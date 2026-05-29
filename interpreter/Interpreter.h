@@ -1,0 +1,158 @@
+#pragma once
+
+#include <string>
+#include <vector>
+#include <functional>
+#include <stdexcept>
+#include <memory>
+#include <unordered_map>
+
+#include "interpreter/Value.h"
+#include "interpreter/Environment.h"
+#include "interpreter/Visitor.h"
+#include "ast/ASTNode.h"
+
+// ============================================================
+// 运行时错误异常
+// ============================================================
+
+/// 运行时错误
+class RuntimeError : public std::runtime_error {
+public:
+    int line;
+    int column;
+
+    RuntimeError(const std::string& msg, int ln = 0, int col = 0)
+        : std::runtime_error(msg), line(ln), column(col) {}
+};
+
+/// return 语句专用异常（用于跳出函数体）
+class ReturnException : public std::runtime_error {
+public:
+    Value returnValue;
+
+    ReturnException(const Value& val)
+        : std::runtime_error("return"), returnValue(val) {}
+};
+
+// ============================================================
+// 调用帧
+// ============================================================
+
+/// 函数调用帧
+struct CallFrame {
+    std::string functionName;      // 函数名
+    Environment* env = nullptr;    // 该帧对应的环境
+    int line = 0;                   // 调用行号
+    int depth = 0;                  // 调用深度
+
+    CallFrame() = default;
+    CallFrame(const std::string& name, Environment* e, int ln, int d)
+        : functionName(name), env(e), line(ln), depth(d) {}
+};
+
+// ============================================================
+// DebugController 前向声明
+// ============================================================
+class DebugController;
+
+// ============================================================
+// 类定义信息
+// ============================================================
+
+/// 类定义信息结构
+struct ClassInfo {
+    std::string name;                                  // 类名
+    std::string superClassName;                         // 父类名（空表示无父类）
+    std::unordered_map<std::string, FunDecl*> methods; // 方法表
+    std::unordered_map<std::string, Value> fields;     // 默认字段值
+    ClassInfo* superClass = nullptr;                    // 父类信息指针
+};
+
+// ============================================================
+// Interpreter 解释器
+// ============================================================
+
+/// 访问者模式解释执行器
+class Interpreter : public Visitor {
+public:
+    Interpreter();
+    ~Interpreter();
+
+    /// 执行程序（AST 根节点）
+    Value execute(Block& program);
+
+    /// 设置输出回调
+    void setOutputCallback(std::function<void(const std::string&)> callback);
+
+    /// 设置调试控制器
+    void setDebugger(DebugController* dbg);
+
+    /// 获取当前环境（用于调试面板）
+    Environment* currentEnvironment() const;
+
+    /// 获取调用栈（用于调试面板）
+    const std::vector<CallFrame>& getCallStack() const;
+
+    // ---- 25 个 visit 方法实现 ----
+
+    Value visitBinaryOp(BinaryOp& node) override;
+    Value visitUnaryOp(UnaryOp& node) override;
+    Value visitNumberLiteral(NumberLiteral& node) override;
+    Value visitStringLiteral(StringLiteral& node) override;
+    Value visitBoolLiteral(BoolLiteral& node) override;
+    Value visitVarDecl(VarDecl& node) override;
+    Value visitAssignment(Assignment& node) override;
+    Value visitVarRef(VarRef& node) override;
+    Value visitIfStmt(IfStmt& node) override;
+    Value visitWhileStmt(WhileStmt& node) override;
+    Value visitForStmt(ForStmt& node) override;
+    Value visitFunDecl(FunDecl& node) override;
+    Value visitFunCall(FunCall& node) override;
+    Value visitReturnStmt(ReturnStmt& node) override;
+    Value visitPrintStmt(PrintStmt& node) override;
+    Value visitBlock(Block& node) override;
+
+    // 新增 9 个 visit 方法
+    Value visitArrayLiteral(ArrayLiteral& node) override;
+    Value visitDictLiteral(DictLiteral& node) override;
+    Value visitIndexAccess(IndexAccess& node) override;
+    Value visitIndexAssign(IndexAssign& node) override;
+    Value visitClassDecl(ClassDecl& node) override;
+    Value visitMemberAccess(MemberAccess& node) override;
+    Value visitMemberAssign(MemberAssign& node) override;
+    Value visitMethodCall(MethodCall& node) override;
+    Value visitNullLiteral(NullLiteral& node) override;
+
+private:
+    Environment* globalEnv_;        // 全局环境
+    Environment* currentEnv_;       // 当前环境
+    std::vector<CallFrame> callStack_;  // 调用栈
+    DebugController* debugger_;     // 调试控制器（可为 nullptr）
+    std::function<void(const std::string&)> outputCallback_; // 输出回调
+    int recursionDepth_ = 0;       // 递归深度
+    std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
+    std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
+
+    /// 执行单个节点
+    Value evaluate(ASTNode* node);
+
+    /// 检查调试断点
+    void checkBreak(ASTNode* node);
+
+    /// 输出字符串
+    void output(const std::string& text);
+
+    /// 数值二元运算（含类型提升）
+    Value numericBinaryOp(const std::string& op, const Value& left, const Value& right,
+                          int line, int col);
+
+    /// 报告运行时错误
+    [[noreturn]] void runtimeError(const std::string& msg, int line, int col);
+
+    /// 查找类的方法（含继承链）
+    FunDecl* findMethod(ClassInfo& cls, const std::string& methodName);
+
+    /// 查找类的字段默认值（含继承链）
+    Value findFieldDefault(ClassInfo& cls, const std::string& fieldName);
+};

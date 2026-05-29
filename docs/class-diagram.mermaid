@@ -1,0 +1,409 @@
+classDiagram
+    direction TB
+
+    %% ===== Token =====
+    class Token {
+        +TokenType type
+        +string lexeme
+        +Value literal
+        +int line
+        +int column
+        +toString() string
+    }
+
+    class TokenType {
+        <<enumeration>>
+        TK_VAR TK_FUN TK_IF TK_ELSE TK_WHILE TK_FOR TK_RETURN
+        TK_TRUE TK_FALSE TK_AND TK_OR TK_NOT TK_PRINT
+        TK_INT TK_FLOAT TK_BOOL TK_STRING_TYPE
+        TK_IDENTIFIER TK_INT_LIT TK_FLOAT_LIT TK_STRING_LIT
+        TK_PLUS TK_MINUS TK_STAR TK_SLASH TK_PERCENT
+        TK_EQ TK_NEQ TK_LT TK_GT TK_LEQ TK_GEQ
+        TK_ASSIGN TK_LPAREN TK_RPAREN TK_LBRACE TK_RBRACE
+        TK_SEMICOLON TK_COMMA TK_EOF TK_ERROR
+    }
+
+    Token --> TokenType
+
+    %% ===== AST Nodes =====
+    class ASTNode {
+        <<abstract>>
+        +int line
+        +int column
+        +accept(Visitor& v) void
+    }
+
+    class BinaryOp {
+        +ASTNode* left
+        +string op
+        +ASTNode* right
+        +accept(Visitor& v) void
+    }
+
+    class UnaryOp {
+        +string op
+        +ASTNode* operand
+        +accept(Visitor& v) void
+    }
+
+    class NumberLiteral {
+        +Value value
+        +accept(Visitor& v) void
+    }
+
+    class StringLiteral {
+        +string value
+        +accept(Visitor& v) void
+    }
+
+    class BoolLiteral {
+        +bool value
+        +accept(Visitor& v) void
+    }
+
+    class VarDecl {
+        +string name
+        +string typeHint
+        +ASTNode* initializer
+        +accept(Visitor& v) void
+    }
+
+    class Assignment {
+        +string name
+        +ASTNode* value
+        +accept(Visitor& v) void
+    }
+
+    class VarRef {
+        +string name
+        +accept(Visitor& v) void
+    }
+
+    class IfStmt {
+        +ASTNode* condition
+        +Block* thenBranch
+        +Block* elseBranch
+        +accept(Visitor& v) void
+    }
+
+    class WhileStmt {
+        +ASTNode* condition
+        +Block* body
+        +accept(Visitor& v) void
+    }
+
+    class ForStmt {
+        +ASTNode* init
+        +ASTNode* condition
+        +ASTNode* update
+        +Block* body
+        +accept(Visitor& v) void
+    }
+
+    class FunDecl {
+        +string name
+        +vector~Param~ params
+        +Block* body
+        +accept(Visitor& v) void
+    }
+
+    class FunCall {
+        +string callee
+        +vector~ASTNode*~ args
+        +accept(Visitor& v) void
+    }
+
+    class ReturnStmt {
+        +ASTNode* value
+        +accept(Visitor& v) void
+    }
+
+    class PrintStmt {
+        +ASTNode* value
+        +accept(Visitor& v) void
+    }
+
+    class Block {
+        +vector~ASTNode*~ statements
+        +accept(Visitor& v) void
+    }
+
+    ASTNode <|-- BinaryOp
+    ASTNode <|-- UnaryOp
+    ASTNode <|-- NumberLiteral
+    ASTNode <|-- StringLiteral
+    ASTNode <|-- BoolLiteral
+    ASTNode <|-- VarDecl
+    ASTNode <|-- Assignment
+    ASTNode <|-- VarRef
+    ASTNode <|-- IfStmt
+    ASTNode <|-- WhileStmt
+    ASTNode <|-- ForStmt
+    ASTNode <|-- FunDecl
+    ASTNode <|-- FunCall
+    ASTNode <|-- ReturnStmt
+    ASTNode <|-- PrintStmt
+    ASTNode <|-- Block
+
+    %% ===== Value =====
+    class Value {
+        +ValueType type
+        +int intVal
+        +double floatVal
+        +bool boolVal
+        +string stringVal
+        +isInt() bool
+        +isFloat() bool
+        +isBool() bool
+        +isString() bool
+        +isNumber() bool
+        +toDouble() double
+        +toString() string
+        +isTruthy() bool
+    }
+
+    class ValueType {
+        <<enumeration>>
+        VAL_INT VAL_FLOAT VAL_BOOL VAL_STRING VAL_NULL
+    }
+
+    Value --> ValueType
+
+    %% ===== Environment =====
+    class Environment {
+        -unordered_map~string,Value~ variables
+        -Environment* parent
+        +define(name: string, val: Value) void
+        +get(name: string) Value
+        +set(name: string, val: Value) void
+        +allVariables() unordered_map~string,Value~
+        +getParent() Environment*
+    }
+
+    Environment --> Environment : parent
+
+    %% ===== Visitor =====
+    class Visitor {
+        <<abstract>>
+        +visitBinaryOp(BinaryOp*) Value
+        +visitUnaryOp(UnaryOp*) Value
+        +visitNumberLiteral(NumberLiteral*) Value
+        +visitStringLiteral(StringLiteral*) Value
+        +visitBoolLiteral(BoolLiteral*) Value
+        +visitVarDecl(VarDecl*) Value
+        +visitAssignment(Assignment*) Value
+        +visitVarRef(VarRef*) Value
+        +visitIfStmt(IfStmt*) Value
+        +visitWhileStmt(WhileStmt*) Value
+        +visitForStmt(ForStmt*) Value
+        +visitFunDecl(FunDecl*) Value
+        +visitFunCall(FunCall*) Value
+        +visitReturnStmt(ReturnStmt*) Value
+        +visitPrintStmt(PrintStmt*) Value
+        +visitBlock(Block*) Value
+    }
+
+    %% ===== Interpreter =====
+    class Interpreter {
+        -Environment* globalEnv
+        -Environment* currentEnv
+        -vector~CallFrame~ callStack
+        -DebugController* debugger
+        -function~void(string)~ outputCallback
+        +Interpreter()
+        +execute(program: ASTNode*) void
+        +setOutputCallback(cb: function) void
+        +setDebugger(dc: DebugController*) void
+        +getGlobalEnv() Environment*
+        +getCurrentEnv() Environment*
+        +visitBinaryOp(BinaryOp*) Value
+        +visitUnaryOp(UnaryOp*) Value
+        +visitNumberLiteral(NumberLiteral*) Value
+        +visitStringLiteral(StringLiteral*) Value
+        +visitBoolLiteral(BoolLiteral*) Value
+        +visitVarDecl(VarDecl*) Value
+        +visitAssignment(Assignment*) Value
+        +visitVarRef(VarRef*) Value
+        +visitIfStmt(IfStmt*) Value
+        +visitWhileStmt(WhileStmt*) Value
+        +visitForStmt(ForStmt*) Value
+        +visitFunDecl(FunDecl*) Value
+        +visitFunCall(FunCall*) Value
+        +visitReturnStmt(ReturnStmt*) Value
+        +visitPrintStmt(PrintStmt*) Value
+        +visitBlock(Block*) Value
+    }
+
+    class CallFrame {
+        +string funcName
+        +Environment* env
+        +int returnLine
+    }
+
+    Interpreter --> Visitor
+    Interpreter --> Environment
+    Interpreter --> CallFrame
+    Interpreter --> DebugController
+
+    %% ===== Lexer =====
+    class Lexer {
+        -string source
+        -int start
+        -int current
+        -int line
+        -int column
+        +Lexer(source: string)
+        +tokenize() vector~Token~
+        -advance() char
+        -peek() char
+        -peekNext() char
+        -match(expected: char) bool
+        -makeToken(type: TokenType) Token
+        -scanToken() Token
+        -scanString() Token
+        -scanNumber() Token
+        -scanIdentifier() Token
+    }
+
+    %% ===== Parser =====
+    class Parser {
+        -vector~Token~ tokens
+        -int current
+        +Parser(tokens: vector~Token~)
+        +parse() Block*
+        -peek() Token
+        -previous() Token
+        -advance() Token
+        -check(type: TokenType) bool
+        -match(types: TokenTypeList) bool
+        -consume(type: TokenType, msg: string) Token
+        -declaration() ASTNode*
+        -varDecl() ASTNode*
+        -funDecl() ASTNode*
+        -statement() ASTNode*
+        -ifStmt() ASTNode*
+        -whileStmt() ASTNode*
+        -forStmt() ASTNode*
+        -printStmt() ASTNode*
+        -returnStmt() ASTNode*
+        -block() Block*
+        -expression() ASTNode*
+        -assignment() ASTNode*
+        -or_() ASTNode*
+        -and_() ASTNode*
+        -equality() ASTNode*
+        -comparison() ASTNode*
+        -term() ASTNode*
+        -factor() ASTNode*
+        -unary() ASTNode*
+        -primary() ASTNode*
+        -call() ASTNode*
+    }
+
+    Parser --> Token
+    Parser --> ASTNode
+
+    %% ===== DebugController =====
+    class StepMode {
+        <<enumeration>>
+        MODE_RUN MODE_STEP_IN MODE_STEP_OVER MODE_PAUSE
+    }
+
+    class DebugController {
+        -set~int~ breakpoints
+        -StepMode mode
+        -bool paused
+        -Interpreter* interp
+        +DebugController()
+        +setBreakpoint(line: int) void
+        +removeBreakpoint(line: int) void
+        +toggleBreakpoint(line: int) void
+        +clearBreakpoints() void
+        +hasBreakpoint(line: int) bool
+        +setStepMode(mode: StepMode) void
+        +checkBreak(node: ASTNode*) bool
+        +isPaused() bool
+        +resume() void
+        +stepIn() void
+        +stepOver() void
+        +stop() void
+        +getVariableSnapshot() unordered_map~string,Value~
+        +getCallStack() vector~CallFrame~
+    }
+
+    DebugController --> StepMode
+    DebugController --> Interpreter
+
+    %% ===== GUI Components =====
+    class CodeEditor {
+        -SyntaxHighlighter* highlighter
+        -QList~QTextEdit::ExtraSelection~ errorMarks
+        +CodeEditor(QWidget* parent)
+        +lineNumberAreaWidth() int
+        +setErrorMarks(errors: vector~ErrorInfo~) void
+        +clearErrorMarks() void
+        +getCurrentLine() int
+        +toggleBreakpoint(line: int) signal
+    }
+
+    class SyntaxHighlighter {
+        +SyntaxHighlighter(QTextDocument*)
+        +highlightBlock(text: string) void
+    }
+
+    class AstViewer {
+        -QGraphicsScene* scene
+        +AstViewer(QWidget* parent)
+        +displayAst(ASTNode* root) void
+        -layoutNode(node: ASTNode*, x: double, y: double) QPointF
+        -createNodeItem(node: ASTNode*, pos: QPointF) QGraphicsItem*
+    }
+
+    class OutputPanel {
+        -QTextEdit* outputText
+        -QTextEdit* errorText
+        +OutputPanel(QWidget* parent)
+        +appendOutput(text: string) void
+        +appendError(text: string) void
+        +clear() void
+    }
+
+    class DebugPanel {
+        -QTreeWidget* varTree
+        -QListWidget* callStackList
+        +DebugPanel(QWidget* parent)
+        +updateVariables(vars: unordered_map~string,Value~) void
+        +updateCallStack(frames: vector~CallFrame~) void
+        +clear() void
+    }
+
+    class IDE {
+        -CodeEditor* editor
+        -AstViewer* astViewer
+        -OutputPanel* outputPanel
+        -DebugPanel* debugPanel
+        -Lexer* lexer
+        -Parser* parser
+        -Interpreter* interpreter
+        -DebugController* debugger
+        +IDE(QWidget* parent)
+        +onRun() void
+        +onDebug() void
+        +onStepIn() void
+        +onStepOver() void
+        +onStop() void
+        +onToggleBreakpoint(line: int) void
+        +onEditorTextChanged() void
+        +updateTokenView() void
+        +updateAstView() void
+    }
+
+    IDE --> CodeEditor
+    IDE --> AstViewer
+    IDE --> OutputPanel
+    IDE --> DebugPanel
+    IDE --> Lexer
+    IDE --> Parser
+    IDE --> Interpreter
+    IDE --> DebugController
+    CodeEditor --> SyntaxHighlighter

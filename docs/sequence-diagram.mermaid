@@ -1,0 +1,82 @@
+sequenceDiagram
+    actor User
+    participant IDE as IDE MainWindow
+    participant Editor as CodeEditor
+    participant Lexer as Lexer
+    participant Parser as Parser
+    participant Interp as Interpreter
+    participant Debug as DebugController
+    participant Env as Environment
+    participant Output as OutputPanel
+    participant AstV as AstViewer
+
+    %% ===== 编译执行流程 =====
+    User->>Editor: 输入 MiniLang 代码
+    Editor->>IDE: textChanged 信号
+    IDE->>Lexer: lexer.tokenize(source)
+    Lexer-->>IDE: Token 列表 (含错误Token)
+    alt 存在词法错误
+        IDE->>Editor: setErrorMarks(errors)
+        IDE->>Output: appendError(词法错误信息)
+    end
+
+    IDE->>Parser: parser.parse(tokens)
+    Parser-->>IDE: AST 根节点 (或错误)
+    alt 存在语法错误
+        IDE->>Editor: setErrorMarks(errors)
+        IDE->>Output: appendError(语法错误信息)
+    else 解析成功
+        IDE->>AstV: displayAst(astRoot)
+    end
+
+    %% ===== 运行流程 =====
+    User->>IDE: 点击"运行"按钮
+    IDE->>Debug: setStepMode(MODE_RUN)
+    IDE->>Interp: execute(astRoot)
+    
+    loop 遍历 AST 节点
+        Interp->>Debug: checkBreak(node)
+        alt 命中断点或 Step 模式
+            Debug-->>Interp: 暂停
+            Debug->>IDE: paused 信号
+            IDE->>Debug: getVariableSnapshot()
+            IDE->>DebugPanel: updateVariables(vars)
+            IDE->>Debug: getCallStack()
+            IDE->>DebugPanel: updateCallStack(frames)
+            IDE->>Editor: 高亮当前执行行
+            User->>IDE: Step In / Step Over / Resume
+            IDE->>Debug: stepIn() / stepOver() / resume()
+        end
+        
+        Interp->>Interp: visitXxxNode(node)
+        
+        alt VarDecl 节点
+            Interp->>Env: define(name, value)
+        else VarRef 节点
+            Interp->>Env: get(name)
+            Env-->>Interp: Value
+        else Assignment 节点
+            Interp->>Env: set(name, value)
+        else FunCall 节点
+            Interp->>Interp: 创建新 CallFrame
+            Interp->>Env: 创建子 Environment
+            Interp->>Interp: 递归执行函数体
+            Interp->>Env: 恢复父 Environment
+        else PrintStmt 节点
+            Interp->>IDE: outputCallback(text)
+            IDE->>Output: appendOutput(text)
+        end
+    end
+    
+    Interp-->>IDE: 执行完毕
+    IDE->>Output: appendOutput("程序执行完毕")
+
+    %% ===== 调试流程 =====
+    User->>Editor: 点击行号区域设置断点
+    Editor->>IDE: toggleBreakpoint(line)
+    IDE->>Debug: toggleBreakpoint(line)
+    
+    User->>IDE: 点击"调试"按钮
+    IDE->>Debug: setStepMode(MODE_STEP_IN)
+    IDE->>Interp: execute(astRoot)
+    Note over Interp,Debug: 后续同运行流程中的断点/单步逻辑
