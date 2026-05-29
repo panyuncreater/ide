@@ -75,7 +75,7 @@ void SyntaxHighlighter::initRules() {
         "\\bwhile\\b", "\\bfor\\b", "\\breturn\\b", "\\bprint\\b",
         "\\band\\b", "\\bor\\b", "\\bnot\\b",
         "\\bint\\b", "\\bfloat\\b", "\\bbool\\b", "\\bstring\\b",
-        "\\bclass\\b", "\\bextends\\b", "\\bdict\\b"
+        "\\bclass\\b", "\\bextends\\b", "\\bdict\\b", "\\barray\\b"
     };
     for (const auto& pattern : keywordPatterns) {
         HighlightRule rule;

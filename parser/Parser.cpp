@@ -80,10 +80,10 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     // class 声明
     if (check(TokenType::TK_CLASS)) return classDecl();
 
-    // 类型注解声明: int/float/bool/string/dict
+    // 类型注解声明: int/float/bool/string/dict/array
     if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
         check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-        check(TokenType::TK_DICT)) {
+        check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
         // 看下一个 Token 是否是标识符（类型注解变量声明）
         // 保存当前位置以便回溯
         int savePos = current_;
@@ -102,6 +102,23 @@ std::unique_ptr<ASTNode> Parser::declaration() {
         }
 
         // 不是类型注解，回溯
+        current_ = savePos;
+    }
+
+    // 类名类型注解声明: ClassName varName; 或 ClassName varName = expr;
+    // 识别模式: 标识符 标识符 (类型名 变量名)
+    if (check(TokenType::TK_IDENTIFIER)) {
+        // 预读两个 token: 第一个是类名，第二个是变量名
+        int savePos = current_;
+        const Token& firstTok = advance();  // 类名
+
+        if (check(TokenType::TK_IDENTIFIER)) {
+            // ClassName varName — 类类型注解变量声明
+            std::string typeAnn = firstTok.lexeme;
+            return typedVarDecl(typeAnn);
+        }
+
+        // 不是类类型声明，回溯
         current_ = savePos;
     }
 
@@ -152,7 +169,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
             // 支持 C 风格类型注解: int a, float b 等
             if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                 check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                check(TokenType::TK_DICT)) {
+                check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
                 // 类型在参数名前面: int a
                 const Token& typeTok = advance();
                 pType = typeTok.lexeme;
@@ -188,7 +205,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     if (match({TokenType::TK_COLON})) {
         if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
             check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-            check(TokenType::TK_DICT)) {
+            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
             const Token& typeTok = advance();
             returnType = typeTok.lexeme;
             if (match({TokenType::TK_LBRACKET})) {
@@ -213,9 +230,9 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
     const Token& classTok = consume(TokenType::TK_CLASS, "期望 'class'");
     const Token& name = consume(TokenType::TK_IDENTIFIER, "期望类名");
 
-    // 可选的 extends SuperClassName
+    // 可选的 extends SuperClassName 或 : SuperClassName
     std::string superClassName;
-    if (match({TokenType::TK_EXTENDS})) {
+    if (match({TokenType::TK_EXTENDS}) || match({TokenType::TK_COLON})) {
         const Token& superName = consume(TokenType::TK_IDENTIFIER, "期望父类名");
         superClassName = superName.lexeme;
     }
@@ -236,7 +253,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
             members.push_back(funDecl());
         } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                    check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                   check(TokenType::TK_DICT)) {
+                   check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
             // 带类型注解的字段声明
             int savePos = current_;
             const Token& typeTok = advance();
@@ -325,7 +342,7 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
         // varDecl 已经消耗了分号
     } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-               check(TokenType::TK_DICT)) {
+               check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
         // 类型注解声明，如 int j = 0;
         int savePos = current_;
         const Token& typeTok = advance();
@@ -765,6 +782,7 @@ void Parser::synchronize() {
         case TokenType::TK_BOOL:
         case TokenType::TK_STRING_TYPE:
         case TokenType::TK_DICT:
+        case TokenType::TK_ARRAY:
             return;
         default:
             break;

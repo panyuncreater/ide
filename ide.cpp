@@ -228,6 +228,9 @@ void Ide::onRun() {
     setRunningState(true);
     debugger_->reset();
 
+    // 非调试模式：完全跳过 checkBreak
+    interpreter_.setDebugMode(false);
+
     try {
         interpreter_.execute(*astRoot_);
         outputPanel_->appendOutput("--- 程序执行结束 ---");
@@ -237,12 +240,15 @@ void Ide::onRun() {
         QSet<int> errorLines;
         errorLines.insert(e.line);
         codeEditor_->setErrorLines(errorLines);
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("错误: %1").arg(e.what()));
+    } catch (const std::runtime_error& e) {
+        if (std::string(e.what()) != "调试终止") {
+            outputPanel_->appendError(QString("错误: %1").arg(e.what()));
+        }
     }
 
     isRunning_ = false;
     setRunningState(false);
+    interpreter_.setDebugMode(false);
 }
 
 void Ide::onDebug() {
@@ -309,7 +315,11 @@ void Ide::onDebug() {
     isRunning_ = true;
     setRunningState(true);
 
-    // 初始模式：单步进入
+    // 调试模式：启用 checkBreak
+    interpreter_.setDebugMode(true);
+
+    // 重置调试状态，然后设置初始模式为 STEP_IN
+    debugger_->reset();
     debugger_->stepIn();
 
     try {
@@ -318,13 +328,20 @@ void Ide::onDebug() {
     } catch (const RuntimeError& e) {
         outputPanel_->appendError(QString("运行时错误 (行 %1, 列 %2): %3")
                                       .arg(e.line).arg(e.column).arg(e.what()));
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("错误: %1").arg(e.what()));
+    } catch (const std::runtime_error& e) {
+        // 调试终止（用户点击停止）— 不显示错误
+        if (std::string(e.what()) != "调试终止") {
+            outputPanel_->appendError(QString("错误: %1").arg(e.what()));
+        } else {
+            outputPanel_->appendOutput("--- 调试终止 ---");
+        }
     }
 
     isRunning_ = false;
     setRunningState(false);
+    interpreter_.setDebugMode(false);
     codeEditor_->clearCurrentLine();
+    debugger_->reset();
 }
 
 void Ide::onStepIn() {
@@ -339,9 +356,8 @@ void Ide::onStepOver() {
 
 void Ide::onStop() {
     debugger_->stop();
-    isRunning_ = false;
-    setRunningState(false);
-    codeEditor_->clearCurrentLine();
+    // 不在这里设置 isRunning_ 和按钮状态
+    // onDebug() 中 interpreter_.execute() 返回后会统一清理
 }
 
 void Ide::onClearOutput() {

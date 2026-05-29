@@ -20,6 +20,7 @@ enum class TokenType {
     TK_CLASS,       // class 关键字
     TK_EXTENDS,     // extends 关键字
     TK_DICT,        // dict 关键字
+    TK_ARRAY,       // array 关键字
     TK_NULL,        // null 关键字
     // 字面量
     TK_IDENTIFIER, TK_INT_LIT, TK_FLOAT_LIT, TK_STRING_LIT,
@@ -79,6 +80,7 @@ struct Token {
         case TokenType::TK_CLASS:       return "CLASS";
         case TokenType::TK_EXTENDS:     return "EXTENDS";
         case TokenType::TK_DICT:        return "DICT";
+        case TokenType::TK_ARRAY:       return "ARRAY";
         case TokenType::TK_NULL:        return "NULL";
         case TokenType::TK_IDENTIFIER:  return "IDENTIFIER";
         case TokenType::TK_INT_LIT:     return "INT_LIT";

@@ -91,6 +91,9 @@ public:
     /// 设置调试控制器
     void setDebugger(DebugController* dbg);
 
+    /// 设置调试模式（启用/禁用 checkBreak 调用）
+    void setDebugMode(bool enabled);
+
     /// 获取当前环境（用于调试面板）
     Environment* currentEnvironment() const;
 
@@ -132,6 +135,7 @@ private:
     Environment* currentEnv_;       // 当前环境
     std::vector<CallFrame> callStack_;  // 调用栈
     DebugController* debugger_;     // 调试控制器（可为 nullptr）
+    bool debugMode_ = false;        // 是否处于调试模式（快速跳过 checkBreak）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     int recursionDepth_ = 0;       // 递归深度
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表

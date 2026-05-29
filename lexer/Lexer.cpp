@@ -33,6 +33,7 @@ void Lexer::initKeywords() {
     keywords_["class"]   = TokenType::TK_CLASS;
     keywords_["extends"] = TokenType::TK_EXTENDS;
     keywords_["dict"]    = TokenType::TK_DICT;
+    keywords_["array"]   = TokenType::TK_ARRAY;
     keywords_["null"]    = TokenType::TK_NULL;
 }
 

@@ -59,6 +59,10 @@ void Interpreter::setDebugger(DebugController* dbg) {
     debugger_ = dbg;
 }
 
+void Interpreter::setDebugMode(bool enabled) {
+    debugMode_ = enabled;
+}
+
 Environment* Interpreter::currentEnvironment() const {
     return currentEnv_;
 }
@@ -75,7 +79,7 @@ Value Interpreter::evaluate(ASTNode* node) {
 }
 
 void Interpreter::checkBreak(ASTNode* node) {
-    if (debugger_) {
+    if (debugMode_ && debugger_) {
         debugger_->checkBreak(node);
     }
 }
@@ -237,6 +241,53 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
     Value initVal = Value::nullValue();
     if (node.initializer) {
         initVal = evaluate(node.initializer.get());
+    } else if (!node.typeAnnotation.empty()) {
+        // 无初始化表达式但有类型注解 — 检查是否是类名
+        auto classIt = classRegistry_.find(node.typeAnnotation);
+        if (classIt != classRegistry_.end()) {
+            // 自动创建类实例（无参构造）
+            ClassInfo& cls = classIt->second;
+            Value instance = Value::makeInstance(cls.name);
+
+            // 复制类默认字段值（含继承链）
+            ClassInfo* curCls = &cls;
+            while (curCls) {
+                for (const auto& kv : curCls->fields) {
+                    if (instance.fields.find(kv.first) == instance.fields.end()) {
+                        instance.fields[kv.first] = kv.second;
+                    }
+                }
+                curCls = curCls->superClass;
+            }
+
+            // 如果有 init 方法（0 参数），执行它
+            FunDecl* initMethod = findMethod(cls, "init");
+            if (initMethod && initMethod->params.empty()) {
+                Environment* initEnv = new Environment(currentEnv_);
+                initEnv->define("this", instance);
+                // 将实例字段注入 init 环境
+                for (const auto& kv : instance.fields) {
+                    initEnv->define(kv.first, kv.second);
+                }
+                Environment* prevEnv = currentEnv_;
+                currentEnv_ = initEnv;
+                try {
+                    evaluate(initMethod->body.get());
+                } catch (const ReturnException& e) {}
+                instance = initEnv->get("this");
+                // 同步字段变更
+                for (const auto& kv : instance.fields) {
+                    if (initEnv->hasVariable(kv.first)) {
+                        instance.fields[kv.first] = initEnv->get(kv.first);
+                    }
+                }
+                currentEnv_ = prevEnv;
+                delete initEnv;
+            }
+
+            initVal = instance;
+        }
+        // 其他类型注解（int/float/bool/string/dict/array）无初始化则保持 null
     }
     currentEnv_->define(node.name, initVal);
     return initVal;
@@ -397,11 +448,16 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
         // 如果有 init 方法，执行它
         if (initMethod) {
-            // 创建新环境
-            Environment* initEnv = new Environment(globalEnv_);
+            // 创建新环境（父级为当前环境，支持闭包）
+            Environment* initEnv = new Environment(currentEnv_);
 
             // 绑定 this
             initEnv->define("this", instance);
+
+            // 将实例字段注入 init 环境
+            for (const auto& kv : instance.fields) {
+                initEnv->define(kv.first, kv.second);
+            }
 
             // 绑定参数
             for (size_t i = 0; i < initMethod->params.size(); ++i) {
@@ -423,6 +479,13 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
             // 从 init 环境中读取 this 的更新值
             instance = initEnv->get("this");
+
+            // 将 init 内对字段的直接修改同步回 this 实例
+            for (const auto& kv : instance.fields) {
+                if (initEnv->hasVariable(kv.first)) {
+                    instance.fields[kv.first] = initEnv->get(kv.first);
+                }
+            }
 
             // 恢复环境
             currentEnv_ = prevEnv;
@@ -801,13 +864,18 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                                  node.line, node.column);
                 }
 
-                // 创建方法环境
-                Environment* methodEnv = new Environment(globalEnv_);
+                // 创建方法环境（父级为当前环境，支持闭包）
+                Environment* methodEnv = new Environment(currentEnv_);
 
                 // 绑定 this
                 methodEnv->define("this", obj);
 
-                // 绑定参数
+                // 将实例字段注入方法环境，使方法内可直接用 name 访问 this.name
+                for (const auto& kv : obj.fields) {
+                    methodEnv->define(kv.first, kv.second);
+                }
+
+                // 绑定参数（参数覆盖同名字段）
                 for (size_t i = 0; i < method->params.size(); ++i) {
                     methodEnv->define(method->params[i], argValues[i]);
                 }
@@ -829,6 +897,16 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
 
                 // 从方法环境中读取 this 的更新值
                 Value updatedThis = methodEnv->get("this");
+
+                // 将方法内对字段的直接修改同步回 this 实例
+                for (const auto& kv : obj.fields) {
+                    if (methodEnv->hasVariable(kv.first)) {
+                        updatedThis.fields[kv.first] = methodEnv->get(kv.first);
+                    }
+                }
+                // 也检查方法中新添加到实例的字段（字段名在 this 中但不在原始 obj 中）
+                // 注意：方法内 name = val 这种赋值可能创建了新的局部变量而非字段
+                // 但如果是已有的字段名被重新赋值，我们需要同步
 
                 // 恢复环境
                 currentEnv_ = prevEnv;
