@@ -5,6 +5,30 @@
 
 class ASTNode;
 class Block;
+class BinaryOp;
+class UnaryOp;
+class NumberLiteral;
+class StringLiteral;
+class BoolLiteral;
+class VarDecl;
+class Assignment;
+class VarRef;
+class IfStmt;
+class WhileStmt;
+class ForStmt;
+class FunDecl;
+class FunCall;
+class ReturnStmt;
+class PrintStmt;
+class ArrayLiteral;
+class DictLiteral;
+class IndexAccess;
+class IndexAssign;
+class ClassDecl;
+class MemberAccess;
+class MemberAssign;
+class MethodCall;
+class NullLiteral;
 
 // ============================================================
 // Formatter 代码格式化器

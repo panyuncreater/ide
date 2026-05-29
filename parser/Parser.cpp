@@ -640,7 +640,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
     }
 
     // 字典字面量 {"key": value, ...}
-    if (match({TokenType::TK_LBRACE)) {
+    if (match({TokenType::TK_LBRACE})) {
         const Token& brace = previous();
 
         std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>> pairs;
