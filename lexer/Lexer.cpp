@@ -29,6 +29,7 @@ void Lexer::initKeywords() {
     keywords_["string"]  = TokenType::TK_STRING_TYPE;
     // 新增关键字
     keywords_["function"] = TokenType::TK_FUNCTION;
+    keywords_["func"]     = TokenType::TK_FUNC;
     keywords_["class"]   = TokenType::TK_CLASS;
     keywords_["extends"] = TokenType::TK_EXTENDS;
     keywords_["dict"]    = TokenType::TK_DICT;

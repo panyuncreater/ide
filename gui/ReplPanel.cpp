@@ -145,7 +145,7 @@ void ReplPanel::executeLine(const QString& line) {
 
     // 执行
     try {
-        Value result = interpreter_->execute(*ast);
+        Value result = interpreter_->executeRepl(*ast);
         // 显示结果
         if (!result.isNull()) {
             appendOutput(QString::fromStdString(result.toString()));

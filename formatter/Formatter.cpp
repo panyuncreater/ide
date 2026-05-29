@@ -202,7 +202,13 @@ std::string Formatter::formatReturnStmt(ReturnStmt& node) {
 }
 
 std::string Formatter::formatPrintStmt(PrintStmt& node) {
-    return "print(" + formatNode(node.value.get()) + ")";
+    std::string result = "print(";
+    for (size_t i = 0; i < node.values.size(); ++i) {
+        if (i > 0) result += ", ";
+        result += formatNode(node.values[i].get());
+    }
+    result += ")";
+    return result;
 }
 
 std::string Formatter::formatBlock(Block& node, bool isTopLevel) {

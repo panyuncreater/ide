@@ -74,8 +74,8 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     // var 声明
     if (check(TokenType::TK_VAR)) return varDecl();
 
-    // fun 或 function 声明
-    if (check(TokenType::TK_FUN) || check(TokenType::TK_FUNCTION)) return funDecl();
+    // fun / function / func 声明
+    if (check(TokenType::TK_FUN) || check(TokenType::TK_FUNCTION) || check(TokenType::TK_FUNC)) return funDecl();
 
     // class 声明
     if (check(TokenType::TK_CLASS)) return classDecl();
@@ -146,25 +146,59 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
 
     if (!check(TokenType::TK_RPAREN)) {
         do {
-            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
-            params.push_back(param.lexeme);
-
-            // 可选的参数类型注解 : type
             std::string pType;
-            if (match({TokenType::TK_COLON})) {
-                const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
+            std::string paramName;
+
+            // 支持 C 风格类型注解: int a, float b 等
+            if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+                check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+                check(TokenType::TK_DICT)) {
+                // 类型在参数名前面: int a
+                const Token& typeTok = advance();
                 pType = typeTok.lexeme;
+
+                // 可选的数组类型: int[]
+                if (match({TokenType::TK_LBRACKET})) {
+                    consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                    pType += "[]";
+                }
+
+                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+                paramName = param.lexeme;
+            } else {
+                // 参数名在前面: a 或 a: int
+                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+                paramName = param.lexeme;
+
+                // 可选的参数类型注解 : type
+                if (match({TokenType::TK_COLON})) {
+                    const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
+                    pType = typeTok.lexeme;
+                }
             }
+
+            params.push_back(paramName);
             paramTypes.push_back(pType);
         } while (match({TokenType::TK_COMMA}));
     }
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
-    // 可选的返回值类型注解 : type
+    // 可选的返回值类型注解 : type（type 可能是关键字如 int/float）
     std::string returnType;
     if (match({TokenType::TK_COLON})) {
-        const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
-        returnType = retTypeTok.lexeme;
+        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+            check(TokenType::TK_DICT)) {
+            const Token& typeTok = advance();
+            returnType = typeTok.lexeme;
+            if (match({TokenType::TK_LBRACKET})) {
+                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                returnType += "[]";
+            }
+        } else {
+            const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
+            returnType = retTypeTok.lexeme;
+        }
     }
 
     consume(TokenType::TK_LBRACE, "期望 '{'");
@@ -198,7 +232,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
         // - 带类型注解的声明
         if (check(TokenType::TK_VAR)) {
             members.push_back(varDecl());
-        } else if (check(TokenType::TK_FUN) || check(TokenType::TK_FUNCTION)) {
+        } else if (check(TokenType::TK_FUN) || check(TokenType::TK_FUNCTION) || check(TokenType::TK_FUNC)) {
             members.push_back(funDecl());
         } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                    check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
@@ -255,8 +289,13 @@ std::unique_ptr<IfStmt> Parser::ifStmt() {
 
     std::unique_ptr<ASTNode> elseB = nullptr;
     if (match({TokenType::TK_ELSE})) {
-        consume(TokenType::TK_LBRACE, "期望 '{'");
-        elseB = block();
+        if (check(TokenType::TK_IF)) {
+            // else if — else 分支是另一个 if 语句
+            elseB = ifStmt();
+        } else {
+            consume(TokenType::TK_LBRACE, "期望 '{'");
+            elseB = block();
+        }
     }
 
     return std::make_unique<IfStmt>(std::move(cond), std::move(thenB),
@@ -284,6 +323,28 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
     if (check(TokenType::TK_VAR)) {
         init = varDecl();
         // varDecl 已经消耗了分号
+    } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+               check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+               check(TokenType::TK_DICT)) {
+        // 类型注解声明，如 int j = 0;
+        int savePos = current_;
+        const Token& typeTok = advance();
+
+        std::string typeAnn = typeTok.lexeme;
+        if (match({TokenType::TK_LBRACKET})) {
+            consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+            typeAnn += "[]";
+        }
+
+        if (check(TokenType::TK_IDENTIFIER)) {
+            init = typedVarDecl(typeAnn);
+            // typedVarDecl 已经消耗了分号
+        } else {
+            // 回溯，当做表达式处理
+            current_ = savePos;
+            init = expression();
+            consume(TokenType::TK_SEMICOLON, "期望 ';'");
+        }
     } else if (!check(TokenType::TK_SEMICOLON)) {
         init = expression();
         consume(TokenType::TK_SEMICOLON, "期望 ';'");
@@ -327,11 +388,18 @@ std::unique_ptr<ReturnStmt> Parser::returnStmt() {
 std::unique_ptr<PrintStmt> Parser::printStmt() {
     const Token& printTok = consume(TokenType::TK_PRINT, "期望 'print'");
     consume(TokenType::TK_LPAREN, "期望 '('");
-    auto val = expression();
+
+    std::vector<std::unique_ptr<ASTNode>> values;
+    if (!check(TokenType::TK_RPAREN)) {
+        do {
+            values.push_back(expression());
+        } while (match({TokenType::TK_COMMA}));
+    }
+
     consume(TokenType::TK_RPAREN, "期望 ')'");
     consume(TokenType::TK_SEMICOLON, "期望 ';'");
 
-    return std::make_unique<PrintStmt>(std::move(val), printTok.line, printTok.column);
+    return std::make_unique<PrintStmt>(std::move(values), printTok.line, printTok.column);
 }
 
 std::unique_ptr<Block> Parser::block() {
@@ -685,6 +753,7 @@ void Parser::synchronize() {
         case TokenType::TK_VAR:
         case TokenType::TK_FUN:
         case TokenType::TK_FUNCTION:
+        case TokenType::TK_FUNC:
         case TokenType::TK_CLASS:
         case TokenType::TK_IF:
         case TokenType::TK_WHILE:

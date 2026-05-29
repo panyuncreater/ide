@@ -82,6 +82,9 @@ public:
     /// 执行程序（AST 根节点）
     Value execute(Block& program);
 
+    /// REPL 模式执行（不重置环境，保留变量/函数/类定义）
+    Value executeRepl(Block& program);
+
     /// 设置输出回调
     void setOutputCallback(std::function<void(const std::string&)> callback);
 

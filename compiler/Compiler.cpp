@@ -342,8 +342,10 @@ void Compiler::compileReturnStmt(ReturnStmt& node) {
 }
 
 void Compiler::compilePrintStmt(PrintStmt& node) {
-    compileNode(node.value.get());
-    chunk_.writeOp(OpCode::OP_PRINT, node.line);
+    for (auto& val : node.values) {
+        compileNode(val.get());
+        chunk_.writeOp(OpCode::OP_PRINT, node.line);
+    }
 }
 
 void Compiler::compileBlock(Block& node) {

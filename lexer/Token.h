@@ -16,6 +16,7 @@ enum class TokenType {
     TK_INT, TK_FLOAT, TK_BOOL, TK_STRING_TYPE,
     // 新增关键字
     TK_FUNCTION,    // function 关键字（fun 的别名）
+    TK_FUNC,        // func 关键字（fun 的别名）
     TK_CLASS,       // class 关键字
     TK_EXTENDS,     // extends 关键字
     TK_DICT,        // dict 关键字
@@ -74,6 +75,7 @@ struct Token {
         case TokenType::TK_BOOL:        return "BOOL_TYPE";
         case TokenType::TK_STRING_TYPE: return "STRING_TYPE";
         case TokenType::TK_FUNCTION:    return "FUNCTION";
+        case TokenType::TK_FUNC:        return "FUNC";
         case TokenType::TK_CLASS:       return "CLASS";
         case TokenType::TK_EXTENDS:     return "EXTENDS";
         case TokenType::TK_DICT:        return "DICT";

@@ -71,7 +71,7 @@ void SyntaxHighlighter::initRules() {
 
     // 关键字（含新增关键字）
     QStringList keywordPatterns = {
-        "\\bvar\\b", "\\bfun\\b", "\\bfunction\\b", "\\bif\\b", "\\belse\\b",
+        "\\bvar\\b", "\\bfun\\b", "\\bfunction\\b", "\\bfunc\\b", "\\bif\\b", "\\belse\\b",
         "\\bwhile\\b", "\\bfor\\b", "\\breturn\\b", "\\bprint\\b",
         "\\band\\b", "\\bor\\b", "\\bnot\\b",
         "\\bint\\b", "\\bfloat\\b", "\\bbool\\b", "\\bstring\\b",

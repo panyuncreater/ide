@@ -38,6 +38,19 @@ Value Interpreter::execute(Block& program) {
     return result;
 }
 
+Value Interpreter::executeRepl(Block& program) {
+    // 不重置环境，保留已有变量/函数/类定义
+    // 确保当前环境回到全局
+    currentEnv_ = globalEnv_;
+    recursionDepth_ = 0;
+
+    Value result = Value::nullValue();
+    for (auto& stmt : program.statements) {
+        result = evaluate(stmt.get());
+    }
+    return result;
+}
+
 void Interpreter::setOutputCallback(std::function<void(const std::string&)> callback) {
     outputCallback_ = callback;
 }
@@ -451,8 +464,8 @@ Value Interpreter::visitFunCall(FunCall& node) {
         argValues.push_back(evaluate(arg.get()));
     }
 
-    // 创建新环境
-    Environment* funEnv = new Environment(globalEnv_);
+    // 创建新环境（使用当前环境作为父级，支持闭包/嵌套函数访问外层变量）
+    Environment* funEnv = new Environment(currentEnv_);
 
     // 绑定参数
     for (size_t i = 0; i < funDecl->params.size(); ++i) {
@@ -498,9 +511,14 @@ Value Interpreter::visitReturnStmt(ReturnStmt& node) {
 Value Interpreter::visitPrintStmt(PrintStmt& node) {
     checkBreak(&node);
 
-    Value val = evaluate(node.value.get());
-    output(val.toString());
-    return val;
+    std::string result;
+    for (size_t i = 0; i < node.values.size(); ++i) {
+        Value val = evaluate(node.values[i].get());
+        if (i > 0) result += " ";
+        result += val.toString();
+    }
+    output(result);
+    return Value::nullValue();
 }
 
 Value Interpreter::visitBlock(Block& node) {

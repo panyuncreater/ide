@@ -295,15 +295,17 @@ public:
 /// print 语句节点
 class PrintStmt : public ASTNode {
 public:
-    std::unique_ptr<ASTNode> value;
+    std::vector<std::unique_ptr<ASTNode>> values;
 
-    PrintStmt(std::unique_ptr<ASTNode> v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(std::move(v)) {}
+    PrintStmt(std::vector<std::unique_ptr<ASTNode>> v, int ln = 0, int col = 0)
+        : ASTNode(ln, col), values(std::move(v)) {}
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "PrintStmt"; }
     std::vector<ASTNode*> children() const override {
-        return { value.get() };
+        std::vector<ASTNode*> ch;
+        for (auto& v : values) ch.push_back(v.get());
+        return ch;
     }
 };
 
