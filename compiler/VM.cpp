@@ -8,6 +8,7 @@
 
 VM::VM() {
     outputCallback_ = [](const std::string&) {};
+    stepCallback_ = [](const VMStepInfo&) {};
 }
 
 void VM::push(const Value& val) {
@@ -51,6 +52,24 @@ std::unordered_map<std::string, Value> VM::getGlobals() const {
 
 void VM::setOutputCallback(std::function<void(const std::string&)> callback) {
     outputCallback_ = callback;
+}
+
+void VM::setStepCallback(std::function<void(const VMStepInfo&)> callback) {
+    stepCallback_ = callback;
+}
+
+void VM::setStepCallbackEnabled(bool enabled) {
+    stepCallbackEnabled_ = enabled;
+}
+
+void VM::notifyStep(size_t ip, OpCode opcode) {
+    if (!stepCallbackEnabled_) return;
+    VMStepInfo info;
+    info.ip = ip;
+    info.opcode = opcode;
+    info.stackSnapshot = stack_;
+    info.globalsSnapshot = globals_;
+    stepCallback_(info);
 }
 
 VMResult VM::numericOp(const std::string& op, int line) {
@@ -105,6 +124,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_CONSTANT: {
             uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
             push(chunk.constants[idx]);
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
@@ -112,6 +132,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_INT: {
             uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
             push(chunk.constants[idx]);
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
@@ -119,6 +140,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_FLOAT: {
             uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
             push(chunk.constants[idx]);
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
@@ -126,28 +148,33 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_STRING: {
             uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
             push(chunk.constants[idx]);
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
 
         case OpCode::OP_NULL:
             push(Value::nullValue());
+            notifyStep(ip, op);
             ip += 1;
             break;
 
         case OpCode::OP_TRUE:
             push(Value(true));
+            notifyStep(ip, op);
             ip += 1;
             break;
 
         case OpCode::OP_FALSE:
             push(Value(false));
+            notifyStep(ip, op);
             ip += 1;
             break;
 
         case OpCode::OP_ADD: {
             VMResult r = numericOp("+", line);
             if (r != VMResult::VM_OK) return r;
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -155,6 +182,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_SUBTRACT: {
             VMResult r = numericOp("-", line);
             if (r != VMResult::VM_OK) return r;
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -162,6 +190,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_MULTIPLY: {
             VMResult r = numericOp("*", line);
             if (r != VMResult::VM_OK) return r;
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -169,6 +198,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_DIVIDE: {
             VMResult r = numericOp("/", line);
             if (r != VMResult::VM_OK) return r;
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -176,6 +206,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_MODULO: {
             VMResult r = numericOp("%", line);
             if (r != VMResult::VM_OK) return r;
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -185,6 +216,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             if (val.isInt()) push(Value(-val.intVal));
             else if (val.isFloat()) push(Value(-val.floatVal));
             else return runtimeError("一元减运算需要数值类型");
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -192,6 +224,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_NOT: {
             Value val = pop();
             push(Value(!val.isTruthy()));
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -200,6 +233,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             Value right = pop();
             Value left = pop();
             push(Value(left.equals(right)));
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -208,6 +242,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             Value right = pop();
             Value left = pop();
             push(Value(!left.equals(right)));
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -216,6 +251,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             Value right = pop();
             Value left = pop();
             push(Value(left.toDouble() < right.toDouble()));
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -224,6 +260,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             Value right = pop();
             Value left = pop();
             push(Value(left.toDouble() > right.toDouble()));
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -232,6 +269,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             Value right = pop();
             Value left = pop();
             push(Value(left.toDouble() <= right.toDouble()));
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -240,6 +278,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             Value right = pop();
             Value left = pop();
             push(Value(left.toDouble() >= right.toDouble()));
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -251,6 +290,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             } else {
                 // 继续评估右操作数（已编译为短路逻辑）
             }
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -262,6 +302,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             } else {
                 // 继续评估右操作数
             }
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -269,12 +310,14 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_PRINT: {
             Value val = pop();
             outputCallback_(val.toString());
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
 
         case OpCode::OP_POP:
             pop();
+            notifyStep(ip, op);
             ip += 1;
             break;
 
@@ -283,6 +326,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             std::string name = chunk.constants[idx].stringVal;
             Value val = pop();
             globals_[name] = val;
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
@@ -296,6 +340,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             } else {
                 push(Value::nullValue());
             }
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
@@ -305,12 +350,14 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             std::string name = chunk.constants[idx].stringVal;
             Value val = pop();
             globals_[name] = val;
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
 
         case OpCode::OP_JUMP: {
             uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+            notifyStep(ip, op);
             ip = jump;
             break;
         }
@@ -318,6 +365,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
         case OpCode::OP_JUMP_IF_FALSE: {
             uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
             Value cond = pop();
+            notifyStep(ip, op);
             if (!cond.isTruthy()) {
                 ip = jump;
             } else {
@@ -328,11 +376,13 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
 
         case OpCode::OP_LOOP: {
             uint16_t loop = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+            notifyStep(ip, op);
             ip = loop;
             break;
         }
 
         case OpCode::OP_RETURN:
+            notifyStep(ip, op);
             return VMResult::VM_OK;
 
         case OpCode::OP_CALL: {
@@ -344,6 +394,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             }
             pop(); // 弹出函数名
             push(Value::nullValue());
+            notifyStep(ip, op);
             ip += 4;
             break;
         }
@@ -355,6 +406,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
                 elements.insert(elements.begin(), pop());
             }
             push(Value(elements));
+            notifyStep(ip, op);
             ip += 2;
             break;
         }
@@ -379,6 +431,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             } else {
                 push(Value::nullValue());
             }
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -390,6 +443,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             // 简化处理：由于 Value 是值类型，索引赋值需要修改变量
             // VM 中暂不支持完整实现
             push(val);
+            notifyStep(ip, op);
             ip += 1;
             break;
         }
@@ -415,6 +469,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             } else {
                 push(Value::nullValue());
             }
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
@@ -426,6 +481,7 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             Value obj = pop();
             // 简化处理
             push(val);
+            notifyStep(ip, op);
             ip += 3;
             break;
         }
@@ -437,12 +493,14 @@ VMResult VM::execute(const BytecodeChunk& chunk) {
             for (uint8_t i = 0; i < argCount; ++i) pop();
             pop(); // 弹出对象
             push(Value::nullValue());
+            notifyStep(ip, op);
             ip += 4;
             break;
         }
 
         case OpCode::OP_DUP:
             push(peek(0));
+            notifyStep(ip, op);
             ip += 1;
             break;
 

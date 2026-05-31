@@ -108,6 +108,7 @@
     <QtMoc Include="gui\DebugPanel.h"/>
     <QtMoc Include="gui\SyntaxHighlighter.h"/>
     <QtMoc Include="gui\ReplPanel.h"/>
+    <QtMoc Include="gui\VmStackPanel.h"/>
     <ClCompile Include="ide.cpp"/>
     <ClCompile Include="main.cpp"/>
     <ClCompile Include="lexer\Lexer.cpp"/>
@@ -122,6 +123,7 @@
     <ClCompile Include="gui\OutputPanel.cpp"/>
     <ClCompile Include="gui\DebugPanel.cpp"/>
     <ClCompile Include="gui\ReplPanel.cpp"/>
+    <ClCompile Include="gui\VmStackPanel.cpp"/>
     <ClCompile Include="compiler\Compiler.cpp"/>
     <ClCompile Include="compiler\VM.cpp"/>
     <ClCompile Include="formatter\Formatter.cpp"/>

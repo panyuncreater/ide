@@ -112,7 +112,13 @@
     <QtMoc Include="gui\ReplPanel.h">
       <Filter>gui</Filter>
     </QtMoc>
+    <QtMoc Include="gui\VmStackPanel.h">
+      <Filter>gui</Filter>
+    </QtMoc>
     <ClCompile Include="gui\ReplPanel.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="gui\VmStackPanel.cpp">
       <Filter>gui</Filter>
     </ClCompile>
     <ClCompile Include="compiler\Compiler.cpp">

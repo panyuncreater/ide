@@ -203,9 +203,10 @@ struct BytecodeChunk {
         }
         case OpCode::OP_RETURN:  str += "OP_RETURN"; offset += 1; break;
         case OpCode::OP_CALL: {
-            uint8_t argCount = code[offset + 1];
-            str += "OP_CALL " + std::to_string(argCount);
-            offset += 2;
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            uint8_t argCount = code[offset + 3];
+            str += "OP_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
+            offset += 4;
             break;
         }
         case OpCode::OP_BUILD_ARRAY: {

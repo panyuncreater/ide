@@ -18,16 +18,30 @@ enum class VMResult {
     VM_STACK_OVERFLOW
 };
 
+/// 每条指令执行后的状态快照（用于调试/可视化）
+struct VMStepInfo {
+    size_t ip;                              // 当前指令指针
+    OpCode opcode;                          // 当前操作码
+    std::vector<Value> stackSnapshot;        // 操作数栈快照
+    std::unordered_map<std::string, Value> globalsSnapshot;  // 全局变量快照
+};
+
 /// 简单栈式虚拟机
 class VM {
 public:
     VM();
 
-    /// 执行字节码
+    /// 执行字节码（一次性全部执行）
     VMResult execute(const BytecodeChunk& chunk);
 
     /// 设置输出回调
     void setOutputCallback(std::function<void(const std::string&)> callback);
+
+    /// 设置指令级步进回调（每条指令执行后调用）
+    void setStepCallback(std::function<void(const VMStepInfo&)> callback);
+
+    /// 设置是否启用步进回调（默认关闭，避免性能开销）
+    void setStepCallbackEnabled(bool enabled);
 
     /// 获取最后的运行时错误
     std::string getLastError() const;
@@ -42,6 +56,8 @@ private:
     std::vector<Value> stack_;                     // 操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表
     std::function<void(const std::string&)> outputCallback_; // 输出回调
+    std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
+    bool stepCallbackEnabled_ = false;              // 是否启用步进回调
     std::string lastError_;                         // 最近一次运行时错误
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
 
@@ -55,4 +71,7 @@ private:
 
     /// 数值二元运算
     VMResult numericOp(const std::string& op, int line);
+
+    /// 通知步进回调
+    void notifyStep(size_t ip, OpCode opcode);
 };

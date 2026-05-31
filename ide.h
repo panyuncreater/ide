@@ -22,6 +22,7 @@
 #include "gui/OutputPanel.h"
 #include "gui/DebugPanel.h"
 #include "gui/ReplPanel.h"
+#include "gui/VmStackPanel.h"
 
 // ============================================================
 // Ide 主窗口
@@ -62,6 +63,15 @@ private slots:
     /// 显示字节码
     void onShowBytecode();
 
+    /// VM 运行字节码（全速执行）
+    void onVmRun();
+
+    /// VM 单步执行字节码
+    void onVmStep();
+
+    /// VM 停止执行
+    void onVmStop();
+
 private:
 
     // ---- 核心组件 ----
@@ -85,7 +95,8 @@ private:
     QTabWidget* bottomTabWidget_ = nullptr;  // 底部 Tab：输出 / 调试 / REPL
 
     QTableWidget* tokenTable_ = nullptr;    // Token 列表表格
-    QTextEdit* bytecodeView_ = nullptr;    // 字节码视图
+    QListWidget* bytecodeList_ = nullptr;   // 字节码指令列表（支持行高亮）
+    VmStackPanel* vmStackPanel_ = nullptr;  // VM 栈状态面板
 
     QSplitter* mainSplitter_ = nullptr;      // 主水平分割
     QSplitter* vSplitter_ = nullptr;         // 垂直分割
@@ -100,11 +111,26 @@ private:
     QAction* formatAction_ = nullptr;
     QAction* bytecodeAction_ = nullptr;
 
+    QAction* vmRunAction_ = nullptr;        // VM 运行
+    QAction* vmStepAction_ = nullptr;       // VM 单步
+    QAction* vmStopAction_ = nullptr;       // VM 停止
+
     // ---- 状态 ----
     std::unique_ptr<Block> astRoot_;        // AST 根节点
     std::vector<Token> lastTokens_;         // 上次词法分析的 Token 列表
     BytecodeChunk lastBytecode_;            // 上次编译的字节码
     bool isRunning_ = false;               // 是否正在运行
+    bool isVmRunning_ = false;             // VM 是否正在运行
+    bool isVmStepMode_ = false;            // VM 单步模式标志
+
+    /// VM 步进回调处理
+    void onVmStepCallback(const VMStepInfo& info);
+
+    /// 更新字节码指令列表高亮
+    void highlightBytecodeLine(size_t ip);
+
+    /// 填充字节码指令列表
+    void populateBytecodeList();
 
     /// 初始化 UI
     void initUI();
