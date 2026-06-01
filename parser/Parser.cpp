@@ -52,6 +52,11 @@ bool Parser::check(TokenType type) const {
     return peek().type == type;
 }
 
+bool Parser::checkNext(TokenType type) const {
+    if (current_ + 1 >= (int)tokens_.size()) return false;
+    return tokens_[current_ + 1].type == type;
+}
+
 bool Parser::match(std::initializer_list<TokenType> types) {
     for (TokenType type : types) {
         if (check(type)) {
@@ -200,9 +205,26 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     }
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
-    // 可选的返回值类型注解 : type（type 可能是关键字如 int/float）
+    // 可选的返回值类型注解 : type 或 -> type（type 可能是关键字如 int/float）
     std::string returnType;
     if (match({TokenType::TK_COLON})) {
+        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+            const Token& typeTok = advance();
+            returnType = typeTok.lexeme;
+            if (match({TokenType::TK_LBRACKET})) {
+                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                returnType += "[]";
+            }
+        } else {
+            const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
+            returnType = retTypeTok.lexeme;
+        }
+    } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
+        // -> type 箭头返回类型语法
+        advance(); // 消耗 '-'
+        advance(); // 消耗 '>'
         if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
             check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
             check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
@@ -704,6 +726,16 @@ std::unique_ptr<ASTNode> Parser::primary() {
 
     // 标识符
     if (match({TokenType::TK_IDENTIFIER})) {
+        const Token& tok = previous();
+        return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
+    }
+
+    // 类型关键字作为标识符使用（如 dict(), array() 函数调用）
+    if (match({TokenType::TK_DICT})) {
+        const Token& tok = previous();
+        return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
+    }
+    if (match({TokenType::TK_ARRAY})) {
         const Token& tok = previous();
         return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }

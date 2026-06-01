@@ -50,6 +50,9 @@ private:
     /// 检查当前 Token 是否为指定类型
     bool check(TokenType type) const;
 
+    /// 检查下一个 Token 是否为指定类型（用于 -> 语法检测）
+    bool checkNext(TokenType type) const;
+
     /// 如果当前 Token 匹配任一类型则前进
     bool match(std::initializer_list<TokenType> types);
 

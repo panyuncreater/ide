@@ -1,409 +1,229 @@
 classDiagram
     direction TB
 
-    %% ===== Token =====
-    class Token {
-        +TokenType type
-        +string lexeme
-        +Value literal
-        +int line
-        +int column
-        +toString() string
-    }
-
-    class TokenType {
-        <<enumeration>>
-        TK_VAR TK_FUN TK_IF TK_ELSE TK_WHILE TK_FOR TK_RETURN
-        TK_TRUE TK_FALSE TK_AND TK_OR TK_NOT TK_PRINT
-        TK_INT TK_FLOAT TK_BOOL TK_STRING_TYPE
-        TK_IDENTIFIER TK_INT_LIT TK_FLOAT_LIT TK_STRING_LIT
-        TK_PLUS TK_MINUS TK_STAR TK_SLASH TK_PERCENT
-        TK_EQ TK_NEQ TK_LT TK_GT TK_LEQ TK_GEQ
-        TK_ASSIGN TK_LPAREN TK_RPAREN TK_LBRACE TK_RBRACE
-        TK_SEMICOLON TK_COMMA TK_EOF TK_ERROR
-    }
-
-    Token --> TokenType
-
-    %% ===== AST Nodes =====
-    class ASTNode {
-        <<abstract>>
-        +int line
-        +int column
-        +accept(Visitor& v) void
-    }
-
-    class BinaryOp {
-        +ASTNode* left
-        +string op
-        +ASTNode* right
-        +accept(Visitor& v) void
-    }
-
-    class UnaryOp {
-        +string op
-        +ASTNode* operand
-        +accept(Visitor& v) void
-    }
-
-    class NumberLiteral {
-        +Value value
-        +accept(Visitor& v) void
-    }
-
-    class StringLiteral {
-        +string value
-        +accept(Visitor& v) void
-    }
-
-    class BoolLiteral {
-        +bool value
-        +accept(Visitor& v) void
-    }
-
-    class VarDecl {
-        +string name
-        +string typeHint
-        +ASTNode* initializer
-        +accept(Visitor& v) void
-    }
-
-    class Assignment {
-        +string name
-        +ASTNode* value
-        +accept(Visitor& v) void
-    }
-
-    class VarRef {
-        +string name
-        +accept(Visitor& v) void
-    }
-
-    class IfStmt {
-        +ASTNode* condition
-        +Block* thenBranch
-        +Block* elseBranch
-        +accept(Visitor& v) void
-    }
-
-    class WhileStmt {
-        +ASTNode* condition
-        +Block* body
-        +accept(Visitor& v) void
-    }
-
-    class ForStmt {
-        +ASTNode* init
-        +ASTNode* condition
-        +ASTNode* update
-        +Block* body
-        +accept(Visitor& v) void
-    }
-
-    class FunDecl {
-        +string name
-        +vector~Param~ params
-        +Block* body
-        +accept(Visitor& v) void
-    }
-
-    class FunCall {
-        +string callee
-        +vector~ASTNode*~ args
-        +accept(Visitor& v) void
-    }
-
-    class ReturnStmt {
-        +ASTNode* value
-        +accept(Visitor& v) void
-    }
-
-    class PrintStmt {
-        +ASTNode* value
-        +accept(Visitor& v) void
-    }
-
-    class Block {
-        +vector~ASTNode*~ statements
-        +accept(Visitor& v) void
-    }
-
-    ASTNode <|-- BinaryOp
-    ASTNode <|-- UnaryOp
-    ASTNode <|-- NumberLiteral
-    ASTNode <|-- StringLiteral
-    ASTNode <|-- BoolLiteral
-    ASTNode <|-- VarDecl
-    ASTNode <|-- Assignment
-    ASTNode <|-- VarRef
-    ASTNode <|-- IfStmt
-    ASTNode <|-- WhileStmt
-    ASTNode <|-- ForStmt
-    ASTNode <|-- FunDecl
-    ASTNode <|-- FunCall
-    ASTNode <|-- ReturnStmt
-    ASTNode <|-- PrintStmt
-    ASTNode <|-- Block
-
-    %% ===== Value =====
     class Value {
+        <<struct>>
         +ValueType type
         +int intVal
         +double floatVal
         +bool boolVal
         +string stringVal
+        +vector~Value~ arrayVal
+        +unordered_map~string Value~ dictVal
+        +string className
+        +unordered_map~string Value~ fields
+        +string closureName
+        +shared_ptr~Environment~ closureEnv
+        +vector~string~ closureParams
+        +isClosure() bool
         +isInt() bool
         +isFloat() bool
         +isBool() bool
         +isString() bool
+        +isNull() bool
+        +isArray() bool
+        +isDict() bool
+        +isInstance() bool
         +isNumber() bool
         +toDouble() double
         +toString() string
         +isTruthy() bool
+        +equals(other Value) bool
+        +nullValue()$ Value
+        +makeInstance(clsName string)$ Value
+        +makeClosure(name string, env shared_ptr~Environment~, params vector~string~)$ Value
     }
 
     class ValueType {
         <<enumeration>>
-        VAL_INT VAL_FLOAT VAL_BOOL VAL_STRING VAL_NULL
+        VAL_INT
+        VAL_FLOAT
+        VAL_BOOL
+        VAL_STRING
+        VAL_NULL
+        VAL_ARRAY
+        VAL_DICT
+        VAL_INSTANCE
+        VAL_CLOSURE
     }
 
-    Value --> ValueType
-
-    %% ===== Environment =====
     class Environment {
-        -unordered_map~string,Value~ variables
-        -Environment* parent
-        +define(name: string, val: Value) void
-        +get(name: string) Value
-        +set(name: string, val: Value) void
-        +allVariables() unordered_map~string,Value~
-        +getParent() Environment*
+        +shared_ptr~Environment~ parent
+        +define(name string, val Value) void
+        +get(name string) Value
+        +set(name string, val Value) bool
+        +hasVariable(name string) bool
+        +allVariables() vector~pair~string Value~~
+        +localVariables() unordered_map~string Value~
     }
 
-    Environment --> Environment : parent
-
-    %% ===== Visitor =====
-    class Visitor {
-        <<abstract>>
-        +visitBinaryOp(BinaryOp*) Value
-        +visitUnaryOp(UnaryOp*) Value
-        +visitNumberLiteral(NumberLiteral*) Value
-        +visitStringLiteral(StringLiteral*) Value
-        +visitBoolLiteral(BoolLiteral*) Value
-        +visitVarDecl(VarDecl*) Value
-        +visitAssignment(Assignment*) Value
-        +visitVarRef(VarRef*) Value
-        +visitIfStmt(IfStmt*) Value
-        +visitWhileStmt(WhileStmt*) Value
-        +visitForStmt(ForStmt*) Value
-        +visitFunDecl(FunDecl*) Value
-        +visitFunCall(FunCall*) Value
-        +visitReturnStmt(ReturnStmt*) Value
-        +visitPrintStmt(PrintStmt*) Value
-        +visitBlock(Block*) Value
-    }
-
-    %% ===== Interpreter =====
     class Interpreter {
-        -Environment* globalEnv
-        -Environment* currentEnv
-        -vector~CallFrame~ callStack
-        -DebugController* debugger
-        -function~void(string)~ outputCallback
-        +Interpreter()
-        +execute(program: ASTNode*) void
-        +setOutputCallback(cb: function) void
-        +setDebugger(dc: DebugController*) void
-        +getGlobalEnv() Environment*
-        +getCurrentEnv() Environment*
-        +visitBinaryOp(BinaryOp*) Value
-        +visitUnaryOp(UnaryOp*) Value
-        +visitNumberLiteral(NumberLiteral*) Value
-        +visitStringLiteral(StringLiteral*) Value
-        +visitBoolLiteral(BoolLiteral*) Value
-        +visitVarDecl(VarDecl*) Value
-        +visitAssignment(Assignment*) Value
-        +visitVarRef(VarRef*) Value
-        +visitIfStmt(IfStmt*) Value
-        +visitWhileStmt(WhileStmt*) Value
-        +visitForStmt(ForStmt*) Value
-        +visitFunDecl(FunDecl*) Value
-        +visitFunCall(FunCall*) Value
-        +visitReturnStmt(ReturnStmt*) Value
-        +visitPrintStmt(PrintStmt*) Value
-        +visitBlock(Block*) Value
+        -shared_ptr~Environment~ globalEnv_
+        -shared_ptr~Environment~ currentEnv_
+        -vector~CallFrame~ callStack_
+        -DebugController* debugger_
+        -bool debugMode_
+        -function~void(string)~ outputCallback_
+        -int recursionDepth_
+        -unordered_map~string FunDecl*~ funRegistry_
+        -unordered_map~string ClassInfo~ classRegistry_
+        -unordered_map~string string~ typeAnnotations_
+        +execute(program Block) Value
+        +executeRepl(program Block) Value
+        +visitFunDecl(node FunDecl) Value
+        +visitFunCall(node FunCall) Value
+        +visitIndexAssign(node IndexAssign) Value
+        +visitMemberAssign(node MemberAssign) Value
+        +visitVarDecl(node VarDecl) Value
+        +visitAssignment(node Assignment) Value
+        +visitReturnStmt(node ReturnStmt) Value
+        -writeBack(node ASTNode*, modifiedValue Value, line int, col int) void
+        -typeMatch(val Value, annotation string) bool
+        -checkType(val Value, annotation string, context string, line int, col int) void
+        -findTypeAnnotation(varName string) string
     }
 
     class CallFrame {
-        +string funcName
+        <<struct>>
+        +string functionName
         +Environment* env
-        +int returnLine
+        +int line
+        +int depth
     }
 
-    Interpreter --> Visitor
-    Interpreter --> Environment
-    Interpreter --> CallFrame
-    Interpreter --> DebugController
-
-    %% ===== Lexer =====
-    class Lexer {
-        -string source
-        -int start
-        -int current
-        -int line
-        -int column
-        +Lexer(source: string)
-        +tokenize() vector~Token~
-        -advance() char
-        -peek() char
-        -peekNext() char
-        -match(expected: char) bool
-        -makeToken(type: TokenType) Token
-        -scanToken() Token
-        -scanString() Token
-        -scanNumber() Token
-        -scanIdentifier() Token
+    class ClassInfo {
+        <<struct>>
+        +string name
+        +string superClassName
+        +unordered_map~string FunDecl*~ methods
+        +unordered_map~string Value~ fields
+        +ClassInfo* superClass
     }
 
-    %% ===== Parser =====
-    class Parser {
-        -vector~Token~ tokens
-        -int current
-        +Parser(tokens: vector~Token~)
-        +parse() Block*
-        -peek() Token
-        -previous() Token
-        -advance() Token
-        -check(type: TokenType) bool
-        -match(types: TokenTypeList) bool
-        -consume(type: TokenType, msg: string) Token
-        -declaration() ASTNode*
-        -varDecl() ASTNode*
-        -funDecl() ASTNode*
-        -statement() ASTNode*
-        -ifStmt() ASTNode*
-        -whileStmt() ASTNode*
-        -forStmt() ASTNode*
-        -printStmt() ASTNode*
-        -returnStmt() ASTNode*
-        -block() Block*
-        -expression() ASTNode*
-        -assignment() ASTNode*
-        -or_() ASTNode*
-        -and_() ASTNode*
-        -equality() ASTNode*
-        -comparison() ASTNode*
-        -term() ASTNode*
-        -factor() ASTNode*
-        -unary() ASTNode*
-        -primary() ASTNode*
-        -call() ASTNode*
+    class Compiler {
+        -BytecodeChunk chunk_
+        -unordered_map~string uint16_t~ varIndex_
+        -unordered_map~string BytecodeChunk~ functionChunks_
+        -unordered_map~string int~ currentLocals_
+        -string lastError_
+        +compile(program Block) CompileResult
+        -compileFunDecl(node FunDecl) void
+        -compileFunCall(node FunCall) void
+        -identifierIndex(name string) uint16_t
     }
 
-    Parser --> Token
-    Parser --> ASTNode
+    class BytecodeChunk {
+        +vector~uint8_t~ code
+        +vector~Value~ constants
+        +vector~int~ lines
+        +string name
+        +int arity
+        +write(byte uint8_t, line int) void
+        +writeOp(op OpCode, line int) void
+        +writeShort(value uint16_t, line int) void
+        +addConstant(val Value) uint16_t
+        +disassemble() string
+    }
 
-    %% ===== DebugController =====
-    class StepMode {
+    class CompileResult {
+        <<struct>>
+        +BytecodeChunk mainChunk
+        +unordered_map~string BytecodeChunk~ functionChunks
+    }
+
+    class OpCode {
         <<enumeration>>
-        MODE_RUN MODE_STEP_IN MODE_STEP_OVER MODE_PAUSE
+        OP_CONSTANT
+        OP_INT
+        OP_FLOAT
+        OP_STRING
+        OP_NULL
+        OP_TRUE
+        OP_FALSE
+        OP_ADD
+        OP_SUBTRACT
+        OP_MULTIPLY
+        OP_DIVIDE
+        OP_MODULO
+        OP_NEGATE
+        OP_NOT
+        OP_EQUAL
+        OP_NOT_EQUAL
+        OP_LESS
+        OP_GREATER
+        OP_LESS_EQUAL
+        OP_GREATER_EQUAL
+        OP_AND
+        OP_OR
+        OP_PRINT
+        OP_POP
+        OP_DEFINE_VAR
+        OP_GET_VAR
+        OP_SET_VAR
+        OP_GET_LOCAL
+        OP_SET_LOCAL
+        OP_JUMP
+        OP_JUMP_IF_FALSE
+        OP_LOOP
+        OP_RETURN
+        OP_CALL
+        OP_CLOSURE
+        OP_CLASS_NEW
+        OP_BUILD_ARRAY
+        OP_INDEX_GET
+        OP_INDEX_SET
+        OP_MEMBER_GET
+        OP_MEMBER_SET
+        OP_METHOD_CALL
+        OP_DUP
     }
 
-    class DebugController {
-        -set~int~ breakpoints
-        -StepMode mode
-        -bool paused
-        -Interpreter* interp
-        +DebugController()
-        +setBreakpoint(line: int) void
-        +removeBreakpoint(line: int) void
-        +toggleBreakpoint(line: int) void
-        +clearBreakpoints() void
-        +hasBreakpoint(line: int) bool
-        +setStepMode(mode: StepMode) void
-        +checkBreak(node: ASTNode*) bool
-        +isPaused() bool
-        +resume() void
-        +stepIn() void
-        +stepOver() void
-        +stop() void
-        +getVariableSnapshot() unordered_map~string,Value~
-        +getCallStack() vector~CallFrame~
+    class VM {
+        -vector~Value~ stack_
+        -unordered_map~string Value~ globals_
+        -vector~VMCallFrame~ frames_
+        -unordered_map~string BytecodeChunk~ functionChunks_
+        -function~void(string)~ outputCallback_
+        -function~void(VMStepInfo)~ stepCallback_
+        -bool stepCallbackEnabled_
+        -string lastError_
+        +execute(result CompileResult) VMResult
+        +setOutputCallback(cb function) void
+        +setStepCallback(cb function) void
+        -push(val Value) void
+        -pop() Value
+        -peek(distance size_t) Value&
     }
 
-    DebugController --> StepMode
-    DebugController --> Interpreter
-
-    %% ===== GUI Components =====
-    class CodeEditor {
-        -SyntaxHighlighter* highlighter
-        -QList~QTextEdit::ExtraSelection~ errorMarks
-        +CodeEditor(QWidget* parent)
-        +lineNumberAreaWidth() int
-        +setErrorMarks(errors: vector~ErrorInfo~) void
-        +clearErrorMarks() void
-        +getCurrentLine() int
-        +toggleBreakpoint(line: int) signal
+    class VMCallFrame {
+        <<struct>>
+        +BytecodeChunk* chunk
+        +size_t ip
+        +size_t basePointer
+        +string functionName
     }
 
-    class SyntaxHighlighter {
-        +SyntaxHighlighter(QTextDocument*)
-        +highlightBlock(text: string) void
+    class VMStepInfo {
+        <<struct>>
+        +size_t ip
+        +OpCode opcode
+        +vector~Value~ stackSnapshot
+        +unordered_map~string Value~ globalsSnapshot
     }
 
-    class AstViewer {
-        -QGraphicsScene* scene
-        +AstViewer(QWidget* parent)
-        +displayAst(ASTNode* root) void
-        -layoutNode(node: ASTNode*, x: double, y: double) QPointF
-        -createNodeItem(node: ASTNode*, pos: QPointF) QGraphicsItem*
-    }
-
-    class OutputPanel {
-        -QTextEdit* outputText
-        -QTextEdit* errorText
-        +OutputPanel(QWidget* parent)
-        +appendOutput(text: string) void
-        +appendError(text: string) void
-        +clear() void
-    }
-
-    class DebugPanel {
-        -QTreeWidget* varTree
-        -QListWidget* callStackList
-        +DebugPanel(QWidget* parent)
-        +updateVariables(vars: unordered_map~string,Value~) void
-        +updateCallStack(frames: vector~CallFrame~) void
-        +clear() void
-    }
-
-    class IDE {
-        -CodeEditor* editor
-        -AstViewer* astViewer
-        -OutputPanel* outputPanel
-        -DebugPanel* debugPanel
-        -Lexer* lexer
-        -Parser* parser
-        -Interpreter* interpreter
-        -DebugController* debugger
-        +IDE(QWidget* parent)
-        +onRun() void
-        +onDebug() void
-        +onStepIn() void
-        +onStepOver() void
-        +onStop() void
-        +onToggleBreakpoint(line: int) void
-        +onEditorTextChanged() void
-        +updateTokenView() void
-        +updateAstView() void
-    }
-
-    IDE --> CodeEditor
-    IDE --> AstViewer
-    IDE --> OutputPanel
-    IDE --> DebugPanel
-    IDE --> Lexer
-    IDE --> Parser
-    IDE --> Interpreter
-    IDE --> DebugController
-    CodeEditor --> SyntaxHighlighter
+    Value --> ValueType
+    Value --> Environment : closureEnv
+    Interpreter --> Environment : currentEnv_
+    Interpreter --> CallFrame : callStack_
+    Interpreter --> ClassInfo : classRegistry_
+    Interpreter --> Value : evaluates
+    Compiler --> BytecodeChunk : chunk_
+    Compiler --> CompileResult : produces
+    CompileResult --> BytecodeChunk
+    VM --> VMCallFrame : frames_
+    VM --> CompileResult : consumes
+    VM --> BytecodeChunk : functionChunks_
+    VMCallFrame --> BytecodeChunk : chunk
+    VM --> Value : stack_
+    Environment --> Environment : parent
+    Environment --> Value : variables

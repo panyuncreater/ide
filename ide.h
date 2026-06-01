@@ -118,7 +118,7 @@ private:
     // ---- 状态 ----
     std::unique_ptr<Block> astRoot_;        // AST 根节点
     std::vector<Token> lastTokens_;         // 上次词法分析的 Token 列表
-    BytecodeChunk lastBytecode_;            // 上次编译的字节码
+    CompileResult lastCompileResult_;     // 上次编译的结果
     bool isRunning_ = false;               // 是否正在运行
     bool isVmRunning_ = false;             // VM 是否正在运行
     bool isVmStepMode_ = false;            // VM 单步模式标志

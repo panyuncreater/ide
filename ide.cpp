@@ -6,6 +6,7 @@
 #include <QThread>
 #include <QHeaderView>
 #include <QApplication>
+#include <QColor>
 #include <sstream>
 
 // ============================================================
@@ -493,7 +494,7 @@ void Ide::onShowBytecode() {
 
 void Ide::onVmRun() {
     if (isVmRunning_) return;
-    if (lastBytecode_.code.empty()) return;
+    if (lastCompileResult_.mainChunk.code.empty()) return;
 
     isVmRunning_ = true;
     isVmStepMode_ = false;
@@ -507,7 +508,7 @@ void Ide::onVmRun() {
     vm_.setStepCallbackEnabled(true);
 
     try {
-        VMResult result = vm_.execute(lastBytecode_);
+        VMResult result = vm_.execute(lastCompileResult_);
         if (result == VMResult::VM_RUNTIME_ERROR) {
             outputPanel_->appendError(QString("VM 运行时错误: %1")
                                           .arg(QString::fromStdString(vm_.getLastError())));
@@ -528,7 +529,7 @@ void Ide::onVmRun() {
 
 void Ide::onVmStep() {
     if (isVmRunning_) return;
-    if (lastBytecode_.code.empty()) return;
+    if (lastCompileResult_.mainChunk.code.empty()) return;
 
     isVmRunning_ = true;
     isVmStepMode_ = true;
@@ -555,7 +556,7 @@ void Ide::onVmStep() {
     });
 
     try {
-        VMResult result = vm_.execute(lastBytecode_);
+        VMResult result = vm_.execute(lastCompileResult_);
         if (result == VMResult::VM_RUNTIME_ERROR) {
             outputPanel_->appendError(QString("VM 运行时错误: %1")
                                           .arg(QString::fromStdString(vm_.getLastError())));
@@ -594,8 +595,8 @@ void Ide::onVmStepCallback(const VMStepInfo& info) {
 
     // 更新当前指令信息
     int line = 0;
-    if (info.ip < lastBytecode_.lines.size()) {
-        line = lastBytecode_.lines[info.ip];
+    if (info.ip < lastCompileResult_.mainChunk.lines.size()) {
+        line = lastCompileResult_.mainChunk.lines[info.ip];
     }
     vmStackPanel_->updateCurrentOp(info.ip, info.opcode, line);
 
@@ -609,11 +610,11 @@ void Ide::onVmStepCallback(const VMStepInfo& info) {
 void Ide::highlightBytecodeLine(size_t ip) {
     // 根据指令偏移找到对应的列表行
     // 由于反汇编指令长度不同，需要遍历计算
-    if (lastBytecode_.code.empty()) return;
+    if (lastCompileResult_.mainChunk.code.empty()) return;
 
     size_t offset = 0;
     int row = 0;
-    while (offset < lastBytecode_.code.size()) {
+    while (offset < lastCompileResult_.mainChunk.code.size()) {
         if (offset == ip) {
             // 找到对应行，设置高亮
             bytecodeList_->setCurrentRow(row);
@@ -621,7 +622,7 @@ void Ide::highlightBytecodeLine(size_t ip) {
             return;
         }
         // 跳过当前指令，计算下一条指令的偏移
-        OpCode op = static_cast<OpCode>(lastBytecode_.code[offset]);
+        OpCode op = static_cast<OpCode>(lastCompileResult_.mainChunk.code[offset]);
         switch (op) {
         case OpCode::OP_CONSTANT:
         case OpCode::OP_INT:
@@ -637,11 +638,14 @@ void Ide::highlightBytecodeLine(size_t ip) {
         case OpCode::OP_MEMBER_SET:
             offset += 3; break;
         case OpCode::OP_CALL:
+        case OpCode::OP_METHOD_CALL:
+        case OpCode::OP_CLOSURE:
+        case OpCode::OP_CLASS_NEW:
             offset += 4; break;
         case OpCode::OP_BUILD_ARRAY:
+        case OpCode::OP_GET_LOCAL:
+        case OpCode::OP_SET_LOCAL:
             offset += 2; break;
-        case OpCode::OP_METHOD_CALL:
-            offset += 4; break;
         default:
             offset += 1; break;
         }
@@ -652,18 +656,36 @@ void Ide::highlightBytecodeLine(size_t ip) {
 void Ide::populateBytecodeList() {
     bytecodeList_->clear();
 
-    if (lastBytecode_.code.empty()) {
+    if (lastCompileResult_.mainChunk.code.empty()) {
         bytecodeList_->addItem("(无字节码)");
         return;
     }
 
-    // 逐条反汇编并添加到列表
+    // 逐条反汇编主 chunk 并添加到列表
     size_t offset = 0;
-    while (offset < lastBytecode_.code.size()) {
-        std::string instr = lastBytecode_.disassembleInstruction(offset);
+    while (offset < lastCompileResult_.mainChunk.code.size()) {
+        std::string instr = lastCompileResult_.mainChunk.disassembleInstruction(offset);
         auto* item = new QListWidgetItem(QString::fromStdString(instr));
         item->setFont(QFont("Consolas", 10));
         bytecodeList_->addItem(item);
+    }
+
+    // 也显示函数 chunk 的字节码
+    for (const auto& kv : lastCompileResult_.functionChunks) {
+        auto* header = new QListWidgetItem(QString("---- %1 (arity=%2) ----")
+                                               .arg(QString::fromStdString(kv.first))
+                                               .arg(kv.second.arity));
+        header->setFont(QFont("Consolas", 10));
+        header->setForeground(QColor("#569CD6"));
+        bytecodeList_->addItem(header);
+
+        size_t funcOffset = 0;
+        while (funcOffset < kv.second.code.size()) {
+            std::string instr = kv.second.disassembleInstruction(funcOffset);
+            auto* item = new QListWidgetItem(QString::fromStdString(instr));
+            item->setFont(QFont("Consolas", 10));
+            bytecodeList_->addItem(item);
+        }
     }
 }
 
@@ -710,7 +732,7 @@ void Ide::runParser(const std::vector<Token>& tokens) {
 void Ide::runCompiler() {
     if (!astRoot_) return;
 
-    lastBytecode_ = compiler_.compile(*astRoot_);
+    lastCompileResult_ = compiler_.compile(*astRoot_);
 
     // 检查编译错误
     std::string err = compiler_.getLastError();

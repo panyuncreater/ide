@@ -5,6 +5,10 @@
 #include <variant>
 #include <sstream>
 #include <vector>
+#include <memory>
+
+// 前向声明 Environment（避免循环依赖）
+class Environment;
 
 // ============================================================
 // Value 运行时值类型
@@ -19,7 +23,8 @@ enum class ValueType {
     VAL_NULL,
     VAL_ARRAY,       // 数组
     VAL_DICT,        // 字典
-    VAL_INSTANCE     // 类实例
+    VAL_INSTANCE,    // 类实例
+    VAL_CLOSURE      // 闭包
 };
 
 /// 运行时值结构体
@@ -33,6 +38,11 @@ struct Value {
     std::unordered_map<std::string, Value> dictVal;                 // 字典
     std::string className;                                          // 实例的类名
     std::unordered_map<std::string, Value> fields;                  // 实例字段
+
+    // 闭包字段
+    std::string closureName;
+    std::shared_ptr<Environment> closureEnv;
+    std::vector<std::string> closureParams;
 
     Value() = default;
 
@@ -69,6 +79,18 @@ struct Value {
         return v;
     }
 
+    /// 创建闭包值
+    static Value makeClosure(const std::string& name,
+                             std::shared_ptr<Environment> env,
+                             const std::vector<std::string>& params) {
+        Value v;
+        v.type = ValueType::VAL_CLOSURE;
+        v.closureName = name;
+        v.closureEnv = env;
+        v.closureParams = params;
+        return v;
+    }
+
     bool isInt() const { return type == ValueType::VAL_INT; }
     bool isFloat() const { return type == ValueType::VAL_FLOAT; }
     bool isBool() const { return type == ValueType::VAL_BOOL; }
@@ -77,6 +99,7 @@ struct Value {
     bool isArray() const { return type == ValueType::VAL_ARRAY; }
     bool isDict() const { return type == ValueType::VAL_DICT; }
     bool isInstance() const { return type == ValueType::VAL_INSTANCE; }
+    bool isClosure() const { return type == ValueType::VAL_CLOSURE; }
     bool isNumber() const { return type == ValueType::VAL_INT || type == ValueType::VAL_FLOAT; }
 
     /// 转换为 double（用于数值运算）
@@ -84,6 +107,22 @@ struct Value {
         if (type == ValueType::VAL_INT) return static_cast<double>(intVal);
         if (type == ValueType::VAL_FLOAT) return floatVal;
         return 0.0;
+    }
+
+    /// 获取类型名称字符串
+    std::string typeName() const {
+        switch (type) {
+        case ValueType::VAL_INT: return "int";
+        case ValueType::VAL_FLOAT: return "float";
+        case ValueType::VAL_BOOL: return "bool";
+        case ValueType::VAL_STRING: return "string";
+        case ValueType::VAL_NULL: return "null";
+        case ValueType::VAL_ARRAY: return "array";
+        case ValueType::VAL_DICT: return "dict";
+        case ValueType::VAL_INSTANCE: return className.empty() ? "instance" : className;
+        case ValueType::VAL_CLOSURE: return "closure";
+        }
+        return "unknown";
     }
 
     /// 转换为字符串表示
@@ -156,6 +195,8 @@ struct Value {
             oss << "}";
             return oss.str();
         }
+        case ValueType::VAL_CLOSURE:
+            return "<fun:" + closureName + ">";
         }
         return "null";
     }
@@ -171,6 +212,7 @@ struct Value {
         case ValueType::VAL_ARRAY:  return true;
         case ValueType::VAL_DICT:   return true;
         case ValueType::VAL_INSTANCE: return true;
+        case ValueType::VAL_CLOSURE: return true;
         }
         return false;
     }
@@ -219,6 +261,12 @@ struct Value {
                 if (it == other.fields.end()) return false;
                 if (!kv.second.equals(it->second)) return false;
             }
+            return true;
+        }
+        case ValueType::VAL_CLOSURE: {
+            // 闭包比较：同名 + 同环境指针
+            if (closureName != other.closureName) return false;
+            if (closureEnv != other.closureEnv) return false;
             return true;
         }
         }

@@ -26,13 +26,22 @@ struct VMStepInfo {
     std::unordered_map<std::string, Value> globalsSnapshot;  // 全局变量快照
 };
 
+/// VM 调用帧
+struct VMCallFrame {
+    const BytecodeChunk* chunk = nullptr;   // 当前执行的字节码块
+    size_t ip = 0;                          // 当前帧的指令指针
+    size_t returnIp = 0;                    // 返回后的 ip
+    size_t basePointer = 0;                 // 帧基指针（栈中参数起始位置）
+    std::string functionName;               // 函数名
+};
+
 /// 简单栈式虚拟机
 class VM {
 public:
     VM();
 
-    /// 执行字节码（一次性全部执行）
-    VMResult execute(const BytecodeChunk& chunk);
+    /// 执行编译结果（一次性全部执行）
+    VMResult execute(const CompileResult& result);
 
     /// 设置输出回调
     void setOutputCallback(std::function<void(const std::string&)> callback);
@@ -55,11 +64,14 @@ public:
 private:
     std::vector<Value> stack_;                     // 操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表
+    std::vector<VMCallFrame> frames_;              // 调用帧栈
+    std::unordered_map<std::string, BytecodeChunk> functionChunks_; // 函数字节码
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
     bool stepCallbackEnabled_ = false;              // 是否启用步进回调
     std::string lastError_;                         // 最近一次运行时错误
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
+    static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
 
     /// 栈操作
     void push(const Value& val);
@@ -74,4 +86,10 @@ private:
 
     /// 通知步进回调
     void notifyStep(size_t ip, OpCode opcode);
+
+    /// 获取当前帧
+    VMCallFrame& currentFrame();
+
+    /// 获取当前 chunk
+    const BytecodeChunk& currentChunk();
 };

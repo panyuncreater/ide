@@ -1,6 +1,8 @@
 #include "interpreter/Interpreter.h"
 #include "debug/DebugController.h"
 #include <cmath>
+#include <cctype>
+#include <cstdint>
 #include <sstream>
 
 // ============================================================
@@ -8,7 +10,7 @@
 // ============================================================
 
 Interpreter::Interpreter()
-    : globalEnv_(new Environment())
+    : globalEnv_(std::make_shared<Environment>())
     , currentEnv_(globalEnv_)
     , debugger_(nullptr)
     , recursionDepth_(0)
@@ -17,17 +19,18 @@ Interpreter::Interpreter()
 }
 
 Interpreter::~Interpreter() {
-    delete globalEnv_;
+    // shared_ptr 自动管理环境生命周期，无需手动 delete
 }
 
 Value Interpreter::execute(Block& program) {
     // 重置状态
-    delete globalEnv_;
-    globalEnv_ = new Environment();
+    globalEnv_ = std::make_shared<Environment>();
     currentEnv_ = globalEnv_;
     callStack_.clear();
     funRegistry_.clear();
     classRegistry_.clear();
+    typeAnnotations_.clear();
+    currentFunctionReturnType_.clear();
     recursionDepth_ = 0;
 
     // 顶层块不创建新作用域，直接在全局环境中执行语句
@@ -64,7 +67,7 @@ void Interpreter::setDebugMode(bool enabled) {
 }
 
 Environment* Interpreter::currentEnvironment() const {
-    return currentEnv_;
+    return currentEnv_.get();
 }
 
 const std::vector<CallFrame>& Interpreter::getCallStack() const {
@@ -149,6 +152,74 @@ Value Interpreter::findFieldDefault(ClassInfo& cls, const std::string& fieldName
     // 沿继承链查找
     if (cls.superClass) return findFieldDefault(*cls.superClass, fieldName);
     return Value::nullValue();
+}
+
+// ---- 类型检查辅助方法 ----
+
+bool Interpreter::typeMatch(const Value& val, const std::string& annotation) const {
+    if (annotation.empty()) return true;
+    if (annotation == "int") return val.isInt();
+    if (annotation == "float") return val.isFloat() || val.isInt();
+    if (annotation == "bool") return val.isBool();
+    if (annotation == "string") return val.isString();
+    if (annotation == "array") return val.isArray();
+    if (annotation == "dict") return val.isDict();
+    // 数组元素类型注解，如 "int[]"
+    if (annotation.size() >= 2 && annotation.back() == ']') {
+        if (!val.isArray()) return false;
+        std::string elemType = annotation.substr(0, annotation.size() - 2);
+        for (const auto& elem : val.arrayVal) {
+            if (!typeMatch(elem, elemType)) return false;
+        }
+        return true;
+    }
+    if (val.isInstance() && val.className == annotation) return true;
+    if (val.isNull()) return true;
+    return false;
+}
+
+void Interpreter::checkType(const Value& val, const std::string& annotation,
+                            const std::string& context, int line, int col) {
+    if (!typeMatch(val, annotation)) {
+        runtimeError(context + " 期望类型 " + annotation + "，实际为 " + val.typeName(), line, col);
+    }
+}
+
+std::string Interpreter::findTypeAnnotation(const std::string& varName) const {
+    auto it = typeAnnotations_.find(varName);
+    if (it != typeAnnotations_.end()) return it->second;
+    return "";
+}
+
+// ---- writeBack 递归写回左值 ----
+
+void Interpreter::writeBack(ASTNode* node, const Value& modifiedValue, int line, int col) {
+    if (auto* varRef = dynamic_cast<VarRef*>(node)) {
+        currentEnv_->set(varRef->name, modifiedValue);
+    } else if (auto* memberAccess = dynamic_cast<MemberAccess*>(node)) {
+        Value outer = evaluate(memberAccess->object.get());
+        if (outer.isInstance()) {
+            outer.fields[memberAccess->fieldName] = modifiedValue;
+        } else if (outer.isDict()) {
+            outer.dictVal[memberAccess->fieldName] = modifiedValue;
+        } else {
+            runtimeError("该类型不支持成员赋值", line, col);
+        }
+        writeBack(memberAccess->object.get(), outer, line, col);
+    } else if (auto* indexAccess = dynamic_cast<IndexAccess*>(node)) {
+        Value outer = evaluate(indexAccess->object.get());
+        Value idx = evaluate(indexAccess->index.get());
+        if (outer.isArray() && idx.isInt()) {
+            if (idx.intVal < 0 || static_cast<size_t>(idx.intVal) >= outer.arrayVal.size())
+                runtimeError("数组索引越界", line, col);
+            outer.arrayVal[idx.intVal] = modifiedValue;
+        } else if (outer.isDict() && idx.isString()) {
+            outer.dictVal[idx.stringVal] = modifiedValue;
+        } else {
+            runtimeError("该类型不支持索引赋值", line, col);
+        }
+        writeBack(indexAccess->object.get(), outer, line, col);
+    }
 }
 
 // ---- 16 个原有 visit 方法 ----
@@ -263,13 +334,13 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
             // 如果有 init 方法（0 参数），执行它
             FunDecl* initMethod = findMethod(cls, "init");
             if (initMethod && initMethod->params.empty()) {
-                Environment* initEnv = new Environment(currentEnv_);
+                auto initEnv = std::make_shared<Environment>(currentEnv_);
                 initEnv->define("this", instance);
                 // 将实例字段注入 init 环境
                 for (const auto& kv : instance.fields) {
                     initEnv->define(kv.first, kv.second);
                 }
-                Environment* prevEnv = currentEnv_;
+                auto prevEnv = currentEnv_;
                 currentEnv_ = initEnv;
                 try {
                     evaluate(initMethod->body.get());
@@ -282,13 +353,22 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                     }
                 }
                 currentEnv_ = prevEnv;
-                delete initEnv;
             }
 
             initVal = instance;
         }
         // 其他类型注解（int/float/bool/string/dict/array）无初始化则保持 null
     }
+
+    // 类型检查：如果有类型注解且有初始化表达式
+    if (!node.typeAnnotation.empty() && node.initializer) {
+        checkType(initVal, node.typeAnnotation, "变量 " + node.name + " 的类型", node.line, node.column);
+    }
+    // 记录类型注解
+    if (!node.typeAnnotation.empty()) {
+        typeAnnotations_[node.name] = node.typeAnnotation;
+    }
+
     currentEnv_->define(node.name, initVal);
     return initVal;
 }
@@ -297,6 +377,13 @@ Value Interpreter::visitAssignment(Assignment& node) {
     checkBreak(&node);
 
     Value val = evaluate(node.value.get());
+
+    // 类型检查
+    std::string typeAnn = findTypeAnnotation(node.name);
+    if (!typeAnn.empty()) {
+        checkType(val, typeAnn, "赋值给 " + node.name, node.line, node.column);
+    }
+
     if (!currentEnv_->set(node.name, val)) {
         runtimeError("未定义的变量: " + node.name, node.line, node.column);
     }
@@ -342,7 +429,7 @@ Value Interpreter::visitForStmt(ForStmt& node) {
     checkBreak(&node);
 
     // 在新作用域中执行初始化
-    Environment* forEnv = new Environment(currentEnv_);
+    auto forEnv = std::make_shared<Environment>(currentEnv_);
     currentEnv_ = forEnv;
 
     if (node.initializer) {
@@ -364,7 +451,6 @@ Value Interpreter::visitForStmt(ForStmt& node) {
             } catch (const ReturnException& e) {
                 // 恢复环境，传播 return
                 currentEnv_ = forEnv->parent;
-                delete forEnv;
                 throw;
             }
 
@@ -375,21 +461,18 @@ Value Interpreter::visitForStmt(ForStmt& node) {
         }
     } catch (...) {
         currentEnv_ = forEnv->parent;
-        delete forEnv;
         throw;
     }
 
     currentEnv_ = forEnv->parent;
-    delete forEnv;
     return result;
 }
 
 Value Interpreter::visitFunDecl(FunDecl& node) {
     checkBreak(&node);
 
-    // 将函数定义存储为特殊值
-    Value funVal(std::string("fun:") + node.name);
-    funVal.type = ValueType::VAL_STRING;
+    // 创建闭包值，捕获当前环境
+    Value funVal = Value::makeClosure(node.name, currentEnv_, node.params);
     currentEnv_->define(node.name, funVal);
 
     // 在全局注册函数体（用于调用时查找）
@@ -400,6 +483,34 @@ Value Interpreter::visitFunDecl(FunDecl& node) {
 
 Value Interpreter::visitFunCall(FunCall& node) {
     checkBreak(&node);
+
+    // 内置函数: dict() 和 array()
+    if (node.name == "dict") {
+        // dict() 或 dict({"a": 1, ...})
+        if (node.arguments.empty()) {
+            return Value(std::unordered_map<std::string, Value>());
+        }
+        // 有参数时，求值参数（期望是字典字面量）
+        std::vector<Value> args;
+        for (auto& arg : node.arguments) {
+            args.push_back(evaluate(arg.get()));
+        }
+        if (args.size() == 1 && args[0].isDict()) {
+            return args[0];
+        }
+        runtimeError("dict() 期望无参数或一个字典参数", node.line, node.column);
+    }
+    if (node.name == "array") {
+        // array() 或 array(1, 2, 3)
+        if (node.arguments.empty()) {
+            return Value(std::vector<Value>());
+        }
+        std::vector<Value> args;
+        for (auto& arg : node.arguments) {
+            args.push_back(evaluate(arg.get()));
+        }
+        return Value(args);
+    }
 
     // 检查是否是类构造调用
     auto classIt = classRegistry_.find(node.name);
@@ -449,7 +560,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
         // 如果有 init 方法，执行它
         if (initMethod) {
             // 创建新环境（父级为当前环境，支持闭包）
-            Environment* initEnv = new Environment(currentEnv_);
+            auto initEnv = std::make_shared<Environment>(currentEnv_);
 
             // 绑定 this
             initEnv->define("this", instance);
@@ -467,8 +578,12 @@ Value Interpreter::visitFunCall(FunCall& node) {
             // 压入调用帧
             callStack_.emplace_back(node.name + ".init", initEnv, node.line, recursionDepth_);
 
+            // 设置返回类型追踪
+            std::string savedReturnType = currentFunctionReturnType_;
+            currentFunctionReturnType_ = initMethod->returnType;
+
             // 切换环境
-            Environment* prevEnv = currentEnv_;
+            auto prevEnv = currentEnv_;
             currentEnv_ = initEnv;
 
             try {
@@ -478,33 +593,47 @@ Value Interpreter::visitFunCall(FunCall& node) {
             }
 
             // 从 init 环境中读取 this 的更新值
+            // writeBack 已经正确更新了 initEnv 中的 this，
+            // 直接获取即可，不需要再用环境变量覆盖
             instance = initEnv->get("this");
-
-            // 将 init 内对字段的直接修改同步回 this 实例
-            for (const auto& kv : instance.fields) {
-                if (initEnv->hasVariable(kv.first)) {
-                    instance.fields[kv.first] = initEnv->get(kv.first);
-                }
-            }
 
             // 恢复环境
             currentEnv_ = prevEnv;
             callStack_.pop_back();
             recursionDepth_--;
-
-            delete initEnv;
+            currentFunctionReturnType_ = savedReturnType;
         }
 
         return instance;
     }
 
-    // 查找函数定义
-    auto it = funRegistry_.find(node.name);
-    if (it == funRegistry_.end()) {
-        runtimeError("未定义的函数: " + node.name, node.line, node.column);
+    // 检查环境中是否有闭包值
+    std::shared_ptr<Environment> closureEnv;
+    std::vector<std::string> closureParams;
+    FunDecl* funDecl = nullptr;
+    std::string effectiveName = node.name;  // 实际函数名（闭包时可能不同于调用变量名）
+
+    if (currentEnv_->hasVariable(node.name)) {
+        Value callee = currentEnv_->get(node.name);
+        if (callee.isClosure()) {
+            closureEnv = callee.closureEnv;
+            closureParams = callee.closureParams;
+            effectiveName = callee.closureName;  // 使用闭包的实际函数名查找函数体
+            auto it = funRegistry_.find(callee.closureName);
+            if (it != funRegistry_.end()) {
+                funDecl = it->second;
+            }
+        }
     }
 
-    FunDecl* funDecl = it->second;
+    // 闭包路径：如果没找到闭包，走 funRegistry_ fallback
+    if (!funDecl) {
+        auto it = funRegistry_.find(effectiveName);
+        if (it == funRegistry_.end()) {
+            runtimeError("未定义的函数: " + node.name, node.line, node.column);
+        }
+        funDecl = it->second;
+    }
 
     // 检查参数数量
     if (node.arguments.size() != funDecl->params.size()) {
@@ -527,8 +656,22 @@ Value Interpreter::visitFunCall(FunCall& node) {
         argValues.push_back(evaluate(arg.get()));
     }
 
-    // 创建新环境（使用当前环境作为父级，支持闭包/嵌套函数访问外层变量）
-    Environment* funEnv = new Environment(currentEnv_);
+    // 参数类型检查
+    for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
+        if (!funDecl->paramTypes[i].empty()) {
+            checkType(argValues[i], funDecl->paramTypes[i],
+                      "函数 " + node.name + " 的参数 " + funDecl->params[i],
+                      node.line, node.column);
+        }
+    }
+
+    // 创建新环境：使用闭包捕获的环境作为父级（如果有的话）
+    std::shared_ptr<Environment> funEnv;
+    if (closureEnv) {
+        funEnv = std::make_shared<Environment>(closureEnv);
+    } else {
+        funEnv = std::make_shared<Environment>(currentEnv_);
+    }
 
     // 绑定参数
     for (size_t i = 0; i < funDecl->params.size(); ++i) {
@@ -538,8 +681,12 @@ Value Interpreter::visitFunCall(FunCall& node) {
     // 压入调用帧
     callStack_.emplace_back(node.name, funEnv, node.line, recursionDepth_);
 
+    // 设置返回类型追踪
+    std::string savedReturnType = currentFunctionReturnType_;
+    currentFunctionReturnType_ = funDecl->returnType;
+
     // 切换环境
-    Environment* prevEnv = currentEnv_;
+    auto prevEnv = currentEnv_;
     currentEnv_ = funEnv;
 
     Value result = Value::nullValue();
@@ -554,9 +701,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
     currentEnv_ = prevEnv;
     callStack_.pop_back();
     recursionDepth_--;
-
-    // 释放函数环境
-    delete funEnv;
+    currentFunctionReturnType_ = savedReturnType;
 
     return result;
 }
@@ -568,6 +713,12 @@ Value Interpreter::visitReturnStmt(ReturnStmt& node) {
     if (node.value) {
         val = evaluate(node.value.get());
     }
+
+    // 返回类型检查
+    if (!currentFunctionReturnType_.empty()) {
+        checkType(val, currentFunctionReturnType_, "返回值", node.line, node.column);
+    }
+
     throw ReturnException(val);
 }
 
@@ -588,7 +739,7 @@ Value Interpreter::visitBlock(Block& node) {
     checkBreak(&node);
 
     // 为代码块创建新作用域
-    Environment* blockEnv = new Environment(currentEnv_);
+    auto blockEnv = std::make_shared<Environment>(currentEnv_);
     currentEnv_ = blockEnv;
 
     Value result = Value::nullValue();
@@ -597,7 +748,6 @@ Value Interpreter::visitBlock(Block& node) {
     }
 
     currentEnv_ = blockEnv->parent;
-    delete blockEnv;
 
     return result;
 }
@@ -663,48 +813,22 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
 Value Interpreter::visitIndexAssign(IndexAssign& node) {
     checkBreak(&node);
 
-    // 需要获取对象的左值，因此用变量名查找
-    // 先求值 index 和 value
     Value idx = evaluate(node.index.get());
     Value val = evaluate(node.value.get());
+    Value obj = evaluate(node.object.get());
 
-    // object 必须是 VarRef（简单变量名），以便我们修改其内容
-    VarRef* varRef = dynamic_cast<VarRef*>(node.object.get());
-    if (varRef) {
-        if (!currentEnv_->hasVariable(varRef->name)) {
-            runtimeError("未定义的变量: " + varRef->name, node.line, node.column);
-        }
-        Value obj = currentEnv_->get(varRef->name);
-
-        if (obj.isArray()) {
-            if (!idx.isInt()) {
-                runtimeError("数组索引必须是整数", node.line, node.column);
-            }
-            int i = idx.intVal;
-            if (i < 0 || i >= static_cast<int>(obj.arrayVal.size())) {
-                runtimeError("数组索引越界: " + std::to_string(i), node.line, node.column);
-            }
-            // 修改数组元素：获取副本，修改，写回
-            obj.arrayVal[i] = val;
-            currentEnv_->set(varRef->name, obj);
-            return val;
-        }
-
-        if (obj.isDict()) {
-            if (!idx.isString()) {
-                runtimeError("字典键必须是字符串", node.line, node.column);
-            }
-            // 修改字典元素：获取副本，修改，写回
-            obj.dictVal[idx.stringVal] = val;
-            currentEnv_->set(varRef->name, obj);
-            return val;
-        }
-
+    if (obj.isArray() && idx.isInt()) {
+        if (idx.intVal < 0 || static_cast<size_t>(idx.intVal) >= obj.arrayVal.size())
+            runtimeError("数组索引越界", node.line, node.column);
+        obj.arrayVal[idx.intVal] = val;
+    } else if (obj.isDict() && idx.isString()) {
+        obj.dictVal[idx.stringVal] = val;
+    } else {
         runtimeError("该类型不支持索引赋值", node.line, node.column);
     }
 
-    // 也可能是对 IndexAccess 的链式赋值（多维数组等），这里简化处理
-    runtimeError("索引赋值的对象必须是变量", node.line, node.column);
+    writeBack(node.object.get(), obj, node.line, node.column);
+    return val;
 }
 
 Value Interpreter::visitClassDecl(ClassDecl& node) {
@@ -803,38 +927,171 @@ Value Interpreter::visitMemberAssign(MemberAssign& node) {
     checkBreak(&node);
 
     Value val = evaluate(node.value.get());
+    Value obj = evaluate(node.object.get());
 
-    // object 必须是 VarRef，以便我们修改实例
-    VarRef* varRef = dynamic_cast<VarRef*>(node.object.get());
-    if (varRef) {
-        if (!currentEnv_->hasVariable(varRef->name)) {
-            runtimeError("未定义的变量: " + varRef->name, node.line, node.column);
-        }
-        Value obj = currentEnv_->get(varRef->name);
-
-        if (obj.isInstance()) {
-            obj.fields[node.fieldName] = val;
-            currentEnv_->set(varRef->name, obj);
-            return val;
-        }
-
-        if (obj.isDict()) {
-            obj.dictVal[node.fieldName] = val;
-            currentEnv_->set(varRef->name, obj);
-            return val;
-        }
-
+    if (obj.isInstance()) {
+        obj.fields[node.fieldName] = val;
+    } else if (obj.isDict()) {
+        obj.dictVal[node.fieldName] = val;
+    } else {
         runtimeError("该类型不支持成员赋值", node.line, node.column);
     }
 
-    // 也可能是 MemberAccess 的链式赋值
-    runtimeError("成员赋值的对象必须是变量", node.line, node.column);
+    writeBack(node.object.get(), obj, node.line, node.column);
+    return val;
 }
 
 Value Interpreter::visitMethodCall(MethodCall& node) {
     checkBreak(&node);
 
     Value obj = evaluate(node.object.get());
+
+    // ---- 数组内置方法 ----
+    if (obj.isArray()) {
+        // 求值参数
+        std::vector<Value> argValues;
+        for (auto& arg : node.arguments) {
+            argValues.push_back(evaluate(arg.get()));
+        }
+
+        // 需要获取可修改的数组引用
+        VarRef* objRef = dynamic_cast<VarRef*>(node.object.get());
+        IndexAccess* idxAccess = dynamic_cast<IndexAccess*>(node.object.get());
+        MemberAccess* memAccess = dynamic_cast<MemberAccess*>(node.object.get());
+
+        if (node.methodName == "push") {
+            if (argValues.size() != 1)
+                runtimeError("push 期望 1 个参数", node.line, node.column);
+            obj.arrayVal.push_back(argValues[0]);
+            // 写回修改
+            if (objRef) currentEnv_->set(objRef->name, obj);
+            return Value::nullValue();
+        }
+        if (node.methodName == "pop") {
+            if (obj.arrayVal.empty())
+                runtimeError("对空数组调用 pop", node.line, node.column);
+            Value last = obj.arrayVal.back();
+            obj.arrayVal.pop_back();
+            if (objRef) currentEnv_->set(objRef->name, obj);
+            return last;
+        }
+        if (node.methodName == "len") {
+            return Value(static_cast<int>(obj.arrayVal.size()));
+        }
+        if (node.methodName == "remove") {
+            if (argValues.size() != 1)
+                runtimeError("remove 期望 1 个参数(索引)", node.line, node.column);
+            if (!argValues[0].isInt())
+                runtimeError("remove 参数必须是整数索引", node.line, node.column);
+            int idx = static_cast<int>(argValues[0].intVal);
+            if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal.size())
+                runtimeError("数组索引越界: " + std::to_string(idx), node.line, node.column);
+            obj.arrayVal.erase(obj.arrayVal.begin() + idx);
+            if (objRef) currentEnv_->set(objRef->name, obj);
+            return Value::nullValue();
+        }
+        if (node.methodName == "contains") {
+            if (argValues.size() != 1)
+                runtimeError("contains 期望 1 个参数", node.line, node.column);
+            for (const auto& elem : obj.arrayVal) {
+                if (elem.equals(argValues[0])) return Value(true);
+            }
+            return Value(false);
+        }
+        if (node.methodName == "join") {
+            std::string sep = argValues.empty() ? "" : argValues[0].toString();
+            std::string result;
+            for (size_t i = 0; i < obj.arrayVal.size(); ++i) {
+                if (i > 0) result += sep;
+                result += obj.arrayVal[i].toString();
+            }
+            return Value(result);
+        }
+        runtimeError("数组没有方法 " + node.methodName, node.line, node.column);
+    }
+
+    // ---- 字典内置方法 ----
+    if (obj.isDict()) {
+        std::vector<Value> argValues;
+        for (auto& arg : node.arguments) {
+            argValues.push_back(evaluate(arg.get()));
+        }
+
+        VarRef* objRef = dynamic_cast<VarRef*>(node.object.get());
+
+        if (node.methodName == "len") {
+            return Value(static_cast<int>(obj.dictVal.size()));
+        }
+        if (node.methodName == "keys") {
+            std::vector<Value> keys;
+            for (const auto& kv : obj.dictVal) {
+                keys.push_back(Value(kv.first));
+            }
+            return Value(keys);
+        }
+        if (node.methodName == "values") {
+            std::vector<Value> vals;
+            for (const auto& kv : obj.dictVal) {
+                vals.push_back(kv.second);
+            }
+            return Value(vals);
+        }
+        if (node.methodName == "has" || node.methodName == "contains") {
+            if (argValues.size() != 1)
+                runtimeError(node.methodName + " 期望 1 个参数(键)", node.line, node.column);
+            return Value(obj.dictVal.find(argValues[0].toString()) != obj.dictVal.end());
+        }
+        if (node.methodName == "remove") {
+            if (argValues.size() != 1)
+                runtimeError("remove 期望 1 个参数(键)", node.line, node.column);
+            obj.dictVal.erase(argValues[0].toString());
+            if (objRef) currentEnv_->set(objRef->name, obj);
+            return Value::nullValue();
+        }
+        runtimeError("字典没有方法 " + node.methodName, node.line, node.column);
+    }
+
+    // ---- 字符串内置方法 ----
+    if (obj.isString()) {
+        std::vector<Value> argValues;
+        for (auto& arg : node.arguments) {
+            argValues.push_back(evaluate(arg.get()));
+        }
+
+        if (node.methodName == "len") {
+            return Value(static_cast<int>(obj.stringVal.size()));
+        }
+        if (node.methodName == "upper") {
+            std::string s = obj.stringVal;
+            for (auto& c : s) c = std::toupper(static_cast<unsigned char>(c));
+            return Value(s);
+        }
+        if (node.methodName == "lower") {
+            std::string s = obj.stringVal;
+            for (auto& c : s) c = std::tolower(static_cast<unsigned char>(c));
+            return Value(s);
+        }
+        if (node.methodName == "split") {
+            // str.split(sep) — 按 sep 分割返回数组
+            std::string sep = argValues.empty() ? " " : argValues[0].toString();
+            std::vector<Value> parts;
+            size_t start = 0, pos;
+            while ((pos = obj.stringVal.find(sep, start)) != std::string::npos) {
+                parts.push_back(Value(obj.stringVal.substr(start, pos - start)));
+                start = pos + sep.size();
+            }
+            parts.push_back(Value(obj.stringVal.substr(start)));
+            return Value(parts);
+        }
+        if (node.methodName == "trim") {
+            std::string s = obj.stringVal;
+            size_t l = s.find_first_not_of(" \t\r\n");
+            size_t r = s.find_last_not_of(" \t\r\n");
+            if (l == std::string::npos) return Value(std::string(""));
+            return Value(s.substr(l, r - l + 1));
+        }
+        runtimeError("字符串没有方法 " + node.methodName, node.line, node.column);
+    }
 
     // 类实例的方法调用
     if (obj.isInstance()) {
@@ -864,8 +1121,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                                  node.line, node.column);
                 }
 
-                // 创建方法环境（父级为当前环境，支持闭包）
-                Environment* methodEnv = new Environment(currentEnv_);
+                // 创建方法环境（父级为当前环境，方法不创建闭包，在调用时绑定 this）
+                auto methodEnv = std::make_shared<Environment>(currentEnv_);
 
                 // 绑定 this
                 methodEnv->define("this", obj);
@@ -884,8 +1141,12 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 callStack_.emplace_back(obj.className + "." + node.methodName,
                                          methodEnv, node.line, recursionDepth_);
 
+                // 设置返回类型追踪
+                std::string savedReturnType = currentFunctionReturnType_;
+                currentFunctionReturnType_ = method->returnType;
+
                 // 切换环境
-                Environment* prevEnv = currentEnv_;
+                auto prevEnv = currentEnv_;
                 currentEnv_ = methodEnv;
 
                 Value result = Value::nullValue();
@@ -896,28 +1157,17 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 }
 
                 // 从方法环境中读取 this 的更新值
+                // writeBack 已经正确更新了 methodEnv 中的 this，
+                // 直接获取即可，不需要再用环境变量覆盖
                 Value updatedThis = methodEnv->get("this");
-
-                // 将方法内对字段的直接修改同步回 this 实例
-                for (const auto& kv : obj.fields) {
-                    if (methodEnv->hasVariable(kv.first)) {
-                        updatedThis.fields[kv.first] = methodEnv->get(kv.first);
-                    }
-                }
-                // 也检查方法中新添加到实例的字段（字段名在 this 中但不在原始 obj 中）
-                // 注意：方法内 name = val 这种赋值可能创建了新的局部变量而非字段
-                // 但如果是已有的字段名被重新赋值，我们需要同步
 
                 // 恢复环境
                 currentEnv_ = prevEnv;
                 callStack_.pop_back();
                 recursionDepth_--;
-
-                delete methodEnv;
+                currentFunctionReturnType_ = savedReturnType;
 
                 // 更新实例（如果 this 被修改了）
-                // 需要在环境中找到原始的实例变量并更新
-                // 这里简化处理：如果 object 是 VarRef，更新环境中的值
                 VarRef* objRef = dynamic_cast<VarRef*>(node.object.get());
                 if (objRef) {
                     currentEnv_->set(objRef->name, updatedThis);

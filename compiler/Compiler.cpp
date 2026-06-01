@@ -7,10 +7,15 @@
 
 Compiler::Compiler() {}
 
-BytecodeChunk Compiler::compile(Block& program) {
+CompileResult Compiler::compile(Block& program) {
     chunk_ = BytecodeChunk();
+    chunk_.name = "main";
+    chunk_.arity = 0;
     varIndex_.clear();
     lastError_.clear();
+    functionChunks_.clear();
+    currentLocals_.clear();
+    inFunction_ = false;
 
     // 编译所有顶层语句
     compileBlock(program);
@@ -18,7 +23,10 @@ BytecodeChunk Compiler::compile(Block& program) {
     // 末尾添加 RETURN
     chunk_.writeOp(OpCode::OP_RETURN, 0);
 
-    return chunk_;
+    CompileResult result;
+    result.mainChunk = std::move(chunk_);
+    result.functionChunks = std::move(functionChunks_);
+    return result;
 }
 
 std::string Compiler::getLastError() const {
@@ -168,19 +176,55 @@ void Compiler::compileVarDecl(VarDecl& node) {
         chunk_.writeOp(OpCode::OP_NULL, node.line);
     }
 
-    uint16_t nameIdx = identifierIndex(node.name);
-    chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
-    chunk_.writeShort(nameIdx, node.line);
+    // 在函数体内使用局部变量
+    if (inFunction_) {
+        auto it = currentLocals_.find(node.name);
+        if (it == currentLocals_.end()) {
+            // 新局部变量，分配槽位
+            int slot = static_cast<int>(currentLocals_.size());
+            currentLocals_[node.name] = slot;
+            chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
+            chunk_.write(static_cast<uint8_t>(slot), node.line);
+        } else {
+            chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
+            chunk_.write(static_cast<uint8_t>(it->second), node.line);
+        }
+    } else {
+        uint16_t nameIdx = identifierIndex(node.name);
+        chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+        chunk_.writeShort(nameIdx, node.line);
+    }
 }
 
 void Compiler::compileAssignment(Assignment& node) {
     compileNode(node.value.get());
-    uint16_t nameIdx = identifierIndex(node.name);
-    chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
-    chunk_.writeShort(nameIdx, node.line);
+
+    if (inFunction_) {
+        auto it = currentLocals_.find(node.name);
+        if (it != currentLocals_.end()) {
+            chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
+            chunk_.write(static_cast<uint8_t>(it->second), node.line);
+        } else {
+            uint16_t nameIdx = identifierIndex(node.name);
+            chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
+            chunk_.writeShort(nameIdx, node.line);
+        }
+    } else {
+        uint16_t nameIdx = identifierIndex(node.name);
+        chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
+        chunk_.writeShort(nameIdx, node.line);
+    }
 }
 
 void Compiler::compileVarRef(VarRef& node) {
+    if (inFunction_) {
+        auto it = currentLocals_.find(node.name);
+        if (it != currentLocals_.end()) {
+            chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
+            chunk_.write(static_cast<uint8_t>(it->second), node.line);
+            return;
+        }
+    }
     uint16_t nameIdx = identifierIndex(node.name);
     chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
     chunk_.writeShort(nameIdx, node.line);
@@ -310,10 +354,46 @@ void Compiler::compileForStmt(ForStmt& node) {
 }
 
 void Compiler::compileFunDecl(FunDecl& node) {
-    // 函数声明在简化字节码中暂不编译
-    // 在 VM 中函数调用仍通过解释器执行
-    // 这里只记录函数名
-    identifierIndex(node.name);
+    // 为函数体创建独立 BytecodeChunk
+    BytecodeChunk savedChunk = std::move(chunk_);
+    std::unordered_map<std::string, uint16_t> savedVarIndex = varIndex_;
+    std::unordered_map<std::string, int> savedLocals = currentLocals_;
+    bool savedInFunction = inFunction_;
+
+    // 设置函数编译上下文
+    chunk_ = BytecodeChunk(node.name, static_cast<int>(node.params.size()));
+    varIndex_.clear();
+    currentLocals_.clear();
+    inFunction_ = true;
+
+    // 编译参数到局部变量槽位
+    for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
+        currentLocals_[node.params[i]] = i;
+    }
+
+    // 编译函数体
+    if (node.body) {
+        compileNode(node.body.get());
+    }
+
+    // 末尾添加隐式返回 null
+    chunk_.writeOp(OpCode::OP_NULL, node.line);
+    chunk_.writeOp(OpCode::OP_RETURN, node.line);
+
+    // 存储函数 chunk
+    functionChunks_[node.name] = std::move(chunk_);
+
+    // 恢复主 chunk
+    chunk_ = std::move(savedChunk);
+    varIndex_ = savedVarIndex;
+    currentLocals_ = savedLocals;
+    inFunction_ = savedInFunction;
+
+    // 在主 chunk 中 emit OP_CLOSURE
+    uint16_t nameIdx = identifierIndex(node.name);
+    chunk_.writeOp(OpCode::OP_CLOSURE, node.line);
+    chunk_.writeShort(nameIdx, node.line);
+    chunk_.write(static_cast<uint8_t>(node.params.size()), node.line);
 }
 
 void Compiler::compileFunCall(FunCall& node) {
@@ -325,7 +405,7 @@ void Compiler::compileFunCall(FunCall& node) {
     // 函数名作为常量
     uint16_t nameIdx = identifierIndex(node.name);
 
-    // 简化：使用 OP_CALL 指令
+    // 使用 OP_CALL 指令
     chunk_.writeOp(OpCode::OP_CALL, node.line);
     chunk_.write(static_cast<uint8_t>(nameIdx & 0xFF), node.line);
     chunk_.write(static_cast<uint8_t>((nameIdx >> 8) & 0xFF), node.line);
@@ -374,7 +454,6 @@ void Compiler::compileDictLiteral(DictLiteral& node) {
     }
     // 字典构建暂用常量池
     // 简化：把字典字面量作为常量存入
-    // TODO: 完整实现需要更复杂的指令
     // 这里先输出空操作
     for (size_t i = 0; i < node.pairs.size(); ++i) {
         chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出值
@@ -397,8 +476,47 @@ void Compiler::compileIndexAssign(IndexAssign& node) {
 }
 
 void Compiler::compileClassDecl(ClassDecl& node) {
-    // 类声明在简化字节码中暂不编译
+    // 类声明：在主 chunk 中 emit OP_CLASS_NEW 占位
     identifierIndex(node.name);
+    // 简化：编译类成员方法为独立 chunk
+    for (auto& member : node.members) {
+        FunDecl* funDecl = dynamic_cast<FunDecl*>(member.get());
+        if (funDecl) {
+            // 编译方法为独立 chunk（方法名用 ClassName.methodName）
+            BytecodeChunk savedChunk = std::move(chunk_);
+            std::unordered_map<std::string, uint16_t> savedVarIndex = varIndex_;
+            std::unordered_map<std::string, int> savedLocals = currentLocals_;
+            bool savedInFunction = inFunction_;
+
+            std::string methodKey = node.name + "." + funDecl->name;
+            chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
+            varIndex_.clear();
+            currentLocals_.clear();
+            inFunction_ = true;
+
+            // 编译参数到局部变量槽位
+            for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
+                currentLocals_[funDecl->params[i]] = i;
+            }
+
+            // 编译方法体
+            if (funDecl->body) {
+                compileNode(funDecl->body.get());
+            }
+
+            // 隐式返回 null
+            chunk_.writeOp(OpCode::OP_NULL, funDecl->line);
+            chunk_.writeOp(OpCode::OP_RETURN, funDecl->line);
+
+            functionChunks_[methodKey] = std::move(chunk_);
+
+            // 恢复
+            chunk_ = std::move(savedChunk);
+            varIndex_ = savedVarIndex;
+            currentLocals_ = savedLocals;
+            inFunction_ = savedInFunction;
+        }
+    }
 }
 
 void Compiler::compileMemberAccess(MemberAccess& node) {

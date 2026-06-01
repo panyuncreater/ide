@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include "interpreter/Value.h"
 
 // ============================================================
@@ -60,6 +61,12 @@ enum class OpCode : uint8_t {
     OP_METHOD_CALL,  // 方法调用（名称索引 + 参数个数）
 
     OP_DUP,          // 复制栈顶
+
+    // 新增指令
+    OP_CLOSURE,      // 创建闭包值（操作数: nameIdx(2B) + argCount(1B)）
+    OP_GET_LOCAL,    // 读取当前帧局部变量（操作数: slot(1B)）
+    OP_SET_LOCAL,    // 写入当前帧局部变量（操作数: slot(1B)）
+    OP_CLASS_NEW,    // 类构造调用（操作数: nameIdx(2B) + argCount(1B)）
 };
 
 /// 字节码块：一段连续的指令
@@ -67,6 +74,12 @@ struct BytecodeChunk {
     std::vector<uint8_t> code;       // 指令字节流
     std::vector<Value> constants;    // 常量池
     std::vector<int> lines;         // 每条指令对应的行号
+    std::string name;               // chunk 名称（函数名）
+    int arity = 0;                  // 参数个数
+
+    BytecodeChunk() = default;
+    explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)
+        : name(chunkName), arity(argCount) {}
 
     /// 追加一个字节
     void write(uint8_t byte, int line) {
@@ -104,6 +117,9 @@ struct BytecodeChunk {
     /// 反汇编：输出字节码文本
     std::string disassemble() const {
         std::string result;
+        if (!name.empty()) {
+            result += "== " + name + " (arity=" + std::to_string(arity) + ") ==\n";
+        }
         size_t offset = 0;
         while (offset < code.size()) {
             result += disassembleInstruction(offset);
@@ -237,6 +253,32 @@ struct BytecodeChunk {
             break;
         }
         case OpCode::OP_DUP: str += "OP_DUP"; offset += 1; break;
+        case OpCode::OP_CLOSURE: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            uint8_t argCount = code[offset + 3];
+            str += "OP_CLOSURE " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
+            offset += 4;
+            break;
+        }
+        case OpCode::OP_GET_LOCAL: {
+            uint8_t slot = code[offset + 1];
+            str += "OP_GET_LOCAL " + std::to_string(slot);
+            offset += 2;
+            break;
+        }
+        case OpCode::OP_SET_LOCAL: {
+            uint8_t slot = code[offset + 1];
+            str += "OP_SET_LOCAL " + std::to_string(slot);
+            offset += 2;
+            break;
+        }
+        case OpCode::OP_CLASS_NEW: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            uint8_t argCount = code[offset + 3];
+            str += "OP_CLASS_NEW " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
+            offset += 4;
+            break;
+        }
         default:
             str += "OP_UNKNOWN(" + std::to_string(static_cast<int>(op)) + ")";
             offset += 1;
@@ -245,4 +287,10 @@ struct BytecodeChunk {
 
         return str;
     }
+};
+
+/// 编译结果：包含主 chunk 和函数 chunk
+struct CompileResult {
+    BytecodeChunk mainChunk;
+    std::unordered_map<std::string, BytecodeChunk> functionChunks;
 };

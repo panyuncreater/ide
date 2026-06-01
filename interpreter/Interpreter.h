@@ -41,13 +41,13 @@ public:
 
 /// 函数调用帧
 struct CallFrame {
-    std::string functionName;      // 函数名
-    Environment* env = nullptr;    // 该帧对应的环境
-    int line = 0;                   // 调用行号
-    int depth = 0;                  // 调用深度
+    std::string functionName;                      // 函数名
+    std::shared_ptr<Environment> env = nullptr;     // 该帧对应的环境
+    int line = 0;                                   // 调用行号
+    int depth = 0;                                  // 调用深度
 
     CallFrame() = default;
-    CallFrame(const std::string& name, Environment* e, int ln, int d)
+    CallFrame(const std::string& name, std::shared_ptr<Environment> e, int ln, int d)
         : functionName(name), env(e), line(ln), depth(d) {}
 };
 
@@ -131,15 +131,17 @@ public:
     Value visitNullLiteral(NullLiteral& node) override;
 
 private:
-    Environment* globalEnv_;        // 全局环境
-    Environment* currentEnv_;       // 当前环境
-    std::vector<CallFrame> callStack_;  // 调用栈
-    DebugController* debugger_;     // 调试控制器（可为 nullptr）
-    bool debugMode_ = false;        // 是否处于调试模式（快速跳过 checkBreak）
+    std::shared_ptr<Environment> globalEnv_;        // 全局环境
+    std::shared_ptr<Environment> currentEnv_;       // 当前环境
+    std::vector<CallFrame> callStack_;              // 调用栈
+    DebugController* debugger_;                     // 调试控制器（可为 nullptr）
+    bool debugMode_ = false;                        // 是否处于调试模式（快速跳过 checkBreak）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
-    int recursionDepth_ = 0;       // 递归深度
+    int recursionDepth_ = 0;                        // 递归深度
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
+    std::unordered_map<std::string, std::string> typeAnnotations_; // 变量类型注解
+    std::string currentFunctionReturnType_;         // 当前函数的返回类型
 
     /// 执行单个节点
     Value evaluate(ASTNode* node);
@@ -162,4 +164,17 @@ private:
 
     /// 查找类的字段默认值（含继承链）
     Value findFieldDefault(ClassInfo& cls, const std::string& fieldName);
+
+    /// 递归写回左值
+    void writeBack(ASTNode* node, const Value& modifiedValue, int line, int col);
+
+    /// 检查值是否匹配类型注解
+    bool typeMatch(const Value& val, const std::string& annotation) const;
+
+    /// 类型检查，不匹配则报运行时错误
+    void checkType(const Value& val, const std::string& annotation,
+                   const std::string& context, int line, int col);
+
+    /// 查找变量的类型注解
+    std::string findTypeAnnotation(const std::string& varName) const;
 };

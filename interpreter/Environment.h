@@ -4,20 +4,21 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
 #include "interpreter/Value.h"
 
 // ============================================================
 // Environment 作用域链
 // ============================================================
 
-/// 作用域环境，支持嵌套（作用域链）
-class Environment {
+/// 作用域环境，支持嵌套（作用域链），使用 shared_ptr 管理生命周期
+class Environment : public std::enable_shared_from_this<Environment> {
 public:
     /// 父作用域指针（全局环境为 nullptr）
-    Environment* parent;
+    std::shared_ptr<Environment> parent;
 
     /// 构造函数
-    explicit Environment(Environment* parentEnv = nullptr)
+    explicit Environment(std::shared_ptr<Environment> parentEnv = nullptr)
         : parent(parentEnv) {}
 
     /// 在当前作用域定义变量

@@ -16,7 +16,7 @@ public:
     Compiler();
 
     /// 编译 AST 块到字节码
-    BytecodeChunk compile(Block& program);
+    CompileResult compile(Block& program);
 
     /// 获取编译错误信息
     std::string getLastError() const;
@@ -25,6 +25,9 @@ private:
     BytecodeChunk chunk_;                           // 当前字节码块
     std::unordered_map<std::string, uint16_t> varIndex_;  // 变量名 → 常量池索引
     std::string lastError_;                         // 最近一次编译错误
+    std::unordered_map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
+    std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
+    bool inFunction_ = false;                       // 是否在函数体内
 
     /// 添加变量名到常量池，返回索引
     uint16_t identifierIndex(const std::string& name);
