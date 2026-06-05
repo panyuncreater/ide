@@ -590,13 +590,9 @@ void Ide::onVmStep() {
     // 高亮当前字节码指令
     size_t currentIP = vm_.getCurrentIP();
     OpCode currentOp = vm_.getCurrentOpCode();
-    int opLine = 0;
-    // 从 mainChunk 获取行号信息
-    if (currentIP < lastCompileResult_.mainChunk.lines.size()) {
-        opLine = lastCompileResult_.mainChunk.lines[currentIP];
-    }
+    int opLine = vm_.getCurrentLine();
     vmStackPanel_->updateCurrentOp(currentIP, currentOp, opLine);
-    highlightBytecodeLine(currentIP);
+    highlightBytecodeLine(vm_.getCurrentChunkName(), currentIP);
 
     vmStepAction_->setEnabled(true);
     isVmRunning_ = false;
@@ -618,36 +614,42 @@ void Ide::onVmStepCallback(const VMStepInfo& info) {
     vmStackPanel_->updateStack(info.stackSnapshot);
     vmStackPanel_->updateGlobals(info.globalsSnapshot);
 
-    // 更新当前指令信息
-    int line = 0;
-    if (info.ip < lastCompileResult_.mainChunk.lines.size()) {
-        line = lastCompileResult_.mainChunk.lines[info.ip];
-    }
+    // 更新当前指令信息（行号从 VM 获取，因为可能在不同 chunk 中）
+    int line = vm_.getCurrentLine();
     vmStackPanel_->updateCurrentOp(info.ip, info.opcode, line);
 
     // 高亮当前指令
-    highlightBytecodeLine(info.ip);
+    highlightBytecodeLine(vm_.getCurrentChunkName(), info.ip);
 
     // 处理 GUI 事件，保持响应
     QApplication::processEvents();
 }
 
-void Ide::highlightBytecodeLine(size_t ip) {
-    // 根据指令偏移找到对应的列表行
-    // 由于反汇编指令长度不同，需要遍历计算
-    if (lastCompileResult_.mainChunk.code.empty()) return;
+void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
+    // 根据当前 chunk 名和 ip 定位到正确的列表行
+    // chunkRowMap_ 记录了每个 chunk 在 bytecodeList_ 中的起始行
+    const BytecodeChunk* targetChunk = nullptr;
 
-    size_t offset = 0;
-    int row = 0;
-    while (offset < lastCompileResult_.mainChunk.code.size()) {
-        if (offset == ip) {
-            // 找到对应行，设置高亮
-            bytecodeList_->setCurrentRow(row);
-            bytecodeList_->scrollToItem(bytecodeList_->item(row));
-            return;
+    // 找到目标 chunk
+    if (chunkName == "main" || chunkName.empty()) {
+        targetChunk = &lastCompileResult_.mainChunk;
+    } else {
+        auto it = lastCompileResult_.functionChunks.find(chunkName);
+        if (it != lastCompileResult_.functionChunks.end()) {
+            targetChunk = &it->second;
         }
-        // 跳过当前指令，计算下一条指令的偏移
-        OpCode op = static_cast<OpCode>(lastCompileResult_.mainChunk.code[offset]);
+    }
+    if (!targetChunk || targetChunk->code.empty()) return;
+
+    // 在目标 chunk 中计算 ip 对应的指令行号（该 chunk 内的第几条指令）
+    size_t offset = 0;
+    int instrIndex = 0;
+    while (offset < targetChunk->code.size()) {
+        if (offset == ip) {
+            break;
+        }
+        // 跳过当前指令
+        OpCode op = static_cast<OpCode>(targetChunk->code[offset]);
         switch (op) {
         case OpCode::OP_CONSTANT:
         case OpCode::OP_INT:
@@ -674,35 +676,61 @@ void Ide::highlightBytecodeLine(size_t ip) {
         default:
             offset += 1; break;
         }
-        row++;
+        instrIndex++;
+    }
+
+    // 在 chunkRowMap_ 中找到该 chunk 的起始行
+    int startRow = 0;
+    for (const auto& info : chunkRowMap_) {
+        if (info.name == chunkName) {
+            startRow = info.startRow;
+            break;
+        }
+    }
+
+    int targetRow = startRow + instrIndex;
+    if (targetRow >= 0 && targetRow < bytecodeList_->count()) {
+        bytecodeList_->setCurrentRow(targetRow);
+        bytecodeList_->scrollToItem(bytecodeList_->item(targetRow));
     }
 }
 
 void Ide::populateBytecodeList() {
     bytecodeList_->clear();
+    chunkRowMap_.clear();
 
     if (lastCompileResult_.mainChunk.code.empty()) {
         bytecodeList_->addItem("(无字节码)");
         return;
     }
 
-    // 逐条反汇编主 chunk 并添加到列表
-    size_t offset = 0;
-    while (offset < lastCompileResult_.mainChunk.code.size()) {
-        std::string instr = lastCompileResult_.mainChunk.disassembleInstruction(offset);
-        auto* item = new QListWidgetItem(QString::fromStdString(instr));
-        item->setFont(QFont("Consolas", 10));
-        bytecodeList_->addItem(item);
+    int currentRow = 0;
+
+    // ---- 主 chunk ----
+    {
+        int startRow = currentRow;
+        size_t offset = 0;
+        while (offset < lastCompileResult_.mainChunk.code.size()) {
+            std::string instr = lastCompileResult_.mainChunk.disassembleInstruction(offset);
+            auto* item = new QListWidgetItem(QString::fromStdString(instr));
+            item->setFont(QFont("Consolas", 10));
+            bytecodeList_->addItem(item);
+            currentRow++;
+        }
+        chunkRowMap_.push_back({"main", startRow, currentRow - startRow});
     }
 
-    // 也显示函数 chunk 的字节码
+    // ---- 函数 chunk ----
     for (const auto& kv : lastCompileResult_.functionChunks) {
+        int startRow = currentRow;
+
         auto* header = new QListWidgetItem(QString("---- %1 (arity=%2) ----")
                                                .arg(QString::fromStdString(kv.first))
                                                .arg(kv.second.arity));
         header->setFont(QFont("Consolas", 10));
         header->setForeground(QColor("#569CD6"));
         bytecodeList_->addItem(header);
+        currentRow++;
 
         size_t funcOffset = 0;
         while (funcOffset < kv.second.code.size()) {
@@ -710,7 +738,9 @@ void Ide::populateBytecodeList() {
             auto* item = new QListWidgetItem(QString::fromStdString(instr));
             item->setFont(QFont("Consolas", 10));
             bytecodeList_->addItem(item);
+            currentRow++;
         }
+        chunkRowMap_.push_back({kv.first, startRow, currentRow - startRow});
     }
 }
 

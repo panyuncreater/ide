@@ -89,6 +89,12 @@ public:
     /// 获取当前帧的指令操作码（用于单步调试 UI 显示）
     OpCode getCurrentOpCode() const;
 
+    /// 获取当前帧的源码行号（从当前 chunk 的 lines 数组获取）
+    int getCurrentLine() const;
+
+    /// 获取当前帧的 chunk 名称（"main" 或函数名）
+    std::string getCurrentChunkName() const;
+
 private:
     std::vector<Value> stack_;                     // 操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表

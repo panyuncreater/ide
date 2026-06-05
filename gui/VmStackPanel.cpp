@@ -202,6 +202,10 @@ void VmStackPanel::updateCurrentOp(size_t ip, OpCode opcode, int line) {
         {OpCode::OP_MEMBER_SET, "OP_MEMBER_SET"},
         {OpCode::OP_METHOD_CALL, "OP_METHOD_CALL"},
         {OpCode::OP_DUP, "OP_DUP"},
+        {OpCode::OP_CLOSURE, "OP_CLOSURE"},
+        {OpCode::OP_GET_LOCAL, "OP_GET_LOCAL"},
+        {OpCode::OP_SET_LOCAL, "OP_SET_LOCAL"},
+        {OpCode::OP_CLASS_NEW, "OP_CLASS_NEW"},
     };
 
     QString opName = opNames.count(opcode)

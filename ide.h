@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QTableWidget>
 #include <QTextEdit>
+#include <QListWidget>
 #include <memory>
 
 #include "lexer/Lexer.h"
@@ -127,10 +128,18 @@ private:
     void onVmStepCallback(const VMStepInfo& info);
 
     /// 更新字节码指令列表高亮
-    void highlightBytecodeLine(size_t ip);
+    void highlightBytecodeLine(const std::string& chunkName, size_t ip);
 
     /// 填充字节码指令列表
     void populateBytecodeList();
+
+    /// chunk→行号映射（用于多 chunk 高亮定位）
+    struct ChunkRowInfo {
+        std::string name;   // chunk 名称（"main" 或函数名）
+        int startRow;       // 在 bytecodeList_ 中的起始行
+        int rowCount;       // 该 chunk 占用的行数
+    };
+    std::vector<ChunkRowInfo> chunkRowMap_;
 
     /// 初始化 UI
     void initUI();

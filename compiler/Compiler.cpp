@@ -313,10 +313,9 @@ void Compiler::compileForStmt(ForStmt& node) {
         // 编译循环体
         compileNode(node.body.get());
 
-        // 编译更新
+        // 编译更新（OP_SET_VAR 不再 push 值，无需额外 OP_POP）
         if (node.update) {
             compileNode(node.update.get());
-            chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出更新表达式的值
         }
 
         // 回跳
@@ -338,9 +337,9 @@ void Compiler::compileForStmt(ForStmt& node) {
 
         compileNode(node.body.get());
 
+        // 编译更新（OP_SET_VAR 不再 push 值，无需额外 OP_POP）
         if (node.update) {
             compileNode(node.update.get());
-            chunk_.writeOp(OpCode::OP_POP, node.line);
         }
 
         chunk_.writeOp(OpCode::OP_LOOP, node.line);
@@ -394,6 +393,8 @@ void Compiler::compileFunDecl(FunDecl& node) {
     chunk_.writeOp(OpCode::OP_CLOSURE, node.line);
     chunk_.writeShort(nameIdx, node.line);
     chunk_.write(static_cast<uint8_t>(node.params.size()), node.line);
+    // OP_CALL 通过函数名查找，不需要栈上的闭包值，弹出
+    chunk_.writeOp(OpCode::OP_POP, node.line);
 }
 
 void Compiler::compileFunCall(FunCall& node) {

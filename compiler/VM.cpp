@@ -63,6 +63,19 @@ OpCode VM::getCurrentOpCode() const {
     return static_cast<OpCode>(chunk.code[ip]);
 }
 
+int VM::getCurrentLine() const {
+    if (frames_.empty()) return 0;
+    const BytecodeChunk& chunk = *frames_.back().chunk;
+    size_t ip = frames_.back().ip;
+    if (ip >= chunk.lines.size()) return 0;
+    return chunk.lines[ip];
+}
+
+std::string VM::getCurrentChunkName() const {
+    if (frames_.empty()) return "";
+    return frames_.back().functionName;
+}
+
 void VM::setOutputCallback(std::function<void(const std::string&)> callback) {
     outputCallback_ = callback;
 }
@@ -395,6 +408,9 @@ VMResult VM::executeOneInstruction() {
         Value left = pop();
         if (!left.isTruthy()) {
             push(Value(false));
+        } else {
+            // 左操作数为真，结果取决于右操作数（已在栈上由编译器短路机制处理）
+            // 注：Compiler 当前不生成 OP_AND，使用 OP_JUMP_IF_FALSE + OP_POP 实现
         }
         notifyStep(ip, op);
         ip += 1;
@@ -405,6 +421,9 @@ VMResult VM::executeOneInstruction() {
         Value left = pop();
         if (left.isTruthy()) {
             push(Value(true));
+        } else {
+            // 左操作数为假，结果取决于右操作数（已在栈上由编译器短路机制处理）
+            // 注：Compiler 当前不生成 OP_OR，使用 OP_JUMP_IF_FALSE + OP_POP 实现
         }
         notifyStep(ip, op);
         ip += 1;
@@ -454,7 +473,8 @@ VMResult VM::executeOneInstruction() {
         std::string name = chunk.constants[idx].stringVal;
         Value val = pop();
         globals_[name] = val;
-        push(val);
+        // 不推入值：赋值是语句而非表达式，不返回值
+        // 与 OP_SET_LOCAL 语义一致（SET_LOCAL 用 peek 不 pop 也不 push）
         notifyStep(ip, op);
         ip += 3;
         break;
