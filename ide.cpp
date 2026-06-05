@@ -484,6 +484,10 @@ void Ide::onShowBytecode() {
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
 
+    // 重置 VM 状态（确保单步模式从头开始）
+    vm_.resetState();
+    isVmInitialized_ = false;
+
     // 切换到字节码 Tab
     rightTabWidget_->setCurrentIndex(2);
 }
@@ -497,15 +501,20 @@ void Ide::onVmRun() {
     if (lastCompileResult_.mainChunk.code.empty()) return;
 
     isVmRunning_ = true;
-    isVmStepMode_ = false;
 
     vmRunAction_->setEnabled(false);
     vmStepAction_->setEnabled(false);
     vmStopAction_->setEnabled(true);
     bytecodeAction_->setEnabled(false);
 
-    // 启用步进回调，全速执行模式下也更新 UI
+    // 重置 VM 状态，全速执行
+    vm_.resetState();
+
+    // 设置步进回调用于实时 UI 更新
     vm_.setStepCallbackEnabled(true);
+    vm_.setStepCallback([this](const VMStepInfo& info) {
+        onVmStepCallback(info);
+    });
 
     try {
         VMResult result = vm_.execute(lastCompileResult_);
@@ -520,72 +529,88 @@ void Ide::onVmRun() {
 
     vm_.setStepCallbackEnabled(false);
     isVmRunning_ = false;
+    isVmInitialized_ = false;
 
     vmRunAction_->setEnabled(true);
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
     bytecodeAction_->setEnabled(true);
+    vmStackPanel_->clearAll();
 }
 
 void Ide::onVmStep() {
     if (isVmRunning_) return;
     if (lastCompileResult_.mainChunk.code.empty()) return;
 
-    isVmRunning_ = true;
-    isVmStepMode_ = true;
-
-    vmRunAction_->setEnabled(false);
-    vmStepAction_->setEnabled(false);
-    vmStopAction_->setEnabled(true);
-    bytecodeAction_->setEnabled(false);
-
-    // 单步模式：只执行一条指令
-    // 通过步进回调，第一条指令执行后自动暂停
-    int stepCount = 0;
-    vm_.setStepCallbackEnabled(true);
-    vm_.setStepCallback([&stepCount, this](const VMStepInfo& info) {
-        stepCount++;
-        // 单步模式：执行一条后即停止（通过抛异常中断）
-        if (stepCount >= 1 && isVmStepMode_) {
-            // 更新 UI
-            onVmStepCallback(info);
-            throw std::runtime_error("__VM_STEP_STOP__");
-        }
-        // 全速运行时每条也更新 UI
-        onVmStepCallback(info);
-    });
-
-    try {
-        VMResult result = vm_.execute(lastCompileResult_);
-        if (result == VMResult::VM_RUNTIME_ERROR) {
-            outputPanel_->appendError(QString("VM 运行时错误: %1")
-                                          .arg(QString::fromStdString(vm_.getLastError())));
-        }
-        outputPanel_->appendOutput("--- VM 执行结束 ---");
-        vmStackPanel_->clearAll();
-    } catch (const std::runtime_error& e) {
-        std::string msg = e.what();
-        if (msg == "__VM_STEP_STOP__") {
-            // 单步暂停，正常
-        } else {
-            outputPanel_->appendError(QString("VM 错误: %1").arg(e.what()));
-        }
+    // 首次点击：初始化 VM 执行环境
+    if (!isVmInitialized_) {
+        vm_.initExecution(lastCompileResult_);
+        isVmInitialized_ = true;
+        vmRunAction_->setEnabled(false);
+        vmStopAction_->setEnabled(true);
+        bytecodeAction_->setEnabled(false);
     }
 
-    vm_.setStepCallbackEnabled(false);
+    isVmRunning_ = true;
+    vmStepAction_->setEnabled(false);  // 防止重入
+
+    // 执行一条指令
+    VMResult result = vm_.stepOnce();
+
+    if (result == VMResult::VM_RUNTIME_ERROR) {
+        outputPanel_->appendError(QString("VM 运行时错误: %1")
+                                      .arg(QString::fromStdString(vm_.getLastError())));
+        vmStackPanel_->clearAll();
+        isVmInitialized_ = false;
+        vmRunAction_->setEnabled(true);
+        vmStepAction_->setEnabled(true);
+        vmStopAction_->setEnabled(false);
+        bytecodeAction_->setEnabled(true);
+        isVmRunning_ = false;
+        return;
+    }
+
+    // 检查是否执行完毕
+    if (vm_.isFinished()) {
+        outputPanel_->appendOutput("--- VM 执行结束 ---");
+        vmStackPanel_->clearAll();
+        isVmInitialized_ = false;
+        vmRunAction_->setEnabled(true);
+        vmStepAction_->setEnabled(true);
+        vmStopAction_->setEnabled(false);
+        bytecodeAction_->setEnabled(true);
+        isVmRunning_ = false;
+        return;
+    }
+
+    // 更新 UI：栈 + 全局变量 + 当前指令高亮
+    vmStackPanel_->updateStack(vm_.getStack());
+    vmStackPanel_->updateGlobals(vm_.getGlobals());
+
+    // 高亮当前字节码指令
+    size_t currentIP = vm_.getCurrentIP();
+    OpCode currentOp = vm_.getCurrentOpCode();
+    int opLine = 0;
+    // 从 mainChunk 获取行号信息
+    if (currentIP < lastCompileResult_.mainChunk.lines.size()) {
+        opLine = lastCompileResult_.mainChunk.lines[currentIP];
+    }
+    vmStackPanel_->updateCurrentOp(currentIP, currentOp, opLine);
+    highlightBytecodeLine(currentIP);
+
+    vmStepAction_->setEnabled(true);
     isVmRunning_ = false;
+}
+
+void Ide::onVmStop() {
+    vm_.resetState();
+    isVmInitialized_ = false;
+    vmStackPanel_->clearAll();
 
     vmRunAction_->setEnabled(true);
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
     bytecodeAction_->setEnabled(true);
-}
-
-void Ide::onVmStop() {
-    // VM 单次执行模式不需要异步停止
-    // 按钮状态在执行完成后自动更新
-    isVmStepMode_ = false;
-    vmStackPanel_->clearAll();
 }
 
 void Ide::onVmStepCallback(const VMStepInfo& info) {

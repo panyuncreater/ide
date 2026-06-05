@@ -108,7 +108,8 @@ void DebugController::stepIn() {
     mode_ = StepMode::MODE_STEP_IN;
     running_ = true;
     paused_ = false;       // 解除暂停
-    lastPausedLine_ = -1;  // 重置，允许停在下一行
+    // 不重置 lastPausedLine_：保留当前暂停行号，跳过同行剩余子表达式，
+    // 仅在行号变化时才暂停（解决"需按多次才到下一行"的问题）
 }
 
 void DebugController::stepOver() {
@@ -116,7 +117,7 @@ void DebugController::stepOver() {
     stepOverDepth_ = currentDepth_;
     running_ = true;
     paused_ = false;
-    lastPausedLine_ = -1;
+    // 同理，不重置 lastPausedLine_
 }
 
 void DebugController::resume() {

@@ -18,6 +18,13 @@ enum class VMResult {
     VM_STACK_OVERFLOW
 };
 
+/// VM 执行模式
+enum class VMExecMode {
+    VM_MODE_NONE,       // 未初始化
+    VM_MODE_RUN,        // 全速运行
+    VM_MODE_STEP        // 单步模式
+};
+
 /// 每条指令执行后的状态快照（用于调试/可视化）
 struct VMStepInfo {
     size_t ip;                              // 当前指令指针
@@ -40,8 +47,23 @@ class VM {
 public:
     VM();
 
-    /// 执行编译结果（一次性全部执行）
+    /// 执行编译结果（一次性全部执行，全速模式）
     VMResult execute(const CompileResult& result);
+
+    /// 初始化执行环境但不运行（单步模式前置操作）
+    void initExecution(const CompileResult& result);
+
+    /// 单步执行一条指令（需先调用 initExecution）
+    VMResult stepOnce();
+
+    /// 是否执行完毕（无帧可执行）
+    bool isFinished() const;
+
+    /// 是否已初始化（initExecution 已调用）
+    bool isInitialized() const;
+
+    /// 重置 VM 状态（清理栈/帧/变量）
+    void resetState();
 
     /// 设置输出回调
     void setOutputCallback(std::function<void(const std::string&)> callback);
@@ -61,6 +83,12 @@ public:
     /// 获取全局变量（用于调试）
     std::unordered_map<std::string, Value> getGlobals() const;
 
+    /// 获取当前帧的 IP（用于单步调试 UI 高亮）
+    size_t getCurrentIP() const;
+
+    /// 获取当前帧的指令操作码（用于单步调试 UI 显示）
+    OpCode getCurrentOpCode() const;
+
 private:
     std::vector<Value> stack_;                     // 操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表
@@ -69,6 +97,7 @@ private:
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
     bool stepCallbackEnabled_ = false;              // 是否启用步进回调
+    bool initialized_ = false;                      // 是否已初始化执行环境
     std::string lastError_;                         // 最近一次运行时错误
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
     static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
@@ -92,4 +121,7 @@ private:
 
     /// 获取当前 chunk
     const BytecodeChunk& currentChunk();
+
+    /// 执行单条指令的内部实现（供 execute() 和 stepOnce() 共用）
+    VMResult executeOneInstruction();
 };

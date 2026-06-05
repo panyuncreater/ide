@@ -83,6 +83,8 @@ Value Interpreter::evaluate(ASTNode* node) {
 
 void Interpreter::checkBreak(ASTNode* node) {
     if (debugMode_ && debugger_) {
+        // 同步调用深度到调试控制器（Step Over 依赖此值判断是否进入函数）
+        debugger_->setCurrentDepth(recursionDepth_);
         debugger_->checkBreak(node);
     }
 }

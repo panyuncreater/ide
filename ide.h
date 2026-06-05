@@ -121,7 +121,7 @@ private:
     CompileResult lastCompileResult_;     // 上次编译的结果
     bool isRunning_ = false;               // 是否正在运行
     bool isVmRunning_ = false;             // VM 是否正在运行
-    bool isVmStepMode_ = false;            // VM 单步模式标志
+    bool isVmInitialized_ = false;         // VM 执行环境是否已初始化（单步模式）
 
     /// VM 步进回调处理
     void onVmStepCallback(const VMStepInfo& info);
