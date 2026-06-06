@@ -561,8 +561,11 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         chunk_.writeShort(fieldIdx, varDecl->line);
     }
 
-    // 弹出实例（OP_CLASS_NEW 已将实例注册到全局变量，栈上的不再需要）
-    chunk_.writeOp(OpCode::OP_POP, node.line);
+    // 将实例注册为全局变量（OP_DEFINE_VAR 从栈上 pop 值并注册到 globals_）
+    chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+    chunk_.writeShort(nameIdx, node.line);
+
+    // 栈上的实例已被 OP_DEFINE_VAR 消费，无需额外 OP_POP
 }
 
 void Compiler::compileMemberAccess(MemberAccess& node) {

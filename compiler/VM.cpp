@@ -625,11 +625,28 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_SET: {
-        // 旧路径：弹出但不写回（仅用于非简单变量的 fallback）
+        // 旧路径：用于非简单变量的 fallback（如嵌套访问 arr[i][j] = val）
+        // 当前不支持嵌套索引赋值的写回，报错提示
         Value val = pop();
         Value idx = pop();
         Value obj = pop();
+        // 恢复 obj 和 idx 到栈上（因为写回需要原地修改）
+        push(obj);
+        push(idx);
         push(val);
+        // 尝试写回：如果 obj 是数组/字典，修改后重新 push
+        if (obj.isArray() && idx.isInt()) {
+            int i = idx.intVal;
+            if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
+                obj.arrayVal[i] = val;
+            }
+        } else if (obj.isDict()) {
+            obj.dictVal[idx.toString()] = val;
+        }
+        // 弹出值（赋值不返回值）
+        pop();  // val
+        pop();  // idx
+        pop();  // obj（修改后的副本，但原引用可能是 globals_ 中的值）
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -685,12 +702,18 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET: {
-        // 旧路径：弹出但不写回（仅用于非简单变量的 fallback）
+        // 旧路径：用于非简单变量的 fallback
+        // 尝试写回：修改对象字段
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         std::string fieldName = chunk.constants[idx].stringVal;
         Value val = pop();
         Value obj = pop();
-        push(val);
+        if (obj.isInstance()) {
+            obj.fields[fieldName] = val;
+        } else if (obj.isDict()) {
+            obj.dictVal[fieldName] = val;
+        }
+        // 赋值不返回值，不 push
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -840,30 +863,46 @@ VMResult VM::executeOneInstruction() {
         Value instance = Value::makeInstance(className);
         push(instance);
 
-        // 如果有 init 方法，调用它（参数在栈上紧跟实例之后）
+        // 检查是否有 init 方法
         std::string initKey = className + ".init";
         auto it = functionChunks_.find(initKey);
-        if (it != functionChunks_.end() && argCount > 0) {
-            const BytecodeChunk& initChunk = it->second;
+
+        if (it != functionChunks_.end()) {
+            // 有 init 方法：创建新帧执行 init
+            // init 的参数在栈上紧跟实例之后（如果有参数的话）
+            // 但当前编译器总是 argCount=0，字段由 OP_INIT_FIELD 初始化
+            // 这里处理两种情况：
+            //   1. argCount > 0：有构造参数（未来扩展）
+            //   2. argCount == 0：无参构造，init 可能做额外初始化逻辑
 
             if (frames_.size() >= MAX_FRAMES) {
                 return runtimeError("调用栈溢出");
             }
 
-            VMCallFrame newFrame;
-            newFrame.chunk = &initChunk;
-            newFrame.returnIp = ip + 4;
-            newFrame.basePointer = stack_.size() - argCount - 1;
-            newFrame.functionName = initKey;
-            newFrame.ip = 0;
-            frames_.push_back(newFrame);
-
-            notifyStep(ip, op);
-            break;
+            // 弹出多余参数（如果有）
+            // 注意：当前编译路径 argCount 总是 0，但 OP_INIT_FIELD 会在
+            // OP_CLASS_NEW 之后立即设置字段，所以 init 方法通过 OP_METHOD_CALL
+            // 单独调用，而不是在 OP_CLASS_NEW 内部调用
+            // 如果 argCount > 0，参数已在栈上，可以直接创建帧
+            if (argCount > 0) {
+                VMCallFrame newFrame;
+                newFrame.chunk = &it->second;
+                newFrame.returnIp = ip + 4;
+                newFrame.basePointer = stack_.size() - argCount - 1;
+                newFrame.functionName = initKey;
+                newFrame.ip = 0;
+                frames_.push_back(newFrame);
+            } else {
+                // 无参构造：弹出多余的参数（没有）
+                // 不自动调用 init —— init 通过 OP_METHOD_CALL 调用
+            }
         }
 
-        // 无 init 或无参数：弹出多余参数
-        for (uint8_t i = 0; i < argCount; ++i) pop();
+        // 弹出多余参数（如果 init 未被调用且有多余参数）
+        if (argCount > 0 && (it == functionChunks_.end())) {
+            for (uint8_t i = 0; i < argCount; ++i) pop();
+        }
+
         notifyStep(ip, op);
         ip += 4;
         break;

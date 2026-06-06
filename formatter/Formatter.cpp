@@ -21,34 +21,51 @@ std::string Formatter::format(Block& program) {
     return formatBlock(program, true);
 }
 
+/// 判断节点类型是否是自终止的复合语句（以 } 结尾，不需要额外 ;）
+static bool isSelfTerminating(ASTNode* node) {
+    if (!node) return false;
+    switch (node->nodeType) {
+    case NodeType::NODE_IF_STMT:
+    case NodeType::NODE_WHILE_STMT:
+    case NodeType::NODE_FOR_STMT:
+    case NodeType::NODE_FUN_DECL:
+    case NodeType::NODE_CLASS_DECL:
+        return true;
+    default:
+        return false;
+    }
+}
+
 std::string Formatter::formatNode(ASTNode* node) {
     if (!node) return "null";
 
-    if (auto* n = dynamic_cast<BinaryOp*>(node)) return formatBinaryOp(*n);
-    if (auto* n = dynamic_cast<UnaryOp*>(node)) return formatUnaryOp(*n);
-    if (auto* n = dynamic_cast<NumberLiteral*>(node)) return formatNumberLiteral(*n);
-    if (auto* n = dynamic_cast<StringLiteral*>(node)) return formatStringLiteral(*n);
-    if (auto* n = dynamic_cast<BoolLiteral*>(node)) return formatBoolLiteral(*n);
-    if (auto* n = dynamic_cast<VarDecl*>(node)) return formatVarDecl(*n);
-    if (auto* n = dynamic_cast<Assignment*>(node)) return formatAssignment(*n);
-    if (auto* n = dynamic_cast<VarRef*>(node)) return formatVarRef(*n);
-    if (auto* n = dynamic_cast<IfStmt*>(node)) return formatIfStmt(*n);
-    if (auto* n = dynamic_cast<WhileStmt*>(node)) return formatWhileStmt(*n);
-    if (auto* n = dynamic_cast<ForStmt*>(node)) return formatForStmt(*n);
-    if (auto* n = dynamic_cast<FunDecl*>(node)) return formatFunDecl(*n);
-    if (auto* n = dynamic_cast<FunCall*>(node)) return formatFunCall(*n);
-    if (auto* n = dynamic_cast<ReturnStmt*>(node)) return formatReturnStmt(*n);
-    if (auto* n = dynamic_cast<PrintStmt*>(node)) return formatPrintStmt(*n);
-    if (auto* n = dynamic_cast<Block*>(node)) return formatBlock(*n);
-    if (auto* n = dynamic_cast<ArrayLiteral*>(node)) return formatArrayLiteral(*n);
-    if (auto* n = dynamic_cast<DictLiteral*>(node)) return formatDictLiteral(*n);
-    if (auto* n = dynamic_cast<IndexAccess*>(node)) return formatIndexAccess(*n);
-    if (auto* n = dynamic_cast<IndexAssign*>(node)) return formatIndexAssign(*n);
-    if (auto* n = dynamic_cast<ClassDecl*>(node)) return formatClassDecl(*n);
-    if (auto* n = dynamic_cast<MemberAccess*>(node)) return formatMemberAccess(*n);
-    if (auto* n = dynamic_cast<MemberAssign*>(node)) return formatMemberAssign(*n);
-    if (auto* n = dynamic_cast<MethodCall*>(node)) return formatMethodCall(*n);
-    if (auto* n = dynamic_cast<NullLiteral*>(node)) return formatNullLiteral(*n);
+    switch (node->nodeType) {
+    case NodeType::NODE_BINARY_OP:     return formatBinaryOp(*static_cast<BinaryOp*>(node));
+    case NodeType::NODE_UNARY_OP:      return formatUnaryOp(*static_cast<UnaryOp*>(node));
+    case NodeType::NODE_NUMBER_LITERAL: return formatNumberLiteral(*static_cast<NumberLiteral*>(node));
+    case NodeType::NODE_STRING_LITERAL: return formatStringLiteral(*static_cast<StringLiteral*>(node));
+    case NodeType::NODE_BOOL_LITERAL:   return formatBoolLiteral(*static_cast<BoolLiteral*>(node));
+    case NodeType::NODE_VAR_DECL:       return formatVarDecl(*static_cast<VarDecl*>(node));
+    case NodeType::NODE_ASSIGNMENT:     return formatAssignment(*static_cast<Assignment*>(node));
+    case NodeType::NODE_VAR_REF:       return formatVarRef(*static_cast<VarRef*>(node));
+    case NodeType::NODE_IF_STMT:        return formatIfStmt(*static_cast<IfStmt*>(node));
+    case NodeType::NODE_WHILE_STMT:     return formatWhileStmt(*static_cast<WhileStmt*>(node));
+    case NodeType::NODE_FOR_STMT:       return formatForStmt(*static_cast<ForStmt*>(node));
+    case NodeType::NODE_FUN_DECL:       return formatFunDecl(*static_cast<FunDecl*>(node));
+    case NodeType::NODE_FUN_CALL:       return formatFunCall(*static_cast<FunCall*>(node));
+    case NodeType::NODE_RETURN_STMT:    return formatReturnStmt(*static_cast<ReturnStmt*>(node));
+    case NodeType::NODE_PRINT_STMT:     return formatPrintStmt(*static_cast<PrintStmt*>(node));
+    case NodeType::NODE_BLOCK:          return formatBlock(*static_cast<Block*>(node));
+    case NodeType::NODE_ARRAY_LITERAL:  return formatArrayLiteral(*static_cast<ArrayLiteral*>(node));
+    case NodeType::NODE_DICT_LITERAL:   return formatDictLiteral(*static_cast<DictLiteral*>(node));
+    case NodeType::NODE_INDEX_ACCESS:   return formatIndexAccess(*static_cast<IndexAccess*>(node));
+    case NodeType::NODE_INDEX_ASSIGN:  return formatIndexAssign(*static_cast<IndexAssign*>(node));
+    case NodeType::NODE_CLASS_DECL:     return formatClassDecl(*static_cast<ClassDecl*>(node));
+    case NodeType::NODE_MEMBER_ACCESS: return formatMemberAccess(*static_cast<MemberAccess*>(node));
+    case NodeType::NODE_MEMBER_ASSIGN: return formatMemberAssign(*static_cast<MemberAssign*>(node));
+    case NodeType::NODE_METHOD_CALL:    return formatMethodCall(*static_cast<MethodCall*>(node));
+    case NodeType::NODE_NULL_LITERAL:   return formatNullLiteral(*static_cast<NullLiteral*>(node));
+    }
 
     return "/* unknown node */";
 }
@@ -103,7 +120,6 @@ std::string Formatter::formatVarRef(VarRef& node) {
 std::string Formatter::formatIfStmt(IfStmt& node) {
     std::string result = "if (" + formatNode(node.condition.get()) + ") {\n";
     currentIndent_++;
-    // 格式化 then 分支
     if (auto* block = dynamic_cast<Block*>(node.thenBranch.get())) {
         result += formatBlock(*block);
     } else {
@@ -113,15 +129,22 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
     result += indent() + "}";
 
     if (node.elseBranch) {
-        result += " else {\n";
-        currentIndent_++;
-        if (auto* block = dynamic_cast<Block*>(node.elseBranch.get())) {
+        // else if 分支：elseBranch 是 IfStmt，直接输出 "else if ..."
+        if (node.elseBranch->nodeType == NodeType::NODE_IF_STMT) {
+            result += " else " + formatIfStmt(*static_cast<IfStmt*>(node.elseBranch.get()));
+        } else if (auto* block = dynamic_cast<Block*>(node.elseBranch.get())) {
+            result += " else {\n";
+            currentIndent_++;
             result += formatBlock(*block);
+            currentIndent_--;
+            result += indent() + "}";
         } else {
+            result += " else {\n";
+            currentIndent_++;
             result += indent() + formatNode(node.elseBranch.get()) + ";\n";
+            currentIndent_--;
+            result += indent() + "}";
         }
-        currentIndent_--;
-        result += indent() + "}";
     }
 
     return result;
@@ -214,7 +237,12 @@ std::string Formatter::formatPrintStmt(PrintStmt& node) {
 std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
     std::string result;
     for (size_t i = 0; i < node.statements.size(); ++i) {
-        result += indent() + formatNode(node.statements[i].get()) + ";\n";
+        // 复合语句（if/while/for/fun/class）以 } 结尾，不需要额外 ;
+        if (isSelfTerminating(node.statements[i].get())) {
+            result += indent() + formatNode(node.statements[i].get()) + "\n";
+        } else {
+            result += indent() + formatNode(node.statements[i].get()) + ";\n";
+        }
     }
     return result;
 }
@@ -257,7 +285,12 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     result += " {\n";
     currentIndent_++;
     for (auto& member : node.members) {
-        result += indent() + formatNode(member.get()) + ";\n";
+        // 方法（FunDecl）以 } 结尾，不需要额外 ;
+        if (isSelfTerminating(member.get())) {
+            result += indent() + formatNode(member.get()) + "\n";
+        } else {
+            result += indent() + formatNode(member.get()) + ";\n";
+        }
     }
     currentIndent_--;
     result += indent() + "}";
