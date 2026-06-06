@@ -53,11 +53,13 @@ enum class OpCode : uint8_t {
     OP_CALL,         // 函数调用（参数个数）
 
     OP_BUILD_ARRAY,  // 构建数组（元素个数）
+    OP_BUILD_DICT,   // 构建字典（键值对个数）
     OP_INDEX_GET,    // 索引取值
-    OP_INDEX_SET,    // 索引赋值
-
+    OP_INDEX_SET,    // 索引赋值（旧：空操作）
+    OP_INDEX_SET_VAR,// 索引赋值到变量（nameIdx(2B)）：直接修改 globals_[varName]
     OP_MEMBER_GET,   // 成员取值（名称索引）
-    OP_MEMBER_SET,   // 成员赋值（名称索引）
+    OP_MEMBER_SET,   // 成员赋值（名称索引）（旧：空操作）
+    OP_MEMBER_SET_VAR,// 成员赋值到变量（nameIdx(2B)+fieldNameIdx(2B)）：直接修改 globals_[varName].fields
     OP_METHOD_CALL,  // 方法调用（名称索引 + 参数个数）
 
     OP_DUP,          // 复制栈顶
@@ -67,6 +69,7 @@ enum class OpCode : uint8_t {
     OP_GET_LOCAL,    // 读取当前帧局部变量（操作数: slot(1B)）
     OP_SET_LOCAL,    // 写入当前帧局部变量（操作数: slot(1B)）
     OP_CLASS_NEW,    // 类构造调用（操作数: nameIdx(2B) + argCount(1B)）
+    OP_INIT_FIELD,   // 初始化实例字段（操作数: fieldNameIdx(2B)）：从栈顶 pop 值设置到实例的字段
 };
 
 /// 字节码块：一段连续的指令
@@ -231,8 +234,20 @@ struct BytecodeChunk {
             offset += 2;
             break;
         }
+        case OpCode::OP_BUILD_DICT: {
+            uint8_t count = code[offset + 1];
+            str += "OP_BUILD_DICT " + std::to_string(count);
+            offset += 2;
+            break;
+        }
         case OpCode::OP_INDEX_GET: str += "OP_INDEX_GET"; offset += 1; break;
         case OpCode::OP_INDEX_SET: str += "OP_INDEX_SET"; offset += 1; break;
+        case OpCode::OP_INDEX_SET_VAR: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_INDEX_SET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            offset += 3;
+            break;
+        }
         case OpCode::OP_MEMBER_GET: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             str += "OP_MEMBER_GET " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
@@ -243,6 +258,13 @@ struct BytecodeChunk {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             str += "OP_MEMBER_SET " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
             offset += 3;
+            break;
+        }
+        case OpCode::OP_MEMBER_SET_VAR: {
+            uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
+            uint16_t fieldIdx = code[offset + 3] | (code[offset + 4] << 8);
+            str += "OP_MEMBER_SET_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal + ") ." + constants[fieldIdx].stringVal;
+            offset += 5;
             break;
         }
         case OpCode::OP_METHOD_CALL: {
@@ -277,6 +299,12 @@ struct BytecodeChunk {
             uint8_t argCount = code[offset + 3];
             str += "OP_CLASS_NEW " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
             offset += 4;
+            break;
+        }
+        case OpCode::OP_INIT_FIELD: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_INIT_FIELD " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            offset += 3;
             break;
         }
         default:

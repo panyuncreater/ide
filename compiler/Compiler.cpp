@@ -44,32 +44,34 @@ uint16_t Compiler::identifierIndex(const std::string& name) {
 void Compiler::compileNode(ASTNode* node) {
     if (!node) return;
 
-    // 根据节点类型分发
-    if (auto* n = dynamic_cast<BinaryOp*>(node)) { compileBinaryOp(*n); return; }
-    if (auto* n = dynamic_cast<UnaryOp*>(node)) { compileUnaryOp(*n); return; }
-    if (auto* n = dynamic_cast<NumberLiteral*>(node)) { compileNumberLiteral(*n); return; }
-    if (auto* n = dynamic_cast<StringLiteral*>(node)) { compileStringLiteral(*n); return; }
-    if (auto* n = dynamic_cast<BoolLiteral*>(node)) { compileBoolLiteral(*n); return; }
-    if (auto* n = dynamic_cast<VarDecl*>(node)) { compileVarDecl(*n); return; }
-    if (auto* n = dynamic_cast<Assignment*>(node)) { compileAssignment(*n); return; }
-    if (auto* n = dynamic_cast<VarRef*>(node)) { compileVarRef(*n); return; }
-    if (auto* n = dynamic_cast<IfStmt*>(node)) { compileIfStmt(*n); return; }
-    if (auto* n = dynamic_cast<WhileStmt*>(node)) { compileWhileStmt(*n); return; }
-    if (auto* n = dynamic_cast<ForStmt*>(node)) { compileForStmt(*n); return; }
-    if (auto* n = dynamic_cast<FunDecl*>(node)) { compileFunDecl(*n); return; }
-    if (auto* n = dynamic_cast<FunCall*>(node)) { compileFunCall(*n); return; }
-    if (auto* n = dynamic_cast<ReturnStmt*>(node)) { compileReturnStmt(*n); return; }
-    if (auto* n = dynamic_cast<PrintStmt*>(node)) { compilePrintStmt(*n); return; }
-    if (auto* n = dynamic_cast<Block*>(node)) { compileBlock(*n); return; }
-    if (auto* n = dynamic_cast<ArrayLiteral*>(node)) { compileArrayLiteral(*n); return; }
-    if (auto* n = dynamic_cast<DictLiteral*>(node)) { compileDictLiteral(*n); return; }
-    if (auto* n = dynamic_cast<IndexAccess*>(node)) { compileIndexAccess(*n); return; }
-    if (auto* n = dynamic_cast<IndexAssign*>(node)) { compileIndexAssign(*n); return; }
-    if (auto* n = dynamic_cast<ClassDecl*>(node)) { compileClassDecl(*n); return; }
-    if (auto* n = dynamic_cast<MemberAccess*>(node)) { compileMemberAccess(*n); return; }
-    if (auto* n = dynamic_cast<MemberAssign*>(node)) { compileMemberAssign(*n); return; }
-    if (auto* n = dynamic_cast<MethodCall*>(node)) { compileMethodCall(*n); return; }
-    if (auto* n = dynamic_cast<NullLiteral*>(node)) { compileNullLiteral(*n); return; }
+    // 根据 NodeType 枚举快速分发（替代 24 次 dynamic_cast）
+    switch (node->nodeType) {
+    case NodeType::NODE_BINARY_OP:     compileBinaryOp(*static_cast<BinaryOp*>(node)); return;
+    case NodeType::NODE_UNARY_OP:      compileUnaryOp(*static_cast<UnaryOp*>(node)); return;
+    case NodeType::NODE_NUMBER_LITERAL: compileNumberLiteral(*static_cast<NumberLiteral*>(node)); return;
+    case NodeType::NODE_STRING_LITERAL: compileStringLiteral(*static_cast<StringLiteral*>(node)); return;
+    case NodeType::NODE_BOOL_LITERAL:   compileBoolLiteral(*static_cast<BoolLiteral*>(node)); return;
+    case NodeType::NODE_VAR_DECL:       compileVarDecl(*static_cast<VarDecl*>(node)); return;
+    case NodeType::NODE_ASSIGNMENT:     compileAssignment(*static_cast<Assignment*>(node)); return;
+    case NodeType::NODE_VAR_REF:       compileVarRef(*static_cast<VarRef*>(node)); return;
+    case NodeType::NODE_IF_STMT:        compileIfStmt(*static_cast<IfStmt*>(node)); return;
+    case NodeType::NODE_WHILE_STMT:     compileWhileStmt(*static_cast<WhileStmt*>(node)); return;
+    case NodeType::NODE_FOR_STMT:       compileForStmt(*static_cast<ForStmt*>(node)); return;
+    case NodeType::NODE_FUN_DECL:       compileFunDecl(*static_cast<FunDecl*>(node)); return;
+    case NodeType::NODE_FUN_CALL:       compileFunCall(*static_cast<FunCall*>(node)); return;
+    case NodeType::NODE_RETURN_STMT:    compileReturnStmt(*static_cast<ReturnStmt*>(node)); return;
+    case NodeType::NODE_PRINT_STMT:     compilePrintStmt(*static_cast<PrintStmt*>(node)); return;
+    case NodeType::NODE_BLOCK:          compileBlock(*static_cast<Block*>(node)); return;
+    case NodeType::NODE_ARRAY_LITERAL:  compileArrayLiteral(*static_cast<ArrayLiteral*>(node)); return;
+    case NodeType::NODE_DICT_LITERAL:   compileDictLiteral(*static_cast<DictLiteral*>(node)); return;
+    case NodeType::NODE_INDEX_ACCESS:   compileIndexAccess(*static_cast<IndexAccess*>(node)); return;
+    case NodeType::NODE_INDEX_ASSIGN:   compileIndexAssign(*static_cast<IndexAssign*>(node)); return;
+    case NodeType::NODE_CLASS_DECL:     compileClassDecl(*static_cast<ClassDecl*>(node)); return;
+    case NodeType::NODE_MEMBER_ACCESS: compileMemberAccess(*static_cast<MemberAccess*>(node)); return;
+    case NodeType::NODE_MEMBER_ASSIGN: compileMemberAssign(*static_cast<MemberAssign*>(node)); return;
+    case NodeType::NODE_METHOD_CALL:    compileMethodCall(*static_cast<MethodCall*>(node)); return;
+    case NodeType::NODE_NULL_LITERAL:   compileNullLiteral(*static_cast<NullLiteral*>(node)); return;
+    }
 }
 
 void Compiler::compileBinaryOp(BinaryOp& node) {
@@ -448,19 +450,14 @@ void Compiler::compileArrayLiteral(ArrayLiteral& node) {
 }
 
 void Compiler::compileDictLiteral(DictLiteral& node) {
-    // 编译所有键值对
+    // 编译所有键值对（先键后值，与 OP_BUILD_DICT 消费顺序一致）
     for (auto& pair : node.pairs) {
         compileNode(pair.first.get());
         compileNode(pair.second.get());
     }
-    // 字典构建暂用常量池
-    // 简化：把字典字面量作为常量存入
-    // 这里先输出空操作
-    for (size_t i = 0; i < node.pairs.size(); ++i) {
-        chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出值
-        chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出键
-    }
-    chunk_.writeOp(OpCode::OP_NULL, node.line);
+    // 构建字典指令：弹出 2*count 个值，构建字典，push 到栈
+    chunk_.writeOp(OpCode::OP_BUILD_DICT, node.line);
+    chunk_.write(static_cast<uint8_t>(node.pairs.size()), node.line);
 }
 
 void Compiler::compileIndexAccess(IndexAccess& node) {
@@ -470,54 +467,102 @@ void Compiler::compileIndexAccess(IndexAccess& node) {
 }
 
 void Compiler::compileIndexAssign(IndexAssign& node) {
-    compileNode(node.object.get());
-    compileNode(node.index.get());
-    compileNode(node.value.get());
-    chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
+    // 根据左值对象类型选择赋值策略
+    VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
+                     ? static_cast<VarRef*>(node.object.get()) : nullptr;
+
+    if (objVar) {
+        // 简单变量索引赋值：arr[i] = val → 不推 arr，仅推 index 和 value
+        compileNode(node.index.get());
+        compileNode(node.value.get());
+        // 发射 OP_INDEX_SET_VAR：直接修改 globals_[varName]
+        uint16_t nameIdx = identifierIndex(objVar->name);
+        chunk_.writeOp(OpCode::OP_INDEX_SET_VAR, node.line);
+        chunk_.writeShort(nameIdx, node.line);
+    } else {
+        // 通用路径（嵌套访问等）：推对象+索引+值，OP_INDEX_SET 不做写回（限制但安全）
+        compileNode(node.object.get());
+        compileNode(node.index.get());
+        compileNode(node.value.get());
+        chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
+    }
 }
 
 void Compiler::compileClassDecl(ClassDecl& node) {
-    // 类声明：在主 chunk 中 emit OP_CLASS_NEW 占位
-    identifierIndex(node.name);
-    // 简化：编译类成员方法为独立 chunk
+    // 类声明：发射 OP_CLASS_NEW + OP_INIT_FIELD 初始化字段 + 编译方法
+    uint16_t nameIdx = identifierIndex(node.name);
+
+    // 先编译所有方法为独立 chunk（方法不依赖字段初始化顺序）
+    // 同时收集字段名列表，用于方法的局部变量映射
+    std::vector<std::string> fieldNames;
     for (auto& member : node.members) {
-        FunDecl* funDecl = dynamic_cast<FunDecl*>(member.get());
-        if (funDecl) {
-            // 编译方法为独立 chunk（方法名用 ClassName.methodName）
-            BytecodeChunk savedChunk = std::move(chunk_);
-            std::unordered_map<std::string, uint16_t> savedVarIndex = varIndex_;
-            std::unordered_map<std::string, int> savedLocals = currentLocals_;
-            bool savedInFunction = inFunction_;
-
-            std::string methodKey = node.name + "." + funDecl->name;
-            chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
-            varIndex_.clear();
-            currentLocals_.clear();
-            inFunction_ = true;
-
-            // 编译参数到局部变量槽位
-            for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
-                currentLocals_[funDecl->params[i]] = i;
-            }
-
-            // 编译方法体
-            if (funDecl->body) {
-                compileNode(funDecl->body.get());
-            }
-
-            // 隐式返回 null
-            chunk_.writeOp(OpCode::OP_NULL, funDecl->line);
-            chunk_.writeOp(OpCode::OP_RETURN, funDecl->line);
-
-            functionChunks_[methodKey] = std::move(chunk_);
-
-            // 恢复
-            chunk_ = std::move(savedChunk);
-            varIndex_ = savedVarIndex;
-            currentLocals_ = savedLocals;
-            inFunction_ = savedInFunction;
+        if (member->nodeType == NodeType::NODE_VAR_DECL) {
+            fieldNames.push_back(static_cast<VarDecl*>(member.get())->name);
         }
     }
+
+    for (auto& member : node.members) {
+        if (member->nodeType != NodeType::NODE_FUN_DECL) continue;
+        FunDecl* funDecl = static_cast<FunDecl*>(member.get());
+        std::string methodKey = node.name + "." + funDecl->name;
+        BytecodeChunk savedChunk = std::move(chunk_);
+        std::unordered_map<std::string, uint16_t> savedVarIndex = varIndex_;
+        std::unordered_map<std::string, int> savedLocals = currentLocals_;
+        bool savedInFunction = inFunction_;
+
+        chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
+        varIndex_.clear();
+        currentLocals_.clear();
+        inFunction_ = true;
+
+        // 局部变量映射：slot 0 = this，slot 1..N = 字段，slot N+1.. = 参数
+        int slot = 0;
+        currentLocals_["this"] = slot++;  // slot 0: this
+        for (const auto& fieldName : fieldNames) {
+            currentLocals_[fieldName] = slot++;  // slot 1..N: 实例字段
+        }
+        for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
+            currentLocals_[funDecl->params[i]] = slot++;  // slot N+1..: 参数
+        }
+
+        if (funDecl->body) {
+            compileNode(funDecl->body.get());
+        }
+
+        chunk_.writeOp(OpCode::OP_NULL, funDecl->line);
+        chunk_.writeOp(OpCode::OP_RETURN, funDecl->line);
+
+        functionChunks_[methodKey] = std::move(chunk_);
+
+        chunk_ = std::move(savedChunk);
+        varIndex_ = savedVarIndex;
+        currentLocals_ = savedLocals;
+        inFunction_ = savedInFunction;
+    }
+
+    // 主 chunk 中：发射 OP_CLASS_NEW（0 参数构造，字段由 OP_INIT_FIELD 设置）
+    chunk_.writeOp(OpCode::OP_CLASS_NEW, node.line);
+    chunk_.writeShort(nameIdx, node.line);
+    chunk_.write(static_cast<uint8_t>(0), node.line);  // argCount = 0（字段由 OP_INIT_FIELD 初始化）
+
+    // 此时栈顶是刚创建的空实例，发射 OP_INIT_FIELD 设置每个字段的默认值
+    for (auto& member : node.members) {
+        if (member->nodeType != NodeType::NODE_VAR_DECL) continue;
+        VarDecl* varDecl = static_cast<VarDecl*>(member.get());
+        // 编译字段默认值表达式
+        if (varDecl->initializer) {
+            compileNode(varDecl->initializer.get());
+        } else {
+            chunk_.writeOp(OpCode::OP_NULL, varDecl->line);
+        }
+        // 发射 OP_INIT_FIELD：pop 默认值，设置到栈顶实例的字段中
+        uint16_t fieldIdx = identifierIndex(varDecl->name);
+        chunk_.writeOp(OpCode::OP_INIT_FIELD, varDecl->line);
+        chunk_.writeShort(fieldIdx, varDecl->line);
+    }
+
+    // 弹出实例（OP_CLASS_NEW 已将实例注册到全局变量，栈上的不再需要）
+    chunk_.writeOp(OpCode::OP_POP, node.line);
 }
 
 void Compiler::compileMemberAccess(MemberAccess& node) {
@@ -528,11 +573,27 @@ void Compiler::compileMemberAccess(MemberAccess& node) {
 }
 
 void Compiler::compileMemberAssign(MemberAssign& node) {
-    compileNode(node.object.get());
-    compileNode(node.value.get());
-    uint16_t nameIdx = identifierIndex(node.fieldName);
-    chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
-    chunk_.writeShort(nameIdx, node.line);
+    // 根据左值对象类型选择赋值策略
+    VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
+                     ? static_cast<VarRef*>(node.object.get()) : nullptr;
+
+    if (objVar) {
+        // 简单变量成员赋值：obj.field = val → 不推 obj，仅推 value
+        compileNode(node.value.get());
+        // 发射 OP_MEMBER_SET_VAR：直接修改 globals_[varName].fields[fieldName]
+        uint16_t varIdx = identifierIndex(objVar->name);
+        uint16_t fieldIdx = identifierIndex(node.fieldName);
+        chunk_.writeOp(OpCode::OP_MEMBER_SET_VAR, node.line);
+        chunk_.writeShort(varIdx, node.line);
+        chunk_.writeShort(fieldIdx, node.line);
+    } else {
+        // 通用路径：推对象+值，OP_MEMBER_SET 不做写回
+        compileNode(node.object.get());
+        compileNode(node.value.get());
+        uint16_t nameIdx = identifierIndex(node.fieldName);
+        chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
+        chunk_.writeShort(nameIdx, node.line);
+    }
 }
 
 void Compiler::compileMethodCall(MethodCall& node) {

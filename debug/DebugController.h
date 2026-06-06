@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QSet>
+#include <QEventLoop>
 #include <vector>
 #include <string>
 #include <functional>
@@ -17,6 +18,7 @@ enum class StepMode {
     MODE_RUN,       // 正常运行（仅检查断点）
     MODE_STEP_IN,   // 单步进入（每个节点暂停）
     MODE_STEP_OVER, // 单步跳过（同调用深度暂停）
+    MODE_STEP_OUT,  // 单步跳出（浅于当前深度时暂停）
     MODE_PAUSE      // 暂停
 };
 
@@ -56,6 +58,7 @@ public:
     /// 步进控制
     void stepIn();
     void stepOver();
+    void stepOut();
     void resume();
     void stop();
 
@@ -98,20 +101,19 @@ private:
     QSet<int> breakpoints_;     // 断点行号集合
     int currentDepth_ = 0;      // 当前调用深度
     int stepOverDepth_ = 0;     // stepOver 时的调用深度
+    int stepOutDepth_ = 0;      // stepOut 时的调用深度
     int lastPausedLine_ = -1;   // 上次暂停的行号（避免同行重复暂停）
     int minBreakpointLine_ = -1; // 最小断点行号（快速跳过不可能命中的节点）
     bool running_ = false;      // 是否正在运行
     bool stopped_ = false;      // 是否被停止
     bool paused_ = false;       // 是否处于暂停状态（等待用户操作）
+    QEventLoop* pauseLoop_ = nullptr;  // 暂停时的事件循环（替代忙等）
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;
     std::function<std::vector<CallStackEntry>()> callStackCallback_;
 
     /// 暂停当前线程，等待用户操作
     void pauseExecution();
-
-    /// 处理 Qt 事件循环（使 UI 保持响应）
-    void processEvents();
 
     /// 更新最小断点行号缓存
     void updateMinBreakpointLine();

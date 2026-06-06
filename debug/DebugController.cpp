@@ -1,7 +1,6 @@
 #include "debug/DebugController.h"
 #include "ast/ASTNode.h"
-#include <QCoreApplication>
-#include <QThread>
+#include <stdexcept>
 
 // ============================================================
 // DebugController 调试控制器实现
@@ -51,6 +50,13 @@ void DebugController::checkBreak(ASTNode* node) {
     case StepMode::MODE_STEP_OVER:
         // 只暂停同一或更浅调用深度，且行号变化的节点
         if (currentDepth_ <= stepOverDepth_ && node->line != lastPausedLine_) {
+            shouldPause = true;
+        }
+        break;
+
+    case StepMode::MODE_STEP_OUT:
+        // 只暂停比进入时更浅的调用深度
+        if (currentDepth_ < stepOutDepth_ && node->line != lastPausedLine_) {
             shouldPause = true;
         }
         break;
@@ -110,6 +116,8 @@ void DebugController::stepIn() {
     paused_ = false;       // 解除暂停
     // 不重置 lastPausedLine_：保留当前暂停行号，跳过同行剩余子表达式，
     // 仅在行号变化时才暂停（解决"需按多次才到下一行"的问题）
+    // 退出暂停事件循环
+    if (pauseLoop_) pauseLoop_->quit();
 }
 
 void DebugController::stepOver() {
@@ -118,6 +126,15 @@ void DebugController::stepOver() {
     running_ = true;
     paused_ = false;
     // 同理，不重置 lastPausedLine_
+    if (pauseLoop_) pauseLoop_->quit();
+}
+
+void DebugController::stepOut() {
+    mode_ = StepMode::MODE_STEP_OUT;
+    stepOutDepth_ = currentDepth_;
+    running_ = true;
+    paused_ = false;
+    if (pauseLoop_) pauseLoop_->quit();
 }
 
 void DebugController::resume() {
@@ -125,12 +142,14 @@ void DebugController::resume() {
     running_ = true;
     stopped_ = false;
     paused_ = false;
+    if (pauseLoop_) pauseLoop_->quit();
 }
 
 void DebugController::stop() {
     stopped_ = true;
     paused_ = false;
     // 注意：不设 running_ = false，让 checkBreak 能走到 stopped_ 检查
+    if (pauseLoop_) pauseLoop_->quit();
 }
 
 void DebugController::setCurrentDepth(int depth) {
@@ -170,6 +189,7 @@ void DebugController::reset() {
     paused_ = false;
     currentDepth_ = 0;
     stepOverDepth_ = 0;
+    stepOutDepth_ = 0;
     lastPausedLine_ = -1;
 }
 
@@ -177,18 +197,12 @@ void DebugController::pauseExecution() {
     // 设置暂停标志
     paused_ = true;
 
-    // 在主线程上运行事件循环，等待用户操作（Step In / Step Over / Resume / Stop）
-    // 使用 processEvents() 保持 UI 响应，同时检查 paused_ 标志
-    // 注意：所有调用都在主线程，无需 mutex 保护
-    while (paused_ && !stopped_) {
-        // 处理 Qt 事件，使 UI 按钮可点击
-        processEvents();
-        QThread::msleep(10);
-    }
-}
-
-void DebugController::processEvents() {
-    QCoreApplication::processEvents();
+    // 使用 QEventLoop 替代忙等
+    // 事件循环保持 UI 响应，stepIn/stepOver/resume/stop 通过 quit() 唤醒
+    QEventLoop loop;
+    pauseLoop_ = &loop;
+    loop.exec();
+    pauseLoop_ = nullptr;
 }
 
 void DebugController::updateMinBreakpointLine() {

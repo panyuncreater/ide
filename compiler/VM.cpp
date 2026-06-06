@@ -584,6 +584,21 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    case OpCode::OP_BUILD_DICT: {
+        uint8_t pairCount = chunk.code[ip + 1];
+        std::unordered_map<std::string, Value> dict;
+        // 先入后出：倒序弹出键值对
+        for (uint8_t i = 0; i < pairCount; ++i) {
+            Value val = pop();
+            Value key = pop();
+            dict[key.toString()] = val;
+        }
+        push(Value(dict));
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
     case OpCode::OP_INDEX_GET: {
         Value idx = pop();
         Value obj = pop();
@@ -610,12 +625,36 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_SET: {
+        // 旧路径：弹出但不写回（仅用于非简单变量的 fallback）
         Value val = pop();
         Value idx = pop();
         Value obj = pop();
         push(val);
         notifyStep(ip, op);
         ip += 1;
+        break;
+    }
+
+    case OpCode::OP_INDEX_SET_VAR: {
+        // 新路径：直接修改 globals_[varName] 中的数组/字典元素
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        std::string varName = chunk.constants[idx].stringVal;
+        Value val = pop();
+        Value index = pop();
+        auto it = globals_.find(varName);
+        if (it != globals_.end()) {
+            Value& obj = it->second;  // 引用，直接修改
+            if (obj.isArray() && index.isInt()) {
+                int i = index.intVal;
+                if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
+                    obj.arrayVal[i] = val;
+                }
+            } else if (obj.isDict() && index.isString()) {
+                obj.dictVal[index.stringVal] = val;
+            }
+        }
+        notifyStep(ip, op);
+        ip += 3;
         break;
     }
 
@@ -646,6 +685,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET: {
+        // 旧路径：弹出但不写回（仅用于非简单变量的 fallback）
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         std::string fieldName = chunk.constants[idx].stringVal;
         Value val = pop();
@@ -653,6 +693,27 @@ VMResult VM::executeOneInstruction() {
         push(val);
         notifyStep(ip, op);
         ip += 3;
+        break;
+    }
+
+    case OpCode::OP_MEMBER_SET_VAR: {
+        // 新路径：直接修改 globals_[varName].fields[fieldName]
+        uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
+        std::string varName = chunk.constants[varIdx].stringVal;
+        std::string fieldName = chunk.constants[fieldIdx].stringVal;
+        Value val = pop();
+        auto it = globals_.find(varName);
+        if (it != globals_.end()) {
+            Value& obj = it->second;  // 引用，直接修改
+            if (obj.isInstance()) {
+                obj.fields[fieldName] = val;
+            } else if (obj.isDict()) {
+                obj.dictVal[fieldName] = val;
+            }
+        }
+        notifyStep(ip, op);
+        ip += 5;
         break;
     }
 
@@ -673,10 +734,39 @@ VMResult VM::executeOneInstruction() {
                     return runtimeError("调用栈溢出");
                 }
 
+                // 在参数前注入 this 和实例字段
+                // 栈布局: [..., obj, arg0, arg1, ...]
+                // 需要变成: [..., obj, this(obj), field0, field1, ..., arg0, arg1, ...]
+                // 但这太复杂，更简单的方式：让方法的局部变量槽位映射 this + 字段 + 参数
+
+                // 方案：将 this 作为 slot 0，实例字段作为 slot 1..N，参数作为 slot N+1..
+                // 在栈上：先放 this，再放字段值，再放参数
+                // 当前栈: [..., obj, arg0, arg1, ...]
+                // 目标栈: [..., this(obj copy), fieldVal0, fieldVal1, ..., arg0, arg1, ...]
+
+                // 移除 obj（peek 不移除），收集参数，重新排列栈
+                std::vector<Value> args;
+                for (uint8_t i = 0; i < argCount; ++i) {
+                    args.insert(args.begin(), pop());
+                }
+                pop();  // 移除 obj
+
+                // 推入 this
+                push(obj);
+                // 推入实例字段值（让方法内可以直接用 this.field 或通过局部变量访问）
+                for (const auto& field : obj.fields) {
+                    push(field.second);
+                }
+                int fieldCount = static_cast<int>(obj.fields.size());
+                // 推入参数
+                for (const auto& arg : args) {
+                    push(arg);
+                }
+
                 VMCallFrame newFrame;
                 newFrame.chunk = &targetChunk;
                 newFrame.returnIp = ip + 4;
-                newFrame.basePointer = stack_.size() - argCount - 1;
+                newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
                 newFrame.functionName = methodKey;
                 newFrame.ip = 0;
                 frames_.push_back(newFrame);
@@ -750,9 +840,10 @@ VMResult VM::executeOneInstruction() {
         Value instance = Value::makeInstance(className);
         push(instance);
 
+        // 如果有 init 方法，调用它（参数在栈上紧跟实例之后）
         std::string initKey = className + ".init";
         auto it = functionChunks_.find(initKey);
-        if (it != functionChunks_.end()) {
+        if (it != functionChunks_.end() && argCount > 0) {
             const BytecodeChunk& initChunk = it->second;
 
             if (frames_.size() >= MAX_FRAMES) {
@@ -771,9 +862,23 @@ VMResult VM::executeOneInstruction() {
             break;
         }
 
+        // 无 init 或无参数：弹出多余参数
         for (uint8_t i = 0; i < argCount; ++i) pop();
         notifyStep(ip, op);
         ip += 4;
+        break;
+    }
+
+    case OpCode::OP_INIT_FIELD: {
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        std::string fieldName = chunk.constants[idx].stringVal;
+        Value val = pop();
+        // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
+        if (!stack_.empty() && stack_.back().isInstance()) {
+            stack_.back().fields[fieldName] = val;
+        }
+        notifyStep(ip, op);
+        ip += 3;
         break;
     }
 

@@ -6,6 +6,38 @@
 #include "interpreter/Value.h"
 
 // ============================================================
+// AST 节点类型枚举（用于快速分发，替代 dynamic_cast）
+// ============================================================
+
+enum class NodeType {
+    NODE_BINARY_OP,
+    NODE_UNARY_OP,
+    NODE_NUMBER_LITERAL,
+    NODE_STRING_LITERAL,
+    NODE_BOOL_LITERAL,
+    NODE_VAR_DECL,
+    NODE_ASSIGNMENT,
+    NODE_VAR_REF,
+    NODE_IF_STMT,
+    NODE_WHILE_STMT,
+    NODE_FOR_STMT,
+    NODE_FUN_DECL,
+    NODE_FUN_CALL,
+    NODE_RETURN_STMT,
+    NODE_PRINT_STMT,
+    NODE_BLOCK,
+    NODE_ARRAY_LITERAL,
+    NODE_DICT_LITERAL,
+    NODE_INDEX_ACCESS,
+    NODE_INDEX_ASSIGN,
+    NODE_CLASS_DECL,
+    NODE_MEMBER_ACCESS,
+    NODE_MEMBER_ASSIGN,
+    NODE_METHOD_CALL,
+    NODE_NULL_LITERAL,
+};
+
+// ============================================================
 // 前向声明 Visitor
 // ============================================================
 class Visitor;
@@ -19,6 +51,7 @@ class ASTNode {
 public:
     int line = 0;       // 行号
     int column = 0;     // 列号
+    NodeType nodeType = NodeType::NODE_NULL_LITERAL;  // 节点类型（用于快速分发）
 
     ASTNode() = default;
     ASTNode(int ln, int col) : line(ln), column(col) {}
@@ -43,7 +76,7 @@ public:
 
     BinaryOp(const std::string& oper, std::unique_ptr<ASTNode> l,
              std::unique_ptr<ASTNode> r, int ln = 0, int col = 0)
-        : ASTNode(ln, col), op(oper), left(std::move(l)), right(std::move(r)) {}
+        : ASTNode(ln, col), op(oper), left(std::move(l)), right(std::move(r)) { nodeType = NodeType::NODE_BINARY_OP; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "BinaryOp(" + op + ")"; }
@@ -60,7 +93,7 @@ public:
 
     UnaryOp(const std::string& oper, std::unique_ptr<ASTNode> o,
             int ln = 0, int col = 0)
-        : ASTNode(ln, col), op(oper), operand(std::move(o)) {}
+        : ASTNode(ln, col), op(oper), operand(std::move(o)) { nodeType = NodeType::NODE_UNARY_OP; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "UnaryOp(" + op + ")"; }
@@ -75,7 +108,7 @@ public:
     Value value;    // 保存 int 或 float 值
 
     NumberLiteral(const Value& v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(v) {}
+        : ASTNode(ln, col), value(v) { nodeType = NodeType::NODE_NUMBER_LITERAL; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override {
@@ -90,7 +123,7 @@ public:
     std::string value;
 
     StringLiteral(const std::string& v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(v) {}
+        : ASTNode(ln, col), value(v) { nodeType = NodeType::NODE_STRING_LITERAL; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override {
@@ -105,7 +138,7 @@ public:
     bool value;
 
     BoolLiteral(bool v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(v) {}
+        : ASTNode(ln, col), value(v) { nodeType = NodeType::NODE_BOOL_LITERAL; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override {
@@ -123,7 +156,7 @@ public:
 
     VarDecl(const std::string& n, const std::string& typeAnn,
             std::unique_ptr<ASTNode> init, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), typeAnnotation(typeAnn), initializer(std::move(init)) {}
+        : ASTNode(ln, col), name(n), typeAnnotation(typeAnn), initializer(std::move(init)) { nodeType = NodeType::NODE_VAR_DECL; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override {
@@ -144,7 +177,7 @@ public:
 
     Assignment(const std::string& n, std::unique_ptr<ASTNode> v,
                int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), value(std::move(v)) {}
+        : ASTNode(ln, col), name(n), value(std::move(v)) { nodeType = NodeType::NODE_ASSIGNMENT; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "Assign(" + name + ")"; }
@@ -159,7 +192,7 @@ public:
     std::string name;
 
     VarRef(const std::string& n, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n) {}
+        : ASTNode(ln, col), name(n) { nodeType = NodeType::NODE_VAR_REF; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "VarRef(" + name + ")"; }
@@ -176,7 +209,7 @@ public:
     IfStmt(std::unique_ptr<ASTNode> cond, std::unique_ptr<ASTNode> thenB,
            std::unique_ptr<ASTNode> elseB, int ln = 0, int col = 0)
         : ASTNode(ln, col), condition(std::move(cond)),
-          thenBranch(std::move(thenB)), elseBranch(std::move(elseB)) {}
+          thenBranch(std::move(thenB)), elseBranch(std::move(elseB)) { nodeType = NodeType::NODE_IF_STMT; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "IfStmt"; }
@@ -197,7 +230,7 @@ public:
 
     WhileStmt(std::unique_ptr<ASTNode> cond, std::unique_ptr<ASTNode> b,
               int ln = 0, int col = 0)
-        : ASTNode(ln, col), condition(std::move(cond)), body(std::move(b)) {}
+        : ASTNode(ln, col), condition(std::move(cond)), body(std::move(b)) { nodeType = NodeType::NODE_WHILE_STMT; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "WhileStmt"; }
@@ -219,7 +252,7 @@ public:
             int ln = 0, int col = 0)
         : ASTNode(ln, col), initializer(std::move(init)),
           condition(std::move(cond)), update(std::move(upd)),
-          body(std::move(b)) {}
+          body(std::move(b)) { nodeType = NodeType::NODE_FOR_STMT; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ForStmt"; }
@@ -246,7 +279,7 @@ public:
             std::vector<std::string> pt, const std::string& rt,
             std::unique_ptr<ASTNode> b, int ln = 0, int col = 0)
         : ASTNode(ln, col), name(n), params(std::move(p)),
-          paramTypes(std::move(pt)), returnType(rt), body(std::move(b)) {}
+          paramTypes(std::move(pt)), returnType(rt), body(std::move(b)) { nodeType = NodeType::NODE_FUN_DECL; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "FunDecl(" + name + ")"; }
@@ -263,7 +296,7 @@ public:
 
     FunCall(const std::string& n, std::vector<std::unique_ptr<ASTNode>> args,
             int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), arguments(std::move(args)) {}
+        : ASTNode(ln, col), name(n), arguments(std::move(args)) { nodeType = NodeType::NODE_FUN_CALL; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "FunCall(" + name + ")"; }
@@ -282,7 +315,7 @@ public:
     std::unique_ptr<ASTNode> value;     // 可为 nullptr
 
     ReturnStmt(std::unique_ptr<ASTNode> v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(std::move(v)) {}
+        : ASTNode(ln, col), value(std::move(v)) { nodeType = NodeType::NODE_RETURN_STMT; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ReturnStmt"; }
@@ -298,7 +331,7 @@ public:
     std::vector<std::unique_ptr<ASTNode>> values;
 
     PrintStmt(std::vector<std::unique_ptr<ASTNode>> v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), values(std::move(v)) {}
+        : ASTNode(ln, col), values(std::move(v)) { nodeType = NodeType::NODE_PRINT_STMT; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "PrintStmt"; }
@@ -315,7 +348,7 @@ public:
     std::vector<std::unique_ptr<ASTNode>> statements;
 
     Block(std::vector<std::unique_ptr<ASTNode>> stmts, int ln = 0, int col = 0)
-        : ASTNode(ln, col), statements(std::move(stmts)) {}
+        : ASTNode(ln, col), statements(std::move(stmts)) { nodeType = NodeType::NODE_BLOCK; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "Block"; }
@@ -337,7 +370,7 @@ class ArrayLiteral : public ASTNode {
 public:
     std::vector<std::unique_ptr<ASTNode>> elements;
     ArrayLiteral(std::vector<std::unique_ptr<ASTNode>> elems, int ln = 0, int col = 0)
-        : ASTNode(ln, col), elements(std::move(elems)) {}
+        : ASTNode(ln, col), elements(std::move(elems)) { nodeType = NodeType::NODE_ARRAY_LITERAL; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ArrayLiteral"; }
     std::vector<ASTNode*> children() const override {
@@ -352,7 +385,7 @@ class DictLiteral : public ASTNode {
 public:
     std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>> pairs;
     DictLiteral(std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>> p, int ln = 0, int col = 0)
-        : ASTNode(ln, col), pairs(std::move(p)) {}
+        : ASTNode(ln, col), pairs(std::move(p)) { nodeType = NodeType::NODE_DICT_LITERAL; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "DictLiteral"; }
     std::vector<ASTNode*> children() const override {
@@ -368,7 +401,7 @@ public:
     std::unique_ptr<ASTNode> object;
     std::unique_ptr<ASTNode> index;
     IndexAccess(std::unique_ptr<ASTNode> obj, std::unique_ptr<ASTNode> idx, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)) {}
+        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)) { nodeType = NodeType::NODE_INDEX_ACCESS; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "IndexAccess"; }
     std::vector<ASTNode*> children() const override { return {object.get(), index.get()}; }
@@ -381,7 +414,7 @@ public:
     std::unique_ptr<ASTNode> index;
     std::unique_ptr<ASTNode> value;
     IndexAssign(std::unique_ptr<ASTNode> obj, std::unique_ptr<ASTNode> idx, std::unique_ptr<ASTNode> val, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)), value(std::move(val)) {}
+        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)), value(std::move(val)) { nodeType = NodeType::NODE_INDEX_ASSIGN; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "IndexAssign"; }
     std::vector<ASTNode*> children() const override { return {object.get(), index.get(), value.get()}; }
@@ -395,7 +428,7 @@ public:
     std::vector<std::unique_ptr<ASTNode>> members;
     ClassDecl(const std::string& n, const std::string& super,
               std::vector<std::unique_ptr<ASTNode>> mems, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), superClassName(super), members(std::move(mems)) {}
+        : ASTNode(ln, col), name(n), superClassName(super), members(std::move(mems)) { nodeType = NodeType::NODE_CLASS_DECL; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ClassDecl(" + name + ")"; }
     std::vector<ASTNode*> children() const override {
@@ -411,7 +444,7 @@ public:
     std::unique_ptr<ASTNode> object;
     std::string fieldName;
     MemberAccess(std::unique_ptr<ASTNode> obj, const std::string& field, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), fieldName(field) {}
+        : ASTNode(ln, col), object(std::move(obj)), fieldName(field) { nodeType = NodeType::NODE_MEMBER_ACCESS; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "MemberAccess(." + fieldName + ")"; }
     std::vector<ASTNode*> children() const override { return {object.get()}; }
@@ -424,7 +457,7 @@ public:
     std::string fieldName;
     std::unique_ptr<ASTNode> value;
     MemberAssign(std::unique_ptr<ASTNode> obj, const std::string& field, std::unique_ptr<ASTNode> val, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), fieldName(field), value(std::move(val)) {}
+        : ASTNode(ln, col), object(std::move(obj)), fieldName(field), value(std::move(val)) { nodeType = NodeType::NODE_MEMBER_ASSIGN; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "MemberAssign(." + fieldName + ")"; }
     std::vector<ASTNode*> children() const override { return {object.get(), value.get()}; }
@@ -438,7 +471,7 @@ public:
     std::vector<std::unique_ptr<ASTNode>> arguments;
     MethodCall(std::unique_ptr<ASTNode> obj, const std::string& method,
                std::vector<std::unique_ptr<ASTNode>> args, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), methodName(method), arguments(std::move(args)) {}
+        : ASTNode(ln, col), object(std::move(obj)), methodName(method), arguments(std::move(args)) { nodeType = NodeType::NODE_METHOD_CALL; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "MethodCall(." + methodName + ")"; }
     std::vector<ASTNode*> children() const override {
@@ -452,7 +485,7 @@ public:
 /// Null 字面量节点
 class NullLiteral : public ASTNode {
 public:
-    NullLiteral(int ln = 0, int col = 0) : ASTNode(ln, col) {}
+    NullLiteral(int ln = 0, int col = 0) : ASTNode(ln, col) { nodeType = NodeType::NODE_NULL_LITERAL; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "Null"; }
     std::vector<ASTNode*> children() const override { return {}; }

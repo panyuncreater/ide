@@ -185,6 +185,12 @@ void Ide::initToolbar() {
     stepOverAction_->setShortcut(Qt::Key_F10);
     stepOverAction_->setEnabled(false);
 
+    // Step Out
+    stepOutAction_ = toolbar->addAction("⬅ Step Out");
+    stepOutAction_->setToolTip("单步跳出 (Shift+F11)");
+    stepOutAction_->setShortcut(Qt::SHIFT | Qt::Key_F11);
+    stepOutAction_->setEnabled(false);
+
     toolbar->addSeparator();
 
     // 停止
@@ -232,6 +238,7 @@ void Ide::initConnections() {
     connect(debugAction_, &QAction::triggered, this, &Ide::onDebug);
     connect(stepInAction_, &QAction::triggered, this, &Ide::onStepIn);
     connect(stepOverAction_, &QAction::triggered, this, &Ide::onStepOver);
+    connect(stepOutAction_, &QAction::triggered, this, &Ide::onStepOut);
     connect(stopAction_, &QAction::triggered, this, &Ide::onStop);
     connect(clearAction_, &QAction::triggered, this, &Ide::onClearOutput);
     connect(formatAction_, &QAction::triggered, this, &Ide::onFormat);
@@ -404,6 +411,11 @@ void Ide::onStepIn() {
 
 void Ide::onStepOver() {
     debugger_->stepOver();
+    updateDebugInfo();
+}
+
+void Ide::onStepOut() {
+    debugger_->stepOut();
     updateDebugInfo();
 }
 
@@ -663,6 +675,8 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
         case OpCode::OP_LOOP:
         case OpCode::OP_MEMBER_GET:
         case OpCode::OP_MEMBER_SET:
+        case OpCode::OP_INDEX_SET_VAR:
+        case OpCode::OP_INIT_FIELD:
             offset += 3; break;
         case OpCode::OP_CALL:
         case OpCode::OP_METHOD_CALL:
@@ -670,9 +684,12 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
         case OpCode::OP_CLASS_NEW:
             offset += 4; break;
         case OpCode::OP_BUILD_ARRAY:
+        case OpCode::OP_BUILD_DICT:
         case OpCode::OP_GET_LOCAL:
         case OpCode::OP_SET_LOCAL:
             offset += 2; break;
+        case OpCode::OP_MEMBER_SET_VAR:
+            offset += 5; break;
         default:
             offset += 1; break;
         }
@@ -809,6 +826,7 @@ void Ide::setRunningState(bool running) {
     debugAction_->setEnabled(!running);
     stepInAction_->setEnabled(running);
     stepOverAction_->setEnabled(running);
+    stepOutAction_->setEnabled(running);
     stopAction_->setEnabled(running);
     formatAction_->setEnabled(!running);
     bytecodeAction_->setEnabled(!running);

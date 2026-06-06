@@ -196,9 +196,14 @@ std::string Interpreter::findTypeAnnotation(const std::string& varName) const {
 // ---- writeBack 递归写回左值 ----
 
 void Interpreter::writeBack(ASTNode* node, const Value& modifiedValue, int line, int col) {
-    if (auto* varRef = dynamic_cast<VarRef*>(node)) {
+    switch (node->nodeType) {
+    case NodeType::NODE_VAR_REF: {
+        auto* varRef = static_cast<VarRef*>(node);
         currentEnv_->set(varRef->name, modifiedValue);
-    } else if (auto* memberAccess = dynamic_cast<MemberAccess*>(node)) {
+        break;
+    }
+    case NodeType::NODE_MEMBER_ACCESS: {
+        auto* memberAccess = static_cast<MemberAccess*>(node);
         Value outer = evaluate(memberAccess->object.get());
         if (outer.isInstance()) {
             outer.fields[memberAccess->fieldName] = modifiedValue;
@@ -208,7 +213,10 @@ void Interpreter::writeBack(ASTNode* node, const Value& modifiedValue, int line,
             runtimeError("该类型不支持成员赋值", line, col);
         }
         writeBack(memberAccess->object.get(), outer, line, col);
-    } else if (auto* indexAccess = dynamic_cast<IndexAccess*>(node)) {
+        break;
+    }
+    case NodeType::NODE_INDEX_ACCESS: {
+        auto* indexAccess = static_cast<IndexAccess*>(node);
         Value outer = evaluate(indexAccess->object.get());
         Value idx = evaluate(indexAccess->index.get());
         if (outer.isArray() && idx.isInt()) {
@@ -221,6 +229,10 @@ void Interpreter::writeBack(ASTNode* node, const Value& modifiedValue, int line,
             runtimeError("该类型不支持索引赋值", line, col);
         }
         writeBack(indexAccess->object.get(), outer, line, col);
+        break;
+    }
+    default:
+        break;
     }
 }
 
@@ -348,12 +360,6 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                     evaluate(initMethod->body.get());
                 } catch (const ReturnException& e) {}
                 instance = initEnv->get("this");
-                // 同步字段变更
-                for (const auto& kv : instance.fields) {
-                    if (initEnv->hasVariable(kv.first)) {
-                        instance.fields[kv.first] = initEnv->get(kv.first);
-                    }
-                }
                 currentEnv_ = prevEnv;
             }
 
@@ -862,8 +868,8 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
     // 处理类成员
     for (auto& member : node.members) {
         // VarDecl: 字段默认值
-        VarDecl* varDecl = dynamic_cast<VarDecl*>(member.get());
-        if (varDecl) {
+        if (member->nodeType == NodeType::NODE_VAR_DECL) {
+            VarDecl* varDecl = static_cast<VarDecl*>(member.get());
             Value defaultVal = Value::nullValue();
             if (varDecl->initializer) {
                 defaultVal = evaluate(varDecl->initializer.get());
@@ -873,8 +879,8 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
         }
 
         // FunDecl: 方法
-        FunDecl* funDecl = dynamic_cast<FunDecl*>(member.get());
-        if (funDecl) {
+        if (member->nodeType == NodeType::NODE_FUN_DECL) {
+            FunDecl* funDecl = static_cast<FunDecl*>(member.get());
             registeredCls.methods[funDecl->name] = funDecl;
             // 同时注册到全局函数表（方法名带类名前缀避免冲突）
             std::string methodKey = node.name + "." + funDecl->name;
@@ -956,10 +962,13 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        // 需要获取可修改的数组引用
-        VarRef* objRef = dynamic_cast<VarRef*>(node.object.get());
-        IndexAccess* idxAccess = dynamic_cast<IndexAccess*>(node.object.get());
-        MemberAccess* memAccess = dynamic_cast<MemberAccess*>(node.object.get());
+        // 需要获取可修改的数组引用（用于 writeBack）
+        VarRef* objRef = (node.object->nodeType == NodeType::NODE_VAR_REF)
+                         ? static_cast<VarRef*>(node.object.get()) : nullptr;
+        IndexAccess* idxAccess = (node.object->nodeType == NodeType::NODE_INDEX_ACCESS)
+                                 ? static_cast<IndexAccess*>(node.object.get()) : nullptr;
+        MemberAccess* memAccess = (node.object->nodeType == NodeType::NODE_MEMBER_ACCESS)
+                                   ? static_cast<MemberAccess*>(node.object.get()) : nullptr;
 
         if (node.methodName == "push") {
             if (argValues.size() != 1)
@@ -1019,7 +1028,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        VarRef* objRef = dynamic_cast<VarRef*>(node.object.get());
+        VarRef* objRef = (node.object->nodeType == NodeType::NODE_VAR_REF)
+                         ? static_cast<VarRef*>(node.object.get()) : nullptr;
 
         if (node.methodName == "len") {
             return Value(static_cast<int>(obj.dictVal.size()));
@@ -1170,7 +1180,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 currentFunctionReturnType_ = savedReturnType;
 
                 // 更新实例（如果 this 被修改了）
-                VarRef* objRef = dynamic_cast<VarRef*>(node.object.get());
+                VarRef* objRef = (node.object->nodeType == NodeType::NODE_VAR_REF)
+                         ? static_cast<VarRef*>(node.object.get()) : nullptr;
                 if (objRef) {
                     currentEnv_->set(objRef->name, updatedThis);
                 }
