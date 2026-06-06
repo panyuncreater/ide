@@ -29,9 +29,16 @@ public:
     /// 解析 Token 流，返回 AST 根节点（Block）
     std::unique_ptr<Block> parse(const std::vector<Token>& tokens);
 
+    /// 获取解析过程中收集的所有错误
+    const std::vector<ParseError>& getErrors() const { return errors_; }
+
+    /// 是否有解析错误
+    bool hasErrors() const { return !errors_.empty(); }
+
 private:
     std::vector<Token> tokens_;     // Token 流
     int current_ = 0;               // 当前位置
+    std::vector<ParseError> errors_; // 收集的解析错误
 
     // ---- 辅助方法 ----
 
@@ -59,6 +66,12 @@ private:
     /// 消耗当前 Token，必须匹配指定类型，否则抛异常
     const Token& consume(TokenType type, const std::string& message);
 
+    /// 消耗标识符或类型关键字（允许 dict/array/int/float/string/bool 作为名称）
+    const Token& consumeIdentifierOrType(const std::string& message);
+
+    /// 检查当前 token 是否是标识符或类型关键字
+    bool isIdentifierOrType() const;
+
     // ---- 声明与语句 ----
 
     /// 声明（变量声明 / 类型注解声明 / 函数声明 / 类声明 / 语句）
@@ -72,6 +85,9 @@ private:
 
     /// 函数声明: fun name(params) { body } 或 function name(params): type { body }
     std::unique_ptr<FunDecl> funDecl();
+
+    /// 带返回类型的函数声明: int fib(int n) { ... }
+    std::unique_ptr<FunDecl> typedFunDecl(const std::string& returnType);
 
     /// 类声明: class Name { members } 或 class Name extends Super { members }
     std::unique_ptr<ClassDecl> classDecl();

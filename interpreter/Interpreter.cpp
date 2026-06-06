@@ -360,6 +360,12 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                     evaluate(initMethod->body.get());
                 } catch (const ReturnException& e) {}
                 instance = initEnv->get("this");
+                // 同步 init 环境中的字段变量回 this 对象
+                for (const auto& fieldKV : instance.fields) {
+                    if (initEnv->hasVariable(fieldKV.first)) {
+                        instance.fields[fieldKV.first] = initEnv->get(fieldKV.first);
+                    }
+                }
                 currentEnv_ = prevEnv;
             }
 
@@ -601,9 +607,14 @@ Value Interpreter::visitFunCall(FunCall& node) {
             }
 
             // 从 init 环境中读取 this 的更新值
-            // writeBack 已经正确更新了 initEnv 中的 this，
-            // 直接获取即可，不需要再用环境变量覆盖
             instance = initEnv->get("this");
+
+            // 同步 init 环境中的字段变量回 this 对象
+            for (const auto& fieldKV : instance.fields) {
+                if (initEnv->hasVariable(fieldKV.first)) {
+                    instance.fields[fieldKV.first] = initEnv->get(fieldKV.first);
+                }
+            }
 
             // 恢复环境
             currentEnv_ = prevEnv;
@@ -1157,9 +1168,16 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 }
 
                 // 从方法环境中读取 this 的更新值
-                // writeBack 已经正确更新了 methodEnv 中的 this，
-                // 直接获取即可，不需要再用环境变量覆盖
                 Value updatedThis = methodEnv->get("this");
+
+                // 关键：将方法环境中的字段变量同步回 this 对象
+                // 方法内直接修改字段（如 count = count + 1）只更新了方法环境，
+                // 不会自动反映到 this 对象的 fields 中，需要手动同步
+                for (const auto& fieldKV : obj.fields) {
+                    if (methodEnv->hasVariable(fieldKV.first)) {
+                        updatedThis.fields[fieldKV.first] = methodEnv->get(fieldKV.first);
+                    }
+                }
 
                 // 恢复环境
                 currentEnv_ = prevEnv;

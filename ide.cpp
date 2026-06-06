@@ -269,17 +269,11 @@ void Ide::onRun() {
         return;
     }
 
-    // 语法分析
-    try {
-        runParser(lastTokens_);
-    } catch (const ParseError& e) {
-        outputPanel_->appendError(QString("语法错误 (行 %1, 列 %2): %3")
-                                      .arg(e.line).arg(e.column).arg(e.what()));
-        QSet<int> errorLines;
-        errorLines.insert(e.line);
-        codeEditor_->setErrorLines(errorLines);
-        return;
-    }
+    // 语法分析（runParser 内部已收集并显示所有错误）
+    runParser(lastTokens_);
+
+    // 如果有解析错误，不再继续执行
+    if (parser_.hasErrors()) return;
 
     if (!astRoot_) return;
 
@@ -328,14 +322,11 @@ void Ide::onDebug() {
         return;
     }
 
-    // 语法分析
-    try {
-        runParser(lastTokens_);
-    } catch (const ParseError& e) {
-        outputPanel_->appendError(QString("语法错误 (行 %1, 列 %2): %3")
-                                      .arg(e.line).arg(e.column).arg(e.what()));
-        return;
-    }
+    // 语法分析（runParser 内部已收集并显示所有错误）
+    runParser(lastTokens_);
+
+    // 如果有解析错误，不再继续
+    if (parser_.hasErrors()) return;
 
     if (!astRoot_) return;
 
@@ -445,11 +436,12 @@ void Ide::onFormat() {
     }
 
     // 语法分析
-    try {
-        astRoot_ = parser_.parse(lastTokens_);
-    } catch (const ParseError& e) {
-        outputPanel_->appendError(QString("格式化失败 - 语法错误 (行 %1, 列 %2): %3")
-                                      .arg(e.line).arg(e.column).arg(e.what()));
+    astRoot_ = parser_.parse(lastTokens_);
+    if (parser_.hasErrors()) {
+        for (const auto& err : parser_.getErrors()) {
+            outputPanel_->appendError(QString("格式化失败 - 语法错误 (行 %1, 列 %2): %3")
+                                          .arg(err.line).arg(err.column).arg(err.what()));
+        }
         return;
     }
 
@@ -471,12 +463,13 @@ void Ide::onShowBytecode() {
     }
 
     // 语法分析
-    try {
-        astRoot_ = parser_.parse(lastTokens_);
-    } catch (const ParseError& e) {
+    astRoot_ = parser_.parse(lastTokens_);
+    if (parser_.hasErrors()) {
         bytecodeList_->clear();
-        bytecodeList_->addItem(QString("编译失败 - 语法错误 (行 %1, 列 %2): %3")
-                                   .arg(e.line).arg(e.column).arg(e.what()));
+        for (const auto& err : parser_.getErrors()) {
+            bytecodeList_->addItem(QString("编译失败 - 语法错误 (行 %1, 列 %2): %3")
+                                       .arg(err.line).arg(err.column).arg(err.what()));
+        }
         return;
     }
 
@@ -794,6 +787,17 @@ void Ide::runLexer(const std::string& source) {
 
 void Ide::runParser(const std::vector<Token>& tokens) {
     astRoot_ = parser_.parse(tokens);
+
+    // 显示所有收集到的解析错误
+    if (parser_.hasErrors()) {
+        QSet<int> errorLines;
+        for (const auto& err : parser_.getErrors()) {
+            outputPanel_->appendError(QString("语法错误 (行 %1, 列 %2): %3")
+                                          .arg(err.line).arg(err.column).arg(err.what()));
+            errorLines.insert(err.line);
+        }
+        codeEditor_->setErrorLines(errorLines);
+    }
 
     // 更新 AST 视图
     if (astRoot_) {

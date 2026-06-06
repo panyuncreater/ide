@@ -139,6 +139,20 @@ void Lexer::scanToken() {
     case '>':
         addToken(match('=') ? TokenType::TK_GEQ : TokenType::TK_GT);
         break;
+    case '&':
+        if (match('&')) {
+            addToken(TokenType::TK_AND);   // && → and
+        } else {
+            errorToken("意外字符 '&'（是否想用 '&&'?）");
+        }
+        break;
+    case '|':
+        if (match('|')) {
+            addToken(TokenType::TK_OR);    // || → or
+        } else {
+            errorToken("意外字符 '|'（是否想用 '||'?）");
+        }
+        break;
 
     // 字符串字面量
     case '"': string(); break;

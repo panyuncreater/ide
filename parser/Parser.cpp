@@ -10,6 +10,7 @@ Parser::Parser() {}
 std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     tokens_ = tokens;
     current_ = 0;
+    errors_.clear();
 
     std::vector<std::unique_ptr<ASTNode>> statements;
 
@@ -20,6 +21,8 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
                 statements.push_back(std::move(decl));
             }
         } catch (const ParseError& e) {
+            // 收集错误而非吞掉
+            errors_.push_back(e);
             // 错误恢复：同步到下一个声明边界
             synchronize();
         }
@@ -73,6 +76,28 @@ const Token& Parser::consume(TokenType type, const std::string& message) {
     throw ParseError(message, tok.line, tok.column);
 }
 
+const Token& Parser::consumeIdentifierOrType(const std::string& message) {
+    // 允许普通标识符
+    if (check(TokenType::TK_IDENTIFIER)) return advance();
+    // 允许类型关键字作为名称（如 dict, array, int, float, string, bool）
+    if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+        check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+        check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+        return advance();
+    }
+    const Token& tok = peek();
+    throw ParseError(message, tok.line, tok.column);
+}
+
+bool Parser::isIdentifierOrType() const {
+    if (isAtEnd()) return false;
+    TokenType t = peek().type;
+    return t == TokenType::TK_IDENTIFIER ||
+           t == TokenType::TK_INT || t == TokenType::TK_FLOAT ||
+           t == TokenType::TK_BOOL || t == TokenType::TK_STRING_TYPE ||
+           t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
+}
+
 // ---- 声明与语句 ----
 
 std::unique_ptr<ASTNode> Parser::declaration() {
@@ -89,7 +114,7 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
         check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
         check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-        // 看下一个 Token 是否是标识符（类型注解变量声明）
+        // 可能是: 类型注解变量声明(int a=1;) 或 带返回类型的函数声明(int fib(n){})
         // 保存当前位置以便回溯
         int savePos = current_;
         const Token& typeTok = advance();
@@ -101,23 +126,34 @@ std::unique_ptr<ASTNode> Parser::declaration() {
             typeAnn += "[]";
         }
 
-        if (check(TokenType::TK_IDENTIFIER)) {
-            // 确定是类型注解变量声明
-            return typedVarDecl(typeAnn);
+        if (isIdentifierOrType()) {
+            // 检查是否是带返回类型的函数声明: int fib(
+            if (checkNext(TokenType::TK_LPAREN)) {
+                return typedFunDecl(typeAnn);
+            }
+            // 普通类型注解变量声明: int a = 10;
+            if (check(TokenType::TK_IDENTIFIER)) {
+                return typedVarDecl(typeAnn);
+            }
+            // 类型关键字作函数名但后面没有( — 无法构成有效声明，回溯
         }
 
         // 不是类型注解，回溯
         current_ = savePos;
     }
 
-    // 类名类型注解声明: ClassName varName; 或 ClassName varName = expr;
-    // 识别模式: 标识符 标识符 (类型名 变量名)
+    // 类名类型注解声明: ClassName varName; 或 ClassName funcName() { ... }
+    // 识别模式: 标识符 标识符 (类型名 变量名/函数名)
     if (check(TokenType::TK_IDENTIFIER)) {
-        // 预读两个 token: 第一个是类名，第二个是变量名
+        // 预读两个 token: 第一个是类名，第二个是变量名/函数名
         int savePos = current_;
         const Token& firstTok = advance();  // 类名
 
         if (check(TokenType::TK_IDENTIFIER)) {
+            // 检查是否是带类类型的函数声明: ClassName funcName(
+            if (checkNext(TokenType::TK_LPAREN)) {
+                return typedFunDecl(firstTok.lexeme);
+            }
             // ClassName varName — 类类型注解变量声明
             std::string typeAnn = firstTok.lexeme;
             return typedVarDecl(typeAnn);
@@ -160,7 +196,9 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
 std::unique_ptr<FunDecl> Parser::funDecl() {
     // 消耗 fun 或 function 关键字
     const Token& funTok = advance();
-    const Token& name = consume(TokenType::TK_IDENTIFIER, "期望函数名");
+
+    // 函数名：允许标识符或类型关键字（如 dict, array, int, float, string, bool）
+    const Token& name = consumeIdentifierOrType("期望函数名");
     consume(TokenType::TK_LPAREN, "期望 '('");
 
     std::vector<std::string> params;
@@ -248,9 +286,63 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
                                      std::move(body), funTok.line, funTok.column);
 }
 
+std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
+    // 带返回类型的函数声明: int fib(int n) { ... }
+    // 返回类型已由调用方提供，当前 token 是函数名
+    const Token& name = consumeIdentifierOrType("期望函数名");
+    consume(TokenType::TK_LPAREN, "期望 '('");
+
+    std::vector<std::string> params;
+    std::vector<std::string> paramTypes;
+
+    if (!check(TokenType::TK_RPAREN)) {
+        do {
+            std::string pType;
+            std::string paramName;
+
+            // 支持 C 风格类型注解: int a, float b 等
+            if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+                check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+                check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+                const Token& typeTok = advance();
+                pType = typeTok.lexeme;
+
+                if (match({TokenType::TK_LBRACKET})) {
+                    consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                    pType += "[]";
+                }
+
+                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+                paramName = param.lexeme;
+            } else {
+                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+                paramName = param.lexeme;
+
+                if (match({TokenType::TK_COLON})) {
+                    const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
+                    pType = typeTok.lexeme;
+                }
+            }
+
+            params.push_back(paramName);
+            paramTypes.push_back(pType);
+        } while (match({TokenType::TK_COMMA}));
+    }
+    consume(TokenType::TK_RPAREN, "期望 ')'");
+
+    // 返回类型已由调用方提供，不再解析 :type 或 ->type
+
+    consume(TokenType::TK_LBRACE, "期望 '{'");
+    auto body = block();
+
+    return std::make_unique<FunDecl>(name.lexeme, std::move(params),
+                                     std::move(paramTypes), returnType,
+                                     std::move(body), name.line, name.column);
+}
+
 std::unique_ptr<ClassDecl> Parser::classDecl() {
     const Token& classTok = consume(TokenType::TK_CLASS, "期望 'class'");
-    const Token& name = consume(TokenType::TK_IDENTIFIER, "期望类名");
+    const Token& name = consumeIdentifierOrType("期望类名");
 
     // 可选的 extends SuperClassName 或 : SuperClassName
     std::string superClassName;
@@ -269,6 +361,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
         // - var 声明（字段）
         // - fun/function 声明（方法）
         // - 带类型注解的声明
+        // - 裸方法名定义: methodName() {} （不带 fun 关键字）
         if (check(TokenType::TK_VAR)) {
             members.push_back(varDecl());
         } else if (check(TokenType::TK_FUN) || check(TokenType::TK_FUNCTION) || check(TokenType::TK_FUNC)) {
@@ -276,7 +369,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
         } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                    check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
                    check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-            // 带类型注解的字段声明
+            // 带类型注解的字段声明（如 int count = 0;）或带返回类型的方法声明（如 int getValue() {}）
             int savePos = current_;
             const Token& typeTok = advance();
 
@@ -286,10 +379,98 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                 typeAnn += "[]";
             }
 
-            if (check(TokenType::TK_IDENTIFIER)) {
-                members.push_back(typedVarDecl(typeAnn));
+            if (isIdentifierOrType()) {
+                // 检查是否是带返回类型的方法声明: int getValue(
+                if (checkNext(TokenType::TK_LPAREN)) {
+                    members.push_back(typedFunDecl(typeAnn));
+                } else if (check(TokenType::TK_IDENTIFIER)) {
+                    members.push_back(typedVarDecl(typeAnn));
+                } else {
+                    current_ = savePos;
+                    break;
+                }
             } else {
                 // 回溯
+                current_ = savePos;
+                break;
+            }
+        } else if (check(TokenType::TK_IDENTIFIER)) {
+            // 裸方法定义: methodName(params) { body }
+            // 或类类型字段: ClassName fieldName;
+            int savePos = current_;
+            const Token& firstTok = advance();  // 方法名或类名
+
+            // 检查是否是方法定义: name(
+            if (check(TokenType::TK_LPAREN)) {
+                // 这是一个裸方法定义
+                consume(TokenType::TK_LPAREN, "期望 '('");
+
+                std::vector<std::string> params;
+                std::vector<std::string> paramTypes;
+
+                if (!check(TokenType::TK_RPAREN)) {
+                    do {
+                        std::string pType;
+                        std::string paramName;
+
+                        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+                            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+                            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+                            const Token& typeTok = advance();
+                            pType = typeTok.lexeme;
+                            if (match({TokenType::TK_LBRACKET})) {
+                                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                                pType += "[]";
+                            }
+                            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+                            paramName = param.lexeme;
+                        } else {
+                            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+                            paramName = param.lexeme;
+                            if (match({TokenType::TK_COLON})) {
+                                const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
+                                pType = typeTok.lexeme;
+                            }
+                        }
+
+                        params.push_back(paramName);
+                        paramTypes.push_back(pType);
+                    } while (match({TokenType::TK_COMMA}));
+                }
+                consume(TokenType::TK_RPAREN, "期望 ')'");
+
+                // 可选的返回类型注解
+                std::string returnType;
+                if (match({TokenType::TK_COLON})) {
+                    if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+                        check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+                        check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+                        const Token& typeTok = advance();
+                        returnType = typeTok.lexeme;
+                    } else {
+                        const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
+                        returnType = retTypeTok.lexeme;
+                    }
+                }
+
+                consume(TokenType::TK_LBRACE, "期望 '{'");
+                auto body = block();
+
+                members.push_back(std::make_unique<FunDecl>(firstTok.lexeme, std::move(params),
+                                                             std::move(paramTypes), returnType,
+                                                             std::move(body), firstTok.line, firstTok.column));
+            } else if (check(TokenType::TK_IDENTIFIER)) {
+                // 可能是类类型字段: ClassName fieldName; 或类类型方法: ClassName methodName()
+                if (checkNext(TokenType::TK_LPAREN)) {
+                    // ClassName methodName() — 带类类型的方法声明
+                    members.push_back(typedFunDecl(firstTok.lexeme));
+                } else {
+                    // ClassName fieldName — 类类型字段声明
+                    // current_ 已在 advance() 后指向 fieldName，无需回溯
+                    members.push_back(typedVarDecl(firstTok.lexeme));
+                }
+            } else {
+                // 无法识别，回溯
                 current_ = savePos;
                 break;
             }
@@ -323,17 +504,26 @@ std::unique_ptr<IfStmt> Parser::ifStmt() {
     consume(TokenType::TK_LPAREN, "期望 '('");
     auto cond = expression();
     consume(TokenType::TK_RPAREN, "期望 ')'");
-    consume(TokenType::TK_LBRACE, "期望 '{'");
-    auto thenB = block();
+
+    // 支持带花括号的块和不带花括号的单条语句
+    std::unique_ptr<ASTNode> thenB;
+    if (check(TokenType::TK_LBRACE)) {
+        advance();
+        thenB = block();
+    } else {
+        thenB = statement();
+    }
 
     std::unique_ptr<ASTNode> elseB = nullptr;
     if (match({TokenType::TK_ELSE})) {
         if (check(TokenType::TK_IF)) {
             // else if — else 分支是另一个 if 语句
             elseB = ifStmt();
-        } else {
-            consume(TokenType::TK_LBRACE, "期望 '{'");
+        } else if (check(TokenType::TK_LBRACE)) {
+            advance();
             elseB = block();
+        } else {
+            elseB = statement();
         }
     }
 
@@ -346,8 +536,15 @@ std::unique_ptr<WhileStmt> Parser::whileStmt() {
     consume(TokenType::TK_LPAREN, "期望 '('");
     auto cond = expression();
     consume(TokenType::TK_RPAREN, "期望 ')'");
-    consume(TokenType::TK_LBRACE, "期望 '{'");
-    auto body = block();
+
+    // 支持带花括号的块和不带花括号的单条语句
+    std::unique_ptr<ASTNode> body;
+    if (check(TokenType::TK_LBRACE)) {
+        advance();
+        body = block();
+    } else {
+        body = statement();
+    }
 
     return std::make_unique<WhileStmt>(std::move(cond), std::move(body),
                                         whileTok.line, whileTok.column);
@@ -404,8 +601,15 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
         update = expression();
     }
     consume(TokenType::TK_RPAREN, "期望 ')'");
-    consume(TokenType::TK_LBRACE, "期望 '{'");
-    auto body = block();
+
+    // 支持带花括号的块和不带花括号的单条语句
+    std::unique_ptr<ASTNode> body;
+    if (check(TokenType::TK_LBRACE)) {
+        advance();
+        body = block();
+    } else {
+        body = statement();
+    }
 
     return std::make_unique<ForStmt>(std::move(init), std::move(cond),
                                       std::move(update), std::move(body),
