@@ -70,9 +70,52 @@ std::string Formatter::formatNode(ASTNode* node) {
     return "/* unknown node */";
 }
 
+// 运算符优先级表（数值越大优先级越高）
+int Formatter::opPrecedence(const std::string& op) {
+    if (op == "or")  return 1;
+    if (op == "and") return 2;
+    if (op == "==" || op == "!=") return 3;
+    if (op == "<" || op == ">" || op == "<=" || op == ">=") return 4;
+    if (op == "+" || op == "-") return 5;
+    if (op == "*" || op == "/" || op == "%") return 6;
+    return 0;
+}
+
+bool Formatter::isRightAssoc(const std::string& op) {
+    // 目前没有右结合的二元运算符（赋值不是 BinaryOp）
+    (void)op;
+    return false;
+}
+
+/// 判断子表达式是否需要加括号
+static bool needsParens(ASTNode* child, const std::string& parentOp, bool isRight) {
+    if (!child || child->nodeType != NodeType::NODE_BINARY_OP) return false;
+    BinaryOp* childBin = static_cast<BinaryOp*>(child);
+    int parentPrec = Formatter::opPrecedence(parentOp);
+    int childPrec  = Formatter::opPrecedence(childBin->op);
+    // 子优先级更低 → 需要括号
+    if (childPrec < parentPrec) return true;
+    // 同优先级时，右结合运算符的右操作数不需要括号，左操作数也不需要
+    // 但对于左结合运算符的右操作数，如果子也是同优先级，需要括号（如 a - (b - c)）
+    if (childPrec == parentPrec) {
+        if (Formatter::isRightAssoc(parentOp)) {
+            return !isRight;  // 右结合：左操作数需要括号
+        } else {
+            return isRight;   // 左结合：右操作数需要括号（如 a-(b+c) 在同优先级时）
+        }
+    }
+    return false;
+}
+
 std::string Formatter::formatBinaryOp(BinaryOp& node) {
     std::string left = formatNode(node.left.get());
+    if (needsParens(node.left.get(), node.op, false)) {
+        left = "(" + left + ")";
+    }
     std::string right = formatNode(node.right.get());
+    if (needsParens(node.right.get(), node.op, true)) {
+        right = "(" + right + ")";
+    }
     return left + " " + node.op + " " + right;
 }
 

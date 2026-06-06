@@ -25,12 +25,10 @@ enum class VMExecMode {
     VM_MODE_STEP        // 单步模式
 };
 
-/// 每条指令执行后的状态快照（用于调试/可视化）
+/// 每条指令执行后的状态信息（用于调试/可视化）
 struct VMStepInfo {
     size_t ip;                              // 当前指令指针
     OpCode opcode;                          // 当前操作码
-    std::vector<Value> stackSnapshot;        // 操作数栈快照
-    std::unordered_map<std::string, Value> globalsSnapshot;  // 全局变量快照
 };
 
 /// VM 调用帧

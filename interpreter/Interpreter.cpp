@@ -962,20 +962,11 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        // 需要获取可修改的数组引用（用于 writeBack）
-        VarRef* objRef = (node.object->nodeType == NodeType::NODE_VAR_REF)
-                         ? static_cast<VarRef*>(node.object.get()) : nullptr;
-        IndexAccess* idxAccess = (node.object->nodeType == NodeType::NODE_INDEX_ACCESS)
-                                 ? static_cast<IndexAccess*>(node.object.get()) : nullptr;
-        MemberAccess* memAccess = (node.object->nodeType == NodeType::NODE_MEMBER_ACCESS)
-                                   ? static_cast<MemberAccess*>(node.object.get()) : nullptr;
-
         if (node.methodName == "push") {
             if (argValues.size() != 1)
                 runtimeError("push 期望 1 个参数", node.line, node.column);
             obj.arrayVal.push_back(argValues[0]);
-            // 写回修改
-            if (objRef) currentEnv_->set(objRef->name, obj);
+            writeBack(node.object.get(), obj, node.line, node.column);
             return Value::nullValue();
         }
         if (node.methodName == "pop") {
@@ -983,7 +974,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 runtimeError("对空数组调用 pop", node.line, node.column);
             Value last = obj.arrayVal.back();
             obj.arrayVal.pop_back();
-            if (objRef) currentEnv_->set(objRef->name, obj);
+            writeBack(node.object.get(), obj, node.line, node.column);
             return last;
         }
         if (node.methodName == "len") {
@@ -998,7 +989,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal.size())
                 runtimeError("数组索引越界: " + std::to_string(idx), node.line, node.column);
             obj.arrayVal.erase(obj.arrayVal.begin() + idx);
-            if (objRef) currentEnv_->set(objRef->name, obj);
+            writeBack(node.object.get(), obj, node.line, node.column);
             return Value::nullValue();
         }
         if (node.methodName == "contains") {
@@ -1028,9 +1019,6 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        VarRef* objRef = (node.object->nodeType == NodeType::NODE_VAR_REF)
-                         ? static_cast<VarRef*>(node.object.get()) : nullptr;
-
         if (node.methodName == "len") {
             return Value(static_cast<int>(obj.dictVal.size()));
         }
@@ -1057,7 +1045,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             if (argValues.size() != 1)
                 runtimeError("remove 期望 1 个参数(键)", node.line, node.column);
             obj.dictVal.erase(argValues[0].toString());
-            if (objRef) currentEnv_->set(objRef->name, obj);
+            writeBack(node.object.get(), obj, node.line, node.column);
             return Value::nullValue();
         }
         runtimeError("字典没有方法 " + node.methodName, node.line, node.column);
@@ -1179,12 +1167,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 recursionDepth_--;
                 currentFunctionReturnType_ = savedReturnType;
 
-                // 更新实例（如果 this 被修改了）
-                VarRef* objRef = (node.object->nodeType == NodeType::NODE_VAR_REF)
-                         ? static_cast<VarRef*>(node.object.get()) : nullptr;
-                if (objRef) {
-                    currentEnv_->set(objRef->name, updatedThis);
-                }
+                // 更新实例（使用 writeBack 支持嵌套左值，如 arr[i].method()）
+                writeBack(node.object.get(), updatedThis, node.line, node.column);
 
                 return result;
             }

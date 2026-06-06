@@ -1,5 +1,6 @@
 #include "lexer/Lexer.h"
 #include <cctype>
+#include <limits>
 
 // ============================================================
 // Lexer 词法分析器实现
@@ -206,11 +207,26 @@ void Lexer::number() {
     int col = static_cast<int>(start_ - lineStart_) + 1;
 
     if (isFloat) {
-        double val = std::stod(text);
-        addToken(TokenType::TK_FLOAT_LIT, Value(val));
+        try {
+            double val = std::stod(text);
+            addToken(TokenType::TK_FLOAT_LIT, Value(val));
+        } catch (const std::out_of_range&) {
+            // 浮点数溢出，使用 infinity
+            addToken(TokenType::TK_FLOAT_LIT, Value(std::numeric_limits<double>::infinity()));
+        }
     } else {
-        int val = std::stoi(text);
-        addToken(TokenType::TK_INT_LIT, Value(val));
+        try {
+            int val = std::stoi(text);
+            addToken(TokenType::TK_INT_LIT, Value(val));
+        } catch (const std::out_of_range&) {
+            // 整数溢出，尝试作为 64 位整数或报错
+            try {
+                long long val = std::stoll(text);
+                addToken(TokenType::TK_INT_LIT, Value(static_cast<int>(val)));
+            } catch (const std::out_of_range&) {
+                errorToken("整数溢出: " + text);
+            }
+        }
     }
 }
 

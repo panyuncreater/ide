@@ -622,9 +622,9 @@ void Ide::onVmStop() {
 }
 
 void Ide::onVmStepCallback(const VMStepInfo& info) {
-    // 更新栈面板
-    vmStackPanel_->updateStack(info.stackSnapshot);
-    vmStackPanel_->updateGlobals(info.globalsSnapshot);
+    // 按需获取栈和全局变量快照（避免每条指令都拷贝）
+    vmStackPanel_->updateStack(vm_.getStack());
+    vmStackPanel_->updateGlobals(vm_.getGlobals());
 
     // 更新当前指令信息（行号从 VM 获取，因为可能在不同 chunk 中）
     int line = vm_.getCurrentLine();

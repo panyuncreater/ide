@@ -1,6 +1,7 @@
 #include "compiler/VM.h"
 #include <sstream>
 #include <cmath>
+#include <algorithm>
 
 // ============================================================
 // VM 虚拟机实现
@@ -93,8 +94,6 @@ void VM::notifyStep(size_t ip, OpCode opcode) {
     VMStepInfo info;
     info.ip = ip;
     info.opcode = opcode;
-    info.stackSnapshot = stack_;
-    info.globalsSnapshot = globals_;
     stepCallback_(info);
 }
 
@@ -575,9 +574,12 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_BUILD_ARRAY: {
         uint8_t count = chunk.code[ip + 1];
         std::vector<Value> elements;
+        elements.reserve(count);
         for (uint8_t i = 0; i < count; ++i) {
-            elements.insert(elements.begin(), pop());
+            elements.push_back(pop());
         }
+        // 栈是后进先出，需要反转
+        std::reverse(elements.begin(), elements.end());
         push(Value(elements));
         notifyStep(ip, op);
         ip += 2;
@@ -625,31 +627,14 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_SET: {
-        // 旧路径：用于非简单变量的 fallback（如嵌套访问 arr[i][j] = val）
-        // 当前不支持嵌套索引赋值的写回，报错提示
+        // fallback 路径：用于非简单变量的嵌套访问（如 arr[i][j] = val）
+        // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
+        // 报错提示，并清理栈上的操作数
         Value val = pop();
         Value idx = pop();
         Value obj = pop();
-        // 恢复 obj 和 idx 到栈上（因为写回需要原地修改）
-        push(obj);
-        push(idx);
-        push(val);
-        // 尝试写回：如果 obj 是数组/字典，修改后重新 push
-        if (obj.isArray() && idx.isInt()) {
-            int i = idx.intVal;
-            if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
-                obj.arrayVal[i] = val;
-            }
-        } else if (obj.isDict()) {
-            obj.dictVal[idx.toString()] = val;
-        }
-        // 弹出值（赋值不返回值）
-        pop();  // val
-        pop();  // idx
-        pop();  // obj（修改后的副本，但原引用可能是 globals_ 中的值）
-        notifyStep(ip, op);
-        ip += 1;
-        break;
+        (void)obj; (void)idx; (void)val;  // 消除未使用警告
+        return runtimeError("VM 不支持嵌套索引赋值（如 arr[i][j] = val），请使用临时变量");
     }
 
     case OpCode::OP_INDEX_SET_VAR: {
@@ -702,21 +687,14 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET: {
-        // 旧路径：用于非简单变量的 fallback
-        // 尝试写回：修改对象字段
+        // fallback 路径：用于非简单变量的嵌套成员赋值
+        // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         std::string fieldName = chunk.constants[idx].stringVal;
         Value val = pop();
         Value obj = pop();
-        if (obj.isInstance()) {
-            obj.fields[fieldName] = val;
-        } else if (obj.isDict()) {
-            obj.dictVal[fieldName] = val;
-        }
-        // 赋值不返回值，不 push
-        notifyStep(ip, op);
-        ip += 3;
-        break;
+        (void)obj; (void)fieldName; (void)val;  // 消除未使用警告
+        return runtimeError("VM 不支持嵌套成员赋值（如 arr[i].field = val），请使用临时变量");
     }
 
     case OpCode::OP_MEMBER_SET_VAR: {
@@ -769,9 +747,12 @@ VMResult VM::executeOneInstruction() {
 
                 // 移除 obj（peek 不移除），收集参数，重新排列栈
                 std::vector<Value> args;
+                args.reserve(argCount);
                 for (uint8_t i = 0; i < argCount; ++i) {
-                    args.insert(args.begin(), pop());
+                    args.push_back(pop());
                 }
+                // 栈是后进先出，需要反转参数顺序
+                std::reverse(args.begin(), args.end());
                 pop();  // 移除 obj
 
                 // 推入 this

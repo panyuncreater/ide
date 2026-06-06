@@ -475,16 +475,16 @@ std::unique_ptr<ASTNode> Parser::assignment() {
         const Token& eq = previous();
 
         // 变量赋值: identifier = expr
-        VarRef* varRef = dynamic_cast<VarRef*>(expr.get());
-        if (varRef) {
+        if (expr->nodeType == NodeType::NODE_VAR_REF) {
+            auto* varRef = static_cast<VarRef*>(expr.get());
             auto val = assignment();  // 右结合
             return std::make_unique<Assignment>(varRef->name, std::move(val),
                                                 eq.line, eq.column);
         }
 
         // 索引赋值: arr[index] = expr 或 dict[key] = expr
-        IndexAccess* idxAccess = dynamic_cast<IndexAccess*>(expr.get());
-        if (idxAccess) {
+        if (expr->nodeType == NodeType::NODE_INDEX_ACCESS) {
+            auto* idxAccess = static_cast<IndexAccess*>(expr.get());
             auto val = assignment();  // 右结合
             // 从 IndexAccess 中提取 object 和 index
             auto obj = std::move(idxAccess->object);
@@ -495,8 +495,8 @@ std::unique_ptr<ASTNode> Parser::assignment() {
         }
 
         // 成员赋值: obj.field = expr
-        MemberAccess* memAccess = dynamic_cast<MemberAccess*>(expr.get());
-        if (memAccess) {
+        if (expr->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            auto* memAccess = static_cast<MemberAccess*>(expr.get());
             auto val = assignment();  // 右结合
             auto obj = std::move(memAccess->object);
             std::string field = memAccess->fieldName;
@@ -624,8 +624,8 @@ std::unique_ptr<ASTNode> Parser::call() {
         // 函数调用: name(args) —— 仅当 expr 是 VarRef 时
         if (match({TokenType::TK_LPAREN})) {
             const Token& paren = previous();
-            VarRef* varRef = dynamic_cast<VarRef*>(expr.get());
-            if (varRef) {
+            if (expr->nodeType == NodeType::NODE_VAR_REF) {
+                auto* varRef = static_cast<VarRef*>(expr.get());
                 std::vector<std::unique_ptr<ASTNode>> args;
                 if (!check(TokenType::TK_RPAREN)) {
                     do {

@@ -45,6 +45,10 @@ public:
     /// 设置缩进大小
     void setIndentSize(int size);
 
+    // 运算符优先级辅助（public 供自由函数 needsParens 使用）
+    static int opPrecedence(const std::string& op);
+    static bool isRightAssoc(const std::string& op);
+
 private:
     int indentSize_ = 4;         // 缩进空格数
     int currentIndent_ = 0;      // 当前缩进级别
