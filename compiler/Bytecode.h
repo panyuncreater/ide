@@ -11,8 +11,7 @@
 // ============================================================
 
 /// 操作码枚举
-enum class OpCode : uint8_t {
-    OP_CONSTANT,     // 加载常量到栈顶
+enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_INT,          // 加载整数常量
     OP_FLOAT,        // 加载浮点常量
     OP_STRING,       // 加载字符串常量
@@ -72,6 +71,60 @@ enum class OpCode : uint8_t {
     OP_INIT_FIELD,   // 初始化实例字段（操作数: fieldNameIdx(2B)）：从栈顶 pop 值设置到实例的字段
 };
 
+/// 操作码 → 名称字符串（统一映射，避免多处手工维护）
+inline const char* opCodeName(OpCode op) {
+    switch (op) {
+    case OpCode::OP_CONSTANT:      return "OP_CONSTANT";
+    case OpCode::OP_INT:            return "OP_INT";
+    case OpCode::OP_FLOAT:          return "OP_FLOAT";
+    case OpCode::OP_STRING:        return "OP_STRING";
+    case OpCode::OP_NULL:          return "OP_NULL";
+    case OpCode::OP_TRUE:          return "OP_TRUE";
+    case OpCode::OP_FALSE:         return "OP_FALSE";
+    case OpCode::OP_ADD:           return "OP_ADD";
+    case OpCode::OP_SUBTRACT:      return "OP_SUBTRACT";
+    case OpCode::OP_MULTIPLY:      return "OP_MULTIPLY";
+    case OpCode::OP_DIVIDE:        return "OP_DIVIDE";
+    case OpCode::OP_MODULO:        return "OP_MODULO";
+    case OpCode::OP_NEGATE:        return "OP_NEGATE";
+    case OpCode::OP_NOT:           return "OP_NOT";
+    case OpCode::OP_EQUAL:         return "OP_EQUAL";
+    case OpCode::OP_NOT_EQUAL:     return "OP_NOT_EQUAL";
+    case OpCode::OP_LESS:          return "OP_LESS";
+    case OpCode::OP_GREATER:       return "OP_GREATER";
+    case OpCode::OP_LESS_EQUAL:    return "OP_LESS_EQUAL";
+    case OpCode::OP_GREATER_EQUAL: return "OP_GREATER_EQUAL";
+    case OpCode::OP_AND:           return "OP_AND";
+    case OpCode::OP_OR:            return "OP_OR";
+    case OpCode::OP_PRINT:         return "OP_PRINT";
+    case OpCode::OP_POP:           return "OP_POP";
+    case OpCode::OP_DEFINE_VAR:    return "OP_DEFINE_VAR";
+    case OpCode::OP_GET_VAR:       return "OP_GET_VAR";
+    case OpCode::OP_SET_VAR:       return "OP_SET_VAR";
+    case OpCode::OP_JUMP:          return "OP_JUMP";
+    case OpCode::OP_JUMP_IF_FALSE: return "OP_JUMP_IF_FALSE";
+    case OpCode::OP_LOOP:          return "OP_LOOP";
+    case OpCode::OP_RETURN:        return "OP_RETURN";
+    case OpCode::OP_CALL:          return "OP_CALL";
+    case OpCode::OP_BUILD_ARRAY:   return "OP_BUILD_ARRAY";
+    case OpCode::OP_BUILD_DICT:    return "OP_BUILD_DICT";
+    case OpCode::OP_INDEX_GET:    return "OP_INDEX_GET";
+    case OpCode::OP_INDEX_SET:    return "OP_INDEX_SET";
+    case OpCode::OP_INDEX_SET_VAR: return "OP_INDEX_SET_VAR";
+    case OpCode::OP_MEMBER_GET:   return "OP_MEMBER_GET";
+    case OpCode::OP_MEMBER_SET:   return "OP_MEMBER_SET";
+    case OpCode::OP_MEMBER_SET_VAR: return "OP_MEMBER_SET_VAR";
+    case OpCode::OP_METHOD_CALL:  return "OP_METHOD_CALL";
+    case OpCode::OP_DUP:          return "OP_DUP";
+    case OpCode::OP_CLOSURE:      return "OP_CLOSURE";
+    case OpCode::OP_GET_LOCAL:    return "OP_GET_LOCAL";
+    case OpCode::OP_SET_LOCAL:    return "OP_SET_LOCAL";
+    case OpCode::OP_CLASS_NEW:    return "OP_CLASS_NEW";
+    case OpCode::OP_INIT_FIELD:   return "OP_INIT_FIELD";
+    }
+    return "OP_UNKNOWN";
+}
+
 /// 字节码块：一段连续的指令
 struct BytecodeChunk {
     std::vector<uint8_t> code;       // 指令字节流
@@ -79,6 +132,7 @@ struct BytecodeChunk {
     std::vector<int> lines;         // 每条指令对应的行号
     std::string name;               // chunk 名称（函数名）
     int arity = 0;                  // 参数个数
+    std::vector<int> ipToInstrIndex; // 预计算：字节偏移 → 指令索引映射
 
     BytecodeChunk() = default;
     explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)
@@ -115,6 +169,54 @@ struct BytecodeChunk {
     int getLine(size_t offset) const {
         if (offset < lines.size()) return lines[offset];
         return 0;
+    }
+
+    /// 预计算 ip→指令索引映射（编译完成后调用一次）
+    void buildIpMap() {
+        ipToInstrIndex.assign(code.size(), -1);
+        size_t offset = 0;
+        int instrIdx = 0;
+        while (offset < code.size()) {
+            ipToInstrIndex[offset] = instrIdx;
+            OpCode op = static_cast<OpCode>(code[offset]);
+            offset += instructionSize(op);
+            instrIdx++;
+        }
+    }
+
+    /// 获取操作码对应的指令长度（字节数）
+    static size_t instructionSize(OpCode op) {
+        switch (op) {
+        case OpCode::OP_CONSTANT:
+        case OpCode::OP_INT:
+        case OpCode::OP_FLOAT:
+        case OpCode::OP_STRING:
+        case OpCode::OP_DEFINE_VAR:
+        case OpCode::OP_GET_VAR:
+        case OpCode::OP_SET_VAR:
+        case OpCode::OP_JUMP:
+        case OpCode::OP_JUMP_IF_FALSE:
+        case OpCode::OP_LOOP:
+        case OpCode::OP_MEMBER_GET:
+        case OpCode::OP_MEMBER_SET:
+        case OpCode::OP_INDEX_SET_VAR:
+        case OpCode::OP_INIT_FIELD:
+            return 3;
+        case OpCode::OP_CALL:
+        case OpCode::OP_METHOD_CALL:
+        case OpCode::OP_CLOSURE:
+        case OpCode::OP_CLASS_NEW:
+            return 4;
+        case OpCode::OP_BUILD_ARRAY:
+        case OpCode::OP_BUILD_DICT:
+        case OpCode::OP_GET_LOCAL:
+        case OpCode::OP_SET_LOCAL:
+            return 2;
+        case OpCode::OP_MEMBER_SET_VAR:
+            return 5;
+        default:
+            return 1;
+        }
     }
 
     /// 反汇编：输出字节码文本

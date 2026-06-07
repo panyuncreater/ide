@@ -72,6 +72,9 @@ public:
     /// 设置是否启用步进回调（默认关闭，避免性能开销）
     void setStepCallbackEnabled(bool enabled);
 
+    /// 是否发生过运行时错误
+    bool hasError() const;
+
     /// 获取最后的运行时错误
     std::string getLastError() const;
 
@@ -97,12 +100,14 @@ private:
     std::vector<Value> stack_;                     // 操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表
     std::vector<VMCallFrame> frames_;              // 调用帧栈
+    BytecodeChunk mainChunk_;                       // 主 chunk 副本（VM 自持，避免悬空指针）
     std::unordered_map<std::string, BytecodeChunk> functionChunks_; // 函数字节码
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
     bool stepCallbackEnabled_ = false;              // 是否启用步进回调
     bool initialized_ = false;                      // 是否已初始化执行环境
     std::string lastError_;                         // 最近一次运行时错误
+    bool hasError_ = false;                         // 运行时错误标志（用于快速检测）
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
     static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
 
@@ -114,8 +119,8 @@ private:
     /// 运行时错误
     VMResult runtimeError(const std::string& msg);
 
-    /// 数值二元运算
-    VMResult numericOp(const std::string& op, int line);
+    /// 数值二元运算（枚举分发）
+    VMResult numericOp(int opType, int line);
 
     /// 通知步进回调
     void notifyStep(size_t ip, OpCode opcode);

@@ -632,7 +632,7 @@ void Ide::onVmStepCallback(const VMStepInfo& info) {
 
 void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
     // 根据当前 chunk 名和 ip 定位到正确的列表行
-    // chunkRowMap_ 记录了每个 chunk 在 bytecodeList_ 中的起始行
+    // 使用预计算的 ipToInstrIndex 做 O(1) 查找
     const BytecodeChunk* targetChunk = nullptr;
 
     // 找到目标 chunk
@@ -646,47 +646,19 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
     }
     if (!targetChunk || targetChunk->code.empty()) return;
 
-    // 在目标 chunk 中计算 ip 对应的指令行号（该 chunk 内的第几条指令）
-    size_t offset = 0;
+    // O(1) 查找：ip → 指令索引
     int instrIndex = 0;
-    while (offset < targetChunk->code.size()) {
-        if (offset == ip) {
-            break;
+    if (ip < targetChunk->ipToInstrIndex.size() && targetChunk->ipToInstrIndex[ip] >= 0) {
+        instrIndex = targetChunk->ipToInstrIndex[ip];
+    } else {
+        // fallback：遍历查找（不应发生）
+        size_t offset = 0;
+        while (offset < targetChunk->code.size()) {
+            if (offset == ip) break;
+            OpCode op = static_cast<OpCode>(targetChunk->code[offset]);
+            offset += BytecodeChunk::instructionSize(op);
+            instrIndex++;
         }
-        // 跳过当前指令
-        OpCode op = static_cast<OpCode>(targetChunk->code[offset]);
-        switch (op) {
-        case OpCode::OP_CONSTANT:
-        case OpCode::OP_INT:
-        case OpCode::OP_FLOAT:
-        case OpCode::OP_STRING:
-        case OpCode::OP_DEFINE_VAR:
-        case OpCode::OP_GET_VAR:
-        case OpCode::OP_SET_VAR:
-        case OpCode::OP_JUMP:
-        case OpCode::OP_JUMP_IF_FALSE:
-        case OpCode::OP_LOOP:
-        case OpCode::OP_MEMBER_GET:
-        case OpCode::OP_MEMBER_SET:
-        case OpCode::OP_INDEX_SET_VAR:
-        case OpCode::OP_INIT_FIELD:
-            offset += 3; break;
-        case OpCode::OP_CALL:
-        case OpCode::OP_METHOD_CALL:
-        case OpCode::OP_CLOSURE:
-        case OpCode::OP_CLASS_NEW:
-            offset += 4; break;
-        case OpCode::OP_BUILD_ARRAY:
-        case OpCode::OP_BUILD_DICT:
-        case OpCode::OP_GET_LOCAL:
-        case OpCode::OP_SET_LOCAL:
-            offset += 2; break;
-        case OpCode::OP_MEMBER_SET_VAR:
-            offset += 5; break;
-        default:
-            offset += 1; break;
-        }
-        instrIndex++;
     }
 
     // 在 chunkRowMap_ 中找到该 chunk 的起始行

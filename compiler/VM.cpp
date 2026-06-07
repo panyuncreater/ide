@@ -31,16 +31,26 @@ Value VM::pop() {
 }
 
 Value& VM::peek(size_t distance) {
+    if (distance >= stack_.size()) {
+        static Value nullSentinel = Value::nullValue();
+        runtimeError("栈访问越界 (peek distance=" + std::to_string(distance) + ", stack size=" + std::to_string(stack_.size()) + ")");
+        return nullSentinel;
+    }
     return stack_[stack_.size() - 1 - distance];
 }
 
 VMResult VM::runtimeError(const std::string& msg) {
     lastError_ = msg;
+    hasError_ = true;
     return VMResult::VM_RUNTIME_ERROR;
 }
 
 std::string VM::getLastError() const {
     return lastError_;
+}
+
+bool VM::hasError() const {
+    return hasError_;
 }
 
 std::vector<Value> VM::getStack() const {
@@ -105,38 +115,49 @@ const BytecodeChunk& VM::currentChunk() {
     return *currentFrame().chunk;
 }
 
-VMResult VM::numericOp(const std::string& op, int line) {
+// 数值运算类型枚举（避免字符串比较）
+enum { OP_ADD_INT = 0, OP_SUB_INT, OP_MUL_INT, OP_DIV_INT, OP_MOD_INT };
+
+VMResult VM::numericOp(int opType, int line) {
     Value right = pop();
     Value left = pop();
 
-    // 字符串拼接
-    if (op == "+" && left.isString() && right.isString()) {
-        push(Value(left.stringVal + right.stringVal));
-        return VMResult::VM_OK;
-    }
-    if (op == "+" && (left.isString() || right.isString())) {
-        push(Value(left.toString() + right.toString()));
-        return VMResult::VM_OK;
+    // 字符串拼接（仅加法）
+    if (opType == OP_ADD_INT) {
+        if (left.isString() && right.isString()) {
+            push(Value(left.stringVal + right.stringVal));
+            return VMResult::VM_OK;
+        }
+        if (left.isString() || right.isString()) {
+            push(Value(left.toString() + right.toString()));
+            return VMResult::VM_OK;
+        }
     }
 
     // 数值运算
-    if (op == "+") {
+    switch (opType) {
+    case OP_ADD_INT:
         if (left.isInt() && right.isInt()) push(Value(left.intVal + right.intVal));
         else push(Value(left.toDouble() + right.toDouble()));
-    } else if (op == "-") {
+        break;
+    case OP_SUB_INT:
         if (left.isInt() && right.isInt()) push(Value(left.intVal - right.intVal));
         else push(Value(left.toDouble() - right.toDouble()));
-    } else if (op == "*") {
+        break;
+    case OP_MUL_INT:
         if (left.isInt() && right.isInt()) push(Value(left.intVal * right.intVal));
         else push(Value(left.toDouble() * right.toDouble()));
-    } else if (op == "/") {
+        break;
+    case OP_DIV_INT:
         if (right.toDouble() == 0.0) return runtimeError("除零错误");
         if (left.isInt() && right.isInt()) push(Value(left.intVal / right.intVal));
         else push(Value(left.toDouble() / right.toDouble()));
-    } else if (op == "%") {
+        break;
+    case OP_MOD_INT:
         if (!left.isInt() || !right.isInt()) return runtimeError("取模运算仅支持整数");
         if (right.intVal == 0) return runtimeError("除零错误");
         push(Value(left.intVal % right.intVal));
+        break;
     }
 
     return VMResult::VM_OK;
@@ -150,12 +171,14 @@ void VM::initExecution(const CompileResult& result) {
     stack_.clear();
     globals_.clear();
     lastError_.clear();
+    hasError_ = false;
     frames_.clear();
     functionChunks_ = result.functionChunks;
+    mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬空指针
 
     // 设置主帧
     VMCallFrame mainFrame;
-    mainFrame.chunk = &result.mainChunk;
+    mainFrame.chunk = &mainChunk_;  // 指向 VM 自持的副本
     mainFrame.ip = 0;
     mainFrame.basePointer = 0;
     mainFrame.functionName = "main";
@@ -176,14 +199,19 @@ void VM::resetState() {
     stack_.clear();
     globals_.clear();
     lastError_.clear();
+    hasError_ = false;
     frames_.clear();
     functionChunks_.clear();
+    mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
     initialized_ = false;
 }
 
 VMResult VM::stepOnce() {
     // 帧已空 → 执行完毕
     if (frames_.empty()) return VMResult::VM_OK;
+
+    // 已有错误 → 不再执行
+    if (hasError_) return VMResult::VM_RUNTIME_ERROR;
 
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
@@ -222,7 +250,7 @@ VMResult VM::execute(const CompileResult& result) {
         }
 
         VMResult r = executeOneInstruction();
-        if (r != VMResult::VM_OK) return r;
+        if (r != VMResult::VM_OK || hasError_) return r;
     }
 
     return VMResult::VM_OK;
@@ -292,7 +320,7 @@ VMResult VM::executeOneInstruction() {
         break;
 
     case OpCode::OP_ADD: {
-        VMResult r = numericOp("+", line);
+        VMResult r = numericOp(OP_ADD_INT, line);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -300,7 +328,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_SUBTRACT: {
-        VMResult r = numericOp("-", line);
+        VMResult r = numericOp(OP_SUB_INT, line);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -308,7 +336,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MULTIPLY: {
-        VMResult r = numericOp("*", line);
+        VMResult r = numericOp(OP_MUL_INT, line);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -316,7 +344,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_DIVIDE: {
-        VMResult r = numericOp("/", line);
+        VMResult r = numericOp(OP_DIV_INT, line);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -324,7 +352,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MODULO: {
-        VMResult r = numericOp("%", line);
+        VMResult r = numericOp(OP_MOD_INT, line);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -445,7 +473,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_DEFINE_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        std::string name = chunk.constants[idx].stringVal;
+        const std::string& name = chunk.constants[idx].stringVal;
         Value val = pop();
         globals_[name] = val;
         notifyStep(ip, op);
@@ -455,7 +483,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_GET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        std::string name = chunk.constants[idx].stringVal;
+        const std::string& name = chunk.constants[idx].stringVal;
         auto it = globals_.find(name);
         if (it != globals_.end()) {
             push(it->second);
@@ -469,7 +497,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_SET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        std::string name = chunk.constants[idx].stringVal;
+        const std::string& name = chunk.constants[idx].stringVal;
         Value val = pop();
         globals_[name] = val;
         // 不推入值：赋值是语句而非表达式，不返回值
@@ -535,7 +563,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_CALL: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
-        std::string funName = chunk.constants[idx].stringVal;
+        const std::string& funName = chunk.constants[idx].stringVal;
 
         auto it = functionChunks_.find(funName);
         if (it == functionChunks_.end()) {
@@ -640,7 +668,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_INDEX_SET_VAR: {
         // 新路径：直接修改 globals_[varName] 中的数组/字典元素
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        std::string varName = chunk.constants[idx].stringVal;
+        const std::string& varName = chunk.constants[idx].stringVal;
         Value val = pop();
         Value index = pop();
         auto it = globals_.find(varName);
@@ -662,7 +690,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_MEMBER_GET: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        std::string fieldName = chunk.constants[idx].stringVal;
+        const std::string& fieldName = chunk.constants[idx].stringVal;
         Value obj = pop();
         if (obj.isInstance()) {
             auto it = obj.fields.find(fieldName);
@@ -690,7 +718,7 @@ VMResult VM::executeOneInstruction() {
         // fallback 路径：用于非简单变量的嵌套成员赋值
         // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        std::string fieldName = chunk.constants[idx].stringVal;
+        const std::string& fieldName = chunk.constants[idx].stringVal;
         Value val = pop();
         Value obj = pop();
         (void)obj; (void)fieldName; (void)val;  // 消除未使用警告
@@ -701,8 +729,8 @@ VMResult VM::executeOneInstruction() {
         // 新路径：直接修改 globals_[varName].fields[fieldName]
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
-        std::string varName = chunk.constants[varIdx].stringVal;
-        std::string fieldName = chunk.constants[fieldIdx].stringVal;
+        const std::string& varName = chunk.constants[varIdx].stringVal;
+        const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
         Value val = pop();
         auto it = globals_.find(varName);
         if (it != globals_.end()) {
@@ -721,7 +749,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_METHOD_CALL: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
-        std::string methodName = chunk.constants[idx].stringVal;
+        const std::string& methodName = chunk.constants[idx].stringVal;
 
         Value obj = peek(argCount);
 
@@ -797,7 +825,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_CLOSURE: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
-        std::string funName = chunk.constants[idx].stringVal;
+        const std::string& funName = chunk.constants[idx].stringVal;
         Value closure = Value::makeClosure(funName, nullptr, {});
         auto it = functionChunks_.find(funName);
         if (it != functionChunks_.end()) {
@@ -839,7 +867,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_CLASS_NEW: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
-        std::string className = chunk.constants[idx].stringVal;
+        const std::string& className = chunk.constants[idx].stringVal;
 
         Value instance = Value::makeInstance(className);
         push(instance);
@@ -891,7 +919,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_INIT_FIELD: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        std::string fieldName = chunk.constants[idx].stringVal;
+        const std::string& fieldName = chunk.constants[idx].stringVal;
         Value val = pop();
         // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
         if (!stack_.empty() && stack_.back().isInstance()) {

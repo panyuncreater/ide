@@ -26,6 +26,13 @@ CompileResult Compiler::compile(Block& program) {
     CompileResult result;
     result.mainChunk = std::move(chunk_);
     result.functionChunks = std::move(functionChunks_);
+
+    // 预计算 ip→指令索引映射（用于调试高亮 O(1) 查找）
+    result.mainChunk.buildIpMap();
+    for (auto& kv : result.functionChunks) {
+        kv.second.buildIpMap();
+    }
+
     return result;
 }
 
