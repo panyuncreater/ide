@@ -540,7 +540,7 @@ VMResult VM::executeOneInstruction() {
 
         // init 方法返回 this 实例而非 null
         if (retFrame.functionName.size() >= 5 &&
-            retFrame.functionName.substr(retFrame.functionName.size() - 5) == ".init") {
+            retFrame.functionName.compare(retFrame.functionName.size() - 5, 5, ".init") == 0) {
             if (retFrame.basePointer < stack_.size()) {
                 result = stack_[retFrame.basePointer];
             }

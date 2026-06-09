@@ -2,6 +2,7 @@
 #include <QVBoxLayout>
 #include <QHeaderView>
 #include <QAbstractItemView>
+#include <algorithm>  // std::sort
 
 // ============================================================
 // VmStackPanel 实现
@@ -148,10 +149,15 @@ void VmStackPanel::updateStack(const std::vector<Value>& stack) {
 }
 
 void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& globals) {
-    globalsTable_->setRowCount(static_cast<int>(globals.size()));
+    // 排序后填表，避免 unordered_map 遍历顺序不确定导致 UI 闪烁
+    std::vector<std::pair<std::string, Value>> entries(globals.begin(), globals.end());
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    globalsTable_->setRowCount(static_cast<int>(entries.size()));
 
     int row = 0;
-    for (const auto& [name, val] : globals) {
+    for (const auto& [name, val] : entries) {
         globalsTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(name)));
         globalsTable_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(val.toString())));
         ++row;

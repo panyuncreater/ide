@@ -78,11 +78,17 @@ public:
     /// 获取最后的运行时错误
     std::string getLastError() const;
 
-    /// 获取栈内容（用于调试）
+    /// 获取栈内容（用于调试，拷贝）
     std::vector<Value> getStack() const;
 
-    /// 获取全局变量（用于调试）
+    /// 获取全局变量（用于调试，拷贝）
     std::unordered_map<std::string, Value> getGlobals() const;
+
+    /// 获取栈的常量引用（零拷贝，调试用）
+    const std::vector<Value>& getStackRef() const { return stack_; }
+
+    /// 获取全局变量表的常量引用（零拷贝，调试用）
+    const std::unordered_map<std::string, Value>& getGlobalsRef() const { return globals_; }
 
     /// 获取当前帧的 IP（用于单步调试 UI 高亮）
     size_t getCurrentIP() const;

@@ -92,6 +92,10 @@ private:
     /// 类声明: class Name { members } 或 class Name extends Super { members }
     std::unique_ptr<ClassDecl> classDecl();
 
+    /// 解析参数列表（支持C风格类型注解 int a 和冒号风格 a: int）
+    /// 假设调用前已 consume '('
+    void parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes);
+
     /// 语句
     std::unique_ptr<ASTNode> statement();
 

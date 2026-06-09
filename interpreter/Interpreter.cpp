@@ -101,40 +101,44 @@ void Interpreter::runtimeError(const std::string& msg, int line, int col) {
 
 Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
                                     const Value& right, int line, int col) {
+    // 运算符字符串 → 内部枚举（避免6次字符串比较的热路径开销）
+    int opType;
+    if (op == "+") opType = 0;
+    else if (op == "-") opType = 1;
+    else if (op == "*") opType = 2;
+    else if (op == "/") opType = 3;
+    else if (op == "%") opType = 4;
+    else { runtimeError("未知运算符: " + op, line, col); }
+
     // 字符串拼接
-    if (op == "+" && left.isString() && right.isString()) {
+    if (opType == 0 && left.isString() && right.isString()) {
         return Value(left.stringVal + right.stringVal);
     }
-    // 字符串 + 其他类型：转为字符串拼接
-    if (op == "+" && (left.isString() || right.isString())) {
+    if (opType == 0 && (left.isString() || right.isString())) {
         return Value(left.toString() + right.toString());
     }
 
-    // 数值运算
-    if (op == "+") {
+    // 数值运算（switch 分发）
+    switch (opType) {
+    case 0: // +
         if (left.isInt() && right.isInt()) return Value(left.intVal + right.intVal);
         return Value(left.toDouble() + right.toDouble());
-    }
-    if (op == "-") {
+    case 1: // -
         if (left.isInt() && right.isInt()) return Value(left.intVal - right.intVal);
         return Value(left.toDouble() - right.toDouble());
-    }
-    if (op == "*") {
+    case 2: // *
         if (left.isInt() && right.isInt()) return Value(left.intVal * right.intVal);
         return Value(left.toDouble() * right.toDouble());
-    }
-    if (op == "/") {
-        double r = right.toDouble();
-        if (r == 0.0) runtimeError("除零错误", line, col);
-        if (left.isInt() && right.isInt()) return Value(left.intVal / right.intVal);
-        return Value(left.toDouble() / r);
-    }
-    if (op == "%") {
+    case 3: // /
+        { double r = right.toDouble();
+          if (r == 0.0) runtimeError("除零错误", line, col);
+          if (left.isInt() && right.isInt()) return Value(left.intVal / right.intVal);
+          return Value(left.toDouble() / r); }
+    case 4: // %
         if (!left.isInt() || !right.isInt()) runtimeError("取模运算仅支持整数", line, col);
         if (right.intVal == 0) runtimeError("除零错误", line, col);
         return Value(left.intVal % right.intVal);
     }
-
     runtimeError("未知运算符: " + op, line, col);
 }
 

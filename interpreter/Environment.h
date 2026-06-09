@@ -59,18 +59,22 @@ public:
         return false;
     }
 
-    /// 获取当前作用域及所有父作用域的变量快照
-    std::vector<std::pair<std::string, Value>> allVariables() const {
-        std::vector<std::pair<std::string, Value>> result;
-        // 先收集父作用域
+    /// 收集所有变量到结果向量（避免N个临时vector深拷贝）
+    void collectVariables(std::vector<std::pair<std::string, Value>>& result) const {
+        // 先收集父作用域（父的变量在前）
         if (parent) {
-            auto parentVars = parent->allVariables();
-            result.insert(result.end(), parentVars.begin(), parentVars.end());
+            parent->collectVariables(result);
         }
-        // 再收集当前作用域
+        // 再收集当前作用域（子的覆盖父的，所以追加到末尾）
         for (const auto& kv : variables) {
             result.emplace_back(kv.first, kv.second);
         }
+    }
+
+    /// 获取当前作用域及所有父作用域的变量快照
+    std::vector<std::pair<std::string, Value>> allVariables() const {
+        std::vector<std::pair<std::string, Value>> result;
+        collectVariables(result);
         return result;
     }
 

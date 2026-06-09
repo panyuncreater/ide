@@ -203,44 +203,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-
-    if (!check(TokenType::TK_RPAREN)) {
-        do {
-            std::string pType;
-            std::string paramName;
-
-            // 支持 C 风格类型注解: int a, float b 等
-            if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-                check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-                // 类型在参数名前面: int a
-                const Token& typeTok = advance();
-                pType = typeTok.lexeme;
-
-                // 可选的数组类型: int[]
-                if (match({TokenType::TK_LBRACKET})) {
-                    consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                    pType += "[]";
-                }
-
-                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
-                paramName = param.lexeme;
-            } else {
-                // 参数名在前面: a 或 a: int
-                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
-                paramName = param.lexeme;
-
-                // 可选的参数类型注解 : type
-                if (match({TokenType::TK_COLON})) {
-                    const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
-                    pType = typeTok.lexeme;
-                }
-            }
-
-            params.push_back(paramName);
-            paramTypes.push_back(pType);
-        } while (match({TokenType::TK_COMMA}));
-    }
+    parseParamList(params, paramTypes);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
     // 可选的返回值类型注解 : type 或 -> type（type 可能是关键字如 int/float）
@@ -294,40 +257,7 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-
-    if (!check(TokenType::TK_RPAREN)) {
-        do {
-            std::string pType;
-            std::string paramName;
-
-            // 支持 C 风格类型注解: int a, float b 等
-            if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-                check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-                const Token& typeTok = advance();
-                pType = typeTok.lexeme;
-
-                if (match({TokenType::TK_LBRACKET})) {
-                    consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                    pType += "[]";
-                }
-
-                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
-                paramName = param.lexeme;
-            } else {
-                const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
-                paramName = param.lexeme;
-
-                if (match({TokenType::TK_COLON})) {
-                    const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
-                    pType = typeTok.lexeme;
-                }
-            }
-
-            params.push_back(paramName);
-            paramTypes.push_back(pType);
-        } while (match({TokenType::TK_COMMA}));
-    }
+    parseParamList(params, paramTypes);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
     // 返回类型已由调用方提供，不再解析 :type 或 ->type
@@ -338,6 +268,44 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
     return std::make_unique<FunDecl>(name.lexeme, std::move(params),
                                      std::move(paramTypes), returnType,
                                      std::move(body), name.line, name.column);
+}
+
+void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes) {
+    if (check(TokenType::TK_RPAREN)) return;
+    do {
+        std::string pType;
+        std::string paramName;
+
+        // 支持 C 风格类型注解: int a, float b 等
+        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+            const Token& typeTok = advance();
+            pType = typeTok.lexeme;
+
+            // 可选的数组类型: int[]
+            if (match({TokenType::TK_LBRACKET})) {
+                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                pType += "[]";
+            }
+
+            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+            paramName = param.lexeme;
+        } else {
+            // 参数名在前面: a 或 a: int
+            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+            paramName = param.lexeme;
+
+            // 可选的参数类型注解 : type
+            if (match({TokenType::TK_COLON})) {
+                const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
+                pType = typeTok.lexeme;
+            }
+        }
+
+        params.push_back(paramName);
+        paramTypes.push_back(pType);
+    } while (match({TokenType::TK_COMMA}));
 }
 
 std::unique_ptr<ClassDecl> Parser::classDecl() {
@@ -407,36 +375,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
                 std::vector<std::string> params;
                 std::vector<std::string> paramTypes;
-
-                if (!check(TokenType::TK_RPAREN)) {
-                    do {
-                        std::string pType;
-                        std::string paramName;
-
-                        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-                            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-                            const Token& typeTok = advance();
-                            pType = typeTok.lexeme;
-                            if (match({TokenType::TK_LBRACKET})) {
-                                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                                pType += "[]";
-                            }
-                            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
-                            paramName = param.lexeme;
-                        } else {
-                            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
-                            paramName = param.lexeme;
-                            if (match({TokenType::TK_COLON})) {
-                                const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
-                                pType = typeTok.lexeme;
-                            }
-                        }
-
-                        params.push_back(paramName);
-                        paramTypes.push_back(pType);
-                    } while (match({TokenType::TK_COMMA}));
-                }
+                parseParamList(params, paramTypes);
                 consume(TokenType::TK_RPAREN, "期望 ')'");
 
                 // 可选的返回类型注解

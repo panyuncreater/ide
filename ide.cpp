@@ -515,11 +515,10 @@ void Ide::onVmRun() {
     // 重置 VM 状态，全速执行
     vm_.resetState();
 
-    // 设置步进回调用于实时 UI 更新
-    vm_.setStepCallbackEnabled(true);
-    vm_.setStepCallback([this](const VMStepInfo& info) {
-        onVmStepCallback(info);
-    });
+    // 全速执行时不启用步进回调：避免每条指令深拷贝栈/全局变量
+    // 以及 processEvents() 导致的重入风险
+    vm_.setStepCallbackEnabled(false);
+    vm_.setStepCallback(nullptr);
 
     try {
         VMResult result = vm_.execute(lastCompileResult_);
@@ -559,6 +558,12 @@ void Ide::onVmStep() {
     isVmRunning_ = true;
     vmStepAction_->setEnabled(false);  // 防止重入
 
+    // 单步执行时启用回调，让 onVmStepCallback 统一处理UI更新
+    vm_.setStepCallbackEnabled(true);
+    vm_.setStepCallback([this](const VMStepInfo& info) {
+        onVmStepCallback(info);
+    });
+
     // 执行一条指令
     VMResult result = vm_.stepOnce();
 
@@ -589,8 +594,8 @@ void Ide::onVmStep() {
     }
 
     // 更新 UI：栈 + 全局变量 + 当前指令高亮
-    vmStackPanel_->updateStack(vm_.getStack());
-    vmStackPanel_->updateGlobals(vm_.getGlobals());
+    vmStackPanel_->updateStack(vm_.getStackRef());
+    vmStackPanel_->updateGlobals(vm_.getGlobalsRef());
 
     // 高亮当前字节码指令
     size_t currentIP = vm_.getCurrentIP();
@@ -615,19 +620,14 @@ void Ide::onVmStop() {
 }
 
 void Ide::onVmStepCallback(const VMStepInfo& info) {
-    // 按需获取栈和全局变量快照（避免每条指令都拷贝）
-    vmStackPanel_->updateStack(vm_.getStack());
-    vmStackPanel_->updateGlobals(vm_.getGlobals());
+    // 单步执行时使用步进回调实时刷新UI
+    // 注意：不调用 processEvents()，避免在执行中响应用户事件导致重入
+    vmStackPanel_->updateStack(vm_.getStackRef());
+    vmStackPanel_->updateGlobals(vm_.getGlobalsRef());
 
-    // 更新当前指令信息（行号从 VM 获取，因为可能在不同 chunk 中）
     int line = vm_.getCurrentLine();
     vmStackPanel_->updateCurrentOp(info.ip, info.opcode, line);
-
-    // 高亮当前指令
     highlightBytecodeLine(vm_.getCurrentChunkName(), info.ip);
-
-    // 处理 GUI 事件，保持响应
-    QApplication::processEvents();
 }
 
 void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
