@@ -226,6 +226,11 @@ void DebugController::reset() {
 }
 
 void DebugController::pauseExecution() {
+    // 防止嵌套事件循环重入（use-after-free 风险）
+    if (inPauseLoop_) {
+        return;
+    }
+    
     // 设置暂停标志
     paused_ = true;
     inPauseLoop_ = true;
