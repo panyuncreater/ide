@@ -1,8 +1,47 @@
 ```
-# Compiled and build artifacts
+# Compiled and binary files
 *.o
 *.obj
+*.exe
+*.dll
+*.so
+*.a
 *.out
-test_vm
-test_vm_advanced
+
+# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+dist/
+build/
+target/
+.gradle/
+
+# Editors and IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System and environment
+.DS_Store
+Thumbs.db
+.env
+.env.local
+*.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Workbuddy memory
+.workbuddy/memory/
 ```
