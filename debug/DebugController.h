@@ -107,6 +107,7 @@ private:
     bool running_ = false;      // 是否正在运行
     bool stopped_ = false;      // 是否被停止
     bool paused_ = false;       // 是否处于暂停状态（等待用户操作）
+    bool inPauseLoop_ = false;  // 是否正在暂停事件循环中（防重入）
     QEventLoop* pauseLoop_ = nullptr;  // 暂停时的事件循环（替代忙等）
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;

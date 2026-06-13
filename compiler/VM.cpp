@@ -15,7 +15,7 @@ VM::VM() {
 void VM::push(const Value& val) {
     if (stack_.size() >= MAX_STACK_SIZE) {
         runtimeError("栈溢出");
-        return;
+        return;  // 溢出后不继续 push_back
     }
     stack_.push_back(val);
 }
@@ -23,6 +23,7 @@ void VM::push(const Value& val) {
 Value VM::pop() {
     if (stack_.empty()) {
         runtimeError("栈下溢");
+        hasError_ = true;  // 栈下溢视为不可恢复错误
         return Value::nullValue();
     }
     Value val = stack_.back();
@@ -30,11 +31,10 @@ Value VM::pop() {
     return val;
 }
 
-Value& VM::peek(size_t distance) {
+Value VM::peek(size_t distance) const {
     if (distance >= stack_.size()) {
-        static Value nullSentinel = Value::nullValue();
-        runtimeError("栈访问越界 (peek distance=" + std::to_string(distance) + ", stack size=" + std::to_string(stack_.size()) + ")");
-        return nullSentinel;
+        // peek 是 const 方法，无法调用 runtimeError，但调用方会检查 hasError_
+        return Value::nullValue();
     }
     return stack_[stack_.size() - 1 - distance];
 }
@@ -108,28 +108,33 @@ void VM::notifyStep(size_t ip, OpCode opcode) {
 }
 
 VMCallFrame& VM::currentFrame() {
-    return frames_.back();
+    return frames_.back();  // 调用方应确保 frames_ 非空（execute/stepOnce 中已检查）
 }
 
 const BytecodeChunk& VM::currentChunk() {
-    return *currentFrame().chunk;
+    return *currentFrame().chunk;  // chunk 由 initExecution 设置，始终有效
 }
 
 // 数值运算类型枚举（避免字符串比较）
 enum { OP_ADD_INT = 0, OP_SUB_INT, OP_MUL_INT, OP_DIV_INT, OP_MOD_INT };
 
 VMResult VM::numericOp(int opType, int line) {
-    Value right = pop();
-    Value left = pop();
+    // 使用 peek 访问栈顶避免深拷贝，然后调整栈指针
+    if (stack_.size() < 2) return runtimeError("栈下溢：二元运算需要两个操作数");
+
+    const Value& rightRef = stack_[stack_.size() - 1];
+    const Value& leftRef = stack_[stack_.size() - 2];
 
     // 字符串拼接（仅加法）
     if (opType == OP_ADD_INT) {
-        if (left.isString() && right.isString()) {
-            push(Value(left.stringVal + right.stringVal));
+        if (leftRef.isString() && rightRef.isString()) {
+            stack_[stack_.size() - 2] = Value(leftRef.stringVal + rightRef.stringVal);
+            stack_.pop_back();
             return VMResult::VM_OK;
         }
-        if (left.isString() || right.isString()) {
-            push(Value(left.toString() + right.toString()));
+        if (leftRef.isString() || rightRef.isString()) {
+            stack_[stack_.size() - 2] = Value(leftRef.toString() + rightRef.toString());
+            stack_.pop_back();
             return VMResult::VM_OK;
         }
     }
@@ -137,29 +142,30 @@ VMResult VM::numericOp(int opType, int line) {
     // 数值运算
     switch (opType) {
     case OP_ADD_INT:
-        if (left.isInt() && right.isInt()) push(Value(left.intVal + right.intVal));
-        else push(Value(left.toDouble() + right.toDouble()));
+        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal + rightRef.intVal);
+        else stack_[stack_.size() - 2] = Value(leftRef.toDouble() + rightRef.toDouble());
         break;
     case OP_SUB_INT:
-        if (left.isInt() && right.isInt()) push(Value(left.intVal - right.intVal));
-        else push(Value(left.toDouble() - right.toDouble()));
+        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal - rightRef.intVal);
+        else stack_[stack_.size() - 2] = Value(leftRef.toDouble() - rightRef.toDouble());
         break;
     case OP_MUL_INT:
-        if (left.isInt() && right.isInt()) push(Value(left.intVal * right.intVal));
-        else push(Value(left.toDouble() * right.toDouble()));
+        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal * rightRef.intVal);
+        else stack_[stack_.size() - 2] = Value(leftRef.toDouble() * rightRef.toDouble());
         break;
     case OP_DIV_INT:
-        if (right.toDouble() == 0.0) return runtimeError("除零错误");
-        if (left.isInt() && right.isInt()) push(Value(left.intVal / right.intVal));
-        else push(Value(left.toDouble() / right.toDouble()));
+        if (rightRef.toDouble() == 0.0) return runtimeError("除零错误");
+        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal / rightRef.intVal);
+        else stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
         break;
     case OP_MOD_INT:
-        if (!left.isInt() || !right.isInt()) return runtimeError("取模运算仅支持整数");
-        if (right.intVal == 0) return runtimeError("除零错误");
-        push(Value(left.intVal % right.intVal));
+        if (!leftRef.isInt() || !rightRef.isInt()) return runtimeError("取模运算仅支持整数");
+        if (rightRef.intVal == 0) return runtimeError("除零错误");
+        stack_[stack_.size() - 2] = Value(leftRef.intVal % rightRef.intVal);
         break;
     }
 
+    stack_.pop_back();  // 弹出 right，保留结果在 left 原位
     return VMResult::VM_OK;
 }
 
@@ -271,6 +277,7 @@ VMResult VM::executeOneInstruction() {
     switch (op) {
     case OpCode::OP_CONSTANT: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界 (idx=" + std::to_string(idx) + ")");
         push(chunk.constants[idx]);
         notifyStep(ip, op);
         ip += 3;
@@ -279,6 +286,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_INT: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         push(chunk.constants[idx]);
         notifyStep(ip, op);
         ip += 3;
@@ -287,6 +295,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_FLOAT: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         push(chunk.constants[idx]);
         notifyStep(ip, op);
         ip += 3;
@@ -295,6 +304,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_STRING: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         push(chunk.constants[idx]);
         notifyStep(ip, op);
         ip += 3;
@@ -398,6 +408,8 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_LESS: {
         Value right = pop();
         Value left = pop();
+        if (!left.isNumber() || !right.isNumber())
+            return runtimeError("比较运算需要数值类型");
         push(Value(left.toDouble() < right.toDouble()));
         notifyStep(ip, op);
         ip += 1;
@@ -407,6 +419,8 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_GREATER: {
         Value right = pop();
         Value left = pop();
+        if (!left.isNumber() || !right.isNumber())
+            return runtimeError("比较运算需要数值类型");
         push(Value(left.toDouble() > right.toDouble()));
         notifyStep(ip, op);
         ip += 1;
@@ -416,6 +430,8 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_LESS_EQUAL: {
         Value right = pop();
         Value left = pop();
+        if (!left.isNumber() || !right.isNumber())
+            return runtimeError("比较运算需要数值类型");
         push(Value(left.toDouble() <= right.toDouble()));
         notifyStep(ip, op);
         ip += 1;
@@ -425,37 +441,19 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_GREATER_EQUAL: {
         Value right = pop();
         Value left = pop();
+        if (!left.isNumber() || !right.isNumber())
+            return runtimeError("比较运算需要数值类型");
         push(Value(left.toDouble() >= right.toDouble()));
         notifyStep(ip, op);
         ip += 1;
         break;
     }
 
-    case OpCode::OP_AND: {
-        Value left = pop();
-        if (!left.isTruthy()) {
-            push(Value(false));
-        } else {
-            // 左操作数为真，结果取决于右操作数（已在栈上由编译器短路机制处理）
-            // 注：Compiler 当前不生成 OP_AND，使用 OP_JUMP_IF_FALSE + OP_POP 实现
-        }
-        notifyStep(ip, op);
-        ip += 1;
-        break;
-    }
-
-    case OpCode::OP_OR: {
-        Value left = pop();
-        if (left.isTruthy()) {
-            push(Value(true));
-        } else {
-            // 左操作数为假，结果取决于右操作数（已在栈上由编译器短路机制处理）
-            // 注：Compiler 当前不生成 OP_OR，使用 OP_JUMP_IF_FALSE + OP_POP 实现
-        }
-        notifyStep(ip, op);
-        ip += 1;
-        break;
-    }
+    case OpCode::OP_AND:
+    case OpCode::OP_OR:
+        // 编译器不生成这些操作码（使用 JUMP_IF_FALSE 短路实现）
+        // 保留 case 防止未知操作码错误，但执行到此说明字节码损坏
+        return runtimeError("内部错误: 编译器不应生成 OP_AND/OP_OR");
 
     case OpCode::OP_PRINT: {
         Value val = pop();
@@ -473,6 +471,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_DEFINE_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal;
         Value val = pop();
         globals_[name] = val;
@@ -483,12 +482,13 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_GET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal;
         auto it = globals_.find(name);
         if (it != globals_.end()) {
             push(it->second);
         } else {
-            push(Value::nullValue());
+            return runtimeError("未定义的变量: " + name);
         }
         notifyStep(ip, op);
         ip += 3;
@@ -497,6 +497,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_SET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal;
         Value val = pop();
         globals_[name] = val;
@@ -587,6 +588,21 @@ VMResult VM::executeOneInstruction() {
             return runtimeError("调用栈溢出");
         }
 
+        // 检查是否有闭包捕获的变量需要注入到全局环境中
+        // 在参数之后的栈位置查找闭包对象
+        if (stack_.size() > argCount) {
+            size_t closurePos = stack_.size() - argCount - 1;
+            const Value& maybeClosure = stack_[closurePos];
+            if (maybeClosure.isClosure() && maybeClosure.closureName == funName) {
+                // 将闭包捕获的变量注入全局环境（仅注入当前不存在的变量）
+                for (const auto& kv : maybeClosure.capturedVars) {
+                    if (globals_.find(kv.first) == globals_.end()) {
+                        globals_[kv.first] = kv.second;
+                    }
+                }
+            }
+        }
+
         VMCallFrame newFrame;
         newFrame.chunk = &targetChunk;
         newFrame.returnIp = ip + 4;
@@ -637,17 +653,19 @@ VMResult VM::executeOneInstruction() {
             if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
                 push(obj.arrayVal[i]);
             } else {
-                push(Value::nullValue());
+                return runtimeError("数组索引越界: " + std::to_string(i) + " (长度: " + std::to_string(obj.arrayVal.size()) + ")");
             }
         } else if (obj.isDict() && idx.isString()) {
             auto it = obj.dictVal.find(idx.stringVal);
             if (it != obj.dictVal.end()) {
                 push(it->second);
             } else {
-                push(Value::nullValue());
+                push(Value::nullValue());  // 字典访问不存在的键返回 null（与解释器一致）
             }
+        } else if (obj.isArray()) {
+            return runtimeError("数组索引需要整数类型");
         } else {
-            push(Value::nullValue());
+            return runtimeError("该类型不支持索引访问");
         }
         notifyStep(ip, op);
         ip += 1;
@@ -751,7 +769,7 @@ VMResult VM::executeOneInstruction() {
         uint8_t argCount = chunk.code[ip + 3];
         const std::string& methodName = chunk.constants[idx].stringVal;
 
-        Value obj = peek(argCount);
+        Value obj = peek(argCount);  // peek 现在返回 Value 拷贝
 
         if (obj.isInstance()) {
             std::string methodKey = obj.className + "." + methodName;
@@ -762,16 +780,6 @@ VMResult VM::executeOneInstruction() {
                 if (frames_.size() >= MAX_FRAMES) {
                     return runtimeError("调用栈溢出");
                 }
-
-                // 在参数前注入 this 和实例字段
-                // 栈布局: [..., obj, arg0, arg1, ...]
-                // 需要变成: [..., obj, this(obj), field0, field1, ..., arg0, arg1, ...]
-                // 但这太复杂，更简单的方式：让方法的局部变量槽位映射 this + 字段 + 参数
-
-                // 方案：将 this 作为 slot 0，实例字段作为 slot 1..N，参数作为 slot N+1..
-                // 在栈上：先放 this，再放字段值，再放参数
-                // 当前栈: [..., obj, arg0, arg1, ...]
-                // 目标栈: [..., this(obj copy), fieldVal0, fieldVal1, ..., arg0, arg1, ...]
 
                 // 移除 obj（peek 不移除），收集参数，重新排列栈
                 std::vector<Value> args;
@@ -785,11 +793,26 @@ VMResult VM::executeOneInstruction() {
 
                 // 推入 this
                 push(obj);
-                // 推入实例字段值（让方法内可以直接用 this.field 或通过局部变量访问）
-                for (const auto& field : obj.fields) {
-                    push(field.second);
+                // 按编译器声明的字段顺序推入实例字段值
+                // 使用 targetChunk 中的 fieldOrder_（如果有）
+                int fieldCount = 0;
+                if (targetChunk.fieldOrder.empty()) {
+                    // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
+                    for (const auto& field : obj.fields) {
+                        push(field.second);
+                    }
+                    fieldCount = static_cast<int>(obj.fields.size());
+                } else {
+                    for (const auto& fieldName : targetChunk.fieldOrder) {
+                        auto fieldIt = obj.fields.find(fieldName);
+                        if (fieldIt != obj.fields.end()) {
+                            push(fieldIt->second);
+                        } else {
+                            push(Value::nullValue());
+                        }
+                    }
+                    fieldCount = static_cast<int>(targetChunk.fieldOrder.size());
                 }
-                int fieldCount = static_cast<int>(obj.fields.size());
                 // 推入参数
                 for (const auto& arg : args) {
                     push(arg);
@@ -827,6 +850,8 @@ VMResult VM::executeOneInstruction() {
         uint8_t argCount = chunk.code[ip + 3];
         const std::string& funName = chunk.constants[idx].stringVal;
         Value closure = Value::makeClosure(funName, nullptr, {});
+        // 捕获当前全局变量环境到闭包中
+        closure.capturedVars = globals_;
         auto it = functionChunks_.find(funName);
         if (it != functionChunks_.end()) {
             for (int i = 0; i < it->second.arity; ++i) {

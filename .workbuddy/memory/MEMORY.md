@@ -61,5 +61,23 @@
 - **instructionSize()**：BytecodeChunk静态方法，返回每个OpCode的字节长度
 - **热路径const引用**：VM executeOneInstruction中所有string变量改为const std::string&
 
+## 2026-06-09 综合代码审查
+- 工程保障团队审查完成：5位审查员（3×代码审查+2×测试），去重后44项发现
+- 🔴严重8项：peek/pop栈操作安全、常量池越界、OP_METHOD_CALL字段顺序、OP_CLOSURE未捕获环境、BUILD_ARRAY溢出、ClassInfo裸指针、push溢出不终止
+- 🟠高12项：Value胖结构体(245B)、VM/Interpreter语义不一致、闭包语义缺失、比较运算无类型检查等
+- 功能完成度：必做6/6✅ 选做4/5✅+1⚠️（VM嵌套赋值不支持）
+- 报告已落盘：deliverables/engineering-assurance/code-review-minilang-2026-06-09.md
+
+## 2026-06-09 综合代码审查
+- 工程保障团队5位审查员（3×Cody+2×Tessa），去重后43项发现
+- 🔴严重10项：peek/pop栈安全、常量池越界、OP_METHOD_CALL字段顺序、OP_CLOSURE未捕获环境、BUILD_ARRAY溢出、ClassInfo裸指针、push溢出不终止、局部变量slot乱序、QEventLoop重入
+- 🟠高11项：Value胖结构体(245B)、VM/Interpreter语义不一致、闭包缺失、比较无类型检查等
+- 功能完成度：必做6/6✅ 选做4/5✅+1⚠️
+- 报告：deliverables/engineering-assurance/code-review-minilang-2026-06-09.md
+
 ## 待扩展功能（计划中）
 - 类型注解、REPL增强、代码格式化、字节码VM优化
+- **优先修复**：10项🔴严重问题（见审查报告行动清单）
+- **架构改进**：Value重构为std::variant、VM闭包环境捕获、VM/Interpreter语义统一
+- **优先修复**：8项🔴严重问题（见审查报告行动清单）
+- **架构改进**：Value重构为std::variant、VM闭包环境捕获、VM/Interpreter语义统一

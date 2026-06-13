@@ -66,7 +66,8 @@ struct ClassInfo {
     std::string superClassName;                         // 父类名（空表示无父类）
     std::unordered_map<std::string, FunDecl*> methods; // 方法表
     std::unordered_map<std::string, Value> fields;     // 默认字段值
-    ClassInfo* superClass = nullptr;                    // 父类信息指针
+    // 注意：不再存储 superClass 裸指针，运行时通过 superClassName 在 classRegistry_ 中查找
+    // 避免 unordered_map rehash 导致指针悬空
 };
 
 // ============================================================

@@ -100,21 +100,19 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
 
     if (node.op == "or") {
         compileNode(node.left.get());
-        // 如果左操作数为真，跳过右操作数
+        // 如果左操作数为真，跳过右操作数，保留左值
         size_t jumpPatch = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
         chunk_.writeShort(0, node.line);  // 占位（先跳到 or 右侧）
-        // 如果到这里，左操作数为真
-        chunk_.writeOp(OpCode::OP_POP, node.line);
-        chunk_.writeOp(OpCode::OP_TRUE, node.line);
+        // 如果到这里，左操作数为真 — 保留左值，跳到末尾
         size_t jumpEnd = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP, node.line);
         chunk_.writeShort(0, node.line);  // 占位
-        // 修补第一个跳转
+        // 修补第一个跳转：左操作数为假，求值右操作数
         uint16_t rightStart = static_cast<uint16_t>(chunk_.code.size());
         chunk_.code[jumpPatch + 1] = static_cast<uint8_t>(rightStart & 0xFF);
         chunk_.code[jumpPatch + 2] = static_cast<uint8_t>((rightStart >> 8) & 0xFF);
-        // 编译右操作数
+        // 弹出左操作数，求值右操作数
         chunk_.writeOp(OpCode::OP_POP, node.line);
         compileNode(node.right.get());
         // 修补第二个跳转
@@ -447,6 +445,11 @@ void Compiler::compileBlock(Block& node) {
 // ---- 新增节点编译 ----
 
 void Compiler::compileArrayLiteral(ArrayLiteral& node) {
+    // 检查元素数量上限（uint8_t 编码限制）
+    if (node.elements.size() > 255) {
+        error("数组元素数量超过 255 个上限", node.line, node.column);
+        return;
+    }
     // 编译所有元素
     for (auto& elem : node.elements) {
         compileNode(elem.get());
@@ -457,6 +460,11 @@ void Compiler::compileArrayLiteral(ArrayLiteral& node) {
 }
 
 void Compiler::compileDictLiteral(DictLiteral& node) {
+    // 检查键值对数量上限（uint8_t 编码限制）
+    if (node.pairs.size() > 255) {
+        error("字典键值对数量超过 255 个上限", node.line, node.column);
+        return;
+    }
     // 编译所有键值对（先键后值，与 OP_BUILD_DICT 消费顺序一致）
     for (auto& pair : node.pairs) {
         compileNode(pair.first.get());
@@ -531,6 +539,9 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
             currentLocals_[funDecl->params[i]] = slot++;  // slot N+1..: 参数
         }
+
+        // 记录字段声明顺序，供 VM OP_METHOD_CALL 按序推入
+        chunk_.fieldOrder = fieldNames;
 
         if (funDecl->body) {
             compileNode(funDecl->body.get());

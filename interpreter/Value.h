@@ -43,6 +43,7 @@ struct Value {
     std::string closureName;
     std::shared_ptr<Environment> closureEnv;
     std::vector<std::string> closureParams;
+    std::unordered_map<std::string, Value> capturedVars;  // VM闭包捕获的变量（名称→值）
 
     Value() = default;
 

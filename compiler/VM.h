@@ -120,7 +120,7 @@ private:
     /// 栈操作
     void push(const Value& val);
     Value pop();
-    Value& peek(size_t distance = 0);
+    Value peek(size_t distance = 0) const;
 
     /// 运行时错误
     VMResult runtimeError(const std::string& msg);

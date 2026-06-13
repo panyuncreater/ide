@@ -112,25 +112,25 @@ QSet<int> DebugController::getBreakpoints() const {
 }
 
 void DebugController::stepIn() {
+    // 防重入：只有暂停状态才能步进
+    if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_STEP_IN;
     running_ = true;
     paused_ = false;       // 解除暂停
-    // 不重置 lastPausedLine_：保留当前暂停行号，跳过同行剩余子表达式，
-    // 仅在行号变化时才暂停（解决"需按多次才到下一行"的问题）
-    // 退出暂停事件循环
     if (pauseLoop_) pauseLoop_->quit();
 }
 
 void DebugController::stepOver() {
+    if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_STEP_OVER;
     stepOverDepth_ = currentDepth_;
     running_ = true;
     paused_ = false;
-    // 同理，不重置 lastPausedLine_
     if (pauseLoop_) pauseLoop_->quit();
 }
 
 void DebugController::stepOut() {
+    if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_STEP_OUT;
     stepOutDepth_ = currentDepth_;
     running_ = true;
@@ -139,6 +139,7 @@ void DebugController::stepOut() {
 }
 
 void DebugController::resume() {
+    if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_RUN;
     running_ = true;
     stopped_ = false;
@@ -197,6 +198,7 @@ void DebugController::reset() {
 void DebugController::pauseExecution() {
     // 设置暂停标志
     paused_ = true;
+    inPauseLoop_ = true;
 
     // 使用 QEventLoop 替代忙等
     // 事件循环保持 UI 响应，stepIn/stepOver/resume/stop 通过 quit() 唤醒
@@ -204,6 +206,7 @@ void DebugController::pauseExecution() {
     pauseLoop_ = &loop;
     loop.exec();
     pauseLoop_ = nullptr;
+    inPauseLoop_ = false;
 }
 
 void DebugController::updateMinBreakpointLine() {

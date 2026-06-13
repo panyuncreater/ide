@@ -43,6 +43,9 @@ Value Interpreter::execute(Block& program) {
 
 Value Interpreter::executeRepl(Block& program) {
     // 不重置环境，保留已有变量/函数/类定义
+    // 但清除注册表中的 AST 裸指针（旧 AST 可能已被销毁）
+    funRegistry_.clear();
+    classRegistry_.clear();
     // 确保当前环境回到全局
     currentEnv_ = globalEnv_;
     recursionDepth_ = 0;
@@ -147,8 +150,11 @@ Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
 FunDecl* Interpreter::findMethod(ClassInfo& cls, const std::string& methodName) {
     auto it = cls.methods.find(methodName);
     if (it != cls.methods.end()) return it->second;
-    // 沿继承链查找
-    if (cls.superClass) return findMethod(*cls.superClass, methodName);
+    // 沿继承链查找（通过名称查找，避免悬空指针）
+    if (!cls.superClassName.empty()) {
+        auto superIt = classRegistry_.find(cls.superClassName);
+        if (superIt != classRegistry_.end()) return findMethod(superIt->second, methodName);
+    }
     return nullptr;
 }
 
@@ -156,7 +162,10 @@ Value Interpreter::findFieldDefault(ClassInfo& cls, const std::string& fieldName
     auto it = cls.fields.find(fieldName);
     if (it != cls.fields.end()) return it->second;
     // 沿继承链查找
-    if (cls.superClass) return findFieldDefault(*cls.superClass, fieldName);
+    if (!cls.superClassName.empty()) {
+        auto superIt = classRegistry_.find(cls.superClassName);
+        if (superIt != classRegistry_.end()) return findFieldDefault(superIt->second, fieldName);
+    }
     return Value::nullValue();
 }
 
@@ -346,7 +355,12 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                         instance.fields[kv.first] = kv.second;
                     }
                 }
-                curCls = curCls->superClass;
+                if (!curCls->superClassName.empty()) {
+                    auto superIt = classRegistry_.find(curCls->superClassName);
+                    curCls = (superIt != classRegistry_.end()) ? &superIt->second : nullptr;
+                } else {
+                    curCls = nullptr;
+                }
             }
 
             // 如果有 init 方法（0 参数），执行它
@@ -365,9 +379,9 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 } catch (const ReturnException& e) {}
                 instance = initEnv->get("this");
                 // 同步 init 环境中的字段变量回 this 对象
-                for (const auto& fieldKV : instance.fields) {
+                for (auto& fieldKV : instance.fields) {
                     if (initEnv->hasVariable(fieldKV.first)) {
-                        instance.fields[fieldKV.first] = initEnv->get(fieldKV.first);
+                        fieldKV.second = initEnv->get(fieldKV.first);
                     }
                 }
                 currentEnv_ = prevEnv;
@@ -477,7 +491,10 @@ Value Interpreter::visitForStmt(ForStmt& node) {
                 evaluate(node.update.get());
             }
         }
-    } catch (...) {
+    } catch (const ReturnException&) {
+        currentEnv_ = forEnv->parent;
+        throw;
+    } catch (const std::runtime_error&) {
         currentEnv_ = forEnv->parent;
         throw;
     }
@@ -572,7 +589,12 @@ Value Interpreter::visitFunCall(FunCall& node) {
                     instance.fields[kv.first] = kv.second;
                 }
             }
-            curCls = curCls->superClass;
+            if (!curCls->superClassName.empty()) {
+                auto superIt = classRegistry_.find(curCls->superClassName);
+                curCls = (superIt != classRegistry_.end()) ? &superIt->second : nullptr;
+            } else {
+                curCls = nullptr;
+            }
         }
 
         // 如果有 init 方法，执行它
@@ -614,9 +636,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
             instance = initEnv->get("this");
 
             // 同步 init 环境中的字段变量回 this 对象
-            for (const auto& fieldKV : instance.fields) {
+            for (auto& fieldKV : instance.fields) {
                 if (initEnv->hasVariable(fieldKV.first)) {
-                    instance.fields[fieldKV.first] = initEnv->get(fieldKV.first);
+                    fieldKV.second = initEnv->get(fieldKV.first);
                 }
             }
 
@@ -860,15 +882,14 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
     ClassInfo cls;
     cls.name = node.name;
     cls.superClassName = node.superClassName;
-    cls.superClass = nullptr;
+    // 不再存储 superClass 裸指针，运行时通过 superClassName 查找
 
-    // 如果有父类，查找父类信息
+    // 如果有父类，验证父类是否已定义
     if (!node.superClassName.empty()) {
         auto it = classRegistry_.find(node.superClassName);
         if (it == classRegistry_.end()) {
             runtimeError("未定义的父类: " + node.superClassName, node.line, node.column);
         }
-        cls.superClass = &(it->second);
     }
 
     // 注册类名到环境
@@ -1177,9 +1198,11 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 // 关键：将方法环境中的字段变量同步回 this 对象
                 // 方法内直接修改字段（如 count = count + 1）只更新了方法环境，
                 // 不会自动反映到 this 对象的 fields 中，需要手动同步
-                for (const auto& fieldKV : obj.fields) {
+                // 同步逻辑：遍历 this.fields（已包含 this.field = val 的新字段），
+                // 再用方法环境中的同名局部变量覆盖（直接赋值优先）
+                for (auto& fieldKV : updatedThis.fields) {
                     if (methodEnv->hasVariable(fieldKV.first)) {
-                        updatedThis.fields[fieldKV.first] = methodEnv->get(fieldKV.first);
+                        fieldKV.second = methodEnv->get(fieldKV.first);
                     }
                 }
 
