@@ -487,13 +487,23 @@ void Compiler::compileIndexAssign(IndexAssign& node) {
                      ? static_cast<VarRef*>(node.object.get()) : nullptr;
 
     if (objVar) {
-        // 简单变量索引赋值：arr[i] = val → 不推 arr，仅推 index 和 value
-        compileNode(node.index.get());
-        compileNode(node.value.get());
-        // 发射 OP_INDEX_SET_VAR：直接修改 globals_[varName]
-        uint16_t nameIdx = identifierIndex(objVar->name);
-        chunk_.writeOp(OpCode::OP_INDEX_SET_VAR, node.line);
-        chunk_.writeShort(nameIdx, node.line);
+        // 先查局部变量（如方法内的 this）
+        auto localIt = currentLocals_.find(objVar->name);
+        if (localIt != currentLocals_.end()) {
+            // 局部变量索引赋值：this.arr[i] = val → OP_INDEX_SET_LOCAL
+            compileNode(node.index.get());
+            compileNode(node.value.get());
+            uint8_t slot = static_cast<uint8_t>(localIt->second);
+            chunk_.writeOp(OpCode::OP_INDEX_SET_LOCAL, node.line);
+            chunk_.write(slot, node.line);
+        } else {
+            // 全局变量索引赋值：arr[i] = val → OP_INDEX_SET_VAR
+            compileNode(node.index.get());
+            compileNode(node.value.get());
+            uint16_t nameIdx = identifierIndex(objVar->name);
+            chunk_.writeOp(OpCode::OP_INDEX_SET_VAR, node.line);
+            chunk_.writeShort(nameIdx, node.line);
+        }
     } else {
         // 通用路径（嵌套访问等）：推对象+索引+值，OP_INDEX_SET 不做写回（限制但安全）
         compileNode(node.object.get());
@@ -599,9 +609,20 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
                      ? static_cast<VarRef*>(node.object.get()) : nullptr;
 
     if (objVar) {
-        // 简单变量成员赋值：obj.field = val → 不推 obj，仅推 value
+        // 先查局部变量（如方法内的 this）
+        auto localIt = currentLocals_.find(objVar->name);
+        if (localIt != currentLocals_.end()) {
+            // 局部变量成员赋值：this.field = val → OP_MEMBER_SET_LOCAL
+            compileNode(node.value.get());
+            uint8_t slot = static_cast<uint8_t>(localIt->second);
+            uint16_t fieldIdx = identifierIndex(node.fieldName);
+            chunk_.writeOp(OpCode::OP_MEMBER_SET_LOCAL, node.line);
+            chunk_.write(slot, node.line);
+            chunk_.writeShort(fieldIdx, node.line);
+            return;
+        }
+        // 全局变量成员赋值：obj.field = val → OP_MEMBER_SET_VAR
         compileNode(node.value.get());
-        // 发射 OP_MEMBER_SET_VAR：直接修改 globals_[varName].fields[fieldName]
         uint16_t varIdx = identifierIndex(objVar->name);
         uint16_t fieldIdx = identifierIndex(node.fieldName);
         chunk_.writeOp(OpCode::OP_MEMBER_SET_VAR, node.line);
@@ -618,6 +639,19 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
 }
 
 void Compiler::compileMethodCall(MethodCall& node) {
+    // 检查接收者是否为简单变量（VarRef），用于 writeBack
+    uint16_t receiverVarIdx = 0;  // 0 = 非简单变量
+    VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
+                     ? static_cast<VarRef*>(node.object.get()) : nullptr;
+    if (objVar) {
+        // 仅全局变量需要 writeBack（局部变量的 writeBack 通过栈引用处理）
+        auto localIt = currentLocals_.find(objVar->name);
+        if (localIt == currentLocals_.end()) {
+            // 全局变量：记录变量名索引供 VM writeBack 使用
+            receiverVarIdx = identifierIndex(objVar->name);
+        }
+    }
+
     compileNode(node.object.get());
     for (auto& arg : node.arguments) {
         compileNode(arg.get());
@@ -626,6 +660,7 @@ void Compiler::compileMethodCall(MethodCall& node) {
     chunk_.writeOp(OpCode::OP_METHOD_CALL, node.line);
     chunk_.writeShort(nameIdx, node.line);
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
+    chunk_.writeShort(receiverVarIdx, node.line);  // 接收者变量名索引（0 = 无 writeBack）
 }
 
 void Compiler::compileNullLiteral(NullLiteral& node) {

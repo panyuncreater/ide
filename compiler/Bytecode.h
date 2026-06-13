@@ -56,10 +56,12 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_INDEX_GET,    // 索引取值
     OP_INDEX_SET,    // 索引赋值（旧：空操作）
     OP_INDEX_SET_VAR,// 索引赋值到变量（nameIdx(2B)）：直接修改 globals_[varName]
+    OP_INDEX_SET_LOCAL,// 索引赋值到局部变量（slot(1B)）：直接修改 stack_[bp+slot]
     OP_MEMBER_GET,   // 成员取值（名称索引）
     OP_MEMBER_SET,   // 成员赋值（名称索引）（旧：空操作）
     OP_MEMBER_SET_VAR,// 成员赋值到变量（nameIdx(2B)+fieldNameIdx(2B)）：直接修改 globals_[varName].fields
-    OP_METHOD_CALL,  // 方法调用（名称索引 + 参数个数）
+    OP_MEMBER_SET_LOCAL,// 成员赋值到局部变量（slot(1B)+fieldNameIdx(2B)）：直接修改 stack_[bp+slot].fields
+    OP_METHOD_CALL,  // 方法调用（名称索引 + 参数个数 + 接收者变量名索引）
 
     OP_DUP,          // 复制栈顶
 
@@ -111,9 +113,11 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_INDEX_GET:    return "OP_INDEX_GET";
     case OpCode::OP_INDEX_SET:    return "OP_INDEX_SET";
     case OpCode::OP_INDEX_SET_VAR: return "OP_INDEX_SET_VAR";
+    case OpCode::OP_INDEX_SET_LOCAL: return "OP_INDEX_SET_LOCAL";
     case OpCode::OP_MEMBER_GET:   return "OP_MEMBER_GET";
     case OpCode::OP_MEMBER_SET:   return "OP_MEMBER_SET";
     case OpCode::OP_MEMBER_SET_VAR: return "OP_MEMBER_SET_VAR";
+    case OpCode::OP_MEMBER_SET_LOCAL: return "OP_MEMBER_SET_LOCAL";
     case OpCode::OP_METHOD_CALL:  return "OP_METHOD_CALL";
     case OpCode::OP_DUP:          return "OP_DUP";
     case OpCode::OP_CLOSURE:      return "OP_CLOSURE";
@@ -203,8 +207,9 @@ struct BytecodeChunk {
         case OpCode::OP_INDEX_SET_VAR:
         case OpCode::OP_INIT_FIELD:
             return 3;
+        case OpCode::OP_INDEX_SET_LOCAL:
+            return 2;
         case OpCode::OP_CALL:
-        case OpCode::OP_METHOD_CALL:
         case OpCode::OP_CLOSURE:
         case OpCode::OP_CLASS_NEW:
             return 4;
@@ -215,6 +220,10 @@ struct BytecodeChunk {
             return 2;
         case OpCode::OP_MEMBER_SET_VAR:
             return 5;
+        case OpCode::OP_MEMBER_SET_LOCAL:
+            return 4;
+        case OpCode::OP_METHOD_CALL:
+            return 6;
         default:
             return 1;
         }
@@ -351,6 +360,12 @@ struct BytecodeChunk {
             offset += 3;
             break;
         }
+        case OpCode::OP_INDEX_SET_LOCAL: {
+            uint8_t slot = code[offset + 1];
+            str += "OP_INDEX_SET_LOCAL slot=" + std::to_string(slot);
+            offset += 2;
+            break;
+        }
         case OpCode::OP_MEMBER_GET: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             str += "OP_MEMBER_GET " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
@@ -370,11 +385,20 @@ struct BytecodeChunk {
             offset += 5;
             break;
         }
+        case OpCode::OP_MEMBER_SET_LOCAL: {
+            uint8_t slot = code[offset + 1];
+            uint16_t fieldIdx = code[offset + 2] | (code[offset + 3] << 8);
+            str += "OP_MEMBER_SET_LOCAL slot=" + std::to_string(slot) + " ." + constants[fieldIdx].stringVal;
+            offset += 4;
+            break;
+        }
         case OpCode::OP_METHOD_CALL: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             uint8_t argCount = code[offset + 3];
+            uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
             str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
-            offset += 4;
+            if (receiverIdx > 0) str += " recv=" + constants[receiverIdx].stringVal;
+            offset += 6;
             break;
         }
         case OpCode::OP_DUP: str += "OP_DUP"; offset += 1; break;

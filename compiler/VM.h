@@ -38,6 +38,9 @@ struct VMCallFrame {
     size_t returnIp = 0;                    // 返回后的 ip
     size_t basePointer = 0;                 // 帧基指针（栈中参数起始位置）
     std::string functionName;               // 函数名
+    bool isMethodCall = false;              // 是否为方法调用（需要 writeBack）
+    size_t callerInstancePos = 0;           // 方法调用时，调用者栈上原始实例的位置
+    std::string receiverVarName;            // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
 };
 
 /// 简单栈式虚拟机

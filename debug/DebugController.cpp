@@ -112,15 +112,29 @@ QSet<int> DebugController::getBreakpoints() const {
 }
 
 void DebugController::stepIn() {
+    // 初始模式设置：尚未开始执行，只设置模式不退出事件循环
+    if (!running_) {
+        mode_ = StepMode::MODE_STEP_IN;
+        running_ = true;
+        paused_ = false;
+        return;
+    }
     // 防重入：只有暂停状态才能步进
     if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_STEP_IN;
     running_ = true;
-    paused_ = false;       // 解除暂停
+    paused_ = false;
     if (pauseLoop_) pauseLoop_->quit();
 }
 
 void DebugController::stepOver() {
+    if (!running_) {
+        mode_ = StepMode::MODE_STEP_OVER;
+        stepOverDepth_ = currentDepth_;
+        running_ = true;
+        paused_ = false;
+        return;
+    }
     if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_STEP_OVER;
     stepOverDepth_ = currentDepth_;
@@ -130,6 +144,13 @@ void DebugController::stepOver() {
 }
 
 void DebugController::stepOut() {
+    if (!running_) {
+        mode_ = StepMode::MODE_STEP_OUT;
+        stepOutDepth_ = currentDepth_;
+        running_ = true;
+        paused_ = false;
+        return;
+    }
     if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_STEP_OUT;
     stepOutDepth_ = currentDepth_;
@@ -139,6 +160,13 @@ void DebugController::stepOut() {
 }
 
 void DebugController::resume() {
+    if (!running_) {
+        mode_ = StepMode::MODE_RUN;
+        running_ = true;
+        stopped_ = false;
+        paused_ = false;
+        return;
+    }
     if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_RUN;
     running_ = true;
@@ -189,6 +217,8 @@ void DebugController::reset() {
     running_ = false;
     stopped_ = false;
     paused_ = false;
+    inPauseLoop_ = false;
+    pauseLoop_ = nullptr;
     currentDepth_ = 0;
     stepOverDepth_ = 0;
     stepOutDepth_ = 0;

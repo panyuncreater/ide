@@ -517,9 +517,10 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_JUMP_IF_FALSE: {
         uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        Value cond = pop();
+        // 注意：不弹出条件值——编译器在 OP_JUMP_IF_FALSE 后显式生成 OP_POP
+        // 如果这里也 pop，会导致所有条件/短路表达式的栈操作双重弹出
         notifyStep(ip, op);
-        if (!cond.isTruthy()) {
+        if (!peek(0).isTruthy()) {
             ip = jump;
         } else {
             ip += 3;
@@ -537,6 +538,8 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_RETURN: {
         Value result = pop();
         VMCallFrame retFrame = frames_.back();
+        // 在 pop_back 之前保存 ip 值，避免悬空引用
+        size_t savedIp = ip;
         frames_.pop_back();
 
         // init 方法返回 this 实例而非 null
@@ -547,9 +550,24 @@ VMResult VM::executeOneInstruction() {
             }
         }
 
+        // 方法调用 writeBack：将方法内修改后的 this 字段写回全局变量
+        if (retFrame.isMethodCall && !retFrame.receiverVarName.empty() &&
+            retFrame.basePointer < stack_.size()) {
+            Value& modifiedThis = stack_[retFrame.basePointer];
+            if (modifiedThis.isInstance()) {
+                auto it = globals_.find(retFrame.receiverVarName);
+                if (it != globals_.end() && it->second.isInstance()) {
+                    // 写回修改后的字段到 globals_ 中的原始实例
+                    for (auto& field : modifiedThis.fields) {
+                        it->second.fields[field.first] = field.second;
+                    }
+                }
+            }
+        }
+
         if (frames_.empty()) {
             push(result);
-            notifyStep(ip, op);
+            notifyStep(savedIp, op);
             return VMResult::VM_OK;
         }
         // 恢复栈：清理当前帧的局部变量和参数
@@ -557,7 +575,7 @@ VMResult VM::executeOneInstruction() {
         push(result);
         // 恢复 ip
         currentFrame().ip = retFrame.returnIp;
-        notifyStep(ip, op);
+        notifyStep(savedIp, op);
         break;
     }
 
@@ -684,7 +702,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_SET_VAR: {
-        // 新路径：直接修改 globals_[varName] 中的数组/字典元素
+        // 直接修改 globals_[varName] 中的数组/字典元素
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         const std::string& varName = chunk.constants[idx].stringVal;
         Value val = pop();
@@ -703,6 +721,28 @@ VMResult VM::executeOneInstruction() {
         }
         notifyStep(ip, op);
         ip += 3;
+        break;
+    }
+
+    case OpCode::OP_INDEX_SET_LOCAL: {
+        // 直接修改 stack_[bp+slot] 中的数组/字典元素（用于方法内 this.arr[i] = val）
+        uint8_t slot = chunk.code[ip + 1];
+        Value val = pop();
+        Value index = pop();
+        size_t bp = currentFrame().basePointer;
+        if (bp + slot < stack_.size()) {
+            Value& obj = stack_[bp + slot];  // 栈引用，直接修改
+            if (obj.isArray() && index.isInt()) {
+                int i = index.intVal;
+                if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
+                    obj.arrayVal[i] = val;
+                }
+            } else if (obj.isDict() && index.isString()) {
+                obj.dictVal[index.stringVal] = val;
+            }
+        }
+        notifyStep(ip, op);
+        ip += 2;
         break;
     }
 
@@ -744,7 +784,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET_VAR: {
-        // 新路径：直接修改 globals_[varName].fields[fieldName]
+        // 直接修改 globals_[varName].fields[fieldName]
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         const std::string& varName = chunk.constants[varIdx].stringVal;
@@ -764,12 +804,33 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    case OpCode::OP_MEMBER_SET_LOCAL: {
+        // 直接修改 stack_[bp+slot].fields[fieldName]（用于方法内 this.field = val）
+        uint8_t slot = chunk.code[ip + 1];
+        uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
+        const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
+        Value val = pop();
+        size_t bp = currentFrame().basePointer;
+        if (bp + slot < stack_.size()) {
+            Value& obj = stack_[bp + slot];  // 栈引用，直接修改
+            if (obj.isInstance()) {
+                obj.fields[fieldName] = val;
+            } else if (obj.isDict()) {
+                obj.dictVal[fieldName] = val;
+            }
+        }
+        notifyStep(ip, op);
+        ip += 4;
+        break;
+    }
+
     case OpCode::OP_METHOD_CALL: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
+        uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
         const std::string& methodName = chunk.constants[idx].stringVal;
 
-        Value obj = peek(argCount);  // peek 现在返回 Value 拷贝
+        Value obj = peek(argCount);  // peek 返回 Value 拷贝
 
         if (obj.isInstance()) {
             std::string methodKey = obj.className + "." + methodName;
@@ -781,7 +842,10 @@ VMResult VM::executeOneInstruction() {
                     return runtimeError("调用栈溢出");
                 }
 
-                // 移除 obj（peek 不移除），收集参数，重新排列栈
+                // 记录调用者栈上原始实例的位置（用于 writeBack）
+                size_t callerPos = stack_.size() - argCount - 1;
+
+                // 收集参数，重新排列栈
                 std::vector<Value> args;
                 args.reserve(argCount);
                 for (uint8_t i = 0; i < argCount; ++i) {
@@ -789,12 +853,11 @@ VMResult VM::executeOneInstruction() {
                 }
                 // 栈是后进先出，需要反转参数顺序
                 std::reverse(args.begin(), args.end());
-                pop();  // 移除 obj
+                pop();  // 移除栈上的原始实例
 
-                // 推入 this
+                // 推入 this（拷贝，方法内修改会被 writeBack 写回）
                 push(obj);
                 // 按编译器声明的字段顺序推入实例字段值
-                // 使用 targetChunk 中的 fieldOrder_（如果有）
                 int fieldCount = 0;
                 if (targetChunk.fieldOrder.empty()) {
                     // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
@@ -820,10 +883,16 @@ VMResult VM::executeOneInstruction() {
 
                 VMCallFrame newFrame;
                 newFrame.chunk = &targetChunk;
-                newFrame.returnIp = ip + 4;
+                newFrame.returnIp = ip + 6;  // OP_METHOD_CALL 现在是 6 字节
                 newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
                 newFrame.functionName = methodKey;
                 newFrame.ip = 0;
+                newFrame.isMethodCall = true;
+                newFrame.callerInstancePos = callerPos;
+                // 记录接收者变量名（用于 writeBack 到 globals_）
+                if (receiverVarIdx > 0 && receiverVarIdx < chunk.constants.size()) {
+                    newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal;
+                }
                 frames_.push_back(newFrame);
 
                 notifyStep(ip, op);
@@ -835,7 +904,7 @@ VMResult VM::executeOneInstruction() {
         pop();
         push(Value::nullValue());
         notifyStep(ip, op);
-        ip += 4;
+        ip += 6;  // OP_METHOD_CALL 现在是 6 字节
         break;
     }
 
