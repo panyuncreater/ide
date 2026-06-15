@@ -582,37 +582,55 @@ VMResult VM::executeOneInstruction() {
                 }
             }
 
-            // 写回到全局变量（接收者为全局变量时，如 c.method()）
-            if (!retFrame.receiverVarName.empty() && modifiedThis.isInstance()) {
-                auto it = globals_.find(retFrame.receiverVarName);
-                if (it != globals_.end() && it->second.isInstance()) {
-                    for (auto& field : modifiedThis.fields) {
-                        it->second.fields[field.first] = field.second;
-                    }
-                }
-            }
-
-            // 写回到调用者栈帧（接收者为局部变量时，如 this.method()）
-            // 将修改后的字段同步到调用者的 this 和字段槽
-            if (retFrame.receiverVarName.empty() && !frames_.empty()) {
+            // 写回到接收者的原始位置
+            if (!frames_.empty()) {
                 VMCallFrame& callerFrame = currentFrame();
                 size_t callerBp = callerFrame.basePointer;
-                if (callerBp < stack_.size() && stack_[callerBp].isInstance()) {
-                    // 同步字段到调用者的 this
-                    for (auto& field : modifiedThis.fields) {
-                        stack_[callerBp].fields[field.first] = field.second;
+
+                // 路径 A：接收者是全局变量 → 写回 globals_
+                if (!retFrame.receiverVarName.empty() && modifiedThis.isInstance()) {
+                    auto it = globals_.find(retFrame.receiverVarName);
+                    if (it != globals_.end() && it->second.isInstance()) {
+                        for (auto& field : modifiedThis.fields) {
+                            it->second.fields[field.first] = field.second;
+                        }
                     }
-                    // 同步字段到调用者的字段槽（bp+1..N）
-                    if (callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty()) {
-                        for (size_t fi = 0; fi < callerFrame.chunk->fieldOrder.size(); ++fi) {
-                            const std::string& fieldName = callerFrame.chunk->fieldOrder[fi];
-                            auto fieldIt = modifiedThis.fields.find(fieldName);
-                            if (fieldIt != modifiedThis.fields.end()) {
-                                size_t slotPos = callerBp + 1 + fi;
-                                if (slotPos < stack_.size()) {
-                                    stack_[slotPos] = fieldIt->second;
+                }
+
+                // 路径 B：接收者是调用者帧中的局部变量 → 写回栈帧
+                if (retFrame.receiverLocalSlot >= 0 &&
+                    callerBp + retFrame.receiverLocalSlot < stack_.size()) {
+                    size_t receiverPos = callerBp + retFrame.receiverLocalSlot;
+
+                    if (retFrame.receiverLocalSlot == 0) {
+                        // 接收者是调用者的 this（slot 0）：同步所有字段和字段槽
+                        if (stack_[callerBp].isInstance()) {
+                            for (auto& field : modifiedThis.fields) {
+                                stack_[callerBp].fields[field.first] = field.second;
+                            }
+                            // 同步字段到调用者的字段槽（bp+1..N）
+                            if (callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty()) {
+                                for (size_t fi = 0; fi < callerFrame.chunk->fieldOrder.size(); ++fi) {
+                                    const std::string& fieldName = callerFrame.chunk->fieldOrder[fi];
+                                    auto fieldIt = modifiedThis.fields.find(fieldName);
+                                    if (fieldIt != modifiedThis.fields.end()) {
+                                        size_t slotPos = callerBp + 1 + fi;
+                                        if (slotPos < stack_.size()) {
+                                            stack_[slotPos] = fieldIt->second;
+                                        }
+                                    }
                                 }
                             }
+                        }
+                    } else {
+                        // 接收者是调用者帧中的特定局部变量（字段、参数或局部变量）
+                        stack_[receiverPos] = modifiedThis;
+
+                        // 如果接收者是调用者 this 的字段（slot 1..N），也更新 this.fields
+                        if (stack_[callerBp].isInstance() && callerFrame.chunk &&
+                            retFrame.receiverLocalSlot <= static_cast<int>(callerFrame.chunk->fieldOrder.size())) {
+                            const std::string& fieldName = callerFrame.chunk->fieldOrder[retFrame.receiverLocalSlot - 1];
+                            stack_[callerBp].fields[fieldName] = modifiedThis;
                         }
                     }
                 }
@@ -620,9 +638,7 @@ VMResult VM::executeOneInstruction() {
         }
 
         // init 方法返回 this 实例而非 null（在字段同步之后读取）
-        if (retFrame.isMethodCall &&
-            retFrame.functionName.size() >= 5 &&
-            retFrame.functionName.compare(retFrame.functionName.size() - 5, 5, ".init") == 0) {
+        if (retFrame.isInitCall) {
             if (retFrame.basePointer < stack_.size()) {
                 result = stack_[retFrame.basePointer];
             }
@@ -710,10 +726,10 @@ VMResult VM::executeOneInstruction() {
                     newFrame.chunk = initChunkPtr;
                     newFrame.returnIp = ip + 4;
                     newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
-                    // init 帧的 functionName 用实际定义 init 的类名，便于 OP_RETURN 识别
                     newFrame.functionName = initChunkPtr->name;
                     newFrame.ip = 0;
                     newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
+                    newFrame.isInitCall = true;     // init 返回 this 而非 null
                     frames_.push_back(newFrame);
 
                     notifyStep(ip, op);
@@ -727,14 +743,11 @@ VMResult VM::executeOneInstruction() {
                 break;
             }
 
-            // 既不是函数也不是类
+            // 既不是函数也不是类：报运行时错误
             for (uint8_t i = 0; i < argCount; ++i) {
                 pop();
             }
-            push(Value::nullValue());
-            notifyStep(ip, op);
-            ip += 4;
-            break;
+            return runtimeError("未定义的函数: " + funName);
         }
 
         const BytecodeChunk& targetChunk = it->second;
@@ -955,10 +968,187 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
         uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
+        uint8_t receiverLocalSlotByte = chunk.code[ip + 6];
         const std::string& methodName = chunk.constants[idx].stringVal;
 
         Value obj = peek(argCount);  // peek 返回 Value 拷贝
 
+        // ---- 数组内置方法 ----
+        if (obj.isArray()) {
+            std::vector<Value> args;
+            args.reserve(argCount);
+            for (uint8_t i = 0; i < argCount; ++i) args.push_back(pop());
+            std::reverse(args.begin(), args.end());
+            pop();  // 移除接收者
+
+            Value result = Value::nullValue();
+            bool mutated = false;
+
+            if (methodName == "push") {
+                if (args.size() != 1) return runtimeError("push 期望 1 个参数");
+                obj.arrayVal.push_back(args[0]);
+                mutated = true;
+            } else if (methodName == "pop") {
+                if (obj.arrayVal.empty()) return runtimeError("对空数组调用 pop");
+                result = obj.arrayVal.back();
+                obj.arrayVal.pop_back();
+                mutated = true;
+            } else if (methodName == "len") {
+                result = Value(static_cast<int>(obj.arrayVal.size()));
+            } else if (methodName == "remove") {
+                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
+                if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
+                int ri = args[0].intVal;
+                if (ri < 0 || static_cast<size_t>(ri) >= obj.arrayVal.size())
+                    return runtimeError("数组索引越界: " + std::to_string(ri));
+                obj.arrayVal.erase(obj.arrayVal.begin() + ri);
+                mutated = true;
+            } else if (methodName == "contains") {
+                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
+                bool found = false;
+                for (const auto& elem : obj.arrayVal) {
+                    if (elem.equals(args[0])) { found = true; break; }
+                }
+                result = Value(found);
+            } else if (methodName == "join") {
+                std::string sep = args.empty() ? "" : args[0].toString();
+                std::string joined;
+                for (size_t i = 0; i < obj.arrayVal.size(); ++i) {
+                    if (i > 0) joined += sep;
+                    joined += obj.arrayVal[i].toString();
+                }
+                result = Value(joined);
+            } else {
+                return runtimeError("数组没有方法 " + methodName);
+            }
+
+            // 变异方法需要写回修改后的对象
+            if (mutated) {
+                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+                    globals_[chunk.constants[receiverVarIdx].stringVal] = obj;
+                } else if (receiverLocalSlotByte != 0xFF) {
+                    size_t bp = currentFrame().basePointer;
+                    if (bp + receiverLocalSlotByte < stack_.size()) {
+                        stack_[bp + receiverLocalSlotByte] = obj;
+                    }
+                    // 如果局部变量是调用者 this 的字段，也更新 this.fields
+                    if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
+                        VMCallFrame& curFrame = currentFrame();
+                        if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
+                            const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
+                            stack_[bp].fields[fn] = obj;
+                        }
+                    }
+                }
+            }
+            push(result);
+            notifyStep(ip, op);
+            ip += 7;
+            break;
+        }
+
+        // ---- 字典内置方法 ----
+        if (obj.isDict()) {
+            std::vector<Value> args;
+            args.reserve(argCount);
+            for (uint8_t i = 0; i < argCount; ++i) args.push_back(pop());
+            std::reverse(args.begin(), args.end());
+            pop();
+
+            Value result = Value::nullValue();
+            bool mutated = false;
+
+            if (methodName == "len") {
+                result = Value(static_cast<int>(obj.dictVal.size()));
+            } else if (methodName == "keys") {
+                std::vector<Value> keys;
+                for (const auto& kv : obj.dictVal) keys.push_back(Value(kv.first));
+                result = Value(keys);
+            } else if (methodName == "values") {
+                std::vector<Value> vals;
+                for (const auto& kv : obj.dictVal) vals.push_back(kv.second);
+                result = Value(vals);
+            } else if (methodName == "has" || methodName == "contains") {
+                if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
+                result = Value(obj.dictVal.find(args[0].toString()) != obj.dictVal.end());
+            } else if (methodName == "remove") {
+                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
+                obj.dictVal.erase(args[0].toString());
+                mutated = true;
+            } else {
+                return runtimeError("字典没有方法 " + methodName);
+            }
+
+            if (mutated) {
+                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+                    globals_[chunk.constants[receiverVarIdx].stringVal] = obj;
+                } else if (receiverLocalSlotByte != 0xFF) {
+                    size_t bp = currentFrame().basePointer;
+                    if (bp + receiverLocalSlotByte < stack_.size()) {
+                        stack_[bp + receiverLocalSlotByte] = obj;
+                    }
+                    if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
+                        VMCallFrame& curFrame = currentFrame();
+                        if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
+                            const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
+                            stack_[bp].fields[fn] = obj;
+                        }
+                    }
+                }
+            }
+            push(result);
+            notifyStep(ip, op);
+            ip += 7;
+            break;
+        }
+
+        // ---- 字符串内置方法 ----
+        if (obj.isString()) {
+            std::vector<Value> args;
+            args.reserve(argCount);
+            for (uint8_t i = 0; i < argCount; ++i) args.push_back(pop());
+            std::reverse(args.begin(), args.end());
+            pop();
+
+            Value result = Value::nullValue();
+
+            if (methodName == "len") {
+                result = Value(static_cast<int>(obj.stringVal.size()));
+            } else if (methodName == "upper") {
+                std::string s = obj.stringVal;
+                for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                result = Value(s);
+            } else if (methodName == "lower") {
+                std::string s = obj.stringVal;
+                for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                result = Value(s);
+            } else if (methodName == "split") {
+                std::string sep = args.empty() ? " " : args[0].toString();
+                if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
+                std::vector<Value> parts;
+                size_t start = 0, pos;
+                while ((pos = obj.stringVal.find(sep, start)) != std::string::npos) {
+                    parts.push_back(Value(obj.stringVal.substr(start, pos - start)));
+                    start = pos + sep.size();
+                }
+                parts.push_back(Value(obj.stringVal.substr(start)));
+                result = Value(parts);
+            } else if (methodName == "trim") {
+                std::string s = obj.stringVal;
+                size_t l = s.find_first_not_of(" \t\r\n");
+                size_t r = s.find_last_not_of(" \t\r\n");
+                if (l == std::string::npos) result = Value(std::string(""));
+                else result = Value(s.substr(l, r - l + 1));
+            } else {
+                return runtimeError("字符串没有方法 " + methodName);
+            }
+            push(result);
+            notifyStep(ip, op);
+            ip += 7;
+            break;
+        }
+
+        // ---- 类实例方法调用 ----
         if (obj.isInstance()) {
             // 沿继承链查找方法（父类方法也可调用）
             const BytecodeChunk* targetChunkPtr = findMethodChunk(obj.className, methodName);
@@ -968,9 +1158,6 @@ VMResult VM::executeOneInstruction() {
                 if (frames_.size() >= MAX_FRAMES) {
                     return runtimeError("调用栈溢出");
                 }
-
-                // 记录调用者栈上原始实例的位置（用于 writeBack）
-                size_t callerPos = stack_.size() - argCount - 1;
 
                 // 收集参数，重新排列栈
                 std::vector<Value> args;
@@ -1010,18 +1197,18 @@ VMResult VM::executeOneInstruction() {
 
                 VMCallFrame newFrame;
                 newFrame.chunk = targetChunkPtr;
-                newFrame.returnIp = ip + 6;  // OP_METHOD_CALL 现在是 6 字节
+                newFrame.returnIp = ip + 7;  // OP_METHOD_CALL 是 7 字节
                 newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
-                // functionName 用方法 chunk 自身的名称（形如 "ClassName.methodName"）
-                // 这样即使方法定义在父类，也能正确定位
                 newFrame.functionName = targetChunk.name;
                 newFrame.ip = 0;
                 newFrame.isMethodCall = true;
-                newFrame.callerInstancePos = callerPos;
+                newFrame.isInitCall = (methodName == "init");  // init 返回 this 而非 null
                 // 记录接收者变量名（用于 writeBack 到 globals_）
-                if (receiverVarIdx > 0 && receiverVarIdx < chunk.constants.size()) {
+                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
                     newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal;
                 }
+                // 记录接收者局部变量 slot（用于 writeBack 到调用者栈帧）
+                newFrame.receiverLocalSlot = (receiverLocalSlotByte == 0xFF) ? -1 : receiverLocalSlotByte;
                 frames_.push_back(newFrame);
 
                 notifyStep(ip, op);
@@ -1029,11 +1216,12 @@ VMResult VM::executeOneInstruction() {
             }
         }
 
+        // 方法未找到
         for (uint8_t i = 0; i < argCount; ++i) pop();
         pop();
         push(Value::nullValue());
         notifyStep(ip, op);
-        ip += 6;  // OP_METHOD_CALL 现在是 6 字节
+        ip += 7;  // OP_METHOD_CALL 是 7 字节
         break;
     }
 
@@ -1092,47 +1280,87 @@ VMResult VM::executeOneInstruction() {
         uint8_t argCount = chunk.code[ip + 3];
         const std::string& className = chunk.constants[idx].stringVal;
 
-        Value instance = Value::makeInstance(className);
-        push(instance);
+        // 收集参数
+        std::vector<Value> args;
+        args.reserve(argCount);
+        for (uint8_t i = 0; i < argCount; ++i) {
+            args.push_back(pop());
+        }
+        std::reverse(args.begin(), args.end());
 
-        // 检查是否有 init 方法
-        std::string initKey = className + ".init";
-        auto it = functionChunks_.find(initKey);
+        // 查找类信息
+        auto classIt = classInfo_.find(className);
+        if (classIt == classInfo_.end()) {
+            return runtimeError("未定义的类: " + className);
+        }
+        VMClassInfo& cls = classIt->second;
 
-        if (it != functionChunks_.end()) {
-            // 有 init 方法：创建新帧执行 init
-            // init 的参数在栈上紧跟实例之后（如果有参数的话）
-            // 但当前编译器总是 argCount=0，字段由 OP_INIT_FIELD 初始化
-            // 这里处理两种情况：
-            //   1. argCount > 0：有构造参数（未来扩展）
-            //   2. argCount == 0：无参构造，init 可能做额外初始化逻辑
+        // 创建新实例
+        Value instance = Value::makeInstance(cls.name);
+        instance.fields = cls.fieldDefaults;  // 已含继承字段
+
+        // 检查是否有 init 方法（沿继承链查找）
+        const BytecodeChunk* initChunkPtr = findMethodChunk(className, "init");
+
+        if (initChunkPtr != nullptr && argCount > 0) {
+            // 有 init 方法且有参数：创建 init 帧执行初始化
+            const BytecodeChunk& initChunk = *initChunkPtr;
+            if (initChunk.arity != static_cast<int>(argCount)) {
+                return runtimeError("构造函数 init 期望 " +
+                    std::to_string(initChunk.arity) + " 个参数，但传入了 " +
+                    std::to_string(argCount) + " 个");
+            }
 
             if (frames_.size() >= MAX_FRAMES) {
                 return runtimeError("调用栈溢出");
             }
 
-            // 弹出多余参数（如果有）
-            // 注意：当前编译路径 argCount 总是 0，但 OP_INIT_FIELD 会在
-            // OP_CLASS_NEW 之后立即设置字段，所以 init 方法通过 OP_METHOD_CALL
-            // 单独调用，而不是在 OP_CLASS_NEW 内部调用
-            // 如果 argCount > 0，参数已在栈上，可以直接创建帧
-            if (argCount > 0) {
-                VMCallFrame newFrame;
-                newFrame.chunk = &it->second;
-                newFrame.returnIp = ip + 4;
-                newFrame.basePointer = stack_.size() - argCount - 1;
-                newFrame.functionName = initKey;
-                newFrame.ip = 0;
-                frames_.push_back(newFrame);
+            // 推入 this
+            push(instance);
+            // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
+            int fieldCount = 0;
+            if (initChunk.fieldOrder.empty()) {
+                for (const auto& field : instance.fields) {
+                    push(field.second);
+                }
+                fieldCount = static_cast<int>(instance.fields.size());
             } else {
-                // 无参构造：弹出多余的参数（没有）
-                // 不自动调用 init —— init 通过 OP_METHOD_CALL 调用
+                for (const auto& fieldName : initChunk.fieldOrder) {
+                    auto fieldIt = instance.fields.find(fieldName);
+                    if (fieldIt != instance.fields.end()) {
+                        push(fieldIt->second);
+                    } else {
+                        push(Value::nullValue());
+                    }
+                }
+                fieldCount = static_cast<int>(initChunk.fieldOrder.size());
             }
+            // 推入参数
+            for (const auto& arg : args) {
+                push(arg);
+            }
+
+            VMCallFrame newFrame;
+            newFrame.chunk = initChunkPtr;
+            newFrame.returnIp = ip + 4;
+            newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
+            newFrame.functionName = initChunkPtr->name;
+            newFrame.ip = 0;
+            newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
+            newFrame.isInitCall = true;     // init 返回 this 而非 null
+            frames_.push_back(newFrame);
+
+            notifyStep(ip, op);
+            break;
         }
 
-        // 弹出多余参数（如果 init 未被调用且有多余参数）
-        if (argCount > 0 && (it == functionChunks_.end())) {
-            for (uint8_t i = 0; i < argCount; ++i) pop();
+        // 无 init 或无参数：推入实例，由后续 OP_INIT_FIELD 设置字段
+        push(instance);
+
+        // 如果有 init 但 argCount==0，init 通过后续 OP_METHOD_CALL 调用
+        // 如果无 init 且有参数，弹出多余参数（不应发生，但防御性处理）
+        if (initChunkPtr == nullptr && argCount > 0) {
+            // 无 init 方法但有参数：静默忽略参数（与解释器行为一致）
         }
 
         notifyStep(ip, op);

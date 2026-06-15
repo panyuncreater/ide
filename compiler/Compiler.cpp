@@ -707,15 +707,18 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
 
 void Compiler::compileMethodCall(MethodCall& node) {
     // 检查接收者是否为简单变量（VarRef），用于 writeBack
-    uint16_t receiverVarIdx = 0;  // 0 = 非简单变量
+    uint16_t receiverVarIdx = 0xFFFF;  // 0xFFFF = 无全局变量 writeBack
+    uint8_t receiverLocalSlot = 0xFF;  // 0xFF = 无局部变量 writeBack
     VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
                      ? static_cast<VarRef*>(node.object.get()) : nullptr;
     if (objVar) {
-        // 仅全局变量需要 writeBack（局部变量的 writeBack 通过栈引用处理）
         auto localIt = currentLocals_.find(objVar->name);
         if (localIt == currentLocals_.end()) {
             // 全局变量：记录变量名索引供 VM writeBack 使用
             receiverVarIdx = identifierIndex(objVar->name);
+        } else {
+            // 局部变量：记录 slot 号供 VM writeBack 使用
+            receiverLocalSlot = static_cast<uint8_t>(localIt->second);
         }
     }
 
@@ -727,7 +730,8 @@ void Compiler::compileMethodCall(MethodCall& node) {
     chunk_.writeOp(OpCode::OP_METHOD_CALL, node.line);
     chunk_.writeShort(nameIdx, node.line);
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
-    chunk_.writeShort(receiverVarIdx, node.line);  // 接收者变量名索引（0 = 无 writeBack）
+    chunk_.writeShort(receiverVarIdx, node.line);  // 接收者全局变量名索引（0xFFFF = 无全局 writeBack）
+    chunk_.write(receiverLocalSlot, node.line);    // 接收者局部变量 slot（0xFF = 无局部 writeBack）
 }
 
 void Compiler::compileNullLiteral(NullLiteral& node) {

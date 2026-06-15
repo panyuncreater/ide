@@ -39,8 +39,9 @@ struct VMCallFrame {
     size_t basePointer = 0;                 // 帧基指针（栈中参数起始位置）
     std::string functionName;               // 函数名
     bool isMethodCall = false;              // 是否为方法调用（需要 writeBack）
-    size_t callerInstancePos = 0;           // 方法调用时，调用者栈上原始实例的位置
+    bool isInitCall = false;                // 是否为 init 构造函数调用（返回 this 而非 null）
     std::string receiverVarName;            // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
+    int receiverLocalSlot = -1;             // 方法调用时，接收者在调用者帧中的局部变量槽号（-1=非局部变量）
 };
 
 /// VM 类信息（用于构造函数调用）

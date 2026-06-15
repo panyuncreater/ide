@@ -227,7 +227,7 @@ struct BytecodeChunk {
         case OpCode::OP_MEMBER_SET_LOCAL:
             return 4;
         case OpCode::OP_METHOD_CALL:
-            return 6;
+            return 7;  // opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B)
         default:
             return 1;
         }
@@ -400,9 +400,11 @@ struct BytecodeChunk {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             uint8_t argCount = code[offset + 3];
             uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
+            uint8_t localSlot = code[offset + 6];
             str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
-            if (receiverIdx > 0) str += " recv=" + constants[receiverIdx].stringVal;
-            offset += 6;
+            if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal;
+            if (localSlot != 0xFF) str += " slot=" + std::to_string(localSlot);
+            offset += 7;
             break;
         }
         case OpCode::OP_DUP: str += "OP_DUP"; offset += 1; break;
