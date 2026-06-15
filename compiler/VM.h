@@ -43,6 +43,13 @@ struct VMCallFrame {
     std::string receiverVarName;            // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
 };
 
+/// VM 类信息（用于构造函数调用）
+struct VMClassInfo {
+    std::string name;                                  // 类名
+    std::vector<std::string> fieldOrder;               // 字段声明顺序
+    std::unordered_map<std::string, Value> fieldDefaults; // 字段默认值
+};
+
 /// 简单栈式虚拟机
 class VM {
 public:
@@ -111,6 +118,7 @@ private:
     std::vector<VMCallFrame> frames_;              // 调用帧栈
     BytecodeChunk mainChunk_;                       // 主 chunk 副本（VM 自持，避免悬空指针）
     std::unordered_map<std::string, BytecodeChunk> functionChunks_; // 函数字节码
+    std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
     bool stepCallbackEnabled_ = false;              // 是否启用步进回调

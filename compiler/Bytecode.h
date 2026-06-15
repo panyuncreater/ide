@@ -71,6 +71,7 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_SET_LOCAL,    // 写入当前帧局部变量（操作数: slot(1B)）
     OP_CLASS_NEW,    // 类构造调用（操作数: nameIdx(2B) + argCount(1B)）
     OP_INIT_FIELD,   // 初始化实例字段（操作数: fieldNameIdx(2B)）：从栈顶 pop 值设置到实例的字段
+    OP_DEFINE_CLASS, // 定义类（操作数: nameIdx(2B)）：从栈顶 pop 模板实例，提取类信息，注册到 VM
 };
 
 /// 操作码 → 名称字符串（统一映射，避免多处手工维护）
@@ -125,6 +126,7 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_SET_LOCAL:    return "OP_SET_LOCAL";
     case OpCode::OP_CLASS_NEW:    return "OP_CLASS_NEW";
     case OpCode::OP_INIT_FIELD:   return "OP_INIT_FIELD";
+    case OpCode::OP_DEFINE_CLASS: return "OP_DEFINE_CLASS";
     }
     return "OP_UNKNOWN";
 }
@@ -206,6 +208,7 @@ struct BytecodeChunk {
         case OpCode::OP_MEMBER_SET:
         case OpCode::OP_INDEX_SET_VAR:
         case OpCode::OP_INIT_FIELD:
+        case OpCode::OP_DEFINE_CLASS:
             return 3;
         case OpCode::OP_INDEX_SET_LOCAL:
             return 2;
@@ -431,6 +434,12 @@ struct BytecodeChunk {
         case OpCode::OP_INIT_FIELD: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             str += "OP_INIT_FIELD " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            offset += 3;
+            break;
+        }
+        case OpCode::OP_DEFINE_CLASS: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_DEFINE_CLASS " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
             offset += 3;
             break;
         }

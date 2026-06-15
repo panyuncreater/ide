@@ -1,5 +1,6 @@
 #include "lexer/Lexer.h"
 #include <cctype>
+#include <climits>
 #include <limits>
 
 // ============================================================
@@ -236,7 +237,12 @@ void Lexer::number() {
             // 整数溢出，尝试作为 64 位整数或报错
             try {
                 long long val = std::stoll(text);
-                addToken(TokenType::TK_INT_LIT, Value(static_cast<int>(val)));
+                // 超出 int 范围时直接报错，而非截断
+                if (val > INT_MAX || val < INT_MIN) {
+                    errorToken("整数溢出: " + text);
+                } else {
+                    addToken(TokenType::TK_INT_LIT, Value(static_cast<int>(val)));
+                }
             } catch (const std::out_of_range&) {
                 errorToken("整数溢出: " + text);
             }

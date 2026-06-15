@@ -166,8 +166,13 @@ private:
     /// 查找类的字段默认值（含继承链）
     Value findFieldDefault(ClassInfo& cls, const std::string& fieldName);
 
-    /// 递归写回左值
-    void writeBack(ASTNode* node, const Value& modifiedValue, int line, int col);
+    /// 写回左值（链式求值，避免重复求值副作用）
+    /// isIndexAssign=true 时为索引赋值，indexNode 为索引表达式节点；否则为成员赋值，fieldName 为字段名
+    /// valueNode 为赋值右值表达式节点，在 writeBack 内部按 object→index→value 顺序求值
+    Value writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* indexNode,
+                    const std::string& fieldName, ASTNode* valueNode, int line, int col);
+    /// 写回已修改的值（用于方法调用等已自行修改对象的场景，链式求值避免重复求值）
+    void writeBack(ASTNode* objectNode, const Value& modifiedValue, int line, int col);
 
     /// 检查值是否匹配类型注解
     bool typeMatch(const Value& val, const std::string& annotation) const;

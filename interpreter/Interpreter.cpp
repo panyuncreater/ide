@@ -121,6 +121,11 @@ Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
         return Value(left.toString() + right.toString());
     }
 
+    // 非数值类型检查（字符串拼接已在上面处理）
+    if (!left.isNumber() || !right.isNumber()) {
+        runtimeError("算术运算需要数值类型", line, col);
+    }
+
     // 数值运算（switch 分发）
     switch (opType) {
     case 0: // +
@@ -206,47 +211,208 @@ std::string Interpreter::findTypeAnnotation(const std::string& varName) const {
     return "";
 }
 
-// ---- writeBack 递归写回左值 ----
+// ---- writeBack 写回左值 ----
+// 链式求值方式：从最外层到最内层逐级求值（每级仅一次），在最内层执行赋值，
+// 再从内到外逐级写回，避免对含副作用的子表达式重复求值。
 
-void Interpreter::writeBack(ASTNode* node, const Value& modifiedValue, int line, int col) {
-    switch (node->nodeType) {
-    case NodeType::NODE_VAR_REF: {
-        auto* varRef = static_cast<VarRef*>(node);
-        currentEnv_->set(varRef->name, modifiedValue);
-        break;
-    }
-    case NodeType::NODE_MEMBER_ACCESS: {
-        auto* memberAccess = static_cast<MemberAccess*>(node);
-        Value outer = evaluate(memberAccess->object.get());
-        if (outer.isInstance()) {
-            outer.fields[memberAccess->fieldName] = modifiedValue;
-        } else if (outer.isDict()) {
-            outer.dictVal[memberAccess->fieldName] = modifiedValue;
+Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* indexNode,
+                            const std::string& fieldName, ASTNode* valueNode, int line, int col) {
+    // 收集从 objectNode 到最外层 VarRef 的节点链
+    std::vector<ASTNode*> chain;
+    ASTNode* cur = objectNode;
+    while (cur->nodeType == NodeType::NODE_MEMBER_ACCESS ||
+           cur->nodeType == NodeType::NODE_INDEX_ACCESS) {
+        chain.push_back(cur);
+        if (cur->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            cur = static_cast<MemberAccess*>(cur)->object.get();
         } else {
-            runtimeError("该类型不支持成员赋值", line, col);
+            cur = static_cast<IndexAccess*>(cur)->object.get();
         }
-        writeBack(memberAccess->object.get(), outer, line, col);
-        break;
     }
-    case NodeType::NODE_INDEX_ACCESS: {
-        auto* indexAccess = static_cast<IndexAccess*>(node);
-        Value outer = evaluate(indexAccess->object.get());
-        Value idx = evaluate(indexAccess->index.get());
-        if (outer.isArray() && idx.isInt()) {
-            if (idx.intVal < 0 || static_cast<size_t>(idx.intVal) >= outer.arrayVal.size())
+    chain.push_back(cur); // 最外层 VarRef
+
+    int n = static_cast<int>(chain.size());
+
+    // 从外到内逐级求值，收集每级的值和索引
+    std::vector<Value> vals(n);
+    std::vector<Value> idxs(n); // IndexAccess 节点的索引值
+
+    auto* varRef = static_cast<VarRef*>(chain[n - 1]);
+    vals[n - 1] = currentEnv_->get(varRef->name);
+
+    for (int i = n - 2; i >= 0; i--) {
+        ASTNode* nd = chain[i];
+        const Value& parent = vals[i + 1];
+        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            auto* ma = static_cast<MemberAccess*>(nd);
+            if (parent.isInstance()) {
+                auto it = parent.fields.find(ma->fieldName);
+                vals[i] = (it != parent.fields.end()) ? it->second : Value::nullValue();
+            } else if (parent.isDict()) {
+                auto it = parent.dictVal.find(ma->fieldName);
+                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+            } else {
+                runtimeError("该类型不支持成员访问", line, col);
+            }
+        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
+            auto* ia = static_cast<IndexAccess*>(nd);
+            idxs[i] = evaluate(ia->index.get());
+            const Value& indexVal = idxs[i];
+            if (parent.isArray() && indexVal.isInt()) {
+                if (indexVal.intVal < 0 || static_cast<size_t>(indexVal.intVal) >= parent.arrayVal.size())
+                    runtimeError("数组索引越界", line, col);
+                vals[i] = parent.arrayVal[indexVal.intVal];
+            } else if (parent.isDict() && indexVal.isString()) {
+                auto it = parent.dictVal.find(indexVal.stringVal);
+                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+            } else {
+                runtimeError("该类型不支持索引访问", line, col);
+            }
+        }
+    }
+
+    // 链式求值完成，现在按左到右顺序求值 index 和 value
+    Value idx;
+    if (isIndexAssign && indexNode) {
+        idx = evaluate(indexNode);
+    }
+    Value val;
+    if (valueNode) {
+        val = evaluate(valueNode);
+    }
+
+    // 在最内层对象上执行赋值
+    Value modifiedObj = vals[0]; // 拷贝
+    if (isIndexAssign) {
+        if (modifiedObj.isArray() && idx.isInt()) {
+            if (idx.intVal < 0 || static_cast<size_t>(idx.intVal) >= modifiedObj.arrayVal.size())
                 runtimeError("数组索引越界", line, col);
-            outer.arrayVal[idx.intVal] = modifiedValue;
-        } else if (outer.isDict() && idx.isString()) {
-            outer.dictVal[idx.stringVal] = modifiedValue;
+            modifiedObj.arrayVal[idx.intVal] = val;
+        } else if (modifiedObj.isDict() && idx.isString()) {
+            modifiedObj.dictVal[idx.stringVal] = val;
         } else {
             runtimeError("该类型不支持索引赋值", line, col);
         }
-        writeBack(indexAccess->object.get(), outer, line, col);
-        break;
+    } else {
+        if (modifiedObj.isInstance()) {
+            modifiedObj.fields[fieldName] = val;
+        } else if (modifiedObj.isDict()) {
+            modifiedObj.dictVal[fieldName] = val;
+        } else {
+            runtimeError("该类型不支持成员赋值", line, col);
+        }
     }
-    default:
-        break;
+
+    // 从内到外逐级写回
+    Value currentVal = modifiedObj;
+    for (int i = 0; i < n - 1; i++) {
+        ASTNode* nd = chain[i];
+        Value parentVal = vals[i + 1]; // 拷贝，将在其上修改
+        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            auto* ma = static_cast<MemberAccess*>(nd);
+            if (parentVal.isInstance()) {
+                parentVal.fields[ma->fieldName] = currentVal;
+            } else if (parentVal.isDict()) {
+                parentVal.dictVal[ma->fieldName] = currentVal;
+            } else {
+                runtimeError("该类型不支持成员赋值", line, col);
+            }
+        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
+            const Value& indexVal = idxs[i];
+            if (parentVal.isArray() && indexVal.isInt()) {
+                if (indexVal.intVal < 0 || static_cast<size_t>(indexVal.intVal) >= parentVal.arrayVal.size())
+                    runtimeError("数组索引越界", line, col);
+                parentVal.arrayVal[indexVal.intVal] = currentVal;
+            } else if (parentVal.isDict() && indexVal.isString()) {
+                parentVal.dictVal[indexVal.stringVal] = currentVal;
+            } else {
+                runtimeError("该类型不支持索引赋值", line, col);
+            }
+        }
+        currentVal = parentVal;
     }
+
+    // 写回最外层变量
+    currentEnv_->set(varRef->name, currentVal);
+    return val;
+}
+
+// ---- writeBack 重载：写回已修改的值 ----
+// 用于方法调用等已自行修改对象的场景，链式求值避免重复求值副作用
+
+void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int line, int col) {
+    // 收集从 objectNode 到最外层 VarRef 的节点链
+    std::vector<ASTNode*> chain;
+    ASTNode* cur = objectNode;
+    while (cur->nodeType == NodeType::NODE_MEMBER_ACCESS ||
+           cur->nodeType == NodeType::NODE_INDEX_ACCESS) {
+        chain.push_back(cur);
+        if (cur->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            cur = static_cast<MemberAccess*>(cur)->object.get();
+        } else {
+            cur = static_cast<IndexAccess*>(cur)->object.get();
+        }
+    }
+    chain.push_back(cur); // 最外层 VarRef
+
+    int n = static_cast<int>(chain.size());
+
+    // 从外到内逐级求值，收集每级的值和索引
+    std::vector<Value> vals(n);
+    std::vector<Value> idxs(n);
+
+    auto* varRef = static_cast<VarRef*>(chain[n - 1]);
+    vals[n - 1] = currentEnv_->get(varRef->name);
+
+    for (int i = n - 2; i >= 0; i--) {
+        ASTNode* nd = chain[i];
+        const Value& parent = vals[i + 1];
+        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            auto* ma = static_cast<MemberAccess*>(nd);
+            if (parent.isInstance()) {
+                auto it = parent.fields.find(ma->fieldName);
+                vals[i] = (it != parent.fields.end()) ? it->second : Value::nullValue();
+            } else if (parent.isDict()) {
+                auto it = parent.dictVal.find(ma->fieldName);
+                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+            }
+        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
+            auto* ia = static_cast<IndexAccess*>(nd);
+            idxs[i] = evaluate(ia->index.get());
+            const Value& indexVal = idxs[i];
+            if (parent.isArray() && indexVal.isInt()) {
+                vals[i] = parent.arrayVal[indexVal.intVal];
+            } else if (parent.isDict() && indexVal.isString()) {
+                auto it = parent.dictVal.find(indexVal.stringVal);
+                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+            }
+        }
+    }
+
+    // 从内到外逐级写回（最内层使用 modifiedValue）
+    Value currentVal = modifiedValue;
+    for (int i = 0; i < n - 1; i++) {
+        ASTNode* nd = chain[i];
+        Value parentVal = vals[i + 1];
+        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            auto* ma = static_cast<MemberAccess*>(nd);
+            if (parentVal.isInstance()) {
+                parentVal.fields[ma->fieldName] = currentVal;
+            } else if (parentVal.isDict()) {
+                parentVal.dictVal[ma->fieldName] = currentVal;
+            }
+        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
+            const Value& indexVal = idxs[i];
+            if (parentVal.isArray() && indexVal.isInt()) {
+                parentVal.arrayVal[indexVal.intVal] = currentVal;
+            } else if (parentVal.isDict() && indexVal.isString()) {
+                parentVal.dictVal[indexVal.stringVal] = currentVal;
+            }
+        }
+        currentVal = parentVal;
+    }
+
+    currentEnv_->set(varRef->name, currentVal);
 }
 
 // ---- 16 个原有 visit 方法 ----
@@ -630,6 +796,13 @@ Value Interpreter::visitFunCall(FunCall& node) {
                 evaluate(initMethod->body.get());
             } catch (const ReturnException& e) {
                 // init 方法的返回值忽略，但更新实例字段
+            } catch (...) {
+                // 运行时错误：先恢复调用状态，再重抛，避免 currentEnv_/调用栈/递归深度错乱
+                currentEnv_ = prevEnv;
+                callStack_.pop_back();
+                recursionDepth_--;
+                currentFunctionReturnType_ = savedReturnType;
+                throw;
             }
 
             // 从 init 环境中读取 this 的更新值
@@ -645,10 +818,12 @@ Value Interpreter::visitFunCall(FunCall& node) {
             // 恢复环境
             currentEnv_ = prevEnv;
             callStack_.pop_back();
-            recursionDepth_--;
             currentFunctionReturnType_ = savedReturnType;
         }
 
+        // 无论是否有 init 方法，都需成对恢复递归深度
+        // （recursionDepth_ 在进入类构造路径时已无条件递增）
+        recursionDepth_--;
         return instance;
     }
 
@@ -740,6 +915,13 @@ Value Interpreter::visitFunCall(FunCall& node) {
         result = evaluate(funDecl->body.get());
     } catch (const ReturnException& e) {
         result = e.returnValue;
+    } catch (...) {
+        // 运行时错误：先恢复调用状态，再重抛
+        currentEnv_ = prevEnv;
+        callStack_.pop_back();
+        recursionDepth_--;
+        currentFunctionReturnType_ = savedReturnType;
+        throw;
     }
 
     // 恢复环境
@@ -857,23 +1039,8 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
 
 Value Interpreter::visitIndexAssign(IndexAssign& node) {
     checkBreak(&node);
-
-    Value idx = evaluate(node.index.get());
-    Value val = evaluate(node.value.get());
-    Value obj = evaluate(node.object.get());
-
-    if (obj.isArray() && idx.isInt()) {
-        if (idx.intVal < 0 || static_cast<size_t>(idx.intVal) >= obj.arrayVal.size())
-            runtimeError("数组索引越界", node.line, node.column);
-        obj.arrayVal[idx.intVal] = val;
-    } else if (obj.isDict() && idx.isString()) {
-        obj.dictVal[idx.stringVal] = val;
-    } else {
-        runtimeError("该类型不支持索引赋值", node.line, node.column);
-    }
-
-    writeBack(node.object.get(), obj, node.line, node.column);
-    return val;
+    // 左到右求值：object → index → value（由 writeBack 内部按序求值）
+    return writeBack(node.object.get(), true, node.index.get(), "", node.value.get(), node.line, node.column);
 }
 
 Value Interpreter::visitClassDecl(ClassDecl& node) {
@@ -969,20 +1136,8 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
 
 Value Interpreter::visitMemberAssign(MemberAssign& node) {
     checkBreak(&node);
-
-    Value val = evaluate(node.value.get());
-    Value obj = evaluate(node.object.get());
-
-    if (obj.isInstance()) {
-        obj.fields[node.fieldName] = val;
-    } else if (obj.isDict()) {
-        obj.dictVal[node.fieldName] = val;
-    } else {
-        runtimeError("该类型不支持成员赋值", node.line, node.column);
-    }
-
-    writeBack(node.object.get(), obj, node.line, node.column);
-    return val;
+    // 左到右求值：object → value（由 writeBack 内部按序求值）
+    return writeBack(node.object.get(), false, nullptr, node.fieldName, node.value.get(), node.line, node.column);
 }
 
 Value Interpreter::visitMethodCall(MethodCall& node) {
@@ -1110,6 +1265,10 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (node.methodName == "split") {
             // str.split(sep) — 按 sep 分割返回数组
             std::string sep = argValues.empty() ? " " : argValues[0].toString();
+            if (sep.empty()) {
+                // 空分隔符下 std::string::find("") 总返回 start，会导致死循环
+                runtimeError("split 的分隔符不能为空字符串", node.line, node.column);
+            }
             std::vector<Value> parts;
             size_t start = 0, pos;
             while ((pos = obj.stringVal.find(sep, start)) != std::string::npos) {
@@ -1190,6 +1349,13 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                     result = evaluate(method->body.get());
                 } catch (const ReturnException& e) {
                     result = e.returnValue;
+                } catch (...) {
+                    // 运行时错误：先恢复调用状态，再重抛
+                    currentEnv_ = prevEnv;
+                    callStack_.pop_back();
+                    recursionDepth_--;
+                    currentFunctionReturnType_ = savedReturnType;
+                    throw;
                 }
 
                 // 从方法环境中读取 this 的更新值

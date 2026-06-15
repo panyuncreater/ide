@@ -298,8 +298,22 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
 
             // 可选的参数类型注解 : type
             if (match({TokenType::TK_COLON})) {
-                const Token& typeTok = consume(TokenType::TK_IDENTIFIER, "期望参数类型名");
-                pType = typeTok.lexeme;
+                // 接受标识符或内置类型关键字（int, float, bool, string, dict, array）
+                if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
+                    check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
+                    check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY) ||
+                    check(TokenType::TK_IDENTIFIER)) {
+                    const Token& typeTok = advance();
+                    pType = typeTok.lexeme;
+                    // 可选的数组类型: int[]
+                    if (match({TokenType::TK_LBRACKET})) {
+                        consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                        pType += "[]";
+                    }
+                } else {
+                    const Token& tok = peek();
+                    throw ParseError("期望参数类型名", tok.line, tok.column);
+                }
             }
         }
 

@@ -202,6 +202,9 @@ void Compiler::compileVarDecl(VarDecl& node) {
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
         }
+        // OP_SET_LOCAL 用 peek(0) 不消费栈顶值，补发 OP_POP 平衡栈，
+        // 避免函数内循环 var 声明累积导致栈溢出。
+        chunk_.writeOp(OpCode::OP_POP, node.line);
     } else {
         uint16_t nameIdx = identifierIndex(node.name);
         chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
@@ -598,11 +601,11 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         chunk_.writeShort(fieldIdx, varDecl->line);
     }
 
-    // 将实例注册为全局变量（OP_DEFINE_VAR 从栈上 pop 值并注册到 globals_）
-    chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+    // 将类注册为全局变量（OP_DEFINE_CLASS 从栈上 pop 模板实例并注册类信息）
+    chunk_.writeOp(OpCode::OP_DEFINE_CLASS, node.line);
     chunk_.writeShort(nameIdx, node.line);
 
-    // 栈上的实例已被 OP_DEFINE_VAR 消费，无需额外 OP_POP
+    // 栈上的模板实例已被 OP_DEFINE_CLASS 消费，无需额外 OP_POP
 }
 
 void Compiler::compileMemberAccess(MemberAccess& node) {

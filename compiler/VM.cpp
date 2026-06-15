@@ -139,6 +139,11 @@ VMResult VM::numericOp(int opType, int line) {
         }
     }
 
+    // 非数值类型检查（字符串拼接已在上面处理）
+    if (!leftRef.isNumber() || !rightRef.isNumber()) {
+        return runtimeError("算术运算需要数值类型");
+    }
+
     // 数值运算
     switch (opType) {
     case OP_ADD_INT:
@@ -180,6 +185,7 @@ void VM::initExecution(const CompileResult& result) {
     hasError_ = false;
     frames_.clear();
     functionChunks_ = result.functionChunks;
+    classInfo_.clear();
     mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬空指针
 
     // 设置主帧
@@ -208,6 +214,7 @@ void VM::resetState() {
     hasError_ = false;
     frames_.clear();
     functionChunks_.clear();
+    classInfo_.clear();
     mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
     initialized_ = false;
 }
@@ -600,6 +607,85 @@ VMResult VM::executeOneInstruction() {
 
         auto it = functionChunks_.find(funName);
         if (it == functionChunks_.end()) {
+            // 检查是否为类构造调用
+            auto classIt = classInfo_.find(funName);
+            if (classIt != classInfo_.end()) {
+                VMClassInfo& cls = classIt->second;
+
+                // 收集参数
+                std::vector<Value> args;
+                args.reserve(argCount);
+                for (uint8_t i = 0; i < argCount; ++i) {
+                    args.push_back(pop());
+                }
+                std::reverse(args.begin(), args.end());
+
+                // 创建新实例
+                Value instance = Value::makeInstance(cls.name);
+                instance.fields = cls.fieldDefaults;
+
+                // 检查是否有 init 方法
+                std::string initKey = funName + ".init";
+                auto initIt = functionChunks_.find(initKey);
+
+                if (initIt != functionChunks_.end()) {
+                    const BytecodeChunk& initChunk = initIt->second;
+                    if (initChunk.arity != static_cast<int>(argCount)) {
+                        return runtimeError("构造函数 init 期望 " +
+                            std::to_string(initChunk.arity) + " 个参数，但传入了 " +
+                            std::to_string(argCount) + " 个");
+                    }
+
+                    if (frames_.size() >= MAX_FRAMES) {
+                        return runtimeError("调用栈溢出");
+                    }
+
+                    // 推入 this
+                    push(instance);
+                    // 按字段声明顺序推入字段值
+                    int fieldCount = 0;
+                    if (initChunk.fieldOrder.empty()) {
+                        for (const auto& field : instance.fields) {
+                            push(field.second);
+                        }
+                        fieldCount = static_cast<int>(instance.fields.size());
+                    } else {
+                        for (const auto& fieldName : initChunk.fieldOrder) {
+                            auto fieldIt = instance.fields.find(fieldName);
+                            if (fieldIt != instance.fields.end()) {
+                                push(fieldIt->second);
+                            } else {
+                                push(Value::nullValue());
+                            }
+                        }
+                        fieldCount = static_cast<int>(initChunk.fieldOrder.size());
+                    }
+                    // 推入参数
+                    for (const auto& arg : args) {
+                        push(arg);
+                    }
+
+                    VMCallFrame newFrame;
+                    newFrame.chunk = &initChunk;
+                    newFrame.returnIp = ip + 4;
+                    newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
+                    newFrame.functionName = initKey;
+                    newFrame.ip = 0;
+                    newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
+                    frames_.push_back(newFrame);
+
+                    notifyStep(ip, op);
+                    break;
+                }
+
+                // 无 init 方法：直接返回新实例
+                push(instance);
+                notifyStep(ip, op);
+                ip += 4;
+                break;
+            }
+
+            // 既不是函数也不是类
             for (uint8_t i = 0; i < argCount; ++i) {
                 pop();
             }
@@ -618,21 +704,6 @@ VMResult VM::executeOneInstruction() {
 
         if (frames_.size() >= MAX_FRAMES) {
             return runtimeError("调用栈溢出");
-        }
-
-        // 检查是否有闭包捕获的变量需要注入到全局环境中
-        // 在参数之后的栈位置查找闭包对象
-        if (stack_.size() > argCount) {
-            size_t closurePos = stack_.size() - argCount - 1;
-            const Value& maybeClosure = stack_[closurePos];
-            if (maybeClosure.isClosure() && maybeClosure.closureName == funName) {
-                // 将闭包捕获的变量注入全局环境（仅注入当前不存在的变量）
-                for (const auto& kv : maybeClosure.capturedVars) {
-                    if (globals_.find(kv.first) == globals_.end()) {
-                        globals_[kv.first] = kv.second;
-                    }
-                }
-            }
         }
 
         VMCallFrame newFrame;
@@ -934,7 +1005,7 @@ VMResult VM::executeOneInstruction() {
         const std::string& funName = chunk.constants[idx].stringVal;
         Value closure = Value::makeClosure(funName, nullptr, {});
         // 捕获当前全局变量环境到闭包中
-        closure.capturedVars = globals_;
+        closure.capturedVars = {};  // 不再深拷贝整个全局环境（capturedVars 未被有效使用）
         auto it = functionChunks_.find(funName);
         if (it != functionChunks_.end()) {
             for (int i = 0; i < it->second.arity; ++i) {
@@ -1033,6 +1104,32 @@ VMResult VM::executeOneInstruction() {
         if (!stack_.empty() && stack_.back().isInstance()) {
             stack_.back().fields[fieldName] = val;
         }
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    case OpCode::OP_DEFINE_CLASS: {
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        const std::string& className = chunk.constants[idx].stringVal;
+        Value templateInstance = pop();
+
+        // 从模板实例提取类信息，注册到 classInfo_
+        VMClassInfo info;
+        info.name = className;
+        if (templateInstance.isInstance()) {
+            for (const auto& field : templateInstance.fields) {
+                info.fieldOrder.push_back(field.first);
+                info.fieldDefaults[field.first] = field.second;
+            }
+        }
+        classInfo_[className] = info;
+
+        // 在全局变量中存储类标记（与解释器语义一致：类名是类型标识，不是实例）
+        Value classVal(std::string("class:") + className);
+        classVal.type = ValueType::VAL_STRING;
+        globals_[className] = classVal;
+
         notifyStep(ip, op);
         ip += 3;
         break;
