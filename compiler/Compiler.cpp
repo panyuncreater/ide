@@ -95,6 +95,9 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         uint16_t jumpTarget = static_cast<uint16_t>(chunk_.code.size());
         chunk_.code[jumpPatch + 1] = static_cast<uint8_t>(jumpTarget & 0xFF);
         chunk_.code[jumpPatch + 2] = static_cast<uint8_t>((jumpTarget >> 8) & 0xFF);
+        // 统一为 bool 语义（对齐解释器 return Value(right.isTruthy())）
+        chunk_.writeOp(OpCode::OP_NOT, node.line);
+        chunk_.writeOp(OpCode::OP_NOT, node.line);
         return;
     }
 
@@ -119,6 +122,9 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         uint16_t endTarget = static_cast<uint16_t>(chunk_.code.size());
         chunk_.code[jumpEnd + 1] = static_cast<uint8_t>(endTarget & 0xFF);
         chunk_.code[jumpEnd + 2] = static_cast<uint8_t>((endTarget >> 8) & 0xFF);
+        // 统一为 bool 语义（对齐解释器 return Value(right.isTruthy())）
+        chunk_.writeOp(OpCode::OP_NOT, node.line);
+        chunk_.writeOp(OpCode::OP_NOT, node.line);
         return;
     }
 
@@ -209,8 +215,11 @@ void Compiler::compileAssignment(Assignment& node) {
     if (inFunction_) {
         auto it = currentLocals_.find(node.name);
         if (it != currentLocals_.end()) {
+            // OP_SET_LOCAL 用 peek(0) 不消费栈顶值，与 OP_SET_VAR 的 pop() 语义不一致。
+            // 这里补发 OP_POP 显式清理被赋值的值，避免函数内循环赋值累积导致栈溢出。
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
+            chunk_.writeOp(OpCode::OP_POP, node.line);
         } else {
             uint16_t nameIdx = identifierIndex(node.name);
             chunk_.writeOp(OpCode::OP_SET_VAR, node.line);

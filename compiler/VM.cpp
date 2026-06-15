@@ -554,6 +554,20 @@ VMResult VM::executeOneInstruction() {
         if (retFrame.isMethodCall && !retFrame.receiverVarName.empty() &&
             retFrame.basePointer < stack_.size()) {
             Value& modifiedThis = stack_[retFrame.basePointer];
+
+            // 先把方法内的字段槽（bp+1..N）同步回 this。
+            // 栈布局：[this, field0, field1, ..., args]，
+            // 方法内直接写 `field = x`（OP_SET_LOCAL）只改字段槽，this.fields 未变，
+            // 必须先同步字段槽→this，否则 writeBack 读 this.fields 会丢失改动。
+            if (modifiedThis.isInstance() && retFrame.chunk && !retFrame.chunk->fieldOrder.empty()) {
+                for (size_t fi = 0; fi < retFrame.chunk->fieldOrder.size(); ++fi) {
+                    size_t pos = retFrame.basePointer + 1 + fi;
+                    if (pos < stack_.size()) {
+                        modifiedThis.fields[retFrame.chunk->fieldOrder[fi]] = stack_[pos];
+                    }
+                }
+            }
+
             if (modifiedThis.isInstance()) {
                 auto it = globals_.find(retFrame.receiverVarName);
                 if (it != globals_.end() && it->second.isInstance()) {
