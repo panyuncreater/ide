@@ -1,7 +1,11 @@
 ```
-# Compiled and build artifacts
+# Compiled and binary files
 *.o
 *.obj
+*.exe
+*.dll
+*.so
+*.a
 *.out
 test_vm
 test_vm_advanced
