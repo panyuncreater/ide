@@ -208,8 +208,9 @@ struct BytecodeChunk {
         case OpCode::OP_MEMBER_SET:
         case OpCode::OP_INDEX_SET_VAR:
         case OpCode::OP_INIT_FIELD:
-        case OpCode::OP_DEFINE_CLASS:
             return 3;
+        case OpCode::OP_DEFINE_CLASS:
+            return 5;  // opcode(1B) + nameIdx(2B) + superNameIdx(2B)
         case OpCode::OP_INDEX_SET_LOCAL:
             return 2;
         case OpCode::OP_CALL:
@@ -439,8 +440,12 @@ struct BytecodeChunk {
         }
         case OpCode::OP_DEFINE_CLASS: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            uint16_t superIdx = code[offset + 3] | (code[offset + 4] << 8);
             str += "OP_DEFINE_CLASS " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
-            offset += 3;
+            if (superIdx != 0xFFFF && superIdx < constants.size()) {
+                str += " extends " + constants[superIdx].stringVal;
+            }
+            offset += 5;
             break;
         }
         default:

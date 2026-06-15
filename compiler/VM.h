@@ -46,8 +46,9 @@ struct VMCallFrame {
 /// VM 类信息（用于构造函数调用）
 struct VMClassInfo {
     std::string name;                                  // 类名
-    std::vector<std::string> fieldOrder;               // 字段声明顺序
-    std::unordered_map<std::string, Value> fieldDefaults; // 字段默认值
+    std::string superClassName;                        // 父类名（空表示无父类）
+    std::vector<std::string> fieldOrder;               // 字段声明顺序（含继承字段）
+    std::unordered_map<std::string, Value> fieldDefaults; // 字段默认值（含继承字段）
 };
 
 /// 简单栈式虚拟机
@@ -147,6 +148,11 @@ private:
 
     /// 获取当前 chunk
     const BytecodeChunk& currentChunk();
+
+    /// 沿继承链查找方法 chunk（返回 nullptr 表示未找到）
+    /// 先在 className 对应类查 methodName，未命中则查 superClass，递归到根。
+    const BytecodeChunk* findMethodChunk(const std::string& className,
+                                         const std::string& methodName) const;
 
     /// 执行单条指令的内部实现（供 execute() 和 stepOnce() 共用）
     VMResult executeOneInstruction();

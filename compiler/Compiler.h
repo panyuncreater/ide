@@ -28,6 +28,8 @@ private:
     std::unordered_map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
     std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
     bool inFunction_ = false;                       // 是否在函数体内
+    std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;  // 类名 → 字段名列表（含继承字段）
+    std::unordered_map<std::string, int> outerLocals_;  // 外层函数的局部变量（用于检测闭包捕获）
 
     /// 添加变量名到常量池，返回索引
     uint16_t identifierIndex(const std::string& name);

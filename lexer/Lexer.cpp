@@ -254,12 +254,8 @@ void Lexer::string() {
     std::string value;
 
     while (!isAtEnd() && peek() != '"') {
-        if (peek() == '\n') {
-            // 字符串内换行也算行号
-            line_++;
-            lineStart_ = current_ + 1;
-        }
-
+        // 换行处理由 advance() 统一完成（line_++ 和 lineStart_ 更新），
+        // 此处不再手动递增，否则会导致行号双重递增。
         if (peek() == '\\') {
             advance(); // 消耗反斜杠
             if (isAtEnd()) {

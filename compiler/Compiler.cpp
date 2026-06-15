@@ -1,5 +1,6 @@
 #include "compiler/Compiler.h"
 #include <sstream>
+#include <algorithm>
 
 // ============================================================
 // Compiler 字节码编译器实现
@@ -16,6 +17,8 @@ CompileResult Compiler::compile(Block& program) {
     functionChunks_.clear();
     currentLocals_.clear();
     inFunction_ = false;
+    classFieldNames_.clear();
+    outerLocals_.clear();
 
     // 编译所有顶层语句
     compileBlock(program);
@@ -224,6 +227,15 @@ void Compiler::compileAssignment(Assignment& node) {
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
             chunk_.writeOp(OpCode::OP_POP, node.line);
         } else {
+            // 检测闭包捕获外层局部变量（VM 不支持 upvalue 机制）
+            if (!outerLocals_.empty()) {
+                auto outerIt = outerLocals_.find(node.name);
+                if (outerIt != outerLocals_.end()) {
+                    error("VM 不支持闭包捕获外层局部变量 '" + node.name +
+                          "'，请使用全局变量替代", node.line, node.column);
+                    return;
+                }
+            }
             uint16_t nameIdx = identifierIndex(node.name);
             chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
@@ -242,6 +254,15 @@ void Compiler::compileVarRef(VarRef& node) {
             chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
             return;
+        }
+        // 检测闭包捕获外层局部变量（VM 不支持 upvalue 机制）
+        if (!outerLocals_.empty()) {
+            auto outerIt = outerLocals_.find(node.name);
+            if (outerIt != outerLocals_.end()) {
+                error("VM 不支持闭包捕获外层局部变量 '" + node.name +
+                      "'，请使用全局变量替代", node.line, node.column);
+                return;
+            }
         }
     }
     uint16_t nameIdx = identifierIndex(node.name);
@@ -377,6 +398,14 @@ void Compiler::compileFunDecl(FunDecl& node) {
     std::unordered_map<std::string, uint16_t> savedVarIndex = varIndex_;
     std::unordered_map<std::string, int> savedLocals = currentLocals_;
     bool savedInFunction = inFunction_;
+    std::unordered_map<std::string, int> savedOuterLocals = outerLocals_;
+
+    // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
+    if (inFunction_) {
+        outerLocals_ = currentLocals_;
+    } else {
+        outerLocals_.clear();
+    }
 
     // 设置函数编译上下文
     chunk_ = BytecodeChunk(node.name, static_cast<int>(node.params.size()));
@@ -406,6 +435,7 @@ void Compiler::compileFunDecl(FunDecl& node) {
     varIndex_ = savedVarIndex;
     currentLocals_ = savedLocals;
     inFunction_ = savedInFunction;
+    outerLocals_ = savedOuterLocals;
 
     // 在主 chunk 中 emit OP_CLOSURE
     uint16_t nameIdx = identifierIndex(node.name);
@@ -529,15 +559,32 @@ void Compiler::compileClassDecl(ClassDecl& node) {
     // 类声明：发射 OP_CLASS_NEW + OP_INIT_FIELD 初始化字段 + 编译方法
     uint16_t nameIdx = identifierIndex(node.name);
 
-    // 先编译所有方法为独立 chunk（方法不依赖字段初始化顺序）
-    // 同时收集字段名列表，用于方法的局部变量映射
-    std::vector<std::string> fieldNames;
+    // 收集当前类的自有字段名
+    std::vector<std::string> ownFieldNames;
     for (auto& member : node.members) {
         if (member->nodeType == NodeType::NODE_VAR_DECL) {
-            fieldNames.push_back(static_cast<VarDecl*>(member.get())->name);
+            ownFieldNames.push_back(static_cast<VarDecl*>(member.get())->name);
         }
     }
 
+    // 构建含继承字段的完整字段列表（父类字段在前，子类字段在后）
+    std::vector<std::string> allFieldNames;
+    if (!node.superClassName.empty()) {
+        auto it = classFieldNames_.find(node.superClassName);
+        if (it != classFieldNames_.end()) {
+            allFieldNames = it->second;  // 父类字段在前
+        }
+    }
+    for (const auto& fn : ownFieldNames) {
+        if (std::find(allFieldNames.begin(), allFieldNames.end(), fn) == allFieldNames.end()) {
+            allFieldNames.push_back(fn);  // 子类字段在后（跳过覆盖的同名字段）
+        }
+    }
+
+    // 注册类字段名（供子类编译时查找）
+    classFieldNames_[node.name] = allFieldNames;
+
+    // 先编译所有方法为独立 chunk
     for (auto& member : node.members) {
         if (member->nodeType != NodeType::NODE_FUN_DECL) continue;
         FunDecl* funDecl = static_cast<FunDecl*>(member.get());
@@ -552,18 +599,18 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         currentLocals_.clear();
         inFunction_ = true;
 
-        // 局部变量映射：slot 0 = this，slot 1..N = 字段，slot N+1.. = 参数
+        // 局部变量映射：slot 0 = this，slot 1..N = 字段（含继承字段），slot N+1.. = 参数
         int slot = 0;
         currentLocals_["this"] = slot++;  // slot 0: this
-        for (const auto& fieldName : fieldNames) {
-            currentLocals_[fieldName] = slot++;  // slot 1..N: 实例字段
+        for (const auto& fieldName : allFieldNames) {
+            currentLocals_[fieldName] = slot++;  // slot 1..N: 实例字段（含继承）
         }
         for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
             currentLocals_[funDecl->params[i]] = slot++;  // slot N+1..: 参数
         }
 
-        // 记录字段声明顺序，供 VM OP_METHOD_CALL 按序推入
-        chunk_.fieldOrder = fieldNames;
+        // 记录字段声明顺序（含继承字段），供 VM OP_METHOD_CALL 按序推入
+        chunk_.fieldOrder = allFieldNames;
 
         if (funDecl->body) {
             compileNode(funDecl->body.get());
@@ -602,8 +649,16 @@ void Compiler::compileClassDecl(ClassDecl& node) {
     }
 
     // 将类注册为全局变量（OP_DEFINE_CLASS 从栈上 pop 模板实例并注册类信息）
+    // 操作数: nameIdx(2B) + superNameIdx(2B)
+    //   superNameIdx == 0xFFFF 表示无父类；否则为父类名在常量池中的索引
     chunk_.writeOp(OpCode::OP_DEFINE_CLASS, node.line);
     chunk_.writeShort(nameIdx, node.line);
+    if (node.superClassName.empty()) {
+        chunk_.writeShort(0xFFFF, node.line);  // 无父类标记
+    } else {
+        uint16_t superIdx = identifierIndex(node.superClassName);
+        chunk_.writeShort(superIdx, node.line);
+    }
 
     // 栈上的模板实例已被 OP_DEFINE_CLASS 消费，无需额外 OP_POP
 }

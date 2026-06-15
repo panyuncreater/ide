@@ -115,6 +115,24 @@ const BytecodeChunk& VM::currentChunk() {
     return *currentFrame().chunk;  // chunk 由 initExecution 设置，始终有效
 }
 
+const BytecodeChunk* VM::findMethodChunk(const std::string& className,
+                                         const std::string& methodName) const {
+    std::string cur = className;
+    // 沿继承链向上查找，防止循环继承（超过 256 层视为异常）
+    for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
+        std::string methodKey = cur + "." + methodName;
+        auto it = functionChunks_.find(methodKey);
+        if (it != functionChunks_.end()) {
+            return &it->second;
+        }
+        // 查父类
+        auto clsIt = classInfo_.find(cur);
+        if (clsIt == classInfo_.end()) break;
+        cur = clsIt->second.superClassName;
+    }
+    return nullptr;
+}
+
 // 数值运算类型枚举（避免字符串比较）
 enum { OP_ADD_INT = 0, OP_SUB_INT, OP_MUL_INT, OP_DIV_INT, OP_MOD_INT };
 
@@ -549,23 +567,12 @@ VMResult VM::executeOneInstruction() {
         size_t savedIp = ip;
         frames_.pop_back();
 
-        // init 方法返回 this 实例而非 null
-        if (retFrame.functionName.size() >= 5 &&
-            retFrame.functionName.compare(retFrame.functionName.size() - 5, 5, ".init") == 0) {
-            if (retFrame.basePointer < stack_.size()) {
-                result = stack_[retFrame.basePointer];
-            }
-        }
-
-        // 方法调用 writeBack：将方法内修改后的 this 字段写回全局变量
-        if (retFrame.isMethodCall && !retFrame.receiverVarName.empty() &&
-            retFrame.basePointer < stack_.size()) {
+        // 方法调用字段同步：将方法内修改的字段槽（bp+1..N）同步回 this（bp）
+        // 对所有 isMethodCall 都执行，不受 receiverVarName 限制
+        if (retFrame.isMethodCall && retFrame.basePointer < stack_.size()) {
             Value& modifiedThis = stack_[retFrame.basePointer];
 
-            // 先把方法内的字段槽（bp+1..N）同步回 this。
-            // 栈布局：[this, field0, field1, ..., args]，
-            // 方法内直接写 `field = x`（OP_SET_LOCAL）只改字段槽，this.fields 未变，
-            // 必须先同步字段槽→this，否则 writeBack 读 this.fields 会丢失改动。
+            // 先把方法内的字段槽（bp+1..N）同步回 this
             if (modifiedThis.isInstance() && retFrame.chunk && !retFrame.chunk->fieldOrder.empty()) {
                 for (size_t fi = 0; fi < retFrame.chunk->fieldOrder.size(); ++fi) {
                     size_t pos = retFrame.basePointer + 1 + fi;
@@ -575,14 +582,49 @@ VMResult VM::executeOneInstruction() {
                 }
             }
 
-            if (modifiedThis.isInstance()) {
+            // 写回到全局变量（接收者为全局变量时，如 c.method()）
+            if (!retFrame.receiverVarName.empty() && modifiedThis.isInstance()) {
                 auto it = globals_.find(retFrame.receiverVarName);
                 if (it != globals_.end() && it->second.isInstance()) {
-                    // 写回修改后的字段到 globals_ 中的原始实例
                     for (auto& field : modifiedThis.fields) {
                         it->second.fields[field.first] = field.second;
                     }
                 }
+            }
+
+            // 写回到调用者栈帧（接收者为局部变量时，如 this.method()）
+            // 将修改后的字段同步到调用者的 this 和字段槽
+            if (retFrame.receiverVarName.empty() && !frames_.empty()) {
+                VMCallFrame& callerFrame = currentFrame();
+                size_t callerBp = callerFrame.basePointer;
+                if (callerBp < stack_.size() && stack_[callerBp].isInstance()) {
+                    // 同步字段到调用者的 this
+                    for (auto& field : modifiedThis.fields) {
+                        stack_[callerBp].fields[field.first] = field.second;
+                    }
+                    // 同步字段到调用者的字段槽（bp+1..N）
+                    if (callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty()) {
+                        for (size_t fi = 0; fi < callerFrame.chunk->fieldOrder.size(); ++fi) {
+                            const std::string& fieldName = callerFrame.chunk->fieldOrder[fi];
+                            auto fieldIt = modifiedThis.fields.find(fieldName);
+                            if (fieldIt != modifiedThis.fields.end()) {
+                                size_t slotPos = callerBp + 1 + fi;
+                                if (slotPos < stack_.size()) {
+                                    stack_[slotPos] = fieldIt->second;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // init 方法返回 this 实例而非 null（在字段同步之后读取）
+        if (retFrame.isMethodCall &&
+            retFrame.functionName.size() >= 5 &&
+            retFrame.functionName.compare(retFrame.functionName.size() - 5, 5, ".init") == 0) {
+            if (retFrame.basePointer < stack_.size()) {
+                result = stack_[retFrame.basePointer];
             }
         }
 
@@ -622,14 +664,13 @@ VMResult VM::executeOneInstruction() {
 
                 // 创建新实例
                 Value instance = Value::makeInstance(cls.name);
-                instance.fields = cls.fieldDefaults;
+                instance.fields = cls.fieldDefaults;  // 已含继承字段（OP_DEFINE_CLASS 合并）
 
-                // 检查是否有 init 方法
-                std::string initKey = funName + ".init";
-                auto initIt = functionChunks_.find(initKey);
+                // 检查是否有 init 方法（沿继承链查找）
+                const BytecodeChunk* initChunkPtr = findMethodChunk(funName, "init");
 
-                if (initIt != functionChunks_.end()) {
-                    const BytecodeChunk& initChunk = initIt->second;
+                if (initChunkPtr != nullptr) {
+                    const BytecodeChunk& initChunk = *initChunkPtr;
                     if (initChunk.arity != static_cast<int>(argCount)) {
                         return runtimeError("构造函数 init 期望 " +
                             std::to_string(initChunk.arity) + " 个参数，但传入了 " +
@@ -642,7 +683,7 @@ VMResult VM::executeOneInstruction() {
 
                     // 推入 this
                     push(instance);
-                    // 按字段声明顺序推入字段值
+                    // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
                     int fieldCount = 0;
                     if (initChunk.fieldOrder.empty()) {
                         for (const auto& field : instance.fields) {
@@ -666,10 +707,11 @@ VMResult VM::executeOneInstruction() {
                     }
 
                     VMCallFrame newFrame;
-                    newFrame.chunk = &initChunk;
+                    newFrame.chunk = initChunkPtr;
                     newFrame.returnIp = ip + 4;
                     newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
-                    newFrame.functionName = initKey;
+                    // init 帧的 functionName 用实际定义 init 的类名，便于 OP_RETURN 识别
+                    newFrame.functionName = initChunkPtr->name;
                     newFrame.ip = 0;
                     newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
                     frames_.push_back(newFrame);
@@ -918,10 +960,10 @@ VMResult VM::executeOneInstruction() {
         Value obj = peek(argCount);  // peek 返回 Value 拷贝
 
         if (obj.isInstance()) {
-            std::string methodKey = obj.className + "." + methodName;
-            auto it = functionChunks_.find(methodKey);
-            if (it != functionChunks_.end()) {
-                const BytecodeChunk& targetChunk = it->second;
+            // 沿继承链查找方法（父类方法也可调用）
+            const BytecodeChunk* targetChunkPtr = findMethodChunk(obj.className, methodName);
+            if (targetChunkPtr != nullptr) {
+                const BytecodeChunk& targetChunk = *targetChunkPtr;
 
                 if (frames_.size() >= MAX_FRAMES) {
                     return runtimeError("调用栈溢出");
@@ -942,7 +984,7 @@ VMResult VM::executeOneInstruction() {
 
                 // 推入 this（拷贝，方法内修改会被 writeBack 写回）
                 push(obj);
-                // 按编译器声明的字段顺序推入实例字段值
+                // 按方法 chunk 声明的字段顺序推入实例字段值
                 int fieldCount = 0;
                 if (targetChunk.fieldOrder.empty()) {
                     // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
@@ -967,10 +1009,12 @@ VMResult VM::executeOneInstruction() {
                 }
 
                 VMCallFrame newFrame;
-                newFrame.chunk = &targetChunk;
+                newFrame.chunk = targetChunkPtr;
                 newFrame.returnIp = ip + 6;  // OP_METHOD_CALL 现在是 6 字节
                 newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
-                newFrame.functionName = methodKey;
+                // functionName 用方法 chunk 自身的名称（形如 "ClassName.methodName"）
+                // 这样即使方法定义在父类，也能正确定位
+                newFrame.functionName = targetChunk.name;
                 newFrame.ip = 0;
                 newFrame.isMethodCall = true;
                 newFrame.callerInstancePos = callerPos;
@@ -1110,20 +1154,68 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_DEFINE_CLASS: {
+        // 操作数: nameIdx(2B) + superNameIdx(2B)
+        // superNameIdx == 0xFFFF 表示无父类
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        uint16_t superIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         const std::string& className = chunk.constants[idx].stringVal;
+        std::string superClassName;
+        if (superIdx != 0xFFFF && superIdx < chunk.constants.size()) {
+            superClassName = chunk.constants[superIdx].stringVal;
+        }
         Value templateInstance = pop();
 
-        // 从模板实例提取类信息，注册到 classInfo_
-        VMClassInfo info;
-        info.name = className;
+        // 从模板实例提取当前类字段
+        std::vector<std::string> ownFieldOrder;
+        std::unordered_map<std::string, Value> ownFieldDefaults;
         if (templateInstance.isInstance()) {
             for (const auto& field : templateInstance.fields) {
-                info.fieldOrder.push_back(field.first);
-                info.fieldDefaults[field.first] = field.second;
+                ownFieldOrder.push_back(field.first);
+                ownFieldDefaults[field.first] = field.second;
             }
         }
+
+        // 注册类信息（先注册以支持循环引用安全查找）
+        VMClassInfo info;
+        info.name = className;
+        info.superClassName = superClassName;
         classInfo_[className] = info;
+
+        // 沿继承链合并父类字段（父类字段在前，子类覆盖同名字段）
+        // 先按"父→子"顺序收集字段名，子类已存在的字段不重复添加
+        std::vector<std::string> mergedOrder;
+        std::unordered_map<std::string, Value> mergedDefaults;
+
+        std::vector<std::string> chain;
+        std::string cur = superClassName;
+        for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
+            chain.push_back(cur);
+            auto clsIt = classInfo_.find(cur);
+            if (clsIt == classInfo_.end()) break;
+            cur = clsIt->second.superClassName;
+        }
+        // 倒序遍历链（最远的祖先在前），保证子类字段覆盖父类字段
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            auto clsIt = classInfo_.find(*it);
+            if (clsIt == classInfo_.end()) continue;
+            for (const auto& fieldName : clsIt->second.fieldOrder) {
+                if (mergedDefaults.find(fieldName) == mergedDefaults.end()) {
+                    mergedOrder.push_back(fieldName);
+                    mergedDefaults[fieldName] = clsIt->second.fieldDefaults[fieldName];
+                }
+            }
+        }
+        // 当前类字段最后处理（覆盖父类同名字段）
+        for (const auto& fieldName : ownFieldOrder) {
+            if (mergedDefaults.find(fieldName) == mergedDefaults.end()) {
+                mergedOrder.push_back(fieldName);
+            }
+            mergedDefaults[fieldName] = ownFieldDefaults[fieldName];
+        }
+
+        VMClassInfo& registered = classInfo_[className];
+        registered.fieldOrder = std::move(mergedOrder);
+        registered.fieldDefaults = std::move(mergedDefaults);
 
         // 在全局变量中存储类标记（与解释器语义一致：类名是类型标识，不是实例）
         Value classVal(std::string("class:") + className);
@@ -1131,7 +1223,7 @@ VMResult VM::executeOneInstruction() {
         globals_[className] = classVal;
 
         notifyStep(ip, op);
-        ip += 3;
+        ip += 5;  // nameIdx(2B) + superNameIdx(2B) + opcode(1B)
         break;
     }
 
