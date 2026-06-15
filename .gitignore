@@ -6,3 +6,6 @@
 test_vm
 test_vm_advanced
 ```
+/.vs
+/ide/x64/Debug
+/x64/Debug
