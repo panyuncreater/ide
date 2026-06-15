@@ -9,3 +9,4 @@ test_vm_advanced
 /.vs
 /ide/x64/Debug
 /x64/Debug
+/nul
