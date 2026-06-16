@@ -119,7 +119,7 @@ void Compiler::compileStatement(ASTNode* node) {
 void Compiler::compileBinaryOp(BinaryOp& node) {
     // 常量折叠：编译期求值常量表达式
     Value folded;
-    if (tryFoldBinary(node.op, node.left.get(), node.right.get(), folded, node.line)) {
+    if (tryFoldBinary(node.opType, node.left.get(), node.right.get(), folded, node.line)) {
         emitConstant(folded, node.line);
         return;
     }
@@ -188,7 +188,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
     case BinOpType::BIN_LTE:  op = OpCode::OP_LESS_EQUAL; break;
     case BinOpType::BIN_GTE:  op = OpCode::OP_GREATER_EQUAL; break;
     default:
-        error("不支持的运算符: " + node.op, node.line, node.column);
+        error("不支持的运算符: " + std::string(BinaryOp::opTypeStr(node.opType)), node.line, node.column);
         return;
     }
 
@@ -198,7 +198,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
 void Compiler::compileUnaryOp(UnaryOp& node) {
     // 常量折叠：编译期求值常量表达式
     Value folded;
-    if (tryFoldUnary(node.op, node.operand.get(), folded, node.line)) {
+    if (tryFoldUnary(node.opType, node.operand.get(), folded, node.line)) {
         emitConstant(folded, node.line);
         return;
     }
@@ -876,7 +876,7 @@ void Compiler::emitConstant(const Value& val, int line) {
     }
 }
 
-bool Compiler::tryFoldBinary(const std::string& op, ASTNode* left, ASTNode* right,
+bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
                               Value& result, int line) {
     // 提取左/右常量值（仅支持字面量节点）
     Value lv, rv;
@@ -915,77 +915,74 @@ bool Compiler::tryFoldBinary(const std::string& op, ASTNode* left, ASTNode* righ
         int64_t li = lv.isInt() ? lv.intVal() : 0;
         int64_t ri = rv.isInt() ? rv.intVal() : 0;
 
-        if (op == "+") {
+        switch (opType) {
+        case BinOpType::BIN_ADD:
             result = useFloat ? Value(ld + rd) : Value(li + ri);
             return true;
-        }
-        if (op == "-") {
+        case BinOpType::BIN_SUB:
             result = useFloat ? Value(ld - rd) : Value(li - ri);
             return true;
-        }
-        if (op == "*") {
+        case BinOpType::BIN_MUL:
             result = useFloat ? Value(ld * rd) : Value(li * ri);
             return true;
-        }
-        if (op == "/") {
+        case BinOpType::BIN_DIV: {
             double divisor = useFloat ? rd : static_cast<double>(ri);
             if (divisor == 0) return false;  // 除零不折叠，保留运行时错误
             result = useFloat ? Value(ld / rd) : Value(li / ri);
             return true;
         }
-        if (op == "%") {
-            if (!useFloat && ri == 0) return false;  // 模零不折叠
-            if (useFloat) return false;  // float 模运算不常见，不折叠
+        case BinOpType::BIN_MOD:
+            if (!useFloat && ri == 0) return false;
+            if (useFloat) return false;
             result = Value(li % ri);
             return true;
+        case BinOpType::BIN_EQ:  result = Value(useFloat ? (ld == rd) : (li == ri)); return true;
+        case BinOpType::BIN_NEQ: result = Value(useFloat ? (ld != rd) : (li != ri)); return true;
+        case BinOpType::BIN_LT:  result = Value(useFloat ? (ld < rd)  : (li < ri));  return true;
+        case BinOpType::BIN_GT:  result = Value(useFloat ? (ld > rd)  : (li > ri));  return true;
+        case BinOpType::BIN_LTE: result = Value(useFloat ? (ld <= rd) : (li <= ri)); return true;
+        case BinOpType::BIN_GTE: result = Value(useFloat ? (ld >= rd) : (li >= ri)); return true;
+        default: break;
         }
-
-        // 比较运算
-        if (op == "==") { result = Value(useFloat ? (ld == rd) : (li == ri)); return true; }
-        if (op == "!=") { result = Value(useFloat ? (ld != rd) : (li != ri)); return true; }
-        if (op == "<")  { result = Value(useFloat ? (ld < rd)  : (li < ri));  return true; }
-        if (op == ">")  { result = Value(useFloat ? (ld > rd)  : (li > ri));  return true; }
-        if (op == "<=") { result = Value(useFloat ? (ld <= rd) : (li <= ri)); return true; }
-        if (op == ">=") { result = Value(useFloat ? (ld >= rd) : (li >= ri)); return true; }
     }
 
     // 字符串拼接
-    if (lv.isString() && rv.isString() && op == "+") {
+    if (lv.isString() && rv.isString() && opType == BinOpType::BIN_ADD) {
         result = Value(lv.stringVal() + rv.stringVal());
         return true;
     }
 
     // 字符串比较
     if (lv.isString() && rv.isString()) {
-        if (op == "==") { result = Value(lv.stringVal() == rv.stringVal()); return true; }
-        if (op == "!=") { result = Value(lv.stringVal() != rv.stringVal()); return true; }
+        if (opType == BinOpType::BIN_EQ)  { result = Value(lv.stringVal() == rv.stringVal()); return true; }
+        if (opType == BinOpType::BIN_NEQ) { result = Value(lv.stringVal() != rv.stringVal()); return true; }
     }
 
     // 布尔逻辑
     if (lv.isBool() && rv.isBool()) {
-        if (op == "and") { result = Value(lv.boolVal() && rv.boolVal()); return true; }
-        if (op == "or")  { result = Value(lv.boolVal() || rv.boolVal()); return true; }
-        if (op == "==") { result = Value(lv.boolVal() == rv.boolVal()); return true; }
-        if (op == "!=") { result = Value(lv.boolVal() != rv.boolVal()); return true; }
+        if (opType == BinOpType::BIN_AND) { result = Value(lv.boolVal() && rv.boolVal()); return true; }
+        if (opType == BinOpType::BIN_OR)  { result = Value(lv.boolVal() || rv.boolVal()); return true; }
+        if (opType == BinOpType::BIN_EQ)  { result = Value(lv.boolVal() == rv.boolVal()); return true; }
+        if (opType == BinOpType::BIN_NEQ) { result = Value(lv.boolVal() != rv.boolVal()); return true; }
     }
 
     return false;
 }
 
-bool Compiler::tryFoldUnary(const std::string& op, ASTNode* operand,
+bool Compiler::tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
                              Value& result, int /*line*/) {
     if (!operand) return false;
 
     if (operand->nodeType == NodeType::NODE_NUMBER_LITERAL) {
         Value val = static_cast<NumberLiteral*>(operand)->value;
-        if (op == "-") {
+        if (opType == UnaryOp::UnaryOpType::UOP_NEGATE) {
             result = val.isFloat() ? Value(-val.floatVal()) : Value(-val.intVal());
             return true;
         }
     }
     if (operand->nodeType == NodeType::NODE_BOOL_LITERAL) {
         bool val = static_cast<BoolLiteral*>(operand)->value;
-        if (op == "not") {
+        if (opType == UnaryOp::UnaryOpType::UOP_NOT) {
             result = Value(!val);
             return true;
         }

@@ -78,11 +78,11 @@ private:
     void error(const std::string& msg, int line, int col);
 
     /// 常量折叠：尝试在编译期求值二元运算，成功返回 true 并输出结果
-    bool tryFoldBinary(const std::string& op, ASTNode* left, ASTNode* right,
+    bool tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
                        Value& result, int line);
 
     /// 常量折叠：尝试在编译期求值一元运算，成功返回 true 并输出结果
-    bool tryFoldUnary(const std::string& op, ASTNode* operand,
+    bool tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
                       Value& result, int line);
 
     /// 发射常量值指令（根据 Value 类型选择 OP_INT/OP_FLOAT/OP_STRING/OP_TRUE/OP_FALSE/OP_NULL）

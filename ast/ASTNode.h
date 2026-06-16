@@ -78,38 +78,39 @@ enum class BinOpType {
 /// 二元运算节点
 class BinaryOp : public ASTNode {
 public:
-    std::string op;                         // 运算符
-    BinOpType opType;                       // 运算符枚举（构造时一次性计算）
+    BinOpType opType;                       // 运算符枚举
     std::unique_ptr<ASTNode> left;          // 左操作数
     std::unique_ptr<ASTNode> right;         // 右操作数
 
-    BinaryOp(const std::string& oper, std::unique_ptr<ASTNode> l,
+    BinaryOp(BinOpType opType, std::unique_ptr<ASTNode> l,
              std::unique_ptr<ASTNode> r, int ln = 0, int col = 0)
-        : ASTNode(ln, col), op(oper), opType(classifyOp(oper)),
+        : ASTNode(ln, col), opType(opType),
           left(std::move(l)), right(std::move(r)) { nodeType = NodeType::NODE_BINARY_OP; }
 
     Value accept(Visitor& visitor) override;
-    std::string nodeName() const override { return "BinaryOp(" + op + ")"; }
+    std::string nodeName() const override { return std::string("BinaryOp(") + opTypeStr(opType) + ")"; }
     std::vector<ASTNode*> children() const override {
         return { left.get(), right.get() };
     }
 
-private:
-    static BinOpType classifyOp(const std::string& op) {
-        if (op == "and") return BinOpType::BIN_AND;
-        if (op == "or")  return BinOpType::BIN_OR;
-        if (op == "==")  return BinOpType::BIN_EQ;
-        if (op == "!=")  return BinOpType::BIN_NEQ;
-        if (op == "<")   return BinOpType::BIN_LT;
-        if (op == ">")   return BinOpType::BIN_GT;
-        if (op == "<=")  return BinOpType::BIN_LTE;
-        if (op == ">=")  return BinOpType::BIN_GTE;
-        if (op == "+")   return BinOpType::BIN_ADD;
-        if (op == "-")   return BinOpType::BIN_SUB;
-        if (op == "*")   return BinOpType::BIN_MUL;
-        if (op == "/")   return BinOpType::BIN_DIV;
-        if (op == "%")   return BinOpType::BIN_MOD;
-        return BinOpType::BIN_UNKNOWN;
+    /// 枚举 → 字符串（用于显示/格式化/错误信息）
+    static const char* opTypeStr(BinOpType t) {
+        switch (t) {
+        case BinOpType::BIN_AND: return "and";
+        case BinOpType::BIN_OR:  return "or";
+        case BinOpType::BIN_EQ:  return "==";
+        case BinOpType::BIN_NEQ: return "!=";
+        case BinOpType::BIN_LT:  return "<";
+        case BinOpType::BIN_GT:  return ">";
+        case BinOpType::BIN_LTE: return "<=";
+        case BinOpType::BIN_GTE: return ">=";
+        case BinOpType::BIN_ADD: return "+";
+        case BinOpType::BIN_SUB: return "-";
+        case BinOpType::BIN_MUL: return "*";
+        case BinOpType::BIN_DIV: return "/";
+        case BinOpType::BIN_MOD: return "%";
+        default: return "?";
+        }
     }
 };
 
@@ -118,24 +119,26 @@ class UnaryOp : public ASTNode {
 public:
     enum class UnaryOpType { UOP_NEGATE, UOP_NOT, UOP_UNKNOWN };
 
-    std::string op;                         // 运算符
-    UnaryOpType opType;                     // 运算符类型（编译时确定，消除运行时字符串比较）
+    UnaryOpType opType;                     // 运算符类型枚举
     std::unique_ptr<ASTNode> operand;        // 操作数
 
-    static UnaryOpType classifyOp(const std::string& op) {
-        if (op == "-")   return UnaryOpType::UOP_NEGATE;
-        if (op == "not") return UnaryOpType::UOP_NOT;
-        return UnaryOpType::UOP_UNKNOWN;
-    }
-
-    UnaryOp(const std::string& oper, std::unique_ptr<ASTNode> o,
+    UnaryOp(UnaryOpType opType, std::unique_ptr<ASTNode> o,
             int ln = 0, int col = 0)
-        : ASTNode(ln, col), op(oper), opType(classifyOp(oper)), operand(std::move(o)) { nodeType = NodeType::NODE_UNARY_OP; }
+        : ASTNode(ln, col), opType(opType), operand(std::move(o)) { nodeType = NodeType::NODE_UNARY_OP; }
 
     Value accept(Visitor& visitor) override;
-    std::string nodeName() const override { return "UnaryOp(" + op + ")"; }
+    std::string nodeName() const override { return std::string("UnaryOp(") + opTypeStr(opType) + ")"; }
     std::vector<ASTNode*> children() const override {
         return { operand.get() };
+    }
+
+    /// 枚举 → 字符串
+    static const char* opTypeStr(UnaryOpType t) {
+        switch (t) {
+        case UnaryOpType::UOP_NEGATE: return "-";
+        case UnaryOpType::UOP_NOT:    return "not";
+        default: return "?";
+        }
     }
 };
 
@@ -160,13 +163,26 @@ public:
     std::string value;
 
     StringLiteral(const std::string& v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(v) { nodeType = NodeType::NODE_STRING_LITERAL; }
+        : ASTNode(ln, col), value(v), cachedValue_(Value(v)) { nodeType = NodeType::NODE_STRING_LITERAL; }
+
+    /// 获取缓存的 Value（首次移动返回，零堆分配；后续从 string 重建）
+    Value takeValue() {
+        if (!cachedValue_.isNull()) {
+            Value result = std::move(cachedValue_);
+            cachedValue_ = Value();
+            return result;
+        }
+        return Value(value);
+    }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override {
         return "String(\"" + value + "\")";
     }
     std::vector<ASTNode*> children() const override { return {}; }
+
+private:
+    Value cachedValue_;  // 预构建的 Value，首次 takeValue() 移动返回
 };
 
 /// 布尔字面量节点

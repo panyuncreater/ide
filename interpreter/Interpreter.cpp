@@ -250,7 +250,8 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     std::vector<Value> idxs(n); // IndexAccess 节点的索引值
 
     auto* varRef = static_cast<VarRef*>(chain[n - 1]);
-    vals[n - 1] = currentEnv_->get(varRef->name);
+    const Value* baseVal = currentEnv_->get(varRef->name);
+    vals[n - 1] = baseVal ? *baseVal : Value::nullValue();
 
     for (int i = n - 2; i >= 0; i--) {
         ASTNode* nd = chain[i];
@@ -374,7 +375,8 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
     std::vector<Value> idxs(n);
 
     auto* varRef = static_cast<VarRef*>(chain[n - 1]);
-    vals[n - 1] = currentEnv_->get(varRef->name);
+    const Value* baseVal = currentEnv_->get(varRef->name);
+    vals[n - 1] = baseVal ? *baseVal : Value::nullValue();
 
     for (int i = n - 2; i >= 0; i--) {
         ASTNode* nd = chain[i];
@@ -504,7 +506,7 @@ Value Interpreter::visitBinaryOp(BinaryOp& node) {
         return numericBinaryOp(node.opType, left, right, node.line, node.column);
     }
     default:
-        runtimeError("未知运算符: " + node.op, node.line, node.column);
+        runtimeError("未知运算符: " + std::string(BinaryOp::opTypeStr(node.opType)), node.line, node.column);
         return Value::nullValue();
     }
 }
@@ -529,7 +531,7 @@ Value Interpreter::visitUnaryOp(UnaryOp& node) {
     case UnaryOp::UnaryOpType::UOP_NOT:
         return Value(!operand.isTruthy());
     default:
-        runtimeError("未知一元运算符: " + node.op, node.line, node.column);
+        runtimeError("未知一元运算符: " + std::string(UnaryOp::opTypeStr(node.opType)), node.line, node.column);
         break;
     }
     return Value::nullValue();
@@ -542,7 +544,7 @@ Value Interpreter::visitNumberLiteral(NumberLiteral& node) {
 
 Value Interpreter::visitStringLiteral(StringLiteral& node) {
     checkBreak(&node);
-    return Value(node.value);
+    return node.takeValue();
 }
 
 Value Interpreter::visitBoolLiteral(BoolLiteral& node) {
@@ -594,7 +596,7 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 try {
                     evaluate(initMethod->body.get());
                 } catch (const ReturnException&) {}
-                instance = initEnv->get("this");
+                instance = *initEnv->get("this");
                 // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
                 const auto& initLocals = initEnv->localVariables();
                 for (auto& fieldKV : instance.fields()) {
@@ -644,14 +646,12 @@ Value Interpreter::visitAssignment(Assignment& node) {
 Value Interpreter::visitVarRef(VarRef& node) {
     checkBreak(&node);
 
-    // 优化：单次 get() 调用代替 hasVariable() + get() 双重作用域链遍历
-    // get() 对未定义变量返回 null，而已定义变量的值不会是 null
-    // （null 字面量绑定到变量时 get() 返回 null，isNull() 为 true，但此时变量是已定义的）
-    Value val = currentEnv_->get(node.name);
-    if (val.isNull() && !currentEnv_->hasVariable(node.name)) {
+    // C7: get() 返回指针，nullptr 表示变量未定义，消除 hasVariable() 双重遍历
+    const Value* val = currentEnv_->get(node.name);
+    if (!val) {
         runtimeError("未定义的变量: " + node.name, node.line, node.column);
     }
-    return val;
+    return *val;
 }
 
 Value Interpreter::visitIfStmt(IfStmt& node) {
@@ -872,7 +872,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
             }
 
             // 从 init 环境中读取 this 的更新值
-            instance = initEnv->get("this");
+            instance = *initEnv->get("this");
 
             // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
             const auto& initLocals2 = initEnv->localVariables();
@@ -903,23 +903,23 @@ Value Interpreter::visitFunCall(FunCall& node) {
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
     if (node.isResolved && node.resolvedDecl) {
         funDecl = static_cast<FunDecl*>(node.resolvedDecl);
-        // 单次 get() 获取闭包环境（避免 hasVariable + get 双重遍历）
-        Value callee = currentEnv_->get(node.name);
-        if (callee.isClosure()) {
-            closureEnv = callee.closureEnv();
-            effectiveName = callee.closureName();
+        // 单次 get() 获取闭包环境（指针返回，nullptr=非闭包或未定义）
+        const Value* calleePtr = currentEnv_->get(node.name);
+        if (calleePtr && calleePtr->isClosure()) {
+            closureEnv = calleePtr->closureEnv();
+            effectiveName = calleePtr->closureName();
         }
     } else {
         // 慢路径：完整解析（单次 get() 调用）
-        Value callee = currentEnv_->get(node.name);
-        if (callee.isClosure()) {
-            closureEnv = callee.closureEnv();
-            effectiveName = callee.closureName();
+        const Value* calleePtr = currentEnv_->get(node.name);
+        if (calleePtr && calleePtr->isClosure()) {
+            closureEnv = calleePtr->closureEnv();
+            effectiveName = calleePtr->closureName();
             // 优先从闭包值中获取函数体（自包含，不依赖 funRegistry_）
-            funDecl = callee.closureBody();
+            funDecl = calleePtr->closureBody();
             if (!funDecl) {
                 // 后备路径：从 funRegistry_ 查找（处理 AST 生命周期问题）
-                auto it = funRegistry_.find(callee.closureName());
+                auto it = funRegistry_.find(calleePtr->closureName());
                 if (it != funRegistry_.end()) {
                     funDecl = it->second;
                 }
@@ -1457,7 +1457,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 }
 
                 // 从方法环境中读取 this 的更新值
-                Value updatedThis = methodEnv->get("this");
+                Value updatedThis = *methodEnv->get("this");
 
                 // 关键：将方法环境中的字段变量同步回 this 对象（直接查找局部变量，O(1)）
                 const auto& methodLocals = methodEnv->localVariables();

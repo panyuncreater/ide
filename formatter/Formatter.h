@@ -2,6 +2,7 @@
 
 #include <string>
 #include <memory>
+#include "ast/ASTNode.h"
 
 class ASTNode;
 class Block;
@@ -94,8 +95,8 @@ public:
     const FormatOptions& getOptions() const;
 
     // 运算符优先级辅助（public 供自由函数 needsParens 使用）
-    static int opPrecedence(const std::string& op);
-    static bool isRightAssoc(const std::string& op);
+    static int opPrecedence(BinOpType opType);
+    static bool isRightAssoc(BinOpType opType);
 
 private:
     FormatOptions options_;

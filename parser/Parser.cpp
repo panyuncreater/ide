@@ -671,7 +671,7 @@ std::unique_ptr<ASTNode> Parser::or_() {
     while (match(TokenType::TK_OR)) {
         const Token& op = previous();
         auto right = and_();
-        left = std::make_unique<BinaryOp>("or", std::move(left), std::move(right),
+        left = std::make_unique<BinaryOp>(BinOpType::BIN_OR, std::move(left), std::move(right),
                                            op.line, op.column);
     }
 
@@ -684,7 +684,7 @@ std::unique_ptr<ASTNode> Parser::and_() {
     while (match(TokenType::TK_AND)) {
         const Token& op = previous();
         auto right = equality();
-        left = std::make_unique<BinaryOp>("and", std::move(left), std::move(right),
+        left = std::make_unique<BinaryOp>(BinOpType::BIN_AND, std::move(left), std::move(right),
                                            op.line, op.column);
     }
 
@@ -697,8 +697,8 @@ std::unique_ptr<ASTNode> Parser::equality() {
     while (match(TokenType::TK_EQ, TokenType::TK_NEQ)) {
         const Token& op = previous();
         auto right = comparison();
-        std::string opStr = (op.type == TokenType::TK_EQ) ? "==" : "!=";
-        left = std::make_unique<BinaryOp>(opStr, std::move(left), std::move(right),
+        BinOpType binOp = (op.type == TokenType::TK_EQ) ? BinOpType::BIN_EQ : BinOpType::BIN_NEQ;
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
                                            op.line, op.column);
     }
 
@@ -711,15 +711,15 @@ std::unique_ptr<ASTNode> Parser::comparison() {
     while (match(TokenType::TK_LT, TokenType::TK_GT, TokenType::TK_LEQ, TokenType::TK_GEQ)) {
         const Token& op = previous();
         auto right = term();
-        std::string opStr;
+        BinOpType binOp;
         switch (op.type) {
-        case TokenType::TK_LT:  opStr = "<";  break;
-        case TokenType::TK_GT:  opStr = ">";  break;
-        case TokenType::TK_LEQ: opStr = "<="; break;
-        case TokenType::TK_GEQ: opStr = ">="; break;
-        default: opStr = "?"; break;
+        case TokenType::TK_LT:  binOp = BinOpType::BIN_LT;  break;
+        case TokenType::TK_GT:  binOp = BinOpType::BIN_GT;  break;
+        case TokenType::TK_LEQ: binOp = BinOpType::BIN_LTE; break;
+        case TokenType::TK_GEQ: binOp = BinOpType::BIN_GTE; break;
+        default: binOp = BinOpType::BIN_UNKNOWN; break;
         }
-        left = std::make_unique<BinaryOp>(opStr, std::move(left), std::move(right),
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
                                            op.line, op.column);
     }
 
@@ -732,8 +732,8 @@ std::unique_ptr<ASTNode> Parser::term() {
     while (match(TokenType::TK_PLUS, TokenType::TK_MINUS)) {
         const Token& op = previous();
         auto right = factor();
-        std::string opStr = (op.type == TokenType::TK_PLUS) ? "+" : "-";
-        left = std::make_unique<BinaryOp>(opStr, std::move(left), std::move(right),
+        BinOpType binOp = (op.type == TokenType::TK_PLUS) ? BinOpType::BIN_ADD : BinOpType::BIN_SUB;
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
                                            op.line, op.column);
     }
 
@@ -746,14 +746,14 @@ std::unique_ptr<ASTNode> Parser::factor() {
     while (match(TokenType::TK_STAR, TokenType::TK_SLASH, TokenType::TK_PERCENT)) {
         const Token& op = previous();
         auto right = unary();
-        std::string opStr;
+        BinOpType binOp;
         switch (op.type) {
-        case TokenType::TK_STAR:    opStr = "*"; break;
-        case TokenType::TK_SLASH:   opStr = "/"; break;
-        case TokenType::TK_PERCENT: opStr = "%"; break;
-        default: opStr = "?"; break;
+        case TokenType::TK_STAR:    binOp = BinOpType::BIN_MUL; break;
+        case TokenType::TK_SLASH:   binOp = BinOpType::BIN_DIV; break;
+        case TokenType::TK_PERCENT: binOp = BinOpType::BIN_MOD; break;
+        default: binOp = BinOpType::BIN_UNKNOWN; break;
         }
-        left = std::make_unique<BinaryOp>(opStr, std::move(left), std::move(right),
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
                                            op.line, op.column);
     }
 
@@ -764,8 +764,8 @@ std::unique_ptr<ASTNode> Parser::unary() {
     if (match(TokenType::TK_NOT, TokenType::TK_MINUS)) {
         const Token& op = previous();
         auto operand = unary();
-        std::string opStr = (op.type == TokenType::TK_NOT) ? "not" : "-";
-        return std::make_unique<UnaryOp>(opStr, std::move(operand), op.line, op.column);
+        auto uopType = (op.type == TokenType::TK_NOT) ? UnaryOp::UnaryOpType::UOP_NOT : UnaryOp::UnaryOpType::UOP_NEGATE;
+        return std::make_unique<UnaryOp>(uopType, std::move(operand), op.line, op.column);
     }
     return call();
 }
