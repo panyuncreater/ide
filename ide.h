@@ -70,9 +70,6 @@ private slots:
     /// 显示字节码
     void onShowBytecode();
 
-    /// VM 运行字节码（全速执行）
-    void onVmRun();
-
     /// VM 单步执行字节码
     void onVmStep();
 
@@ -120,7 +117,6 @@ private:
     QAction* formatAction_ = nullptr;
     QAction* bytecodeAction_ = nullptr;
 
-    QAction* vmRunAction_ = nullptr;        // VM 运行
     QAction* vmStepAction_ = nullptr;       // VM 单步
     QAction* vmStopAction_ = nullptr;       // VM 停止
 

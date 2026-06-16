@@ -224,11 +224,6 @@ void Ide::initToolbar() {
     toolbar->addSeparator();
 
     // ---- VM 调试按钮 ----
-    vmRunAction_ = toolbar->addAction("⚡ VM运行");
-    vmRunAction_->setToolTip("全速运行字节码 (Ctrl+Shift+R)");
-    vmRunAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_R);
-    vmRunAction_->setEnabled(false);
-
     vmStepAction_ = toolbar->addAction("👉 VM单步");
     vmStepAction_->setToolTip("单步执行字节码 (Ctrl+Shift+N)");
     vmStepAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_N);
@@ -254,7 +249,6 @@ void Ide::initConnections() {
     connect(debugger_, &DebugController::pausedAt, this, &Ide::onPausedAt);
 
     // VM 调试连接
-    connect(vmRunAction_, &QAction::triggered, this, &Ide::onVmRun);
     connect(vmStepAction_, &QAction::triggered, this, &Ide::onVmStep);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
 }
@@ -506,7 +500,6 @@ void Ide::onShowBytecode() {
     vmStackPanel_->clearAll();
 
     // 启用 VM 调试按钮
-    vmRunAction_->setEnabled(true);
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
 
@@ -518,51 +511,6 @@ void Ide::onShowBytecode() {
     rightTabWidget_->setCurrentIndex(2);
 }
 
-// ============================================================
-// VM 调试执行
-// ============================================================
-
-void Ide::onVmRun() {
-    if (isVmRunning_) return;
-    if (lastCompileResult_.mainChunk.code.empty()) return;
-
-    isVmRunning_ = true;
-
-    vmRunAction_->setEnabled(false);
-    vmStepAction_->setEnabled(false);
-    vmStopAction_->setEnabled(true);
-    bytecodeAction_->setEnabled(false);
-
-    // 重置 VM 状态，全速执行
-    vm_.resetState();
-
-    // 全速执行时不启用步进回调：避免每条指令深拷贝栈/全局变量
-    // 以及 processEvents() 导致的重入风险
-    vm_.setStepCallbackEnabled(false);
-    vm_.setStepCallback(nullptr);
-
-    try {
-        VMResult result = vm_.execute(lastCompileResult_);
-        if (result == VMResult::VM_RUNTIME_ERROR) {
-            outputPanel_->appendError(QString("VM 运行时错误: %1")
-                                          .arg(QString::fromStdString(vm_.getLastError())));
-        }
-        outputPanel_->appendOutput("--- VM 执行结束 ---");
-    } catch (...) {
-        outputPanel_->appendError("VM 执行异常");
-    }
-
-    vm_.setStepCallbackEnabled(false);
-    isVmRunning_ = false;
-    isVmInitialized_ = false;
-
-    vmRunAction_->setEnabled(true);
-    vmStepAction_->setEnabled(true);
-    vmStopAction_->setEnabled(false);
-    bytecodeAction_->setEnabled(true);
-    vmStackPanel_->clearAll();
-}
-
 void Ide::onVmStep() {
     if (isVmRunning_) return;
     if (lastCompileResult_.mainChunk.code.empty()) return;
@@ -571,7 +519,6 @@ void Ide::onVmStep() {
     if (!isVmInitialized_) {
         vm_.initExecution(lastCompileResult_);
         isVmInitialized_ = true;
-        vmRunAction_->setEnabled(false);
         vmStopAction_->setEnabled(true);
         bytecodeAction_->setEnabled(false);
     }
@@ -593,7 +540,6 @@ void Ide::onVmStep() {
                                       .arg(QString::fromStdString(vm_.getLastError())));
         vmStackPanel_->clearAll();
         isVmInitialized_ = false;
-        vmRunAction_->setEnabled(true);
         vmStepAction_->setEnabled(true);
         vmStopAction_->setEnabled(false);
         bytecodeAction_->setEnabled(true);
@@ -606,7 +552,6 @@ void Ide::onVmStep() {
         outputPanel_->appendOutput("--- VM 执行结束 ---");
         vmStackPanel_->clearAll();
         isVmInitialized_ = false;
-        vmRunAction_->setEnabled(true);
         vmStepAction_->setEnabled(true);
         vmStopAction_->setEnabled(false);
         bytecodeAction_->setEnabled(true);
@@ -634,7 +579,6 @@ void Ide::onVmStop() {
     isVmInitialized_ = false;
     vmStackPanel_->clearAll();
 
-    vmRunAction_->setEnabled(true);
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
     bytecodeAction_->setEnabled(true);
