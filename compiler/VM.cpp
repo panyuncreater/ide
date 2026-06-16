@@ -722,10 +722,17 @@ VMResult VM::executeOneInstruction() {
                         push(arg);
                     }
 
+                    // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
+                    int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
+                    int extraSlots = initChunk.localCount - preAllocated;
+                    for (int i = 0; i < extraSlots; ++i) {
+                        push(Value::nullValue());
+                    }
+
                     VMCallFrame newFrame;
                     newFrame.chunk = initChunkPtr;
                     newFrame.returnIp = ip + 4;
-                    newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
+                    newFrame.basePointer = stack_.size() - initChunk.localCount;
                     newFrame.functionName = initChunkPtr->name;
                     newFrame.ip = 0;
                     newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
@@ -761,10 +768,17 @@ VMResult VM::executeOneInstruction() {
             return runtimeError("调用栈溢出");
         }
 
+        // 预分配局部变量栈空间：函数体内 var 声明的局部变量需要栈槽，
+        // 但帧创建时栈上只有参数，需补推 null 填充额外槽位
+        int extraSlots = targetChunk.localCount - argCount;
+        for (int i = 0; i < extraSlots; ++i) {
+            push(Value::nullValue());
+        }
+
         VMCallFrame newFrame;
         newFrame.chunk = &targetChunk;
         newFrame.returnIp = ip + 4;
-        newFrame.basePointer = stack_.size() - argCount;
+        newFrame.basePointer = stack_.size() - targetChunk.localCount;
         newFrame.functionName = funName;
         newFrame.ip = 0;
         frames_.push_back(newFrame);
@@ -1209,10 +1223,17 @@ VMResult VM::executeOneInstruction() {
                     push(arg);
                 }
 
+                // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
+                int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
+                int extraSlots = targetChunk.localCount - preAllocated;
+                for (int i = 0; i < extraSlots; ++i) {
+                    push(Value::nullValue());
+                }
+
                 VMCallFrame newFrame;
                 newFrame.chunk = targetChunkPtr;
                 newFrame.returnIp = ip + 7;  // OP_METHOD_CALL 是 7 字节
-                newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
+                newFrame.basePointer = stack_.size() - targetChunk.localCount;
                 newFrame.functionName = targetChunk.name;
                 newFrame.ip = 0;
                 newFrame.isMethodCall = true;
@@ -1354,10 +1375,17 @@ VMResult VM::executeOneInstruction() {
                 push(arg);
             }
 
+            // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
+            int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
+            int extraSlots = initChunk.localCount - preAllocated;
+            for (int i = 0; i < extraSlots; ++i) {
+                push(Value::nullValue());
+            }
+
             VMCallFrame newFrame;
             newFrame.chunk = initChunkPtr;
             newFrame.returnIp = ip + 4;
-            newFrame.basePointer = stack_.size() - fieldCount - argCount - 1;
+            newFrame.basePointer = stack_.size() - initChunk.localCount;
             newFrame.functionName = initChunkPtr->name;
             newFrame.ip = 0;
             newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this

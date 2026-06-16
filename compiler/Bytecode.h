@@ -140,6 +140,7 @@ struct BytecodeChunk {
     int arity = 0;                  // 参数个数
     std::vector<int> ipToInstrIndex; // 预计算：字节偏移 → 指令索引映射
     std::vector<std::string> fieldOrder; // 方法所属类的字段声明顺序（用于 OP_METHOD_CALL 栈布局）
+    int localCount = 0;              // 局部变量总槽位数（含参数/this/字段/方法体内var声明），用于 VM 帧创建时预分配栈空间
 
     BytecodeChunk() = default;
     explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)

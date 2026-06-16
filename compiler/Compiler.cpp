@@ -457,6 +457,9 @@ void Compiler::compileFunDecl(FunDecl& node) {
     chunk_.writeOp(OpCode::OP_NULL, node.line);
     chunk_.writeOp(OpCode::OP_RETURN, node.line);
 
+    // 记录局部变量总槽位数（含参数和函数体内 var 声明），供 VM 预分配栈空间
+    chunk_.localCount = static_cast<int>(currentLocals_.size());
+
     // 存储函数 chunk
     functionChunks_[node.name] = std::move(chunk_);
 
@@ -648,6 +651,9 @@ void Compiler::compileClassDecl(ClassDecl& node) {
 
         chunk_.writeOp(OpCode::OP_NULL, funDecl->line);
         chunk_.writeOp(OpCode::OP_RETURN, funDecl->line);
+
+        // 记录局部变量总槽位数（含 this/字段/参数和方法体内 var 声明），供 VM 预分配栈空间
+        chunk_.localCount = static_cast<int>(currentLocals_.size());
 
         functionChunks_[methodKey] = std::move(chunk_);
 
