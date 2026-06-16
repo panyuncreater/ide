@@ -45,9 +45,9 @@ public:
         }
     }
 
-    /// 获取变量值（沿作用域链查找）
+    /// 获取变量值（沿作用域链查找）— 返回 const 引用，避免深拷贝
     /// 优化路径：先查本地 O(1)，再用深度缓存跳过已知的中间作用域
-    Value get(const std::string& name) const {
+    const Value& get(const std::string& name) const {
         // 快速路径：当前作用域直接命中
         auto it = variables.find(name);
         if (it != variables.end()) {
@@ -63,14 +63,14 @@ public:
             }
             // 缓存未命中或过期：正常遍历并记录深度
             int depth = 0;
-            Value result = parent->getWithDepth(name, depth);
+            const Value& result = parent->getWithDepth(name, depth);
             if (depth >= 0) {
                 depthCache_[name] = {depth + 1, sGeneration};  // +1: depth相对于parent，缓存相对于this
             }
             return result;
         }
-        // 未找到变量，返回 null
-        return Value::nullValue();
+        // 未找到变量，返回静态 null 哨兵
+        return nullSentinel();
     }
 
     /// 设置变量值（沿作用域链查找并更新）
@@ -128,6 +128,12 @@ public:
 private:
     std::unordered_map<std::string, Value> variables;
 
+    /// 静态 null 哨兵：避免未找到时构造临时 Value
+    static const Value& nullSentinel() {
+        static const Value null = Value::nullValue();
+        return null;
+    }
+
     /// 深度缓存条目：记录变量在作用域链中的深度位置
     struct DepthEntry {
         int depth;          // 变量所在作用域相对于当前作用域的深度（1=直接父级）
@@ -138,8 +144,8 @@ private:
     /// 全局世代计数器：任何环境变化都会递增，使缓存自动失效
     inline static uint32_t sGeneration = 0;
 
-    /// 在指定深度查找变量（depth=1 表示直接父级）
-    Value getAtDepth(const std::string& name, int depth) const {
+    /// 在指定深度查找变量（depth=1 表示直接父级）— 返回 const 引用
+    const Value& getAtDepth(const std::string& name, int depth) const {
         const Environment* env = this;
         for (int i = 0; i < depth && env; ++i) {
             env = env->parent.get();
@@ -149,7 +155,7 @@ private:
             if (it != env->variables.end()) return it->second;
         }
         // 缓存过期（变量被遮蔽），回退到正常遍历
-        return parent ? parent->get(name) : Value::nullValue();
+        return parent ? parent->get(name) : nullSentinel();
     }
 
     /// 在指定深度设置变量（depth=1 表示直接父级）
@@ -169,8 +175,8 @@ private:
         return parent ? parent->set(name, val) : false;
     }
 
-    /// 带深度记录的查找（返回时 depth 为变量所在深度，-1 表示未找到）
-    Value getWithDepth(const std::string& name, int& depth) const {
+    /// 带深度记录的查找（返回时 depth 为变量所在深度，-1 表示未找到）— 返回 const 引用
+    const Value& getWithDepth(const std::string& name, int& depth) const {
         auto it = variables.find(name);
         if (it != variables.end()) {
             depth = 0;
@@ -178,11 +184,11 @@ private:
         }
         if (parent) {
             int childDepth = 0;
-            Value result = parent->getWithDepth(name, childDepth);
+            const Value& result = parent->getWithDepth(name, childDepth);
             depth = (childDepth >= 0) ? childDepth + 1 : -1;
             return result;
         }
         depth = -1;
-        return Value::nullValue();
+        return nullSentinel();
     }
 };

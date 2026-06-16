@@ -12,6 +12,7 @@ CompileResult Compiler::compile(Block& program) {
     chunk_ = BytecodeChunk();
     chunk_.name = "main";
     chunk_.arity = 0;
+    chunk_.reserveCode(1024);  // C21: 预分配字节码空间
     varIndex_.clear();
     lastError_.clear();
     diagnostics_.clear();
@@ -460,6 +461,7 @@ void Compiler::compileFunDecl(FunDecl& node) {
 
     // 设置函数编译上下文
     chunk_ = BytecodeChunk(node.name, static_cast<int>(node.params.size()));
+    chunk_.reserveCode(256);  // C21: 预分配函数字节码空间
     varIndex_.clear();
     currentLocals_.clear();
     inFunction_ = true;
@@ -650,6 +652,7 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         bool savedInFunction = inFunction_;
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
+        chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
         varIndex_.clear();
         currentLocals_.clear();
         outerLocals_.clear();

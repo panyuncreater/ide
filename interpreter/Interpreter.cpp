@@ -595,10 +595,12 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                     evaluate(initMethod->body.get());
                 } catch (const ReturnException&) {}
                 instance = initEnv->get("this");
-                // 同步 init 环境中的字段变量回 this 对象
+                // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
+                const auto& initLocals = initEnv->localVariables();
                 for (auto& fieldKV : instance.fields()) {
-                    if (initEnv->hasVariable(fieldKV.first)) {
-                        fieldKV.second = initEnv->get(fieldKV.first);
+                    auto it = initLocals.find(fieldKV.first);
+                    if (it != initLocals.end()) {
+                        fieldKV.second = it->second;
                     }
                 }
                 currentEnv_ = prevEnv;
@@ -872,10 +874,12 @@ Value Interpreter::visitFunCall(FunCall& node) {
             // 从 init 环境中读取 this 的更新值
             instance = initEnv->get("this");
 
-            // 同步 init 环境中的字段变量回 this 对象
+            // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
+            const auto& initLocals2 = initEnv->localVariables();
             for (auto& fieldKV : instance.fields()) {
-                if (initEnv->hasVariable(fieldKV.first)) {
-                    fieldKV.second = initEnv->get(fieldKV.first);
+                auto it = initLocals2.find(fieldKV.first);
+                if (it != initLocals2.end()) {
+                    fieldKV.second = it->second;
                 }
             }
 
@@ -1455,14 +1459,12 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 // 从方法环境中读取 this 的更新值
                 Value updatedThis = methodEnv->get("this");
 
-                // 关键：将方法环境中的字段变量同步回 this 对象
-                // 方法内直接修改字段（如 count = count + 1）只更新了方法环境，
-                // 不会自动反映到 this 对象的 fields 中，需要手动同步
-                // 同步逻辑：遍历 this.fields()（已包含 this.field = val 的新字段），
-                // 再用方法环境中的同名局部变量覆盖（直接赋值优先）
+                // 关键：将方法环境中的字段变量同步回 this 对象（直接查找局部变量，O(1)）
+                const auto& methodLocals = methodEnv->localVariables();
                 for (auto& fieldKV : updatedThis.fields()) {
-                    if (methodEnv->hasVariable(fieldKV.first)) {
-                        fieldKV.second = methodEnv->get(fieldKV.first);
+                    auto it = methodLocals.find(fieldKV.first);
+                    if (it != methodLocals.end()) {
+                        fieldKV.second = it->second;
                     }
                 }
 

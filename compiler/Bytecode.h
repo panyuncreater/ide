@@ -156,6 +156,12 @@ struct BytecodeChunk {
     explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)
         : name(chunkName), arity(argCount) {}
 
+    /// C21: 预分配字节码空间，避免编译期间频繁 realloc
+    void reserveCode(size_t estimatedBytes) {
+        code.reserve(estimatedBytes);
+        lines.reserve(estimatedBytes);
+    }
+
     /// 追加一个字节
     void write(uint8_t byte, int line) {
         code.push_back(byte);
@@ -173,15 +179,35 @@ struct BytecodeChunk {
         write(static_cast<uint8_t>((value >> 8) & 0xFF), line);
     }
 
-    /// 添加常量，返回索引
+    /// 添加常量，返回索引（哈希去重，O(1) 均摊）
     uint16_t addConstant(const Value& val) {
-        // 检查是否已存在相同常量
-        for (uint16_t i = 0; i < static_cast<uint16_t>(constants.size()); ++i) {
+        size_t h = hashValue(val);
+        auto& bucket = constantHashMap_[h];
+        for (uint16_t i : bucket) {
             if (constants[i].equals(val)) return i;
         }
+        uint16_t idx = static_cast<uint16_t>(constants.size());
         constants.push_back(val);
-        return static_cast<uint16_t>(constants.size() - 1);
+        bucket.push_back(idx);
+        return idx;
     }
+
+private:
+    /// 常量值哈希（用于 O(1) 去重）
+    static size_t hashValue(const Value& val) {
+        switch (val.getType()) {
+        case ValueType::VAL_INT: return std::hash<int64_t>{}(val.intVal());
+        case ValueType::VAL_FLOAT: return std::hash<double>{}(val.floatVal());
+        case ValueType::VAL_STRING: return std::hash<std::string>{}(val.stringVal());
+        case ValueType::VAL_BOOL: return std::hash<bool>{}(val.boolVal());
+        case ValueType::VAL_NULL: return 0;
+        default: return static_cast<size_t>(val.getType());
+        }
+    }
+
+    std::unordered_map<size_t, std::vector<uint16_t>> constantHashMap_;
+
+public:
 
     /// 获取指令行号
     int getLine(size_t offset) const {

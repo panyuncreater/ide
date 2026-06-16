@@ -143,6 +143,38 @@ private:
     /// 数值二元运算（枚举分发）
     VMResult numericOp(int opType);
 
+    /// 比较运算结果写回（消除 6 个比较运算符的重复代码）
+    /// ip 按引用传入，结果写入后自动 +1（所有比较指令均为 1 字节）
+    VMResult pushCompareResult(bool result, size_t& ip, OpCode opcode);
+
+    /// 有序比较：类型检查 + 比较 + 结果写回（<, >, <=, >= 共用模板）
+    template<typename Cmp>
+    VMResult orderedCompare(Cmp cmp, size_t& ip, OpCode opcode) {
+        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
+        const Value& right = stack_.back();
+        const Value& left = stack_[stack_.size() - 2];
+        if (!left.isNumber() || !right.isNumber())
+            return runtimeError("比较运算需要数值类型");
+        return pushCompareResult(cmp(left, right), ip, opcode);
+    }
+
+    /// 内建方法名枚举（消除运行时字符串比较）
+    enum class BuiltinMethod {
+        // 数组方法
+        ARR_PUSH, ARR_POP, ARR_LEN, ARR_REMOVE, ARR_CONTAINS, ARR_JOIN,
+        // 字典方法
+        DICT_LEN, DICT_KEYS, DICT_VALUES, DICT_HAS, DICT_REMOVE,
+        // 字符串方法
+        STR_LEN, STR_UPPER, STR_LOWER, STR_CONTAINS, STR_STARTS_WITH,
+        STR_ENDS_WITH, STR_REPLACE, STR_SUBSTR, STR_INDEX_OF,
+        STR_SPLIT, STR_TRIM,
+        // 未知
+        UNKNOWN
+    };
+
+    /// 将方法名分类为枚举（单次哈希，后续 switch 分发）
+    static BuiltinMethod classifyBuiltinMethod(const std::string& name);
+
     /// 通知步进回调（内联：禁用时直接返回，避免函数调用开销）
     void notifyStep(size_t ip, OpCode opcode) {
         if (!stepCallbackEnabled_) return;

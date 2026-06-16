@@ -73,23 +73,36 @@ private:
     Data data_;
 
     // ---- 深拷贝辅助（用于拷贝构造 / 拷贝赋值）----
+    // switch 分发比 std::visit + generic lambda 生成更紧凑的跳转表
     Data deepCopy(const Data& src) {
-        return std::visit([](const auto& v) -> Data {
-            using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, std::unique_ptr<StringData>>) {
-                return v ? std::make_unique<StringData>(*v) : std::unique_ptr<StringData>{};
-            } else if constexpr (std::is_same_v<T, std::unique_ptr<ArrayData>>) {
-                return v ? std::make_unique<ArrayData>(*v) : std::unique_ptr<ArrayData>{};
-            } else if constexpr (std::is_same_v<T, std::unique_ptr<DictData>>) {
-                return v ? std::make_unique<DictData>(*v) : std::unique_ptr<DictData>{};
-            } else if constexpr (std::is_same_v<T, std::unique_ptr<InstanceData>>) {
-                return v ? std::make_unique<InstanceData>(*v) : std::unique_ptr<InstanceData>{};
-            } else if constexpr (std::is_same_v<T, std::unique_ptr<ClosureData>>) {
-                return v ? std::make_unique<ClosureData>(*v) : std::unique_ptr<ClosureData>{};
-            } else {
-                return v;  // 基础类型直接拷贝
-            }
-        }, src);
+        switch (static_cast<ValueType>(src.index())) {
+        case ValueType::VAL_STRING: {
+            const auto& p = std::get<4>(src);
+            return p ? std::make_unique<StringData>(*p) : std::unique_ptr<StringData>{};
+        }
+        case ValueType::VAL_ARRAY: {
+            const auto& p = std::get<5>(src);
+            return p ? std::make_unique<ArrayData>(*p) : std::unique_ptr<ArrayData>{};
+        }
+        case ValueType::VAL_DICT: {
+            const auto& p = std::get<6>(src);
+            return p ? std::make_unique<DictData>(*p) : std::unique_ptr<DictData>{};
+        }
+        case ValueType::VAL_INSTANCE: {
+            const auto& p = std::get<7>(src);
+            return p ? std::make_unique<InstanceData>(*p) : std::unique_ptr<InstanceData>{};
+        }
+        case ValueType::VAL_CLOSURE: {
+            const auto& p = std::get<8>(src);
+            return p ? std::make_unique<ClosureData>(*p) : std::unique_ptr<ClosureData>{};
+        }
+        default:
+            // 基础类型：逐个提取（variant 含 unique_ptr 不可整体拷贝）
+            if (src.index() == 0) return std::monostate{};
+            if (src.index() == 1) return std::get<1>(src);
+            if (src.index() == 2) return std::get<2>(src);
+            return std::get<3>(src);  // bool
+        }
     }
 
 public:
@@ -180,98 +193,98 @@ public:
     bool isDict()     const { return std::holds_alternative<std::unique_ptr<DictData>>(data_); }
     bool isInstance() const { return std::holds_alternative<std::unique_ptr<InstanceData>>(data_); }
     bool isClosure()  const { return std::holds_alternative<std::unique_ptr<ClosureData>>(data_); }
-    bool isNumber()   const { return isInt() || isFloat(); }
+    bool isNumber()   const { auto i = data_.index(); return i == 1 || i == 2; }
 
     // ---- 向后兼容的字段访问器 ----
     // 所有访问器返回引用，使 val.intVal、val.stringVal、val.fields[k] 等用法
     // 无需修改即可正常工作（读/写均兼容）。
 
     // -- intVal --
-    int64_t& intVal()             { return std::get<int64_t>(data_); }
-    const int64_t& intVal() const { return std::get<int64_t>(data_); }
+    int64_t& intVal()             { return std::get<1>(data_); }
+    const int64_t& intVal() const { return std::get<1>(data_); }
 
     // -- floatVal --
-    double& floatVal()             { return std::get<double>(data_); }
-    const double& floatVal() const { return std::get<double>(data_); }
+    double& floatVal()             { return std::get<2>(data_); }
+    const double& floatVal() const { return std::get<2>(data_); }
 
     // -- boolVal --
-    bool& boolVal()             { return std::get<bool>(data_); }
-    const bool& boolVal() const { return std::get<bool>(data_); }
+    bool& boolVal()             { return std::get<3>(data_); }
+    const bool& boolVal() const { return std::get<3>(data_); }
 
     // -- stringVal --
     std::string& stringVal() {
-        return std::get<std::unique_ptr<StringData>>(data_)->value;
+        return std::get<4>(data_)->value;
     }
     const std::string& stringVal() const {
-        return std::get<std::unique_ptr<StringData>>(data_)->value;
+        return std::get<4>(data_)->value;
     }
 
     // -- arrayVal --
     std::vector<Value>& arrayVal() {
-        return std::get<std::unique_ptr<ArrayData>>(data_)->elements;
+        return std::get<5>(data_)->elements;
     }
     const std::vector<Value>& arrayVal() const {
-        return std::get<std::unique_ptr<ArrayData>>(data_)->elements;
+        return std::get<5>(data_)->elements;
     }
 
     // -- dictVal --
     std::unordered_map<std::string, Value>& dictVal() {
-        return std::get<std::unique_ptr<DictData>>(data_)->entries;
+        return std::get<6>(data_)->entries;
     }
     const std::unordered_map<std::string, Value>& dictVal() const {
-        return std::get<std::unique_ptr<DictData>>(data_)->entries;
+        return std::get<6>(data_)->entries;
     }
 
     // -- className（实例专用）--
     std::string& className() {
-        return std::get<std::unique_ptr<InstanceData>>(data_)->className;
+        return std::get<7>(data_)->className;
     }
     const std::string& className() const {
-        return std::get<std::unique_ptr<InstanceData>>(data_)->className;
+        return std::get<7>(data_)->className;
     }
 
     // -- fields（实例字段）--
     std::unordered_map<std::string, Value>& fields() {
-        return std::get<std::unique_ptr<InstanceData>>(data_)->fields;
+        return std::get<7>(data_)->fields;
     }
     const std::unordered_map<std::string, Value>& fields() const {
-        return std::get<std::unique_ptr<InstanceData>>(data_)->fields;
+        return std::get<7>(data_)->fields;
     }
 
     // -- 闭包字段 --
     std::string& closureName() {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->name;
+        return std::get<8>(data_)->name;
     }
     const std::string& closureName() const {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->name;
+        return std::get<8>(data_)->name;
     }
 
     std::shared_ptr<Environment>& closureEnv() {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->env;
+        return std::get<8>(data_)->env;
     }
     const std::shared_ptr<Environment>& closureEnv() const {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->env;
+        return std::get<8>(data_)->env;
     }
 
     std::vector<std::string>& closureParams() {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->params;
+        return std::get<8>(data_)->params;
     }
     const std::vector<std::string>& closureParams() const {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->params;
+        return std::get<8>(data_)->params;
     }
 
     FunDecl*& closureBody() {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->body;
+        return std::get<8>(data_)->body;
     }
     FunDecl* closureBody() const {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->body;
+        return std::get<8>(data_)->body;
     }
 
     std::unordered_map<std::string, Value>& capturedVars() {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->capturedVars;
+        return std::get<8>(data_)->capturedVars;
     }
     const std::unordered_map<std::string, Value>& capturedVars() const {
-        return std::get<std::unique_ptr<ClosureData>>(data_)->capturedVars;
+        return std::get<8>(data_)->capturedVars;
     }
 
     // ============================================================

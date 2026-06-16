@@ -209,6 +209,58 @@ VMResult VM::numericOp(int opType) {
     return VMResult::VM_OK;
 }
 
+// ---- C10: 内建方法名枚举分发 ----
+VM::BuiltinMethod VM::classifyBuiltinMethod(const std::string& name) {
+    // 按长度快速筛选，减少不必要的字符串比较
+    switch (name.size()) {
+    case 3:
+        if (name == "pop") return BuiltinMethod::ARR_POP;
+        if (name == "len") return BuiltinMethod::ARR_LEN; // 数组/字典/字符串共用
+        if (name == "has") return BuiltinMethod::DICT_HAS;
+        if (name == "get") return BuiltinMethod::UNKNOWN; // dict.get handled elsewhere
+        break;
+    case 4:
+        if (name == "push") return BuiltinMethod::ARR_PUSH;
+        if (name == "keys") return BuiltinMethod::DICT_KEYS;
+        if (name == "trim") return BuiltinMethod::STR_TRIM;
+        if (name == "join") return BuiltinMethod::ARR_JOIN;
+        break;
+    case 5:
+        if (name == "upper") return BuiltinMethod::STR_UPPER;
+        if (name == "lower") return BuiltinMethod::STR_LOWER;
+        if (name == "split") return BuiltinMethod::STR_SPLIT;
+        break;
+    case 6:
+        if (name == "values") return BuiltinMethod::DICT_VALUES;
+        if (name == "remove") return BuiltinMethod::ARR_REMOVE; // 数组/字典共用
+        break;
+    case 7:
+        if (name == "replace") return BuiltinMethod::STR_REPLACE;
+        break;
+    case 8:
+        if (name == "contains") return BuiltinMethod::ARR_CONTAINS; // 数组/字典共用
+        if (name == "substr") return BuiltinMethod::STR_SUBSTR;
+        break;
+    case 9:
+        if (name == "indexOf") return BuiltinMethod::STR_INDEX_OF;
+        break;
+    case 10:
+        if (name == "startsWith") return BuiltinMethod::STR_STARTS_WITH;
+        if (name == "endsWith") return BuiltinMethod::STR_ENDS_WITH;
+        break;
+    }
+    return BuiltinMethod::UNKNOWN;
+}
+
+// ---- C11: 比较运算辅助函数 ----
+VMResult VM::pushCompareResult(bool result, size_t& ip, OpCode opcode) {
+    stack_[stack_.size() - 2] = Value(result);
+    stack_.pop_back();
+    notifyStep(ip, opcode);
+    ip += 1;
+    return VMResult::VM_OK;
+}
+
 // ============================================================
 // 初始化 / 单步 / 状态查询
 // ============================================================
@@ -417,83 +469,27 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_EQUAL: {
         if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
-        const Value& right = stack_.back();
-        const Value& left = stack_[stack_.size() - 2];
-        bool result = left.equals(right);
-        stack_[stack_.size() - 2] = Value(result);
-        stack_.pop_back();
-        notifyStep(ip, op);
-        ip += 1;
-        break;
+        bool result = stack_[stack_.size() - 2].equals(stack_.back());
+        return pushCompareResult(result, ip, op);
     }
 
     case OpCode::OP_NOT_EQUAL: {
         if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
-        const Value& right = stack_.back();
-        const Value& left = stack_[stack_.size() - 2];
-        bool result = !left.equals(right);
-        stack_[stack_.size() - 2] = Value(result);
-        stack_.pop_back();
-        notifyStep(ip, op);
-        ip += 1;
-        break;
+        bool result = !stack_[stack_.size() - 2].equals(stack_.back());
+        return pushCompareResult(result, ip, op);
     }
 
-    case OpCode::OP_LESS: {
-        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
-        const Value& right = stack_.back();
-        const Value& left = stack_[stack_.size() - 2];
-        if (!left.isNumber() || !right.isNumber())
-            return runtimeError("比较运算需要数值类型");
-        bool result = left.toDouble() < right.toDouble();
-        stack_[stack_.size() - 2] = Value(result);
-        stack_.pop_back();
-        notifyStep(ip, op);
-        ip += 1;
-        break;
-    }
+    case OpCode::OP_LESS:
+        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() < r.toDouble(); }, ip, op);
 
-    case OpCode::OP_GREATER: {
-        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
-        const Value& right = stack_.back();
-        const Value& left = stack_[stack_.size() - 2];
-        if (!left.isNumber() || !right.isNumber())
-            return runtimeError("比较运算需要数值类型");
-        bool result = left.toDouble() > right.toDouble();
-        stack_[stack_.size() - 2] = Value(result);
-        stack_.pop_back();
-        notifyStep(ip, op);
-        ip += 1;
-        break;
-    }
+    case OpCode::OP_GREATER:
+        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() > r.toDouble(); }, ip, op);
 
-    case OpCode::OP_LESS_EQUAL: {
-        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
-        const Value& right = stack_.back();
-        const Value& left = stack_[stack_.size() - 2];
-        if (!left.isNumber() || !right.isNumber())
-            return runtimeError("比较运算需要数值类型");
-        bool result = left.toDouble() <= right.toDouble();
-        stack_[stack_.size() - 2] = Value(result);
-        stack_.pop_back();
-        notifyStep(ip, op);
-        ip += 1;
-        break;
-    }
+    case OpCode::OP_LESS_EQUAL:
+        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() <= r.toDouble(); }, ip, op);
 
-    case OpCode::OP_GREATER_EQUAL: {
-        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
-        const Value& right = stack_.back();
-        const Value& left = stack_[stack_.size() - 2];
-        if (!left.isNumber() || !right.isNumber())
-            return runtimeError("比较运算需要数值类型");
-        bool result = left.toDouble() >= right.toDouble();
-        stack_[stack_.size() - 2] = Value(result);
-        stack_.pop_back();
-        notifyStep(ip, op);
-        ip += 1;
-        break;
-    }
+    case OpCode::OP_GREATER_EQUAL:
+        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() >= r.toDouble(); }, ip, op);
 
     case OpCode::OP_AND:
     case OpCode::OP_OR:
@@ -1029,44 +1025,33 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& methodName = chunk.constants[idx].stringVal();
 
-        Value obj = peek(argCount);  // peek 返回 Value 拷贝
+        // C8: 用 const 引用访问接收者，避免非变异方法的深拷贝
+        const Value& obj = peek(argCount);
+        // C10: 方法名一次性分类为枚举
+        BuiltinMethod method = classifyBuiltinMethod(methodName);
 
         // ---- 数组内置方法 ----
         if (obj.isArray()) {
+            // 先弹出参数（接收者仍在栈上，const ref 有效）
             std::vector<Value> args(argCount);
             for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-            pop();  // 移除接收者
 
+            // 非变异路径：从 const 引用计算结果，无需拷贝接收者
             Value result = Value::nullValue();
-            bool mutated = false;
-
-            if (methodName == "push") {
-                if (args.size() != 1) return runtimeError("push 期望 1 个参数");
-                obj.arrayVal().push_back(args[0]);
-                mutated = true;
-            } else if (methodName == "pop") {
-                if (obj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
-                result = obj.arrayVal().back();
-                obj.arrayVal().pop_back();
-                mutated = true;
-            } else if (methodName == "len") {
+            if (method == BuiltinMethod::ARR_LEN) {
                 result = Value(static_cast<int64_t>(obj.arrayVal().size()));
-            } else if (methodName == "remove") {
-                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
-                if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
-                int64_t ri = args[0].intVal();
-                if (ri < 0 || static_cast<size_t>(ri) >= obj.arrayVal().size())
-                    return runtimeError("数组索引越界: " + std::to_string(ri));
-                obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(ri));
-                mutated = true;
-            } else if (methodName == "contains") {
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+            if (method == BuiltinMethod::ARR_CONTAINS) {
                 if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
                 bool found = false;
                 for (const auto& elem : obj.arrayVal()) {
                     if (elem.equals(args[0])) { found = true; break; }
                 }
                 result = Value(found);
-            } else if (methodName == "join") {
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+            if (method == BuiltinMethod::ARR_JOIN) {
                 std::string sep = args.empty() ? "" : args[0].toString();
                 std::string joined;
                 joined.reserve(obj.arrayVal().size() * (8 + sep.size()));
@@ -1075,31 +1060,48 @@ VMResult VM::executeOneInstruction() {
                     joined += obj.arrayVal()[i].toString();
                 }
                 result = Value(std::move(joined));
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+
+            // 变异路径：拷贝接收者后 pop，修改副本，写回
+            Value mutableObj(obj);  // 深拷贝（仅变异方法需要）
+            pop();  // 移除栈上原始接收者
+
+            if (method == BuiltinMethod::ARR_PUSH) {
+                if (args.size() != 1) return runtimeError("push 期望 1 个参数");
+                mutableObj.arrayVal().push_back(args[0]);
+            } else if (method == BuiltinMethod::ARR_POP) {
+                if (mutableObj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
+                result = mutableObj.arrayVal().back();
+                mutableObj.arrayVal().pop_back();
+            } else if (method == BuiltinMethod::ARR_REMOVE) {
+                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
+                if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
+                int64_t ri = args[0].intVal();
+                if (ri < 0 || static_cast<size_t>(ri) >= mutableObj.arrayVal().size())
+                    return runtimeError("数组索引越界: " + std::to_string(ri));
+                mutableObj.arrayVal().erase(mutableObj.arrayVal().begin() + static_cast<size_t>(ri));
             } else {
                 return runtimeError("数组没有方法 " + methodName);
             }
 
-            // 变异方法需要写回修改后的对象
-            if (mutated) {
-                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                    globals_[chunk.constants[receiverVarIdx].stringVal()] = obj;
-                } else if (receiverLocalSlotByte != 0xFF) {
-                    size_t bp = currentFrame().basePointer;
-                    if (bp + receiverLocalSlotByte < stack_.size()) {
-                        stack_[bp + receiverLocalSlotByte] = obj;
-                    }
-                    // 如果局部变量是调用者 this 的字段，也更新 this.fields()
-                    if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
-                        VMCallFrame& curFrame = currentFrame();
-                        if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
-                            const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                            stack_[bp].fields()[fn] = obj;
-                        }
-                    }
-                } else {
-                    // 嵌套访问（如 this.arr.push(42)）：暂存修改后的对象，供后续写回指令使用
-                    lastMutatedReceiver_ = obj;
+            // 写回变异后的对象
+            if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+                globals_[chunk.constants[receiverVarIdx].stringVal()] = mutableObj;
+            } else if (receiverLocalSlotByte != 0xFF) {
+                size_t bp = currentFrame().basePointer;
+                if (bp + receiverLocalSlotByte < stack_.size()) {
+                    stack_[bp + receiverLocalSlotByte] = mutableObj;
                 }
+                if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
+                    VMCallFrame& curFrame = currentFrame();
+                    if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
+                        const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
+                        stack_[bp].fields()[fn] = mutableObj;
+                    }
+                }
+            } else {
+                lastMutatedReceiver_ = mutableObj;
             }
             push(result);
             notifyStep(ip, op);
@@ -1111,53 +1113,62 @@ VMResult VM::executeOneInstruction() {
         if (obj.isDict()) {
             std::vector<Value> args(argCount);
             for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-            pop();
 
             Value result = Value::nullValue();
-            bool mutated = false;
 
-            if (methodName == "len") {
+            // 非变异路径：直接从 const 引用读取
+            if (method == BuiltinMethod::DICT_LEN || method == BuiltinMethod::ARR_LEN) {
                 result = Value(static_cast<int64_t>(obj.dictVal().size()));
-            } else if (methodName == "keys") {
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+            if (method == BuiltinMethod::DICT_KEYS) {
                 std::vector<Value> keys;
                 keys.reserve(obj.dictVal().size());
                 for (const auto& kv : obj.dictVal()) keys.emplace_back(Value(kv.first));
                 result = Value(std::move(keys));
-            } else if (methodName == "values") {
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+            if (method == BuiltinMethod::DICT_VALUES) {
                 std::vector<Value> vals;
                 vals.reserve(obj.dictVal().size());
                 for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
                 result = Value(std::move(vals));
-            } else if (methodName == "has" || methodName == "contains") {
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+            if (method == BuiltinMethod::DICT_HAS || method == BuiltinMethod::ARR_CONTAINS) {
                 if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
                 result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
-            } else if (methodName == "remove") {
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+
+            // 变异路径（remove）：拷贝后修改
+            Value mutableObj(obj);
+            pop();
+
+            if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
                 if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
-                obj.dictVal().erase(args[0].toString());
-                mutated = true;
+                mutableObj.dictVal().erase(args[0].toString());
             } else {
                 return runtimeError("字典没有方法 " + methodName);
             }
 
-            if (mutated) {
-                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                    globals_[chunk.constants[receiverVarIdx].stringVal()] = obj;
-                } else if (receiverLocalSlotByte != 0xFF) {
-                    size_t bp = currentFrame().basePointer;
-                    if (bp + receiverLocalSlotByte < stack_.size()) {
-                        stack_[bp + receiverLocalSlotByte] = obj;
-                    }
-                    if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
-                        VMCallFrame& curFrame = currentFrame();
-                        if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
-                            const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                            stack_[bp].fields()[fn] = obj;
-                        }
-                    }
-                } else {
-                    // 嵌套访问（如 this.dict.remove("key")）：暂存修改后的对象，供后续写回指令使用
-                    lastMutatedReceiver_ = obj;
+            // 写回
+            if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+                globals_[chunk.constants[receiverVarIdx].stringVal()] = mutableObj;
+            } else if (receiverLocalSlotByte != 0xFF) {
+                size_t bp = currentFrame().basePointer;
+                if (bp + receiverLocalSlotByte < stack_.size()) {
+                    stack_[bp + receiverLocalSlotByte] = mutableObj;
                 }
+                if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
+                    VMCallFrame& curFrame = currentFrame();
+                    if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
+                        const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
+                        stack_[bp].fields()[fn] = mutableObj;
+                    }
+                }
+            } else {
+                lastMutatedReceiver_ = mutableObj;
             }
             push(result);
             notifyStep(ip, op);
@@ -1165,30 +1176,28 @@ VMResult VM::executeOneInstruction() {
             break;
         }
 
-        // ---- 字符串内置方法 ----
+        // ---- 字符串内置方法（全部非变异，使用 const 引用）----
         if (obj.isString()) {
             std::vector<Value> args(argCount);
             for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-            pop();
 
             Value result = Value::nullValue();
 
-            if (methodName == "len") {
+            if (method == BuiltinMethod::STR_LEN || method == BuiltinMethod::ARR_LEN || method == BuiltinMethod::DICT_LEN) {
                 result = Value(static_cast<int64_t>(obj.stringVal().size()));
-            } else if (methodName == "upper") {
+            } else if (method == BuiltinMethod::STR_UPPER) {
                 std::string s = obj.stringVal();
                 for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                result = Value(s);
-            } else if (methodName == "lower") {
+                result = Value(std::move(s));
+            } else if (method == BuiltinMethod::STR_LOWER) {
                 std::string s = obj.stringVal();
                 for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                result = Value(s);
-            } else if (methodName == "split") {
+                result = Value(std::move(s));
+            } else if (method == BuiltinMethod::STR_SPLIT) {
                 std::string sep = args.empty() ? " " : args[0].toString();
                 if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
                 std::vector<Value> parts;
                 const std::string& src = obj.stringVal();
-                // 预估分割次数以预分配
                 size_t estCount = 1;
                 for (size_t p = 0; (p = src.find(sep, p)) != std::string::npos; p += sep.size()) ++estCount;
                 parts.reserve(estCount);
@@ -1199,15 +1208,58 @@ VMResult VM::executeOneInstruction() {
                 }
                 parts.emplace_back(Value(src.substr(start)));
                 result = Value(std::move(parts));
-            } else if (methodName == "trim") {
-                std::string s = obj.stringVal();
+            } else if (method == BuiltinMethod::STR_TRIM) {
+                const std::string& s = obj.stringVal();
                 size_t l = s.find_first_not_of(" \t\r\n");
                 size_t r = s.find_last_not_of(" \t\r\n");
                 if (l == std::string::npos) result = Value(std::string(""));
                 else result = Value(s.substr(l, r - l + 1));
+            } else if (method == BuiltinMethod::STR_CONTAINS) {
+                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
+                result = Value(obj.stringVal().find(args[0].toString()) != std::string::npos);
+            } else if (method == BuiltinMethod::STR_STARTS_WITH) {
+                if (args.size() != 1) return runtimeError("startsWith 期望 1 个参数");
+                const std::string& prefix = args[0].toString();
+                const std::string& s = obj.stringVal();
+                result = Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0);
+            } else if (method == BuiltinMethod::STR_ENDS_WITH) {
+                if (args.size() != 1) return runtimeError("endsWith 期望 1 个参数");
+                const std::string& suffix = args[0].toString();
+                const std::string& s = obj.stringVal();
+                result = Value(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
+            } else if (method == BuiltinMethod::STR_REPLACE) {
+                if (args.size() != 2) return runtimeError("replace 期望 2 个参数(旧串, 新串)");
+                std::string s = obj.stringVal();
+                const std::string& from = args[0].toString();
+                const std::string& to = args[1].toString();
+                if (!from.empty()) {
+                    size_t pos = 0;
+                    while ((pos = s.find(from, pos)) != std::string::npos) {
+                        s.replace(pos, from.size(), to);
+                        pos += to.size();
+                    }
+                }
+                result = Value(std::move(s));
+            } else if (method == BuiltinMethod::STR_SUBSTR) {
+                if (args.size() < 1 || args.size() > 2) return runtimeError("substr 期望 1-2 个参数(起始[, 长度])");
+                int64_t start = args[0].intVal();
+                const std::string& s = obj.stringVal();
+                if (start < 0 || static_cast<size_t>(start) > s.size()) result = Value(std::string(""));
+                else if (args.size() == 2) {
+                    int64_t len = args[1].intVal();
+                    result = Value(s.substr(static_cast<size_t>(start), static_cast<size_t>(len)));
+                } else {
+                    result = Value(s.substr(static_cast<size_t>(start)));
+                }
+            } else if (method == BuiltinMethod::STR_INDEX_OF) {
+                if (args.size() != 1) return runtimeError("indexOf 期望 1 个参数");
+                size_t pos = obj.stringVal().find(args[0].toString());
+                result = Value(pos == std::string::npos ? static_cast<int64_t>(-1) : static_cast<int64_t>(pos));
             } else {
                 return runtimeError("字符串没有方法 " + methodName);
             }
+
+            pop();  // 移除接收者（在计算完成后）
             push(result);
             notifyStep(ip, op);
             ip += 7;
