@@ -190,6 +190,6 @@ private:
     void checkType(const Value& val, const std::string& annotation,
                    const std::string& context, int line, int col);
 
-    /// 查找变量的类型注解
-    std::string findTypeAnnotation(const std::string& varName) const;
+    /// 查找变量的类型注解（返回指针，避免字符串拷贝）
+    const std::string* findTypeAnnotation(const std::string& varName) const;
 };

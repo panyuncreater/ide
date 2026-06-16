@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <variant>
 #include <sstream>
+#include <cstdio>
 #include <vector>
 #include <memory>
 #include <cstdint>
@@ -309,9 +310,9 @@ public:
         case ValueType::VAL_INT:
             return std::to_string(intVal());
         case ValueType::VAL_FLOAT: {
-            std::ostringstream oss;
-            oss << floatVal();
-            return oss.str();
+            char buf[64];
+            int len = snprintf(buf, sizeof(buf), "%g", floatVal());
+            return std::string(buf, len);
         }
         case ValueType::VAL_BOOL:
             return boolVal() ? "true" : "false";

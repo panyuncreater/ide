@@ -217,10 +217,10 @@ void Interpreter::checkType(const Value& val, const std::string& annotation,
     }
 }
 
-std::string Interpreter::findTypeAnnotation(const std::string& varName) const {
+const std::string* Interpreter::findTypeAnnotation(const std::string& varName) const {
     auto it = typeAnnotations_.find(varName);
-    if (it != typeAnnotations_.end()) return it->second;
-    return "";
+    if (it != typeAnnotations_.end()) return &it->second;
+    return nullptr;
 }
 
 // ---- writeBack 写回左值 ----
@@ -514,16 +514,19 @@ Value Interpreter::visitUnaryOp(UnaryOp& node) {
 
     Value operand = evaluate(node.operand.get());
 
-    if (node.op == "-") {
+    switch (node.opType) {
+    case UnaryOp::UnaryOpType::UOP_NEGATE:
         if (operand.isInt()) return Value(-operand.intVal());
         if (operand.isFloat()) return Value(-operand.floatVal());
         runtimeError("一元减运算需要数值类型", node.line, node.column);
-    }
-    if (node.op == "not") {
+        break;
+    case UnaryOp::UnaryOpType::UOP_NOT:
         return Value(!operand.isTruthy());
+    default:
+        runtimeError("未知一元运算符: " + node.op, node.line, node.column);
+        break;
     }
-
-    runtimeError("未知一元运算符: " + node.op, node.line, node.column);
+    return Value::nullValue();
 }
 
 Value Interpreter::visitNumberLiteral(NumberLiteral& node) {
@@ -619,9 +622,9 @@ Value Interpreter::visitAssignment(Assignment& node) {
     Value val = evaluate(node.value.get());
 
     // 类型检查
-    std::string typeAnn = findTypeAnnotation(node.name);
-    if (!typeAnn.empty()) {
-        checkType(val, typeAnn, "赋值给 " + node.name, node.line, node.column);
+    const std::string* typeAnn = findTypeAnnotation(node.name);
+    if (typeAnn) {
+        checkType(val, *typeAnn, "赋值给 " + node.name, node.line, node.column);
     }
 
     if (!currentEnv_->set(node.name, val)) {
@@ -958,9 +961,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
         funEnv = std::make_shared<Environment>(currentEnv_);
     }
 
-    // 绑定参数
+    // 绑定参数（move 避免深拷贝）
     for (size_t i = 0; i < funDecl->params.size(); ++i) {
-        funEnv->define(funDecl->params[i], argValues[i]);
+        funEnv->define(funDecl->params[i], std::move(argValues[i]));
     }
 
     // 压入调用帧
@@ -1064,23 +1067,25 @@ Value Interpreter::visitArrayLiteral(ArrayLiteral& node) {
     checkBreak(&node);
 
     std::vector<Value> elements;
+    elements.reserve(node.elements.size());
     for (auto& elem : node.elements) {
         elements.push_back(evaluate(elem.get()));
     }
-    return Value(elements);
+    return Value(std::move(elements));
 }
 
 Value Interpreter::visitDictLiteral(DictLiteral& node) {
     checkBreak(&node);
 
     std::unordered_map<std::string, Value> dict;
+    dict.reserve(node.pairs.size());
     for (auto& pair : node.pairs) {
         Value key = evaluate(pair.first.get());
         Value val = evaluate(pair.second.get());
         // 字典的键必须是字符串
-        dict[key.toString()] = val;
+        dict[key.toString()] = std::move(val);
     }
-    return Value(dict);
+    return Value(std::move(dict));
 }
 
 Value Interpreter::visitIndexAccess(IndexAccess& node) {

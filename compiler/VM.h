@@ -141,7 +141,7 @@ private:
     VMResult runtimeError(const std::string& msg);
 
     /// 数值二元运算（枚举分发）
-    VMResult numericOp(int opType, int line);
+    VMResult numericOp(int opType);
 
     /// 通知步进回调
     void notifyStep(size_t ip, OpCode opcode);

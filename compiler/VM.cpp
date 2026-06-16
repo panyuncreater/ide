@@ -146,7 +146,7 @@ const BytecodeChunk* VM::findMethodChunk(const std::string& className,
 // 数值运算类型枚举（避免字符串比较）
 enum { OP_ADD_INT = 0, OP_SUB_INT, OP_MUL_INT, OP_DIV_INT, OP_MOD_INT };
 
-VMResult VM::numericOp(int opType, int line) {
+VMResult VM::numericOp(int opType) {
     // 使用 peek 访问栈顶避免深拷贝，然后调整栈指针
     if (stack_.size() < 2) return runtimeError("栈下溢：二元运算需要两个操作数");
 
@@ -317,7 +317,6 @@ VMResult VM::executeOneInstruction() {
     size_t& ip = frame.ip;
 
     OpCode op = static_cast<OpCode>(chunk.code[ip]);
-    int line = chunk.getLine(ip);
 
     switch (op) {
     case OpCode::OP_CONSTANT: {
@@ -375,7 +374,7 @@ VMResult VM::executeOneInstruction() {
         break;
 
     case OpCode::OP_ADD: {
-        VMResult r = numericOp(OP_ADD_INT, line);
+        VMResult r = numericOp(OP_ADD_INT);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -383,7 +382,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_SUBTRACT: {
-        VMResult r = numericOp(OP_SUB_INT, line);
+        VMResult r = numericOp(OP_SUB_INT);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -391,7 +390,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MULTIPLY: {
-        VMResult r = numericOp(OP_MUL_INT, line);
+        VMResult r = numericOp(OP_MUL_INT);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -399,7 +398,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_DIVIDE: {
-        VMResult r = numericOp(OP_DIV_INT, line);
+        VMResult r = numericOp(OP_DIV_INT);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -407,7 +406,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MODULO: {
-        VMResult r = numericOp(OP_MOD_INT, line);
+        VMResult r = numericOp(OP_MOD_INT);
         if (r != VMResult::VM_OK) return r;
         notifyStep(ip, op);
         ip += 1;
@@ -433,62 +432,74 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_EQUAL: {
-        Value right = pop();
-        Value left = pop();
-        push(Value(left.equals(right)));
+        const Value& right = stack_.back();
+        const Value& left = stack_[stack_.size() - 2];
+        bool result = left.equals(right);
+        stack_.resize(stack_.size() - 2);
+        push(Value(result));
         notifyStep(ip, op);
         ip += 1;
         break;
     }
 
     case OpCode::OP_NOT_EQUAL: {
-        Value right = pop();
-        Value left = pop();
-        push(Value(!left.equals(right)));
+        const Value& right = stack_.back();
+        const Value& left = stack_[stack_.size() - 2];
+        bool result = !left.equals(right);
+        stack_.resize(stack_.size() - 2);
+        push(Value(result));
         notifyStep(ip, op);
         ip += 1;
         break;
     }
 
     case OpCode::OP_LESS: {
-        Value right = pop();
-        Value left = pop();
+        const Value& right = stack_.back();
+        const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
-        push(Value(left.toDouble() < right.toDouble()));
+        bool result = left.toDouble() < right.toDouble();
+        stack_.resize(stack_.size() - 2);
+        push(Value(result));
         notifyStep(ip, op);
         ip += 1;
         break;
     }
 
     case OpCode::OP_GREATER: {
-        Value right = pop();
-        Value left = pop();
+        const Value& right = stack_.back();
+        const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
-        push(Value(left.toDouble() > right.toDouble()));
+        bool result = left.toDouble() > right.toDouble();
+        stack_.resize(stack_.size() - 2);
+        push(Value(result));
         notifyStep(ip, op);
         ip += 1;
         break;
     }
 
     case OpCode::OP_LESS_EQUAL: {
-        Value right = pop();
-        Value left = pop();
+        const Value& right = stack_.back();
+        const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
-        push(Value(left.toDouble() <= right.toDouble()));
+        bool result = left.toDouble() <= right.toDouble();
+        stack_.resize(stack_.size() - 2);
+        push(Value(result));
         notifyStep(ip, op);
         ip += 1;
         break;
     }
 
     case OpCode::OP_GREATER_EQUAL: {
-        Value right = pop();
-        Value left = pop();
+        const Value& right = stack_.back();
+        const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
-        push(Value(left.toDouble() >= right.toDouble()));
+        bool result = left.toDouble() >= right.toDouble();
+        stack_.resize(stack_.size() - 2);
+        push(Value(result));
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -692,12 +703,10 @@ VMResult VM::executeOneInstruction() {
                 VMClassInfo& cls = classIt->second;
 
                 // 收集参数
-                std::vector<Value> args;
-                args.reserve(argCount);
-                for (uint8_t i = 0; i < argCount; ++i) {
-                    args.push_back(pop());
+                std::vector<Value> args(argCount);
+                for (int i = argCount - 1; i >= 0; --i) {
+                    args[i] = pop();
                 }
-                std::reverse(args.begin(), args.end());
 
                 // 创建新实例
                 Value instance = Value::makeInstance(cls.name);
@@ -1029,10 +1038,8 @@ VMResult VM::executeOneInstruction() {
 
         // ---- 数组内置方法 ----
         if (obj.isArray()) {
-            std::vector<Value> args;
-            args.reserve(argCount);
-            for (uint8_t i = 0; i < argCount; ++i) args.push_back(pop());
-            std::reverse(args.begin(), args.end());
+            std::vector<Value> args(argCount);
+            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
             pop();  // 移除接收者
 
             Value result = Value::nullValue();
@@ -1106,10 +1113,8 @@ VMResult VM::executeOneInstruction() {
 
         // ---- 字典内置方法 ----
         if (obj.isDict()) {
-            std::vector<Value> args;
-            args.reserve(argCount);
-            for (uint8_t i = 0; i < argCount; ++i) args.push_back(pop());
-            std::reverse(args.begin(), args.end());
+            std::vector<Value> args(argCount);
+            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
             pop();
 
             Value result = Value::nullValue();
@@ -1164,10 +1169,8 @@ VMResult VM::executeOneInstruction() {
 
         // ---- 字符串内置方法 ----
         if (obj.isString()) {
-            std::vector<Value> args;
-            args.reserve(argCount);
-            for (uint8_t i = 0; i < argCount; ++i) args.push_back(pop());
-            std::reverse(args.begin(), args.end());
+            std::vector<Value> args(argCount);
+            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
             pop();
 
             Value result = Value::nullValue();
@@ -1228,14 +1231,11 @@ VMResult VM::executeOneInstruction() {
                     return runtimeError("调用栈溢出");
                 }
 
-                // 收集参数，重新排列栈
-                std::vector<Value> args;
-                args.reserve(argCount);
-                for (uint8_t i = 0; i < argCount; ++i) {
-                    args.push_back(pop());
+                // 收集参数（反向填充，省去 reverse）
+                std::vector<Value> args(argCount);
+                for (int i = argCount - 1; i >= 0; --i) {
+                    args[i] = pop();
                 }
-                // 栈是后进先出，需要反转参数顺序
-                std::reverse(args.begin(), args.end());
                 pop();  // 移除栈上的原始实例
 
                 // 推入 this（拷贝，方法内修改会被 writeBack 写回）
@@ -1359,13 +1359,11 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& className = chunk.constants[idx].stringVal();
 
-        // 收集参数
-        std::vector<Value> args;
-        args.reserve(argCount);
-        for (uint8_t i = 0; i < argCount; ++i) {
-            args.push_back(pop());
+        // 收集参数（反向填充，省去 reverse）
+        std::vector<Value> args(argCount);
+        for (int i = argCount - 1; i >= 0; --i) {
+            args[i] = pop();
         }
-        std::reverse(args.begin(), args.end());
 
         // 查找类信息
         auto classIt = classInfo_.find(className);

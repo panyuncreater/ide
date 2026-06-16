@@ -116,12 +116,21 @@ private:
 /// 一元运算节点
 class UnaryOp : public ASTNode {
 public:
+    enum class UnaryOpType { UOP_NEGATE, UOP_NOT, UOP_UNKNOWN };
+
     std::string op;                         // 运算符
+    UnaryOpType opType;                     // 运算符类型（编译时确定，消除运行时字符串比较）
     std::unique_ptr<ASTNode> operand;        // 操作数
+
+    static UnaryOpType classifyOp(const std::string& op) {
+        if (op == "-")   return UnaryOpType::UOP_NEGATE;
+        if (op == "not") return UnaryOpType::UOP_NOT;
+        return UnaryOpType::UOP_UNKNOWN;
+    }
 
     UnaryOp(const std::string& oper, std::unique_ptr<ASTNode> o,
             int ln = 0, int col = 0)
-        : ASTNode(ln, col), op(oper), operand(std::move(o)) { nodeType = NodeType::NODE_UNARY_OP; }
+        : ASTNode(ln, col), op(oper), opType(classifyOp(oper)), operand(std::move(o)) { nodeType = NodeType::NODE_UNARY_OP; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "UnaryOp(" + op + ")"; }

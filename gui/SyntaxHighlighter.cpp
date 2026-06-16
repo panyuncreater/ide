@@ -66,26 +66,15 @@ void SyntaxHighlighter::initRules() {
     falseRule.format = boolFormat_;
     rules_.push_back(falseRule);
 
-    // null 关键字
-    HighlightRule nullRule;
-    nullRule.pattern = QRegularExpression("\\bnull\\b");
-    nullRule.format = keywordFormat_;
-    rules_.push_back(nullRule);
+    // null 关键字 — 合并到下面的关键字正则中
 
-    // 关键字（含新增关键字）
-    QStringList keywordPatterns = {
-        "\\bvar\\b", "\\bfun\\b", "\\bfunction\\b", "\\bfunc\\b", "\\bif\\b", "\\belse\\b",
-        "\\bwhile\\b", "\\bfor\\b", "\\breturn\\b", "\\bprint\\b",
-        "\\band\\b", "\\bor\\b", "\\bnot\\b",
-        "\\bint\\b", "\\bfloat\\b", "\\bbool\\b", "\\bstring\\b",
-        "\\bclass\\b", "\\bextends\\b", "\\bdict\\b", "\\barray\\b"
-    };
-    for (const auto& pattern : keywordPatterns) {
-        HighlightRule rule;
-        rule.pattern = QRegularExpression(pattern);
-        rule.format = keywordFormat_;
-        rules_.push_back(rule);
-    }
+    // 关键字（含 null）：合并为单个交替正则，减少正则匹配次数
+    HighlightRule keywordRule;
+    keywordRule.pattern = QRegularExpression(
+        "\\b(?:var|fun|function|func|if|else|while|for|return|print"
+        "|and|or|not|int|float|bool|string|class|extends|dict|array|null)\\b");
+    keywordRule.format = keywordFormat_;
+    rules_.push_back(keywordRule);
 
     // 运算符（含新增分隔符）
     HighlightRule opRule;
