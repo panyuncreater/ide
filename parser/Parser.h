@@ -40,7 +40,7 @@ public:
     const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
 
 private:
-    std::vector<Token> tokens_;     // Token 流
+    const std::vector<Token>* tokens_ = nullptr;  // Token 流（引用，避免深拷贝）
     int current_ = 0;               // 当前位置
     std::vector<ParseError> errors_; // 收集的解析错误
     DiagnosticBag diagnostics_;      // 诊断收集器

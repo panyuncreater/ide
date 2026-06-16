@@ -1,6 +1,9 @@
 #include "gui/SyntaxHighlighter.h"
 #include <QStringList>
 
+// 静态成员定义：注释正则（全局共享，避免每次 highlightBlock 重建）
+QRegularExpression SyntaxHighlighter::commentRegex_("//[^\n]*");
+
 // ============================================================
 // SyntaxHighlighter 语法高亮器实现
 // ============================================================
@@ -93,8 +96,7 @@ void SyntaxHighlighter::initRules() {
 
 void SyntaxHighlighter::highlightBlock(const QString& text) {
     // 先处理注释（注释优先级最高，注释内的关键字不应高亮）
-    QRegularExpression commentRegex("//[^\n]*");
-    QRegularExpressionMatch commentMatch = commentRegex.match(text);
+    QRegularExpressionMatch commentMatch = commentRegex_.match(text);
     if (commentMatch.hasMatch()) {
         // 注释前的部分正常高亮
         QString beforeComment = text.left(commentMatch.capturedStart());

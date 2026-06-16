@@ -35,6 +35,8 @@ private:
     QTextCharFormat operatorFormat_;    // 运算符：紫色
     QTextCharFormat boolFormat_;        // 布尔值：蓝色
 
+    static QRegularExpression commentRegex_;  // 注释正则（全局共享，避免每次 highlightBlock 重建）
+
     /// 初始化高亮规则
     void initRules();
 };

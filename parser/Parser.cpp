@@ -8,7 +8,7 @@
 Parser::Parser() {}
 
 std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
-    tokens_ = tokens;
+    tokens_ = &tokens;  // 存储指针，避免深拷贝整个 token 流
     current_ = 0;
     errors_.clear();
     diagnostics_.clear();
@@ -40,11 +40,11 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
 // ---- 辅助方法 ----
 
 const Token& Parser::peek() const {
-    return tokens_[current_];
+    return (*tokens_)[current_];
 }
 
 const Token& Parser::previous() const {
-    return tokens_[current_ - 1];
+    return (*tokens_)[current_ - 1];
 }
 
 bool Parser::isAtEnd() const {
@@ -62,8 +62,8 @@ bool Parser::check(TokenType type) const {
 }
 
 bool Parser::checkNext(TokenType type) const {
-    if (current_ + 1 >= (int)tokens_.size()) return false;
-    return tokens_[current_ + 1].type == type;
+    if (current_ + 1 >= (int)tokens_->size()) return false;
+    return (*tokens_)[current_ + 1].type == type;
 }
 
 bool Parser::match(std::initializer_list<TokenType> types) {

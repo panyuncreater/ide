@@ -67,21 +67,49 @@ public:
     virtual std::vector<ASTNode*> children() const = 0;
 };
 
+/// 二元运算符类型枚举（缓存字符串→枚举映射，避免运行时字符串比较）
+enum class BinOpType {
+    BIN_AND, BIN_OR,
+    BIN_EQ, BIN_NEQ, BIN_LT, BIN_GT, BIN_LTE, BIN_GTE,
+    BIN_ADD, BIN_SUB, BIN_MUL, BIN_DIV, BIN_MOD,
+    BIN_UNKNOWN
+};
+
 /// 二元运算节点
 class BinaryOp : public ASTNode {
 public:
     std::string op;                         // 运算符
+    BinOpType opType;                       // 运算符枚举（构造时一次性计算）
     std::unique_ptr<ASTNode> left;          // 左操作数
     std::unique_ptr<ASTNode> right;         // 右操作数
 
     BinaryOp(const std::string& oper, std::unique_ptr<ASTNode> l,
              std::unique_ptr<ASTNode> r, int ln = 0, int col = 0)
-        : ASTNode(ln, col), op(oper), left(std::move(l)), right(std::move(r)) { nodeType = NodeType::NODE_BINARY_OP; }
+        : ASTNode(ln, col), op(oper), opType(classifyOp(oper)),
+          left(std::move(l)), right(std::move(r)) { nodeType = NodeType::NODE_BINARY_OP; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "BinaryOp(" + op + ")"; }
     std::vector<ASTNode*> children() const override {
         return { left.get(), right.get() };
+    }
+
+private:
+    static BinOpType classifyOp(const std::string& op) {
+        if (op == "and") return BinOpType::BIN_AND;
+        if (op == "or")  return BinOpType::BIN_OR;
+        if (op == "==")  return BinOpType::BIN_EQ;
+        if (op == "!=")  return BinOpType::BIN_NEQ;
+        if (op == "<")   return BinOpType::BIN_LT;
+        if (op == ">")   return BinOpType::BIN_GT;
+        if (op == "<=")  return BinOpType::BIN_LTE;
+        if (op == ">=")  return BinOpType::BIN_GTE;
+        if (op == "+")   return BinOpType::BIN_ADD;
+        if (op == "-")   return BinOpType::BIN_SUB;
+        if (op == "*")   return BinOpType::BIN_MUL;
+        if (op == "/")   return BinOpType::BIN_DIV;
+        if (op == "%")   return BinOpType::BIN_MOD;
+        return BinOpType::BIN_UNKNOWN;
     }
 };
 

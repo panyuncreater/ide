@@ -133,6 +133,7 @@ private:
 
     /// 栈操作
     void push(const Value& val);
+    void push(Value&& val);
     Value pop();
     Value peek(size_t distance = 0) const;
 

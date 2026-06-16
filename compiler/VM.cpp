@@ -22,13 +22,21 @@ void VM::push(const Value& val) {
     stack_.push_back(val);
 }
 
+void VM::push(Value&& val) {
+    if (stack_.size() >= MAX_STACK_SIZE) {
+        runtimeError("栈溢出");
+        return;
+    }
+    stack_.push_back(std::move(val));
+}
+
 Value VM::pop() {
     if (stack_.empty()) {
         runtimeError("栈下溢");
         hasError_ = true;  // 栈下溢视为不可恢复错误
         return Value::nullValue();
     }
-    Value val = stack_.back();
+    Value val = std::move(stack_.back());
     stack_.pop_back();
     return val;
 }
@@ -203,6 +211,7 @@ VMResult VM::numericOp(int opType, int line) {
 
 void VM::initExecution(const CompileResult& result) {
     stack_.clear();
+    stack_.reserve(256);  // 预分配栈空间，避免频繁 realloc
     globals_.clear();
     lastError_.clear();
     hasError_ = false;

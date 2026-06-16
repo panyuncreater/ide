@@ -31,8 +31,8 @@ class ReturnException : public std::runtime_error {
 public:
     Value returnValue;
 
-    ReturnException(const Value& val)
-        : std::runtime_error("return"), returnValue(val) {}
+    ReturnException(Value val)
+        : std::runtime_error("return"), returnValue(std::move(val)) {}
 };
 
 /// 调试终止异常（用户点击停止按钮时抛出）

@@ -60,13 +60,21 @@ public:
     }
 
     /// 设置变量值（沿作用域链查找并更新）
+    /// 优化路径：先查本地 O(1)，再用深度缓存跳过已知的中间作用域
     bool set(const std::string& name, const Value& val) {
+        // 快速路径：当前作用域直接命中
         auto it = variables.find(name);
         if (it != variables.end()) {
             it->second = val;
             return true;
         }
         if (parent) {
+            // 检查深度缓存是否有效
+            auto cacheIt = depthCache_.find(name);
+            if (cacheIt != depthCache_.end() && cacheIt->second.generation == sGeneration) {
+                // 缓存命中：直接跳到目标深度
+                return setAtDepth(name, val, cacheIt->second.depth);
+            }
             return parent->set(name, val);
         }
         return false;   // 变量不存在
@@ -128,6 +136,23 @@ private:
         }
         // 缓存过期（变量被遮蔽），回退到正常遍历
         return parent ? parent->get(name) : Value::nullValue();
+    }
+
+    /// 在指定深度设置变量（depth=1 表示直接父级）
+    bool setAtDepth(const std::string& name, const Value& val, int depth) {
+        Environment* env = this;
+        for (int i = 0; i < depth && env; ++i) {
+            env = env->parent.get();
+        }
+        if (env) {
+            auto it = env->variables.find(name);
+            if (it != env->variables.end()) {
+                it->second = val;
+                return true;
+            }
+        }
+        // 缓存过期（变量被遮蔽），回退到正常遍历
+        return parent ? parent->set(name, val) : false;
     }
 
     /// 带深度记录的查找（返回时 depth 为变量所在深度，-1 表示未找到）

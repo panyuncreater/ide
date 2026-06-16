@@ -447,51 +447,71 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
 Value Interpreter::visitBinaryOp(BinaryOp& node) {
     checkBreak(&node);
 
-    // 短路求值：and
-    if (node.op == "and") {
+    // 使用预计算的枚举类型进行快速分发（避免运行时字符串比较）
+    switch (node.opType) {
+    case BinOpType::BIN_AND: {
         Value left = evaluate(node.left.get());
         if (!left.isTruthy()) return Value(false);
         Value right = evaluate(node.right.get());
         return Value(right.isTruthy());
     }
-
-    // 短路求值：or
-    if (node.op == "or") {
+    case BinOpType::BIN_OR: {
         Value left = evaluate(node.left.get());
         if (left.isTruthy()) return Value(true);
         Value right = evaluate(node.right.get());
         return Value(right.isTruthy());
     }
-
-    Value left = evaluate(node.left.get());
-    Value right = evaluate(node.right.get());
-
-    // 比较运算
-    if (node.op == "==") return Value(left.equals(right));
-    if (node.op == "!=") return Value(!left.equals(right));
-    if (node.op == "<") {
+    case BinOpType::BIN_EQ: {
+        Value left = evaluate(node.left.get());
+        Value right = evaluate(node.right.get());
+        return Value(left.equals(right));
+    }
+    case BinOpType::BIN_NEQ: {
+        Value left = evaluate(node.left.get());
+        Value right = evaluate(node.right.get());
+        return Value(!left.equals(right));
+    }
+    case BinOpType::BIN_LT: {
+        Value left = evaluate(node.left.get());
+        Value right = evaluate(node.right.get());
         if (!left.isNumber() || !right.isNumber())
             runtimeError("比较运算需要数值类型", node.line, node.column);
         return Value(left.toDouble() < right.toDouble());
     }
-    if (node.op == ">") {
+    case BinOpType::BIN_GT: {
+        Value left = evaluate(node.left.get());
+        Value right = evaluate(node.right.get());
         if (!left.isNumber() || !right.isNumber())
             runtimeError("比较运算需要数值类型", node.line, node.column);
         return Value(left.toDouble() > right.toDouble());
     }
-    if (node.op == "<=") {
+    case BinOpType::BIN_LTE: {
+        Value left = evaluate(node.left.get());
+        Value right = evaluate(node.right.get());
         if (!left.isNumber() || !right.isNumber())
             runtimeError("比较运算需要数值类型", node.line, node.column);
         return Value(left.toDouble() <= right.toDouble());
     }
-    if (node.op == ">=") {
+    case BinOpType::BIN_GTE: {
+        Value left = evaluate(node.left.get());
+        Value right = evaluate(node.right.get());
         if (!left.isNumber() || !right.isNumber())
             runtimeError("比较运算需要数值类型", node.line, node.column);
         return Value(left.toDouble() >= right.toDouble());
     }
-
-    // 算术运算
-    return numericBinaryOp(node.op, left, right, node.line, node.column);
+    case BinOpType::BIN_ADD:
+    case BinOpType::BIN_SUB:
+    case BinOpType::BIN_MUL:
+    case BinOpType::BIN_DIV:
+    case BinOpType::BIN_MOD: {
+        Value left = evaluate(node.left.get());
+        Value right = evaluate(node.right.get());
+        return numericBinaryOp(node.op, left, right, node.line, node.column);
+    }
+    default:
+        runtimeError("未知运算符: " + node.op, node.line, node.column);
+        return Value::nullValue();
+    }
 }
 
 Value Interpreter::visitUnaryOp(UnaryOp& node) {
@@ -618,10 +638,14 @@ Value Interpreter::visitAssignment(Assignment& node) {
 Value Interpreter::visitVarRef(VarRef& node) {
     checkBreak(&node);
 
-    if (!currentEnv_->hasVariable(node.name)) {
+    // 优化：单次 get() 调用代替 hasVariable() + get() 双重作用域链遍历
+    // get() 对未定义变量返回 null，而已定义变量的值不会是 null
+    // （null 字面量绑定到变量时 get() 返回 null，isNull() 为 true，但此时变量是已定义的）
+    Value val = currentEnv_->get(node.name);
+    if (val.isNull() && !currentEnv_->hasVariable(node.name)) {
         runtimeError("未定义的变量: " + node.name, node.line, node.column);
     }
-    return currentEnv_->get(node.name);
+    return val;
 }
 
 Value Interpreter::visitIfStmt(IfStmt& node) {
@@ -967,7 +991,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
         // 执行函数体
         result = evaluate(funDecl->body.get());
     } catch (const ReturnException& e) {
-        result = e.returnValue;
+        result = std::move(const_cast<ReturnException&>(e).returnValue);
     } catch (...) {
         // 运行时错误：先恢复调用状态，再重抛
         currentEnv_ = prevEnv;
@@ -999,7 +1023,7 @@ Value Interpreter::visitReturnStmt(ReturnStmt& node) {
         checkType(val, currentFunctionReturnType_, "返回值", node.line, node.column);
     }
 
-    throw ReturnException(val);
+    throw ReturnException(std::move(val));
 }
 
 Value Interpreter::visitPrintStmt(PrintStmt& node) {
@@ -1402,7 +1426,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 try {
                     result = evaluate(method->body.get());
                 } catch (const ReturnException& e) {
-                    result = e.returnValue;
+                    result = std::move(const_cast<ReturnException&>(e).returnValue);
                 } catch (...) {
                     // 运行时错误：先恢复调用状态，再重抛
                     currentEnv_ = prevEnv;
