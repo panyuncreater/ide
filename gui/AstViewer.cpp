@@ -43,6 +43,7 @@ void AstViewer::setAst(ASTNode* root) {
 
 void AstViewer::clearAst() {
     scene_->clear();
+    sizeCache_.clear();
 }
 
 void AstViewer::wheelEvent(QWheelEvent* event) {
@@ -53,35 +54,6 @@ void AstViewer::wheelEvent(QWheelEvent* event) {
         scale(1.0 / factor, 1.0 / factor);
     }
     event->accept();
-}
-
-AstViewer::SubtreeInfo AstViewer::computeSubtreeSize(ASTNode* node) {
-    if (!node) return {0, 0};
-
-    auto children = node->children();
-
-    if (children.empty()) {
-        // 叶节点
-        return {NODE_WIDTH, NODE_HEIGHT};
-    }
-
-    // 计算所有子树的宽度之和
-    double totalChildWidth = 0;
-    double maxChildHeight = 0;
-
-    for (ASTNode* child : children) {
-        SubtreeInfo childInfo = computeSubtreeSize(child);
-        totalChildWidth += childInfo.width;
-        maxChildHeight = std::max(maxChildHeight, childInfo.height);
-    }
-
-    // 加上子树之间的间距
-    totalChildWidth += H_SPACING * (children.size() - 1);
-
-    double width = std::max(static_cast<double>(NODE_WIDTH), totalChildWidth);
-    double height = NODE_HEIGHT + V_SPACING + maxChildHeight;
-
-    return {width, height};
 }
 
 void AstViewer::precomputeSubtreeSizes(ASTNode* node) {

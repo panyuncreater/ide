@@ -419,7 +419,10 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_NEGATE: {
         Value val = pop();
-        if (val.isInt()) push(Value(-val.intVal()));
+        if (val.isInt()) {
+            if (val.intVal() == INT64_MIN) return runtimeError("整数溢出：无法对最小值取负");
+            push(Value(-val.intVal()));
+        }
         else if (val.isFloat()) push(Value(-val.floatVal()));
         else return runtimeError("一元减运算需要数值类型");
         notifyStep(ip, op);
@@ -436,6 +439,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_EQUAL: {
+        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         bool result = left.equals(right);
@@ -447,6 +451,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_NOT_EQUAL: {
+        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         bool result = !left.equals(right);
@@ -458,6 +463,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_LESS: {
+        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
@@ -471,6 +477,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_GREATER: {
+        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
@@ -484,6 +491,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_LESS_EQUAL: {
+        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
@@ -497,6 +505,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_GREATER_EQUAL: {
+        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         if (!left.isNumber() || !right.isNumber())
@@ -859,9 +868,9 @@ VMResult VM::executeOneInstruction() {
         Value idx = pop();
         Value obj = pop();
         if (obj.isArray() && idx.isInt()) {
-            int i = idx.intVal();
-            if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
-                push(obj.arrayVal()[i]);
+            int64_t i = idx.intVal();
+            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                push(obj.arrayVal()[static_cast<size_t>(i)]);
             } else {
                 return runtimeError("数组索引越界: " + std::to_string(i) + " (长度: " + std::to_string(obj.arrayVal().size()) + ")");
             }
@@ -904,9 +913,9 @@ VMResult VM::executeOneInstruction() {
         if (it != globals_.end()) {
             Value& obj = it->second;  // 引用，直接修改
             if (obj.isArray() && index.isInt()) {
-                int i = index.intVal();
-                if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
-                    obj.arrayVal()[i] = val;
+                int64_t i = index.intVal();
+                if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                    obj.arrayVal()[static_cast<size_t>(i)] = val;
                 }
             } else if (obj.isDict() && index.isString()) {
                 obj.dictVal()[index.stringVal()] = val;
@@ -926,9 +935,9 @@ VMResult VM::executeOneInstruction() {
         if (bp + slot < stack_.size()) {
             Value& obj = stack_[bp + slot];  // 栈引用，直接修改
             if (obj.isArray() && index.isInt()) {
-                int i = index.intVal();
-                if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
-                    obj.arrayVal()[i] = val;
+                int64_t i = index.intVal();
+                if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                    obj.arrayVal()[static_cast<size_t>(i)] = val;
                 }
             } else if (obj.isDict() && index.isString()) {
                 obj.dictVal()[index.stringVal()] = val;
@@ -1064,14 +1073,14 @@ VMResult VM::executeOneInstruction() {
                 obj.arrayVal().pop_back();
                 mutated = true;
             } else if (methodName == "len") {
-                result = Value(static_cast<int>(obj.arrayVal().size()));
+                result = Value(static_cast<int64_t>(obj.arrayVal().size()));
             } else if (methodName == "remove") {
                 if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
                 if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
-                int ri = args[0].intVal();
+                int64_t ri = args[0].intVal();
                 if (ri < 0 || static_cast<size_t>(ri) >= obj.arrayVal().size())
                     return runtimeError("数组索引越界: " + std::to_string(ri));
-                obj.arrayVal().erase(obj.arrayVal().begin() + ri);
+                obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(ri));
                 mutated = true;
             } else if (methodName == "contains") {
                 if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
@@ -1130,7 +1139,7 @@ VMResult VM::executeOneInstruction() {
             bool mutated = false;
 
             if (methodName == "len") {
-                result = Value(static_cast<int>(obj.dictVal().size()));
+                result = Value(static_cast<int64_t>(obj.dictVal().size()));
             } else if (methodName == "keys") {
                 std::vector<Value> keys;
                 for (const auto& kv : obj.dictVal()) keys.push_back(Value(kv.first));
@@ -1185,7 +1194,7 @@ VMResult VM::executeOneInstruction() {
             Value result = Value::nullValue();
 
             if (methodName == "len") {
-                result = Value(static_cast<int>(obj.stringVal().size()));
+                result = Value(static_cast<int64_t>(obj.stringVal().size()));
             } else if (methodName == "upper") {
                 std::string s = obj.stringVal();
                 for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -1622,9 +1631,9 @@ VMResult VM::executeOneInstruction() {
             if (it != globals_.end()) {
                 Value& obj = it->second;
                 if (obj.isArray() && index.isInt()) {
-                    int i = index.intVal();
-                    if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
-                        obj.arrayVal()[i] = lastMutatedReceiver_;
+                    int64_t i = index.intVal();
+                    if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                        obj.arrayVal()[static_cast<size_t>(i)] = lastMutatedReceiver_;
                     }
                 } else if (obj.isDict() && index.isString()) {
                     obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;
@@ -1645,9 +1654,9 @@ VMResult VM::executeOneInstruction() {
         if (bp + slot < stack_.size()) {
             Value& obj = stack_[bp + slot];
             if (obj.isArray() && index.isInt()) {
-                int i = index.intVal();
-                if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
-                    obj.arrayVal()[i] = lastMutatedReceiver_;
+                int64_t i = index.intVal();
+                if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                    obj.arrayVal()[static_cast<size_t>(i)] = lastMutatedReceiver_;
                 }
             } else if (obj.isDict() && index.isString()) {
                 obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;

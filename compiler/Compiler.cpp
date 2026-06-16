@@ -640,11 +640,13 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         BytecodeChunk savedChunk = std::move(chunk_);
         std::unordered_map<std::string, uint16_t> savedVarIndex = std::move(varIndex_);
         std::unordered_map<std::string, int> savedLocals = std::move(currentLocals_);
+        std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
         bool savedInFunction = inFunction_;
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
         varIndex_.clear();
         currentLocals_.clear();
+        outerLocals_.clear();
         inFunction_ = true;
 
         // 局部变量映射：slot 0 = this，slot 1..N = 字段（含继承字段），slot N+1.. = 参数
@@ -675,6 +677,7 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         chunk_ = std::move(savedChunk);
         varIndex_ = std::move(savedVarIndex);
         currentLocals_ = std::move(savedLocals);
+        outerLocals_ = std::move(savedOuterLocals);
         inFunction_ = savedInFunction;
     }
 

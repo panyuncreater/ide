@@ -46,9 +46,6 @@ private:
         double height = 0;
     };
 
-    /// 递归计算子树宽度
-    SubtreeInfo computeSubtreeSize(ASTNode* node);
-
     /// 单次遍历预计算所有子树尺寸，填充 sizeCache_
     void precomputeSubtreeSizes(ASTNode* node);
 

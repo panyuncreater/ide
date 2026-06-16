@@ -312,6 +312,7 @@ public:
         case ValueType::VAL_FLOAT: {
             char buf[64];
             int len = snprintf(buf, sizeof(buf), "%g", floatVal());
+            if (len < 0) return "nan";
             return std::string(buf, len);
         }
         case ValueType::VAL_BOOL:
