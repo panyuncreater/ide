@@ -128,9 +128,13 @@ const BytecodeChunk& VM::currentChunk() {
 const BytecodeChunk* VM::findMethodChunk(const std::string& className,
                                          const std::string& methodName) const {
     std::string cur = className;
+    // 复用 buffer 避免每次查找都分配新字符串
+    std::string methodKey;
+    methodKey.reserve(cur.size() + 1 + methodName.size());
     // 沿继承链向上查找，防止循环继承（超过 256 层视为异常）
     for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
-        std::string methodKey = cur + "." + methodName;
+        methodKey.clear();
+        methodKey.append(cur).append(1, '.').append(methodName);
         auto it = functionChunks_.find(methodKey);
         if (it != functionChunks_.end()) {
             return &it->second;
@@ -530,7 +534,7 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
-        globals_[name] = val;
+        globals_[name] = std::move(val);
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -556,9 +560,7 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
-        globals_[name] = val;
-        // 不推入值：赋值是语句而非表达式，不返回值
-        // 与 OP_SET_LOCAL 语义一致（SET_LOCAL 用 peek 不 pop 也不 push）
+        globals_[name] = std::move(val);
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -593,22 +595,29 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_RETURN: {
         Value result = pop();
-        VMCallFrame retFrame = frames_.back();
+        // 提取标量字段 + move 字符串，避免拷贝整个 VMCallFrame（含 2 个 std::string）
+        const size_t savedBp = frames_.back().basePointer;
+        const size_t savedReturnIp = frames_.back().returnIp;
+        const bool wasMethodCall = frames_.back().isMethodCall;
+        const bool wasInitCall = frames_.back().isInitCall;
+        const int recvLocalSlot = frames_.back().receiverLocalSlot;
+        const BytecodeChunk* retChunk = frames_.back().chunk;
+        std::string recvVarName = std::move(frames_.back().receiverVarName);
         // 在 pop_back 之前保存 ip 值，避免悬空引用
         size_t savedIp = ip;
         frames_.pop_back();
 
         // 方法调用字段同步：将方法内修改的字段槽（bp+1..N）同步回 this（bp）
         // 对所有 isMethodCall 都执行，不受 receiverVarName 限制
-        if (retFrame.isMethodCall && retFrame.basePointer < stack_.size()) {
-            Value& modifiedThis = stack_[retFrame.basePointer];
+        if (wasMethodCall && savedBp < stack_.size()) {
+            Value& modifiedThis = stack_[savedBp];
 
             // 先把方法内的字段槽（bp+1..N）同步回 this
-            if (modifiedThis.isInstance() && retFrame.chunk && !retFrame.chunk->fieldOrder.empty()) {
-                for (size_t fi = 0; fi < retFrame.chunk->fieldOrder.size(); ++fi) {
-                    size_t pos = retFrame.basePointer + 1 + fi;
+            if (modifiedThis.isInstance() && retChunk && !retChunk->fieldOrder.empty()) {
+                for (size_t fi = 0; fi < retChunk->fieldOrder.size(); ++fi) {
+                    size_t pos = savedBp + 1 + fi;
                     if (pos < stack_.size()) {
-                        modifiedThis.fields()[retFrame.chunk->fieldOrder[fi]] = stack_[pos];
+                        modifiedThis.fields()[retChunk->fieldOrder[fi]] = stack_[pos];
                     }
                 }
             }
@@ -619,8 +628,8 @@ VMResult VM::executeOneInstruction() {
                 size_t callerBp = callerFrame.basePointer;
 
                 // 路径 A：接收者是全局变量 → 写回 globals_
-                if (!retFrame.receiverVarName.empty() && modifiedThis.isInstance()) {
-                    auto it = globals_.find(retFrame.receiverVarName);
+                if (!recvVarName.empty() && modifiedThis.isInstance()) {
+                    auto it = globals_.find(recvVarName);
                     if (it != globals_.end() && it->second.isInstance()) {
                         for (auto& field : modifiedThis.fields()) {
                             it->second.fields()[field.first] = field.second;
@@ -629,11 +638,11 @@ VMResult VM::executeOneInstruction() {
                 }
 
                 // 路径 B：接收者是调用者帧中的局部变量 → 写回栈帧
-                if (retFrame.receiverLocalSlot >= 0 &&
-                    callerBp + retFrame.receiverLocalSlot < stack_.size()) {
-                    size_t receiverPos = callerBp + retFrame.receiverLocalSlot;
+                if (recvLocalSlot >= 0 &&
+                    callerBp + recvLocalSlot < stack_.size()) {
+                    size_t receiverPos = callerBp + recvLocalSlot;
 
-                    if (retFrame.receiverLocalSlot == 0) {
+                    if (recvLocalSlot == 0) {
                         // 接收者是调用者的 this（slot 0）：同步所有字段和字段槽
                         if (stack_[callerBp].isInstance()) {
                             for (auto& field : modifiedThis.fields()) {
@@ -659,8 +668,8 @@ VMResult VM::executeOneInstruction() {
 
                         // 如果接收者是调用者 this 的字段（slot 1..N），也更新 this.fields()
                         if (stack_[callerBp].isInstance() && callerFrame.chunk &&
-                            retFrame.receiverLocalSlot <= static_cast<int>(callerFrame.chunk->fieldOrder.size())) {
-                            const std::string& fieldName = callerFrame.chunk->fieldOrder[retFrame.receiverLocalSlot - 1];
+                            recvLocalSlot <= static_cast<int>(callerFrame.chunk->fieldOrder.size())) {
+                            const std::string& fieldName = callerFrame.chunk->fieldOrder[recvLocalSlot - 1];
                             stack_[callerBp].fields()[fieldName] = modifiedThis;
                         }
                     }
@@ -669,9 +678,9 @@ VMResult VM::executeOneInstruction() {
         }
 
         // init 方法返回 this 实例而非 null（在字段同步之后读取）
-        if (retFrame.isInitCall) {
-            if (retFrame.basePointer < stack_.size()) {
-                result = stack_[retFrame.basePointer];
+        if (wasInitCall) {
+            if (savedBp < stack_.size()) {
+                result = stack_[savedBp];
             }
         }
 
@@ -681,10 +690,10 @@ VMResult VM::executeOneInstruction() {
             return VMResult::VM_OK;
         }
         // 恢复栈：清理当前帧的局部变量和参数
-        stack_.resize(retFrame.basePointer);
+        stack_.resize(savedBp);
         push(result);
         // 恢复 ip
-        currentFrame().ip = retFrame.returnIp;
+        currentFrame().ip = savedReturnIp;
         notifyStep(savedIp, op);
         break;
     }

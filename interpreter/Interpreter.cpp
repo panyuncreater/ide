@@ -781,6 +781,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
         // 求值参数
         std::vector<Value> argValues;
+        argValues.reserve(node.arguments.size());
         for (auto& arg : node.arguments) {
             argValues.push_back(evaluate(arg.get()));
         }
@@ -940,6 +941,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
     // 求值参数
     std::vector<Value> argValues;
+    argValues.reserve(node.arguments.size());
     for (auto& arg : node.arguments) {
         argValues.push_back(evaluate(arg.get()));
     }
@@ -1228,6 +1230,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
     if (obj.isArray()) {
         // 求值参数
         std::vector<Value> argValues;
+        argValues.reserve(node.arguments.size());
         for (auto& arg : node.arguments) {
             argValues.push_back(evaluate(arg.get()));
         }
@@ -1273,11 +1276,12 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (node.methodName == "join") {
             std::string sep = argValues.empty() ? "" : argValues[0].toString();
             std::string result;
-            for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
+            const auto& arr = obj.arrayVal();
+            for (size_t i = 0; i < arr.size(); ++i) {
                 if (i > 0) result += sep;
-                result += obj.arrayVal()[i].toString();
+                result += arr[i].toString();
             }
-            return Value(result);
+            return Value(std::move(result));
         }
         runtimeError("数组没有方法 " + node.methodName, node.line, node.column);
     }
@@ -1297,14 +1301,14 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             for (const auto& kv : obj.dictVal()) {
                 keys.push_back(Value(kv.first));
             }
-            return Value(keys);
+            return Value(std::move(keys));
         }
         if (node.methodName == "values") {
             std::vector<Value> vals;
             for (const auto& kv : obj.dictVal()) {
                 vals.push_back(kv.second);
             }
-            return Value(vals);
+            return Value(std::move(vals));
         }
         if (node.methodName == "has" || node.methodName == "contains") {
             if (argValues.size() != 1)
@@ -1334,12 +1338,12 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (node.methodName == "upper") {
             std::string s = obj.stringVal();
             for (auto& c : s) c = std::toupper(static_cast<unsigned char>(c));
-            return Value(s);
+            return Value(std::move(s));
         }
         if (node.methodName == "lower") {
             std::string s = obj.stringVal();
             for (auto& c : s) c = std::tolower(static_cast<unsigned char>(c));
-            return Value(s);
+            return Value(std::move(s));
         }
         if (node.methodName == "split") {
             // str.split(sep) — 按 sep 分割返回数组
@@ -1350,12 +1354,13 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             }
             std::vector<Value> parts;
             size_t start = 0, pos;
-            while ((pos = obj.stringVal().find(sep, start)) != std::string::npos) {
-                parts.push_back(Value(obj.stringVal().substr(start, pos - start)));
+            const std::string& str = obj.stringVal();
+            while ((pos = str.find(sep, start)) != std::string::npos) {
+                parts.push_back(Value(str.substr(start, pos - start)));
                 start = pos + sep.size();
             }
-            parts.push_back(Value(obj.stringVal().substr(start)));
-            return Value(parts);
+            parts.push_back(Value(str.substr(start)));
+            return Value(std::move(parts));
         }
         if (node.methodName == "trim") {
             std::string s = obj.stringVal();
@@ -1382,6 +1387,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
 
                 // 求值参数
                 std::vector<Value> argValues;
+                argValues.reserve(node.arguments.size());
                 for (auto& arg : node.arguments) {
                     argValues.push_back(evaluate(arg.get()));
                 }

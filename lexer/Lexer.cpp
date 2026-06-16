@@ -202,17 +202,17 @@ void Lexer::identifier() {
         TokenType type = it->second;
         // true 和 false 有字面量值
         if (type == TokenType::TK_TRUE) {
-            addToken(type, Value(true));
+            addToken(type, std::move(text), Value(true));
         } else if (type == TokenType::TK_FALSE) {
-            addToken(type, Value(false));
+            addToken(type, std::move(text), Value(false));
         } else if (type == TokenType::TK_NULL) {
             // null 关键字有字面量值
-            addToken(type, Value::nullValue());
+            addToken(type, std::move(text), Value::nullValue());
         } else {
-            addToken(type);
+            addToken(type, std::move(text));
         }
     } else {
-        addToken(TokenType::TK_IDENTIFIER);
+        addToken(TokenType::TK_IDENTIFIER, std::move(text));
     }
 }
 
@@ -237,14 +237,14 @@ void Lexer::number() {
     if (isFloat) {
         try {
             double val = std::stod(text);
-            addToken(TokenType::TK_FLOAT_LIT, Value(val));
+            addToken(TokenType::TK_FLOAT_LIT, std::move(text), Value(val));
         } catch (const std::out_of_range&) {
             errorToken("浮点数溢出: " + text);
         }
     } else {
         try {
             int val = std::stoi(text);
-            addToken(TokenType::TK_INT_LIT, Value(val));
+            addToken(TokenType::TK_INT_LIT, std::move(text), Value(val));
         } catch (const std::out_of_range&) {
             // 整数溢出，尝试作为 64 位整数或报错
             try {
@@ -253,7 +253,7 @@ void Lexer::number() {
                 if (val > INT_MAX || val < INT_MIN) {
                     errorToken("整数溢出: " + text);
                 } else {
-                    addToken(TokenType::TK_INT_LIT, Value(static_cast<int>(val)));
+                    addToken(TokenType::TK_INT_LIT, std::move(text), Value(static_cast<int>(val)));
                 }
             } catch (const std::out_of_range&) {
                 errorToken("整数溢出: " + text);
@@ -309,6 +309,16 @@ void Lexer::addToken(TokenType type, const Value& literal) {
     std::string text = source_.substr(start_, current_ - start_);
     int col = static_cast<int>(start_ - lineStart_) + 1;
     tokens_.emplace_back(type, text, literal, line_, col);
+}
+
+void Lexer::addToken(TokenType type, std::string&& text) {
+    int col = static_cast<int>(start_ - lineStart_) + 1;
+    tokens_.emplace_back(type, std::move(text), Value::nullValue(), line_, col);
+}
+
+void Lexer::addToken(TokenType type, std::string&& text, const Value& literal) {
+    int col = static_cast<int>(start_ - lineStart_) + 1;
+    tokens_.emplace_back(type, std::move(text), literal, line_, col);
 }
 
 void Lexer::errorToken(const std::string& message) {
