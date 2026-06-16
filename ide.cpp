@@ -704,8 +704,6 @@ void Ide::populateBytecodeList() {
 
     // ---- 函数 chunk ----
     for (const auto& kv : lastCompileResult_.functionChunks) {
-        int startRow = currentRow;
-
         auto* header = new QListWidgetItem(QString("---- %1 (arity=%2) ----")
                                                .arg(QString::fromStdString(kv.first))
                                                .arg(kv.second.arity));
@@ -713,6 +711,10 @@ void Ide::populateBytecodeList() {
         header->setForeground(QColor("#569CD6"));
         bytecodeList_->addItem(header);
         currentRow++;
+
+        // startRow 指向第一条指令所在行（标题行之后），而非标题行
+        // 这样 highlightBytecodeLine 中 startRow + instrIndex 才能正确对应指令行
+        int startRow = currentRow;
 
         size_t funcOffset = 0;
         while (funcOffset < kv.second.code.size()) {

@@ -84,6 +84,36 @@ void Compiler::compileNode(ASTNode* node) {
     }
 }
 
+void Compiler::compileStatement(ASTNode* node) {
+    if (!node) return;
+
+    compileNode(node);
+
+    // 表达式语句（如 foo(); 或 obj.method();）会产生一个栈上返回值但不会被消费，
+    // 若不弹出会导致栈无限累积（main chunk 无外层帧清理，循环内泄漏必然触发栈溢出）。
+    // 赋值类节点（Assignment/IndexAssign/MemberAssign）以及声明/控制流节点已自行平衡栈，
+    // 此处只对纯表达式补发 OP_POP，避免双重弹出。
+    switch (node->nodeType) {
+    case NodeType::NODE_FUN_CALL:
+    case NodeType::NODE_METHOD_CALL:
+    case NodeType::NODE_BINARY_OP:
+    case NodeType::NODE_UNARY_OP:
+    case NodeType::NODE_VAR_REF:
+    case NodeType::NODE_MEMBER_ACCESS:
+    case NodeType::NODE_INDEX_ACCESS:
+    case NodeType::NODE_NUMBER_LITERAL:
+    case NodeType::NODE_STRING_LITERAL:
+    case NodeType::NODE_BOOL_LITERAL:
+    case NodeType::NODE_NULL_LITERAL:
+    case NodeType::NODE_ARRAY_LITERAL:
+    case NodeType::NODE_DICT_LITERAL:
+        chunk_.writeOp(OpCode::OP_POP, node->line);
+        break;
+    default:
+        break;
+    }
+}
+
 void Compiler::compileBinaryOp(BinaryOp& node) {
     // 短路运算特殊处理
     if (node.op == "and") {
@@ -280,7 +310,7 @@ void Compiler::compileIfStmt(IfStmt& node) {
 
     // 编译 then 分支
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
-    compileNode(node.thenBranch.get());
+    compileStatement(node.thenBranch.get());
 
     // 跳过 else 分支
     size_t endJumpPatch = chunk_.code.size();
@@ -296,7 +326,7 @@ void Compiler::compileIfStmt(IfStmt& node) {
 
     // 编译 else 分支
     if (node.elseBranch) {
-        compileNode(node.elseBranch.get());
+        compileStatement(node.elseBranch.get());
     }
 
     // 修补 end 跳转
@@ -319,7 +349,7 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
 
     // 编译循环体
-    compileNode(node.body.get());
+    compileStatement(node.body.get());
 
     // 回跳到条件检查
     uint16_t loopOffset = static_cast<uint16_t>(loopStart);
@@ -337,7 +367,7 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
 void Compiler::compileForStmt(ForStmt& node) {
     // 编译初始化
     if (node.initializer) {
-        compileNode(node.initializer.get());
+        compileStatement(node.initializer.get());
     }
 
     size_t loopStart = chunk_.code.size();
@@ -351,11 +381,11 @@ void Compiler::compileForStmt(ForStmt& node) {
         chunk_.writeOp(OpCode::OP_POP, node.line);
 
         // 编译循环体
-        compileNode(node.body.get());
+        compileStatement(node.body.get());
 
         // 编译更新（OP_SET_VAR 不再 push 值，无需额外 OP_POP）
         if (node.update) {
-            compileNode(node.update.get());
+            compileStatement(node.update.get());
         }
 
         // 回跳
@@ -375,11 +405,11 @@ void Compiler::compileForStmt(ForStmt& node) {
         chunk_.writeShort(0, node.line);
         chunk_.writeOp(OpCode::OP_POP, node.line);
 
-        compileNode(node.body.get());
+        compileStatement(node.body.get());
 
         // 编译更新（OP_SET_VAR 不再 push 值，无需额外 OP_POP）
         if (node.update) {
-            compileNode(node.update.get());
+            compileStatement(node.update.get());
         }
 
         chunk_.writeOp(OpCode::OP_LOOP, node.line);
@@ -480,7 +510,7 @@ void Compiler::compilePrintStmt(PrintStmt& node) {
 
 void Compiler::compileBlock(Block& node) {
     for (auto& stmt : node.statements) {
-        compileNode(stmt.get());
+        compileStatement(stmt.get());
     }
 }
 

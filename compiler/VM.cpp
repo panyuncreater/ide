@@ -955,6 +955,20 @@ VMResult VM::executeOneInstruction() {
             Value& obj = stack_[bp + slot];  // 栈引用，直接修改
             if (obj.isInstance()) {
                 obj.fields[fieldName] = val;
+                // 当 slot==0（写 this.field）时，也需同步更新对应的字段槽
+                // 否则 OP_RETURN 会用字段槽的旧值覆盖 this.fields，导致 this.field 赋值丢失
+                if (slot == 0 && currentFrame().chunk && !currentFrame().chunk->fieldOrder.empty()) {
+                    const auto& fieldOrder = currentFrame().chunk->fieldOrder;
+                    for (size_t fi = 0; fi < fieldOrder.size(); ++fi) {
+                        if (fieldOrder[fi] == fieldName) {
+                            size_t slotPos = bp + 1 + fi;
+                            if (slotPos < stack_.size()) {
+                                stack_[slotPos] = val;
+                            }
+                            break;
+                        }
+                    }
+                }
             } else if (obj.isDict()) {
                 obj.dictVal[fieldName] = val;
             }

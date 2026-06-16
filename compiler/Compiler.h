@@ -37,6 +37,9 @@ private:
     /// 编译 AST 节点
     void compileNode(ASTNode* node);
 
+    /// 编译节点作为语句（确保栈平衡：纯表达式语句会补发 OP_POP 弹出返回值）
+    void compileStatement(ASTNode* node);
+
     /// 编译各个节点类型
     void compileBinaryOp(BinaryOp& node);
     void compileUnaryOp(UnaryOp& node);
