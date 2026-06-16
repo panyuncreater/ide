@@ -218,6 +218,10 @@ void DebugController::reset() {
     running_ = false;
     stopped_ = false;
     paused_ = false;
+    // 先退出暂停事件循环，再清理指针
+    if (pauseLoop_) {
+        pauseLoop_->quit();
+    }
     inPauseLoop_ = false;
     pauseLoop_ = nullptr;
     currentDepth_ = 0;

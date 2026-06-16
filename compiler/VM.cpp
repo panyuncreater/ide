@@ -1,6 +1,7 @@
 #include "compiler/VM.h"
 #include <sstream>
 #include <cmath>
+#include <climits>
 #include <algorithm>
 
 // ============================================================
@@ -178,12 +179,15 @@ VMResult VM::numericOp(int opType, int line) {
         break;
     case OP_DIV_INT:
         if (rightRef.toDouble() == 0.0) return runtimeError("除零错误");
-        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal / rightRef.intVal);
-        else stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
+        if (leftRef.isInt() && rightRef.isInt()) {
+            if (leftRef.intVal == INT_MIN && rightRef.intVal == -1) return runtimeError("整数除法溢出");
+            stack_[stack_.size() - 2] = Value(leftRef.intVal / rightRef.intVal);
+        } else stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
         break;
     case OP_MOD_INT:
         if (!leftRef.isInt() || !rightRef.isInt()) return runtimeError("取模运算仅支持整数");
         if (rightRef.intVal == 0) return runtimeError("除零错误");
+        if (leftRef.intVal == INT_MIN && rightRef.intVal == -1) { stack_[stack_.size() - 2] = Value(0); break; }
         stack_[stack_.size() - 2] = Value(leftRef.intVal % rightRef.intVal);
         break;
     }
@@ -667,6 +671,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_CALL: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& funName = chunk.constants[idx].stringVal;
 
         auto it = functionChunks_.find(funName);
@@ -864,6 +869,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_INDEX_SET_VAR: {
         // 直接修改 globals_[varName] 中的数组/字典元素
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[idx].stringVal;
         Value val = pop();
         Value index = pop();
@@ -908,6 +914,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_MEMBER_GET: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[idx].stringVal;
         Value obj = pop();
         if (obj.isInstance()) {
@@ -936,6 +943,7 @@ VMResult VM::executeOneInstruction() {
         // fallback 路径：用于非简单变量的嵌套成员赋值
         // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[idx].stringVal;
         Value val = pop();
         Value obj = pop();
@@ -947,6 +955,7 @@ VMResult VM::executeOneInstruction() {
         // 直接修改 globals_[varName].fields[fieldName]
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
+        if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[varIdx].stringVal;
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
         Value val = pop();
@@ -968,6 +977,7 @@ VMResult VM::executeOneInstruction() {
         // 直接修改 stack_[bp+slot].fields[fieldName]（用于方法内 this.field = val）
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
+        if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
         Value val = pop();
         size_t bp = currentFrame().basePointer;
@@ -1003,6 +1013,7 @@ VMResult VM::executeOneInstruction() {
         uint8_t argCount = chunk.code[ip + 3];
         uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
         uint8_t receiverLocalSlotByte = chunk.code[ip + 6];
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& methodName = chunk.constants[idx].stringVal;
 
         Value obj = peek(argCount);  // peek 返回 Value 拷贝
@@ -1291,6 +1302,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_CLOSURE: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& funName = chunk.constants[idx].stringVal;
         Value closure = Value::makeClosure(funName, nullptr, {});
         // 捕获当前全局变量环境到闭包中
@@ -1335,6 +1347,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_CLASS_NEW: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& className = chunk.constants[idx].stringVal;
 
         // 收集参数
@@ -1434,6 +1447,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_INIT_FIELD: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[idx].stringVal;
         Value val = pop();
         // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
@@ -1450,6 +1464,7 @@ VMResult VM::executeOneInstruction() {
         // superNameIdx == 0xFFFF 表示无父类
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t superIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& className = chunk.constants[idx].stringVal;
         std::string superClassName;
         if (superIdx != 0xFFFF && superIdx < chunk.constants.size()) {
@@ -1527,7 +1542,7 @@ VMResult VM::executeOneInstruction() {
         // 操作数: varIdx(2B) + fieldIdx(2B)
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
-        if (varIdx < chunk.constants.size()) {
+        if (varIdx < chunk.constants.size() && fieldIdx < chunk.constants.size()) {
             const std::string& varName = chunk.constants[varIdx].stringVal;
             const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
             auto it = globals_.find(varName);
@@ -1550,6 +1565,7 @@ VMResult VM::executeOneInstruction() {
         // 操作数: slot(1B) + fieldIdx(2B)
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
+        if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
         size_t bp = currentFrame().basePointer;
         if (bp + slot < stack_.size()) {

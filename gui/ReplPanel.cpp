@@ -62,7 +62,8 @@ void ReplPanel::appendOutput(const QString& text) {
 void ReplPanel::appendError(const QString& text) {
     QTextCursor cursor(outputArea_->document());
     cursor.movePosition(QTextCursor::End);
-    cursor.insertText("\n");
+    if (!outputArea_->document()->isEmpty())
+        cursor.insertText("\n");
     QTextCharFormat fmt;
     fmt.setForeground(Qt::red);
     cursor.setCharFormat(fmt);

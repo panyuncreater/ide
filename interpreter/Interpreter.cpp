@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdint>
+#include <climits>
 #include <sstream>
 
 // ============================================================
@@ -140,14 +141,18 @@ Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
     case 3: // /
         { double r = right.toDouble();
           if (r == 0.0) runtimeError("除零错误", line, col);
-          if (left.isInt() && right.isInt()) return Value(left.intVal / right.intVal);
+          if (left.isInt() && right.isInt()) {
+              if (left.intVal == INT_MIN && right.intVal == -1) runtimeError("整数除法溢出", line, col);
+              return Value(left.intVal / right.intVal);
+          }
           return Value(left.toDouble() / r); }
     case 4: // %
         if (!left.isInt() || !right.isInt()) runtimeError("取模运算仅支持整数", line, col);
         if (right.intVal == 0) runtimeError("除零错误", line, col);
+        if (left.intVal == INT_MIN && right.intVal == -1) return Value(0);
         return Value(left.intVal % right.intVal);
     }
-    runtimeError("未知运算符: " + op, line, col);
+    return Value::nullValue();  // 不可达，但消除编译器警告
 }
 
 // ---- 类辅助方法 ----
@@ -185,7 +190,7 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
     if (annotation == "array") return val.isArray();
     if (annotation == "dict") return val.isDict();
     // 数组元素类型注解，如 "int[]"
-    if (annotation.size() >= 2 && annotation.back() == ']') {
+    if (annotation.size() >= 2 && annotation.back() == ']' && annotation[annotation.size() - 2] == '[') {
         if (!val.isArray()) return false;
         std::string elemType = annotation.substr(0, annotation.size() - 2);
         for (const auto& elem : val.arrayVal) {
@@ -381,7 +386,11 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
             idxs[i] = evaluate(ia->index.get());
             const Value& indexVal = idxs[i];
             if (parent.isArray() && indexVal.isInt()) {
-                vals[i] = parent.arrayVal[indexVal.intVal];
+                int idx = indexVal.intVal;
+                if (idx < 0 || idx >= static_cast<int>(parent.arrayVal.size())) {
+                    runtimeError("数组索引越界: " + std::to_string(idx), ia->line, ia->column);
+                }
+                vals[i] = parent.arrayVal[idx];
             } else if (parent.isDict() && indexVal.isString()) {
                 auto it = parent.dictVal.find(indexVal.stringVal);
                 vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
@@ -548,7 +557,7 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 currentEnv_ = initEnv;
                 try {
                     evaluate(initMethod->body.get());
-                } catch (const ReturnException& e) {}
+                } catch (const ReturnException&) {}
                 instance = initEnv->get("this");
                 // 同步 init 环境中的字段变量回 this 对象
                 for (auto& fieldKV : instance.fields) {
@@ -623,11 +632,7 @@ Value Interpreter::visitWhileStmt(WhileStmt& node) {
         // 每次迭代重新检查断点（MODE_RUN 下确保 while 行断点每次迭代都能命中；
         // STEP_IN/STEP_OVER 下 lastPausedLine_ 机制保证同行不重复暂停）
         checkBreak(&node);
-        try {
-            result = evaluate(node.body.get());
-        } catch (const ReturnException& e) {
-            throw;  // 传播 return
-        }
+        result = evaluate(node.body.get());
     }
     return result;
 }
@@ -658,7 +663,7 @@ Value Interpreter::visitForStmt(ForStmt& node) {
             // 执行循环体
             try {
                 result = evaluate(node.body.get());
-            } catch (const ReturnException& e) {
+            } catch (const ReturnException&) {
                 // 恢复环境，传播 return
                 currentEnv_ = forEnv->parent;
                 throw;
@@ -672,7 +677,7 @@ Value Interpreter::visitForStmt(ForStmt& node) {
     } catch (const ReturnException&) {
         currentEnv_ = forEnv->parent;
         throw;
-    } catch (const std::runtime_error&) {
+    } catch (...) {
         currentEnv_ = forEnv->parent;
         throw;
     }
@@ -806,7 +811,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
             try {
                 evaluate(initMethod->body.get());
-            } catch (const ReturnException& e) {
+            } catch (const ReturnException&) {
                 // init 方法的返回值忽略，但更新实例字段
             } catch (...) {
                 // 运行时错误：先恢复调用状态，再重抛，避免 currentEnv_/调用栈/递归深度错乱

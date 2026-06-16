@@ -7,6 +7,7 @@
 #include <QHeaderView>
 #include <QApplication>
 #include <QColor>
+#include <QScrollBar>
 #include <sstream>
 
 // ============================================================
@@ -446,7 +447,8 @@ void Ide::onFormat() {
     // 词法分析
     try {
         lastTokens_ = lexer_.scan(source);
-    } catch (...) {
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("格式化失败 - 词法错误: %1").arg(e.what()));
         return;
     }
 
@@ -462,9 +464,20 @@ void Ide::onFormat() {
 
     if (!astRoot_) return;
 
-    // 格式化
+    // 格式化：行号会变化，需清除断点并保存光标位置
+    codeEditor_->setBreakpoints(QSet<int>());
+
+    QTextCursor savedCursor = codeEditor_->textCursor();
+    int scrollPos = codeEditor_->verticalScrollBar()->value();
+
     std::string formatted = formatter_.format(*astRoot_);
     codeEditor_->setPlainText(QString::fromStdString(formatted));
+
+    // 恢复光标位置和滚动位置（尽可能）
+    if (savedCursor.position() <= codeEditor_->document()->characterCount()) {
+        codeEditor_->setTextCursor(savedCursor);
+    }
+    codeEditor_->verticalScrollBar()->setValue(scrollPos);
 }
 
 void Ide::onShowBytecode() {
