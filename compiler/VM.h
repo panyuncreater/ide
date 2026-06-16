@@ -127,6 +127,7 @@ private:
     bool initialized_ = false;                      // 是否已初始化执行环境
     std::string lastError_;                         // 最近一次运行时错误
     bool hasError_ = false;                         // 运行时错误标志（用于快速检测）
+    Value lastMutatedReceiver_;                     // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
     static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
 

@@ -234,6 +234,7 @@ void VM::resetState() {
     functionChunks_.clear();
     classInfo_.clear();
     mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
+    lastMutatedReceiver_ = Value::nullValue();
     initialized_ = false;
 }
 
@@ -275,8 +276,11 @@ VMResult VM::execute(const CompileResult& result) {
         size_t& ip = frame.ip;
 
         if (ip >= chunk.code.size()) {
+            // 当前 chunk 执行完毕 → 弹帧（防御性路径，正常情况由 OP_RETURN 处理）
+            size_t returnIp = frame.returnIp;  // 保存调用者返回地址
             frames_.pop_back();
             if (!frames_.empty()) {
+                currentFrame().ip = returnIp;   // 恢复调用者 ip，避免重复执行调用指令
                 push(Value::nullValue());
             }
             continue;
@@ -1069,6 +1073,9 @@ VMResult VM::executeOneInstruction() {
                             stack_[bp].fields[fn] = obj;
                         }
                     }
+                } else {
+                    // 嵌套访问（如 this.arr.push(42)）：暂存修改后的对象，供后续写回指令使用
+                    lastMutatedReceiver_ = obj;
                 }
             }
             push(result);
@@ -1124,6 +1131,9 @@ VMResult VM::executeOneInstruction() {
                             stack_[bp].fields[fn] = obj;
                         }
                     }
+                } else {
+                    // 嵌套访问（如 this.dict.remove("key")）：暂存修改后的对象，供后续写回指令使用
+                    lastMutatedReceiver_ = obj;
                 }
             }
             push(result);
@@ -1471,9 +1481,11 @@ VMResult VM::executeOneInstruction() {
         std::vector<std::string> chain;
         std::string cur = superClassName;
         for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
-            chain.push_back(cur);
             auto clsIt = classInfo_.find(cur);
-            if (clsIt == classInfo_.end()) break;
+            if (clsIt == classInfo_.end()) {
+                return runtimeError("未定义的父类: " + cur);
+            }
+            chain.push_back(cur);
             cur = clsIt->second.superClassName;
         }
         // 倒序遍历链（最远的祖先在前），保证子类字段覆盖父类字段
@@ -1506,6 +1518,117 @@ VMResult VM::executeOneInstruction() {
 
         notifyStep(ip, op);
         ip += 5;  // nameIdx(2B) + superNameIdx(2B) + opcode(1B)
+        break;
+    }
+
+    // ---- 嵌套访问变异方法写回指令 ----
+    // 从 lastMutatedReceiver_ 取值，写回基对象的字段或索引位置
+    case OpCode::OP_WRITEBACK_MEMBER_VAR: {
+        // 操作数: varIdx(2B) + fieldIdx(2B)
+        uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
+        if (varIdx < chunk.constants.size()) {
+            const std::string& varName = chunk.constants[varIdx].stringVal;
+            const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
+            auto it = globals_.find(varName);
+            if (it != globals_.end()) {
+                Value& obj = it->second;
+                if (obj.isInstance()) {
+                    obj.fields[fieldName] = lastMutatedReceiver_;
+                } else if (obj.isDict()) {
+                    obj.dictVal[fieldName] = lastMutatedReceiver_;
+                }
+            }
+        }
+        lastMutatedReceiver_ = Value::nullValue();
+        notifyStep(ip, op);
+        ip += 5;
+        break;
+    }
+
+    case OpCode::OP_WRITEBACK_MEMBER_LOCAL: {
+        // 操作数: slot(1B) + fieldIdx(2B)
+        uint8_t slot = chunk.code[ip + 1];
+        uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
+        const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
+        size_t bp = currentFrame().basePointer;
+        if (bp + slot < stack_.size()) {
+            Value& obj = stack_[bp + slot];
+            if (obj.isInstance()) {
+                obj.fields[fieldName] = lastMutatedReceiver_;
+                // 如果 slot==0（this），也同步更新对应字段槽
+                if (slot == 0) {
+                    VMCallFrame& curFrame = currentFrame();
+                    if (curFrame.chunk) {
+                        for (size_t i = 0; i < curFrame.chunk->fieldOrder.size(); ++i) {
+                            if (curFrame.chunk->fieldOrder[i] == fieldName) {
+                                size_t fieldSlot = bp + 1 + i;
+                                if (fieldSlot < stack_.size()) {
+                                    stack_[fieldSlot] = lastMutatedReceiver_;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if (obj.isDict()) {
+                obj.dictVal[fieldName] = lastMutatedReceiver_;
+            }
+        }
+        lastMutatedReceiver_ = Value::nullValue();
+        notifyStep(ip, op);
+        ip += 4;
+        break;
+    }
+
+    case OpCode::OP_WRITEBACK_INDEX_VAR: {
+        // 操作数: varIdx(2B)，索引从栈顶 pop
+        uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        Value index = pop();
+        if (varIdx < chunk.constants.size()) {
+            const std::string& varName = chunk.constants[varIdx].stringVal;
+            auto it = globals_.find(varName);
+            if (it != globals_.end()) {
+                Value& obj = it->second;
+                if (obj.isArray() && index.isInt()) {
+                    int i = index.intVal;
+                    if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
+                        obj.arrayVal[i] = lastMutatedReceiver_;
+                    }
+                } else if (obj.isDict() && index.isString()) {
+                    obj.dictVal[index.stringVal] = lastMutatedReceiver_;
+                }
+            }
+        }
+        lastMutatedReceiver_ = Value::nullValue();
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    case OpCode::OP_WRITEBACK_INDEX_LOCAL: {
+        // 操作数: slot(1B)，索引从栈顶 pop
+        uint8_t slot = chunk.code[ip + 1];
+        Value index = pop();
+        size_t bp = currentFrame().basePointer;
+        if (bp + slot < stack_.size()) {
+            Value& obj = stack_[bp + slot];
+            if (obj.isArray() && index.isInt()) {
+                int i = index.intVal;
+                if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
+                    obj.arrayVal[i] = lastMutatedReceiver_;
+                }
+            } else if (obj.isDict() && index.isString()) {
+                obj.dictVal[index.stringVal] = lastMutatedReceiver_;
+            }
+            // 如果 slot==0（this），也同步更新对应字段槽
+            if (slot == 0 && obj.isInstance()) {
+                // 索引写回 this 不太常见，但为一致性处理
+            }
+        }
+        lastMutatedReceiver_ = Value::nullValue();
+        notifyStep(ip, op);
+        ip += 2;
         break;
     }
 

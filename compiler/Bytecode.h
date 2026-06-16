@@ -72,6 +72,12 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_CLASS_NEW,    // 类构造调用（操作数: nameIdx(2B) + argCount(1B)）
     OP_INIT_FIELD,   // 初始化实例字段（操作数: fieldNameIdx(2B)）：从栈顶 pop 值设置到实例的字段
     OP_DEFINE_CLASS, // 定义类（操作数: nameIdx(2B)）：从栈顶 pop 模板实例，提取类信息，注册到 VM
+
+    // 嵌套访问变异方法写回指令（从 lastMutatedReceiver_ 取值写回基对象）
+    OP_WRITEBACK_MEMBER_VAR,   // 成员写回到全局变量（varIdx(2B) + fieldIdx(2B)）
+    OP_WRITEBACK_MEMBER_LOCAL, // 成员写回到局部变量（slot(1B) + fieldIdx(2B)）
+    OP_WRITEBACK_INDEX_VAR,    // 索引写回到全局变量（varIdx(2B)），索引从栈顶 pop
+    OP_WRITEBACK_INDEX_LOCAL,  // 索引写回到局部变量（slot(1B)），索引从栈顶 pop
 };
 
 /// 操作码 → 名称字符串（统一映射，避免多处手工维护）
@@ -127,6 +133,10 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_CLASS_NEW:    return "OP_CLASS_NEW";
     case OpCode::OP_INIT_FIELD:   return "OP_INIT_FIELD";
     case OpCode::OP_DEFINE_CLASS: return "OP_DEFINE_CLASS";
+    case OpCode::OP_WRITEBACK_MEMBER_VAR: return "OP_WRITEBACK_MEMBER_VAR";
+    case OpCode::OP_WRITEBACK_MEMBER_LOCAL: return "OP_WRITEBACK_MEMBER_LOCAL";
+    case OpCode::OP_WRITEBACK_INDEX_VAR: return "OP_WRITEBACK_INDEX_VAR";
+    case OpCode::OP_WRITEBACK_INDEX_LOCAL: return "OP_WRITEBACK_INDEX_LOCAL";
     }
     return "OP_UNKNOWN";
 }
@@ -229,6 +239,14 @@ struct BytecodeChunk {
             return 4;
         case OpCode::OP_METHOD_CALL:
             return 7;  // opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B)
+        case OpCode::OP_WRITEBACK_MEMBER_VAR:
+            return 5;  // opcode(1B) + varIdx(2B) + fieldIdx(2B)
+        case OpCode::OP_WRITEBACK_MEMBER_LOCAL:
+            return 4;  // opcode(1B) + slot(1B) + fieldIdx(2B)
+        case OpCode::OP_WRITEBACK_INDEX_VAR:
+            return 3;  // opcode(1B) + varIdx(2B)
+        case OpCode::OP_WRITEBACK_INDEX_LOCAL:
+            return 2;  // opcode(1B) + slot(1B)
         default:
             return 1;
         }
@@ -449,6 +467,32 @@ struct BytecodeChunk {
                 str += " extends " + constants[superIdx].stringVal;
             }
             offset += 5;
+            break;
+        }
+        case OpCode::OP_WRITEBACK_MEMBER_VAR: {
+            uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
+            uint16_t fieldIdx = code[offset + 3] | (code[offset + 4] << 8);
+            str += "OP_WRITEBACK_MEMBER_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal + ") ." + constants[fieldIdx].stringVal;
+            offset += 5;
+            break;
+        }
+        case OpCode::OP_WRITEBACK_MEMBER_LOCAL: {
+            uint8_t slot = code[offset + 1];
+            uint16_t fieldIdx = code[offset + 2] | (code[offset + 3] << 8);
+            str += "OP_WRITEBACK_MEMBER_LOCAL slot=" + std::to_string(slot) + " ." + constants[fieldIdx].stringVal;
+            offset += 4;
+            break;
+        }
+        case OpCode::OP_WRITEBACK_INDEX_VAR: {
+            uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_WRITEBACK_INDEX_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal + ")";
+            offset += 3;
+            break;
+        }
+        case OpCode::OP_WRITEBACK_INDEX_LOCAL: {
+            uint8_t slot = code[offset + 1];
+            str += "OP_WRITEBACK_INDEX_LOCAL slot=" + std::to_string(slot);
+            offset += 2;
             break;
         }
         default:

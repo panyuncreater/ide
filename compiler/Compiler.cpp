@@ -768,6 +768,52 @@ void Compiler::compileMethodCall(MethodCall& node) {
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
     chunk_.writeShort(receiverVarIdx, node.line);  // 接收者全局变量名索引（0xFFFF = 无全局 writeBack）
     chunk_.write(receiverLocalSlot, node.line);    // 接收者局部变量 slot（0xFF = 无局部 writeBack）
+
+    // 嵌套访问变异方法写回：当接收者是 MemberAccess/IndexAccess 且基对象是 VarRef 时，
+    // 方法调用后发射写回指令，确保 this.arr.push(42) 等嵌套调用的修改不丢失。
+    // VM 在变异方法调用时将修改后的对象暂存到 lastMutatedReceiver_，
+    // 写回指令从中取值写回基对象的字段/索引位置。
+    if (!objVar && node.object) {
+        // MemberAccess 嵌套写回：如 this.arr.push(42)、obj.field.pop()
+        if (node.object->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            auto* ma = static_cast<MemberAccess*>(node.object.get());
+            if (ma->object && ma->object->nodeType == NodeType::NODE_VAR_REF) {
+                auto* baseVar = static_cast<VarRef*>(ma->object.get());
+                uint16_t fieldIdx = identifierIndex(ma->fieldName);
+                auto localIt = currentLocals_.find(baseVar->name);
+                if (localIt != currentLocals_.end()) {
+                    // 局部变量成员写回：OP_WRITEBACK_MEMBER_LOCAL(slot, fieldIdx)
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_LOCAL, node.line);
+                    chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
+                    chunk_.writeShort(fieldIdx, node.line);
+                } else {
+                    // 全局变量成员写回：OP_WRITEBACK_MEMBER_VAR(varIdx, fieldIdx)
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_VAR, node.line);
+                    chunk_.writeShort(identifierIndex(baseVar->name), node.line);
+                    chunk_.writeShort(fieldIdx, node.line);
+                }
+            }
+        }
+        // IndexAccess 嵌套写回：如 arr[0].push(42)、dict["key"].remove("x")
+        else if (node.object->nodeType == NodeType::NODE_INDEX_ACCESS) {
+            auto* ia = static_cast<IndexAccess*>(node.object.get());
+            if (ia->object && ia->object->nodeType == NodeType::NODE_VAR_REF) {
+                auto* baseVar = static_cast<VarRef*>(ia->object.get());
+                auto localIt = currentLocals_.find(baseVar->name);
+                // 先推入索引值（OP_WRITEBACK_INDEX_LOCAL/VAR 需要索引在栈上）
+                compileNode(ia->index.get());
+                if (localIt != currentLocals_.end()) {
+                    // 局部变量索引写回：OP_WRITEBACK_INDEX_LOCAL(slot)
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);
+                    chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
+                } else {
+                    // 全局变量索引写回：OP_WRITEBACK_INDEX_VAR(varIdx)
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_VAR, node.line);
+                    chunk_.writeShort(identifierIndex(baseVar->name), node.line);
+                }
+            }
+        }
+    }
 }
 
 void Compiler::compileNullLiteral(NullLiteral& node) {
