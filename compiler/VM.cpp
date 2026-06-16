@@ -248,10 +248,12 @@ VMResult VM::stepOnce() {
     const BytecodeChunk& chunk = *frame.chunk;
     size_t& ip = frame.ip;
 
-    // 当前 chunk 执行完毕 → 弹帧
+    // 当前 chunk 执行完毕 → 弹帧（防御性路径，正常情况由 OP_RETURN 处理）
     if (ip >= chunk.code.size()) {
+        size_t returnIp = frame.returnIp;
         frames_.pop_back();
         if (!frames_.empty()) {
+            currentFrame().ip = returnIp;  // 恢复调用者 ip，避免重复执行调用指令
             push(Value::nullValue());
         }
         return VMResult::VM_OK;
@@ -1183,6 +1185,15 @@ VMResult VM::executeOneInstruction() {
             if (targetChunkPtr != nullptr) {
                 const BytecodeChunk& targetChunk = *targetChunkPtr;
 
+                // 检查参数数量
+                if (targetChunk.arity != argCount) {
+                    for (uint8_t i = 0; i < argCount; ++i) pop();
+                    pop();
+                    return runtimeError("方法 " + methodName + " 期望 " +
+                        std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
+                        std::to_string(argCount) + " 个");
+                }
+
                 if (frames_.size() >= MAX_FRAMES) {
                     return runtimeError("调用栈溢出");
                 }
@@ -1251,13 +1262,14 @@ VMResult VM::executeOneInstruction() {
             }
         }
 
-        // 方法未找到
+        // 方法未找到或对象非实例
         for (uint8_t i = 0; i < argCount; ++i) pop();
         pop();
-        push(Value::nullValue());
-        notifyStep(ip, op);
-        ip += 7;  // OP_METHOD_CALL 是 7 字节
-        break;
+        if (obj.isInstance()) {
+            return runtimeError("类 " + obj.className + " 没有方法 " + methodName);
+        } else {
+            return runtimeError("方法调用需要类实例");
+        }
     }
 
     case OpCode::OP_DUP:
