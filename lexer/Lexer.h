@@ -32,11 +32,8 @@ private:
     std::vector<Token> tokens_;     // 输出的 Token 列表
     DiagnosticBag diagnostics_;      // 诊断收集器
 
-    /// 关键字映射表
-    std::unordered_map<std::string, TokenType> keywords_;
-
-    /// 初始化关键字表
-    void initKeywords();
+    /// 关键字映射表（全局共享，只初始化一次）
+    static const std::unordered_map<std::string, TokenType>& keywords();
 
     /// 获取当前字符（不前进）
     char peek() const;

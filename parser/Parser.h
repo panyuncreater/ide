@@ -65,8 +65,11 @@ private:
     /// 检查下一个 Token 是否为指定类型（用于 -> 语法检测）
     bool checkNext(TokenType type) const;
 
-    /// 如果当前 Token 匹配任一类型则前进
-    bool match(std::initializer_list<TokenType> types);
+    /// 如果当前 Token 匹配任一类型则前进（C++17 折叠表达式，零分配）
+    template<typename... Ts>
+    bool match(Ts... types) {
+        return ((check(static_cast<TokenType>(types)) ? (advance(), true) : false) || ...);
+    }
 
     /// 消耗当前 Token，必须匹配指定类型，否则抛异常
     const Token& consume(TokenType type, const std::string& message);

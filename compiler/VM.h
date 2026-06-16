@@ -143,8 +143,14 @@ private:
     /// 数值二元运算（枚举分发）
     VMResult numericOp(int opType);
 
-    /// 通知步进回调
-    void notifyStep(size_t ip, OpCode opcode);
+    /// 通知步进回调（内联：禁用时直接返回，避免函数调用开销）
+    void notifyStep(size_t ip, OpCode opcode) {
+        if (!stepCallbackEnabled_) return;
+        VMStepInfo info;
+        info.ip = ip;
+        info.opcode = opcode;
+        stepCallback_(info);
+    }
 
     /// 获取当前帧
     VMCallFrame& currentFrame();

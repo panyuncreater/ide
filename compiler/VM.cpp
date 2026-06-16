@@ -109,13 +109,6 @@ void VM::setStepCallbackEnabled(bool enabled) {
     stepCallbackEnabled_ = enabled;
 }
 
-void VM::notifyStep(size_t ip, OpCode opcode) {
-    if (!stepCallbackEnabled_) return;
-    VMStepInfo info;
-    info.ip = ip;
-    info.opcode = opcode;
-    stepCallback_(info);
-}
 
 VMCallFrame& VM::currentFrame() {
     return frames_.back();  // 调用方应确保 frames_ 非空（execute/stepOnce 中已检查）
@@ -160,12 +153,19 @@ VMResult VM::numericOp(int opType) {
     // 字符串拼接（仅加法）
     if (opType == OP_ADD_INT) {
         if (leftRef.isString() && rightRef.isString()) {
-            stack_[stack_.size() - 2] = Value(leftRef.stringVal() + rightRef.stringVal());
+            const auto& ls = leftRef.stringVal();
+            const auto& rs = rightRef.stringVal();
+            std::string concat;
+            concat.reserve(ls.size() + rs.size());
+            concat.append(ls).append(rs);
+            stack_[stack_.size() - 2] = Value(std::move(concat));
             stack_.pop_back();
             return VMResult::VM_OK;
         }
         if (leftRef.isString() || rightRef.isString()) {
-            stack_[stack_.size() - 2] = Value(leftRef.toString() + rightRef.toString());
+            std::string ls = leftRef.toString();
+            ls.append(rightRef.toString());
+            stack_[stack_.size() - 2] = Value(std::move(ls));
             stack_.pop_back();
             return VMResult::VM_OK;
         }
@@ -220,6 +220,7 @@ void VM::initExecution(const CompileResult& result) {
     lastError_.clear();
     hasError_ = false;
     frames_.clear();
+    frames_.reserve(64);  // 预分配调用帧空间，避免频繁 realloc
     functionChunks_ = result.functionChunks;
     classInfo_.clear();
     mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬空指针
@@ -323,33 +324,9 @@ VMResult VM::executeOneInstruction() {
     OpCode op = static_cast<OpCode>(chunk.code[ip]);
 
     switch (op) {
-    case OpCode::OP_CONSTANT: {
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界 (idx=" + std::to_string(idx) + ")");
-        push(chunk.constants[idx]);
-        notifyStep(ip, op);
-        ip += 3;
-        break;
-    }
-
-    case OpCode::OP_INT: {
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        push(chunk.constants[idx]);
-        notifyStep(ip, op);
-        ip += 3;
-        break;
-    }
-
-    case OpCode::OP_FLOAT: {
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        push(chunk.constants[idx]);
-        notifyStep(ip, op);
-        ip += 3;
-        break;
-    }
-
+    case OpCode::OP_CONSTANT:
+    case OpCode::OP_INT:
+    case OpCode::OP_FLOAT:
     case OpCode::OP_STRING: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
@@ -443,8 +420,8 @@ VMResult VM::executeOneInstruction() {
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         bool result = left.equals(right);
-        stack_.resize(stack_.size() - 2);
-        push(Value(result));
+        stack_[stack_.size() - 2] = Value(result);
+        stack_.pop_back();
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -455,8 +432,8 @@ VMResult VM::executeOneInstruction() {
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         bool result = !left.equals(right);
-        stack_.resize(stack_.size() - 2);
-        push(Value(result));
+        stack_[stack_.size() - 2] = Value(result);
+        stack_.pop_back();
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -469,8 +446,8 @@ VMResult VM::executeOneInstruction() {
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
         bool result = left.toDouble() < right.toDouble();
-        stack_.resize(stack_.size() - 2);
-        push(Value(result));
+        stack_[stack_.size() - 2] = Value(result);
+        stack_.pop_back();
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -483,8 +460,8 @@ VMResult VM::executeOneInstruction() {
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
         bool result = left.toDouble() > right.toDouble();
-        stack_.resize(stack_.size() - 2);
-        push(Value(result));
+        stack_[stack_.size() - 2] = Value(result);
+        stack_.pop_back();
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -497,8 +474,8 @@ VMResult VM::executeOneInstruction() {
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
         bool result = left.toDouble() <= right.toDouble();
-        stack_.resize(stack_.size() - 2);
-        push(Value(result));
+        stack_[stack_.size() - 2] = Value(result);
+        stack_.pop_back();
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -511,8 +488,8 @@ VMResult VM::executeOneInstruction() {
         if (!left.isNumber() || !right.isNumber())
             return runtimeError("比较运算需要数值类型");
         bool result = left.toDouble() >= right.toDouble();
-        stack_.resize(stack_.size() - 2);
-        push(Value(result));
+        stack_[stack_.size() - 2] = Value(result);
+        stack_.pop_back();
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -1092,11 +1069,12 @@ VMResult VM::executeOneInstruction() {
             } else if (methodName == "join") {
                 std::string sep = args.empty() ? "" : args[0].toString();
                 std::string joined;
+                joined.reserve(obj.arrayVal().size() * (8 + sep.size()));
                 for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
                     if (i > 0) joined += sep;
                     joined += obj.arrayVal()[i].toString();
                 }
-                result = Value(joined);
+                result = Value(std::move(joined));
             } else {
                 return runtimeError("数组没有方法 " + methodName);
             }
@@ -1142,12 +1120,14 @@ VMResult VM::executeOneInstruction() {
                 result = Value(static_cast<int64_t>(obj.dictVal().size()));
             } else if (methodName == "keys") {
                 std::vector<Value> keys;
-                for (const auto& kv : obj.dictVal()) keys.push_back(Value(kv.first));
-                result = Value(keys);
+                keys.reserve(obj.dictVal().size());
+                for (const auto& kv : obj.dictVal()) keys.emplace_back(Value(kv.first));
+                result = Value(std::move(keys));
             } else if (methodName == "values") {
                 std::vector<Value> vals;
+                vals.reserve(obj.dictVal().size());
                 for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
-                result = Value(vals);
+                result = Value(std::move(vals));
             } else if (methodName == "has" || methodName == "contains") {
                 if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
                 result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
@@ -1207,13 +1187,18 @@ VMResult VM::executeOneInstruction() {
                 std::string sep = args.empty() ? " " : args[0].toString();
                 if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
                 std::vector<Value> parts;
+                const std::string& src = obj.stringVal();
+                // 预估分割次数以预分配
+                size_t estCount = 1;
+                for (size_t p = 0; (p = src.find(sep, p)) != std::string::npos; p += sep.size()) ++estCount;
+                parts.reserve(estCount);
                 size_t start = 0, pos;
-                while ((pos = obj.stringVal().find(sep, start)) != std::string::npos) {
-                    parts.push_back(Value(obj.stringVal().substr(start, pos - start)));
+                while ((pos = src.find(sep, start)) != std::string::npos) {
+                    parts.emplace_back(Value(src.substr(start, pos - start)));
                     start = pos + sep.size();
                 }
-                parts.push_back(Value(obj.stringVal().substr(start)));
-                result = Value(parts);
+                parts.emplace_back(Value(src.substr(start)));
+                result = Value(std::move(parts));
             } else if (methodName == "trim") {
                 std::string s = obj.stringVal();
                 size_t l = s.find_first_not_of(" \t\r\n");

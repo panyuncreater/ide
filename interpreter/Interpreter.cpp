@@ -211,9 +211,9 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
 }
 
 void Interpreter::checkType(const Value& val, const std::string& annotation,
-                            const std::string& context, int line, int col) {
+                            const std::function<std::string()>& contextBuilder, int line, int col) {
     if (!typeMatch(val, annotation)) {
-        runtimeError(context + " 期望类型 " + annotation + "，实际为 " + val.typeName(), line, col);
+        runtimeError(contextBuilder() + " 期望类型 " + annotation + "，实际为 " + val.typeName(), line, col);
     }
 }
 
@@ -611,7 +611,7 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
 
     // 类型检查：如果有类型注解且有初始化表达式
     if (!node.typeAnnotation.empty() && node.initializer) {
-        checkType(initVal, node.typeAnnotation, "变量 " + node.name + " 的类型", node.line, node.column);
+        checkType(initVal, node.typeAnnotation, [&]{ return "变量 " + node.name + " 的类型"; }, node.line, node.column);
     }
     // 记录类型注解
     if (!node.typeAnnotation.empty()) {
@@ -630,7 +630,7 @@ Value Interpreter::visitAssignment(Assignment& node) {
     // 类型检查
     const std::string* typeAnn = findTypeAnnotation(node.name);
     if (typeAnn) {
-        checkType(val, *typeAnn, "赋值给 " + node.name, node.line, node.column);
+        checkType(val, *typeAnn, [&]{ return std::string("赋值给 ") + node.name; }, node.line, node.column);
     }
 
     if (!currentEnv_->set(node.name, val)) {
@@ -962,7 +962,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
     for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
         if (!funDecl->paramTypes[i].empty()) {
             checkType(argValues[i], funDecl->paramTypes[i],
-                      "函数 " + node.name + " 的参数 " + funDecl->params[i],
+                      [&]{ return "函数 " + node.name + " 的参数 " + funDecl->params[i]; },
                       node.line, node.column);
         }
     }
@@ -1025,7 +1025,7 @@ Value Interpreter::visitReturnStmt(ReturnStmt& node) {
 
     // 返回类型检查
     if (!currentFunctionReturnType_.empty()) {
-        checkType(val, currentFunctionReturnType_, "返回值", node.line, node.column);
+        checkType(val, currentFunctionReturnType_, []{ return std::string("返回值"); }, node.line, node.column);
     }
 
     throw ReturnException(std::move(val));
@@ -1296,6 +1296,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
     // ---- 字典内置方法 ----
     if (obj.isDict()) {
         std::vector<Value> argValues;
+        argValues.reserve(node.arguments.size());
         for (auto& arg : node.arguments) {
             argValues.push_back(evaluate(arg.get()));
         }
@@ -1335,6 +1336,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
     // ---- 字符串内置方法 ----
     if (obj.isString()) {
         std::vector<Value> argValues;
+        argValues.reserve(node.arguments.size());
         for (auto& arg : node.arguments) {
             argValues.push_back(evaluate(arg.get()));
         }

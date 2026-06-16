@@ -124,7 +124,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
     }
 
     // 短路运算特殊处理
-    if (node.op == "and") {
+    if (node.opType == BinOpType::BIN_AND) {
         compileNode(node.left.get());
         // 如果左操作数为假，跳过右操作数
         size_t jumpPatch = chunk_.code.size();
@@ -142,7 +142,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         return;
     }
 
-    if (node.op == "or") {
+    if (node.opType == BinOpType::BIN_OR) {
         compileNode(node.left.get());
         // 如果左操作数为真，跳过右操作数，保留左值
         size_t jumpPatch = chunk_.code.size();
@@ -174,18 +174,19 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
     compileNode(node.right.get());
 
     OpCode op = OpCode::OP_ADD;
-    if (node.op == "+") op = OpCode::OP_ADD;
-    else if (node.op == "-") op = OpCode::OP_SUBTRACT;
-    else if (node.op == "*") op = OpCode::OP_MULTIPLY;
-    else if (node.op == "/") op = OpCode::OP_DIVIDE;
-    else if (node.op == "%") op = OpCode::OP_MODULO;
-    else if (node.op == "==") op = OpCode::OP_EQUAL;
-    else if (node.op == "!=") op = OpCode::OP_NOT_EQUAL;
-    else if (node.op == "<") op = OpCode::OP_LESS;
-    else if (node.op == ">") op = OpCode::OP_GREATER;
-    else if (node.op == "<=") op = OpCode::OP_LESS_EQUAL;
-    else if (node.op == ">=") op = OpCode::OP_GREATER_EQUAL;
-    else {
+    switch (node.opType) {
+    case BinOpType::BIN_ADD:  op = OpCode::OP_ADD; break;
+    case BinOpType::BIN_SUB:  op = OpCode::OP_SUBTRACT; break;
+    case BinOpType::BIN_MUL:  op = OpCode::OP_MULTIPLY; break;
+    case BinOpType::BIN_DIV:  op = OpCode::OP_DIVIDE; break;
+    case BinOpType::BIN_MOD:  op = OpCode::OP_MODULO; break;
+    case BinOpType::BIN_EQ:   op = OpCode::OP_EQUAL; break;
+    case BinOpType::BIN_NEQ:  op = OpCode::OP_NOT_EQUAL; break;
+    case BinOpType::BIN_LT:   op = OpCode::OP_LESS; break;
+    case BinOpType::BIN_GT:   op = OpCode::OP_GREATER; break;
+    case BinOpType::BIN_LTE:  op = OpCode::OP_LESS_EQUAL; break;
+    case BinOpType::BIN_GTE:  op = OpCode::OP_GREATER_EQUAL; break;
+    default:
         error("不支持的运算符: " + node.op, node.line, node.column);
         return;
     }
@@ -202,10 +203,15 @@ void Compiler::compileUnaryOp(UnaryOp& node) {
     }
 
     compileNode(node.operand.get());
-    if (node.op == "-") {
+    switch (node.opType) {
+    case UnaryOp::UnaryOpType::UOP_NEGATE:
         chunk_.writeOp(OpCode::OP_NEGATE, node.line);
-    } else if (node.op == "not") {
+        break;
+    case UnaryOp::UnaryOpType::UOP_NOT:
         chunk_.writeOp(OpCode::OP_NOT, node.line);
+        break;
+    default:
+        break;
     }
 }
 

@@ -8,35 +8,38 @@
 // ============================================================
 
 Lexer::Lexer() {
-    initKeywords();
 }
 
-void Lexer::initKeywords() {
-    keywords_["var"]      = TokenType::TK_VAR;
-    keywords_["fun"]      = TokenType::TK_FUN;
-    keywords_["if"]       = TokenType::TK_IF;
-    keywords_["else"]     = TokenType::TK_ELSE;
-    keywords_["while"]   = TokenType::TK_WHILE;
-    keywords_["for"]     = TokenType::TK_FOR;
-    keywords_["return"]  = TokenType::TK_RETURN;
-    keywords_["true"]    = TokenType::TK_TRUE;
-    keywords_["false"]   = TokenType::TK_FALSE;
-    keywords_["and"]     = TokenType::TK_AND;
-    keywords_["or"]      = TokenType::TK_OR;
-    keywords_["not"]     = TokenType::TK_NOT;
-    keywords_["print"]   = TokenType::TK_PRINT;
-    keywords_["int"]     = TokenType::TK_INT;
-    keywords_["float"]   = TokenType::TK_FLOAT;
-    keywords_["bool"]    = TokenType::TK_BOOL;
-    keywords_["string"]  = TokenType::TK_STRING_TYPE;
-    // 新增关键字
-    keywords_["function"] = TokenType::TK_FUNCTION;
-    keywords_["func"]     = TokenType::TK_FUNC;
-    keywords_["class"]   = TokenType::TK_CLASS;
-    keywords_["extends"] = TokenType::TK_EXTENDS;
-    keywords_["dict"]    = TokenType::TK_DICT;
-    keywords_["array"]   = TokenType::TK_ARRAY;
-    keywords_["null"]    = TokenType::TK_NULL;
+const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
+    static const auto kw = [] {
+        std::unordered_map<std::string, TokenType> m;
+        m["var"]      = TokenType::TK_VAR;
+        m["fun"]      = TokenType::TK_FUN;
+        m["if"]       = TokenType::TK_IF;
+        m["else"]     = TokenType::TK_ELSE;
+        m["while"]   = TokenType::TK_WHILE;
+        m["for"]     = TokenType::TK_FOR;
+        m["return"]  = TokenType::TK_RETURN;
+        m["true"]    = TokenType::TK_TRUE;
+        m["false"]   = TokenType::TK_FALSE;
+        m["and"]     = TokenType::TK_AND;
+        m["or"]      = TokenType::TK_OR;
+        m["not"]     = TokenType::TK_NOT;
+        m["print"]   = TokenType::TK_PRINT;
+        m["int"]     = TokenType::TK_INT;
+        m["float"]   = TokenType::TK_FLOAT;
+        m["bool"]    = TokenType::TK_BOOL;
+        m["string"]  = TokenType::TK_STRING_TYPE;
+        m["function"] = TokenType::TK_FUNCTION;
+        m["func"]     = TokenType::TK_FUNC;
+        m["class"]   = TokenType::TK_CLASS;
+        m["extends"] = TokenType::TK_EXTENDS;
+        m["dict"]    = TokenType::TK_DICT;
+        m["array"]   = TokenType::TK_ARRAY;
+        m["null"]    = TokenType::TK_NULL;
+        return m;
+    }();
+    return kw;
 }
 
 std::vector<Token> Lexer::scan(const std::string& source) {
@@ -197,8 +200,8 @@ void Lexer::identifier() {
     std::string text = source_.substr(start_, current_ - start_);
 
     // 查关键字表
-    auto it = keywords_.find(text);
-    if (it != keywords_.end()) {
+    auto it = keywords().find(text);
+    if (it != keywords().end()) {
         TokenType type = it->second;
         // true 和 false 有字面量值
         if (type == TokenType::TK_TRUE) {

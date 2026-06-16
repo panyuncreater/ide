@@ -188,7 +188,7 @@ private:
 
     /// 类型检查，不匹配则报运行时错误
     void checkType(const Value& val, const std::string& annotation,
-                   const std::string& context, int line, int col);
+                   const std::function<std::string()>& contextBuilder, int line, int col);
 
     /// 查找变量的类型注解（返回指针，避免字符串拷贝）
     const std::string* findTypeAnnotation(const std::string& varName) const;

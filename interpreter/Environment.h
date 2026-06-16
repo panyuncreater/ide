@@ -35,6 +35,16 @@ public:
         }
     }
 
+    /// 移动重载：避免临时 Value 的深拷贝（数组/字典/实例等大对象）
+    void define(const std::string& name, Value&& val) {
+        auto [it, inserted] = variables.try_emplace(name, std::move(val));
+        if (!inserted) {
+            it->second = std::move(val);   // 覆盖已有变量
+        } else {
+            ++sGeneration;
+        }
+    }
+
     /// 获取变量值（沿作用域链查找）
     /// 优化路径：先查本地 O(1)，再用深度缓存跳过已知的中间作用域
     Value get(const std::string& name) const {

@@ -66,15 +66,6 @@ bool Parser::checkNext(TokenType type) const {
     return (*tokens_)[current_ + 1].type == type;
 }
 
-bool Parser::match(std::initializer_list<TokenType> types) {
-    for (TokenType type : types) {
-        if (check(type)) {
-            advance();
-            return true;
-        }
-    }
-    return false;
-}
 
 const Token& Parser::consume(TokenType type, const std::string& message) {
     if (check(type)) return advance();
@@ -127,7 +118,7 @@ std::unique_ptr<ASTNode> Parser::declaration() {
 
         // 检查是否是数组类型注解，如 int[]
         std::string typeAnn = typeTok.lexeme;
-        if (match({TokenType::TK_LBRACKET})) {
+        if (match(TokenType::TK_LBRACKET)) {
             consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
             typeAnn += "[]";
         }
@@ -177,7 +168,7 @@ std::unique_ptr<VarDecl> Parser::varDecl() {
     const Token& name = consume(TokenType::TK_IDENTIFIER, "期望变量名");
 
     std::unique_ptr<ASTNode> init = nullptr;
-    if (match({TokenType::TK_ASSIGN})) {
+    if (match(TokenType::TK_ASSIGN)) {
         init = expression();
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
@@ -190,7 +181,7 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
     const Token& name = consume(TokenType::TK_IDENTIFIER, "期望变量名");
 
     std::unique_ptr<ASTNode> init = nullptr;
-    if (match({TokenType::TK_ASSIGN})) {
+    if (match(TokenType::TK_ASSIGN)) {
         init = expression();
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
@@ -214,13 +205,13 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
 
     // 可选的返回值类型注解 : type 或 -> type（type 可能是关键字如 int/float）
     std::string returnType;
-    if (match({TokenType::TK_COLON})) {
+    if (match(TokenType::TK_COLON)) {
         if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
             check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
             check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
             const Token& typeTok = advance();
             returnType = typeTok.lexeme;
-            if (match({TokenType::TK_LBRACKET})) {
+            if (match(TokenType::TK_LBRACKET)) {
                 consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
                 returnType += "[]";
             }
@@ -237,7 +228,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
             check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
             const Token& typeTok = advance();
             returnType = typeTok.lexeme;
-            if (match({TokenType::TK_LBRACKET})) {
+            if (match(TokenType::TK_LBRACKET)) {
                 consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
                 returnType += "[]";
             }
@@ -290,7 +281,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             pType = typeTok.lexeme;
 
             // 可选的数组类型: int[]
-            if (match({TokenType::TK_LBRACKET})) {
+            if (match(TokenType::TK_LBRACKET)) {
                 consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
                 pType += "[]";
             }
@@ -303,7 +294,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             paramName = param.lexeme;
 
             // 可选的参数类型注解 : type
-            if (match({TokenType::TK_COLON})) {
+            if (match(TokenType::TK_COLON)) {
                 // 接受标识符或内置类型关键字（int, float, bool, string, dict, array）
                 if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                     check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
@@ -312,7 +303,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
                     const Token& typeTok = advance();
                     pType = typeTok.lexeme;
                     // 可选的数组类型: int[]
-                    if (match({TokenType::TK_LBRACKET})) {
+                    if (match(TokenType::TK_LBRACKET)) {
                         consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
                         pType += "[]";
                     }
@@ -325,7 +316,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
 
         params.push_back(paramName);
         paramTypes.push_back(pType);
-    } while (match({TokenType::TK_COMMA}));
+    } while (match(TokenType::TK_COMMA));
 }
 
 std::unique_ptr<ClassDecl> Parser::classDecl() {
@@ -334,7 +325,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
     // 可选的 extends SuperClassName 或 : SuperClassName
     std::string superClassName;
-    if (match({TokenType::TK_EXTENDS}) || match({TokenType::TK_COLON})) {
+    if (match(TokenType::TK_EXTENDS) || match(TokenType::TK_COLON)) {
         const Token& superName = consume(TokenType::TK_IDENTIFIER, "期望父类名");
         superClassName = superName.lexeme;
     }
@@ -362,7 +353,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
             const Token& typeTok = advance();
 
             std::string typeAnn = typeTok.lexeme;
-            if (match({TokenType::TK_LBRACKET})) {
+            if (match(TokenType::TK_LBRACKET)) {
                 consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
                 typeAnn += "[]";
             }
@@ -400,7 +391,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
                 // 可选的返回类型注解
                 std::string returnType;
-                if (match({TokenType::TK_COLON})) {
+                if (match(TokenType::TK_COLON)) {
                     if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                         check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
                         check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
@@ -474,7 +465,7 @@ std::unique_ptr<IfStmt> Parser::ifStmt() {
     }
 
     std::unique_ptr<ASTNode> elseB = nullptr;
-    if (match({TokenType::TK_ELSE})) {
+    if (match(TokenType::TK_ELSE)) {
         if (check(TokenType::TK_IF)) {
             // else if — else 分支是另一个 if 语句
             elseB = ifStmt();
@@ -526,7 +517,7 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
         const Token& typeTok = advance();
 
         std::string typeAnn = typeTok.lexeme;
-        if (match({TokenType::TK_LBRACKET})) {
+        if (match(TokenType::TK_LBRACKET)) {
             consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
             typeAnn += "[]";
         }
@@ -595,7 +586,7 @@ std::unique_ptr<PrintStmt> Parser::printStmt() {
     if (!check(TokenType::TK_RPAREN)) {
         do {
             values.push_back(expression());
-        } while (match({TokenType::TK_COMMA}));
+        } while (match(TokenType::TK_COMMA));
     }
 
     consume(TokenType::TK_RPAREN, "期望 ')'");
@@ -634,7 +625,7 @@ std::unique_ptr<ASTNode> Parser::assignment() {
     auto expr = or_();
 
     // 检查是否是赋值
-    if (match({TokenType::TK_ASSIGN})) {
+    if (match(TokenType::TK_ASSIGN)) {
         const Token& eq = previous();
 
         // 变量赋值: identifier = expr
@@ -677,7 +668,7 @@ std::unique_ptr<ASTNode> Parser::assignment() {
 std::unique_ptr<ASTNode> Parser::or_() {
     auto left = and_();
 
-    while (match({TokenType::TK_OR})) {
+    while (match(TokenType::TK_OR)) {
         const Token& op = previous();
         auto right = and_();
         left = std::make_unique<BinaryOp>("or", std::move(left), std::move(right),
@@ -690,7 +681,7 @@ std::unique_ptr<ASTNode> Parser::or_() {
 std::unique_ptr<ASTNode> Parser::and_() {
     auto left = equality();
 
-    while (match({TokenType::TK_AND})) {
+    while (match(TokenType::TK_AND)) {
         const Token& op = previous();
         auto right = equality();
         left = std::make_unique<BinaryOp>("and", std::move(left), std::move(right),
@@ -703,7 +694,7 @@ std::unique_ptr<ASTNode> Parser::and_() {
 std::unique_ptr<ASTNode> Parser::equality() {
     auto left = comparison();
 
-    while (match({TokenType::TK_EQ, TokenType::TK_NEQ})) {
+    while (match(TokenType::TK_EQ, TokenType::TK_NEQ)) {
         const Token& op = previous();
         auto right = comparison();
         std::string opStr = (op.type == TokenType::TK_EQ) ? "==" : "!=";
@@ -717,7 +708,7 @@ std::unique_ptr<ASTNode> Parser::equality() {
 std::unique_ptr<ASTNode> Parser::comparison() {
     auto left = term();
 
-    while (match({TokenType::TK_LT, TokenType::TK_GT, TokenType::TK_LEQ, TokenType::TK_GEQ})) {
+    while (match(TokenType::TK_LT, TokenType::TK_GT, TokenType::TK_LEQ, TokenType::TK_GEQ)) {
         const Token& op = previous();
         auto right = term();
         std::string opStr;
@@ -738,7 +729,7 @@ std::unique_ptr<ASTNode> Parser::comparison() {
 std::unique_ptr<ASTNode> Parser::term() {
     auto left = factor();
 
-    while (match({TokenType::TK_PLUS, TokenType::TK_MINUS})) {
+    while (match(TokenType::TK_PLUS, TokenType::TK_MINUS)) {
         const Token& op = previous();
         auto right = factor();
         std::string opStr = (op.type == TokenType::TK_PLUS) ? "+" : "-";
@@ -752,7 +743,7 @@ std::unique_ptr<ASTNode> Parser::term() {
 std::unique_ptr<ASTNode> Parser::factor() {
     auto left = unary();
 
-    while (match({TokenType::TK_STAR, TokenType::TK_SLASH, TokenType::TK_PERCENT})) {
+    while (match(TokenType::TK_STAR, TokenType::TK_SLASH, TokenType::TK_PERCENT)) {
         const Token& op = previous();
         auto right = unary();
         std::string opStr;
@@ -770,7 +761,7 @@ std::unique_ptr<ASTNode> Parser::factor() {
 }
 
 std::unique_ptr<ASTNode> Parser::unary() {
-    if (match({TokenType::TK_NOT, TokenType::TK_MINUS})) {
+    if (match(TokenType::TK_NOT, TokenType::TK_MINUS)) {
         const Token& op = previous();
         auto operand = unary();
         std::string opStr = (op.type == TokenType::TK_NOT) ? "not" : "-";
@@ -785,7 +776,7 @@ std::unique_ptr<ASTNode> Parser::call() {
     // 支持链式调用: obj.method(args).field[0]
     while (true) {
         // 函数调用: name(args) —— 仅当 expr 是 VarRef 时
-        if (match({TokenType::TK_LPAREN})) {
+        if (match(TokenType::TK_LPAREN)) {
             const Token& paren = previous();
             if (expr->nodeType == NodeType::NODE_VAR_REF) {
                 auto* varRef = static_cast<VarRef*>(expr.get());
@@ -793,7 +784,7 @@ std::unique_ptr<ASTNode> Parser::call() {
                 if (!check(TokenType::TK_RPAREN)) {
                     do {
                         args.push_back(expression());
-                    } while (match({TokenType::TK_COMMA}));
+                    } while (match(TokenType::TK_COMMA));
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束参数列表");
 
@@ -810,7 +801,7 @@ std::unique_ptr<ASTNode> Parser::call() {
         }
 
         // 索引访问: expr[index]
-        if (match({TokenType::TK_LBRACKET})) {
+        if (match(TokenType::TK_LBRACKET)) {
             const Token& bracket = previous();
             auto index = expression();
             consume(TokenType::TK_RBRACKET, "期望 ']' 结束索引访问");
@@ -820,17 +811,17 @@ std::unique_ptr<ASTNode> Parser::call() {
         }
 
         // 成员访问: expr.field 或 方法调用 expr.method(args)
-        if (match({TokenType::TK_DOT})) {
+        if (match(TokenType::TK_DOT)) {
             const Token& dot = previous();
             const Token& fieldName = consume(TokenType::TK_IDENTIFIER, "期望成员名");
 
             // 检查是否是方法调用: obj.method(args)
-            if (match({TokenType::TK_LPAREN})) {
+            if (match(TokenType::TK_LPAREN)) {
                 std::vector<std::unique_ptr<ASTNode>> args;
                 if (!check(TokenType::TK_RPAREN)) {
                     do {
                         args.push_back(expression());
-                    } while (match({TokenType::TK_COMMA}));
+                    } while (match(TokenType::TK_COMMA));
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束方法参数列表");
 
@@ -854,64 +845,64 @@ std::unique_ptr<ASTNode> Parser::call() {
 
 std::unique_ptr<ASTNode> Parser::primary() {
     // 整数字面量
-    if (match({TokenType::TK_INT_LIT})) {
+    if (match(TokenType::TK_INT_LIT)) {
         const Token& tok = previous();
         return std::make_unique<NumberLiteral>(tok.literal, tok.line, tok.column);
     }
 
     // 浮点字面量
-    if (match({TokenType::TK_FLOAT_LIT})) {
+    if (match(TokenType::TK_FLOAT_LIT)) {
         const Token& tok = previous();
         return std::make_unique<NumberLiteral>(tok.literal, tok.line, tok.column);
     }
 
     // 字符串字面量
-    if (match({TokenType::TK_STRING_LIT})) {
+    if (match(TokenType::TK_STRING_LIT)) {
         const Token& tok = previous();
         return std::make_unique<StringLiteral>(tok.literal.stringVal(), tok.line, tok.column);
     }
 
     // 布尔字面量
-    if (match({TokenType::TK_TRUE})) {
+    if (match(TokenType::TK_TRUE)) {
         const Token& tok = previous();
         return std::make_unique<BoolLiteral>(true, tok.line, tok.column);
     }
-    if (match({TokenType::TK_FALSE})) {
+    if (match(TokenType::TK_FALSE)) {
         const Token& tok = previous();
         return std::make_unique<BoolLiteral>(false, tok.line, tok.column);
     }
 
     // null 字面量
-    if (match({TokenType::TK_NULL})) {
+    if (match(TokenType::TK_NULL)) {
         const Token& tok = previous();
         return std::make_unique<NullLiteral>(tok.line, tok.column);
     }
 
     // 标识符
-    if (match({TokenType::TK_IDENTIFIER})) {
+    if (match(TokenType::TK_IDENTIFIER)) {
         const Token& tok = previous();
         return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }
 
     // 类型关键字作为标识符使用（如 dict(), array() 函数调用）
-    if (match({TokenType::TK_DICT})) {
+    if (match(TokenType::TK_DICT)) {
         const Token& tok = previous();
         return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }
-    if (match({TokenType::TK_ARRAY})) {
+    if (match(TokenType::TK_ARRAY)) {
         const Token& tok = previous();
         return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }
 
     // 数组字面量 [e1, e2, e3]
-    if (match({TokenType::TK_LBRACKET})) {
+    if (match(TokenType::TK_LBRACKET)) {
         const Token& bracket = previous();
 
         std::vector<std::unique_ptr<ASTNode>> elements;
         if (!check(TokenType::TK_RBRACKET)) {
             do {
                 elements.push_back(expression());
-            } while (match({TokenType::TK_COMMA}));
+            } while (match(TokenType::TK_COMMA));
         }
         consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组字面量");
 
@@ -920,7 +911,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
     }
 
     // 字典字面量 {"key": value, ...}
-    if (match({TokenType::TK_LBRACE})) {
+    if (match(TokenType::TK_LBRACE)) {
         const Token& brace = previous();
 
         std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>> pairs;
@@ -931,7 +922,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
                 consume(TokenType::TK_COLON, "期望 ':' 分隔键值对");
                 auto val = expression();
                 pairs.emplace_back(std::move(key), std::move(val));
-            } while (match({TokenType::TK_COMMA}));
+            } while (match(TokenType::TK_COMMA));
         }
         consume(TokenType::TK_RBRACE, "期望 '}' 结束字典字面量");
 
@@ -940,7 +931,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
     }
 
     // 分组表达式
-    if (match({TokenType::TK_LPAREN})) {
+    if (match(TokenType::TK_LPAREN)) {
         auto expr = expression();
         consume(TokenType::TK_RPAREN, "期望 ')' 结束分组表达式");
         return expr;

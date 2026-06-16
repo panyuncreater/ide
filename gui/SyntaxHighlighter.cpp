@@ -87,18 +87,21 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     // 先处理注释（注释优先级最高，注释内的关键字不应高亮）
     QRegularExpressionMatch commentMatch = commentRegex_.match(text);
     if (commentMatch.hasMatch()) {
-        // 注释前的部分正常高亮
-        QString beforeComment = text.left(commentMatch.capturedStart());
-        for (const auto& rule : rules_) {
-            if (rule.format == commentFormat_) continue;  // 跳过注释规则
-            QRegularExpressionMatchIterator it = rule.pattern.globalMatch(beforeComment);
-            while (it.hasNext()) {
-                QRegularExpressionMatch match = it.next();
-                setFormat(match.capturedStart(), match.capturedLength(), rule.format);
+        int commentStart = commentMatch.capturedStart();
+        // 注释前的部分正常高亮（仅当注释不在行首时）
+        if (commentStart > 0) {
+            QString beforeComment = text.left(commentStart);
+            for (const auto& rule : rules_) {
+                if (rule.format == commentFormat_) continue;
+                QRegularExpressionMatchIterator it = rule.pattern.globalMatch(beforeComment);
+                while (it.hasNext()) {
+                    QRegularExpressionMatch match = it.next();
+                    setFormat(match.capturedStart(), match.capturedLength(), rule.format);
+                }
             }
         }
         // 注释部分用注释格式
-        setFormat(commentMatch.capturedStart(), commentMatch.capturedLength(), commentFormat_);
+        setFormat(commentStart, commentMatch.capturedLength(), commentFormat_);
         return;
     }
 
