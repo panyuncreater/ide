@@ -1,5 +1,6 @@
 #include "debug/DebugController.h"
 #include "ast/ASTNode.h"
+#include "interpreter/Interpreter.h"
 #include <stdexcept>
 
 // ============================================================
@@ -21,7 +22,7 @@ void DebugController::checkBreak(ASTNode* node) {
 
     // 如果已被停止，立即终止执行（优先级最高）
     if (stopped_) {
-        throw std::runtime_error("调试终止");
+        throw DebugStopException();
     }
 
     if (!running_) return;
@@ -242,6 +243,7 @@ void DebugController::pauseExecution() {
     loop.exec();
     pauseLoop_ = nullptr;
     inPauseLoop_ = false;
+    paused_ = false;  // 安全防护：确保状态一致
 }
 
 void DebugController::updateMinBreakpointLine() {

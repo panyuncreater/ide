@@ -3,6 +3,9 @@
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 #include <QKeyEvent>
+#include <QTextCursor>
+#include <QTextCharFormat>
+#include <QColor>
 #include <sstream>
 
 // ============================================================
@@ -46,11 +49,27 @@ void ReplPanel::setInterpreter(Interpreter* interp) {
 }
 
 void ReplPanel::appendOutput(const QString& text) {
-    outputArea_->append(text);
+    QTextCursor cursor(outputArea_->document());
+    cursor.movePosition(QTextCursor::End);
+    if (!outputArea_->document()->isEmpty()) {
+        cursor.insertText("\n");
+    }
+    cursor.insertText(text);
+    outputArea_->setTextCursor(cursor);
+    outputArea_->ensureCursorVisible();
 }
 
 void ReplPanel::appendError(const QString& text) {
-    outputArea_->append("<span style=\"color: red;\">" + text + "</span>");
+    QTextCursor cursor(outputArea_->document());
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertText("\n");
+    QTextCharFormat fmt;
+    fmt.setForeground(Qt::red);
+    cursor.setCharFormat(fmt);
+    cursor.insertText(text);
+    cursor.setCharFormat(QTextCharFormat());
+    outputArea_->setTextCursor(cursor);
+    outputArea_->ensureCursorVisible();
 }
 
 void ReplPanel::clearHistory() {
@@ -67,8 +86,19 @@ void ReplPanel::onReturnPressed() {
     history_.push_back(line);
     historyIndex_ = history_.size();
 
-    // 显示输入
-    outputArea_->append("<span style=\"color: #006600;\">>>> " + line + "</span>");
+    // 显示输入（使用纯文本+颜色格式，避免HTML注入）
+    {
+        QTextCursor cursor(outputArea_->document());
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertText("\n");
+        QTextCharFormat fmt;
+        fmt.setForeground(QColor("#006600"));
+        cursor.setCharFormat(fmt);
+        cursor.insertText(">>> " + line);
+        cursor.setCharFormat(QTextCharFormat());
+        outputArea_->setTextCursor(cursor);
+        outputArea_->ensureCursorVisible();
+    }
 
     // 特殊命令
     if (line == "clear") {

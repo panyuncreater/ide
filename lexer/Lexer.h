@@ -23,7 +23,6 @@ private:
     int start_ = 0;                 // 当前 token 起始位置
     int current_ = 0;               // 当前读取位置
     int line_ = 1;                  // 当前行号
-    int column_ = 1;                // 当前列号（行首为 1）
     int lineStart_ = 0;             // 当前行起始偏移
 
     std::vector<Token> tokens_;     // 输出的 Token 列表

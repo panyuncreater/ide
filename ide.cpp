@@ -191,6 +191,12 @@ void Ide::initToolbar() {
     stepOutAction_->setShortcut(Qt::SHIFT | Qt::Key_F11);
     stepOutAction_->setEnabled(false);
 
+    // Resume（继续运行到下一个断点）
+    resumeAction_ = toolbar->addAction("▶ Resume");
+    resumeAction_->setToolTip("继续运行到下一个断点 (F9)");
+    resumeAction_->setShortcut(Qt::Key_F9);
+    resumeAction_->setEnabled(false);
+
     toolbar->addSeparator();
 
     // 停止
@@ -239,6 +245,7 @@ void Ide::initConnections() {
     connect(stepInAction_, &QAction::triggered, this, &Ide::onStepIn);
     connect(stepOverAction_, &QAction::triggered, this, &Ide::onStepOver);
     connect(stepOutAction_, &QAction::triggered, this, &Ide::onStepOut);
+    connect(resumeAction_, &QAction::triggered, this, &Ide::onResume);
     connect(stopAction_, &QAction::triggered, this, &Ide::onStop);
     connect(clearAction_, &QAction::triggered, this, &Ide::onClearOutput);
     connect(formatAction_, &QAction::triggered, this, &Ide::onFormat);
@@ -265,7 +272,8 @@ void Ide::onRun() {
     // 词法分析
     try {
         runLexer(source);
-    } catch (...) {
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("词法分析异常: %1").arg(e.what()));
         return;
     }
 
@@ -294,10 +302,10 @@ void Ide::onRun() {
         QSet<int> errorLines;
         errorLines.insert(e.line);
         codeEditor_->setErrorLines(errorLines);
+    } catch (const DebugStopException&) {
+        outputPanel_->appendOutput("--- 调试终止 ---");
     } catch (const std::runtime_error& e) {
-        if (std::string(e.what()) != "调试终止") {
-            outputPanel_->appendError(QString("错误: %1").arg(e.what()));
-        }
+        outputPanel_->appendError(QString("错误: %1").arg(e.what()));
     }
 
     isRunning_ = false;
@@ -318,7 +326,8 @@ void Ide::onDebug() {
     // 词法分析
     try {
         runLexer(source);
-    } catch (...) {
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("词法分析异常: %1").arg(e.what()));
         return;
     }
 
@@ -338,13 +347,20 @@ void Ide::onDebug() {
         std::vector<VariableSnapshot> result;
         Environment* env = interpreter_.currentEnvironment();
         if (env) {
-            auto vars = env->allVariables();
-            for (const auto& kv : vars) {
-                VariableSnapshot snap;
-                snap.name = kv.first;
-                snap.value = kv.second;
-                snap.scope = "global";
-                result.push_back(snap);
+            // 沿作用域链收集变量，标注每个变量的作用域层级
+            int depth = 0;
+            Environment* current = env;
+            while (current) {
+                const auto& locals = current->localVariables();
+                for (const auto& kv : locals) {
+                    VariableSnapshot snap;
+                    snap.name = kv.first;
+                    snap.value = kv.second;
+                    snap.scope = (depth == 0) ? "局部" : (current->parent ? "外层" : "全局");
+                    result.push_back(snap);
+                }
+                current = current->parent.get();
+                depth++;
             }
         }
         return result;
@@ -379,13 +395,11 @@ void Ide::onDebug() {
     } catch (const RuntimeError& e) {
         outputPanel_->appendError(QString("运行时错误 (行 %1, 列 %2): %3")
                                       .arg(e.line).arg(e.column).arg(e.what()));
+    } catch (const DebugStopException&) {
+        // 用户点击停止按钮 — 正常调试终止，不显示错误
+        outputPanel_->appendOutput("--- 调试终止 ---");
     } catch (const std::runtime_error& e) {
-        // 调试终止（用户点击停止）— 不显示错误
-        if (std::string(e.what()) != "调试终止") {
-            outputPanel_->appendError(QString("错误: %1").arg(e.what()));
-        } else {
-            outputPanel_->appendOutput("--- 调试终止 ---");
-        }
+        outputPanel_->appendError(QString("错误: %1").arg(e.what()));
     }
 
     isRunning_ = false;
@@ -408,6 +422,10 @@ void Ide::onStepOver() {
 void Ide::onStepOut() {
     debugger_->stepOut();
     updateDebugInfo();
+}
+
+void Ide::onResume() {
+    debugger_->resume();
 }
 
 void Ide::onStop() {
@@ -805,6 +823,7 @@ void Ide::setRunningState(bool running) {
     stepInAction_->setEnabled(running);
     stepOverAction_->setEnabled(running);
     stepOutAction_->setEnabled(running);
+    resumeAction_->setEnabled(running);
     stopAction_->setEnabled(running);
     formatAction_->setEnabled(!running);
     bytecodeAction_->setEnabled(!running);

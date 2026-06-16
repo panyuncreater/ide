@@ -404,7 +404,13 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             const Value& indexVal = idxs[i];
             if (parentVal.isArray() && indexVal.isInt()) {
-                parentVal.arrayVal[indexVal.intVal] = currentVal;
+                int idx = indexVal.intVal;
+                if (idx < 0 || idx >= static_cast<int>(parentVal.arrayVal.size())) {
+                    runtimeError("数组越界: 索引 " + std::to_string(idx) +
+                                 " 超出范围 [0, " + std::to_string(parentVal.arrayVal.size()) + ")",
+                                 line, col);
+                }
+                parentVal.arrayVal[idx] = currentVal;
             } else if (parentVal.isDict() && indexVal.isString()) {
                 parentVal.dictVal[indexVal.stringVal] = currentVal;
             }
@@ -967,14 +973,20 @@ Value Interpreter::visitBlock(Block& node) {
 
     // 为代码块创建新作用域
     auto blockEnv = std::make_shared<Environment>(currentEnv_);
+    auto savedEnv = currentEnv_;
     currentEnv_ = blockEnv;
 
     Value result = Value::nullValue();
-    for (auto& stmt : node.statements) {
-        result = evaluate(stmt.get());
+    try {
+        for (auto& stmt : node.statements) {
+            result = evaluate(stmt.get());
+        }
+    } catch (...) {
+        currentEnv_ = savedEnv;
+        throw;
     }
 
-    currentEnv_ = blockEnv->parent;
+    currentEnv_ = savedEnv;
 
     return result;
 }

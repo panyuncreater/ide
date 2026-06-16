@@ -25,7 +25,7 @@ DebugPanel::DebugPanel(QWidget* parent)
     varLayout->addWidget(varLabel);
 
     variableTree_ = new QTreeWidget;
-    variableTree_->setHeaderLabels({"名称", "值", "类型"});
+    variableTree_->setHeaderLabels({"名称", "值", "作用域"});
     variableTree_->header()->setStretchLastSection(true);
     variableTree_->setAlternatingRowColors(true);
     variableTree_->setColumnWidth(0, 120);

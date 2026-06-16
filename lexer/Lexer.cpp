@@ -44,7 +44,6 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     start_ = 0;
     current_ = 0;
     line_ = 1;
-    column_ = 1;
     lineStart_ = 0;
     tokens_.clear();
 
@@ -85,7 +84,7 @@ bool Lexer::isAtEnd() const {
 bool Lexer::match(char expected) {
     if (isAtEnd()) return false;
     if (source_[current_] != expected) return false;
-    current_++;
+    advance();  // 使用 advance() 确保行号跟踪正确
     return true;
 }
 
@@ -219,15 +218,13 @@ void Lexer::number() {
     }
 
     std::string text = source_.substr(start_, current_ - start_);
-    int col = static_cast<int>(start_ - lineStart_) + 1;
 
     if (isFloat) {
         try {
             double val = std::stod(text);
             addToken(TokenType::TK_FLOAT_LIT, Value(val));
         } catch (const std::out_of_range&) {
-            // 浮点数溢出，使用 infinity
-            addToken(TokenType::TK_FLOAT_LIT, Value(std::numeric_limits<double>::infinity()));
+            errorToken("浮点数溢出: " + text);
         }
     } else {
         try {

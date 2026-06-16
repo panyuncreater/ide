@@ -132,7 +132,21 @@ std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
 }
 
 std::string Formatter::formatStringLiteral(StringLiteral& node) {
-    return "\"" + node.value + "\"";
+    std::string escaped;
+    escaped.reserve(node.value.size() + 2);
+    escaped += '"';
+    for (char c : node.value) {
+        switch (c) {
+        case '\\': escaped += "\\\\"; break;
+        case '"':  escaped += "\\\""; break;
+        case '\n': escaped += "\\n";  break;
+        case '\t': escaped += "\\t";  break;
+        case '\r': escaped += "\\r";  break;
+        default:   escaped += c;      break;
+        }
+    }
+    escaped += '"';
+    return escaped;
 }
 
 std::string Formatter::formatBoolLiteral(BoolLiteral& node) {

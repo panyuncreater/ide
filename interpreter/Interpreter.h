@@ -35,6 +35,12 @@ public:
         : std::runtime_error("return"), returnValue(val) {}
 };
 
+/// 调试终止异常（用户点击停止按钮时抛出）
+class DebugStopException : public std::exception {
+public:
+    const char* what() const noexcept override { return "调试终止"; }
+};
+
 // ============================================================
 // 调用帧
 // ============================================================

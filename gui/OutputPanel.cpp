@@ -1,5 +1,7 @@
 #include "gui/OutputPanel.h"
 #include <QLabel>
+#include <QTextCursor>
+#include <QTextCharFormat>
 
 // ============================================================
 // OutputPanel 输出与错误面板实现
@@ -77,11 +79,31 @@ OutputPanel::OutputPanel(QWidget* parent)
 }
 
 void OutputPanel::appendOutput(const QString& text) {
-    outputEdit_->append(text);
+    QTextCursor cursor(outputEdit_->document());
+    cursor.movePosition(QTextCursor::End);
+    if (!outputEdit_->document()->isEmpty()) {
+        cursor.insertText("\n");
+    }
+    cursor.insertText(text);
+    outputEdit_->setTextCursor(cursor);
+    outputEdit_->ensureCursorVisible();
 }
 
 void OutputPanel::appendError(const QString& text) {
-    errorEdit_->append(text);
+    QTextCursor cursor(errorEdit_->document());
+    cursor.movePosition(QTextCursor::End);
+    if (!errorEdit_->document()->isEmpty()) {
+        cursor.insertText("\n");
+    }
+    // 使用红色字符格式显示错误，但内容本身作为纯文本插入
+    QTextCharFormat fmt;
+    fmt.setForeground(Qt::red);
+    cursor.setCharFormat(fmt);
+    cursor.insertText(text);
+    // 恢复默认格式
+    cursor.setCharFormat(QTextCharFormat());
+    errorEdit_->setTextCursor(cursor);
+    errorEdit_->ensureCursorVisible();
 }
 
 void OutputPanel::clearAll() {

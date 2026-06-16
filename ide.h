@@ -52,6 +52,9 @@ private slots:
     /// 单步跳出
     void onStepOut();
 
+    /// 继续运行（到下一个断点）
+    void onResume();
+
     /// 停止运行
     void onStop();
 
@@ -111,6 +114,7 @@ private:
     QAction* stepInAction_ = nullptr;
     QAction* stepOverAction_ = nullptr;
     QAction* stepOutAction_ = nullptr;
+    QAction* resumeAction_ = nullptr;
     QAction* stopAction_ = nullptr;
     QAction* clearAction_ = nullptr;
     QAction* formatAction_ = nullptr;
