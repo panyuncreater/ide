@@ -620,6 +620,9 @@ Value Interpreter::visitWhileStmt(WhileStmt& node) {
 
     Value result = Value::nullValue();
     while (evaluate(node.condition.get()).isTruthy()) {
+        // 每次迭代重新检查断点（MODE_RUN 下确保 while 行断点每次迭代都能命中；
+        // STEP_IN/STEP_OVER 下 lastPausedLine_ 机制保证同行不重复暂停）
+        checkBreak(&node);
         try {
             result = evaluate(node.body.get());
         } catch (const ReturnException& e) {
@@ -643,6 +646,9 @@ Value Interpreter::visitForStmt(ForStmt& node) {
     Value result = Value::nullValue();
     try {
         while (true) {
+            // 每次迭代重新检查断点（同 visitWhileStmt 的修复原因）
+            checkBreak(&node);
+
             // 条件检查
             if (node.condition) {
                 Value cond = evaluate(node.condition.get());

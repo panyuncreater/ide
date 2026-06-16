@@ -425,7 +425,10 @@ void Ide::onStepOut() {
 }
 
 void Ide::onResume() {
+    // 同步编辑器断点到调试控制器（用户可能在暂停期间修改了断点）
+    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->resume();
+    updateDebugInfo();
 }
 
 void Ide::onStop() {
