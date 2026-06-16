@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include "lexer/Token.h"
 #include "ast/ASTNode.h"
+#include "Diagnostic.h"
 
 // ============================================================
 // Parser 语法分析器
@@ -35,10 +36,14 @@ public:
     /// 是否有解析错误
     bool hasErrors() const { return !errors_.empty(); }
 
+    /// 获取解析过程中的诊断信息
+    const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
+
 private:
     std::vector<Token> tokens_;     // Token 流
     int current_ = 0;               // 当前位置
     std::vector<ParseError> errors_; // 收集的解析错误
+    DiagnosticBag diagnostics_;      // 诊断收集器
 
     // ---- 辅助方法 ----
 

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QSet>
+#include <QMap>
 #include <QEventLoop>
 #include <vector>
 #include <string>
@@ -34,6 +35,20 @@ struct CallStackEntry {
     std::string functionName;
     int line;
     int depth;
+    std::vector<std::pair<std::string, Value>> locals;  // 该帧的局部变量快照
+};
+
+/// 断点信息（支持条件断点）
+struct BreakpointInfo {
+    int line;
+    std::string condition;  // 条件表达式（空字符串 = 无条件断点）
+    int hitCount = 0;       // 命中次数
+
+    BreakpointInfo() : line(0) {}
+    BreakpointInfo(int ln, const std::string& cond = "")
+        : line(ln), condition(cond) {}
+
+    bool isConditional() const { return !condition.empty(); }
 };
 
 /// 调试控制器：管理断点、步进模式和暂停
@@ -54,6 +69,18 @@ public:
     void toggleBreakpoint(int line);
     bool hasBreakpoint(int line) const;
     QSet<int> getBreakpoints() const;
+
+    /// 条件断点：设置断点条件表达式
+    void setBreakpointCondition(int line, const std::string& condition);
+
+    /// 获取断点条件
+    std::string getBreakpointCondition(int line) const;
+
+    /// 获取断点命中次数
+    int getBreakpointHitCount(int line) const;
+
+    /// 设置条件表达式求值回调（由 IDE 设置，接收条件字符串，返回 bool）
+    void setConditionEvaluator(std::function<bool(const std::string&)> evaluator);
 
     /// 步进控制
     void stepIn();
@@ -99,6 +126,8 @@ signals:
 private:
     StepMode mode_ = StepMode::MODE_RUN;
     QSet<int> breakpoints_;     // 断点行号集合
+    QMap<int, BreakpointInfo> breakpointInfos_;  // 条件断点详情（行号→信息）
+    std::function<bool(const std::string&)> conditionEvaluator_;  // 条件表达式求值器
     int currentDepth_ = 0;      // 当前调用深度
     int stepOverDepth_ = 0;     // stepOver 时的调用深度
     int stepOutDepth_ = 0;      // stepOut 时的调用深度

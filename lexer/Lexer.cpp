@@ -46,6 +46,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     line_ = 1;
     lineStart_ = 0;
     tokens_.clear();
+    diagnostics_.clear();
 
     while (!isAtEnd()) {
         start_ = current_;
@@ -54,6 +55,14 @@ std::vector<Token> Lexer::scan(const std::string& source) {
 
     // 添加 EOF Token
     tokens_.emplace_back(TokenType::TK_EOF, "", Value::nullValue(), line_, currentColumn());
+
+    // 从 TK_ERROR Token 中提取诊断信息
+    for (const auto& tok : tokens_) {
+        if (tok.type == TokenType::TK_ERROR) {
+            diagnostics_.addError(tok.lexeme, tok.line, tok.column, DiagSource::Lexer);
+        }
+    }
+
     return tokens_;
 }
 
@@ -126,33 +135,39 @@ void Lexer::scanToken() {
         break;
     case '%': addToken(TokenType::TK_PERCENT); break;
 
-    // 可能是双字符运算符
-    case '=':
-        addToken(match('=') ? TokenType::TK_EQ : TokenType::TK_ASSIGN);
-        break;
-    case '!':
-        addToken(match('=') ? TokenType::TK_NEQ : TokenType::TK_NOT);
-        break;
-    case '<':
-        addToken(match('=') ? TokenType::TK_LEQ : TokenType::TK_LT);
-        break;
-    case '>':
-        addToken(match('=') ? TokenType::TK_GEQ : TokenType::TK_GT);
-        break;
-    case '&':
-        if (match('&')) {
-            addToken(TokenType::TK_AND);   // && → and
-        } else {
-            errorToken("意外字符 '&'（是否想用 '&&'?）");
+    // 可能是双字符运算符（使用查找表 O(1) 分派）
+    case '=': case '!': case '<': case '>': case '&': case '|': {
+        // 双字符运算符查找表: [首字符索引][后继字符] → TokenType
+        // 首字符映射: '='→0, '!'→1, '<'→2, '>'→3, '&'→4, '|'→5
+        static const struct {
+            char first;
+            char second;        // 匹配的第二字符（'\0' 表示无匹配）
+            TokenType dualType; // 双字符类型
+            TokenType soloType; // 单字符类型
+            const char* hint;   // 错误提示（soloType 为 TK_ERROR 时使用）
+        } twoCharOps[] = {
+            {'=', '=', TokenType::TK_EQ,     TokenType::TK_ASSIGN, nullptr},
+            {'!', '=', TokenType::TK_NEQ,    TokenType::TK_NOT,    nullptr},
+            {'<', '=', TokenType::TK_LEQ,    TokenType::TK_LT,     nullptr},
+            {'>', '=', TokenType::TK_GEQ,    TokenType::TK_GT,     nullptr},
+            {'&', '&', TokenType::TK_AND,    TokenType::TK_ERROR,  "请使用 'and' 关键字代替 '&'"},
+            {'|', '|', TokenType::TK_OR,     TokenType::TK_ERROR,  "请使用 'or' 关键字代替 '|'"},
+        };
+        // 查找表项（6 项，编译期初始化）
+        for (const auto& entry : twoCharOps) {
+            if (entry.first == c) {
+                if (entry.second != '\0' && match(entry.second)) {
+                    addToken(entry.dualType);
+                } else if (entry.soloType != TokenType::TK_ERROR) {
+                    addToken(entry.soloType);
+                } else {
+                    errorToken(std::string("意外字符 '") + c + "'（" + entry.hint + "）");
+                }
+                break;
+            }
         }
         break;
-    case '|':
-        if (match('|')) {
-            addToken(TokenType::TK_OR);    // || → or
-        } else {
-            errorToken("意外字符 '|'（是否想用 '||'?）");
-        }
-        break;
+    }
 
     // 字符串字面量
     case '"': string(); break;

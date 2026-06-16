@@ -12,6 +12,7 @@
 // ============================================================
 
 /// 作用域环境，支持嵌套（作用域链），使用 shared_ptr 管理生命周期
+/// 优化：对父作用域查找使用深度快捷缓存，避免重复 O(depth) 链遍历
 class Environment : public std::enable_shared_from_this<Environment> {
 public:
     /// 父作用域指针（全局环境为 nullptr）
@@ -19,23 +20,42 @@ public:
 
     /// 构造函数
     explicit Environment(std::shared_ptr<Environment> parentEnv = nullptr)
-        : parent(parentEnv) {}
+        : parent(parentEnv) {
+        // 创建新作用域时递增全局世代，使缓存失效
+        ++sGeneration;
+    }
 
     /// 在当前作用域定义变量
     void define(const std::string& name, const Value& val) {
         variables[name] = val;
+        ++sGeneration;  // 变量定义改变环境状态，递增世代
     }
 
     /// 获取变量值（沿作用域链查找）
+    /// 优化路径：先查本地 O(1)，再用深度缓存跳过已知的中间作用域
     Value get(const std::string& name) const {
+        // 快速路径：当前作用域直接命中
         auto it = variables.find(name);
         if (it != variables.end()) {
             return it->second;
         }
+        // 慢路径：沿作用域链查找，使用深度缓存加速
         if (parent) {
-            return parent->get(name);
+            // 检查深度缓存是否有效
+            auto cacheIt = depthCache_.find(name);
+            if (cacheIt != depthCache_.end() && cacheIt->second.generation == sGeneration) {
+                // 缓存命中：直接跳到目标深度
+                return getAtDepth(name, cacheIt->second.depth);
+            }
+            // 缓存未命中或过期：正常遍历并记录深度
+            int depth = 0;
+            Value result = parent->getWithDepth(name, depth);
+            if (depth >= 0) {
+                depthCache_[name] = {depth + 1, sGeneration};  // +1: depth相对于parent，缓存相对于this
+            }
+            return result;
         }
-        // 未找到变量，返回 null（调用者应先检查 hasVariable）
+        // 未找到变量，返回 null
         return Value::nullValue();
     }
 
@@ -85,4 +105,45 @@ public:
 
 private:
     std::unordered_map<std::string, Value> variables;
+
+    /// 深度缓存条目：记录变量在作用域链中的深度位置
+    struct DepthEntry {
+        int depth;          // 变量所在作用域相对于当前作用域的深度（1=直接父级）
+        uint32_t generation; // 缓存写入时的世代号
+    };
+    mutable std::unordered_map<std::string, DepthEntry> depthCache_;
+
+    /// 全局世代计数器：任何环境变化都会递增，使缓存自动失效
+    inline static uint32_t sGeneration = 0;
+
+    /// 在指定深度查找变量（depth=1 表示直接父级）
+    Value getAtDepth(const std::string& name, int depth) const {
+        const Environment* env = this;
+        for (int i = 0; i < depth && env; ++i) {
+            env = env->parent.get();
+        }
+        if (env) {
+            auto it = env->variables.find(name);
+            if (it != env->variables.end()) return it->second;
+        }
+        // 缓存过期（变量被遮蔽），回退到正常遍历
+        return parent ? parent->get(name) : Value::nullValue();
+    }
+
+    /// 带深度记录的查找（返回时 depth 为变量所在深度，-1 表示未找到）
+    Value getWithDepth(const std::string& name, int& depth) const {
+        auto it = variables.find(name);
+        if (it != variables.end()) {
+            depth = 0;
+            return it->second;
+        }
+        if (parent) {
+            int childDepth = 0;
+            Value result = parent->getWithDepth(name, childDepth);
+            depth = (childDepth >= 0) ? childDepth + 1 : -1;
+            return result;
+        }
+        depth = -1;
+        return Value::nullValue();
+    }
 };

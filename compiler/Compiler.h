@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include "ast/ASTNode.h"
 #include "compiler/Bytecode.h"
+#include "Diagnostic.h"
 
 // ============================================================
 // Compiler 字节码编译器
@@ -21,10 +22,14 @@ public:
     /// 获取编译错误信息
     std::string getLastError() const;
 
+    /// 获取编译过程中的诊断信息
+    const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
+
 private:
     BytecodeChunk chunk_;                           // 当前字节码块
     std::unordered_map<std::string, uint16_t> varIndex_;  // 变量名 → 常量池索引
     std::string lastError_;                         // 最近一次编译错误
+    DiagnosticBag diagnostics_;                      // 诊断收集器
     std::unordered_map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
     std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
     bool inFunction_ = false;                       // 是否在函数体内
@@ -71,4 +76,15 @@ private:
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);
+
+    /// 常量折叠：尝试在编译期求值二元运算，成功返回 true 并输出结果
+    bool tryFoldBinary(const std::string& op, ASTNode* left, ASTNode* right,
+                       Value& result, int line);
+
+    /// 常量折叠：尝试在编译期求值一元运算，成功返回 true 并输出结果
+    bool tryFoldUnary(const std::string& op, ASTNode* operand,
+                      Value& result, int line);
+
+    /// 发射常量值指令（根据 Value 类型选择 OP_INT/OP_FLOAT/OP_STRING/OP_TRUE/OP_FALSE/OP_NULL）
+    void emitConstant(const Value& val, int line);
 };

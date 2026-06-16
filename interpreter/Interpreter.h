@@ -107,6 +107,9 @@ public:
     /// 获取调用栈（用于调试面板）
     const std::vector<CallFrame>& getCallStack() const;
 
+    /// 在当前环境中求值单个表达式（用于条件断点，不触发调试检查）
+    Value evaluateExpr(ASTNode* node);
+
     // ---- 25 个 visit 方法实现 ----
 
     Value visitBinaryOp(BinaryOp& node) override;

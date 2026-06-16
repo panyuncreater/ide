@@ -3,6 +3,8 @@
 #include <QPlainTextEdit>
 #include <QWidget>
 #include <QSet>
+#include <QMap>
+#include <string>
 
 // ============================================================
 // CodeEditor 代码编辑器
@@ -19,6 +21,7 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     QPlainTextEdit* editor_;
@@ -52,6 +55,13 @@ public:
     /// 设置断点集合
     void setBreakpoints(const QSet<int>& breakpoints);
 
+    /// 获取断点条件
+    std::string getBreakpointCondition(int line) const;
+
+signals:
+    /// 用户通过右键菜单设置断点条件时发射
+    void breakpointConditionRequested(int line, const QString& condition);
+
 protected:
     /// 行号区域重绘时触发
     void resizeEvent(QResizeEvent* event) override;
@@ -65,10 +75,8 @@ private:
     LineNumberArea* lineNumberArea_;
     QSet<int> errorLines_;      // 错误行号
     QSet<int> breakpoints_;     // 断点行号
+    QMap<int, std::string> breakpointConditions_;  // 断点条件表达式
     int currentLine_ = -1;      // 当前执行行号
 
     friend class LineNumberArea;
 };
-
-/// 行号区域点击事件处理：切换断点
-/// 鼠标点击行号区域时发射此信号

@@ -2,6 +2,7 @@
 #include <sstream>
 #include <cmath>
 #include <climits>
+#include <cstdint>
 #include <algorithm>
 
 // ============================================================
@@ -147,7 +148,7 @@ VMResult VM::numericOp(int opType, int line) {
     // 字符串拼接（仅加法）
     if (opType == OP_ADD_INT) {
         if (leftRef.isString() && rightRef.isString()) {
-            stack_[stack_.size() - 2] = Value(leftRef.stringVal + rightRef.stringVal);
+            stack_[stack_.size() - 2] = Value(leftRef.stringVal() + rightRef.stringVal());
             stack_.pop_back();
             return VMResult::VM_OK;
         }
@@ -166,29 +167,29 @@ VMResult VM::numericOp(int opType, int line) {
     // 数值运算
     switch (opType) {
     case OP_ADD_INT:
-        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal + rightRef.intVal);
+        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal() + rightRef.intVal());
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() + rightRef.toDouble());
         break;
     case OP_SUB_INT:
-        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal - rightRef.intVal);
+        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal() - rightRef.intVal());
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() - rightRef.toDouble());
         break;
     case OP_MUL_INT:
-        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal * rightRef.intVal);
+        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal() * rightRef.intVal());
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() * rightRef.toDouble());
         break;
     case OP_DIV_INT:
         if (rightRef.toDouble() == 0.0) return runtimeError("除零错误");
         if (leftRef.isInt() && rightRef.isInt()) {
-            if (leftRef.intVal == INT_MIN && rightRef.intVal == -1) return runtimeError("整数除法溢出");
-            stack_[stack_.size() - 2] = Value(leftRef.intVal / rightRef.intVal);
+            if (leftRef.intVal() == INT64_MIN && rightRef.intVal() == -1) return runtimeError("整数除法溢出");
+            stack_[stack_.size() - 2] = Value(leftRef.intVal() / rightRef.intVal());
         } else stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
         break;
     case OP_MOD_INT:
         if (!leftRef.isInt() || !rightRef.isInt()) return runtimeError("取模运算仅支持整数");
-        if (rightRef.intVal == 0) return runtimeError("除零错误");
-        if (leftRef.intVal == INT_MIN && rightRef.intVal == -1) { stack_[stack_.size() - 2] = Value(0); break; }
-        stack_[stack_.size() - 2] = Value(leftRef.intVal % rightRef.intVal);
+        if (rightRef.intVal() == 0) return runtimeError("除零错误");
+        if (leftRef.intVal() == INT64_MIN && rightRef.intVal() == -1) { stack_[stack_.size() - 2] = Value(0); break; }
+        stack_[stack_.size() - 2] = Value(leftRef.intVal() % rightRef.intVal());
         break;
     }
 
@@ -406,8 +407,8 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_NEGATE: {
         Value val = pop();
-        if (val.isInt()) push(Value(-val.intVal));
-        else if (val.isFloat()) push(Value(-val.floatVal));
+        if (val.isInt()) push(Value(-val.intVal()));
+        else if (val.isFloat()) push(Value(-val.floatVal()));
         else return runtimeError("一元减运算需要数值类型");
         notifyStep(ip, op);
         ip += 1;
@@ -507,7 +508,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_DEFINE_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& name = chunk.constants[idx].stringVal;
+        const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
         globals_[name] = val;
         notifyStep(ip, op);
@@ -518,7 +519,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_GET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& name = chunk.constants[idx].stringVal;
+        const std::string& name = chunk.constants[idx].stringVal();
         auto it = globals_.find(name);
         if (it != globals_.end()) {
             push(it->second);
@@ -533,7 +534,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_SET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& name = chunk.constants[idx].stringVal;
+        const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
         globals_[name] = val;
         // 不推入值：赋值是语句而非表达式，不返回值
@@ -587,7 +588,7 @@ VMResult VM::executeOneInstruction() {
                 for (size_t fi = 0; fi < retFrame.chunk->fieldOrder.size(); ++fi) {
                     size_t pos = retFrame.basePointer + 1 + fi;
                     if (pos < stack_.size()) {
-                        modifiedThis.fields[retFrame.chunk->fieldOrder[fi]] = stack_[pos];
+                        modifiedThis.fields()[retFrame.chunk->fieldOrder[fi]] = stack_[pos];
                     }
                 }
             }
@@ -601,8 +602,8 @@ VMResult VM::executeOneInstruction() {
                 if (!retFrame.receiverVarName.empty() && modifiedThis.isInstance()) {
                     auto it = globals_.find(retFrame.receiverVarName);
                     if (it != globals_.end() && it->second.isInstance()) {
-                        for (auto& field : modifiedThis.fields) {
-                            it->second.fields[field.first] = field.second;
+                        for (auto& field : modifiedThis.fields()) {
+                            it->second.fields()[field.first] = field.second;
                         }
                     }
                 }
@@ -615,15 +616,15 @@ VMResult VM::executeOneInstruction() {
                     if (retFrame.receiverLocalSlot == 0) {
                         // 接收者是调用者的 this（slot 0）：同步所有字段和字段槽
                         if (stack_[callerBp].isInstance()) {
-                            for (auto& field : modifiedThis.fields) {
-                                stack_[callerBp].fields[field.first] = field.second;
+                            for (auto& field : modifiedThis.fields()) {
+                                stack_[callerBp].fields()[field.first] = field.second;
                             }
                             // 同步字段到调用者的字段槽（bp+1..N）
                             if (callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty()) {
                                 for (size_t fi = 0; fi < callerFrame.chunk->fieldOrder.size(); ++fi) {
                                     const std::string& fieldName = callerFrame.chunk->fieldOrder[fi];
-                                    auto fieldIt = modifiedThis.fields.find(fieldName);
-                                    if (fieldIt != modifiedThis.fields.end()) {
+                                    auto fieldIt = modifiedThis.fields().find(fieldName);
+                                    if (fieldIt != modifiedThis.fields().end()) {
                                         size_t slotPos = callerBp + 1 + fi;
                                         if (slotPos < stack_.size()) {
                                             stack_[slotPos] = fieldIt->second;
@@ -636,11 +637,11 @@ VMResult VM::executeOneInstruction() {
                         // 接收者是调用者帧中的特定局部变量（字段、参数或局部变量）
                         stack_[receiverPos] = modifiedThis;
 
-                        // 如果接收者是调用者 this 的字段（slot 1..N），也更新 this.fields
+                        // 如果接收者是调用者 this 的字段（slot 1..N），也更新 this.fields()
                         if (stack_[callerBp].isInstance() && callerFrame.chunk &&
                             retFrame.receiverLocalSlot <= static_cast<int>(callerFrame.chunk->fieldOrder.size())) {
                             const std::string& fieldName = callerFrame.chunk->fieldOrder[retFrame.receiverLocalSlot - 1];
-                            stack_[callerBp].fields[fieldName] = modifiedThis;
+                            stack_[callerBp].fields()[fieldName] = modifiedThis;
                         }
                     }
                 }
@@ -672,7 +673,7 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& funName = chunk.constants[idx].stringVal;
+        const std::string& funName = chunk.constants[idx].stringVal();
 
         auto it = functionChunks_.find(funName);
         if (it == functionChunks_.end()) {
@@ -691,7 +692,7 @@ VMResult VM::executeOneInstruction() {
 
                 // 创建新实例
                 Value instance = Value::makeInstance(cls.name);
-                instance.fields = cls.fieldDefaults;  // 已含继承字段（OP_DEFINE_CLASS 合并）
+                instance.fields() = cls.fieldDefaults;  // 已含继承字段（OP_DEFINE_CLASS 合并）
 
                 // 检查是否有 init 方法（沿继承链查找）
                 const BytecodeChunk* initChunkPtr = findMethodChunk(funName, "init");
@@ -713,14 +714,14 @@ VMResult VM::executeOneInstruction() {
                     // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
                     int fieldCount = 0;
                     if (initChunk.fieldOrder.empty()) {
-                        for (const auto& field : instance.fields) {
+                        for (const auto& field : instance.fields()) {
                             push(field.second);
                         }
-                        fieldCount = static_cast<int>(instance.fields.size());
+                        fieldCount = static_cast<int>(instance.fields().size());
                     } else {
                         for (const auto& fieldName : initChunk.fieldOrder) {
-                            auto fieldIt = instance.fields.find(fieldName);
-                            if (fieldIt != instance.fields.end()) {
+                            auto fieldIt = instance.fields().find(fieldName);
+                            if (fieldIt != instance.fields().end()) {
                                 push(fieldIt->second);
                             } else {
                                 push(Value::nullValue());
@@ -832,15 +833,15 @@ VMResult VM::executeOneInstruction() {
         Value idx = pop();
         Value obj = pop();
         if (obj.isArray() && idx.isInt()) {
-            int i = idx.intVal;
-            if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
-                push(obj.arrayVal[i]);
+            int i = idx.intVal();
+            if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
+                push(obj.arrayVal()[i]);
             } else {
-                return runtimeError("数组索引越界: " + std::to_string(i) + " (长度: " + std::to_string(obj.arrayVal.size()) + ")");
+                return runtimeError("数组索引越界: " + std::to_string(i) + " (长度: " + std::to_string(obj.arrayVal().size()) + ")");
             }
         } else if (obj.isDict() && idx.isString()) {
-            auto it = obj.dictVal.find(idx.stringVal);
-            if (it != obj.dictVal.end()) {
+            auto it = obj.dictVal().find(idx.stringVal());
+            if (it != obj.dictVal().end()) {
                 push(it->second);
             } else {
                 push(Value::nullValue());  // 字典访问不存在的键返回 null（与解释器一致）
@@ -870,19 +871,19 @@ VMResult VM::executeOneInstruction() {
         // 直接修改 globals_[varName] 中的数组/字典元素
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& varName = chunk.constants[idx].stringVal;
+        const std::string& varName = chunk.constants[idx].stringVal();
         Value val = pop();
         Value index = pop();
         auto it = globals_.find(varName);
         if (it != globals_.end()) {
             Value& obj = it->second;  // 引用，直接修改
             if (obj.isArray() && index.isInt()) {
-                int i = index.intVal;
-                if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
-                    obj.arrayVal[i] = val;
+                int i = index.intVal();
+                if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
+                    obj.arrayVal()[i] = val;
                 }
             } else if (obj.isDict() && index.isString()) {
-                obj.dictVal[index.stringVal] = val;
+                obj.dictVal()[index.stringVal()] = val;
             }
         }
         notifyStep(ip, op);
@@ -899,12 +900,12 @@ VMResult VM::executeOneInstruction() {
         if (bp + slot < stack_.size()) {
             Value& obj = stack_[bp + slot];  // 栈引用，直接修改
             if (obj.isArray() && index.isInt()) {
-                int i = index.intVal;
-                if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
-                    obj.arrayVal[i] = val;
+                int i = index.intVal();
+                if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
+                    obj.arrayVal()[i] = val;
                 }
             } else if (obj.isDict() && index.isString()) {
-                obj.dictVal[index.stringVal] = val;
+                obj.dictVal()[index.stringVal()] = val;
             }
         }
         notifyStep(ip, op);
@@ -915,18 +916,18 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_MEMBER_GET: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& fieldName = chunk.constants[idx].stringVal;
+        const std::string& fieldName = chunk.constants[idx].stringVal();
         Value obj = pop();
         if (obj.isInstance()) {
-            auto it = obj.fields.find(fieldName);
-            if (it != obj.fields.end()) {
+            auto it = obj.fields().find(fieldName);
+            if (it != obj.fields().end()) {
                 push(it->second);
             } else {
                 push(Value::nullValue());
             }
         } else if (obj.isDict()) {
-            auto it = obj.dictVal.find(fieldName);
-            if (it != obj.dictVal.end()) {
+            auto it = obj.dictVal().find(fieldName);
+            if (it != obj.dictVal().end()) {
                 push(it->second);
             } else {
                 push(Value::nullValue());
@@ -944,7 +945,7 @@ VMResult VM::executeOneInstruction() {
         // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& fieldName = chunk.constants[idx].stringVal;
+        const std::string& fieldName = chunk.constants[idx].stringVal();
         Value val = pop();
         Value obj = pop();
         (void)obj; (void)fieldName; (void)val;  // 消除未使用警告
@@ -952,20 +953,20 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET_VAR: {
-        // 直接修改 globals_[varName].fields[fieldName]
+        // 直接修改 globals_[varName].fields()[fieldName]
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& varName = chunk.constants[varIdx].stringVal;
-        const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
+        const std::string& varName = chunk.constants[varIdx].stringVal();
+        const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
         Value val = pop();
         auto it = globals_.find(varName);
         if (it != globals_.end()) {
             Value& obj = it->second;  // 引用，直接修改
             if (obj.isInstance()) {
-                obj.fields[fieldName] = val;
+                obj.fields()[fieldName] = val;
             } else if (obj.isDict()) {
-                obj.dictVal[fieldName] = val;
+                obj.dictVal()[fieldName] = val;
             }
         }
         notifyStep(ip, op);
@@ -974,19 +975,19 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET_LOCAL: {
-        // 直接修改 stack_[bp+slot].fields[fieldName]（用于方法内 this.field = val）
+        // 直接修改 stack_[bp+slot].fields()[fieldName]（用于方法内 this.field = val）
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
         if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
+        const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
         Value val = pop();
         size_t bp = currentFrame().basePointer;
         if (bp + slot < stack_.size()) {
             Value& obj = stack_[bp + slot];  // 栈引用，直接修改
             if (obj.isInstance()) {
-                obj.fields[fieldName] = val;
+                obj.fields()[fieldName] = val;
                 // 当 slot==0（写 this.field）时，也需同步更新对应的字段槽
-                // 否则 OP_RETURN 会用字段槽的旧值覆盖 this.fields，导致 this.field 赋值丢失
+                // 否则 OP_RETURN 会用字段槽的旧值覆盖 this.fields()，导致 this.field 赋值丢失
                 if (slot == 0 && currentFrame().chunk && !currentFrame().chunk->fieldOrder.empty()) {
                     const auto& fieldOrder = currentFrame().chunk->fieldOrder;
                     for (size_t fi = 0; fi < fieldOrder.size(); ++fi) {
@@ -1000,7 +1001,7 @@ VMResult VM::executeOneInstruction() {
                     }
                 }
             } else if (obj.isDict()) {
-                obj.dictVal[fieldName] = val;
+                obj.dictVal()[fieldName] = val;
             }
         }
         notifyStep(ip, op);
@@ -1014,7 +1015,7 @@ VMResult VM::executeOneInstruction() {
         uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
         uint8_t receiverLocalSlotByte = chunk.code[ip + 6];
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& methodName = chunk.constants[idx].stringVal;
+        const std::string& methodName = chunk.constants[idx].stringVal();
 
         Value obj = peek(argCount);  // peek 返回 Value 拷贝
 
@@ -1031,36 +1032,36 @@ VMResult VM::executeOneInstruction() {
 
             if (methodName == "push") {
                 if (args.size() != 1) return runtimeError("push 期望 1 个参数");
-                obj.arrayVal.push_back(args[0]);
+                obj.arrayVal().push_back(args[0]);
                 mutated = true;
             } else if (methodName == "pop") {
-                if (obj.arrayVal.empty()) return runtimeError("对空数组调用 pop");
-                result = obj.arrayVal.back();
-                obj.arrayVal.pop_back();
+                if (obj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
+                result = obj.arrayVal().back();
+                obj.arrayVal().pop_back();
                 mutated = true;
             } else if (methodName == "len") {
-                result = Value(static_cast<int>(obj.arrayVal.size()));
+                result = Value(static_cast<int>(obj.arrayVal().size()));
             } else if (methodName == "remove") {
                 if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
                 if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
-                int ri = args[0].intVal;
-                if (ri < 0 || static_cast<size_t>(ri) >= obj.arrayVal.size())
+                int ri = args[0].intVal();
+                if (ri < 0 || static_cast<size_t>(ri) >= obj.arrayVal().size())
                     return runtimeError("数组索引越界: " + std::to_string(ri));
-                obj.arrayVal.erase(obj.arrayVal.begin() + ri);
+                obj.arrayVal().erase(obj.arrayVal().begin() + ri);
                 mutated = true;
             } else if (methodName == "contains") {
                 if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
                 bool found = false;
-                for (const auto& elem : obj.arrayVal) {
+                for (const auto& elem : obj.arrayVal()) {
                     if (elem.equals(args[0])) { found = true; break; }
                 }
                 result = Value(found);
             } else if (methodName == "join") {
                 std::string sep = args.empty() ? "" : args[0].toString();
                 std::string joined;
-                for (size_t i = 0; i < obj.arrayVal.size(); ++i) {
+                for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
                     if (i > 0) joined += sep;
-                    joined += obj.arrayVal[i].toString();
+                    joined += obj.arrayVal()[i].toString();
                 }
                 result = Value(joined);
             } else {
@@ -1070,18 +1071,18 @@ VMResult VM::executeOneInstruction() {
             // 变异方法需要写回修改后的对象
             if (mutated) {
                 if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                    globals_[chunk.constants[receiverVarIdx].stringVal] = obj;
+                    globals_[chunk.constants[receiverVarIdx].stringVal()] = obj;
                 } else if (receiverLocalSlotByte != 0xFF) {
                     size_t bp = currentFrame().basePointer;
                     if (bp + receiverLocalSlotByte < stack_.size()) {
                         stack_[bp + receiverLocalSlotByte] = obj;
                     }
-                    // 如果局部变量是调用者 this 的字段，也更新 this.fields
+                    // 如果局部变量是调用者 this 的字段，也更新 this.fields()
                     if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
                         VMCallFrame& curFrame = currentFrame();
                         if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
                             const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                            stack_[bp].fields[fn] = obj;
+                            stack_[bp].fields()[fn] = obj;
                         }
                     }
                 } else {
@@ -1107,21 +1108,21 @@ VMResult VM::executeOneInstruction() {
             bool mutated = false;
 
             if (methodName == "len") {
-                result = Value(static_cast<int>(obj.dictVal.size()));
+                result = Value(static_cast<int>(obj.dictVal().size()));
             } else if (methodName == "keys") {
                 std::vector<Value> keys;
-                for (const auto& kv : obj.dictVal) keys.push_back(Value(kv.first));
+                for (const auto& kv : obj.dictVal()) keys.push_back(Value(kv.first));
                 result = Value(keys);
             } else if (methodName == "values") {
                 std::vector<Value> vals;
-                for (const auto& kv : obj.dictVal) vals.push_back(kv.second);
+                for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
                 result = Value(vals);
             } else if (methodName == "has" || methodName == "contains") {
                 if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
-                result = Value(obj.dictVal.find(args[0].toString()) != obj.dictVal.end());
+                result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
             } else if (methodName == "remove") {
                 if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
-                obj.dictVal.erase(args[0].toString());
+                obj.dictVal().erase(args[0].toString());
                 mutated = true;
             } else {
                 return runtimeError("字典没有方法 " + methodName);
@@ -1129,7 +1130,7 @@ VMResult VM::executeOneInstruction() {
 
             if (mutated) {
                 if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                    globals_[chunk.constants[receiverVarIdx].stringVal] = obj;
+                    globals_[chunk.constants[receiverVarIdx].stringVal()] = obj;
                 } else if (receiverLocalSlotByte != 0xFF) {
                     size_t bp = currentFrame().basePointer;
                     if (bp + receiverLocalSlotByte < stack_.size()) {
@@ -1139,7 +1140,7 @@ VMResult VM::executeOneInstruction() {
                         VMCallFrame& curFrame = currentFrame();
                         if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
                             const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                            stack_[bp].fields[fn] = obj;
+                            stack_[bp].fields()[fn] = obj;
                         }
                     }
                 } else {
@@ -1164,13 +1165,13 @@ VMResult VM::executeOneInstruction() {
             Value result = Value::nullValue();
 
             if (methodName == "len") {
-                result = Value(static_cast<int>(obj.stringVal.size()));
+                result = Value(static_cast<int>(obj.stringVal().size()));
             } else if (methodName == "upper") {
-                std::string s = obj.stringVal;
+                std::string s = obj.stringVal();
                 for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
                 result = Value(s);
             } else if (methodName == "lower") {
-                std::string s = obj.stringVal;
+                std::string s = obj.stringVal();
                 for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                 result = Value(s);
             } else if (methodName == "split") {
@@ -1178,14 +1179,14 @@ VMResult VM::executeOneInstruction() {
                 if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
                 std::vector<Value> parts;
                 size_t start = 0, pos;
-                while ((pos = obj.stringVal.find(sep, start)) != std::string::npos) {
-                    parts.push_back(Value(obj.stringVal.substr(start, pos - start)));
+                while ((pos = obj.stringVal().find(sep, start)) != std::string::npos) {
+                    parts.push_back(Value(obj.stringVal().substr(start, pos - start)));
                     start = pos + sep.size();
                 }
-                parts.push_back(Value(obj.stringVal.substr(start)));
+                parts.push_back(Value(obj.stringVal().substr(start)));
                 result = Value(parts);
             } else if (methodName == "trim") {
-                std::string s = obj.stringVal;
+                std::string s = obj.stringVal();
                 size_t l = s.find_first_not_of(" \t\r\n");
                 size_t r = s.find_last_not_of(" \t\r\n");
                 if (l == std::string::npos) result = Value(std::string(""));
@@ -1202,7 +1203,7 @@ VMResult VM::executeOneInstruction() {
         // ---- 类实例方法调用 ----
         if (obj.isInstance()) {
             // 沿继承链查找方法（父类方法也可调用）
-            const BytecodeChunk* targetChunkPtr = findMethodChunk(obj.className, methodName);
+            const BytecodeChunk* targetChunkPtr = findMethodChunk(obj.className(), methodName);
             if (targetChunkPtr != nullptr) {
                 const BytecodeChunk& targetChunk = *targetChunkPtr;
 
@@ -1235,14 +1236,14 @@ VMResult VM::executeOneInstruction() {
                 int fieldCount = 0;
                 if (targetChunk.fieldOrder.empty()) {
                     // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
-                    for (const auto& field : obj.fields) {
+                    for (const auto& field : obj.fields()) {
                         push(field.second);
                     }
-                    fieldCount = static_cast<int>(obj.fields.size());
+                    fieldCount = static_cast<int>(obj.fields().size());
                 } else {
                     for (const auto& fieldName : targetChunk.fieldOrder) {
-                        auto fieldIt = obj.fields.find(fieldName);
-                        if (fieldIt != obj.fields.end()) {
+                        auto fieldIt = obj.fields().find(fieldName);
+                        if (fieldIt != obj.fields().end()) {
                             push(fieldIt->second);
                         } else {
                             push(Value::nullValue());
@@ -1272,7 +1273,7 @@ VMResult VM::executeOneInstruction() {
                 newFrame.isInitCall = (methodName == "init");  // init 返回 this 而非 null
                 // 记录接收者变量名（用于 writeBack 到 globals_）
                 if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                    newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal;
+                    newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal();
                 }
                 // 记录接收者局部变量 slot（用于 writeBack 到调用者栈帧）
                 newFrame.receiverLocalSlot = (receiverLocalSlotByte == 0xFF) ? -1 : receiverLocalSlotByte;
@@ -1287,7 +1288,7 @@ VMResult VM::executeOneInstruction() {
         for (uint8_t i = 0; i < argCount; ++i) pop();
         pop();
         if (obj.isInstance()) {
-            return runtimeError("类 " + obj.className + " 没有方法 " + methodName);
+            return runtimeError("类 " + obj.className() + " 没有方法 " + methodName);
         } else {
             return runtimeError("方法调用需要类实例");
         }
@@ -1303,14 +1304,14 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& funName = chunk.constants[idx].stringVal;
+        const std::string& funName = chunk.constants[idx].stringVal();
         Value closure = Value::makeClosure(funName, nullptr, {});
         // 捕获当前全局变量环境到闭包中
-        closure.capturedVars = {};  // 不再深拷贝整个全局环境（capturedVars 未被有效使用）
+        closure.capturedVars() = {};  // 不再深拷贝整个全局环境（capturedVars 未被有效使用）
         auto it = functionChunks_.find(funName);
         if (it != functionChunks_.end()) {
             for (int i = 0; i < it->second.arity; ++i) {
-                closure.closureParams.push_back("param" + std::to_string(i));
+                closure.closureParams().push_back("param" + std::to_string(i));
             }
         }
         push(closure);
@@ -1348,7 +1349,7 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& className = chunk.constants[idx].stringVal;
+        const std::string& className = chunk.constants[idx].stringVal();
 
         // 收集参数
         std::vector<Value> args;
@@ -1367,7 +1368,7 @@ VMResult VM::executeOneInstruction() {
 
         // 创建新实例
         Value instance = Value::makeInstance(cls.name);
-        instance.fields = cls.fieldDefaults;  // 已含继承字段
+        instance.fields() = cls.fieldDefaults;  // 已含继承字段
 
         // 检查是否有 init 方法（沿继承链查找）
         const BytecodeChunk* initChunkPtr = findMethodChunk(className, "init");
@@ -1390,14 +1391,14 @@ VMResult VM::executeOneInstruction() {
             // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
             int fieldCount = 0;
             if (initChunk.fieldOrder.empty()) {
-                for (const auto& field : instance.fields) {
+                for (const auto& field : instance.fields()) {
                     push(field.second);
                 }
-                fieldCount = static_cast<int>(instance.fields.size());
+                fieldCount = static_cast<int>(instance.fields().size());
             } else {
                 for (const auto& fieldName : initChunk.fieldOrder) {
-                    auto fieldIt = instance.fields.find(fieldName);
-                    if (fieldIt != instance.fields.end()) {
+                    auto fieldIt = instance.fields().find(fieldName);
+                    if (fieldIt != instance.fields().end()) {
                         push(fieldIt->second);
                     } else {
                         push(Value::nullValue());
@@ -1448,11 +1449,11 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_INIT_FIELD: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& fieldName = chunk.constants[idx].stringVal;
+        const std::string& fieldName = chunk.constants[idx].stringVal();
         Value val = pop();
         // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
         if (!stack_.empty() && stack_.back().isInstance()) {
-            stack_.back().fields[fieldName] = val;
+            stack_.back().fields()[fieldName] = val;
         }
         notifyStep(ip, op);
         ip += 3;
@@ -1465,10 +1466,10 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t superIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& className = chunk.constants[idx].stringVal;
+        const std::string& className = chunk.constants[idx].stringVal();
         std::string superClassName;
         if (superIdx != 0xFFFF && superIdx < chunk.constants.size()) {
-            superClassName = chunk.constants[superIdx].stringVal;
+            superClassName = chunk.constants[superIdx].stringVal();
         }
         Value templateInstance = pop();
 
@@ -1476,7 +1477,7 @@ VMResult VM::executeOneInstruction() {
         std::vector<std::string> ownFieldOrder;
         std::unordered_map<std::string, Value> ownFieldDefaults;
         if (templateInstance.isInstance()) {
-            for (const auto& field : templateInstance.fields) {
+            for (const auto& field : templateInstance.fields()) {
                 ownFieldOrder.push_back(field.first);
                 ownFieldDefaults[field.first] = field.second;
             }
@@ -1528,7 +1529,6 @@ VMResult VM::executeOneInstruction() {
 
         // 在全局变量中存储类标记（与解释器语义一致：类名是类型标识，不是实例）
         Value classVal(std::string("class:") + className);
-        classVal.type = ValueType::VAL_STRING;
         globals_[className] = classVal;
 
         notifyStep(ip, op);
@@ -1543,15 +1543,15 @@ VMResult VM::executeOneInstruction() {
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         if (varIdx < chunk.constants.size() && fieldIdx < chunk.constants.size()) {
-            const std::string& varName = chunk.constants[varIdx].stringVal;
-            const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
+            const std::string& varName = chunk.constants[varIdx].stringVal();
+            const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
             auto it = globals_.find(varName);
             if (it != globals_.end()) {
                 Value& obj = it->second;
                 if (obj.isInstance()) {
-                    obj.fields[fieldName] = lastMutatedReceiver_;
+                    obj.fields()[fieldName] = lastMutatedReceiver_;
                 } else if (obj.isDict()) {
-                    obj.dictVal[fieldName] = lastMutatedReceiver_;
+                    obj.dictVal()[fieldName] = lastMutatedReceiver_;
                 }
             }
         }
@@ -1566,12 +1566,12 @@ VMResult VM::executeOneInstruction() {
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
         if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& fieldName = chunk.constants[fieldIdx].stringVal;
+        const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
         size_t bp = currentFrame().basePointer;
         if (bp + slot < stack_.size()) {
             Value& obj = stack_[bp + slot];
             if (obj.isInstance()) {
-                obj.fields[fieldName] = lastMutatedReceiver_;
+                obj.fields()[fieldName] = lastMutatedReceiver_;
                 // 如果 slot==0（this），也同步更新对应字段槽
                 if (slot == 0) {
                     VMCallFrame& curFrame = currentFrame();
@@ -1588,7 +1588,7 @@ VMResult VM::executeOneInstruction() {
                     }
                 }
             } else if (obj.isDict()) {
-                obj.dictVal[fieldName] = lastMutatedReceiver_;
+                obj.dictVal()[fieldName] = lastMutatedReceiver_;
             }
         }
         lastMutatedReceiver_ = Value::nullValue();
@@ -1602,17 +1602,17 @@ VMResult VM::executeOneInstruction() {
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         Value index = pop();
         if (varIdx < chunk.constants.size()) {
-            const std::string& varName = chunk.constants[varIdx].stringVal;
+            const std::string& varName = chunk.constants[varIdx].stringVal();
             auto it = globals_.find(varName);
             if (it != globals_.end()) {
                 Value& obj = it->second;
                 if (obj.isArray() && index.isInt()) {
-                    int i = index.intVal;
-                    if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
-                        obj.arrayVal[i] = lastMutatedReceiver_;
+                    int i = index.intVal();
+                    if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
+                        obj.arrayVal()[i] = lastMutatedReceiver_;
                     }
                 } else if (obj.isDict() && index.isString()) {
-                    obj.dictVal[index.stringVal] = lastMutatedReceiver_;
+                    obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;
                 }
             }
         }
@@ -1630,12 +1630,12 @@ VMResult VM::executeOneInstruction() {
         if (bp + slot < stack_.size()) {
             Value& obj = stack_[bp + slot];
             if (obj.isArray() && index.isInt()) {
-                int i = index.intVal;
-                if (i >= 0 && i < static_cast<int>(obj.arrayVal.size())) {
-                    obj.arrayVal[i] = lastMutatedReceiver_;
+                int i = index.intVal();
+                if (i >= 0 && i < static_cast<int>(obj.arrayVal().size())) {
+                    obj.arrayVal()[i] = lastMutatedReceiver_;
                 }
             } else if (obj.isDict() && index.isString()) {
-                obj.dictVal[index.stringVal] = lastMutatedReceiver_;
+                obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;
             }
             // 如果 slot==0（this），也同步更新对应字段槽
             if (slot == 0 && obj.isInstance()) {

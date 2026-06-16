@@ -40,3 +40,49 @@ public:
     virtual Value visitMethodCall(MethodCall& node) = 0;
     virtual Value visitNullLiteral(NullLiteral& node) = 0;
 };
+
+// ============================================================
+// DefaultVisitor 默认访问者基类
+// ============================================================
+// 为所有 25 个 visit 方法提供默认实现，统一委托到 defaultVisit()。
+// 子类只需覆盖 defaultVisit()（通用处理）或个别 visit 方法，
+// 无需实现全部 25 个接口。适用于类型检查器、静态分析器、
+// 代码格式分析等只需处理部分节点的场景。
+
+class DefaultVisitor : public Visitor {
+public:
+    ~DefaultVisitor() override = default;
+
+    /// 默认处理方法，子类可覆盖以实现通用行为
+    virtual Value defaultVisit(ASTNode& /*node*/) {
+        return Value::nullValue();
+    }
+
+    // ---- 25 个 visit 方法的默认实现 ----
+
+    Value visitBinaryOp(BinaryOp& node) override { return defaultVisit(node); }
+    Value visitUnaryOp(UnaryOp& node) override { return defaultVisit(node); }
+    Value visitNumberLiteral(NumberLiteral& node) override { return defaultVisit(node); }
+    Value visitStringLiteral(StringLiteral& node) override { return defaultVisit(node); }
+    Value visitBoolLiteral(BoolLiteral& node) override { return defaultVisit(node); }
+    Value visitVarDecl(VarDecl& node) override { return defaultVisit(node); }
+    Value visitAssignment(Assignment& node) override { return defaultVisit(node); }
+    Value visitVarRef(VarRef& node) override { return defaultVisit(node); }
+    Value visitIfStmt(IfStmt& node) override { return defaultVisit(node); }
+    Value visitWhileStmt(WhileStmt& node) override { return defaultVisit(node); }
+    Value visitForStmt(ForStmt& node) override { return defaultVisit(node); }
+    Value visitFunDecl(FunDecl& node) override { return defaultVisit(node); }
+    Value visitFunCall(FunCall& node) override { return defaultVisit(node); }
+    Value visitReturnStmt(ReturnStmt& node) override { return defaultVisit(node); }
+    Value visitPrintStmt(PrintStmt& node) override { return defaultVisit(node); }
+    Value visitBlock(Block& node) override { return defaultVisit(node); }
+    Value visitArrayLiteral(ArrayLiteral& node) override { return defaultVisit(node); }
+    Value visitDictLiteral(DictLiteral& node) override { return defaultVisit(node); }
+    Value visitIndexAccess(IndexAccess& node) override { return defaultVisit(node); }
+    Value visitIndexAssign(IndexAssign& node) override { return defaultVisit(node); }
+    Value visitClassDecl(ClassDecl& node) override { return defaultVisit(node); }
+    Value visitMemberAccess(MemberAccess& node) override { return defaultVisit(node); }
+    Value visitMemberAssign(MemberAssign& node) override { return defaultVisit(node); }
+    Value visitMethodCall(MethodCall& node) override { return defaultVisit(node); }
+    Value visitNullLiteral(NullLiteral& node) override { return defaultVisit(node); }
+};

@@ -249,6 +249,12 @@ void Ide::initConnections() {
 
     connect(debugger_, &DebugController::pausedAt, this, &Ide::onPausedAt);
 
+    // 条件断点：编辑器右键设置条件时同步到调试控制器
+    connect(codeEditor_, &CodeEditor::breakpointConditionRequested,
+            this, [this](int line, const QString& condition) {
+                debugger_->setBreakpointCondition(line, condition.toStdString());
+            });
+
     // VM 调试连接
     connect(vmStepAction_, &QAction::triggered, this, &Ide::onVmStep);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
@@ -272,6 +278,9 @@ void Ide::onRun() {
         return;
     }
 
+    // 如果有词法错误，不再继续解析
+    if (lexer_.getDiagnostics().hasErrors()) return;
+
     // 语法分析（runParser 内部已收集并显示所有错误）
     runParser(lastTokens_);
 
@@ -292,8 +301,8 @@ void Ide::onRun() {
         interpreter_.execute(*astRoot_);
         outputPanel_->appendOutput("--- 程序执行结束 ---");
     } catch (const RuntimeError& e) {
-        outputPanel_->appendError(QString("运行时错误 (行 %1, 列 %2): %3")
-                                      .arg(e.line).arg(e.column).arg(e.what()));
+        Diagnostic diag(DiagLevel::Error, e.what(), e.line, e.column, DiagSource::Interpreter);
+        outputPanel_->appendError(QString::fromStdString(diag.format()));
         QSet<int> errorLines;
         errorLines.insert(e.line);
         codeEditor_->setErrorLines(errorLines);
@@ -326,6 +335,9 @@ void Ide::onDebug() {
         return;
     }
 
+    // 如果有词法错误，不再继续解析
+    if (lexer_.getDiagnostics().hasErrors()) return;
+
     // 语法分析（runParser 内部已收集并显示所有错误）
     runParser(lastTokens_);
 
@@ -336,6 +348,32 @@ void Ide::onDebug() {
 
     // 设置断点
     debugger_->setBreakpoints(codeEditor_->getBreakpoints());
+
+    // 同步断点条件到调试控制器
+    for (int line : codeEditor_->getBreakpoints()) {
+        std::string cond = codeEditor_->getBreakpointCondition(line);
+        if (!cond.empty()) {
+            debugger_->setBreakpointCondition(line, cond);
+        }
+    }
+
+    // 设置条件断点求值器：用 Lexer+Parser 解析条件字符串，在当前环境中求值
+    debugger_->setConditionEvaluator([this](const std::string& condition) -> bool {
+        try {
+            Lexer condLexer;
+            auto tokens = condLexer.scan(condition);
+            Parser condParser;
+            auto block = condParser.parse(tokens);
+            if (condParser.getErrors().empty() && block && !block->statements.empty()) {
+                // 在当前环境中求值表达式（不触发 checkBreak）
+                Value result = interpreter_.evaluateExpr(block->statements[0].get());
+                return result.isTruthy();
+            }
+        } catch (...) {
+            // 条件求值失败视为 false（不暂停）
+        }
+        return false;
+    });
 
     // 设置调试变量回调
     debugger_->setVariableCallback([this]() -> std::vector<VariableSnapshot> {
@@ -369,6 +407,12 @@ void Ide::onDebug() {
             entry.functionName = frame.functionName;
             entry.line = frame.line;
             entry.depth = frame.depth;
+            // 填充该帧的局部变量快照
+            if (frame.env) {
+                for (const auto& kv : frame.env->localVariables()) {
+                    entry.locals.emplace_back(kv.first, kv.second);
+                }
+            }
             result.push_back(entry);
         }
         return result;
@@ -388,8 +432,8 @@ void Ide::onDebug() {
         interpreter_.execute(*astRoot_);
         outputPanel_->appendOutput("--- 程序执行结束 ---");
     } catch (const RuntimeError& e) {
-        outputPanel_->appendError(QString("运行时错误 (行 %1, 列 %2): %3")
-                                      .arg(e.line).arg(e.column).arg(e.what()));
+        Diagnostic diag(DiagLevel::Error, e.what(), e.line, e.column, DiagSource::Interpreter);
+        outputPanel_->appendError(QString::fromStdString(diag.format()));
     } catch (const DebugStopException&) {
         // 用户点击停止按钮 — 正常调试终止，不显示错误
         outputPanel_->appendOutput("--- 调试终止 ---");
@@ -448,16 +492,17 @@ void Ide::onFormat() {
     try {
         lastTokens_ = lexer_.scan(source);
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("格式化失败 - 词法错误: %1").arg(e.what()));
+        Diagnostic diag(DiagLevel::Error, e.what(), 0, 0, DiagSource::Lexer);
+        outputPanel_->appendError(QString::fromStdString("[格式化] " + diag.format()));
         return;
     }
 
     // 语法分析
     astRoot_ = parser_.parse(lastTokens_);
     if (parser_.hasErrors()) {
-        for (const auto& err : parser_.getErrors()) {
-            outputPanel_->appendError(QString("格式化失败 - 语法错误 (行 %1, 列 %2): %3")
-                                          .arg(err.line).arg(err.column).arg(err.what()));
+        for (const auto& diag : parser_.getDiagnostics().all()) {
+            outputPanel_->appendError(QString::fromStdString(
+                "[格式化] " + diag.format()));
         }
         return;
     }
@@ -494,9 +539,9 @@ void Ide::onShowBytecode() {
     astRoot_ = parser_.parse(lastTokens_);
     if (parser_.hasErrors()) {
         bytecodeList_->clear();
-        for (const auto& err : parser_.getErrors()) {
-            bytecodeList_->addItem(QString("编译失败 - 语法错误 (行 %1, 列 %2): %3")
-                                       .arg(err.line).arg(err.column).arg(err.what()));
+        for (const auto& diag : parser_.getDiagnostics().all()) {
+            bytecodeList_->addItem(QString::fromStdString(
+                "[编译] " + diag.format()));
         }
         return;
     }
@@ -549,8 +594,8 @@ void Ide::onVmStep() {
     VMResult result = vm_.stepOnce();
 
     if (result == VMResult::VM_RUNTIME_ERROR) {
-        outputPanel_->appendError(QString("VM 运行时错误: %1")
-                                      .arg(QString::fromStdString(vm_.getLastError())));
+        Diagnostic diag(DiagLevel::Error, vm_.getLastError(), 0, 0, DiagSource::VM);
+        outputPanel_->appendError(QString::fromStdString(diag.format()));
         vmStackPanel_->clearAll();
         isVmInitialized_ = false;
         vmStepAction_->setEnabled(true);
@@ -729,27 +774,19 @@ void Ide::runLexer(const std::string& source) {
             for (int col = 0; col < 5; ++col) {
                 tokenTable_->item(i, col)->setForeground(Qt::red);
             }
-            outputPanel_->appendError(QString("词法错误 (行 %1, 列 %2): %3")
-                                          .arg(tok.line).arg(tok.column)
-                                          .arg(QString::fromStdString(tok.lexeme)));
         }
     }
     tokenTable_->resizeColumnsToContents();
+
+    // 使用统一诊断显示词法错误
+    displayDiagnostics(lexer_.getDiagnostics());
 }
 
 void Ide::runParser(const std::vector<Token>& tokens) {
     astRoot_ = parser_.parse(tokens);
 
-    // 显示所有收集到的解析错误
-    if (parser_.hasErrors()) {
-        QSet<int> errorLines;
-        for (const auto& err : parser_.getErrors()) {
-            outputPanel_->appendError(QString("语法错误 (行 %1, 列 %2): %3")
-                                          .arg(err.line).arg(err.column).arg(err.what()));
-            errorLines.insert(err.line);
-        }
-        codeEditor_->setErrorLines(errorLines);
-    }
+    // 使用统一诊断显示解析错误
+    displayDiagnostics(parser_.getDiagnostics());
 
     // 更新 AST 视图
     if (astRoot_) {
@@ -762,11 +799,8 @@ void Ide::runCompiler() {
 
     lastCompileResult_ = compiler_.compile(*astRoot_);
 
-    // 检查编译错误
-    std::string err = compiler_.getLastError();
-    if (!err.empty()) {
-        outputPanel_->appendError(QString::fromStdString(err));
-    }
+    // 使用统一诊断显示编译错误
+    displayDiagnostics(compiler_.getDiagnostics());
 }
 
 void Ide::updateDebugInfo() {
@@ -775,6 +809,34 @@ void Ide::updateDebugInfo() {
 
     auto stack = debugger_->getCallStack();
     debugPanel_->updateCallStack(stack);
+}
+
+void Ide::displayDiagnostics(const DiagnosticBag& bag) {
+    for (const auto& diag : bag.all()) {
+        QString text = QString::fromStdString(diag.format());
+        if (diag.isError()) {
+            outputPanel_->appendError(text);
+        } else if (diag.isWarning()) {
+            outputPanel_->appendOutput(QString("[警告] ") + text);
+        } else {
+            outputPanel_->appendOutput(text);
+        }
+    }
+
+    // 标记编辑器错误行
+    auto errorLines = bag.errorLines();
+    if (!errorLines.empty()) {
+        QSet<int> lineSet;
+        for (int ln : errorLines) {
+            lineSet.insert(ln);
+        }
+        codeEditor_->setErrorLines(lineSet);
+    }
+
+    // 显示摘要（当有多条诊断时）
+    if (bag.size() > 1) {
+        outputPanel_->appendOutput(QString::fromStdString("--- " + bag.summary() + " ---"));
+    }
 }
 
 void Ide::setRunningState(bool running) {

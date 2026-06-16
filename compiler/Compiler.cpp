@@ -14,6 +14,7 @@ CompileResult Compiler::compile(Block& program) {
     chunk_.arity = 0;
     varIndex_.clear();
     lastError_.clear();
+    diagnostics_.clear();
     functionChunks_.clear();
     currentLocals_.clear();
     inFunction_ = false;
@@ -115,6 +116,13 @@ void Compiler::compileStatement(ASTNode* node) {
 }
 
 void Compiler::compileBinaryOp(BinaryOp& node) {
+    // 常量折叠：编译期求值常量表达式
+    Value folded;
+    if (tryFoldBinary(node.op, node.left.get(), node.right.get(), folded, node.line)) {
+        emitConstant(folded, node.line);
+        return;
+    }
+
     // 短路运算特殊处理
     if (node.op == "and") {
         compileNode(node.left.get());
@@ -186,6 +194,13 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
 }
 
 void Compiler::compileUnaryOp(UnaryOp& node) {
+    // 常量折叠：编译期求值常量表达式
+    Value folded;
+    if (tryFoldUnary(node.op, node.operand.get(), folded, node.line)) {
+        emitConstant(folded, node.line);
+        return;
+    }
+
     compileNode(node.operand.get());
     if (node.op == "-") {
         chunk_.writeOp(OpCode::OP_NEGATE, node.line);
@@ -824,4 +839,145 @@ void Compiler::error(const std::string& msg, int line, int col) {
     std::ostringstream oss;
     oss << "编译错误 (行 " << line << ", 列 " << col << "): " << msg;
     lastError_ = oss.str();
+    diagnostics_.addError(msg, line, col, DiagSource::Compiler);
+}
+
+// ---- 常量折叠 ----
+
+void Compiler::emitConstant(const Value& val, int line) {
+    if (val.isInt()) {
+        uint16_t idx = chunk_.addConstant(val);
+        chunk_.writeOp(OpCode::OP_INT, line);
+        chunk_.writeShort(idx, line);
+    } else if (val.isFloat()) {
+        uint16_t idx = chunk_.addConstant(val);
+        chunk_.writeOp(OpCode::OP_FLOAT, line);
+        chunk_.writeShort(idx, line);
+    } else if (val.isString()) {
+        uint16_t idx = chunk_.addConstant(val);
+        chunk_.writeOp(OpCode::OP_STRING, line);
+        chunk_.writeShort(idx, line);
+    } else if (val.isBool()) {
+        chunk_.writeOp(val.boolVal() ? OpCode::OP_TRUE : OpCode::OP_FALSE, line);
+    } else {
+        chunk_.writeOp(OpCode::OP_NULL, line);
+    }
+}
+
+bool Compiler::tryFoldBinary(const std::string& op, ASTNode* left, ASTNode* right,
+                              Value& result, int line) {
+    // 提取左/右常量值（仅支持字面量节点）
+    Value lv, rv;
+    bool lConst = false, rConst = false;
+
+    if (left && left->nodeType == NodeType::NODE_NUMBER_LITERAL) {
+        lv = static_cast<NumberLiteral*>(left)->value;
+        lConst = true;
+    } else if (left && left->nodeType == NodeType::NODE_STRING_LITERAL) {
+        lv = Value(static_cast<StringLiteral*>(left)->value);
+        lConst = true;
+    } else if (left && left->nodeType == NodeType::NODE_BOOL_LITERAL) {
+        lv = Value(static_cast<BoolLiteral*>(left)->value);
+        lConst = true;
+    }
+
+    if (right && right->nodeType == NodeType::NODE_NUMBER_LITERAL) {
+        rv = static_cast<NumberLiteral*>(right)->value;
+        rConst = true;
+    } else if (right && right->nodeType == NodeType::NODE_STRING_LITERAL) {
+        rv = Value(static_cast<StringLiteral*>(right)->value);
+        rConst = true;
+    } else if (right && right->nodeType == NodeType::NODE_BOOL_LITERAL) {
+        rv = Value(static_cast<BoolLiteral*>(right)->value);
+        rConst = true;
+    }
+
+    if (!lConst || !rConst) return false;
+
+    // 数值运算
+    if (lv.isNumber() && rv.isNumber()) {
+        // 类型提升：int+float → float
+        bool useFloat = lv.isFloat() || rv.isFloat();
+        double ld = useFloat ? (lv.isFloat() ? lv.floatVal() : static_cast<double>(lv.intVal())) : 0;
+        double rd = useFloat ? (rv.isFloat() ? rv.floatVal() : static_cast<double>(rv.intVal())) : 0;
+        int64_t li = lv.isInt() ? lv.intVal() : 0;
+        int64_t ri = rv.isInt() ? rv.intVal() : 0;
+
+        if (op == "+") {
+            result = useFloat ? Value(ld + rd) : Value(li + ri);
+            return true;
+        }
+        if (op == "-") {
+            result = useFloat ? Value(ld - rd) : Value(li - ri);
+            return true;
+        }
+        if (op == "*") {
+            result = useFloat ? Value(ld * rd) : Value(li * ri);
+            return true;
+        }
+        if (op == "/") {
+            double divisor = useFloat ? rd : static_cast<double>(ri);
+            if (divisor == 0) return false;  // 除零不折叠，保留运行时错误
+            result = useFloat ? Value(ld / rd) : Value(li / ri);
+            return true;
+        }
+        if (op == "%") {
+            if (!useFloat && ri == 0) return false;  // 模零不折叠
+            if (useFloat) return false;  // float 模运算不常见，不折叠
+            result = Value(li % ri);
+            return true;
+        }
+
+        // 比较运算
+        if (op == "==") { result = Value(useFloat ? (ld == rd) : (li == ri)); return true; }
+        if (op == "!=") { result = Value(useFloat ? (ld != rd) : (li != ri)); return true; }
+        if (op == "<")  { result = Value(useFloat ? (ld < rd)  : (li < ri));  return true; }
+        if (op == ">")  { result = Value(useFloat ? (ld > rd)  : (li > ri));  return true; }
+        if (op == "<=") { result = Value(useFloat ? (ld <= rd) : (li <= ri)); return true; }
+        if (op == ">=") { result = Value(useFloat ? (ld >= rd) : (li >= ri)); return true; }
+    }
+
+    // 字符串拼接
+    if (lv.isString() && rv.isString() && op == "+") {
+        result = Value(lv.stringVal() + rv.stringVal());
+        return true;
+    }
+
+    // 字符串比较
+    if (lv.isString() && rv.isString()) {
+        if (op == "==") { result = Value(lv.stringVal() == rv.stringVal()); return true; }
+        if (op == "!=") { result = Value(lv.stringVal() != rv.stringVal()); return true; }
+    }
+
+    // 布尔逻辑
+    if (lv.isBool() && rv.isBool()) {
+        if (op == "and") { result = Value(lv.boolVal() && rv.boolVal()); return true; }
+        if (op == "or")  { result = Value(lv.boolVal() || rv.boolVal()); return true; }
+        if (op == "==") { result = Value(lv.boolVal() == rv.boolVal()); return true; }
+        if (op == "!=") { result = Value(lv.boolVal() != rv.boolVal()); return true; }
+    }
+
+    return false;
+}
+
+bool Compiler::tryFoldUnary(const std::string& op, ASTNode* operand,
+                             Value& result, int /*line*/) {
+    if (!operand) return false;
+
+    if (operand->nodeType == NodeType::NODE_NUMBER_LITERAL) {
+        Value val = static_cast<NumberLiteral*>(operand)->value;
+        if (op == "-") {
+            result = val.isFloat() ? Value(-val.floatVal()) : Value(-val.intVal());
+            return true;
+        }
+    }
+    if (operand->nodeType == NodeType::NODE_BOOL_LITERAL) {
+        bool val = static_cast<BoolLiteral*>(operand)->value;
+        if (op == "not") {
+            result = Value(!val);
+            return true;
+        }
+    }
+
+    return false;
 }

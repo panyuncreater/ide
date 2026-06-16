@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include "lexer/Token.h"
+#include "Diagnostic.h"
 
 // ============================================================
 // Lexer 词法分析器
@@ -18,6 +19,9 @@ public:
     /// 扫描源代码，返回 Token 列表
     std::vector<Token> scan(const std::string& source);
 
+    /// 获取扫描过程中收集的诊断信息
+    const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
+
 private:
     std::string source_;            // 源代码文本
     int start_ = 0;                 // 当前 token 起始位置
@@ -26,6 +30,7 @@ private:
     int lineStart_ = 0;             // 当前行起始偏移
 
     std::vector<Token> tokens_;     // 输出的 Token 列表
+    DiagnosticBag diagnostics_;      // 诊断收集器
 
     /// 关键字映射表
     std::unordered_map<std::string, TokenType> keywords_;

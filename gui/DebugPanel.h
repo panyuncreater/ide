@@ -28,7 +28,12 @@ public:
     /// 清空所有
     void clearAll();
 
+private slots:
+    /// 调用栈帧被选中时，显示该帧的局部变量
+    void onStackFrameSelected(int index);
+
 private:
     QTreeWidget* variableTree_;   // 变量监视树
     QListWidget* callStackList_;  // 调用栈列表
+    std::vector<CallStackEntry> currentStack_;  // 当前调用栈数据（含局部变量）
 };

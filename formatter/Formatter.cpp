@@ -9,11 +9,40 @@
 Formatter::Formatter() {}
 
 void Formatter::setIndentSize(int size) {
-    indentSize_ = size;
+    options_.indentSize = size;
+}
+
+void Formatter::setOptions(const FormatOptions& options) {
+    options_ = options;
+}
+
+const FormatOptions& Formatter::getOptions() const {
+    return options_;
 }
 
 std::string Formatter::indent() const {
-    return std::string(currentIndent_ * indentSize_, ' ');
+    if (options_.useTabs) {
+        return std::string(currentIndent_, '\t');
+    }
+    return std::string(currentIndent_ * options_.indentSize, ' ');
+}
+
+std::string Formatter::binOp(const std::string& op) const {
+    if (options_.spaceAroundOperators) {
+        return " " + op + " ";
+    }
+    return op;
+}
+
+std::string Formatter::comma() const {
+    return options_.spaceAfterComma ? ", " : ",";
+}
+
+std::string Formatter::openBrace() const {
+    if (options_.braceStyle == BraceStyle::NEXT_LINE) {
+        return "\n" + indent() + "{";
+    }
+    return " {";
 }
 
 std::string Formatter::format(Block& program) {
@@ -116,11 +145,16 @@ std::string Formatter::formatBinaryOp(BinaryOp& node) {
     if (needsParens(node.right.get(), node.op, true)) {
         right = "(" + right + ")";
     }
-    return left + " " + node.op + " " + right;
+    return left + binOp(node.op) + right;
 }
 
 std::string Formatter::formatUnaryOp(UnaryOp& node) {
     std::string operand = formatNode(node.operand.get());
+    // BinaryOp 优先级低于一元运算符，必须加括号保持语义正确
+    // 例如 -(a + b) 不能格式化为 -a + b
+    if (node.operand && node.operand->nodeType == NodeType::NODE_BINARY_OP) {
+        operand = "(" + operand + ")";
+    }
     if (node.op == "not") {
         return "not " + operand;
     }
@@ -161,13 +195,13 @@ std::string Formatter::formatVarDecl(VarDecl& node) {
         result = "var " + node.name;
     }
     if (node.initializer) {
-        result += " = " + formatNode(node.initializer.get());
+        result += binOp("=") + formatNode(node.initializer.get());
     }
     return result;
 }
 
 std::string Formatter::formatAssignment(Assignment& node) {
-    return node.name + " = " + formatNode(node.value.get());
+    return node.name + binOp("=") + formatNode(node.value.get());
 }
 
 std::string Formatter::formatVarRef(VarRef& node) {
@@ -175,12 +209,12 @@ std::string Formatter::formatVarRef(VarRef& node) {
 }
 
 std::string Formatter::formatIfStmt(IfStmt& node) {
-    std::string result = "if (" + formatNode(node.condition.get()) + ") {\n";
+    std::string result = "if (" + formatNode(node.condition.get()) + ")" + openBrace() + "\n";
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.thenBranch.get())) {
         result += formatBlock(*block);
     } else {
-        result += indent() + formatNode(node.thenBranch.get()) + ";\n";
+        result += indent() + formatNode(node.thenBranch.get()) + (options_.semicolons ? ";\n" : "\n");
     }
     currentIndent_--;
     result += indent() + "}";
@@ -190,15 +224,15 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
         if (node.elseBranch->nodeType == NodeType::NODE_IF_STMT) {
             result += " else " + formatIfStmt(*static_cast<IfStmt*>(node.elseBranch.get()));
         } else if (auto* block = dynamic_cast<Block*>(node.elseBranch.get())) {
-            result += " else {\n";
+            result += " else" + openBrace() + "\n";
             currentIndent_++;
             result += formatBlock(*block);
             currentIndent_--;
             result += indent() + "}";
         } else {
-            result += " else {\n";
+            result += " else" + openBrace() + "\n";
             currentIndent_++;
-            result += indent() + formatNode(node.elseBranch.get()) + ";\n";
+            result += indent() + formatNode(node.elseBranch.get()) + (options_.semicolons ? ";\n" : "\n");
             currentIndent_--;
             result += indent() + "}";
         }
@@ -208,12 +242,12 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
 }
 
 std::string Formatter::formatWhileStmt(WhileStmt& node) {
-    std::string result = "while (" + formatNode(node.condition.get()) + ") {\n";
+    std::string result = "while (" + formatNode(node.condition.get()) + ")" + openBrace() + "\n";
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
     } else {
-        result += indent() + formatNode(node.body.get()) + ";\n";
+        result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
     currentIndent_--;
     result += indent() + "}";
@@ -227,12 +261,12 @@ std::string Formatter::formatForStmt(ForStmt& node) {
     if (node.condition) result += formatNode(node.condition.get());
     result += "; ";
     if (node.update) result += formatNode(node.update.get());
-    result += ") {\n";
+    result += ")" + openBrace() + "\n";
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
     } else {
-        result += indent() + formatNode(node.body.get()) + ";\n";
+        result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
     currentIndent_--;
     result += indent() + "}";
@@ -242,7 +276,7 @@ std::string Formatter::formatForStmt(ForStmt& node) {
 std::string Formatter::formatFunDecl(FunDecl& node) {
     std::string result = "fun " + node.name + "(";
     for (size_t i = 0; i < node.params.size(); ++i) {
-        if (i > 0) result += ", ";
+        if (i > 0) result += comma();
         result += node.params[i];
         if (!node.paramTypes.empty() && i < node.paramTypes.size() && !node.paramTypes[i].empty()) {
             result += ": " + node.paramTypes[i];
@@ -252,12 +286,12 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     if (!node.returnType.empty()) {
         result += ": " + node.returnType;
     }
-    result += " {\n";
+    result += openBrace() + "\n";
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
     } else {
-        result += indent() + formatNode(node.body.get()) + ";\n";
+        result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
     currentIndent_--;
     result += indent() + "}";
@@ -267,7 +301,7 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
 std::string Formatter::formatFunCall(FunCall& node) {
     std::string result = node.name + "(";
     for (size_t i = 0; i < node.arguments.size(); ++i) {
-        if (i > 0) result += ", ";
+        if (i > 0) result += comma();
         result += formatNode(node.arguments[i].get());
     }
     result += ")";
@@ -284,7 +318,7 @@ std::string Formatter::formatReturnStmt(ReturnStmt& node) {
 std::string Formatter::formatPrintStmt(PrintStmt& node) {
     std::string result = "print(";
     for (size_t i = 0; i < node.values.size(); ++i) {
-        if (i > 0) result += ", ";
+        if (i > 0) result += comma();
         result += formatNode(node.values[i].get());
     }
     result += ")";
@@ -294,11 +328,21 @@ std::string Formatter::formatPrintStmt(PrintStmt& node) {
 std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
     std::string result;
     for (size_t i = 0; i < node.statements.size(); ++i) {
+        ASTNode* stmt = node.statements[i].get();
+
+        // 函数/类声明之间加空行
+        if (options_.blankLineBetweenFunctions && i > 0 && isSelfTerminating(stmt)) {
+            ASTNode* prev = node.statements[i - 1].get();
+            if (isSelfTerminating(prev)) {
+                result += "\n";
+            }
+        }
+
         // 复合语句（if/while/for/fun/class）以 } 结尾，不需要额外 ;
-        if (isSelfTerminating(node.statements[i].get())) {
-            result += indent() + formatNode(node.statements[i].get()) + "\n";
+        if (isSelfTerminating(stmt)) {
+            result += indent() + formatNode(stmt) + "\n";
         } else {
-            result += indent() + formatNode(node.statements[i].get()) + ";\n";
+            result += indent() + formatNode(stmt) + (options_.semicolons ? ";\n" : "\n");
         }
     }
     return result;
@@ -309,7 +353,7 @@ std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
 std::string Formatter::formatArrayLiteral(ArrayLiteral& node) {
     std::string result = "[";
     for (size_t i = 0; i < node.elements.size(); ++i) {
-        if (i > 0) result += ", ";
+        if (i > 0) result += comma();
         result += formatNode(node.elements[i].get());
     }
     result += "]";
@@ -319,7 +363,7 @@ std::string Formatter::formatArrayLiteral(ArrayLiteral& node) {
 std::string Formatter::formatDictLiteral(DictLiteral& node) {
     std::string result = "{";
     for (size_t i = 0; i < node.pairs.size(); ++i) {
-        if (i > 0) result += ", ";
+        if (i > 0) result += comma();
         result += formatNode(node.pairs[i].first.get()) + ": " + formatNode(node.pairs[i].second.get());
     }
     result += "}";
@@ -331,7 +375,7 @@ std::string Formatter::formatIndexAccess(IndexAccess& node) {
 }
 
 std::string Formatter::formatIndexAssign(IndexAssign& node) {
-    return formatNode(node.object.get()) + "[" + formatNode(node.index.get()) + "] = " + formatNode(node.value.get());
+    return formatNode(node.object.get()) + "[" + formatNode(node.index.get()) + "]" + binOp("=") + formatNode(node.value.get());
 }
 
 std::string Formatter::formatClassDecl(ClassDecl& node) {
@@ -339,14 +383,14 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     if (!node.superClassName.empty()) {
         result += " extends " + node.superClassName;
     }
-    result += " {\n";
+    result += openBrace() + "\n";
     currentIndent_++;
     for (auto& member : node.members) {
         // 方法（FunDecl）以 } 结尾，不需要额外 ;
         if (isSelfTerminating(member.get())) {
             result += indent() + formatNode(member.get()) + "\n";
         } else {
-            result += indent() + formatNode(member.get()) + ";\n";
+            result += indent() + formatNode(member.get()) + (options_.semicolons ? ";\n" : "\n");
         }
     }
     currentIndent_--;
@@ -359,13 +403,13 @@ std::string Formatter::formatMemberAccess(MemberAccess& node) {
 }
 
 std::string Formatter::formatMemberAssign(MemberAssign& node) {
-    return formatNode(node.object.get()) + "." + node.fieldName + " = " + formatNode(node.value.get());
+    return formatNode(node.object.get()) + "." + node.fieldName + binOp("=") + formatNode(node.value.get());
 }
 
 std::string Formatter::formatMethodCall(MethodCall& node) {
     std::string result = formatNode(node.object.get()) + "." + node.methodName + "(";
     for (size_t i = 0; i < node.arguments.size(); ++i) {
-        if (i > 0) result += ", ";
+        if (i > 0) result += comma();
         result += formatNode(node.arguments[i].get());
     }
     result += ")";

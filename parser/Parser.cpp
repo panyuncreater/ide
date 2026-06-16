@@ -11,6 +11,7 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     tokens_ = tokens;
     current_ = 0;
     errors_.clear();
+    diagnostics_.clear();
 
     std::vector<std::unique_ptr<ASTNode>> statements;
 
@@ -26,6 +27,11 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
             // 错误恢复：同步到下一个声明边界
             synchronize();
         }
+    }
+
+    // 将 ParseError 转换为 Diagnostic
+    for (const auto& err : errors_) {
+        diagnostics_.addError(err.what(), err.line, err.column, DiagSource::Parser);
     }
 
     return std::make_unique<Block>(std::move(statements), 1, 1);
@@ -862,7 +868,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
     // 字符串字面量
     if (match({TokenType::TK_STRING_LIT})) {
         const Token& tok = previous();
-        return std::make_unique<StringLiteral>(tok.literal.stringVal, tok.line, tok.column);
+        return std::make_unique<StringLiteral>(tok.literal.stringVal(), tok.line, tok.column);
     }
 
     // 布尔字面量

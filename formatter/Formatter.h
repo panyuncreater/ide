@@ -34,6 +34,48 @@ class NullLiteral;
 // Formatter 代码格式化器
 // ============================================================
 
+/// 花括号风格
+enum class BraceStyle {
+    SAME_LINE,    // K&R 风格：if (x) {
+    NEXT_LINE     // Allman 风格：if (x)\n{
+};
+
+/// 格式化选项
+struct FormatOptions {
+    int indentSize = 4;              // 缩进空格数
+    bool useTabs = false;            // 使用 tab 缩进（true 时忽略 indentSize）
+    BraceStyle braceStyle = BraceStyle::SAME_LINE;
+    bool spaceAroundOperators = true;  // 二元运算符两侧加空格
+    bool spaceAfterComma = true;       // 逗号后加空格
+    bool trailingComma = false;        // 多行数组/字典末尾加逗号
+    bool blankLineBetweenFunctions = true;  // 函数/类声明之间加空行
+    bool semicolons = true;            // 语句末尾加分号
+    int maxLineWidth = 0;              // 最大行宽（0 = 不限制）
+
+    /// 预设：紧凑风格
+    static FormatOptions compact() {
+        FormatOptions o;
+        o.indentSize = 2;
+        o.blankLineBetweenFunctions = false;
+        return o;
+    }
+
+    /// 预设：Allman 风格
+    static FormatOptions allman() {
+        FormatOptions o;
+        o.braceStyle = BraceStyle::NEXT_LINE;
+        return o;
+    }
+
+    /// 预设：Tab 缩进
+    static FormatOptions tabbed() {
+        FormatOptions o;
+        o.useTabs = true;
+        o.indentSize = 1;
+        return o;
+    }
+};
+
 /// 将 AST 重新格式化为标准代码文本
 class Formatter {
 public:
@@ -42,19 +84,34 @@ public:
     /// 格式化 AST 为代码文本
     std::string format(Block& program);
 
-    /// 设置缩进大小
+    /// 设置缩进大小（兼容旧接口）
     void setIndentSize(int size);
+
+    /// 设置完整格式化选项
+    void setOptions(const FormatOptions& options);
+
+    /// 获取当前格式化选项
+    const FormatOptions& getOptions() const;
 
     // 运算符优先级辅助（public 供自由函数 needsParens 使用）
     static int opPrecedence(const std::string& op);
     static bool isRightAssoc(const std::string& op);
 
 private:
-    int indentSize_ = 4;         // 缩进空格数
+    FormatOptions options_;
     int currentIndent_ = 0;      // 当前缩进级别
 
     /// 生成缩进字符串
     std::string indent() const;
+
+    /// 生成二元运算符（根据 spaceAroundOperators 选项）
+    std::string binOp(const std::string& op) const;
+
+    /// 生成逗号分隔符（根据 spaceAfterComma 选项）
+    std::string comma() const;
+
+    /// 生成开括号（根据 braceStyle 选项）
+    std::string openBrace() const;
 
     /// 格式化 AST 节点
     std::string formatNode(ASTNode* node);

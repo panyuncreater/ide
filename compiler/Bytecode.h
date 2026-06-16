@@ -281,21 +281,21 @@ struct BytecodeChunk {
         }
         case OpCode::OP_INT: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_INT " + std::to_string(idx) + " (" + std::to_string(constants[idx].intVal) + ")";
+            str += "OP_INT " + std::to_string(idx) + " (" + std::to_string(constants[idx].intVal()) + ")";
             offset += 3;
             break;
         }
         case OpCode::OP_FLOAT: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             std::ostringstream oss;
-            oss << constants[idx].floatVal;
+            oss << constants[idx].floatVal();
             str += "OP_FLOAT " + std::to_string(idx) + " (" + oss.str() + ")";
             offset += 3;
             break;
         }
         case OpCode::OP_STRING: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_STRING " + std::to_string(idx) + " (\"" + constants[idx].stringVal + "\")";
+            str += "OP_STRING " + std::to_string(idx) + " (\"" + constants[idx].stringVal() + "\")";
             offset += 3;
             break;
         }
@@ -321,19 +321,19 @@ struct BytecodeChunk {
         case OpCode::OP_POP:     str += "OP_POP"; offset += 1; break;
         case OpCode::OP_DEFINE_VAR: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_DEFINE_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_DEFINE_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
         case OpCode::OP_GET_VAR: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_GET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_GET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
         case OpCode::OP_SET_VAR: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_SET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_SET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
@@ -359,7 +359,7 @@ struct BytecodeChunk {
         case OpCode::OP_CALL: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             uint8_t argCount = code[offset + 3];
-            str += "OP_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
+            str += "OP_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
             offset += 4;
             break;
         }
@@ -379,7 +379,7 @@ struct BytecodeChunk {
         case OpCode::OP_INDEX_SET: str += "OP_INDEX_SET"; offset += 1; break;
         case OpCode::OP_INDEX_SET_VAR: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_INDEX_SET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_INDEX_SET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
@@ -391,27 +391,27 @@ struct BytecodeChunk {
         }
         case OpCode::OP_MEMBER_GET: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_MEMBER_GET " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_MEMBER_GET " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
         case OpCode::OP_MEMBER_SET: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_MEMBER_SET " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_MEMBER_SET " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
         case OpCode::OP_MEMBER_SET_VAR: {
             uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
             uint16_t fieldIdx = code[offset + 3] | (code[offset + 4] << 8);
-            str += "OP_MEMBER_SET_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal + ") ." + constants[fieldIdx].stringVal;
+            str += "OP_MEMBER_SET_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal() + ") ." + constants[fieldIdx].stringVal();
             offset += 5;
             break;
         }
         case OpCode::OP_MEMBER_SET_LOCAL: {
             uint8_t slot = code[offset + 1];
             uint16_t fieldIdx = code[offset + 2] | (code[offset + 3] << 8);
-            str += "OP_MEMBER_SET_LOCAL slot=" + std::to_string(slot) + " ." + constants[fieldIdx].stringVal;
+            str += "OP_MEMBER_SET_LOCAL slot=" + std::to_string(slot) + " ." + constants[fieldIdx].stringVal();
             offset += 4;
             break;
         }
@@ -420,8 +420,8 @@ struct BytecodeChunk {
             uint8_t argCount = code[offset + 3];
             uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
             uint8_t localSlot = code[offset + 6];
-            str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
-            if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal;
+            str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
+            if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal();
             if (localSlot != 0xFF) str += " slot=" + std::to_string(localSlot);
             offset += 7;
             break;
@@ -430,7 +430,7 @@ struct BytecodeChunk {
         case OpCode::OP_CLOSURE: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             uint8_t argCount = code[offset + 3];
-            str += "OP_CLOSURE " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
+            str += "OP_CLOSURE " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
             offset += 4;
             break;
         }
@@ -449,22 +449,22 @@ struct BytecodeChunk {
         case OpCode::OP_CLASS_NEW: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             uint8_t argCount = code[offset + 3];
-            str += "OP_CLASS_NEW " + std::to_string(idx) + " (" + constants[idx].stringVal + ") " + std::to_string(argCount);
+            str += "OP_CLASS_NEW " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
             offset += 4;
             break;
         }
         case OpCode::OP_INIT_FIELD: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_INIT_FIELD " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_INIT_FIELD " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
         case OpCode::OP_DEFINE_CLASS: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             uint16_t superIdx = code[offset + 3] | (code[offset + 4] << 8);
-            str += "OP_DEFINE_CLASS " + std::to_string(idx) + " (" + constants[idx].stringVal + ")";
+            str += "OP_DEFINE_CLASS " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             if (superIdx != 0xFFFF && superIdx < constants.size()) {
-                str += " extends " + constants[superIdx].stringVal;
+                str += " extends " + constants[superIdx].stringVal();
             }
             offset += 5;
             break;
@@ -472,20 +472,20 @@ struct BytecodeChunk {
         case OpCode::OP_WRITEBACK_MEMBER_VAR: {
             uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
             uint16_t fieldIdx = code[offset + 3] | (code[offset + 4] << 8);
-            str += "OP_WRITEBACK_MEMBER_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal + ") ." + constants[fieldIdx].stringVal;
+            str += "OP_WRITEBACK_MEMBER_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal() + ") ." + constants[fieldIdx].stringVal();
             offset += 5;
             break;
         }
         case OpCode::OP_WRITEBACK_MEMBER_LOCAL: {
             uint8_t slot = code[offset + 1];
             uint16_t fieldIdx = code[offset + 2] | (code[offset + 3] << 8);
-            str += "OP_WRITEBACK_MEMBER_LOCAL slot=" + std::to_string(slot) + " ." + constants[fieldIdx].stringVal;
+            str += "OP_WRITEBACK_MEMBER_LOCAL slot=" + std::to_string(slot) + " ." + constants[fieldIdx].stringVal();
             offset += 4;
             break;
         }
         case OpCode::OP_WRITEBACK_INDEX_VAR: {
             uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
-            str += "OP_WRITEBACK_INDEX_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal + ")";
+            str += "OP_WRITEBACK_INDEX_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal() + ")";
             offset += 3;
             break;
         }

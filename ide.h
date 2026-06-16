@@ -17,6 +17,7 @@
 #include "compiler/VM.h"
 #include "formatter/Formatter.h"
 #include "debug/DebugController.h"
+#include "Diagnostic.h"
 #include "gui/CodeEditor.h"
 #include "gui/SyntaxHighlighter.h"
 #include "gui/AstViewer.h"
@@ -127,6 +128,7 @@ private:
     bool isRunning_ = false;               // 是否正在运行
     bool isVmRunning_ = false;             // VM 是否正在运行
     bool isVmInitialized_ = false;         // VM 执行环境是否已初始化（单步模式）
+    DiagnosticBag diagnostics_;             // 统一诊断收集器
 
     /// VM 步进回调处理
     void onVmStepCallback(const VMStepInfo& info);
@@ -168,4 +170,7 @@ private:
 
     /// 设置运行状态（启用/禁用按钮）
     void setRunningState(bool running);
+
+    /// 将诊断信息输出到输出面板，并标记编辑器错误行
+    void displayDiagnostics(const DiagnosticBag& bag);
 };

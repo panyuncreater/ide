@@ -2,8 +2,12 @@
 #include <QPainter>
 #include <QTextBlock>
 #include <QMouseEvent>
+#include <QContextMenuEvent>
 #include <QScrollBar>
 #include <QTextCharFormat>
+#include <QMenu>
+#include <QInputDialog>
+#include <QLineEdit>
 
 // ============================================================
 // LineNumberArea 行号区域
@@ -37,7 +41,10 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
             // 绘制断点标记
             if (codeEditor->breakpoints_.contains(lineNumber)) {
-                painter.setBrush(Qt::red);
+                // 条件断点用橙色，无条件断点用红色
+                bool hasCondition = codeEditor->breakpointConditions_.contains(lineNumber)
+                                    && !codeEditor->breakpointConditions_[lineNumber].empty();
+                painter.setBrush(hasCondition ? QColor(255, 165, 0) : Qt::red);
                 painter.setPen(Qt::NoPen);
                 int radius = 6;
                 int cx = 14;
@@ -73,6 +80,7 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
 
     if (codeEditor->breakpoints_.contains(lineNumber)) {
         codeEditor->breakpoints_.remove(lineNumber);
+        codeEditor->breakpointConditions_.remove(lineNumber);
     } else {
         codeEditor->breakpoints_.insert(lineNumber);
     }
@@ -80,6 +88,54 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
 
     // 更新断点显示
     codeEditor->viewport()->update();
+}
+
+void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
+    CodeEditor* codeEditor = qobject_cast<CodeEditor*>(editor_);
+    if (!codeEditor) return;
+
+    // 将 Y 坐标映射到行号
+    QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->pos().y())));
+    int lineNumber = cursor.blockNumber() + 1;
+
+    if (!codeEditor->breakpoints_.contains(lineNumber)) return;
+
+    QMenu menu(this);
+    QString currentCond = QString::fromStdString(codeEditor->getBreakpointCondition(lineNumber));
+
+    QAction* setCondAction = menu.addAction(
+        currentCond.isEmpty()
+            ? QString("设置条件... (行 %1)").arg(lineNumber)
+            : QString("修改条件: \"%1\"").arg(currentCond));
+
+    QAction* removeCondAction = nullptr;
+    if (!currentCond.isEmpty()) {
+        removeCondAction = menu.addAction("移除条件");
+    }
+
+    QAction* chosen = menu.exec(event->globalPos());
+    if (chosen == setCondAction) {
+        bool ok = false;
+        QString cond = QInputDialog::getText(
+            this, "设置断点条件",
+            QString("行 %1 的条件表达式（为空则变为无条件断点）:").arg(lineNumber),
+            QLineEdit::Normal, currentCond, &ok);
+        if (ok) {
+            QString condTrimmed = cond.trimmed();
+            std::string condStr = condTrimmed.toStdString();
+            if (condStr.empty()) {
+                codeEditor->breakpointConditions_.remove(lineNumber);
+            } else {
+                codeEditor->breakpointConditions_[lineNumber] = condStr;
+            }
+            emit codeEditor->breakpointConditionRequested(lineNumber, condTrimmed);
+            update();  // 刷新颜色（红/橙）
+        }
+    } else if (chosen == removeCondAction) {
+        codeEditor->breakpointConditions_.remove(lineNumber);
+        emit codeEditor->breakpointConditionRequested(lineNumber, QString());
+        update();
+    }
 }
 
 // ============================================================
@@ -158,6 +214,14 @@ QSet<int> CodeEditor::getBreakpoints() const {
 void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
     breakpoints_ = breakpoints;
     lineNumberArea_->update();
+}
+
+std::string CodeEditor::getBreakpointCondition(int line) const {
+    auto it = breakpointConditions_.find(line);
+    if (it != breakpointConditions_.end()) {
+        return it.value();
+    }
+    return "";
 }
 
 void CodeEditor::resizeEvent(QResizeEvent* event) {

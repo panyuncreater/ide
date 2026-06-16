@@ -49,6 +49,10 @@ DebugPanel::DebugPanel(QWidget* parent)
     callStackList_->setFont(QFont("Consolas", 10));
     stackLayout->addWidget(callStackList_);
 
+    // 选中栈帧时显示该帧的局部变量
+    connect(callStackList_, &QListWidget::currentRowChanged,
+            this, &DebugPanel::onStackFrameSelected);
+
     splitter->addWidget(stackWidget);
 
     // 设置分割比例
@@ -70,6 +74,7 @@ void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
 }
 
 void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
+    currentStack_ = stack;  // 保存完整数据（含局部变量）
     callStackList_->clear();
 
     for (const auto& frame : stack) {
@@ -81,7 +86,22 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
     }
 }
 
+void DebugPanel::onStackFrameSelected(int index) {
+    if (index < 0 || index >= static_cast<int>(currentStack_.size())) return;
+
+    const auto& frame = currentStack_[index];
+    // 在变量树中显示选中帧的局部变量
+    variableTree_->clear();
+    for (const auto& kv : frame.locals) {
+        auto* item = new QTreeWidgetItem(variableTree_);
+        item->setText(0, QString::fromStdString(kv.first));
+        item->setText(1, QString::fromStdString(kv.second.toString()));
+        item->setText(2, QString::fromStdString(frame.functionName));  // 作用域 = 函数名
+    }
+}
+
 void DebugPanel::clearAll() {
     variableTree_->clear();
     callStackList_->clear();
+    currentStack_.clear();
 }

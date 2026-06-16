@@ -78,6 +78,18 @@ const std::vector<CallFrame>& Interpreter::getCallStack() const {
     return callStack_;
 }
 
+Value Interpreter::evaluateExpr(ASTNode* node) {
+    if (!node) return Value::nullValue();
+    // RAII 守卫：确保异常时也能恢复 debugMode_
+    struct DebugModeGuard {
+        bool& ref;
+        bool saved;
+        DebugModeGuard(bool& r) : ref(r), saved(r) { r = false; }
+        ~DebugModeGuard() { ref = saved; }
+    } guard(debugMode_);
+    return node->accept(*this);
+}
+
 // ---- 辅助方法 ----
 
 Value Interpreter::evaluate(ASTNode* node) {
@@ -116,7 +128,7 @@ Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
 
     // 字符串拼接
     if (opType == 0 && left.isString() && right.isString()) {
-        return Value(left.stringVal + right.stringVal);
+        return Value(left.stringVal() + right.stringVal());
     }
     if (opType == 0 && (left.isString() || right.isString())) {
         return Value(left.toString() + right.toString());
@@ -130,27 +142,27 @@ Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
     // 数值运算（switch 分发）
     switch (opType) {
     case 0: // +
-        if (left.isInt() && right.isInt()) return Value(left.intVal + right.intVal);
+        if (left.isInt() && right.isInt()) return Value(left.intVal() + right.intVal());
         return Value(left.toDouble() + right.toDouble());
     case 1: // -
-        if (left.isInt() && right.isInt()) return Value(left.intVal - right.intVal);
+        if (left.isInt() && right.isInt()) return Value(left.intVal() - right.intVal());
         return Value(left.toDouble() - right.toDouble());
     case 2: // *
-        if (left.isInt() && right.isInt()) return Value(left.intVal * right.intVal);
+        if (left.isInt() && right.isInt()) return Value(left.intVal() * right.intVal());
         return Value(left.toDouble() * right.toDouble());
     case 3: // /
         { double r = right.toDouble();
           if (r == 0.0) runtimeError("除零错误", line, col);
           if (left.isInt() && right.isInt()) {
-              if (left.intVal == INT_MIN && right.intVal == -1) runtimeError("整数除法溢出", line, col);
-              return Value(left.intVal / right.intVal);
+              if (left.intVal() == INT64_MIN && right.intVal() == -1) runtimeError("整数除法溢出", line, col);
+              return Value(left.intVal() / right.intVal());
           }
           return Value(left.toDouble() / r); }
     case 4: // %
         if (!left.isInt() || !right.isInt()) runtimeError("取模运算仅支持整数", line, col);
-        if (right.intVal == 0) runtimeError("除零错误", line, col);
-        if (left.intVal == INT_MIN && right.intVal == -1) return Value(0);
-        return Value(left.intVal % right.intVal);
+        if (right.intVal() == 0) runtimeError("除零错误", line, col);
+        if (left.intVal() == INT64_MIN && right.intVal() == -1) return Value(0);
+        return Value(left.intVal() % right.intVal());
     }
     return Value::nullValue();  // 不可达，但消除编译器警告
 }
@@ -193,12 +205,12 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
     if (annotation.size() >= 2 && annotation.back() == ']' && annotation[annotation.size() - 2] == '[') {
         if (!val.isArray()) return false;
         std::string elemType = annotation.substr(0, annotation.size() - 2);
-        for (const auto& elem : val.arrayVal) {
+        for (const auto& elem : val.arrayVal()) {
             if (!typeMatch(elem, elemType)) return false;
         }
         return true;
     }
-    if (val.isInstance() && val.className == annotation) return true;
+    if (val.isInstance() && val.className() == annotation) return true;
     if (val.isNull()) return true;
     return false;
 }
@@ -251,11 +263,11 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parent.isInstance()) {
-                auto it = parent.fields.find(ma->fieldName);
-                vals[i] = (it != parent.fields.end()) ? it->second : Value::nullValue();
+                auto it = parent.fields().find(ma->fieldName);
+                vals[i] = (it != parent.fields().end()) ? it->second : Value::nullValue();
             } else if (parent.isDict()) {
-                auto it = parent.dictVal.find(ma->fieldName);
-                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+                auto it = parent.dictVal().find(ma->fieldName);
+                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
             } else {
                 runtimeError("该类型不支持成员访问", line, col);
             }
@@ -264,12 +276,12 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
             idxs[i] = evaluate(ia->index.get());
             const Value& indexVal = idxs[i];
             if (parent.isArray() && indexVal.isInt()) {
-                if (indexVal.intVal < 0 || static_cast<size_t>(indexVal.intVal) >= parent.arrayVal.size())
+                if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parent.arrayVal().size())
                     runtimeError("数组索引越界", line, col);
-                vals[i] = parent.arrayVal[indexVal.intVal];
+                vals[i] = parent.arrayVal()[indexVal.intVal()];
             } else if (parent.isDict() && indexVal.isString()) {
-                auto it = parent.dictVal.find(indexVal.stringVal);
-                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+                auto it = parent.dictVal().find(indexVal.stringVal());
+                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
             } else {
                 runtimeError("该类型不支持索引访问", line, col);
             }
@@ -290,19 +302,19 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     Value modifiedObj = vals[0]; // 拷贝
     if (isIndexAssign) {
         if (modifiedObj.isArray() && idx.isInt()) {
-            if (idx.intVal < 0 || static_cast<size_t>(idx.intVal) >= modifiedObj.arrayVal.size())
+            if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= modifiedObj.arrayVal().size())
                 runtimeError("数组索引越界", line, col);
-            modifiedObj.arrayVal[idx.intVal] = val;
+            modifiedObj.arrayVal()[idx.intVal()] = val;
         } else if (modifiedObj.isDict() && idx.isString()) {
-            modifiedObj.dictVal[idx.stringVal] = val;
+            modifiedObj.dictVal()[idx.stringVal()] = val;
         } else {
             runtimeError("该类型不支持索引赋值", line, col);
         }
     } else {
         if (modifiedObj.isInstance()) {
-            modifiedObj.fields[fieldName] = val;
+            modifiedObj.fields()[fieldName] = val;
         } else if (modifiedObj.isDict()) {
-            modifiedObj.dictVal[fieldName] = val;
+            modifiedObj.dictVal()[fieldName] = val;
         } else {
             runtimeError("该类型不支持成员赋值", line, col);
         }
@@ -316,20 +328,20 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parentVal.isInstance()) {
-                parentVal.fields[ma->fieldName] = currentVal;
+                parentVal.fields()[ma->fieldName] = currentVal;
             } else if (parentVal.isDict()) {
-                parentVal.dictVal[ma->fieldName] = currentVal;
+                parentVal.dictVal()[ma->fieldName] = currentVal;
             } else {
                 runtimeError("该类型不支持成员赋值", line, col);
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             const Value& indexVal = idxs[i];
             if (parentVal.isArray() && indexVal.isInt()) {
-                if (indexVal.intVal < 0 || static_cast<size_t>(indexVal.intVal) >= parentVal.arrayVal.size())
+                if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parentVal.arrayVal().size())
                     runtimeError("数组索引越界", line, col);
-                parentVal.arrayVal[indexVal.intVal] = currentVal;
+                parentVal.arrayVal()[indexVal.intVal()] = currentVal;
             } else if (parentVal.isDict() && indexVal.isString()) {
-                parentVal.dictVal[indexVal.stringVal] = currentVal;
+                parentVal.dictVal()[indexVal.stringVal()] = currentVal;
             } else {
                 runtimeError("该类型不支持索引赋值", line, col);
             }
@@ -375,25 +387,25 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parent.isInstance()) {
-                auto it = parent.fields.find(ma->fieldName);
-                vals[i] = (it != parent.fields.end()) ? it->second : Value::nullValue();
+                auto it = parent.fields().find(ma->fieldName);
+                vals[i] = (it != parent.fields().end()) ? it->second : Value::nullValue();
             } else if (parent.isDict()) {
-                auto it = parent.dictVal.find(ma->fieldName);
-                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+                auto it = parent.dictVal().find(ma->fieldName);
+                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             auto* ia = static_cast<IndexAccess*>(nd);
             idxs[i] = evaluate(ia->index.get());
             const Value& indexVal = idxs[i];
             if (parent.isArray() && indexVal.isInt()) {
-                int idx = indexVal.intVal;
-                if (idx < 0 || idx >= static_cast<int>(parent.arrayVal.size())) {
+                int idx = indexVal.intVal();
+                if (idx < 0 || idx >= static_cast<int>(parent.arrayVal().size())) {
                     runtimeError("数组索引越界: " + std::to_string(idx), ia->line, ia->column);
                 }
-                vals[i] = parent.arrayVal[idx];
+                vals[i] = parent.arrayVal()[idx];
             } else if (parent.isDict() && indexVal.isString()) {
-                auto it = parent.dictVal.find(indexVal.stringVal);
-                vals[i] = (it != parent.dictVal.end()) ? it->second : Value::nullValue();
+                auto it = parent.dictVal().find(indexVal.stringVal());
+                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
             }
         }
     }
@@ -406,22 +418,22 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parentVal.isInstance()) {
-                parentVal.fields[ma->fieldName] = currentVal;
+                parentVal.fields()[ma->fieldName] = currentVal;
             } else if (parentVal.isDict()) {
-                parentVal.dictVal[ma->fieldName] = currentVal;
+                parentVal.dictVal()[ma->fieldName] = currentVal;
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             const Value& indexVal = idxs[i];
             if (parentVal.isArray() && indexVal.isInt()) {
-                int idx = indexVal.intVal;
-                if (idx < 0 || idx >= static_cast<int>(parentVal.arrayVal.size())) {
+                int idx = indexVal.intVal();
+                if (idx < 0 || idx >= static_cast<int>(parentVal.arrayVal().size())) {
                     runtimeError("数组越界: 索引 " + std::to_string(idx) +
-                                 " 超出范围 [0, " + std::to_string(parentVal.arrayVal.size()) + ")",
+                                 " 超出范围 [0, " + std::to_string(parentVal.arrayVal().size()) + ")",
                                  line, col);
                 }
-                parentVal.arrayVal[idx] = currentVal;
+                parentVal.arrayVal()[idx] = currentVal;
             } else if (parentVal.isDict() && indexVal.isString()) {
-                parentVal.dictVal[indexVal.stringVal] = currentVal;
+                parentVal.dictVal()[indexVal.stringVal()] = currentVal;
             }
         }
         currentVal = parentVal;
@@ -488,8 +500,8 @@ Value Interpreter::visitUnaryOp(UnaryOp& node) {
     Value operand = evaluate(node.operand.get());
 
     if (node.op == "-") {
-        if (operand.isInt()) return Value(-operand.intVal);
-        if (operand.isFloat()) return Value(-operand.floatVal);
+        if (operand.isInt()) return Value(-operand.intVal());
+        if (operand.isFloat()) return Value(-operand.floatVal());
         runtimeError("一元减运算需要数值类型", node.line, node.column);
     }
     if (node.op == "not") {
@@ -532,8 +544,8 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
             ClassInfo* curCls = &cls;
             while (curCls) {
                 for (const auto& kv : curCls->fields) {
-                    if (instance.fields.find(kv.first) == instance.fields.end()) {
-                        instance.fields[kv.first] = kv.second;
+                    if (instance.fields().find(kv.first) == instance.fields().end()) {
+                        instance.fields()[kv.first] = kv.second;
                     }
                 }
                 if (!curCls->superClassName.empty()) {
@@ -550,7 +562,7 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 auto initEnv = std::make_shared<Environment>(currentEnv_);
                 initEnv->define("this", instance);
                 // 将实例字段注入 init 环境
-                for (const auto& kv : instance.fields) {
+                for (const auto& kv : instance.fields()) {
                     initEnv->define(kv.first, kv.second);
                 }
                 auto prevEnv = currentEnv_;
@@ -560,7 +572,7 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 } catch (const ReturnException&) {}
                 instance = initEnv->get("this");
                 // 同步 init 环境中的字段变量回 this 对象
-                for (auto& fieldKV : instance.fields) {
+                for (auto& fieldKV : instance.fields()) {
                     if (initEnv->hasVariable(fieldKV.first)) {
                         fieldKV.second = initEnv->get(fieldKV.first);
                     }
@@ -689,11 +701,11 @@ Value Interpreter::visitForStmt(ForStmt& node) {
 Value Interpreter::visitFunDecl(FunDecl& node) {
     checkBreak(&node);
 
-    // 创建闭包值，捕获当前环境
-    Value funVal = Value::makeClosure(node.name, currentEnv_, node.params);
+    // 创建闭包值，捕获当前环境并存储函数体指针（自包含，不依赖 funRegistry_）
+    Value funVal = Value::makeClosure(node.name, currentEnv_, node.params, &node);
     currentEnv_->define(node.name, funVal);
 
-    // 在全局注册函数体（用于调用时查找）
+    // 保留 funRegistry_ 作为后备（处理 AST 生命周期问题）
     funRegistry_[node.name] = &node;
 
     return funVal;
@@ -768,8 +780,8 @@ Value Interpreter::visitFunCall(FunCall& node) {
         while (curCls) {
             for (const auto& kv : curCls->fields) {
                 // 子类字段覆盖父类
-                if (instance.fields.find(kv.first) == instance.fields.end()) {
-                    instance.fields[kv.first] = kv.second;
+                if (instance.fields().find(kv.first) == instance.fields().end()) {
+                    instance.fields()[kv.first] = kv.second;
                 }
             }
             if (!curCls->superClassName.empty()) {
@@ -789,7 +801,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
             initEnv->define("this", instance);
 
             // 将实例字段注入 init 环境
-            for (const auto& kv : instance.fields) {
+            for (const auto& kv : instance.fields()) {
                 initEnv->define(kv.first, kv.second);
             }
 
@@ -826,7 +838,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
             instance = initEnv->get("this");
 
             // 同步 init 环境中的字段变量回 this 对象
-            for (auto& fieldKV : instance.fields) {
+            for (auto& fieldKV : instance.fields()) {
                 if (initEnv->hasVariable(fieldKV.first)) {
                     fieldKV.second = initEnv->get(fieldKV.first);
                 }
@@ -850,26 +862,50 @@ Value Interpreter::visitFunCall(FunCall& node) {
     FunDecl* funDecl = nullptr;
     std::string effectiveName = node.name;  // 实际函数名（闭包时可能不同于调用变量名）
 
-    if (currentEnv_->hasVariable(node.name)) {
-        Value callee = currentEnv_->get(node.name);
-        if (callee.isClosure()) {
-            closureEnv = callee.closureEnv;
-            closureParams = callee.closureParams;
-            effectiveName = callee.closureName;  // 使用闭包的实际函数名查找函数体
-            auto it = funRegistry_.find(callee.closureName);
-            if (it != funRegistry_.end()) {
-                funDecl = it->second;
+    // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
+    if (node.isResolved && node.resolvedDecl) {
+        funDecl = static_cast<FunDecl*>(node.resolvedDecl);
+        // 仍需获取闭包环境（如果有的话）
+        if (currentEnv_->hasVariable(node.name)) {
+            Value callee = currentEnv_->get(node.name);
+            if (callee.isClosure()) {
+                closureEnv = callee.closureEnv();
+                closureParams = callee.closureParams();
+                effectiveName = callee.closureName();
             }
         }
-    }
-
-    // 闭包路径：如果没找到闭包，走 funRegistry_ fallback
-    if (!funDecl) {
-        auto it = funRegistry_.find(effectiveName);
-        if (it == funRegistry_.end()) {
-            runtimeError("未定义的函数: " + node.name, node.line, node.column);
+    } else {
+        // 慢路径：完整解析
+        if (currentEnv_->hasVariable(node.name)) {
+            Value callee = currentEnv_->get(node.name);
+            if (callee.isClosure()) {
+                closureEnv = callee.closureEnv();
+                closureParams = callee.closureParams();
+                effectiveName = callee.closureName();
+                // 优先从闭包值中获取函数体（自包含，不依赖 funRegistry_）
+                funDecl = callee.closureBody();
+                if (!funDecl) {
+                    // 后备路径：从 funRegistry_ 查找（处理 AST 生命周期问题）
+                    auto it = funRegistry_.find(callee.closureName());
+                    if (it != funRegistry_.end()) {
+                        funDecl = it->second;
+                    }
+                }
+            }
         }
-        funDecl = it->second;
+
+        // 如果闭包路径未找到函数体，走 funRegistry_ 后备
+        if (!funDecl) {
+            auto it = funRegistry_.find(effectiveName);
+            if (it == funRegistry_.end()) {
+                runtimeError("未定义的函数: " + node.name, node.line, node.column);
+            }
+            funDecl = it->second;
+        }
+
+        // 缓存解析结果供后续调用使用
+        node.resolvedDecl = funDecl;
+        node.isResolved = true;
     }
 
     // 检查参数数量
@@ -1038,11 +1074,11 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
         if (!idx.isInt()) {
             runtimeError("数组索引必须是整数", node.line, node.column);
         }
-        int i = idx.intVal;
-        if (i < 0 || i >= static_cast<int>(obj.arrayVal.size())) {
+        int i = idx.intVal();
+        if (i < 0 || i >= static_cast<int>(obj.arrayVal().size())) {
             runtimeError("数组索引越界: " + std::to_string(i), node.line, node.column);
         }
-        return obj.arrayVal[i];
+        return obj.arrayVal()[i];
     }
 
     // 字典索引访问
@@ -1050,8 +1086,8 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
         if (!idx.isString()) {
             runtimeError("字典键必须是字符串", node.line, node.column);
         }
-        auto it = obj.dictVal.find(idx.stringVal);
-        if (it == obj.dictVal.end()) {
+        auto it = obj.dictVal().find(idx.stringVal());
+        if (it == obj.dictVal().end()) {
             return Value::nullValue();
         }
         return it->second;
@@ -1084,7 +1120,6 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
 
     // 注册类名到环境
     Value classVal(std::string("class:") + node.name);
-    classVal.type = ValueType::VAL_STRING;
     currentEnv_->define(node.name, classVal);
 
     // 先注册类信息（以便方法中可以递归引用自身）
@@ -1108,9 +1143,6 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
         if (member->nodeType == NodeType::NODE_FUN_DECL) {
             FunDecl* funDecl = static_cast<FunDecl*>(member.get());
             registeredCls.methods[funDecl->name] = funDecl;
-            // 同时注册到全局函数表（方法名带类名前缀避免冲突）
-            std::string methodKey = node.name + "." + funDecl->name;
-            funRegistry_[methodKey] = funDecl;
             continue;
         }
     }
@@ -1125,19 +1157,18 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
 
     // 类实例的成员访问
     if (obj.isInstance()) {
-        auto it = obj.fields.find(node.fieldName);
-        if (it != obj.fields.end()) {
+        auto it = obj.fields().find(node.fieldName);
+        if (it != obj.fields().end()) {
             return it->second;
         }
 
         // 检查是否访问的是方法（返回一个标记值）
-        auto classIt = classRegistry_.find(obj.className);
+        auto classIt = classRegistry_.find(obj.className());
         if (classIt != classRegistry_.end()) {
             FunDecl* method = findMethod(classIt->second, node.fieldName);
             if (method) {
                 // 方法作为字段访问，返回特殊标记
-                Value methodVal(std::string("method:") + obj.className + "." + node.fieldName);
-                methodVal.type = ValueType::VAL_STRING;
+                Value methodVal(std::string("method:") + obj.className() + "." + node.fieldName);
                 return methodVal;
             }
         }
@@ -1147,8 +1178,8 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
 
     // 字典的成员访问（同索引访问）
     if (obj.isDict()) {
-        auto it = obj.dictVal.find(node.fieldName);
-        if (it != obj.dictVal.end()) {
+        auto it = obj.dictVal().find(node.fieldName);
+        if (it != obj.dictVal().end()) {
             return it->second;
         }
         return Value::nullValue();
@@ -1179,37 +1210,37 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (node.methodName == "push") {
             if (argValues.size() != 1)
                 runtimeError("push 期望 1 个参数", node.line, node.column);
-            obj.arrayVal.push_back(argValues[0]);
+            obj.arrayVal().push_back(argValues[0]);
             writeBack(node.object.get(), obj, node.line, node.column);
             return Value::nullValue();
         }
         if (node.methodName == "pop") {
-            if (obj.arrayVal.empty())
+            if (obj.arrayVal().empty())
                 runtimeError("对空数组调用 pop", node.line, node.column);
-            Value last = obj.arrayVal.back();
-            obj.arrayVal.pop_back();
+            Value last = obj.arrayVal().back();
+            obj.arrayVal().pop_back();
             writeBack(node.object.get(), obj, node.line, node.column);
             return last;
         }
         if (node.methodName == "len") {
-            return Value(static_cast<int>(obj.arrayVal.size()));
+            return Value(static_cast<int>(obj.arrayVal().size()));
         }
         if (node.methodName == "remove") {
             if (argValues.size() != 1)
                 runtimeError("remove 期望 1 个参数(索引)", node.line, node.column);
             if (!argValues[0].isInt())
                 runtimeError("remove 参数必须是整数索引", node.line, node.column);
-            int idx = static_cast<int>(argValues[0].intVal);
-            if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal.size())
+            int idx = static_cast<int>(argValues[0].intVal());
+            if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal().size())
                 runtimeError("数组索引越界: " + std::to_string(idx), node.line, node.column);
-            obj.arrayVal.erase(obj.arrayVal.begin() + idx);
+            obj.arrayVal().erase(obj.arrayVal().begin() + idx);
             writeBack(node.object.get(), obj, node.line, node.column);
             return Value::nullValue();
         }
         if (node.methodName == "contains") {
             if (argValues.size() != 1)
                 runtimeError("contains 期望 1 个参数", node.line, node.column);
-            for (const auto& elem : obj.arrayVal) {
+            for (const auto& elem : obj.arrayVal()) {
                 if (elem.equals(argValues[0])) return Value(true);
             }
             return Value(false);
@@ -1217,9 +1248,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (node.methodName == "join") {
             std::string sep = argValues.empty() ? "" : argValues[0].toString();
             std::string result;
-            for (size_t i = 0; i < obj.arrayVal.size(); ++i) {
+            for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
                 if (i > 0) result += sep;
-                result += obj.arrayVal[i].toString();
+                result += obj.arrayVal()[i].toString();
             }
             return Value(result);
         }
@@ -1234,18 +1265,18 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         }
 
         if (node.methodName == "len") {
-            return Value(static_cast<int>(obj.dictVal.size()));
+            return Value(static_cast<int>(obj.dictVal().size()));
         }
         if (node.methodName == "keys") {
             std::vector<Value> keys;
-            for (const auto& kv : obj.dictVal) {
+            for (const auto& kv : obj.dictVal()) {
                 keys.push_back(Value(kv.first));
             }
             return Value(keys);
         }
         if (node.methodName == "values") {
             std::vector<Value> vals;
-            for (const auto& kv : obj.dictVal) {
+            for (const auto& kv : obj.dictVal()) {
                 vals.push_back(kv.second);
             }
             return Value(vals);
@@ -1253,12 +1284,12 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (node.methodName == "has" || node.methodName == "contains") {
             if (argValues.size() != 1)
                 runtimeError(node.methodName + " 期望 1 个参数(键)", node.line, node.column);
-            return Value(obj.dictVal.find(argValues[0].toString()) != obj.dictVal.end());
+            return Value(obj.dictVal().find(argValues[0].toString()) != obj.dictVal().end());
         }
         if (node.methodName == "remove") {
             if (argValues.size() != 1)
                 runtimeError("remove 期望 1 个参数(键)", node.line, node.column);
-            obj.dictVal.erase(argValues[0].toString());
+            obj.dictVal().erase(argValues[0].toString());
             writeBack(node.object.get(), obj, node.line, node.column);
             return Value::nullValue();
         }
@@ -1273,15 +1304,15 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         }
 
         if (node.methodName == "len") {
-            return Value(static_cast<int>(obj.stringVal.size()));
+            return Value(static_cast<int>(obj.stringVal().size()));
         }
         if (node.methodName == "upper") {
-            std::string s = obj.stringVal;
+            std::string s = obj.stringVal();
             for (auto& c : s) c = std::toupper(static_cast<unsigned char>(c));
             return Value(s);
         }
         if (node.methodName == "lower") {
-            std::string s = obj.stringVal;
+            std::string s = obj.stringVal();
             for (auto& c : s) c = std::tolower(static_cast<unsigned char>(c));
             return Value(s);
         }
@@ -1294,15 +1325,15 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             }
             std::vector<Value> parts;
             size_t start = 0, pos;
-            while ((pos = obj.stringVal.find(sep, start)) != std::string::npos) {
-                parts.push_back(Value(obj.stringVal.substr(start, pos - start)));
+            while ((pos = obj.stringVal().find(sep, start)) != std::string::npos) {
+                parts.push_back(Value(obj.stringVal().substr(start, pos - start)));
                 start = pos + sep.size();
             }
-            parts.push_back(Value(obj.stringVal.substr(start)));
+            parts.push_back(Value(obj.stringVal().substr(start)));
             return Value(parts);
         }
         if (node.methodName == "trim") {
-            std::string s = obj.stringVal;
+            std::string s = obj.stringVal();
             size_t l = s.find_first_not_of(" \t\r\n");
             size_t r = s.find_last_not_of(" \t\r\n");
             if (l == std::string::npos) return Value(std::string(""));
@@ -1313,7 +1344,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
 
     // 类实例的方法调用
     if (obj.isInstance()) {
-        auto classIt = classRegistry_.find(obj.className);
+        auto classIt = classRegistry_.find(obj.className());
         if (classIt != classRegistry_.end()) {
             FunDecl* method = findMethod(classIt->second, node.methodName);
             if (method) {
@@ -1346,7 +1377,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 methodEnv->define("this", obj);
 
                 // 将实例字段注入方法环境，使方法内可直接用 name 访问 this.name
-                for (const auto& kv : obj.fields) {
+                for (const auto& kv : obj.fields()) {
                     methodEnv->define(kv.first, kv.second);
                 }
 
@@ -1356,7 +1387,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 }
 
                 // 压入调用帧
-                callStack_.emplace_back(obj.className + "." + node.methodName,
+                callStack_.emplace_back(obj.className() + "." + node.methodName,
                                          methodEnv, node.line, recursionDepth_);
 
                 // 设置返回类型追踪
@@ -1387,9 +1418,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 // 关键：将方法环境中的字段变量同步回 this 对象
                 // 方法内直接修改字段（如 count = count + 1）只更新了方法环境，
                 // 不会自动反映到 this 对象的 fields 中，需要手动同步
-                // 同步逻辑：遍历 this.fields（已包含 this.field = val 的新字段），
+                // 同步逻辑：遍历 this.fields()（已包含 this.field = val 的新字段），
                 // 再用方法环境中的同名局部变量覆盖（直接赋值优先）
-                for (auto& fieldKV : updatedThis.fields) {
+                for (auto& fieldKV : updatedThis.fields()) {
                     if (methodEnv->hasVariable(fieldKV.first)) {
                         fieldKV.second = methodEnv->get(fieldKV.first);
                     }
@@ -1408,7 +1439,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             }
         }
 
-        runtimeError("类 " + obj.className + " 没有方法 " + node.methodName,
+        runtimeError("类 " + obj.className() + " 没有方法 " + node.methodName,
                      node.line, node.column);
     }
 

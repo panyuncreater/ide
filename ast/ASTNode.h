@@ -294,6 +294,10 @@ public:
     std::string name;
     std::vector<std::unique_ptr<ASTNode>> arguments;
 
+    /// 缓存：首次调用解析后存储 FunDecl*，后续调用跳过查找
+    void* resolvedDecl = nullptr;
+    bool isResolved = false;
+
     FunCall(const std::string& n, std::vector<std::unique_ptr<ASTNode>> args,
             int ln = 0, int col = 0)
         : ASTNode(ln, col), name(n), arguments(std::move(args)) { nodeType = NodeType::NODE_FUN_CALL; }

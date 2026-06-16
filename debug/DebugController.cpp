@@ -38,7 +38,21 @@ void DebugController::checkBreak(ASTNode* node) {
     case StepMode::MODE_RUN:
         // 仅检查断点（先用最小行号快速排除）
         if (node->line >= minBreakpointLine_ && breakpoints_.contains(node->line)) {
-            shouldPause = true;
+            // 检查是否为条件断点
+            auto infoIt = breakpointInfos_.find(node->line);
+            if (infoIt != breakpointInfos_.end() && infoIt->isConditional()) {
+                // 条件断点：只求值条件为真时才暂停
+                infoIt->hitCount++;
+                if (conditionEvaluator_ && conditionEvaluator_(infoIt->condition)) {
+                    shouldPause = true;
+                }
+            } else {
+                // 无条件断点：直接暂停
+                if (infoIt != breakpointInfos_.end()) {
+                    infoIt->hitCount++;
+                }
+                shouldPause = true;
+            }
         }
         break;
 
@@ -82,24 +96,47 @@ void DebugController::checkBreak(ASTNode* node) {
 
 void DebugController::setBreakpoint(int line) {
     breakpoints_.insert(line);
+    // 若尚无 BreakpointInfo 条目则创建（保留已有条件）
+    if (!breakpointInfos_.contains(line)) {
+        breakpointInfos_.insert(line, BreakpointInfo(line));
+    }
     updateMinBreakpointLine();
 }
 
 void DebugController::setBreakpoints(const QSet<int>& lines) {
     breakpoints_ = lines;
+    // 同步 breakpointInfos_：移除不再存在的，添加新增的
+    auto it = breakpointInfos_.begin();
+    while (it != breakpointInfos_.end()) {
+        if (!lines.contains(it.key())) {
+            it = breakpointInfos_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (int line : lines) {
+        if (!breakpointInfos_.contains(line)) {
+            breakpointInfos_.insert(line, BreakpointInfo(line));
+        }
+    }
     updateMinBreakpointLine();
 }
 
 void DebugController::removeBreakpoint(int line) {
     breakpoints_.remove(line);
+    breakpointInfos_.remove(line);
     updateMinBreakpointLine();
 }
 
 void DebugController::toggleBreakpoint(int line) {
     if (breakpoints_.contains(line)) {
         breakpoints_.remove(line);
+        breakpointInfos_.remove(line);
     } else {
         breakpoints_.insert(line);
+        if (!breakpointInfos_.contains(line)) {
+            breakpointInfos_.insert(line, BreakpointInfo(line));
+        }
     }
     updateMinBreakpointLine();
 }
@@ -110,6 +147,41 @@ bool DebugController::hasBreakpoint(int line) const {
 
 QSet<int> DebugController::getBreakpoints() const {
     return breakpoints_;
+}
+
+void DebugController::setBreakpointCondition(int line, const std::string& condition) {
+    // 确保断点存在
+    if (!breakpoints_.contains(line)) {
+        setBreakpoint(line);
+    }
+    // 更新或创建 BreakpointInfo
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        it->condition = condition;
+        it->hitCount = 0;  // 条件变更时重置命中计数
+    } else {
+        breakpointInfos_.insert(line, BreakpointInfo(line, condition));
+    }
+}
+
+std::string DebugController::getBreakpointCondition(int line) const {
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        return it->condition;
+    }
+    return "";
+}
+
+int DebugController::getBreakpointHitCount(int line) const {
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        return it->hitCount;
+    }
+    return 0;
+}
+
+void DebugController::setConditionEvaluator(std::function<bool(const std::string&)> evaluator) {
+    conditionEvaluator_ = std::move(evaluator);
 }
 
 void DebugController::stepIn() {
@@ -228,6 +300,11 @@ void DebugController::reset() {
     stepOverDepth_ = 0;
     stepOutDepth_ = 0;
     lastPausedLine_ = -1;
+
+    // 重置所有断点命中计数（保留断点和条件）
+    for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {
+        it->hitCount = 0;
+    }
 }
 
 void DebugController::pauseExecution() {
