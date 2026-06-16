@@ -41,10 +41,10 @@ Value VM::pop() {
     return val;
 }
 
-Value VM::peek(size_t distance) const {
+const Value& VM::peek(size_t distance) const {
+    static const Value nullSentinel;  // 静态 null 哨兵，用于越界访问
     if (distance >= stack_.size()) {
-        // peek 是 const 方法，无法调用 runtimeError，但调用方会检查 hasError_
-        return Value::nullValue();
+        return nullSentinel;
     }
     return stack_[stack_.size() - 1 - distance];
 }
@@ -810,14 +810,12 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_BUILD_ARRAY: {
         uint8_t count = chunk.code[ip + 1];
-        std::vector<Value> elements;
-        elements.reserve(count);
-        for (uint8_t i = 0; i < count; ++i) {
-            elements.push_back(pop());
+        std::vector<Value> elements(count);
+        // 逆序弹出直接填入预分配槽位，无需 reverse
+        for (int i = count - 1; i >= 0; --i) {
+            elements[i] = pop();
         }
-        // 栈是后进先出，需要反转
-        std::reverse(elements.begin(), elements.end());
-        push(Value(elements));
+        push(Value(std::move(elements)));
         notifyStep(ip, op);
         ip += 2;
         break;
@@ -826,13 +824,14 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_BUILD_DICT: {
         uint8_t pairCount = chunk.code[ip + 1];
         std::unordered_map<std::string, Value> dict;
+        dict.reserve(pairCount);
         // 先入后出：倒序弹出键值对
         for (uint8_t i = 0; i < pairCount; ++i) {
             Value val = pop();
             Value key = pop();
-            dict[key.toString()] = val;
+            dict[key.toString()] = std::move(val);
         }
-        push(Value(dict));
+        push(Value(std::move(dict)));
         notifyStep(ip, op);
         ip += 2;
         break;
@@ -1345,7 +1344,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_SET_LOCAL: {
         uint8_t slot = chunk.code[ip + 1];
         size_t bp = currentFrame().basePointer;
-        Value val = peek(0);
+        const Value& val = peek(0);
         if (bp + slot < stack_.size()) {
             stack_[bp + slot] = val;
         }

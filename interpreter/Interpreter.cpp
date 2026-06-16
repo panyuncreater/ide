@@ -115,23 +115,16 @@ void Interpreter::runtimeError(const std::string& msg, int line, int col) {
 
 // ---- 数值二元运算 ----
 
-Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
+Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
                                     const Value& right, int line, int col) {
-    // 运算符字符串 → 内部枚举（避免6次字符串比较的热路径开销）
-    int opType;
-    if (op == "+") opType = 0;
-    else if (op == "-") opType = 1;
-    else if (op == "*") opType = 2;
-    else if (op == "/") opType = 3;
-    else if (op == "%") opType = 4;
-    else { runtimeError("未知运算符: " + op, line, col); }
-
-    // 字符串拼接
-    if (opType == 0 && left.isString() && right.isString()) {
-        return Value(left.stringVal() + right.stringVal());
-    }
-    if (opType == 0 && (left.isString() || right.isString())) {
-        return Value(left.toString() + right.toString());
+    // 字符串拼接（仅加法）
+    if (opType == BinOpType::BIN_ADD) {
+        if (left.isString() && right.isString()) {
+            return Value(left.stringVal() + right.stringVal());
+        }
+        if (left.isString() || right.isString()) {
+            return Value(left.toString() + right.toString());
+        }
     }
 
     // 非数值类型检查（字符串拼接已在上面处理）
@@ -139,18 +132,18 @@ Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
         runtimeError("算术运算需要数值类型", line, col);
     }
 
-    // 数值运算（switch 分发）
+    // 数值运算（switch 分发，零字符串比较）
     switch (opType) {
-    case 0: // +
+    case BinOpType::BIN_ADD:
         if (left.isInt() && right.isInt()) return Value(left.intVal() + right.intVal());
         return Value(left.toDouble() + right.toDouble());
-    case 1: // -
+    case BinOpType::BIN_SUB:
         if (left.isInt() && right.isInt()) return Value(left.intVal() - right.intVal());
         return Value(left.toDouble() - right.toDouble());
-    case 2: // *
+    case BinOpType::BIN_MUL:
         if (left.isInt() && right.isInt()) return Value(left.intVal() * right.intVal());
         return Value(left.toDouble() * right.toDouble());
-    case 3: // /
+    case BinOpType::BIN_DIV:
         { double r = right.toDouble();
           if (r == 0.0) runtimeError("除零错误", line, col);
           if (left.isInt() && right.isInt()) {
@@ -158,11 +151,13 @@ Value Interpreter::numericBinaryOp(const std::string& op, const Value& left,
               return Value(left.intVal() / right.intVal());
           }
           return Value(left.toDouble() / r); }
-    case 4: // %
+    case BinOpType::BIN_MOD:
         if (!left.isInt() || !right.isInt()) runtimeError("取模运算仅支持整数", line, col);
         if (right.intVal() == 0) runtimeError("除零错误", line, col);
         if (left.intVal() == INT64_MIN && right.intVal() == -1) return Value(0);
         return Value(left.intVal() % right.intVal());
+    default:
+        runtimeError("不支持的算术运算符", line, col);
     }
     return Value::nullValue();  // 不可达，但消除编译器警告
 }
@@ -506,7 +501,7 @@ Value Interpreter::visitBinaryOp(BinaryOp& node) {
     case BinOpType::BIN_MOD: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
-        return numericBinaryOp(node.op, left, right, node.line, node.column);
+        return numericBinaryOp(node.opType, left, right, node.line, node.column);
     }
     default:
         runtimeError("未知运算符: " + node.op, node.line, node.column);
@@ -882,38 +877,31 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
     // 检查环境中是否有闭包值
     std::shared_ptr<Environment> closureEnv;
-    std::vector<std::string> closureParams;
     FunDecl* funDecl = nullptr;
     std::string effectiveName = node.name;  // 实际函数名（闭包时可能不同于调用变量名）
 
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
     if (node.isResolved && node.resolvedDecl) {
         funDecl = static_cast<FunDecl*>(node.resolvedDecl);
-        // 仍需获取闭包环境（如果有的话）
-        if (currentEnv_->hasVariable(node.name)) {
-            Value callee = currentEnv_->get(node.name);
-            if (callee.isClosure()) {
-                closureEnv = callee.closureEnv();
-                closureParams = callee.closureParams();
-                effectiveName = callee.closureName();
-            }
+        // 单次 get() 获取闭包环境（避免 hasVariable + get 双重遍历）
+        Value callee = currentEnv_->get(node.name);
+        if (callee.isClosure()) {
+            closureEnv = callee.closureEnv();
+            effectiveName = callee.closureName();
         }
     } else {
-        // 慢路径：完整解析
-        if (currentEnv_->hasVariable(node.name)) {
-            Value callee = currentEnv_->get(node.name);
-            if (callee.isClosure()) {
-                closureEnv = callee.closureEnv();
-                closureParams = callee.closureParams();
-                effectiveName = callee.closureName();
-                // 优先从闭包值中获取函数体（自包含，不依赖 funRegistry_）
-                funDecl = callee.closureBody();
-                if (!funDecl) {
-                    // 后备路径：从 funRegistry_ 查找（处理 AST 生命周期问题）
-                    auto it = funRegistry_.find(callee.closureName());
-                    if (it != funRegistry_.end()) {
-                        funDecl = it->second;
-                    }
+        // 慢路径：完整解析（单次 get() 调用）
+        Value callee = currentEnv_->get(node.name);
+        if (callee.isClosure()) {
+            closureEnv = callee.closureEnv();
+            effectiveName = callee.closureName();
+            // 优先从闭包值中获取函数体（自包含，不依赖 funRegistry_）
+            funDecl = callee.closureBody();
+            if (!funDecl) {
+                // 后备路径：从 funRegistry_ 查找（处理 AST 生命周期问题）
+                auto it = funRegistry_.find(callee.closureName());
+                if (it != funRegistry_.end()) {
+                    funDecl = it->second;
                 }
             }
         }
@@ -1042,7 +1030,15 @@ Value Interpreter::visitPrintStmt(PrintStmt& node) {
 Value Interpreter::visitBlock(Block& node) {
     checkBreak(&node);
 
-    // 为代码块创建新作用域
+    // 快速路径：空块直接返回
+    if (node.statements.empty()) return Value::nullValue();
+
+    // 快速路径：单语句块不创建新作用域（避免 Environment 分配和 sGeneration 递增）
+    if (node.statements.size() == 1) {
+        return evaluate(node.statements[0].get());
+    }
+
+    // 为多语句代码块创建新作用域
     auto blockEnv = std::make_shared<Environment>(currentEnv_);
     auto savedEnv = currentEnv_;
     currentEnv_ = blockEnv;

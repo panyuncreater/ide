@@ -29,6 +29,10 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
     CodeEditor* codeEditor = qobject_cast<CodeEditor*>(editor_);
     if (!codeEditor) return;
 
+    // 字体只需设置一次（移出循环避免每行重建）
+    QFont lineFont("Consolas", 10);
+    painter.setFont(lineFont);
+
     QTextBlock block = codeEditor->firstVisibleBlock();
     int blockNumber = block.blockNumber();
     int top = static_cast<int>(codeEditor->blockBoundingGeometry(block)
@@ -54,10 +58,6 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
             // 绘制行号
             painter.setPen(QColor(120, 120, 120));
-            QFont font = painter.font();
-            font.setFamily("Consolas");
-            font.setPointSize(10);
-            painter.setFont(font);
             painter.drawText(0, top, width() - 8, bottom - top,
                              Qt::AlignRight | Qt::AlignVCenter,
                              QString::number(lineNumber));
@@ -174,8 +174,8 @@ int CodeEditor::lineNumberAreaWidth() {
 void CodeEditor::setErrorLines(const QSet<int>& lines) {
     errorLines_ = lines;
 
-    // 设置错误下划线
-    QList<QTextEdit::ExtraSelection> selections;
+    // 构建并缓存错误行选择（仅在 errorLines_ 变化时重建）
+    cachedErrorSelections_.clear();
     for (int line : errorLines_) {
         QTextBlock block = document()->findBlockByNumber(line - 1);
         if (block.isValid()) {
@@ -184,16 +184,15 @@ void CodeEditor::setErrorLines(const QSet<int>& lines) {
             sel.cursor.select(QTextCursor::LineUnderCursor);
             sel.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
             sel.format.setUnderlineColor(Qt::red);
-            selections.append(sel);
+            cachedErrorSelections_.append(sel);
         }
     }
-    // 保留当前行高亮
     highlightCurrentLine();
-    setExtraSelections(selections);
 }
 
 void CodeEditor::clearErrorLines() {
     errorLines_.clear();
+    cachedErrorSelections_.clear();
     highlightCurrentLine();
 }
 
@@ -259,18 +258,8 @@ void CodeEditor::highlightCurrentLine() {
     cursorSel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
     selections.append(cursorSel);
 
-    // 错误下划线
-    for (int line : errorLines_) {
-        QTextBlock block = document()->findBlockByNumber(line - 1);
-        if (block.isValid()) {
-            QTextEdit::ExtraSelection sel;
-            sel.cursor = QTextCursor(block);
-            sel.cursor.select(QTextCursor::LineUnderCursor);
-            sel.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
-            sel.format.setUnderlineColor(Qt::red);
-            selections.append(sel);
-        }
-    }
+    // 错误下划线（使用预构建的缓存，避免每次光标移动都遍历）
+    selections.append(cachedErrorSelections_);
 
     setExtraSelections(selections);
 }

@@ -21,14 +21,18 @@ public:
     /// 构造函数
     explicit Environment(std::shared_ptr<Environment> parentEnv = nullptr)
         : parent(parentEnv) {
-        // 创建新作用域时递增全局世代，使缓存失效
-        ++sGeneration;
+        // 注意：不在这里递增 sGeneration
+        // 创建子作用域不改变已有变量的深度位置，缓存仍有效
     }
 
     /// 在当前作用域定义变量
     void define(const std::string& name, const Value& val) {
-        variables[name] = val;
-        ++sGeneration;  // 变量定义改变环境状态，递增世代
+        auto [it, inserted] = variables.try_emplace(name, val);
+        if (!inserted) {
+            it->second = val;   // 覆盖已有变量，不递增世代
+        } else {
+            ++sGeneration;      // 新变量插入才需要使缓存失效
+        }
     }
 
     /// 获取变量值（沿作用域链查找）

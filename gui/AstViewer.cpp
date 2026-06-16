@@ -22,11 +22,15 @@ AstViewer::AstViewer(QWidget* parent)
 
 void AstViewer::setAst(ASTNode* root) {
     scene_->clear();
+    sizeCache_.clear();
 
     if (!root) return;
 
-    // 计算整棵树的尺寸
-    SubtreeInfo info = computeSubtreeSize(root);
+    // 单次遍历预计算所有子树尺寸（O(N) 代替 O(N²)）
+    precomputeSubtreeSizes(root);
+
+    // 从缓存中获取根节点尺寸
+    SubtreeInfo info = sizeCache_[root];
 
     // 绘制整棵树
     drawNode(root, 0, 0, info.width);
@@ -78,6 +82,34 @@ AstViewer::SubtreeInfo AstViewer::computeSubtreeSize(ASTNode* node) {
     double height = NODE_HEIGHT + V_SPACING + maxChildHeight;
 
     return {width, height};
+}
+
+void AstViewer::precomputeSubtreeSizes(ASTNode* node) {
+    if (!node) return;
+
+    auto children = node->children();
+
+    if (children.empty()) {
+        sizeCache_[node] = {NODE_WIDTH, NODE_HEIGHT};
+        return;
+    }
+
+    double totalChildWidth = 0;
+    double maxChildHeight = 0;
+
+    for (ASTNode* child : children) {
+        precomputeSubtreeSizes(child);
+        SubtreeInfo childInfo = sizeCache_[child];
+        totalChildWidth += childInfo.width;
+        maxChildHeight = std::max(maxChildHeight, childInfo.height);
+    }
+
+    totalChildWidth += H_SPACING * (children.size() - 1);
+
+    double width = std::max(static_cast<double>(NODE_WIDTH), totalChildWidth);
+    double height = NODE_HEIGHT + V_SPACING + maxChildHeight;
+
+    sizeCache_[node] = {width, height};
 }
 
 void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidth) {
@@ -132,11 +164,11 @@ void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidt
     auto children = node->children();
     if (children.empty()) return;
 
-    // 计算子节点的总宽度
+    // 计算子节点的总宽度（从预计算缓存中查找）
     double totalChildWidth = 0;
     std::vector<SubtreeInfo> childInfos;
     for (ASTNode* child : children) {
-        SubtreeInfo info = computeSubtreeSize(child);
+        SubtreeInfo info = sizeCache_[child];
         childInfos.push_back(info);
         totalChildWidth += info.width;
     }

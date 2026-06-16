@@ -440,10 +440,10 @@ void Compiler::compileForStmt(ForStmt& node) {
 void Compiler::compileFunDecl(FunDecl& node) {
     // 为函数体创建独立 BytecodeChunk
     BytecodeChunk savedChunk = std::move(chunk_);
-    std::unordered_map<std::string, uint16_t> savedVarIndex = varIndex_;
-    std::unordered_map<std::string, int> savedLocals = currentLocals_;
+    std::unordered_map<std::string, uint16_t> savedVarIndex = std::move(varIndex_);
+    std::unordered_map<std::string, int> savedLocals = std::move(currentLocals_);
     bool savedInFunction = inFunction_;
-    std::unordered_map<std::string, int> savedOuterLocals = outerLocals_;
+    std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
 
     // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
     if (inFunction_) {
@@ -480,10 +480,10 @@ void Compiler::compileFunDecl(FunDecl& node) {
 
     // 恢复主 chunk
     chunk_ = std::move(savedChunk);
-    varIndex_ = savedVarIndex;
-    currentLocals_ = savedLocals;
+    varIndex_ = std::move(savedVarIndex);
+    currentLocals_ = std::move(savedLocals);
     inFunction_ = savedInFunction;
-    outerLocals_ = savedOuterLocals;
+    outerLocals_ = std::move(savedOuterLocals);
 
     // 在主 chunk 中 emit OP_CLOSURE
     uint16_t nameIdx = identifierIndex(node.name);
@@ -638,8 +638,8 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         FunDecl* funDecl = static_cast<FunDecl*>(member.get());
         std::string methodKey = node.name + "." + funDecl->name;
         BytecodeChunk savedChunk = std::move(chunk_);
-        std::unordered_map<std::string, uint16_t> savedVarIndex = varIndex_;
-        std::unordered_map<std::string, int> savedLocals = currentLocals_;
+        std::unordered_map<std::string, uint16_t> savedVarIndex = std::move(varIndex_);
+        std::unordered_map<std::string, int> savedLocals = std::move(currentLocals_);
         bool savedInFunction = inFunction_;
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
@@ -673,8 +673,8 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         functionChunks_[methodKey] = std::move(chunk_);
 
         chunk_ = std::move(savedChunk);
-        varIndex_ = savedVarIndex;
-        currentLocals_ = savedLocals;
+        varIndex_ = std::move(savedVarIndex);
+        currentLocals_ = std::move(savedLocals);
         inFunction_ = savedInFunction;
     }
 

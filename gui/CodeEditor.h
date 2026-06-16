@@ -77,6 +77,7 @@ private:
     QSet<int> breakpoints_;     // 断点行号
     QMap<int, std::string> breakpointConditions_;  // 断点条件表达式
     int currentLine_ = -1;      // 当前执行行号
+    QList<QTextEdit::ExtraSelection> cachedErrorSelections_;  // 缓存的错误行选择（仅 errorLines_ 变化时重建）
 
     friend class LineNumberArea;
 };

@@ -163,7 +163,7 @@ private:
     void output(const std::string& text);
 
     /// 数值二元运算（含类型提升）
-    Value numericBinaryOp(const std::string& op, const Value& left, const Value& right,
+    Value numericBinaryOp(BinOpType opType, const Value& left, const Value& right,
                           int line, int col);
 
     /// 报告运行时错误

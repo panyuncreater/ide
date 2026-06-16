@@ -2,6 +2,7 @@
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
+#include <unordered_map>
 #include <memory>
 
 class ASTNode;
@@ -47,6 +48,12 @@ private:
 
     /// 递归计算子树宽度
     SubtreeInfo computeSubtreeSize(ASTNode* node);
+
+    /// 单次遍历预计算所有子树尺寸，填充 sizeCache_
+    void precomputeSubtreeSizes(ASTNode* node);
+
+    /// 子树尺寸缓存（节点指针 -> 尺寸信息）
+    std::unordered_map<ASTNode*, SubtreeInfo> sizeCache_;
 
     /// 递归绘制 AST 节点
     void drawNode(ASTNode* node, double x, double y, double availableWidth);
