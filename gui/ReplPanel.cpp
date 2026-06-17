@@ -259,7 +259,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
         }
     }
 
-    return braceDepth <= 0 && parenDepth <= 0 && bracketDepth <= 0;
+    return braceDepth == 0 && parenDepth == 0 && bracketDepth == 0;
 }
 
 bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {

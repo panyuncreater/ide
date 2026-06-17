@@ -1,6 +1,7 @@
 #include "compiler/Compiler.h"
 #include <sstream>
 #include <algorithm>
+#include <cstdint>
 
 // ============================================================
 // Compiler 字节码编译器实现
@@ -85,6 +86,9 @@ void Compiler::compileNode(ASTNode* node) {
     case NodeType::NODE_METHOD_CALL:    compileMethodCall(*static_cast<MethodCall*>(node)); return;
     case NodeType::NODE_NULL_LITERAL:   compileNullLiteral(*static_cast<NullLiteral*>(node)); return;
     case NodeType::NODE_SUPER_EXPR:    compileSuperExpr(*static_cast<SuperExpr*>(node)); return;
+    default:
+        diagnostics_.addError("编译器内部错误: 未处理的 AST 节点类型", node->line, node->column, DiagSource::Compiler);
+        return;
     }
 }
 
@@ -812,7 +816,31 @@ void Compiler::compileMethodCall(MethodCall& node) {
         }
     }
 
-    compileNode(node.object.get());
+    // B6 fix: 如果接收者是 IndexAccess，预缓存索引值避免写回时重复求值
+    // （对 arr[expr()].method() 这类调用，expr() 只执行一次）
+    std::string cachedIndexVar;
+    if (!objVar && node.object && node.object->nodeType == NodeType::NODE_INDEX_ACCESS) {
+        auto* ia = static_cast<IndexAccess*>(node.object.get());
+        if (ia->object && ia->object->nodeType == NodeType::NODE_VAR_REF && ia->index) {
+            cachedIndexVar = "__wb_idx_" + std::to_string(writebackCounter_++);
+            compileNode(ia->index.get());
+            uint16_t cacheIdx = identifierIndex(cachedIndexVar);
+            chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
+            chunk_.writeShort(cacheIdx, node.line);
+        }
+    }
+
+    // B6 fix: 如果索引已缓存，手动内联 IndexAccess 编译（用缓存值代替重新求值）
+    if (!cachedIndexVar.empty()) {
+        auto* ia = static_cast<IndexAccess*>(node.object.get());
+        compileNode(ia->object.get());  // push base (e.g., arr)
+        uint16_t cacheIdx = identifierIndex(cachedIndexVar);
+        chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+        chunk_.writeShort(cacheIdx, node.line);  // push cached index
+        chunk_.writeOp(OpCode::OP_INDEX_GET, node.line);  // base[cachedIndex]
+    } else {
+        compileNode(node.object.get());
+    }
     for (auto& arg : node.arguments) {
         compileNode(arg.get());
     }
@@ -851,13 +879,21 @@ void Compiler::compileMethodCall(MethodCall& node) {
             }
         }
         // IndexAccess 嵌套写回：如 arr[0].push(42)、dict["key"].remove("x")
+        // B6 fix: 使用预缓存的索引值，避免重复求值（对 arr[expr()].method() 防止副作用执行两次）
         else if (node.object->nodeType == NodeType::NODE_INDEX_ACCESS) {
             auto* ia = static_cast<IndexAccess*>(node.object.get());
             if (ia->object && ia->object->nodeType == NodeType::NODE_VAR_REF) {
                 auto* baseVar = static_cast<VarRef*>(ia->object.get());
                 auto localIt = currentLocals_.find(baseVar->name);
-                // 先推入索引值（OP_WRITEBACK_INDEX_LOCAL/VAR 需要索引在栈上）
-                compileNode(ia->index.get());
+                // 推入缓存的索引值（OP_WRITEBACK_INDEX_LOCAL/VAR 需要索引在栈上）
+                if (!cachedIndexVar.empty()) {
+                    uint16_t cacheIdx = identifierIndex(cachedIndexVar);
+                    chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+                    chunk_.writeShort(cacheIdx, node.line);
+                } else {
+                    // 降级路径：不应到达此处（cachedIndexVar 总会在上方设置）
+                    compileNode(ia->index.get());
+                }
                 if (localIt != currentLocals_.end()) {
                     // 局部变量索引写回：OP_WRITEBACK_INDEX_LOCAL(slot)
                     chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);
@@ -964,11 +1000,15 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
         case BinOpType::BIN_DIV: {
             double divisor = useFloat ? rd : static_cast<double>(ri);
             if (divisor == 0) return false;  // 除零不折叠，保留运行时错误
+            // B3 fix: INT64_MIN / -1 = 溢出 UB，不折叠
+            if (!useFloat && li == INT64_MIN && ri == -1) return false;
             result = useFloat ? Value(ld / rd) : Value(li / ri);
             return true;
         }
         case BinOpType::BIN_MOD:
             if (!useFloat && ri == 0) return false;
+            // B3 fix: INT64_MIN % -1 = 溢出 UB，不折叠
+            if (!useFloat && li == INT64_MIN && ri == -1) return false;
             if (useFloat) return false;
             result = Value(li % ri);
             return true;
@@ -1012,6 +1052,8 @@ bool Compiler::tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
     if (operand->nodeType == NodeType::NODE_NUMBER_LITERAL) {
         Value val = static_cast<NumberLiteral*>(operand)->value;
         if (opType == UnaryOp::UnaryOpType::UOP_NEGATE) {
+            // B3 fix: -INT64_MIN = 溢出 UB，不折叠
+            if (val.isInt() && val.intVal() == INT64_MIN) return false;
             result = val.isFloat() ? Value(-val.floatVal()) : Value(-val.intVal());
             return true;
         }

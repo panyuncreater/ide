@@ -159,14 +159,12 @@ private:
     int recursionDepth_ = 0;                        // 递归深度
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
-    std::unordered_map<std::string, std::string> typeAnnotations_; // 变量类型注解
     std::string currentFunctionReturnType_;         // 当前函数的返回类型
     std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
 
     // REPL 状态暂存（saveReplState/restoreReplState）
     std::shared_ptr<Environment> savedGlobalEnv_;
     std::unordered_map<std::string, ClassInfo> savedClassRegistry_;
-    std::unordered_map<std::string, std::string> savedTypeAnnotations_;
     std::vector<std::unique_ptr<Block>> savedReplAsts_;
 
     /// 执行单个节点

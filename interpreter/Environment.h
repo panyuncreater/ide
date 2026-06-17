@@ -125,8 +125,29 @@ public:
         return variables;
     }
 
+    // ---- B2 fix: 作用域感知的类型注解 ----
+
+    /// 在当前作用域定义类型注解
+    void defineTypeAnnotation(const std::string& name, const std::string& type) {
+        typeAnnotations_[name] = type;
+    }
+
+    /// 沿作用域链查找类型注解（返回指针，nullptr=无注解）
+    const std::string* getTypeAnnotation(const std::string& name) const {
+        auto it = typeAnnotations_.find(name);
+        if (it != typeAnnotations_.end()) return &it->second;
+        if (parent) return parent->getTypeAnnotation(name);
+        return nullptr;
+    }
+
+    /// 获取当前作用域的类型注解（用于 REPL 状态保存）
+    const std::unordered_map<std::string, std::string>& localTypeAnnotations() const {
+        return typeAnnotations_;
+    }
+
 private:
     std::unordered_map<std::string, Value> variables;
+    std::unordered_map<std::string, std::string> typeAnnotations_; // B2: 作用域感知类型注解
 
     /// 深度缓存条目：记录变量在作用域链中的深度位置
     struct DepthEntry {

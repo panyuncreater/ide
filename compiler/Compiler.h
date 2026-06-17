@@ -35,6 +35,7 @@ private:
     bool inFunction_ = false;                       // 是否在函数体内
     std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;  // 类名 → 字段名列表（含继承字段）
     std::unordered_map<std::string, int> outerLocals_;  // 外层函数的局部变量（用于检测闭包捕获）
+    int writebackCounter_ = 0;  // B6: 写回计数器，生成唯一缓存变量名避免索引重复求值
 
     /// 添加变量名到常量池，返回索引
     uint16_t identifierIndex(const std::string& name);

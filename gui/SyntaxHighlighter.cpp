@@ -2,7 +2,7 @@
 #include <QStringList>
 
 // 静态成员定义（全局共享，避免每次 highlightBlock 重建）
-QRegularExpression SyntaxHighlighter::commentRegex_("(//[^\\n]*)|(#[^\\n]*)");
+QRegularExpression SyntaxHighlighter::commentRegex_("(//[^\\n]*)");
 // HL-3 fix: 字符串正则支持单行和多行起始匹配
 QRegularExpression SyntaxHighlighter::stringRegex_("\"(?:[^\"\\\\]|\\\\.)*\"?");
 
@@ -55,7 +55,7 @@ void SyntaxHighlighter::initRules() {
 
     // 运算符（含分隔符，不再匹配字符串内内容——由 highlightBlock 逻辑控制）
     HighlightRule opRule;
-    opRule.pattern = QRegularExpression("[+\\-*/%]|==|!=|<=|>=|<|>|=|\\(|\\)|\\{|\\}|\\[|\\]|;|,|:|\\.");
+    opRule.pattern = QRegularExpression("[+\\-*/%]|==|!=|<=|>=|<|>|=|\\(|\\)|\\{|\\}|\\[|\\]|;|,|:");
     opRule.format = operatorFormat_;
     rules_.push_back(opRule);
 }

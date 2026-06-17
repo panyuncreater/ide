@@ -72,8 +72,13 @@ bool Parser::check(TokenType type) const {
 }
 
 bool Parser::checkNext(TokenType type) const {
-    if (current_ + 1 >= (int)tokens_->size()) return false;
-    return (*tokens_)[current_ + 1].type == type;
+    int idx = current_ + 1;
+    // B12 fix: 跳过注释 token，与 advance()/peek() 行为一致
+    while (idx < (int)tokens_->size() && (*tokens_)[idx].type == TokenType::TK_LINE_COMMENT) {
+        idx++;
+    }
+    if (idx >= (int)tokens_->size()) return false;
+    return (*tokens_)[idx].type == type;
 }
 
 
@@ -776,6 +781,10 @@ std::unique_ptr<ASTNode> Parser::unary() {
         auto operand = unary();
         auto uopType = (op.type == TokenType::TK_NOT) ? UnaryOp::UnaryOpType::UOP_NOT : UnaryOp::UnaryOpType::UOP_NEGATE;
         return std::make_unique<UnaryOp>(uopType, std::move(operand), op.line, op.column);
+    }
+    // B13 fix: 一元 + 是恒等操作，直接返回操作数
+    if (match(TokenType::TK_PLUS)) {
+        return unary();
     }
     return call();
 }

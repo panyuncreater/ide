@@ -31,7 +31,6 @@ Value Interpreter::execute(Block& program) {
     callStack_.clear();
     funRegistry_.clear();
     classRegistry_.clear();
-    typeAnnotations_.clear();
     currentFunctionReturnType_.clear();
     recursionDepth_ = 0;
     replAsts_.clear();  // 释放 REPL 保留的 AST
@@ -75,7 +74,6 @@ void Interpreter::retainReplAst(std::unique_ptr<Block> ast) {
 void Interpreter::saveReplState() {
     savedGlobalEnv_ = globalEnv_;
     savedClassRegistry_ = std::move(classRegistry_);
-    savedTypeAnnotations_ = std::move(typeAnnotations_);
     savedReplAsts_ = std::move(replAsts_);
 }
 
@@ -83,7 +81,6 @@ void Interpreter::restoreReplState() {
     globalEnv_ = savedGlobalEnv_;
     currentEnv_ = globalEnv_;
     classRegistry_ = std::move(savedClassRegistry_);
-    typeAnnotations_ = std::move(savedTypeAnnotations_);
     replAsts_ = std::move(savedReplAsts_);
     savedGlobalEnv_.reset();
 }
@@ -261,9 +258,8 @@ void Interpreter::checkType(const Value& val, const std::string& annotation,
 }
 
 const std::string* Interpreter::findTypeAnnotation(const std::string& varName) const {
-    auto it = typeAnnotations_.find(varName);
-    if (it != typeAnnotations_.end()) return &it->second;
-    return nullptr;
+    // B2 fix: 沿作用域链查找类型注解（不再使用 flat map）
+    return currentEnv_->getTypeAnnotation(varName);
 }
 
 // ---- writeBack 写回左值 ----
@@ -616,9 +612,11 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
             ClassInfo& cls = classIt->second;
             Value instance = Value::makeInstance(cls.name);
 
-            // 复制类默认字段值（含继承链）
+            // 复制类默认字段值（含继承链）— B8 fix: 加入循环检测
             ClassInfo* curCls = &cls;
+            std::unordered_set<std::string> visitedClasses;
             while (curCls) {
+                if (!visitedClasses.insert(curCls->name).second) break; // 检测到循环继承
                 for (const auto& kv : curCls->fields) {
                     if (instance.fields().find(kv.first) == instance.fields().end()) {
                         instance.fields()[kv.first] = kv.second;
@@ -675,9 +673,9 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
     if (!node.typeAnnotation.empty() && node.initializer) {
         checkType(initVal, node.typeAnnotation, [&]{ return "变量 " + node.name + " 的类型"; }, node.line, node.column);
     }
-    // 记录类型注解
+    // 记录类型注解（B2 fix: 存入当前作用域环境）
     if (!node.typeAnnotation.empty()) {
-        typeAnnotations_[node.name] = node.typeAnnotation;
+        currentEnv_->defineTypeAnnotation(node.name, node.typeAnnotation);
     }
 
     // P1 fix: 检测同作用域重复声明
@@ -866,12 +864,22 @@ Value Interpreter::visitFunCall(FunCall& node) {
             runtimeError("递归深度超过限制 (256)", node.line, node.column);
         }
 
+        // B1 fix: RAII guard 确保任何异常路径都能恢复 recursionDepth_
+        struct RecursionGuard {
+            int& depth;
+            bool dismissed = false;
+            ~RecursionGuard() { if (!dismissed) depth--; }
+            void dismiss() { dismissed = true; }
+        } recursionGuard{recursionDepth_, false};
+
         // 创建实例
         Value instance = Value::makeInstance(cls.name);
 
-        // 复制类默认字段值（含继承链）
+        // 复制类默认字段值（含继承链）— B8 fix: 加入循环检测
         ClassInfo* curCls = &cls;
+        std::unordered_set<std::string> visitedClasses;
         while (curCls) {
+            if (!visitedClasses.insert(curCls->name).second) break; // 检测到循环继承
             for (const auto& kv : curCls->fields) {
                 // 子类字段覆盖父类
                 if (instance.fields().find(kv.first) == instance.fields().end()) {
@@ -921,10 +929,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
             } catch (const ReturnException&) {
                 // init 方法的返回值忽略，但更新实例字段
             } catch (...) {
-                // 运行时错误：先恢复调用状态，再重抛，避免 currentEnv_/调用栈/递归深度错乱
+                // B1 fix: RAII guard 自动恢复 recursionDepth_，此处只需恢复其他状态
                 currentEnv_ = prevEnv;
                 callStack_.pop_back();
-                recursionDepth_--;
                 currentFunctionReturnType_ = savedReturnType;
                 throw;
             }
@@ -950,9 +957,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
             currentFunctionReturnType_ = savedReturnType;
         }
 
-        // 无论是否有 init 方法，都需成对恢复递归深度
-        // （recursionDepth_ 在进入类构造路径时已无条件递增）
-        recursionDepth_--;
+        // B1 fix: recursionDepth_ 由 RAII guard 自动恢复（无需手动递减）
         return instance;
     }
 

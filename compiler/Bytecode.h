@@ -64,6 +64,7 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_METHOD_CALL,  // 方法调用（名称索引 + 参数个数 + 接收者变量名索引）
 
     OP_DUP,          // 复制栈顶
+    OP_DUP_N,        // 复制栈中第 N 个值到栈顶（操作数: depth(1B)），用于写回时保留索引值
 
     // 新增指令
     OP_CLOSURE,      // 创建闭包值（操作数: nameIdx(2B) + argCount(1B)）
@@ -131,6 +132,7 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_MEMBER_SET_LOCAL: return "OP_MEMBER_SET_LOCAL";
     case OpCode::OP_METHOD_CALL:  return "OP_METHOD_CALL";
     case OpCode::OP_DUP:          return "OP_DUP";
+    case OpCode::OP_DUP_N:        return "OP_DUP_N";
     case OpCode::OP_CLOSURE:      return "OP_CLOSURE";
     case OpCode::OP_GET_LOCAL:    return "OP_GET_LOCAL";
     case OpCode::OP_SET_LOCAL:    return "OP_SET_LOCAL";
@@ -268,6 +270,7 @@ public:
         case OpCode::OP_BUILD_DICT:
         case OpCode::OP_GET_LOCAL:
         case OpCode::OP_SET_LOCAL:
+        case OpCode::OP_DUP_N:
             return 2;
         case OpCode::OP_MEMBER_SET_VAR:
             return 5;
@@ -481,6 +484,12 @@ public:
             break;
         }
         case OpCode::OP_DUP: str += "OP_DUP"; offset += 1; break;
+        case OpCode::OP_DUP_N: {
+            uint8_t depth = code[offset + 1];
+            str += "OP_DUP_N depth=" + std::to_string(depth);
+            offset += 2;
+            break;
+        }
         case OpCode::OP_CLOSURE: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             uint8_t argCount = code[offset + 3];

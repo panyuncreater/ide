@@ -1,6 +1,7 @@
 #include "debug/DebugController.h"
 #include "ast/ASTNode.h"
 #include "interpreter/Interpreter.h"
+#include <QApplication>
 #include <stdexcept>
 
 // ============================================================
@@ -32,6 +33,11 @@ void DebugController::checkBreak(ASTNode* node) {
 
     // 快速路径：RUN 模式且无断点 → 直接返回（递归/循环程序的主要开销来源）
     if (mode_ == StepMode::MODE_RUN && breakpoints_.empty()) {
+        // B11 fix: 即使在快速路径，也定期处理 UI 事件防止界面冻结
+        if (++eventPumpCounter_ >= 100) {
+            eventPumpCounter_ = 0;
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+        }
         return;
     }
 
@@ -89,6 +95,12 @@ void DebugController::checkBreak(ASTNode* node) {
 
         // 暂停执行，等待用户操作
         pauseExecution();
+    } else {
+        // B11 fix: 不暂停时也定期处理 UI 事件，防止界面冻结
+        if (++eventPumpCounter_ >= 100) {
+            eventPumpCounter_ = 0;
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+        }
     }
 }
 
