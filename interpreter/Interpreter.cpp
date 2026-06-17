@@ -649,6 +649,11 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
         typeAnnotations_[node.name] = node.typeAnnotation;
     }
 
+    // P1 fix: 检测同作用域重复声明
+    if (currentEnv_->localVariables().find(node.name) != currentEnv_->localVariables().end()) {
+        runtimeError("变量 '" + node.name + "' 已在当前作用域中定义", node.line, node.column);
+    }
+
     currentEnv_->define(node.name, initVal);
     return initVal;
 }
@@ -743,9 +748,6 @@ Value Interpreter::visitForStmt(ForStmt& node) {
                 evaluate(node.update.get());
             }
         }
-    } catch (const ReturnException&) {
-        currentEnv_ = forEnv->parent;
-        throw;
     } catch (...) {
         currentEnv_ = forEnv->parent;
         throw;
@@ -1511,7 +1513,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                      node.line, node.column);
     }
 
-    runtimeError("方法调用需要类实例", node.line, node.column);
+    runtimeError("类型 " + obj.typeName() + " 不支持方法调用", node.line, node.column);
 }
 
 Value Interpreter::visitNullLiteral(NullLiteral& node) {
