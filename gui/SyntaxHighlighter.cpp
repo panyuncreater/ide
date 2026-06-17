@@ -43,7 +43,7 @@ void SyntaxHighlighter::initRules() {
     HighlightRule keywordRule;
     keywordRule.pattern = QRegularExpression(
         "\\b(?:var|fun|function|func|if|else|while|for|return|print"
-        "|and|or|not|int|float|bool|string|class|extends|dict|array|null|true|false)\\b");
+        "|and|or|not|int|float|bool|string|class|extends|super|dict|array|null|true|false)\\b");
     keywordRule.format = keywordFormat_;
     rules_.push_back(keywordRule);
 

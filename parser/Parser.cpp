@@ -890,6 +890,12 @@ std::unique_ptr<ASTNode> Parser::primary() {
         return std::make_unique<NullLiteral>(tok.line, tok.column);
     }
 
+    // super 关键字
+    if (match(TokenType::TK_SUPER)) {
+        const Token& tok = previous();
+        return std::make_unique<SuperExpr>(tok.line, tok.column);
+    }
+
     // 标识符
     if (match(TokenType::TK_IDENTIFIER)) {
         const Token& tok = previous();

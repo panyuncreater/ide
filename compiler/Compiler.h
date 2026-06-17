@@ -73,6 +73,7 @@ private:
     void compileMemberAssign(MemberAssign& node);
     void compileMethodCall(MethodCall& node);
     void compileNullLiteral(NullLiteral& node);
+    void compileSuperExpr(SuperExpr& node);
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);

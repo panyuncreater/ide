@@ -80,12 +80,22 @@ void ReplPanel::clearHistory() {
 }
 
 void ReplPanel::onReturnPressed() {
-    QString line = inputLine_->text().trimmed();
-    if (line.isEmpty()) return;
+    QString line = inputLine_->text();
+    QString trimmedLine = line.trimmed();
 
-    // 保存到历史
-    history_.push_back(line);
-    historyIndex_ = history_.size();
+    // R4: 续行模式 — 累积输入
+    if (inContinuation_) {
+        pendingInput_ += "\n" + line;
+    } else {
+        if (trimmedLine.isEmpty()) return;
+        pendingInput_ = trimmedLine;
+    }
+
+    // 保存到历史（仅首次行）
+    if (!inContinuation_) {
+        history_.push_back(trimmedLine);
+        historyIndex_ = history_.size();
+    }
 
     // 显示输入（使用纯文本+颜色格式，避免HTML注入）
     {
@@ -95,39 +105,54 @@ void ReplPanel::onReturnPressed() {
         QTextCharFormat fmt;
         fmt.setForeground(QColor("#006600"));
         cursor.setCharFormat(fmt);
-        cursor.insertText(">>> " + line);
+        QString prompt = inContinuation_ ? "... " : ">>> ";
+        cursor.insertText(prompt + (inContinuation_ ? line : trimmedLine));
         cursor.setCharFormat(QTextCharFormat());
         outputArea_->setTextCursor(cursor);
         outputArea_->ensureCursorVisible();
     }
 
-    // 特殊命令
-    if (line == "clear") {
-        outputArea_->clear();
-        inputLine_->clear();
-        return;
+    // 特殊命令（仅在非续行模式）
+    if (!inContinuation_) {
+        if (trimmedLine == "clear") {
+            outputArea_->clear();
+            pendingInput_.clear();
+            inputLine_->clear();
+            return;
+        }
+        if (trimmedLine == "help") {
+            outputArea_->append(
+                "MiniLang 支持的语法:\n"
+                "  var x = 10;          变量声明\n"
+                "  int a = 5;           类型注解变量\n"
+                "  fun f(x) { ... }     函数声明\n"
+                "  if (cond) { ... }    条件语句\n"
+                "  while (cond) { ... } 循环语句\n"
+                "  for (init; cond; upd) { ... }  for循环\n"
+                "  print(expr);         输出\n"
+                "  [1, 2, 3]            数组字面量\n"
+                "  {\"key\": val}        字典字面量\n"
+                "  null                 空值\n"
+                "  class Name { ... }   类声明\n"
+                "  多行输入: 未闭合的 { ( [ 会自动续行\n"
+            );
+            pendingInput_.clear();
+            inputLine_->clear();
+            return;
+        }
     }
-    if (line == "help") {
-        outputArea_->append(
-            "MiniLang 支持的语法:\n"
-            "  var x = 10;          变量声明\n"
-            "  int a = 5;           类型注解变量\n"
-            "  fun f(x) { ... }     函数声明\n"
-            "  if (cond) { ... }    条件语句\n"
-            "  while (cond) { ... } 循环语句\n"
-            "  for (init; cond; upd) { ... }  for循环\n"
-            "  print(expr);         输出\n"
-            "  [1, 2, 3]            数组字面量\n"
-            "  {\"key\": val}        字典字面量\n"
-            "  null                 空值\n"
-            "  class Name { ... }   类声明\n"
-        );
+
+    // R4: 检查输入是否完整
+    if (!isInputComplete(pendingInput_)) {
+        inContinuation_ = true;
         inputLine_->clear();
         return;
     }
 
-    // 执行代码
-    executeLine(line);
+    // 输入完整 — 执行并重置续行状态
+    inContinuation_ = false;
+    executeLine(pendingInput_);
+    pendingInput_.clear();
 
     inputLine_->clear();
 }
@@ -189,6 +214,52 @@ void ReplPanel::executeLine(const QString& line) {
     } catch (const std::exception& e) {
         appendError(QString("错误: %1").arg(e.what()));
     }
+}
+
+bool ReplPanel::isInputComplete(const QString& input) {
+    int braceDepth = 0;   // {}
+    int parenDepth = 0;   // ()
+    int bracketDepth = 0; // []
+    bool inString = false;
+
+    for (int i = 0; i < input.length(); ++i) {
+        QChar c = input[i];
+
+        // 处理字符串字面量（跳过内部字符）
+        if (inString) {
+            if (c == '\\' && i + 1 < input.length()) {
+                ++i; // 跳过转义字符
+                continue;
+            }
+            if (c == '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            inString = true;
+            continue;
+        }
+
+        // 跳过行注释
+        if (c == '/' && i + 1 < input.length() && input[i + 1] == '/') {
+            // 跳到行尾
+            while (i < input.length() && input[i] != '\n') ++i;
+            continue;
+        }
+
+        switch (c.toLatin1()) {
+        case '{': ++braceDepth; break;
+        case '}': --braceDepth; break;
+        case '(': ++parenDepth; break;
+        case ')': --parenDepth; break;
+        case '[': ++bracketDepth; break;
+        case ']': --bracketDepth; break;
+        }
+    }
+
+    return braceDepth <= 0 && parenDepth <= 0 && bracketDepth <= 0;
 }
 
 bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {

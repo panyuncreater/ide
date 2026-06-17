@@ -35,6 +35,7 @@ enum class NodeType {
     NODE_MEMBER_ASSIGN,
     NODE_METHOD_CALL,
     NODE_NULL_LITERAL,
+    NODE_SUPER_EXPR,
 };
 
 // ============================================================
@@ -545,5 +546,14 @@ public:
     NullLiteral(int ln = 0, int col = 0) : ASTNode(ln, col) { nodeType = NodeType::NODE_NULL_LITERAL; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "Null"; }
+    std::vector<ASTNode*> children() const override { return {}; }
+};
+
+/// Super 表达式节点（引用父类方法/字段）
+class SuperExpr : public ASTNode {
+public:
+    SuperExpr(int ln = 0, int col = 0) : ASTNode(ln, col) { nodeType = NodeType::NODE_SUPER_EXPR; }
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "Super"; }
     std::vector<ASTNode*> children() const override { return {}; }
 };

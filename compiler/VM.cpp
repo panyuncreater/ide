@@ -867,7 +867,7 @@ VMResult VM::executeOneInstruction() {
             if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
                 push(obj.arrayVal()[static_cast<size_t>(i)]);
             } else {
-                return runtimeError("数组索引越界: " + std::to_string(i) + " (长度: " + std::to_string(obj.arrayVal().size()) + ")");
+                return runtimeError("数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
             }
         } else if (obj.isDict() && idx.isString()) {
             auto it = obj.dictVal().find(idx.stringVal());
@@ -912,8 +912,8 @@ VMResult VM::executeOneInstruction() {
                 if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
                     obj.arrayVal()[static_cast<size_t>(i)] = val;
                 } else {
-                    runtimeError("数组索引越界: " + std::to_string(i) +
-                                 " 超出范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
+                    return runtimeError("数组索引越界: " + std::to_string(i) +
+                                 ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
                 }
             } else if (obj.isDict() && index.isString()) {
                 obj.dictVal()[index.stringVal()] = val;
@@ -937,8 +937,8 @@ VMResult VM::executeOneInstruction() {
                 if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
                     obj.arrayVal()[static_cast<size_t>(i)] = val;
                 } else {
-                    runtimeError("数组索引越界: " + std::to_string(i) +
-                                 " 超出范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
+                    return runtimeError("数组索引越界: " + std::to_string(i) +
+                                 ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
                 }
             } else if (obj.isDict() && index.isString()) {
                 obj.dictVal()[index.stringVal()] = val;
@@ -949,6 +949,7 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    case OpCode::OP_SUPER_MEMBER_GET:
     case OpCode::OP_MEMBER_GET: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
@@ -959,8 +960,7 @@ VMResult VM::executeOneInstruction() {
             if (it != obj.fields().end()) {
                 push(it->second);
             } else {
-                runtimeError("类 " + obj.className() + " 没有字段或方法 '" + fieldName + "'");
-                push(Value::nullValue());
+                return runtimeError("类 " + obj.className() + " 没有字段或方法 '" + fieldName + "'");
             }
         } else if (obj.isDict()) {
             auto it = obj.dictVal().find(fieldName);
@@ -970,8 +970,7 @@ VMResult VM::executeOneInstruction() {
                 push(Value::nullValue());
             }
         } else {
-            runtimeError("该类型不支持成员访问");
-            push(Value::nullValue());
+            return runtimeError("该类型不支持成员访问");
         }
         notifyStep(ip, op);
         ip += 3;
@@ -1047,7 +1046,9 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    case OpCode::OP_SUPER_CALL:
     case OpCode::OP_METHOD_CALL: {
+        bool isSuperCall = (op == OpCode::OP_SUPER_CALL);
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
         uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
@@ -1311,8 +1312,17 @@ VMResult VM::executeOneInstruction() {
         if (obj.isInstance()) {
             // 拷贝接收者，因为后续 pop() 会使 peek 引用失效
             Value objCopy = obj;
+            // O1: super 调用从父类开始查找方法
+            std::string searchClassName = objCopy.className();
+            if (isSuperCall) {
+                auto clsIt = classInfo_.find(searchClassName);
+                if (clsIt == classInfo_.end() || clsIt->second.superClassName.empty()) {
+                    return runtimeError("类 " + searchClassName + " 没有父类，不能使用 super");
+                }
+                searchClassName = clsIt->second.superClassName;
+            }
             // 沿继承链查找方法（父类方法也可调用）
-            const BytecodeChunk* targetChunkPtr = findMethodChunk(objCopy.className(), methodName);
+            const BytecodeChunk* targetChunkPtr = findMethodChunk(searchClassName, methodName);
             if (targetChunkPtr != nullptr) {
                 const BytecodeChunk& targetChunk = *targetChunkPtr;
 
@@ -1546,7 +1556,7 @@ VMResult VM::executeOneInstruction() {
 
         // 如果有 init 但 argCount==0，init 通过后续 OP_METHOD_CALL 调用
         if (initChunkPtr == nullptr && argCount > 0) {
-            runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
+            return runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
                          std::to_string(argCount) + " 个参数");
         }
 

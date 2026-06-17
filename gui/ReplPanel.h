@@ -47,8 +47,14 @@ private:
     QStringList history_;               // 命令历史
     int historyIndex_ = -1;             // 历史浏览索引
 
+    QString pendingInput_;              // R4: 多行累积输入缓冲
+    bool inContinuation_ = false;       // R4: 是否在续行模式
+
     /// 执行单行代码
     void executeLine(const QString& line);
+
+    /// R4: 检查输入是否完整（括号/花括号/方括号是否匹配）
+    static bool isInputComplete(const QString& input);
 
     /// 键盘事件过滤（支持上下键浏览历史）
     bool eventFilter(QObject* obj, QEvent* event) override;

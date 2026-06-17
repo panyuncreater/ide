@@ -78,6 +78,10 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_WRITEBACK_MEMBER_LOCAL, // 成员写回到局部变量（slot(1B) + fieldIdx(2B)）
     OP_WRITEBACK_INDEX_VAR,    // 索引写回到全局变量（varIdx(2B)），索引从栈顶 pop
     OP_WRITEBACK_INDEX_LOCAL,  // 索引写回到局部变量（slot(1B)），索引从栈顶 pop
+
+    // O1: super 关键字指令
+    OP_SUPER_CALL,       // super 方法调用（格式同 OP_METHOD_CALL，7字节），从父类开始方法查找
+    OP_SUPER_MEMBER_GET, // super 成员取值（格式同 OP_MEMBER_GET，3字节），从父类查找
 };
 
 /// 操作码 → 名称字符串（统一映射，避免多处手工维护）
@@ -137,6 +141,8 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_WRITEBACK_MEMBER_LOCAL: return "OP_WRITEBACK_MEMBER_LOCAL";
     case OpCode::OP_WRITEBACK_INDEX_VAR: return "OP_WRITEBACK_INDEX_VAR";
     case OpCode::OP_WRITEBACK_INDEX_LOCAL: return "OP_WRITEBACK_INDEX_LOCAL";
+    case OpCode::OP_SUPER_CALL:       return "OP_SUPER_CALL";
+    case OpCode::OP_SUPER_MEMBER_GET: return "OP_SUPER_MEMBER_GET";
     }
     return "OP_UNKNOWN";
 }
@@ -245,6 +251,7 @@ public:
         case OpCode::OP_JUMP_IF_FALSE:
         case OpCode::OP_LOOP:
         case OpCode::OP_MEMBER_GET:
+        case OpCode::OP_SUPER_MEMBER_GET:
         case OpCode::OP_MEMBER_SET:
         case OpCode::OP_INDEX_SET_VAR:
         case OpCode::OP_INIT_FIELD:
@@ -267,6 +274,7 @@ public:
         case OpCode::OP_MEMBER_SET_LOCAL:
             return 4;
         case OpCode::OP_METHOD_CALL:
+        case OpCode::OP_SUPER_CALL:
             return 7;  // opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B)
         case OpCode::OP_WRITEBACK_MEMBER_VAR:
             return 5;  // opcode(1B) + varIdx(2B) + fieldIdx(2B)
@@ -424,6 +432,12 @@ public:
             offset += 3;
             break;
         }
+        case OpCode::OP_SUPER_MEMBER_GET: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_SUPER_MEMBER_GET " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
+            offset += 3;
+            break;
+        }
         case OpCode::OP_MEMBER_SET: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             str += "OP_MEMBER_SET " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
@@ -450,6 +464,17 @@ public:
             uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
             uint8_t localSlot = code[offset + 6];
             str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
+            if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal();
+            if (localSlot != 0xFF) str += " slot=" + std::to_string(localSlot);
+            offset += 7;
+            break;
+        }
+        case OpCode::OP_SUPER_CALL: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            uint8_t argCount = code[offset + 3];
+            uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
+            uint8_t localSlot = code[offset + 6];
+            str += "OP_SUPER_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
             if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal();
             if (localSlot != 0xFF) str += " slot=" + std::to_string(localSlot);
             offset += 7;

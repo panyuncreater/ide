@@ -39,6 +39,7 @@ public:
     virtual Value visitMemberAssign(MemberAssign& node) = 0;
     virtual Value visitMethodCall(MethodCall& node) = 0;
     virtual Value visitNullLiteral(NullLiteral& node) = 0;
+    virtual Value visitSuperExpr(SuperExpr& node) = 0;
 };
 
 // ============================================================
@@ -85,4 +86,5 @@ public:
     Value visitMemberAssign(MemberAssign& node) override { return defaultVisit(node); }
     Value visitMethodCall(MethodCall& node) override { return defaultVisit(node); }
     Value visitNullLiteral(NullLiteral& node) override { return defaultVisit(node); }
+    Value visitSuperExpr(SuperExpr& node) override { return defaultVisit(node); }
 };

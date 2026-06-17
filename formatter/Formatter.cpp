@@ -112,6 +112,7 @@ std::string Formatter::formatNode(ASTNode* node) {
     case NodeType::NODE_MEMBER_ASSIGN: return formatMemberAssign(*static_cast<MemberAssign*>(node));
     case NodeType::NODE_METHOD_CALL:    return formatMethodCall(*static_cast<MethodCall*>(node));
     case NodeType::NODE_NULL_LITERAL:   return formatNullLiteral(*static_cast<NullLiteral*>(node));
+    case NodeType::NODE_SUPER_EXPR:    return "super";
     }
 
     return "/* unknown node */";

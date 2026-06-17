@@ -19,6 +19,7 @@ enum class TokenType {
     TK_FUNC,        // func 关键字（fun 的别名）
     TK_CLASS,       // class 关键字
     TK_EXTENDS,     // extends 关键字
+    TK_SUPER,       // super 关键字
     TK_DICT,        // dict 关键字
     TK_ARRAY,       // array 关键字
     TK_NULL,        // null 关键字
@@ -79,6 +80,7 @@ struct Token {
         case TokenType::TK_FUNC:        return "FUNC";
         case TokenType::TK_CLASS:       return "CLASS";
         case TokenType::TK_EXTENDS:     return "EXTENDS";
+        case TokenType::TK_SUPER:       return "SUPER";
         case TokenType::TK_DICT:        return "DICT";
         case TokenType::TK_ARRAY:       return "ARRAY";
         case TokenType::TK_NULL:        return "NULL";

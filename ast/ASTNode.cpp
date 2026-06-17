@@ -106,3 +106,7 @@ Value MethodCall::accept(Visitor& visitor) {
 Value NullLiteral::accept(Visitor& visitor) {
     return visitor.visitNullLiteral(*this);
 }
+
+Value SuperExpr::accept(Visitor& visitor) {
+    return visitor.visitSuperExpr(*this);
+}

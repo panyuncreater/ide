@@ -319,7 +319,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
             const Value& indexVal = idxs[i];
             if (parent.isArray() && indexVal.isInt()) {
                 if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parent.arrayVal().size())
-                    runtimeError("数组索引越界", line, col);
+                    runtimeError("数组索引越界: " + std::to_string(indexVal.intVal()) + ", 有效范围 [0, " + std::to_string(parent.arrayVal().size()) + ")", line, col);
                 vals[i] = parent.arrayVal()[indexVal.intVal()];
             } else if (parent.isDict() && indexVal.isString()) {
                 auto it = parent.dictVal().find(indexVal.stringVal());
@@ -345,7 +345,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     if (isIndexAssign) {
         if (modifiedObj.isArray() && idx.isInt()) {
             if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= modifiedObj.arrayVal().size())
-                runtimeError("数组索引越界", line, col);
+                runtimeError("数组索引越界: " + std::to_string(idx.intVal()) + ", 有效范围 [0, " + std::to_string(modifiedObj.arrayVal().size()) + ")", line, col);
             modifiedObj.arrayVal()[idx.intVal()] = val;
         } else if (modifiedObj.isDict() && idx.isString()) {
             modifiedObj.dictVal()[idx.stringVal()] = val;
@@ -380,7 +380,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
             const Value& indexVal = idxs[i];
             if (parentVal.isArray() && indexVal.isInt()) {
                 if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parentVal.arrayVal().size())
-                    runtimeError("数组索引越界", line, col);
+                    runtimeError("数组索引越界: " + std::to_string(indexVal.intVal()) + ", 有效范围 [0, " + std::to_string(parentVal.arrayVal().size()) + ")", line, col);
                 parentVal.arrayVal()[indexVal.intVal()] = currentVal;
             } else if (parentVal.isDict() && indexVal.isString()) {
                 parentVal.dictVal()[indexVal.stringVal()] = currentVal;
@@ -447,7 +447,7 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
             if (parent.isArray() && indexVal.isInt()) {
                 int64_t idx = indexVal.intVal();
                 if (idx < 0 || static_cast<size_t>(idx) >= parent.arrayVal().size()) {
-                    runtimeError("数组索引越界: " + std::to_string(idx), ia->line, ia->column);
+                    runtimeError("数组索引越界: " + std::to_string(idx) + ", 有效范围 [0, " + std::to_string(parent.arrayVal().size()) + ")", ia->line, ia->column);
                 }
                 vals[i] = parent.arrayVal()[static_cast<size_t>(idx)];
             } else if (parent.isDict() && indexVal.isString()) {
@@ -635,7 +635,8 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
             // 如果有 init 方法（0 参数），执行它
             FunDecl* initMethod = findMethod(cls, "init");
             if (initMethod && initMethod->params.empty()) {
-                auto initEnv = std::make_shared<Environment>(currentEnv_);
+                auto parentEnv = cls.closureEnv ? cls.closureEnv : currentEnv_;
+                auto initEnv = std::make_shared<Environment>(parentEnv);
                 initEnv->define("this", instance);
                 // 将实例字段注入 init 环境
                 for (const auto& kv : instance.fields()) {
@@ -887,8 +888,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
         // 如果有 init 方法，执行它
         if (initMethod) {
-            // 创建新环境（父级为当前环境，支持闭包）
-            auto initEnv = std::make_shared<Environment>(currentEnv_);
+            // O5: 使用类定义时捕获的环境作为父级（闭包）
+            auto parentEnv = cls.closureEnv ? cls.closureEnv : currentEnv_;
+            auto initEnv = std::make_shared<Environment>(parentEnv);
 
             // 绑定 this
             initEnv->define("this", instance);
@@ -1173,7 +1175,7 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
         }
         int64_t i = idx.intVal();
         if (i < 0 || static_cast<size_t>(i) >= obj.arrayVal().size()) {
-            runtimeError("数组索引越界: " + std::to_string(i), node.line, node.column);
+            runtimeError("数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")", node.line, node.column);
         }
         return obj.arrayVal()[static_cast<size_t>(i)];
     }
@@ -1205,6 +1207,7 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
     ClassInfo cls;
     cls.name = node.name;
     cls.superClassName = node.superClassName;
+    cls.closureEnv = currentEnv_;  // O5: 捕获类定义时的环境（闭包）
     // 不再存储 superClass 裸指针，运行时通过 superClassName 查找
 
     // 如果有父类，验证父类是否已定义
@@ -1254,6 +1257,9 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
 
     // 类实例的成员访问
     if (obj.isInstance()) {
+        // O1: super.field — 字段查找不变（实例已含继承字段），方法查找从父类开始
+        bool isSuperAccess = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
+
         auto it = obj.fields().find(node.fieldName);
         if (it != obj.fields().end()) {
             return it->second;
@@ -1262,7 +1268,17 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
         // 检查是否访问的是方法（返回一个标记值）
         auto classIt = classRegistry_.find(obj.className());
         if (classIt != classRegistry_.end()) {
-            FunDecl* method = findMethod(classIt->second, node.fieldName);
+            ClassInfo* searchClass = &classIt->second;
+            if (isSuperAccess) {
+                if (classIt->second.superClassName.empty()) {
+                    runtimeError("类 " + classIt->second.name + " 没有父类，不能使用 super", node.line, node.column);
+                }
+                auto superIt = classRegistry_.find(classIt->second.superClassName);
+                if (superIt != classRegistry_.end()) {
+                    searchClass = &superIt->second;
+                }
+            }
+            FunDecl* method = findMethod(*searchClass, node.fieldName);
             if (method) {
                 // 方法作为字段访问，返回特殊标记
                 Value methodVal(std::string("method:") + obj.className() + "." + node.fieldName);
@@ -1332,7 +1348,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 runtimeError("remove 参数必须是整数索引", node.line, node.column);
             int64_t idx = argValues[0].intVal();
             if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal().size())
-                runtimeError("数组索引越界: " + std::to_string(idx), node.line, node.column);
+                runtimeError("数组索引越界: " + std::to_string(idx) + ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")", node.line, node.column);
             obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(idx));
             writeBack(node.object.get(), obj, node.line, node.column);
             return Value::nullValue();
@@ -1460,7 +1476,20 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
     if (obj.isInstance()) {
         auto classIt = classRegistry_.find(obj.className());
         if (classIt != classRegistry_.end()) {
-            FunDecl* method = findMethod(classIt->second, node.methodName);
+            // O1: super.method() — 从父类开始查找方法
+            bool isSuperCall = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
+            ClassInfo* searchClass = &classIt->second;
+            if (isSuperCall) {
+                if (classIt->second.superClassName.empty()) {
+                    runtimeError("类 " + classIt->second.name + " 没有父类，不能使用 super", node.line, node.column);
+                }
+                auto superIt = classRegistry_.find(classIt->second.superClassName);
+                if (superIt == classRegistry_.end()) {
+                    runtimeError("未定义的父类: " + classIt->second.superClassName, node.line, node.column);
+                }
+                searchClass = &superIt->second;
+            }
+            FunDecl* method = findMethod(*searchClass, node.methodName);
             if (method) {
                 // 求值参数
                 std::vector<Value> argValues;
@@ -1483,8 +1512,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                     runtimeError("递归深度超过限制 (256)", node.line, node.column);
                 }
 
-                // 创建方法环境（父级为当前环境，方法不创建闭包，在调用时绑定 this）
-                auto methodEnv = std::make_shared<Environment>(currentEnv_);
+                // O5: 使用类定义时捕获的环境作为父级（闭包），而非调用者的环境
+                auto parentEnv = classIt->second.closureEnv ? classIt->second.closureEnv : currentEnv_;
+                auto methodEnv = std::make_shared<Environment>(parentEnv);
 
                 // 绑定 this
                 methodEnv->define("this", obj);
@@ -1561,4 +1591,14 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
 Value Interpreter::visitNullLiteral(NullLiteral& node) {
     checkBreak(&node);
     return Value::nullValue();
+}
+
+Value Interpreter::visitSuperExpr(SuperExpr& node) {
+    checkBreak(&node);
+    // super 解析为当前 this 实例；调用者通过 NODE_SUPER_EXPR 判断使用父类方法查找
+    const Value* thisVal = currentEnv_->get("this");
+    if (!thisVal) {
+        runtimeError("super 只能在类方法中使用", node.line, node.column);
+    }
+    return *thisVal;
 }

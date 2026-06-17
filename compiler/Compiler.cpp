@@ -84,6 +84,7 @@ void Compiler::compileNode(ASTNode* node) {
     case NodeType::NODE_MEMBER_ASSIGN: compileMemberAssign(*static_cast<MemberAssign*>(node)); return;
     case NodeType::NODE_METHOD_CALL:    compileMethodCall(*static_cast<MethodCall*>(node)); return;
     case NodeType::NODE_NULL_LITERAL:   compileNullLiteral(*static_cast<NullLiteral*>(node)); return;
+    case NodeType::NODE_SUPER_EXPR:    compileSuperExpr(*static_cast<SuperExpr*>(node)); return;
     }
 }
 
@@ -108,6 +109,7 @@ void Compiler::compileStatement(ASTNode* node) {
     case NodeType::NODE_STRING_LITERAL:
     case NodeType::NODE_BOOL_LITERAL:
     case NodeType::NODE_NULL_LITERAL:
+    case NodeType::NODE_SUPER_EXPR:
     case NodeType::NODE_ARRAY_LITERAL:
     case NodeType::NODE_DICT_LITERAL:
         chunk_.writeOp(OpCode::OP_POP, node->line);
@@ -673,7 +675,12 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
         varIndex_.clear();
         currentLocals_.clear();
-        outerLocals_.clear();
+        // O5: 如果类定义在函数内，设置 outerLocals_ 以检测不支持的闭包捕获
+        if (savedInFunction) {
+            outerLocals_ = savedLocals;
+        } else {
+            outerLocals_.clear();
+        }
         inFunction_ = true;
 
         // 局部变量映射：slot 0 = this，slot 1..N = 字段（含继承字段），slot N+1.. = 参数
@@ -747,7 +754,9 @@ void Compiler::compileClassDecl(ClassDecl& node) {
 void Compiler::compileMemberAccess(MemberAccess& node) {
     compileNode(node.object.get());
     uint16_t nameIdx = identifierIndex(node.fieldName);
-    chunk_.writeOp(OpCode::OP_MEMBER_GET, node.line);
+    // O1: super.field 使用 OP_SUPER_MEMBER_GET（从父类查找字段/方法）
+    bool isSuperAccess = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
+    chunk_.writeOp(isSuperAccess ? OpCode::OP_SUPER_MEMBER_GET : OpCode::OP_MEMBER_GET, node.line);
     chunk_.writeShort(nameIdx, node.line);
 }
 
@@ -808,7 +817,9 @@ void Compiler::compileMethodCall(MethodCall& node) {
         compileNode(arg.get());
     }
     uint16_t nameIdx = identifierIndex(node.methodName);
-    chunk_.writeOp(OpCode::OP_METHOD_CALL, node.line);
+    // O1: super.method() 使用 OP_SUPER_CALL（从父类开始方法查找）
+    bool isSuperCall = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
+    chunk_.writeOp(isSuperCall ? OpCode::OP_SUPER_CALL : OpCode::OP_METHOD_CALL, node.line);
     chunk_.writeShort(nameIdx, node.line);
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
     chunk_.writeShort(receiverVarIdx, node.line);  // 接收者全局变量名索引（0xFFFF = 无全局 writeBack）
@@ -863,6 +874,13 @@ void Compiler::compileMethodCall(MethodCall& node) {
 
 void Compiler::compileNullLiteral(NullLiteral& node) {
     chunk_.writeOp(OpCode::OP_NULL, node.line);
+}
+
+void Compiler::compileSuperExpr(SuperExpr& node) {
+    // super 编译为 OP_GET_LOCAL 0（this），与方法中访问 this 相同
+    // 调用点（compileMethodCall/compileMemberAccess）检测 super 对象并使用父类查找
+    chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
+    chunk_.write(0, node.line);  // slot 0 = this
 }
 
 void Compiler::error(const std::string& msg, int line, int col) {

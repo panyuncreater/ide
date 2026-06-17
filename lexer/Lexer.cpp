@@ -32,6 +32,7 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["func"]     = TokenType::TK_FUNC;
         m["class"]   = TokenType::TK_CLASS;
         m["extends"] = TokenType::TK_EXTENDS;
+        m["super"]   = TokenType::TK_SUPER;
         m["dict"]    = TokenType::TK_DICT;
         m["array"]   = TokenType::TK_ARRAY;
         m["null"]    = TokenType::TK_NULL;

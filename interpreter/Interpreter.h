@@ -72,6 +72,7 @@ struct ClassInfo {
     std::string superClassName;                         // 父类名（空表示无父类）
     std::unordered_map<std::string, FunDecl*> methods; // 方法表
     std::unordered_map<std::string, Value> fields;     // 默认字段值
+    std::shared_ptr<Environment> closureEnv;           // O5: 类定义时的环境（闭包捕获）
     // 注意：不再存储 superClass 裸指针，运行时通过 superClassName 在 classRegistry_ 中查找
     // 避免 unordered_map rehash 导致指针悬空
 };
@@ -146,6 +147,7 @@ public:
     Value visitMemberAssign(MemberAssign& node) override;
     Value visitMethodCall(MethodCall& node) override;
     Value visitNullLiteral(NullLiteral& node) override;
+    Value visitSuperExpr(SuperExpr& node) override;
 
 private:
     std::shared_ptr<Environment> globalEnv_;        // 全局环境
