@@ -357,7 +357,7 @@ VMResult VM::execute(const CompileResult& result) {
             continue;
         }
 
-        if (hasError_) return VMResult::VM_ERROR;
+        if (hasError_) return VMResult::VM_RUNTIME_ERROR;
         VMResult r = executeOneInstruction();
         if (r != VMResult::VM_OK || hasError_) return r;
     }
@@ -370,7 +370,7 @@ VMResult VM::execute(const CompileResult& result) {
 // ============================================================
 
 VMResult VM::executeOneInstruction() {
-    if (hasError_) return VMResult::VM_ERROR;
+    if (hasError_) return VMResult::VM_RUNTIME_ERROR;
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
     size_t& ip = frame.ip;
