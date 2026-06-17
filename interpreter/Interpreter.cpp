@@ -162,13 +162,35 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
     // 数值运算（switch 分发，零字符串比较）
     switch (opType) {
     case BinOpType::BIN_ADD:
-        if (left.isInt() && right.isInt()) return Value(left.intVal() + right.intVal());
+        if (left.isInt() && right.isInt()) {
+            int64_t a = left.intVal(), b = right.intVal();
+            if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b))
+                runtimeError("整数加法溢出", line, col);
+            return Value(a + b);
+        }
         return Value(left.toDouble() + right.toDouble());
     case BinOpType::BIN_SUB:
-        if (left.isInt() && right.isInt()) return Value(left.intVal() - right.intVal());
+        if (left.isInt() && right.isInt()) {
+            int64_t a = left.intVal(), b = right.intVal();
+            if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b))
+                runtimeError("整数减法溢出", line, col);
+            return Value(a - b);
+        }
         return Value(left.toDouble() - right.toDouble());
     case BinOpType::BIN_MUL:
-        if (left.isInt() && right.isInt()) return Value(left.intVal() * right.intVal());
+        if (left.isInt() && right.isInt()) {
+            int64_t a = left.intVal(), b = right.intVal();
+            if (a != 0 && b != 0) {
+                if (a == -1 && b == INT64_MIN) runtimeError("整数乘法溢出", line, col);
+                if (b == -1 && a == INT64_MIN) runtimeError("整数乘法溢出", line, col);
+                if ((a > 0 && b > 0 && a > INT64_MAX / b) ||
+                    (a > 0 && b < 0 && b < INT64_MIN / a) ||
+                    (a < 0 && b > 0 && a < INT64_MIN / b) ||
+                    (a < 0 && b < 0 && a < INT64_MAX / b))
+                    runtimeError("整数乘法溢出", line, col);
+            }
+            return Value(a * b);
+        }
         return Value(left.toDouble() * right.toDouble());
     case BinOpType::BIN_DIV:
         { double r = right.toDouble();
@@ -435,6 +457,8 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
             } else if (parent.isDict()) {
                 auto it = parent.dictVal().find(ma->fieldName);
                 vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
+            } else {
+                runtimeError("该类型不支持成员访问", line, col);
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             auto* ia = static_cast<IndexAccess*>(nd);
@@ -449,6 +473,8 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
             } else if (parent.isDict() && indexVal.isString()) {
                 auto it = parent.dictVal().find(indexVal.stringVal());
                 vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
+            } else {
+                runtimeError("该类型不支持索引访问", line, col);
             }
         }
     }
@@ -464,6 +490,8 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
                 parentVal.fields()[ma->fieldName] = currentVal;
             } else if (parentVal.isDict()) {
                 parentVal.dictVal()[ma->fieldName] = currentVal;
+            } else {
+                runtimeError("该类型不支持成员赋值", line, col);
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             const Value& indexVal = idxs[i];
@@ -477,6 +505,8 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
                 parentVal.arrayVal()[static_cast<size_t>(idx)] = currentVal;
             } else if (parentVal.isDict() && indexVal.isString()) {
                 parentVal.dictVal()[indexVal.stringVal()] = currentVal;
+            } else {
+                runtimeError("该类型不支持索引赋值", line, col);
             }
         }
         currentVal = parentVal;

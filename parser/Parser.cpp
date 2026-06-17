@@ -62,7 +62,8 @@ bool Parser::isAtEnd() const {
 
 const Token& Parser::advance() {
     if (!isAtEnd()) current_++;
-    skipComments();
+    // 不在 advance() 中跳过注释——peek()/check() 已负责跳注释
+    // advance() 后 previous() 必须返回实际被消耗的 token（修复 block() 等位置追踪）
     return previous();
 }
 

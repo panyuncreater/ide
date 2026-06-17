@@ -51,9 +51,15 @@ void DebugController::checkBreak(ASTNode* node) {
             auto infoIt = breakpointInfos_.find(node->line);
             if (infoIt != breakpointInfos_.end() && infoIt->isConditional()) {
                 // 条件断点：只求值条件为真时才暂停
-                if (conditionEvaluator_ && conditionEvaluator_(infoIt->condition)) {
-                    infoIt->hitCount++;  // DB-3 fix: 仅条件满足时递增
-                    shouldPause = true;
+                if (conditionEvaluator_) {
+                    try {
+                        if (conditionEvaluator_(infoIt->condition)) {
+                            infoIt->hitCount++;  // DB-3 fix: 仅条件满足时递增
+                            shouldPause = true;
+                        }
+                    } catch (...) {
+                        // 条件表达式求值异常——视为条件不满足，不暂停
+                    }
                 }
             } else {
                 // 无条件断点：直接暂停
@@ -199,6 +205,7 @@ void DebugController::stepIn() {
     if (!running_) {
         mode_ = StepMode::MODE_STEP_IN;
         running_ = true;
+        stopped_ = false;
         paused_ = false;
         return;
     }
@@ -206,6 +213,7 @@ void DebugController::stepIn() {
     if (!inPauseLoop_) return;
     mode_ = StepMode::MODE_STEP_IN;
     running_ = true;
+    stopped_ = false;
     paused_ = false;
     if (pauseLoop_) pauseLoop_->quit();
 }
@@ -215,6 +223,7 @@ void DebugController::stepOver() {
         mode_ = StepMode::MODE_STEP_OVER;
         stepOverDepth_ = currentDepth_;
         running_ = true;
+        stopped_ = false;
         paused_ = false;
         return;
     }
@@ -222,6 +231,7 @@ void DebugController::stepOver() {
     mode_ = StepMode::MODE_STEP_OVER;
     stepOverDepth_ = currentDepth_;
     running_ = true;
+    stopped_ = false;
     paused_ = false;
     if (pauseLoop_) pauseLoop_->quit();
 }
@@ -232,6 +242,7 @@ void DebugController::stepOut() {
         mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
         stepOutDepth_ = currentDepth_;
         running_ = true;
+        stopped_ = false;
         paused_ = false;
         return;
     }
@@ -239,6 +250,7 @@ void DebugController::stepOut() {
     mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
     stepOutDepth_ = currentDepth_;
     running_ = true;
+    stopped_ = false;
     paused_ = false;
     if (pauseLoop_) pauseLoop_->quit();
 }

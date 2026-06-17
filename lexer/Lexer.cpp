@@ -50,6 +50,16 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     tokens_.clear();
     diagnostics_.clear();
 
+    // 跳过 UTF-8 BOM（字节序标记）
+    if (source_.size() >= 3 &&
+        static_cast<unsigned char>(source_[0]) == 0xEF &&
+        static_cast<unsigned char>(source_[1]) == 0xBB &&
+        static_cast<unsigned char>(source_[2]) == 0xBF) {
+        current_ = 3;
+        start_ = 3;
+        lineStart_ = 3;
+    }
+
     while (!isAtEnd()) {
         start_ = current_;
         scanToken();
@@ -79,6 +89,7 @@ char Lexer::peekNext() const {
 }
 
 char Lexer::advance() {
+    if (current_ >= static_cast<int>(source_.size())) return '\0';  // 防御性边界检查
     char c = source_[current_];
     current_++;
     if (c == '\n') {

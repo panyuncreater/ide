@@ -245,7 +245,16 @@ QSet<int> CodeEditor::getBreakpoints() const {
 }
 
 void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
-    breakpoints_ = breakpoints;
+    breakpoints_.clear();
+    // DB-2 fix: 过滤空行和纯注释行，与 mousePressEvent 行为一致
+    for (int line : breakpoints) {
+        QTextBlock block = document()->findBlockByNumber(line - 1);
+        if (block.isValid()) {
+            QString text = block.text().trimmed();
+            if (text.isEmpty() || text.startsWith("//")) continue;
+        }
+        breakpoints_.insert(line);
+    }
     // 清理不再有效的断点条件
     for (auto it = breakpointConditions_.begin(); it != breakpointConditions_.end(); ) {
         if (!breakpoints_.contains(it.key())) {

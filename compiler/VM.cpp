@@ -184,15 +184,37 @@ VMResult VM::numericOp(int opType) {
     // 数值运算
     switch (opType) {
     case OP_ADD_INT:
-        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal() + rightRef.intVal());
+        if (leftRef.isInt() && rightRef.isInt()) {
+            int64_t a = leftRef.intVal(), b = rightRef.intVal();
+            if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b))
+                return runtimeError("整数加法溢出");
+            stack_[stack_.size() - 2] = Value(a + b);
+        }
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() + rightRef.toDouble());
         break;
     case OP_SUB_INT:
-        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal() - rightRef.intVal());
+        if (leftRef.isInt() && rightRef.isInt()) {
+            int64_t a = leftRef.intVal(), b = rightRef.intVal();
+            if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b))
+                return runtimeError("整数减法溢出");
+            stack_[stack_.size() - 2] = Value(a - b);
+        }
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() - rightRef.toDouble());
         break;
     case OP_MUL_INT:
-        if (leftRef.isInt() && rightRef.isInt()) stack_[stack_.size() - 2] = Value(leftRef.intVal() * rightRef.intVal());
+        if (leftRef.isInt() && rightRef.isInt()) {
+            int64_t a = leftRef.intVal(), b = rightRef.intVal();
+            if (a != 0 && b != 0) {
+                if (a == -1 && b == INT64_MIN) return runtimeError("整数乘法溢出");
+                if (b == -1 && a == INT64_MIN) return runtimeError("整数乘法溢出");
+                if ((a > 0 && b > 0 && a > INT64_MAX / b) ||
+                    (a > 0 && b < 0 && b < INT64_MIN / a) ||
+                    (a < 0 && b > 0 && a < INT64_MIN / b) ||
+                    (a < 0 && b < 0 && a < INT64_MAX / b))
+                    return runtimeError("整数乘法溢出");
+            }
+            stack_[stack_.size() - 2] = Value(a * b);
+        }
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() * rightRef.toDouble());
         break;
     case OP_DIV_INT:
@@ -478,6 +500,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_NOT: {
+        if (stack_.empty()) return runtimeError("栈下溢：NOT 运算需要一个操作数");
         Value val = pop();
         push(Value(!val.isTruthy()));
         notifyStep(ip, op);
@@ -1608,6 +1631,8 @@ VMResult VM::executeOneInstruction() {
         // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
         if (!stack_.empty() && stack_.back().isInstance()) {
             stack_.back().fields()[fieldName] = val;
+        } else {
+            return runtimeError("OP_INIT_FIELD: 栈顶不是实例");
         }
         // M3 fix: 记录字段声明顺序（OP_INIT_FIELD 按 AST 声明顺序执行）
         pendingFieldOrder_.push_back(fieldName);
@@ -1639,6 +1664,8 @@ VMResult VM::executeOneInstruction() {
                     ownFieldDefaults[fieldName] = it->second;
                 }
             }
+        } else {
+            return runtimeError("OP_DEFINE_CLASS: 模板值不是实例");
         }
 
         // 注册类信息（先注册以支持循环引用安全查找）
@@ -1706,15 +1733,16 @@ VMResult VM::executeOneInstruction() {
         auto it = globals_.find(varName);
         if (it == globals_.end()) {
             lastMutatedReceiver_ = Value::nullValue();
-            notifyStep(ip, op);
-            ip += 5;
-            break;
+            return runtimeError("未定义的变量: " + varName);
         }
         Value& obj = it->second;
         if (obj.isInstance()) {
             obj.fields()[fieldName] = lastMutatedReceiver_;
         } else if (obj.isDict()) {
             obj.dictVal()[fieldName] = lastMutatedReceiver_;
+        } else {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("类型 " + obj.typeName() + " 不支持成员赋值");
         }
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
@@ -1731,9 +1759,7 @@ VMResult VM::executeOneInstruction() {
         size_t bp = currentFrame().basePointer;
         if (bp + slot >= stack_.size()) {
             lastMutatedReceiver_ = Value::nullValue();
-            notifyStep(ip, op);
-            ip += 4;
-            break;
+            return runtimeError("OP_WRITEBACK_MEMBER_LOCAL: 栈槽越界");
         }
         Value& obj = stack_[bp + slot];
         if (obj.isInstance()) {
@@ -1755,6 +1781,9 @@ VMResult VM::executeOneInstruction() {
             }
         } else if (obj.isDict()) {
             obj.dictVal()[fieldName] = lastMutatedReceiver_;
+        } else {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("类型 " + obj.typeName() + " 不支持成员赋值");
         }
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
@@ -1766,20 +1795,30 @@ VMResult VM::executeOneInstruction() {
         // 操作数: varIdx(2B)，索引从栈顶 pop
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         Value index = pop();
-        if (varIdx < chunk.constants.size()) {
-            const std::string& varName = chunk.constants[varIdx].stringVal();
-            auto it = globals_.find(varName);
-            if (it != globals_.end()) {
-                Value& obj = it->second;
-                if (obj.isArray() && index.isInt()) {
-                    int64_t i = index.intVal();
-                    if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
-                        obj.arrayVal()[static_cast<size_t>(i)] = lastMutatedReceiver_;
-                    }
-                } else if (obj.isDict() && index.isString()) {
-                    obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;
-                }
+        if (varIdx >= chunk.constants.size()) {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("常量池索引越界");
+        }
+        const std::string& varName = chunk.constants[varIdx].stringVal();
+        auto it = globals_.find(varName);
+        if (it == globals_.end()) {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("未定义的变量: " + varName);
+        }
+        Value& obj = it->second;
+        if (obj.isArray() && index.isInt()) {
+            int64_t i = index.intVal();
+            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                obj.arrayVal()[static_cast<size_t>(i)] = lastMutatedReceiver_;
+            } else {
+                lastMutatedReceiver_ = Value::nullValue();
+                return runtimeError("数组索引越界: " + std::to_string(i));
             }
+        } else if (obj.isDict() && index.isString()) {
+            obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;
+        } else {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("该类型不支持索引赋值");
         }
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
@@ -1792,20 +1831,24 @@ VMResult VM::executeOneInstruction() {
         uint8_t slot = chunk.code[ip + 1];
         Value index = pop();
         size_t bp = currentFrame().basePointer;
-        if (bp + slot < stack_.size()) {
-            Value& obj = stack_[bp + slot];
-            if (obj.isArray() && index.isInt()) {
-                int64_t i = index.intVal();
-                if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
-                    obj.arrayVal()[static_cast<size_t>(i)] = lastMutatedReceiver_;
-                }
-            } else if (obj.isDict() && index.isString()) {
-                obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;
+        if (bp + slot >= stack_.size()) {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("OP_WRITEBACK_INDEX_LOCAL: 栈槽越界");
+        }
+        Value& obj = stack_[bp + slot];
+        if (obj.isArray() && index.isInt()) {
+            int64_t i = index.intVal();
+            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                obj.arrayVal()[static_cast<size_t>(i)] = lastMutatedReceiver_;
+            } else {
+                lastMutatedReceiver_ = Value::nullValue();
+                return runtimeError("数组索引越界: " + std::to_string(i));
             }
-            // 如果 slot==0（this），也同步更新对应字段槽
-            if (slot == 0 && obj.isInstance()) {
-                // 索引写回 this 不太常见，但为一致性处理
-            }
+        } else if (obj.isDict() && index.isString()) {
+            obj.dictVal()[index.stringVal()] = lastMutatedReceiver_;
+        } else {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("该类型不支持索引赋值");
         }
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
