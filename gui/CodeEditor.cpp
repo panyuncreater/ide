@@ -78,6 +78,15 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
     QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->position().y())));
     int lineNumber = cursor.blockNumber() + 1;
 
+    // DB-2 fix: 不允许在空行/纯注释行设置断点
+    QTextBlock block = codeEditor->document()->findBlockByNumber(lineNumber - 1);
+    if (block.isValid()) {
+        QString text = block.text().trimmed();
+        if (text.isEmpty() || text.startsWith("//")) {
+            return;  // 跳过不可执行行
+        }
+    }
+
     if (codeEditor->breakpoints_.contains(lineNumber)) {
         codeEditor->breakpoints_.remove(lineNumber);
         codeEditor->breakpointConditions_.remove(lineNumber);
@@ -182,6 +191,31 @@ void CodeEditor::setErrorLines(const QSet<int>& lines) {
             QTextEdit::ExtraSelection sel;
             sel.cursor = QTextCursor(block);
             sel.cursor.select(QTextCursor::LineUnderCursor);
+            sel.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
+            sel.format.setUnderlineColor(Qt::red);
+            cachedErrorSelections_.append(sel);
+        }
+    }
+    highlightCurrentLine();
+}
+
+void CodeEditor::setErrorRanges(const std::vector<ErrorRange>& ranges) {
+    errorLines_.clear();
+    cachedErrorSelections_.clear();
+    for (const auto& r : ranges) {
+        errorLines_.insert(r.line);
+        QTextBlock block = document()->findBlockByNumber(r.line - 1);
+        if (block.isValid()) {
+            QTextEdit::ExtraSelection sel;
+            int startPos = block.position();
+            // EU-1 fix: 从列位置开始，精确标记错误 token
+            int col = (r.column > 0) ? r.column - 1 : 0;
+            int len = (r.length > 0) ? r.length : block.length() - col - 1;
+            if (len <= 0) len = block.length() - col - 1;
+            if (len <= 0) len = 1;
+            sel.cursor = QTextCursor(document());
+            sel.cursor.setPosition(startPos + col);
+            sel.cursor.setPosition(startPos + col + len, QTextCursor::KeepAnchor);
             sel.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
             sel.format.setUnderlineColor(Qt::red);
             cachedErrorSelections_.append(sel);

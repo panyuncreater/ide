@@ -45,8 +45,8 @@ void DebugController::checkBreak(ASTNode* node) {
             auto infoIt = breakpointInfos_.find(node->line);
             if (infoIt != breakpointInfos_.end() && infoIt->isConditional()) {
                 // 条件断点：只求值条件为真时才暂停
-                infoIt->hitCount++;
                 if (conditionEvaluator_ && conditionEvaluator_(infoIt->condition)) {
+                    infoIt->hitCount++;  // DB-3 fix: 仅条件满足时递增
                     shouldPause = true;
                 }
             } else {
@@ -216,14 +216,15 @@ void DebugController::stepOver() {
 
 void DebugController::stepOut() {
     if (!running_) {
-        mode_ = StepMode::MODE_STEP_OUT;
+        // depth 0 时无外层作用域可跳出，降级为 Resume
+        mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
         stepOutDepth_ = currentDepth_;
         running_ = true;
         paused_ = false;
         return;
     }
     if (!inPauseLoop_) return;
-    mode_ = StepMode::MODE_STEP_OUT;
+    mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
     stepOutDepth_ = currentDepth_;
     running_ = true;
     paused_ = false;

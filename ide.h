@@ -28,6 +28,32 @@
 #include "gui/VmStackPanel.h"
 
 // ============================================================
+// InterpreterWorker — 解释器线程工作对象（OP-1 fix）
+// ============================================================
+
+class InterpreterWorker : public QObject {
+    Q_OBJECT
+public:
+    InterpreterWorker(Interpreter& interp, Block& ast, DebugController* dbg)
+        : interp_(interp), ast_(ast), debugger_(dbg) {}
+
+public slots:
+    void run();
+
+signals:
+    void outputReady(const QString& text);
+    void finishedOk();
+    void stoppedByUser();
+    void runtimeError(const QString& msg, int line, int column);
+    void genericError(const QString& msg);
+
+private:
+    Interpreter& interp_;
+    Block& ast_;
+    DebugController* debugger_;
+};
+
+// ============================================================
 // Ide 主窗口
 // ============================================================
 
@@ -59,6 +85,9 @@ private slots:
 
     /// 停止运行
     void onStop();
+
+    /// 运行线程结束后的清理回调
+    void onRunFinished();
 
     /// 清空输出
     void onClearOutput();
@@ -129,6 +158,8 @@ private:
     std::vector<Token> lastTokens_;         // 上次词法分析的 Token 列表
     CompileResult lastCompileResult_;     // 上次编译的结果
     bool isRunning_ = false;               // 是否正在运行
+    QThread* workerThread_ = nullptr;      // OP-1: 解释器运行线程
+    InterpreterWorker* worker_ = nullptr;  // OP-1: 解释器工作对象
     bool isVmRunning_ = false;             // VM 是否正在运行
     bool isVmInitialized_ = false;         // VM 执行环境是否已初始化（单步模式）
     DiagnosticBag diagnostics_;             // 统一诊断收集器

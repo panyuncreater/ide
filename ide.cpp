@@ -11,6 +11,31 @@
 #include <sstream>
 
 // ============================================================
+// InterpreterWorker 实现（OP-1 fix）
+// ============================================================
+
+void InterpreterWorker::run() {
+    interp_.setOutputCallback([this](const std::string& text) {
+        emit outputReady(QString::fromStdString(text));
+    });
+
+    try {
+        interp_.execute(ast_);
+        emit finishedOk();
+    } catch (const RuntimeError& e) {
+        emit runtimeError(QString::fromStdString(e.what()), e.line, e.column);
+    } catch (const DebugStopException&) {
+        emit stoppedByUser();
+    } catch (const std::runtime_error& e) {
+        emit genericError(QString::fromStdString(e.what()));
+    } catch (const std::exception& e) {
+        emit genericError(QString("未预期的错误: %1").arg(e.what()));
+    } catch (...) {
+        emit genericError("未预期的异常");
+    }
+}
+
+// ============================================================
 // Ide 主窗口实现
 // ============================================================
 
@@ -20,7 +45,7 @@ Ide::Ide(QWidget* parent)
     debugger_ = new DebugController(this);
     interpreter_.setDebugger(debugger_);
     interpreter_.setOutputCallback([this](const std::string& text) {
-        // 解释器在主线程运行，直接调用即可
+        // REPL 和调试模式在主线程运行，直接调用；onRun() 会替换为线程安全的回调
         outputPanel_->appendOutput(QString::fromStdString(text));
     });
 
@@ -57,14 +82,27 @@ Ide::Ide(QWidget* parent)
 }
 
 Ide::~Ide() {
+    delete worker_;
+    // workerThread_ 是 this 的子对象，由 Qt 自动管理
 }
 
 void Ide::closeEvent(QCloseEvent* event) {
     if (isRunning_) {
-        // 先停止调试器，让嵌套事件循环退出，解释器抛出 DebugStopException 正常退出
+        // 先停止调试器，让解释器通过 DebugStopException 正常退出
         debugger_->stop();
-        // 短暂等待解释器退出（stop() 会触发 pauseLoop_->quit()）
-        // 如果 onDebug/onRun 正在 QEventLoop 中处理事件，stop 信号会在事件循环中被处理
+        // OP-1 fix: 等待工作线程退出
+        if (workerThread_) {
+            workerThread_->quit();
+            if (!workerThread_->wait(3000)) {
+                // 超时未退出，强制终止（关闭时的最后手段）
+                workerThread_->terminate();
+                workerThread_->wait();
+            }
+            delete worker_;
+            worker_ = nullptr;
+            delete workerThread_;
+            workerThread_ = nullptr;
+        }
     }
     if (isVmRunning_) {
         onVmStop();
@@ -303,36 +341,49 @@ void Ide::onRun() {
 
     if (!astRoot_) return;
 
-    // 执行
+    // OP-1 fix: 在独立线程中执行解释器，避免 UI 冻结
     isRunning_ = true;
     setRunningState(true);
-    debugger_->reset();
+    codeEditor_->setReadOnly(true);
 
-    // 非调试模式：完全跳过 checkBreak
-    interpreter_.setDebugMode(false);
+    // 清理上次运行的 worker（若有）
+    delete worker_;
+    worker_ = new InterpreterWorker(interpreter_, *astRoot_, debugger_);
+    workerThread_ = new QThread(this);
+    worker_->moveToThread(workerThread_);
 
-    try {
-        interpreter_.execute(*astRoot_);
+    // 输出信号 → 主线程 UI（跨线程自动排队）
+    connect(worker_, &InterpreterWorker::outputReady, outputPanel_, &OutputPanel::appendOutput);
+
+    // 各类结果信号 → UI 更新
+    connect(worker_, &InterpreterWorker::finishedOk, this, [this]() {
         outputPanel_->appendOutput("--- 程序执行结束 ---");
-    } catch (const RuntimeError& e) {
-        Diagnostic diag(DiagLevel::Error, e.what(), e.line, e.column, DiagSource::Interpreter);
+    });
+    connect(worker_, &InterpreterWorker::stoppedByUser, this, [this]() {
+        outputPanel_->appendOutput("--- 调试终止 ---");
+    });
+    connect(worker_, &InterpreterWorker::runtimeError, this, [this](const QString& msg, int line, int column) {
+        Diagnostic diag(DiagLevel::Error, msg.toStdString(), line, column, DiagSource::Interpreter);
         outputPanel_->appendError(QString::fromStdString(diag.format()));
         QSet<int> errorLines;
-        errorLines.insert(e.line);
+        errorLines.insert(line);
         codeEditor_->setErrorLines(errorLines);
-    } catch (const DebugStopException&) {
-        outputPanel_->appendOutput("--- 调试终止 ---");
-    } catch (const std::runtime_error& e) {
-        outputPanel_->appendError(QString("错误: %1").arg(e.what()));
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("未预期的错误: %1").arg(e.what()));
-    } catch (...) {
-        outputPanel_->appendError("未预期的异常");
-    }
+    });
+    connect(worker_, &InterpreterWorker::genericError, this, [this](const QString& msg) {
+        outputPanel_->appendError(msg);
+    });
 
-    isRunning_ = false;
-    setRunningState(false);
-    interpreter_.setDebugMode(false);
+    // worker 完成 → 清理运行状态
+    connect(workerThread_, &QThread::finished, this, &Ide::onRunFinished);
+
+    // 任一终止信号 → 退出线程事件循环（确保 QThread::finished 能被触发）
+    connect(worker_, &InterpreterWorker::finishedOk, workerThread_, &QThread::quit);
+    connect(worker_, &InterpreterWorker::stoppedByUser, workerThread_, &QThread::quit);
+    connect(worker_, &InterpreterWorker::runtimeError, workerThread_, &QThread::quit);
+    connect(worker_, &InterpreterWorker::genericError, workerThread_, &QThread::quit);
+
+    workerThread_->start();
+    QMetaObject::invokeMethod(worker_, "run", Qt::QueuedConnection);
 }
 
 void Ide::onDebug() {
@@ -375,14 +426,12 @@ void Ide::onDebug() {
         }
     }
 
-    // 设置条件断点求值器：用 Lexer+Parser 解析条件字符串，在当前环境中求值
+    // 设置条件断点求值器：复用成员 lexer_/parser_（DB-4 fix）
     debugger_->setConditionEvaluator([this](const std::string& condition) -> bool {
         try {
-            Lexer condLexer;
-            auto tokens = condLexer.scan(condition);
-            Parser condParser;
-            auto block = condParser.parse(tokens);
-            if (condParser.getErrors().empty() && block && !block->statements.empty()) {
+            auto tokens = lexer_.scan(condition);
+            auto block = parser_.parse(tokens);
+            if (parser_.getErrors().empty() && block && !block->statements.empty()) {
                 // 在当前环境中求值表达式（不触发 checkBreak）
                 Value result = interpreter_.evaluateExpr(block->statements[0].get());
                 return result.isTruthy();
@@ -473,32 +522,46 @@ void Ide::onDebug() {
 void Ide::onStepIn() {
     debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->stepIn();
-    updateDebugInfo();
+    // updateDebugInfo() 由下一次 onPausedAt() 触发，避免在嵌套事件循环中重复更新
 }
 
 void Ide::onStepOver() {
     debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->stepOver();
-    updateDebugInfo();
 }
 
 void Ide::onStepOut() {
     debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->stepOut();
-    updateDebugInfo();
 }
 
 void Ide::onResume() {
     // 同步编辑器断点到调试控制器（用户可能在暂停期间修改了断点）
     debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->resume();
-    updateDebugInfo();
 }
 
 void Ide::onStop() {
     debugger_->stop();
     // 不在这里设置 isRunning_ 和按钮状态
-    // onDebug() 中 interpreter_.execute() 返回后会统一清理
+    // onRunFinished() 或 onDebug() 中 interpreter_.execute() 返回后会统一清理
+}
+
+void Ide::onRunFinished() {
+    isRunning_ = false;
+    setRunningState(false);
+    codeEditor_->clearCurrentLine();
+
+    // 安全删除 worker（QThread::finished 在所有 worker 信号之后到达）
+    delete worker_;
+    worker_ = nullptr;
+
+    if (workerThread_) {
+        workerThread_->quit();
+        workerThread_->wait();
+        delete workerThread_;
+        workerThread_ = nullptr;
+    }
 }
 
 void Ide::onClearOutput() {
@@ -850,14 +913,18 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
         }
     }
 
-    // 标记编辑器错误行
-    auto errorLines = bag.errorLines();
-    if (!errorLines.empty()) {
-        QSet<int> lineSet;
-        for (int ln : errorLines) {
-            lineSet.insert(ln);
+    // 标记编辑器错误行（EU-1 fix: 使用精确列范围）
+    if (!bag.empty()) {
+        std::vector<CodeEditor::ErrorRange> ranges;
+        for (const auto& diag : bag.all()) {
+            if (diag.isError() && diag.line > 0) {
+                // 使用 0 表示"从列到行尾"，setErrorRanges 会处理
+                ranges.push_back({diag.line, diag.column, 0});
+            }
         }
-        codeEditor_->setErrorLines(lineSet);
+        if (!ranges.empty()) {
+            codeEditor_->setErrorRanges(ranges);
+        }
     }
 
     // 显示摘要（当有多条诊断时）

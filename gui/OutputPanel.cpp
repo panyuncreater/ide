@@ -36,6 +36,7 @@ OutputPanel::OutputPanel(QWidget* parent)
     outputEdit_ = new QTextEdit;
     outputEdit_->setReadOnly(true);
     outputEdit_->setFont(QFont("Consolas", 10));
+    outputEdit_->document()->setMaximumBlockCount(10000);  // OP-2 fix: 限制输出行数
     outputEdit_->setStyleSheet("QTextEdit { background-color: #FFFFFF; border: 1px solid #DDD; }");
     outputLayout->addWidget(outputEdit_);
 
@@ -62,6 +63,7 @@ OutputPanel::OutputPanel(QWidget* parent)
     errorEdit_ = new QTextEdit;
     errorEdit_->setReadOnly(true);
     errorEdit_->setFont(QFont("Consolas", 10));
+    errorEdit_->document()->setMaximumBlockCount(5000);  // OP-2 fix: 限制错误行数
     errorEdit_->setStyleSheet("QTextEdit { background-color: #FFF5F5; border: 1px solid #FCC; }");
     errorLayout->addWidget(errorEdit_);
 

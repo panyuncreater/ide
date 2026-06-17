@@ -40,6 +40,10 @@ public:
     /// 设置错误行集合
     void setErrorLines(const QSet<int>& lines);
 
+    /// 设置精确错误范围（行+列+长度）
+    struct ErrorRange { int line; int column; int length; };
+    void setErrorRanges(const std::vector<ErrorRange>& ranges);
+
     /// 清除错误行
     void clearErrorLines();
 

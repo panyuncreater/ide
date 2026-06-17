@@ -36,6 +36,7 @@ private:
     QTextCharFormat boolFormat_;        // 布尔值：蓝色
 
     static QRegularExpression commentRegex_;  // 注释正则（全局共享，避免每次 highlightBlock 重建）
+    static QRegularExpression stringRegex_;   // 字符串正则（多行字符串状态传递用）
 
     /// 初始化高亮规则
     void initRules();

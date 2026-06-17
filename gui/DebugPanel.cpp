@@ -75,6 +75,9 @@ void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
 
 void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
     currentStack_ = stack;  // 保存完整数据（含局部变量）
+
+    // 阻塞信号防止 clear/addItem 触发 currentRowChanged 级联更新变量树
+    callStackList_->blockSignals(true);
     callStackList_->clear();
 
     for (const auto& frame : stack) {
@@ -84,6 +87,7 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
                            .arg(frame.depth);
         callStackList_->addItem(text);
     }
+    callStackList_->blockSignals(false);
 }
 
 void DebugPanel::onStackFrameSelected(int index) {
