@@ -177,6 +177,8 @@ void ReplPanel::executeLine(const QString& line) {
     // 执行
     try {
         Value result = interpreter_->executeRepl(*ast);
+        // 保留 AST 所有权，确保 classRegistry_ 中的方法指针持续有效
+        interpreter_->retainReplAst(std::move(ast));
         // 显示结果
         if (!result.isNull()) {
             appendOutput(QString::fromStdString(result.toString()));

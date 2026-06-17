@@ -92,6 +92,13 @@ public:
     /// REPL 模式执行（不重置环境，保留变量/函数/类定义）
     Value executeRepl(Block& program);
 
+    /// REPL 模式下保留 AST 所有权（确保 classRegistry_/funRegistry_ 中的裸指针持续有效）
+    void retainReplAst(std::unique_ptr<Block> ast);
+
+    /// 保存 REPL 状态（Run 前调用），Run 结束后调用 restoreReplState() 恢复
+    void saveReplState();
+    void restoreReplState();
+
     /// 设置输出回调
     void setOutputCallback(std::function<void(const std::string&)> callback);
 
@@ -152,6 +159,13 @@ private:
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
     std::unordered_map<std::string, std::string> typeAnnotations_; // 变量类型注解
     std::string currentFunctionReturnType_;         // 当前函数的返回类型
+    std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
+
+    // REPL 状态暂存（saveReplState/restoreReplState）
+    std::shared_ptr<Environment> savedGlobalEnv_;
+    std::unordered_map<std::string, ClassInfo> savedClassRegistry_;
+    std::unordered_map<std::string, std::string> savedTypeAnnotations_;
+    std::vector<std::unique_ptr<Block>> savedReplAsts_;
 
     /// 执行单个节点
     Value evaluate(ASTNode* node);

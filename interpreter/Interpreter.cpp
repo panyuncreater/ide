@@ -34,6 +34,7 @@ Value Interpreter::execute(Block& program) {
     typeAnnotations_.clear();
     currentFunctionReturnType_.clear();
     recursionDepth_ = 0;
+    replAsts_.clear();  // 释放 REPL 保留的 AST
 
     // 顶层块不创建新作用域，直接在全局环境中执行语句
     Value result = Value::nullValue();
@@ -45,9 +46,9 @@ Value Interpreter::execute(Block& program) {
 
 Value Interpreter::executeRepl(Block& program) {
     // 不重置环境，保留已有变量/函数/类定义
-    // 但清除注册表中的 AST 裸指针（旧 AST 可能已被销毁）
+    // 清除 funRegistry_ 中的 AST 裸指针（旧 AST 可能已被销毁，闭包自带 body 指针不受影响）
     funRegistry_.clear();
-    classRegistry_.clear();
+    // classRegistry_ 不清除 — 类定义需要跨 REPL 行保留（AST 由 replAsts_ 保持存活）
     // 确保当前环境回到全局
     currentEnv_ = globalEnv_;
     recursionDepth_ = 0;
@@ -57,6 +58,26 @@ Value Interpreter::executeRepl(Block& program) {
         result = evaluate(stmt.get());
     }
     return result;
+}
+
+void Interpreter::retainReplAst(std::unique_ptr<Block> ast) {
+    replAsts_.push_back(std::move(ast));
+}
+
+void Interpreter::saveReplState() {
+    savedGlobalEnv_ = globalEnv_;
+    savedClassRegistry_ = std::move(classRegistry_);
+    savedTypeAnnotations_ = std::move(typeAnnotations_);
+    savedReplAsts_ = std::move(replAsts_);
+}
+
+void Interpreter::restoreReplState() {
+    globalEnv_ = savedGlobalEnv_;
+    currentEnv_ = globalEnv_;
+    classRegistry_ = std::move(savedClassRegistry_);
+    typeAnnotations_ = std::move(savedTypeAnnotations_);
+    replAsts_ = std::move(savedReplAsts_);
+    savedGlobalEnv_.reset();
 }
 
 void Interpreter::setOutputCallback(std::function<void(const std::string&)> callback) {

@@ -369,6 +369,7 @@ VMResult VM::execute(const CompileResult& result) {
         if (r != VMResult::VM_OK || hasError_) return r;
     }
 
+    if (hasError_) return VMResult::VM_RUNTIME_ERROR;
     return VMResult::VM_OK;
 }
 

@@ -346,6 +346,9 @@ void Ide::onRun() {
     setRunningState(true);
     codeEditor_->setReadOnly(true);
 
+    // R2 fix: 保存 REPL 状态（Run 的 execute() 会重置全局环境/类注册表）
+    interpreter_.saveReplState();
+
     // 清理上次运行的 worker（若有）
     delete worker_;
     worker_ = new InterpreterWorker(interpreter_, *astRoot_, debugger_);
@@ -562,6 +565,14 @@ void Ide::onRunFinished() {
         delete workerThread_;
         workerThread_ = nullptr;
     }
+
+    // R3 fix: 恢复主线程输出回调（worker 的回调 lambda 捕获了已删除的 worker this 指针）
+    interpreter_.setOutputCallback([this](const std::string& text) {
+        outputPanel_->appendOutput(QString::fromStdString(text));
+    });
+
+    // R2 fix: 恢复 REPL 状态（变量/类定义/函数定义）
+    interpreter_.restoreReplState();
 }
 
 void Ide::onClearOutput() {

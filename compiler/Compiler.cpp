@@ -25,7 +25,8 @@ CompileResult Compiler::compile(Block& program) {
     // 编译所有顶层语句
     compileBlock(program);
 
-    // 末尾添加 RETURN
+    // 末尾添加 null + RETURN（main chunk 必须有返回值，否则 OP_RETURN 弹栈下溢）
+    chunk_.writeOp(OpCode::OP_NULL, 0);
     chunk_.writeOp(OpCode::OP_RETURN, 0);
 
     CompileResult result;
