@@ -795,9 +795,11 @@ std::unique_ptr<ASTNode> Parser::call() {
                 expr = std::make_unique<FunCall>(funcName, std::move(args), ln, col);
                 continue;
             }
-            // 不是 VarRef 的左括号——回溯
-            current_--;
-            break;
+            // 非 VarRef 后跟 '(' —— 不支持链式调用或表达式调用，给出明确错误
+            throw ParseError(
+                "只有命名函数可以直接调用，不支持链式调用 f(x)(y) "
+                "或将函数调用结果作为表达式再调用",
+                paren.line, paren.column);
         }
 
         // 索引访问: expr[index]

@@ -83,6 +83,13 @@ char Lexer::advance() {
     if (c == '\n') {
         line_++;
         lineStart_ = current_;
+    } else if (c == '\r') {
+        // \r\n 视为单个换行；裸 \r（旧 Mac 格式）也触发换行
+        if (current_ < static_cast<int>(source_.size()) && source_[current_] == '\n') {
+            current_++;
+        }
+        line_++;
+        lineStart_ = current_;
     }
     return c;
 }
@@ -120,7 +127,14 @@ void Lexer::scanToken() {
     case '[': addToken(TokenType::TK_LBRACKET); break;
     case ']': addToken(TokenType::TK_RBRACKET); break;
     case ':': addToken(TokenType::TK_COLON); break;
-    case '.': addToken(TokenType::TK_DOT); break;
+    case '.':
+        // .123 → 浮点数前导点
+        if (std::isdigit(static_cast<unsigned char>(peek()))) {
+            number();
+        } else {
+            addToken(TokenType::TK_DOT);
+        }
+        break;
 
     // 运算符
     case '+': addToken(TokenType::TK_PLUS); break;
@@ -151,14 +165,17 @@ void Lexer::scanToken() {
             {'!', '=', TokenType::TK_NEQ,    TokenType::TK_NOT,    nullptr},
             {'<', '=', TokenType::TK_LEQ,    TokenType::TK_LT,     nullptr},
             {'>', '=', TokenType::TK_GEQ,    TokenType::TK_GT,     nullptr},
-            {'&', '&', TokenType::TK_AND,    TokenType::TK_ERROR,  "请使用 'and' 关键字代替 '&'"},
-            {'|', '|', TokenType::TK_OR,     TokenType::TK_ERROR,  "请使用 'or' 关键字代替 '|'"},
+            {'&', '&', TokenType::TK_ERROR,  TokenType::TK_ERROR,  "请使用 'and' 关键字代替 '&'"},
+            {'|', '|', TokenType::TK_ERROR,  TokenType::TK_ERROR,  "请使用 'or' 关键字代替 '|'"},
         };
         // 查找表项（6 项，编译期初始化）
         for (const auto& entry : twoCharOps) {
             if (entry.first == c) {
                 if (entry.second != '\0' && match(entry.second)) {
-                    addToken(entry.dualType);
+                    if (entry.dualType != TokenType::TK_ERROR)
+                        addToken(entry.dualType);
+                    else
+                        errorToken(std::string("'") + c + c + "'（" + entry.hint + "）");
                 } else if (entry.soloType != TokenType::TK_ERROR) {
                     addToken(entry.soloType);
                 } else {
@@ -218,14 +235,15 @@ void Lexer::identifier() {
 }
 
 void Lexer::number() {
+    // 前导点浮点（.123）：scanToken 已消耗 '.'，start_ 指向 '.'，跳过整数部分
+    bool isFloat = (source_[start_] == '.');
+
     while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
         advance();
     }
 
-    // 浮点数：小数部分
-    bool isFloat = false;
-    if (!isAtEnd() && peek() == '.' &&
-        std::isdigit(static_cast<unsigned char>(peekNext()))) {
+    // 浮点数：小数部分（支持 123.456、123.、.123）
+    if (!isFloat && !isAtEnd() && peek() == '.') {
         isFloat = true;
         advance(); // 消耗 '.'
         while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
@@ -288,7 +306,9 @@ void Lexer::string() {
     }
 
     advance(); // 消耗闭合的 '"'
-    addToken(TokenType::TK_STRING_LIT, Value(value));
+    // 使用字符串起始位置（startLine/startCol），避免多行字符串行号/列号错误
+    std::string text = source_.substr(start_, current_ - start_);
+    tokens_.emplace_back(TokenType::TK_STRING_LIT, std::move(text), Value(value), startLine, startCol);
 }
 
 void Lexer::addToken(TokenType type) {
