@@ -222,7 +222,7 @@ VM::BuiltinMethod VM::classifyBuiltinMethod(const std::string& name) {
         if (name == "pop") return BuiltinMethod::ARR_POP;
         if (name == "len") return BuiltinMethod::ARR_LEN; // 数组/字典/字符串共用
         if (name == "has") return BuiltinMethod::DICT_HAS;
-        if (name == "get") return BuiltinMethod::UNKNOWN; // dict.get handled elsewhere
+        if (name == "get") return BuiltinMethod::DICT_GET;
         break;
     case 4:
         if (name == "push") return BuiltinMethod::ARR_PUSH;
@@ -1168,6 +1168,17 @@ VMResult VM::executeOneInstruction() {
             if (method == BuiltinMethod::DICT_HAS || method == BuiltinMethod::ARR_CONTAINS) {
                 if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
                 result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
+                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+            }
+            if (method == BuiltinMethod::DICT_GET) {
+                if (args.empty() || args.size() > 2) return runtimeError("get 期望 1-2 个参数(键[, 默认值])");
+                std::string key = args[0].toString();
+                auto it = obj.dictVal().find(key);
+                if (it != obj.dictVal().end()) {
+                    result = it->second;
+                } else {
+                    result = (args.size() == 2) ? args[1] : Value::nullValue();
+                }
                 pop(); push(result); notifyStep(ip, op); ip += 7; break;
             }
 

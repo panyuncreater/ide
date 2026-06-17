@@ -297,6 +297,7 @@ void Lexer::string() {
             switch (esc) {
             case 'n':  value += '\n'; break;
             case 't':  value += '\t'; break;
+            case 'r':  value += '\r'; break;
             case '\\': value += '\\'; break;
             case '"':  value += '"';  break;
             default:

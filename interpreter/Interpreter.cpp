@@ -38,8 +38,12 @@ Value Interpreter::execute(Block& program) {
 
     // 顶层块不创建新作用域，直接在全局环境中执行语句
     Value result = Value::nullValue();
-    for (auto& stmt : program.statements) {
-        result = evaluate(stmt.get());
+    try {
+        for (auto& stmt : program.statements) {
+            result = evaluate(stmt.get());
+        }
+    } catch (const ReturnException&) {
+        runtimeError("return 只能在函数体内使用", 0, 0);
     }
     return result;
 }
@@ -54,8 +58,12 @@ Value Interpreter::executeRepl(Block& program) {
     recursionDepth_ = 0;
 
     Value result = Value::nullValue();
-    for (auto& stmt : program.statements) {
-        result = evaluate(stmt.get());
+    try {
+        for (auto& stmt : program.statements) {
+            result = evaluate(stmt.get());
+        }
+    } catch (const ReturnException&) {
+        runtimeError("return 只能在函数体内使用", 0, 0);
     }
     return result;
 }
@@ -1379,6 +1387,16 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             if (argValues.size() != 1)
                 runtimeError(node.methodName + " 期望 1 个参数(键)", node.line, node.column);
             return Value(obj.dictVal().find(argValues[0].toString()) != obj.dictVal().end());
+        }
+        if (node.methodName == "get") {
+            if (argValues.empty() || argValues.size() > 2)
+                runtimeError("get 期望 1-2 个参数(键[, 默认值])", node.line, node.column);
+            std::string key = argValues[0].toString();
+            auto it = obj.dictVal().find(key);
+            if (it != obj.dictVal().end()) {
+                return it->second;
+            }
+            return (argValues.size() == 2) ? argValues[1] : Value::nullValue();
         }
         if (node.methodName == "remove") {
             if (argValues.size() != 1)

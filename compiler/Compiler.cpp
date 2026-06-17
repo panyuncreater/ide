@@ -532,6 +532,11 @@ void Compiler::compileFunCall(FunCall& node) {
 }
 
 void Compiler::compileReturnStmt(ReturnStmt& node) {
+    if (!inFunction_) {
+        lastError_ = "return 只能在函数体内使用";
+        diagnostics_.addError("return 只能在函数体内使用", node.line, 0, DiagSource::Compiler);
+        return;
+    }
     if (node.value) {
         compileNode(node.value.get());
     } else {
