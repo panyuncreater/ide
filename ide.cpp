@@ -621,7 +621,7 @@ void Ide::onVmStep() {
     VMResult result = vm_.stepOnce();
 
     if (result == VMResult::VM_RUNTIME_ERROR) {
-        Diagnostic diag(DiagLevel::Error, vm_.getLastError(), 0, 0, DiagSource::VM);
+        Diagnostic diag(DiagLevel::Error, vm_.getLastError(), vm_.getLastErrorLine(), 0, DiagSource::VM);
         outputPanel_->appendError(QString::fromStdString(diag.format()));
         vmStackPanel_->clearAll();
         isVmInitialized_ = false;

@@ -969,6 +969,7 @@ void Parser::synchronize() {
         case TokenType::TK_STRING_TYPE:
         case TokenType::TK_DICT:
         case TokenType::TK_ARRAY:
+        case TokenType::TK_NULL:
             return;
         default:
             break;

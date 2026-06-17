@@ -51,12 +51,17 @@ const Value& VM::peek(size_t distance) const {
 
 VMResult VM::runtimeError(const std::string& msg) {
     lastError_ = msg;
+    lastErrorLine_ = getCurrentLine();
     hasError_ = true;
     return VMResult::VM_RUNTIME_ERROR;
 }
 
 std::string VM::getLastError() const {
     return lastError_;
+}
+
+int VM::getLastErrorLine() const {
+    return lastErrorLine_;
 }
 
 bool VM::hasError() const {
@@ -270,6 +275,7 @@ void VM::initExecution(const CompileResult& result) {
     stack_.reserve(256);  // 预分配栈空间，避免频繁 realloc
     globals_.clear();
     lastError_.clear();
+    lastErrorLine_ = 0;
     hasError_ = false;
     frames_.clear();
     frames_.reserve(64);  // 预分配调用帧空间，避免频繁 realloc
@@ -300,6 +306,7 @@ void VM::resetState() {
     stack_.clear();
     globals_.clear();
     lastError_.clear();
+    lastErrorLine_ = 0;
     hasError_ = false;
     frames_.clear();
     functionChunks_.clear();

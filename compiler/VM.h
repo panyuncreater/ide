@@ -90,6 +90,9 @@ public:
     /// 获取最后的运行时错误
     std::string getLastError() const;
 
+    /// 获取最后错误的源码行号（1-based，0=无位置信息）
+    int getLastErrorLine() const;
+
     /// 获取栈内容（用于调试，拷贝）
     std::vector<Value> getStack() const;
 
@@ -126,6 +129,7 @@ private:
     bool stepCallbackEnabled_ = false;              // 是否启用步进回调
     bool initialized_ = false;                      // 是否已初始化执行环境
     std::string lastError_;                         // 最近一次运行时错误
+    int lastErrorLine_ = 0;                          // 最近一次运行时错误的源码行号（1-based，0=无位置）
     bool hasError_ = false;                         // 运行时错误标志（用于快速检测）
     Value lastMutatedReceiver_;                     // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度

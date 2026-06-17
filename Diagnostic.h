@@ -142,10 +142,7 @@ public:
         std::vector<int> lines;
         for (const auto& d : diagnostics_) {
             if (d.isError() && d.line > 0) {
-                // 去重
-                if (lines.empty() || lines.back() != d.line) {
-                    lines.push_back(d.line);
-                }
+                lines.push_back(d.line);
             }
         }
         std::sort(lines.begin(), lines.end());
