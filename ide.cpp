@@ -82,8 +82,16 @@ Ide::Ide(QWidget* parent)
 }
 
 Ide::~Ide() {
+    // #10 fix: 确保工作线程已停止再删除，避免 delete running QThread 的 UB
+    if (workerThread_ && workerThread_->isRunning()) {
+        debugger_->stop();
+        workerThread_->quit();
+        if (!workerThread_->wait(3000)) {
+            workerThread_->terminate();
+            workerThread_->wait();
+        }
+    }
     delete worker_;
-    // workerThread_ 是 this 的子对象，由 Qt 自动管理
 }
 
 void Ide::closeEvent(QCloseEvent* event) {

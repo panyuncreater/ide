@@ -273,6 +273,22 @@ void Lexer::number() {
         }
     }
 
+    // #15: 科学计数法（如 1e5, 3.14e-2, 2E+10）
+    if (!isAtEnd() && (peek() == 'e' || peek() == 'E')) {
+        isFloat = true;
+        advance(); // 消耗 'e'/'E'
+        if (!isAtEnd() && (peek() == '+' || peek() == '-')) {
+            advance(); // 消耗符号
+        }
+        if (isAtEnd() || !std::isdigit(static_cast<unsigned char>(peek()))) {
+            errorToken("科学计数法格式错误: " + source_.substr(start_, current_ - start_));
+            return;
+        }
+        while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
+            advance();
+        }
+    }
+
     std::string text = source_.substr(start_, current_ - start_);
 
     if (isFloat) {
@@ -313,6 +329,12 @@ void Lexer::string() {
             case 'r':  value += '\r'; break;
             case '\\': value += '\\'; break;
             case '"':  value += '"';  break;
+            case '\'': value += '\''; break;
+            case '0':  value += '\0'; break;
+            case 'b':  value += '\b'; break;
+            case 'f':  value += '\f'; break;
+            case 'a':  value += '\a'; break;
+            case 'v':  value += '\v'; break;
             default:
                 value += '\\';
                 value += esc;

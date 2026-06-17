@@ -2,6 +2,7 @@
 #include "ast/ASTNode.h"
 #include "interpreter/Interpreter.h"
 #include <QApplication>
+#include <QThread>
 #include <stdexcept>
 
 // ============================================================
@@ -36,7 +37,8 @@ void DebugController::checkBreak(ASTNode* node) {
         // B11 fix: 即使在快速路径，也定期处理 UI 事件防止界面冻结
         if (++eventPumpCounter_ >= 100) {
             eventPumpCounter_ = 0;
-            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+            if (QThread::currentThread() == QCoreApplication::instance()->thread())
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
         }
         return;
     }
@@ -105,7 +107,8 @@ void DebugController::checkBreak(ASTNode* node) {
         // B11 fix: 不暂停时也定期处理 UI 事件，防止界面冻结
         if (++eventPumpCounter_ >= 100) {
             eventPumpCounter_ = 0;
-            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+            if (QThread::currentThread() == QCoreApplication::instance()->thread())
+                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
         }
     }
 }

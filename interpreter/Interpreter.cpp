@@ -315,7 +315,10 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     }
     auto* varRef = static_cast<VarRef*>(chain[n - 1]);
     const Value* baseVal = currentEnv_->get(varRef->name);
-    vals[n - 1] = baseVal ? *baseVal : Value::nullValue();
+    if (!baseVal) {
+        runtimeError("未定义的变量: " + varRef->name, line, col);
+    }
+    vals[n - 1] = *baseVal;  // #18 fix: 明确报错而非静默nullValue
 
     for (int i = n - 2; i >= 0; i--) {
         ASTNode* nd = chain[i];
@@ -444,7 +447,10 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
     }
     auto* varRef = static_cast<VarRef*>(chain[n - 1]);
     const Value* baseVal = currentEnv_->get(varRef->name);
-    vals[n - 1] = baseVal ? *baseVal : Value::nullValue();
+    if (!baseVal) {
+        runtimeError("未定义的变量: " + varRef->name, line, col);
+    }
+    vals[n - 1] = *baseVal;  // #18 fix: 明确报错而非静默nullValue
 
     for (int i = n - 2; i >= 0; i--) {
         ASTNode* nd = chain[i];
@@ -670,6 +676,14 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 }
                 auto prevEnv = currentEnv_;
                 currentEnv_ = initEnv;
+                // #8 fix: recursionDepth_ guard for auto-construction
+                recursionDepth_++;
+                if (recursionDepth_ >= 256) {
+                    recursionDepth_--;
+                    currentEnv_ = prevEnv;
+                    runtimeError("递归深度超过限制 (256)", node.line, node.column);
+                }
+                struct RecursionGuard { int& d; ~RecursionGuard() { d--; } } guard{recursionDepth_};
                 try {
                     evaluate(initMethod->body.get());
                 } catch (const ReturnException&) {
@@ -862,30 +876,36 @@ Value Interpreter::visitFunCall(FunCall& node) {
     // 检查是否是类构造调用
     auto classIt = classRegistry_.find(node.name);
     if (classIt != classRegistry_.end()) {
-        ClassInfo& cls = classIt->second;
+        ClassInfo* cls = &classIt->second;  // #2 fix: 用指针代替引用，便evaluate后重绑定
 
         // 检查参数数量（构造函数为 init 方法）
-        FunDecl* initMethod = findMethod(cls, "init");
+        FunDecl* initMethod = findMethod(*cls, "init");
+
+        // #7 fix: 先检查参数数量再求值，避免无效evaluate
+        if (initMethod && node.arguments.size() != initMethod->params.size()) {
+            runtimeError("构造函数 init 期望 " +
+                         std::to_string(initMethod->params.size()) + " 个参数，但传入了 " +
+                         std::to_string(node.arguments.size()) + " 个",
+                         node.line, node.column);
+        }
+        if (!initMethod && !node.arguments.empty()) {
+            runtimeError("类 " + cls->name + " 没有 init 方法，但传入了 " +
+                         std::to_string(node.arguments.size()) + " 个参数",
+                         node.line, node.column);
+        }
 
         // 求值参数
         std::vector<Value> argValues;
         argValues.reserve(node.arguments.size());
+        std::string className = cls->name;  // #2 fix: 缓存类名
         for (auto& arg : node.arguments) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        // 检查参数数量
-        if (initMethod && argValues.size() != initMethod->params.size()) {
-            runtimeError("构造函数 init 期望 " +
-                         std::to_string(initMethod->params.size()) + " 个参数，但传入了 " +
-                         std::to_string(argValues.size()) + " 个",
-                         node.line, node.column);
-        }
-        if (!initMethod && !argValues.empty()) {
-            runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
-                         std::to_string(argValues.size()) + " 个参数",
-                         node.line, node.column);
-        }
+        // #2 fix: evaluate后重新查找
+        classIt = classRegistry_.find(className);
+        cls = &classIt->second;  // 重绑定指针到新位置
+        initMethod = findMethod(*cls, "init");
 
         recursionDepth_++;
         if (recursionDepth_ >= 256) {
@@ -902,10 +922,10 @@ Value Interpreter::visitFunCall(FunCall& node) {
         } recursionGuard{recursionDepth_, false};
 
         // 创建实例
-        Value instance = Value::makeInstance(cls.name);
+        Value instance = Value::makeInstance(cls->name);
 
         // 复制类默认字段值（含继承链）— B8 fix: 加入循环检测
-        ClassInfo* curCls = &cls;
+        ClassInfo* curCls = cls;  // cls is already a pointer
         std::unordered_set<std::string> visitedClasses;
         while (curCls) {
             if (!visitedClasses.insert(curCls->name).second) break; // 检测到循环继承
@@ -926,7 +946,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
         // 如果有 init 方法，执行它
         if (initMethod) {
             // O5: 使用类定义时捕获的环境作为父级（闭包）
-            auto parentEnv = cls.closureEnv ? cls.closureEnv : currentEnv_;
+            auto parentEnv = cls->closureEnv ? cls->closureEnv : currentEnv_;
             auto initEnv = std::make_shared<Environment>(parentEnv);
 
             // 绑定 this
@@ -1052,48 +1072,48 @@ Value Interpreter::visitFunCall(FunCall& node) {
         argValues.push_back(evaluate(arg.get()));
     }
 
-    // 递归深度检查
-    recursionDepth_++;
-    if (recursionDepth_ >= 256) {
-        recursionDepth_--;
-        runtimeError("递归深度超过限制 (256)", node.line, node.column);
-    }
-
-    // 参数类型检查
-    for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
-        if (!funDecl->paramTypes[i].empty()) {
-            checkType(argValues[i], funDecl->paramTypes[i],
-                      [&]{ return "函数 " + node.name + " 的参数 " + funDecl->params[i]; },
-                      node.line, node.column);
-        }
-    }
-
-    // 创建新环境：使用闭包捕获的环境作为父级（如果有的话）
-    std::shared_ptr<Environment> funEnv;
-    if (closureEnv) {
-        funEnv = std::make_shared<Environment>(closureEnv);
-    } else {
-        funEnv = std::make_shared<Environment>(currentEnv_);
-    }
-
-    // 绑定参数（move 避免深拷贝）
-    for (size_t i = 0; i < funDecl->params.size(); ++i) {
-        funEnv->define(funDecl->params[i], std::move(argValues[i]));
-    }
-
-    // 压入调用帧
-    callStack_.emplace_back(node.name, funEnv, node.line, recursionDepth_);
-
-    // 设置返回类型追踪
+    // 保存调用状态（在try外，确保catch可以恢复）
     std::string savedReturnType = currentFunctionReturnType_;
     currentFunctionReturnType_ = funDecl->returnType;
-
-    // 切换环境
     auto prevEnv = currentEnv_;
-    currentEnv_ = funEnv;
 
     Value result = Value::nullValue();
     try {
+        // 递归深度检查（在try内，throw时catch负责恢复）
+        recursionDepth_++;
+        if (recursionDepth_ >= 256) {
+            recursionDepth_--;
+            runtimeError("递归深度超过限制 (256)", node.line, node.column);
+        }
+
+        // 参数类型检查
+        for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
+            if (!funDecl->paramTypes[i].empty()) {
+                checkType(argValues[i], funDecl->paramTypes[i],
+                          [&]{ return "函数 " + node.name + " 的参数 " + funDecl->params[i]; },
+                          node.line, node.column);
+            }
+        }
+
+        // 创建新环境：使用闭包捕获的环境作为父级（如果有的话）
+        std::shared_ptr<Environment> funEnv;
+        if (closureEnv) {
+            funEnv = std::make_shared<Environment>(closureEnv);
+        } else {
+            funEnv = std::make_shared<Environment>(currentEnv_);
+        }
+
+        // 绑定参数（move 避免深拷贝）
+        for (size_t i = 0; i < funDecl->params.size(); ++i) {
+            funEnv->define(funDecl->params[i], std::move(argValues[i]));
+        }
+
+        // 压入调用栈
+        callStack_.emplace_back(node.name, funEnv, node.line, recursionDepth_);
+
+        // 切换环境
+        currentEnv_ = funEnv;
+
         // 执行函数体
         result = evaluate(funDecl->body.get());
     } catch (ReturnException& e) {
@@ -1101,7 +1121,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
     } catch (...) {
         // 运行时错误：先恢复调用状态，再重抛
         currentEnv_ = prevEnv;
-        callStack_.pop_back();
+        if (!callStack_.empty()) callStack_.pop_back();
         recursionDepth_--;
         currentFunctionReturnType_ = savedReturnType;
         throw;
@@ -1271,14 +1291,14 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
             if (varDecl->initializer) {
                 defaultVal = evaluate(varDecl->initializer.get());
             }
-            registeredCls.fields[varDecl->name] = defaultVal;
+            classRegistry_[node.name].fields[varDecl->name] = defaultVal;  // #2 fix: 直接索引，避免registeredCls失效
             continue;
         }
 
         // FunDecl: 方法
         if (member->nodeType == NodeType::NODE_FUN_DECL) {
             FunDecl* funDecl = static_cast<FunDecl*>(member.get());
-            registeredCls.methods[funDecl->name] = funDecl;
+            classRegistry_[node.name].methods[funDecl->name] = funDecl;  // #2 fix
             continue;
         }
     }
@@ -1530,62 +1550,66 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 // 求值参数
                 std::vector<Value> argValues;
                 argValues.reserve(node.arguments.size());
+                // #7 fix: 先检查参数数量再求值
+                if (node.arguments.size() != method->params.size()) {
+                    runtimeError("方法 " + node.methodName + " 期望 " +
+                                 std::to_string(method->params.size()) + " 个参数，但传入了 " +
+                                 std::to_string(node.arguments.size()) + " 个",
+                                 node.line, node.column);
+                }
+
+                // #2 fix: 缓存closureEnv
+                auto cachedParentEnv = classIt->second.closureEnv;
                 for (auto& arg : node.arguments) {
                     argValues.push_back(evaluate(arg.get()));
                 }
 
-                // 检查参数数量
-                if (argValues.size() != method->params.size()) {
-                    runtimeError("方法 " + node.methodName + " 期望 " +
-                                 std::to_string(method->params.size()) + " 个参数，但传入了 " +
-                                 std::to_string(argValues.size()) + " 个",
-                                 node.line, node.column);
-                }
-
-                recursionDepth_++;
-                if (recursionDepth_ >= 256) {
-                    recursionDepth_--;
-                    runtimeError("递归深度超过限制 (256)", node.line, node.column);
-                }
-
-                // O5: 使用类定义时捕获的环境作为父级（闭包），而非调用者的环境
-                auto parentEnv = classIt->second.closureEnv ? classIt->second.closureEnv : currentEnv_;
-                auto methodEnv = std::make_shared<Environment>(parentEnv);
-
-                // 绑定 this
-                methodEnv->define("this", obj);
-
-                // 将实例字段注入方法环境，使方法内可直接用 name 访问 this.name
-                for (const auto& kv : obj.fields()) {
-                    methodEnv->define(kv.first, kv.second);
-                }
-
-                // 绑定参数（参数覆盖同名字段）
-                for (size_t i = 0; i < method->params.size(); ++i) {
-                    methodEnv->define(method->params[i], std::move(argValues[i]));
-                }
-
-                // 压入调用帧
-                callStack_.emplace_back(obj.className() + "." + node.methodName,
-                                         methodEnv, node.line, recursionDepth_);
-
-                // 设置返回类型追踪
+                // 保存调用状态（在try外）
                 std::string savedReturnType = currentFunctionReturnType_;
                 currentFunctionReturnType_ = method->returnType;
-
-                // 切换环境
                 auto prevEnv = currentEnv_;
-                currentEnv_ = methodEnv;
 
+                std::shared_ptr<Environment> methodEnv;  // 声明在try外，使catch后可访问
                 Value result = Value::nullValue();
                 try {
+                    // 递归深度检查（在try内，throw时catch负责恢复）
+                    recursionDepth_++;
+                    if (recursionDepth_ >= 256) {
+                        recursionDepth_--;
+                        runtimeError("递归深度超过限制 (256)", node.line, node.column);
+                    }
+
+                    // O5: 使用类定义时捕获的环境作为父级（闭包），而非调用者的环境
+                    auto parentEnv = cachedParentEnv ? cachedParentEnv : currentEnv_;  // #2 fix: 使用缓存值
+                    methodEnv = std::make_shared<Environment>(parentEnv);
+
+                    // 绑定 this
+                    methodEnv->define("this", obj);
+
+                    // 将实例字段注入方法环境，使方法内可直接用 name 访问 this.name
+                    for (const auto& kv : obj.fields()) {
+                        methodEnv->define(kv.first, kv.second);
+                    }
+
+                    // 绑定参数（参数覆盖同名字段）
+                    for (size_t i = 0; i < method->params.size(); ++i) {
+                        methodEnv->define(method->params[i], std::move(argValues[i]));
+                    }
+
+                    // 压入调用栈
+                    callStack_.emplace_back(obj.className() + "." + node.methodName,
+                                             methodEnv, node.line, recursionDepth_);
+
+                    // 切换环境
+                    currentEnv_ = methodEnv;
+
                     result = evaluate(method->body.get());
                 } catch (ReturnException& e) {
                     result = std::move(e.returnValue);
                 } catch (...) {
                     // 运行时错误：先恢复调用状态，再重抛
                     currentEnv_ = prevEnv;
-                    callStack_.pop_back();
+                    if (!callStack_.empty()) callStack_.pop_back();
                     recursionDepth_--;
                     currentFunctionReturnType_ = savedReturnType;
                     throw;

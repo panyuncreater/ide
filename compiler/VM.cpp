@@ -379,10 +379,17 @@ VMResult VM::execute(const CompileResult& result) {
         if (ip >= chunk.code.size()) {
             // 当前 chunk 执行完毕 → 弹帧（防御性路径，正常情况由 OP_RETURN 处理）
             size_t returnIp = frame.returnIp;  // 保存调用者返回地址
+            size_t savedBp = frame.basePointer;
+            bool wasInit = frame.isInitCall;
             frames_.pop_back();
             if (!frames_.empty()) {
                 currentFrame().ip = returnIp;   // 恢复调用者 ip，避免重复执行调用指令
-                push(Value::nullValue());
+                // init 帧返回 this 实例而非 null
+                if (wasInit && savedBp < stack_.size()) {
+                    push(stack_[savedBp]);
+                } else {
+                    push(Value::nullValue());
+                }
             }
             continue;
         }
@@ -596,6 +603,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_JUMP: {
         uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP");
         notifyStep(ip, op);
         ip = jump;
         break;
@@ -603,6 +611,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_JUMP_IF_FALSE: {
         uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP_IF_FALSE");
         // 注意：不弹出条件值——编译器在 OP_JUMP_IF_FALSE 后显式生成 OP_POP
         // 如果这里也 pop，会导致所有条件/短路表达式的栈操作双重弹出
         notifyStep(ip, op);
@@ -616,6 +625,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_LOOP: {
         uint16_t loop = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (loop >= chunk.code.size()) return runtimeError("跳转目标越界: OP_LOOP");
         notifyStep(ip, op);
         ip = loop;
         break;
@@ -740,6 +750,7 @@ VMResult VM::executeOneInstruction() {
                 VMClassInfo& cls = classIt->second;
 
                 // 收集参数
+                if (stack_.size() < static_cast<size_t>(argCount)) return runtimeError("栈下溢: OP_CALL ctor");
                 std::vector<Value> args(argCount);
                 for (int i = argCount - 1; i >= 0; --i) {
                     args[i] = pop();
@@ -862,6 +873,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_BUILD_ARRAY: {
         uint8_t count = chunk.code[ip + 1];
+        if (stack_.size() < count) return runtimeError("栈下溢: OP_BUILD_ARRAY");
         std::vector<Value> elements(count);
         // 逆序弹出直接填入预分配槽位，无需 reverse
         for (int i = count - 1; i >= 0; --i) {
@@ -875,6 +887,7 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_BUILD_DICT: {
         uint8_t pairCount = chunk.code[ip + 1];
+        if (stack_.size() < static_cast<size_t>(pairCount) * 2) return runtimeError("栈下溢: OP_BUILD_DICT");
         std::unordered_map<std::string, Value> dict;
         dict.reserve(pairCount);
         // 先入后出：倒序弹出键值对
@@ -890,6 +903,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_GET: {
+        if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_GET");
         Value idx = pop();
         Value obj = pop();
         if (obj.isArray() && idx.isInt()) {
@@ -917,6 +931,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_SET: {
+        if (stack_.size() < 3) return runtimeError("栈下溢: OP_INDEX_SET");
         // fallback 路径：用于非简单变量的嵌套访问（如 arr[i][j] = val）
         // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
         // 报错提示，并清理栈上的操作数
@@ -932,6 +947,7 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[idx].stringVal();
+        if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_SET_VAR");
         Value val = pop();
         Value index = pop();
         auto it = globals_.find(varName);
@@ -962,6 +978,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_INDEX_SET_LOCAL: {
         // 直接修改 stack_[bp+slot] 中的数组/字典元素（用于方法内 this.arr[i] = val）
         uint8_t slot = chunk.code[ip + 1];
+        if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_SET_LOCAL");
         Value val = pop();
         Value index = pop();
         size_t bp = currentFrame().basePointer;
@@ -1018,6 +1035,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET: {
+        if (stack_.size() < 2) return runtimeError("栈下溢: OP_MEMBER_SET");
         // fallback 路径：用于非简单变量的嵌套成员赋值
         // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
@@ -1386,6 +1404,7 @@ VMResult VM::executeOneInstruction() {
                 }
 
                 // 收集参数（反向填充，省去 reverse）
+                if (stack_.size() < static_cast<size_t>(argCount) + 1) return runtimeError("栈下溢: OP_METHOD_CALL");
                 std::vector<Value> args(argCount);
                 for (int i = argCount - 1; i >= 0; --i) {
                     args[i] = pop();
@@ -1530,6 +1549,7 @@ VMResult VM::executeOneInstruction() {
         const std::string& className = chunk.constants[idx].stringVal();
 
         // 收集参数（反向填充，省去 reverse）
+        if (stack_.size() < argCount) return runtimeError("栈下溢: OP_CLASS_NEW");
         std::vector<Value> args(argCount);
         for (int i = argCount - 1; i >= 0; --i) {
             args[i] = pop();

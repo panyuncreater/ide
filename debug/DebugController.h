@@ -8,6 +8,7 @@
 #include <string>
 #include <functional>
 #include <utility>
+#include <atomic>
 #include "interpreter/Value.h"
 
 // ============================================================
@@ -132,8 +133,8 @@ private:
     int stepOutDepth_ = 0;      // stepOut 时的调用深度
     int lastPausedLine_ = -1;   // 上次暂停的行号（避免同行重复暂停）
     int minBreakpointLine_ = -1; // 最小断点行号（快速跳过不可能命中的节点）
-    bool running_ = false;      // 是否正在运行
-    bool stopped_ = false;      // 是否被停止
+    std::atomic<bool> running_{false};      // #9 fix: atomic for cross-thread access
+    std::atomic<bool> stopped_{false};      // #9 fix: atomic for cross-thread access
     bool paused_ = false;       // 是否处于暂停状态（等待用户操作）
     bool inPauseLoop_ = false;  // 是否正在暂停事件循环中（防重入）
     QEventLoop* pauseLoop_ = nullptr;  // 暂停时的事件循环（替代忙等）

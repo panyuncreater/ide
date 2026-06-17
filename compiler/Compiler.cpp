@@ -333,9 +333,15 @@ void Compiler::compileIfStmt(IfStmt& node) {
     chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
     chunk_.writeShort(0, node.line);
 
+    // 保存外层作用域，then 分支内声明的变量不泄漏
+    auto savedLocals = currentLocals_;
+
     // 编译 then 分支
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
     compileStatement(node.thenBranch.get());
+
+    // then 分支变量不泄漏到 else/后续代码
+    currentLocals_ = savedLocals;
 
     // 跳过 else 分支
     size_t endJumpPatch = chunk_.code.size();
@@ -349,10 +355,13 @@ void Compiler::compileIfStmt(IfStmt& node) {
 
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
 
-    // 编译 else 分支
+    // 编译 else 分支（使用同样的 savedLocals，then 分支变量不可见）
     if (node.elseBranch) {
         compileStatement(node.elseBranch.get());
     }
+
+    // else 分支变量也不泄漏
+    currentLocals_ = savedLocals;
 
     // 修补 end 跳转
     uint16_t endTarget = safeCodeOffset();
@@ -555,9 +564,11 @@ void Compiler::compilePrintStmt(PrintStmt& node) {
 }
 
 void Compiler::compileBlock(Block& node) {
+    auto savedLocals = currentLocals_;  // 保存外层作用域
     for (auto& stmt : node.statements) {
         compileStatement(stmt.get());
     }
+    currentLocals_ = savedLocals;  // 恢复，块内变量不泄漏
 }
 
 // ---- 新增节点编译 ----
@@ -754,7 +765,8 @@ void Compiler::compileClassDecl(ClassDecl& node) {
 void Compiler::compileMemberAccess(MemberAccess& node) {
     compileNode(node.object.get());
     uint16_t nameIdx = identifierIndex(node.fieldName);
-    // O1: super.field 使用 OP_SUPER_MEMBER_GET（从父类查找字段/方法）
+    // O1: super.field — 字段已在构造时通过继承链复制到实例中，与 this.field 等价
+    // 方法调用走 OP_SUPER_CALL，此处仅处理字段读取
     bool isSuperAccess = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
     chunk_.writeOp(isSuperAccess ? OpCode::OP_SUPER_MEMBER_GET : OpCode::OP_MEMBER_GET, node.line);
     chunk_.writeShort(nameIdx, node.line);
