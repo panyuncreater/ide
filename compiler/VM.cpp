@@ -781,7 +781,11 @@ VMResult VM::executeOneInstruction() {
                     break;
                 }
 
-                // 无 init 方法：直接返回新实例
+                // 无 init 方法：检查是否有多余参数（与解释器行为保持一致）
+                if (argCount > 0) {
+                    return runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
+                                        std::to_string(argCount) + " 个参数");
+                }
                 push(instance);
                 notifyStep(ip, op);
                 ip += 4;
@@ -907,6 +911,9 @@ VMResult VM::executeOneInstruction() {
                 int64_t i = index.intVal();
                 if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
                     obj.arrayVal()[static_cast<size_t>(i)] = val;
+                } else {
+                    runtimeError("数组索引越界: " + std::to_string(i) +
+                                 " 超出范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
                 }
             } else if (obj.isDict() && index.isString()) {
                 obj.dictVal()[index.stringVal()] = val;
@@ -929,6 +936,9 @@ VMResult VM::executeOneInstruction() {
                 int64_t i = index.intVal();
                 if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
                     obj.arrayVal()[static_cast<size_t>(i)] = val;
+                } else {
+                    runtimeError("数组索引越界: " + std::to_string(i) +
+                                 " 超出范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
                 }
             } else if (obj.isDict() && index.isString()) {
                 obj.dictVal()[index.stringVal()] = val;
@@ -949,6 +959,7 @@ VMResult VM::executeOneInstruction() {
             if (it != obj.fields().end()) {
                 push(it->second);
             } else {
+                runtimeError("类 " + obj.className() + " 没有字段或方法 '" + fieldName + "'");
                 push(Value::nullValue());
             }
         } else if (obj.isDict()) {
@@ -959,6 +970,7 @@ VMResult VM::executeOneInstruction() {
                 push(Value::nullValue());
             }
         } else {
+            runtimeError("该类型不支持成员访问");
             push(Value::nullValue());
         }
         notifyStep(ip, op);
@@ -1522,9 +1534,9 @@ VMResult VM::executeOneInstruction() {
         push(instance);
 
         // 如果有 init 但 argCount==0，init 通过后续 OP_METHOD_CALL 调用
-        // 如果无 init 且有参数，弹出多余参数（不应发生，但防御性处理）
         if (initChunkPtr == nullptr && argCount > 0) {
-            // 无 init 方法但有参数：静默忽略参数（与解释器行为一致）
+            runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
+                         std::to_string(argCount) + " 个参数");
         }
 
         notifyStep(ip, op);

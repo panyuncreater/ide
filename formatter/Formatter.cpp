@@ -8,6 +8,16 @@
 
 Formatter::Formatter() {}
 
+void Formatter::setComments(const std::vector<Token>& tokens) {
+    comments_.clear();
+    for (const auto& tok : tokens) {
+        if (tok.type == TokenType::TK_LINE_COMMENT) {
+            comments_.push_back(tok);
+        }
+    }
+    commentIndex_ = 0;
+}
+
 void Formatter::setIndentSize(int size) {
     options_.indentSize = size;
 }
@@ -347,6 +357,13 @@ std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
     for (size_t i = 0; i < node.statements.size(); ++i) {
         ASTNode* stmt = node.statements[i].get();
 
+        // F1 fix: 输出当前语句之前的所有注释
+        while (commentIndex_ < comments_.size() &&
+               comments_[commentIndex_].line <= stmt->line) {
+            result += indent() + comments_[commentIndex_].lexeme + "\n";
+            commentIndex_++;
+        }
+
         // 函数/类声明之间加空行
         if (options_.blankLineBetweenFunctions && i > 0 && isSelfTerminating(stmt)) {
             ASTNode* prev = node.statements[i - 1].get();
@@ -362,6 +379,15 @@ std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
             result += indent() + formatNode(stmt) + (options_.semicolons ? ";\n" : "\n");
         }
     }
+
+    // F1 fix: 顶层块末尾输出剩余注释
+    if (isTopLevel) {
+        while (commentIndex_ < comments_.size()) {
+            result += indent() + comments_[commentIndex_].lexeme + "\n";
+            commentIndex_++;
+        }
+    }
+
     return result;
 }
 

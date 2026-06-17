@@ -2,7 +2,9 @@
 
 #include <string>
 #include <memory>
+#include <vector>
 #include "ast/ASTNode.h"
+#include "lexer/Token.h"
 
 class ASTNode;
 class Block;
@@ -85,6 +87,9 @@ public:
     /// 格式化 AST 为代码文本
     std::string format(Block& program);
 
+    /// 设置注释 token 列表（F1 fix: 保留源代码中的注释）
+    void setComments(const std::vector<Token>& tokens);
+
     /// 设置缩进大小（兼容旧接口）
     void setIndentSize(int size);
 
@@ -101,6 +106,8 @@ public:
 private:
     FormatOptions options_;
     int currentIndent_ = 0;      // 当前缩进级别
+    std::vector<Token> comments_; // F1 fix: 注释 token 列表
+    size_t commentIndex_ = 0;    // 当前注释游标
 
     /// 生成缩进字符串
     std::string indent() const;

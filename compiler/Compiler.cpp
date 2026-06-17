@@ -359,6 +359,9 @@ void Compiler::compileIfStmt(IfStmt& node) {
 }
 
 void Compiler::compileWhileStmt(WhileStmt& node) {
+    // V3 fix: 保存局部变量映射，while 循环体内声明的变量不泄漏
+    auto savedLocals = currentLocals_;
+
     size_t loopStart = chunk_.code.size();
 
     // 编译条件
@@ -385,9 +388,15 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
     chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
 
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
+
+    // V3 fix: 恢复局部变量映射
+    currentLocals_ = savedLocals;
 }
 
 void Compiler::compileForStmt(ForStmt& node) {
+    // V3 fix: 保存局部变量映射，for 循环内声明的变量不泄漏到外层作用域
+    auto savedLocals = currentLocals_;
+
     // 编译初始化
     if (node.initializer) {
         compileStatement(node.initializer.get());
@@ -443,6 +452,9 @@ void Compiler::compileForStmt(ForStmt& node) {
         chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
         chunk_.writeOp(OpCode::OP_POP, node.line);
     }
+
+    // V3 fix: 恢复局部变量映射，for 循环内声明的变量不再可见
+    currentLocals_ = savedLocals;
 }
 
 void Compiler::compileFunDecl(FunDecl& node) {

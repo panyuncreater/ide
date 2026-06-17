@@ -41,7 +41,7 @@ public:
 
 private:
     const std::vector<Token>* tokens_ = nullptr;  // Token 流（引用，避免深拷贝）
-    int current_ = 0;               // 当前位置
+    mutable int current_ = 0;               // 当前位置（mutable：peek() 需跳过注释）
     std::vector<ParseError> errors_; // 收集的解析错误
     DiagnosticBag diagnostics_;      // 诊断收集器
 
@@ -58,6 +58,9 @@ private:
 
     /// 前进一个 Token，返回前一个 Token
     const Token& advance();
+
+    /// 跳过注释 Token（F1 fix）
+    void skipComments() const;
 
     /// 检查当前 Token 是否为指定类型
     bool check(TokenType type) const;

@@ -38,7 +38,7 @@ enum class TokenType {
     TK_COLON,       // :
     TK_DOT,         // .
     // 特殊
-    TK_EOF, TK_ERROR
+    TK_EOF, TK_ERROR, TK_LINE_COMMENT
 };
 
 /// Token 结构体
@@ -110,6 +110,7 @@ struct Token {
         case TokenType::TK_DOT:         return "DOT";
         case TokenType::TK_EOF:         return "EOF";
         case TokenType::TK_ERROR:       return "ERROR";
+        case TokenType::TK_LINE_COMMENT: return "COMMENT";
         }
         return "UNKNOWN";
     }

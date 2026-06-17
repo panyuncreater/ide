@@ -615,6 +615,8 @@ void Ide::onFormat() {
     QTextCursor savedCursor = codeEditor_->textCursor();
     int scrollPos = codeEditor_->verticalScrollBar()->value();
 
+    // F1 fix: 传入注释 token，使格式化后保留注释
+    formatter_.setComments(lastTokens_);
     std::string formatted = formatter_.format(*astRoot_);
     codeEditor_->setPlainText(QString::fromStdString(formatted));
 

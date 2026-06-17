@@ -39,7 +39,16 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
 
 // ---- 辅助方法 ----
 
+/// 跳过注释 token（F1 fix: 注释由 Lexer 产生，但 Parser 不处理）
+void Parser::skipComments() const {
+    while (current_ < (int)tokens_->size() &&
+           (*tokens_)[current_].type == TokenType::TK_LINE_COMMENT) {
+        current_++;
+    }
+}
+
 const Token& Parser::peek() const {
+    skipComments();
     return (*tokens_)[current_];
 }
 
@@ -53,6 +62,7 @@ bool Parser::isAtEnd() const {
 
 const Token& Parser::advance() {
     if (!isAtEnd()) current_++;
+    skipComments();
     return previous();
 }
 

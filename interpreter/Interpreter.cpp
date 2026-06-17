@@ -413,7 +413,8 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
     std::vector<Value> idxs(n);
 
     if (chain[n - 1]->nodeType != NodeType::NODE_VAR_REF) {
-        runtimeError("赋值目标必须是变量引用", line, col);
+        // O2 fix: 临时值（如 Foo(1).setX(99)）方法正常执行但修改不写回
+        return;
     }
     auto* varRef = static_cast<VarRef*>(chain[n - 1]);
     const Value* baseVal = currentEnv_->get(varRef->name);
@@ -1261,7 +1262,9 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
             }
         }
 
-        return Value::nullValue();
+        // 字段和方法都不存在，报告错误
+        runtimeError("类 " + obj.className() + " 没有字段或方法 '" + node.fieldName + "'",
+                     node.line, node.column);
     }
 
     // 字典的成员访问（同索引访问）

@@ -143,7 +143,16 @@ void Lexer::scanToken() {
     case '/':
         // 单行注释
         if (match('/')) {
+            // 捕获注释文本（含 // 前缀）
+            size_t commentStart = start_;
             while (!isAtEnd() && peek() != '\n') advance();
+            std::string commentText = source_.substr(commentStart, current_ - commentStart);
+            Token tok;
+            tok.type = TokenType::TK_LINE_COMMENT;
+            tok.lexeme = commentText;
+            tok.line = line_;
+            tok.column = static_cast<int>(commentStart - lineStart_) + 1;
+            tokens_.push_back(tok);
         } else {
             addToken(TokenType::TK_SLASH);
         }
