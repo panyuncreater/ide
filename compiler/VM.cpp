@@ -313,6 +313,7 @@ void VM::resetState() {
     classInfo_.clear();
     mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
     lastMutatedReceiver_ = Value::nullValue();
+    pendingFieldOrder_.clear();
     initialized_ = false;
 }
 
@@ -559,7 +560,12 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
-        globals_[name] = std::move(val);
+        // M2 fix: 检查变量是否已定义，防止拼写错误静默创建新变量
+        auto it = globals_.find(name);
+        if (it == globals_.end()) {
+            return runtimeError("未定义的变量: " + name);
+        }
+        it->second = std::move(val);
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -1494,6 +1500,7 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_CLASS_NEW: {
+        pendingFieldOrder_.clear();  // M3: 开始新的类定义，清空字段顺序记录
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
@@ -1602,6 +1609,8 @@ VMResult VM::executeOneInstruction() {
         if (!stack_.empty() && stack_.back().isInstance()) {
             stack_.back().fields()[fieldName] = val;
         }
+        // M3 fix: 记录字段声明顺序（OP_INIT_FIELD 按 AST 声明顺序执行）
+        pendingFieldOrder_.push_back(fieldName);
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -1620,13 +1629,15 @@ VMResult VM::executeOneInstruction() {
         }
         Value templateInstance = pop();
 
-        // 从模板实例提取当前类字段
-        std::vector<std::string> ownFieldOrder;
+        // 从模板实例提取当前类字段（M3 fix: 使用 pendingFieldOrder_ 保持声明顺序）
+        std::vector<std::string> ownFieldOrder = std::move(pendingFieldOrder_);
         std::unordered_map<std::string, Value> ownFieldDefaults;
         if (templateInstance.isInstance()) {
-            for (const auto& field : templateInstance.fields()) {
-                ownFieldOrder.push_back(field.first);
-                ownFieldDefaults[field.first] = field.second;
+            for (const auto& fieldName : ownFieldOrder) {
+                auto it = templateInstance.fields().find(fieldName);
+                if (it != templateInstance.fields().end()) {
+                    ownFieldDefaults[fieldName] = it->second;
+                }
             }
         }
 

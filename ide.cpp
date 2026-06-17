@@ -94,9 +94,19 @@ void Ide::closeEvent(QCloseEvent* event) {
         if (workerThread_) {
             workerThread_->quit();
             if (!workerThread_->wait(3000)) {
-                // 超时未退出，强制终止（关闭时的最后手段）
-                workerThread_->terminate();
-                workerThread_->wait();
+                // M5 fix: 线程未响应，弹窗让用户选择，避免盲目 terminate()
+                auto ret = QMessageBox::warning(
+                    this, tr("程序仍在运行"),
+                    tr("程序未能在 3 秒内停止。强制终止可能导致数据丢失。\n是否强制终止？"),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                if (ret == QMessageBox::Yes) {
+                    workerThread_->terminate();
+                    workerThread_->wait();
+                } else {
+                    // 用户选择等待：忽略关闭事件，让程序继续运行
+                    event->ignore();
+                    return;
+                }
             }
             delete worker_;
             worker_ = nullptr;

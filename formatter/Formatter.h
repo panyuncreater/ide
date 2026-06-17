@@ -50,10 +50,8 @@ struct FormatOptions {
     BraceStyle braceStyle = BraceStyle::SAME_LINE;
     bool spaceAroundOperators = true;  // 二元运算符两侧加空格
     bool spaceAfterComma = true;       // 逗号后加空格
-    bool trailingComma = false;        // 多行数组/字典末尾加逗号
     bool blankLineBetweenFunctions = true;  // 函数/类声明之间加空行
     bool semicolons = true;            // 语句末尾加分号
-    int maxLineWidth = 0;              // 最大行宽（0 = 不限制）
 
     /// 预设：紧凑风格
     static FormatOptions compact() {

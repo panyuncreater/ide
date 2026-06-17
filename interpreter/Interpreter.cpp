@@ -494,15 +494,13 @@ Value Interpreter::visitBinaryOp(BinaryOp& node) {
     switch (node.opType) {
     case BinOpType::BIN_AND: {
         Value left = evaluate(node.left.get());
-        if (!left.isTruthy()) return Value(false);
-        Value right = evaluate(node.right.get());
-        return Value(right.isTruthy());
+        if (!left.isTruthy()) return left;   // M1 fix: 返回原始左值而非 Value(false)
+        return evaluate(node.right.get());   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
     }
     case BinOpType::BIN_OR: {
         Value left = evaluate(node.left.get());
-        if (left.isTruthy()) return Value(true);
-        Value right = evaluate(node.right.get());
-        return Value(right.isTruthy());
+        if (left.isTruthy()) return left;    // M1 fix: 返回原始左值而非 Value(true)
+        return evaluate(node.right.get());   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
     }
     case BinOpType::BIN_EQ: {
         Value left = evaluate(node.left.get());
@@ -795,6 +793,7 @@ Value Interpreter::visitFunDecl(FunDecl& node) {
 
     // 保留 funRegistry_ 作为后备（处理 AST 生命周期问题）
     funRegistry_[node.name] = &node;
+    funRegistryGen_++;  // M7: 函数注册/重定义时递增代数，使旧缓存失效
 
     return funVal;
 }
@@ -967,7 +966,8 @@ Value Interpreter::visitFunCall(FunCall& node) {
     std::string effectiveName = node.name;  // 实际函数名（闭包时可能不同于调用变量名）
 
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
-    if (node.isResolved && node.resolvedDecl) {
+    // M7 fix: 检查代数是否匹配，函数重定义后缓存失效
+    if (node.isResolved && node.resolvedDecl && node.resolvedGen_ == funRegistryGen_) {
         funDecl = static_cast<FunDecl*>(node.resolvedDecl);
         // 单次 get() 获取闭包环境（指针返回，nullptr=非闭包或未定义）
         const Value* calleePtr = currentEnv_->get(node.name);
@@ -1004,6 +1004,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
         // 缓存解析结果供后续调用使用
         node.resolvedDecl = funDecl;
         node.isResolved = true;
+        node.resolvedGen_ = funRegistryGen_;  // M7: 记录当前代数
     }
 
     // 检查参数数量

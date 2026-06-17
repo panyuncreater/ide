@@ -252,8 +252,9 @@ void Lexer::number() {
         advance();
     }
 
-    // 浮点数：小数部分（支持 123.456、123.、.123）
-    if (!isFloat && !isAtEnd() && peek() == '.') {
+    // 浮点数：小数部分（仅当 '.' 后紧跟数字时才视为浮点，避免 123.foo 被误分词）
+    if (!isFloat && !isAtEnd() && peek() == '.' &&
+        (current_ + 1 < source_.size()) && std::isdigit(static_cast<unsigned char>(source_[current_ + 1]))) {
         isFloat = true;
         advance(); // 消耗 '.'
         while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {

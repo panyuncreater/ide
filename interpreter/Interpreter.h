@@ -158,6 +158,7 @@ private:
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     int recursionDepth_ = 0;                        // 递归深度
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
+    int funRegistryGen_ = 0;  // M7: 注册表代数，函数重定义时递增使 FunCall 缓存失效
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
     std::string currentFunctionReturnType_;         // 当前函数的返回类型
     std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效

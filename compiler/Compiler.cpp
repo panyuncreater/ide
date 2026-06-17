@@ -144,9 +144,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         uint16_t jumpTarget = safeCodeOffset();
         chunk_.code[jumpPatch + 1] = static_cast<uint8_t>(jumpTarget & 0xFF);
         chunk_.code[jumpPatch + 2] = static_cast<uint8_t>((jumpTarget >> 8) & 0xFF);
-        // 统一为 bool 语义（对齐解释器 return Value(right.isTruthy())）
-        chunk_.writeOp(OpCode::OP_NOT, node.line);
-        chunk_.writeOp(OpCode::OP_NOT, node.line);
+        // M1 fix: 移除 NOT NOT 双重取反，保留操作数原始值（JS 语义）
         return;
     }
 
@@ -171,9 +169,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         uint16_t endTarget = safeCodeOffset();
         chunk_.code[jumpEnd + 1] = static_cast<uint8_t>(endTarget & 0xFF);
         chunk_.code[jumpEnd + 2] = static_cast<uint8_t>((endTarget >> 8) & 0xFF);
-        // 统一为 bool 语义（对齐解释器 return Value(right.isTruthy())）
-        chunk_.writeOp(OpCode::OP_NOT, node.line);
-        chunk_.writeOp(OpCode::OP_NOT, node.line);
+        // M1 fix: 移除 NOT NOT 双重取反，保留操作数原始值（JS 语义）
         return;
     }
 
