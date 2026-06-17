@@ -266,6 +266,8 @@ void Lexer::number() {
 }
 
 void Lexer::string() {
+    int startLine = line_;
+    int startCol = static_cast<int>(start_ - lineStart_) + 1;
     std::string value;
 
     while (!isAtEnd() && peek() != '"') {
@@ -274,7 +276,7 @@ void Lexer::string() {
         if (peek() == '\\') {
             advance(); // 消耗反斜杠
             if (isAtEnd()) {
-                errorToken("未终止的字符串");
+                errorToken("未终止的字符串", startLine, startCol);
                 return;
             }
             char esc = advance();
@@ -294,7 +296,7 @@ void Lexer::string() {
     }
 
     if (isAtEnd()) {
-        errorToken("未终止的字符串");
+        errorToken("未终止的字符串", startLine, startCol);
         return;
     }
 
@@ -324,9 +326,10 @@ void Lexer::addToken(TokenType type, std::string&& text, const Value& literal) {
     tokens_.emplace_back(type, std::move(text), literal, line_, col);
 }
 
-void Lexer::errorToken(const std::string& message) {
-    int col = currentColumn();
-    tokens_.emplace_back(TokenType::TK_ERROR, message, Value::nullValue(), line_, col);
+void Lexer::errorToken(const std::string& message, int errorLine, int errorCol) {
+    int col = (errorCol > 0) ? errorCol : static_cast<int>(start_ - lineStart_) + 1;
+    int ln = (errorLine > 0) ? errorLine : line_;
+    tokens_.emplace_back(TokenType::TK_ERROR, message, Value::nullValue(), ln, col);
 }
 
 int Lexer::currentColumn() const {

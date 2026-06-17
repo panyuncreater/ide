@@ -212,6 +212,14 @@ QSet<int> CodeEditor::getBreakpoints() const {
 
 void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
     breakpoints_ = breakpoints;
+    // 清理不再有效的断点条件
+    for (auto it = breakpointConditions_.begin(); it != breakpointConditions_.end(); ) {
+        if (!breakpoints_.contains(it.key())) {
+            it = breakpointConditions_.erase(it);
+        } else {
+            ++it;
+        }
+    }
     lineNumberArea_->update();
 }
 

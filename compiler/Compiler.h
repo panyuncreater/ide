@@ -77,6 +77,19 @@ private:
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);
 
+    /// 安全获取当前字节码偏移量（溢出检查）
+    uint16_t safeCodeOffset() {
+        return safeCodeOffset(chunk_.code.size());
+    }
+
+    /// 安全将 size_t 偏移量转为 uint16_t（溢出检查）
+    uint16_t safeCodeOffset(size_t offset) {
+        if (offset > 65535) {
+            throw std::runtime_error("编译错误: 字节码超出 64KB 限制");
+        }
+        return static_cast<uint16_t>(offset);
+    }
+
     /// 常量折叠：尝试在编译期求值二元运算，成功返回 true 并输出结果
     bool tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
                        Value& result, int line);

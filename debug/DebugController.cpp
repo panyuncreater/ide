@@ -15,6 +15,9 @@ DebugController::~DebugController() {
     stopped_ = true;
     paused_ = false;
     mode_ = StepMode::MODE_RUN;
+    if (pauseLoop_) {
+        pauseLoop_->quit();
+    }
 }
 
 void DebugController::checkBreak(ASTNode* node) {
@@ -75,11 +78,6 @@ void DebugController::checkBreak(ASTNode* node) {
         if (currentDepth_ < stepOutDepth_ && node->line != lastPausedLine_) {
             shouldPause = true;
         }
-        break;
-
-    case StepMode::MODE_PAUSE:
-        // 总是暂停
-        shouldPause = true;
         break;
     }
 

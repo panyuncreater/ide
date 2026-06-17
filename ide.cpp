@@ -59,6 +59,19 @@ Ide::Ide(QWidget* parent)
 Ide::~Ide() {
 }
 
+void Ide::closeEvent(QCloseEvent* event) {
+    if (isRunning_) {
+        // 先停止调试器，让嵌套事件循环退出，解释器抛出 DebugStopException 正常退出
+        debugger_->stop();
+        // 短暂等待解释器退出（stop() 会触发 pauseLoop_->quit()）
+        // 如果 onDebug/onRun 正在 QEventLoop 中处理事件，stop 信号会在事件循环中被处理
+    }
+    if (isVmRunning_) {
+        onVmStop();
+    }
+    event->accept();
+}
+
 void Ide::initUI() {
     // 中央部件
     auto* centralWidget = new QWidget(this);
@@ -265,8 +278,9 @@ void Ide::onRun() {
 
     std::string source = codeEditor_->toPlainText().toStdString();
 
-    // 清空输出
+    // 清空输出和调试面板
     outputPanel_->clearAll();
+    debugPanel_->clearAll();
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
@@ -310,6 +324,10 @@ void Ide::onRun() {
         outputPanel_->appendOutput("--- 调试终止 ---");
     } catch (const std::runtime_error& e) {
         outputPanel_->appendError(QString("错误: %1").arg(e.what()));
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("未预期的错误: %1").arg(e.what()));
+    } catch (...) {
+        outputPanel_->appendError("未预期的异常");
     }
 
     isRunning_ = false;
@@ -439,6 +457,10 @@ void Ide::onDebug() {
         outputPanel_->appendOutput("--- 调试终止 ---");
     } catch (const std::runtime_error& e) {
         outputPanel_->appendError(QString("错误: %1").arg(e.what()));
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("未预期的错误: %1").arg(e.what()));
+    } catch (...) {
+        outputPanel_->appendError("未预期的异常");
     }
 
     isRunning_ = false;
@@ -449,16 +471,19 @@ void Ide::onDebug() {
 }
 
 void Ide::onStepIn() {
+    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->stepIn();
     updateDebugInfo();
 }
 
 void Ide::onStepOver() {
+    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->stepOver();
     updateDebugInfo();
 }
 
 void Ide::onStepOut() {
+    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
     debugger_->stepOut();
     updateDebugInfo();
 }
@@ -511,6 +536,7 @@ void Ide::onFormat() {
 
     // 格式化：行号会变化，需清除断点并保存光标位置
     codeEditor_->setBreakpoints(QSet<int>());
+    debugger_->setBreakpoints(QSet<int>());
 
     QTextCursor savedCursor = codeEditor_->textCursor();
     int scrollPos = codeEditor_->verticalScrollBar()->value();
@@ -531,7 +557,8 @@ void Ide::onShowBytecode() {
     // 词法分析
     try {
         lastTokens_ = lexer_.scan(source);
-    } catch (...) {
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("字节码生成失败 - 词法错误: %1").arg(e.what()));
         return;
     }
 

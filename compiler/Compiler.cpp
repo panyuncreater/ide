@@ -134,7 +134,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出左操作数
         compileNode(node.right.get());
         // 修补跳转地址
-        uint16_t jumpTarget = static_cast<uint16_t>(chunk_.code.size());
+        uint16_t jumpTarget = safeCodeOffset();
         chunk_.code[jumpPatch + 1] = static_cast<uint8_t>(jumpTarget & 0xFF);
         chunk_.code[jumpPatch + 2] = static_cast<uint8_t>((jumpTarget >> 8) & 0xFF);
         // 统一为 bool 语义（对齐解释器 return Value(right.isTruthy())）
@@ -154,14 +154,14 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         chunk_.writeOp(OpCode::OP_JUMP, node.line);
         chunk_.writeShort(0, node.line);  // 占位
         // 修补第一个跳转：左操作数为假，求值右操作数
-        uint16_t rightStart = static_cast<uint16_t>(chunk_.code.size());
+        uint16_t rightStart = safeCodeOffset();
         chunk_.code[jumpPatch + 1] = static_cast<uint8_t>(rightStart & 0xFF);
         chunk_.code[jumpPatch + 2] = static_cast<uint8_t>((rightStart >> 8) & 0xFF);
         // 弹出左操作数，求值右操作数
         chunk_.writeOp(OpCode::OP_POP, node.line);
         compileNode(node.right.get());
         // 修补第二个跳转
-        uint16_t endTarget = static_cast<uint16_t>(chunk_.code.size());
+        uint16_t endTarget = safeCodeOffset();
         chunk_.code[jumpEnd + 1] = static_cast<uint8_t>(endTarget & 0xFF);
         chunk_.code[jumpEnd + 2] = static_cast<uint8_t>((endTarget >> 8) & 0xFF);
         // 统一为 bool 语义（对齐解释器 return Value(right.isTruthy())）
@@ -340,7 +340,7 @@ void Compiler::compileIfStmt(IfStmt& node) {
     chunk_.writeShort(0, node.line);
 
     // 修补 else 跳转
-    uint16_t elseStart = static_cast<uint16_t>(chunk_.code.size());
+    uint16_t elseStart = safeCodeOffset();
     chunk_.code[elseJumpPatch + 1] = static_cast<uint8_t>(elseStart & 0xFF);
     chunk_.code[elseJumpPatch + 2] = static_cast<uint8_t>((elseStart >> 8) & 0xFF);
 
@@ -352,7 +352,7 @@ void Compiler::compileIfStmt(IfStmt& node) {
     }
 
     // 修补 end 跳转
-    uint16_t endTarget = static_cast<uint16_t>(chunk_.code.size());
+    uint16_t endTarget = safeCodeOffset();
     chunk_.code[endJumpPatch + 1] = static_cast<uint8_t>(endTarget & 0xFF);
     chunk_.code[endJumpPatch + 2] = static_cast<uint8_t>((endTarget >> 8) & 0xFF);
 }
@@ -374,12 +374,12 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
     compileStatement(node.body.get());
 
     // 回跳到条件检查
-    uint16_t loopOffset = static_cast<uint16_t>(loopStart);
+    uint16_t loopOffset = safeCodeOffset(loopStart);
     chunk_.writeOp(OpCode::OP_LOOP, node.line);
     chunk_.writeShort(loopOffset, node.line);
 
     // 修补退出跳转
-    uint16_t exitTarget = static_cast<uint16_t>(chunk_.code.size());
+    uint16_t exitTarget = safeCodeOffset();
     chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
     chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
 
@@ -412,10 +412,10 @@ void Compiler::compileForStmt(ForStmt& node) {
 
         // 回跳
         chunk_.writeOp(OpCode::OP_LOOP, node.line);
-        chunk_.writeShort(static_cast<uint16_t>(loopStart), node.line);
+        chunk_.writeShort(safeCodeOffset(loopStart), node.line);
 
         // 修补退出跳转
-        uint16_t exitTarget = static_cast<uint16_t>(chunk_.code.size());
+        uint16_t exitTarget = safeCodeOffset();
         chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
         chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
         chunk_.writeOp(OpCode::OP_POP, node.line);
@@ -435,9 +435,9 @@ void Compiler::compileForStmt(ForStmt& node) {
         }
 
         chunk_.writeOp(OpCode::OP_LOOP, node.line);
-        chunk_.writeShort(static_cast<uint16_t>(loopStart), node.line);
+        chunk_.writeShort(safeCodeOffset(loopStart), node.line);
 
-        uint16_t exitTarget = static_cast<uint16_t>(chunk_.code.size());
+        uint16_t exitTarget = safeCodeOffset();
         chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
         chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
         chunk_.writeOp(OpCode::OP_POP, node.line);

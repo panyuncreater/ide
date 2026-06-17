@@ -69,7 +69,7 @@ private:
     void addToken(TokenType type, std::string&& text, const Value& literal);
 
     /// 报告词法错误（生成 TK_ERROR Token，继续扫描）
-    void errorToken(const std::string& message);
+    void errorToken(const std::string& message, int errorLine = -1, int errorCol = -1);
 
     /// 获取当前列号
     int currentColumn() const;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QCloseEvent>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QToolBar>
@@ -78,6 +79,8 @@ private slots:
     void onVmStop();
 
 private:
+    /// 窗口关闭事件：确保调试器和VM安全停止
+    void closeEvent(QCloseEvent* event) override;
 
     // ---- 核心组件 ----
     Lexer lexer_;

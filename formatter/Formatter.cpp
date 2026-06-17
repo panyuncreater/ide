@@ -59,6 +59,7 @@ static bool isSelfTerminating(ASTNode* node) {
     case NodeType::NODE_FOR_STMT:
     case NodeType::NODE_FUN_DECL:
     case NodeType::NODE_CLASS_DECL:
+    case NodeType::NODE_BLOCK:
         return true;
     default:
         return false;
@@ -84,7 +85,14 @@ std::string Formatter::formatNode(ASTNode* node) {
     case NodeType::NODE_FUN_CALL:       return formatFunCall(*static_cast<FunCall*>(node));
     case NodeType::NODE_RETURN_STMT:    return formatReturnStmt(*static_cast<ReturnStmt*>(node));
     case NodeType::NODE_PRINT_STMT:     return formatPrintStmt(*static_cast<PrintStmt*>(node));
-    case NodeType::NODE_BLOCK:          return formatBlock(*static_cast<Block*>(node));
+    case NodeType::NODE_BLOCK: {
+        std::string result = "{\n";
+        currentIndent_++;
+        result += formatBlock(*static_cast<Block*>(node));
+        currentIndent_--;
+        result += indent() + "}";
+        return result;
+    }
     case NodeType::NODE_ARRAY_LITERAL:  return formatArrayLiteral(*static_cast<ArrayLiteral*>(node));
     case NodeType::NODE_DICT_LITERAL:   return formatDictLiteral(*static_cast<DictLiteral*>(node));
     case NodeType::NODE_INDEX_ACCESS:   return formatIndexAccess(*static_cast<IndexAccess*>(node));
@@ -160,7 +168,8 @@ std::string Formatter::formatUnaryOp(UnaryOp& node) {
     std::string operand = formatNode(node.operand.get());
     // BinaryOp 优先级低于一元运算符，必须加括号保持语义正确
     // 例如 -(a + b) 不能格式化为 -a + b
-    if (node.operand && node.operand->nodeType == NodeType::NODE_BINARY_OP) {
+    if (node.operand && (node.operand->nodeType == NodeType::NODE_BINARY_OP ||
+                         node.operand->nodeType == NodeType::NODE_UNARY_OP)) {
         operand = "(" + operand + ")";
     }
     if (node.opType == UnaryOp::UnaryOpType::UOP_NOT) {

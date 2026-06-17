@@ -19,8 +19,7 @@ enum class StepMode {
     MODE_RUN,       // 正常运行（仅检查断点）
     MODE_STEP_IN,   // 单步进入（每个节点暂停）
     MODE_STEP_OVER, // 单步跳过（同调用深度暂停）
-    MODE_STEP_OUT,  // 单步跳出（浅于当前深度时暂停）
-    MODE_PAUSE      // 暂停
+    MODE_STEP_OUT   // 单步跳出（浅于当前深度时暂停）
 };
 
 /// 变量快照条目

@@ -186,6 +186,9 @@ struct BytecodeChunk {
         for (uint16_t i : bucket) {
             if (constants[i].equals(val)) return i;
         }
+        if (constants.size() >= 65535) {
+            throw std::runtime_error("编译错误: 常量池超出限制 (65535)");
+        }
         uint16_t idx = static_cast<uint16_t>(constants.size());
         constants.push_back(val);
         bucket.push_back(idx);

@@ -357,6 +357,7 @@ VMResult VM::execute(const CompileResult& result) {
             continue;
         }
 
+        if (hasError_) return VMResult::VM_ERROR;
         VMResult r = executeOneInstruction();
         if (r != VMResult::VM_OK || hasError_) return r;
     }
@@ -369,11 +370,18 @@ VMResult VM::execute(const CompileResult& result) {
 // ============================================================
 
 VMResult VM::executeOneInstruction() {
+    if (hasError_) return VMResult::VM_ERROR;
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
     size_t& ip = frame.ip;
 
     OpCode op = static_cast<OpCode>(chunk.code[ip]);
+
+    // 检查完整指令是否在字节码范围内
+    size_t instrSize = BytecodeChunk::instructionSize(op);
+    if (ip + instrSize > chunk.code.size()) {
+        return runtimeError("字节码截断: 指令不完整");
+    }
 
     switch (op) {
     case OpCode::OP_CONSTANT:
@@ -758,9 +766,10 @@ VMResult VM::executeOneInstruction() {
                     newFrame.ip = 0;
                     newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
                     newFrame.isInitCall = true;     // init 返回 this 而非 null
+                    size_t savedIp = ip;
                     frames_.push_back(newFrame);
 
-                    notifyStep(ip, op);
+                    notifyStep(savedIp, op);
                     break;
                 }
 
@@ -802,9 +811,10 @@ VMResult VM::executeOneInstruction() {
         newFrame.basePointer = stack_.size() - targetChunk.localCount;
         newFrame.functionName = funName;
         newFrame.ip = 0;
+        size_t savedIp = ip;
         frames_.push_back(newFrame);
 
-        notifyStep(ip, op);
+        notifyStep(savedIp, op);
         break;
     }
 
@@ -1268,8 +1278,10 @@ VMResult VM::executeOneInstruction() {
 
         // ---- 类实例方法调用 ----
         if (obj.isInstance()) {
+            // 拷贝接收者，因为后续 pop() 会使 peek 引用失效
+            Value objCopy = obj;
             // 沿继承链查找方法（父类方法也可调用）
-            const BytecodeChunk* targetChunkPtr = findMethodChunk(obj.className(), methodName);
+            const BytecodeChunk* targetChunkPtr = findMethodChunk(objCopy.className(), methodName);
             if (targetChunkPtr != nullptr) {
                 const BytecodeChunk& targetChunk = *targetChunkPtr;
 
@@ -1294,19 +1306,19 @@ VMResult VM::executeOneInstruction() {
                 pop();  // 移除栈上的原始实例
 
                 // 推入 this（拷贝，方法内修改会被 writeBack 写回）
-                push(obj);
+                push(objCopy);
                 // 按方法 chunk 声明的字段顺序推入实例字段值
                 int fieldCount = 0;
                 if (targetChunk.fieldOrder.empty()) {
                     // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
-                    for (const auto& field : obj.fields()) {
+                    for (const auto& field : objCopy.fields()) {
                         push(field.second);
                     }
-                    fieldCount = static_cast<int>(obj.fields().size());
+                    fieldCount = static_cast<int>(objCopy.fields().size());
                 } else {
                     for (const auto& fieldName : targetChunk.fieldOrder) {
-                        auto fieldIt = obj.fields().find(fieldName);
-                        if (fieldIt != obj.fields().end()) {
+                        auto fieldIt = objCopy.fields().find(fieldName);
+                        if (fieldIt != objCopy.fields().end()) {
                             push(fieldIt->second);
                         } else {
                             push(Value::nullValue());
@@ -1340,18 +1352,22 @@ VMResult VM::executeOneInstruction() {
                 }
                 // 记录接收者局部变量 slot（用于 writeBack 到调用者栈帧）
                 newFrame.receiverLocalSlot = (receiverLocalSlotByte == 0xFF) ? -1 : receiverLocalSlotByte;
+                size_t savedIp = ip;
                 frames_.push_back(newFrame);
 
-                notifyStep(ip, op);
+                notifyStep(savedIp, op);
                 break;
             }
         }
 
         // 方法未找到或对象非实例
+        // 先保存类型信息，因为 pop 会使 obj 引用失效
+        bool wasInstance = obj.isInstance();
+        std::string clsName = wasInstance ? obj.className() : "";
         for (uint8_t i = 0; i < argCount; ++i) pop();
         pop();
-        if (obj.isInstance()) {
-            return runtimeError("类 " + obj.className() + " 没有方法 " + methodName);
+        if (wasInstance) {
+            return runtimeError("类 " + clsName + " 没有方法 " + methodName);
         } else {
             return runtimeError("方法调用需要类实例");
         }
@@ -1487,9 +1503,10 @@ VMResult VM::executeOneInstruction() {
             newFrame.ip = 0;
             newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
             newFrame.isInitCall = true;     // init 返回 this 而非 null
+            size_t savedIp = ip;
             frames_.push_back(newFrame);
 
-            notifyStep(ip, op);
+            notifyStep(savedIp, op);
             break;
         }
 

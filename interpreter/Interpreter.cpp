@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <climits>
 #include <sstream>
+#include <unordered_set>
 
 // ============================================================
 // Interpreter 解释器实现
@@ -165,23 +166,36 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
 // ---- 类辅助方法 ----
 
 FunDecl* Interpreter::findMethod(ClassInfo& cls, const std::string& methodName) {
-    auto it = cls.methods.find(methodName);
-    if (it != cls.methods.end()) return it->second;
-    // 沿继承链查找（通过名称查找，避免悬空指针）
-    if (!cls.superClassName.empty()) {
-        auto superIt = classRegistry_.find(cls.superClassName);
-        if (superIt != classRegistry_.end()) return findMethod(superIt->second, methodName);
+    // 使用非递归方式沿继承链查找，避免循环继承导致栈溢出
+    ClassInfo* cur = &cls;
+    std::unordered_set<std::string> visited;
+    while (cur) {
+        if (!visited.insert(cur->name).second) return nullptr;  // 检测到循环
+        auto it = cur->methods.find(methodName);
+        if (it != cur->methods.end()) return it->second;
+        if (!cur->superClassName.empty()) {
+            auto superIt = classRegistry_.find(cur->superClassName);
+            cur = (superIt != classRegistry_.end()) ? &superIt->second : nullptr;
+        } else {
+            cur = nullptr;
+        }
     }
     return nullptr;
 }
 
 Value Interpreter::findFieldDefault(ClassInfo& cls, const std::string& fieldName) {
-    auto it = cls.fields.find(fieldName);
-    if (it != cls.fields.end()) return it->second;
-    // 沿继承链查找
-    if (!cls.superClassName.empty()) {
-        auto superIt = classRegistry_.find(cls.superClassName);
-        if (superIt != classRegistry_.end()) return findFieldDefault(superIt->second, fieldName);
+    ClassInfo* cur = &cls;
+    std::unordered_set<std::string> visited;
+    while (cur) {
+        if (!visited.insert(cur->name).second) return Value::nullValue();  // 检测到循环
+        auto it = cur->fields.find(fieldName);
+        if (it != cur->fields.end()) return it->second;
+        if (!cur->superClassName.empty()) {
+            auto superIt = classRegistry_.find(cur->superClassName);
+            cur = (superIt != classRegistry_.end()) ? &superIt->second : nullptr;
+        } else {
+            cur = nullptr;
+        }
     }
     return Value::nullValue();
 }
@@ -249,6 +263,9 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     std::vector<Value> vals(n);
     std::vector<Value> idxs(n); // IndexAccess 节点的索引值
 
+    if (chain[n - 1]->nodeType != NodeType::NODE_VAR_REF) {
+        runtimeError("赋值目标必须是变量引用", line, col);
+    }
     auto* varRef = static_cast<VarRef*>(chain[n - 1]);
     const Value* baseVal = currentEnv_->get(varRef->name);
     vals[n - 1] = baseVal ? *baseVal : Value::nullValue();
@@ -374,6 +391,9 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
     std::vector<Value> vals(n);
     std::vector<Value> idxs(n);
 
+    if (chain[n - 1]->nodeType != NodeType::NODE_VAR_REF) {
+        runtimeError("赋值目标必须是变量引用", line, col);
+    }
     auto* varRef = static_cast<VarRef*>(chain[n - 1]);
     const Value* baseVal = currentEnv_->get(varRef->name);
     vals[n - 1] = baseVal ? *baseVal : Value::nullValue();
@@ -595,8 +615,15 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 currentEnv_ = initEnv;
                 try {
                     evaluate(initMethod->body.get());
-                } catch (const ReturnException&) {}
-                instance = *initEnv->get("this");
+                } catch (const ReturnException&) {
+                } catch (...) {
+                    currentEnv_ = prevEnv;
+                    throw;
+                }
+                auto* thisPtr = initEnv->get("this");
+                if (thisPtr) {
+                    instance = *thisPtr;
+                }
                 // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
                 const auto& initLocals = initEnv->localVariables();
                 for (auto& fieldKV : instance.fields()) {
@@ -780,13 +807,6 @@ Value Interpreter::visitFunCall(FunCall& node) {
         // 检查参数数量（构造函数为 init 方法）
         FunDecl* initMethod = findMethod(cls, "init");
 
-        // 递归深度检查
-        recursionDepth_++;
-        if (recursionDepth_ >= 256) {
-            recursionDepth_--;
-            runtimeError("递归深度超过限制 (256)", node.line, node.column);
-        }
-
         // 求值参数
         std::vector<Value> argValues;
         argValues.reserve(node.arguments.size());
@@ -796,17 +816,21 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
         // 检查参数数量
         if (initMethod && argValues.size() != initMethod->params.size()) {
-            recursionDepth_--;
             runtimeError("构造函数 init 期望 " +
                          std::to_string(initMethod->params.size()) + " 个参数，但传入了 " +
                          std::to_string(argValues.size()) + " 个",
                          node.line, node.column);
         }
         if (!initMethod && !argValues.empty()) {
-            recursionDepth_--;
             runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
                          std::to_string(argValues.size()) + " 个参数",
                          node.line, node.column);
+        }
+
+        recursionDepth_++;
+        if (recursionDepth_ >= 256) {
+            recursionDepth_--;
+            runtimeError("递归深度超过限制 (256)", node.line, node.column);
         }
 
         // 创建实例
@@ -872,7 +896,10 @@ Value Interpreter::visitFunCall(FunCall& node) {
             }
 
             // 从 init 环境中读取 this 的更新值
-            instance = *initEnv->get("this");
+            auto* thisPtr = initEnv->get("this");
+            if (thisPtr) {
+                instance = *thisPtr;
+            }
 
             // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
             const auto& initLocals2 = initEnv->localVariables();
@@ -948,18 +975,18 @@ Value Interpreter::visitFunCall(FunCall& node) {
                      node.line, node.column);
     }
 
-    // 递归深度检查
-    recursionDepth_++;
-    if (recursionDepth_ >= 256) {
-        recursionDepth_--;
-        runtimeError("递归深度超过限制 (256)", node.line, node.column);
-    }
-
     // 求值参数
     std::vector<Value> argValues;
     argValues.reserve(node.arguments.size());
     for (auto& arg : node.arguments) {
         argValues.push_back(evaluate(arg.get()));
+    }
+
+    // 递归深度检查
+    recursionDepth_++;
+    if (recursionDepth_ >= 256) {
+        recursionDepth_--;
+        runtimeError("递归深度超过限制 (256)", node.line, node.column);
     }
 
     // 参数类型检查
@@ -999,8 +1026,8 @@ Value Interpreter::visitFunCall(FunCall& node) {
     try {
         // 执行函数体
         result = evaluate(funDecl->body.get());
-    } catch (const ReturnException& e) {
-        result = std::move(const_cast<ReturnException&>(e).returnValue);
+    } catch (ReturnException& e) {
+        result = std::move(e.returnValue);
     } catch (...) {
         // 运行时错误：先恢复调用状态，再重抛
         currentEnv_ = prevEnv;
@@ -1391,13 +1418,6 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (classIt != classRegistry_.end()) {
             FunDecl* method = findMethod(classIt->second, node.methodName);
             if (method) {
-                // 递归深度检查
-                recursionDepth_++;
-                if (recursionDepth_ >= 256) {
-                    recursionDepth_--;
-                    runtimeError("递归深度超过限制 (256)", node.line, node.column);
-                }
-
                 // 求值参数
                 std::vector<Value> argValues;
                 argValues.reserve(node.arguments.size());
@@ -1407,11 +1427,16 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
 
                 // 检查参数数量
                 if (argValues.size() != method->params.size()) {
-                    recursionDepth_--;
                     runtimeError("方法 " + node.methodName + " 期望 " +
                                  std::to_string(method->params.size()) + " 个参数，但传入了 " +
                                  std::to_string(argValues.size()) + " 个",
                                  node.line, node.column);
+                }
+
+                recursionDepth_++;
+                if (recursionDepth_ >= 256) {
+                    recursionDepth_--;
+                    runtimeError("递归深度超过限制 (256)", node.line, node.column);
                 }
 
                 // 创建方法环境（父级为当前环境，方法不创建闭包，在调用时绑定 this）
@@ -1445,8 +1470,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 Value result = Value::nullValue();
                 try {
                     result = evaluate(method->body.get());
-                } catch (const ReturnException& e) {
-                    result = std::move(const_cast<ReturnException&>(e).returnValue);
+                } catch (ReturnException& e) {
+                    result = std::move(e.returnValue);
                 } catch (...) {
                     // 运行时错误：先恢复调用状态，再重抛
                     currentEnv_ = prevEnv;
@@ -1457,7 +1482,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 }
 
                 // 从方法环境中读取 this 的更新值
-                Value updatedThis = *methodEnv->get("this");
+                auto* thisPtr = methodEnv->get("this");
+                Value updatedThis = thisPtr ? *thisPtr : Value::nullValue();
 
                 // 关键：将方法环境中的字段变量同步回 this 对象（直接查找局部变量，O(1)）
                 const auto& methodLocals = methodEnv->localVariables();
