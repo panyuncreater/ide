@@ -341,7 +341,13 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
 }
 
 std::string Formatter::formatFunCall(FunCall& node) {
-    std::string result = node.name + "(";
+    std::string result;
+    if (node.callee) {
+        // 链式调用 / 表达式调用
+        result = formatNode(node.callee.get()) + "(";
+    } else {
+        result = node.name + "(";
+    }
     for (size_t i = 0; i < node.arguments.size(); ++i) {
         if (i > 0) result += comma();
         result += formatNode(node.arguments[i].get());
@@ -372,9 +378,9 @@ std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
     for (size_t i = 0; i < node.statements.size(); ++i) {
         ASTNode* stmt = node.statements[i].get();
 
-        // F1 fix: 输出当前语句之前的所有注释
+        // F1 fix: 输出当前语句之前的所有独立注释（行号严格小于语句行号）
         while (commentIndex_ < comments_.size() &&
-               comments_[commentIndex_].line <= stmt->line) {
+               comments_[commentIndex_].line < stmt->line) {
             result += indent() + comments_[commentIndex_].lexeme + "\n";
             commentIndex_++;
         }
@@ -387,12 +393,23 @@ std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
             }
         }
 
-        // 复合语句（if/while/for/fun/class）以 } 结尾，不需要额外 ;
+        // 格式化语句
+        std::string stmtText;
         if (isSelfTerminating(stmt)) {
-            result += indent() + formatNode(stmt) + "\n";
+            stmtText = indent() + formatNode(stmt);
         } else {
-            result += indent() + formatNode(stmt) + (options_.semicolons ? ";\n" : "\n");
+            stmtText = indent() + formatNode(stmt) + (options_.semicolons ? ";" : "");
         }
+
+        // F1+ fix: 同行行内注释追加到语句末尾
+        std::string trailing;
+        while (commentIndex_ < comments_.size() &&
+               comments_[commentIndex_].line == stmt->line) {
+            trailing += " " + comments_[commentIndex_].lexeme;
+            commentIndex_++;
+        }
+
+        result += stmtText + trailing + "\n";
     }
 
     // F1 fix: 顶层块末尾输出剩余注释

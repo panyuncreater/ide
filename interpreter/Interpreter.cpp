@@ -847,6 +847,62 @@ Value Interpreter::visitFunDecl(FunDecl& node) {
 Value Interpreter::visitFunCall(FunCall& node) {
     checkBreak(&node);
 
+    // 链式调用 / 表达式调用: callee(args)
+    if (node.callee) {
+        Value calleeVal = evaluate(node.callee.get());
+        if (!calleeVal.isClosure()) {
+            runtimeError("表达式求值结果不是函数，无法调用", node.line, node.column);
+        }
+
+        FunDecl* funDecl = calleeVal.closureBody();
+        auto closureEnv = calleeVal.closureEnv();
+        std::string effectiveName = calleeVal.closureName();
+
+        if (node.arguments.size() != funDecl->params.size()) {
+            runtimeError("函数 " + effectiveName + " 期望 " +
+                         std::to_string(funDecl->params.size()) + " 个参数，但传入了 " +
+                         std::to_string(node.arguments.size()) + " 个",
+                         node.line, node.column);
+        }
+
+        std::vector<Value> argValues;
+        argValues.reserve(node.arguments.size());
+        for (auto& arg : node.arguments) {
+            argValues.push_back(evaluate(arg.get()));
+        }
+
+        std::string savedReturnType = currentFunctionReturnType_;
+        currentFunctionReturnType_ = funDecl->returnType;
+        auto prevEnv = currentEnv_;
+
+        Value result = Value::nullValue();
+        try {
+            recursionDepth_++;
+            if (recursionDepth_ >= 64) {
+                recursionDepth_--;
+                runtimeError("递归深度超过限制 (64)", node.line, node.column);
+            }
+
+            auto funEnv = std::make_shared<Environment>(
+                closureEnv ? closureEnv : currentEnv_);
+            for (size_t i = 0; i < funDecl->params.size(); ++i) {
+                funEnv->define(funDecl->params[i], std::move(argValues[i]));
+            }
+
+            callStack_.emplace_back(effectiveName, funEnv, node.line, recursionDepth_);
+            currentEnv_ = funEnv;
+            evaluate(funDecl->body.get());
+        } catch (ReturnException& e) {
+            result = std::move(e.returnValue);
+        }
+
+        currentEnv_ = prevEnv;
+        callStack_.pop_back();
+        recursionDepth_--;
+        currentFunctionReturnType_ = savedReturnType;
+        return result;
+    }
+
     // 内置函数: dict() 和 array()
     if (node.name == "dict") {
         // dict() 或 dict({"a": 1, ...})

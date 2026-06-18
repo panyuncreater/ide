@@ -51,6 +51,7 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
 
     OP_RETURN,       // 返回
     OP_CALL,         // 函数调用（参数个数）
+    OP_CALL_EXPR,    // 表达式调用：栈顶为闭包，下方为参数（1字节参数个数）
 
     OP_BUILD_ARRAY,  // 构建数组（元素个数）
     OP_BUILD_DICT,   // 构建字典（键值对个数）
@@ -122,6 +123,7 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_LOOP:          return "OP_LOOP";
     case OpCode::OP_RETURN:        return "OP_RETURN";
     case OpCode::OP_CALL:          return "OP_CALL";
+    case OpCode::OP_CALL_EXPR:     return "OP_CALL_EXPR";
     case OpCode::OP_BUILD_ARRAY:   return "OP_BUILD_ARRAY";
     case OpCode::OP_BUILD_DICT:    return "OP_BUILD_DICT";
     case OpCode::OP_INDEX_GET:    return "OP_INDEX_GET";
@@ -274,6 +276,7 @@ public:
         case OpCode::OP_GET_LOCAL:
         case OpCode::OP_SET_LOCAL:
         case OpCode::OP_DUP_N:
+        case OpCode::OP_CALL_EXPR:
             return 2;
         case OpCode::OP_MEMBER_SET_VAR:
             return 5;
@@ -410,6 +413,12 @@ public:
             uint8_t argCount = code[offset + 3];
             str += "OP_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
             offset += 4;
+            break;
+        }
+        case OpCode::OP_CALL_EXPR: {
+            uint8_t argCount = code[offset + 1];
+            str += "OP_CALL_EXPR " + std::to_string(argCount);
+            offset += 2;
             break;
         }
         case OpCode::OP_BUILD_ARRAY: {

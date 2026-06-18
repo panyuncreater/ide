@@ -410,6 +410,17 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
 
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
 
+    // V3+ fix: 顶层循环退出时清理循环体内声明的全局变量
+    if (!inFunction_) {
+        for (auto& [name, _] : currentLocals_) {
+            if (savedLocals.find(name) == savedLocals.end()) {
+                uint16_t nameIdx = identifierIndex(name);
+                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            }
+        }
+    }
+
     // V3 fix: 恢复局部变量映射
     currentLocals_ = savedLocals;
 }
@@ -450,6 +461,21 @@ void Compiler::compileForStmt(ForStmt& node) {
         chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
         chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
         chunk_.writeOp(OpCode::OP_POP, node.line);
+
+        // V3+ fix: 顶层循环退出时清理循环变量
+        if (!inFunction_) {
+            std::vector<std::string> cleanupVars;
+            for (auto& [name, _] : currentLocals_) {
+                if (savedLocals.find(name) == savedLocals.end()) {
+                    cleanupVars.push_back(name);
+                }
+            }
+            for (const auto& name : cleanupVars) {
+                uint16_t nameIdx = identifierIndex(name);
+                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            }
+        }
     } else {
         // 无条件循环（while true）
         chunk_.writeOp(OpCode::OP_TRUE, node.line);
@@ -472,6 +498,21 @@ void Compiler::compileForStmt(ForStmt& node) {
         chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
         chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
         chunk_.writeOp(OpCode::OP_POP, node.line);
+
+        // V3+ fix: 顶层循环退出时清理循环变量
+        if (!inFunction_) {
+            std::vector<std::string> cleanupVars2;
+            for (auto& [name, _] : currentLocals_) {
+                if (savedLocals.find(name) == savedLocals.end()) {
+                    cleanupVars2.push_back(name);
+                }
+            }
+            for (const auto& name : cleanupVars2) {
+                uint16_t nameIdx = identifierIndex(name);
+                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            }
+        }
     }
 
     // V3 fix: 恢复局部变量映射，for 循环内声明的变量不再可见
@@ -541,6 +582,23 @@ void Compiler::compileFunDecl(FunDecl& node) {
 }
 
 void Compiler::compileFunCall(FunCall& node) {
+    // 链式调用 / 表达式调用: callee(args)
+    if (node.callee) {
+        // 编译被调用表达式（结果应为闭包值，推入栈顶）
+        compileNode(node.callee.get());
+        // 编译参数
+        for (auto& arg : node.arguments) {
+            compileNode(arg.get());
+        }
+        if (node.arguments.size() > 255) {
+            // uint8_t 编码限制
+        }
+        // OP_CALL_EXPR: 栈顶 N 个参数下方为闭包值
+        chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
+        chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
+        return;
+    }
+
     // 编译参数
     for (auto& arg : node.arguments) {
         compileNode(arg.get());

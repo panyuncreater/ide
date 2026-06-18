@@ -348,6 +348,10 @@ public:
     std::string name;
     std::vector<std::unique_ptr<ASTNode>> arguments;
 
+    /// 链式调用：非 null 时表示被调用表达式（如 f(x)(y) 中的 f(x)）
+    /// 此时 name 为空，调用 callee 求值结果（需为闭包）
+    std::unique_ptr<ASTNode> callee;
+
     /// 缓存：首次调用解析后存储 FunDecl*，后续调用跳过查找
     FunDecl* resolvedDecl = nullptr;
     bool isResolved = false;
@@ -357,10 +361,17 @@ public:
             int ln = 0, int col = 0)
         : ASTNode(ln, col), name(n), arguments(std::move(args)) { nodeType = NodeType::NODE_FUN_CALL; }
 
+    /// 链式调用构造：callee 为任意表达式
+    FunCall(std::unique_ptr<ASTNode> calleeExpr, std::vector<std::unique_ptr<ASTNode>> args,
+            int ln = 0, int col = 0)
+        : ASTNode(ln, col), arguments(std::move(args)), callee(std::move(calleeExpr))
+        { nodeType = NodeType::NODE_FUN_CALL; }
+
     Value accept(Visitor& visitor) override;
-    std::string nodeName() const override { return "FunCall(" + name + ")"; }
+    std::string nodeName() const override { return "FunCall(" + (callee ? "expr" : name) + ")"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
+        if (callee) ch.push_back(callee.get());
         for (auto& arg : arguments) {
             ch.push_back(arg.get());
         }

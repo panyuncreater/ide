@@ -795,31 +795,29 @@ std::unique_ptr<ASTNode> Parser::call() {
 
     // 支持链式调用: obj.method(args).field[0]
     while (true) {
-        // 函数调用: name(args) —— 仅当 expr 是 VarRef 时
+        // 函数调用: expr(args)
         if (match(TokenType::TK_LPAREN)) {
             const Token& paren = previous();
-            if (expr->nodeType == NodeType::NODE_VAR_REF) {
-                auto* varRef = static_cast<VarRef*>(expr.get());
-                std::vector<std::unique_ptr<ASTNode>> args;
-                if (!check(TokenType::TK_RPAREN)) {
-                    do {
-                        args.push_back(expression());
-                    } while (match(TokenType::TK_COMMA));
-                }
-                consume(TokenType::TK_RPAREN, "期望 ')' 结束参数列表");
-
-                std::string funcName = varRef->name;
-                int ln = varRef->line;
-                int col = varRef->column;
-
-                expr = std::make_unique<FunCall>(funcName, std::move(args), ln, col);
-                continue;
+            // 解析参数列表
+            std::vector<std::unique_ptr<ASTNode>> args;
+            if (!check(TokenType::TK_RPAREN)) {
+                do {
+                    args.push_back(expression());
+                } while (match(TokenType::TK_COMMA));
             }
-            // 非 VarRef 后跟 '(' —— 不支持链式调用或表达式调用，给出明确错误
-            throw ParseError(
-                "只有命名函数可以直接调用，不支持链式调用 f(x)(y) "
-                "或将函数调用结果作为表达式再调用",
-                paren.line, paren.column);
+            consume(TokenType::TK_RPAREN, "期望 ')' 结束参数列表");
+
+            if (expr->nodeType == NodeType::NODE_VAR_REF) {
+                // 命名函数调用（原有路径）
+                auto* varRef = static_cast<VarRef*>(expr.get());
+                expr = std::make_unique<FunCall>(varRef->name, std::move(args),
+                                                  varRef->line, varRef->column);
+            } else {
+                // 链式调用 / 表达式调用: f(x)(y), closures, 高阶函数
+                expr = std::make_unique<FunCall>(std::move(expr), std::move(args),
+                                                  paren.line, paren.column);
+            }
+            continue;
         }
 
         // 索引访问: expr[index]

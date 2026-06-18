@@ -881,6 +881,16 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    case OpCode::OP_CALL_EXPR: {
+        uint8_t argCount = chunk.code[ip + 1];
+        // VM 不支持一等闭包调用（链式调用 f(x)(y) 请使用解释器运行）
+        for (uint8_t i = 0; i < argCount; ++i) {
+            if (!stack_.empty()) pop();
+        }
+        if (!stack_.empty()) pop();  // 弹出 callee
+        return runtimeError("VM 不支持表达式调用（链式调用 f(x)(y)），请使用解释器运行");
+    }
+
     case OpCode::OP_BUILD_ARRAY: {
         uint8_t count = chunk.code[ip + 1];
         if (stack_.size() < count) return runtimeError("栈下溢: OP_BUILD_ARRAY");
