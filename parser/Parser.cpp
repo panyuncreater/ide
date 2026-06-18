@@ -924,12 +924,10 @@ std::unique_ptr<ASTNode> Parser::primary() {
         return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }
 
-    // 类型关键字作为标识符使用（如 dict(), array() 函数调用）
-    if (match(TokenType::TK_DICT)) {
-        const Token& tok = previous();
-        return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
-    }
-    if (match(TokenType::TK_ARRAY)) {
+    // 类型关键字作为标识符使用（如 dict(), array(), int(), string() 等函数调用）
+    if (match(TokenType::TK_DICT) || match(TokenType::TK_ARRAY) ||
+        match(TokenType::TK_INT) || match(TokenType::TK_FLOAT) ||
+        match(TokenType::TK_BOOL) || match(TokenType::TK_STRING_TYPE)) {
         const Token& tok = previous();
         return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }

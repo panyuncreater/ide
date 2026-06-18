@@ -99,11 +99,23 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
             int length = match.capturedLength();
             QString captured = match.captured();
 
-            // 检查字符串是否闭合（以 " 结尾且不以 \" 结尾）
-            if (captured.endsWith('"') && !captured.endsWith("\\\"")) {
-                // 完整字符串
-                stringRanges.append({start, length});
-                searchPos = start + length;
+            // 检查字符串是否闭合（以 " 结尾且引号未被转义）
+            // M12 fix: 计算末尾连续反斜杠数量，偶数个则引号未转义（已闭合），奇数个则引号被转义（未闭合）
+            if (captured.endsWith('"')) {
+                int backslashCount = 0;
+                for (int k = captured.length() - 2; k >= 0 && captured[k] == '\\'; --k) {
+                    backslashCount++;
+                }
+                if (backslashCount % 2 == 0) {
+                    // 引号未被转义，字符串已闭合
+                    stringRanges.append({start, length});
+                    searchPos = start + length;
+                } else {
+                    // 引号被转义，未闭合的多行字符串
+                    stringRanges.append({start, text.length() - start});
+                    currentlyInString = true;
+                    break;
+                }
             } else {
                 // 未闭合的多行字符串
                 stringRanges.append({start, text.length() - start});

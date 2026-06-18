@@ -303,18 +303,7 @@ void Lexer::number() {
             long long val = std::stoll(text);
             addToken(TokenType::TK_INT_LIT, std::move(text), Value(static_cast<int64_t>(val)));
         } catch (const std::out_of_range&) {
-            // INT64_MIN 特判：9223372036854775808 = INT64_MAX+1，stoll 溢出但 stoull 可解析
-            try {
-                unsigned long long uval = std::stoull(text);
-                if (uval == 9223372036854775808ULL) {
-                    addToken(TokenType::TK_INT_LIT, std::move(text),
-                             Value(static_cast<int64_t>(0x8000000000000000LL)));
-                } else {
-                    errorToken("整数溢出: " + text);
-                }
-            } catch (...) {
-                errorToken("整数溢出: " + text);
-            }
+            errorToken("整数溢出: " + text);
         }
     }
 }

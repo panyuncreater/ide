@@ -103,6 +103,14 @@ void DebugController::checkBreak(ASTNode* node) {
         lastSeenLine_ = node->line;
     }
 
+    // M10 fix: 步进模式下经过断点行时也递增 hitCount（暂停由步进触发，但断点确实被经过）
+    if (mode_ != StepMode::MODE_RUN && node->line > 0) {
+        auto infoIt = breakpointInfos_.find(node->line);
+        if (infoIt != breakpointInfos_.end()) {
+            infoIt->hitCount++;
+        }
+    }
+
     if (shouldPause && node->line > 0) {
         lastPausedLine_ = node->line;  // 记录暂停行号
         lastPausedDepth_ = currentDepth_;  // 记录暂停深度
@@ -133,12 +141,14 @@ void DebugController::setBreakpoint(int line) {
 
 void DebugController::setBreakpoints(const QSet<int>& lines) {
     breakpoints_ = lines;
-    // 同步 breakpointInfos_：移除不再存在的，添加新增的
+    // 同步 breakpointInfos_：移除不再存在的，添加新增的，重置仍存在的条目的条件
     auto it = breakpointInfos_.begin();
     while (it != breakpointInfos_.end()) {
         if (!lines.contains(it.key())) {
             it = breakpointInfos_.erase(it);
         } else {
+            // M11 fix: 重置条件，防止用户删除条件断点后重新添加（无条件）时残留旧条件
+            it->condition.clear();
             ++it;
         }
     }

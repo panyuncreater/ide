@@ -620,7 +620,12 @@ void Ide::onFormat() {
     }
 
     // 语法分析
-    astRoot_ = parser_.parse(lastTokens_);
+    try {
+        astRoot_ = parser_.parse(lastTokens_);
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("[格式化] 解析异常: %1").arg(e.what()));
+        return;
+    }
     if (parser_.hasErrors()) {
         for (const auto& diag : parser_.getDiagnostics().all()) {
             outputPanel_->appendError(QString::fromStdString(
@@ -640,8 +645,13 @@ void Ide::onFormat() {
 
     // F1 fix: 传入注释 token，使格式化后保留注释
     formatter_.setComments(lastTokens_);
-    std::string formatted = formatter_.format(*astRoot_);
-    codeEditor_->setPlainText(QString::fromStdString(formatted));
+    try {
+        std::string formatted = formatter_.format(*astRoot_);
+        codeEditor_->setPlainText(QString::fromStdString(formatted));
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("[格式化] 格式化异常: %1").arg(e.what()));
+        return;
+    }
 
     // 恢复光标位置和滚动位置（尽可能）
     if (savedCursor.position() <= codeEditor_->document()->characterCount()) {
@@ -662,7 +672,13 @@ void Ide::onShowBytecode() {
     }
 
     // 语法分析
-    astRoot_ = parser_.parse(lastTokens_);
+    try {
+        astRoot_ = parser_.parse(lastTokens_);
+    } catch (const std::exception& e) {
+        bytecodeList_->clear();
+        bytecodeList_->addItem(QString("字节码生成失败 - 解析异常: %1").arg(e.what()));
+        return;
+    }
     if (parser_.hasErrors()) {
         bytecodeList_->clear();
         for (const auto& diag : parser_.getDiagnostics().all()) {
@@ -675,7 +691,13 @@ void Ide::onShowBytecode() {
     if (!astRoot_) return;
 
     // 编译
-    runCompiler();
+    try {
+        runCompiler();
+    } catch (const std::exception& e) {
+        bytecodeList_->clear();
+        bytecodeList_->addItem(QString("字节码编译异常: %1").arg(e.what()));
+        return;
+    }
 
     // 填充指令列表
     populateBytecodeList();

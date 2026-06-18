@@ -196,10 +196,7 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
     case BinOpType::BIN_DIV:
         { double r = right.toDouble();
           if (r == 0.0) runtimeError("除零错误", line, col);
-          if (left.isInt() && right.isInt()) {
-              if (left.intVal() == INT64_MIN && right.intVal() == -1) runtimeError("整数除法溢出", line, col);
-              return Value(left.intVal() / right.intVal());
-          }
+          // M5 fix: 整数除法也返回 float（真除法），与 Python 3 行为一致
           return Value(left.toDouble() / r); }
     case BinOpType::BIN_MOD:
         if (!left.isInt() || !right.isInt()) runtimeError("取模运算仅支持整数", line, col);
@@ -271,7 +268,8 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
         return true;
     }
     if (val.isInstance() && val.className() == annotation) return true;
-    if (val.isNull()) return true;
+    // M7 fix: null 不再隐式匹配所有类型注解，仅匹配 "null" 类型
+    if (val.isNull() && annotation == "null") return true;
     return false;
 }
 
@@ -554,29 +552,38 @@ Value Interpreter::visitBinaryOp(BinaryOp& node) {
     case BinOpType::BIN_LT: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
+        // M4 fix: 支持字符串字典序比较
+        if (left.isString() && right.isString())
+            return Value(left.stringVal() < right.stringVal());
         if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值类型", node.line, node.column);
+            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
         return Value(left.toDouble() < right.toDouble());
     }
     case BinOpType::BIN_GT: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
+        if (left.isString() && right.isString())
+            return Value(left.stringVal() > right.stringVal());
         if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值类型", node.line, node.column);
+            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
         return Value(left.toDouble() > right.toDouble());
     }
     case BinOpType::BIN_LTE: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
+        if (left.isString() && right.isString())
+            return Value(left.stringVal() <= right.stringVal());
         if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值类型", node.line, node.column);
+            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
         return Value(left.toDouble() <= right.toDouble());
     }
     case BinOpType::BIN_GTE: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
+        if (left.isString() && right.isString())
+            return Value(left.stringVal() >= right.stringVal());
         if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值类型", node.line, node.column);
+            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
         return Value(left.toDouble() >= right.toDouble());
     }
     case BinOpType::BIN_ADD:
@@ -1339,18 +1346,36 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
         return it->second;
     }
 
-    // 字符串索引访问：返回单字符字符串
+    // 字符串索引访问：返回单字符字符串（M6 fix: 基于 UTF-8 码位而非字节）
     if (obj.isString()) {
         if (!idx.isInt()) {
             runtimeError("字符串索引必须是整数", node.line, node.column);
         }
         int64_t i = idx.intVal();
         const std::string& s = obj.stringVal();
-        if (i < 0 || static_cast<size_t>(i) >= s.size()) {
-            runtimeError("字符串索引越界: " + std::to_string(i) + ", 有效范围 [0, "
-                         + std::to_string(s.size()) + ")", node.line, node.column);
+        // 计算 UTF-8 字符数
+        size_t charCount = 0;
+        size_t bytePos = 0;
+        size_t targetBytePos = 0;
+        size_t targetByteLen = 0;
+        bool found = false;
+        while (bytePos < s.size()) {
+            unsigned char c = static_cast<unsigned char>(s[bytePos]);
+            size_t charLen = (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                             ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+            if (static_cast<size_t>(i) == charCount) {
+                targetBytePos = bytePos;
+                targetByteLen = charLen;
+                found = true;
+            }
+            bytePos += charLen;
+            charCount++;
         }
-        return Value(std::string(1, s[static_cast<size_t>(i)]));
+        if (i < 0 || !found) {
+            runtimeError("字符串索引越界: " + std::to_string(i) + ", 有效范围 [0, "
+                         + std::to_string(charCount) + ")", node.line, node.column);
+        }
+        return Value(s.substr(targetBytePos, targetByteLen));
     }
 
     runtimeError("该类型不支持索引访问", node.line, node.column);
@@ -1594,7 +1619,16 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         }
 
         if (node.methodName == "len") {
-            return Value(static_cast<int64_t>(obj.stringVal().size()));
+            // M6 fix: 按 UTF-8 码位计数而非字节数
+            const std::string& s = obj.stringVal();
+            size_t count = 0;
+            for (size_t i = 0; i < s.size(); ) {
+                unsigned char c = static_cast<unsigned char>(s[i]);
+                i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                     ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+                count++;
+            }
+            return Value(static_cast<int64_t>(count));
         }
         if (node.methodName == "upper") {
             std::string s = obj.stringVal();

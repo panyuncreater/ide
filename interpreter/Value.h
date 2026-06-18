@@ -8,6 +8,7 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <cmath>
 
 // 前向声明 Environment（避免循环依赖）
 class Environment;
@@ -410,8 +411,25 @@ public:
 
     /// 相等比较
     bool equals(const Value& other) const {
-        // int 和 float 之间可以比较
+        // int 和 float 之间可以比较（M3 fix: 避免大整数精度丢失）
         if (isNumber() && other.isNumber() && getType() != other.getType()) {
+            if (isInt() && other.isFloat()) {
+                double d = other.floatVal();
+                // double 不是整数值、或超出 int64_t 范围、或 NaN → 不可能相等
+                if (std::isnan(d) || std::isinf(d)) return false;
+                double intPart;
+                if (std::modf(d, &intPart) != 0.0) return false;  // 有小数部分
+                if (d < static_cast<double>(INT64_MIN) || d > static_cast<double>(INT64_MAX)) return false;
+                return intVal() == static_cast<int64_t>(d);
+            }
+            if (isFloat() && other.isInt()) {
+                double d = floatVal();
+                if (std::isnan(d) || std::isinf(d)) return false;
+                double intPart;
+                if (std::modf(d, &intPart) != 0.0) return false;
+                if (d < static_cast<double>(INT64_MIN) || d > static_cast<double>(INT64_MAX)) return false;
+                return static_cast<int64_t>(d) == other.intVal();
+            }
             return toDouble() == other.toDouble();
         }
         if (getType() != other.getType()) {
