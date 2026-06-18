@@ -244,58 +244,72 @@ public:
     }
 
     /// 获取操作码对应的指令长度（字节数）
+    /// P5 fix: 用 constexpr 数组查表替代 switch，每条指令 O(1) 访问
     static size_t instructionSize(OpCode op) {
-        switch (op) {
-        case OpCode::OP_CONSTANT:
-        case OpCode::OP_INT:
-        case OpCode::OP_FLOAT:
-        case OpCode::OP_STRING:
-        case OpCode::OP_DEFINE_VAR:
-        case OpCode::OP_GET_VAR:
-        case OpCode::OP_SET_VAR:
-        case OpCode::OP_DELETE_VAR:
-        case OpCode::OP_JUMP:
-        case OpCode::OP_JUMP_IF_FALSE:
-        case OpCode::OP_LOOP:
-        case OpCode::OP_MEMBER_GET:
-        case OpCode::OP_SUPER_MEMBER_GET:
-        case OpCode::OP_MEMBER_SET:
-        case OpCode::OP_INDEX_SET_VAR:
-        case OpCode::OP_INIT_FIELD:
-            return 3;
-        case OpCode::OP_DEFINE_CLASS:
-            return 5;  // opcode(1B) + nameIdx(2B) + superNameIdx(2B)
-        case OpCode::OP_INDEX_SET_LOCAL:
-            return 2;
-        case OpCode::OP_CALL:
-        case OpCode::OP_CLOSURE:
-        case OpCode::OP_CLASS_NEW:
-            return 4;
-        case OpCode::OP_BUILD_ARRAY:
-        case OpCode::OP_BUILD_DICT:
-        case OpCode::OP_GET_LOCAL:
-        case OpCode::OP_SET_LOCAL:
-        case OpCode::OP_DUP_N:
-        case OpCode::OP_CALL_EXPR:
-            return 2;
-        case OpCode::OP_MEMBER_SET_VAR:
-            return 5;
-        case OpCode::OP_MEMBER_SET_LOCAL:
-            return 4;
-        case OpCode::OP_METHOD_CALL:
-        case OpCode::OP_SUPER_CALL:
-            return 7;  // opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B)
-        case OpCode::OP_WRITEBACK_MEMBER_VAR:
-            return 5;  // opcode(1B) + varIdx(2B) + fieldIdx(2B)
-        case OpCode::OP_WRITEBACK_MEMBER_LOCAL:
-            return 4;  // opcode(1B) + slot(1B) + fieldIdx(2B)
-        case OpCode::OP_WRITEBACK_INDEX_VAR:
-            return 3;  // opcode(1B) + varIdx(2B)
-        case OpCode::OP_WRITEBACK_INDEX_LOCAL:
-            return 2;  // opcode(1B) + slot(1B)
-        default:
-            return 1;
-        }
+        static constexpr uint8_t sizes[] = {
+            /*  0 OP_CONSTANT            */ 3,
+            /*  1 OP_INT                 */ 3,
+            /*  2 OP_FLOAT               */ 3,
+            /*  3 OP_STRING              */ 3,
+            /*  4 OP_NULL                */ 1,
+            /*  5 OP_TRUE                */ 1,
+            /*  6 OP_FALSE               */ 1,
+            /*  7 OP_ADD                 */ 1,
+            /*  8 OP_SUBTRACT            */ 1,
+            /*  9 OP_MULTIPLY            */ 1,
+            /* 10 OP_DIVIDE              */ 1,
+            /* 11 OP_MODULO              */ 1,
+            /* 12 OP_NEGATE              */ 1,
+            /* 13 OP_NOT                 */ 1,
+            /* 14 OP_EQUAL               */ 1,
+            /* 15 OP_NOT_EQUAL           */ 1,
+            /* 16 OP_LESS                */ 1,
+            /* 17 OP_GREATER             */ 1,
+            /* 18 OP_LESS_EQUAL          */ 1,
+            /* 19 OP_GREATER_EQUAL       */ 1,
+            /* 20 OP_AND                 */ 1,
+            /* 21 OP_OR                  */ 1,
+            /* 22 OP_PRINT               */ 1,
+            /* 23 OP_POP                 */ 1,
+            /* 24 OP_DEFINE_VAR          */ 3,
+            /* 25 OP_GET_VAR             */ 3,
+            /* 26 OP_SET_VAR             */ 3,
+            /* 27 OP_DELETE_VAR          */ 3,
+            /* 28 OP_JUMP                */ 3,
+            /* 29 OP_JUMP_IF_FALSE       */ 3,
+            /* 30 OP_LOOP                */ 3,
+            /* 31 OP_RETURN              */ 1,
+            /* 32 OP_CALL                */ 4,
+            /* 33 OP_CALL_EXPR           */ 2,
+            /* 34 OP_BUILD_ARRAY         */ 2,
+            /* 35 OP_BUILD_DICT          */ 2,
+            /* 36 OP_INDEX_GET           */ 1,
+            /* 37 OP_INDEX_SET           */ 1,
+            /* 38 OP_INDEX_SET_VAR       */ 3,
+            /* 39 OP_INDEX_SET_LOCAL     */ 2,
+            /* 40 OP_MEMBER_GET          */ 3,
+            /* 41 OP_MEMBER_SET          */ 3,
+            /* 42 OP_MEMBER_SET_VAR      */ 5,
+            /* 43 OP_MEMBER_SET_LOCAL    */ 4,
+            /* 44 OP_METHOD_CALL         */ 7,
+            /* 45 OP_DUP                 */ 1,
+            /* 46 OP_DUP_N               */ 2,
+            /* 47 OP_CLOSURE             */ 4,
+            /* 48 OP_GET_LOCAL           */ 2,
+            /* 49 OP_SET_LOCAL           */ 2,
+            /* 50 OP_CLASS_NEW           */ 4,
+            /* 51 OP_INIT_FIELD          */ 3,
+            /* 52 OP_DEFINE_CLASS        */ 5,
+            /* 53 OP_WRITEBACK_MEMBER_VAR   */ 5,
+            /* 54 OP_WRITEBACK_MEMBER_LOCAL */ 4,
+            /* 55 OP_WRITEBACK_INDEX_VAR    */ 3,
+            /* 56 OP_WRITEBACK_INDEX_LOCAL  */ 2,
+            /* 57 OP_SUPER_CALL             */ 7,
+            /* 58 OP_SUPER_MEMBER_GET       */ 3,
+        };
+        auto idx = static_cast<uint8_t>(op);
+        if (idx < sizeof(sizes)) return sizes[idx];
+        return 1;  // 安全兜底
     }
 
     /// 反汇编：输出字节码文本

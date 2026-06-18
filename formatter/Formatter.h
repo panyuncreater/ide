@@ -104,17 +104,25 @@ public:
 private:
     FormatOptions options_;
     int currentIndent_ = 0;      // 当前缩进级别
+    int formatDepth_ = 0;        // D5 fix: 格式化递归深度计数器
+    static constexpr int MAX_FORMAT_DEPTH = 256;  // D5 fix: 最大嵌套深度
     std::vector<Token> comments_; // F1 fix: 注释 token 列表
     size_t commentIndex_ = 0;    // 当前注释游标
 
-    /// 生成缩进字符串
+    // P3 fix: 缓存频繁生成的小字符串，避免重复分配（mutable 因为 indent() 是 const）
+    mutable std::string indentCache_;     // 当前缩进字符串缓存
+    mutable int cachedIndentLevel_ = -1; // 缓存对应的缩进级别
+    std::string commaCache_;     // 逗号分隔符缓存
+    bool commaCacheValid_ = false;
+
+    /// 生成缩进字符串（P3: 带缓存）
     std::string indent() const;
 
     /// 生成二元运算符（根据 spaceAroundOperators 选项）
     std::string binOp(const std::string& op) const;
 
-    /// 生成逗号分隔符（根据 spaceAfterComma 选项）
-    std::string comma() const;
+    /// 生成逗号分隔符（P3: 带缓存）
+    std::string comma();
 
     /// 生成开括号（根据 braceStyle 选项）
     std::string openBrace() const;

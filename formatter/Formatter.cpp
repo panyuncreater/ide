@@ -20,10 +20,14 @@ void Formatter::setComments(const std::vector<Token>& tokens) {
 
 void Formatter::setIndentSize(int size) {
     options_.indentSize = size;
+    cachedIndentLevel_ = -1;  // P3: 使缩进缓存失效
 }
 
 void Formatter::setOptions(const FormatOptions& options) {
     options_ = options;
+    // P3: 选项变更时使缓存失效
+    cachedIndentLevel_ = -1;
+    commaCacheValid_ = false;
 }
 
 const FormatOptions& Formatter::getOptions() const {
@@ -31,10 +35,16 @@ const FormatOptions& Formatter::getOptions() const {
 }
 
 std::string Formatter::indent() const {
-    if (options_.useTabs) {
-        return std::string(currentIndent_, '\t');
+    // P3 fix: 缓存缩进字符串，仅在级别变化时重建
+    if (cachedIndentLevel_ != currentIndent_) {
+        cachedIndentLevel_ = currentIndent_;
+        if (options_.useTabs) {
+            indentCache_ = std::string(currentIndent_, '\t');
+        } else {
+            indentCache_ = std::string(currentIndent_ * options_.indentSize, ' ');
+        }
     }
-    return std::string(currentIndent_ * options_.indentSize, ' ');
+    return indentCache_;
 }
 
 std::string Formatter::binOp(const std::string& op) const {
@@ -44,8 +54,13 @@ std::string Formatter::binOp(const std::string& op) const {
     return op;
 }
 
-std::string Formatter::comma() const {
-    return options_.spaceAfterComma ? ", " : ",";
+std::string Formatter::comma() {
+    // P3 fix: 缓存逗号分隔符
+    if (!commaCacheValid_) {
+        commaCache_ = options_.spaceAfterComma ? ", " : ",";
+        commaCacheValid_ = true;
+    }
+    return commaCache_;
 }
 
 std::string Formatter::openBrace() const {
@@ -57,6 +72,7 @@ std::string Formatter::openBrace() const {
 
 std::string Formatter::format(Block& program) {
     currentIndent_ = 0;
+    formatDepth_ = 0;  // D5 fix: 重置递归深度计数器
     return formatBlock(program);
 }
 
@@ -78,6 +94,11 @@ static bool isSelfTerminating(ASTNode* node) {
 
 std::string Formatter::formatNode(ASTNode* node) {
     if (!node) return "null";
+
+    // D5 fix: 递归深度保护，防止极端嵌套 AST 导致栈溢出
+    if (formatDepth_ >= MAX_FORMAT_DEPTH) return "/* 嵌套过深 */";
+    formatDepth_++;
+    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{formatDepth_};
 
     switch (node->nodeType) {
     case NodeType::NODE_BINARY_OP:     return formatBinaryOp(*static_cast<BinaryOp*>(node));
@@ -248,7 +269,7 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
         result += indent() + formatNode(node.thenBranch.get()) + "\n";
         currentIndent_--;
     } else {
-        result += indent() + formatNode(node.thenBranch.get()) + (options_.semicolons ? ";\n" : "\n");
+        result += indent() + formatNode(node.thenBranch.get()) + ";\n";
     }
     currentIndent_--;
     result += indent() + "}";
@@ -272,7 +293,7 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
         } else {
             result += " else" + openBrace() + "\n";
             currentIndent_++;
-            result += indent() + formatNode(node.elseBranch.get()) + (options_.semicolons ? ";\n" : "\n");
+            result += indent() + formatNode(node.elseBranch.get()) + ";\n";
             currentIndent_--;
             result += indent() + "}";
         }
@@ -292,7 +313,7 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
         result += indent() + formatNode(node.body.get()) + "\n";
         currentIndent_--;
     } else {
-        result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
+        result += indent() + formatNode(node.body.get()) + ";\n";
     }
     currentIndent_--;
     result += indent() + "}";
@@ -316,7 +337,7 @@ std::string Formatter::formatForStmt(ForStmt& node) {
         result += indent() + formatNode(node.body.get()) + "\n";
         currentIndent_--;
     } else {
-        result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
+        result += indent() + formatNode(node.body.get()) + ";\n";
     }
     currentIndent_--;
     result += indent() + "}";
@@ -346,7 +367,7 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
         result += indent() + formatNode(node.body.get()) + "\n";
         currentIndent_--;
     } else {
-        result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
+        result += indent() + formatNode(node.body.get()) + ";\n";
     }
     currentIndent_--;
     result += indent() + "}";
@@ -388,6 +409,8 @@ std::string Formatter::formatPrintStmt(PrintStmt& node) {
 
 std::string Formatter::formatBlock(Block& node) {
     std::string result;
+    // P3 fix: 预估输出大小，避免反复 realloc（每条语句平均约 40 字符）
+    result.reserve(node.statements.size() * 40);
     for (size_t i = 0; i < node.statements.size(); ++i) {
         ASTNode* stmt = node.statements[i].get();
 
@@ -411,7 +434,7 @@ std::string Formatter::formatBlock(Block& node) {
         if (isSelfTerminating(stmt)) {
             stmtText = indent() + formatNode(stmt);
         } else {
-            stmtText = indent() + formatNode(stmt) + (options_.semicolons ? ";" : "");
+            stmtText = indent() + formatNode(stmt) + ";";
         }
 
         // F1+ fix: 同行行内注释追加到语句末尾
@@ -487,7 +510,7 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
         if (isSelfTerminating(member.get())) {
             result += indent() + formatNode(member.get()) + "\n";
         } else {
-            result += indent() + formatNode(member.get()) + (options_.semicolons ? ";\n" : "\n");
+            result += indent() + formatNode(member.get()) + ";\n";
         }
     }
     currentIndent_--;

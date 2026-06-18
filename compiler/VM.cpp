@@ -1238,23 +1238,24 @@ VMResult VM::executeOneInstruction() {
                 return runtimeError("数组没有方法 " + methodName);
             }
 
-            // 写回变异后的对象
+            // 写回变异后的对象（P7 fix: 使用 std::move 避免二次深拷贝）
             if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                globals_[chunk.constants[receiverVarIdx].stringVal()] = mutableObj;
+                globals_[chunk.constants[receiverVarIdx].stringVal()] = std::move(mutableObj);
             } else if (receiverLocalSlotByte != 0xFF) {
                 size_t bp = currentFrame().basePointer;
-                if (bp + receiverLocalSlotByte < stack_.size()) {
-                    stack_[bp + receiverLocalSlotByte] = mutableObj;
-                }
+                // P7 fix: 先拷贝到字段（需要完整副本），再 move 到栈槽
                 if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
                     VMCallFrame& curFrame = currentFrame();
                     if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
                         const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                        stack_[bp].fields()[fn] = mutableObj;
+                        stack_[bp].fields()[fn] = mutableObj;  // 拷贝（move 前）
                     }
                 }
+                if (bp + receiverLocalSlotByte < stack_.size()) {
+                    stack_[bp + receiverLocalSlotByte] = std::move(mutableObj);  // move 在后
+                }
             } else {
-                lastMutatedReceiver_ = mutableObj;
+                lastMutatedReceiver_ = std::move(mutableObj);
             }
             push(result);
             notifyStep(ip, op);
@@ -1316,23 +1317,24 @@ VMResult VM::executeOneInstruction() {
                 return runtimeError("字典没有方法 " + methodName);
             }
 
-            // 写回
+            // 写回（P7 fix: 使用 std::move 避免二次深拷贝）
             if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                globals_[chunk.constants[receiverVarIdx].stringVal()] = mutableObj;
+                globals_[chunk.constants[receiverVarIdx].stringVal()] = std::move(mutableObj);
             } else if (receiverLocalSlotByte != 0xFF) {
                 size_t bp = currentFrame().basePointer;
-                if (bp + receiverLocalSlotByte < stack_.size()) {
-                    stack_[bp + receiverLocalSlotByte] = mutableObj;
-                }
+                // P7 fix: 先拷贝到字段（需要完整副本），再 move 到栈槽
                 if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
                     VMCallFrame& curFrame = currentFrame();
                     if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
                         const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                        stack_[bp].fields()[fn] = mutableObj;
+                        stack_[bp].fields()[fn] = mutableObj;  // 拷贝（move 前）
                     }
                 }
+                if (bp + receiverLocalSlotByte < stack_.size()) {
+                    stack_[bp + receiverLocalSlotByte] = std::move(mutableObj);  // move 在后
+                }
             } else {
-                lastMutatedReceiver_ = mutableObj;
+                lastMutatedReceiver_ = std::move(mutableObj);
             }
             push(result);
             notifyStep(ip, op);

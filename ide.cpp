@@ -519,6 +519,9 @@ void Ide::onDebug() {
     debugger_->reset();
     debugger_->stepIn();
 
+    // D1 fix: 保存 REPL 状态（调试的 execute() 会重置全局环境/类注册表，与 onRun 一致）
+    interpreter_.saveReplState();
+
     try {
         interpreter_.execute(*astRoot_);
         outputPanel_->appendOutput("--- 程序执行结束 ---");
@@ -540,6 +543,7 @@ void Ide::onDebug() {
     setRunningState(false);
     replPanel_->setInputEnabled(true);  // H7 fix: 恢复 REPL 输入
     interpreter_.setDebugMode(false);
+    interpreter_.restoreReplState();  // D1 fix: 恢复 REPL 状态
     codeEditor_->clearCurrentLine();
     debugger_->reset();
 }
@@ -637,11 +641,7 @@ void Ide::onFormat() {
     if (!astRoot_) return;
 
     // 格式化：行号会变化，需清除断点并保存光标位置
-    if (!debugger_->getBreakpoints().isEmpty()) {
-        outputPanel_->appendOutput(QString("[格式化] 断点已清除（行号变化，断点不再有效）"));
-    }
-    codeEditor_->setBreakpoints(QSet<int>());
-    debugger_->setBreakpoints(QSet<int>());
+    bool hadBreakpoints = !debugger_->getBreakpoints().isEmpty();
 
     QTextCursor savedCursor = codeEditor_->textCursor();
     int scrollPos = codeEditor_->verticalScrollBar()->value();
@@ -653,8 +653,18 @@ void Ide::onFormat() {
         codeEditor_->setPlainText(QString::fromStdString(formatted));
     } catch (const std::exception& e) {
         outputPanel_->appendError(QString("[格式化] 格式化异常: %1").arg(e.what()));
-        return;
+        return;  // D4 fix: 格式化失败时断点保留不清除
     }
+
+    // D4 fix: 格式化成功后才清除断点
+    if (hadBreakpoints) {
+        outputPanel_->appendOutput(QString("[格式化] 断点已清除（行号变化，断点不再有效）"));
+    }
+    codeEditor_->setBreakpoints(QSet<int>());
+    debugger_->setBreakpoints(QSet<int>());
+
+    // D3 fix: 刷新 AST 查看器（格式化后 astRoot_ 已更新）
+    astViewer_->setAst(astRoot_.get());
 
     // 恢复光标位置和滚动位置（尽可能）
     if (savedCursor.position() <= codeEditor_->document()->characterCount()) {
@@ -695,6 +705,9 @@ void Ide::onShowBytecode() {
     }
 
     if (!astRoot_) return;
+
+    // D3 fix: 刷新 AST 查看器
+    astViewer_->setAst(astRoot_.get());
 
     // 编译
     try {
@@ -868,6 +881,7 @@ void Ide::populateBytecodeList() {
         return;
     }
 
+    bytecodeList_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
     int currentRow = 0;
 
     // ---- 主 chunk ----
@@ -908,6 +922,7 @@ void Ide::populateBytecodeList() {
         }
         chunkRowMap_.push_back({kv.first, startRow, currentRow - startRow});
     }
+    bytecodeList_->setUpdatesEnabled(true);  // P6 fix: 恢复重绘
 }
 
 void Ide::runLexer(const std::string& source) {
@@ -915,6 +930,7 @@ void Ide::runLexer(const std::string& source) {
 
     // 更新 Token 列表
     tokenTable_->setRowCount(static_cast<int>(lastTokens_.size()));
+    tokenTable_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
     for (int i = 0; i < static_cast<int>(lastTokens_.size()); ++i) {
         const Token& tok = lastTokens_[i];
         tokenTable_->setItem(i, 0, new QTableWidgetItem(
@@ -935,6 +951,7 @@ void Ide::runLexer(const std::string& source) {
             }
         }
     }
+    tokenTable_->setUpdatesEnabled(true);   // P6 fix: 恢复重绘
     tokenTable_->resizeColumnsToContents();
 
     // 使用统一诊断显示词法错误

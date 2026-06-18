@@ -21,7 +21,7 @@ public:
     /// 构造函数
     explicit Environment(std::shared_ptr<Environment> parentEnv = nullptr)
         : parent(parentEnv) {
-        // 注意：不在这里递增 sGeneration
+        // 注意：不在这里递增 generation_
         // 创建子作用域不改变已有变量的深度位置，缓存仍有效
     }
 
@@ -31,7 +31,7 @@ public:
         if (!inserted) {
             it->second = val;   // 覆盖已有变量，不递增世代
         } else {
-            ++sGeneration;      // 新变量插入才需要使缓存失效
+            ++generation_;      // P2 fix: per-environment generation
         }
     }
 
@@ -41,7 +41,7 @@ public:
         if (!inserted) {
             it->second = std::move(val);   // 覆盖已有变量
         } else {
-            ++sGeneration;
+            ++generation_;
         }
     }
 
@@ -55,9 +55,10 @@ public:
         }
         // 慢路径：沿作用域链查找，使用深度缓存加速
         if (parent) {
-            // 检查深度缓存是否有效
+            // 检查深度缓存是否有效（P2: 使用目标环境的 per-instance generation）
             auto cacheIt = depthCache_.find(name);
-            if (cacheIt != depthCache_.end() && cacheIt->second.generation == sGeneration) {
+            if (cacheIt != depthCache_.end() && cacheIt->second.target &&
+                cacheIt->second.generation == cacheIt->second.target->generation_) {
                 // 缓存命中：直接跳到目标深度
                 return getAtDepth(name, cacheIt->second.depth);
             }
@@ -65,7 +66,9 @@ public:
             int depth = 0;
             const Value* result = parent->getWithDepth(name, depth);
             if (depth >= 0) {
-                depthCache_[name] = {depth + 1, sGeneration};  // +1: depth相对于parent，缓存相对于this
+                // 找到变量所在的目标环境
+                Environment* target = findTargetEnv(name);
+                depthCache_[name] = {depth + 1, target ? target->generation_ : generation_, target};
             }
             return result;
         }
@@ -85,7 +88,8 @@ public:
         if (parent) {
             // 检查深度缓存是否有效
             auto cacheIt = depthCache_.find(name);
-            if (cacheIt != depthCache_.end() && cacheIt->second.generation == sGeneration) {
+            if (cacheIt != depthCache_.end() && cacheIt->second.target &&
+                cacheIt->second.generation == cacheIt->second.target->generation_) {
                 // 缓存命中：直接跳到目标深度
                 return setAtDepth(name, val, cacheIt->second.depth);
             }
@@ -93,13 +97,40 @@ public:
             int depth = 0;
             const Value* found = parent->getWithDepth(name, depth);
             if (found) {
-                depthCache_[name] = {depth + 1, sGeneration};
+                // 找到变量所在的目标环境
+                Environment* target = findTargetEnv(name);
+                depthCache_[name] = {depth + 1, target ? target->generation_ : generation_, target};
                 // 直接通过深度路径写入，避免重复遍历
                 return setAtDepth(name, val, depth + 1);
             }
             return false;
         }
         return false;   // 变量不存在
+    }
+
+    /// P1 fix: move 重载 — 避免 writeBack 中 std::move 静默退化为深拷贝
+    bool set(const std::string& name, Value&& val) {
+        auto it = variables.find(name);
+        if (it != variables.end()) {
+            it->second = std::move(val);
+            return true;
+        }
+        if (parent) {
+            auto cacheIt = depthCache_.find(name);
+            if (cacheIt != depthCache_.end() && cacheIt->second.target &&
+                cacheIt->second.generation == cacheIt->second.target->generation_) {
+                return setAtDepth(name, std::move(val), cacheIt->second.depth);
+            }
+            int depth = 0;
+            const Value* found = parent->getWithDepth(name, depth);
+            if (found) {
+                Environment* target = findTargetEnv(name);
+                depthCache_[name] = {depth + 1, target ? target->generation_ : generation_, target};
+                return setAtDepth(name, std::move(val), depth + 1);
+            }
+            return false;
+        }
+        return false;
     }
 
     /// 检查变量是否存在（沿作用域链）
@@ -160,12 +191,28 @@ private:
     /// 深度缓存条目：记录变量在作用域链中的深度位置
     struct DepthEntry {
         int depth;          // 变量所在作用域相对于当前作用域的深度（1=直接父级）
-        uint32_t generation; // 缓存写入时的世代号
+        uint32_t generation; // 目标环境的世代号（P2: per-environment）
+        Environment* target; // P2: 变量所在的目标环境指针（用于验证 generation）
     };
     mutable std::unordered_map<std::string, DepthEntry> depthCache_;
 
-    /// 全局世代计数器：任何环境变化都会递增，使缓存自动失效
-    inline static uint32_t sGeneration = 0;
+    /// P2 fix: per-environment 世代计数器（替代全局 sGeneration）
+    /// 仅在当前环境 define 新变量时递增，不影响其他环境的缓存
+    uint32_t generation_ = 0;
+
+    /// P2: 沿作用域链查找变量所在的目标环境（返回原始指针）
+    Environment* findTargetEnv(const std::string& name) {
+        auto it = variables.find(name);
+        if (it != variables.end()) return this;
+        if (parent) return parent->findTargetEnv(name);
+        return nullptr;
+    }
+    const Environment* findTargetEnv(const std::string& name) const {
+        auto it = variables.find(name);
+        if (it != variables.end()) return this;
+        if (parent) return parent->findTargetEnv(name);
+        return nullptr;
+    }
 
     /// 在指定深度查找变量（depth=1 表示直接父级）— 返回指针，nullptr=未找到
     const Value* getAtDepth(const std::string& name, int depth) const {
@@ -196,6 +243,22 @@ private:
         }
         // 缓存过期（变量被遮蔽），回退到正常遍历
         return parent ? parent->set(name, val) : false;
+    }
+
+    /// P1 fix: setAtDepth move 重载
+    bool setAtDepth(const std::string& name, Value&& val, int depth) {
+        Environment* env = this;
+        for (int i = 0; i < depth && env; ++i) {
+            env = env->parent.get();
+        }
+        if (env) {
+            auto it = env->variables.find(name);
+            if (it != env->variables.end()) {
+                it->second = std::move(val);
+                return true;
+            }
+        }
+        return parent ? parent->set(name, std::move(val)) : false;
     }
 
     /// 带深度记录的查找（返回时 depth 为变量所在深度，-1 表示未找到）— 返回指针
