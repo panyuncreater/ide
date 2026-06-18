@@ -47,8 +47,10 @@ void DebugController::checkBreak(ASTNode* node) {
 
     switch (mode_) {
     case StepMode::MODE_RUN:
-        // 仅检查断点（先用最小行号快速排除）
-        if (node->line >= minBreakpointLine_ && breakpoints_.contains(node->line)) {
+        // C3 fix: 跳过与上次相同行号的子表达式，防止 resume 后同行子节点重复触发断点。
+        // lastSeenLine_ 会在执行到其他行时自动更新，使循环下一迭代能重新命中断点。
+        if (node->line != lastSeenLine_ &&
+            node->line >= minBreakpointLine_ && breakpoints_.contains(node->line)) {
             // 检查是否为条件断点
             auto infoIt = breakpointInfos_.find(node->line);
             if (infoIt != breakpointInfos_.end() && infoIt->isConditional()) {
@@ -93,6 +95,11 @@ void DebugController::checkBreak(ASTNode* node) {
             shouldPause = true;
         }
         break;
+    }
+
+    // C3 fix: 始终记录最后看到的行号，使执行移到其他行后 lastSeenLine_ 自动更新
+    if (node->line > 0) {
+        lastSeenLine_ = node->line;
     }
 
     if (shouldPause && node->line > 0) {
@@ -328,6 +335,7 @@ void DebugController::reset() {
     stepOutDepth_ = 0;
     lastPausedLine_ = -1;
     lastPausedDepth_ = -1;
+    lastSeenLine_ = -1;
 
     // 重置所有断点命中计数（保留断点和条件）
     for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {

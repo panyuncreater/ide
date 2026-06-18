@@ -103,11 +103,12 @@ void Compiler::compileStatement(ASTNode* node) {
 
     compileNode(node);
 
-    // 表达式语句（如 foo(); 或 obj.method();）会产生一个栈上返回值但不会被消费，
+    // 表达式语句（如 foo(); 或 a = 5;）会产生一个栈上返回值但不会被消费，
     // 若不弹出会导致栈无限累积（main chunk 无外层帧清理，循环内泄漏必然触发栈溢出）。
-    // 赋值类节点（Assignment/IndexAssign/MemberAssign）以及声明/控制流节点已自行平衡栈，
-    // 此处只对纯表达式补发 OP_POP，避免双重弹出。
+    // 声明/控制流节点（VarDecl/IfStmt/WhileStmt 等）已自行平衡栈，
+    // IndexAssign/MemberAssign 也已自行平衡，此处对产生栈值的表达式补发 OP_POP。
     switch (node->nodeType) {
+    case NodeType::NODE_ASSIGNMENT:
     case NodeType::NODE_FUN_CALL:
     case NodeType::NODE_METHOD_CALL:
     case NodeType::NODE_BINARY_OP:
@@ -283,11 +284,14 @@ void Compiler::compileVarDecl(VarDecl& node) {
 void Compiler::compileAssignment(Assignment& node) {
     compileNode(node.value.get());
 
+    // C2 fix: 赋值作为表达式应产生值。先 DUP 保留一份在栈上，
+    // SET 操作消费原始值后，DUP 的副本留在栈顶供外层表达式使用。
+    chunk_.writeOp(OpCode::OP_DUP, node.line);
+
     if (inFunction_) {
         auto it = currentLocals_.find(node.name);
         if (it != currentLocals_.end()) {
-            // OP_SET_LOCAL 用 peek(0) 不消费栈顶值，与 OP_SET_VAR 的 pop() 语义不一致。
-            // 这里补发 OP_POP 显式清理被赋值的值，避免函数内循环赋值累积导致栈溢出。
+            // OP_SET_LOCAL 用 peek(0) 不消费栈顶值，配合 OP_POP 清理 DUP 的副本
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
             chunk_.writeOp(OpCode::OP_POP, node.line);
@@ -301,11 +305,13 @@ void Compiler::compileAssignment(Assignment& node) {
                     return;
                 }
             }
+            // OP_SET_VAR pop 消费栈顶值（DUP 的副本留在栈上）
             uint16_t nameIdx = identifierIndex(node.name);
             chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
         }
     } else {
+        // OP_SET_VAR pop 消费栈顶值（DUP 的副本留在栈上）
         uint16_t nameIdx = identifierIndex(node.name);
         chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
         chunk_.writeShort(nameIdx, node.line);
@@ -447,7 +453,7 @@ void Compiler::compileForStmt(ForStmt& node) {
         // 编译循环体
         compileStatement(node.body.get());
 
-        // 编译更新（OP_SET_VAR 不再 push 值，无需额外 OP_POP）
+        // 编译更新表达式（compileStatement 会自动 POP 赋值留下的栈值）
         if (node.update) {
             compileStatement(node.update.get());
         }
@@ -486,7 +492,7 @@ void Compiler::compileForStmt(ForStmt& node) {
 
         compileStatement(node.body.get());
 
-        // 编译更新（OP_SET_VAR 不再 push 值，无需额外 OP_POP）
+        // 编译更新表达式（compileStatement 会自动 POP 赋值留下的栈值）
         if (node.update) {
             compileStatement(node.update.get());
         }

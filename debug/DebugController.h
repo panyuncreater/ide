@@ -133,6 +133,7 @@ private:
     int stepOutDepth_ = 0;      // stepOut 时的调用深度
     int lastPausedLine_ = -1;   // 上次暂停的行号（避免同行重复暂停）
     int lastPausedDepth_ = -1;  // 上次暂停时的调用深度（递归函数同行不同深度需重新暂停）
+    int lastSeenLine_ = -1;     // C3 fix: checkBreak 上次看到的行号，用于 MODE_RUN 跳过同行子表达式
     int minBreakpointLine_ = -1; // 最小断点行号（快速跳过不可能命中的节点）
     std::atomic<bool> running_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> stopped_{false};      // #9 fix: atomic for cross-thread access

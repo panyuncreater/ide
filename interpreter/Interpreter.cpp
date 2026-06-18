@@ -894,6 +894,14 @@ Value Interpreter::visitFunCall(FunCall& node) {
             evaluate(funDecl->body.get());
         } catch (ReturnException& e) {
             result = std::move(e.returnValue);
+        } catch (...) {
+            // C1 fix: 运行时错误时恢复解释器状态，再重抛
+            // 与具名函数调用路径 (visitFunCall 的 catch(...)) 保持一致
+            currentEnv_ = prevEnv;
+            if (!callStack_.empty()) callStack_.pop_back();
+            recursionDepth_--;
+            currentFunctionReturnType_ = savedReturnType;
+            throw;
         }
 
         currentEnv_ = prevEnv;
