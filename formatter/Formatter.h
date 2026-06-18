@@ -138,7 +138,7 @@ private:
     std::string formatFunCall(FunCall& node);
     std::string formatReturnStmt(ReturnStmt& node);
     std::string formatPrintStmt(PrintStmt& node);
-    std::string formatBlock(Block& node, bool isTopLevel = false);
+    std::string formatBlock(Block& node);
 
     // 新增节点格式化
     std::string formatArrayLiteral(ArrayLiteral& node);

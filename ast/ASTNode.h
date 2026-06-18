@@ -416,6 +416,7 @@ public:
 class Block : public ASTNode {
 public:
     std::vector<std::unique_ptr<ASTNode>> statements;
+    int closingBraceLine = 0;  // L18 fix: '}' 所在行号，用于格式化器刷新块尾部注释
 
     Block(std::vector<std::unique_ptr<ASTNode>> stmts, int ln = 0, int col = 0)
         : ASTNode(ln, col), statements(std::move(stmts)) { nodeType = NodeType::NODE_BLOCK; }

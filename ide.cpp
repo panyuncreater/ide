@@ -637,6 +637,9 @@ void Ide::onFormat() {
     if (!astRoot_) return;
 
     // 格式化：行号会变化，需清除断点并保存光标位置
+    if (!debugger_->getBreakpoints().isEmpty()) {
+        outputPanel_->appendOutput(QString("[格式化] 断点已清除（行号变化，断点不再有效）"));
+    }
     codeEditor_->setBreakpoints(QSet<int>());
     debugger_->setBreakpoints(QSet<int>());
 
@@ -662,6 +665,9 @@ void Ide::onFormat() {
 
 void Ide::onShowBytecode() {
     std::string source = codeEditor_->toPlainText().toStdString();
+
+    // L15 fix: 清除编辑器中残留的错误行标记
+    codeEditor_->clearErrorLines();
 
     // 词法分析
     try {

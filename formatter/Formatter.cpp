@@ -57,7 +57,7 @@ std::string Formatter::openBrace() const {
 
 std::string Formatter::format(Block& program) {
     currentIndent_ = 0;
-    return formatBlock(program, true);
+    return formatBlock(program);
 }
 
 /// 判断节点类型是否是自终止的复合语句（以 } 结尾，不需要额外 ;）
@@ -242,7 +242,11 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
     if (auto* block = dynamic_cast<Block*>(node.thenBranch.get())) {
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.thenBranch.get())) {
+        // L17 fix: 裸复合语句（if/while/for）作为 thenBranch 时，需要额外缩进层级
+        // 注意：else-if 链不受影响，因为 else 分支中的 IfStmt 走下面的 "else " + formatIfStmt 路径
+        currentIndent_++;
         result += indent() + formatNode(node.thenBranch.get()) + "\n";
+        currentIndent_--;
     } else {
         result += indent() + formatNode(node.thenBranch.get()) + (options_.semicolons ? ";\n" : "\n");
     }
@@ -283,7 +287,10 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
+        // L17 fix: 裸复合语句需要额外缩进层级
+        currentIndent_++;
         result += indent() + formatNode(node.body.get()) + "\n";
+        currentIndent_--;
     } else {
         result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
@@ -304,7 +311,10 @@ std::string Formatter::formatForStmt(ForStmt& node) {
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
+        // L17 fix: 裸复合语句需要额外缩进层级
+        currentIndent_++;
         result += indent() + formatNode(node.body.get()) + "\n";
+        currentIndent_--;
     } else {
         result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
@@ -331,7 +341,10 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
+        // L17 fix: 裸复合语句需要额外缩进层级
+        currentIndent_++;
         result += indent() + formatNode(node.body.get()) + "\n";
+        currentIndent_--;
     } else {
         result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
@@ -373,7 +386,7 @@ std::string Formatter::formatPrintStmt(PrintStmt& node) {
     return result;
 }
 
-std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
+std::string Formatter::formatBlock(Block& node) {
     std::string result;
     for (size_t i = 0; i < node.statements.size(); ++i) {
         ASTNode* stmt = node.statements[i].get();
@@ -412,8 +425,17 @@ std::string Formatter::formatBlock(Block& node, bool isTopLevel) {
         result += stmtText + trailing + "\n";
     }
 
-    // F1 fix: 顶层块末尾输出剩余注释
-    if (isTopLevel) {
+    // F1 fix: 块末尾输出尾部注释
+    // L18 fix: 对所有块都刷新尾部注释，不仅仅是顶层块
+    if (node.closingBraceLine > 0) {
+        // 非顶层块：输出 closingBraceLine 之前的注释
+        while (commentIndex_ < comments_.size() &&
+               comments_[commentIndex_].line < node.closingBraceLine) {
+            result += indent() + comments_[commentIndex_].lexeme + "\n";
+            commentIndex_++;
+        }
+    } else {
+        // 顶层块（closingBraceLine == 0）：输出所有剩余注释
         while (commentIndex_ < comments_.size()) {
             result += indent() + comments_[commentIndex_].lexeme + "\n";
             commentIndex_++;

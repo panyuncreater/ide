@@ -210,9 +210,12 @@ void CodeEditor::setErrorRanges(const std::vector<ErrorRange>& ranges) {
             int startPos = block.position();
             // EU-1 fix: 从列位置开始，精确标记错误 token
             int col = (r.column > 0) ? r.column - 1 : 0;
-            int len = (r.length > 0) ? r.length : block.length() - col - 1;
-            if (len <= 0) len = block.length() - col - 1;
+            int blockTextLen = block.length() - 1;  // block.length() includes the newline
+            if (col >= blockTextLen) col = (blockTextLen > 0) ? blockTextLen - 1 : 0;
+            int len = (r.length > 0) ? r.length : blockTextLen - col;
+            if (len <= 0) len = blockTextLen - col;
             if (len <= 0) len = 1;
+            if (col + len > blockTextLen) len = blockTextLen - col;
             sel.cursor = QTextCursor(document());
             sel.cursor.setPosition(startPos + col);
             sel.cursor.setPosition(startPos + col + len, QTextCursor::KeepAnchor);

@@ -265,7 +265,7 @@ void Lexer::number() {
 
     // 浮点数：小数部分（仅当 '.' 后紧跟数字时才视为浮点，避免 123.foo 被误分词）
     if (!isFloat && !isAtEnd() && peek() == '.' &&
-        (current_ + 1 < source_.size()) && std::isdigit(static_cast<unsigned char>(source_[current_ + 1]))) {
+        (static_cast<size_t>(current_) + 1 < source_.size()) && std::isdigit(static_cast<unsigned char>(source_[current_ + 1]))) {
         isFloat = true;
         advance(); // 消耗 '.'
         while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
@@ -297,6 +297,8 @@ void Lexer::number() {
             addToken(TokenType::TK_FLOAT_LIT, std::move(text), Value(val));
         } catch (const std::out_of_range&) {
             errorToken("浮点数溢出: " + text);
+        } catch (const std::invalid_argument&) {
+            errorToken("浮点数格式错误: " + text);
         }
     } else {
         try {
@@ -304,6 +306,8 @@ void Lexer::number() {
             addToken(TokenType::TK_INT_LIT, std::move(text), Value(static_cast<int64_t>(val)));
         } catch (const std::out_of_range&) {
             errorToken("整数溢出: " + text);
+        } catch (const std::invalid_argument&) {
+            errorToken("整数格式错误: " + text);
         }
     }
 }

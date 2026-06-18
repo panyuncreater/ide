@@ -636,7 +636,9 @@ std::unique_ptr<Block> Parser::block() {
 
     consume(TokenType::TK_RBRACE, "期望 '}'");
 
-    return std::make_unique<Block>(std::move(stmts), lbrace.line, lbrace.column);
+    auto blk = std::make_unique<Block>(std::move(stmts), lbrace.line, lbrace.column);
+    blk->closingBraceLine = previous().line;  // L18 fix: 记录 '}' 行号
+    return blk;
 }
 
 std::unique_ptr<ASTNode> Parser::expressionStatement() {
@@ -1007,7 +1009,6 @@ void Parser::synchronize() {
         case TokenType::TK_STRING_TYPE:
         case TokenType::TK_DICT:
         case TokenType::TK_ARRAY:
-        case TokenType::TK_NULL:
             return;
         default:
             break;

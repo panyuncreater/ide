@@ -25,6 +25,7 @@ CompileResult Compiler::compile(Block& program) {
     writebackCounter_ = 0;  // #24: reset for clean variable names across compilations
     peakLocals_ = 0;
     blockDepth_ = 0;
+    blockSaveCounter_ = 0;  // L11 fix: 编译间重置块保存计数器
     topLevelGlobals_.clear();
 
     // 编译所有顶层语句（不调用 compileBlock，确保 blockDepth_=0 为真正顶层）
@@ -649,13 +650,12 @@ void Compiler::compileBlock(Block& node) {
 
         // 收集块作用域中将要声明的变量名，以便在编译前保存被遮蔽的全局变量
         std::vector<std::pair<std::string, std::string>> shadowedSaves; // (blockVarName, tempSaveName)
-        static int blockSaveCounter = 0;
         for (auto& stmt : node.statements) {
             if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
                 VarDecl* vd = static_cast<VarDecl*>(stmt.get());
                 if (topLevelGlobals_.find(vd->name) != topLevelGlobals_.end()) {
                     std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_"
-                        + std::to_string(blockSaveCounter++) + "_" + vd->name;
+                        + std::to_string(blockSaveCounter_++) + "_" + vd->name;
                     shadowedSaves.push_back({vd->name, saveName});
                     // 将当前全局值保存到临时变量
                     uint16_t origIdx = identifierIndex(vd->name);

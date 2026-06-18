@@ -433,7 +433,6 @@ public:
             return toDouble() == other.toDouble();
         }
         if (getType() != other.getType()) {
-            if (isNull() && other.isNull()) return true;
             return false;
         }
         switch (getType()) {
