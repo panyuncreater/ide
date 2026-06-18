@@ -51,7 +51,7 @@ private:
     };
     struct ClosureData {
         std::string name;
-        std::shared_ptr<Environment> env;
+        std::weak_ptr<Environment> env;  // V4 fix: weak_ptr 打破闭包→环境→闭包的循环引用
         std::vector<std::string> params;
         std::unordered_map<std::string, Value> capturedVars;
         FunDecl* body = nullptr;       // 函数体 AST 节点（自包含，不依赖 funRegistry_）
@@ -260,11 +260,8 @@ public:
         return std::get<8>(data_)->name;
     }
 
-    std::shared_ptr<Environment>& closureEnv() {
-        return std::get<8>(data_)->env;
-    }
-    const std::shared_ptr<Environment>& closureEnv() const {
-        return std::get<8>(data_)->env;
+    std::shared_ptr<Environment> closureEnv() const {
+        return std::get<8>(data_)->env.lock();
     }
 
     std::vector<std::string>& closureParams() {

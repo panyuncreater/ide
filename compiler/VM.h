@@ -158,8 +158,12 @@ private:
         if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
+        // V2 fix: 支持字符串字典序比较，与解释器 M4 fix 一致
+        if (left.isString() && right.isString()) {
+            return pushCompareResult(cmp(left, right), ip, opcode);
+        }
         if (!left.isNumber() || !right.isNumber())
-            return runtimeError("比较运算需要数值类型");
+            return runtimeError("比较运算需要数值或字符串类型");
         return pushCompareResult(cmp(left, right), ip, opcode);
     }
 

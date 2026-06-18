@@ -218,11 +218,9 @@ VMResult VM::numericOp(int opType) {
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() * rightRef.toDouble());
         break;
     case OP_DIV_INT:
+        // V1 fix: 整数除法也返回 float（真除法），与解释器 M5 fix 和 Python 3 一致
         if (rightRef.toDouble() == 0.0) return runtimeError("除零错误");
-        if (leftRef.isInt() && rightRef.isInt()) {
-            if (leftRef.intVal() == INT64_MIN && rightRef.intVal() == -1) return runtimeError("整数除法溢出");
-            stack_[stack_.size() - 2] = Value(leftRef.intVal() / rightRef.intVal());
-        } else stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
+        stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
         break;
     case OP_MOD_INT:
         if (!leftRef.isInt() || !rightRef.isInt()) return runtimeError("取模运算仅支持整数");
@@ -528,16 +526,28 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_LESS:
-        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() < r.toDouble(); }, ip, op);
+        return orderedCompare([](const Value& l, const Value& r) {
+            if (l.isString() && r.isString()) return l.stringVal() < r.stringVal();
+            return l.toDouble() < r.toDouble();
+        }, ip, op);
 
     case OpCode::OP_GREATER:
-        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() > r.toDouble(); }, ip, op);
+        return orderedCompare([](const Value& l, const Value& r) {
+            if (l.isString() && r.isString()) return l.stringVal() > r.stringVal();
+            return l.toDouble() > r.toDouble();
+        }, ip, op);
 
     case OpCode::OP_LESS_EQUAL:
-        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() <= r.toDouble(); }, ip, op);
+        return orderedCompare([](const Value& l, const Value& r) {
+            if (l.isString() && r.isString()) return l.stringVal() <= r.stringVal();
+            return l.toDouble() <= r.toDouble();
+        }, ip, op);
 
     case OpCode::OP_GREATER_EQUAL:
-        return orderedCompare([](const Value& l, const Value& r) { return l.toDouble() >= r.toDouble(); }, ip, op);
+        return orderedCompare([](const Value& l, const Value& r) {
+            if (l.isString() && r.isString()) return l.stringVal() >= r.stringVal();
+            return l.toDouble() >= r.toDouble();
+        }, ip, op);
 
     case OpCode::OP_AND:
     case OpCode::OP_OR:
@@ -943,14 +953,31 @@ VMResult VM::executeOneInstruction() {
         } else if (obj.isArray()) {
             return runtimeError("数组索引需要整数类型");
         } else if (obj.isString() && idx.isInt()) {
+            // V3 fix: 基于 UTF-8 码位索引，与解释器 M6 fix 一致
             int64_t i = idx.intVal();
             const std::string& s = obj.stringVal();
-            if (i >= 0 && static_cast<size_t>(i) < s.size()) {
-                push(Value(std::string(1, s[static_cast<size_t>(i)])));
-            } else {
-                return runtimeError("字符串索引越界: " + std::to_string(i)
-                           + ", 有效范围 [0, " + std::to_string(s.size()) + ")");
+            size_t charCount = 0;
+            size_t bytePos = 0;
+            size_t targetBytePos = 0;
+            size_t targetByteLen = 0;
+            bool found = false;
+            while (bytePos < s.size()) {
+                unsigned char c = static_cast<unsigned char>(s[bytePos]);
+                size_t charLen = (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+                if (static_cast<size_t>(i) == charCount) {
+                    targetBytePos = bytePos;
+                    targetByteLen = charLen;
+                    found = true;
+                }
+                bytePos += charLen;
+                charCount++;
             }
+            if (i < 0 || !found) {
+                return runtimeError("字符串索引越界: " + std::to_string(i)
+                           + ", 有效范围 [0, " + std::to_string(charCount) + ")");
+            }
+            push(Value(s.substr(targetBytePos, targetByteLen)));
         } else if (obj.isString()) {
             return runtimeError("字符串索引需要整数类型");
         } else {
@@ -1321,7 +1348,16 @@ VMResult VM::executeOneInstruction() {
             Value result = Value::nullValue();
 
             if (method == BuiltinMethod::STR_LEN || method == BuiltinMethod::ARR_LEN || method == BuiltinMethod::DICT_LEN) {
-                result = Value(static_cast<int64_t>(obj.stringVal().size()));
+                // V3 fix: 字符串按 UTF-8 码位计数，与解释器 M6 fix 一致
+                const std::string& s = obj.stringVal();
+                size_t count = 0;
+                for (size_t i = 0; i < s.size(); ) {
+                    unsigned char c = static_cast<unsigned char>(s[i]);
+                    i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                         ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+                    count++;
+                }
+                result = Value(static_cast<int64_t>(count));
             } else if (method == BuiltinMethod::STR_UPPER) {
                 std::string s = obj.stringVal();
                 for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
