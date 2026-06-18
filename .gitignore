@@ -20,3 +20,8 @@ test_vm_advanced
 /ide/x64/Release/qt/qmake
 /ide/x64/Release/qt
 /ide/x64/Release
+/test_harness/x64/Debug
+/test_harness/build.bat
+/test_harness/debug
+/test_harness
+/test_harness.vcxproj
