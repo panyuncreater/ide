@@ -1520,6 +1520,23 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             parts.push_back(Value(str.substr(start)));
             return Value(std::move(parts));
         }
+        if (node.methodName == "replace") {
+            // str.replace(from, to) — 将所有 from 替换为 to
+            if (argValues.size() < 2) {
+                runtimeError("replace() 需要 2 个参数", node.line, node.column);
+                return Value::nullValue();
+            }
+            std::string from = argValues[0].toString();
+            std::string to = argValues[1].toString();
+            std::string result = obj.stringVal();
+            if (from.empty()) return Value(std::move(result));
+            size_t pos = 0;
+            while ((pos = result.find(from, pos)) != std::string::npos) {
+                result.replace(pos, from.length(), to);
+                pos += to.length();
+            }
+            return Value(std::move(result));
+        }
         if (node.methodName == "trim") {
             std::string s = obj.stringVal();
             size_t l = s.find_first_not_of(" \t\r\n");

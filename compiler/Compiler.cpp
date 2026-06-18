@@ -23,9 +23,14 @@ CompileResult Compiler::compile(Block& program) {
     classFieldNames_.clear();
     outerLocals_.clear();
     writebackCounter_ = 0;  // #24: reset for clean variable names across compilations
+    peakLocals_ = 0;
+    blockDepth_ = 0;
+    topLevelGlobals_.clear();
 
-    // 编译所有顶层语句
-    compileBlock(program);
+    // 编译所有顶层语句（不调用 compileBlock，确保 blockDepth_=0 为真正顶层）
+    for (auto& stmt : program.statements) {
+        compileStatement(stmt.get());
+    }
 
     // 末尾添加 null + RETURN（main chunk 必须有返回值，否则 OP_RETURN 弹栈下溢）
     chunk_.writeOp(OpCode::OP_NULL, 0);
@@ -255,6 +260,7 @@ void Compiler::compileVarDecl(VarDecl& node) {
             // 新局部变量，分配槽位
             int slot = static_cast<int>(currentLocals_.size());
             currentLocals_[node.name] = slot;
+            peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(slot), node.line);
         } else {
@@ -268,6 +274,9 @@ void Compiler::compileVarDecl(VarDecl& node) {
         uint16_t nameIdx = identifierIndex(node.name);
         chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
         chunk_.writeShort(nameIdx, node.line);
+        if (blockDepth_ == 0) {
+            topLevelGlobals_.insert(node.name);
+        }
     }
 }
 
@@ -476,6 +485,7 @@ void Compiler::compileFunDecl(FunDecl& node) {
     std::unordered_map<std::string, int> savedLocals = std::move(currentLocals_);
     bool savedInFunction = inFunction_;
     std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
+    int savedPeakLocals = peakLocals_;
 
     // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
     if (inFunction_) {
@@ -495,6 +505,7 @@ void Compiler::compileFunDecl(FunDecl& node) {
     for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
         currentLocals_[node.params[i]] = i;
     }
+    peakLocals_ = static_cast<int>(node.params.size());
 
     // 编译函数体
     if (node.body) {
@@ -506,7 +517,8 @@ void Compiler::compileFunDecl(FunDecl& node) {
     chunk_.writeOp(OpCode::OP_RETURN, node.line);
 
     // 记录局部变量总槽位数（含参数和函数体内 var 声明），供 VM 预分配栈空间
-    chunk_.localCount = static_cast<int>(currentLocals_.size());
+    // 使用 peakLocals_（峰值）而非 currentLocals_.size()，因为块作用域退出的变量仍占栈槽
+    chunk_.localCount = peakLocals_;
 
     // 存储函数 chunk
     functionChunks_[node.name] = std::move(chunk_);
@@ -517,6 +529,7 @@ void Compiler::compileFunDecl(FunDecl& node) {
     currentLocals_ = std::move(savedLocals);
     inFunction_ = savedInFunction;
     outerLocals_ = std::move(savedOuterLocals);
+    peakLocals_ = savedPeakLocals;
 
     // 在主 chunk 中 emit OP_CLOSURE
     uint16_t nameIdx = identifierIndex(node.name);
@@ -565,11 +578,81 @@ void Compiler::compilePrintStmt(PrintStmt& node) {
 }
 
 void Compiler::compileBlock(Block& node) {
-    auto savedLocals = currentLocals_;  // 保存外层作用域
-    for (auto& stmt : node.statements) {
-        compileStatement(stmt.get());
+    auto savedLocals = currentLocals_;
+
+    if (!inFunction_) {
+        blockDepth_++;
+
+        // 收集块作用域中将要声明的变量名，以便在编译前保存被遮蔽的全局变量
+        std::vector<std::pair<std::string, std::string>> shadowedSaves; // (blockVarName, tempSaveName)
+        static int blockSaveCounter = 0;
+        for (auto& stmt : node.statements) {
+            if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
+                VarDecl* vd = static_cast<VarDecl*>(stmt.get());
+                if (topLevelGlobals_.find(vd->name) != topLevelGlobals_.end()) {
+                    std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_"
+                        + std::to_string(blockSaveCounter++) + "_" + vd->name;
+                    shadowedSaves.push_back({vd->name, saveName});
+                    // 将当前全局值保存到临时变量
+                    uint16_t origIdx = identifierIndex(vd->name);
+                    uint16_t saveIdx = identifierIndex(saveName);
+                    chunk_.writeOp(OpCode::OP_GET_VAR, vd->line);
+                    chunk_.writeShort(origIdx, vd->line);
+                    chunk_.writeOp(OpCode::OP_DEFINE_VAR, vd->line);
+                    chunk_.writeShort(saveIdx, vd->line);
+                }
+            }
+        }
+
+        // 编译块体
+        for (auto& stmt : node.statements) {
+            compileStatement(stmt.get());
+        }
+
+        // 找出块作用域内新声明的变量
+        std::vector<std::string> blockVars;
+        for (auto& [name, slot] : currentLocals_) {
+            if (savedLocals.find(name) == savedLocals.end()) {
+                blockVars.push_back(name);
+            }
+        }
+
+        // 恢复外层作用域
+        currentLocals_ = savedLocals;
+        blockDepth_--;
+
+        // 清理块作用域变量并恢复被遮蔽的全局变量
+        for (auto& [varName, saveName] : shadowedSaves) {
+            // 从临时变量恢复全局值
+            uint16_t saveIdx = identifierIndex(saveName);
+            uint16_t origIdx = identifierIndex(varName);
+            chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+            chunk_.writeShort(saveIdx, node.line);
+            chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
+            chunk_.writeShort(origIdx, node.line);
+            // 删除临时保存变量
+            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+            chunk_.writeShort(saveIdx, node.line);
+        }
+        // 删除未遮蔽任何全局变量的块作用域变量
+        for (auto& name : blockVars) {
+            bool wasShadowed = false;
+            for (auto& [vn, sn] : shadowedSaves) {
+                if (vn == name) { wasShadowed = true; break; }
+            }
+            if (!wasShadowed) {
+                uint16_t nameIdx = identifierIndex(name);
+                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            }
+        }
+    } else {
+        // 函数内块作用域：局部变量使用栈槽，无需清理（VM 帧退出时自动释放）
+        for (auto& stmt : node.statements) {
+            compileStatement(stmt.get());
+        }
+        currentLocals_ = savedLocals;
     }
-    currentLocals_ = savedLocals;  // 恢复，块内变量不泄漏
 }
 
 // ---- 新增节点编译 ----
@@ -682,6 +765,7 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         std::unordered_map<std::string, int> savedLocals = std::move(currentLocals_);
         std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
         bool savedInFunction = inFunction_;
+        int savedPeakLocals = peakLocals_;
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
         chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
@@ -704,6 +788,7 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
             currentLocals_[funDecl->params[i]] = slot++;  // slot N+1..: 参数
         }
+        peakLocals_ = slot;
 
         // 记录字段声明顺序（含继承字段），供 VM OP_METHOD_CALL 按序推入
         chunk_.fieldOrder = allFieldNames;
@@ -716,7 +801,7 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         chunk_.writeOp(OpCode::OP_RETURN, funDecl->line);
 
         // 记录局部变量总槽位数（含 this/字段/参数和方法体内 var 声明），供 VM 预分配栈空间
-        chunk_.localCount = static_cast<int>(currentLocals_.size());
+        chunk_.localCount = peakLocals_;
 
         functionChunks_[methodKey] = std::move(chunk_);
 
@@ -725,6 +810,7 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         currentLocals_ = std::move(savedLocals);
         outerLocals_ = std::move(savedOuterLocals);
         inFunction_ = savedInFunction;
+        peakLocals_ = savedPeakLocals;
     }
 
     // 主 chunk 中：发射 OP_CLASS_NEW（0 参数构造，字段由 OP_INIT_FIELD 设置）

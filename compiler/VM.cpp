@@ -601,6 +601,16 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    case OpCode::OP_DELETE_VAR: {
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        const std::string& name = chunk.constants[idx].stringVal();
+        globals_.erase(name);
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
     case OpCode::OP_JUMP: {
         uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP");

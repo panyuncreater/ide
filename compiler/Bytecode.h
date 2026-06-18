@@ -43,6 +43,7 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_DEFINE_VAR,   // 定义变量（名称索引在常量池）
     OP_GET_VAR,      // 获取变量值
     OP_SET_VAR,      // 设置变量值
+    OP_DELETE_VAR,   // 删除变量（用于块作用域退出时清理全局变量）
 
     OP_JUMP,         // 无条件跳转
     OP_JUMP_IF_FALSE,// 条件为假跳转
@@ -115,6 +116,7 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_DEFINE_VAR:    return "OP_DEFINE_VAR";
     case OpCode::OP_GET_VAR:       return "OP_GET_VAR";
     case OpCode::OP_SET_VAR:       return "OP_SET_VAR";
+    case OpCode::OP_DELETE_VAR:    return "OP_DELETE_VAR";
     case OpCode::OP_JUMP:          return "OP_JUMP";
     case OpCode::OP_JUMP_IF_FALSE: return "OP_JUMP_IF_FALSE";
     case OpCode::OP_LOOP:          return "OP_LOOP";
@@ -249,6 +251,7 @@ public:
         case OpCode::OP_DEFINE_VAR:
         case OpCode::OP_GET_VAR:
         case OpCode::OP_SET_VAR:
+        case OpCode::OP_DELETE_VAR:
         case OpCode::OP_JUMP:
         case OpCode::OP_JUMP_IF_FALSE:
         case OpCode::OP_LOOP:
@@ -374,6 +377,12 @@ public:
         case OpCode::OP_SET_VAR: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
             str += "OP_SET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
+            offset += 3;
+            break;
+        }
+        case OpCode::OP_DELETE_VAR: {
+            uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_DELETE_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
             offset += 3;
             break;
         }
