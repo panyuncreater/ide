@@ -1655,15 +1655,6 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 auto* thisPtr = methodEnv->get("this");
                 Value updatedThis = thisPtr ? *thisPtr : Value::nullValue();
 
-                // 关键：将方法环境中的字段变量同步回 this 对象（直接查找局部变量，O(1)）
-                const auto& methodLocals = methodEnv->localVariables();
-                for (auto& fieldKV : updatedThis.fields()) {
-                    auto it = methodLocals.find(fieldKV.first);
-                    if (it != methodLocals.end()) {
-                        fieldKV.second = it->second;
-                    }
-                }
-
                 // 恢复环境
                 currentEnv_ = prevEnv;
                 callStack_.pop_back();
