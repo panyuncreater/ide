@@ -241,6 +241,8 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.thenBranch.get())) {
         result += formatBlock(*block);
+    } else if (isSelfTerminating(node.thenBranch.get())) {
+        result += indent() + formatNode(node.thenBranch.get()) + "\n";
     } else {
         result += indent() + formatNode(node.thenBranch.get()) + (options_.semicolons ? ";\n" : "\n");
     }
@@ -255,6 +257,12 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
             result += " else" + openBrace() + "\n";
             currentIndent_++;
             result += formatBlock(*block);
+            currentIndent_--;
+            result += indent() + "}";
+        } else if (isSelfTerminating(node.elseBranch.get())) {
+            result += " else" + openBrace() + "\n";
+            currentIndent_++;
+            result += indent() + formatNode(node.elseBranch.get()) + "\n";
             currentIndent_--;
             result += indent() + "}";
         } else {
@@ -274,6 +282,8 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
+    } else if (isSelfTerminating(node.body.get())) {
+        result += indent() + formatNode(node.body.get()) + "\n";
     } else {
         result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
@@ -293,6 +303,8 @@ std::string Formatter::formatForStmt(ForStmt& node) {
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
+    } else if (isSelfTerminating(node.body.get())) {
+        result += indent() + formatNode(node.body.get()) + "\n";
     } else {
         result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
@@ -318,6 +330,8 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
+    } else if (isSelfTerminating(node.body.get())) {
+        result += indent() + formatNode(node.body.get()) + "\n";
     } else {
         result += indent() + formatNode(node.body.get()) + (options_.semicolons ? ";\n" : "\n");
     }
