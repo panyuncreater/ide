@@ -214,11 +214,12 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
 // ---- 类辅助方法 ----
 
 FunDecl* Interpreter::findMethod(ClassInfo& cls, const std::string& methodName) {
-    // 使用非递归方式沿继承链查找，避免循环继承导致栈溢出
+    // 使用深度计数器代替 unordered_set，避免每次调用都堆分配
     ClassInfo* cur = &cls;
-    std::unordered_set<std::string> visited;
+    int depth = 0;
+    constexpr int MAX_INHERITANCE_DEPTH = 64;
     while (cur) {
-        if (!visited.insert(cur->name).second) return nullptr;  // 检测到循环
+        if (++depth > MAX_INHERITANCE_DEPTH) return nullptr;  // 循环继承或过深继承链
         auto it = cur->methods.find(methodName);
         if (it != cur->methods.end()) return it->second;
         if (!cur->superClassName.empty()) {
@@ -233,9 +234,10 @@ FunDecl* Interpreter::findMethod(ClassInfo& cls, const std::string& methodName) 
 
 Value Interpreter::findFieldDefault(ClassInfo& cls, const std::string& fieldName) {
     ClassInfo* cur = &cls;
-    std::unordered_set<std::string> visited;
+    int depth = 0;
+    constexpr int MAX_INHERITANCE_DEPTH = 64;
     while (cur) {
-        if (!visited.insert(cur->name).second) return Value::nullValue();  // 检测到循环
+        if (++depth > MAX_INHERITANCE_DEPTH) return Value::nullValue();  // 循环继承
         auto it = cur->fields.find(fieldName);
         if (it != cur->fields.end()) return it->second;
         if (!cur->superClassName.empty()) {
@@ -384,10 +386,10 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     }
 
     // 从内到外逐级写回
-    Value currentVal = modifiedObj;
+    Value currentVal = std::move(modifiedObj);  // #19: move而非copy
     for (int i = 0; i < n - 1; i++) {
         ASTNode* nd = chain[i];
-        Value parentVal = vals[i + 1]; // 拷贝，将在其上修改
+        Value parentVal = std::move(vals[i + 1]);  // #19: move避免深拷贝
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parentVal.isInstance()) {
@@ -409,11 +411,11 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
                 runtimeError("该类型不支持索引赋值", line, col);
             }
         }
-        currentVal = parentVal;
+        currentVal = std::move(parentVal);  // #19: move
     }
 
     // 写回最外层变量
-    currentEnv_->set(varRef->name, currentVal);
+    currentEnv_->set(varRef->name, std::move(currentVal));  // #19: move
     return val;
 }
 
@@ -486,10 +488,10 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
     }
 
     // 从内到外逐级写回（最内层使用 modifiedValue）
-    Value currentVal = modifiedValue;
+    Value currentVal = modifiedValue;  // const ref, 不能move
     for (int i = 0; i < n - 1; i++) {
         ASTNode* nd = chain[i];
-        Value parentVal = vals[i + 1];
+        Value parentVal = std::move(vals[i + 1]);  // #19: move避免深拷贝
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parentVal.isInstance()) {
@@ -515,10 +517,10 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
                 runtimeError("该类型不支持索引赋值", line, col);
             }
         }
-        currentVal = parentVal;
+        currentVal = std::move(parentVal);  // #19: move
     }
 
-    currentEnv_->set(varRef->name, currentVal);
+    currentEnv_->set(varRef->name, std::move(currentVal));  // #19: move
 }
 
 // ---- 16 个原有 visit 方法 ----

@@ -22,6 +22,7 @@ CompileResult Compiler::compile(Block& program) {
     inFunction_ = false;
     classFieldNames_.clear();
     outerLocals_.clear();
+    writebackCounter_ = 0;  // #24: reset for clean variable names across compilations
 
     // 编译所有顶层语句
     compileBlock(program);

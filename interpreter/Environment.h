@@ -89,7 +89,15 @@ public:
                 // 缓存命中：直接跳到目标深度
                 return setAtDepth(name, val, cacheIt->second.depth);
             }
-            return parent->set(name, val);
+            // 缓存未命中：正常遍历并记录深度，供后续 set 使用
+            int depth = 0;
+            const Value* found = parent->getWithDepth(name, depth);
+            if (found) {
+                depthCache_[name] = {depth + 1, sGeneration};
+                // 直接通过深度路径写入，避免重复遍历
+                return setAtDepth(name, val, depth + 1);
+            }
+            return false;
         }
         return false;   // 变量不存在
     }

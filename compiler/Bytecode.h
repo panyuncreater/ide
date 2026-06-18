@@ -572,4 +572,10 @@ public:
 struct CompileResult {
     BytecodeChunk mainChunk;
     std::unordered_map<std::string, BytecodeChunk> functionChunks;
+
+    CompileResult() = default;
+    CompileResult(CompileResult&&) noexcept = default;
+    CompileResult& operator=(CompileResult&&) noexcept = default;
+    CompileResult(const CompileResult&) = default;
+    CompileResult& operator=(const CompileResult&) = default;
 };
