@@ -51,6 +51,7 @@ Value Interpreter::executeRepl(Block& program) {
     // 不重置环境，保留已有变量/函数/类定义
     // 清除 funRegistry_ 中的 AST 裸指针（旧 AST 可能已被销毁，闭包自带 body 指针不受影响）
     funRegistry_.clear();
+    funRegistryGen_++;  // H5 fix: 使所有旧缓存的 resolvedDecl 指针失效，防止野指针访问
     // classRegistry_ 不清除 — 类定义需要跨 REPL 行保留（AST 由 replAsts_ 保持存活）
     // 确保当前环境回到全局
     currentEnv_ = globalEnv_;
@@ -678,11 +679,21 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 }
                 auto prevEnv = currentEnv_;
                 currentEnv_ = initEnv;
+
+                // H3 fix: 与 visitFunCall 类构造路径保持一致的状态管理
+                std::string savedReturnType = currentFunctionReturnType_;
+                currentFunctionReturnType_ = initMethod->returnType;
+                callStack_.emplace_back(cls.name + ".init", initEnv, node.line, recursionDepth_ + 1);
+                classContextStack_.push_back(cls.name);
+
                 // #8 fix: recursionDepth_ guard for auto-construction
                 recursionDepth_++;
                 if (recursionDepth_ >= 64) {
                     recursionDepth_--;
                     currentEnv_ = prevEnv;
+                    callStack_.pop_back();
+                    if (!classContextStack_.empty()) classContextStack_.pop_back();
+                    currentFunctionReturnType_ = savedReturnType;
                     runtimeError("递归深度超过限制 (64)", node.line, node.column);
                 }
                 struct RecursionGuard { int& d; ~RecursionGuard() { d--; } } guard{recursionDepth_};
@@ -691,8 +702,18 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 } catch (const ReturnException&) {
                 } catch (...) {
                     currentEnv_ = prevEnv;
+                    callStack_.pop_back();
+                    if (!classContextStack_.empty()) classContextStack_.pop_back();
+                    currentFunctionReturnType_ = savedReturnType;
                     throw;
                 }
+
+                // 恢复状态
+                currentEnv_ = prevEnv;
+                callStack_.pop_back();
+                if (!classContextStack_.empty()) classContextStack_.pop_back();
+                currentFunctionReturnType_ = savedReturnType;
+
                 auto* thisPtr = initEnv->get("this");
                 if (thisPtr) {
                     instance = *thisPtr;
@@ -705,7 +726,6 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                         fieldKV.second = it->second;
                     }
                 }
-                currentEnv_ = prevEnv;
             }
 
             initVal = instance;
@@ -1669,7 +1689,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 }
 
                 // #2 fix: 缓存closureEnv
-                auto cachedParentEnv = classIt->second.closureEnv;
+                // H4 fix: 对 super.method() 调用，使用方法实际定义所在类（searchClass）的环境，
+                // 而非实例所属类（classIt）的环境，确保继承链中跨作用域的变量绑定正确
+                auto cachedParentEnv = searchClass->closureEnv;
                 for (auto& arg : node.arguments) {
                     argValues.push_back(evaluate(arg.get()));
                 }

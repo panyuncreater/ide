@@ -413,8 +413,9 @@ void Ide::onDebug() {
 
     std::string source = codeEditor_->toPlainText().toStdString();
 
-    // 清空输出
+    // 清空输出和调试面板
     outputPanel_->clearAll();
+    debugPanel_->clearAll();  // H7 fix: 清空旧调试数据
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
@@ -509,6 +510,7 @@ void Ide::onDebug() {
 
     isRunning_ = true;
     setRunningState(true);
+    replPanel_->setInputEnabled(false);  // H7 fix: 调试期间禁用 REPL，防止嵌套事件循环中用户修改程序状态
 
     // 调试模式：启用 checkBreak
     interpreter_.setDebugMode(true);
@@ -536,6 +538,7 @@ void Ide::onDebug() {
 
     isRunning_ = false;
     setRunningState(false);
+    replPanel_->setInputEnabled(true);  // H7 fix: 恢复 REPL 输入
     interpreter_.setDebugMode(false);
     codeEditor_->clearCurrentLine();
     debugger_->reset();

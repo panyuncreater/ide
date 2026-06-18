@@ -90,8 +90,9 @@ void DebugController::checkBreak(ASTNode* node) {
         break;
 
     case StepMode::MODE_STEP_OUT:
-        // 只暂停比进入时更浅的调用深度
-        if (currentDepth_ < stepOutDepth_ && node->line != lastPausedLine_) {
+        // H6 fix: 仅检查调用深度，不使用 lastPausedLine_ 防护。
+        // 深度变浅即可确定已从函数返回，同行嵌套调用或递归函数也能正确暂停。
+        if (currentDepth_ < stepOutDepth_) {
             shouldPause = true;
         }
         break;

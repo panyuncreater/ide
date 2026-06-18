@@ -547,6 +547,20 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
             init = expression();
             consume(TokenType::TK_SEMICOLON, "期望 ';'");
         }
+    } else if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_IDENTIFIER)) {
+        // H2 fix: 类名类型注解声明，如 Point p = create();
+        int savePos = current_;
+        const Token& firstTok = advance();  // 类名
+        if (checkNext(TokenType::TK_LPAREN)) {
+            // ClassName funcName( — 函数声明不应出现在 for 初始化中，回溯当表达式处理
+            current_ = savePos;
+            init = expression();
+            consume(TokenType::TK_SEMICOLON, "期望 ';'");
+        } else {
+            std::string typeAnn = firstTok.lexeme;
+            init = typedVarDecl(typeAnn);
+            // typedVarDecl 已经消耗了分号
+        }
     } else if (!check(TokenType::TK_SEMICOLON)) {
         init = expression();
         consume(TokenType::TK_SEMICOLON, "期望 ';'");
