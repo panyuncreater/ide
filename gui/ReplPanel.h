@@ -35,6 +35,9 @@ public:
     /// 清空历史
     void clearHistory();
 
+    /// 启用/禁用输入（Run 期间禁用，防止与 worker 线程并发访问 Interpreter）
+    void setInputEnabled(bool enabled);
+
 private slots:
     /// 处理输入
     void onReturnPressed();

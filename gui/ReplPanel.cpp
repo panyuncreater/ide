@@ -79,6 +79,15 @@ void ReplPanel::clearHistory() {
     historyIndex_ = -1;
 }
 
+void ReplPanel::setInputEnabled(bool enabled) {
+    inputLine_->setEnabled(enabled);
+    if (enabled) {
+        inputLine_->setPlaceholderText(QString());
+    } else {
+        inputLine_->setPlaceholderText(QString::fromUtf8("\xe7\xa8\x8b\xe5\xba\x8f\xe8\xbf\x90\xe8\xa1\x8c\xe4\xb8\xad\xef\xbc\x8cREPL \xe5\xb7\xb2\xe6\x9a\x82\xe5\x81\x9c"));
+    }
+}
+
 void ReplPanel::onReturnPressed() {
     QString line = inputLine_->text();
     QString trimmedLine = line.trimmed();

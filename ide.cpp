@@ -363,6 +363,7 @@ void Ide::onRun() {
     isRunning_ = true;
     setRunningState(true);
     codeEditor_->setReadOnly(true);
+    replPanel_->setInputEnabled(false);
 
     // R2 fix: 保存 REPL 状态（Run 的 execute() 会重置全局环境/类注册表）
     interpreter_.saveReplState();
@@ -572,6 +573,7 @@ void Ide::onRunFinished() {
     isRunning_ = false;
     setRunningState(false);
     codeEditor_->clearCurrentLine();
+    replPanel_->setInputEnabled(true);
 
     // 安全删除 worker（QThread::finished 在所有 worker 信号之后到达）
     delete worker_;
@@ -717,6 +719,11 @@ void Ide::onVmStep() {
     if (result == VMResult::VM_RUNTIME_ERROR) {
         Diagnostic diag(DiagLevel::Error, vm_.getLastError(), vm_.getLastErrorLine(), 0, DiagSource::VM);
         outputPanel_->appendError(QString::fromStdString(diag.format()));
+        if (vm_.getLastErrorLine() > 0) {
+            QSet<int> errorLines;
+            errorLines.insert(vm_.getLastErrorLine());
+            codeEditor_->setErrorLines(errorLines);
+        }
         vmStackPanel_->clearAll();
         isVmInitialized_ = false;
         vmStepAction_->setEnabled(true);

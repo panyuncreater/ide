@@ -932,6 +932,17 @@ VMResult VM::executeOneInstruction() {
             }
         } else if (obj.isArray()) {
             return runtimeError("数组索引需要整数类型");
+        } else if (obj.isString() && idx.isInt()) {
+            int64_t i = idx.intVal();
+            const std::string& s = obj.stringVal();
+            if (i >= 0 && static_cast<size_t>(i) < s.size()) {
+                push(Value(std::string(1, s[static_cast<size_t>(i)])));
+            } else {
+                return runtimeError("字符串索引越界: " + std::to_string(i)
+                           + ", 有效范围 [0, " + std::to_string(s.size()) + ")");
+            }
+        } else if (obj.isString()) {
+            return runtimeError("字符串索引需要整数类型");
         } else {
             return runtimeError("该类型不支持索引访问");
         }

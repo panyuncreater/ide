@@ -349,7 +349,7 @@ public:
     std::vector<std::unique_ptr<ASTNode>> arguments;
 
     /// 缓存：首次调用解析后存储 FunDecl*，后续调用跳过查找
-    void* resolvedDecl = nullptr;
+    FunDecl* resolvedDecl = nullptr;
     bool isResolved = false;
     int resolvedGen_ = -1;  // M7: 缓存时的 funRegistry 代数，不匹配则失效
 

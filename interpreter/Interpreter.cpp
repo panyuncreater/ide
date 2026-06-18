@@ -1025,7 +1025,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
     // M7 fix: 检查代数是否匹配，函数重定义后缓存失效
     if (node.isResolved && node.resolvedDecl && node.resolvedGen_ == funRegistryGen_) {
-        funDecl = static_cast<FunDecl*>(node.resolvedDecl);
+        funDecl = node.resolvedDecl;
         // 单次 get() 获取闭包环境（指针返回，nullptr=非闭包或未定义）
         const Value* calleePtr = currentEnv_->get(node.name);
         if (calleePtr && calleePtr->isClosure()) {
@@ -1253,6 +1253,20 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
             return Value::nullValue();
         }
         return it->second;
+    }
+
+    // 字符串索引访问：返回单字符字符串
+    if (obj.isString()) {
+        if (!idx.isInt()) {
+            runtimeError("字符串索引必须是整数", node.line, node.column);
+        }
+        int64_t i = idx.intVal();
+        const std::string& s = obj.stringVal();
+        if (i < 0 || static_cast<size_t>(i) >= s.size()) {
+            runtimeError("字符串索引越界: " + std::to_string(i) + ", 有效范围 [0, "
+                         + std::to_string(s.size()) + ")", node.line, node.column);
+        }
+        return Value(std::string(1, s[static_cast<size_t>(i)]));
     }
 
     runtimeError("该类型不支持索引访问", node.line, node.column);
