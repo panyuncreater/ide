@@ -975,6 +975,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
             auto prevEnv = currentEnv_;
             currentEnv_ = initEnv;
 
+            // 压入类上下文（super 解析用）
+            classContextStack_.push_back(cls->name);
+
             try {
                 evaluate(initMethod->body.get());
             } catch (const ReturnException&) {
@@ -983,6 +986,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
                 // B1 fix: RAII guard 自动恢复 recursionDepth_，此处只需恢复其他状态
                 currentEnv_ = prevEnv;
                 callStack_.pop_back();
+                if (!classContextStack_.empty()) classContextStack_.pop_back();
                 currentFunctionReturnType_ = savedReturnType;
                 throw;
             }
@@ -1005,6 +1009,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
             // 恢复环境
             currentEnv_ = prevEnv;
             callStack_.pop_back();
+            if (!classContextStack_.empty()) classContextStack_.pop_back();
             currentFunctionReturnType_ = savedReturnType;
         }
 
@@ -1555,12 +1560,20 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             bool isSuperCall = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
             ClassInfo* searchClass = &classIt->second;
             if (isSuperCall) {
-                if (classIt->second.superClassName.empty()) {
-                    runtimeError("类 " + classIt->second.name + " 没有父类，不能使用 super", node.line, node.column);
+                // 使用 classContextStack_ 确定当前执行类的父类（修复多层 super.init() 递归）
+                std::string currentClassName;
+                if (!classContextStack_.empty()) {
+                    currentClassName = classContextStack_.back();
+                } else {
+                    currentClassName = obj.className();
                 }
-                auto superIt = classRegistry_.find(classIt->second.superClassName);
+                auto ctxIt = classRegistry_.find(currentClassName);
+                if (ctxIt == classRegistry_.end() || ctxIt->second.superClassName.empty()) {
+                    runtimeError("类 " + currentClassName + " 没有父类，不能使用 super", node.line, node.column);
+                }
+                auto superIt = classRegistry_.find(ctxIt->second.superClassName);
                 if (superIt == classRegistry_.end()) {
-                    runtimeError("未定义的父类: " + classIt->second.superClassName, node.line, node.column);
+                    runtimeError("未定义的父类: " + ctxIt->second.superClassName, node.line, node.column);
                 }
                 searchClass = &superIt->second;
             }
@@ -1622,6 +1635,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                     // 切换环境
                     currentEnv_ = methodEnv;
 
+                    // 压入类上下文（super 解析用）
+                    classContextStack_.push_back(searchClass->name);
+
                     result = evaluate(method->body.get());
                 } catch (ReturnException& e) {
                     result = std::move(e.returnValue);
@@ -1630,6 +1646,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                     currentEnv_ = prevEnv;
                     if (!callStack_.empty()) callStack_.pop_back();
                     recursionDepth_--;
+                    if (!classContextStack_.empty()) classContextStack_.pop_back();
                     currentFunctionReturnType_ = savedReturnType;
                     throw;
                 }
@@ -1651,10 +1668,17 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 currentEnv_ = prevEnv;
                 callStack_.pop_back();
                 recursionDepth_--;
+                if (!classContextStack_.empty()) classContextStack_.pop_back();
                 currentFunctionReturnType_ = savedReturnType;
 
                 // 更新实例（使用 writeBack 支持嵌套左值，如 arr[i].method()）
                 writeBack(node.object.get(), updatedThis, node.line, node.column);
+
+                // super.method() 调用后，需将更新后的 this 写回调用者的环境
+                // （writeBack 无法处理 SuperExpr，因为它不是 VarRef）
+                if (isSuperCall) {
+                    currentEnv_->set("this", updatedThis);
+                }
 
                 return result;
             }

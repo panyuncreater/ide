@@ -74,8 +74,8 @@ void DebugController::checkBreak(ASTNode* node) {
         break;
 
     case StepMode::MODE_STEP_IN:
-        // 只在行号变化时暂停（跳过同行内的子表达式节点）
-        if (node->line != lastPausedLine_) {
+        // 行号变化时暂停（跳过同行子表达式），或调用深度变化时暂停（递归函数同行不同深度）
+        if (node->line != lastPausedLine_ || currentDepth_ != lastPausedDepth_) {
             shouldPause = true;
         }
         break;
@@ -97,6 +97,7 @@ void DebugController::checkBreak(ASTNode* node) {
 
     if (shouldPause && node->line > 0) {
         lastPausedLine_ = node->line;  // 记录暂停行号
+        lastPausedDepth_ = currentDepth_;  // 记录暂停深度
 
         // 发出暂停信号（更新 UI 高亮行）
         emit pausedAt(node->line);
@@ -326,6 +327,7 @@ void DebugController::reset() {
     stepOverDepth_ = 0;
     stepOutDepth_ = 0;
     lastPausedLine_ = -1;
+    lastPausedDepth_ = -1;
 
     // 重置所有断点命中计数（保留断点和条件）
     for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {

@@ -160,6 +160,7 @@ private:
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
     int funRegistryGen_ = 0;  // M7: 注册表代数，函数重定义时递增使 FunCall 缓存失效
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
+    std::vector<std::string> classContextStack_; // super 解析用：当前执行的方法所属类名栈
     std::string currentFunctionReturnType_;         // 当前函数的返回类型
     std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
 
