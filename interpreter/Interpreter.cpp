@@ -680,10 +680,10 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 currentEnv_ = initEnv;
                 // #8 fix: recursionDepth_ guard for auto-construction
                 recursionDepth_++;
-                if (recursionDepth_ >= 256) {
+                if (recursionDepth_ >= 64) {
                     recursionDepth_--;
                     currentEnv_ = prevEnv;
-                    runtimeError("递归深度超过限制 (256)", node.line, node.column);
+                    runtimeError("递归深度超过限制 (64)", node.line, node.column);
                 }
                 struct RecursionGuard { int& d; ~RecursionGuard() { d--; } } guard{recursionDepth_};
                 try {
@@ -910,9 +910,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
         initMethod = findMethod(*cls, "init");
 
         recursionDepth_++;
-        if (recursionDepth_ >= 256) {
+        if (recursionDepth_ >= 64) {
             recursionDepth_--;
-            runtimeError("递归深度超过限制 (256)", node.line, node.column);
+            runtimeError("递归深度超过限制 (64)", node.line, node.column);
         }
 
         // B1 fix: RAII guard 确保任何异常路径都能恢复 recursionDepth_
@@ -1083,9 +1083,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
     try {
         // 递归深度检查（在try内，throw时catch负责恢复）
         recursionDepth_++;
-        if (recursionDepth_ >= 256) {
+        if (recursionDepth_ >= 64) {
             recursionDepth_--;
-            runtimeError("递归深度超过限制 (256)", node.line, node.column);
+            runtimeError("递归深度超过限制 (64)", node.line, node.column);
         }
 
         // 参数类型检查
@@ -1116,8 +1116,8 @@ Value Interpreter::visitFunCall(FunCall& node) {
         // 切换环境
         currentEnv_ = funEnv;
 
-        // 执行函数体
-        result = evaluate(funDecl->body.get());
+        // 执行函数体（不求值返回值：无 return 语句时函数应返回 null）
+        evaluate(funDecl->body.get());
     } catch (ReturnException& e) {
         result = std::move(e.returnValue);
     } catch (...) {
@@ -1576,9 +1576,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                 try {
                     // 递归深度检查（在try内，throw时catch负责恢复）
                     recursionDepth_++;
-                    if (recursionDepth_ >= 256) {
+                    if (recursionDepth_ >= 64) {
                         recursionDepth_--;
-                        runtimeError("递归深度超过限制 (256)", node.line, node.column);
+                        runtimeError("递归深度超过限制 (64)", node.line, node.column);
                     }
 
                     // O5: 使用类定义时捕获的环境作为父级（闭包），而非调用者的环境
