@@ -194,15 +194,28 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
         }
         return Value(left.toDouble() * right.toDouble());
     case BinOpType::BIN_DIV:
+        if (left.isInt() && right.isInt()) {
+            int64_t b = right.intVal();
+            if (b == 0) runtimeError("除零错误", line, col);
+            return Value(left.intVal() / b);  // int/int → int (截断除法)
+        }
         { double r = right.toDouble();
           if (r == 0.0) runtimeError("除零错误", line, col);
-          // M5 fix: 整数除法也返回 float（真除法），与 Python 3 行为一致
           return Value(left.toDouble() / r); }
     case BinOpType::BIN_MOD:
-        if (!left.isInt() || !right.isInt()) runtimeError("取模运算仅支持整数", line, col);
-        if (right.intVal() == 0) runtimeError("除零错误", line, col);
-        if (left.intVal() == INT64_MIN && right.intVal() == -1) return Value(0);
-        return Value(left.intVal() % right.intVal());
+        // Bug3 fix: 接受 float 操作数（截断为整数后取模）
+        {
+            int64_t a, b;
+            if (left.isInt()) a = left.intVal();
+            else if (left.isFloat()) a = static_cast<int64_t>(left.floatVal());
+            else runtimeError("取模运算需要数值类型", line, col);
+            if (right.isInt()) b = right.intVal();
+            else if (right.isFloat()) b = static_cast<int64_t>(right.floatVal());
+            else runtimeError("取模运算需要数值类型", line, col);
+            if (b == 0) runtimeError("除零错误", line, col);
+            if (a == INT64_MIN && b == -1) return Value(0);
+            return Value(a % b);
+        }
     default:
         runtimeError("不支持的算术运算符", line, col);
     }

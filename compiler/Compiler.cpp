@@ -321,7 +321,8 @@ void Compiler::compileVarDecl(VarDecl& node) {
         chunk_.writeOp(OpCode::OP_POP, node.line);
     } else {
         // A2: use integer slot for known globals
-        int slot = lookupGlobalSlot(node.name);
+        // Bug2 fix: 块作用域内不使用预分配的全局槽位，避免覆盖外层全局变量
+        int slot = (blockDepth_ > 0) ? -1 : lookupGlobalSlot(node.name);
         if (slot >= 0) {
             chunk_.writeOp(OpCode::OP_DEFINE_GLOBAL, node.line);
             chunk_.writeShort(static_cast<uint16_t>(slot), node.line);
@@ -491,12 +492,15 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
 
     // V3+ fix: 顶层循环退出时清理循环体内声明的全局变量
+    // Bug2 fix: 跳过有预分配全局槽位的变量（避免清空外层全局值）
     if (!inFunction_) {
         for (auto& [name, _] : currentLocals_) {
             if (savedLocals.find(name) == savedLocals.end()) {
-                uint16_t nameIdx = identifierIndex(name);
-                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-                chunk_.writeShort(nameIdx, node.line);
+                if (lookupGlobalSlot(name) < 0) {
+                    uint16_t nameIdx = identifierIndex(name);
+                    chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                    chunk_.writeShort(nameIdx, node.line);
+                }
             }
         }
     }
@@ -543,6 +547,7 @@ void Compiler::compileForStmt(ForStmt& node) {
         chunk_.writeOp(OpCode::OP_POP, node.line);
 
         // V3+ fix: 顶层循环退出时清理循环变量
+        // Bug2 fix: 跳过有预分配全局槽位的变量（避免清空外层全局值）
         if (!inFunction_) {
             std::vector<std::string> cleanupVars;
             for (auto& [name, _] : currentLocals_) {
@@ -551,9 +556,11 @@ void Compiler::compileForStmt(ForStmt& node) {
                 }
             }
             for (const auto& name : cleanupVars) {
-                uint16_t nameIdx = identifierIndex(name);
-                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-                chunk_.writeShort(nameIdx, node.line);
+                if (lookupGlobalSlot(name) < 0) {
+                    uint16_t nameIdx = identifierIndex(name);
+                    chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                    chunk_.writeShort(nameIdx, node.line);
+                }
             }
         }
     } else {
@@ -580,6 +587,7 @@ void Compiler::compileForStmt(ForStmt& node) {
         chunk_.writeOp(OpCode::OP_POP, node.line);
 
         // V3+ fix: 顶层循环退出时清理循环变量
+        // Bug2 fix: 跳过有预分配全局槽位的变量
         if (!inFunction_) {
             std::vector<std::string> cleanupVars2;
             for (auto& [name, _] : currentLocals_) {
@@ -588,9 +596,11 @@ void Compiler::compileForStmt(ForStmt& node) {
                 }
             }
             for (const auto& name : cleanupVars2) {
-                uint16_t nameIdx = identifierIndex(name);
-                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-                chunk_.writeShort(nameIdx, node.line);
+                if (lookupGlobalSlot(name) < 0) {
+                    uint16_t nameIdx = identifierIndex(name);
+                    chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                    chunk_.writeShort(nameIdx, node.line);
+                }
             }
         }
     }
@@ -726,15 +736,15 @@ void Compiler::compileBlock(Block& node) {
         for (auto& stmt : node.statements) {
             if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
                 VarDecl* vd = static_cast<VarDecl*>(stmt.get());
-                if (topLevelGlobals_.find(vd->name) != topLevelGlobals_.end()) {
+                int gsSlot = lookupGlobalSlot(vd->name);
+                if (gsSlot >= 0) {
                     std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_"
                         + std::to_string(blockSaveCounter_++) + "_" + vd->name;
                     shadowedSaves.push_back({vd->name, saveName});
-                    // 将当前全局值保存到临时变量
-                    uint16_t origIdx = identifierIndex(vd->name);
+                    // A2: 使用槽位操作码保存全局变量值
                     uint16_t saveIdx = identifierIndex(saveName);
-                    chunk_.writeOp(OpCode::OP_GET_VAR, vd->line);
-                    chunk_.writeShort(origIdx, vd->line);
+                    chunk_.writeOp(OpCode::OP_GET_GLOBAL, vd->line);
+                    chunk_.writeShort(static_cast<uint16_t>(gsSlot), vd->line);
                     chunk_.writeOp(OpCode::OP_DEFINE_VAR, vd->line);
                     chunk_.writeShort(saveIdx, vd->line);
                 }
@@ -760,13 +770,19 @@ void Compiler::compileBlock(Block& node) {
 
         // 清理块作用域变量并恢复被遮蔽的全局变量
         for (auto& [varName, saveName] : shadowedSaves) {
-            // 从临时变量恢复全局值
+            // A2: 使用槽位操作码恢复全局变量值
+            int gsSlot = lookupGlobalSlot(varName);
             uint16_t saveIdx = identifierIndex(saveName);
-            uint16_t origIdx = identifierIndex(varName);
             chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
             chunk_.writeShort(saveIdx, node.line);
-            chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
-            chunk_.writeShort(origIdx, node.line);
+            if (gsSlot >= 0) {
+                chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
+                chunk_.writeShort(static_cast<uint16_t>(gsSlot), node.line);
+            } else {
+                uint16_t origIdx = identifierIndex(varName);
+                chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
+                chunk_.writeShort(origIdx, node.line);
+            }
             // 删除临时保存变量
             chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
             chunk_.writeShort(saveIdx, node.line);

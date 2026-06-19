@@ -232,14 +232,30 @@ VMResult VM::numericOp(int opType) {
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() * rightRef.toDouble());
         break;
     case OP_DIV_INT:
-        // V1 fix: 整数除法也返回 float（真除法），与解释器 M5 fix 和 Python 3 一致
+        if (rightRef.isInt() && leftRef.isInt()) {
+            int64_t b = rightRef.intVal();
+            if (b == 0) return runtimeError("除零错误");
+            stack_[stack_.size() - 2] = Value(leftRef.intVal() / b);  // int/int → int
+            break;
+        }
         if (rightRef.toDouble() == 0.0) return runtimeError("除零错误");
         stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
         break;
     case OP_MOD_INT:
-        if (!leftRef.isInt() || !rightRef.isInt()) return runtimeError("取模运算仅支持整数");
-        if (rightRef.intVal() == 0) return runtimeError("除零错误");
-        if (leftRef.intVal() == INT64_MIN && rightRef.intVal() == -1) { stack_[stack_.size() - 2] = Value(0); break; }
+        // Bug3 fix: 接受 float 操作数（截断为整数后取模）
+        {
+            int64_t a, b;
+            if (leftRef.isInt()) a = leftRef.intVal();
+            else if (leftRef.isFloat()) a = static_cast<int64_t>(leftRef.floatVal());
+            else return runtimeError("取模运算需要数值类型");
+            if (rightRef.isInt()) b = rightRef.intVal();
+            else if (rightRef.isFloat()) b = static_cast<int64_t>(rightRef.floatVal());
+            else return runtimeError("取模运算需要数值类型");
+            if (b == 0) return runtimeError("除零错误");
+            if (a == INT64_MIN && b == -1) { stack_[stack_.size() - 2] = Value(0); break; }
+            stack_[stack_.size() - 2] = Value(a % b);
+            break;
+        }
         stack_[stack_.size() - 2] = Value(leftRef.intVal() % rightRef.intVal());
         break;
     }
@@ -720,6 +736,10 @@ VMResult VM::executeOneInstruction() {
             globalSlots_[gsIt->second] = Value::nullValue();
         } else {
             globals_.erase(name);
+            // Bug fix: erase 可能不改变 bucket_count()，但会使已缓存指针悬垂
+            // 清除所有缓存条目以确保安全
+            for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
+            globalCacheNextSlot_ = 0;
         }
         notifyStep(ip, op);
         ip += 3;
