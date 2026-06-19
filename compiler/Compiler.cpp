@@ -2,6 +2,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cstdint>
+#include <unordered_set>
 
 // ============================================================
 // Compiler 字节码编译器实现
@@ -266,6 +267,8 @@ void Compiler::compileVarDecl(VarDecl& node) {
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(slot), node.line);
         } else {
+            // B2 fix: 与解释器行为一致，同作用域重复声明报错
+            error("变量 '" + node.name + "' 已在当前作用域中定义", node.line, node.column);
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
         }
@@ -428,8 +431,8 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
         }
     }
 
-    // V3 fix: 恢复局部变量映射
-    currentLocals_ = savedLocals;
+    // V3 fix: 恢复局部变量映射（P28: swap 避免二次拷贝）
+    currentLocals_.swap(savedLocals);
 }
 
 void Compiler::compileForStmt(ForStmt& node) {
@@ -522,8 +525,8 @@ void Compiler::compileForStmt(ForStmt& node) {
         }
     }
 
-    // V3 fix: 恢复局部变量映射，for 循环内声明的变量不再可见
-    currentLocals_ = savedLocals;
+    // V3 fix: 恢复局部变量映射（P28: swap）
+    currentLocals_.swap(savedLocals);
 }
 
 void Compiler::compileFunDecl(FunDecl& node) {
@@ -681,8 +684,8 @@ void Compiler::compileBlock(Block& node) {
             }
         }
 
-        // 恢复外层作用域
-        currentLocals_ = savedLocals;
+        // 恢复外层作用域（P28: swap）
+        currentLocals_.swap(savedLocals);
         blockDepth_--;
 
         // 清理块作用域变量并恢复被遮蔽的全局变量
@@ -699,12 +702,11 @@ void Compiler::compileBlock(Block& node) {
             chunk_.writeShort(saveIdx, node.line);
         }
         // 删除未遮蔽任何全局变量的块作用域变量
+        // P29: 用 unordered_set 替代线性扫描
+        std::unordered_set<std::string> shadowedNames;
+        for (auto& [vn, sn] : shadowedSaves) shadowedNames.insert(vn);
         for (auto& name : blockVars) {
-            bool wasShadowed = false;
-            for (auto& [vn, sn] : shadowedSaves) {
-                if (vn == name) { wasShadowed = true; break; }
-            }
-            if (!wasShadowed) {
+            if (shadowedNames.find(name) == shadowedNames.end()) {
                 uint16_t nameIdx = identifierIndex(name);
                 chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
                 chunk_.writeShort(nameIdx, node.line);
@@ -715,7 +717,7 @@ void Compiler::compileBlock(Block& node) {
         for (auto& stmt : node.statements) {
             compileStatement(stmt.get());
         }
-        currentLocals_ = savedLocals;
+        currentLocals_.swap(savedLocals);  // P28: swap
     }
 }
 
@@ -830,11 +832,13 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
         bool savedInFunction = inFunction_;
         int savedPeakLocals = peakLocals_;
+        std::string savedClassName = currentClassName_;  // B1 fix
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
         chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
         varIndex_.clear();
         currentLocals_.clear();
+        currentClassName_ = node.name;  // B1 fix: 记录当前类名供 super 使用
         // O5: 如果类定义在函数内，设置 outerLocals_ 以检测不支持的闭包捕获
         if (savedInFunction) {
             outerLocals_ = savedLocals;
@@ -875,6 +879,7 @@ void Compiler::compileClassDecl(ClassDecl& node) {
         outerLocals_ = std::move(savedOuterLocals);
         inFunction_ = savedInFunction;
         peakLocals_ = savedPeakLocals;
+        currentClassName_ = savedClassName;  // B1 fix
     }
 
     // 主 chunk 中：发射 OP_CLASS_NEW（0 参数构造，字段由 OP_INIT_FIELD 设置）
@@ -1011,6 +1016,11 @@ void Compiler::compileMethodCall(MethodCall& node) {
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
     chunk_.writeShort(receiverVarIdx, node.line);  // 接收者全局变量名索引（0xFFFF = 无全局 writeBack）
     chunk_.write(receiverLocalSlot, node.line);    // 接收者局部变量 slot（0xFF = 无局部 writeBack）
+    if (isSuperCall) {
+        // B1 fix: 编码当前类名索引，VM 用它查找父类（而非运行时实例类名）
+        uint16_t classIdx = identifierIndex(currentClassName_);
+        chunk_.writeShort(classIdx, node.line);
+    }
 
     // 嵌套访问变异方法写回：当接收者是 MemberAccess/IndexAccess 且基对象是 VarRef 时，
     // 方法调用后发射写回指令，确保 this.arr.push(42) 等嵌套调用的修改不丢失。

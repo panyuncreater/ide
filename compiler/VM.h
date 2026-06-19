@@ -77,6 +77,8 @@ struct VMClassInfo {
     std::string superClassName;                        // 父类名（空表示无父类）
     std::vector<std::string> fieldOrder;               // 字段声明顺序（含继承字段）
     std::unordered_map<std::string, Value> fieldDefaults; // 字段默认值（含继承字段）
+    // P4 fix: 方法解析缓存（methodName -> chunk 指针），避免每次方法调用都拼接字符串+查继承链
+    mutable std::unordered_map<std::string, const BytecodeChunk*> methodCache;
 };
 
 /// 简单栈式虚拟机
@@ -150,6 +152,15 @@ private:
     std::vector<VMCallFrame> frames_;              // 调用帧栈
     BytecodeChunk mainChunk_;                       // 主 chunk 副本（VM 自持，避免悬空指针）
     std::unordered_map<std::string, BytecodeChunk> functionChunks_; // 函数字节码
+
+    // P3 fix: 函数调用内联缓存（按常量池字符串指针匹配，避免每次 hash 查找）
+    static constexpr int CALL_CACHE_SIZE = 8;
+    struct CallCacheEntry {
+        const std::string* namePtr = nullptr;
+        const BytecodeChunk* chunkPtr = nullptr;
+    };
+    CallCacheEntry callCache_[CALL_CACHE_SIZE] = {};
+    int callCacheNextSlot_ = 0;  // P3: round-robin 替换指针
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调

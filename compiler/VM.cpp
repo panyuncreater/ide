@@ -125,22 +125,37 @@ const BytecodeChunk& VM::currentChunk() {
 
 const BytecodeChunk* VM::findMethodChunk(const std::string& className,
                                          const std::string& methodName) const {
+    // P4 fix: 先查缓存
+    auto clsIt = classInfo_.find(className);
+    if (clsIt != classInfo_.end()) {
+        auto& cache = clsIt->second.methodCache;
+        auto cacheIt = cache.find(methodName);
+        if (cacheIt != cache.end()) {
+            return cacheIt->second;  // 缓存命中（含 nullptr 表示方法不存在）
+        }
+    }
+
     std::string cur = className;
-    // 复用 buffer 避免每次查找都分配新字符串
     std::string methodKey;
     methodKey.reserve(cur.size() + 1 + methodName.size());
-    // 沿继承链向上查找，防止循环继承（超过 256 层视为异常）
     for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
         methodKey.clear();
         methodKey.append(cur).append(1, '.').append(methodName);
         auto it = functionChunks_.find(methodKey);
         if (it != functionChunks_.end()) {
+            // P4: 写入缓存
+            if (clsIt != classInfo_.end()) {
+                clsIt->second.methodCache[methodName] = &it->second;
+            }
             return &it->second;
         }
-        // 查父类
-        auto clsIt = classInfo_.find(cur);
-        if (clsIt == classInfo_.end()) break;
-        cur = clsIt->second.superClassName;
+        auto nextIt = classInfo_.find(cur);
+        if (nextIt == classInfo_.end()) break;
+        cur = nextIt->second.superClassName;
+    }
+    // P4: 缓存 nullptr（方法不存在），避免重复查找
+    if (clsIt != classInfo_.end()) {
+        clsIt->second.methodCache[methodName] = nullptr;
     }
     return nullptr;
 }
@@ -303,6 +318,9 @@ void VM::initExecution(const CompileResult& result) {
     frames_.clear();
     frames_.reserve(64);  // 预分配调用帧空间，避免频繁 realloc
     functionChunks_ = result.functionChunks;
+    // P3: 清除函数调用缓存（functionChunks_ 地址已变）
+    for (int ci = 0; ci < CALL_CACHE_SIZE; ++ci) callCache_[ci] = {};
+    callCacheNextSlot_ = 0;
     classInfo_.clear();
     mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬空指针
 
@@ -767,9 +785,21 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& funName = chunk.constants[idx].stringVal();
 
-        auto it = functionChunks_.find(funName);
-        if (it == functionChunks_.end()) {
-            // 检查是否为类构造调用
+        // P3 fix: 内联缓存快速路径（按指针比较，避免 hash 查找）
+        const BytecodeChunk* cachedChunk = nullptr;
+        const std::string* namePtr = &funName;
+        for (int ci = 0; ci < CALL_CACHE_SIZE; ++ci) {
+            if (callCache_[ci].namePtr == namePtr) {
+                cachedChunk = callCache_[ci].chunkPtr;
+                break;
+            }
+        }
+
+        auto it = cachedChunk
+            ? functionChunks_.end()  // 缓存命中，跳过 hash 查找
+            : functionChunks_.find(funName);
+
+        if (!cachedChunk && it == functionChunks_.end()) {
             auto classIt = classInfo_.find(funName);
             if (classIt != classInfo_.end()) {
                 VMClassInfo& cls = classIt->second;
@@ -865,7 +895,14 @@ VMResult VM::executeOneInstruction() {
             return runtimeError("未定义的函数: " + funName);
         }
 
-        const BytecodeChunk& targetChunk = it->second;
+        // P3: 缓存未命中时写入缓存（round-robin 替换）
+        if (!cachedChunk) {
+            callCache_[callCacheNextSlot_].namePtr = namePtr;
+            callCache_[callCacheNextSlot_].chunkPtr = &it->second;
+            callCacheNextSlot_ = (callCacheNextSlot_ + 1) % CALL_CACHE_SIZE;
+        }
+
+        const BytecodeChunk& targetChunk = cachedChunk ? *cachedChunk : it->second;
         if (targetChunk.arity != argCount) {
             return runtimeError("函数 " + funName + " 期望 " +
                 std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
@@ -1180,6 +1217,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_SUPER_CALL:
     case OpCode::OP_METHOD_CALL: {
         bool isSuperCall = (op == OpCode::OP_SUPER_CALL);
+        const int instrLen = isSuperCall ? 9 : 7;  // B1 fix: SUPER_CALL 多了 2 字节 classIdx
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint8_t argCount = chunk.code[ip + 3];
         uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
@@ -1202,7 +1240,7 @@ VMResult VM::executeOneInstruction() {
             Value result = Value::nullValue();
             if (method == BuiltinMethod::ARR_LEN) {
                 result = Value(static_cast<int64_t>(obj.arrayVal().size()));
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
             if (method == BuiltinMethod::ARR_CONTAINS) {
                 if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
@@ -1211,7 +1249,7 @@ VMResult VM::executeOneInstruction() {
                     if (elem.equals(args[0])) { found = true; break; }
                 }
                 result = Value(found);
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
             if (method == BuiltinMethod::ARR_JOIN) {
                 std::string sep = args.empty() ? "" : args[0].toString();
@@ -1222,7 +1260,7 @@ VMResult VM::executeOneInstruction() {
                     joined += obj.arrayVal()[i].toString();
                 }
                 result = Value(std::move(joined));
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
 
             // 变异路径：拷贝接收者后 pop，修改副本，写回
@@ -1268,7 +1306,7 @@ VMResult VM::executeOneInstruction() {
             }
             push(result);
             notifyStep(ip, op);
-            ip += 7;
+            ip += instrLen;
             break;
         }
 
@@ -1282,26 +1320,26 @@ VMResult VM::executeOneInstruction() {
             // 非变异路径：直接从 const 引用读取
             if (method == BuiltinMethod::DICT_LEN || method == BuiltinMethod::ARR_LEN) {
                 result = Value(static_cast<int64_t>(obj.dictVal().size()));
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
             if (method == BuiltinMethod::DICT_KEYS) {
                 std::vector<Value> keys;
                 keys.reserve(obj.dictVal().size());
                 for (const auto& kv : obj.dictVal()) keys.emplace_back(Value(kv.first));
                 result = Value(std::move(keys));
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
             if (method == BuiltinMethod::DICT_VALUES) {
                 std::vector<Value> vals;
                 vals.reserve(obj.dictVal().size());
                 for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
                 result = Value(std::move(vals));
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
             if (method == BuiltinMethod::DICT_HAS || method == BuiltinMethod::ARR_CONTAINS) {
                 if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
                 result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
             if (method == BuiltinMethod::DICT_GET) {
                 if (args.empty() || args.size() > 2) return runtimeError("get 期望 1-2 个参数(键[, 默认值])");
@@ -1312,7 +1350,7 @@ VMResult VM::executeOneInstruction() {
                 } else {
                     result = (args.size() == 2) ? args[1] : Value::nullValue();
                 }
-                pop(); push(result); notifyStep(ip, op); ip += 7; break;
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
 
             // 变异路径（remove）：拷贝后修改
@@ -1347,7 +1385,7 @@ VMResult VM::executeOneInstruction() {
             }
             push(result);
             notifyStep(ip, op);
-            ip += 7;
+            ip += instrLen;
             break;
         }
 
@@ -1446,7 +1484,7 @@ VMResult VM::executeOneInstruction() {
             pop();  // 移除接收者（在计算完成后）
             push(result);
             notifyStep(ip, op);
-            ip += 7;
+            ip += instrLen;
             break;
         }
 
@@ -1454,9 +1492,14 @@ VMResult VM::executeOneInstruction() {
         if (obj.isInstance()) {
             // 拷贝接收者，因为后续 pop() 会使 peek 引用失效
             Value objCopy = obj;
-            // O1: super 调用从父类开始查找方法
+            // B1 fix: super 调用使用编译时编码的类名（而非运行时实例类名）
+            // 避免 3+ 级继承时 super 查找回到子类导致死循环
             std::string searchClassName = objCopy.className();
             if (isSuperCall) {
+                uint16_t classIdx = chunk.code[ip + 7] | (chunk.code[ip + 8] << 8);
+                if (classIdx < chunk.constants.size()) {
+                    searchClassName = chunk.constants[classIdx].stringVal();
+                }
                 auto clsIt = classInfo_.find(searchClassName);
                 if (clsIt == classInfo_.end() || clsIt->second.superClassName.empty()) {
                     return runtimeError("类 " + searchClassName + " 没有父类，不能使用 super");
@@ -1524,7 +1567,7 @@ VMResult VM::executeOneInstruction() {
 
                 VMCallFrame newFrame;
                 newFrame.chunk = targetChunkPtr;
-                newFrame.returnIp = ip + 7;  // OP_METHOD_CALL 是 7 字节
+                newFrame.returnIp = ip + instrLen;  // B1 fix: SUPER_CALL 是 9 字节
                 newFrame.basePointer = stack_.size() - targetChunk.localCount;
                 newFrame.functionName = targetChunk.name;
                 newFrame.ip = 0;

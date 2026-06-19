@@ -304,7 +304,7 @@ public:
             /* 54 OP_WRITEBACK_MEMBER_LOCAL */ 4,
             /* 55 OP_WRITEBACK_INDEX_VAR    */ 3,
             /* 56 OP_WRITEBACK_INDEX_LOCAL  */ 2,
-            /* 57 OP_SUPER_CALL             */ 7,
+            /* 57 OP_SUPER_CALL             */ 9,  // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B) + classIdx(2B)
             /* 58 OP_SUPER_MEMBER_GET       */ 3,
         };
         auto idx = static_cast<uint8_t>(op);
@@ -509,10 +509,12 @@ public:
             uint8_t argCount = code[offset + 3];
             uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
             uint8_t localSlot = code[offset + 6];
+            uint16_t classIdx = code[offset + 7] | (code[offset + 8] << 8);  // B1 fix
             str += "OP_SUPER_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
             if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal();
             if (localSlot != 0xFF) str += " slot=" + std::to_string(localSlot);
-            offset += 7;
+            if (classIdx < constants.size()) str += " class=" + constants[classIdx].stringVal();
+            offset += 9;
             break;
         }
         case OpCode::OP_DUP: str += "OP_DUP"; offset += 1; break;

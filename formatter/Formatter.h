@@ -114,6 +114,8 @@ private:
     mutable int cachedIndentLevel_ = -1; // 缓存对应的缩进级别
     std::string commaCache_;     // 逗号分隔符缓存
     bool commaCacheValid_ = false;
+    mutable std::string binOpKey_;       // binOp 缓存键（上次使用的运算符）
+    mutable std::string binOpVal_;       // binOp 缓存值
 
     /// 生成缩进字符串（P3: 带缓存）
     std::string indent() const;

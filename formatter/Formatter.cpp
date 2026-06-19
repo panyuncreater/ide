@@ -28,6 +28,7 @@ void Formatter::setOptions(const FormatOptions& options) {
     // P3: 选项变更时使缓存失效
     cachedIndentLevel_ = -1;
     commaCacheValid_ = false;
+    binOpKey_.clear();  // P30: 使 binOp 缓存失效
 }
 
 const FormatOptions& Formatter::getOptions() const {
@@ -49,7 +50,11 @@ std::string Formatter::indent() const {
 
 std::string Formatter::binOp(const std::string& op) const {
     if (options_.spaceAroundOperators) {
-        return " " + op + " ";
+        // P30 fix: MRU 缓存 — 同一运算符连续调用时直接返回缓存
+        if (op == binOpKey_) return binOpVal_;
+        binOpKey_ = op;
+        binOpVal_ = " " + op + " ";
+        return binOpVal_;
     }
     return op;
 }

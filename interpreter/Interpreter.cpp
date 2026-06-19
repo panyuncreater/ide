@@ -1569,6 +1569,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         }
         if (node.methodName == "keys") {
             std::vector<Value> keys;
+            keys.reserve(obj.dictVal().size());
             for (const auto& kv : obj.dictVal()) {
                 keys.push_back(Value(kv.first));
             }
@@ -1576,6 +1577,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         }
         if (node.methodName == "values") {
             std::vector<Value> vals;
+            vals.reserve(obj.dictVal().size());
             for (const auto& kv : obj.dictVal()) {
                 vals.push_back(kv.second);
             }
