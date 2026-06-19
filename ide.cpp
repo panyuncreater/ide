@@ -510,7 +510,7 @@ void Ide::onDebug() {
 
     isRunning_ = true;
     setRunningState(true);
-    replPanel_->setInputEnabled(false);  // H7 fix: 调试期间禁用 REPL，防止嵌套事件循环中用户修改程序状态
+    replPanel_->setInputEnabled(false);
 
     // 调试模式：启用 checkBreak
     interpreter_.setDebugMode(true);
@@ -519,33 +519,62 @@ void Ide::onDebug() {
     debugger_->reset();
     debugger_->stepIn();
 
-    // D1 fix: 保存 REPL 状态（调试的 execute() 会重置全局环境/类注册表，与 onRun 一致）
+    // D1 fix: 保存 REPL 状态
     interpreter_.saveReplState();
 
-    try {
-        interpreter_.execute(*astRoot_);
-        outputPanel_->appendOutput("--- 程序执行结束 ---");
-    } catch (const RuntimeError& e) {
-        Diagnostic diag(DiagLevel::Error, e.what(), e.line, e.column, DiagSource::Interpreter);
-        outputPanel_->appendError(QString::fromStdString(diag.format()));
-    } catch (const DebugStopException&) {
-        // 用户点击停止按钮 — 正常调试终止，不显示错误
-        outputPanel_->appendOutput("--- 调试终止 ---");
-    } catch (const std::runtime_error& e) {
-        outputPanel_->appendError(QString("错误: %1").arg(e.what()));
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("未预期的错误: %1").arg(e.what()));
-    } catch (...) {
-        outputPanel_->appendError("未预期的异常");
-    }
+    // A2: 在 worker 线程上执行调试，避免 UI 冻结
+    worker_ = new InterpreterWorker(interpreter_, *astRoot_, debugger_);
+    workerThread_ = new QThread(this);
+    worker_->moveToThread(workerThread_);
 
-    isRunning_ = false;
-    setRunningState(false);
-    replPanel_->setInputEnabled(true);  // H7 fix: 恢复 REPL 输入
-    interpreter_.setDebugMode(false);
-    interpreter_.restoreReplState();  // D1 fix: 恢复 REPL 状态
-    codeEditor_->clearCurrentLine();
-    debugger_->reset();
+    // 跨线程信号连接（auto-queued）
+    connect(worker_, &InterpreterWorker::outputReady,
+            outputPanel_, &OutputPanel::appendOutput);
+    connect(worker_, &InterpreterWorker::finishedOk, this, [this]() {
+        outputPanel_->appendOutput("--- 程序执行结束 ---");
+    });
+    connect(worker_, &InterpreterWorker::runtimeError, this,
+            [this](const QString& msg, int line, int column) {
+        Diagnostic diag(DiagLevel::Error, msg.toStdString(), line, column, DiagSource::Interpreter);
+        outputPanel_->appendError(QString::fromStdString(diag.format()));
+    });
+    connect(worker_, &InterpreterWorker::stoppedByUser, this, [this]() {
+        outputPanel_->appendOutput("--- 调试终止 ---");
+    });
+    connect(worker_, &InterpreterWorker::genericError, this,
+            [this](const QString& msg) {
+        outputPanel_->appendError(msg);
+    });
+
+    // 线程结束时清理
+    connect(workerThread_, &QThread::finished, this, [this]() {
+        isRunning_ = false;
+        setRunningState(false);
+        replPanel_->setInputEnabled(true);
+        interpreter_.setDebugMode(false);
+        interpreter_.restoreReplState();
+        codeEditor_->clearCurrentLine();
+        debugger_->reset();
+
+        // 恢复主线程输出回调
+        interpreter_.setOutputCallback([this](const std::string& text) {
+            outputPanel_->appendOutput(QString::fromStdString(text));
+        });
+
+        delete worker_;
+        worker_ = nullptr;
+        workerThread_->deleteLater();
+        workerThread_ = nullptr;
+    });
+
+    // 所有终止信号 → 退出线程事件循环
+    connect(worker_, &InterpreterWorker::finishedOk, workerThread_, &QThread::quit);
+    connect(worker_, &InterpreterWorker::stoppedByUser, workerThread_, &QThread::quit);
+    connect(worker_, &InterpreterWorker::runtimeError, workerThread_, &QThread::quit);
+    connect(worker_, &InterpreterWorker::genericError, workerThread_, &QThread::quit);
+
+    workerThread_->start();
+    QMetaObject::invokeMethod(worker_, "run", Qt::QueuedConnection);
 }
 
 void Ide::onStepIn() {

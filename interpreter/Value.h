@@ -15,14 +15,13 @@ class Environment;
 class FunDecl;
 
 // ============================================================
-// Value 运行时值类型 — std::variant 存储优化
+// Value 运行时值类型 — std::variant 存储 + COW 语义
 // ============================================================
-// 优化说明：
-//   旧设计：所有类型字段同时存在（~341 bytes / Value）
-//   新设计：std::variant 互斥存储 + unique_ptr 隔离大类型
-//   结果：sizeof(Value) 从 ~341 字节降至 ~16 字节（减少 95%+）
+// A1 架构优化：unique_ptr → shared_ptr + copy-on-write
+//   拷贝操作 O(1)（仅递增引用计数），写入时通过 ensureUnique() 自动 detach
+//   sizeof(Value) 仍为 ~16 字节
 //   小类型（int/double/bool/null）内联存储，无堆分配
-//   大类型（string/array/dict/instance/closure）通过 unique_ptr 堆分配
+//   大类型（string/array/dict/instance/closure）通过 shared_ptr 堆分配
 
 /// 值类型枚举（顺序必须与 std::variant Data 的类型顺序严格一致！
 /// getType() 通过 static_cast<ValueType>(data_.index()) 将 variant 索引映射到此枚举）
@@ -31,17 +30,17 @@ enum class ValueType {
     VAL_INT,       // 1 = int64_t
     VAL_FLOAT,     // 2 = double
     VAL_BOOL,      // 3 = bool
-    VAL_STRING,    // 4 = std::unique_ptr<StringData>
-    VAL_ARRAY,     // 5 = std::unique_ptr<ArrayData>
-    VAL_DICT,      // 6 = std::unique_ptr<DictData>
-    VAL_INSTANCE,  // 7 = std::unique_ptr<InstanceData>
-    VAL_CLOSURE    // 8 = std::unique_ptr<ClosureData>
+    VAL_STRING,    // 4 = std::shared_ptr<StringData>
+    VAL_ARRAY,     // 5 = std::shared_ptr<ArrayData>
+    VAL_DICT,      // 6 = std::shared_ptr<DictData>
+    VAL_INSTANCE,  // 7 = std::shared_ptr<InstanceData>
+    VAL_CLOSURE    // 8 = std::shared_ptr<ClosureData>
 };
 
 /// 运行时值结构体
 struct Value {
 private:
-    // ---- 复杂类型数据载体（仅通过 unique_ptr 持有）----
+    // ---- 复杂类型数据载体（通过 shared_ptr 持有，支持 COW）----
     struct StringData  { std::string value; };
     struct ArrayData   { std::vector<Value> elements; };
     struct DictData    { std::unordered_map<std::string, Value> entries; };
@@ -58,51 +57,60 @@ private:
     };
 
     // ---- 变体存储：同一时刻仅一个类型有效 ----
-    // 注意：类型顺序必须与 ValueType 枚举严格对应（index 0~8 → VAL_NULL~VAL_CLOSURE）
+    // A1: unique_ptr → shared_ptr（支持 COW 浅拷贝 + detach-on-write）
     using Data = std::variant<
         std::monostate,                    // 0: VAL_NULL
         int64_t,                           // 1: VAL_INT
         double,                            // 2: VAL_FLOAT
         bool,                              // 3: VAL_BOOL
-        std::unique_ptr<StringData>,       // 4: VAL_STRING
-        std::unique_ptr<ArrayData>,        // 5: VAL_ARRAY
-        std::unique_ptr<DictData>,         // 6: VAL_DICT
-        std::unique_ptr<InstanceData>,     // 7: VAL_INSTANCE
-        std::unique_ptr<ClosureData>       // 8: VAL_CLOSURE
+        std::shared_ptr<StringData>,       // 4: VAL_STRING
+        std::shared_ptr<ArrayData>,        // 5: VAL_ARRAY
+        std::shared_ptr<DictData>,         // 6: VAL_DICT
+        std::shared_ptr<InstanceData>,     // 7: VAL_INSTANCE
+        std::shared_ptr<ClosureData>       // 8: VAL_CLOSURE
     >;
 
     Data data_;
 
-    // ---- 深拷贝辅助（用于拷贝构造 / 拷贝赋值）----
-    // switch 分发比 std::visit + generic lambda 生成更紧凑的跳转表
-    Data deepCopy(const Data& src) {
+    // ---- A1: COW detach — 写入前确保独占所有权 ----
+    // 若引用计数 > 1，深拷贝一份新数据并替换 shared_ptr
+    template<size_t I>
+    auto& ensureUnique() {
+        auto& ptr = std::get<I>(data_);
+        if (ptr && ptr.use_count() > 1) {
+            ptr = std::make_shared<std::remove_reference_t<decltype(*ptr)>>(*ptr);
+        }
+        return *ptr;
+    }
+
+    // ---- 显式深拷贝（用于需要完全独立副本的场景）----
+    Data deepClone(const Data& src) const {
         switch (static_cast<ValueType>(src.index())) {
         case ValueType::VAL_STRING: {
             const auto& p = std::get<4>(src);
-            return p ? std::make_unique<StringData>(*p) : std::unique_ptr<StringData>{};
+            return p ? std::make_shared<StringData>(*p) : std::shared_ptr<StringData>{};
         }
         case ValueType::VAL_ARRAY: {
             const auto& p = std::get<5>(src);
-            return p ? std::make_unique<ArrayData>(*p) : std::unique_ptr<ArrayData>{};
+            return p ? std::make_shared<ArrayData>(*p) : std::shared_ptr<ArrayData>{};
         }
         case ValueType::VAL_DICT: {
             const auto& p = std::get<6>(src);
-            return p ? std::make_unique<DictData>(*p) : std::unique_ptr<DictData>{};
+            return p ? std::make_shared<DictData>(*p) : std::shared_ptr<DictData>{};
         }
         case ValueType::VAL_INSTANCE: {
             const auto& p = std::get<7>(src);
-            return p ? std::make_unique<InstanceData>(*p) : std::unique_ptr<InstanceData>{};
+            return p ? std::make_shared<InstanceData>(*p) : std::shared_ptr<InstanceData>{};
         }
         case ValueType::VAL_CLOSURE: {
             const auto& p = std::get<8>(src);
-            return p ? std::make_unique<ClosureData>(*p) : std::unique_ptr<ClosureData>{};
+            return p ? std::make_shared<ClosureData>(*p) : std::shared_ptr<ClosureData>{};
         }
         default:
-            // 基础类型：逐个提取（variant 含 unique_ptr 不可整体拷贝）
             if (src.index() == 0) return std::monostate{};
             if (src.index() == 1) return std::get<1>(src);
             if (src.index() == 2) return std::get<2>(src);
-            return std::get<3>(src);  // bool
+            return std::get<3>(src);
         }
     }
 
@@ -123,38 +131,42 @@ public:
 
     // 字符串构造
     explicit Value(const std::string& v)
-        : data_(std::make_unique<StringData>(StringData{v})) {}
+        : data_(std::make_shared<StringData>(StringData{v})) {}
     explicit Value(std::string&& v)
-        : data_(std::make_unique<StringData>(StringData{std::move(v)})) {}
+        : data_(std::make_shared<StringData>(StringData{std::move(v)})) {}
     explicit Value(const char* v)
-        : data_(std::make_unique<StringData>(StringData{std::string(v)})) {}
+        : data_(std::make_shared<StringData>(StringData{std::string(v)})) {}
 
     // 数组构造
     explicit Value(const std::vector<Value>& v)
-        : data_(std::make_unique<ArrayData>(ArrayData{v})) {}
+        : data_(std::make_shared<ArrayData>(ArrayData{v})) {}
     explicit Value(std::vector<Value>&& v)
-        : data_(std::make_unique<ArrayData>(ArrayData{std::move(v)})) {}
+        : data_(std::make_shared<ArrayData>(ArrayData{std::move(v)})) {}
 
     // 字典构造
     explicit Value(const std::unordered_map<std::string, Value>& v)
-        : data_(std::make_unique<DictData>(DictData{v})) {}
+        : data_(std::make_shared<DictData>(DictData{v})) {}
     explicit Value(std::unordered_map<std::string, Value>&& v)
-        : data_(std::make_unique<DictData>(DictData{std::move(v)})) {}
+        : data_(std::make_shared<DictData>(DictData{std::move(v)})) {}
 
-    // 拷贝构造（深拷贝 unique_ptr 数据）
-    Value(const Value& other) : data_(deepCopy(other.data_)) {}
+    // A1: 拷贝构造 — 浅拷贝（shared_ptr 引用计数递增，O(1)）
+    Value(const Value& other) = default;
 
-    // 拷贝赋值
-    Value& operator=(const Value& other) {
-        if (this != &other) data_ = deepCopy(other.data_);
-        return *this;
-    }
+    // A1: 拷贝赋值 — 浅拷贝
+    Value& operator=(const Value& other) = default;
 
-    // 移动（默认即可，unique_ptr 自动转移所有权）
+    // 移动（默认即可，shared_ptr 自动转移所有权）
     Value(Value&&) noexcept = default;
     Value& operator=(Value&&) noexcept = default;
 
     ~Value() = default;
+
+    /// A1: 显式深拷贝（需要完全独立副本时使用）
+    Value clone() const {
+        Value result;
+        result.data_ = deepClone(data_);
+        return result;
+    }
 
     // ---- 静态工厂方法 ----
 
@@ -162,7 +174,7 @@ public:
 
     static Value makeInstance(const std::string& clsName) {
         Value v;
-        v.data_ = std::make_unique<InstanceData>(InstanceData{clsName, {}});
+        v.data_ = std::make_shared<InstanceData>(InstanceData{clsName, {}});
         return v;
     }
 
@@ -171,7 +183,7 @@ public:
                              const std::vector<std::string>& params,
                              FunDecl* body = nullptr) {
         Value v;
-        v.data_ = std::make_unique<ClosureData>(ClosureData{name, env, params, {}, body});
+        v.data_ = std::make_shared<ClosureData>(ClosureData{name, env, params, {}, body});
         return v;
     }
 
@@ -188,17 +200,17 @@ public:
     bool isInt()      const { return std::holds_alternative<int64_t>(data_); }
     bool isFloat()    const { return std::holds_alternative<double>(data_); }
     bool isBool()     const { return std::holds_alternative<bool>(data_); }
-    bool isString()   const { return std::holds_alternative<std::unique_ptr<StringData>>(data_); }
+    bool isString()   const { return std::holds_alternative<std::shared_ptr<StringData>>(data_); }
     bool isNull()     const { return std::holds_alternative<std::monostate>(data_); }
-    bool isArray()    const { return std::holds_alternative<std::unique_ptr<ArrayData>>(data_); }
-    bool isDict()     const { return std::holds_alternative<std::unique_ptr<DictData>>(data_); }
-    bool isInstance() const { return std::holds_alternative<std::unique_ptr<InstanceData>>(data_); }
-    bool isClosure()  const { return std::holds_alternative<std::unique_ptr<ClosureData>>(data_); }
+    bool isArray()    const { return std::holds_alternative<std::shared_ptr<ArrayData>>(data_); }
+    bool isDict()     const { return std::holds_alternative<std::shared_ptr<DictData>>(data_); }
+    bool isInstance() const { return std::holds_alternative<std::shared_ptr<InstanceData>>(data_); }
+    bool isClosure()  const { return std::holds_alternative<std::shared_ptr<ClosureData>>(data_); }
     bool isNumber()   const { auto i = data_.index(); return i == 1 || i == 2; }
 
-    // ---- 向后兼容的字段访问器 ----
-    // 所有访问器返回引用，使 val.intVal、val.stringVal、val.fields[k] 等用法
-    // 无需修改即可正常工作（读/写均兼容）。
+    // ---- 访问器 ----
+    // const 访问器：直接读取，不触发 COW detach
+    // 非 const 访问器：调用 ensureUnique() 确保独占后再返回引用
 
     // -- intVal --
     int64_t& intVal()             { return std::get<1>(data_); }
@@ -214,7 +226,7 @@ public:
 
     // -- stringVal --
     std::string& stringVal() {
-        return std::get<4>(data_)->value;
+        return ensureUnique<4>().value;
     }
     const std::string& stringVal() const {
         return std::get<4>(data_)->value;
@@ -222,7 +234,7 @@ public:
 
     // -- arrayVal --
     std::vector<Value>& arrayVal() {
-        return std::get<5>(data_)->elements;
+        return ensureUnique<5>().elements;
     }
     const std::vector<Value>& arrayVal() const {
         return std::get<5>(data_)->elements;
@@ -230,7 +242,7 @@ public:
 
     // -- dictVal --
     std::unordered_map<std::string, Value>& dictVal() {
-        return std::get<6>(data_)->entries;
+        return ensureUnique<6>().entries;
     }
     const std::unordered_map<std::string, Value>& dictVal() const {
         return std::get<6>(data_)->entries;
@@ -238,7 +250,7 @@ public:
 
     // -- className（实例专用）--
     std::string& className() {
-        return std::get<7>(data_)->className;
+        return ensureUnique<7>().className;
     }
     const std::string& className() const {
         return std::get<7>(data_)->className;
@@ -246,7 +258,7 @@ public:
 
     // -- fields（实例字段）--
     std::unordered_map<std::string, Value>& fields() {
-        return std::get<7>(data_)->fields;
+        return ensureUnique<7>().fields;
     }
     const std::unordered_map<std::string, Value>& fields() const {
         return std::get<7>(data_)->fields;
@@ -254,7 +266,7 @@ public:
 
     // -- 闭包字段 --
     std::string& closureName() {
-        return std::get<8>(data_)->name;
+        return ensureUnique<8>().name;
     }
     const std::string& closureName() const {
         return std::get<8>(data_)->name;
@@ -265,21 +277,21 @@ public:
     }
 
     std::vector<std::string>& closureParams() {
-        return std::get<8>(data_)->params;
+        return ensureUnique<8>().params;
     }
     const std::vector<std::string>& closureParams() const {
         return std::get<8>(data_)->params;
     }
 
     FunDecl*& closureBody() {
-        return std::get<8>(data_)->body;
+        return ensureUnique<8>().body;
     }
     FunDecl* closureBody() const {
         return std::get<8>(data_)->body;
     }
 
     std::unordered_map<std::string, Value>& capturedVars() {
-        return std::get<8>(data_)->capturedVars;
+        return ensureUnique<8>().capturedVars;
     }
     const std::unordered_map<std::string, Value>& capturedVars() const {
         return std::get<8>(data_)->capturedVars;

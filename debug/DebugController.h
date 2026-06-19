@@ -3,12 +3,13 @@
 #include <QObject>
 #include <QSet>
 #include <QMap>
-#include <QEventLoop>
 #include <vector>
 #include <string>
 #include <functional>
 #include <utility>
 #include <atomic>
+#include <mutex>
+#include <condition_variable>
 #include "interpreter/Value.h"
 
 // ============================================================
@@ -138,8 +139,10 @@ private:
     std::atomic<bool> running_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> stopped_{false};      // #9 fix: atomic for cross-thread access
     bool paused_ = false;       // 是否处于暂停状态（等待用户操作）
-    bool inPauseLoop_ = false;  // 是否正在暂停事件循环中（防重入）
-    QEventLoop* pauseLoop_ = nullptr;  // 暂停时的事件循环（替代忙等）
+
+    // A2: 线程安全的暂停/恢复机制（替代 QEventLoop）
+    std::mutex pauseMutex_;
+    std::condition_variable pauseCV_;
     int eventPumpCounter_ = 0;  // B11: 用于周期性刷新 UI 事件的计数器
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;

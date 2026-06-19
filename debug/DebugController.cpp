@@ -15,11 +15,12 @@ DebugController::DebugController(QObject* parent)
 
 DebugController::~DebugController() {
     stopped_ = true;
-    paused_ = false;
-    mode_ = StepMode::MODE_RUN;
-    if (pauseLoop_) {
-        pauseLoop_->quit();
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        paused_ = false;
+        mode_ = StepMode::MODE_RUN;
     }
+    pauseCV_.notify_all();
 }
 
 void DebugController::checkBreak(ASTNode* node) {
@@ -223,7 +224,7 @@ void DebugController::setConditionEvaluator(std::function<bool(const std::string
 }
 
 void DebugController::stepIn() {
-    // 初始模式设置：尚未开始执行，只设置模式不退出事件循环
+    // 初始模式设置：尚未开始执行
     if (!running_) {
         mode_ = StepMode::MODE_STEP_IN;
         running_ = true;
@@ -231,13 +232,15 @@ void DebugController::stepIn() {
         paused_ = false;
         return;
     }
-    // 防重入：只有暂停状态才能步进
-    if (!inPauseLoop_) return;
-    mode_ = StepMode::MODE_STEP_IN;
-    running_ = true;
-    stopped_ = false;
-    paused_ = false;
-    if (pauseLoop_) pauseLoop_->quit();
+    // A2: 通过 CV 唤醒 worker 线程
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        mode_ = StepMode::MODE_STEP_IN;
+        running_ = true;
+        stopped_ = false;
+        paused_ = false;
+    }
+    pauseCV_.notify_one();
 }
 
 void DebugController::stepOver() {
@@ -249,18 +252,19 @@ void DebugController::stepOver() {
         paused_ = false;
         return;
     }
-    if (!inPauseLoop_) return;
-    mode_ = StepMode::MODE_STEP_OVER;
-    stepOverDepth_ = currentDepth_;
-    running_ = true;
-    stopped_ = false;
-    paused_ = false;
-    if (pauseLoop_) pauseLoop_->quit();
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        mode_ = StepMode::MODE_STEP_OVER;
+        stepOverDepth_ = currentDepth_;
+        running_ = true;
+        stopped_ = false;
+        paused_ = false;
+    }
+    pauseCV_.notify_one();
 }
 
 void DebugController::stepOut() {
     if (!running_) {
-        // depth 0 时无外层作用域可跳出，降级为 Resume
         mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
         stepOutDepth_ = currentDepth_;
         running_ = true;
@@ -268,13 +272,15 @@ void DebugController::stepOut() {
         paused_ = false;
         return;
     }
-    if (!inPauseLoop_) return;
-    mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
-    stepOutDepth_ = currentDepth_;
-    running_ = true;
-    stopped_ = false;
-    paused_ = false;
-    if (pauseLoop_) pauseLoop_->quit();
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
+        stepOutDepth_ = currentDepth_;
+        running_ = true;
+        stopped_ = false;
+        paused_ = false;
+    }
+    pauseCV_.notify_one();
 }
 
 void DebugController::resume() {
@@ -285,19 +291,23 @@ void DebugController::resume() {
         paused_ = false;
         return;
     }
-    if (!inPauseLoop_) return;
-    mode_ = StepMode::MODE_RUN;
-    running_ = true;
-    stopped_ = false;
-    paused_ = false;
-    if (pauseLoop_) pauseLoop_->quit();
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        mode_ = StepMode::MODE_RUN;
+        running_ = true;
+        stopped_ = false;
+        paused_ = false;
+    }
+    pauseCV_.notify_one();
 }
 
 void DebugController::stop() {
     stopped_ = true;
-    paused_ = false;
-    // 注意：不设 running_ = false，让 checkBreak 能走到 stopped_ 检查
-    if (pauseLoop_) pauseLoop_->quit();
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        paused_ = false;
+    }
+    pauseCV_.notify_one();
 }
 
 void DebugController::setCurrentDepth(int depth) {
@@ -331,16 +341,14 @@ bool DebugController::isPaused() const {
 }
 
 void DebugController::reset() {
-    mode_ = StepMode::MODE_RUN;
-    running_ = false;
-    stopped_ = false;
-    paused_ = false;
-    // 先退出暂停事件循环，再清理指针
-    if (pauseLoop_) {
-        pauseLoop_->quit();
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        mode_ = StepMode::MODE_RUN;
+        running_ = false;
+        stopped_ = false;
+        paused_ = false;
     }
-    inPauseLoop_ = false;
-    pauseLoop_ = nullptr;
+    pauseCV_.notify_all();
     currentDepth_ = 0;
     stepOverDepth_ = 0;
     stepOutDepth_ = 0;
@@ -355,23 +363,12 @@ void DebugController::reset() {
 }
 
 void DebugController::pauseExecution() {
-    // 防止嵌套事件循环重入（use-after-free 风险）
-    if (inPauseLoop_) {
-        return;
-    }
-    
-    // 设置暂停标志
+    // A2: 使用 condition_variable 替代 QEventLoop
+    // worker 线程在此阻塞，UI 线程通过 stepIn/stepOver/resume/stop 唤醒
+    std::unique_lock<std::mutex> lock(pauseMutex_);
     paused_ = true;
-    inPauseLoop_ = true;
-
-    // 使用 QEventLoop 替代忙等
-    // 事件循环保持 UI 响应，stepIn/stepOver/resume/stop 通过 quit() 唤醒
-    QEventLoop loop;
-    pauseLoop_ = &loop;
-    loop.exec();
-    pauseLoop_ = nullptr;
-    inPauseLoop_ = false;
-    paused_ = false;  // 安全防护：确保状态一致
+    pauseCV_.wait(lock, [this]{ return !paused_; });
+    // 唤醒后 paused_ 已被设为 false
 }
 
 void DebugController::updateMinBreakpointLine() {

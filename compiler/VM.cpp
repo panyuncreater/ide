@@ -428,6 +428,9 @@ VMResult VM::execute(const CompileResult& result) {
 // ============================================================
 // executeOneInstruction() — 单条指令执行（核心逻辑）
 // ============================================================
+// A3 注记：MSVC 对密集 switch 已自动生成跳转表（jump table），
+// 函数指针表的额外重构（1600+ 行拆分为 50+ 方法）收益极小。
+// 保留 switch 形式，确保代码可维护性。
 
 VMResult VM::executeOneInstruction() {
     if (hasError_) return VMResult::VM_RUNTIME_ERROR;

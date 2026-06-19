@@ -93,9 +93,11 @@ public:
         }
         // 未找到变量
         // P5 fix: 回退到绑定实例的字段（方法调用时避免字段深拷贝）
+        // A1: 使用 const 访问器避免触发 COW detach
         if (boundInstance_ && boundInstance_->isInstance()) {
-            auto fit = boundInstance_->fields().find(name);
-            if (fit != boundInstance_->fields().end()) return &fit->second;
+            const auto& flds = static_cast<const Value*>(boundInstance_)->fields();
+            auto fit = flds.find(name);
+            if (fit != flds.end()) return &fit->second;
         }
         return nullptr;
     }
