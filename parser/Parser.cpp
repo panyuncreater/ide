@@ -10,6 +10,7 @@ Parser::Parser() {}
 std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     tokens_ = &tokens;  // 存储指针，避免深拷贝整个 token 流
     current_ = 0;
+    parseDepth_ = 0;  // P15 fix: 重置递归深度
     errors_.clear();
     diagnostics_.clear();
 
@@ -650,6 +651,13 @@ std::unique_ptr<ASTNode> Parser::expressionStatement() {
 // ---- 表达式 ----
 
 std::unique_ptr<ASTNode> Parser::expression() {
+    // P15 fix: 递归深度保护，防止极端嵌套表达式导致栈溢出
+    if (parseDepth_ >= MAX_PARSE_DEPTH) {
+        throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
+                         peek().line, peek().column);
+    }
+    parseDepth_++;
+    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
     return assignment();
 }
 

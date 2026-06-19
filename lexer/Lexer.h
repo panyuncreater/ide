@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_map>
 #include "lexer/Token.h"
@@ -23,7 +24,7 @@ public:
     const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
 
 private:
-    std::string source_;            // 源代码文本
+    std::string_view source_;        // P9 fix: string_view 避免全量拷贝（调用方保证生命周期）
     int start_ = 0;                 // 当前 token 起始位置
     int current_ = 0;               // 当前读取位置
     int line_ = 1;                  // 当前行号

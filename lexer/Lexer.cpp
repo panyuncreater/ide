@@ -158,7 +158,7 @@ void Lexer::scanToken() {
             // 捕获注释文本（含 // 前缀）
             size_t commentStart = start_;
             while (!isAtEnd() && peek() != '\n') advance();
-            std::string commentText = source_.substr(commentStart, current_ - commentStart);
+            std::string commentText(source_.substr(commentStart, current_ - commentStart));
             Token tok;
             tok.type = TokenType::TK_LINE_COMMENT;
             tok.lexeme = commentText;
@@ -233,7 +233,7 @@ void Lexer::identifier() {
                           || peek() == '_')) {
         advance();
     }
-    std::string text = source_.substr(start_, current_ - start_);
+    std::string text(source_.substr(start_, current_ - start_));
 
     // 查关键字表
     auto it = keywords().find(text);
@@ -281,7 +281,7 @@ void Lexer::number() {
             advance(); // 消耗符号
         }
         if (isAtEnd() || !std::isdigit(static_cast<unsigned char>(peek()))) {
-            errorToken("科学计数法格式错误: " + source_.substr(start_, current_ - start_));
+            errorToken("科学计数法格式错误: " + std::string(source_.substr(start_, current_ - start_)));
             return;
         }
         while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
@@ -289,7 +289,7 @@ void Lexer::number() {
         }
     }
 
-    std::string text = source_.substr(start_, current_ - start_);
+    std::string text(source_.substr(start_, current_ - start_));
 
     if (isFloat) {
         try {
@@ -356,18 +356,18 @@ void Lexer::string() {
 
     advance(); // 消耗闭合的 '"'
     // 使用字符串起始位置（startLine/startCol），避免多行字符串行号/列号错误
-    std::string text = source_.substr(start_, current_ - start_);
+    std::string text(source_.substr(start_, current_ - start_));
     tokens_.emplace_back(TokenType::TK_STRING_LIT, std::move(text), Value(value), startLine, startCol);
 }
 
 void Lexer::addToken(TokenType type) {
-    std::string text = source_.substr(start_, current_ - start_);
+    std::string text(source_.substr(start_, current_ - start_));
     int col = static_cast<int>(start_ - lineStart_) + 1;
     tokens_.emplace_back(type, text, Value::nullValue(), line_, col);
 }
 
 void Lexer::addToken(TokenType type, const Value& literal) {
-    std::string text = source_.substr(start_, current_ - start_);
+    std::string text(source_.substr(start_, current_ - start_));
     int col = static_cast<int>(start_ - lineStart_) + 1;
     tokens_.emplace_back(type, text, literal, line_, col);
 }

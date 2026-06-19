@@ -44,6 +44,8 @@ private:
     mutable int current_ = 0;               // 当前位置（mutable：peek() 需跳过注释）
     std::vector<ParseError> errors_; // 收集的解析错误
     DiagnosticBag diagnostics_;      // 诊断收集器
+    int parseDepth_ = 0;             // P15 fix: 递归深度计数器
+    static constexpr int MAX_PARSE_DEPTH = 512;  // P15 fix: 最大递归深度
 
     // ---- 辅助方法 ----
 

@@ -273,12 +273,7 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
     return false;
 }
 
-void Interpreter::checkType(const Value& val, const std::string& annotation,
-                            const std::function<std::string()>& contextBuilder, int line, int col) {
-    if (!typeMatch(val, annotation)) {
-        runtimeError(contextBuilder() + " 期望类型 " + annotation + "，实际为 " + val.typeName(), line, col);
-    }
-}
+// checkType 已模板化移至 Interpreter.h（P20 fix）
 
 const std::string* Interpreter::findTypeAnnotation(const std::string& varName) const {
     // B2 fix: 沿作用域链查找类型注解（不再使用 flat map）
@@ -749,12 +744,11 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
         currentEnv_->defineTypeAnnotation(node.name, node.typeAnnotation);
     }
 
-    // P1 fix: 检测同作用域重复声明
-    if (currentEnv_->localVariables().find(node.name) != currentEnv_->localVariables().end()) {
+    // P21 fix: 原子性检查+插入，消除 find+define 双次查找
+    if (!currentEnv_->tryDefineNew(node.name, initVal)) {
         runtimeError("变量 '" + node.name + "' 已在当前作用域中定义", node.line, node.column);
     }
 
-    currentEnv_->define(node.name, initVal);
     return initVal;
 }
 
@@ -1551,6 +1545,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             std::string sep = argValues.empty() ? "" : argValues[0].toString();
             std::string result;
             const auto& arr = obj.arrayVal();
+            // P24 fix: 预估结果字符串大小，避免反复 realloc
+            result.reserve(arr.size() * 16 + (arr.size() > 0 ? (arr.size() - 1) * sep.size() : 0));
             for (size_t i = 0; i < arr.size(); ++i) {
                 if (i > 0) result += sep;
                 result += arr[i].toString();

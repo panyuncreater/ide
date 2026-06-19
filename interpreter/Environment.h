@@ -45,6 +45,25 @@ public:
         }
     }
 
+    /// P21 fix: 原子性检查+插入 — 变量已存在返回 false，新插入返回 true
+    /// 用于 visitVarDecl 消除 find+define 双次查找
+    bool tryDefineNew(const std::string& name, const Value& val) {
+        auto [it, inserted] = variables.try_emplace(name, val);
+        if (inserted) {
+            ++generation_;
+            return true;
+        }
+        return false;  // 已存在，不覆盖
+    }
+    bool tryDefineNew(const std::string& name, Value&& val) {
+        auto [it, inserted] = variables.try_emplace(name, std::move(val));
+        if (inserted) {
+            ++generation_;
+            return true;
+        }
+        return false;
+    }
+
     /// 获取变量值（沿作用域链查找）— 返回指针，nullptr 表示未找到
     /// 优化路径：先查本地 O(1)，再用深度缓存跳过已知的中间作用域
     const Value* get(const std::string& name) const {
@@ -66,8 +85,8 @@ public:
             int depth = 0;
             const Value* result = parent->getWithDepth(name, depth);
             if (depth >= 0) {
-                // 找到变量所在的目标环境
-                Environment* target = findTargetEnv(name);
+                // 找到变量所在的目标环境（const_cast 安全：底层对象非 const，仅缓存使用）
+                Environment* target = const_cast<Environment*>(findTargetEnv(name));
                 depthCache_[name] = {depth + 1, target ? target->generation_ : generation_, target};
             }
             return result;

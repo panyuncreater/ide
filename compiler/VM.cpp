@@ -168,8 +168,11 @@ VMResult VM::numericOp(int opType) {
             return VMResult::VM_OK;
         }
         if (leftRef.isString() || rightRef.isString()) {
+            // VM fix: 预估大小避免 realloc
+            auto rs = rightRef.toString();
             std::string ls = leftRef.toString();
-            ls.append(rightRef.toString());
+            ls.reserve(ls.size() + rs.size());
+            ls.append(rs);
             stack_[stack_.size() - 2] = Value(std::move(ls));
             stack_.pop_back();
             return VMResult::VM_OK;
@@ -491,13 +494,14 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_NEGATE: {
-        Value val = pop();
-        if (hasError_) return VMResult::VM_RUNTIME_ERROR;
-        if (val.isInt()) {
-            if (val.intVal() == INT64_MIN) return runtimeError("整数溢出：无法对最小值取负");
-            push(Value(-val.intVal()));
+        // P17 fix: 原地修改栈顶，避免 pop+push 开销
+        if (stack_.empty()) return runtimeError("栈下溢：NEGATE 运算需要一个操作数");
+        auto& top = stack_.back();
+        if (top.isInt()) {
+            if (top.intVal() == INT64_MIN) return runtimeError("整数溢出：无法对最小值取负");
+            top = Value(-top.intVal());
         }
-        else if (val.isFloat()) push(Value(-val.floatVal()));
+        else if (top.isFloat()) top = Value(-top.floatVal());
         else return runtimeError("一元减运算需要数值类型");
         notifyStep(ip, op);
         ip += 1;
@@ -506,8 +510,8 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_NOT: {
         if (stack_.empty()) return runtimeError("栈下溢：NOT 运算需要一个操作数");
-        Value val = pop();
-        push(Value(!val.isTruthy()));
+        // P17 fix: 原地修改栈顶
+        stack_.back() = Value(!stack_.back().isTruthy());
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -660,14 +664,15 @@ VMResult VM::executeOneInstruction() {
         const bool wasInitCall = frames_.back().isInitCall;
         const int recvLocalSlot = frames_.back().receiverLocalSlot;
         const BytecodeChunk* retChunk = frames_.back().chunk;
+        const bool fieldsModified = frames_.back().fieldsModified;  // VM fix: 脏标记
         std::string recvVarName = std::move(frames_.back().receiverVarName);
         // 在 pop_back 之前保存 ip 值，避免悬空引用
         size_t savedIp = ip;
         frames_.pop_back();
 
         // 方法调用字段同步：将方法内修改的字段槽（bp+1..N）同步回 this（bp）
-        // 对所有 isMethodCall 都执行，不受 receiverVarName 限制
-        if (wasMethodCall && savedBp < stack_.size()) {
+        // VM fix: 仅在 init 调用或字段被修改时执行同步，跳过只读方法
+        if (wasMethodCall && savedBp < stack_.size() && (wasInitCall || fieldsModified)) {
             Value& modifiedThis = stack_[savedBp];
 
             // 先把方法内的字段槽（bp+1..N）同步回 this
@@ -771,7 +776,7 @@ VMResult VM::executeOneInstruction() {
 
                 // 收集参数
                 if (stack_.size() < static_cast<size_t>(argCount)) return runtimeError("栈下溢: OP_CALL ctor");
-                std::vector<Value> args(argCount);
+                SmallArgs<Value> args(argCount);
                 for (int i = argCount - 1; i >= 0; --i) {
                     args[i] = pop();
                 }
@@ -1048,12 +1053,14 @@ VMResult VM::executeOneInstruction() {
             int64_t i = index.intVal();
             if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
+                if (slot == 0) currentFrame().fieldsModified = true;  // VM fix
             } else {
                 return runtimeError("数组索引越界: " + std::to_string(i) +
                              ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = val;
+            if (slot == 0) currentFrame().fieldsModified = true;  // VM fix
         } else if (obj.isArray()) {
             return runtimeError("数组索引需要整数类型");
         } else {
@@ -1144,6 +1151,8 @@ VMResult VM::executeOneInstruction() {
         Value& obj = stack_[bp + slot];  // 栈引用，直接修改
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
+            // VM fix: 标记字段已修改，OP_RETURN 可跳过只读方法的字段同步
+            if (slot == 0) currentFrame().fieldsModified = true;
             // 当 slot==0（写 this.field）时，也需同步更新对应的字段槽
             // 否则 OP_RETURN 会用字段槽的旧值覆盖 this.fields()，导致 this.field 赋值丢失
             if (slot == 0 && currentFrame().chunk && !currentFrame().chunk->fieldOrder.empty()) {
@@ -1186,7 +1195,7 @@ VMResult VM::executeOneInstruction() {
         // ---- 数组内置方法 ----
         if (obj.isArray()) {
             // 先弹出参数（接收者仍在栈上，const ref 有效）
-            std::vector<Value> args(argCount);
+            SmallArgs<Value> args(argCount);
             for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
 
             // 非变异路径：从 const 引用计算结果，无需拷贝接收者
@@ -1265,7 +1274,7 @@ VMResult VM::executeOneInstruction() {
 
         // ---- 字典内置方法 ----
         if (obj.isDict()) {
-            std::vector<Value> args(argCount);
+            SmallArgs<Value> args(argCount);
             for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
 
             Value result = Value::nullValue();
@@ -1344,7 +1353,7 @@ VMResult VM::executeOneInstruction() {
 
         // ---- 字符串内置方法（全部非变异，使用 const 引用）----
         if (obj.isString()) {
-            std::vector<Value> args(argCount);
+            SmallArgs<Value> args(argCount);
             for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
 
             Value result = Value::nullValue();
@@ -1474,7 +1483,7 @@ VMResult VM::executeOneInstruction() {
 
                 // 收集参数（反向填充，省去 reverse）
                 if (stack_.size() < static_cast<size_t>(argCount) + 1) return runtimeError("栈下溢: OP_METHOD_CALL");
-                std::vector<Value> args(argCount);
+                SmallArgs<Value> args(argCount);
                 for (int i = argCount - 1; i >= 0; --i) {
                     args[i] = pop();
                 }
@@ -1619,7 +1628,7 @@ VMResult VM::executeOneInstruction() {
 
         // 收集参数（反向填充，省去 reverse）
         if (stack_.size() < argCount) return runtimeError("栈下溢: OP_CLASS_NEW");
-        std::vector<Value> args(argCount);
+        SmallArgs<Value> args(argCount);
         for (int i = argCount - 1; i >= 0; --i) {
             args[i] = pop();
         }

@@ -203,8 +203,14 @@ private:
     bool typeMatch(const Value& val, const std::string& annotation) const;
 
     /// 类型检查，不匹配则报运行时错误
+    /// P20 fix: 模板化 contextBuilder 消除 std::function 堆分配
+    template<typename ContextBuilder>
     void checkType(const Value& val, const std::string& annotation,
-                   const std::function<std::string()>& contextBuilder, int line, int col);
+                   ContextBuilder&& contextBuilder, int line, int col) {
+        if (!typeMatch(val, annotation)) {
+            runtimeError(contextBuilder() + " 期望类型 " + annotation + "，实际为 " + val.typeName(), line, col);
+        }
+    }
 
     /// 查找变量的类型注解（返回指针，避免字符串拷贝）
     const std::string* findTypeAnnotation(const std::string& varName) const;

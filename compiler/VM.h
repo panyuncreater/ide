@@ -11,6 +11,32 @@
 // VM 虚拟机（简单栈机）
 // ============================================================
 
+/// P13 fix: 小缓冲区优化的参数容器，避免方法调用时的堆分配
+/// 对于 argCount <= N 使用栈上内联存储，超出时回退到 vector
+template<typename T, size_t N = 8>
+class SmallArgs {
+    T inline_[N];
+    std::vector<T> heap_;
+    size_t sz_ = 0;
+public:
+    SmallArgs() = default;
+    explicit SmallArgs(size_t count) : sz_(count) {
+        if (count > N) heap_.resize(count);
+    }
+    size_t size() const { return sz_; }
+    bool empty() const { return sz_ == 0; }
+    T& operator[](size_t i) { return (sz_ <= N) ? inline_[i] : heap_[i]; }
+    const T& operator[](size_t i) const { return (sz_ <= N) ? inline_[i] : heap_[i]; }
+    T* begin() { return (sz_ <= N) ? inline_ : heap_.data(); }
+    T* end() { return begin() + sz_; }
+    const T* begin() const { return (sz_ <= N) ? inline_ : heap_.data(); }
+    const T* end() const { return begin() + sz_; }
+    void push_back(const T& v) {
+        if (sz_ < N) { inline_[sz_++] = v; }
+        else { if (sz_ == N) { heap_.assign(inline_, inline_ + N); } heap_.push_back(v); sz_++; }
+    }
+};
+
 /// 虚拟机执行结果
 enum class VMResult {
     VM_OK,
@@ -42,6 +68,7 @@ struct VMCallFrame {
     bool isInitCall = false;                // 是否为 init 构造函数调用（返回 this 而非 null）
     std::string receiverVarName;            // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
     int receiverLocalSlot = -1;             // 方法调用时，接收者在调用者帧中的局部变量槽号（-1=非局部变量）
+    bool fieldsModified = false;            // VM fix: 方法内是否修改了字段（用于跳过只读方法的字段同步）
 };
 
 /// VM 类信息（用于构造函数调用）
