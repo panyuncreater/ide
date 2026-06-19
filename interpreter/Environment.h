@@ -92,6 +92,11 @@ public:
             return result;
         }
         // 未找到变量
+        // P5 fix: 回退到绑定实例的字段（方法调用时避免字段深拷贝）
+        if (boundInstance_ && boundInstance_->isInstance()) {
+            auto fit = boundInstance_->fields().find(name);
+            if (fit != boundInstance_->fields().end()) return &fit->second;
+        }
         return nullptr;
     }
 
@@ -124,6 +129,14 @@ public:
             }
             return false;
         }
+        // P5 fix: 回退到绑定实例的字段
+        if (boundInstance_ && boundInstance_->isInstance()) {
+            auto fit = boundInstance_->fields().find(name);
+            if (fit != boundInstance_->fields().end()) {
+                fit->second = val;
+                return true;
+            }
+        }
         return false;   // 变量不存在
     }
 
@@ -148,6 +161,14 @@ public:
                 return setAtDepth(name, std::move(val), depth + 1);
             }
             return false;
+        }
+        // P5 fix: 回退到绑定实例的字段
+        if (boundInstance_ && boundInstance_->isInstance()) {
+            auto fit = boundInstance_->fields().find(name);
+            if (fit != boundInstance_->fields().end()) {
+                fit->second = std::move(val);
+                return true;
+            }
         }
         return false;
     }
@@ -183,6 +204,13 @@ public:
         return variables;
     }
 
+    // ---- P5 fix: 实例字段绑定 ----
+    // 方法调用时绑定 this 实例，get/set 找不到变量时回退到实例字段
+    // 避免将所有字段深拷贝到方法环境中
+
+    void bindInstance(Value* instance) { boundInstance_ = instance; }
+    Value* getBoundInstance() const { return boundInstance_; }
+
     // ---- B2 fix: 作用域感知的类型注解 ----
 
     /// 在当前作用域定义类型注解
@@ -206,6 +234,7 @@ public:
 private:
     std::unordered_map<std::string, Value> variables;
     std::unordered_map<std::string, std::string> typeAnnotations_; // B2: 作用域感知类型注解
+    Value* boundInstance_ = nullptr;  // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
 
     /// 深度缓存条目：记录变量在作用域链中的深度位置
     struct DepthEntry {

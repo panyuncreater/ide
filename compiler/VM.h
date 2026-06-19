@@ -161,6 +161,19 @@ private:
     };
     CallCacheEntry callCache_[CALL_CACHE_SIZE] = {};
     int callCacheNextSlot_ = 0;  // P3: round-robin 替换指针
+
+    // P2 fix: 全局变量内联缓存
+    static constexpr int GLOBAL_CACHE_SIZE = 8;
+    struct GlobalCacheEntry {
+        const std::string* namePtr = nullptr;
+        Value* valuePtr = nullptr;      // 指向 globals_ 中的 Value（rehash 后失效）
+        size_t generation = 0;          // globals_.bucket_count() 快照（检测 rehash）
+    };
+    GlobalCacheEntry globalCache_[GLOBAL_CACHE_SIZE] = {};
+    int globalCacheNextSlot_ = 0;
+    // P7: ASCII 字符串索引缓存（记住上次检查过的字符串，避免循环中重复 O(n) 扫描）
+    const std::string* lastAsciiStr_ = nullptr;
+    bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调

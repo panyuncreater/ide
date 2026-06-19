@@ -675,10 +675,9 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 auto parentEnv = cls.closureEnv ? cls.closureEnv : currentEnv_;
                 auto initEnv = std::make_shared<Environment>(parentEnv);
                 initEnv->define("this", instance);
-                // 将实例字段注入 init 环境
-                for (const auto& kv : instance.fields()) {
-                    initEnv->define(kv.first, kv.second);
-                }
+                // P5 fix: 绑定实例而非深拷贝所有字段
+                Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
+                if (thisInEnv) initEnv->bindInstance(thisInEnv);
                 auto prevEnv = currentEnv_;
                 currentEnv_ = initEnv;
 
@@ -1039,10 +1038,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
             // 绑定 this
             initEnv->define("this", instance);
 
-            // 将实例字段注入 init 环境
-            for (const auto& kv : instance.fields()) {
-                initEnv->define(kv.first, kv.second);
-            }
+            // P5 fix: 绑定实例而非深拷贝所有字段
+            Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
+            if (thisInEnv) initEnv->bindInstance(thisInEnv);
 
             // 绑定参数
             for (size_t i = 0; i < initMethod->params.size(); ++i) {
@@ -1750,10 +1748,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                     // 绑定 this
                     methodEnv->define("this", obj);
 
-                    // 将实例字段注入方法环境，使方法内可直接用 name 访问 this.name
-                    for (const auto& kv : obj.fields()) {
-                        methodEnv->define(kv.first, kv.second);
-                    }
+                    // P5 fix: 绑定实例而非深拷贝所有字段 — get/set 自动回退到实例字段
+                    Value* thisInEnv = const_cast<Value*>(methodEnv->get("this"));
+                    if (thisInEnv) methodEnv->bindInstance(thisInEnv);
 
                     // 绑定参数（参数覆盖同名字段）
                     for (size_t i = 0; i < method->params.size(); ++i) {

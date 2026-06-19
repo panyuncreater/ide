@@ -149,17 +149,21 @@ void VmStackPanel::updateStack(const std::vector<Value>& stack) {
 }
 
 void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& globals) {
-    // 排序后填表，避免 unordered_map 遍历顺序不确定导致 UI 闪烁
-    std::vector<std::pair<std::string, Value>> entries(globals.begin(), globals.end());
+    // P6 fix: 排序时只拷贝键的指针，避免深拷贝所有 Value
+    std::vector<const std::pair<const std::string, Value>*> entries;
+    entries.reserve(globals.size());
+    for (const auto& kv : globals) {
+        entries.push_back(&kv);
+    }
     std::sort(entries.begin(), entries.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+              [](const auto* a, const auto* b) { return a->first < b->first; });
 
     globalsTable_->setRowCount(static_cast<int>(entries.size()));
 
     int row = 0;
-    for (const auto& [name, val] : entries) {
-        globalsTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(name)));
-        globalsTable_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(val.toString())));
+    for (const auto* entry : entries) {
+        globalsTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(entry->first)));
+        globalsTable_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(entry->second.toString())));
         ++row;
     }
 

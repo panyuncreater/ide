@@ -321,6 +321,9 @@ void VM::initExecution(const CompileResult& result) {
     // P3: 清除函数调用缓存（functionChunks_ 地址已变）
     for (int ci = 0; ci < CALL_CACHE_SIZE; ++ci) callCache_[ci] = {};
     callCacheNextSlot_ = 0;
+    // P2: 清除全局变量缓存
+    for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
+    globalCacheNextSlot_ = 0;
     classInfo_.clear();
     mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬空指针
 
@@ -606,11 +609,32 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
-        auto it = globals_.find(name);
-        if (it != globals_.end()) {
-            push(it->second);
+
+        // P2 fix: 内联缓存快速路径
+        const std::string* namePtr = &name;
+        size_t curGen = globals_.bucket_count();
+        Value* cachedVal = nullptr;
+        for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) {
+            if (globalCache_[ci].namePtr == namePtr && globalCache_[ci].generation == curGen) {
+                cachedVal = globalCache_[ci].valuePtr;
+                break;
+            }
+        }
+
+        if (cachedVal) {
+            push(*cachedVal);
         } else {
-            return runtimeError("未定义的变量: " + name);
+            auto it = globals_.find(name);
+            if (it != globals_.end()) {
+                // 写入缓存
+                globalCache_[globalCacheNextSlot_].namePtr = namePtr;
+                globalCache_[globalCacheNextSlot_].valuePtr = &it->second;
+                globalCache_[globalCacheNextSlot_].generation = curGen;
+                globalCacheNextSlot_ = (globalCacheNextSlot_ + 1) % GLOBAL_CACHE_SIZE;
+                push(it->second);
+            } else {
+                return runtimeError("未定义的变量: " + name);
+            }
         }
         notifyStep(ip, op);
         ip += 3;
@@ -622,12 +646,32 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
-        // M2 fix: 检查变量是否已定义，防止拼写错误静默创建新变量
-        auto it = globals_.find(name);
-        if (it == globals_.end()) {
-            return runtimeError("未定义的变量: " + name);
+
+        // P2 fix: 内联缓存快速路径
+        const std::string* namePtr = &name;
+        size_t curGen = globals_.bucket_count();
+        Value* cachedVal = nullptr;
+        for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) {
+            if (globalCache_[ci].namePtr == namePtr && globalCache_[ci].generation == curGen) {
+                cachedVal = globalCache_[ci].valuePtr;
+                break;
+            }
         }
-        it->second = std::move(val);
+
+        if (cachedVal) {
+            *cachedVal = std::move(val);
+        } else {
+            auto it = globals_.find(name);
+            if (it == globals_.end()) {
+                return runtimeError("未定义的变量: " + name);
+            }
+            // 写入缓存
+            globalCache_[globalCacheNextSlot_].namePtr = namePtr;
+            globalCache_[globalCacheNextSlot_].valuePtr = &it->second;
+            globalCache_[globalCacheNextSlot_].generation = curGen;
+            globalCacheNextSlot_ = (globalCacheNextSlot_ + 1) % GLOBAL_CACHE_SIZE;
+            it->second = std::move(val);
+        }
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -998,6 +1042,27 @@ VMResult VM::executeOneInstruction() {
             // V3 fix: 基于 UTF-8 码位索引，与解释器 M6 fix 一致
             int64_t i = idx.intVal();
             const std::string& s = obj.stringVal();
+
+            // P7 fix: ASCII 快速路径 — 纯 ASCII 字符串直接按字节索引 O(1)
+            // 缓存上次检查的字符串，循环中重复访问同一字符串时跳过 O(n) 扫描
+            if (i >= 0 && static_cast<size_t>(i) < s.size()) {
+                bool isAscii;
+                if (lastAsciiStr_ == &s) {
+                    isAscii = lastAsciiStrIsAscii_;
+                } else {
+                    isAscii = true;
+                    for (size_t b = 0; b < s.size(); ++b) {
+                        if (static_cast<unsigned char>(s[b]) >= 0x80) { isAscii = false; break; }
+                    }
+                    lastAsciiStr_ = &s;
+                    lastAsciiStrIsAscii_ = isAscii;
+                }
+                if (isAscii) {
+                    push(Value(s.substr(static_cast<size_t>(i), 1)));
+                    break;  // 跳过慢路径
+                }
+            }
+
             size_t charCount = 0;
             size_t bytePos = 0;
             size_t targetBytePos = 0;
