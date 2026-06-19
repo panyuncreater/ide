@@ -298,6 +298,46 @@ public:
     }
 
     // ============================================================
+    // A2: 原地变异辅助方法 — 跳过 COW detach 当 refcount==1
+    // ============================================================
+
+    /// 若独占拥有数组数据（refcount==1），返回可修改指针；否则返回 nullptr
+    std::vector<Value>* tryGetMutableArray() {
+        if (!isArray()) return nullptr;
+        auto& ptr = std::get<5>(data_);
+        if (!ptr || ptr.use_count() != 1) return nullptr;
+        return &ptr->elements;
+    }
+
+    /// 若独占拥有字典数据（refcount==1），返回可修改指针；否则返回 nullptr
+    std::unordered_map<std::string, Value>* tryGetMutableDict() {
+        if (!isDict()) return nullptr;
+        auto& ptr = std::get<6>(data_);
+        if (!ptr || ptr.use_count() != 1) return nullptr;
+        return &ptr->entries;
+    }
+
+    /// 若独占拥有实例数据（refcount==1），返回可修改字段指针；否则返回 nullptr
+    std::unordered_map<std::string, Value>* tryGetMutableFields() {
+        if (!isInstance()) return nullptr;
+        auto& ptr = std::get<7>(data_);
+        if (!ptr || ptr.use_count() != 1) return nullptr;
+        return &ptr->fields;
+    }
+
+    /// 检查是否独占拥有数据（标量类型始终返回 true）
+    bool isUniquelyOwned() const {
+        switch (getType()) {
+        case ValueType::VAL_STRING:   return !std::get<4>(data_) || std::get<4>(data_).use_count() == 1;
+        case ValueType::VAL_ARRAY:    return !std::get<5>(data_) || std::get<5>(data_).use_count() == 1;
+        case ValueType::VAL_DICT:     return !std::get<6>(data_) || std::get<6>(data_).use_count() == 1;
+        case ValueType::VAL_INSTANCE: return !std::get<7>(data_) || std::get<7>(data_).use_count() == 1;
+        case ValueType::VAL_CLOSURE:  return !std::get<8>(data_) || std::get<8>(data_).use_count() == 1;
+        default: return true;
+        }
+    }
+
+    // ============================================================
     // 工具方法
     // ============================================================
 

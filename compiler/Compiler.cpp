@@ -28,6 +28,18 @@ CompileResult Compiler::compile(Block& program) {
     blockDepth_ = 0;
     blockSaveCounter_ = 0;  // L11 fix: 编译间重置块保存计数器
     topLevelGlobals_.clear();
+    globalSlots_.clear();
+    slotNames_.clear();
+    freeSlots_.clear();
+
+    // A2: pre-scan top-level declarations to assign global slots (eliminates forward-reference issues)
+    for (auto& stmt : program.statements) {
+        if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
+            allocateGlobalSlot(static_cast<VarDecl*>(stmt.get())->name);
+        } else if (stmt && stmt->nodeType == NodeType::NODE_CLASS_DECL) {
+            allocateGlobalSlot(static_cast<ClassDecl*>(stmt.get())->name);
+        }
+    }
 
     // 编译所有顶层语句（不调用 compileBlock，确保 blockDepth_=0 为真正顶层）
     for (auto& stmt : program.statements) {
@@ -41,6 +53,8 @@ CompileResult Compiler::compile(Block& program) {
     CompileResult result;
     result.mainChunk = std::move(chunk_);
     result.functionChunks = std::move(functionChunks_);
+    result.globalSlotCount = static_cast<int>(slotNames_.size());
+    result.globalSlotNames = slotNames_;
 
     // 预计算 ip→指令索引映射（用于调试高亮 O(1) 查找）
     result.mainChunk.buildIpMap();
@@ -53,6 +67,36 @@ CompileResult Compiler::compile(Block& program) {
 
 std::string Compiler::getLastError() const {
     return lastError_;
+}
+
+// A2: global slot management
+int Compiler::allocateGlobalSlot(const std::string& name) {
+    auto it = globalSlots_.find(name);
+    if (it != globalSlots_.end()) return it->second;
+    int slot;
+    if (!freeSlots_.empty()) {
+        slot = freeSlots_.back();
+        freeSlots_.pop_back();
+        slotNames_[slot] = name;
+    } else {
+        slot = static_cast<int>(slotNames_.size());
+        slotNames_.push_back(name);
+    }
+    globalSlots_[name] = slot;
+    return slot;
+}
+
+void Compiler::releaseGlobalSlot(const std::string& name) {
+    auto it = globalSlots_.find(name);
+    if (it != globalSlots_.end()) {
+        freeSlots_.push_back(it->second);
+        globalSlots_.erase(it);
+    }
+}
+
+int Compiler::lookupGlobalSlot(const std::string& name) const {
+    auto it = globalSlots_.find(name);
+    return (it != globalSlots_.end()) ? it->second : -1;
 }
 
 uint16_t Compiler::identifierIndex(const std::string& name) {
@@ -276,9 +320,16 @@ void Compiler::compileVarDecl(VarDecl& node) {
         // 避免函数内循环 var 声明累积导致栈溢出。
         chunk_.writeOp(OpCode::OP_POP, node.line);
     } else {
-        uint16_t nameIdx = identifierIndex(node.name);
-        chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
-        chunk_.writeShort(nameIdx, node.line);
+        // A2: use integer slot for known globals
+        int slot = lookupGlobalSlot(node.name);
+        if (slot >= 0) {
+            chunk_.writeOp(OpCode::OP_DEFINE_GLOBAL, node.line);
+            chunk_.writeShort(static_cast<uint16_t>(slot), node.line);
+        } else {
+            uint16_t nameIdx = identifierIndex(node.name);
+            chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+            chunk_.writeShort(nameIdx, node.line);
+        }
         if (blockDepth_ == 0) {
             topLevelGlobals_.insert(node.name);
         }
@@ -309,16 +360,28 @@ void Compiler::compileAssignment(Assignment& node) {
                     return;
                 }
             }
-            // OP_SET_VAR pop 消费栈顶值（DUP 的副本留在栈上）
+            // A2: use integer slot for known globals
+            int slot = lookupGlobalSlot(node.name);
+            if (slot >= 0) {
+                chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
+                chunk_.writeShort(static_cast<uint16_t>(slot), node.line);
+            } else {
+                uint16_t nameIdx = identifierIndex(node.name);
+                chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            }
+        }
+    } else {
+        // A2: use integer slot for known globals
+        int slot = lookupGlobalSlot(node.name);
+        if (slot >= 0) {
+            chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
+            chunk_.writeShort(static_cast<uint16_t>(slot), node.line);
+        } else {
             uint16_t nameIdx = identifierIndex(node.name);
             chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
         }
-    } else {
-        // OP_SET_VAR pop 消费栈顶值（DUP 的副本留在栈上）
-        uint16_t nameIdx = identifierIndex(node.name);
-        chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
-        chunk_.writeShort(nameIdx, node.line);
     }
 }
 
@@ -340,9 +403,16 @@ void Compiler::compileVarRef(VarRef& node) {
             }
         }
     }
-    uint16_t nameIdx = identifierIndex(node.name);
-    chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
-    chunk_.writeShort(nameIdx, node.line);
+    // A2: use integer slot for known globals
+    int slot = lookupGlobalSlot(node.name);
+    if (slot >= 0) {
+        chunk_.writeOp(OpCode::OP_GET_GLOBAL, node.line);
+        chunk_.writeShort(static_cast<uint16_t>(slot), node.line);
+    } else {
+        uint16_t nameIdx = identifierIndex(node.name);
+        chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+        chunk_.writeShort(nameIdx, node.line);
+    }
 }
 
 void Compiler::compileIfStmt(IfStmt& node) {

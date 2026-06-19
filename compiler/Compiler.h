@@ -43,8 +43,22 @@ private:
     std::string currentClassName_;  // B1 fix: 当前正在编译的类名（供 OP_SUPER_CALL 编码类上下文）
     std::unordered_set<std::string> topLevelGlobals_;  // VMBUG-1: 顶层（非块/非函数）var 声明的全局变量名集合
 
+    // A2: 全局变量整数槽位管理
+    std::unordered_map<std::string, int> globalSlots_;  // name -> slot index
+    std::vector<std::string> slotNames_;                 // slot -> name (parallel array)
+    std::vector<int> freeSlots_;                         // recycled slot indices
+
     /// 添加变量名到常量池，返回索引
     uint16_t identifierIndex(const std::string& name);
+
+    /// A2: 分配全局槽位（已有则返回现有，否则从 freeSlots_ 或新分配）
+    int allocateGlobalSlot(const std::string& name);
+
+    /// A2: 释放全局槽位（从 globalSlots_ 移除，推入 freeSlots_）
+    void releaseGlobalSlot(const std::string& name);
+
+    /// A2: 查找全局槽位（未找到返回 -1）
+    int lookupGlobalSlot(const std::string& name) const;
 
     /// 编译 AST 节点
     void compileNode(ASTNode* node);

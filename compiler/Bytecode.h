@@ -85,6 +85,12 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     // O1: super 关键字指令
     OP_SUPER_CALL,       // super 方法调用（格式同 OP_METHOD_CALL，7字节），从父类开始方法查找
     OP_SUPER_MEMBER_GET, // super 成员取值（格式同 OP_MEMBER_GET，3字节），从父类查找
+
+    // A2: 全局变量整数索引指令（编译期分配槽位，运行时 vector 直接访问）
+    OP_GET_GLOBAL,       // 读取全局槽位（操作数: slot(2B)）
+    OP_SET_GLOBAL,       // 写入全局槽位（操作数: slot(2B)）
+    OP_DEFINE_GLOBAL,    // 定义全局槽位（操作数: slot(2B)）
+    OP_DELETE_GLOBAL,    // 删除全局槽位（操作数: slot(2B)）
 };
 
 /// 操作码 → 名称字符串（统一映射，避免多处手工维护）
@@ -149,6 +155,10 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_WRITEBACK_INDEX_LOCAL: return "OP_WRITEBACK_INDEX_LOCAL";
     case OpCode::OP_SUPER_CALL:       return "OP_SUPER_CALL";
     case OpCode::OP_SUPER_MEMBER_GET: return "OP_SUPER_MEMBER_GET";
+    case OpCode::OP_GET_GLOBAL:       return "OP_GET_GLOBAL";
+    case OpCode::OP_SET_GLOBAL:       return "OP_SET_GLOBAL";
+    case OpCode::OP_DEFINE_GLOBAL:    return "OP_DEFINE_GLOBAL";
+    case OpCode::OP_DELETE_GLOBAL:    return "OP_DELETE_GLOBAL";
     }
     return "OP_UNKNOWN";
 }
@@ -306,6 +316,10 @@ public:
             /* 56 OP_WRITEBACK_INDEX_LOCAL  */ 2,
             /* 57 OP_SUPER_CALL             */ 9,  // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B) + classIdx(2B)
             /* 58 OP_SUPER_MEMBER_GET       */ 3,
+            /* 59 OP_GET_GLOBAL             */ 3,
+            /* 60 OP_SET_GLOBAL             */ 3,
+            /* 61 OP_DEFINE_GLOBAL          */ 3,
+            /* 62 OP_DELETE_GLOBAL          */ 3,
         };
         auto idx = static_cast<uint8_t>(op);
         if (idx < sizeof(sizes)) return sizes[idx];
@@ -592,6 +606,30 @@ public:
             offset += 2;
             break;
         }
+        case OpCode::OP_GET_GLOBAL: {
+            uint16_t slot = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_GET_GLOBAL slot=" + std::to_string(slot);
+            offset += 3;
+            break;
+        }
+        case OpCode::OP_SET_GLOBAL: {
+            uint16_t slot = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_SET_GLOBAL slot=" + std::to_string(slot);
+            offset += 3;
+            break;
+        }
+        case OpCode::OP_DEFINE_GLOBAL: {
+            uint16_t slot = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_DEFINE_GLOBAL slot=" + std::to_string(slot);
+            offset += 3;
+            break;
+        }
+        case OpCode::OP_DELETE_GLOBAL: {
+            uint16_t slot = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_DELETE_GLOBAL slot=" + std::to_string(slot);
+            offset += 3;
+            break;
+        }
         default:
             str += "OP_UNKNOWN(" + std::to_string(static_cast<int>(op)) + ")";
             offset += 1;
@@ -606,6 +644,9 @@ public:
 struct CompileResult {
     BytecodeChunk mainChunk;
     std::unordered_map<std::string, BytecodeChunk> functionChunks;
+    // A2: 全局变量槽位映射（编译器→VM）
+    int globalSlotCount = 0;
+    std::vector<std::string> globalSlotNames;
 
     CompileResult() = default;
     CompileResult(CompileResult&&) noexcept = default;

@@ -72,10 +72,6 @@ std::vector<Value> VM::getStack() const {
     return stack_;
 }
 
-std::unordered_map<std::string, Value> VM::getGlobals() const {
-    return globals_;
-}
-
 size_t VM::getCurrentIP() const {
     if (frames_.empty()) return 0;
     return frames_.back().ip;
@@ -325,6 +321,15 @@ void VM::initExecution(const CompileResult& result) {
     for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
     globalCacheNextSlot_ = 0;
     classInfo_.clear();
+    // A2: 初始化全局变量槽位
+    globalSlots_.clear();
+    globalSlotNames_.clear();
+    globalNameToSlot_.clear();
+    globalSlots_.resize(result.globalSlotCount);
+    globalSlotNames_ = result.globalSlotNames;
+    for (int i = 0; i < result.globalSlotCount; ++i) {
+        globalNameToSlot_[result.globalSlotNames[i]] = i;
+    }
     mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬空指针
 
     // 设置主帧
@@ -355,6 +360,9 @@ void VM::resetState() {
     frames_.clear();
     functionChunks_.clear();
     classInfo_.clear();
+    globalSlots_.clear();
+    globalSlotNames_.clear();
+    globalNameToSlot_.clear();
     mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
@@ -602,7 +610,12 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
-        globals_[name] = std::move(val);
+        auto gsIt = globalNameToSlot_.find(name);
+        if (gsIt != globalNameToSlot_.end()) {
+            globalSlots_[gsIt->second] = std::move(val);
+        } else {
+            globals_[name] = std::move(val);
+        }
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -613,7 +626,16 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
 
-        // P2 fix: 内联缓存快速路径
+        // A2: slot-based global fast path
+        auto gsIt = globalNameToSlot_.find(name);
+        if (gsIt != globalNameToSlot_.end()) {
+            push(globalSlots_[gsIt->second]);
+            notifyStep(ip, op);
+            ip += 3;
+            break;
+        }
+
+        // P2 fix: 内联缓存快速路径（仅 fallback globals_）
         const std::string* namePtr = &name;
         size_t curGen = globals_.bucket_count();
         Value* cachedVal = nullptr;
@@ -650,7 +672,16 @@ VMResult VM::executeOneInstruction() {
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
 
-        // P2 fix: 内联缓存快速路径
+        // A2: slot-based global fast path
+        auto gsIt = globalNameToSlot_.find(name);
+        if (gsIt != globalNameToSlot_.end()) {
+            globalSlots_[gsIt->second] = std::move(val);
+            notifyStep(ip, op);
+            ip += 3;
+            break;
+        }
+
+        // P2 fix: 内联缓存快速路径（仅 fallback globals_）
         const std::string* namePtr = &name;
         size_t curGen = globals_.bucket_count();
         Value* cachedVal = nullptr;
@@ -684,7 +715,53 @@ VMResult VM::executeOneInstruction() {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& name = chunk.constants[idx].stringVal();
-        globals_.erase(name);
+        auto gsIt = globalNameToSlot_.find(name);
+        if (gsIt != globalNameToSlot_.end()) {
+            globalSlots_[gsIt->second] = Value::nullValue();
+        } else {
+            globals_.erase(name);
+        }
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    // ---- A2: 全局变量整数槽位指令 ----
+
+    case OpCode::OP_GET_GLOBAL: {
+        uint16_t slot = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (slot >= globalSlots_.size()) return runtimeError("全局变量槽越界");
+        push(globalSlots_[slot]);
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    case OpCode::OP_SET_GLOBAL: {
+        uint16_t slot = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (slot >= globalSlots_.size()) return runtimeError("全局变量槽越界");
+        Value val = pop();
+        globalSlots_[slot] = std::move(val);
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    case OpCode::OP_DEFINE_GLOBAL: {
+        uint16_t slot = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (slot >= globalSlots_.size()) return runtimeError("全局变量槽越界");
+        Value val = pop();
+        globalSlots_[slot] = std::move(val);
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    case OpCode::OP_DELETE_GLOBAL: {
+        uint16_t slot = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (slot < globalSlots_.size()) {
+            globalSlots_[slot] = Value::nullValue();
+        }
         notifyStep(ip, op);
         ip += 3;
         break;
@@ -755,12 +832,19 @@ VMResult VM::executeOneInstruction() {
                 VMCallFrame& callerFrame = currentFrame();
                 size_t callerBp = callerFrame.basePointer;
 
-                // 路径 A：接收者是全局变量 → 写回 globals_
+                // 路径 A：接收者是全局变量 → 写回 globals_ 或 globalSlots_
                 if (!recvVarName.empty() && modifiedThis.isInstance()) {
-                    auto it = globals_.find(recvVarName);
-                    if (it != globals_.end() && it->second.isInstance()) {
+                    auto gsIt = globalNameToSlot_.find(recvVarName);
+                    if (gsIt != globalNameToSlot_.end() && globalSlots_[gsIt->second].isInstance()) {
                         for (auto& field : modifiedThis.fields()) {
-                            it->second.fields()[field.first] = field.second;
+                            globalSlots_[gsIt->second].fields()[field.first] = field.second;
+                        }
+                    } else {
+                        auto it = globals_.find(recvVarName);
+                        if (it != globals_.end() && it->second.isInstance()) {
+                            for (auto& field : modifiedThis.fields()) {
+                                it->second.fields()[field.first] = field.second;
+                            }
                         }
                     }
                 }
@@ -1062,7 +1146,9 @@ VMResult VM::executeOneInstruction() {
                 }
                 if (isAscii) {
                     push(Value(s.substr(static_cast<size_t>(i), 1)));
-                    break;  // 跳过慢路径
+                    notifyStep(ip, op);
+                    ip += 1;
+                    break;  // 跳过慢路径，直接完成 OP_INDEX_GET
                 }
             }
 
@@ -1111,18 +1197,26 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_SET_VAR: {
-        // 直接修改 globals_[varName] 中的数组/字典元素
+        // 直接修改全局变量中的数组/字典元素
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[idx].stringVal();
         if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_SET_VAR");
         Value val = pop();
         Value index = pop();
-        auto it = globals_.find(varName);
-        if (it == globals_.end()) {
-            return runtimeError("未定义的变量: " + varName);
+        // A2: 先查 globalSlots_，再查 globals_
+        Value* objPtr = nullptr;
+        auto gsIt = globalNameToSlot_.find(varName);
+        if (gsIt != globalNameToSlot_.end()) {
+            objPtr = &globalSlots_[gsIt->second];
+        } else {
+            auto it = globals_.find(varName);
+            if (it == globals_.end()) {
+                return runtimeError("未定义的变量: " + varName);
+            }
+            objPtr = &it->second;
         }
-        Value& obj = it->second;  // 引用，直接修改
+        Value& obj = *objPtr;  // 引用，直接修改
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
             if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
@@ -1218,18 +1312,26 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET_VAR: {
-        // 直接修改 globals_[varName].fields()[fieldName]
+        // 直接修改全局变量.fields()[fieldName]
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[varIdx].stringVal();
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
         Value val = pop();
-        auto it = globals_.find(varName);
-        if (it == globals_.end()) {
-            return runtimeError("未定义的变量: " + varName);
+        // A2: 先查 globalSlots_，再查 globals_
+        Value* objPtr = nullptr;
+        auto gsIt = globalNameToSlot_.find(varName);
+        if (gsIt != globalNameToSlot_.end()) {
+            objPtr = &globalSlots_[gsIt->second];
+        } else {
+            auto it = globals_.find(varName);
+            if (it == globals_.end()) {
+                return runtimeError("未定义的变量: " + varName);
+            }
+            objPtr = &it->second;
         }
-        Value& obj = it->second;  // 引用，直接修改
+        Value& obj = *objPtr;  // 引用，直接修改
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
         } else if (obj.isDict()) {
@@ -1331,31 +1433,53 @@ VMResult VM::executeOneInstruction() {
                 pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
 
-            // 变异路径：拷贝接收者后 pop，修改副本，写回
-            Value mutableObj(obj);  // 深拷贝（仅变异方法需要）
-            pop();  // 移除栈上原始接收者
+            // A2 变异路径：先 pop 接收者(move, refcount 不变)，再用 tryGetMutable 原地修改
+            Value mutableObj = std::move(stack_.back());
+            stack_.pop_back();
 
             if (method == BuiltinMethod::ARR_PUSH) {
                 if (args.size() != 1) return runtimeError("push 期望 1 个参数");
-                mutableObj.arrayVal().push_back(args[0]);
+                auto* arr = mutableObj.tryGetMutableArray();
+                if (arr) arr->push_back(std::move(args[0]));
+                else mutableObj.arrayVal().push_back(args[0]);
             } else if (method == BuiltinMethod::ARR_POP) {
-                if (mutableObj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
-                result = mutableObj.arrayVal().back();
-                mutableObj.arrayVal().pop_back();
+                auto* arr = mutableObj.tryGetMutableArray();
+                if (arr) {
+                    if (arr->empty()) return runtimeError("对空数组调用 pop");
+                    result = std::move(arr->back());
+                    arr->pop_back();
+                } else {
+                    if (mutableObj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
+                    result = mutableObj.arrayVal().back();
+                    mutableObj.arrayVal().pop_back();
+                }
             } else if (method == BuiltinMethod::ARR_REMOVE) {
                 if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
                 if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
                 int64_t ri = args[0].intVal();
-                if (ri < 0 || static_cast<size_t>(ri) >= mutableObj.arrayVal().size())
-                    return runtimeError("数组索引越界: " + std::to_string(ri));
-                mutableObj.arrayVal().erase(mutableObj.arrayVal().begin() + static_cast<size_t>(ri));
+                auto* arr = mutableObj.tryGetMutableArray();
+                if (arr) {
+                    if (ri < 0 || static_cast<size_t>(ri) >= arr->size())
+                        return runtimeError("数组索引越界: " + std::to_string(ri));
+                    arr->erase(arr->begin() + static_cast<size_t>(ri));
+                } else {
+                    if (ri < 0 || static_cast<size_t>(ri) >= mutableObj.arrayVal().size())
+                        return runtimeError("数组索引越界: " + std::to_string(ri));
+                    mutableObj.arrayVal().erase(mutableObj.arrayVal().begin() + static_cast<size_t>(ri));
+                }
             } else {
                 return runtimeError("数组没有方法 " + methodName);
             }
 
             // 写回变异后的对象（P7 fix: 使用 std::move 避免二次深拷贝）
             if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                globals_[chunk.constants[receiverVarIdx].stringVal()] = std::move(mutableObj);
+                const std::string& recvName = chunk.constants[receiverVarIdx].stringVal();
+                auto gsIt = globalNameToSlot_.find(recvName);
+                if (gsIt != globalNameToSlot_.end()) {
+                    globalSlots_[gsIt->second] = std::move(mutableObj);
+                } else {
+                    globals_[recvName] = std::move(mutableObj);
+                }
             } else if (receiverLocalSlotByte != 0xFF) {
                 size_t bp = currentFrame().basePointer;
                 // P7 fix: 先拷贝到字段（需要完整副本），再 move 到栈槽
@@ -1421,20 +1545,28 @@ VMResult VM::executeOneInstruction() {
                 pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
             }
 
-            // 变异路径（remove）：拷贝后修改
-            Value mutableObj(obj);
-            pop();
+            // A2 变异路径（remove）：先 pop 再原地修改
+            Value mutableObj = std::move(stack_.back());
+            stack_.pop_back();
 
             if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
                 if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
-                mutableObj.dictVal().erase(args[0].toString());
+                auto* dict = mutableObj.tryGetMutableDict();
+                if (dict) dict->erase(args[0].toString());
+                else mutableObj.dictVal().erase(args[0].toString());
             } else {
                 return runtimeError("字典没有方法 " + methodName);
             }
 
             // 写回（P7 fix: 使用 std::move 避免二次深拷贝）
             if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                globals_[chunk.constants[receiverVarIdx].stringVal()] = std::move(mutableObj);
+                const std::string& recvName = chunk.constants[receiverVarIdx].stringVal();
+                auto gsIt = globalNameToSlot_.find(recvName);
+                if (gsIt != globalNameToSlot_.end()) {
+                    globalSlots_[gsIt->second] = std::move(mutableObj);
+                } else {
+                    globals_[recvName] = std::move(mutableObj);
+                }
             } else if (receiverLocalSlotByte != 0xFF) {
                 size_t bp = currentFrame().basePointer;
                 // P7 fix: 先拷贝到字段（需要完整副本），再 move 到栈槽
@@ -1923,7 +2055,12 @@ VMResult VM::executeOneInstruction() {
 
         // 在全局变量中存储类标记（与解释器语义一致：类名是类型标识，不是实例）
         Value classVal(std::string("class:") + className);
-        globals_[className] = classVal;
+        auto classGsIt = globalNameToSlot_.find(className);
+        if (classGsIt != globalNameToSlot_.end()) {
+            globalSlots_[classGsIt->second] = classVal;
+        } else {
+            globals_[className] = classVal;
+        }
 
         notifyStep(ip, op);
         ip += 5;  // nameIdx(2B) + superNameIdx(2B) + opcode(1B)
@@ -1939,12 +2076,20 @@ VMResult VM::executeOneInstruction() {
         if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[varIdx].stringVal();
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
-        auto it = globals_.find(varName);
-        if (it == globals_.end()) {
-            lastMutatedReceiver_ = Value::nullValue();
-            return runtimeError("未定义的变量: " + varName);
+        // A2: 先查 globalSlots_，再查 globals_
+        Value* objPtr = nullptr;
+        auto gsIt = globalNameToSlot_.find(varName);
+        if (gsIt != globalNameToSlot_.end()) {
+            objPtr = &globalSlots_[gsIt->second];
+        } else {
+            auto it = globals_.find(varName);
+            if (it == globals_.end()) {
+                lastMutatedReceiver_ = Value::nullValue();
+                return runtimeError("未定义的变量: " + varName);
+            }
+            objPtr = &it->second;
         }
-        Value& obj = it->second;
+        Value& obj = *objPtr;
         if (obj.isInstance()) {
             obj.fields()[fieldName] = lastMutatedReceiver_;
         } else if (obj.isDict()) {
@@ -2009,12 +2154,20 @@ VMResult VM::executeOneInstruction() {
             return runtimeError("常量池索引越界");
         }
         const std::string& varName = chunk.constants[varIdx].stringVal();
-        auto it = globals_.find(varName);
-        if (it == globals_.end()) {
-            lastMutatedReceiver_ = Value::nullValue();
-            return runtimeError("未定义的变量: " + varName);
+        // A2: 先查 globalSlots_，再查 globals_
+        Value* objPtr = nullptr;
+        auto gsIt = globalNameToSlot_.find(varName);
+        if (gsIt != globalNameToSlot_.end()) {
+            objPtr = &globalSlots_[gsIt->second];
+        } else {
+            auto it = globals_.find(varName);
+            if (it == globals_.end()) {
+                lastMutatedReceiver_ = Value::nullValue();
+                return runtimeError("未定义的变量: " + varName);
+            }
+            objPtr = &it->second;
         }
-        Value& obj = it->second;
+        Value& obj = *objPtr;
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
             if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {

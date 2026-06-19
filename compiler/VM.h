@@ -125,14 +125,27 @@ public:
     /// 获取栈内容（用于调试，拷贝）
     std::vector<Value> getStack() const;
 
-    /// 获取全局变量（用于调试，拷贝）
-    std::unordered_map<std::string, Value> getGlobals() const;
-
     /// 获取栈的常量引用（零拷贝，调试用）
     const std::vector<Value>& getStackRef() const { return stack_; }
 
-    /// 获取全局变量表的常量引用（零拷贝，调试用）
-    const std::unordered_map<std::string, Value>& getGlobalsRef() const { return globals_; }
+    /// 获取全局变量表（合并 slot-based + map-based，调试/测试用）
+    std::unordered_map<std::string, Value> getGlobals() const {
+        std::unordered_map<std::string, Value> result;
+        // Slot-based globals first
+        for (size_t i = 0; i < globalSlots_.size() && i < globalSlotNames_.size(); ++i) {
+            if (!globalSlots_[i].isNull()) {
+                result[globalSlotNames_[i]] = globalSlots_[i];
+            }
+        }
+        // Map-based globals overlay (runtime-defined, class markers, etc.)
+        for (const auto& kv : globals_) {
+            result[kv.first] = kv.second;
+        }
+        return result;
+    }
+
+    /// 向后兼容：旧版 getGlobalsRef 改为调用 getGlobals
+    std::unordered_map<std::string, Value> getGlobalsRef() const { return getGlobals(); }
 
     /// 获取当前帧的 IP（用于单步调试 UI 高亮）
     size_t getCurrentIP() const;
@@ -148,7 +161,11 @@ public:
 
 private:
     std::vector<Value> stack_;                     // 操作数栈
-    std::unordered_map<std::string, Value> globals_; // 全局变量表
+    std::unordered_map<std::string, Value> globals_; // 全局变量表（runtime-defined fallback）
+    // A2: 全局变量整数槽位存储（编译期分配，vector 直接访问）
+    std::vector<Value> globalSlots_;               // slot-indexed global storage
+    std::vector<std::string> globalSlotNames_;     // parallel: slot -> name (debug)
+    std::unordered_map<std::string, int> globalNameToSlot_; // name -> slot (runtime lookup)
     std::vector<VMCallFrame> frames_;              // 调用帧栈
     BytecodeChunk mainChunk_;                       // 主 chunk 副本（VM 自持，避免悬空指针）
     std::unordered_map<std::string, BytecodeChunk> functionChunks_; // 函数字节码

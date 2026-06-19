@@ -358,7 +358,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     }
 
     // 在最内层对象上执行赋值
-    Value modifiedObj = vals[0]; // 拷贝
+    Value modifiedObj = std::move(vals[0]); // A2: move 而非拷贝，保持 refcount=1 跳过 COW detach
     if (isIndexAssign) {
         if (modifiedObj.isArray() && idx.isInt()) {
             if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= modifiedObj.arrayVal().size())
