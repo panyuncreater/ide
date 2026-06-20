@@ -681,7 +681,7 @@ void Compiler::compileFunCall(FunCall& node) {
             compileNode(arg.get());
         }
         if (node.arguments.size() > 255) {
-            // uint8_t 编码限制
+            error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
         }
         // OP_CALL_EXPR: 栈顶 N 个参数下方为闭包值
         chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
@@ -697,6 +697,9 @@ void Compiler::compileFunCall(FunCall& node) {
     // 函数名作为常量
     uint16_t nameIdx = identifierIndex(node.name);
 
+    if (node.arguments.size() > 255) {
+        error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
+    }
     // 使用 OP_CALL 指令
     chunk_.writeOp(OpCode::OP_CALL, node.line);
     chunk_.write(static_cast<uint8_t>(nameIdx & 0xFF), node.line);

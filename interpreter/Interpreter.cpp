@@ -118,6 +118,30 @@ Value Interpreter::evaluateExpr(ASTNode* node) {
     return node->accept(*this);
 }
 
+// GUI-03 fix: 安全条件断点求值 — 保存/恢复所有可变状态，防止重入损坏
+Value Interpreter::evaluateCondition(ASTNode* node) {
+    if (!node) return Value::nullValue();
+    auto savedCallStack = callStack_;
+    auto savedClassCtx = classContextStack_;
+    int savedDepth = recursionDepth_;
+    bool savedDebugMode = debugMode_;
+    debugMode_ = false;
+    try {
+        Value result = node->accept(*this);
+        callStack_ = std::move(savedCallStack);
+        classContextStack_ = std::move(savedClassCtx);
+        recursionDepth_ = savedDepth;
+        debugMode_ = savedDebugMode;
+        return result;
+    } catch (...) {
+        callStack_ = std::move(savedCallStack);
+        classContextStack_ = std::move(savedClassCtx);
+        recursionDepth_ = savedDepth;
+        debugMode_ = savedDebugMode;
+        throw;
+    }
+}
+
 // ---- 辅助方法 ----
 
 Value Interpreter::evaluate(ASTNode* node) {
@@ -197,6 +221,7 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
         if (left.isInt() && right.isInt()) {
             int64_t b = right.intVal();
             if (b == 0) runtimeError("除零错误", line, col);
+            if (left.intVal() == INT64_MIN && b == -1) runtimeError("整数除法溢出", line, col);
             return Value(left.intVal() / b);  // int/int → int (截断除法)
         }
         { double r = right.toDouble();
@@ -207,10 +232,20 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
         {
             int64_t a, b;
             if (left.isInt()) a = left.intVal();
-            else if (left.isFloat()) a = static_cast<int64_t>(left.floatVal());
+            else if (left.isFloat()) {
+                double lf = left.floatVal();
+                if (lf > static_cast<double>(INT64_MAX) || lf < static_cast<double>(INT64_MIN))
+                    runtimeError("浮点数转整数溢出", line, col);
+                a = static_cast<int64_t>(lf);
+            }
             else runtimeError("取模运算需要数值类型", line, col);
             if (right.isInt()) b = right.intVal();
-            else if (right.isFloat()) b = static_cast<int64_t>(right.floatVal());
+            else if (right.isFloat()) {
+                double rf = right.floatVal();
+                if (rf > static_cast<double>(INT64_MAX) || rf < static_cast<double>(INT64_MIN))
+                    runtimeError("浮点数转整数溢出", line, col);
+                b = static_cast<int64_t>(rf);
+            }
             else runtimeError("取模运算需要数值类型", line, col);
             if (b == 0) runtimeError("除零错误", line, col);
             if (a == INT64_MIN && b == -1) return Value(0);

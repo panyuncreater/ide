@@ -158,6 +158,7 @@ private:
     std::vector<Token> lastTokens_;         // 上次词法分析的 Token 列表
     CompileResult lastCompileResult_;     // 上次编译的结果
     bool isRunning_ = false;               // 是否正在运行
+    bool isDebugRun_ = false;              // GUI-01 fix: 是否调试运行（控制单步按钮）
     QThread* workerThread_ = nullptr;      // OP-1: 解释器运行线程
     InterpreterWorker* worker_ = nullptr;  // OP-1: 解释器工作对象
     bool isVmRunning_ = false;             // VM 是否正在运行

@@ -118,6 +118,9 @@ public:
     /// 在当前环境中求值单个表达式（用于条件断点，不触发调试检查）
     Value evaluateExpr(ASTNode* node);
 
+    /// GUI-03 fix: 安全求值条件断点表达式（保存/恢复所有可变状态，防止重入损坏）
+    Value evaluateCondition(ASTNode* node);
+
     // ---- 25 个 visit 方法实现 ----
 
     Value visitBinaryOp(BinaryOp& node) override;

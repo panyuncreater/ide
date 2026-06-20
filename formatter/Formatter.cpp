@@ -230,6 +230,11 @@ std::string Formatter::formatStringLiteral(StringLiteral& node) {
         case '\n': escaped += "\\n";  break;
         case '\t': escaped += "\\t";  break;
         case '\r': escaped += "\\r";  break;
+        case '\0': escaped += "\\0";  break;  // FMT-02 fix
+        case '\b': escaped += "\\b";  break;  // FMT-02 fix
+        case '\f': escaped += "\\f";  break;  // FMT-02 fix
+        case '\a': escaped += "\\a";  break;  // FMT-02 fix
+        case '\v': escaped += "\\v";  break;  // FMT-02 fix
         default:   escaped += c;      break;
         }
     }
@@ -383,7 +388,11 @@ std::string Formatter::formatFunCall(FunCall& node) {
     std::string result;
     if (node.callee) {
         // 链式调用 / 表达式调用
-        result = formatNode(node.callee.get()) + "(";
+        std::string callee = formatNode(node.callee.get());
+        if (node.callee && (node.callee->nodeType == NodeType::NODE_BINARY_OP ||
+                            node.callee->nodeType == NodeType::NODE_UNARY_OP))
+            callee = "(" + callee + ")";  // FMT-01 fix
+        result = callee + "(";
     } else {
         result = node.name + "(";
     }
@@ -496,11 +505,19 @@ std::string Formatter::formatDictLiteral(DictLiteral& node) {
 }
 
 std::string Formatter::formatIndexAccess(IndexAccess& node) {
-    return formatNode(node.object.get()) + "[" + formatNode(node.index.get()) + "]";
+    std::string obj = formatNode(node.object.get());
+    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                        node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")";  // FMT-01 fix: 低优先级表达式需要括号
+    return obj + "[" + formatNode(node.index.get()) + "]";
 }
 
 std::string Formatter::formatIndexAssign(IndexAssign& node) {
-    return formatNode(node.object.get()) + "[" + formatNode(node.index.get()) + "]" + binOp("=") + formatNode(node.value.get());
+    std::string obj = formatNode(node.object.get());
+    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                        node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")";  // FMT-01 fix
+    return obj + "[" + formatNode(node.index.get()) + "]" + binOp("=") + formatNode(node.value.get());
 }
 
 std::string Formatter::formatClassDecl(ClassDecl& node) {
@@ -524,15 +541,27 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
 }
 
 std::string Formatter::formatMemberAccess(MemberAccess& node) {
-    return formatNode(node.object.get()) + "." + node.fieldName;
+    std::string obj = formatNode(node.object.get());
+    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                        node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")";  // FMT-01 fix
+    return obj + "." + node.fieldName;
 }
 
 std::string Formatter::formatMemberAssign(MemberAssign& node) {
-    return formatNode(node.object.get()) + "." + node.fieldName + binOp("=") + formatNode(node.value.get());
+    std::string obj = formatNode(node.object.get());
+    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                        node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")";  // FMT-01 fix
+    return obj + "." + node.fieldName + binOp("=") + formatNode(node.value.get());
 }
 
 std::string Formatter::formatMethodCall(MethodCall& node) {
-    std::string result = formatNode(node.object.get()) + "." + node.methodName + "(";
+    std::string obj = formatNode(node.object.get());
+    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
+                        node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")";  // FMT-01 fix
+    std::string result = obj + "." + node.methodName + "(";
     for (size_t i = 0; i < node.arguments.size(); ++i) {
         if (i > 0) result += comma();
         result += formatNode(node.arguments[i].get());

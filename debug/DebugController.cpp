@@ -148,8 +148,8 @@ void DebugController::setBreakpoints(const QSet<int>& lines) {
         if (!lines.contains(it.key())) {
             it = breakpointInfos_.erase(it);
         } else {
-            // M11 fix: 重置条件，防止用户删除条件断点后重新添加（无条件）时残留旧条件
-            it->condition.clear();
+            // DBG-01 fix: 不重置条件表达式（条件由 setBreakpointCondition 单独管理）
+            it->hitCount = 0;
             ++it;
         }
     }

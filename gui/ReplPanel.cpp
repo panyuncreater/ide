@@ -210,9 +210,10 @@ void ReplPanel::executeLine(const QString& line) {
 
     // 执行
     try {
-        Value result = interpreter_->executeRepl(*ast);
-        // 保留 AST 所有权，确保 classRegistry_ 中的方法指针持续有效
+        // PANEL-02 fix: 先保留 AST 再执行，确保异常时 classRegistry_/闭包 body 指针不悬空
+        Block* rawAst = ast.get();
         interpreter_->retainReplAst(std::move(ast));
+        Value result = interpreter_->executeRepl(*rawAst);
         // 显示结果
         if (!result.isNull()) {
             appendOutput(QString::fromStdString(result.toString()));

@@ -351,13 +351,22 @@ void Ide::onRun() {
     // 如果有词法错误，不再继续解析
     if (lexer_.getDiagnostics().hasErrors()) return;
 
-    // 语法分析（runParser 内部已收集并显示所有错误）
-    runParser(lastTokens_);
+    // GUI-02 fix: 解析器异常保护
+    try {
+        runParser(lastTokens_);
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("解析异常: %1").arg(e.what()));
+        return;
+    }
 
     // 如果有解析错误，不再继续执行
     if (parser_.hasErrors()) return;
 
     if (!astRoot_) return;
+
+    // GUI-01 fix: 启用 debugMode 使 checkBreak 生效，stop 按钮才能触发 DebugStopException
+    interpreter_.setDebugMode(true);
+    isDebugRun_ = false;  // 普通运行，禁用单步按钮
 
     // OP-1 fix: 在独立线程中执行解释器，避免 UI 冻结
     isRunning_ = true;
@@ -430,8 +439,13 @@ void Ide::onDebug() {
     // 如果有词法错误，不再继续解析
     if (lexer_.getDiagnostics().hasErrors()) return;
 
-    // 语法分析（runParser 内部已收集并显示所有错误）
-    runParser(lastTokens_);
+    // GUI-02 fix: 解析器异常保护
+    try {
+        runParser(lastTokens_);
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("解析异常: %1").arg(e.what()));
+        return;
+    }
 
     // 如果有解析错误，不再继续
     if (parser_.hasErrors()) return;
@@ -449,18 +463,19 @@ void Ide::onDebug() {
         }
     }
 
-    // 设置条件断点求值器：复用成员 lexer_/parser_（DB-4 fix）
+    // GUI-03 fix: 使用 evaluateCondition 安全求值条件断点，避免重入损坏运行中的状态
     debugger_->setConditionEvaluator([this](const std::string& condition) -> bool {
         try {
-            auto tokens = lexer_.scan(condition);
-            auto block = parser_.parse(tokens);
-            if (parser_.getErrors().empty() && block && !block->statements.empty()) {
-                // 在当前环境中求值表达式（不触发 checkBreak）
-                Value result = interpreter_.evaluateExpr(block->statements[0].get());
+            Lexer condLexer;
+            auto tokens = condLexer.scan(condition);
+            Parser condParser;
+            auto block = condParser.parse(tokens);
+            if (condParser.getErrors().empty() && block && !block->statements.empty()) {
+                Value result = interpreter_.evaluateCondition(block->statements[0].get());
                 return result.isTruthy();
             }
         } catch (...) {
-            // 条件求值失败视为 false（不暂停）
+            // 条件求值失赅视为 false（不暂停）
         }
         return false;
     });
@@ -509,6 +524,7 @@ void Ide::onDebug() {
     });
 
     isRunning_ = true;
+    isDebugRun_ = true;  // GUI-01 fix: 调试运行，启用单步按钮
     setRunningState(true);
     replPanel_->setInputEnabled(false);
 
@@ -549,6 +565,7 @@ void Ide::onDebug() {
     // 线程结束时清理
     connect(workerThread_, &QThread::finished, this, [this]() {
         isRunning_ = false;
+        isDebugRun_ = false;
         setRunningState(false);
         replPanel_->setInputEnabled(true);
         interpreter_.setDebugMode(false);
@@ -607,6 +624,8 @@ void Ide::onStop() {
 
 void Ide::onRunFinished() {
     isRunning_ = false;
+    isDebugRun_ = false;
+    interpreter_.setDebugMode(false);  // GUI-01 fix: 普通运行结束关闭 debugMode
     setRunningState(false);
     codeEditor_->clearCurrentLine();
     replPanel_->setInputEnabled(true);
@@ -1049,12 +1068,13 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
 }
 
 void Ide::setRunningState(bool running) {
+    bool isDebug = isDebugRun_ && running;  // GUI-01 fix: 普通运行时禁用单步按钮
     runAction_->setEnabled(!running);
     debugAction_->setEnabled(!running);
-    stepInAction_->setEnabled(running);
-    stepOverAction_->setEnabled(running);
-    stepOutAction_->setEnabled(running);
-    resumeAction_->setEnabled(running);
+    stepInAction_->setEnabled(isDebug);
+    stepOverAction_->setEnabled(isDebug);
+    stepOutAction_->setEnabled(isDebug);
+    resumeAction_->setEnabled(isDebug);
     stopAction_->setEnabled(running);
     formatAction_->setEnabled(!running);
     bytecodeAction_->setEnabled(!running);

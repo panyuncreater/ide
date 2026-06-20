@@ -235,6 +235,7 @@ VMResult VM::numericOp(int opType) {
         if (rightRef.isInt() && leftRef.isInt()) {
             int64_t b = rightRef.intVal();
             if (b == 0) return runtimeError("除零错误");
+            if (leftRef.intVal() == INT64_MIN && b == -1) return runtimeError("整数除法溢出");
             stack_[stack_.size() - 2] = Value(leftRef.intVal() / b);  // int/int → int
             break;
         }
@@ -246,18 +247,26 @@ VMResult VM::numericOp(int opType) {
         {
             int64_t a, b;
             if (leftRef.isInt()) a = leftRef.intVal();
-            else if (leftRef.isFloat()) a = static_cast<int64_t>(leftRef.floatVal());
+            else if (leftRef.isFloat()) {
+                double lf = leftRef.floatVal();
+                if (lf > static_cast<double>(INT64_MAX) || lf < static_cast<double>(INT64_MIN))
+                    return runtimeError("浮点数转整数溢出");
+                a = static_cast<int64_t>(lf);
+            }
             else return runtimeError("取模运算需要数值类型");
             if (rightRef.isInt()) b = rightRef.intVal();
-            else if (rightRef.isFloat()) b = static_cast<int64_t>(rightRef.floatVal());
+            else if (rightRef.isFloat()) {
+                double rf = rightRef.floatVal();
+                if (rf > static_cast<double>(INT64_MAX) || rf < static_cast<double>(INT64_MIN))
+                    return runtimeError("浮点数转整数溢出");
+                b = static_cast<int64_t>(rf);
+            }
             else return runtimeError("取模运算需要数值类型");
             if (b == 0) return runtimeError("除零错误");
             if (a == INT64_MIN && b == -1) { stack_[stack_.size() - 2] = Value(0); break; }
             stack_[stack_.size() - 2] = Value(a % b);
             break;
         }
-        stack_[stack_.size() - 2] = Value(leftRef.intVal() % rightRef.intVal());
-        break;
     }
 
     stack_.pop_back();  // 弹出 right，保留结果在 left 原位
@@ -1117,7 +1126,7 @@ VMResult VM::executeOneInstruction() {
         for (uint8_t i = 0; i < pairCount; ++i) {
             Value val = pop();
             Value key = pop();
-            dict[key.toString()] = std::move(val);
+            dict.emplace(key.toString(), std::move(val));  // VM-03 fix: emplace 不覆盖已有键，实现后者覆盖语义
         }
         push(Value(std::move(dict)));
         notifyStep(ip, op);

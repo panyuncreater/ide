@@ -72,6 +72,12 @@ public:
         if (it != variables.end()) {
             return &it->second;
         }
+        // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
+        if (boundInstance_ && boundInstance_->isInstance()) {
+            const auto& flds = static_cast<const Value*>(boundInstance_)->fields();
+            auto fit = flds.find(name);
+            if (fit != flds.end()) return &fit->second;
+        }
         // 慢路径：沿作用域链查找，使用深度缓存加速
         if (parent) {
             // 检查深度缓存是否有效（P2: 使用目标环境的 per-instance generation）
@@ -91,14 +97,6 @@ public:
             }
             return result;
         }
-        // 未找到变量
-        // P5 fix: 回退到绑定实例的字段（方法调用时避免字段深拷贝）
-        // A1: 使用 const 访问器避免触发 COW detach
-        if (boundInstance_ && boundInstance_->isInstance()) {
-            const auto& flds = static_cast<const Value*>(boundInstance_)->fields();
-            auto fit = flds.find(name);
-            if (fit != flds.end()) return &fit->second;
-        }
         return nullptr;
     }
 
@@ -110,6 +108,14 @@ public:
         if (it != variables.end()) {
             it->second = val;
             return true;
+        }
+        // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
+        if (boundInstance_ && boundInstance_->isInstance()) {
+            auto fit = boundInstance_->fields().find(name);
+            if (fit != boundInstance_->fields().end()) {
+                fit->second = val;
+                return true;
+            }
         }
         if (parent) {
             // 检查深度缓存是否有效
@@ -131,14 +137,6 @@ public:
             }
             return false;
         }
-        // P5 fix: 回退到绑定实例的字段
-        if (boundInstance_ && boundInstance_->isInstance()) {
-            auto fit = boundInstance_->fields().find(name);
-            if (fit != boundInstance_->fields().end()) {
-                fit->second = val;
-                return true;
-            }
-        }
         return false;   // 变量不存在
     }
 
@@ -148,6 +146,14 @@ public:
         if (it != variables.end()) {
             it->second = std::move(val);
             return true;
+        }
+        // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
+        if (boundInstance_ && boundInstance_->isInstance()) {
+            auto fit = boundInstance_->fields().find(name);
+            if (fit != boundInstance_->fields().end()) {
+                fit->second = std::move(val);
+                return true;
+            }
         }
         if (parent) {
             auto cacheIt = depthCache_.find(name);
@@ -163,14 +169,6 @@ public:
                 return setAtDepth(name, std::move(val), depth + 1);
             }
             return false;
-        }
-        // P5 fix: 回退到绑定实例的字段
-        if (boundInstance_ && boundInstance_->isInstance()) {
-            auto fit = boundInstance_->fields().find(name);
-            if (fit != boundInstance_->fields().end()) {
-                fit->second = std::move(val);
-                return true;
-            }
         }
         return false;
     }

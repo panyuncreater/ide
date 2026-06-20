@@ -102,6 +102,7 @@ char Lexer::advance() {
         }
         line_++;
         lineStart_ = current_;
+        return '\n';  // LEX-01/02/03 fix: 统一返回 '\n'，确保注释循环和字符串构建正确感知换行
     }
     return c;
 }
