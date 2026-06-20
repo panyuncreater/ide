@@ -298,6 +298,13 @@ void Compiler::compileVarDecl(VarDecl& node) {
     // 编译初始化表达式
     if (node.initializer) {
         compileNode(node.initializer.get());
+    } else if (!node.typeAnnotation.empty() &&
+               classFieldNames_.find(node.typeAnnotation) != classFieldNames_.end()) {
+        // S2 fix: 类名类型注解无初始化器 → 自动构造实例（与解释器 visitVarDecl 一致）
+        uint16_t classNameIdx = identifierIndex(node.typeAnnotation);
+        chunk_.writeOp(OpCode::OP_CLASS_NEW, node.line);
+        chunk_.writeShort(classNameIdx, node.line);
+        chunk_.write(static_cast<uint8_t>(0), node.line);  // argCount = 0
     } else {
         chunk_.writeOp(OpCode::OP_NULL, node.line);
     }
@@ -801,6 +808,7 @@ void Compiler::compileBlock(Block& node) {
 
         // 收集块作用域中将要声明的变量名，以便在编译前保存被遮蔽的全局变量
         std::vector<std::pair<std::string, std::string>> shadowedSaves; // (blockVarName, tempSaveName)
+        std::vector<std::pair<std::string, int>> removedSlots; // H1: (name, slot) 用于恢复
         for (auto& stmt : node.statements) {
             if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
                 VarDecl* vd = static_cast<VarDecl*>(stmt.get());
@@ -816,6 +824,17 @@ void Compiler::compileBlock(Block& node) {
                     chunk_.writeOp(OpCode::OP_DEFINE_VAR, vd->line);
                     chunk_.writeShort(saveIdx, vd->line);
                 }
+            }
+        }
+
+        // H1 fix: 保存全局值后，移除被遮蔽的全局槽位条目
+        // 使块内 compileVarDecl/compileVarRef/compileAssignment 不命中全局槽位，
+        // 改用 OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR → globals_ 路径
+        for (auto& [varName, saveName] : shadowedSaves) {
+            auto it = globalSlots_.find(varName);
+            if (it != globalSlots_.end()) {
+                removedSlots.push_back({varName, it->second});
+                globalSlots_.erase(it);
             }
         }
 
@@ -836,6 +855,11 @@ void Compiler::compileBlock(Block& node) {
         currentLocals_.swap(savedLocals);
         blockDepth_--;
 
+        // H1 fix: 恢复被移除的全局槽位条目（必须在恢复字节码之前，使 lookupGlobalSlot 正确）
+        for (auto& [name, slot] : removedSlots) {
+            globalSlots_[name] = slot;
+        }
+
         // 清理块作用域变量并恢复被遮蔽的全局变量
         for (auto& [varName, saveName] : shadowedSaves) {
             // A2: 使用槽位操作码恢复全局变量值
@@ -855,16 +879,12 @@ void Compiler::compileBlock(Block& node) {
             chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
             chunk_.writeShort(saveIdx, node.line);
         }
-        // 删除未遮蔽任何全局变量的块作用域变量
-        // P29: 用 unordered_set 替代线性扫描
-        std::unordered_set<std::string> shadowedNames;
-        for (auto& [vn, sn] : shadowedSaves) shadowedNames.insert(vn);
+
+        // 删除块作用域变量（含被遮蔽变量的 globals_ 残留值）
         for (auto& name : blockVars) {
-            if (shadowedNames.find(name) == shadowedNames.end()) {
-                uint16_t nameIdx = identifierIndex(name);
-                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-                chunk_.writeShort(nameIdx, node.line);
-            }
+            uint16_t nameIdx = identifierIndex(name);
+            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+            chunk_.writeShort(nameIdx, node.line);
         }
     } else {
         // 函数内块作用域：局部变量使用栈槽，无需清理（VM 帧退出时自动释放）
@@ -1357,10 +1377,10 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
         if (opType == BinOpType::BIN_NEQ) { result = Value(lv.stringVal() != rv.stringVal()); return true; }
     }
 
-    // 布尔逻辑
+    // 布尔逻辑（M1 fix: 短路语义，返回操作数原始值而非 bool）
     if (lv.isBool() && rv.isBool()) {
-        if (opType == BinOpType::BIN_AND) { result = Value(lv.boolVal() && rv.boolVal()); return true; }
-        if (opType == BinOpType::BIN_OR)  { result = Value(lv.boolVal() || rv.boolVal()); return true; }
+        if (opType == BinOpType::BIN_AND) { result = lv.isTruthy() ? rv : lv; return true; }
+        if (opType == BinOpType::BIN_OR)  { result = lv.isTruthy() ? lv : rv; return true; }
         if (opType == BinOpType::BIN_EQ)  { result = Value(lv.boolVal() == rv.boolVal()); return true; }
         if (opType == BinOpType::BIN_NEQ) { result = Value(lv.boolVal() != rv.boolVal()); return true; }
     }

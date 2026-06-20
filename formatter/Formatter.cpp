@@ -184,7 +184,14 @@ static bool needsParens(ASTNode* child, BinOpType parentOpType, bool isRight) {
         if (Formatter::isRightAssoc(parentOpType)) {
             return !isRight;  // 右结合：左操作数需要括号
         } else {
-            return isRight;   // 左结合：右操作数需要括号（如 a-(b+c) 在同优先级时）
+            // 左结合：SUB/DIV/MOD 不满足结合律，右操作数同优先级子表达式必须加括号
+            // 例: a-(b+c) ≠ a-b+c, a/(b*c) ≠ a/b*c, a%(b-c) ≠ a%b-c
+            if (isRight && (parentOpType == BinOpType::BIN_SUB ||
+                            parentOpType == BinOpType::BIN_DIV ||
+                            parentOpType == BinOpType::BIN_MOD)) {
+                return true;
+            }
+            return false;   // ADD/MUL 满足结合律，同优先级无需括号
         }
     }
     return false;

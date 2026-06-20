@@ -410,10 +410,17 @@ VMResult VM::stepOnce() {
     // 当前 chunk 执行完毕 → 弹帧（防御性路径，正常情况由 OP_RETURN 处理）
     if (ip >= chunk.code.size()) {
         size_t returnIp = frame.returnIp;
+        size_t savedBp = frame.basePointer;
+        bool wasInit = frame.isInitCall;
         frames_.pop_back();
         if (!frames_.empty()) {
             currentFrame().ip = returnIp;  // 恢复调用者 ip，避免重复执行调用指令
-            push(Value::nullValue());
+            // L2 fix: init 帧返回 this 实例而非 null（与 execute() 防御路径一致）
+            if (wasInit && savedBp < stack_.size()) {
+                push(stack_[savedBp]);
+            } else {
+                push(Value::nullValue());
+            }
         }
         return VMResult::VM_OK;
     }
@@ -1780,8 +1787,23 @@ VMResult VM::executeOneInstruction() {
                 }
             } else if (method == BuiltinMethod::STR_INDEX_OF) {
                 if (args.size() != 1) return runtimeError("indexOf 期望 1 个参数");
-                size_t pos = obj.stringVal().find(args[0].toString());
-                result = Value(pos == std::string::npos ? static_cast<int64_t>(-1) : static_cast<int64_t>(pos));
+                // M2 fix: 返回 UTF-8 字符位置而非字节位置
+                const std::string& s = obj.stringVal();
+                const std::string& needle = args[0].toString();
+                size_t bytePos = s.find(needle);
+                if (bytePos == std::string::npos) {
+                    result = Value(static_cast<int64_t>(-1));
+                } else {
+                    // 将字节偏移转换为 UTF-8 字符索引
+                    int64_t charIdx = 0;
+                    for (size_t b = 0; b < bytePos; ) {
+                        unsigned char c = static_cast<unsigned char>(s[b]);
+                        b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                             ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+                        charIdx++;
+                    }
+                    result = Value(charIdx);
+                }
             } else {
                 return runtimeError("字符串没有方法 " + methodName);
             }
@@ -1928,14 +1950,8 @@ VMResult VM::executeOneInstruction() {
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& funName = chunk.constants[idx].stringVal();
 
-        // 创建闭包值
+        // 创建闭包值（参数名由 OP_CALL 按 arity 绑定，此处不填充假名）
         Value closure = Value::makeClosure(funName, nullptr, {});
-        auto it = functionChunks_.find(funName);
-        if (it != functionChunks_.end()) {
-            for (int i = 0; i < it->second.arity; ++i) {
-                closure.closureParams().push_back("param" + std::to_string(i));
-            }
-        }
 
         // VM-05/06: 创建 VM 闭包数据并绑定 upvalue
         auto vmClosureData = std::make_shared<VMClosureData>();
