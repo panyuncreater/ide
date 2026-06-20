@@ -92,6 +92,12 @@ private slots:
     /// 清空输出
     void onClearOutput();
 
+    /// GUI-04: 文件操作
+    void onNew();
+    void onOpen();
+    void onSave();
+    void onSaveAs();
+
     /// 调试暂停在某行
     void onPausedAt(int line);
 
@@ -153,6 +159,12 @@ private:
     QAction* vmStepAction_ = nullptr;       // VM 单步
     QAction* vmStopAction_ = nullptr;       // VM 停止
 
+    // GUI-04: 文件操作 actions
+    QAction* newAction_ = nullptr;
+    QAction* openAction_ = nullptr;
+    QAction* saveAction_ = nullptr;
+    QAction* saveAsAction_ = nullptr;
+
     // ---- 状态 ----
     std::unique_ptr<Block> astRoot_;        // AST 根节点
     std::vector<Token> lastTokens_;         // 上次词法分析的 Token 列表
@@ -164,6 +176,9 @@ private:
     bool isVmRunning_ = false;             // VM 是否正在运行
     bool isVmInitialized_ = false;         // VM 执行环境是否已初始化（单步模式）
     DiagnosticBag diagnostics_;             // 统一诊断收集器
+    // GUI-04: 文件状态
+    QString currentFilePath_;              // 当前文件路径（空=未保存）
+    bool isDirty_ = false;                 // 是否有未保存修改
 
     /// VM 步进回调处理
     void onVmStepCallback(const VMStepInfo& info);
@@ -208,4 +223,9 @@ private:
 
     /// 将诊断信息输出到输出面板，并标记编辑器错误行
     void displayDiagnostics(const DiagnosticBag& bag);
+
+    // GUI-04: 文件操作辅助方法
+    bool maybeSave();                        // 未保存提示，返回 true 可以继续
+    void updateWindowTitle();                // 更新窗口标题
+    void loadFile(const QString& path);      // 加载文件到编辑器
 };

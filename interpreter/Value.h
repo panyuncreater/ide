@@ -48,12 +48,14 @@ private:
         std::string className;
         std::unordered_map<std::string, Value> fields;
     };
+
     struct ClosureData {
         std::string name;
         std::weak_ptr<Environment> env;  // V4 fix: weak_ptr 打破闭包→环境→闭包的循环引用
         std::vector<std::string> params;
         std::unordered_map<std::string, Value> capturedVars;
         FunDecl* body = nullptr;       // 函数体 AST 节点（自包含，不依赖 funRegistry_）
+        std::shared_ptr<struct VMClosureData> vmClosure; // VM-05/06: VM 闭包数据（定义在 Value 之后）
     };
 
     // ---- 变体存储：同一时刻仅一个类型有效 ----
@@ -297,6 +299,14 @@ public:
         return std::get<8>(data_)->capturedVars;
     }
 
+    // VM-05/06: VM 闭包数据访问器
+    std::shared_ptr<VMClosureData>& vmClosure() {
+        return ensureUnique<8>().vmClosure;
+    }
+    const std::shared_ptr<VMClosureData>& vmClosure() const {
+        return std::get<8>(data_)->vmClosure;
+    }
+
     // ============================================================
     // A2: 原地变异辅助方法 — 跳过 COW detach 当 refcount==1
     // ============================================================
@@ -528,4 +538,16 @@ public:
         }
         return false;
     }
+};
+
+// VM-05/06: VM 闭包 upvalue 结构（定义在 Value 之后，以便使用完整 Value 类型）
+struct VMUpvalue {
+    Value value;           // 关闭后存储值（isClosed=true 时有效）
+    bool isClosed = false; // 是否已关闭
+    size_t stackSlot = 0;  // 未关闭时指向的栈绝对位置
+};
+
+struct VMClosureData {
+    std::string functionName;
+    std::vector<std::shared_ptr<VMUpvalue>> upvalues;
 };

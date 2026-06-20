@@ -354,14 +354,13 @@ void Compiler::compileAssignment(Assignment& node) {
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
             chunk_.writeOp(OpCode::OP_POP, node.line);
         } else {
-            // 检测闭包捕获外层局部变量（VM 不支持 upvalue 机制）
-            if (!outerLocals_.empty()) {
-                auto outerIt = outerLocals_.find(node.name);
-                if (outerIt != outerLocals_.end()) {
-                    error("VM 不支持闭包捕获外层局部变量 '" + node.name +
-                          "'，请使用全局变量替代", node.line, node.column);
-                    return;
-                }
+            // VM-05/06: 尝试解析为 upvalue（闭包捕获外层变量赋值）
+            int uvIdx = resolveUpvalue(node.name, node.line);
+            if (uvIdx >= 0) {
+                chunk_.writeOp(OpCode::OP_SET_UPVALUE, node.line);
+                chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+                chunk_.writeOp(OpCode::OP_POP, node.line); // 清理 DUP 副本
+                return;
             }
             // A2: use integer slot for known globals
             int slot = lookupGlobalSlot(node.name);
@@ -388,6 +387,38 @@ void Compiler::compileAssignment(Assignment& node) {
     }
 }
 
+// VM-05/06: 解析闭包捕获变量为 upvalue 索引
+// 返回 upvalue 在 currentUpvalues_ 中的索引，-1 表示不是闭包变量
+int Compiler::resolveUpvalue(const std::string& name, int line) {
+    // 1. 检查是否已在当前 upvalue 列表中（去重）
+    auto existIt = currentUpvalueNames_.find(name);
+    if (existIt != currentUpvalueNames_.end()) {
+        return existIt->second;
+    }
+
+    // 2. 检查外层局部变量（直接捕获）
+    auto outerIt = outerLocals_.find(name);
+    if (outerIt != outerLocals_.end()) {
+        UpvalueDesc desc;
+        desc.isLocal = true;
+        desc.index = outerIt->second;
+
+        // 3. 检查是否是外层函数的 upvalue（透传）
+        auto outerUvIt = outerUpvalueNames_.find(name);
+        if (outerUvIt != outerUpvalueNames_.end()) {
+            // 外层函数本身也通过 upvalue 捕获该变量 → 透传
+            desc.isLocal = false;
+            desc.index = outerUvIt->second; // 外层 upvalue 索引
+        }
+
+        int idx = static_cast<int>(currentUpvalues_.size());
+        currentUpvalues_.push_back(desc);
+        currentUpvalueNames_[name] = idx;
+        return idx;
+    }
+    return -1;
+}
+
 void Compiler::compileVarRef(VarRef& node) {
     if (inFunction_) {
         auto it = currentLocals_.find(node.name);
@@ -396,14 +427,12 @@ void Compiler::compileVarRef(VarRef& node) {
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
             return;
         }
-        // 检测闭包捕获外层局部变量（VM 不支持 upvalue 机制）
-        if (!outerLocals_.empty()) {
-            auto outerIt = outerLocals_.find(node.name);
-            if (outerIt != outerLocals_.end()) {
-                error("VM 不支持闭包捕获外层局部变量 '" + node.name +
-                      "'，请使用全局变量替代", node.line, node.column);
-                return;
-            }
+        // VM-05/06: 尝试解析为 upvalue（闭包捕获外层变量）
+        int uvIdx = resolveUpvalue(node.name, node.line);
+        if (uvIdx >= 0) {
+            chunk_.writeOp(OpCode::OP_GET_UPVALUE, node.line);
+            chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+            return;
         }
     }
     // A2: use integer slot for known globals
@@ -619,19 +648,33 @@ void Compiler::compileFunDecl(FunDecl& node) {
     bool savedInFunction = inFunction_;
     std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
     int savedPeakLocals = peakLocals_;
+    // VM-05/06: 保存外层 upvalue 和函数状态
+    std::vector<UpvalueDesc> savedOuterUpvalues = std::move(outerUpvalues_);
+    std::unordered_map<std::string, int> savedOuterUpvalueNames = std::move(outerUpvalueNames_);
+    std::unordered_map<std::string, int> savedOuterFunctions = std::move(outerFunctions_);
 
     // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
     if (inFunction_) {
         outerLocals_ = currentLocals_;
+        outerUpvalues_ = currentUpvalues_;
+        outerUpvalueNames_ = currentUpvalueNames_;
     } else {
         outerLocals_.clear();
+        outerUpvalues_.clear();
+        outerUpvalueNames_.clear();
+    }
+    outerFunctions_.clear();
+    if (inFunction_) {
+        outerFunctions_ = savedOuterFunctions;
     }
 
     // 设置函数编译上下文
     chunk_ = BytecodeChunk(node.name, static_cast<int>(node.params.size()));
-    chunk_.reserveCode(256);  // C21: 预分配函数字节码空间
+    chunk_.reserveCode(256);
     varIndex_.clear();
     currentLocals_.clear();
+    currentUpvalues_.clear();  // VM-05/06: 新的 upvalue 列表
+    currentUpvalueNames_.clear(); // VM-05/06: 新的 upvalue 名称映射
     inFunction_ = true;
 
     // 编译参数到局部变量槽位
@@ -649,9 +692,11 @@ void Compiler::compileFunDecl(FunDecl& node) {
     chunk_.writeOp(OpCode::OP_NULL, node.line);
     chunk_.writeOp(OpCode::OP_RETURN, node.line);
 
-    // 记录局部变量总槽位数（含参数和函数体内 var 声明），供 VM 预分配栈空间
-    // 使用 peakLocals_（峰值）而非 currentLocals_.size()，因为块作用域退出的变量仍占栈槽
+    // 记录局部变量总槽位数
     chunk_.localCount = peakLocals_;
+
+    // VM-05/06: 将 upvalue 描述符附加到函数 chunk
+    chunk_.upvalues = std::move(currentUpvalues_);
 
     // 存储函数 chunk
     functionChunks_[node.name] = std::move(chunk_);
@@ -663,14 +708,32 @@ void Compiler::compileFunDecl(FunDecl& node) {
     inFunction_ = savedInFunction;
     outerLocals_ = std::move(savedOuterLocals);
     peakLocals_ = savedPeakLocals;
+    // VM-05/06: 恢复外层 upvalue 和函数状态
+    outerUpvalues_ = std::move(savedOuterUpvalues);
+    outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
+    outerFunctions_ = std::move(savedOuterFunctions);
 
-    // 在主 chunk 中 emit OP_CLOSURE
+    // 在主 chunk 中 emit OP_CLOSURE（扩展格式：含 upvalue 描述符）
     uint16_t nameIdx = identifierIndex(node.name);
+    const BytecodeChunk& funChunk = functionChunks_[node.name];
+    int upvalueCount = static_cast<int>(funChunk.upvalues.size());
     chunk_.writeOp(OpCode::OP_CLOSURE, node.line);
     chunk_.writeShort(nameIdx, node.line);
-    chunk_.write(static_cast<uint8_t>(node.params.size()), node.line);
+    chunk_.write(static_cast<uint8_t>(upvalueCount), node.line); // 改为 upvalue 数量
+    // 写入每个 upvalue 的描述符
+    for (int i = 0; i < upvalueCount; ++i) {
+        chunk_.write(funChunk.upvalues[i].isLocal ? 1 : 0, node.line);
+        chunk_.write(static_cast<uint8_t>(funChunk.upvalues[i].index), node.line);
+    }
     // OP_CALL 通过函数名查找，不需要栈上的闭包值，弹出
     chunk_.writeOp(OpCode::OP_POP, node.line);
+
+    // VM-05/06: 如果在函数内，将本函数注册到 outerLocals_ 和 outerFunctions_ 供更内层捕获
+    if (inFunction_) {
+        int slot = peakLocals_;  // 分配一个虚拟槽位（仅用于标识）
+        outerLocals_[node.name] = slot;
+        outerFunctions_[node.name] = slot;
+    }
 }
 
 void Compiler::compileFunCall(FunCall& node) {

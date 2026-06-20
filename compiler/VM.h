@@ -69,6 +69,8 @@ struct VMCallFrame {
     std::string receiverVarName;            // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
     int receiverLocalSlot = -1;             // 方法调用时，接收者在调用者帧中的局部变量槽号（-1=非局部变量）
     bool fieldsModified = false;            // VM fix: 方法内是否修改了字段（用于跳过只读方法的字段同步）
+    // VM-05/06: 闭包 upvalue 列表
+    std::vector<std::shared_ptr<VMUpvalue>> upvalues;
 };
 
 /// VM 类信息（用于构造函数调用）
@@ -192,6 +194,9 @@ private:
     const std::string* lastAsciiStr_ = nullptr;
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
+    // VM-05/06: 闭包支持
+    std::vector<std::shared_ptr<VMUpvalue>> openUpvalues_;   // 当前所有 open 的 upvalue（函数返回时关闭）
+    std::unordered_map<std::string, Value> functionClosures_;       // 函数名→闭包值（含 upvalue 绑定）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
     bool stepCallbackEnabled_ = false;              // 是否启用步进回调

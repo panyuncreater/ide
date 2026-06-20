@@ -91,6 +91,11 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_SET_GLOBAL,       // 写入全局槽位（操作数: slot(2B)）
     OP_DEFINE_GLOBAL,    // 定义全局槽位（操作数: slot(2B)）
     OP_DELETE_GLOBAL,    // 删除全局槽位（操作数: slot(2B)）
+
+    // VM-05/06: 闭包 upvalue 操作码
+    OP_GET_UPVALUE,      // 读取 upvalue（操作数: upvalueIndex(1B)）
+    OP_SET_UPVALUE,      // 写入 upvalue（操作数: upvalueIndex(1B)）
+    OP_CLOSE_UPVALUE,    // 关闭 upvalue（操作数: upvalueIndex(1B)）
 };
 
 /// 操作码 → 名称字符串（统一映射，避免多处手工维护）
@@ -159,9 +164,18 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_SET_GLOBAL:       return "OP_SET_GLOBAL";
     case OpCode::OP_DEFINE_GLOBAL:    return "OP_DEFINE_GLOBAL";
     case OpCode::OP_DELETE_GLOBAL:    return "OP_DELETE_GLOBAL";
+    case OpCode::OP_GET_UPVALUE:      return "OP_GET_UPVALUE";
+    case OpCode::OP_SET_UPVALUE:      return "OP_SET_UPVALUE";
+    case OpCode::OP_CLOSE_UPVALUE:    return "OP_CLOSE_UPVALUE";
     }
     return "OP_UNKNOWN";
 }
+
+/// VM-05/06: Upvalue 描述符（编译期生成，描述闭包捕获的外层变量）
+struct UpvalueDesc {
+    int index;     // 捕获变量在调用者帧中的局部变量槽号（isLocal=true）或外层upvalue索引（isLocal=false）
+    bool isLocal;  // true=直接捕获外层局部变量, false=透传外层函数的upvalue
+};
 
 /// 字节码块：一段连续的指令
 struct BytecodeChunk {
@@ -173,6 +187,7 @@ struct BytecodeChunk {
     std::vector<int> ipToInstrIndex; // 预计算：字节偏移 → 指令索引映射
     std::vector<std::string> fieldOrder; // 方法所属类的字段声明顺序（用于 OP_METHOD_CALL 栈布局）
     int localCount = 0;              // 局部变量总槽位数（含参数/this/字段/方法体内var声明），用于 VM 帧创建时预分配栈空间
+    std::vector<UpvalueDesc> upvalues; // VM-05/06: 闭包捕获的 upvalue 描述符列表
 
     BytecodeChunk() = default;
     explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)
@@ -320,6 +335,9 @@ public:
             /* 60 OP_SET_GLOBAL             */ 3,
             /* 61 OP_DEFINE_GLOBAL          */ 3,
             /* 62 OP_DELETE_GLOBAL          */ 3,
+            /* 63 OP_GET_UPVALUE            */ 2,
+            /* 64 OP_SET_UPVALUE            */ 2,
+            /* 65 OP_CLOSE_UPVALUE          */ 2,
         };
         auto idx = static_cast<uint8_t>(op);
         if (idx < sizeof(sizes)) return sizes[idx];
@@ -628,6 +646,24 @@ public:
             uint16_t slot = code[offset + 1] | (code[offset + 2] << 8);
             str += "OP_DELETE_GLOBAL slot=" + std::to_string(slot);
             offset += 3;
+            break;
+        }
+        case OpCode::OP_GET_UPVALUE: {
+            uint8_t idx = code[offset + 1];
+            str += "OP_GET_UPVALUE " + std::to_string(idx);
+            offset += 2;
+            break;
+        }
+        case OpCode::OP_SET_UPVALUE: {
+            uint8_t idx = code[offset + 1];
+            str += "OP_SET_UPVALUE " + std::to_string(idx);
+            offset += 2;
+            break;
+        }
+        case OpCode::OP_CLOSE_UPVALUE: {
+            uint8_t idx = code[offset + 1];
+            str += "OP_CLOSE_UPVALUE " + std::to_string(idx);
+            offset += 2;
             break;
         }
         default:

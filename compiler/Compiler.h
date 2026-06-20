@@ -36,6 +36,12 @@ private:
     bool inFunction_ = false;                       // 是否在函数体内
     std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;  // 类名 → 字段名列表（含继承字段）
     std::unordered_map<std::string, int> outerLocals_;  // 外层函数的局部变量（用于检测闭包捕获）
+    // VM-05/06: 闭包 upvalue 编译期追踪
+    std::vector<UpvalueDesc> currentUpvalues_;       // 当前函数正在构建的 upvalue 描述符列表
+    std::unordered_map<std::string, int> currentUpvalueNames_; // 变量名→upvalue索引（去重用）
+    std::vector<UpvalueDesc> outerUpvalues_;         // 外层函数的 upvalue 描述符（用于透传检测）
+    std::unordered_map<std::string, int> outerUpvalueNames_; // 外层函数的 upvalue 名称映射
+    std::unordered_map<std::string, int> outerFunctions_; // 外层作用域的函数名→槽位号（内嵌函数捕获用）
     int writebackCounter_ = 0;  // B6: 写回计数器，生成唯一缓存变量名避免索引重复求值
     int peakLocals_ = 0;        // VMBUG-2: 函数编译期间局部变量槽位峰值（含被块作用域回收的变量）
     int blockDepth_ = 0;        // VMBUG-1: 顶层块作用域嵌套深度（仅在 inFunction_==false 时有效）
@@ -98,6 +104,9 @@ private:
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);
+
+    /// VM-05/06: 解析闭包捕获变量为 upvalue 索引（返回 -1 表示未找到）
+    int resolveUpvalue(const std::string& name, int line);
 
     /// 安全获取当前字节码偏移量（溢出检查）
     uint16_t safeCodeOffset() {

@@ -8,6 +8,10 @@
 #include <QApplication>
 #include <QColor>
 #include <QScrollBar>
+#include <QFile>
+#include <QTextStream>
+#include <QMenuBar>
+#include <QFileInfo>
 #include <sstream>
 
 // ============================================================
@@ -95,6 +99,11 @@ Ide::~Ide() {
 }
 
 void Ide::closeEvent(QCloseEvent* event) {
+    // GUI-04: 关闭前检查未保存的修改
+    if (!maybeSave()) {
+        event->ignore();
+        return;
+    }
     if (isRunning_) {
         // 先停止调试器，让解释器通过 DebugStopException 正常退出
         debugger_->stop();
@@ -129,6 +138,31 @@ void Ide::closeEvent(QCloseEvent* event) {
 }
 
 void Ide::initUI() {
+    // GUI-04: 菜单栏
+    auto* fileMenu = menuBar()->addMenu(QString::fromUtf8("文件(&F)"));
+
+    newAction_ = new QAction(QString::fromUtf8("新建(&N)"), this);
+    newAction_->setShortcut(QKeySequence::New);
+    connect(newAction_, &QAction::triggered, this, &Ide::onNew);
+    fileMenu->addAction(newAction_);
+
+    openAction_ = new QAction(QString::fromUtf8("打开(&O)..."), this);
+    openAction_->setShortcut(QKeySequence::Open);
+    connect(openAction_, &QAction::triggered, this, &Ide::onOpen);
+    fileMenu->addAction(openAction_);
+
+    fileMenu->addSeparator();
+
+    saveAction_ = new QAction(QString::fromUtf8("保存(&S)"), this);
+    saveAction_->setShortcut(QKeySequence::Save);
+    connect(saveAction_, &QAction::triggered, this, &Ide::onSave);
+    fileMenu->addAction(saveAction_);
+
+    saveAsAction_ = new QAction(QString::fromUtf8("另存为(&A)..."), this);
+    saveAsAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    connect(saveAsAction_, &QAction::triggered, this, &Ide::onSaveAs);
+    fileMenu->addAction(saveAsAction_);
+
     // 中央部件
     auto* centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
@@ -222,7 +256,7 @@ void Ide::initUI() {
     mainLayout->addWidget(vSplitter_);
 
     // 窗口属性
-    setWindowTitle("MiniLang IDE - 迷你编程语言解释器与执行可视化平台");
+    updateWindowTitle();
     resize(1200, 800);
 }
 
@@ -327,6 +361,13 @@ void Ide::initConnections() {
     // VM 调试连接
     connect(vmStepAction_, &QAction::triggered, this, &Ide::onVmStep);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
+
+    // GUI-04: 文件修改追踪
+    connect(codeEditor_->document(), &QTextDocument::modificationChanged,
+            this, [this](bool changed) {
+        isDirty_ = changed;
+        updateWindowTitle();
+    });
 }
 
 void Ide::onRun() {
@@ -1093,4 +1134,97 @@ void Ide::setRunningState(bool running) {
     formatAction_->setEnabled(!running);
     bytecodeAction_->setEnabled(!running);
     codeEditor_->setReadOnly(running);
+}
+
+// ============================================================
+// GUI-04: 文件操作实现
+// ============================================================
+
+void Ide::onNew() {
+    if (!maybeSave()) return;
+    codeEditor_->clear();
+    currentFilePath_.clear();
+    isDirty_ = false;
+    codeEditor_->document()->setModified(false);
+    updateWindowTitle();
+}
+
+void Ide::onOpen() {
+    if (!maybeSave()) return;
+    QString path = QFileDialog::getOpenFileName(this,
+        QString::fromUtf8("打开文件"), QString(),
+        "MiniLang (*.mini *.ml);;All Files (*)");
+    if (path.isEmpty()) return;
+    loadFile(path);
+}
+
+void Ide::onSave() {
+    if (currentFilePath_.isEmpty()) {
+        onSaveAs();
+        return;
+    }
+    QFile file(currentFilePath_);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, QString::fromUtf8("错误"),
+            QString::fromUtf8("无法保存文件: ") + file.errorString());
+        return;
+    }
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+    out << codeEditor_->toPlainText();
+    file.close();
+    isDirty_ = false;
+    codeEditor_->document()->setModified(false);
+    updateWindowTitle();
+}
+
+void Ide::onSaveAs() {
+    QString path = QFileDialog::getSaveFileName(this,
+        QString::fromUtf8("保存文件"), QString(),
+        "MiniLang (*.mini *.ml);;All Files (*)");
+    if (path.isEmpty()) return;
+    currentFilePath_ = path;
+    onSave();
+}
+
+bool Ide::maybeSave() {
+    if (!isDirty_) return true;
+    auto ret = QMessageBox::question(this,
+        QString::fromUtf8("MiniLang IDE"),
+        QString::fromUtf8("文件已修改，是否保存？"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (ret == QMessageBox::Save) {
+        onSave();
+        return !isDirty_; // onSave 失败时 isDirty_ 仍为 true
+    }
+    if (ret == QMessageBox::Cancel) return false;
+    return true; // Discard
+}
+
+void Ide::updateWindowTitle() {
+    QString title = "MiniLang IDE";
+    if (!currentFilePath_.isEmpty()) {
+        QFileInfo fi(currentFilePath_);
+        title += " - " + fi.fileName();
+    }
+    if (isDirty_) title += " *";
+    setWindowTitle(title);
+}
+
+void Ide::loadFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, QString::fromUtf8("错误"),
+            QString::fromUtf8("无法打开文件: ") + file.errorString());
+        return;
+    }
+    QTextStream in(&file);
+    in.setEncoding(QStringConverter::Utf8);
+    codeEditor_->setPlainText(in.readAll());
+    file.close();
+    currentFilePath_ = path;
+    isDirty_ = false;
+    codeEditor_->document()->setModified(false);
+    updateWindowTitle();
 }

@@ -391,6 +391,8 @@ void VM::resetState() {
     mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
+    openUpvalues_.clear();       // VM-05/06
+    functionClosures_.clear();   // VM-05/06
     initialized_ = false;
 }
 
@@ -925,6 +927,26 @@ VMResult VM::executeOneInstruction() {
             }
         }
 
+        // VM-05/06: 关闭当前帧关联的 open upvalues（在 stack resize 之前）
+        if (retChunk || !frames_.empty()) {
+            // 先关闭当前帧的 upvalues
+            // frames_ 可能已被 pop_back，需通过 saved 数据来关闭
+            // 遍历 openUpvalues_ 列表，关闭指向 savedBp 及以上栈槽的 upvalue
+            auto it = openUpvalues_.begin();
+            while (it != openUpvalues_.end()) {
+                auto& uv = *it;
+                if (!uv->isClosed && uv->stackSlot >= savedBp) {
+                    if (uv->stackSlot < stack_.size()) {
+                        uv->value = stack_[uv->stackSlot];
+                    }
+                    uv->isClosed = true;
+                    it = openUpvalues_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
         if (frames_.empty()) {
             push(result);
             notifyStep(savedIp, op);
@@ -1086,6 +1108,11 @@ VMResult VM::executeOneInstruction() {
         newFrame.basePointer = stack_.size() - targetChunk.localCount;
         newFrame.functionName = funName;
         newFrame.ip = 0;
+        // VM-05/06: 从闭包注册表附加 upvalues（如果该函数有闭包绑定）
+        auto closureIt = functionClosures_.find(funName);
+        if (closureIt != functionClosures_.end() && closureIt->second.vmClosure()) {
+            newFrame.upvalues = closureIt->second.vmClosure()->upvalues;
+        }
         size_t savedIp = ip;
         frames_.push_back(newFrame);
 
@@ -1095,12 +1122,61 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_CALL_EXPR: {
         uint8_t argCount = chunk.code[ip + 1];
-        // VM 不支持一等闭包调用（链式调用 f(x)(y) 请使用解释器运行）
-        for (uint8_t i = 0; i < argCount; ++i) {
-            if (!stack_.empty()) pop();
+        // VM-05/06: 从栈上弹出闭包值和参数，执行调用
+        if (stack_.size() < static_cast<size_t>(argCount) + 1) {
+            return runtimeError("栈下溢: OP_CALL_EXPR");
         }
-        if (!stack_.empty()) pop();  // 弹出 callee
-        return runtimeError("VM 不支持表达式调用（链式调用 f(x)(y)），请使用解释器运行");
+
+        // 弹出参数（逆序保存）
+        SmallArgs<Value, 8> args(argCount);
+        for (int i = argCount - 1; i >= 0; --i) {
+            args[i] = pop();
+        }
+        Value callee = pop();
+
+        if (!callee.isClosure()) {
+            return runtimeError("表达式调用需要函数值");
+        }
+
+        const std::string& funName = callee.closureName();
+        auto chunkIt = functionChunks_.find(funName);
+        if (chunkIt == functionChunks_.end()) {
+            return runtimeError("未找到函数: " + funName);
+        }
+
+        const BytecodeChunk& targetChunk = chunkIt->second;
+        if (targetChunk.arity != argCount) {
+            return runtimeError("函数 " + funName + " 期望 " +
+                std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
+                std::to_string(argCount) + " 个");
+        }
+
+        if (frames_.size() >= MAX_FRAMES) {
+            return runtimeError("调用栈溢出");
+        }
+
+        // 预分配局部变量栈空间
+        int extraSlots = targetChunk.localCount - argCount;
+        for (int i = 0; i < extraSlots; ++i) {
+            push(Value::nullValue());
+        }
+
+        VMCallFrame newFrame;
+        newFrame.chunk = &targetChunk;
+        newFrame.returnIp = ip + 2; // OP_CALL_EXPR 是 2 字节指令
+        newFrame.basePointer = stack_.size() - targetChunk.localCount;
+        newFrame.functionName = funName;
+        newFrame.ip = 0;
+
+        // VM-05/06: 绑定闭包 upvalues 到新帧
+        if (callee.vmClosure()) {
+            newFrame.upvalues = callee.vmClosure()->upvalues;
+        }
+
+        size_t savedIp = ip;
+        frames_.push_back(newFrame);
+        notifyStep(savedIp, op);
+        break;
     }
 
     case OpCode::OP_BUILD_ARRAY: {
@@ -1848,21 +1924,58 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_CLOSURE: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        uint8_t argCount = chunk.code[ip + 3];
+        uint8_t upvalueCount = chunk.code[ip + 3]; // VM-05/06: 改为 upvalue 数量
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& funName = chunk.constants[idx].stringVal();
+
+        // 创建闭包值
         Value closure = Value::makeClosure(funName, nullptr, {});
-        // 捕获当前全局变量环境到闭包中
-        closure.capturedVars() = {};  // 不再深拷贝整个全局环境（capturedVars 未被有效使用）
         auto it = functionChunks_.find(funName);
         if (it != functionChunks_.end()) {
             for (int i = 0; i < it->second.arity; ++i) {
                 closure.closureParams().push_back("param" + std::to_string(i));
             }
         }
+
+        // VM-05/06: 创建 VM 闭包数据并绑定 upvalue
+        auto vmClosureData = std::make_shared<VMClosureData>();
+        vmClosureData->functionName = funName;
+        vmClosureData->upvalues.resize(upvalueCount);
+
+        size_t instrBase = ip + 4; // OP_CLOSURE(1) + nameIdx(2) + upvalueCount(1)
+        VMCallFrame& frame = currentFrame();
+
+        for (uint8_t i = 0; i < upvalueCount; ++i) {
+            uint8_t isLocal = chunk.code[instrBase + i * 2];
+            uint8_t uvIndex = chunk.code[instrBase + i * 2 + 1];
+
+            if (isLocal) {
+                // 直接捕获：创建新 upvalue 指向调用者帧的栈槽
+                auto uv = std::make_shared<VMUpvalue>();
+                uv->stackSlot = frame.basePointer + uvIndex;
+                uv->isClosed = false;
+                vmClosureData->upvalues[i] = uv;
+                openUpvalues_.push_back(uv);
+            } else {
+                // 透传：复用调用者帧的 upvalue
+                if (static_cast<size_t>(uvIndex) < frame.upvalues.size()) {
+                    vmClosureData->upvalues[i] = frame.upvalues[uvIndex];
+                } else {
+                    // 降级：创建空 upvalue
+                    vmClosureData->upvalues[i] = std::make_shared<VMUpvalue>();
+                    vmClosureData->upvalues[i]->value = Value::nullValue();
+                    vmClosureData->upvalues[i]->isClosed = true;
+                }
+            }
+        }
+        closure.vmClosure() = vmClosureData;
+
+        // 注册到函数闭包表（OP_CALL 按名称查找时使用）
+        functionClosures_[funName] = closure;
+
         push(closure);
         notifyStep(ip, op);
-        ip += 4;
+        ip = instrBase + upvalueCount * 2; // 跳过 upvalue 描述符
         break;
     }
 
@@ -1886,6 +1999,65 @@ VMResult VM::executeOneInstruction() {
             return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
         }
         stack_[bp + slot] = val;
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    // VM-05/06: upvalue 读写操作码
+    case OpCode::OP_GET_UPVALUE: {
+        uint8_t uvIdx = chunk.code[ip + 1];
+        VMCallFrame& frame = currentFrame();
+        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
+            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
+        }
+        auto& uv = frame.upvalues[uvIdx];
+        if (uv->isClosed) {
+            push(uv->value);
+        } else {
+            if (uv->stackSlot < stack_.size()) {
+                push(stack_[uv->stackSlot]);
+            } else {
+                return runtimeError("内部错误: upvalue 栈槽越界");
+            }
+        }
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    case OpCode::OP_SET_UPVALUE: {
+        uint8_t uvIdx = chunk.code[ip + 1];
+        VMCallFrame& frame = currentFrame();
+        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
+            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
+        }
+        auto& uv = frame.upvalues[uvIdx];
+        const Value& val = peek(0); // peek 不消费（与 OP_SET_LOCAL 一致）
+        if (uv->isClosed) {
+            uv->value = val;
+        } else {
+            if (uv->stackSlot < stack_.size()) {
+                stack_[uv->stackSlot] = val;
+            } else {
+                return runtimeError("内部错误: upvalue 栈槽越界");
+            }
+        }
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    case OpCode::OP_CLOSE_UPVALUE: {
+        uint8_t uvIdx = chunk.code[ip + 1];
+        VMCallFrame& frame = currentFrame();
+        if (static_cast<size_t>(uvIdx) < frame.upvalues.size()) {
+            auto& uv = frame.upvalues[uvIdx];
+            if (!uv->isClosed && uv->stackSlot < stack_.size()) {
+                uv->value = stack_[uv->stackSlot];
+                uv->isClosed = true;
+            }
+        }
         notifyStep(ip, op);
         ip += 2;
         break;
