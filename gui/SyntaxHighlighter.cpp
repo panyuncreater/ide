@@ -33,10 +33,6 @@ void SyntaxHighlighter::initRules() {
     // 运算符：紫色
     operatorFormat_.setForeground(QColor(128, 0, 128));
 
-    // 布尔值：蓝色粗体
-    boolFormat_.setForeground(QColor(0, 0, 180));
-    boolFormat_.setFontWeight(QFont::Bold);
-
     // ---- 添加高亮规则 ----
 
     // 关键字（合并为单个正则，减少匹配次数）
@@ -47,9 +43,14 @@ void SyntaxHighlighter::initRules() {
     keywordRule.format = keywordFormat_;
     rules_.push_back(keywordRule);
 
-    // HL-2 fix: 数字字面量（支持整数、浮点数、前导点 .123、尾点 123.）
+    // HL-2 + HL-4 fix: 数字字面量（整数、浮点数、前导点、尾点、科学计数法）
     HighlightRule numberRule;
-    numberRule.pattern = QRegularExpression("\\b\\d+\\.\\d+\\b|\\b\\d+\\.\\B|\\B\\.\\d+|\\b\\d+\\b");
+    numberRule.pattern = QRegularExpression(
+        "\\b\\d+\\.\\d+(?:[eE][+-]?\\d+)?\\b"  // 1.23, 1.23e5, 1.23e-5
+        "|\\b\\d+\\.\\B(?:[eE][+-]?\\d+)?"      // 123., 123.e5
+        "|\\B\\.\\d+(?:[eE][+-]?\\d+)?\\b"      // .123, .123e5
+        "|\\b\\d+(?:[eE][+-]?\\d+)?\\b"          // 123, 123e5
+    );
     numberRule.format = numberFormat_;
     rules_.push_back(numberRule);
 

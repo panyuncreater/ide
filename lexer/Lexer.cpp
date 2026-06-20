@@ -236,6 +236,12 @@ void Lexer::identifier() {
     }
     std::string text(source_.substr(start_, current_ - start_));
 
+    // #10 fix: 保留 __ 前缀给编译器内部使用（__blk_save_*, __wb_idx_*）
+    if (text.size() >= 2 && text[0] == '_' && text[1] == '_') {
+        errorToken("标识符 '" + text + "' 使用了保留前缀 '__'（编译器内部使用）");
+        return;
+    }
+
     // 查关键字表
     auto it = keywords().find(text);
     if (it != keywords().end()) {

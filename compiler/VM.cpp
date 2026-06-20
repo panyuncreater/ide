@@ -1,9 +1,7 @@
 #include "compiler/VM.h"
 #include <sstream>
-#include <cmath>
 #include <climits>
 #include <cstdint>
-#include <algorithm>
 
 // ============================================================
 // VM 虚拟机实现

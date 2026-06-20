@@ -4,7 +4,7 @@
 #include <QGraphicsTextItem>
 #include <QGraphicsLineItem>
 #include <QWheelEvent>
-#include <cmath>
+#include <algorithm>
 
 // ============================================================
 // AstViewer AST 树形可视化实现

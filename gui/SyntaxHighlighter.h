@@ -33,7 +33,6 @@ private:
     QTextCharFormat numberFormat_;      // 数字：橙色
     QTextCharFormat commentFormat_;     // 注释：灰色
     QTextCharFormat operatorFormat_;    // 运算符：紫色
-    QTextCharFormat boolFormat_;        // 布尔值：蓝色
 
     static QRegularExpression commentRegex_;  // 注释正则（全局共享，避免每次 highlightBlock 重建）
     static QRegularExpression stringRegex_;   // 字符串正则（多行字符串状态传递用）

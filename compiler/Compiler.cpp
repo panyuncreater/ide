@@ -2,7 +2,6 @@
 #include <sstream>
 #include <algorithm>
 #include <cstdint>
-#include <unordered_set>
 
 // ============================================================
 // Compiler 字节码编译器实现
@@ -1283,7 +1282,7 @@ void Compiler::compileMethodCall(MethodCall& node) {
             cachedIndexVar = "__wb_idx_" + std::to_string(writebackCounter_++);
             compileNode(ia->index.get());
             uint16_t cacheIdx = identifierIndex(cachedIndexVar);
-            chunk_.writeOp(OpCode::OP_SET_VAR, node.line);
+            chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);  // #9 fix: DEFINE 而非 SET（首次创建变量）
             chunk_.writeShort(cacheIdx, node.line);
         }
     }
@@ -1368,6 +1367,13 @@ void Compiler::compileMethodCall(MethodCall& node) {
                 }
             }
         }
+    }
+
+    // #9 fix: 清理 __wb_idx_ 缓存变量，防止永久泄漏到 globals_
+    if (!cachedIndexVar.empty()) {
+        uint16_t cacheIdx = identifierIndex(cachedIndexVar);
+        chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+        chunk_.writeShort(cacheIdx, node.line);
     }
 }
 

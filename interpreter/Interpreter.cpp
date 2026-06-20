@@ -1,6 +1,5 @@
 #include "interpreter/Interpreter.h"
 #include "debug/DebugController.h"
-#include <cmath>
 #include <cctype>
 #include <cstdint>
 #include <climits>
