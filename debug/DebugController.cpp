@@ -50,8 +50,10 @@ void DebugController::checkBreak(ASTNode* node) {
     case StepMode::MODE_RUN:
         // C3 fix: 跳过与上次相同行号的子表达式，防止 resume 后同行子节点重复触发断点。
         // lastSeenLine_ 会在执行到其他行时自动更新，使循环下一迭代能重新命中断点。
-        if (node->line != lastSeenLine_ &&
+        // DBG-03 fix: 单行循环断点重触发——用 crossedLine_ 检测是否跨过不同行
+        if ((node->line != lastSeenLine_ || crossedLine_) &&
             node->line >= minBreakpointLine_ && breakpoints_.contains(node->line)) {
+            crossedLine_ = false;  // 命中后重置，同行后续子表达式不再触发
             // 检查是否为条件断点
             auto infoIt = breakpointInfos_.find(node->line);
             if (infoIt != breakpointInfos_.end() && infoIt->isConditional()) {
@@ -99,16 +101,19 @@ void DebugController::checkBreak(ASTNode* node) {
         break;
     }
 
-    // C3 fix: 始终记录最后看到的行号，使执行移到其他行后 lastSeenLine_ 自动更新
+    // C3 fix + DBG-03: 始终记录最后看到的行号，跨行时设置 crossedLine_ 允许单行循环断点重触发
     if (node->line > 0) {
+        if (node->line != lastSeenLine_) crossedLine_ = true;
         lastSeenLine_ = node->line;
     }
 
-    // M10 fix: 步进模式下经过断点行时也递增 hitCount（暂停由步进触发，但断点确实被经过）
+    // M10 + DBG-04 fix: 步进模式下经过断点行时递增 hitCount，去重避免同行多个子表达式重复计数
     if (mode_ != StepMode::MODE_RUN && node->line > 0) {
-        auto infoIt = breakpointInfos_.find(node->line);
-        if (infoIt != breakpointInfos_.end()) {
-            infoIt->hitCount++;
+        if (node->line != lastPausedLine_ || currentDepth_ != lastPausedDepth_) {
+            auto infoIt = breakpointInfos_.find(node->line);
+            if (infoIt != breakpointInfos_.end()) {
+                infoIt->hitCount++;
+            }
         }
     }
 
@@ -303,6 +308,7 @@ void DebugController::resume() {
 
 void DebugController::stop() {
     stopped_ = true;
+    running_ = false;  // DBG-02 fix: 重置 running_ 以便下次启动时能正确初始化步进模式
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         paused_ = false;
@@ -355,6 +361,7 @@ void DebugController::reset() {
     lastPausedLine_ = -1;
     lastPausedDepth_ = -1;
     lastSeenLine_ = -1;
+    crossedLine_ = false;
 
     // 重置所有断点命中计数（保留断点和条件）
     for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {

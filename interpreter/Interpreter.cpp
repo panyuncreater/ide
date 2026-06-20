@@ -1215,14 +1215,15 @@ Value Interpreter::visitFunCall(FunCall& node) {
     currentFunctionReturnType_ = funDecl->returnType;
     auto prevEnv = currentEnv_;
 
+    // INTERP-04 fix: 递归深度检查移至try外，避免超限时catch双重递减
+    recursionDepth_++;
+    if (recursionDepth_ >= 64) {
+        recursionDepth_--;
+        runtimeError("递归深度超过限制 (64)", node.line, node.column);
+    }
+
     Value result = Value::nullValue();
     try {
-        // 递归深度检查（在try内，throw时catch负责恢复）
-        recursionDepth_++;
-        if (recursionDepth_ >= 64) {
-            recursionDepth_--;
-            runtimeError("递归深度超过限制 (64)", node.line, node.column);
-        }
 
         // 参数类型检查
         for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {

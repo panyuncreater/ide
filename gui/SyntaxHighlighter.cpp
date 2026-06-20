@@ -70,14 +70,26 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     QList<QPair<int, int>> stringRanges;  // {start, length}
 
     if (inString) {
-        // 上一行有未闭合的字符串，继续匹配
-        QRegularExpressionMatch endMatch = stringRegex_.match(text, 0);
-        if (endMatch.hasMatch() && text[endMatch.capturedStart()] == '"') {
-            // 本行找到了闭合引号
-            int endPos = endMatch.capturedEnd();
-            stringRanges.append({0, endPos});
-            startIndex = endPos;
-            currentlyInString = false;
+        // GUI-05 fix: 在本行任意位置搜索闭合引号（不要求从行首开始）
+        int closePos = text.indexOf('"');
+        if (closePos >= 0) {
+            // 检查引号是否被转义：计算前面连续反斜杠数量
+            int backslashCount = 0;
+            for (int k = closePos - 1; k >= 0 && text[k] == '\\'; --k) {
+                backslashCount++;
+            }
+            if (backslashCount % 2 == 0) {
+                // 引号未被转义，字符串在此闭合
+                int endPos = closePos + 1;
+                stringRanges.append({0, endPos});
+                startIndex = endPos;
+                currentlyInString = false;
+            } else {
+                // 引号被转义，本行整个都在字符串内
+                setFormat(0, text.length(), stringFormat_);
+                setCurrentBlockState(1);
+                return;
+            }
         } else {
             // 本行整个都在字符串内
             setFormat(0, text.length(), stringFormat_);

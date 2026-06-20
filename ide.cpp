@@ -553,6 +553,12 @@ void Ide::onDebug() {
             [this](const QString& msg, int line, int column) {
         Diagnostic diag(DiagLevel::Error, msg.toStdString(), line, column, DiagSource::Interpreter);
         outputPanel_->appendError(QString::fromStdString(diag.format()));
+        // GUI-07 fix: 调试模式下也标记错误行
+        if (line > 0) {
+            QSet<int> errorLines;
+            errorLines.insert(line);
+            codeEditor_->setErrorLines(errorLines);
+        }
     });
     connect(worker_, &InterpreterWorker::stoppedByUser, this, [this]() {
         outputPanel_->appendOutput("--- 调试终止 ---");
@@ -657,6 +663,8 @@ void Ide::onClearOutput() {
 void Ide::onPausedAt(int line) {
     codeEditor_->setCurrentLine(line);
     updateDebugInfo();
+    // GUI-09 fix: 暂停时自动切换到调试面板
+    bottomTabWidget_->setCurrentWidget(debugPanel_);
 }
 
 void Ide::onFormat() {
@@ -726,6 +734,8 @@ void Ide::onShowBytecode() {
 
     // L15 fix: 清除编辑器中残留的错误行标记
     codeEditor_->clearErrorLines();
+    // GUI-10 fix: 清除调试执行行高亮
+    codeEditor_->clearCurrentLine();
 
     // 词法分析
     try {
@@ -856,6 +866,8 @@ void Ide::onVmStop() {
     vm_.resetState();
     isVmInitialized_ = false;
     vmStackPanel_->clearAll();
+    // GUI-11 fix: 清除字节码列表当前行高亮
+    bytecodeList_->setCurrentRow(-1);
 
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
@@ -1012,9 +1024,11 @@ void Ide::runParser(const std::vector<Token>& tokens) {
     // 使用统一诊断显示解析错误
     displayDiagnostics(parser_.getDiagnostics());
 
-    // 更新 AST 视图
+    // GUI-08 fix: 解析失败时清空旧 AST 视图
     if (astRoot_) {
         astViewer_->setAst(astRoot_.get());
+    } else {
+        astViewer_->clearAst();
     }
 }
 

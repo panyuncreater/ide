@@ -86,7 +86,10 @@ void OutputPanel::appendOutput(const QString& text) {
     if (!outputEdit_->document()->isEmpty()) {
         cursor.insertText("\n");
     }
-    cursor.insertText(text);
+    // PANEL-01 fix: strip trailing newline to avoid extra blank lines
+    QString trimmed = text;
+    if (trimmed.endsWith(QChar(10))) trimmed.chop(1);
+    cursor.insertText(trimmed);
     outputEdit_->setTextCursor(cursor);
     outputEdit_->ensureCursorVisible();
 }
@@ -101,7 +104,10 @@ void OutputPanel::appendError(const QString& text) {
     QTextCharFormat fmt;
     fmt.setForeground(Qt::red);
     cursor.setCharFormat(fmt);
-    cursor.insertText(text);
+    // PANEL-01 fix: strip trailing newline
+    QString trimmed = text;
+    if (trimmed.endsWith(QChar(10))) trimmed.chop(1);
+    cursor.insertText(trimmed);
     // 恢复默认格式
     cursor.setCharFormat(QTextCharFormat());
     errorEdit_->setTextCursor(cursor);

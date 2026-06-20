@@ -83,7 +83,8 @@ public:
             // 检查深度缓存是否有效（P2: 使用目标环境的 per-instance generation）
             auto cacheIt = depthCache_.find(name);
             if (cacheIt != depthCache_.end() && cacheIt->second.target &&
-                cacheIt->second.generation == cacheIt->second.target->generation_) {
+                cacheIt->second.generation == cacheIt->second.target->generation_ &&
+                generation_ == cacheIt->second.target->generation_) {
                 // 缓存命中：直接跳到目标深度
                 return getAtDepth(name, cacheIt->second.depth);
             }
@@ -121,7 +122,8 @@ public:
             // 检查深度缓存是否有效
             auto cacheIt = depthCache_.find(name);
             if (cacheIt != depthCache_.end() && cacheIt->second.target &&
-                cacheIt->second.generation == cacheIt->second.target->generation_) {
+                cacheIt->second.generation == cacheIt->second.target->generation_ &&
+                generation_ == cacheIt->second.target->generation_) {
                 // 缓存命中：直接跳到目标深度
                 return setAtDepth(name, val, cacheIt->second.depth);
             }
@@ -158,7 +160,8 @@ public:
         if (parent) {
             auto cacheIt = depthCache_.find(name);
             if (cacheIt != depthCache_.end() && cacheIt->second.target &&
-                cacheIt->second.generation == cacheIt->second.target->generation_) {
+                cacheIt->second.generation == cacheIt->second.target->generation_ &&
+                generation_ == cacheIt->second.target->generation_) {
                 return setAtDepth(name, std::move(val), cacheIt->second.depth);
             }
             int depth = 0;

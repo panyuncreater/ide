@@ -291,7 +291,16 @@ void CodeEditor::updateLineNumberAreaWidth(int newBlockCount) {
 void CodeEditor::highlightCurrentLine() {
     QList<QTextEdit::ExtraSelection> selections;
 
-    // 当前执行行高亮（黄色背景）
+    // GUI-12 fix: 光标行先添加（蓝色），执行行后添加（黄色）
+    // Qt ExtraSelection 后添加的覆盖先添加的，黄色要在蓝色之上
+    QTextEdit::ExtraSelection cursorSel;
+    cursorSel.cursor = textCursor();
+    cursorSel.cursor.select(QTextCursor::LineUnderCursor);
+    cursorSel.format.setBackground(QColor(235, 243, 255));
+    cursorSel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
+    selections.append(cursorSel);
+
+    // 当前执行行高亮（黄色背景，后添加以覆盖蓝色）
     if (currentLine_ > 0) {
         QTextBlock block = document()->findBlockByNumber(currentLine_ - 1);
         if (block.isValid()) {
@@ -303,14 +312,6 @@ void CodeEditor::highlightCurrentLine() {
             selections.append(sel);
         }
     }
-
-    // 光标行高亮（浅蓝色背景）
-    QTextEdit::ExtraSelection cursorSel;
-    cursorSel.cursor = textCursor();
-    cursorSel.cursor.select(QTextCursor::LineUnderCursor);
-    cursorSel.format.setBackground(QColor(235, 243, 255));
-    cursorSel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
-    selections.append(cursorSel);
 
     // 错误下划线（使用预构建的缓存，避免每次光标移动都遍历）
     selections.append(cachedErrorSelections_);
