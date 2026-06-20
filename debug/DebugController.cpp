@@ -175,7 +175,7 @@ void DebugController::removeBreakpoint(int line) {
 void DebugController::toggleBreakpoint(int line) {
     if (breakpoints_.contains(line)) {
         breakpoints_.remove(line);
-        breakpointInfos_.remove(line);
+        // DBG-07 fix: 保留 breakpointInfos_ 中的条件表达式，仅移除活跃断点
     } else {
         breakpoints_.insert(line);
         if (!breakpointInfos_.contains(line)) {

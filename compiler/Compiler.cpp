@@ -267,6 +267,8 @@ void Compiler::compileUnaryOp(UnaryOp& node) {
     case UnaryOp::UnaryOpType::UOP_NOT:
         chunk_.writeOp(OpCode::OP_NOT, node.line);
         break;
+    case UnaryOp::UnaryOpType::UOP_PLUS:
+        break;  // 一元 + 恒等操作，操作数已在栈上
     default:
         break;
     }

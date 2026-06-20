@@ -369,7 +369,8 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
     // 可选的 extends SuperClassName 或 : SuperClassName
     std::string superClassName;
     if (match(TokenType::TK_EXTENDS) || match(TokenType::TK_COLON)) {
-        const Token& superName = consume(TokenType::TK_IDENTIFIER, "期望父类名");
+        // PARSE-03 fix: 父类名支持类型关键字（与类名声明一致）
+        const Token& superName = consumeIdentifierOrType("期望父类名");
         superClassName = superName.lexeme;
     }
 
@@ -443,6 +444,11 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                     } else {
                         const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
                         returnType = retTypeTok.lexeme;
+                        // PARSE-04 fix: 支持类类型数组返回值
+                        if (match(TokenType::TK_LBRACKET)) {
+                            consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                            returnType += "[]";
+                        }
                     }
                 } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
                     advance(); // 消耗 '-'
@@ -858,9 +864,11 @@ std::unique_ptr<ASTNode> Parser::unary() {
         auto uopType = (op.type == TokenType::TK_NOT) ? UnaryOp::UnaryOpType::UOP_NOT : UnaryOp::UnaryOpType::UOP_NEGATE;
         return std::make_unique<UnaryOp>(uopType, std::move(operand), op.line, op.column);
     }
-    // B13 fix: 一元 + 是恒等操作，直接返回操作数
+    // PARSE-07 fix: 一元 + 创建 UnaryOp 节点保留 AST 保真度
     if (match(TokenType::TK_PLUS)) {
-        return unary();
+        const Token& op = previous();
+        auto operand = unary();
+        return std::make_unique<UnaryOp>(UnaryOp::UnaryOpType::UOP_PLUS, std::move(operand), op.line, op.column);
     }
     return call();
 }
@@ -908,7 +916,8 @@ std::unique_ptr<ASTNode> Parser::call() {
         // 成员访问: expr.field 或 方法调用 expr.method(args)
         if (match(TokenType::TK_DOT)) {
             const Token& dot = previous();
-            const Token& fieldName = consume(TokenType::TK_IDENTIFIER, "期望成员名");
+            // PARSE-10 fix: 成员名支持类型关键字（与声明端一致）
+        const Token& fieldName = consumeIdentifierOrType("期望成员名");
 
             // 检查是否是方法调用: obj.method(args)
             if (match(TokenType::TK_LPAREN)) {
@@ -1062,6 +1071,7 @@ void Parser::synchronize() {
         case TokenType::TK_FOR:
         case TokenType::TK_RETURN:
         case TokenType::TK_PRINT:
+        case TokenType::TK_ELSE:  // PARSE-11 fix: else 作为同步点
         case TokenType::TK_INT:
         case TokenType::TK_FLOAT:
         case TokenType::TK_BOOL:

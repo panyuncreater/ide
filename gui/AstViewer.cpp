@@ -47,11 +47,15 @@ void AstViewer::clearAst() {
 }
 
 void AstViewer::wheelEvent(QWheelEvent* event) {
+    // GUI-13 fix: 缩放范围限制 (0.1x ~ 10x)
     double factor = 1.15;
+    double currentScale = transform().m11();  // 当前水平缩放因子
     if (event->angleDelta().y() > 0) {
-        scale(factor, factor);
+        if (currentScale * factor <= 10.0)
+            scale(factor, factor);
     } else {
-        scale(1.0 / factor, 1.0 / factor);
+        if (currentScale / factor >= 0.1)
+            scale(1.0 / factor, 1.0 / factor);
     }
     event->accept();
 }

@@ -121,14 +121,16 @@ void ReplPanel::onReturnPressed() {
         outputArea_->ensureCursorVisible();
     }
 
+    // PANEL-05 fix: clear 在续行模式下也可退出续行
+    if (trimmedLine == "clear") {
+        outputArea_->clear();
+        pendingInput_.clear();
+        inContinuation_ = false;
+        inputLine_->clear();
+        return;
+    }
     // 特殊命令（仅在非续行模式）
     if (!inContinuation_) {
-        if (trimmedLine == "clear") {
-            outputArea_->clear();
-            pendingInput_.clear();
-            inputLine_->clear();
-            return;
-        }
         if (trimmedLine == "help") {
             outputArea_->append(
                 "MiniLang 支持的语法:\n"
@@ -215,9 +217,8 @@ void ReplPanel::executeLine(const QString& line) {
         interpreter_->retainReplAst(std::move(ast));
         Value result = interpreter_->executeRepl(*rawAst);
         // 显示结果
-        if (!result.isNull()) {
-            appendOutput(QString::fromStdString(result.toString()));
-        }
+        // PANEL-03 fix: null 结果也打印
+        appendOutput(QString::fromStdString(result.toString()));
     } catch (const RuntimeError& e) {
         appendError(QString("运行时错误 (行 %1, 列 %2): %3")
                         .arg(e.line).arg(e.column).arg(e.what()));

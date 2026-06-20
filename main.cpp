@@ -1,6 +1,7 @@
 #include "ide.h"
 
 #include <QApplication>
+#include <QMessageBox>
 
 // ============================================================
 // MiniLang IDE 程序入口
@@ -98,7 +99,18 @@ int main(int argc, char *argv[]) {
         }
     )");
 
-    Ide w;
-    w.show();
-    return a.exec();
+    // MAIN-01 fix: 顶层异常捕获保护
+    try {
+        Ide w;
+        w.show();
+        return a.exec();
+    } catch (const std::exception& e) {
+        QMessageBox::critical(nullptr, "MiniLang IDE - 启动错误",
+                              QString::fromStdString(e.what()));
+        return 1;
+    } catch (...) {
+        QMessageBox::critical(nullptr, "MiniLang IDE - 启动错误",
+                              "未知的启动异常");
+        return 1;
+    }
 }

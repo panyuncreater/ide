@@ -118,7 +118,7 @@ public:
 /// 一元运算节点
 class UnaryOp : public ASTNode {
 public:
-    enum class UnaryOpType { UOP_NEGATE, UOP_NOT, UOP_UNKNOWN };
+    enum class UnaryOpType { UOP_NEGATE, UOP_NOT, UOP_PLUS, UOP_UNKNOWN };
 
     UnaryOpType opType;                     // 运算符类型枚举
     std::unique_ptr<ASTNode> operand;        // 操作数
@@ -138,6 +138,7 @@ public:
         switch (t) {
         case UnaryOpType::UOP_NEGATE: return "-";
         case UnaryOpType::UOP_NOT:    return "not";
+        case UnaryOpType::UOP_PLUS:   return "+";
         default: return "?";
         }
     }
@@ -178,7 +179,13 @@ public:
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override {
-        return "String(\"" + value + "\")";
+        std::string escaped;
+        for (char ch : value) {
+            if (ch == '\\') escaped += "\\\\";
+            else if (ch == '"') escaped += "\\\"";
+            else escaped += ch;
+        }
+        return "String(\"" + escaped + "\")";
     }
     std::vector<ASTNode*> children() const override { return {}; }
 

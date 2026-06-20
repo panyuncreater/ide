@@ -663,6 +663,8 @@ Value Interpreter::visitUnaryOp(UnaryOp& node) {
         break;
     case UnaryOp::UnaryOpType::UOP_NOT:
         return Value(!operand.isTruthy());
+    case UnaryOp::UnaryOpType::UOP_PLUS:
+        return operand;  // 一元 + 恒等操作
     default:
         runtimeError("未知一元运算符: " + std::string(UnaryOp::opTypeStr(node.opType)), node.line, node.column);
         break;

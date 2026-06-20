@@ -122,7 +122,8 @@ std::string Formatter::formatNode(ASTNode* node) {
     case NodeType::NODE_RETURN_STMT:    return formatReturnStmt(*static_cast<ReturnStmt*>(node));
     case NodeType::NODE_PRINT_STMT:     return formatPrintStmt(*static_cast<PrintStmt*>(node));
     case NodeType::NODE_BLOCK: {
-        std::string result = "{\n";
+        // FMT-05 fix: 使用 openBrace() 支持 BraceStyle 配置
+        std::string result = openBrace();
         currentIndent_++;
         result += formatBlock(*static_cast<Block*>(node));
         currentIndent_--;
@@ -211,6 +212,13 @@ std::string Formatter::formatUnaryOp(UnaryOp& node) {
     }
     if (node.opType == UnaryOp::UnaryOpType::UOP_NOT) {
         return "not " + operand;
+    }
+    if (node.opType == UnaryOp::UnaryOpType::UOP_PLUS) {
+        return "+" + operand;
+    }
+    // FMT-03 fix: UOP_UNKNOWN 不应被格式化为 "-"
+    if (node.opType == UnaryOp::UnaryOpType::UOP_UNKNOWN) {
+        return "/* unknown */ " + operand;
     }
     return "-" + operand;
 }
