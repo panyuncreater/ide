@@ -136,6 +136,7 @@ private:
     int lastPausedDepth_ = -1;  // 上次暂停时的调用深度（递归函数同行不同深度需重新暂停）
     int lastSeenLine_ = -1;     // C3 fix: checkBreak 上次看到的行号，用于 MODE_RUN 跳过同行子表达式
     bool crossedLine_ = false;  // DBG-03 fix: 是否已经跨过不同行（用于单行循环断点重触发）
+    bool crossedDeeper_ = false; // DBG-B fix: Step Over 期间是否进入了更深的调用层
     int minBreakpointLine_ = -1; // 最小断点行号（快速跳过不可能命中的节点）
     std::atomic<bool> running_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> stopped_{false};      // #9 fix: atomic for cross-thread access

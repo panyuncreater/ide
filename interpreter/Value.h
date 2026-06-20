@@ -13,6 +13,7 @@
 // 前向声明 Environment（避免循环依赖）
 class Environment;
 class FunDecl;
+class BytecodeChunk;  // M3 fix: 闭包值持有函数 chunk 指针
 
 // ============================================================
 // Value 运行时值类型 — std::variant 存储 + COW 语义
@@ -550,4 +551,5 @@ struct VMUpvalue {
 struct VMClosureData {
     std::string functionName;
     std::vector<std::shared_ptr<VMUpvalue>> upvalues;
+    const BytecodeChunk* chunkPtr = nullptr;  // M3 fix: 直接持有函数 chunk 指针
 };

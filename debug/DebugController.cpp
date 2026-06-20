@@ -46,6 +46,11 @@ void DebugController::checkBreak(ASTNode* node) {
 
     bool shouldPause = false;
 
+    // DBG-B fix: Step Over 模式下追踪是否进入了更深的调用层
+    if (mode_ == StepMode::MODE_STEP_OVER && currentDepth_ > stepOverDepth_) {
+        crossedDeeper_ = true;
+    }
+
     switch (mode_) {
     case StepMode::MODE_RUN:
         // C3 fix: 跳过与上次相同行号的子表达式，防止 resume 后同行子节点重复触发断点。
@@ -86,8 +91,9 @@ void DebugController::checkBreak(ASTNode* node) {
         break;
 
     case StepMode::MODE_STEP_OVER:
-        // 只暂停同一或更浅调用深度，且行号变化的节点
-        if (currentDepth_ <= stepOverDepth_ && node->line != lastPausedLine_) {
+        // 只暂停同一或更浅调用深度，且行号变化或从深层返回的节点
+        // DBG-B fix: crossedDeeper_ 检测从函数调用返回 — 即使同行也暂停（f();g(); 场景）
+        if (currentDepth_ <= stepOverDepth_ && (node->line != lastPausedLine_ || crossedDeeper_)) {
             shouldPause = true;
         }
         break;
@@ -120,6 +126,7 @@ void DebugController::checkBreak(ASTNode* node) {
     if (shouldPause && node->line > 0) {
         lastPausedLine_ = node->line;  // 记录暂停行号
         lastPausedDepth_ = currentDepth_;  // 记录暂停深度
+        crossedDeeper_ = false;  // DBG-B fix: 暂停后重置深度追踪
 
         // 发出暂停信号（更新 UI 高亮行）
         emit pausedAt(node->line);
@@ -252,6 +259,7 @@ void DebugController::stepOver() {
     if (!running_) {
         mode_ = StepMode::MODE_STEP_OVER;
         stepOverDepth_ = currentDepth_;
+        crossedDeeper_ = false;  // DBG-B fix
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -261,6 +269,7 @@ void DebugController::stepOver() {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_ = StepMode::MODE_STEP_OVER;
         stepOverDepth_ = currentDepth_;
+        crossedDeeper_ = false;  // DBG-B fix
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -362,6 +371,7 @@ void DebugController::reset() {
     lastPausedDepth_ = -1;
     lastSeenLine_ = -1;
     crossedLine_ = false;
+    crossedDeeper_ = false;  // DBG-B fix
 
     // 重置所有断点命中计数（保留断点和条件）
     for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {

@@ -118,11 +118,12 @@ Value Interpreter::evaluateExpr(ASTNode* node) {
     return node->accept(*this);
 }
 
-// GUI-03 fix: 安全条件断点求值 — 保存/恢复所有可变状态，防止重入损坏
+// GUI-03 fix + DBG-A fix: 安全条件断点求值 — 保存/恢复所有可变状态（含 currentEnv_），防止重入损坏
 Value Interpreter::evaluateCondition(ASTNode* node) {
     if (!node) return Value::nullValue();
     auto savedCallStack = callStack_;
     auto savedClassCtx = classContextStack_;
+    auto savedEnv = currentEnv_;  // DBG-A fix: 保存环境指针，条件求值不修改程序状态
     int savedDepth = recursionDepth_;
     bool savedDebugMode = debugMode_;
     debugMode_ = false;
@@ -130,12 +131,14 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         Value result = node->accept(*this);
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);
+        currentEnv_ = savedEnv;  // DBG-A fix: 恢复环境
         recursionDepth_ = savedDepth;
         debugMode_ = savedDebugMode;
         return result;
     } catch (...) {
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);
+        currentEnv_ = savedEnv;  // DBG-A fix: 异常时也恢复环境
         recursionDepth_ = savedDepth;
         debugMode_ = savedDebugMode;
         throw;

@@ -1145,15 +1145,24 @@ VMResult VM::executeOneInstruction() {
             return runtimeError("表达式调用需要函数值");
         }
 
-        const std::string& funName = callee.closureName();
-        auto chunkIt = functionChunks_.find(funName);
-        if (chunkIt == functionChunks_.end()) {
-            return runtimeError("未找到函数: " + funName);
+        // M3 fix: 优先使用闭包值中的 chunkPtr（直接指针，无哈希查找）
+        // 回退到名称查找兼容旧闭包（chunkPtr 为 null 时）
+        const BytecodeChunk* targetChunkPtr = nullptr;
+        if (callee.vmClosure() && callee.vmClosure()->chunkPtr) {
+            targetChunkPtr = callee.vmClosure()->chunkPtr;
+        } else {
+            auto chunkIt = functionChunks_.find(callee.closureName());
+            if (chunkIt != functionChunks_.end()) {
+                targetChunkPtr = &chunkIt->second;
+            }
+        }
+        if (!targetChunkPtr) {
+            return runtimeError("未找到函数: " + callee.closureName());
         }
 
-        const BytecodeChunk& targetChunk = chunkIt->second;
+        const BytecodeChunk& targetChunk = *targetChunkPtr;
         if (targetChunk.arity != argCount) {
-            return runtimeError("函数 " + funName + " 期望 " +
+            return runtimeError("函数 " + callee.closureName() + " 期望 " +
                 std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
                 std::to_string(argCount) + " 个");
         }
@@ -1172,7 +1181,7 @@ VMResult VM::executeOneInstruction() {
         newFrame.chunk = &targetChunk;
         newFrame.returnIp = ip + 2; // OP_CALL_EXPR 是 2 字节指令
         newFrame.basePointer = stack_.size() - targetChunk.localCount;
-        newFrame.functionName = funName;
+        newFrame.functionName = callee.closureName();
         newFrame.ip = 0;
 
         // VM-05/06: 绑定闭包 upvalues 到新帧
@@ -1297,15 +1306,31 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_INDEX_SET: {
+        // M1 fix: 嵌套索引赋值（如 arr[i][j] = val）
+        // 栈序: [..., obj, outerIdx, innerIdx, val]
+        // 弹出 val, innerIdx, obj → 修改 obj[innerIdx] → 存入 lastMutatedReceiver_
         if (stack_.size() < 3) return runtimeError("栈下溢: OP_INDEX_SET");
-        // fallback 路径：用于非简单变量的嵌套访问（如 arr[i][j] = val）
-        // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
-        // 报错提示，并清理栈上的操作数
         Value val = pop();
-        Value idx = pop();
+        Value innerIdx = pop();
         Value obj = pop();
-        (void)obj; (void)idx; (void)val;  // 消除未使用警告
-        return runtimeError("VM 不支持嵌套索引赋值（如 arr[i][j] = val），请使用临时变量");
+        if (obj.isArray() && innerIdx.isInt()) {
+            int64_t i = innerIdx.intVal();
+            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+                obj.arrayVal()[static_cast<size_t>(i)] = val;
+            } else {
+                return runtimeError("数组索引越界: " + std::to_string(i));
+            }
+        } else if (obj.isDict() && innerIdx.isString()) {
+            obj.dictVal()[innerIdx.stringVal()] = val;
+        } else if (obj.isArray()) {
+            return runtimeError("数组索引需要整数类型");
+        } else {
+            return runtimeError("该类型不支持索引赋值");
+        }
+        lastMutatedReceiver_ = std::move(obj);
+        notifyStep(ip, op);
+        ip += 1;
+        break;
     }
 
     case OpCode::OP_INDEX_SET_VAR: {
@@ -1411,16 +1436,26 @@ VMResult VM::executeOneInstruction() {
     }
 
     case OpCode::OP_MEMBER_SET: {
+        // M1 fix: 嵌套成员赋值（如 obj.field.subfield = val 或 arr[i].field = val）
+        // 栈序: [..., obj, val]
+        // 弹出 val, obj → 修改 obj.field → 存入 lastMutatedReceiver_
         if (stack_.size() < 2) return runtimeError("栈下溢: OP_MEMBER_SET");
-        // fallback 路径：用于非简单变量的嵌套成员赋值
-        // Value 是值语义，pop 出来的是副本，修改副本无法写回原位置
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[idx].stringVal();
         Value val = pop();
         Value obj = pop();
-        (void)obj; (void)fieldName; (void)val;  // 消除未使用警告
-        return runtimeError("VM 不支持嵌套成员赋值（如 arr[i].field = val），请使用临时变量");
+        if (obj.isInstance()) {
+            obj.fields()[fieldName] = val;
+        } else if (obj.isDict()) {
+            obj.dictVal()[fieldName] = val;
+        } else {
+            return runtimeError("该类型不支持成员赋值");
+        }
+        lastMutatedReceiver_ = std::move(obj);
+        notifyStep(ip, op);
+        ip += 3;
+        break;
     }
 
     case OpCode::OP_MEMBER_SET_VAR: {
@@ -1957,6 +1992,11 @@ VMResult VM::executeOneInstruction() {
         auto vmClosureData = std::make_shared<VMClosureData>();
         vmClosureData->functionName = funName;
         vmClosureData->upvalues.resize(upvalueCount);
+        // M3 fix: 闭包值直接持有函数 chunk 指针（OP_CALL_EXPR 使用，避免名称查找）
+        auto chunkIt = functionChunks_.find(funName);
+        if (chunkIt != functionChunks_.end()) {
+            vmClosureData->chunkPtr = &chunkIt->second;
+        }
 
         size_t instrBase = ip + 4; // OP_CLOSURE(1) + nameIdx(2) + upvalueCount(1)
         VMCallFrame& frame = currentFrame();
@@ -2107,8 +2147,19 @@ VMResult VM::executeOneInstruction() {
         // 检查是否有 init 方法（沿继承链查找）
         const BytecodeChunk* initChunkPtr = findMethodChunk(className, "init");
 
-        if (initChunkPtr != nullptr && argCount > 0) {
-            // 有 init 方法且有参数：创建 init 帧执行初始化
+        // S2 fix: 也处理 argCount==0 且 init.arity==0 的自动构造场景
+        // （与解释器 visitVarDecl 一致：Point p; 自动调用 0 参数 init）
+        bool shouldCallInit = false;
+        if (initChunkPtr != nullptr) {
+            if (argCount > 0) {
+                shouldCallInit = true;
+            } else if (initChunkPtr->arity == 0) {
+                shouldCallInit = true;  // 0 参数 init，自动构造时调用
+            }
+        }
+
+        if (shouldCallInit) {
+            // 创建 init 帧执行初始化
             const BytecodeChunk& initChunk = *initChunkPtr;
             if (initChunk.arity != static_cast<int>(argCount)) {
                 return runtimeError("构造函数 init 期望 " +
@@ -2167,10 +2218,10 @@ VMResult VM::executeOneInstruction() {
             break;
         }
 
-        // 无 init 或无参数：推入实例，由后续 OP_INIT_FIELD 设置字段
+        // 无 init 或 init.arity 不匹配 argCount：推入实例（OP_INIT_FIELD 或手动 init 后续处理）
         push(instance);
 
-        // 如果有 init 但 argCount==0，init 通过后续 OP_METHOD_CALL 调用
+        // 无 init 但有参数：报错（与解释器一致）
         if (initChunkPtr == nullptr && argCount > 0) {
             return runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
                          std::to_string(argCount) + " 个参数");

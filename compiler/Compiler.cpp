@@ -940,30 +940,90 @@ void Compiler::compileIndexAssign(IndexAssign& node) {
                      ? static_cast<VarRef*>(node.object.get()) : nullptr;
 
     if (objVar) {
-        // 先查局部变量（如方法内的 this）
+        // 简单路径：arr[i] = val（基是 VarRef）
         auto localIt = currentLocals_.find(objVar->name);
         if (localIt != currentLocals_.end()) {
-            // 局部变量索引赋值：this.arr[i] = val → OP_INDEX_SET_LOCAL
             compileNode(node.index.get());
             compileNode(node.value.get());
             uint8_t slot = static_cast<uint8_t>(localIt->second);
             chunk_.writeOp(OpCode::OP_INDEX_SET_LOCAL, node.line);
             chunk_.write(slot, node.line);
         } else {
-            // 全局变量索引赋值：arr[i] = val → OP_INDEX_SET_VAR
             compileNode(node.index.get());
             compileNode(node.value.get());
             uint16_t nameIdx = identifierIndex(objVar->name);
             chunk_.writeOp(OpCode::OP_INDEX_SET_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
         }
-    } else {
-        // 通用路径（嵌套访问等）：推对象+索引+值，OP_INDEX_SET 不做写回（限制但安全）
-        compileNode(node.object.get());
-        compileNode(node.index.get());
-        compileNode(node.value.get());
-        chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
+        return;
     }
+
+    // M1 fix: 嵌套索引赋值（2 层）
+    // 检测 node.object 是否是 IndexAccess(VarRef) 或 MemberAccess(VarRef)
+    IndexAccess* outerIdx = (node.object && node.object->nodeType == NodeType::NODE_INDEX_ACCESS)
+                            ? static_cast<IndexAccess*>(node.object.get()) : nullptr;
+    MemberAccess* outerMem = (node.object && node.object->nodeType == NodeType::NODE_MEMBER_ACCESS)
+                             ? static_cast<MemberAccess*>(node.object.get()) : nullptr;
+    VarRef* baseVar = nullptr;
+    if (outerIdx && outerIdx->object && outerIdx->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerIdx->object.get());
+    else if (outerMem && outerMem->object && outerMem->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerMem->object.get());
+
+    if (baseVar) {
+        auto localIt = currentLocals_.find(baseVar->name);
+        bool isLocal = (localIt != currentLocals_.end());
+
+        // 编译基变量 → push base
+        compileNode(baseVar);
+        // 编译外层表达式 → push base[outerIdx] 或 base.field（正确求值中间值）
+        compileNode(node.object.get());
+        // 编译内层索引 → push innerIdx
+        compileNode(node.index.get());
+        // 编译值 → push val
+        compileNode(node.value.get());
+        // OP_INDEX_SET: 弹出 val/innerIdx/outerValue → 修改 → lastMutatedReceiver_
+        chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
+        // 推外层索引（write-back 需要）
+        if (outerIdx) {
+            compileNode(outerIdx->index.get());
+        } else {
+            uint16_t fieldIdx = identifierIndex(outerMem->fieldName);
+            chunk_.writeOp(OpCode::OP_STRING, node.line);
+            chunk_.writeShort(fieldIdx, node.line);
+        }
+        // write-back: 将 lastMutatedReceiver_ 写回基变量
+        if (isLocal) {
+            if (outerIdx) {
+                chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);
+                chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
+            } else {
+                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_LOCAL, node.line);
+                chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
+                uint16_t fieldIdx = identifierIndex(outerMem->fieldName);
+                chunk_.writeShort(fieldIdx, node.line);
+            }
+        } else {
+            if (outerIdx) {
+                uint16_t nameIdx = identifierIndex(baseVar->name);
+                chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            } else {
+                uint16_t varIdx = identifierIndex(baseVar->name);
+                uint16_t fieldIdx = identifierIndex(outerMem->fieldName);
+                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_VAR, node.line);
+                chunk_.writeShort(varIdx, node.line);
+                chunk_.writeShort(fieldIdx, node.line);
+            }
+        }
+        return;
+    }
+
+    // 3+ 层嵌套或复杂表达式：通用路径（仍报错）
+    compileNode(node.object.get());
+    compileNode(node.index.get());
+    compileNode(node.value.get());
+    chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
 }
 
 void Compiler::compileClassDecl(ClassDecl& node) {
@@ -1108,10 +1168,9 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
                      ? static_cast<VarRef*>(node.object.get()) : nullptr;
 
     if (objVar) {
-        // 先查局部变量（如方法内的 this）
+        // 简单路径：obj.field = val（基是 VarRef）
         auto localIt = currentLocals_.find(objVar->name);
         if (localIt != currentLocals_.end()) {
-            // 局部变量成员赋值：this.field = val → OP_MEMBER_SET_LOCAL
             compileNode(node.value.get());
             uint8_t slot = static_cast<uint8_t>(localIt->second);
             uint16_t fieldIdx = identifierIndex(node.fieldName);
@@ -1120,21 +1179,82 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
             chunk_.writeShort(fieldIdx, node.line);
             return;
         }
-        // 全局变量成员赋值：obj.field = val → OP_MEMBER_SET_VAR
         compileNode(node.value.get());
         uint16_t varIdx = identifierIndex(objVar->name);
         uint16_t fieldIdx = identifierIndex(node.fieldName);
         chunk_.writeOp(OpCode::OP_MEMBER_SET_VAR, node.line);
         chunk_.writeShort(varIdx, node.line);
         chunk_.writeShort(fieldIdx, node.line);
-    } else {
-        // 通用路径：推对象+值，OP_MEMBER_SET 不做写回
-        compileNode(node.object.get());
-        compileNode(node.value.get());
-        uint16_t nameIdx = identifierIndex(node.fieldName);
-        chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
-        chunk_.writeShort(nameIdx, node.line);
+        return;
     }
+
+    // M1 fix: 嵌套成员赋值（2 层）
+    // 检测 node.object 是否是 IndexAccess(VarRef) 或 MemberAccess(VarRef)
+    IndexAccess* outerIdx = (node.object && node.object->nodeType == NodeType::NODE_INDEX_ACCESS)
+                            ? static_cast<IndexAccess*>(node.object.get()) : nullptr;
+    MemberAccess* outerMem = (node.object && node.object->nodeType == NodeType::NODE_MEMBER_ACCESS)
+                             ? static_cast<MemberAccess*>(node.object.get()) : nullptr;
+    VarRef* baseVar = nullptr;
+    if (outerIdx && outerIdx->object && outerIdx->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerIdx->object.get());
+    else if (outerMem && outerMem->object && outerMem->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerMem->object.get());
+
+    if (baseVar) {
+        auto localIt = currentLocals_.find(baseVar->name);
+        bool isLocal = (localIt != currentLocals_.end());
+
+        // 编译基变量 → push base
+        compileNode(baseVar);
+        // 编译外层表达式 → push base[outerIdx] 或 base.field
+        compileNode(node.object.get());
+        // 编译值 → push val
+        compileNode(node.value.get());
+        // OP_MEMBER_SET: 弹出 val/outerValue → 修改 → lastMutatedReceiver_
+        uint16_t fieldNameIdx = identifierIndex(node.fieldName);
+        chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
+        chunk_.writeShort(fieldNameIdx, node.line);
+        // 推外层索引（write-back 需要）
+        if (outerIdx) {
+            compileNode(outerIdx->index.get());
+        } else {
+            uint16_t outerFieldIdx = identifierIndex(outerMem->fieldName);
+            chunk_.writeOp(OpCode::OP_STRING, node.line);
+            chunk_.writeShort(outerFieldIdx, node.line);
+        }
+        // write-back: 将 lastMutatedReceiver_ 写回基变量
+        if (isLocal) {
+            if (outerIdx) {
+                chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);
+                chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
+            } else {
+                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_LOCAL, node.line);
+                chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
+                uint16_t outerFieldIdx = identifierIndex(outerMem->fieldName);
+                chunk_.writeShort(outerFieldIdx, node.line);
+            }
+        } else {
+            if (outerIdx) {
+                uint16_t nameIdx = identifierIndex(baseVar->name);
+                chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            } else {
+                uint16_t varIdx = identifierIndex(baseVar->name);
+                uint16_t outerFieldIdx = identifierIndex(outerMem->fieldName);
+                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_VAR, node.line);
+                chunk_.writeShort(varIdx, node.line);
+                chunk_.writeShort(outerFieldIdx, node.line);
+            }
+        }
+        return;
+    }
+
+    // 3+ 层嵌套或复杂表达式：通用路径
+    compileNode(node.object.get());
+    compileNode(node.value.get());
+    uint16_t nameIdx = identifierIndex(node.fieldName);
+    chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
+    chunk_.writeShort(nameIdx, node.line);
 }
 
 void Compiler::compileMethodCall(MethodCall& node) {
