@@ -18,7 +18,7 @@ DebugController::~DebugController() {
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         paused_ = false;
-        mode_ = StepMode::MODE_RUN;
+        mode_.store(static_cast<int>(StepMode::MODE_RUN));
     }
     pauseCV_.notify_all();
 }
@@ -33,8 +33,31 @@ void DebugController::checkBreak(ASTNode* node) {
 
     if (!running_) return;
 
+    // Thread-safety: take a snapshot of shared state under the mutex.
+    // Breakpoint containers are copied; scalar fields are read into locals.
+    // This avoids holding the mutex for the entire function.
+    StepMode snapMode;
+    QSet<int> localBreakpoints;
+    QMap<int, BreakpointInfo> localBreakpointInfos;
+    int snapCurrentDepth, snapStepOverDepth, snapStepOutDepth;
+    int snapLastPausedLine, snapLastPausedDepth, snapMinBreakpointLine;
+    bool snapCrossedDeeper;
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        snapMode = static_cast<StepMode>(mode_.load());
+        localBreakpoints = breakpoints_;
+        localBreakpointInfos = breakpointInfos_;
+        snapCurrentDepth = currentDepth_;
+        snapStepOverDepth = stepOverDepth_;
+        snapStepOutDepth = stepOutDepth_;
+        snapLastPausedLine = lastPausedLine_;
+        snapLastPausedDepth = lastPausedDepth_;
+        snapMinBreakpointLine = minBreakpointLine_;
+        snapCrossedDeeper = crossedDeeper_;
+    }
+
     // 快速路径：RUN 模式且无断点 → 直接返回（递归/循环程序的主要开销来源）
-    if (mode_ == StepMode::MODE_RUN && breakpoints_.empty()) {
+    if (snapMode == StepMode::MODE_RUN && localBreakpoints.empty()) {
         // B11 fix: 即使在快速路径，也定期处理 UI 事件防止界面冻结
         if (++eventPumpCounter_ >= 100) {
             eventPumpCounter_ = 0;
@@ -47,26 +70,32 @@ void DebugController::checkBreak(ASTNode* node) {
     bool shouldPause = false;
 
     // DBG-B fix: Step Over 模式下追踪是否进入了更深的调用层
-    if (mode_ == StepMode::MODE_STEP_OVER && currentDepth_ > stepOverDepth_) {
+    if (snapMode == StepMode::MODE_STEP_OVER && snapCurrentDepth > snapStepOverDepth) {
         crossedDeeper_ = true;
+        snapCrossedDeeper = true;
     }
 
-    switch (mode_) {
+    switch (snapMode) {
     case StepMode::MODE_RUN:
         // C3 fix: 跳过与上次相同行号的子表达式，防止 resume 后同行子节点重复触发断点。
         // lastSeenLine_ 会在执行到其他行时自动更新，使循环下一迭代能重新命中断点。
         // DBG-03 fix: 单行循环断点重触发——用 crossedLine_ 检测是否跨过不同行
         if ((node->line != lastSeenLine_ || crossedLine_) &&
-            node->line >= minBreakpointLine_ && breakpoints_.contains(node->line)) {
+            node->line >= snapMinBreakpointLine && localBreakpoints.contains(node->line)) {
             crossedLine_ = false;  // 命中后重置，同行后续子表达式不再触发
             // 检查是否为条件断点
-            auto infoIt = breakpointInfos_.find(node->line);
-            if (infoIt != breakpointInfos_.end() && infoIt->isConditional()) {
+            auto infoIt = localBreakpointInfos.find(node->line);
+            if (infoIt != localBreakpointInfos.end() && infoIt->isConditional()) {
                 // 条件断点：只求值条件为真时才暂停
                 if (conditionEvaluator_) {
                     try {
                         if (conditionEvaluator_(infoIt->condition)) {
-                            infoIt->hitCount++;  // DB-3 fix: 仅条件满足时递增
+                            // Thread-safety: update hitCount on the real container under mutex
+                            {
+                                std::lock_guard<std::mutex> lock(pauseMutex_);
+                                auto realIt = breakpointInfos_.find(node->line);
+                                if (realIt != breakpointInfos_.end()) realIt->hitCount++;
+                            }
                             shouldPause = true;
                         }
                     } catch (...) {
@@ -75,8 +104,10 @@ void DebugController::checkBreak(ASTNode* node) {
                 }
             } else {
                 // 无条件断点：直接暂停
-                if (infoIt != breakpointInfos_.end()) {
-                    infoIt->hitCount++;
+                if (infoIt != localBreakpointInfos.end()) {
+                    std::lock_guard<std::mutex> lock(pauseMutex_);
+                    auto realIt = breakpointInfos_.find(node->line);
+                    if (realIt != breakpointInfos_.end()) realIt->hitCount++;
                 }
                 shouldPause = true;
             }
@@ -85,7 +116,7 @@ void DebugController::checkBreak(ASTNode* node) {
 
     case StepMode::MODE_STEP_IN:
         // 行号变化时暂停（跳过同行子表达式），或调用深度变化时暂停（递归函数同行不同深度）
-        if (node->line != lastPausedLine_ || currentDepth_ != lastPausedDepth_) {
+        if (node->line != snapLastPausedLine || snapCurrentDepth != snapLastPausedDepth) {
             shouldPause = true;
         }
         break;
@@ -93,7 +124,7 @@ void DebugController::checkBreak(ASTNode* node) {
     case StepMode::MODE_STEP_OVER:
         // 只暂停同一或更浅调用深度，且行号变化或从深层返回的节点
         // DBG-B fix: crossedDeeper_ 检测从函数调用返回 — 即使同行也暂停（f();g(); 场景）
-        if (currentDepth_ <= stepOverDepth_ && (node->line != lastPausedLine_ || crossedDeeper_)) {
+        if (snapCurrentDepth <= snapStepOverDepth && (node->line != snapLastPausedLine || snapCrossedDeeper)) {
             shouldPause = true;
         }
         break;
@@ -101,7 +132,7 @@ void DebugController::checkBreak(ASTNode* node) {
     case StepMode::MODE_STEP_OUT:
         // H6 fix: 仅检查调用深度，不使用 lastPausedLine_ 防护。
         // 深度变浅即可确定已从函数返回，同行嵌套调用或递归函数也能正确暂停。
-        if (currentDepth_ < stepOutDepth_) {
+        if (snapCurrentDepth < snapStepOutDepth) {
             shouldPause = true;
         }
         break;
@@ -114,18 +145,19 @@ void DebugController::checkBreak(ASTNode* node) {
     }
 
     // M10 + DBG-04 fix: 步进模式下经过断点行时递增 hitCount，去重避免同行多个子表达式重复计数
-    if (mode_ != StepMode::MODE_RUN && node->line > 0) {
-        if (node->line != lastPausedLine_ || currentDepth_ != lastPausedDepth_) {
-            auto infoIt = breakpointInfos_.find(node->line);
-            if (infoIt != breakpointInfos_.end()) {
-                infoIt->hitCount++;
+    if (snapMode != StepMode::MODE_RUN && node->line > 0) {
+        if (node->line != snapLastPausedLine || snapCurrentDepth != snapLastPausedDepth) {
+            std::lock_guard<std::mutex> lock(pauseMutex_);
+            auto realIt = breakpointInfos_.find(node->line);
+            if (realIt != breakpointInfos_.end()) {
+                realIt->hitCount++;
             }
         }
     }
 
     if (shouldPause && node->line > 0) {
         lastPausedLine_ = node->line;  // 记录暂停行号
-        lastPausedDepth_ = currentDepth_;  // 记录暂停深度
+        lastPausedDepth_ = snapCurrentDepth;  // 记录暂停深度
         crossedDeeper_ = false;  // DBG-B fix: 暂停后重置深度追踪
 
         // 发出暂停信号（更新 UI 高亮行）
@@ -238,7 +270,7 @@ void DebugController::setConditionEvaluator(std::function<bool(const std::string
 void DebugController::stepIn() {
     // 初始模式设置：尚未开始执行
     if (!running_) {
-        mode_ = StepMode::MODE_STEP_IN;
+        mode_.store(static_cast<int>(StepMode::MODE_STEP_IN));
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -247,7 +279,7 @@ void DebugController::stepIn() {
     // A2: 通过 CV 唤醒 worker 线程
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
-        mode_ = StepMode::MODE_STEP_IN;
+        mode_.store(static_cast<int>(StepMode::MODE_STEP_IN));
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -257,7 +289,7 @@ void DebugController::stepIn() {
 
 void DebugController::stepOver() {
     if (!running_) {
-        mode_ = StepMode::MODE_STEP_OVER;
+        mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
         stepOverDepth_ = currentDepth_;
         crossedDeeper_ = false;  // DBG-B fix
         running_ = true;
@@ -267,7 +299,7 @@ void DebugController::stepOver() {
     }
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
-        mode_ = StepMode::MODE_STEP_OVER;
+        mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
         stepOverDepth_ = currentDepth_;
         crossedDeeper_ = false;  // DBG-B fix
         running_ = true;
@@ -279,7 +311,7 @@ void DebugController::stepOver() {
 
 void DebugController::stepOut() {
     if (!running_) {
-        mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
+        mode_.store(static_cast<int>((currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
         stepOutDepth_ = currentDepth_;
         running_ = true;
         stopped_ = false;
@@ -288,7 +320,7 @@ void DebugController::stepOut() {
     }
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
-        mode_ = (currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN;
+        mode_.store(static_cast<int>((currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
         stepOutDepth_ = currentDepth_;
         running_ = true;
         stopped_ = false;
@@ -299,7 +331,7 @@ void DebugController::stepOut() {
 
 void DebugController::resume() {
     if (!running_) {
-        mode_ = StepMode::MODE_RUN;
+        mode_.store(static_cast<int>(StepMode::MODE_RUN));
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -307,7 +339,7 @@ void DebugController::resume() {
     }
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
-        mode_ = StepMode::MODE_RUN;
+        mode_.store(static_cast<int>(StepMode::MODE_RUN));
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -358,7 +390,7 @@ bool DebugController::isPaused() const {
 void DebugController::reset() {
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
-        mode_ = StepMode::MODE_RUN;
+        mode_.store(static_cast<int>(StepMode::MODE_RUN));
         running_ = false;
         stopped_ = false;
         paused_ = false;

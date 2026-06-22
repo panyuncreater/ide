@@ -202,6 +202,21 @@ private:
     /// 写回已修改的值（用于方法调用等已自行修改对象的场景，链式求值避免重复求值）
     void writeBack(ASTNode* objectNode, const Value& modifiedValue, int line, int col);
 
+    /// 链收集与求值结果
+    struct ChainInfo {
+        std::vector<ASTNode*> chain;
+        std::vector<Value> vals;
+        std::vector<Value> idxs;
+        VarRef* varRef;  // nullptr if root is not a VarRef
+    };
+
+    /// 收集从 objectNode 到 VarRef 的节点链，并从外到内逐级求值
+    /// errorOnNonVarRef=true 时，非 VarRef 根节点报错；否则 varRef 设为 nullptr
+    ChainInfo collectAndEvaluateChain(ASTNode* objectNode, bool errorOnNonVarRef, int line, int col);
+
+    /// 从内到外逐级写回修改后的值，最终写回变量
+    void writeBackChain(const ChainInfo& info, Value innermost, int line, int col);
+
     /// 检查值是否匹配类型注解
     bool typeMatch(const Value& val, const std::string& annotation) const;
 

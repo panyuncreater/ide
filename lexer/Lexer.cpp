@@ -48,6 +48,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     line_ = 1;
     lineStart_ = 0;
     tokens_.clear();
+    comments_.clear();
     diagnostics_.clear();
 
     // 跳过 UTF-8 BOM（字节序标记）
@@ -68,12 +69,20 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     // 添加 EOF Token
     tokens_.emplace_back(TokenType::TK_EOF, "", Value::nullValue(), line_, currentColumn());
 
-    // 从 TK_ERROR Token 中提取诊断信息
-    for (const auto& tok : tokens_) {
+    // 从 TK_ERROR Token 中提取诊断信息，并将注释 Token 分离到 comments_
+    std::vector<Token> cleanTokens;
+    cleanTokens.reserve(tokens_.size());
+    for (auto& tok : tokens_) {
         if (tok.type == TokenType::TK_ERROR) {
             diagnostics_.addError(tok.lexeme, tok.line, tok.column, DiagSource::Lexer);
+            cleanTokens.push_back(std::move(tok));
+        } else if (tok.type == TokenType::TK_LINE_COMMENT) {
+            comments_.push_back(std::move(tok));
+        } else {
+            cleanTokens.push_back(std::move(tok));
         }
     }
+    tokens_ = std::move(cleanTokens);
 
     return tokens_;
 }

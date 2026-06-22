@@ -23,6 +23,9 @@ public:
     /// 获取扫描过程中收集的诊断信息
     const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
 
+    /// 获取注释 Token 列表（从主 Token 流中分离，供 Formatter 保留注释用）
+    const std::vector<Token>& comments() const { return comments_; }
+
 private:
     std::string_view source_;        // P9 fix: string_view 避免全量拷贝（调用方保证生命周期）
     int start_ = 0;                 // 当前 token 起始位置
@@ -31,6 +34,7 @@ private:
     int lineStart_ = 0;             // 当前行起始偏移
 
     std::vector<Token> tokens_;     // 输出的 Token 列表
+    std::vector<Token> comments_;   // 注释 Token 列表（从主流中分离，供 Formatter 使用）
     DiagnosticBag diagnostics_;      // 诊断收集器
 
     /// 关键字映射表（全局共享，只初始化一次）

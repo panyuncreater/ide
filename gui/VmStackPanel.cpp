@@ -52,22 +52,8 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     stackLayout->addWidget(stackTitle);
 
     stackList_ = new QListWidget(this);
+    stackList_->setObjectName("vmStackList");
     stackList_->setFont(QFont("Consolas", 10));
-    stackList_->setStyleSheet(
-        "QListWidget {"
-        "  background-color: #1e1e1e;"
-        "  color: #d4d4d4;"
-        "  border: 1px solid #444;"
-        "  border-radius: 4px;"
-        "}"
-        "QListWidget::item {"
-        "  padding: 3px 6px;"
-        "  border-bottom: 1px solid #333;"
-        "}"
-        "QListWidget::item:selected {"
-        "  background-color: #264f78;"
-        "}"
-    );
     stackLayout->addWidget(stackList_);
     splitter->addWidget(stackGroup);
 
@@ -89,6 +75,7 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     globalsLayout->addWidget(globalsTitle);
 
     globalsTable_ = new QTableWidget(this);
+    globalsTable_->setObjectName("vmGlobalsTable");
     globalsTable_->setColumnCount(2);
     globalsTable_->setHorizontalHeaderLabels({"变量名", "值"});
     globalsTable_->horizontalHeader()->setStretchLastSection(true);
@@ -96,21 +83,6 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     globalsTable_->setAlternatingRowColors(true);
     globalsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     globalsTable_->setFont(QFont("Consolas", 10));
-    globalsTable_->setStyleSheet(
-        "QTableWidget {"
-        "  background-color: #1e1e1e;"
-        "  color: #d4d4d4;"
-        "  border: 1px solid #444;"
-        "  border-radius: 4px;"
-        "}"
-        "QHeaderView::section {"
-        "  background-color: #2d2d2d;"
-        "  color: #ccc;"
-        "  padding: 4px;"
-        "  border: 1px solid #444;"
-        "  font-weight: bold;"
-        "}"
-    );
     globalsLayout->addWidget(globalsTable_);
     splitter->addWidget(globalsGroup);
 

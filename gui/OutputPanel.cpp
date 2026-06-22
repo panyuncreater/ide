@@ -23,13 +23,13 @@ OutputPanel::OutputPanel(QWidget* parent)
 
     auto* outputHeaderLayout = new QHBoxLayout;
     auto* outputLabel = new QLabel("输出");
-    outputLabel->setStyleSheet("font-weight: bold; color: #333;");
+    outputLabel->setObjectName("outputLabel");
     outputHeaderLayout->addWidget(outputLabel);
     outputHeaderLayout->addStretch();
 
     clearOutputBtn_ = new QPushButton("清空");
+    clearOutputBtn_->setObjectName("clearOutputBtn");
     clearOutputBtn_->setFixedWidth(60);
-    clearOutputBtn_->setStyleSheet("QPushButton { padding: 2px 8px; }");
     outputHeaderLayout->addWidget(clearOutputBtn_);
     outputLayout->addLayout(outputHeaderLayout);
 
@@ -37,7 +37,7 @@ OutputPanel::OutputPanel(QWidget* parent)
     outputEdit_->setReadOnly(true);
     outputEdit_->setFont(QFont("Consolas", 10));
     outputEdit_->document()->setMaximumBlockCount(10000);  // OP-2 fix: 限制输出行数
-    outputEdit_->setStyleSheet("QTextEdit { background-color: #FFFFFF; border: 1px solid #DDD; }");
+    outputEdit_->setObjectName("outputEdit");
     outputLayout->addWidget(outputEdit_);
 
     splitter->addWidget(outputWidget);
@@ -50,13 +50,13 @@ OutputPanel::OutputPanel(QWidget* parent)
 
     auto* errorHeaderLayout = new QHBoxLayout;
     auto* errorLabel = new QLabel("错误");
-    errorLabel->setStyleSheet("font-weight: bold; color: #C00;");
+    errorLabel->setObjectName("errorLabel");
     errorHeaderLayout->addWidget(errorLabel);
     errorHeaderLayout->addStretch();
 
     clearErrorBtn_ = new QPushButton("清空");
+    clearErrorBtn_->setObjectName("clearErrorBtn");
     clearErrorBtn_->setFixedWidth(60);
-    clearErrorBtn_->setStyleSheet("QPushButton { padding: 2px 8px; }");
     errorHeaderLayout->addWidget(clearErrorBtn_);
     errorLayout->addLayout(errorHeaderLayout);
 
@@ -64,7 +64,7 @@ OutputPanel::OutputPanel(QWidget* parent)
     errorEdit_->setReadOnly(true);
     errorEdit_->setFont(QFont("Consolas", 10));
     errorEdit_->document()->setMaximumBlockCount(5000);  // OP-2 fix: 限制错误行数
-    errorEdit_->setStyleSheet("QTextEdit { background-color: #FFF5F5; border: 1px solid #FCC; }");
+    errorEdit_->setObjectName("errorEdit");
     errorLayout->addWidget(errorEdit_);
 
     splitter->addWidget(errorWidget);

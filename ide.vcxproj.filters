@@ -91,6 +91,9 @@
     <ClCompile Include="interpreter\Interpreter.cpp">
       <Filter>interpreter</Filter>
     </ClCompile>
+    <ClCompile Include="interpreter\BuiltinMethods.cpp">
+      <Filter>interpreter</Filter>
+    </ClCompile>
     <ClCompile Include="debug\DebugController.cpp">
       <Filter>debug</Filter>
     </ClCompile>

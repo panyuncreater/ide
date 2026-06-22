@@ -116,6 +116,7 @@
     <ClCompile Include="parser\Parser.cpp"/>
     <ClCompile Include="interpreter\Environment.cpp"/>
     <ClCompile Include="interpreter\Interpreter.cpp"/>
+    <ClCompile Include="interpreter\BuiltinMethods.cpp"/>
     <ClCompile Include="debug\DebugController.cpp"/>
     <ClCompile Include="gui\CodeEditor.cpp"/>
     <ClCompile Include="gui\SyntaxHighlighter.cpp"/>

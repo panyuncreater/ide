@@ -41,7 +41,7 @@ public:
 
 private:
     const std::vector<Token>* tokens_ = nullptr;  // Token 流（引用，避免深拷贝）
-    mutable int current_ = 0;               // 当前位置（mutable：peek() 需跳过注释）
+    int current_ = 0;                        // 当前位置
     std::vector<ParseError> errors_; // 收集的解析错误
     DiagnosticBag diagnostics_;      // 诊断收集器
     int parseDepth_ = 0;             // P15 fix: 递归深度计数器
@@ -60,9 +60,6 @@ private:
 
     /// 前进一个 Token，返回前一个 Token
     const Token& advance();
-
-    /// 跳过注释 Token（F1 fix）
-    void skipComments() const;
 
     /// 检查当前 Token 是否为指定类型
     bool check(TokenType type) const;
@@ -84,6 +81,17 @@ private:
 
     /// 检查当前 token 是否是标识符或类型关键字
     bool isIdentifierOrType() const;
+
+    /// 解析类型注解（内置类型或类名，可选 [] 数组后缀）
+    /// 当前 token 必须是类型关键字或标识符，消耗类型 token 并可选地消耗 []
+    /// 使用安全回溯：仅在 [ 后紧跟 ] 时才消费，否则回退 [
+    /// 返回如 "int", "int[]", "ClassName", "ClassName[]" 等字符串
+    std::string parseTypeAnnotation();
+
+    /// 解析可选的返回类型注解（: type 或 -> type）
+    /// 如果当前 token 是 : 或 ->，则消耗并解析返回类型
+    /// 否则返回空字符串
+    std::string parseReturnType();
 
     // ---- 声明与语句 ----
 

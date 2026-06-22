@@ -203,21 +203,8 @@ void Ide::initUI() {
     auto* bytecodeSplitter = new QSplitter(Qt::Horizontal, this);
 
     bytecodeList_ = new QListWidget(this);
+    bytecodeList_->setObjectName("bytecodeList");
     bytecodeList_->setFont(QFont("Consolas", 10));
-    bytecodeList_->setStyleSheet(
-        "QListWidget {"
-        "  background-color: #1e1e1e;"
-        "  color: #d4d4d4;"
-        "  border: none;"
-        "}"
-        "QListWidget::item {"
-        "  padding: 2px 6px;"
-        "  border-bottom: 1px solid #333;"
-        "}"
-        "QListWidget::item:selected {"
-        "  background-color: #264f78;"
-        "}"
-    );
     bytecodeList_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
     vmStackPanel_ = new VmStackPanel(this);
@@ -745,8 +732,8 @@ void Ide::onFormat() {
     QTextCursor savedCursor = codeEditor_->textCursor();
     int scrollPos = codeEditor_->verticalScrollBar()->value();
 
-    // F1 fix: 传入注释 token，使格式化后保留注释
-    formatter_.setComments(lastTokens_);
+    // F1 fix: 传入注释 token（Lexer 已将注释从主流分离，存储在 comments() 中）
+    formatter_.setComments(lexer_.comments());
     try {
         std::string formatted = formatter_.format(*astRoot_);
         codeEditor_->setPlainText(QString::fromStdString(formatted));

@@ -9,6 +9,8 @@
 #include <memory>
 #include <cstdint>
 #include <cmath>
+#include <cassert>
+#include <unordered_set>
 
 // 前向声明 Environment（避免循环依赖）
 class Environment;
@@ -94,6 +96,7 @@ private:
         if (ptr && ptr.use_count() > 1) {
             ptr = std::make_shared<std::remove_reference_t<decltype(*ptr)>>(*ptr);
         }
+        assert(ptr && "ensureUnique() called on null shared_ptr (moved-from Value?)");
         return *ptr;
     }
 
@@ -243,7 +246,9 @@ public:
         return ensureUnique<4>().value;
     }
     const std::string& stringVal() const {
-        return std::get<4>(data_)->value;
+        auto& ptr = std::get<4>(data_);
+        assert(ptr && "stringVal() called on null StringData");
+        return ptr->value;
     }
 
     // -- arrayVal --
@@ -251,7 +256,9 @@ public:
         return ensureUnique<5>().elements;
     }
     const std::vector<Value>& arrayVal() const {
-        return std::get<5>(data_)->elements;
+        auto& ptr = std::get<5>(data_);
+        assert(ptr && "arrayVal() called on null ArrayData");
+        return ptr->elements;
     }
 
     // -- dictVal --
@@ -259,7 +266,9 @@ public:
         return ensureUnique<6>().entries;
     }
     const std::unordered_map<std::string, Value>& dictVal() const {
-        return std::get<6>(data_)->entries;
+        auto& ptr = std::get<6>(data_);
+        assert(ptr && "dictVal() called on null DictData");
+        return ptr->entries;
     }
 
     // -- className（实例专用）--
@@ -267,7 +276,9 @@ public:
         return ensureUnique<7>().className;
     }
     const std::string& className() const {
-        return std::get<7>(data_)->className;
+        auto& ptr = std::get<7>(data_);
+        assert(ptr && "className() called on null InstanceData");
+        return ptr->className;
     }
 
     // -- fields（实例字段）--
@@ -275,7 +286,9 @@ public:
         return ensureUnique<7>().fields;
     }
     const std::unordered_map<std::string, Value>& fields() const {
-        return std::get<7>(data_)->fields;
+        auto& ptr = std::get<7>(data_);
+        assert(ptr && "fields() called on null InstanceData");
+        return ptr->fields;
     }
 
     // -- 闭包字段 --
@@ -283,32 +296,42 @@ public:
         return ensureUnique<8>().name;
     }
     const std::string& closureName() const {
-        return std::get<8>(data_)->name;
+        auto& ptr = std::get<8>(data_);
+        assert(ptr && "closureName() called on null ClosureData");
+        return ptr->name;
     }
 
     std::shared_ptr<Environment> closureEnv() const {
-        return std::get<8>(data_)->env.lock();
+        auto& ptr = std::get<8>(data_);
+        assert(ptr && "closureEnv() called on null ClosureData");
+        return ptr->env.lock();
     }
 
     std::vector<std::string>& closureParams() {
         return ensureUnique<8>().params;
     }
     const std::vector<std::string>& closureParams() const {
-        return std::get<8>(data_)->params;
+        auto& ptr = std::get<8>(data_);
+        assert(ptr && "closureParams() called on null ClosureData");
+        return ptr->params;
     }
 
     FunDecl*& closureBody() {
         return ensureUnique<8>().body;
     }
     FunDecl* closureBody() const {
-        return std::get<8>(data_)->body;
+        auto& ptr = std::get<8>(data_);
+        assert(ptr && "closureBody() called on null ClosureData");
+        return ptr->body;
     }
 
     std::unordered_map<std::string, Value>& capturedVars() {
         return ensureUnique<8>().capturedVars;
     }
     const std::unordered_map<std::string, Value>& capturedVars() const {
-        return std::get<8>(data_)->capturedVars;
+        auto& ptr = std::get<8>(data_);
+        assert(ptr && "capturedVars() called on null ClosureData");
+        return ptr->capturedVars;
     }
 
     // VM-05/06: VM 闭包数据访问器
@@ -316,7 +339,9 @@ public:
         return ensureUnique<8>().vmClosure;
     }
     const std::shared_ptr<VMClosureData>& vmClosure() const {
-        return std::get<8>(data_)->vmClosure;
+        auto& ptr = std::get<8>(data_);
+        assert(ptr && "vmClosure() called on null ClosureData");
+        return ptr->vmClosure;
     }
 
     // ============================================================
@@ -391,6 +416,12 @@ public:
 
     /// 转换为字符串表示
     std::string toString() const {
+        std::unordered_set<const void*> visited;
+        return toStringImpl(visited);
+    }
+
+private:
+    std::string toStringImpl(std::unordered_set<const void*>& visited) const {
         switch (getType()) {
         case ValueType::VAL_INT:
             return std::to_string(intVal());
@@ -407,7 +438,10 @@ public:
         case ValueType::VAL_NULL:
             return "null";
         case ValueType::VAL_ARRAY: {
-            const auto& arr = arrayVal();
+            const auto& ptr = std::get<5>(data_);
+            assert(ptr && "toString on null ArrayData");
+            if (!visited.insert(ptr.get()).second) return "[cycle]";
+            const auto& arr = ptr->elements;
             std::ostringstream oss;
             oss << "[";
             for (size_t i = 0; i < arr.size(); ++i) {
@@ -415,14 +449,18 @@ public:
                 if (arr[i].isString()) {
                     oss << "\"" << arr[i].stringVal() << "\"";
                 } else {
-                    oss << arr[i].toString();
+                    oss << arr[i].toStringImpl(visited);
                 }
             }
             oss << "]";
+            visited.erase(ptr.get());
             return oss.str();
         }
         case ValueType::VAL_DICT: {
-            const auto& dict = dictVal();
+            const auto& ptr = std::get<6>(data_);
+            assert(ptr && "toString on null DictData");
+            if (!visited.insert(ptr.get()).second) return "[cycle]";
+            const auto& dict = ptr->entries;
             std::ostringstream oss;
             oss << "{";
             bool first = true;
@@ -433,15 +471,19 @@ public:
                 if (kv.second.isString()) {
                     oss << "\"" << kv.second.stringVal() << "\"";
                 } else {
-                    oss << kv.second.toString();
+                    oss << kv.second.toStringImpl(visited);
                 }
             }
             oss << "}";
+            visited.erase(ptr.get());
             return oss.str();
         }
         case ValueType::VAL_INSTANCE: {
-            const auto& cn = className();
-            const auto& flds = fields();
+            const auto& ptr = std::get<7>(data_);
+            assert(ptr && "toString on null InstanceData");
+            if (!visited.insert(ptr.get()).second) return "[cycle]";
+            const auto& cn = ptr->className;
+            const auto& flds = ptr->fields;
             std::ostringstream oss;
             oss << cn << "{";
             bool first = true;
@@ -452,10 +494,11 @@ public:
                 if (kv.second.isString()) {
                     oss << "\"" << kv.second.stringVal() << "\"";
                 } else {
-                    oss << kv.second.toString();
+                    oss << kv.second.toStringImpl(visited);
                 }
             }
             oss << "}";
+            visited.erase(ptr.get());
             return oss.str();
         }
         case ValueType::VAL_CLOSURE:
@@ -463,6 +506,8 @@ public:
         }
         return "null";
     }
+
+public:
 
     /// 判断真值
     bool isTruthy() const {

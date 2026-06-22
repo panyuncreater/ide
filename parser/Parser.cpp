@@ -39,16 +39,7 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
 
 // ---- 辅助方法 ----
 
-/// 跳过注释 token（F1 fix: 注释由 Lexer 产生，但 Parser 不处理）
-void Parser::skipComments() const {
-    while (current_ < (int)tokens_->size() &&
-           (*tokens_)[current_].type == TokenType::TK_LINE_COMMENT) {
-        current_++;
-    }
-}
-
 const Token& Parser::peek() const {
-    skipComments();
     return (*tokens_)[current_];
 }
 
@@ -74,10 +65,6 @@ bool Parser::check(TokenType type) const {
 
 bool Parser::checkNext(TokenType type) const {
     int idx = current_ + 1;
-    // B12 fix: 跳过注释 token，与 advance()/peek() 行为一致
-    while (idx < (int)tokens_->size() && (*tokens_)[idx].type == TokenType::TK_LINE_COMMENT) {
-        idx++;
-    }
     if (idx >= (int)tokens_->size()) return false;
     return (*tokens_)[idx].type == type;
 }
@@ -111,6 +98,23 @@ bool Parser::isIdentifierOrType() const {
            t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
 }
 
+std::string Parser::parseTypeAnnotation() {
+    const Token& typeTok = advance();  // 消耗类型关键字或标识符
+    std::string typeAnn = typeTok.lexeme;
+    // 安全回溯：仅在 [ 后紧跟 ] 时才消费，否则回退 [
+    if (check(TokenType::TK_LBRACKET)) {
+        int bracketSave = current_;
+        advance(); // 消耗 '['
+        if (check(TokenType::TK_RBRACKET)) {
+            advance(); // 消耗 ']'
+            typeAnn += "[]";
+        } else {
+            current_ = bracketSave; // 不是 [] 类型注解，回退 '['
+        }
+    }
+    return typeAnn;
+}
+
 // ---- 声明与语句 ----
 
 std::unique_ptr<ASTNode> Parser::declaration() {
@@ -130,21 +134,7 @@ std::unique_ptr<ASTNode> Parser::declaration() {
         // 可能是: 类型注解变量声明(int a=1;) 或 带返回类型的函数声明(int fib(n){})
         // 保存当前位置以便回溯
         int savePos = current_;
-        const Token& typeTok = advance();
-
-        // 检查是否是数组类型注解，如 int[]
-        std::string typeAnn = typeTok.lexeme;
-        // H-新3 fix: 安全回溯 — 仅在确认 ] 紧跟 [ 后才消费，否则回退 [ 使 int[0] 等表达式正常解析
-        if (check(TokenType::TK_LBRACKET)) {
-            int bracketSave = current_;
-            advance(); // 消耗 '['
-            if (check(TokenType::TK_RBRACKET)) {
-                advance(); // 消耗 ']'
-                typeAnn += "[]";
-            } else {
-                current_ = bracketSave; // 不是 [] 类型注解，回退 '['
-            }
-        }
+        std::string typeAnn = parseTypeAnnotation();
 
         if (isIdentifierOrType()) {
             // 检查是否是带返回类型的函数声明: int fib(
@@ -167,16 +157,11 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     if (check(TokenType::TK_IDENTIFIER)) {
         // 预读两个 token: 第一个是类名，第二个是变量名/函数名
         int savePos = current_;
-        const Token& firstTok = advance();  // 类名
+        std::string typeAnn = parseTypeAnnotation();  // 消耗类名 + 可选 []
 
         if (check(TokenType::TK_IDENTIFIER)) {
             // M7 fix: 前瞻验证 — 检查第二个标识符后是否为合法声明后续 token
             int afterSecondPos = current_ + 1;  // 跳过第二个标识符
-            // M-新6 fix: 跳过注释 token
-            while (afterSecondPos < static_cast<int>(tokens_->size()) &&
-                   (*tokens_)[afterSecondPos].type == TokenType::TK_LINE_COMMENT) {
-                afterSecondPos++;
-            }
             // 跳过可能的 [] 数组类型后缀
             if (afterSecondPos < static_cast<int>(tokens_->size()) &&
                 (*tokens_)[afterSecondPos].type == TokenType::TK_LBRACKET &&
@@ -195,12 +180,6 @@ std::unique_ptr<ASTNode> Parser::declaration() {
             }
 
             if (validDeclFollow) {
-                // PARSE-01 fix: 支持 ClassName[] 数组类型
-                std::string typeAnn = firstTok.lexeme;
-                if (match(TokenType::TK_LBRACKET)) {
-                    consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                    typeAnn += "[]";
-                }
                 // 检查是否是带类类型的函数声明: ClassName funcName(
                 if (checkNext(TokenType::TK_LPAREN)) {
                     return typedFunDecl(typeAnn);
@@ -257,49 +236,14 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     parseParamList(params, paramTypes);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
-    // 可选的返回值类型注解 : type 或 -> type（type 可能是关键字如 int/float）
+    // 可选的返回值类型注解 : type 或 -> type
     std::string returnType;
     if (match(TokenType::TK_COLON)) {
-        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-            const Token& typeTok = advance();
-            returnType = typeTok.lexeme;
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                returnType += "[]";
-            }
-        } else {
-            const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
-            returnType = retTypeTok.lexeme;
-            // PARSE-05 fix: 支持类类型数组返回值
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                returnType += "[]";
-            }
-        }
+        returnType = parseTypeAnnotation();
     } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
-        // -> type 箭头返回类型语法
         advance(); // 消耗 '-'
         advance(); // 消耗 '>'
-        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-            const Token& typeTok = advance();
-            returnType = typeTok.lexeme;
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                returnType += "[]";
-            }
-        } else {
-            const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
-            returnType = retTypeTok.lexeme;
-            // PARSE-05 fix: 支持类类型数组返回值
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                returnType += "[]";
-            }
-        }
+        returnType = parseTypeAnnotation();
     }
 
     consume(TokenType::TK_LBRACE, "期望 '{'");
@@ -341,26 +285,13 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
             check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
             check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-            const Token& typeTok = advance();
-            pType = typeTok.lexeme;
-
-            // 可选的数组类型: int[]
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                pType += "[]";
-            }
+            pType = parseTypeAnnotation();
 
             const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
             paramName = param.lexeme;
         } else if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_IDENTIFIER)) {
             // PARSE-02 fix: C 风格类类型参数: ClassName paramName
-            const Token& typeTok = advance();
-            pType = typeTok.lexeme;
-            // 可选的数组类型: ClassName[]
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                pType += "[]";
-            }
+            pType = parseTypeAnnotation();
             const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
             paramName = param.lexeme;
         } else {
@@ -375,13 +306,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
                     check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
                     check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY) ||
                     check(TokenType::TK_IDENTIFIER)) {
-                    const Token& typeTok = advance();
-                    pType = typeTok.lexeme;
-                    // 可选的数组类型: int[]
-                    if (match(TokenType::TK_LBRACKET)) {
-                        consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                        pType += "[]";
-                    }
+                    pType = parseTypeAnnotation();
                 } else {
                     const Token& tok = peek();
                     throw ParseError("期望参数类型名", tok.line, tok.column);
@@ -432,13 +357,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                    check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
             // 带类型注解的字段声明（如 int count = 0;）或带返回类型的方法声明（如 int getValue() {}）
             int savePos = current_;
-            const Token& typeTok = advance();
-
-            std::string typeAnn = typeTok.lexeme;
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                typeAnn += "[]";
-            }
+            std::string typeAnn = parseTypeAnnotation();
 
             if (isIdentifierOrType()) {
                 // 检查是否是带返回类型的方法声明: int getValue(
@@ -474,40 +393,11 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                 // PARSE-06 fix: 可选的返回类型注解（支持 : type 和 -> type）
                 std::string returnType;
                 if (match(TokenType::TK_COLON)) {
-                    if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-                        check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                        check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-                        const Token& typeTok = advance();
-                        returnType = typeTok.lexeme;
-                    } else {
-                        const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
-                        returnType = retTypeTok.lexeme;
-                        // PARSE-04 fix: 支持类类型数组返回值
-                        if (match(TokenType::TK_LBRACKET)) {
-                            consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                            returnType += "[]";
-                        }
-                    }
+                    returnType = parseTypeAnnotation();
                 } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
                     advance(); // 消耗 '-'
                     advance(); // 消耗 '>'
-                    if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-                        check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                        check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
-                        const Token& typeTok = advance();
-                        returnType = typeTok.lexeme;
-                        if (match(TokenType::TK_LBRACKET)) {
-                            consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                            returnType += "[]";
-                        }
-                    } else {
-                        const Token& retTypeTok = consume(TokenType::TK_IDENTIFIER, "期望返回类型名");
-                        returnType = retTypeTok.lexeme;
-                        if (match(TokenType::TK_LBRACKET)) {
-                            consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                            returnType += "[]";
-                        }
-                    }
+                    returnType = parseTypeAnnotation();
                 }
 
                 consume(TokenType::TK_LBRACE, "期望 '{'");
@@ -621,13 +511,7 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
                check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
         // 类型注解声明，如 int j = 0;
         int savePos = current_;
-        const Token& typeTok = advance();
-
-        std::string typeAnn = typeTok.lexeme;
-        if (match(TokenType::TK_LBRACKET)) {
-            consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-            typeAnn += "[]";
-        }
+        std::string typeAnn = parseTypeAnnotation();
 
         if (check(TokenType::TK_IDENTIFIER)) {
             init = typedVarDecl(typeAnn);
@@ -641,21 +525,20 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
     } else if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_IDENTIFIER)) {
         // H2 fix: 类名类型注解声明，如 Point p = create();
         int savePos = current_;
-        const Token& firstTok = advance();  // 类名
-        if (checkNext(TokenType::TK_LPAREN)) {
+        std::string typeAnn = parseTypeAnnotation();  // 消耗类名 + 可选 []
+        if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_LPAREN)) {
             // ClassName funcName( — 函数声明不应出现在 for 初始化中，回溯当表达式处理
             current_ = savePos;
             init = expression();
             consume(TokenType::TK_SEMICOLON, "期望 ';'");
-        } else {
-            // PARSE-01 fix: 支持 ClassName[] 数组类型
-            std::string typeAnn = firstTok.lexeme;
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                typeAnn += "[]";
-            }
+        } else if (check(TokenType::TK_IDENTIFIER)) {
             init = typedVarDecl(typeAnn);
             // typedVarDecl 已经消耗了分号
+        } else {
+            // 回溯，当做表达式处理
+            current_ = savePos;
+            init = expression();
+            consume(TokenType::TK_SEMICOLON, "期望 ';'");
         }
     } else if (!check(TokenType::TK_SEMICOLON)) {
         init = expression();

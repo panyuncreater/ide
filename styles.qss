@@ -1,0 +1,208 @@
+/* ============================================================
+   MiniLang IDE - Centralized Stylesheet (styles.qss)
+   ============================================================ */
+
+/* ---- Global: Main Window ---- */
+QMainWindow {
+    background-color: #F5F5F5;
+}
+
+/* ---- Global: Tab Widget ---- */
+QTabWidget::pane {
+    border: 1px solid #CCC;
+    background: white;
+}
+QTabBar::tab {
+    padding: 6px 14px;
+    border: 1px solid #CCC;
+    border-bottom: none;
+    background: #EEE;
+    margin-right: 2px;
+}
+QTabBar::tab:selected {
+    background: white;
+    border-bottom: 2px solid #4A90D9;
+    color: #333;
+}
+QTabBar::tab:hover {
+    background: #E0E0E0;
+}
+
+/* ---- Global: Toolbar ---- */
+QToolBar {
+    background: #FAFAFA;
+    border-bottom: 1px solid #DDD;
+    spacing: 4px;
+    padding: 2px;
+}
+QToolBar QToolButton {
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    font-size: 13px;
+}
+QToolBar QToolButton:hover {
+    background: #E8E8E8;
+    border: 1px solid #CCC;
+}
+QToolBar QToolButton:pressed {
+    background: #D0D0D0;
+}
+QToolBar QToolButton:disabled {
+    color: #AAA;
+}
+
+/* ---- Global: Splitter ---- */
+QSplitter::handle {
+    background: #DDD;
+}
+QSplitter::handle:horizontal {
+    width: 3px;
+}
+QSplitter::handle:vertical {
+    height: 3px;
+}
+
+/* ---- Global: Table Widget ---- */
+QTableWidget {
+    gridline-color: #DDD;
+    selection-background-color: #4A90D9;
+    selection-color: white;
+}
+QTableWidget::item {
+    padding: 2px 6px;
+}
+
+/* ---- Global: Header View ---- */
+QHeaderView::section {
+    background: #F0F0F0;
+    padding: 4px 8px;
+    border: 1px solid #DDD;
+    font-weight: bold;
+}
+
+/* ---- Global: Tree Widget ---- */
+QTreeWidget {
+    border: 1px solid #DDD;
+    alternate-background-color: #F8F8F8;
+}
+
+/* ---- Global: List Widget ---- */
+QListWidget {
+    border: 1px solid #DDD;
+    alternate-background-color: #F8F8F8;
+}
+
+/* ---- Global: Status Bar ---- */
+QStatusBar {
+    background: #F0F0F0;
+    border-top: 1px solid #DDD;
+}
+
+/* ============================================================
+   Panel section title labels (bold, dark text)
+   ============================================================ */
+QLabel#outputLabel,
+QLabel#errorLabel,
+QLabel#debugVarLabel,
+QLabel#debugStackLabel {
+    font-weight: bold;
+    color: #333;
+}
+
+/* Error label uses red color */
+QLabel#errorLabel {
+    color: #C00;
+}
+
+/* ============================================================
+   Panel clear buttons
+   ============================================================ */
+QPushButton#clearOutputBtn,
+QPushButton#clearErrorBtn {
+    padding: 2px 8px;
+}
+
+/* ============================================================
+   Output panel text edits
+   ============================================================ */
+QTextEdit#outputEdit {
+    background-color: #FFFFFF;
+    border: 1px solid #DDD;
+}
+
+QTextEdit#errorEdit {
+    background-color: #FFF5F5;
+    border: 1px solid #FCC;
+}
+
+/* ============================================================
+   VM Stack Panel - Dark theme widgets
+   ============================================================ */
+
+/* Current operation label */
+QLabel#vmOpLabel {
+    background-color: #2d2d2d;
+    color: #00ff88;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    padding: 6px;
+    border-radius: 4px;
+    border: 1px solid #444;
+}
+
+/* Section titles inside VM panel (stack title, globals title) */
+QLabel#vmStackTitle,
+QLabel#vmGlobalsTitle {
+    color: #aaa;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 2px;
+}
+
+/* Operand stack list */
+QListWidget#vmStackList {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border: 1px solid #444;
+    border-radius: 4px;
+}
+QListWidget#vmStackList::item {
+    padding: 3px 6px;
+    border-bottom: 1px solid #333;
+}
+QListWidget#vmStackList::item:selected {
+    background-color: #264f78;
+}
+
+/* Globals table */
+QTableWidget#vmGlobalsTable {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border: 1px solid #444;
+    border-radius: 4px;
+}
+QTableWidget#vmGlobalsTable QHeaderView::section {
+    background-color: #2d2d2d;
+    color: #ccc;
+    padding: 4px;
+    border: 1px solid #444;
+    font-weight: bold;
+}
+
+/* ============================================================
+   Bytecode list (dark theme)
+   ============================================================ */
+QListWidget#bytecodeList {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    border: none;
+}
+QListWidget#bytecodeList::item {
+    padding: 2px 6px;
+    border-bottom: 1px solid #333;
+}
+QListWidget#bytecodeList::item:selected {
+    background-color: #264f78;
+}

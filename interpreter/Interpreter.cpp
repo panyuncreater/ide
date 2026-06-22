@@ -1,4 +1,5 @@
 #include "interpreter/Interpreter.h"
+#include "interpreter/BuiltinMethods.h"
 #include "debug/DebugController.h"
 #include <cctype>
 #include <cstdint>
@@ -344,72 +345,116 @@ const std::string* Interpreter::findTypeAnnotation(const std::string& varName) c
     return currentEnv_->getTypeAnnotation(varName);
 }
 
-// ---- writeBack 写回左值 ----
-// 链式求值方式：从最外层到最内层逐级求值（每级仅一次），在最内层执行赋值，
-// 再从内到外逐级写回，避免对含副作用的子表达式重复求值。
+// ---- writeBack 辅助方法 ----
 
-Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* indexNode,
-                            const std::string& fieldName, ASTNode* valueNode, int line, int col) {
-    // 收集从 objectNode 到最外层 VarRef 的节点链
-    std::vector<ASTNode*> chain;
+Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode, bool errorOnNonVarRef, int line, int col) {
+    ChainInfo info;
     ASTNode* cur = objectNode;
     while (cur->nodeType == NodeType::NODE_MEMBER_ACCESS ||
            cur->nodeType == NodeType::NODE_INDEX_ACCESS) {
-        chain.push_back(cur);
+        info.chain.push_back(cur);
         if (cur->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             cur = static_cast<MemberAccess*>(cur)->object.get();
         } else {
             cur = static_cast<IndexAccess*>(cur)->object.get();
         }
     }
-    chain.push_back(cur); // 最外层 VarRef
+    info.chain.push_back(cur); // 最外层 VarRef
 
-    int n = static_cast<int>(chain.size());
+    int n = static_cast<int>(info.chain.size());
 
     // 从外到内逐级求值，收集每级的值和索引
-    std::vector<Value> vals(n);
-    std::vector<Value> idxs(n); // IndexAccess 节点的索引值
+    info.vals.resize(n);
+    info.idxs.resize(n);
 
-    if (chain[n - 1]->nodeType != NodeType::NODE_VAR_REF) {
-        runtimeError("赋值目标必须是变量引用", line, col);
+    if (info.chain[n - 1]->nodeType != NodeType::NODE_VAR_REF) {
+        if (errorOnNonVarRef) {
+            runtimeError("赋值目标必须是变量引用", line, col);
+        }
+        info.varRef = nullptr;
+        return info;
     }
-    auto* varRef = static_cast<VarRef*>(chain[n - 1]);
-    const Value* baseVal = currentEnv_->get(varRef->name);
+    info.varRef = static_cast<VarRef*>(info.chain[n - 1]);
+    const Value* baseVal = currentEnv_->get(info.varRef->name);
     if (!baseVal) {
-        runtimeError("未定义的变量: " + varRef->name, line, col);
+        runtimeError("未定义的变量: " + info.varRef->name, line, col);
     }
-    vals[n - 1] = *baseVal;  // #18 fix: 明确报错而非静默nullValue
+    info.vals[n - 1] = *baseVal;  // #18 fix: 明确报错而非静默nullValue
 
     for (int i = n - 2; i >= 0; i--) {
-        ASTNode* nd = chain[i];
-        const Value& parent = vals[i + 1];
+        ASTNode* nd = info.chain[i];
+        const Value& parent = info.vals[i + 1];
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parent.isInstance()) {
                 auto it = parent.fields().find(ma->fieldName);
-                vals[i] = (it != parent.fields().end()) ? it->second : Value::nullValue();
+                info.vals[i] = (it != parent.fields().end()) ? it->second : Value::nullValue();
             } else if (parent.isDict()) {
                 auto it = parent.dictVal().find(ma->fieldName);
-                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
+                info.vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
             } else {
                 runtimeError("该类型不支持成员访问", line, col);
             }
         } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
             auto* ia = static_cast<IndexAccess*>(nd);
-            idxs[i] = evaluate(ia->index.get());
-            const Value& indexVal = idxs[i];
+            info.idxs[i] = evaluate(ia->index.get());
+            const Value& indexVal = info.idxs[i];
             if (parent.isArray() && indexVal.isInt()) {
                 if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parent.arrayVal().size())
                     runtimeError("数组索引越界: " + std::to_string(indexVal.intVal()) + ", 有效范围 [0, " + std::to_string(parent.arrayVal().size()) + ")", line, col);
-                vals[i] = parent.arrayVal()[indexVal.intVal()];
+                info.vals[i] = parent.arrayVal()[indexVal.intVal()];
             } else if (parent.isDict() && indexVal.isString()) {
                 auto it = parent.dictVal().find(indexVal.stringVal());
-                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
+                info.vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
             } else {
                 runtimeError("该类型不支持索引访问", line, col);
             }
         }
     }
+
+    return info;
+}
+
+void Interpreter::writeBackChain(const ChainInfo& info, Value innermost, int line, int col) {
+    int n = static_cast<int>(info.chain.size());
+    Value currentVal = std::move(innermost);
+    for (int i = 0; i < n - 1; i++) {
+        ASTNode* nd = info.chain[i];
+        Value parentVal = std::move(info.vals[i + 1]);  // #19: move避免深拷贝
+        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
+            auto* ma = static_cast<MemberAccess*>(nd);
+            if (parentVal.isInstance()) {
+                parentVal.fields()[ma->fieldName] = currentVal;
+            } else if (parentVal.isDict()) {
+                parentVal.dictVal()[ma->fieldName] = currentVal;
+            } else {
+                runtimeError("该类型不支持成员赋值", line, col);
+            }
+        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
+            const Value& indexVal = info.idxs[i];
+            if (parentVal.isArray() && indexVal.isInt()) {
+                if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parentVal.arrayVal().size())
+                    runtimeError("数组索引越界: " + std::to_string(indexVal.intVal()) + ", 有效范围 [0, " + std::to_string(parentVal.arrayVal().size()) + ")", line, col);
+                parentVal.arrayVal()[indexVal.intVal()] = currentVal;
+            } else if (parentVal.isDict() && indexVal.isString()) {
+                parentVal.dictVal()[indexVal.stringVal()] = currentVal;
+            } else {
+                runtimeError("该类型不支持索引赋值", line, col);
+            }
+        }
+        currentVal = std::move(parentVal);  // #19: move
+    }
+
+    currentEnv_->set(info.varRef->name, std::move(currentVal));  // #19: move
+}
+
+// ---- writeBack 写回左值 ----
+// 链式求值方式：从最外层到最内层逐级求值（每级仅一次），在最内层执行赋值，
+// 再从内到外逐级写回，避免对含副作用的子表达式重复求值。
+
+Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* indexNode,
+                            const std::string& fieldName, ASTNode* valueNode, int line, int col) {
+    ChainInfo info = collectAndEvaluateChain(objectNode, true, line, col);
 
     // 链式求值完成，现在按左到右顺序求值 index 和 value
     Value idx;
@@ -422,7 +467,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     }
 
     // 在最内层对象上执行赋值
-    Value modifiedObj = std::move(vals[0]); // A2: move 而非拷贝，保持 refcount=1 跳过 COW detach
+    Value modifiedObj = std::move(info.vals[0]); // A2: move 而非拷贝，保持 refcount=1 跳过 COW detach
     if (isIndexAssign) {
         if (modifiedObj.isArray() && idx.isInt()) {
             if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= modifiedObj.arrayVal().size())
@@ -443,37 +488,7 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
         }
     }
 
-    // 从内到外逐级写回
-    Value currentVal = std::move(modifiedObj);  // #19: move而非copy
-    for (int i = 0; i < n - 1; i++) {
-        ASTNode* nd = chain[i];
-        Value parentVal = std::move(vals[i + 1]);  // #19: move避免深拷贝
-        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
-            auto* ma = static_cast<MemberAccess*>(nd);
-            if (parentVal.isInstance()) {
-                parentVal.fields()[ma->fieldName] = currentVal;
-            } else if (parentVal.isDict()) {
-                parentVal.dictVal()[ma->fieldName] = currentVal;
-            } else {
-                runtimeError("该类型不支持成员赋值", line, col);
-            }
-        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
-            const Value& indexVal = idxs[i];
-            if (parentVal.isArray() && indexVal.isInt()) {
-                if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parentVal.arrayVal().size())
-                    runtimeError("数组索引越界: " + std::to_string(indexVal.intVal()) + ", 有效范围 [0, " + std::to_string(parentVal.arrayVal().size()) + ")", line, col);
-                parentVal.arrayVal()[indexVal.intVal()] = currentVal;
-            } else if (parentVal.isDict() && indexVal.isString()) {
-                parentVal.dictVal()[indexVal.stringVal()] = currentVal;
-            } else {
-                runtimeError("该类型不支持索引赋值", line, col);
-            }
-        }
-        currentVal = std::move(parentVal);  // #19: move
-    }
-
-    // 写回最外层变量
-    currentEnv_->set(varRef->name, std::move(currentVal));  // #19: move
+    writeBackChain(info, std::move(modifiedObj), line, col);
     return val;
 }
 
@@ -481,104 +496,12 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
 // 用于方法调用等已自行修改对象的场景，链式求值避免重复求值副作用
 
 void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int line, int col) {
-    // 收集从 objectNode 到最外层 VarRef 的节点链
-    std::vector<ASTNode*> chain;
-    ASTNode* cur = objectNode;
-    while (cur->nodeType == NodeType::NODE_MEMBER_ACCESS ||
-           cur->nodeType == NodeType::NODE_INDEX_ACCESS) {
-        chain.push_back(cur);
-        if (cur->nodeType == NodeType::NODE_MEMBER_ACCESS) {
-            cur = static_cast<MemberAccess*>(cur)->object.get();
-        } else {
-            cur = static_cast<IndexAccess*>(cur)->object.get();
-        }
-    }
-    chain.push_back(cur); // 最外层 VarRef
-
-    int n = static_cast<int>(chain.size());
-
-    // 从外到内逐级求值，收集每级的值和索引
-    std::vector<Value> vals(n);
-    std::vector<Value> idxs(n);
-
-    if (chain[n - 1]->nodeType != NodeType::NODE_VAR_REF) {
+    ChainInfo info = collectAndEvaluateChain(objectNode, false, line, col);
+    if (!info.varRef) {
         // O2 fix: 临时值（如 Foo(1).setX(99)）方法正常执行但修改不写回
         return;
     }
-    auto* varRef = static_cast<VarRef*>(chain[n - 1]);
-    const Value* baseVal = currentEnv_->get(varRef->name);
-    if (!baseVal) {
-        runtimeError("未定义的变量: " + varRef->name, line, col);
-    }
-    vals[n - 1] = *baseVal;  // #18 fix: 明确报错而非静默nullValue
-
-    for (int i = n - 2; i >= 0; i--) {
-        ASTNode* nd = chain[i];
-        const Value& parent = vals[i + 1];
-        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
-            auto* ma = static_cast<MemberAccess*>(nd);
-            if (parent.isInstance()) {
-                auto it = parent.fields().find(ma->fieldName);
-                vals[i] = (it != parent.fields().end()) ? it->second : Value::nullValue();
-            } else if (parent.isDict()) {
-                auto it = parent.dictVal().find(ma->fieldName);
-                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
-            } else {
-                runtimeError("该类型不支持成员访问", line, col);
-            }
-        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
-            auto* ia = static_cast<IndexAccess*>(nd);
-            idxs[i] = evaluate(ia->index.get());
-            const Value& indexVal = idxs[i];
-            if (parent.isArray() && indexVal.isInt()) {
-                int64_t idx = indexVal.intVal();
-                if (idx < 0 || static_cast<size_t>(idx) >= parent.arrayVal().size()) {
-                    runtimeError("数组索引越界: " + std::to_string(idx) + ", 有效范围 [0, " + std::to_string(parent.arrayVal().size()) + ")", ia->line, ia->column);
-                }
-                vals[i] = parent.arrayVal()[static_cast<size_t>(idx)];
-            } else if (parent.isDict() && indexVal.isString()) {
-                auto it = parent.dictVal().find(indexVal.stringVal());
-                vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
-            } else {
-                runtimeError("该类型不支持索引访问", line, col);
-            }
-        }
-    }
-
-    // 从内到外逐级写回（最内层使用 modifiedValue）
-    Value currentVal = modifiedValue;  // const ref, 不能move
-    for (int i = 0; i < n - 1; i++) {
-        ASTNode* nd = chain[i];
-        Value parentVal = std::move(vals[i + 1]);  // #19: move避免深拷贝
-        if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
-            auto* ma = static_cast<MemberAccess*>(nd);
-            if (parentVal.isInstance()) {
-                parentVal.fields()[ma->fieldName] = currentVal;
-            } else if (parentVal.isDict()) {
-                parentVal.dictVal()[ma->fieldName] = currentVal;
-            } else {
-                runtimeError("该类型不支持成员赋值", line, col);
-            }
-        } else if (nd->nodeType == NodeType::NODE_INDEX_ACCESS) {
-            const Value& indexVal = idxs[i];
-            if (parentVal.isArray() && indexVal.isInt()) {
-                int64_t idx = indexVal.intVal();
-                if (idx < 0 || static_cast<size_t>(idx) >= parentVal.arrayVal().size()) {
-                    runtimeError("数组越界: 索引 " + std::to_string(idx) +
-                                 " 超出范围 [0, " + std::to_string(parentVal.arrayVal().size()) + ")",
-                                 line, col);
-                }
-                parentVal.arrayVal()[static_cast<size_t>(idx)] = currentVal;
-            } else if (parentVal.isDict() && indexVal.isString()) {
-                parentVal.dictVal()[indexVal.stringVal()] = currentVal;
-            } else {
-                runtimeError("该类型不支持索引赋值", line, col);
-            }
-        }
-        currentVal = std::move(parentVal);  // #19: move
-    }
-
-    currentEnv_->set(varRef->name, std::move(currentVal));  // #19: move
+    writeBackChain(info, modifiedValue, line, col);  // const ref, 不能move
 }
 
 // ---- 16 个原有 visit 方法 ----
@@ -1610,63 +1533,12 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        if (node.methodName == "push") {
-            if (argValues.size() != 1)
-                runtimeError("push 期望 1 个参数", node.line, node.column);
-            obj.arrayVal().push_back(argValues[0]);
+        auto builtinResult = BuiltinMethods::handleArrayMethod(
+            node.methodName, obj, argValues, node.line, node.column);
+        if (builtinResult.objectModified) {
             writeBack(node.object.get(), obj, node.line, node.column);
-            return Value::nullValue();
         }
-        if (node.methodName == "pop") {
-            if (!argValues.empty())
-                runtimeError("pop 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            if (obj.arrayVal().empty())
-                runtimeError("对空数组调用 pop", node.line, node.column);
-            Value last = obj.arrayVal().back();
-            obj.arrayVal().pop_back();
-            writeBack(node.object.get(), obj, node.line, node.column);
-            return last;
-        }
-        if (node.methodName == "len") {
-            if (!argValues.empty())
-                runtimeError("len 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            return Value(static_cast<int64_t>(obj.arrayVal().size()));
-        }
-        if (node.methodName == "remove") {
-            if (argValues.size() != 1)
-                runtimeError("remove 期望 1 个参数(索引)", node.line, node.column);
-            if (!argValues[0].isInt())
-                runtimeError("remove 参数必须是整数索引", node.line, node.column);
-            int64_t idx = argValues[0].intVal();
-            if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal().size())
-                runtimeError("数组索引越界: " + std::to_string(idx) + ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")", node.line, node.column);
-            obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(idx));
-            writeBack(node.object.get(), obj, node.line, node.column);
-            return Value::nullValue();
-        }
-        if (node.methodName == "contains") {
-            if (argValues.size() != 1)
-                runtimeError("contains 期望 1 个参数", node.line, node.column);
-            for (const auto& elem : obj.arrayVal()) {
-                if (elem.equals(argValues[0])) return Value(true);
-            }
-            return Value(false);
-        }
-        if (node.methodName == "join") {
-            if (argValues.size() > 1)
-                runtimeError("join 期望 0 或 1 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            std::string sep = argValues.empty() ? "" : argValues[0].toString();
-            std::string result;
-            const auto& arr = obj.arrayVal();
-            // P24 fix: 预估结果字符串大小，避免反复 realloc
-            result.reserve(arr.size() * 16 + (arr.size() > 0 ? (arr.size() - 1) * sep.size() : 0));
-            for (size_t i = 0; i < arr.size(); ++i) {
-                if (i > 0) result += sep;
-                result += arr[i].toString();
-            }
-            return Value(std::move(result));
-        }
-        runtimeError("数组没有方法 " + node.methodName, node.line, node.column);
+        return builtinResult.result;
     }
 
     // ---- 字典内置方法 ----
@@ -1677,54 +1549,12 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        if (node.methodName == "len") {
-            if (!argValues.empty())
-                runtimeError("len 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            return Value(static_cast<int64_t>(obj.dictVal().size()));
-        }
-        if (node.methodName == "keys") {
-            if (!argValues.empty())
-                runtimeError("keys 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            std::vector<Value> keys;
-            keys.reserve(obj.dictVal().size());
-            for (const auto& kv : obj.dictVal()) {
-                keys.push_back(Value(kv.first));
-            }
-            return Value(std::move(keys));
-        }
-        if (node.methodName == "values") {
-            if (!argValues.empty())
-                runtimeError("values 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            std::vector<Value> vals;
-            vals.reserve(obj.dictVal().size());
-            for (const auto& kv : obj.dictVal()) {
-                vals.push_back(kv.second);
-            }
-            return Value(std::move(vals));
-        }
-        if (node.methodName == "has" || node.methodName == "contains") {
-            if (argValues.size() != 1)
-                runtimeError(node.methodName + " 期望 1 个参数(键)", node.line, node.column);
-            return Value(obj.dictVal().find(argValues[0].toString()) != obj.dictVal().end());
-        }
-        if (node.methodName == "get") {
-            if (argValues.empty() || argValues.size() > 2)
-                runtimeError("get 期望 1-2 个参数(键[, 默认值])", node.line, node.column);
-            std::string key = argValues[0].toString();
-            auto it = obj.dictVal().find(key);
-            if (it != obj.dictVal().end()) {
-                return it->second;
-            }
-            return (argValues.size() == 2) ? argValues[1] : Value::nullValue();
-        }
-        if (node.methodName == "remove") {
-            if (argValues.size() != 1)
-                runtimeError("remove 期望 1 个参数(键)", node.line, node.column);
-            obj.dictVal().erase(argValues[0].toString());
+        auto builtinResult = BuiltinMethods::handleDictMethod(
+            node.methodName, obj, argValues, node.line, node.column);
+        if (builtinResult.objectModified) {
             writeBack(node.object.get(), obj, node.line, node.column);
-            return Value::nullValue();
         }
-        runtimeError("字典没有方法 " + node.methodName, node.line, node.column);
+        return builtinResult.result;
     }
 
     // ---- 字符串内置方法 ----
@@ -1735,78 +1565,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             argValues.push_back(evaluate(arg.get()));
         }
 
-        if (node.methodName == "len") {
-            if (!argValues.empty())
-                runtimeError("len 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            // M6 fix: 按 UTF-8 码位计数而非字节数
-            const std::string& s = obj.stringVal();
-            size_t count = 0;
-            for (size_t i = 0; i < s.size(); ) {
-                unsigned char c = static_cast<unsigned char>(s[i]);
-                i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                     ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-                count++;
-            }
-            return Value(static_cast<int64_t>(count));
-        }
-        if (node.methodName == "upper") {
-            if (!argValues.empty())
-                runtimeError("upper 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            std::string s = obj.stringVal();
-            for (auto& c : s) c = std::toupper(static_cast<unsigned char>(c));
-            return Value(std::move(s));
-        }
-        if (node.methodName == "lower") {
-            if (!argValues.empty())
-                runtimeError("lower 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            std::string s = obj.stringVal();
-            for (auto& c : s) c = std::tolower(static_cast<unsigned char>(c));
-            return Value(std::move(s));
-        }
-        if (node.methodName == "split") {
-            // str.split(sep) — 按 sep 分割返回数组
-            std::string sep = argValues.empty() ? " " : argValues[0].toString();
-            if (sep.empty()) {
-                // 空分隔符下 std::string::find("") 总返回 start，会导致死循环
-                runtimeError("split 的分隔符不能为空字符串", node.line, node.column);
-            }
-            std::vector<Value> parts;
-            size_t start = 0, pos;
-            const std::string& str = obj.stringVal();
-            while ((pos = str.find(sep, start)) != std::string::npos) {
-                parts.push_back(Value(str.substr(start, pos - start)));
-                start = pos + sep.size();
-            }
-            parts.push_back(Value(str.substr(start)));
-            return Value(std::move(parts));
-        }
-        if (node.methodName == "replace") {
-            // str.replace(from, to) — 将所有 from 替换为 to
-            if (argValues.size() < 2) {
-                runtimeError("replace() 需要 2 个参数", node.line, node.column);
-                return Value::nullValue();
-            }
-            std::string from = argValues[0].toString();
-            std::string to = argValues[1].toString();
-            std::string result = obj.stringVal();
-            if (from.empty()) return Value(std::move(result));
-            size_t pos = 0;
-            while ((pos = result.find(from, pos)) != std::string::npos) {
-                result.replace(pos, from.length(), to);
-                pos += to.length();
-            }
-            return Value(std::move(result));
-        }
-        if (node.methodName == "trim") {
-            if (!argValues.empty())
-                runtimeError("trim 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
-            std::string s = obj.stringVal();
-            size_t l = s.find_first_not_of(" \t\r\n");
-            size_t r = s.find_last_not_of(" \t\r\n");
-            if (l == std::string::npos) return Value(std::string(""));
-            return Value(s.substr(l, r - l + 1));
-        }
-        runtimeError("字符串没有方法 " + node.methodName, node.line, node.column);
+        auto builtinResult = BuiltinMethods::handleStringMethod(
+            node.methodName, obj, argValues, node.line, node.column);
+        return builtinResult.result;
     }
 
     // 类实例的方法调用

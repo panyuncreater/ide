@@ -125,7 +125,7 @@ signals:
     void variablesChanged();
 
 private:
-    StepMode mode_ = StepMode::MODE_RUN;
+    std::atomic<int> mode_{static_cast<int>(StepMode::MODE_RUN)};  // atomic for cross-thread access
     QSet<int> breakpoints_;     // 断点行号集合
     QMap<int, BreakpointInfo> breakpointInfos_;  // 条件断点详情（行号→信息）
     std::function<bool(const std::string&)> conditionEvaluator_;  // 条件表达式求值器
@@ -140,7 +140,7 @@ private:
     int minBreakpointLine_ = -1; // 最小断点行号（快速跳过不可能命中的节点）
     std::atomic<bool> running_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> stopped_{false};      // #9 fix: atomic for cross-thread access
-    bool paused_ = false;       // 是否处于暂停状态（等待用户操作）
+    std::atomic<bool> paused_{false};  // atomic for cross-thread access  // 是否处于暂停状态（等待用户操作）
 
     // A2: 线程安全的暂停/恢复机制（替代 QEventLoop）
     std::mutex pauseMutex_;

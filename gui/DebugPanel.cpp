@@ -21,7 +21,7 @@ DebugPanel::DebugPanel(QWidget* parent)
     varLayout->setSpacing(2);
 
     auto* varLabel = new QLabel("变量监视");
-    varLabel->setStyleSheet("font-weight: bold; color: #333;");
+    varLabel->setObjectName("debugVarLabel");
     varLayout->addWidget(varLabel);
 
     variableTree_ = new QTreeWidget;
@@ -41,7 +41,7 @@ DebugPanel::DebugPanel(QWidget* parent)
     stackLayout->setSpacing(2);
 
     auto* stackLabel = new QLabel("调用栈");
-    stackLabel->setStyleSheet("font-weight: bold; color: #333;");
+    stackLabel->setObjectName("debugStackLabel");
     stackLayout->addWidget(stackLabel);
 
     callStackList_ = new QListWidget;
