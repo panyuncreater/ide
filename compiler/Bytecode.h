@@ -263,7 +263,13 @@ public:
         while (offset < code.size()) {
             ipToInstrIndex[offset] = instrIdx;
             OpCode op = static_cast<OpCode>(code[offset]);
-            offset += instructionSize(op);
+            // M1 fix: OP_CLOSURE 是变长指令（4 + 2*upvalueCount 字节），需特殊处理
+            if (op == OpCode::OP_CLOSURE && offset + 3 < code.size()) {
+                uint8_t upvalueCount = code[offset + 3];
+                offset += 4 + static_cast<size_t>(upvalueCount) * 2;
+            } else {
+                offset += instructionSize(op);
+            }
             instrIdx++;
         }
     }
@@ -558,9 +564,11 @@ public:
         }
         case OpCode::OP_CLOSURE: {
             uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
-            uint8_t argCount = code[offset + 3];
-            str += "OP_CLOSURE " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
-            offset += 4;
+            uint8_t upvalueCount = code[offset + 3];
+            str += "OP_CLOSURE " + std::to_string(idx);
+            if (idx < constants.size()) str += " (" + constants[idx].stringVal() + ")";
+            str += " upvalues=" + std::to_string(upvalueCount);
+            offset += 4 + static_cast<size_t>(upvalueCount) * 2;  // M1 fix: 跳过 upvalue 描述符
             break;
         }
         case OpCode::OP_GET_LOCAL: {

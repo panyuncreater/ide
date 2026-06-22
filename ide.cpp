@@ -618,6 +618,7 @@ void Ide::onDebug() {
         interpreter_.setDebugMode(false);
         interpreter_.restoreReplState();
         codeEditor_->clearCurrentLine();
+        codeEditor_->clearErrorLines();  // L-新2 fix: 调试结束时清除错误标记
         debugger_->reset();
 
         // 恢复主线程输出回调
@@ -675,6 +676,7 @@ void Ide::onRunFinished() {
     interpreter_.setDebugMode(false);  // GUI-01 fix: 普通运行结束关闭 debugMode
     setRunningState(false);
     codeEditor_->clearCurrentLine();
+    codeEditor_->clearErrorLines();  // L-新2 fix: 运行结束时清除错误标记
     replPanel_->setInputEnabled(true);
 
     // 安全删除 worker（QThread::finished 在所有 worker 信号之后到达）

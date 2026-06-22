@@ -30,6 +30,8 @@ CompileResult Compiler::compile(Block& program) {
     globalSlots_.clear();
     slotNames_.clear();
     freeSlots_.clear();
+    innerFunctions_.clear();        // H5 fix: 重置内嵌函数追踪
+    innerFunctionSlots_.clear();    // H5 fix
 
     // A2: pre-scan top-level declarations to assign global slots (eliminates forward-reference issues)
     for (auto& stmt : program.statements) {
@@ -647,6 +649,9 @@ void Compiler::compileForStmt(ForStmt& node) {
 }
 
 void Compiler::compileFunDecl(FunDecl& node) {
+    // H5 fix: 记录是否为内嵌函数（在函数体内定义的函数）
+    bool isInner = inFunction_;
+
     // 为函数体创建独立 BytecodeChunk
     BytecodeChunk savedChunk = std::move(chunk_);
     std::unordered_map<std::string, uint16_t> savedVarIndex = std::move(varIndex_);
@@ -658,6 +663,9 @@ void Compiler::compileFunDecl(FunDecl& node) {
     std::vector<UpvalueDesc> savedOuterUpvalues = std::move(outerUpvalues_);
     std::unordered_map<std::string, int> savedOuterUpvalueNames = std::move(outerUpvalueNames_);
     std::unordered_map<std::string, int> savedOuterFunctions = std::move(outerFunctions_);
+    // H5 fix: 保存内嵌函数追踪
+    std::unordered_set<std::string> savedInnerFunctions = std::move(innerFunctions_);
+    std::unordered_map<std::string, int> savedInnerFunctionSlots = std::move(innerFunctionSlots_);
 
     // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
     if (inFunction_) {
@@ -718,6 +726,9 @@ void Compiler::compileFunDecl(FunDecl& node) {
     outerUpvalues_ = std::move(savedOuterUpvalues);
     outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
     outerFunctions_ = std::move(savedOuterFunctions);
+    // H5 fix: 恢复内嵌函数追踪
+    innerFunctions_ = std::move(savedInnerFunctions);
+    innerFunctionSlots_ = std::move(savedInnerFunctionSlots);
 
     // 在主 chunk 中 emit OP_CLOSURE（扩展格式：含 upvalue 描述符）
     uint16_t nameIdx = identifierIndex(node.name);
@@ -731,12 +742,26 @@ void Compiler::compileFunDecl(FunDecl& node) {
         chunk_.write(funChunk.upvalues[i].isLocal ? 1 : 0, node.line);
         chunk_.write(static_cast<uint8_t>(funChunk.upvalues[i].index), node.line);
     }
-    // OP_CALL 通过函数名查找，不需要栈上的闭包值，弹出
-    chunk_.writeOp(OpCode::OP_POP, node.line);
+    // H5 fix: 内嵌函数存储为局部变量（供 OP_CALL_EXPR 使用），全局函数直接弹出
+    if (isInner) {
+        // 分配局部变量槽位存储闭包值
+        int slot = static_cast<int>(currentLocals_.size());
+        currentLocals_[node.name] = slot;
+        peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
+        innerFunctions_.insert(node.name);
+        innerFunctionSlots_[node.name] = slot;
+        chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
+        chunk_.write(static_cast<uint8_t>(slot), node.line);
+        chunk_.writeOp(OpCode::OP_POP, node.line);
+    } else {
+        // 全局函数：OP_CALL 通过函数名查找，不需要栈上的闭包值
+        chunk_.writeOp(OpCode::OP_POP, node.line);
+    }
 
     // VM-05/06: 如果在函数内，将本函数注册到 outerLocals_ 和 outerFunctions_ 供更内层捕获
     if (inFunction_) {
-        int slot = peakLocals_;  // 分配一个虚拟槽位（仅用于标识）
+        // H5 fix: 内嵌函数已有真实槽位，使用它；全局函数使用虚拟槽位
+        int slot = isInner ? innerFunctionSlots_[node.name] : peakLocals_;
         outerLocals_[node.name] = slot;
         outerFunctions_[node.name] = slot;
     }
@@ -755,6 +780,24 @@ void Compiler::compileFunCall(FunCall& node) {
             error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
         }
         // OP_CALL_EXPR: 栈顶 N 个参数下方为闭包值
+        chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
+        chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
+        return;
+    }
+
+    // H5 fix: 内嵌函数通过局部变量中的闭包值调用，避免 functionClosures_ 按名称覆盖
+    auto innerIt = innerFunctionSlots_.find(node.name);
+    if (innerIt != innerFunctionSlots_.end()) {
+        // 先 push 闭包值（从局部变量获取）
+        chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
+        chunk_.write(static_cast<uint8_t>(innerIt->second), node.line);
+        // 再编译参数
+        for (auto& arg : node.arguments) {
+            compileNode(arg.get());
+        }
+        if (node.arguments.size() > 255) {
+            error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
+        }
         chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
         chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
         return;
@@ -793,8 +836,29 @@ void Compiler::compileReturnStmt(ReturnStmt& node) {
 }
 
 void Compiler::compilePrintStmt(PrintStmt& node) {
-    for (auto& val : node.values) {
-        compileNode(val.get());
+    // C2 fix: 与解释器行为对齐 — 多参数用空格拼接后单次输出
+    if (node.values.empty()) {
+        // print() → 输出空行（与解释器 output("") 一致）
+        uint16_t emptyIdx = chunk_.addConstant(Value(std::string("")));
+        chunk_.writeOp(OpCode::OP_CONSTANT, node.line);
+        chunk_.writeShort(emptyIdx, node.line);
+        chunk_.writeOp(OpCode::OP_PRINT, node.line);
+    } else if (node.values.size() == 1) {
+        compileNode(node.values[0].get());
+        chunk_.writeOp(OpCode::OP_PRINT, node.line);
+    } else {
+        // 多值：用 OP_ADD 拼接为单字符串（OP_ADD 已支持 string+non-string 拼接）
+        compileNode(node.values[0].get());
+        for (size_t i = 1; i < node.values.size(); ++i) {
+            // push " " + OP_ADD → 左侧被 toString 后与空格拼接
+            uint16_t spaceIdx = chunk_.addConstant(Value(std::string(" ")));
+            chunk_.writeOp(OpCode::OP_CONSTANT, node.line);
+            chunk_.writeShort(spaceIdx, node.line);
+            chunk_.writeOp(OpCode::OP_ADD, node.line);
+            // push next value + OP_ADD
+            compileNode(node.values[i].get());
+            chunk_.writeOp(OpCode::OP_ADD, node.line);
+        }
         chunk_.writeOp(OpCode::OP_PRINT, node.line);
     }
 }
@@ -1273,6 +1337,12 @@ void Compiler::compileMethodCall(MethodCall& node) {
         }
     }
 
+    // H4 fix: super.method() 的接收者是 this（始终在 slot 0），设置写回目标
+    if (!objVar && node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR
+        && inFunction_) {
+        receiverLocalSlot = 0;  // slot 0 = this
+    }
+
     // B6 fix: 如果接收者是 IndexAccess，预缓存索引值避免写回时重复求值
     // （对 arr[expr()].method() 这类调用，expr() 只执行一次）
     std::string cachedIndexVar;
@@ -1458,13 +1528,41 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
 
         switch (opType) {
         case BinOpType::BIN_ADD:
-            result = useFloat ? Value(ld + rd) : Value(li + ri);
+            if (!useFloat) {
+                // H3 fix: 整数加法溢出检测
+                if ((ri > 0 && li > INT64_MAX - ri) || (ri < 0 && li < INT64_MIN - ri))
+                    return false;
+                result = Value(li + ri);
+            } else {
+                result = Value(ld + rd);
+            }
             return true;
         case BinOpType::BIN_SUB:
-            result = useFloat ? Value(ld - rd) : Value(li - ri);
+            if (!useFloat) {
+                // H3 fix: 整数减法溢出检测
+                if ((ri < 0 && li > INT64_MAX + ri) || (ri > 0 && li < INT64_MIN + ri))
+                    return false;
+                result = Value(li - ri);
+            } else {
+                result = Value(ld - rd);
+            }
             return true;
         case BinOpType::BIN_MUL:
-            result = useFloat ? Value(ld * rd) : Value(li * ri);
+            if (!useFloat) {
+                // H3 fix: 整数乘法溢出检测
+                if (li != 0 && ri != 0) {
+                    if (li == -1 && ri == INT64_MIN) return false;
+                    if (ri == -1 && li == INT64_MIN) return false;
+                    if ((li > 0 && ri > 0 && li > INT64_MAX / ri) ||
+                        (li > 0 && ri < 0 && ri < INT64_MIN / li) ||
+                        (li < 0 && ri > 0 && li < INT64_MIN / ri) ||
+                        (li < 0 && ri < 0 && li < INT64_MAX / ri))
+                        return false;
+                }
+                result = Value(li * ri);
+            } else {
+                result = Value(ld * rd);
+            }
             return true;
         case BinOpType::BIN_DIV: {
             double divisor = useFloat ? rd : static_cast<double>(ri);

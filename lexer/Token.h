@@ -15,8 +15,8 @@ enum class TokenType {
     // 类型关键字
     TK_INT, TK_FLOAT, TK_BOOL, TK_STRING_TYPE,
     // 新增关键字
-    TK_FUNCTION,    // function 关键字（fun 的别名）
-    TK_FUNC,        // func 关键字（fun 的别名）
+    TK_FUNCTION,    // [已废弃] Lexer 已统一为 TK_FUN，保留枚举值避免编号变化
+    TK_FUNC,        // [已废弃] Lexer 已统一为 TK_FUN，保留枚举值避免编号变化
     TK_CLASS,       // class 关键字
     TK_EXTENDS,     // extends 关键字
     TK_SUPER,       // super 关键字

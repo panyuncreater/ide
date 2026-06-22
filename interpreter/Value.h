@@ -73,6 +73,17 @@ private:
         std::shared_ptr<ClosureData>       // 8: VAL_CLOSURE
     >;
 
+    // 编译期校验：ValueType 枚举值必须与 variant Data 的 alternative 索引严格一致
+    static_assert(static_cast<size_t>(ValueType::VAL_NULL)     == 0, "VAL_NULL must be variant index 0 (monostate)");
+    static_assert(static_cast<size_t>(ValueType::VAL_INT)      == 1, "VAL_INT must be variant index 1 (int64_t)");
+    static_assert(static_cast<size_t>(ValueType::VAL_FLOAT)    == 2, "VAL_FLOAT must be variant index 2 (double)");
+    static_assert(static_cast<size_t>(ValueType::VAL_BOOL)     == 3, "VAL_BOOL must be variant index 3 (bool)");
+    static_assert(static_cast<size_t>(ValueType::VAL_STRING)   == 4, "VAL_STRING must be variant index 4 (StringData)");
+    static_assert(static_cast<size_t>(ValueType::VAL_ARRAY)    == 5, "VAL_ARRAY must be variant index 5 (ArrayData)");
+    static_assert(static_cast<size_t>(ValueType::VAL_DICT)     == 6, "VAL_DICT must be variant index 6 (DictData)");
+    static_assert(static_cast<size_t>(ValueType::VAL_INSTANCE) == 7, "VAL_INSTANCE must be variant index 7 (InstanceData)");
+    static_assert(static_cast<size_t>(ValueType::VAL_CLOSURE)  == 8, "VAL_CLOSURE must be variant index 8 (ClosureData)");
+
     Data data_;
 
     // ---- A1: COW detach — 写入前确保独占所有权 ----
@@ -479,7 +490,7 @@ public:
                 if (std::isnan(d) || std::isinf(d)) return false;
                 double intPart;
                 if (std::modf(d, &intPart) != 0.0) return false;  // 有小数部分
-                if (d < static_cast<double>(INT64_MIN) || d > static_cast<double>(INT64_MAX)) return false;
+                if (d < static_cast<double>(INT64_MIN) || d >= -static_cast<double>(INT64_MIN)) return false;
                 return intVal() == static_cast<int64_t>(d);
             }
             if (isFloat() && other.isInt()) {
@@ -487,7 +498,7 @@ public:
                 if (std::isnan(d) || std::isinf(d)) return false;
                 double intPart;
                 if (std::modf(d, &intPart) != 0.0) return false;
-                if (d < static_cast<double>(INT64_MIN) || d > static_cast<double>(INT64_MAX)) return false;
+                if (d < static_cast<double>(INT64_MIN) || d >= -static_cast<double>(INT64_MIN)) return false;
                 return static_cast<int64_t>(d) == other.intVal();
             }
             return toDouble() == other.toDouble();

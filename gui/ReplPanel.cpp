@@ -54,7 +54,10 @@ void ReplPanel::appendOutput(const QString& text) {
     if (!outputArea_->document()->isEmpty()) {
         cursor.insertText("\n");
     }
-    cursor.insertText(text);
+    // L-新3 fix: 去除尾部换行，避免多余空行（与 OutputPanel PANEL-01 一致）
+    QString trimmed = text;
+    if (trimmed.endsWith(QChar(10))) trimmed.chop(1);
+    cursor.insertText(trimmed);
     outputArea_->setTextCursor(cursor);
     outputArea_->ensureCursorVisible();
 }

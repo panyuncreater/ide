@@ -117,8 +117,8 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     // var 声明
     if (check(TokenType::TK_VAR)) return varDecl();
 
-    // fun / function / func 声明
-    if (check(TokenType::TK_FUN) || check(TokenType::TK_FUNCTION) || check(TokenType::TK_FUNC)) return funDecl();
+    // fun / function / func 声明（Lexer 已统一为 TK_FUN）
+    if (check(TokenType::TK_FUN)) return funDecl();
 
     // class 声明
     if (check(TokenType::TK_CLASS)) return classDecl();
@@ -134,9 +134,16 @@ std::unique_ptr<ASTNode> Parser::declaration() {
 
         // 检查是否是数组类型注解，如 int[]
         std::string typeAnn = typeTok.lexeme;
-        if (match(TokenType::TK_LBRACKET)) {
-            consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-            typeAnn += "[]";
+        // H-新3 fix: 安全回溯 — 仅在确认 ] 紧跟 [ 后才消费，否则回退 [ 使 int[0] 等表达式正常解析
+        if (check(TokenType::TK_LBRACKET)) {
+            int bracketSave = current_;
+            advance(); // 消耗 '['
+            if (check(TokenType::TK_RBRACKET)) {
+                advance(); // 消耗 ']'
+                typeAnn += "[]";
+            } else {
+                current_ = bracketSave; // 不是 [] 类型注解，回退 '['
+            }
         }
 
         if (isIdentifierOrType()) {
@@ -163,18 +170,44 @@ std::unique_ptr<ASTNode> Parser::declaration() {
         const Token& firstTok = advance();  // 类名
 
         if (check(TokenType::TK_IDENTIFIER)) {
-            // PARSE-01 fix: 支持 ClassName[] 数组类型
-            std::string typeAnn = firstTok.lexeme;
-            if (match(TokenType::TK_LBRACKET)) {
-                consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
-                typeAnn += "[]";
+            // M7 fix: 前瞻验证 — 检查第二个标识符后是否为合法声明后续 token
+            int afterSecondPos = current_ + 1;  // 跳过第二个标识符
+            // M-新6 fix: 跳过注释 token
+            while (afterSecondPos < static_cast<int>(tokens_->size()) &&
+                   (*tokens_)[afterSecondPos].type == TokenType::TK_LINE_COMMENT) {
+                afterSecondPos++;
             }
-            // 检查是否是带类类型的函数声明: ClassName funcName(
-            if (checkNext(TokenType::TK_LPAREN)) {
-                return typedFunDecl(typeAnn);
+            // 跳过可能的 [] 数组类型后缀
+            if (afterSecondPos < static_cast<int>(tokens_->size()) &&
+                (*tokens_)[afterSecondPos].type == TokenType::TK_LBRACKET &&
+                afterSecondPos + 1 < static_cast<int>(tokens_->size()) &&
+                (*tokens_)[afterSecondPos + 1].type == TokenType::TK_RBRACKET) {
+                afterSecondPos += 2;
             }
-            // ClassName varName — 类类型注解变量声明
-            return typedVarDecl(typeAnn);
+            bool validDeclFollow = false;
+            if (afterSecondPos < static_cast<int>(tokens_->size())) {
+                TokenType follow = (*tokens_)[afterSecondPos].type;
+                // 合法后续: '=' 初始化, ';' 结束, '(' 函数参数, '{' 函数体
+                validDeclFollow = (follow == TokenType::TK_ASSIGN ||
+                                   follow == TokenType::TK_SEMICOLON ||
+                                   follow == TokenType::TK_LPAREN ||
+                                   follow == TokenType::TK_LBRACE);
+            }
+
+            if (validDeclFollow) {
+                // PARSE-01 fix: 支持 ClassName[] 数组类型
+                std::string typeAnn = firstTok.lexeme;
+                if (match(TokenType::TK_LBRACKET)) {
+                    consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组类型注解");
+                    typeAnn += "[]";
+                }
+                // 检查是否是带类类型的函数声明: ClassName funcName(
+                if (checkNext(TokenType::TK_LPAREN)) {
+                    return typedFunDecl(typeAnn);
+                }
+                // ClassName varName — 类类型注解变量声明
+                return typedVarDecl(typeAnn);
+            }
         }
 
         // 不是类类型声明，回溯
@@ -356,6 +389,12 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             }
         }
 
+        // M-新5 fix: 检测重复参数名
+        for (const auto& existing : params) {
+            if (existing == paramName) {
+                throw ParseError("重复的参数名 '" + paramName + "'", peek().line, peek().column);
+            }
+        }
         params.push_back(paramName);
         paramTypes.push_back(pType);
     } while (match(TokenType::TK_COMMA));
@@ -386,7 +425,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
         // - 裸方法名定义: methodName() {} （不带 fun 关键字）
         if (check(TokenType::TK_VAR)) {
             members.push_back(varDecl());
-        } else if (check(TokenType::TK_FUN) || check(TokenType::TK_FUNCTION) || check(TokenType::TK_FUNC)) {
+        } else if (check(TokenType::TK_FUN)) {  // Lexer 已统一 function/func → TK_FUN
             members.push_back(funDecl());
         } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
                    check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
@@ -1008,6 +1047,8 @@ std::unique_ptr<ASTNode> Parser::primary() {
         std::vector<std::unique_ptr<ASTNode>> elements;
         if (!check(TokenType::TK_RBRACKET)) {
             do {
+                // L4 fix: 允许尾逗号 — 逗号后紧跟 ] 则结束
+                if (check(TokenType::TK_RBRACKET)) break;
                 elements.push_back(expression());
             } while (match(TokenType::TK_COMMA));
         }
@@ -1025,6 +1066,8 @@ std::unique_ptr<ASTNode> Parser::primary() {
 
         if (!check(TokenType::TK_RBRACE)) {
             do {
+                // L4 fix: 允许尾逗号 — 逗号后紧跟 } 则结束
+                if (check(TokenType::TK_RBRACE)) break;
                 auto key = expression();
                 consume(TokenType::TK_COLON, "期望 ':' 分隔键值对");
                 auto val = expression();
@@ -1062,8 +1105,6 @@ void Parser::synchronize() {
         switch (peek().type) {
         case TokenType::TK_VAR:
         case TokenType::TK_FUN:
-        case TokenType::TK_FUNCTION:
-        case TokenType::TK_FUNC:
         case TokenType::TK_CLASS:
         case TokenType::TK_IF:
         case TokenType::TK_WHILE:

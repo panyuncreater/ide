@@ -317,7 +317,21 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
         }
         return true;
     }
-    if (val.isInstance() && val.className() == annotation) return true;
+    if (val.isInstance()) {
+        // H1 fix: 遍历继承链，使子类实例可以匹配父类类型注解
+        auto classIt = classRegistry_.find(val.className());
+        int depth = 0;
+        constexpr int MAX_INHERITANCE_DEPTH = 64;
+        while (classIt != classRegistry_.end()) {
+            if (++depth > MAX_INHERITANCE_DEPTH) break;
+            if (classIt->second.name == annotation) return true;
+            if (!classIt->second.superClassName.empty()) {
+                classIt = classRegistry_.find(classIt->second.superClassName);
+            } else {
+                break;
+            }
+        }
+    }
     // M7 fix: null 不再隐式匹配所有类型注解，仅匹配 "null" 类型
     if (val.isNull() && annotation == "null") return true;
     return false;
@@ -727,11 +741,12 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 auto parentEnv = cls.closureEnv ? cls.closureEnv : currentEnv_;
                 auto initEnv = std::make_shared<Environment>(parentEnv);
                 initEnv->define("this", instance);
-                // P5 fix: 绑定实例而非深拷贝所有字段
-                Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
-                if (thisInEnv) initEnv->bindInstance(thisInEnv);
                 auto prevEnv = currentEnv_;
                 currentEnv_ = initEnv;
+
+                // H-新2 fix: bindInstance 在 define 之后（此路径 0 参数无 rehash 风险，但保持一致性）
+                Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
+                if (thisInEnv) initEnv->bindInstance(thisInEnv);
 
                 // H3 fix: 与 visitFunCall 类构造路径保持一致的状态管理
                 std::string savedReturnType = currentFunctionReturnType_;
@@ -771,14 +786,8 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 if (thisPtr) {
                     instance = *thisPtr;
                 }
-                // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
-                const auto& initLocals = initEnv->localVariables();
-                for (auto& fieldKV : instance.fields()) {
-                    auto it = initLocals.find(fieldKV.first);
-                    if (it != initLocals.end()) {
-                        fieldKV.second = it->second;
-                    }
-                }
+                // M3 fix: 移除冗余的局部变量→字段同步。P5 bindInstance 使 init 中的字段赋值
+                // 直接写入 instance.fields()，此处同步是多余的且会因同名局部变量覆盖字段值。
             }
 
             initVal = instance;
@@ -864,7 +873,13 @@ Value Interpreter::visitForStmt(ForStmt& node) {
     currentEnv_ = forEnv;
 
     if (node.initializer) {
-        evaluate(node.initializer.get());
+        try {
+            evaluate(node.initializer.get());
+        } catch (...) {
+            // M2 fix: 初始化器异常时恢复外层环境，再传播异常
+            currentEnv_ = forEnv->parent;
+            throw;
+        }
     }
 
     Value result = Value::nullValue();
@@ -907,6 +922,10 @@ Value Interpreter::visitFunDecl(FunDecl& node) {
 
     // 创建闭包值，捕获当前环境并存储函数体指针（自包含，不依赖 funRegistry_）
     Value funVal = Value::makeClosure(node.name, currentEnv_, node.params, &node);
+
+    // C1 fix: 快照捕获当前所有可见变量，作为 weak_ptr 过期后的回退环境
+    funVal.capturedVars() = currentEnv_->allVariablesMap();
+
     currentEnv_->define(node.name, funVal);
 
     // 保留 funRegistry_ 作为后备（处理 AST 生命周期问题）
@@ -947,16 +966,30 @@ Value Interpreter::visitFunCall(FunCall& node) {
         currentFunctionReturnType_ = funDecl->returnType;
         auto prevEnv = currentEnv_;
 
+        // H2 fix: 递归深度检查移至 try 外，避免超限时 catch 双重递减
+        recursionDepth_++;
+        if (recursionDepth_ >= 64) {
+            recursionDepth_--;
+            currentFunctionReturnType_ = savedReturnType;
+            runtimeError("递归深度超过限制 (64)", node.line, node.column);
+        }
+
+        std::shared_ptr<Environment> funEnv;
+        bool envFromSnapshot = false;
         Value result = Value::nullValue();
         try {
-            recursionDepth_++;
-            if (recursionDepth_ >= 64) {
-                recursionDepth_--;
-                runtimeError("递归深度超过限制 (64)", node.line, node.column);
+            funEnv = std::make_shared<Environment>(
+                closureEnv ? closureEnv : currentEnv_);
+
+            // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
+            if (!closureEnv) {
+                funEnv = std::make_shared<Environment>(nullptr);
+                for (const auto& kv : calleeVal.capturedVars()) {
+                    funEnv->define(kv.first, kv.second);
+                }
+                envFromSnapshot = true;
             }
 
-            auto funEnv = std::make_shared<Environment>(
-                closureEnv ? closureEnv : currentEnv_);
             for (size_t i = 0; i < funDecl->params.size(); ++i) {
                 funEnv->define(funDecl->params[i], std::move(argValues[i]));
             }
@@ -974,6 +1007,14 @@ Value Interpreter::visitFunCall(FunCall& node) {
             recursionDepth_--;
             currentFunctionReturnType_ = savedReturnType;
             throw;
+        }
+
+        // C1 fix: 从快照恢复环境时，将变异写回 capturedVars，使后续调用可见
+        if (!closureEnv && envFromSnapshot) {
+            auto& captured = calleeVal.capturedVars();
+            for (const auto& kv : funEnv->localVariables()) {
+                captured[kv.first] = kv.second;
+            }
         }
 
         currentEnv_ = prevEnv;
@@ -1091,13 +1132,14 @@ Value Interpreter::visitFunCall(FunCall& node) {
             initEnv->define("this", instance);
 
             // P5 fix: 绑定实例而非深拷贝所有字段
-            Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
-            if (thisInEnv) initEnv->bindInstance(thisInEnv);
-
             // 绑定参数
             for (size_t i = 0; i < initMethod->params.size(); ++i) {
                 initEnv->define(initMethod->params[i], std::move(argValues[i]));
             }
+
+            // H-新2 fix: bindInstance 必须在所有 define 之后
+            Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
+            if (thisInEnv) initEnv->bindInstance(thisInEnv);
 
             // 压入调用帧
             callStack_.emplace_back(node.name + ".init", initEnv, node.line, recursionDepth_);
@@ -1132,14 +1174,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
                 instance = *thisPtr;
             }
 
-            // 同步 init 环境中的字段变量回 this 对象（直接查找局部变量，O(1)）
-            const auto& initLocals2 = initEnv->localVariables();
-            for (auto& fieldKV : instance.fields()) {
-                auto it = initLocals2.find(fieldKV.first);
-                if (it != initLocals2.end()) {
-                    fieldKV.second = it->second;
-                }
-            }
+            // M3 fix: 移除冗余的局部变量→字段同步（同 VarDecl 路径，P5 bindInstance 已处理）
 
             // 恢复环境
             currentEnv_ = prevEnv;
@@ -1154,6 +1189,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
     // 检查环境中是否有闭包值
     std::shared_ptr<Environment> closureEnv;
+    Value* closureValPtr = nullptr;  // C1 fix: 保存闭包值指针用于 capturedVars 回退
     FunDecl* funDecl = nullptr;
     std::string effectiveName = node.name;  // 实际函数名（闭包时可能不同于调用变量名）
 
@@ -1166,6 +1202,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
         if (calleePtr && calleePtr->isClosure()) {
             closureEnv = calleePtr->closureEnv();
             effectiveName = calleePtr->closureName();
+            closureValPtr = const_cast<Value*>(calleePtr);  // C1 fix
         }
     } else {
         // 慢路径：完整解析（单次 get() 调用）
@@ -1173,6 +1210,7 @@ Value Interpreter::visitFunCall(FunCall& node) {
         if (calleePtr && calleePtr->isClosure()) {
             closureEnv = calleePtr->closureEnv();
             effectiveName = calleePtr->closureName();
+            closureValPtr = const_cast<Value*>(calleePtr);  // C1 fix
             // 优先从闭包值中获取函数体（自包含，不依赖 funRegistry_）
             funDecl = calleePtr->closureBody();
             if (!funDecl) {
@@ -1227,6 +1265,8 @@ Value Interpreter::visitFunCall(FunCall& node) {
     }
 
     Value result = Value::nullValue();
+    std::shared_ptr<Environment> funEnv;  // C1 fix: 声明在 try 外以便写回
+    bool envFromSnapshot = false;
     try {
 
         // 参数类型检查
@@ -1239,11 +1279,19 @@ Value Interpreter::visitFunCall(FunCall& node) {
         }
 
         // 创建新环境：使用闭包捕获的环境作为父级（如果有的话）
-        std::shared_ptr<Environment> funEnv;
         if (closureEnv) {
             funEnv = std::make_shared<Environment>(closureEnv);
         } else {
             funEnv = std::make_shared<Environment>(currentEnv_);
+        }
+
+        // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
+        if (!closureEnv && closureValPtr) {
+            funEnv = std::make_shared<Environment>(nullptr);
+            for (const auto& kv : closureValPtr->capturedVars()) {
+                funEnv->define(kv.first, kv.second);
+            }
+            envFromSnapshot = true;
         }
 
         // 绑定参数（move 避免深拷贝）
@@ -1268,6 +1316,14 @@ Value Interpreter::visitFunCall(FunCall& node) {
         recursionDepth_--;
         currentFunctionReturnType_ = savedReturnType;
         throw;
+    }
+
+    // C1 fix: 从快照恢复环境时，将变异写回 capturedVars，使后续调用可见
+    if (!closureEnv && envFromSnapshot && closureValPtr && funEnv) {
+        auto& captured = closureValPtr->capturedVars();
+        for (const auto& kv : funEnv->localVariables()) {
+            captured[kv.first] = kv.second;
+        }
     }
 
     // 恢复环境
@@ -1562,6 +1618,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             return Value::nullValue();
         }
         if (node.methodName == "pop") {
+            if (!argValues.empty())
+                runtimeError("pop 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             if (obj.arrayVal().empty())
                 runtimeError("对空数组调用 pop", node.line, node.column);
             Value last = obj.arrayVal().back();
@@ -1570,6 +1628,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             return last;
         }
         if (node.methodName == "len") {
+            if (!argValues.empty())
+                runtimeError("len 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             return Value(static_cast<int64_t>(obj.arrayVal().size()));
         }
         if (node.methodName == "remove") {
@@ -1593,6 +1653,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             return Value(false);
         }
         if (node.methodName == "join") {
+            if (argValues.size() > 1)
+                runtimeError("join 期望 0 或 1 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             std::string sep = argValues.empty() ? "" : argValues[0].toString();
             std::string result;
             const auto& arr = obj.arrayVal();
@@ -1616,9 +1678,13 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         }
 
         if (node.methodName == "len") {
+            if (!argValues.empty())
+                runtimeError("len 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             return Value(static_cast<int64_t>(obj.dictVal().size()));
         }
         if (node.methodName == "keys") {
+            if (!argValues.empty())
+                runtimeError("keys 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             std::vector<Value> keys;
             keys.reserve(obj.dictVal().size());
             for (const auto& kv : obj.dictVal()) {
@@ -1627,6 +1693,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             return Value(std::move(keys));
         }
         if (node.methodName == "values") {
+            if (!argValues.empty())
+                runtimeError("values 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             std::vector<Value> vals;
             vals.reserve(obj.dictVal().size());
             for (const auto& kv : obj.dictVal()) {
@@ -1668,6 +1736,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         }
 
         if (node.methodName == "len") {
+            if (!argValues.empty())
+                runtimeError("len 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             // M6 fix: 按 UTF-8 码位计数而非字节数
             const std::string& s = obj.stringVal();
             size_t count = 0;
@@ -1680,11 +1750,15 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             return Value(static_cast<int64_t>(count));
         }
         if (node.methodName == "upper") {
+            if (!argValues.empty())
+                runtimeError("upper 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             std::string s = obj.stringVal();
             for (auto& c : s) c = std::toupper(static_cast<unsigned char>(c));
             return Value(std::move(s));
         }
         if (node.methodName == "lower") {
+            if (!argValues.empty())
+                runtimeError("lower 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             std::string s = obj.stringVal();
             for (auto& c : s) c = std::tolower(static_cast<unsigned char>(c));
             return Value(std::move(s));
@@ -1724,6 +1798,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
             return Value(std::move(result));
         }
         if (node.methodName == "trim") {
+            if (!argValues.empty())
+                runtimeError("trim 期望 0 个参数，但传入了 " + std::to_string(argValues.size()) + " 个", node.line, node.column);
             std::string s = obj.stringVal();
             size_t l = s.find_first_not_of(" \t\r\n");
             size_t r = s.find_last_not_of(" \t\r\n");
@@ -1786,14 +1862,16 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
 
                 std::shared_ptr<Environment> methodEnv;  // 声明在try外，使catch后可访问
                 Value result = Value::nullValue();
-                try {
-                    // 递归深度检查（在try内，throw时catch负责恢复）
-                    recursionDepth_++;
-                    if (recursionDepth_ >= 64) {
-                        recursionDepth_--;
-                        runtimeError("递归深度超过限制 (64)", node.line, node.column);
-                    }
 
+                // H2 fix: 递归深度检查移至 try 外，避免超限时 catch 双重递减
+                recursionDepth_++;
+                if (recursionDepth_ >= 64) {
+                    recursionDepth_--;
+                    currentFunctionReturnType_ = savedReturnType;
+                    runtimeError("递归深度超过限制 (64)", node.line, node.column);
+                }
+
+                try {
                     // O5: 使用类定义时捕获的环境作为父级（闭包），而非调用者的环境
                     auto parentEnv = cachedParentEnv ? cachedParentEnv : currentEnv_;  // #2 fix: 使用缓存值
                     methodEnv = std::make_shared<Environment>(parentEnv);
@@ -1801,14 +1879,14 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
                     // 绑定 this
                     methodEnv->define("this", obj);
 
-                    // P5 fix: 绑定实例而非深拷贝所有字段 — get/set 自动回退到实例字段
-                    Value* thisInEnv = const_cast<Value*>(methodEnv->get("this"));
-                    if (thisInEnv) methodEnv->bindInstance(thisInEnv);
-
                     // 绑定参数（参数覆盖同名字段）
                     for (size_t i = 0; i < method->params.size(); ++i) {
                         methodEnv->define(method->params[i], std::move(argValues[i]));
                     }
+
+                    // H-新2 fix: bindInstance 必须在所有 define 之后，避免 map rehash 使指针悬空
+                    Value* thisInEnv = const_cast<Value*>(methodEnv->get("this"));
+                    if (thisInEnv) methodEnv->bindInstance(thisInEnv);
 
                     // 压入调用栈
                     callStack_.emplace_back(obj.className() + "." + node.methodName,

@@ -49,6 +49,10 @@ private:
     std::string currentClassName_;  // B1 fix: 当前正在编译的类名（供 OP_SUPER_CALL 编码类上下文）
     std::unordered_set<std::string> topLevelGlobals_;  // VMBUG-1: 顶层（非块/非函数）var 声明的全局变量名集合
 
+    // H5 fix: 内嵌函数闭包追踪 — 内嵌函数存储为局部变量，通过 OP_CALL_EXPR 调用
+    std::unordered_set<std::string> innerFunctions_;           // 当前作用域中的内嵌函数名
+    std::unordered_map<std::string, int> innerFunctionSlots_;  // 内嵌函数名 → 局部变量槽位号
+
     // A2: 全局变量整数槽位管理
     std::unordered_map<std::string, int> globalSlots_;  // name -> slot index
     std::vector<std::string> slotNames_;                 // slot -> name (parallel array)

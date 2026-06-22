@@ -28,8 +28,8 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["float"]   = TokenType::TK_FLOAT;
         m["bool"]    = TokenType::TK_BOOL;
         m["string"]  = TokenType::TK_STRING_TYPE;
-        m["function"] = TokenType::TK_FUNCTION;
-        m["func"]     = TokenType::TK_FUNC;
+        m["function"] = TokenType::TK_FUN;  // function 是 fun 的别名，统一为 TK_FUN
+        m["func"]     = TokenType::TK_FUN;  // func 是 fun 的别名，统一为 TK_FUN
         m["class"]   = TokenType::TK_CLASS;
         m["extends"] = TokenType::TK_EXTENDS;
         m["super"]   = TokenType::TK_SUPER;
@@ -127,6 +127,8 @@ void Lexer::scanToken() {
     case '\t':
     case '\r':
     case '\n':
+    case '\f':   // L3 fix: form feed
+    case '\v':   // L3 fix: vertical tab
         break;
 
     // 分隔符
@@ -266,6 +268,20 @@ void Lexer::number() {
     // 前导点浮点（.123）：scanToken 已消耗 '.'，start_ 指向 '.'，跳过整数部分
     bool isFloat = (source_[start_] == '.');
 
+    // M6 fix: 检测 0x/0b/0o 前缀，发出明确错误（而非静默分为两个 token）
+    if (!isFloat && !isAtEnd() && source_[start_] == '0' &&
+        (peek() == 'x' || peek() == 'X' || peek() == 'b' || peek() == 'B' ||
+         peek() == 'o' || peek() == 'O')) {
+        char prefix = peek();
+        advance(); // 消耗前缀字母
+        while (!isAtEnd() && std::isxdigit(static_cast<unsigned char>(peek()))) {
+            advance();
+        }
+        std::string text(source_.substr(start_, current_ - start_));
+        errorToken("不支持 " + std::string(1, prefix) + " 前缀字面量: " + text + "，请使用十进制表示");
+        return;
+    }
+
     while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
         advance();
     }
@@ -280,7 +296,15 @@ void Lexer::number() {
         }
     }
 
-    // #15: 科学计数法（如 1e5, 3.14e-2, 2E+10）
+    // M5 fix: 整数后直接跟 .e/.E 形式（如 123.e5），消耗 '.' 后进入科学计数法
+    if (!isFloat && !isAtEnd() && peek() == '.' &&
+        (static_cast<size_t>(current_) + 1 < source_.size()) &&
+        (source_[current_ + 1] == 'e' || source_[current_ + 1] == 'E')) {
+        isFloat = true;
+        advance(); // 消耗 '.'
+    }
+
+    // #15: 科学计数法（如 1e5, 3.14e-2, 2E+10, 123.e5）
     if (!isAtEnd() && (peek() == 'e' || peek() == 'E')) {
         isFloat = true;
         advance(); // 消耗 'e'/'E'

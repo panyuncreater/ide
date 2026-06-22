@@ -195,10 +195,22 @@ public:
         }
     }
 
-    /// 获取当前作用域及所有父作用域的变量快照
+    /// 获取当前作用域及所有父作用域的变量快照（向量形式，保留遮蔽顺序）
     std::vector<std::pair<std::string, Value>> allVariables() const {
         std::vector<std::pair<std::string, Value>> result;
         collectVariables(result);
+        return result;
+    }
+
+    /// C1 fix: 获取所有可见变量的扁平 map（用于闭包 capturedVars 快照）
+    /// 子作用域变量覆盖父作用域同名变量（与 collectVariables 的追加顺序一致）
+    std::unordered_map<std::string, Value> allVariablesMap() const {
+        auto vec = allVariables();
+        std::unordered_map<std::string, Value> result;
+        result.reserve(vec.size());
+        for (auto& kv : vec) {
+            result[kv.first] = std::move(kv.second);
+        }
         return result;
     }
 

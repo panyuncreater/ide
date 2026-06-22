@@ -2,6 +2,7 @@
 #include <sstream>
 #include <climits>
 #include <cstdint>
+#include <algorithm>
 
 // ============================================================
 // VM 虚拟机实现
@@ -247,7 +248,8 @@ VMResult VM::numericOp(int opType) {
             if (leftRef.isInt()) a = leftRef.intVal();
             else if (leftRef.isFloat()) {
                 double lf = leftRef.floatVal();
-                if (lf > static_cast<double>(INT64_MAX) || lf < static_cast<double>(INT64_MIN))
+                // M-新3 fix: 用 >= 代替 >，因 double(INT64_MAX) 上取整为 2^63，该值无法表示为 int64_t
+                if (lf >= -static_cast<double>(INT64_MIN) || lf < static_cast<double>(INT64_MIN))
                     return runtimeError("浮点数转整数溢出");
                 a = static_cast<int64_t>(lf);
             }
@@ -255,7 +257,7 @@ VMResult VM::numericOp(int opType) {
             if (rightRef.isInt()) b = rightRef.intVal();
             else if (rightRef.isFloat()) {
                 double rf = rightRef.floatVal();
-                if (rf > static_cast<double>(INT64_MAX) || rf < static_cast<double>(INT64_MIN))
+                if (rf >= -static_cast<double>(INT64_MIN) || rf < static_cast<double>(INT64_MIN))
                     return runtimeError("浮点数转整数溢出");
                 b = static_cast<int64_t>(rf);
             }
@@ -344,6 +346,11 @@ void VM::initExecution(const CompileResult& result) {
     for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
     globalCacheNextSlot_ = 0;
     classInfo_.clear();
+    // M-新1 fix: 清理残留闭包/upvalue 状态，避免多次执行时悬空指针
+    openUpvalues_.clear();
+    functionClosures_.clear();
+    lastMutatedReceiver_ = Value::nullValue();
+    pendingFieldOrder_.clear();
     // A2: 初始化全局变量槽位
     globalSlots_.clear();
     globalSlotNames_.clear();
@@ -458,7 +465,7 @@ VMResult VM::execute(const CompileResult& result) {
 
         if (hasError_) return VMResult::VM_RUNTIME_ERROR;
         VMResult r = executeOneInstruction();
-        if (r != VMResult::VM_OK || hasError_) return r;
+        if (r != VMResult::VM_OK || hasError_) return VMResult::VM_RUNTIME_ERROR;
     }
 
     if (hasError_) return VMResult::VM_RUNTIME_ERROR;
@@ -480,8 +487,12 @@ VMResult VM::executeOneInstruction() {
 
     OpCode op = static_cast<OpCode>(chunk.code[ip]);
 
-    // 检查完整指令是否在字节码范围内
+    // M-新2 fix: OP_CLOSURE 是变长指令，需要计算完整长度再做边界检查
     size_t instrSize = BytecodeChunk::instructionSize(op);
+    if (op == OpCode::OP_CLOSURE && ip + 3 < chunk.code.size()) {
+        uint8_t uvCount = chunk.code[ip + 3];
+        instrSize = 4 + static_cast<size_t>(uvCount) * 2;
+    }
     if (ip + instrSize > chunk.code.size()) {
         return runtimeError("字节码截断: 指令不完整");
     }
@@ -1127,19 +1138,19 @@ VMResult VM::executeOneInstruction() {
 
     case OpCode::OP_CALL_EXPR: {
         uint8_t argCount = chunk.code[ip + 1];
-        // VM-05/06: 从栈上弹出闭包值和参数，执行调用
+        // VM-05/06: 从栈上获取闭包值和参数，执行调用
         if (stack_.size() < static_cast<size_t>(argCount) + 1) {
             return runtimeError("栈下溢: OP_CALL_EXPR");
         }
 
-        // 弹出参数（逆序保存）
-        SmallArgs<Value, 8> args(argCount);
-        for (int i = argCount - 1; i >= 0; --i) {
-            args[i] = pop();
-        }
+        // R3-1 fix: 只弹出闭包值（在栈顶），参数保留在栈上供新帧使用
+        // 栈布局: [..., arg0, arg1, ..., argN-1, closure]
+        // 弹出 closure 后: [..., arg0, arg1, ..., argN-1] — 参数就位
         Value callee = pop();
 
         if (!callee.isClosure()) {
+            // R3-1 fix: 弹出参数以保持栈平衡
+            for (int i = 0; i < argCount; ++i) pop();
             return runtimeError("表达式调用需要函数值");
         }
 
@@ -1155,17 +1166,23 @@ VMResult VM::executeOneInstruction() {
             }
         }
         if (!targetChunkPtr) {
+            // R3-1 fix: 弹出参数保持栈平衡
+            for (int i = 0; i < argCount; ++i) pop();
             return runtimeError("未找到函数: " + callee.closureName());
         }
 
         const BytecodeChunk& targetChunk = *targetChunkPtr;
         if (targetChunk.arity != argCount) {
+            // R3-1 fix: 弹出参数保持栈平衡
+            for (int i = 0; i < argCount; ++i) pop();
             return runtimeError("函数 " + callee.closureName() + " 期望 " +
                 std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
                 std::to_string(argCount) + " 个");
         }
 
         if (frames_.size() >= MAX_FRAMES) {
+            // R3-1 fix: 弹出参数保持栈平衡
+            for (int i = 0; i < argCount; ++i) pop();
             return runtimeError("调用栈溢出");
         }
 
@@ -1216,7 +1233,7 @@ VMResult VM::executeOneInstruction() {
         for (uint8_t i = 0; i < pairCount; ++i) {
             Value val = pop();
             Value key = pop();
-            dict.emplace(key.toString(), std::move(val));  // VM-03 fix: emplace 不覆盖已有键，实现后者覆盖语义
+            dict.emplace(key.toString(), std::move(val));  // 先入后出：最后入栈的键值对最先弹出，emplace 保留首次插入的值 = 源码中后者覆盖
         }
         push(Value(std::move(dict)));
         notifyStep(ip, op);
@@ -2110,6 +2127,10 @@ VMResult VM::executeOneInstruction() {
             if (!uv->isClosed && uv->stackSlot < stack_.size()) {
                 uv->value = stack_[uv->stackSlot];
                 uv->isClosed = true;
+                // L-新1 fix: 从 openUpvalues_ 移除已关闭的 upvalue
+                openUpvalues_.erase(
+                    std::remove(openUpvalues_.begin(), openUpvalues_.end(), uv),
+                    openUpvalues_.end());
             }
         }
         notifyStep(ip, op);
