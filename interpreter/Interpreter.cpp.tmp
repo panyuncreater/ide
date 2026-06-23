@@ -276,7 +276,6 @@ FunDecl* Interpreter::findMethod(ClassInfo& cls, const std::string& methodName) 
     // 使用深度计数器代替 unordered_set，避免每次调用都堆分配
     ClassInfo* cur = &cls;
     int depth = 0;
-    constexpr int MAX_INHERITANCE_DEPTH = 64;
     while (cur) {
         if (++depth > MAX_INHERITANCE_DEPTH) return nullptr;  // 循环继承或过深继承链
         auto it = cur->methods.find(methodName);
@@ -294,7 +293,6 @@ FunDecl* Interpreter::findMethod(ClassInfo& cls, const std::string& methodName) 
 Value Interpreter::findFieldDefault(ClassInfo& cls, const std::string& fieldName) {
     ClassInfo* cur = &cls;
     int depth = 0;
-    constexpr int MAX_INHERITANCE_DEPTH = 64;
     while (cur) {
         if (++depth > MAX_INHERITANCE_DEPTH) return Value::nullValue();  // 循环继承
         auto it = cur->fields.find(fieldName);
@@ -332,7 +330,6 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
         // H1 fix: 遍历继承链，使子类实例可以匹配父类类型注解
         auto classIt = classRegistry_.find(val.className());
         int depth = 0;
-        constexpr int MAX_INHERITANCE_DEPTH = 64;
         while (classIt != classRegistry_.end()) {
             if (++depth > MAX_INHERITANCE_DEPTH) break;
             if (classIt->second.name == annotation) return true;
@@ -689,13 +686,13 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
 
                 // #8 fix: recursionDepth_ guard for auto-construction
                 recursionDepth_++;
-                if (recursionDepth_ >= 64) {
+                if (recursionDepth_ >= MAX_RECURSION_DEPTH) {
                     recursionDepth_--;
                     currentEnv_ = prevEnv;
                     callStack_.pop_back();
                     if (!classContextStack_.empty()) classContextStack_.pop_back();
                     currentFunctionReturnType_ = savedReturnType;
-                    runtimeError("递归深度超过限制 (64)", node.line, node.column);
+                    runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
                 }
                 struct RecursionGuard { int& d; ~RecursionGuard() { d--; } } guard{recursionDepth_};
                 try {
@@ -901,10 +898,10 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
         // H2 fix: 递归深度检查移至 try 外，避免超限时 catch 双重递减
         recursionDepth_++;
-        if (recursionDepth_ >= 64) {
+        if (recursionDepth_ >= MAX_RECURSION_DEPTH) {
             recursionDepth_--;
             currentFunctionReturnType_ = savedReturnType;
-            runtimeError("递归深度超过限制 (64)", node.line, node.column);
+            runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
         }
 
         std::shared_ptr<Environment> funEnv;
@@ -1020,9 +1017,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
         initMethod = findMethod(*cls, "init");
 
         recursionDepth_++;
-        if (recursionDepth_ >= 64) {
+        if (recursionDepth_ >= MAX_RECURSION_DEPTH) {
             recursionDepth_--;
-            runtimeError("递归深度超过限制 (64)", node.line, node.column);
+            runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
         }
 
         // B1 fix: RAII guard 确保任何异常路径都能恢复 recursionDepth_
@@ -1192,9 +1189,9 @@ Value Interpreter::visitFunCall(FunCall& node) {
 
     // INTERP-04 fix: 递归深度检查移至try外，避免超限时catch双重递减
     recursionDepth_++;
-    if (recursionDepth_ >= 64) {
+    if (recursionDepth_ >= MAX_RECURSION_DEPTH) {
         recursionDepth_--;
-        runtimeError("递归深度超过限制 (64)", node.line, node.column);
+        runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
     }
 
     Value result = Value::nullValue();
@@ -1636,10 +1633,10 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
 
                 // H2 fix: 递归深度检查移至 try 外，避免超限时 catch 双重递减
                 recursionDepth_++;
-                if (recursionDepth_ >= 64) {
+                if (recursionDepth_ >= MAX_RECURSION_DEPTH) {
                     recursionDepth_--;
                     currentFunctionReturnType_ = savedReturnType;
-                    runtimeError("递归深度超过限制 (64)", node.line, node.column);
+                    runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
                 }
 
                 try {

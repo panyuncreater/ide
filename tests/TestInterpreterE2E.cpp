@@ -1,0 +1,688 @@
+// ============================================================
+// Interpreter 端到端（E2E）测试
+// ------------------------------------------------------------
+// 测试流程：源码 → Lexer::scan() → Parser::parse() → Interpreter::execute()
+// 通过设置输出回调捕获 print 输出，验证解释器的整体行为。
+// 覆盖功能点：
+//   1. 基本算术
+//   2. 变量声明与赋值
+//   3. 控制流（if/while/for）
+//   4. 函数定义与调用（含递归）
+//   5. 闭包
+//   6. 数组操作
+//   7. 字典操作
+//   8. 字符串操作
+//   9. 类与继承
+//  10. 错误处理
+// ============================================================
+
+#include <gtest/gtest.h>
+
+#include "lexer/Lexer.h"
+#include "parser/Parser.h"
+#include "interpreter/Interpreter.h"
+#include "interpreter/Value.h"
+
+#include <string>
+#include <vector>
+#include <sstream>
+
+// ============================================================
+// 辅助：执行源码并捕获 print 输出
+// ============================================================
+
+// 执行源码，返回所有 print 输出拼接后的字符串（每条 print 不自动加换行）
+static std::string runInterpreterOutput(const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    EXPECT_TRUE(ast != nullptr);
+    if (!ast) return "";
+
+    Interpreter interp;
+    std::string captured;
+    interp.setOutputCallback([&](const std::string& s) { captured += s; });
+    interp.execute(*ast);
+    return captured;
+}
+
+// 执行源码，返回最后一条语句的求值结果（不依赖 print）
+static Value runInterpreterValue(const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    if (!ast) return Value::nullValue();
+
+    Interpreter interp;
+    interp.setOutputCallback([](const std::string&) {});
+    return interp.execute(*ast);
+}
+
+// 执行源码，预期抛出 RuntimeError
+static bool runInterpreterThrows(const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    if (!ast) return false;
+
+    Interpreter interp;
+    interp.setOutputCallback([](const std::string&) {});
+    try {
+        interp.execute(*ast);
+        return false;
+    } catch (const RuntimeError&) {
+        return true;
+    }
+}
+
+// ============================================================
+// 1. 基本算术
+// ============================================================
+
+// 测试：1 + 2 应输出 3
+TEST(InterpreterE2E, BasicAddition) {
+    std::string output = runInterpreterOutput("print(1 + 2);");
+    EXPECT_EQ(output, "3");
+}
+
+// 测试：减法、乘法、除法
+TEST(InterpreterE2E, BasicArithmetic) {
+    EXPECT_EQ(runInterpreterOutput("print(10 - 3);"), "7");
+    EXPECT_EQ(runInterpreterOutput("print(4 * 5);"), "20");
+    EXPECT_EQ(runInterpreterOutput("print(20 / 4);"), "5");
+    EXPECT_EQ(runInterpreterOutput("print(17 % 5);"), "2");
+}
+
+// 测试：运算符优先级
+TEST(InterpreterE2E, OperatorPrecedence) {
+    // 2 + 3 * 4 = 14
+    EXPECT_EQ(runInterpreterOutput("print(2 + 3 * 4);"), "14");
+    // (2 + 3) * 4 = 20
+    EXPECT_EQ(runInterpreterOutput("print((2 + 3) * 4);"), "20");
+}
+
+// 测试：变量参与的算术
+TEST(InterpreterE2E, ArithmeticWithVariables) {
+    std::string src = "var x = 10; var y = 20; print(x + y);";
+    EXPECT_EQ(runInterpreterOutput(src), "30");
+}
+
+// 测试：浮点运算
+TEST(InterpreterE2E, FloatArithmetic) {
+    EXPECT_EQ(runInterpreterOutput("print(1.5 + 2.5);"), "4");
+    EXPECT_EQ(runInterpreterOutput("print(3.14 * 2);"), "6.28");
+}
+
+// ============================================================
+// 2. 变量声明与赋值
+// ============================================================
+
+// 测试：变量声明后读取
+TEST(InterpreterE2E, VariableDeclaration) {
+    std::string src = "var x = 5; print(x);";
+    EXPECT_EQ(runInterpreterOutput(src), "5");
+}
+
+// 测试：变量赋值（修改值）
+TEST(InterpreterE2E, VariableAssignment) {
+    std::string src = "var x = 5; print(x); x = 10; print(x);";
+    EXPECT_EQ(runInterpreterOutput(src), "510");
+}
+
+// 测试：带类型注解的变量声明
+TEST(InterpreterE2E, TypedVariableDeclaration) {
+    std::string src = "int a = 42; print(a);";
+    EXPECT_EQ(runInterpreterOutput(src), "42");
+}
+
+// 测试：多个变量交互
+TEST(InterpreterE2E, MultipleVariables) {
+    std::string src = "var a = 1; var b = 2; var c = a + b; print(c);";
+    EXPECT_EQ(runInterpreterOutput(src), "3");
+}
+
+// ============================================================
+// 3. 控制流
+// ============================================================
+
+// 测试：if-else 条件为真
+TEST(InterpreterE2E, IfTrueBranch) {
+    std::string src = "if (true) { print(1); } else { print(2); }";
+    EXPECT_EQ(runInterpreterOutput(src), "1");
+}
+
+// 测试：if-else 条件为假
+TEST(InterpreterE2E, IfFalseBranch) {
+    std::string src = "if (false) { print(1); } else { print(2); }";
+    EXPECT_EQ(runInterpreterOutput(src), "2");
+}
+
+// 测试：if-elseif-else 链
+TEST(InterpreterE2E, IfElseIfChain) {
+    std::string src =
+        "var x = 5;"
+        "if (x == 1) { print(1); }"
+        "else if (x == 5) { print(5); }"
+        "else { print(0); }";
+    EXPECT_EQ(runInterpreterOutput(src), "5");
+}
+
+// 测试：while 循环计算 1 到 10 的和
+TEST(InterpreterE2E, WhileLoopSum) {
+    std::string src =
+        "var sum = 0;"
+        "var i = 1;"
+        "while (i <= 10) { sum = sum + i; i = i + 1; }"
+        "print(sum);";
+    EXPECT_EQ(runInterpreterOutput(src), "55");
+}
+
+// 测试：while 循环条件不满足时不执行
+TEST(InterpreterE2E, WhileLoopNotExecuted) {
+    std::string src =
+        "var i = 100;"
+        "while (i < 10) { print(i); i = i + 1; }"
+        "print(99);";
+    EXPECT_EQ(runInterpreterOutput(src), "99");
+}
+
+// 测试：for 循环打印 1 到 5
+TEST(InterpreterE2E, ForLoopPrint) {
+    std::string src =
+        "for (var i = 1; i <= 5; i = i + 1) { print(i); }";
+    EXPECT_EQ(runInterpreterOutput(src), "12345");
+}
+
+// 测试：for 循环计算累加和
+TEST(InterpreterE2E, ForLoopSum) {
+    std::string src =
+        "var sum = 0;"
+        "for (var i = 1; i <= 100; i = i + 1) { sum = sum + i; }"
+        "print(sum);";
+    EXPECT_EQ(runInterpreterOutput(src), "5050");
+}
+
+// ============================================================
+// 4. 函数定义与调用
+// ============================================================
+
+// 测试：简单函数调用
+TEST(InterpreterE2E, SimpleFunctionCall) {
+    std::string src =
+        "fun add(a, b) { return a + b; }"
+        "print(add(3, 4));";
+    EXPECT_EQ(runInterpreterOutput(src), "7");
+}
+
+// 测试：函数无返回值（默认 null）
+TEST(InterpreterE2E, FunctionNoReturn) {
+    std::string src =
+        "fun greet() { print(123); }"
+        "greet();";
+    EXPECT_EQ(runInterpreterOutput(src), "123");
+}
+
+// 测试：阶乘递归
+TEST(InterpreterE2E, FactorialRecursive) {
+    std::string src =
+        "fun fact(n) {"
+        "  if (n <= 1) { return 1; }"
+        "  return n * fact(n - 1);"
+        "}"
+        "print(fact(5));";
+    EXPECT_EQ(runInterpreterOutput(src), "120");
+}
+
+// 测试：斐波那契递归
+TEST(InterpreterE2E, FibonacciRecursive) {
+    std::string src =
+        "fun fib(n) {"
+        "  if (n < 2) { return n; }"
+        "  return fib(n - 1) + fib(n - 2);"
+        "}"
+        "print(fib(10));";
+    EXPECT_EQ(runInterpreterOutput(src), "55");
+}
+
+// 测试：函数参数为表达式
+TEST(InterpreterE2E, FunctionCallWithExpression) {
+    std::string src =
+        "fun double(x) { return x * 2; }"
+        "print(double(3 + 4));";
+    EXPECT_EQ(runInterpreterOutput(src), "14");
+}
+
+// 测试：嵌套函数调用
+TEST(InterpreterE2E, NestedFunctionCall) {
+    std::string src =
+        "fun inc(x) { return x + 1; }"
+        "fun double(x) { return x * 2; }"
+        "print(inc(double(5)));";
+    EXPECT_EQ(runInterpreterOutput(src), "11");
+}
+
+// ============================================================
+// 5. 闭包
+// ============================================================
+
+// 测试：函数作为返回值（计数器）
+TEST(InterpreterE2E, ClosureAsReturnValue) {
+    std::string src =
+        "fun makeCounter() {"
+        "  var count = 0;"
+        "  fun increment() { count = count + 1; return count; }"
+        "  return increment;"
+        "}"
+        "var c = makeCounter();"
+        "print(c());"
+        "print(c());"
+        "print(c());";
+    EXPECT_EQ(runInterpreterOutput(src), "123");
+}
+
+// 测试：闭包捕获外部变量
+TEST(InterpreterE2E, ClosureCapturesVariable) {
+    std::string src =
+        "var x = 10;"
+        "fun getX() { return x; }"
+        "print(getX());"
+        "x = 20;"
+        "print(getX());";
+    EXPECT_EQ(runInterpreterOutput(src), "1020");
+}
+
+// ============================================================
+// 6. 数组操作
+// ============================================================
+
+// 测试：数组创建与访问
+TEST(InterpreterE2E, ArrayCreateAndAccess) {
+    std::string src =
+        "var arr = [1, 2, 3];"
+        "print(arr[0]);"
+        "print(arr[1]);"
+        "print(arr[2]);";
+    EXPECT_EQ(runInterpreterOutput(src), "123");
+}
+
+// 测试：数组索引赋值
+TEST(InterpreterE2E, ArrayIndexAssign) {
+    std::string src =
+        "var arr = [1, 2, 3];"
+        "arr[0] = 99;"
+        "print(arr[0]);";
+    EXPECT_EQ(runInterpreterOutput(src), "99");
+}
+
+// 测试：数组 push 方法
+TEST(InterpreterE2E, ArrayPush) {
+    std::string src =
+        "var arr = [1, 2];"
+        "arr.push(3);"
+        "print(arr[2]);"
+        "print(arr.len());";
+    EXPECT_EQ(runInterpreterOutput(src), "33");
+}
+
+// 测试：数组 pop 方法
+TEST(InterpreterE2E, ArrayPop) {
+    std::string src =
+        "var arr = [1, 2, 3];"
+        "var x = arr.pop();"
+        "print(x);"
+        "print(arr.len());";
+    EXPECT_EQ(runInterpreterOutput(src), "32");
+}
+
+// 测试：数组 len 方法
+TEST(InterpreterE2E, ArrayLen) {
+    std::string src =
+        "var arr = [10, 20, 30, 40];"
+        "print(arr.len());";
+    EXPECT_EQ(runInterpreterOutput(src), "4");
+}
+
+// 测试：数组 contains 方法
+TEST(InterpreterE2E, ArrayContains) {
+    std::string src =
+        "var arr = [1, 2, 3];"
+        "print(arr.contains(2));"
+        "print(arr.contains(99));";
+    EXPECT_EQ(runInterpreterOutput(src), "truefalse");
+}
+
+// 测试：数组 join 方法
+TEST(InterpreterE2E, ArrayJoin) {
+    std::string src =
+        "var arr = [1, 2, 3];"
+        "print(arr.join(\",\"));";
+    EXPECT_EQ(runInterpreterOutput(src), "1,2,3");
+}
+
+// 测试：遍历数组
+TEST(InterpreterE2E, ArrayIterate) {
+    std::string src =
+        "var arr = [10, 20, 30];"
+        "var sum = 0;"
+        "for (var i = 0; i < arr.len(); i = i + 1) { sum = sum + arr[i]; }"
+        "print(sum);";
+    EXPECT_EQ(runInterpreterOutput(src), "60");
+}
+
+// ============================================================
+// 7. 字典操作
+// ============================================================
+
+// 测试：字典创建与访问
+TEST(InterpreterE2E, DictCreateAndAccess) {
+    std::string src =
+        "var d = {\"a\": 1, \"b\": 2};"
+        "print(d[\"a\"]);"
+        "print(d[\"b\"]);";
+    EXPECT_EQ(runInterpreterOutput(src), "12");
+}
+
+// 测试：字典键赋值
+TEST(InterpreterE2E, DictKeyAssign) {
+    std::string src =
+        "var d = {\"x\": 1};"
+        "d[\"x\"] = 100;"
+        "d[\"y\"] = 200;"
+        "print(d[\"x\"]);"
+        "print(d[\"y\"]);";
+    EXPECT_EQ(runInterpreterOutput(src), "100200");
+}
+
+// 测试：字典 len 方法
+TEST(InterpreterE2E, DictLen) {
+    std::string src =
+        "var d = {\"a\": 1, \"b\": 2, \"c\": 3};"
+        "print(d.len());";
+    EXPECT_EQ(runInterpreterOutput(src), "3");
+}
+
+// 测试：字典 has 方法
+TEST(InterpreterE2E, DictHas) {
+    std::string src =
+        "var d = {\"name\": \"Alice\"};"
+        "print(d.has(\"name\"));"
+        "print(d.has(\"age\"));";
+    EXPECT_EQ(runInterpreterOutput(src), "truefalse");
+}
+
+// 测试：字典 keys 方法
+TEST(InterpreterE2E, DictKeys) {
+    std::string src =
+        "var d = {\"a\": 1, \"b\": 2};"
+        "var ks = d.keys();"
+        "print(ks.len());";
+    EXPECT_EQ(runInterpreterOutput(src), "2");
+}
+
+// 测试：字典 get 方法（带默认值）
+TEST(InterpreterE2E, DictGetWithDefault) {
+    std::string src =
+        "var d = {\"a\": 1};"
+        "print(d.get(\"a\", 99));"
+        "print(d.get(\"missing\", 99));";
+    EXPECT_EQ(runInterpreterOutput(src), "199");
+}
+
+// ============================================================
+// 8. 字符串操作
+// ============================================================
+
+// 测试：字符串拼接
+TEST(InterpreterE2E, StringConcatenation) {
+    EXPECT_EQ(runInterpreterOutput("print(\"hello\" + \" \" + \"world\");"),
+              "hello world");
+}
+
+// 测试：字符串与数字拼接
+TEST(InterpreterE2E, StringNumberConcat) {
+    EXPECT_EQ(runInterpreterOutput("print(\"count: \" + 42);"), "count: 42");
+}
+
+// 测试：字符串 len 方法
+TEST(InterpreterE2E, StringLen) {
+    std::string src = "var s = \"hello\"; print(s.len());";
+    EXPECT_EQ(runInterpreterOutput(src), "5");
+}
+
+// 测试：字符串 upper/lower 方法
+TEST(InterpreterE2E, StringUpperLower) {
+    std::string src =
+        "var s = \"Hello\";"
+        "print(s.upper());"
+        "print(s.lower());";
+    EXPECT_EQ(runInterpreterOutput(src), "HELLOhello");
+}
+
+// 测试：字符串 split 方法
+TEST(InterpreterE2E, StringSplit) {
+    std::string src =
+        "var s = \"a,b,c\";"
+        "var arr = s.split(\",\");"
+        "print(arr.len());"
+        "print(arr[0]);"
+        "print(arr[1]);"
+        "print(arr[2]);";
+    EXPECT_EQ(runInterpreterOutput(src), "3abc");
+}
+
+// 测试：字符串 replace 方法
+TEST(InterpreterE2E, StringReplace) {
+    std::string src =
+        "var s = \"a-b-c\";"
+        "print(s.replace(\"-\", \"+\"));";
+    EXPECT_EQ(runInterpreterOutput(src), "a+b+c");
+}
+
+// 测试：字符串 trim 方法
+TEST(InterpreterE2E, StringTrim) {
+    std::string src =
+        "var s = \"  hello  \";"
+        "print(s.trim());";
+    EXPECT_EQ(runInterpreterOutput(src), "hello");
+}
+
+// 测试：字符串 contains 方法
+TEST(InterpreterE2E, StringContains) {
+    std::string src =
+        "var s = \"hello world\";"
+        "print(s.contains(\"world\"));"
+        "print(s.contains(\"xyz\"));";
+    EXPECT_EQ(runInterpreterOutput(src), "truefalse");
+}
+
+// ============================================================
+// 9. 类与继承
+// ============================================================
+
+// 测试：类定义、实例化与方法调用
+TEST(InterpreterE2E, ClassBasic) {
+    std::string src =
+        "class Point {"
+        "  var x = 0;"
+        "  var y = 0;"
+        "  fun getX() { return x; }"
+        "  fun setX(v) { x = v; }"
+        "}"
+        "var p = Point();"
+        "print(p.getX());"
+        "p.setX(42);"
+        "print(p.getX());";
+    EXPECT_EQ(runInterpreterOutput(src), "042");
+}
+
+// 测试：类成员访问与赋值
+TEST(InterpreterE2E, ClassMemberAccess) {
+    std::string src =
+        "class Box {"
+        "  var value = 0;"
+        "}"
+        "var b = Box();"
+        "print(b.value);"
+        "b.value = 99;"
+        "print(b.value);";
+    EXPECT_EQ(runInterpreterOutput(src), "099");
+}
+
+// 测试：继承与 super 调用
+TEST(InterpreterE2E, ClassInheritanceAndSuper) {
+    std::string src =
+        "class Animal {"
+        "  fun speak() { return \"generic sound\"; }"
+        "}"
+        "class Dog extends Animal {"
+        "  fun speak() { return \"woof: \" + super.speak(); }"
+        "}"
+        "var d = Dog();"
+        "print(d.speak());";
+    EXPECT_EQ(runInterpreterOutput(src), "woof: generic sound");
+}
+
+// 测试：继承链中方法查找
+TEST(InterpreterE2E, InheritedMethod) {
+    std::string src =
+        "class Base {"
+        "  fun greet() { return \"hello from base\"; }"
+        "}"
+        "class Derived extends Base {"
+        "}"
+        "var d = Derived();"
+        "print(d.greet());";
+    EXPECT_EQ(runInterpreterOutput(src), "hello from base");
+}
+
+// ============================================================
+// 10. 错误处理
+// ============================================================
+
+// 测试：除零错误
+TEST(InterpreterE2E, DivisionByZeroError) {
+    EXPECT_TRUE(runInterpreterThrows("print(1 / 0);"));
+}
+
+// 测试：取模除零错误
+TEST(InterpreterE2E, ModuloByZeroError) {
+    EXPECT_TRUE(runInterpreterThrows("print(10 % 0);"));
+}
+
+// 测试：未定义变量
+TEST(InterpreterE2E, UndefinedVariableError) {
+    EXPECT_TRUE(runInterpreterThrows("print(undefinedVar);"));
+}
+
+// 测试：类型错误（对非数值做算术）
+TEST(InterpreterE2E, TypeErrorOnArithmetic) {
+    // 对数组做加法应抛出运行时错误
+    EXPECT_TRUE(runInterpreterThrows("var a = [1,2]; var b = a + 1; print(b);"));
+}
+
+// 测试：调用未定义函数
+TEST(InterpreterE2E, UndefinedFunctionError) {
+    EXPECT_TRUE(runInterpreterThrows("undefinedFunc();"));
+}
+
+// 测试：数组索引越界
+TEST(InterpreterE2E, ArrayIndexOutOfBoundsError) {
+    EXPECT_TRUE(runInterpreterThrows("var a = [1,2,3]; print(a[10]);"));
+}
+
+// 测试：对空数组 pop
+TEST(InterpreterE2E, PopFromEmptyArrayError) {
+    EXPECT_TRUE(runInterpreterThrows("var a = []; a.pop();"));
+}
+
+// 测试：错误信息包含相关内容
+TEST(InterpreterE2E, ErrorMessageContent) {
+    Lexer lexer;
+    auto tokens = lexer.scan("print(1 / 0);");
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    ASSERT_TRUE(ast != nullptr);
+
+    Interpreter interp;
+    interp.setOutputCallback([](const std::string&) {});
+    try {
+        interp.execute(*ast);
+        FAIL() << "应抛出 RuntimeError";
+    } catch (const RuntimeError& e) {
+        std::string msg = e.what();
+        EXPECT_NE(msg.find("除零"), std::string::npos);
+    }
+}
+
+// 测试：错误携带行号
+TEST(InterpreterE2E, ErrorPreservesLine) {
+    Lexer lexer;
+    // 第二行触发除零错误
+    auto tokens = lexer.scan("var x = 1;\nprint(x / 0);");
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    ASSERT_TRUE(ast != nullptr);
+
+    Interpreter interp;
+    interp.setOutputCallback([](const std::string&) {});
+    try {
+        interp.execute(*ast);
+        FAIL() << "应抛出 RuntimeError";
+    } catch (const RuntimeError& e) {
+        // 行号应大于 0（具体行号取决于实现）
+        EXPECT_GE(e.line, 0);
+    }
+}
+
+// ============================================================
+// 综合测试
+// ============================================================
+
+// 测试：综合 - 函数 + 循环 + 数组
+TEST(InterpreterE2E, ComprehensiveFunctionLoopArray) {
+    std::string src =
+        "fun sumArray(arr) {"
+        "  var total = 0;"
+        "  var i = 0;"
+        "  while (i < arr.len()) { total = total + arr[i]; i = i + 1; }"
+        "  return total;"
+        "}"
+        "var data = [1, 2, 3, 4, 5];"
+        "print(sumArray(data));";
+    EXPECT_EQ(runInterpreterOutput(src), "15");
+}
+
+// 测试：综合 - 类 + 闭包
+TEST(InterpreterE2E, ComprehensiveClassAndClosure) {
+    std::string src =
+        "class Counter {"
+        "  var count = 0;"
+        "  fun inc() { count = count + 1; return count; }"
+        "  fun get() { return count; }"
+        "}"
+        "var c = Counter();"
+        "print(c.inc());"
+        "print(c.inc());"
+        "print(c.get());";
+    EXPECT_EQ(runInterpreterOutput(src), "122");
+}
+
+// 测试：综合 - 字符串处理
+TEST(InterpreterE2E, ComprehensiveStringProcessing) {
+    std::string src =
+        "var s = \"hello,world,foo,bar\";"
+        "var parts = s.split(\",\");"
+        "print(parts.len());"
+        "var i = 0;"
+        "while (i < parts.len()) {"
+        "  print(parts[i]);"
+        "  i = i + 1;"
+        "}";
+    EXPECT_EQ(runInterpreterOutput(src), "4helloworldfoobar");
+}

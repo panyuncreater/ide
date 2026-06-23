@@ -15,7 +15,6 @@ CompileResult Compiler::compile(Block& program) {
     chunk_.arity = 0;
     chunk_.reserveCode(1024);  // C21: 预分配字节码空间
     varIndex_.clear();
-    lastError_.clear();
     diagnostics_.clear();
     functionChunks_.clear();
     currentLocals_.clear();
@@ -67,7 +66,14 @@ CompileResult Compiler::compile(Block& program) {
 }
 
 std::string Compiler::getLastError() const {
-    return lastError_;
+    // 从 diagnostics_ 派生最后一条错误信息
+    const auto& diags = diagnostics_.all();
+    for (auto it = diags.rbegin(); it != diags.rend(); ++it) {
+        if (it->isError()) {
+            return it->format();
+        }
+    }
+    return {};
 }
 
 // A2: global slot management
@@ -111,38 +117,8 @@ uint16_t Compiler::identifierIndex(const std::string& name) {
 void Compiler::compileNode(ASTNode* node) {
     if (!node) return;
 
-    // 根据 NodeType 枚举快速分发（替代 24 次 dynamic_cast）
-    switch (node->nodeType) {
-    case NodeType::NODE_BINARY_OP:     compileBinaryOp(*static_cast<BinaryOp*>(node)); return;
-    case NodeType::NODE_UNARY_OP:      compileUnaryOp(*static_cast<UnaryOp*>(node)); return;
-    case NodeType::NODE_NUMBER_LITERAL: compileNumberLiteral(*static_cast<NumberLiteral*>(node)); return;
-    case NodeType::NODE_STRING_LITERAL: compileStringLiteral(*static_cast<StringLiteral*>(node)); return;
-    case NodeType::NODE_BOOL_LITERAL:   compileBoolLiteral(*static_cast<BoolLiteral*>(node)); return;
-    case NodeType::NODE_VAR_DECL:       compileVarDecl(*static_cast<VarDecl*>(node)); return;
-    case NodeType::NODE_ASSIGNMENT:     compileAssignment(*static_cast<Assignment*>(node)); return;
-    case NodeType::NODE_VAR_REF:       compileVarRef(*static_cast<VarRef*>(node)); return;
-    case NodeType::NODE_IF_STMT:        compileIfStmt(*static_cast<IfStmt*>(node)); return;
-    case NodeType::NODE_WHILE_STMT:     compileWhileStmt(*static_cast<WhileStmt*>(node)); return;
-    case NodeType::NODE_FOR_STMT:       compileForStmt(*static_cast<ForStmt*>(node)); return;
-    case NodeType::NODE_FUN_DECL:       compileFunDecl(*static_cast<FunDecl*>(node)); return;
-    case NodeType::NODE_FUN_CALL:       compileFunCall(*static_cast<FunCall*>(node)); return;
-    case NodeType::NODE_RETURN_STMT:    compileReturnStmt(*static_cast<ReturnStmt*>(node)); return;
-    case NodeType::NODE_PRINT_STMT:     compilePrintStmt(*static_cast<PrintStmt*>(node)); return;
-    case NodeType::NODE_BLOCK:          compileBlock(*static_cast<Block*>(node)); return;
-    case NodeType::NODE_ARRAY_LITERAL:  compileArrayLiteral(*static_cast<ArrayLiteral*>(node)); return;
-    case NodeType::NODE_DICT_LITERAL:   compileDictLiteral(*static_cast<DictLiteral*>(node)); return;
-    case NodeType::NODE_INDEX_ACCESS:   compileIndexAccess(*static_cast<IndexAccess*>(node)); return;
-    case NodeType::NODE_INDEX_ASSIGN:   compileIndexAssign(*static_cast<IndexAssign*>(node)); return;
-    case NodeType::NODE_CLASS_DECL:     compileClassDecl(*static_cast<ClassDecl*>(node)); return;
-    case NodeType::NODE_MEMBER_ACCESS: compileMemberAccess(*static_cast<MemberAccess*>(node)); return;
-    case NodeType::NODE_MEMBER_ASSIGN: compileMemberAssign(*static_cast<MemberAssign*>(node)); return;
-    case NodeType::NODE_METHOD_CALL:    compileMethodCall(*static_cast<MethodCall*>(node)); return;
-    case NodeType::NODE_NULL_LITERAL:   compileNullLiteral(*static_cast<NullLiteral*>(node)); return;
-    case NodeType::NODE_SUPER_EXPR:    compileSuperExpr(*static_cast<SuperExpr*>(node)); return;
-    default:
-        diagnostics_.addError("编译器内部错误: 未处理的 AST 节点类型", node->line, node->column, DiagSource::Compiler);
-        return;
-    }
+    // 通过 Visitor 模式分派：accept 会回调对应的 visit* 方法
+    node->accept(*this);
 }
 
 void Compiler::compileStatement(ASTNode* node) {
@@ -177,12 +153,12 @@ void Compiler::compileStatement(ASTNode* node) {
     }
 }
 
-void Compiler::compileBinaryOp(BinaryOp& node) {
+Value Compiler::visitBinaryOp(BinaryOp& node) {
     // 常量折叠：编译期求值常量表达式
     Value folded;
     if (tryFoldBinary(node.opType, node.left.get(), node.right.get(), folded, node.line)) {
         emitConstant(folded, node.line);
-        return;
+        return Value::nullValue();
     }
 
     // 短路运算特殊处理
@@ -199,7 +175,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         chunk_.code[jumpPatch + 1] = static_cast<uint8_t>(jumpTarget & 0xFF);
         chunk_.code[jumpPatch + 2] = static_cast<uint8_t>((jumpTarget >> 8) & 0xFF);
         // M1 fix: 移除 NOT NOT 双重取反，保留操作数原始值（JS 语义）
-        return;
+        return Value::nullValue();
     }
 
     if (node.opType == BinOpType::BIN_OR) {
@@ -224,7 +200,7 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
         chunk_.code[jumpEnd + 1] = static_cast<uint8_t>(endTarget & 0xFF);
         chunk_.code[jumpEnd + 2] = static_cast<uint8_t>((endTarget >> 8) & 0xFF);
         // M1 fix: 移除 NOT NOT 双重取反，保留操作数原始值（JS 语义）
-        return;
+        return Value::nullValue();
     }
 
     // 普通二元运算
@@ -246,18 +222,19 @@ void Compiler::compileBinaryOp(BinaryOp& node) {
     case BinOpType::BIN_GTE:  op = OpCode::OP_GREATER_EQUAL; break;
     default:
         error("不支持的运算符: " + std::string(BinaryOp::opTypeStr(node.opType)), node.line, node.column);
-        return;
+        return Value::nullValue();
     }
 
     chunk_.writeOp(op, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileUnaryOp(UnaryOp& node) {
+Value Compiler::visitUnaryOp(UnaryOp& node) {
     // 常量折叠：编译期求值常量表达式
     Value folded;
     if (tryFoldUnary(node.opType, node.operand.get(), folded, node.line)) {
         emitConstant(folded, node.line);
-        return;
+        return Value::nullValue();
     }
 
     compileNode(node.operand.get());
@@ -273,9 +250,10 @@ void Compiler::compileUnaryOp(UnaryOp& node) {
     default:
         break;
     }
+    return Value::nullValue();
 }
 
-void Compiler::compileNumberLiteral(NumberLiteral& node) {
+Value Compiler::visitNumberLiteral(NumberLiteral& node) {
     uint16_t idx = chunk_.addConstant(node.value);
     if (node.value.isInt()) {
         chunk_.writeOp(OpCode::OP_INT, node.line);
@@ -283,19 +261,22 @@ void Compiler::compileNumberLiteral(NumberLiteral& node) {
         chunk_.writeOp(OpCode::OP_FLOAT, node.line);
     }
     chunk_.writeShort(idx, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileStringLiteral(StringLiteral& node) {
+Value Compiler::visitStringLiteral(StringLiteral& node) {
     uint16_t idx = chunk_.addConstant(Value(node.value));
     chunk_.writeOp(OpCode::OP_STRING, node.line);
     chunk_.writeShort(idx, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileBoolLiteral(BoolLiteral& node) {
+Value Compiler::visitBoolLiteral(BoolLiteral& node) {
     chunk_.writeOp(node.value ? OpCode::OP_TRUE : OpCode::OP_FALSE, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileVarDecl(VarDecl& node) {
+Value Compiler::visitVarDecl(VarDecl& node) {
     // 编译初始化表达式
     if (node.initializer) {
         compileNode(node.initializer.get());
@@ -345,9 +326,10 @@ void Compiler::compileVarDecl(VarDecl& node) {
             topLevelGlobals_.insert(node.name);
         }
     }
+    return Value::nullValue();
 }
 
-void Compiler::compileAssignment(Assignment& node) {
+Value Compiler::visitAssignment(Assignment& node) {
     compileNode(node.value.get());
 
     // C2 fix: 赋值作为表达式应产生值。先 DUP 保留一份在栈上，
@@ -368,7 +350,7 @@ void Compiler::compileAssignment(Assignment& node) {
                 chunk_.writeOp(OpCode::OP_SET_UPVALUE, node.line);
                 chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
                 chunk_.writeOp(OpCode::OP_POP, node.line); // 清理 DUP 副本
-                return;
+                return Value::nullValue();
             }
             // A2: use integer slot for known globals
             int slot = lookupGlobalSlot(node.name);
@@ -393,6 +375,7 @@ void Compiler::compileAssignment(Assignment& node) {
             chunk_.writeShort(nameIdx, node.line);
         }
     }
+    return Value::nullValue();
 }
 
 // VM-05/06: 解析闭包捕获变量为 upvalue 索引
@@ -427,20 +410,20 @@ int Compiler::resolveUpvalue(const std::string& name, int line) {
     return -1;
 }
 
-void Compiler::compileVarRef(VarRef& node) {
+Value Compiler::visitVarRef(VarRef& node) {
     if (inFunction_) {
         auto it = currentLocals_.find(node.name);
         if (it != currentLocals_.end()) {
             chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(it->second), node.line);
-            return;
+            return Value::nullValue();
         }
         // VM-05/06: 尝试解析为 upvalue（闭包捕获外层变量）
         int uvIdx = resolveUpvalue(node.name, node.line);
         if (uvIdx >= 0) {
             chunk_.writeOp(OpCode::OP_GET_UPVALUE, node.line);
             chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
-            return;
+            return Value::nullValue();
         }
     }
     // A2: use integer slot for known globals
@@ -453,9 +436,10 @@ void Compiler::compileVarRef(VarRef& node) {
         chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
         chunk_.writeShort(nameIdx, node.line);
     }
+    return Value::nullValue();
 }
 
-void Compiler::compileIfStmt(IfStmt& node) {
+Value Compiler::visitIfStmt(IfStmt& node) {
     compileNode(node.condition.get());
 
     // 条件为假跳转到 else 分支
@@ -497,9 +481,10 @@ void Compiler::compileIfStmt(IfStmt& node) {
     uint16_t endTarget = safeCodeOffset();
     chunk_.code[endJumpPatch + 1] = static_cast<uint8_t>(endTarget & 0xFF);
     chunk_.code[endJumpPatch + 2] = static_cast<uint8_t>((endTarget >> 8) & 0xFF);
+    return Value::nullValue();
 }
 
-void Compiler::compileWhileStmt(WhileStmt& node) {
+Value Compiler::visitWhileStmt(WhileStmt& node) {
     // V3 fix: 保存局部变量映射，while 循环体内声明的变量不泄漏
     auto savedLocals = currentLocals_;
 
@@ -546,9 +531,10 @@ void Compiler::compileWhileStmt(WhileStmt& node) {
 
     // V3 fix: 恢复局部变量映射（P28: swap 避免二次拷贝）
     currentLocals_.swap(savedLocals);
+    return Value::nullValue();
 }
 
-void Compiler::compileForStmt(ForStmt& node) {
+Value Compiler::visitForStmt(ForStmt& node) {
     // V3 fix: 保存局部变量映射，for 循环内声明的变量不泄漏到外层作用域
     auto savedLocals = currentLocals_;
 
@@ -646,9 +632,10 @@ void Compiler::compileForStmt(ForStmt& node) {
 
     // V3 fix: 恢复局部变量映射（P28: swap）
     currentLocals_.swap(savedLocals);
+    return Value::nullValue();
 }
 
-void Compiler::compileFunDecl(FunDecl& node) {
+Value Compiler::visitFunDecl(FunDecl& node) {
     // H5 fix: 记录是否为内嵌函数（在函数体内定义的函数）
     bool isInner = inFunction_;
 
@@ -765,9 +752,10 @@ void Compiler::compileFunDecl(FunDecl& node) {
         outerLocals_[node.name] = slot;
         outerFunctions_[node.name] = slot;
     }
+    return Value::nullValue();
 }
 
-void Compiler::compileFunCall(FunCall& node) {
+Value Compiler::visitFunCall(FunCall& node) {
     // 链式调用 / 表达式调用: callee(args)
     if (node.callee) {
         // 编译被调用表达式（结果应为闭包值，推入栈顶）
@@ -782,7 +770,7 @@ void Compiler::compileFunCall(FunCall& node) {
         // OP_CALL_EXPR: 栈顶 N 个参数下方为闭包值
         chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
         chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
-        return;
+        return Value::nullValue();
     }
 
     // H5 fix: 内嵌函数通过局部变量中的闭包值调用，避免 functionClosures_ 按名称覆盖
@@ -800,7 +788,7 @@ void Compiler::compileFunCall(FunCall& node) {
         }
         chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
         chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
-        return;
+        return Value::nullValue();
     }
 
     // 编译参数
@@ -819,13 +807,13 @@ void Compiler::compileFunCall(FunCall& node) {
     chunk_.write(static_cast<uint8_t>(nameIdx & 0xFF), node.line);
     chunk_.write(static_cast<uint8_t>((nameIdx >> 8) & 0xFF), node.line);
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileReturnStmt(ReturnStmt& node) {
+Value Compiler::visitReturnStmt(ReturnStmt& node) {
     if (!inFunction_) {
-        lastError_ = "return 只能在函数体内使用";
-        diagnostics_.addError("return 只能在函数体内使用", node.line, 0, DiagSource::Compiler);
-        return;
+        error("return 只能在函数体内使用", node.line, 0);
+        return Value::nullValue();
     }
     if (node.value) {
         compileNode(node.value.get());
@@ -833,9 +821,10 @@ void Compiler::compileReturnStmt(ReturnStmt& node) {
         chunk_.writeOp(OpCode::OP_NULL, node.line);
     }
     chunk_.writeOp(OpCode::OP_RETURN, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compilePrintStmt(PrintStmt& node) {
+Value Compiler::visitPrintStmt(PrintStmt& node) {
     // C2 fix: 与解释器行为对齐 — 多参数用空格拼接后单次输出
     if (node.values.empty()) {
         // print() → 输出空行（与解释器 output("") 一致）
@@ -861,9 +850,10 @@ void Compiler::compilePrintStmt(PrintStmt& node) {
         }
         chunk_.writeOp(OpCode::OP_PRINT, node.line);
     }
+    return Value::nullValue();
 }
 
-void Compiler::compileBlock(Block& node) {
+Value Compiler::visitBlock(Block& node) {
     auto savedLocals = currentLocals_;
 
     if (!inFunction_) {
@@ -956,15 +946,16 @@ void Compiler::compileBlock(Block& node) {
         }
         currentLocals_.swap(savedLocals);  // P28: swap
     }
+    return Value::nullValue();
 }
 
 // ---- 新增节点编译 ----
 
-void Compiler::compileArrayLiteral(ArrayLiteral& node) {
+Value Compiler::visitArrayLiteral(ArrayLiteral& node) {
     // 检查元素数量上限（uint8_t 编码限制）
     if (node.elements.size() > 255) {
         error("数组元素数量超过 255 个上限", node.line, node.column);
-        return;
+        return Value::nullValue();
     }
     // 编译所有元素
     for (auto& elem : node.elements) {
@@ -973,13 +964,14 @@ void Compiler::compileArrayLiteral(ArrayLiteral& node) {
     // 构建数组指令
     chunk_.writeOp(OpCode::OP_BUILD_ARRAY, node.line);
     chunk_.write(static_cast<uint8_t>(node.elements.size()), node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileDictLiteral(DictLiteral& node) {
+Value Compiler::visitDictLiteral(DictLiteral& node) {
     // 检查键值对数量上限（uint8_t 编码限制）
     if (node.pairs.size() > 255) {
         error("字典键值对数量超过 255 个上限", node.line, node.column);
-        return;
+        return Value::nullValue();
     }
     // 编译所有键值对（先键后值，与 OP_BUILD_DICT 消费顺序一致）
     for (auto& pair : node.pairs) {
@@ -989,15 +981,17 @@ void Compiler::compileDictLiteral(DictLiteral& node) {
     // 构建字典指令：弹出 2*count 个值，构建字典，push 到栈
     chunk_.writeOp(OpCode::OP_BUILD_DICT, node.line);
     chunk_.write(static_cast<uint8_t>(node.pairs.size()), node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileIndexAccess(IndexAccess& node) {
+Value Compiler::visitIndexAccess(IndexAccess& node) {
     compileNode(node.object.get());
     compileNode(node.index.get());
     chunk_.writeOp(OpCode::OP_INDEX_GET, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileIndexAssign(IndexAssign& node) {
+Value Compiler::visitIndexAssign(IndexAssign& node) {
     // 根据左值对象类型选择赋值策略
     VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
                      ? static_cast<VarRef*>(node.object.get()) : nullptr;
@@ -1018,7 +1012,7 @@ void Compiler::compileIndexAssign(IndexAssign& node) {
             chunk_.writeOp(OpCode::OP_INDEX_SET_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
         }
-        return;
+        return Value::nullValue();
     }
 
     // M1 fix: 嵌套索引赋值（2 层）
@@ -1079,7 +1073,7 @@ void Compiler::compileIndexAssign(IndexAssign& node) {
                 chunk_.writeShort(fieldIdx, node.line);
             }
         }
-        return;
+        return Value::nullValue();
     }
 
     // 3+ 层嵌套或复杂表达式：通用路径（仍报错）
@@ -1087,9 +1081,10 @@ void Compiler::compileIndexAssign(IndexAssign& node) {
     compileNode(node.index.get());
     compileNode(node.value.get());
     chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileClassDecl(ClassDecl& node) {
+Value Compiler::visitClassDecl(ClassDecl& node) {
     // 类声明：发射 OP_CLASS_NEW + OP_INIT_FIELD 初始化字段 + 编译方法
     uint16_t nameIdx = identifierIndex(node.name);
 
@@ -1213,9 +1208,10 @@ void Compiler::compileClassDecl(ClassDecl& node) {
     }
 
     // 栈上的模板实例已被 OP_DEFINE_CLASS 消费，无需额外 OP_POP
+    return Value::nullValue();
 }
 
-void Compiler::compileMemberAccess(MemberAccess& node) {
+Value Compiler::visitMemberAccess(MemberAccess& node) {
     compileNode(node.object.get());
     uint16_t nameIdx = identifierIndex(node.fieldName);
     // O1: super.field — 字段已在构造时通过继承链复制到实例中，与 this.field 等价
@@ -1223,9 +1219,10 @@ void Compiler::compileMemberAccess(MemberAccess& node) {
     bool isSuperAccess = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
     chunk_.writeOp(isSuperAccess ? OpCode::OP_SUPER_MEMBER_GET : OpCode::OP_MEMBER_GET, node.line);
     chunk_.writeShort(nameIdx, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileMemberAssign(MemberAssign& node) {
+Value Compiler::visitMemberAssign(MemberAssign& node) {
     // 根据左值对象类型选择赋值策略
     VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
                      ? static_cast<VarRef*>(node.object.get()) : nullptr;
@@ -1240,7 +1237,7 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
             chunk_.writeOp(OpCode::OP_MEMBER_SET_LOCAL, node.line);
             chunk_.write(slot, node.line);
             chunk_.writeShort(fieldIdx, node.line);
-            return;
+            return Value::nullValue();
         }
         compileNode(node.value.get());
         uint16_t varIdx = identifierIndex(objVar->name);
@@ -1248,7 +1245,7 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
         chunk_.writeOp(OpCode::OP_MEMBER_SET_VAR, node.line);
         chunk_.writeShort(varIdx, node.line);
         chunk_.writeShort(fieldIdx, node.line);
-        return;
+        return Value::nullValue();
     }
 
     // M1 fix: 嵌套成员赋值（2 层）
@@ -1309,7 +1306,7 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
                 chunk_.writeShort(outerFieldIdx, node.line);
             }
         }
-        return;
+        return Value::nullValue();
     }
 
     // 3+ 层嵌套或复杂表达式：通用路径
@@ -1318,9 +1315,10 @@ void Compiler::compileMemberAssign(MemberAssign& node) {
     uint16_t nameIdx = identifierIndex(node.fieldName);
     chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
     chunk_.writeShort(nameIdx, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileMethodCall(MethodCall& node) {
+Value Compiler::visitMethodCall(MethodCall& node) {
     // 检查接收者是否为简单变量（VarRef），用于 writeBack
     uint16_t receiverVarIdx = 0xFFFF;  // 0xFFFF = 无全局变量 writeBack
     uint8_t receiverLocalSlot = 0xFF;  // 0xFF = 无局部变量 writeBack
@@ -1445,23 +1443,23 @@ void Compiler::compileMethodCall(MethodCall& node) {
         chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
         chunk_.writeShort(cacheIdx, node.line);
     }
+    return Value::nullValue();
 }
 
-void Compiler::compileNullLiteral(NullLiteral& node) {
+Value Compiler::visitNullLiteral(NullLiteral& node) {
     chunk_.writeOp(OpCode::OP_NULL, node.line);
+    return Value::nullValue();
 }
 
-void Compiler::compileSuperExpr(SuperExpr& node) {
+Value Compiler::visitSuperExpr(SuperExpr& node) {
     // super 编译为 OP_GET_LOCAL 0（this），与方法中访问 this 相同
-    // 调用点（compileMethodCall/compileMemberAccess）检测 super 对象并使用父类查找
+    // 调用点（visitMethodCall/visitMemberAccess）检测 super 对象并使用父类查找
     chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
     chunk_.write(0, node.line);  // slot 0 = this
+    return Value::nullValue();
 }
 
 void Compiler::error(const std::string& msg, int line, int col) {
-    std::ostringstream oss;
-    oss << "编译错误 (行 " << line << ", 列 " << col << "): " << msg;
-    lastError_ = oss.str();
     diagnostics_.addError(msg, line, col, DiagSource::Compiler);
 }
 

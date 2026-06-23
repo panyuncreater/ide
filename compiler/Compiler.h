@@ -7,13 +7,14 @@
 #include "ast/ASTNode.h"
 #include "compiler/Bytecode.h"
 #include "Diagnostic.h"
+#include "interpreter/Visitor.h"  // 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式
 
 // ============================================================
 // Compiler 字节码编译器
 // ============================================================
 
 /// 将 AST 编译为字节码
-class Compiler {
+class Compiler : public DefaultVisitor {
 public:
     Compiler();
 
@@ -29,7 +30,6 @@ public:
 private:
     BytecodeChunk chunk_;                           // 当前字节码块
     std::unordered_map<std::string, uint16_t> varIndex_;  // 变量名 → 常量池索引
-    std::string lastError_;                         // 最近一次编译错误
     DiagnosticBag diagnostics_;                      // 诊断收集器
     std::unordered_map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
     std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
@@ -70,41 +70,41 @@ private:
     /// A2: 查找全局槽位（未找到返回 -1）
     int lookupGlobalSlot(const std::string& name) const;
 
-    /// 编译 AST 节点
+    /// 编译 AST 节点（通过 Visitor 模式的 accept 分派）
     void compileNode(ASTNode* node);
 
     /// 编译节点作为语句（确保栈平衡：纯表达式语句会补发 OP_POP 弹出返回值）
     void compileStatement(ASTNode* node);
 
-    /// 编译各个节点类型
-    void compileBinaryOp(BinaryOp& node);
-    void compileUnaryOp(UnaryOp& node);
-    void compileNumberLiteral(NumberLiteral& node);
-    void compileStringLiteral(StringLiteral& node);
-    void compileBoolLiteral(BoolLiteral& node);
-    void compileVarDecl(VarDecl& node);
-    void compileAssignment(Assignment& node);
-    void compileVarRef(VarRef& node);
-    void compileIfStmt(IfStmt& node);
-    void compileWhileStmt(WhileStmt& node);
-    void compileForStmt(ForStmt& node);
-    void compileFunDecl(FunDecl& node);
-    void compileFunCall(FunCall& node);
-    void compileReturnStmt(ReturnStmt& node);
-    void compilePrintStmt(PrintStmt& node);
-    void compileBlock(Block& node);
+    /// 编译各个节点类型（Visitor 模式：由 accept 分派调用，返回 Value 统一接口）
+    Value visitBinaryOp(BinaryOp& node) override;
+    Value visitUnaryOp(UnaryOp& node) override;
+    Value visitNumberLiteral(NumberLiteral& node) override;
+    Value visitStringLiteral(StringLiteral& node) override;
+    Value visitBoolLiteral(BoolLiteral& node) override;
+    Value visitVarDecl(VarDecl& node) override;
+    Value visitAssignment(Assignment& node) override;
+    Value visitVarRef(VarRef& node) override;
+    Value visitIfStmt(IfStmt& node) override;
+    Value visitWhileStmt(WhileStmt& node) override;
+    Value visitForStmt(ForStmt& node) override;
+    Value visitFunDecl(FunDecl& node) override;
+    Value visitFunCall(FunCall& node) override;
+    Value visitReturnStmt(ReturnStmt& node) override;
+    Value visitPrintStmt(PrintStmt& node) override;
+    Value visitBlock(Block& node) override;
 
     // 新增节点编译
-    void compileArrayLiteral(ArrayLiteral& node);
-    void compileDictLiteral(DictLiteral& node);
-    void compileIndexAccess(IndexAccess& node);
-    void compileIndexAssign(IndexAssign& node);
-    void compileClassDecl(ClassDecl& node);
-    void compileMemberAccess(MemberAccess& node);
-    void compileMemberAssign(MemberAssign& node);
-    void compileMethodCall(MethodCall& node);
-    void compileNullLiteral(NullLiteral& node);
-    void compileSuperExpr(SuperExpr& node);
+    Value visitArrayLiteral(ArrayLiteral& node) override;
+    Value visitDictLiteral(DictLiteral& node) override;
+    Value visitIndexAccess(IndexAccess& node) override;
+    Value visitIndexAssign(IndexAssign& node) override;
+    Value visitClassDecl(ClassDecl& node) override;
+    Value visitMemberAccess(MemberAccess& node) override;
+    Value visitMemberAssign(MemberAssign& node) override;
+    Value visitMethodCall(MethodCall& node) override;
+    Value visitNullLiteral(NullLiteral& node) override;
+    Value visitSuperExpr(SuperExpr& node) override;
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);

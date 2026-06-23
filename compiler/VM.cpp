@@ -52,6 +52,7 @@ VMResult VM::runtimeError(const std::string& msg) {
     lastError_ = msg;
     lastErrorLine_ = getCurrentLine();
     hasError_ = true;
+    diagnostics_.addError(msg, lastErrorLine_, 0, DiagSource::VM);
     return VMResult::VM_RUNTIME_ERROR;
 }
 
@@ -325,6 +326,41 @@ VMResult VM::pushCompareResult(bool result, size_t& ip, OpCode opcode) {
     return VMResult::VM_OK;
 }
 
+// 写回变异方法调用后的接收者（统一数组/字典/实例三处写回逻辑）
+// 判断链：
+//   1. receiverVarIdx != 0xFFFF → 写入 globalSlots_ 或 globals_
+//   2. receiverLocalSlotByte != 0xFF → 写入栈帧（含字段同步）
+//   3. 否则 → 存入 lastMutatedReceiver_
+VMResult VM::writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
+                               Value& mutatedObj, bool fieldsModified) {
+    const BytecodeChunk& chunk = currentChunk();
+    if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+        const std::string& recvName = chunk.constants[receiverVarIdx].stringVal();
+        auto gsIt = globalNameToSlot_.find(recvName);
+        if (gsIt != globalNameToSlot_.end()) {
+            globalSlots_[gsIt->second] = std::move(mutatedObj);
+        } else {
+            globals_[recvName] = std::move(mutatedObj);
+        }
+    } else if (receiverLocalSlotByte != 0xFF) {
+        size_t bp = currentFrame().basePointer;
+        // P7 fix: 先拷贝到字段（需要完整副本），再 move 到栈槽
+        if (fieldsModified && receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
+            VMCallFrame& curFrame = currentFrame();
+            if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
+                const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
+                stack_[bp].fields()[fn] = mutatedObj;  // 拷贝（move 前）
+            }
+        }
+        if (bp + receiverLocalSlotByte < stack_.size()) {
+            stack_[bp + receiverLocalSlotByte] = std::move(mutatedObj);  // move 在后
+        }
+    } else {
+        lastMutatedReceiver_ = std::move(mutatedObj);
+    }
+    return VMResult::VM_OK;
+}
+
 // ============================================================
 // 初始化 / 单步 / 状态查询
 // ============================================================
@@ -336,6 +372,7 @@ void VM::initExecution(const CompileResult& result) {
     lastError_.clear();
     lastErrorLine_ = 0;
     hasError_ = false;
+    diagnostics_.clear();
     frames_.clear();
     frames_.reserve(64);  // 预分配调用帧空间，避免频繁 realloc
     functionChunks_ = result.functionChunks;
@@ -387,6 +424,7 @@ void VM::resetState() {
     lastError_.clear();
     lastErrorLine_ = 0;
     hasError_ = false;
+    diagnostics_.clear();
     frames_.clear();
     functionChunks_.clear();
     classInfo_.clear();
@@ -479,6 +517,11 @@ VMResult VM::execute(const CompileResult& result) {
 // 函数指针表的额外重构（1600+ 行拆分为 50+ 方法）收益极小。
 // 保留 switch 形式，确保代码可维护性。
 
+
+// ============================================================
+// executeOneInstruction() — 单条指令执行（按指令类别转发到私有方法）
+// ============================================================
+
 VMResult VM::executeOneInstruction() {
     if (hasError_) return VMResult::VM_RUNTIME_ERROR;
     VMCallFrame& frame = currentFrame();
@@ -496,6 +539,112 @@ VMResult VM::executeOneInstruction() {
     if (ip + instrSize > chunk.code.size()) {
         return runtimeError("字节码截断: 指令不完整");
     }
+
+    switch (op) {
+    // 常量加载类
+    case OpCode::OP_CONSTANT:
+    case OpCode::OP_INT:
+    case OpCode::OP_FLOAT:
+    case OpCode::OP_STRING:
+    case OpCode::OP_NULL:
+    case OpCode::OP_TRUE:
+    case OpCode::OP_FALSE:
+        return executeConstantOps(op, ip);
+
+    // 算术运算类
+    case OpCode::OP_ADD:
+    case OpCode::OP_SUBTRACT:
+    case OpCode::OP_MULTIPLY:
+    case OpCode::OP_DIVIDE:
+    case OpCode::OP_MODULO:
+    case OpCode::OP_NEGATE:
+        return executeArithOps(op, ip);
+
+    // 比较与逻辑运算类
+    case OpCode::OP_EQUAL:
+    case OpCode::OP_NOT_EQUAL:
+    case OpCode::OP_LESS:
+    case OpCode::OP_GREATER:
+    case OpCode::OP_LESS_EQUAL:
+    case OpCode::OP_GREATER_EQUAL:
+    case OpCode::OP_NOT:
+    case OpCode::OP_AND:
+    case OpCode::OP_OR:
+        return executeCompareOps(op, ip);
+
+    // 变量操作类
+    case OpCode::OP_DEFINE_VAR:
+    case OpCode::OP_GET_VAR:
+    case OpCode::OP_SET_VAR:
+    case OpCode::OP_DELETE_VAR:
+    case OpCode::OP_GET_GLOBAL:
+    case OpCode::OP_SET_GLOBAL:
+    case OpCode::OP_DEFINE_GLOBAL:
+    case OpCode::OP_DELETE_GLOBAL:
+    case OpCode::OP_GET_LOCAL:
+    case OpCode::OP_SET_LOCAL:
+    case OpCode::OP_GET_UPVALUE:
+    case OpCode::OP_SET_UPVALUE:
+    case OpCode::OP_CLOSE_UPVALUE:
+        return executeVarOps(op, ip);
+
+    // 调用相关类
+    case OpCode::OP_CALL:
+    case OpCode::OP_CALL_EXPR:
+    case OpCode::OP_CLOSURE:
+    case OpCode::OP_RETURN:
+    case OpCode::OP_SUPER_CALL:
+    case OpCode::OP_METHOD_CALL:
+    case OpCode::OP_CLASS_NEW:
+    case OpCode::OP_DEFINE_CLASS:
+        return executeCallOps(op, ip);
+
+    // 容器与成员操作类
+    case OpCode::OP_BUILD_ARRAY:
+    case OpCode::OP_BUILD_DICT:
+    case OpCode::OP_INDEX_GET:
+    case OpCode::OP_INDEX_SET:
+    case OpCode::OP_INDEX_SET_VAR:
+    case OpCode::OP_INDEX_SET_LOCAL:
+    case OpCode::OP_MEMBER_GET:
+    case OpCode::OP_MEMBER_SET:
+    case OpCode::OP_MEMBER_SET_VAR:
+    case OpCode::OP_MEMBER_SET_LOCAL:
+    case OpCode::OP_SUPER_MEMBER_GET:
+        return executeContainerOps(op, ip);
+
+    // 嵌套访问写回类
+    case OpCode::OP_WRITEBACK_MEMBER_VAR:
+    case OpCode::OP_WRITEBACK_MEMBER_LOCAL:
+    case OpCode::OP_WRITEBACK_INDEX_VAR:
+    case OpCode::OP_WRITEBACK_INDEX_LOCAL:
+        return executeWritebackOps(op, ip);
+
+    // 其他指令
+    case OpCode::OP_PRINT:
+    case OpCode::OP_POP:
+    case OpCode::OP_DUP:
+    case OpCode::OP_DUP_N:
+    case OpCode::OP_JUMP:
+    case OpCode::OP_JUMP_IF_FALSE:
+    case OpCode::OP_LOOP:
+    case OpCode::OP_INIT_FIELD:
+        return executeMiscOps(op, ip);
+
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// 常量加载类指令
+// ============================================================
+
+VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
 
     switch (op) {
     case OpCode::OP_CONSTANT:
@@ -528,6 +677,24 @@ VMResult VM::executeOneInstruction() {
         ip += 1;
         break;
 
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// 算术运算类指令
+// ============================================================
+
+VMResult VM::executeArithOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+    (void)frame;
+    (void)chunk;
+
+    switch (op) {
     case OpCode::OP_ADD: {
         VMResult r = numericOp(OP_ADD_INT);
         if (r != VMResult::VM_OK) return r;
@@ -583,6 +750,24 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// 比较与逻辑运算类指令
+// ============================================================
+
+VMResult VM::executeCompareOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+    (void)frame;
+    (void)chunk;
+
+    switch (op) {
     case OpCode::OP_NOT: {
         if (stack_.empty()) return runtimeError("栈下溢：NOT 运算需要一个操作数");
         // P17 fix: 原地修改栈顶
@@ -634,20 +819,22 @@ VMResult VM::executeOneInstruction() {
         // 保留 case 防止未知操作码错误，但执行到此说明字节码损坏
         return runtimeError("内部错误: 编译器不应生成 OP_AND/OP_OR");
 
-    case OpCode::OP_PRINT: {
-        Value val = pop();
-        outputCallback_(val.toString());
-        notifyStep(ip, op);
-        ip += 1;
-        break;
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
     }
 
-    case OpCode::OP_POP:
-        pop();
-        notifyStep(ip, op);
-        ip += 1;
-        break;
+    return VMResult::VM_OK;
+}
 
+// ============================================================
+// 变量操作类指令
+// ============================================================
+
+VMResult VM::executeVarOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+
+    switch (op) {
     case OpCode::OP_DEFINE_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
@@ -814,36 +1001,107 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
-    case OpCode::OP_JUMP: {
-        uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP");
-        notifyStep(ip, op);
-        ip = jump;
-        break;
-    }
-
-    case OpCode::OP_JUMP_IF_FALSE: {
-        uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP_IF_FALSE");
-        // 注意：不弹出条件值——编译器在 OP_JUMP_IF_FALSE 后显式生成 OP_POP
-        // 如果这里也 pop，会导致所有条件/短路表达式的栈操作双重弹出
-        notifyStep(ip, op);
-        if (!peek(0).isTruthy()) {
-            ip = jump;
-        } else {
-            ip += 3;
+    case OpCode::OP_GET_LOCAL: {
+        uint8_t slot = chunk.code[ip + 1];
+        size_t bp = currentFrame().basePointer;
+        if (bp + slot >= stack_.size()) {
+            return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
         }
-        break;
-    }
-
-    case OpCode::OP_LOOP: {
-        uint16_t loop = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (loop >= chunk.code.size()) return runtimeError("跳转目标越界: OP_LOOP");
+        push(stack_[bp + slot]);
         notifyStep(ip, op);
-        ip = loop;
+        ip += 2;
         break;
     }
 
+    case OpCode::OP_SET_LOCAL: {
+        uint8_t slot = chunk.code[ip + 1];
+        size_t bp = currentFrame().basePointer;
+        const Value& val = peek(0);
+        if (bp + slot >= stack_.size()) {
+            return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
+        }
+        stack_[bp + slot] = val;
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    // VM-05/06: upvalue 读写操作码
+    case OpCode::OP_GET_UPVALUE: {
+        uint8_t uvIdx = chunk.code[ip + 1];
+        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
+            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
+        }
+        auto& uv = frame.upvalues[uvIdx];
+        if (uv->isClosed) {
+            push(uv->value);
+        } else {
+            if (uv->stackSlot < stack_.size()) {
+                push(stack_[uv->stackSlot]);
+            } else {
+                return runtimeError("内部错误: upvalue 栈槽越界");
+            }
+        }
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    case OpCode::OP_SET_UPVALUE: {
+        uint8_t uvIdx = chunk.code[ip + 1];
+        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
+            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
+        }
+        auto& uv = frame.upvalues[uvIdx];
+        const Value& val = peek(0); // peek 不消费（与 OP_SET_LOCAL 一致）
+        if (uv->isClosed) {
+            uv->value = val;
+        } else {
+            if (uv->stackSlot < stack_.size()) {
+                stack_[uv->stackSlot] = val;
+            } else {
+                return runtimeError("内部错误: upvalue 栈槽越界");
+            }
+        }
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    case OpCode::OP_CLOSE_UPVALUE: {
+        uint8_t uvIdx = chunk.code[ip + 1];
+        if (static_cast<size_t>(uvIdx) < frame.upvalues.size()) {
+            auto& uv = frame.upvalues[uvIdx];
+            if (!uv->isClosed && uv->stackSlot < stack_.size()) {
+                uv->value = stack_[uv->stackSlot];
+                uv->isClosed = true;
+                // L-新1 fix: 从 openUpvalues_ 移除已关闭的 upvalue
+                openUpvalues_.erase(
+                    std::remove(openUpvalues_.begin(), openUpvalues_.end(), uv),
+                    openUpvalues_.end());
+            }
+        }
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// 调用相关类指令
+// ============================================================
+
+VMResult VM::executeCallOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+
+    switch (op) {
     case OpCode::OP_RETURN: {
         Value result = pop();
         // 提取标量字段 + move 字符串，避免拷贝整个 VMCallFrame（含 2 个 std::string）
@@ -1210,6 +1468,660 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
+    case OpCode::OP_SUPER_CALL:
+    case OpCode::OP_METHOD_CALL: {
+        bool isSuperCall = (op == OpCode::OP_SUPER_CALL);
+        const int instrLen = isSuperCall ? 9 : 7;  // B1 fix: SUPER_CALL 多了 2 字节 classIdx
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        uint8_t argCount = chunk.code[ip + 3];
+        uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
+        uint8_t receiverLocalSlotByte = chunk.code[ip + 6];
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        const std::string& methodName = chunk.constants[idx].stringVal();
+
+        // C8: 用 const 引用访问接收者，避免非变异方法的深拷贝
+        const Value& obj = peek(argCount);
+        // C10: 方法名一次性分类为枚举
+        BuiltinMethod method = classifyBuiltinMethod(methodName);
+
+        // ---- 数组内置方法 ----
+        if (obj.isArray()) {
+            // 先弹出参数（接收者仍在栈上，const ref 有效）
+            SmallArgs<Value> args(argCount);
+            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
+
+            // 非变异路径：从 const 引用计算结果，无需拷贝接收者
+            Value result = Value::nullValue();
+            if (method == BuiltinMethod::ARR_LEN) {
+                result = Value(static_cast<int64_t>(obj.arrayVal().size()));
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+            if (method == BuiltinMethod::ARR_CONTAINS) {
+                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
+                bool found = false;
+                for (const auto& elem : obj.arrayVal()) {
+                    if (elem.equals(args[0])) { found = true; break; }
+                }
+                result = Value(found);
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+            if (method == BuiltinMethod::ARR_JOIN) {
+                std::string sep = args.empty() ? "" : args[0].toString();
+                std::string joined;
+                joined.reserve(obj.arrayVal().size() * (8 + sep.size()));
+                for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
+                    if (i > 0) joined += sep;
+                    joined += obj.arrayVal()[i].toString();
+                }
+                result = Value(std::move(joined));
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+
+            // A2 变异路径：先 pop 接收者(move, refcount 不变)，再用 tryGetMutable 原地修改
+            Value mutableObj = std::move(stack_.back());
+            stack_.pop_back();
+
+            if (method == BuiltinMethod::ARR_PUSH) {
+                if (args.size() != 1) return runtimeError("push 期望 1 个参数");
+                auto* arr = mutableObj.tryGetMutableArray();
+                if (arr) arr->push_back(std::move(args[0]));
+                else mutableObj.arrayVal().push_back(args[0]);
+            } else if (method == BuiltinMethod::ARR_POP) {
+                auto* arr = mutableObj.tryGetMutableArray();
+                if (arr) {
+                    if (arr->empty()) return runtimeError("对空数组调用 pop");
+                    result = std::move(arr->back());
+                    arr->pop_back();
+                } else {
+                    if (mutableObj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
+                    result = mutableObj.arrayVal().back();
+                    mutableObj.arrayVal().pop_back();
+                }
+            } else if (method == BuiltinMethod::ARR_REMOVE) {
+                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
+                if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
+                int64_t ri = args[0].intVal();
+                auto* arr = mutableObj.tryGetMutableArray();
+                if (arr) {
+                    if (ri < 0 || static_cast<size_t>(ri) >= arr->size())
+                        return runtimeError("数组索引越界: " + std::to_string(ri));
+                    arr->erase(arr->begin() + static_cast<size_t>(ri));
+                } else {
+                    if (ri < 0 || static_cast<size_t>(ri) >= mutableObj.arrayVal().size())
+                        return runtimeError("数组索引越界: " + std::to_string(ri));
+                    mutableObj.arrayVal().erase(mutableObj.arrayVal().begin() + static_cast<size_t>(ri));
+                }
+            } else {
+                return runtimeError("数组没有方法 " + methodName);
+            }
+
+            // 写回变异后的对象（P7 fix: 使用 std::move 避免二次深拷贝）
+            writeBackReceiver(receiverVarIdx, receiverLocalSlotByte, mutableObj, true);
+            push(result);
+            notifyStep(ip, op);
+            ip += instrLen;
+            break;
+        }
+
+        // ---- 字典内置方法 ----
+        if (obj.isDict()) {
+            SmallArgs<Value> args(argCount);
+            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
+
+            Value result = Value::nullValue();
+
+            // 非变异路径：直接从 const 引用读取
+            if (method == BuiltinMethod::DICT_LEN || method == BuiltinMethod::ARR_LEN) {
+                result = Value(static_cast<int64_t>(obj.dictVal().size()));
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+            if (method == BuiltinMethod::DICT_KEYS) {
+                std::vector<Value> keys;
+                keys.reserve(obj.dictVal().size());
+                for (const auto& kv : obj.dictVal()) keys.emplace_back(Value(kv.first));
+                result = Value(std::move(keys));
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+            if (method == BuiltinMethod::DICT_VALUES) {
+                std::vector<Value> vals;
+                vals.reserve(obj.dictVal().size());
+                for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
+                result = Value(std::move(vals));
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+            if (method == BuiltinMethod::DICT_HAS || method == BuiltinMethod::ARR_CONTAINS) {
+                if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
+                result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+            if (method == BuiltinMethod::DICT_GET) {
+                if (args.empty() || args.size() > 2) return runtimeError("get 期望 1-2 个参数(键[, 默认值])");
+                std::string key = args[0].toString();
+                auto it = obj.dictVal().find(key);
+                if (it != obj.dictVal().end()) {
+                    result = it->second;
+                } else {
+                    result = (args.size() == 2) ? args[1] : Value::nullValue();
+                }
+                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
+            }
+
+            // A2 变异路径（remove）：先 pop 再原地修改
+            Value mutableObj = std::move(stack_.back());
+            stack_.pop_back();
+
+            if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
+                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
+                auto* dict = mutableObj.tryGetMutableDict();
+                if (dict) dict->erase(args[0].toString());
+                else mutableObj.dictVal().erase(args[0].toString());
+            } else {
+                return runtimeError("字典没有方法 " + methodName);
+            }
+
+            // 写回（P7 fix: 使用 std::move 避免二次深拷贝）
+            writeBackReceiver(receiverVarIdx, receiverLocalSlotByte, mutableObj, true);
+            push(result);
+            notifyStep(ip, op);
+            ip += instrLen;
+            break;
+        }
+
+        // ---- 字符串内置方法（全部非变异，使用 const 引用）----
+        if (obj.isString()) {
+            SmallArgs<Value> args(argCount);
+            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
+
+            Value result = Value::nullValue();
+
+            if (method == BuiltinMethod::STR_LEN || method == BuiltinMethod::ARR_LEN || method == BuiltinMethod::DICT_LEN) {
+                // V3 fix: 字符串按 UTF-8 码位计数，与解释器 M6 fix 一致
+                const std::string& s = obj.stringVal();
+                size_t count = 0;
+                for (size_t i = 0; i < s.size(); ) {
+                    unsigned char c = static_cast<unsigned char>(s[i]);
+                    i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                         ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+                    count++;
+                }
+                result = Value(static_cast<int64_t>(count));
+            } else if (method == BuiltinMethod::STR_UPPER) {
+                std::string s = obj.stringVal();
+                for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                result = Value(std::move(s));
+            } else if (method == BuiltinMethod::STR_LOWER) {
+                std::string s = obj.stringVal();
+                for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                result = Value(std::move(s));
+            } else if (method == BuiltinMethod::STR_SPLIT) {
+                std::string sep = args.empty() ? " " : args[0].toString();
+                if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
+                std::vector<Value> parts;
+                const std::string& src = obj.stringVal();
+                size_t estCount = 1;
+                for (size_t p = 0; (p = src.find(sep, p)) != std::string::npos; p += sep.size()) ++estCount;
+                parts.reserve(estCount);
+                size_t start = 0, pos;
+                while ((pos = src.find(sep, start)) != std::string::npos) {
+                    parts.emplace_back(Value(src.substr(start, pos - start)));
+                    start = pos + sep.size();
+                }
+                parts.emplace_back(Value(src.substr(start)));
+                result = Value(std::move(parts));
+            } else if (method == BuiltinMethod::STR_TRIM) {
+                const std::string& s = obj.stringVal();
+                size_t l = s.find_first_not_of(" \t\r\n");
+                size_t r = s.find_last_not_of(" \t\r\n");
+                if (l == std::string::npos) result = Value(std::string(""));
+                else result = Value(s.substr(l, r - l + 1));
+            } else if (method == BuiltinMethod::STR_CONTAINS) {
+                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
+                result = Value(obj.stringVal().find(args[0].toString()) != std::string::npos);
+            } else if (method == BuiltinMethod::STR_STARTS_WITH) {
+                if (args.size() != 1) return runtimeError("startsWith 期望 1 个参数");
+                const std::string& prefix = args[0].toString();
+                const std::string& s = obj.stringVal();
+                result = Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0);
+            } else if (method == BuiltinMethod::STR_ENDS_WITH) {
+                if (args.size() != 1) return runtimeError("endsWith 期望 1 个参数");
+                const std::string& suffix = args[0].toString();
+                const std::string& s = obj.stringVal();
+                result = Value(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
+            } else if (method == BuiltinMethod::STR_REPLACE) {
+                if (args.size() != 2) return runtimeError("replace 期望 2 个参数(旧串, 新串)");
+                std::string s = obj.stringVal();
+                const std::string& from = args[0].toString();
+                const std::string& to = args[1].toString();
+                if (!from.empty()) {
+                    size_t pos = 0;
+                    while ((pos = s.find(from, pos)) != std::string::npos) {
+                        s.replace(pos, from.size(), to);
+                        pos += to.size();
+                    }
+                }
+                result = Value(std::move(s));
+            } else if (method == BuiltinMethod::STR_SUBSTR) {
+                if (args.size() < 1 || args.size() > 2) return runtimeError("substr 期望 1-2 个参数(起始[, 长度])");
+                int64_t start = args[0].intVal();
+                const std::string& s = obj.stringVal();
+                if (start < 0 || static_cast<size_t>(start) > s.size()) result = Value(std::string(""));
+                else if (args.size() == 2) {
+                    int64_t len = args[1].intVal();
+                    result = Value(s.substr(static_cast<size_t>(start), static_cast<size_t>(len)));
+                } else {
+                    result = Value(s.substr(static_cast<size_t>(start)));
+                }
+            } else if (method == BuiltinMethod::STR_INDEX_OF) {
+                if (args.size() != 1) return runtimeError("indexOf 期望 1 个参数");
+                // M2 fix: 返回 UTF-8 字符位置而非字节位置
+                const std::string& s = obj.stringVal();
+                const std::string& needle = args[0].toString();
+                size_t bytePos = s.find(needle);
+                if (bytePos == std::string::npos) {
+                    result = Value(static_cast<int64_t>(-1));
+                } else {
+                    // 将字节偏移转换为 UTF-8 字符索引
+                    int64_t charIdx = 0;
+                    for (size_t b = 0; b < bytePos; ) {
+                        unsigned char c = static_cast<unsigned char>(s[b]);
+                        b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                             ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+                        charIdx++;
+                    }
+                    result = Value(charIdx);
+                }
+            } else {
+                return runtimeError("字符串没有方法 " + methodName);
+            }
+
+            pop();  // 移除接收者（在计算完成后）
+            push(result);
+            notifyStep(ip, op);
+            ip += instrLen;
+            break;
+        }
+
+        // ---- 类实例方法调用 ----
+        if (obj.isInstance()) {
+            // 拷贝接收者，因为后续 pop() 会使 peek 引用失效
+            Value objCopy = obj;
+            // B1 fix: super 调用使用编译时编码的类名（而非运行时实例类名）
+            // 避免 3+ 级继承时 super 查找回到子类导致死循环
+            std::string searchClassName = objCopy.className();
+            if (isSuperCall) {
+                uint16_t classIdx = chunk.code[ip + 7] | (chunk.code[ip + 8] << 8);
+                if (classIdx < chunk.constants.size()) {
+                    searchClassName = chunk.constants[classIdx].stringVal();
+                }
+                auto clsIt = classInfo_.find(searchClassName);
+                if (clsIt == classInfo_.end() || clsIt->second.superClassName.empty()) {
+                    return runtimeError("类 " + searchClassName + " 没有父类，不能使用 super");
+                }
+                searchClassName = clsIt->second.superClassName;
+            }
+            // 沿继承链查找方法（父类方法也可调用）
+            const BytecodeChunk* targetChunkPtr = findMethodChunk(searchClassName, methodName);
+            if (targetChunkPtr != nullptr) {
+                const BytecodeChunk& targetChunk = *targetChunkPtr;
+
+                // 检查参数数量
+                if (targetChunk.arity != argCount) {
+                    for (uint8_t i = 0; i < argCount; ++i) pop();
+                    pop();
+                    return runtimeError("方法 " + methodName + " 期望 " +
+                        std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
+                        std::to_string(argCount) + " 个");
+                }
+
+                if (frames_.size() >= MAX_FRAMES) {
+                    return runtimeError("调用栈溢出");
+                }
+
+                // 收集参数（反向填充，省去 reverse）
+                if (stack_.size() < static_cast<size_t>(argCount) + 1) return runtimeError("栈下溢: OP_METHOD_CALL");
+                SmallArgs<Value> args(argCount);
+                for (int i = argCount - 1; i >= 0; --i) {
+                    args[i] = pop();
+                }
+                pop();  // 移除栈上的原始实例
+
+                // 推入 this（拷贝，方法内修改会被 writeBack 写回）
+                push(objCopy);
+                // 按方法 chunk 声明的字段顺序推入实例字段值
+                int fieldCount = 0;
+                if (targetChunk.fieldOrder.empty()) {
+                    // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
+                    for (const auto& field : objCopy.fields()) {
+                        push(field.second);
+                    }
+                    fieldCount = static_cast<int>(objCopy.fields().size());
+                } else {
+                    for (const auto& fieldName : targetChunk.fieldOrder) {
+                        auto fieldIt = objCopy.fields().find(fieldName);
+                        if (fieldIt != objCopy.fields().end()) {
+                            push(fieldIt->second);
+                        } else {
+                            push(Value::nullValue());
+                        }
+                    }
+                    fieldCount = static_cast<int>(targetChunk.fieldOrder.size());
+                }
+                // 推入参数
+                for (const auto& arg : args) {
+                    push(arg);
+                }
+
+                // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
+                int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
+                int extraSlots = targetChunk.localCount - preAllocated;
+                for (int i = 0; i < extraSlots; ++i) {
+                    push(Value::nullValue());
+                }
+
+                VMCallFrame newFrame;
+                newFrame.chunk = targetChunkPtr;
+                newFrame.returnIp = ip + instrLen;  // B1 fix: SUPER_CALL 是 9 字节
+                newFrame.basePointer = stack_.size() - targetChunk.localCount;
+                newFrame.functionName = targetChunk.name;
+                newFrame.ip = 0;
+                newFrame.isMethodCall = true;
+                newFrame.isInitCall = (methodName == "init");  // init 返回 this 而非 null
+                // 记录接收者变量名（用于 writeBack 到 globals_）
+                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+                    newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal();
+                }
+                // 记录接收者局部变量 slot（用于 writeBack 到调用者栈帧）
+                newFrame.receiverLocalSlot = (receiverLocalSlotByte == 0xFF) ? -1 : receiverLocalSlotByte;
+                size_t savedIp = ip;
+                frames_.push_back(newFrame);
+
+                notifyStep(savedIp, op);
+                break;
+            }
+        }
+
+        // 方法未找到或对象非实例
+        // 先保存类型信息，因为 pop 会使 obj 引用失效
+        bool wasInstance = obj.isInstance();
+        std::string clsName = wasInstance ? obj.className() : "";
+        for (uint8_t i = 0; i < argCount; ++i) pop();
+        pop();
+        if (wasInstance) {
+            return runtimeError("类 " + clsName + " 没有方法 " + methodName);
+        } else {
+            return runtimeError("方法调用需要类实例");
+        }
+    }
+
+    case OpCode::OP_CLOSURE: {
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        uint8_t upvalueCount = chunk.code[ip + 3]; // VM-05/06: 改为 upvalue 数量
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        const std::string& funName = chunk.constants[idx].stringVal();
+
+        // 创建闭包值（参数名由 OP_CALL 按 arity 绑定，此处不填充假名）
+        Value closure = Value::makeClosure(funName, nullptr, {});
+
+        // VM-05/06: 创建 VM 闭包数据并绑定 upvalue
+        auto vmClosureData = std::make_shared<VMClosureData>();
+        vmClosureData->functionName = funName;
+        vmClosureData->upvalues.resize(upvalueCount);
+        // M3 fix: 闭包值直接持有函数 chunk 指针（OP_CALL_EXPR 使用，避免名称查找）
+        auto chunkIt = functionChunks_.find(funName);
+        if (chunkIt != functionChunks_.end()) {
+            vmClosureData->chunkPtr = &chunkIt->second;
+        }
+
+        size_t instrBase = ip + 4; // OP_CLOSURE(1) + nameIdx(2) + upvalueCount(1)
+
+        for (uint8_t i = 0; i < upvalueCount; ++i) {
+            uint8_t isLocal = chunk.code[instrBase + i * 2];
+            uint8_t uvIndex = chunk.code[instrBase + i * 2 + 1];
+
+            if (isLocal) {
+                // 直接捕获：创建新 upvalue 指向调用者帧的栈槽
+                auto uv = std::make_shared<VMUpvalue>();
+                uv->stackSlot = frame.basePointer + uvIndex;
+                uv->isClosed = false;
+                vmClosureData->upvalues[i] = uv;
+                openUpvalues_.push_back(uv);
+            } else {
+                // 透传：复用调用者帧的 upvalue
+                if (static_cast<size_t>(uvIndex) < frame.upvalues.size()) {
+                    vmClosureData->upvalues[i] = frame.upvalues[uvIndex];
+                } else {
+                    // 降级：创建空 upvalue
+                    vmClosureData->upvalues[i] = std::make_shared<VMUpvalue>();
+                    vmClosureData->upvalues[i]->value = Value::nullValue();
+                    vmClosureData->upvalues[i]->isClosed = true;
+                }
+            }
+        }
+        closure.vmClosure() = vmClosureData;
+
+        // 注册到函数闭包表（OP_CALL 按名称查找时使用）
+        functionClosures_[funName] = closure;
+
+        push(closure);
+        notifyStep(ip, op);
+        ip = instrBase + upvalueCount * 2; // 跳过 upvalue 描述符
+        break;
+    }
+
+    case OpCode::OP_CLASS_NEW: {
+        pendingFieldOrder_.clear();  // M3: 开始新的类定义，清空字段顺序记录
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        uint8_t argCount = chunk.code[ip + 3];
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        const std::string& className = chunk.constants[idx].stringVal();
+
+        // 收集参数（反向填充，省去 reverse）
+        if (stack_.size() < argCount) return runtimeError("栈下溢: OP_CLASS_NEW");
+        SmallArgs<Value> args(argCount);
+        for (int i = argCount - 1; i >= 0; --i) {
+            args[i] = pop();
+        }
+
+        // 查找类信息
+        auto classIt = classInfo_.find(className);
+        if (classIt == classInfo_.end()) {
+            return runtimeError("未定义的类: " + className);
+        }
+        VMClassInfo& cls = classIt->second;
+
+        // 创建新实例
+        Value instance = Value::makeInstance(cls.name);
+        instance.fields() = cls.fieldDefaults;  // 已含继承字段
+
+        // 检查是否有 init 方法（沿继承链查找）
+        const BytecodeChunk* initChunkPtr = findMethodChunk(className, "init");
+
+        // S2 fix: 也处理 argCount==0 且 init.arity==0 的自动构造场景
+        // （与解释器 visitVarDecl 一致：Point p; 自动调用 0 参数 init）
+        bool shouldCallInit = false;
+        if (initChunkPtr != nullptr) {
+            if (argCount > 0) {
+                shouldCallInit = true;
+            } else if (initChunkPtr->arity == 0) {
+                shouldCallInit = true;  // 0 参数 init，自动构造时调用
+            }
+        }
+
+        if (shouldCallInit) {
+            // 创建 init 帧执行初始化
+            const BytecodeChunk& initChunk = *initChunkPtr;
+            if (initChunk.arity != static_cast<int>(argCount)) {
+                return runtimeError("构造函数 init 期望 " +
+                    std::to_string(initChunk.arity) + " 个参数，但传入了 " +
+                    std::to_string(argCount) + " 个");
+            }
+
+            if (frames_.size() >= MAX_FRAMES) {
+                return runtimeError("调用栈溢出");
+            }
+
+            // 推入 this
+            push(instance);
+            // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
+            int fieldCount = 0;
+            if (initChunk.fieldOrder.empty()) {
+                for (const auto& field : instance.fields()) {
+                    push(field.second);
+                }
+                fieldCount = static_cast<int>(instance.fields().size());
+            } else {
+                for (const auto& fieldName : initChunk.fieldOrder) {
+                    auto fieldIt = instance.fields().find(fieldName);
+                    if (fieldIt != instance.fields().end()) {
+                        push(fieldIt->second);
+                    } else {
+                        push(Value::nullValue());
+                    }
+                }
+                fieldCount = static_cast<int>(initChunk.fieldOrder.size());
+            }
+            // 推入参数
+            for (const auto& arg : args) {
+                push(arg);
+            }
+
+            // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
+            int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
+            int extraSlots = initChunk.localCount - preAllocated;
+            for (int i = 0; i < extraSlots; ++i) {
+                push(Value::nullValue());
+            }
+
+            VMCallFrame newFrame;
+            newFrame.chunk = initChunkPtr;
+            newFrame.returnIp = ip + 4;
+            newFrame.basePointer = stack_.size() - initChunk.localCount;
+            newFrame.functionName = initChunkPtr->name;
+            newFrame.ip = 0;
+            newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
+            newFrame.isInitCall = true;     // init 返回 this 而非 null
+            size_t savedIp = ip;
+            frames_.push_back(newFrame);
+
+            notifyStep(savedIp, op);
+            break;
+        }
+
+        // 无 init 或 init.arity 不匹配 argCount：推入实例（OP_INIT_FIELD 或手动 init 后续处理）
+        push(instance);
+
+        // 无 init 但有参数：报错（与解释器一致）
+        if (initChunkPtr == nullptr && argCount > 0) {
+            return runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
+                         std::to_string(argCount) + " 个参数");
+        }
+
+        notifyStep(ip, op);
+        ip += 4;
+        break;
+    }
+
+    case OpCode::OP_DEFINE_CLASS: {
+        // 操作数: nameIdx(2B) + superNameIdx(2B)
+        // superNameIdx == 0xFFFF 表示无父类
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        uint16_t superIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        const std::string& className = chunk.constants[idx].stringVal();
+        std::string superClassName;
+        if (superIdx != 0xFFFF && superIdx < chunk.constants.size()) {
+            superClassName = chunk.constants[superIdx].stringVal();
+        }
+        Value templateInstance = pop();
+
+        // 从模板实例提取当前类字段（M3 fix: 使用 pendingFieldOrder_ 保持声明顺序）
+        std::vector<std::string> ownFieldOrder = std::move(pendingFieldOrder_);
+        std::unordered_map<std::string, Value> ownFieldDefaults;
+        if (templateInstance.isInstance()) {
+            for (const auto& fieldName : ownFieldOrder) {
+                auto it = templateInstance.fields().find(fieldName);
+                if (it != templateInstance.fields().end()) {
+                    ownFieldDefaults[fieldName] = it->second;
+                }
+            }
+        } else {
+            return runtimeError("OP_DEFINE_CLASS: 模板值不是实例");
+        }
+
+        // 注册类信息（先注册以支持循环引用安全查找）
+        VMClassInfo info;
+        info.name = className;
+        info.superClassName = superClassName;
+        classInfo_[className] = info;
+
+        // 沿继承链合并父类字段（父类字段在前，子类覆盖同名字段）
+        // 先按"父→子"顺序收集字段名，子类已存在的字段不重复添加
+        std::vector<std::string> mergedOrder;
+        std::unordered_map<std::string, Value> mergedDefaults;
+
+        std::vector<std::string> chain;
+        std::string cur = superClassName;
+        for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
+            auto clsIt = classInfo_.find(cur);
+            if (clsIt == classInfo_.end()) {
+                return runtimeError("未定义的父类: " + cur);
+            }
+            chain.push_back(cur);
+            cur = clsIt->second.superClassName;
+        }
+        // 倒序遍历链（最远的祖先在前），保证子类字段覆盖父类字段
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            auto clsIt = classInfo_.find(*it);
+            if (clsIt == classInfo_.end()) continue;
+            for (const auto& fieldName : clsIt->second.fieldOrder) {
+                if (mergedDefaults.find(fieldName) == mergedDefaults.end()) {
+                    mergedOrder.push_back(fieldName);
+                    mergedDefaults[fieldName] = clsIt->second.fieldDefaults[fieldName];
+                }
+            }
+        }
+        // 当前类字段最后处理（覆盖父类同名字段）
+        for (const auto& fieldName : ownFieldOrder) {
+            if (mergedDefaults.find(fieldName) == mergedDefaults.end()) {
+                mergedOrder.push_back(fieldName);
+            }
+            mergedDefaults[fieldName] = ownFieldDefaults[fieldName];
+        }
+
+        VMClassInfo& registered = classInfo_[className];
+        registered.fieldOrder = std::move(mergedOrder);
+        registered.fieldDefaults = std::move(mergedDefaults);
+
+        // 在全局变量中存储类标记（与解释器语义一致：类名是类型标识，不是实例）
+        Value classVal(std::string("class:") + className);
+        auto classGsIt = globalNameToSlot_.find(className);
+        if (classGsIt != globalNameToSlot_.end()) {
+            globalSlots_[classGsIt->second] = classVal;
+        } else {
+            globals_[className] = classVal;
+        }
+
+        notifyStep(ip, op);
+        ip += 5;  // nameIdx(2B) + superNameIdx(2B) + opcode(1B)
+        break;
+    }
+
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// 容器与成员操作类指令
+// ============================================================
+
+VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+
+    switch (op) {
     case OpCode::OP_BUILD_ARRAY: {
         uint8_t count = chunk.code[ip + 1];
         if (stack_.size() < count) return runtimeError("栈下溢: OP_BUILD_ARRAY");
@@ -1546,816 +2458,24 @@ VMResult VM::executeOneInstruction() {
         break;
     }
 
-    case OpCode::OP_SUPER_CALL:
-    case OpCode::OP_METHOD_CALL: {
-        bool isSuperCall = (op == OpCode::OP_SUPER_CALL);
-        const int instrLen = isSuperCall ? 9 : 7;  // B1 fix: SUPER_CALL 多了 2 字节 classIdx
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        uint8_t argCount = chunk.code[ip + 3];
-        uint16_t receiverVarIdx = chunk.code[ip + 4] | (chunk.code[ip + 5] << 8);
-        uint8_t receiverLocalSlotByte = chunk.code[ip + 6];
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& methodName = chunk.constants[idx].stringVal();
-
-        // C8: 用 const 引用访问接收者，避免非变异方法的深拷贝
-        const Value& obj = peek(argCount);
-        // C10: 方法名一次性分类为枚举
-        BuiltinMethod method = classifyBuiltinMethod(methodName);
-
-        // ---- 数组内置方法 ----
-        if (obj.isArray()) {
-            // 先弹出参数（接收者仍在栈上，const ref 有效）
-            SmallArgs<Value> args(argCount);
-            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-
-            // 非变异路径：从 const 引用计算结果，无需拷贝接收者
-            Value result = Value::nullValue();
-            if (method == BuiltinMethod::ARR_LEN) {
-                result = Value(static_cast<int64_t>(obj.arrayVal().size()));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::ARR_CONTAINS) {
-                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
-                bool found = false;
-                for (const auto& elem : obj.arrayVal()) {
-                    if (elem.equals(args[0])) { found = true; break; }
-                }
-                result = Value(found);
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::ARR_JOIN) {
-                std::string sep = args.empty() ? "" : args[0].toString();
-                std::string joined;
-                joined.reserve(obj.arrayVal().size() * (8 + sep.size()));
-                for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
-                    if (i > 0) joined += sep;
-                    joined += obj.arrayVal()[i].toString();
-                }
-                result = Value(std::move(joined));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-
-            // A2 变异路径：先 pop 接收者(move, refcount 不变)，再用 tryGetMutable 原地修改
-            Value mutableObj = std::move(stack_.back());
-            stack_.pop_back();
-
-            if (method == BuiltinMethod::ARR_PUSH) {
-                if (args.size() != 1) return runtimeError("push 期望 1 个参数");
-                auto* arr = mutableObj.tryGetMutableArray();
-                if (arr) arr->push_back(std::move(args[0]));
-                else mutableObj.arrayVal().push_back(args[0]);
-            } else if (method == BuiltinMethod::ARR_POP) {
-                auto* arr = mutableObj.tryGetMutableArray();
-                if (arr) {
-                    if (arr->empty()) return runtimeError("对空数组调用 pop");
-                    result = std::move(arr->back());
-                    arr->pop_back();
-                } else {
-                    if (mutableObj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
-                    result = mutableObj.arrayVal().back();
-                    mutableObj.arrayVal().pop_back();
-                }
-            } else if (method == BuiltinMethod::ARR_REMOVE) {
-                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
-                if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
-                int64_t ri = args[0].intVal();
-                auto* arr = mutableObj.tryGetMutableArray();
-                if (arr) {
-                    if (ri < 0 || static_cast<size_t>(ri) >= arr->size())
-                        return runtimeError("数组索引越界: " + std::to_string(ri));
-                    arr->erase(arr->begin() + static_cast<size_t>(ri));
-                } else {
-                    if (ri < 0 || static_cast<size_t>(ri) >= mutableObj.arrayVal().size())
-                        return runtimeError("数组索引越界: " + std::to_string(ri));
-                    mutableObj.arrayVal().erase(mutableObj.arrayVal().begin() + static_cast<size_t>(ri));
-                }
-            } else {
-                return runtimeError("数组没有方法 " + methodName);
-            }
-
-            // 写回变异后的对象（P7 fix: 使用 std::move 避免二次深拷贝）
-            if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                const std::string& recvName = chunk.constants[receiverVarIdx].stringVal();
-                auto gsIt = globalNameToSlot_.find(recvName);
-                if (gsIt != globalNameToSlot_.end()) {
-                    globalSlots_[gsIt->second] = std::move(mutableObj);
-                } else {
-                    globals_[recvName] = std::move(mutableObj);
-                }
-            } else if (receiverLocalSlotByte != 0xFF) {
-                size_t bp = currentFrame().basePointer;
-                // P7 fix: 先拷贝到字段（需要完整副本），再 move 到栈槽
-                if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
-                    VMCallFrame& curFrame = currentFrame();
-                    if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
-                        const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                        stack_[bp].fields()[fn] = mutableObj;  // 拷贝（move 前）
-                    }
-                }
-                if (bp + receiverLocalSlotByte < stack_.size()) {
-                    stack_[bp + receiverLocalSlotByte] = std::move(mutableObj);  // move 在后
-                }
-            } else {
-                lastMutatedReceiver_ = std::move(mutableObj);
-            }
-            push(result);
-            notifyStep(ip, op);
-            ip += instrLen;
-            break;
-        }
-
-        // ---- 字典内置方法 ----
-        if (obj.isDict()) {
-            SmallArgs<Value> args(argCount);
-            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-
-            Value result = Value::nullValue();
-
-            // 非变异路径：直接从 const 引用读取
-            if (method == BuiltinMethod::DICT_LEN || method == BuiltinMethod::ARR_LEN) {
-                result = Value(static_cast<int64_t>(obj.dictVal().size()));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_KEYS) {
-                std::vector<Value> keys;
-                keys.reserve(obj.dictVal().size());
-                for (const auto& kv : obj.dictVal()) keys.emplace_back(Value(kv.first));
-                result = Value(std::move(keys));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_VALUES) {
-                std::vector<Value> vals;
-                vals.reserve(obj.dictVal().size());
-                for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
-                result = Value(std::move(vals));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_HAS || method == BuiltinMethod::ARR_CONTAINS) {
-                if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
-                result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_GET) {
-                if (args.empty() || args.size() > 2) return runtimeError("get 期望 1-2 个参数(键[, 默认值])");
-                std::string key = args[0].toString();
-                auto it = obj.dictVal().find(key);
-                if (it != obj.dictVal().end()) {
-                    result = it->second;
-                } else {
-                    result = (args.size() == 2) ? args[1] : Value::nullValue();
-                }
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-
-            // A2 变异路径（remove）：先 pop 再原地修改
-            Value mutableObj = std::move(stack_.back());
-            stack_.pop_back();
-
-            if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
-                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
-                auto* dict = mutableObj.tryGetMutableDict();
-                if (dict) dict->erase(args[0].toString());
-                else mutableObj.dictVal().erase(args[0].toString());
-            } else {
-                return runtimeError("字典没有方法 " + methodName);
-            }
-
-            // 写回（P7 fix: 使用 std::move 避免二次深拷贝）
-            if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                const std::string& recvName = chunk.constants[receiverVarIdx].stringVal();
-                auto gsIt = globalNameToSlot_.find(recvName);
-                if (gsIt != globalNameToSlot_.end()) {
-                    globalSlots_[gsIt->second] = std::move(mutableObj);
-                } else {
-                    globals_[recvName] = std::move(mutableObj);
-                }
-            } else if (receiverLocalSlotByte != 0xFF) {
-                size_t bp = currentFrame().basePointer;
-                // P7 fix: 先拷贝到字段（需要完整副本），再 move 到栈槽
-                if (receiverLocalSlotByte > 0 && bp < stack_.size() && stack_[bp].isInstance()) {
-                    VMCallFrame& curFrame = currentFrame();
-                    if (curFrame.chunk && receiverLocalSlotByte <= curFrame.chunk->fieldOrder.size()) {
-                        const std::string& fn = curFrame.chunk->fieldOrder[receiverLocalSlotByte - 1];
-                        stack_[bp].fields()[fn] = mutableObj;  // 拷贝（move 前）
-                    }
-                }
-                if (bp + receiverLocalSlotByte < stack_.size()) {
-                    stack_[bp + receiverLocalSlotByte] = std::move(mutableObj);  // move 在后
-                }
-            } else {
-                lastMutatedReceiver_ = std::move(mutableObj);
-            }
-            push(result);
-            notifyStep(ip, op);
-            ip += instrLen;
-            break;
-        }
-
-        // ---- 字符串内置方法（全部非变异，使用 const 引用）----
-        if (obj.isString()) {
-            SmallArgs<Value> args(argCount);
-            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-
-            Value result = Value::nullValue();
-
-            if (method == BuiltinMethod::STR_LEN || method == BuiltinMethod::ARR_LEN || method == BuiltinMethod::DICT_LEN) {
-                // V3 fix: 字符串按 UTF-8 码位计数，与解释器 M6 fix 一致
-                const std::string& s = obj.stringVal();
-                size_t count = 0;
-                for (size_t i = 0; i < s.size(); ) {
-                    unsigned char c = static_cast<unsigned char>(s[i]);
-                    i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                         ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-                    count++;
-                }
-                result = Value(static_cast<int64_t>(count));
-            } else if (method == BuiltinMethod::STR_UPPER) {
-                std::string s = obj.stringVal();
-                for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                result = Value(std::move(s));
-            } else if (method == BuiltinMethod::STR_LOWER) {
-                std::string s = obj.stringVal();
-                for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                result = Value(std::move(s));
-            } else if (method == BuiltinMethod::STR_SPLIT) {
-                std::string sep = args.empty() ? " " : args[0].toString();
-                if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
-                std::vector<Value> parts;
-                const std::string& src = obj.stringVal();
-                size_t estCount = 1;
-                for (size_t p = 0; (p = src.find(sep, p)) != std::string::npos; p += sep.size()) ++estCount;
-                parts.reserve(estCount);
-                size_t start = 0, pos;
-                while ((pos = src.find(sep, start)) != std::string::npos) {
-                    parts.emplace_back(Value(src.substr(start, pos - start)));
-                    start = pos + sep.size();
-                }
-                parts.emplace_back(Value(src.substr(start)));
-                result = Value(std::move(parts));
-            } else if (method == BuiltinMethod::STR_TRIM) {
-                const std::string& s = obj.stringVal();
-                size_t l = s.find_first_not_of(" \t\r\n");
-                size_t r = s.find_last_not_of(" \t\r\n");
-                if (l == std::string::npos) result = Value(std::string(""));
-                else result = Value(s.substr(l, r - l + 1));
-            } else if (method == BuiltinMethod::STR_CONTAINS) {
-                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
-                result = Value(obj.stringVal().find(args[0].toString()) != std::string::npos);
-            } else if (method == BuiltinMethod::STR_STARTS_WITH) {
-                if (args.size() != 1) return runtimeError("startsWith 期望 1 个参数");
-                const std::string& prefix = args[0].toString();
-                const std::string& s = obj.stringVal();
-                result = Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0);
-            } else if (method == BuiltinMethod::STR_ENDS_WITH) {
-                if (args.size() != 1) return runtimeError("endsWith 期望 1 个参数");
-                const std::string& suffix = args[0].toString();
-                const std::string& s = obj.stringVal();
-                result = Value(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
-            } else if (method == BuiltinMethod::STR_REPLACE) {
-                if (args.size() != 2) return runtimeError("replace 期望 2 个参数(旧串, 新串)");
-                std::string s = obj.stringVal();
-                const std::string& from = args[0].toString();
-                const std::string& to = args[1].toString();
-                if (!from.empty()) {
-                    size_t pos = 0;
-                    while ((pos = s.find(from, pos)) != std::string::npos) {
-                        s.replace(pos, from.size(), to);
-                        pos += to.size();
-                    }
-                }
-                result = Value(std::move(s));
-            } else if (method == BuiltinMethod::STR_SUBSTR) {
-                if (args.size() < 1 || args.size() > 2) return runtimeError("substr 期望 1-2 个参数(起始[, 长度])");
-                int64_t start = args[0].intVal();
-                const std::string& s = obj.stringVal();
-                if (start < 0 || static_cast<size_t>(start) > s.size()) result = Value(std::string(""));
-                else if (args.size() == 2) {
-                    int64_t len = args[1].intVal();
-                    result = Value(s.substr(static_cast<size_t>(start), static_cast<size_t>(len)));
-                } else {
-                    result = Value(s.substr(static_cast<size_t>(start)));
-                }
-            } else if (method == BuiltinMethod::STR_INDEX_OF) {
-                if (args.size() != 1) return runtimeError("indexOf 期望 1 个参数");
-                // M2 fix: 返回 UTF-8 字符位置而非字节位置
-                const std::string& s = obj.stringVal();
-                const std::string& needle = args[0].toString();
-                size_t bytePos = s.find(needle);
-                if (bytePos == std::string::npos) {
-                    result = Value(static_cast<int64_t>(-1));
-                } else {
-                    // 将字节偏移转换为 UTF-8 字符索引
-                    int64_t charIdx = 0;
-                    for (size_t b = 0; b < bytePos; ) {
-                        unsigned char c = static_cast<unsigned char>(s[b]);
-                        b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                             ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-                        charIdx++;
-                    }
-                    result = Value(charIdx);
-                }
-            } else {
-                return runtimeError("字符串没有方法 " + methodName);
-            }
-
-            pop();  // 移除接收者（在计算完成后）
-            push(result);
-            notifyStep(ip, op);
-            ip += instrLen;
-            break;
-        }
-
-        // ---- 类实例方法调用 ----
-        if (obj.isInstance()) {
-            // 拷贝接收者，因为后续 pop() 会使 peek 引用失效
-            Value objCopy = obj;
-            // B1 fix: super 调用使用编译时编码的类名（而非运行时实例类名）
-            // 避免 3+ 级继承时 super 查找回到子类导致死循环
-            std::string searchClassName = objCopy.className();
-            if (isSuperCall) {
-                uint16_t classIdx = chunk.code[ip + 7] | (chunk.code[ip + 8] << 8);
-                if (classIdx < chunk.constants.size()) {
-                    searchClassName = chunk.constants[classIdx].stringVal();
-                }
-                auto clsIt = classInfo_.find(searchClassName);
-                if (clsIt == classInfo_.end() || clsIt->second.superClassName.empty()) {
-                    return runtimeError("类 " + searchClassName + " 没有父类，不能使用 super");
-                }
-                searchClassName = clsIt->second.superClassName;
-            }
-            // 沿继承链查找方法（父类方法也可调用）
-            const BytecodeChunk* targetChunkPtr = findMethodChunk(searchClassName, methodName);
-            if (targetChunkPtr != nullptr) {
-                const BytecodeChunk& targetChunk = *targetChunkPtr;
-
-                // 检查参数数量
-                if (targetChunk.arity != argCount) {
-                    for (uint8_t i = 0; i < argCount; ++i) pop();
-                    pop();
-                    return runtimeError("方法 " + methodName + " 期望 " +
-                        std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
-                        std::to_string(argCount) + " 个");
-                }
-
-                if (frames_.size() >= MAX_FRAMES) {
-                    return runtimeError("调用栈溢出");
-                }
-
-                // 收集参数（反向填充，省去 reverse）
-                if (stack_.size() < static_cast<size_t>(argCount) + 1) return runtimeError("栈下溢: OP_METHOD_CALL");
-                SmallArgs<Value> args(argCount);
-                for (int i = argCount - 1; i >= 0; --i) {
-                    args[i] = pop();
-                }
-                pop();  // 移除栈上的原始实例
-
-                // 推入 this（拷贝，方法内修改会被 writeBack 写回）
-                push(objCopy);
-                // 按方法 chunk 声明的字段顺序推入实例字段值
-                int fieldCount = 0;
-                if (targetChunk.fieldOrder.empty()) {
-                    // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
-                    for (const auto& field : objCopy.fields()) {
-                        push(field.second);
-                    }
-                    fieldCount = static_cast<int>(objCopy.fields().size());
-                } else {
-                    for (const auto& fieldName : targetChunk.fieldOrder) {
-                        auto fieldIt = objCopy.fields().find(fieldName);
-                        if (fieldIt != objCopy.fields().end()) {
-                            push(fieldIt->second);
-                        } else {
-                            push(Value::nullValue());
-                        }
-                    }
-                    fieldCount = static_cast<int>(targetChunk.fieldOrder.size());
-                }
-                // 推入参数
-                for (const auto& arg : args) {
-                    push(arg);
-                }
-
-                // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
-                int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
-                int extraSlots = targetChunk.localCount - preAllocated;
-                for (int i = 0; i < extraSlots; ++i) {
-                    push(Value::nullValue());
-                }
-
-                VMCallFrame newFrame;
-                newFrame.chunk = targetChunkPtr;
-                newFrame.returnIp = ip + instrLen;  // B1 fix: SUPER_CALL 是 9 字节
-                newFrame.basePointer = stack_.size() - targetChunk.localCount;
-                newFrame.functionName = targetChunk.name;
-                newFrame.ip = 0;
-                newFrame.isMethodCall = true;
-                newFrame.isInitCall = (methodName == "init");  // init 返回 this 而非 null
-                // 记录接收者变量名（用于 writeBack 到 globals_）
-                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
-                    newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal();
-                }
-                // 记录接收者局部变量 slot（用于 writeBack 到调用者栈帧）
-                newFrame.receiverLocalSlot = (receiverLocalSlotByte == 0xFF) ? -1 : receiverLocalSlotByte;
-                size_t savedIp = ip;
-                frames_.push_back(newFrame);
-
-                notifyStep(savedIp, op);
-                break;
-            }
-        }
-
-        // 方法未找到或对象非实例
-        // 先保存类型信息，因为 pop 会使 obj 引用失效
-        bool wasInstance = obj.isInstance();
-        std::string clsName = wasInstance ? obj.className() : "";
-        for (uint8_t i = 0; i < argCount; ++i) pop();
-        pop();
-        if (wasInstance) {
-            return runtimeError("类 " + clsName + " 没有方法 " + methodName);
-        } else {
-            return runtimeError("方法调用需要类实例");
-        }
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
     }
 
-    case OpCode::OP_DUP:
-        push(peek(0));
-        notifyStep(ip, op);
-        ip += 1;
-        break;
+    return VMResult::VM_OK;
+}
 
-    case OpCode::OP_DUP_N: {
-        uint8_t depth = chunk.code[ip + 1];
-        if (depth >= stack_.size()) {
-            return runtimeError("OP_DUP_N: 栈深度不足");
-        }
-        push(peek(depth));
-        notifyStep(ip, op);
-        ip += 2;
-        break;
-    }
+// ============================================================
+// 嵌套访问写回类指令
+// ============================================================
 
-    case OpCode::OP_CLOSURE: {
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        uint8_t upvalueCount = chunk.code[ip + 3]; // VM-05/06: 改为 upvalue 数量
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& funName = chunk.constants[idx].stringVal();
-
-        // 创建闭包值（参数名由 OP_CALL 按 arity 绑定，此处不填充假名）
-        Value closure = Value::makeClosure(funName, nullptr, {});
-
-        // VM-05/06: 创建 VM 闭包数据并绑定 upvalue
-        auto vmClosureData = std::make_shared<VMClosureData>();
-        vmClosureData->functionName = funName;
-        vmClosureData->upvalues.resize(upvalueCount);
-        // M3 fix: 闭包值直接持有函数 chunk 指针（OP_CALL_EXPR 使用，避免名称查找）
-        auto chunkIt = functionChunks_.find(funName);
-        if (chunkIt != functionChunks_.end()) {
-            vmClosureData->chunkPtr = &chunkIt->second;
-        }
-
-        size_t instrBase = ip + 4; // OP_CLOSURE(1) + nameIdx(2) + upvalueCount(1)
-        VMCallFrame& frame = currentFrame();
-
-        for (uint8_t i = 0; i < upvalueCount; ++i) {
-            uint8_t isLocal = chunk.code[instrBase + i * 2];
-            uint8_t uvIndex = chunk.code[instrBase + i * 2 + 1];
-
-            if (isLocal) {
-                // 直接捕获：创建新 upvalue 指向调用者帧的栈槽
-                auto uv = std::make_shared<VMUpvalue>();
-                uv->stackSlot = frame.basePointer + uvIndex;
-                uv->isClosed = false;
-                vmClosureData->upvalues[i] = uv;
-                openUpvalues_.push_back(uv);
-            } else {
-                // 透传：复用调用者帧的 upvalue
-                if (static_cast<size_t>(uvIndex) < frame.upvalues.size()) {
-                    vmClosureData->upvalues[i] = frame.upvalues[uvIndex];
-                } else {
-                    // 降级：创建空 upvalue
-                    vmClosureData->upvalues[i] = std::make_shared<VMUpvalue>();
-                    vmClosureData->upvalues[i]->value = Value::nullValue();
-                    vmClosureData->upvalues[i]->isClosed = true;
-                }
-            }
-        }
-        closure.vmClosure() = vmClosureData;
-
-        // 注册到函数闭包表（OP_CALL 按名称查找时使用）
-        functionClosures_[funName] = closure;
-
-        push(closure);
-        notifyStep(ip, op);
-        ip = instrBase + upvalueCount * 2; // 跳过 upvalue 描述符
-        break;
-    }
-
-    case OpCode::OP_GET_LOCAL: {
-        uint8_t slot = chunk.code[ip + 1];
-        size_t bp = currentFrame().basePointer;
-        if (bp + slot >= stack_.size()) {
-            return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
-        }
-        push(stack_[bp + slot]);
-        notifyStep(ip, op);
-        ip += 2;
-        break;
-    }
-
-    case OpCode::OP_SET_LOCAL: {
-        uint8_t slot = chunk.code[ip + 1];
-        size_t bp = currentFrame().basePointer;
-        const Value& val = peek(0);
-        if (bp + slot >= stack_.size()) {
-            return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
-        }
-        stack_[bp + slot] = val;
-        notifyStep(ip, op);
-        ip += 2;
-        break;
-    }
-
-    // VM-05/06: upvalue 读写操作码
-    case OpCode::OP_GET_UPVALUE: {
-        uint8_t uvIdx = chunk.code[ip + 1];
-        VMCallFrame& frame = currentFrame();
-        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
-            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
-        }
-        auto& uv = frame.upvalues[uvIdx];
-        if (uv->isClosed) {
-            push(uv->value);
-        } else {
-            if (uv->stackSlot < stack_.size()) {
-                push(stack_[uv->stackSlot]);
-            } else {
-                return runtimeError("内部错误: upvalue 栈槽越界");
-            }
-        }
-        notifyStep(ip, op);
-        ip += 2;
-        break;
-    }
-
-    case OpCode::OP_SET_UPVALUE: {
-        uint8_t uvIdx = chunk.code[ip + 1];
-        VMCallFrame& frame = currentFrame();
-        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
-            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
-        }
-        auto& uv = frame.upvalues[uvIdx];
-        const Value& val = peek(0); // peek 不消费（与 OP_SET_LOCAL 一致）
-        if (uv->isClosed) {
-            uv->value = val;
-        } else {
-            if (uv->stackSlot < stack_.size()) {
-                stack_[uv->stackSlot] = val;
-            } else {
-                return runtimeError("内部错误: upvalue 栈槽越界");
-            }
-        }
-        notifyStep(ip, op);
-        ip += 2;
-        break;
-    }
-
-    case OpCode::OP_CLOSE_UPVALUE: {
-        uint8_t uvIdx = chunk.code[ip + 1];
-        VMCallFrame& frame = currentFrame();
-        if (static_cast<size_t>(uvIdx) < frame.upvalues.size()) {
-            auto& uv = frame.upvalues[uvIdx];
-            if (!uv->isClosed && uv->stackSlot < stack_.size()) {
-                uv->value = stack_[uv->stackSlot];
-                uv->isClosed = true;
-                // L-新1 fix: 从 openUpvalues_ 移除已关闭的 upvalue
-                openUpvalues_.erase(
-                    std::remove(openUpvalues_.begin(), openUpvalues_.end(), uv),
-                    openUpvalues_.end());
-            }
-        }
-        notifyStep(ip, op);
-        ip += 2;
-        break;
-    }
-
-    case OpCode::OP_CLASS_NEW: {
-        pendingFieldOrder_.clear();  // M3: 开始新的类定义，清空字段顺序记录
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        uint8_t argCount = chunk.code[ip + 3];
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& className = chunk.constants[idx].stringVal();
-
-        // 收集参数（反向填充，省去 reverse）
-        if (stack_.size() < argCount) return runtimeError("栈下溢: OP_CLASS_NEW");
-        SmallArgs<Value> args(argCount);
-        for (int i = argCount - 1; i >= 0; --i) {
-            args[i] = pop();
-        }
-
-        // 查找类信息
-        auto classIt = classInfo_.find(className);
-        if (classIt == classInfo_.end()) {
-            return runtimeError("未定义的类: " + className);
-        }
-        VMClassInfo& cls = classIt->second;
-
-        // 创建新实例
-        Value instance = Value::makeInstance(cls.name);
-        instance.fields() = cls.fieldDefaults;  // 已含继承字段
-
-        // 检查是否有 init 方法（沿继承链查找）
-        const BytecodeChunk* initChunkPtr = findMethodChunk(className, "init");
-
-        // S2 fix: 也处理 argCount==0 且 init.arity==0 的自动构造场景
-        // （与解释器 visitVarDecl 一致：Point p; 自动调用 0 参数 init）
-        bool shouldCallInit = false;
-        if (initChunkPtr != nullptr) {
-            if (argCount > 0) {
-                shouldCallInit = true;
-            } else if (initChunkPtr->arity == 0) {
-                shouldCallInit = true;  // 0 参数 init，自动构造时调用
-            }
-        }
-
-        if (shouldCallInit) {
-            // 创建 init 帧执行初始化
-            const BytecodeChunk& initChunk = *initChunkPtr;
-            if (initChunk.arity != static_cast<int>(argCount)) {
-                return runtimeError("构造函数 init 期望 " +
-                    std::to_string(initChunk.arity) + " 个参数，但传入了 " +
-                    std::to_string(argCount) + " 个");
-            }
-
-            if (frames_.size() >= MAX_FRAMES) {
-                return runtimeError("调用栈溢出");
-            }
-
-            // 推入 this
-            push(instance);
-            // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
-            int fieldCount = 0;
-            if (initChunk.fieldOrder.empty()) {
-                for (const auto& field : instance.fields()) {
-                    push(field.second);
-                }
-                fieldCount = static_cast<int>(instance.fields().size());
-            } else {
-                for (const auto& fieldName : initChunk.fieldOrder) {
-                    auto fieldIt = instance.fields().find(fieldName);
-                    if (fieldIt != instance.fields().end()) {
-                        push(fieldIt->second);
-                    } else {
-                        push(Value::nullValue());
-                    }
-                }
-                fieldCount = static_cast<int>(initChunk.fieldOrder.size());
-            }
-            // 推入参数
-            for (const auto& arg : args) {
-                push(arg);
-            }
-
-            // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
-            int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
-            int extraSlots = initChunk.localCount - preAllocated;
-            for (int i = 0; i < extraSlots; ++i) {
-                push(Value::nullValue());
-            }
-
-            VMCallFrame newFrame;
-            newFrame.chunk = initChunkPtr;
-            newFrame.returnIp = ip + 4;
-            newFrame.basePointer = stack_.size() - initChunk.localCount;
-            newFrame.functionName = initChunkPtr->name;
-            newFrame.ip = 0;
-            newFrame.isMethodCall = true;  // 使 OP_RETURN 同步字段到 this
-            newFrame.isInitCall = true;     // init 返回 this 而非 null
-            size_t savedIp = ip;
-            frames_.push_back(newFrame);
-
-            notifyStep(savedIp, op);
-            break;
-        }
-
-        // 无 init 或 init.arity 不匹配 argCount：推入实例（OP_INIT_FIELD 或手动 init 后续处理）
-        push(instance);
-
-        // 无 init 但有参数：报错（与解释器一致）
-        if (initChunkPtr == nullptr && argCount > 0) {
-            return runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
-                         std::to_string(argCount) + " 个参数");
-        }
-
-        notifyStep(ip, op);
-        ip += 4;
-        break;
-    }
-
-    case OpCode::OP_INIT_FIELD: {
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& fieldName = chunk.constants[idx].stringVal();
-        Value val = pop();
-        // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
-        if (!stack_.empty() && stack_.back().isInstance()) {
-            stack_.back().fields()[fieldName] = val;
-        } else {
-            return runtimeError("OP_INIT_FIELD: 栈顶不是实例");
-        }
-        // M3 fix: 记录字段声明顺序（OP_INIT_FIELD 按 AST 声明顺序执行）
-        pendingFieldOrder_.push_back(fieldName);
-        notifyStep(ip, op);
-        ip += 3;
-        break;
-    }
-
-    case OpCode::OP_DEFINE_CLASS: {
-        // 操作数: nameIdx(2B) + superNameIdx(2B)
-        // superNameIdx == 0xFFFF 表示无父类
-        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        uint16_t superIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& className = chunk.constants[idx].stringVal();
-        std::string superClassName;
-        if (superIdx != 0xFFFF && superIdx < chunk.constants.size()) {
-            superClassName = chunk.constants[superIdx].stringVal();
-        }
-        Value templateInstance = pop();
-
-        // 从模板实例提取当前类字段（M3 fix: 使用 pendingFieldOrder_ 保持声明顺序）
-        std::vector<std::string> ownFieldOrder = std::move(pendingFieldOrder_);
-        std::unordered_map<std::string, Value> ownFieldDefaults;
-        if (templateInstance.isInstance()) {
-            for (const auto& fieldName : ownFieldOrder) {
-                auto it = templateInstance.fields().find(fieldName);
-                if (it != templateInstance.fields().end()) {
-                    ownFieldDefaults[fieldName] = it->second;
-                }
-            }
-        } else {
-            return runtimeError("OP_DEFINE_CLASS: 模板值不是实例");
-        }
-
-        // 注册类信息（先注册以支持循环引用安全查找）
-        VMClassInfo info;
-        info.name = className;
-        info.superClassName = superClassName;
-        classInfo_[className] = info;
-
-        // 沿继承链合并父类字段（父类字段在前，子类覆盖同名字段）
-        // 先按"父→子"顺序收集字段名，子类已存在的字段不重复添加
-        std::vector<std::string> mergedOrder;
-        std::unordered_map<std::string, Value> mergedDefaults;
-
-        std::vector<std::string> chain;
-        std::string cur = superClassName;
-        for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
-            auto clsIt = classInfo_.find(cur);
-            if (clsIt == classInfo_.end()) {
-                return runtimeError("未定义的父类: " + cur);
-            }
-            chain.push_back(cur);
-            cur = clsIt->second.superClassName;
-        }
-        // 倒序遍历链（最远的祖先在前），保证子类字段覆盖父类字段
-        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-            auto clsIt = classInfo_.find(*it);
-            if (clsIt == classInfo_.end()) continue;
-            for (const auto& fieldName : clsIt->second.fieldOrder) {
-                if (mergedDefaults.find(fieldName) == mergedDefaults.end()) {
-                    mergedOrder.push_back(fieldName);
-                    mergedDefaults[fieldName] = clsIt->second.fieldDefaults[fieldName];
-                }
-            }
-        }
-        // 当前类字段最后处理（覆盖父类同名字段）
-        for (const auto& fieldName : ownFieldOrder) {
-            if (mergedDefaults.find(fieldName) == mergedDefaults.end()) {
-                mergedOrder.push_back(fieldName);
-            }
-            mergedDefaults[fieldName] = ownFieldDefaults[fieldName];
-        }
-
-        VMClassInfo& registered = classInfo_[className];
-        registered.fieldOrder = std::move(mergedOrder);
-        registered.fieldDefaults = std::move(mergedDefaults);
-
-        // 在全局变量中存储类标记（与解释器语义一致：类名是类型标识，不是实例）
-        Value classVal(std::string("class:") + className);
-        auto classGsIt = globalNameToSlot_.find(className);
-        if (classGsIt != globalNameToSlot_.end()) {
-            globalSlots_[classGsIt->second] = classVal;
-        } else {
-            globals_[className] = classVal;
-        }
-
-        notifyStep(ip, op);
-        ip += 5;  // nameIdx(2B) + superNameIdx(2B) + opcode(1B)
-        break;
-    }
+VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
 
     // ---- 嵌套访问变异方法写回指令 ----
     // 从 lastMutatedReceiver_ 取值，写回基对象的字段或索引位置
+    switch (op) {
     case OpCode::OP_WRITEBACK_MEMBER_VAR: {
         // 操作数: varIdx(2B) + fieldIdx(2B)
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
@@ -2502,6 +2622,101 @@ VMResult VM::executeOneInstruction() {
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
         ip += 2;
+        break;
+    }
+
+    default:
+        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// 其他指令（输出、栈操作、跳转、字段初始化）
+// ============================================================
+
+VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+
+    switch (op) {
+    case OpCode::OP_PRINT: {
+        Value val = pop();
+        outputCallback_(val.toString());
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
+
+    case OpCode::OP_POP:
+        pop();
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+
+    case OpCode::OP_DUP:
+        push(peek(0));
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+
+    case OpCode::OP_DUP_N: {
+        uint8_t depth = chunk.code[ip + 1];
+        if (depth >= stack_.size()) {
+            return runtimeError("OP_DUP_N: 栈深度不足");
+        }
+        push(peek(depth));
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    case OpCode::OP_JUMP: {
+        uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP");
+        notifyStep(ip, op);
+        ip = jump;
+        break;
+    }
+
+    case OpCode::OP_JUMP_IF_FALSE: {
+        uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP_IF_FALSE");
+        // 注意：不弹出条件值——编译器在 OP_JUMP_IF_FALSE 后显式生成 OP_POP
+        // 如果这里也 pop，会导致所有条件/短路表达式的栈操作双重弹出
+        notifyStep(ip, op);
+        if (!peek(0).isTruthy()) {
+            ip = jump;
+        } else {
+            ip += 3;
+        }
+        break;
+    }
+
+    case OpCode::OP_LOOP: {
+        uint16_t loop = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (loop >= chunk.code.size()) return runtimeError("跳转目标越界: OP_LOOP");
+        notifyStep(ip, op);
+        ip = loop;
+        break;
+    }
+
+    case OpCode::OP_INIT_FIELD: {
+        uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        const std::string& fieldName = chunk.constants[idx].stringVal();
+        Value val = pop();
+        // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
+        if (!stack_.empty() && stack_.back().isInstance()) {
+            stack_.back().fields()[fieldName] = val;
+        } else {
+            return runtimeError("OP_INIT_FIELD: 栈顶不是实例");
+        }
+        // M3 fix: 记录字段声明顺序（OP_INIT_FIELD 按 AST 声明顺序执行）
+        pendingFieldOrder_.push_back(fieldName);
+        notifyStep(ip, op);
+        ip += 3;
         break;
     }
 

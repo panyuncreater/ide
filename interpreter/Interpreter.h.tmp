@@ -163,6 +163,10 @@ public:
     Value visitSuperExpr(SuperExpr& node) override;
 
 private:
+    // 运行时限制常量（替代散布在代码中的魔法数字）
+    static constexpr int MAX_RECURSION_DEPTH = 64;      // 最大递归深度
+    static constexpr int MAX_INHERITANCE_DEPTH = 64;    // 最大继承链深度
+
     std::shared_ptr<Environment> globalEnv_;        // 全局环境
     std::shared_ptr<Environment> currentEnv_;       // 当前环境
     std::vector<CallFrame> callStack_;              // 调用栈

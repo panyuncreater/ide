@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include "compiler/Bytecode.h"
 #include "interpreter/Value.h"
+#include "Diagnostic.h"
 
 // ============================================================
 // VM 虚拟机（简单栈机）
@@ -124,6 +125,12 @@ public:
     /// 获取最后错误的源码行号（1-based，0=无位置信息）
     int getLastErrorLine() const;
 
+    /// 获取诊断信息
+    const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
+
+    /// 获取诊断信息（简短访问器）
+    const DiagnosticBag& diagnostics() const { return diagnostics_; }
+
     /// 获取栈内容（用于调试，拷贝）
     std::vector<Value> getStack() const;
 
@@ -204,6 +211,7 @@ private:
     std::string lastError_;                         // 最近一次运行时错误
     int lastErrorLine_ = 0;                          // 最近一次运行时错误的源码行号（1-based，0=无位置）
     bool hasError_ = false;                         // 运行时错误标志（用于快速检测）
+    DiagnosticBag diagnostics_;                     // 诊断收集器
     Value lastMutatedReceiver_;                     // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
     std::vector<std::string> pendingFieldOrder_;    // M3: OP_INIT_FIELD 执行期间记录的字段声明顺序
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
@@ -224,6 +232,14 @@ private:
     /// 比较运算结果写回（消除 6 个比较运算符的重复代码）
     /// ip 按引用传入，结果写入后自动 +1（所有比较指令均为 1 字节）
     VMResult pushCompareResult(bool result, size_t& ip, OpCode opcode);
+
+    /// 写回变异方法调用后的接收者（统一数组/字典/实例三处写回逻辑）
+    /// receiverVarIdx: 接收者的全局变量索引（0xFFFF 表示无）
+    /// receiverLocalSlotByte: 接收者的本地槽字节（0xFF 表示无）
+    /// mutatedObj: 被修改的对象引用（将被 std::move）
+    /// fieldsModified: 是否修改了字段（影响实例字段同步）
+    VMResult writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
+                               Value& mutatedObj, bool fieldsModified);
 
     /// 有序比较：类型检查 + 比较 + 结果写回（<, >, <=, >= 共用模板）
     template<typename Cmp>
@@ -276,6 +292,16 @@ private:
     /// 先在 className 对应类查 methodName，未命中则查 superClass，递归到根。
     const BytecodeChunk* findMethodChunk(const std::string& className,
                                          const std::string& methodName) const;
+
+    /// 按指令类别执行指令（executeOneInstruction 内部转发）
+    VMResult executeConstantOps(OpCode op, size_t& ip);
+    VMResult executeArithOps(OpCode op, size_t& ip);
+    VMResult executeCompareOps(OpCode op, size_t& ip);
+    VMResult executeVarOps(OpCode op, size_t& ip);
+    VMResult executeCallOps(OpCode op, size_t& ip);
+    VMResult executeContainerOps(OpCode op, size_t& ip);
+    VMResult executeWritebackOps(OpCode op, size_t& ip);
+    VMResult executeMiscOps(OpCode op, size_t& ip);
 
     /// 执行单条指令的内部实现（供 execute() 和 stepOnce() 共用）
     VMResult executeOneInstruction();

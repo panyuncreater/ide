@@ -498,7 +498,7 @@ void Ide::onDebug() {
             auto tokens = condLexer.scan(condition);
             Parser condParser;
             auto block = condParser.parse(tokens);
-            if (condParser.getErrors().empty() && block && !block->statements.empty()) {
+            if (!condParser.getDiagnostics().hasErrors() && block && !block->statements.empty()) {
                 Value result = interpreter_.evaluateCondition(block->statements[0].get());
                 return result.isTruthy();
             }

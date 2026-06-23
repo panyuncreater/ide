@@ -30,11 +30,8 @@ public:
     /// 解析 Token 流，返回 AST 根节点（Block）
     std::unique_ptr<Block> parse(const std::vector<Token>& tokens);
 
-    /// 获取解析过程中收集的所有错误
-    const std::vector<ParseError>& getErrors() const { return errors_; }
-
     /// 是否有解析错误
-    bool hasErrors() const { return !errors_.empty(); }
+    bool hasErrors() const { return diagnostics_.hasErrors(); }
 
     /// 获取解析过程中的诊断信息
     const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
@@ -42,7 +39,6 @@ public:
 private:
     const std::vector<Token>* tokens_ = nullptr;  // Token 流（引用，避免深拷贝）
     int current_ = 0;                        // 当前位置
-    std::vector<ParseError> errors_; // 收集的解析错误
     DiagnosticBag diagnostics_;      // 诊断收集器
     int parseDepth_ = 0;             // P15 fix: 递归深度计数器
     static constexpr int MAX_PARSE_DEPTH = 512;  // P15 fix: 最大递归深度
@@ -181,3 +177,4 @@ private:
     /// 同步到下一个声明边界
     void synchronize();
 };
+

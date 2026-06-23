@@ -10,7 +10,6 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     tokens_ = &tokens;  // 存储指针，避免深拷贝整个 token 流
     current_ = 0;
     parseDepth_ = 0;  // P15 fix: 重置递归深度
-    errors_.clear();
     diagnostics_.clear();
 
     std::vector<std::unique_ptr<ASTNode>> statements;
@@ -22,16 +21,11 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
                 statements.push_back(std::move(decl));
             }
         } catch (const ParseError& e) {
-            // 收集错误而非吞掉
-            errors_.push_back(e);
+            // 收集错误到诊断包而非吞掉
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
             // 错误恢复：同步到下一个声明边界
             synchronize();
         }
-    }
-
-    // 将 ParseError 转换为 Diagnostic
-    for (const auto& err : errors_) {
-        diagnostics_.addError(err.what(), err.line, err.column, DiagSource::Parser);
     }
 
     return std::make_unique<Block>(std::move(statements), 1, 1);

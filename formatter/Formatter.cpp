@@ -105,44 +105,155 @@ std::string Formatter::formatNode(ASTNode* node) {
     formatDepth_++;
     struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{formatDepth_};
 
-    switch (node->nodeType) {
-    case NodeType::NODE_BINARY_OP:     return formatBinaryOp(*static_cast<BinaryOp*>(node));
-    case NodeType::NODE_UNARY_OP:      return formatUnaryOp(*static_cast<UnaryOp*>(node));
-    case NodeType::NODE_NUMBER_LITERAL: return formatNumberLiteral(*static_cast<NumberLiteral*>(node));
-    case NodeType::NODE_STRING_LITERAL: return formatStringLiteral(*static_cast<StringLiteral*>(node));
-    case NodeType::NODE_BOOL_LITERAL:   return formatBoolLiteral(*static_cast<BoolLiteral*>(node));
-    case NodeType::NODE_VAR_DECL:       return formatVarDecl(*static_cast<VarDecl*>(node));
-    case NodeType::NODE_ASSIGNMENT:     return formatAssignment(*static_cast<Assignment*>(node));
-    case NodeType::NODE_VAR_REF:       return formatVarRef(*static_cast<VarRef*>(node));
-    case NodeType::NODE_IF_STMT:        return formatIfStmt(*static_cast<IfStmt*>(node));
-    case NodeType::NODE_WHILE_STMT:     return formatWhileStmt(*static_cast<WhileStmt*>(node));
-    case NodeType::NODE_FOR_STMT:       return formatForStmt(*static_cast<ForStmt*>(node));
-    case NodeType::NODE_FUN_DECL:       return formatFunDecl(*static_cast<FunDecl*>(node));
-    case NodeType::NODE_FUN_CALL:       return formatFunCall(*static_cast<FunCall*>(node));
-    case NodeType::NODE_RETURN_STMT:    return formatReturnStmt(*static_cast<ReturnStmt*>(node));
-    case NodeType::NODE_PRINT_STMT:     return formatPrintStmt(*static_cast<PrintStmt*>(node));
-    case NodeType::NODE_BLOCK: {
-        // FMT-05 fix: 使用 openBrace() 支持 BraceStyle 配置
-        std::string result = openBrace();
-        currentIndent_++;
-        result += formatBlock(*static_cast<Block*>(node));
-        currentIndent_--;
-        result += indent() + "}";
-        return result;
-    }
-    case NodeType::NODE_ARRAY_LITERAL:  return formatArrayLiteral(*static_cast<ArrayLiteral*>(node));
-    case NodeType::NODE_DICT_LITERAL:   return formatDictLiteral(*static_cast<DictLiteral*>(node));
-    case NodeType::NODE_INDEX_ACCESS:   return formatIndexAccess(*static_cast<IndexAccess*>(node));
-    case NodeType::NODE_INDEX_ASSIGN:  return formatIndexAssign(*static_cast<IndexAssign*>(node));
-    case NodeType::NODE_CLASS_DECL:     return formatClassDecl(*static_cast<ClassDecl*>(node));
-    case NodeType::NODE_MEMBER_ACCESS: return formatMemberAccess(*static_cast<MemberAccess*>(node));
-    case NodeType::NODE_MEMBER_ASSIGN: return formatMemberAssign(*static_cast<MemberAssign*>(node));
-    case NodeType::NODE_METHOD_CALL:    return formatMethodCall(*static_cast<MethodCall*>(node));
-    case NodeType::NODE_NULL_LITERAL:   return formatNullLiteral(*static_cast<NullLiteral*>(node));
-    case NodeType::NODE_SUPER_EXPR:    return "super";
-    }
+    // 统一通过 Visitor 模式分派：node->accept(*this) 调用对应的 visit* 方法，
+    // visit* 方法将格式化结果存入 lastFormatResult_，替代原 25 路 switch。
+    node->accept(*this);
+    return std::move(lastFormatResult_);
+}
 
-    return "/* unknown node */";
+// ============================================================
+// Visitor 模式：visit* 方法实现
+// 每个 visit* 方法调用对应的 format* 逻辑，将结果存入 lastFormatResult_，
+// 返回 Value::nullValue()。
+// ============================================================
+
+Value Formatter::visitBinaryOp(BinaryOp& node) {
+    lastFormatResult_ = formatBinaryOp(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitUnaryOp(UnaryOp& node) {
+    lastFormatResult_ = formatUnaryOp(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitNumberLiteral(NumberLiteral& node) {
+    lastFormatResult_ = formatNumberLiteral(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitStringLiteral(StringLiteral& node) {
+    lastFormatResult_ = formatStringLiteral(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitBoolLiteral(BoolLiteral& node) {
+    lastFormatResult_ = formatBoolLiteral(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitVarDecl(VarDecl& node) {
+    lastFormatResult_ = formatVarDecl(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitAssignment(Assignment& node) {
+    lastFormatResult_ = formatAssignment(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitVarRef(VarRef& node) {
+    lastFormatResult_ = formatVarRef(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitIfStmt(IfStmt& node) {
+    lastFormatResult_ = formatIfStmt(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitWhileStmt(WhileStmt& node) {
+    lastFormatResult_ = formatWhileStmt(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitForStmt(ForStmt& node) {
+    lastFormatResult_ = formatForStmt(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitFunDecl(FunDecl& node) {
+    lastFormatResult_ = formatFunDecl(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitFunCall(FunCall& node) {
+    lastFormatResult_ = formatFunCall(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitReturnStmt(ReturnStmt& node) {
+    lastFormatResult_ = formatReturnStmt(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitPrintStmt(PrintStmt& node) {
+    lastFormatResult_ = formatPrintStmt(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitBlock(Block& node) {
+    // 保留原 formatNode 中 NODE_BLOCK 分支的行为：用花括号包裹 formatBlock 输出。
+    // formatBlock 只格式化语句列表，不包含外层花括号，此处补上。
+    // FMT-05 fix: 使用 openBrace() 支持 BraceStyle 配置
+    std::string result = openBrace();
+    currentIndent_++;
+    result += formatBlock(node);
+    currentIndent_--;
+    result += indent() + "}";
+    lastFormatResult_ = std::move(result);
+    return Value::nullValue();
+}
+
+Value Formatter::visitArrayLiteral(ArrayLiteral& node) {
+    lastFormatResult_ = formatArrayLiteral(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitDictLiteral(DictLiteral& node) {
+    lastFormatResult_ = formatDictLiteral(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitIndexAccess(IndexAccess& node) {
+    lastFormatResult_ = formatIndexAccess(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitIndexAssign(IndexAssign& node) {
+    lastFormatResult_ = formatIndexAssign(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitClassDecl(ClassDecl& node) {
+    lastFormatResult_ = formatClassDecl(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitMemberAccess(MemberAccess& node) {
+    lastFormatResult_ = formatMemberAccess(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitMemberAssign(MemberAssign& node) {
+    lastFormatResult_ = formatMemberAssign(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitMethodCall(MethodCall& node) {
+    lastFormatResult_ = formatMethodCall(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitNullLiteral(NullLiteral& node) {
+    lastFormatResult_ = formatNullLiteral(node);
+    return Value::nullValue();
+}
+
+Value Formatter::visitSuperExpr(SuperExpr& /*node*/) {
+    // SuperExpr 无对应 format* 方法，保留原 formatNode 中 NODE_SUPER_EXPR 分支的行为
+    lastFormatResult_ = "super";
+    return Value::nullValue();
 }
 
 // 运算符优先级表（数值越大优先级越高）

@@ -5,6 +5,8 @@
 #include <vector>
 #include "ast/ASTNode.h"
 #include "lexer/Token.h"
+#include "interpreter/Visitor.h"
+#include "interpreter/Value.h"
 
 class ASTNode;
 class Block;
@@ -32,6 +34,7 @@ class MemberAccess;
 class MemberAssign;
 class MethodCall;
 class NullLiteral;
+class SuperExpr;
 
 // ============================================================
 // Formatter 代码格式化器
@@ -78,9 +81,42 @@ struct FormatOptions {
 };
 
 /// 将 AST 重新格式化为标准代码文本
-class Formatter {
+/// 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式：
+/// formatNode 通过 node->accept(*this) 分派到对应的 visit* 方法，
+/// visit* 方法内部调用原 format* 逻辑并将结果存入 lastFormatResult_。
+class Formatter : public DefaultVisitor {
 public:
     Formatter();
+
+    // ---- Visitor 模式：visit* 方法（override）----
+    // 每个 visit* 方法调用对应的 format* 逻辑，将结果存入 lastFormatResult_，
+    // 返回 Value::nullValue()。统一 AST 分派为 Visitor 模式，替代原 25 路 switch。
+    Value visitBinaryOp(BinaryOp& node) override;
+    Value visitUnaryOp(UnaryOp& node) override;
+    Value visitNumberLiteral(NumberLiteral& node) override;
+    Value visitStringLiteral(StringLiteral& node) override;
+    Value visitBoolLiteral(BoolLiteral& node) override;
+    Value visitVarDecl(VarDecl& node) override;
+    Value visitAssignment(Assignment& node) override;
+    Value visitVarRef(VarRef& node) override;
+    Value visitIfStmt(IfStmt& node) override;
+    Value visitWhileStmt(WhileStmt& node) override;
+    Value visitForStmt(ForStmt& node) override;
+    Value visitFunDecl(FunDecl& node) override;
+    Value visitFunCall(FunCall& node) override;
+    Value visitReturnStmt(ReturnStmt& node) override;
+    Value visitPrintStmt(PrintStmt& node) override;
+    Value visitBlock(Block& node) override;
+    Value visitArrayLiteral(ArrayLiteral& node) override;
+    Value visitDictLiteral(DictLiteral& node) override;
+    Value visitIndexAccess(IndexAccess& node) override;
+    Value visitIndexAssign(IndexAssign& node) override;
+    Value visitClassDecl(ClassDecl& node) override;
+    Value visitMemberAccess(MemberAccess& node) override;
+    Value visitMemberAssign(MemberAssign& node) override;
+    Value visitMethodCall(MethodCall& node) override;
+    Value visitNullLiteral(NullLiteral& node) override;
+    Value visitSuperExpr(SuperExpr& node) override;
 
     /// 格式化 AST 为代码文本
     std::string format(Block& program);
@@ -108,6 +144,7 @@ private:
     static constexpr int MAX_FORMAT_DEPTH = 256;  // D5 fix: 最大嵌套深度
     std::vector<Token> comments_; // F1 fix: 注释 token 列表
     size_t commentIndex_ = 0;    // 当前注释游标
+    std::string lastFormatResult_;  // 存储 visit* 方法的格式化结果
 
     // P3 fix: 缓存频繁生成的小字符串，避免重复分配（mutable 因为 indent() 是 const）
     mutable std::string indentCache_;     // 当前缩进字符串缓存
@@ -129,7 +166,7 @@ private:
     /// 生成开括号（根据 braceStyle 选项）
     std::string openBrace() const;
 
-    /// 格式化 AST 节点
+    /// 格式化 AST 节点（通过 Visitor 模式分派到 visit* 方法）
     std::string formatNode(ASTNode* node);
 
     /// 格式化各种节点类型
