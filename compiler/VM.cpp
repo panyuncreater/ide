@@ -1,4 +1,7 @@
 #include "compiler/VM.h"
+#include "interpreter/BuiltinMethods.h"  // 共享纯函数层（len/contains/has）
+#include "interpreter/NumericUtils.h"    // 共享溢出检查（B6 fix）
+#include "Logger.h"
 #include <sstream>
 #include <climits>
 #include <cstdint>
@@ -53,6 +56,7 @@ VMResult VM::runtimeError(const std::string& msg) {
     lastErrorLine_ = getCurrentLine();
     hasError_ = true;
     diagnostics_.addError(msg, lastErrorLine_, 0, DiagSource::VM);
+    Logger::Error(msg + " (行 " + std::to_string(lastErrorLine_) + ")", "VM");
     return VMResult::VM_RUNTIME_ERROR;
 }
 
@@ -134,7 +138,7 @@ const BytecodeChunk* VM::findMethodChunk(const std::string& className,
     std::string cur = className;
     std::string methodKey;
     methodKey.reserve(cur.size() + 1 + methodName.size());
-    for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
+    for (int guard = 0; guard < MAX_INHERITANCE_DEPTH && !cur.empty(); ++guard) {
         methodKey.clear();
         methodKey.append(cur).append(1, '.').append(methodName);
         auto it = functionChunks_.find(methodKey);
@@ -200,7 +204,7 @@ VMResult VM::numericOp(int opType) {
     case OP_ADD_INT:
         if (leftRef.isInt() && rightRef.isInt()) {
             int64_t a = leftRef.intVal(), b = rightRef.intVal();
-            if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b))
+            if (OverflowCheck::addOverflow(a, b))
                 return runtimeError("整数加法溢出");
             stack_[stack_.size() - 2] = Value(a + b);
         }
@@ -209,7 +213,7 @@ VMResult VM::numericOp(int opType) {
     case OP_SUB_INT:
         if (leftRef.isInt() && rightRef.isInt()) {
             int64_t a = leftRef.intVal(), b = rightRef.intVal();
-            if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b))
+            if (OverflowCheck::subOverflow(a, b))
                 return runtimeError("整数减法溢出");
             stack_[stack_.size() - 2] = Value(a - b);
         }
@@ -218,15 +222,8 @@ VMResult VM::numericOp(int opType) {
     case OP_MUL_INT:
         if (leftRef.isInt() && rightRef.isInt()) {
             int64_t a = leftRef.intVal(), b = rightRef.intVal();
-            if (a != 0 && b != 0) {
-                if (a == -1 && b == INT64_MIN) return runtimeError("整数乘法溢出");
-                if (b == -1 && a == INT64_MIN) return runtimeError("整数乘法溢出");
-                if ((a > 0 && b > 0 && a > INT64_MAX / b) ||
-                    (a > 0 && b < 0 && b < INT64_MIN / a) ||
-                    (a < 0 && b > 0 && a < INT64_MIN / b) ||
-                    (a < 0 && b < 0 && a < INT64_MAX / b))
-                    return runtimeError("整数乘法溢出");
-            }
+            if (OverflowCheck::mulOverflow(a, b))
+                return runtimeError("整数乘法溢出");
             stack_[stack_.size() - 2] = Value(a * b);
         }
         else stack_[stack_.size() - 2] = Value(leftRef.toDouble() * rightRef.toDouble());
@@ -235,7 +232,7 @@ VMResult VM::numericOp(int opType) {
         if (rightRef.isInt() && leftRef.isInt()) {
             int64_t b = rightRef.intVal();
             if (b == 0) return runtimeError("除零错误");
-            if (leftRef.intVal() == INT64_MIN && b == -1) return runtimeError("整数除法溢出");
+            if (OverflowCheck::divOverflow(leftRef.intVal(), b)) return runtimeError("整数除法溢出");
             stack_[stack_.size() - 2] = Value(leftRef.intVal() / b);  // int/int → int
             break;
         }
@@ -249,8 +246,8 @@ VMResult VM::numericOp(int opType) {
             if (leftRef.isInt()) a = leftRef.intVal();
             else if (leftRef.isFloat()) {
                 double lf = leftRef.floatVal();
-                // M-新3 fix: 用 >= 代替 >，因 double(INT64_MAX) 上取整为 2^63，该值无法表示为 int64_t
-                if (lf >= -static_cast<double>(INT64_MIN) || lf < static_cast<double>(INT64_MIN))
+                // B6 fix: 统一使用 OverflowCheck::doubleToIntOverflow
+                if (OverflowCheck::doubleToIntOverflow(lf))
                     return runtimeError("浮点数转整数溢出");
                 a = static_cast<int64_t>(lf);
             }
@@ -258,13 +255,13 @@ VMResult VM::numericOp(int opType) {
             if (rightRef.isInt()) b = rightRef.intVal();
             else if (rightRef.isFloat()) {
                 double rf = rightRef.floatVal();
-                if (rf >= -static_cast<double>(INT64_MIN) || rf < static_cast<double>(INT64_MIN))
+                if (OverflowCheck::doubleToIntOverflow(rf))
                     return runtimeError("浮点数转整数溢出");
                 b = static_cast<int64_t>(rf);
             }
             else return runtimeError("取模运算需要数值类型");
             if (b == 0) return runtimeError("除零错误");
-            if (a == INT64_MIN && b == -1) { stack_[stack_.size() - 2] = Value(0); break; }
+            if (OverflowCheck::modOverflow(a, b)) { stack_[stack_.size() - 2] = Value(0); break; }
             stack_[stack_.size() - 2] = Value(a % b);
             break;
         }
@@ -358,6 +355,273 @@ VMResult VM::writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlo
     } else {
         lastMutatedReceiver_ = std::move(mutatedObj);
     }
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// B7 fix: 内建方法分发（从 executeCallOps 提取）
+// ============================================================
+
+// ---- 数组内建方法 ----
+VMResult VM::dispatchArrayBuiltin(const Value& obj, BuiltinMethod method,
+                                   const std::string& methodName, uint8_t argCount,
+                                   uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
+                                   size_t& ip, OpCode op, int instrLen) {
+    // 先弹出参数（接收者仍在栈上，const ref 有效）
+    SmallArgs<Value> args(argCount);
+    for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
+
+    // 非变异路径：从 const 引用计算结果，无需拷贝接收者
+    Value result = Value::nullValue();
+    if (method == BuiltinMethod::ARR_LEN) {
+        auto sr = executeSharedLen(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        pop(); push(sr.result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+    if (method == BuiltinMethod::ARR_CONTAINS) {
+        auto sr = executeSharedArrayContains(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        pop(); push(sr.result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+    if (method == BuiltinMethod::ARR_JOIN) {
+        std::string sep = args.empty() ? "" : args[0].toString();
+        std::string joined;
+        joined.reserve(obj.arrayVal().size() * (8 + sep.size()));
+        for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
+            if (i > 0) joined += sep;
+            joined += obj.arrayVal()[i].toString();
+        }
+        result = Value(std::move(joined));
+        pop(); push(result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+
+    // A2 变异路径：先 pop 接收者(move, refcount 不变)，再用 tryGetMutable 原地修改
+    Value mutableObj = std::move(stack_.back());
+    stack_.pop_back();
+
+    if (method == BuiltinMethod::ARR_PUSH) {
+        if (args.size() != 1) return runtimeError("push 期望 1 个参数");
+        auto* arr = mutableObj.tryGetMutableArray();
+        if (arr) arr->push_back(std::move(args[0]));
+        else mutableObj.arrayVal().push_back(args[0]);
+    } else if (method == BuiltinMethod::ARR_POP) {
+        auto* arr = mutableObj.tryGetMutableArray();
+        if (arr) {
+            if (arr->empty()) return runtimeError("对空数组调用 pop");
+            result = std::move(arr->back());
+            arr->pop_back();
+        } else {
+            if (mutableObj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
+            result = mutableObj.arrayVal().back();
+            mutableObj.arrayVal().pop_back();
+        }
+    } else if (method == BuiltinMethod::ARR_REMOVE) {
+        if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
+        if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
+        int64_t ri = args[0].intVal();
+        auto* arr = mutableObj.tryGetMutableArray();
+        if (arr) {
+            if (ri < 0 || static_cast<size_t>(ri) >= arr->size())
+                return runtimeError("数组索引越界: " + std::to_string(ri));
+            arr->erase(arr->begin() + static_cast<size_t>(ri));
+        } else {
+            if (ri < 0 || static_cast<size_t>(ri) >= mutableObj.arrayVal().size())
+                return runtimeError("数组索引越界: " + std::to_string(ri));
+            mutableObj.arrayVal().erase(mutableObj.arrayVal().begin() + static_cast<size_t>(ri));
+        }
+    } else {
+        return runtimeError("数组没有方法 " + methodName);
+    }
+
+    // 写回变异后的对象（P7 fix: 使用 std::move 避免二次深拷贝）
+    writeBackReceiver(receiverVarIdx, receiverLocalSlotByte, mutableObj, true);
+    push(result);
+    notifyStep(ip, op);
+    ip += instrLen;
+    return VMResult::VM_OK;
+}
+
+// ---- 字典内建方法 ----
+VMResult VM::dispatchDictBuiltin(const Value& obj, BuiltinMethod method,
+                                  const std::string& methodName, uint8_t argCount,
+                                  uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
+                                  size_t& ip, OpCode op, int instrLen) {
+    SmallArgs<Value> args(argCount);
+    for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
+
+    Value result = Value::nullValue();
+
+    // 非变异路径：直接从 const 引用读取
+    if (method == BuiltinMethod::DICT_LEN || method == BuiltinMethod::ARR_LEN) {
+        auto sr = executeSharedLen(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        pop(); push(sr.result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+    if (method == BuiltinMethod::DICT_KEYS) {
+        std::vector<Value> keys;
+        keys.reserve(obj.dictVal().size());
+        for (const auto& kv : obj.dictVal()) keys.emplace_back(Value(kv.first));
+        result = Value(std::move(keys));
+        pop(); push(result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+    if (method == BuiltinMethod::DICT_VALUES) {
+        std::vector<Value> vals;
+        vals.reserve(obj.dictVal().size());
+        for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
+        result = Value(std::move(vals));
+        pop(); push(result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+    if (method == BuiltinMethod::DICT_HAS || method == BuiltinMethod::ARR_CONTAINS) {
+        auto sr = executeSharedDictHas(obj, methodName, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        pop(); push(sr.result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+    if (method == BuiltinMethod::DICT_GET) {
+        if (args.empty() || args.size() > 2) return runtimeError("get 期望 1-2 个参数(键[, 默认值])");
+        std::string key = args[0].toString();
+        auto it = obj.dictVal().find(key);
+        if (it != obj.dictVal().end()) {
+            result = it->second;
+        } else {
+            result = (args.size() == 2) ? args[1] : Value::nullValue();
+        }
+        pop(); push(result); notifyStep(ip, op); ip += instrLen;
+        return VMResult::VM_OK;
+    }
+
+    // A2 变异路径（remove）：先 pop 再原地修改
+    Value mutableObj = std::move(stack_.back());
+    stack_.pop_back();
+
+    if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
+        if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
+        auto* dict = mutableObj.tryGetMutableDict();
+        if (dict) dict->erase(args[0].toString());
+        else mutableObj.dictVal().erase(args[0].toString());
+    } else {
+        return runtimeError("字典没有方法 " + methodName);
+    }
+
+    // 写回（P7 fix: 使用 std::move 避免二次深拷贝）
+    writeBackReceiver(receiverVarIdx, receiverLocalSlotByte, mutableObj, true);
+    push(result);
+    notifyStep(ip, op);
+    ip += instrLen;
+    return VMResult::VM_OK;
+}
+
+// ---- 字符串内建方法（全部非变异，使用 const 引用）----
+VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
+                                    const std::string& methodName, uint8_t argCount,
+                                    size_t& ip, OpCode op, int instrLen) {
+    SmallArgs<Value> args(argCount);
+    for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
+
+    Value result = Value::nullValue();
+
+    if (method == BuiltinMethod::STR_LEN || method == BuiltinMethod::ARR_LEN || method == BuiltinMethod::DICT_LEN) {
+        auto sr = executeSharedLen(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        result = std::move(sr.result);
+    } else if (method == BuiltinMethod::STR_UPPER) {
+        std::string s = obj.stringVal();
+        for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        result = Value(std::move(s));
+    } else if (method == BuiltinMethod::STR_LOWER) {
+        std::string s = obj.stringVal();
+        for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        result = Value(std::move(s));
+    } else if (method == BuiltinMethod::STR_SPLIT) {
+        std::string sep = args.empty() ? " " : args[0].toString();
+        if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
+        std::vector<Value> parts;
+        const std::string& src = obj.stringVal();
+        size_t estCount = 1;
+        for (size_t p = 0; (p = src.find(sep, p)) != std::string::npos; p += sep.size()) ++estCount;
+        parts.reserve(estCount);
+        size_t start = 0, pos;
+        while ((pos = src.find(sep, start)) != std::string::npos) {
+            parts.emplace_back(Value(src.substr(start, pos - start)));
+            start = pos + sep.size();
+        }
+        parts.emplace_back(Value(src.substr(start)));
+        result = Value(std::move(parts));
+    } else if (method == BuiltinMethod::STR_TRIM) {
+        const std::string& s = obj.stringVal();
+        size_t l = s.find_first_not_of(" \t\r\n");
+        size_t r = s.find_last_not_of(" \t\r\n");
+        if (l == std::string::npos) result = Value(std::string(""));
+        else result = Value(s.substr(l, r - l + 1));
+    } else if (method == BuiltinMethod::STR_CONTAINS || method == BuiltinMethod::ARR_CONTAINS) {
+        if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
+        result = Value(obj.stringVal().find(args[0].toString()) != std::string::npos);
+    } else if (method == BuiltinMethod::STR_STARTS_WITH) {
+        if (args.size() != 1) return runtimeError("startsWith 期望 1 个参数");
+        const std::string& prefix = args[0].toString();
+        const std::string& s = obj.stringVal();
+        result = Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0);
+    } else if (method == BuiltinMethod::STR_ENDS_WITH) {
+        if (args.size() != 1) return runtimeError("endsWith 期望 1 个参数");
+        const std::string& suffix = args[0].toString();
+        const std::string& s = obj.stringVal();
+        result = Value(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
+    } else if (method == BuiltinMethod::STR_REPLACE) {
+        if (args.size() != 2) return runtimeError("replace 期望 2 个参数(旧串, 新串)");
+        std::string s = obj.stringVal();
+        const std::string& from = args[0].toString();
+        const std::string& to = args[1].toString();
+        if (!from.empty()) {
+            size_t pos = 0;
+            while ((pos = s.find(from, pos)) != std::string::npos) {
+                s.replace(pos, from.size(), to);
+                pos += to.size();
+            }
+        }
+        result = Value(std::move(s));
+    } else if (method == BuiltinMethod::STR_SUBSTR) {
+        if (args.size() < 1 || args.size() > 2) return runtimeError("substr 期望 1-2 个参数(起始[, 长度])");
+        int64_t start = args[0].intVal();
+        const std::string& s = obj.stringVal();
+        if (start < 0 || static_cast<size_t>(start) > s.size()) result = Value(std::string(""));
+        else if (args.size() == 2) {
+            int64_t len = args[1].intVal();
+            result = Value(s.substr(static_cast<size_t>(start), static_cast<size_t>(len)));
+        } else {
+            result = Value(s.substr(static_cast<size_t>(start)));
+        }
+    } else if (method == BuiltinMethod::STR_INDEX_OF) {
+        if (args.size() != 1) return runtimeError("indexOf 期望 1 个参数");
+        // M2 fix: 返回 UTF-8 字符位置而非字节位置
+        const std::string& s = obj.stringVal();
+        const std::string& needle = args[0].toString();
+        size_t bytePos = s.find(needle);
+        if (bytePos == std::string::npos) {
+            result = Value(static_cast<int64_t>(-1));
+        } else {
+            int64_t charIdx = 0;
+            for (size_t b = 0; b < bytePos; ) {
+                unsigned char c = static_cast<unsigned char>(s[b]);
+                b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                     ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+                charIdx++;
+            }
+            result = Value(charIdx);
+        }
+    } else {
+        return runtimeError("字符串没有方法 " + methodName);
+    }
+
+    pop();  // 移除接收者（在计算完成后）
+    push(result);
+    notifyStep(ip, op);
+    ip += instrLen;
     return VMResult::VM_OK;
 }
 
@@ -478,6 +742,8 @@ VMResult VM::stepOnce() {
 VMResult VM::execute(const CompileResult& result) {
     initExecution(result);
 
+    // S-02 fix: 指令执行预算，防止恶意字节码导致 DoS
+    int64_t instructionCount = 0;
     while (!frames_.empty()) {
         VMCallFrame& frame = currentFrame();
         const BytecodeChunk& chunk = *frame.chunk;
@@ -502,6 +768,13 @@ VMResult VM::execute(const CompileResult& result) {
         }
 
         if (hasError_) return VMResult::VM_RUNTIME_ERROR;
+        // S-02 fix: 检查指令预算
+        if (++instructionCount > MAX_INSTRUCTIONS) {
+            lastError_ = "指令执行数超过上限 " + std::to_string(MAX_INSTRUCTIONS) + "，疑似无限循环";
+            lastErrorLine_ = 0;
+            hasError_ = true;
+            return VMResult::VM_RUNTIME_ERROR;
+        }
         VMResult r = executeOneInstruction();
         if (r != VMResult::VM_OK || hasError_) return VMResult::VM_RUNTIME_ERROR;
     }
@@ -740,7 +1013,7 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
         if (stack_.empty()) return runtimeError("栈下溢：NEGATE 运算需要一个操作数");
         auto& top = stack_.back();
         if (top.isInt()) {
-            if (top.intVal() == INT64_MIN) return runtimeError("整数溢出：无法对最小值取负");
+            if (OverflowCheck::negateOverflow(top.intVal())) return runtimeError("整数溢出：无法对最小值取负");
             top = Value(-top.intVal());
         }
         else if (top.isFloat()) top = Value(-top.floatVal());
@@ -1486,258 +1759,28 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
 
         // ---- 数组内置方法 ----
         if (obj.isArray()) {
-            // 先弹出参数（接收者仍在栈上，const ref 有效）
-            SmallArgs<Value> args(argCount);
-            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-
-            // 非变异路径：从 const 引用计算结果，无需拷贝接收者
-            Value result = Value::nullValue();
-            if (method == BuiltinMethod::ARR_LEN) {
-                result = Value(static_cast<int64_t>(obj.arrayVal().size()));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::ARR_CONTAINS) {
-                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
-                bool found = false;
-                for (const auto& elem : obj.arrayVal()) {
-                    if (elem.equals(args[0])) { found = true; break; }
-                }
-                result = Value(found);
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::ARR_JOIN) {
-                std::string sep = args.empty() ? "" : args[0].toString();
-                std::string joined;
-                joined.reserve(obj.arrayVal().size() * (8 + sep.size()));
-                for (size_t i = 0; i < obj.arrayVal().size(); ++i) {
-                    if (i > 0) joined += sep;
-                    joined += obj.arrayVal()[i].toString();
-                }
-                result = Value(std::move(joined));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-
-            // A2 变异路径：先 pop 接收者(move, refcount 不变)，再用 tryGetMutable 原地修改
-            Value mutableObj = std::move(stack_.back());
-            stack_.pop_back();
-
-            if (method == BuiltinMethod::ARR_PUSH) {
-                if (args.size() != 1) return runtimeError("push 期望 1 个参数");
-                auto* arr = mutableObj.tryGetMutableArray();
-                if (arr) arr->push_back(std::move(args[0]));
-                else mutableObj.arrayVal().push_back(args[0]);
-            } else if (method == BuiltinMethod::ARR_POP) {
-                auto* arr = mutableObj.tryGetMutableArray();
-                if (arr) {
-                    if (arr->empty()) return runtimeError("对空数组调用 pop");
-                    result = std::move(arr->back());
-                    arr->pop_back();
-                } else {
-                    if (mutableObj.arrayVal().empty()) return runtimeError("对空数组调用 pop");
-                    result = mutableObj.arrayVal().back();
-                    mutableObj.arrayVal().pop_back();
-                }
-            } else if (method == BuiltinMethod::ARR_REMOVE) {
-                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(索引)");
-                if (!args[0].isInt()) return runtimeError("remove 参数必须是整数索引");
-                int64_t ri = args[0].intVal();
-                auto* arr = mutableObj.tryGetMutableArray();
-                if (arr) {
-                    if (ri < 0 || static_cast<size_t>(ri) >= arr->size())
-                        return runtimeError("数组索引越界: " + std::to_string(ri));
-                    arr->erase(arr->begin() + static_cast<size_t>(ri));
-                } else {
-                    if (ri < 0 || static_cast<size_t>(ri) >= mutableObj.arrayVal().size())
-                        return runtimeError("数组索引越界: " + std::to_string(ri));
-                    mutableObj.arrayVal().erase(mutableObj.arrayVal().begin() + static_cast<size_t>(ri));
-                }
-            } else {
-                return runtimeError("数组没有方法 " + methodName);
-            }
-
-            // 写回变异后的对象（P7 fix: 使用 std::move 避免二次深拷贝）
-            writeBackReceiver(receiverVarIdx, receiverLocalSlotByte, mutableObj, true);
-            push(result);
-            notifyStep(ip, op);
-            ip += instrLen;
+            // B7 fix: 提取到 dispatchArrayBuiltin，降低 executeCallOps 圈复杂度
+            VMResult r = dispatchArrayBuiltin(obj, method, methodName, argCount,
+                                               receiverVarIdx, receiverLocalSlotByte,
+                                               ip, op, instrLen);
+            if (r != VMResult::VM_OK) return r;
             break;
         }
 
         // ---- 字典内置方法 ----
         if (obj.isDict()) {
-            SmallArgs<Value> args(argCount);
-            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-
-            Value result = Value::nullValue();
-
-            // 非变异路径：直接从 const 引用读取
-            if (method == BuiltinMethod::DICT_LEN || method == BuiltinMethod::ARR_LEN) {
-                result = Value(static_cast<int64_t>(obj.dictVal().size()));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_KEYS) {
-                std::vector<Value> keys;
-                keys.reserve(obj.dictVal().size());
-                for (const auto& kv : obj.dictVal()) keys.emplace_back(Value(kv.first));
-                result = Value(std::move(keys));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_VALUES) {
-                std::vector<Value> vals;
-                vals.reserve(obj.dictVal().size());
-                for (const auto& kv : obj.dictVal()) vals.push_back(kv.second);
-                result = Value(std::move(vals));
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_HAS || method == BuiltinMethod::ARR_CONTAINS) {
-                if (args.size() != 1) return runtimeError(methodName + " 期望 1 个参数(键)");
-                result = Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end());
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-            if (method == BuiltinMethod::DICT_GET) {
-                if (args.empty() || args.size() > 2) return runtimeError("get 期望 1-2 个参数(键[, 默认值])");
-                std::string key = args[0].toString();
-                auto it = obj.dictVal().find(key);
-                if (it != obj.dictVal().end()) {
-                    result = it->second;
-                } else {
-                    result = (args.size() == 2) ? args[1] : Value::nullValue();
-                }
-                pop(); push(result); notifyStep(ip, op); ip += instrLen; break;
-            }
-
-            // A2 变异路径（remove）：先 pop 再原地修改
-            Value mutableObj = std::move(stack_.back());
-            stack_.pop_back();
-
-            if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
-                if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
-                auto* dict = mutableObj.tryGetMutableDict();
-                if (dict) dict->erase(args[0].toString());
-                else mutableObj.dictVal().erase(args[0].toString());
-            } else {
-                return runtimeError("字典没有方法 " + methodName);
-            }
-
-            // 写回（P7 fix: 使用 std::move 避免二次深拷贝）
-            writeBackReceiver(receiverVarIdx, receiverLocalSlotByte, mutableObj, true);
-            push(result);
-            notifyStep(ip, op);
-            ip += instrLen;
+            VMResult r = dispatchDictBuiltin(obj, method, methodName, argCount,
+                                              receiverVarIdx, receiverLocalSlotByte,
+                                              ip, op, instrLen);
+            if (r != VMResult::VM_OK) return r;
             break;
         }
 
         // ---- 字符串内置方法（全部非变异，使用 const 引用）----
         if (obj.isString()) {
-            SmallArgs<Value> args(argCount);
-            for (int i = argCount - 1; i >= 0; --i) args[i] = pop();
-
-            Value result = Value::nullValue();
-
-            if (method == BuiltinMethod::STR_LEN || method == BuiltinMethod::ARR_LEN || method == BuiltinMethod::DICT_LEN) {
-                // V3 fix: 字符串按 UTF-8 码位计数，与解释器 M6 fix 一致
-                const std::string& s = obj.stringVal();
-                size_t count = 0;
-                for (size_t i = 0; i < s.size(); ) {
-                    unsigned char c = static_cast<unsigned char>(s[i]);
-                    i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                         ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-                    count++;
-                }
-                result = Value(static_cast<int64_t>(count));
-            } else if (method == BuiltinMethod::STR_UPPER) {
-                std::string s = obj.stringVal();
-                for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                result = Value(std::move(s));
-            } else if (method == BuiltinMethod::STR_LOWER) {
-                std::string s = obj.stringVal();
-                for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                result = Value(std::move(s));
-            } else if (method == BuiltinMethod::STR_SPLIT) {
-                std::string sep = args.empty() ? " " : args[0].toString();
-                if (sep.empty()) return runtimeError("split 的分隔符不能为空字符串");
-                std::vector<Value> parts;
-                const std::string& src = obj.stringVal();
-                size_t estCount = 1;
-                for (size_t p = 0; (p = src.find(sep, p)) != std::string::npos; p += sep.size()) ++estCount;
-                parts.reserve(estCount);
-                size_t start = 0, pos;
-                while ((pos = src.find(sep, start)) != std::string::npos) {
-                    parts.emplace_back(Value(src.substr(start, pos - start)));
-                    start = pos + sep.size();
-                }
-                parts.emplace_back(Value(src.substr(start)));
-                result = Value(std::move(parts));
-            } else if (method == BuiltinMethod::STR_TRIM) {
-                const std::string& s = obj.stringVal();
-                size_t l = s.find_first_not_of(" \t\r\n");
-                size_t r = s.find_last_not_of(" \t\r\n");
-                if (l == std::string::npos) result = Value(std::string(""));
-                else result = Value(s.substr(l, r - l + 1));
-            } else if (method == BuiltinMethod::STR_CONTAINS) {
-                if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
-                result = Value(obj.stringVal().find(args[0].toString()) != std::string::npos);
-            } else if (method == BuiltinMethod::STR_STARTS_WITH) {
-                if (args.size() != 1) return runtimeError("startsWith 期望 1 个参数");
-                const std::string& prefix = args[0].toString();
-                const std::string& s = obj.stringVal();
-                result = Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0);
-            } else if (method == BuiltinMethod::STR_ENDS_WITH) {
-                if (args.size() != 1) return runtimeError("endsWith 期望 1 个参数");
-                const std::string& suffix = args[0].toString();
-                const std::string& s = obj.stringVal();
-                result = Value(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
-            } else if (method == BuiltinMethod::STR_REPLACE) {
-                if (args.size() != 2) return runtimeError("replace 期望 2 个参数(旧串, 新串)");
-                std::string s = obj.stringVal();
-                const std::string& from = args[0].toString();
-                const std::string& to = args[1].toString();
-                if (!from.empty()) {
-                    size_t pos = 0;
-                    while ((pos = s.find(from, pos)) != std::string::npos) {
-                        s.replace(pos, from.size(), to);
-                        pos += to.size();
-                    }
-                }
-                result = Value(std::move(s));
-            } else if (method == BuiltinMethod::STR_SUBSTR) {
-                if (args.size() < 1 || args.size() > 2) return runtimeError("substr 期望 1-2 个参数(起始[, 长度])");
-                int64_t start = args[0].intVal();
-                const std::string& s = obj.stringVal();
-                if (start < 0 || static_cast<size_t>(start) > s.size()) result = Value(std::string(""));
-                else if (args.size() == 2) {
-                    int64_t len = args[1].intVal();
-                    result = Value(s.substr(static_cast<size_t>(start), static_cast<size_t>(len)));
-                } else {
-                    result = Value(s.substr(static_cast<size_t>(start)));
-                }
-            } else if (method == BuiltinMethod::STR_INDEX_OF) {
-                if (args.size() != 1) return runtimeError("indexOf 期望 1 个参数");
-                // M2 fix: 返回 UTF-8 字符位置而非字节位置
-                const std::string& s = obj.stringVal();
-                const std::string& needle = args[0].toString();
-                size_t bytePos = s.find(needle);
-                if (bytePos == std::string::npos) {
-                    result = Value(static_cast<int64_t>(-1));
-                } else {
-                    // 将字节偏移转换为 UTF-8 字符索引
-                    int64_t charIdx = 0;
-                    for (size_t b = 0; b < bytePos; ) {
-                        unsigned char c = static_cast<unsigned char>(s[b]);
-                        b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                             ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-                        charIdx++;
-                    }
-                    result = Value(charIdx);
-                }
-            } else {
-                return runtimeError("字符串没有方法 " + methodName);
-            }
-
-            pop();  // 移除接收者（在计算完成后）
-            push(result);
-            notifyStep(ip, op);
-            ip += instrLen;
+            VMResult r = dispatchStringBuiltin(obj, method, methodName, argCount,
+                                                ip, op, instrLen);
+            if (r != VMResult::VM_OK) return r;
             break;
         }
 
@@ -2061,7 +2104,7 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
 
         std::vector<std::string> chain;
         std::string cur = superClassName;
-        for (int guard = 0; guard < 256 && !cur.empty(); ++guard) {
+        for (int guard = 0; guard < MAX_INHERITANCE_DEPTH && !cur.empty(); ++guard) {
             auto clsIt = classInfo_.find(cur);
             if (clsIt == classInfo_.end()) {
                 return runtimeError("未定义的父类: " + cur);

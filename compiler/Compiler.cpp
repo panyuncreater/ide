@@ -1,4 +1,6 @@
 #include "compiler/Compiler.h"
+#include "interpreter/NumericUtils.h"  // 共享溢出检查（B6 fix）
+#include "Logger.h"
 #include <sstream>
 #include <algorithm>
 #include <cstdint>
@@ -62,6 +64,8 @@ CompileResult Compiler::compile(Block& program) {
         kv.second.buildIpMap();
     }
 
+    Logger::Info("字节码编译完成: " + std::to_string(result.globalSlotCount) + " 全局槽, " +
+        std::to_string(result.functionChunks.size()) + " 函数chunk", "Compiler");
     return result;
 }
 
@@ -1527,8 +1531,8 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
         switch (opType) {
         case BinOpType::BIN_ADD:
             if (!useFloat) {
-                // H3 fix: 整数加法溢出检测
-                if ((ri > 0 && li > INT64_MAX - ri) || (ri < 0 && li < INT64_MIN - ri))
+                // B6 fix: 统一使用 OverflowCheck
+                if (OverflowCheck::addOverflow(li, ri))
                     return false;
                 result = Value(li + ri);
             } else {
@@ -1537,8 +1541,7 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
             return true;
         case BinOpType::BIN_SUB:
             if (!useFloat) {
-                // H3 fix: 整数减法溢出检测
-                if ((ri < 0 && li > INT64_MAX + ri) || (ri > 0 && li < INT64_MIN + ri))
+                if (OverflowCheck::subOverflow(li, ri))
                     return false;
                 result = Value(li - ri);
             } else {
@@ -1547,16 +1550,8 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
             return true;
         case BinOpType::BIN_MUL:
             if (!useFloat) {
-                // H3 fix: 整数乘法溢出检测
-                if (li != 0 && ri != 0) {
-                    if (li == -1 && ri == INT64_MIN) return false;
-                    if (ri == -1 && li == INT64_MIN) return false;
-                    if ((li > 0 && ri > 0 && li > INT64_MAX / ri) ||
-                        (li > 0 && ri < 0 && ri < INT64_MIN / li) ||
-                        (li < 0 && ri > 0 && li < INT64_MIN / ri) ||
-                        (li < 0 && ri < 0 && li < INT64_MAX / ri))
-                        return false;
-                }
+                if (OverflowCheck::mulOverflow(li, ri))
+                    return false;
                 result = Value(li * ri);
             } else {
                 result = Value(ld * rd);
@@ -1566,14 +1561,14 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
             double divisor = useFloat ? rd : static_cast<double>(ri);
             if (divisor == 0) return false;  // 除零不折叠，保留运行时错误
             // B3 fix: INT64_MIN / -1 = 溢出 UB，不折叠
-            if (!useFloat && li == INT64_MIN && ri == -1) return false;
+            if (!useFloat && OverflowCheck::divOverflow(li, ri)) return false;
             result = useFloat ? Value(ld / rd) : Value(li / ri);
             return true;
         }
         case BinOpType::BIN_MOD:
             if (!useFloat && ri == 0) return false;
             // B3 fix: INT64_MIN % -1 = 溢出 UB，不折叠
-            if (!useFloat && li == INT64_MIN && ri == -1) return false;
+            if (!useFloat && OverflowCheck::modOverflow(li, ri)) return false;
             if (useFloat) return false;
             result = Value(li % ri);
             return true;
@@ -1618,7 +1613,7 @@ bool Compiler::tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
         Value val = static_cast<NumberLiteral*>(operand)->value;
         if (opType == UnaryOp::UnaryOpType::UOP_NEGATE) {
             // B3 fix: -INT64_MIN = 溢出 UB，不折叠
-            if (val.isInt() && val.intVal() == INT64_MIN) return false;
+            if (val.isInt() && OverflowCheck::negateOverflow(val.intVal())) return false;
             result = val.isFloat() ? Value(-val.floatVal()) : Value(-val.intVal());
             return true;
         }

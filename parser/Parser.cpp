@@ -74,9 +74,7 @@ const Token& Parser::consumeIdentifierOrType(const std::string& message) {
     // 允许普通标识符
     if (check(TokenType::TK_IDENTIFIER)) return advance();
     // 允许类型关键字作为名称（如 dict, array, int, float, string, bool）
-    if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-        check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-        check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+    if (isTypeKeyword()) {
         return advance();
     }
     const Token& tok = peek();
@@ -88,6 +86,14 @@ bool Parser::isIdentifierOrType() const {
     TokenType t = peek().type;
     return t == TokenType::TK_IDENTIFIER ||
            t == TokenType::TK_INT || t == TokenType::TK_FLOAT ||
+           t == TokenType::TK_BOOL || t == TokenType::TK_STRING_TYPE ||
+           t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
+}
+
+bool Parser::isTypeKeyword() const {
+    if (isAtEnd()) return false;
+    TokenType t = peek().type;
+    return t == TokenType::TK_INT || t == TokenType::TK_FLOAT ||
            t == TokenType::TK_BOOL || t == TokenType::TK_STRING_TYPE ||
            t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
 }
@@ -122,9 +128,7 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     if (check(TokenType::TK_CLASS)) return classDecl();
 
     // 类型注解声明: int/float/bool/string/dict/array
-    if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-        check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-        check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+    if (isTypeKeyword()) {
         // 可能是: 类型注解变量声明(int a=1;) 或 带返回类型的函数声明(int fib(n){})
         // 保存当前位置以便回溯
         int savePos = current_;
@@ -276,9 +280,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         std::string paramName;
 
         // 支持 C 风格类型注解: int a, float b 等
-        if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-            check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-            check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+        if (isTypeKeyword()) {
             pType = parseTypeAnnotation();
 
             const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
@@ -296,10 +298,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             // 可选的参数类型注解 : type
             if (match(TokenType::TK_COLON)) {
                 // 接受标识符或内置类型关键字（int, float, bool, string, dict, array）
-                if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-                    check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                    check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY) ||
-                    check(TokenType::TK_IDENTIFIER)) {
+                if (isIdentifierOrType()) {
                     pType = parseTypeAnnotation();
                 } else {
                     const Token& tok = peek();
@@ -346,9 +345,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
             members.push_back(varDecl());
         } else if (check(TokenType::TK_FUN)) {  // Lexer 已统一 function/func → TK_FUN
             members.push_back(funDecl());
-        } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-                   check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-                   check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+        } else if (isTypeKeyword()) {
             // 带类型注解的字段声明（如 int count = 0;）或带返回类型的方法声明（如 int getValue() {}）
             int savePos = current_;
             std::string typeAnn = parseTypeAnnotation();
@@ -500,9 +497,7 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
     if (check(TokenType::TK_VAR)) {
         init = varDecl();
         // varDecl 已经消耗了分号
-    } else if (check(TokenType::TK_INT) || check(TokenType::TK_FLOAT) ||
-               check(TokenType::TK_BOOL) || check(TokenType::TK_STRING_TYPE) ||
-               check(TokenType::TK_DICT) || check(TokenType::TK_ARRAY)) {
+    } else if (isTypeKeyword()) {
         // 类型注解声明，如 int j = 0;
         int savePos = current_;
         std::string typeAnn = parseTypeAnnotation();

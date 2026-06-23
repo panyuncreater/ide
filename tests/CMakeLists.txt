@@ -12,10 +12,11 @@ if(NOT TARGET minilang_core)
 
     set(CMAKE_CXX_STANDARD 20)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_AUTOMOC ON)
     set(CMAKE_CXX_EXTENSIONS OFF)
 
     # 查找 Qt6
-    find_package(Qt6 COMPONENTS Core REQUIRED)
+    find_package(Qt6 COMPONENTS Core Widgets REQUIRED)
 
     # 项目根目录
     set(MINILANG_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -35,7 +36,7 @@ if(NOT TARGET minilang_core)
     )
 
     target_include_directories(minilang_core PUBLIC ${MINILANG_ROOT_DIR})
-    target_link_libraries(minilang_core PUBLIC Qt6::Core)
+    target_link_libraries(minilang_core PUBLIC Qt6::Core Qt6::Widgets)
 
     if(MSVC)
         target_compile_options(minilang_core PRIVATE /W3 /utf-8 /EHsc /permissive- /wd4996)
@@ -43,18 +44,29 @@ if(NOT TARGET minilang_core)
 endif()
 
 # ============================================================
-# 通过 FetchContent 拉取 GoogleTest v1.14.0
+# 集成 GoogleTest v1.14.0
+# 优先使用本地 third_party/googletest 源码（离线可用）
+# 回退到 FetchContent 从 gitee 镜像下载（需网络）
 # ============================================================
-include(FetchContent)
+set(GOOGLETEST_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/googletest)
 
-FetchContent_Declare(
-    googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG v1.14.0
-)
-
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
+if(EXISTS "${GOOGLETEST_LOCAL_DIR}/CMakeLists.txt")
+    # 使用本地源码（离线可用）
+    message(STATUS "使用本地 GoogleTest 源码: ${GOOGLETEST_LOCAL_DIR}")
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    add_subdirectory(${GOOGLETEST_LOCAL_DIR} ${CMAKE_BINARY_DIR}/_deps/googletest-build EXCLUDE_FROM_ALL)
+else()
+    # 回退：从 gitee 镜像下载（github.com 可能不可达）
+    message(STATUS "本地 GoogleTest 不存在，从 gitee 镜像下载")
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://gitee.com/mirrors/googletest.git
+        GIT_TAG v1.14.0
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+endif()
 
 # ============================================================
 # minilang_tests 测试可执行目标
@@ -67,11 +79,12 @@ add_executable(minilang_tests
     TestBuiltinMethods.cpp
     TestInterpreterE2E.cpp
     TestVME2E.cpp
+    TestCompiler.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
     minilang_core
-    GTest::gtest_main
+    gtest_main
 )
 
 if(MSVC)

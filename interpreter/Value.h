@@ -1,5 +1,22 @@
 #pragma once
 
+// ============================================================
+// Value.h — 操作接口模块
+// ------------------------------------------------------------
+// 运行时值结构体 Value 的完整定义，包含数据载体（私有嵌套）
+// 与所有操作接口（构造/查询/访问/变异/工具/比较）。
+//
+// 本文件从原 611 行的上帝头文件拆分而来：
+//   - 类型定义 → ValueTypes.h（ValueType 枚举、前置声明、VMClosureData）
+//   - 操作接口 → 本文件（Value 结构体）
+//   - 数据载体 → ValueData.h（VMUpvalue，依赖完整 Value 类型）
+//
+// 包含本文件即可获得全部内容（向后兼容）。
+// ============================================================
+
+#include "interpreter/ValueTypes.h"
+#include "interpreter/NumericUtils.h"  // 共享溢出检查（B6 fix）
+
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -12,35 +29,10 @@
 #include <cassert>
 #include <unordered_set>
 
-// 前向声明 Environment（避免循环依赖）
-class Environment;
-class FunDecl;
-class BytecodeChunk;  // M3 fix: 闭包值持有函数 chunk 指针
-
 // ============================================================
-// Value 运行时值类型 — std::variant 存储 + COW 语义
+// Value 运行时值结构体
 // ============================================================
-// A1 架构优化：unique_ptr → shared_ptr + copy-on-write
-//   拷贝操作 O(1)（仅递增引用计数），写入时通过 ensureUnique() 自动 detach
-//   sizeof(Value) 仍为 ~16 字节
-//   小类型（int/double/bool/null）内联存储，无堆分配
-//   大类型（string/array/dict/instance/closure）通过 shared_ptr 堆分配
 
-/// 值类型枚举（顺序必须与 std::variant Data 的类型顺序严格一致！
-/// getType() 通过 static_cast<ValueType>(data_.index()) 将 variant 索引映射到此枚举）
-enum class ValueType {
-    VAL_NULL,      // 0 = std::monostate
-    VAL_INT,       // 1 = int64_t
-    VAL_FLOAT,     // 2 = double
-    VAL_BOOL,      // 3 = bool
-    VAL_STRING,    // 4 = std::shared_ptr<StringData>
-    VAL_ARRAY,     // 5 = std::shared_ptr<ArrayData>
-    VAL_DICT,      // 6 = std::shared_ptr<DictData>
-    VAL_INSTANCE,  // 7 = std::shared_ptr<InstanceData>
-    VAL_CLOSURE    // 8 = std::shared_ptr<ClosureData>
-};
-
-/// 运行时值结构体
 struct Value {
 private:
     // ---- 复杂类型数据载体（通过 shared_ptr 持有，支持 COW）----
@@ -58,7 +50,7 @@ private:
         std::vector<std::string> params;
         std::unordered_map<std::string, Value> capturedVars;
         FunDecl* body = nullptr;       // 函数体 AST 节点（自包含，不依赖 funRegistry_）
-        std::shared_ptr<struct VMClosureData> vmClosure; // VM-05/06: VM 闭包数据（定义在 Value 之后）
+        std::shared_ptr<VMClosureData> vmClosure; // VM-05/06: VM 闭包数据（定义于 ValueTypes.h）
     };
 
     // ---- 变体存储：同一时刻仅一个类型有效 ----
@@ -414,14 +406,43 @@ public:
         return "unknown";
     }
 
+    // B5 fix: toString 递归深度上限，防止极端嵌套结构导致栈溢出
+    // 对齐 Formatter MAX_FORMAT_DEPTH=256 和 Interpreter MAX_RECURSION_DEPTH=256
+    static constexpr int MAX_TOSTRING_DEPTH = 256;
+
     /// 转换为字符串表示
     std::string toString() const {
+        // P-03 fix: 标量类型走快速路径，避免每次分配 unordered_set
+        switch (getType()) {
+        case ValueType::VAL_INT:
+            return std::to_string(intVal());
+        case ValueType::VAL_FLOAT: {
+            char buf[64];
+            int len = snprintf(buf, sizeof(buf), "%.17g", floatVal());
+            if (len < 0) return "nan";
+            return std::string(buf, len);
+        }
+        case ValueType::VAL_BOOL:
+            return boolVal() ? "true" : "false";
+        case ValueType::VAL_STRING:
+            return stringVal();
+        case ValueType::VAL_NULL:
+            return "null";
+        case ValueType::VAL_CLOSURE:
+            return "<fun:" + closureName() + ">";
+        default:
+            break;
+        }
+        // 容器类型（数组/字典/实例）需要环检测
         std::unordered_set<const void*> visited;
-        return toStringImpl(visited);
+        return toStringImpl(visited, 0);
     }
 
 private:
-    std::string toStringImpl(std::unordered_set<const void*>& visited) const {
+    std::string toStringImpl(std::unordered_set<const void*>& visited, int depth) const {
+        // B5 fix: 深度保护，防止 [[[[...]]]] 线性嵌套导致栈溢出
+        // visited 仅防真环（insert/erase 路径检测），depth 防线性深度
+        if (depth >= MAX_TOSTRING_DEPTH) return "[...too deep]";
         switch (getType()) {
         case ValueType::VAL_INT:
             return std::to_string(intVal());
@@ -449,7 +470,7 @@ private:
                 if (arr[i].isString()) {
                     oss << "\"" << arr[i].stringVal() << "\"";
                 } else {
-                    oss << arr[i].toStringImpl(visited);
+                    oss << arr[i].toStringImpl(visited, depth + 1);
                 }
             }
             oss << "]";
@@ -471,7 +492,7 @@ private:
                 if (kv.second.isString()) {
                     oss << "\"" << kv.second.stringVal() << "\"";
                 } else {
-                    oss << kv.second.toStringImpl(visited);
+                    oss << kv.second.toStringImpl(visited, depth + 1);
                 }
             }
             oss << "}";
@@ -494,7 +515,7 @@ private:
                 if (kv.second.isString()) {
                     oss << "\"" << kv.second.stringVal() << "\"";
                 } else {
-                    oss << kv.second.toStringImpl(visited);
+                    oss << kv.second.toStringImpl(visited, depth + 1);
                 }
             }
             oss << "}";
@@ -535,7 +556,7 @@ public:
                 if (std::isnan(d) || std::isinf(d)) return false;
                 double intPart;
                 if (std::modf(d, &intPart) != 0.0) return false;  // 有小数部分
-                if (d < static_cast<double>(INT64_MIN) || d >= -static_cast<double>(INT64_MIN)) return false;
+                if (OverflowCheck::doubleToIntOverflow(d)) return false;
                 return intVal() == static_cast<int64_t>(d);
             }
             if (isFloat() && other.isInt()) {
@@ -543,7 +564,7 @@ public:
                 if (std::isnan(d) || std::isinf(d)) return false;
                 double intPart;
                 if (std::modf(d, &intPart) != 0.0) return false;
-                if (d < static_cast<double>(INT64_MIN) || d >= -static_cast<double>(INT64_MIN)) return false;
+                if (OverflowCheck::doubleToIntOverflow(d)) return false;
                 return static_cast<int64_t>(d) == other.intVal();
             }
             return toDouble() == other.toDouble();
@@ -597,15 +618,6 @@ public:
     }
 };
 
-// VM-05/06: VM 闭包 upvalue 结构（定义在 Value 之后，以便使用完整 Value 类型）
-struct VMUpvalue {
-    Value value;           // 关闭后存储值（isClosed=true 时有效）
-    bool isClosed = false; // 是否已关闭
-    size_t stackSlot = 0;  // 未关闭时指向的栈绝对位置
-};
-
-struct VMClosureData {
-    std::string functionName;
-    std::vector<std::shared_ptr<VMUpvalue>> upvalues;
-    const BytecodeChunk* chunkPtr = nullptr;  // M3 fix: 直接持有函数 chunk 指针
-};
+// 包含数据载体模块（VMUpvalue 等，依赖完整 Value 类型）
+// 放在 Value 定义之后，确保 ValueData.h 中的 VMUpvalue 能使用完整 Value 类型
+#include "interpreter/ValueData.h"

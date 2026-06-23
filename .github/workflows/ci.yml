@@ -1,0 +1,125 @@
+# ============================================================
+# MiniLang CI/CD 流水线
+# ------------------------------------------------------------
+# 触发条件：push / pull_request 到 main / master 分支
+# 作业：
+#   build-test  — Windows + MSVC + Qt6 构建并运行全部单元测试
+#   static-analysis — cppcheck 静态代码分析
+# ============================================================
+
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  CMAKE_BUILD_TYPE: Release
+  QT_VERSION: '6.7.0'
+
+jobs:
+  # ============================================================
+  # 作业 1：构建 + 单元测试
+  # ============================================================
+  build-test:
+    name: Build & Test (Windows MSVC)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: 安装 Ninja
+        run: pip install ninja
+
+      - name: 设置 MSVC 开发环境
+        uses: ilammy/msvc-dev-shell@v1
+        with:
+          arch: x64
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          modules: qtwidgets qtcore qtgui
+          cache: true
+
+      - name: 配置 CMake（测试目录）
+        shell: cmd
+        run: |
+          cmake -B tests\build -S tests -G Ninja ^
+            -DCMAKE_BUILD_TYPE=%CMAKE_BUILD_TYPE% ^
+            -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
+
+      - name: 构建 minilang_tests
+        shell: cmd
+        run: |
+          cmake --build tests\build --target minilang_tests --config %CMAKE_BUILD_TYPE%
+
+      - name: 运行单元测试
+        shell: cmd
+        working-directory: tests\build
+        run: |
+          ctest -C %CMAKE_BUILD_TYPE% --output-on-failure --verbose
+          .\minilang_tests.exe --gtest_brief=1
+
+      - name: 上传测试结果（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: tests\build\Testing\**\*.xml
+          retention-days: 7
+
+  # ============================================================
+  # 作业 2：静态代码分析
+  # ============================================================
+  static-analysis:
+    name: Static Analysis (cppcheck)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+
+      - name: 安装 cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: 运行 cppcheck 静态分析
+        run: |
+          cppcheck \
+            --enable=warning,style,performance,portability \
+            --suppress=missingIncludeSystem \
+            --suppress=unmatchedSuppression \
+            --suppress=noExplicitConstructor \
+            --inline-suppr \
+            --xml \
+            --xml-version=2 \
+            -I lexer -I parser -I ast -I interpreter -I compiler -I debug -I formatter -I gui \
+            -DQT_CORE_LIB -DQT_GUI_LIB -DQT_WIDGETS_LIB \
+            --output-file=cppcheck-report.xml \
+            lexer parser ast interpreter compiler debug formatter gui 2>&1 | tee cppcheck-stdout.txt || true
+
+      - name: 显示分析摘要
+        run: |
+          echo "=== cppcheck 分析摘要 ==="
+          cppcheck --version
+          grep -c "<error " cppcheck-report.xml || echo "无错误"
+          head -n 100 cppcheck-stdout.txt || true
+
+      - name: 上传 cppcheck 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cppcheck-report
+          path: |
+            cppcheck-report.xml
+            cppcheck-stdout.txt
+          retention-days: 14

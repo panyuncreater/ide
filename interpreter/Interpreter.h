@@ -163,6 +163,13 @@ public:
     Value visitSuperExpr(SuperExpr& node) override;
 
 private:
+    // 运行时限制常量（替代散布在代码中的魔法数字）
+    // S-10 fix: 与 VM 的 MAX_FRAMES=256 对齐，避免正常递归程序被误杀
+    static constexpr int MAX_RECURSION_DEPTH = 256;      // 最大递归深度
+    static constexpr int MAX_INHERITANCE_DEPTH = 64;    // 最大继承链深度
+    // S-01 fix: 循环迭代次数上限，防止 while(true){} 等无限循环导致 DoS
+    static constexpr int64_t MAX_LOOP_ITERATIONS = 100000000;  // 1 亿次（约 2-3 秒）
+
     std::shared_ptr<Environment> globalEnv_;        // 全局环境
     std::shared_ptr<Environment> currentEnv_;       // 当前环境
     std::vector<CallFrame> callStack_;              // 调用栈
@@ -243,4 +250,26 @@ private:
 
     /// 查找变量的类型注解（返回指针，避免字符串拷贝）
     const std::string* findTypeAnnotation(const std::string& varName) const;
+
+    // ---- P1 重构：visitFunCall 分派器辅助方法 ----
+
+    /// 链式调用 / 表达式调用 callee(args)
+    Value callClosureValue(FunCall& node);
+
+    /// 内置构造函数 dict() / array()
+    Value callBuiltinConstructor(FunCall& node);
+
+    /// 类构造调用 ClassName(args)
+    Value constructClassInstance(FunCall& node);
+
+    /// 普通函数/闭包调用 name(args)
+    Value callNamedFunction(FunCall& node);
+
+    // ---- P1 重构：visitMethodCall 辅助方法 ----
+
+    /// 类实例方法调用（含 super.method() 处理）
+    Value callInstanceMethod(MethodCall& node, Value& obj);
+
+    /// 求值参数列表（消除 visitMethodCall 中重复的参数求值逻辑）
+    std::vector<Value> evaluateArguments(const std::vector<std::unique_ptr<ASTNode>>& args);
 };

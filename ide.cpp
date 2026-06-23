@@ -1,4 +1,5 @@
 #include "ide.h"
+#include "Logger.h"
 #include <QVBoxLayout>
 #include <QAbstractItemView>
 #include <QFileDialog>
@@ -15,52 +16,23 @@
 #include <sstream>
 
 // ============================================================
-// InterpreterWorker 实现（OP-1 fix）
-// ============================================================
-
-void InterpreterWorker::run() {
-    interp_.setOutputCallback([this](const std::string& text) {
-        emit outputReady(QString::fromStdString(text));
-    });
-
-    try {
-        interp_.execute(ast_);
-        emit finishedOk();
-    } catch (const RuntimeError& e) {
-        emit runtimeError(QString::fromStdString(e.what()), e.line, e.column);
-    } catch (const DebugStopException&) {
-        emit stoppedByUser();
-    } catch (const std::runtime_error& e) {
-        emit genericError(QString::fromStdString(e.what()));
-    } catch (const std::exception& e) {
-        emit genericError(QString("未预期的错误: %1").arg(e.what()));
-    } catch (...) {
-        emit genericError("未预期的异常");
-    }
-}
-
-// ============================================================
-// Ide 主窗口实现
+// Ide — GUI 交互层实现
+// ------------------------------------------------------------
+// 仅负责 GUI 创建/布局/事件处理，业务逻辑委托给 IdeController。
 // ============================================================
 
 Ide::Ide(QWidget* parent)
     : QMainWindow(parent) {
 
-    debugger_ = new DebugController(this);
-    interpreter_.setDebugger(debugger_);
-    interpreter_.setOutputCallback([this](const std::string& text) {
-        // REPL 和调试模式在主线程运行，直接调用；onRun() 会替换为线程安全的回调
-        outputPanel_->appendOutput(QString::fromStdString(text));
-    });
-
-    // VM 输出回调
-    vm_.setOutputCallback([this](const std::string& text) {
-        outputPanel_->appendOutput(QString::fromStdString(text));
-    });
+    // 创建业务逻辑层（作为子 QObject，自动释放）
+    controller_ = new IdeController(this);
 
     initUI();
     initToolbar();
     initConnections();
+
+    // REPL 面板需要解释器引用
+    replPanel_->setInterpreter(&controller_->interpreter());
 
     // 设置默认示例代码
     codeEditor_->setPlainText(
@@ -86,16 +58,8 @@ Ide::Ide(QWidget* parent)
 }
 
 Ide::~Ide() {
-    // #10 fix: 确保工作线程已停止再删除，避免 delete running QThread 的 UB
-    if (workerThread_ && workerThread_->isRunning()) {
-        debugger_->stop();
-        workerThread_->quit();
-        if (!workerThread_->wait(3000)) {
-            workerThread_->terminate();
-            workerThread_->wait();
-        }
-    }
-    delete worker_;
+    // controller_ 是子 QObject，由 QObject 析构链自动释放
+    // 其析构函数会安全停止 worker 线程
 }
 
 void Ide::closeEvent(QCloseEvent* event) {
@@ -104,38 +68,31 @@ void Ide::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
-    if (isRunning_) {
+    if (controller_->isRunning()) {
         // 先停止调试器，让解释器通过 DebugStopException 正常退出
-        debugger_->stop();
-        // OP-1 fix: 等待工作线程退出
-        if (workerThread_) {
-            workerThread_->quit();
-            if (!workerThread_->wait(3000)) {
-                // M5 fix: 线程未响应，弹窗让用户选择，避免盲目 terminate()
-                auto ret = QMessageBox::warning(
-                    this, tr("程序仍在运行"),
-                    tr("程序未能在 3 秒内停止。强制终止可能导致数据丢失。\n是否强制终止？"),
-                    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-                if (ret == QMessageBox::Yes) {
-                    workerThread_->terminate();
-                    workerThread_->wait();
-                } else {
-                    // 用户选择等待：忽略关闭事件，让程序继续运行
-                    event->ignore();
-                    return;
-                }
+        if (!controller_->stopForClose(3000)) {
+            // M5 fix: 线程未响应，弹窗让用户选择
+            auto ret = QMessageBox::warning(
+                this, tr("程序仍在运行"),
+                tr("程序未能在 3 秒内停止。强制终止可能导致数据丢失。\n是否强制终止？"),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (ret == QMessageBox::Yes) {
+                controller_->forceStop();
+            } else {
+                event->ignore();
+                return;
             }
-            delete worker_;
-            worker_ = nullptr;
-            delete workerThread_;
-            workerThread_ = nullptr;
         }
     }
-    if (isVmRunning_) {
+    if (controller_->isVmRunning()) {
         onVmStop();
     }
     event->accept();
 }
+
+// ============================================================
+// UI 初始化
+// ============================================================
 
 void Ide::initUI() {
     // GUI-04: 菜单栏
@@ -232,7 +189,6 @@ void Ide::initUI() {
     bottomTabWidget_->addTab(debugPanel_, "调试");
 
     replPanel_ = new ReplPanel(this);
-    replPanel_->setInterpreter(&interpreter_);
     bottomTabWidget_->addTab(replPanel_, "REPL");
 
     vSplitter_->addWidget(mainSplitter_);
@@ -326,6 +282,7 @@ void Ide::initToolbar() {
 }
 
 void Ide::initConnections() {
+    // ---- 工具栏动作 ----
     connect(runAction_, &QAction::triggered, this, &Ide::onRun);
     connect(debugAction_, &QAction::triggered, this, &Ide::onDebug);
     connect(stepInAction_, &QAction::triggered, this, &Ide::onStepIn);
@@ -337,12 +294,10 @@ void Ide::initConnections() {
     connect(formatAction_, &QAction::triggered, this, &Ide::onFormat);
     connect(bytecodeAction_, &QAction::triggered, this, &Ide::onShowBytecode);
 
-    connect(debugger_, &DebugController::pausedAt, this, &Ide::onPausedAt);
-
     // 条件断点：编辑器右键设置条件时同步到调试控制器
     connect(codeEditor_, &CodeEditor::breakpointConditionRequested,
             this, [this](int line, const QString& condition) {
-                debugger_->setBreakpointCondition(line, condition.toStdString());
+                controller_->debugger()->setBreakpointCondition(line, condition.toStdString());
             });
 
     // VM 调试连接
@@ -355,11 +310,53 @@ void Ide::initConnections() {
         isDirty_ = changed;
         updateWindowTitle();
     });
+
+    // ---- IdeController 信号 → UI 更新 ----
+    connect(controller_, &IdeController::outputReady, outputPanel_, &OutputPanel::appendOutput);
+
+    connect(controller_, &IdeController::runOk, this, [this]() {
+        outputPanel_->appendOutput("--- 程序执行结束 ---");
+    });
+
+    connect(controller_, &IdeController::stoppedByUser, this, [this]() {
+        outputPanel_->appendOutput("--- 调试终止 ---");
+    });
+
+    connect(controller_, &IdeController::runtimeError, this, [this](const QString& msg, int line, int column) {
+        Diagnostic diag(DiagLevel::Error, msg.toStdString(), line, column, DiagSource::Interpreter);
+        outputPanel_->appendError(QString::fromStdString(diag.format()));
+        // GUI-07 fix: 标记错误行（line > 0 时才标记）
+        if (line > 0) {
+            QSet<int> errorLines;
+            errorLines.insert(line);
+            codeEditor_->setErrorLines(errorLines);
+        }
+    });
+
+    connect(controller_, &IdeController::genericError, this, [this](const QString& msg) {
+        outputPanel_->appendError(msg);
+    });
+
+    connect(controller_, &IdeController::pausedAt, this, &Ide::onPausedAt);
+
+    connect(controller_, &IdeController::workerFinished, this, &Ide::onWorkerFinished);
+
+    connect(controller_, &IdeController::vmStepInfo, this, [this](const VMStepInfo& info) {
+        vmStackPanel_->updateStack(controller_->vm().getStackRef());
+        vmStackPanel_->updateGlobals(controller_->vm().getGlobalsRef());
+        int line = controller_->vm().getCurrentLine();
+        vmStackPanel_->updateCurrentOp(info.ip, info.opcode, line);
+        highlightBytecodeLine(controller_->vm().getCurrentChunkName(), info.ip);
+    });
+
+    connect(controller_, &IdeController::diagnosticsReady, this, &Ide::displayDiagnostics);
 }
 
-void Ide::onRun() {
-    if (isRunning_) return;
+// ============================================================
+// 运行 / 调试
+// ============================================================
 
+void Ide::onRun() {
     std::string source = codeEditor_->toPlainText().toStdString();
 
     // 清空输出和调试面板
@@ -368,86 +365,18 @@ void Ide::onRun() {
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
-    // 词法分析
-    try {
-        runLexer(source);
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("词法分析异常: %1").arg(e.what()));
-        return;
-    }
+    if (!controller_->prepareRun(false, source)) return;
 
-    // 如果有词法错误，不再继续解析
-    if (lexer_.getDiagnostics().hasErrors()) return;
-
-    // GUI-02 fix: 解析器异常保护
-    try {
-        runParser(lastTokens_);
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("解析异常: %1").arg(e.what()));
-        return;
-    }
-
-    // 如果有解析错误，不再继续执行
-    if (parser_.hasErrors()) return;
-
-    if (!astRoot_) return;
-
-    // GUI-01 fix: 启用 debugMode 使 checkBreak 生效，stop 按钮才能触发 DebugStopException
-    interpreter_.setDebugMode(true);
-    isDebugRun_ = false;  // 普通运行，禁用单步按钮
-
-    // OP-1 fix: 在独立线程中执行解释器，避免 UI 冻结
-    isRunning_ = true;
+    // 更新 UI
+    updateTokenTable();
+    updateAstViewer();
     setRunningState(true);
-    codeEditor_->setReadOnly(true);
     replPanel_->setInputEnabled(false);
 
-    // R2 fix: 保存 REPL 状态（Run 的 execute() 会重置全局环境/类注册表）
-    interpreter_.saveReplState();
-
-    // 清理上次运行的 worker（若有）
-    delete worker_;
-    worker_ = new InterpreterWorker(interpreter_, *astRoot_, debugger_);
-    workerThread_ = new QThread(this);
-    worker_->moveToThread(workerThread_);
-
-    // 输出信号 → 主线程 UI（跨线程自动排队）
-    connect(worker_, &InterpreterWorker::outputReady, outputPanel_, &OutputPanel::appendOutput);
-
-    // 各类结果信号 → UI 更新
-    connect(worker_, &InterpreterWorker::finishedOk, this, [this]() {
-        outputPanel_->appendOutput("--- 程序执行结束 ---");
-    });
-    connect(worker_, &InterpreterWorker::stoppedByUser, this, [this]() {
-        outputPanel_->appendOutput("--- 调试终止 ---");
-    });
-    connect(worker_, &InterpreterWorker::runtimeError, this, [this](const QString& msg, int line, int column) {
-        Diagnostic diag(DiagLevel::Error, msg.toStdString(), line, column, DiagSource::Interpreter);
-        outputPanel_->appendError(QString::fromStdString(diag.format()));
-        QSet<int> errorLines;
-        errorLines.insert(line);
-        codeEditor_->setErrorLines(errorLines);
-    });
-    connect(worker_, &InterpreterWorker::genericError, this, [this](const QString& msg) {
-        outputPanel_->appendError(msg);
-    });
-
-    // worker 完成 → 清理运行状态
-    connect(workerThread_, &QThread::finished, this, &Ide::onRunFinished);
-
-    // 任一终止信号 → 退出线程事件循环（确保 QThread::finished 能被触发）
-    connect(worker_, &InterpreterWorker::finishedOk, workerThread_, &QThread::quit);
-    connect(worker_, &InterpreterWorker::stoppedByUser, workerThread_, &QThread::quit);
-    connect(worker_, &InterpreterWorker::runtimeError, workerThread_, &QThread::quit);
-    connect(worker_, &InterpreterWorker::genericError, workerThread_, &QThread::quit);
-
-    workerThread_->start();
-    QMetaObject::invokeMethod(worker_, "run", Qt::QueuedConnection);
+    controller_->startWorker();
 }
 
 void Ide::onDebug() {
-    if (isRunning_) return;
-
     std::string source = codeEditor_->toPlainText().toStdString();
 
     // 清空输出和调试面板
@@ -456,234 +385,50 @@ void Ide::onDebug() {
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
-    // 词法分析
-    try {
-        runLexer(source);
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("词法分析异常: %1").arg(e.what()));
-        return;
-    }
+    if (!controller_->prepareRun(true, source)) return;
 
-    // 如果有词法错误，不再继续解析
-    if (lexer_.getDiagnostics().hasErrors()) return;
-
-    // GUI-02 fix: 解析器异常保护
-    try {
-        runParser(lastTokens_);
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("解析异常: %1").arg(e.what()));
-        return;
-    }
-
-    // 如果有解析错误，不再继续
-    if (parser_.hasErrors()) return;
-
-    if (!astRoot_) return;
-
-    // 设置断点
-    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
-
-    // 同步断点条件到调试控制器
-    for (int line : codeEditor_->getBreakpoints()) {
-        std::string cond = codeEditor_->getBreakpointCondition(line);
-        if (!cond.empty()) {
-            debugger_->setBreakpointCondition(line, cond);
-        }
-    }
-
-    // GUI-03 fix: 使用 evaluateCondition 安全求值条件断点，避免重入损坏运行中的状态
-    debugger_->setConditionEvaluator([this](const std::string& condition) -> bool {
-        try {
-            Lexer condLexer;
-            auto tokens = condLexer.scan(condition);
-            Parser condParser;
-            auto block = condParser.parse(tokens);
-            if (!condParser.getDiagnostics().hasErrors() && block && !block->statements.empty()) {
-                Value result = interpreter_.evaluateCondition(block->statements[0].get());
-                return result.isTruthy();
-            }
-        } catch (...) {
-            // 条件求值失赅视为 false（不暂停）
-        }
-        return false;
-    });
-
-    // 设置调试变量回调
-    debugger_->setVariableCallback([this]() -> std::vector<VariableSnapshot> {
-        std::vector<VariableSnapshot> result;
-        Environment* env = interpreter_.currentEnvironment();
-        if (env) {
-            // 沿作用域链收集变量，标注每个变量的作用域层级
-            int depth = 0;
-            Environment* current = env;
-            while (current) {
-                const auto& locals = current->localVariables();
-                for (const auto& kv : locals) {
-                    VariableSnapshot snap;
-                    snap.name = kv.first;
-                    snap.value = kv.second;
-                    snap.scope = (depth == 0) ? "局部" : (current->parent ? "外层" : "全局");
-                    result.push_back(snap);
-                }
-                current = current->parent.get();
-                depth++;
-            }
-        }
-        return result;
-    });
-
-    debugger_->setCallStackCallback([this]() -> std::vector<CallStackEntry> {
-        std::vector<CallStackEntry> result;
-        const auto& stack = interpreter_.getCallStack();
-        for (const auto& frame : stack) {
-            CallStackEntry entry;
-            entry.functionName = frame.functionName;
-            entry.line = frame.line;
-            entry.depth = frame.depth;
-            // 填充该帧的局部变量快照
-            if (frame.env) {
-                for (const auto& kv : frame.env->localVariables()) {
-                    entry.locals.emplace_back(kv.first, kv.second);
-                }
-            }
-            result.push_back(entry);
-        }
-        return result;
-    });
-
-    isRunning_ = true;
-    isDebugRun_ = true;  // GUI-01 fix: 调试运行，启用单步按钮
+    // 更新 UI
+    updateTokenTable();
+    updateAstViewer();
     setRunningState(true);
     replPanel_->setInputEnabled(false);
 
-    // 调试模式：启用 checkBreak
-    interpreter_.setDebugMode(true);
-
-    // 重置调试状态，然后设置初始模式为 STEP_IN
-    debugger_->reset();
-    debugger_->stepIn();
-
-    // D1 fix: 保存 REPL 状态
-    interpreter_.saveReplState();
-
-    // A2: 在 worker 线程上执行调试，避免 UI 冻结
-    worker_ = new InterpreterWorker(interpreter_, *astRoot_, debugger_);
-    workerThread_ = new QThread(this);
-    worker_->moveToThread(workerThread_);
-
-    // 跨线程信号连接（auto-queued）
-    connect(worker_, &InterpreterWorker::outputReady,
-            outputPanel_, &OutputPanel::appendOutput);
-    connect(worker_, &InterpreterWorker::finishedOk, this, [this]() {
-        outputPanel_->appendOutput("--- 程序执行结束 ---");
-    });
-    connect(worker_, &InterpreterWorker::runtimeError, this,
-            [this](const QString& msg, int line, int column) {
-        Diagnostic diag(DiagLevel::Error, msg.toStdString(), line, column, DiagSource::Interpreter);
-        outputPanel_->appendError(QString::fromStdString(diag.format()));
-        // GUI-07 fix: 调试模式下也标记错误行
-        if (line > 0) {
-            QSet<int> errorLines;
-            errorLines.insert(line);
-            codeEditor_->setErrorLines(errorLines);
+    // 设置断点及条件
+    QSet<int> breakpoints = codeEditor_->getBreakpoints();
+    QMap<int, std::string> conditions;
+    for (int line : breakpoints) {
+        std::string cond = codeEditor_->getBreakpointCondition(line);
+        if (!cond.empty()) {
+            conditions[line] = cond;
         }
-    });
-    connect(worker_, &InterpreterWorker::stoppedByUser, this, [this]() {
-        outputPanel_->appendOutput("--- 调试终止 ---");
-    });
-    connect(worker_, &InterpreterWorker::genericError, this,
-            [this](const QString& msg) {
-        outputPanel_->appendError(msg);
-    });
+    }
+    controller_->setupDebug(breakpoints, conditions);
 
-    // 线程结束时清理
-    connect(workerThread_, &QThread::finished, this, [this]() {
-        isRunning_ = false;
-        isDebugRun_ = false;
-        setRunningState(false);
-        replPanel_->setInputEnabled(true);
-        interpreter_.setDebugMode(false);
-        interpreter_.restoreReplState();
-        codeEditor_->clearCurrentLine();
-        codeEditor_->clearErrorLines();  // L-新2 fix: 调试结束时清除错误标记
-        debugger_->reset();
-
-        // 恢复主线程输出回调
-        interpreter_.setOutputCallback([this](const std::string& text) {
-            outputPanel_->appendOutput(QString::fromStdString(text));
-        });
-
-        delete worker_;
-        worker_ = nullptr;
-        workerThread_->deleteLater();
-        workerThread_ = nullptr;
-    });
-
-    // 所有终止信号 → 退出线程事件循环
-    connect(worker_, &InterpreterWorker::finishedOk, workerThread_, &QThread::quit);
-    connect(worker_, &InterpreterWorker::stoppedByUser, workerThread_, &QThread::quit);
-    connect(worker_, &InterpreterWorker::runtimeError, workerThread_, &QThread::quit);
-    connect(worker_, &InterpreterWorker::genericError, workerThread_, &QThread::quit);
-
-    workerThread_->start();
-    QMetaObject::invokeMethod(worker_, "run", Qt::QueuedConnection);
+    controller_->startWorker();
 }
 
 void Ide::onStepIn() {
-    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
-    debugger_->stepIn();
-    // updateDebugInfo() 由下一次 onPausedAt() 触发，避免在嵌套事件循环中重复更新
+    controller_->setBreakpoints(codeEditor_->getBreakpoints());
+    controller_->stepIn();
 }
 
 void Ide::onStepOver() {
-    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
-    debugger_->stepOver();
+    controller_->setBreakpoints(codeEditor_->getBreakpoints());
+    controller_->stepOver();
 }
 
 void Ide::onStepOut() {
-    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
-    debugger_->stepOut();
+    controller_->setBreakpoints(codeEditor_->getBreakpoints());
+    controller_->stepOut();
 }
 
 void Ide::onResume() {
-    // 同步编辑器断点到调试控制器（用户可能在暂停期间修改了断点）
-    debugger_->setBreakpoints(codeEditor_->getBreakpoints());
-    debugger_->resume();
+    controller_->setBreakpoints(codeEditor_->getBreakpoints());
+    controller_->resume();
 }
 
 void Ide::onStop() {
-    debugger_->stop();
-    // 不在这里设置 isRunning_ 和按钮状态
-    // onRunFinished() 或 onDebug() 中 interpreter_.execute() 返回后会统一清理
-}
-
-void Ide::onRunFinished() {
-    isRunning_ = false;
-    isDebugRun_ = false;
-    interpreter_.setDebugMode(false);  // GUI-01 fix: 普通运行结束关闭 debugMode
-    setRunningState(false);
-    codeEditor_->clearCurrentLine();
-    codeEditor_->clearErrorLines();  // L-新2 fix: 运行结束时清除错误标记
-    replPanel_->setInputEnabled(true);
-
-    // 安全删除 worker（QThread::finished 在所有 worker 信号之后到达）
-    delete worker_;
-    worker_ = nullptr;
-
-    if (workerThread_) {
-        workerThread_->quit();
-        workerThread_->wait();
-        delete workerThread_;
-        workerThread_ = nullptr;
-    }
-
-    // R3 fix: 恢复主线程输出回调（worker 的回调 lambda 捕获了已删除的 worker this 指针）
-    interpreter_.setOutputCallback([this](const std::string& text) {
-        outputPanel_->appendOutput(QString::fromStdString(text));
-    });
-
-    // R2 fix: 恢复 REPL 状态（变量/类定义/函数定义）
-    interpreter_.restoreReplState();
+    controller_->stop();
 }
 
 void Ide::onClearOutput() {
@@ -697,45 +442,64 @@ void Ide::onPausedAt(int line) {
     bottomTabWidget_->setCurrentWidget(debugPanel_);
 }
 
+void Ide::onWorkerFinished(bool wasDebug) {
+    setRunningState(false);
+    codeEditor_->clearCurrentLine();
+    codeEditor_->clearErrorLines();  // L-新2 fix: 运行结束时清除错误标记
+    replPanel_->setInputEnabled(true);
+}
+
+// ============================================================
+// 格式化
+// ============================================================
+
 void Ide::onFormat() {
     std::string source = codeEditor_->toPlainText().toStdString();
 
     // 词法分析
     try {
-        lastTokens_ = lexer_.scan(source);
+        if (!controller_->runLexer(source)) {
+            updateTokenTable();
+            return;
+        }
     } catch (const std::exception& e) {
         Diagnostic diag(DiagLevel::Error, e.what(), 0, 0, DiagSource::Lexer);
         outputPanel_->appendError(QString::fromStdString("[格式化] " + diag.format()));
         return;
     }
+    updateTokenTable();
 
     // 语法分析
     try {
-        astRoot_ = parser_.parse(lastTokens_);
+        if (!controller_->runParser()) {
+            updateAstViewer();
+            return;
+        }
     } catch (const std::exception& e) {
         outputPanel_->appendError(QString("[格式化] 解析异常: %1").arg(e.what()));
         return;
     }
-    if (parser_.hasErrors()) {
-        for (const auto& diag : parser_.getDiagnostics().all()) {
-            outputPanel_->appendError(QString::fromStdString(
-                "[格式化] " + diag.format()));
+    if (controller_->parser().hasErrors()) {
+        for (const auto& diag : controller_->parserDiagnostics().all()) {
+            outputPanel_->appendError(QString::fromStdString("[格式化] " + diag.format()));
         }
         return;
     }
+    updateAstViewer();
 
-    if (!astRoot_) return;
+    if (!controller_->astRoot()) return;
 
     // 格式化：行号会变化，需清除断点并保存光标位置
-    bool hadBreakpoints = !debugger_->getBreakpoints().isEmpty();
+    bool hadBreakpoints = !controller_->debugger()->getBreakpoints().isEmpty();
 
     QTextCursor savedCursor = codeEditor_->textCursor();
     int scrollPos = codeEditor_->verticalScrollBar()->value();
 
-    // F1 fix: 传入注释 token（Lexer 已将注释从主流分离，存储在 comments() 中）
-    formatter_.setComments(lexer_.comments());
+    std::string formatted;
     try {
-        std::string formatted = formatter_.format(*astRoot_);
+        if (!controller_->formatCode(formatted)) {
+            return;
+        }
         codeEditor_->setPlainText(QString::fromStdString(formatted));
     } catch (const std::exception& e) {
         outputPanel_->appendError(QString("[格式化] 格式化异常: %1").arg(e.what()));
@@ -747,10 +511,10 @@ void Ide::onFormat() {
         outputPanel_->appendOutput(QString("[格式化] 断点已清除（行号变化，断点不再有效）"));
     }
     codeEditor_->setBreakpoints(QSet<int>());
-    debugger_->setBreakpoints(QSet<int>());
+    controller_->setBreakpoints(QSet<int>());
 
     // D3 fix: 刷新 AST 查看器（格式化后 astRoot_ 已更新）
-    astViewer_->setAst(astRoot_.get());
+    updateAstViewer();
 
     // 恢复光标位置和滚动位置（尽可能）
     if (savedCursor.position() <= codeEditor_->document()->characterCount()) {
@@ -758,6 +522,10 @@ void Ide::onFormat() {
     }
     codeEditor_->verticalScrollBar()->setValue(scrollPos);
 }
+
+// ============================================================
+// 字节码视图
+// ============================================================
 
 void Ide::onShowBytecode() {
     std::string source = codeEditor_->toPlainText().toStdString();
@@ -769,37 +537,41 @@ void Ide::onShowBytecode() {
 
     // 词法分析
     try {
-        lastTokens_ = lexer_.scan(source);
+        if (!controller_->runLexer(source)) {
+            updateTokenTable();
+            return;
+        }
     } catch (const std::exception& e) {
         outputPanel_->appendError(QString("字节码生成失败 - 词法错误: %1").arg(e.what()));
         return;
     }
+    updateTokenTable();
 
     // 语法分析
     try {
-        astRoot_ = parser_.parse(lastTokens_);
+        if (!controller_->runParser()) {
+            updateAstViewer();
+            return;
+        }
     } catch (const std::exception& e) {
         bytecodeList_->clear();
         bytecodeList_->addItem(QString("字节码生成失败 - 解析异常: %1").arg(e.what()));
         return;
     }
-    if (parser_.hasErrors()) {
+    if (controller_->parser().hasErrors()) {
         bytecodeList_->clear();
-        for (const auto& diag : parser_.getDiagnostics().all()) {
-            bytecodeList_->addItem(QString::fromStdString(
-                "[编译] " + diag.format()));
+        for (const auto& diag : controller_->parserDiagnostics().all()) {
+            bytecodeList_->addItem(QString::fromStdString("[编译] " + diag.format()));
         }
         return;
     }
+    updateAstViewer();
 
-    if (!astRoot_) return;
-
-    // D3 fix: 刷新 AST 查看器
-    astViewer_->setAst(astRoot_.get());
+    if (!controller_->astRoot()) return;
 
     // 编译
     try {
-        runCompiler();
+        controller_->runCompiler();
     } catch (const std::exception& e) {
         bytecodeList_->clear();
         bytecodeList_->addItem(QString("字节码编译异常: %1").arg(e.what()));
@@ -816,85 +588,75 @@ void Ide::onShowBytecode() {
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
 
-    // 重置 VM 状态（确保单步模式从头开始）
-    vm_.resetState();
-    isVmInitialized_ = false;
+    // 重置 VM 状态
+    controller_->vmReset();
 
     // 切换到字节码 Tab
     rightTabWidget_->setCurrentIndex(2);
 }
 
 void Ide::onVmStep() {
-    if (isVmRunning_) return;
-    if (lastCompileResult_.mainChunk.code.empty()) return;
+    if (controller_->isVmRunning()) return;
+    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
 
-    // 首次点击：初始化 VM 执行环境
-    if (!isVmInitialized_) {
-        vm_.initExecution(lastCompileResult_);
-        isVmInitialized_ = true;
+    bool firstStep = !controller_->isVmInitialized();
+
+    vmStepAction_->setEnabled(false);  // 防止重入
+
+    if (firstStep) {
         vmStopAction_->setEnabled(true);
         bytecodeAction_->setEnabled(false);
     }
 
-    isVmRunning_ = true;
-    vmStepAction_->setEnabled(false);  // 防止重入
+    auto result = controller_->vmStep();
 
-    // 单步执行时启用回调，让 onVmStepCallback 统一处理UI更新
-    vm_.setStepCallbackEnabled(true);
-    vm_.setStepCallback([this](const VMStepInfo& info) {
-        onVmStepCallback(info);
-    });
+    switch (result) {
+    case IdeController::VmStepResult::NOT_READY:
+        vmStepAction_->setEnabled(true);
+        return;
 
-    // 执行一条指令
-    VMResult result = vm_.stepOnce();
-
-    if (result == VMResult::VM_RUNTIME_ERROR) {
-        Diagnostic diag(DiagLevel::Error, vm_.getLastError(), vm_.getLastErrorLine(), 0, DiagSource::VM);
+    case IdeController::VmStepResult::ERROR: {
+        Diagnostic diag(DiagLevel::Error, controller_->vm().getLastError(),
+                        controller_->vm().getLastErrorLine(), 0, DiagSource::VM);
         outputPanel_->appendError(QString::fromStdString(diag.format()));
-        if (vm_.getLastErrorLine() > 0) {
+        if (controller_->vm().getLastErrorLine() > 0) {
             QSet<int> errorLines;
-            errorLines.insert(vm_.getLastErrorLine());
+            errorLines.insert(controller_->vm().getLastErrorLine());
             codeEditor_->setErrorLines(errorLines);
         }
         vmStackPanel_->clearAll();
-        isVmInitialized_ = false;
         vmStepAction_->setEnabled(true);
         vmStopAction_->setEnabled(false);
         bytecodeAction_->setEnabled(true);
-        isVmRunning_ = false;
         return;
     }
 
-    // 检查是否执行完毕
-    if (vm_.isFinished()) {
+    case IdeController::VmStepResult::FINISHED:
         outputPanel_->appendOutput("--- VM 执行结束 ---");
         vmStackPanel_->clearAll();
-        isVmInitialized_ = false;
         vmStepAction_->setEnabled(true);
         vmStopAction_->setEnabled(false);
         bytecodeAction_->setEnabled(true);
-        isVmRunning_ = false;
+        return;
+
+    case IdeController::VmStepResult::OK:
+        // 更新 UI：栈 + 全局变量 + 当前指令高亮
+        vmStackPanel_->updateStack(controller_->vm().getStackRef());
+        vmStackPanel_->updateGlobals(controller_->vm().getGlobalsRef());
+        {
+            size_t currentIP = controller_->vm().getCurrentIP();
+            OpCode currentOp = controller_->vm().getCurrentOpCode();
+            int opLine = controller_->vm().getCurrentLine();
+            vmStackPanel_->updateCurrentOp(currentIP, currentOp, opLine);
+            highlightBytecodeLine(controller_->vm().getCurrentChunkName(), currentIP);
+        }
+        vmStepAction_->setEnabled(true);
         return;
     }
-
-    // 更新 UI：栈 + 全局变量 + 当前指令高亮
-    vmStackPanel_->updateStack(vm_.getStackRef());
-    vmStackPanel_->updateGlobals(vm_.getGlobalsRef());
-
-    // 高亮当前字节码指令
-    size_t currentIP = vm_.getCurrentIP();
-    OpCode currentOp = vm_.getCurrentOpCode();
-    int opLine = vm_.getCurrentLine();
-    vmStackPanel_->updateCurrentOp(currentIP, currentOp, opLine);
-    highlightBytecodeLine(vm_.getCurrentChunkName(), currentIP);
-
-    vmStepAction_->setEnabled(true);
-    isVmRunning_ = false;
 }
 
 void Ide::onVmStop() {
-    vm_.resetState();
-    isVmInitialized_ = false;
+    controller_->vmStop();
     vmStackPanel_->clearAll();
     // GUI-11 fix: 清除字节码列表当前行高亮
     bytecodeList_->setCurrentRow(-1);
@@ -904,28 +666,20 @@ void Ide::onVmStop() {
     bytecodeAction_->setEnabled(true);
 }
 
-void Ide::onVmStepCallback(const VMStepInfo& info) {
-    // 单步执行时使用步进回调实时刷新UI
-    // 注意：不调用 processEvents()，避免在执行中响应用户事件导致重入
-    vmStackPanel_->updateStack(vm_.getStackRef());
-    vmStackPanel_->updateGlobals(vm_.getGlobalsRef());
-
-    int line = vm_.getCurrentLine();
-    vmStackPanel_->updateCurrentOp(info.ip, info.opcode, line);
-    highlightBytecodeLine(vm_.getCurrentChunkName(), info.ip);
-}
+// ============================================================
+// 字节码列表 UI 辅助
+// ============================================================
 
 void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
-    // 根据当前 chunk 名和 ip 定位到正确的列表行
-    // 使用预计算的 ipToInstrIndex 做 O(1) 查找
+    const CompileResult& compileResult = controller_->lastCompileResult();
     const BytecodeChunk* targetChunk = nullptr;
 
     // 找到目标 chunk
     if (chunkName == "main" || chunkName.empty()) {
-        targetChunk = &lastCompileResult_.mainChunk;
+        targetChunk = &compileResult.mainChunk;
     } else {
-        auto it = lastCompileResult_.functionChunks.find(chunkName);
-        if (it != lastCompileResult_.functionChunks.end()) {
+        auto it = compileResult.functionChunks.find(chunkName);
+        if (it != compileResult.functionChunks.end()) {
             targetChunk = &it->second;
         }
     }
@@ -963,10 +717,12 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
 }
 
 void Ide::populateBytecodeList() {
+    const CompileResult& compileResult = controller_->lastCompileResult();
+
     bytecodeList_->clear();
     chunkRowMap_.clear();
 
-    if (lastCompileResult_.mainChunk.code.empty()) {
+    if (compileResult.mainChunk.code.empty()) {
         bytecodeList_->addItem("(无字节码)");
         return;
     }
@@ -978,8 +734,8 @@ void Ide::populateBytecodeList() {
     {
         int startRow = currentRow;
         size_t offset = 0;
-        while (offset < lastCompileResult_.mainChunk.code.size()) {
-            std::string instr = lastCompileResult_.mainChunk.disassembleInstruction(offset);
+        while (offset < compileResult.mainChunk.code.size()) {
+            std::string instr = compileResult.mainChunk.disassembleInstruction(offset);
             auto* item = new QListWidgetItem(QString::fromStdString(instr));
             item->setFont(QFont("Consolas", 10));
             bytecodeList_->addItem(item);
@@ -989,7 +745,7 @@ void Ide::populateBytecodeList() {
     }
 
     // ---- 函数 chunk ----
-    for (const auto& kv : lastCompileResult_.functionChunks) {
+    for (const auto& kv : compileResult.functionChunks) {
         auto* header = new QListWidgetItem(QString("---- %1 (arity=%2) ----")
                                                .arg(QString::fromStdString(kv.first))
                                                .arg(kv.second.arity));
@@ -998,8 +754,6 @@ void Ide::populateBytecodeList() {
         bytecodeList_->addItem(header);
         currentRow++;
 
-        // startRow 指向第一条指令所在行（标题行之后），而非标题行
-        // 这样 highlightBytecodeLine 中 startRow + instrIndex 才能正确对应指令行
         int startRow = currentRow;
 
         size_t funcOffset = 0;
@@ -1015,14 +769,16 @@ void Ide::populateBytecodeList() {
     bytecodeList_->setUpdatesEnabled(true);  // P6 fix: 恢复重绘
 }
 
-void Ide::runLexer(const std::string& source) {
-    lastTokens_ = lexer_.scan(source);
+// ============================================================
+// UI 更新辅助方法
+// ============================================================
 
-    // 更新 Token 列表
-    tokenTable_->setRowCount(static_cast<int>(lastTokens_.size()));
-    tokenTable_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
-    for (int i = 0; i < static_cast<int>(lastTokens_.size()); ++i) {
-        const Token& tok = lastTokens_[i];
+void Ide::updateTokenTable() {
+    const std::vector<Token>& tokens = controller_->lastTokens();
+    tokenTable_->setRowCount(static_cast<int>(tokens.size()));
+    tokenTable_->setUpdatesEnabled(false);
+    for (int i = 0; i < static_cast<int>(tokens.size()); ++i) {
+        const Token& tok = tokens[i];
         tokenTable_->setItem(i, 0, new QTableWidgetItem(
             QString::fromStdString(Token::typeToString(tok.type))));
         tokenTable_->setItem(i, 1, new QTableWidgetItem(
@@ -1041,41 +797,23 @@ void Ide::runLexer(const std::string& source) {
             }
         }
     }
-    tokenTable_->setUpdatesEnabled(true);   // P6 fix: 恢复重绘
+    tokenTable_->setUpdatesEnabled(true);
     tokenTable_->resizeColumnsToContents();
-
-    // 使用统一诊断显示词法错误
-    displayDiagnostics(lexer_.getDiagnostics());
 }
 
-void Ide::runParser(const std::vector<Token>& tokens) {
-    astRoot_ = parser_.parse(tokens);
-
-    // 使用统一诊断显示解析错误
-    displayDiagnostics(parser_.getDiagnostics());
-
-    // GUI-08 fix: 解析失败时清空旧 AST 视图
-    if (astRoot_) {
-        astViewer_->setAst(astRoot_.get());
+void Ide::updateAstViewer() {
+    if (controller_->astRoot()) {
+        astViewer_->setAst(controller_->astRoot());
     } else {
         astViewer_->clearAst();
     }
 }
 
-void Ide::runCompiler() {
-    if (!astRoot_) return;
-
-    lastCompileResult_ = compiler_.compile(*astRoot_);
-
-    // 使用统一诊断显示编译错误
-    displayDiagnostics(compiler_.getDiagnostics());
-}
-
 void Ide::updateDebugInfo() {
-    auto vars = debugger_->getVariableSnapshot();
+    auto vars = controller_->debugger()->getVariableSnapshot();
     debugPanel_->updateVariables(vars);
 
-    auto stack = debugger_->getCallStack();
+    auto stack = controller_->debugger()->getCallStack();
     debugPanel_->updateCallStack(stack);
 }
 
@@ -1096,7 +834,6 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
         std::vector<CodeEditor::ErrorRange> ranges;
         for (const auto& diag : bag.all()) {
             if (diag.isError() && diag.line > 0) {
-                // 使用 0 表示"从列到行尾"，setErrorRanges 会处理
                 ranges.push_back({diag.line, diag.column, 0});
             }
         }
@@ -1112,7 +849,7 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
 }
 
 void Ide::setRunningState(bool running) {
-    bool isDebug = isDebugRun_ && running;  // GUI-01 fix: 普通运行时禁用单步按钮
+    bool isDebug = controller_->isDebugRun() && running;  // GUI-01 fix: 普通运行时禁用单步按钮
     runAction_->setEnabled(!running);
     debugAction_->setEnabled(!running);
     stepInAction_->setEnabled(isDebug);
@@ -1185,7 +922,7 @@ bool Ide::maybeSave() {
         QMessageBox::Save);
     if (ret == QMessageBox::Save) {
         onSave();
-        return !isDirty_; // onSave 失败时 isDirty_ 仍为 true
+        return !isDirty_;
     }
     if (ret == QMessageBox::Cancel) return false;
     return true; // Discard

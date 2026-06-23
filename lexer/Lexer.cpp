@@ -356,6 +356,8 @@ void Lexer::string() {
     int startLine = line_;
     int startCol = static_cast<int>(start_ - lineStart_) + 1;
     std::string value;
+    // P-07 fix: 预估字符串容量，避免逐字符 += 反复 realloc
+    value.reserve(current_ < source_.size() ? (source_.size() - current_) : 0);
 
     while (!isAtEnd() && peek() != '"') {
         // 换行处理由 advance() 统一完成（line_++ 和 lineStart_ 更新），

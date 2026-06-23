@@ -1,6 +1,7 @@
 #include "debug/DebugController.h"
 #include "ast/ASTNode.h"
 #include "interpreter/Interpreter.h"
+#include "Logger.h"
 #include <QApplication>
 #include <QThread>
 #include <stdexcept>
@@ -160,6 +161,9 @@ void DebugController::checkBreak(ASTNode* node) {
         lastPausedDepth_ = snapCurrentDepth;  // 记录暂停深度
         crossedDeeper_ = false;  // DBG-B fix: 暂停后重置深度追踪
 
+        Logger::Debug("断点暂停于行 " + std::to_string(node->line) +
+            " (深度 " + std::to_string(snapCurrentDepth) + ")", "Debugger");
+
         // 发出暂停信号（更新 UI 高亮行）
         emit pausedAt(node->line);
 
@@ -268,6 +272,7 @@ void DebugController::setConditionEvaluator(std::function<bool(const std::string
 }
 
 void DebugController::stepIn() {
+    Logger::Debug("Step In", "Debugger");
     // 初始模式设置：尚未开始执行
     if (!running_) {
         mode_.store(static_cast<int>(StepMode::MODE_STEP_IN));
@@ -288,6 +293,7 @@ void DebugController::stepIn() {
 }
 
 void DebugController::stepOver() {
+    Logger::Debug("Step Over (depth=" + std::to_string(currentDepth_) + ")", "Debugger");
     if (!running_) {
         mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
         stepOverDepth_ = currentDepth_;
@@ -310,6 +316,7 @@ void DebugController::stepOver() {
 }
 
 void DebugController::stepOut() {
+    Logger::Debug("Step Out (depth=" + std::to_string(currentDepth_) + ")", "Debugger");
     if (!running_) {
         mode_.store(static_cast<int>((currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
         stepOutDepth_ = currentDepth_;
@@ -330,6 +337,7 @@ void DebugController::stepOut() {
 }
 
 void DebugController::resume() {
+    Logger::Debug("Resume", "Debugger");
     if (!running_) {
         mode_.store(static_cast<int>(StepMode::MODE_RUN));
         running_ = true;
@@ -348,6 +356,7 @@ void DebugController::resume() {
 }
 
 void DebugController::stop() {
+    Logger::Debug("Stop", "Debugger");
     stopped_ = true;
     running_ = false;  // DBG-02 fix: 重置 running_ 以便下次启动时能正确初始化步进模式
     {

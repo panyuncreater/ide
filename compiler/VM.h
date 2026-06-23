@@ -216,6 +216,10 @@ private:
     std::vector<std::string> pendingFieldOrder_;    // M3: OP_INIT_FIELD 执行期间记录的字段声明顺序
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
     static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
+    // S-02 fix: 总指令执行预算，防止 while(true){} 字节码导致 DoS
+    static constexpr int64_t MAX_INSTRUCTIONS = 500000000;  // 5 亿条指令（约 3-5 秒）
+    // 继承链最大深度（与 Interpreter 的 MAX_INHERITANCE_DEPTH 对齐）
+    static constexpr int MAX_INHERITANCE_DEPTH = 64;
 
     /// 栈操作
     void push(const Value& val);
@@ -272,6 +276,22 @@ private:
 
     /// 将方法名分类为枚举（单次哈希，后续 switch 分发）
     static BuiltinMethod classifyBuiltinMethod(const std::string& name);
+
+    // ---- B7 fix: 内建方法分发（从 executeCallOps 提取，降低圈复杂度）----
+    /// 数组内建方法分发。返回 VM_OK 表示已处理（caller 应 break），VM_RUNTIME_ERROR 表示出错。
+    VMResult dispatchArrayBuiltin(const Value& obj, BuiltinMethod method,
+                                   const std::string& methodName, uint8_t argCount,
+                                   uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
+                                   size_t& ip, OpCode op, int instrLen);
+    /// 字典内建方法分发。语义同上。
+    VMResult dispatchDictBuiltin(const Value& obj, BuiltinMethod method,
+                                  const std::string& methodName, uint8_t argCount,
+                                  uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
+                                  size_t& ip, OpCode op, int instrLen);
+    /// 字符串内建方法分发（全部非变异，无需 writeBack 参数）。语义同上。
+    VMResult dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
+                                    const std::string& methodName, uint8_t argCount,
+                                    size_t& ip, OpCode op, int instrLen);
 
     /// 通知步进回调（内联：禁用时直接返回，避免函数调用开销）
     void notifyStep(size_t ip, OpCode opcode) {

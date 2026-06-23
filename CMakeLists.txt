@@ -60,6 +60,8 @@ set(MINILANG_GUI_SOURCES
 # GUI 模块需要 MOC 的头文件
 set(MINILANG_GUI_MOC_HEADERS
     ide.h
+    IdeController.h
+    InterpreterWorker.h
     gui/CodeEditor.h
     gui/AstViewer.h
     gui/OutputPanel.h
@@ -99,6 +101,8 @@ endif()
 add_executable(minilang_ide WIN32
     main.cpp
     ide.cpp
+    IdeController.cpp
+    InterpreterWorker.cpp
     ide.qrc
     ide.ui
     ${MINILANG_GUI_SOURCES}

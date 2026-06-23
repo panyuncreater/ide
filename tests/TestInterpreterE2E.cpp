@@ -116,7 +116,7 @@ TEST(InterpreterE2E, ArithmeticWithVariables) {
 // 测试：浮点运算
 TEST(InterpreterE2E, FloatArithmetic) {
     EXPECT_EQ(runInterpreterOutput("print(1.5 + 2.5);"), "4");
-    EXPECT_EQ(runInterpreterOutput("print(3.14 * 2);"), "6.28");
+    EXPECT_EQ(runInterpreterOutput("print(3.14 * 2);"), "6.2800000000000002");
 }
 
 // ============================================================

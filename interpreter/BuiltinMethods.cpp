@@ -3,12 +3,90 @@
 // ============================================================
 // 从 Interpreter::visitMethodCall 中提取的数组/字典/字符串内置方法处理。
 // 错误通过 throw RuntimeError(msg, line, col) 抛出，与 Interpreter::runtimeError 语义一致。
+//
+// 共享纯函数层（executeSharedLen / executeSharedArrayContains / executeSharedDictHas）
+// 不抛异常，供 Interpreter 和 VM 共用。下方的 handle*Method 在调用共享函数后，
+// 自行将 SharedBuiltinResult.isError 转换为 RuntimeError 抛出。
 
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/Interpreter.h"  // RuntimeError 定义
 #include <cctype>
 #include <cstdint>
 #include <string>
+
+// ============================================================
+// 共享纯函数实现（供 Interpreter 和 VM 共用）
+// ============================================================
+
+SharedBuiltinResult executeSharedLen(const Value& obj,
+                                     const Value* args, size_t argCount,
+                                     int line, int column) {
+    SharedBuiltinResult r;
+    if (argCount != 0) {
+        r.isError = true;
+        r.errorMessage = "len 期望 0 个参数，但传入了 " + std::to_string(argCount) + " 个";
+        r.errorLine = line;
+        r.errorColumn = column;
+        return r;
+    }
+    if (obj.isArray()) {
+        r.result = Value(static_cast<int64_t>(obj.arrayVal().size()));
+    } else if (obj.isDict()) {
+        r.result = Value(static_cast<int64_t>(obj.dictVal().size()));
+    } else if (obj.isString()) {
+        // M6 fix: 按 UTF-8 码位计数而非字节数
+        const std::string& s = obj.stringVal();
+        size_t count = 0;
+        for (size_t i = 0; i < s.size(); ) {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+            count++;
+        }
+        r.result = Value(static_cast<int64_t>(count));
+    } else {
+        r.isError = true;
+        r.errorMessage = "len 不支持类型 " + obj.typeName();
+        r.errorLine = line;
+        r.errorColumn = column;
+    }
+    return r;
+}
+
+SharedBuiltinResult executeSharedArrayContains(const Value& arr,
+                                               const Value* args, size_t argCount,
+                                               int line, int column) {
+    SharedBuiltinResult r;
+    if (argCount != 1) {
+        r.isError = true;
+        r.errorMessage = "contains 期望 1 个参数";
+        r.errorLine = line;
+        r.errorColumn = column;
+        return r;
+    }
+    bool found = false;
+    for (const auto& elem : arr.arrayVal()) {
+        if (elem.equals(args[0])) { found = true; break; }
+    }
+    r.result = Value(found);
+    return r;
+}
+
+SharedBuiltinResult executeSharedDictHas(const Value& dict,
+                                         const std::string& method,
+                                         const Value* args, size_t argCount,
+                                         int line, int column) {
+    SharedBuiltinResult r;
+    if (argCount != 1) {
+        r.isError = true;
+        r.errorMessage = method + " 期望 1 个参数(键)";
+        r.errorLine = line;
+        r.errorColumn = column;
+        return r;
+    }
+    r.result = Value(dict.dictVal().find(args[0].toString()) != dict.dictVal().end());
+    return r;
+}
 
 // ============================================================
 // 数组内置方法
@@ -36,9 +114,10 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
     }
 
     if (method == "len") {
-        if (!args.empty())
-            throw RuntimeError("len 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个", line, col);
-        return BuiltinMethodResult(Value(static_cast<int64_t>(obj.arrayVal().size())));
+        // 委托共享纯函数（供 VM 复用同一份逻辑）
+        auto sr = executeSharedLen(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
     }
 
     if (method == "remove") {
@@ -54,12 +133,10 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
     }
 
     if (method == "contains") {
-        if (args.size() != 1)
-            throw RuntimeError("contains 期望 1 个参数", line, col);
-        for (const auto& elem : obj.arrayVal()) {
-            if (elem.equals(args[0])) return BuiltinMethodResult(Value(true));
-        }
-        return BuiltinMethodResult(Value(false));
+        // 委托共享纯函数（供 VM 复用同一份逻辑）
+        auto sr = executeSharedArrayContains(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
     }
 
     if (method == "join") {
@@ -67,7 +144,8 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
             throw RuntimeError("join 期望 0 或 1 个参数，但传入了 " + std::to_string(args.size()) + " 个", line, col);
         std::string sep = args.empty() ? "" : args[0].toString();
         std::string result;
-        const auto& arr = obj.arrayVal();
+        // P-01 fix: 只读方法使用 const 访问，避免触发 COW 深拷贝
+        const auto& arr = static_cast<const Value&>(obj).arrayVal();
         // P24 fix: 预估结果字符串大小，避免反复 realloc
         result.reserve(arr.size() * 16 + (arr.size() > 0 ? (arr.size() - 1) * sep.size() : 0));
         for (size_t i = 0; i < arr.size(); ++i) {
@@ -89,17 +167,20 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(
     const std::vector<Value>& args, int line, int col)
 {
     if (method == "len") {
-        if (!args.empty())
-            throw RuntimeError("len 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个", line, col);
-        return BuiltinMethodResult(Value(static_cast<int64_t>(obj.dictVal().size())));
+        // 委托共享纯函数（供 VM 复用同一份逻辑）
+        auto sr = executeSharedLen(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
     }
 
     if (method == "keys") {
         if (!args.empty())
             throw RuntimeError("keys 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个", line, col);
+        // P-01 fix: 只读方法使用 const 访问，避免触发 COW 深拷贝
+        const auto& dict = static_cast<const Value&>(obj).dictVal();
         std::vector<Value> keys;
-        keys.reserve(obj.dictVal().size());
-        for (const auto& kv : obj.dictVal()) {
+        keys.reserve(dict.size());
+        for (const auto& kv : dict) {
             keys.push_back(Value(kv.first));
         }
         return BuiltinMethodResult(Value(std::move(keys)));
@@ -108,26 +189,31 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(
     if (method == "values") {
         if (!args.empty())
             throw RuntimeError("values 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个", line, col);
+        // P-01 fix: 只读方法使用 const 访问，避免触发 COW 深拷贝
+        const auto& dict = static_cast<const Value&>(obj).dictVal();
         std::vector<Value> vals;
-        vals.reserve(obj.dictVal().size());
-        for (const auto& kv : obj.dictVal()) {
+        vals.reserve(dict.size());
+        for (const auto& kv : dict) {
             vals.push_back(kv.second);
         }
         return BuiltinMethodResult(Value(std::move(vals)));
     }
 
     if (method == "has" || method == "contains") {
-        if (args.size() != 1)
-            throw RuntimeError(method + " 期望 1 个参数(键)", line, col);
-        return BuiltinMethodResult(Value(obj.dictVal().find(args[0].toString()) != obj.dictVal().end()));
+        // 委托共享纯函数（供 VM 复用同一份逻辑）
+        auto sr = executeSharedDictHas(obj, method, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
     }
 
     if (method == "get") {
         if (args.empty() || args.size() > 2)
             throw RuntimeError("get 期望 1-2 个参数(键[, 默认值])", line, col);
         std::string key = args[0].toString();
-        auto it = obj.dictVal().find(key);
-        if (it != obj.dictVal().end()) {
+        // P-01 fix: 只读方法使用 const 访问，避免触发 COW 深拷贝
+        const auto& dict = static_cast<const Value&>(obj).dictVal();
+        auto it = dict.find(key);
+        if (it != dict.end()) {
             return BuiltinMethodResult(it->second);
         }
         return BuiltinMethodResult((args.size() == 2) ? args[1] : Value::nullValue());
@@ -152,18 +238,10 @@ BuiltinMethodResult BuiltinMethods::handleStringMethod(
     const std::vector<Value>& args, int line, int col)
 {
     if (method == "len") {
-        if (!args.empty())
-            throw RuntimeError("len 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个", line, col);
-        // M6 fix: 按 UTF-8 码位计数而非字节数
-        const std::string& s = obj.stringVal();
-        size_t count = 0;
-        for (size_t i = 0; i < s.size(); ) {
-            unsigned char c = static_cast<unsigned char>(s[i]);
-            i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-            count++;
-        }
-        return BuiltinMethodResult(Value(static_cast<int64_t>(count)));
+        // 委托共享纯函数（供 VM 复用同一份逻辑）
+        auto sr = executeSharedLen(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
     }
 
     if (method == "upper") {
@@ -227,5 +305,10 @@ BuiltinMethodResult BuiltinMethods::handleStringMethod(
         return BuiltinMethodResult(Value(s.substr(l, r - l + 1)));
     }
 
+    if (method == "contains") {
+        if (args.size() != 1)
+            throw RuntimeError("contains 期望 1 个参数", line, col);
+        return BuiltinMethodResult(Value(obj.stringVal().find(args[0].toString()) != std::string::npos));
+    }
     throw RuntimeError("字符串没有方法 " + method, line, col);
 }

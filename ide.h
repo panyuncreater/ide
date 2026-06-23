@@ -11,14 +11,8 @@
 #include <QListWidget>
 #include <memory>
 
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
-#include "interpreter/Interpreter.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
-#include "formatter/Formatter.h"
-#include "debug/DebugController.h"
 #include "Diagnostic.h"
+#include "IdeController.h"
 #include "gui/CodeEditor.h"
 #include "gui/SyntaxHighlighter.h"
 #include "gui/AstViewer.h"
@@ -28,33 +22,16 @@
 #include "gui/VmStackPanel.h"
 
 // ============================================================
-// InterpreterWorker — 解释器线程工作对象（OP-1 fix）
-// ============================================================
-
-class InterpreterWorker : public QObject {
-    Q_OBJECT
-public:
-    InterpreterWorker(Interpreter& interp, Block& ast, DebugController* dbg)
-        : interp_(interp), ast_(ast), debugger_(dbg) {}
-
-public slots:
-    void run();
-
-signals:
-    void outputReady(const QString& text);
-    void finishedOk();
-    void stoppedByUser();
-    void runtimeError(const QString& msg, int line, int column);
-    void genericError(const QString& msg);
-
-private:
-    Interpreter& interp_;
-    Block& ast_;
-    DebugController* debugger_;
-};
-
-// ============================================================
-// Ide 主窗口
+// Ide — GUI 交互层
+// ------------------------------------------------------------
+// 从原上帝对象拆分而来，仅负责：
+//   - GUI 组件创建与布局
+//   - 文件操作（新建/打开/保存）
+//   - 用户操作槽函数（委托给 IdeController 处理业务逻辑）
+//   - 通过 IdeController 信号更新 UI
+//
+// 业务逻辑层 → IdeController
+// Worker 任务处理层 → InterpreterWorker（已拆分至独立文件）
 // ============================================================
 
 class Ide : public QMainWindow {
@@ -86,9 +63,6 @@ private slots:
     /// 停止运行
     void onStop();
 
-    /// 运行线程结束后的清理回调
-    void onRunFinished();
-
     /// 清空输出
     void onClearOutput();
 
@@ -117,14 +91,8 @@ private:
     /// 窗口关闭事件：确保调试器和VM安全停止
     void closeEvent(QCloseEvent* event) override;
 
-    // ---- 核心组件 ----
-    Lexer lexer_;
-    Parser parser_;
-    Interpreter interpreter_;
-    Compiler compiler_;
-    VM vm_;
-    Formatter formatter_;
-    DebugController* debugger_ = nullptr;
+    // ---- 业务逻辑层 ----
+    IdeController* controller_ = nullptr;
 
     // ---- GUI 组件 ----
     CodeEditor* codeEditor_ = nullptr;
@@ -165,29 +133,9 @@ private:
     QAction* saveAction_ = nullptr;
     QAction* saveAsAction_ = nullptr;
 
-    // ---- 状态 ----
-    std::unique_ptr<Block> astRoot_;        // AST 根节点
-    std::vector<Token> lastTokens_;         // 上次词法分析的 Token 列表
-    CompileResult lastCompileResult_;     // 上次编译的结果
-    bool isRunning_ = false;               // 是否正在运行
-    bool isDebugRun_ = false;              // GUI-01 fix: 是否调试运行（控制单步按钮）
-    QThread* workerThread_ = nullptr;      // OP-1: 解释器运行线程
-    InterpreterWorker* worker_ = nullptr;  // OP-1: 解释器工作对象
-    bool isVmRunning_ = false;             // VM 是否正在运行
-    bool isVmInitialized_ = false;         // VM 执行环境是否已初始化（单步模式）
-    DiagnosticBag diagnostics_;             // 统一诊断收集器
     // GUI-04: 文件状态
     QString currentFilePath_;              // 当前文件路径（空=未保存）
     bool isDirty_ = false;                 // 是否有未保存修改
-
-    /// VM 步进回调处理
-    void onVmStepCallback(const VMStepInfo& info);
-
-    /// 更新字节码指令列表高亮
-    void highlightBytecodeLine(const std::string& chunkName, size_t ip);
-
-    /// 填充字节码指令列表
-    void populateBytecodeList();
 
     /// chunk→行号映射（用于多 chunk 高亮定位）
     struct ChunkRowInfo {
@@ -203,26 +151,32 @@ private:
     /// 初始化工具栏
     void initToolbar();
 
-    /// 初始化信号连接
+    /// 初始化信号连接（工具栏 + controller 信号）
     void initConnections();
 
-    /// 执行词法分析并更新 Token 列表
-    void runLexer(const std::string& source);
+    /// 更新字节码指令列表高亮
+    void highlightBytecodeLine(const std::string& chunkName, size_t ip);
 
-    /// 执行语法分析并更新 AST 视图
-    void runParser(const std::vector<Token>& tokens);
+    /// 填充字节码指令列表
+    void populateBytecodeList();
 
-    /// 执行字节码编译并更新字节码视图
-    void runCompiler();
+    /// 更新 Token 列表表格
+    void updateTokenTable();
+
+    /// 更新 AST 视图
+    void updateAstViewer();
 
     /// 更新调试面板
     void updateDebugInfo();
 
+    /// 将诊断信息输出到输出面板，并标记编辑器错误行
+    void displayDiagnostics(const DiagnosticBag& bag);
+
     /// 设置运行状态（启用/禁用按钮）
     void setRunningState(bool running);
 
-    /// 将诊断信息输出到输出面板，并标记编辑器错误行
-    void displayDiagnostics(const DiagnosticBag& bag);
+    /// Worker 线程结束后的 UI 清理
+    void onWorkerFinished(bool wasDebug);
 
     // GUI-04: 文件操作辅助方法
     bool maybeSave();                        // 未保存提示，返回 true 可以继续

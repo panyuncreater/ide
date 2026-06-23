@@ -23,6 +23,10 @@ public:
         : parent(parentEnv) {
         // 注意：不在这里递增 generation_
         // 创建子作用域不改变已有变量的深度位置，缓存仍有效
+        // 修复：继承父作用域的 boundInstance_，使方法体内的块作用域也能访问实例字段
+        if (parentEnv) {
+            boundInstance_ = parentEnv->boundInstance_;
+        }
     }
 
     /// 在当前作用域定义变量

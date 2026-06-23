@@ -304,10 +304,13 @@ TEST(ParserTest, ArrayLiteral_TrailingComma) {
 
 // 测试：字典字面量 {"key": "value"}
 TEST(ParserTest, DictLiteral) {
-    auto block = parseSource("{\"key\": \"value\"};");
+    auto block = parseSource("var x = {\"key\": \"value\"};");
     auto* node = firstStmt(block);
-    ASSERT_EQ(node->nodeType, NodeType::NODE_DICT_LITERAL);
-    auto* dict = static_cast<DictLiteral*>(node);
+    ASSERT_EQ(node->nodeType, NodeType::NODE_VAR_DECL);
+    auto* decl = static_cast<VarDecl*>(node);
+    ASSERT_NE(decl->initializer, nullptr);
+    EXPECT_EQ(decl->initializer->nodeType, NodeType::NODE_DICT_LITERAL);
+    auto* dict = static_cast<DictLiteral*>(decl->initializer.get());
     ASSERT_EQ(dict->pairs.size(), 1u);
     EXPECT_EQ(dict->pairs[0].first->nodeType, NodeType::NODE_STRING_LITERAL);
     EXPECT_EQ(dict->pairs[0].second->nodeType, NodeType::NODE_STRING_LITERAL);
@@ -315,10 +318,13 @@ TEST(ParserTest, DictLiteral) {
 
 // 测试：字典字面量多键值对
 TEST(ParserTest, DictLiteral_MultiplePairs) {
-    auto block = parseSource("{\"a\": 1, \"b\": 2, \"c\": 3};");
+    auto block = parseSource("var x = {\"a\": 1, \"b\": 2, \"c\": 3};");
     auto* node = firstStmt(block);
-    ASSERT_EQ(node->nodeType, NodeType::NODE_DICT_LITERAL);
-    auto* dict = static_cast<DictLiteral*>(node);
+    ASSERT_EQ(node->nodeType, NodeType::NODE_VAR_DECL);
+    auto* decl = static_cast<VarDecl*>(node);
+    ASSERT_NE(decl->initializer, nullptr);
+    EXPECT_EQ(decl->initializer->nodeType, NodeType::NODE_DICT_LITERAL);
+    auto* dict = static_cast<DictLiteral*>(decl->initializer.get());
     EXPECT_EQ(dict->pairs.size(), 3u);
 }
 
