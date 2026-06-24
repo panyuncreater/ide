@@ -1,8 +1,7 @@
 # ============================================================
 # MiniLang IDE 构建脚本（CMake）
 # ------------------------------------------------------------
-# 替代硬编码路径的 .vcxproj + .bat 构建，支持跨环境构建。
-# 旧 ide.vcxproj 保留作为兼容备选。
+# 唯一构建系统。旧 .vcxproj 已移除。
 # ============================================================
 
 cmake_minimum_required(VERSION 3.20)
@@ -59,9 +58,9 @@ set(MINILANG_GUI_SOURCES
 
 # GUI 模块需要 MOC 的头文件
 set(MINILANG_GUI_MOC_HEADERS
-    ide.h
-    IdeController.h
-    InterpreterWorker.h
+    app/ide.h
+    app/IdeController.h
+    app/InterpreterWorker.h
     gui/CodeEditor.h
     gui/AstViewer.h
     gui/OutputPanel.h
@@ -80,6 +79,7 @@ add_library(minilang_core STATIC
 
 target_include_directories(minilang_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
 )
 
 target_link_libraries(minilang_core PUBLIC Qt6::Core)
@@ -100,11 +100,11 @@ endif()
 # P1 fix: 链接 minilang_core 而非重复包含源文件，减少 ~50% 编译时间
 # ============================================================
 add_executable(minilang_ide WIN32
-    main.cpp
-    ide.cpp
-    IdeController.cpp
-    InterpreterWorker.cpp
-    ide.qrc
+    app/main.cpp
+    app/ide.cpp
+    app/IdeController.cpp
+    app/InterpreterWorker.cpp
+    app/ide.qrc
     ${MINILANG_GUI_SOURCES}
 )
 

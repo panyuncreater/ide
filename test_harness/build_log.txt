@@ -1,0 +1,483 @@
+test_main.cpp
+C:\Users\v\Desktop\ide\ide\test_harness\test_main.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(46): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(46): error C2334: “{”的前面有意外标记；跳过明显的函数体
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(52): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(52): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(59): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(60): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(61): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(65): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(66): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(66): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(70): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(70): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(82): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(82): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(85): error C2059: 语法错误:“public”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C2146: 语法错误: 缺少“;”(在标识符“push_back”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(88): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(88): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(92): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(92): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(95): error C2838: “Warning”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(96): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(96): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(100): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(100): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2143: 语法错误: 缺少“)”(在“;”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(105): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(105): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2143: 语法错误: 缺少“)”(在“;”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(110): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(110): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(113): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(113): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(119): error C2270: “warningCount”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(121): error C2039: "isWarning": 不是 "Diagnostic" 的成员
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(31): note: 参见“Diagnostic”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(121): error C2039: "__this": 不是 "Diagnostic" 的成员
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(31): note: 参见“Diagnostic”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): error C2672: “std::count_if”: 未找到匹配的重载函数
+D:\vs\VC\Tools\MSVC\14.51.36231\include\algorithm(1000): note: 可能是“iterator_traits<_DestIt>::difference_type std::count_if(_ExPo &&,_FwdIt,_FwdIt,_Pr) noexcept”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): note: “iterator_traits<_DestIt>::difference_type std::count_if(_ExPo &&,_FwdIt,_FwdIt,_Pr) noexcept”: 应输入 4 个参数，却提供了 2 个
+D:\vs\VC\Tools\MSVC\14.51.36231\include\algorithm(983): note: 或    “iterator_traits<_Iter>::difference_type std::count_if(_InIt,_InIt,_Pr)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): note: “iterator_traits<_Iter>::difference_type std::count_if(_InIt,_InIt,_Pr)”: 应输入 3 个参数，却提供了 2 个
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C3312: 找不到类型 "int" 的可调用 "begin" 函数
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C3312: 找不到类型 "int" 的可调用 "end" 函数
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2059: 语法错误:“for”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2086: “int diagnostics_”: 重定义
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): note: 参见“diagnostics_”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(132): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(132): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C2371: “lines”: 重定义；不同的基类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(127): note: 参见“lines”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C2146: 语法错误: 缺少“;”(在标识符“erase”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(135): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(136): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(136): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(141): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(141): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(144): error C2270: “empty”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(147): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(147): error C2365: “std::stable_sort”: 重定义；以前的定义是“函数”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(152): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(152): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(158): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(158): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(159): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(159): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(161): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(163): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(163): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(165): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(165): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(168): error C2371: “diagnostics_”: 重定义；不同的基类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): note: 参见“diagnostics_”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(169): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(169): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(13): error C2059: 语法错误:“public”
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(20): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(20): error C2143: 语法错误: 缺少“;”(在“&”的前面)
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(20): fatal error C1003: 错误计数超过 100；正在停止编译
+Lexer.cpp
+C:\Users\v\Desktop\ide\ide\lexer\Lexer.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(46): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(46): error C2334: “{”的前面有意外标记；跳过明显的函数体
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(52): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(52): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(59): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(60): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(61): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(65): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(66): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(66): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(70): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(70): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(82): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(82): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(85): error C2059: 语法错误:“public”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C2146: 语法错误: 缺少“;”(在标识符“push_back”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(88): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(88): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(92): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(92): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(95): error C2838: “Warning”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(96): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(96): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(100): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(100): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2143: 语法错误: 缺少“)”(在“;”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(105): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(105): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2143: 语法错误: 缺少“)”(在“;”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(110): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(110): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(113): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(113): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(119): error C2270: “warningCount”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(121): error C2039: "isWarning": 不是 "Diagnostic" 的成员
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(31): note: 参见“Diagnostic”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(121): error C2039: "__this": 不是 "Diagnostic" 的成员
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(31): note: 参见“Diagnostic”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): error C2672: “std::count_if”: 未找到匹配的重载函数
+D:\vs\VC\Tools\MSVC\14.51.36231\include\algorithm(1000): note: 可能是“iterator_traits<_DestIt>::difference_type std::count_if(_ExPo &&,_FwdIt,_FwdIt,_Pr) noexcept”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): note: “iterator_traits<_DestIt>::difference_type std::count_if(_ExPo &&,_FwdIt,_FwdIt,_Pr) noexcept”: 应输入 4 个参数，却提供了 2 个
+D:\vs\VC\Tools\MSVC\14.51.36231\include\algorithm(983): note: 或    “iterator_traits<_Iter>::difference_type std::count_if(_InIt,_InIt,_Pr)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): note: “iterator_traits<_Iter>::difference_type std::count_if(_InIt,_InIt,_Pr)”: 应输入 3 个参数，却提供了 2 个
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C3312: 找不到类型 "int" 的可调用 "begin" 函数
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C3312: 找不到类型 "int" 的可调用 "end" 函数
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2059: 语法错误:“for”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2086: “int diagnostics_”: 重定义
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): note: 参见“diagnostics_”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(132): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(132): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C2371: “lines”: 重定义；不同的基类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(127): note: 参见“lines”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C2146: 语法错误: 缺少“;”(在标识符“erase”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(135): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(136): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(136): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(141): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(141): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(144): error C2270: “empty”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(147): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(147): error C2365: “std::stable_sort”: 重定义；以前的定义是“函数”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(152): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(152): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(158): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(158): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(159): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(159): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(161): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(163): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(163): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(165): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(165): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(168): error C2371: “diagnostics_”: 重定义；不同的基类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): note: 参见“diagnostics_”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(169): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(169): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(13): error C2059: 语法错误:“public”
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(20): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(20): error C2143: 语法错误: 缺少“;”(在“&”的前面)
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(20): fatal error C1003: 错误计数超过 100；正在停止编译
+Parser.cpp
+C:\Users\v\Desktop\ide\ide\parser\Parser.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\parser/Parser.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\ast/ASTNode.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(46): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(46): error C2334: “{”的前面有意外标记；跳过明显的函数体
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(52): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(52): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(56): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(59): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(60): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(61): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(65): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(66): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(66): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(70): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(70): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(82): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(82): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(85): error C2059: 语法错误:“public”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): error C2146: 语法错误: 缺少“;”(在标识符“push_back”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(88): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(88): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(92): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(92): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(95): error C2838: “Warning”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(96): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(96): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(100): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(100): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2143: 语法错误: 缺少“)”(在“;”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(104): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(105): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(105): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2143: 语法错误: 缺少“)”(在“;”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(109): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(110): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(110): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(113): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(113): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(119): error C2270: “warningCount”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(121): error C2039: "isWarning": 不是 "Diagnostic" 的成员
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(31): note: 参见“Diagnostic”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(121): error C2039: "__this": 不是 "Diagnostic" 的成员
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(31): note: 参见“Diagnostic”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): error C2672: “std::count_if”: 未找到匹配的重载函数
+D:\vs\VC\Tools\MSVC\14.51.36231\include\algorithm(1000): note: 可能是“iterator_traits<_DestIt>::difference_type std::count_if(_ExPo &&,_FwdIt,_FwdIt,_Pr) noexcept”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): note: “iterator_traits<_DestIt>::difference_type std::count_if(_ExPo &&,_FwdIt,_FwdIt,_Pr) noexcept”: 应输入 4 个参数，却提供了 2 个
+D:\vs\VC\Tools\MSVC\14.51.36231\include\algorithm(983): note: 或    “iterator_traits<_Iter>::difference_type std::count_if(_InIt,_InIt,_Pr)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(120): note: “iterator_traits<_Iter>::difference_type std::count_if(_InIt,_InIt,_Pr)”: 应输入 3 个参数，却提供了 2 个
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C3312: 找不到类型 "int" 的可调用 "begin" 函数
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C3312: 找不到类型 "int" 的可调用 "end" 函数
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2059: 语法错误:“for”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(128): error C2086: “int diagnostics_”: 重定义
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): note: 参见“diagnostics_”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(129): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(132): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(132): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C2371: “lines”: 重定义；不同的基类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(127): note: 参见“lines”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(134): error C2146: 语法错误: 缺少“;”(在标识符“erase”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(135): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(136): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(136): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(141): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(141): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(144): error C2270: “empty”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(147): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(147): error C2365: “std::stable_sort”: 重定义；以前的定义是“函数”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(152): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(152): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(158): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(158): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(159): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(159): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(161): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(163): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(163): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(165): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(165): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(168): error C2371: “diagnostics_”: 重定义；不同的基类型
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(87): note: 参见“diagnostics_”的声明
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(169): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\Diagnostic.h(169): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\parser/Parser.h(40): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\parser/Parser.h(40): error C2143: 语法错误: 缺少“;”(在“&”的前面)
+C:\Users\v\Desktop\ide\ide\parser/Parser.h(40): error C2334: “{”的前面有意外标记；跳过明显的函数体
+C:\Users\v\Desktop\ide\ide\parser/Parser.h(40): fatal error C1003: 错误计数超过 100；正在停止编译
+ASTNode.cpp
+C:\Users\v\Desktop\ide\ide\ast\ASTNode.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\ast/ASTNode.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+Interpreter.cpp
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Interpreter.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Environment.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\ast/ASTNode.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(45): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(46): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(45): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter/Interpreter.h(185): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(45): note: 尝试匹配参数列表“(const char [43])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(46): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(65): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(66): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(65): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter/Interpreter.h(185): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(65): note: 尝试匹配参数列表“(const char [43])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(66): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(159): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(160): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(159): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(159): note: 尝试匹配参数列表“(const char [44])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(160): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(204): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(205): error C2143: 语法错误: 缺少“)”(在“if”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(204): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(204): note: 尝试匹配参数列表“(const char [41])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(205): error C2143: 语法错误: 缺少“;”(在“if”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(209): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(210): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(209): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(209): note: 尝试匹配参数列表“(const char [41])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(210): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(376): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(377): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(376): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(376): note: 尝试匹配参数列表“(const char [44])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(377): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(384): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(385): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(384): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(384): note: 尝试匹配参数列表“(const char [44])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(385): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(400): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(401): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(400): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(400): note: 尝试匹配参数列表“(const char [44])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(401): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(411): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(412): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(411): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(411): note: 尝试匹配参数列表“(const char [44])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(412): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(502): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(503): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(502): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(502): note: 尝试匹配参数列表“(const char [44])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(503): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(517): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(518): error C2143: 语法错误: 缺少“)”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(517): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(517): note: 尝试匹配参数列表“(const char [44])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(518): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(557): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(558): error C2143: 语法错误: 缺少“)”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(557): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(557): note: 尝试匹配参数列表“(const char [57])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(558): error C2143: 语法错误: 缺少“;”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(564): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(565): error C2143: 语法错误: 缺少“)”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(564): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(564): note: 尝试匹配参数列表“(const char [57])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(565): error C2143: 语法错误: 缺少“;”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(571): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(572): error C2143: 语法错误: 缺少“)”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(571): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(571): note: 尝试匹配参数列表“(const char [57])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(572): error C2143: 语法错误: 缺少“;”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(578): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(579): error C2143: 语法错误: 缺少“)”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(578): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(578): note: 尝试匹配参数列表“(const char [57])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(579): error C2143: 语法错误: 缺少“;”(在“return”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(605): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(606): error C2143: 语法错误: 缺少“)”(在“break”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(605): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(605): note: 尝试匹配参数列表“(const char [66])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(606): error C2143: 语法错误: 缺少“;”(在“break”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(611): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(612): error C2143: 语法错误: 缺少“)”(在“break”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(611): error C2660: “Interpreter::runtimeError”: 函数不接受 1 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(139): note: 参见“Interpreter::runtimeError”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(611): note: 尝试匹配参数列表“(const char [60])”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(612): error C2143: 语法错误: 缺少“;”(在“break”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(682): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(718): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(719): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(721): error C2143: 语法错误: 缺少“)”(在“if”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(718): error C2660: “Interpreter::checkType”: 函数不接受 3 个参数
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(277): note: 参见“Interpreter::checkType”的声明
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(718): note: 尝试匹配参数列表“(Value, std::string, Interpreter::visitVarDecl::<lambda_fb9ffb53442b39e039d3636761d5cef2>)”时
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(721): error C2143: 语法错误: 缺少“;”(在“if”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(734): error C2601: “Interpreter::visitAssignment”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(637): note: 此行有一个“{”没有匹配项
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(751): error C2601: “Interpreter::visitVarRef”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(637): note: 此行有一个“{”没有匹配项
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(762): error C2601: “Interpreter::visitIfStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(637): note: 此行有一个“{”没有匹配项
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(774): error C2601: “Interpreter::visitWhileStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(637): note: 此行有一个“{”没有匹配项
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(787): error C2601: “Interpreter::visitForStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(637): note: 此行有一个“{”没有匹配项
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(833): error C2601: “Interpreter::visitFunDecl”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(637): note: 此行有一个“{”没有匹配项
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(847): error C2601: “Interpreter::visitFunCall”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(637): note: 此行有一个“{”没有匹配项
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(864): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(890): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(895): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1066): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1151): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1232): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1244): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1386): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1406): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1416): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1440): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1511): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1559): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1650): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1663): error C2001: 字符串字面量中的换行符
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1663): fatal error C1075: “(”: 未找到匹配令牌
+Environment.cpp
+C:\Users\v\Desktop\ide\ide\interpreter\Environment.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Environment.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+正在生成代码...
+EXIT_CODE=2 

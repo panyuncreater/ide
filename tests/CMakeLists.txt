@@ -35,7 +35,10 @@ if(NOT TARGET minilang_core)
         ${MINILANG_ROOT_DIR}/formatter/Formatter.cpp
     )
 
-    target_include_directories(minilang_core PUBLIC ${MINILANG_ROOT_DIR})
+    target_include_directories(minilang_core PUBLIC
+        ${MINILANG_ROOT_DIR}
+        ${MINILANG_ROOT_DIR}/common
+    )
     target_link_libraries(minilang_core PUBLIC Qt6::Core Qt6::Widgets)
 
     if(MSVC)

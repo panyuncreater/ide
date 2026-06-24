@@ -1,0 +1,78 @@
+MiniLang Formatter Consistency & Idempotency Test
+==================================================
+Test count: 70
+
+  running AR1... PASS AR1 integer
+  running AR2... PASS AR2 float
+  running AR3... PASS AR3 add-sub
+  running AR4... PASS AR4 mul-div
+  running AR5... PASS AR5 precedence
+  running AR6... PASS AR6 modulo
+  running AR7... PASS AR7 unary neg
+  running AR8... PASS AR8 complex arith
+  running UN1... PASS UN1 unary not
+  running UN2... PASS UN2 comparison chain
+  running UN3... PASS UN3 logical and
+  running UN4... PASS UN4 logical or
+  running UN5... PASS UN5 string literal
+  running UN6... PASS UN6 bool and null
+  running VR1... PASS VR1 var decl
+  running VR2... PASS VR2 reassign
+  running VR3... PASS VR3 multi var
+  running VR4... PASS VR4 string concat
+  running VR5... PASS VR5 shadow
+  running VR6... PASS VR6 compound expr
+  running BR1... PASS BR1 if true
+  running BR2... PASS BR2 if-else
+  running BR3... PASS BR3 else-if
+  running BR4... PASS BR4 nested if
+  running BR5... PASS BR5 dangling else
+  running BR6... PASS BR6 ternary-like
+  running BR7... PASS BR7 empty if
+  running BR8... PASS BR8 nested if-else
+  running LP1... PASS LP1 while basic
+  running LP2... PASS LP2 while sum
+  running LP3... PASS LP3 for basic
+  running LP4... PASS LP4 for sum
+  running LP5... PASS LP5 nested for
+  running LP6... PASS LP6 while countdown
+  running FN1... PASS FN1 basic fun
+  running FN2... PASS FN2 no return
+  running FN3... PASS FN3 recursive
+  running FN4... PASS FN4 multi-param
+  running FN5... PASS FN5 nested call
+  running FN6... PASS FN6 void fun
+  running FN7... PASS FN7 typed params
+  running FN8... PASS FN8 mutual recursion
+  running AY1... PASS AY1 array literal
+  running AY2... PASS AY2 array len
+  running AY3... PASS AY3 array push
+  running AY4... PASS AY4 array iter
+  running AY5... PASS AY5 array concat
+  running AY6... PASS AY6 nested array
+  running DC1... PASS DC1 dict literal
+  running DC2... PASS DC2 dict methods
+  running DC3... PASS DC3 dict set
+  running DC4... PASS DC4 nested dict
+  running CL1... PASS CL1 basic class
+  running CL2... PASS CL2 inheritance
+  running CL3... PASS CL3 class field
+  running CL4... PASS CL4 class method call
+  running CM1... PASS CM1 nested parens
+  running CM2... PASS CM2 array method chain
+  running CM3... PASS CM3 string methods
+  running CM4... PASS CM4 mixed expr
+  running BD1... PASS BD1 10-level nesting
+  running BD2... PASS BD2 whitespace mess
+  running BD3... PASS BD3 long expression
+  running BD4... PASS BD4 empty program
+  running BD5... PASS BD5 single print
+  running BD6... PASS BD6 multi print
+  running BD7... PASS BD7 deep function chain
+  running BD8... PASS BD8 large array
+  running BD9... PASS BD9 deep class hierarchy
+  running BD10... PASS BD10 messy class
+
+==================================================
+RESULTS: 70 passed, 0 failed, 0 skipped, 70 total
+==================================================

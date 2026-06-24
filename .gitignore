@@ -1,28 +1,46 @@
-```
-# Compiled and binary files
+# ============================================================
+# MiniLang IDE .gitignore
+# ============================================================
+
+# --- 构建输出目录 ---
+build_*/
+x64/
+.vs/
+
+# --- 编译产物 ---
 *.o
 *.obj
 *.exe
 *.dll
 *.so
 *.a
-*.out
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# --- CMake 生成文件 ---
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+build.ninja
+rules.ninja
+.ninja_*
+_deps/
+
+# --- Qt 自动生成 ---
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# --- 测试产物 ---
 test_vm
 test_vm_advanced
-```
-/.vs
-/ide/x64/Debug
-/x64/Debug
-/nul
-/ide/x64/Release/qt/uic
-/ide/x64/Release/qt/rcc
-/ide/x64/Release/qt/qmake/06119d6b396d482b97524235dbdc056e
-/ide/x64/Release/qt/qmake
-/ide/x64/Release/qt
-/ide/x64/Release
-/test_harness/x64/Debug
-/test_harness/build.bat
+/test_harness/x64/
 /test_harness/debug
-/test_harness
-/test_harness.vcxproj
-/extract_styles.py
+/test_harness/*.exe
+/test_harness/*.obj
+
+# --- 杂项 ---
+nul

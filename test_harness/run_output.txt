@@ -1,0 +1,93 @@
+ExitCode: 1
+MiniLang AST Bidirectional Parse Consistency Test
+==================================================
+Test count: 60
+
+PASS LIT1 integer literal
+PASS LIT2 float literal
+PASS LIT3 string literal
+PASS LIT4 bool and null
+PASS BIN1 addition
+PASS BIN2 subtraction
+PASS BIN3 mul-div-mod
+PASS BIN4 precedence mul+add
+PASS BIN5 parenthesized group
+PASS BIN6 comparison and logic
+PASS UN1 unary negate
+PASS UN2 unary not
+PASS UN3 nested unary
+PASS VR1 var decl no init
+PASS VR2 var decl with init
+PASS VR3 assignment
+PASS VR4 var ref in expr
+PASS IF1 if-else
+PASS IF2 else-if chain
+PASS IF3 nested if
+FAIL IF4 dangling else -- PARSE2_FAIL: parse2 error: 意外�?Token: ';'
+--- formatted source ---
+if (true) {
+    if (false) {
+        print(1);
+    } else {
+        print(2);
+    };
+}
+
+--- end ---
+PASS IF5 complex condition
+PASS LP1 while basic
+PASS LP2 for with init/cond/upd
+PASS LP3 nested for
+PASS LP4 while with return
+PASS FN1 basic fun
+PASS FN2 recursive fun
+PASS FN3 typed params
+PASS FN4 fun as expression
+PASS FN5 mutual recursion
+PASS AR1 array literal
+PASS AR2 array index access
+PASS AR3 array index assign
+PASS AR4 nested array
+PASS DC1 dict literal
+PASS DC2 dict member access
+PASS DC3 dict member assign
+PASS CL1 basic class with init
+PASS CL2 class inheritance+super
+PASS CL3 class field + method
+PASS CL4 class member call
+PASS MX1 complex arith expr
+PASS MX2 block scoping
+PASS MX3 print multi values
+PASS MX4 return stmt bare
+PASS MX5 array method push
+PASS MX6 string methods
+PASS MX7 deeply nested blocks
+PASS MX8 comparison chain
+PASS PR1 left-assoc subtraction
+PASS PR2 left-assoc division
+PASS PR3 mul over add
+PASS PR4 paren override
+PASS PR5 nested parens
+PASS PR6 unary over binary
+PASS PR7 complex nested
+PASS PR8 and-or precedence
+PASS PR9 cmp with arith
+PASS PR10 deep paren nesting
+
+==================================================
+RESULTS: 59 passed, 1 failed, 0 skipped, 60 total
+==================================================
+
+FAILURES:
+  [IF4] dangling else: PARSE2_FAIL: parse2 error: 意外�?Token: ';'
+--- formatted source ---
+if (true) {
+    if (false) {
+        print(1);
+    } else {
+        print(2);
+    };
+}
+
+--- end ---
+--- STDERR ---
