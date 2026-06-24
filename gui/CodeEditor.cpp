@@ -251,6 +251,8 @@ void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
     breakpoints_.clear();
     // DB-2 fix: 过滤空行和纯注释行，与 mousePressEvent 行为一致
     for (int line : breakpoints) {
+        // G-P1-2 fix: 校验行号合法性，过滤 <= 0 的无效行号避免 findBlockByNumber 越界
+        if (line <= 0) continue;
         QTextBlock block = document()->findBlockByNumber(line - 1);
         if (block.isValid()) {
             QString text = block.text().trimmed();

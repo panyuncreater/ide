@@ -110,6 +110,10 @@ public:
     /// 设置输出回调
     void setOutputCallback(std::function<void(const std::string&)> callback);
 
+    /// 设置输入回调（用于 input() 函数）
+    /// 回调接收提示字符串，返回用户输入的字符串
+    void setInputCallback(std::function<std::string(const std::string&)> callback);
+
     /// 设置指令级步进回调（每条指令执行后调用）
     void setStepCallback(std::function<void(const VMStepInfo&)> callback);
 
@@ -206,6 +210,7 @@ private:
     std::vector<std::shared_ptr<VMUpvalue>> openUpvalues_;   // 当前所有 open 的 upvalue（函数返回时关闭）
     std::unordered_map<std::string, Value> functionClosures_;       // 函数名→闭包值（含 upvalue 绑定）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
+    std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
     bool stepCallbackEnabled_ = false;              // 是否启用步进回调
     bool initialized_ = false;                      // 是否已初始化执行环境

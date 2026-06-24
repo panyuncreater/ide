@@ -1,6 +1,7 @@
 #include "formatter/Formatter.h"
 #include "ast/ASTNode.h"
 #include <sstream>
+#include <algorithm>  // F-P2-5 fix: std::sort
 
 // ============================================================
 // Formatter 代码格式化器实现
@@ -15,10 +16,15 @@ void Formatter::setComments(const std::vector<Token>& tokens) {
             comments_.push_back(tok);
         }
     }
+    // F-P2-5 fix: 按行号排序，确保 formatBlock 中的 commentIndex_ 单调递增游标正确工作
+    std::sort(comments_.begin(), comments_.end(),
+              [](const Token& a, const Token& b) { return a.line < b.line; });
     commentIndex_ = 0;
 }
 
 void Formatter::setIndentSize(int size) {
+    // F-P1-2 fix: 校验缩进大小，负值会导致 std::string 构造时 size_t 溢出触发 bad_alloc
+    if (size < 0 || size > 16) return;
     options_.indentSize = size;
     cachedIndentLevel_ = -1;  // P3: 使缩进缓存失效
 }
@@ -42,7 +48,10 @@ std::string Formatter::indent() const {
         if (options_.useTabs) {
             indentCache_ = std::string(currentIndent_, '\t');
         } else {
-            indentCache_ = std::string(currentIndent_ * options_.indentSize, ' ');
+            // F-P1-2 fix: 防御性检查，防止负值乘积溢出
+            int spaces = currentIndent_ * options_.indentSize;
+            if (spaces < 0) spaces = 0;
+            indentCache_ = std::string(static_cast<size_t>(spaces), ' ');
         }
     }
     return indentCache_;
@@ -78,6 +87,7 @@ std::string Formatter::openBrace() const {
 std::string Formatter::format(Block& program) {
     currentIndent_ = 0;
     formatDepth_ = 0;  // D5 fix: 重置递归深度计数器
+    commentIndex_ = 0;  // F-P1-4 fix: 重置注释游标，确保 Formatter 对象复用时注释正确输出
     return formatBlock(program);
 }
 
@@ -107,7 +117,12 @@ std::string Formatter::formatNode(ASTNode* node) {
 
     // 统一通过 Visitor 模式分派：node->accept(*this) 调用对应的 visit* 方法，
     // visit* 方法将格式化结果存入 lastFormatResult_，替代原 25 路 switch。
+    // F-P2-6 fix: 清空 lastFormatResult_，避免未覆盖的节点类型返回陈旧结果
+    lastFormatResult_.clear();
     node->accept(*this);
+    if (lastFormatResult_.empty()) {
+        return "/* unhandled node */";
+    }
     return std::move(lastFormatResult_);
 }
 
@@ -196,7 +211,8 @@ Value Formatter::visitBlock(Block& node) {
     // 保留原 formatNode 中 NODE_BLOCK 分支的行为：用花括号包裹 formatBlock 输出。
     // formatBlock 只格式化语句列表，不包含外层花括号，此处补上。
     // FMT-05 fix: 使用 openBrace() 支持 BraceStyle 配置
-    std::string result = openBrace();
+    // F-P2-1 fix: openBrace() 后添加换行，与 formatIfStmt 等保持一致，避免 { 与首条语句同行
+    std::string result = openBrace() + "\n";
     currentIndent_++;
     result += formatBlock(node);
     currentIndent_--;
@@ -253,6 +269,16 @@ Value Formatter::visitNullLiteral(NullLiteral& node) {
 Value Formatter::visitSuperExpr(SuperExpr& /*node*/) {
     // SuperExpr 无对应 format* 方法，保留原 formatNode 中 NODE_SUPER_EXPR 分支的行为
     lastFormatResult_ = "super";
+    return Value::nullValue();
+}
+
+Value Formatter::visitBreakStmt(BreakStmt& /*node*/) {
+    lastFormatResult_ = "break";
+    return Value::nullValue();
+}
+
+Value Formatter::visitContinueStmt(ContinueStmt& /*node*/) {
+    lastFormatResult_ = "continue";
     return Value::nullValue();
 }
 
@@ -386,6 +412,8 @@ std::string Formatter::formatVarDecl(VarDecl& node) {
 }
 
 std::string Formatter::formatAssignment(Assignment& node) {
+    // F-P2-10 fix: 检查 value 空指针，避免输出 "x = null" 语义错误
+    if (!node.value) return node.name + binOp("=") + "/* null */";
     return node.name + binOp("=") + formatNode(node.value.get());
 }
 
@@ -396,11 +424,14 @@ std::string Formatter::formatVarRef(VarRef& node) {
 std::string Formatter::formatIfStmt(IfStmt& node) {
     std::string result = "if (" + formatNode(node.condition.get()) + ")" + openBrace() + "\n";
     currentIndent_++;
-    if (auto* block = dynamic_cast<Block*>(node.thenBranch.get())) {
+    // F-P2-3 fix: 检查 thenBranch 空指针，避免 formatNode 返回 "null" 语义错误
+    if (!node.thenBranch) {
+        result += indent() + "/* empty */\n";
+    } else if (auto* block = dynamic_cast<Block*>(node.thenBranch.get())) {
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.thenBranch.get())) {
         // L17 fix: 裸复合语句（if/while/for）作为 thenBranch 时，需要额外缩进层级
-        // 注意：else-if 链不受影响，因为 else 分支中的 IfStmt 走下面的 "else " + formatIfStmt 路径
+        // 注意：else-if 链不受影响，因为 else 分支中的 IfStmt 走下面的 "else " + formatNode 路径
         currentIndent_++;
         result += indent() + formatNode(node.thenBranch.get()) + "\n";
         currentIndent_--;
@@ -411,9 +442,11 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
     result += indent() + "}";
 
     if (node.elseBranch) {
-        // else if 分支：elseBranch 是 IfStmt，直接输出 "else if ..."
+        // else if 分支：elseBranch 是 IfStmt
         if (node.elseBranch->nodeType == NodeType::NODE_IF_STMT) {
-            result += " else " + formatIfStmt(*static_cast<IfStmt*>(node.elseBranch.get()));
+            // F-P1-1 fix: 改用 formatNode 分派，让 else-if 链也受 MAX_FORMAT_DEPTH 深度保护
+            // 输出结果一致：" else " + "if (...) { ... }" = " else if (...) { ... }"
+            result += " else " + formatNode(node.elseBranch.get());
         } else if (auto* block = dynamic_cast<Block*>(node.elseBranch.get())) {
             result += " else" + openBrace() + "\n";
             currentIndent_++;
@@ -457,13 +490,14 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
 }
 
 std::string Formatter::formatForStmt(ForStmt& node) {
+    // F-P2-9 fix: 条件化添加分号和空格，避免 update 为空时产生 "for (init; cond; ) {" 多余空格
     std::string result = "for (";
     if (node.initializer) result += formatNode(node.initializer.get());
-    result += "; ";
-    if (node.condition) result += formatNode(node.condition.get());
-    result += "; ";
-    if (node.update) result += formatNode(node.update.get());
-    result += ")" + openBrace() + "\n";
+    result += ";";
+    if (node.condition) result += " " + formatNode(node.condition.get());
+    result += ";";
+    if (node.update) result += " " + formatNode(node.update.get());
+    result += " " + openBrace() + "\n";
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);
@@ -511,12 +545,15 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
 }
 
 std::string Formatter::formatFunCall(FunCall& node) {
+    // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result;
+    result.reserve(node.arguments.size() * 16 + 16);
     if (node.callee) {
         // 链式调用 / 表达式调用
         std::string callee = formatNode(node.callee.get());
-        if (node.callee && (node.callee->nodeType == NodeType::NODE_BINARY_OP ||
-                            node.callee->nodeType == NodeType::NODE_UNARY_OP))
+        // F-P2-12 fix: 移除冗余的 node.callee 二次检查（已在 if 分支内）
+        if (node.callee->nodeType == NodeType::NODE_BINARY_OP ||
+            node.callee->nodeType == NodeType::NODE_UNARY_OP)
             callee = "(" + callee + ")";  // FMT-01 fix
         result = callee + "(";
     } else {
@@ -538,7 +575,9 @@ std::string Formatter::formatReturnStmt(ReturnStmt& node) {
 }
 
 std::string Formatter::formatPrintStmt(PrintStmt& node) {
+    // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result = "print(";
+    result.reserve(node.values.size() * 16 + 8);
     for (size_t i = 0; i < node.values.size(); ++i) {
         if (i > 0) result += comma();
         result += formatNode(node.values[i].get());
@@ -553,6 +592,8 @@ std::string Formatter::formatBlock(Block& node) {
     result.reserve(node.statements.size() * 40);
     for (size_t i = 0; i < node.statements.size(); ++i) {
         ASTNode* stmt = node.statements[i].get();
+        // F-P1-3 fix: 跳过空语句指针，避免后续 stmt->line 解引用空指针崩溃
+        if (!stmt) continue;
 
         // F1 fix: 输出当前语句之前的所有独立注释（行号严格小于语句行号）
         while (commentIndex_ < comments_.size() &&
@@ -611,7 +652,9 @@ std::string Formatter::formatBlock(Block& node) {
 // ---- 新增节点格式化 ----
 
 std::string Formatter::formatArrayLiteral(ArrayLiteral& node) {
+    // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result = "[";
+    result.reserve(node.elements.size() * 16 + 2);
     for (size_t i = 0; i < node.elements.size(); ++i) {
         if (i > 0) result += comma();
         result += formatNode(node.elements[i].get());
@@ -621,7 +664,9 @@ std::string Formatter::formatArrayLiteral(ArrayLiteral& node) {
 }
 
 std::string Formatter::formatDictLiteral(DictLiteral& node) {
+    // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result = "{";
+    result.reserve(node.pairs.size() * 32 + 2);
     for (size_t i = 0; i < node.pairs.size(); ++i) {
         if (i > 0) result += comma();
         result += formatNode(node.pairs[i].first.get()) + ": " + formatNode(node.pairs[i].second.get());
@@ -654,6 +699,8 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     result += openBrace() + "\n";
     currentIndent_++;
     for (auto& member : node.members) {
+        // F-P2-8 fix: 跳过空成员指针，避免 formatNode 返回 "null" 作为类成员
+        if (!member) continue;
         // 方法（FunDecl）以 } 结尾，不需要额外 ;
         if (isSelfTerminating(member.get())) {
             result += indent() + formatNode(member.get()) + "\n";

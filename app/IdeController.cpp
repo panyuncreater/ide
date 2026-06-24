@@ -1,5 +1,8 @@
 #include "IdeController.h"
 #include "Logger.h"
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QThread>
 
 // ============================================================
 // IdeController — 业务逻辑层实现
@@ -31,9 +34,56 @@ IdeController::IdeController(QObject* parent)
         emit outputReady(QString::fromStdString(text));
     });
 
+    // input() 函数回调：跨线程安全
+    // 主线程（REPL/VM调试）直接显示对话框，工作线程（Run）通过 BlockingQueuedConnection 转发
+    auto inputHandler = [this](const std::string& prompt) -> std::string {
+        if (QThread::currentThread() == this->thread()) {
+            bool ok = false;
+            QString text = QInputDialog::getText(nullptr, "input",
+                QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+            return ok ? text.toStdString() : "";
+        } else {
+            QString result;
+            QMetaObject::invokeMethod(this, [this, prompt, &result]() {
+                bool ok = false;
+                result = QInputDialog::getText(nullptr, "input",
+                    QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+                if (!ok) result = "";
+            }, Qt::BlockingQueuedConnection);
+            return result.toStdString();
+        }
+    };
+    interpreter_.setInputCallback(inputHandler);
+    vm_.setInputCallback(inputHandler);
+
     // 转发调试器暂停信号
     connect(debugger_, &DebugController::pausedAt, this, [this](int line) {
         emit pausedAt(line);
+    });
+}
+
+void IdeController::setupMainCallbacks() {
+    // 恢复主线程输出回调
+    interpreter_.setOutputCallback([this](const std::string& text) {
+        emit outputReady(QString::fromStdString(text));
+    });
+    // 恢复主线程输入回调（跨线程安全，worker 清除后由 cleanupWorker 调用恢复）
+    interpreter_.setInputCallback([this](const std::string& prompt) -> std::string {
+        if (QThread::currentThread() == this->thread()) {
+            bool ok = false;
+            QString text = QInputDialog::getText(nullptr, "input",
+                QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+            return ok ? text.toStdString() : "";
+        } else {
+            QString result;
+            QMetaObject::invokeMethod(this, [this, prompt, &result]() {
+                bool ok = false;
+                result = QInputDialog::getText(nullptr, "input",
+                    QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+                if (!ok) result = "";
+            }, Qt::BlockingQueuedConnection);
+            return result.toStdString();
+        }
     });
 }
 
@@ -115,14 +165,21 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source) {
     isDebugRun_ = isDebug;
     isRunning_ = true;
 
+    // A-P1-1 fix: 非调试运行时清除残留断点，避免普通运行在调试会话后意外暂停
+    // （DebugController::reset() 保留断点供下次调试复用，普通运行需显式清除）
+    if (!isDebug) {
+        debugger_->setBreakpoints(QSet<int>());
+    }
+
     // R2/D1 fix: 保存 REPL 状态
     interpreter_.saveReplState();
 
     // 7.1 fix: 使用 unique_ptr 管理生命周期，清理上次运行的 worker
     worker_.reset();
     workerThread_.reset();
-    worker_ = std::make_unique<InterpreterWorker>(interpreter_, *astRoot_, debugger_);
-    workerThread_.reset(new QThread(this));
+    worker_ = std::make_unique<InterpreterWorker>(interpreter_, *astRoot_);
+    // A-P2-5 fix: 不设 parent，由 unique_ptr 独占管理生命周期，避免双重所有权
+    workerThread_.reset(new QThread());
     worker_->moveToThread(workerThread_.get());
 
     // 转发 worker 信号到 IdeController 信号
@@ -154,11 +211,6 @@ void IdeController::startWorker() {
     QMetaObject::invokeMethod(worker_.get(), "run", Qt::QueuedConnection);
 }
 
-void IdeController::stopWorker() {
-    debugger_->stop();
-    // 状态清理由 workerFinished 信号触发
-}
-
 bool IdeController::stopForClose(int timeoutMs) {
     debugger_->stop();
     if (workerThread_) {
@@ -188,7 +240,13 @@ void IdeController::forceStop() {
         worker_.reset();
         workerThread_.reset();
     }
+    // A-P1-2 fix: 补全状态清理（与 cleanupWorker 一致），避免下次运行因 stopped_=true 立即终止
     isRunning_ = false;
+    isDebugRun_ = false;
+    interpreter_.setDebugMode(false);
+    interpreter_.restoreReplState();
+    debugger_->reset();
+    setupMainCallbacks();
 }
 
 void IdeController::cleanupWorker() {
@@ -198,19 +256,16 @@ void IdeController::cleanupWorker() {
     interpreter_.restoreReplState();
     debugger_->reset();
 
-    // 7.1 fix: unique_ptr 自动释放，无需手动 delete
-    worker_.reset();
-
+    // A-P2-1 fix: 先确保线程完全退出，再删除 worker（符合 Qt 线程亲和性规则）
     if (workerThread_) {
         workerThread_->quit();
         workerThread_->wait();
         workerThread_.reset();
     }
+    worker_.reset();
 
-    // 恢复主线程输出回调（worker 的回调 lambda 捕获了已删除的 worker this 指针）
-    interpreter_.setOutputCallback([this](const std::string& text) {
-        emit outputReady(QString::fromStdString(text));
-    });
+    // 恢复主线程输出+输入回调（worker 的回调 lambda 捕获了已删除的 worker this 指针）
+    setupMainCallbacks();
 }
 
 // ============================================================
@@ -299,53 +354,48 @@ IdeController::VmStepResult IdeController::vmStep() {
     if (isVmRunning_) return VmStepResult::NOT_READY;
     if (lastCompileResult_.mainChunk.code.empty()) return VmStepResult::NOT_READY;
 
-    // 首次点击：初始化 VM 执行环境
-    if (!isVmInitialized_) {
-        vm_.initExecution(lastCompileResult_);
-        isVmInitialized_ = true;
-    }
+    // A-P1-4 fix: 异常安全保护，确保 isVmRunning_/isVmInitialized_ 在异常时回滚
+    try {
+        // 首次点击：初始化 VM 执行环境
+        if (!isVmInitialized_) {
+            vm_.initExecution(lastCompileResult_);
+            isVmInitialized_ = true;
+        }
 
-    isVmRunning_ = true;
+        isVmRunning_ = true;
 
-    // 单步执行时启用回调
-    vm_.setStepCallbackEnabled(true);
-    vm_.setStepCallback([this](const VMStepInfo& info) {
-        emit vmStepInfo(info);
-    });
+        // 单步执行时启用回调
+        vm_.setStepCallbackEnabled(true);
+        vm_.setStepCallback([this](const VMStepInfo& info) {
+            emit vmStepInfo(info);
+        });
 
-    VMResult result = vm_.stepOnce();
+        VMResult result = vm_.stepOnce();
 
-    if (result == VMResult::VM_RUNTIME_ERROR) {
+        if (result == VMResult::VM_RUNTIME_ERROR) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::ERROR;
+        }
+
+        if (vm_.isFinished()) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::FINISHED;
+        }
+
+        isVmRunning_ = false;
+        return VmStepResult::OK;
+    } catch (...) {
+        // 异常时重置所有状态，避免永久卡死
         isVmInitialized_ = false;
         isVmRunning_ = false;
-        return VmStepResult::ERROR;
+        throw;
     }
-
-    if (vm_.isFinished()) {
-        isVmInitialized_ = false;
-        isVmRunning_ = false;
-        return VmStepResult::FINISHED;
-    }
-
-    isVmRunning_ = false;
-    return VmStepResult::OK;
 }
 
 void IdeController::vmStop() {
     vm_.resetState();
     isVmInitialized_ = false;
     isVmRunning_ = false;
-}
-
-// ============================================================
-// 输出回调设置
-// ============================================================
-
-void IdeController::setupCallbacks() {
-    interpreter_.setOutputCallback([this](const std::string& text) {
-        emit outputReady(QString::fromStdString(text));
-    });
-    vm_.setOutputCallback([this](const std::string& text) {
-        emit outputReady(QString::fromStdString(text));
-    });
 }

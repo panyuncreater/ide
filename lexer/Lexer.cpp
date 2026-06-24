@@ -24,6 +24,8 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["or"]      = TokenType::TK_OR;
         m["not"]     = TokenType::TK_NOT;
         m["print"]   = TokenType::TK_PRINT;
+        m["break"]   = TokenType::TK_BREAK;
+        m["continue"]= TokenType::TK_CONTINUE;
         m["int"]     = TokenType::TK_INT;
         m["float"]   = TokenType::TK_FLOAT;
         m["bool"]    = TokenType::TK_BOOL;
@@ -93,7 +95,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
         if (tok.type == TokenType::TK_ERROR) {
             diagnostics_.addError(tok.lexeme, tok.line, tok.column, DiagSource::Lexer);
             cleanTokens.push_back(std::move(tok));
-        } else if (tok.type == TokenType::TK_LINE_COMMENT) {
+        } else if (tok.type == TokenType::TK_LINE_COMMENT || tok.type == TokenType::TK_BLOCK_COMMENT) {
             comments_.push_back(std::move(tok));
         } else {
             cleanTokens.push_back(std::move(tok));
@@ -195,6 +197,34 @@ void Lexer::scanToken() {
             tok.lexeme = commentText;
             tok.line = line_;
             tok.column = static_cast<int>(commentStart - lineStart_) + 1;
+            tokens_.push_back(tok);
+        } else if (match('*')) {
+            // 块注释 /* ... */（支持嵌套）
+            size_t commentStart = start_;
+            int startLine = line_;
+            int startCol = static_cast<int>(commentStart - lineStart_) + 1;
+            int depth = 1;  // 嵌套深度
+            while (!isAtEnd() && depth > 0) {
+                if (peek() == '/' && peekNext() == '*') {
+                    advance(); advance();  // 消耗 /*
+                    depth++;
+                } else if (peek() == '*' && peekNext() == '/') {
+                    advance(); advance();  // 消耗 */
+                    depth--;
+                } else {
+                    advance();
+                }
+            }
+            if (depth > 0) {
+                errorToken("未终止的块注释", startLine, startCol);
+                return;
+            }
+            std::string commentText(source_.substr(commentStart, current_ - commentStart));
+            Token tok;
+            tok.type = TokenType::TK_BLOCK_COMMENT;
+            tok.lexeme = commentText;
+            tok.line = startLine;
+            tok.column = startCol;
             tokens_.push_back(tok);
         } else {
             addToken(TokenType::TK_SLASH);
@@ -302,7 +332,9 @@ void Lexer::number() {
          peek() == 'o' || peek() == 'O')) {
         char prefix = peek();
         advance(); // 消耗前缀字母
-        while (!isAtEnd() && std::isxdigit(static_cast<unsigned char>(peek()))) {
+        // P2-2 fix: 用 isalnum 消费整个非法字面量，避免 isxdigit 对 0b/0o 前缀的语义错误
+        // （isxdigit 会消费 a-f，但 0bff 中 ff 不是合法二进制位；此处统一消费字母数字即可）
+        while (!isAtEnd() && std::isalnum(static_cast<unsigned char>(peek()))) {
             advance();
         }
         std::string text(source_.substr(start_, current_ - start_));

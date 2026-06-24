@@ -34,6 +34,27 @@ void DebugController::checkBreak(ASTNode* node) {
 
     if (!running_) return;
 
+    // D-P1-1 fix: 原子快速路径——RUN 模式且无断点时，无锁返回
+    // 避免每次 checkBreak 都获取 mutex 并深拷贝断点容器（循环/递归程序的主要开销）
+    if (static_cast<StepMode>(mode_.load()) == StepMode::MODE_RUN &&
+        !hasBreakpoints_.load()) {
+        // D-P2-11 fix: 快速路径也更新 lastSeenLine_/crossedLine_，
+        // 避免动态添加断点后切换到慢速路径时状态陈旧导致断点漏触发
+        if (node->line > 0) {
+            if (node->line != lastSeenLine_.load()) crossedLine_.store(true);
+            lastSeenLine_.store(node->line);
+        }
+        // B11 fix: 即使在快速路径，也定期处理 UI 事件防止界面冻结
+        if (++eventPumpCounter_ >= 100) {
+            eventPumpCounter_ = 0;
+            // D-P2-3 fix: QCoreApplication::instance() 可能为 null（单元测试/库使用场景）
+            auto app = QCoreApplication::instance();
+            if (app && QThread::currentThread() == app->thread())
+                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+        }
+        return;
+    }
+
     // Thread-safety: take a snapshot of shared state under the mutex.
     // Breakpoint containers are copied; scalar fields are read into locals.
     // This avoids holding the mutex for the entire function.
@@ -58,11 +79,18 @@ void DebugController::checkBreak(ASTNode* node) {
     }
 
     // 快速路径：RUN 模式且无断点 → 直接返回（递归/循环程序的主要开销来源）
+    // 注意：此处保留原逻辑作为慢速路径中的二次确认（hasBreakpoints_ 是原子读，可能与锁内状态有微小窗口）
     if (snapMode == StepMode::MODE_RUN && localBreakpoints.empty()) {
+        // D-P2-11 fix: 快速路径也更新行号追踪
+        if (node->line > 0) {
+            if (node->line != lastSeenLine_.load()) crossedLine_.store(true);
+            lastSeenLine_.store(node->line);
+        }
         // B11 fix: 即使在快速路径，也定期处理 UI 事件防止界面冻结
         if (++eventPumpCounter_ >= 100) {
             eventPumpCounter_ = 0;
-            if (QThread::currentThread() == QCoreApplication::instance()->thread())
+            auto app = QCoreApplication::instance();
+            if (app && QThread::currentThread() == app->thread())
                 QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
         }
         return;
@@ -170,22 +198,35 @@ void DebugController::checkBreak(ASTNode* node) {
         Logger::Debug("断点暂停于行 " + std::to_string(node->line) +
             " (深度 " + std::to_string(snapCurrentDepth) + ")", "Debugger");
 
-        // 发出暂停信号（更新 UI 高亮行）
+        // D-P1-3 fix: 先设置 paused_=true（锁内），再发信号，最后阻塞等待。
+        // 确保 UI 收到信号查询变量时，worker 已确认进入暂停状态，避免解释器状态竞争窗口。
+        {
+            std::lock_guard<std::mutex> lock(pauseMutex_);
+            paused_ = true;
+        }
+        // 发出暂停信号（更新 UI 高亮行）——此时 paused_ 已为 true
         emit pausedAt(node->line);
-
-        // 暂停执行，等待用户操作
+        // 阻塞等待用户操作（pauseExecution 内部不再重复设置 paused_）
         pauseExecution();
+
+        // D-P2-1 fix: pauseExecution 返回后立即检查 stopped_，
+        // 避免用户停止后仍执行当前节点的副作用（如 print 输出）
+        if (stopped_) throw DebugStopException();
     } else {
         // B11 fix: 不暂停时也定期处理 UI 事件，防止界面冻结
         if (++eventPumpCounter_ >= 100) {
             eventPumpCounter_ = 0;
-            if (QThread::currentThread() == QCoreApplication::instance()->thread())
+            // D-P2-3 fix: QCoreApplication::instance() 可能为 null
+            auto app = QCoreApplication::instance();
+            if (app && QThread::currentThread() == app->thread())
                 QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
         }
     }
 }
 
 void DebugController::setBreakpoint(int line) {
+    // D-P2-6 fix: 校验行号有效性（负数或 0 无意义）
+    if (line <= 0) return;
     // P0-9 fix: 加锁保护容器（checkBreak 在 worker 线程读取）
     std::lock_guard<std::mutex> lock(pauseMutex_);
     breakpoints_.insert(line);
@@ -194,28 +235,37 @@ void DebugController::setBreakpoint(int line) {
         breakpointInfos_.insert(line, BreakpointInfo(line));
     }
     updateMinBreakpointLine();
+    // D-P1-1 fix: 更新原子标志位
+    hasBreakpoints_.store(!breakpoints_.empty());
 }
 
 void DebugController::setBreakpoints(const QSet<int>& lines) {
     // P0-9 fix: 加锁保护容器
     std::lock_guard<std::mutex> lock(pauseMutex_);
-    breakpoints_ = lines;
+    // D-P2-6 fix: 过滤无效行号
+    QSet<int> validLines;
+    for (int line : lines) {
+        if (line > 0) validLines.insert(line);
+    }
+    breakpoints_ = validLines;
     // 同步 breakpointInfos_：移除不再存在的，添加新增的
     // P0-10 fix: 不再重置已有断点的 hitCount（保留累计命中次数）
     auto it = breakpointInfos_.begin();
     while (it != breakpointInfos_.end()) {
-        if (!lines.contains(it.key())) {
+        if (!validLines.contains(it.key())) {
             it = breakpointInfos_.erase(it);
         } else {
             ++it;
         }
     }
-    for (int line : lines) {
+    for (int line : validLines) {
         if (!breakpointInfos_.contains(line)) {
             breakpointInfos_.insert(line, BreakpointInfo(line));
         }
     }
     updateMinBreakpointLine();
+    // D-P1-1 fix: 更新原子标志位
+    hasBreakpoints_.store(!breakpoints_.empty());
 }
 
 void DebugController::removeBreakpoint(int line) {
@@ -224,9 +274,13 @@ void DebugController::removeBreakpoint(int line) {
     breakpoints_.remove(line);
     breakpointInfos_.remove(line);
     updateMinBreakpointLine();
+    // D-P1-1 fix: 更新原子标志位
+    hasBreakpoints_.store(!breakpoints_.empty());
 }
 
 void DebugController::toggleBreakpoint(int line) {
+    // D-P2-6 fix: 校验行号有效性
+    if (line <= 0) return;
     // P0-9 fix: 加锁保护容器
     std::lock_guard<std::mutex> lock(pauseMutex_);
     if (breakpoints_.contains(line)) {
@@ -239,6 +293,8 @@ void DebugController::toggleBreakpoint(int line) {
         }
     }
     updateMinBreakpointLine();
+    // D-P1-1 fix: 更新原子标志位
+    hasBreakpoints_.store(!breakpoints_.empty());
 }
 
 bool DebugController::hasBreakpoint(int line) const {
@@ -254,6 +310,8 @@ QSet<int> DebugController::getBreakpoints() const {
 }
 
 void DebugController::setBreakpointCondition(int line, const std::string& condition) {
+    // D-P2-6 fix: 校验行号有效性
+    if (line <= 0) return;
     // P0-9 fix: 加锁保护容器
     std::lock_guard<std::mutex> lock(pauseMutex_);
     // 确保断点存在
@@ -263,6 +321,8 @@ void DebugController::setBreakpointCondition(int line, const std::string& condit
             breakpointInfos_.insert(line, BreakpointInfo(line));
         }
         updateMinBreakpointLine();
+        // D-P1-1 fix: 更新原子标志位
+        hasBreakpoints_.store(!breakpoints_.empty());
     }
     // 更新或创建 BreakpointInfo
     auto it = breakpointInfos_.find(line);
@@ -413,16 +473,24 @@ void DebugController::setCallStackCallback(std::function<std::vector<CallStackEn
 }
 
 std::vector<VariableSnapshot> DebugController::getVariableSnapshot() const {
-    // P0-9 fix: 加锁读取回调
-    std::lock_guard<std::mutex> lock(pauseMutex_);
-    if (variableCallback_) return variableCallback_();
+    // D-P1-2 fix: 锁内仅拷贝回调函数对象，锁外调用，避免持锁阻塞和重入死锁
+    std::function<std::vector<VariableSnapshot>()> cb;
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        cb = variableCallback_;
+    }
+    if (cb) return cb();
     return {};
 }
 
 std::vector<CallStackEntry> DebugController::getCallStack() const {
-    // P0-9 fix: 加锁读取回调
-    std::lock_guard<std::mutex> lock(pauseMutex_);
-    if (callStackCallback_) return callStackCallback_();
+    // D-P1-2 fix: 锁内仅拷贝回调函数对象，锁外调用，避免持锁阻塞和重入死锁
+    std::function<std::vector<CallStackEntry>()> cb;
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        cb = callStackCallback_;
+    }
+    if (cb) return cb();
     return {};
 }
 
@@ -431,10 +499,13 @@ bool DebugController::isRunning() const {
 }
 
 bool DebugController::isPaused() const {
-    return paused_;
+    // D-P2-14 fix: 结合 stopped_ 判断，避免停止过程中 isPaused 仍返回 true
+    return paused_ && !stopped_;
 }
 
 void DebugController::reset() {
+    // D-P2-10 fix: 所有状态重置统一在锁内进行，避免锁内外重置的一致性间隙
+    // D-P2-8 fix: eventPumpCounter_ 也需重置，避免跨调试会话残留
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_.store(static_cast<int>(StepMode::MODE_RUN));
@@ -443,26 +514,26 @@ void DebugController::reset() {
         paused_ = false;
         stepOverDepth_ = 0;
         stepOutDepth_ = 0;
+        currentDepth_.store(0);
+        lastPausedLine_.store(-1);
+        lastPausedDepth_.store(-1);
+        lastSeenLine_.store(-1);
+        crossedLine_.store(false);
+        crossedDeeper_.store(false);  // DBG-B fix
+        eventPumpCounter_ = 0;        // D-P2-8 fix: 重置事件泵计数器
         // P0-9 fix: 重置所有断点命中计数在锁内进行（保留断点和条件）
         for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {
             it->hitCount = 0;
         }
     }
     pauseCV_.notify_all();
-    // P0-9 fix: atomic 字段在锁外重置（atomic store 本身线程安全）
-    currentDepth_.store(0);
-    lastPausedLine_.store(-1);
-    lastPausedDepth_.store(-1);
-    lastSeenLine_.store(-1);
-    crossedLine_.store(false);
-    crossedDeeper_.store(false);  // DBG-B fix
 }
 
 void DebugController::pauseExecution() {
     // A2: 使用 condition_variable 替代 QEventLoop
     // worker 线程在此阻塞，UI 线程通过 stepIn/stepOver/resume/stop 唤醒
+    // D-P1-3 fix: paused_ 已由调用方在 emit 前设置，此处仅阻塞等待
     std::unique_lock<std::mutex> lock(pauseMutex_);
-    paused_ = true;
     pauseCV_.wait(lock, [this]{ return !paused_; });
     // 唤醒后 paused_ 已被设为 false
 }

@@ -92,6 +92,26 @@ SharedBuiltinResult executeSharedDictHas(const Value& dict,
                                          const Value* args, size_t argCount,
                                          int line = 0, int column = 0);
 
+// ============================================================
+// 顶层内置函数共享层（供 Interpreter 和 VM 共用，不抛异常）
+// ============================================================
+// 支持: len / type / str / int / abs / min / max / range / sum / input
+// 用户自定义函数和类会覆盖这些内置函数（由调用方在分发时保证优先级）
+
+/// 判断函数名是否为顶层内置函数
+bool isBuiltinFunction(const std::string& name);
+
+/// 执行顶层内置函数
+/// @param funcName  函数名（len/type/str/int/abs/min/max/range/sum/input）
+/// @param args       参数列表首指针（argCount==0 时可为 nullptr）
+/// @param argCount   参数数量
+/// @param line       调用行号（用于错误报告）
+/// @param column     调用列号（用于错误报告）
+SharedBuiltinResult executeSharedBuiltinFunction(
+    const std::string& funcName,
+    const Value* args, size_t argCount,
+    int line = 0, int column = 0);
+
 /// 内置方法辅助类（全静态方法，无状态）
 class BuiltinMethods {
 public:

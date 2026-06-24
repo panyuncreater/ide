@@ -24,7 +24,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
-    QPlainTextEdit* editor_;
+    QPlainTextEdit* editor_ = nullptr;
 };
 
 /// 代码编辑器：支持行号、断点标记、错误下划线、当前执行行高亮
@@ -76,7 +76,7 @@ private slots:
     void updateLineNumberArea(const QRect& rect, int dy);
 
 private:
-    LineNumberArea* lineNumberArea_;
+    LineNumberArea* lineNumberArea_ = nullptr;
     QSet<int> errorLines_;      // 错误行号
     QSet<int> breakpoints_;     // 断点行号
     QMap<int, std::string> breakpointConditions_;  // 断点条件表达式

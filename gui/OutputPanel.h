@@ -35,8 +35,8 @@ public:
     void clearErrors();
 
 private:
-    QTextEdit* outputEdit_;      // 输出文本区域
-    QTextEdit* errorEdit_;        // 错误文本区域
-    QPushButton* clearOutputBtn_; // 清空输出按钮
-    QPushButton* clearErrorBtn_;  // 清空错误按钮
+    QTextEdit* outputEdit_ = nullptr;      // 输出文本区域
+    QTextEdit* errorEdit_ = nullptr;        // 错误文本区域
+    QPushButton* clearOutputBtn_ = nullptr; // 清空输出按钮
+    QPushButton* clearErrorBtn_ = nullptr;  // 清空错误按钮
 };

@@ -28,4 +28,9 @@ void InterpreterWorker::run() {
         // S-07 fix: catch(...) 兜底，无法获取类型信息但明确标注
         emit genericError("未预期的未知异常（无法获取类型信息）");
     }
+
+    // A-P2-2 fix: 返回前恢复空回调，避免 interp_ 持有指向已销毁 worker 的悬垂 lambda
+    // （cleanupWorker 会在主线程恢复主线程回调，此处仅清除 worker 侧的捕获 this 的回调）
+    interp_.setOutputCallback([](const std::string&) {});
+    interp_.setInputCallback([](const std::string&) { return std::string(); });
 }

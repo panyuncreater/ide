@@ -36,6 +36,8 @@ enum class NodeType {
     NODE_METHOD_CALL,
     NODE_NULL_LITERAL,
     NODE_SUPER_EXPR,
+    NODE_BREAK_STMT,
+    NODE_CONTINUE_STMT,
 };
 
 // ============================================================
@@ -575,5 +577,23 @@ public:
     SuperExpr(int ln = 0, int col = 0) : ASTNode(ln, col) { nodeType = NodeType::NODE_SUPER_EXPR; }
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "Super"; }
+    std::vector<ASTNode*> children() const override { return {}; }
+};
+
+/// break 语句节点（跳出最近的 while/for 循环）
+class BreakStmt : public ASTNode {
+public:
+    BreakStmt(int ln = 0, int col = 0) : ASTNode(ln, col) { nodeType = NodeType::NODE_BREAK_STMT; }
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "BreakStmt"; }
+    std::vector<ASTNode*> children() const override { return {}; }
+};
+
+/// continue 语句节点（跳到最近 while/for 循环的下一次迭代）
+class ContinueStmt : public ASTNode {
+public:
+    ContinueStmt(int ln = 0, int col = 0) : ASTNode(ln, col) { nodeType = NodeType::NODE_CONTINUE_STMT; }
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "ContinueStmt"; }
     std::vector<ASTNode*> children() const override { return {}; }
 };

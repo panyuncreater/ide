@@ -130,7 +130,10 @@ void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& g
     std::sort(entries.begin(), entries.end(),
               [](const auto* a, const auto* b) { return a->first < b->first; });
 
-    globalsTable_->setRowCount(static_cast<int>(entries.size()));
+    // G-P2-4 fix: 仅在行数变化时调用 resizeColumnsToContents（O(n) 操作），避免每次更新都重算列宽
+    const int newRowCount = static_cast<int>(entries.size());
+    const bool rowCountChanged = (globalsTable_->rowCount() != newRowCount);
+    globalsTable_->setRowCount(newRowCount);
 
     int row = 0;
     for (const auto* entry : entries) {
@@ -139,7 +142,9 @@ void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& g
         ++row;
     }
 
-    globalsTable_->resizeColumnsToContents();
+    if (rowCountChanged) {
+        globalsTable_->resizeColumnsToContents();
+    }
 }
 
 void VmStackPanel::updateCurrentOp(size_t ip, OpCode opcode, int line) {

@@ -14,6 +14,7 @@
 #include <QMenuBar>
 #include <QFileInfo>
 #include <sstream>
+#include <algorithm>  // A-P2-8 fix: std::min
 
 // ============================================================
 // Ide — GUI 交互层实现
@@ -373,7 +374,18 @@ void Ide::onRun() {
     setRunningState(true);
     replPanel_->setInputEnabled(false);
 
-    controller_->startWorker();
+    // A-P1-5 fix: startWorker 失败时回滚 UI 状态，避免界面卡在"运行中"
+    try {
+        controller_->startWorker();
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("启动失败: %1").arg(e.what()));
+        setRunningState(false);
+        replPanel_->setInputEnabled(true);
+    } catch (...) {
+        outputPanel_->appendError("启动发生未知异常");
+        setRunningState(false);
+        replPanel_->setInputEnabled(true);
+    }
 }
 
 void Ide::onDebug() {
@@ -404,7 +416,18 @@ void Ide::onDebug() {
     }
     controller_->setupDebug(breakpoints, conditions);
 
-    controller_->startWorker();
+    // A-P1-5 fix: startWorker 失败时回滚 UI 状态，避免界面卡在"运行中"
+    try {
+        controller_->startWorker();
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("启动调试失败: %1").arg(e.what()));
+        setRunningState(false);
+        replPanel_->setInputEnabled(true);
+    } catch (...) {
+        outputPanel_->appendError("启动调试发生未知异常");
+        setRunningState(false);
+        replPanel_->setInputEnabled(true);
+    }
 }
 
 void Ide::onStepIn() {
@@ -608,7 +631,24 @@ void Ide::onVmStep() {
         bytecodeAction_->setEnabled(false);
     }
 
-    auto result = controller_->vmStep();
+    // A-P1-3 fix: 异常安全保护，确保 vmStepAction_ 在异常时恢复可用
+    // vmStep() 内部 catch(...) 后 rethrow，此处必须捕获避免 Qt 槽函数抛出未捕获异常
+    IdeController::VmStepResult result;
+    try {
+        result = controller_->vmStep();
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("VM 单步异常: %1").arg(e.what()));
+        vmStepAction_->setEnabled(true);
+        vmStopAction_->setEnabled(false);
+        bytecodeAction_->setEnabled(true);
+        return;
+    } catch (...) {
+        outputPanel_->appendError("VM 单步发生未知异常");
+        vmStepAction_->setEnabled(true);
+        vmStopAction_->setEnabled(false);
+        bytecodeAction_->setEnabled(true);
+        return;
+    }
 
     switch (result) {
     case IdeController::VmStepResult::NOT_READY:
@@ -691,12 +731,15 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
         instrIndex = targetChunk->ipToInstrIndex[ip];
     } else {
         // fallback：遍历查找（不应发生）
-        // P2 fix: 正确处理 OP_CLOSURE 变长指令（4 + upvalueCount*2 字节）
+        // A-P2-11 fix: 正确处理 OP_CLOSURE 变长指令（4 + upvalueCount*2 字节）
+        // 并处理截断情况：若 OP_CLOSURE 字节码不完整（offset+3 越界），终止遍历避免误对齐
         size_t offset = 0;
         while (offset < targetChunk->code.size()) {
             if (offset == ip) break;
             OpCode op = static_cast<OpCode>(targetChunk->code[offset]);
-            if (op == OpCode::OP_CLOSURE && offset + 3 < targetChunk->code.size()) {
+            if (op == OpCode::OP_CLOSURE) {
+                // 需要 offset+1..offset+3 三字节读取 upvalueCount
+                if (offset + 3 >= targetChunk->code.size()) break;  // 截断，终止
                 uint8_t upvalueCount = targetChunk->code[offset + 3];
                 offset += 4 + static_cast<size_t>(upvalueCount) * 2;
             } else {
@@ -735,6 +778,8 @@ void Ide::populateBytecodeList() {
 
     bytecodeList_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
     int currentRow = 0;
+    // G-P2-3 fix: QFont 静态化，避免循环内重复构造
+    static const QFont bytecodeFont("Consolas", 10);
 
     // ---- 主 chunk ----
     {
@@ -743,7 +788,7 @@ void Ide::populateBytecodeList() {
         while (offset < compileResult.mainChunk.code.size()) {
             std::string instr = compileResult.mainChunk.disassembleInstruction(offset);
             auto* item = new QListWidgetItem(QString::fromStdString(instr));
-            item->setFont(QFont("Consolas", 10));
+            item->setFont(bytecodeFont);
             bytecodeList_->addItem(item);
             currentRow++;
         }
@@ -755,7 +800,7 @@ void Ide::populateBytecodeList() {
         auto* header = new QListWidgetItem(QString("---- %1 (arity=%2) ----")
                                                .arg(QString::fromStdString(kv.first))
                                                .arg(kv.second.arity));
-        header->setFont(QFont("Consolas", 10));
+        header->setFont(bytecodeFont);
         header->setForeground(QColor("#569CD6"));
         bytecodeList_->addItem(header);
         currentRow++;
@@ -766,7 +811,7 @@ void Ide::populateBytecodeList() {
         while (funcOffset < kv.second.code.size()) {
             std::string instr = kv.second.disassembleInstruction(funcOffset);
             auto* item = new QListWidgetItem(QString::fromStdString(instr));
-            item->setFont(QFont("Consolas", 10));
+            item->setFont(bytecodeFont);
             bytecodeList_->addItem(item);
             currentRow++;
         }
@@ -781,9 +826,12 @@ void Ide::populateBytecodeList() {
 
 void Ide::updateTokenTable() {
     const std::vector<Token>& tokens = controller_->lastTokens();
-    tokenTable_->setRowCount(static_cast<int>(tokens.size()));
+    // A-P2-8 fix: 分页保护，防止超大 Token 列表（如 1M Token）创建过多行导致 UI 卡死
+    static constexpr int MAX_DISPLAY = 10000;
+    int displayCount = static_cast<int>(std::min(tokens.size(), static_cast<size_t>(MAX_DISPLAY)));
+    tokenTable_->setRowCount(displayCount);
     tokenTable_->setUpdatesEnabled(false);
-    for (int i = 0; i < static_cast<int>(tokens.size()); ++i) {
+    for (int i = 0; i < displayCount; ++i) {
         const Token& tok = tokens[i];
         tokenTable_->setItem(i, 0, new QTableWidgetItem(
             QString::fromStdString(Token::typeToString(tok.type))));
@@ -805,6 +853,12 @@ void Ide::updateTokenTable() {
     }
     tokenTable_->setUpdatesEnabled(true);
     tokenTable_->resizeColumnsToContents();
+
+    // 超出限制时提示
+    if (tokens.size() > static_cast<size_t>(MAX_DISPLAY)) {
+        outputPanel_->appendOutput(QString("[提示] Token 数量 %1 超过显示上限 %2，仅显示前 %2 条")
+                                   .arg(tokens.size()).arg(MAX_DISPLAY));
+    }
 }
 
 void Ide::updateAstViewer() {
@@ -824,7 +878,9 @@ void Ide::updateDebugInfo() {
 }
 
 void Ide::displayDiagnostics(const DiagnosticBag& bag) {
-    for (const auto& diag : bag.all()) {
+    // A-P2-13 fix: 缓存 bag.all() 一次，避免重复遍历（all() 可能返回拷贝或视图）
+    const auto& allDiags = bag.all();
+    for (const auto& diag : allDiags) {
         QString text = QString::fromStdString(diag.format());
         if (diag.isError()) {
             outputPanel_->appendError(text);
@@ -838,7 +894,7 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
     // 标记编辑器错误行（EU-1 fix: 使用精确列范围）
     if (!bag.empty()) {
         std::vector<CodeEditor::ErrorRange> ranges;
-        for (const auto& diag : bag.all()) {
+        for (const auto& diag : allDiags) {
             if (diag.isError() && diag.line > 0) {
                 ranges.push_back({diag.line, diag.column, 0});
             }

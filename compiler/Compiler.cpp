@@ -57,7 +57,7 @@ CompileResult Compiler::compile(Block& program) {
     result.mainChunk = std::move(chunk_);
     result.functionChunks = std::move(functionChunks_);
     result.globalSlotCount = static_cast<int>(slotNames_.size());
-    result.globalSlotNames = slotNames_;
+    result.globalSlotNames = std::move(slotNames_);  // C-P2-5 fix: move 避免深拷贝整个全局变量名表
 
     // 预计算 ip→指令索引映射（用于调试高亮 O(1) 查找）
     result.mainChunk.buildIpMap();
@@ -310,6 +310,11 @@ Value Compiler::visitVarDecl(VarDecl& node) {
         if (it == currentLocals_.end()) {
             // 新局部变量，分配槽位
             int slot = static_cast<int>(currentLocals_.size());
+            // C-P1-2 fix: 局部变量槽位上限 255（uint8_t 编码限制）
+            if (slot > 255) {
+                error("函数局部变量数量超过限制（最大 256 个，含 this/参数/字段）", node.line, node.column);
+                return Value::nullValue();
+            }
             currentLocals_[node.name] = slot;
             peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
@@ -400,21 +405,25 @@ int Compiler::resolveUpvalue(const std::string& name, int line) {
         return existIt->second;
     }
 
-    // 2. 检查外层局部变量（直接捕获）
+    // 2. 检查外层局部变量（直接捕获，isLocal=true）
     auto outerIt = outerLocals_.find(name);
     if (outerIt != outerLocals_.end()) {
         UpvalueDesc desc;
         desc.isLocal = true;
         desc.index = outerIt->second;
+        int idx = static_cast<int>(currentUpvalues_.size());
+        currentUpvalues_.push_back(desc);
+        currentUpvalueNames_[name] = idx;
+        return idx;
+    }
 
-        // 3. 检查是否是外层函数的 upvalue（透传）
-        auto outerUvIt = outerUpvalueNames_.find(name);
-        if (outerUvIt != outerUpvalueNames_.end()) {
-            // 外层函数本身也通过 upvalue 捕获该变量 → 透传
-            desc.isLocal = false;
-            desc.index = outerUvIt->second; // 外层 upvalue 索引
-        }
-
+    // C-P1-3 fix: 3. 检查外层函数的 upvalue（透传捕获，isLocal=false）
+    // 原代码将此检查嵌套在步骤 2 内部，导致永远不会执行（变量不可能同时是外层局部变量和 upvalue）
+    auto outerUvIt = outerUpvalueNames_.find(name);
+    if (outerUvIt != outerUpvalueNames_.end()) {
+        UpvalueDesc desc;
+        desc.isLocal = false;
+        desc.index = outerUvIt->second; // 外层 upvalue 索引
         int idx = static_cast<int>(currentUpvalues_.size());
         currentUpvalues_.push_back(desc);
         currentUpvalueNames_[name] = idx;
@@ -511,22 +520,44 @@ Value Compiler::visitWhileStmt(WhileStmt& node) {
     chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
     chunk_.writeShort(0, node.line);
 
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
+    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（true 路径）
+
+    // break/continue 循环上下文：while 的 continue 跳回 loopStart（条件检查）
+    // break 跳转目标在循环编译完成后回填（跳过出口 OP_POP，因 break 时条件值已弹出）
+    loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, false, 0});
 
     // 编译循环体
     compileStatement(node.body.get());
+
+    // 取出本层循环的 break/continue 跳转列表
+    auto ctx = std::move(loopStack_.back());
+    loopStack_.pop_back();
 
     // 回跳到条件检查
     uint16_t loopOffset = safeCodeOffset(loopStart);
     chunk_.writeOp(OpCode::OP_LOOP, node.line);
     chunk_.writeShort(loopOffset, node.line);
 
-    // 修补退出跳转
+    // 修补退出跳转（正常退出：条件为假，条件值仍在栈上）
     uint16_t exitTarget = safeCodeOffset();
     chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
     chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
 
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
+    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（false 路径）
+
+    // 回填 continue 跳转：跳到 loopStart（条件检查）
+    uint16_t contTarget = safeCodeOffset(ctx.loopStart);
+    for (size_t patch : ctx.continueJumps) {
+        chunk_.code[patch + 1] = static_cast<uint8_t>(contTarget & 0xFF);
+        chunk_.code[patch + 2] = static_cast<uint8_t>((contTarget >> 8) & 0xFF);
+    }
+
+    // 回填 break 跳转：跳到当前偏移（OP_POP 之后，break 时栈上无条件值）
+    uint16_t breakTarget = safeCodeOffset();
+    for (size_t patch : ctx.breakJumps) {
+        chunk_.code[patch + 1] = static_cast<uint8_t>(breakTarget & 0xFF);
+        chunk_.code[patch + 2] = static_cast<uint8_t>((breakTarget >> 8) & 0xFF);
+    }
 
     // V3+ fix: 顶层循环退出时清理循环体内声明的全局变量
     // Bug2 fix: 跳过有预分配全局槽位的变量（避免清空外层全局值）
@@ -558,87 +589,77 @@ Value Compiler::visitForStmt(ForStmt& node) {
 
     size_t loopStart = chunk_.code.size();
 
-    // 编译条件
+    // 编译条件（无条件循环使用 OP_TRUE 作为永真条件）
     if (node.condition) {
         compileNode(node.condition.get());
-        size_t exitJumpPatch = chunk_.code.size();
-        chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
-        chunk_.writeShort(0, node.line);
-        chunk_.writeOp(OpCode::OP_POP, node.line);
-
-        // 编译循环体
-        compileStatement(node.body.get());
-
-        // 编译更新表达式（compileStatement 会自动 POP 赋值留下的栈值）
-        if (node.update) {
-            compileStatement(node.update.get());
-        }
-
-        // 回跳
-        chunk_.writeOp(OpCode::OP_LOOP, node.line);
-        chunk_.writeShort(safeCodeOffset(loopStart), node.line);
-
-        // 修补退出跳转
-        uint16_t exitTarget = safeCodeOffset();
-        chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
-        chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
-        chunk_.writeOp(OpCode::OP_POP, node.line);
-
-        // V3+ fix: 顶层循环退出时清理循环变量
-        // Bug2 fix: 跳过有预分配全局槽位的变量（避免清空外层全局值）
-        if (!inFunction_) {
-            std::vector<std::string> cleanupVars;
-            for (auto& [name, _] : currentLocals_) {
-                if (savedLocals.find(name) == savedLocals.end()) {
-                    cleanupVars.push_back(name);
-                }
-            }
-            for (const auto& name : cleanupVars) {
-                if (lookupGlobalSlot(name) < 0) {
-                    uint16_t nameIdx = identifierIndex(name);
-                    chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-                    chunk_.writeShort(nameIdx, node.line);
-                }
-            }
-        }
     } else {
-        // 无条件循环（while true）
         chunk_.writeOp(OpCode::OP_TRUE, node.line);
-        size_t exitJumpPatch = chunk_.code.size();
-        chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
-        chunk_.writeShort(0, node.line);
-        chunk_.writeOp(OpCode::OP_POP, node.line);
+    }
 
-        compileStatement(node.body.get());
+    size_t exitJumpPatch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
+    chunk_.writeShort(0, node.line);
+    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（true 路径）
 
-        // 编译更新表达式（compileStatement 会自动 POP 赋值留下的栈值）
-        if (node.update) {
-            compileStatement(node.update.get());
-        }
+    // break/continue 循环上下文
+    // continue 目标：有 update 时跳到 updateStart，否则跳到 loopStart
+    // break 目标：循环编译完成后回填（跳过出口 OP_POP）
+    bool hasUpdate = (node.update != nullptr);
+    loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, hasUpdate, 0});
 
-        chunk_.writeOp(OpCode::OP_LOOP, node.line);
-        chunk_.writeShort(safeCodeOffset(loopStart), node.line);
+    // 编译循环体
+    compileStatement(node.body.get());
 
-        uint16_t exitTarget = safeCodeOffset();
-        chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
-        chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
-        chunk_.writeOp(OpCode::OP_POP, node.line);
+    // 取出本层循环的 break/continue 跳转列表
+    auto ctx = std::move(loopStack_.back());
+    loopStack_.pop_back();
 
-        // V3+ fix: 顶层循环退出时清理循环变量
-        // Bug2 fix: 跳过有预分配全局槽位的变量
-        if (!inFunction_) {
-            std::vector<std::string> cleanupVars2;
-            for (auto& [name, _] : currentLocals_) {
-                if (savedLocals.find(name) == savedLocals.end()) {
-                    cleanupVars2.push_back(name);
-                }
+    // 记录 update 起始偏移（continue 跳转目标）
+    size_t updateStart = chunk_.code.size();
+
+    // 编译更新表达式（compileStatement 会自动 POP 赋值留下的栈值）
+    if (node.update) {
+        compileStatement(node.update.get());
+    }
+
+    // 回跳到条件检查
+    chunk_.writeOp(OpCode::OP_LOOP, node.line);
+    chunk_.writeShort(safeCodeOffset(loopStart), node.line);
+
+    // 修补退出跳转（正常退出：条件为假，条件值仍在栈上）
+    uint16_t exitTarget = safeCodeOffset();
+    chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
+    chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
+    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（false 路径）
+
+    // 回填 continue 跳转：有 update 跳到 updateStart，否则跳到 loopStart
+    uint16_t contTarget = ctx.hasUpdate ? safeCodeOffset(updateStart) : safeCodeOffset(ctx.loopStart);
+    for (size_t patch : ctx.continueJumps) {
+        chunk_.code[patch + 1] = static_cast<uint8_t>(contTarget & 0xFF);
+        chunk_.code[patch + 2] = static_cast<uint8_t>((contTarget >> 8) & 0xFF);
+    }
+
+    // 回填 break 跳转：跳到当前偏移（OP_POP 之后，break 时栈上无条件值）
+    uint16_t breakTarget = safeCodeOffset();
+    for (size_t patch : ctx.breakJumps) {
+        chunk_.code[patch + 1] = static_cast<uint8_t>(breakTarget & 0xFF);
+        chunk_.code[patch + 2] = static_cast<uint8_t>((breakTarget >> 8) & 0xFF);
+    }
+
+    // V3+ fix: 顶层循环退出时清理循环变量
+    // Bug2 fix: 跳过有预分配全局槽位的变量（避免清空外层全局值）
+    if (!inFunction_) {
+        std::vector<std::string> cleanupVars;
+        for (auto& [name, _] : currentLocals_) {
+            if (savedLocals.find(name) == savedLocals.end()) {
+                cleanupVars.push_back(name);
             }
-            for (const auto& name : cleanupVars2) {
-                if (lookupGlobalSlot(name) < 0) {
-                    uint16_t nameIdx = identifierIndex(name);
-                    chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-                    chunk_.writeShort(nameIdx, node.line);
-                }
+        }
+        for (const auto& name : cleanupVars) {
+            if (lookupGlobalSlot(name) < 0) {
+                uint16_t nameIdx = identifierIndex(name);
+                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
             }
         }
     }
@@ -666,12 +687,16 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     // H5 fix: 保存内嵌函数追踪
     std::unordered_set<std::string> savedInnerFunctions = std::move(innerFunctions_);
     std::unordered_map<std::string, int> savedInnerFunctionSlots = std::move(innerFunctionSlots_);
+    // C-P2-8 fix: 保存当前函数已收集的 upvalue 列表和名称映射（嵌套函数编译后会清空它们）
+    std::vector<UpvalueDesc> savedCurrentUpvalues = std::move(currentUpvalues_);
+    std::unordered_map<std::string, int> savedCurrentUpvalueNames = std::move(currentUpvalueNames_);
 
     // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
     if (inFunction_) {
-        outerLocals_ = currentLocals_;
-        outerUpvalues_ = currentUpvalues_;
-        outerUpvalueNames_ = currentUpvalueNames_;
+        // C-P2-7 fix: 使用 savedLocals（含外层函数局部变量），而非已 move 为空的 currentLocals_
+        outerLocals_ = savedLocals;
+        outerUpvalues_ = savedCurrentUpvalues;
+        outerUpvalueNames_ = savedCurrentUpvalueNames;
     } else {
         outerLocals_.clear();
         outerUpvalues_.clear();
@@ -692,6 +717,26 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     inFunction_ = true;
 
     // 编译参数到局部变量槽位
+    // C-P1-2 fix: 参数数量上限 255（uint8_t 编码限制）
+    if (node.params.size() > 255) {
+        error("函数参数数量超过限制（最大 255 个）: " + node.name, node.line, 0);
+        // 恢复上下文并返回
+        chunk_ = std::move(savedChunk);
+        varIndex_ = std::move(savedVarIndex);
+        currentLocals_ = std::move(savedLocals);
+        inFunction_ = savedInFunction;
+        outerLocals_ = std::move(savedOuterLocals);
+        peakLocals_ = savedPeakLocals;
+        outerUpvalues_ = std::move(savedOuterUpvalues);
+        outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
+        outerFunctions_ = std::move(savedOuterFunctions);
+        innerFunctions_ = std::move(savedInnerFunctions);
+        innerFunctionSlots_ = std::move(savedInnerFunctionSlots);
+        // C-P2-8 fix: 恢复当前函数的 upvalue 列表和名称映射
+        currentUpvalues_ = std::move(savedCurrentUpvalues);
+        currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
+        return Value::nullValue();
+    }
     for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
         currentLocals_[node.params[i]] = i;
     }
@@ -729,6 +774,9 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     // H5 fix: 恢复内嵌函数追踪
     innerFunctions_ = std::move(savedInnerFunctions);
     innerFunctionSlots_ = std::move(savedInnerFunctionSlots);
+    // C-P2-8 fix: 恢复当前函数的 upvalue 列表和名称映射（chunk_.upvalues 已 move 走内嵌函数的 upvalue）
+    currentUpvalues_ = std::move(savedCurrentUpvalues);
+    currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
 
     // 在主 chunk 中 emit OP_CLOSURE（扩展格式：含 upvalue 描述符）
     uint16_t nameIdx = identifierIndex(node.name);
@@ -771,14 +819,16 @@ Value Compiler::visitFunDecl(FunDecl& node) {
 Value Compiler::visitFunCall(FunCall& node) {
     // 链式调用 / 表达式调用: callee(args)
     if (node.callee) {
+        // C-P1-1 fix: 参数数量检查移到编译参数之前，避免截断后栈损坏
+        if (node.arguments.size() > 255) {
+            error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
+            return Value::nullValue();
+        }
         // 编译被调用表达式（结果应为闭包值，推入栈顶）
         compileNode(node.callee.get());
         // 编译参数
         for (auto& arg : node.arguments) {
             compileNode(arg.get());
-        }
-        if (node.arguments.size() > 255) {
-            error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
         }
         // OP_CALL_EXPR: 栈顶 N 个参数下方为闭包值
         chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
@@ -789,6 +839,11 @@ Value Compiler::visitFunCall(FunCall& node) {
     // H5 fix: 内嵌函数通过局部变量中的闭包值调用，避免 functionClosures_ 按名称覆盖
     auto innerIt = innerFunctionSlots_.find(node.name);
     if (innerIt != innerFunctionSlots_.end()) {
+        // C-P1-1 fix: 参数数量检查移到编译参数之前
+        if (node.arguments.size() > 255) {
+            error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
+            return Value::nullValue();
+        }
         // 先 push 闭包值（从局部变量获取）
         chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
         chunk_.write(static_cast<uint8_t>(innerIt->second), node.line);
@@ -796,11 +851,14 @@ Value Compiler::visitFunCall(FunCall& node) {
         for (auto& arg : node.arguments) {
             compileNode(arg.get());
         }
-        if (node.arguments.size() > 255) {
-            error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
-        }
         chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
         chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
+        return Value::nullValue();
+    }
+
+    // C-P1-1 fix: 参数数量检查移到编译参数之前
+    if (node.arguments.size() > 255) {
+        error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
         return Value::nullValue();
     }
 
@@ -812,9 +870,6 @@ Value Compiler::visitFunCall(FunCall& node) {
     // 函数名作为常量
     uint16_t nameIdx = identifierIndex(node.name);
 
-    if (node.arguments.size() > 255) {
-        error("函数调用参数数量超过限制（最大 255 个）", node.line, 0);
-    }
     // 使用 OP_CALL 指令
     chunk_.writeOp(OpCode::OP_CALL, node.line);
     chunk_.write(static_cast<uint8_t>(nameIdx & 0xFF), node.line);
@@ -837,6 +892,32 @@ Value Compiler::visitReturnStmt(ReturnStmt& node) {
     return Value::nullValue();
 }
 
+Value Compiler::visitBreakStmt(BreakStmt& node) {
+    if (loopStack_.empty()) {
+        error("break 只能在循环体内使用", node.line, 0);
+        return Value::nullValue();
+    }
+    // 发射 OP_JUMP，目标在循环编译完成后回填
+    size_t patch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP, node.line);
+    chunk_.writeShort(0, node.line);
+    loopStack_.back().breakJumps.push_back(patch);
+    return Value::nullValue();
+}
+
+Value Compiler::visitContinueStmt(ContinueStmt& node) {
+    if (loopStack_.empty()) {
+        error("continue 只能在循环体内使用", node.line, 0);
+        return Value::nullValue();
+    }
+    // 发射 OP_JUMP，目标在循环编译完成后回填
+    size_t patch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP, node.line);
+    chunk_.writeShort(0, node.line);
+    loopStack_.back().continueJumps.push_back(patch);
+    return Value::nullValue();
+}
+
 Value Compiler::visitPrintStmt(PrintStmt& node) {
     // C2 fix: 与解释器行为对齐 — 多参数用空格拼接后单次输出
     if (node.values.empty()) {
@@ -851,9 +932,10 @@ Value Compiler::visitPrintStmt(PrintStmt& node) {
     } else {
         // 多值：用 OP_ADD 拼接为单字符串（OP_ADD 已支持 string+non-string 拼接）
         compileNode(node.values[0].get());
+        // C-P2-6 fix: 空格常量索引提升到循环外，避免每次迭代重复构造和哈希查找
+        uint16_t spaceIdx = chunk_.addConstant(Value(std::string(" ")));
         for (size_t i = 1; i < node.values.size(); ++i) {
             // push " " + OP_ADD → 左侧被 toString 后与空格拼接
-            uint16_t spaceIdx = chunk_.addConstant(Value(std::string(" ")));
             chunk_.writeOp(OpCode::OP_CONSTANT, node.line);
             chunk_.writeShort(spaceIdx, node.line);
             chunk_.writeOp(OpCode::OP_ADD, node.line);
@@ -1089,7 +1171,8 @@ Value Compiler::visitIndexAssign(IndexAssign& node) {
         return Value::nullValue();
     }
 
-    // 3+ 层嵌套或复杂表达式：通用路径（仍报错）
+    // C-P2-2 fix: 3+ 层嵌套或复杂表达式：不支持，报错而非静默丢失修改
+    error("不支持 3 层及以上嵌套索引赋值（如 a[b[c]] = d）", node.line, node.column);
     compileNode(node.object.get());
     compileNode(node.index.get());
     compileNode(node.value.get());
@@ -1115,6 +1198,10 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
         auto it = classFieldNames_.find(node.superClassName);
         if (it != classFieldNames_.end()) {
             allFieldNames = it->second;  // 父类字段在前
+        } else {
+            // C-P2-9 fix: 父类未找到时报错，而非静默丢失继承字段（导致 slot 布局错误）
+            error("类 '" + node.name + "' 的父类 '" + node.superClassName +
+                  "' 未定义（不支持前向引用，请确保父类在子类之前声明）", node.line, node.column);
         }
     }
     for (const auto& fn : ownFieldNames) {
@@ -1138,17 +1225,28 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
         bool savedInFunction = inFunction_;
         int savedPeakLocals = peakLocals_;
         std::string savedClassName = currentClassName_;  // B1 fix
+        // C-P2-10 fix: 保存当前函数的 upvalue 列表和名称映射，方法编译不应污染外层
+        std::vector<UpvalueDesc> savedCurrentUpvalues = std::move(currentUpvalues_);
+        std::unordered_map<std::string, int> savedCurrentUpvalueNames = std::move(currentUpvalueNames_);
+        std::vector<UpvalueDesc> savedOuterUpvalues = std::move(outerUpvalues_);
+        std::unordered_map<std::string, int> savedOuterUpvalueNames = std::move(outerUpvalueNames_);
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
         chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
         varIndex_.clear();
         currentLocals_.clear();
+        currentUpvalues_.clear();  // C-P2-10 fix: 方法编译使用独立的 upvalue 列表
+        currentUpvalueNames_.clear();
         currentClassName_ = node.name;  // B1 fix: 记录当前类名供 super 使用
         // O5: 如果类定义在函数内，设置 outerLocals_ 以检测不支持的闭包捕获
         if (savedInFunction) {
             outerLocals_ = savedLocals;
+            outerUpvalues_ = savedCurrentUpvalues;  // C-P2-10 fix: 与 visitFunDecl 一致
+            outerUpvalueNames_ = savedCurrentUpvalueNames;
         } else {
             outerLocals_.clear();
+            outerUpvalues_.clear();
+            outerUpvalueNames_.clear();
         }
         inFunction_ = true;
 
@@ -1162,6 +1260,27 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
             currentLocals_[funDecl->params[i]] = slot++;  // slot N+1..: 参数
         }
         peakLocals_ = slot;
+        // C-P1-2 fix: 方法局部变量槽位上限 255（uint8_t 编码限制，含 this/字段/参数）
+        // C-P2-3/4 fix: >256 改为 >255（slot==256 截断为 0 与 this 碰撞），并提前 continue 避免用截断 slot 继续编译
+        if (slot > 255) {
+            error("类 '" + node.name + "' 方法 '" + funDecl->name +
+                  "' 局部变量槽位超过限制（最大 256，当前 " + std::to_string(slot) +
+                  "，含 this/字段/参数）", funDecl->line, 0);
+            // 恢复上下文并跳过此方法
+            chunk_ = std::move(savedChunk);
+            varIndex_ = std::move(savedVarIndex);
+            currentLocals_ = std::move(savedLocals);
+            outerLocals_ = std::move(savedOuterLocals);
+            inFunction_ = savedInFunction;
+            peakLocals_ = savedPeakLocals;
+            currentClassName_ = savedClassName;
+            // C-P2-10 fix: 恢复 upvalue 状态
+            currentUpvalues_ = std::move(savedCurrentUpvalues);
+            currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
+            outerUpvalues_ = std::move(savedOuterUpvalues);
+            outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
+            continue;
+        }
 
         // 记录字段声明顺序（含继承字段），供 VM OP_METHOD_CALL 按序推入
         chunk_.fieldOrder = allFieldNames;
@@ -1185,6 +1304,11 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
         inFunction_ = savedInFunction;
         peakLocals_ = savedPeakLocals;
         currentClassName_ = savedClassName;  // B1 fix
+        // C-P2-10 fix: 恢复外层 upvalue 状态
+        currentUpvalues_ = std::move(savedCurrentUpvalues);
+        currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
+        outerUpvalues_ = std::move(savedOuterUpvalues);
+        outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
     }
 
     // 主 chunk 中：发射 OP_CLASS_NEW（0 参数构造，字段由 OP_INIT_FIELD 设置）
@@ -1322,7 +1446,8 @@ Value Compiler::visitMemberAssign(MemberAssign& node) {
         return Value::nullValue();
     }
 
-    // 3+ 层嵌套或复杂表达式：通用路径
+    // C-P2-2 fix: 3+ 层嵌套或复杂表达式：不支持，报错而非静默丢失修改
+    error("不支持 3 层及以上嵌套成员赋值（如 a.b.c.d = e）", node.line, node.column);
     compileNode(node.object.get());
     compileNode(node.value.get());
     uint16_t nameIdx = identifierIndex(node.fieldName);
@@ -1332,6 +1457,11 @@ Value Compiler::visitMemberAssign(MemberAssign& node) {
 }
 
 Value Compiler::visitMethodCall(MethodCall& node) {
+    // C-P2-11 fix: 参数数量检查移到最前面，避免字节码已发射后报错导致 __wb_idx_ 缓存变量泄漏
+    if (node.arguments.size() > 255) {
+        error("方法调用参数数量超过限制（最大 255 个）", node.line, 0);
+        return Value::nullValue();
+    }
     // 检查接收者是否为简单变量（VarRef），用于 writeBack
     uint16_t receiverVarIdx = 0xFFFF;  // 0xFFFF = 无全局变量 writeBack
     uint8_t receiverLocalSlot = 0xFF;  // 0xFF = 无局部变量 writeBack
@@ -1379,6 +1509,7 @@ Value Compiler::visitMethodCall(MethodCall& node) {
     } else {
         compileNode(node.object.get());
     }
+    // C-P2-1 fix: 方法调用参数数量检查（已前移到函数开头，C-P2-11 fix 避免缓存变量泄漏）
     for (auto& arg : node.arguments) {
         compileNode(arg.get());
     }

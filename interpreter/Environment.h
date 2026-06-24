@@ -86,11 +86,13 @@ public:
             return true;
         }
         // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
+        // P1-5 fix: 先用 const 访问器检查字段是否存在，避免不必要 COW 深拷贝
         if (boundInstance_ && boundInstance_->isInstance()) {
-            auto& flds = boundInstance_->fields();
-            auto fit = flds.find(name);
-            if (fit != flds.end()) {
-                fit->second = val;
+            const auto& constFlds = static_cast<const Value*>(boundInstance_)->fields();
+            auto fit = constFlds.find(name);
+            if (fit != constFlds.end()) {
+                // 字段确实存在，此时才触发 COW（必要时）
+                boundInstance_->fields()[name] = val;
                 return true;
             }
         }
@@ -109,11 +111,12 @@ public:
             return true;
         }
         // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
+        // P1-5 fix: 先用 const 访问器检查字段是否存在，避免不必要 COW 深拷贝
         if (boundInstance_ && boundInstance_->isInstance()) {
-            auto& flds = boundInstance_->fields();
-            auto fit = flds.find(name);
-            if (fit != flds.end()) {
-                fit->second = std::move(val);
+            const auto& constFlds = static_cast<const Value*>(boundInstance_)->fields();
+            auto fit = constFlds.find(name);
+            if (fit != constFlds.end()) {
+                boundInstance_->fields()[name] = std::move(val);
                 return true;
             }
         }
@@ -124,8 +127,14 @@ public:
     }
 
     /// 检查变量是否存在（沿作用域链）
+    /// P2-10 fix: 与 get() 保持一致，也检查绑定实例的字段
     bool hasVariable(const std::string& name) const {
         if (variables.find(name) != variables.end()) return true;
+        // 与 get() 一致：回退到绑定实例的字段检查
+        if (boundInstance_ && boundInstance_->isInstance()) {
+            const auto& flds = static_cast<const Value*>(boundInstance_)->fields();
+            if (flds.find(name) != flds.end()) return true;
+        }
         if (parent) return parent->hasVariable(name);
         return false;
     }

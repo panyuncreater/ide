@@ -4,6 +4,7 @@
 #include <QGraphicsTextItem>
 #include <QGraphicsLineItem>
 #include <QWheelEvent>
+#include <QScrollBar>  // G-P2-20 fix: horizontalScrollBar() 需要 QScrollBar 完整定义
 #include <algorithm>
 
 // ============================================================
@@ -47,6 +48,16 @@ void AstViewer::clearAst() {
 }
 
 void AstViewer::wheelEvent(QWheelEvent* event) {
+    // G-P2-20 fix: Shift+滚轮 → 水平滚动；无修饰 → 缩放（保持原行为）
+    if (event->modifiers() & Qt::ShiftModifier) {
+        QScrollBar* hBar = horizontalScrollBar();
+        if (hBar) {
+            int delta = event->angleDelta().y();
+            hBar->setValue(hBar->value() - delta);
+        }
+        event->accept();
+        return;
+    }
     // GUI-13 fix: 缩放范围限制 (0.1x ~ 10x)
     double factor = 1.15;
     double currentScale = transform().m11();  // 当前水平缩放因子
@@ -91,6 +102,10 @@ void AstViewer::precomputeSubtreeSizes(ASTNode* node) {
 void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidth) {
     if (!node) return;
 
+    // G-P2-1 fix: 缓存 nodeName/children，避免重复调用（children() 可能返回拷贝）
+    const std::string nodeNameStr = node->nodeName();
+    const QString name = QString::fromStdString(nodeNameStr);
+
     // 节点位置：水平居中
     double nodeX = x + (availableWidth - NODE_WIDTH) / 2.0;
     double nodeY = y;
@@ -100,7 +115,6 @@ void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidt
 
     // 根据节点类型选择颜色
     QColor bgColor;
-    QString name = QString::fromStdString(node->nodeName());
     if (name.startsWith("BinaryOp") || name.startsWith("UnaryOp")) {
         bgColor = QColor(255, 230, 200);   // 运算：浅橙
     } else if (name.startsWith("Number") || name.startsWith("String") || name.startsWith("Bool")) {
@@ -124,7 +138,7 @@ void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidt
     // 圆角效果（通过额外绘制一个圆角矩形叠加）
 
     // 绘制文本
-    QString displayText = QString::fromStdString(node->nodeName());
+    QString displayText = name;
     // 截断过长文本
     if (displayText.length() > 14) {
         displayText = displayText.left(12) + "..";
@@ -132,8 +146,9 @@ void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidt
 
     QGraphicsTextItem* textItem = scene_->addText(displayText);
     textItem->setPos(nodeX + 4, nodeY + 8);
-    QFont font("Consolas", 8);
-    textItem->setFont(font);
+    // G-P2-3 fix: QFont 静态化，避免每次 drawNode 都构造
+    static const QFont astFont("Consolas", 8);
+    textItem->setFont(astFont);
     textItem->setZValue(2);
 
     // 绘制子节点
@@ -143,7 +158,14 @@ void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidt
     // 计算子节点的总宽度（从预计算缓存中查找）
     double totalChildWidth = 0;
     std::vector<SubtreeInfo> childInfos;
+    childInfos.reserve(children.size());
     for (ASTNode* child : children) {
+        // G-P2-2 fix: 子节点空指针检查，避免 sizeCache_[nullptr] 插入空条目
+        if (!child) {
+            childInfos.push_back({NODE_WIDTH, NODE_HEIGHT});
+            totalChildWidth += NODE_WIDTH;
+            continue;
+        }
         SubtreeInfo info = sizeCache_[child];
         childInfos.push_back(info);
         totalChildWidth += info.width;
@@ -161,6 +183,11 @@ void AstViewer::drawNode(ASTNode* node, double x, double y, double availableWidt
     double currentX = childStartX;
     for (size_t i = 0; i < children.size(); ++i) {
         ASTNode* child = children[i];
+        // G-P2-2 fix: 跳过空子节点
+        if (!child) {
+            currentX += NODE_WIDTH + H_SPACING;
+            continue;
+        }
         double childWidth = childInfos[i].width;
 
         // 子节点顶部中心

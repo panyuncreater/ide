@@ -33,7 +33,7 @@ private slots:
     void onStackFrameSelected(int index);
 
 private:
-    QTreeWidget* variableTree_;   // 变量监视树
-    QListWidget* callStackList_;  // 调用栈列表
+    QTreeWidget* variableTree_ = nullptr;   // 变量监视树
+    QListWidget* callStackList_ = nullptr;  // 调用栈列表
     std::vector<CallStackEntry> currentStack_;  // 当前调用栈数据（含局部变量）
 };

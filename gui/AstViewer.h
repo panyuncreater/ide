@@ -29,7 +29,7 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
 
 private:
-    QGraphicsScene* scene_;
+    QGraphicsScene* scene_ = nullptr;
 
     /// 节点宽度
     static constexpr int NODE_WIDTH = 120;

@@ -52,6 +52,19 @@ private:
     std::string currentClassName_;  // B1 fix: 当前正在编译的类名（供 OP_SUPER_CALL 编码类上下文）
     std::unordered_set<std::string> topLevelGlobals_;  // VMBUG-1: 顶层（非块/非函数）var 声明的全局变量名集合
 
+    // break/continue 循环上下文栈
+    // 每层循环编译时压入，记录 break 跳转目标（循环出口）和 continue 跳转目标（循环起始/更新）
+    // 的待回填跳转指令偏移列表，循环编译完成后统一回填
+    struct LoopContext {
+        size_t loopStart;              // 循环起始字节码偏移（continue 跳转目标）
+        size_t loopEndPatch;           // 循环出口跳转指令偏移（break 跳转目标，循环结束时回填）
+        std::vector<size_t> breakJumps;    // break 语句的 OP_JUMP 偏移列表（待回填到循环出口）
+        std::vector<size_t> continueJumps; // continue 语句的 OP_JUMP/OP_LOOP 偏移列表（待回填到循环起始）
+        bool hasUpdate;                // for 循环有 update 表达式，continue 应跳到 update 而非 loopStart
+        size_t updateStart;            // for 循环 update 表达式起始偏移（hasUpdate=true 时有效）
+    };
+    std::vector<LoopContext> loopStack_;
+
     // H5 fix: 内嵌函数闭包追踪 — 内嵌函数存储为局部变量，通过 OP_CALL_EXPR 调用
     std::unordered_set<std::string> innerFunctions_;           // 当前作用域中的内嵌函数名
     std::unordered_map<std::string, int> innerFunctionSlots_;  // 内嵌函数名 → 局部变量槽位号
@@ -108,6 +121,8 @@ private:
     Value visitMethodCall(MethodCall& node) override;
     Value visitNullLiteral(NullLiteral& node) override;
     Value visitSuperExpr(SuperExpr& node) override;
+    Value visitBreakStmt(BreakStmt& node) override;
+    Value visitContinueStmt(ContinueStmt& node) override;
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);

@@ -63,6 +63,9 @@ void ReplPanel::appendOutput(const QString& text) {
 }
 
 void ReplPanel::appendError(const QString& text) {
+    // G-P2-7 fix: 去除尾部换行，避免错误消息后出现多余空行
+    QString trimmed = text;
+    while (trimmed.endsWith('\n') || trimmed.endsWith('\r')) trimmed.chop(1);
     QTextCursor cursor(outputArea_->document());
     cursor.movePosition(QTextCursor::End);
     if (!outputArea_->document()->isEmpty())
@@ -70,7 +73,7 @@ void ReplPanel::appendError(const QString& text) {
     QTextCharFormat fmt;
     fmt.setForeground(Qt::red);
     cursor.setCharFormat(fmt);
-    cursor.insertText(text);
+    cursor.insertText(trimmed);
     cursor.setCharFormat(QTextCharFormat());
     outputArea_->setTextCursor(cursor);
     outputArea_->ensureCursorVisible();
@@ -99,7 +102,11 @@ void ReplPanel::onReturnPressed() {
     if (inContinuation_) {
         pendingInput_ += "\n" + line;
     } else {
-        if (trimmedLine.isEmpty()) return;
+        // G-P2-8 fix: 空输入时清空输入框（用户可能输入了纯空白），避免残留显示
+        if (trimmedLine.isEmpty()) {
+            inputLine_->clear();
+            return;
+        }
         pendingInput_ = trimmedLine;
     }
 
@@ -273,7 +280,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
         }
     }
 
-    return braceDepth == 0 && parenDepth == 0 && bracketDepth == 0;
+    return !inString && braceDepth == 0 && parenDepth == 0 && bracketDepth == 0;
 }
 
 bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {

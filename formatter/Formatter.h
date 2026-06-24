@@ -35,6 +35,8 @@ class MemberAssign;
 class MethodCall;
 class NullLiteral;
 class SuperExpr;
+class BreakStmt;
+class ContinueStmt;
 
 // ============================================================
 // Formatter 代码格式化器
@@ -117,6 +119,8 @@ public:
     Value visitMethodCall(MethodCall& node) override;
     Value visitNullLiteral(NullLiteral& node) override;
     Value visitSuperExpr(SuperExpr& node) override;
+    Value visitBreakStmt(BreakStmt& node) override;
+    Value visitContinueStmt(ContinueStmt& node) override;
 
     /// 格式化 AST 为代码文本
     std::string format(Block& program);

@@ -110,3 +110,11 @@ Value NullLiteral::accept(Visitor& visitor) {
 Value SuperExpr::accept(Visitor& visitor) {
     return visitor.visitSuperExpr(*this);
 }
+
+Value BreakStmt::accept(Visitor& visitor) {
+    return visitor.visitBreakStmt(*this);
+}
+
+Value ContinueStmt::accept(Visitor& visitor) {
+    return visitor.visitContinueStmt(*this);
+}

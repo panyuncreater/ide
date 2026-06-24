@@ -36,6 +36,18 @@ public:
         : std::runtime_error("return"), returnValue(std::move(val)) {}
 };
 
+/// break 语句专用异常（用于跳出循环体）
+class BreakException : public std::runtime_error {
+public:
+    BreakException() : std::runtime_error("break") {}
+};
+
+/// continue 语句专用异常（用于跳到循环下一次迭代）
+class ContinueException : public std::runtime_error {
+public:
+    ContinueException() : std::runtime_error("continue") {}
+};
+
 /// 调试终止异常（用户点击停止按钮时抛出）
 class DebugStopException : public std::exception {
 public:
@@ -104,6 +116,10 @@ public:
     /// 设置输出回调
     void setOutputCallback(std::function<void(const std::string&)> callback);
 
+    /// 设置输入回调（用于 input() 函数）
+    /// 回调接收提示字符串，返回用户输入的字符串
+    void setInputCallback(std::function<std::string(const std::string&)> callback);
+
     /// 设置调试控制器
     void setDebugger(DebugController* dbg);
 
@@ -161,6 +177,8 @@ public:
     Value visitMethodCall(MethodCall& node) override;
     Value visitNullLiteral(NullLiteral& node) override;
     Value visitSuperExpr(SuperExpr& node) override;
+    Value visitBreakStmt(BreakStmt& node) override;
+    Value visitContinueStmt(ContinueStmt& node) override;
 
 private:
     // 运行时限制常量（替代散布在代码中的魔法数字）
@@ -177,6 +195,7 @@ private:
     DebugController* debugger_;                     // 调试控制器（可为 nullptr）
     bool debugMode_ = false;                        // 是否处于调试模式（快速跳过 checkBreak）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
+    std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     DiagnosticBag diagnostics_;                        // 诊断收集器
     int recursionDepth_ = 0;                        // 递归深度
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
@@ -260,6 +279,9 @@ private:
 
     /// 内置构造函数 dict() / array()
     Value callBuiltinConstructor(FunCall& node);
+
+    /// 顶层内置函数 len/type/str/int/abs/min/max/range/sum
+    Value callBuiltinFunction(FunCall& node);
 
     /// 类构造调用 ClassName(args)
     Value constructClassInstance(FunCall& node);

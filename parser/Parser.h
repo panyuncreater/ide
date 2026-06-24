@@ -90,10 +90,8 @@ private:
     /// 返回如 "int", "int[]", "ClassName", "ClassName[]" 等字符串
     std::string parseTypeAnnotation();
 
-    /// 解析可选的返回类型注解（: type 或 -> type）
-    /// 如果当前 token 是 : 或 ->，则消耗并解析返回类型
-    /// 否则返回空字符串
-    std::string parseReturnType();
+    // P2-1 fix: 移除未实现的 parseReturnType() 声明（死代码）
+    // 实际的 -> type 解析逻辑在 funDecl() 和 classDecl() 中内联实现
 
     // ---- 声明与语句 ----
 
@@ -133,6 +131,12 @@ private:
 
     /// return 语句
     std::unique_ptr<ReturnStmt> returnStmt();
+
+    /// break 语句
+    std::unique_ptr<BreakStmt> breakStmt();
+
+    /// continue 语句
+    std::unique_ptr<ContinueStmt> continueStmt();
 
     /// print 语句
     std::unique_ptr<PrintStmt> printStmt();

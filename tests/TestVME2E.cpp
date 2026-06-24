@@ -737,3 +737,192 @@ TEST(VMConsistency, Comprehensive) {
     EXPECT_EQ(runInterpreterOutputForConsistency(src),
               runVMOutputForConsistency(src));
 }
+
+// ============================================================
+// 9. break / continue 语句测试
+// ============================================================
+
+TEST(VME2E, BreakInWhileLoop) {
+    std::string src =
+        "var i = 0;"
+        "var result = 0;"
+        "while (i < 10) {"
+        "  if (i == 5) { break; }"
+        "  result = result + i;"
+        "  i = i + 1;"
+        "}"
+        "print(result);";
+    EXPECT_EQ(runVMOutput(src), "10");
+}
+
+TEST(VME2E, ContinueInWhileLoop) {
+    std::string src =
+        "var i = 0;"
+        "var result = 0;"
+        "while (i < 5) {"
+        "  i = i + 1;"
+        "  if (i == 3) { continue; }"
+        "  result = result + i;"
+        "}"
+        "print(result);";
+    EXPECT_EQ(runVMOutput(src), "12");
+}
+
+TEST(VME2E, BreakInForLoop) {
+    std::string src =
+        "var result = 0;"
+        "for (var i = 0; i < 10; i = i + 1) {"
+        "  if (i == 5) { break; }"
+        "  result = result + i;"
+        "}"
+        "print(result);";
+    EXPECT_EQ(runVMOutput(src), "10");
+}
+
+TEST(VME2E, ContinueInForLoop) {
+    std::string src =
+        "var result = 0;"
+        "for (var i = 0; i < 5; i = i + 1) {"
+        "  if (i == 2) { continue; }"
+        "  result = result + i;"
+        "}"
+        "print(result);";
+    EXPECT_EQ(runVMOutput(src), "8");
+}
+
+TEST(VME2E, NestedLoopBreak) {
+    std::string src =
+        "var result = 0;"
+        "for (var i = 0; i < 3; i = i + 1) {"
+        "  for (var j = 0; j < 3; j = j + 1) {"
+        "    if (j == 1) { break; }"
+        "    result = result + 1;"
+        "  }"
+        "}"
+        "print(result);";
+    EXPECT_EQ(runVMOutput(src), "3");
+}
+
+// ============================================================
+// 10. 块注释测试
+// ============================================================
+
+TEST(VME2E, BlockComment) {
+    std::string src =
+        "/* 这是一个块注释 */"
+        "print(42);";
+    EXPECT_EQ(runVMOutput(src), "42");
+}
+
+TEST(VME2E, BlockCommentMultiline) {
+    std::string src =
+        "/* 这是\n多行\n块注释 */"
+        "print(42);";
+    EXPECT_EQ(runVMOutput(src), "42");
+}
+
+TEST(VME2E, BlockCommentNested) {
+    std::string src =
+        "/* 外层 /* 内层 */ 外层继续 */"
+        "print(42);";
+    EXPECT_EQ(runVMOutput(src), "42");
+}
+
+TEST(VME2E, BlockCommentInCode) {
+    std::string src =
+        "var x = 1; /* 注释 */ x = x + 1; print(x);";
+    EXPECT_EQ(runVMOutput(src), "2");
+}
+
+// ============================================================
+// 11. 顶层内置函数测试
+// ============================================================
+
+TEST(VME2E, BuiltinLen) {
+    EXPECT_EQ(runVMOutput("print(len([1,2,3]));"), "3");
+    EXPECT_EQ(runVMOutput("print(len(\"hello\"));"), "5");
+    EXPECT_EQ(runVMOutput("print(len({\"a\":1,\"b\":2}));"), "2");
+}
+
+TEST(VME2E, BuiltinType) {
+    EXPECT_EQ(runVMOutput("print(type(42));"), "int");
+    EXPECT_EQ(runVMOutput("print(type(3.14));"), "float");
+    EXPECT_EQ(runVMOutput("print(type(true));"), "bool");
+    EXPECT_EQ(runVMOutput("print(type(\"hello\"));"), "string");
+    EXPECT_EQ(runVMOutput("print(type([1,2]));"), "array");
+    EXPECT_EQ(runVMOutput("print(type(null));"), "null");
+}
+
+TEST(VME2E, BuiltinStr) {
+    EXPECT_EQ(runVMOutput("print(str(42));"), "42");
+    EXPECT_EQ(runVMOutput("print(str(3.0));"), "3");
+    EXPECT_EQ(runVMOutput("print(str(true));"), "true");
+}
+
+TEST(VME2E, BuiltinInt) {
+    EXPECT_EQ(runVMOutput("print(int(42));"), "42");
+    EXPECT_EQ(runVMOutput("print(int(3.99));"), "3");
+    EXPECT_EQ(runVMOutput("print(int(true));"), "1");
+    EXPECT_EQ(runVMOutput("print(int(\"123\"));"), "123");
+}
+
+TEST(VME2E, BuiltinAbs) {
+    EXPECT_EQ(runVMOutput("print(abs(-5));"), "5");
+    EXPECT_EQ(runVMOutput("print(abs(5));"), "5");
+    EXPECT_EQ(runVMOutput("print(abs(-3.0));"), "3");
+}
+
+TEST(VME2E, BuiltinMinMax) {
+    EXPECT_EQ(runVMOutput("print(min(3, 7));"), "3");
+    EXPECT_EQ(runVMOutput("print(max(3, 7));"), "7");
+    EXPECT_EQ(runVMOutput("print(min(3.5, 2));"), "2");
+}
+
+TEST(VME2E, BuiltinRange) {
+    EXPECT_EQ(runVMOutput("print(range(5));"), "[0, 1, 2, 3, 4]");
+    EXPECT_EQ(runVMOutput("print(range(0));"), "[]");
+}
+
+TEST(VME2E, BuiltinSum) {
+    EXPECT_EQ(runVMOutput("print(sum([1, 2, 3, 4, 5]));"), "15");
+    EXPECT_EQ(runVMOutput("print(sum([1.5, 2.5]));"), "4");
+}
+
+// ============================================================
+// 12. input() 函数测试（无回调时返回空字符串）
+// ============================================================
+
+TEST(VME2E, BuiltinInputNoCallback) {
+    // 无 input 回调时返回空字符串
+    EXPECT_EQ(runVMOutput("print(input());"), "");
+}
+
+// ============================================================
+// 13. break/continue + 内置函数一致性测试
+// ============================================================
+
+TEST(VMConsistency, BreakContinue) {
+    std::string src =
+        "var result = 0;"
+        "for (var i = 0; i < 10; i = i + 1) {"
+        "  if (i == 5) { break; }"
+        "  if (i == 2) { continue; }"
+        "  result = result + i;"
+        "}"
+        "print(result);";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}
+
+TEST(VMConsistency, BuiltinFunctions) {
+    std::string src =
+        "print(len([1,2,3]));"
+        "print(type(42));"
+        "print(str(3.14));"
+        "print(abs(-5));"
+        "print(min(3, 7));"
+        "print(max(3, 7));"
+        "print(sum(range(5)));";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}

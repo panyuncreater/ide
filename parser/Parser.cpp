@@ -431,10 +431,21 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 }
 
 std::unique_ptr<ASTNode> Parser::statement() {
+    // P1-1 fix: 无花括号的 if/while/for 嵌套语句也需深度保护，防止栈溢出 DoS
+    // 覆盖 "if (a) if (b) if (c) ..." 这类无花括号嵌套场景
+    if (parseDepth_ >= MAX_PARSE_DEPTH) {
+        throw ParseError("语句嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
+                         peek().line, peek().column);
+    }
+    parseDepth_++;
+    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+
     if (check(TokenType::TK_IF))       return ifStmt();
     if (check(TokenType::TK_WHILE))    return whileStmt();
     if (check(TokenType::TK_FOR))      return forStmt();
     if (check(TokenType::TK_RETURN))   return returnStmt();
+    if (check(TokenType::TK_BREAK))    return breakStmt();
+    if (check(TokenType::TK_CONTINUE)) return continueStmt();
     if (check(TokenType::TK_PRINT))    return printStmt();
     if (check(TokenType::TK_LBRACE)) {
         advance();
@@ -587,6 +598,18 @@ std::unique_ptr<ReturnStmt> Parser::returnStmt() {
     consume(TokenType::TK_SEMICOLON, "期望 ';'");
 
     return std::make_unique<ReturnStmt>(std::move(val), retTok.line, retTok.column);
+}
+
+std::unique_ptr<BreakStmt> Parser::breakStmt() {
+    const Token& tok = consume(TokenType::TK_BREAK, "期望 'break'");
+    consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 break 语句");
+    return std::make_unique<BreakStmt>(tok.line, tok.column);
+}
+
+std::unique_ptr<ContinueStmt> Parser::continueStmt() {
+    const Token& tok = consume(TokenType::TK_CONTINUE, "期望 'continue'");
+    consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 continue 语句");
+    return std::make_unique<ContinueStmt>(tok.line, tok.column);
 }
 
 std::unique_ptr<PrintStmt> Parser::printStmt() {
@@ -1040,6 +1063,8 @@ void Parser::synchronize() {
         case TokenType::TK_FOR:
         case TokenType::TK_RETURN:
         case TokenType::TK_PRINT:
+        case TokenType::TK_BREAK:      // break 作为同步点
+        case TokenType::TK_CONTINUE:   // continue 作为同步点
         case TokenType::TK_ELSE:  // PARSE-11 fix: else 作为同步点
         case TokenType::TK_INT:
         case TokenType::TK_FLOAT:

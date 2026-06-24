@@ -12,13 +12,13 @@
 
 #include "interpreter/Interpreter.h"
 #include "ast/ASTNode.h"
-#include "debug/DebugController.h"
 
 class InterpreterWorker : public QObject {
     Q_OBJECT
 public:
-    InterpreterWorker(Interpreter& interp, Block& ast, DebugController* dbg)
-        : interp_(interp), ast_(ast), debugger_(dbg) {}
+    // A-P2-9 fix: 移除未使用的 debugger_ 参数（debugger 已通过 interpreter_.setDebugger 设置）
+    InterpreterWorker(Interpreter& interp, Block& ast)
+        : interp_(interp), ast_(ast) {}
 
 public slots:
     void run();
@@ -33,5 +33,4 @@ signals:
 private:
     Interpreter& interp_;
     Block& ast_;
-    DebugController* debugger_;
 };

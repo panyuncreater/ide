@@ -64,8 +64,6 @@ public:
     bool prepareRun(bool isDebug, const std::string& source);
     /// 启动 worker 线程执行
     void startWorker();
-    /// 停止 worker（通过调试器 stop）
-    void stopWorker();
     /// 关闭前安全停止，返回 false 表示超时需强制终止
     bool stopForClose(int timeoutMs = 3000);
     /// 强制终止 worker 线程
@@ -104,9 +102,6 @@ public:
     const DiagnosticBag& lexerDiagnostics() const { return lexer_.getDiagnostics(); }
     const DiagnosticBag& parserDiagnostics() const { return parser_.getDiagnostics(); }
     const DiagnosticBag& compilerDiagnostics() const { return compiler_.getDiagnostics(); }
-
-    /// 设置主线程输出回调（emit outputReady 信号）
-    void setupCallbacks();
 
 signals:
     void outputReady(const QString& text);
@@ -152,4 +147,6 @@ private:
     // ---- 内部方法 ----
     /// Worker 线程结束后的清理（删除 worker/thread、恢复回调、恢复 REPL 状态）
     void cleanupWorker();
+    /// 设置 interpreter_ 的输出+输入回调（主线程 REPL 模式）
+    void setupMainCallbacks();
 };

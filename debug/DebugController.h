@@ -139,6 +139,7 @@ private:
     std::atomic<bool> crossedLine_{false};  // DBG-03 fix: 是否已经跨过不同行
     std::atomic<bool> crossedDeeper_{false}; // DBG-B fix: Step Over 期间是否进入了更深的调用层
     int minBreakpointLine_ = -1; // 最小断点行号（mutex 保护，随 breakpoints_ 一起更新）
+    std::atomic<bool> hasBreakpoints_{false};  // D-P1-1 fix: 原子标志位，快速路径无锁判断
     std::atomic<bool> running_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> stopped_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> paused_{false};  // atomic for cross-thread access  // 是否处于暂停状态（等待用户操作）
@@ -146,7 +147,7 @@ private:
     // A2: 线程安全的暂停/恢复机制（替代 QEventLoop）
     mutable std::mutex pauseMutex_;  // P0-9 fix: mutable 以便 const 方法加锁
     std::condition_variable pauseCV_;
-    int eventPumpCounter_ = 0;  // B11: 用于周期性刷新 UI 事件的计数器（仅 worker 线程访问）
+    unsigned int eventPumpCounter_ = 0;  // B11: 用于周期性刷新 UI 事件的计数器（仅 worker 线程访问）；D-P2-8 fix: unsigned 防溢出
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;
     std::function<std::vector<CallStackEntry>()> callStackCallback_;

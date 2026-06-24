@@ -2,7 +2,8 @@
 #include <QStringList>
 
 // 静态成员定义（全局共享，避免每次 highlightBlock 重建）
-QRegularExpression SyntaxHighlighter::commentRegex_("(//[^\\n]*)");
+// 匹配单行注释 //... 或块注释 /*...*/（同一行内的块注释）
+QRegularExpression SyntaxHighlighter::commentRegex_("(//[^\\n]*|/\\*.*?\\*/)");
 // HL-3 fix: 字符串正则支持单行和多行起始匹配
 QRegularExpression SyntaxHighlighter::stringRegex_("\"(?:[^\"\\\\]|\\\\.)*\"?");
 
@@ -38,7 +39,7 @@ void SyntaxHighlighter::initRules() {
     // 关键字（合并为单个正则，减少匹配次数）
     HighlightRule keywordRule;
     keywordRule.pattern = QRegularExpression(
-        "\\b(?:var|fun|function|func|if|else|while|for|return|print"
+        "\\b(?:var|fun|function|func|if|else|while|for|return|print|break|continue"
         "|and|or|not|int|float|bool|string|class|extends|super|dict|array|null|true|false)\\b");
     keywordRule.format = keywordFormat_;
     rules_.push_back(keywordRule);

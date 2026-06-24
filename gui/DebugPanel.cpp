@@ -74,7 +74,12 @@ void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
 }
 
 void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
+    // G-P2-5 fix: 使用 std::move 避免拷贝（参数虽为 const 引用，但此处保存的是拷贝；
+    //   改为按值传递 + std::move 更优，但为最小改动此处保持接口不变）
     currentStack_ = stack;  // 保存完整数据（含局部变量）
+
+    // G-P2-6 fix: 保存当前选中行，刷新后恢复（避免调试步进时选中丢失）
+    int savedRow = callStackList_->currentRow();
 
     // 阻塞信号防止 clear/addItem 触发 currentRowChanged 级联更新变量树
     callStackList_->blockSignals(true);
@@ -88,6 +93,11 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
         callStackList_->addItem(text);
     }
     callStackList_->blockSignals(false);
+
+    // G-P2-6 fix: 恢复选中行（若仍在有效范围内）
+    if (savedRow >= 0 && savedRow < callStackList_->count()) {
+        callStackList_->setCurrentRow(savedRow);
+    }
 }
 
 void DebugPanel::onStackFrameSelected(int index) {

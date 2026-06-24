@@ -106,6 +106,10 @@ void Interpreter::setOutputCallback(std::function<void(const std::string&)> call
     outputCallback_ = callback;
 }
 
+void Interpreter::setInputCallback(std::function<std::string(const std::string&)> callback) {
+    inputCallback_ = callback;
+}
+
 void Interpreter::setDebugger(DebugController* dbg) {
     debugger_ = dbg;
 }
@@ -824,7 +828,17 @@ Value Interpreter::visitWhileStmt(WhileStmt& node) {
         // 每次迭代重新检查断点（MODE_RUN 下确保 while 行断点每次迭代都能命中；
         // STEP_IN/STEP_OVER 下 lastPausedLine_ 机制保证同行不重复暂停）
         checkBreak(&node);
-        result = evaluate(node.body.get());
+        try {
+            result = evaluate(node.body.get());
+        }
+        catch (const BreakException&) {
+            // break 跳出循环
+            break;
+        }
+        catch (const ContinueException&) {
+            // continue 跳到下一次条件检查
+            continue;
+        }
     }
     return result;
 }
@@ -868,6 +882,13 @@ Value Interpreter::visitForStmt(ForStmt& node) {
             // 执行循环体
             try {
                 result = evaluate(node.body.get());
+            }
+            catch (const BreakException&) {
+                // break 跳出循环
+                break;
+            }
+            catch (const ContinueException&) {
+                // continue 跳到更新步骤
             }
             catch (const ReturnException&) {
                 // 恢复环境，传播 return
@@ -915,6 +936,31 @@ Value Interpreter::visitFunCall(FunCall& node) {
     if (node.callee) return callClosureValue(node);
     if (node.name == "dict" || node.name == "array") return callBuiltinConstructor(node);
     if (classRegistry_.find(node.name) != classRegistry_.end()) return constructClassInstance(node);
+    // input() 函数（需要回调，单独处理）
+    if (node.name == "input") {
+        std::string prompt;
+        if (node.arguments.size() > 1) {
+            runtimeError("input 期望 0 或 1 个参数，但传入了 " +
+                std::to_string(node.arguments.size()) + " 个",
+                node.line, node.column);
+        }
+        if (node.arguments.size() == 1) {
+            Value promptVal = evaluate(node.arguments[0].get());
+            prompt = promptVal.toString();
+        }
+        if (inputCallback_) {
+            return Value(inputCallback_(prompt));
+        }
+        // 无回调时返回空字符串（允许非交互式运行不崩溃）
+        return Value(std::string());
+    }
+    // 顶层内置函数（用户自定义函数/类优先，仅当未定义时才使用内置）
+    if (isBuiltinFunction(node.name)) {
+        const Value* calleePtr = currentEnv_->get(node.name);
+        if (!calleePtr || !calleePtr->isClosure()) {
+            return callBuiltinFunction(node);
+        }
+    }
     return callNamedFunction(node);
 }
 
@@ -971,6 +1017,12 @@ Value Interpreter::callClosureValue(FunCall& node) {
         }
 
         for (size_t i = 0; i < funDecl->params.size(); ++i) {
+            // P1-4 fix: 补充参数类型检查（与 callNamedFunction 一致）
+            if (i < funDecl->paramTypes.size() && !funDecl->paramTypes[i].empty()) {
+                checkType(argValues[i], funDecl->paramTypes[i],
+                    [&] { return "函数 " + effectiveName + " 的参数 " + funDecl->params[i]; },
+                    node.line, node.column);
+            }
             funEnv->define(funDecl->params[i], std::move(argValues[i]));
         }
 
@@ -1040,6 +1092,25 @@ Value Interpreter::callBuiltinConstructor(FunCall& node) {
         return Value(args);
     }
     return Value::nullValue();
+}
+
+// ---- 顶层内置函数 len/type/str/int/abs/min/max/range/sum ----
+Value Interpreter::callBuiltinFunction(FunCall& node) {
+    // 求值参数
+    std::vector<Value> argValues;
+    argValues.reserve(node.arguments.size());
+    for (auto& arg : node.arguments) {
+        argValues.push_back(evaluate(arg.get()));
+    }
+
+    // 调用共享纯函数层
+    SharedBuiltinResult r = executeSharedBuiltinFunction(
+        node.name, argValues.data(), argValues.size(), node.line, node.column);
+
+    if (r.isError) {
+        runtimeError(r.errorMessage, r.errorLine, r.errorColumn);
+    }
+    return r.result;
 }
 
 // ---- P1 重构：类构造调用 ----
@@ -1194,17 +1265,22 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
     // M7 fix: 检查代数是否匹配，函数重定义后缓存失效
+    // P1-2 fix: 若变量已被重赋值为非闭包，缓存失效，回退慢路径
     if (node.isResolved && node.resolvedDecl && node.resolvedGen_ == funRegistryGen_) {
-        funDecl = node.resolvedDecl;
-        // 单次 get() 获取闭包环境（指针返回，nullptr=非闭包或未定义）
         const Value* calleePtr = currentEnv_->get(node.name);
         if (calleePtr && calleePtr->isClosure()) {
+            funDecl = node.resolvedDecl;
             closureEnv = calleePtr->closureEnv();
             effectiveName = calleePtr->closureName();
             closureValPtr = const_cast<Value*>(calleePtr);  // C1 fix
         }
+        else {
+            // 变量已被重赋值为非闭包（或未定义），缓存陈旧，失效并回退慢路径
+            node.isResolved = false;
+        }
     }
-    else {
+
+    if (!funDecl) {
         // 慢路径：完整解析（单次 get() 调用）
         const Value* calleePtr = currentEnv_->get(node.name);
         if (calleePtr && calleePtr->isClosure()) {
@@ -1222,8 +1298,13 @@ Value Interpreter::callNamedFunction(FunCall& node) {
             }
         }
 
-        // 如果闭包路径未找到函数体，走 funRegistry_ 后备
+        // P1-3 fix: 变量非闭包时不应从 funRegistry_ 后备调用旧函数体
+        // funRegistry_ 仅用于闭包 body 缺失的后备，不能让重赋值后的变量仍调用旧函数
         if (!funDecl) {
+            if (!calleePtr || !calleePtr->isClosure()) {
+                runtimeError(node.name + " 不是函数，无法调用", node.line, node.column);
+            }
+            // 仅在 calleePtr 是闭包但 body 缺失时回退到 funRegistry_
             auto it = funRegistry_.find(effectiveName);
             if (it == funRegistry_.end()) {
                 runtimeError("未定义的函数: " + node.name, node.line, node.column);
@@ -1356,6 +1437,16 @@ Value Interpreter::visitReturnStmt(ReturnStmt& node) {
     }
 
     throw ReturnException(std::move(val));
+}
+
+Value Interpreter::visitBreakStmt(BreakStmt& node) {
+    checkBreak(&node);
+    throw BreakException();
+}
+
+Value Interpreter::visitContinueStmt(ContinueStmt& node) {
+    checkBreak(&node);
+    throw ContinueException();
 }
 
 Value Interpreter::visitPrintStmt(PrintStmt& node) {
@@ -1634,8 +1725,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         auto argValues = evaluateArguments(node.arguments);
         auto builtinResult = BuiltinMethods::handleArrayMethod(
             node.methodName, obj, argValues, node.line, node.column);
+        // P2-7 fix: obj 此后不再使用，使用 std::move 避免不必要的拷贝
         if (builtinResult.objectModified && info.varRef) {
-            writeBackChain(info, obj, node.line, node.column);
+            writeBackChain(info, std::move(obj), node.line, node.column);
         }
         return builtinResult.result;
     }
@@ -1645,8 +1737,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         auto argValues = evaluateArguments(node.arguments);
         auto builtinResult = BuiltinMethods::handleDictMethod(
             node.methodName, obj, argValues, node.line, node.column);
+        // P2-7 fix: obj 此后不再使用，使用 std::move 避免不必要的拷贝
         if (builtinResult.objectModified && info.varRef) {
-            writeBackChain(info, obj, node.line, node.column);
+            writeBackChain(info, std::move(obj), node.line, node.column);
         }
         return builtinResult.result;
     }
@@ -1662,8 +1755,9 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
     // 类实例的方法调用
     if (obj.isInstance()) {
         Value result = callInstanceMethod(node, obj);
+        // P2-7 fix: obj 此后不再使用，使用 std::move 避免不必要的拷贝
         if (info.varRef) {
-            writeBackChain(info, obj, node.line, node.column);
+            writeBackChain(info, std::move(obj), node.line, node.column);
         }
         return result;
     }
@@ -1744,6 +1838,12 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
 
                 // 绑定参数（参数覆盖同名字段）
                 for (size_t i = 0; i < method->params.size(); ++i) {
+                    // P1-4 fix: 补充参数类型检查（与 callNamedFunction 一致）
+                    if (i < method->paramTypes.size() && !method->paramTypes[i].empty()) {
+                        checkType(argValues[i], method->paramTypes[i],
+                            [&] { return "方法 " + node.methodName + " 的参数 " + method->params[i]; },
+                            node.line, node.column);
+                    }
                     methodEnv->define(method->params[i], std::move(argValues[i]));
                 }
 
@@ -1793,8 +1893,9 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
 
             // super.method() 调用后，需将更新后的 this 写回调用者的环境
             // （writeBackChain 无法处理 SuperExpr，因为它不是 VarRef）
+            // P2-6 fix: obj 此后不再使用，使用 std::move 避免不必要的拷贝
             if (isSuperCall) {
-                currentEnv_->set("this", obj);
+                currentEnv_->set("this", std::move(obj));
             }
 
             return result;
