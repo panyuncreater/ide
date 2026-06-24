@@ -140,8 +140,10 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source) {
 
     // 线程结束 → 清理 → 通知 UI
     connect(workerThread_.get(), &QThread::finished, this, [this]() {
+        // P2 fix: 在 cleanupWorker 重置 isDebugRun_ 之前保存其值
+        bool wasDebug = isDebugRun_;
         cleanupWorker();
-        emit workerFinished(isDebugRun_);
+        emit workerFinished(wasDebug);
     });
 
     return true;
@@ -174,8 +176,14 @@ bool IdeController::stopForClose(int timeoutMs) {
 
 void IdeController::forceStop() {
     if (workerThread_) {
-        workerThread_->terminate();
-        workerThread_->wait();
+        // P1 fix: 优先通过 debugger_->stop() 触发 DebugStopException 正常退出
+        // 仅在超时后才使用 terminate 作为最后手段
+        debugger_->stop();
+        if (!workerThread_->wait(2000)) {
+            // 超时后强制终止（可能导致资源泄漏，但避免 UI 永久卡死）
+            workerThread_->terminate();
+            workerThread_->wait();
+        }
         // 7.1 fix: unique_ptr 自动释放，无需手动 delete
         worker_.reset();
         workerThread_.reset();

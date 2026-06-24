@@ -129,23 +129,24 @@ private:
     QSet<int> breakpoints_;     // 断点行号集合
     QMap<int, BreakpointInfo> breakpointInfos_;  // 条件断点详情（行号→信息）
     std::function<bool(const std::string&)> conditionEvaluator_;  // 条件表达式求值器
-    int currentDepth_ = 0;      // 当前调用深度
-    int stepOverDepth_ = 0;     // stepOver 时的调用深度
-    int stepOutDepth_ = 0;      // stepOut 时的调用深度
-    int lastPausedLine_ = -1;   // 上次暂停的行号（避免同行重复暂停）
-    int lastPausedDepth_ = -1;  // 上次暂停时的调用深度（递归函数同行不同深度需重新暂停）
-    int lastSeenLine_ = -1;     // C3 fix: checkBreak 上次看到的行号，用于 MODE_RUN 跳过同行子表达式
-    bool crossedLine_ = false;  // DBG-03 fix: 是否已经跨过不同行（用于单行循环断点重触发）
-    bool crossedDeeper_ = false; // DBG-B fix: Step Over 期间是否进入了更深的调用层
-    int minBreakpointLine_ = -1; // 最小断点行号（快速跳过不可能命中的节点）
+    // P0-9 fix: 跨线程读写的标量字段改为 atomic，避免数据竞争
+    std::atomic<int> currentDepth_{0};      // 当前调用深度（worker 写，UI 读）
+    int stepOverDepth_ = 0;     // stepOver 时的调用深度（mutex 保护）
+    int stepOutDepth_ = 0;      // stepOut 时的调用深度（mutex 保护）
+    std::atomic<int> lastPausedLine_{-1};   // 上次暂停的行号（worker 写，UI 读）
+    std::atomic<int> lastPausedDepth_{-1};  // 上次暂停时的调用深度
+    std::atomic<int> lastSeenLine_{-1};     // C3 fix: checkBreak 上次看到的行号
+    std::atomic<bool> crossedLine_{false};  // DBG-03 fix: 是否已经跨过不同行
+    std::atomic<bool> crossedDeeper_{false}; // DBG-B fix: Step Over 期间是否进入了更深的调用层
+    int minBreakpointLine_ = -1; // 最小断点行号（mutex 保护，随 breakpoints_ 一起更新）
     std::atomic<bool> running_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> stopped_{false};      // #9 fix: atomic for cross-thread access
     std::atomic<bool> paused_{false};  // atomic for cross-thread access  // 是否处于暂停状态（等待用户操作）
 
     // A2: 线程安全的暂停/恢复机制（替代 QEventLoop）
-    std::mutex pauseMutex_;
+    mutable std::mutex pauseMutex_;  // P0-9 fix: mutable 以便 const 方法加锁
     std::condition_variable pauseCV_;
-    int eventPumpCounter_ = 0;  // B11: 用于周期性刷新 UI 事件的计数器
+    int eventPumpCounter_ = 0;  // B11: 用于周期性刷新 UI 事件的计数器（仅 worker 线程访问）
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;
     std::function<std::vector<CallStackEntry>()> callStackCallback_;

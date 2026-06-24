@@ -44,8 +44,14 @@ Value VM::pop() {
 }
 
 const Value& VM::peek(size_t distance) const {
+    // P0-12 fix: 越界时返回静态 null 哨兵但设置 hasError_ 标志，
+    // 避免静默失败导致调用方在错误数据上继续执行
+    // P0 fix: hasError_ 改为 mutable，在 const 方法中也可设置
     static const Value nullSentinel;  // 静态 null 哨兵，用于越界访问
     if (distance >= stack_.size()) {
+        Logger::Error("VM 栈下溢: peek(distance=" + std::to_string(distance) +
+                      ") 但栈大小=" + std::to_string(stack_.size()), "VM");
+        hasError_ = true;  // P0 fix: 设置错误标志，防止调用方在 null 哨兵上继续执行
         return nullSentinel;
     }
     return stack_[stack_.size() - 1 - distance];
@@ -652,6 +658,10 @@ void VM::initExecution(const CompileResult& result) {
     functionClosures_.clear();
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
+    // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
+    stepInstructionCount_ = 0;
+    lastAsciiStrContent_.clear();
+    lastAsciiStrIsAscii_ = false;
     // A2: 初始化全局变量槽位
     globalSlots_.clear();
     globalSlotNames_.clear();
@@ -700,6 +710,10 @@ void VM::resetState() {
     pendingFieldOrder_.clear();
     openUpvalues_.clear();       // VM-05/06
     functionClosures_.clear();   // VM-05/06
+    // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
+    stepInstructionCount_ = 0;
+    lastAsciiStrContent_.clear();
+    lastAsciiStrIsAscii_ = false;
     initialized_ = false;
 }
 
@@ -709,6 +723,14 @@ VMResult VM::stepOnce() {
 
     // 已有错误 → 不再执行
     if (hasError_) return VMResult::VM_RUNTIME_ERROR;
+
+    // P1 fix: stepOnce 累计指令预算检查，防止通过循环调用 stepOnce 绕过 DoS 防护
+    if (++stepInstructionCount_ > MAX_INSTRUCTIONS) {
+        lastError_ = "指令执行数超过上限 " + std::to_string(MAX_INSTRUCTIONS) + "，疑似无限循环";
+        lastErrorLine_ = 0;
+        hasError_ = true;
+        return VMResult::VM_RUNTIME_ERROR;
+    }
 
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
@@ -1118,6 +1140,10 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
             globalSlots_[gsIt->second] = std::move(val);
         } else {
             globals_[name] = std::move(val);
+            // P0-8 fix: 插入新元素可能触发 unordered_map rehash，使已缓存的
+            // &it->second 指针失效。清除 globalCache_ 避免悬垂指针访问
+            for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
+            globalCacheNextSlot_ = 0;
         }
         notifyStep(ip, op);
         ip += 3;
@@ -1294,6 +1320,12 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
             return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
         }
         stack_[bp + slot] = val;
+        // P0-7 fix: 若 slot 在字段范围内（1..fieldOrder.size()），标记字段已修改，
+        // 确保 OP_RETURN 时字段同步回实例，避免方法内字段赋值丢失
+        if (slot > 0 && currentFrame().chunk &&
+            slot <= currentFrame().chunk->fieldOrder.size()) {
+            currentFrame().fieldsModified = true;
+        }
         notifyStep(ip, op);
         ip += 2;
         break;
@@ -2223,16 +2255,17 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
 
             // P7 fix: ASCII 快速路径 — 纯 ASCII 字符串直接按字节索引 O(1)
             // 缓存上次检查的字符串，循环中重复访问同一字符串时跳过 O(n) 扫描
+            // P1 fix: 缓存字符串内容而非指针，消除 use-after-free
             if (i >= 0 && static_cast<size_t>(i) < s.size()) {
                 bool isAscii;
-                if (lastAsciiStr_ == &s) {
+                if (lastAsciiStrContent_ == s) {
                     isAscii = lastAsciiStrIsAscii_;
                 } else {
                     isAscii = true;
                     for (size_t b = 0; b < s.size(); ++b) {
                         if (static_cast<unsigned char>(s[b]) >= 0x80) { isAscii = false; break; }
                     }
-                    lastAsciiStr_ = &s;
+                    lastAsciiStrContent_ = s;
                     lastAsciiStrIsAscii_ = isAscii;
                 }
                 if (isAscii) {

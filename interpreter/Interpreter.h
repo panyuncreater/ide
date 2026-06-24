@@ -168,7 +168,8 @@ private:
     static constexpr int MAX_RECURSION_DEPTH = 256;      // 最大递归深度
     static constexpr int MAX_INHERITANCE_DEPTH = 64;    // 最大继承链深度
     // S-01 fix: 循环迭代次数上限，防止 while(true){} 等无限循环导致 DoS
-    static constexpr int64_t MAX_LOOP_ITERATIONS = 100000000;  // 1 亿次（约 2-3 秒）
+    // P0-13 fix: 从 1 亿降至 1000 万，将单次循环 CPU 占用从 2-3 秒降至 ~0.3 秒
+    static constexpr int64_t MAX_LOOP_ITERATIONS = 10000000;  // 1000 万次（约 0.3 秒）
 
     std::shared_ptr<Environment> globalEnv_;        // 全局环境
     std::shared_ptr<Environment> currentEnv_;       // 当前环境
@@ -233,7 +234,8 @@ private:
     ChainInfo collectAndEvaluateChain(ASTNode* objectNode, bool errorOnNonVarRef, int line, int col);
 
     /// 从内到外逐级写回修改后的值，最终写回变量
-    void writeBackChain(const ChainInfo& info, Value innermost, int line, int col);
+    // P1 fix: 改为非 const 引用，使 std::move 真正生效（const T&& 退化为拷贝）
+    void writeBackChain(ChainInfo& info, Value innermost, int line, int col);
 
     /// 检查值是否匹配类型注解
     bool typeMatch(const Value& val, const std::string& annotation) const;

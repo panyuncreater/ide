@@ -48,7 +48,8 @@ public:
     LogLevel level() const { return level_.load(); }
 
     /// 启用/禁用控制台输出（默认启用）
-    void setConsoleOutput(bool enabled) { consoleOutput_ = enabled; }
+    // P1 fix: 使用 atomic<bool> 防止 setConsoleOutput 与 log() 之间的数据竞争
+    void setConsoleOutput(bool enabled) { consoleOutput_.store(enabled); }
 
     /// 设置日志文件输出路径（空字符串则关闭文件输出）
     bool setOutputFile(const std::string& path) {
@@ -64,13 +65,14 @@ public:
         if (level < level_.load() || level == LogLevel::NONE) return;
         std::lock_guard<std::mutex> lock(mutex_);
         std::string line = formatLine(level, message, source);
-        if (consoleOutput_) {
+        if (consoleOutput_.load()) {
             if (level >= LogLevel::WARNING) std::cerr << line << '\n';
             else std::cout << line << '\n';
         }
         if (fileStream_.is_open()) {
             fileStream_ << line << '\n';
-            fileStream_.flush();
+            // P2 fix: 仅 ERROR 级别 flush，避免高频日志每行 flush 导致性能下降
+            if (level >= LogLevel::ERROR) fileStream_.flush();
         }
     }
 
@@ -93,7 +95,7 @@ private:
 
     std::mutex mutex_;
     std::atomic<LogLevel> level_{LogLevel::WARNING};
-    bool consoleOutput_ = true;
+    std::atomic<bool> consoleOutput_{true};  // P1 fix: atomic 防止数据竞争
     std::ofstream fileStream_;
 
     /// 级别文本标签
@@ -129,9 +131,9 @@ private:
 };
 
 // ============================================================
-// 便捷宏（仅当级别启用时才求值字符串，避免开销）
+// 便捷宏（P2 fix: 真正懒求值，仅在级别启用时才构造字符串）
 // ============================================================
-#define LOG_DEBUG(msg, source)   Logger::Debug(msg, source)
-#define LOG_INFO(msg, source)    Logger::Info(msg, source)
-#define LOG_WARNING(msg, source) Logger::Warning(msg, source)
-#define LOG_ERROR(msg, source)   Logger::Error(msg, source)
+#define LOG_DEBUG(msg, source)   do { if (Logger::instance().level() <= LogLevel::DEBUG)   Logger::Debug(msg, source); } while(0)
+#define LOG_INFO(msg, source)    do { if (Logger::instance().level() <= LogLevel::INFO)    Logger::Info(msg, source); } while(0)
+#define LOG_WARNING(msg, source) do { if (Logger::instance().level() <= LogLevel::WARNING) Logger::Warning(msg, source); } while(0)
+#define LOG_ERROR(msg, source)   do { if (Logger::instance().level() <= LogLevel::ERROR)   Logger::Error(msg, source); } while(0)

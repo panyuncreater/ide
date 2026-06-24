@@ -435,7 +435,7 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
     return info;
 }
 
-void Interpreter::writeBackChain(const ChainInfo& info, Value innermost, int line, int col) {
+void Interpreter::writeBackChain(ChainInfo& info, Value innermost, int line, int col) {
     int n = static_cast<int>(info.chain.size());
     Value currentVal = std::move(innermost);
     for (int i = 0; i < n - 1; i++) {
@@ -992,10 +992,14 @@ Value Interpreter::callClosureValue(FunCall& node) {
     }
 
     // C1 fix: 从快照恢复环境时，将变异写回 capturedVars，使后续调用可见
+    // P0-6 fix: 仅写回原始 capturedVars 中已存在的键（捕获变量），
+    // 跳过参数和函数内新建的局部变量，避免污染下次调用
     if (!closureEnv && envFromSnapshot) {
         auto& captured = calleeVal.capturedVars();
         for (const auto& kv : funEnv->localVariables()) {
-            captured[kv.first] = kv.second;
+            if (captured.find(kv.first) != captured.end()) {
+                captured[kv.first] = kv.second;
+            }
         }
     }
 
@@ -1318,10 +1322,14 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     }
 
     // C1 fix: 从快照恢复环境时，将变异写回 capturedVars，使后续调用可见
+    // P0-6 fix: 仅写回原始 capturedVars 中已存在的键（捕获变量），
+    // 跳过参数和函数内新建的局部变量，避免污染下次调用
     if (!closureEnv && envFromSnapshot && closureValPtr && funEnv) {
         auto& captured = closureValPtr->capturedVars();
         for (const auto& kv : funEnv->localVariables()) {
-            captured[kv.first] = kv.second;
+            if (captured.find(kv.first) != captured.end()) {
+                captured[kv.first] = kv.second;
+            }
         }
     }
 
@@ -1425,37 +1433,42 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
     Value obj = evaluate(node.object.get());
     Value idx = evaluate(node.index.get());
 
+    // P0-3 fix: 使用 const 引用避免在只读访问时触发 COW 深拷贝
+    const Value& objC = obj;
+
     // 数组索引访问
-    if (obj.isArray()) {
+    if (objC.isArray()) {
         if (!idx.isInt()) {
             runtimeError("数组索引必须是整数", node.line, node.column);
         }
         int64_t i = idx.intVal();
-        if (i < 0 || static_cast<size_t>(i) >= obj.arrayVal().size()) {
-            runtimeError("数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")", node.line, node.column);
+        const auto& arr = objC.arrayVal();
+        if (i < 0 || static_cast<size_t>(i) >= arr.size()) {
+            runtimeError("数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(arr.size()) + ")", node.line, node.column);
         }
-        return obj.arrayVal()[static_cast<size_t>(i)];
+        return arr[static_cast<size_t>(i)];
     }
 
     // 字典索引访问
-    if (obj.isDict()) {
+    if (objC.isDict()) {
         if (!idx.isString()) {
             runtimeError("字典键必须是字符串", node.line, node.column);
         }
-        auto it = obj.dictVal().find(idx.stringVal());
-        if (it == obj.dictVal().end()) {
+        const auto& dict = objC.dictVal();
+        auto it = dict.find(idx.stringVal());
+        if (it == dict.end()) {
             return Value::nullValue();
         }
         return it->second;
     }
 
     // 字符串索引访问：返回单字符字符串（M6 fix: 基于 UTF-8 码位而非字节）
-    if (obj.isString()) {
+    if (objC.isString()) {
         if (!idx.isInt()) {
             runtimeError("字符串索引必须是整数", node.line, node.column);
         }
         int64_t i = idx.intVal();
-        const std::string& s = obj.stringVal();
+        const std::string& s = objC.stringVal();
         // 计算 UTF-8 字符数
         size_t charCount = 0;
         size_t bytePos = 0;
@@ -1544,18 +1557,22 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
 
     Value obj = evaluate(node.object.get());
 
+    // P0-3 fix: 使用 const 引用避免在只读访问时触发 COW 深拷贝
+    const Value& objC = obj;
+
     // 类实例的成员访问
-    if (obj.isInstance()) {
+    if (objC.isInstance()) {
         // O1: super.field — 字段查找不变（实例已含继承字段），方法查找从父类开始
         bool isSuperAccess = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
 
-        auto it = obj.fields().find(node.fieldName);
-        if (it != obj.fields().end()) {
+        const auto& flds = objC.fields();
+        auto it = flds.find(node.fieldName);
+        if (it != flds.end()) {
             return it->second;
         }
 
         // 检查是否访问的是方法（返回一个标记值）
-        auto classIt = classRegistry_.find(obj.className());
+        auto classIt = classRegistry_.find(objC.className());
         if (classIt != classRegistry_.end()) {
             ClassInfo* searchClass = &classIt->second;
             if (isSuperAccess) {
@@ -1570,20 +1587,21 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
             FunDecl* method = findMethod(*searchClass, node.fieldName);
             if (method) {
                 // 方法作为字段访问，返回特殊标记
-                Value methodVal(std::string("method:") + obj.className() + "." + node.fieldName);
+                Value methodVal(std::string("method:") + objC.className() + "." + node.fieldName);
                 return methodVal;
             }
         }
 
         // 字段和方法都不存在，报告错误
-        runtimeError("类 " + obj.className() + " 没有字段或方法 '" + node.fieldName + "'",
+        runtimeError("类 " + objC.className() + " 没有字段或方法 '" + node.fieldName + "'",
             node.line, node.column);
     }
 
     // 字典的成员访问（同索引访问）
-    if (obj.isDict()) {
-        auto it = obj.dictVal().find(node.fieldName);
-        if (it != obj.dictVal().end()) {
+    if (objC.isDict()) {
+        const auto& dict = objC.dictVal();
+        auto it = dict.find(node.fieldName);
+        if (it != dict.end()) {
             return it->second;
         }
         return Value::nullValue();
@@ -1601,15 +1619,23 @@ Value Interpreter::visitMemberAssign(MemberAssign& node) {
 Value Interpreter::visitMethodCall(MethodCall& node) {
     checkBreak(&node);
 
-    Value obj = evaluate(node.object.get());
+    // P0-4 fix: 通过 collectAndEvaluateChain 一次性求值对象链，
+    // 避免对含副作用的子表达式（如 arr[sideEffect()].push(1)）重复求值
+    ChainInfo info = collectAndEvaluateChain(node.object.get(), false, node.line, node.column);
+    Value obj;
+    if (info.varRef) {
+        obj = std::move(info.vals[0]);
+    } else {
+        obj = evaluate(node.object.get());
+    }
 
     // ---- 数组内置方法 ----
     if (obj.isArray()) {
         auto argValues = evaluateArguments(node.arguments);
         auto builtinResult = BuiltinMethods::handleArrayMethod(
             node.methodName, obj, argValues, node.line, node.column);
-        if (builtinResult.objectModified) {
-            writeBack(node.object.get(), obj, node.line, node.column);
+        if (builtinResult.objectModified && info.varRef) {
+            writeBackChain(info, obj, node.line, node.column);
         }
         return builtinResult.result;
     }
@@ -1619,8 +1645,8 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         auto argValues = evaluateArguments(node.arguments);
         auto builtinResult = BuiltinMethods::handleDictMethod(
             node.methodName, obj, argValues, node.line, node.column);
-        if (builtinResult.objectModified) {
-            writeBack(node.object.get(), obj, node.line, node.column);
+        if (builtinResult.objectModified && info.varRef) {
+            writeBackChain(info, obj, node.line, node.column);
         }
         return builtinResult.result;
     }
@@ -1634,7 +1660,13 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
     }
 
     // 类实例的方法调用
-    if (obj.isInstance()) return callInstanceMethod(node, obj);
+    if (obj.isInstance()) {
+        Value result = callInstanceMethod(node, obj);
+        if (info.varRef) {
+            writeBackChain(info, obj, node.line, node.column);
+        }
+        return result;
+    }
 
     runtimeError("类型 " + obj.typeName() + " 不支持方法调用", node.line, node.column);
 }
@@ -1755,13 +1787,14 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             if (!classContextStack_.empty()) classContextStack_.pop_back();
             currentFunctionReturnType_ = savedReturnType;
 
-            // 更新实例（使用 writeBack 支持嵌套左值，如 arr[i].method()）
-            writeBack(node.object.get(), updatedThis, node.line, node.column);
+            // P0-4 fix: 不再调用 writeBack（会重复求值对象链），
+            // 而是将更新后的 this 写回 obj（按引用传递），由 visitMethodCall 统一通过 writeBackChain 写回
+            obj = std::move(updatedThis);
 
             // super.method() 调用后，需将更新后的 this 写回调用者的环境
-            // （writeBack 无法处理 SuperExpr，因为它不是 VarRef）
+            // （writeBackChain 无法处理 SuperExpr，因为它不是 VarRef）
             if (isSuperCall) {
-                currentEnv_->set("this", updatedThis);
+                currentEnv_->set("this", obj);
             }
 
             return result;

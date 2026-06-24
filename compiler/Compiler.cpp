@@ -27,6 +27,7 @@ CompileResult Compiler::compile(Block& program) {
     peakLocals_ = 0;
     blockDepth_ = 0;
     blockSaveCounter_ = 0;  // L11 fix: 编译间重置块保存计数器
+    compileDepth_ = 0;  // P1 fix: 编译间重置递归深度计数器
     topLevelGlobals_.clear();
     globalSlots_.clear();
     slotNames_.clear();
@@ -120,6 +121,14 @@ uint16_t Compiler::identifierIndex(const std::string& name) {
 
 void Compiler::compileNode(ASTNode* node) {
     if (!node) return;
+
+    // P1 fix: 递归深度保护，防止深度嵌套 AST 导致 C++ 栈溢出
+    if (compileDepth_ >= MAX_COMPILE_DEPTH) {
+        error("编译嵌套过深（超过 " + std::to_string(MAX_COMPILE_DEPTH) + " 层）", 0, 0);
+        return;
+    }
+    compileDepth_++;
+    struct CompileDepthGuard { int& d; ~CompileDepthGuard() { d--; } } guard{compileDepth_};
 
     // 通过 Visitor 模式分派：accept 会回调对应的 visit* 方法
     node->accept(*this);

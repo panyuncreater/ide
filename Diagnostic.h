@@ -93,16 +93,21 @@ public:
     /// 添加一条诊断
     void add(const Diagnostic& diag) {
         diagnostics_.push_back(diag);
+        // P2 fix: 维护计数器实现 O(1) 查询
+        if (diag.isError()) ++errorCount_;
+        else if (diag.isWarning()) ++warningCount_;
     }
 
     /// 便捷方法：添加错误
     void addError(const std::string& msg, int line, int col, DiagSource src) {
         diagnostics_.emplace_back(DiagLevel::Error, msg, line, col, src);
+        ++errorCount_;  // P2 fix: O(1) 计数
     }
 
     /// 便捷方法：添加警告
     void addWarning(const std::string& msg, int line, int col, DiagSource src) {
         diagnostics_.emplace_back(DiagLevel::Warning, msg, line, col, src);
+        ++warningCount_;  // P2 fix: O(1) 计数
     }
 
     /// 便捷方法：添加信息
@@ -111,28 +116,16 @@ public:
     }
 
     /// 是否有错误
-    bool hasErrors() const {
-        return std::any_of(diagnostics_.begin(), diagnostics_.end(),
-                          [](const Diagnostic& d) { return d.isError(); });
-    }
+    bool hasErrors() const { return errorCount_ > 0; }
 
     /// 是否有警告
-    bool hasWarnings() const {
-        return std::any_of(diagnostics_.begin(), diagnostics_.end(),
-                          [](const Diagnostic& d) { return d.isWarning(); });
-    }
+    bool hasWarnings() const { return warningCount_ > 0; }
 
     /// 错误数量
-    int errorCount() const {
-        return static_cast<int>(std::count_if(diagnostics_.begin(), diagnostics_.end(),
-                                              [](const Diagnostic& d) { return d.isError(); }));
-    }
+    int errorCount() const { return errorCount_; }
 
     /// 警告数量
-    int warningCount() const {
-        return static_cast<int>(std::count_if(diagnostics_.begin(), diagnostics_.end(),
-                                              [](const Diagnostic& d) { return d.isWarning(); }));
-    }
+    int warningCount() const { return warningCount_; }
 
     /// 获取所有诊断
     const std::vector<Diagnostic>& all() const { return diagnostics_; }
@@ -151,7 +144,7 @@ public:
     }
 
     /// 清空所有诊断
-    void clear() { diagnostics_.clear(); }
+    void clear() { diagnostics_.clear(); errorCount_ = 0; warningCount_ = 0; }
 
     /// 诊断数量
     size_t size() const { return diagnostics_.size(); }
@@ -184,4 +177,6 @@ public:
 
 private:
     std::vector<Diagnostic> diagnostics_;
+    int errorCount_ = 0;    // P2 fix: O(1) 错误计数
+    int warningCount_ = 0;  // P2 fix: O(1) 警告计数
 };

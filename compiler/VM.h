@@ -198,7 +198,8 @@ private:
     GlobalCacheEntry globalCache_[GLOBAL_CACHE_SIZE] = {};
     int globalCacheNextSlot_ = 0;
     // P7: ASCII 字符串索引缓存（记住上次检查过的字符串，避免循环中重复 O(n) 扫描）
-    const std::string* lastAsciiStr_ = nullptr;
+    // P1 fix: 改为缓存字符串内容而非裸指针，消除 use-after-free 风险
+    std::string lastAsciiStrContent_;
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
     // VM-05/06: 闭包支持
@@ -210,14 +211,19 @@ private:
     bool initialized_ = false;                      // 是否已初始化执行环境
     std::string lastError_;                         // 最近一次运行时错误
     int lastErrorLine_ = 0;                          // 最近一次运行时错误的源码行号（1-based，0=无位置）
-    bool hasError_ = false;                         // 运行时错误标志（用于快速检测）
+    // P1 fix: mutable 允许 const peek() 在栈下溢时设置错误标志
+    mutable bool hasError_ = false;                 // 运行时错误标志（用于快速检测）
     DiagnosticBag diagnostics_;                     // 诊断收集器
     Value lastMutatedReceiver_;                     // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
     std::vector<std::string> pendingFieldOrder_;    // M3: OP_INIT_FIELD 执行期间记录的字段声明顺序
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
     static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
     // S-02 fix: 总指令执行预算，防止 while(true){} 字节码导致 DoS
-    static constexpr int64_t MAX_INSTRUCTIONS = 500000000;  // 5 亿条指令（约 3-5 秒）
+    // P0-13 fix: 从 5 亿降至 5000 万，将单次执行 CPU 占用从 3-5 秒降至 ~0.5 秒
+    // P1 fix: 从 5000 万降至 4000 万，确保紧凑循环（~4 指令/次）不超过 1000 万迭代上限
+    static constexpr int64_t MAX_INSTRUCTIONS = 40000000;  // 4000 万条指令（≤1000 万次循环迭代）
+    // P1 fix: stepOnce 累计指令计数器，防止通过循环调用 stepOnce 绕过 DoS 防护
+    int64_t stepInstructionCount_ = 0;
     // 继承链最大深度（与 Interpreter 的 MAX_INHERITANCE_DEPTH 对齐）
     static constexpr int MAX_INHERITANCE_DEPTH = 64;
 

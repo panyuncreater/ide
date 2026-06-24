@@ -261,7 +261,7 @@ C:/Users/v/Desktop/ide/ide/InterpreterWorker.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtCore/qversiontagging.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtCore/qxptype_traits.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtCore/qyieldcpu.h
-C:/Users/v/Desktop/ide/ide/formatter/Formatter.h
+C:/Users/v/Desktop/ide/ide/compiler/Compiler.h
 C:/Users/v/Desktop/ide/ide/parser/Parser.h
 C:/Users/v/Desktop/ide/ide/gui/DebugPanel.h
  mmc:Q_OBJECT
@@ -469,9 +469,8 @@ C:/Users/v/Desktop/ide/ide/gui/DebugPanel.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsglobal.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qwidget.h
 C:/Users/v/Desktop/ide/ide/compiler/VM.h
-C:/Users/v/Desktop/ide/ide/compiler/Compiler.h
+C:/Users/v/Desktop/ide/ide/formatter/Formatter.h
 C:/Users/v/Desktop/ide/ide/ast/ASTNode.h
-C:/Users/v/Desktop/ide/ide/gui/AstViewer.cpp
 C:/Users/v/Desktop/ide/ide/debug/DebugController.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/debug/DebugController.h
@@ -590,6 +589,7 @@ C:/Users/v/Desktop/ide/ide/debug/DebugController.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtCore/qversiontagging.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtCore/qxptype_traits.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtCore/qyieldcpu.h
+C:/Users/v/Desktop/ide/ide/gui/AstViewer.cpp
 C:/Users/v/Desktop/ide/ide/gui/AstViewer.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/gui/AstViewer.h
@@ -761,7 +761,6 @@ C:/Users/v/Desktop/ide/ide/gui/AstViewer.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsexports.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsglobal.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qwidget.h
-C:/Users/v/Desktop/ide/ide/gui/OutputPanel.cpp
 C:/Users/v/Desktop/ide/ide/gui/CodeEditor.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/gui/CodeEditor.h
@@ -969,7 +968,7 @@ C:/Users/v/Desktop/ide/ide/gui/CodeEditor.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsexports.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsglobal.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qwidget.h
-C:/Users/v/Desktop/ide/ide/IdeController.cpp
+C:/Users/v/Desktop/ide/ide/gui/OutputPanel.cpp
 C:/Users/v/Desktop/ide/ide/gui/OutputPanel.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/gui/OutputPanel.h
@@ -1171,7 +1170,7 @@ C:/Users/v/Desktop/ide/ide/gui/OutputPanel.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsexports.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsglobal.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qwidget.h
-C:/Users/v/Desktop/ide/ide/gui/CodeEditor.cpp
+C:/Users/v/Desktop/ide/ide/IdeController.cpp
 C:/Users/v/Desktop/ide/ide/gui/ReplPanel.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/gui/ReplPanel.h
@@ -1352,6 +1351,7 @@ C:/Users/v/Desktop/ide/ide/gui/ReplPanel.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsexports.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsglobal.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qwidget.h
+C:/Users/v/Desktop/ide/ide/gui/CodeEditor.cpp
 C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.h
@@ -1543,7 +1543,6 @@ C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtGui/qvectornd.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs_win.h
-C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h
 C:/Users/v/Desktop/ide/ide/gui/VmStackPanel.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h
@@ -1742,6 +1741,7 @@ C:/Users/v/Desktop/ide/ide/gui/VmStackPanel.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsexports.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsglobal.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qwidget.h
+C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h
 C:/Users/v/Desktop/ide/ide/ide.h
  mmc:Q_OBJECT
  mdp:C:/Users/v/Desktop/ide/ide/Diagnostic.h
@@ -2040,19 +2040,19 @@ C:/Users/v/Desktop/ide/ide/ide.h
  mdp:D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qwidget.h
 C:/Users/v/Desktop/ide/ide/interpreter/Environment.h
 C:/Users/v/Desktop/ide/ide/lexer/Lexer.h
-C:/Users/v/Desktop/ide/ide/interpreter/BuiltinMethods.cpp
 C:/Users/v/Desktop/ide/ide/InterpreterWorker.cpp
+C:/Users/v/Desktop/ide/ide/interpreter/BuiltinMethods.cpp
 C:/Users/v/Desktop/ide/ide/ast/ASTNode.cpp
 C:/Users/v/Desktop/ide/ide/compiler/Compiler.cpp
-C:/Users/v/Desktop/ide/ide/parser/Parser.cpp
-C:/Users/v/Desktop/ide/ide/gui/DebugPanel.cpp
 C:/Users/v/Desktop/ide/ide/compiler/VM.cpp
+C:/Users/v/Desktop/ide/ide/gui/DebugPanel.cpp
+C:/Users/v/Desktop/ide/ide/parser/Parser.cpp
 C:/Users/v/Desktop/ide/ide/debug/DebugController.cpp
 C:/Users/v/Desktop/ide/ide/formatter/Formatter.cpp
 C:/Users/v/Desktop/ide/ide/gui/ReplPanel.cpp
 C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.cpp
-C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.cpp
 C:/Users/v/Desktop/ide/ide/gui/VmStackPanel.cpp
+C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.cpp
 C:/Users/v/Desktop/ide/ide/ide.cpp
 C:/Users/v/Desktop/ide/ide/interpreter/Environment.cpp
 C:/Users/v/Desktop/ide/ide/lexer/Lexer.cpp

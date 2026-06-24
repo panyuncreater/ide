@@ -10,6 +10,7 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     tokens_ = &tokens;  // 存储指针，避免深拷贝整个 token 流
     current_ = 0;
     parseDepth_ = 0;  // P15 fix: 重置递归深度
+    blockDepth_ = 0;  // P0-1 fix: 重置块嵌套深度
     diagnostics_.clear();
 
     std::vector<std::unique_ptr<ASTNode>> statements;
@@ -38,6 +39,11 @@ const Token& Parser::peek() const {
 }
 
 const Token& Parser::previous() const {
+    // P0-14 fix: 边界检查，current_==0 时返回 EOF 哨兵避免负索引 UB
+    if (current_ <= 0) {
+        static const Token eofSentinel(TokenType::TK_EOF, "", Value(), 0, 0);
+        return eofSentinel;
+    }
     return (*tokens_)[current_ - 1];
 }
 
@@ -456,6 +462,13 @@ std::unique_ptr<IfStmt> Parser::ifStmt() {
     if (match(TokenType::TK_ELSE)) {
         if (check(TokenType::TK_IF)) {
             // else if — else 分支是另一个 if 语句
+            // P1 fix: else-if 链递归也需深度保护（if..else if..else if.. 可深度嵌套）
+            if (parseDepth_ >= MAX_PARSE_DEPTH) {
+                throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
+                                 peek().line, peek().column);
+            }
+            parseDepth_++;
+            struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
             elseB = ifStmt();
         } else if (check(TokenType::TK_LBRACE)) {
             advance();
@@ -596,10 +609,28 @@ std::unique_ptr<PrintStmt> Parser::printStmt() {
 std::unique_ptr<Block> Parser::block() {
     const Token& lbrace = previous();  // '{' 已被消耗
 
+    // P0-1 fix: 块嵌套深度保护，防止 {{...}} 深度嵌套导致 C++ 栈溢出
+    if (blockDepth_ >= MAX_BLOCK_DEPTH) {
+        throw ParseError("块嵌套过深（超过 " + std::to_string(MAX_BLOCK_DEPTH) + " 层）",
+                         lbrace.line, lbrace.column);
+    }
+    blockDepth_++;
+    struct BlockDepthGuard { int& d; ~BlockDepthGuard() { d--; } } guard{blockDepth_};
+
     std::vector<std::unique_ptr<ASTNode>> stmts;
 
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
-        stmts.push_back(declaration());
+        try {
+            auto decl = declaration();
+            if (decl) {
+                stmts.push_back(std::move(decl));
+            }
+        } catch (const ParseError& e) {
+            // P1-1/P1-2 fix: block() 内错误恢复，避免单错误导致整个块被放弃
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            synchronize();
+            // synchronize 后若已到 '}' 或 EOF 则退出循环
+        }
     }
 
     consume(TokenType::TK_RBRACE, "期望 '}'");
@@ -629,6 +660,14 @@ std::unique_ptr<ASTNode> Parser::expression() {
 }
 
 std::unique_ptr<ASTNode> Parser::assignment() {
+    // P1 fix: 赋值右结合递归也需深度保护（a = b = c = ... 可深度嵌套）
+    if (parseDepth_ >= MAX_PARSE_DEPTH) {
+        throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
+                         peek().line, peek().column);
+    }
+    parseDepth_++;
+    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+
     auto expr = or_();
 
     // 检查是否是赋值
@@ -768,7 +807,15 @@ std::unique_ptr<ASTNode> Parser::factor() {
 }
 
 std::unique_ptr<ASTNode> Parser::unary() {
+    // P1 fix: 一元运算符递归也需深度保护（---...x 可深度嵌套）
     if (match(TokenType::TK_NOT, TokenType::TK_MINUS)) {
+        if (parseDepth_ >= MAX_PARSE_DEPTH) {
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
+                             peek().line, peek().column);
+        }
+        parseDepth_++;
+        struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+
         const Token& op = previous();
         auto operand = unary();
         auto uopType = (op.type == TokenType::TK_NOT) ? UnaryOp::UnaryOpType::UOP_NOT : UnaryOp::UnaryOpType::UOP_NEGATE;
@@ -776,6 +823,13 @@ std::unique_ptr<ASTNode> Parser::unary() {
     }
     // PARSE-07 fix: 一元 + 创建 UnaryOp 节点保留 AST 保真度
     if (match(TokenType::TK_PLUS)) {
+        if (parseDepth_ >= MAX_PARSE_DEPTH) {
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
+                             peek().line, peek().column);
+        }
+        parseDepth_++;
+        struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+
         const Token& op = previous();
         auto operand = unary();
         return std::make_unique<UnaryOp>(UnaryOp::UnaryOpType::UOP_PLUS, std::move(operand), op.line, op.column);
@@ -972,6 +1026,9 @@ void Parser::synchronize() {
     while (!isAtEnd()) {
         // 分号标记语句结束
         if (previous().type == TokenType::TK_SEMICOLON) return;
+
+        // P1-2 fix: '}' 标记块结束，作为同步点避免跳过块边界
+        if (peek().type == TokenType::TK_RBRACE) return;
 
         // 关键字标记声明开始
         switch (peek().type) {

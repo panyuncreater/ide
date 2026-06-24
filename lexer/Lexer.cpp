@@ -42,6 +42,16 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
 }
 
 std::vector<Token> Lexer::scan(const std::string& source) {
+    // P0 fix: 源码大小上限检查，防止恶意大文件导致 DoS
+    if (source.size() > MAX_SOURCE_SIZE) {
+        diagnostics_.addError("源代码过大（" + std::to_string(source.size() / 1024 / 1024) +
+                              "MB），超过上限 " + std::to_string(MAX_SOURCE_SIZE / 1024 / 1024) + "MB",
+                              1, 1, DiagSource::Lexer);
+        tokens_.clear();
+        tokens_.emplace_back(TokenType::TK_EOF, "", Value::nullValue(), 1, 1);
+        return tokens_;
+    }
+
     source_ = source;
     start_ = 0;
     current_ = 0;
@@ -64,6 +74,13 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     while (!isAtEnd()) {
         start_ = current_;
         scanToken();
+        // P0 fix: Token 数量上限检查，防止 Token 爆炸导致 OOM
+        if (tokens_.size() > MAX_TOKEN_COUNT) {
+            diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                                  "，源代码可能包含过多 token",
+                                  line_, currentColumn(), DiagSource::Lexer);
+            break;
+        }
     }
 
     // 添加 EOF Token
@@ -84,7 +101,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     }
     tokens_ = std::move(cleanTokens);
 
-    return tokens_;
+    return std::move(tokens_);
 }
 
 char Lexer::peek() const {
@@ -169,7 +186,9 @@ void Lexer::scanToken() {
         if (match('/')) {
             // 捕获注释文本（含 // 前缀）
             size_t commentStart = start_;
-            while (!isAtEnd() && peek() != '\n') advance();
+            // P0-2 fix: 同时检查 \r 和 \n，避免 CRLF 下 advance() 消耗 \r\n 后
+            // peek() 跳过 \n 导致注释吞掉下一行内容
+            while (!isAtEnd() && peek() != '\n' && peek() != '\r') advance();
             std::string commentText(source_.substr(commentStart, current_ - commentStart));
             Token tok;
             tok.type = TokenType::TK_LINE_COMMENT;
@@ -357,7 +376,10 @@ void Lexer::string() {
     int startCol = static_cast<int>(start_ - lineStart_) + 1;
     std::string value;
     // P-07 fix: 预估字符串容量，避免逐字符 += 反复 realloc
-    value.reserve(current_ < source_.size() ? (source_.size() - current_) : 0);
+    // P0 fix: 限制 reserve 上限为 1MB，防止未闭合字符串触发 GB 级内存分配
+    size_t reserveCap = current_ < source_.size() ? (source_.size() - current_) : 0;
+    if (reserveCap > 1024 * 1024) reserveCap = 1024 * 1024;
+    value.reserve(reserveCap);
 
     while (!isAtEnd() && peek() != '"') {
         // 换行处理由 advance() 统一完成（line_++ 和 lineStart_ 更新），
@@ -405,13 +427,13 @@ void Lexer::string() {
 void Lexer::addToken(TokenType type) {
     std::string text(source_.substr(start_, current_ - start_));
     int col = static_cast<int>(start_ - lineStart_) + 1;
-    tokens_.emplace_back(type, text, Value::nullValue(), line_, col);
+    tokens_.emplace_back(type, std::move(text), Value::nullValue(), line_, col);
 }
 
 void Lexer::addToken(TokenType type, const Value& literal) {
     std::string text(source_.substr(start_, current_ - start_));
     int col = static_cast<int>(start_ - lineStart_) + 1;
-    tokens_.emplace_back(type, text, literal, line_, col);
+    tokens_.emplace_back(type, std::move(text), literal, line_, col);
 }
 
 void Lexer::addToken(TokenType type, std::string&& text) {

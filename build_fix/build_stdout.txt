@@ -1,0 +1,78 @@
+[  0%] Built target minilang_core_autogen_timestamp_deps
+[  2%] Automatic MOC and UIC for target minilang_core
+[  2%] Built target minilang_core_autogen
+[  5%] Building CXX object CMakeFiles/minilang_core.dir/minilang_core_autogen/mocs_compilation.cpp.obj
+mocs_compilation.cpp
+[  8%] Building CXX object CMakeFiles/minilang_core.dir/lexer/Lexer.cpp.obj
+Lexer.cpp
+[ 11%] Building CXX object CMakeFiles/minilang_core.dir/ast/ASTNode.cpp.obj
+ASTNode.cpp
+[ 14%] Building CXX object CMakeFiles/minilang_core.dir/parser/Parser.cpp.obj
+Parser.cpp
+[ 17%] Building CXX object CMakeFiles/minilang_core.dir/interpreter/Environment.cpp.obj
+Environment.cpp
+[ 20%] Building CXX object CMakeFiles/minilang_core.dir/interpreter/Interpreter.cpp.obj
+Interpreter.cpp
+[ 23%] Building CXX object CMakeFiles/minilang_core.dir/interpreter/BuiltinMethods.cpp.obj
+BuiltinMethods.cpp
+[ 26%] Building CXX object CMakeFiles/minilang_core.dir/debug/DebugController.cpp.obj
+DebugController.cpp
+?⒁? 包含文件:         D:\vs\VC\Tools\MSVC\14.51.36231\include\compare
+[ 29%] Building CXX object CMakeFiles/minilang_core.dir/compiler/Compiler.cpp.obj
+Compiler.cpp
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): warning C4099: “BytecodeChunk”: 类型名称以前使用“class”现在使用的是“struct”
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): note: 参见“BytecodeChunk”的声明
+[ 32%] Building CXX object CMakeFiles/minilang_core.dir/compiler/VM.cpp.obj
+VM.cpp
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): warning C4099: “BytecodeChunk”: 类型名称以前使用“class”现在使用的是“struct”
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): note: 参见“BytecodeChunk”的声明
+[ 35%] Building CXX object CMakeFiles/minilang_core.dir/formatter/Formatter.cpp.obj
+Formatter.cpp
+[ 38%] Linking CXX static library minilang_core.lib
+[ 38%] Built target minilang_core
+[ 38%] Built target gtest_autogen_timestamp_deps
+[ 41%] Automatic MOC and UIC for target gtest
+[ 41%] Built target gtest_autogen
+[ 44%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/gtest_autogen/mocs_compilation.cpp.obj
+mocs_compilation.cpp
+[ 47%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.obj
+gtest-all.cc
+[ 50%] Linking CXX static library ..\..\..\lib\gtest.lib
+[ 52%] Built target gtest
+[ 52%] Built target gtest_main_autogen_timestamp_deps
+[ 55%] Automatic MOC and UIC for target gtest_main
+[ 55%] Built target gtest_main_autogen
+[ 58%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/gtest_main_autogen/mocs_compilation.cpp.obj
+mocs_compilation.cpp
+[ 61%] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.obj
+gtest_main.cc
+[ 64%] Linking CXX static library ..\..\..\lib\gtest_main.lib
+[ 67%] Built target gtest_main
+[ 67%] Built target minilang_tests_autogen_timestamp_deps
+[ 70%] Automatic MOC and UIC for target minilang_tests
+[ 70%] Built target minilang_tests_autogen
+[ 73%] Building CXX object tests/CMakeFiles/minilang_tests.dir/minilang_tests_autogen/mocs_compilation.cpp.obj
+mocs_compilation.cpp
+[ 76%] Building CXX object tests/CMakeFiles/minilang_tests.dir/main.cpp.obj
+main.cpp
+[ 79%] Building CXX object tests/CMakeFiles/minilang_tests.dir/TestLexer.cpp.obj
+TestLexer.cpp
+[ 82%] Building CXX object tests/CMakeFiles/minilang_tests.dir/TestParser.cpp.obj
+TestParser.cpp
+?⒁? 包含文件:           D:\vs\VC\Tools\MSVC\14.51.36231\include\__msvc_system_error_abi.hpp
+[ 85%] Building CXX object tests/CMakeFiles/minilang_tests.dir/TestValue.cpp.obj
+TestValue.cpp
+[ 88%] Building CXX object tests/CMakeFiles/minilang_tests.dir/TestBuiltinMethods.cpp.obj
+TestBuiltinMethods.cpp
+[ 91%] Building CXX object tests/CMakeFiles/minilang_tests.dir/TestInterpreterE2E.cpp.obj
+TestInterpreterE2E.cpp
+[ 94%] Building CXX object tests/CMakeFiles/minilang_tests.dir/TestVME2E.cpp.obj
+TestVME2E.cpp
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): warning C4099: “BytecodeChunk”: 类型名称以前使用“class”现在使用的是“struct”
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): note: 参见“BytecodeChunk”的声明
+[ 97%] Building CXX object tests/CMakeFiles/minilang_tests.dir/TestCompiler.cpp.obj
+TestCompiler.cpp
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): warning C4099: “BytecodeChunk”: 类型名称以前使用“class”现在使用的是“struct”
+C:\Users\v\Desktop\ide\ide\compiler/Bytecode.h(181): note: 参见“BytecodeChunk”的声明
+[100%] Linking CXX executable minilang_tests.exe
+[100%] Built target minilang_tests

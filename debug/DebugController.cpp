@@ -2,7 +2,7 @@
 #include "ast/ASTNode.h"
 #include "interpreter/Interpreter.h"
 #include "Logger.h"
-#include <QApplication>
+#include <QCoreApplication>  // P1 fix: 用 QCoreApplication 替代 QApplication，避免 minilang_core 依赖 Qt6::Widgets
 #include <QThread>
 #include <stdexcept>
 
@@ -48,13 +48,13 @@ void DebugController::checkBreak(ASTNode* node) {
         snapMode = static_cast<StepMode>(mode_.load());
         localBreakpoints = breakpoints_;
         localBreakpointInfos = breakpointInfos_;
-        snapCurrentDepth = currentDepth_;
+        snapCurrentDepth = currentDepth_.load();       // P0-9 fix: atomic load
         snapStepOverDepth = stepOverDepth_;
         snapStepOutDepth = stepOutDepth_;
-        snapLastPausedLine = lastPausedLine_;
-        snapLastPausedDepth = lastPausedDepth_;
+        snapLastPausedLine = lastPausedLine_.load();   // P0-9 fix: atomic load
+        snapLastPausedDepth = lastPausedDepth_.load(); // P0-9 fix: atomic load
         snapMinBreakpointLine = minBreakpointLine_;
-        snapCrossedDeeper = crossedDeeper_;
+        snapCrossedDeeper = crossedDeeper_.load();     // P0-9 fix: atomic load
     }
 
     // 快速路径：RUN 模式且无断点 → 直接返回（递归/循环程序的主要开销来源）
@@ -63,7 +63,7 @@ void DebugController::checkBreak(ASTNode* node) {
         if (++eventPumpCounter_ >= 100) {
             eventPumpCounter_ = 0;
             if (QThread::currentThread() == QCoreApplication::instance()->thread())
-                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
         }
         return;
     }
@@ -72,7 +72,7 @@ void DebugController::checkBreak(ASTNode* node) {
 
     // DBG-B fix: Step Over 模式下追踪是否进入了更深的调用层
     if (snapMode == StepMode::MODE_STEP_OVER && snapCurrentDepth > snapStepOverDepth) {
-        crossedDeeper_ = true;
+        crossedDeeper_.store(true);  // P0-9 fix: atomic store
         snapCrossedDeeper = true;
     }
 
@@ -81,16 +81,22 @@ void DebugController::checkBreak(ASTNode* node) {
         // C3 fix: 跳过与上次相同行号的子表达式，防止 resume 后同行子节点重复触发断点。
         // lastSeenLine_ 会在执行到其他行时自动更新，使循环下一迭代能重新命中断点。
         // DBG-03 fix: 单行循环断点重触发——用 crossedLine_ 检测是否跨过不同行
-        if ((node->line != lastSeenLine_ || crossedLine_) &&
+        if ((node->line != lastSeenLine_.load() || crossedLine_.load()) &&
             node->line >= snapMinBreakpointLine && localBreakpoints.contains(node->line)) {
-            crossedLine_ = false;  // 命中后重置，同行后续子表达式不再触发
+            crossedLine_.store(false);  // P0-9 fix: atomic store. 命中后重置，同行后续子表达式不再触发
             // 检查是否为条件断点
             auto infoIt = localBreakpointInfos.find(node->line);
             if (infoIt != localBreakpointInfos.end() && infoIt->isConditional()) {
                 // 条件断点：只求值条件为真时才暂停
-                if (conditionEvaluator_) {
+                // P0-9 fix: 在 mutex 下读取 conditionEvaluator_ 快照，避免与 setConditionEvaluator 竞争
+                std::function<bool(const std::string&)> snapEvaluator;
+                {
+                    std::lock_guard<std::mutex> lock(pauseMutex_);
+                    snapEvaluator = conditionEvaluator_;
+                }
+                if (snapEvaluator) {
                     try {
-                        if (conditionEvaluator_(infoIt->condition)) {
+                        if (snapEvaluator(infoIt->condition)) {
                             // Thread-safety: update hitCount on the real container under mutex
                             {
                                 std::lock_guard<std::mutex> lock(pauseMutex_);
@@ -141,8 +147,8 @@ void DebugController::checkBreak(ASTNode* node) {
 
     // C3 fix + DBG-03: 始终记录最后看到的行号，跨行时设置 crossedLine_ 允许单行循环断点重触发
     if (node->line > 0) {
-        if (node->line != lastSeenLine_) crossedLine_ = true;
-        lastSeenLine_ = node->line;
+        if (node->line != lastSeenLine_.load()) crossedLine_.store(true);  // P0-9 fix: atomic
+        lastSeenLine_.store(node->line);                                    // P0-9 fix: atomic
     }
 
     // M10 + DBG-04 fix: 步进模式下经过断点行时递增 hitCount，去重避免同行多个子表达式重复计数
@@ -157,9 +163,9 @@ void DebugController::checkBreak(ASTNode* node) {
     }
 
     if (shouldPause && node->line > 0) {
-        lastPausedLine_ = node->line;  // 记录暂停行号
-        lastPausedDepth_ = snapCurrentDepth;  // 记录暂停深度
-        crossedDeeper_ = false;  // DBG-B fix: 暂停后重置深度追踪
+        lastPausedLine_.store(node->line);           // P0-9 fix: atomic store
+        lastPausedDepth_.store(snapCurrentDepth);    // P0-9 fix: atomic store
+        crossedDeeper_.store(false);                 // P0-9 fix: atomic store (DBG-B fix: 暂停后重置)
 
         Logger::Debug("断点暂停于行 " + std::to_string(node->line) +
             " (深度 " + std::to_string(snapCurrentDepth) + ")", "Debugger");
@@ -174,12 +180,14 @@ void DebugController::checkBreak(ASTNode* node) {
         if (++eventPumpCounter_ >= 100) {
             eventPumpCounter_ = 0;
             if (QThread::currentThread() == QCoreApplication::instance()->thread())
-                QApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
         }
     }
 }
 
 void DebugController::setBreakpoint(int line) {
+    // P0-9 fix: 加锁保护容器（checkBreak 在 worker 线程读取）
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     breakpoints_.insert(line);
     // 若尚无 BreakpointInfo 条目则创建（保留已有条件）
     if (!breakpointInfos_.contains(line)) {
@@ -189,15 +197,16 @@ void DebugController::setBreakpoint(int line) {
 }
 
 void DebugController::setBreakpoints(const QSet<int>& lines) {
+    // P0-9 fix: 加锁保护容器
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     breakpoints_ = lines;
-    // 同步 breakpointInfos_：移除不再存在的，添加新增的，重置仍存在的条目的条件
+    // 同步 breakpointInfos_：移除不再存在的，添加新增的
+    // P0-10 fix: 不再重置已有断点的 hitCount（保留累计命中次数）
     auto it = breakpointInfos_.begin();
     while (it != breakpointInfos_.end()) {
         if (!lines.contains(it.key())) {
             it = breakpointInfos_.erase(it);
         } else {
-            // DBG-01 fix: 不重置条件表达式（条件由 setBreakpointCondition 单独管理）
-            it->hitCount = 0;
             ++it;
         }
     }
@@ -210,12 +219,16 @@ void DebugController::setBreakpoints(const QSet<int>& lines) {
 }
 
 void DebugController::removeBreakpoint(int line) {
+    // P0-9 fix: 加锁保护容器
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     breakpoints_.remove(line);
     breakpointInfos_.remove(line);
     updateMinBreakpointLine();
 }
 
 void DebugController::toggleBreakpoint(int line) {
+    // P0-9 fix: 加锁保护容器
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     if (breakpoints_.contains(line)) {
         breakpoints_.remove(line);
         // DBG-07 fix: 保留 breakpointInfos_ 中的条件表达式，仅移除活跃断点
@@ -229,17 +242,27 @@ void DebugController::toggleBreakpoint(int line) {
 }
 
 bool DebugController::hasBreakpoint(int line) const {
+    // P0-9 fix: 加锁保护容器读取
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     return breakpoints_.contains(line);
 }
 
 QSet<int> DebugController::getBreakpoints() const {
+    // P0-9 fix: 加锁保护容器读取
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     return breakpoints_;
 }
 
 void DebugController::setBreakpointCondition(int line, const std::string& condition) {
+    // P0-9 fix: 加锁保护容器
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     // 确保断点存在
     if (!breakpoints_.contains(line)) {
-        setBreakpoint(line);
+        breakpoints_.insert(line);
+        if (!breakpointInfos_.contains(line)) {
+            breakpointInfos_.insert(line, BreakpointInfo(line));
+        }
+        updateMinBreakpointLine();
     }
     // 更新或创建 BreakpointInfo
     auto it = breakpointInfos_.find(line);
@@ -252,6 +275,8 @@ void DebugController::setBreakpointCondition(int line, const std::string& condit
 }
 
 std::string DebugController::getBreakpointCondition(int line) const {
+    // P0-9 fix: 加锁保护容器读取
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     auto it = breakpointInfos_.find(line);
     if (it != breakpointInfos_.end()) {
         return it->condition;
@@ -260,6 +285,8 @@ std::string DebugController::getBreakpointCondition(int line) const {
 }
 
 int DebugController::getBreakpointHitCount(int line) const {
+    // P0-9 fix: 加锁保护容器读取
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     auto it = breakpointInfos_.find(line);
     if (it != breakpointInfos_.end()) {
         return it->hitCount;
@@ -268,6 +295,8 @@ int DebugController::getBreakpointHitCount(int line) const {
 }
 
 void DebugController::setConditionEvaluator(std::function<bool(const std::string&)> evaluator) {
+    // P0-9 fix: 加锁保护（checkBreak 在 worker 线程读取）
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     conditionEvaluator_ = std::move(evaluator);
 }
 
@@ -293,11 +322,11 @@ void DebugController::stepIn() {
 }
 
 void DebugController::stepOver() {
-    Logger::Debug("Step Over (depth=" + std::to_string(currentDepth_) + ")", "Debugger");
+    Logger::Debug("Step Over (depth=" + std::to_string(currentDepth_.load()) + ")", "Debugger");
     if (!running_) {
         mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
-        stepOverDepth_ = currentDepth_;
-        crossedDeeper_ = false;  // DBG-B fix
+        stepOverDepth_ = currentDepth_.load();  // P0-9 fix: atomic load
+        crossedDeeper_.store(false);            // P0-9 fix: atomic store (DBG-B fix)
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -306,8 +335,8 @@ void DebugController::stepOver() {
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
-        stepOverDepth_ = currentDepth_;
-        crossedDeeper_ = false;  // DBG-B fix
+        stepOverDepth_ = currentDepth_.load();  // P0-9 fix: atomic load
+        crossedDeeper_.store(false);            // P0-9 fix: atomic store (DBG-B fix)
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -316,10 +345,11 @@ void DebugController::stepOver() {
 }
 
 void DebugController::stepOut() {
-    Logger::Debug("Step Out (depth=" + std::to_string(currentDepth_) + ")", "Debugger");
+    Logger::Debug("Step Out (depth=" + std::to_string(currentDepth_.load()) + ")", "Debugger");
+    int depth = currentDepth_.load();  // P0-9 fix: atomic load
     if (!running_) {
-        mode_.store(static_cast<int>((currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
-        stepOutDepth_ = currentDepth_;
+        mode_.store(static_cast<int>((depth > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
+        stepOutDepth_ = depth;
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -327,8 +357,8 @@ void DebugController::stepOut() {
     }
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
-        mode_.store(static_cast<int>((currentDepth_ > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
-        stepOutDepth_ = currentDepth_;
+        mode_.store(static_cast<int>((depth > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
+        stepOutDepth_ = depth;
         running_ = true;
         stopped_ = false;
         paused_ = false;
@@ -367,23 +397,31 @@ void DebugController::stop() {
 }
 
 void DebugController::setCurrentDepth(int depth) {
-    currentDepth_ = depth;
+    currentDepth_.store(depth);  // P0-9 fix: atomic store
 }
 
 void DebugController::setVariableCallback(std::function<std::vector<VariableSnapshot>()> cb) {
-    variableCallback_ = cb;
+    // P0-9 fix: 加锁保护（getVariableSnapshot 可能在 UI 线程读取）
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    variableCallback_ = std::move(cb);
 }
 
 void DebugController::setCallStackCallback(std::function<std::vector<CallStackEntry>()> cb) {
-    callStackCallback_ = cb;
+    // P0-9 fix: 加锁保护
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    callStackCallback_ = std::move(cb);
 }
 
 std::vector<VariableSnapshot> DebugController::getVariableSnapshot() const {
+    // P0-9 fix: 加锁读取回调
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     if (variableCallback_) return variableCallback_();
     return {};
 }
 
 std::vector<CallStackEntry> DebugController::getCallStack() const {
+    // P0-9 fix: 加锁读取回调
+    std::lock_guard<std::mutex> lock(pauseMutex_);
     if (callStackCallback_) return callStackCallback_();
     return {};
 }
@@ -403,21 +441,21 @@ void DebugController::reset() {
         running_ = false;
         stopped_ = false;
         paused_ = false;
+        stepOverDepth_ = 0;
+        stepOutDepth_ = 0;
+        // P0-9 fix: 重置所有断点命中计数在锁内进行（保留断点和条件）
+        for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {
+            it->hitCount = 0;
+        }
     }
     pauseCV_.notify_all();
-    currentDepth_ = 0;
-    stepOverDepth_ = 0;
-    stepOutDepth_ = 0;
-    lastPausedLine_ = -1;
-    lastPausedDepth_ = -1;
-    lastSeenLine_ = -1;
-    crossedLine_ = false;
-    crossedDeeper_ = false;  // DBG-B fix
-
-    // 重置所有断点命中计数（保留断点和条件）
-    for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {
-        it->hitCount = 0;
-    }
+    // P0-9 fix: atomic 字段在锁外重置（atomic store 本身线程安全）
+    currentDepth_.store(0);
+    lastPausedLine_.store(-1);
+    lastPausedDepth_.store(-1);
+    lastSeenLine_.store(-1);
+    crossedLine_.store(false);
+    crossedDeeper_.store(false);  // DBG-B fix
 }
 
 void DebugController::pauseExecution() {

@@ -33,9 +33,7 @@ public:
     void define(const std::string& name, const Value& val) {
         auto [it, inserted] = variables.try_emplace(name, val);
         if (!inserted) {
-            it->second = val;   // 覆盖已有变量，不递增世代
-        } else {
-            ++generation_;      // P2 fix: per-environment generation
+            it->second = val;   // 覆盖已有变量
         }
     }
 
@@ -44,8 +42,6 @@ public:
         auto [it, inserted] = variables.try_emplace(name, std::move(val));
         if (!inserted) {
             it->second = std::move(val);   // 覆盖已有变量
-        } else {
-            ++generation_;
         }
     }
 
@@ -53,23 +49,14 @@ public:
     /// 用于 visitVarDecl 消除 find+define 双次查找
     bool tryDefineNew(const std::string& name, const Value& val) {
         auto [it, inserted] = variables.try_emplace(name, val);
-        if (inserted) {
-            ++generation_;
-            return true;
-        }
-        return false;  // 已存在，不覆盖
+        return inserted;
     }
     bool tryDefineNew(const std::string& name, Value&& val) {
         auto [it, inserted] = variables.try_emplace(name, std::move(val));
-        if (inserted) {
-            ++generation_;
-            return true;
-        }
-        return false;
+        return inserted;
     }
 
     /// 获取变量值（沿作用域链查找）— 返回指针，nullptr 表示未找到
-    /// 优化路径：先查本地 O(1)，再用深度缓存跳过已知的中间作用域
     const Value* get(const std::string& name) const {
         // 快速路径：当前作用域直接命中
         auto it = variables.find(name);
@@ -82,31 +69,15 @@ public:
             auto fit = flds.find(name);
             if (fit != flds.end()) return &fit->second;
         }
-        // 慢路径：沿作用域链查找，使用深度缓存加速
+        // P0-5 fix: 移除有缺陷的深度缓存（验证条件几乎永不成立且存在遮蔽 Bug），
+        // 改用简单的作用域链遍历，O(depth) 但正确性可靠
         if (parent) {
-            // 检查深度缓存是否有效（P2: 使用目标环境的 per-instance generation）
-            auto cacheIt = depthCache_.find(name);
-            if (cacheIt != depthCache_.end() && cacheIt->second.target &&
-                cacheIt->second.generation == cacheIt->second.target->generation_ &&
-                generation_ == cacheIt->second.target->generation_) {
-                // 缓存命中：直接跳到目标深度
-                return getAtDepth(name, cacheIt->second.depth);
-            }
-            // 缓存未命中或过期：正常遍历并记录深度
-            int depth = 0;
-            const Value* result = parent->getWithDepth(name, depth);
-            if (depth >= 0) {
-                // 找到变量所在的目标环境（const_cast 安全：底层对象非 const，仅缓存使用）
-                Environment* target = const_cast<Environment*>(findTargetEnv(name));
-                depthCache_[name] = {depth + 1, target ? target->generation_ : generation_, target};
-            }
-            return result;
+            return parent->get(name);
         }
         return nullptr;
     }
 
     /// 设置变量值（沿作用域链查找并更新）
-    /// 优化路径：先查本地 O(1)，再用深度缓存跳过已知的中间作用域
     bool set(const std::string& name, const Value& val) {
         // 快速路径：当前作用域直接命中
         auto it = variables.find(name);
@@ -116,32 +87,16 @@ public:
         }
         // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
         if (boundInstance_ && boundInstance_->isInstance()) {
-            auto fit = boundInstance_->fields().find(name);
-            if (fit != boundInstance_->fields().end()) {
+            auto& flds = boundInstance_->fields();
+            auto fit = flds.find(name);
+            if (fit != flds.end()) {
                 fit->second = val;
                 return true;
             }
         }
+        // P0-5 fix: 移除深度缓存，改用简单遍历
         if (parent) {
-            // 检查深度缓存是否有效
-            auto cacheIt = depthCache_.find(name);
-            if (cacheIt != depthCache_.end() && cacheIt->second.target &&
-                cacheIt->second.generation == cacheIt->second.target->generation_ &&
-                generation_ == cacheIt->second.target->generation_) {
-                // 缓存命中：直接跳到目标深度
-                return setAtDepth(name, val, cacheIt->second.depth);
-            }
-            // 缓存未命中：正常遍历并记录深度，供后续 set 使用
-            int depth = 0;
-            const Value* found = parent->getWithDepth(name, depth);
-            if (found) {
-                // 找到变量所在的目标环境
-                Environment* target = findTargetEnv(name);
-                depthCache_[name] = {depth + 1, target ? target->generation_ : generation_, target};
-                // 直接通过深度路径写入，避免重复遍历
-                return setAtDepth(name, val, depth + 1);
-            }
-            return false;
+            return parent->set(name, val);
         }
         return false;   // 变量不存在
     }
@@ -155,27 +110,15 @@ public:
         }
         // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
         if (boundInstance_ && boundInstance_->isInstance()) {
-            auto fit = boundInstance_->fields().find(name);
-            if (fit != boundInstance_->fields().end()) {
+            auto& flds = boundInstance_->fields();
+            auto fit = flds.find(name);
+            if (fit != flds.end()) {
                 fit->second = std::move(val);
                 return true;
             }
         }
         if (parent) {
-            auto cacheIt = depthCache_.find(name);
-            if (cacheIt != depthCache_.end() && cacheIt->second.target &&
-                cacheIt->second.generation == cacheIt->second.target->generation_ &&
-                generation_ == cacheIt->second.target->generation_) {
-                return setAtDepth(name, std::move(val), cacheIt->second.depth);
-            }
-            int depth = 0;
-            const Value* found = parent->getWithDepth(name, depth);
-            if (found) {
-                Environment* target = findTargetEnv(name);
-                depthCache_[name] = {depth + 1, target ? target->generation_ : generation_, target};
-                return setAtDepth(name, std::move(val), depth + 1);
-            }
-            return false;
+            return parent->set(name, std::move(val));
         }
         return false;
     }
@@ -255,93 +198,7 @@ private:
     std::unordered_map<std::string, std::string> typeAnnotations_; // B2: 作用域感知类型注解
     Value* boundInstance_ = nullptr;  // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
 
-    /// 深度缓存条目：记录变量在作用域链中的深度位置
-    struct DepthEntry {
-        int depth;          // 变量所在作用域相对于当前作用域的深度（1=直接父级）
-        uint32_t generation; // 目标环境的世代号（P2: per-environment）
-        Environment* target; // P2: 变量所在的目标环境指针（用于验证 generation）
-    };
-    mutable std::unordered_map<std::string, DepthEntry> depthCache_;
-
-    /// P2 fix: per-environment 世代计数器（替代全局 sGeneration）
-    /// 仅在当前环境 define 新变量时递增，不影响其他环境的缓存
-    uint32_t generation_ = 0;
-
-    /// P2: 沿作用域链查找变量所在的目标环境（返回原始指针）
-    Environment* findTargetEnv(const std::string& name) {
-        auto it = variables.find(name);
-        if (it != variables.end()) return this;
-        if (parent) return parent->findTargetEnv(name);
-        return nullptr;
-    }
-    const Environment* findTargetEnv(const std::string& name) const {
-        auto it = variables.find(name);
-        if (it != variables.end()) return this;
-        if (parent) return parent->findTargetEnv(name);
-        return nullptr;
-    }
-
-    /// 在指定深度查找变量（depth=1 表示直接父级）— 返回指针，nullptr=未找到
-    const Value* getAtDepth(const std::string& name, int depth) const {
-        const Environment* env = this;
-        for (int i = 0; i < depth && env; ++i) {
-            env = env->parent.get();
-        }
-        if (env) {
-            auto it = env->variables.find(name);
-            if (it != env->variables.end()) return &it->second;
-        }
-        // 缓存过期（变量被遮蔽），回退到正常遍历
-        return parent ? parent->get(name) : nullptr;
-    }
-
-    /// 在指定深度设置变量（depth=1 表示直接父级）
-    bool setAtDepth(const std::string& name, const Value& val, int depth) {
-        Environment* env = this;
-        for (int i = 0; i < depth && env; ++i) {
-            env = env->parent.get();
-        }
-        if (env) {
-            auto it = env->variables.find(name);
-            if (it != env->variables.end()) {
-                it->second = val;
-                return true;
-            }
-        }
-        // 缓存过期（变量被遮蔽），回退到正常遍历
-        return parent ? parent->set(name, val) : false;
-    }
-
-    /// P1 fix: setAtDepth move 重载
-    bool setAtDepth(const std::string& name, Value&& val, int depth) {
-        Environment* env = this;
-        for (int i = 0; i < depth && env; ++i) {
-            env = env->parent.get();
-        }
-        if (env) {
-            auto it = env->variables.find(name);
-            if (it != env->variables.end()) {
-                it->second = std::move(val);
-                return true;
-            }
-        }
-        return parent ? parent->set(name, std::move(val)) : false;
-    }
-
-    /// 带深度记录的查找（返回时 depth 为变量所在深度，-1 表示未找到）— 返回指针
-    const Value* getWithDepth(const std::string& name, int& depth) const {
-        auto it = variables.find(name);
-        if (it != variables.end()) {
-            depth = 0;
-            return &it->second;
-        }
-        if (parent) {
-            int childDepth = 0;
-            const Value* result = parent->getWithDepth(name, childDepth);
-            depth = (childDepth >= 0) ? childDepth + 1 : -1;
-            return result;
-        }
-        depth = -1;
-        return nullptr;
-    }
+    // P0-5 fix: 已移除有缺陷的深度缓存（DepthEntry/depthCache_/generation_/
+    //   findTargetEnv/getAtDepth/setAtDepth/getWithDepth），改用简单作用域链遍历。
+    //   缓存验证条件几乎永不成立且存在遮蔽 Bug，移除后无性能损失。
 };

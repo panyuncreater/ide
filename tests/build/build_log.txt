@@ -1,0 +1,9 @@
+﻿ninja.exe : ninja: fatal: GetOverlappedResult: The operation completed successfully.
+At line:1 char:5
++ & { & ninja minilang_tests 2>&1 | Out-File -FilePath build_log.txt -E ...
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ninja: fatal: G...d successfully.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+

@@ -1,0 +1,96 @@
+{
+	"AUTOGEN_COMMAND_LINE_LENGTH_MAX" : 32000,
+	"BUILD_DIR" : "C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/gmock_main_autogen",
+	"CMAKE_BINARY_DIR" : "C:/Users/v/Desktop/ide/ide/build_fix",
+	"CMAKE_CURRENT_BINARY_DIR" : "C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock",
+	"CMAKE_CURRENT_SOURCE_DIR" : "C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock",
+	"CMAKE_EXECUTABLE" : "C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/bin/cmake.exe",
+	"CMAKE_LIST_FILES" : 
+	[
+		"C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/CMakeLists.txt",
+		"C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/share/cmake-4.3/Modules/FindThreads.cmake",
+		"C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/share/cmake-4.3/Modules/CheckLibraryExists.cmake",
+		"C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/share/cmake-4.3/Modules/CheckIncludeFile.cmake",
+		"C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/share/cmake-4.3/Modules/CheckCSourceCompiles.cmake",
+		"C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/share/cmake-4.3/Modules/FindPackageHandleStandardArgs.cmake",
+		"C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/share/cmake-4.3/Modules/FindPackageMessage.cmake",
+		"C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/cmake/gmock.pc.in",
+		"C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/cmake/gmock_main.pc.in"
+	],
+	"CMAKE_SOURCE_DIR" : "C:/Users/v/Desktop/ide/ide",
+	"CROSS_CONFIG" : false,
+	"DEP_FILE" : "C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/gmock_main_autogen/deps",
+	"DEP_FILE_RULE_NAME" : "gmock_main_autogen/timestamp",
+	"HEADERS" : [],
+	"HEADER_EXTENSIONS" : [ "h", "hh", "h++", "hm", "hpp", "hxx", "in", "txx" ],
+	"INCLUDE_DIR" : "C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/gmock_main_autogen/include",
+	"MOC_COMPILATION_FILE" : "C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/gmock_main_autogen/mocs_compilation.cpp",
+	"MOC_DEFINITIONS" : [ "WIN32" ],
+	"MOC_DEPEND_FILTERS" : 
+	[
+		[
+			"Q_PLUGIN_METADATA",
+			"[\n][ \t]*Q_PLUGIN_METADATA[ \t]*\\([^\\)]*FILE[ \t]*\"([^\"]+)\""
+		]
+	],
+	"MOC_INCLUDES" : 
+	[
+		"C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/include",
+		"C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock",
+		"C:/Users/v/Desktop/ide/ide/third_party/googletest/googletest/include",
+		"C:/Users/v/Desktop/ide/ide/third_party/googletest/googletest"
+	],
+	"MOC_MACRO_NAMES" : 
+	[
+		"Q_OBJECT",
+		"Q_GADGET",
+		"Q_NAMESPACE",
+		"Q_NAMESPACE_EXPORT",
+		"Q_GADGET_EXPORT",
+		"Q_ENUM_NS"
+	],
+	"MOC_OPTIONS" : [],
+	"MOC_PATH_PREFIX" : false,
+	"MOC_PREDEFS_CMD" : [],
+	"MOC_PREDEFS_FILE" : "",
+	"MOC_RELAXED_MODE" : false,
+	"MOC_SKIP" : 
+	[
+		"C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/gmock_autogen/mocs_compilation.cpp"
+	],
+	"MULTI_CONFIG" : false,
+	"PARALLEL" : 12,
+	"PARSE_CACHE_FILE" : "C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/CMakeFiles/gmock_main_autogen.dir/ParseCache.txt",
+	"QT_MOC_EXECUTABLE" : "D:/qt/6.10.3/msvc2022_64/bin/moc.exe",
+	"QT_UIC_EXECUTABLE" : "D:/qt/6.10.3/msvc2022_64/bin/uic.exe",
+	"QT_VERSION_MAJOR" : 6,
+	"QT_VERSION_MINOR" : 10,
+	"SETTINGS_FILE" : "C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/CMakeFiles/gmock_main_autogen.dir/AutogenUsed.txt",
+	"SOURCES" : 
+	[
+		[
+			"C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/src/gmock-all.cc",
+			"MU",
+			null
+		],
+		[
+			"C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/src/gmock_main.cc",
+			"MU",
+			null
+		],
+		[
+			"C:/Users/v/Desktop/ide/ide/third_party/googletest/googletest/src/gtest-all.cc",
+			"MU",
+			null
+		]
+	],
+	"UIC_OPTIONS" : [],
+	"UIC_SEARCH_PATHS" : [],
+	"UIC_SKIP" : 
+	[
+		"C:/Users/v/Desktop/ide/ide/build_fix/_deps/googletest-build/googlemock/gmock_autogen/mocs_compilation.cpp"
+	],
+	"UIC_UI_FILES" : [],
+	"USE_BETTER_GRAPH" : true,
+	"VERBOSITY" : 0
+}

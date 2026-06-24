@@ -691,11 +691,17 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
         instrIndex = targetChunk->ipToInstrIndex[ip];
     } else {
         // fallback：遍历查找（不应发生）
+        // P2 fix: 正确处理 OP_CLOSURE 变长指令（4 + upvalueCount*2 字节）
         size_t offset = 0;
         while (offset < targetChunk->code.size()) {
             if (offset == ip) break;
             OpCode op = static_cast<OpCode>(targetChunk->code[offset]);
-            offset += BytecodeChunk::instructionSize(op);
+            if (op == OpCode::OP_CLOSURE && offset + 3 < targetChunk->code.size()) {
+                uint8_t upvalueCount = targetChunk->code[offset + 3];
+                offset += 4 + static_cast<size_t>(upvalueCount) * 2;
+            } else {
+                offset += BytecodeChunk::instructionSize(op);
+            }
             instrIndex++;
         }
     }

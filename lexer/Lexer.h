@@ -37,6 +37,10 @@ private:
     std::vector<Token> comments_;   // 注释 Token 列表（从主流中分离，供 Formatter 使用）
     DiagnosticBag diagnostics_;      // 诊断收集器
 
+    // DoS 防护：源码大小上限和 Token 数量上限
+    static constexpr size_t MAX_SOURCE_SIZE = 10 * 1024 * 1024;  // 10MB
+    static constexpr size_t MAX_TOKEN_COUNT = 1000000;            // 100万 Token
+
     /// 关键字映射表（全局共享，只初始化一次）
     static const std::unordered_map<std::string, TokenType>& keywords();
 

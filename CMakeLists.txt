@@ -97,6 +97,7 @@ endif()
 
 # ============================================================
 # minilang_ide 可执行目标（GUI 应用）
+# P1 fix: 链接 minilang_core 而非重复包含源文件，减少 ~50% 编译时间
 # ============================================================
 add_executable(minilang_ide WIN32
     main.cpp
@@ -104,9 +105,7 @@ add_executable(minilang_ide WIN32
     IdeController.cpp
     InterpreterWorker.cpp
     ide.qrc
-    ide.ui
     ${MINILANG_GUI_SOURCES}
-    ${MINILANG_CORE_SOURCES}
 )
 
 target_include_directories(minilang_ide PRIVATE
@@ -114,6 +113,7 @@ target_include_directories(minilang_ide PRIVATE
 )
 
 target_link_libraries(minilang_ide PRIVATE
+    minilang_core
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
