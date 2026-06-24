@@ -221,6 +221,14 @@ private:
     DiagnosticBag diagnostics_;                     // 诊断收集器
     Value lastMutatedReceiver_;                     // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
     std::vector<std::string> pendingFieldOrder_;    // M3: OP_INIT_FIELD 执行期间记录的字段声明顺序
+
+    // F11: 异常处理
+    struct TryHandler {
+        size_t catchIp;       // catch 块的 IP
+        size_t stackBase;     // try 开始时的栈大小（catch 时恢复）
+        size_t frameIndex;    // 所属调用帧索引
+    };
+    std::vector<TryHandler> tryStack_;              // try 处理器栈
     static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
     static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
     // S-02 fix: 总指令执行预算，防止 while(true){} 字节码导致 DoS
@@ -240,6 +248,18 @@ private:
 
     /// 运行时错误
     VMResult runtimeError(const std::string& msg);
+
+    /// F11: 抛出异常，搜索 try 处理器或跨帧传播
+    VMResult throwException(Value thrownValue);
+
+    /// F11-fix: 关闭指向 [fromSlot, stack_.size()) 范围内栈槽的 open upvalues
+    /// 用于异常展开和帧弹出时防止悬垂指针
+    void closeUpvaluesFrom(size_t fromSlot);
+
+    /// F10-fix: 为 init 方法填充缺失的默认参数，返回 true 表示成功
+    /// argCount 会被更新为填充后的参数数量，默认值追加到 defaults 向量
+    bool fillDefaultArgs(const BytecodeChunk& chunk, uint8_t& argCount,
+                         const std::string& funName, std::vector<Value>& defaults);
 
     /// 数值二元运算（枚举分发）
     VMResult numericOp(int opType);

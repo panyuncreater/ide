@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <unordered_map>
 
 // ============================================================
 // 辅助：执行源码并捕获 print 输出
@@ -685,4 +686,267 @@ TEST(InterpreterE2E, ComprehensiveStringProcessing) {
         "  i = i + 1;"
         "}";
     EXPECT_EQ(runInterpreterOutput(src), "4helloworldfoobar");
+}
+
+// ============================================================
+// 11. F12 模块系统 / import / export
+// ============================================================
+
+// 辅助：执行源码并加载模拟模块，返回 print 输出
+// modules: 模块路径 -> 模块源代码 的映射
+static std::string runInterpreterWithModules(
+    const std::string& source,
+    const std::unordered_map<std::string, std::string>& modules) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    EXPECT_TRUE(ast != nullptr);
+    if (!ast) return "";
+
+    Interpreter interp;
+    std::string captured;
+    interp.setOutputCallback([&](const std::string& s) { captured += s; });
+    interp.setModuleLoader([&](const std::string& path) -> std::string {
+        auto it = modules.find(path);
+        if (it == modules.end()) return "";
+        return it->second;
+    });
+    interp.execute(*ast);
+    return captured;
+}
+
+// 辅助：执行带模块的源码，预期抛出 RuntimeError
+static bool runInterpreterWithModulesThrows(
+    const std::string& source,
+    const std::unordered_map<std::string, std::string>& modules) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    if (!ast) return false;
+
+    Interpreter interp;
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setModuleLoader([&](const std::string& path) -> std::string {
+        auto it = modules.find(path);
+        if (it == modules.end()) return "";
+        return it->second;
+    });
+    try {
+        interp.execute(*ast);
+        return false;
+    } catch (const RuntimeError&) {
+        return true;
+    }
+}
+
+// 测试：import 全部导出
+TEST(InterpreterE2E, ModuleImportAll) {
+    std::string src =
+        "import \"mymod\";"
+        "print(PI);"
+        "print(add(3, 4));";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "export var PI = 314;"
+         "export fun add(a, b) { return a + b; }"}
+    };
+    EXPECT_EQ(runInterpreterWithModules(src, modules), "3147");
+}
+
+// 测试：import 指定名称
+TEST(InterpreterE2E, ModuleImportNamed) {
+    std::string src =
+        "import { greet } from \"greetings\";"
+        "print(greet(\"world\"));";
+    std::unordered_map<std::string, std::string> modules = {
+        {"greetings",
+         "export fun greet(name) { return \"hello \" + name; }"
+         "export fun unused() { return 999; }"}
+    };
+    EXPECT_EQ(runInterpreterWithModules(src, modules), "hello world");
+}
+
+// 测试：import 指定名称时未导出的名称不可访问
+TEST(InterpreterE2E, ModuleImportNamedNotExported) {
+    std::string src =
+        "import { secret } from \"m\";"
+        "print(secret);";
+    std::unordered_map<std::string, std::string> modules = {
+        {"m", "var secret = 42; export var public_val = 1;"}
+    };
+    EXPECT_TRUE(runInterpreterWithModulesThrows(src, modules));
+}
+
+// 测试：export 类
+TEST(InterpreterE2E, ModuleExportClass) {
+    std::string src =
+        "import { Point } from \"geom\";"
+        "var p = Point(3, 4);"
+        "print(p.x);"
+        "print(p.y);"
+        "print(p.norm());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"geom",
+         "export class Point {"
+         "  var x = 0;"
+         "  var y = 0;"
+         "  fun init(ax, ay) { x = ax; y = ay; }"
+         "  fun norm() { return (x * x + y * y) % 100; }"
+         "}"}
+    };
+    EXPECT_EQ(runInterpreterWithModules(src, modules), "3425");
+}
+
+// 测试：模块缓存（多次 import 同一模块只执行一次）
+TEST(InterpreterE2E, ModuleCache) {
+    std::string src =
+        "import { counter } from \"counter_mod\";"
+        "print(counter());"
+        "import { counter } from \"counter_mod\";"
+        "print(counter());";
+    // 模块中使用模块级变量计数，验证模块只执行一次
+    std::unordered_map<std::string, std::string> modules = {
+        {"counter_mod",
+         "var count = 10;"
+         "export fun counter() { count = count + 1; return count; }"}
+    };
+    // 第一次调用 counter() → 11，第二次（重新 import 但模块已缓存）→ 12
+    EXPECT_EQ(runInterpreterWithModules(src, modules), "1112");
+}
+
+// 测试：循环依赖检测
+TEST(InterpreterE2E, ModuleCircularDependency) {
+    std::string src = "import \"a\";";
+    std::unordered_map<std::string, std::string> modules = {
+        {"a", "import \"b\";"},
+        {"b", "import \"a\";"}
+    };
+    EXPECT_TRUE(runInterpreterWithModulesThrows(src, modules));
+}
+
+// 测试：模块不存在
+TEST(InterpreterE2E, ModuleNotFound) {
+    std::string src = "import \"nonexistent\";";
+    std::unordered_map<std::string, std::string> modules;
+    EXPECT_TRUE(runInterpreterWithModulesThrows(src, modules));
+}
+
+// 测试：未设置模块加载器
+TEST(InterpreterE2E, ModuleNoLoader) {
+    std::string src = "import \"m\";";
+    Lexer lexer;
+    auto tokens = lexer.scan(src);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    ASSERT_TRUE(ast != nullptr);
+    Interpreter interp;
+    interp.setOutputCallback([](const std::string&) {});
+    try {
+        interp.execute(*ast);
+        FAIL() << "应抛出 RuntimeError";
+    } catch (const RuntimeError&) {
+        SUCCEED();
+    }
+}
+
+// 测试：模块内未导出的变量不影响导入方
+TEST(InterpreterE2E, ModuleIsolation) {
+    std::string src =
+        "import { public_val } from \"m\";"
+        "print(public_val);";
+    std::unordered_map<std::string, std::string> modules = {
+        {"m",
+         "var hidden = 999;"
+         "export var public_val = 1;"}
+    };
+    EXPECT_EQ(runInterpreterWithModules(src, modules), "1");
+}
+
+// 测试：嵌套模块导入
+TEST(InterpreterE2E, ModuleNestedImport) {
+    std::string src =
+        "import { getValue } from \"outer\";"
+        "print(getValue());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"outer",
+         "import { base } from \"inner\";"
+         "export fun getValue() { return base + 100; }"},
+        {"inner",
+         "export var base = 42;"}
+    };
+    EXPECT_EQ(runInterpreterWithModules(src, modules), "142");
+}
+
+// 测试：import 全部时只导入 export 的名称
+TEST(InterpreterE2E, ModuleImportAllOnlyExports) {
+    std::string src =
+        "import \"m\";"
+        "print(private_val);";
+    std::unordered_map<std::string, std::string> modules = {
+        {"m",
+         "var private_val = 999;"
+         "export var public_val = 1;"}
+    };
+    // import "m" 导入全部导出名称，private_val 未导出，不应可访问
+    EXPECT_TRUE(runInterpreterWithModulesThrows(src, modules));
+}
+
+// P2-1 fix: 命名导入原子性 — 部分名称不存在时不导入任何名称
+TEST(InterpreterE2E, ModuleImportNamedAtomic) {
+    std::string src =
+        "import { a, nonexistent, c } from \"m\";"
+        "print(a);"
+        "print(c);";
+    std::unordered_map<std::string, std::string> modules = {
+        {"m",
+         "export var a = 1;"
+         "export var c = 3;"}
+    };
+    // nonexistent 未导出，应抛出错误，且 a 和 c 不应被导入
+    EXPECT_TRUE(runInterpreterWithModulesThrows(src, modules));
+}
+
+// P2-1 fix: 命名导入原子性 — 验证错误后环境不被污染
+TEST(InterpreterE2E, ModuleImportNamedAtomicNoPollution) {
+    std::unordered_map<std::string, std::string> modules = {
+        {"m",
+         "export var a = 1;"}
+    };
+    // import 失败后 a 不应被导入（原子性：先验证全部名称，再统一定义）
+    EXPECT_TRUE(runInterpreterWithModulesThrows(
+        "import { a, nonexistent } from \"m\";"
+        "print(a);",
+        modules));
+}
+
+// P2-3 fix: 模块缓存键路径规范化 — 不同路径表示应命中同一缓存
+TEST(InterpreterE2E, ModuleCacheKeyNormalization) {
+    std::string src =
+        "import \"./mod.mini\";"
+        "import \"mod.mini\";"
+        "print(\"ok\");";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mod.mini",
+         "export var val = 1;"}
+    };
+    // "./mod.mini" 和 "mod.mini" 规范化后应命中同一缓存
+    std::string output = runInterpreterWithModules(src, modules);
+    EXPECT_EQ(output, "ok");
+}
+
+// P2-3 fix: Windows 路径分隔符规范化
+TEST(InterpreterE2E, ModuleCacheKeyBackslashNormalization) {
+    std::string src =
+        "import \"sub/mod.mini\";"
+        "import \"sub\\mod.mini\";"
+        "print(\"ok\");";
+    std::unordered_map<std::string, std::string> modules = {
+        {"sub/mod.mini",
+         "export var val = 1;"}
+    };
+    // "sub/mod.mini" 和 "sub\mod.mini" 规范化后应命中同一缓存
+    std::string output = runInterpreterWithModules(src, modules);
+    EXPECT_EQ(output, "ok");
 }

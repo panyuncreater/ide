@@ -1,0 +1,272 @@
+[
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\minilang_core_autogen\\mocs_compilation.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\mocs_compilation.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_core_autogen/mocs_compilation.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/minilang_core_autogen/mocs_compilation.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\lexer\\Lexer.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\lexer\\Lexer.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/lexer/Lexer.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/lexer/Lexer.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\ast\\ASTNode.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\ast\\ASTNode.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/ast/ASTNode.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/ast/ASTNode.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\parser\\Parser.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\parser\\Parser.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/parser/Parser.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/parser/Parser.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\interpreter\\Environment.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\interpreter\\Environment.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/interpreter/Environment.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/interpreter/Environment.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\interpreter\\Interpreter.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\interpreter\\Interpreter.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/interpreter/Interpreter.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\interpreter\\BuiltinMethods.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\interpreter\\BuiltinMethods.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/interpreter/BuiltinMethods.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/interpreter/BuiltinMethods.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\debug\\DebugController.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\debug\\DebugController.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/debug/DebugController.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/debug/DebugController.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\compiler\\Compiler.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\compiler\\Compiler.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/compiler/Compiler.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/compiler/Compiler.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\compiler\\VM.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\compiler\\VM.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/compiler/VM.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/compiler/VM.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_core_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_core.dir\\formatter\\Formatter.cpp.obj /FdCMakeFiles\\minilang_core.dir\\minilang_core.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\formatter\\Formatter.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/formatter/Formatter.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_core.dir/formatter/Formatter.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\minilang_ide_autogen\\mocs_compilation.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\mocs_compilation.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/mocs_compilation.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/minilang_ide_autogen/mocs_compilation.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\app\\main.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\app\\main.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/app/main.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/app/main.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\app\\ide.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\app\\ide.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/app/ide.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/app/ide.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\app\\IdeController.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\app\\IdeController.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/app/IdeController.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/app/IdeController.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\app\\InterpreterWorker.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\app\\InterpreterWorker.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/app/InterpreterWorker.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/app/InterpreterWorker.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\CodeEditor.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\CodeEditor.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/CodeEditor.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/CodeEditor.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\SyntaxHighlighter.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\SyntaxHighlighter.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/SyntaxHighlighter.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\AstViewer.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\AstViewer.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/AstViewer.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/AstViewer.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\OutputPanel.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\OutputPanel.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/OutputPanel.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/OutputPanel.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\DebugPanel.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\DebugPanel.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/DebugPanel.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/DebugPanel.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\ReplPanel.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\ReplPanel.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/ReplPanel.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/ReplPanel.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\VmStackPanel.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\VmStackPanel.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/VmStackPanel.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/VmStackPanel.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\gui\\FindReplacePanel.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\gui\\FindReplacePanel.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/gui/FindReplacePanel.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/gui/FindReplacePanel.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DQT_DEBUG -DQT_GUI_LIB -DQT_WIDGETS_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtGui -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtWidgets -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 /MP -Zc:__cplusplus -permissive- -utf-8 /FoCMakeFiles\\minilang_ide.dir\\minilang_ide_autogen\\VJIZ3MDCXP\\qrc_ide.cpp.obj /FdCMakeFiles\\minilang_ide.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\minilang_ide_autogen\\VJIZ3MDCXP\\qrc_ide.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/qrc_ide.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/CMakeFiles/minilang_ide.dir/minilang_ide_autogen/VJIZ3MDCXP/qrc_ide.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\minilang_tests_autogen\\mocs_compilation.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\mocs_compilation.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/minilang_tests_autogen/mocs_compilation.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/minilang_tests_autogen/mocs_compilation.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\main.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\main.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/main.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/main.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\TestLexer.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\TestLexer.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/TestLexer.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/TestLexer.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\TestParser.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\TestParser.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/TestParser.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/TestParser.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\TestValue.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\TestValue.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/TestValue.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/TestValue.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\TestBuiltinMethods.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\TestBuiltinMethods.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/TestBuiltinMethods.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/TestBuiltinMethods.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\TestInterpreterE2E.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\TestInterpreterE2E.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/TestInterpreterE2E.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/TestInterpreterE2E.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\TestVME2E.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\TestVME2E.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/TestVME2E.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/TestVME2E.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -DQT_CORE_LIB -DUNICODE -DWIN32 -DWIN64 -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_UNICODE -D_WIN64 -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\tests\\minilang_tests_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide -IC:\\Users\\v\\Desktop\\ide\\ide\\common -external:ID:\\qt\\6.10.3\\msvc2022_64\\include\\QtCore -external:ID:\\qt\\6.10.3\\msvc2022_64\\include -external:ID:\\qt\\6.10.3\\msvc2022_64\\mkspecs\\win32-msvc -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd /W3 /utf-8 /EHsc /permissive- /wd4996 -Zc:__cplusplus -permissive- -utf-8 /Fotests\\CMakeFiles\\minilang_tests.dir\\TestCompiler.cpp.obj /Fdtests\\CMakeFiles\\minilang_tests.dir\\ /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\tests\\TestCompiler.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/tests/TestCompiler.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/tests/CMakeFiles/minilang_tests.dir/TestCompiler.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googlemock\\CMakeFiles\\gmock.dir\\gmock_autogen\\mocs_compilation.cpp.obj /Fdlib\\gmockpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_autogen\\mocs_compilation.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/gmock_autogen/mocs_compilation.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/CMakeFiles/gmock.dir/gmock_autogen/mocs_compilation.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googlemock\\CMakeFiles\\gmock.dir\\__\\googletest\\src\\gtest-all.cc.obj /Fdlib\\gmockpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\src\\gtest-all.cc",
+  "file": "C:/Users/v/Desktop/ide/ide/third_party/googletest/googletest/src/gtest-all.cc",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/CMakeFiles/gmock.dir/__/googletest/src/gtest-all.cc.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googlemock\\CMakeFiles\\gmock.dir\\src\\gmock-all.cc.obj /Fdlib\\gmockpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\src\\gmock-all.cc",
+  "file": "C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/src/gmock-all.cc",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_main_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googlemock\\CMakeFiles\\gmock_main.dir\\gmock_main_autogen\\mocs_compilation.cpp.obj /Fdlib\\gmock_mainpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_main_autogen\\mocs_compilation.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/gmock_main_autogen/mocs_compilation.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/gmock_main_autogen/mocs_compilation.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_main_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googlemock\\CMakeFiles\\gmock_main.dir\\__\\googletest\\src\\gtest-all.cc.obj /Fdlib\\gmock_mainpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\src\\gtest-all.cc",
+  "file": "C:/Users/v/Desktop/ide/ide/third_party/googletest/googletest/src/gtest-all.cc",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/__/googletest/src/gtest-all.cc.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_main_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googlemock\\CMakeFiles\\gmock_main.dir\\src\\gmock-all.cc.obj /Fdlib\\gmock_mainpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\src\\gmock-all.cc",
+  "file": "C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/src/gmock-all.cc",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock-all.cc.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googlemock\\gmock_main_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googlemock\\CMakeFiles\\gmock_main.dir\\src\\gmock_main.cc.obj /Fdlib\\gmock_mainpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googlemock\\src\\gmock_main.cc",
+  "file": "C:/Users/v/Desktop/ide/ide/third_party/googletest/googlemock/src/gmock_main.cc",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googletest\\gtest_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googletest\\CMakeFiles\\gtest.dir\\gtest_autogen\\mocs_compilation.cpp.obj /Fdlib\\gtestpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googletest\\gtest_autogen\\mocs_compilation.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googletest/gtest_autogen/mocs_compilation.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googletest/CMakeFiles/gtest.dir/gtest_autogen/mocs_compilation.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googletest\\gtest_autogen\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googletest\\CMakeFiles\\gtest.dir\\src\\gtest-all.cc.obj /Fdlib\\gtestpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\src\\gtest-all.cc",
+  "file": "C:/Users/v/Desktop/ide/ide/third_party/googletest/googletest/src/gtest-all.cc",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googletest\\gtest_main_autogen\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googletest\\CMakeFiles\\gtest_main.dir\\gtest_main_autogen\\mocs_compilation.cpp.obj /Fdlib\\gtest_mainpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googletest\\gtest_main_autogen\\mocs_compilation.cpp",
+  "file": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googletest/gtest_main_autogen/mocs_compilation.cpp",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/gtest_main_autogen/mocs_compilation.cpp.obj"
+},
+{
+  "directory": "C:/Users/v/Desktop/ide/ide/out/build/debug",
+  "command": "D:\\vs\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\cl.exe  /nologo /TP -IC:\\Users\\v\\Desktop\\ide\\ide\\out\\build\\debug\\_deps\\googletest-build\\googletest\\gtest_main_autogen\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\include -external:IC:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest -external:W0 -DQT_QML_DEBUG /Zi /Ob0 /Od /RTC1 -std:c++20 -MDd -GS -W4 -WX -wd4251 -wd4275 -nologo -J -D_UNICODE -DUNICODE -DWIN32 -D_WIN32 -DSTRICT -DWIN32_LEAN_AND_MEAN -wd4702 -utf-8 -DGTEST_HAS_PTHREAD=0 -EHsc -D_HAS_EXCEPTIONS=1  /Fo_deps\\googletest-build\\googletest\\CMakeFiles\\gtest_main.dir\\src\\gtest_main.cc.obj /Fdlib\\gtest_mainpdb_debug_postfix-NOTFOUND.pdb /FS -c C:\\Users\\v\\Desktop\\ide\\ide\\third_party\\googletest\\googletest\\src\\gtest_main.cc",
+  "file": "C:/Users/v/Desktop/ide/ide/third_party/googletest/googletest/src/gtest_main.cc",
+  "output": "C:/Users/v/Desktop/ide/ide/out/build/debug/_deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.obj"
+}
+]

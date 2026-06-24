@@ -9,6 +9,7 @@
 #include <QTableWidget>
 #include <QTextEdit>
 #include <QListWidget>
+#include <QTimer>
 #include <memory>
 
 #include "Diagnostic.h"
@@ -20,6 +21,7 @@
 #include "gui/DebugPanel.h"
 #include "gui/ReplPanel.h"
 #include "gui/VmStackPanel.h"
+#include "gui/FindReplacePanel.h"
 
 // ============================================================
 // Ide — GUI 交互层
@@ -87,6 +89,18 @@ private slots:
     /// VM 停止执行
     void onVmStop();
 
+    /// F6: 显示查找面板 (Ctrl+F)
+    void onFind();
+    /// F6: 显示替换面板 (Ctrl+H)
+    void onReplace();
+    /// F6: 查找下一个 (F3)
+    void onFindNext();
+    /// F6: 查找上一个 (Shift+F3)
+    void onFindPrev();
+
+    /// F9: 切换深色/浅色主题
+    void onToggleTheme(bool dark);
+
 private:
     /// 窗口关闭事件：确保调试器和VM安全停止
     void closeEvent(QCloseEvent* event) override;
@@ -96,6 +110,7 @@ private:
 
     // ---- GUI 组件 ----
     CodeEditor* codeEditor_ = nullptr;
+    FindReplacePanel* findReplacePanel_ = nullptr;
     SyntaxHighlighter* highlighter_ = nullptr;
     AstViewer* astViewer_ = nullptr;
     OutputPanel* outputPanel_ = nullptr;
@@ -127,6 +142,10 @@ private:
     QAction* vmStepAction_ = nullptr;       // VM 单步
     QAction* vmStopAction_ = nullptr;       // VM 停止
 
+    // F9: 主题切换
+    QAction* darkThemeAction_ = nullptr;    // 深色主题（checkable）
+    bool isDarkTheme_ = false;              // 当前主题状态
+
     // GUI-04: 文件操作 actions
     QAction* newAction_ = nullptr;
     QAction* openAction_ = nullptr;
@@ -136,6 +155,10 @@ private:
     // GUI-04: 文件状态
     QString currentFilePath_;              // 当前文件路径（空=未保存）
     bool isDirty_ = false;                 // 是否有未保存修改
+
+    // F13: 补全词更新防抖定时器
+    QTimer* completionTimer_ = nullptr;    // 文本变化后延迟更新补全词
+    QStringList staticCompletionWords_;    // 静态补全词（关键字 + 内置函数）
 
     /// chunk→行号映射（用于多 chunk 高亮定位）
     struct ChunkRowInfo {
@@ -153,6 +176,15 @@ private:
 
     /// 初始化信号连接（工具栏 + controller 信号）
     void initConnections();
+
+    /// F9: 应用主题（true=深色，false=浅色）
+    void applyTheme(bool dark);
+
+    /// F13: 初始化自动补全（关键字 + 内置函数）
+    void setupCompletion();
+
+    /// F13: 从当前文档扫描用户定义的符号（var/fun/class 名称）
+    void updateCompletionWords();
 
     /// 更新字节码指令列表高亮
     void highlightBytecodeLine(const std::string& chunkName, size_t ip);

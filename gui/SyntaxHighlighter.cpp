@@ -16,23 +16,32 @@ SyntaxHighlighter::SyntaxHighlighter(QTextDocument* parent)
     initRules();
 }
 
+void SyntaxHighlighter::setDarkTheme(bool dark) {
+    isDarkTheme_ = dark;
+    initRules();  // 重新初始化颜色规则
+    rehighlight();  // 重新高亮整个文档
+}
+
 void SyntaxHighlighter::initRules() {
-    // 关键字：蓝色粗体
-    keywordFormat_.setForeground(QColor(0, 0, 180));
-    keywordFormat_.setFontWeight(QFont::Bold);
-
-    // 字符串：绿色
-    stringFormat_.setForeground(QColor(0, 128, 0));
-
-    // 数字：橙色
-    numberFormat_.setForeground(QColor(200, 100, 0));
-
-    // 注释：灰色斜体
-    commentFormat_.setForeground(QColor(128, 128, 128));
-    commentFormat_.setFontItalic(true);
-
-    // 运算符：紫色
-    operatorFormat_.setForeground(QColor(128, 0, 128));
+    if (isDarkTheme_) {
+        // 深色主题（VS Code Dark+ 风格）
+        keywordFormat_.setForeground(QColor(0x56, 0x9c, 0xd6));   // 蓝色
+        keywordFormat_.setFontWeight(QFont::Bold);
+        stringFormat_.setForeground(QColor(0xce, 0x91, 0x78));    // 橙棕色
+        numberFormat_.setForeground(QColor(0xb5, 0xce, 0xa8));    // 浅绿色
+        commentFormat_.setForeground(QColor(0x6a, 0x99, 0x55));   // 绿色
+        commentFormat_.setFontItalic(true);
+        operatorFormat_.setForeground(QColor(0xd4, 0xd4, 0xd4));  // 浅灰色
+    } else {
+        // 浅色主题（原有配色）
+        keywordFormat_.setForeground(QColor(0, 0, 180));           // 蓝色
+        keywordFormat_.setFontWeight(QFont::Bold);
+        stringFormat_.setForeground(QColor(0, 128, 0));            // 绿色
+        numberFormat_.setForeground(QColor(200, 100, 0));          // 橙色
+        commentFormat_.setForeground(QColor(128, 128, 128));       // 灰色
+        commentFormat_.setFontItalic(true);
+        operatorFormat_.setForeground(QColor(128, 0, 128));        // 紫色
+    }
 
     // ---- 添加高亮规则 ----
 
@@ -40,7 +49,8 @@ void SyntaxHighlighter::initRules() {
     HighlightRule keywordRule;
     keywordRule.pattern = QRegularExpression(
         "\\b(?:var|fun|function|func|if|else|while|for|return|print|break|continue"
-        "|and|or|not|int|float|bool|string|class|extends|super|dict|array|null|true|false)\\b");
+        "|and|or|not|int|float|bool|string|class|extends|super|dict|array|null|true|false"
+        "|try|catch|throw|import|from|export)\\b");
     keywordRule.format = keywordFormat_;
     rules_.push_back(keywordRule);
 

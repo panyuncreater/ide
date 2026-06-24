@@ -1,11 +1,4 @@
-C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_CodeEditor.cpp: C:/Users/v/Desktop/ide/ide/gui/CodeEditor.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QList \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QMap \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QObject \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QRect \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QSet \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QSize \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QSizeF \
+C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_FindReplacePanel.cpp: C:/Users/v/Desktop/ide/ide/gui/FindReplacePanel.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q17memory.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20functional.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20iterator.h \
@@ -14,7 +7,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20utility.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q23type_traits.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q23utility.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qabstracteventdispatcher.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qalgorithms.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qalloc.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qanystringview.h \
@@ -25,7 +17,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qatomic.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qatomic_cxx11.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbasicatomic.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qbasictimer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbindingstorage.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbytearray.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbytearrayalgorithms.h \
@@ -43,15 +34,10 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qcontainerinfo.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qcontainertools_impl.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qcontiguouscache.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qcoreapplication.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qcoreapplication_platform.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qcoreevent.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qdarwinhelpers.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qdatastream.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qdeadlinetimer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qdebug.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qendian.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qeventloop.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qexceptionhandling.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qflags.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qfloat16.h \
@@ -70,7 +56,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qlatin1stringview.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qline.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qlist.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qlocale.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qlogging.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qmalloc.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qmap.h \
@@ -80,7 +65,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qmetatype.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qminmax.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qnamespace.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qnativeinterface.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qnumeric.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qobject.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qobject_impl.h \
@@ -144,63 +128,50 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qversiontagging.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qxptype_traits.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qyieldcpu.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/QTextBlock \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/QTransform \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qabstracttextdocumentlayout.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qaction.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qbitmap.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qbrush.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qcolor.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qcursor.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qevent.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qeventpoint.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qfont.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qfontdatabase.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qfontinfo.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qfontmetrics.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qfontvariableaxis.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qglyphrun.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qguiapplication.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qguiapplication_platform.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qicon.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qimage.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qinputdevice.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qinputmethod.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qkeysequence.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpaintdevice.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpalette.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpen.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtGui/qpicture.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpixelformat.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpixmap.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qpointingdevice.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpolygon.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qrawfont.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qregion.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qrgb.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qrgba64.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qscreen.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qscreen_platform.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtextcursor.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtextdocument.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtextformat.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qtextlayout.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qtextobject.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtextoption.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtgui-config.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtguiexports.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtguiglobal.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtransform.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qvector2d.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qvectornd.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs_win.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QPlainTextEdit \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QCheckBox \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QLabel \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QLineEdit \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QPushButton \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QWidget \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractscrollarea.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractbutton.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qcheckbox.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qframe.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qplaintextedit.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qlabel.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qlineedit.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qpushbutton.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qsizepolicy.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtextedit.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgets-config.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsexports.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsglobal.h \

@@ -115,7 +115,9 @@ private:
 
     /// 解析参数列表（支持C风格类型注解 int a 和冒号风格 a: int）
     /// 假设调用前已 consume '('
-    void parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes);
+    /// F10: defaultValues 收集默认参数值表达式（与 params 一一对应，无默认值时为 nullptr）
+    void parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes,
+                        std::vector<std::unique_ptr<ASTNode>>& defaultValues);
 
     /// 语句
     std::unique_ptr<ASTNode> statement();
@@ -137,6 +139,18 @@ private:
 
     /// continue 语句
     std::unique_ptr<ContinueStmt> continueStmt();
+
+    /// try-catch 语句
+    std::unique_ptr<TryStmt> tryStmt();
+
+    /// throw 语句
+    std::unique_ptr<ThrowStmt> throwStmt();
+
+    /// import 语句
+    std::unique_ptr<ImportStmt> importStmt();
+
+    /// export 语句
+    std::unique_ptr<ExportStmt> exportStmt();
 
     /// print 语句
     std::unique_ptr<PrintStmt> printStmt();
@@ -181,6 +195,11 @@ private:
 
     /// 基本字面量 / 标识符 / 分组
     std::unique_ptr<ASTNode> primary();
+
+    /// F7: 解析插值字符串 "Hello {name}, age {age}"
+    /// 将字符串字面量和表达式拼接为 BinaryOp(BIN_ADD) 链
+    /// @param first 第一个字符串片段（已解析的 StringLiteral）
+    std::unique_ptr<ASTNode> parseInterpolatedString(std::unique_ptr<ASTNode> first);
 
     // ---- 错误恢复 ----
 

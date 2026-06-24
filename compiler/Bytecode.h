@@ -96,6 +96,11 @@ enum class OpCode : uint8_t {    OP_CONSTANT,     // 加载常量到栈顶
     OP_GET_UPVALUE,      // 读取 upvalue（操作数: upvalueIndex(1B)）
     OP_SET_UPVALUE,      // 写入 upvalue（操作数: upvalueIndex(1B)）
     OP_CLOSE_UPVALUE,    // 关闭 upvalue（操作数: upvalueIndex(1B)）
+
+    // F11: 异常处理操作码
+    OP_TRY_BEGIN,        // try 块开始（操作数: catchOffset(2B)）
+    OP_TRY_END,          // try 块正常结束（弹出 try 处理器）
+    OP_THROW,            // 抛出异常（弹出栈顶值并触发异常传播）
 };
 
 /// 操作码 → 名称字符串（统一映射，避免多处手工维护）
@@ -167,6 +172,9 @@ inline const char* opCodeName(OpCode op) {
     case OpCode::OP_GET_UPVALUE:      return "OP_GET_UPVALUE";
     case OpCode::OP_SET_UPVALUE:      return "OP_SET_UPVALUE";
     case OpCode::OP_CLOSE_UPVALUE:    return "OP_CLOSE_UPVALUE";
+    case OpCode::OP_TRY_BEGIN:        return "OP_TRY_BEGIN";
+    case OpCode::OP_TRY_END:          return "OP_TRY_END";
+    case OpCode::OP_THROW:            return "OP_THROW";
     }
     return "OP_UNKNOWN";
 }
@@ -183,7 +191,9 @@ struct BytecodeChunk {
     std::vector<Value> constants;    // 常量池
     std::vector<int> lines;         // 每条指令对应的行号
     std::string name;               // chunk 名称（函数名）
-    int arity = 0;                  // 参数个数
+    int arity = 0;                  // 参数个数（F10: 含默认参数的总数）
+    int requiredArity = 0;          // F10: 必需参数个数（无默认值的前缀参数数量）
+    std::vector<uint16_t> defaultConstIndices;  // F10: 默认参数值的常量池索引（仅尾部有默认值的参数）
     std::vector<int> ipToInstrIndex; // 预计算：字节偏移 → 指令索引映射
     std::vector<std::string> fieldOrder; // 方法所属类的字段声明顺序（用于 OP_METHOD_CALL 栈布局）
     int localCount = 0;              // 局部变量总槽位数（含参数/this/字段/方法体内var声明），用于 VM 帧创建时预分配栈空间
@@ -191,7 +201,7 @@ struct BytecodeChunk {
 
     BytecodeChunk() = default;
     explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)
-        : name(chunkName), arity(argCount) {}
+        : name(chunkName), arity(argCount), requiredArity(argCount) {}
 
     /// C21: 预分配字节码空间，避免编译期间频繁 realloc
     void reserveCode(size_t estimatedBytes) {
@@ -344,6 +354,9 @@ public:
             /* 63 OP_GET_UPVALUE            */ 2,
             /* 64 OP_SET_UPVALUE            */ 2,
             /* 65 OP_CLOSE_UPVALUE          */ 2,
+            /* 66 OP_TRY_BEGIN              */ 3,
+            /* 67 OP_TRY_END                */ 1,
+            /* 68 OP_THROW                  */ 1,
         };
         auto idx = static_cast<uint8_t>(op);
         if (idx < sizeof(sizes)) return sizes[idx];
@@ -674,6 +687,20 @@ public:
             offset += 2;
             break;
         }
+        case OpCode::OP_TRY_BEGIN: {
+            uint16_t off = code[offset + 1] | (code[offset + 2] << 8);
+            str += "OP_TRY_BEGIN catchOffset=" + std::to_string(off);
+            offset += 3;
+            break;
+        }
+        case OpCode::OP_TRY_END:
+            str += "OP_TRY_END";
+            offset += 1;
+            break;
+        case OpCode::OP_THROW:
+            str += "OP_THROW";
+            offset += 1;
+            break;
         default:
             str += "OP_UNKNOWN(" + std::to_string(static_cast<int>(op)) + ")";
             offset += 1;

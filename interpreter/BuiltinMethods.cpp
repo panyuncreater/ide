@@ -10,6 +10,7 @@
 
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/Interpreter.h"  // RuntimeError 定义
+#include "interpreter/NumericUtils.h"  // BUG9 fix: 溢出检查
 #include <cctype>
 #include <cstdint>
 #include <string>
@@ -89,6 +90,148 @@ SharedBuiltinResult executeSharedDictHas(const Value& dict,
 }
 
 // ============================================================
+// 字符串方法共享层实现（供 Interpreter 和 VM 共用）
+// ============================================================
+
+SharedBuiltinResult executeSharedStrStartsWith(const Value& str,
+                                                const Value* args, size_t argCount,
+                                                int line, int column) {
+    SharedBuiltinResult r;
+    if (argCount != 1) {
+        r.isError = true;
+        r.errorMessage = "startsWith 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个";
+        r.errorLine = line; r.errorColumn = column;
+        return r;
+    }
+    const std::string& prefix = args[0].toString();
+    const std::string& s = str.stringVal();
+    r.result = Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0);
+    return r;
+}
+
+SharedBuiltinResult executeSharedStrEndsWith(const Value& str,
+                                              const Value* args, size_t argCount,
+                                              int line, int column) {
+    SharedBuiltinResult r;
+    if (argCount != 1) {
+        r.isError = true;
+        r.errorMessage = "endsWith 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个";
+        r.errorLine = line; r.errorColumn = column;
+        return r;
+    }
+    const std::string& suffix = args[0].toString();
+    const std::string& s = str.stringVal();
+    r.result = Value(s.size() >= suffix.size() &&
+                     s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
+    return r;
+}
+
+SharedBuiltinResult executeSharedStrSubstr(const Value& str,
+                                            const Value* args, size_t argCount,
+                                            int line, int column) {
+    SharedBuiltinResult r;
+    if (argCount < 1 || argCount > 2) {
+        r.isError = true;
+        r.errorMessage = "substr 期望 1-2 个参数(起始[, 长度])，但传入了 " + std::to_string(argCount) + " 个";
+        r.errorLine = line; r.errorColumn = column;
+        return r;
+    }
+    if (!args[0].isInt()) {
+        r.isError = true;
+        r.errorMessage = "substr 起始位置必须是整数";
+        r.errorLine = line; r.errorColumn = column;
+        return r;
+    }
+    int64_t start = args[0].intVal();
+    const std::string& s = str.stringVal();
+
+    // BUG 1.1 fix: 将码位索引转换为字节索引，与 len()/indexOf() 的码位语义一致
+    auto codepointToByte = [](const std::string& str, int64_t cpIdx) -> size_t {
+        size_t bytePos = 0;
+        int64_t cp = 0;
+        while (bytePos < str.size() && cp < cpIdx) {
+            unsigned char c = static_cast<unsigned char>(str[bytePos]);
+            bytePos += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                       ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+            cp++;
+        }
+        return bytePos;
+    };
+
+    // 计算字符串的码位总数
+    auto codepointCount = [](const std::string& str) -> int64_t {
+        int64_t count = 0;
+        for (size_t i = 0; i < str.size(); ) {
+            unsigned char c = static_cast<unsigned char>(str[i]);
+            i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+            count++;
+        }
+        return count;
+    };
+
+    int64_t totalCp = codepointCount(s);
+    if (start < 0 || start > totalCp) {
+        r.result = Value(std::string(""));
+        return r;
+    }
+
+    size_t byteStart = codepointToByte(s, start);
+
+    if (argCount == 2) {
+        if (!args[1].isInt()) {
+            r.isError = true;
+            r.errorMessage = "substr 长度必须是整数";
+            r.errorLine = line; r.errorColumn = column;
+            return r;
+        }
+        int64_t len = args[1].intVal();
+        if (len < 0) {
+            r.isError = true;
+            r.errorMessage = "substr 长度不能为负数";
+            r.errorLine = line; r.errorColumn = column;
+            return r;
+        }
+        // 截取 len 个码位
+        size_t byteEnd = codepointToByte(s, start + len);
+        if (byteEnd > s.size()) byteEnd = s.size();
+        r.result = Value(s.substr(byteStart, byteEnd - byteStart));
+    } else {
+        r.result = Value(s.substr(byteStart));
+    }
+    return r;
+}
+
+SharedBuiltinResult executeSharedStrIndexOf(const Value& str,
+                                             const Value* args, size_t argCount,
+                                             int line, int column) {
+    SharedBuiltinResult r;
+    if (argCount != 1) {
+        r.isError = true;
+        r.errorMessage = "indexOf 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个";
+        r.errorLine = line; r.errorColumn = column;
+        return r;
+    }
+    // M2 fix: 返回 UTF-8 字符位置而非字节位置
+    const std::string& s = str.stringVal();
+    const std::string& needle = args[0].toString();
+    size_t bytePos = s.find(needle);
+    if (bytePos == std::string::npos) {
+        r.result = Value(static_cast<int64_t>(-1));
+    } else {
+        int64_t charIdx = 0;
+        for (size_t b = 0; b < bytePos; ) {
+            unsigned char c = static_cast<unsigned char>(s[b]);
+            b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
+                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
+            charIdx++;
+        }
+        r.result = Value(charIdx);
+    }
+    return r;
+}
+
+// ============================================================
 // 顶层内置函数共享层实现
 // ============================================================
 
@@ -153,8 +296,16 @@ SharedBuiltinResult executeSharedBuiltinFunction(
         if (v.isInt()) {
             r.result = v;
         } else if (v.isFloat()) {
+            // BUG 9.3 fix: 浮点转整数溢出检查
+            double dv = v.floatVal();
+            if (OverflowCheck::doubleToIntOverflow(dv)) {
+                r.isError = true;
+                r.errorMessage = "int 转换溢出: " + std::to_string(dv) + " 超出 int64_t 范围";
+                r.errorLine = line; r.errorColumn = column;
+                return r;
+            }
             // 截断小数部分（向零取整，与 C++ static_cast 一致）
-            r.result = Value(static_cast<int64_t>(v.floatVal()));
+            r.result = Value(static_cast<int64_t>(dv));
         } else if (v.isBool()) {
             r.result = Value(static_cast<int64_t>(v.boolVal() ? 1 : 0));
         } else if (v.isString()) {
@@ -197,6 +348,13 @@ SharedBuiltinResult executeSharedBuiltinFunction(
         const Value& v = args[0];
         if (v.isInt()) {
             int64_t iv = v.intVal();
+            // BUG 9.1 fix: abs(INT64_MIN) 会导致整数溢出（C++ UB）
+            if (OverflowCheck::negateOverflow(iv)) {
+                r.isError = true;
+                r.errorMessage = "abs 溢出: INT64_MIN 的绝对值无法表示";
+                r.errorLine = line; r.errorColumn = column;
+                return r;
+            }
             r.result = Value(iv < 0 ? -iv : iv);
         } else if (v.isFloat()) {
             double dv = v.floatVal();
@@ -323,6 +481,13 @@ SharedBuiltinResult executeSharedBuiltinFunction(
         if (allInt) {
             int64_t total = 0;
             for (const auto& elem : arr) {
+                // BUG 9.2 fix: 累加溢出检查
+                if (OverflowCheck::addOverflow(total, elem.intVal())) {
+                    r.isError = true;
+                    r.errorMessage = "sum 整数累加溢出";
+                    r.errorLine = line; r.errorColumn = column;
+                    return r;
+                }
                 total += elem.intVal();
             }
             r.result = Value(total);
@@ -598,6 +763,28 @@ BuiltinMethodResult BuiltinMethods::handleStringMethod(
         if (args.size() != 1)
             throw RuntimeError("contains 期望 1 个参数", line, col);
         return BuiltinMethodResult(Value(obj.stringVal().find(args[0].toString()) != std::string::npos));
+    }
+
+    // F5 fix: 补齐 startsWith/endsWith/substr/indexOf，与 VM 保持一致
+    if (method == "startsWith") {
+        auto sr = executeSharedStrStartsWith(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
+    }
+    if (method == "endsWith") {
+        auto sr = executeSharedStrEndsWith(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
+    }
+    if (method == "substr") {
+        auto sr = executeSharedStrSubstr(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
+    }
+    if (method == "indexOf") {
+        auto sr = executeSharedStrIndexOf(obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
+        if (sr.isError) throw RuntimeError(sr.errorMessage, sr.errorLine, sr.errorColumn);
+        return BuiltinMethodResult(std::move(sr.result));
     }
     throw RuntimeError("字符串没有方法 " + method, line, col);
 }

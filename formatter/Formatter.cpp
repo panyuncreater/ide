@@ -12,7 +12,9 @@ Formatter::Formatter() {}
 void Formatter::setComments(const std::vector<Token>& tokens) {
     comments_.clear();
     for (const auto& tok : tokens) {
-        if (tok.type == TokenType::TK_LINE_COMMENT) {
+        // P1 fix: 同时收集行注释和块注释，避免块注释格式化后丢失
+        if (tok.type == TokenType::TK_LINE_COMMENT ||
+            tok.type == TokenType::TK_BLOCK_COMMENT) {
             comments_.push_back(tok);
         }
     }
@@ -101,7 +103,23 @@ static bool isSelfTerminating(ASTNode* node) {
     case NodeType::NODE_FUN_DECL:
     case NodeType::NODE_CLASS_DECL:
     case NodeType::NODE_BLOCK:
+    case NodeType::NODE_TRY_STMT:       // P0 fix: try/catch 以 } 结尾，自终止
         return true;
+    case NodeType::NODE_IMPORT_STMT:    // P0 fix: visitImportStmt 已自行添加 ;
+        return true;
+    case NodeType::NODE_EXPORT_STMT: {
+        // P0 fix: export 的自终止性取决于内层声明类型
+        // export var x = 1 需要额外 ;，export fun/class 不需要
+        auto* exportNode = static_cast<ExportStmt*>(node);
+        if (exportNode->declaration) {
+            auto innerType = exportNode->declaration->nodeType;
+            if (innerType == NodeType::NODE_FUN_DECL ||
+                innerType == NodeType::NODE_CLASS_DECL) {
+                return true;
+            }
+        }
+        return false;
+    }
     default:
         return false;
     }
@@ -279,6 +297,44 @@ Value Formatter::visitBreakStmt(BreakStmt& /*node*/) {
 
 Value Formatter::visitContinueStmt(ContinueStmt& /*node*/) {
     lastFormatResult_ = "continue";
+    return Value::nullValue();
+}
+
+Value Formatter::visitThrowStmt(ThrowStmt& node) {
+    std::string result = "throw";
+    if (node.expression) {
+        result += " " + formatNode(node.expression.get());
+    }
+    lastFormatResult_ = result;
+    return Value::nullValue();
+}
+
+Value Formatter::visitTryStmt(TryStmt& node) {
+    // P2 fix: visitBlock 以 " {" 开头，"try" 后无需额外空格
+    std::string result = "try" + formatNode(node.tryBlock.get());
+    result += " catch (" + node.catchVarName + ")" + formatNode(node.catchBlock.get());
+    lastFormatResult_ = result;
+    return Value::nullValue();
+}
+
+Value Formatter::visitImportStmt(ImportStmt& node) {
+    std::string result = "import ";
+    if (!node.importAll && !node.names.empty()) {
+        result += "{ ";
+        for (size_t i = 0; i < node.names.size(); ++i) {
+            if (i > 0) result += ", ";
+            result += node.names[i];
+        }
+        result += " } from ";
+    }
+    result += "\"" + node.modulePath + "\";";
+    lastFormatResult_ = result;
+    return Value::nullValue();
+}
+
+Value Formatter::visitExportStmt(ExportStmt& node) {
+    std::string result = "export " + formatNode(node.declaration.get());
+    lastFormatResult_ = result;
     return Value::nullValue();
 }
 
@@ -522,6 +578,10 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
         if (!node.paramTypes.empty() && i < node.paramTypes.size() && !node.paramTypes[i].empty()) {
             result += ": " + node.paramTypes[i];
         }
+        // F10: 格式化默认参数值
+        if (i < node.defaultValues.size() && node.defaultValues[i]) {
+            result += " = " + formatNode(node.defaultValues[i].get());
+        }
     }
     result += ")";
     if (!node.returnType.empty()) {
@@ -602,10 +662,13 @@ std::string Formatter::formatBlock(Block& node) {
             commentIndex_++;
         }
 
-        // 函数/类声明之间加空行
-        if (options_.blankLineBetweenFunctions && i > 0 && isSelfTerminating(stmt)) {
-            ASTNode* prev = node.statements[i - 1].get();
-            if (isSelfTerminating(prev)) {
+        // 函数/类声明前加空行（BUG1 fix: 原代码在任意自终止语句间插入空行）
+        if (options_.blankLineBetweenFunctions && i > 0) {
+            auto isFunOrClass = [](ASTNode* n) {
+                return n && (n->nodeType == NodeType::NODE_FUN_DECL ||
+                             n->nodeType == NodeType::NODE_CLASS_DECL);
+            };
+            if (isFunOrClass(stmt)) {
                 result += "\n";
             }
         }

@@ -242,9 +242,30 @@ bool ReplPanel::isInputComplete(const QString& input) {
     int parenDepth = 0;   // ()
     int bracketDepth = 0; // []
     bool inString = false;
+    bool inBlockComment = false;  // BUG-R2 fix: 跟踪块注释状态
+    bool inLineComment = false;
+    int tryCount = 0;     // BUG-R1 fix: 跟踪 try/catch 配对
+    int catchCount = 0;
 
     for (int i = 0; i < input.length(); ++i) {
         QChar c = input[i];
+
+        // 处理块注释（跳过内部字符）
+        if (inBlockComment) {
+            if (c == '*' && i + 1 < input.length() && input[i + 1] == '/') {
+                inBlockComment = false;
+                ++i;
+            }
+            continue;
+        }
+
+        // 处理行注释（跳过内部字符）
+        if (inLineComment) {
+            if (c == '\n') {
+                inLineComment = false;
+            }
+            continue;
+        }
 
         // 处理字符串字面量（跳过内部字符）
         if (inString) {
@@ -263,10 +284,35 @@ bool ReplPanel::isInputComplete(const QString& input) {
             continue;
         }
 
-        // 跳过行注释
-        if (c == '/' && i + 1 < input.length() && input[i + 1] == '/') {
-            // 跳到行尾
-            while (i < input.length() && input[i] != '\n') ++i;
+        // 注释起始检测
+        if (c == '/' && i + 1 < input.length()) {
+            if (input[i + 1] == '/') {
+                inLineComment = true;
+                ++i;
+                continue;
+            }
+            if (input[i + 1] == '*') {
+                inBlockComment = true;
+                ++i;
+                continue;
+            }
+        }
+
+        // BUG-R1 fix: 识别 try/catch 关键字以检测缺失的 catch
+        if (c.isLetter() || c == '_') {
+            int start = i;
+            while (i < input.length() && (input[i].isLetterOrNumber() || input[i] == '_')) {
+                ++i;
+            }
+            int len = i - start;
+            // 仅匹配完整单词 "try" / "catch"，避免匹配 "trying" / "catcher"
+            if (len == 3 && input[start] == 't' && input[start + 1] == 'r' && input[start + 2] == 'y') {
+                ++tryCount;
+            } else if (len == 5 && input[start] == 'c' && input[start + 1] == 'a' &&
+                       input[start + 2] == 't' && input[start + 3] == 'c' && input[start + 4] == 'h') {
+                ++catchCount;
+            }
+            --i; // 补偿 for 循环的 ++i
             continue;
         }
 
@@ -280,7 +326,16 @@ bool ReplPanel::isInputComplete(const QString& input) {
         }
     }
 
-    return !inString && braceDepth == 0 && parenDepth == 0 && bracketDepth == 0;
+    // BUG-R2 fix: 未闭合的块注释视为输入不完整
+    if (inBlockComment) return false;
+    // 未闭合的字符串
+    if (inString) return false;
+    // 括号不匹配
+    if (braceDepth != 0 || parenDepth != 0 || bracketDepth != 0) return false;
+    // BUG-R1 fix: try 缺少 catch 视为输入不完整
+    if (tryCount > catchCount) return false;
+
+    return true;
 }
 
 bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {

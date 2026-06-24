@@ -48,19 +48,19 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 102,
+				"line" : 104,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 148,
+				"line" : 150,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 115,
+				"line" : 117,
 				"parent" : 0
 			},
 			{
@@ -188,19 +188,19 @@
 			{
 				"command" : 9,
 				"file" : 0,
-				"line" : 123,
+				"line" : 125,
 				"parent" : 0
 			},
 			{
 				"command" : 10,
 				"file" : 0,
-				"line" : 134,
+				"line" : 136,
 				"parent" : 0
 			},
 			{
 				"command" : 11,
 				"file" : 0,
-				"line" : 111,
+				"line" : 113,
 				"parent" : 0
 			}
 		]
@@ -381,7 +381,8 @@
 				10,
 				11,
 				12,
-				14
+				13,
+				15
 			]
 		}
 	],
@@ -392,11 +393,11 @@
 			"id" : "minilang_core::@6890427a1f51a3e7e1df"
 		},
 		{
-			"backtrace" : 0,
-			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
+			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
+			"backtrace" : 0,
+			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
 		}
 	],
 	"id" : "minilang_ide::@6890427a1f51a3e7e1df",
@@ -530,11 +531,11 @@
 			"id" : "Qt6::uic::@6890427a1f51a3e7e1df"
 		},
 		{
-			"backtrace" : 0,
-			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
+			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
+			"backtrace" : 0,
+			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
 		}
 	],
 	"paths" : 
@@ -560,7 +561,8 @@
 				10,
 				11,
 				12,
-				14
+				13,
+				15
 			]
 		},
 		{
@@ -568,15 +570,15 @@
 			"sourceIndexes" : 
 			[
 				5,
-				13
+				14
 			]
 		},
 		{
 			"name" : "CMake Rules",
 			"sourceIndexes" : 
 			[
-				15,
-				16
+				16,
+				17
 			]
 		}
 	],
@@ -658,6 +660,12 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
 			"path" : "gui/VmStackPanel.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "gui/FindReplacePanel.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{

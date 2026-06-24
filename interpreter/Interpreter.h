@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "interpreter/Value.h"
 #include "interpreter/Environment.h"
@@ -46,6 +47,15 @@ public:
 class ContinueException : public std::runtime_error {
 public:
     ContinueException() : std::runtime_error("continue") {}
+};
+
+/// throw 语句专用异常（用于 try/catch 捕获）
+class ThrowException : public std::runtime_error {
+public:
+    Value thrownValue;
+
+    ThrowException(Value val)
+        : std::runtime_error("throw"), thrownValue(std::move(val)) {}
 };
 
 /// 调试终止异常（用户点击停止按钮时抛出）
@@ -120,6 +130,13 @@ public:
     /// 回调接收提示字符串，返回用户输入的字符串
     void setInputCallback(std::function<std::string(const std::string&)> callback);
 
+    /// F12: 设置模块加载回调（用于 import 语句）
+    /// 回调接收模块路径，返回模块源代码内容。若模块不存在则返回空字符串。
+    void setModuleLoader(std::function<std::string(const std::string&)> loader);
+
+    /// F12: 设置当前文件路径（用于解析相对 import 路径）
+    void setCurrentFilePath(const std::string& path);
+
     /// 设置调试控制器
     void setDebugger(DebugController* dbg);
 
@@ -179,6 +196,10 @@ public:
     Value visitSuperExpr(SuperExpr& node) override;
     Value visitBreakStmt(BreakStmt& node) override;
     Value visitContinueStmt(ContinueStmt& node) override;
+    Value visitTryStmt(TryStmt& node) override;
+    Value visitThrowStmt(ThrowStmt& node) override;
+    Value visitImportStmt(ImportStmt& node) override;
+    Value visitExportStmt(ExportStmt& node) override;
 
 private:
     // 运行时限制常量（替代散布在代码中的魔法数字）
@@ -196,6 +217,12 @@ private:
     bool debugMode_ = false;                        // 是否处于调试模式（快速跳过 checkBreak）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
+    std::function<std::string(const std::string&)> moduleLoader_; // F12: 模块加载回调
+    std::string currentFilePath_;                             // F12: 当前文件路径
+    std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache_; // F12: 模块缓存
+    std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_; // F12: 模块导出名称缓存
+    std::vector<std::string> moduleLoadingStack_;             // F12: 模块加载栈（循环依赖检测）
+    std::unordered_set<std::string> exportedNames_;           // F12: 当前模块的导出名称集合
     DiagnosticBag diagnostics_;                        // 诊断收集器
     int recursionDepth_ = 0;                        // 递归深度
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
@@ -209,6 +236,14 @@ private:
     std::shared_ptr<Environment> savedGlobalEnv_;
     std::unordered_map<std::string, ClassInfo> savedClassRegistry_;
     std::vector<std::unique_ptr<Block>> savedReplAsts_;
+    // BUG7 fix: 保存 funRegistry_ 以避免 Run→REPL 切换后函数注册表丢失
+    std::unordered_map<std::string, FunDecl*> savedFunRegistry_;
+    int savedFunRegistryGen_ = 0;
+    // P1-1 fix: 模块相关状态暂存（避免 Run→REPL 切换后悬垂指针）
+    std::unordered_map<std::string, std::shared_ptr<Environment>> savedModuleCache_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> savedModuleExports_;
+    std::unordered_set<std::string> savedExportedNames_;
+    std::vector<std::string> savedModuleLoadingStack_;
 
     /// 执行单个节点
     Value evaluate(ASTNode* node);

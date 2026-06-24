@@ -524,7 +524,7 @@ Value Compiler::visitWhileStmt(WhileStmt& node) {
 
     // break/continue 循环上下文：while 的 continue 跳回 loopStart（条件检查）
     // break 跳转目标在循环编译完成后回填（跳过出口 OP_POP，因 break 时条件值已弹出）
-    loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, false, 0});
+    loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, false, 0, tryDepth_});
 
     // 编译循环体
     compileStatement(node.body.get());
@@ -710,6 +710,8 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     // 设置函数编译上下文
     chunk_ = BytecodeChunk(node.name, static_cast<int>(node.params.size()));
     chunk_.reserveCode(256);
+    // F10: 设置必需参数个数和默认值常量索引
+    chunk_.requiredArity = node.requiredParamCount;
     varIndex_.clear();
     currentLocals_.clear();
     currentUpvalues_.clear();  // VM-05/06: 新的 upvalue 列表
@@ -753,6 +755,62 @@ Value Compiler::visitFunDecl(FunDecl& node) {
 
     // 记录局部变量总槽位数
     chunk_.localCount = peakLocals_;
+
+    // F10: 编译默认参数值为常量
+    // 仅支持字面量（Number/String/Bool/Null）和负数字面量，复杂表达式需通过 Interpreter 执行
+    for (size_t i = 0; i < node.defaultValues.size(); ++i) {
+        if (node.defaultValues[i]) {
+            const ASTNode* dv = node.defaultValues[i].get();
+            Value constVal;
+            bool isConst = false;
+
+            if (dv->nodeType == NodeType::NODE_NUMBER_LITERAL) {
+                constVal = static_cast<const NumberLiteral*>(dv)->value;
+                isConst = true;
+            } else if (dv->nodeType == NodeType::NODE_STRING_LITERAL) {
+                constVal = Value(static_cast<const StringLiteral*>(dv)->value);
+                isConst = true;
+            } else if (dv->nodeType == NodeType::NODE_BOOL_LITERAL) {
+                constVal = Value(static_cast<const BoolLiteral*>(dv)->value);
+                isConst = true;
+            } else if (dv->nodeType == NodeType::NODE_NULL_LITERAL) {
+                constVal = Value::nullValue();
+                isConst = true;
+            } else if (dv->nodeType == NodeType::NODE_UNARY_OP) {
+                // 支持负数字面量: -42, -3.14, --5 (双重否定)
+                // C-P2-2 fix: 递归折叠嵌套一元运算，使 --5 等价于 5
+                const ASTNode* cur = dv;
+                int negateCount = 0;
+                while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
+                    const auto* unary = static_cast<const UnaryOp*>(cur);
+                    if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) break;
+                    ++negateCount;
+                    cur = unary->operand.get();
+                }
+                if (cur && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0) {
+                    const Value& numVal = static_cast<const NumberLiteral*>(cur)->value;
+                    if (numVal.isInt()) {
+                        int64_t v = numVal.intVal();
+                        // 奇数次取反为负，偶数次为正
+                        constVal = Value((negateCount % 2 == 1) ? -v : v);
+                    } else {
+                        double v = numVal.floatVal();
+                        constVal = Value((negateCount % 2 == 1) ? -v : v);
+                    }
+                    isConst = true;
+                }
+            }
+
+            if (isConst) {
+                uint16_t constIdx = chunk_.addConstant(constVal);
+                chunk_.defaultConstIndices.push_back(constIdx);
+            } else {
+                // 复杂表达式默认值：VM 不支持，记录无效索引（0xFFFF）
+                // Interpreter 路径仍可正常执行
+                chunk_.defaultConstIndices.push_back(0xFFFF);
+            }
+        }
+    }
 
     // VM-05/06: 将 upvalue 描述符附加到函数 chunk
     chunk_.upvalues = std::move(currentUpvalues_);
@@ -897,6 +955,10 @@ Value Compiler::visitBreakStmt(BreakStmt& node) {
         error("break 只能在循环体内使用", node.line, 0);
         return Value::nullValue();
     }
+    // P0-4 fix: break 跳出 try 块时需发射 OP_TRY_END 弹出 tryStack_ handler
+    for (int i = 0; i < tryDepth_; ++i) {
+        chunk_.writeOp(OpCode::OP_TRY_END, node.line);
+    }
     // 发射 OP_JUMP，目标在循环编译完成后回填
     size_t patch = chunk_.code.size();
     chunk_.writeOp(OpCode::OP_JUMP, node.line);
@@ -910,11 +972,166 @@ Value Compiler::visitContinueStmt(ContinueStmt& node) {
         error("continue 只能在循环体内使用", node.line, 0);
         return Value::nullValue();
     }
+    // BUG1 fix: 只弹出循环内部的 try handler
+    int tryDepthInLoop = tryDepth_ - loopStack_.back().tryDepthAtStart;
+    for (int i = 0; i < tryDepthInLoop; ++i) {
+        chunk_.writeOp(OpCode::OP_TRY_END, node.line);
+    }
     // 发射 OP_JUMP，目标在循环编译完成后回填
     size_t patch = chunk_.code.size();
     chunk_.writeOp(OpCode::OP_JUMP, node.line);
     chunk_.writeShort(0, node.line);
     loopStack_.back().continueJumps.push_back(patch);
+    return Value::nullValue();
+}
+
+Value Compiler::visitThrowStmt(ThrowStmt& node) {
+    // 编译抛出表达式，将值推入栈顶
+    if (node.expression) {
+        compileNode(node.expression.get());
+    } else {
+        chunk_.writeOp(OpCode::OP_NULL, node.line);
+    }
+    // OP_THROW 弹出栈顶值并触发异常传播
+    chunk_.writeOp(OpCode::OP_THROW, node.line);
+    return Value::nullValue();
+}
+
+Value Compiler::visitImportStmt(ImportStmt& node) {
+    // F12: VM 不支持模块加载，编译为运行时错误
+    // 模块系统由 Interpreter 层处理，VM 编译时发出警告但不阻止编译
+    error("VM 不支持 import 语句，请使用解释器模式", node.line, 0);
+    return Value::nullValue();
+}
+
+Value Compiler::visitExportStmt(ExportStmt& node) {
+    // F12: export 在 VM 中等价于普通声明（导出语义由 Interpreter 处理）
+    if (node.declaration) {
+        compileNode(node.declaration.get());
+    }
+    return Value::nullValue();
+}
+
+Value Compiler::visitTryStmt(TryStmt& node) {
+    // 编译模式:
+    //   OP_TRY_BEGIN <catchOffset>
+    //   <try block>
+    //   OP_TRY_END
+    //   OP_JUMP <afterCatch>
+    // catchIp:
+    //   <bind exception to catchVar>
+    //   <catch block>
+    // afterCatch:
+
+    // 1. 发射 OP_TRY_BEGIN（catchOffset 占位，稍后回填）
+    size_t tryBeginIp = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
+    size_t catchOffsetPatch = chunk_.code.size();
+    chunk_.writeShort(0, node.line);  // 占位
+
+    // 2. 编译 try 块
+    // P0-4 fix: 增加 tryDepth_，使 break/continue 能发射 OP_TRY_END
+    ++tryDepth_;
+    if (node.tryBlock) {
+        compileNode(node.tryBlock.get());
+    }
+    --tryDepth_;
+
+    // 3. try 块正常结束：弹出 try 处理器，跳过 catch 块
+    chunk_.writeOp(OpCode::OP_TRY_END, node.line);
+    size_t skipCatchJumpPatch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP, node.line);
+    chunk_.writeShort(0, node.line);  // 占位
+
+    // 4. 回填 catchOffset
+    size_t catchIp = chunk_.code.size();
+    size_t catchOffset = catchIp - (tryBeginIp + 3);
+    // P1-3 fix: 检查 catchOffset 是否溢出 uint16_t
+    if (catchOffset > 65535) {
+        error("try 块过大，catch 偏移溢出 65535", node.line, 0);
+        return Value::nullValue();
+    }
+    chunk_.code[catchOffsetPatch] = static_cast<uint8_t>(catchOffset & 0xFF);
+    chunk_.code[catchOffsetPatch + 1] = static_cast<uint8_t>((catchOffset >> 8) & 0xFF);
+
+    // 5. 在 catchIp 处：异常值已在栈顶，绑定到 catch 变量
+    // BUG 7a/7b/7c fix: catch 变量应 shadow 外层同名变量，不覆盖其值；
+    // 顶层 catch 变量在 catch 块结束后清理，不泄漏到外层作用域
+    auto savedCatchLocals = currentLocals_;
+    bool needCatchVarCleanup = false;
+    bool hasShadowedGlobal = false;
+    int shadowedGlobalSlot = -1;
+    std::string shadowedSaveName;
+
+    if (inFunction_) {
+        // 函数内：始终分配新局部变量槽位（shadow 外层同名变量，不覆盖其值）
+        int slot = static_cast<int>(currentLocals_.size());
+        if (slot > 255) {
+            error("函数局部变量数量超过限制", node.line, 0);
+            return Value::nullValue();
+        }
+        currentLocals_[node.catchVarName] = slot;
+        peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
+        chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
+        chunk_.write(static_cast<uint8_t>(slot), node.line);
+        chunk_.writeOp(OpCode::OP_POP, node.line);
+    } else {
+        // 顶层：使用块作用域变量（OP_DEFINE_VAR），不覆盖已有全局变量
+        shadowedGlobalSlot = (blockDepth_ > 0) ? -1 : lookupGlobalSlot(node.catchVarName);
+        if (shadowedGlobalSlot >= 0) {
+            // 保存被遮蔽的全局值到临时变量
+            hasShadowedGlobal = true;
+            shadowedSaveName = "__catch_save_" + std::to_string(blockSaveCounter_++) + "_" + node.catchVarName;
+            uint16_t saveIdx = identifierIndex(shadowedSaveName);
+            chunk_.writeOp(OpCode::OP_GET_GLOBAL, node.line);
+            chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
+            chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+            chunk_.writeShort(saveIdx, node.line);
+            globalSlots_.erase(node.catchVarName);
+        }
+        // 定义 catch 变量
+        uint16_t nameIdx = identifierIndex(node.catchVarName);
+        chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+        chunk_.writeShort(nameIdx, node.line);
+        needCatchVarCleanup = true;
+    }
+
+    // 6. 编译 catch 块
+    if (node.catchBlock) {
+        compileNode(node.catchBlock.get());
+    }
+
+    // 7. 清理顶层 catch 变量并恢复被遮蔽的全局值
+    if (needCatchVarCleanup) {
+        uint16_t nameIdx = identifierIndex(node.catchVarName);
+        chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+        chunk_.writeShort(nameIdx, node.line);
+    }
+    if (hasShadowedGlobal) {
+        uint16_t saveIdx = identifierIndex(shadowedSaveName);
+        chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+        chunk_.writeShort(saveIdx, node.line);
+        chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
+        chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
+        chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+        chunk_.writeShort(saveIdx, node.line);
+        globalSlots_[node.catchVarName] = shadowedGlobalSlot;
+    }
+
+    // 恢复 currentLocals_，使 catch 变量不泄漏到外层作用域
+    currentLocals_ = std::move(savedCatchLocals);
+
+    // 7. 回填跳过 catch 块的跳转目标（OP_JUMP 使用绝对地址）
+    size_t afterCatch = chunk_.code.size();
+    // P1-3 fix: 检查 afterCatch 是否溢出 uint16_t
+    if (afterCatch > 65535) {
+        error("代码量过大，跳转目标溢出 65535", node.line, 0);
+        return Value::nullValue();
+    }
+    uint16_t afterCatchTarget = static_cast<uint16_t>(afterCatch);
+    chunk_.code[skipCatchJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
+    chunk_.code[skipCatchJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
+
     return Value::nullValue();
 }
 
@@ -1233,6 +1450,8 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
         chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
+        // F10: 设置必需参数个数
+        chunk_.requiredArity = funDecl->requiredParamCount;
         varIndex_.clear();
         currentLocals_.clear();
         currentUpvalues_.clear();  // C-P2-10 fix: 方法编译使用独立的 upvalue 列表
@@ -1294,6 +1513,57 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
 
         // 记录局部变量总槽位数（含 this/字段/参数和方法体内 var 声明），供 VM 预分配栈空间
         chunk_.localCount = peakLocals_;
+
+        // F10: 编译默认参数值为常量（与 visitFunDecl 一致）
+        for (size_t i = 0; i < funDecl->defaultValues.size(); ++i) {
+            if (funDecl->defaultValues[i]) {
+                const ASTNode* dv = funDecl->defaultValues[i].get();
+                Value constVal;
+                bool isConst = false;
+
+                if (dv->nodeType == NodeType::NODE_NUMBER_LITERAL) {
+                    constVal = static_cast<const NumberLiteral*>(dv)->value;
+                    isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_STRING_LITERAL) {
+                    constVal = Value(static_cast<const StringLiteral*>(dv)->value);
+                    isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_BOOL_LITERAL) {
+                    constVal = Value(static_cast<const BoolLiteral*>(dv)->value);
+                    isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_NULL_LITERAL) {
+                    constVal = Value::nullValue();
+                    isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_UNARY_OP) {
+                    // BUG 6a fix: 递归折叠嵌套一元取反，与 visitFunDecl 保持一致
+                    const ASTNode* cur = dv;
+                    int negateCount = 0;
+                    while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
+                        const auto* unary = static_cast<const UnaryOp*>(cur);
+                        if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) break;
+                        ++negateCount;
+                        cur = unary->operand.get();
+                    }
+                    if (cur && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0) {
+                        const Value& numVal = static_cast<const NumberLiteral*>(cur)->value;
+                        if (numVal.isInt()) {
+                            int64_t v = numVal.intVal();
+                            constVal = Value((negateCount % 2 == 1) ? -v : v);
+                        } else {
+                            double v = numVal.floatVal();
+                            constVal = Value((negateCount % 2 == 1) ? -v : v);
+                        }
+                        isConst = true;
+                    }
+                }
+
+                if (isConst) {
+                    uint16_t constIdx = chunk_.addConstant(constVal);
+                    chunk_.defaultConstIndices.push_back(constIdx);
+                } else {
+                    chunk_.defaultConstIndices.push_back(0xFFFF);
+                }
+            }
+        }
 
         functionChunks_[methodKey] = std::move(chunk_);
 

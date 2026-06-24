@@ -13,6 +13,8 @@ enum class TokenType {
     TK_VAR, TK_FUN, TK_IF, TK_ELSE, TK_WHILE, TK_FOR, TK_RETURN,
     TK_TRUE, TK_FALSE, TK_AND, TK_OR, TK_NOT, TK_PRINT,
     TK_BREAK, TK_CONTINUE,
+    TK_TRY, TK_CATCH, TK_THROW,
+    TK_IMPORT, TK_FROM, TK_EXPORT,
     // 类型关键字
     TK_INT, TK_FLOAT, TK_BOOL, TK_STRING_TYPE,
     // 新增关键字
@@ -40,7 +42,11 @@ enum class TokenType {
     TK_COLON,       // :
     TK_DOT,         // .
     // 特殊
-    TK_EOF, TK_ERROR, TK_LINE_COMMENT, TK_BLOCK_COMMENT
+    TK_EOF, TK_ERROR, TK_LINE_COMMENT, TK_BLOCK_COMMENT,
+    // F7: 字符串插值 "Hello {name}" 的分隔标记
+    TK_INTERP_START,  // {
+    TK_INTERP_END,    // }
+    TK_STRING_PART    // 插值字符串的文本片段（非终结字符串字面量）
 };
 
 /// Token 结构体
@@ -75,6 +81,12 @@ struct Token {
         case TokenType::TK_PRINT:       return "PRINT";
         case TokenType::TK_BREAK:       return "BREAK";
         case TokenType::TK_CONTINUE:    return "CONTINUE";
+        case TokenType::TK_TRY:         return "TRY";
+        case TokenType::TK_CATCH:       return "CATCH";
+        case TokenType::TK_THROW:       return "THROW";
+        case TokenType::TK_IMPORT:      return "IMPORT";
+        case TokenType::TK_FROM:        return "FROM";
+        case TokenType::TK_EXPORT:      return "EXPORT";
         case TokenType::TK_INT:         return "INT_TYPE";
         case TokenType::TK_FLOAT:       return "FLOAT_TYPE";
         case TokenType::TK_BOOL:        return "BOOL_TYPE";
@@ -117,6 +129,9 @@ struct Token {
         case TokenType::TK_ERROR:       return "ERROR";
         case TokenType::TK_LINE_COMMENT: return "COMMENT";
         case TokenType::TK_BLOCK_COMMENT: return "BLOCK_COMMENT";
+        case TokenType::TK_INTERP_START: return "INTERP_START";
+        case TokenType::TK_INTERP_END:   return "INTERP_END";
+        case TokenType::TK_STRING_PART:  return "STRING_PART";
         }
         return "UNKNOWN";
     }

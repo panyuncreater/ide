@@ -62,8 +62,12 @@ private:
         std::vector<size_t> continueJumps; // continue 语句的 OP_JUMP/OP_LOOP 偏移列表（待回填到循环起始）
         bool hasUpdate;                // for 循环有 update 表达式，continue 应跳到 update 而非 loopStart
         size_t updateStart;            // for 循环 update 表达式起始偏移（hasUpdate=true 时有效）
+        int tryDepthAtStart;           // BUG1 fix: 循环开始时的 tryDepth_，break/continue 只弹循环内 try handler
     };
     std::vector<LoopContext> loopStack_;
+
+    // P0-4 fix: 跟踪当前 try 块嵌套深度，break/continue 跳出 try 块时需发射 OP_TRY_END
+    int tryDepth_ = 0;
 
     // H5 fix: 内嵌函数闭包追踪 — 内嵌函数存储为局部变量，通过 OP_CALL_EXPR 调用
     std::unordered_set<std::string> innerFunctions_;           // 当前作用域中的内嵌函数名
@@ -123,6 +127,10 @@ private:
     Value visitSuperExpr(SuperExpr& node) override;
     Value visitBreakStmt(BreakStmt& node) override;
     Value visitContinueStmt(ContinueStmt& node) override;
+    Value visitTryStmt(TryStmt& node) override;
+    Value visitThrowStmt(ThrowStmt& node) override;
+    Value visitImportStmt(ImportStmt& node) override;
+    Value visitExportStmt(ExportStmt& node) override;
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);

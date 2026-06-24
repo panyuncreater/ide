@@ -11,6 +11,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   C:/Users/v/Desktop/ide/ide/gui/AstViewer.h \
   C:/Users/v/Desktop/ide/ide/gui/CodeEditor.h \
   C:/Users/v/Desktop/ide/ide/gui/DebugPanel.h \
+  C:/Users/v/Desktop/ide/ide/gui/FindReplacePanel.h \
   C:/Users/v/Desktop/ide/ide/gui/OutputPanel.h \
   C:/Users/v/Desktop/ide/ide/gui/ReplPanel.h \
   C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.h \
@@ -36,6 +37,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QString \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QStringList \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QThread \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/QTimer \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q17memory.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20functional.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20iterator.h \
@@ -161,6 +163,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtextstream.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtformat_impl.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qthread.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/qtimer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtmetamacros.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtnoop.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtpreprocessorsupport.h \
@@ -181,6 +184,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   D:/qt/6.10.3/msvc2022_64/include/QtGui/QAction \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/QCloseEvent \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/QSyntaxHighlighter \
+  D:/qt/6.10.3/msvc2022_64/include/QtGui/QTextBlock \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/QTextCharFormat \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/QTransform \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qabstracttextdocumentlayout.h \
@@ -235,6 +239,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qvectornd.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs_win.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QCheckBox \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QGraphicsScene \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QGraphicsView \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QHBoxLayout \
@@ -259,6 +264,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractslider.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractspinbox.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qboxlayout.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qcheckbox.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qframe.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qgraphicsscene.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qgraphicsview.h \

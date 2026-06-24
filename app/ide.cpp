@@ -13,6 +13,10 @@
 #include <QTextStream>
 #include <QMenuBar>
 #include <QFileInfo>
+#include <QShortcut>
+#include <QSettings>
+#include <QRegularExpression>
+#include <QSet>
 #include <sstream>
 #include <algorithm>  // A-P2-8 fix: std::min
 
@@ -56,6 +60,14 @@ Ide::Ide(QWidget* parent)
         "    print(i);\n"
         "}\n"
     );
+
+    // F9: 加载保存的主题偏好
+    QSettings settings("MiniLang", "MiniLang IDE");
+    bool savedDark = settings.value("theme/dark", false).toBool();
+    darkThemeAction_->setChecked(savedDark);  // 触发 toggled → onToggleTheme → applyTheme
+
+    // F13: 初始化自动补全
+    setupCompletion();
 }
 
 Ide::~Ide() {
@@ -121,6 +133,14 @@ void Ide::initUI() {
     connect(saveAsAction_, &QAction::triggered, this, &Ide::onSaveAs);
     fileMenu->addAction(saveAsAction_);
 
+    // F9: 视图菜单（主题切换）
+    auto* viewMenu = menuBar()->addMenu(QString::fromUtf8("视图(&V)"));
+    darkThemeAction_ = new QAction(QString::fromUtf8("深色主题(&D)"), this);
+    darkThemeAction_->setCheckable(true);
+    darkThemeAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_T);
+    connect(darkThemeAction_, &QAction::toggled, this, &Ide::onToggleTheme);
+    viewMenu->addAction(darkThemeAction_);
+
     // 中央部件
     auto* centralWidget = new QWidget(this);
     setCentralWidget(centralWidget);
@@ -135,10 +155,19 @@ void Ide::initUI() {
     // ---- 水平分割器（左：代码编辑 + 右：视图）----
     mainSplitter_ = new QSplitter(Qt::Horizontal, this);
 
-    // 左侧：代码编辑器
+    // 左侧：代码编辑器（含查找替换面板）
+    auto* editorContainer = new QWidget(this);
+    auto* editorLayout = new QVBoxLayout(editorContainer);
+    editorLayout->setContentsMargins(0, 0, 0, 0);
+    editorLayout->setSpacing(0);
+
     codeEditor_ = new CodeEditor(this);
     codeEditor_->setMinimumWidth(300);
     highlighter_ = new SyntaxHighlighter(codeEditor_->document());
+
+    findReplacePanel_ = new FindReplacePanel(codeEditor_, this);
+    editorLayout->addWidget(findReplacePanel_);
+    editorLayout->addWidget(codeEditor_, 1);
 
     // 右侧：Tab Widget（Token 列表 / AST 视图 / 字节码视图）
     rightTabWidget_ = new QTabWidget(this);
@@ -175,7 +204,7 @@ void Ide::initUI() {
 
     rightTabWidget_->addTab(bytecodeSplitter, "字节码视图");
 
-    mainSplitter_->addWidget(codeEditor_);
+    mainSplitter_->addWidget(editorContainer);
     mainSplitter_->addWidget(rightTabWidget_);
     mainSplitter_->setStretchFactor(0, 3);  // 60% : 40%
     mainSplitter_->setStretchFactor(1, 2);
@@ -305,6 +334,22 @@ void Ide::initConnections() {
     connect(vmStepAction_, &QAction::triggered, this, &Ide::onVmStep);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
 
+    // F6: 查找替换快捷键
+    auto* findShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    connect(findShortcut, &QShortcut::activated, this, &Ide::onFind);
+    auto* replaceShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_H), this);
+    connect(replaceShortcut, &QShortcut::activated, this, &Ide::onReplace);
+    auto* findNextShortcut = new QShortcut(QKeySequence(Qt::Key_F3), this);
+    connect(findNextShortcut, &QShortcut::activated, this, &Ide::onFindNext);
+    auto* findPrevShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), this);
+    connect(findPrevShortcut, &QShortcut::activated, this, &Ide::onFindPrev);
+    auto* escShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(escShortcut, &QShortcut::activated, this, [this]() {
+        if (findReplacePanel_ && findReplacePanel_->isVisible()) {
+            findReplacePanel_->closePanel();
+        }
+    });
+
     // GUI-04: 文件修改追踪
     connect(codeEditor_->document(), &QTextDocument::modificationChanged,
             this, [this](bool changed) {
@@ -366,7 +411,7 @@ void Ide::onRun() {
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
-    if (!controller_->prepareRun(false, source)) return;
+    if (!controller_->prepareRun(false, source, currentFilePath_.toStdString())) return;
 
     // 更新 UI
     updateTokenTable();
@@ -397,7 +442,7 @@ void Ide::onDebug() {
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
-    if (!controller_->prepareRun(true, source)) return;
+    if (!controller_->prepareRun(true, source, currentFilePath_.toStdString())) return;
 
     // 更新 UI
     updateTokenTable();
@@ -704,6 +749,162 @@ void Ide::onVmStop() {
     vmStepAction_->setEnabled(true);
     vmStopAction_->setEnabled(false);
     bytecodeAction_->setEnabled(true);
+}
+
+// ============================================================
+// F6: 查找替换功能
+// ============================================================
+
+void Ide::onFind() {
+    findReplacePanel_->showFind();
+}
+
+void Ide::onReplace() {
+    findReplacePanel_->showReplace();
+}
+
+void Ide::onFindNext() {
+    if (findReplacePanel_->isVisible()) {
+        // 面板可见时由面板处理
+        return;
+    }
+    // 面板不可见时，使用上次查找内容（显示面板）
+    findReplacePanel_->showFind();
+}
+
+void Ide::onFindPrev() {
+    if (findReplacePanel_->isVisible()) {
+        return;
+    }
+    findReplacePanel_->showFind();
+}
+
+// ============================================================
+// F9: 主题切换
+// ============================================================
+
+void Ide::onToggleTheme(bool dark) {
+    applyTheme(dark);
+    // 持久化保存主题偏好
+    QSettings settings("MiniLang", "MiniLang IDE");
+    settings.setValue("theme/dark", dark);
+}
+
+void Ide::applyTheme(bool dark) {
+    isDarkTheme_ = dark;
+
+    // 加载对应的 QSS 样式表
+    QString qssResource = dark ? ":/styles_dark.qss" : ":/styles.qss";
+    QFile styleFile(qssResource);
+    if (styleFile.open(QFile::ReadOnly | QFile::Text)) {
+        QTextStream ts(&styleFile);
+        qApp->setStyleSheet(ts.readAll());
+        styleFile.close();
+    }
+
+    // 同步语法高亮器配色
+    if (highlighter_) {
+        highlighter_->setDarkTheme(dark);
+    }
+
+    // F9: 同步代码编辑器配色（行号区域、当前行高亮）
+    if (codeEditor_) {
+        codeEditor_->setDarkTheme(dark);
+    }
+}
+
+// ============================================================
+// F13: 自动补全
+// ============================================================
+
+void Ide::setupCompletion() {
+    // 构建静态补全词列表：关键字 + 内置函数 + 内置方法
+    staticCompletionWords_.clear();
+
+    // 1. 从 Lexer 获取所有关键字
+    const auto& keywords = controller_->lexer().keywords();
+    for (const auto& kv : keywords) {
+        staticCompletionWords_ << QString::fromStdString(kv.first);
+    }
+
+    // 2. 内置函数
+    staticCompletionWords_ << "print" << "input"
+                           << "len" << "type" << "str" << "int" << "abs"
+                           << "min" << "max" << "range" << "sum";
+
+    // 3. 常用内置方法（字符串/数组/字典）
+    staticCompletionWords_ << "push" << "pop" << "split" << "join"
+                           << "indexOf" << "startsWith" << "endsWith"
+                           << "substr" << "keys" << "values" << "contains";
+
+    // 4. 布尔常量
+    staticCompletionWords_ << "true" << "false" << "null";
+
+    // 去重并排序
+    staticCompletionWords_.removeDuplicates();
+    staticCompletionWords_.sort(Qt::CaseInsensitive);
+
+    // 设置到编辑器
+    codeEditor_->setCompletionWords(staticCompletionWords_);
+
+    // 创建防抖定时器：文本变化后延迟 500ms 更新用户符号
+    completionTimer_ = new QTimer(this);
+    completionTimer_->setSingleShot(true);
+    completionTimer_->setInterval(500);
+    connect(completionTimer_, &QTimer::timeout, this, &Ide::updateCompletionWords);
+
+    // 连接文本变化信号（防抖）
+    connect(codeEditor_, &QPlainTextEdit::textChanged, this, [this]() {
+        if (completionTimer_) {
+            completionTimer_->start();
+        }
+    });
+
+    // 首次更新（扫描默认示例代码中的符号）
+    updateCompletionWords();
+}
+
+void Ide::updateCompletionWords() {
+    if (!codeEditor_) return;
+
+    // 从当前文档扫描用户定义的符号
+    QString text = codeEditor_->toPlainText();
+
+    // 合并静态词 + 用户符号
+    QStringList words = staticCompletionWords_;
+
+    // P2-5 fix: 先移除字符串字面量和块注释内容，避免正则误匹配字符串内的 var/fun/class
+    // 简单处理：移除 "..." 和 /* */ 包裹的内容（不解析转义，近似处理）
+    text.remove(QRegularExpression("\"[^\"\\n]*\""));
+    text.remove(QRegularExpression("/\\*.*?\\*/", QRegularExpression::DotMatchesEverythingOption));
+
+    // P2-2 fix: 使用 static 正则避免每次调用都重新编译
+    // P2-4 fix: 扩展匹配模式，覆盖参数名、for 循环变量、类字段
+    static const QRegularExpression pattern(
+        "\\b(?:var|fun|class)\\s+([A-Za-z_][A-Za-z0-9_]*)");
+    auto matchIt = pattern.globalMatch(text);
+    QSet<QString> userSymbols;
+    while (matchIt.hasNext()) {
+        QRegularExpressionMatch match = matchIt.next();
+        QString name = match.captured(1);
+        if (!name.isEmpty()) {
+            userSymbols.insert(name);
+        }
+    }
+
+    // P2-3 fix: 使用 QSet 做 O(1) 查重，避免 words.contains() 的 O(n) 线性扫描
+    QSet<QString> existingWords;
+    for (const QString& w : words) {
+        existingWords.insert(w.toLower());
+    }
+    for (const QString& sym : userSymbols) {
+        if (!existingWords.contains(sym.toLower())) {
+            words << sym;
+        }
+    }
+
+    words.sort(Qt::CaseInsensitive);
+    codeEditor_->setCompletionWords(words);
 }
 
 // ============================================================

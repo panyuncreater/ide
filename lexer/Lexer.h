@@ -26,6 +26,9 @@ public:
     /// 获取注释 Token 列表（从主 Token 流中分离，供 Formatter 保留注释用）
     const std::vector<Token>& comments() const { return comments_; }
 
+    /// F13: 获取关键字映射表（供自动补全使用）
+    static const std::unordered_map<std::string, TokenType>& keywords();
+
 private:
     std::string_view source_;        // P9 fix: string_view 避免全量拷贝（调用方保证生命周期）
     int start_ = 0;                 // 当前 token 起始位置
@@ -40,9 +43,6 @@ private:
     // DoS 防护：源码大小上限和 Token 数量上限
     static constexpr size_t MAX_SOURCE_SIZE = 10 * 1024 * 1024;  // 10MB
     static constexpr size_t MAX_TOKEN_COUNT = 1000000;            // 100万 Token
-
-    /// 关键字映射表（全局共享，只初始化一次）
-    static const std::unordered_map<std::string, TokenType>& keywords();
 
     /// 获取当前字符（不前进）
     char peek() const;
@@ -70,6 +70,10 @@ private:
 
     /// 扫描字符串字面量
     void string();
+
+    /// F7: 扫描字符串字面量（支持插值）
+    /// isInterp=true 表示当前处于插值字符串的后续片段（由 } 触发）
+    void string(bool isInterp);
 
     /// 添加 Token
     void addToken(TokenType type);

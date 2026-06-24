@@ -93,6 +93,34 @@ SharedBuiltinResult executeSharedDictHas(const Value& dict,
                                          int line = 0, int column = 0);
 
 // ============================================================
+// 字符串方法共享层（供 Interpreter 和 VM 共用，不抛异常）
+// ============================================================
+// 补齐 Interpreter 与 VM 的字符串方法一致性：
+// startsWith / endsWith / substr / indexOf
+
+/// 共享纯函数：执行字符串 startsWith 方法
+SharedBuiltinResult executeSharedStrStartsWith(const Value& str,
+                                                const Value* args, size_t argCount,
+                                                int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 endsWith 方法
+SharedBuiltinResult executeSharedStrEndsWith(const Value& str,
+                                              const Value* args, size_t argCount,
+                                              int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 substr 方法
+/// substr(start) 或 substr(start, length)
+SharedBuiltinResult executeSharedStrSubstr(const Value& str,
+                                            const Value* args, size_t argCount,
+                                            int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 indexOf 方法
+/// 返回 UTF-8 字符位置（非字节位置），未找到返回 -1
+SharedBuiltinResult executeSharedStrIndexOf(const Value& str,
+                                             const Value* args, size_t argCount,
+                                             int line = 0, int column = 0);
+
+// ============================================================
 // 顶层内置函数共享层（供 Interpreter 和 VM 共用，不抛异常）
 // ============================================================
 // 支持: len / type / str / int / abs / min / max / range / sum / input

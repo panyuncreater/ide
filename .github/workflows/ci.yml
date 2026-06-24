@@ -3,8 +3,8 @@
 # ------------------------------------------------------------
 # 触发条件：push / pull_request 到 main / master 分支
 # 作业：
-#   build-test  — Windows + MSVC + Qt6 构建并运行全部单元测试
-#   static-analysis — cppcheck 静态代码分析
+#   build-test       — Windows + MSVC + Qt6 构建并运行全部单元测试
+#   static-analysis  — cppcheck 静态代码分析
 # ============================================================
 
 name: CI
@@ -21,7 +21,11 @@ env:
 
 jobs:
   # ============================================================
-  # 作业 1：构建 + 单元测试
+  # 作业 1：构建 + 单元测试（Windows + MSVC + Qt6）
+  # ------------------------------------------------------------
+  # 使用 windows-latest 自带的 Visual Studio 2022 + MSVC 工具链。
+  # 通过 CMake "Visual Studio 17 2022" 生成器自动检测 MSVC，
+  # 无需任何第三方 action 设置开发环境。
   # ============================================================
   build-test:
     name: Build & Test (Windows MSVC)
@@ -29,17 +33,9 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
-
-      - name: 安装 Ninja
-        run: pip install ninja
-
-      - name: 设置 MSVC 开发环境
-        uses: ilammy/msvc-dev-shell@v1
-        with:
-          arch: x64
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -48,38 +44,29 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2019_64
-          modules: qtwidgets qtcore qtgui
           cache: true
 
-      - name: 配置 CMake（测试目录）
-        shell: cmd
-        run: |
-          cmake -B tests\build -S tests -G Ninja ^
-            -DCMAKE_BUILD_TYPE=%CMAKE_BUILD_TYPE% ^
-            -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
+      - name: 配置 CMake（Visual Studio 2022 + MSVC）
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
 
-      - name: 构建 minilang_tests
-        shell: cmd
-        run: |
-          cmake --build tests\build --target minilang_tests --config %CMAKE_BUILD_TYPE%
+      - name: 构建项目
+        run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }} --parallel
 
       - name: 运行单元测试
-        shell: cmd
-        working-directory: tests\build
-        run: |
-          ctest -C %CMAKE_BUILD_TYPE% --output-on-failure --verbose
-          .\minilang_tests.exe --gtest_brief=1
+        working-directory: build
+        run: ctest -C ${{ env.CMAKE_BUILD_TYPE }} --output-on-failure --verbose
 
       - name: 上传测试结果（失败时）
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
-          path: tests\build\Testing\**\*.xml
+          path: build/Testing/**/*.xml
+          if-no-files-found: ignore
           retention-days: 7
 
   # ============================================================
-  # 作业 2：静态代码分析
+  # 作业 2：静态代码分析（cppcheck）
   # ============================================================
   static-analysis:
     name: Static Analysis (cppcheck)
@@ -87,7 +74,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: 安装 cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -116,7 +103,7 @@ jobs:
 
       - name: 上传 cppcheck 报告
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cppcheck-report
           path: |

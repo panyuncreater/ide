@@ -2,10 +2,13 @@
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/NumericUtils.h"
 #include "debug/DebugController.h"
+#include "lexer/Lexer.h"
+#include "parser/Parser.h"
 #include "Logger.h"
 #include <cctype>
 #include <cstdint>
 #include <climits>
+#include <cmath>  // BUG 8.1 fix: std::fmod
 #include <sstream>
 #include <unordered_set>
 
@@ -37,6 +40,11 @@ Value Interpreter::execute(Block& program) {
     recursionDepth_ = 0;
     replAsts_.clear();  // 释放 REPL 保留的 AST
     diagnostics_.clear();  // 清空诊断信息
+    // P0-1 fix: 清理模块缓存，避免 replAsts_.clear() 后缓存中的悬垂指针
+    moduleCache_.clear();
+    moduleExports_.clear();
+    moduleLoadingStack_.clear();
+    exportedNames_.clear();
 
     // 顶层块不创建新作用域，直接在全局环境中执行语句
     Value result = Value::nullValue();
@@ -47,6 +55,17 @@ Value Interpreter::execute(Block& program) {
     }
     catch (const ReturnException&) {
         runtimeError("return 只能在函数体内使用", 0, 0);
+    }
+    catch (const BreakException&) {
+        // BUG-I1 fix: 捕获泄漏的 BreakException，提供友好错误信息
+        runtimeError("break 只能在循环体内使用", 0, 0);
+    }
+    catch (const ContinueException&) {
+        // BUG-I1 fix: 捕获泄漏的 ContinueException，提供友好错误信息
+        runtimeError("continue 只能在循环体内使用", 0, 0);
+    }
+    catch (const ThrowException& e) {
+        runtimeError("未捕获的异常: " + e.thrownValue.toString(), 0, 0);
     }
     catch (const RuntimeError& e) {
         // 记录到诊断包后重新抛出，保持原有异常传播机制
@@ -76,6 +95,17 @@ Value Interpreter::executeRepl(Block& program) {
     catch (const ReturnException&) {
         runtimeError("return 只能在函数体内使用", 0, 0);
     }
+    catch (const BreakException&) {
+        // BUG-I1 fix: 捕获泄漏的 BreakException
+        runtimeError("break 只能在循环体内使用", 0, 0);
+    }
+    catch (const ContinueException&) {
+        // BUG-I1 fix: 捕获泄漏的 ContinueException
+        runtimeError("continue 只能在循环体内使用", 0, 0);
+    }
+    catch (const ThrowException& e) {
+        runtimeError("未捕获的异常: " + e.thrownValue.toString(), 0, 0);
+    }
     catch (const RuntimeError& e) {
         // 记录到诊断包后重新抛出，保持原有异常传播机制
         diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Interpreter);
@@ -92,6 +122,14 @@ void Interpreter::saveReplState() {
     savedGlobalEnv_ = globalEnv_;
     savedClassRegistry_ = std::move(classRegistry_);
     savedReplAsts_ = std::move(replAsts_);
+    // BUG7 fix: 保存函数注册表，避免 Run→REPL 切换后 funRegistry_ 丢失
+    savedFunRegistry_ = std::move(funRegistry_);
+    savedFunRegistryGen_ = funRegistryGen_;
+    // P1-1 fix: 保存模块相关状态，避免 Run→REPL 切换后悬垂指针
+    savedModuleCache_ = std::move(moduleCache_);
+    savedModuleExports_ = std::move(moduleExports_);
+    savedExportedNames_ = exportedNames_;
+    savedModuleLoadingStack_ = moduleLoadingStack_;
 }
 
 void Interpreter::restoreReplState() {
@@ -99,6 +137,14 @@ void Interpreter::restoreReplState() {
     currentEnv_ = globalEnv_;
     classRegistry_ = std::move(savedClassRegistry_);
     replAsts_ = std::move(savedReplAsts_);
+    // BUG7 fix: 恢复函数注册表
+    funRegistry_ = std::move(savedFunRegistry_);
+    funRegistryGen_ = savedFunRegistryGen_;
+    // P1-1 fix: 恢复模块相关状态
+    moduleCache_ = std::move(savedModuleCache_);
+    moduleExports_ = std::move(savedModuleExports_);
+    exportedNames_ = std::move(savedExportedNames_);
+    moduleLoadingStack_ = std::move(savedModuleLoadingStack_);
     savedGlobalEnv_.reset();
 }
 
@@ -108,6 +154,14 @@ void Interpreter::setOutputCallback(std::function<void(const std::string&)> call
 
 void Interpreter::setInputCallback(std::function<std::string(const std::string&)> callback) {
     inputCallback_ = callback;
+}
+
+void Interpreter::setModuleLoader(std::function<std::string(const std::string&)> loader) {
+    moduleLoader_ = loader;
+}
+
+void Interpreter::setCurrentFilePath(const std::string& path) {
+    currentFilePath_ = path;
 }
 
 void Interpreter::setDebugger(DebugController* dbg) {
@@ -248,29 +302,24 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
             return Value(left.toDouble() / r);
         }
     case BinOpType::BIN_MOD:
-        // Bug3 fix: 接受 float 操作数（截断为整数后取模）
+        // BUG 8.1 fix: 浮点操作数应使用 fmod，而非截断为整数后取模
     {
-        int64_t a, b;
-        if (left.isInt()) a = left.intVal();
-        else if (left.isFloat()) {
-            double lf = left.floatVal();
-            // B6 fix: 统一使用 OverflowCheck::doubleToIntOverflow（修复旧版 > 上界 Bug）
-            if (OverflowCheck::doubleToIntOverflow(lf))
-                runtimeError("浮点数转整数溢出", line, col);
-            a = static_cast<int64_t>(lf);
+        // 如果两个操作数都是 int，使用整数取模
+        if (left.isInt() && right.isInt()) {
+            int64_t a = left.intVal();
+            int64_t b = right.intVal();
+            if (b == 0) runtimeError("除零错误", line, col);
+            if (OverflowCheck::modOverflow(a, b)) return Value(0);
+            return Value(a % b);
         }
-        else runtimeError("取模运算需要数值类型", line, col);
-        if (right.isInt()) b = right.intVal();
-        else if (right.isFloat()) {
-            double rf = right.floatVal();
-            if (OverflowCheck::doubleToIntOverflow(rf))
-                runtimeError("浮点数转整数溢出", line, col);
-            b = static_cast<int64_t>(rf);
+        // 至少一个 float → 使用 fmod 进行浮点取模
+        if (!left.isNumber() || !right.isNumber()) {
+            runtimeError("取模运算需要数值类型", line, col);
         }
-        else runtimeError("取模运算需要数值类型", line, col);
-        if (b == 0) runtimeError("除零错误", line, col);
-        if (OverflowCheck::modOverflow(a, b)) return Value(0);
-        return Value(a % b);
+        double a = left.toDouble();
+        double b = right.toDouble();
+        if (b == 0.0) runtimeError("除零错误", line, col);
+        return Value(std::fmod(a, b));
     }
     default:
         runtimeError("不支持的算术运算符", line, col);
@@ -694,9 +743,10 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 }
             }
 
-            // 如果有 init 方法（0 参数），执行它
+            // 如果有 init 方法（0 必需参数，含全默认参数），执行它
             FunDecl* initMethod = findMethod(cls, "init");
-            if (initMethod && initMethod->params.empty()) {
+            // P1-2 fix: 使用 requiredParamCount==0 判断，支持全默认参数 init
+            if (initMethod && initMethod->requiredParamCount == 0) {
                 auto parentEnv = cls.closureEnv ? cls.closureEnv : currentEnv_;
                 auto initEnv = std::make_shared<Environment>(parentEnv);
                 initEnv->define("this", instance);
@@ -975,17 +1025,37 @@ Value Interpreter::callClosureValue(FunCall& node) {
     auto closureEnv = calleeVal.closureEnv();
     std::string effectiveName = calleeVal.closureName();
 
-    if (node.arguments.size() != funDecl->params.size()) {
+    // F10: 支持默认参数
+    size_t argCount = node.arguments.size();
+    if (argCount < static_cast<size_t>(funDecl->requiredParamCount) ||
+        argCount > funDecl->params.size()) {
         runtimeError("函数 " + effectiveName + " 期望 " +
+            std::to_string(funDecl->requiredParamCount) + "-" +
             std::to_string(funDecl->params.size()) + " 个参数，但传入了 " +
-            std::to_string(node.arguments.size()) + " 个",
+            std::to_string(argCount) + " 个",
             node.line, node.column);
     }
 
     std::vector<Value> argValues;
-    argValues.reserve(node.arguments.size());
+    argValues.reserve(argCount);
     for (auto& arg : node.arguments) {
         argValues.push_back(evaluate(arg.get()));
+    }
+
+    // F10: 为缺失的参数填充默认值（在闭包环境中求值）
+    if (argCount < funDecl->params.size()) {
+        auto savedEnv = currentEnv_;
+        if (closureEnv) {
+            currentEnv_ = closureEnv;
+        }
+        for (size_t i = argCount; i < funDecl->params.size(); ++i) {
+            if (funDecl->defaultValues[i]) {
+                argValues.push_back(evaluate(funDecl->defaultValues[i].get()));
+            } else {
+                argValues.push_back(Value::nullValue());
+            }
+        }
+        currentEnv_ = savedEnv;
     }
 
     std::string savedReturnType = currentFunctionReturnType_;
@@ -1123,9 +1193,11 @@ Value Interpreter::constructClassInstance(FunCall& node) {
         // 检查参数数量（构造函数为 init 方法）
         FunDecl* initMethod = findMethod(*cls, "init");
 
-        // #7 fix: 先检查参数数量再求值，避免无效evaluate
-        if (initMethod && node.arguments.size() != initMethod->params.size()) {
+        // P0-2 fix: 支持默认参数，参数数量可在 [requiredParamCount, params.size()] 范围内
+        if (initMethod && (node.arguments.size() < initMethod->requiredParamCount ||
+                           node.arguments.size() > initMethod->params.size())) {
             runtimeError("构造函数 init 期望 " +
+                std::to_string(initMethod->requiredParamCount) + "-" +
                 std::to_string(initMethod->params.size()) + " 个参数，但传入了 " +
                 std::to_string(node.arguments.size()) + " 个",
                 node.line, node.column);
@@ -1198,7 +1270,25 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             // P5 fix: 绑定实例而非深拷贝所有字段
             // 绑定参数
             for (size_t i = 0; i < initMethod->params.size(); ++i) {
-                initEnv->define(initMethod->params[i], std::move(argValues[i]));
+                if (i < argValues.size()) {
+                    initEnv->define(initMethod->params[i], std::move(argValues[i]));
+                } else {
+                    // P0-2 fix: 填充缺失的默认参数值
+                    // defaultValues 与 params 一一对应（无默认值的位置为 nullptr）
+                    if (i < initMethod->defaultValues.size() && initMethod->defaultValues[i]) {
+                        // I-P1-1 fix: 默认值表达式应在类定义的闭包环境中求值
+                        // （与 callNamedFunction/callClosureValue/callInstanceMethod 保持一致）
+                        auto savedEnv = currentEnv_;
+                        if (cls->closureEnv) {
+                            currentEnv_ = cls->closureEnv;
+                        }
+                        Value defaultVal = evaluate(initMethod->defaultValues[i].get());
+                        currentEnv_ = savedEnv;
+                        initEnv->define(initMethod->params[i], std::move(defaultVal));
+                    } else {
+                        initEnv->define(initMethod->params[i], Value::nullValue());
+                    }
+                }
             }
 
             // H-新2 fix: bindInstance 必须在所有 define 之后
@@ -1319,18 +1409,41 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     }
 
     // 检查参数数量
-    if (node.arguments.size() != funDecl->params.size()) {
+    // F10: 支持默认参数，参数数量可在 [requiredParamCount, params.size()] 范围内
+    size_t argCount = node.arguments.size();
+    if (argCount < static_cast<size_t>(funDecl->requiredParamCount) ||
+        argCount > funDecl->params.size()) {
         runtimeError("函数 " + node.name + " 期望 " +
+            std::to_string(funDecl->requiredParamCount) + "-" +
             std::to_string(funDecl->params.size()) + " 个参数，但传入了 " +
-            std::to_string(node.arguments.size()) + " 个",
+            std::to_string(argCount) + " 个",
             node.line, node.column);
     }
 
     // 求值参数
     std::vector<Value> argValues;
-    argValues.reserve(node.arguments.size());
+    argValues.reserve(argCount);
     for (auto& arg : node.arguments) {
         argValues.push_back(evaluate(arg.get()));
+    }
+
+    // F10: 为缺失的参数填充默认值
+    // 默认值在函数定义时的闭包环境中求值（与函数体同级）
+    if (argCount < funDecl->params.size()) {
+        auto savedEnv = currentEnv_;
+        // 切换到闭包环境（函数定义时的环境），使默认值表达式能访问外层变量
+        if (closureEnv) {
+            currentEnv_ = closureEnv;
+        }
+        for (size_t i = argCount; i < funDecl->params.size(); ++i) {
+            if (funDecl->defaultValues[i]) {
+                argValues.push_back(evaluate(funDecl->defaultValues[i].get()));
+            } else {
+                // 不应发生（requiredParamCount 已校验），防御性处理
+                argValues.push_back(Value::nullValue());
+            }
+        }
+        currentEnv_ = savedEnv;
     }
 
     // 保存调用状态（在try外，确保catch可以恢复）
@@ -1447,6 +1560,189 @@ Value Interpreter::visitBreakStmt(BreakStmt& node) {
 Value Interpreter::visitContinueStmt(ContinueStmt& node) {
     checkBreak(&node);
     throw ContinueException();
+}
+
+Value Interpreter::visitThrowStmt(ThrowStmt& node) {
+    checkBreak(&node);
+    Value val = evaluate(node.expression.get());
+    throw ThrowException(std::move(val));
+}
+
+Value Interpreter::visitTryStmt(TryStmt& node) {
+    checkBreak(&node);
+    try {
+        if (node.tryBlock) {
+            evaluate(node.tryBlock.get());
+        }
+    } catch (ThrowException& e) {
+        // 在 catch 块的新作用域中绑定异常变量
+        auto catchEnv = std::make_shared<Environment>(currentEnv_);
+        auto savedEnv = currentEnv_;
+        currentEnv_ = catchEnv;
+        // P2-1 fix: 使用 std::move 避免不必要的 Value 拷贝
+        currentEnv_->define(node.catchVarName, std::move(e.thrownValue));
+        try {
+            if (node.catchBlock) {
+                evaluate(node.catchBlock.get());
+            }
+        } catch (...) {
+            currentEnv_ = savedEnv;
+            throw;  // 重新抛出 break/continue/return/throw
+        }
+        currentEnv_ = savedEnv;
+    }
+    return Value::nullValue();
+}
+
+Value Interpreter::visitExportStmt(ExportStmt& node) {
+    checkBreak(&node);
+    // F12: export 语句执行内部声明，并记录导出名称
+    if (!node.declaration) return Value::nullValue();
+
+    // 提取声明名称并标记为导出
+    std::string declName;
+    switch (node.declaration->nodeType) {
+    case NodeType::NODE_VAR_DECL:
+        declName = static_cast<VarDecl*>(node.declaration.get())->name;
+        break;
+    case NodeType::NODE_FUN_DECL:
+        declName = static_cast<FunDecl*>(node.declaration.get())->name;
+        break;
+    case NodeType::NODE_CLASS_DECL:
+        declName = static_cast<ClassDecl*>(node.declaration.get())->name;
+        break;
+    default:
+        break;
+    }
+
+    // 执行声明
+    evaluate(node.declaration.get());
+
+    // 标记为导出
+    if (!declName.empty()) {
+        exportedNames_.insert(declName);
+    }
+    return Value::nullValue();
+}
+
+Value Interpreter::visitImportStmt(ImportStmt& node) {
+    checkBreak(&node);
+
+    // F12: 模块加载
+    if (!moduleLoader_) {
+        runtimeError("未设置模块加载器，无法执行 import", node.line, node.column);
+    }
+
+    // 解析模块路径（相对于当前文件）
+    std::string modulePath = node.modulePath;
+    // P2-3 fix: 路径规范化 — 统一路径分隔符为 '/'，去除多余的 "./" 前缀
+    // 避免相同模块因路径表示不同（如 "foo\bar.mini" vs "foo/bar.mini"）被重复加载
+    for (char& c : modulePath) {
+        if (c == '\\') c = '/';
+    }
+    if (modulePath.size() >= 2 && modulePath[0] == '.' && modulePath[1] == '/') {
+        modulePath.erase(0, 2);
+    }
+    // 简单路径解析：如果模块路径是相对路径且当前文件路径非空，拼接目录
+    // （完整路径解析由 moduleLoader_ 回调负责）
+
+    // 循环依赖检测
+    for (const auto& loading : moduleLoadingStack_) {
+        if (loading == modulePath) {
+            runtimeError("检测到循环依赖: " + modulePath, node.line, node.column);
+        }
+    }
+    // P1-1 fix: 深度导入链递归保护（防止 C++ 栈溢出）
+    if (moduleLoadingStack_.size() >= MAX_RECURSION_DEPTH) {
+        runtimeError("模块导入深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
+    }
+
+    // 检查缓存
+    auto cacheIt = moduleCache_.find(modulePath);
+    std::shared_ptr<Environment> moduleEnv;
+    if (cacheIt != moduleCache_.end()) {
+        moduleEnv = cacheIt->second;
+    } else {
+        // 加载模块源码
+        std::string source = moduleLoader_(modulePath);
+        if (source.empty()) {
+            runtimeError("无法加载模块: " + modulePath, node.line, node.column);
+        }
+
+        // 词法分析 + 语法分析
+        Lexer lexer;
+        auto tokens = lexer.scan(source);
+        Parser parser;
+        auto ast = parser.parse(tokens);
+        if (!ast) {
+            runtimeError("模块 " + modulePath + " 语法错误", node.line, node.column);
+        }
+
+        // P1-2 fix: 使用独立的空父环境，避免模块访问导入方的全局变量
+        // 模块环境隔离：模块只能访问自身定义和导出的名称，不能读写导入方全局变量
+        auto moduleParentEnv = std::make_shared<Environment>(nullptr);
+        moduleEnv = std::make_shared<Environment>(moduleParentEnv);
+        auto savedEnv = currentEnv_;
+        auto savedExported = exportedNames_;
+        exportedNames_.clear();
+        currentEnv_ = moduleEnv;
+        moduleLoadingStack_.push_back(modulePath);
+
+        try {
+            for (auto& stmt : ast->statements) {
+                evaluate(stmt.get());
+            }
+        } catch (...) {
+            currentEnv_ = savedEnv;
+            exportedNames_ = savedExported;
+            moduleLoadingStack_.pop_back();
+            throw;
+        }
+
+        moduleLoadingStack_.pop_back();
+        currentEnv_ = savedEnv;
+
+        // 缓存模块环境和导出名称（必须在恢复 savedExported 之前捕获当前模块的 exports）
+        moduleCache_[modulePath] = moduleEnv;
+        moduleExports_[modulePath] = exportedNames_;
+        exportedNames_ = savedExported;
+
+        // 保留模块 AST（确保函数/类定义指针有效）
+        replAsts_.push_back(std::move(ast));
+    }
+
+    // 导入名称到当前环境（仅导入已 export 的名称）
+    auto& exports = moduleExports_[modulePath];
+    if (node.importAll) {
+        // 导入全部导出名称
+        for (const auto& name : exports) {
+            const Value* valPtr = moduleEnv->get(name);
+            if (valPtr) {
+                currentEnv_->define(name, *valPtr);
+            }
+        }
+    } else {
+        // P2-1 fix: 原子性导入 — 先验证所有名称都存在，再统一定义
+        // 避免部分名称已导入后遇到错误名称导致环境不一致
+        for (const auto& name : node.names) {
+            if (exports.find(name) == exports.end()) {
+                runtimeError("模块 " + modulePath + " 中未导出名称: " + name,
+                            node.line, node.column);
+            }
+            const Value* valPtr = moduleEnv->get(name);
+            if (!valPtr) {
+                runtimeError("模块 " + modulePath + " 中未找到导出名称: " + name,
+                            node.line, node.column);
+            }
+        }
+        // 全部验证通过后，统一导入
+        for (const auto& name : node.names) {
+            const Value* valPtr = moduleEnv->get(name);
+            currentEnv_->define(name, *valPtr);
+        }
+    }
+
+    return Value::nullValue();
 }
 
 Value Interpreter::visitPrintStmt(PrintStmt& node) {
@@ -1795,14 +2091,17 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
         if (method) {
             // 求值参数
             std::vector<Value> argValues;
-            argValues.reserve(node.arguments.size());
-            // #7 fix: 先检查参数数量再求值
-            if (node.arguments.size() != method->params.size()) {
+            // F10: 支持默认参数
+            size_t argCount = node.arguments.size();
+            if (argCount < static_cast<size_t>(method->requiredParamCount) ||
+                argCount > method->params.size()) {
                 runtimeError("方法 " + node.methodName + " 期望 " +
+                    std::to_string(method->requiredParamCount) + "-" +
                     std::to_string(method->params.size()) + " 个参数，但传入了 " +
-                    std::to_string(node.arguments.size()) + " 个",
+                    std::to_string(argCount) + " 个",
                     node.line, node.column);
             }
+            argValues.reserve(argCount);
 
             // #2 fix: 缓存closureEnv
             // H4 fix: 对 super.method() 调用，使用方法实际定义所在类（searchClass）的环境，
@@ -1810,6 +2109,22 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             auto cachedParentEnv = searchClass->closureEnv;
             for (auto& arg : node.arguments) {
                 argValues.push_back(evaluate(arg.get()));
+            }
+
+            // F10: 为缺失的参数填充默认值（在类定义的闭包环境中求值）
+            if (argCount < method->params.size()) {
+                auto savedEnv = currentEnv_;
+                if (cachedParentEnv) {
+                    currentEnv_ = cachedParentEnv;
+                }
+                for (size_t i = argCount; i < method->params.size(); ++i) {
+                    if (method->defaultValues[i]) {
+                        argValues.push_back(evaluate(method->defaultValues[i].get()));
+                    } else {
+                        argValues.push_back(Value::nullValue());
+                    }
+                }
+                currentEnv_ = savedEnv;
             }
 
             // 保存调用状态（在try外）

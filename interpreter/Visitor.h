@@ -42,6 +42,10 @@ public:
     virtual Value visitSuperExpr(SuperExpr& node) = 0;
     virtual Value visitBreakStmt(BreakStmt& node) = 0;
     virtual Value visitContinueStmt(ContinueStmt& node) = 0;
+    virtual Value visitTryStmt(TryStmt& node) = 0;
+    virtual Value visitThrowStmt(ThrowStmt& node) = 0;
+    virtual Value visitImportStmt(ImportStmt& node) = 0;
+    virtual Value visitExportStmt(ExportStmt& node) = 0;
 };
 
 // ============================================================
@@ -91,4 +95,8 @@ public:
     Value visitSuperExpr(SuperExpr& node) override { return defaultVisit(node); }
     Value visitBreakStmt(BreakStmt& node) override { return defaultVisit(node); }
     Value visitContinueStmt(ContinueStmt& node) override { return defaultVisit(node); }
+    Value visitTryStmt(TryStmt& node) override { return defaultVisit(node); }
+    Value visitThrowStmt(ThrowStmt& node) override { return defaultVisit(node); }
+    Value visitImportStmt(ImportStmt& node) override { return defaultVisit(node); }
+    Value visitExportStmt(ExportStmt& node) override { return defaultVisit(node); }
 };

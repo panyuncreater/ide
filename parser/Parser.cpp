@@ -1,8 +1,70 @@
 #include "parser/Parser.h"
+#include <unordered_set>
 
 // ============================================================
 // Parser 递归下降语法分析器实现
 // ============================================================
+
+// BUG-P1 fix: 递归收集表达式中的所有变量引用名
+// 用于校验默认参数值不引用后续参数
+static void collectVarRefs(ASTNode* node, std::unordered_set<std::string>& names) {
+    if (!node) return;
+    switch (node->nodeType) {
+    case NodeType::NODE_VAR_REF:
+        names.insert(static_cast<VarRef*>(node)->name);
+        break;
+    case NodeType::NODE_BINARY_OP: {
+        auto* bin = static_cast<BinaryOp*>(node);
+        collectVarRefs(bin->left.get(), names);
+        collectVarRefs(bin->right.get(), names);
+        break;
+    }
+    case NodeType::NODE_UNARY_OP:
+        collectVarRefs(static_cast<UnaryOp*>(node)->operand.get(), names);
+        break;
+    case NodeType::NODE_FUN_CALL: {
+        auto* call = static_cast<FunCall*>(node);
+        for (auto& arg : call->arguments) {
+            collectVarRefs(arg.get(), names);
+        }
+        break;
+    }
+    case NodeType::NODE_INDEX_ACCESS: {
+        auto* idx = static_cast<IndexAccess*>(node);
+        collectVarRefs(idx->object.get(), names);
+        collectVarRefs(idx->index.get(), names);
+        break;
+    }
+    case NodeType::NODE_MEMBER_ACCESS:
+        collectVarRefs(static_cast<MemberAccess*>(node)->object.get(), names);
+        break;
+    case NodeType::NODE_METHOD_CALL: {
+        auto* mc = static_cast<MethodCall*>(node);
+        collectVarRefs(mc->object.get(), names);
+        for (auto& arg : mc->arguments) {
+            collectVarRefs(arg.get(), names);
+        }
+        break;
+    }
+    case NodeType::NODE_ARRAY_LITERAL: {
+        auto* arr = static_cast<ArrayLiteral*>(node);
+        for (auto& elem : arr->elements) {
+            collectVarRefs(elem.get(), names);
+        }
+        break;
+    }
+    case NodeType::NODE_DICT_LITERAL: {
+        auto* dict = static_cast<DictLiteral*>(node);
+        for (auto& pair : dict->pairs) {
+            collectVarRefs(pair.first.get(), names);
+            collectVarRefs(pair.second.get(), names);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+}
 
 Parser::Parser() {}
 
@@ -133,6 +195,10 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     // class 声明
     if (check(TokenType::TK_CLASS)) return classDecl();
 
+    // F12: import / export 声明
+    if (check(TokenType::TK_IMPORT)) return importStmt();
+    if (check(TokenType::TK_EXPORT)) return exportStmt();
+
     // 类型注解声明: int/float/bool/string/dict/array
     if (isTypeKeyword()) {
         // 可能是: 类型注解变量声明(int a=1;) 或 带返回类型的函数声明(int fib(n){})
@@ -237,7 +303,8 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    parseParamList(params, paramTypes);
+    std::vector<std::unique_ptr<ASTNode>> defaultValues;  // F10
+    parseParamList(params, paramTypes, defaultValues);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
     // 可选的返回值类型注解 : type 或 -> type
@@ -253,9 +320,21 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    return std::make_unique<FunDecl>(name.lexeme, std::move(params),
-                                     std::move(paramTypes), returnType,
-                                     std::move(body), funTok.line, funTok.column);
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params),
+                                          std::move(paramTypes), returnType,
+                                          std::move(body), funTok.line, funTok.column);
+    // F10: 计算必需参数个数（前缀无默认值的参数数量）
+    int reqCount = 0;
+    for (size_t i = 0; i < defaultValues.size(); ++i) {
+        if (defaultValues[i] == nullptr) {
+            ++reqCount;
+        } else {
+            break;  // 一旦遇到默认值，后续都有默认值
+        }
+    }
+    decl->requiredParamCount = reqCount;
+    decl->defaultValues = std::move(defaultValues);
+    return decl;
 }
 
 std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
@@ -266,7 +345,8 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    parseParamList(params, paramTypes);
+    std::vector<std::unique_ptr<ASTNode>> defaultValues;  // F10
+    parseParamList(params, paramTypes, defaultValues);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
     // 返回类型已由调用方提供，不再解析 :type 或 ->type
@@ -274,13 +354,27 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    return std::make_unique<FunDecl>(name.lexeme, std::move(params),
-                                     std::move(paramTypes), returnType,
-                                     std::move(body), name.line, name.column);
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params),
+                                          std::move(paramTypes), returnType,
+                                          std::move(body), name.line, name.column);
+    // F10: 计算必需参数个数
+    int reqCount = 0;
+    for (size_t i = 0; i < defaultValues.size(); ++i) {
+        if (defaultValues[i] == nullptr) {
+            ++reqCount;
+        } else {
+            break;
+        }
+    }
+    decl->requiredParamCount = reqCount;
+    decl->defaultValues = std::move(defaultValues);
+    return decl;
 }
 
-void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes) {
+void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes,
+                            std::vector<std::unique_ptr<ASTNode>>& defaultValues) {
     if (check(TokenType::TK_RPAREN)) return;
+    bool seenDefault = false;  // F10: 一旦出现默认参数，后续都必须有默认值
     do {
         std::string pType;
         std::string paramName;
@@ -321,7 +415,35 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         }
         params.push_back(paramName);
         paramTypes.push_back(pType);
+
+        // F10: 解析默认参数值 = expr
+        if (match(TokenType::TK_ASSIGN)) {
+            seenDefault = true;
+            auto defaultExpr = expression();
+            defaultValues.push_back(std::move(defaultExpr));
+        } else {
+            if (seenDefault) {
+                throw ParseError("默认参数后的参数都必须有默认值: '" + paramName + "'",
+                                 peek().line, peek().column);
+            }
+            defaultValues.push_back(nullptr);
+        }
     } while (match(TokenType::TK_COMMA));
+
+    // BUG-P1 fix: 默认参数值不能引用后续参数（如 fun f(a = b, b = 1) 应报错）
+    for (size_t i = 0; i < defaultValues.size(); ++i) {
+        if (!defaultValues[i]) continue;
+        std::unordered_set<std::string> refNames;
+        collectVarRefs(defaultValues[i].get(), refNames);
+        for (const auto& ref : refNames) {
+            for (size_t j = i + 1; j < params.size(); ++j) {
+                if (params[j] == ref) {
+                    throw ParseError("默认参数值不能引用后续参数: '" + ref + "'",
+                                     defaultValues[i]->line, defaultValues[i]->column);
+                }
+            }
+        }
+    }
 }
 
 std::unique_ptr<ClassDecl> Parser::classDecl() {
@@ -384,7 +506,8 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
                 std::vector<std::string> params;
                 std::vector<std::string> paramTypes;
-                parseParamList(params, paramTypes);
+                std::vector<std::unique_ptr<ASTNode>> defaultValues;  // F10
+                parseParamList(params, paramTypes, defaultValues);
                 consume(TokenType::TK_RPAREN, "期望 ')'");
 
                 // PARSE-06 fix: 可选的返回类型注解（支持 : type 和 -> type）
@@ -400,9 +523,21 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                 consume(TokenType::TK_LBRACE, "期望 '{'");
                 auto body = block();
 
-                members.push_back(std::make_unique<FunDecl>(firstTok.lexeme, std::move(params),
-                                                             std::move(paramTypes), returnType,
-                                                             std::move(body), firstTok.line, firstTok.column));
+                auto decl = std::make_unique<FunDecl>(firstTok.lexeme, std::move(params),
+                                                       std::move(paramTypes), returnType,
+                                                       std::move(body), firstTok.line, firstTok.column);
+                // F10: 计算必需参数个数
+                int reqCount = 0;
+                for (size_t i = 0; i < defaultValues.size(); ++i) {
+                    if (defaultValues[i] == nullptr) {
+                        ++reqCount;
+                    } else {
+                        break;
+                    }
+                }
+                decl->requiredParamCount = reqCount;
+                decl->defaultValues = std::move(defaultValues);
+                members.push_back(std::move(decl));
             } else if (check(TokenType::TK_IDENTIFIER)) {
                 // 可能是类类型字段: ClassName fieldName; 或类类型方法: ClassName methodName()
                 if (checkNext(TokenType::TK_LPAREN)) {
@@ -446,6 +581,8 @@ std::unique_ptr<ASTNode> Parser::statement() {
     if (check(TokenType::TK_RETURN))   return returnStmt();
     if (check(TokenType::TK_BREAK))    return breakStmt();
     if (check(TokenType::TK_CONTINUE)) return continueStmt();
+    if (check(TokenType::TK_TRY))      return tryStmt();
+    if (check(TokenType::TK_THROW))    return throwStmt();
     if (check(TokenType::TK_PRINT))    return printStmt();
     if (check(TokenType::TK_LBRACE)) {
         advance();
@@ -610,6 +747,106 @@ std::unique_ptr<ContinueStmt> Parser::continueStmt() {
     const Token& tok = consume(TokenType::TK_CONTINUE, "期望 'continue'");
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 continue 语句");
     return std::make_unique<ContinueStmt>(tok.line, tok.column);
+}
+
+std::unique_ptr<TryStmt> Parser::tryStmt() {
+    const Token& tryTok = consume(TokenType::TK_TRY, "期望 'try'");
+    consume(TokenType::TK_LBRACE, "try 后期望 '{'");
+    auto tryBlock = block();
+
+    consume(TokenType::TK_CATCH, "期望 'catch'");
+    consume(TokenType::TK_LPAREN, "catch 后期望 '('");
+    const Token& varTok = consume(TokenType::TK_IDENTIFIER, "期望 catch 变量名");
+    consume(TokenType::TK_RPAREN, "期望 ')'");
+    consume(TokenType::TK_LBRACE, "catch 后期望 '{'");
+    auto catchBlock = block();
+
+    return std::make_unique<TryStmt>(std::move(tryBlock), varTok.lexeme,
+                                      std::move(catchBlock), tryTok.line, tryTok.column);
+}
+
+std::unique_ptr<ThrowStmt> Parser::throwStmt() {
+    const Token& throwTok = consume(TokenType::TK_THROW, "期望 'throw'");
+    auto expr = expression();
+    consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 throw 语句");
+    return std::make_unique<ThrowStmt>(std::move(expr), throwTok.line, throwTok.column);
+}
+
+std::unique_ptr<ImportStmt> Parser::importStmt() {
+    // BUG 5b fix: import 只能在顶层使用
+    if (blockDepth_ > 0) {
+        const Token& tok = peek();
+        throw ParseError("import 语句只能在顶层使用", tok.line, tok.column);
+    }
+    const Token& importTok = consume(TokenType::TK_IMPORT, "期望 'import'");
+
+    std::vector<std::string> names;
+    bool importAll = false;
+
+    // 两种形式:
+    // 1. import "path";           — 导入全部
+    // 2. import { a, b } from "path"; — 导入指定名称
+    if (check(TokenType::TK_LBRACE)) {
+        advance();  // 消耗 '{'
+        do {
+            const Token& name = consume(TokenType::TK_IDENTIFIER, "期望导入名称");
+            names.push_back(name.lexeme);
+        } while (match(TokenType::TK_COMMA));
+        consume(TokenType::TK_RBRACE, "期望 '}'");
+        consume(TokenType::TK_FROM, "期望 'from'");
+    } else {
+        importAll = true;
+    }
+
+    const Token& pathTok = consume(TokenType::TK_STRING_LIT, "期望模块路径字符串");
+    // BUG 4a fix: 空模块路径校验
+    if (pathTok.literal.stringVal().empty()) {
+        throw ParseError("模块路径不能为空", pathTok.line, pathTok.column);
+    }
+    consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 import 语句");
+
+    return std::make_unique<ImportStmt>(pathTok.literal.stringVal(), std::move(names),
+                                         importAll, importTok.line, importTok.column);
+}
+
+std::unique_ptr<ExportStmt> Parser::exportStmt() {
+    // BUG 5b fix: export 只能在顶层使用
+    if (blockDepth_ > 0) {
+        const Token& tok = peek();
+        throw ParseError("export 语句只能在顶层使用", tok.line, tok.column);
+    }
+    const Token& exportTok = consume(TokenType::TK_EXPORT, "期望 'export'");
+
+    // export 后必须是声明: var / fun / class / 类型注解
+    std::unique_ptr<ASTNode> decl;
+    if (check(TokenType::TK_VAR)) {
+        decl = varDecl();
+    } else if (check(TokenType::TK_FUN)) {
+        decl = funDecl();
+    } else if (check(TokenType::TK_CLASS)) {
+        decl = classDecl();
+    } else if (isTypeKeyword() || check(TokenType::TK_IDENTIFIER)) {
+        // 类型注解声明: int x = 1; 或 ClassName obj;
+        int savePos = current_;
+        std::string typeAnn = parseTypeAnnotation();
+        if (isIdentifierOrType()) {
+            if (checkNext(TokenType::TK_LPAREN)) {
+                decl = typedFunDecl(typeAnn);
+            } else if (check(TokenType::TK_IDENTIFIER)) {
+                decl = typedVarDecl(typeAnn);
+            } else {
+                current_ = savePos;
+                throw ParseError("export 后期望声明", peek().line, peek().column);
+            }
+        } else {
+            current_ = savePos;
+            throw ParseError("export 后期望声明", peek().line, peek().column);
+        }
+    } else {
+        throw ParseError("export 后期望 var/fun/class 声明", peek().line, peek().column);
+    }
+
+    return std::make_unique<ExportStmt>(std::move(decl), exportTok.line, exportTok.column);
 }
 
 std::unique_ptr<PrintStmt> Parser::printStmt() {
@@ -947,10 +1184,22 @@ std::unique_ptr<ASTNode> Parser::primary() {
         return std::make_unique<NumberLiteral>(tok.literal, tok.line, tok.column);
     }
 
-    // 字符串字面量
+    // 字符串字面量（含 F7 字符串插值支持）
     if (match(TokenType::TK_STRING_LIT)) {
         const Token& tok = previous();
-        return std::make_unique<StringLiteral>(tok.literal.stringVal(), tok.line, tok.column);
+        auto result = std::make_unique<StringLiteral>(tok.literal.stringVal(), tok.line, tok.column);
+
+        // F7: 检查是否为插值字符串（后跟 TK_INTERP_START）
+        if (check(TokenType::TK_INTERP_START)) {
+            return parseInterpolatedString(std::move(result));
+        }
+        return result;
+    }
+
+    // F7: 插值字符串的后续片段（不应在 primary 顶层出现，由 parseInterpolatedString 内部处理）
+    if (match(TokenType::TK_STRING_PART)) {
+        const Token& tok = previous();
+        throw ParseError("字符串片段出现在非插值上下文", tok.line, tok.column);
     }
 
     // 布尔字面量
@@ -1079,4 +1328,63 @@ void Parser::synchronize() {
 
         advance();
     }
+}
+
+// F7: 解析插值字符串
+// 语法: "text {expr} more text {expr2} end"
+// Lexer 已将其拆分为: TK_STRING_LIT TK_INTERP_START <expr tokens> TK_INTERP_END TK_STRING_PART TK_INTERP_START ... TK_STRING_PART
+// Parser 将其转换为: ((str("text ") + expr) + str(" more text ")) + expr2) + str(" end")
+std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode> first) {
+    std::unique_ptr<ASTNode> result = std::move(first);
+    int startLine = result ? result->line : 0;
+    int startCol = result ? result->column : 0;
+
+    // 循环处理 {expr} text 片段
+    while (true) {
+        if (!match(TokenType::TK_INTERP_START)) {
+            const Token& tok = peek();
+            throw ParseError("期望插值起始 '{'", tok.line, tok.column);
+        }
+
+        // 解析表达式（直到 TK_INTERP_END）
+        // expression() 调用链最终会调用 primary()，若 primary 遇到 TK_INTERP_END 会抛出 ParseError
+        // 此处捕获该错误，将空表达式视为空字符串
+        std::unique_ptr<ASTNode> expr;
+        try {
+            expr = expression();
+        } catch (const ParseError&) {
+            // 表达式为空（如 "{}"），视为空字符串
+            expr = std::make_unique<StringLiteral>(std::string(), startLine, startCol);
+        }
+
+        // 拼接: result + expr
+        result = std::make_unique<BinaryOp>(BinOpType::BIN_ADD, std::move(result), std::move(expr),
+                                            startLine, startCol);
+
+        // 消耗 TK_INTERP_END
+        if (!match(TokenType::TK_INTERP_END)) {
+            const Token& tok = peek();
+            throw ParseError("期望插值结束 '}'", tok.line, tok.column);
+        }
+
+        // 期望下一个 token 是 TK_STRING_PART（字符串剩余部分）
+        if (!match(TokenType::TK_STRING_PART)) {
+            const Token& tok = peek();
+            throw ParseError("期望字符串片段", tok.line, tok.column);
+        }
+
+        const Token& partTok = previous();
+        auto part = std::make_unique<StringLiteral>(partTok.literal.stringVal(), partTok.line, partTok.column);
+
+        // 拼接: result + part
+        result = std::make_unique<BinaryOp>(BinOpType::BIN_ADD, std::move(result), std::move(part),
+                                            startLine, startCol);
+
+        // 检查是否还有更多插值
+        if (!check(TokenType::TK_INTERP_START)) {
+            break;
+        }
+    }
+
+    return result;
 }

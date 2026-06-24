@@ -3,6 +3,9 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QThread>
+#include <QFile>
+#include <QFileInfo>
+#include <QDir>
 
 // ============================================================
 // IdeController — 业务逻辑层实现
@@ -137,10 +140,40 @@ bool IdeController::formatCode(std::string& formatted) {
 // Worker 线程管理
 // ============================================================
 
-bool IdeController::prepareRun(bool isDebug, const std::string& source) {
+bool IdeController::prepareRun(bool isDebug, const std::string& source, const std::string& filePath) {
     if (isRunning_) return false;
 
     Logger::Info(isDebug ? "启动调试运行" : "启动程序运行", "IDE");
+
+    // P0-1 fix: 设置模块加载器，使 F12 模块系统在 IDE 中可用
+    // 模块路径解析：相对于当前文件所在目录查找 <modulePath>.mini 文件
+    QString baseDir;
+    if (!filePath.empty()) {
+        QFileInfo fi(QString::fromStdString(filePath));
+        baseDir = fi.absolutePath();
+    }
+    interpreter_.setCurrentFilePath(filePath);
+    interpreter_.setModuleLoader([baseDir](const std::string& modulePath) -> std::string {
+        // 尝试解析模块路径：优先作为相对路径，其次在 baseDir 下查找
+        QString qPath = QString::fromStdString(modulePath);
+        // 如果没有 .mini 后缀，自动添加
+        if (!qPath.endsWith(".mini", Qt::CaseInsensitive)) {
+            qPath += ".mini";
+        }
+        QStringList candidates;
+        if (baseDir.isEmpty()) {
+            candidates << qPath;
+        } else {
+            candidates << QDir(baseDir).filePath(qPath) << qPath;
+        }
+        for (const QString& candidate : candidates) {
+            QFile file(candidate);
+            if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                return QString::fromUtf8(file.readAll()).toStdString();
+            }
+        }
+        return "";
+    });
 
     // 词法分析
     try {

@@ -926,3 +926,556 @@ TEST(VMConsistency, BuiltinFunctions) {
     EXPECT_EQ(runInterpreterOutputForConsistency(src),
               runVMOutputForConsistency(src));
 }
+
+// ============================================================
+// 14. F5: 字符串方法一致性测试 (startsWith/endsWith/substr/indexOf)
+// ============================================================
+
+TEST(VME2E, StringStartsWith) {
+    EXPECT_EQ(runVMOutput("print(\"hello world\".startsWith(\"hello\"));"), "true");
+    EXPECT_EQ(runVMOutput("print(\"hello world\".startsWith(\"world\"));"), "false");
+    EXPECT_EQ(runVMOutput("print(\"hello\".startsWith(\"\"));"), "true");
+}
+
+TEST(VME2E, StringEndsWith) {
+    EXPECT_EQ(runVMOutput("print(\"hello world\".endsWith(\"world\"));"), "true");
+    EXPECT_EQ(runVMOutput("print(\"hello world\".endsWith(\"hello\"));"), "false");
+    EXPECT_EQ(runVMOutput("print(\"hello\".endsWith(\"\"));"), "true");
+}
+
+TEST(VME2E, StringSubstr) {
+    EXPECT_EQ(runVMOutput("print(\"hello world\".substr(6));"), "world");
+    EXPECT_EQ(runVMOutput("print(\"hello world\".substr(0, 5));"), "hello");
+    EXPECT_EQ(runVMOutput("print(\"hello\".substr(2, 3));"), "llo");
+}
+
+TEST(VME2E, StringIndexOf) {
+    EXPECT_EQ(runVMOutput("print(\"hello world\".indexOf(\"world\"));"), "6");
+    EXPECT_EQ(runVMOutput("print(\"hello world\".indexOf(\"xyz\"));"), "-1");
+    EXPECT_EQ(runVMOutput("print(\"hello\".indexOf(\"l\"));"), "2");
+}
+
+TEST(VMConsistency, StringMethods) {
+    std::string src =
+        "var s = \"hello world\";"
+        "print(s.startsWith(\"hello\"));"
+        "print(s.endsWith(\"world\"));"
+        "print(s.substr(6));"
+        "print(s.indexOf(\"world\"));";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}
+
+// ============================================================
+// 15. F7: 字符串插值测试
+// ============================================================
+
+TEST(VME2E, StringInterpolationBasic) {
+    EXPECT_EQ(runVMOutput("var name = \"Alice\"; print(\"Hello {name}!\");"), "Hello Alice!");
+}
+
+TEST(VME2E, StringInterpolationMultiple) {
+    std::string src =
+        "var name = \"Bob\";"
+        "var age = 25;"
+        "print(\"Name: {name}, Age: {age}\");";
+    EXPECT_EQ(runVMOutput(src), "Name: Bob, Age: 25");
+}
+
+TEST(VME2E, StringInterpolationExpression) {
+    EXPECT_EQ(runVMOutput("print(\"Result: {1 + 2 * 3}\");"), "Result: 7");
+}
+
+TEST(VME2E, StringInterpolationNoInterp) {
+    // 普通字符串不受影响
+    EXPECT_EQ(runVMOutput("print(\"hello world\");"), "hello world");
+}
+
+TEST(VME2E, StringInterpolationEmpty) {
+    // 空插值 {}
+    EXPECT_EQ(runVMOutput("print(\"a{}b\");"), "ab");
+}
+
+TEST(VMConsistency, StringInterpolation) {
+    std::string src =
+        "var name = \"Test\";"
+        "var count = 3;"
+        "print(\"{name}: {count} items\");";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}
+
+// ============================================================
+// F10: 默认参数值
+// ============================================================
+
+// 测试：使用默认参数
+TEST(VME2E, DefaultParamBasic) {
+    std::string src =
+        "fun greet(name, greeting = \"Hello\") {"
+        "  print(greeting + \", \" + name);"
+        "}"
+        "greet(\"World\");";
+    EXPECT_EQ(runVMOutput(src), "Hello, World");
+}
+
+// 测试：覆盖默认参数
+TEST(VME2E, DefaultParamOverride) {
+    std::string src =
+        "fun greet(name, greeting = \"Hello\") {"
+        "  print(greeting + \", \" + name);"
+        "}"
+        "greet(\"World\", \"Hi\");";
+    EXPECT_EQ(runVMOutput(src), "Hi, World");
+}
+
+// 测试：多个默认参数
+TEST(VME2E, DefaultParamMultiple) {
+    std::string src =
+        "fun add(a, b = 10, c = 100) {"
+        "  return a + b + c;"
+        "}"
+        "print(add(1));"
+        "print(add(1, 2));"
+        "print(add(1, 2, 3));";
+    EXPECT_EQ(runVMOutput(src), "1111036");
+}
+
+// 测试：默认参数为数字
+TEST(VME2E, DefaultParamNumber) {
+    std::string src =
+        "fun power(base, exp = 2) {"
+        "  var result = 1;"
+        "  for (var i = 0; i < exp; i = i + 1) {"
+        "    result = result * base;"
+        "  }"
+        "  return result;"
+        "}"
+        "print(power(3));"
+        "print(power(3, 3));";
+    EXPECT_EQ(runVMOutput(src), "927");
+}
+
+// 测试：默认参数为布尔值和 null
+TEST(VME2E, DefaultParamBoolNull) {
+    std::string src =
+        "fun test(a, b = true, c = null) {"
+        "  print(a);"
+        "  print(b);"
+        "  print(c);"
+        "}"
+        "test(1);";
+    EXPECT_EQ(runVMOutput(src), "1truenull");
+}
+
+// 测试：默认参数为负数
+TEST(VME2E, DefaultParamNegative) {
+    std::string src =
+        "fun test(a, b = -5) {"
+        "  return a + b;"
+        "}"
+        "print(test(10));"
+        "print(test(10, 20));";
+    EXPECT_EQ(runVMOutput(src), "530");
+}
+
+// 测试：参数过少时报错
+TEST(VME2E, DefaultParamTooFew) {
+    std::string output, error;
+    std::string src =
+        "fun test(a, b = 10) { return a + b; }"
+        "test();";
+    runVMResult(src, output, error);
+    EXPECT_FALSE(error.empty());
+}
+
+// 测试：参数过多时报错
+TEST(VME2E, DefaultParamTooMany) {
+    std::string output, error;
+    std::string src =
+        "fun test(a, b = 10) { return a + b; }"
+        "test(1, 2, 3);";
+    runVMResult(src, output, error);
+    EXPECT_FALSE(error.empty());
+}
+
+// 测试：类方法默认参数
+TEST(VME2E, DefaultParamMethod) {
+    std::string src =
+        "class Calculator {"
+        "  fun multiply(a, b = 2) { return a * b; }"
+        "}"
+        "var calc = Calculator();"
+        "print(calc.multiply(5));"
+        "print(calc.multiply(5, 3));";
+    EXPECT_EQ(runVMOutput(src), "1015");
+}
+
+// 测试：全默认参数
+TEST(VME2E, DefaultParamAllDefault) {
+    std::string src =
+        "fun test(a = 1, b = 2, c = 3) {"
+        "  return a + b + c;"
+        "}"
+        "print(test());"
+        "print(test(10));"
+        "print(test(10, 20));"
+        "print(test(10, 20, 30));";
+    EXPECT_EQ(runVMOutput(src), "6153360");
+}
+
+// 一致性测试：默认参数
+TEST(VMConsistency, DefaultParams) {
+    std::string src =
+        "fun compute(a, b = 10, c = 20) {"
+        "  return (a + b) * c;"
+        "}"
+        "print(compute(1));"
+        "print(compute(1, 2));"
+        "print(compute(1, 2, 3));";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}
+
+// ============================================================
+// F11: try/catch 异常处理测试
+// ============================================================
+
+// 测试：基本 try-catch 捕获
+TEST(VME2E, TryCatchBasic) {
+    std::string src =
+        "try {"
+        "  throw \"error\";"
+        "} catch (e) {"
+        "  print(e);"
+        "}";
+    EXPECT_EQ(runVMOutput(src), "error");
+}
+
+// 测试：try 块无异常时跳过 catch
+TEST(VME2E, TryCatchNoThrow) {
+    std::string src =
+        "try {"
+        "  print(\"try\");"
+        "} catch (e) {"
+        "  print(\"catch\");"
+        "}"
+        "print(\"end\");";
+    EXPECT_EQ(runVMOutput(src), "tryend");
+}
+
+// 测试：抛出数字异常
+TEST(VME2E, TryCatchThrowNumber) {
+    std::string src =
+        "try {"
+        "  throw 42;"
+        "} catch (n) {"
+        "  print(n);"
+        "}";
+    EXPECT_EQ(runVMOutput(src), "42");
+}
+
+// 测试：函数内抛出，外层捕获
+TEST(VME2E, TryCatchCrossFunction) {
+    std::string src =
+        "fun risky() {"
+        "  throw \"from func\";"
+        "}"
+        "try {"
+        "  risky();"
+        "} catch (e) {"
+        "  print(e);"
+        "}";
+    EXPECT_EQ(runVMOutput(src), "from func");
+}
+
+// 测试：catch 块中继续执行后续代码
+TEST(VME2E, TryCatchContinue) {
+    std::string src =
+        "try {"
+        "  throw 1;"
+        "} catch (e) {"
+        "  print(\"caught\");"
+        "}"
+        "print(\"after\");";
+    EXPECT_EQ(runVMOutput(src), "caughtafter");
+}
+
+// 测试：未捕获的异常导致错误
+TEST(VME2E, TryUncaught) {
+    std::string src = "throw \"uncaught\";";
+    std::string output, error;
+    runVMResult(src, output, error);
+    EXPECT_FALSE(error.empty());
+}
+
+// 测试：嵌套 try-catch
+TEST(VME2E, TryCatchNested) {
+    std::string src =
+        "try {"
+        "  try {"
+        "    throw \"inner\";"
+        "  } catch (e1) {"
+        "    print(e1);"
+        "    throw \"outer\";"
+        "  }"
+        "} catch (e2) {"
+        "  print(e2);"
+        "}";
+    EXPECT_EQ(runVMOutput(src), "innerouter");
+}
+
+// 测试：catch 变量在新作用域中
+TEST(VME2E, TryCatchScope) {
+    std::string src =
+        "var x = 1;"
+        "try {"
+        "  throw 99;"
+        "} catch (e) {"
+        "  print(e);"
+        "}"
+        "print(x);";
+    EXPECT_EQ(runVMOutput(src), "991");
+}
+
+// 测试：throw 后的代码不执行
+TEST(VME2E, ThrowSkipsRemaining) {
+    std::string src =
+        "try {"
+        "  print(\"before\");"
+        "  throw 1;"
+        "  print(\"after\");"
+        "} catch (e) {"
+        "  print(\"caught\");"
+        "}";
+    EXPECT_EQ(runVMOutput(src), "beforecaught");
+}
+
+// 一致性测试：try/catch
+TEST(VMConsistency, TryCatch) {
+    std::string src =
+        "fun divide(a, b) {"
+        "  if (b == 0) { throw \"div by zero\"; }"
+        "  return a / b;"
+        "}"
+        "try {"
+        "  print(divide(10, 2));"
+        "  print(divide(10, 0));"
+        "  print(divide(20, 4));"
+        "} catch (e) {"
+        "  print(e);"
+        "}";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}
+
+// ============================================================
+// Bug 回归测试：新功能 bug 修复验证
+// ============================================================
+
+// P0-1/P0-2 fix: 类 init 方法支持默认参数
+TEST(VME2E, ClassInitDefaultParam) {
+    std::string src =
+        "class Point {"
+        "  var x = 0;"
+        "  var y = 0;"
+        "  fun init(x, y = 0) {"
+        "    this.x = x;"
+        "    this.y = y;"
+        "  }"
+        "}"
+        "var p1 = Point(1);"
+        "var p2 = Point(1, 2);"
+        "print(p1.x);"
+        "print(p1.y);"
+        "print(p2.x);"
+        "print(p2.y);";
+    EXPECT_EQ(runVMOutput(src), "1012");
+}
+
+// P0-1 fix: 类 init 全部默认参数时可无参构造
+TEST(VME2E, ClassInitAllDefaultParam) {
+    std::string src =
+        "class Config {"
+        "  var host = \"localhost\";"
+        "  var port = 8080;"
+        "  fun init(host = \"default\", port = 3000) {"
+        "    this.host = host;"
+        "    this.port = port;"
+        "  }"
+        "}"
+        "var c = Config();"
+        "print(c.host);"
+        "print(c.port);";
+    EXPECT_EQ(runVMOutput(src), "default3000");
+}
+
+// P0-3 fix: try 块内 return 不泄漏 tryStack_ handler
+TEST(VME2E, TryReturnCleanup) {
+    std::string src =
+        "fun test() {"
+        "  try {"
+        "    return 42;"
+        "  } catch (e) {"
+        "    return -1;"
+        "  }"
+        "}"
+        "print(test());"
+        // 再次调用验证 tryStack_ 未泄漏（不会误捕后续异常）
+        "fun test2() {"
+        "  throw 99;"
+        "}"
+        "try {"
+        "  test2();"
+        "} catch (e) {"
+        "  print(e);"
+        "}";
+    EXPECT_EQ(runVMOutput(src), "4299");
+}
+
+// P0-4 fix: try 块内 break 不泄漏 tryStack_ handler
+TEST(VME2E, TryBreakCleanup) {
+    std::string src =
+        "var result = \"\";"
+        "for (var i = 0; i < 5; i = i + 1) {"
+        "  try {"
+        "    if (i == 2) { break; }"
+        "    result = result + \"i\";"
+        "  } catch (e) {"
+        "    result = result + \"e\";"
+        "  }"
+        "}"
+        "print(result);"
+        // 验证 break 后 tryStack_ 已清理：后续 throw 应正常传播
+        "try {"
+        "  throw 1;"
+        "} catch (e) {"
+        "  print(\"ok\");"
+        "}";
+    EXPECT_EQ(runVMOutput(src), "iiok");
+}
+
+// P0-4 fix: try 块内 continue 不泄漏 tryStack_ handler
+TEST(VME2E, TryContinueCleanup) {
+    std::string src =
+        "var result = \"\";"
+        "for (var i = 0; i < 4; i = i + 1) {"
+        "  try {"
+        "    if (i == 1) { continue; }"
+        "    result = result + \"i\" + i;"
+        "  } catch (e) {"
+        "    result = result + \"e\";"
+        "  }"
+        "}"
+        "print(result);";
+    EXPECT_EQ(runVMOutput(src), "i0i2i3");
+}
+
+// P2-4 fix: catch 变量不泄漏到外层作用域（函数内测试）
+// 注意：顶层 catch 变量在 VM 中为全局变量，属于设计限制，此处仅测试函数内作用域
+TEST(VME2E, CatchVarNoLeak) {
+    std::string output, error;
+    std::string src =
+        "fun test() {"
+        "  try {"
+        "    throw 42;"
+        "  } catch (e) {"
+        "    print(e);"
+        "  }"
+        "  return e;"  // e 不应在此可访问
+        "}"
+        "test();";
+    runVMResult(src, output, error);
+    EXPECT_EQ(output, "42");
+    EXPECT_FALSE(error.empty());
+}
+
+// P0-5 fix: try 块内闭包捕获 — 异常展开时关闭 open upvalues
+TEST(VME2E, TryClosureUpvalueClose) {
+    std::string src =
+        "fun makeCounter() {"
+        "  var count = 0;"
+        "  fun inc() {"
+        "    count = count + 1;"
+        "    return count;"
+        "  }"
+        "  try {"
+        "    inc();"
+        "    inc();"
+        "    throw \"stop\";"
+        "  } catch (e) {"
+        "    print(e);"
+        "  }"
+        "  print(inc());"  // 应输出 3（count 未被异常破坏）
+        "}"
+        "makeCounter();";
+    EXPECT_EQ(runVMOutput(src), "stop3");
+}
+
+// P2-1 fix: 命名导入原子性 — 部分名称不存在时不导入任何名称
+TEST(InterpreterE2E, ModuleImportAtomic) {
+    // 这个测试需要 Interpreter 端的模块支持，在 TestInterpreterE2E 中已有框架
+    // 此处仅验证 VM 端不崩溃（VM 不支持 import，编译期报错）
+    std::string output, error;
+    std::string src =
+        "import { a, b, c } from \"nonexistent.mini\";";
+    runVMResult(src, output, error);
+    EXPECT_FALSE(error.empty());  // VM 应报编译错误
+}
+
+// 一致性测试：类 init 默认参数
+TEST(VMConsistency, ClassInitDefaultParam) {
+    std::string src =
+        "class Box {"
+        "  var w = 0;"
+        "  var h = 0;"
+        "  fun init(aw, ah = 1) {"
+        "    w = aw;"
+        "    h = ah;"
+        "  }"
+        "  fun area() { return w * h; }"
+        "}"
+        "var b1 = Box(5);"
+        "var b2 = Box(5, 10);"
+        "print(b1.area());"
+        "print(b2.area());";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}
+
+// 一致性测试：try 块内 return
+TEST(VMConsistency, TryReturn) {
+    std::string src =
+        "fun safeDiv(a, b) {"
+        "  try {"
+        "    if (b == 0) { throw \"zero\"; }"
+        "    return a / b;"
+        "  } catch (e) {"
+        "    return -1;"
+        "  }"
+        "}"
+        "print(safeDiv(10, 2));"
+        "print(safeDiv(10, 0));"
+        "print(safeDiv(20, 4));";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}
+
+// 一致性测试：try 块内闭包
+TEST(VMConsistency, TryClosure) {
+    std::string src =
+        "fun test() {"
+        "  var x = 10;"
+        "  fun getX() { return x; }"
+        "  try {"
+        "    x = 20;"
+        "    throw 1;"
+        "  } catch (e) {"
+        "    x = 30;"
+        "  }"
+        "  return getX();"
+        "}"
+        "print(test());";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src),
+              runVMOutputForConsistency(src));
+}

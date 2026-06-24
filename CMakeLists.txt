@@ -54,6 +54,7 @@ set(MINILANG_GUI_SOURCES
     gui/DebugPanel.cpp
     gui/ReplPanel.cpp
     gui/VmStackPanel.cpp
+    gui/FindReplacePanel.cpp
 )
 
 # GUI 模块需要 MOC 的头文件
@@ -68,6 +69,7 @@ set(MINILANG_GUI_MOC_HEADERS
     gui/SyntaxHighlighter.h
     gui/ReplPanel.h
     gui/VmStackPanel.h
+    gui/FindReplacePanel.h
 )
 
 # ============================================================

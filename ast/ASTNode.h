@@ -38,6 +38,10 @@ enum class NodeType {
     NODE_SUPER_EXPR,
     NODE_BREAK_STMT,
     NODE_CONTINUE_STMT,
+    NODE_TRY_STMT,
+    NODE_THROW_STMT,
+    NODE_IMPORT_STMT,
+    NODE_EXPORT_STMT,
 };
 
 // ============================================================
@@ -337,17 +341,27 @@ public:
     std::vector<std::string> paramTypes;    // 参数类型注解
     std::string returnType;                 // 返回值类型注解
     std::unique_ptr<ASTNode> body;
+    // F10: 默认参数值。与 params 一一对应，无默认值时为 nullptr。
+    // 约束：一旦某参数有默认值，其后所有参数都必须有默认值。
+    std::vector<std::unique_ptr<ASTNode>> defaultValues;
+    int requiredParamCount = 0;  // F10: 必需参数个数（无默认值的前缀参数数量）
 
     FunDecl(const std::string& n, std::vector<std::string> p,
             std::vector<std::string> pt, const std::string& rt,
             std::unique_ptr<ASTNode> b, int ln = 0, int col = 0)
         : ASTNode(ln, col), name(n), params(std::move(p)),
-          paramTypes(std::move(pt)), returnType(rt), body(std::move(b)) { nodeType = NodeType::NODE_FUN_DECL; }
+          paramTypes(std::move(pt)), returnType(rt), body(std::move(b)),
+          requiredParamCount(static_cast<int>(this->params.size())) { nodeType = NodeType::NODE_FUN_DECL; }
 
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "FunDecl(" + name + ")"; }
     std::vector<ASTNode*> children() const override {
-        return { body.get() };
+        std::vector<ASTNode*> ch;
+        if (body) ch.push_back(body.get());
+        for (const auto& dv : defaultValues) {
+            if (dv) ch.push_back(dv.get());
+        }
+        return ch;
     }
 };
 
@@ -596,4 +610,74 @@ public:
     Value accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ContinueStmt"; }
     std::vector<ASTNode*> children() const override { return {}; }
+};
+
+/// try-catch 语句节点
+class TryStmt : public ASTNode {
+public:
+    std::unique_ptr<ASTNode> tryBlock;     // try 块
+    std::string catchVarName;               // catch 绑定的变量名
+    std::unique_ptr<ASTNode> catchBlock;    // catch 块
+
+    TryStmt(std::unique_ptr<ASTNode> tryB, const std::string& varName,
+            std::unique_ptr<ASTNode> catchB, int ln = 0, int col = 0)
+        : ASTNode(ln, col), tryBlock(std::move(tryB)), catchVarName(varName),
+          catchBlock(std::move(catchB)) { nodeType = NodeType::NODE_TRY_STMT; }
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "TryStmt"; }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> c;
+        if (tryBlock) c.push_back(tryBlock.get());
+        if (catchBlock) c.push_back(catchBlock.get());
+        return c;
+    }
+};
+
+/// throw 语句节点
+class ThrowStmt : public ASTNode {
+public:
+    std::unique_ptr<ASTNode> expression;   // 抛出的值
+
+    ThrowStmt(std::unique_ptr<ASTNode> expr, int ln = 0, int col = 0)
+        : ASTNode(ln, col), expression(std::move(expr)) { nodeType = NodeType::NODE_THROW_STMT; }
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "ThrowStmt"; }
+    std::vector<ASTNode*> children() const override {
+        return expression ? std::vector<ASTNode*>{expression.get()} : std::vector<ASTNode*>{};
+    }
+};
+
+/// import 语句节点
+/// 语法: import "path"; 或 import { a, b } from "path";
+class ImportStmt : public ASTNode {
+public:
+    std::string modulePath;             // 模块路径（字符串字面量）
+    std::vector<std::string> names;     // 导入的名称（空表示导入全部）
+    bool importAll;                     // true = import * (导入全部), false = 指定名称
+
+    ImportStmt(const std::string& path, std::vector<std::string> n, bool all,
+               int ln = 0, int col = 0)
+        : ASTNode(ln, col), modulePath(path), names(std::move(n)), importAll(all) {
+        nodeType = NodeType::NODE_IMPORT_STMT;
+    }
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "ImportStmt"; }
+    std::vector<ASTNode*> children() const override { return {}; }
+};
+
+/// export 语句节点
+/// 语法: export var x = 1; export fun foo() {} export class Foo {}
+class ExportStmt : public ASTNode {
+public:
+    std::unique_ptr<ASTNode> declaration;   // 被导出的声明节点
+
+    ExportStmt(std::unique_ptr<ASTNode> decl, int ln = 0, int col = 0)
+        : ASTNode(ln, col), declaration(std::move(decl)) {
+        nodeType = NodeType::NODE_EXPORT_STMT;
+    }
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "ExportStmt"; }
+    std::vector<ASTNode*> children() const override {
+        return declaration ? std::vector<ASTNode*>{declaration.get()} : std::vector<ASTNode*>{};
+    }
 };

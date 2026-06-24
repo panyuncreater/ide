@@ -5,6 +5,7 @@
 #include <sstream>
 #include <climits>
 #include <cstdint>
+#include <cmath>  // BUG 8.1 fix: std::fmod
 #include <algorithm>
 
 // ============================================================
@@ -64,6 +65,108 @@ VMResult VM::runtimeError(const std::string& msg) {
     diagnostics_.addError(msg, lastErrorLine_, 0, DiagSource::VM);
     Logger::Error(msg + " (行 " + std::to_string(lastErrorLine_) + ")", "VM");
     return VMResult::VM_RUNTIME_ERROR;
+}
+
+VMResult VM::throwException(Value thrownValue) {
+    // F11: 异常处理 — 搜索 try 处理器或跨帧传播
+    while (true) {
+        size_t currentFrameIdx = frames_.size() - 1;
+
+        // 从 tryStack_ 顶部搜索当前帧的处理器
+        // tryStack_ 是栈结构，顶部可能是当前帧或更内层帧的处理器
+        while (!tryStack_.empty()) {
+            const auto& handler = tryStack_.back();
+            if (handler.frameIndex == currentFrameIdx) {
+                // 找到 catch 处理器：截断栈、推入异常值、跳转到 catch
+                // P0-5 fix: 截断栈前关闭指向被截断栈槽的 open upvalues，防止悬垂指针
+                if (handler.stackBase <= stack_.size()) {
+                    closeUpvaluesFrom(handler.stackBase);
+                    stack_.resize(handler.stackBase);
+                }
+                push(std::move(thrownValue));
+                currentFrame().ip = handler.catchIp;
+                tryStack_.pop_back();
+                return VMResult::VM_OK;
+            }
+            if (handler.frameIndex < currentFrameIdx) {
+                // 处理器在外层帧 — 当前帧无处理器，需弹出当前帧
+                break;
+            }
+            // handler.frameIndex > currentFrameIdx: 内层帧残留处理器，弹出
+            tryStack_.pop_back();
+        }
+
+        // 当前帧无处理器 — 弹出帧，传播到调用者
+        if (frames_.size() <= 1) {
+            // 无更多帧 — 未捕获的异常
+            // P2-5 fix: 限制异常值 toString 长度，防止循环引用对象导致超长输出
+            std::string str = thrownValue.toString();
+            if (str.size() > 200) str = str.substr(0, 200) + "...";
+            return runtimeError("未捕获的异常: " + str);
+        }
+
+        size_t savedReturnIp = frames_.back().returnIp;
+        size_t savedBp = frames_.back().basePointer;
+        size_t poppedFrameIdx = frames_.size() - 1;
+        // P0-5 fix: 弹帧前关闭该帧关联的 open upvalues
+        closeUpvaluesFrom(savedBp);
+        frames_.pop_back();
+        // Bug3 fix: 清理属于被弹出帧的 tryStack_ handler（与 OP_RETURN 保持一致）
+        while (!tryStack_.empty() && tryStack_.back().frameIndex >= poppedFrameIdx) {
+            tryStack_.pop_back();
+        }
+
+        // 截断栈到调用者的 basePointer
+        if (savedBp <= stack_.size()) {
+            stack_.resize(savedBp);
+        }
+
+        // 设置调用者的 ip，继续在调用者帧中搜索
+        currentFrame().ip = savedReturnIp;
+        // 循环回到顶部，在调用者帧中搜索 tryStack_
+    }
+}
+
+void VM::closeUpvaluesFrom(size_t fromSlot) {
+    // F11-fix: 关闭指向 [fromSlot, stack_.size()) 范围内栈槽的 open upvalues
+    auto it = openUpvalues_.begin();
+    while (it != openUpvalues_.end()) {
+        auto& uv = *it;
+        if (!uv->isClosed && uv->stackSlot >= fromSlot) {
+            if (uv->stackSlot < stack_.size()) {
+                uv->value = stack_[uv->stackSlot];
+            }
+            uv->isClosed = true;
+            it = openUpvalues_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool VM::fillDefaultArgs(const BytecodeChunk& chunk, uint8_t& argCount,
+                         const std::string& funName, std::vector<Value>& defaults) {
+    // F10-fix: 为 init 方法填充缺失的默认参数
+    if (argCount < static_cast<uint8_t>(chunk.requiredArity) ||
+        argCount > static_cast<uint8_t>(chunk.arity)) {
+        return false;
+    }
+    if (argCount < static_cast<uint8_t>(chunk.arity)) {
+        int missingCount = chunk.arity - argCount;
+        int defaultStartIdx = static_cast<int>(chunk.defaultConstIndices.size()) - missingCount;
+        if (defaultStartIdx < 0 ||
+            static_cast<size_t>(defaultStartIdx + missingCount) > chunk.defaultConstIndices.size()) {
+            return false;
+        }
+        for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
+            uint16_t constIdx = chunk.defaultConstIndices[i];
+            if (constIdx == 0xFFFF) return false;
+            if (constIdx >= chunk.constants.size()) return false;
+            defaults.push_back(chunk.constants[constIdx]);
+        }
+        argCount = static_cast<uint8_t>(chunk.arity);
+    }
+    return true;
 }
 
 std::string VM::getLastError() const {
@@ -250,29 +353,24 @@ VMResult VM::numericOp(int opType) {
         stack_[stack_.size() - 2] = Value(leftRef.toDouble() / rightRef.toDouble());
         break;
     case OP_MOD_INT:
-        // Bug3 fix: 接受 float 操作数（截断为整数后取模）
+        // BUG 8.1 fix: 浮点操作数应使用 fmod，而非截断为整数后取模
         {
-            int64_t a, b;
-            if (leftRef.isInt()) a = leftRef.intVal();
-            else if (leftRef.isFloat()) {
-                double lf = leftRef.floatVal();
-                // B6 fix: 统一使用 OverflowCheck::doubleToIntOverflow
-                if (OverflowCheck::doubleToIntOverflow(lf))
-                    return runtimeError("浮点数转整数溢出");
-                a = static_cast<int64_t>(lf);
+            // 两个 int → 整数取模
+            if (leftRef.isInt() && rightRef.isInt()) {
+                int64_t a = leftRef.intVal();
+                int64_t b = rightRef.intVal();
+                if (b == 0) return runtimeError("除零错误");
+                if (OverflowCheck::modOverflow(a, b)) { stack_[stack_.size() - 2] = Value(0); break; }
+                stack_[stack_.size() - 2] = Value(a % b);
+                break;
             }
-            else return runtimeError("取模运算需要数值类型");
-            if (rightRef.isInt()) b = rightRef.intVal();
-            else if (rightRef.isFloat()) {
-                double rf = rightRef.floatVal();
-                if (OverflowCheck::doubleToIntOverflow(rf))
-                    return runtimeError("浮点数转整数溢出");
-                b = static_cast<int64_t>(rf);
-            }
-            else return runtimeError("取模运算需要数值类型");
-            if (b == 0) return runtimeError("除零错误");
-            if (OverflowCheck::modOverflow(a, b)) { stack_[stack_.size() - 2] = Value(0); break; }
-            stack_[stack_.size() - 2] = Value(a % b);
+            // 至少一个 float → fmod 浮点取模
+            if (!leftRef.isNumber() || !rightRef.isNumber())
+                return runtimeError("取模运算需要数值类型");
+            double a = leftRef.toDouble();
+            double b = rightRef.toDouble();
+            if (b == 0.0) return runtimeError("除零错误");
+            stack_[stack_.size() - 2] = Value(std::fmod(a, b));
             break;
         }
     }
@@ -305,20 +403,20 @@ VM::BuiltinMethod VM::classifyBuiltinMethod(const std::string& name) {
     case 6:
         if (name == "values") return BuiltinMethod::DICT_VALUES;
         if (name == "remove") return BuiltinMethod::ARR_REMOVE; // 数组/字典共用
+        if (name == "substr") return BuiltinMethod::STR_SUBSTR;
         break;
     case 7:
         if (name == "replace") return BuiltinMethod::STR_REPLACE;
+        if (name == "indexOf") return BuiltinMethod::STR_INDEX_OF;
         break;
     case 8:
         if (name == "contains") return BuiltinMethod::ARR_CONTAINS; // 数组/字典共用
-        if (name == "substr") return BuiltinMethod::STR_SUBSTR;
+        if (name == "endsWith") return BuiltinMethod::STR_ENDS_WITH;
         break;
     case 9:
-        if (name == "indexOf") return BuiltinMethod::STR_INDEX_OF;
         break;
     case 10:
         if (name == "startsWith") return BuiltinMethod::STR_STARTS_WITH;
-        if (name == "endsWith") return BuiltinMethod::STR_ENDS_WITH;
         break;
     }
     return BuiltinMethod::UNKNOWN;
@@ -590,15 +688,13 @@ VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
         if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
         result = Value(obj.stringVal().find(args[0].toString()) != std::string::npos);
     } else if (method == BuiltinMethod::STR_STARTS_WITH) {
-        if (args.size() != 1) return runtimeError("startsWith 期望 1 个参数");
-        const std::string& prefix = args[0].toString();
-        const std::string& s = obj.stringVal();
-        result = Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0);
+        auto sr = executeSharedStrStartsWith(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        result = std::move(sr.result);
     } else if (method == BuiltinMethod::STR_ENDS_WITH) {
-        if (args.size() != 1) return runtimeError("endsWith 期望 1 个参数");
-        const std::string& suffix = args[0].toString();
-        const std::string& s = obj.stringVal();
-        result = Value(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
+        auto sr = executeSharedStrEndsWith(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        result = std::move(sr.result);
     } else if (method == BuiltinMethod::STR_REPLACE) {
         if (args.size() != 2) return runtimeError("replace 期望 2 个参数(旧串, 新串)");
         std::string s = obj.stringVal();
@@ -613,38 +709,13 @@ VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
         }
         result = Value(std::move(s));
     } else if (method == BuiltinMethod::STR_SUBSTR) {
-        if (args.size() < 1 || args.size() > 2) return runtimeError("substr 期望 1-2 个参数(起始[, 长度])");
-        // V-P1-3 fix: 参数类型检查，避免 bad_variant_access 崩溃
-        if (!args[0].isInt()) return runtimeError("substr 起始位置必须是整数");
-        int64_t start = args[0].intVal();
-        const std::string& s = obj.stringVal();
-        if (start < 0 || static_cast<size_t>(start) > s.size()) result = Value(std::string(""));
-        else if (args.size() == 2) {
-            if (!args[1].isInt()) return runtimeError("substr 长度必须是整数");
-            int64_t len = args[1].intVal();
-            if (len < 0) return runtimeError("substr 长度不能为负数");
-            result = Value(s.substr(static_cast<size_t>(start), static_cast<size_t>(len)));
-        } else {
-            result = Value(s.substr(static_cast<size_t>(start)));
-        }
+        auto sr = executeSharedStrSubstr(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        result = std::move(sr.result);
     } else if (method == BuiltinMethod::STR_INDEX_OF) {
-        if (args.size() != 1) return runtimeError("indexOf 期望 1 个参数");
-        // M2 fix: 返回 UTF-8 字符位置而非字节位置
-        const std::string& s = obj.stringVal();
-        const std::string& needle = args[0].toString();
-        size_t bytePos = s.find(needle);
-        if (bytePos == std::string::npos) {
-            result = Value(static_cast<int64_t>(-1));
-        } else {
-            int64_t charIdx = 0;
-            for (size_t b = 0; b < bytePos; ) {
-                unsigned char c = static_cast<unsigned char>(s[b]);
-                b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                     ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-                charIdx++;
-            }
-            result = Value(charIdx);
-        }
+        auto sr = executeSharedStrIndexOf(obj, args.begin(), args.size());
+        if (sr.isError) return runtimeError(sr.errorMessage);
+        result = std::move(sr.result);
     } else {
         return runtimeError("字符串没有方法 " + methodName);
     }
@@ -684,6 +755,7 @@ void VM::initExecution(const CompileResult& result) {
     functionClosures_.clear();
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
+    tryStack_.clear();  // F11: 清理异常处理栈
     // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
     stepInstructionCount_ = 0;
     lastAsciiStrContent_.clear();
@@ -734,6 +806,7 @@ void VM::resetState() {
     mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
+    tryStack_.clear();  // F11: 清理异常处理栈
     openUpvalues_.clear();       // VM-05/06
     functionClosures_.clear();   // VM-05/06
     // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
@@ -772,7 +845,13 @@ VMResult VM::stepOnce() {
         size_t returnIp = frame.returnIp;
         size_t savedBp = frame.basePointer;
         bool wasInit = frame.isInitCall;
+        // P1-5 fix: 记录帧索引并清理 tryStack_ handler
+        size_t returningFrameIdx = frames_.size() - 1;
+        closeUpvaluesFrom(savedBp);  // P1-5 fix: 关闭 open upvalues
         frames_.pop_back();
+        while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
+            tryStack_.pop_back();  // P1-5 fix: 清理残留 handler
+        }
         if (!frames_.empty()) {
             currentFrame().ip = returnIp;  // 恢复调用者 ip，避免重复执行调用指令
             // V-P1-5 fix: 先截断栈清理 callee 残留局部变量，再 push 返回值
@@ -815,7 +894,13 @@ VMResult VM::execute(const CompileResult& result) {
             size_t returnIp = frame.returnIp;  // 保存调用者返回地址
             size_t savedBp = frame.basePointer;
             bool wasInit = frame.isInitCall;
+            // P1-5 fix: 记录帧索引并清理 tryStack_ handler
+            size_t returningFrameIdx = frames_.size() - 1;
+            closeUpvaluesFrom(savedBp);  // P1-5 fix: 关闭 open upvalues
             frames_.pop_back();
+            while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
+                tryStack_.pop_back();  // P1-5 fix: 清理残留 handler
+            }
             if (!frames_.empty()) {
                 currentFrame().ip = returnIp;   // 恢复调用者 ip，避免重复执行调用指令
                 // V-P1-5 fix: 先截断栈清理 callee 残留局部变量，再 push 返回值
@@ -970,6 +1055,9 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_JUMP_IF_FALSE:
     case OpCode::OP_LOOP:
     case OpCode::OP_INIT_FIELD:
+    case OpCode::OP_TRY_BEGIN:
+    case OpCode::OP_TRY_END:
+    case OpCode::OP_THROW:
         return executeMiscOps(op, ip);
 
     default:
@@ -1479,7 +1567,14 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         std::string recvVarName = std::move(frames_.back().receiverVarName);
         // 在 pop_back 之前保存 ip 值，避免悬空引用
         size_t savedIp = ip;
+        // P0-3 fix: 记录当前帧索引，pop 后清理该帧的 tryStack_ handler
+        size_t returningFrameIdx = frames_.size() - 1;
         frames_.pop_back();
+
+        // P0-3 fix: 清理属于返回帧的 tryStack_ handler（return 跳出 try 块时 handler 会残留）
+        while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
+            tryStack_.pop_back();
+        }
 
         // 方法调用字段同步：将方法内修改的字段槽（bp+1..N）同步回 this（bp）
         // VM fix: 仅在 init 调用或字段被修改时执行同步，跳过只读方法
@@ -1569,23 +1664,9 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         }
 
         // VM-05/06: 关闭当前帧关联的 open upvalues（在 stack resize 之前）
+        // P1-5 fix: 使用统一辅助函数，避免代码重复
         if (retChunk || !frames_.empty()) {
-            // 先关闭当前帧的 upvalues
-            // frames_ 可能已被 pop_back，需通过 saved 数据来关闭
-            // 遍历 openUpvalues_ 列表，关闭指向 savedBp 及以上栈槽的 upvalue
-            auto it = openUpvalues_.begin();
-            while (it != openUpvalues_.end()) {
-                auto& uv = *it;
-                if (!uv->isClosed && uv->stackSlot >= savedBp) {
-                    if (uv->stackSlot < stack_.size()) {
-                        uv->value = stack_[uv->stackSlot];
-                    }
-                    uv->isClosed = true;
-                    it = openUpvalues_.erase(it);
-                } else {
-                    ++it;
-                }
-            }
+            closeUpvaluesFrom(savedBp);
         }
 
         if (frames_.empty()) {
@@ -1645,10 +1726,17 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
 
                 if (initChunkPtr != nullptr) {
                     const BytecodeChunk& initChunk = *initChunkPtr;
-                    if (initChunk.arity != static_cast<int>(argCount)) {
+                    // P0-1 fix: 使用范围检查支持默认参数，并填充缺失的默认值
+                    std::vector<Value> defaults;
+                    if (!fillDefaultArgs(initChunk, argCount, funName, defaults)) {
                         return runtimeError("构造函数 init 期望 " +
+                            std::to_string(initChunk.requiredArity) + "-" +
                             std::to_string(initChunk.arity) + " 个参数，但传入了 " +
                             std::to_string(argCount) + " 个");
+                    }
+                    // 将默认参数追加到 args 末尾
+                    for (auto& d : defaults) {
+                        args.push_back(std::move(d));
                     }
 
                     if (frames_.size() >= MAX_FRAMES) {
@@ -1683,6 +1771,12 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
                     // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
                     int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
                     int extraSlots = initChunk.localCount - preAllocated;
+                    // V-P2-1 fix: extraSlots 为负表示帧布局损坏（fieldCount 与编译期不一致）
+                    if (extraSlots < 0) {
+                        return runtimeError("类 " + funName + " 的 init 方法帧布局损坏: localCount=" +
+                            std::to_string(initChunk.localCount) + " < preAllocated=" +
+                            std::to_string(preAllocated));
+                    }
                     for (int i = 0; i < extraSlots; ++i) {
                         push(Value::nullValue());
                     }
@@ -1777,10 +1871,34 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         }
 
         const BytecodeChunk& targetChunk = cachedChunk ? *cachedChunk : it->second;
-        if (targetChunk.arity != argCount) {
+        // F10: 支持默认参数，参数数量可在 [requiredArity, arity] 范围内
+        if (argCount < static_cast<uint8_t>(targetChunk.requiredArity) ||
+            argCount > static_cast<uint8_t>(targetChunk.arity)) {
             return runtimeError("函数 " + funName + " 期望 " +
+                std::to_string(targetChunk.requiredArity) + "-" +
                 std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
                 std::to_string(argCount) + " 个");
+        }
+
+        // F10: 为缺失的尾部参数填充默认值
+        if (argCount < static_cast<uint8_t>(targetChunk.arity)) {
+            int missingCount = targetChunk.arity - argCount;
+            int defaultStartIdx = static_cast<int>(targetChunk.defaultConstIndices.size()) - missingCount;
+            if (defaultStartIdx < 0 || 
+                static_cast<size_t>(defaultStartIdx + missingCount) > targetChunk.defaultConstIndices.size()) {
+                return runtimeError("函数 " + funName + " 默认参数索引越界");
+            }
+            for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
+                uint16_t constIdx = targetChunk.defaultConstIndices[i];
+                if (constIdx == 0xFFFF) {
+                    return runtimeError("函数 " + funName + " 的默认参数包含非字面量表达式，VM 不支持");
+                }
+                if (constIdx >= targetChunk.constants.size()) {
+                    return runtimeError("函数 " + funName + " 默认参数常量索引越界");
+                }
+                push(targetChunk.constants[constIdx]);
+            }
+            argCount = static_cast<uint8_t>(targetChunk.arity);
         }
 
         if (frames_.size() >= MAX_FRAMES) {
@@ -1790,6 +1908,12 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         // 预分配局部变量栈空间：函数体内 var 声明的局部变量需要栈槽，
         // 但帧创建时栈上只有参数，需补推 null 填充额外槽位
         int extraSlots = targetChunk.localCount - argCount;
+        // V-P2-1 fix: extraSlots 为负表示帧布局损坏
+        if (extraSlots < 0) {
+            return runtimeError("闭包调用帧布局损坏: localCount=" +
+                std::to_string(targetChunk.localCount) + " < argCount=" +
+                std::to_string(argCount));
+        }
         for (int i = 0; i < extraSlots; ++i) {
             push(Value::nullValue());
         }
@@ -1848,12 +1972,39 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         }
 
         const BytecodeChunk& targetChunk = *targetChunkPtr;
-        if (targetChunk.arity != argCount) {
+        // F10: 支持默认参数
+        if (argCount < static_cast<uint8_t>(targetChunk.requiredArity) ||
+            argCount > static_cast<uint8_t>(targetChunk.arity)) {
             // R3-1 fix: 弹出参数保持栈平衡
             for (int i = 0; i < argCount; ++i) pop();
             return runtimeError("函数 " + callee.closureName() + " 期望 " +
+                std::to_string(targetChunk.requiredArity) + "-" +
                 std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
                 std::to_string(argCount) + " 个");
+        }
+
+        // F10: 为缺失的尾部参数填充默认值
+        if (argCount < static_cast<uint8_t>(targetChunk.arity)) {
+            int missingCount = targetChunk.arity - argCount;
+            int defaultStartIdx = static_cast<int>(targetChunk.defaultConstIndices.size()) - missingCount;
+            if (defaultStartIdx < 0 ||
+                static_cast<size_t>(defaultStartIdx + missingCount) > targetChunk.defaultConstIndices.size()) {
+                for (int i = 0; i < argCount; ++i) pop();
+                return runtimeError("函数 " + callee.closureName() + " 默认参数索引越界");
+            }
+            for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
+                uint16_t constIdx = targetChunk.defaultConstIndices[i];
+                if (constIdx == 0xFFFF) {
+                    for (int j = 0; j < argCount; ++j) pop();
+                    return runtimeError("函数 " + callee.closureName() + " 的默认参数包含非字面量表达式，VM 不支持");
+                }
+                if (constIdx >= targetChunk.constants.size()) {
+                    for (int j = 0; j < argCount; ++j) pop();
+                    return runtimeError("函数 " + callee.closureName() + " 默认参数常量索引越界");
+                }
+                push(targetChunk.constants[constIdx]);
+            }
+            argCount = static_cast<uint8_t>(targetChunk.arity);
         }
 
         if (frames_.size() >= MAX_FRAMES) {
@@ -1864,6 +2015,12 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
 
         // 预分配局部变量栈空间
         int extraSlots = targetChunk.localCount - argCount;
+        // V-P2-1 fix: extraSlots 为负表示帧布局损坏
+        if (extraSlots < 0) {
+            return runtimeError("函数调用帧布局损坏: localCount=" +
+                std::to_string(targetChunk.localCount) + " < argCount=" +
+                std::to_string(argCount));
+        }
         for (int i = 0; i < extraSlots; ++i) {
             push(Value::nullValue());
         }
@@ -1957,11 +2114,13 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
             if (targetChunkPtr != nullptr) {
                 const BytecodeChunk& targetChunk = *targetChunkPtr;
 
-                // 检查参数数量
-                if (targetChunk.arity != argCount) {
+                // F10: 支持默认参数
+                if (argCount < static_cast<uint8_t>(targetChunk.requiredArity) ||
+                    argCount > static_cast<uint8_t>(targetChunk.arity)) {
                     for (uint8_t i = 0; i < argCount; ++i) pop();
                     pop();
                     return runtimeError("方法 " + methodName + " 期望 " +
+                        std::to_string(targetChunk.requiredArity) + "-" +
                         std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
                         std::to_string(argCount) + " 个");
                 }
@@ -2004,9 +2163,36 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
                     push(arg);
                 }
 
+                // F10: 为缺失的尾部参数填充默认值
+                if (argCount < static_cast<uint8_t>(targetChunk.arity)) {
+                    int missingCount = targetChunk.arity - argCount;
+                    int defaultStartIdx = static_cast<int>(targetChunk.defaultConstIndices.size()) - missingCount;
+                    if (defaultStartIdx < 0 ||
+                        static_cast<size_t>(defaultStartIdx + missingCount) > targetChunk.defaultConstIndices.size()) {
+                        return runtimeError("方法 " + methodName + " 默认参数索引越界");
+                    }
+                    for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
+                        uint16_t constIdx = targetChunk.defaultConstIndices[i];
+                        if (constIdx == 0xFFFF) {
+                            return runtimeError("方法 " + methodName + " 的默认参数包含非字面量表达式，VM 不支持");
+                        }
+                        if (constIdx >= targetChunk.constants.size()) {
+                            return runtimeError("方法 " + methodName + " 默认参数常量索引越界");
+                        }
+                        push(targetChunk.constants[constIdx]);
+                    }
+                    argCount = static_cast<uint8_t>(targetChunk.arity);
+                }
+
                 // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
                 int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
                 int extraSlots = targetChunk.localCount - preAllocated;
+                // V-P2-1 fix: extraSlots 为负表示帧布局损坏
+                if (extraSlots < 0) {
+                    return runtimeError("方法 " + methodName + " 帧布局损坏: localCount=" +
+                        std::to_string(targetChunk.localCount) + " < preAllocated=" +
+                        std::to_string(preAllocated));
+                }
                 for (int i = 0; i < extraSlots; ++i) {
                     push(Value::nullValue());
                 }
@@ -2119,7 +2305,16 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         // 查找类信息
         auto classIt = classInfo_.find(className);
         if (classIt == classInfo_.end()) {
-            return runtimeError("未定义的类: " + className);
+            // 类定义阶段：类尚未注册（OP_DEFINE_CLASS 会随后注册）。
+            // 创建空模板实例供 OP_INIT_FIELD 填充字段，不支持带参数构造。
+            if (argCount > 0) {
+                return runtimeError("类 " + className + " 尚未定义，不能带参数构造");
+            }
+            Value instance = Value::makeInstance(className);
+            push(std::move(instance));
+            notifyStep(ip, op);
+            ip += 4;
+            break;
         }
         VMClassInfo& cls = classIt->second;
 
@@ -2132,22 +2327,30 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
 
         // S2 fix: 也处理 argCount==0 且 init.arity==0 的自动构造场景
         // （与解释器 visitVarDecl 一致：Point p; 自动调用 0 参数 init）
+        // P1-1 fix: 使用 requiredArity==0 判断自动构造，支持全默认参数 init
         bool shouldCallInit = false;
         if (initChunkPtr != nullptr) {
             if (argCount > 0) {
                 shouldCallInit = true;
-            } else if (initChunkPtr->arity == 0) {
-                shouldCallInit = true;  // 0 参数 init，自动构造时调用
+            } else if (initChunkPtr->requiredArity == 0) {
+                shouldCallInit = true;  // 0 必需参数（含全默认参数 init），自动构造时调用
             }
         }
 
         if (shouldCallInit) {
             // 创建 init 帧执行初始化
             const BytecodeChunk& initChunk = *initChunkPtr;
-            if (initChunk.arity != static_cast<int>(argCount)) {
+            // P0-1 fix: 使用范围检查支持默认参数，并填充缺失的默认值
+            std::vector<Value> defaults;
+            if (!fillDefaultArgs(initChunk, argCount, className, defaults)) {
                 return runtimeError("构造函数 init 期望 " +
+                    std::to_string(initChunk.requiredArity) + "-" +
                     std::to_string(initChunk.arity) + " 个参数，但传入了 " +
                     std::to_string(argCount) + " 个");
+            }
+            // 将默认参数追加到 args 末尾
+            for (auto& d : defaults) {
+                args.push_back(std::move(d));
             }
 
             if (frames_.size() >= MAX_FRAMES) {
@@ -2183,6 +2386,12 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
             // 预分配局部变量栈空间：方法体内 var 声明的局部变量需要栈槽
             int preAllocated = 1 + fieldCount + argCount;  // this + 字段 + 参数
             int extraSlots = initChunk.localCount - preAllocated;
+            // V-P2-1 fix: extraSlots 为负表示帧布局损坏
+            if (extraSlots < 0) {
+                return runtimeError("类 " + className + " 的 init 方法帧布局损坏: localCount=" +
+                    std::to_string(initChunk.localCount) + " < preAllocated=" +
+                    std::to_string(preAllocated));
+            }
             for (int i = 0; i < extraSlots; ++i) {
                 push(Value::nullValue());
             }
@@ -2203,10 +2412,10 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
         }
 
         // 无 init 或 init.arity 不匹配 argCount：推入实例（OP_INIT_FIELD 或手动 init 后续处理）
-        // V-P1-8 fix: init 存在但参数不匹配（argCount==0 且 init.arity>0）时报错，而非静默跳过
+        // V-P1-8 fix: init 存在但参数不匹配（argCount==0 且 init.requiredArity>0）时报错，而非静默跳过
         if (initChunkPtr != nullptr && !shouldCallInit) {
-            return runtimeError("类 " + cls.name + " 的 init 期望 " +
-                std::to_string(initChunkPtr->arity) + " 个参数，但传入了 " +
+            return runtimeError("类 " + cls.name + " 的 init 期望至少 " +
+                std::to_string(initChunkPtr->requiredArity) + " 个参数，但传入了 " +
                 std::to_string(argCount) + " 个");
         }
         push(instance);
@@ -2924,6 +3133,40 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
         notifyStep(ip, op);
         ip += 3;
         break;
+    }
+
+    case OpCode::OP_TRY_BEGIN: {
+        // F11: push try handler，记录 catch 目标和当前栈深度
+        uint16_t catchOffset = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        size_t catchIp = ip + 3 + catchOffset;
+        if (catchIp >= chunk.code.size()) return runtimeError("OP_TRY_BEGIN: catch 目标越界");
+        tryStack_.push_back({catchIp, stack_.size(), frames_.size() - 1});
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    case OpCode::OP_TRY_END: {
+        // F11: try 块正常结束，弹出 try 处理器
+        if (!tryStack_.empty() && tryStack_.back().frameIndex == frames_.size() - 1) {
+            tryStack_.pop_back();
+        }
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
+
+    case OpCode::OP_THROW: {
+        // F11: 弹出栈顶值作为异常，搜索 try 处理器
+        // Bug1 fix: 空栈检查 — pop() 在空栈时设置 hasError_ 并返回 null，
+        // 若继续 throwException(null) 会使 catch handler 以错误数据执行
+        if (stack_.empty()) {
+            return runtimeError("throw 语句在空栈上执行");
+        }
+        Value thrownValue = pop();
+        // P2-2 fix: 调试模式下通知步进（throwException 可能改变 ip）
+        notifyStep(ip, op);
+        return throwException(std::move(thrownValue));
     }
 
     default:

@@ -8,6 +8,11 @@
 #include <QMenu>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QCompleter>
+#include <QStringListModel>
+#include <QKeyEvent>
+#include <QAbstractItemView>
+#include <QScrollBar>
 
 // ============================================================
 // LineNumberArea 行号区域
@@ -23,11 +28,13 @@ QSize LineNumberArea::sizeHint() const {
 }
 
 void LineNumberArea::paintEvent(QPaintEvent* event) {
-    QPainter painter(this);
-    painter.fillRect(event->rect(), QColor(245, 245, 245));
-
     CodeEditor* codeEditor = qobject_cast<CodeEditor*>(editor_);
     if (!codeEditor) return;
+
+    QPainter painter(this);
+    // F9: 主题感知背景色
+    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(45, 45, 45) : QColor(245, 245, 245);
+    painter.fillRect(event->rect(), bgColor);
 
     // 字体只需设置一次（移出循环避免每行重建）
     QFont lineFont("Consolas", 10);
@@ -57,10 +64,36 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
             }
 
             // 绘制行号
-            painter.setPen(QColor(120, 120, 120));
-            painter.drawText(0, top, width() - 8, bottom - top,
+            // F9: 主题感知文字颜色
+            QColor numColor = codeEditor->isDarkTheme_ ? QColor(133, 133, 133) : QColor(120, 120, 120);
+            painter.setPen(numColor);
+            painter.drawText(0, top, width() - 20, bottom - top,
                              Qt::AlignRight | Qt::AlignVCenter,
                              QString::number(lineNumber));
+
+            // F8: 绘制折叠标记（右侧）
+            if (codeEditor->isFoldable(block)) {
+                bool folded = codeEditor->isFolded(blockNumber);
+                int boxSize = 9;
+                int bx = width() - 14;
+                int by = (top + bottom) / 2 - boxSize / 2;
+                // F9: 主题感知折叠标记颜色
+                QColor foldBg = folded
+                    ? (codeEditor->isDarkTheme_ ? QColor(100, 100, 220) : QColor(80, 80, 200))
+                    : (codeEditor->isDarkTheme_ ? QColor(80, 80, 80) : QColor(200, 200, 200));
+                QColor foldBorder = codeEditor->isDarkTheme_ ? QColor(140, 140, 140) : QColor(100, 100, 100);
+                painter.setBrush(foldBg);
+                painter.setPen(QPen(foldBorder, 1));
+                painter.drawRect(bx, by, boxSize, boxSize);
+                // 绘制 +/- 符号
+                painter.setPen(folded ? Qt::white : (codeEditor->isDarkTheme_ ? Qt::white : Qt::black));
+                int cx2 = bx + boxSize / 2;
+                int cy2 = by + boxSize / 2;
+                painter.drawLine(cx2 - 2, cy2, cx2 + 2, cy2);  // 横线
+                if (!folded) {
+                    painter.drawLine(cx2, cy2 - 2, cx2, cy2 + 2);  // 竖线（仅展开时）
+                }
+            }
         }
 
         block = block.next();
@@ -73,6 +106,19 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 void LineNumberArea::mousePressEvent(QMouseEvent* event) {
     CodeEditor* codeEditor = qobject_cast<CodeEditor*>(editor_);
     if (!codeEditor) return;
+
+    // F8: 检查是否点击了折叠区域（右侧 14px）
+    int clickX = static_cast<int>(event->position().x());
+    if (clickX >= width() - 16) {
+        // 映射 Y 坐标到块号
+        QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->position().y())));
+        int blockNumber = cursor.blockNumber();
+        QTextBlock block = codeEditor->document()->findBlockByNumber(blockNumber);
+        if (block.isValid() && codeEditor->isFoldable(block)) {
+            codeEditor->toggleFold(blockNumber);
+            return;
+        }
+    }
 
     // 将 Y 坐标映射到行号
     QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->position().y())));
@@ -166,6 +212,17 @@ CodeEditor::CodeEditor(QWidget* parent)
     QFont font("Consolas", 11);
     setFont(font);
     setTabStopDistance(fontMetrics().horizontalAdvance(' ') * 4);
+
+    // F13: 初始化自动补全器
+    completionModel_ = new QStringListModel(this);
+    completer_ = new QCompleter(this);
+    completer_->setModel(completionModel_);
+    completer_->setWidget(this);
+    completer_->setCompletionMode(QCompleter::PopupCompletion);
+    completer_->setCaseSensitivity(Qt::CaseInsensitive);
+    completer_->setFilterMode(Qt::MatchStartsWith);
+    connect(completer_, QOverload<const QString&>::of(&QCompleter::activated),
+            this, &CodeEditor::insertCompletion);
 }
 
 int CodeEditor::lineNumberAreaWidth() {
@@ -295,10 +352,14 @@ void CodeEditor::highlightCurrentLine() {
 
     // GUI-12 fix: 光标行先添加（蓝色），执行行后添加（黄色）
     // Qt ExtraSelection 后添加的覆盖先添加的，黄色要在蓝色之上
+    // F9: 主题感知高亮颜色
+    QColor cursorLineColor = isDarkTheme_ ? QColor(42, 45, 46) : QColor(235, 243, 255);
+    QColor execLineColor = isDarkTheme_ ? QColor(90, 93, 46) : QColor(255, 255, 180);
+
     QTextEdit::ExtraSelection cursorSel;
     cursorSel.cursor = textCursor();
     cursorSel.cursor.select(QTextCursor::LineUnderCursor);
-    cursorSel.format.setBackground(QColor(235, 243, 255));
+    cursorSel.format.setBackground(cursorLineColor);
     cursorSel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
     selections.append(cursorSel);
 
@@ -309,7 +370,7 @@ void CodeEditor::highlightCurrentLine() {
             QTextEdit::ExtraSelection sel;
             sel.cursor = QTextCursor(block);
             sel.cursor.select(QTextCursor::LineUnderCursor);
-            sel.format.setBackground(QColor(255, 255, 180));
+            sel.format.setBackground(execLineColor);
             sel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
             selections.append(sel);
         }
@@ -318,7 +379,20 @@ void CodeEditor::highlightCurrentLine() {
     // 错误下划线（使用预构建的缓存，避免每次光标移动都遍历）
     selections.append(cachedErrorSelections_);
 
+    // BUG 4.2 fix: 合并查找高亮，不覆盖编辑器自身 selections
+    selections.append(findSelections_);
+
     setExtraSelections(selections);
+}
+
+void CodeEditor::setFindSelections(const QList<QTextEdit::ExtraSelection>& selections) {
+    findSelections_ = selections;
+    highlightCurrentLine();  // 触发重绘，合并所有 selections
+}
+
+void CodeEditor::clearFindSelections() {
+    findSelections_.clear();
+    highlightCurrentLine();
 }
 
 void CodeEditor::updateLineNumberArea(const QRect& rect, int dy) {
@@ -331,4 +405,276 @@ void CodeEditor::updateLineNumberArea(const QRect& rect, int dy) {
     if (rect.contains(viewport()->rect())) {
         updateLineNumberAreaWidth(0);
     }
+}
+
+// ============================================================
+// F8: 代码折叠
+// ============================================================
+
+namespace {
+// 统计单行中的大括号深度变化，跳过字符串和注释
+// inBlockComment 跨行追踪块注释状态
+int countBracesInLine(const QString& text, bool& inBlockComment) {
+    int depth = 0;
+    bool inString = false;
+    for (int i = 0; i < text.size(); ++i) {
+        QChar c = text[i];
+        if (inBlockComment) {
+            if (c == '*' && i + 1 < text.size() && text[i + 1] == '/') {
+                inBlockComment = false;
+                i++;
+            }
+            continue;
+        }
+        if (inString) {
+            if (c == '\\' && i + 1 < text.size()) {
+                i++;  // 跳过转义字符
+                continue;
+            }
+            if (c == '"') inString = false;
+            continue;
+        }
+        if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') {
+            break;  // 行注释，忽略后续内容
+        }
+        if (c == '/' && i + 1 < text.size() && text[i + 1] == '*') {
+            inBlockComment = true;
+            i++;
+            continue;
+        }
+        if (c == '"') {
+            inString = true;
+            continue;
+        }
+        if (c == '{') depth++;
+        else if (c == '}') depth--;
+    }
+    return depth;
+}
+}  // namespace
+
+bool CodeEditor::isFoldable(const QTextBlock& block) const {
+    if (!block.isValid()) return false;
+    // P2 fix: 从文档开头追踪块注释状态，避免跨行块注释导致 brace 计数错误
+    bool inBlockComment = false;
+    for (QTextBlock b = document()->begin(); b.isValid() && b.blockNumber() < block.blockNumber(); b = b.next()) {
+        countBracesInLine(b.text(), inBlockComment);
+    }
+    int depth = countBracesInLine(block.text(), inBlockComment);
+    return depth > 0;
+}
+
+bool CodeEditor::isFolded(int blockNumber) const {
+    return foldedBlocks_.contains(blockNumber);
+}
+
+int CodeEditor::foldEndBlock(const QTextBlock& startBlock) const {
+    if (!startBlock.isValid()) return -1;
+
+    // P2 fix: 从文档开头追踪块注释状态，避免跨行块注释导致 brace 计数错误
+    bool inBlockComment = false;
+    for (QTextBlock b = document()->begin(); b.isValid() && b.blockNumber() < startBlock.blockNumber(); b = b.next()) {
+        countBracesInLine(b.text(), inBlockComment);
+    }
+    int depth = countBracesInLine(startBlock.text(), inBlockComment);
+    if (depth <= 0) return -1;
+
+    QTextBlock block = startBlock.next();
+    while (block.isValid()) {
+        depth += countBracesInLine(block.text(), inBlockComment);
+        if (depth <= 0) return block.blockNumber();
+        block = block.next();
+    }
+    return -1;
+}
+
+void CodeEditor::toggleFold(int blockNumber) {
+    QTextBlock block = document()->findBlockByNumber(blockNumber);
+    if (!block.isValid() || !isFoldable(block)) return;
+
+    int endNum = foldEndBlock(block);
+    if (endNum < 0 || endNum <= blockNumber) return;
+
+    if (foldedBlocks_.contains(blockNumber)) {
+        // 展开：显示范围内的块，但跳过仍折叠的嵌套块的子块
+        foldedBlocks_.remove(blockNumber);
+        int i = blockNumber + 1;
+        while (i <= endNum) {
+            QTextBlock b = document()->findBlockByNumber(i);
+            if (!b.isValid()) break;
+            b.setVisible(true);
+            // 如果此块自身也处于折叠状态，跳过其子块
+            if (foldedBlocks_.contains(i)) {
+                int childEnd = foldEndBlock(b);
+                if (childEnd > i) {
+                    i = childEnd + 1;
+                    continue;
+                }
+            }
+            i++;
+        }
+    } else {
+        // 折叠：隐藏范围内的所有块
+        foldedBlocks_.insert(blockNumber);
+        for (int i = blockNumber + 1; i <= endNum; ++i) {
+            QTextBlock b = document()->findBlockByNumber(i);
+            if (b.isValid()) b.setVisible(false);
+        }
+    }
+
+    viewport()->update();
+    lineNumberArea_->update();
+}
+
+void CodeEditor::setDarkTheme(bool dark) {
+    isDarkTheme_ = dark;
+    highlightCurrentLine();  // 刷新当前行高亮配色
+    lineNumberArea_->update();  // 刷新行号区域
+    viewport()->update();  // 刷新编辑器视口
+}
+
+// ============================================================
+// F13: 自动补全实现
+// ============================================================
+
+void CodeEditor::setCompletionWords(const QStringList& words) {
+    if (completionModel_) {
+        completionModel_->setStringList(words);
+    }
+}
+
+QString CodeEditor::textUnderCursor() const {
+    QTextCursor tc = textCursor();
+    tc.select(QTextCursor::WordUnderCursor);
+    return tc.selectedText();
+}
+
+void CodeEditor::insertCompletion(const QString& completion) {
+    if (!completer_ || completion.isEmpty()) return;
+
+    // 计算需要替换的前缀长度
+    QString prefix = completer_->completionPrefix();
+    if (prefix.isEmpty()) return;
+
+    QTextCursor tc = textCursor();
+    // 选中当前单词（前缀部分），替换为完整补全文本
+    // P1-1 fix: insertText 后光标已位于插入文本末尾，无需额外右移
+    tc.movePosition(QTextCursor::Left, QTextCursor::KeepAnchor, prefix.length());
+    tc.insertText(completion);
+    setTextCursor(tc);
+}
+
+void CodeEditor::triggerCompletion() {
+    if (!completer_) return;
+
+    QString prefix = textUnderCursor();
+    // 仅在有有效前缀时显示补全（至少 1 个字符）
+    if (prefix.length() < 1) {
+        completer_->popup()->hide();
+        return;
+    }
+
+    completer_->setCompletionPrefix(prefix);
+    updateCompletionPopup();
+}
+
+void CodeEditor::updateCompletionPopup() {
+    if (!completer_) return;
+
+    // 如果没有匹配项，隐藏弹窗
+    if (completer_->completionCount() == 0) {
+        completer_->popup()->hide();
+        return;
+    }
+
+    // 计算弹窗位置：光标所在行的下方
+    QRect cr = cursorRect();
+    // 弹窗宽度根据最长补全项调整
+    int popupWidth = completer_->popup()->sizeHintForColumn(0)
+                     + completer_->popup()->verticalScrollBar()->sizeHint().width();
+    cr.setWidth(popupWidth);
+    // P2-1 fix: QCompleter::complete() 会自动在 cr 下方显示弹窗，无需手动 translate
+    completer_->complete(cr);
+}
+
+void CodeEditor::keyPressEvent(QKeyEvent* event) {
+    if (!completer_) {
+        QPlainTextEdit::keyPressEvent(event);
+        return;
+    }
+
+    // 补全弹窗打开时的导航处理
+    if (completer_->popup()->isVisible()) {
+        // 以下键由补全弹窗处理
+        switch (event->key()) {
+        case Qt::Key_Enter:
+        case Qt::Key_Return:
+        case Qt::Key_Escape:
+        case Qt::Key_Tab:
+        case Qt::Key_Backtab:
+            event->ignore();
+            return;  // 让 completer 弹窗处理这些键
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+        case Qt::Key_PageUp:
+        case Qt::Key_PageDown:
+            event->ignore();
+            return;  // 弹窗导航
+        default:
+            break;
+        }
+    }
+
+    // P1-2 fix: Ctrl+Space 在中文 IME 下会被系统拦截切换输入法，增加 Ctrl+J 作为备选触发键
+    if (event->modifiers() == Qt::ControlModifier &&
+        (event->key() == Qt::Key_Space || event->key() == Qt::Key_J)) {
+        triggerCompletion();
+        return;
+    }
+
+    // 先处理按键（插入字符等）
+    QPlainTextEdit::keyPressEvent(event);
+
+    // 自动触发补全：输入字母/下划线时自动弹出
+    if (completer_->popup()->isVisible()) {
+        // 弹窗已打开，更新前缀
+        QString prefix = textUnderCursor();
+        if (prefix.isEmpty()) {
+            completer_->popup()->hide();
+        } else {
+            completer_->setCompletionPrefix(prefix);
+            if (completer_->completionCount() == 0) {
+                completer_->popup()->hide();
+            } else {
+                updateCompletionPopup();
+            }
+        }
+    } else {
+        // 输入字母或下划线时自动触发
+        QChar lastChar = event->text().isEmpty() ? QChar() : event->text().back();
+        if (lastChar.isLetter() || lastChar == '_') {
+            QString prefix = textUnderCursor();
+            if (prefix.length() >= 2) {
+                completer_->setCompletionPrefix(prefix);
+                if (completer_->completionCount() > 0) {
+                    updateCompletionPopup();
+                }
+            }
+        }
+    }
+}
+
+void CodeEditor::focusInEvent(QFocusEvent* event) {
+    if (completer_) {
+        completer_->setWidget(this);
+    }
+    QPlainTextEdit::focusInEvent(event);
+}
+
+void CodeEditor::focusOutEvent(QFocusEvent* event) {
+    // P2-4 fix: 失去焦点时隐藏补全弹窗，避免悬垂弹窗
+    if (completer_ && completer_->popup()) {
+        completer_->popup()->hide();
+    }
+    QPlainTextEdit::focusOutEvent(event);
 }

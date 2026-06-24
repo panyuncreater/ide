@@ -26,6 +26,12 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["print"]   = TokenType::TK_PRINT;
         m["break"]   = TokenType::TK_BREAK;
         m["continue"]= TokenType::TK_CONTINUE;
+        m["try"]     = TokenType::TK_TRY;
+        m["catch"]   = TokenType::TK_CATCH;
+        m["throw"]   = TokenType::TK_THROW;
+        m["import"]  = TokenType::TK_IMPORT;
+        m["from"]    = TokenType::TK_FROM;
+        m["export"]  = TokenType::TK_EXPORT;
         m["int"]     = TokenType::TK_INT;
         m["float"]   = TokenType::TK_FLOAT;
         m["bool"]    = TokenType::TK_BOOL;
@@ -404,6 +410,10 @@ void Lexer::number() {
 }
 
 void Lexer::string() {
+    string(false);
+}
+
+void Lexer::string(bool isInterp) {
     int startLine = line_;
     int startCol = static_cast<int>(start_ - lineStart_) + 1;
     std::string value;
@@ -414,6 +424,72 @@ void Lexer::string() {
     value.reserve(reserveCap);
 
     while (!isAtEnd() && peek() != '"') {
+        // F7: 检测插值起始 {
+        if (peek() == '{') {
+            // 发出前面的文本片段（TK_STRING_PART 表示插值字符串的一部分）
+            TokenType partType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
+            // 如果是插值字符串的第一个片段，用 TK_STRING_LIT；后续片段用 TK_STRING_PART
+            // 但为简化 Parser 逻辑，统一：插值字符串中所有文本片段都用 TK_STRING_PART，
+            // 仅当整个字符串无插值时用 TK_STRING_LIT（由下方闭合处判断）
+            std::string text(source_.substr(start_, current_ - start_));
+            tokens_.emplace_back(partType, std::move(text), Value(value), startLine, startCol);
+
+            // 消耗 {
+            advance();
+            // 发出 TK_INTERP_START
+            int braceLine = line_;
+            int braceCol = static_cast<int>(start_ - lineStart_) + 1;
+            tokens_.emplace_back(TokenType::TK_INTERP_START, "{", Value::nullValue(), braceLine, braceCol);
+
+            // 扫描表达式直到 }（支持嵌套大括号，如对象字面量）
+            // 更新 start_ 到表达式起始位置，确保 scanToken() 的 addToken() 正确提取 lexeme
+            start_ = current_;
+            int braceDepth = 1;
+            while (!isAtEnd() && braceDepth > 0) {
+                // 跳过空白
+                if (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') {
+                    advance();
+                    continue;
+                }
+                if (peek() == '{') {
+                    braceDepth++;
+                    start_ = current_;  // 更新 start_ 以便 scanToken 正确提取
+                    scanToken();
+                } else if (peek() == '}') {
+                    braceDepth--;
+                    if (braceDepth == 0) {
+                        advance();  // 消耗 }
+                        int endLine = line_;
+                        int endCol = static_cast<int>(start_ - lineStart_) + 1;
+                        tokens_.emplace_back(TokenType::TK_INTERP_END, "}", Value::nullValue(), endLine, endCol);
+                        break;
+                    }
+                    start_ = current_;  // 更新 start_ 以便 scanToken 正确提取
+                    scanToken();
+                } else if (peek() == '"') {
+                    // 嵌套字符串（可能含插值）
+                    advance();
+                    string(true);  // 递归扫描嵌套字符串
+                    start_ = current_;  // 更新 start_ 以便后续 scanToken 正确提取
+                } else {
+                    start_ = current_;  // 更新 start_ 以便 scanToken 正确提取
+                    scanToken();
+                }
+            }
+            if (braceDepth > 0) {
+                errorToken("未终止的插值表达式（缺少 }）", startLine, startCol);
+                return;
+            }
+
+            // 继续扫描字符串剩余部分（标记为插值片段）
+            start_ = current_;
+            startLine = line_;
+            startCol = static_cast<int>(start_ - lineStart_) + 1;
+            value.clear();
+            isInterp = true;
+            continue;
+        }
+
         // 换行处理由 advance() 统一完成（line_++ 和 lineStart_ 更新），
         // 此处不再手动递增，否则会导致行号双重递增。
         if (peek() == '\\') {
@@ -451,9 +527,11 @@ void Lexer::string() {
     }
 
     advance(); // 消耗闭合的 '"'
-    // 使用字符串起始位置（startLine/startCol），避免多行字符串行号/列号错误
+
+    // F7: 如果是插值字符串的后续片段，用 TK_STRING_PART；否则用 TK_STRING_LIT
+    TokenType finalType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
     std::string text(source_.substr(start_, current_ - start_));
-    tokens_.emplace_back(TokenType::TK_STRING_LIT, std::move(text), Value(value), startLine, startCol);
+    tokens_.emplace_back(finalType, std::move(text), Value(value), startLine, startCol);
 }
 
 void Lexer::addToken(TokenType type) {

@@ -118,3 +118,19 @@ Value BreakStmt::accept(Visitor& visitor) {
 Value ContinueStmt::accept(Visitor& visitor) {
     return visitor.visitContinueStmt(*this);
 }
+
+Value TryStmt::accept(Visitor& visitor) {
+    return visitor.visitTryStmt(*this);
+}
+
+Value ThrowStmt::accept(Visitor& visitor) {
+    return visitor.visitThrowStmt(*this);
+}
+
+Value ImportStmt::accept(Visitor& visitor) {
+    return visitor.visitImportStmt(*this);
+}
+
+Value ExportStmt::accept(Visitor& visitor) {
+    return visitor.visitExportStmt(*this);
+}

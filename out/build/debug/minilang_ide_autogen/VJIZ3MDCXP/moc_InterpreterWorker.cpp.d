@@ -1,7 +1,6 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_InterpreterWorker.cpp: C:/Users/v/Desktop/ide/ide/app/InterpreterWorker.h \
   C:/Users/v/Desktop/ide/ide/ast/ASTNode.h \
   C:/Users/v/Desktop/ide/ide/common/Diagnostic.h \
-  C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Environment.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
@@ -9,9 +8,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueTypes.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Visitor.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QMap \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QObject \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/QSet \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QString \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q17memory.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20functional.h \
@@ -53,7 +50,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qgenericatomic.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qglobal.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qglobalstatic.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qhash.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qhashfunctions.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qiodevicebase.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qiterable.h \
@@ -62,7 +58,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qlist.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qlogging.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qmalloc.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qmap.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qmath.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qmetacontainer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qmetatype.h \
@@ -79,9 +74,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qrefcount.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qscopedpointer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qscopeguard.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qset.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qshareddata.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qshareddata_impl.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qstdlibdetection.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qstring.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qstringalgorithms.h \

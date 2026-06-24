@@ -121,6 +121,10 @@ public:
     Value visitSuperExpr(SuperExpr& node) override;
     Value visitBreakStmt(BreakStmt& node) override;
     Value visitContinueStmt(ContinueStmt& node) override;
+    Value visitTryStmt(TryStmt& node) override;
+    Value visitThrowStmt(ThrowStmt& node) override;
+    Value visitImportStmt(ImportStmt& node) override;
+    Value visitExportStmt(ExportStmt& node) override;
 
     /// 格式化 AST 为代码文本
     std::string format(Block& program);

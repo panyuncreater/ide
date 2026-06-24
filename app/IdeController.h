@@ -61,7 +61,8 @@ public:
 
     // ---- Worker 线程管理 ----
     /// 准备运行（词法+解析+创建 worker），返回 true 表示已就绪
-    bool prepareRun(bool isDebug, const std::string& source);
+    /// filePath: 当前文件路径（用于模块加载的相对路径解析），为空表示未保存文件
+    bool prepareRun(bool isDebug, const std::string& source, const std::string& filePath = "");
     /// 启动 worker 线程执行
     void startWorker();
     /// 关闭前安全停止，返回 false 表示超时需强制终止
