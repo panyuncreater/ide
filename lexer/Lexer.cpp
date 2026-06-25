@@ -1,4 +1,5 @@
 #include "lexer/Lexer.h"
+#include "common/Utf8Utils.h"
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -6,6 +7,16 @@
 // ============================================================
 // Lexer 词法分析器实现
 // ============================================================
+
+// D10 fix: locale-independent ASCII 分类函数。
+// std::isalpha/isalnum/isdigit 依赖全局 C locale，在非 "C" locale 下行为可能不同
+// （例如某些 locale 下 isalpha 对高位字节返回 true）。词法分析仅需识别 ASCII
+// 标识符字符与十进制数字，直接用 ASCII 码位比较彻底消除 locale 依赖。
+namespace {
+inline bool isAsciiDigit(char c)    { return c >= '0' && c <= '9'; }
+inline bool isAsciiAlpha(char c)    { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+inline bool isAsciiAlphaNum(char c) { return isAsciiAlpha(c) || isAsciiDigit(c); }
+} // namespace
 
 Lexer::Lexer() {
 }
@@ -181,7 +192,7 @@ void Lexer::scanToken() {
     case ':': addToken(TokenType::TK_COLON); break;
     case '.':
         // .123 → 浮点数前导点
-        if (std::isdigit(static_cast<unsigned char>(peek()))) {
+        if (isAsciiDigit(peek())) {
             number();
         } else {
             addToken(TokenType::TK_DOT);
@@ -283,11 +294,11 @@ void Lexer::scanToken() {
 
     default:
         // 数字
-        if (std::isdigit(static_cast<unsigned char>(c))) {
+        if (isAsciiDigit(c)) {
             number();
         }
         // 标识符或关键字
-        else if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+        else if (isAsciiAlpha(c) || c == '_') {
             identifier();
         }
         // 无法识别的字符
@@ -299,8 +310,7 @@ void Lexer::scanToken() {
 }
 
 void Lexer::identifier() {
-    while (!isAtEnd() && (std::isalnum(static_cast<unsigned char>(peek()))
-                          || peek() == '_')) {
+    while (!isAtEnd() && (isAsciiAlphaNum(peek()) || peek() == '_')) {
         advance();
     }
     std::string text(source_, start_, current_ - start_);
@@ -343,7 +353,7 @@ void Lexer::number() {
         advance(); // 消耗前缀字母
         // P2-2 fix: 用 isalnum 消费整个非法字面量，避免 isxdigit 对 0b/0o 前缀的语义错误
         // （isxdigit 会消费 a-f，但 0bff 中 ff 不是合法二进制位；此处统一消费字母数字即可）
-        while (!isAtEnd() && std::isalnum(static_cast<unsigned char>(peek()))) {
+        while (!isAtEnd() && isAsciiAlphaNum(peek())) {
             advance();
         }
         std::string text(source_, start_, current_ - start_);
@@ -351,16 +361,16 @@ void Lexer::number() {
         return;
     }
 
-    while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
+    while (!isAtEnd() && isAsciiDigit(peek())) {
         advance();
     }
 
     // 浮点数：小数部分（仅当 '.' 后紧跟数字时才视为浮点，避免 123.foo 被误分词）
     if (!isFloat && !isAtEnd() && peek() == '.' &&
-        (static_cast<size_t>(current_) + 1 < source_.size()) && std::isdigit(static_cast<unsigned char>(source_[current_ + 1]))) {
+        (static_cast<size_t>(current_) + 1 < source_.size()) && isAsciiDigit(source_[current_ + 1])) {
         isFloat = true;
         advance(); // 消耗 '.'
-        while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
+        while (!isAtEnd() && isAsciiDigit(peek())) {
             advance();
         }
     }
@@ -380,11 +390,11 @@ void Lexer::number() {
         if (!isAtEnd() && (peek() == '+' || peek() == '-')) {
             advance(); // 消耗符号
         }
-        if (isAtEnd() || !std::isdigit(static_cast<unsigned char>(peek()))) {
+        if (isAtEnd() || !isAsciiDigit(peek())) {
             errorToken("科学计数法格式错误: " + std::string(source_, start_, current_ - start_));
             return;
         }
-        while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
+        while (!isAtEnd() && isAsciiDigit(peek())) {
             advance();
         }
     }
@@ -554,32 +564,51 @@ void Lexer::string(bool isInterp) {
 
 void Lexer::addToken(TokenType type) {
     std::string text(source_, start_, current_ - start_);
-    int col = static_cast<int>(start_ - lineStart_) + 1;
+    int col = columnAt(start_);
     tokens_.emplace_back(type, std::move(text), Value::nullValue(), line_, col);
 }
 
 void Lexer::addToken(TokenType type, const Value& literal) {
     std::string text(source_, start_, current_ - start_);
-    int col = static_cast<int>(start_ - lineStart_) + 1;
+    int col = columnAt(start_);
     tokens_.emplace_back(type, std::move(text), literal, line_, col);
 }
 
 void Lexer::addToken(TokenType type, std::string&& text) {
-    int col = static_cast<int>(start_ - lineStart_) + 1;
+    int col = columnAt(start_);
     tokens_.emplace_back(type, std::move(text), Value::nullValue(), line_, col);
 }
 
 void Lexer::addToken(TokenType type, std::string&& text, const Value& literal) {
-    int col = static_cast<int>(start_ - lineStart_) + 1;
+    int col = columnAt(start_);
     tokens_.emplace_back(type, std::move(text), literal, line_, col);
 }
 
 void Lexer::errorToken(const std::string& message, int errorLine, int errorCol) {
-    int col = (errorCol > 0) ? errorCol : static_cast<int>(start_ - lineStart_) + 1;
+    int col = (errorCol > 0) ? errorCol : columnAt(start_);
     int ln = (errorLine > 0) ? errorLine : line_;
     tokens_.emplace_back(TokenType::TK_ERROR, message, Value::nullValue(), ln, col);
 }
 
 int Lexer::currentColumn() const {
-    return static_cast<int>(current_ - lineStart_) + 1;
+    return columnAt(current_);
+}
+
+int Lexer::columnAt(int byteOffset) const {
+    // D11 fix: 按 UTF-8 码位计算列号，避免多字节字符（如中文）导致列号偏移过大。
+    // 从 lineStart_ 遍历到 byteOffset，按首字节判断码位字节数。
+    if (byteOffset <= lineStart_) return 1;
+    int col = 1;
+    int i = lineStart_;
+    while (i < byteOffset && i < static_cast<int>(source_.size())) {
+        unsigned char c = static_cast<unsigned char>(source_[i]);
+        int len = Utf8::byteLength(c);
+        // 防御：若剩余字节不足完整码位，按 1 字节前进避免越界
+        if (i + len > byteOffset || i + len > static_cast<int>(source_.size())) {
+            len = 1;
+        }
+        i += len;
+        col++;
+    }
+    return col;
 }

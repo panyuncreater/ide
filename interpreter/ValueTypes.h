@@ -41,6 +41,22 @@ enum class ValueType {
 };
 
 // ============================================================
+// P2-8 fix: 类型名字符串常量（统一管理，避免多处硬编码）
+// ============================================================
+// 用于 Value::typeName() 和 Interpreter::checkType() 的类型注解匹配。
+namespace TypeName {
+    constexpr const char* INT      = "int";
+    constexpr const char* FLOAT    = "float";
+    constexpr const char* BOOL     = "bool";
+    constexpr const char* STRING   = "string";
+    constexpr const char* NULL_T   = "null";
+    constexpr const char* ARRAY    = "array";
+    constexpr const char* DICT     = "dict";
+    constexpr const char* INSTANCE = "instance";
+    constexpr const char* CLOSURE  = "closure";
+}
+
+// ============================================================
 // VM 闭包数据结构（定义在 Value 之前，因 ClosureData 持有其 shared_ptr）
 // ============================================================
 

@@ -36,6 +36,8 @@ if(NOT TARGET minilang_core)
         ${MINILANG_ROOT_DIR}/debug/DebugController.cpp
         ${MINILANG_ROOT_DIR}/compiler/Compiler.cpp
         ${MINILANG_ROOT_DIR}/compiler/VM.cpp
+        ${MINILANG_ROOT_DIR}/compiler/VMCalls.cpp
+        ${MINILANG_ROOT_DIR}/compiler/VMContainers.cpp
         ${MINILANG_ROOT_DIR}/formatter/Formatter.cpp
     )
 

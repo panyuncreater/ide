@@ -22,6 +22,8 @@
 #include <sstream>
 #include <mutex>
 #include <atomic>
+#include <charconv>
+#include <array>
 
 /// 日志级别（由低到高）
 enum class LogLevel {
@@ -137,3 +139,39 @@ private:
 #define LOG_INFO(msg, source)    do { if (Logger::instance().level() <= LogLevel::INFO)    Logger::Info(msg, source); } while(0)
 #define LOG_WARNING(msg, source) do { if (Logger::instance().level() <= LogLevel::WARNING) Logger::Warning(msg, source); } while(0)
 #define LOG_ERROR(msg, source)   do { if (Logger::instance().level() <= LogLevel::ERROR)   Logger::Error(msg, source); } while(0)
+
+// ============================================================
+// P1-9 fix: 错误消息定位格式化（热路径优化）
+// ------------------------------------------------------------
+// runtimeError 是错误处理热路径，原实现使用 std::to_string + operator+
+// 多次堆分配。改用 std::to_chars 写入栈缓冲区，零堆分配。
+// ============================================================
+namespace ErrorFormat {
+inline std::string formatWithLocation(const std::string& msg, int line, int col) {
+    // 预估容量：msg + " (行 " + 11 位 int + ", 列 " + 11 位 int + ")"
+    std::string result;
+    result.reserve(msg.size() + 32);
+    result = msg;
+    result += " (行 ";
+    std::array<char, 24> buf{};
+    auto r1 = std::to_chars(buf.data(), buf.data() + buf.size(), line);
+    result.append(buf.data(), r1.ptr);
+    result += ", 列 ";
+    auto r2 = std::to_chars(buf.data(), buf.data() + buf.size(), col);
+    result.append(buf.data(), r2.ptr);
+    result += ')';
+    return result;
+}
+
+inline std::string formatWithLine(const std::string& msg, int line) {
+    std::string result;
+    result.reserve(msg.size() + 16);
+    result = msg;
+    result += " (行 ";
+    std::array<char, 24> buf{};
+    auto r = std::to_chars(buf.data(), buf.data() + buf.size(), line);
+    result.append(buf.data(), r.ptr);
+    result += ')';
+    return result;
+}
+} // namespace ErrorFormat

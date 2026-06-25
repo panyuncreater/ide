@@ -70,6 +70,46 @@ private:
     // P0-4 fix: 跟踪当前 try 块嵌套深度，break/continue 跳出 try 块时需发射 OP_TRY_END
     int tryDepth_ = 0;
 
+    // ---- C3 fix: 编译上下文 RAII 守卫 ----
+    // visitFunDecl 需保存/恢复 15 个成员变量。原代码手动 std::move 保存 + 手动恢复
+    // （含异常路径），极易遗漏。CompileContextGuard 构造时保存，析构时恢复（含异常路径）。
+
+    /// 编译上下文快照（函数编译时保存的外层状态）
+    struct CompileContext {
+        BytecodeChunk chunk;
+        std::unordered_map<std::string, uint16_t> varIndex;
+        std::unordered_map<std::string, int> currentLocals;
+        bool inFunction = false;
+        std::unordered_map<std::string, int> outerLocals;
+        int peakLocals = 0;
+        std::vector<UpvalueDesc> outerUpvalues;
+        std::unordered_map<std::string, int> outerUpvalueNames;
+        std::unordered_map<std::string, int> outerFunctions;
+        std::unordered_set<std::string> innerFunctions;
+        std::unordered_map<std::string, int> innerFunctionSlots;
+        std::vector<UpvalueDesc> currentUpvalues;
+        std::unordered_map<std::string, int> currentUpvalueNames;
+        std::vector<LoopContext> loopStack;
+        int tryDepth = 0;
+    };
+
+    /// 保存当前编译上下文（move 语义，调用后成员变量处于 moved-from 状态）
+    CompileContext saveCompileContext();
+    /// 从快照恢复编译上下文
+    void restoreCompileContext(CompileContext&& ctx);
+
+    /// RAII 守卫：构造时保存上下文，析构时自动恢复（含异常路径）
+    struct CompileContextGuard {
+        Compiler& compiler;
+        CompileContext saved;
+        bool dismissed = false;
+        explicit CompileContextGuard(Compiler& c) : compiler(c), saved(c.saveCompileContext()) {}
+        ~CompileContextGuard() { if (!dismissed) compiler.restoreCompileContext(std::move(saved)); }
+        void dismiss() { dismissed = true; }
+        CompileContextGuard(const CompileContextGuard&) = delete;
+        CompileContextGuard& operator=(const CompileContextGuard&) = delete;
+    };
+
     // H5 fix: 内嵌函数闭包追踪 — 内嵌函数存储为局部变量，通过 OP_CALL_EXPR 调用
     std::unordered_set<std::string> innerFunctions_;           // 当前作用域中的内嵌函数名
     std::unordered_map<std::string, int> innerFunctionSlots_;  // 内嵌函数名 → 局部变量槽位号
@@ -132,6 +172,7 @@ private:
     Value visitThrowStmt(ThrowStmt& node) override;
     Value visitImportStmt(ImportStmt& node) override;
     Value visitExportStmt(ExportStmt& node) override;
+    Value visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);
@@ -159,6 +200,10 @@ private:
     /// 常量折叠：尝试在编译期求值一元运算，成功返回 true 并输出结果
     bool tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
                       Value& result, int line);
+
+    /// D8 fix: 从 AST 节点递归提取常量值。支持字面量节点和嵌套的 BinaryOp/UnaryOp
+    /// 常量表达式（如 (1+2)*3）。成功返回 true 并输出常量值。
+    bool extractConstant(ASTNode* node, Value& result, int line);
 
     /// 发射常量值指令（根据 Value 类型选择 OP_INT/OP_FLOAT/OP_STRING/OP_TRUE/OP_FALSE/OP_NULL）
     void emitConstant(const Value& val, int line);

@@ -6,17 +6,41 @@
 
 #include "interpreter/Interpreter.h"
 #include "interpreter/BuiltinMethods.h"
-#include "interpreter/NumericUtils.h"
-#include "debug/DebugController.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
-#include "Logger.h"
-#include <cctype>
-#include <cstdint>
-#include <climits>
-#include <cmath>
-#include <sstream>
 #include <unordered_set>
+
+// 依赖说明：
+// - BuiltinMethods.h：callBuiltinFunction 调用 executeSharedBuiltinFunction + Result<Value>
+// - <unordered_set>：constructClassInstance 中的 visitedClasses 循环继承检测
+// 其余类型（FunCall/FunDecl/Environment/RecursionGuard/ClassInfo 等）由 Interpreter.h 传递包含。
+
+// ============================================================
+// P1-6 fix: 闭包 capturedVars 快照重建/回写辅助函数
+// ============================================================
+// 消除 callClosureValue 和 callNamedFunction 中的重复逻辑。
+
+namespace {
+
+/// 从闭包的 capturedVars 快照重建环境（C1 fix: 闭包环境 weak_ptr 失效时使用）
+void rebuildEnvFromSnapshot(Value& closureVal, std::shared_ptr<Environment>& funEnv) {
+    funEnv = std::make_shared<Environment>(nullptr);
+    for (const auto& kv : closureVal.capturedVars()) {
+        funEnv->define(kv.first, kv.second);
+    }
+}
+
+/// 将变异后的捕获变量写回 capturedVars（C1/P0-6 fix）
+/// 仅写回原始 capturedVars 中已存在的键，跳过参数和局部变量，避免污染下次调用
+void writeBackCapturedVars(Value& closureVal, std::shared_ptr<Environment>& funEnv) {
+    auto& captured = closureVal.capturedVars();
+    for (const auto& kv : funEnv->localVariables()) {
+        if (captured.find(kv.first) != captured.end()) {
+            captured[kv.first] = kv.second;
+        }
+    }
+}
+
+} // anonymous namespace
+
 
 Value Interpreter::visitFunCall(FunCall& node) {
     checkBreak(&node);
@@ -97,13 +121,12 @@ Value Interpreter::callClosureValue(FunCall& node) {
         currentEnv_ = savedEnv;
     }
 
-    std::string savedReturnType = currentFunctionReturnType_;
-    currentFunctionReturnType_ = funDecl->returnType;
+    // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复
+    CallFrameGuard frameGuard{ *this, funDecl->returnType };
     auto prevEnv = currentEnv_;
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-        currentFunctionReturnType_ = savedReturnType;
         runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
     }
     RecursionGuard recursionGuard{ recursionDepth_ };
@@ -117,10 +140,7 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
         // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
         if (!closureEnv) {
-            funEnv = std::make_shared<Environment>(nullptr);
-            for (const auto& kv : calleeVal.capturedVars()) {
-                funEnv->define(kv.first, kv.second);
-            }
+            rebuildEnvFromSnapshot(calleeVal, funEnv);
             envFromSnapshot = true;
         }
 
@@ -143,11 +163,9 @@ Value Interpreter::callClosureValue(FunCall& node) {
     }
     catch (...) {
         // C1 fix: 运行时错误时恢复解释器状态，再重抛
-        // 与具名函数调用路径 (visitFunCall 的 catch(...)) 保持一致
+        // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复，此处只需恢复 env
         // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
         currentEnv_ = prevEnv;
-        if (!callStack_.empty()) callStack_.pop_back();
-        currentFunctionReturnType_ = savedReturnType;
         throw;
     }
 
@@ -155,18 +173,12 @@ Value Interpreter::callClosureValue(FunCall& node) {
     // P0-6 fix: 仅写回原始 capturedVars 中已存在的键（捕获变量），
     // 跳过参数和函数内新建的局部变量，避免污染下次调用
     if (!closureEnv && envFromSnapshot) {
-        auto& captured = calleeVal.capturedVars();
-        for (const auto& kv : funEnv->localVariables()) {
-            if (captured.find(kv.first) != captured.end()) {
-                captured[kv.first] = kv.second;
-            }
-        }
+        writeBackCapturedVars(calleeVal, funEnv);
     }
 
+    // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复
     // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
     currentEnv_ = prevEnv;
-    callStack_.pop_back();
-    currentFunctionReturnType_ = savedReturnType;
     return result;
 }
 
@@ -328,9 +340,8 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             // 压入调用帧
             callStack_.emplace_back(node.name + ".init", initEnv, node.line, recursionDepth_);
 
-            // 设置返回类型追踪
-            std::string savedReturnType = currentFunctionReturnType_;
-            currentFunctionReturnType_ = initMethod->returnType;
+            // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
+            CallFrameGuard frameGuard{ *this, initMethod->returnType, /*manageCtx=*/true };
 
             // 切换环境
             auto prevEnv = currentEnv_;
@@ -347,10 +358,8 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             }
             catch (...) {
                 // B1 fix: RAII guard 自动恢复 recursionDepth_，此处只需恢复其他状态
+                // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
                 currentEnv_ = prevEnv;
-                callStack_.pop_back();
-                if (!classContextStack_.empty()) classContextStack_.pop_back();
-                currentFunctionReturnType_ = savedReturnType;
                 throw;
             }
 
@@ -362,11 +371,8 @@ Value Interpreter::constructClassInstance(FunCall& node) {
 
             // M3 fix: 移除冗余的局部变量→字段同步（同 VarDecl 路径，P5 bindInstance 已处理）
 
-            // 恢复环境
+            // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
             currentEnv_ = prevEnv;
-            callStack_.pop_back();
-            if (!classContextStack_.empty()) classContextStack_.pop_back();
-            currentFunctionReturnType_ = savedReturnType;
         }
 
         // B1 fix: recursionDepth_ 由 RAII guard 自动恢复（无需手动递减）
@@ -476,9 +482,8 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         currentEnv_ = savedEnv;
     }
 
-    // 保存调用状态（在try外，确保catch可以恢复）
-    std::string savedReturnType = currentFunctionReturnType_;
-    currentFunctionReturnType_ = funDecl->returnType;
+    // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复
+    CallFrameGuard frameGuard{ *this, funDecl->returnType };
     auto prevEnv = currentEnv_;
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
@@ -511,10 +516,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
         // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
         if (!closureEnv && closureValPtr) {
-            funEnv = std::make_shared<Environment>(nullptr);
-            for (const auto& kv : closureValPtr->capturedVars()) {
-                funEnv->define(kv.first, kv.second);
-            }
+            rebuildEnvFromSnapshot(*closureValPtr, funEnv);
             envFromSnapshot = true;
         }
 
@@ -537,10 +539,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     }
     catch (...) {
         // 运行时错误：先恢复调用状态，再重抛
+        // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复，此处只需恢复 env
         // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
         currentEnv_ = prevEnv;
-        if (!callStack_.empty()) callStack_.pop_back();
-        currentFunctionReturnType_ = savedReturnType;
         throw;
     }
 
@@ -548,19 +549,12 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // P0-6 fix: 仅写回原始 capturedVars 中已存在的键（捕获变量），
     // 跳过参数和函数内新建的局部变量，避免污染下次调用
     if (!closureEnv && envFromSnapshot && closureValPtr && funEnv) {
-        auto& captured = closureValPtr->capturedVars();
-        for (const auto& kv : funEnv->localVariables()) {
-            if (captured.find(kv.first) != captured.end()) {
-                captured[kv.first] = kv.second;
-            }
-        }
+        writeBackCapturedVars(*closureValPtr, funEnv);
     }
 
-    // 恢复环境
+    // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复
     // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
     currentEnv_ = prevEnv;
-    callStack_.pop_back();
-    currentFunctionReturnType_ = savedReturnType;
 
     return result;
 }

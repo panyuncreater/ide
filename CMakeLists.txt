@@ -37,8 +37,11 @@ set(MINILANG_CORE_SOURCES
     interpreter/BuiltinMethods.cpp
     interpreter/Value.cpp
     debug/DebugController.cpp
+    compiler/Bytecode.cpp
     compiler/Compiler.cpp
     compiler/VM.cpp
+    compiler/VMCalls.cpp
+    compiler/VMContainers.cpp
     formatter/Formatter.cpp
 )
 

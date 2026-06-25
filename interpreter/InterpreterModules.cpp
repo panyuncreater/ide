@@ -5,18 +5,12 @@
 // ============================================================
 
 #include "interpreter/Interpreter.h"
-#include "interpreter/BuiltinMethods.h"
-#include "interpreter/NumericUtils.h"
-#include "debug/DebugController.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "Logger.h"
-#include <cctype>
-#include <cstdint>
-#include <climits>
-#include <cmath>
-#include <sstream>
-#include <unordered_set>
+
+// 依赖说明：import 语句需要 Lexer::scan + Parser::parse 加载模块源码；
+// 其余类型（ImportStmt/ExportStmt/VarDecl/Environment 等）由 Interpreter.h 传递包含。
+
 
 Value Interpreter::visitImportStmt(ImportStmt& node) {
     checkBreak(&node);
@@ -39,11 +33,9 @@ Value Interpreter::visitImportStmt(ImportStmt& node) {
     // 简单路径解析：如果模块路径是相对路径且当前文件路径非空，拼接目录
     // （完整路径解析由 moduleLoader_ 回调负责）
 
-    // 循环依赖检测
-    for (const auto& loading : moduleLoadingStack_) {
-        if (loading == modulePath) {
-            runtimeError("检测到循环依赖: " + modulePath, node.line, node.column);
-        }
+    // 循环依赖检测（D19 fix: 用 unordered_set 实现 O(1) 查找，替代线性扫描）
+    if (moduleLoadingSet_.count(modulePath) > 0) {
+        runtimeError("检测到循环依赖: " + modulePath, node.line, node.column);
     }
     // P1-1 fix: 深度导入链递归保护（防止 C++ 栈溢出）
     if (moduleLoadingStack_.size() >= MAX_RECURSION_DEPTH) {
@@ -80,6 +72,7 @@ Value Interpreter::visitImportStmt(ImportStmt& node) {
         exportedNames_.clear();
         currentEnv_ = moduleEnv;
         moduleLoadingStack_.push_back(modulePath);
+        moduleLoadingSet_.insert(modulePath);  // D19 fix: 与 stack 同步维护 set
 
         try {
             for (auto& stmt : ast->statements) {
@@ -89,10 +82,12 @@ Value Interpreter::visitImportStmt(ImportStmt& node) {
             currentEnv_ = savedEnv;
             exportedNames_ = savedExported;
             moduleLoadingStack_.pop_back();
+            moduleLoadingSet_.erase(modulePath);  // D19 fix: 同步移除
             throw;
         }
 
         moduleLoadingStack_.pop_back();
+        moduleLoadingSet_.erase(modulePath);  // D19 fix: 同步移除
         currentEnv_ = savedEnv;
 
         // 缓存模块环境和导出名称（必须在恢复 savedExported 之前捕获当前模块的 exports）

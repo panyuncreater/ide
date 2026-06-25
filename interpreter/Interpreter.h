@@ -36,6 +36,11 @@ struct ClassInfo {
     std::unordered_map<std::string, FunDecl*> methods; // 方法表
     std::unordered_map<std::string, Value> fields;     // 默认字段值
     std::shared_ptr<Environment> closureEnv;           // O5: 类定义时的环境（闭包捕获）
+    // C6 fix: 方法分派缓存。沿继承链查找是 O(depth)，热路径上每次方法调用重复查找。
+    // 缓存 methodName → (FunDecl*, cacheGen_)。cacheGen_ 与 Interpreter::classRegistryGen_
+    // 比较，不匹配则视为未命中（任何类重定义都会递增 gen，使全部缓存条目失效，
+    // 解决子类缓存指向已被重定义父类的旧方法指针的悬垂问题）。
+    mutable std::unordered_map<std::string, std::pair<FunDecl*, int>> methodCache_;
     // 注意：不再存储 superClass 裸指针，运行时通过 superClassName 在 classRegistry_ 中查找
     // 避免 unordered_map rehash 导致指针悬空
 };
@@ -55,6 +60,9 @@ public:
 
     /// REPL 模式执行（不重置环境，保留变量/函数/类定义）
     Value executeRepl(Block& program);
+
+    /// P1-4 fix: execute/executeRepl 共享的语句执行 + 异常处理逻辑
+    Value runStatementsWithExceptionHandling(Block& program);
 
     /// REPL 模式下保留 AST 所有权（确保 classRegistry_/funRegistry_ 中的裸指针持续有效）
     void retainReplAst(std::unique_ptr<Block> ast);
@@ -140,6 +148,7 @@ public:
     Value visitThrowStmt(ThrowStmt& node) override;
     Value visitImportStmt(ImportStmt& node) override;
     Value visitExportStmt(ExportStmt& node) override;
+    Value visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
 
 private:
     // 运行时限制常量 — 统一引用 common/RuntimeLimits.h
@@ -159,13 +168,15 @@ private:
     std::string currentFilePath_;                             // F12: 当前文件路径
     std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache_; // F12: 模块缓存
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_; // F12: 模块导出名称缓存
-    std::vector<std::string> moduleLoadingStack_;             // F12: 模块加载栈（循环依赖检测）
+    std::vector<std::string> moduleLoadingStack_;             // F12: 模块加载栈（顺序管理 + 深度保护）
+    std::unordered_set<std::string> moduleLoadingSet_;        // D19 fix: 模块加载集合（O(1) 循环依赖检测，与 moduleLoadingStack_ 同步维护）
     std::unordered_set<std::string> exportedNames_;           // F12: 当前模块的导出名称集合
     DiagnosticBag diagnostics_;                        // 诊断收集器
     int recursionDepth_ = 0;                        // 递归深度
     std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
     int funRegistryGen_ = 0;  // M7: 注册表代数，函数重定义时递增使 FunCall 缓存失效
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
+    int classRegistryGen_ = 0;  // C6 fix: 类注册表代数，任何类定义/重定义时递增，使方法分派缓存失效
     std::vector<std::string> classContextStack_; // super 解析用：当前执行的方法所属类名栈
     std::string currentFunctionReturnType_;         // 当前函数的返回类型
     std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
@@ -182,6 +193,7 @@ private:
     std::unordered_map<std::string, std::unordered_set<std::string>> savedModuleExports_;
     std::unordered_set<std::string> savedExportedNames_;
     std::vector<std::string> savedModuleLoadingStack_;
+    std::unordered_set<std::string> savedModuleLoadingSet_;  // D19 fix: 与 savedModuleLoadingStack_ 配对
 
     // S2 fix: RAII 递归深度守卫 — 统一 constructClassInstance/callNamedFunction/callInstanceMethod
     // 的递归深度管理，消除手动递减在异常路径下的遗漏风险
@@ -191,6 +203,39 @@ private:
         explicit RecursionGuard(int& d) : depth(d) { ++depth; }
         ~RecursionGuard() { if (!dismissed) --depth; }
         void dismiss() { dismissed = true; }
+    };
+
+    // B3 fix: RAII 调用帧守卫 — 统一 5 处调用帧状态管理（currentFunctionReturnType_ +
+    // callStack_ + classContextStack_），消除异常路径和成功路径中重复的手动恢复代码。
+    // 构造时保存 currentFunctionReturnType_ 并设置新值；析构时恢复 returnType，
+    // 并将 callStack_/classContextStack_ 弹出到构造时的深度（处理异常路径自动清理）。
+    // currentEnv_ 不由此守卫管理（各调用点的 env 保存/恢复时机不同）。
+    struct CallFrameGuard {
+        Interpreter& interp;
+        std::string savedReturnType;
+        size_t savedStackDepth;
+        size_t savedClassContextDepth;
+        bool manageClassContext;
+        CallFrameGuard(Interpreter& i, const std::string& newReturnType, bool manageCtx = false)
+            : interp(i), savedReturnType(i.currentFunctionReturnType_),
+              savedStackDepth(i.callStack_.size()),
+              savedClassContextDepth(i.classContextStack_.size()),
+              manageClassContext(manageCtx) {
+            interp.currentFunctionReturnType_ = newReturnType;
+        }
+        ~CallFrameGuard() {
+            while (interp.callStack_.size() > savedStackDepth) {
+                interp.callStack_.pop_back();
+            }
+            if (manageClassContext) {
+                while (interp.classContextStack_.size() > savedClassContextDepth) {
+                    interp.classContextStack_.pop_back();
+                }
+            }
+            interp.currentFunctionReturnType_ = std::move(savedReturnType);
+        }
+        CallFrameGuard(const CallFrameGuard&) = delete;
+        CallFrameGuard& operator=(const CallFrameGuard&) = delete;
     };
 
     /// 执行单个节点
@@ -206,14 +251,18 @@ private:
     Value numericBinaryOp(BinOpType opType, const Value& left, const Value& right,
                           int line, int col);
 
+    /// P1-2 fix: 比较运算（LT/GT/LTE/GTE）共用模板，消除 4 处重复样板
+    template<typename Cmp>
+    Value compareNumericOrString(BinaryOp& node, Cmp cmp);
+
     /// 报告运行时错误
     [[noreturn]] void runtimeError(const std::string& msg, int line, int col);
 
     /// 查找类的方法（含继承链）
-    FunDecl* findMethod(ClassInfo& cls, const std::string& methodName);
+    FunDecl* findMethod(const ClassInfo& cls, const std::string& methodName);
 
     /// 查找类的字段默认值（含继承链）
-    Value findFieldDefault(ClassInfo& cls, const std::string& fieldName);
+    Value findFieldDefault(const ClassInfo& cls, const std::string& fieldName);
 
     /// 写回左值（链式求值，避免重复求值副作用）
     /// isIndexAssign=true 时为索引赋值，indexNode 为索引表达式节点；否则为成员赋值，fieldName 为字段名
@@ -279,4 +328,17 @@ private:
 
     /// 求值参数列表（消除 visitMethodCall 中重复的参数求值逻辑）
     std::vector<Value> evaluateArguments(const std::vector<std::unique_ptr<ASTNode>>& args);
+
+    // ---- B1 fix: 闭包仅捕获自由变量（静态分析 AST）----
+
+    /// 计算函数的自由变量集合（函数体引用但未在函数内定义的变量）。
+    /// 用于 visitFunDecl 时仅捕获实际需要的变量，而非整个环境快照。
+    /// 递归处理嵌套函数：嵌套函数的自由变量若在外层函数内定义则不算外层自由变量，
+    /// 否则归入外层自由变量。类方法不分析（使用 closureEnv 而非 capturedVars）。
+    std::unordered_set<std::string> computeFreeVariables(const FunDecl& fn);
+
+    /// collectFreeVars 的递归辅助函数（作用于作用域栈）。
+    void collectFreeVars(const ASTNode& node,
+                         std::vector<std::unordered_set<std::string>>& scopes,
+                         std::unordered_set<std::string>& freeVars);
 };

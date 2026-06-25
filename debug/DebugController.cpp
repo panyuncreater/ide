@@ -35,29 +35,15 @@ void DebugController::checkBreak(ASTNode* node) {
     if (!running_) return;
 
     // D-P1-1 fix: 原子快速路径——RUN 模式且无断点时，无锁返回
-    // 避免每次 checkBreak 都获取 mutex 并深拷贝断点容器（循环/递归程序的主要开销）
     if (static_cast<StepMode>(mode_.load()) == StepMode::MODE_RUN &&
         !hasBreakpoints_.load()) {
-        // D-P2-11 fix: 快速路径也更新 lastSeenLine_/crossedLine_，
-        // 避免动态添加断点后切换到慢速路径时状态陈旧导致断点漏触发
-        if (node->line > 0) {
-            if (node->line != lastSeenLine_.load()) crossedLine_.store(true);
-            lastSeenLine_.store(node->line);
-        }
-        // B11 fix: 即使在快速路径，也定期处理 UI 事件防止界面冻结
-        if (++eventPumpCounter_ >= 100) {
-            eventPumpCounter_ = 0;
-            // D-P2-3 fix: QCoreApplication::instance() 可能为 null（单元测试/库使用场景）
-            auto app = QCoreApplication::instance();
-            if (app && QThread::currentThread() == app->thread())
-                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
-        }
+        // D-P2-11 fix: 快速路径也更新行号追踪
+        updateLineTracking(node->line, 0, 0, StepMode::MODE_RUN);
+        pumpEventsIfNeeded();
         return;
     }
 
     // Thread-safety: take a snapshot of shared state under the mutex.
-    // Breakpoint containers are copied; scalar fields are read into locals.
-    // This avoids holding the mutex for the entire function.
     StepMode snapMode;
     QSet<int> localBreakpoints;
     QMap<int, BreakpointInfo> localBreakpointInfos;
@@ -69,117 +55,44 @@ void DebugController::checkBreak(ASTNode* node) {
         snapMode = static_cast<StepMode>(mode_.load());
         localBreakpoints = breakpoints_;
         localBreakpointInfos = breakpointInfos_;
-        snapCurrentDepth = currentDepth_.load();       // P0-9 fix: atomic load
+        snapCurrentDepth = currentDepth_.load();
         snapStepOverDepth = stepOverDepth_;
         snapStepOutDepth = stepOutDepth_;
-        snapLastPausedLine = lastPausedLine_.load();   // P0-9 fix: atomic load
-        snapLastPausedDepth = lastPausedDepth_.load(); // P0-9 fix: atomic load
+        snapLastPausedLine = lastPausedLine_.load();
+        snapLastPausedDepth = lastPausedDepth_.load();
         snapMinBreakpointLine = minBreakpointLine_;
-        snapCrossedDeeper = crossedDeeper_.load();     // P0-9 fix: atomic load
+        snapCrossedDeeper = crossedDeeper_.load();
     }
 
-    // 快速路径：RUN 模式且无断点 → 直接返回（递归/循环程序的主要开销来源）
-    // 注意：此处保留原逻辑作为慢速路径中的二次确认（hasBreakpoints_ 是原子读，可能与锁内状态有微小窗口）
+    // 慢速路径中的二次确认（hasBreakpoints_ 原子读可能与锁内状态有微小窗口）
     if (snapMode == StepMode::MODE_RUN && localBreakpoints.empty()) {
-        // D-P2-11 fix: 快速路径也更新行号追踪
-        if (node->line > 0) {
-            if (node->line != lastSeenLine_.load()) crossedLine_.store(true);
-            lastSeenLine_.store(node->line);
-        }
-        // B11 fix: 即使在快速路径，也定期处理 UI 事件防止界面冻结
-        if (++eventPumpCounter_ >= 100) {
-            eventPumpCounter_ = 0;
-            auto app = QCoreApplication::instance();
-            if (app && QThread::currentThread() == app->thread())
-                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
-        }
+        updateLineTracking(node->line, 0, 0, StepMode::MODE_RUN);
+        pumpEventsIfNeeded();
         return;
     }
 
-    bool shouldPause = false;
-
     // DBG-B fix: Step Over 模式下追踪是否进入了更深的调用层
     if (snapMode == StepMode::MODE_STEP_OVER && snapCurrentDepth > snapStepOverDepth) {
-        crossedDeeper_.store(true);  // P0-9 fix: atomic store
+        crossedDeeper_.store(true);
         snapCrossedDeeper = true;
     }
 
-    switch (snapMode) {
-    case StepMode::MODE_RUN:
-        // C3 fix: 跳过与上次相同行号的子表达式，防止 resume 后同行子节点重复触发断点。
-        // lastSeenLine_ 会在执行到其他行时自动更新，使循环下一迭代能重新命中断点。
-        // DBG-03 fix: 单行循环断点重触发——用 crossedLine_ 检测是否跨过不同行
-        if ((node->line != lastSeenLine_.load() || crossedLine_.load()) &&
-            node->line >= snapMinBreakpointLine && localBreakpoints.contains(node->line)) {
-            crossedLine_.store(false);  // P0-9 fix: atomic store. 命中后重置，同行后续子表达式不再触发
-            // 检查是否为条件断点
-            auto infoIt = localBreakpointInfos.find(node->line);
-            if (infoIt != localBreakpointInfos.end() && infoIt->isConditional()) {
-                // 条件断点：只求值条件为真时才暂停
-                // P0-9 fix: 在 mutex 下读取 conditionEvaluator_ 快照，避免与 setConditionEvaluator 竞争
-                std::function<bool(const std::string&)> snapEvaluator;
-                {
-                    std::lock_guard<std::mutex> lock(pauseMutex_);
-                    snapEvaluator = conditionEvaluator_;
-                }
-                if (snapEvaluator) {
-                    try {
-                        if (snapEvaluator(infoIt->condition)) {
-                            // Thread-safety: update hitCount on the real container under mutex
-                            {
-                                std::lock_guard<std::mutex> lock(pauseMutex_);
-                                auto realIt = breakpointInfos_.find(node->line);
-                                if (realIt != breakpointInfos_.end()) realIt->hitCount++;
-                            }
-                            shouldPause = true;
-                        }
-                    } catch (...) {
-                        // 条件表达式求值异常——视为条件不满足，不暂停
-                    }
-                }
-            } else {
-                // 无条件断点：直接暂停
-                if (infoIt != localBreakpointInfos.end()) {
-                    std::lock_guard<std::mutex> lock(pauseMutex_);
-                    auto realIt = breakpointInfos_.find(node->line);
-                    if (realIt != breakpointInfos_.end()) realIt->hitCount++;
-                }
-                shouldPause = true;
-            }
-        }
-        break;
-
-    case StepMode::MODE_STEP_IN:
-        // 行号变化时暂停（跳过同行子表达式），或调用深度变化时暂停（递归函数同行不同深度）
-        if (node->line != snapLastPausedLine || snapCurrentDepth != snapLastPausedDepth) {
-            shouldPause = true;
-        }
-        break;
-
-    case StepMode::MODE_STEP_OVER:
-        // 只暂停同一或更浅调用深度，且行号变化或从深层返回的节点
-        // DBG-B fix: crossedDeeper_ 检测从函数调用返回 — 即使同行也暂停（f();g(); 场景）
-        if (snapCurrentDepth <= snapStepOverDepth && (node->line != snapLastPausedLine || snapCrossedDeeper)) {
-            shouldPause = true;
-        }
-        break;
-
-    case StepMode::MODE_STEP_OUT:
-        // H6 fix: 仅检查调用深度，不使用 lastPausedLine_ 防护。
-        // 深度变浅即可确定已从函数返回，同行嵌套调用或递归函数也能正确暂停。
-        if (snapCurrentDepth < snapStepOutDepth) {
-            shouldPause = true;
-        }
-        break;
+    // C11 fix: 委托给助手方法判断是否应暂停
+    bool shouldPause = false;
+    if (snapMode == StepMode::MODE_RUN) {
+        shouldPause = shouldPauseAtBreakpoint(node->line, localBreakpoints,
+                                              localBreakpointInfos, snapMinBreakpointLine);
+    } else {
+        shouldPause = shouldPauseForStepping(snapMode, node->line, snapCurrentDepth,
+                                             snapStepOverDepth, snapStepOutDepth,
+                                             snapLastPausedLine, snapLastPausedDepth,
+                                             snapCrossedDeeper);
     }
 
-    // C3 fix + DBG-03: 始终记录最后看到的行号，跨行时设置 crossedLine_ 允许单行循环断点重触发
-    if (node->line > 0) {
-        if (node->line != lastSeenLine_.load()) crossedLine_.store(true);  // P0-9 fix: atomic
-        lastSeenLine_.store(node->line);                                    // P0-9 fix: atomic
-    }
+    // C3 fix + DBG-03: 始终记录最后看到的行号
+    updateLineTracking(node->line, snapCurrentDepth, snapStepOverDepth, snapMode);
 
-    // M10 + DBG-04 fix: 步进模式下经过断点行时递增 hitCount，去重避免同行多个子表达式重复计数
+    // M10 + DBG-04 fix: 步进模式下经过断点行时递增 hitCount
     if (snapMode != StepMode::MODE_RUN && node->line > 0) {
         if (node->line != snapLastPausedLine || snapCurrentDepth != snapLastPausedDepth) {
             std::lock_guard<std::mutex> lock(pauseMutex_);
@@ -191,40 +104,123 @@ void DebugController::checkBreak(ASTNode* node) {
     }
 
     if (shouldPause && node->line > 0) {
-        lastPausedLine_.store(node->line);           // P0-9 fix: atomic store
-        lastPausedDepth_.store(snapCurrentDepth);    // P0-9 fix: atomic store
-        crossedDeeper_.store(false);                 // P0-9 fix: atomic store (DBG-B fix: 暂停后重置)
-
-        Logger::Debug("断点暂停于行 " + std::to_string(node->line) +
-            " (深度 " + std::to_string(snapCurrentDepth) + ")", "Debugger");
-
-        // V-P0-1/D-P0-1 fix: 锁内原子性地检查 stopped_ 并设置 paused_=true，
-        // 防止 stop() 在 line 31 检查后、设置 paused_=true 前之间的窗口运行，
-        // 导致 paused_=true 覆盖 stop() 设置的 paused_=false，使 worker 永久睡眠。
-        {
-            std::lock_guard<std::mutex> lock(pauseMutex_);
-            if (stopped_) {
-                throw DebugStopException();
-            }
-            paused_ = true;
-        }
-        // 发出暂停信号（更新 UI 高亮行）——此时 paused_ 已为 true
-        emit pausedAt(node->line);
-        // 阻塞等待用户操作（pauseExecution 内部不再重复设置 paused_）
-        pauseExecution();
-
-        // D-P2-1 fix: pauseExecution 返回后立即检查 stopped_，
-        // 避免用户停止后仍执行当前节点的副作用（如 print 输出）
-        if (stopped_) throw DebugStopException();
+        doPause(node->line, snapCurrentDepth);
     } else {
-        // B11 fix: 不暂停时也定期处理 UI 事件，防止界面冻结
-        if (++eventPumpCounter_ >= 100) {
-            eventPumpCounter_ = 0;
-            // D-P2-3 fix: QCoreApplication::instance() 可能为 null
-            auto app = QCoreApplication::instance();
-            if (app && QThread::currentThread() == app->thread())
-                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
+        pumpEventsIfNeeded();
+    }
+}
+
+// C11 fix: checkBreak 助手方法实现
+
+bool DebugController::shouldPauseAtBreakpoint(int line, const QSet<int>& localBreakpoints,
+                                              const QMap<int, BreakpointInfo>& localBreakpointInfos,
+                                              int snapMinBreakpointLine) {
+    // C3 fix + DBG-03: 单行循环断点重触发——用 crossedLine_ 检测是否跨过不同行
+    if ((line != lastSeenLine_.load() || crossedLine_.load()) &&
+        line >= snapMinBreakpointLine && localBreakpoints.contains(line)) {
+        crossedLine_.store(false);  // 命中后重置，同行后续子表达式不再触发
+        // 检查是否为条件断点
+        auto infoIt = localBreakpointInfos.find(line);
+        if (infoIt != localBreakpointInfos.end() && infoIt->isConditional()) {
+            // 条件断点：只求值条件为真时才暂停
+            std::function<bool(const std::string&)> snapEvaluator;
+            {
+                std::lock_guard<std::mutex> lock(pauseMutex_);
+                snapEvaluator = conditionEvaluator_;
+            }
+            if (snapEvaluator) {
+                try {
+                    if (snapEvaluator(infoIt->condition)) {
+                        {
+                            std::lock_guard<std::mutex> lock(pauseMutex_);
+                            auto realIt = breakpointInfos_.find(line);
+                            if (realIt != breakpointInfos_.end()) realIt->hitCount++;
+                        }
+                        return true;
+                    }
+                } catch (...) {
+                    // 条件表达式求值异常——视为条件不满足，不暂停
+                }
+            }
+        } else {
+            // 无条件断点：直接暂停
+            if (infoIt != localBreakpointInfos.end()) {
+                std::lock_guard<std::mutex> lock(pauseMutex_);
+                auto realIt = breakpointInfos_.find(line);
+                if (realIt != breakpointInfos_.end()) realIt->hitCount++;
+            }
+            return true;
         }
+    }
+    return false;
+}
+
+bool DebugController::shouldPauseForStepping(StepMode snapMode, int line, int snapCurrentDepth,
+                                             int snapStepOverDepth, int snapStepOutDepth,
+                                             int snapLastPausedLine, int snapLastPausedDepth,
+                                             bool snapCrossedDeeper) {
+    (void)line;  // STEP_OUT 不使用 line
+    switch (snapMode) {
+    case StepMode::MODE_STEP_IN:
+        // 行号变化时暂停，或调用深度变化时暂停（递归函数同行不同深度）
+        return (line != snapLastPausedLine || snapCurrentDepth != snapLastPausedDepth);
+    case StepMode::MODE_STEP_OVER:
+        // 只暂停同一或更浅调用深度，且行号变化或从深层返回
+        if (snapCurrentDepth <= snapStepOverDepth &&
+            (line != snapLastPausedLine || snapCrossedDeeper)) {
+            return true;
+        }
+        return false;
+    case StepMode::MODE_STEP_OUT:
+        // H6 fix: 仅检查调用深度，深度变浅即已从函数返回
+        return (snapCurrentDepth < snapStepOutDepth);
+    default:
+        return false;
+    }
+}
+
+void DebugController::updateLineTracking(int line, int snapCurrentDepth, int snapStepOverDepth,
+                                         StepMode snapMode) {
+    (void)snapCurrentDepth;
+    (void)snapStepOverDepth;
+    (void)snapMode;
+    if (line > 0) {
+        if (line != lastSeenLine_.load()) crossedLine_.store(true);
+        lastSeenLine_.store(line);
+    }
+}
+
+void DebugController::doPause(int line, int snapCurrentDepth) {
+    lastPausedLine_.store(line);
+    lastPausedDepth_.store(snapCurrentDepth);
+    crossedDeeper_.store(false);  // DBG-B fix: 暂停后重置
+
+    Logger::Debug("断点暂停于行 " + std::to_string(line) +
+        " (深度 " + std::to_string(snapCurrentDepth) + ")", "Debugger");
+
+    // V-P0-1/D-P0-1 fix: 锁内原子性地检查 stopped_ 并设置 paused_=true
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        if (stopped_) {
+            throw DebugStopException();
+        }
+        paused_ = true;
+    }
+    emit pausedAt(line);
+    pauseExecution();
+
+    // D-P2-1 fix: pauseExecution 返回后立即检查 stopped_
+    if (stopped_) throw DebugStopException();
+}
+
+void DebugController::pumpEventsIfNeeded() {
+    // B11 fix: 定期处理 UI 事件防止界面冻结
+    if (++eventPumpCounter_ >= 100) {
+        eventPumpCounter_ = 0;
+        // D-P2-3 fix: QCoreApplication::instance() 可能为 null
+        auto app = QCoreApplication::instance();
+        if (app && QThread::currentThread() == app->thread())
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
     }
 }
 

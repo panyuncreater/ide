@@ -6,6 +6,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <future>
+#include <chrono>
 
 // ============================================================
 // IdeController — 业务逻辑层实现
@@ -20,6 +22,36 @@ void IdeController::QThreadDeleter::operator()(QThread* thread) const {
         }
         delete thread;
     }
+}
+
+// D20 fix: 构建跨线程安全的 input() 回调。
+// 主线程直接弹对话框；工作线程通过 Qt::QueuedConnection 投递到主线程，
+// 用 std::future + wait_for 限时 30 秒，超时返回空串避免 worker 永久阻塞。
+std::function<std::string(const std::string&)> IdeController::buildInputCallback() const {
+    return [this](const std::string& prompt) -> std::string {
+        if (QThread::currentThread() == this->thread()) {
+            bool ok = false;
+            QString text = QInputDialog::getText(nullptr, "input",
+                QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+            return ok ? text.toStdString() : "";
+        }
+        // 跨线程：投递到主线程并限时等待
+        std::promise<QString> promise;
+        std::shared_future<QString> future = promise.get_future().share();
+        QMetaObject::invokeMethod(const_cast<IdeController*>(this),
+            [this, prompt, &promise]() {
+                bool ok = false;
+                QString result = QInputDialog::getText(nullptr, "input",
+                    QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+                if (!ok) result = "";
+                promise.set_value(result);
+            }, Qt::QueuedConnection);
+        if (future.wait_for(std::chrono::seconds(30)) == std::future_status::ready) {
+            return future.get().toStdString();
+        }
+        Logger::Warn("input() 超时（主线程 30 秒未响应），返回空串", "IDE");
+        return std::string();
+    };
 }
 
 IdeController::IdeController(QObject* parent)
@@ -37,25 +69,8 @@ IdeController::IdeController(QObject* parent)
         emit outputReady(QString::fromStdString(text));
     });
 
-    // input() 函数回调：跨线程安全
-    // 主线程（REPL/VM调试）直接显示对话框，工作线程（Run）通过 BlockingQueuedConnection 转发
-    auto inputHandler = [this](const std::string& prompt) -> std::string {
-        if (QThread::currentThread() == this->thread()) {
-            bool ok = false;
-            QString text = QInputDialog::getText(nullptr, "input",
-                QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
-            return ok ? text.toStdString() : "";
-        } else {
-            QString result;
-            QMetaObject::invokeMethod(this, [this, prompt, &result]() {
-                bool ok = false;
-                result = QInputDialog::getText(nullptr, "input",
-                    QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
-                if (!ok) result = "";
-            }, Qt::BlockingQueuedConnection);
-            return result.toStdString();
-        }
-    };
+    // D20 fix: input() 回调统一通过 buildInputCallback 构建（带超时保护）
+    auto inputHandler = buildInputCallback();
     interpreter_.setInputCallback(inputHandler);
     vm_.setInputCallback(inputHandler);
 
@@ -70,33 +85,20 @@ void IdeController::setupMainCallbacks() {
     interpreter_.setOutputCallback([this](const std::string& text) {
         emit outputReady(QString::fromStdString(text));
     });
-    // 恢复主线程输入回调（跨线程安全，worker 清除后由 cleanupWorker 调用恢复）
-    interpreter_.setInputCallback([this](const std::string& prompt) -> std::string {
-        if (QThread::currentThread() == this->thread()) {
-            bool ok = false;
-            QString text = QInputDialog::getText(nullptr, "input",
-                QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
-            return ok ? text.toStdString() : "";
-        } else {
-            QString result;
-            QMetaObject::invokeMethod(this, [this, prompt, &result]() {
-                bool ok = false;
-                result = QInputDialog::getText(nullptr, "input",
-                    QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
-                if (!ok) result = "";
-            }, Qt::BlockingQueuedConnection);
-            return result.toStdString();
-        }
-    });
+    // D20 fix: 恢复输入回调统一通过 buildInputCallback 构建（带超时保护）
+    interpreter_.setInputCallback(buildInputCallback());
 }
 
 IdeController::~IdeController() {
     // #10 fix: 确保工作线程已停止再删除，避免 delete running QThread 的 UB
     // 7.1 fix: 使用 unique_ptr 自动释放，显式 stop 逻辑保留
+    // A5 fix: 优先协作式取消，延长等待至 5 秒。terminate() 仅作为析构时的最后手段
+    // （进程退出阶段，资源泄漏可接受，但避免 UI 永久卡死）。
     if (workerThread_ && workerThread_->isRunning()) {
         debugger_->stop();
         workerThread_->quit();
-        if (!workerThread_->wait(3000)) {
+        if (!workerThread_->wait(5000)) {
+            Logger::Error("析构时 Worker 未在 5 秒内停止，回退到 terminate()（进程退出阶段）", "IDE");
             workerThread_->terminate();
             workerThread_->wait();
         }
@@ -134,6 +136,39 @@ bool IdeController::formatCode(std::string& formatted) {
     formatter_.setComments(lexer_.comments());
     formatted = formatter_.format(*astRoot_);
     return true;
+}
+
+// C9 fix: 统一前端管线实现
+IdeController::PipelineResult IdeController::runFrontendPipeline(const std::string& source) {
+    PipelineResult result;
+
+    // 词法分析
+    try {
+        if (!runLexer(source)) {
+            result.status = PipelineStatus::LexerFailed;
+            result.diagnostics = &lexer_.getDiagnostics();
+            return result;
+        }
+    } catch (const std::exception& e) {
+        result.status = PipelineStatus::LexerFailed;
+        result.errorMessage = e.what();
+        return result;
+    }
+
+    // 语法分析
+    try {
+        if (!runParser()) {
+            result.status = PipelineStatus::ParserFailed;
+            result.diagnostics = &parser_.getDiagnostics();
+            return result;
+        }
+    } catch (const std::exception& e) {
+        result.status = PipelineStatus::ParserFailed;
+        result.errorMessage = e.what();
+        return result;
+    }
+
+    return result;  // OK
 }
 
 // ============================================================
@@ -175,19 +210,14 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
         return "";
     });
 
-    // 词法分析
-    try {
-        if (!runLexer(source)) return false;
-    } catch (const std::exception& e) {
-        emit genericError(QString("词法分析异常: %1").arg(e.what()));
-        return false;
-    }
-
-    // 语法分析
-    try {
-        if (!runParser()) return false;
-    } catch (const std::exception& e) {
-        emit genericError(QString("解析异常: %1").arg(e.what()));
+    // C9 fix: 使用统一前端管线
+    auto pipelineResult = runFrontendPipeline(source);
+    if (pipelineResult.status != PipelineStatus::OK) {
+        if (!pipelineResult.errorMessage.empty()) {
+            emit genericError(QString("%1: %2")
+                .arg(pipelineResult.status == PipelineStatus::LexerFailed ? "词法分析异常" : "解析异常")
+                .arg(QString::fromStdString(pipelineResult.errorMessage)));
+        }
         return false;
     }
 
@@ -216,6 +246,9 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
     worker_ = std::make_unique<InterpreterWorker>(interpreter_, *astRoot_);
     // A-P2-5 fix: 不设 parent，由 unique_ptr 独占管理生命周期，避免双重所有权
     workerThread_.reset(new QThread());
+    // C16 fix: 增大 worker 线程栈至 4MB。每次 MiniLang 调用展开 6-10 个 C++ 栈帧，
+    // MAX_RECURSION_DEPTH=256 对应约 1500-2500 个 C++ 栈帧，接近 Windows 默认 1MB 栈边界。
+    workerThread_->setStackSize(4 * 1024 * 1024);
     worker_->moveToThread(workerThread_.get());
 
     // 转发 worker 信号到 IdeController 信号
@@ -275,17 +308,21 @@ bool IdeController::stopForClose(int timeoutMs) {
 
 void IdeController::forceStop() {
     if (workerThread_) {
-        // P1 fix: 优先通过 debugger_->stop() 触发 DebugStopException 正常退出
-        // 仅在超时后才使用 terminate 作为最后手段
+        // A5 fix: 协作式取消 — 通过 debugger_->stop() 设置 stopped_ 标志，
+        // 解释器/VM 在 checkBreak() 检测到后抛出 DebugStopException 正常退出。
+        // 不再使用 QThread::terminate()（会导致 UB：互斥锁未释放、堆损坏、悬垂信号）。
         debugger_->stop();
-        if (!workerThread_->wait(2000)) {
-            // 超时后强制终止（可能导致资源泄漏，但避免 UI 永久卡死）
-            workerThread_->terminate();
-            workerThread_->wait();
+        if (workerThread_->wait(5000)) {
+            // Worker 已正常停止，安全释放
+            worker_.reset();
+            workerThread_.reset();
+        } else {
+            // A5 fix: Worker 未在 5 秒内停止（仅在解释器/VM 存在未检查 stopped_ 的
+            // 死循环时发生，属于 bug）。不调用 terminate()，保留 worker/thread 对象
+            // 避免删除运行中对象的 UB。UI 状态已在下方恢复，用户可继续操作。
+            // Worker 最终会因 MAX_RECURSION_DEPTH/迭代上限退出，届时由 workerFinished 清理。
+            Logger::Error("Worker 未在 5 秒内响应取消请求，保留运行中线程（未调用 terminate 避免 UB）", "IDE");
         }
-        // 7.1 fix: unique_ptr 自动释放，无需手动 delete
-        worker_.reset();
-        workerThread_.reset();
     }
     // A-P1-2 fix: 补全状态清理（与 cleanupWorker 一致），避免下次运行因 stopped_=true 立即终止
     isRunning_ = false;

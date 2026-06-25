@@ -59,6 +59,25 @@ public:
     /// 格式化代码（需先 runLexer + runParser），成功时写入 formatted
     bool formatCode(std::string& formatted);
 
+    /// C9 fix: 前端管线结果状态码
+    enum class PipelineStatus {
+        OK,            ///< Lexer+Parser 均成功
+        LexerFailed,   ///< Lexer 异常或错误
+        ParserFailed   ///< Parser 异常或错误
+    };
+
+    /// C9 fix: 前端管线结果
+    struct PipelineResult {
+        PipelineStatus status = PipelineStatus::OK;
+        std::string errorMessage;  ///< 异常消息（status != OK 时有效）
+        const DiagnosticBag* diagnostics = nullptr;  ///< 错误诊断包指针
+    };
+
+    /// C9 fix: 统一前端管线（Lexer + Parser），消除 onFormat/onShowBytecode/prepareRun 三处重复。
+    /// 调用后 lastTokens_/astRoot_ 已就绪，caller 根据 status 决定后续动作。
+    /// 错误诊断已 emit diagnosticsReady，caller 仅需更新 UI。
+    PipelineResult runFrontendPipeline(const std::string& source);
+
     // ---- Worker 线程管理 ----
     /// 准备运行（词法+解析+创建 worker），返回 true 表示已就绪
     /// filePath: 当前文件路径（用于模块加载的相对路径解析），为空表示未保存文件
@@ -150,4 +169,6 @@ private:
     void cleanupWorker();
     /// 设置 interpreter_ 的输出+输入回调（主线程 REPL 模式）
     void setupMainCallbacks();
+    /// D20 fix: 构建跨线程安全的 input() 回调（带 30 秒超时保护，防止主线程无响应时 worker 永久阻塞）
+    std::function<std::string(const std::string&)> buildInputCallback() const;
 };

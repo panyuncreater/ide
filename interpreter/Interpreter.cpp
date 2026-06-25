@@ -44,9 +44,30 @@ Value Interpreter::execute(Block& program) {
     moduleCache_.clear();
     moduleExports_.clear();
     moduleLoadingStack_.clear();
+    moduleLoadingSet_.clear();  // D19 fix: 同步清理 set
     exportedNames_.clear();
 
     // 顶层块不创建新作用域，直接在全局环境中执行语句
+    return runStatementsWithExceptionHandling(program);
+}
+
+Value Interpreter::executeRepl(Block& program) {
+    // 不重置环境，保留已有变量/函数/类定义
+    // 清除 funRegistry_ 中的 AST 裸指针（旧 AST 可能已被销毁，闭包自带 body 指针不受影响）
+    funRegistry_.clear();
+    funRegistryGen_++;  // H5 fix: 使所有旧缓存的 resolvedDecl 指针失效，防止野指针访问
+    // classRegistry_ 不清除 — 类定义需要跨 REPL 行保留（AST 由 replAsts_ 保持存活）
+    // 确保当前环境回到全局
+    currentEnv_ = globalEnv_;
+    recursionDepth_ = 0;
+    diagnostics_.clear();  // 清空诊断信息
+
+    return runStatementsWithExceptionHandling(program);
+}
+
+// P1-4 fix: execute/executeRepl 共享的语句执行 + 异常处理逻辑。
+// 捕获 5 类异常：ReturnException/BreakException/ContinueException/ThrowException/RuntimeError。
+Value Interpreter::runStatementsWithExceptionHandling(Block& program) {
     Value result = Value::nullValue();
     try {
         for (auto& stmt : program.statements) {
@@ -62,45 +83,6 @@ Value Interpreter::execute(Block& program) {
     }
     catch (const ContinueException&) {
         // BUG-I1 fix: 捕获泄漏的 ContinueException，提供友好错误信息
-        runtimeError("continue 只能在循环体内使用", 0, 0);
-    }
-    catch (const ThrowException& e) {
-        runtimeError("未捕获的异常: " + e.thrownValue.toString(), 0, 0);
-    }
-    catch (const RuntimeError& e) {
-        // 记录到诊断包后重新抛出，保持原有异常传播机制
-        diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Interpreter);
-        throw;
-    }
-    return result;
-}
-
-Value Interpreter::executeRepl(Block& program) {
-    // 不重置环境，保留已有变量/函数/类定义
-    // 清除 funRegistry_ 中的 AST 裸指针（旧 AST 可能已被销毁，闭包自带 body 指针不受影响）
-    funRegistry_.clear();
-    funRegistryGen_++;  // H5 fix: 使所有旧缓存的 resolvedDecl 指针失效，防止野指针访问
-    // classRegistry_ 不清除 — 类定义需要跨 REPL 行保留（AST 由 replAsts_ 保持存活）
-    // 确保当前环境回到全局
-    currentEnv_ = globalEnv_;
-    recursionDepth_ = 0;
-    diagnostics_.clear();  // 清空诊断信息
-
-    Value result = Value::nullValue();
-    try {
-        for (auto& stmt : program.statements) {
-            result = evaluate(stmt.get());
-        }
-    }
-    catch (const ReturnException&) {
-        runtimeError("return 只能在函数体内使用", 0, 0);
-    }
-    catch (const BreakException&) {
-        // BUG-I1 fix: 捕获泄漏的 BreakException
-        runtimeError("break 只能在循环体内使用", 0, 0);
-    }
-    catch (const ContinueException&) {
-        // BUG-I1 fix: 捕获泄漏的 ContinueException
         runtimeError("continue 只能在循环体内使用", 0, 0);
     }
     catch (const ThrowException& e) {
@@ -130,6 +112,7 @@ void Interpreter::saveReplState() {
     savedModuleExports_ = std::move(moduleExports_);
     savedExportedNames_ = exportedNames_;
     savedModuleLoadingStack_ = moduleLoadingStack_;
+    savedModuleLoadingSet_ = moduleLoadingSet_;  // D19 fix: 同步保存 set
 }
 
 void Interpreter::restoreReplState() {
@@ -145,6 +128,7 @@ void Interpreter::restoreReplState() {
     moduleExports_ = std::move(savedModuleExports_);
     exportedNames_ = std::move(savedExportedNames_);
     moduleLoadingStack_ = std::move(savedModuleLoadingStack_);
+    moduleLoadingSet_ = std::move(savedModuleLoadingSet_);  // D19 fix: 同步恢复 set
     savedGlobalEnv_.reset();
 }
 
@@ -240,11 +224,45 @@ void Interpreter::output(const std::string& text) {
 }
 
 void Interpreter::runtimeError(const std::string& msg, int line, int col) {
-    Logger::Error(msg + " (行 " + std::to_string(line) + ", 列 " + std::to_string(col) + ")", "Interpreter");
+    // P1-9 fix: 使用 ErrorFormat::formatWithLocation 替代 std::to_string + operator+，
+    // 内部用 std::to_chars 写入栈缓冲区，零堆分配。
+    Logger::Error(ErrorFormat::formatWithLocation(msg, line, col), "Interpreter");
     throw RuntimeError(msg, line, col);
 }
 
 // ---- 数值二元运算 ----
+
+// P1-2 fix: 4 个比较运算（LT/GT/LTE/GTE）共用模板，消除重复样板。
+// 支持字符串字典序比较与数值比较，类型不匹配时抛 RuntimeError。
+template<typename Cmp>
+Value Interpreter::compareNumericOrString(BinaryOp& node, Cmp cmp) {
+    Value left = evaluate(node.left.get());
+    Value right = evaluate(node.right.get());
+
+    // C12 fix: 调用共享比较逻辑，消除与 VM 的重复实现
+    using namespace NumericOps;
+    // 根据 cmp 仿函数确定比较类型（std::less→Less, std::greater→Greater, 等）
+    CompareOp op;
+    if (std::is_same_v<Cmp, std::less<>>)
+        op = CompareOp::Less;
+    else if (std::is_same_v<Cmp, std::greater<>>)
+        op = CompareOp::Greater;
+    else if (std::is_same_v<Cmp, std::less_equal<>>)
+        op = CompareOp::LessEqual;
+    else
+        op = CompareOp::GreaterEqual;
+
+    // 字符串字典序比较
+    if (left.isString() && right.isString()) {
+        auto r = computeCompare(op, true, left.stringVal(), true, right.stringVal(), 0, 0);
+        return Value(r.value);
+    }
+    // 数值比较
+    if (!left.isNumber() || !right.isNumber())
+        runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
+    auto r = computeCompare(op, false, {}, false, {}, left.toDouble(), right.toDouble());
+    return Value(r.value);
+}
 
 Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
     const Value& right, int line, int col) {
@@ -263,66 +281,30 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
         runtimeError("算术运算需要数值类型", line, col);
     }
 
-    // 数值运算（switch 分发，零字符串比较）
+    // C12 fix: 调用共享算术运算逻辑，消除与 VM 的重复实现
+    using namespace NumericOps;
+    ArithOp op;
     switch (opType) {
-    case BinOpType::BIN_ADD:
-        if (left.isInt() && right.isInt()) {
-            int64_t a = left.intVal(), b = right.intVal();
-            if (OverflowCheck::addOverflow(a, b))
-                runtimeError("整数加法溢出", line, col);
-            return Value(a + b);
-        }
-        return Value(left.toDouble() + right.toDouble());
-    case BinOpType::BIN_SUB:
-        if (left.isInt() && right.isInt()) {
-            int64_t a = left.intVal(), b = right.intVal();
-            if (OverflowCheck::subOverflow(a, b))
-                runtimeError("整数减法溢出", line, col);
-            return Value(a - b);
-        }
-        return Value(left.toDouble() - right.toDouble());
-    case BinOpType::BIN_MUL:
-        if (left.isInt() && right.isInt()) {
-            int64_t a = left.intVal(), b = right.intVal();
-            if (OverflowCheck::mulOverflow(a, b))
-                runtimeError("整数乘法溢出", line, col);
-            return Value(a * b);
-        }
-        return Value(left.toDouble() * right.toDouble());
-    case BinOpType::BIN_DIV:
-        if (left.isInt() && right.isInt()) {
-            int64_t b = right.intVal();
-            if (b == 0) runtimeError("除零错误", line, col);
-            if (OverflowCheck::divOverflow(left.intVal(), b)) runtimeError("整数除法溢出", line, col);
-            return Value(left.intVal() / b);  // int/int → int (截断除法)
-        }
-        {
-            double r = right.toDouble();
-            if (r == 0.0) runtimeError("除零错误", line, col);
-            return Value(left.toDouble() / r);
-        }
-    case BinOpType::BIN_MOD:
-        // BUG 8.1 fix: 浮点操作数应使用 fmod，而非截断为整数后取模
-    {
-        // 如果两个操作数都是 int，使用整数取模
-        if (left.isInt() && right.isInt()) {
-            int64_t a = left.intVal();
-            int64_t b = right.intVal();
-            if (b == 0) runtimeError("除零错误", line, col);
-            if (OverflowCheck::modOverflow(a, b)) runtimeError("整数取模溢出", line, col);
-            return Value(a % b);
-        }
-        // 至少一个 float → 使用 fmod 进行浮点取模
-        if (!left.isNumber() || !right.isNumber()) {
-            runtimeError("取模运算需要数值类型", line, col);
-        }
-        double a = left.toDouble();
-        double b = right.toDouble();
-        if (b == 0.0) runtimeError("除零错误", line, col);
-        return Value(std::fmod(a, b));
-    }
+    case BinOpType::BIN_ADD: op = ArithOp::Add; break;
+    case BinOpType::BIN_SUB: op = ArithOp::Sub;  break;
+    case BinOpType::BIN_MUL: op = ArithOp::Mul;  break;
+    case BinOpType::BIN_DIV: op = ArithOp::Div;  break;
+    case BinOpType::BIN_MOD: op = ArithOp::Mod;  break;
     default:
         runtimeError("不支持的算术运算符", line, col);
+    }
+
+    ArithResult r = computeArith(op, left.isInt(), left.isInt() ? left.intVal() : 0, left.toDouble(),
+                                 right.isInt(), right.isInt() ? right.intVal() : 0, right.toDouble());
+    switch (r.status) {
+    case ArithStatus::DivByZero:
+        runtimeError("除零错误", line, col);
+    case ArithStatus::IntOverflow:
+        runtimeError("整数运算溢出", line, col);
+    case ArithStatus::NotNumeric:
+        runtimeError("算术运算需要数值类型", line, col);
+    case ArithStatus::OK:
+        return r.isIntResult ? Value(r.intVal) : Value(r.floatVal);
     }
     return Value::nullValue();  // 不可达，但消除编译器警告
 }
@@ -331,12 +313,13 @@ Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
 
 bool Interpreter::typeMatch(const Value& val, const std::string& annotation) const {
     if (annotation.empty()) return true;
-    if (annotation == "int") return val.isInt();
-    if (annotation == "float") return val.isFloat() || val.isInt();
-    if (annotation == "bool") return val.isBool();
-    if (annotation == "string") return val.isString();
-    if (annotation == "array") return val.isArray();
-    if (annotation == "dict") return val.isDict();
+    // P2-8 fix: 使用 TypeName 常量替代硬编码字符串
+    if (annotation == TypeName::INT) return val.isInt();
+    if (annotation == TypeName::FLOAT) return val.isFloat() || val.isInt();
+    if (annotation == TypeName::BOOL) return val.isBool();
+    if (annotation == TypeName::STRING) return val.isString();
+    if (annotation == TypeName::ARRAY) return val.isArray();
+    if (annotation == TypeName::DICT) return val.isDict();
     // 数组元素类型注解，如 "int[]"
     if (annotation.size() >= 2 && annotation.back() == ']' && annotation[annotation.size() - 2] == '[') {
         if (!val.isArray()) return false;
@@ -362,7 +345,7 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
         }
     }
     // M7 fix: null 不再隐式匹配所有类型注解，仅匹配 "null" 类型
-    if (val.isNull() && annotation == "null") return true;
+    if (val.isNull() && annotation == TypeName::NULL_T) return true;
     return false;
 }
 
@@ -596,41 +579,17 @@ Value Interpreter::visitBinaryOp(BinaryOp& node) {
         return Value(!left.equals(right));
     }
     case BinOpType::BIN_LT: {
-        Value left = evaluate(node.left.get());
-        Value right = evaluate(node.right.get());
-        // M4 fix: 支持字符串字典序比较
-        if (left.isString() && right.isString())
-            return Value(left.stringVal() < right.stringVal());
-        if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
-        return Value(left.toDouble() < right.toDouble());
+        // P1-2 fix: 4 个比较运算共用 compareNumericOrString 模板
+        return compareNumericOrString(node, std::less<>());
     }
     case BinOpType::BIN_GT: {
-        Value left = evaluate(node.left.get());
-        Value right = evaluate(node.right.get());
-        if (left.isString() && right.isString())
-            return Value(left.stringVal() > right.stringVal());
-        if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
-        return Value(left.toDouble() > right.toDouble());
+        return compareNumericOrString(node, std::greater<>());
     }
     case BinOpType::BIN_LTE: {
-        Value left = evaluate(node.left.get());
-        Value right = evaluate(node.right.get());
-        if (left.isString() && right.isString())
-            return Value(left.stringVal() <= right.stringVal());
-        if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
-        return Value(left.toDouble() <= right.toDouble());
+        return compareNumericOrString(node, std::less_equal<>());
     }
     case BinOpType::BIN_GTE: {
-        Value left = evaluate(node.left.get());
-        Value right = evaluate(node.right.get());
-        if (left.isString() && right.isString())
-            return Value(left.stringVal() >= right.stringVal());
-        if (!left.isNumber() || !right.isNumber())
-            runtimeError("比较运算需要数值或字符串类型", node.line, node.column);
-        return Value(left.toDouble() >= right.toDouble());
+        return compareNumericOrString(node, std::greater_equal<>());
     }
     case BinOpType::BIN_ADD:
     case BinOpType::BIN_SUB:
@@ -682,7 +641,23 @@ Value Interpreter::visitNumberLiteral(NumberLiteral& node) {
 
 Value Interpreter::visitStringLiteral(StringLiteral& node) {
     checkBreak(&node);
-    return node.takeValue();
+    return node.getValue();
+}
+
+// C5 fix: 插值字符串求值 — 交替拼接字面量片段和表达式结果
+Value Interpreter::visitInterpolatedString(InterpolatedString& node) {
+    checkBreak(&node);
+    // literals.size() == expressions.size() + 1
+    // 结果: literals[0] + str(expressions[0]) + literals[1] + ... + str(expressions[n-1]) + literals[n]
+    std::string result = node.literals.empty() ? std::string() : node.literals[0];
+    for (size_t i = 0; i < node.expressions.size(); ++i) {
+        Value exprVal = evaluate(node.expressions[i].get());
+        result += exprVal.toString();
+        if (i + 1 < node.literals.size()) {
+            result += node.literals[i + 1];
+        }
+    }
+    return Value(std::move(result));
 }
 
 Value Interpreter::visitBoolLiteral(BoolLiteral& node) {
@@ -739,18 +714,14 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 if (thisInEnv) initEnv->bindInstance(thisInEnv);
 
                 // H3 fix: 与 visitFunCall 类构造路径保持一致的状态管理
-                std::string savedReturnType = currentFunctionReturnType_;
-                currentFunctionReturnType_ = initMethod->returnType;
+                // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
+                CallFrameGuard frameGuard{ *this, initMethod->returnType, /*manageCtx=*/true };
                 callStack_.emplace_back(cls.name + ".init", initEnv, node.line, recursionDepth_ + 1);
                 classContextStack_.push_back(cls.name);
 
                 // #8 fix: recursionDepth_ guard for auto-construction
                 // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
                 if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-                    currentEnv_ = prevEnv;
-                    callStack_.pop_back();
-                    if (!classContextStack_.empty()) classContextStack_.pop_back();
-                    currentFunctionReturnType_ = savedReturnType;
                     runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
                 }
                 RecursionGuard guard{ recursionDepth_ };
@@ -760,18 +731,13 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
                 catch (const ReturnException&) {
                 }
                 catch (...) {
+                    // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
                     currentEnv_ = prevEnv;
-                    callStack_.pop_back();
-                    if (!classContextStack_.empty()) classContextStack_.pop_back();
-                    currentFunctionReturnType_ = savedReturnType;
                     throw;
                 }
 
-                // 恢复状态
+                // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
                 currentEnv_ = prevEnv;
-                callStack_.pop_back();
-                if (!classContextStack_.empty()) classContextStack_.pop_back();
-                currentFunctionReturnType_ = savedReturnType;
 
                 auto* thisPtr = initEnv->get("this");
                 if (thisPtr) {
@@ -941,14 +907,173 @@ Value Interpreter::visitForStmt(ForStmt& node) {
     return result;
 }
 
+// ============================================================
+// B1 fix: 闭包仅捕获自由变量（静态分析 AST）
+// ============================================================
+
+namespace {
+/// 在作用域栈中查找变量是否已定义（从内到外搜索所有作用域）
+bool isDefinedInScopes(const std::vector<std::unordered_set<std::string>>& scopes,
+                       const std::string& name) {
+    for (const auto& scope : scopes) {
+        if (scope.count(name)) return true;
+    }
+    return false;
+}
+} // anonymous namespace
+
+std::unordered_set<std::string> Interpreter::computeFreeVariables(const FunDecl& fn) {
+    // 函数作用域：参数 + 函数自身名称（允许递归自引用）
+    std::vector<std::unordered_set<std::string>> scopes;
+    scopes.emplace_back();
+    for (const auto& param : fn.params) scopes.back().insert(param);
+    scopes.back().insert(fn.name);
+
+    std::unordered_set<std::string> freeVars;
+
+    // 默认参数值在外层作用域求值（不在函数作用域内）
+    for (const auto& dv : fn.defaultValues) {
+        if (dv) collectFreeVars(*dv, scopes, freeVars);
+    }
+
+    // 分析函数体
+    if (fn.body) collectFreeVars(*fn.body, scopes, freeVars);
+
+    return freeVars;
+}
+
+void Interpreter::collectFreeVars(const ASTNode& node,
+                                  std::vector<std::unordered_set<std::string>>& scopes,
+                                  std::unordered_set<std::string>& freeVars) {
+    switch (node.nodeType) {
+        case NodeType::NODE_VAR_REF: {
+            const auto& ref = static_cast<const VarRef&>(node);
+            if (!isDefinedInScopes(scopes, ref.name)) {
+                freeVars.insert(ref.name);
+            }
+            break;
+        }
+        case NodeType::NODE_ASSIGNMENT: {
+            const auto& assign = static_cast<const Assignment&>(node);
+            if (!isDefinedInScopes(scopes, assign.name)) {
+                freeVars.insert(assign.name);
+            }
+            if (assign.value) collectFreeVars(*assign.value, scopes, freeVars);
+            break;
+        }
+        case NodeType::NODE_VAR_DECL: {
+            const auto& decl = static_cast<const VarDecl&>(node);
+            // 初始化器在变量声明前求值（变量尚未进入作用域）
+            if (decl.initializer) collectFreeVars(*decl.initializer, scopes, freeVars);
+            scopes.back().insert(decl.name);
+            break;
+        }
+        case NodeType::NODE_FUN_DECL: {
+            // 嵌套函数：用全新作用域栈分析其自由变量，再合并到外层
+            const auto& nestedFn = static_cast<const FunDecl&>(node);
+            // 默认参数值在外层（当前）作用域求值
+            for (const auto& dv : nestedFn.defaultValues) {
+                if (dv) collectFreeVars(*dv, scopes, freeVars);
+            }
+            // 用全新作用域栈分析嵌套函数体
+            std::vector<std::unordered_set<std::string>> nestedScopes;
+            nestedScopes.emplace_back();
+            for (const auto& p : nestedFn.params) nestedScopes.back().insert(p);
+            nestedScopes.back().insert(nestedFn.name);
+            std::unordered_set<std::string> nestedFree;
+            if (nestedFn.body) collectFreeVars(*nestedFn.body, nestedScopes, nestedFree);
+            // 嵌套函数的自由变量若不在外层作用域定义，则为外层自由变量
+            for (const auto& name : nestedFree) {
+                if (!isDefinedInScopes(scopes, name)) {
+                    freeVars.insert(name);
+                }
+            }
+            // 嵌套函数名是外层作用域的局部变量
+            scopes.back().insert(nestedFn.name);
+            break;
+        }
+        case NodeType::NODE_FUN_CALL: {
+            const auto& call = static_cast<const FunCall&>(node);
+            if (call.callee) {
+                collectFreeVars(*call.callee, scopes, freeVars);
+            } else if (!call.name.empty()) {
+                // 命名调用：函数名视为变量引用（可能是用户函数/类/闭包变量）
+                if (!isDefinedInScopes(scopes, call.name)) {
+                    freeVars.insert(call.name);
+                }
+            }
+            for (const auto& arg : call.arguments) {
+                if (arg) collectFreeVars(*arg, scopes, freeVars);
+            }
+            break;
+        }
+        case NodeType::NODE_BLOCK: {
+            const auto& block = static_cast<const Block&>(node);
+            scopes.emplace_back();  // 块作用域
+            for (const auto& stmt : block.statements) {
+                if (stmt) collectFreeVars(*stmt, scopes, freeVars);
+            }
+            scopes.pop_back();
+            break;
+        }
+        case NodeType::NODE_FOR_STMT: {
+            const auto& forStmt = static_cast<const ForStmt&>(node);
+            scopes.emplace_back();  // for 循环作用域（含循环变量）
+            if (forStmt.initializer) collectFreeVars(*forStmt.initializer, scopes, freeVars);
+            if (forStmt.condition) collectFreeVars(*forStmt.condition, scopes, freeVars);
+            if (forStmt.update) collectFreeVars(*forStmt.update, scopes, freeVars);
+            if (forStmt.body) collectFreeVars(*forStmt.body, scopes, freeVars);
+            scopes.pop_back();
+            break;
+        }
+        case NodeType::NODE_TRY_STMT: {
+            const auto& tryStmt = static_cast<const TryStmt&>(node);
+            if (tryStmt.tryBlock) collectFreeVars(*tryStmt.tryBlock, scopes, freeVars);
+            if (tryStmt.catchBlock) {
+                scopes.emplace_back();  // catch 块作用域（含异常变量）
+                if (!tryStmt.catchVarName.empty()) scopes.back().insert(tryStmt.catchVarName);
+                collectFreeVars(*tryStmt.catchBlock, scopes, freeVars);
+                scopes.pop_back();
+            }
+            break;
+        }
+        case NodeType::NODE_CLASS_DECL: {
+            const auto& cls = static_cast<const ClassDecl&>(node);
+            // 类名是当前作用域的局部变量
+            scopes.back().insert(cls.name);
+            // 不分析类成员：类方法通过 closureEnv 访问外层变量，不依赖 capturedVars
+            break;
+        }
+        default:
+            // 其他节点：递归遍历子节点（BinaryOp/UnaryOp/字面量/IfStmt/WhileStmt/
+            // ReturnStmt/PrintStmt/MemberAccess/MemberAssign/MethodCall/IndexAccess/
+            // IndexAssign/ThrowStmt/ImportStmt/ExportStmt/SuperExpr/BreakStmt/
+            // ContinueStmt/NullLiteral 等）
+            for (auto* child : node.children()) {
+                if (child) collectFreeVars(*child, scopes, freeVars);
+            }
+            break;
+    }
+}
+
 Value Interpreter::visitFunDecl(FunDecl& node) {
     checkBreak(&node);
 
     // 创建闭包值，捕获当前环境并存储函数体指针（自包含，不依赖 funRegistry_）
     Value funVal = Value::makeClosure(node.name, currentEnv_, node.params, &node);
 
-    // C1 fix: 快照捕获当前所有可见变量，作为 weak_ptr 过期后的回退环境
-    funVal.capturedVars() = currentEnv_->allVariablesMap();
+    // B1 fix: 仅捕获自由变量（函数体实际引用的外层变量），而非整个环境快照。
+    // 原 C1 fix 复制 allVariablesMap() 的全部可见变量，REPL 模式下随变量积累越来越慢；
+    // 现通过静态分析 AST 仅捕获实际需要的变量。getVariableOnly 确保不捕获实例字段
+    // （与原 collectVariables 行为一致）。
+    auto freeVars = computeFreeVariables(node);
+    auto& captured = funVal.capturedVars();
+    captured.reserve(freeVars.size());
+    for (const auto& name : freeVars) {
+        if (const Value* val = currentEnv_->getVariableOnly(name)) {
+            captured.emplace(name, *val);
+        }
+    }
 
     currentEnv_->define(node.name, funVal);
 
@@ -1286,9 +1411,8 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
                 currentEnv_ = savedEnv;
             }
 
-            // 保存调用状态（在try外）
-            std::string savedReturnType = currentFunctionReturnType_;
-            currentFunctionReturnType_ = method->returnType;
+            // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
+            CallFrameGuard frameGuard{ *this, method->returnType, /*manageCtx=*/true };
             auto prevEnv = currentEnv_;
 
             std::shared_ptr<Environment> methodEnv;  // 声明在try外，使catch后可访问
@@ -1296,7 +1420,6 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
 
             // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
             if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-                currentFunctionReturnType_ = savedReturnType;
                 runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
             }
             RecursionGuard recursionGuard{ recursionDepth_ };
@@ -1341,11 +1464,9 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             }
             catch (...) {
                 // 运行时错误：先恢复调用状态，再重抛
+                // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
                 // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
                 currentEnv_ = prevEnv;
-                if (!callStack_.empty()) callStack_.pop_back();
-                if (!classContextStack_.empty()) classContextStack_.pop_back();
-                currentFunctionReturnType_ = savedReturnType;
                 throw;
             }
 
@@ -1353,12 +1474,9 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             auto* thisPtr = methodEnv->get("this");
             Value updatedThis = thisPtr ? *thisPtr : Value::nullValue();
 
-            // 恢复环境
+            // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
             // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
             currentEnv_ = prevEnv;
-            callStack_.pop_back();
-            if (!classContextStack_.empty()) classContextStack_.pop_back();
-            currentFunctionReturnType_ = savedReturnType;
 
             // P0-4 fix: 不再调用 writeBack（会重复求值对象链），
             // 而是将更新后的 this 写回 obj（按引用传递），由 visitMethodCall 统一通过 writeBackChain 写回

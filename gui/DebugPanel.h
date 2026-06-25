@@ -6,6 +6,7 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <vector>
+#include <tuple>
 #include "debug/DebugController.h"
 
 // ============================================================
@@ -33,6 +34,9 @@ private slots:
     void onStackFrameSelected(int index);
 
 private:
+    /// P1-14 fix: 变量树填充共享逻辑（updateVariables/onStackFrameSelected 共用）
+    void populateVariableTree(const std::vector<std::tuple<QString, QString, QString>>& rows);
+
     QTreeWidget* variableTree_ = nullptr;   // 变量监视树
     QListWidget* callStackList_ = nullptr;  // 调用栈列表
     std::vector<CallStackEntry> currentStack_;  // 当前调用栈数据（含局部变量）

@@ -572,8 +572,7 @@ std::unique_ptr<ASTNode> Parser::statement() {
         throw ParseError("语句嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                          peek().line, peek().column);
     }
-    parseDepth_++;
-    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+    DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
 
     if (check(TokenType::TK_IF))       return ifStmt();
     if (check(TokenType::TK_WHILE))    return whileStmt();
@@ -615,8 +614,7 @@ std::unique_ptr<IfStmt> Parser::ifStmt() {
                 throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                                  peek().line, peek().column);
             }
-            parseDepth_++;
-            struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+            DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
             elseB = ifStmt();
         } else if (check(TokenType::TK_LBRACE)) {
             advance();
@@ -874,8 +872,7 @@ std::unique_ptr<Block> Parser::block() {
         throw ParseError("块嵌套过深（超过 " + std::to_string(MAX_BLOCK_DEPTH) + " 层）",
                          lbrace.line, lbrace.column);
     }
-    blockDepth_++;
-    struct BlockDepthGuard { int& d; ~BlockDepthGuard() { d--; } } guard{blockDepth_};
+    DepthGuard blockGuard{blockDepth_};  // C4 fix: 复用 DepthGuard，自动 ++/-- blockDepth_
 
     std::vector<std::unique_ptr<ASTNode>> stmts;
 
@@ -914,8 +911,7 @@ std::unique_ptr<ASTNode> Parser::expression() {
         throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                          peek().line, peek().column);
     }
-    parseDepth_++;
-    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+    DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
     return assignment();
 }
 
@@ -925,8 +921,7 @@ std::unique_ptr<ASTNode> Parser::assignment() {
         throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                          peek().line, peek().column);
     }
-    parseDepth_++;
-    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+    DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
 
     auto expr = or_();
 
@@ -1073,8 +1068,7 @@ std::unique_ptr<ASTNode> Parser::unary() {
             throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                              peek().line, peek().column);
         }
-        parseDepth_++;
-        struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+        DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
 
         const Token& op = previous();
         auto operand = unary();
@@ -1087,8 +1081,7 @@ std::unique_ptr<ASTNode> Parser::unary() {
             throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                              peek().line, peek().column);
         }
-        parseDepth_++;
-        struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{parseDepth_};
+        DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
 
         const Token& op = previous();
         auto operand = unary();
@@ -1333,11 +1326,21 @@ void Parser::synchronize() {
 // F7: 解析插值字符串
 // 语法: "text {expr} more text {expr2} end"
 // Lexer 已将其拆分为: TK_STRING_LIT TK_INTERP_START <expr tokens> TK_INTERP_END TK_STRING_PART TK_INTERP_START ... TK_STRING_PART
-// Parser 将其转换为: ((str("text ") + expr) + str(" more text ")) + expr2) + str(" end")
+// C5 fix: 保留插值结构为 InterpolatedString AST 节点（原实现抹平为 BinaryOp(BIN_ADD) 链，
+// Formatter 无法重建插值语法，AstViewer 只能看到一堆 BinaryOp）
 std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode> first) {
-    std::unique_ptr<ASTNode> result = std::move(first);
-    int startLine = result ? result->line : 0;
-    int startCol = result ? result->column : 0;
+    int startLine = first ? first->line : 0;
+    int startCol = first ? first->column : 0;
+
+    auto interp = std::make_unique<InterpolatedString>(startLine, startCol);
+
+    // 首个字符串片段（来自 first，即 TK_STRING_LIT 的值）
+    if (first && first->nodeType == NodeType::NODE_STRING_LITERAL) {
+        interp->literals.push_back(static_cast<StringLiteral*>(first.get())->value);
+    } else {
+        // 理论上 first 始终是 StringLiteral，防御性处理
+        interp->literals.push_back(std::string());
+    }
 
     // 循环处理 {expr} text 片段
     while (true) {
@@ -1357,9 +1360,7 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
             expr = std::make_unique<StringLiteral>(std::string(), startLine, startCol);
         }
 
-        // 拼接: result + expr
-        result = std::make_unique<BinaryOp>(BinOpType::BIN_ADD, std::move(result), std::move(expr),
-                                            startLine, startCol);
+        interp->expressions.push_back(std::move(expr));
 
         // 消耗 TK_INTERP_END
         if (!match(TokenType::TK_INTERP_END)) {
@@ -1374,11 +1375,7 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
         }
 
         const Token& partTok = previous();
-        auto part = std::make_unique<StringLiteral>(partTok.literal.stringVal(), partTok.line, partTok.column);
-
-        // 拼接: result + part
-        result = std::make_unique<BinaryOp>(BinOpType::BIN_ADD, std::move(result), std::move(part),
-                                            startLine, startCol);
+        interp->literals.push_back(partTok.literal.stringVal());
 
         // 检查是否还有更多插值
         if (!check(TokenType::TK_INTERP_START)) {
@@ -1386,5 +1383,5 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
         }
     }
 
-    return result;
+    return interp;
 }

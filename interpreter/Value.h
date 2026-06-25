@@ -94,6 +94,8 @@ private:
     }
 
     // ---- 显式深拷贝（用于需要完全独立副本的场景）----
+    // D2 fix: 递归深拷贝嵌套容器。原实现仅拷贝顶层 shared_ptr，嵌套数组/字典/实例
+    // 仍共享底层数据，修改副本的嵌套元素会影响原件。现递归克隆所有层级的 Value。
     Data deepClone(const Data& src) const {
         switch (static_cast<ValueType>(src.index())) {
         case ValueType::VAL_STRING: {
@@ -102,19 +104,54 @@ private:
         }
         case ValueType::VAL_ARRAY: {
             const auto& p = std::get<5>(src);
-            return p ? std::make_shared<ArrayData>(*p) : std::shared_ptr<ArrayData>{};
+            if (!p) return std::shared_ptr<ArrayData>{};
+            auto cloned = std::make_shared<ArrayData>();
+            cloned->elements.reserve(p->elements.size());
+            for (const auto& elem : p->elements) {
+                // 递归深拷贝每个元素
+                Value tmp;
+                tmp.data_ = deepClone(elem.data_);
+                cloned->elements.emplace_back(std::move(tmp));
+            }
+            return cloned;
         }
         case ValueType::VAL_DICT: {
             const auto& p = std::get<6>(src);
-            return p ? std::make_shared<DictData>(*p) : std::shared_ptr<DictData>{};
+            if (!p) return std::shared_ptr<DictData>{};
+            auto cloned = std::make_shared<DictData>();
+            cloned->entries.reserve(p->entries.size());
+            for (const auto& kv : p->entries) {
+                Value tmp;
+                tmp.data_ = deepClone(kv.second.data_);
+                cloned->entries.emplace(kv.first, std::move(tmp));
+            }
+            return cloned;
         }
         case ValueType::VAL_INSTANCE: {
             const auto& p = std::get<7>(src);
-            return p ? std::make_shared<InstanceData>(*p) : std::shared_ptr<InstanceData>{};
+            if (!p) return std::shared_ptr<InstanceData>{};
+            auto cloned = std::make_shared<InstanceData>();
+            cloned->className = p->className;
+            cloned->fields.reserve(p->fields.size());
+            for (const auto& kv : p->fields) {
+                Value tmp;
+                tmp.data_ = deepClone(kv.second.data_);
+                cloned->fields.emplace(kv.first, std::move(tmp));
+            }
+            return cloned;
         }
         case ValueType::VAL_CLOSURE: {
             const auto& p = std::get<8>(src);
-            return p ? std::make_shared<ClosureData>(*p) : std::shared_ptr<ClosureData>{};
+            if (!p) return std::shared_ptr<ClosureData>{};
+            auto cloned = std::make_shared<ClosureData>(*p);  // 浅拷贝 env/params/body/vmClosure
+            // 递归深拷贝 capturedVars（闭包捕获的变量需独立）
+            cloned->capturedVars.clear();
+            for (const auto& kv : p->capturedVars) {
+                Value tmp;
+                tmp.data_ = deepClone(kv.second.data_);
+                cloned->capturedVars.emplace(kv.first, std::move(tmp));
+            }
+            return cloned;
         }
         default:
             if (src.index() == 0) return std::monostate{};
@@ -391,18 +428,18 @@ public:
     /// 获取类型名称字符串
     std::string typeName() const {
         switch (getType()) {
-        case ValueType::VAL_INT:      return "int";
-        case ValueType::VAL_FLOAT:    return "float";
-        case ValueType::VAL_BOOL:     return "bool";
-        case ValueType::VAL_STRING:   return "string";
-        case ValueType::VAL_NULL:     return "null";
-        case ValueType::VAL_ARRAY:    return "array";
-        case ValueType::VAL_DICT:     return "dict";
+        case ValueType::VAL_INT:      return TypeName::INT;
+        case ValueType::VAL_FLOAT:    return TypeName::FLOAT;
+        case ValueType::VAL_BOOL:     return TypeName::BOOL;
+        case ValueType::VAL_STRING:   return TypeName::STRING;
+        case ValueType::VAL_NULL:     return TypeName::NULL_T;
+        case ValueType::VAL_ARRAY:    return TypeName::ARRAY;
+        case ValueType::VAL_DICT:     return TypeName::DICT;
         case ValueType::VAL_INSTANCE: {
             const auto& cn = className();
-            return cn.empty() ? "instance" : cn;
+            return cn.empty() ? TypeName::INSTANCE : cn;
         }
-        case ValueType::VAL_CLOSURE:  return "closure";
+        case ValueType::VAL_CLOSURE:  return TypeName::CLOSURE;
         }
         return "unknown";
     }

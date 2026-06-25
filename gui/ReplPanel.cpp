@@ -1,4 +1,5 @@
 #include "gui/ReplPanel.h"
+#include "gui/GuiTextUtils.h"  // P1-12 fix: 共享文本追加逻辑
 #include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -49,34 +50,15 @@ void ReplPanel::setInterpreter(Interpreter* interp) {
 }
 
 void ReplPanel::appendOutput(const QString& text) {
-    QTextCursor cursor(outputArea_->document());
-    cursor.movePosition(QTextCursor::End);
-    if (!outputArea_->document()->isEmpty()) {
-        cursor.insertText("\n");
-    }
-    // L-新3 fix: 去除尾部换行，避免多余空行（与 OutputPanel PANEL-01 一致）
-    QString trimmed = text;
-    if (trimmed.endsWith(QChar(10))) trimmed.chop(1);
-    cursor.insertText(trimmed);
-    outputArea_->setTextCursor(cursor);
-    outputArea_->ensureCursorVisible();
+    // P1-12 fix: 委托给 GuiTextUtils::appendLine
+    GuiTextUtils::appendLine(outputArea_, text);
 }
 
 void ReplPanel::appendError(const QString& text) {
-    // G-P2-7 fix: 去除尾部换行，避免错误消息后出现多余空行
-    QString trimmed = text;
-    while (trimmed.endsWith('\n') || trimmed.endsWith('\r')) trimmed.chop(1);
-    QTextCursor cursor(outputArea_->document());
-    cursor.movePosition(QTextCursor::End);
-    if (!outputArea_->document()->isEmpty())
-        cursor.insertText("\n");
+    // P1-12 fix: 委托给 GuiTextUtils::appendLine，使用红色格式
     QTextCharFormat fmt;
     fmt.setForeground(Qt::red);
-    cursor.setCharFormat(fmt);
-    cursor.insertText(trimmed);
-    cursor.setCharFormat(QTextCharFormat());
-    outputArea_->setTextCursor(cursor);
-    outputArea_->ensureCursorVisible();
+    GuiTextUtils::appendLine(outputArea_, text, &fmt);
 }
 
 void ReplPanel::clearHistory() {

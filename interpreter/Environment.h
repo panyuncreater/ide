@@ -1,6 +1,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <map>
 #include <string>
 #include <vector>
 #include <functional>
@@ -74,6 +75,16 @@ public:
         if (parent) {
             return parent->get(name);
         }
+        return nullptr;
+    }
+
+    /// B1 fix: 沿作用域链查找变量（仅 variables map，不含 boundInstance 字段）。
+    /// 用于闭包 capturedVars 快照——仅捕获环境变量，不捕获实例字段（与
+    /// collectVariables/allVariablesMap 行为一致）。
+    const Value* getVariableOnly(const std::string& name) const {
+        auto it = variables.find(name);
+        if (it != variables.end()) return &it->second;
+        if (parent) return parent->getVariableOnly(name);
         return nullptr;
     }
 
@@ -171,7 +182,9 @@ public:
     }
 
     /// 仅获取当前作用域变量（不含父作用域）
-    const std::unordered_map<std::string, Value>& localVariables() const {
+    // B2 fix: 改用 std::map — 插入不使引用失效，boundInstance_ 指向的 Value 不会因
+    // 后续 define() 触发 rehash 而悬空。
+    const std::map<std::string, Value>& localVariables() const {
         return variables;
     }
 
@@ -203,7 +216,10 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, Value> variables;
+    // B2 fix: 使用 std::map 替代 unordered_map。std::map 插入/删除不使已有元素的
+    // 引用和迭代器失效，从而保证 boundInstance_（指向 variables 中 "this" 条目的
+    // Value*）在后续 define() 调用后仍然有效，消除 rehash 悬垂指针风险。
+    std::map<std::string, Value> variables;
     std::unordered_map<std::string, std::string> typeAnnotations_; // B2: 作用域感知类型注解
     Value* boundInstance_ = nullptr;  // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
 

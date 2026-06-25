@@ -26,6 +26,7 @@ public:
 /// 递归下降语法分析器
 class Parser {
 public:
+    /// 构造函数
     Parser();
 
     /// 解析 Token 流，返回 AST 根节点（Block）
@@ -36,6 +37,16 @@ public:
 
     /// 获取解析过程中的诊断信息
     const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
+
+    // C4 fix: 统一的递归深度 RAII 守卫，消除 6 处局部结构体重复定义。
+    // 构造时递增深度计数器，析构时递减（异常路径也自动递减，防止深度计数泄漏）。
+    struct DepthGuard {
+        int& depth;
+        explicit DepthGuard(int& d) : depth(d) { ++depth; }
+        ~DepthGuard() { --depth; }
+        DepthGuard(const DepthGuard&) = delete;
+        DepthGuard& operator=(const DepthGuard&) = delete;
+    };
 
 private:
     const std::vector<Token>* tokens_ = nullptr;  // Token 流（引用，避免深拷贝）

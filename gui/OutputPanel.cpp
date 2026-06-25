@@ -1,4 +1,5 @@
 #include "gui/OutputPanel.h"
+#include "gui/GuiTextUtils.h"  // P1-12 fix: 共享文本追加逻辑
 #include <QLabel>
 #include <QTextCursor>
 #include <QTextCharFormat>
@@ -81,37 +82,15 @@ OutputPanel::OutputPanel(QWidget* parent)
 }
 
 void OutputPanel::appendOutput(const QString& text) {
-    QTextCursor cursor(outputEdit_->document());
-    cursor.movePosition(QTextCursor::End);
-    if (!outputEdit_->document()->isEmpty()) {
-        cursor.insertText("\n");
-    }
-    // PANEL-01 fix: strip trailing newline to avoid extra blank lines
-    QString trimmed = text;
-    if (trimmed.endsWith(QChar(10))) trimmed.chop(1);
-    cursor.insertText(trimmed);
-    outputEdit_->setTextCursor(cursor);
-    outputEdit_->ensureCursorVisible();
+    // P1-12 fix: 委托给 GuiTextUtils::appendLine
+    GuiTextUtils::appendLine(outputEdit_, text);
 }
 
 void OutputPanel::appendError(const QString& text) {
-    QTextCursor cursor(errorEdit_->document());
-    cursor.movePosition(QTextCursor::End);
-    if (!errorEdit_->document()->isEmpty()) {
-        cursor.insertText("\n");
-    }
-    // 使用红色字符格式显示错误，但内容本身作为纯文本插入
+    // P1-12 fix: 委托给 GuiTextUtils::appendLine，使用红色格式
     QTextCharFormat fmt;
     fmt.setForeground(Qt::red);
-    cursor.setCharFormat(fmt);
-    // PANEL-01 fix: strip trailing newline
-    QString trimmed = text;
-    if (trimmed.endsWith(QChar(10))) trimmed.chop(1);
-    cursor.insertText(trimmed);
-    // 恢复默认格式
-    cursor.setCharFormat(QTextCharFormat());
-    errorEdit_->setTextCursor(cursor);
-    errorEdit_->ensureCursorVisible();
+    GuiTextUtils::appendLine(errorEdit_, text, &fmt);
 }
 
 void OutputPanel::clearAll() {

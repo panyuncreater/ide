@@ -17,6 +17,7 @@
 #include <QSettings>
 #include <QRegularExpression>
 #include <QSet>
+#include <QHash>
 #include <sstream>
 #include <algorithm>  // A-P2-8 fix: std::min
 
@@ -557,33 +558,22 @@ void Ide::onWorkerFinished(bool wasDebug) {
 void Ide::onFormat() {
     std::string source = codeEditor_->toPlainText().toStdString();
 
-    // 词法分析
-    try {
-        if (!controller_->runLexer(source)) {
-            updateTokenTable();
-            return;
-        }
-    } catch (const std::exception& e) {
-        Diagnostic diag(DiagLevel::Error, e.what(), 0, 0, DiagSource::Lexer);
-        outputPanel_->appendError(QString::fromStdString("[格式化] " + diag.format()));
-        return;
-    }
+    // C9 fix: 使用统一前端管线
+    auto pipelineResult = controller_->runFrontendPipeline(source);
     updateTokenTable();
 
-    // 语法分析
-    try {
-        if (!controller_->runParser()) {
-            updateAstViewer();
-            return;
+    if (pipelineResult.status != IdeController::PipelineStatus::OK) {
+        // 错误诊断已由 runLexer/runParser 内部 emit diagnosticsReady
+        if (!pipelineResult.errorMessage.empty()) {
+            outputPanel_->appendError(QString("[格式化] %1: %2")
+                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed ? "词法异常" : "解析异常")
+                .arg(QString::fromStdString(pipelineResult.errorMessage)));
+        } else if (pipelineResult.diagnostics) {
+            for (const auto& diag : pipelineResult.diagnostics->all()) {
+                outputPanel_->appendError(QString::fromStdString("[格式化] " + diag.format()));
+            }
         }
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("[格式化] 解析异常: %1").arg(e.what()));
-        return;
-    }
-    if (controller_->parser().hasErrors()) {
-        for (const auto& diag : controller_->parserDiagnostics().all()) {
-            outputPanel_->appendError(QString::fromStdString("[格式化] " + diag.format()));
-        }
+        updateAstViewer();
         return;
     }
     updateAstViewer();
@@ -636,34 +626,23 @@ void Ide::onShowBytecode() {
     // GUI-10 fix: 清除调试执行行高亮
     codeEditor_->clearCurrentLine();
 
-    // 词法分析
-    try {
-        if (!controller_->runLexer(source)) {
-            updateTokenTable();
-            return;
-        }
-    } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("字节码生成失败 - 词法错误: %1").arg(e.what()));
-        return;
-    }
+    // C9 fix: 使用统一前端管线
+    auto pipelineResult = controller_->runFrontendPipeline(source);
     updateTokenTable();
 
-    // 语法分析
-    try {
-        if (!controller_->runParser()) {
-            updateAstViewer();
-            return;
-        }
-    } catch (const std::exception& e) {
+    if (pipelineResult.status != IdeController::PipelineStatus::OK) {
         bytecodeList_->clear();
-        bytecodeList_->addItem(QString("字节码生成失败 - 解析异常: %1").arg(e.what()));
-        return;
-    }
-    if (controller_->parser().hasErrors()) {
-        bytecodeList_->clear();
-        for (const auto& diag : controller_->parserDiagnostics().all()) {
-            bytecodeList_->addItem(QString::fromStdString("[编译] " + diag.format()));
+        lastBytecodeSourceHash_ = 0;  // D21 fix: 失效缓存
+        if (!pipelineResult.errorMessage.empty()) {
+            bytecodeList_->addItem(QString("字节码生成失败 - %1: %2")
+                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed ? "词法异常" : "解析异常")
+                .arg(QString::fromStdString(pipelineResult.errorMessage)));
+        } else if (pipelineResult.diagnostics) {
+            for (const auto& diag : pipelineResult.diagnostics->all()) {
+                bytecodeList_->addItem(QString::fromStdString("[编译] " + diag.format()));
+            }
         }
+        updateAstViewer();
         return;
     }
     updateAstViewer();
@@ -675,6 +654,7 @@ void Ide::onShowBytecode() {
         controller_->runCompiler();
     } catch (const std::exception& e) {
         bytecodeList_->clear();
+        lastBytecodeSourceHash_ = 0;  // D21 fix: 失效缓存
         bytecodeList_->addItem(QString("字节码编译异常: %1").arg(e.what()));
         return;
     }
@@ -907,8 +887,16 @@ void Ide::updateCompletionWords() {
     QStringList words = staticCompletionWords_;
 
     // P2-5 fix: 先移除字符串字面量和块注释内容，避免正则误匹配字符串内的 var/fun/class
-    // 简单处理：移除 "..." 和 /* */ 包裹的内容（不解析转义，近似处理）
-    text.remove(QRegularExpression("\"[^\"\\n]*\""));
+    // D13 fix: 正则支持转义序列，避免 "He said \"hello\"" 被错误拆分为两段，
+    // 导致 hello 被当作代码扫描。模式 "(?:\\.|[^"\\\n])*" 匹配：
+    //   "        起始引号
+    //   (?:      非捕获组，重复以下二者之一：
+    //     \\.    转义序列（反斜杠 + 任意字符，如 \" \\ \n）
+    //     |      或
+    //     [^"\\\n]  非引号、非反斜杠、非换行的任意字符
+    //   )*       重复 0 次或多次
+    //   "        结束引号
+    text.remove(QRegularExpression("\"(?:\\\\.|[^\"\\\\\\n])*\""));
     text.remove(QRegularExpression("/\\*.*?\\*/", QRegularExpression::DotMatchesEverythingOption));
 
     // P2-2 fix: 使用 static 正则避免每次调用都重新编译
@@ -965,20 +953,11 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
         instrIndex = targetChunk->ipToInstrIndex[ip];
     } else {
         // fallback：遍历查找（不应发生）
-        // A-P2-11 fix: 正确处理 OP_CLOSURE 变长指令（4 + upvalueCount*2 字节）
-        // 并处理截断情况：若 OP_CLOSURE 字节码不完整（offset+3 越界），终止遍历避免误对齐
+        // D7 fix: 使用 instructionSizeAt 统一处理 OP_CLOSURE 变长指令
         size_t offset = 0;
         while (offset < targetChunk->code.size()) {
             if (offset == ip) break;
-            OpCode op = static_cast<OpCode>(targetChunk->code[offset]);
-            if (op == OpCode::OP_CLOSURE) {
-                // 需要 offset+1..offset+3 三字节读取 upvalueCount
-                if (offset + 3 >= targetChunk->code.size()) break;  // 截断，终止
-                uint8_t upvalueCount = targetChunk->code[offset + 3];
-                offset += 4 + static_cast<size_t>(upvalueCount) * 2;
-            } else {
-                offset += BytecodeChunk::instructionSize(op);
-            }
+            offset += targetChunk->instructionSizeAt(offset);
             instrIndex++;
         }
     }
@@ -1001,6 +980,15 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
 
 void Ide::populateBytecodeList() {
     const CompileResult& compileResult = controller_->lastCompileResult();
+
+    // D21 fix: 计算当前源码哈希，若与上次相同则跳过全量重建。
+    // 常见场景：用户多次点击"运行"而代码未修改，避免 O(n) 清空+重建列表。
+    QString currentSource = codeEditor_ ? codeEditor_->toPlainText() : QString();
+    size_t currentHash = qHash(currentSource);
+    if (currentHash == lastBytecodeSourceHash_ && !bytecodeList_->items().isEmpty()) {
+        return;  // 源码未变，复用现有列表
+    }
+    lastBytecodeSourceHash_ = currentHash;
 
     bytecodeList_->clear();
     chunkRowMap_.clear();

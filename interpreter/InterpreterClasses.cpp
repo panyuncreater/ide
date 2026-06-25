@@ -5,18 +5,10 @@
 // ============================================================
 
 #include "interpreter/Interpreter.h"
-#include "interpreter/BuiltinMethods.h"
-#include "interpreter/NumericUtils.h"
-#include "debug/DebugController.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
-#include "Logger.h"
-#include <cctype>
-#include <cstdint>
-#include <climits>
-#include <cmath>
-#include <sstream>
-#include <unordered_set>
+
+// 依赖说明：ClassInfo/ClassDecl/MemberAccess/FunDecl/VarDecl/NodeType/Environment 等
+// 均通过 Interpreter.h 传递包含；本文件不直接使用 Lexer/Parser/BuiltinMethods/NumericUtils。
+
 
 Value Interpreter::visitClassDecl(ClassDecl& node) {
     checkBreak(&node);
@@ -41,6 +33,9 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
 
     // 先注册类信息（以便方法中可以递归引用自身）
     classRegistry_[node.name] = cls;
+    // C6 fix: 任何类定义/重定义都递增 gen，使所有 ClassInfo::methodCache_ 条目失效，
+    // 防止子类缓存指向已被替换的父类旧方法指针。
+    classRegistryGen_++;
     ClassInfo& registeredCls = classRegistry_[node.name];
 
     // 处理类成员
@@ -143,39 +138,55 @@ Value Interpreter::visitSuperExpr(SuperExpr& node) {
 
 // ---- 类辅助方法 ----
 
-FunDecl* Interpreter::findMethod(ClassInfo& cls, const std::string& methodName) {
-    // 使用深度计数器代替 unordered_set，避免每次调用都堆分配
-    ClassInfo* cur = &cls;
+// P1-3 fix: 继承链查找模板，消除 findMethod/findFieldDefault 的重复遍历结构。
+// 沿 superClassName 上移，MAX_INHERITANCE_DEPTH 防止循环继承。
+template<typename Lookup, typename NotFound>
+auto lookupInheritanceChain(const ClassInfo& cls,
+                            const std::unordered_map<std::string, ClassInfo>& registry,
+                            Lookup lookup, NotFound notFound)
+    -> decltype(lookup(cls)) {
+    const ClassInfo* cur = &cls;
     int depth = 0;
     while (cur) {
-        if (++depth > MAX_INHERITANCE_DEPTH) return nullptr;  // 循环继承或过深继承链
-        auto it = cur->methods.find(methodName);
-        if (it != cur->methods.end()) return it->second;
+        if (++depth > RuntimeLimits::MAX_INHERITANCE_DEPTH) return notFound;
+        if (auto r = lookup(*cur)) return r;
         if (!cur->superClassName.empty()) {
-            auto superIt = classRegistry_.find(cur->superClassName);
-            cur = (superIt != classRegistry_.end()) ? &superIt->second : nullptr;
-        }
-        else {
+            auto superIt = registry.find(cur->superClassName);
+            cur = (superIt != registry.end()) ? &superIt->second : nullptr;
+        } else {
             cur = nullptr;
         }
     }
-    return nullptr;
+    return notFound;
 }
 
-Value Interpreter::findFieldDefault(ClassInfo& cls, const std::string& fieldName) {
-    ClassInfo* cur = &cls;
-    int depth = 0;
-    while (cur) {
-        if (++depth > MAX_INHERITANCE_DEPTH) return Value::nullValue();  // 循环继承
-        auto it = cur->fields.find(fieldName);
-        if (it != cur->fields.end()) return it->second;
-        if (!cur->superClassName.empty()) {
-            auto superIt = classRegistry_.find(cur->superClassName);
-            cur = (superIt != classRegistry_.end()) ? &superIt->second : nullptr;
-        }
-        else {
-            cur = nullptr;
-        }
+FunDecl* Interpreter::findMethod(const ClassInfo& cls, const std::string& methodName) {
+    // C6 fix: 方法分派缓存。先查缓存（O(1)），gen 不匹配或未命中才走继承链（O(depth)）。
+    auto cacheIt = cls.methodCache_.find(methodName);
+    if (cacheIt != cls.methodCache_.end() && cacheIt->second.second == classRegistryGen_) {
+        return cacheIt->second.first;
     }
-    return Value::nullValue();
+    // P2-7 fix: const 正确性 — 不修改 cls，使用 const 指针遍历继承链
+    // P1-3 fix: 委托给 lookupInheritanceChain 模板
+    FunDecl* result = lookupInheritanceChain(cls, classRegistry_,
+        [&methodName](const ClassInfo& c) -> FunDecl* {
+            auto it = c.methods.find(methodName);
+            return (it != c.methods.end()) ? it->second : nullptr;
+        },
+        nullptr);
+    // 写入缓存（记录当前 gen，类重定义时 gen 递增使此条目失效）
+    cls.methodCache_[methodName] = { result, classRegistryGen_ };
+    return result;
+}
+
+Value Interpreter::findFieldDefault(const ClassInfo& cls, const std::string& fieldName) {
+    // P1-3 fix: 委托给 lookupInheritanceChain 模板
+    // lookup 返回 const Value*（指向 map 中条目，nullptr 表示未找到）
+    const Value* found = lookupInheritanceChain(cls, classRegistry_,
+        [&fieldName](const ClassInfo& c) -> const Value* {
+            auto it = c.fields.find(fieldName);
+            return (it != c.fields.end()) ? &it->second : nullptr;
+        },
+        nullptr);
+    return found ? *found : Value::nullValue();
 }

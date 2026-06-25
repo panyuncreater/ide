@@ -1,9 +1,24 @@
 #include "gui/SyntaxHighlighter.h"
+#include "lexer/Lexer.h"
 #include <QStringList>
 
 // ============================================================
 // SyntaxHighlighter 语法高亮器实现
 // ============================================================
+
+// C13 fix: 关键字列表从 Lexer::keywords() 单一来源派生，避免新增关键字时
+// SyntaxHighlighter 与 Lexer 两处不同步的问题。
+static QRegularExpression buildKeywordPattern() {
+    QString pattern = "\\b(?:";
+    bool first = true;
+    for (const auto& kv : Lexer::keywords()) {
+        if (!first) pattern += '|';
+        pattern += QString::fromStdString(kv.first);
+        first = false;
+    }
+    pattern += ")\\b";
+    return QRegularExpression(pattern);
+}
 
 SyntaxHighlighter::SyntaxHighlighter(QTextDocument* parent)
     : QSyntaxHighlighter(parent) {
@@ -42,12 +57,9 @@ void SyntaxHighlighter::initRules() {
 
     // ---- 添加高亮规则 ----
 
-    // 关键字（合并为单个正则，减少匹配次数）
+    // 关键字（C13 fix: 从 Lexer::keywords() 单一来源派生，避免硬编码不同步）
     HighlightRule keywordRule;
-    keywordRule.pattern = QRegularExpression(
-        "\\b(?:var|fun|function|func|if|else|while|for|return|print|break|continue"
-        "|and|or|not|int|float|bool|string|class|extends|super|dict|array|null|true|false"
-        "|try|catch|throw|import|from|export)\\b");
+    keywordRule.pattern = buildKeywordPattern();
     keywordRule.format = keywordFormat_;
     rules_.push_back(keywordRule);
 

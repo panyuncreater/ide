@@ -62,4 +62,11 @@ constexpr size_t MAX_TOKEN_COUNT = 1000000;
 // 字符串插值最大嵌套深度
 constexpr int MAX_INTERP_DEPTH = 64;
 
+// ---- GUI 查找/替换限制 ----
+// D14 fix: 统一 GUI 查找/替换上限到 RuntimeLimits，避免硬编码散布
+// 高亮匹配上限（防止超大文档 UI 卡死）
+constexpr int MAX_FIND_HIGHLIGHTS = 1000;
+// 全部替换上限（防止超大文档 UI 卡死）
+constexpr int MAX_REPLACE_ALL = 100000;
+
 } // namespace RuntimeLimits

@@ -22,6 +22,7 @@
 #include <string>
 #include <utility>
 #include <variant>
+#include "interpreter/RuntimeExceptions.h"  // P2-9 fix: to_runtime_error() 需要完整 RuntimeError 类型
 
 /// 错误信息载体（与 RuntimeError 字段对齐）
 struct ErrorInfo {
@@ -80,8 +81,7 @@ private:
     std::variant<T, ErrorInfo> data_;
 };
 
-// 前向声明 RuntimeError（定义在 RuntimeExceptions.h）
-class RuntimeError;
+// P2-9 fix: RuntimeError 完整定义由 interpreter/RuntimeExceptions.h 提供（顶部包含）
 
 template<typename T>
 RuntimeError Result<T>::to_runtime_error() const {

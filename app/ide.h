@@ -168,6 +168,9 @@ private:
     };
     std::vector<ChunkRowInfo> chunkRowMap_;
 
+    // D21 fix: 缓存上次编译的源码哈希，若源码未变则跳过字节码列表重建
+    size_t lastBytecodeSourceHash_ = 0;
+
     /// 初始化 UI
     void initUI();
 

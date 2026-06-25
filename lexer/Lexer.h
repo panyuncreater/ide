@@ -89,4 +89,9 @@ private:
 
     /// 获取当前列号
     int currentColumn() const;
+
+    /// D11 fix: 根据字节偏移计算 UTF-8 码位列号（1-based）。
+    /// 从 lineStart_ 到 byteOffset 之间的字节数按 UTF-8 首字节解码为码位数，
+    /// 避免多字节字符（如中文）导致列号偏移过大。
+    int columnAt(int byteOffset) const;
 };

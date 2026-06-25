@@ -119,6 +119,52 @@ uint16_t Compiler::identifierIndex(const std::string& name) {
     return idx;
 }
 
+// ============================================================
+// C3 fix: 编译上下文 RAII 守卫实现
+// ============================================================
+// visitFunDecl 需保存/恢复 15 个成员变量。原代码手动 std::move 保存 +
+// 手动恢复（含异常路径），极易遗漏。CompileContextGuard 构造时调用
+// saveCompileContext()，析构时调用 restoreCompileContext()，自动覆盖
+// early return 和异常路径。
+
+Compiler::CompileContext Compiler::saveCompileContext() {
+    CompileContext ctx;
+    ctx.chunk = std::move(chunk_);
+    ctx.varIndex = std::move(varIndex_);
+    ctx.currentLocals = std::move(currentLocals_);
+    ctx.inFunction = inFunction_;
+    ctx.outerLocals = std::move(outerLocals_);
+    ctx.peakLocals = peakLocals_;
+    ctx.outerUpvalues = std::move(outerUpvalues_);
+    ctx.outerUpvalueNames = std::move(outerUpvalueNames_);
+    ctx.outerFunctions = std::move(outerFunctions_);
+    ctx.innerFunctions = std::move(innerFunctions_);
+    ctx.innerFunctionSlots = std::move(innerFunctionSlots_);
+    ctx.currentUpvalues = std::move(currentUpvalues_);
+    ctx.currentUpvalueNames = std::move(currentUpvalueNames_);
+    ctx.loopStack = std::move(loopStack_);
+    ctx.tryDepth = tryDepth_;
+    return ctx;
+}
+
+void Compiler::restoreCompileContext(CompileContext&& ctx) {
+    chunk_ = std::move(ctx.chunk);
+    varIndex_ = std::move(ctx.varIndex);
+    currentLocals_ = std::move(ctx.currentLocals);
+    inFunction_ = ctx.inFunction;
+    outerLocals_ = std::move(ctx.outerLocals);
+    peakLocals_ = ctx.peakLocals;
+    outerUpvalues_ = std::move(ctx.outerUpvalues);
+    outerUpvalueNames_ = std::move(ctx.outerUpvalueNames);
+    outerFunctions_ = std::move(ctx.outerFunctions);
+    innerFunctions_ = std::move(ctx.innerFunctions);
+    innerFunctionSlots_ = std::move(ctx.innerFunctionSlots);
+    currentUpvalues_ = std::move(ctx.currentUpvalues);
+    currentUpvalueNames_ = std::move(ctx.currentUpvalueNames);
+    loopStack_ = std::move(ctx.loopStack);
+    tryDepth_ = ctx.tryDepth;
+}
+
 void Compiler::compileNode(ASTNode* node) {
     if (!node) return;
 
@@ -159,6 +205,7 @@ void Compiler::compileStatement(ASTNode* node) {
     case NodeType::NODE_SUPER_EXPR:
     case NodeType::NODE_ARRAY_LITERAL:
     case NodeType::NODE_DICT_LITERAL:
+    case NodeType::NODE_INTERPOLATED_STRING:  // C5 fix: 插值字符串产生栈值
         chunk_.writeOp(OpCode::OP_POP, node->line);
         break;
     default:
@@ -281,6 +328,32 @@ Value Compiler::visitStringLiteral(StringLiteral& node) {
     uint16_t idx = chunk_.addConstant(Value(node.value));
     chunk_.writeOp(OpCode::OP_STRING, node.line);
     chunk_.writeShort(idx, node.line);
+    return Value::nullValue();
+}
+
+// C5 fix: 插值字符串编译 — 发射字面量 + 表达式 + OP_ADD 链
+// 等价于原 BinaryOp(BIN_ADD) 链的字节码，但 AST 结构得以保留
+Value Compiler::visitInterpolatedString(InterpolatedString& node) {
+    // 发射首个字面量片段到栈顶
+    if (!node.literals.empty()) {
+        uint16_t idx = chunk_.addConstant(Value(node.literals[0]));
+        chunk_.writeOp(OpCode::OP_STRING, node.line);
+        chunk_.writeShort(idx, node.line);
+    } else {
+        chunk_.writeOp(OpCode::OP_NULL, node.line);
+    }
+
+    // 交替发射: 表达式 → OP_ADD → 字面量 → OP_ADD
+    for (size_t i = 0; i < node.expressions.size(); ++i) {
+        compileNode(node.expressions[i].get());
+        chunk_.writeOp(OpCode::OP_ADD, node.line);
+        if (i + 1 < node.literals.size() && !node.literals[i + 1].empty()) {
+            uint16_t idx = chunk_.addConstant(Value(node.literals[i + 1]));
+            chunk_.writeOp(OpCode::OP_STRING, node.line);
+            chunk_.writeShort(idx, node.line);
+            chunk_.writeOp(OpCode::OP_ADD, node.line);
+        }
+    }
     return Value::nullValue();
 }
 
@@ -462,6 +535,22 @@ Value Compiler::visitVarRef(VarRef& node) {
 }
 
 Value Compiler::visitIfStmt(IfStmt& node) {
+    // C17 fix: 死代码消除 — 若条件可在编译期求值为常量布尔值（无副作用），
+    // 直接编译存活分支，跳过条件求值与跳转指令，消除死代码。
+    Value condConst;
+    if (extractConstant(node.condition.get(), condConst, node.line) && condConst.isBool()) {
+        auto savedLocals = currentLocals_;
+        if (condConst.boolVal()) {
+            // 条件恒真：仅编译 then 分支
+            compileStatement(node.thenBranch.get());
+        } else if (node.elseBranch) {
+            // 条件恒假：仅编译 else 分支
+            compileStatement(node.elseBranch.get());
+        }
+        currentLocals_ = savedLocals;
+        return Value::nullValue();
+    }
+
     compileNode(node.condition.get());
 
     // 条件为假跳转到 else 分支
@@ -673,189 +762,140 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     // H5 fix: 记录是否为内嵌函数（在函数体内定义的函数）
     bool isInner = inFunction_;
 
-    // 为函数体创建独立 BytecodeChunk
-    BytecodeChunk savedChunk = std::move(chunk_);
-    std::unordered_map<std::string, uint16_t> savedVarIndex = std::move(varIndex_);
-    std::unordered_map<std::string, int> savedLocals = std::move(currentLocals_);
-    bool savedInFunction = inFunction_;
-    std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
-    int savedPeakLocals = peakLocals_;
-    // VM-05/06: 保存外层 upvalue 和函数状态
-    std::vector<UpvalueDesc> savedOuterUpvalues = std::move(outerUpvalues_);
-    std::unordered_map<std::string, int> savedOuterUpvalueNames = std::move(outerUpvalueNames_);
-    std::unordered_map<std::string, int> savedOuterFunctions = std::move(outerFunctions_);
-    // H5 fix: 保存内嵌函数追踪
-    std::unordered_set<std::string> savedInnerFunctions = std::move(innerFunctions_);
-    std::unordered_map<std::string, int> savedInnerFunctionSlots = std::move(innerFunctionSlots_);
-    // C-P2-8 fix: 保存当前函数已收集的 upvalue 列表和名称映射（嵌套函数编译后会清空它们）
-    std::vector<UpvalueDesc> savedCurrentUpvalues = std::move(currentUpvalues_);
-    std::unordered_map<std::string, int> savedCurrentUpvalueNames = std::move(currentUpvalueNames_);
-    // C-P0-1/C-P0-3 fix: 保存并清空循环栈和 try 深度，防止内层函数中的 break/continue/try
-    // 污染外层函数的循环上下文和 try 帧计数
-    std::vector<LoopContext> savedLoopStack = std::move(loopStack_);
-    int savedTryDepth = tryDepth_;
+    // C3 fix: 使用 CompileContextGuard RAII 自动保存/恢复 15 个编译上下文成员变量。
+    // 原代码 22 处 std::move 保存 + 22 处手动恢复（含异常路径），极易遗漏。
+    // 守卫在块作用域结束时自动恢复，包括 early return 和异常路径。
+    int upvalueCount = 0;
+    {
+        CompileContextGuard guard(*this);
 
-    // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
-    if (inFunction_) {
-        // C-P2-7 fix: 使用 savedLocals（含外层函数局部变量），而非已 move 为空的 currentLocals_
-        outerLocals_ = savedLocals;
-        outerUpvalues_ = savedCurrentUpvalues;
-        outerUpvalueNames_ = savedCurrentUpvalueNames;
-    } else {
-        outerLocals_.clear();
-        outerUpvalues_.clear();
-        outerUpvalueNames_.clear();
-    }
-    outerFunctions_.clear();
-    if (inFunction_) {
-        outerFunctions_ = savedOuterFunctions;
-    }
+        // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
+        // C-P2-7 fix: 使用 guard.saved.currentLocals（含外层函数局部变量）
+        if (guard.saved.inFunction) {
+            outerLocals_ = guard.saved.currentLocals;
+            outerUpvalues_ = guard.saved.currentUpvalues;
+            outerUpvalueNames_ = guard.saved.currentUpvalueNames;
+        } else {
+            outerLocals_.clear();
+            outerUpvalues_.clear();
+            outerUpvalueNames_.clear();
+        }
+        outerFunctions_.clear();
+        if (guard.saved.inFunction) {
+            outerFunctions_ = guard.saved.outerFunctions;
+        }
 
-    // 设置函数编译上下文
-    chunk_ = BytecodeChunk(node.name, static_cast<int>(node.params.size()));
-    chunk_.reserveCode(256);
-    // F10: 设置必需参数个数和默认值常量索引
-    chunk_.requiredArity = node.requiredParamCount;
-    varIndex_.clear();
-    currentLocals_.clear();
-    currentUpvalues_.clear();  // VM-05/06: 新的 upvalue 列表
-    currentUpvalueNames_.clear(); // VM-05/06: 新的 upvalue 名称映射
-    inFunction_ = true;
-    // C-P0-1/C-P0-3 fix: 函数体的循环栈和 try 深度从 0 开始
-    loopStack_.clear();
-    tryDepth_ = 0;
+        // 设置函数编译上下文
+        chunk_ = BytecodeChunk(node.name, static_cast<int>(node.params.size()));
+        chunk_.reserveCode(256);
+        // F10: 设置必需参数个数和默认值常量索引
+        chunk_.requiredArity = node.requiredParamCount;
+        varIndex_.clear();
+        currentLocals_.clear();
+        currentUpvalues_.clear();  // VM-05/06: 新的 upvalue 列表
+        currentUpvalueNames_.clear(); // VM-05/06: 新的 upvalue 名称映射
+        inFunction_ = true;
+        // C-P0-1/C-P0-3 fix: 函数体的循环栈和 try 深度从 0 开始
+        loopStack_.clear();
+        tryDepth_ = 0;
 
-    // 编译参数到局部变量槽位
-    // C-P1-2 fix: 参数数量上限 255（uint8_t 编码限制）
-    if (node.params.size() > 255) {
-        error("函数参数数量超过限制（最大 255 个）: " + node.name, node.line, 0);
-        // 恢复上下文并返回
-        chunk_ = std::move(savedChunk);
-        varIndex_ = std::move(savedVarIndex);
-        currentLocals_ = std::move(savedLocals);
-        inFunction_ = savedInFunction;
-        outerLocals_ = std::move(savedOuterLocals);
-        peakLocals_ = savedPeakLocals;
-        outerUpvalues_ = std::move(savedOuterUpvalues);
-        outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
-        outerFunctions_ = std::move(savedOuterFunctions);
-        innerFunctions_ = std::move(savedInnerFunctions);
-        innerFunctionSlots_ = std::move(savedInnerFunctionSlots);
-        // C-P2-8 fix: 恢复当前函数的 upvalue 列表和名称映射
-        currentUpvalues_ = std::move(savedCurrentUpvalues);
-        currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
-        // C-P0-1/C-P0-3 fix: 恢复循环栈和 try 深度
-        loopStack_ = std::move(savedLoopStack);
-        tryDepth_ = savedTryDepth;
-        return Value::nullValue();
-    }
-    for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
-        currentLocals_[node.params[i]] = i;
-    }
-    peakLocals_ = static_cast<int>(node.params.size());
+        // 编译参数到局部变量槽位
+        // C-P1-2 fix: 参数数量上限 255（uint8_t 编码限制）
+        if (node.params.size() > 255) {
+            error("函数参数数量超过限制（最大 255 个）: " + node.name, node.line, 0);
+            return Value::nullValue();  // guard 自动恢复上下文
+        }
+        for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
+            currentLocals_[node.params[i]] = i;
+        }
+        peakLocals_ = static_cast<int>(node.params.size());
 
-    // 编译函数体
-    if (node.body) {
-        compileNode(node.body.get());
-    }
+        // 编译函数体
+        if (node.body) {
+            compileNode(node.body.get());
+        }
 
-    // 末尾添加隐式返回 null
-    chunk_.writeOp(OpCode::OP_NULL, node.line);
-    chunk_.writeOp(OpCode::OP_RETURN, node.line);
+        // 末尾添加隐式返回 null
+        chunk_.writeOp(OpCode::OP_NULL, node.line);
+        chunk_.writeOp(OpCode::OP_RETURN, node.line);
 
-    // 记录局部变量总槽位数
-    chunk_.localCount = peakLocals_;
+        // 记录局部变量总槽位数
+        chunk_.localCount = peakLocals_;
 
-    // F10: 编译默认参数值为常量
-    // 仅支持字面量（Number/String/Bool/Null）和负数字面量，复杂表达式需通过 Interpreter 执行
-    for (size_t i = 0; i < node.defaultValues.size(); ++i) {
-        if (node.defaultValues[i]) {
-            const ASTNode* dv = node.defaultValues[i].get();
-            Value constVal;
-            bool isConst = false;
+        // F10: 编译默认参数值为常量
+        // 仅支持字面量（Number/String/Bool/Null）和负数字面量，复杂表达式需通过 Interpreter 执行
+        for (size_t i = 0; i < node.defaultValues.size(); ++i) {
+            if (node.defaultValues[i]) {
+                const ASTNode* dv = node.defaultValues[i].get();
+                Value constVal;
+                bool isConst = false;
 
-            if (dv->nodeType == NodeType::NODE_NUMBER_LITERAL) {
-                constVal = static_cast<const NumberLiteral*>(dv)->value;
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_STRING_LITERAL) {
-                constVal = Value(static_cast<const StringLiteral*>(dv)->value);
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_BOOL_LITERAL) {
-                constVal = Value(static_cast<const BoolLiteral*>(dv)->value);
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_NULL_LITERAL) {
-                constVal = Value::nullValue();
-                isConst = true;
-            } else if (dv->nodeType == NodeType::NODE_UNARY_OP) {
-                // 支持负数字面量: -42, -3.14, --5 (双重否定)
-                // C-P2-2 fix: 递归折叠嵌套一元运算，使 --5 等价于 5
-                const ASTNode* cur = dv;
-                int negateCount = 0;
-                while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
-                    const auto* unary = static_cast<const UnaryOp*>(cur);
-                    if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) break;
-                    ++negateCount;
-                    cur = unary->operand.get();
-                }
-                if (cur && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0) {
-                    const Value& numVal = static_cast<const NumberLiteral*>(cur)->value;
-                    if (numVal.isInt()) {
-                        int64_t v = numVal.intVal();
-                        // 奇数次取反为负，偶数次为正
-                        constVal = Value((negateCount % 2 == 1) ? -v : v);
-                    } else {
-                        double v = numVal.floatVal();
-                        constVal = Value((negateCount % 2 == 1) ? -v : v);
-                    }
+                if (dv->nodeType == NodeType::NODE_NUMBER_LITERAL) {
+                    constVal = static_cast<const NumberLiteral*>(dv)->value;
                     isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_STRING_LITERAL) {
+                    constVal = Value(static_cast<const StringLiteral*>(dv)->value);
+                    isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_BOOL_LITERAL) {
+                    constVal = Value(static_cast<const BoolLiteral*>(dv)->value);
+                    isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_NULL_LITERAL) {
+                    constVal = Value::nullValue();
+                    isConst = true;
+                } else if (dv->nodeType == NodeType::NODE_UNARY_OP) {
+                    // 支持负数字面量: -42, -3.14, --5 (双重否定)
+                    // C-P2-2 fix: 递归折叠嵌套一元运算，使 --5 等价于 5
+                    const ASTNode* cur = dv;
+                    int negateCount = 0;
+                    while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
+                        const auto* unary = static_cast<const UnaryOp*>(cur);
+                        if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) break;
+                        ++negateCount;
+                        cur = unary->operand.get();
+                    }
+                    if (cur && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0) {
+                        const Value& numVal = static_cast<const NumberLiteral*>(cur)->value;
+                        if (numVal.isInt()) {
+                            int64_t v = numVal.intVal();
+                            // 奇数次取反为负，偶数次为正
+                            constVal = Value((negateCount % 2 == 1) ? -v : v);
+                        } else {
+                            double v = numVal.floatVal();
+                            constVal = Value((negateCount % 2 == 1) ? -v : v);
+                        }
+                        isConst = true;
+                    }
                 }
-            }
 
-            if (isConst) {
-                uint16_t constIdx = chunk_.addConstant(constVal);
-                chunk_.defaultConstIndices.push_back(constIdx);
-            } else {
-                // 复杂表达式默认值：VM 不支持，记录无效索引（0xFFFF）
-                // Interpreter 路径仍可正常执行
-                chunk_.defaultConstIndices.push_back(0xFFFF);
+                if (isConst) {
+                    uint16_t constIdx = chunk_.addConstant(constVal);
+                    chunk_.defaultConstIndices.push_back(constIdx);
+                } else {
+                    // 复杂表达式默认值：VM 不支持，记录无效索引（0xFFFF）
+                    // Interpreter 路径仍可正常执行
+                    chunk_.defaultConstIndices.push_back(0xFFFF);
+                }
             }
         }
+
+        // VM-05/06: 将 upvalue 描述符附加到函数 chunk
+        chunk_.upvalues = std::move(currentUpvalues_);
+
+        // 存储函数 chunk
+        functionChunks_[node.name] = std::move(chunk_);
+
+        // 记录 upvalue 数量（块外需要用于 OP_CLOSURE 发射）
+        upvalueCount = static_cast<int>(functionChunks_[node.name].upvalues.size());
+
+        // guard 在块结束时自动恢复外层上下文
     }
 
-    // VM-05/06: 将 upvalue 描述符附加到函数 chunk
-    chunk_.upvalues = std::move(currentUpvalues_);
-
-    // 存储函数 chunk
-    functionChunks_[node.name] = std::move(chunk_);
-
-    // 恢复主 chunk
-    chunk_ = std::move(savedChunk);
-    varIndex_ = std::move(savedVarIndex);
-    currentLocals_ = std::move(savedLocals);
-    inFunction_ = savedInFunction;
-    outerLocals_ = std::move(savedOuterLocals);
-    peakLocals_ = savedPeakLocals;
-    // VM-05/06: 恢复外层 upvalue 和函数状态
-    outerUpvalues_ = std::move(savedOuterUpvalues);
-    outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
-    outerFunctions_ = std::move(savedOuterFunctions);
-    // H5 fix: 恢复内嵌函数追踪
-    innerFunctions_ = std::move(savedInnerFunctions);
-    innerFunctionSlots_ = std::move(savedInnerFunctionSlots);
-    // C-P2-8 fix: 恢复当前函数的 upvalue 列表和名称映射（chunk_.upvalues 已 move 走内嵌函数的 upvalue）
-    currentUpvalues_ = std::move(savedCurrentUpvalues);
-    currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
-    // C-P0-1/C-P0-3 fix: 恢复循环栈和 try 深度
-    loopStack_ = std::move(savedLoopStack);
-    tryDepth_ = savedTryDepth;
-
-    // 在主 chunk 中 emit OP_CLOSURE（扩展格式：含 upvalue 描述符）
+    // 此时已恢复外层上下文，在主 chunk 中 emit OP_CLOSURE
     uint16_t nameIdx = identifierIndex(node.name);
     const BytecodeChunk& funChunk = functionChunks_[node.name];
-    int upvalueCount = static_cast<int>(funChunk.upvalues.size());
     chunk_.writeOp(OpCode::OP_CLOSURE, node.line);
     chunk_.writeShort(nameIdx, node.line);
-    chunk_.write(static_cast<uint8_t>(upvalueCount), node.line); // 改为 upvalue 数量
+    chunk_.write(static_cast<uint8_t>(upvalueCount), node.line);
     // 写入每个 upvalue 的描述符
     for (int i = 0; i < upvalueCount; ++i) {
         chunk_.write(funChunk.upvalues[i].isLocal ? 1 : 0, node.line);
@@ -1155,7 +1195,8 @@ Value Compiler::visitPrintStmt(PrintStmt& node) {
     if (node.values.empty()) {
         // print() → 输出空行（与解释器 output("") 一致）
         uint16_t emptyIdx = chunk_.addConstant(Value(std::string("")));
-        chunk_.writeOp(OpCode::OP_CONSTANT, node.line);
+        // D5 fix: 使用 OP_STRING 替代 OP_CONSTANT（二者功能相同，OP_CONSTANT 已废弃）
+        chunk_.writeOp(OpCode::OP_STRING, node.line);
         chunk_.writeShort(emptyIdx, node.line);
         chunk_.writeOp(OpCode::OP_PRINT, node.line);
     } else if (node.values.size() == 1) {
@@ -1168,7 +1209,8 @@ Value Compiler::visitPrintStmt(PrintStmt& node) {
         uint16_t spaceIdx = chunk_.addConstant(Value(std::string(" ")));
         for (size_t i = 1; i < node.values.size(); ++i) {
             // push " " + OP_ADD → 左侧被 toString 后与空格拼接
-            chunk_.writeOp(OpCode::OP_CONSTANT, node.line);
+            // D5 fix: 使用 OP_STRING 替代 OP_CONSTANT
+            chunk_.writeOp(OpCode::OP_STRING, node.line);
             chunk_.writeShort(spaceIdx, node.line);
             chunk_.writeOp(OpCode::OP_ADD, node.line);
             // push next value + OP_ADD
@@ -1928,33 +1970,11 @@ void Compiler::emitConstant(const Value& val, int line) {
 
 bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
                               Value& result, int line) {
-    // 提取左/右常量值（仅支持字面量节点）
+    // D8 fix: 使用 extractConstant 递归提取常量值，支持嵌套常量表达式（如 (1+2)*3）
     Value lv, rv;
-    bool lConst = false, rConst = false;
-
-    if (left && left->nodeType == NodeType::NODE_NUMBER_LITERAL) {
-        lv = static_cast<NumberLiteral*>(left)->value;
-        lConst = true;
-    } else if (left && left->nodeType == NodeType::NODE_STRING_LITERAL) {
-        lv = Value(static_cast<StringLiteral*>(left)->value);
-        lConst = true;
-    } else if (left && left->nodeType == NodeType::NODE_BOOL_LITERAL) {
-        lv = Value(static_cast<BoolLiteral*>(left)->value);
-        lConst = true;
+    if (!extractConstant(left, lv, line) || !extractConstant(right, rv, line)) {
+        return false;
     }
-
-    if (right && right->nodeType == NodeType::NODE_NUMBER_LITERAL) {
-        rv = static_cast<NumberLiteral*>(right)->value;
-        rConst = true;
-    } else if (right && right->nodeType == NodeType::NODE_STRING_LITERAL) {
-        rv = Value(static_cast<StringLiteral*>(right)->value);
-        rConst = true;
-    } else if (right && right->nodeType == NodeType::NODE_BOOL_LITERAL) {
-        rv = Value(static_cast<BoolLiteral*>(right)->value);
-        rConst = true;
-    }
-
-    if (!lConst || !rConst) return false;
 
     // 数值运算
     if (lv.isNumber() && rv.isNumber()) {
@@ -2043,25 +2063,60 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
 }
 
 bool Compiler::tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
-                             Value& result, int /*line*/) {
+                             Value& result, int line) {
     if (!operand) return false;
 
-    if (operand->nodeType == NodeType::NODE_NUMBER_LITERAL) {
-        Value val = static_cast<NumberLiteral*>(operand)->value;
-        if (opType == UnaryOp::UnaryOpType::UOP_NEGATE) {
+    // D8 fix: 使用 extractConstant 递归提取常量值，支持嵌套表达式（如 -(3+2)）
+    Value val;
+    if (!extractConstant(operand, val, line)) return false;
+
+    if (opType == UnaryOp::UnaryOpType::UOP_NEGATE) {
+        if (val.isInt()) {
             // B3 fix: -INT64_MIN = 溢出 UB，不折叠
-            if (val.isInt() && OverflowCheck::negateOverflow(val.intVal())) return false;
-            result = val.isFloat() ? Value(-val.floatVal()) : Value(-val.intVal());
+            if (OverflowCheck::negateOverflow(val.intVal())) return false;
+            result = Value(-val.intVal());
+            return true;
+        }
+        if (val.isFloat()) {
+            result = Value(-val.floatVal());
             return true;
         }
     }
-    if (operand->nodeType == NodeType::NODE_BOOL_LITERAL) {
-        bool val = static_cast<BoolLiteral*>(operand)->value;
-        if (opType == UnaryOp::UnaryOpType::UOP_NOT) {
-            result = Value(!val);
-            return true;
-        }
+    if (opType == UnaryOp::UnaryOpType::UOP_NOT && val.isBool()) {
+        result = Value(!val.boolVal());
+        return true;
     }
 
     return false;
+}
+
+// D8 fix: 递归提取常量值。支持字面量 + 嵌套 BinaryOp/UnaryOp 常量表达式，
+// 使 tryFoldBinary/tryFoldUnary 能折叠 (1+2)*3、-(-(5)) 等嵌套表达式。
+bool Compiler::extractConstant(ASTNode* node, Value& result, int line) {
+    if (!node) return false;
+
+    switch (node->nodeType) {
+    case NodeType::NODE_NUMBER_LITERAL:
+        result = static_cast<NumberLiteral*>(node)->value;
+        return true;
+    case NodeType::NODE_STRING_LITERAL:
+        result = Value(static_cast<StringLiteral*>(node)->value);
+        return true;
+    case NodeType::NODE_BOOL_LITERAL:
+        result = Value(static_cast<BoolLiteral*>(node)->value);
+        return true;
+    case NodeType::NODE_NULL_LITERAL:
+        result = Value::nullValue();
+        return true;
+    case NodeType::NODE_BINARY_OP: {
+        auto* bin = static_cast<BinaryOp*>(node);
+        return tryFoldBinary(bin->opType, bin->left.get(), bin->right.get(), result, line);
+    }
+    case NodeType::NODE_UNARY_OP: {
+        auto* un = static_cast<UnaryOp*>(node);
+        return tryFoldUnary(un->opType, un->operand.get(), result, line);
+    }
+    default:
+        return false;
+    }
 }

@@ -134,3 +134,8 @@ Value ImportStmt::accept(Visitor& visitor) {
 Value ExportStmt::accept(Visitor& visitor) {
     return visitor.visitExportStmt(*this);
 }
+
+// C5 fix: 插值字符串节点的 accept 实现
+Value InterpolatedString::accept(Visitor& visitor) {
+    return visitor.visitInterpolatedString(*this);
+}

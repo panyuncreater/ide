@@ -42,6 +42,7 @@ enum class NodeType {
     NODE_THROW_STMT,
     NODE_IMPORT_STMT,
     NODE_EXPORT_STMT,
+    NODE_INTERPOLATED_STRING,  // C5 fix: 保留插值字符串 AST 结构
 };
 
 // ============================================================
@@ -119,6 +120,33 @@ public:
         default: return "?";
         }
     }
+
+    // C14 fix: 统一的运算符优先级表（Parser 递归下降结构隐式编码，
+    // Formatter 显式查询，二者必须一致。提取为单一来源避免漂移）。
+    // 值越大优先级越高（1=最低, 6=最高）。
+    static int precedence(BinOpType t) {
+        switch (t) {
+        case BinOpType::BIN_OR:  return 1;
+        case BinOpType::BIN_AND: return 2;
+        case BinOpType::BIN_EQ:
+        case BinOpType::BIN_NEQ: return 3;
+        case BinOpType::BIN_LT:
+        case BinOpType::BIN_GT:
+        case BinOpType::BIN_LTE:
+        case BinOpType::BIN_GTE: return 4;
+        case BinOpType::BIN_ADD:
+        case BinOpType::BIN_SUB: return 5;
+        case BinOpType::BIN_MUL:
+        case BinOpType::BIN_DIV:
+        case BinOpType::BIN_MOD: return 6;
+        default: return 0;
+        }
+    }
+
+    /// 是否右结合（目前无右结合二元运算符，赋值不是 BinaryOp）
+    static bool isRightAssociative(BinOpType /*t*/) {
+        return false;
+    }
 };
 
 /// 一元运算节点
@@ -173,14 +201,10 @@ public:
     StringLiteral(const std::string& v, int ln = 0, int col = 0)
         : ASTNode(ln, col), value(v), cachedValue_(Value(v)) { nodeType = NodeType::NODE_STRING_LITERAL; }
 
-    /// 获取缓存的 Value（首次移动返回，零堆分配；后续从 string 重建）
-    Value takeValue() {
-        if (!cachedValue_.isNull()) {
-            Value result = std::move(cachedValue_);
-            cachedValue_ = Value();
-            return result;
-        }
-        return Value(value);
+    /// 获取缓存的 Value（A2 fix: 非破坏性，Value 为 COW 语义拷贝 O(1)，
+    /// 可安全多次遍历同一 AST，如先编译再格式化）
+    Value getValue() const {
+        return cachedValue_;
     }
 
     Value accept(Visitor& visitor) override;
@@ -197,6 +221,33 @@ public:
 
 private:
     Value cachedValue_;  // 预构建的 Value，首次 takeValue() 移动返回
+};
+
+/// C5 fix: 插值字符串节点 — 保留 `"text {expr} more {expr2}"` 的 AST 结构
+/// 原 parseInterpolatedString 将其抹平为 BinaryOp(BIN_ADD) 链，Formatter 无法
+/// 重建插值语法，AstViewer 只能看到一堆 BinaryOp。本节点存储交替的字面量片段
+/// 和表达式，Formatter 可精确重建 `"text {expr} more {expr2}"` 语法。
+class InterpolatedString : public ASTNode {
+public:
+    // literals.size() == expressions.size() + 1
+    // 表示: literals[0] + expressions[0] + literals[1] + ... + expressions[n-1] + literals[n]
+    std::vector<std::string> literals;                    // 字符串字面量片段
+    std::vector<std::unique_ptr<ASTNode>> expressions;    // 插值表达式
+
+    InterpolatedString(int ln = 0, int col = 0) : ASTNode(ln, col) {
+        nodeType = NodeType::NODE_INTERPOLATED_STRING;
+    }
+
+    Value accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "InterpolatedString"; }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> result;
+        result.reserve(expressions.size());
+        for (const auto& expr : expressions) {
+            result.push_back(expr.get());
+        }
+        return result;
+    }
 };
 
 /// 布尔字面量节点

@@ -42,19 +42,14 @@ static CompileResult compileSource(const std::string& source) {
 }
 
 /// 按指令边界遍历字节码，收集所有 OpCode 序列
-/// 注意：OP_CLOSURE 是变长指令（4 + 2*upvalueCount 字节），需特殊处理
+/// D7 fix: 使用 instructionSizeAt 统一处理 OP_CLOSURE 变长指令
 static std::vector<OpCode> collectOps(const BytecodeChunk& chunk) {
     std::vector<OpCode> ops;
     size_t offset = 0;
     while (offset < chunk.code.size()) {
         OpCode op = static_cast<OpCode>(chunk.code[offset]);
         ops.push_back(op);
-        if (op == OpCode::OP_CLOSURE && offset + 3 < chunk.code.size()) {
-            uint8_t upvalueCount = chunk.code[offset + 3];
-            offset += 4 + static_cast<size_t>(upvalueCount) * 2;
-        } else {
-            offset += BytecodeChunk::instructionSize(op);
-        }
+        offset += chunk.instructionSizeAt(offset);
     }
     return ops;
 }
@@ -228,18 +223,41 @@ TEST(CompilerVariableTest, VarRef) {
 // 3. 控制流语句
 // ============================================================
 
-/// `if (true) { print(1); }` → 验证生成 OP_TRUE OP_JUMP_IF_FALSE ... OP_PRINT
+/// `if (x) { print(1); }` → 验证生成 OP_JUMP_IF_FALSE ... OP_PRINT OP_JUMP
+/// 注：使用非常量条件 x，以验证完整的 if 跳转结构（C17 死代码消除会跳过常量条件）
 TEST(CompilerControlFlowTest, IfStmt) {
-    auto result = compileSource("if (true) { print(1); }");
+    auto result = compileSource("var x = 1; if (x) { print(1); }");
     auto& chunk = result.mainChunk;
-    // 条件 true → OP_TRUE
-    EXPECT_TRUE(containsOp(chunk, OpCode::OP_TRUE));
     // 条件跳转
     EXPECT_TRUE(containsOp(chunk, OpCode::OP_JUMP_IF_FALSE));
     // then 分支中的 print
     EXPECT_TRUE(containsOp(chunk, OpCode::OP_PRINT));
     // 跳过 else 的无条件跳转
     EXPECT_TRUE(containsOp(chunk, OpCode::OP_JUMP));
+}
+
+/// `if (true) { print(1); } else { print(2); }` → C17 死代码消除：
+/// 常量 true 条件下仅编译 then 分支，不生成条件求值与跳转指令，else 分支被消除
+TEST(CompilerControlFlowTest, IfStmtConstantFoldTrue) {
+    auto result = compileSource("if (true) { print(1); } else { print(2); }");
+    auto& chunk = result.mainChunk;
+    // then 分支的 print(1) 被保留
+    EXPECT_TRUE(containsOp(chunk, OpCode::OP_PRINT));
+    // 常量条件消除：不生成条件求值与跳转
+    EXPECT_FALSE(containsOp(chunk, OpCode::OP_JUMP_IF_FALSE));
+    EXPECT_FALSE(containsOp(chunk, OpCode::OP_TRUE));
+}
+
+/// `if (false) { print(1); } else { print(2); }` → C17 死代码消除：
+/// 常量 false 条件下仅编译 else 分支，then 分支被消除
+TEST(CompilerControlFlowTest, IfStmtConstantFoldFalse) {
+    auto result = compileSource("if (false) { print(1); } else { print(2); }");
+    auto& chunk = result.mainChunk;
+    // else 分支的 print(2) 被保留
+    EXPECT_TRUE(containsOp(chunk, OpCode::OP_PRINT));
+    // 常量条件消除：不生成跳转，then 分支的 OP_PRINT 数量不应因 print(1) 独有...
+    // 这里验证不生成条件跳转即可
+    EXPECT_FALSE(containsOp(chunk, OpCode::OP_JUMP_IF_FALSE));
 }
 
 /// `while (true) { print(1); }` → 验证生成 OP_LOOP 和 OP_JUMP_IF_FALSE

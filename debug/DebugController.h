@@ -157,4 +157,23 @@ private:
 
     /// 更新最小断点行号缓存
     void updateMinBreakpointLine();
+
+    // C11 fix: checkBreak 拆分为 4 个助手方法，降低单函数复杂度
+    /// 断点命中检测（MODE_RUN 模式下检查行号是否命中断点，含条件断点求值）
+    bool shouldPauseAtBreakpoint(int line, const QSet<int>& localBreakpoints,
+                                 const QMap<int, BreakpointInfo>& localBreakpointInfos,
+                                 int snapMinBreakpointLine);
+    /// 步进模式暂停检测（STEP_IN/STEP_OVER/STEP_OUT 三种模式的状态机）
+    bool shouldPauseForStepping(StepMode snapMode, int line, int snapCurrentDepth,
+                                int snapStepOverDepth, int snapStepOutDepth,
+                                int snapLastPausedLine, int snapLastPausedDepth,
+                                bool snapCrossedDeeper);
+    /// 更新行号追踪状态（lastSeenLine_/crossedLine_/crossedDeeper_）
+    void updateLineTracking(int line, int snapCurrentDepth, int snapStepOverDepth,
+                            StepMode snapMode);
+    /// 执行暂停（设置 paused_、emit pausedAt、阻塞等待）
+    void doPause(int line, int snapCurrentDepth);
+
+    /// 定期处理 UI 事件防止界面冻结（B11 fix）
+    void pumpEventsIfNeeded();
 };

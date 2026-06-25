@@ -126,6 +126,7 @@ public:
     Value visitThrowStmt(ThrowStmt& node) override;
     Value visitImportStmt(ImportStmt& node) override;
     Value visitExportStmt(ExportStmt& node) override;
+    Value visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
 
     /// 格式化 AST 为代码文本
     std::string format(Block& program);
@@ -206,4 +207,5 @@ private:
     std::string formatMemberAssign(MemberAssign& node);
     std::string formatMethodCall(MethodCall& node);
     std::string formatNullLiteral(NullLiteral& node);
+    std::string formatInterpolatedString(InterpolatedString& node);  // C5 fix
 };

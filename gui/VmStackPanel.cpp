@@ -17,17 +17,9 @@ VmStackPanel::VmStackPanel(QWidget* parent)
 
     // 当前指令信息
     opLabel_ = new QLabel("等待执行...", this);
-    opLabel_->setStyleSheet(
-        "QLabel {"
-        "  background-color: #2d2d2d;"
-        "  color: #00ff88;"
-        "  font-family: Consolas, monospace;"
-        "  font-size: 12px;"
-        "  padding: 6px;"
-        "  border-radius: 4px;"
-        "  border: 1px solid #444;"
-        "}"
-    );
+    // D12 fix: 移除内联硬编码样式表，改用 objectName 让 styles.qss 集中管理，
+    // 便于主题切换时统一调整颜色（原内联 #2d2d2d/#00ff88/#444 不适配浅色主题）。
+    opLabel_->setObjectName("vmOpLabel");
     opLabel_->setWordWrap(true);
     mainLayout->addWidget(opLabel_);
 
@@ -41,14 +33,8 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     stackLayout->setSpacing(2);
 
     auto* stackTitle = new QLabel("操作数栈 (栈顶 ↑)", this);
-    stackTitle->setStyleSheet(
-        "QLabel {"
-        "  color: #aaa;"
-        "  font-size: 11px;"
-        "  font-weight: bold;"
-        "  padding: 2px;"
-        "}"
-    );
+    // D12 fix: 移除内联样式，由 styles.qss 的 QLabel#vmStackTitle 规则统一定义
+    stackTitle->setObjectName("vmStackTitle");
     stackLayout->addWidget(stackTitle);
 
     stackList_ = new QListWidget(this);
@@ -64,14 +50,8 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     globalsLayout->setSpacing(2);
 
     auto* globalsTitle = new QLabel("全局变量", this);
-    globalsTitle->setStyleSheet(
-        "QLabel {"
-        "  color: #aaa;"
-        "  font-size: 11px;"
-        "  font-weight: bold;"
-        "  padding: 2px;"
-        "}"
-    );
+    // D12 fix: 移除内联样式，由 styles.qss 的 QLabel#vmGlobalsTitle 规则统一定义
+    globalsTitle->setObjectName("vmGlobalsTitle");
     globalsLayout->addWidget(globalsTitle);
 
     globalsTable_ = new QTableWidget(this);
@@ -107,7 +87,8 @@ void VmStackPanel::updateStack(const std::vector<Value>& stack) {
 
         // 栈顶项高亮
         if (i == static_cast<int>(stack.size()) - 1) {
-            item->setForeground(QColor("#00ff88"));
+            // D12 fix: 使用 palette Link 角色替代硬编码 #00ff88，适配主题
+            item->setForeground(palette().link().color());
         }
 
         stackList_->addItem(item);
@@ -115,7 +96,8 @@ void VmStackPanel::updateStack(const std::vector<Value>& stack) {
 
     if (stack.empty()) {
         auto* item = new QListWidgetItem("(栈为空)");
-        item->setForeground(QColor("#666"));
+        // D12 fix: 使用 palette PlaceholderText 角色替代硬编码 #666
+        item->setForeground(palette().placeholderText().color());
         stackList_->addItem(item);
     }
 }

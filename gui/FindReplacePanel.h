@@ -38,6 +38,9 @@ private slots:
     void onFindTextChanged(const QString& text);
 
 private:
+    /// P1-13 fix: showFind/showReplace 共用逻辑
+    void showPanel(bool showReplace);
+
     CodeEditor* editor_ = nullptr;
     QLineEdit* findEdit_ = nullptr;
     QLineEdit* replaceEdit_ = nullptr;

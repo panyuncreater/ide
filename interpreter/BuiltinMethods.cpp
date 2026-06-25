@@ -11,10 +11,44 @@
 #include "interpreter/BuiltinMethods.h"
 #include "interpreter/NumericUtils.h"  // BUG9 fix: 溢出检查
 #include "common/RuntimeLimits.h"      // S1 fix: MAX_RANGE 统一定义
+#include "common/Utf8Utils.h"          // P0-4 fix: UTF-8 码位工具
 #include <cctype>
+#include <unordered_set>
 #include <cstdint>
 #include <string>
 #include <charconv>
+
+// ============================================================
+// P1-5 fix: 参数数量检查辅助函数
+// ============================================================
+// 消除 BuiltinMethods.cpp 中 20 处重复的 argCount 校验样板。
+// 匹配时返回 ok(null)，不匹配时返回 err。
+// 调用方: if (auto r = checkExact("len", argCount, 0, line, column); r.is_err()) return r;
+
+namespace {
+
+Result<Value> checkExact(const char* name, size_t argCount, size_t expected,
+                         int line, int column) {
+    if (argCount != expected) {
+        return Result<Value>::err(
+            std::string(name) + " 期望 " + std::to_string(expected) +
+            " 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
+    }
+    return Result<Value>::ok(Value::nullValue());
+}
+
+Result<Value> checkRange(const char* name, size_t argCount, size_t minExpected, size_t maxExpected,
+                         int line, int column) {
+    if (argCount < minExpected || argCount > maxExpected) {
+        return Result<Value>::err(
+            std::string(name) + " 期望 " + std::to_string(minExpected) + "-" +
+            std::to_string(maxExpected) + " 个参数，但传入了 " + std::to_string(argCount) + " 个",
+            line, column);
+    }
+    return Result<Value>::ok(Value::nullValue());
+}
+
+} // anonymous namespace
 
 // ============================================================
 // 共享纯函数实现（供 Interpreter 和 VM 共用）
@@ -23,24 +57,14 @@
 Result<Value> executeSharedLen(const Value& obj,
                                      const Value* args, size_t argCount,
                                      int line, int column) {
-    if (argCount != 0) {
-        return Result<Value>::err("len 期望 0 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("len", argCount, 0, line, column); r.is_err()) return r;
     if (obj.isArray()) {
         return Result<Value>::ok(Value(static_cast<int64_t>(obj.arrayVal().size())));
     } else if (obj.isDict()) {
         return Result<Value>::ok(Value(static_cast<int64_t>(obj.dictVal().size())));
     } else if (obj.isString()) {
         // M6 fix: 按 UTF-8 码位计数而非字节数
-        const std::string& s = obj.stringVal();
-        size_t count = 0;
-        for (size_t i = 0; i < s.size(); ) {
-            unsigned char c = static_cast<unsigned char>(s[i]);
-            i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-            count++;
-        }
-        return Result<Value>::ok(Value(static_cast<int64_t>(count)));
+        return Result<Value>::ok(Value(Utf8::codepointCount(obj.stringVal())));
     } else {
         return Result<Value>::err("len 不支持类型 " + obj.typeName(), line, column);
     }
@@ -76,9 +100,7 @@ Result<Value> executeSharedDictHas(const Value& dict,
 Result<Value> executeSharedStrStartsWith(const Value& str,
                                                 const Value* args, size_t argCount,
                                                 int line, int column) {
-    if (argCount != 1) {
-        return Result<Value>::err("startsWith 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("startsWith", argCount, 1, line, column); r.is_err()) return r;
     const std::string& prefix = args[0].toString();
     const std::string& s = str.stringVal();
     return Result<Value>::ok(Value(s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0));
@@ -87,9 +109,7 @@ Result<Value> executeSharedStrStartsWith(const Value& str,
 Result<Value> executeSharedStrEndsWith(const Value& str,
                                               const Value* args, size_t argCount,
                                               int line, int column) {
-    if (argCount != 1) {
-        return Result<Value>::err("endsWith 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("endsWith", argCount, 1, line, column); r.is_err()) return r;
     const std::string& suffix = args[0].toString();
     const std::string& s = str.stringVal();
     return Result<Value>::ok(Value(s.size() >= suffix.size() &&
@@ -109,36 +129,14 @@ Result<Value> executeSharedStrSubstr(const Value& str,
     const std::string& s = str.stringVal();
 
     // BUG 1.1 fix: 将码位索引转换为字节索引，与 len()/indexOf() 的码位语义一致
-    auto codepointToByte = [](const std::string& str, int64_t cpIdx) -> size_t {
-        size_t bytePos = 0;
-        int64_t cp = 0;
-        while (bytePos < str.size() && cp < cpIdx) {
-            unsigned char c = static_cast<unsigned char>(str[bytePos]);
-            bytePos += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                       ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-            cp++;
-        }
-        return bytePos;
-    };
+    // P0-4 fix: 使用 Utf8 工具函数替代重复的内联 lambda
 
-    // 计算字符串的码位总数
-    auto codepointCount = [](const std::string& str) -> int64_t {
-        int64_t count = 0;
-        for (size_t i = 0; i < str.size(); ) {
-            unsigned char c = static_cast<unsigned char>(str[i]);
-            i += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-            count++;
-        }
-        return count;
-    };
-
-    int64_t totalCp = codepointCount(s);
+    int64_t totalCp = Utf8::codepointCount(s);
     if (start < 0 || start > totalCp) {
         return Result<Value>::ok(Value(std::string("")));
     }
 
-    size_t byteStart = codepointToByte(s, start);
+    size_t byteStart = Utf8::codepointToByteIndex(s, start);
 
     if (argCount == 2) {
         if (!args[1].isInt()) {
@@ -149,7 +147,7 @@ Result<Value> executeSharedStrSubstr(const Value& str,
             return Result<Value>::err("substr 长度不能为负数", line, column);
         }
         // 截取 len 个码位
-        size_t byteEnd = codepointToByte(s, start + len);
+        size_t byteEnd = Utf8::codepointToByteIndex(s, start + len);
         if (byteEnd > s.size()) byteEnd = s.size();
         return Result<Value>::ok(Value(s.substr(byteStart, byteEnd - byteStart)));
     } else {
@@ -160,9 +158,7 @@ Result<Value> executeSharedStrSubstr(const Value& str,
 Result<Value> executeSharedStrIndexOf(const Value& str,
                                              const Value* args, size_t argCount,
                                              int line, int column) {
-    if (argCount != 1) {
-        return Result<Value>::err("indexOf 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("indexOf", argCount, 1, line, column); r.is_err()) return r;
     // M2 fix: 返回 UTF-8 字符位置而非字节位置
     const std::string& s = str.stringVal();
     const std::string& needle = args[0].toString();
@@ -170,14 +166,8 @@ Result<Value> executeSharedStrIndexOf(const Value& str,
     if (bytePos == std::string::npos) {
         return Result<Value>::ok(Value(static_cast<int64_t>(-1)));
     } else {
-        int64_t charIdx = 0;
-        for (size_t b = 0; b < bytePos; ) {
-            unsigned char c = static_cast<unsigned char>(s[b]);
-            b += (c < 0x80) ? 1 : ((c & 0xE0) == 0xC0) ? 2 :
-                 ((c & 0xF0) == 0xE0) ? 3 : ((c & 0xF8) == 0xF0) ? 4 : 1;
-            charIdx++;
-        }
-        return Result<Value>::ok(Value(charIdx));
+        // P0-4 fix: 使用 Utf8 工具函数替代内联码位计算
+        return Result<Value>::ok(Value(Utf8::byteToCodepointIndex(s, bytePos)));
     }
 }
 
@@ -229,9 +219,7 @@ Result<Value> executeSharedStrReplace(const Value& str,
 Result<Value> executeSharedStrUpper(const Value& str,
                                           const Value* args, size_t argCount,
                                           int line, int column) {
-    if (argCount != 0) {
-        return Result<Value>::err("upper 期望 0 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("upper", argCount, 0, line, column); r.is_err()) return r;
     const std::string& s = str.stringVal();
     std::string result;
     result.reserve(s.size());
@@ -244,9 +232,7 @@ Result<Value> executeSharedStrUpper(const Value& str,
 Result<Value> executeSharedStrLower(const Value& str,
                                           const Value* args, size_t argCount,
                                           int line, int column) {
-    if (argCount != 0) {
-        return Result<Value>::err("lower 期望 0 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("lower", argCount, 0, line, column); r.is_err()) return r;
     const std::string& s = str.stringVal();
     std::string result;
     result.reserve(s.size());
@@ -259,9 +245,7 @@ Result<Value> executeSharedStrLower(const Value& str,
 Result<Value> executeSharedStrSplit(const Value& str,
                                           const Value* args, size_t argCount,
                                           int line, int column) {
-    if (argCount > 1) {
-        return Result<Value>::err("split 期望 0-1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkRange("split", argCount, 0, 1, line, column); r.is_err()) return r;
     const std::string& s = str.stringVal();
     std::string sep = (argCount == 1) ? args[0].toString() : " ";
     if (sep.empty()) {
@@ -290,9 +274,7 @@ Result<Value> executeSharedStrSplit(const Value& str,
 Result<Value> executeSharedStrTrim(const Value& str,
                                          const Value* args, size_t argCount,
                                          int line, int column) {
-    if (argCount != 0) {
-        return Result<Value>::err("trim 期望 0 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("trim", argCount, 0, line, column); r.is_err()) return r;
     const std::string& s = str.stringVal();
     size_t start = s.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) {
@@ -305,9 +287,7 @@ Result<Value> executeSharedStrTrim(const Value& str,
 Result<Value> executeSharedDictKeys(const Value& dict,
                                           const Value* args, size_t argCount,
                                           int line, int column) {
-    if (argCount != 0) {
-        return Result<Value>::err("keys 期望 0 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("keys", argCount, 0, line, column); r.is_err()) return r;
     const auto& entries = dict.dictVal();
     std::vector<Value> keys;
     keys.reserve(entries.size());
@@ -320,9 +300,7 @@ Result<Value> executeSharedDictKeys(const Value& dict,
 Result<Value> executeSharedDictValues(const Value& dict,
                                             const Value* args, size_t argCount,
                                             int line, int column) {
-    if (argCount != 0) {
-        return Result<Value>::err("values 期望 0 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkExact("values", argCount, 0, line, column); r.is_err()) return r;
     const auto& entries = dict.dictVal();
     std::vector<Value> vals;
     vals.reserve(entries.size());
@@ -353,9 +331,7 @@ Result<Value> executeSharedDictGet(const Value& dict,
 Result<Value> executeSharedArrayJoin(const Value& arr,
                                            const Value* args, size_t argCount,
                                            int line, int column) {
-    if (argCount > 1) {
-        return Result<Value>::err("join 期望 0-1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-    }
+    if (auto r = checkRange("join", argCount, 0, 1, line, column); r.is_err()) return r;
     std::string sep = (argCount == 1) ? args[0].toString() : "";
     const auto& elements = arr.arrayVal();
 
@@ -378,209 +354,219 @@ Result<Value> executeSharedArrayJoin(const Value& arr,
 // ============================================================
 
 bool isBuiltinFunction(const std::string& name) {
-    return name == "len" || name == "type" || name == "str" ||
-           name == "int" || name == "abs" || name == "min" ||
-           name == "max" || name == "range" || name == "sum";
+    // C7 fix: 用 unordered_set 实现 O(1) 查找，替代每次调用 9 次字符串比较
+    static const std::unordered_set<std::string> builtinNames = {
+        "len", "type", "str", "int", "abs", "min", "max", "range", "sum"
+    };
+    return builtinNames.count(name) > 0;
 }
+
+// ============================================================
+// P0-2 fix: 顶层内置函数注册表模式（替代 9 分支 if-else）
+// ============================================================
+// 每个内置函数提取为独立函数，统一签名 SharedBuiltinFn，
+// 通过 static unordered_map 实现 O(1) 分派。
+// 新增内置函数只需在 registry 中添加一行。
+
+namespace {
+
+/// 顶层内置函数处理函数类型：接收 args 数组，返回 Result<Value>
+using SharedBuiltinFn = Result<Value>(*)(const Value*, size_t, int, int);
+
+// ---- len(x): 长度（委托 executeSharedLen）----
+Result<Value> executeBuiltinLen(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("len", argCount, 1, line, column); r.is_err()) return r;
+    return executeSharedLen(args[0], nullptr, 0, line, column);
+}
+
+// ---- type(x): 类型名 ----
+Result<Value> executeBuiltinType(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("type", argCount, 1, line, column); r.is_err()) return r;
+    return Result<Value>::ok(Value(args[0].typeName()));
+}
+
+// ---- str(x): 转字符串 ----
+Result<Value> executeBuiltinStr(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("str", argCount, 1, line, column); r.is_err()) return r;
+    return Result<Value>::ok(Value(args[0].toString()));
+}
+
+// ---- int(x): 转整数 ----
+Result<Value> executeBuiltinInt(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("int", argCount, 1, line, column); r.is_err()) return r;
+    const Value& v = args[0];
+    if (v.isInt()) {
+        return Result<Value>::ok(v);
+    } else if (v.isFloat()) {
+        // BUG 9.3 fix: 浮点转整数溢出检查
+        double dv = v.floatVal();
+        if (OverflowCheck::doubleToIntOverflow(dv)) {
+            return Result<Value>::err("int 转换溢出: " + std::to_string(dv) + " 超出 int64_t 范围", line, column);
+        }
+        // 截断小数部分（向零取整，与 C++ static_cast 一致）
+        return Result<Value>::ok(Value(static_cast<int64_t>(dv)));
+    } else if (v.isBool()) {
+        return Result<Value>::ok(Value(static_cast<int64_t>(v.boolVal() ? 1 : 0)));
+    } else if (v.isString()) {
+        // L-P2 fix: 使用 from_chars 替代 stoll，避免 locale 依赖
+        const std::string& s = v.stringVal();
+        size_t startIdx = 0;
+        while (startIdx < s.size() && std::isspace(static_cast<unsigned char>(s[startIdx]))) startIdx++;
+        if (startIdx >= s.size()) {
+            return Result<Value>::err("int 无法将空字符串转换为整数", line, column);
+        }
+        long long parsed = 0;
+        auto [ptr, ec] = std::from_chars(s.data() + startIdx, s.data() + s.size(), parsed);
+        if (ec != std::errc()) {
+            return Result<Value>::err("int 无法将字符串 \"" + s + "\" 转换为整数", line, column);
+        }
+        size_t consumed = static_cast<size_t>(ptr - s.data());
+        while (consumed < s.size() && std::isspace(static_cast<unsigned char>(s[consumed]))) consumed++;
+        if (consumed != s.size()) {
+            return Result<Value>::err("int 无法将字符串 \"" + s + "\" 转换为整数", line, column);
+        }
+        return Result<Value>::ok(Value(static_cast<int64_t>(parsed)));
+    } else {
+        return Result<Value>::err("int 不支持类型 " + v.typeName(), line, column);
+    }
+}
+
+// ---- abs(x): 绝对值 ----
+Result<Value> executeBuiltinAbs(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("abs", argCount, 1, line, column); r.is_err()) return r;
+    const Value& v = args[0];
+    if (v.isInt()) {
+        int64_t iv = v.intVal();
+        // BUG 9.1 fix: abs(INT64_MIN) 会导致整数溢出（C++ UB）
+        if (OverflowCheck::negateOverflow(iv)) {
+            return Result<Value>::err("abs 溢出: INT64_MIN 的绝对值无法表示", line, column);
+        }
+        return Result<Value>::ok(Value(iv < 0 ? -iv : iv));
+    } else if (v.isFloat()) {
+        double dv = v.floatVal();
+        return Result<Value>::ok(Value(dv < 0 ? -dv : dv));
+    } else {
+        return Result<Value>::err("abs 期望数值参数，实际为 " + v.typeName(), line, column);
+    }
+}
+
+// ---- min(a, b): 最小值 ----
+Result<Value> executeBuiltinMin(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("min", argCount, 2, line, column); r.is_err()) return r;
+    const Value& a = args[0];
+    const Value& b = args[1];
+    if (!a.isNumber() || !b.isNumber()) {
+        return Result<Value>::err("min 期望数值参数", line, column);
+    }
+    if (a.isInt() && b.isInt()) {
+        return Result<Value>::ok((a.intVal() <= b.intVal()) ? a : b);
+    } else {
+        double da = a.toDouble(), db = b.toDouble();
+        return Result<Value>::ok(Value(da <= db ? da : db));
+    }
+}
+
+// ---- max(a, b): 最大值 ----
+Result<Value> executeBuiltinMax(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("max", argCount, 2, line, column); r.is_err()) return r;
+    const Value& a = args[0];
+    const Value& b = args[1];
+    if (!a.isNumber() || !b.isNumber()) {
+        return Result<Value>::err("max 期望数值参数", line, column);
+    }
+    if (a.isInt() && b.isInt()) {
+        return Result<Value>::ok((a.intVal() >= b.intVal()) ? a : b);
+    } else {
+        double da = a.toDouble(), db = b.toDouble();
+        return Result<Value>::ok(Value(da >= db ? da : db));
+    }
+}
+
+// ---- range(n): 生成 [0, 1, ..., n-1] 数组 ----
+Result<Value> executeBuiltinRange(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("range", argCount, 1, line, column); r.is_err()) return r;
+    const Value& v = args[0];
+    if (!v.isInt()) {
+        return Result<Value>::err("range 期望整数参数，实际为 " + v.typeName(), line, column);
+    }
+    int64_t n = v.intVal();
+    if (n < 0) {
+        return Result<Value>::err("range 参数不能为负数: " + std::to_string(n), line, column);
+    }
+    if (n > RuntimeLimits::MAX_RANGE) {
+        return Result<Value>::err("range 参数超过上限 " + std::to_string(RuntimeLimits::MAX_RANGE), line, column);
+    }
+    std::vector<Value> elements;
+    elements.reserve(static_cast<size_t>(n));
+    for (int64_t i = 0; i < n; ++i) {
+        elements.emplace_back(Value(i));
+    }
+    return Result<Value>::ok(Value(std::move(elements)));
+}
+
+// ---- sum(arr): 数组元素求和 ----
+Result<Value> executeBuiltinSum(const Value* args, size_t argCount, int line, int column) {
+    if (auto r = checkExact("sum", argCount, 1, line, column); r.is_err()) return r;
+    const Value& v = args[0];
+    if (!v.isArray()) {
+        return Result<Value>::err("sum 期望数组参数，实际为 " + v.typeName(), line, column);
+    }
+    const auto& arr = v.arrayVal();
+    bool allInt = true;
+    for (const auto& elem : arr) {
+        if (!elem.isInt()) { allInt = false; break; }
+    }
+    if (allInt) {
+        int64_t total = 0;
+        for (const auto& elem : arr) {
+            if (OverflowCheck::addOverflow(total, elem.intVal())) {
+                return Result<Value>::err("sum 整数累加溢出", line, column);
+            }
+            total += elem.intVal();
+        }
+        return Result<Value>::ok(Value(total));
+    } else {
+        double total = 0.0;
+        for (const auto& elem : arr) {
+            if (elem.isNumber()) {
+                total += elem.toDouble();
+            } else {
+                return Result<Value>::err("sum 数组元素包含非数值类型: " + elem.typeName(), line, column);
+            }
+        }
+        return Result<Value>::ok(Value(total));
+    }
+}
+
+/// 顶层内置函数注册表（延迟初始化，thread-safe since C++11）
+const std::unordered_map<std::string, SharedBuiltinFn>& builtinFunctionRegistry() {
+    static const std::unordered_map<std::string, SharedBuiltinFn> registry = {
+        {"len",   executeBuiltinLen},
+        {"type",  executeBuiltinType},
+        {"str",   executeBuiltinStr},
+        {"int",   executeBuiltinInt},
+        {"abs",   executeBuiltinAbs},
+        {"min",   executeBuiltinMin},
+        {"max",   executeBuiltinMax},
+        {"range", executeBuiltinRange},
+        {"sum",   executeBuiltinSum},
+    };
+    return registry;
+}
+
+} // anonymous namespace
 
 Result<Value> executeSharedBuiltinFunction(
     const std::string& funcName,
     const Value* args, size_t argCount,
     int line, int column) {
 
-    // ---- len(x): 长度 ----
-    if (funcName == "len") {
-        if (argCount != 1) {
-            return Result<Value>::err("len 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        // 复用已有的 executeSharedLen（它期望 obj + 0 个额外参数）
-        return executeSharedLen(args[0], nullptr, 0, line, column);
+    const auto& registry = builtinFunctionRegistry();
+    auto it = registry.find(funcName);
+    if (it == registry.end()) {
+        return Result<Value>::err("未知的内置函数: " + funcName, line, column);
     }
-
-    // ---- type(x): 类型名 ----
-    if (funcName == "type") {
-        if (argCount != 1) {
-            return Result<Value>::err("type 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        return Result<Value>::ok(Value(args[0].typeName()));
-    }
-
-    // ---- str(x): 转字符串 ----
-    if (funcName == "str") {
-        if (argCount != 1) {
-            return Result<Value>::err("str 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        return Result<Value>::ok(Value(args[0].toString()));
-    }
-
-    // ---- int(x): 转整数 ----
-    if (funcName == "int") {
-        if (argCount != 1) {
-            return Result<Value>::err("int 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        const Value& v = args[0];
-        if (v.isInt()) {
-            return Result<Value>::ok(v);
-        } else if (v.isFloat()) {
-            // BUG 9.3 fix: 浮点转整数溢出检查
-            double dv = v.floatVal();
-            if (OverflowCheck::doubleToIntOverflow(dv)) {
-                return Result<Value>::err("int 转换溢出: " + std::to_string(dv) + " 超出 int64_t 范围", line, column);
-            }
-            // 截断小数部分（向零取整，与 C++ static_cast 一致）
-            return Result<Value>::ok(Value(static_cast<int64_t>(dv)));
-        } else if (v.isBool()) {
-            return Result<Value>::ok(Value(static_cast<int64_t>(v.boolVal() ? 1 : 0)));
-        } else if (v.isString()) {
-            // 尝试解析字符串为整数
-            // L-P2 fix: 使用 from_chars 替代 stoll，避免 locale 依赖
-            const std::string& s = v.stringVal();
-            // 跳过前导空白
-            size_t startIdx = 0;
-            while (startIdx < s.size() && std::isspace(static_cast<unsigned char>(s[startIdx]))) startIdx++;
-            if (startIdx >= s.size()) {
-                return Result<Value>::err("int 无法将空字符串转换为整数", line, column);
-            }
-            long long parsed = 0;
-            auto [ptr, ec] = std::from_chars(s.data() + startIdx, s.data() + s.size(), parsed);
-            if (ec != std::errc()) {
-                return Result<Value>::err("int 无法将字符串 \"" + s + "\" 转换为整数", line, column);
-            }
-            // 允许尾部空白，但不允许其他字符
-            size_t consumed = static_cast<size_t>(ptr - s.data());
-            while (consumed < s.size() && std::isspace(static_cast<unsigned char>(s[consumed]))) consumed++;
-            if (consumed != s.size()) {
-                return Result<Value>::err("int 无法将字符串 \"" + s + "\" 转换为整数", line, column);
-            }
-            return Result<Value>::ok(Value(static_cast<int64_t>(parsed)));
-        } else {
-            return Result<Value>::err("int 不支持类型 " + v.typeName(), line, column);
-        }
-    }
-
-    // ---- abs(x): 绝对值 ----
-    if (funcName == "abs") {
-        if (argCount != 1) {
-            return Result<Value>::err("abs 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        const Value& v = args[0];
-        if (v.isInt()) {
-            int64_t iv = v.intVal();
-            // BUG 9.1 fix: abs(INT64_MIN) 会导致整数溢出（C++ UB）
-            if (OverflowCheck::negateOverflow(iv)) {
-                return Result<Value>::err("abs 溢出: INT64_MIN 的绝对值无法表示", line, column);
-            }
-            return Result<Value>::ok(Value(iv < 0 ? -iv : iv));
-        } else if (v.isFloat()) {
-            double dv = v.floatVal();
-            return Result<Value>::ok(Value(dv < 0 ? -dv : dv));
-        } else {
-            return Result<Value>::err("abs 期望数值参数，实际为 " + v.typeName(), line, column);
-        }
-    }
-
-    // ---- min(a, b): 最小值 ----
-    if (funcName == "min") {
-        if (argCount != 2) {
-            return Result<Value>::err("min 期望 2 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        const Value& a = args[0];
-        const Value& b = args[1];
-        if (!a.isNumber() || !b.isNumber()) {
-            return Result<Value>::err("min 期望数值参数", line, column);
-        }
-        // 保持类型语义：两个 int 返回 int，否则返回 float
-        if (a.isInt() && b.isInt()) {
-            return Result<Value>::ok((a.intVal() <= b.intVal()) ? a : b);
-        } else {
-            double da = a.toDouble(), db = b.toDouble();
-            return Result<Value>::ok(Value(da <= db ? da : db));
-        }
-    }
-
-    // ---- max(a, b): 最大值 ----
-    if (funcName == "max") {
-        if (argCount != 2) {
-            return Result<Value>::err("max 期望 2 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        const Value& a = args[0];
-        const Value& b = args[1];
-        if (!a.isNumber() || !b.isNumber()) {
-            return Result<Value>::err("max 期望数值参数", line, column);
-        }
-        if (a.isInt() && b.isInt()) {
-            return Result<Value>::ok((a.intVal() >= b.intVal()) ? a : b);
-        } else {
-            double da = a.toDouble(), db = b.toDouble();
-            return Result<Value>::ok(Value(da >= db ? da : db));
-        }
-    }
-
-    // ---- range(n): 生成 [0, 1, ..., n-1] 数组 ----
-    if (funcName == "range") {
-        if (argCount != 1) {
-            return Result<Value>::err("range 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        const Value& v = args[0];
-        if (!v.isInt()) {
-            return Result<Value>::err("range 期望整数参数，实际为 " + v.typeName(), line, column);
-        }
-        int64_t n = v.intVal();
-        if (n < 0) {
-            return Result<Value>::err("range 参数不能为负数: " + std::to_string(n), line, column);
-        }
-        // DoS 防护：限制 range 上限（S1 fix: 统一引用 RuntimeLimits::MAX_RANGE）
-        if (n > RuntimeLimits::MAX_RANGE) {
-            return Result<Value>::err("range 参数超过上限 " + std::to_string(RuntimeLimits::MAX_RANGE), line, column);
-        }
-        std::vector<Value> elements;
-        elements.reserve(static_cast<size_t>(n));
-        for (int64_t i = 0; i < n; ++i) {
-            elements.emplace_back(Value(i));
-        }
-        return Result<Value>::ok(Value(std::move(elements)));
-    }
-
-    // ---- sum(arr): 数组元素求和 ----
-    if (funcName == "sum") {
-        if (argCount != 1) {
-            return Result<Value>::err("sum 期望 1 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
-        }
-        const Value& v = args[0];
-        if (!v.isArray()) {
-            return Result<Value>::err("sum 期望数组参数，实际为 " + v.typeName(), line, column);
-        }
-        const auto& arr = v.arrayVal();
-        // 判断是否全为 int（结果保持 int 类型）
-        bool allInt = true;
-        for (const auto& elem : arr) {
-            if (!elem.isInt()) { allInt = false; break; }
-        }
-        if (allInt) {
-            int64_t total = 0;
-            for (const auto& elem : arr) {
-                // BUG 9.2 fix: 累加溢出检查
-                if (OverflowCheck::addOverflow(total, elem.intVal())) {
-                    return Result<Value>::err("sum 整数累加溢出", line, column);
-                }
-                total += elem.intVal();
-            }
-            return Result<Value>::ok(Value(total));
-        } else {
-            double total = 0.0;
-            for (const auto& elem : arr) {
-                if (elem.isNumber()) {
-                    total += elem.toDouble();
-                } else {
-                    return Result<Value>::err("sum 数组元素包含非数值类型: " + elem.typeName(), line, column);
-                }
-            }
-            return Result<Value>::ok(Value(total));
-        }
-    }
-
-    // 未知内置函数名
-    return Result<Value>::err("未知的内置函数: " + funcName, line, column);
+    return it->second(args, argCount, line, column);
 }
 
 // ============================================================

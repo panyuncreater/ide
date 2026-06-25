@@ -1,10 +1,24 @@
 #include "gui/DebugPanel.h"
 #include <QHeaderView>
 #include <QSplitter>
+#include <tuple>
+#include <vector>
 
 // ============================================================
 // DebugPanel 调试面板实现
 // ============================================================
+
+// P1-14 fix: 变量树填充共享逻辑（updateVariables/onStackFrameSelected 共用）
+void DebugPanel::populateVariableTree(
+    const std::vector<std::tuple<QString, QString, QString>>& rows) {
+    variableTree_->clear();
+    for (const auto& [name, value, scope] : rows) {
+        auto* item = new QTreeWidgetItem(variableTree_);
+        item->setText(0, name);
+        item->setText(1, value);
+        item->setText(2, scope);
+    }
+}
 
 DebugPanel::DebugPanel(QWidget* parent)
     : QWidget(parent) {
@@ -63,14 +77,15 @@ DebugPanel::DebugPanel(QWidget* parent)
 }
 
 void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
-    variableTree_->clear();
-
+    // P1-14 fix: 委托给 populateVariableTree
+    std::vector<std::tuple<QString, QString, QString>> rows;
+    rows.reserve(vars.size());
     for (const auto& v : vars) {
-        auto* item = new QTreeWidgetItem(variableTree_);
-        item->setText(0, QString::fromStdString(v.name));
-        item->setText(1, QString::fromStdString(v.value.toString()));
-        item->setText(2, QString::fromStdString(v.scope));
+        rows.emplace_back(QString::fromStdString(v.name),
+                          QString::fromStdString(v.value.toString()),
+                          QString::fromStdString(v.scope));
     }
+    populateVariableTree(rows);
 }
 
 void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
@@ -104,14 +119,15 @@ void DebugPanel::onStackFrameSelected(int index) {
     if (index < 0 || index >= static_cast<int>(currentStack_.size())) return;
 
     const auto& frame = currentStack_[index];
-    // 在变量树中显示选中帧的局部变量
-    variableTree_->clear();
+    // P1-14 fix: 委托给 populateVariableTree
+    std::vector<std::tuple<QString, QString, QString>> rows;
+    rows.reserve(frame.locals.size());
     for (const auto& kv : frame.locals) {
-        auto* item = new QTreeWidgetItem(variableTree_);
-        item->setText(0, QString::fromStdString(kv.first));
-        item->setText(1, QString::fromStdString(kv.second.toString()));
-        item->setText(2, QString::fromStdString(frame.functionName));  // 作用域 = 函数名
+        rows.emplace_back(QString::fromStdString(kv.first),
+                          QString::fromStdString(kv.second.toString()),
+                          QString::fromStdString(frame.functionName));  // 作用域 = 函数名
     }
+    populateVariableTree(rows);
 }
 
 void DebugPanel::clearAll() {

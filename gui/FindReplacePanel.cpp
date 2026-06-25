@@ -1,5 +1,6 @@
 #include "gui/FindReplacePanel.h"
 #include "gui/CodeEditor.h"
+#include "common/RuntimeLimits.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -88,12 +89,13 @@ FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent)
     setVisible(false);
 }
 
-void FindReplacePanel::showFind() {
-    replaceVisible_ = false;
-    replaceEdit_->setVisible(false);
-    replaceBtn_->setVisible(false);
-    replaceAllBtn_->setVisible(false);
-    setFixedHeight(60);
+void FindReplacePanel::showPanel(bool showReplace) {
+    // P1-13 fix: showFind/showReplace 共用逻辑提取
+    replaceVisible_ = showReplace;
+    replaceEdit_->setVisible(showReplace);
+    replaceBtn_->setVisible(showReplace);
+    replaceAllBtn_->setVisible(showReplace);
+    setFixedHeight(showReplace ? 90 : 60);
     setVisible(true);
     findEdit_->setFocus();
     findEdit_->selectAll();
@@ -107,22 +109,12 @@ void FindReplacePanel::showFind() {
     }
 }
 
+void FindReplacePanel::showFind() {
+    showPanel(false);
+}
+
 void FindReplacePanel::showReplace() {
-    replaceVisible_ = true;
-    replaceEdit_->setVisible(true);
-    replaceBtn_->setVisible(true);
-    replaceAllBtn_->setVisible(true);
-    setFixedHeight(90);
-    setVisible(true);
-    findEdit_->setFocus();
-    findEdit_->selectAll();
-    QString selected = editor_->textCursor().selectedText();
-    if (!selected.isEmpty() && !selected.contains('\n')) {
-        findEdit_->setText(selected);
-    }
-    if (!findEdit_->text().isEmpty()) {
-        highlightMatches(findEdit_->text());
-    }
+    showPanel(true);
 }
 
 void FindReplacePanel::closePanel() {
@@ -262,7 +254,8 @@ void FindReplacePanel::onReplaceAll() {
     int replaceCount = 0;
     cursor.movePosition(QTextCursor::Start);
     // P2 fix: 限制替换数量上限，防止超大文档阻塞 UI
-    while (replaceCount < 100000) {
+    // D14 fix: 上限统一引用 RuntimeLimits::MAX_REPLACE_ALL
+    while (replaceCount < RuntimeLimits::MAX_REPLACE_ALL) {
         QTextCursor found = editor_->document()->find(findTextStr, cursor, flags);
         if (found.isNull()) break;
         cursor = found;
@@ -298,12 +291,13 @@ void FindReplacePanel::highlightMatches(const QString& text) {
         selections.append(sel);
         count++;
         // P2 fix: 限制高亮匹配数量，防止大文档卡顿
-        if (count >= 1000) break;
+        // D14 fix: 上限统一引用 RuntimeLimits::MAX_FIND_HIGHLIGHTS
+        if (count >= RuntimeLimits::MAX_FIND_HIGHLIGHTS) break;
     }
 
     editor_->setFindSelections(selections);
 
-    if (count >= 1000) {
+    if (count >= RuntimeLimits::MAX_FIND_HIGHLIGHTS) {
         statusLabel_->setText(QString("匹配 %1+ 处").arg(count));
         statusLabel_->setStyleSheet("color: gray;");
     } else if (count > 0) {

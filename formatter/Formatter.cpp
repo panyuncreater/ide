@@ -338,29 +338,21 @@ Value Formatter::visitExportStmt(ExportStmt& node) {
     return Value::nullValue();
 }
 
-// 运算符优先级表（数值越大优先级越高）
-int Formatter::opPrecedence(BinOpType opType) {
-    switch (opType) {
-    case BinOpType::BIN_OR:  return 1;
-    case BinOpType::BIN_AND: return 2;
-    case BinOpType::BIN_EQ:
-    case BinOpType::BIN_NEQ: return 3;
-    case BinOpType::BIN_LT:
-    case BinOpType::BIN_GT:
-    case BinOpType::BIN_LTE:
-    case BinOpType::BIN_GTE: return 4;
-    case BinOpType::BIN_ADD:
-    case BinOpType::BIN_SUB: return 5;
-    case BinOpType::BIN_MUL:
-    case BinOpType::BIN_DIV:
-    case BinOpType::BIN_MOD: return 6;
-    default: return 0;
-    }
+// C5 fix: 插值字符串格式化 — 重建 `"text {expr} more {expr2}"` 语法
+Value Formatter::visitInterpolatedString(InterpolatedString& node) {
+    lastFormatResult_ = formatInterpolatedString(node);
+    return Value::nullValue();
 }
 
-bool Formatter::isRightAssoc(BinOpType /*opType*/) {
-    // 目前没有右结合的二元运算符（赋值不是 BinaryOp）
-    return false;
+// 运算符优先级表（数值越大优先级越高）
+int Formatter::opPrecedence(BinOpType opType) {
+    // C14 fix: 委托给 BinaryOp::precedence 单一来源，消除 Formatter 与 Parser 的重复优先级表
+    return BinaryOp::precedence(opType);
+}
+
+bool Formatter::isRightAssoc(BinOpType opType) {
+    // C14 fix: 委托给 BinaryOp::isRightAssociative 单一来源
+    return BinaryOp::isRightAssociative(opType);
 }
 
 /// 判断子表达式是否需要加括号
@@ -817,4 +809,52 @@ std::string Formatter::formatMethodCall(MethodCall& node) {
 
 std::string Formatter::formatNullLiteral(NullLiteral& node) {
     return "null";
+}
+
+// C5 fix: 插值字符串格式化 — 重建 `"text {expr} more {expr2}"` 语法
+// literals.size() == expressions.size() + 1
+// 输出: "literals[0]{expressions[0]}literals[1]{expressions[1]}...literals[n]"
+std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
+    std::string result;
+    result += '"';  // 开头引号
+
+    // 字符串字面量片段需要转义（与 formatStringLiteral 一致的转义规则）
+    auto escapeString = [](const std::string& s) {
+        std::string escaped;
+        escaped.reserve(s.size());
+        for (char c : s) {
+            switch (c) {
+            case '\\': escaped += "\\\\"; break;
+            case '"':  escaped += "\\\""; break;
+            case '\n': escaped += "\\n";  break;
+            case '\t': escaped += "\\t";  break;
+            case '\r': escaped += "\\r";  break;
+            case '\0': escaped += "\\0";  break;
+            case '\b': escaped += "\\b";  break;
+            case '\f': escaped += "\\f";  break;
+            case '\a': escaped += "\\a";  break;
+            case '\v': escaped += "\\v";  break;
+            default:   escaped += c;      break;
+            }
+        }
+        return escaped;
+    };
+
+    // 首个字面量片段
+    if (!node.literals.empty()) {
+        result += escapeString(node.literals[0]);
+    }
+
+    // 交替输出: {expr} literal
+    for (size_t i = 0; i < node.expressions.size(); ++i) {
+        result += '{';
+        result += formatNode(node.expressions[i].get());
+        result += '}';
+        if (i + 1 < node.literals.size()) {
+            result += escapeString(node.literals[i + 1]);
+        }
+    }
+
+    result += '"';  // 结尾引号
+    return result;
 }

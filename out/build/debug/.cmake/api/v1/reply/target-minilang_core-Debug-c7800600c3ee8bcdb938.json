@@ -38,31 +38,31 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 82,
+				"line" : 85,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 91,
+				"line" : 94,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 98,
+				"line" : 101,
 				"parent" : 0
 			},
 			{
 				"command" : 3,
 				"file" : 0,
-				"line" : 86,
+				"line" : 89,
 				"parent" : 0
 			},
 			{
 				"command" : 4,
 				"file" : 0,
-				"line" : 95,
+				"line" : 98,
 				"parent" : 0
 			}
 		]
@@ -350,7 +350,10 @@
 				12,
 				13,
 				14,
-				15
+				15,
+				16,
+				17,
+				18
 			]
 		}
 	],
@@ -430,28 +433,31 @@
 				12,
 				13,
 				14,
-				15
+				15,
+				16,
+				17,
+				18
 			]
 		},
 		{
 			"name" : "",
 			"sourceIndexes" : 
 			[
-				16
+				19
 			]
 		},
 		{
 			"name" : "Precompile Header File",
 			"sourceIndexes" : 
 			[
-				17
+				20
 			]
 		},
 		{
 			"name" : "CMake Rules",
 			"sourceIndexes" : 
 			[
-				18
+				21
 			]
 		}
 	],
@@ -539,6 +545,12 @@
 		{
 			"backtrace" : 1,
 			"compileGroupIndex" : 1,
+			"path" : "compiler/Bytecode.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
 			"path" : "compiler/Compiler.cpp",
 			"sourceGroupIndex" : 0
 		},
@@ -546,6 +558,18 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 1,
 			"path" : "compiler/VM.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "compiler/VMCalls.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "compiler/VMContainers.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{

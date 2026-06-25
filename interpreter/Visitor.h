@@ -46,6 +46,8 @@ public:
     virtual Value visitThrowStmt(ThrowStmt& node) = 0;
     virtual Value visitImportStmt(ImportStmt& node) = 0;
     virtual Value visitExportStmt(ExportStmt& node) = 0;
+    // C5 fix: 插值字符串节点
+    virtual Value visitInterpolatedString(InterpolatedString& node) = 0;
 };
 
 // ============================================================
@@ -99,4 +101,5 @@ public:
     Value visitThrowStmt(ThrowStmt& node) override { return defaultVisit(node); }
     Value visitImportStmt(ImportStmt& node) override { return defaultVisit(node); }
     Value visitExportStmt(ExportStmt& node) override { return defaultVisit(node); }
+    Value visitInterpolatedString(InterpolatedString& node) override { return defaultVisit(node); }
 };

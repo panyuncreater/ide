@@ -4,8 +4,11 @@
 #include <string>
 #include <functional>
 #include <unordered_map>
+#include <map>
+#include <memory>
 #include "compiler/Bytecode.h"
 #include "interpreter/Value.h"
+#include "common/Result.h"
 #include "Diagnostic.h"
 #include "common/RuntimeLimits.h"
 
@@ -212,7 +215,10 @@ private:
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
     // VM-05/06: 闭包支持
-    std::vector<std::shared_ptr<VMUpvalue>> openUpvalues_;   // 当前所有 open 的 upvalue（函数返回时关闭）
+    // B5 fix: openUpvalues_ 改用按 stackSlot 排序的有序结构（multimap 允许多个 upvalue 共享同一栈槽），
+    // closeUpvaluesFrom 从 O(n) 线性扫描降为 O(log n + k)。value 用 weak_ptr 监视 shared_ptr 生命周期
+    // （closure 持有强引用），closure 销毁后 weak_ptr 自动过期，不阻碍 upvalue 释放。
+    std::multimap<size_t, std::weak_ptr<VMUpvalue>> openUpvalues_;
     std::unordered_map<std::string, Value> functionClosures_;       // 函数名→闭包值（含 upvalue 绑定）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
@@ -325,6 +331,33 @@ private:
     VMResult dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
                                     const std::string& methodName, uint8_t argCount,
                                     size_t& ip, OpCode op, int instrLen);
+
+    // ---- P0-3 fix: 共享内置方法分派样板提取 ----
+    /// 非变异方法完成：检查错误 → pop 接收者 → push 结果 → 推进 ip。
+    /// 用于 dispatchArrayBuiltin/dispatchDictBuiltin 的非变异路径。
+    VMResult finishSharedBuiltin(Result<Value>&& sr, size_t& ip, OpCode op, int instrLen);
+
+    /// 提取共享方法结果：检查错误 → 移动值到 out。
+    /// 用于 dispatchStringBuiltin（pop/push 延迟到函数末尾统一执行）。
+    /// @return true 成功；false 失败（已设置 hasError_，caller 应 return VM_RUNTIME_ERROR）
+    bool extractSharedBuiltin(Result<Value>&& sr, Value& out);
+
+    // ---- P2-9 fix: COW 变异模式提取 ----
+    /// 获取数组的可变引用：若独占拥有数据（refcount==1）直接返回；
+    /// 否则通过非 const arrayVal() 触发 COW detach 后返回。
+    /// 消除 dispatchArrayBuiltin 中 4 处重复的 tryGetMutableArray 模式。
+    std::vector<Value>& getMutableArrayRef(Value& obj) {
+        auto* arr = obj.tryGetMutableArray();
+        if (arr) return *arr;
+        return obj.arrayVal();
+    }
+
+    /// 获取字典的可变引用：同上，针对字典类型。
+    std::unordered_map<std::string, Value>& getMutableDictRef(Value& obj) {
+        auto* dict = obj.tryGetMutableDict();
+        if (dict) return *dict;
+        return obj.dictVal();
+    }
 
     /// 通知步进回调（内联：禁用时直接返回，避免函数调用开销）
     void notifyStep(size_t ip, OpCode opcode) {
