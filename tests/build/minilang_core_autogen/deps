@@ -37,6 +37,7 @@ minilang_core_autogen/timestamp: \
 	C:/Users/v/AppData/Local/Programs/Python/Python310/Lib/site-packages/cmake/data/share/cmake-4.3/Modules/Platform/WindowsPaths.cmake \
 	C:/Users/v/Desktop/ide/ide/ast/ASTNode.cpp \
 	C:/Users/v/Desktop/ide/ide/ast/ASTNode.h \
+	C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
 	C:/Users/v/Desktop/ide/ide/compiler/Compiler.cpp \
 	C:/Users/v/Desktop/ide/ide/compiler/Compiler.h \
 	C:/Users/v/Desktop/ide/ide/compiler/VM.cpp \

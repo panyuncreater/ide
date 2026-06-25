@@ -38,17 +38,17 @@ private slots:
     void onFindTextChanged(const QString& text);
 
 private:
-    CodeEditor* editor_;
-    QLineEdit* findEdit_;
-    QLineEdit* replaceEdit_;
-    QPushButton* findNextBtn_;
-    QPushButton* findPrevBtn_;
-    QPushButton* replaceBtn_;
-    QPushButton* replaceAllBtn_;
-    QPushButton* closeBtn_;
-    QCheckBox* caseSensitiveCheck_;
-    QCheckBox* wholeWordCheck_;
-    QLabel* statusLabel_;
+    CodeEditor* editor_ = nullptr;
+    QLineEdit* findEdit_ = nullptr;
+    QLineEdit* replaceEdit_ = nullptr;
+    QPushButton* findNextBtn_ = nullptr;
+    QPushButton* findPrevBtn_ = nullptr;
+    QPushButton* replaceBtn_ = nullptr;
+    QPushButton* replaceAllBtn_ = nullptr;
+    QPushButton* closeBtn_ = nullptr;
+    QCheckBox* caseSensitiveCheck_ = nullptr;
+    QCheckBox* wholeWordCheck_ = nullptr;
+    QLabel* statusLabel_ = nullptr;
     bool replaceVisible_ = false;
 
     /// 查找文本，从当前位置向后/向前查找

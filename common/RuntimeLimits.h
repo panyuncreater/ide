@@ -1,0 +1,65 @@
+#pragma once
+
+// ============================================================
+// RuntimeLimits.h — 统一运行时限制常量
+// ------------------------------------------------------------
+// 消除 17 个限制常量散布在 7 个文件的重复定义问题。
+// 所有模块（Lexer/Parser/Interpreter/Compiler/VM/Formatter/Value）
+// 共享同一组常量，避免对齐遗漏（如 MAX_INHERITANCE_DEPTH 曾重复
+// 定义在 Interpreter.h 和 VM.h 两处）。
+//
+// 设计原则：
+//   1. 所有常量为 constexpr，可供编译期常量折叠
+//   2. 不依赖任何标准库头文件，无循环依赖风险
+//   3. 常量值与原各自定义保持一致，纯重构无行为变更
+// ============================================================
+
+#include <cstdint>
+
+namespace RuntimeLimits {
+
+// ---- 递归 / 调用栈深度 ----
+// Interpreter 树遍历递归深度上限（与 VM MAX_FRAMES 对齐）
+constexpr int MAX_RECURSION_DEPTH = 256;
+// VM 调用帧最大深度（与 Interpreter MAX_RECURSION_DEPTH 对齐）
+constexpr size_t MAX_FRAMES = 256;
+// VM 操作数栈最大深度
+constexpr size_t MAX_STACK_SIZE = 1024;
+
+// ---- 继承链 ----
+// 类继承链最大深度（Interpreter 和 VM 共享，避免重复定义）
+constexpr int MAX_INHERITANCE_DEPTH = 64;
+
+// ---- DoS 防护 ----
+// Interpreter 循环迭代次数上限（约 0.3 秒 CPU 时间）
+constexpr int64_t MAX_LOOP_ITERATIONS = 10000000;
+// VM 指令执行总预算（≤1000 万次循环迭代，约 0.5 秒）
+constexpr int64_t MAX_INSTRUCTIONS = 40000000;
+// range() 函数参数上限（与 MAX_LOOP_ITERATIONS 对齐）
+constexpr int64_t MAX_RANGE = 10000000;
+
+// ---- 编译期深度保护 ----
+// Parser 最大递归深度
+constexpr int MAX_PARSE_DEPTH = 512;
+// Parser 最大块嵌套深度
+constexpr int MAX_BLOCK_DEPTH = 256;
+// Compiler 最大编译嵌套深度
+constexpr int MAX_COMPILE_DEPTH = 512;
+// Formatter 最大格式化嵌套深度
+constexpr int MAX_FORMAT_DEPTH = 256;
+
+// ---- Value 序列化 / 比较 ----
+// toString 递归深度上限（对齐 Formatter MAX_FORMAT_DEPTH）
+constexpr int MAX_TOSTRING_DEPTH = 256;
+// equals 递归深度上限
+constexpr int MAX_EQUALS_DEPTH = 256;
+
+// ---- Lexer 输入限制 ----
+// 源代码最大大小（10MB）
+constexpr size_t MAX_SOURCE_SIZE = 10 * 1024 * 1024;
+// 最大 Token 数量（100万）
+constexpr size_t MAX_TOKEN_COUNT = 1000000;
+// 字符串插值最大嵌套深度
+constexpr int MAX_INTERP_DEPTH = 64;
+
+} // namespace RuntimeLimits

@@ -4,9 +4,8 @@
 #include <vector>
 #include <cstdint>
 #include "interpreter/Value.h"
-
-// Forward declaration - RuntimeError is defined in Interpreter.h
-class RuntimeError;
+#include "interpreter/RuntimeExceptions.h"  // S6 fix: RuntimeError 完整定义
+#include "common/Result.h"                   // S6 fix: 统一错误处理 Result<Value>
 
 // ============================================================
 // BuiltinMethods - 内置方法分发辅助类
@@ -15,7 +14,7 @@ class RuntimeError;
 // 从 Interpreter::visitMethodCall 中提取，降低 Interpreter.cpp 复杂度。
 // 错误通过直接抛出 RuntimeError 传达（与 Interpreter::runtimeError 语义一致）。
 
-/// 内置方法调用结果
+/// 内置方法调用结果（Interpreter 侧专用，含 objectModified 标志）
 struct BuiltinMethodResult {
     Value result;              // 方法返回值
     bool objectModified;       // 对象是否被修改（需要 writeBack）
@@ -28,32 +27,16 @@ struct BuiltinMethodResult {
 // ============================================================
 // 共享纯函数层（供 Interpreter 和 VM 共用，不抛异常）
 // ============================================================
-// 保守重构：目前仅提取 len / contains / has 三个最简单、最常用的方法
-// 作为共享纯函数，消除 Interpreter 与 VM 间的双重实现。
-// 其余内置方法（push/pop/remove/keys/values/get/join/upper/lower/split/
-// replace/trim/substr/indexOf/startsWith/endsWith 等）仍由 BuiltinMethods 类
-// （Interpreter 侧，抛 RuntimeError）和 VM 内联代码（VM 侧，返回错误码）各自维护。
-// TODO: 后续逐步将其余方法迁移到共享纯函数层。
+// S6 fix: 统一使用 Result<Value> 替代 Result<Value>。
+// 错误通过 Result<Value>::err() 返回，成功通过 Result<Value>::ok() 返回。
+// 调用方（Interpreter handle*Method）使用 to_runtime_error() 转为异常抛出。
+// 调用方（VM dispatch）直接检查 is_err() 并返回错误码。
 //
 // 设计要点：
-//   1. 不抛异常 —— 错误通过 SharedBuiltinResult 字段传达，便于 VM 使用返回码语义；
-//      Interpreter 侧的 handle*Method 在调用后自行转换为 RuntimeError 抛出。
+//   1. 不抛异常 —— 错误通过 Result<Value> 传达，便于 VM 使用返回码语义
 //   2. 参数使用 const Value* + size_t 而非 const std::vector<Value>& —— 避免 VM
-//      从 SmallArgs 构造 vector 的额外分配（零拷贝传递栈上参数）。
-//   3. 非变异方法 —— 接收者均为 const Value&，不触发 COW detach。
-
-/// 共享纯函数执行结果（不抛异常，错误通过字段传达，便于 VM 使用返回码语义）
-struct SharedBuiltinResult {
-    Value result;              // 返回值（出错时为 null）
-    bool isError;              // 是否出错
-    std::string errorMessage;  // 错误信息
-    int errorLine;             // 错误行号
-    int errorColumn;           // 错误列号
-
-    SharedBuiltinResult()
-        : result(Value::nullValue()), isError(false),
-          errorLine(0), errorColumn(0) {}
-};
+//      从 SmallArgs 构造 vector 的额外分配（零拷贝传递栈上参数）
+//   3. 非变异方法 —— 接收者均为 const Value&，不触发 COW detach
 
 /// 共享纯函数：执行 len 方法（适用于数组/字典/字符串）
 /// - 数组：返回元素个数
@@ -64,7 +47,7 @@ struct SharedBuiltinResult {
 /// @param argCount   参数数量（len 期望 0）
 /// @param line       调用行号（用于错误报告）
 /// @param column     调用列号（用于错误报告）
-SharedBuiltinResult executeSharedLen(const Value& obj,
+Result<Value> executeSharedLen(const Value& obj,
                                      const Value* args, size_t argCount,
                                      int line = 0, int column = 0);
 
@@ -75,7 +58,7 @@ SharedBuiltinResult executeSharedLen(const Value& obj,
 /// @param argCount   参数数量（contains 期望 1）
 /// @param line       调用行号
 /// @param column     调用列号
-SharedBuiltinResult executeSharedArrayContains(const Value& arr,
+Result<Value> executeSharedArrayContains(const Value& arr,
                                                const Value* args, size_t argCount,
                                                int line = 0, int column = 0);
 
@@ -87,7 +70,7 @@ SharedBuiltinResult executeSharedArrayContains(const Value& arr,
 /// @param argCount   参数数量（has/contains 期望 1）
 /// @param line       调用行号
 /// @param column     调用列号
-SharedBuiltinResult executeSharedDictHas(const Value& dict,
+Result<Value> executeSharedDictHas(const Value& dict,
                                          const std::string& method,
                                          const Value* args, size_t argCount,
                                          int line = 0, int column = 0);
@@ -99,26 +82,80 @@ SharedBuiltinResult executeSharedDictHas(const Value& dict,
 // startsWith / endsWith / substr / indexOf
 
 /// 共享纯函数：执行字符串 startsWith 方法
-SharedBuiltinResult executeSharedStrStartsWith(const Value& str,
+Result<Value> executeSharedStrStartsWith(const Value& str,
                                                 const Value* args, size_t argCount,
                                                 int line = 0, int column = 0);
 
 /// 共享纯函数：执行字符串 endsWith 方法
-SharedBuiltinResult executeSharedStrEndsWith(const Value& str,
+Result<Value> executeSharedStrEndsWith(const Value& str,
                                               const Value* args, size_t argCount,
                                               int line = 0, int column = 0);
 
 /// 共享纯函数：执行字符串 substr 方法
 /// substr(start) 或 substr(start, length)
-SharedBuiltinResult executeSharedStrSubstr(const Value& str,
+Result<Value> executeSharedStrSubstr(const Value& str,
                                             const Value* args, size_t argCount,
                                             int line = 0, int column = 0);
 
 /// 共享纯函数：执行字符串 indexOf 方法
 /// 返回 UTF-8 字符位置（非字节位置），未找到返回 -1
-SharedBuiltinResult executeSharedStrIndexOf(const Value& str,
+Result<Value> executeSharedStrIndexOf(const Value& str,
                                              const Value* args, size_t argCount,
                                              int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 replace 方法
+/// 将所有 from 子串替换为 to（单遍构建，O(N) 复杂度）
+/// @param str       字符串对象
+/// @param args       参数列表首指针（replace 期望 2：from, to）
+/// @param argCount   参数数量
+/// @param line       调用行号
+/// @param column     调用列号
+Result<Value> executeSharedStrReplace(const Value& str,
+                                            const Value* args, size_t argCount,
+                                            int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 upper 方法（转大写）
+Result<Value> executeSharedStrUpper(const Value& str,
+                                          const Value* args, size_t argCount,
+                                          int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 lower 方法（转小写）
+Result<Value> executeSharedStrLower(const Value& str,
+                                          const Value* args, size_t argCount,
+                                          int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 split 方法（按分隔符分割）
+/// split(sep) 或 split()（默认分隔符为空格）
+Result<Value> executeSharedStrSplit(const Value& str,
+                                          const Value* args, size_t argCount,
+                                          int line = 0, int column = 0);
+
+/// 共享纯函数：执行字符串 trim 方法（去除首尾空白）
+Result<Value> executeSharedStrTrim(const Value& str,
+                                         const Value* args, size_t argCount,
+                                         int line = 0, int column = 0);
+
+/// 共享纯函数：执行字典 keys 方法（返回所有键组成的数组）
+Result<Value> executeSharedDictKeys(const Value& dict,
+                                          const Value* args, size_t argCount,
+                                          int line = 0, int column = 0);
+
+/// 共享纯函数：执行字典 values 方法（返回所有值组成的数组）
+Result<Value> executeSharedDictValues(const Value& dict,
+                                            const Value* args, size_t argCount,
+                                            int line = 0, int column = 0);
+
+/// 共享纯函数：执行字典 get 方法（按键查找，支持默认值）
+/// get(key) 或 get(key, default)
+Result<Value> executeSharedDictGet(const Value& dict,
+                                         const Value* args, size_t argCount,
+                                         int line = 0, int column = 0);
+
+/// 共享纯函数：执行数组 join 方法（用分隔符连接所有元素）
+/// join() 或 join(sep)
+Result<Value> executeSharedArrayJoin(const Value& arr,
+                                           const Value* args, size_t argCount,
+                                           int line = 0, int column = 0);
 
 // ============================================================
 // 顶层内置函数共享层（供 Interpreter 和 VM 共用，不抛异常）
@@ -135,7 +172,7 @@ bool isBuiltinFunction(const std::string& name);
 /// @param argCount   参数数量
 /// @param line       调用行号（用于错误报告）
 /// @param column     调用列号（用于错误报告）
-SharedBuiltinResult executeSharedBuiltinFunction(
+Result<Value> executeSharedBuiltinFunction(
     const std::string& funcName,
     const Value* args, size_t argCount,
     int line = 0, int column = 0);

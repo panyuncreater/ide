@@ -1,6 +1,6 @@
 #include "debug/DebugController.h"
 #include "ast/ASTNode.h"
-#include "interpreter/Interpreter.h"
+#include "interpreter/RuntimeExceptions.h"  // S6 fix: DebugStopException 定义
 #include "Logger.h"
 #include <QCoreApplication>  // P1 fix: 用 QCoreApplication 替代 QApplication，避免 minilang_core 依赖 Qt6::Widgets
 #include <QThread>
@@ -198,10 +198,14 @@ void DebugController::checkBreak(ASTNode* node) {
         Logger::Debug("断点暂停于行 " + std::to_string(node->line) +
             " (深度 " + std::to_string(snapCurrentDepth) + ")", "Debugger");
 
-        // D-P1-3 fix: 先设置 paused_=true（锁内），再发信号，最后阻塞等待。
-        // 确保 UI 收到信号查询变量时，worker 已确认进入暂停状态，避免解释器状态竞争窗口。
+        // V-P0-1/D-P0-1 fix: 锁内原子性地检查 stopped_ 并设置 paused_=true，
+        // 防止 stop() 在 line 31 检查后、设置 paused_=true 前之间的窗口运行，
+        // 导致 paused_=true 覆盖 stop() 设置的 paused_=false，使 worker 永久睡眠。
         {
             std::lock_guard<std::mutex> lock(pauseMutex_);
+            if (stopped_) {
+                throw DebugStopException();
+            }
             paused_ = true;
         }
         // 发出暂停信号（更新 UI 高亮行）——此时 paused_ 已为 true

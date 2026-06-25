@@ -1,12 +1,6 @@
 #include "gui/SyntaxHighlighter.h"
 #include <QStringList>
 
-// 静态成员定义（全局共享，避免每次 highlightBlock 重建）
-// 匹配单行注释 //... 或块注释 /*...*/（同一行内的块注释）
-QRegularExpression SyntaxHighlighter::commentRegex_("(//[^\\n]*|/\\*.*?\\*/)");
-// HL-3 fix: 字符串正则支持单行和多行起始匹配
-QRegularExpression SyntaxHighlighter::stringRegex_("\"(?:[^\"\\\\]|\\\\.)*\"?");
-
 // ============================================================
 // SyntaxHighlighter 语法高亮器实现
 // ============================================================
@@ -23,6 +17,9 @@ void SyntaxHighlighter::setDarkTheme(bool dark) {
 }
 
 void SyntaxHighlighter::initRules() {
+    // P1 fix: 清空已有规则，避免 setDarkTheme 多次调用导致规则累积
+    rules_.clear();
+
     if (isDarkTheme_) {
         // 深色主题（VS Code Dark+ 风格）
         keywordFormat_.setForeground(QColor(0x56, 0x9c, 0xd6));   // 蓝色
@@ -73,133 +70,112 @@ void SyntaxHighlighter::initRules() {
 }
 
 void SyntaxHighlighter::highlightBlock(const QString& text) {
-    // ---- HL-3 fix: 多行字符串状态传递 ----
-    int startIndex = 0;
+    // P1 fix: 使用扫描器方式正确跟踪多行块注释状态
+    // 块状态: 0 = 正常, 1 = 字符串内, 2 = 块注释内
+    int pos = 0;
+    int len = text.length();
+
     bool inString = (previousBlockState() == 1);
-    bool currentlyInString = false;
+    bool inBlockComment = (previousBlockState() == 2);
 
-    // 收集本行中字符串覆盖的范围（这些范围内不应用其他高亮规则）
-    QList<QPair<int, int>> stringRanges;  // {start, length}
+    QList<QPair<int, int>> stringRanges;
+    QList<QPair<int, int>> commentRanges;
 
-    if (inString) {
-        // GUI-05 fix: 在本行任意位置搜索闭合引号（不要求从行首开始）
-        int closePos = text.indexOf('"');
-        if (closePos >= 0) {
-            // 检查引号是否被转义：计算前面连续反斜杠数量
-            int backslashCount = 0;
-            for (int k = closePos - 1; k >= 0 && text[k] == '\\'; --k) {
-                backslashCount++;
+    int stringStart = inString ? 0 : -1;
+    int commentStart = inBlockComment ? 0 : -1;
+
+    while (pos < len) {
+        if (inBlockComment) {
+            if (pos + 1 < len && text[pos] == '*' && text[pos + 1] == '/') {
+                pos += 2;
+                commentRanges.append({commentStart, pos - commentStart});
+                inBlockComment = false;
+                commentStart = -1;
+                continue;
             }
-            if (backslashCount % 2 == 0) {
-                // 引号未被转义，字符串在此闭合
-                int endPos = closePos + 1;
-                stringRanges.append({0, endPos});
-                startIndex = endPos;
-                currentlyInString = false;
-            } else {
-                // 引号被转义，本行整个都在字符串内
-                setFormat(0, text.length(), stringFormat_);
-                setCurrentBlockState(1);
-                return;
-            }
-        } else {
-            // 本行整个都在字符串内
-            setFormat(0, text.length(), stringFormat_);
-            setCurrentBlockState(1);
-            return;
+            pos++;
+            continue;
         }
+
+        if (inString) {
+            if (text[pos] == '\\' && pos + 1 < len) {
+                pos += 2;
+                continue;
+            }
+            if (text[pos] == '"') {
+                pos++;
+                stringRanges.append({stringStart, pos - stringStart});
+                inString = false;
+                stringStart = -1;
+                continue;
+            }
+            pos++;
+            continue;
+        }
+
+        if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '/') {
+            commentRanges.append({pos, len - pos});
+            break;
+        }
+
+        if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '*') {
+            commentStart = pos;
+            inBlockComment = true;
+            pos += 2;
+            continue;
+        }
+
+        if (text[pos] == '"') {
+            stringStart = pos;
+            inString = true;
+            pos++;
+            continue;
+        }
+
+        pos++;
     }
 
-    // 从 startIndex 开始查找本行中的字符串
-    int searchPos = startIndex;
-    while (searchPos < text.length()) {
-        int quotePos = text.indexOf('"', searchPos);
-        if (quotePos == -1) break;
-
-        // 找到字符串起始，用正则匹配完整字符串
-        QRegularExpressionMatch match = stringRegex_.match(text, quotePos);
-        if (match.hasMatch()) {
-            int start = match.capturedStart();
-            int length = match.capturedLength();
-            QString captured = match.captured();
-
-            // 检查字符串是否闭合（以 " 结尾且引号未被转义）
-            // M12 fix: 计算末尾连续反斜杠数量，偶数个则引号未转义（已闭合），奇数个则引号被转义（未闭合）
-            if (captured.endsWith('"')) {
-                int backslashCount = 0;
-                for (int k = captured.length() - 2; k >= 0 && captured[k] == '\\'; --k) {
-                    backslashCount++;
-                }
-                if (backslashCount % 2 == 0) {
-                    // 引号未被转义，字符串已闭合
-                    stringRanges.append({start, length});
-                    searchPos = start + length;
-                } else {
-                    // 引号被转义，未闭合的多行字符串
-                    stringRanges.append({start, text.length() - start});
-                    currentlyInString = true;
-                    break;
-                }
-            } else {
-                // 未闭合的多行字符串
-                stringRanges.append({start, text.length() - start});
-                currentlyInString = true;
-                break;
-            }
-        } else {
-            searchPos = quotePos + 1;
-        }
+    if (inString && stringStart >= 0) {
+        stringRanges.append({stringStart, len - stringStart});
+    }
+    if (inBlockComment && commentStart >= 0) {
+        commentRanges.append({commentStart, len - commentStart});
     }
 
-    // 先应用字符串高亮（优先级最高，覆盖其他格式）
     for (const auto& range : stringRanges) {
         setFormat(range.first, range.second, stringFormat_);
     }
-
-    // 检查注释
-    QRegularExpressionMatch commentMatch = commentRegex_.match(text);
-    int commentStart = commentMatch.hasMatch() ? commentMatch.capturedStart() : text.length();
-
-    // 修复：如果注释起始位置在字符串范围内，则忽略（如 "http://example.com"）
-    for (const auto& range : stringRanges) {
-        if (commentStart >= range.first && commentStart < range.first + range.second) {
-            commentStart = text.length();
-            break;
-        }
+    for (const auto& range : commentRanges) {
+        setFormat(range.first, range.second, commentFormat_);
     }
 
-    // 应用其他规则（跳过字符串范围内的匹配）
     for (const auto& rule : rules_) {
-        if (rule.format == stringFormat_) continue;  // 字符串已处理
-
         QRegularExpressionMatchIterator it = rule.pattern.globalMatch(text);
         while (it.hasNext()) {
             QRegularExpressionMatch match = it.next();
             int matchStart = match.capturedStart();
             int matchEnd = match.capturedEnd();
 
-            // 跳过注释区域内的匹配
-            if (matchStart >= commentStart) continue;
-
-            // 跳过字符串范围内的匹配 (HL-1 fix)
-            bool inStringRange = false;
+            bool skip = false;
             for (const auto& range : stringRanges) {
                 if (matchStart >= range.first && matchEnd <= range.first + range.second) {
-                    inStringRange = true;
+                    skip = true;
                     break;
                 }
             }
-            if (inStringRange) continue;
+            if (skip) continue;
+
+            for (const auto& range : commentRanges) {
+                if (matchStart >= range.first && matchEnd <= range.first + range.second) {
+                    skip = true;
+                    break;
+                }
+            }
+            if (skip) continue;
 
             setFormat(matchStart, match.capturedLength(), rule.format);
         }
     }
 
-    // 注释高亮（最高优先级，覆盖一切）
-    if (commentMatch.hasMatch()) {
-        setFormat(commentStart, commentMatch.capturedLength(), commentFormat_);
-    }
-
-    // HL-3: 设置块状态以支持多行字符串
-    setCurrentBlockState(currentlyInString ? 1 : 0);
+    setCurrentBlockState(inString ? 1 : (inBlockComment ? 2 : 0));
 }

@@ -1,5 +1,7 @@
 #include "lexer/Lexer.h"
 #include <cctype>
+#include <charconv>
+#include <cmath>
 
 // ============================================================
 // Lexer 词法分析器实现
@@ -68,6 +70,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     tokens_.clear();
     comments_.clear();
     diagnostics_.clear();
+    interpDepth_ = 0;  // L-P1-1: 重置插值嵌套深度
 
     // 跳过 UTF-8 BOM（字节序标记）
     if (source_.size() >= 3 &&
@@ -197,7 +200,7 @@ void Lexer::scanToken() {
             // P0-2 fix: 同时检查 \r 和 \n，避免 CRLF 下 advance() 消耗 \r\n 后
             // peek() 跳过 \n 导致注释吞掉下一行内容
             while (!isAtEnd() && peek() != '\n' && peek() != '\r') advance();
-            std::string commentText(source_.substr(commentStart, current_ - commentStart));
+            std::string commentText(source_, commentStart, current_ - commentStart);
             Token tok;
             tok.type = TokenType::TK_LINE_COMMENT;
             tok.lexeme = commentText;
@@ -225,7 +228,7 @@ void Lexer::scanToken() {
                 errorToken("未终止的块注释", startLine, startCol);
                 return;
             }
-            std::string commentText(source_.substr(commentStart, current_ - commentStart));
+            std::string commentText(source_, commentStart, current_ - commentStart);
             Token tok;
             tok.type = TokenType::TK_BLOCK_COMMENT;
             tok.lexeme = commentText;
@@ -300,7 +303,7 @@ void Lexer::identifier() {
                           || peek() == '_')) {
         advance();
     }
-    std::string text(source_.substr(start_, current_ - start_));
+    std::string text(source_, start_, current_ - start_);
 
     // #10 fix: 保留 __ 前缀给编译器内部使用（__blk_save_*, __wb_idx_*）
     if (text.size() >= 2 && text[0] == '_' && text[1] == '_') {
@@ -343,7 +346,7 @@ void Lexer::number() {
         while (!isAtEnd() && std::isalnum(static_cast<unsigned char>(peek()))) {
             advance();
         }
-        std::string text(source_.substr(start_, current_ - start_));
+        std::string text(source_, start_, current_ - start_);
         errorToken("不支持 " + std::string(1, prefix) + " 前缀字面量: " + text + "，请使用十进制表示");
         return;
     }
@@ -378,7 +381,7 @@ void Lexer::number() {
             advance(); // 消耗符号
         }
         if (isAtEnd() || !std::isdigit(static_cast<unsigned char>(peek()))) {
-            errorToken("科学计数法格式错误: " + std::string(source_.substr(start_, current_ - start_)));
+            errorToken("科学计数法格式错误: " + std::string(source_, start_, current_ - start_));
             return;
         }
         while (!isAtEnd() && std::isdigit(static_cast<unsigned char>(peek()))) {
@@ -386,25 +389,30 @@ void Lexer::number() {
         }
     }
 
-    std::string text(source_.substr(start_, current_ - start_));
+    std::string text(source_, start_, current_ - start_);
 
     if (isFloat) {
-        try {
-            double val = std::stod(text);
-            addToken(TokenType::TK_FLOAT_LIT, std::move(text), Value(val));
-        } catch (const std::out_of_range&) {
+        // L-P1-3 fix: 使用 std::from_chars 替代 std::stod，locale-independent，
+        // 避免系统 locale 用 ',' 作小数点时 "1.5" 解析错误
+        double val = 0.0;
+        auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), val);
+        if (ec == std::errc::result_out_of_range) {
             errorToken("浮点数溢出: " + text);
-        } catch (const std::invalid_argument&) {
+        } else if (ec != std::errc() || ptr != text.data() + text.size()) {
             errorToken("浮点数格式错误: " + text);
+        } else {
+            addToken(TokenType::TK_FLOAT_LIT, std::move(text), Value(val));
         }
     } else {
-        try {
-            long long val = std::stoll(text);
-            addToken(TokenType::TK_INT_LIT, std::move(text), Value(static_cast<int64_t>(val)));
-        } catch (const std::out_of_range&) {
+        // L-P1-3 fix: 使用 std::from_chars 替代 std::stoll，locale-independent
+        int64_t val = 0;
+        auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), val);
+        if (ec == std::errc::result_out_of_range) {
             errorToken("整数溢出: " + text);
-        } catch (const std::invalid_argument&) {
+        } else if (ec != std::errc() || ptr != text.data() + text.size()) {
             errorToken("整数格式错误: " + text);
+        } else {
+            addToken(TokenType::TK_INT_LIT, std::move(text), Value(val));
         }
     }
 }
@@ -426,12 +434,18 @@ void Lexer::string(bool isInterp) {
     while (!isAtEnd() && peek() != '"') {
         // F7: 检测插值起始 {
         if (peek() == '{') {
+            // L-P1-1: 插值嵌套深度检查，防止栈溢出
+            if (interpDepth_ >= MAX_INTERP_DEPTH) {
+                errorToken("字符串插值嵌套过深（最大 " + std::to_string(MAX_INTERP_DEPTH) + " 层）", startLine, startCol);
+                return;
+            }
+            interpDepth_++;
             // 发出前面的文本片段（TK_STRING_PART 表示插值字符串的一部分）
             TokenType partType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
             // 如果是插值字符串的第一个片段，用 TK_STRING_LIT；后续片段用 TK_STRING_PART
             // 但为简化 Parser 逻辑，统一：插值字符串中所有文本片段都用 TK_STRING_PART，
             // 仅当整个字符串无插值时用 TK_STRING_LIT（由下方闭合处判断）
-            std::string text(source_.substr(start_, current_ - start_));
+            std::string text(source_, start_, current_ - start_);
             tokens_.emplace_back(partType, std::move(text), Value(value), startLine, startCol);
 
             // 消耗 {
@@ -477,9 +491,13 @@ void Lexer::string(bool isInterp) {
                 }
             }
             if (braceDepth > 0) {
+                interpDepth_--;  // L-P1-1: 错误退出时也减少深度，保持计数器一致
                 errorToken("未终止的插值表达式（缺少 }）", startLine, startCol);
                 return;
             }
+
+            // L-P1-1: 本层插值已闭合，减少深度
+            interpDepth_--;
 
             // 继续扫描字符串剩余部分（标记为插值片段）
             start_ = current_;
@@ -530,18 +548,18 @@ void Lexer::string(bool isInterp) {
 
     // F7: 如果是插值字符串的后续片段，用 TK_STRING_PART；否则用 TK_STRING_LIT
     TokenType finalType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
-    std::string text(source_.substr(start_, current_ - start_));
+    std::string text(source_, start_, current_ - start_);
     tokens_.emplace_back(finalType, std::move(text), Value(value), startLine, startCol);
 }
 
 void Lexer::addToken(TokenType type) {
-    std::string text(source_.substr(start_, current_ - start_));
+    std::string text(source_, start_, current_ - start_);
     int col = static_cast<int>(start_ - lineStart_) + 1;
     tokens_.emplace_back(type, std::move(text), Value::nullValue(), line_, col);
 }
 
 void Lexer::addToken(TokenType type, const Value& literal) {
-    std::string text(source_.substr(start_, current_ - start_));
+    std::string text(source_, start_, current_ - start_);
     int col = static_cast<int>(start_ - lineStart_) + 1;
     tokens_.emplace_back(type, std::move(text), literal, line_, col);
 }

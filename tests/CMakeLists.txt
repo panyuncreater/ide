@@ -28,7 +28,11 @@ if(NOT TARGET minilang_core)
         ${MINILANG_ROOT_DIR}/parser/Parser.cpp
         ${MINILANG_ROOT_DIR}/interpreter/Environment.cpp
         ${MINILANG_ROOT_DIR}/interpreter/Interpreter.cpp
+        ${MINILANG_ROOT_DIR}/interpreter/InterpreterCalls.cpp
+        ${MINILANG_ROOT_DIR}/interpreter/InterpreterClasses.cpp
+        ${MINILANG_ROOT_DIR}/interpreter/InterpreterModules.cpp
         ${MINILANG_ROOT_DIR}/interpreter/BuiltinMethods.cpp
+        ${MINILANG_ROOT_DIR}/interpreter/Value.cpp
         ${MINILANG_ROOT_DIR}/debug/DebugController.cpp
         ${MINILANG_ROOT_DIR}/compiler/Compiler.cpp
         ${MINILANG_ROOT_DIR}/compiler/VM.cpp
@@ -40,6 +44,9 @@ if(NOT TARGET minilang_core)
         ${MINILANG_ROOT_DIR}/common
     )
     target_link_libraries(minilang_core PUBLIC Qt6::Core Qt6::Widgets)
+
+    # S4 fix: 预编译头（PCH）—— 与父项目保持一致
+    target_precompile_headers(minilang_core PRIVATE ${MINILANG_ROOT_DIR}/common/pch.h)
 
     if(MSVC)
         target_compile_options(minilang_core PRIVATE /W3 /utf-8 /EHsc /permissive- /wd4996)

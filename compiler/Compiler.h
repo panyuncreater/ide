@@ -8,6 +8,7 @@
 #include "compiler/Bytecode.h"
 #include "Diagnostic.h"
 #include "interpreter/Visitor.h"  // 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式
+#include "common/RuntimeLimits.h"
 
 // ============================================================
 // Compiler 字节码编译器
@@ -48,7 +49,7 @@ private:
     int blockSaveCounter_ = 0;  // L11 fix: 块作用域保存计数器（成员变量，编译间重置）
     // P1 fix: 编译递归深度计数器，防止深度嵌套 AST 导致 C++ 栈溢出
     int compileDepth_ = 0;
-    static constexpr int MAX_COMPILE_DEPTH = 512;
+    static constexpr int MAX_COMPILE_DEPTH = RuntimeLimits::MAX_COMPILE_DEPTH;
     std::string currentClassName_;  // B1 fix: 当前正在编译的类名（供 OP_SUPER_CALL 编码类上下文）
     std::unordered_set<std::string> topLevelGlobals_;  // VMBUG-1: 顶层（非块/非函数）var 声明的全局变量名集合
 

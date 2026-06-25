@@ -37,7 +37,8 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
     painter.fillRect(event->rect(), bgColor);
 
     // 字体只需设置一次（移出循环避免每行重建）
-    QFont lineFont("Consolas", 10);
+    // P2 fix: 使用 static const 避免 paintEvent 每次重绘都构造 QFont
+    static const QFont lineFont("Consolas", 10);
     painter.setFont(lineFont);
 
     QTextBlock block = codeEditor->firstVisibleBlock();
@@ -455,10 +456,12 @@ int countBracesInLine(const QString& text, bool& inBlockComment) {
 
 bool CodeEditor::isFoldable(const QTextBlock& block) const {
     if (!block.isValid()) return false;
-    // P2 fix: 从文档开头追踪块注释状态，避免跨行块注释导致 brace 计数错误
+    // P2 fix: 使用语法高亮器的块状态 (userState) 判断是否处于块注释中，O(1) 而非 O(N)
+    // 状态 2 = 块注释内（由 SyntaxHighlighter 设置）
     bool inBlockComment = false;
-    for (QTextBlock b = document()->begin(); b.isValid() && b.blockNumber() < block.blockNumber(); b = b.next()) {
-        countBracesInLine(b.text(), inBlockComment);
+    QTextBlock prev = block.previous();
+    if (prev.isValid() && prev.userState() == 2) {
+        inBlockComment = true;
     }
     int depth = countBracesInLine(block.text(), inBlockComment);
     return depth > 0;
@@ -471,10 +474,11 @@ bool CodeEditor::isFolded(int blockNumber) const {
 int CodeEditor::foldEndBlock(const QTextBlock& startBlock) const {
     if (!startBlock.isValid()) return -1;
 
-    // P2 fix: 从文档开头追踪块注释状态，避免跨行块注释导致 brace 计数错误
+    // P2 fix: 使用语法高亮器的块状态 (userState) 判断是否处于块注释中，O(1) 而非 O(N)
     bool inBlockComment = false;
-    for (QTextBlock b = document()->begin(); b.isValid() && b.blockNumber() < startBlock.blockNumber(); b = b.next()) {
-        countBracesInLine(b.text(), inBlockComment);
+    QTextBlock prev = startBlock.previous();
+    if (prev.isValid() && prev.userState() == 2) {
+        inBlockComment = true;
     }
     int depth = countBracesInLine(startBlock.text(), inBlockComment);
     if (depth <= 0) return -1;

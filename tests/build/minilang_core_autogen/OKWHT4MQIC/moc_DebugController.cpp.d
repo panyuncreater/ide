@@ -1,4 +1,5 @@
 C:/Users/v/Desktop/ide/ide/tests/build/minilang_core_autogen/OKWHT4MQIC/moc_DebugController.cpp: C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
+  C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \

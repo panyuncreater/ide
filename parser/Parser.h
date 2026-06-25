@@ -7,6 +7,7 @@
 #include "lexer/Token.h"
 #include "ast/ASTNode.h"
 #include "Diagnostic.h"
+#include "common/RuntimeLimits.h"
 
 // ============================================================
 // Parser 语法分析器
@@ -42,8 +43,8 @@ private:
     DiagnosticBag diagnostics_;      // 诊断收集器
     int parseDepth_ = 0;             // P15 fix: 递归深度计数器
     int blockDepth_ = 0;             // P0-1 fix: 块嵌套深度计数器
-    static constexpr int MAX_PARSE_DEPTH = 512;  // P15 fix: 最大递归深度
-    static constexpr int MAX_BLOCK_DEPTH = 256;  // P0-1 fix: 最大块嵌套深度
+    static constexpr int MAX_PARSE_DEPTH = RuntimeLimits::MAX_PARSE_DEPTH;
+    static constexpr int MAX_BLOCK_DEPTH = RuntimeLimits::MAX_BLOCK_DEPTH;
 
     // ---- 辅助方法 ----
 

@@ -379,10 +379,19 @@ static bool needsParens(ASTNode* child, BinOpType parentOpType, bool isRight) {
         } else {
             // 左结合：SUB/DIV/MOD 不满足结合律，右操作数同优先级子表达式必须加括号
             // 例: a-(b+c) ≠ a-b+c, a/(b*c) ≠ a/b*c, a%(b-c) ≠ a%b-c
-            if (isRight && (parentOpType == BinOpType::BIN_SUB ||
-                            parentOpType == BinOpType::BIN_DIV ||
-                            parentOpType == BinOpType::BIN_MOD)) {
-                return true;
+            // F-P2 fix: MUL 的右操作数为 DIV/MOD 也需括号，因为整数乘法不对整除/取模分配律
+            // 例: a*(b/c) ≠ a*b/c, a*(b%c) ≠ a*b%c
+            if (isRight) {
+                if (parentOpType == BinOpType::BIN_SUB ||
+                    parentOpType == BinOpType::BIN_DIV ||
+                    parentOpType == BinOpType::BIN_MOD) {
+                    return true;
+                }
+                if (parentOpType == BinOpType::BIN_MUL &&
+                    (childBin->opType == BinOpType::BIN_DIV ||
+                     childBin->opType == BinOpType::BIN_MOD)) {
+                    return true;
+                }
             }
             return false;   // ADD/MUL 满足结合律，同优先级无需括号
         }
@@ -553,7 +562,7 @@ std::string Formatter::formatForStmt(ForStmt& node) {
     if (node.condition) result += " " + formatNode(node.condition.get());
     result += ";";
     if (node.update) result += " " + formatNode(node.update.get());
-    result += " " + openBrace() + "\n";
+    result += ")" + openBrace() + "\n";
     currentIndent_++;
     if (auto* block = dynamic_cast<Block*>(node.body.get())) {
         result += formatBlock(*block);

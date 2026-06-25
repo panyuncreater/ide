@@ -605,7 +605,7 @@ Value Compiler::visitForStmt(ForStmt& node) {
     // continue 目标：有 update 时跳到 updateStart，否则跳到 loopStart
     // break 目标：循环编译完成后回填（跳过出口 OP_POP）
     bool hasUpdate = (node.update != nullptr);
-    loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, hasUpdate, 0});
+    loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, hasUpdate, 0, tryDepth_});
 
     // 编译循环体
     compileStatement(node.body.get());
@@ -690,6 +690,10 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     // C-P2-8 fix: 保存当前函数已收集的 upvalue 列表和名称映射（嵌套函数编译后会清空它们）
     std::vector<UpvalueDesc> savedCurrentUpvalues = std::move(currentUpvalues_);
     std::unordered_map<std::string, int> savedCurrentUpvalueNames = std::move(currentUpvalueNames_);
+    // C-P0-1/C-P0-3 fix: 保存并清空循环栈和 try 深度，防止内层函数中的 break/continue/try
+    // 污染外层函数的循环上下文和 try 帧计数
+    std::vector<LoopContext> savedLoopStack = std::move(loopStack_);
+    int savedTryDepth = tryDepth_;
 
     // 如果当前在函数内，将当前函数的局部变量保存为外层局部变量（供嵌套函数检测闭包捕获）
     if (inFunction_) {
@@ -717,6 +721,9 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     currentUpvalues_.clear();  // VM-05/06: 新的 upvalue 列表
     currentUpvalueNames_.clear(); // VM-05/06: 新的 upvalue 名称映射
     inFunction_ = true;
+    // C-P0-1/C-P0-3 fix: 函数体的循环栈和 try 深度从 0 开始
+    loopStack_.clear();
+    tryDepth_ = 0;
 
     // 编译参数到局部变量槽位
     // C-P1-2 fix: 参数数量上限 255（uint8_t 编码限制）
@@ -737,6 +744,9 @@ Value Compiler::visitFunDecl(FunDecl& node) {
         // C-P2-8 fix: 恢复当前函数的 upvalue 列表和名称映射
         currentUpvalues_ = std::move(savedCurrentUpvalues);
         currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
+        // C-P0-1/C-P0-3 fix: 恢复循环栈和 try 深度
+        loopStack_ = std::move(savedLoopStack);
+        tryDepth_ = savedTryDepth;
         return Value::nullValue();
     }
     for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
@@ -835,6 +845,9 @@ Value Compiler::visitFunDecl(FunDecl& node) {
     // C-P2-8 fix: 恢复当前函数的 upvalue 列表和名称映射（chunk_.upvalues 已 move 走内嵌函数的 upvalue）
     currentUpvalues_ = std::move(savedCurrentUpvalues);
     currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
+    // C-P0-1/C-P0-3 fix: 恢复循环栈和 try 深度
+    loopStack_ = std::move(savedLoopStack);
+    tryDepth_ = savedTryDepth;
 
     // 在主 chunk 中 emit OP_CLOSURE（扩展格式：含 upvalue 描述符）
     uint16_t nameIdx = identifierIndex(node.name);
@@ -955,8 +968,10 @@ Value Compiler::visitBreakStmt(BreakStmt& node) {
         error("break 只能在循环体内使用", node.line, 0);
         return Value::nullValue();
     }
-    // P0-4 fix: break 跳出 try 块时需发射 OP_TRY_END 弹出 tryStack_ handler
-    for (int i = 0; i < tryDepth_; ++i) {
+    // C-P0-2 fix: 只弹出循环内部的 try handler（与 continue 一致），
+    // 之前使用 tryDepth_（全局深度）会错误弹出入层函数/外层循环的 try 帧
+    int tryDepthInLoop = tryDepth_ - loopStack_.back().tryDepthAtStart;
+    for (int i = 0; i < tryDepthInLoop; ++i) {
         chunk_.writeOp(OpCode::OP_TRY_END, node.line);
     }
     // 发射 OP_JUMP，目标在循环编译完成后回填
@@ -1447,6 +1462,9 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
         std::unordered_map<std::string, int> savedCurrentUpvalueNames = std::move(currentUpvalueNames_);
         std::vector<UpvalueDesc> savedOuterUpvalues = std::move(outerUpvalues_);
         std::unordered_map<std::string, int> savedOuterUpvalueNames = std::move(outerUpvalueNames_);
+        // C-P0-1/C-P0-3 fix: 保存并清空循环栈和 try 深度，方法编译不应污染外层
+        std::vector<LoopContext> savedLoopStack = std::move(loopStack_);
+        int savedTryDepth = tryDepth_;
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
         chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
@@ -1468,6 +1486,9 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
             outerUpvalueNames_.clear();
         }
         inFunction_ = true;
+        // C-P0-1/C-P0-3 fix: 方法体的循环栈和 try 深度从 0 开始
+        loopStack_.clear();
+        tryDepth_ = 0;
 
         // 局部变量映射：slot 0 = this，slot 1..N = 字段（含继承字段），slot N+1.. = 参数
         int slot = 0;
@@ -1498,6 +1519,9 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
             currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
             outerUpvalues_ = std::move(savedOuterUpvalues);
             outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
+            // C-P0-1/C-P0-3 fix: 恢复循环栈和 try 深度
+            loopStack_ = std::move(savedLoopStack);
+            tryDepth_ = savedTryDepth;
             continue;
         }
 
@@ -1579,6 +1603,9 @@ Value Compiler::visitClassDecl(ClassDecl& node) {
         currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
         outerUpvalues_ = std::move(savedOuterUpvalues);
         outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
+        // C-P0-1/C-P0-3 fix: 恢复循环栈和 try 深度
+        loopStack_ = std::move(savedLoopStack);
+        tryDepth_ = savedTryDepth;
     }
 
     // 主 chunk 中：发射 OP_CLASS_NEW（0 参数构造，字段由 OP_INIT_FIELD 设置）

@@ -198,6 +198,9 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
     isDebugRun_ = isDebug;
     isRunning_ = true;
 
+    // A-P1-1 fix: isRunning_=true 之后的代码若抛出异常，需回滚 isRunning_ 状态，
+    // 否则 UI 永久卡在"运行中"
+    try {
     // A-P1-1 fix: 非调试运行时清除残留断点，避免普通运行在调试会话后意外暂停
     // （DebugController::reset() 保留断点供下次调试复用，普通运行需显式清除）
     if (!isDebug) {
@@ -235,6 +238,17 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
         cleanupWorker();
         emit workerFinished(wasDebug);
     });
+    } catch (...) {
+        isRunning_ = false;
+        isDebugRun_ = false;
+        interpreter_.setDebugMode(false);
+        interpreter_.restoreReplState();
+        debugger_->reset();
+        worker_.reset();
+        workerThread_.reset();
+        setupMainCallbacks();
+        throw;
+    }
 
     return true;
 }

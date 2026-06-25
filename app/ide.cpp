@@ -459,10 +459,11 @@ void Ide::onDebug() {
             conditions[line] = cond;
         }
     }
-    controller_->setupDebug(breakpoints, conditions);
 
     // A-P1-5 fix: startWorker 失败时回滚 UI 状态，避免界面卡在"运行中"
+    // P2 fix: setupDebug 也纳入异常保护，防止抛出时 UI 卡在"运行中"
     try {
+        controller_->setupDebug(breakpoints, conditions);
         controller_->startWorker();
     } catch (const std::exception& e) {
         outputPanel_->appendError(QString("启动调试失败: %1").arg(e.what()));
@@ -476,23 +477,48 @@ void Ide::onDebug() {
 }
 
 void Ide::onStepIn() {
-    controller_->setBreakpoints(codeEditor_->getBreakpoints());
-    controller_->stepIn();
+    // P2 fix: 异常保护，防止 controller 抛出时 UI 状态不一致
+    try {
+        controller_->setBreakpoints(codeEditor_->getBreakpoints());
+        controller_->stepIn();
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("单步进入失败: %1").arg(e.what()));
+    } catch (...) {
+        outputPanel_->appendError("单步进入发生未知异常");
+    }
 }
 
 void Ide::onStepOver() {
-    controller_->setBreakpoints(codeEditor_->getBreakpoints());
-    controller_->stepOver();
+    try {
+        controller_->setBreakpoints(codeEditor_->getBreakpoints());
+        controller_->stepOver();
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("单步跳过失败: %1").arg(e.what()));
+    } catch (...) {
+        outputPanel_->appendError("单步跳过发生未知异常");
+    }
 }
 
 void Ide::onStepOut() {
-    controller_->setBreakpoints(codeEditor_->getBreakpoints());
-    controller_->stepOut();
+    try {
+        controller_->setBreakpoints(codeEditor_->getBreakpoints());
+        controller_->stepOut();
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("单步跳出失败: %1").arg(e.what()));
+    } catch (...) {
+        outputPanel_->appendError("单步跳出发生未知异常");
+    }
 }
 
 void Ide::onResume() {
-    controller_->setBreakpoints(codeEditor_->getBreakpoints());
-    controller_->resume();
+    try {
+        controller_->setBreakpoints(codeEditor_->getBreakpoints());
+        controller_->resume();
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("继续执行失败: %1").arg(e.what()));
+    } catch (...) {
+        outputPanel_->appendError("继续执行发生未知异常");
+    }
 }
 
 void Ide::onStop() {
@@ -504,10 +530,17 @@ void Ide::onClearOutput() {
 }
 
 void Ide::onPausedAt(int line) {
-    codeEditor_->setCurrentLine(line);
-    updateDebugInfo();
-    // GUI-09 fix: 暂停时自动切换到调试面板
-    bottomTabWidget_->setCurrentWidget(debugPanel_);
+    // P2 fix: 异常保护调试回调
+    try {
+        codeEditor_->setCurrentLine(line);
+        updateDebugInfo();
+        // GUI-09 fix: 暂停时自动切换到调试面板
+        bottomTabWidget_->setCurrentWidget(debugPanel_);
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("调试信息更新失败: %1").arg(e.what()));
+    } catch (...) {
+        outputPanel_->appendError("调试信息更新发生未知异常");
+    }
 }
 
 void Ide::onWorkerFinished(bool wasDebug) {

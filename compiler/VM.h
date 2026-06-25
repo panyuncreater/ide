@@ -7,6 +7,7 @@
 #include "compiler/Bytecode.h"
 #include "interpreter/Value.h"
 #include "Diagnostic.h"
+#include "common/RuntimeLimits.h"
 
 // ============================================================
 // VM 虚拟机（简单栈机）
@@ -184,7 +185,8 @@ private:
     std::unordered_map<std::string, BytecodeChunk> functionChunks_; // 函数字节码
 
     // P3 fix: 函数调用内联缓存（按常量池字符串指针匹配，避免每次 hash 查找）
-    static constexpr int CALL_CACHE_SIZE = 8;
+    // S1 fix: 增大到 32 项，减少多函数场景的缓存抖动
+    static constexpr int CALL_CACHE_SIZE = 32;
     struct CallCacheEntry {
         const std::string* namePtr = nullptr;
         const BytecodeChunk* chunkPtr = nullptr;
@@ -193,7 +195,8 @@ private:
     int callCacheNextSlot_ = 0;  // P3: round-robin 替换指针
 
     // P2 fix: 全局变量内联缓存
-    static constexpr int GLOBAL_CACHE_SIZE = 8;
+    // S1 fix: 增大到 32 项
+    static constexpr int GLOBAL_CACHE_SIZE = 32;
     struct GlobalCacheEntry {
         const std::string* namePtr = nullptr;
         Value* valuePtr = nullptr;      // 指向 globals_ 中的 Value（rehash 后失效）
@@ -202,8 +205,10 @@ private:
     GlobalCacheEntry globalCache_[GLOBAL_CACHE_SIZE] = {};
     int globalCacheNextSlot_ = 0;
     // P7: ASCII 字符串索引缓存（记住上次检查过的字符串，避免循环中重复 O(n) 扫描）
-    // P1 fix: 改为缓存字符串内容而非裸指针，消除 use-after-free 风险
-    std::string lastAsciiStrContent_;
+    // S5 fix: 改为缓存 StringData* 指针（shared_ptr 管理的对象地址稳定），
+    //         O(1) 指针比较替代 O(n) 字符串内容比较；miss 时无需拷贝整个字符串
+    //         安全性：StringData 由 shared_ptr 持有，只要 Value 在栈上指针就有效
+    const void* lastAsciiStrPtr_ = nullptr;
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
     // VM-05/06: 闭包支持
@@ -229,16 +234,13 @@ private:
         size_t frameIndex;    // 所属调用帧索引
     };
     std::vector<TryHandler> tryStack_;              // try 处理器栈
-    static constexpr size_t MAX_STACK_SIZE = 1024;  // 栈最大深度
-    static constexpr size_t MAX_FRAMES = 256;       // 调用帧最大深度
-    // S-02 fix: 总指令执行预算，防止 while(true){} 字节码导致 DoS
-    // P0-13 fix: 从 5 亿降至 5000 万，将单次执行 CPU 占用从 3-5 秒降至 ~0.5 秒
-    // P1 fix: 从 5000 万降至 4000 万，确保紧凑循环（~4 指令/次）不超过 1000 万迭代上限
-    static constexpr int64_t MAX_INSTRUCTIONS = 40000000;  // 4000 万条指令（≤1000 万次循环迭代）
+    // S1 fix: 统一引用 common/RuntimeLimits.h，消除重复定义
+    static constexpr size_t MAX_STACK_SIZE = RuntimeLimits::MAX_STACK_SIZE;
+    static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
+    static constexpr int64_t MAX_INSTRUCTIONS = RuntimeLimits::MAX_INSTRUCTIONS;
     // P1 fix: stepOnce 累计指令计数器，防止通过循环调用 stepOnce 绕过 DoS 防护
     int64_t stepInstructionCount_ = 0;
-    // 继承链最大深度（与 Interpreter 的 MAX_INHERITANCE_DEPTH 对齐）
-    static constexpr int MAX_INHERITANCE_DEPTH = 64;
+    static constexpr int MAX_INHERITANCE_DEPTH = RuntimeLimits::MAX_INHERITANCE_DEPTH;
 
     /// 栈操作
     void push(const Value& val);
@@ -353,6 +355,20 @@ private:
     VMResult executeContainerOps(OpCode op, size_t& ip);
     VMResult executeWritebackOps(OpCode op, size_t& ip);
     VMResult executeMiscOps(OpCode op, size_t& ip);
+
+    // ---- S1 fix: executeCallOps 拆分为 8 个独立方法（原 978 行 → 每个方法 < 200 行）----
+    /// OP_RETURN 执行：方法调用返回、字段同步、栈帧弹出
+    VMResult executeReturn(size_t& ip);
+    /// OP_CALL / OP_CALL_EXPR 执行：函数调用
+    VMResult executeCall(size_t& ip, bool isExpr);
+    /// OP_SUPER_CALL / OP_METHOD_CALL 执行：方法调用（含 super）
+    VMResult executeMethodCall(size_t& ip, OpCode op);
+    /// OP_CLOSURE 执行：创建闭包值
+    VMResult executeClosure(size_t& ip, OpCode op);
+    /// OP_CLASS_NEW 执行：构造类实例
+    VMResult executeClassNew(size_t& ip, OpCode op);
+    /// OP_DEFINE_CLASS 执行：注册类信息
+    VMResult executeDefineClass(size_t& ip, OpCode op);
 
     /// 执行单条指令的内部实现（供 execute() 和 stepOnce() 共用）
     VMResult executeOneInstruction();

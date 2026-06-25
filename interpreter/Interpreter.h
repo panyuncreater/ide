@@ -11,74 +11,14 @@
 #include "interpreter/Value.h"
 #include "interpreter/Environment.h"
 #include "interpreter/Visitor.h"
+#include "interpreter/RuntimeExceptions.h"  // S6 fix: 异常类/CallFrame 提取到独立头文件
 #include "ast/ASTNode.h"
 #include "Diagnostic.h"
+#include "common/RuntimeLimits.h"
 
 // ============================================================
-// 运行时错误异常
+// Interpreter 解释器
 // ============================================================
-
-/// 运行时错误
-class RuntimeError : public std::runtime_error {
-public:
-    int line;
-    int column;
-
-    RuntimeError(const std::string& msg, int ln = 0, int col = 0)
-        : std::runtime_error(msg), line(ln), column(col) {}
-};
-
-/// return 语句专用异常（用于跳出函数体）
-class ReturnException : public std::runtime_error {
-public:
-    Value returnValue;
-
-    ReturnException(Value val)
-        : std::runtime_error("return"), returnValue(std::move(val)) {}
-};
-
-/// break 语句专用异常（用于跳出循环体）
-class BreakException : public std::runtime_error {
-public:
-    BreakException() : std::runtime_error("break") {}
-};
-
-/// continue 语句专用异常（用于跳到循环下一次迭代）
-class ContinueException : public std::runtime_error {
-public:
-    ContinueException() : std::runtime_error("continue") {}
-};
-
-/// throw 语句专用异常（用于 try/catch 捕获）
-class ThrowException : public std::runtime_error {
-public:
-    Value thrownValue;
-
-    ThrowException(Value val)
-        : std::runtime_error("throw"), thrownValue(std::move(val)) {}
-};
-
-/// 调试终止异常（用户点击停止按钮时抛出）
-class DebugStopException : public std::exception {
-public:
-    const char* what() const noexcept override { return "调试终止"; }
-};
-
-// ============================================================
-// 调用帧
-// ============================================================
-
-/// 函数调用帧
-struct CallFrame {
-    std::string functionName;                      // 函数名
-    std::shared_ptr<Environment> env = nullptr;     // 该帧对应的环境
-    int line = 0;                                   // 调用行号
-    int depth = 0;                                  // 调用深度
-
-    CallFrame() = default;
-    CallFrame(const std::string& name, std::shared_ptr<Environment> e, int ln, int d)
-        : functionName(name), env(e), line(ln), depth(d) {}
-};
 
 // ============================================================
 // DebugController 前向声明
@@ -202,13 +142,11 @@ public:
     Value visitExportStmt(ExportStmt& node) override;
 
 private:
-    // 运行时限制常量（替代散布在代码中的魔法数字）
-    // S-10 fix: 与 VM 的 MAX_FRAMES=256 对齐，避免正常递归程序被误杀
-    static constexpr int MAX_RECURSION_DEPTH = 256;      // 最大递归深度
-    static constexpr int MAX_INHERITANCE_DEPTH = 64;    // 最大继承链深度
-    // S-01 fix: 循环迭代次数上限，防止 while(true){} 等无限循环导致 DoS
-    // P0-13 fix: 从 1 亿降至 1000 万，将单次循环 CPU 占用从 2-3 秒降至 ~0.3 秒
-    static constexpr int64_t MAX_LOOP_ITERATIONS = 10000000;  // 1000 万次（约 0.3 秒）
+    // 运行时限制常量 — 统一引用 common/RuntimeLimits.h
+    // S1 fix: 消除散布在 7 个文件的重复定义，避免对齐遗漏
+    static constexpr int MAX_RECURSION_DEPTH = RuntimeLimits::MAX_RECURSION_DEPTH;
+    static constexpr int MAX_INHERITANCE_DEPTH = RuntimeLimits::MAX_INHERITANCE_DEPTH;
+    static constexpr int64_t MAX_LOOP_ITERATIONS = RuntimeLimits::MAX_LOOP_ITERATIONS;
 
     std::shared_ptr<Environment> globalEnv_;        // 全局环境
     std::shared_ptr<Environment> currentEnv_;       // 当前环境
@@ -244,6 +182,16 @@ private:
     std::unordered_map<std::string, std::unordered_set<std::string>> savedModuleExports_;
     std::unordered_set<std::string> savedExportedNames_;
     std::vector<std::string> savedModuleLoadingStack_;
+
+    // S2 fix: RAII 递归深度守卫 — 统一 constructClassInstance/callNamedFunction/callInstanceMethod
+    // 的递归深度管理，消除手动递减在异常路径下的遗漏风险
+    struct RecursionGuard {
+        int& depth;
+        bool dismissed = false;
+        explicit RecursionGuard(int& d) : depth(d) { ++depth; }
+        ~RecursionGuard() { if (!dismissed) --depth; }
+        void dismiss() { dismissed = true; }
+    };
 
     /// 执行单个节点
     Value evaluate(ASTNode* node);

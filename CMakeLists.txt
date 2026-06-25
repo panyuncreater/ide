@@ -31,7 +31,11 @@ set(MINILANG_CORE_SOURCES
     parser/Parser.cpp
     interpreter/Environment.cpp
     interpreter/Interpreter.cpp
+    interpreter/InterpreterCalls.cpp
+    interpreter/InterpreterClasses.cpp
+    interpreter/InterpreterModules.cpp
     interpreter/BuiltinMethods.cpp
+    interpreter/Value.cpp
     debug/DebugController.cpp
     compiler/Compiler.cpp
     compiler/VM.cpp
@@ -85,6 +89,10 @@ target_include_directories(minilang_core PUBLIC
 )
 
 target_link_libraries(minilang_core PUBLIC Qt6::Core)
+
+# S4 fix: 预编译头（PCH）—— 包含常用标准库头文件，减少重复解析
+# 仅用于 minilang_core（10 个 .cpp 共享相同的标准库头文件）
+target_precompile_headers(minilang_core PRIVATE common/pch.h)
 
 if(MSVC)
     target_compile_options(minilang_core PRIVATE

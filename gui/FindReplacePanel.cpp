@@ -261,7 +261,8 @@ void FindReplacePanel::onReplaceAll() {
 
     int replaceCount = 0;
     cursor.movePosition(QTextCursor::Start);
-    while (true) {
+    // P2 fix: 限制替换数量上限，防止超大文档阻塞 UI
+    while (replaceCount < 100000) {
         QTextCursor found = editor_->document()->find(findTextStr, cursor, flags);
         if (found.isNull()) break;
         cursor = found;
@@ -296,11 +297,16 @@ void FindReplacePanel::highlightMatches(const QString& text) {
         sel.format.setBackground(QColor(255, 255, 0, 100));  // 半透明黄色
         selections.append(sel);
         count++;
+        // P2 fix: 限制高亮匹配数量，防止大文档卡顿
+        if (count >= 1000) break;
     }
 
     editor_->setFindSelections(selections);
 
-    if (count > 0) {
+    if (count >= 1000) {
+        statusLabel_->setText(QString("匹配 %1+ 处").arg(count));
+        statusLabel_->setStyleSheet("color: gray;");
+    } else if (count > 0) {
         statusLabel_->setText(QString("匹配 %1 处").arg(count));
         statusLabel_->setStyleSheet("color: gray;");
     } else {
@@ -310,5 +316,6 @@ void FindReplacePanel::highlightMatches(const QString& text) {
 }
 
 void FindReplacePanel::clearHighlights() {
-    editor_->setExtraSelections(QList<QTextEdit::ExtraSelection>());
+    // P1 fix: 仅清除查找高亮，不要清除错误下划线和当前行高亮
+    editor_->clearFindSelections();
 }

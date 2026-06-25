@@ -7,6 +7,7 @@
 #include "lexer/Token.h"
 #include "interpreter/Visitor.h"
 #include "interpreter/Value.h"
+#include "common/RuntimeLimits.h"
 
 class ASTNode;
 class Block;
@@ -149,7 +150,7 @@ private:
     FormatOptions options_;
     int currentIndent_ = 0;      // 当前缩进级别
     int formatDepth_ = 0;        // D5 fix: 格式化递归深度计数器
-    static constexpr int MAX_FORMAT_DEPTH = 256;  // D5 fix: 最大嵌套深度
+    static constexpr int MAX_FORMAT_DEPTH = RuntimeLimits::MAX_FORMAT_DEPTH;
     std::vector<Token> comments_; // F1 fix: 注释 token 列表
     size_t commentIndex_ = 0;    // 当前注释游标
     std::string lastFormatResult_;  // 存储 visit* 方法的格式化结果

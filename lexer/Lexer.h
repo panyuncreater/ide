@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include "lexer/Token.h"
 #include "Diagnostic.h"
+#include "common/RuntimeLimits.h"
 
 // ============================================================
 // Lexer 词法分析器
@@ -40,9 +41,11 @@ private:
     std::vector<Token> comments_;   // 注释 Token 列表（从主流中分离，供 Formatter 使用）
     DiagnosticBag diagnostics_;      // 诊断收集器
 
-    // DoS 防护：源码大小上限和 Token 数量上限
-    static constexpr size_t MAX_SOURCE_SIZE = 10 * 1024 * 1024;  // 10MB
-    static constexpr size_t MAX_TOKEN_COUNT = 1000000;            // 100万 Token
+    // DoS 防护：源码大小上限和 Token 数量上限（统一引用 RuntimeLimits）
+    static constexpr size_t MAX_SOURCE_SIZE = RuntimeLimits::MAX_SOURCE_SIZE;
+    static constexpr size_t MAX_TOKEN_COUNT = RuntimeLimits::MAX_TOKEN_COUNT;
+    static constexpr int MAX_INTERP_DEPTH = RuntimeLimits::MAX_INTERP_DEPTH;
+    int interpDepth_ = 0;                                         // L-P1-1: 当前插值嵌套深度
 
     /// 获取当前字符（不前进）
     char peek() const;
