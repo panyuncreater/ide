@@ -385,6 +385,15 @@ public:
     // A2: 原地变异辅助方法 — 跳过 COW detach 当 refcount==1
     // ============================================================
 
+    /// 若独占拥有字符串数据（refcount==1），返回可修改指针；否则返回 nullptr
+    // PERF-06 fix: 字符串拼接路径用此判断独占所有权，原地 append 避免 O(n²) 分配。
+    std::string* tryGetMutableString() {
+        if (!isString()) return nullptr;
+        auto& ptr = std::get<4>(data_);
+        if (!ptr || ptr.use_count() != 1) return nullptr;
+        return &ptr->value;
+    }
+
     /// 若独占拥有数组数据（refcount==1），返回可修改指针；否则返回 nullptr
     std::vector<Value>* tryGetMutableArray() {
         if (!isArray()) return nullptr;
@@ -466,8 +475,12 @@ public:
         if (thisScalar || otherScalar) {
             return equalsImpl(other, nullptr, 0);
         }
-        std::unordered_set<const void*> visited;
-        return equalsImpl(other, &visited, 0);
+        // PERF-03 fix: thread_local 复用 visited set，避免每次 equals 调用堆分配 unordered_set。
+        // clear() 保留内部 bucket 数组（不释放），后续调用复用同一内存，消除反复 alloc/dealloc。
+        // 线程安全：thread_local 保证每线程独立；equalsImpl 仅递归调用自身（不回调 equals），无重入风险。
+        thread_local std::unordered_set<const void*> tlsVisited;
+        tlsVisited.clear();
+        return equalsImpl(other, &tlsVisited, 0);
     }
 
 private:
@@ -501,9 +514,12 @@ public:
         default:
             break;
         }
-        // 容器类型（数组/字典/实例）需要环检测
-        std::unordered_set<const void*> visited;
-        return toStringImpl(visited, 0);
+        // PERF-03/04 fix: 容器类型（数组/字典/实例）需要环检测
+        // thread_local 复用 visited set，避免每次 toString 调用堆分配 unordered_set。
+        // clear() 保留内部 bucket 数组，后续调用复用同一内存。
+        thread_local std::unordered_set<const void*> tlsVisited;
+        tlsVisited.clear();
+        return toStringImpl(tlsVisited, 0);
     }
 
 private:

@@ -82,21 +82,17 @@ void Ide::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
+
+    // QT-R-05 fix: 异步停止 worker 线程，避免 closeEvent 中 wait(3000) 阻塞 UI 3 秒。
+    // 若程序正在运行，设置 pendingClose_=true 并异步触发 stop，event->ignore() 暂不关闭。
+    // workerFinished 信号触发 onWorkerFinished，其中检测 pendingClose_ 后调用 close() 完成关闭。
     if (controller_->isRunning()) {
-        // 先停止调试器，让解释器通过 DebugStopException 正常退出
-        if (!controller_->stopForClose(3000)) {
-            // M5 fix: 线程未响应，弹窗让用户选择
-            auto ret = QMessageBox::warning(
-                this, tr("程序仍在运行"),
-                tr("程序未能在 3 秒内停止。强制终止可能导致数据丢失。\n是否强制终止？"),
-                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-            if (ret == QMessageBox::Yes) {
-                controller_->forceStop();
-            } else {
-                event->ignore();
-                return;
-            }
-        }
+        pendingClose_ = true;
+        // 异步停止：通过 debugger_->stop() 让 worker 通过 DebugStopException 正常退出
+        // 不调用 stopForClose（会阻塞），改用 forceStop 的协作式取消路径（非 terminate）
+        controller_->forceStop();
+        event->ignore();
+        return;
     }
     if (controller_->isVmRunning()) {
         onVmStop();
@@ -407,6 +403,9 @@ void Ide::initConnections() {
 
     connect(controller_, &IdeController::workerFinished, this, &Ide::onWorkerFinished);
 
+    // QT-R-01 fix: RUN 模式异步执行暂停时，通过信号通知 UI 更新
+    connect(controller_, &IdeController::vmRunPaused, this, &Ide::handleVmStepResult);
+
     // B6 bug fix: 移除未使用的 vmStepInfo 信号连接（全代码库无 emit，死代码）
 
     connect(controller_, &IdeController::diagnosticsReady, this, &Ide::displayDiagnostics);
@@ -562,6 +561,13 @@ void Ide::onWorkerFinished(bool wasDebug) {
     codeEditor_->clearCurrentLine();
     codeEditor_->clearErrorLines();  // L-新2 fix: 运行结束时清除错误标记
     replPanel_->setInputEnabled(true);
+
+    // QT-R-05 fix: 异步关闭路径 — 若 closeEvent 已设置 pendingClose_，
+    // worker 退出后触发窗口关闭（closeEvent 此时 isRunning()=false，直接 accept）
+    if (pendingClose_) {
+        pendingClose_ = false;
+        close();
+    }
 }
 
 // ============================================================
@@ -570,6 +576,11 @@ void Ide::onWorkerFinished(bool wasDebug) {
 
 void Ide::onFormat() {
     std::string source = codeEditor_->toPlainText().toStdString();
+
+    // QT-R-10 fix: 大文件格式化时显示等待光标，避免用户以为 UI 冻结。
+    // RAII 守卫确保所有 return 路径都恢复光标。
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } cursorGuard;
 
     // C9 fix: 使用统一前端管线
     auto pipelineResult = controller_->runFrontendPipeline(source);
@@ -633,6 +644,11 @@ void Ide::onFormat() {
 
 void Ide::onShowBytecode() {
     std::string source = codeEditor_->toPlainText().toStdString();
+
+    // QT-R-10 fix: 大文件字节码生成时显示等待光标，避免用户以为 UI 冻结。
+    // RAII 守卫确保所有 return 路径都恢复光标。
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } cursorGuard;
 
     // L15 fix: 清除编辑器中残留的错误行标记
     codeEditor_->clearErrorLines();
@@ -788,6 +804,16 @@ void Ide::onVmRun() {
         setVmStepActionsEnabled(true, /*running=*/false);
         return;
     }
+    // QT-R-01 fix: RUNNING 表示异步 RUN 已启动，等待 vmRunPaused 信号
+    if (result == IdeController::VmStepResult::RUNNING) {
+        // 异步运行中：禁用步进按钮，仅启用 Stop 按钮
+        vmStepAction_->setEnabled(false);
+        vmStepOverAction_->setEnabled(false);
+        vmStepOutAction_->setEnabled(false);
+        vmRunAction_->setEnabled(false);
+        vmStopAction_->setEnabled(true);
+        return;
+    }
     handleVmStepResult(result);
 }
 
@@ -796,6 +822,16 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
     switch (result) {
     case IdeController::VmStepResult::NOT_READY:
         setVmStepActionsEnabled(true, /*running=*/false);
+        return;
+
+    case IdeController::VmStepResult::RUNNING:
+        // QT-R-01 fix: 异步 RUN 已启动，不应走到这里（onVmRun 中已处理）
+        // 防御性处理：仅启用 Stop 按钮
+        vmStepAction_->setEnabled(false);
+        vmStepOverAction_->setEnabled(false);
+        vmStepOutAction_->setEnabled(false);
+        vmRunAction_->setEnabled(false);
+        vmStopAction_->setEnabled(true);
         return;
 
     case IdeController::VmStepResult::ERROR: {

@@ -9,6 +9,7 @@
 
 #include <QObject>
 #include <QString>
+#include <memory>
 
 #include "interpreter/Interpreter.h"
 #include "ast/ASTNode.h"
@@ -16,9 +17,11 @@
 class InterpreterWorker : public QObject {
     Q_OBJECT
 public:
-    // A-P2-9 fix: 移除未使用的 debugger_ 参数（debugger 已通过 interpreter_.setDebugger 设置）
-    InterpreterWorker(Interpreter& interp, Block& ast)
-        : interp_(interp), ast_(ast) {}
+    // MEM-01 fix: 改用 shared_ptr 持有 Interpreter，使 worker 线程共享所有权，
+    // IdeController 析构后 Interpreter 仍存活直到 worker 释放引用，避免悬垂引用。
+    // QT-R-03 fix: 改用 shared_ptr 持有 AST，避免主线程重新 parse 导致 worker 持有悬垂引用。
+    InterpreterWorker(std::shared_ptr<Interpreter> interp, std::shared_ptr<Block> ast)
+        : interp_(std::move(interp)), ast_(std::move(ast)) {}
 
 public slots:
     void run();
@@ -31,6 +34,6 @@ signals:
     void genericError(const QString& msg);
 
 private:
-    Interpreter& interp_;
-    Block& ast_;
+    std::shared_ptr<Interpreter> interp_;
+    std::shared_ptr<Block> ast_;
 };

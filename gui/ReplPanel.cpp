@@ -8,6 +8,7 @@
 #include <QTextCursor>
 #include <QTextCharFormat>
 #include <QColor>
+#include <future>  // QT-R-06 fix: std::async 异步执行
 #include <sstream>
 
 // ============================================================
@@ -42,9 +43,21 @@ ReplPanel::ReplPanel(QWidget* parent)
     outputArea_->append("输入 MiniLang 表达式或语句，按回车执行。");
     outputArea_->append("输入 'help' 查看帮助，输入 'clear' 清空输出。");
     outputArea_->append("");
+
+    // QT-R-06 fix: 用 QTimer 轮询 std::future 状态
+    // 替代 QtConcurrent（Qt6::Concurrent 模块未安装）
+    pollTimer_ = new QTimer(this);
+    pollTimer_->setInterval(50);  // 50ms 轮询间隔，足够响应
+    connect(pollTimer_, &QTimer::timeout, this, &ReplPanel::pollReplFuture);
 }
 
-ReplPanel::~ReplPanel() {}
+ReplPanel::~ReplPanel() {
+    // QT-R-06 fix: 析构时等待异步任务完成，避免悬垂访问
+    if (pollTimer_) pollTimer_->stop();
+    if (replFuture_.valid()) {
+        replFuture_.wait();
+    }
+}
 
 void ReplPanel::setController(IdeController* controller) {
     controller_ = controller;
@@ -167,10 +180,16 @@ void ReplPanel::executeLine(const QString& line) {
         return;
     }
 
+    // QT-R-06 fix: 若上一次异步执行尚未完成，拒绝新输入
+    if (replRunning_) {
+        appendError("上一次执行尚未完成，请稍候...");
+        return;
+    }
+
     // 确保语句以分号结尾（简单表达式除外）
     std::string source = line.toStdString();
 
-    // 词法分析
+    // 词法分析（主线程，轻量）
     Lexer lexer;
     std::vector<Token> tokens;
     try {
@@ -190,7 +209,7 @@ void ReplPanel::executeLine(const QString& line) {
         }
     }
 
-    // 语法分析
+    // 语法分析（主线程，轻量）
     Parser parser;
     std::unique_ptr<Block> ast;
     try {
@@ -203,22 +222,60 @@ void ReplPanel::executeLine(const QString& line) {
 
     if (!ast) return;
 
-    // 执行
-    try {
-        // PANEL-02 fix: 先保留 AST 再执行，确保异常时 classRegistry_/闭包 body 指针不悬空
-        // B6 fix: 通过 IdeController（业务层）间接调用，不直接持有 Interpreter
-        Block* rawAst = ast.get();
-        controller_->retainReplAst(std::move(ast));
-        Value result = controller_->executeRepl(*rawAst);
-        // 显示结果
-        // PANEL-03 fix: null 结果也打印
-        appendOutput(QString::fromStdString(result.toString()));
-    } catch (const RuntimeError& e) {
-        appendError(QString("运行时错误 (行 %1, 列 %2): %3")
-                        .arg(e.line).arg(e.column).arg(e.what()));
-    } catch (const std::exception& e) {
-        appendError(QString("错误: %1").arg(e.what()));
-    }
+    // QT-R-06 fix: 异步执行解释器，避免主线程阻塞。
+    // 词法/语法分析在主线程（轻量，<1ms），解释器执行可能耗时（如 while 循环）放后台。
+    // 用 std::async + QTimer 轮询替代 QtConcurrent（Qt6::Concurrent 未安装）。
+    // 异常在异步任务中捕获，通过 QMetaObject::invokeMethod 投递到主线程信号链。
+    // PANEL-02 fix: 先保留 AST 再执行，确保异常时 classRegistry_/闭包 body 指针不悬空
+    Block* rawAst = ast.get();
+    controller_->retainReplAst(std::move(ast));
+
+    // 标记执行中，禁用输入
+    replRunning_ = true;
+    setInputEnabled(false);
+
+    // 异步执行 executeRepl
+    IdeController* ctrl = controller_;  // 显式捕获
+    replFuture_ = std::async(std::launch::async, [ctrl, rawAst]() -> Value {
+        try {
+            return ctrl->executeRepl(*rawAst);
+        } catch (const RuntimeError& e) {
+            QMetaObject::invokeMethod(ctrl,
+                [ctrl, msg = std::string(e.what()), line = e.line, col = e.column]() {
+                    emit ctrl->runtimeError(QString::fromStdString(msg), line, col);
+                }, Qt::QueuedConnection);
+            return Value::nullValue();
+        } catch (const std::exception& e) {
+            QMetaObject::invokeMethod(ctrl,
+                [ctrl, msg = std::string(e.what())]() {
+                    emit ctrl->genericError(QString::fromStdString(msg));
+                }, Qt::QueuedConnection);
+            return Value::nullValue();
+        }
+    });
+
+    // 启动轮询定时器
+    pollTimer_->start();
+}
+
+void ReplPanel::pollReplFuture() {
+    // QT-R-06 fix: 轮询 std::future 状态，完成则显示结果并恢复输入
+    if (!replFuture_.valid()) return;
+
+    // 检查是否完成（非阻塞）
+    auto status = replFuture_.wait_for(std::chrono::seconds(0));
+    if (status != std::future_status::ready) return;  // 仍在执行
+
+    pollTimer_->stop();
+    Value result = replFuture_.get();
+
+    // PANEL-03 fix: null 结果也打印
+    appendOutput(QString::fromStdString(result.toString()));
+
+    // 恢复输入
+    replRunning_ = false;
+    setInputEnabled(true);
+    inputLine_->setFocus();
 }
 
 bool ReplPanel::isInputComplete(const QString& input) {

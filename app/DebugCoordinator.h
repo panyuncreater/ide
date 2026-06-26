@@ -1,0 +1,68 @@
+#pragma once
+
+// ============================================================
+// DebugCoordinator — 调试状态协调（ARCH-11 拆分自 IdeController）
+// ------------------------------------------------------------
+// 职责：
+//   - 设置断点及条件表达式
+//   - 配置调试器回调（条件求值、变量快照、调用栈快照）
+//   - 步进控制（stepIn / stepOver / stepOut / resume / stop）
+//   - 调试状态查询（hasBreakpoints / getDebugVariableSnapshot / getDebugCallStack）
+//
+// 与 WorkerManager 共享 Interpreter / DebugController 所有权。
+// ============================================================
+
+#include <QObject>
+#include <QString>
+#include <QSet>
+#include <QMap>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "interpreter/Interpreter.h"
+#include "debug/DebugController.h"
+
+class DebugCoordinator : public QObject {
+    Q_OBJECT
+
+public:
+    DebugCoordinator(std::shared_ptr<Interpreter> interpreter,
+                     std::shared_ptr<DebugController> debugger,
+                     QObject* parent = nullptr);
+
+    // ---- 断点管理 ----
+    /// 设置断点及条件表达式（GUI-03 fix: 使用 evaluateCondition 安全求值条件断点）
+    void setupDebug(const QSet<int>& breakpoints,
+                    const QMap<int, std::string>& conditions);
+    void setBreakpoints(const QSet<int>& breakpoints) {
+        debugger_->setBreakpoints(breakpoints);
+    }
+    void setBreakpointCondition(int line, const std::string& condition) {
+        debugger_->setBreakpointCondition(line, condition);
+    }
+    bool hasBreakpoints() const { return !debugger_->getBreakpoints().isEmpty(); }
+
+    // ---- 步进控制 ----
+    void stepIn()  { debugger_->stepIn(); }
+    void stepOver() { debugger_->stepOver(); }
+    void stepOut() { debugger_->stepOut(); }
+    void resume()  { debugger_->resume(); }
+    void stop()    { debugger_->stop(); }
+
+    // ---- 调试状态查询 ----
+    std::vector<VariableSnapshot> getDebugVariableSnapshot() const {
+        return debugger_->getVariableSnapshot();
+    }
+    std::vector<CallStackEntry> getDebugCallStack() const {
+        return debugger_->getCallStack();
+    }
+
+signals:
+    /// 转发调试器暂停信号
+    void pausedAt(int line);
+
+private:
+    std::shared_ptr<Interpreter> interpreter_;
+    std::shared_ptr<DebugController> debugger_;
+};

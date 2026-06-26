@@ -198,28 +198,28 @@ private:
     std::unordered_map<std::string, int> globalNameToSlot_; // name -> slot (runtime lookup)
     std::vector<VMCallFrame> frames_;              // 调用帧栈
     BytecodeChunk mainChunk_;                       // 主 chunk 副本（VM 自持，避免悬空指针）
-    std::unordered_map<std::string, BytecodeChunk> functionChunks_; // 函数字节码
+    // MEM-03/MEM-04 fix: 改用 std::map（节点式，插入不使引用/迭代器/指针失效）。
+    // 原 unordered_map 在 rehash 后会使所有 VMClosureData::chunkPtr 和
+    // VMCallFrame::chunk（裸指针）悬垂。std::map 的节点稳定性消除该风险。
+    std::map<std::string, BytecodeChunk> functionChunks_; // 函数字节码
 
-    // P3 fix: 函数调用内联缓存（按常量池字符串指针匹配，避免每次 hash 查找）
-    // S1 fix: 增大到 32 项，减少多函数场景的缓存抖动
-    static constexpr int CALL_CACHE_SIZE = 32;
-    struct CallCacheEntry {
-        const std::string* namePtr = nullptr;
-        const BytecodeChunk* chunkPtr = nullptr;
-    };
-    CallCacheEntry callCache_[CALL_CACHE_SIZE] = {};
-    int callCacheNextSlot_ = 0;  // P3: round-robin 替换指针
+    // P3 fix: 函数调用内联缓存（按常量池字符串指针 O(1) 查找）
+    // PERF-14 fix: 改用 unordered_map 替代固定 32 项数组线性扫描，
+    // 函数数量较多时查找由 O(cache_size) 降为 O(1) 平均。
+    // key 是 chunk.constants[idx].stringVal() 的指针（chunk 自持 mainChunk_ 副本，
+    // functionChunks_ 是 std::map 节点稳定，故 key 在 chunk 生命周期内有效）。
+    std::unordered_map<const std::string*, const BytecodeChunk*> callCache_;
 
     // P2 fix: 全局变量内联缓存
-    // S1 fix: 增大到 32 项
-    static constexpr int GLOBAL_CACHE_SIZE = 32;
+    // PERF-14 fix: 改用 unordered_map 替代固定 32 项数组线性扫描。
+    // MEM-05 fix: generation 由原 bucket_count() 单一维度改为
+    // (bucket_count() << 16) ^ size() 组合，erase 不会改变 bucket_count 但会改变 size，
+    // 使缓存条目自动失效，避免命中已被 erase 的全局变量槽位。
     struct GlobalCacheEntry {
-        const std::string* namePtr = nullptr;
         Value* valuePtr = nullptr;      // 指向 globals_ 中的 Value（rehash 后失效）
-        size_t generation = 0;          // globals_.bucket_count() 快照（检测 rehash）
+        size_t generation = 0;          // globals_ 状态快照（检测 rehash / erase）
     };
-    GlobalCacheEntry globalCache_[GLOBAL_CACHE_SIZE] = {};
-    int globalCacheNextSlot_ = 0;
+    std::unordered_map<const std::string*, GlobalCacheEntry> globalCache_;
     // P7: ASCII 字符串索引缓存（记住上次检查过的字符串，避免循环中重复 O(n) 扫描）
     // S5 fix: 改为缓存 StringData* 指针（shared_ptr 管理的对象地址稳定），
     //         O(1) 指针比较替代 O(n) 字符串内容比较；miss 时无需拷贝整个字符串
@@ -227,6 +227,9 @@ private:
     const void* lastAsciiStrPtr_ = nullptr;
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
+    // PERF-15 fix: findMethodChunk 复用的 methodKey buffer，避免每次调用重新分配堆内存。
+    // 原为局部变量，每次 findMethodChunk 调用都构造/析构 std::string。
+    mutable std::string findMethodKeyBuf_;
     // VM-05/06: 闭包支持
     // B5 fix: openUpvalues_ 改用按 stackSlot 排序的有序结构（multimap 允许多个 upvalue 共享同一栈槽），
     // closeUpvaluesFrom 从 O(n) 线性扫描降为 O(log n + k)。value 用 weak_ptr 监视 shared_ptr 生命周期
@@ -266,6 +269,23 @@ private:
     void push(Value&& val);
     Value pop();
     const Value& peek(size_t distance = 0) const;
+    // PERF-12 fix: 引用语义 + 栈槽复用优化
+    /// 非 const peek：返回栈槽引用，允许直接修改栈顶元素，避免 pop+push 往返原子操作
+    Value& peekRef(size_t distance = 0);
+    /// 批量 pop：一次 resize 替代多次 pop_back，避免多次析构 + 容量抖动。
+    /// 不返回弹出值（调用方已通过 peek 读过），用于函数调用参数清理等场景。
+    void popN(size_t n);
+    /// 在栈顶直接 emplace 构造 Value，避免临时 Value 的 shared_ptr 原子操作。
+    /// 用于 OP_CONSTANT 等热路径：原 push(Value(...)) 需 1 次 make_shared + 1 次 push_back 拷贝
+    /// （拷贝 = 原子递增），现直接在栈槽构造，再 move 到 vector（move shared_ptr 是普通指针拷贝）。
+    template<typename... Args>
+    void emplace(Args&&... args) {
+        if (stack_.size() >= MAX_STACK_SIZE) {
+            runtimeError("栈溢出");
+            return;
+        }
+        stack_.emplace_back(std::forward<Args>(args)...);
+    }
 
     /// 运行时错误
     VMResult runtimeError(const std::string& msg);

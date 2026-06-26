@@ -7,6 +7,7 @@
 #include "compiler/VM.h"
 #include "interpreter/BuiltinMethods.h"  // 共享纯函数层（len/contains/has）
 #include "interpreter/NumericUtils.h"    // 共享溢出检查（B6 fix）
+#include "interpreter/StringIntern.h"    // PERF-05 fix: 方法标记字符串驻留
 #include "common/Utf8Utils.h"            // P0-4 fix: UTF-8 码位工具
 #include "Logger.h"
 #include <sstream>
@@ -261,7 +262,11 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                 // （super.method() 调用走 OP_SUPER_CALL 直接指定起始类，不经过此路径）
                 const BytecodeChunk* methodChunk = findMethodChunk(obj.className(), fieldName);
                 if (methodChunk != nullptr) {
-                    push(Value(std::string("method:") + obj.className() + "." + fieldName));
+                    // PERF-05 fix: 驻留 "method:Class.field" 字符串，避免每次成员访问重复构造。
+                    // 同一类+方法的成员访问频繁发生（如 obj.x 多次读取），驻留后池中复用同一 std::string。
+                    push(Value(StringIntern::internConcat(
+                        StringIntern::internConcat("method:", obj.className()),
+                        std::string(".") + fieldName)));
                 } else {
                     return runtimeError("类 " + obj.className() + " 没有字段或方法 '" + fieldName + "'");
                 }
@@ -443,7 +448,13 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         }
         Value& obj = stack_[bp + slot];
         if (obj.isInstance()) {
-            obj.fields()[fieldName] = std::move(lastMutatedReceiver_);
+            // MEM-06 fix: 原代码先 std::move(lastMutatedReceiver_) 到 obj.fields()[fieldName]，
+            // 再对已 moved-from 的 lastMutatedReceiver_ 二次 move 到字段槽 → UB。
+            // 改为先 move 到字段槽，再用副本（拷贝）写入 fields()。字段槽是权威来源，
+            // OP_RETURN 时从字段槽同步到 fields()，两者需一致。
+            // 此处用 std::move 一次到局部副本，然后拷贝到两个目标，确保无 moved-from 二次使用。
+            Value newVal = std::move(lastMutatedReceiver_);
+            obj.fields()[fieldName] = newVal;  // 拷贝（newVal 仍有效）
             // 如果 slot==0（this），也同步更新对应字段槽
             if (slot == 0) {
                 VMCallFrame& curFrame = currentFrame();
@@ -452,7 +463,7 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
                         if (curFrame.chunk->fieldOrder[i] == fieldName) {
                             size_t fieldSlot = bp + 1 + i;
                             if (fieldSlot < stack_.size()) {
-                                stack_[fieldSlot] = std::move(lastMutatedReceiver_);
+                                stack_[fieldSlot] = std::move(newVal);  // 最后一次 move
                             }
                             break;
                         }

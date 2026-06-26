@@ -1,5 +1,6 @@
 #include "formatter/Formatter.h"
 #include "ast/ASTNode.h"
+#include "interpreter/Value.h"  // ARCH-01 fix: getValue().toString() 需要 Value 完整定义
 #include <sstream>
 #include <algorithm>  // F-P2-5 fix: std::sort
 
@@ -484,7 +485,9 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
     // F-P2-3 fix: 检查 thenBranch 空指针，避免 formatNode 返回 "null" 语义错误
     if (!node.thenBranch) {
         result += indent() + "/* empty */\n";
-    } else if (auto* block = dynamic_cast<Block*>(node.thenBranch.get())) {
+    } else if (node.thenBranch->nodeType == NodeType::NODE_BLOCK) {
+        // PERF-26 fix: dynamic_cast 改 nodeType 分支判断，O(1) vs O(RTTI)
+        auto* block = static_cast<Block*>(node.thenBranch.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.thenBranch.get())) {
         // L17 fix: 裸复合语句（if/while/for）作为 thenBranch 时，需要额外缩进层级
@@ -504,7 +507,9 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
             // F-P1-1 fix: 改用 formatNode 分派，让 else-if 链也受 MAX_FORMAT_DEPTH 深度保护
             // 输出结果一致：" else " + "if (...) { ... }" = " else if (...) { ... }"
             result += " else " + formatNode(node.elseBranch.get());
-        } else if (auto* block = dynamic_cast<Block*>(node.elseBranch.get())) {
+        } else if (node.elseBranch->nodeType == NodeType::NODE_BLOCK) {
+            // PERF-26 fix: dynamic_cast 改 nodeType 分支判断
+            auto* block = static_cast<Block*>(node.elseBranch.get());
             result += " else" + openBrace() + "\n";
             currentIndent_++;
             result += formatBlock(*block);
@@ -531,7 +536,9 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
 std::string Formatter::formatWhileStmt(WhileStmt& node) {
     std::string result = "while (" + formatNode(node.condition.get()) + ")" + openBrace() + "\n";
     currentIndent_++;
-    if (auto* block = dynamic_cast<Block*>(node.body.get())) {
+    if (node.body->nodeType == NodeType::NODE_BLOCK) {
+        // PERF-26 fix: dynamic_cast 改 nodeType 分支判断
+        auto* block = static_cast<Block*>(node.body.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
         // L17 fix: 裸复合语句需要额外缩进层级
@@ -556,7 +563,9 @@ std::string Formatter::formatForStmt(ForStmt& node) {
     if (node.update) result += " " + formatNode(node.update.get());
     result += ")" + openBrace() + "\n";
     currentIndent_++;
-    if (auto* block = dynamic_cast<Block*>(node.body.get())) {
+    if (node.body->nodeType == NodeType::NODE_BLOCK) {
+        // PERF-26 fix: dynamic_cast 改 nodeType 分支判断
+        auto* block = static_cast<Block*>(node.body.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
         // L17 fix: 裸复合语句需要额外缩进层级
@@ -572,7 +581,10 @@ std::string Formatter::formatForStmt(ForStmt& node) {
 }
 
 std::string Formatter::formatFunDecl(FunDecl& node) {
-    std::string result = "fun " + node.name + "(";
+    // PERF-27 fix: 预估输出大小（fun + name + params + body），避免反复 realloc
+    std::string result;
+    result.reserve(32 + node.params.size() * 16 + node.name.size());
+    result += "fun " + node.name + "(";
     for (size_t i = 0; i < node.params.size(); ++i) {
         if (i > 0) result += comma();
         result += node.params[i];
@@ -590,7 +602,9 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     }
     result += openBrace() + "\n";
     currentIndent_++;
-    if (auto* block = dynamic_cast<Block*>(node.body.get())) {
+    if (node.body->nodeType == NodeType::NODE_BLOCK) {
+        // PERF-26 fix: dynamic_cast 改 nodeType 分支判断
+        auto* block = static_cast<Block*>(node.body.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
         // L17 fix: 裸复合语句需要额外缩进层级
@@ -756,7 +770,10 @@ std::string Formatter::formatIndexAssign(IndexAssign& node) {
 }
 
 std::string Formatter::formatClassDecl(ClassDecl& node) {
-    std::string result = "class " + node.name;
+    // PERF-27 fix: 预估输出大小（class + name + members），避免反复 realloc
+    std::string result;
+    result.reserve(32 + node.name.size() + node.members.size() * 48);
+    result += "class " + node.name;
     if (!node.superClassName.empty()) {
         result += " extends " + node.superClassName;
     }
@@ -815,7 +832,12 @@ std::string Formatter::formatNullLiteral(NullLiteral& node) {
 // literals.size() == expressions.size() + 1
 // 输出: "literals[0]{expressions[0]}literals[1]{expressions[1]}...literals[n]"
 std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
+    // PERF-27 fix: 预估输出大小（literals + expressions），避免反复 realloc
     std::string result;
+    size_t estimatedSize = 2;  // 引号
+    for (const auto& lit : node.literals) estimatedSize += lit.size();
+    estimatedSize += node.expressions.size() * 8;  // 每个 {expr} 平均 8 字符
+    result.reserve(estimatedSize);
     result += '"';  // 开头引号
 
     // 字符串字面量片段需要转义（与 formatStringLiteral 一致的转义规则）

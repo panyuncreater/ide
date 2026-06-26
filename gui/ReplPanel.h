@@ -5,7 +5,12 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QStringList>
+#include <QTimer>
+#include <future>
 #include <memory>
+#include <atomic>
+
+#include "interpreter/Value.h"  // QT-R-06 fix: std::future<Value> 需 Value 完整定义
 
 // B6 fix: ReplPanel 不再直接持有 Interpreter*，改由 IdeController（业务层）
 // 提供 retainReplAst + executeRepl 接口，避免 GUI 层直接接触引擎内部。
@@ -44,6 +49,9 @@ private slots:
     /// 处理输入
     void onReturnPressed();
 
+    /// QT-R-06 fix: 轮询异步执行状态的槽函数
+    void pollReplFuture();
+
 private:
     QTextEdit* outputArea_ = nullptr;   // 输出区域
     QLineEdit* inputLine_ = nullptr;    // 输入行
@@ -54,6 +62,13 @@ private:
 
     QString pendingInput_;              // R4: 多行累积输入缓冲
     bool inContinuation_ = false;       // R4: 是否在续行模式
+
+    // QT-R-06 fix: 异步执行支持
+    // 用 std::future + QTimer 轮询替代 QtConcurrent（Qt6::Concurrent 模块未安装）
+    std::future<Value> replFuture_;
+    QTimer* pollTimer_ = nullptr;
+    /// 异步执行期间禁用输入
+    std::atomic<bool> replRunning_{false};
 
     /// 执行单行代码
     void executeLine(const QString& line);

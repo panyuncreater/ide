@@ -42,6 +42,7 @@ set(MINILANG_CORE_SOURCES
     compiler/VM.cpp
     compiler/VMCalls.cpp
     compiler/VMContainers.cpp
+    compiler/IR.cpp
     formatter/Formatter.cpp
 )
 
@@ -69,6 +70,10 @@ set(MINILANG_GUI_MOC_HEADERS
     app/ide.h
     app/IdeController.h
     app/InterpreterWorker.h
+    app/PipelineRunner.h
+    app/WorkerManager.h
+    app/DebugCoordinator.h
+    app/VmStepper.h
     gui/CodeEditor.h
     gui/AstViewer.h
     gui/OutputPanel.h
@@ -117,6 +122,10 @@ add_executable(minilang_ide WIN32
     app/ide.cpp
     app/IdeController.cpp
     app/InterpreterWorker.cpp
+    app/PipelineRunner.cpp
+    app/WorkerManager.cpp
+    app/DebugCoordinator.cpp
+    app/VmStepper.cpp
     app/ide.qrc
     ${MINILANG_GUI_SOURCES}
 )

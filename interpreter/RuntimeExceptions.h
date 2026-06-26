@@ -1,7 +1,7 @@
 #pragma once
 
 // ============================================================
-// RuntimeExceptions.h - 解释器运行时异常与调用帧
+// RuntimeExceptions.h - 解释器运行时异常
 // ============================================================
 // S6 fix: 从 Interpreter.h 提取，降低头文件耦合。
 // 仅依赖 Value.h 和标准库，不依赖 AST/Visitor/Environment。
@@ -11,13 +11,17 @@
 // A1 fix: 新增自由函数模板 to_runtime_error(const Result<T>&)，
 // 将原 Result<T>::to_runtime_error() 成员函数迁移至此，
 // 使 common/Result.h 不再反向依赖 interpreter 层。
+//
+// ARCH-02 fix: CallFrame 拆出到独立头文件 CallFrame.h。
+// 原本因 CallFrame 需要 shared_ptr<Environment> 而 include Environment.h，
+// 传递拉入 Environment/Value 类型体系。现仅依赖 Value.h（异常类持有 Value）。
+// 真正使用 CallFrame 的模块（Interpreter.h）请 include "interpreter/CallFrame.h"。
 // ============================================================
 
 #include <string>
 #include <stdexcept>
 #include <memory>
 #include "interpreter/Value.h"
-#include "interpreter/Environment.h"  // CallFrame 需要 shared_ptr<Environment>
 #include "common/Result.h"  // A1 fix: to_runtime_error 自由函数模板需要 Result<T>
 
 // ============================================================
@@ -68,22 +72,6 @@ public:
 class DebugStopException : public std::exception {
 public:
     const char* what() const noexcept override { return "调试终止"; }
-};
-
-// ============================================================
-// 调用帧
-// ============================================================
-
-/// 函数调用帧
-struct CallFrame {
-    std::string functionName;                      // 函数名
-    std::shared_ptr<Environment> env = nullptr;     // 该帧对应的环境
-    int line = 0;                                   // 调用行号
-    int depth = 0;                                  // 调用深度
-
-    CallFrame() = default;
-    CallFrame(const std::string& name, std::shared_ptr<Environment> e, int ln, int d)
-        : functionName(name), env(e), line(ln), depth(d) {}
 };
 
 // ============================================================

@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
+#include <map>
 #include "interpreter/Value.h"
 
 // ============================================================
@@ -312,7 +313,9 @@ public:
 /// 编译结果：包含主 chunk 和函数 chunk
 struct CompileResult {
     BytecodeChunk mainChunk;
-    std::unordered_map<std::string, BytecodeChunk> functionChunks;
+    // MEM-03/MEM-04 fix: 改用 std::map 保证节点稳定性，使 VM 持有的
+    // VMClosureData::chunkPtr 和 VMCallFrame::chunk 裸指针在后续插入时不悬垂。
+    std::map<std::string, BytecodeChunk> functionChunks;
     // A2: 全局变量槽位映射（编译器→VM）
     int globalSlotCount = 0;
     std::vector<std::string> globalSlotNames;

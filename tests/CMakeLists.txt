@@ -38,6 +38,7 @@ if(NOT TARGET minilang_core)
         ${MINILANG_ROOT_DIR}/compiler/VM.cpp
         ${MINILANG_ROOT_DIR}/compiler/VMCalls.cpp
         ${MINILANG_ROOT_DIR}/compiler/VMContainers.cpp
+        ${MINILANG_ROOT_DIR}/compiler/IR.cpp
         ${MINILANG_ROOT_DIR}/formatter/Formatter.cpp
     )
 
@@ -92,6 +93,7 @@ add_executable(minilang_tests
     TestInterpreterE2E.cpp
     TestVME2E.cpp
     TestCompiler.cpp
+    TestIR.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE

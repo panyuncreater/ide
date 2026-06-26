@@ -19,7 +19,6 @@
 Interpreter::Interpreter()
     : globalEnv_(std::make_shared<Environment>())
     , currentEnv_(globalEnv_)
-    , debugger_(nullptr)
     , recursionDepth_(0)
 {
     outputCallback_ = [](const std::string&) {};
@@ -34,6 +33,7 @@ Value Interpreter::execute(Block& program) {
     globalEnv_ = std::make_shared<Environment>();
     currentEnv_ = globalEnv_;
     callStack_.clear();
+    envPool_.clear();  // PERF-07: 旧环境链已销毁，清空池避免悬垂 parent 引用
     funRegistry_.clear();
     classRegistry_.clear();
     currentFunctionReturnType_.clear();
@@ -151,8 +151,8 @@ void Interpreter::setCurrentFilePath(const std::string& path) {
     currentFilePath_ = path;
 }
 
-void Interpreter::setDebugger(DebugController* dbg) {
-    debugger_ = dbg;
+void Interpreter::setDebugger(std::shared_ptr<DebugController> dbg) {
+    debugger_ = std::move(dbg);
 }
 
 void Interpreter::setDebugMode(bool enabled) {
@@ -170,11 +170,12 @@ const std::vector<CallFrame>& Interpreter::getCallStack() const {
 Value Interpreter::evaluateExpr(ASTNode* node) {
     if (!node) return Value::nullValue();
     // RAII 守卫：确保异常时也能恢复 debugMode_
+    // QT-R-02 fix: debugMode_ 是 atomic<bool>，guard 使用 atomic 引用
     struct DebugModeGuard {
-        bool& ref;
+        std::atomic<bool>& ref;
         bool saved;
-        DebugModeGuard(bool& r) : ref(r), saved(r) { r = false; }
-        ~DebugModeGuard() { ref = saved; }
+        DebugModeGuard(std::atomic<bool>& r) : ref(r), saved(r.load()) { ref.store(false); }
+        ~DebugModeGuard() { ref.store(saved); }
     } guard(debugMode_);
     // A1 fix: accept 返回 void，结果通过 lastValue_ 传递。
     // A1 bug fix: 预先清空 lastValue_，避免未覆盖的节点类型返回陈旧值（对齐 Formatter F-P2-6）
@@ -285,14 +286,31 @@ Value Interpreter::compareNumericOrString(BinaryOp& node, Cmp cmp) {
     return Value(r.value);
 }
 
-Value Interpreter::numericBinaryOp(BinOpType opType, const Value& left,
-    const Value& right, int line, int col) {
+Value Interpreter::numericBinaryOp(BinOpType opType, Value left,
+    Value right, int line, int col) {
     // 字符串拼接（仅加法）
     if (opType == BinOpType::BIN_ADD) {
         if (left.isString() && right.isString()) {
+            // PERF-06 fix: 若 left 独占 StringData（典型场景：左操作数是临时值，
+            // 如 `((s + "x") + "y")` 中内层 `s + "x"` 的结果），原地 append
+            // 避免分配新 string + 拷贝。链式拼接 `a + b + c + d` 由 amortized O(n²) 降为 O(n)。
+            if (std::string* lhs = left.tryGetMutableString()) {
+                const std::string& rhs = right.stringVal();
+                lhs->reserve(lhs->size() + rhs.size());
+                *lhs += rhs;
+                return std::move(left);
+            }
             return Value(left.stringVal() + right.stringVal());
         }
         if (left.isString() || right.isString()) {
+            // 一侧为字符串、一侧为其他类型 → 用 toString() 双向转换后拼接
+            // PERF-06: 同样优先 left 独占时原地 append
+            if (std::string* lhs = left.tryGetMutableString()) {
+                std::string rhs = right.toString();
+                lhs->reserve(lhs->size() + rhs.size());
+                *lhs += rhs;
+                return std::move(left);
+            }
             return Value(left.toString() + right.toString());
         }
     }
@@ -619,7 +637,8 @@ void Interpreter::visitBinaryOp(BinaryOp& node) {
     case BinOpType::BIN_MOD: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
-        lastValue_ = numericBinaryOp(node.opType, left, right, node.line, node.column); return;
+        // PERF-06 fix: move 传入使 numericBinaryOp 可检测独占所有权做原地 append
+        lastValue_ = numericBinaryOp(node.opType, std::move(left), std::move(right), node.line, node.column); return;
     }
     default:
         runtimeError("未知运算符: " + std::string(BinaryOp::opTypeStr(node.opType)), node.line, node.column);
@@ -670,7 +689,9 @@ void Interpreter::visitInterpolatedString(InterpolatedString& node) {
     checkBreak(&node);
     // literals.size() == expressions.size() + 1
     // 结果: literals[0] + str(expressions[0]) + literals[1] + ... + str(expressions[n-1]) + literals[n]
+    // PERF-11 fix: 用 node.literalsTotalLen 预计算 reserve，避免循环中多次 realloc
     std::string result = node.literals.empty() ? std::string() : node.literals[0];
+    result.reserve(node.literalsTotalLen + node.expressions.size() * 8);
     for (size_t i = 0; i < node.expressions.size(); ++i) {
         Value exprVal = evaluate(node.expressions[i].get());
         result += exprVal.toString();
@@ -944,6 +965,13 @@ bool isDefinedInScopes(const std::vector<std::unordered_set<std::string>>& scope
 } // anonymous namespace
 
 std::unordered_set<std::string> Interpreter::computeFreeVariables(const FunDecl& fn) {
+    // PERF-08 fix: 同一 FunDecl 的自由变量集仅依赖函数体 AST 结构（纯函数），
+    // 重复捕获闭包时无需重新遍历整个 AST。首次计算后缓存到 fn.cachedFreeVars_。
+    // AST 重建（execute/REPL 重解析）会构造全新 FunDecl 对象，缓存自动失效。
+    if (fn.cachedFreeVars_) {
+        return *fn.cachedFreeVars_;
+    }
+
     // 函数作用域：参数 + 函数自身名称（允许递归自引用）
     std::vector<std::unordered_set<std::string>> scopes;
     scopes.emplace_back();
@@ -960,6 +988,7 @@ std::unordered_set<std::string> Interpreter::computeFreeVariables(const FunDecl&
     // 分析函数体
     if (fn.body) collectFreeVars(*fn.body, scopes, freeVars);
 
+    fn.cachedFreeVars_ = freeVars;  // 缓存结果
     return freeVars;
 }
 
@@ -1199,8 +1228,17 @@ void Interpreter::visitBlock(Block& node) {
     // 快速路径：空块直接返回
     if (node.statements.empty()) { lastValue_ = Value::nullValue(); return; }
 
-    // 为代码块创建新作用域（即使只有单条语句，也需创建作用域以防 var 声明泄漏到父作用域）
-    auto blockEnv = std::make_shared<Environment>(currentEnv_);
+    // PERF-07 fix: 块作用域 Environment 对象池复用。
+    // 优先从 envPool_ 取出已回收的 Environment 并 reset，避免 make_shared 堆分配。
+    // 退出时若 blockEnv 未被闭包捕获（use_count==1），回收至池供下次复用。
+    std::shared_ptr<Environment> blockEnv;
+    if (!envPool_.empty()) {
+        blockEnv = std::move(envPool_.back());
+        envPool_.pop_back();
+        blockEnv->resetForReuse(currentEnv_);
+    } else {
+        blockEnv = std::make_shared<Environment>(currentEnv_);
+    }
     auto savedEnv = currentEnv_;
     currentEnv_ = blockEnv;
 
@@ -1212,10 +1250,17 @@ void Interpreter::visitBlock(Block& node) {
     }
     catch (...) {
         currentEnv_ = savedEnv;
+        // 异常路径不回收（blockEnv 可能已被闭包捕获，安全起见让 shared_ptr 自然销毁）
         throw;
     }
 
     currentEnv_ = savedEnv;
+
+    // PERF-07: 若 blockEnv 独占所有权（未被闭包/子作用域捕获），回收至池复用。
+    // use_count()==1 表示仅 blockEnv 本地变量持有，可安全 reset。
+    if (blockEnv.use_count() == 1) {
+        envPool_.push_back(std::move(blockEnv));
+    }
 
     lastValue_ = std::move(result); return;
 }

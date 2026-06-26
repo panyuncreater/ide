@@ -6,12 +6,14 @@
 // ============================================================
 
 void InterpreterWorker::run() {
-    interp_.setOutputCallback([this](const std::string& text) {
+    // MEM-01 fix: 使用 shared_ptr 持有 interp_，需通过 -> 访问
+    interp_->setOutputCallback([this](const std::string& text) {
         emit outputReady(QString::fromStdString(text));
     });
 
     try {
-        interp_.execute(ast_);
+        // QT-R-03 fix: 通过 shared_ptr 持有 ast_，解引用 *ast_ 传给 execute
+        interp_->execute(*ast_);
         emit finishedOk();
     } catch (const RuntimeError& e) {
         emit runtimeError(QString::fromStdString(e.what()), e.line, e.column);
@@ -31,6 +33,6 @@ void InterpreterWorker::run() {
 
     // A-P2-2 fix: 返回前恢复空回调，避免 interp_ 持有指向已销毁 worker 的悬垂 lambda
     // （cleanupWorker 会在主线程恢复主线程回调，此处仅清除 worker 侧的捕获 this 的回调）
-    interp_.setOutputCallback([](const std::string&) {});
-    interp_.setInputCallback([](const std::string&) { return std::string(); });
+    interp_->setOutputCallback([](const std::string&) {});
+    interp_->setInputCallback([](const std::string&) { return std::string(); });
 }

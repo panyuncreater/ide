@@ -3,6 +3,8 @@
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
 #include <QRegularExpression>
+#include <QSet>
+#include <QString>
 #include <vector>
 
 // ============================================================
@@ -30,6 +32,9 @@ protected:
 
 private:
     std::vector<HighlightRule> rules_;
+
+    // PERF-22 fix: 关键字用 QSet 替代大正则 alternation，O(1) 查找替代 regex 回溯
+    QSet<QString> keywordSet_;
 
     QTextCharFormat keywordFormat_;     // 关键字：蓝色粗体
     QTextCharFormat stringFormat_;      // 字符串：绿色

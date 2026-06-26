@@ -6,13 +6,15 @@
 #include <stdexcept>
 #include <memory>
 #include <mutex>
+#include <atomic>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "interpreter/Value.h"
 #include "interpreter/Environment.h"
 #include "interpreter/Visitor.h"
-#include "interpreter/RuntimeExceptions.h"  // S6 fix: 异常类/CallFrame 提取到独立头文件
+#include "interpreter/RuntimeExceptions.h"  // S6 fix: 异常类提取到独立头文件
+#include "interpreter/CallFrame.h"  // ARCH-02 fix: CallFrame 拆出，避免传递依赖
 #include "ast/ASTNode.h"
 #include "Diagnostic.h"
 #include "common/RuntimeLimits.h"
@@ -89,7 +91,9 @@ public:
     void setCurrentFilePath(const std::string& path);
 
     /// 设置调试控制器
-    void setDebugger(DebugController* dbg);
+    // MEM-01 fix: 改用 shared_ptr 共享所有权，使 worker 线程持有的 Interpreter
+    // 保持 debugger 存活，避免 IdeController 析构后 debugger_ 悬垂。
+    void setDebugger(std::shared_ptr<DebugController> dbg);
 
     /// 设置调试模式（启用/禁用 checkBreak 调用）
     void setDebugMode(bool enabled);
@@ -163,8 +167,16 @@ private:
     std::shared_ptr<Environment> globalEnv_;        // 全局环境
     std::shared_ptr<Environment> currentEnv_;       // 当前环境
     std::vector<CallFrame> callStack_;              // 调用栈
-    DebugController* debugger_;                     // 调试控制器（可为 nullptr）
-    bool debugMode_ = false;                        // 是否处于调试模式（快速跳过 checkBreak）
+    // PERF-07 fix: Environment 对象池。visitBlock 退出时若块作用域未被闭包捕获
+    // （use_count==1），回收并 reset 后供下次 visitBlock 复用，避免重复堆分配。
+    // execute() 开头清空（旧环境链已销毁，池中 Environment 可能被新链引用作 parent）。
+    std::vector<std::shared_ptr<Environment>> envPool_;
+    // MEM-01 fix: shared_ptr 共享所有权，worker 线程持有的 Interpreter 保持 debugger 存活
+    std::shared_ptr<DebugController> debugger_;              // 调试控制器（可为 nullptr）
+    // QT-R-02 fix: debugMode_ 改为 atomic，消除主线程 setDebugMode() 与 worker 线程
+    // checkBreak() 读操作之间的数据竞争。A6 fix 已确保主线程不在 worker 运行时
+    // 调用 setDebugMode，但 atomic 提供额外的内存可见性保证和防御性保护。
+    std::atomic<bool> debugMode_{false};            // 是否处于调试模式（快速跳过 checkBreak）
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     std::function<std::string(const std::string&)> moduleLoader_; // F12: 模块加载回调
@@ -260,7 +272,9 @@ private:
     void output(const std::string& text);
 
     /// 数值二元运算（含类型提升）
-    Value numericBinaryOp(BinOpType opType, const Value& left, const Value& right,
+    // PERF-06 fix: 改为按值接收，使调用方 move 临时 Value 进入，
+    // 函数内可检测独占所有权（tryGetMutableString）做原地 append。
+    Value numericBinaryOp(BinOpType opType, Value left, Value right,
                           int line, int col);
 
     /// P1-2 fix: 比较运算（LT/GT/LTE/GTE）共用模板，消除 4 处重复样板

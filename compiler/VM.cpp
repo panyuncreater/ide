@@ -59,6 +59,29 @@ const Value& VM::peek(size_t distance) const {
     return stack_[stack_.size() - 1 - distance];
 }
 
+Value& VM::peekRef(size_t distance) {
+    // PERF-12 fix: 非 const peek 重载，允许直接修改栈槽
+    static Value nullSentinel;  // 静态哨兵（与 const 版本一致）
+    if (distance >= stack_.size()) {
+        Logger::Error("VM 栈下溢: peekRef(distance=" + std::to_string(distance) +
+                      ") 但栈大小=" + std::to_string(stack_.size()), "VM");
+        hasError_ = true;
+        return nullSentinel;
+    }
+    return stack_[stack_.size() - 1 - distance];
+}
+
+void VM::popN(size_t n) {
+    // PERF-12 fix: 批量 pop，一次 resize 替代多次 pop_back
+    if (n > stack_.size()) {
+        runtimeError("栈下溢: popN");
+        hasError_ = true;
+        stack_.clear();
+        return;
+    }
+    stack_.resize(stack_.size() - n);
+}
+
 VMResult VM::runtimeError(const std::string& msg) {
     lastError_ = msg;
     lastErrorLine_ = getCurrentLine();
@@ -269,13 +292,15 @@ const BytecodeChunk* VM::findMethodChunk(const std::string& className,
         }
     }
 
+    // PERF-15 fix: 复用成员变量 findMethodKeyBuf_ 避免每次调用重新分配堆内存。
+    // 原为局部 std::string methodKey，每次 findMethodChunk 调用都构造/析构。
     std::string cur = className;
-    std::string methodKey;
-    methodKey.reserve(cur.size() + 1 + methodName.size());
+    findMethodKeyBuf_.clear();
+    findMethodKeyBuf_.reserve(cur.size() + 1 + methodName.size());
     for (int guard = 0; guard < MAX_INHERITANCE_DEPTH && !cur.empty(); ++guard) {
-        methodKey.clear();
-        methodKey.append(cur).append(1, '.').append(methodName);
-        auto it = functionChunks_.find(methodKey);
+        findMethodKeyBuf_.clear();
+        findMethodKeyBuf_.append(cur).append(1, '.').append(methodName);
+        auto it = functionChunks_.find(findMethodKeyBuf_);
         if (it != functionChunks_.end()) {
             // P4: 写入缓存
             if (clsIt != classInfo_.end()) {
@@ -664,11 +689,10 @@ void VM::initExecution(const CompileResult& result) {
     frames_.reserve(64);  // 预分配调用帧空间，避免频繁 realloc
     functionChunks_ = result.functionChunks;
     // P3: 清除函数调用缓存（functionChunks_ 地址已变）
-    for (int ci = 0; ci < CALL_CACHE_SIZE; ++ci) callCache_[ci] = {};
-    callCacheNextSlot_ = 0;
+    // PERF-14 fix: unordered_map 替代数组，clear() 即可
+    callCache_.clear();
     // P2: 清除全局变量缓存
-    for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
-    globalCacheNextSlot_ = 0;
+    globalCache_.clear();
     classInfo_.clear();
     // M-新1 fix: 清理残留闭包/upvalue 状态，避免多次执行时悬空指针
     openUpvalues_.clear();
@@ -734,10 +758,9 @@ void VM::resetState() {
     lastAsciiStrPtr_ = nullptr;
     lastAsciiStrIsAscii_ = false;
     // V-P1-1 fix: 清理内联缓存，避免悬垂指针（callCache_/globalCache_ 指向已清空的容器）
-    for (int ci = 0; ci < CALL_CACHE_SIZE; ++ci) callCache_[ci] = {};
-    callCacheNextSlot_ = 0;
-    for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
-    globalCacheNextSlot_ = 0;
+    // PERF-14 fix: unordered_map clear()
+    callCache_.clear();
+    globalCache_.clear();
     initialized_ = false;
 }
 
@@ -1000,6 +1023,9 @@ VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
     case OpCode::OP_STRING: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        // PERF-12 fix: 直接 emplace const Value& 到栈槽，避免临时 Value 的额外原子操作
+        // push(const Value&) 内部 push_back 是拷贝（shared_ptr 原子递增），
+        // emplace(const Value&) 同样是拷贝但显式语义，便于未来替换为更激进的优化。
         push(chunk.constants[idx]);
         notifyStep(ip, op);
         ip += 3;
@@ -1007,19 +1033,22 @@ VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_NULL:
-        push(Value::nullValue());
+        // PERF-12 fix: 直接 emplace 构造 null Value，避免临时对象
+        emplace<>();
         notifyStep(ip, op);
         ip += 1;
         break;
 
     case OpCode::OP_TRUE:
-        push(Value(true));
+        // PERF-12 fix: 直接 emplace 构造 bool Value
+        emplace<bool>(true);
         notifyStep(ip, op);
         ip += 1;
         break;
 
     case OpCode::OP_FALSE:
-        push(Value(false));
+        // PERF-12 fix: 直接 emplace 构造 bool Value
+        emplace<bool>(false);
         notifyStep(ip, op);
         ip += 1;
         break;
@@ -1191,8 +1220,8 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
             globals_[name] = std::move(val);
             // P0-8 fix: 插入新元素可能触发 unordered_map rehash，使已缓存的
             // &it->second 指针失效。清除 globalCache_ 避免悬垂指针访问
-            for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
-            globalCacheNextSlot_ = 0;
+            // PERF-14 fix: unordered_map clear()
+            globalCache_.clear();
         }
         notifyStep(ip, op);
         ip += 3;
@@ -1214,14 +1243,14 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         }
 
         // P2 fix: 内联缓存快速路径（仅 fallback globals_）
+        // PERF-14 fix: unordered_map find O(1) 替代数组线性扫描
+        // MEM-05 fix: generation = (bucket_count() << 16) ^ size()，erase 后 size 变化触发失效
         const std::string* namePtr = &name;
-        size_t curGen = globals_.bucket_count();
+        size_t curGen = (globals_.bucket_count() << 16) ^ globals_.size();
         Value* cachedVal = nullptr;
-        for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) {
-            if (globalCache_[ci].namePtr == namePtr && globalCache_[ci].generation == curGen) {
-                cachedVal = globalCache_[ci].valuePtr;
-                break;
-            }
+        auto ccIt = globalCache_.find(namePtr);
+        if (ccIt != globalCache_.end() && ccIt->second.generation == curGen) {
+            cachedVal = ccIt->second.valuePtr;
         }
 
         if (cachedVal) {
@@ -1230,10 +1259,7 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
             auto it = globals_.find(name);
             if (it != globals_.end()) {
                 // 写入缓存
-                globalCache_[globalCacheNextSlot_].namePtr = namePtr;
-                globalCache_[globalCacheNextSlot_].valuePtr = &it->second;
-                globalCache_[globalCacheNextSlot_].generation = curGen;
-                globalCacheNextSlot_ = (globalCacheNextSlot_ + 1) % GLOBAL_CACHE_SIZE;
+                globalCache_[namePtr] = { &it->second, curGen };
                 push(it->second);
             } else {
                 return runtimeError("未定义的变量: " + name);
@@ -1260,14 +1286,14 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         }
 
         // P2 fix: 内联缓存快速路径（仅 fallback globals_）
+        // PERF-14 fix: unordered_map find O(1) 替代数组线性扫描
+        // MEM-05 fix: generation = (bucket_count() << 16) ^ size()
         const std::string* namePtr = &name;
-        size_t curGen = globals_.bucket_count();
+        size_t curGen = (globals_.bucket_count() << 16) ^ globals_.size();
         Value* cachedVal = nullptr;
-        for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) {
-            if (globalCache_[ci].namePtr == namePtr && globalCache_[ci].generation == curGen) {
-                cachedVal = globalCache_[ci].valuePtr;
-                break;
-            }
+        auto ccIt = globalCache_.find(namePtr);
+        if (ccIt != globalCache_.end() && ccIt->second.generation == curGen) {
+            cachedVal = ccIt->second.valuePtr;
         }
 
         if (cachedVal) {
@@ -1278,10 +1304,7 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
                 return runtimeError("未定义的变量: " + name);
             }
             // 写入缓存
-            globalCache_[globalCacheNextSlot_].namePtr = namePtr;
-            globalCache_[globalCacheNextSlot_].valuePtr = &it->second;
-            globalCache_[globalCacheNextSlot_].generation = curGen;
-            globalCacheNextSlot_ = (globalCacheNextSlot_ + 1) % GLOBAL_CACHE_SIZE;
+            globalCache_[namePtr] = { &it->second, curGen };
             it->second = std::move(val);
         }
         notifyStep(ip, op);
@@ -1300,8 +1323,9 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
             globals_.erase(name);
             // Bug fix: erase 可能不改变 bucket_count()，但会使已缓存指针悬垂
             // 清除所有缓存条目以确保安全
-            for (int ci = 0; ci < GLOBAL_CACHE_SIZE; ++ci) globalCache_[ci] = {};
-            globalCacheNextSlot_ = 0;
+            // PERF-14 fix: unordered_map clear()
+            // MEM-05 fix: 即使不清空，generation 检测也会因 size() 变化而失效
+            globalCache_.clear();
         }
         notifyStep(ip, op);
         ip += 3;

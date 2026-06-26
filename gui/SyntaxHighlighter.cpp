@@ -1,24 +1,9 @@
 #include "gui/SyntaxHighlighter.h"
 #include "lexer/Lexer.h"
-#include <QStringList>
 
 // ============================================================
 // SyntaxHighlighter 语法高亮器实现
 // ============================================================
-
-// C13 fix: 关键字列表从 Lexer::keywords() 单一来源派生，避免新增关键字时
-// SyntaxHighlighter 与 Lexer 两处不同步的问题。
-static QRegularExpression buildKeywordPattern() {
-    QString pattern = "\\b(?:";
-    bool first = true;
-    for (const auto& kv : Lexer::keywords()) {
-        if (!first) pattern += '|';
-        pattern += QString::fromStdString(kv.first);
-        first = false;
-    }
-    pattern += ")\\b";
-    return QRegularExpression(pattern);
-}
 
 SyntaxHighlighter::SyntaxHighlighter(QTextDocument* parent)
     : QSyntaxHighlighter(parent) {
@@ -34,6 +19,7 @@ void SyntaxHighlighter::setDarkTheme(bool dark) {
 void SyntaxHighlighter::initRules() {
     // P1 fix: 清空已有规则，避免 setDarkTheme 多次调用导致规则累积
     rules_.clear();
+    keywordSet_.clear();
 
     if (isDarkTheme_) {
         // 深色主题（VS Code Dark+ 风格）
@@ -57,11 +43,11 @@ void SyntaxHighlighter::initRules() {
 
     // ---- 添加高亮规则 ----
 
-    // 关键字（C13 fix: 从 Lexer::keywords() 单一来源派生，避免硬编码不同步）
-    HighlightRule keywordRule;
-    keywordRule.pattern = buildKeywordPattern();
-    keywordRule.format = keywordFormat_;
-    rules_.push_back(keywordRule);
+    // PERF-22 fix: 关键字用 QSet 替代大正则 alternation
+    // C13 fix: 关键字列表从 Lexer::keywords() 单一来源派生
+    for (const auto& kv : Lexer::keywords()) {
+        keywordSet_.insert(QString::fromStdString(kv.first));
+    }
 
     // HL-2 + HL-4 fix: 数字字面量（整数、浮点数、前导点、尾点、科学计数法）
     HighlightRule numberRule;
@@ -90,6 +76,11 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     bool inString = (previousBlockState() == 1);
     bool inBlockComment = (previousBlockState() == 2);
 
+    // PERF-22 fix: 用 per-character 掩码数组标记字符串/注释范围，
+    // 将范围检查从 O(ranges) 线性扫描降为 O(1) 数组查找
+    std::vector<char> mask;
+    if (len > 0) mask.resize(len, 0);
+
     QList<QPair<int, int>> stringRanges;
     QList<QPair<int, int>> commentRanges;
 
@@ -98,8 +89,11 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
 
     while (pos < len) {
         if (inBlockComment) {
+            mask[pos] = 1;
             if (pos + 1 < len && text[pos] == '*' && text[pos + 1] == '/') {
-                pos += 2;
+                pos++;
+                mask[pos] = 1;
+                pos++;
                 commentRanges.append({commentStart, pos - commentStart});
                 inBlockComment = false;
                 commentStart = -1;
@@ -110,8 +104,11 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         }
 
         if (inString) {
+            mask[pos] = 1;
             if (text[pos] == '\\' && pos + 1 < len) {
-                pos += 2;
+                pos++;
+                mask[pos] = 1;
+                pos++;
                 continue;
             }
             if (text[pos] == '"') {
@@ -127,12 +124,15 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
 
         if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '/') {
             commentRanges.append({pos, len - pos});
+            for (int i = pos; i < len; ++i) mask[i] = 1;
             break;
         }
 
         if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '*') {
             commentStart = pos;
             inBlockComment = true;
+            mask[pos] = 1;
+            mask[pos + 1] = 1;
             pos += 2;
             continue;
         }
@@ -140,6 +140,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         if (text[pos] == '"') {
             stringStart = pos;
             inString = true;
+            mask[pos] = 1;
             pos++;
             continue;
         }
@@ -154,6 +155,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         commentRanges.append({commentStart, len - commentStart});
     }
 
+    // 应用字符串/注释格式
     for (const auto& range : stringRanges) {
         setFormat(range.first, range.second, stringFormat_);
     }
@@ -161,29 +163,38 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         setFormat(range.first, range.second, commentFormat_);
     }
 
+    // PERF-22 fix: 关键字用 QSet 查找替代大正则 globalMatch
+    // 逐词扫描，检查 QSet membership (O(1) 平均) 替代 regex 回溯
+    if (!keywordSet_.isEmpty()) {
+        int wordStart = -1;
+        for (int i = 0; i <= len; ++i) {
+            bool isWordChar = (i < len) && (text[i].isLetterOrNumber() || text[i] == '_');
+            if (isWordChar) {
+                if (wordStart < 0) wordStart = i;
+            } else {
+                if (wordStart >= 0) {
+                    int wordLen = i - wordStart;
+                    // 关键字不会太长，跳过过长的标识符
+                    if (wordLen <= 20 && !mask[wordStart]) {
+                        if (keywordSet_.contains(text.mid(wordStart, wordLen))) {
+                            setFormat(wordStart, wordLen, keywordFormat_);
+                        }
+                    }
+                    wordStart = -1;
+                }
+            }
+        }
+    }
+
+    // PERF-22 fix: 数字和运算符仍用 regex，但范围检查用 mask 数组 O(1) 替代线性扫描
     for (const auto& rule : rules_) {
         QRegularExpressionMatchIterator it = rule.pattern.globalMatch(text);
         while (it.hasNext()) {
             QRegularExpressionMatch match = it.next();
             int matchStart = match.capturedStart();
-            int matchEnd = match.capturedEnd();
 
-            bool skip = false;
-            for (const auto& range : stringRanges) {
-                if (matchStart >= range.first && matchEnd <= range.first + range.second) {
-                    skip = true;
-                    break;
-                }
-            }
-            if (skip) continue;
-
-            for (const auto& range : commentRanges) {
-                if (matchStart >= range.first && matchEnd <= range.first + range.second) {
-                    skip = true;
-                    break;
-                }
-            }
-            if (skip) continue;
+            // O(1) 掩码检查：matchStart 处的字符若在字符串/注释内则跳过
+            if (matchStart < len && mask[matchStart]) continue;
 
             setFormat(matchStart, match.capturedLength(), rule.format);
         }

@@ -122,6 +122,10 @@ private:
     /// 窗口关闭事件：确保调试器和VM安全停止
     void closeEvent(QCloseEvent* event) override;
 
+    // QT-R-05 fix: 异步关闭状态
+    // closeEvent 触发异步停止后置 true，workerFinished 信号触发后调用 close()
+    bool pendingClose_ = false;
+
     // ---- 业务逻辑层 ----
     IdeController* controller_ = nullptr;
 

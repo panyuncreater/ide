@@ -174,6 +174,10 @@ bool Value::equalsImpl(const Value& other,
 // ============================================================
 // toStringImpl — 字符串化实现（含环检测和深度保护）
 // ============================================================
+// PERF-04 fix: 容器路径改用 std::string + reserve + append，替代 std::ostringstream。
+// ostringstream 每次构造含 locale 同步 + 多层缓冲，比 string+reserve 慢 5-10x。
+// reserve 容量按元素数估算（每元素平均 8 字符），避免反复 realloc。
+// ============================================================
 
 std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int depth) const {
     // B5 fix: 深度保护，防止 [[[[...]]]] 线性嵌套导致栈溢出
@@ -199,41 +203,50 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
         assert(ptr && "toString on null ArrayData");
         if (!visited.insert(ptr.get()).second) return "[cycle]";
         const auto& arr = ptr->elements;
-        std::ostringstream oss;
-        oss << "[";
+        // PERF-04 fix: reserve 容量估算（每元素约 8 字符 + 分隔符）
+        std::string result;
+        result.reserve(arr.size() * 8 + 2);
+        result += "[";
         for (size_t i = 0; i < arr.size(); ++i) {
-            if (i > 0) oss << ", ";
+            if (i > 0) result += ", ";
             if (arr[i].isString()) {
-                oss << "\"" << arr[i].stringVal() << "\"";
+                result += "\"";
+                result += arr[i].stringVal();
+                result += "\"";
             } else {
-                oss << arr[i].toStringImpl(visited, depth + 1);
+                result += arr[i].toStringImpl(visited, depth + 1);
             }
         }
-        oss << "]";
+        result += "]";
         visited.erase(ptr.get());
-        return oss.str();
+        return result;
     }
     case ValueType::VAL_DICT: {
         const auto& ptr = std::get<6>(data_);
         assert(ptr && "toString on null DictData");
         if (!visited.insert(ptr.get()).second) return "[cycle]";
         const auto& dict = ptr->entries;
-        std::ostringstream oss;
-        oss << "{";
+        std::string result;
+        result.reserve(dict.size() * 16 + 2);
+        result += "{";
         bool first = true;
         for (const auto& kv : dict) {
-            if (!first) oss << ", ";
+            if (!first) result += ", ";
             first = false;
-            oss << "\"" << kv.first << "\": ";
+            result += "\"";
+            result += kv.first;
+            result += "\": ";
             if (kv.second.isString()) {
-                oss << "\"" << kv.second.stringVal() << "\"";
+                result += "\"";
+                result += kv.second.stringVal();
+                result += "\"";
             } else {
-                oss << kv.second.toStringImpl(visited, depth + 1);
+                result += kv.second.toStringImpl(visited, depth + 1);
             }
         }
-        oss << "}";
+        result += "}";
         visited.erase(ptr.get());
-        return oss.str();
+        return result;
     }
     case ValueType::VAL_INSTANCE: {
         const auto& ptr = std::get<7>(data_);
@@ -241,22 +254,27 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
         if (!visited.insert(ptr.get()).second) return "[cycle]";
         const auto& cn = ptr->className;
         const auto& flds = ptr->fields;
-        std::ostringstream oss;
-        oss << cn << "{";
+        std::string result;
+        result.reserve(cn.size() + flds.size() * 16 + 2);
+        result += cn;
+        result += "{";
         bool first = true;
         for (const auto& kv : flds) {
-            if (!first) oss << ", ";
+            if (!first) result += ", ";
             first = false;
-            oss << kv.first << ": ";
+            result += kv.first;
+            result += ": ";
             if (kv.second.isString()) {
-                oss << "\"" << kv.second.stringVal() << "\"";
+                result += "\"";
+                result += kv.second.stringVal();
+                result += "\"";
             } else {
-                oss << kv.second.toStringImpl(visited, depth + 1);
+                result += kv.second.toStringImpl(visited, depth + 1);
             }
         }
-        oss << "}";
+        result += "}";
         visited.erase(ptr.get());
-        return oss.str();
+        return result;
     }
     case ValueType::VAL_CLOSURE:
         return "<fun:" + closureName() + ">";

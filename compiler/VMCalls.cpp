@@ -67,8 +67,12 @@ VMResult VM::executeReturn(size_t& ip) {
     }
 
     // 方法调用字段同步：将方法内修改的字段槽（bp+1..N）同步回 this（bp）
-    // VM fix: 仅在 init 调用或字段被修改时执行同步，跳过只读方法
-    if (wasMethodCall && savedBp < stack_.size() && (wasInitCall || fieldsModified)) {
+    // VM fix: 仅在字段被修改时执行同步，跳过只读方法和无字段写入的 init
+    // PERF-13 fix: 移除 wasInitCall 强制同步——init 的字段槽从 instance.fields() 拷贝初始化，
+    // 若 init 未修改任何字段，槽值与实例字段一致，同步是冗余的。
+    // fieldsModified 标志在 init 写入 this.field（slot 0）或字段槽（OP_SET_LOCAL）时被置位，
+    // 因此有字段写入的 init 仍会触发同步，语义无变化。
+    if (wasMethodCall && savedBp < stack_.size() && fieldsModified) {
         Value& modifiedThis = stack_[savedBp];
 
         // 先把方法内的字段槽（bp+1..N）同步回 this
@@ -188,13 +192,12 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         const std::string& funName = chunk.constants[idx].stringVal();
 
         // P3 fix: 内联缓存快速路径（按指针比较，避免 hash 查找）
+        // PERF-14 fix: unordered_map find O(1) 替代数组线性扫描
         const BytecodeChunk* cachedChunk = nullptr;
         const std::string* namePtr = &funName;
-        for (int ci = 0; ci < CALL_CACHE_SIZE; ++ci) {
-            if (callCache_[ci].namePtr == namePtr) {
-                cachedChunk = callCache_[ci].chunkPtr;
-                break;
-            }
+        auto ccIt = callCache_.find(namePtr);
+        if (ccIt != callCache_.end()) {
+            cachedChunk = ccIt->second;
         }
 
         auto it = cachedChunk
@@ -353,17 +356,15 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
                 return VMResult::VM_OK;
             }
 
-            for (uint8_t i = 0; i < argCount; ++i) {
-                pop();
-            }
+            // PERF-12 fix: 批量 pop 用 popN 一次 resize
+            popN(argCount);
             return runtimeError("未定义的函数: " + funName);
         }
 
-        // P3: 缓存未命中时写入缓存（round-robin 替换）
+        // P3: 缓存未命中时写入缓存
+        // PERF-14 fix: unordered_map 直接 emplace
         if (!cachedChunk) {
-            callCache_[callCacheNextSlot_].namePtr = namePtr;
-            callCache_[callCacheNextSlot_].chunkPtr = &it->second;
-            callCacheNextSlot_ = (callCacheNextSlot_ + 1) % CALL_CACHE_SIZE;
+            callCache_[namePtr] = &it->second;
         }
 
         const BytecodeChunk& targetChunk = cachedChunk ? *cachedChunk : it->second;
@@ -616,8 +617,8 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                 // F10: 支持默认参数
                 if (argCount < static_cast<uint8_t>(targetChunk.requiredArity) ||
                     argCount > static_cast<uint8_t>(targetChunk.arity)) {
-                    for (uint8_t i = 0; i < argCount; ++i) pop();
-                    pop();
+                    // PERF-12 fix: 批量 pop 用 popN（参数 + 接收者）
+                    popN(argCount + 1);
                     return runtimeError("方法 " + methodName + " 期望 " +
                         std::to_string(targetChunk.requiredArity) + "-" +
                         std::to_string(targetChunk.arity) + " 个参数，但传入了 " +

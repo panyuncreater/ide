@@ -108,7 +108,9 @@ static DebugResult runDebug(const std::string& source, StepMode mode,
     interp.setOutputCallback([&captured](const std::string& s) { captured += s + "\n"; });
 
     // Wire debugger to interpreter
-    interp.setDebugger(dbg);
+    // MEM-01 fix: setDebugger 改用 shared_ptr。此处 dbg 是栈对象或外部所有，
+    // 用空删除器避免 shared_ptr 析构时误 delete。
+    interp.setDebugger(std::shared_ptr<DebugController>(dbg, [](DebugController*){}));
     interp.setDebugMode(true);
 
     // Variable snapshot callback: walk environment chain

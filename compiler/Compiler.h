@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
 #include "ast/ASTNode.h"
 #include "compiler/Bytecode.h"
 #include "Diagnostic.h"
@@ -31,8 +32,13 @@ public:
 private:
     BytecodeChunk chunk_;                           // 当前字节码块
     std::unordered_map<std::string, uint16_t> varIndex_;  // 变量名 → 常量池索引
+    // PERF-29 fix: 字符串字面量去重 map，避免相同字符串重复存入常量池。
+    // 仅对字符串字面量去重（数字字面量本身类型不同，去重收益小）。
+    std::unordered_map<std::string, uint16_t> stringConstIndex_;
     DiagnosticBag diagnostics_;                      // 诊断收集器
-    std::unordered_map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
+    // MEM-03/MEM-04 fix: 与 CompileResult/VM 保持一致使用 std::map，
+    // 使 std::move 给 CompileResult 时类型匹配。
+    std::map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
     std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
     bool inFunction_ = false;                       // 是否在函数体内
     std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;  // 类名 → 字段名列表（含继承字段）

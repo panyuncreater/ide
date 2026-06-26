@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <optional>
+#include <unordered_set>
 
 // A1 fix: ASTNode.h 不再 include interpreter/Value.h。
 // Value 仅作前向声明，getValue() 实现移至 ASTNode.cpp。
@@ -251,6 +253,10 @@ public:
     std::vector<std::string> literals;                    // 字符串字面量片段
     std::vector<std::shared_ptr<ASTNode>> expressions;    // 插值表达式
 
+    // PERF-11 fix: literals 总字符数，由 Parser 构造时预计算。
+    // visitInterpolatedString 用此值 + expressions.size() * 8 估算 reserve，避免 realloc。
+    size_t literalsTotalLen = 0;
+
     InterpolatedString(int ln = 0, int col = 0) : ASTNode(ln, col) {
         nodeType = NodeType::NODE_INTERPOLATED_STRING;
     }
@@ -418,6 +424,12 @@ public:
     // 约束：一旦某参数有默认值，其后所有参数都必须有默认值。
     std::vector<std::shared_ptr<ASTNode>> defaultValues;
     int requiredParamCount = 0;  // F10: 必需参数个数（无默认值的前缀参数数量）
+
+    // PERF-08 fix: 自由变量分析结果缓存。
+    // computeFreeVariables 是纯函数（仅依赖函数体 AST 结构，不依赖运行时环境），
+    // 同一 FunDecl 多次被闭包捕获时无需重复遍历整个函数体 AST。
+    // mutable 允许 const FunDecl& 修改缓存；AST 重建后 FunDecl 是新对象，缓存自动失效。
+    mutable std::optional<std::unordered_set<std::string>> cachedFreeVars_;
 
     FunDecl(const std::string& n, std::vector<std::string> p,
             std::vector<std::string> pt, const std::string& rt,

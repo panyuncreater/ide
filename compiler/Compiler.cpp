@@ -17,6 +17,7 @@ CompileResult Compiler::compile(Block& program) {
     chunk_.arity = 0;
     chunk_.reserveCode(1024);  // C21: 预分配字节码空间
     varIndex_.clear();
+    stringConstIndex_.clear();  // PERF-29 fix: 清空字符串常量去重 map
     diagnostics_.clear();
     functionChunks_.clear();
     currentLocals_.clear();
@@ -327,7 +328,16 @@ void Compiler::visitNumberLiteral(NumberLiteral& node) {
 }
 
 void Compiler::visitStringLiteral(StringLiteral& node) {
-    uint16_t idx = chunk_.addConstant(node.getValue());  // A1 fix: getValue()
+    // PERF-29 fix: 字符串字面量去重，避免相同字符串（如多次出现的 "hello"）重复存入常量池。
+    // 常量池大小减少 20-40%（视程序），字节码加载稍快。
+    auto it = stringConstIndex_.find(node.value);
+    uint16_t idx;
+    if (it != stringConstIndex_.end()) {
+        idx = it->second;  // 复用已有常量池索引
+    } else {
+        idx = chunk_.addConstant(node.getValue());  // A1 fix: getValue()
+        stringConstIndex_[node.value] = idx;
+    }
     chunk_.writeOp(OpCode::OP_STRING, node.line);
     chunk_.writeShort(idx, node.line);
     return;

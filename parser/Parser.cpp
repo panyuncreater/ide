@@ -75,7 +75,10 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     blockDepth_ = 0;  // P0-1 fix: 重置块嵌套深度
     diagnostics_.clear();
 
+    // PERF-21 fix: 预分配 statements 向量容量，避免每个 declaration push_back 触发 realloc。
+    // 估算：平均每 4 个 token 产生 1 个声明（关键字 + 名字 + ... + 分号）
     std::vector<std::shared_ptr<ASTNode>> statements;
+    statements.reserve(tokens_->size() / 4);
 
     while (!isAtEnd()) {
         try {
@@ -875,7 +878,9 @@ std::unique_ptr<Block> Parser::block() {
     }
     DepthGuard blockGuard{blockDepth_};  // C4 fix: 复用 DepthGuard，自动 ++/-- blockDepth_
 
+    // PERF-21 fix: 预分配小量容量，减少小 block 的 realloc（典型 block 含 3-10 条语句）
     std::vector<std::shared_ptr<ASTNode>> stmts;
+    stmts.reserve(8);
 
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
         try {
@@ -1384,6 +1389,11 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
         if (!check(TokenType::TK_INTERP_START)) {
             break;
         }
+    }
+
+    // PERF-11 fix: 预计算 literals 总字符数，供 visitInterpolatedString reserve
+    for (const auto& lit : interp->literals) {
+        interp->literalsTotalLen += lit.size();
     }
 
     return interp;

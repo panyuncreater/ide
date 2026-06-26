@@ -5,6 +5,7 @@
 // ============================================================
 
 #include "interpreter/Interpreter.h"
+#include "interpreter/StringIntern.h"  // PERF-05 fix: 方法标记字符串驻留
 
 // 依赖说明：ClassInfo/ClassDecl/MemberAccess/FunDecl/VarDecl/NodeType/Environment 等
 // 均通过 Interpreter.h 传递包含；本文件不直接使用 Lexer/Parser/BuiltinMethods/NumericUtils。
@@ -98,7 +99,10 @@ void Interpreter::visitMemberAccess(MemberAccess& node) {
             FunDecl* method = findMethod(*searchClass, node.fieldName);
             if (method) {
                 // 方法作为字段访问，返回特殊标记
-                Value methodVal(std::string("method:") + objC.className() + "." + node.fieldName);
+                // PERF-05 fix: 驻留 "method:Class.field" 字符串，避免每次成员访问重复构造
+                Value methodVal(StringIntern::internConcat(
+                    StringIntern::internConcat("method:", objC.className()),
+                    std::string(".") + node.fieldName));
                 lastValue_ = std::move(methodVal); return;
             }
         }

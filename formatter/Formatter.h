@@ -6,8 +6,13 @@
 #include "ast/ASTNode.h"
 #include "lexer/Token.h"
 #include "interpreter/Visitor.h"
-#include "interpreter/Value.h"
 #include "common/RuntimeLimits.h"
+
+// ARCH-01 fix: 移除不必要的 #include "interpreter/Value.h"。
+// Formatter 的 visit 方法返回 void，lastFormatResult_ 是 std::string，
+// 头文件不使用 Value 类型。Formatter.cpp 调用 getValue().toString() 时
+// 自行 include Value.h。这使 Formatter 成为一个独立的工具模块，
+// 修改 Value.h 不再触发 Formatter 重编译。
 
 class ASTNode;
 class Block;
