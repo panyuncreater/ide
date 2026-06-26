@@ -2060,8 +2060,19 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
 
     // 字符串比较
     if (lv.isString() && rv.isString()) {
-        if (opType == BinOpType::BIN_EQ)  { result = Value(lv.stringVal() == rv.stringVal()); return true; }
-        if (opType == BinOpType::BIN_NEQ) { result = Value(lv.stringVal() != rv.stringVal()); return true; }
+        // PERF-30 fix: 补全字符串字典序比较折叠（<, >, <=, >=）
+        // 原 BIN_EQ/BIN_NEQ 已支持，此处补齐 4 个关系运算符
+        const std::string& ls = lv.stringVal();
+        const std::string& rs = rv.stringVal();
+        switch (opType) {
+        case BinOpType::BIN_EQ:  result = Value(ls == rs); return true;
+        case BinOpType::BIN_NEQ: result = Value(ls != rs); return true;
+        case BinOpType::BIN_LT:  result = Value(ls <  rs); return true;
+        case BinOpType::BIN_GT:  result = Value(ls >  rs); return true;
+        case BinOpType::BIN_LTE: result = Value(ls <= rs); return true;
+        case BinOpType::BIN_GTE: result = Value(ls >= rs); return true;
+        default: break;
+        }
     }
 
     // 布尔逻辑（M1 fix: 短路语义，返回操作数原始值而非 bool）

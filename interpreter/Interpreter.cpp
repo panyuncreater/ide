@@ -101,35 +101,40 @@ void Interpreter::retainReplAst(std::unique_ptr<Block> ast) {
 }
 
 void Interpreter::saveReplState() {
-    savedGlobalEnv_ = globalEnv_;
-    savedClassRegistry_ = std::move(classRegistry_);
-    savedReplAsts_ = std::move(replAsts_);
+    // ARCH-12 fix: 聚合到 ReplState 结构体
+    replState_.savedGlobalEnv = globalEnv_;
+    replState_.savedClassRegistry = std::move(classRegistry_);
+    replState_.savedReplAsts = std::move(replAsts_);
     // BUG7 fix: 保存函数注册表，避免 Run→REPL 切换后 funRegistry_ 丢失
-    savedFunRegistry_ = std::move(funRegistry_);
-    savedFunRegistryGen_ = funRegistryGen_;
+    replState_.savedFunRegistry = std::move(funRegistry_);
+    replState_.savedFunRegistryGen = funRegistryGen_;
     // P1-1 fix: 保存模块相关状态，避免 Run→REPL 切换后悬垂指针
-    savedModuleCache_ = std::move(moduleCache_);
-    savedModuleExports_ = std::move(moduleExports_);
-    savedExportedNames_ = exportedNames_;
-    savedModuleLoadingStack_ = moduleLoadingStack_;
-    savedModuleLoadingSet_ = moduleLoadingSet_;  // D19 fix: 同步保存 set
+    replState_.savedModuleCache = std::move(moduleCache_);
+    replState_.savedModuleExports = std::move(moduleExports_);
+    replState_.savedExportedNames = exportedNames_;
+    replState_.savedModuleLoadingStack = moduleLoadingStack_;
+    replState_.savedModuleLoadingSet = moduleLoadingSet_;  // D19 fix: 同步保存 set
+    replState_.active = true;
 }
 
 void Interpreter::restoreReplState() {
-    globalEnv_ = savedGlobalEnv_;
+    // ARCH-12 fix: 防御性检查 — 未 save 就 restore 是调用方 bug，静默返回避免状态损坏
+    if (!replState_.active) return;
+    globalEnv_ = replState_.savedGlobalEnv;
     currentEnv_ = globalEnv_;
-    classRegistry_ = std::move(savedClassRegistry_);
-    replAsts_ = std::move(savedReplAsts_);
+    classRegistry_ = std::move(replState_.savedClassRegistry);
+    replAsts_ = std::move(replState_.savedReplAsts);
     // BUG7 fix: 恢复函数注册表
-    funRegistry_ = std::move(savedFunRegistry_);
-    funRegistryGen_ = savedFunRegistryGen_;
+    funRegistry_ = std::move(replState_.savedFunRegistry);
+    funRegistryGen_ = replState_.savedFunRegistryGen;
     // P1-1 fix: 恢复模块相关状态
-    moduleCache_ = std::move(savedModuleCache_);
-    moduleExports_ = std::move(savedModuleExports_);
-    exportedNames_ = std::move(savedExportedNames_);
-    moduleLoadingStack_ = std::move(savedModuleLoadingStack_);
-    moduleLoadingSet_ = std::move(savedModuleLoadingSet_);  // D19 fix: 同步恢复 set
-    savedGlobalEnv_.reset();
+    moduleCache_ = std::move(replState_.savedModuleCache);
+    moduleExports_ = std::move(replState_.savedModuleExports);
+    exportedNames_ = std::move(replState_.savedExportedNames);
+    moduleLoadingStack_ = std::move(replState_.savedModuleLoadingStack);
+    moduleLoadingSet_ = std::move(replState_.savedModuleLoadingSet);  // D19 fix: 同步恢复 set
+    replState_.savedGlobalEnv.reset();
+    replState_.active = false;
 }
 
 void Interpreter::setOutputCallback(std::function<void(const std::string&)> callback) {
@@ -399,6 +404,11 @@ const std::string* Interpreter::findTypeAnnotation(const std::string& varName) c
 
 Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode, bool errorOnNonVarRef, int line, int col) {
     ChainInfo info;
+    // PERF-09 fix: 预分配 chain 容量，避免链式访问深度 >5 时多次 realloc。
+    // 绝大多数链式访问深度 ≤ 8（如 a.b.c[i].d），预分配 8 足以覆盖常见场景。
+    info.chain.reserve(8);
+    info.vals.reserve(8);
+    info.idxs.reserve(8);
     ASTNode* cur = objectNode;
     while (cur->nodeType == NodeType::NODE_MEMBER_ACCESS ||
         cur->nodeType == NodeType::NODE_INDEX_ACCESS) {

@@ -27,6 +27,28 @@ void AstViewer::setAst(ASTNode* root) {
 
     if (!root) return;
 
+    // PERF-24 fix: 大 AST 节点数上限保护，避免创建 O(3N) 个 QGraphicsItem 导致 UI 卡顿。
+    // 阈值 2000 节点 ≈ 6000 QGraphicsItem，是 QGraphicsScene 流畅渲染的合理上限。
+    // 超过时仅渲染前 2000 节点并在场景顶部添加警告文本。
+    const int MAX_AST_NODES = 2000;
+    int nodeCount = 0;
+    countNodes(root, nodeCount);
+    if (nodeCount > MAX_AST_NODES) {
+        QGraphicsTextItem* warning = scene_->addText(
+            QString("AST 节点数 %1 超过上限 %2，已跳过渲染以避免 UI 卡顿。\n"
+                    "请考虑简化代码或使用字节码视图查看。")
+                .arg(nodeCount).arg(MAX_AST_NODES));
+        warning->setDefaultTextColor(QColor(200, 0, 0));
+        auto font = warning->font();
+        font.setPointSize(12);
+        font.setBold(true);
+        warning->setFont(font);
+        QRectF rect = scene_->itemsBoundingRect().adjusted(-30, -30, 30, 30);
+        scene_->setSceneRect(rect);
+        fitInView(rect, Qt::KeepAspectRatio);
+        return;
+    }
+
     // 单次遍历预计算所有子树尺寸（O(N) 代替 O(N²)）
     precomputeSubtreeSizes(root);
 
@@ -40,6 +62,15 @@ void AstViewer::setAst(ASTNode* root) {
     QRectF rect = scene_->itemsBoundingRect().adjusted(-30, -30, 30, 30);
     scene_->setSceneRect(rect);
     fitInView(rect, Qt::KeepAspectRatio);
+}
+
+void AstViewer::countNodes(ASTNode* node, int& count) {
+    if (!node) return;
+    ++count;
+    auto children = node->children();
+    for (ASTNode* child : children) {
+        countNodes(child, count);
+    }
 }
 
 void AstViewer::clearAst() {

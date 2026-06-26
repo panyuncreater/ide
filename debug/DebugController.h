@@ -11,46 +11,13 @@
 #include <mutex>
 #include <condition_variable>
 #include "interpreter/Value.h"
+#include "debug/DebugTypes.h"  // ARCH-16 fix: 共享调试公共类型
 
 // ============================================================
 // DebugController 调试控制器
 // ============================================================
-
-/// 调试步进模式
-enum class StepMode {
-    MODE_RUN,       // 正常运行（仅检查断点）
-    MODE_STEP_IN,   // 单步进入（每个节点暂停）
-    MODE_STEP_OVER, // 单步跳过（同调用深度暂停）
-    MODE_STEP_OUT   // 单步跳出（浅于当前深度时暂停）
-};
-
-/// 变量快照条目
-struct VariableSnapshot {
-    std::string name;
-    Value value;
-    std::string scope;  // 作用域描述
-};
-
-/// 调用栈条目
-struct CallStackEntry {
-    std::string functionName;
-    int line;
-    int depth;
-    std::vector<std::pair<std::string, Value>> locals;  // 该帧的局部变量快照
-};
-
-/// 断点信息（支持条件断点）
-struct BreakpointInfo {
-    int line;
-    std::string condition;  // 条件表达式（空字符串 = 无条件断点）
-    int hitCount = 0;       // 命中次数
-
-    BreakpointInfo() : line(0) {}
-    BreakpointInfo(int ln, const std::string& cond = "")
-        : line(ln), condition(cond) {}
-
-    bool isConditional() const { return !condition.empty(); }
-};
+// ARCH-16 fix: StepMode / VariableSnapshot / CallStackEntry / BreakpointInfo
+// 已提取到 debug/DebugTypes.h，与 test_harness/debug/DebugController.h 共享。
 
 /// 调试控制器：管理断点、步进模式和暂停
 class DebugController : public QObject {

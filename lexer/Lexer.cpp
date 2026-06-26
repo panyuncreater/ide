@@ -82,6 +82,9 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     comments_.clear();
     diagnostics_.clear();
     interpDepth_ = 0;  // L-P1-1: 重置插值嵌套深度
+    // PERF-19 fix: 预分配 tokens_ 容量，避免大文件场景多次 realloc。
+    // 估算：平均每 8 字符产生 1 个 token（关键字/标识符/字面量/运算符）
+    tokens_.reserve(source.size() / 8 + 16);
 
     // 跳过 UTF-8 BOM（字节序标记）
     if (source_.size() >= 3 &&

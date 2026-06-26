@@ -204,7 +204,16 @@ CodeEditor::CodeEditor(QWidget* parent)
 
     connect(this, &CodeEditor::blockCountChanged, this, &CodeEditor::updateLineNumberAreaWidth);
     connect(this, &CodeEditor::updateRequest, this, &CodeEditor::updateLineNumberArea);
-    connect(this, &CodeEditor::cursorPositionChanged, this, &CodeEditor::highlightCurrentLine);
+
+    // QT-R-08 fix: 光标行高亮用 QTimer 防抖（16ms ≈ 60fps），避免快速移动光标时
+    // 频繁 setExtraSelections 触发重绘导致卡顿/闪烁
+    lineHighlightTimer_ = new QTimer(this);
+    lineHighlightTimer_->setSingleShot(true);
+    lineHighlightTimer_->setInterval(16);
+    connect(lineHighlightTimer_, &QTimer::timeout, this, &CodeEditor::highlightCurrentLine);
+    connect(this, &CodeEditor::cursorPositionChanged, this, [this]() {
+        if (lineHighlightTimer_) lineHighlightTimer_->start();
+    });
 
     updateLineNumberAreaWidth(0);
     highlightCurrentLine();

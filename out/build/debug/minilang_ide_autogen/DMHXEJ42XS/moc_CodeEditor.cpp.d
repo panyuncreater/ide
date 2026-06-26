@@ -6,6 +6,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QSet \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QSize \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QSizeF \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/QTimer \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q17memory.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20functional.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20iterator.h \
@@ -127,6 +128,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_C
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtenvironmentvariables.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtextstream.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtformat_impl.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/qtimer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtmetamacros.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtnoop.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtpreprocessorsupport.h \

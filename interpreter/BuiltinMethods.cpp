@@ -284,6 +284,17 @@ Result<Value> executeSharedStrTrim(const Value& str,
     return Result<Value>::ok(Value(s.substr(start, end - start + 1)));
 }
 
+// ARCH-15 fix: str.contains 共享实现（消除 Interpreter/VM 内联重复）
+Result<Value> executeSharedStrContains(const Value& str,
+                                                const Value* args, size_t argCount,
+                                                int line, int column) {
+    if (argCount != 1) {
+        return Result<Value>::err("contains 期望 1 个参数", line, column);
+    }
+    return Result<Value>::ok(Value(
+        str.stringVal().find(args[0].toString()) != std::string::npos));
+}
+
 Result<Value> executeSharedDictKeys(const Value& dict,
                                           const Value* args, size_t argCount,
                                           int line, int column) {
@@ -614,6 +625,7 @@ const std::unordered_map<std::string, SharedMethodFn>& stringSharedMethods() {
         {"split",      executeSharedStrSplit},
         {"replace",    executeSharedStrReplace},
         {"trim",       executeSharedStrTrim},
+        {"contains",   executeSharedStrContains},  // ARCH-15 fix: 补齐 contains 家族
         {"startsWith", executeSharedStrStartsWith},
         {"endsWith",   executeSharedStrEndsWith},
         {"substr",     executeSharedStrSubstr},
@@ -722,13 +734,7 @@ BuiltinMethodResult BuiltinMethods::handleStringMethod(
     const std::string& method, const Value& obj,
     const std::vector<Value>& args, int line, int col)
 {
-    // S6 fix: contains 特殊处理（内联实现，不走共享层）
-    if (method == "contains") {
-        if (args.size() != 1)
-            throw RuntimeError("contains 期望 1 个参数", line, col);
-        return BuiltinMethodResult(Value(obj.stringVal().find(args[0].toString()) != std::string::npos));
-    }
-
+    // ARCH-15 fix: contains 已注册到 stringSharedMethods()，无需内联特例
     // S6 fix: 非变异方法通过注册表分发
     auto& registry = stringSharedMethods();
     auto it = registry.find(method);

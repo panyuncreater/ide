@@ -1,9 +1,14 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_InterpreterWorker.cpp: C:/Users/v/Desktop/ide/ide/app/InterpreterWorker.h \
   C:/Users/v/Desktop/ide/ide/ast/ASTNode.h \
   C:/Users/v/Desktop/ide/ide/common/Diagnostic.h \
+  C:/Users/v/Desktop/ide/ide/common/IBackend.h \
+  C:/Users/v/Desktop/ide/ide/common/Result.h \
+  C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/CallFrame.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Environment.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/RuntimeExceptions.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueTypes.h \

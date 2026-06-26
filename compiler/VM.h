@@ -6,11 +6,13 @@
 #include <unordered_map>
 #include <map>
 #include <memory>
+#include <cassert>
 #include "compiler/Bytecode.h"
 #include "interpreter/Value.h"
 #include "common/Result.h"
 #include "Diagnostic.h"
 #include "common/RuntimeLimits.h"
+#include "common/IBackend.h"  // ARCH-09 fix: 后端抽象接口
 
 // ============================================================
 // VM 虚拟机（简单栈机）
@@ -30,8 +32,17 @@ public:
     }
     size_t size() const { return sz_; }
     bool empty() const { return sz_ == 0; }
-    T& operator[](size_t i) { return (sz_ <= N) ? inline_[i] : heap_[i]; }
-    const T& operator[](size_t i) const { return (sz_ <= N) ? inline_[i] : heap_[i]; }
+    // 崩溃修复: Debug 构建下加 assert 边界检查，防止越界写破坏 inline_ 栈数组。
+    // 越界访问 inline_[i]（i >= N）会写穿到相邻成员（heap_/sz_）甚至栈 cookie，
+    // 触发 "Stack around the variable was corrupted"。
+    T& operator[](size_t i) {
+        assert(i < sz_ && "SmallArgs::operator[] index out of range");
+        return (sz_ <= N) ? inline_[i] : heap_[i];
+    }
+    const T& operator[](size_t i) const {
+        assert(i < sz_ && "SmallArgs::operator[] index out of range");
+        return (sz_ <= N) ? inline_[i] : heap_[i];
+    }
     T* begin() { return (sz_ <= N) ? inline_ : heap_.data(); }
     T* end() { return begin() + sz_; }
     const T* begin() const { return (sz_ <= N) ? inline_ : heap_.data(); }
@@ -90,9 +101,12 @@ struct VMClassInfo {
 };
 
 /// 简单栈式虚拟机
-class VM {
+class VM : public IBackend {
 public:
     VM();
+
+    /// ARCH-09 fix: IBackend 实现 — 后端名称
+    std::string backendName() const override { return "VM"; }
 
     /// 执行编译结果（一次性全部执行，全速模式）
     VMResult execute(const CompileResult& result);
@@ -112,12 +126,13 @@ public:
     /// 重置 VM 状态（清理栈/帧/变量）
     void resetState();
 
-    /// 设置输出回调
-    void setOutputCallback(std::function<void(const std::string&)> callback);
+    /// 设置输出回调（ARCH-09 fix: IBackend override）
+    void setOutputCallback(std::function<void(const std::string&)> callback) override;
 
     /// 设置输入回调（用于 input() 函数）
     /// 回调接收提示字符串，返回用户输入的字符串
-    void setInputCallback(std::function<std::string(const std::string&)> callback);
+    /// ARCH-09 fix: IBackend override
+    void setInputCallback(std::function<std::string(const std::string&)> callback) override;
 
     /// 设置指令级步进回调（每条指令执行后调用）
     void setStepCallback(std::function<void(const VMStepInfo&)> callback);
@@ -134,8 +149,8 @@ public:
     /// 获取最后错误的源码行号（1-based，0=无位置信息）
     int getLastErrorLine() const;
 
-    /// 获取诊断信息
-    const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
+    /// 获取诊断信息（ARCH-09 fix: IBackend override）
+    const DiagnosticBag& getDiagnostics() const override { return diagnostics_; }
 
     /// 获取诊断信息（简短访问器）
     const DiagnosticBag& diagnostics() const { return diagnostics_; }

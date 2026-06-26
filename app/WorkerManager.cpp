@@ -240,7 +240,6 @@ bool WorkerManager::stopForClose(int timeoutMs) {
 }
 
 void WorkerManager::forceStop() {
-    bool workerStopped = true;
     if (workerThread_) {
         // A5 fix: 协作式取消 — 通过 debugger_->stop() 设置 stopped_ 标志，
         // 解释器/VM 在 checkBreak() 检测到后抛出 DebugStopException 正常退出。
@@ -251,29 +250,30 @@ void WorkerManager::forceStop() {
             worker_.reset();
             workerThread_.reset();
         } else {
-            // A5 fix: Worker 未在 5 秒内停止（仅在解释器/VM 存在未检查 stopped_ 的
-            // 死循环时发生，属于 bug）。不调用 terminate()，保留 worker/thread 对象
-            // 避免删除运行中对象的 UB。
-            // A6 bug fix: 不在此处调用 setDebugMode/restoreReplState/setupMainCallbacks，
-            // 这些修改未受 callbackMutex_ 保护，与仍在运行的 worker 数据竞争（UB）。
-            // 状态清理延后到 workerFinished 信号触发的 cleanupWorker 中执行（此时 worker 已 join）。
-            workerStopped = false;
-            Logger::Error("Worker 未在 5 秒内响应取消请求，保留运行中线程（未调用 terminate 避免 UB）；状态清理延后到 worker 退出", "IDE");
+            // 崩溃修复: Worker 未在 5 秒内停止（死循环未检查 stopped_）。
+            // 必须 terminate + join，否则 forceStop 返回后 isRunning_=false，
+            // 后续 closeEvent 会 accept 并销毁 Ide，而 worker 线程仍通过
+            // QueuedConnection 回写已析构的 IdeController/WorkerManager 成员 →
+            // use-after-free → 栈损坏。
+            // terminate 风险（pauseMutex_ 可能被持有）：仅当 worker 卡在 checkBreak()
+            // 才会持有该锁，但卡在 checkBreak 的 worker 会检测到 stopped_ 并正常退出，
+            // 因此到达此分支的 worker 通常在执行用户代码（未持有 DebugController 锁）。
+            Logger::Error("Worker 未在 5 秒内响应取消请求，回退 terminate() + join（确保 close 路径安全）", "IDE");
+            workerThread_->terminate();
+            workerThread_->wait();
+            // 重置 workerThread_ 会断开 QThread::finished 信号连接，
+            // 避免后续 cleanupWorker 被延迟触发（worker 已通过 terminate 停止）。
+            worker_.reset();
+            workerThread_.reset();
         }
     }
-    // A-P1-2 fix: 仅在 worker 已停止时清理状态；未停止时延后到 cleanupWorker
-    if (workerStopped) {
-        isRunning_ = false;
-        isDebugRun_ = false;
-        interpreter_->setDebugMode(false);
-        interpreter_->restoreReplState();
-        debugger_->reset();
-        setupMainCallbacks();
-    } else {
-        // 仅更新 UI 状态标志（atomic/POD，无并发风险），引擎状态等 worker 退出后清理
-        isRunning_ = false;
-        isDebugRun_ = false;
-    }
+    // A-P1-2 fix: worker 已停止（正常或 terminate），安全执行完整状态清理
+    isRunning_ = false;
+    isDebugRun_ = false;
+    interpreter_->setDebugMode(false);
+    interpreter_->restoreReplState();
+    debugger_->reset();
+    setupMainCallbacks();
 }
 
 void WorkerManager::cleanupWorker() {

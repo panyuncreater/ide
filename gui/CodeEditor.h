@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QMap>
 #include <QTextBlock>
+#include <QTimer>
 #include <string>
 
 // ============================================================
@@ -116,6 +117,9 @@ private:
 
     // F9: 主题状态
     bool isDarkTheme_ = false;  // 当前是否深色主题
+
+    // QT-R-08 fix: 光标行高亮防抖定时器，避免快速移动光标时频繁 setExtraSelections
+    QTimer* lineHighlightTimer_ = nullptr;
 
     // F13: 自动补全
     QCompleter* completer_ = nullptr;           // 补全器

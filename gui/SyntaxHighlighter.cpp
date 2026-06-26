@@ -49,22 +49,10 @@ void SyntaxHighlighter::initRules() {
         keywordSet_.insert(QString::fromStdString(kv.first));
     }
 
-    // HL-2 + HL-4 fix: 数字字面量（整数、浮点数、前导点、尾点、科学计数法）
-    HighlightRule numberRule;
-    numberRule.pattern = QRegularExpression(
-        "\\b\\d+\\.\\d+(?:[eE][+-]?\\d+)?\\b"  // 1.23, 1.23e5, 1.23e-5
-        "|\\b\\d+\\.\\B(?:[eE][+-]?\\d+)?"      // 123., 123.e5
-        "|\\B\\.\\d+(?:[eE][+-]?\\d+)?\\b"      // .123, .123e5
-        "|\\b\\d+(?:[eE][+-]?\\d+)?\\b"          // 123, 123e5
-    );
-    numberRule.format = numberFormat_;
-    rules_.push_back(numberRule);
-
-    // 运算符（含分隔符，不再匹配字符串内内容——由 highlightBlock 逻辑控制）
-    HighlightRule opRule;
-    opRule.pattern = QRegularExpression("[+\\-*/%]|==|!=|<=|>=|<|>|=|\\(|\\)|\\{|\\}|\\[|\\]|;|,|:");
-    opRule.format = operatorFormat_;
-    rules_.push_back(opRule);
+    // PERF-22 fix: 数字和运算符的识别已完全移入 highlightBlock 的单遍扫描器，
+    // 不再需要 QRegularExpression 规则。rules_ 向量保持空（保留成员以维持 ABI 兼容）。
+    // 原 2 次 globalMatch 调用（数字正则 + 运算符正则）被消除，复杂度从
+    // O(n × regex回溯) 降为 O(n) 单遍字符扫描。
 }
 
 void SyntaxHighlighter::highlightBlock(const QString& text) {
@@ -87,6 +75,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     int stringStart = inString ? 0 : -1;
     int commentStart = inBlockComment ? 0 : -1;
 
+    // ---- 第一遍：扫描字符串/注释，填充 mask + ranges ----
     while (pos < len) {
         if (inBlockComment) {
             mask[pos] = 1;
@@ -163,41 +152,105 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         setFormat(range.first, range.second, commentFormat_);
     }
 
-    // PERF-22 fix: 关键字用 QSet 查找替代大正则 globalMatch
-    // 逐词扫描，检查 QSet membership (O(1) 平均) 替代 regex 回溯
-    if (!keywordSet_.isEmpty()) {
-        int wordStart = -1;
-        for (int i = 0; i <= len; ++i) {
-            bool isWordChar = (i < len) && (text[i].isLetterOrNumber() || text[i] == '_');
-            if (isWordChar) {
-                if (wordStart < 0) wordStart = i;
-            } else {
-                if (wordStart >= 0) {
-                    int wordLen = i - wordStart;
-                    // 关键字不会太长，跳过过长的标识符
-                    if (wordLen <= 20 && !mask[wordStart]) {
-                        if (keywordSet_.contains(text.mid(wordStart, wordLen))) {
-                            setFormat(wordStart, wordLen, keywordFormat_);
-                        }
-                    }
-                    wordStart = -1;
+    // ---- 第二遍：单遍扫描识别关键字/数字/运算符，完全消除 regex globalMatch ----
+    // PERF-22 fix: 原实现用 2 次 QRegularExpression::globalMatch（数字正则 + 运算符正则），
+    // 每次匹配都需 regex 引擎回溯 + 对每个匹配检查 mask。
+    // 改造后：单遍字符扫描，按首字符分派到 keyword/number/operator 分支，
+    // 总复杂度从 O(n × regex回溯) 降为 O(n)。
+    pos = 0;
+    while (pos < len) {
+        // 跳过字符串/注释内的字符（mask 标记）
+        if (mask[pos]) {
+            pos++;
+            continue;
+        }
+
+        QChar c = text[pos];
+
+        // ---- 标识符/关键字 ----
+        // 首字符：字母或下划线；后续：字母/数字/下划线
+        if (c.isLetter() || c == '_') {
+            int start = pos;
+            while (pos < len && (text[pos].isLetterOrNumber() || text[pos] == '_')) {
+                pos++;
+            }
+            int wordLen = pos - start;
+            // 关键字不会太长，跳过过长的标识符
+            if (wordLen <= 20 && !keywordSet_.isEmpty() &&
+                keywordSet_.contains(text.mid(start, wordLen))) {
+                setFormat(start, wordLen, keywordFormat_);
+            }
+            continue;
+        }
+
+        // ---- 数字字面量 ----
+        // 支持：整数(123)、浮点(1.23)、科学计数(1e5/1.23e-5)、
+        //       前导点(.123)、尾点(123.)
+        // 判定条件：首字符是数字，或者首字符是 '.' 且下一个字符是数字
+        if (c.isDigit() || (c == '.' && pos + 1 < len && text[pos + 1].isDigit())) {
+            int start = pos;
+            bool hasDot = false;
+            bool hasExp = false;
+
+            // 整数部分（如果有，前导点场景无整数部分）
+            while (pos < len && text[pos].isDigit()) {
+                pos++;
+            }
+
+            // 小数点 + 小数部分
+            if (pos < len && text[pos] == '.' && !hasDot) {
+                hasDot = true;
+                pos++;
+                while (pos < len && text[pos].isDigit()) {
+                    pos++;
                 }
             }
+
+            // 指数部分 e/E[+-]?digits
+            if (pos < len && (text[pos] == 'e' || text[pos] == 'E')) {
+                int expPos = pos;
+                pos++;
+                if (pos < len && (text[pos] == '+' || text[pos] == '-')) {
+                    pos++;
+                }
+                if (pos < len && text[pos].isDigit()) {
+                    hasExp = true;
+                    while (pos < len && text[pos].isDigit()) {
+                        pos++;
+                    }
+                } else {
+                    // 回退：'e' 后无数字，不是合法指数，回退到 e 前
+                    pos = expPos;
+                }
+            }
+
+            setFormat(start, pos - start, numberFormat_);
+            continue;
         }
-    }
 
-    // PERF-22 fix: 数字和运算符仍用 regex，但范围检查用 mask 数组 O(1) 替代线性扫描
-    for (const auto& rule : rules_) {
-        QRegularExpressionMatchIterator it = rule.pattern.globalMatch(text);
-        while (it.hasNext()) {
-            QRegularExpressionMatch match = it.next();
-            int matchStart = match.capturedStart();
-
-            // O(1) 掩码检查：matchStart 处的字符若在字符串/注释内则跳过
-            if (matchStart < len && mask[matchStart]) continue;
-
-            setFormat(matchStart, match.capturedLength(), rule.format);
+        // ---- 运算符/分隔符 ----
+        // 两字符运算符优先匹配：== != <= >=
+        // 单字符运算符：+ - * / % < > = ( ) { } [ ] ; , :
+        if (pos + 1 < len) {
+            QChar c2 = text[pos + 1];
+            if ((c == '=' && c2 == '=') || (c == '!' && c2 == '=') ||
+                (c == '<' && c2 == '=') || (c == '>' && c2 == '=')) {
+                setFormat(pos, 2, operatorFormat_);
+                pos += 2;
+                continue;
+            }
         }
+        if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' ||
+            c == '<' || c == '>' || c == '=' ||
+            c == '(' || c == ')' || c == '{' || c == '}' ||
+            c == '[' || c == ']' || c == ';' || c == ',' || c == ':') {
+            setFormat(pos, 1, operatorFormat_);
+            pos++;
+            continue;
+        }
+
+        // 其他字符（空白等），跳过
+        pos++;
     }
 
     setCurrentBlockState(inString ? 1 : (inBlockComment ? 2 : 0));

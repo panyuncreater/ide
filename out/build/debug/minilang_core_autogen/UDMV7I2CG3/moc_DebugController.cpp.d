@@ -1,4 +1,6 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_core_autogen/UDMV7I2CG3/moc_DebugController.cpp: C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
+  C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
+  C:/Users/v/Desktop/ide/ide/debug/DebugTypes.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \

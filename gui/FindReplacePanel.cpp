@@ -127,6 +127,7 @@ void FindReplacePanel::closePanel() {
 void FindReplacePanel::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         closePanel();
+        event->accept();   // QT-R-09 fix: 显式 accept，避免事件继续传播
         return;
     }
     // F3 查找下一个, Shift+F3 查找上一个
@@ -136,6 +137,7 @@ void FindReplacePanel::keyPressEvent(QKeyEvent* event) {
         } else {
             onFindNext();
         }
+        event->accept();   // QT-R-09 fix: 显式 accept，避免事件继续传播
         return;
     }
     QWidget::keyPressEvent(event);

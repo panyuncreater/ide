@@ -83,16 +83,12 @@ void Ide::closeEvent(QCloseEvent* event) {
         return;
     }
 
-    // QT-R-05 fix: 异步停止 worker 线程，避免 closeEvent 中 wait(3000) 阻塞 UI 3 秒。
-    // 若程序正在运行，设置 pendingClose_=true 并异步触发 stop，event->ignore() 暂不关闭。
-    // workerFinished 信号触发 onWorkerFinished，其中检测 pendingClose_ 后调用 close() 完成关闭。
+    // 崩溃修复: forceStop 保证 worker 线程在返回前完全停止（正常退出或 terminate+join）。
+    // 不再使用 pendingClose_ 异步机制 — forceStop 重置 workerThread_ 会断开 finished 信号，
+    // 导致 workerFinished 永不发射、pendingClose_ 永远为 true、窗口永远无法关闭。
+    // forceStop 最多阻塞 5 秒（worker 协作式退出期间），对关闭场景可接受。
     if (controller_->isRunning()) {
-        pendingClose_ = true;
-        // 异步停止：通过 debugger_->stop() 让 worker 通过 DebugStopException 正常退出
-        // 不调用 stopForClose（会阻塞），改用 forceStop 的协作式取消路径（非 terminate）
         controller_->forceStop();
-        event->ignore();
-        return;
     }
     if (controller_->isVmRunning()) {
         onVmStop();

@@ -449,6 +449,42 @@ VMResult VM::pushCompareResult(bool result, size_t& ip, OpCode opcode) {
     return VMResult::VM_OK;
 }
 
+// ============================================================
+// writeBack 接收者写回机制（ARCH-24 设计说明）
+// ------------------------------------------------------------
+// 背景：MiniLang 方法调用语义要求变异方法（如 arr.push()、dict.remove()、
+// 实例字段写入）的修改回写到原始变量/字段。由于 VM 栈式执行，方法调用时
+// 接收者被拷贝到新栈帧，方法内的修改不会自动反映到调用者栈帧。
+//
+// 编译期编码（Compiler::visitMethodCall）：
+//   编译器检测接收者是否为简单 VarRef：
+//     - 全局变量：编码 receiverVarIdx（常量池索引，0xFFFF 表示无）
+//     - 局部变量：编码 receiverLocalSlot（栈槽偏移，0xFF 表示无）
+//     - 复杂表达式（如 obj.x.y.f()）：不写回，结果存入 lastMutatedReceiver_
+//   这些编码附加在 OP_METHOD_CALL 指令后，VM 执行时读取。
+//
+// 运行期写回（VM::writeBackReceiver）：
+//   方法返回时（OP_RETURN），VM 根据 receiverVarIdx/receiverLocalSlot 判断
+//   写回目标，执行三分支写回：
+//     1. receiverVarIdx != 0xFFFF → 写入 globalSlots_（槽位寻址）或 globals_（名称寻址）
+//     2. receiverLocalSlotByte != 0xFF → 写入栈帧（含字段同步到实例）
+//     3. 否则 → 存入 lastMutatedReceiver_（供调用方通过 OP_GET_LAST_MUTATED 读取）
+//
+// 字段同步优化（PERF-13 fix）：
+//   fieldsModified 脏标记由 OP_SET_LOCAL/OP_MEMBER_SET_LOCAL 在写入字段槽时置位。
+//   OP_RETURN 仅在 fieldsModified=true 时执行字段同步循环，跳过只读方法
+//   和无字段写入的 init，避免冗余拷贝。
+//
+// 链式调用（dispatchArrayBuiltin/dispatchDictBuiltin）：
+//   内建方法分发器在变异路径（ARR_PUSH/POP/REMOVE、DICT_REMOVE）后调用
+//   writeBackReceiver(..., true) 强制写回。非变异路径（ARR_LEN/CONTAINS、
+//   DICT_LEN/KEYS/VALUES/HAS/GET）不调用写回。
+//
+// P7 fix：字段同步先拷贝后 move 的顺序
+//   receiverLocalSlotByte == 0 时（this 槽位），先拷贝 mutatedObj 到字段，
+//   再 move 到栈槽。若先 move 则拷贝时 mutatedObj 已被掏空。
+// ============================================================
+
 // 写回变异方法调用后的接收者（统一数组/字典/实例三处写回逻辑）
 // 判断链：
 //   1. receiverVarIdx != 0xFFFF → 写入 globalSlots_ 或 globals_
@@ -643,8 +679,9 @@ VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
         if (!extractSharedBuiltin(executeSharedStrTrim(obj, args.begin(), args.size()), result))
             return VMResult::VM_RUNTIME_ERROR;
     } else if (method == BuiltinMethod::STR_CONTAINS || method == BuiltinMethod::ARR_CONTAINS) {
-        if (args.size() != 1) return runtimeError("contains 期望 1 个参数");
-        result = Value(obj.stringVal().find(args[0].toString()) != std::string::npos);
+        // ARCH-15 fix: 改用 executeSharedStrContains 共享函数，消除与 Interpreter 的内联重复
+        if (!extractSharedBuiltin(executeSharedStrContains(obj, args.begin(), args.size()), result))
+            return VMResult::VM_RUNTIME_ERROR;
     } else if (method == BuiltinMethod::STR_STARTS_WITH) {
         if (!extractSharedBuiltin(executeSharedStrStartsWith(obj, args.begin(), args.size()), result))
             return VMResult::VM_RUNTIME_ERROR;

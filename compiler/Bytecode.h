@@ -12,7 +12,8 @@
 // ============================================================
 
 /// 操作码枚举
-enum class OpCode : uint8_t {    OP_CONSTANT,     // [已废弃] 与 OP_INT/OP_FLOAT/OP_STRING 功能相同，编译器不再生成（D5 fix），保留枚举值避免后续操作码重新编号，VM 仍 dispatch 兼容旧字节码
+enum class OpCode : uint8_t {
+    OP_CONSTANT,     // [已废弃] 与 OP_INT/OP_FLOAT/OP_STRING 功能相同，编译器不再生成（D5 fix），保留枚举值避免后续操作码重新编号，VM 仍 dispatch 兼容旧字节码
     OP_INT,          // 加载整数常量
     OP_FLOAT,        // 加载浮点常量
     OP_STRING,       // 加载字符串常量

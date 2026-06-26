@@ -1,12 +1,20 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_ide.cpp: C:/Users/v/Desktop/ide/ide/app/ide.h \
+  C:/Users/v/Desktop/ide/ide/app/DebugCoordinator.h \
   C:/Users/v/Desktop/ide/ide/app/IdeController.h \
   C:/Users/v/Desktop/ide/ide/app/InterpreterWorker.h \
+  C:/Users/v/Desktop/ide/ide/app/PipelineRunner.h \
+  C:/Users/v/Desktop/ide/ide/app/VmStepper.h \
+  C:/Users/v/Desktop/ide/ide/app/WorkerManager.h \
   C:/Users/v/Desktop/ide/ide/ast/ASTNode.h \
   C:/Users/v/Desktop/ide/ide/common/Diagnostic.h \
+  C:/Users/v/Desktop/ide/ide/common/IBackend.h \
+  C:/Users/v/Desktop/ide/ide/common/Result.h \
+  C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
   C:/Users/v/Desktop/ide/ide/compiler/Compiler.h \
   C:/Users/v/Desktop/ide/ide/compiler/VM.h \
   C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
+  C:/Users/v/Desktop/ide/ide/debug/DebugTypes.h \
   C:/Users/v/Desktop/ide/ide/formatter/Formatter.h \
   C:/Users/v/Desktop/ide/ide/gui/AstViewer.h \
   C:/Users/v/Desktop/ide/ide/gui/CodeEditor.h \
@@ -16,9 +24,11 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   C:/Users/v/Desktop/ide/ide/gui/ReplPanel.h \
   C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.h \
   C:/Users/v/Desktop/ide/ide/gui/VmStackPanel.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/CallFrame.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Environment.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/RuntimeExceptions.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueTypes.h \

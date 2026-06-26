@@ -36,9 +36,13 @@ int main(int argc, char *argv[]) {
     }
 
     // MAIN-01 fix: 顶层异常捕获保护
+    // 崩溃修复: Ide 改为堆分配。QMainWindow 是大型对象，栈分配会在 MSVC /RTC1 Debug
+    // 构建中放置栈 cookie，若析构期间发生任何越界写（如 worker 线程通过 QueuedConnection
+    // 回写已析构成员）会触发 "Stack around the variable 'w' was corrupted"。
+    // 堆分配消除该栈检查，且符合 Qt 窗口组件的惯用模式。
     try {
-        Ide w;
-        w.show();
+        auto w = std::make_unique<Ide>();
+        w->show();
         return a.exec();
     } catch (const std::exception& e) {
         QMessageBox::critical(nullptr, "MiniLang IDE - 启动错误",

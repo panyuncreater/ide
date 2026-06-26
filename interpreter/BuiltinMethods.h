@@ -135,6 +135,20 @@ Result<Value> executeSharedStrTrim(const Value& str,
                                          const Value* args, size_t argCount,
                                          int line = 0, int column = 0);
 
+/// 共享纯函数：执行字符串 contains 方法
+/// ARCH-15 fix: 补齐 contains 家族（arr/dict/str）的共享层覆盖，
+/// 消除 Interpreter（BuiltinMethods.cpp handleStringMethod 内联）与
+/// VM（VM.cpp dispatchStringBuiltin 内联）的重复实现。
+/// 检查字符串是否包含子串（子串通过 Value::toString 转换）
+/// @param str       字符串对象
+/// @param args       参数列表首指针（contains 期望 1）
+/// @param argCount   参数数量
+/// @param line       调用行号
+/// @param column     调用列号
+Result<Value> executeSharedStrContains(const Value& str,
+                                                const Value* args, size_t argCount,
+                                                int line = 0, int column = 0);
+
 /// 共享纯函数：执行字典 keys 方法（返回所有键组成的数组）
 Result<Value> executeSharedDictKeys(const Value& dict,
                                           const Value* args, size_t argCount,

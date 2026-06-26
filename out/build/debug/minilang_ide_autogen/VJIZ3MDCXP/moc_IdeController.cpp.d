@@ -1,15 +1,25 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_IdeController.cpp: C:/Users/v/Desktop/ide/ide/app/IdeController.h \
+  C:/Users/v/Desktop/ide/ide/app/DebugCoordinator.h \
   C:/Users/v/Desktop/ide/ide/app/InterpreterWorker.h \
+  C:/Users/v/Desktop/ide/ide/app/PipelineRunner.h \
+  C:/Users/v/Desktop/ide/ide/app/VmStepper.h \
+  C:/Users/v/Desktop/ide/ide/app/WorkerManager.h \
   C:/Users/v/Desktop/ide/ide/ast/ASTNode.h \
   C:/Users/v/Desktop/ide/ide/common/Diagnostic.h \
+  C:/Users/v/Desktop/ide/ide/common/IBackend.h \
+  C:/Users/v/Desktop/ide/ide/common/Result.h \
+  C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
   C:/Users/v/Desktop/ide/ide/compiler/Compiler.h \
   C:/Users/v/Desktop/ide/ide/compiler/VM.h \
   C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
+  C:/Users/v/Desktop/ide/ide/debug/DebugTypes.h \
   C:/Users/v/Desktop/ide/ide/formatter/Formatter.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/CallFrame.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Environment.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/RuntimeExceptions.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueTypes.h \
@@ -22,11 +32,13 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QSet \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QString \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/QThread \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/QTimer \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q17memory.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20functional.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20memory.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q20type_traits.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/q23type_traits.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/qabstracteventdispatcher.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qalgorithms.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qanystringview.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qarraydata.h \
@@ -36,6 +48,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qatomic.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qatomic_cxx11.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbasicatomic.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/qbasictimer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbindingstorage.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbytearray.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qbytearrayalgorithms.h \
@@ -54,6 +67,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qdarwinhelpers.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qdatastream.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qdeadlinetimer.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/qeventloop.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qexceptionhandling.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qflags.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qfloat16.h \
@@ -118,6 +132,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_I
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtenvironmentvariables.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtformat_impl.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qthread.h \
+  D:/qt/6.10.3/msvc2022_64/include/QtCore/qtimer.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtmetamacros.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtnoop.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtpreprocessorsupport.h \

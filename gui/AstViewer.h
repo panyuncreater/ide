@@ -49,6 +49,9 @@ private:
     /// 单次遍历预计算所有子树尺寸，填充 sizeCache_
     void precomputeSubtreeSizes(ASTNode* node);
 
+    /// PERF-24 fix: 递归统计 AST 节点数（用于大 AST 上限保护）
+    void countNodes(ASTNode* node, int& count);
+
     /// 子树尺寸缓存（节点指针 -> 尺寸信息）
     std::unordered_map<ASTNode*, SubtreeInfo> sizeCache_;
 

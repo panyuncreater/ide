@@ -3,12 +3,20 @@ minilang_core_autogen/timestamp: \
 	C:/Users/v/Desktop/ide/ide/app/ide.qrc \
 	C:/Users/v/Desktop/ide/ide/ast/ASTNode.cpp \
 	C:/Users/v/Desktop/ide/ide/ast/ASTNode.h \
+	C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
+	C:/Users/v/Desktop/ide/ide/compiler/Bytecode.cpp \
+	C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
 	C:/Users/v/Desktop/ide/ide/compiler/Compiler.cpp \
 	C:/Users/v/Desktop/ide/ide/compiler/Compiler.h \
+	C:/Users/v/Desktop/ide/ide/compiler/IR.cpp \
+	C:/Users/v/Desktop/ide/ide/compiler/IR.h \
 	C:/Users/v/Desktop/ide/ide/compiler/VM.cpp \
 	C:/Users/v/Desktop/ide/ide/compiler/VM.h \
+	C:/Users/v/Desktop/ide/ide/compiler/VMCalls.cpp \
+	C:/Users/v/Desktop/ide/ide/compiler/VMContainers.cpp \
 	C:/Users/v/Desktop/ide/ide/debug/DebugController.cpp \
 	C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
+	C:/Users/v/Desktop/ide/ide/debug/DebugTypes.h \
 	C:/Users/v/Desktop/ide/ide/formatter/Formatter.cpp \
 	C:/Users/v/Desktop/ide/ide/formatter/Formatter.h \
 	C:/Users/v/Desktop/ide/ide/interpreter/BuiltinMethods.cpp \
@@ -17,7 +25,11 @@ minilang_core_autogen/timestamp: \
 	C:/Users/v/Desktop/ide/ide/interpreter/Environment.h \
 	C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.cpp \
 	C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h \
+	C:/Users/v/Desktop/ide/ide/interpreter/InterpreterCalls.cpp \
+	C:/Users/v/Desktop/ide/ide/interpreter/InterpreterClasses.cpp \
+	C:/Users/v/Desktop/ide/ide/interpreter/InterpreterModules.cpp \
 	C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
+	C:/Users/v/Desktop/ide/ide/interpreter/Value.cpp \
 	C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
 	C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \
 	C:/Users/v/Desktop/ide/ide/interpreter/ValueTypes.h \

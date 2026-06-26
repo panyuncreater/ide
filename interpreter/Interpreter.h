@@ -18,6 +18,7 @@
 #include "ast/ASTNode.h"
 #include "Diagnostic.h"
 #include "common/RuntimeLimits.h"
+#include "common/IBackend.h"  // ARCH-09 fix: 后端抽象接口
 
 // ============================================================
 // Interpreter 解释器
@@ -55,10 +56,13 @@ struct ClassInfo {
 // ============================================================
 
 /// 访问者模式解释执行器
-class Interpreter : public Visitor {
+class Interpreter : public Visitor, public IBackend {
 public:
     Interpreter();
     ~Interpreter();
+
+    /// ARCH-09 fix: IBackend 实现 — 后端名称
+    std::string backendName() const override { return "Interpreter"; }
 
     /// 执行程序（AST 根节点）
     Value execute(Block& program);
@@ -76,12 +80,13 @@ public:
     void saveReplState();
     void restoreReplState();
 
-    /// 设置输出回调
-    void setOutputCallback(std::function<void(const std::string&)> callback);
+    /// 设置输出回调（ARCH-09 fix: IBackend override）
+    void setOutputCallback(std::function<void(const std::string&)> callback) override;
 
     /// 设置输入回调（用于 input() 函数）
     /// 回调接收提示字符串，返回用户输入的字符串
-    void setInputCallback(std::function<std::string(const std::string&)> callback);
+    /// ARCH-09 fix: IBackend override
+    void setInputCallback(std::function<std::string(const std::string&)> callback) override;
 
     /// F12: 设置模块加载回调（用于 import 语句）
     /// 回调接收模块路径，返回模块源代码内容。若模块不存在则返回空字符串。
@@ -110,8 +115,8 @@ public:
     /// GUI-03 fix: 安全求值条件断点表达式（保存/恢复所有可变状态，防止重入损坏）
     Value evaluateCondition(ASTNode* node);
 
-    /// 获取诊断信息
-    const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
+    /// 获取诊断信息（ARCH-09 fix: IBackend override）
+    const DiagnosticBag& getDiagnostics() const override { return diagnostics_; }
 
     /// 获取诊断信息（简短访问器）
     const DiagnosticBag& diagnostics() const { return diagnostics_; }
@@ -201,20 +206,26 @@ private:
     std::string currentFunctionReturnType_;         // 当前函数的返回类型
     std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
 
-    // REPL 状态暂存（saveReplState/restoreReplState）
-    std::shared_ptr<Environment> savedGlobalEnv_;
-    std::unordered_map<std::string, ClassInfo> savedClassRegistry_;
-    std::vector<std::unique_ptr<Block>> savedReplAsts_;
-    // BUG7 fix: 保存 funRegistry_ 以避免 Run→REPL 切换后函数注册表丢失
-    // A3 fix: 与 funRegistry_ 一致，使用 shared_ptr 持有所有权
-    std::unordered_map<std::string, std::shared_ptr<FunDecl>> savedFunRegistry_;
-    int savedFunRegistryGen_ = 0;
-    // P1-1 fix: 模块相关状态暂存（避免 Run→REPL 切换后悬垂指针）
-    std::unordered_map<std::string, std::shared_ptr<Environment>> savedModuleCache_;
-    std::unordered_map<std::string, std::unordered_set<std::string>> savedModuleExports_;
-    std::unordered_set<std::string> savedExportedNames_;
-    std::vector<std::string> savedModuleLoadingStack_;
-    std::unordered_set<std::string> savedModuleLoadingSet_;  // D19 fix: 与 savedModuleLoadingStack_ 配对
+    // ARCH-12 fix: REPL 状态暂存聚合为 ReplState 结构体（原为 10 个散布的 saved* 字段）。
+    // 将 REPL 状态管理的完整边界集中在一处，便于理解和未来进一步提取为独立类。
+    // 语义：saveReplState() 将当前 REPL 状态 move 到 ReplState，restoreReplState() 反向 move 回。
+    // active 标志用于防御性检查，避免未 save 就 restore 或重复 restore。
+    struct ReplState {
+        std::shared_ptr<Environment> savedGlobalEnv;
+        std::unordered_map<std::string, ClassInfo> savedClassRegistry;
+        std::vector<std::unique_ptr<Block>> savedReplAsts;
+        // BUG7 fix: 保存 funRegistry_ 以避免 Run→REPL 切换后函数注册表丢失
+        // A3 fix: 与 funRegistry_ 一致，使用 shared_ptr 持有所有权
+        std::unordered_map<std::string, std::shared_ptr<FunDecl>> savedFunRegistry;
+        int savedFunRegistryGen = 0;
+        // P1-1 fix: 模块相关状态暂存（避免 Run→REPL 切换后悬垂指针）
+        std::unordered_map<std::string, std::shared_ptr<Environment>> savedModuleCache;
+        std::unordered_map<std::string, std::unordered_set<std::string>> savedModuleExports;
+        std::unordered_set<std::string> savedExportedNames;
+        std::vector<std::string> savedModuleLoadingStack;
+        std::unordered_set<std::string> savedModuleLoadingSet;  // D19 fix: 与 savedModuleLoadingStack 配对
+        bool active = false;  // 是否有暂存的状态（避免未 save 就 restore）
+    } replState_;
 
     // S2 fix: RAII 递归深度守卫 — 统一 constructClassInstance/callNamedFunction/callInstanceMethod
     // 的递归深度管理，消除手动递减在异常路径下的遗漏风险

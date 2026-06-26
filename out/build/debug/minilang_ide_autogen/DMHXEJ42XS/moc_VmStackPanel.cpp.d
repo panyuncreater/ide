@@ -1,4 +1,5 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_VmStackPanel.cpp: C:/Users/v/Desktop/ide/ide/gui/VmStackPanel.h \
+  C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
