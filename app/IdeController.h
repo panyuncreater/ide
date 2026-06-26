@@ -41,13 +41,50 @@ public:
     ~IdeController();
 
     // ---- 引擎访问 ----
-    Interpreter& interpreter() { return interpreter_; }
-    DebugController* debugger() { return debugger_; }
-    VM& vm() { return vm_; }
+    // B6 fix: 移除 interpreter()/debugger()/vm() 原始引用暴露，GUI 不直接接触引擎内部。
+    // formatter/lexer/parser/compiler 仍供 IdeController 内部调用（GUI 不直接使用）。
     Formatter& formatter() { return formatter_; }
     Lexer& lexer() { return lexer_; }
     Parser& parser() { return parser_; }
     Compiler& compiler() { return compiler_; }
+
+    // B6 fix: 语义化的 VM 调试状态快照接口（GUI 仅通过这些方法读取 VM 状态）
+    // B6 bug fix: getVmStack 改返回 by value，避免返回 vm_.stack_ 引用导致调用方
+    // 缓存引用后步进 VM 触发悬垂/use-after-free（与 getVmGlobals 保持一致的快照语义）
+    std::vector<Value> getVmStack() const { return vm_.getStack(); }
+    std::unordered_map<std::string, Value> getVmGlobals() const { return vm_.getGlobalsRef(); }
+    size_t getVmCurrentIP() const { return vm_.getCurrentIP(); }
+    OpCode getVmCurrentOpCode() const { return vm_.getCurrentOpCode(); }
+    int getVmCurrentLine() const { return vm_.getCurrentLine(); }
+    std::string getVmCurrentChunkName() const { return vm_.getCurrentChunkName(); }
+    std::string getVmLastError() const { return vm_.getLastError(); }
+    int getVmLastErrorLine() const { return vm_.getLastErrorLine(); }
+    // A4 fix: 暴露 VM 调用栈深度（用于 step-over/out 判断）
+    // B6 bug fix: 移除未使用的 getVmCallStack（GUI 无调用点，死 API）
+    size_t getVmFrameCount() const { return vm_.getFrameCount(); }
+
+    // B6 fix: 语义化的调试器接口（GUI 仅通过这些方法操作调试状态）
+    void setBreakpointCondition(int line, const std::string& condition) {
+        debugger_->setBreakpointCondition(line, condition);
+    }
+    bool hasBreakpoints() const { return !debugger_->getBreakpoints().isEmpty(); }
+    std::vector<VariableSnapshot> getDebugVariableSnapshot() const {
+        return debugger_->getVariableSnapshot();
+    }
+    std::vector<CallStackEntry> getDebugCallStack() const {
+        return debugger_->getCallStack();
+    }
+
+    // B6 fix: 语义化的关键字接口（替代 GUI 直接访问 lexer().keywords()）
+    const std::unordered_map<std::string, TokenType>& getKeywords() const { return lexer_.keywords(); }
+
+    // B6 fix: 语义化的 REPL 执行接口（替代 ReplPanel 直接持有 Interpreter*）
+    /// 保留 REPL AST 引用（防止类/闭包 body 指针悬空）
+    void retainReplAst(std::unique_ptr<Block> ast) {
+        interpreter_.retainReplAst(std::move(ast));
+    }
+    /// 执行 REPL 程序，返回求值结果（异常向上传播由调用方处理）
+    Value executeRepl(Block& program) { return interpreter_.executeRepl(program); }
 
     // ---- 管线操作 ----
     /// 执行词法分析，返回 true 表示无错误
@@ -105,13 +142,29 @@ public:
     void stop()    { debugger_->stop(); }
 
     // ---- VM 操作 ----
-    enum class VmStepResult { OK, FINISHED, ERROR, NOT_READY };
-    /// 单步执行 VM，返回结果状态
+    enum class VmStepResult { OK, FINISHED, ERROR, NOT_READY, PAUSED_AT_BREAKPOINT };
+    /// A4 fix: VM 步进模式（与 Interpreter DebugController::StepMode 对齐）
+    enum class VmStepMode { STEP_IN, STEP_OVER, STEP_OUT, RUN };
+
+    /// 单步执行 VM（等价于 stepIn），返回结果状态
     VmStepResult vmStep();
-    /// 停止 VM 并重置状态
+
+    /// A4 fix: 按指定模式执行 VM 步进
+    /// - STEP_IN: 执行一条指令即返回
+    /// - STEP_OVER: 执行直到帧深度 <= 起始深度且行号变化
+    /// - STEP_OUT: 执行直到帧深度 < 起始深度
+    /// - RUN: 全速执行直到命中断点/结束/错误
+    /// 返回 PAUSED_AT_BREAKPOINT 表示命中断点需 UI 更新
+    VmStepResult vmStepByMode(VmStepMode mode);
+
+    /// A4 fix: 设置 VM 模式断点（复用 Interpreter 的 breakpoint 行号集合）
+    /// 在 vmStepByMode(RUN) 时检查命中
+    void setVmBreakpoints(const QSet<int>& breakpoints) { vmBreakpoints_ = breakpoints; }
+
+    /// A4 fix: 停止 VM 并重置状态
     void vmStop();
-    /// 重置 VM 状态（用于重新开始）
-    void vmReset() { vm_.resetState(); isVmInitialized_ = false; }
+    /// A4 fix: 重置 VM 状态（用于重新开始）
+    void vmReset() { vm_.resetState(); isVmInitialized_ = false; vmStepMode_ = VmStepMode::STEP_IN; }
     bool isVmRunning() const { return isVmRunning_; }
     bool isVmInitialized() const { return isVmInitialized_; }
 
@@ -131,7 +184,7 @@ signals:
     void genericError(const QString& msg);
     void pausedAt(int line);
     void workerFinished(bool wasDebug);
-    void vmStepInfo(const VMStepInfo& info);
+    // B6 bug fix: 移除未使用的 vmStepInfo 信号（全代码库无 emit，连接为死代码）
     void diagnosticsReady(const DiagnosticBag& bag);
 
 private:
@@ -163,6 +216,11 @@ private:
     // ---- VM 状态 ----
     bool isVmRunning_ = false;
     bool isVmInitialized_ = false;
+    // A4 fix: VM 步进状态机（轻量版，不依赖 DebugController 的跨线程机制）
+    VmStepMode vmStepMode_ = VmStepMode::STEP_IN;
+    size_t vmStepStartFrameCount_ = 0;  // step-over/out 起始帧深度
+    int vmLastPausedLine_ = 0;          // 上次暂停的行号（防同行重复触发）
+    QSet<int> vmBreakpoints_;          // VM 模式断点行号集合（复用 Editor 断点）
 
     // ---- 内部方法 ----
     /// Worker 线程结束后的清理（删除 worker/thread、恢复回调、恢复 REPL 状态）

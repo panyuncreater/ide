@@ -7,7 +7,9 @@
 #include <QStringList>
 #include <memory>
 
-class Interpreter;
+// B6 fix: ReplPanel 不再直接持有 Interpreter*，改由 IdeController（业务层）
+// 提供 retainReplAst + executeRepl 接口，避免 GUI 层直接接触引擎内部。
+class IdeController;
 class Lexer;
 class Parser;
 
@@ -23,8 +25,8 @@ public:
     explicit ReplPanel(QWidget* parent = nullptr);
     ~ReplPanel();
 
-    /// 设置解释器实例
-    void setInterpreter(Interpreter* interp);
+    /// 设置 IdeController（业务逻辑层，提供 REPL 执行接口）
+    void setController(IdeController* controller);
 
     /// 追加输出文本
     void appendOutput(const QString& text);
@@ -45,7 +47,7 @@ private slots:
 private:
     QTextEdit* outputArea_ = nullptr;   // 输出区域
     QLineEdit* inputLine_ = nullptr;    // 输入行
-    Interpreter* interpreter_ = nullptr; // 解释器指针（不拥有）
+    IdeController* controller_ = nullptr; // 业务层指针（不拥有）
 
     QStringList history_;               // 命令历史
     int historyIndex_ = -1;             // 历史浏览索引

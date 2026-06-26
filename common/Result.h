@@ -6,23 +6,23 @@
 // S6 fix: 统一错误处理模式，替代项目中分散的 SharedBuiltinResult /
 // BuiltinMethodResult / VMResult 等特化结构体。
 //
+// A1 fix: common 层不再反向依赖 interpreter 层。
+// Result.h 仅保留泛型 Result<T> 框架与 ErrorInfo，不包含
+// RuntimeExceptions.h。to_runtime_error() 转换由调用方所在的
+// interpreter 层自行实现（见 RuntimeExceptions.h 末尾的自由函数模板
+// to_runtime_error(const Result<T>&)）。
+//
 // 设计要点：
 //   1. Result<T> 持有成功值或错误信息，不抛异常
 //   2. 错误信息包含 message + line + column，与 RuntimeError 对齐
 //   3. 提供 ok() / err() 工厂函数，is_ok() / is_err() 查询
 //   4. value() / error() 访问器（不安全，调用方需先检查）
 //   5. unwrap_or() 提供默认值回退
-//
-// 迁移策略：
-//   - 第一阶段：SharedBuiltinResult → Result<Value>（共享层）
-//   - 第二阶段：VMResult → Result<void>（VM 层，后续）
-//   - 第三阶段：Interpreter 异常路径保持不变（81 个 throw 站点迁移成本过高）
 // ============================================================
 
 #include <string>
 #include <utility>
 #include <variant>
-#include "interpreter/RuntimeExceptions.h"  // P2-9 fix: to_runtime_error() 需要完整 RuntimeError 类型
 
 /// 错误信息载体（与 RuntimeError 字段对齐）
 struct ErrorInfo {
@@ -73,18 +73,9 @@ public:
         return is_ok() ? std::get<0>(data_) : std::move(fallback);
     }
 
-    /// 转换为 RuntimeError（用于 Interpreter 侧从 Result 转回异常）
-    /// 调用方需确保 is_err()
-    class RuntimeError to_runtime_error() const;
-
 private:
     std::variant<T, ErrorInfo> data_;
 };
 
-// P2-9 fix: RuntimeError 完整定义由 interpreter/RuntimeExceptions.h 提供（顶部包含）
-
-template<typename T>
-RuntimeError Result<T>::to_runtime_error() const {
-    const auto& e = error();
-    return RuntimeError(e.message, e.line, e.column);
-}
+// A1 fix: to_runtime_error() 移至 interpreter/RuntimeExceptions.h 作为自由函数模板，
+// 由调用方（interpreter 层）包含。common 层保持无依赖。

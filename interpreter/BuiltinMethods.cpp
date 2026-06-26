@@ -627,7 +627,7 @@ BuiltinMethodResult dispatchShared(SharedMethodFn fn, const Value& obj,
                                     const Value* args, size_t argCount,
                                     int line, int col) {
     auto sr = fn(obj, args, argCount, line, col);
-    if (sr.is_err()) throw sr.to_runtime_error();
+    if (sr.is_err()) throw to_runtime_error(sr);  // A1 fix: 自由函数模板
     return BuiltinMethodResult(std::move(sr.value()));
 }
 
@@ -700,7 +700,7 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(
     // S6 fix: has/contains 特殊处理（共享函数需要 method 名用于错误消息）
     if (method == "has" || method == "contains") {
         auto sr = executeSharedDictHas(obj, method, args.empty() ? nullptr : args.data(), args.size(), line, col);
-        if (sr.is_err()) throw sr.to_runtime_error();
+        if (sr.is_err()) throw to_runtime_error(sr);  // A1 fix: 自由函数模板
         return BuiltinMethodResult(std::move(sr.value()));
     }
 

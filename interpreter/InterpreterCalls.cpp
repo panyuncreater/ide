@@ -42,13 +42,13 @@ void writeBackCapturedVars(Value& closureVal, std::shared_ptr<Environment>& funE
 } // anonymous namespace
 
 
-Value Interpreter::visitFunCall(FunCall& node) {
+void Interpreter::visitFunCall(FunCall& node) {
     checkBreak(&node);
 
     // P1 重构：按调用类型分派到辅助方法
-    if (node.callee) return callClosureValue(node);
-    if (node.name == "dict" || node.name == "array") return callBuiltinConstructor(node);
-    if (classRegistry_.find(node.name) != classRegistry_.end()) return constructClassInstance(node);
+    if (node.callee) { lastValue_ = callClosureValue(node); return; }
+    if (node.name == "dict" || node.name == "array") { lastValue_ = callBuiltinConstructor(node); return; }
+    if (classRegistry_.find(node.name) != classRegistry_.end()) { lastValue_ = constructClassInstance(node); return; }
     // input() 函数（需要回调，单独处理）
     if (node.name == "input") {
         std::string prompt;
@@ -61,20 +61,26 @@ Value Interpreter::visitFunCall(FunCall& node) {
             Value promptVal = evaluate(node.arguments[0].get());
             prompt = promptVal.toString();
         }
-        if (inputCallback_) {
-            return Value(inputCallback_(prompt));
+        // A6 fix: 加锁拷贝 callback 后解锁调用，避免持锁回调导致死锁
+        std::function<std::string(const std::string&)> cb;
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex_);
+            cb = inputCallback_;
+        }
+        if (cb) {
+            lastValue_ = Value(cb(prompt)); return;
         }
         // 无回调时返回空字符串（允许非交互式运行不崩溃）
-        return Value(std::string());
+        lastValue_ = Value(std::string()); return;
     }
     // 顶层内置函数（用户自定义函数/类优先，仅当未定义时才使用内置）
     if (isBuiltinFunction(node.name)) {
         const Value* calleePtr = currentEnv_->get(node.name);
         if (!calleePtr || !calleePtr->isClosure()) {
-            return callBuiltinFunction(node);
+            lastValue_ = callBuiltinFunction(node); return;
         }
     }
-    return callNamedFunction(node);
+    lastValue_ = callNamedFunction(node); return;
 }
 
 // ---- P1 重构：链式调用 / 表达式调用 callee(args) ----
@@ -228,7 +234,7 @@ Value Interpreter::callBuiltinFunction(FunCall& node) {
         node.name, argValues.data(), argValues.size(), node.line, node.column);
 
     if (r.is_err()) {
-        throw r.to_runtime_error();
+        throw to_runtime_error(r);  // A1 fix: 自由函数模板
     }
     return std::move(r.value());
 }
@@ -386,7 +392,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // 检查环境中是否有闭包值
     std::shared_ptr<Environment> closureEnv;
     Value* closureValPtr = nullptr;  // C1 fix: 保存闭包值指针用于 capturedVars 回退
-    FunDecl* funDecl = nullptr;
+    // A3 fix: 使用 shared_ptr 持有 FunDecl，源（resolvedDecl/funRegistry_/closureBodyShared）
+    // 均返回 shared_ptr，确保缓存写入时共享所有权
+    std::shared_ptr<FunDecl> funDecl;
     std::string effectiveName = node.name;  // 实际函数名（闭包时可能不同于调用变量名）
 
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
@@ -414,7 +422,8 @@ Value Interpreter::callNamedFunction(FunCall& node) {
             effectiveName = calleePtr->closureName();
             closureValPtr = const_cast<Value*>(calleePtr);  // C1 fix
             // 优先从闭包值中获取函数体（自包含，不依赖 funRegistry_）
-            funDecl = calleePtr->closureBody();
+            // A3 fix: 使用 closureBodyShared() 获取 shared_ptr 副本
+            funDecl = calleePtr->closureBodyShared();
             if (!funDecl) {
                 // 后备路径：从 funRegistry_ 查找（处理 AST 生命周期问题）
                 auto it = funRegistry_.find(calleePtr->closureName());
@@ -560,7 +569,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 }
 
 // ---- P1 重构：求值参数列表 ----
-std::vector<Value> Interpreter::evaluateArguments(const std::vector<std::unique_ptr<ASTNode>>& args) {
+std::vector<Value> Interpreter::evaluateArguments(const std::vector<std::shared_ptr<ASTNode>>& args) {
     std::vector<Value> argValues;
     argValues.reserve(args.size());
     for (auto& arg : args) {

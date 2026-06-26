@@ -27,6 +27,8 @@ void IdeController::QThreadDeleter::operator()(QThread* thread) const {
 // D20 fix: 构建跨线程安全的 input() 回调。
 // 主线程直接弹对话框；工作线程通过 Qt::QueuedConnection 投递到主线程，
 // 用 std::future + wait_for 限时 30 秒，超时返回空串避免 worker 永久阻塞。
+// A6 bug fix: promise 必须用 shared_ptr 按值捕获，否则超时后主线程 lambda
+// 仍持栈上 promise 的悬垂引用，调用 set_value 触发 use-after-free。
 std::function<std::string(const std::string&)> IdeController::buildInputCallback() const {
     return [this](const std::string& prompt) -> std::string {
         if (QThread::currentThread() == this->thread()) {
@@ -35,21 +37,22 @@ std::function<std::string(const std::string&)> IdeController::buildInputCallback
                 QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
             return ok ? text.toStdString() : "";
         }
-        // 跨线程：投递到主线程并限时等待
-        std::promise<QString> promise;
-        std::shared_future<QString> future = promise.get_future().share();
+        // 跨线程：投递到主线程并限时等待。promise 用 shared_ptr 持有，
+        // worker 超时返回后 lambda 仍可安全调用 set_value（满足一个无人等待的 shared state）。
+        auto promisePtr = std::make_shared<std::promise<QString>>();
+        std::shared_future<QString> future = promisePtr->get_future().share();
         QMetaObject::invokeMethod(const_cast<IdeController*>(this),
-            [this, prompt, &promise]() {
+            [this, prompt, promisePtr]() {
                 bool ok = false;
                 QString result = QInputDialog::getText(nullptr, "input",
                     QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
                 if (!ok) result = "";
-                promise.set_value(result);
+                promisePtr->set_value(result);
             }, Qt::QueuedConnection);
         if (future.wait_for(std::chrono::seconds(30)) == std::future_status::ready) {
             return future.get().toStdString();
         }
-        Logger::Warn("input() 超时（主线程 30 秒未响应），返回空串", "IDE");
+        Logger::Warning("input() 超时（主线程 30 秒未响应），返回空串", "IDE");
         return std::string();
     };
 }
@@ -307,6 +310,7 @@ bool IdeController::stopForClose(int timeoutMs) {
 }
 
 void IdeController::forceStop() {
+    bool workerStopped = true;
     if (workerThread_) {
         // A5 fix: 协作式取消 — 通过 debugger_->stop() 设置 stopped_ 标志，
         // 解释器/VM 在 checkBreak() 检测到后抛出 DebugStopException 正常退出。
@@ -319,18 +323,27 @@ void IdeController::forceStop() {
         } else {
             // A5 fix: Worker 未在 5 秒内停止（仅在解释器/VM 存在未检查 stopped_ 的
             // 死循环时发生，属于 bug）。不调用 terminate()，保留 worker/thread 对象
-            // 避免删除运行中对象的 UB。UI 状态已在下方恢复，用户可继续操作。
-            // Worker 最终会因 MAX_RECURSION_DEPTH/迭代上限退出，届时由 workerFinished 清理。
-            Logger::Error("Worker 未在 5 秒内响应取消请求，保留运行中线程（未调用 terminate 避免 UB）", "IDE");
+            // 避免删除运行中对象的 UB。
+            // A6 bug fix: 不在此处调用 setDebugMode/restoreReplState/setupMainCallbacks，
+            // 这些修改未受 callbackMutex_ 保护，与仍在运行的 worker 数据竞争（UB）。
+            // 状态清理延后到 workerFinished 信号触发的 cleanupWorker 中执行（此时 worker 已 join）。
+            workerStopped = false;
+            Logger::Error("Worker 未在 5 秒内响应取消请求，保留运行中线程（未调用 terminate 避免 UB）；状态清理延后到 worker 退出", "IDE");
         }
     }
-    // A-P1-2 fix: 补全状态清理（与 cleanupWorker 一致），避免下次运行因 stopped_=true 立即终止
-    isRunning_ = false;
-    isDebugRun_ = false;
-    interpreter_.setDebugMode(false);
-    interpreter_.restoreReplState();
-    debugger_->reset();
-    setupMainCallbacks();
+    // A-P1-2 fix: 仅在 worker 已停止时清理状态；未停止时延后到 cleanupWorker
+    if (workerStopped) {
+        isRunning_ = false;
+        isDebugRun_ = false;
+        interpreter_.setDebugMode(false);
+        interpreter_.restoreReplState();
+        debugger_->reset();
+        setupMainCallbacks();
+    } else {
+        // 仅更新 UI 状态标志（atomic/POD，无并发风险），引擎状态等 worker 退出后清理
+        isRunning_ = false;
+        isDebugRun_ = false;
+    }
 }
 
 void IdeController::cleanupWorker() {
@@ -435,6 +448,22 @@ void IdeController::setupDebug(const QSet<int>& breakpoints,
 // ============================================================
 
 IdeController::VmStepResult IdeController::vmStep() {
+    // 保持向后兼容：等价于 stepIn 模式
+    return vmStepByMode(VmStepMode::STEP_IN);
+}
+
+// ============================================================
+// A4 fix: VM 步进状态机实现
+// ------------------------------------------------------------
+// 与 Interpreter DebugController::shouldPauseForStepping 逻辑对齐：
+// - STEP_IN: 执行一条指令即返回
+// - STEP_OVER: 执行直到 frameCount <= startFrameCount 且行号变化
+// - STEP_OUT: 执行直到 frameCount < startFrameCount
+// - RUN: 全速执行直到命中断点/结束/错误
+// 暂停条件检查在每次 stepOnce 后进行，避免回调中状态不一致。
+// 循环上限保护：防止恶意输入（如死循环无断点）卡死 UI。
+// ============================================================
+IdeController::VmStepResult IdeController::vmStepByMode(VmStepMode mode) {
     if (isVmRunning_) return VmStepResult::NOT_READY;
     if (lastCompileResult_.mainChunk.code.empty()) return VmStepResult::NOT_READY;
 
@@ -444,32 +473,101 @@ IdeController::VmStepResult IdeController::vmStep() {
         if (!isVmInitialized_) {
             vm_.initExecution(lastCompileResult_);
             isVmInitialized_ = true;
+            vmLastPausedLine_ = 0;
         }
 
         isVmRunning_ = true;
+        vmStepMode_ = mode;
+        vmStepStartFrameCount_ = vm_.getFrameCount();
 
-        // 单步执行时启用回调
-        vm_.setStepCallbackEnabled(true);
-        vm_.setStepCallback([this](const VMStepInfo& info) {
-            emit vmStepInfo(info);
-        });
+        // A4 fix: 步进循环期间禁用 stepCallback（避免每条指令 emit 信号拖慢 UI）。
+        // UI 更新由 vmStepByMode 返回后调用方一次性完成。
+        vm_.setStepCallbackEnabled(false);
 
-        VMResult result = vm_.stepOnce();
+        // A4 fix: 循环上限保护，防止死循环程序卡死 UI（所有模式都保护）。
+        // RUN 模式上限 100 万指令（足够单次 RUN 到断点/结束）。
+        // STEP_OVER/OUT 上限 100 万（防止无行号指令或栈底无法跨出导致死循环）。
+        constexpr int64_t MAX_STEP_LOOP = 1000000;
+        int64_t stepCount = 0;
 
-        if (result == VMResult::VM_RUNTIME_ERROR) {
-            isVmInitialized_ = false;
-            isVmRunning_ = false;
-            return VmStepResult::ERROR;
+        while (true) {
+            VMResult result = vm_.stepOnce();
+            ++stepCount;
+
+            if (result == VMResult::VM_RUNTIME_ERROR) {
+                isVmInitialized_ = false;
+                isVmRunning_ = false;
+                return VmStepResult::ERROR;
+            }
+
+            if (vm_.isFinished()) {
+                isVmInitialized_ = false;
+                isVmRunning_ = false;
+                return VmStepResult::FINISHED;
+            }
+
+            // A4 fix: 所有模式的循环上限保护
+            if (stepCount >= MAX_STEP_LOOP) {
+                isVmRunning_ = false;
+                return VmStepResult::OK;  // 返回 OK 让 UI 更新，用户可继续
+            }
+
+            // A4 fix: 检查是否应暂停
+            int currentLine = vm_.getCurrentLine();
+            size_t currentFrameCount = vm_.getFrameCount();
+
+            // 断点命中检查（所有模式都检查，使 RUN 能停在断点）
+            if (!vmBreakpoints_.isEmpty() && currentLine > 0
+                && vmBreakpoints_.contains(currentLine)
+                && currentLine != vmLastPausedLine_) {
+                vmLastPausedLine_ = currentLine;
+                isVmRunning_ = false;
+                return VmStepResult::PAUSED_AT_BREAKPOINT;
+            }
+
+            // 根据步进模式判断是否暂停
+            bool shouldPause = false;
+            switch (mode) {
+            case VmStepMode::STEP_IN:
+                // 单步：执行一条即暂停
+                shouldPause = true;
+                break;
+            case VmStepMode::STEP_OVER:
+                // 帧深度回到起始或更浅，且行号变化（行号为 0 时仅按帧深度判断）
+                if (currentFrameCount <= vmStepStartFrameCount_) {
+                    if (currentLine == 0) {
+                        // 无行号信息（如 OP_CLOSURE 等辅助指令），仅当帧深度变化时暂停
+                        if (currentFrameCount != vmStepStartFrameCount_) {
+                            shouldPause = true;
+                        }
+                    } else if (currentLine != vmLastPausedLine_) {
+                        shouldPause = true;
+                    }
+                }
+                break;
+            case VmStepMode::STEP_OUT:
+                // 帧深度比起始更浅
+                if (currentFrameCount < vmStepStartFrameCount_) {
+                    shouldPause = true;
+                }
+                // A4 fix: 若已在栈底无法跨出（frameCount == startFrameCount == 1），
+                // 执行到下一条有行号的指令即暂停（避免死循环）
+                else if (currentFrameCount <= 1 && currentLine > 0
+                         && currentLine != vmLastPausedLine_) {
+                    shouldPause = true;
+                }
+                break;
+            case VmStepMode::RUN:
+                // RUN 模式：仅断点命中才暂停（已在上方检查）
+                break;
+            }
+
+            if (shouldPause) {
+                vmLastPausedLine_ = currentLine;
+                isVmRunning_ = false;
+                return VmStepResult::OK;
+            }
         }
-
-        if (vm_.isFinished()) {
-            isVmInitialized_ = false;
-            isVmRunning_ = false;
-            return VmStepResult::FINISHED;
-        }
-
-        isVmRunning_ = false;
-        return VmStepResult::OK;
     } catch (...) {
         // 异常时重置所有状态，避免永久卡死
         isVmInitialized_ = false;
@@ -482,4 +580,6 @@ void IdeController::vmStop() {
     vm_.resetState();
     isVmInitialized_ = false;
     isVmRunning_ = false;
+    vmStepMode_ = VmStepMode::STEP_IN;
+    vmLastPausedLine_ = 0;
 }

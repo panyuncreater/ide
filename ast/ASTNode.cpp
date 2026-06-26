@@ -1,141 +1,162 @@
 #include "ast/ASTNode.h"
 #include "interpreter/Visitor.h"
+#include "interpreter/Value.h"  // A1 fix: getValue()/nodeName() 实现需要 Value 完整定义
 
 // ============================================================
 // AST 节点的 accept 实现
 // ============================================================
+// A1 fix: accept 返回 void，结果通过 Visitor 子类成员变量传递。
 
-Value BinaryOp::accept(Visitor& visitor) {
-    return visitor.visitBinaryOp(*this);
+// A1 fix: 以下 getValue() / nodeName() 实现原本 inline 定义于 ASTNode.h，
+// 但 ASTNode.h 现仅前向声明 Value（不再 include Value.h），故实现移至此处。
+
+Value NumberLiteral::getValue() const {
+    return isFloat_ ? Value(floatValue_) : Value(intValue_);
 }
 
-Value UnaryOp::accept(Visitor& visitor) {
-    return visitor.visitUnaryOp(*this);
+std::string NumberLiteral::nodeName() const {
+    return "Number(" + getValue().toString() + ")";
 }
 
-Value NumberLiteral::accept(Visitor& visitor) {
-    return visitor.visitNumberLiteral(*this);
+Value StringLiteral::getValue() const {
+    return Value(value);
 }
 
-Value StringLiteral::accept(Visitor& visitor) {
-    return visitor.visitStringLiteral(*this);
+Value BoolLiteral::getValue() const {
+    return Value(value);
 }
 
-Value BoolLiteral::accept(Visitor& visitor) {
-    return visitor.visitBoolLiteral(*this);
+void BinaryOp::accept(Visitor& visitor) {
+    visitor.visitBinaryOp(*this);
 }
 
-Value VarDecl::accept(Visitor& visitor) {
-    return visitor.visitVarDecl(*this);
+void UnaryOp::accept(Visitor& visitor) {
+    visitor.visitUnaryOp(*this);
 }
 
-Value Assignment::accept(Visitor& visitor) {
-    return visitor.visitAssignment(*this);
+void NumberLiteral::accept(Visitor& visitor) {
+    visitor.visitNumberLiteral(*this);
 }
 
-Value VarRef::accept(Visitor& visitor) {
-    return visitor.visitVarRef(*this);
+void StringLiteral::accept(Visitor& visitor) {
+    visitor.visitStringLiteral(*this);
 }
 
-Value IfStmt::accept(Visitor& visitor) {
-    return visitor.visitIfStmt(*this);
+void BoolLiteral::accept(Visitor& visitor) {
+    visitor.visitBoolLiteral(*this);
 }
 
-Value WhileStmt::accept(Visitor& visitor) {
-    return visitor.visitWhileStmt(*this);
+void VarDecl::accept(Visitor& visitor) {
+    visitor.visitVarDecl(*this);
 }
 
-Value ForStmt::accept(Visitor& visitor) {
-    return visitor.visitForStmt(*this);
+void Assignment::accept(Visitor& visitor) {
+    visitor.visitAssignment(*this);
 }
 
-Value FunDecl::accept(Visitor& visitor) {
-    return visitor.visitFunDecl(*this);
+void VarRef::accept(Visitor& visitor) {
+    visitor.visitVarRef(*this);
 }
 
-Value FunCall::accept(Visitor& visitor) {
-    return visitor.visitFunCall(*this);
+void IfStmt::accept(Visitor& visitor) {
+    visitor.visitIfStmt(*this);
 }
 
-Value ReturnStmt::accept(Visitor& visitor) {
-    return visitor.visitReturnStmt(*this);
+void WhileStmt::accept(Visitor& visitor) {
+    visitor.visitWhileStmt(*this);
 }
 
-Value PrintStmt::accept(Visitor& visitor) {
-    return visitor.visitPrintStmt(*this);
+void ForStmt::accept(Visitor& visitor) {
+    visitor.visitForStmt(*this);
 }
 
-Value Block::accept(Visitor& visitor) {
-    return visitor.visitBlock(*this);
+void FunDecl::accept(Visitor& visitor) {
+    visitor.visitFunDecl(*this);
+}
+
+void FunCall::accept(Visitor& visitor) {
+    visitor.visitFunCall(*this);
+}
+
+void ReturnStmt::accept(Visitor& visitor) {
+    visitor.visitReturnStmt(*this);
+}
+
+void PrintStmt::accept(Visitor& visitor) {
+    visitor.visitPrintStmt(*this);
+}
+
+void Block::accept(Visitor& visitor) {
+    visitor.visitBlock(*this);
 }
 
 // 新增节点的 accept 实现
 
-Value ArrayLiteral::accept(Visitor& visitor) {
-    return visitor.visitArrayLiteral(*this);
+void ArrayLiteral::accept(Visitor& visitor) {
+    visitor.visitArrayLiteral(*this);
 }
 
-Value DictLiteral::accept(Visitor& visitor) {
-    return visitor.visitDictLiteral(*this);
+void DictLiteral::accept(Visitor& visitor) {
+    visitor.visitDictLiteral(*this);
 }
 
-Value IndexAccess::accept(Visitor& visitor) {
-    return visitor.visitIndexAccess(*this);
+void IndexAccess::accept(Visitor& visitor) {
+    visitor.visitIndexAccess(*this);
 }
 
-Value IndexAssign::accept(Visitor& visitor) {
-    return visitor.visitIndexAssign(*this);
+void IndexAssign::accept(Visitor& visitor) {
+    visitor.visitIndexAssign(*this);
 }
 
-Value ClassDecl::accept(Visitor& visitor) {
-    return visitor.visitClassDecl(*this);
+void ClassDecl::accept(Visitor& visitor) {
+    visitor.visitClassDecl(*this);
 }
 
-Value MemberAccess::accept(Visitor& visitor) {
-    return visitor.visitMemberAccess(*this);
+void MemberAccess::accept(Visitor& visitor) {
+    visitor.visitMemberAccess(*this);
 }
 
-Value MemberAssign::accept(Visitor& visitor) {
-    return visitor.visitMemberAssign(*this);
+void MemberAssign::accept(Visitor& visitor) {
+    visitor.visitMemberAssign(*this);
 }
 
-Value MethodCall::accept(Visitor& visitor) {
-    return visitor.visitMethodCall(*this);
+void MethodCall::accept(Visitor& visitor) {
+    visitor.visitMethodCall(*this);
 }
 
-Value NullLiteral::accept(Visitor& visitor) {
-    return visitor.visitNullLiteral(*this);
+void NullLiteral::accept(Visitor& visitor) {
+    visitor.visitNullLiteral(*this);
 }
 
-Value SuperExpr::accept(Visitor& visitor) {
-    return visitor.visitSuperExpr(*this);
+void SuperExpr::accept(Visitor& visitor) {
+    visitor.visitSuperExpr(*this);
 }
 
-Value BreakStmt::accept(Visitor& visitor) {
-    return visitor.visitBreakStmt(*this);
+void BreakStmt::accept(Visitor& visitor) {
+    visitor.visitBreakStmt(*this);
 }
 
-Value ContinueStmt::accept(Visitor& visitor) {
-    return visitor.visitContinueStmt(*this);
+void ContinueStmt::accept(Visitor& visitor) {
+    visitor.visitContinueStmt(*this);
 }
 
-Value TryStmt::accept(Visitor& visitor) {
-    return visitor.visitTryStmt(*this);
+void TryStmt::accept(Visitor& visitor) {
+    visitor.visitTryStmt(*this);
 }
 
-Value ThrowStmt::accept(Visitor& visitor) {
-    return visitor.visitThrowStmt(*this);
+void ThrowStmt::accept(Visitor& visitor) {
+    visitor.visitThrowStmt(*this);
 }
 
-Value ImportStmt::accept(Visitor& visitor) {
-    return visitor.visitImportStmt(*this);
+void ImportStmt::accept(Visitor& visitor) {
+    visitor.visitImportStmt(*this);
 }
 
-Value ExportStmt::accept(Visitor& visitor) {
-    return visitor.visitExportStmt(*this);
+void ExportStmt::accept(Visitor& visitor) {
+    visitor.visitExportStmt(*this);
 }
 
 // C5 fix: 插值字符串节点的 accept 实现
-Value InterpolatedString::accept(Visitor& visitor) {
-    return visitor.visitInterpolatedString(*this);
+void InterpolatedString::accept(Visitor& visitor) {
+    visitor.visitInterpolatedString(*this);
 }

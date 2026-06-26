@@ -60,6 +60,7 @@ enum class VMExecMode {
 struct VMStepInfo {
     size_t ip;                              // 当前指令指针
     OpCode opcode;                          // 当前操作码
+    size_t frameCount;                      // A4 fix: 当前调用帧栈深度（用于 step-over/out 语义）
 };
 
 /// VM 调用帧
@@ -175,6 +176,18 @@ public:
 
     /// 获取当前帧的 chunk 名称（"main" 或函数名）
     std::string getCurrentChunkName() const;
+
+    /// A4 fix: 获取当前调用帧栈深度（用于 step-over/out 判断）
+    size_t getFrameCount() const { return frames_.size(); }
+
+    /// A4 fix: 获取调用栈快照（用于 UI 调用栈面板显示）
+    /// 返回从栈底到栈顶的调用帧信息（函数名 + 当前行号 + ip）
+    struct VMCallStackEntry {
+        std::string functionName;   // "main" 或函数名
+        int line;                    // 当前源码行号
+        size_t ip;                   // 当前指令指针
+    };
+    std::vector<VMCallStackEntry> getCallStack() const;
 
 private:
     std::vector<Value> stack_;                     // 操作数栈
@@ -365,6 +378,7 @@ private:
         VMStepInfo info;
         info.ip = ip;
         info.opcode = opcode;
+        info.frameCount = frames_.size();  // A4 fix: 暴露调用深度供 step-over/out 判断
         stepCallback_(info);
     }
 

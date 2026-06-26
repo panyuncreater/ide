@@ -83,11 +83,28 @@ private slots:
     /// 显示字节码
     void onShowBytecode();
 
-    /// VM 单步执行字节码
+    /// VM 单步执行字节码（step-in）
     void onVmStep();
+
+    /// A4 fix: VM 单步跨过（step-over，不进入函数调用）
+    void onVmStepOver();
+
+    /// A4 fix: VM 单步跨出（step-out，跳出当前函数）
+    void onVmStepOut();
+
+    /// A4 fix: VM 全速运行（命中断点时暂停）
+    void onVmRun();
 
     /// VM 停止执行
     void onVmStop();
+
+    // A4 fix: VM 步进共享辅助方法
+    /// 处理 vmStepByMode 结果，更新 UI（栈/全局变量/调用栈/高亮）
+    void handleVmStepResult(IdeController::VmStepResult result);
+    /// 批量启用/禁用 VM 步进按钮
+    /// running=true 表示 VM 处于暂停状态（可继续步进），需启用所有步进按钮
+    /// running=false 表示 VM 已停止/未初始化
+    void setVmStepActionsEnabled(bool enabled, bool running = false);
 
     /// F6: 显示查找面板 (Ctrl+F)
     void onFind();
@@ -139,7 +156,10 @@ private:
     QAction* formatAction_ = nullptr;
     QAction* bytecodeAction_ = nullptr;
 
-    QAction* vmStepAction_ = nullptr;       // VM 单步
+    QAction* vmStepAction_ = nullptr;       // VM 单步（step-in）
+    QAction* vmStepOverAction_ = nullptr;   // A4 fix: VM 单步跨过（step-over）
+    QAction* vmStepOutAction_ = nullptr;    // A4 fix: VM 单步跨出（step-out）
+    QAction* vmRunAction_ = nullptr;        // A4 fix: VM 全速运行（命中断点暂停）
     QAction* vmStopAction_ = nullptr;       // VM 停止
 
     // F9: 主题切换

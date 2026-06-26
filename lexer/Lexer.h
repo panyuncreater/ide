@@ -80,9 +80,10 @@ private:
 
     /// 添加 Token
     void addToken(TokenType type);
-    void addToken(TokenType type, const Value& literal);
+    // A1 fix: literal 参数改用 TokenLiteral（variant），不再依赖 Value
+    void addToken(TokenType type, TokenLiteral literal);
     void addToken(TokenType type, std::string&& text);
-    void addToken(TokenType type, std::string&& text, const Value& literal);
+    void addToken(TokenType type, std::string&& text, TokenLiteral literal);
 
     /// 报告词法错误（生成 TK_ERROR Token，继续扫描）
     void errorToken(const std::string& message, int errorLine = -1, int errorCol = -1);

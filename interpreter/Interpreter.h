@@ -5,6 +5,7 @@
 #include <functional>
 #include <stdexcept>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -33,14 +34,16 @@ class DebugController;
 struct ClassInfo {
     std::string name;                                  // 类名
     std::string superClassName;                         // 父类名（空表示无父类）
-    std::unordered_map<std::string, FunDecl*> methods; // 方法表
+    // A3 fix: shared_ptr 持有方法 AST 所有权，避免 AST 重建后裸指针悬垂
+    std::unordered_map<std::string, std::shared_ptr<FunDecl>> methods; // 方法表
     std::unordered_map<std::string, Value> fields;     // 默认字段值
     std::shared_ptr<Environment> closureEnv;           // O5: 类定义时的环境（闭包捕获）
     // C6 fix: 方法分派缓存。沿继承链查找是 O(depth)，热路径上每次方法调用重复查找。
-    // 缓存 methodName → (FunDecl*, cacheGen_)。cacheGen_ 与 Interpreter::classRegistryGen_
+    // 缓存 methodName → (shared_ptr<FunDecl>, cacheGen_)。cacheGen_ 与 Interpreter::classRegistryGen_
     // 比较，不匹配则视为未命中（任何类重定义都会递增 gen，使全部缓存条目失效，
     // 解决子类缓存指向已被重定义父类的旧方法指针的悬垂问题）。
-    mutable std::unordered_map<std::string, std::pair<FunDecl*, int>> methodCache_;
+    // A3 fix: 缓存值改为 shared_ptr，与 methods 表所有权一致，避免悬垂。
+    mutable std::unordered_map<std::string, std::pair<std::shared_ptr<FunDecl>, int>> methodCache_;
     // 注意：不再存储 superClass 裸指针，运行时通过 superClassName 在 classRegistry_ 中查找
     // 避免 unordered_map rehash 导致指针悬空
 };
@@ -114,41 +117,41 @@ public:
 
     // ---- 25 个 visit 方法实现 ----
 
-    Value visitBinaryOp(BinaryOp& node) override;
-    Value visitUnaryOp(UnaryOp& node) override;
-    Value visitNumberLiteral(NumberLiteral& node) override;
-    Value visitStringLiteral(StringLiteral& node) override;
-    Value visitBoolLiteral(BoolLiteral& node) override;
-    Value visitVarDecl(VarDecl& node) override;
-    Value visitAssignment(Assignment& node) override;
-    Value visitVarRef(VarRef& node) override;
-    Value visitIfStmt(IfStmt& node) override;
-    Value visitWhileStmt(WhileStmt& node) override;
-    Value visitForStmt(ForStmt& node) override;
-    Value visitFunDecl(FunDecl& node) override;
-    Value visitFunCall(FunCall& node) override;
-    Value visitReturnStmt(ReturnStmt& node) override;
-    Value visitPrintStmt(PrintStmt& node) override;
-    Value visitBlock(Block& node) override;
+    void visitBinaryOp(BinaryOp& node) override;
+    void visitUnaryOp(UnaryOp& node) override;
+    void visitNumberLiteral(NumberLiteral& node) override;
+    void visitStringLiteral(StringLiteral& node) override;
+    void visitBoolLiteral(BoolLiteral& node) override;
+    void visitVarDecl(VarDecl& node) override;
+    void visitAssignment(Assignment& node) override;
+    void visitVarRef(VarRef& node) override;
+    void visitIfStmt(IfStmt& node) override;
+    void visitWhileStmt(WhileStmt& node) override;
+    void visitForStmt(ForStmt& node) override;
+    void visitFunDecl(FunDecl& node) override;
+    void visitFunCall(FunCall& node) override;
+    void visitReturnStmt(ReturnStmt& node) override;
+    void visitPrintStmt(PrintStmt& node) override;
+    void visitBlock(Block& node) override;
 
     // 新增 9 个 visit 方法
-    Value visitArrayLiteral(ArrayLiteral& node) override;
-    Value visitDictLiteral(DictLiteral& node) override;
-    Value visitIndexAccess(IndexAccess& node) override;
-    Value visitIndexAssign(IndexAssign& node) override;
-    Value visitClassDecl(ClassDecl& node) override;
-    Value visitMemberAccess(MemberAccess& node) override;
-    Value visitMemberAssign(MemberAssign& node) override;
-    Value visitMethodCall(MethodCall& node) override;
-    Value visitNullLiteral(NullLiteral& node) override;
-    Value visitSuperExpr(SuperExpr& node) override;
-    Value visitBreakStmt(BreakStmt& node) override;
-    Value visitContinueStmt(ContinueStmt& node) override;
-    Value visitTryStmt(TryStmt& node) override;
-    Value visitThrowStmt(ThrowStmt& node) override;
-    Value visitImportStmt(ImportStmt& node) override;
-    Value visitExportStmt(ExportStmt& node) override;
-    Value visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
+    void visitArrayLiteral(ArrayLiteral& node) override;
+    void visitDictLiteral(DictLiteral& node) override;
+    void visitIndexAccess(IndexAccess& node) override;
+    void visitIndexAssign(IndexAssign& node) override;
+    void visitClassDecl(ClassDecl& node) override;
+    void visitMemberAccess(MemberAccess& node) override;
+    void visitMemberAssign(MemberAssign& node) override;
+    void visitMethodCall(MethodCall& node) override;
+    void visitNullLiteral(NullLiteral& node) override;
+    void visitSuperExpr(SuperExpr& node) override;
+    void visitBreakStmt(BreakStmt& node) override;
+    void visitContinueStmt(ContinueStmt& node) override;
+    void visitTryStmt(TryStmt& node) override;
+    void visitThrowStmt(ThrowStmt& node) override;
+    void visitImportStmt(ImportStmt& node) override;
+    void visitExportStmt(ExportStmt& node) override;
+    void visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
 
 private:
     // 运行时限制常量 — 统一引用 common/RuntimeLimits.h
@@ -165,6 +168,10 @@ private:
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     std::function<std::string(const std::string&)> moduleLoader_; // F12: 模块加载回调
+    // A6 fix: callback 跨线程 mutex 保护。同一 Interpreter 实例被 worker 线程（execute）
+    // 和主线程（REPL/条件断点求值/callback 设置）同时访问，std::function 成员无 mutex
+    // 保护会导致数据竞争。setter 加锁写入，invocation 加锁拷贝后解锁调用（避免持锁回调）。
+    mutable std::mutex callbackMutex_;
     std::string currentFilePath_;                             // F12: 当前文件路径
     std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache_; // F12: 模块缓存
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_; // F12: 模块导出名称缓存
@@ -173,7 +180,8 @@ private:
     std::unordered_set<std::string> exportedNames_;           // F12: 当前模块的导出名称集合
     DiagnosticBag diagnostics_;                        // 诊断收集器
     int recursionDepth_ = 0;                        // 递归深度
-    std::unordered_map<std::string, FunDecl*> funRegistry_; // 函数注册表
+    // A3 fix: shared_ptr 持有函数 AST 所有权，避免 AST 重建后裸指针悬垂
+    std::unordered_map<std::string, std::shared_ptr<FunDecl>> funRegistry_; // 函数注册表
     int funRegistryGen_ = 0;  // M7: 注册表代数，函数重定义时递增使 FunCall 缓存失效
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
     int classRegistryGen_ = 0;  // C6 fix: 类注册表代数，任何类定义/重定义时递增，使方法分派缓存失效
@@ -186,7 +194,8 @@ private:
     std::unordered_map<std::string, ClassInfo> savedClassRegistry_;
     std::vector<std::unique_ptr<Block>> savedReplAsts_;
     // BUG7 fix: 保存 funRegistry_ 以避免 Run→REPL 切换后函数注册表丢失
-    std::unordered_map<std::string, FunDecl*> savedFunRegistry_;
+    // A3 fix: 与 funRegistry_ 一致，使用 shared_ptr 持有所有权
+    std::unordered_map<std::string, std::shared_ptr<FunDecl>> savedFunRegistry_;
     int savedFunRegistryGen_ = 0;
     // P1-1 fix: 模块相关状态暂存（避免 Run→REPL 切换后悬垂指针）
     std::unordered_map<std::string, std::shared_ptr<Environment>> savedModuleCache_;
@@ -239,7 +248,10 @@ private:
     };
 
     /// 执行单个节点
+    // A1 fix: Visitor::accept 返回 void，evaluate() 通过 lastValue_ 获取结果。
+    // evaluate() 保持返回 Value 的签名，所有调用方无需修改。
     Value evaluate(ASTNode* node);
+    Value lastValue_;  // A1 fix: visit 方法的结果载体（替代 accept 返回值）
 
     /// 检查调试断点
     void checkBreak(ASTNode* node);
@@ -327,7 +339,7 @@ private:
     Value callInstanceMethod(MethodCall& node, Value& obj);
 
     /// 求值参数列表（消除 visitMethodCall 中重复的参数求值逻辑）
-    std::vector<Value> evaluateArguments(const std::vector<std::unique_ptr<ASTNode>>& args);
+    std::vector<Value> evaluateArguments(const std::vector<std::shared_ptr<ASTNode>>& args);
 
     // ---- B1 fix: 闭包仅捕获自由变量（静态分析 AST）----
 

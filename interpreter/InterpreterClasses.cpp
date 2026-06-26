@@ -10,7 +10,7 @@
 // 均通过 Interpreter.h 传递包含；本文件不直接使用 Lexer/Parser/BuiltinMethods/NumericUtils。
 
 
-Value Interpreter::visitClassDecl(ClassDecl& node) {
+void Interpreter::visitClassDecl(ClassDecl& node) {
     checkBreak(&node);
 
     ClassInfo cls;
@@ -53,16 +53,17 @@ Value Interpreter::visitClassDecl(ClassDecl& node) {
 
         // FunDecl: 方法
         if (member->nodeType == NodeType::NODE_FUN_DECL) {
-            FunDecl* funDecl = static_cast<FunDecl*>(member.get());
+            // A3 fix: 使用 static_pointer_cast 共享 AST 节点所有权
+            auto funDecl = std::static_pointer_cast<FunDecl>(member);
             classRegistry_[node.name].methods[funDecl->name] = funDecl;  // #2 fix
             continue;
         }
     }
 
-    return classVal;
+    lastValue_ = std::move(classVal); return;
 }
 
-Value Interpreter::visitMemberAccess(MemberAccess& node) {
+void Interpreter::visitMemberAccess(MemberAccess& node) {
     checkBreak(&node);
 
     Value obj = evaluate(node.object.get());
@@ -78,7 +79,7 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
         const auto& flds = objC.fields();
         auto it = flds.find(node.fieldName);
         if (it != flds.end()) {
-            return it->second;
+            lastValue_ = it->second; return;
         }
 
         // 检查是否访问的是方法（返回一个标记值）
@@ -98,7 +99,7 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
             if (method) {
                 // 方法作为字段访问，返回特殊标记
                 Value methodVal(std::string("method:") + objC.className() + "." + node.fieldName);
-                return methodVal;
+                lastValue_ = std::move(methodVal); return;
             }
         }
 
@@ -112,28 +113,28 @@ Value Interpreter::visitMemberAccess(MemberAccess& node) {
         const auto& dict = objC.dictVal();
         auto it = dict.find(node.fieldName);
         if (it != dict.end()) {
-            return it->second;
+            lastValue_ = it->second; return;
         }
-        return Value::nullValue();
+        lastValue_ = Value::nullValue(); return;
     }
 
     runtimeError("该类型不支持成员访问", node.line, node.column);
 }
 
-Value Interpreter::visitMemberAssign(MemberAssign& node) {
+void Interpreter::visitMemberAssign(MemberAssign& node) {
     checkBreak(&node);
     // 左到右求值：object → value（由 writeBack 内部按序求值）
-    return writeBack(node.object.get(), false, nullptr, node.fieldName, node.value.get(), node.line, node.column);
+    lastValue_ = writeBack(node.object.get(), false, nullptr, node.fieldName, node.value.get(), node.line, node.column); return;
 }
 
-Value Interpreter::visitSuperExpr(SuperExpr& node) {
+void Interpreter::visitSuperExpr(SuperExpr& node) {
     checkBreak(&node);
     // super 解析为当前 this 实例；调用者通过 NODE_SUPER_EXPR 判断使用父类方法查找
     const Value* thisVal = currentEnv_->get("this");
     if (!thisVal) {
         runtimeError("super 只能在类方法中使用", node.line, node.column);
     }
-    return *thisVal;
+    lastValue_ = *thisVal; return;
 }
 
 // ---- 类辅助方法 ----
@@ -164,19 +165,20 @@ FunDecl* Interpreter::findMethod(const ClassInfo& cls, const std::string& method
     // C6 fix: 方法分派缓存。先查缓存（O(1)），gen 不匹配或未命中才走继承链（O(depth)）。
     auto cacheIt = cls.methodCache_.find(methodName);
     if (cacheIt != cls.methodCache_.end() && cacheIt->second.second == classRegistryGen_) {
-        return cacheIt->second.first;
+        return cacheIt->second.first.get();  // A3 fix: cache 持有 shared_ptr，返回裸指针
     }
     // P2-7 fix: const 正确性 — 不修改 cls，使用 const 指针遍历继承链
     // P1-3 fix: 委托给 lookupInheritanceChain 模板
-    FunDecl* result = lookupInheritanceChain(cls, classRegistry_,
-        [&methodName](const ClassInfo& c) -> FunDecl* {
+    // A3 fix: methods 表持有 shared_ptr<FunDecl>，lambda 返回 shared_ptr
+    std::shared_ptr<FunDecl> result = lookupInheritanceChain(cls, classRegistry_,
+        [&methodName](const ClassInfo& c) -> std::shared_ptr<FunDecl> {
             auto it = c.methods.find(methodName);
             return (it != c.methods.end()) ? it->second : nullptr;
         },
         nullptr);
     // 写入缓存（记录当前 gen，类重定义时 gen 递增使此条目失效）
     cls.methodCache_[methodName] = { result, classRegistryGen_ };
-    return result;
+    return result.get();  // 返回裸指针，调用方在 ClassInfo 存活期间安全使用
 }
 
 Value Interpreter::findFieldDefault(const ClassInfo& cls, const std::string& fieldName) {

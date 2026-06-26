@@ -211,8 +211,9 @@ TEST(ParserTest, Literal_Integer) {
     auto* node = firstStmt(block);
     ASSERT_EQ(node->nodeType, NodeType::NODE_NUMBER_LITERAL);
     auto* num = static_cast<NumberLiteral*>(node);
-    ASSERT_TRUE(num->value.isInt());
-    EXPECT_EQ(num->value.intVal(), 42);
+    // A1 fix: NumberLiteral 存储标量，用 isInt()/intVal() 直接访问
+    ASSERT_TRUE(num->isInt());
+    EXPECT_EQ(num->intVal(), 42);
 }
 
 // 测试：浮点数字面量
@@ -221,8 +222,8 @@ TEST(ParserTest, Literal_Float) {
     auto* node = firstStmt(block);
     ASSERT_EQ(node->nodeType, NodeType::NODE_NUMBER_LITERAL);
     auto* num = static_cast<NumberLiteral*>(node);
-    ASSERT_TRUE(num->value.isFloat());
-    EXPECT_DOUBLE_EQ(num->value.floatVal(), 3.14);
+    ASSERT_TRUE(num->isFloatValue());
+    EXPECT_DOUBLE_EQ(num->floatVal(), 3.14);
 }
 
 // 测试：字符串字面量

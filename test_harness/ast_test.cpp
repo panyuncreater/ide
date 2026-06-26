@@ -64,8 +64,11 @@ static bool astEqual(ASTNode* a, ASTNode* b, std::string& diff, const std::strin
     case NodeType::NODE_NUMBER_LITERAL: {
         auto* x = static_cast<NumberLiteral*>(a);
         auto* y = static_cast<NumberLiteral*>(b);
-        if (!x->value.equals(y->value)) {
-            diff = path + ": number value mismatch (" + x->value.toString() + " vs " + y->value.toString() + ")";
+        // A1 fix: NumberLiteral 存储标量，用 getValue() 构造 Value 比较
+        Value xv = x->getValue();
+        Value yv = y->getValue();
+        if (!xv.equals(yv)) {
+            diff = path + ": number value mismatch (" + xv.toString() + " vs " + yv.toString() + ")";
             return false;
         }
         return true;

@@ -129,7 +129,7 @@ private:
     /// 假设调用前已 consume '('
     /// F10: defaultValues 收集默认参数值表达式（与 params 一一对应，无默认值时为 nullptr）
     void parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes,
-                        std::vector<std::unique_ptr<ASTNode>>& defaultValues);
+                        std::vector<std::shared_ptr<ASTNode>>& defaultValues);
 
     /// 语句
     std::unique_ptr<ASTNode> statement();

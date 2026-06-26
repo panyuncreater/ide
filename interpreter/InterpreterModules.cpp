@@ -12,11 +12,17 @@
 // 其余类型（ImportStmt/ExportStmt/VarDecl/Environment 等）由 Interpreter.h 传递包含。
 
 
-Value Interpreter::visitImportStmt(ImportStmt& node) {
+void Interpreter::visitImportStmt(ImportStmt& node) {
     checkBreak(&node);
 
     // F12: 模块加载
-    if (!moduleLoader_) {
+    // A6 fix: 加锁拷贝 callback 后解锁检查，避免跨线程数据竞争
+    std::function<std::string(const std::string&)> loader;
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex_);
+        loader = moduleLoader_;
+    }
+    if (!loader) {
         runtimeError("未设置模块加载器，无法执行 import", node.line, node.column);
     }
 
@@ -48,8 +54,8 @@ Value Interpreter::visitImportStmt(ImportStmt& node) {
     if (cacheIt != moduleCache_.end()) {
         moduleEnv = cacheIt->second;
     } else {
-        // 加载模块源码
-        std::string source = moduleLoader_(modulePath);
+        // 加载模块源码（A6 fix: 使用已拷贝的 loader，避免跨线程数据竞争）
+        std::string source = loader(modulePath);
         if (source.empty()) {
             runtimeError("无法加载模块: " + modulePath, node.line, node.column);
         }
@@ -130,13 +136,13 @@ Value Interpreter::visitImportStmt(ImportStmt& node) {
         }
     }
 
-    return Value::nullValue();
+    lastValue_ = Value::nullValue(); return;
 }
 
-Value Interpreter::visitExportStmt(ExportStmt& node) {
+void Interpreter::visitExportStmt(ExportStmt& node) {
     checkBreak(&node);
     // F12: export 语句执行内部声明，并记录导出名称
-    if (!node.declaration) return Value::nullValue();
+    if (!node.declaration) { lastValue_ = Value::nullValue(); return; }
 
     // 提取声明名称并标记为导出
     std::string declName;
@@ -161,5 +167,5 @@ Value Interpreter::visitExportStmt(ExportStmt& node) {
     if (!declName.empty()) {
         exportedNames_.insert(declName);
     }
-    return Value::nullValue();
+    lastValue_ = Value::nullValue(); return;
 }

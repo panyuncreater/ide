@@ -141,15 +141,15 @@ TEST(LexerTest, Keywords_LiteralValues) {
     ASSERT_EQ(tokens.size(), 4u);
     // true → 布尔值 true
     EXPECT_EQ(tokens[0].type, TokenType::TK_TRUE);
-    EXPECT_TRUE(tokens[0].literal.isBool());
-    EXPECT_TRUE(tokens[0].literal.boolVal());
+    EXPECT_TRUE(tokens[0].literalIsBool());
+    EXPECT_TRUE(tokens[0].literalBool());
     // false → 布尔值 false
     EXPECT_EQ(tokens[1].type, TokenType::TK_FALSE);
-    EXPECT_TRUE(tokens[1].literal.isBool());
-    EXPECT_FALSE(tokens[1].literal.boolVal());
+    EXPECT_TRUE(tokens[1].literalIsBool());
+    EXPECT_FALSE(tokens[1].literalBool());
     // null → 空值
     EXPECT_EQ(tokens[2].type, TokenType::TK_NULL);
-    EXPECT_TRUE(tokens[2].literal.isNull());
+    EXPECT_TRUE(tokens[2].literalIsNull());
 }
 
 // ============================================================
@@ -228,8 +228,8 @@ TEST(LexerTest, Number_IntegerValue) {
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_INT_LIT);
     EXPECT_EQ(tokens[0].lexeme, "42");
-    ASSERT_TRUE(tokens[0].literal.isInt());
-    EXPECT_EQ(tokens[0].literal.intVal(), 42);
+    ASSERT_TRUE(tokens[0].literalIsInt());
+    EXPECT_EQ(tokens[0].literalInt(), 42);
 }
 
 // 测试：浮点数字面量
@@ -244,8 +244,8 @@ TEST(LexerTest, Number_Float) {
 TEST(LexerTest, Number_FloatValue) {
     auto tokens = scanTokens("3.14");
     ASSERT_EQ(tokens.size(), 1u);
-    ASSERT_TRUE(tokens[0].literal.isFloat());
-    EXPECT_DOUBLE_EQ(tokens[0].literal.floatVal(), 3.14);
+    ASSERT_TRUE(tokens[0].literalIsFloat());
+    EXPECT_DOUBLE_EQ(tokens[0].literalFloat(), 3.14);
 }
 
 // 测试：前导点浮点数 .123
@@ -254,8 +254,8 @@ TEST(LexerTest, Number_LeadingDotFloat) {
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_FLOAT_LIT);
     EXPECT_EQ(tokens[0].lexeme, ".123");
-    ASSERT_TRUE(tokens[0].literal.isFloat());
-    EXPECT_DOUBLE_EQ(tokens[0].literal.floatVal(), 0.123);
+    ASSERT_TRUE(tokens[0].literalIsFloat());
+    EXPECT_DOUBLE_EQ(tokens[0].literalFloat(), 0.123);
 }
 
 // 测试：科学计数法 1e5
@@ -264,8 +264,8 @@ TEST(LexerTest, Number_ScientificNotation) {
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_FLOAT_LIT);
     EXPECT_EQ(tokens[0].lexeme, "1e5");
-    ASSERT_TRUE(tokens[0].literal.isFloat());
-    EXPECT_DOUBLE_EQ(tokens[0].literal.floatVal(), 1e5);
+    ASSERT_TRUE(tokens[0].literalIsFloat());
+    EXPECT_DOUBLE_EQ(tokens[0].literalFloat(), 1e5);
 }
 
 // 测试：科学计数法带负指数 3.14e-2
@@ -274,8 +274,8 @@ TEST(LexerTest, Number_ScientificNotationNegativeExponent) {
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_FLOAT_LIT);
     EXPECT_EQ(tokens[0].lexeme, "3.14e-2");
-    ASSERT_TRUE(tokens[0].literal.isFloat());
-    EXPECT_DOUBLE_EQ(tokens[0].literal.floatVal(), 3.14e-2);
+    ASSERT_TRUE(tokens[0].literalIsFloat());
+    EXPECT_DOUBLE_EQ(tokens[0].literalFloat(), 3.14e-2);
 }
 
 // 测试：科学计数法带正指数和大写 E 2E+10
@@ -284,8 +284,8 @@ TEST(LexerTest, Number_ScientificNotationPositiveExponent) {
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_FLOAT_LIT);
     EXPECT_EQ(tokens[0].lexeme, "2E+10");
-    ASSERT_TRUE(tokens[0].literal.isFloat());
-    EXPECT_DOUBLE_EQ(tokens[0].literal.floatVal(), 2e10);
+    ASSERT_TRUE(tokens[0].literalIsFloat());
+    EXPECT_DOUBLE_EQ(tokens[0].literalFloat(), 2e10);
 }
 
 // 测试：整数后跟点和标识符（123.foo 应分为三个 Token）
@@ -347,8 +347,8 @@ TEST(LexerTest, Number_ScientificWithDecimalPoint) {
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_FLOAT_LIT);
     EXPECT_EQ(tokens[0].lexeme, "123.e5");
-    ASSERT_TRUE(tokens[0].literal.isFloat());
-    EXPECT_DOUBLE_EQ(tokens[0].literal.floatVal(), 123e5);
+    ASSERT_TRUE(tokens[0].literalIsFloat());
+    EXPECT_DOUBLE_EQ(tokens[0].literalFloat(), 123e5);
 }
 
 // ============================================================
@@ -360,8 +360,8 @@ TEST(LexerTest, String_Simple) {
     auto tokens = scanTokens("\"hello\"");
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_STRING_LIT);
-    ASSERT_TRUE(tokens[0].literal.isString());
-    EXPECT_EQ(tokens[0].literal.stringVal(), "hello");
+    ASSERT_TRUE(tokens[0].literalIsString());
+    EXPECT_EQ(tokens[0].literalString(), "hello");
 }
 
 // 测试：空字符串
@@ -369,8 +369,8 @@ TEST(LexerTest, String_Empty) {
     auto tokens = scanTokens("\"\"");
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_STRING_LIT);
-    ASSERT_TRUE(tokens[0].literal.isString());
-    EXPECT_EQ(tokens[0].literal.stringVal(), "");
+    ASSERT_TRUE(tokens[0].literalIsString());
+    EXPECT_EQ(tokens[0].literalString(), "");
 }
 
 // 测试：lexeme 包含引号
@@ -386,32 +386,32 @@ TEST(LexerTest, String_EscapeSequences) {
     {
         auto tokens = scanTokens("\"a\\nb\"");
         ASSERT_EQ(tokens.size(), 1u);
-        ASSERT_TRUE(tokens[0].literal.isString());
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a\nb");
+        ASSERT_TRUE(tokens[0].literalIsString());
+        EXPECT_EQ(tokens[0].literalString(), "a\nb");
     }
     // 测试 \t 制表符
     {
         auto tokens = scanTokens("\"a\\tb\"");
         ASSERT_EQ(tokens.size(), 1u);
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a\tb");
+        EXPECT_EQ(tokens[0].literalString(), "a\tb");
     }
     // 测试 \\ 反斜杠
     {
         auto tokens = scanTokens("\"a\\\\b\"");
         ASSERT_EQ(tokens.size(), 1u);
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a\\b");
+        EXPECT_EQ(tokens[0].literalString(), "a\\b");
     }
     // 测试 \" 双引号
     {
         auto tokens = scanTokens("\"a\\\"b\"");
         ASSERT_EQ(tokens.size(), 1u);
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a\"b");
+        EXPECT_EQ(tokens[0].literalString(), "a\"b");
     }
     // 测试 \r 回车
     {
         auto tokens = scanTokens("\"a\\rb\"");
         ASSERT_EQ(tokens.size(), 1u);
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a\rb");
+        EXPECT_EQ(tokens[0].literalString(), "a\rb");
     }
 }
 
@@ -421,7 +421,7 @@ TEST(LexerTest, String_AdditionalEscapeSequences) {
     {
         auto tokens = scanTokens("\"a\\'b\"");
         ASSERT_EQ(tokens.size(), 1u);
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a'b");
+        EXPECT_EQ(tokens[0].literalString(), "a'b");
     }
     // \0 空字符
     {
@@ -430,19 +430,19 @@ TEST(LexerTest, String_AdditionalEscapeSequences) {
         std::string expected = "a";
         expected += '\0';
         expected += "b";
-        EXPECT_EQ(tokens[0].literal.stringVal(), expected);
+        EXPECT_EQ(tokens[0].literalString(), expected);
     }
     // \b 退格
     {
         auto tokens = scanTokens("\"a\\bb\"");
         ASSERT_EQ(tokens.size(), 1u);
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a\bb");
+        EXPECT_EQ(tokens[0].literalString(), "a\bb");
     }
     // \f 换页
     {
         auto tokens = scanTokens("\"a\\fb\"");
         ASSERT_EQ(tokens.size(), 1u);
-        EXPECT_EQ(tokens[0].literal.stringVal(), "a\fb");
+        EXPECT_EQ(tokens[0].literalString(), "a\fb");
     }
 }
 
@@ -450,9 +450,9 @@ TEST(LexerTest, String_AdditionalEscapeSequences) {
 TEST(LexerTest, String_UnknownEscapeKeptAsIs) {
     auto tokens = scanTokens("\"a\\xb\"");
     ASSERT_EQ(tokens.size(), 1u);
-    ASSERT_TRUE(tokens[0].literal.isString());
+    ASSERT_TRUE(tokens[0].literalIsString());
     // 未知转义 \x 保留为 \x
-    EXPECT_EQ(tokens[0].literal.stringVal(), "a\\xb");
+    EXPECT_EQ(tokens[0].literalString(), "a\\xb");
 }
 
 // 测试：未闭合字符串应产生错误

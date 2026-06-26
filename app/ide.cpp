@@ -37,8 +37,8 @@ Ide::Ide(QWidget* parent)
     initToolbar();
     initConnections();
 
-    // REPL 面板需要解释器引用
-    replPanel_->setInterpreter(&controller_->interpreter());
+    // B6 fix: REPL 面板通过 IdeController（业务层）间接执行，不直接持有 Interpreter*
+    replPanel_->setController(controller_);
 
     // 设置默认示例代码
     codeEditor_->setPlainText(
@@ -307,6 +307,22 @@ void Ide::initToolbar() {
     vmStepAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_N);
     vmStepAction_->setEnabled(false);
 
+    // A4 fix: 新增 VM 步进语义按钮（与 Interpreter 调试按钮对齐）
+    vmStepOverAction_ = toolbar->addAction("⏭ VM跨过");
+    vmStepOverAction_->setToolTip("VM 单步跨过函数调用 (Ctrl+Shift+O)");
+    vmStepOverAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_O);
+    vmStepOverAction_->setEnabled(false);
+
+    vmStepOutAction_ = toolbar->addAction("⤴ VM跨出");
+    vmStepOutAction_->setToolTip("VM 跳出当前函数 (Ctrl+Shift+U)");
+    vmStepOutAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_U);
+    vmStepOutAction_->setEnabled(false);
+
+    vmRunAction_ = toolbar->addAction("▶ VM运行");
+    vmRunAction_->setToolTip("VM 全速运行（命中断点暂停）(Ctrl+Shift+R)");
+    vmRunAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_R);
+    vmRunAction_->setEnabled(false);
+
     vmStopAction_ = toolbar->addAction("⏹ VM停止");
     vmStopAction_->setToolTip("停止 VM 执行");
     vmStopAction_->setEnabled(false);
@@ -328,11 +344,14 @@ void Ide::initConnections() {
     // 条件断点：编辑器右键设置条件时同步到调试控制器
     connect(codeEditor_, &CodeEditor::breakpointConditionRequested,
             this, [this](int line, const QString& condition) {
-                controller_->debugger()->setBreakpointCondition(line, condition.toStdString());
+                controller_->setBreakpointCondition(line, condition.toStdString());
             });
 
     // VM 调试连接
     connect(vmStepAction_, &QAction::triggered, this, &Ide::onVmStep);
+    connect(vmStepOverAction_, &QAction::triggered, this, &Ide::onVmStepOver);
+    connect(vmStepOutAction_, &QAction::triggered, this, &Ide::onVmStepOut);
+    connect(vmRunAction_, &QAction::triggered, this, &Ide::onVmRun);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
 
     // F6: 查找替换快捷键
@@ -388,13 +407,7 @@ void Ide::initConnections() {
 
     connect(controller_, &IdeController::workerFinished, this, &Ide::onWorkerFinished);
 
-    connect(controller_, &IdeController::vmStepInfo, this, [this](const VMStepInfo& info) {
-        vmStackPanel_->updateStack(controller_->vm().getStackRef());
-        vmStackPanel_->updateGlobals(controller_->vm().getGlobalsRef());
-        int line = controller_->vm().getCurrentLine();
-        vmStackPanel_->updateCurrentOp(info.ip, info.opcode, line);
-        highlightBytecodeLine(controller_->vm().getCurrentChunkName(), info.ip);
-    });
+    // B6 bug fix: 移除未使用的 vmStepInfo 信号连接（全代码库无 emit，死代码）
 
     connect(controller_, &IdeController::diagnosticsReady, this, &Ide::displayDiagnostics);
 }
@@ -581,7 +594,7 @@ void Ide::onFormat() {
     if (!controller_->astRoot()) return;
 
     // 格式化：行号会变化，需清除断点并保存光标位置
-    bool hadBreakpoints = !controller_->debugger()->getBreakpoints().isEmpty();
+    bool hadBreakpoints = controller_->hasBreakpoints();
 
     QTextCursor savedCursor = codeEditor_->textCursor();
     int scrollPos = codeEditor_->verticalScrollBar()->value();
@@ -676,80 +689,175 @@ void Ide::onShowBytecode() {
     rightTabWidget_->setCurrentIndex(2);
 }
 
+// ============================================================
+// A4 fix: VM 调试槽函数
+// ------------------------------------------------------------
+// 4 种步进模式共享同一 UI 更新逻辑（handleVmStepResult），
+// 仅 vmStepByMode 的模式参数不同。
+// ============================================================
+
 void Ide::onVmStep() {
     if (controller_->isVmRunning()) return;
     if (controller_->lastCompileResult().mainChunk.code.empty()) return;
 
-    bool firstStep = !controller_->isVmInitialized();
+    // A4 fix: 每次步进前同步断点（用户可能在暂停期间增删断点）
+    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
 
-    vmStepAction_->setEnabled(false);  // 防止重入
+    // 禁用所有 VM 步进按钮防止重入
+    setVmStepActionsEnabled(false);
 
-    if (firstStep) {
-        vmStopAction_->setEnabled(true);
-        bytecodeAction_->setEnabled(false);
-    }
-
-    // A-P1-3 fix: 异常安全保护，确保 vmStepAction_ 在异常时恢复可用
-    // vmStep() 内部 catch(...) 后 rethrow，此处必须捕获避免 Qt 槽函数抛出未捕获异常
     IdeController::VmStepResult result;
     try {
-        result = controller_->vmStep();
+        result = controller_->vmStepByMode(IdeController::VmStepMode::STEP_IN);
     } catch (const std::exception& e) {
         outputPanel_->appendError(QString("VM 单步异常: %1").arg(e.what()));
-        vmStepAction_->setEnabled(true);
-        vmStopAction_->setEnabled(false);
-        bytecodeAction_->setEnabled(true);
+        setVmStepActionsEnabled(true, /*running=*/false);
         return;
     } catch (...) {
         outputPanel_->appendError("VM 单步发生未知异常");
-        vmStepAction_->setEnabled(true);
-        vmStopAction_->setEnabled(false);
-        bytecodeAction_->setEnabled(true);
+        setVmStepActionsEnabled(true, /*running=*/false);
         return;
     }
 
+    handleVmStepResult(result);
+}
+
+void Ide::onVmStepOver() {
+    if (controller_->isVmRunning()) return;
+    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
+
+    // A4 fix: 每次步进前同步断点
+    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
+
+    setVmStepActionsEnabled(false);
+    IdeController::VmStepResult result;
+    try {
+        result = controller_->vmStepByMode(IdeController::VmStepMode::STEP_OVER);
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("VM 跨过异常: %1").arg(e.what()));
+        setVmStepActionsEnabled(true, /*running=*/false);
+        return;
+    } catch (...) {
+        outputPanel_->appendError("VM 跨过发生未知异常");
+        setVmStepActionsEnabled(true, /*running=*/false);
+        return;
+    }
+    handleVmStepResult(result);
+}
+
+void Ide::onVmStepOut() {
+    if (controller_->isVmRunning()) return;
+    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
+
+    // A4 fix: 每次步进前同步断点
+    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
+
+    setVmStepActionsEnabled(false);
+    IdeController::VmStepResult result;
+    try {
+        result = controller_->vmStepByMode(IdeController::VmStepMode::STEP_OUT);
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("VM 跨出异常: %1").arg(e.what()));
+        setVmStepActionsEnabled(true, /*running=*/false);
+        return;
+    } catch (...) {
+        outputPanel_->appendError("VM 跨出发生未知异常");
+        setVmStepActionsEnabled(true, /*running=*/false);
+        return;
+    }
+    handleVmStepResult(result);
+}
+
+void Ide::onVmRun() {
+    if (controller_->isVmRunning()) return;
+    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
+
+    // A4 fix: 每次步进前同步断点
+    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
+
+    setVmStepActionsEnabled(false);
+    IdeController::VmStepResult result;
+    try {
+        result = controller_->vmStepByMode(IdeController::VmStepMode::RUN);
+    } catch (const std::exception& e) {
+        outputPanel_->appendError(QString("VM 运行异常: %1").arg(e.what()));
+        setVmStepActionsEnabled(true, /*running=*/false);
+        return;
+    } catch (...) {
+        outputPanel_->appendError("VM 运行发生未知异常");
+        setVmStepActionsEnabled(true, /*running=*/false);
+        return;
+    }
+    handleVmStepResult(result);
+}
+
+/// A4 fix: 处理 vmStepByMode 的结果，更新 UI（栈/全局变量/调用栈/高亮）
+void Ide::handleVmStepResult(IdeController::VmStepResult result) {
     switch (result) {
     case IdeController::VmStepResult::NOT_READY:
-        vmStepAction_->setEnabled(true);
+        setVmStepActionsEnabled(true, /*running=*/false);
         return;
 
     case IdeController::VmStepResult::ERROR: {
-        Diagnostic diag(DiagLevel::Error, controller_->vm().getLastError(),
-                        controller_->vm().getLastErrorLine(), 0, DiagSource::VM);
+        Diagnostic diag(DiagLevel::Error, controller_->getVmLastError(),
+                        controller_->getVmLastErrorLine(), 0, DiagSource::VM);
         outputPanel_->appendError(QString::fromStdString(diag.format()));
-        if (controller_->vm().getLastErrorLine() > 0) {
+        if (controller_->getVmLastErrorLine() > 0) {
             QSet<int> errorLines;
-            errorLines.insert(controller_->vm().getLastErrorLine());
+            errorLines.insert(controller_->getVmLastErrorLine());
             codeEditor_->setErrorLines(errorLines);
         }
         vmStackPanel_->clearAll();
-        vmStepAction_->setEnabled(true);
-        vmStopAction_->setEnabled(false);
-        bytecodeAction_->setEnabled(true);
+        setVmStepActionsEnabled(true, /*running=*/false);
         return;
     }
 
     case IdeController::VmStepResult::FINISHED:
         outputPanel_->appendOutput("--- VM 执行结束 ---");
         vmStackPanel_->clearAll();
-        vmStepAction_->setEnabled(true);
-        vmStopAction_->setEnabled(false);
-        bytecodeAction_->setEnabled(true);
+        setVmStepActionsEnabled(true, /*running=*/false);
         return;
 
     case IdeController::VmStepResult::OK:
-        // 更新 UI：栈 + 全局变量 + 当前指令高亮
-        vmStackPanel_->updateStack(controller_->vm().getStackRef());
-        vmStackPanel_->updateGlobals(controller_->vm().getGlobalsRef());
+    case IdeController::VmStepResult::PAUSED_AT_BREAKPOINT:
+        // 更新 UI：栈 + 全局变量 + 当前指令高亮 + 调用栈
+        vmStackPanel_->updateStack(controller_->getVmStack());
+        vmStackPanel_->updateGlobals(controller_->getVmGlobals());
         {
-            size_t currentIP = controller_->vm().getCurrentIP();
-            OpCode currentOp = controller_->vm().getCurrentOpCode();
-            int opLine = controller_->vm().getCurrentLine();
+            size_t currentIP = controller_->getVmCurrentIP();
+            OpCode currentOp = controller_->getVmCurrentOpCode();
+            int opLine = controller_->getVmCurrentLine();
             vmStackPanel_->updateCurrentOp(currentIP, currentOp, opLine);
-            highlightBytecodeLine(controller_->vm().getCurrentChunkName(), currentIP);
+            highlightBytecodeLine(controller_->getVmCurrentChunkName(), currentIP);
         }
-        vmStepAction_->setEnabled(true);
+        // A4 fix: 同步断点行高亮（命中断点时跳转到该行）
+        if (result == IdeController::VmStepResult::PAUSED_AT_BREAKPOINT) {
+            int breakLine = controller_->getVmCurrentLine();
+            if (breakLine > 0) {
+                codeEditor_->setCurrentLine(breakLine);
+                outputPanel_->appendOutput(
+                    QString("🔴 VM 命中断点: 第 %1 行").arg(breakLine));
+            }
+        }
+        setVmStepActionsEnabled(true, /*running=*/true);
         return;
+    }
+}
+
+/// A4 fix: 批量启用/禁用 VM 步进按钮
+/// running=true 表示 VM 处于暂停状态（可继续步进），需启用所有步进按钮
+/// running=false 表示 VM 已停止/未初始化，仅启用 vmStep + vmRun，禁用 vmStop
+void Ide::setVmStepActionsEnabled(bool enabled, bool running) {
+    vmStepAction_->setEnabled(enabled);
+    vmStepOverAction_->setEnabled(enabled);
+    vmStepOutAction_->setEnabled(enabled);
+    vmRunAction_->setEnabled(enabled);
+    vmStopAction_->setEnabled(enabled && running);
+    // 首次启动后禁用「查看字节码」按钮（避免运行中重新编译导致状态不一致）
+    if (enabled && running) {
+        bytecodeAction_->setEnabled(false);
+    } else {
+        bytecodeAction_->setEnabled(true);
     }
 }
 
@@ -759,9 +867,7 @@ void Ide::onVmStop() {
     // GUI-11 fix: 清除字节码列表当前行高亮
     bytecodeList_->setCurrentRow(-1);
 
-    vmStepAction_->setEnabled(true);
-    vmStopAction_->setEnabled(false);
-    bytecodeAction_->setEnabled(true);
+    setVmStepActionsEnabled(true, /*running=*/false);
 }
 
 // ============================================================
@@ -834,8 +940,8 @@ void Ide::setupCompletion() {
     // 构建静态补全词列表：关键字 + 内置函数 + 内置方法
     staticCompletionWords_.clear();
 
-    // 1. 从 Lexer 获取所有关键字
-    const auto& keywords = controller_->lexer().keywords();
+    // 1. 从 Lexer 获取所有关键字（B6 fix: 通过语义化接口）
+    const auto& keywords = controller_->getKeywords();
     for (const auto& kv : keywords) {
         staticCompletionWords_ << QString::fromStdString(kv.first);
     }
@@ -985,7 +1091,7 @@ void Ide::populateBytecodeList() {
     // 常见场景：用户多次点击"运行"而代码未修改，避免 O(n) 清空+重建列表。
     QString currentSource = codeEditor_ ? codeEditor_->toPlainText() : QString();
     size_t currentHash = qHash(currentSource);
-    if (currentHash == lastBytecodeSourceHash_ && !bytecodeList_->items().isEmpty()) {
+    if (currentHash == lastBytecodeSourceHash_ && bytecodeList_->count() > 0) {
         return;  // 源码未变，复用现有列表
     }
     lastBytecodeSourceHash_ = currentHash;
@@ -1060,7 +1166,7 @@ void Ide::updateTokenTable() {
         tokenTable_->setItem(i, 1, new QTableWidgetItem(
             QString::fromStdString(tok.lexeme)));
         tokenTable_->setItem(i, 2, new QTableWidgetItem(
-            QString::fromStdString(tok.literal.toString())));
+            QString::fromStdString(tok.literalToString())));  // A1 fix: Token 字面量调试输出
         tokenTable_->setItem(i, 3, new QTableWidgetItem(
             QString::number(tok.line)));
         tokenTable_->setItem(i, 4, new QTableWidgetItem(
@@ -1092,10 +1198,10 @@ void Ide::updateAstViewer() {
 }
 
 void Ide::updateDebugInfo() {
-    auto vars = controller_->debugger()->getVariableSnapshot();
+    auto vars = controller_->getDebugVariableSnapshot();
     debugPanel_->updateVariables(vars);
 
-    auto stack = controller_->debugger()->getCallStack();
+    auto stack = controller_->getDebugCallStack();
     debugPanel_->updateCallStack(stack);
 }
 

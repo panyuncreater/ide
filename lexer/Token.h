@@ -1,7 +1,10 @@
 #pragma once
 
 #include <string>
-#include "interpreter/Value.h"
+#include <variant>
+// A1 fix: Token.h 不再 include interpreter/Value.h。
+// lexer 层是比 interpreter 层更底层的模块，不应反向依赖。
+// 字面量值用 std::variant 直接存储标量，由 Parser 在构造 AST 节点时转换为 Value。
 
 // ============================================================
 // Token 类型与结构体
@@ -49,19 +52,37 @@ enum class TokenType {
     TK_STRING_PART    // 插值字符串的文本片段（非终结字符串字面量）
 };
 
+/// A1 fix: Token 字面量值类型。
+/// 用 variant 替代 Value，使 lexer 层不依赖 interpreter 层。
+/// 仅存储字面量所需的标量类型。
+using TokenLiteral = std::variant<std::monostate, int64_t, double, std::string, bool>;
+
 /// Token 结构体
 struct Token {
     TokenType type;
     std::string lexeme;
-    Value literal;      // 字面量值（仅 TK_INT_LIT, TK_FLOAT_LIT, TK_STRING_LIT, TK_TRUE, TK_FALSE）
+    TokenLiteral literal;   // A1 fix: 字面量值（variant 替代 Value）
     int line;           // 行号（从 1 开始）
     int column;         // 列号（从 1 开始）
 
     Token()
         : type(TokenType::TK_EOF), line(0), column(0) {}
 
-    Token(TokenType t, const std::string& lex, const Value& lit, int ln, int col)
-        : type(t), lexeme(lex), literal(lit), line(ln), column(col) {}
+    Token(TokenType t, const std::string& lex, TokenLiteral lit, int ln, int col)
+        : type(t), lexeme(lex), literal(std::move(lit)), line(ln), column(col) {}
+
+    // A1 fix: 字面量类型查询（替代原 Value::isXxx()）
+    bool literalIsInt() const { return std::holds_alternative<int64_t>(literal); }
+    bool literalIsFloat() const { return std::holds_alternative<double>(literal); }
+    bool literalIsString() const { return std::holds_alternative<std::string>(literal); }
+    bool literalIsBool() const { return std::holds_alternative<bool>(literal); }
+    bool literalIsNull() const { return std::holds_alternative<std::monostate>(literal); }
+
+    // A1 fix: 字面量值访问（替代原 Value::xxxVal()）
+    int64_t literalInt() const { return std::get<int64_t>(literal); }
+    double literalFloat() const { return std::get<double>(literal); }
+    const std::string& literalString() const { return std::get<std::string>(literal); }
+    bool literalBool() const { return std::get<bool>(literal); }
 
     /// 获取 Token 类型的字符串表示
     static std::string typeToString(TokenType t) {
@@ -136,9 +157,20 @@ struct Token {
         return "UNKNOWN";
     }
 
+    /// A1 fix: 字面量的字符串表示（替代原 Value::toString()）
+    /// 仅供调试输出使用，不引入 Value 依赖
+    std::string literalToString() const {
+        if (literalIsNull()) return "null";
+        if (literalIsInt()) return std::to_string(std::get<int64_t>(literal));
+        if (literalIsFloat()) return std::to_string(std::get<double>(literal));
+        if (literalIsBool()) return std::get<bool>(literal) ? "true" : "false";
+        if (literalIsString()) return "\"" + std::get<std::string>(literal) + "\"";
+        return "";
+    }
+
     /// 调试输出
     std::string toString() const {
-        return typeToString(type) + " '" + lexeme + "' " + literal.toString()
+        return typeToString(type) + " '" + lexeme + "' " + literalToString()
                + " @L" + std::to_string(line) + ":C" + std::to_string(column);
     }
 };

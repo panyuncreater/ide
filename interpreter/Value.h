@@ -50,7 +50,9 @@ private:
         std::weak_ptr<Environment> env;  // V4 fix: weak_ptr 打破闭包→环境→闭包的循环引用
         std::vector<std::string> params;
         std::unordered_map<std::string, Value> capturedVars;
-        FunDecl* body = nullptr;       // 函数体 AST 节点（自包含，不依赖 funRegistry_）
+        // A3 fix: shared_ptr 所有权，避免 AST 重建后 funRegistry_/methods 持有的裸指针悬垂。
+        // 自包含闭包不依赖 funRegistry_，body 共享 AST 节点所有权。
+        std::shared_ptr<FunDecl> body;
         std::shared_ptr<VMClosureData> vmClosure; // VM-05/06: VM 闭包数据（定义于 ValueTypes.h）
     };
 
@@ -228,9 +230,9 @@ public:
     static Value makeClosure(const std::string& name,
                              std::shared_ptr<Environment> env,
                              const std::vector<std::string>& params,
-                             FunDecl* body = nullptr) {
+                             std::shared_ptr<FunDecl> body = nullptr) {
         Value v;
-        v.data_ = std::make_shared<ClosureData>(ClosureData{name, env, params, {}, body});
+        v.data_ = std::make_shared<ClosureData>(ClosureData{name, env, params, {}, std::move(body)});
         return v;
     }
 
@@ -346,12 +348,17 @@ public:
         return ptr->params;
     }
 
-    FunDecl*& closureBody() {
-        return ensureUnique<8>().body;
-    }
+    // A3 fix: closureBody() 返回裸指针用于只读访问（Value 存活期间 body 有效）。
+    // 移除非 const 写入版本——body 仅通过 makeClosure 设置，无需可变访问器。
     FunDecl* closureBody() const {
         auto& ptr = std::get<8>(data_);
         assert(ptr && "closureBody() called on null ClosureData");
+        return ptr->body.get();
+    }
+    /// 获取 body 的 shared_ptr 副本（用于缓存等需延长生命周期的场景）
+    std::shared_ptr<FunDecl> closureBodyShared() const {
+        auto& ptr = std::get<8>(data_);
+        assert(ptr && "closureBodyShared() called on null ClosureData");
         return ptr->body;
     }
 

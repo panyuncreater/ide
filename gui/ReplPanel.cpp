@@ -1,6 +1,7 @@
 #include "gui/ReplPanel.h"
 #include "gui/GuiTextUtils.h"  // P1-12 fix: 共享文本追加逻辑
-#include "interpreter/Interpreter.h"
+#include "app/IdeController.h"  // B6 fix: 通过业务层调用 retainReplAst/executeRepl
+#include "interpreter/Interpreter.h"  // Value/RuntimeError 类型
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 #include <QKeyEvent>
@@ -45,8 +46,8 @@ ReplPanel::ReplPanel(QWidget* parent)
 
 ReplPanel::~ReplPanel() {}
 
-void ReplPanel::setInterpreter(Interpreter* interp) {
-    interpreter_ = interp;
+void ReplPanel::setController(IdeController* controller) {
+    controller_ = controller;
 }
 
 void ReplPanel::appendOutput(const QString& text) {
@@ -161,7 +162,7 @@ void ReplPanel::onReturnPressed() {
 }
 
 void ReplPanel::executeLine(const QString& line) {
-    if (!interpreter_) {
+    if (!controller_) {
         appendError("解释器未初始化");
         return;
     }
@@ -205,9 +206,10 @@ void ReplPanel::executeLine(const QString& line) {
     // 执行
     try {
         // PANEL-02 fix: 先保留 AST 再执行，确保异常时 classRegistry_/闭包 body 指针不悬空
+        // B6 fix: 通过 IdeController（业务层）间接调用，不直接持有 Interpreter
         Block* rawAst = ast.get();
-        interpreter_->retainReplAst(std::move(ast));
-        Value result = interpreter_->executeRepl(*rawAst);
+        controller_->retainReplAst(std::move(ast));
+        Value result = controller_->executeRepl(*rawAst);
         // 显示结果
         // PANEL-03 fix: null 结果也打印
         appendOutput(QString::fromStdString(result.toString()));

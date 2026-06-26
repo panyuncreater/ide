@@ -214,6 +214,24 @@ std::string VM::getCurrentChunkName() const {
     return frames_.back().functionName;
 }
 
+std::vector<VM::VMCallStackEntry> VM::getCallStack() const {
+    std::vector<VMCallStackEntry> result;
+    result.reserve(frames_.size());
+    for (const auto& frame : frames_) {
+        VMCallStackEntry entry;
+        entry.functionName = frame.functionName;
+        entry.ip = frame.ip;
+        // 获取该帧当前行号
+        if (frame.chunk && frame.ip < frame.chunk->lines.size()) {
+            entry.line = frame.chunk->lines[frame.ip];
+        } else {
+            entry.line = 0;
+        }
+        result.push_back(entry);
+    }
+    return result;
+}
+
 void VM::setOutputCallback(std::function<void(const std::string&)> callback) {
     outputCallback_ = callback;
 }

@@ -7,6 +7,10 @@
 // 仅依赖 Value.h 和标准库，不依赖 AST/Visitor/Environment。
 // 需要 RuntimeError/BreakException 等但不依赖 Interpreter 类的模块
 // 可直接包含此头文件，避免拉入 AST/Visitor 等重型依赖。
+//
+// A1 fix: 新增自由函数模板 to_runtime_error(const Result<T>&)，
+// 将原 Result<T>::to_runtime_error() 成员函数迁移至此，
+// 使 common/Result.h 不再反向依赖 interpreter 层。
 // ============================================================
 
 #include <string>
@@ -14,6 +18,7 @@
 #include <memory>
 #include "interpreter/Value.h"
 #include "interpreter/Environment.h"  // CallFrame 需要 shared_ptr<Environment>
+#include "common/Result.h"  // A1 fix: to_runtime_error 自由函数模板需要 Result<T>
 
 // ============================================================
 // 运行时异常
@@ -80,3 +85,17 @@ struct CallFrame {
     CallFrame(const std::string& name, std::shared_ptr<Environment> e, int ln, int d)
         : functionName(name), env(e), line(ln), depth(d) {}
 };
+
+// ============================================================
+// A1 fix: Result → RuntimeError 转换（自由函数模板）
+// ============================================================
+// 原 Result<T>::to_runtime_error() 成员函数需要 Result.h 包含
+// RuntimeExceptions.h，导致 common 层反向依赖 interpreter 层。
+// 现迁移为自由函数模板，定义在 interpreter 层，由调用方包含此头文件使用。
+// 调用方需确保 result.is_err()。
+
+template<typename T>
+RuntimeError to_runtime_error(const Result<T>& result) {
+    const auto& e = result.error();
+    return RuntimeError(e.message, e.line, e.column);
+}

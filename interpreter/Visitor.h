@@ -5,6 +5,10 @@
 // ============================================================
 // Visitor 抽象基类
 // ============================================================
+// A1 fix: 所有 visit 方法返回 void，结果通过子类成员变量传递。
+// 这打破了 Visitor 对 Value 的依赖，使 Formatter/Compiler/AstViewer 等
+// 无需引入 interpreter/Value.h。Interpreter 用 lastValue_ 成员保存求值结果，
+// Formatter 用 lastFormatResult_，Compiler 忽略返回值。
 
 /// 访问者抽象基类，定义 25 个纯虚 visit 方法
 class Visitor {
@@ -12,42 +16,42 @@ public:
     virtual ~Visitor() = default;
 
     // 原有 16 个 visit 方法
-    virtual Value visitBinaryOp(BinaryOp& node) = 0;
-    virtual Value visitUnaryOp(UnaryOp& node) = 0;
-    virtual Value visitNumberLiteral(NumberLiteral& node) = 0;
-    virtual Value visitStringLiteral(StringLiteral& node) = 0;
-    virtual Value visitBoolLiteral(BoolLiteral& node) = 0;
-    virtual Value visitVarDecl(VarDecl& node) = 0;
-    virtual Value visitAssignment(Assignment& node) = 0;
-    virtual Value visitVarRef(VarRef& node) = 0;
-    virtual Value visitIfStmt(IfStmt& node) = 0;
-    virtual Value visitWhileStmt(WhileStmt& node) = 0;
-    virtual Value visitForStmt(ForStmt& node) = 0;
-    virtual Value visitFunDecl(FunDecl& node) = 0;
-    virtual Value visitFunCall(FunCall& node) = 0;
-    virtual Value visitReturnStmt(ReturnStmt& node) = 0;
-    virtual Value visitPrintStmt(PrintStmt& node) = 0;
-    virtual Value visitBlock(Block& node) = 0;
+    virtual void visitBinaryOp(BinaryOp& node) = 0;
+    virtual void visitUnaryOp(UnaryOp& node) = 0;
+    virtual void visitNumberLiteral(NumberLiteral& node) = 0;
+    virtual void visitStringLiteral(StringLiteral& node) = 0;
+    virtual void visitBoolLiteral(BoolLiteral& node) = 0;
+    virtual void visitVarDecl(VarDecl& node) = 0;
+    virtual void visitAssignment(Assignment& node) = 0;
+    virtual void visitVarRef(VarRef& node) = 0;
+    virtual void visitIfStmt(IfStmt& node) = 0;
+    virtual void visitWhileStmt(WhileStmt& node) = 0;
+    virtual void visitForStmt(ForStmt& node) = 0;
+    virtual void visitFunDecl(FunDecl& node) = 0;
+    virtual void visitFunCall(FunCall& node) = 0;
+    virtual void visitReturnStmt(ReturnStmt& node) = 0;
+    virtual void visitPrintStmt(PrintStmt& node) = 0;
+    virtual void visitBlock(Block& node) = 0;
 
     // 新增 9 个 visit 方法
-    virtual Value visitArrayLiteral(ArrayLiteral& node) = 0;
-    virtual Value visitDictLiteral(DictLiteral& node) = 0;
-    virtual Value visitIndexAccess(IndexAccess& node) = 0;
-    virtual Value visitIndexAssign(IndexAssign& node) = 0;
-    virtual Value visitClassDecl(ClassDecl& node) = 0;
-    virtual Value visitMemberAccess(MemberAccess& node) = 0;
-    virtual Value visitMemberAssign(MemberAssign& node) = 0;
-    virtual Value visitMethodCall(MethodCall& node) = 0;
-    virtual Value visitNullLiteral(NullLiteral& node) = 0;
-    virtual Value visitSuperExpr(SuperExpr& node) = 0;
-    virtual Value visitBreakStmt(BreakStmt& node) = 0;
-    virtual Value visitContinueStmt(ContinueStmt& node) = 0;
-    virtual Value visitTryStmt(TryStmt& node) = 0;
-    virtual Value visitThrowStmt(ThrowStmt& node) = 0;
-    virtual Value visitImportStmt(ImportStmt& node) = 0;
-    virtual Value visitExportStmt(ExportStmt& node) = 0;
+    virtual void visitArrayLiteral(ArrayLiteral& node) = 0;
+    virtual void visitDictLiteral(DictLiteral& node) = 0;
+    virtual void visitIndexAccess(IndexAccess& node) = 0;
+    virtual void visitIndexAssign(IndexAssign& node) = 0;
+    virtual void visitClassDecl(ClassDecl& node) = 0;
+    virtual void visitMemberAccess(MemberAccess& node) = 0;
+    virtual void visitMemberAssign(MemberAssign& node) = 0;
+    virtual void visitMethodCall(MethodCall& node) = 0;
+    virtual void visitNullLiteral(NullLiteral& node) = 0;
+    virtual void visitSuperExpr(SuperExpr& node) = 0;
+    virtual void visitBreakStmt(BreakStmt& node) = 0;
+    virtual void visitContinueStmt(ContinueStmt& node) = 0;
+    virtual void visitTryStmt(TryStmt& node) = 0;
+    virtual void visitThrowStmt(ThrowStmt& node) = 0;
+    virtual void visitImportStmt(ImportStmt& node) = 0;
+    virtual void visitExportStmt(ExportStmt& node) = 0;
     // C5 fix: 插值字符串节点
-    virtual Value visitInterpolatedString(InterpolatedString& node) = 0;
+    virtual void visitInterpolatedString(InterpolatedString& node) = 0;
 };
 
 // ============================================================
@@ -63,43 +67,43 @@ public:
     ~DefaultVisitor() override = default;
 
     /// 默认处理方法，子类可覆盖以实现通用行为
-    virtual Value defaultVisit(ASTNode& /*node*/) {
-        return Value::nullValue();
+    virtual void defaultVisit(ASTNode& /*node*/) {
+        // 默认无操作
     }
 
     // ---- 25 个 visit 方法的默认实现 ----
 
-    Value visitBinaryOp(BinaryOp& node) override { return defaultVisit(node); }
-    Value visitUnaryOp(UnaryOp& node) override { return defaultVisit(node); }
-    Value visitNumberLiteral(NumberLiteral& node) override { return defaultVisit(node); }
-    Value visitStringLiteral(StringLiteral& node) override { return defaultVisit(node); }
-    Value visitBoolLiteral(BoolLiteral& node) override { return defaultVisit(node); }
-    Value visitVarDecl(VarDecl& node) override { return defaultVisit(node); }
-    Value visitAssignment(Assignment& node) override { return defaultVisit(node); }
-    Value visitVarRef(VarRef& node) override { return defaultVisit(node); }
-    Value visitIfStmt(IfStmt& node) override { return defaultVisit(node); }
-    Value visitWhileStmt(WhileStmt& node) override { return defaultVisit(node); }
-    Value visitForStmt(ForStmt& node) override { return defaultVisit(node); }
-    Value visitFunDecl(FunDecl& node) override { return defaultVisit(node); }
-    Value visitFunCall(FunCall& node) override { return defaultVisit(node); }
-    Value visitReturnStmt(ReturnStmt& node) override { return defaultVisit(node); }
-    Value visitPrintStmt(PrintStmt& node) override { return defaultVisit(node); }
-    Value visitBlock(Block& node) override { return defaultVisit(node); }
-    Value visitArrayLiteral(ArrayLiteral& node) override { return defaultVisit(node); }
-    Value visitDictLiteral(DictLiteral& node) override { return defaultVisit(node); }
-    Value visitIndexAccess(IndexAccess& node) override { return defaultVisit(node); }
-    Value visitIndexAssign(IndexAssign& node) override { return defaultVisit(node); }
-    Value visitClassDecl(ClassDecl& node) override { return defaultVisit(node); }
-    Value visitMemberAccess(MemberAccess& node) override { return defaultVisit(node); }
-    Value visitMemberAssign(MemberAssign& node) override { return defaultVisit(node); }
-    Value visitMethodCall(MethodCall& node) override { return defaultVisit(node); }
-    Value visitNullLiteral(NullLiteral& node) override { return defaultVisit(node); }
-    Value visitSuperExpr(SuperExpr& node) override { return defaultVisit(node); }
-    Value visitBreakStmt(BreakStmt& node) override { return defaultVisit(node); }
-    Value visitContinueStmt(ContinueStmt& node) override { return defaultVisit(node); }
-    Value visitTryStmt(TryStmt& node) override { return defaultVisit(node); }
-    Value visitThrowStmt(ThrowStmt& node) override { return defaultVisit(node); }
-    Value visitImportStmt(ImportStmt& node) override { return defaultVisit(node); }
-    Value visitExportStmt(ExportStmt& node) override { return defaultVisit(node); }
-    Value visitInterpolatedString(InterpolatedString& node) override { return defaultVisit(node); }
+    void visitBinaryOp(BinaryOp& node) override { defaultVisit(node); }
+    void visitUnaryOp(UnaryOp& node) override { defaultVisit(node); }
+    void visitNumberLiteral(NumberLiteral& node) override { defaultVisit(node); }
+    void visitStringLiteral(StringLiteral& node) override { defaultVisit(node); }
+    void visitBoolLiteral(BoolLiteral& node) override { defaultVisit(node); }
+    void visitVarDecl(VarDecl& node) override { defaultVisit(node); }
+    void visitAssignment(Assignment& node) override { defaultVisit(node); }
+    void visitVarRef(VarRef& node) override { defaultVisit(node); }
+    void visitIfStmt(IfStmt& node) override { defaultVisit(node); }
+    void visitWhileStmt(WhileStmt& node) override { defaultVisit(node); }
+    void visitForStmt(ForStmt& node) override { defaultVisit(node); }
+    void visitFunDecl(FunDecl& node) override { defaultVisit(node); }
+    void visitFunCall(FunCall& node) override { defaultVisit(node); }
+    void visitReturnStmt(ReturnStmt& node) override { defaultVisit(node); }
+    void visitPrintStmt(PrintStmt& node) override { defaultVisit(node); }
+    void visitBlock(Block& node) override { defaultVisit(node); }
+    void visitArrayLiteral(ArrayLiteral& node) override { defaultVisit(node); }
+    void visitDictLiteral(DictLiteral& node) override { defaultVisit(node); }
+    void visitIndexAccess(IndexAccess& node) override { defaultVisit(node); }
+    void visitIndexAssign(IndexAssign& node) override { defaultVisit(node); }
+    void visitClassDecl(ClassDecl& node) override { defaultVisit(node); }
+    void visitMemberAccess(MemberAccess& node) override { defaultVisit(node); }
+    void visitMemberAssign(MemberAssign& node) override { defaultVisit(node); }
+    void visitMethodCall(MethodCall& node) override { defaultVisit(node); }
+    void visitNullLiteral(NullLiteral& node) override { defaultVisit(node); }
+    void visitSuperExpr(SuperExpr& node) override { defaultVisit(node); }
+    void visitBreakStmt(BreakStmt& node) override { defaultVisit(node); }
+    void visitContinueStmt(ContinueStmt& node) override { defaultVisit(node); }
+    void visitTryStmt(TryStmt& node) override { defaultVisit(node); }
+    void visitThrowStmt(ThrowStmt& node) override { defaultVisit(node); }
+    void visitImportStmt(ImportStmt& node) override { defaultVisit(node); }
+    void visitExportStmt(ExportStmt& node) override { defaultVisit(node); }
+    void visitInterpolatedString(InterpolatedString& node) override { defaultVisit(node); }
 };

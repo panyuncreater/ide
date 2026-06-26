@@ -69,7 +69,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
                               "MB），超过上限 " + std::to_string(MAX_SOURCE_SIZE / 1024 / 1024) + "MB",
                               1, 1, DiagSource::Lexer);
         tokens_.clear();
-        tokens_.emplace_back(TokenType::TK_EOF, "", Value::nullValue(), 1, 1);
+        tokens_.emplace_back(TokenType::TK_EOF, "", std::monostate{}, 1, 1);
         return tokens_;
     }
 
@@ -106,7 +106,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     }
 
     // 添加 EOF Token
-    tokens_.emplace_back(TokenType::TK_EOF, "", Value::nullValue(), line_, currentColumn());
+    tokens_.emplace_back(TokenType::TK_EOF, "", std::monostate{}, line_, currentColumn());
 
     // 从 TK_ERROR Token 中提取诊断信息，并将注释 Token 分离到 comments_
     std::vector<Token> cleanTokens;
@@ -327,12 +327,12 @@ void Lexer::identifier() {
         TokenType type = it->second;
         // true 和 false 有字面量值
         if (type == TokenType::TK_TRUE) {
-            addToken(type, std::move(text), Value(true));
+            addToken(type, std::move(text), true);  // A1 fix: variant bool
         } else if (type == TokenType::TK_FALSE) {
-            addToken(type, std::move(text), Value(false));
+            addToken(type, std::move(text), false);  // A1 fix: variant bool
         } else if (type == TokenType::TK_NULL) {
             // null 关键字有字面量值
-            addToken(type, std::move(text), Value::nullValue());
+            addToken(type, std::move(text), std::monostate{});  // A1 fix: variant monostate
         } else {
             addToken(type, std::move(text));
         }
@@ -411,7 +411,7 @@ void Lexer::number() {
         } else if (ec != std::errc() || ptr != text.data() + text.size()) {
             errorToken("浮点数格式错误: " + text);
         } else {
-            addToken(TokenType::TK_FLOAT_LIT, std::move(text), Value(val));
+            addToken(TokenType::TK_FLOAT_LIT, std::move(text), val);  // A1 fix: variant double
         }
     } else {
         // L-P1-3 fix: 使用 std::from_chars 替代 std::stoll，locale-independent
@@ -422,7 +422,7 @@ void Lexer::number() {
         } else if (ec != std::errc() || ptr != text.data() + text.size()) {
             errorToken("整数格式错误: " + text);
         } else {
-            addToken(TokenType::TK_INT_LIT, std::move(text), Value(val));
+            addToken(TokenType::TK_INT_LIT, std::move(text), val);  // A1 fix: variant int64_t
         }
     }
 }
@@ -456,14 +456,14 @@ void Lexer::string(bool isInterp) {
             // 但为简化 Parser 逻辑，统一：插值字符串中所有文本片段都用 TK_STRING_PART，
             // 仅当整个字符串无插值时用 TK_STRING_LIT（由下方闭合处判断）
             std::string text(source_, start_, current_ - start_);
-            tokens_.emplace_back(partType, std::move(text), Value(value), startLine, startCol);
+            tokens_.emplace_back(partType, std::move(text), std::move(value), startLine, startCol);  // A1 fix: variant string
 
             // 消耗 {
             advance();
             // 发出 TK_INTERP_START
             int braceLine = line_;
             int braceCol = static_cast<int>(start_ - lineStart_) + 1;
-            tokens_.emplace_back(TokenType::TK_INTERP_START, "{", Value::nullValue(), braceLine, braceCol);
+            tokens_.emplace_back(TokenType::TK_INTERP_START, "{", std::monostate{}, braceLine, braceCol);  // A1 fix: variant monostate
 
             // 扫描表达式直到 }（支持嵌套大括号，如对象字面量）
             // 更新 start_ 到表达式起始位置，确保 scanToken() 的 addToken() 正确提取 lexeme
@@ -485,7 +485,7 @@ void Lexer::string(bool isInterp) {
                         advance();  // 消耗 }
                         int endLine = line_;
                         int endCol = static_cast<int>(start_ - lineStart_) + 1;
-                        tokens_.emplace_back(TokenType::TK_INTERP_END, "}", Value::nullValue(), endLine, endCol);
+                        tokens_.emplace_back(TokenType::TK_INTERP_END, "}", std::monostate{}, endLine, endCol);  // A1 fix: variant monostate
                         break;
                     }
                     start_ = current_;  // 更新 start_ 以便 scanToken 正确提取
@@ -559,35 +559,35 @@ void Lexer::string(bool isInterp) {
     // F7: 如果是插值字符串的后续片段，用 TK_STRING_PART；否则用 TK_STRING_LIT
     TokenType finalType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
     std::string text(source_, start_, current_ - start_);
-    tokens_.emplace_back(finalType, std::move(text), Value(value), startLine, startCol);
+    tokens_.emplace_back(finalType, std::move(text), std::move(value), startLine, startCol);  // A1 fix: variant string
 }
 
 void Lexer::addToken(TokenType type) {
     std::string text(source_, start_, current_ - start_);
     int col = columnAt(start_);
-    tokens_.emplace_back(type, std::move(text), Value::nullValue(), line_, col);
+    tokens_.emplace_back(type, std::move(text), std::monostate{}, line_, col);  // A1 fix: variant monostate
 }
 
-void Lexer::addToken(TokenType type, const Value& literal) {
+void Lexer::addToken(TokenType type, TokenLiteral literal) {
     std::string text(source_, start_, current_ - start_);
     int col = columnAt(start_);
-    tokens_.emplace_back(type, std::move(text), literal, line_, col);
+    tokens_.emplace_back(type, std::move(text), std::move(literal), line_, col);
 }
 
 void Lexer::addToken(TokenType type, std::string&& text) {
     int col = columnAt(start_);
-    tokens_.emplace_back(type, std::move(text), Value::nullValue(), line_, col);
+    tokens_.emplace_back(type, std::move(text), std::monostate{}, line_, col);  // A1 fix: variant monostate
 }
 
-void Lexer::addToken(TokenType type, std::string&& text, const Value& literal) {
+void Lexer::addToken(TokenType type, std::string&& text, TokenLiteral literal) {
     int col = columnAt(start_);
-    tokens_.emplace_back(type, std::move(text), literal, line_, col);
+    tokens_.emplace_back(type, std::move(text), std::move(literal), line_, col);
 }
 
 void Lexer::errorToken(const std::string& message, int errorLine, int errorCol) {
     int col = (errorCol > 0) ? errorCol : columnAt(start_);
     int ln = (errorLine > 0) ? errorLine : line_;
-    tokens_.emplace_back(TokenType::TK_ERROR, message, Value::nullValue(), ln, col);
+    tokens_.emplace_back(TokenType::TK_ERROR, message, std::monostate{}, ln, col);  // A1 fix: variant monostate
 }
 
 int Lexer::currentColumn() const {

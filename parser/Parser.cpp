@@ -75,7 +75,7 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     blockDepth_ = 0;  // P0-1 fix: 重置块嵌套深度
     diagnostics_.clear();
 
-    std::vector<std::unique_ptr<ASTNode>> statements;
+    std::vector<std::shared_ptr<ASTNode>> statements;
 
     while (!isAtEnd()) {
         try {
@@ -103,7 +103,7 @@ const Token& Parser::peek() const {
 const Token& Parser::previous() const {
     // P0-14 fix: 边界检查，current_==0 时返回 EOF 哨兵避免负索引 UB
     if (current_ <= 0) {
-        static const Token eofSentinel(TokenType::TK_EOF, "", Value(), 0, 0);
+        static const Token eofSentinel(TokenType::TK_EOF, "", std::monostate{}, 0, 0);  // A1 fix: variant monostate
         return eofSentinel;
     }
     return (*tokens_)[current_ - 1];
@@ -303,7 +303,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    std::vector<std::unique_ptr<ASTNode>> defaultValues;  // F10
+    std::vector<std::shared_ptr<ASTNode>> defaultValues;  // F10
     parseParamList(params, paramTypes, defaultValues);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
@@ -345,7 +345,7 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    std::vector<std::unique_ptr<ASTNode>> defaultValues;  // F10
+    std::vector<std::shared_ptr<ASTNode>> defaultValues;  // F10
     parseParamList(params, paramTypes, defaultValues);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
@@ -372,7 +372,7 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
 }
 
 void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes,
-                            std::vector<std::unique_ptr<ASTNode>>& defaultValues) {
+                            std::vector<std::shared_ptr<ASTNode>>& defaultValues) {
     if (check(TokenType::TK_RPAREN)) return;
     bool seenDefault = false;  // F10: 一旦出现默认参数，后续都必须有默认值
     do {
@@ -461,7 +461,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
     consume(TokenType::TK_LBRACE, "期望 '{'");
 
     // 解析类成员
-    std::vector<std::unique_ptr<ASTNode>> members;
+    std::vector<std::shared_ptr<ASTNode>> members;
 
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
         // 类成员可以是：
@@ -506,7 +506,7 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
                 std::vector<std::string> params;
                 std::vector<std::string> paramTypes;
-                std::vector<std::unique_ptr<ASTNode>> defaultValues;  // F10
+                std::vector<std::shared_ptr<ASTNode>> defaultValues;  // F10
                 parseParamList(params, paramTypes, defaultValues);
                 consume(TokenType::TK_RPAREN, "期望 ')'");
 
@@ -798,12 +798,13 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
 
     const Token& pathTok = consume(TokenType::TK_STRING_LIT, "期望模块路径字符串");
     // BUG 4a fix: 空模块路径校验
-    if (pathTok.literal.stringVal().empty()) {
+    // A1 fix: Token.literal 是 variant，用 literalString() 访问
+    if (pathTok.literalString().empty()) {
         throw ParseError("模块路径不能为空", pathTok.line, pathTok.column);
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 import 语句");
 
-    return std::make_unique<ImportStmt>(pathTok.literal.stringVal(), std::move(names),
+    return std::make_unique<ImportStmt>(pathTok.literalString(), std::move(names),
                                          importAll, importTok.line, importTok.column);
 }
 
@@ -851,7 +852,7 @@ std::unique_ptr<PrintStmt> Parser::printStmt() {
     const Token& printTok = consume(TokenType::TK_PRINT, "期望 'print'");
     consume(TokenType::TK_LPAREN, "期望 '('");
 
-    std::vector<std::unique_ptr<ASTNode>> values;
+    std::vector<std::shared_ptr<ASTNode>> values;
     if (!check(TokenType::TK_RPAREN)) {
         do {
             values.push_back(expression());
@@ -874,7 +875,7 @@ std::unique_ptr<Block> Parser::block() {
     }
     DepthGuard blockGuard{blockDepth_};  // C4 fix: 复用 DepthGuard，自动 ++/-- blockDepth_
 
-    std::vector<std::unique_ptr<ASTNode>> stmts;
+    std::vector<std::shared_ptr<ASTNode>> stmts;
 
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
         try {
@@ -1099,7 +1100,7 @@ std::unique_ptr<ASTNode> Parser::call() {
         if (match(TokenType::TK_LPAREN)) {
             const Token& paren = previous();
             // 解析参数列表
-            std::vector<std::unique_ptr<ASTNode>> args;
+            std::vector<std::shared_ptr<ASTNode>> args;
             if (!check(TokenType::TK_RPAREN)) {
                 do {
                     args.push_back(expression());
@@ -1138,7 +1139,7 @@ std::unique_ptr<ASTNode> Parser::call() {
 
             // 检查是否是方法调用: obj.method(args)
             if (match(TokenType::TK_LPAREN)) {
-                std::vector<std::unique_ptr<ASTNode>> args;
+                std::vector<std::shared_ptr<ASTNode>> args;
                 if (!check(TokenType::TK_RPAREN)) {
                     do {
                         args.push_back(expression());
@@ -1168,19 +1169,21 @@ std::unique_ptr<ASTNode> Parser::primary() {
     // 整数字面量
     if (match(TokenType::TK_INT_LIT)) {
         const Token& tok = previous();
-        return std::make_unique<NumberLiteral>(tok.literal, tok.line, tok.column);
+        // A1 fix: Token.literal 是 variant，Parser 直接用标量构造 AST 节点
+        return std::make_unique<NumberLiteral>(tok.literalInt(), tok.line, tok.column);
     }
 
     // 浮点字面量
     if (match(TokenType::TK_FLOAT_LIT)) {
         const Token& tok = previous();
-        return std::make_unique<NumberLiteral>(tok.literal, tok.line, tok.column);
+        // A1 fix: Token.literal 是 variant，Parser 直接用标量构造 AST 节点
+        return std::make_unique<NumberLiteral>(tok.literalFloat(), tok.line, tok.column);
     }
 
     // 字符串字面量（含 F7 字符串插值支持）
     if (match(TokenType::TK_STRING_LIT)) {
         const Token& tok = previous();
-        auto result = std::make_unique<StringLiteral>(tok.literal.stringVal(), tok.line, tok.column);
+        auto result = std::make_unique<StringLiteral>(tok.literalString(), tok.line, tok.column);
 
         // F7: 检查是否为插值字符串（后跟 TK_INTERP_START）
         if (check(TokenType::TK_INTERP_START)) {
@@ -1235,7 +1238,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
     if (match(TokenType::TK_LBRACKET)) {
         const Token& bracket = previous();
 
-        std::vector<std::unique_ptr<ASTNode>> elements;
+        std::vector<std::shared_ptr<ASTNode>> elements;
         if (!check(TokenType::TK_RBRACKET)) {
             do {
                 // L4 fix: 允许尾逗号 — 逗号后紧跟 ] 则结束
@@ -1253,7 +1256,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
     if (match(TokenType::TK_LBRACE)) {
         const Token& brace = previous();
 
-        std::vector<std::pair<std::unique_ptr<ASTNode>, std::unique_ptr<ASTNode>>> pairs;
+        std::vector<std::pair<std::shared_ptr<ASTNode>, std::shared_ptr<ASTNode>>> pairs;
 
         if (!check(TokenType::TK_RBRACE)) {
             do {
@@ -1375,7 +1378,7 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
         }
 
         const Token& partTok = previous();
-        interp->literals.push_back(partTok.literal.stringVal());
+        interp->literals.push_back(partTok.literalString());  // A1 fix: variant 访问
 
         // 检查是否还有更多插值
         if (!check(TokenType::TK_INTERP_START)) {

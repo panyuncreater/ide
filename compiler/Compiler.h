@@ -138,41 +138,41 @@ private:
     void compileStatement(ASTNode* node);
 
     /// 编译各个节点类型（Visitor 模式：由 accept 分派调用，返回 Value 统一接口）
-    Value visitBinaryOp(BinaryOp& node) override;
-    Value visitUnaryOp(UnaryOp& node) override;
-    Value visitNumberLiteral(NumberLiteral& node) override;
-    Value visitStringLiteral(StringLiteral& node) override;
-    Value visitBoolLiteral(BoolLiteral& node) override;
-    Value visitVarDecl(VarDecl& node) override;
-    Value visitAssignment(Assignment& node) override;
-    Value visitVarRef(VarRef& node) override;
-    Value visitIfStmt(IfStmt& node) override;
-    Value visitWhileStmt(WhileStmt& node) override;
-    Value visitForStmt(ForStmt& node) override;
-    Value visitFunDecl(FunDecl& node) override;
-    Value visitFunCall(FunCall& node) override;
-    Value visitReturnStmt(ReturnStmt& node) override;
-    Value visitPrintStmt(PrintStmt& node) override;
-    Value visitBlock(Block& node) override;
+    void visitBinaryOp(BinaryOp& node) override;
+    void visitUnaryOp(UnaryOp& node) override;
+    void visitNumberLiteral(NumberLiteral& node) override;
+    void visitStringLiteral(StringLiteral& node) override;
+    void visitBoolLiteral(BoolLiteral& node) override;
+    void visitVarDecl(VarDecl& node) override;
+    void visitAssignment(Assignment& node) override;
+    void visitVarRef(VarRef& node) override;
+    void visitIfStmt(IfStmt& node) override;
+    void visitWhileStmt(WhileStmt& node) override;
+    void visitForStmt(ForStmt& node) override;
+    void visitFunDecl(FunDecl& node) override;
+    void visitFunCall(FunCall& node) override;
+    void visitReturnStmt(ReturnStmt& node) override;
+    void visitPrintStmt(PrintStmt& node) override;
+    void visitBlock(Block& node) override;
 
     // 新增节点编译
-    Value visitArrayLiteral(ArrayLiteral& node) override;
-    Value visitDictLiteral(DictLiteral& node) override;
-    Value visitIndexAccess(IndexAccess& node) override;
-    Value visitIndexAssign(IndexAssign& node) override;
-    Value visitClassDecl(ClassDecl& node) override;
-    Value visitMemberAccess(MemberAccess& node) override;
-    Value visitMemberAssign(MemberAssign& node) override;
-    Value visitMethodCall(MethodCall& node) override;
-    Value visitNullLiteral(NullLiteral& node) override;
-    Value visitSuperExpr(SuperExpr& node) override;
-    Value visitBreakStmt(BreakStmt& node) override;
-    Value visitContinueStmt(ContinueStmt& node) override;
-    Value visitTryStmt(TryStmt& node) override;
-    Value visitThrowStmt(ThrowStmt& node) override;
-    Value visitImportStmt(ImportStmt& node) override;
-    Value visitExportStmt(ExportStmt& node) override;
-    Value visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
+    void visitArrayLiteral(ArrayLiteral& node) override;
+    void visitDictLiteral(DictLiteral& node) override;
+    void visitIndexAccess(IndexAccess& node) override;
+    void visitIndexAssign(IndexAssign& node) override;
+    void visitClassDecl(ClassDecl& node) override;
+    void visitMemberAccess(MemberAccess& node) override;
+    void visitMemberAssign(MemberAssign& node) override;
+    void visitMethodCall(MethodCall& node) override;
+    void visitNullLiteral(NullLiteral& node) override;
+    void visitSuperExpr(SuperExpr& node) override;
+    void visitBreakStmt(BreakStmt& node) override;
+    void visitContinueStmt(ContinueStmt& node) override;
+    void visitTryStmt(TryStmt& node) override;
+    void visitThrowStmt(ThrowStmt& node) override;
+    void visitImportStmt(ImportStmt& node) override;
+    void visitExportStmt(ExportStmt& node) override;
+    void visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);

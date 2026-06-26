@@ -150,82 +150,82 @@ std::string Formatter::formatNode(ASTNode* node) {
 // 返回 Value::nullValue()。
 // ============================================================
 
-Value Formatter::visitBinaryOp(BinaryOp& node) {
+void Formatter::visitBinaryOp(BinaryOp& node) {
     lastFormatResult_ = formatBinaryOp(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitUnaryOp(UnaryOp& node) {
+void Formatter::visitUnaryOp(UnaryOp& node) {
     lastFormatResult_ = formatUnaryOp(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitNumberLiteral(NumberLiteral& node) {
+void Formatter::visitNumberLiteral(NumberLiteral& node) {
     lastFormatResult_ = formatNumberLiteral(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitStringLiteral(StringLiteral& node) {
+void Formatter::visitStringLiteral(StringLiteral& node) {
     lastFormatResult_ = formatStringLiteral(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitBoolLiteral(BoolLiteral& node) {
+void Formatter::visitBoolLiteral(BoolLiteral& node) {
     lastFormatResult_ = formatBoolLiteral(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitVarDecl(VarDecl& node) {
+void Formatter::visitVarDecl(VarDecl& node) {
     lastFormatResult_ = formatVarDecl(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitAssignment(Assignment& node) {
+void Formatter::visitAssignment(Assignment& node) {
     lastFormatResult_ = formatAssignment(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitVarRef(VarRef& node) {
+void Formatter::visitVarRef(VarRef& node) {
     lastFormatResult_ = formatVarRef(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitIfStmt(IfStmt& node) {
+void Formatter::visitIfStmt(IfStmt& node) {
     lastFormatResult_ = formatIfStmt(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitWhileStmt(WhileStmt& node) {
+void Formatter::visitWhileStmt(WhileStmt& node) {
     lastFormatResult_ = formatWhileStmt(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitForStmt(ForStmt& node) {
+void Formatter::visitForStmt(ForStmt& node) {
     lastFormatResult_ = formatForStmt(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitFunDecl(FunDecl& node) {
+void Formatter::visitFunDecl(FunDecl& node) {
     lastFormatResult_ = formatFunDecl(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitFunCall(FunCall& node) {
+void Formatter::visitFunCall(FunCall& node) {
     lastFormatResult_ = formatFunCall(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitReturnStmt(ReturnStmt& node) {
+void Formatter::visitReturnStmt(ReturnStmt& node) {
     lastFormatResult_ = formatReturnStmt(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitPrintStmt(PrintStmt& node) {
+void Formatter::visitPrintStmt(PrintStmt& node) {
     lastFormatResult_ = formatPrintStmt(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitBlock(Block& node) {
+void Formatter::visitBlock(Block& node) {
     // 保留原 formatNode 中 NODE_BLOCK 分支的行为：用花括号包裹 formatBlock 输出。
     // formatBlock 只格式化语句列表，不包含外层花括号，此处补上。
     // FMT-05 fix: 使用 openBrace() 支持 BraceStyle 配置
@@ -236,88 +236,88 @@ Value Formatter::visitBlock(Block& node) {
     currentIndent_--;
     result += indent() + "}";
     lastFormatResult_ = std::move(result);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitArrayLiteral(ArrayLiteral& node) {
+void Formatter::visitArrayLiteral(ArrayLiteral& node) {
     lastFormatResult_ = formatArrayLiteral(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitDictLiteral(DictLiteral& node) {
+void Formatter::visitDictLiteral(DictLiteral& node) {
     lastFormatResult_ = formatDictLiteral(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitIndexAccess(IndexAccess& node) {
+void Formatter::visitIndexAccess(IndexAccess& node) {
     lastFormatResult_ = formatIndexAccess(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitIndexAssign(IndexAssign& node) {
+void Formatter::visitIndexAssign(IndexAssign& node) {
     lastFormatResult_ = formatIndexAssign(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitClassDecl(ClassDecl& node) {
+void Formatter::visitClassDecl(ClassDecl& node) {
     lastFormatResult_ = formatClassDecl(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitMemberAccess(MemberAccess& node) {
+void Formatter::visitMemberAccess(MemberAccess& node) {
     lastFormatResult_ = formatMemberAccess(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitMemberAssign(MemberAssign& node) {
+void Formatter::visitMemberAssign(MemberAssign& node) {
     lastFormatResult_ = formatMemberAssign(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitMethodCall(MethodCall& node) {
+void Formatter::visitMethodCall(MethodCall& node) {
     lastFormatResult_ = formatMethodCall(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitNullLiteral(NullLiteral& node) {
+void Formatter::visitNullLiteral(NullLiteral& node) {
     lastFormatResult_ = formatNullLiteral(node);
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitSuperExpr(SuperExpr& /*node*/) {
+void Formatter::visitSuperExpr(SuperExpr& /*node*/) {
     // SuperExpr 无对应 format* 方法，保留原 formatNode 中 NODE_SUPER_EXPR 分支的行为
     lastFormatResult_ = "super";
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitBreakStmt(BreakStmt& /*node*/) {
+void Formatter::visitBreakStmt(BreakStmt& /*node*/) {
     lastFormatResult_ = "break";
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitContinueStmt(ContinueStmt& /*node*/) {
+void Formatter::visitContinueStmt(ContinueStmt& /*node*/) {
     lastFormatResult_ = "continue";
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitThrowStmt(ThrowStmt& node) {
+void Formatter::visitThrowStmt(ThrowStmt& node) {
     std::string result = "throw";
     if (node.expression) {
         result += " " + formatNode(node.expression.get());
     }
     lastFormatResult_ = result;
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitTryStmt(TryStmt& node) {
+void Formatter::visitTryStmt(TryStmt& node) {
     // P2 fix: visitBlock 以 " {" 开头，"try" 后无需额外空格
     std::string result = "try" + formatNode(node.tryBlock.get());
     result += " catch (" + node.catchVarName + ")" + formatNode(node.catchBlock.get());
     lastFormatResult_ = result;
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitImportStmt(ImportStmt& node) {
+void Formatter::visitImportStmt(ImportStmt& node) {
     std::string result = "import ";
     if (!node.importAll && !node.names.empty()) {
         result += "{ ";
@@ -329,19 +329,19 @@ Value Formatter::visitImportStmt(ImportStmt& node) {
     }
     result += "\"" + node.modulePath + "\";";
     lastFormatResult_ = result;
-    return Value::nullValue();
+    return;
 }
 
-Value Formatter::visitExportStmt(ExportStmt& node) {
+void Formatter::visitExportStmt(ExportStmt& node) {
     std::string result = "export " + formatNode(node.declaration.get());
     lastFormatResult_ = result;
-    return Value::nullValue();
+    return;
 }
 
 // C5 fix: 插值字符串格式化 — 重建 `"text {expr} more {expr2}"` 语法
-Value Formatter::visitInterpolatedString(InterpolatedString& node) {
+void Formatter::visitInterpolatedString(InterpolatedString& node) {
     lastFormatResult_ = formatInterpolatedString(node);
-    return Value::nullValue();
+    return;
 }
 
 // 运算符优先级表（数值越大优先级越高）
@@ -425,7 +425,7 @@ std::string Formatter::formatUnaryOp(UnaryOp& node) {
 }
 
 std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
-    return node.value.toString();
+    return node.getValue().toString();  // A1 fix: getValue() 按需构造
 }
 
 std::string Formatter::formatStringLiteral(StringLiteral& node) {

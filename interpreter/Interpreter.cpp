@@ -133,14 +133,17 @@ void Interpreter::restoreReplState() {
 }
 
 void Interpreter::setOutputCallback(std::function<void(const std::string&)> callback) {
+    std::lock_guard<std::mutex> lock(callbackMutex_);
     outputCallback_ = callback;
 }
 
 void Interpreter::setInputCallback(std::function<std::string(const std::string&)> callback) {
+    std::lock_guard<std::mutex> lock(callbackMutex_);
     inputCallback_ = callback;
 }
 
 void Interpreter::setModuleLoader(std::function<std::string(const std::string&)> loader) {
+    std::lock_guard<std::mutex> lock(callbackMutex_);
     moduleLoader_ = loader;
 }
 
@@ -173,7 +176,11 @@ Value Interpreter::evaluateExpr(ASTNode* node) {
         DebugModeGuard(bool& r) : ref(r), saved(r) { r = false; }
         ~DebugModeGuard() { ref = saved; }
     } guard(debugMode_);
-    return node->accept(*this);
+    // A1 fix: accept 返回 void，结果通过 lastValue_ 传递。
+    // A1 bug fix: 预先清空 lastValue_，避免未覆盖的节点类型返回陈旧值（对齐 Formatter F-P2-6）
+    lastValue_ = Value::nullValue();
+    node->accept(*this);
+    return std::move(lastValue_);
 }
 
 // GUI-03 fix + DBG-A fix: 安全条件断点求值 — 保存/恢复所有可变状态（含 currentEnv_），防止重入损坏
@@ -186,7 +193,11 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     bool savedDebugMode = debugMode_;
     debugMode_ = false;
     try {
-        Value result = node->accept(*this);
+        // A1 fix: accept 返回 void，结果通过 lastValue_ 传递。
+        // A1 bug fix: 预先清空 lastValue_，避免未覆盖的节点类型返回陈旧值
+        lastValue_ = Value::nullValue();
+        node->accept(*this);
+        Value result = std::move(lastValue_);
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);
         currentEnv_ = savedEnv;  // DBG-A fix: 恢复环境
@@ -208,7 +219,11 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
 
 Value Interpreter::evaluate(ASTNode* node) {
     if (!node) return Value::nullValue();
-    return node->accept(*this);
+    // A1 fix: accept 返回 void，结果通过 lastValue_ 传递。
+    // A1 bug fix: 预先清空 lastValue_，避免未覆盖的节点类型返回陈旧值
+    lastValue_ = Value::nullValue();
+    node->accept(*this);
+    return std::move(lastValue_);
 }
 
 void Interpreter::checkBreak(ASTNode* node) {
@@ -220,7 +235,13 @@ void Interpreter::checkBreak(ASTNode* node) {
 }
 
 void Interpreter::output(const std::string& text) {
-    outputCallback_(text);
+    // A6 fix: 加锁拷贝 callback 后解锁调用，避免持锁回调导致死锁
+    std::function<void(const std::string&)> cb;
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex_);
+        cb = outputCallback_;
+    }
+    if (cb) cb(text);
 }
 
 void Interpreter::runtimeError(const std::string& msg, int line, int col) {
@@ -553,43 +574,43 @@ void Interpreter::writeBack(ASTNode* objectNode, const Value& modifiedValue, int
 
 // ---- 16 个原有 visit 方法 ----
 
-Value Interpreter::visitBinaryOp(BinaryOp& node) {
+void Interpreter::visitBinaryOp(BinaryOp& node) {
     checkBreak(&node);
 
     // 使用预计算的枚举类型进行快速分发（避免运行时字符串比较）
     switch (node.opType) {
     case BinOpType::BIN_AND: {
         Value left = evaluate(node.left.get());
-        if (!left.isTruthy()) return left;   // M1 fix: 返回原始左值而非 Value(false)
-        return evaluate(node.right.get());   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
+        if (!left.isTruthy()) { lastValue_ = std::move(left); return; }   // M1 fix: 返回原始左值而非 Value(false)
+        evaluate(node.right.get()); return;   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
     }
     case BinOpType::BIN_OR: {
         Value left = evaluate(node.left.get());
-        if (left.isTruthy()) return left;    // M1 fix: 返回原始左值而非 Value(true)
-        return evaluate(node.right.get());   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
+        if (left.isTruthy()) { lastValue_ = std::move(left); return; }    // M1 fix: 返回原始左值而非 Value(true)
+        evaluate(node.right.get()); return;   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
     }
     case BinOpType::BIN_EQ: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
-        return Value(left.equals(right));
+        lastValue_ = Value(left.equals(right)); return;
     }
     case BinOpType::BIN_NEQ: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
-        return Value(!left.equals(right));
+        lastValue_ = Value(!left.equals(right)); return;
     }
     case BinOpType::BIN_LT: {
         // P1-2 fix: 4 个比较运算共用 compareNumericOrString 模板
-        return compareNumericOrString(node, std::less<>());
+        lastValue_ = compareNumericOrString(node, std::less<>()); return;
     }
     case BinOpType::BIN_GT: {
-        return compareNumericOrString(node, std::greater<>());
+        lastValue_ = compareNumericOrString(node, std::greater<>()); return;
     }
     case BinOpType::BIN_LTE: {
-        return compareNumericOrString(node, std::less_equal<>());
+        lastValue_ = compareNumericOrString(node, std::less_equal<>()); return;
     }
     case BinOpType::BIN_GTE: {
-        return compareNumericOrString(node, std::greater_equal<>());
+        lastValue_ = compareNumericOrString(node, std::greater_equal<>()); return;
     }
     case BinOpType::BIN_ADD:
     case BinOpType::BIN_SUB:
@@ -598,15 +619,15 @@ Value Interpreter::visitBinaryOp(BinaryOp& node) {
     case BinOpType::BIN_MOD: {
         Value left = evaluate(node.left.get());
         Value right = evaluate(node.right.get());
-        return numericBinaryOp(node.opType, left, right, node.line, node.column);
+        lastValue_ = numericBinaryOp(node.opType, left, right, node.line, node.column); return;
     }
     default:
         runtimeError("未知运算符: " + std::string(BinaryOp::opTypeStr(node.opType)), node.line, node.column);
-        return Value::nullValue();
+        lastValue_ = Value::nullValue(); return;
     }
 }
 
-Value Interpreter::visitUnaryOp(UnaryOp& node) {
+void Interpreter::visitUnaryOp(UnaryOp& node) {
     checkBreak(&node);
 
     Value operand = evaluate(node.operand.get());
@@ -618,34 +639,34 @@ Value Interpreter::visitUnaryOp(UnaryOp& node) {
                 runtimeError("整数溢出：无法对最小值取负", node.line, node.column);
                 break;
             }
-            return Value(-operand.intVal());
+            lastValue_ = Value(-operand.intVal()); return;
         }
-        if (operand.isFloat()) return Value(-operand.floatVal());
+        if (operand.isFloat()) { lastValue_ = Value(-operand.floatVal()); return; }
         runtimeError("一元减运算需要数值类型", node.line, node.column);
         break;
     case UnaryOp::UnaryOpType::UOP_NOT:
-        return Value(!operand.isTruthy());
+        lastValue_ = Value(!operand.isTruthy()); return;
     case UnaryOp::UnaryOpType::UOP_PLUS:
-        return operand;  // 一元 + 恒等操作
+        lastValue_ = std::move(operand); return;  // 一元 + 恒等操作
     default:
         runtimeError("未知一元运算符: " + std::string(UnaryOp::opTypeStr(node.opType)), node.line, node.column);
         break;
     }
-    return Value::nullValue();
+    lastValue_ = Value::nullValue(); return;
 }
 
-Value Interpreter::visitNumberLiteral(NumberLiteral& node) {
+void Interpreter::visitNumberLiteral(NumberLiteral& node) {
     checkBreak(&node);
-    return node.value;
+    lastValue_ = node.getValue(); return;  // A1 fix: getValue() 按需构造
 }
 
-Value Interpreter::visitStringLiteral(StringLiteral& node) {
+void Interpreter::visitStringLiteral(StringLiteral& node) {
     checkBreak(&node);
-    return node.getValue();
+    lastValue_ = node.getValue(); return;
 }
 
 // C5 fix: 插值字符串求值 — 交替拼接字面量片段和表达式结果
-Value Interpreter::visitInterpolatedString(InterpolatedString& node) {
+void Interpreter::visitInterpolatedString(InterpolatedString& node) {
     checkBreak(&node);
     // literals.size() == expressions.size() + 1
     // 结果: literals[0] + str(expressions[0]) + literals[1] + ... + str(expressions[n-1]) + literals[n]
@@ -657,15 +678,15 @@ Value Interpreter::visitInterpolatedString(InterpolatedString& node) {
             result += node.literals[i + 1];
         }
     }
-    return Value(std::move(result));
+    lastValue_ = Value(std::move(result)); return;
 }
 
-Value Interpreter::visitBoolLiteral(BoolLiteral& node) {
+void Interpreter::visitBoolLiteral(BoolLiteral& node) {
     checkBreak(&node);
-    return Value(node.value);
+    lastValue_ = Value(node.value); return;
 }
 
-Value Interpreter::visitVarDecl(VarDecl& node) {
+void Interpreter::visitVarDecl(VarDecl& node) {
     checkBreak(&node);
 
     Value initVal = Value::nullValue();
@@ -766,10 +787,10 @@ Value Interpreter::visitVarDecl(VarDecl& node) {
         runtimeError("变量 '" + node.name + "' 已在当前作用域中定义", node.line, node.column);
     }
 
-    return initVal;
+    lastValue_ = std::move(initVal); return;
 }
 
-Value Interpreter::visitAssignment(Assignment& node) {
+void Interpreter::visitAssignment(Assignment& node) {
     checkBreak(&node);
 
     Value val = evaluate(node.value.get());
@@ -783,10 +804,10 @@ Value Interpreter::visitAssignment(Assignment& node) {
     if (!currentEnv_->set(node.name, val)) {
         runtimeError("未定义的变量: " + node.name, node.line, node.column);
     }
-    return val;
+    lastValue_ = std::move(val); return;
 }
 
-Value Interpreter::visitVarRef(VarRef& node) {
+void Interpreter::visitVarRef(VarRef& node) {
     checkBreak(&node);
 
     // C7: get() 返回指针，nullptr 表示变量未定义，消除 hasVariable() 双重遍历
@@ -794,23 +815,23 @@ Value Interpreter::visitVarRef(VarRef& node) {
     if (!val) {
         runtimeError("未定义的变量: " + node.name, node.line, node.column);
     }
-    return *val;
+    lastValue_ = *val; return;
 }
 
-Value Interpreter::visitIfStmt(IfStmt& node) {
+void Interpreter::visitIfStmt(IfStmt& node) {
     checkBreak(&node);
 
     Value cond = evaluate(node.condition.get());
     if (cond.isTruthy()) {
-        return evaluate(node.thenBranch.get());
+        evaluate(node.thenBranch.get()); return;
     }
     else if (node.elseBranch) {
-        return evaluate(node.elseBranch.get());
+        evaluate(node.elseBranch.get()); return;
     }
-    return Value::nullValue();
+    lastValue_ = Value::nullValue(); return;
 }
 
-Value Interpreter::visitWhileStmt(WhileStmt& node) {
+void Interpreter::visitWhileStmt(WhileStmt& node) {
     checkBreak(&node);
 
     Value result = Value::nullValue();
@@ -836,10 +857,10 @@ Value Interpreter::visitWhileStmt(WhileStmt& node) {
             continue;
         }
     }
-    return result;
+    lastValue_ = std::move(result); return;
 }
 
-Value Interpreter::visitForStmt(ForStmt& node) {
+void Interpreter::visitForStmt(ForStmt& node) {
     checkBreak(&node);
 
     // 在新作用域中执行初始化
@@ -904,7 +925,7 @@ Value Interpreter::visitForStmt(ForStmt& node) {
     }
 
     currentEnv_ = forEnv->parent;
-    return result;
+    lastValue_ = std::move(result); return;
 }
 
 // ============================================================
@@ -1056,11 +1077,25 @@ void Interpreter::collectFreeVars(const ASTNode& node,
     }
 }
 
-Value Interpreter::visitFunDecl(FunDecl& node) {
+void Interpreter::visitFunDecl(FunDecl& node) {
     checkBreak(&node);
 
+    // A3 fix: 通过 shared_from_this() 获取 shared_ptr<FunDecl>，使闭包和 funRegistry_
+    // 共享 AST 节点所有权，避免 AST 重建后裸指针悬垂。
+    // AST 节点由 Block::statements（vector<shared_ptr<ASTNode>>）持有，此处共享所有权。
+    // A3 bug fix: shared_from_this() 要求对象已被 shared_ptr 管理，否则抛 bad_weak_ptr。
+    // 当前所有调用路径均满足此约束，但为防御未来误用（如栈上构造的 FunDecl），
+    // 捕获异常并回退到 funRegistry_ 查找（仅失去自包含闭包语义，不致进程终止）。
+    std::shared_ptr<FunDecl> nodeShared;
+    try {
+        nodeShared = std::static_pointer_cast<FunDecl>(node.shared_from_this());
+    } catch (const std::bad_weak_ptr&) {
+        runtimeError("内部错误: FunDecl 节点未被 shared_ptr 管理，无法注册函数 " + node.name,
+                     node.line, node.column);
+    }
+
     // 创建闭包值，捕获当前环境并存储函数体指针（自包含，不依赖 funRegistry_）
-    Value funVal = Value::makeClosure(node.name, currentEnv_, node.params, &node);
+    Value funVal = Value::makeClosure(node.name, currentEnv_, node.params, nodeShared);
 
     // B1 fix: 仅捕获自由变量（函数体实际引用的外层变量），而非整个环境快照。
     // 原 C1 fix 复制 allVariablesMap() 的全部可见变量，REPL 模式下随变量积累越来越慢；
@@ -1077,14 +1112,15 @@ Value Interpreter::visitFunDecl(FunDecl& node) {
 
     currentEnv_->define(node.name, funVal);
 
-    // 保留 funRegistry_ 作为后备（处理 AST 生命周期问题）
-    funRegistry_[node.name] = &node;
+    // 保留 funRegistry_ 作为后备（处理闭包 body 缺失的场景）
+    // A3 fix: 存储 shared_ptr 而非裸指针
+    funRegistry_[node.name] = nodeShared;
     funRegistryGen_++;  // M7: 函数注册/重定义时递增代数，使旧缓存失效
 
-    return funVal;
+    lastValue_ = std::move(funVal); return;
 }
 
-Value Interpreter::visitReturnStmt(ReturnStmt& node) {
+void Interpreter::visitReturnStmt(ReturnStmt& node) {
     checkBreak(&node);
 
     Value val = Value::nullValue();
@@ -1100,23 +1136,23 @@ Value Interpreter::visitReturnStmt(ReturnStmt& node) {
     throw ReturnException(std::move(val));
 }
 
-Value Interpreter::visitBreakStmt(BreakStmt& node) {
+void Interpreter::visitBreakStmt(BreakStmt& node) {
     checkBreak(&node);
     throw BreakException();
 }
 
-Value Interpreter::visitContinueStmt(ContinueStmt& node) {
+void Interpreter::visitContinueStmt(ContinueStmt& node) {
     checkBreak(&node);
     throw ContinueException();
 }
 
-Value Interpreter::visitThrowStmt(ThrowStmt& node) {
+void Interpreter::visitThrowStmt(ThrowStmt& node) {
     checkBreak(&node);
     Value val = evaluate(node.expression.get());
     throw ThrowException(std::move(val));
 }
 
-Value Interpreter::visitTryStmt(TryStmt& node) {
+void Interpreter::visitTryStmt(TryStmt& node) {
     checkBreak(&node);
     try {
         if (node.tryBlock) {
@@ -1139,10 +1175,10 @@ Value Interpreter::visitTryStmt(TryStmt& node) {
         }
         currentEnv_ = savedEnv;
     }
-    return Value::nullValue();
+    lastValue_ = Value::nullValue(); return;
 }
 
-Value Interpreter::visitPrintStmt(PrintStmt& node) {
+void Interpreter::visitPrintStmt(PrintStmt& node) {
     checkBreak(&node);
 
     std::string result;
@@ -1154,14 +1190,14 @@ Value Interpreter::visitPrintStmt(PrintStmt& node) {
         result += val.toString();
     }
     output(result);
-    return Value::nullValue();
+    lastValue_ = Value::nullValue(); return;
 }
 
-Value Interpreter::visitBlock(Block& node) {
+void Interpreter::visitBlock(Block& node) {
     checkBreak(&node);
 
     // 快速路径：空块直接返回
-    if (node.statements.empty()) return Value::nullValue();
+    if (node.statements.empty()) { lastValue_ = Value::nullValue(); return; }
 
     // 为代码块创建新作用域（即使只有单条语句，也需创建作用域以防 var 声明泄漏到父作用域）
     auto blockEnv = std::make_shared<Environment>(currentEnv_);
@@ -1181,12 +1217,12 @@ Value Interpreter::visitBlock(Block& node) {
 
     currentEnv_ = savedEnv;
 
-    return result;
+    lastValue_ = std::move(result); return;
 }
 
 // ---- 新增 9 个 visit 方法 ----
 
-Value Interpreter::visitArrayLiteral(ArrayLiteral& node) {
+void Interpreter::visitArrayLiteral(ArrayLiteral& node) {
     checkBreak(&node);
 
     std::vector<Value> elements;
@@ -1194,10 +1230,10 @@ Value Interpreter::visitArrayLiteral(ArrayLiteral& node) {
     for (auto& elem : node.elements) {
         elements.push_back(evaluate(elem.get()));
     }
-    return Value(std::move(elements));
+    lastValue_ = Value(std::move(elements)); return;
 }
 
-Value Interpreter::visitDictLiteral(DictLiteral& node) {
+void Interpreter::visitDictLiteral(DictLiteral& node) {
     checkBreak(&node);
 
     std::unordered_map<std::string, Value> dict;
@@ -1208,10 +1244,10 @@ Value Interpreter::visitDictLiteral(DictLiteral& node) {
         // 字典的键必须是字符串
         dict[key.toString()] = std::move(val);
     }
-    return Value(std::move(dict));
+    lastValue_ = Value(std::move(dict)); return;
 }
 
-Value Interpreter::visitIndexAccess(IndexAccess& node) {
+void Interpreter::visitIndexAccess(IndexAccess& node) {
     checkBreak(&node);
 
     Value obj = evaluate(node.object.get());
@@ -1230,7 +1266,7 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
         if (i < 0 || static_cast<size_t>(i) >= arr.size()) {
             runtimeError("数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(arr.size()) + ")", node.line, node.column);
         }
-        return arr[static_cast<size_t>(i)];
+        lastValue_ = arr[static_cast<size_t>(i)]; return;
     }
 
     // 字典索引访问
@@ -1241,9 +1277,9 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
         const auto& dict = objC.dictVal();
         auto it = dict.find(idx.stringVal());
         if (it == dict.end()) {
-            return Value::nullValue();
+            lastValue_ = Value::nullValue(); return;
         }
-        return it->second;
+        lastValue_ = it->second; return;
     }
 
     // 字符串索引访问：返回单字符字符串（M6 fix: 基于 UTF-8 码位而非字节）
@@ -1275,19 +1311,19 @@ Value Interpreter::visitIndexAccess(IndexAccess& node) {
             runtimeError("字符串索引越界: " + std::to_string(i) + ", 有效范围 [0, "
                 + std::to_string(charCount) + ")", node.line, node.column);
         }
-        return Value(s.substr(targetBytePos, targetByteLen));
+        lastValue_ = Value(s.substr(targetBytePos, targetByteLen)); return;
     }
 
     runtimeError("该类型不支持索引访问", node.line, node.column);
 }
 
-Value Interpreter::visitIndexAssign(IndexAssign& node) {
+void Interpreter::visitIndexAssign(IndexAssign& node) {
     checkBreak(&node);
     // 左到右求值：object → index → value（由 writeBack 内部按序求值）
-    return writeBack(node.object.get(), true, node.index.get(), "", node.value.get(), node.line, node.column);
+    lastValue_ = writeBack(node.object.get(), true, node.index.get(), "", node.value.get(), node.line, node.column); return;
 }
 
-Value Interpreter::visitMethodCall(MethodCall& node) {
+void Interpreter::visitMethodCall(MethodCall& node) {
     checkBreak(&node);
 
     // P0-4 fix: 通过 collectAndEvaluateChain 一次性求值对象链，
@@ -1309,7 +1345,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (builtinResult.objectModified && info.varRef) {
             writeBackChain(info, std::move(obj), node.line, node.column);
         }
-        return builtinResult.result;
+        lastValue_ = std::move(builtinResult.result); return;
     }
 
     // ---- 字典内置方法 ----
@@ -1321,7 +1357,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (builtinResult.objectModified && info.varRef) {
             writeBackChain(info, std::move(obj), node.line, node.column);
         }
-        return builtinResult.result;
+        lastValue_ = std::move(builtinResult.result); return;
     }
 
     // ---- 字符串内置方法 ----
@@ -1329,7 +1365,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         auto argValues = evaluateArguments(node.arguments);
         auto builtinResult = BuiltinMethods::handleStringMethod(
             node.methodName, obj, argValues, node.line, node.column);
-        return builtinResult.result;
+        lastValue_ = std::move(builtinResult.result); return;
     }
 
     // 类实例的方法调用
@@ -1339,7 +1375,7 @@ Value Interpreter::visitMethodCall(MethodCall& node) {
         if (info.varRef) {
             writeBackChain(info, std::move(obj), node.line, node.column);
         }
-        return result;
+        lastValue_ = std::move(result); return;
     }
 
     runtimeError("类型 " + obj.typeName() + " 不支持方法调用", node.line, node.column);
@@ -1352,6 +1388,8 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
         // O1: super.method() — 从父类开始查找方法
         bool isSuperCall = (node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR);
         ClassInfo* searchClass = &classIt->second;
+        // A3 bug fix: 缓存 searchClass 名称，参数求值后重新查找避免悬垂
+        std::string searchClassName;
         if (isSuperCall) {
             // 使用 classContextStack_ 确定当前执行类的父类（修复多层 super.init() 递归）
             std::string currentClassName;
@@ -1369,7 +1407,10 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             if (superIt == classRegistry_.end()) {
                 runtimeError("未定义的父类: " + ctxIt->second.superClassName, node.line, node.column);
             }
+            searchClassName = superIt->second.name;
             searchClass = &superIt->second;
+        } else {
+            searchClassName = searchClass->name;
         }
         FunDecl* method = findMethod(*searchClass, node.methodName);
         if (method) {
@@ -1393,6 +1434,24 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             auto cachedParentEnv = searchClass->closureEnv;
             for (auto& arg : node.arguments) {
                 argValues.push_back(evaluate(arg.get()));
+            }
+
+            // A3 bug fix: 参数求值可能触发类重定义（如参数中调用重定义类的函数），
+            // 导致 classRegistry_ 中 ClassInfo 被替换、searchClass 悬垂。
+            // 对齐 constructClassInstance 的 #2 fix：参数求值后重新查找。
+            {
+                auto reIt = classRegistry_.find(searchClassName);
+                if (reIt == classRegistry_.end()) {
+                    runtimeError("类 " + searchClassName + " 在方法调用期间被重定义并删除", node.line, node.column);
+                }
+                searchClass = &reIt->second;
+                method = findMethod(*searchClass, node.methodName);
+                if (!method) {
+                    runtimeError("类 " + searchClassName + " 在方法调用期间被重定义，方法 " +
+                        node.methodName + " 不再存在", node.line, node.column);
+                }
+                // 重新缓存 closureEnv（类重定义后环境可能变化）
+                cachedParentEnv = searchClass->closureEnv;
             }
 
             // F10: 为缺失的参数填充默认值（在类定义的闭包环境中求值）
@@ -1497,7 +1556,7 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
         node.line, node.column);
 }
 
-Value Interpreter::visitNullLiteral(NullLiteral& node) {
+void Interpreter::visitNullLiteral(NullLiteral& node) {
     checkBreak(&node);
-    return Value::nullValue();
+    lastValue_ = Value::nullValue(); return;
 }
