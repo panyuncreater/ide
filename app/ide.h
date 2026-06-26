@@ -21,6 +21,7 @@
 #include "gui/DebugPanel.h"
 #include "gui/ReplPanel.h"
 #include "gui/VmStackPanel.h"
+#include "gui/IrViewer.h"
 #include "gui/FindReplacePanel.h"
 
 // ============================================================
@@ -83,6 +84,9 @@ private slots:
     /// 显示字节码
     void onShowBytecode();
 
+    /// 方向三：显示 IR 中间表示
+    void onShowIR();
+
     /// VM 单步执行字节码（step-in）
     void onVmStep();
 
@@ -144,6 +148,7 @@ private:
     QTableWidget* tokenTable_ = nullptr;    // Token 列表表格
     QListWidget* bytecodeList_ = nullptr;   // 字节码指令列表（支持行高亮）
     VmStackPanel* vmStackPanel_ = nullptr;  // VM 栈状态面板
+    IrViewer* irViewer_ = nullptr;          // IR 中间表示可视化面板（方向三）
 
     QSplitter* mainSplitter_ = nullptr;      // 主水平分割
     QSplitter* vSplitter_ = nullptr;         // 垂直分割
@@ -159,6 +164,7 @@ private:
     QAction* clearAction_ = nullptr;
     QAction* formatAction_ = nullptr;
     QAction* bytecodeAction_ = nullptr;
+    QAction* irAction_ = nullptr;           // 方向三：IR 可视化按钮
 
     QAction* vmStepAction_ = nullptr;       // VM 单步（step-in）
     QAction* vmStepOverAction_ = nullptr;   // A4 fix: VM 单步跨过（step-over）
@@ -195,6 +201,12 @@ private:
     // D21 fix: 缓存上次编译的源码哈希，若源码未变则跳过字节码列表重建
     size_t lastBytecodeSourceHash_ = 0;
 
+    // 方向四：IR 指令 → 字节码偏移映射（IR 调试器集成）
+    // 在 compileViaIR 后由 BytecodeIRBackend 生成的映射表，
+    // 用于 VM 单步执行时高亮对应的 IR 指令。
+    // first = IR 指令展平序号, second = 字节码偏移
+    std::vector<std::pair<size_t, size_t>> irToBytecodeOffset_;
+
     /// 初始化 UI
     void initUI();
 
@@ -218,6 +230,12 @@ private:
 
     /// 填充字节码指令列表
     void populateBytecodeList();
+
+    /// 方向三：填充 IR 可视化面板
+    void populateIRViewer();
+
+    /// 方向四：VM 单步时高亮对应 IR 指令
+    void highlightIRLine(size_t bytecodeOffset);
 
     /// 更新 Token 列表表格
     void updateTokenTable();

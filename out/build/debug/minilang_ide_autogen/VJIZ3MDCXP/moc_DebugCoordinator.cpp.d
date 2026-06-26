@@ -9,7 +9,9 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_D
   C:/Users/v/Desktop/ide/ide/interpreter/CallFrame.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Environment.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/NaNBox.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/RefCounted.h \
   C:/Users/v/Desktop/ide/ide/interpreter/RuntimeExceptions.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \

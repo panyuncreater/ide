@@ -43,6 +43,9 @@ set(MINILANG_CORE_SOURCES
     compiler/VMCalls.cpp
     compiler/VMContainers.cpp
     compiler/IR.cpp
+    compiler/RegisterBytecode.cpp
+    compiler/RegisterBytecodeBackend.cpp
+    compiler/RegisterVM.cpp
     formatter/Formatter.cpp
 )
 
@@ -62,6 +65,7 @@ set(MINILANG_GUI_SOURCES
     gui/DebugPanel.cpp
     gui/ReplPanel.cpp
     gui/VmStackPanel.cpp
+    gui/IrViewer.cpp
     gui/FindReplacePanel.cpp
 )
 
@@ -81,6 +85,7 @@ set(MINILANG_GUI_MOC_HEADERS
     gui/SyntaxHighlighter.h
     gui/ReplPanel.h
     gui/VmStackPanel.h
+    gui/IrViewer.h
     gui/FindReplacePanel.h
 )
 

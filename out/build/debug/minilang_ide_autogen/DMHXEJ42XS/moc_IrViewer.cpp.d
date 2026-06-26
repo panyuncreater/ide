@@ -1,6 +1,8 @@
-C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_VmStackPanel.cpp: C:/Users/v/Desktop/ide/ide/gui/VmStackPanel.h \
+C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_IrViewer.cpp: C:/Users/v/Desktop/ide/ide/gui/IrViewer.h \
   C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
+  C:/Users/v/Desktop/ide/ide/compiler/GlobalSlotAllocator.h \
+  C:/Users/v/Desktop/ide/ide/compiler/IR.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NaNBox.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/RefCounted.h \
@@ -58,7 +60,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_V
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qglobalstatic.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qhash.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qhashfunctions.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qiodevice.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qiodevicebase.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qitemselectionmodel.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qiterable.h \
@@ -133,7 +134,6 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_V
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtversionchecks.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtypeinfo.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qtypes.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtCore/qurl.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qutf8stringview.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qvariant.h \
   D:/qt/6.10.3/msvc2022_64/include/QtCore/qvarlengtharray.h \
@@ -154,14 +154,12 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_V
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qkeysequence.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpaintdevice.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpalette.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qpicture.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpixelformat.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpixmap.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qpolygon.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qregion.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qrgb.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qrgba64.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtGui/qtextdocument.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtgui-config.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtguiexports.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qtguiglobal.h \
@@ -169,10 +167,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_V
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qvalidator.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs.h \
   D:/qt/6.10.3/msvc2022_64/include/QtGui/qwindowdefs_win.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QLabel \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QListWidget \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QSplitter \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QTableWidget \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/QWidget \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractitemdelegate.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractitemview.h \
@@ -180,18 +175,14 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_V
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractslider.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qabstractspinbox.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qframe.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qlabel.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qlistview.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qlistwidget.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qrubberband.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qsizepolicy.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qslider.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qsplitter.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qstyle.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qstyleoption.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtabbar.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtableview.h \
-  D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtablewidget.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtabwidget.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgets-config.h \
   D:/qt/6.10.3/msvc2022_64/include/QtWidgets/qtwidgetsexports.h \

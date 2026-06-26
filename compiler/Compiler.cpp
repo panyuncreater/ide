@@ -1,4 +1,5 @@
 #include "compiler/Compiler.h"
+#include "compiler/RegisterBytecodeBackend.h"  // PERF-14: 寄存器式后端
 #include "interpreter/NumericUtils.h"  // 共享溢出检查（B6 fix）
 #include "Logger.h"
 #include <sstream>
@@ -12,6 +13,21 @@
 Compiler::Compiler() {}
 
 CompileResult Compiler::compile(Block& program) {
+    // PERF-14: 寄存器式 VM 路径（AST → IR → RegisterBytecode）
+    // 启用后走 AstIRBuilder + RegisterBytecodeBackend，配合 RegisterVM 执行
+    if (useRegisterVM_) {
+        lastRegisterResult_ = compileViaRegisterIR(program);
+        // 寄存器式路径返回空 CompileResult（调用方应使用 getLastRegisterResult()）
+        CompileResult emptyResult;
+        return emptyResult;
+    }
+
+    // ARCH-06: 可选 IR 中间层路径（AST → IR → Bytecode）
+    // 启用后走 AstIRBuilder + BytecodeIRBackend（含完整特性 + 可选优化 pass）
+    if (useIR_) {
+        return compileViaIR(program);
+    }
+
     chunk_ = BytecodeChunk();
     chunk_.name = "main";
     chunk_.arity = 0;
@@ -29,10 +45,7 @@ CompileResult Compiler::compile(Block& program) {
     blockDepth_ = 0;
     blockSaveCounter_ = 0;  // L11 fix: 编译间重置块保存计数器
     compileDepth_ = 0;  // P1 fix: 编译间重置递归深度计数器
-    topLevelGlobals_.clear();
-    globalSlots_.clear();
-    slotNames_.clear();
-    freeSlots_.clear();
+    globalSlotAllocator_.clear();  // B4: 重置全局槽位分配器
     innerFunctions_.clear();        // H5 fix: 重置内嵌函数追踪
     innerFunctionSlots_.clear();    // H5 fix
 
@@ -57,8 +70,8 @@ CompileResult Compiler::compile(Block& program) {
     CompileResult result;
     result.mainChunk = std::move(chunk_);
     result.functionChunks = std::move(functionChunks_);
-    result.globalSlotCount = static_cast<int>(slotNames_.size());
-    result.globalSlotNames = std::move(slotNames_);  // C-P2-5 fix: move 避免深拷贝整个全局变量名表
+    result.globalSlotCount = globalSlotAllocator_.count();
+    result.globalSlotNames = std::move(globalSlotAllocator_.mutableNames());  // B4: move 避免深拷贝
 
     // 预计算 ip→指令索引映射（用于调试高亮 O(1) 查找）
     result.mainChunk.buildIpMap();
@@ -68,6 +81,136 @@ CompileResult Compiler::compile(Block& program) {
 
     Logger::Info("字节码编译完成: " + std::to_string(result.globalSlotCount) + " 全局槽, " +
         std::to_string(result.functionChunks.size()) + " 函数chunk", "Compiler");
+    return result;
+}
+
+// ============================================================
+// ARCH-06: IR 中间层编译路径
+// ============================================================
+// AST → IR（AstIRBuilder）→ [可选优化 pass] → Bytecode（BytecodeIRBackend）
+// IR 路径已支持完整特性：闭包 upvalue、写回指令、全局槽位分配、默认参数、块作用域。
+// 方向二：当 irOptimize_=true 时，在 lowering 前执行常量折叠/复制传播/死代码消除。
+CompileResult Compiler::compileViaIR(Block& program) {
+    diagnostics_.clear();
+
+    // 阶段 1：AST → IR
+    AstIRBuilder irBuilder;
+    lastIR_ = irBuilder.build(program);
+    if (!lastIR_) {
+        error("IR 构建失败", 0, 0);
+        CompileResult emptyResult;
+        return emptyResult;
+    }
+
+    // 方向二：IR 优化 pass（可选）
+    if (irOptimize_) {
+        optimizeIR(*lastIR_);
+    }
+
+    // 把 mainFunction 放回 module_ 供 lowerModule 使用
+    // build() 返回时已 move 出 module_->mainFunction，需临时放回
+    IRModule* module = irBuilder.getModule();
+    module->mainFunction = std::move(lastIR_);
+
+    // 阶段 2：IR → Bytecode（整个 module: main + 子函数）
+    BytecodeIRBackend backend;
+    if (!backend.lowerModule(*module)) {
+        error("IR lowering 失败", 0, 0);
+        CompileResult emptyResult;
+        return emptyResult;
+    }
+    auto mainChunk = backend.takeChunk();
+    if (!mainChunk) {
+        error("IR lowering 未生成字节码", 0, 0);
+        CompileResult emptyResult;
+        return emptyResult;
+    }
+
+    // 末尾添加 null + RETURN（main chunk 必须有返回值）
+    mainChunk->writeOp(OpCode::OP_NULL, 0);
+    mainChunk->writeOp(OpCode::OP_RETURN, 0);
+    mainChunk->buildIpMap();
+
+    CompileResult result;
+    result.mainChunk = std::move(*mainChunk);
+    result.functionChunks = backend.takeFunctionChunks();
+    result.globalSlotNames = irBuilder.getGlobalSlotNames();
+    result.globalSlotCount = static_cast<int>(result.globalSlotNames.size());
+
+    // 为函数 chunks 构建 ipMap（用于调试高亮）
+    for (auto& kv : result.functionChunks) {
+        kv.second.buildIpMap();
+    }
+
+    // 恢复 lastIR_ 供调试/可视化使用
+    lastIR_ = std::move(module->mainFunction);
+
+    // 方向四：保存 main 函数的 IR→字节码偏移映射（用于 VM 单步时高亮 IR 指令）
+    lastIRToBytecodeOffset_ = backend.irToBytecodeOffset();
+
+    Logger::Info("IR 编译完成: " + std::to_string(lastIR_->blocks.size()) + " 基本块, " +
+        std::to_string(lastIR_->constants.size()) + " 常量, " +
+        std::to_string(lastIR_->nextVReg) + " vreg, " +
+        std::to_string(result.functionChunks.size()) + " 函数chunk, " +
+        std::to_string(result.globalSlotCount) + " 全局槽" +
+        (irOptimize_ ? " (已优化)" : ""), "Compiler-IR");
+    return result;
+}
+
+// ============================================================
+// PERF-14: 寄存器式 VM 编译路径
+// AST → IR（AstIRBuilder）→ [可选优化 pass] → RegisterBytecode（RegisterBytecodeBackend）
+// ============================================================
+RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
+    diagnostics_.clear();
+
+    // 阶段 1：AST → IR
+    AstIRBuilder irBuilder;
+    lastIR_ = irBuilder.build(program);
+    if (!lastIR_) {
+        error("IR 构建失败", 0, 0);
+        RegisterCompileResult emptyResult;
+        return emptyResult;
+    }
+
+    // PERF-15: IR 优化 pass（寄存器式下复制传播安全启用）
+    if (irOptimize_) {
+        optimizeIR(*lastIR_, true);  // enableCopyPropagation=true
+    }
+
+    // 把 mainFunction 放回 module_ 供 lowerModule 使用
+    IRModule* module = irBuilder.getModule();
+    module->mainFunction = std::move(lastIR_);
+
+    // 阶段 2：IR → RegisterBytecode（整个 module: main + 子函数）
+    RegisterBytecodeBackend backend;
+    if (!backend.lowerModule(*module)) {
+        error("Register IR lowering 失败", 0, 0);
+        RegisterCompileResult emptyResult;
+        return emptyResult;
+    }
+
+    RegisterCompileResult result;
+    auto functionChunks = backend.takeFunctionChunks();
+    // main chunk 是 functionChunks 中名为 "main" 的条目
+    auto mainIt = functionChunks.find("main");
+    if (mainIt != functionChunks.end()) {
+        result.mainChunk = std::move(mainIt->second);
+        functionChunks.erase(mainIt);
+    }
+    result.functionChunks = std::move(functionChunks);
+    result.globalSlotNames = irBuilder.getGlobalSlotNames();
+    result.globalSlotCount = static_cast<int>(result.globalSlotNames.size());
+
+    // 恢复 lastIR_ 供调试/可视化使用
+    lastIR_ = std::move(module->mainFunction);
+
+    Logger::Info("Register IR 编译完成: " +
+        std::to_string(result.mainChunk.code.size()) + " 字节, " +
+        std::to_string(result.mainChunk.registerCount) + " 寄存器, " +
+        std::to_string(result.functionChunks.size()) + " 函数chunk, " +
+        std::to_string(result.globalSlotCount) + " 全局槽" +
+        (irOptimize_ ? " (已优化)" : ""), "Compiler-RegIR");
     return result;
 }
 
@@ -82,35 +225,7 @@ std::string Compiler::getLastError() const {
     return {};
 }
 
-// A2: global slot management
-int Compiler::allocateGlobalSlot(const std::string& name) {
-    auto it = globalSlots_.find(name);
-    if (it != globalSlots_.end()) return it->second;
-    int slot;
-    if (!freeSlots_.empty()) {
-        slot = freeSlots_.back();
-        freeSlots_.pop_back();
-        slotNames_[slot] = name;
-    } else {
-        slot = static_cast<int>(slotNames_.size());
-        slotNames_.push_back(name);
-    }
-    globalSlots_[name] = slot;
-    return slot;
-}
-
-void Compiler::releaseGlobalSlot(const std::string& name) {
-    auto it = globalSlots_.find(name);
-    if (it != globalSlots_.end()) {
-        freeSlots_.push_back(it->second);
-        globalSlots_.erase(it);
-    }
-}
-
-int Compiler::lookupGlobalSlot(const std::string& name) const {
-    auto it = globalSlots_.find(name);
-    return (it != globalSlots_.end()) ? it->second : -1;
-}
+// A2/B4: global slot management 已内联到 Compiler.h，委托给 globalSlotAllocator_
 
 uint16_t Compiler::identifierIndex(const std::string& name) {
     auto it = varIndex_.find(name);
@@ -425,9 +540,7 @@ void Compiler::visitVarDecl(VarDecl& node) {
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
             chunk_.writeShort(nameIdx, node.line);
         }
-        if (blockDepth_ == 0) {
-            topLevelGlobals_.insert(node.name);
-        }
+        // B4: topLevelGlobals_ 已删除（write-only 死代码，从未被读取）
     }
     return;
 }
@@ -1155,7 +1268,7 @@ void Compiler::visitTryStmt(TryStmt& node) {
             chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
             chunk_.writeShort(saveIdx, node.line);
-            globalSlots_.erase(node.catchVarName);
+            globalSlotAllocator_.removeMapping(node.catchVarName);  // B4: 临时遮蔽
         }
         // 定义 catch 变量
         uint16_t nameIdx = identifierIndex(node.catchVarName);
@@ -1183,7 +1296,7 @@ void Compiler::visitTryStmt(TryStmt& node) {
         chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
         chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
         chunk_.writeShort(saveIdx, node.line);
-        globalSlots_[node.catchVarName] = shadowedGlobalSlot;
+        globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);  // B4: 恢复遮蔽
     }
 
     // 恢复 currentLocals_，使 catch 变量不泄漏到外层作用域
@@ -1266,10 +1379,9 @@ void Compiler::visitBlock(Block& node) {
         // 使块内 compileVarDecl/compileVarRef/compileAssignment 不命中全局槽位，
         // 改用 OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR → globals_ 路径
         for (auto& [varName, saveName] : shadowedSaves) {
-            auto it = globalSlots_.find(varName);
-            if (it != globalSlots_.end()) {
-                removedSlots.push_back({varName, it->second});
-                globalSlots_.erase(it);
+            int slot = globalSlotAllocator_.removeMapping(varName);  // B4: 临时遮蔽
+            if (slot >= 0) {
+                removedSlots.push_back({varName, slot});
             }
         }
 
@@ -1292,7 +1404,7 @@ void Compiler::visitBlock(Block& node) {
 
         // H1 fix: 恢复被移除的全局槽位条目（必须在恢复字节码之前，使 lookupGlobalSlot 正确）
         for (auto& [name, slot] : removedSlots) {
-            globalSlots_[name] = slot;
+            globalSlotAllocator_.restoreMapping(name, slot);  // B4: 恢复遮蔽
         }
 
         // 清理块作用域变量并恢复被遮蔽的全局变量

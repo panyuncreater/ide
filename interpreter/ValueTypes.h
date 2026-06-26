@@ -18,26 +18,25 @@ class FunDecl;
 class BytecodeChunk;  // M3 fix: 闭包值持有函数 chunk 指针
 
 // ============================================================
-// Value 运行时值类型 — std::variant 存储 + COW 语义
+// Value 运行时值类型 — NaN-boxing + 侵入式引用计数（PERF-12）
 // ============================================================
-// A1 架构优化：unique_ptr → shared_ptr + copy-on-write
-//   拷贝操作 O(1)（仅递增引用计数），写入时通过 ensureUnique() 自动 detach
-//   sizeof(Value) 仍为 ~16 字节
-//   小类型（int/double/bool/null）内联存储，无堆分配
-//   大类型（string/array/dict/instance/closure）通过 shared_ptr 堆分配
+// PERF-12: 从 std::variant<shared_ptr<XData>>（24 字节）迁移到 NaNBox（8 字节）。
+//   sizeof(Value) = 8 字节
+//   标量（int/float/bool/null）内联存储于 NaNBox，零原子操作
+//   堆类型（string/array/dict/instance/closure）通过 RefCounted* 指针存储，
+//   侵入式引用计数（addRef/release），COW 通过 ensureUnique<T>() detach
 
-/// 值类型枚举（顺序必须与 std::variant Data 的类型顺序严格一致！
-/// getType() 通过 static_cast<ValueType>(data_.index()) 将 variant 索引映射到此枚举）
+/// 值类型枚举（PERF-12: 不再依赖 variant 索引，由 NaNBox::tag() + RefCounted::type 分发）
 enum class ValueType {
-    VAL_NULL,      // 0 = std::monostate
-    VAL_INT,       // 1 = int64_t
-    VAL_FLOAT,     // 2 = double
-    VAL_BOOL,      // 3 = bool
-    VAL_STRING,    // 4 = std::shared_ptr<StringData>
-    VAL_ARRAY,     // 5 = std::shared_ptr<ArrayData>
-    VAL_DICT,      // 6 = std::shared_ptr<DictData>
-    VAL_INSTANCE,  // 7 = std::shared_ptr<InstanceData>
-    VAL_CLOSURE    // 8 = std::shared_ptr<ClosureData>
+    VAL_NULL,      // NaNBox NULL_BITS
+    VAL_INT,       // NaNBox int48 内联 或 BoxedIntData* 装箱
+    VAL_FLOAT,     // NaNBox double 原始位
+    VAL_BOOL,      // NaNBox bool
+    VAL_STRING,    // StringData* (RefCounted)
+    VAL_ARRAY,     // ArrayData* (RefCounted)
+    VAL_DICT,      // DictData* (RefCounted)
+    VAL_INSTANCE,  // InstanceData* (RefCounted)
+    VAL_CLOSURE    // ClosureData* (RefCounted)
 };
 
 // ============================================================

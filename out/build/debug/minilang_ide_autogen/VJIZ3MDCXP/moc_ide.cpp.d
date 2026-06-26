@@ -12,6 +12,9 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
   C:/Users/v/Desktop/ide/ide/compiler/Compiler.h \
+  C:/Users/v/Desktop/ide/ide/compiler/GlobalSlotAllocator.h \
+  C:/Users/v/Desktop/ide/ide/compiler/IR.h \
+  C:/Users/v/Desktop/ide/ide/compiler/RegisterBytecode.h \
   C:/Users/v/Desktop/ide/ide/compiler/VM.h \
   C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
   C:/Users/v/Desktop/ide/ide/debug/DebugTypes.h \
@@ -20,6 +23,7 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   C:/Users/v/Desktop/ide/ide/gui/CodeEditor.h \
   C:/Users/v/Desktop/ide/ide/gui/DebugPanel.h \
   C:/Users/v/Desktop/ide/ide/gui/FindReplacePanel.h \
+  C:/Users/v/Desktop/ide/ide/gui/IrViewer.h \
   C:/Users/v/Desktop/ide/ide/gui/OutputPanel.h \
   C:/Users/v/Desktop/ide/ide/gui/ReplPanel.h \
   C:/Users/v/Desktop/ide/ide/gui/SyntaxHighlighter.h \
@@ -27,7 +31,9 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_i
   C:/Users/v/Desktop/ide/ide/interpreter/CallFrame.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Environment.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Interpreter.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/NaNBox.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/RefCounted.h \
   C:/Users/v/Desktop/ide/ide/interpreter/RuntimeExceptions.h \
   C:/Users/v/Desktop/ide/ide/interpreter/Value.h \
   C:/Users/v/Desktop/ide/ide/interpreter/ValueData.h \

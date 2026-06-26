@@ -100,6 +100,80 @@ struct VMClassInfo {
     mutable std::unordered_map<std::string, const BytecodeChunk*> methodCache;
 };
 
+// ============================================================
+// PERF-13: VMStack — 定长数组 + 栈顶指针，替代 std::vector<Value>
+// ------------------------------------------------------------
+// Value 从 24 字节降至 8 字节后，1024 元素仅 8KB，可直接内联到 VM 对象。
+// 消除 push_back 的容量检查和潜在的堆分配开销。
+// API 与 std::vector<Value> 兼容（size/empty/clear/push_back/pop_back/
+// back/operator[]/resize/emplace_back/reserve），实现直接替换。
+// ============================================================
+class VMStack {
+public:
+    VMStack() = default;
+
+    // ---- 容量查询 ----
+    size_t size() const { return top_; }
+    bool empty() const { return top_ == 0; }
+    static constexpr size_t capacity() { return CAPACITY; }
+
+    // ---- 元素访问 ----
+    Value& operator[](size_t i) {
+        assert(i < top_ && "VMStack index out of range");
+        return data_[i];
+    }
+    const Value& operator[](size_t i) const {
+        assert(i < top_ && "VMStack index out of range");
+        return data_[i];
+    }
+    Value& back() {
+        assert(top_ > 0 && "VMStack::back() on empty stack");
+        return data_[top_ - 1];
+    }
+    const Value& back() const {
+        assert(top_ > 0 && "VMStack::back() on empty stack");
+        return data_[top_ - 1];
+    }
+
+    // ---- 栈操作 ----
+    void push_back(const Value& v) {
+        assert(top_ < CAPACITY && "VMStack overflow");
+        data_[top_++] = v;
+    }
+    void push_back(Value&& v) {
+        assert(top_ < CAPACITY && "VMStack overflow");
+        data_[top_++] = std::move(v);
+    }
+    template<typename... Args>
+    void emplace_back(Args&&... args) {
+        assert(top_ < CAPACITY && "VMStack overflow");
+        data_[top_++] = Value(std::forward<Args>(args)...);
+    }
+    void pop_back() {
+        assert(top_ > 0 && "VMStack::pop_back() on empty stack");
+        --top_;
+    }
+
+    // ---- 批量操作 ----
+    void clear() { top_ = 0; }
+    void resize(size_t n) {
+        assert(n <= top_ && "VMStack::resize() can only shrink");
+        top_ = n;
+    }
+    /// no-op：定长数组无需预分配
+    void reserve(size_t) {}
+
+    /// 转换为 vector（用于 GUI 调试视图，按值返回）
+    std::vector<Value> toVector() const {
+        return std::vector<Value>(data_, data_ + top_);
+    }
+
+private:
+    static constexpr size_t CAPACITY = RuntimeLimits::MAX_STACK_SIZE;
+    Value data_[CAPACITY];
+    size_t top_ = 0;
+};
+
 /// 简单栈式虚拟机
 class VM : public IBackend {
 public:
@@ -158,16 +232,14 @@ public:
     /// 获取栈内容（用于调试，拷贝）
     std::vector<Value> getStack() const;
 
-    /// 获取栈的常量引用（零拷贝，调试用）
-    const std::vector<Value>& getStackRef() const { return stack_; }
-
     /// 获取全局变量表（合并 slot-based + map-based，调试/测试用）
     std::unordered_map<std::string, Value> getGlobals() const {
         std::unordered_map<std::string, Value> result;
-        // Slot-based globals first
-        for (size_t i = 0; i < globalSlots_.size() && i < globalSlotNames_.size(); ++i) {
-            if (!globalSlots_[i].isNull()) {
-                result[globalSlotNames_[i]] = globalSlots_[i];
+        // B4: 从 globalNameToSlot_ 重建逆映射（避免存储冗余的 globalSlotNames_）
+        for (const auto& kv : globalNameToSlot_) {
+            int slot = kv.second;
+            if (slot >= 0 && slot < static_cast<int>(globalSlots_.size()) && !globalSlots_[slot].isNull()) {
+                result[kv.first] = globalSlots_[slot];
             }
         }
         // Map-based globals overlay (runtime-defined, class markers, etc.)
@@ -205,12 +277,12 @@ public:
     std::vector<VMCallStackEntry> getCallStack() const;
 
 private:
-    std::vector<Value> stack_;                     // 操作数栈
+    VMStack stack_;                                // PERF-13: 定长数组操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表（runtime-defined fallback）
     // A2: 全局变量整数槽位存储（编译期分配，vector 直接访问）
-    std::vector<Value> globalSlots_;               // slot-indexed global storage
-    std::vector<std::string> globalSlotNames_;     // parallel: slot -> name (debug)
-    std::unordered_map<std::string, int> globalNameToSlot_; // name -> slot (runtime lookup)
+    std::vector<Value> globalSlots_;                        // slot-indexed 存储
+    // B4: globalSlotNames_ 已删除（仅调试用，getGlobals 从 globalNameToSlot_ 重建逆映射）
+    std::unordered_map<std::string, int> globalNameToSlot_; // name -> slot (runtime lookup + 调试重建)
     std::vector<VMCallFrame> frames_;              // 调用帧栈
     BytecodeChunk mainChunk_;                       // 主 chunk 副本（VM 自持，避免悬空指针）
     // MEM-03/MEM-04 fix: 改用 std::map（节点式，插入不使引用/迭代器/指针失效）。
@@ -290,9 +362,8 @@ private:
     /// 批量 pop：一次 resize 替代多次 pop_back，避免多次析构 + 容量抖动。
     /// 不返回弹出值（调用方已通过 peek 读过），用于函数调用参数清理等场景。
     void popN(size_t n);
-    /// 在栈顶直接 emplace 构造 Value，避免临时 Value 的 shared_ptr 原子操作。
-    /// 用于 OP_CONSTANT 等热路径：原 push(Value(...)) 需 1 次 make_shared + 1 次 push_back 拷贝
-    /// （拷贝 = 原子递增），现直接在栈槽构造，再 move 到 vector（move shared_ptr 是普通指针拷贝）。
+    /// 在栈顶直接 emplace 构造 Value，避免临时 Value 构造+拷贝。
+    /// PERF-13: VMStack 使用定长数组，emplace_back 直接写入栈槽。
     template<typename... Args>
     void emplace(Args&&... args) {
         if (stack_.size() >= MAX_STACK_SIZE) {

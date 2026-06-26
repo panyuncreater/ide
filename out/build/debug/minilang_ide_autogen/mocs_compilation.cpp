@@ -10,6 +10,7 @@
 #include "DMHXEJ42XS/moc_CodeEditor.cpp"
 #include "DMHXEJ42XS/moc_DebugPanel.cpp"
 #include "DMHXEJ42XS/moc_FindReplacePanel.cpp"
+#include "DMHXEJ42XS/moc_IrViewer.cpp"
 #include "DMHXEJ42XS/moc_OutputPanel.cpp"
 #include "DMHXEJ42XS/moc_ReplPanel.cpp"
 #include "DMHXEJ42XS/moc_SyntaxHighlighter.cpp"

@@ -48,19 +48,19 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 120,
+				"line" : 125,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 170,
+				"line" : 175,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 137,
+				"line" : 142,
 				"parent" : 0
 			},
 			{
@@ -188,19 +188,19 @@
 			{
 				"command" : 9,
 				"file" : 0,
-				"line" : 145,
+				"line" : 150,
 				"parent" : 0
 			},
 			{
 				"command" : 10,
 				"file" : 0,
-				"line" : 156,
+				"line" : 161,
 				"parent" : 0
 			},
 			{
 				"command" : 11,
 				"file" : 0,
-				"line" : 133,
+				"line" : 138,
 				"parent" : 0
 			}
 		]
@@ -386,7 +386,8 @@
 				15,
 				16,
 				17,
-				19
+				18,
+				20
 			]
 		}
 	],
@@ -397,11 +398,11 @@
 			"id" : "minilang_core::@6890427a1f51a3e7e1df"
 		},
 		{
-			"backtrace" : 0,
-			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
+			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
+			"backtrace" : 0,
+			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
 		}
 	],
 	"id" : "minilang_ide::@6890427a1f51a3e7e1df",
@@ -535,11 +536,11 @@
 			"id" : "Qt6::uic::@6890427a1f51a3e7e1df"
 		},
 		{
-			"backtrace" : 0,
-			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
+			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
+			"backtrace" : 0,
+			"id" : "minilang_ide_autogen::@6890427a1f51a3e7e1df"
 		}
 	],
 	"paths" : 
@@ -570,7 +571,8 @@
 				15,
 				16,
 				17,
-				19
+				18,
+				20
 			]
 		},
 		{
@@ -578,15 +580,15 @@
 			"sourceIndexes" : 
 			[
 				9,
-				18
+				19
 			]
 		},
 		{
 			"name" : "CMake Rules",
 			"sourceIndexes" : 
 			[
-				20,
-				21
+				21,
+				22
 			]
 		}
 	],
@@ -692,6 +694,12 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
 			"path" : "gui/VmStackPanel.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "gui/IrViewer.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{

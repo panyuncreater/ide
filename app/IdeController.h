@@ -137,6 +137,16 @@ public:
     const DiagnosticBag& parserDiagnostics() const { return pipeline_.parserDiagnostics(); }
     const DiagnosticBag& compilerDiagnostics() const { return pipeline_.compilerDiagnostics(); }
 
+    /// 方向三：获取最近一次 IR 构建结果（用于 IR 可视化）。
+    /// 仅当 compiler().setUseIR(true) 且 compile() 成功后有效。
+    /// 返回 nullptr 表示未启用 IR 路径或构建失败。
+    const IRFunction* lastIR() const { return pipeline_.compiler().getLastIR(); }
+
+    /// 方向四：获取 main 函数的 IR→字节码偏移映射（IR 调试器集成）。
+    const std::vector<std::pair<size_t, size_t>>& lastIRToBytecodeOffset() const {
+        return pipeline_.compiler().getLastIRToBytecodeOffset();
+    }
+
 signals:
     void outputReady(const QString& text);
     void runOk();

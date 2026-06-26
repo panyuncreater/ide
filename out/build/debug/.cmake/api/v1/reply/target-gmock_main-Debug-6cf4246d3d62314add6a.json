@@ -143,11 +143,11 @@
 	"dependencies" : 
 	[
 		{
-			"id" : "gmock_main_autogen_timestamp_deps::@0f7bb11d64f3678238c7"
-		},
-		{
 			"backtrace" : 0,
 			"id" : "gmock_main_autogen::@0f7bb11d64f3678238c7"
+		},
+		{
+			"id" : "gmock_main_autogen_timestamp_deps::@0f7bb11d64f3678238c7"
 		}
 	],
 	"id" : "gmock_main::@0f7bb11d64f3678238c7",
@@ -176,11 +176,11 @@
 			"id" : "Qt6::uic::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "gmock_main_autogen_timestamp_deps::@0f7bb11d64f3678238c7"
-		},
-		{
 			"backtrace" : 0,
 			"id" : "gmock_main_autogen::@0f7bb11d64f3678238c7"
+		},
+		{
+			"id" : "gmock_main_autogen_timestamp_deps::@0f7bb11d64f3678238c7"
 		}
 	],
 	"paths" : 

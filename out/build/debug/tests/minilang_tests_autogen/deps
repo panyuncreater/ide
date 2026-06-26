@@ -5,6 +5,7 @@ minilang_tests_autogen/timestamp: \
 	C:/Users/v/Desktop/ide/ide/tests/TestIR.cpp \
 	C:/Users/v/Desktop/ide/ide/tests/TestInterpreterE2E.cpp \
 	C:/Users/v/Desktop/ide/ide/tests/TestLexer.cpp \
+	C:/Users/v/Desktop/ide/ide/tests/TestNaNBox.cpp \
 	C:/Users/v/Desktop/ide/ide/tests/TestParser.cpp \
 	C:/Users/v/Desktop/ide/ide/tests/TestVME2E.cpp \
 	C:/Users/v/Desktop/ide/ide/tests/TestValue.cpp \

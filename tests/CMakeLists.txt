@@ -39,6 +39,9 @@ if(NOT TARGET minilang_core)
         ${MINILANG_ROOT_DIR}/compiler/VMCalls.cpp
         ${MINILANG_ROOT_DIR}/compiler/VMContainers.cpp
         ${MINILANG_ROOT_DIR}/compiler/IR.cpp
+        ${MINILANG_ROOT_DIR}/compiler/RegisterBytecode.cpp
+        ${MINILANG_ROOT_DIR}/compiler/RegisterBytecodeBackend.cpp
+        ${MINILANG_ROOT_DIR}/compiler/RegisterVM.cpp
         ${MINILANG_ROOT_DIR}/formatter/Formatter.cpp
     )
 
@@ -94,6 +97,7 @@ add_executable(minilang_tests
     TestVME2E.cpp
     TestCompiler.cpp
     TestIR.cpp
+    TestNaNBox.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE

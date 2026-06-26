@@ -1,9 +1,9 @@
 // ============================================================
 // Value.cpp — Value 的 equalsImpl / toStringImpl 实现
 // ------------------------------------------------------------
-// S6 fix: 从 Value.h 提取，减小头文件体积（726→约 450 行）。
-// 这两个方法是 Value 中最大的实现块（约 240 行），
-// 提取到 .cpp 后 Value.h 仅保留接口声明。
+// PERF-12: 从 std::variant<shared_ptr<XData>> 迁移到 NaNBox + intrusive refcount。
+// 所有 std::get<I>(data_) 调用替换为 box_.asPtr<XData>() 指针转换。
+// visited 集合使用 RefCounted* 原始指针作为身份标识。
 // ============================================================
 
 #include "interpreter/Value.h"
@@ -57,112 +57,110 @@ bool Value::equalsImpl(const Value& other,
     case ValueType::VAL_STRING:   return stringVal() == other.stringVal();
     case ValueType::VAL_NULL:     return true;
     case ValueType::VAL_ARRAY: {
-        const auto& a = arrayVal();
-        const auto& b = other.arrayVal();
+        // PERF-12: 直接通过 NaNBox 指针访问 ArrayData
+        auto* aPtr = box_.asPtr<ArrayData>();
+        auto* bPtr = other.box_.asPtr<ArrayData>();
+        const auto& a = aPtr->elements;
+        const auto& b = bPtr->elements;
         if (a.size() != b.size()) return false;
-        // P1-6 fix: 环检测（与 toStringImpl 一致）
+        // P1-6 fix: 环检测（使用 ArrayData* 指针作为身份标识）
         if (visited) {
-            const void* ptrA = reinterpret_cast<const void*>(a.data());
-            const void* ptrB = reinterpret_cast<const void*>(b.data());
-            // 使用 data() 指针作为身份标识；若已访问过则视为相等（避免无限递归）
-            if (!visited->insert(ptrA).second) return true;
-            if (!visited->insert(ptrB).second) return true;
+            if (!visited->insert(aPtr).second) return true;
+            if (!visited->insert(bPtr).second) return true;
         }
         for (size_t i = 0; i < a.size(); ++i) {
             if (!a[i].equalsImpl(b[i], visited, depth + 1)) {
                 if (visited) {
-                    visited->erase(reinterpret_cast<const void*>(a.data()));
-                    visited->erase(reinterpret_cast<const void*>(b.data()));
+                    visited->erase(aPtr);
+                    visited->erase(bPtr);
                 }
                 return false;
             }
         }
         if (visited) {
-            visited->erase(reinterpret_cast<const void*>(a.data()));
-            visited->erase(reinterpret_cast<const void*>(b.data()));
+            visited->erase(aPtr);
+            visited->erase(bPtr);
         }
         return true;
     }
     case ValueType::VAL_DICT: {
-        const auto& a = dictVal();
-        const auto& b = other.dictVal();
+        auto* aPtr = box_.asPtr<DictData>();
+        auto* bPtr = other.box_.asPtr<DictData>();
+        const auto& a = aPtr->entries;
+        const auto& b = bPtr->entries;
         if (a.size() != b.size()) return false;
-        // P1-6 fix: 环检测
         if (visited) {
-            const void* ptrA = reinterpret_cast<const void*>(&a);
-            const void* ptrB = reinterpret_cast<const void*>(&b);
-            if (!visited->insert(ptrA).second) return true;
-            if (!visited->insert(ptrB).second) return true;
+            if (!visited->insert(aPtr).second) return true;
+            if (!visited->insert(bPtr).second) return true;
         }
         for (const auto& kv : a) {
             auto it = b.find(kv.first);
             if (it == b.end()) {
                 if (visited) {
-                    visited->erase(reinterpret_cast<const void*>(&a));
-                    visited->erase(reinterpret_cast<const void*>(&b));
+                    visited->erase(aPtr);
+                    visited->erase(bPtr);
                 }
                 return false;
             }
             if (!kv.second.equalsImpl(it->second, visited, depth + 1)) {
                 if (visited) {
-                    visited->erase(reinterpret_cast<const void*>(&a));
-                    visited->erase(reinterpret_cast<const void*>(&b));
+                    visited->erase(aPtr);
+                    visited->erase(bPtr);
                 }
                 return false;
             }
         }
         if (visited) {
-            visited->erase(reinterpret_cast<const void*>(&a));
-            visited->erase(reinterpret_cast<const void*>(&b));
+            visited->erase(aPtr);
+            visited->erase(bPtr);
         }
         return true;
     }
     case ValueType::VAL_INSTANCE: {
         if (className() != other.className()) return false;
-        const auto& a = fields();
-        const auto& b = other.fields();
+        auto* aPtr = box_.asPtr<InstanceData>();
+        auto* bPtr = other.box_.asPtr<InstanceData>();
+        const auto& a = aPtr->fields;
+        const auto& b = bPtr->fields;
         if (a.size() != b.size()) return false;
-        // P1-6 fix: 环检测
         if (visited) {
-            const void* ptrA = reinterpret_cast<const void*>(&a);
-            const void* ptrB = reinterpret_cast<const void*>(&b);
-            if (!visited->insert(ptrA).second) return true;
-            if (!visited->insert(ptrB).second) return true;
+            if (!visited->insert(aPtr).second) return true;
+            if (!visited->insert(bPtr).second) return true;
         }
         for (const auto& kv : a) {
             auto it = b.find(kv.first);
             if (it == b.end()) {
                 if (visited) {
-                    visited->erase(reinterpret_cast<const void*>(&a));
-                    visited->erase(reinterpret_cast<const void*>(&b));
+                    visited->erase(aPtr);
+                    visited->erase(bPtr);
                 }
                 return false;
             }
             if (!kv.second.equalsImpl(it->second, visited, depth + 1)) {
                 if (visited) {
-                    visited->erase(reinterpret_cast<const void*>(&a));
-                    visited->erase(reinterpret_cast<const void*>(&b));
+                    visited->erase(aPtr);
+                    visited->erase(bPtr);
                 }
                 return false;
             }
         }
         if (visited) {
-            visited->erase(reinterpret_cast<const void*>(&a));
-            visited->erase(reinterpret_cast<const void*>(&b));
+            visited->erase(aPtr);
+            visited->erase(bPtr);
         }
         return true;
     }
     case ValueType::VAL_CLOSURE:
         // P2-14 fix: expired env 误判相等防护
-        // 双方 env 均失效时按 ClosureData 身份比较，避免 nullptr==nullptr 误判
+        // PERF-12: 直接通过 NaNBox 指针访问 ClosureData
         {
-            const auto& cd1 = std::get<8>(data_);
-            const auto& cd2 = std::get<8>(other.data_);
+            auto* cd1 = box_.asPtr<ClosureData>();
+            auto* cd2 = other.box_.asPtr<ClosureData>();
             bool env1Expired = cd1->env.expired();
             bool env2Expired = cd2->env.expired();
             if (env1Expired && env2Expired) {
                 // 双方 env 均失效，按 ClosureData 指针身份比较
-                return cd1.get() == cd2.get();
+                return cd1 == cd2;
             }
             return closureName() == other.closureName()
                 && closureEnv() == other.closureEnv();
@@ -174,36 +172,30 @@ bool Value::equalsImpl(const Value& other,
 // ============================================================
 // toStringImpl — 字符串化实现（含环检测和深度保护）
 // ============================================================
-// PERF-04 fix: 容器路径改用 std::string + reserve + append，替代 std::ostringstream。
-// ostringstream 每次构造含 locale 同步 + 多层缓冲，比 string+reserve 慢 5-10x。
-// reserve 容量按元素数估算（每元素平均 8 字符），避免反复 realloc。
-// ============================================================
 
 std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int depth) const {
-    // B5 fix: 深度保护，防止 [[[[...]]]] 线性嵌套导致栈溢出
-    // visited 仅防真环（insert/erase 路径检测），depth 防线性深度
+    // B5 fix: 深度保护
     if (depth >= MAX_TOSTRING_DEPTH) return "[...too deep]";
     switch (getType()) {
     case ValueType::VAL_INT:
         return std::to_string(intVal());
     case ValueType::VAL_FLOAT: {
         char buf[64];
-        int len = snprintf(buf, sizeof(buf), "%.17g", floatVal());  // FMT-R1 fix: 17位有效数字保证 double 往返无损
+        int len = snprintf(buf, sizeof(buf), "%.17g", box_.asFloat());
         if (len < 0) return "nan";
         return std::string(buf, len);
     }
     case ValueType::VAL_BOOL:
-        return boolVal() ? "true" : "false";
+        return box_.asBool() ? "true" : "false";
     case ValueType::VAL_STRING:
         return stringVal();
     case ValueType::VAL_NULL:
         return "null";
     case ValueType::VAL_ARRAY: {
-        const auto& ptr = std::get<5>(data_);
-        assert(ptr && "toString on null ArrayData");
-        if (!visited.insert(ptr.get()).second) return "[cycle]";
+        // PERF-12: 直接通过 NaNBox 指针访问 ArrayData
+        auto* ptr = box_.asPtr<ArrayData>();
+        if (!visited.insert(ptr).second) return "[cycle]";
         const auto& arr = ptr->elements;
-        // PERF-04 fix: reserve 容量估算（每元素约 8 字符 + 分隔符）
         std::string result;
         result.reserve(arr.size() * 8 + 2);
         result += "[";
@@ -218,13 +210,12 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
             }
         }
         result += "]";
-        visited.erase(ptr.get());
+        visited.erase(ptr);
         return result;
     }
     case ValueType::VAL_DICT: {
-        const auto& ptr = std::get<6>(data_);
-        assert(ptr && "toString on null DictData");
-        if (!visited.insert(ptr.get()).second) return "[cycle]";
+        auto* ptr = box_.asPtr<DictData>();
+        if (!visited.insert(ptr).second) return "[cycle]";
         const auto& dict = ptr->entries;
         std::string result;
         result.reserve(dict.size() * 16 + 2);
@@ -245,13 +236,12 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
             }
         }
         result += "}";
-        visited.erase(ptr.get());
+        visited.erase(ptr);
         return result;
     }
     case ValueType::VAL_INSTANCE: {
-        const auto& ptr = std::get<7>(data_);
-        assert(ptr && "toString on null InstanceData");
-        if (!visited.insert(ptr.get()).second) return "[cycle]";
+        auto* ptr = box_.asPtr<InstanceData>();
+        if (!visited.insert(ptr).second) return "[cycle]";
         const auto& cn = ptr->className;
         const auto& flds = ptr->fields;
         std::string result;
@@ -273,7 +263,7 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
             }
         }
         result += "}";
-        visited.erase(ptr.get());
+        visited.erase(ptr);
         return result;
     }
     case ValueType::VAL_CLOSURE:

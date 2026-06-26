@@ -1,6 +1,6 @@
 # MiniLang IDE
 
-一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境，包含自研词法分析器、递归下降解析器、栈式字节码虚拟机、树遍历解释器、调试器、代码格式化器与完整 GUI。
+一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境，包含自研词法分析器、递归下降解析器、栈式字节码虚拟机、树遍历解释器、调试器、代码格式化器、IR 中间表示层与完整 GUI。
 
 ## 功能特性
 
@@ -18,12 +18,13 @@
 - **代码编辑器**：语法高亮、行号、断点标记、错误下划线、当前执行行高亮
 - **词法/语法分析可视化**：Token 表格、AST 树形图（可缩放/平移）
 - **字节码反汇编**：主 chunk 与函数 chunk 分段显示，单步高亮当前指令
+- **IR 中间表示层**：可选 AST → IR → Bytecode 三段式编译，52 个 IROp 指令，支持 SSA-like 虚拟寄存器、多函数 lowering、闭包 upvalue 捕获、写回指令、全局槽位分配、优化 pass（常量折叠 / 死代码消除）、IR 可视化面板与 IR 调试器集成
 - **双执行引擎**：
   - 树遍历解释器（支持 REPL 续行输入）
   - 栈式字节码 VM（支持单步、栈/全局变量监视）
 - **调试器**：断点（含条件断点）、单步进入/跳过/跳出、变量监视、调用栈
 - **代码格式化器**：可配置缩进/花括号风格/运算符空格，保留注释
-- **REPL 面板**：交互式求值，支持多行续行（未闭合 `{ ( [` 或字符串自动续行）
+- **REPL 面板**：交互式求值，支持多行续行（未闭合 `{ ( [` 或字符串自动续行），异步执行不阻塞 UI
 
 ## 架构
 
@@ -39,11 +40,12 @@
 │  独立 QThread 执行解释器，信号回传结果           │
 ├─────────────────────────────────────────────────┤
 │  引擎层 (minilang_core 静态库)                  │
-│  Lexer → Parser → AST → Compiler → Bytecode → VM │
-│                 ↓                                │
+│  Lexer → Parser → AST → Formatter               │
+│              ↓                                   │
 │            Interpreter (树遍历)                  │
-│            Formatter (Visitor 模式)              │
-│            DebugController (断点/单步/条件求值)   │
+│              ↓                                   │
+│       Compiler → IR → Bytecode → VM             │
+│            DebugController (断点/单步)           │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -55,13 +57,13 @@
 | `parser/` | 递归下降解析器，生成 AST |
 | `ast/` | AST 节点定义与 Visitor 接口 |
 | `interpreter/` | 树遍历解释器、Environment、Value、内置方法 |
-| `compiler/` | 字节码编译器、VM、BytecodeChunk |
+| `compiler/` | 字节码编译器、IR 中间表示层、VM、BytecodeChunk |
 | `debug/` | DebugController（断点/单步/条件求值/变量快照） |
 | `formatter/` | 代码格式化器（Visitor 模式） |
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/调试面板等） |
 | `app/` | IdeController、InterpreterWorker、main、Ide 主窗口 |
-| `common/` | Diagnostic、Logger |
-| `tests/` | GoogleTest 单元测试（558 个） |
+| `common/` | Diagnostic、Logger、IBackend、TypeChecker |
+| `tests/` | GoogleTest 单元测试（678 个） |
 | `test_harness/` | 独立测试工具（AST/格式化器/调试一致性审计） |
 
 ## 构建与运行
@@ -109,7 +111,7 @@ nmake
 
 ## 测试
 
-项目包含 **558 个 GoogleTest 单元测试**，覆盖所有核心模块：
+项目包含 **697 个 GoogleTest 单元测试**，覆盖所有核心模块：
 
 | 测试套件 | 覆盖模块 |
 |----------|----------|
@@ -120,6 +122,7 @@ nmake
 | `TestCompiler` | compiler/Compiler |
 | `TestVME2E` | compiler/VM (端到端) |
 | `TestValue` | interpreter/Value |
+| `TestIR` | compiler/IR（中间表示层） |
 | `CompilerConstantPoolTest` | compiler/ 常量池 |
 | `CompilerGlobalSlotTest` | compiler/ 全局槽位 |
 
@@ -185,12 +188,17 @@ print(dict["key"]);
 
 ## 工程约定
 
-- **COW 优化**：Value 类型使用 Copy-On-Write，读操作必须使用 const 访问器避免深拷贝
+- **PERF-12 NaN-boxing**：Value 类型使用 8 字节 NaN-boxing 编码（sizeof 从 24 字节降至 8 字节），标量（int/float/bool/null）内联存储零原子操作，堆类型通过侵入式引用计数（RefCounted 基类）管理
+- **PERF-13 VMStack**：VM 操作数栈使用定长数组（1024 × 8B = 8KB）+ 栈顶指针替代 `std::vector`，消除 `push_back` 容量检查和堆分配开销
+- **PERF-14 寄存器式 VM**：双后端并存策略，新增独立 RegisterBytecode（50+ RegOp，32 虚拟寄存器 R0-R31）+ RegisterBytecodeBackend（IR 三地址码直接 lowering）+ RegisterVM 解释循环，通过 `setUseRegisterVM(true)` 启用；默认关闭，栈式 VM 完整保留
+- **PERF-15 IR 复制传播**：`copyPropagationPass` 完整实现，记录 vreg→常量等价关系并替换后续引用；仅在寄存器式后端启用（`optimizeIR` 新增 `enableCopyPropagation` 参数），栈式后端禁用避免删除 LOAD_CONST 导致栈下溢
+- **COW 优化**：Value 类型使用 Copy-On-Write，堆类型修改前通过 `ensureUnique<T>()` 检查 `isUnique()` 确保独占所有权
 - **DoS 防护**：源码 ≤10MB、Token ≤100 万、循环 ≤1000 万次、字符串 reserve ≤1MB
 - **递归保护**：Parser/Compiler/Formatter/equals() 均有深度限制（512/256）
 - **线程安全**：DebugController 使用 mutex + atomic，Worker 线程通过 Qt 信号回传
 - **异常安全**：UI 槽函数包裹 try/catch，确保异常时回滚 UI 状态
 - **资源管理**：unique_ptr 管理 QThread（自定义删除器先 quit+wait 再 delete）
+- **IR 中间层**：可选 AST → IR → Bytecode 三段式编译，IRBuilder/IRBackend 抽象接口可扩展多后端；启用 `setIR(true)` + `setIROptimize(true)` 后在 lowering 前执行常量折叠 / 死代码消除 pass（最多 3 轮迭代）；寄存器式后端额外启用复制传播（`setUseRegisterVM(true)` + `setIROptimize(true)`）
 
 ## 许可证
 

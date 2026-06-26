@@ -7,6 +7,9 @@
 #include <map>
 #include "ast/ASTNode.h"
 #include "compiler/Bytecode.h"
+#include "compiler/GlobalSlotAllocator.h"  // B4: 全局槽位分配器
+#include "compiler/IR.h"  // ARCH-06: IR 中间层（AstIRBuilder + BytecodeIRBackend）
+#include "compiler/RegisterBytecode.h"  // PERF-14: 寄存器式字节码
 #include "Diagnostic.h"
 #include "interpreter/Visitor.h"  // 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式
 #include "common/RuntimeLimits.h"
@@ -23,13 +26,62 @@ public:
     /// 编译 AST 块到字节码
     CompileResult compile(Block& program);
 
+    /// ARCH-06: IR 中间层编译路径（实验性）
+    /// AST → IR（AstIRBuilder）→ Bytecode（BytecodeIRBackend）
+    /// 当 useIR_=true 时由 compile() 调用。简化实现，不支持高级特性。
+    CompileResult compileViaIR(Block& program);
+
+    /// PERF-14: 寄存器式编译路径
+    /// AST → IR（AstIRBuilder）→ RegisterBytecode（RegisterBytecodeBackend）
+    /// 当 useRegisterVM_=true 时由 compile() 调用。
+    RegisterCompileResult compileViaRegisterIR(Block& program);
+
     /// 获取编译错误信息
     std::string getLastError() const;
 
     /// 获取编译过程中的诊断信息
     const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
 
+    // ARCH-06: IR 中间层开关（实验性，默认关闭）
+    // 启用后 compile() 走 AST → IR → Bytecode 路径（AstIRBuilder + BytecodeIRBackend）。
+    // IR 路径已支持闭包 upvalue、写回指令、全局槽位分配、默认参数、块作用域等完整特性。
+    void setUseIR(bool enabled) { useIR_ = enabled; }
+    bool getUseIR() const { return useIR_; }
+
+    /// 方向二：IR 优化 pass 开关（仅当 useIR_=true 时生效）
+    /// 启用后在 IR lowering 前执行：常量折叠 → 复制传播 → 死代码消除
+    void setIROptimize(bool enabled) { irOptimize_ = enabled; }
+    bool getIROptimize() const { return irOptimize_; }
+
+    /// PERF-14: 寄存器式 VM 开关（默认关闭）
+    /// 启用后 compile() 走 AST → IR → RegisterBytecode 路径，
+    /// 配合 RegisterVM 执行。PERF-15 复制传播在寄存器式下安全启用。
+    void setUseRegisterVM(bool enabled) { useRegisterVM_ = enabled; }
+    bool getUseRegisterVM() const { return useRegisterVM_; }
+
+    /// PERF-14: 寄存器式编译结果（compileViaRegisterIR 后有效）
+    const RegisterCompileResult& getLastRegisterResult() const { return lastRegisterResult_; }
+
+    /// ARCH-06: 获取最近一次 IR 构建结果（用于调试/可视化）。
+    /// 仅当 useIR_=true 且 compile() 成功后有效。返回 nullptr 表示未启用 IR 或构建失败。
+    const IRFunction* getLastIR() const { return lastIR_.get(); }
+
+    /// 方向四：获取 main 函数的 IR 指令 → 字节码偏移映射（IR 调试器集成）。
+    /// 仅当 useIR_=true 且 compile() 成功后有效。
+    /// 返回空 vector 表示未启用 IR 路径或构建失败。
+    const std::vector<std::pair<size_t, size_t>>& getLastIRToBytecodeOffset() const { return lastIRToBytecodeOffset_; }
+
 private:
+    // ARCH-06: IR 中间层状态
+    bool useIR_ = false;  // 是否启用 IR 路径（实验性，默认关闭）
+    bool irOptimize_ = false;  // 是否启用 IR 优化 pass（方向二）
+    std::unique_ptr<IRFunction> lastIR_;  // 最近一次 IR 构建结果
+    std::vector<std::pair<size_t, size_t>> lastIRToBytecodeOffset_;  // 方向四：IR→字节码偏移映射
+
+    // PERF-14: 寄存器式 VM 状态
+    bool useRegisterVM_ = false;  // 是否启用寄存器式 VM（默认关闭）
+    RegisterCompileResult lastRegisterResult_;  // 最近一次寄存器式编译结果
+
     BytecodeChunk chunk_;                           // 当前字节码块
     std::unordered_map<std::string, uint16_t> varIndex_;  // 变量名 → 常量池索引
     // PERF-29 fix: 字符串字面量去重 map，避免相同字符串重复存入常量池。
@@ -57,7 +109,6 @@ private:
     int compileDepth_ = 0;
     static constexpr int MAX_COMPILE_DEPTH = RuntimeLimits::MAX_COMPILE_DEPTH;
     std::string currentClassName_;  // B1 fix: 当前正在编译的类名（供 OP_SUPER_CALL 编码类上下文）
-    std::unordered_set<std::string> topLevelGlobals_;  // VMBUG-1: 顶层（非块/非函数）var 声明的全局变量名集合
 
     // break/continue 循环上下文栈
     // 每层循环编译时压入，记录 break 跳转目标（循环出口）和 continue 跳转目标（循环起始/更新）
@@ -120,22 +171,20 @@ private:
     std::unordered_set<std::string> innerFunctions_;           // 当前作用域中的内嵌函数名
     std::unordered_map<std::string, int> innerFunctionSlots_;  // 内嵌函数名 → 局部变量槽位号
 
-    // A2: 全局变量整数槽位管理
-    std::unordered_map<std::string, int> globalSlots_;  // name -> slot index
-    std::vector<std::string> slotNames_;                 // slot -> name (parallel array)
-    std::vector<int> freeSlots_;                         // recycled slot indices
+    // A2/B4: 全局变量整数槽位管理（委托给 GlobalSlotAllocator）
+    GlobalSlotAllocator globalSlotAllocator_;
 
     /// 添加变量名到常量池，返回索引
     uint16_t identifierIndex(const std::string& name);
 
-    /// A2: 分配全局槽位（已有则返回现有，否则从 freeSlots_ 或新分配）
-    int allocateGlobalSlot(const std::string& name);
+    /// A2: 分配全局槽位（委托给 globalSlotAllocator_）
+    int allocateGlobalSlot(const std::string& name) { return globalSlotAllocator_.allocate(name); }
 
-    /// A2: 释放全局槽位（从 globalSlots_ 移除，推入 freeSlots_）
-    void releaseGlobalSlot(const std::string& name);
+    /// A2: 释放全局槽位（委托给 globalSlotAllocator_）
+    void releaseGlobalSlot(const std::string& name) { globalSlotAllocator_.release(name); }
 
-    /// A2: 查找全局槽位（未找到返回 -1）
-    int lookupGlobalSlot(const std::string& name) const;
+    /// A2: 查找全局槽位（委托给 globalSlotAllocator_）
+    int lookupGlobalSlot(const std::string& name) const { return globalSlotAllocator_.lookup(name); }
 
     /// 编译 AST 节点（通过 Visitor 模式的 accept 分派）
     void compileNode(ASTNode* node);

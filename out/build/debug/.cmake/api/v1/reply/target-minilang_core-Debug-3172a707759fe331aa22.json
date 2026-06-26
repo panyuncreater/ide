@@ -38,31 +38,31 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 90,
+				"line" : 95,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 99,
+				"line" : 104,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 106,
+				"line" : 111,
 				"parent" : 0
 			},
 			{
 				"command" : 3,
 				"file" : 0,
-				"line" : 94,
+				"line" : 99,
 				"parent" : 0
 			},
 			{
 				"command" : 4,
 				"file" : 0,
-				"line" : 103,
+				"line" : 108,
 				"parent" : 0
 			}
 		]
@@ -354,18 +354,21 @@
 				16,
 				17,
 				18,
-				19
+				19,
+				20,
+				21,
+				22
 			]
 		}
 	],
 	"dependencies" : 
 	[
 		{
-			"id" : "minilang_core_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
-		},
-		{
 			"backtrace" : 0,
 			"id" : "minilang_core_autogen::@6890427a1f51a3e7e1df"
+		},
+		{
+			"id" : "minilang_core_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
 		}
 	],
 	"id" : "minilang_core::@6890427a1f51a3e7e1df",
@@ -401,11 +404,11 @@
 			"id" : "Qt6::uic::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "minilang_core_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
-		},
-		{
 			"backtrace" : 0,
 			"id" : "minilang_core_autogen::@6890427a1f51a3e7e1df"
+		},
+		{
+			"id" : "minilang_core_autogen_timestamp_deps::@6890427a1f51a3e7e1df"
 		}
 	],
 	"paths" : 
@@ -438,28 +441,31 @@
 				16,
 				17,
 				18,
-				19
+				19,
+				20,
+				21,
+				22
 			]
 		},
 		{
 			"name" : "",
 			"sourceIndexes" : 
 			[
-				20
+				23
 			]
 		},
 		{
 			"name" : "Precompile Header File",
 			"sourceIndexes" : 
 			[
-				21
+				24
 			]
 		},
 		{
 			"name" : "CMake Rules",
 			"sourceIndexes" : 
 			[
-				22
+				25
 			]
 		}
 	],
@@ -578,6 +584,24 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 1,
 			"path" : "compiler/IR.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "compiler/RegisterBytecode.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "compiler/RegisterBytecodeBackend.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "compiler/RegisterVM.cpp",
 			"sourceGroupIndex" : 0
 		},
 		{

@@ -208,7 +208,7 @@ bool VM::hasError() const {
 }
 
 std::vector<Value> VM::getStack() const {
-    return stack_;
+    return stack_.toVector();
 }
 
 size_t VM::getCurrentIP() const {
@@ -715,8 +715,7 @@ VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
 
 void VM::initExecution(const CompileResult& result) {
     stack_.clear();
-    // S1 fix: 预分配到 MAX_STACK_SIZE，消除运行中 realloc（栈操作提升 20-30%）
-    stack_.reserve(MAX_STACK_SIZE);
+    // PERF-13: VMStack 使用定长数组，无需 reserve
     globals_.clear();
     lastError_.clear();
     lastErrorLine_ = 0;
@@ -741,12 +740,11 @@ void VM::initExecution(const CompileResult& result) {
     stepInstructionCount_ = 0;
     lastAsciiStrPtr_ = nullptr;
     lastAsciiStrIsAscii_ = false;
-    // A2: 初始化全局变量槽位
+    // A2/B4: 初始化全局变量槽位
     globalSlots_.clear();
-    globalSlotNames_.clear();
     globalNameToSlot_.clear();
     globalSlots_.resize(result.globalSlotCount);
-    globalSlotNames_ = result.globalSlotNames;
+    // B4: 不再存储 globalSlotNames_，直接构建 globalNameToSlot_（调试时从逆映射重建）
     for (int i = 0; i < result.globalSlotCount; ++i) {
         globalNameToSlot_[result.globalSlotNames[i]] = i;
     }
@@ -782,7 +780,7 @@ void VM::resetState() {
     functionChunks_.clear();
     classInfo_.clear();
     globalSlots_.clear();
-    globalSlotNames_.clear();
+    // B4: globalSlotNames_ 已删除
     globalNameToSlot_.clear();
     mainChunk_ = BytecodeChunk();  // 清空主 chunk 副本
     lastMutatedReceiver_ = Value::nullValue();

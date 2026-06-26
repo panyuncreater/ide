@@ -179,6 +179,10 @@ void Ide::initUI() {
     astViewer_ = new AstViewer(this);
     rightTabWidget_->addTab(astViewer_, "AST 视图");
 
+    // 方向三：IR 中间表示视图
+    irViewer_ = new IrViewer(this);
+    rightTabWidget_->addTab(irViewer_, "IR 视图");
+
     // 字节码视图：左右分割（左：指令列表 + 右：栈状态面板）
     auto* bytecodeSplitter = new QSplitter(Qt::Horizontal, this);
 
@@ -291,6 +295,11 @@ void Ide::initToolbar() {
     bytecodeAction_->setToolTip("查看字节码 (Ctrl+B)");
     bytecodeAction_->setShortcut(Qt::CTRL | Qt::Key_B);
 
+    // 方向三：IR 中间表示
+    irAction_ = toolbar->addAction("🔮 IR");
+    irAction_->setToolTip("查看 IR 中间表示 (Ctrl+Shift+I)");
+    irAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_I);
+
     toolbar->addSeparator();
 
     // ---- VM 调试按钮 ----
@@ -332,6 +341,7 @@ void Ide::initConnections() {
     connect(clearAction_, &QAction::triggered, this, &Ide::onClearOutput);
     connect(formatAction_, &QAction::triggered, this, &Ide::onFormat);
     connect(bytecodeAction_, &QAction::triggered, this, &Ide::onShowBytecode);
+    connect(irAction_, &QAction::triggered, this, &Ide::onShowIR);
 
     // 条件断点：编辑器右键设置条件时同步到调试控制器
     connect(codeEditor_, &CodeEditor::breakpointConditionRequested,
@@ -697,8 +707,80 @@ void Ide::onShowBytecode() {
     // 重置 VM 状态
     controller_->vmReset();
 
-    // 切换到字节码 Tab
-    rightTabWidget_->setCurrentIndex(2);
+    // 切换到字节码 Tab（方向三新增 IR Tab 后，用 setCurrentWidget 避免索引漂移）
+    rightTabWidget_->setCurrentWidget(bytecodeList_->parentWidget());
+}
+
+// ============================================================
+// 方向三：IR 中间表示可视化
+// ============================================================
+
+void Ide::onShowIR() {
+    std::string source = codeEditor_->toPlainText().toStdString();
+
+    // QT-R-10 fix: 大文件 IR 生成时显示等待光标
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } cursorGuard;
+
+    codeEditor_->clearErrorLines();
+    codeEditor_->clearCurrentLine();
+
+    // 方向三：启用 IR 编译路径
+    controller_->compiler().setUseIR(true);
+
+    // C9 fix: 使用统一前端管线
+    auto pipelineResult = controller_->runFrontendPipeline(source);
+    updateTokenTable();
+
+    if (pipelineResult.status != IdeController::PipelineStatus::OK) {
+        irViewer_->clearIR();
+        if (!pipelineResult.errorMessage.empty()) {
+            irViewer_->setIR(nullptr);
+            // 显示错误信息
+            outputPanel_->appendError(QString("IR 生成失败 - %1: %2")
+                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed ? "词法异常" : "解析异常")
+                .arg(QString::fromStdString(pipelineResult.errorMessage)));
+        } else if (pipelineResult.diagnostics) {
+            displayDiagnostics(*pipelineResult.diagnostics);
+        }
+        updateAstViewer();
+        return;
+    }
+    updateAstViewer();
+
+    if (!controller_->astRoot()) return;
+
+    // 编译（走 IR 路径）
+    try {
+        controller_->runCompiler();
+    } catch (const std::exception& e) {
+        irViewer_->clearIR();
+        outputPanel_->appendError(QString("IR 编译异常: %1").arg(e.what()));
+        return;
+    }
+
+    // 填充 IR 可视化面板
+    populateIRViewer();
+
+    // 切换到 IR Tab
+    rightTabWidget_->setCurrentWidget(irViewer_);
+}
+
+void Ide::populateIRViewer() {
+    const IRFunction* ir = controller_->lastIR();
+    irViewer_->setIR(ir);
+
+    // 方向四：同步保存 IR→字节码偏移映射（供 VM 单步时高亮）
+    irToBytecodeOffset_ = controller_->lastIRToBytecodeOffset();
+}
+
+// ============================================================
+// 方向四：IR 调试器集成 — VM 单步时高亮对应 IR 指令
+// ============================================================
+
+void Ide::highlightIRLine(size_t bytecodeOffset) {
+    if (irToBytecodeOffset_.empty()) return;
+    irViewer_->highlightByBytecodeOffset(irToBytecodeOffset_, bytecodeOffset);
 }
 
 // ============================================================
@@ -861,6 +943,10 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
             int opLine = controller_->getVmCurrentLine();
             vmStackPanel_->updateCurrentOp(currentIP, currentOp, opLine);
             highlightBytecodeLine(controller_->getVmCurrentChunkName(), currentIP);
+            // 方向四：同步高亮 IR 视图中对应的 IR 指令（仅 main chunk 时有效）
+            if (controller_->getVmCurrentChunkName() == "main") {
+                highlightIRLine(currentIP);
+            }
         }
         // A4 fix: 同步断点行高亮（命中断点时跳转到该行）
         if (result == IdeController::VmStepResult::PAUSED_AT_BREAKPOINT) {
