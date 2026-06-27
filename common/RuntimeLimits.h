@@ -53,6 +53,8 @@ constexpr int MAX_FORMAT_DEPTH = 256;
 constexpr int MAX_TOSTRING_DEPTH = 256;
 // equals 递归深度上限
 constexpr int MAX_EQUALS_DEPTH = 256;
+// clone 递归深度上限（防止深嵌套/环形结构栈溢出）
+constexpr int MAX_CLONE_DEPTH = 256;
 
 // ---- Lexer 输入限制 ----
 // 源代码最大大小（10MB）

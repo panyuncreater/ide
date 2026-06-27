@@ -1,5 +1,6 @@
 #include "lexer/Lexer.h"
 #include "common/Utf8Utils.h"
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -257,15 +258,15 @@ void Lexer::scanToken() {
 
     // 可能是双字符运算符（使用查找表 O(1) 分派）
     case '=': case '!': case '<': case '>': case '&': case '|': {
-        // 双字符运算符查找表: [首字符索引][后继字符] → TokenType
-        // 首字符映射: '='→0, '!'→1, '<'→2, '>'→3, '&'→4, '|'→5
-        static const struct {
+        // 双字符运算符查找表
+        struct TwoCharOp {
             char first;
             char second;        // 匹配的第二字符（'\0' 表示无匹配）
             TokenType dualType; // 双字符类型
             TokenType soloType; // 单字符类型
             const char* hint;   // 错误提示（soloType 为 TK_ERROR 时使用）
-        } twoCharOps[] = {
+        };
+        static const TwoCharOp twoCharOps[] = {
             {'=', '=', TokenType::TK_EQ,     TokenType::TK_ASSIGN, nullptr},
             {'!', '=', TokenType::TK_NEQ,    TokenType::TK_NOT,    nullptr},
             {'<', '=', TokenType::TK_LEQ,    TokenType::TK_LT,     nullptr},
@@ -273,20 +274,26 @@ void Lexer::scanToken() {
             {'&', '&', TokenType::TK_ERROR,  TokenType::TK_ERROR,  "请使用 'and' 关键字代替 '&'"},
             {'|', '|', TokenType::TK_ERROR,  TokenType::TK_ERROR,  "请使用 'or' 关键字代替 '|'"},
         };
-        // 查找表项（6 项，编译期初始化）
-        for (const auto& entry : twoCharOps) {
-            if (entry.first == c) {
-                if (entry.second != '\0' && match(entry.second)) {
-                    if (entry.dualType != TokenType::TK_ERROR)
-                        addToken(entry.dualType);
-                    else
-                        errorToken(std::string("'") + c + c + "'（" + entry.hint + "）");
-                } else if (entry.soloType != TokenType::TK_ERROR) {
-                    addToken(entry.soloType);
-                } else {
-                    errorToken(std::string("意外字符 '") + c + "'（" + entry.hint + "）");
-                }
-                break;
+        // #28 fix: [256] 查找表按首字符 O(1) 定位条目，替代 6 项线性扫描。
+        // 首字符仅这 6 个有条目，其余槽位为 nullptr。首次调用时初始化，后续零开销。
+        static const auto firstCharTable = []() {
+            std::array<const TwoCharOp*, 256> t{};
+            for (const auto& op : twoCharOps) {
+                t[static_cast<unsigned char>(op.first)] = &op;
+            }
+            return t;
+        }();
+        const TwoCharOp* entry = firstCharTable[static_cast<unsigned char>(c)];
+        if (entry) {
+            if (entry->second != '\0' && match(entry->second)) {
+                if (entry->dualType != TokenType::TK_ERROR)
+                    addToken(entry->dualType);
+                else
+                    errorToken(std::string("'") + c + c + "'（" + entry->hint + "）");
+            } else if (entry->soloType != TokenType::TK_ERROR) {
+                addToken(entry->soloType);
+            } else {
+                errorToken(std::string("意外字符 '") + c + "'（" + entry->hint + "）");
             }
         }
         break;

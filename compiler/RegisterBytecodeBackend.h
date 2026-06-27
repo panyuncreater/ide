@@ -37,6 +37,7 @@ private:
     std::unique_ptr<RegBytecodeChunk> chunk_;
     std::map<std::string, RegBytecodeChunk> functionChunks_;
     std::vector<std::pair<size_t, size_t>> irToBytecodeOffset_;
+    bool hasError_ = false;  // vregToReg 溢出等错误标志，lower 末尾检查
 
     // vreg → 寄存器号映射（IR 的虚拟寄存器直接映射为物理寄存器）
     // 简单线性分配：vreg N → register N（如果 N < 32）

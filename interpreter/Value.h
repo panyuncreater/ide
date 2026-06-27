@@ -23,6 +23,12 @@
 //   - 堆数据类型继承 RefCounted（atomic refCount + ValueType type）
 //   - Value 的拷贝/移动/析构手动管理 addRef/release
 //   - COW detach 通过 isUnique() 判断
+//
+// 已知限制：环形容器泄漏（见 RefCounted.h 的 "#9 文档化" 章节）
+//   - 自引用容器（如 `a=[]; a.append(a)` 或 `d={}; d.self=d`）
+//     会形成引用计数永不归零的循环，导致内存泄漏直至进程退出。
+//   - 闭包场景的循环已通过 ClosureData.env = weak_ptr<Environment>
+//     静态打破；用户层容器循环依赖 OS 退出回收，视为可接受。
 // ============================================================
 
 #include "interpreter/ValueTypes.h"
@@ -175,13 +181,16 @@ public:
 
     Value& operator=(const Value& other) {
         if (this != &other) {
+            // 先固化 other 的位并 addRef，再 release 旧值——避免"自子对象赋值"
+            // （如 a = a.arrayVal()[i]）时 release 旧容器导致 other 悬垂的 UAF。
+            NaNBox saved = other.box_;
+            if (saved.isPointer()) {
+                saved.asPtr<RefCounted>()->addRef();
+            }
             if (box_.isPointer()) {
                 box_.asPtr<RefCounted>()->release();
             }
-            box_ = other.box_;
-            if (box_.isPointer()) {
-                box_.asPtr<RefCounted>()->addRef();
-            }
+            box_ = saved;
         }
         return *this;
     }
@@ -192,11 +201,14 @@ public:
 
     Value& operator=(Value&& other) noexcept {
         if (this != &other) {
+            // 先把 other 抽空，再 release 旧值——避免 other 别名到 *this 拥有的
+            // 容器子元素时，release 触发容器析构使 other 悬垂。
+            NaNBox saved = other.box_;
+            other.box_ = NaNBox::null();
             if (box_.isPointer()) {
                 box_.asPtr<RefCounted>()->release();
             }
-            box_ = other.box_;
-            other.box_ = NaNBox::null();
+            box_ = saved;
         }
         return *this;
     }
@@ -208,6 +220,9 @@ public:
     }
 
     /// 显式深拷贝（需要完全独立副本时使用）
+    /// 注意：环形容器结构（如 a.append(a)）会被检测到并打断（back-edge
+    /// 指向浅拷贝引用），避免无限递归栈溢出。线性深嵌套超过
+    /// MAX_CLONE_DEPTH 也会终止并返回浅拷贝。
     Value clone() const {
         if (!box_.isPointer()) {
             // 标量：直接拷贝 NaNBox
@@ -215,11 +230,37 @@ public:
             result.box_ = box_;
             return result;
         }
-        // 堆类型：递归深拷贝
+        thread_local std::unordered_map<const void*, Value> tlsCloned;
+        tlsCloned.clear();
+        return cloneImpl(0, tlsCloned);
+    }
+
+    // clone 递归深度上限（对齐 equals/toString 的 MAX_*_DEPTH）
+    static constexpr int MAX_CLONE_DEPTH = RuntimeLimits::MAX_CLONE_DEPTH;
+
+private:
+    /// 递归深拷贝实现。
+    /// cloned 映射：旧 RefCounted* → 已克隆的新 Value，用于打断环形 back-edge
+    /// 和避免 DAG 重复克隆。遇到已克隆节点直接返回新引用（addRef）。
+    Value cloneImpl(int depth, std::unordered_map<const void*, Value>& cloned) const {
+        if (!box_.isPointer()) {
+            Value result;
+            result.box_ = box_;
+            return result;
+        }
         auto* rc = box_.asPtr<RefCounted>();
+        // 深度保护：超限时返回浅拷贝（保留原引用），避免栈溢出
+        if (depth >= MAX_CLONE_DEPTH) {
+            return *this;  // 拷贝构造 + addRef
+        }
+        // 环检测：遇到已克隆节点直接复用（addRef 后返回）
+        auto it = cloned.find(rc);
+        if (it != cloned.end()) {
+            return it->second;  // 拷贝构造 + addRef
+        }
+
         switch (rc->type) {
         case ValueType::VAL_INT: {
-            // 装箱的 int64
             auto* p = static_cast<BoxedIntData*>(rc);
             return fromHeapPtr(new BoxedIntData(p->value));
         }
@@ -229,44 +270,56 @@ public:
         }
         case ValueType::VAL_ARRAY: {
             auto* p = static_cast<ArrayData*>(rc);
-            auto* cloned = new ArrayData();
-            cloned->elements.reserve(p->elements.size());
+            auto* newPtr = new ArrayData();
+            Value result = fromHeapPtr(newPtr);
+            // 先登记到 cloned，再递归克隆元素——这样环 back-edge
+            // 在递归遇到此节点时能从 cloned 取到新引用。
+            cloned.emplace(rc, result);
+            newPtr->elements.reserve(p->elements.size());
             for (const auto& elem : p->elements) {
-                cloned->elements.push_back(elem.clone());
+                newPtr->elements.push_back(elem.cloneImpl(depth + 1, cloned));
             }
-            return fromHeapPtr(cloned);
+            return result;
         }
         case ValueType::VAL_DICT: {
             auto* p = static_cast<DictData*>(rc);
-            auto* cloned = new DictData();
-            cloned->entries.reserve(p->entries.size());
+            auto* newPtr = new DictData();
+            Value result = fromHeapPtr(newPtr);
+            cloned.emplace(rc, result);
+            newPtr->entries.reserve(p->entries.size());
             for (const auto& kv : p->entries) {
-                cloned->entries.emplace(kv.first, kv.second.clone());
+                newPtr->entries.emplace(kv.first, kv.second.cloneImpl(depth + 1, cloned));
             }
-            return fromHeapPtr(cloned);
+            return result;
         }
         case ValueType::VAL_INSTANCE: {
             auto* p = static_cast<InstanceData*>(rc);
-            auto* cloned = new InstanceData(p->className);
-            cloned->fields.reserve(p->fields.size());
+            auto* newPtr = new InstanceData(p->className);
+            Value result = fromHeapPtr(newPtr);
+            cloned.emplace(rc, result);
+            newPtr->fields.reserve(p->fields.size());
             for (const auto& kv : p->fields) {
-                cloned->fields.emplace(kv.first, kv.second.clone());
+                newPtr->fields.emplace(kv.first, kv.second.cloneImpl(depth + 1, cloned));
             }
-            return fromHeapPtr(cloned);
+            return result;
         }
         case ValueType::VAL_CLOSURE: {
             auto* p = static_cast<ClosureData*>(rc);
-            auto* cloned = new ClosureData(*p);  // 浅拷贝 env/params/body/vmClosure
-            cloned->capturedVars.clear();
+            auto* newPtr = new ClosureData(*p);  // 浅拷贝 env/params/body/vmClosure
+            Value result = fromHeapPtr(newPtr);
+            cloned.emplace(rc, result);
+            newPtr->capturedVars.clear();
             for (const auto& kv : p->capturedVars) {
-                cloned->capturedVars.emplace(kv.first, kv.second.clone());
+                newPtr->capturedVars.emplace(kv.first, kv.second.cloneImpl(depth + 1, cloned));
             }
-            return fromHeapPtr(cloned);
+            return result;
         }
         default:
             return Value();  // null
         }
     }
+
+public:
 
     // ---- 静态工厂方法 ----
 

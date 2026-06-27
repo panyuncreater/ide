@@ -62,9 +62,15 @@ public:
         // PERF-02 fix: 递归改迭代循环，消除函数调用开销。
         // 每层先查 variables，再查 boundInstance 字段，再向上。
         // 迭代上限保护：防止异常的循环父指针导致无限循环。
+        // #21 fix: boundInstance_ 沿作用域链继承（构造/resetForReuse 时从父级拷贝），
+        // 同一链上多数层 boundInstance_ 指针相同。缓存上次已检查过的实例指针，
+        // 若当前层与之相同则跳过重复 fields 查找——同一实例的字段集在 get() 期间不变，
+        // 上次未命中则本次也不会命中。仅当链上出现不同 boundInstance_（bindInstance
+        // 显式覆盖）时才重新检查。语义等价：scope 0 vars > 实例字段 > 父级 vars > ...。
         const Environment* cur = this;
         int depth = 0;
         constexpr int MAX_SCOPE_DEPTH = 1024;
+        const Value* lastCheckedInstance = nullptr;
         while (cur) {
             if (depth++ >= MAX_SCOPE_DEPTH) break;
             auto it = cur->variables.find(name);
@@ -72,7 +78,9 @@ public:
                 return &it->second;
             }
             // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
+                && cur->boundInstance_ != lastCheckedInstance) {
+                lastCheckedInstance = cur->boundInstance_;
                 const auto& flds = static_cast<const Value*>(cur->boundInstance_)->fields();
                 auto fit = flds.find(name);
                 if (fit != flds.end()) return &fit->second;
@@ -102,9 +110,11 @@ public:
     /// 设置变量值（沿作用域链查找并更新）
     bool set(const std::string& name, const Value& val) {
         // PERF-02 fix: 递归改迭代，每层查 variables 再查 boundInstance 字段
+        // #21 fix: 同 get()，缓存 lastCheckedInstance 跳过重复 boundInstance_ 字段查找
         Environment* cur = this;
         int depth = 0;
         constexpr int MAX_SCOPE_DEPTH = 1024;
+        const Value* lastCheckedInstance = nullptr;
         while (cur) {
             if (depth++ >= MAX_SCOPE_DEPTH) break;
             auto it = cur->variables.find(name);
@@ -114,7 +124,9 @@ public:
             }
             // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
             // P1-5 fix: 先用 const 访问器检查字段是否存在，避免不必要 COW 深拷贝
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
+                && cur->boundInstance_ != lastCheckedInstance) {
+                lastCheckedInstance = cur->boundInstance_;
                 const auto& constFlds = static_cast<const Value*>(cur->boundInstance_)->fields();
                 auto fit = constFlds.find(name);
                 if (fit != constFlds.end()) {
@@ -130,9 +142,11 @@ public:
     /// P1 fix: move 重载 — 避免 writeBack 中 std::move 静默退化为深拷贝
     bool set(const std::string& name, Value&& val) {
         // PERF-02 fix: 递归改迭代
+        // #21 fix: 同 set(const&)，缓存 lastCheckedInstance 跳过重复 boundInstance_ 字段查找
         Environment* cur = this;
         int depth = 0;
         constexpr int MAX_SCOPE_DEPTH = 1024;
+        const Value* lastCheckedInstance = nullptr;
         while (cur) {
             if (depth++ >= MAX_SCOPE_DEPTH) break;
             auto it = cur->variables.find(name);
@@ -142,7 +156,9 @@ public:
             }
             // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
             // P1-5 fix: 先用 const 访问器检查字段是否存在，避免不必要 COW 深拷贝
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
+                && cur->boundInstance_ != lastCheckedInstance) {
+                lastCheckedInstance = cur->boundInstance_;
                 const auto& constFlds = static_cast<const Value*>(cur->boundInstance_)->fields();
                 auto fit = constFlds.find(name);
                 if (fit != constFlds.end()) {
@@ -159,14 +175,18 @@ public:
     /// P2-10 fix: 与 get() 保持一致，也检查绑定实例的字段
     bool hasVariable(const std::string& name) const {
         // PERF-02 fix: 递归改迭代
+        // #21 fix: 同 get()，缓存 lastCheckedInstance 跳过重复 boundInstance_ 字段查找
         const Environment* cur = this;
         int depth = 0;
         constexpr int MAX_SCOPE_DEPTH = 1024;
+        const Value* lastCheckedInstance = nullptr;
         while (cur) {
             if (depth++ >= MAX_SCOPE_DEPTH) break;
             if (cur->variables.find(name) != cur->variables.end()) return true;
             // 与 get() 一致：回退到绑定实例的字段检查
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
+                && cur->boundInstance_ != lastCheckedInstance) {
+                lastCheckedInstance = cur->boundInstance_;
                 const auto& flds = static_cast<const Value*>(cur->boundInstance_)->fields();
                 if (flds.find(name) != flds.end()) return true;
             }

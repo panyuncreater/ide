@@ -2,8 +2,6 @@
 #include "ast/ASTNode.h"
 #include "interpreter/RuntimeExceptions.h"  // S6 fix: DebugStopException 定义
 #include "Logger.h"
-#include <QCoreApplication>  // P1 fix: 用 QCoreApplication 替代 QApplication，避免 minilang_core 依赖 Qt6::Widgets
-#include <QThread>
 #include <stdexcept>
 
 // ============================================================
@@ -39,7 +37,6 @@ void DebugController::checkBreak(ASTNode* node) {
         !hasBreakpoints_.load()) {
         // D-P2-11 fix: 快速路径也更新行号追踪
         updateLineTracking(node->line, 0, 0, StepMode::MODE_RUN);
-        pumpEventsIfNeeded();
         return;
     }
 
@@ -67,7 +64,6 @@ void DebugController::checkBreak(ASTNode* node) {
     // 慢速路径中的二次确认（hasBreakpoints_ 原子读可能与锁内状态有微小窗口）
     if (snapMode == StepMode::MODE_RUN && localBreakpoints.empty()) {
         updateLineTracking(node->line, 0, 0, StepMode::MODE_RUN);
-        pumpEventsIfNeeded();
         return;
     }
 
@@ -105,8 +101,6 @@ void DebugController::checkBreak(ASTNode* node) {
 
     if (shouldPause && node->line > 0) {
         doPause(node->line, snapCurrentDepth);
-    } else {
-        pumpEventsIfNeeded();
     }
 }
 
@@ -211,17 +205,6 @@ void DebugController::doPause(int line, int snapCurrentDepth) {
 
     // D-P2-1 fix: pauseExecution 返回后立即检查 stopped_
     if (stopped_) throw DebugStopException();
-}
-
-void DebugController::pumpEventsIfNeeded() {
-    // B11 fix: 定期处理 UI 事件防止界面冻结
-    if (++eventPumpCounter_ >= 100) {
-        eventPumpCounter_ = 0;
-        // D-P2-3 fix: QCoreApplication::instance() 可能为 null
-        auto app = QCoreApplication::instance();
-        if (app && QThread::currentThread() == app->thread())
-            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 10);
-    }
 }
 
 void DebugController::setBreakpoint(int line) {
@@ -505,7 +488,6 @@ bool DebugController::isPaused() const {
 
 void DebugController::reset() {
     // D-P2-10 fix: 所有状态重置统一在锁内进行，避免锁内外重置的一致性间隙
-    // D-P2-8 fix: eventPumpCounter_ 也需重置，避免跨调试会话残留
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_.store(static_cast<int>(StepMode::MODE_RUN));
@@ -520,7 +502,6 @@ void DebugController::reset() {
         lastSeenLine_.store(-1);
         crossedLine_.store(false);
         crossedDeeper_.store(false);  // DBG-B fix
-        eventPumpCounter_ = 0;        // D-P2-8 fix: 重置事件泵计数器
         // P0-9 fix: 重置所有断点命中计数在锁内进行（保留断点和条件）
         for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {
             it->hitCount = 0;

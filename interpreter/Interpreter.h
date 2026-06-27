@@ -190,6 +190,11 @@ private:
     // 保护会导致数据竞争。setter 加锁写入，invocation 加锁拷贝后解锁调用（避免持锁回调）。
     mutable std::mutex callbackMutex_;
     std::string currentFilePath_;                             // F12: 当前文件路径
+    // #13 fix: 字符串索引 ASCII 快速路径缓存（镜像 VM 的 P7 fix）。
+    // 循环 s[i] 访问时，首次判定字符串是否纯 ASCII 并缓存（按 StringData 指针），
+    // 后续访问 O(1) 按字节索引，避免每次 O(i) 码位扫描导致的 O(n²) 退化。
+    const void* lastAsciiStrPtr_ = nullptr;
+    bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache_; // F12: 模块缓存
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_; // F12: 模块导出名称缓存
     std::vector<std::string> moduleLoadingStack_;             // F12: 模块加载栈（顺序管理 + 深度保护）

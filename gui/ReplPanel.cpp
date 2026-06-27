@@ -1,6 +1,7 @@
 #include "gui/ReplPanel.h"
 #include "gui/GuiTextUtils.h"  // P1-12 fix: 共享文本追加逻辑
 #include "app/IdeController.h"  // B6 fix: 通过业务层调用 retainReplAst/executeRepl
+#include "common/Logger.h"  // 析构超时日志
 #include "interpreter/Interpreter.h"  // Value/RuntimeError 类型
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -55,7 +56,15 @@ ReplPanel::~ReplPanel() {
     // QT-R-06 fix: 析构时等待异步任务完成，避免悬垂访问
     if (pollTimer_) pollTimer_->stop();
     if (replFuture_.valid()) {
-        replFuture_.wait();
+        // 带超时等待：Interpreter 有 MAX_LOOP_ITERATIONS 保护，正常情况数秒内完成；
+        // 超时（如极端死循环未触发迭代上限）则放弃 join 让进程退出时回收，避免 UI 永久挂起。
+        auto status = replFuture_.wait_for(std::chrono::seconds(5));
+        if (status != std::future_status::ready) {
+            // 超时：分离 future，线程在进程退出时被强杀（仅关闭窗口场景可接受）
+            Logger::Warning("ReplPanel: REPL 异步任务未在 5 秒内完成，析构放弃等待");
+            auto discarded = std::move(replFuture_);  // 移走 future，避免析构时 abort
+            (void)discarded;
+        }
     }
 }
 

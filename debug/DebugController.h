@@ -114,7 +114,6 @@ private:
     // A2: 线程安全的暂停/恢复机制（替代 QEventLoop）
     mutable std::mutex pauseMutex_;  // P0-9 fix: mutable 以便 const 方法加锁
     std::condition_variable pauseCV_;
-    unsigned int eventPumpCounter_ = 0;  // B11: 用于周期性刷新 UI 事件的计数器（仅 worker 线程访问）；D-P2-8 fix: unsigned 防溢出
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;
     std::function<std::vector<CallStackEntry>()> callStackCallback_;
@@ -140,7 +139,4 @@ private:
                             StepMode snapMode);
     /// 执行暂停（设置 paused_、emit pausedAt、阻塞等待）
     void doPause(int line, int snapCurrentDepth);
-
-    /// 定期处理 UI 事件防止界面冻结（B11 fix）
-    void pumpEventsIfNeeded();
 };

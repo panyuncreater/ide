@@ -117,19 +117,22 @@ VMResult VM::executeReturn(size_t& ip) {
 
                 if (recvLocalSlot == 0) {
                     // 接收者是调用者的 this（slot 0）：同步所有字段和字段槽
+                    // #19 fix: 原 2 次 O(fieldCount) 遍历（先写 this.fields()，再查 fieldOrder
+                    // 写槽）合并为 1 次——遍历 modifiedThis.fields() 时同步写两处。slot 索引
+                    // 用 #11 的 fieldSlotIndex O(1) 查找。语义等价：对 modifiedThis 中每个
+                    // 字段，写入 caller this.fields()；若该字段在 caller 的 fieldOrder 中，
+                    // 额外写入对应栈槽。
                     if (stack_[callerBp].isInstance()) {
+                        Value& callerThis = stack_[callerBp];
+                        const bool hasCallerFieldOrder = callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty();
                         for (const auto& field : modifiedThisC.fields()) {
-                            stack_[callerBp].fields()[field.first] = field.second;
-                        }
-                        // 同步字段到调用者的字段槽（bp+1..N）
-                        if (callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty()) {
-                            for (size_t fi = 0; fi < callerFrame.chunk->fieldOrder.size(); ++fi) {
-                                const std::string& fieldName = callerFrame.chunk->fieldOrder[fi];
-                                auto fieldIt = modifiedThisC.fields().find(fieldName);
-                                if (fieldIt != modifiedThisC.fields().end()) {
+                            callerThis.fields()[field.first] = field.second;
+                            if (hasCallerFieldOrder) {
+                                size_t fi = callerFrame.chunk->fieldSlotIndex(field.first);
+                                if (fi != SIZE_MAX) {
                                     size_t slotPos = callerBp + 1 + fi;
                                     if (slotPos < stack_.size()) {
-                                        stack_[slotPos] = fieldIt->second;
+                                        stack_[slotPos] = field.second;
                                     }
                                 }
                             }
@@ -764,6 +767,9 @@ VMResult VM::executeClosure(size_t& ip, OpCode op) {
                 auto uv = std::make_shared<VMUpvalue>();
                 uv->stackSlot = frame.basePointer + uvIndex;
                 uv->isClosed = false;
+                // #18 fix: 记录所属帧索引（当前帧 = frames_.size()-1），
+                // 供 OP_SET_UPVALUE 跳过 O(frames_) 线性扫描
+                uv->owningFrameIdx = frames_.size() - 1;
                 vmClosureData->upvalues[i] = uv;
                 // B5 fix: 插入有序索引（multimap，按 stackSlot 排序）
                 openUpvalues_.emplace(uv->stackSlot, uv);

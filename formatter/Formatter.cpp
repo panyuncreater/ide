@@ -370,23 +370,22 @@ static bool needsParens(ASTNode* child, BinOpType parentOpType, bool isRight) {
         if (Formatter::isRightAssoc(parentOpType)) {
             return !isRight;  // 右结合：左操作数需要括号
         } else {
-            // 左结合：SUB/DIV/MOD 不满足结合律，右操作数同优先级子表达式必须加括号
-            // 例: a-(b+c) ≠ a-b+c, a/(b*c) ≠ a/b*c, a%(b-c) ≠ a%b-c
-            // F-P2 fix: MUL 的右操作数为 DIV/MOD 也需括号，因为整数乘法不对整除/取模分配律
-            // 例: a*(b/c) ≠ a*b/c, a*(b%c) ≠ a*b%c
+            // 左结合：右操作数同优先级子表达式必须加括号以保持原始分组。
+            // #15 fix: ADD/MUL 也需加括号——浮点运算不满足结合律：
+            //   (a+b)+c ≠ a+(b+c)（舍入误差），(a*b)*c ≠ a*(b*c)。
+            // 原实现误认为 ADD/MUL 满足结合律而漏加括号，导致 a+(b+c) 被格式化为 a+b+c，
+            // 重新解析为 (a+b)+c，浮点语义被改变。整数虽结合律成立，但为统一分组语义一并加括号。
+            // SUB/DIV/MOD 本就不满足结合律；MUL 右操作数为 DIV/MOD 同理需括号（分配律不成立）。
             if (isRight) {
-                if (parentOpType == BinOpType::BIN_SUB ||
+                if (parentOpType == BinOpType::BIN_ADD ||
+                    parentOpType == BinOpType::BIN_SUB ||
+                    parentOpType == BinOpType::BIN_MUL ||
                     parentOpType == BinOpType::BIN_DIV ||
                     parentOpType == BinOpType::BIN_MOD) {
                     return true;
                 }
-                if (parentOpType == BinOpType::BIN_MUL &&
-                    (childBin->opType == BinOpType::BIN_DIV ||
-                     childBin->opType == BinOpType::BIN_MOD)) {
-                    return true;
-                }
             }
-            return false;   // ADD/MUL 满足结合律，同优先级无需括号
+            return false;   // 左操作数同优先级无需括号（左结合天然保持分组）
         }
     }
     return false;

@@ -137,6 +137,9 @@ enum class IROp : uint8_t {
     WRITEBACK_MEMBER_LOCAL,  // 成员写回到局部变量   operands: [slot, field_idx]
     WRITEBACK_INDEX_VAR,     // 索引写回到全局变量   operands: [var_idx]
     WRITEBACK_INDEX_LOCAL,   // 索引写回到局部变量   operands: [slot]
+    // #7 fix: upvalue 写回（嵌套左值变异 a[i]=.. / a.f=.. 其中 a 是 upvalue）
+    WRITEBACK_MEMBER_UPVALUE, // 成员写回到 upvalue  operands: [uv_idx, field_idx]
+    WRITEBACK_INDEX_UPVALUE,  // 索引写回到 upvalue  operands: [uv_idx]
 
     // ---- 其他 ----
     PRINT,           // print src                   operands: [src_vreg]
@@ -288,6 +291,10 @@ private:
     std::unordered_map<std::string, VarInfo> varMap_;
     bool inFunction_ = false;
     uint32_t nextLocalSlot_ = 0;
+    // C-9 fix: 编译类方法时为 true。visitFunDecl 检查此标记，
+    // 预留 slot 0 给隐式 this 参数，并将 varMap_["this"] 绑定到 slot 0。
+    // 调用方（executeMethodCallImpl/executeClassNewImpl）将 this 作为第一个参数传入。
+    bool compilingMethod_ = false;
 
     // 块作用域跟踪（限制5）
     struct BlockScope {
@@ -300,7 +307,6 @@ private:
     GlobalSlotAllocator globalSlotAllocator_;
 
     int allocateGlobalSlot(const std::string& name) { return globalSlotAllocator_.allocate(name); }
-    void releaseGlobalSlot(const std::string& name) { globalSlotAllocator_.release(name); }
     int lookupGlobalSlot(const std::string& name) const { return globalSlotAllocator_.lookup(name); }
 
     // 闭包 upvalue 追踪（限制1）

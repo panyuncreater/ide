@@ -1,0 +1,114 @@
+{
+	"abstract" : true,
+	"artifacts" : 
+	[
+		{
+			"path" : "D:/qt/6.10.3/msvc2022_64/bin/moc.exe"
+		}
+	],
+	"backtrace" : 12,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_executable",
+			"include",
+			"find_package",
+			"_qt_internal_find_tool_dependencies"
+		],
+		"files" : 
+		[
+			"D:/qt/6.10.3/msvc2022_64/lib/cmake/Qt6CoreTools/Qt6CoreToolsTargets.cmake",
+			"D:/qt/6.10.3/msvc2022_64/lib/cmake/Qt6CoreTools/Qt6CoreToolsConfig.cmake",
+			"D:/qt/6.10.3/msvc2022_64/lib/cmake/Qt6/QtPublicDependencyHelpers.cmake",
+			"D:/qt/6.10.3/msvc2022_64/lib/cmake/Qt6Core/Qt6CoreDependencies.cmake",
+			"D:/qt/6.10.3/msvc2022_64/lib/cmake/Qt6Core/Qt6CoreConfig.cmake",
+			"D:/qt/6.10.3/msvc2022_64/lib/cmake/Qt6/Qt6Config.cmake",
+			"CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 6
+			},
+			{
+				"command" : 2,
+				"file" : 6,
+				"line" : 18,
+				"parent" : 0
+			},
+			{
+				"file" : 5,
+				"parent" : 1
+			},
+			{
+				"command" : 2,
+				"file" : 5,
+				"line" : 244,
+				"parent" : 2
+			},
+			{
+				"file" : 4,
+				"parent" : 3
+			},
+			{
+				"command" : 1,
+				"file" : 4,
+				"line" : 42,
+				"parent" : 4
+			},
+			{
+				"file" : 3,
+				"parent" : 5
+			},
+			{
+				"command" : 3,
+				"file" : 3,
+				"line" : 43,
+				"parent" : 6
+			},
+			{
+				"command" : 2,
+				"file" : 2,
+				"line" : 100,
+				"parent" : 7
+			},
+			{
+				"file" : 1,
+				"parent" : 8
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 46,
+				"parent" : 9
+			},
+			{
+				"file" : 0,
+				"parent" : 10
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 85,
+				"parent" : 11
+			}
+		]
+	},
+	"codemodelVersion" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	},
+	"id" : "Qt6::moc::@6890427a1f51a3e7e1df",
+	"imported" : true,
+	"name" : "Qt6::moc",
+	"nameOnDisk" : "moc.exe",
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	},
+	"sources" : [],
+	"type" : "EXECUTABLE"
+}

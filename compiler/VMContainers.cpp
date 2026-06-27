@@ -361,14 +361,12 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
             // 当 slot==0（写 this.field）时，也需同步更新对应的字段槽
             // 否则 OP_RETURN 会用字段槽的旧值覆盖 this.fields()，导致 this.field 赋值丢失
             if (slot == 0 && currentFrame().chunk && !currentFrame().chunk->fieldOrder.empty()) {
-                const auto& fieldOrder = currentFrame().chunk->fieldOrder;
-                for (size_t fi = 0; fi < fieldOrder.size(); ++fi) {
-                    if (fieldOrder[fi] == fieldName) {
-                        size_t slotPos = bp + 1 + fi;
-                        if (slotPos < stack_.size()) {
-                            stack_[slotPos] = val;
-                        }
-                        break;
+                // #11 fix: 用 BytecodeChunk::fieldSlotIndex O(1) 查找替代线性扫描
+                size_t fi = currentFrame().chunk->fieldSlotIndex(fieldName);
+                if (fi != SIZE_MAX) {
+                    size_t slotPos = bp + 1 + fi;
+                    if (slotPos < stack_.size()) {
+                        stack_[slotPos] = val;
                     }
                 }
             }
@@ -459,13 +457,12 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
             if (slot == 0) {
                 VMCallFrame& curFrame = currentFrame();
                 if (curFrame.chunk) {
-                    for (size_t i = 0; i < curFrame.chunk->fieldOrder.size(); ++i) {
-                        if (curFrame.chunk->fieldOrder[i] == fieldName) {
-                            size_t fieldSlot = bp + 1 + i;
-                            if (fieldSlot < stack_.size()) {
-                                stack_[fieldSlot] = std::move(newVal);  // 最后一次 move
-                            }
-                            break;
+                    // #11 fix: 用 BytecodeChunk::fieldSlotIndex O(1) 查找替代线性扫描
+                    size_t i = curFrame.chunk->fieldSlotIndex(fieldName);
+                    if (i != SIZE_MAX) {
+                        size_t fieldSlot = bp + 1 + i;
+                        if (fieldSlot < stack_.size()) {
+                            stack_[fieldSlot] = std::move(newVal);  // 最后一次 move
                         }
                     }
                 }
@@ -548,6 +545,59 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         } else {
             lastMutatedReceiver_ = Value::nullValue();
             return runtimeError("该类型不支持索引赋值");
+        }
+        lastMutatedReceiver_ = Value::nullValue();
+        notifyStep(ip, op);
+        ip += 2;
+        break;
+    }
+
+    case OpCode::OP_WRITEBACK_MEMBER_UPVALUE: {
+        // #7 fix: 操作数 uvIdx(1B) + fieldIdx(2B)（fieldIdx 仅用于反汇编，运行时不用）
+        // 语义：将 lastMutatedReceiver_（MEMBER_SET 产生的变异后整个容器）整体替换 upvalue 槽位。
+        // 注意：与 WRITEBACK_MEMBER_LOCAL/VAR 的"写入 obj.field"语义不同——
+        // 简单 1 级 `obj.f = v`（obj 是 upvalue）经 IR 路径 MEMBER_SET 已完成字段写入，
+        // 此处只需把 COW 产生的新容器替换回 upvalue 即可。
+        uint8_t uvIdx = chunk.code[ip + 1];
+        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("OP_WRITEBACK_MEMBER_UPVALUE: upvalue 索引越界");
+        }
+        auto& uv = frame.upvalues[uvIdx];
+        if (uv->isClosed) {
+            uv->value = std::move(lastMutatedReceiver_);
+        } else {
+            if (uv->stackSlot >= stack_.size()) {
+                lastMutatedReceiver_ = Value::nullValue();
+                return runtimeError("OP_WRITEBACK_MEMBER_UPVALUE: upvalue 栈槽越界");
+            }
+            stack_[uv->stackSlot] = std::move(lastMutatedReceiver_);
+        }
+        lastMutatedReceiver_ = Value::nullValue();
+        notifyStep(ip, op);
+        ip += 4;
+        break;
+    }
+
+    case OpCode::OP_WRITEBACK_INDEX_UPVALUE: {
+        // #7 fix: 操作数 uvIdx(1B)
+        // 语义：将 lastMutatedReceiver_（INDEX_SET 产生的变异后整个容器）整体替换 upvalue 槽位。
+        // 不 pop 索引——简单 1 级 `arr[i] = v`（arr 是 upvalue）经 IR 路径 INDEX_SET 已完成元素写入，
+        // 此处只需把 COW 产生的新容器替换回 upvalue。
+        uint8_t uvIdx = chunk.code[ip + 1];
+        if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("OP_WRITEBACK_INDEX_UPVALUE: upvalue 索引越界");
+        }
+        auto& uv = frame.upvalues[uvIdx];
+        if (uv->isClosed) {
+            uv->value = std::move(lastMutatedReceiver_);
+        } else {
+            if (uv->stackSlot >= stack_.size()) {
+                lastMutatedReceiver_ = Value::nullValue();
+                return runtimeError("OP_WRITEBACK_INDEX_UPVALUE: upvalue 栈槽越界");
+            }
+            stack_[uv->stackSlot] = std::move(lastMutatedReceiver_);
         }
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);

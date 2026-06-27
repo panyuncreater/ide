@@ -180,9 +180,6 @@ private:
     /// A2: 分配全局槽位（委托给 globalSlotAllocator_）
     int allocateGlobalSlot(const std::string& name) { return globalSlotAllocator_.allocate(name); }
 
-    /// A2: 释放全局槽位（委托给 globalSlotAllocator_）
-    void releaseGlobalSlot(const std::string& name) { globalSlotAllocator_.release(name); }
-
     /// A2: 查找全局槽位（委托给 globalSlotAllocator_）
     int lookupGlobalSlot(const std::string& name) const { return globalSlotAllocator_.lookup(name); }
 

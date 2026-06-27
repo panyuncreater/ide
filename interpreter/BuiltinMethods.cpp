@@ -19,6 +19,51 @@
 #include <charconv>
 
 // ============================================================
+// #20 fix: 内建方法名枚举分发（从 VM::classifyBuiltinMethod 提取为共享自由函数）
+// ============================================================
+BuiltinMethod classifyBuiltinMethod(const std::string& name) {
+    // 按长度快速筛选，减少不必要的字符串比较
+    switch (name.size()) {
+    case 3:
+        if (name == "pop") return BuiltinMethod::ARR_POP;
+        if (name == "len") return BuiltinMethod::ARR_LEN; // 数组/字典/字符串共用
+        if (name == "has") return BuiltinMethod::DICT_HAS;
+        if (name == "get") return BuiltinMethod::DICT_GET;
+        break;
+    case 4:
+        if (name == "push") return BuiltinMethod::ARR_PUSH;
+        if (name == "keys") return BuiltinMethod::DICT_KEYS;
+        if (name == "trim") return BuiltinMethod::STR_TRIM;
+        if (name == "join") return BuiltinMethod::ARR_JOIN;
+        break;
+    case 5:
+        if (name == "upper") return BuiltinMethod::STR_UPPER;
+        if (name == "lower") return BuiltinMethod::STR_LOWER;
+        if (name == "split") return BuiltinMethod::STR_SPLIT;
+        break;
+    case 6:
+        if (name == "values") return BuiltinMethod::DICT_VALUES;
+        if (name == "remove") return BuiltinMethod::ARR_REMOVE; // 数组/字典共用
+        if (name == "substr") return BuiltinMethod::STR_SUBSTR;
+        break;
+    case 7:
+        if (name == "replace") return BuiltinMethod::STR_REPLACE;
+        if (name == "indexOf") return BuiltinMethod::STR_INDEX_OF;
+        break;
+    case 8:
+        if (name == "contains") return BuiltinMethod::ARR_CONTAINS; // 数组/字典共用
+        if (name == "endsWith") return BuiltinMethod::STR_ENDS_WITH;
+        break;
+    case 9:
+        break;
+    case 10:
+        if (name == "startsWith") return BuiltinMethod::STR_STARTS_WITH;
+        break;
+    }
+    return BuiltinMethod::UNKNOWN;
+}
+
+// ============================================================
 // P1-5 fix: 参数数量检查辅助函数
 // ============================================================
 // 消除 BuiltinMethods.cpp 中 20 处重复的 argCount 校验样板。
@@ -146,8 +191,14 @@ Result<Value> executeSharedStrSubstr(const Value& str,
         if (len < 0) {
             return Result<Value>::err("substr 长度不能为负数", line, column);
         }
-        // 截取 len 个码位
-        size_t byteEnd = Utf8::codepointToByteIndex(s, start + len);
+        // #27 fix: 原 codepointToByteIndex(s, start + len) 从头重新扫描到 start+len，
+        // 重复扫描了前 start 个码位。改为从 byteStart 起推进 len 个码位，单次扫描。
+        size_t byteEnd = byteStart;
+        int64_t remaining = len;
+        while (byteEnd < s.size() && remaining > 0) {
+            byteEnd += Utf8::byteLength(static_cast<unsigned char>(s[byteEnd]));
+            --remaining;
+        }
         if (byteEnd > s.size()) byteEnd = s.size();
         return Result<Value>::ok(Value(s.substr(byteStart, byteEnd - byteStart)));
     } else {

@@ -85,6 +85,8 @@ static const char* localIrOpName(IROp op) {
     case IROp::WRITEBACK_MEMBER_LOCAL:  return "WRITEBACK_MEMBER_LOCAL";
     case IROp::WRITEBACK_INDEX_VAR:     return "WRITEBACK_INDEX_VAR";
     case IROp::WRITEBACK_INDEX_LOCAL:   return "WRITEBACK_INDEX_LOCAL";
+    case IROp::WRITEBACK_MEMBER_UPVALUE: return "WRITEBACK_MEMBER_UPVALUE";
+    case IROp::WRITEBACK_INDEX_UPVALUE:  return "WRITEBACK_INDEX_UPVALUE";
     case IROp::PRINT:           return "PRINT";
     case IROp::POP:             return "POP";
     case IROp::DUP:             return "DUP";

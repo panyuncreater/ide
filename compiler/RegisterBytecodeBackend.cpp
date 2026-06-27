@@ -10,7 +10,6 @@
 
 #include "compiler/RegisterBytecodeBackend.h"
 #include "common/Logger.h"
-#include <cassert>
 
 RegisterBytecodeBackend::RegisterBytecodeBackend() = default;
 
@@ -21,6 +20,7 @@ void RegisterBytecodeBackend::resetState() {
     vregToReg_.clear();
     labelToOffset_.clear();
     pendingJumps_.clear();
+    hasError_ = false;
 }
 
 void RegisterBytecodeBackend::emitShort(uint16_t v, int line) {
@@ -37,9 +37,13 @@ uint8_t RegisterBytecodeBackend::vregToReg(uint32_t vreg) {
     // vreg N → 寄存器 localCount + N
     int reg = chunk_->localCount + static_cast<int>(vreg);
     if (reg >= 32) {
+        // 溢出：设置错误标志，返回 R0 作为占位（lower 末尾会因 hasError_ 失败，
+        // 已 emit 的指令不会被执行）。不静默生成损坏的字节码。
         Logger::Error("RegisterBytecodeBackend: vreg " + std::to_string(vreg) +
-                      " 映射到寄存器 " + std::to_string(reg) + " 超出 32 上限", "RegIR");
-        return 0;  // 回退到 R0（错误已记录，lower 后会失败）
+                      " 映射到寄存器 " + std::to_string(reg) +
+                      " 超出 32 上限（需减少局部变量/简化表达式或实现寄存器溢出）", "RegIR");
+        hasError_ = true;
+        return 0;  // 占位值，lower 会失败
     }
     uint8_t regByte = static_cast<uint8_t>(reg);
     vregToReg_[vreg] = regByte;
@@ -74,8 +78,8 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
     for (const auto& block : ir.blocks) {
         for (const auto& instr : block.instructions) {
             irToBytecodeOffset_.push_back({instrIndex, chunk_->code.size()});
-            if (!lowerInstruction(instr, ir)) {
-                return false;
+            if (!lowerInstruction(instr, ir) || hasError_) {
+                return false;  // lowering 失败或 vreg 溢出：不生成损坏的字节码
             }
             // 填充行号表
             while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
@@ -494,10 +498,43 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
 
     // ---- 类 ----
     case IROp::DEFINE_CLASS: {
-        if (instr.operands.empty()) return false;
+        // C-9 fix: 携带完整类元数据（父类、字段顺序、方法名→函数名映射）
+        // 操作数布局（见 IR.cpp visitClassDecl）：
+        //   [0] className (FUNC_NAME)
+        //   [1] parentName (IMM_UINT, UINT32_MAX=无父类)
+        //   [2] fieldCount (IMM_UINT)
+        //   [3 .. 3+F-1] field names (FIELD_NAME)
+        //   [3+F] methodCount (IMM_UINT)
+        //   [3+F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+        if (instr.operands.size() < 3) return false;
         uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+
+        uint32_t parentRaw = instr.operands[1].index;
+        uint16_t parentIdx = (parentRaw == UINT32_MAX)
+            ? 0xFFFF
+            : addStringConstant(globalName(parentRaw), ir);
+
+        uint32_t fieldCount = instr.operands[2].index;
+        if (instr.operands.size() < 3 + fieldCount + 1) return false;
+        uint32_t methodCount = instr.operands[3 + fieldCount].index;
+        if (instr.operands.size() < 3 + fieldCount + 1 + methodCount * 2) return false;
+
         chunk_->writeOp(RegOp::REG_DEFINE_CLASS, line);
         chunk_->writeShort(nameIdx, line);
+        chunk_->writeShort(parentIdx, line);
+        chunk_->writeByte(static_cast<uint8_t>(fieldCount), line);
+        for (uint32_t i = 0; i < fieldCount; ++i) {
+            uint16_t fIdx = addStringConstant(globalName(instr.operands[3 + i].index), ir);
+            chunk_->writeShort(fIdx, line);
+        }
+        chunk_->writeByte(static_cast<uint8_t>(methodCount), line);
+        for (uint32_t i = 0; i < methodCount; ++i) {
+            size_t base = 3 + fieldCount + 1 + i * 2;
+            uint16_t mIdx = addStringConstant(globalName(instr.operands[base].index), ir);
+            uint16_t fIdx = addStringConstant(globalName(instr.operands[base + 1].index), ir);
+            chunk_->writeShort(mIdx, line);
+            chunk_->writeShort(fIdx, line);
+        }
         break;
     }
     case IROp::CLASS_NEW: {
@@ -548,7 +585,13 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::WRITEBACK_MEMBER_VAR: {
         if (instr.operands.size() < 2) return false;
         chunk_->writeOp(RegOp::REG_WRITEBACK_MEMBER_VAR, line);
-        chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
+        // C-1 fix: 区分 GLOBAL_SLOT(IMM_UINT) 和 GLOBAL_NAME，与 LOAD_GLOBAL 一致用高 bit 标记
+        if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
+            chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
+        } else {
+            uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            chunk_->writeShort(nameIdx | 0x8000, line);
+        }
         chunk_->writeShort(addStringConstant(globalName(instr.operands[1].index), ir), line);
         break;
     }
@@ -562,13 +605,33 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::WRITEBACK_INDEX_VAR: {
         if (instr.operands.empty()) return false;
         chunk_->writeOp(RegOp::REG_WRITEBACK_INDEX_VAR, line);
-        chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
+        // C-1 fix: 区分 GLOBAL_SLOT(IMM_UINT) 和 GLOBAL_NAME，与 LOAD_GLOBAL 一致用高 bit 标记
+        if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
+            chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
+        } else {
+            uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            chunk_->writeShort(nameIdx | 0x8000, line);
+        }
         break;
     }
     case IROp::WRITEBACK_INDEX_LOCAL: {
         if (instr.operands.empty()) return false;
         chunk_->writeOp(RegOp::REG_WRITEBACK_INDEX_LOCAL, line);
         chunk_->writeReg(static_cast<uint8_t>(instr.operands[0].index & 0x1F), line);
+        break;
+    }
+    case IROp::WRITEBACK_MEMBER_UPVALUE: {
+        // #7 fix: 寄存器式 upvalue 写回（uvIdx 在运行时由 frame.upvalues 解释，不映射到寄存器）
+        if (instr.operands.size() < 2) return false;
+        chunk_->writeOp(RegOp::REG_WRITEBACK_MEMBER_UPVALUE, line);
+        chunk_->writeByte(static_cast<uint8_t>(instr.operands[0].index & 0xFF), line);
+        chunk_->writeShort(addStringConstant(globalName(instr.operands[1].index), ir), line);
+        break;
+    }
+    case IROp::WRITEBACK_INDEX_UPVALUE: {
+        if (instr.operands.empty()) return false;
+        chunk_->writeOp(RegOp::REG_WRITEBACK_INDEX_UPVALUE, line);
+        chunk_->writeByte(static_cast<uint8_t>(instr.operands[0].index & 0xFF), line);
         break;
     }
 

@@ -15,7 +15,7 @@
 // 前向声明（避免循环依赖）
 class Environment;
 class FunDecl;
-class BytecodeChunk;  // M3 fix: 闭包值持有函数 chunk 指针
+struct BytecodeChunk;  // M3 fix: 闭包值持有函数 chunk 指针（D-1: 与 Bytecode.h 定义一致）
 
 // ============================================================
 // Value 运行时值类型 — NaN-boxing + 侵入式引用计数（PERF-12）

@@ -292,21 +292,20 @@ const BytecodeChunk* VM::findMethodChunk(const std::string& className,
         }
     }
 
-    // PERF-15 fix: 复用成员变量 findMethodKeyBuf_ 避免每次调用重新分配堆内存。
-    // 原为局部 std::string methodKey，每次 findMethodChunk 调用都构造/析构。
+    // #12 fix: 冷路径走两级 unordered_map 索引（methodsByClass_），消除每层
+    // 继承链 "Class.method" 字符串拼接。语义等价：自底向上沿继承链查找首个命中。
     std::string cur = className;
-    findMethodKeyBuf_.clear();
-    findMethodKeyBuf_.reserve(cur.size() + 1 + methodName.size());
     for (int guard = 0; guard < MAX_INHERITANCE_DEPTH && !cur.empty(); ++guard) {
-        findMethodKeyBuf_.clear();
-        findMethodKeyBuf_.append(cur).append(1, '.').append(methodName);
-        auto it = functionChunks_.find(findMethodKeyBuf_);
-        if (it != functionChunks_.end()) {
-            // P4: 写入缓存
-            if (clsIt != classInfo_.end()) {
-                clsIt->second.methodCache[methodName] = &it->second;
+        auto clsIdxIt = methodsByClass_.find(cur);
+        if (clsIdxIt != methodsByClass_.end()) {
+            auto mIt = clsIdxIt->second.find(methodName);
+            if (mIt != clsIdxIt->second.end()) {
+                // P4: 写入缓存
+                if (clsIt != classInfo_.end()) {
+                    clsIt->second.methodCache[methodName] = mIt->second;
+                }
+                return mIt->second;
             }
-            return &it->second;
         }
         auto nextIt = classInfo_.find(cur);
         if (nextIt == classInfo_.end()) break;
@@ -397,48 +396,8 @@ VMResult VM::numericOp(int opType) {
     return VMResult::VM_OK;
 }
 
-// ---- C10: 内建方法名枚举分发 ----
-VM::BuiltinMethod VM::classifyBuiltinMethod(const std::string& name) {
-    // 按长度快速筛选，减少不必要的字符串比较
-    switch (name.size()) {
-    case 3:
-        if (name == "pop") return BuiltinMethod::ARR_POP;
-        if (name == "len") return BuiltinMethod::ARR_LEN; // 数组/字典/字符串共用
-        if (name == "has") return BuiltinMethod::DICT_HAS;
-        if (name == "get") return BuiltinMethod::DICT_GET;
-        break;
-    case 4:
-        if (name == "push") return BuiltinMethod::ARR_PUSH;
-        if (name == "keys") return BuiltinMethod::DICT_KEYS;
-        if (name == "trim") return BuiltinMethod::STR_TRIM;
-        if (name == "join") return BuiltinMethod::ARR_JOIN;
-        break;
-    case 5:
-        if (name == "upper") return BuiltinMethod::STR_UPPER;
-        if (name == "lower") return BuiltinMethod::STR_LOWER;
-        if (name == "split") return BuiltinMethod::STR_SPLIT;
-        break;
-    case 6:
-        if (name == "values") return BuiltinMethod::DICT_VALUES;
-        if (name == "remove") return BuiltinMethod::ARR_REMOVE; // 数组/字典共用
-        if (name == "substr") return BuiltinMethod::STR_SUBSTR;
-        break;
-    case 7:
-        if (name == "replace") return BuiltinMethod::STR_REPLACE;
-        if (name == "indexOf") return BuiltinMethod::STR_INDEX_OF;
-        break;
-    case 8:
-        if (name == "contains") return BuiltinMethod::ARR_CONTAINS; // 数组/字典共用
-        if (name == "endsWith") return BuiltinMethod::STR_ENDS_WITH;
-        break;
-    case 9:
-        break;
-    case 10:
-        if (name == "startsWith") return BuiltinMethod::STR_STARTS_WITH;
-        break;
-    }
-    return BuiltinMethod::UNKNOWN;
-}
+// ---- C10: 内建方法名枚举分发（#20 fix: 已提取为共享自由函数 classifyBuiltinMethod
+//          于 BuiltinMethods.h/.cpp，VM 与 RegisterVM 共用）----
 
 // ---- C11: 比较运算辅助函数 ----
 VMResult VM::pushCompareResult(bool result, size_t& ip, OpCode opcode) {
@@ -724,6 +683,18 @@ void VM::initExecution(const CompileResult& result) {
     frames_.clear();
     frames_.reserve(64);  // 预分配调用帧空间，避免频繁 realloc
     functionChunks_ = result.functionChunks;
+    // #12 fix: 构建 类→方法名→chunk 两级索引（仅收录 "Class.method" 条目）。
+    // 用首个 '.' 拆分；普通函数名（无 '.'）不入索引。functionChunks_ 是 std::map
+    // 节点稳定，存储的 BytecodeChunk* 在 functionChunks_ 生命周期内有效。
+    methodsByClass_.clear();
+    methodsByClass_.reserve(functionChunks_.size());
+    for (auto& kv : functionChunks_) {
+        const std::string& key = kv.first;
+        auto dotPos = key.find('.');
+        if (dotPos != std::string::npos && dotPos > 0 && dotPos + 1 < key.size()) {
+            methodsByClass_[key.substr(0, dotPos)][key.substr(dotPos + 1)] = &kv.second;
+        }
+    }
     // P3: 清除函数调用缓存（functionChunks_ 地址已变）
     // PERF-14 fix: unordered_map 替代数组，clear() 即可
     callCache_.clear();
@@ -779,6 +750,7 @@ void VM::resetState() {
     frames_.clear();
     functionChunks_.clear();
     classInfo_.clear();
+    methodsByClass_.clear();  // #12 fix: 同步清理类方法索引
     globalSlots_.clear();
     // B4: globalSlotNames_ 已删除
     globalNameToSlot_.clear();
@@ -1020,6 +992,8 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_WRITEBACK_MEMBER_LOCAL:
     case OpCode::OP_WRITEBACK_INDEX_VAR:
     case OpCode::OP_WRITEBACK_INDEX_LOCAL:
+    case OpCode::OP_WRITEBACK_MEMBER_UPVALUE:
+    case OpCode::OP_WRITEBACK_INDEX_UPVALUE:
         return executeWritebackOps(op, ip);
 
     // 其他指令
@@ -1474,14 +1448,15 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
                 stack_[uv->stackSlot] = val;
                 // V-P1-6 fix: 若修改的是某外层帧的字段槽，标记该帧 fieldsModified，
                 // 确保 OP_RETURN 时字段同步回实例（闭包内修改捕获的字段）
-                for (size_t fi = 0; fi < frames_.size(); ++fi) {
-                    VMCallFrame& of = frames_[fi];
+                // #18 fix: 用 owningFrameIdx O(1) 定位所属帧，替代 O(frames_) 线性扫描。
+                // upvalue 为 open 状态时所属帧必在 frames_ 中（帧返回前会关闭其 upvalue）。
+                if (uv->owningFrameIdx < frames_.size()) {
+                    VMCallFrame& of = frames_[uv->owningFrameIdx];
                     if (of.chunk && !of.chunk->fieldOrder.empty()) {
                         size_t fieldStart = of.basePointer + 1;
                         size_t fieldEnd = fieldStart + of.chunk->fieldOrder.size();
                         if (uv->stackSlot >= fieldStart && uv->stackSlot < fieldEnd) {
                             of.fieldsModified = true;
-                            break;
                         }
                     }
                 }

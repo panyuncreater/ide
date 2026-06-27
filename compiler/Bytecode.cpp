@@ -82,6 +82,8 @@ const char* opCodeName(OpCode op) {
     case OpCode::OP_TRY_BEGIN:        return "OP_TRY_BEGIN";
     case OpCode::OP_TRY_END:          return "OP_TRY_END";
     case OpCode::OP_THROW:            return "OP_THROW";
+    case OpCode::OP_WRITEBACK_MEMBER_UPVALUE: return "OP_WRITEBACK_MEMBER_UPVALUE";
+    case OpCode::OP_WRITEBACK_INDEX_UPVALUE:  return "OP_WRITEBACK_INDEX_UPVALUE";
     }
     return "OP_UNKNOWN";
 }
@@ -424,6 +426,20 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         str += "OP_THROW";
         offset += 1;
         break;
+    case OpCode::OP_WRITEBACK_MEMBER_UPVALUE: {
+        uint8_t uvIdx = code[offset + 1];
+        uint16_t fieldIdx = code[offset + 2] | (code[offset + 3] << 8);
+        str += "OP_WRITEBACK_MEMBER_UPVALUE uv=" + std::to_string(uvIdx) +
+               " field=" + std::to_string(fieldIdx);
+        offset += 4;
+        break;
+    }
+    case OpCode::OP_WRITEBACK_INDEX_UPVALUE: {
+        uint8_t uvIdx = code[offset + 1];
+        str += "OP_WRITEBACK_INDEX_UPVALUE uv=" + std::to_string(uvIdx);
+        offset += 2;
+        break;
+    }
     default:
         str += "OP_UNKNOWN(" + std::to_string(static_cast<int>(op)) + ")";
         offset += 1;

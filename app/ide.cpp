@@ -84,8 +84,9 @@ void Ide::closeEvent(QCloseEvent* event) {
     }
 
     // 崩溃修复: forceStop 保证 worker 线程在返回前完全停止（正常退出或 terminate+join）。
-    // 不再使用 pendingClose_ 异步机制 — forceStop 重置 workerThread_ 会断开 finished 信号，
-    // 导致 workerFinished 永不发射、pendingClose_ 永远为 true、窗口永远无法关闭。
+    // 曾尝试异步关闭机制（closeEvent 触发停止、workerFinished 信号回调 close()），
+    // 但 forceStop 重置 workerThread_ 会断开 finished 信号，导致 workerFinished 永不
+    // 发射、窗口永远无法关闭，故改为同步停止。#24 fix 已移除残留的 pendingClose_ 死分支。
     // forceStop 最多阻塞 5 秒（worker 协作式退出期间），对关闭场景可接受。
     if (controller_->isRunning()) {
         controller_->forceStop();
@@ -430,6 +431,12 @@ void Ide::onRun() {
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
+    // 互斥检查：REPL 异步任务在跑时拒绝运行，避免并发访问 Interpreter 数据竞争
+    if (replPanel_->isReplRunning()) {
+        outputPanel_->appendError("REPL 正在执行，请等待其完成后再运行");
+        return;
+    }
+
     if (!controller_->prepareRun(false, source, currentFilePath_.toStdString())) return;
 
     // 更新 UI
@@ -460,6 +467,12 @@ void Ide::onDebug() {
     debugPanel_->clearAll();  // H7 fix: 清空旧调试数据
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
+
+    // 互斥检查：REPL 异步任务在跑时拒绝调试，避免并发访问 Interpreter 数据竞争
+    if (replPanel_->isReplRunning()) {
+        outputPanel_->appendError("REPL 正在执行，请等待其完成后再调试");
+        return;
+    }
 
     if (!controller_->prepareRun(true, source, currentFilePath_.toStdString())) return;
 
@@ -567,13 +580,6 @@ void Ide::onWorkerFinished(bool wasDebug) {
     codeEditor_->clearCurrentLine();
     codeEditor_->clearErrorLines();  // L-新2 fix: 运行结束时清除错误标记
     replPanel_->setInputEnabled(true);
-
-    // QT-R-05 fix: 异步关闭路径 — 若 closeEvent 已设置 pendingClose_，
-    // worker 退出后触发窗口关闭（closeEvent 此时 isRunning()=false，直接 accept）
-    if (pendingClose_) {
-        pendingClose_ = false;
-        close();
-    }
 }
 
 // ============================================================

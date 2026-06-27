@@ -378,6 +378,54 @@ TEST(IRE2E, NestedFunctionCall) {
     EXPECT_EQ(runViaIR(src), "20");
 }
 
+// ---- 闭包 upvalue 容器变异（#7 fix: WRITEBACK_*_UPVALUE）----
+
+TEST(IRE2E, ClosureUpvalueArrayIndexAssign) {
+    // 内层闭包修改外层函数局部数组：arr[i] = v
+    // 修复前：COW ensureUnique 产生新数组副本，但未写回 upvalue，修改丢失
+    std::string src =
+        "fun outer() {\n"
+        "    var arr = [1, 2, 3];\n"
+        "    fun mutate() {\n"
+        "        arr[0] = 99;\n"
+        "    }\n"
+        "    mutate();\n"
+        "    return arr[0];\n"
+        "}\n"
+        "print(outer());\n";
+    EXPECT_EQ(runViaIR(src), "99");
+}
+
+TEST(IRE2E, ClosureUpvalueDictMemberAssign) {
+    // 内层闭包修改外层函数局部字典字段：d.f = v
+    std::string src =
+        "fun outer() {\n"
+        "    var d = {\"x\": 1};\n"
+        "    fun setX() {\n"
+        "        d.x = 42;\n"
+        "    }\n"
+        "    setX();\n"
+        "    return d.x;\n"
+        "}\n"
+        "print(outer());\n";
+    EXPECT_EQ(runViaIR(src), "42");
+}
+
+TEST(IRE2E, ClosureUpvalueArrayIndexAssignOptimized) {
+    // 同上，但启用 IR 优化 pass，确保 WRITEBACK_*_UPVALUE 不被错误删除
+    std::string src =
+        "fun outer() {\n"
+        "    var arr = [1, 2, 3];\n"
+        "    fun mutate() {\n"
+        "        arr[1] = 77;\n"
+        "    }\n"
+        "    mutate();\n"
+        "    return arr[1];\n"
+        "}\n"
+    "print(outer());\n";
+    EXPECT_EQ(runViaIROptimized(src), "77");
+}
+
 // ---- 优化 pass 与非优化路径结果一致性 ----
 
 TEST(IRE2E, OptimizedMatchesNonOptimized) {

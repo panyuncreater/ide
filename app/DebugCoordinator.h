@@ -31,6 +31,11 @@ public:
                      std::shared_ptr<DebugController> debugger,
                      QObject* parent = nullptr);
 
+    // #10 fix: 析构时反注册 debugger_ 上的回调。debugger_ 与 WorkerManager 共享所有权，
+    // 可能比 DebugCoordinator 存活更久；setupDebug 注册的三个 lambda 捕获裸 this，
+    // 若不反注册，异常关闭路径下 worker 线程调用这些回调将触发 UAF。
+    ~DebugCoordinator() override;
+
     // ---- 断点管理 ----
     /// 设置断点及条件表达式（GUI-03 fix: 使用 evaluateCondition 安全求值条件断点）
     void setupDebug(const QSet<int>& breakpoints,

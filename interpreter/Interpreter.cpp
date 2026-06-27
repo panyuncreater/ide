@@ -157,6 +157,10 @@ void Interpreter::setCurrentFilePath(const std::string& path) {
 }
 
 void Interpreter::setDebugger(std::shared_ptr<DebugController> dbg) {
+    // #26 fix: 加锁与 setModuleLoader/setOutputCallback 等 setter 保持一致。
+    // checkBreak 在 worker 线程读取 debugger_ 不加锁——安全前提是 debugger_ 在
+    // execute() 开始后不再变更（调用方 IdeController 在启动 worker 前设置，执行期间不变）。
+    std::lock_guard<std::mutex> lock(callbackMutex_);
     debugger_ = std::move(dbg);
 }
 
@@ -1344,7 +1348,31 @@ void Interpreter::visitIndexAccess(IndexAccess& node) {
         }
         int64_t i = idx.intVal();
         const std::string& s = objC.stringVal();
-        // 计算 UTF-8 字符数
+
+        // #13 fix: ASCII 快速路径（镜像 VM 的 P7 fix）。
+        // 纯 ASCII 字符串每码位 1 字节，可直接按字节索引 O(1)。
+        // 按 StringData 指针缓存 ASCII 判定，循环 s[i] 访问时仅首次 O(n) 扫描，后续 O(1)。
+        // 原实现每次访问都 O(i) 扫描到目标码位，循环退化 O(n²)。
+        if (i >= 0 && static_cast<size_t>(i) < s.size()) {
+            const void* strPtr = static_cast<const void*>(&s);
+            bool isAscii;
+            if (lastAsciiStrPtr_ == strPtr) {
+                isAscii = lastAsciiStrIsAscii_;
+            } else {
+                isAscii = true;
+                for (size_t b = 0; b < s.size(); ++b) {
+                    if (static_cast<unsigned char>(s[b]) >= 0x80) { isAscii = false; break; }
+                }
+                lastAsciiStrPtr_ = strPtr;
+                lastAsciiStrIsAscii_ = isAscii;
+            }
+            if (isAscii) {
+                lastValue_ = Value(s.substr(static_cast<size_t>(i), 1));
+                return;
+            }
+        }
+
+        // 非 ASCII 慢路径：逐码位扫描
         size_t charCount = 0;
         size_t bytePos = 0;
         size_t targetBytePos = 0;

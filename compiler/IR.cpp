@@ -1,6 +1,7 @@
 #include "compiler/IR.h"
 #include "ast/ASTNode.h"
 #include "interpreter/Value.h"
+#include "interpreter/NumericUtils.h"  // #14: OverflowCheck
 #include "Logger.h"
 #include <sstream>
 #include <unordered_set>
@@ -91,6 +92,8 @@ const char* irOpName(IROp op) {
     case IROp::WRITEBACK_MEMBER_LOCAL:  return "WRITEBACK_MEMBER_LOCAL";
     case IROp::WRITEBACK_INDEX_VAR:     return "WRITEBACK_INDEX_VAR";
     case IROp::WRITEBACK_INDEX_LOCAL:   return "WRITEBACK_INDEX_LOCAL";
+    case IROp::WRITEBACK_MEMBER_UPVALUE: return "WRITEBACK_MEMBER_UPVALUE";
+    case IROp::WRITEBACK_INDEX_UPVALUE:  return "WRITEBACK_INDEX_UPVALUE";
     // 其他
     case IROp::PRINT:           return "PRINT";
     case IROp::POP:             return "POP";
@@ -164,6 +167,8 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
         if (stmt) visitNode(stmt.get());
     }
     // 将 ir_ 作为 mainFunction 存入 module_
+    // 更新 main 的 localCount（顶层代码的 AND/OR 短路等会用 nextLocalSlot_ 分配临时 slot）
+    ir_->localCount = static_cast<int>(nextLocalSlot_);
     module_->mainFunction = std::move(ir_);
     // 返回 ir_（转移所有权给调用者；module_ 通过 getModule() 仍可访问 functions）
     return std::move(module_->mainFunction);
@@ -391,29 +396,53 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
 }
 
 IROperand AstIRBuilder::visitBinaryOp(BinaryOp* node) {
-    // AND/OR 短路求值：JUMP_IF_FALSE + LABEL
+    // AND/OR 短路求值：用临时 local slot 汇合两条路径的结果。
+    // 旧实现短路路径返回未定义的 right vreg（right 从未被 visitNode 求值），
+    // 导致消费者读取脏 vreg。现在两条路径都 STORE_LOCAL 到 tempSlot，
+    // 汇合后 LOAD_LOCAL 到 dest，保证 dest 在所有路径都有定义。
     if (node->opType == BinOpType::BIN_AND) {
         IROperand left = visitNode(node->left.get());
+        uint32_t shortCircuitLabel = ir_->allocLabel();
         uint32_t endLabel = ir_->allocLabel();
-        // 左值为假则短路到 end（结果取 left）
-        emitIR(IROp::JUMP_IF_FALSE, { left, IROperand::label(endLabel) }, node->line);
-        // 左值为真，求值右操作数（结果取 right）
+        uint32_t tempSlot = nextLocalSlot_++;  // 临时 slot 存放结果
+        // 左值为假则短路（结果 = left）
+        emitIR(IROp::JUMP_IF_FALSE, { left, IROperand::label(shortCircuitLabel) }, node->line);
+        // 非短路路径：left 在栈顶，先存入 tempSlot（pop left 保持栈平衡），
+        // 再求值 right 并覆盖 tempSlot
+        emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
         IROperand right = visitNode(node->right.get());
+        emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), right }, node->line);
+        emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
+        // 短路路径：left 在栈顶，存入 tempSlot（pop left）
+        emitIR(IROp::LABEL, { IROperand::label(shortCircuitLabel) }, node->line);
+        emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
+        // 汇合：加载结果到 dest（两条路径栈均已空，LOAD_LOCAL push dest）
         emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
-        return right;
+        IROperand dest = ir_->allocVReg();
+        emitIR(IROp::LOAD_LOCAL, { dest, IROperand::local(tempSlot) }, node->line);
+        return dest;
     }
     if (node->opType == BinOpType::BIN_OR) {
         IROperand left = visitNode(node->left.get());
         uint32_t evalRightLabel = ir_->allocLabel();
         uint32_t endLabel = ir_->allocLabel();
+        uint32_t tempSlot = nextLocalSlot_++;  // 临时 slot 存放结果
         // 左值为假则去求值右操作数
         emitIR(IROp::JUMP_IF_FALSE, { left, IROperand::label(evalRightLabel) }, node->line);
-        // 左值为真，短路到 end（结果取 left）
+        // 左值为真，短路（结果 = left）：left 在栈顶，存入 tempSlot（pop left）
+        emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
         emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
+        // 非短路路径：left 在栈顶，先存入 tempSlot（pop left 保持栈平衡），
+        // 再求值 right 并覆盖 tempSlot
         emitIR(IROp::LABEL, { IROperand::label(evalRightLabel) }, node->line);
+        emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
         IROperand right = visitNode(node->right.get());
+        emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), right }, node->line);
+        // 汇合：加载结果到 dest
         emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
-        return right;
+        IROperand dest = ir_->allocVReg();
+        emitIR(IROp::LOAD_LOCAL, { dest, IROperand::local(tempSlot) }, node->line);
+        return dest;
     }
     // 非短路二元运算
     IROperand left = visitNode(node->left.get());
@@ -566,14 +595,12 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     // continue 目标 = update 块（continueLabel 在 body 之后、update 之前）
     loopStack_.push_back({ startLabel, endLabel, continueLabel });
     emitIR(IROp::LABEL, { IROperand::label(startLabel) }, node->line);
-    // 条件（nullptr 时视为永真，不 emit 跳转）
+    // 条件（nullptr 时视为永真，不 emit 任何指令——循环体由 body 内的 break 控制退出）
+    // C-10 fix: 原 else 分支 emit LOAD_TRUE 分配 vreg 但永不消费，
+    // 栈式 VM 后端 lowering 时每次循环迭代压一个 true 入栈而永不弹出 → 死循环程序栈溢出。
     if (node->condition) {
         IROperand cond = visitNode(node->condition.get());
         emitIR(IROp::JUMP_IF_FALSE, { cond, IROperand::label(endLabel) }, node->line);
-    } else {
-        // 无条件：emit LOAD_TRUE（保持栈平衡，但不跳转）
-        IROperand t = ir_->allocVReg();
-        emitIR(IROp::LOAD_TRUE, { t }, node->line);
     }
     // 编译循环体（限制5：块作用域包裹）
     if (inFunction_) enterBlockScope();
@@ -624,6 +651,16 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     currentUpvalueNames_.clear();
     innerFunctions_.clear();
     innerFunctionSlots_.clear();
+
+    // C-9 fix: 类方法有隐式 this 参数（由调用方传入 slot 0）。
+    // 预留 slot 0 给 this，声明参数从 slot 1 开始；同步调整 arity/requiredArity
+    // 使 executeCallImpl 的默认参数填充逻辑（argCount < arity 触发）正确工作。
+    if (compilingMethod_) {
+        nextLocalSlot_ = 1;
+        varMap_["this"] = { VarInfo::Kind::LOCAL, 0 };
+        ir_->arity += 1;
+        ir_->requiredArity += 1;
+    }
 
     // 3. 设置外层局部/upvalue 信息（供 addUpvalue 查找）
     //    outerLocalSlots_ = 父函数的 LOCAL 变量（子函数可捕获为 isLocal=true）
@@ -840,8 +877,11 @@ void AstIRBuilder::visitIndexAssign(IndexAssign* node) {
             emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::imm(info.index) }, node->line);
         } else if (info.kind == VarInfo::Kind::GLOBAL_NAME) {
             emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::global(info.index) }, node->line);
+        } else if (info.kind == VarInfo::Kind::UPVALUE) {
+            // #7 fix: upvalue 容器赋值时需写回，否则 COW ensureUnique 产生的新容器
+            // 副本会丢失，导致闭包内 arr[i]=v 修改被静默吞掉。
+            emitIR(IROp::WRITEBACK_INDEX_UPVALUE, { IROperand::upvalue(info.index) }, node->line);
         }
-        // UPVALUE：不 emit 写回（简化）
     }
 }
 
@@ -873,12 +913,21 @@ void AstIRBuilder::visitMemberAssign(MemberAssign* node) {
         } else if (info.kind == VarInfo::Kind::GLOBAL_NAME) {
             emitIR(IROp::WRITEBACK_MEMBER_VAR,
                 { IROperand::global(info.index), IROperand::field(fieldIdx) }, node->line);
+        } else if (info.kind == VarInfo::Kind::UPVALUE) {
+            // #7 fix: upvalue 容器字段赋值时需写回，否则 COW ensureUnique 产生的新容器
+            // 副本会丢失，导致闭包内 obj.f=v 修改被静默吞掉。
+            emitIR(IROp::WRITEBACK_MEMBER_UPVALUE,
+                { IROperand::upvalue(info.index), IROperand::field(fieldIdx) }, node->line);
         }
-        // UPVALUE：不 emit 写回（简化）
     }
 }
 
 IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
+    // C-6 fix: 检测 object 是否为简单 VarRef。方法调用可能通过 COW 修改接收者实例
+    // （this.field = ... 或 arr.push(...)），产生新的 InstanceData/ArrayData。
+    // 若接收者是 VarRef，需在 METHOD_CALL 后 emit STORE 将变异后的接收者写回变量槽，
+    // 否则全局/upvalue 中的原值不变，下次读取得到旧值（字段修改丢失）。
+    bool isVarRef = node->object && node->object->nodeType == NodeType::NODE_VAR_REF;
     IROperand obj = visitNode(node->object.get());
     IROperand dest = ir_->allocVReg();
     uint32_t methodIdx = ir_->addGlobal(node->methodName);
@@ -891,18 +940,81 @@ IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
         ops.push_back(visitNode(a.get()));
     }
     emitIR(IROp::METHOD_CALL, ops, node->line);
+    // C-6 fix: 方法调用后写回接收者（仅当 object 是 VarRef）。
+    // METHOD_CALL 的 sync 逻辑（executeReturnImpl）或内建方法（callBuiltinMethod）
+    // 会更新 obj 寄存器，此处将其写回到原始变量槽。
+    if (isVarRef) {
+        VarRef* vr = static_cast<VarRef*>(node->object.get());
+        emitStoreVar(vr->name, obj, node->line);
+    }
     return dest;
 }
 
 void AstIRBuilder::visitClassDecl(ClassDecl* node) {
+    // C-9 fix: 完整携带类元数据（父类、字段顺序、方法名→函数名映射），
+    // 使 REG_DEFINE_CLASS 能填充 classInfo_ 的 methods/fieldOrder/parent。
+    // 原实现仅 emit DEFINE_CLASS{name}，导致 executeMethodCallImpl/executeClassNewImpl
+    // 查 classInfo_[cls].methods 永远为空，类系统完全不可用。
     uint32_t nameIdx = ir_->addGlobal(node->name);
-    emitIR(IROp::DEFINE_CLASS, { IROperand::funcName(nameIdx) }, node->line);
-    // 遍历成员：对方法（FunDecl）调用 visitFunDecl（简化处理）
+    uint32_t parentIdx = node->superClassName.empty()
+        ? UINT32_MAX
+        : ir_->addGlobal(node->superClassName);
+
+    // 收集字段名（按声明顺序，仅 VarDecl）
+    std::vector<uint32_t> fieldIdxs;
+    for (auto& m : node->members) {
+        if (m && m->nodeType == NodeType::NODE_VAR_DECL) {
+            VarDecl* vd = static_cast<VarDecl*>(m.get());
+            fieldIdxs.push_back(ir_->addGlobal(vd->name));
+        }
+    }
+
+    // 收集方法名 → 函数名映射。函数名使用 "ClassName.method" 作用域命名，
+    // 避免多类同名方法（如 init/display）在 functionChunks_ 中冲突。
+    std::vector<std::pair<uint32_t, uint32_t>> methodIdxs;
     for (auto& m : node->members) {
         if (m && m->nodeType == NodeType::NODE_FUN_DECL) {
-            visitFunDecl(static_cast<FunDecl*>(m.get()));
+            FunDecl* fd = static_cast<FunDecl*>(m.get());
+            uint32_t methodIdx = ir_->addGlobal(fd->name);
+            std::string scopedFunName = node->name + "." + fd->name;
+            uint32_t funIdx = ir_->addGlobal(scopedFunName);
+            methodIdxs.push_back({ methodIdx, funIdx });
         }
-        // 其他成员（字段声明等）简化跳过
+    }
+
+    // DEFINE_CLASS 操作数布局：
+    //   [0] className (FUNC_NAME)
+    //   [1] parentName (IMM_UINT, UINT32_MAX=无父类)
+    //   [2] fieldCount (IMM_UINT)
+    //   [3 .. 3+F-1] field names (FIELD_NAME)
+    //   [3+F] methodCount (IMM_UINT)
+    //   [3+F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+    std::vector<IROperand> ops;
+    ops.push_back(IROperand::funcName(nameIdx));
+    ops.push_back(IROperand::imm(parentIdx));
+    ops.push_back(IROperand::imm(static_cast<uint32_t>(fieldIdxs.size())));
+    for (uint32_t fidx : fieldIdxs) {
+        ops.push_back(IROperand::field(fidx));
+    }
+    ops.push_back(IROperand::imm(static_cast<uint32_t>(methodIdxs.size())));
+    for (auto& mp : methodIdxs) {
+        ops.push_back(IROperand::field(mp.first));
+        ops.push_back(IROperand::funcName(mp.second));
+    }
+    emitIR(IROp::DEFINE_CLASS, std::move(ops), node->line);
+
+    // 编译方法函数体：临时改名为 "ClassName.method" 以作用域隔离，
+    // 设置 compilingMethod_ 标记让 visitFunDecl 预留 slot 0 给 this。
+    for (auto& m : node->members) {
+        if (m && m->nodeType == NodeType::NODE_FUN_DECL) {
+            FunDecl* fd = static_cast<FunDecl*>(m.get());
+            std::string origName = fd->name;
+            fd->name = node->name + "." + origName;
+            compilingMethod_ = true;
+            visitFunDecl(fd);
+            compilingMethod_ = false;
+            fd->name = origName;
+        }
     }
 }
 
@@ -1018,15 +1130,13 @@ bool BytecodeIRBackend::lowerModule(const IRModule& module) {
         }
     }
 
-    // 注：globalSlotNames_ 需从 AstIRBuilder 获取，但 IRModule 不携带槽位名表，
-    // B4: slotNames_ 已删除，全局槽位名表从 AstIRBuilder.globalSlotAllocator_ 获取。
+    // 全局槽位名表从 AstIRBuilder.globalSlotAllocator_ 获取。
     return true;
 }
 
 void BytecodeIRBackend::resetState() {
     chunk_.reset();
     functionChunks_.clear();
-    // B4: slotNames_ 已删除（dead member，全局槽位名表从 AstIRBuilder 获取）
     vregStackDepth_.clear();
     labelToOffset_.clear();
     pendingJumps_.clear();
@@ -1396,6 +1506,24 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // slot(1B)
         break;
     }
+    case IROp::WRITEBACK_MEMBER_UPVALUE: {
+        // operands: [uv_idx, field_idx]
+        // → OP_WRITEBACK_MEMBER_UPVALUE uvIdx(1B) fieldIdx(2B)
+        if (instr.operands.size() < 2) return false;
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_MEMBER_UPVALUE));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // uvIdx(1B)
+        uint16_t fieldConstIdx = addStringConstant(globalName(instr.operands[1].index), ir);
+        emitUint16(chunk_->code, fieldConstIdx);
+        break;
+    }
+    case IROp::WRITEBACK_INDEX_UPVALUE: {
+        // operands: [uv_idx]
+        // → OP_WRITEBACK_INDEX_UPVALUE uvIdx(1B)
+        if (instr.operands.size() < 1) return false;
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_INDEX_UPVALUE));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // uvIdx(1B)
+        break;
+    }
 
     // ---- 其他 ----
     case IROp::PRINT: {
@@ -1515,8 +1643,10 @@ bool isPureCompute(IROp op) {
     case IROp::LOAD_TRUE:
     case IROp::LOAD_FALSE:
     case IROp::LOAD_LOCAL:
-    case IROp::LOAD_GLOBAL:
-    case IROp::LOAD_UPVALUE:
+    // #23 fix: LOAD_GLOBAL/LOAD_UPVALUE 不列为纯计算——它们在运行时会检查
+    // 变量是否定义并可能抛"未定义的变量"错误。若 DCE 删除 dest 未引用的加载，
+    // 会抑制该错误（如 `undefinedVar;` 表达式语句本应报错却被静默删除）。
+    // LOAD_LOCAL 可保留：局部变量由编译期静态绑定，不存在运行时未定义。
     case IROp::ADD: case IROp::SUB: case IROp::MUL: case IROp::DIV: case IROp::MOD:
     case IROp::NEGATE: case IROp::NOT:
     case IROp::EQ: case IROp::NEQ: case IROp::LT: case IROp::GT: case IROp::LTE: case IROp::GTE:
@@ -1533,14 +1663,25 @@ bool foldArith(IROp op, const Value& lhs, const Value& rhs, Value& result) {
     if (lhs.isInt() && rhs.isInt()) {
         int64_t a = lhs.intVal(), b = rhs.intVal();
         switch (op) {
-        case IROp::ADD: result = Value(a + b); return true;
-        case IROp::SUB: result = Value(a - b); return true;
-        case IROp::MUL: result = Value(a * b); return true;
+        // #14 fix: 整数 ADD/SUB/MUL 折叠需检查溢出（与 RegisterVM::executeArith 一致），
+        // 溢出时不折叠（返回 false），留待运行时按 OverflowCheck 路径报错。
+        // 原实现直接 a+b/a-b/a*b 在溢出时是 UB（int64_t 有符号溢出）。
+        case IROp::ADD:
+            if (OverflowCheck::addOverflow(a, b)) return false;
+            result = Value(a + b); return true;
+        case IROp::SUB:
+            if (OverflowCheck::subOverflow(a, b)) return false;
+            result = Value(a - b); return true;
+        case IROp::MUL:
+            if (OverflowCheck::mulOverflow(a, b)) return false;
+            result = Value(a * b); return true;
         case IROp::DIV:
             if (b == 0) return false;  // 除零不折叠，留待运行时报错
+            if (OverflowCheck::divOverflow(a, b)) return false;  // INT64_MIN / -1
             result = Value(a / b); return true;
         case IROp::MOD:
             if (b == 0) return false;
+            if (OverflowCheck::modOverflow(a, b)) return false;  // INT64_MIN % -1
             result = Value(a % b); return true;
         default: return false;
         }
@@ -1614,7 +1755,11 @@ bool foldCompare(IROp op, const Value& lhs, const Value& rhs, Value& result) {
 bool foldUnary(IROp op, const Value& operand, Value& result) {
     switch (op) {
     case IROp::NEGATE:
-        if (operand.isInt()) { result = Value(-operand.intVal()); return true; }
+        // #14 fix: -INT64_MIN 是 UB，需检查（与 RegisterVM::executeArith 一致）。
+        if (operand.isInt()) {
+            if (OverflowCheck::negateOverflow(operand.intVal())) return false;
+            result = Value(-operand.intVal()); return true;
+        }
         if (operand.isFloat()) { result = Value(-operand.floatVal()); return true; }
         return false;
     case IROp::NOT:

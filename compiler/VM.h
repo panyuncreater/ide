@@ -9,6 +9,7 @@
 #include <cassert>
 #include "compiler/Bytecode.h"
 #include "interpreter/Value.h"
+#include "interpreter/BuiltinMethods.h"  // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
 #include "common/Result.h"
 #include "Diagnostic.h"
 #include "common/RuntimeLimits.h"
@@ -47,6 +48,8 @@ public:
     T* end() { return begin() + sz_; }
     const T* begin() const { return (sz_ <= N) ? inline_ : heap_.data(); }
     const T* end() const { return begin() + sz_; }
+    T* data() { return begin(); }
+    const T* data() const { return begin(); }
     void push_back(const T& v) {
         if (sz_ < N) { inline_[sz_++] = v; }
         else { if (sz_ == N) { heap_.assign(inline_, inline_ + N); } heap_.push_back(v); sz_++; }
@@ -314,9 +317,12 @@ private:
     const void* lastAsciiStrPtr_ = nullptr;
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
-    // PERF-15 fix: findMethodChunk 复用的 methodKey buffer，避免每次调用重新分配堆内存。
-    // 原为局部变量，每次 findMethodChunk 调用都构造/析构 std::string。
-    mutable std::string findMethodKeyBuf_;
+    // #12 fix: 类→方法名→chunk 两级索引，替代 findMethodChunk 冷路径每层继承链
+    // 拼 "Class.method" 字符串。在 initExecution 中扫描 functionChunks_ 一次性构建。
+    // 仅收录 "Class.method" 格式条目（按首个 '.' 拆分），普通函数名（无 '.'）不入索引。
+    // 安全性：functionChunks_ 为 std::map（节点稳定），BytecodeChunk* 在 functionChunks_
+    // 生命周期内有效；methodsByClass_ 与 functionChunks_ 在 initExecution/resetState 同步重建。
+    std::unordered_map<std::string, std::unordered_map<std::string, BytecodeChunk*>> methodsByClass_;
     // VM-05/06: 闭包支持
     // B5 fix: openUpvalues_ 改用按 stackSlot 排序的有序结构（multimap 允许多个 upvalue 共享同一栈槽），
     // closeUpvaluesFrom 从 O(n) 线性扫描降为 O(log n + k)。value 用 weak_ptr 监视 shared_ptr 生命周期
@@ -417,23 +423,6 @@ private:
             return runtimeError("比较运算需要数值或字符串类型");
         return pushCompareResult(cmp(left, right), ip, opcode);
     }
-
-    /// 内建方法名枚举（消除运行时字符串比较）
-    enum class BuiltinMethod {
-        // 数组方法
-        ARR_PUSH, ARR_POP, ARR_LEN, ARR_REMOVE, ARR_CONTAINS, ARR_JOIN,
-        // 字典方法
-        DICT_LEN, DICT_KEYS, DICT_VALUES, DICT_HAS, DICT_REMOVE, DICT_GET,
-        // 字符串方法
-        STR_LEN, STR_UPPER, STR_LOWER, STR_CONTAINS, STR_STARTS_WITH,
-        STR_ENDS_WITH, STR_REPLACE, STR_SUBSTR, STR_INDEX_OF,
-        STR_SPLIT, STR_TRIM,
-        // 未知
-        UNKNOWN
-    };
-
-    /// 将方法名分类为枚举（单次哈希，后续 switch 分发）
-    static BuiltinMethod classifyBuiltinMethod(const std::string& name);
 
     // ---- B7 fix: 内建方法分发（从 executeCallOps 提取，降低圈复杂度）----
     /// 数组内建方法分发。返回 VM_OK 表示已处理（caller 应 break），VM_RUNTIME_ERROR 表示出错。

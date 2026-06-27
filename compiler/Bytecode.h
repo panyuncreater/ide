@@ -103,6 +103,10 @@ enum class OpCode : uint8_t {
     OP_TRY_BEGIN,        // try 块开始（操作数: catchOffset(2B)）
     OP_TRY_END,          // try 块正常结束（弹出 try 处理器）
     OP_THROW,            // 抛出异常（弹出栈顶值并触发异常传播）
+
+    // #7 fix: upvalue 写回指令（嵌套左值变异 a.b.c=.. 或 a[i]=.. 其中 a 是 upvalue）
+    OP_WRITEBACK_MEMBER_UPVALUE,  // 成员写回到 upvalue（uvIdx(1B) + fieldIdx(2B)）
+    OP_WRITEBACK_INDEX_UPVALUE,   // 索引写回到 upvalue（uvIdx(1B)），索引从栈顶 pop
 };
 
 /// 操作码 → 名称字符串（D9 fix: 实现移至 Bytecode.cpp）
@@ -127,6 +131,25 @@ struct BytecodeChunk {
     std::vector<std::string> fieldOrder; // 方法所属类的字段声明顺序（用于 OP_METHOD_CALL 栈布局）
     int localCount = 0;              // 局部变量总槽位数（含参数/this/字段/方法体内var声明），用于 VM 帧创建时预分配栈空间
     std::vector<UpvalueDesc> upvalues; // VM-05/06: 闭包捕获的 upvalue 描述符列表
+    // #11 fix: fieldOrder 的字段名→索引懒缓存。OP_MEMBER_SET_LOCAL 在 slot==0 时
+    // 原线性扫描 fieldOrder（每次 this.field=v 都 O(n)）；改为首次访问时建 map，
+    // 后续 O(1) 查找。mutable 因访问发生在 const 上下文（VM 执行 const chunk）。
+    // 安全性：VM 单线程执行，无数据竞争；BytecodeChunk 拷贝时缓存随之复制且仍与
+    // fieldOrder 一致（缓存纯派生自 fieldOrder）。
+    mutable std::unordered_map<std::string, size_t> fieldIndexCache_;
+    mutable bool fieldIndexCacheBuilt_ = false;
+
+    /// 返回 fieldName 在 fieldOrder 中的索引，未找到返回 SIZE_MAX
+    size_t fieldSlotIndex(const std::string& fieldName) const {
+        if (!fieldIndexCacheBuilt_) {
+            for (size_t i = 0; i < fieldOrder.size(); ++i) {
+                fieldIndexCache_[fieldOrder[i]] = i;
+            }
+            fieldIndexCacheBuilt_ = true;
+        }
+        auto it = fieldIndexCache_.find(fieldName);
+        return it != fieldIndexCache_.end() ? it->second : SIZE_MAX;
+    }
 
     BytecodeChunk() = default;
     explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)
@@ -298,6 +321,8 @@ public:
             /* 66 OP_TRY_BEGIN              */ 3,
             /* 67 OP_TRY_END                */ 1,
             /* 68 OP_THROW                  */ 1,
+            /* 69 OP_WRITEBACK_MEMBER_UPVALUE */ 4,
+            /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ 2,
         };
         auto idx = static_cast<uint8_t>(op);
         if (idx < sizeof(sizes)) return sizes[idx];

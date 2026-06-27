@@ -45,6 +45,9 @@ public:
     /// 启用/禁用输入（Run 期间禁用，防止与 worker 线程并发访问 Interpreter）
     void setInputEnabled(bool enabled);
 
+    /// REPL 异步任务是否正在执行（用于 Run/Debug 前互斥检查，避免并发访问 Interpreter）
+    bool isReplRunning() const { return replRunning_.load(); }
+
 private slots:
     /// 处理输入
     void onReturnPressed();

@@ -114,6 +114,9 @@ enum class RegOp : uint8_t {
     REG_WRITEBACK_MEMBER_LOCAL, // localReg, fieldIdx(2B)
     REG_WRITEBACK_INDEX_VAR,    // varIdx(2B)
     REG_WRITEBACK_INDEX_LOCAL,  // localReg
+    // #7 fix: upvalue 写回
+    REG_WRITEBACK_MEMBER_UPVALUE, // uvIdx(1B), fieldIdx(2B)
+    REG_WRITEBACK_INDEX_UPVALUE,  // uvIdx(1B)
 };
 
 /// 寄存器式操作码名称（调试用）
@@ -151,6 +154,9 @@ struct RegBytecodeChunk {
 
     /// 写入 2 字节小端序
     void writeShort(uint16_t v, int line);
+
+    /// 写入单字节原始值（用于非寄存器编号，如 upvalue 索引）
+    void writeByte(uint8_t v, int line);
 
     /// 构建字节偏移 → 指令索引映射（调试器用）
     void buildIpMap();

@@ -60,6 +60,8 @@ const char* regOpName(RegOp op) {
     case RegOp::REG_WRITEBACK_MEMBER_LOCAL: return "REG_WRITEBACK_MEMBER_LOCAL";
     case RegOp::REG_WRITEBACK_INDEX_VAR:    return "REG_WRITEBACK_INDEX_VAR";
     case RegOp::REG_WRITEBACK_INDEX_LOCAL:  return "REG_WRITEBACK_INDEX_LOCAL";
+    case RegOp::REG_WRITEBACK_MEMBER_UPVALUE: return "REG_WRITEBACK_MEMBER_UPVALUE";
+    case RegOp::REG_WRITEBACK_INDEX_UPVALUE:  return "REG_WRITEBACK_INDEX_UPVALUE";
     }
     return "UNKNOWN";
 }
@@ -104,6 +106,13 @@ void RegBytecodeChunk::writeShort(uint16_t v, int line) {
     }
 }
 
+void RegBytecodeChunk::writeByte(uint8_t v, int line) {
+    code.push_back(v);
+    while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
+        lines.push_back(line);
+    }
+}
+
 // ---- 指令长度表 ----
 // PERF-14: constexpr 数组查表，与 BytecodeChunk::instructionSize 同模式
 uint8_t RegBytecodeChunk::instructionSize(RegOp op) {
@@ -130,8 +139,10 @@ uint8_t RegBytecodeChunk::instructionSize(RegOp op) {
     case RegOp::REG_DELETE_GLOBAL:  return 3;  // op + nameIdx(2B)
 
     // upvalue
+    // C-12 fix: LOAD/STORE_UPVALUE 实际编码为 op+reg(1B)+uvIdx(1B)=3B（与 CLOSE_UPVALUE 的 2B 不同）。
+    // 原长度表统一返回 2，导致分发器边界检查少校验 1 字节、buildIpMap 映射错位。
     case RegOp::REG_LOAD_UPVALUE:
-    case RegOp::REG_STORE_UPVALUE:
+    case RegOp::REG_STORE_UPVALUE:  return 3;  // op + reg(1B) + uvIdx(1B)
     case RegOp::REG_CLOSE_UPVALUE:  return 2;  // op + uvIdx(1B)
 
     // 算术
@@ -174,7 +185,10 @@ uint8_t RegBytecodeChunk::instructionSize(RegOp op) {
     case RegOp::REG_PRINT:          return 2;  // op + src
 
     // 类
-    case RegOp::REG_DEFINE_CLASS:   return 3;  // op + nameIdx(2B)
+    // C-9 fix: REG_DEFINE_CLASS 现为变长指令（携带父类/字段/方法元数据）。
+    // 最小长度 = op(1) + nameIdx(2) + parentIdx(2) + fieldCount(1) + methodCount(1) = 7
+    // 实际长度由 instructionSizeAt 按 fieldCount/methodCount 计算。
+    case RegOp::REG_DEFINE_CLASS:   return 7;
     case RegOp::REG_INIT_FIELD:     return 3;  // op + fieldIdx(2B)
 
     // super
@@ -185,6 +199,8 @@ uint8_t RegBytecodeChunk::instructionSize(RegOp op) {
     case RegOp::REG_WRITEBACK_MEMBER_LOCAL: return 4;  // op + localReg + fieldIdx(2B)
     case RegOp::REG_WRITEBACK_INDEX_VAR:    return 3;  // op + varIdx(2B)
     case RegOp::REG_WRITEBACK_INDEX_LOCAL:  return 2;  // op + localReg
+    case RegOp::REG_WRITEBACK_MEMBER_UPVALUE: return 4;  // op + uvIdx(1B) + fieldIdx(2B)
+    case RegOp::REG_WRITEBACK_INDEX_UPVALUE:  return 2;  // op + uvIdx(1B)
 
     // 变长指令（返回最小长度，实际长度由 instructionSizeAt 计算）
     case RegOp::REG_CALL:           return 5;  // op + dst(1B) + nameIdx(2B) + argCount(1B) + args...
@@ -267,6 +283,20 @@ uint8_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
         if (offset + 7 < code.size()) {
             uint8_t argCount = code[offset + 4];
             return static_cast<uint8_t>(8 + argCount);
+        }
+        return baseSize;
+    }
+    case RegOp::REG_DEFINE_CLASS: {
+        // C-9 fix: op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B) + [fieldIdx(2B)×F]
+        //        + methodCount(1B) + [methodIdx(2B)+funIdx(2B)]×M
+        // 最小 7B；需读取 fieldCount（offset+5）和 methodCount（offset+6+F*2）
+        if (offset + 6 < code.size()) {
+            uint8_t fieldCount = code[offset + 5];
+            size_t methodCountPos = offset + 6 + static_cast<size_t>(fieldCount) * 2;
+            if (methodCountPos < code.size()) {
+                uint8_t methodCount = code[methodCountPos];
+                return static_cast<uint8_t>(7 + fieldCount * 2 + methodCount * 4);
+            }
         }
         return baseSize;
     }

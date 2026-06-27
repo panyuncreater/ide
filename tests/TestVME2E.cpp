@@ -20,6 +20,7 @@
 #include "parser/Parser.h"
 #include "compiler/Compiler.h"
 #include "compiler/VM.h"
+#include "compiler/RegisterVM.h"
 #include "interpreter/Value.h"
 #include "interpreter/Interpreter.h"
 
@@ -1478,4 +1479,117 @@ TEST(VMConsistency, TryClosure) {
         "print(test());";
     EXPECT_EQ(runInterpreterOutputForConsistency(src),
               runVMOutputForConsistency(src));
+}
+
+// ============================================================
+// RegVM 端到端测试（C-9 fix: 验证寄存器式 VM 类系统）
+// ============================================================
+
+// 辅助：通过 RegVM 路径执行源码，返回 print 输出
+static std::string runRegVMOutput(const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    EXPECT_TRUE(ast != nullptr);
+    if (!ast) return "";
+
+    Compiler compiler;
+    compiler.setUseRegisterVM(true);
+    compiler.compile(*ast);
+
+    RegisterVM vm;
+    std::string captured;
+    vm.setOutputCallback([&](const std::string& s) { captured += s; });
+    vm.execute(compiler.getLastRegisterResult());
+    return captured;
+}
+
+// C-9 fix: RegVM 类方法调用（无 this 引用）
+TEST(RegVME2E, ClassMethodNoThis) {
+    std::string src =
+        "class Calculator {"
+        "  fun multiply(a, b = 2) { return a * b; }"
+        "}"
+        "var calc = Calculator();"
+        "print(calc.multiply(5));"
+        "print(calc.multiply(5, 3));";
+    EXPECT_EQ(runRegVMOutput(src), "1015");
+}
+
+// C-9 fix: RegVM 类 init + this 字段赋值
+TEST(RegVME2E, ClassInitWithThis) {
+    std::string src =
+        "class Point {"
+        "  var x = 0;"
+        "  var y = 0;"
+        "  fun init(x, y = 0) {"
+        "    this.x = x;"
+        "    this.y = y;"
+        "  }"
+        "}"
+        "var p1 = Point(1);"
+        "var p2 = Point(1, 2);"
+        "print(p1.x);"
+        "print(p1.y);"
+        "print(p2.x);"
+        "print(p2.y);";
+    EXPECT_EQ(runRegVMOutput(src), "1012");
+}
+
+// C-9 fix: RegVM 类方法读取 this 字段
+TEST(RegVME2E, ClassMethodReadThis) {
+    std::string src =
+        "class Box {"
+        "  var w = 0;"
+        "  var h = 0;"
+        "  fun init(aw, ah = 1) {"
+        "    this.w = aw;"
+        "    this.h = ah;"
+        "  }"
+        "  fun area() { return this.w * this.h; }"
+        "}"
+        "var b1 = Box(5);"
+        "var b2 = Box(5, 10);"
+        "print(b1.area());"
+        "print(b2.area());";
+    EXPECT_EQ(runRegVMOutput(src), "550");
+}
+
+// C-6 fix: 方法修改 this 字段后返回非实例值，字段同步不应丢失
+TEST(RegVME2E, ClassMethodModifyThisReturnNumber) {
+    std::string src =
+        "class Counter {"
+        "  var count;"
+        "  fun init() { this.count = 0; }"
+        "  fun increment() {"
+        "    this.count = this.count + 1;"
+        "    return this.count;"
+        "  }"
+        "}"
+        "var c = Counter();"
+        "print(c.increment());"
+        "print(c.increment());"
+        "print(c.count);";
+    // increment() 返回 1（count 从 0→1），再次 increment 返回 2，最后 count=2
+    EXPECT_EQ(runRegVMOutput(src), "122");
+}
+
+// C-6 fix: 方法修改 this 字段后无返回值（隐式 null），字段同步不应丢失
+TEST(RegVME2E, ClassMethodModifyThisNoReturn) {
+    std::string src =
+        "class Accumulator {"
+        "  var total;"
+        "  fun init() { this.total = 0; }"
+        "  fun add(n) {"
+        "    this.total = this.total + n;"
+        "  }"
+        "  fun get() { return this.total; }"
+        "}"
+        "var a = Accumulator();"
+        "a.add(10);"
+        "a.add(20);"
+        "print(a.get());";
+    EXPECT_EQ(runRegVMOutput(src), "30");
 }

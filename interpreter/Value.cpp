@@ -10,10 +10,8 @@
 #include "interpreter/NumericUtils.h"
 #include "common/RuntimeLimits.h"
 #include <unordered_set>
-#include <sstream>
 #include <cstdio>
 #include <cmath>
-#include <cassert>
 
 // ============================================================
 // equalsImpl — 相等比较实现（含环检测和深度保护）

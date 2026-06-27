@@ -25,6 +25,31 @@ struct BuiltinMethodResult {
 };
 
 // ============================================================
+// #20 fix: 内建方法名枚举分发（供 VM 和 RegisterVM 共用）
+// ------------------------------------------------------------
+// 原本 VM::classifyBuiltinMethod 是 VM 的私有静态方法，RegisterVM 无法复用，
+// 其 callBuiltinMethod 用长串 if-else 字符串比较分发。提取到共享头后两处均可
+// 用单次 hash + switch 分发，消除重复字符串比较。
+// ============================================================
+
+/// 内建方法名枚举（消除运行时字符串比较）
+enum class BuiltinMethod {
+    // 数组方法
+    ARR_PUSH, ARR_POP, ARR_LEN, ARR_REMOVE, ARR_CONTAINS, ARR_JOIN,
+    // 字典方法
+    DICT_LEN, DICT_KEYS, DICT_VALUES, DICT_HAS, DICT_REMOVE, DICT_GET,
+    // 字符串方法
+    STR_LEN, STR_UPPER, STR_LOWER, STR_CONTAINS, STR_STARTS_WITH,
+    STR_ENDS_WITH, STR_REPLACE, STR_SUBSTR, STR_INDEX_OF,
+    STR_SPLIT, STR_TRIM,
+    // 未知
+    UNKNOWN
+};
+
+/// 将方法名分类为枚举（按长度快速筛选 + 单次字符串比较，后续 switch 分发）
+BuiltinMethod classifyBuiltinMethod(const std::string& name);
+
+// ============================================================
 // 共享纯函数层（供 Interpreter 和 VM 共用，不抛异常）
 // ============================================================
 // S6 fix: 统一使用 Result<Value> 替代 Result<Value>。
