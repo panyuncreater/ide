@@ -212,6 +212,9 @@ IROperand AstIRBuilder::emitLoadVar(const std::string& name, int line) {
     default:
         // VarInfo::Kind 是封闭枚举，落空会导致 dest vreg 已分配但无指令 emit，
         // 后续 lowering 栈深度映射缺失，静默产生坏代码。
+        // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+        Logger::Error("AstIRBuilder::emitLoadVar: 未知 VarInfo::Kind " +
+                      std::to_string(static_cast<int>(info.kind)), "IR");
         assert(false && "未知 VarInfo::Kind");
         break;
     }
@@ -235,6 +238,9 @@ void AstIRBuilder::emitStoreVar(const std::string& name, IROperand val, int line
         break;
     default:
         // 落空会导致 store 被静默丢弃，变量赋值失效。
+        // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+        Logger::Error("AstIRBuilder::emitStoreVar: 未知 VarInfo::Kind " +
+                      std::to_string(static_cast<int>(info.kind)), "IR");
         assert(false && "未知 VarInfo::Kind");
         break;
     }
@@ -373,6 +379,9 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
         // 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
         // 静默产生坏代码。用 assert 兜底，Release 构建中 assert 被剥离时返回空 vreg
         // 至少不会 emit 错误指令。
+        // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+        Logger::Error("AstIRBuilder::visitNode: 未支持的 AST 节点类型 " +
+                      std::to_string(static_cast<int>(node->nodeType)), "IR");
         assert(false && "AstIRBuilder::visitNode: 未支持的 AST 节点类型");
         return IROperand::vreg(0);
     }
@@ -446,6 +455,9 @@ IROperand AstIRBuilder::visitBinaryOp(BinaryOp* node) {
     default:
         // R7 fix: 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
         // 静默产生坏代码。用 assert 兜底，Release 构建中 assert 被剥离时 dest 仍返回（至少不崩溃）。
+        // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+        Logger::Error("AstIRBuilder::visitBinaryOp: 未处理的 BinOpType " +
+                      std::to_string(static_cast<int>(node->opType)), "IR");
         assert(false && "未处理的 BinOpType");
         break;
     }
@@ -1882,6 +1894,9 @@ const char* irOpName(IROp op) {
     case IROp::DUP:             return "DUP";
     // Bug-6 同型修复：枚举扩展时静默走 "?"，加 default + assert 兜底
     default:
+        // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+        Logger::Error("irOpName: 未处理的 IROp 枚举值 " +
+                      std::to_string(static_cast<int>(op)), "IR");
         assert(false && "irOpName: 未处理的 IROp 枚举值");
         return "?";
     }
@@ -2266,6 +2281,8 @@ bool copyPropagationPass(IRFunction& ir) {
                             break;
                         // Bug-6 同型修复：枚举扩展时静默跳过替换，留下不一致状态
                         default:
+                            // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+                            Logger::Error("copyPropagationPass: 未处理的 ConstKind 枚举值", "IR");
                             assert(false && "copyPropagationPass: 未处理的 ConstKind 枚举值");
                             break;
                         }

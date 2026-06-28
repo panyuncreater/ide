@@ -52,8 +52,17 @@ Value Interpreter::execute(Block& program) {
     moduleLoadingSet_.clear();  // D19 fix: 同步清理 set
     exportedNames_.clear();
 
+    // Bug2 fix: 在 resetState 之后、runStatements 之前触发 GcManager mark-sweep。
+    // 此时上一轮残留的循环引用容器 refCount>0 仍存活（aliveSet_ 中），
+    // 而非循环容器已在上述 clear() 中被自然释放（析构时从 aliveSet_ 移除）。
+    // 传入空根集：所有 aliveSet_ 中存活但 tracked_ 未标记的节点都是循环孤岛。
+    // 放在 runStatements 之前确保不破坏本轮程序新建的容器状态。
+    GcManager::instance().collectCycle({});
+
     // 顶层块不创建新作用域，直接在全局环境中执行语句
-    return runStatementsWithExceptionHandling(program);
+    Value result = runStatementsWithExceptionHandling(program);
+
+    return result;
 }
 
 Value Interpreter::executeRepl(Block& program) {

@@ -48,19 +48,19 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 125,
+				"line" : 126,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 175,
+				"line" : 176,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 142,
+				"line" : 143,
 				"parent" : 0
 			},
 			{
@@ -188,19 +188,19 @@
 			{
 				"command" : 9,
 				"file" : 0,
-				"line" : 150,
+				"line" : 151,
 				"parent" : 0
 			},
 			{
 				"command" : 10,
 				"file" : 0,
-				"line" : 161,
+				"line" : 162,
 				"parent" : 0
 			},
 			{
 				"command" : 11,
 				"file" : 0,
-				"line" : 138,
+				"line" : 139,
 				"parent" : 0
 			}
 		]
@@ -527,10 +527,10 @@
 	"orderDependencies" : 
 	[
 		{
-			"id" : "Qt6::rcc::@6890427a1f51a3e7e1df"
+			"id" : "Qt6::moc::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "Qt6::moc::@6890427a1f51a3e7e1df"
+			"id" : "Qt6::rcc::@6890427a1f51a3e7e1df"
 		},
 		{
 			"id" : "Qt6::uic::@6890427a1f51a3e7e1df"

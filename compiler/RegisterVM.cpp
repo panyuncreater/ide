@@ -1422,6 +1422,16 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName,
         return VMResult::VM_OK;
     }
 
+    // P1-1 fix: 缺失 argCount > arity 检查。栈式 VM (VMCalls.cpp:397-403) 有显式检查，
+    // 原 RegisterVM 实现直接落入正常路径，虽然 for 循环的 i < newFrame.registerCount
+    // 保护了寄存器不溢出，但语义错误——多出的参数被静默丢弃而非报错。
+    if (argCount > calleeChunk.arity) {
+        return runtimeError(ErrorFormat::format(
+            "函数 %s 期望 %d-%d 个参数，但传入了 %d 个",
+            funName.c_str(), static_cast<int>(calleeChunk.requiredArity),
+            static_cast<int>(calleeChunk.arity), static_cast<int>(argCount)));
+    }
+
     // 创建新帧
     RegCallFrame newFrame;
     newFrame.chunk = &calleeChunk;
@@ -1501,12 +1511,26 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
         }
 
         if (syncSource) {
+            // Bug4 fix: 当 syncSource 是 methodThis 时，直接替换接收者 Value，
+            // 避免 thisVal.fields() 触发 ensureUnique 深拷贝整个 InstanceData
+            // （大字段类+循环方法调用场景的高频分配热点）。
+            // methodThis 是方法帧 slot 0 的 COW 副本，已包含方法的字段修改，
+            // 直接替换与逐字段同步语义等价（MiniLang 不支持字段删除）。
+            // 当 syncSource 是 result（回退路径，方法返回实例）时，
+            // 保留逐字段同步以维持原语义（result 可能是不同实例）。
+            bool directReplace = hasMethodThis;
+
             // 同步字段到 caller 帧的接收者寄存器
             if (receiverReg >= 0 && static_cast<size_t>(receiverReg) < currentFrame().registerCount) {
                 Value& thisVal = currentFrame().registers[receiverReg];
                 if (thisVal.isInstance()) {
-                    for (const auto& field : syncSource->fields()) {
-                        thisVal.fields()[field.first] = field.second;
+                    if (directReplace) {
+                        thisVal = *syncSource;  // 零 COW，仅指针+refCount 操作
+                    } else {
+                        auto& targetFields = thisVal.fields();  // ensureUnique 一次
+                        for (const auto& field : syncSource->fields()) {
+                            targetFields[field.first] = field.second;
+                        }
                     }
                 }
             }
@@ -1516,8 +1540,13 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
                 if (gsIt != globalNameToSlot_.end() && gsIt->second < static_cast<int>(globalSlots_.size())) {
                     Value& globalVal = globalSlots_[gsIt->second];
                     if (globalVal.isInstance()) {
-                        for (const auto& field : syncSource->fields()) {
-                            globalVal.fields()[field.first] = field.second;
+                        if (directReplace) {
+                            globalVal = *syncSource;  // 零 COW
+                        } else {
+                            auto& targetFields = globalVal.fields();  // ensureUnique 一次
+                            for (const auto& field : syncSource->fields()) {
+                                targetFields[field.first] = field.second;
+                            }
                         }
                     }
                 }

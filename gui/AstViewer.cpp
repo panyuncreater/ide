@@ -170,12 +170,15 @@ void AstViewer::layoutSubtree(RtNode* node) {
     // 第一个子节点放在 x=0（相对父中心）
     // 后续子节点依次根据前一个子树的右轮廓与自身的左轮廓计算平移量
     double currentRightEdge = 0;  // 已布局部分的右边界（相对父中心）
+    double firstChildFinalX = 0;  // 记录第一个子节点的 finalX
+    double lastChildFinalX = 0;    // 记录最后一个子节点的 finalX
     for (size_t i = 0; i < node->children.size(); ++i) {
         RtNode* child = node->children[i];
         if (i == 0) {
             // 第一个子节点：finalX 即相对父中心的偏移，初始为 0
             // 但需考虑子树自身宽度：让其中心对齐父中心
             child->finalX = 0;
+            firstChildFinalX = child->finalX;
             // 更新 currentRightEdge 为该子树右轮廓的最大值
             if (!child->rightContour.empty()) {
                 currentRightEdge = *std::max_element(child->rightContour.begin(),
@@ -205,6 +208,24 @@ void AstViewer::layoutSubtree(RtNode* node) {
                 currentRightEdge = childAbsoluteRight;
             }
         }
+        lastChildFinalX = child->finalX;
+    }
+
+    // Bug1 fix: 父节点位置应在所有子节点的中间。
+    // 当前子节点布局基于第一个子节点在 x=0，最后一个子节点在 lastChildFinalX。
+    // 父节点应居中于 [firstChildFinalX, lastChildFinalX] 的中点。
+    // 通过平移所有子节点使中点对齐到 x=0（父中心），父节点的 finalX 保持 0 即可
+    // 处于子节点群的中间位置。
+    if (!node->children.empty()) {
+        double childrenMidX = (firstChildFinalX + lastChildFinalX) / 2.0;
+        // 平移所有子节点使中点对齐到父中心（x=0）
+        if (childrenMidX != 0) {
+            for (RtNode* child : node->children) {
+                child->finalX -= childrenMidX;
+                // 同步更新子树轮廓（轮廓相对子节点中心，平移子节点不影响轮廓相对值，
+                // 但 buildParentContour 会用 child.finalX 转换到父坐标系，故无需改轮廓）
+            }
+        }
     }
 
     (void)currentRightEdge;  // 父轮廓由 buildParentContour 统一构建
@@ -224,15 +245,30 @@ double AstViewer::computeShift(const RtNode* leftNode, const RtNode* rightNode) 
     const auto& lc = leftNode->rightContour;
     const auto& rc = rightNode->leftContour;
 
+    // Bug fix: 不等深子树轮廓延伸。
+    // 原实现用 commonDepth = min(lc.size(), rc.size()) 只比较到浅侧长度，
+    // 忽略深层比较。当左子树比右子树深时，左子树深层右轮廓可能比层 0 还靠右，
+    // 但右子树（浅）只在层 0 被推开，左子树深层穿透右子树位置 → 叶子重合。
+    //
+    // 修复（经典 Reingold-Tilford 做法）：遍历 maxDepth 所有层，
+    // 浅侧轮廓用最后一个已知值延伸——等价于浅子树在深层仍占自身最后一层的宽度。
+    // 这是保守做法（可能比必要间距略大），但保证不重合。
+    auto getOrExtend = [](const std::vector<double>& contour, size_t i) -> double {
+        if (i < contour.size()) return contour[i];
+        if (contour.empty()) return 0.0;
+        return contour.back();
+    };
+
     double minShift = 0;
-    size_t commonDepth = std::min(lc.size(), rc.size());
-    for (size_t i = 0; i < commonDepth; ++i) {
-        double required = lc[i] - rc[i] + SIBLING_SPACING;
+    size_t maxDepth = std::max(lc.size(), rc.size());
+    for (size_t i = 0; i < maxDepth; ++i) {
+        double lcVal = getOrExtend(lc, i);
+        double rcVal = getOrExtend(rc, i);
+        double required = lcVal - rcVal + SIBLING_SPACING;
         if (required > minShift) {
             minShift = required;
         }
     }
-    // 若一侧轮廓比另一侧浅，浅层无约束，深层的最值由本侧决定，无需额外处理
     return minShift;
 }
 

@@ -336,15 +336,9 @@ void DebugController::setConditionEvaluator(std::function<bool(const std::string
 
 void DebugController::stepIn() {
     LOG_DEBUG("Step In", "Debugger");
-    // 初始模式设置：尚未开始执行
-    if (!running_) {
-        mode_.store(static_cast<int>(StepMode::MODE_STEP_IN));
-        running_ = true;
-        stopped_ = false;
-        paused_ = false;
-        return;
-    }
-    // A2: 通过 CV 唤醒 worker 线程
+    // P1-8 fix: 消除 TOCTOU。原实现先无锁检查 !running_ 决定走快速路径（无 CV notify），
+    // 再加锁走慢速路径。检查与加锁之间存在窗口，且快速路径不 notify 在 worker
+    // 极端时序下可能丢唤醒。改为统一加锁路径，notify 对无 waiter 是 no-op。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_.store(static_cast<int>(StepMode::MODE_STEP_IN));
@@ -357,15 +351,7 @@ void DebugController::stepIn() {
 
 void DebugController::stepOver() {
     LOG_DEBUG("Step Over (depth=" + std::to_string(currentDepth_.load()) + ")", "Debugger");
-    if (!running_) {
-        mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
-        stepOverDepth_ = currentDepth_.load();  // P0-9 fix: atomic load
-        crossedDeeper_.store(false);            // P0-9 fix: atomic store (DBG-B fix)
-        running_ = true;
-        stopped_ = false;
-        paused_ = false;
-        return;
-    }
+    // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
@@ -381,14 +367,7 @@ void DebugController::stepOver() {
 void DebugController::stepOut() {
     LOG_DEBUG("Step Out (depth=" + std::to_string(currentDepth_.load()) + ")", "Debugger");
     int depth = currentDepth_.load();  // P0-9 fix: atomic load
-    if (!running_) {
-        mode_.store(static_cast<int>((depth > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
-        stepOutDepth_ = depth;
-        running_ = true;
-        stopped_ = false;
-        paused_ = false;
-        return;
-    }
+    // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_.store(static_cast<int>((depth > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
@@ -402,13 +381,7 @@ void DebugController::stepOut() {
 
 void DebugController::resume() {
     LOG_DEBUG("Resume", "Debugger");
-    if (!running_) {
-        mode_.store(static_cast<int>(StepMode::MODE_RUN));
-        running_ = true;
-        stopped_ = false;
-        paused_ = false;
-        return;
-    }
+    // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         mode_.store(static_cast<int>(StepMode::MODE_RUN));

@@ -1498,7 +1498,9 @@ TEST(VMConsistency, TryClosure) {
 // ============================================================
 
 // 辅助：通过 RegVM 路径执行源码，返回 print 输出
-static std::string runRegVMOutput(const std::string& source) {
+// P1-7 fix: 默认断言无运行时错误，使失败信息包含 lastError_ 而非仅输出 diff。
+// expectError=true 时跳过断言，用于已知会出错的用例（如除零、未支持方法）。
+static std::string runRegVMOutput(const std::string& source, bool expectError = false) {
     Lexer lexer;
     auto tokens = lexer.scan(source);
 
@@ -1514,7 +1516,15 @@ static std::string runRegVMOutput(const std::string& source) {
     RegisterVM vm;
     std::string captured;
     vm.setOutputCallback([&](const std::string& s) { captured += s; });
-    vm.execute(compiler.getLastRegisterResult());
+    VMResult vmr = vm.execute(compiler.getLastRegisterResult());
+    // P1-7 fix: 原实现忽略 vmr 与 hasError_，若 VM 运行时出错（如类型错误、栈溢出），
+    // captured 可能为部分输出或空串，测试会以"输出不匹配"误报，掩盖真实失败原因。
+    if (!expectError && vm.hasError()) {
+        ADD_FAILURE() << "RegisterVM 执行出错: " << vm.getLastError()
+                      << " (输出: \"" << captured << "\")";
+        return captured;
+    }
+    (void)vmr;
     return captured;
 }
 
@@ -1983,7 +1993,8 @@ TEST(BackendConsistency, RegVmUnsupportedStringMethods) {
     EXPECT_EQ(stackVm, "HXo");
     EXPECT_EQ(interp, "HXo");
     // RegisterVM 不支持 replace，输出为空（运行时错误）
-    std::string regVm = runRegVMOutput(src);
+    // P1-7 fix: 显式传 expectError=true 跳过 hasError 断言（此为已知功能缺失）
+    std::string regVm = runRegVMOutput(src, /*expectError=*/true);
     EXPECT_TRUE(regVm.empty());
 }
 
@@ -2055,7 +2066,8 @@ TEST(BackendConsistency, DivByZero) {
     std::string src = "print(10 / 0);";
     std::string interp = runInterpreterOutputForConsistency(src);
     std::string stackVm = runVMOutputForConsistency(src);
-    std::string regVm = runRegVMOutput(src);
+    // P1-7 fix: 显式传 expectError=true 跳过 hasError 断言（除零是预期错误）
+    std::string regVm = runRegVMOutput(src, /*expectError=*/true);
     // 三后端均触发除零错误，print 输出为空
     EXPECT_TRUE(interp.empty());
     EXPECT_TRUE(stackVm.empty());

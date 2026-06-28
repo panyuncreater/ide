@@ -37,18 +37,27 @@ bool VmStepper::isActiveFinished() const {
     return useRegister_ ? regVm_.isFinished() : vm_.isFinished();
 }
 
-void VmStepper::initActiveExecution() {
+bool VmStepper::initActiveExecution() {
     if (useRegister_) {
         // A1 fix: RegisterVM 路径必须有 lastRegCompileResult_
         if (!lastRegCompileResult_ || lastRegCompileResult_->mainChunk.code.empty()) {
-            // 让 stepByMode 的 NOT_READY 路径处理（虽然此处已进入 init 分支，
-            // 但保持防御性——如果代码空，直接标记完成）
-            return;
+            // P1-5 fix: 原 silent no-op 让 caller 无条件设 isVmInitialized_=true，
+            // 后续 stepOnceActive() 操作未初始化 VM（regVm_.stepOnce() 返回 VM_RUNTIME_ERROR
+            // "VM 未初始化"）。改为返回 false，caller 据此不标记 initialized。
+            // 同时清理活跃 VM 状态避免上一轮残留。
+            regVm_.resetState();
+            return false;
         }
         regVm_.initExecution(*lastRegCompileResult_);
     } else {
+        // P1-5 fix: 栈式 VM 路径同样防御性检查 lastCompileResult_
+        if (!lastCompileResult_ || lastCompileResult_->mainChunk.code.empty()) {
+            vm_.resetState();
+            return false;
+        }
         vm_.initExecution(*lastCompileResult_);
     }
+    return true;
 }
 
 void VmStepper::resetActiveState() {
@@ -93,7 +102,11 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
     try {
         // 首次点击：初始化 VM 执行环境
         if (!isVmInitialized_) {
-            initActiveExecution();
+            // P1-5 fix: 检查 initActiveExecution 返回值。原实现即使 init 为 silent no-op
+            // 也设 isVmInitialized_=true，导致后续 stepOnceActive() 操作未初始化 VM。
+            if (!initActiveExecution()) {
+                return VmStepResult::NOT_READY;
+            }
             isVmInitialized_ = true;
             vmLastPausedLine_ = 0;
         }
@@ -215,6 +228,19 @@ void VmStepper::runBatch() {
     constexpr int BATCH_SIZE = 2000;
     // 总量上限 100 万步（与原同步模式一致），防止死循环程序无限消耗 CPU
     constexpr int64_t MAX_TOTAL_STEPS = 1000000;
+
+    // P1-5 fix: runBatch 缺少 hasCompileResult 保护。原实现假设 caller stepByMode
+    // 已通过 initActiveExecution 检查，但若 VM 状态被外部清空（如 stop() 后定时器
+    // 仍在 pending），会调用 stepOnceActive() 操作未初始化 VM。
+    bool hasCompileResult = useRegister_
+        ? (lastRegCompileResult_ && !lastRegCompileResult_->mainChunk.code.empty())
+        : (lastCompileResult_ && !lastCompileResult_->mainChunk.code.empty());
+    if (!hasCompileResult || !isVmInitialized_) {
+        vmRunTimer_->stop();
+        isVmRunning_ = false;
+        emit vmRunPaused(VmStepResult::NOT_READY);
+        return;
+    }
 
     try {
         for (int i = 0; i < BATCH_SIZE; ++i) {

@@ -1,7 +1,11 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_DebugPanel.cpp: C:/Users/v/Desktop/ide/ide/gui/DebugPanel.h \
+  C:/Users/v/Desktop/ide/ide/common/Logger.h \
   C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
+  C:/Users/v/Desktop/ide/ide/common/Utf8Utils.h \
   C:/Users/v/Desktop/ide/ide/debug/DebugController.h \
+  C:/Users/v/Desktop/ide/ide/debug/DebugEvaluator.h \
   C:/Users/v/Desktop/ide/ide/debug/DebugTypes.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/GcManager.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NaNBox.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/RefCounted.h \

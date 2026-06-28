@@ -8,6 +8,7 @@
 #include <QDir>
 #include <future>
 #include <chrono>
+#include <cstdlib>  // std::_Exit — terminate worker 后跳过析构退出进程
 
 // ============================================================
 // WorkerManager — Worker 线程管理实现（ARCH-11 拆分自 IdeController）
@@ -264,10 +265,23 @@ void WorkerManager::forceStop() {
             Logger::Error("Worker 未在 5 秒内响应取消请求，回退 terminate() + join（确保 close 路径安全）", "IDE");
             workerThread_->terminate();
             workerThread_->wait();
-            // 重置 workerThread_ 会断开 QThread::finished 信号连接，
-            // 避免后续 cleanupWorker 被延迟触发（worker 已通过 terminate 停止）。
             worker_.reset();
             workerThread_.reset();
+            // P0 fix: terminate() 在任意指令处杀死 worker，留下损坏的 Interpreter 状态：
+            // (1) Value::operator= 的 release→assign 窗口被中断 → box_ 指向已释放 RefCounted
+            //     → restoreReplState 析构时 double-release UAF
+            // (2) unordered_map rehash / vector realloc 中途被中断 → 容器半重组
+            //     → restoreReplState 析构时 double-free 或野指针解引用
+            // (3) CRT 堆 critical section 被死线程永久持有 → 后续堆操作崩溃
+            // 这三种损坏状态都会被 NaNBox::tag() 合法化为 NaN float（0xFFFFFFFFFFFFFFFF），
+            // 掩盖底层 UB。继续执行 restoreReplState/setupMainCallbacks 会立即触发崩溃。
+            //
+            // 修复策略：terminate 是不可恢复的平台级故障，立即调用 std::_Exit(0) 退出进程，
+            // 跳过所有析构（损坏状态由操作系统回收）。这是关闭场景，进程即将退出，
+            // 跳过析构是安全的——比尝试析构损坏状态导致崩溃要好得多。
+            // 先 flush Logger 确保诊断信息写入文件/控制台。
+            Logger::instance().flush();
+            std::_Exit(0);
         }
     }
     // A-P1-2 fix: worker 已停止（正常或 terminate），安全执行完整状态清理

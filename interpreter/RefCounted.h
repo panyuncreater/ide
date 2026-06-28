@@ -56,9 +56,16 @@
 #include <atomic>
 #include "interpreter/ValueTypes.h"  // ValueType 枚举
 
+// Bug2 fix: 前向声明 GcManager（析构钩子需要调用其静态方法）
+class GcManager;
+
 struct RefCounted {
     mutable std::atomic<int> refCount{1};
     const ValueType type;
+    // Bug2 fix: GcManager 跟踪标志。构造时为 false，registerTracked 设为 true。
+    // 析构时若为 true，通知 GcManager 从 aliveSet_ 移除，避免 collectCycle
+    // 迭代 tracked_ 时访问已释放的对象（UAF）。
+    mutable bool gcTracked_ = false;
 
     explicit RefCounted(ValueType t) : type(t) {}
 
@@ -70,7 +77,11 @@ struct RefCounted {
     RefCounted& operator=(const RefCounted&) = delete;
     RefCounted& operator=(RefCounted&&) = delete;
 
-    virtual ~RefCounted() = default;
+    // Bug2 fix: 析构时通知 GcManager 从 aliveSet_ 移除本指针。
+    // 仅在 gcTracked_ 为 true 时调用，非跟踪对象零开销。
+    // 安全性：单线程 collectCycle 期间不会并发；this 在析构函数内仍有效
+    // （派生类析构已执行，RefCounted 部分仍可访问 gcTracked_）。
+    virtual ~RefCounted();
 
     /// 增加引用计数（relaxed 内存序， sufficient for refcounting）
     void addRef() const {

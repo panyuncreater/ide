@@ -24,6 +24,7 @@
 #include <atomic>
 #include <charconv>
 #include <array>
+#include <ctime>     // P0-2 fix: localtime_s/localtime_r 线程安全版本
 
 /// 日志级别（由低到高）
 enum class LogLevel {
@@ -162,22 +163,47 @@ private:
     }
 
     /// 生成带时间戳的格式化日志行
+    // P0-2 fix: std::localtime() 返回指向内部 static buffer 的指针，多线程并发调用时
+    // 产生数据竞争（项目已有多线程架构 QThread worker）。改用线程安全版本：
+    // Windows 用 localtime_s，POSIX 用 localtime_r。
+    // 同时 P1-3/Bug3 fix: 用栈缓冲 + snprintf 替代 ostringstream，避免多次堆分配
+    // （错误路径虽然低频，但 formatLine 是所有 log 的公共路径，INFO/DEBUG 级别高频）。
     std::string formatLine(LogLevel level, const std::string& message, const std::string& source) {
-        std::ostringstream oss;
         // 时间戳
         auto now = std::chrono::system_clock::now();
         auto t = std::chrono::system_clock::to_time_t(now);
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             now.time_since_epoch()) % 1000;
-        oss << std::put_time(std::localtime(&t), "%H:%M:%S");
-        oss << '.' << std::setfill('0') << std::setw(3) << ms.count();
-        // 级别
-        oss << " [" << levelString(level) << "]";
-        // 来源
-        if (!source.empty()) oss << " [" << source << "]";
-        // 消息
-        oss << ' ' << message;
-        return oss.str();
+        std::tm tmBuf{};
+#ifdef _WIN32
+        localtime_s(&tmBuf, &t);
+#else
+        localtime_r(&t, &tmBuf);
+#endif
+        char timeBuf[16];
+        std::strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &tmBuf);
+
+        // 预估容量并一次性分配：[HH:MM:SS.mmm] [LEVEL] [source] message
+        // 最坏情况：8+4+8+source.size()+1+message.size()，预留 64 字节余量
+        std::string result;
+        result.reserve(64 + source.size() + message.size());
+        result.append(timeBuf);
+        result.push_back('.');
+        // 毫秒固定 3 位补零
+        char msBuf[8];
+        std::snprintf(msBuf, sizeof(msBuf), "%03lld", static_cast<long long>(ms.count()));
+        result.append(msBuf);
+        result.append(" [");
+        result.append(levelString(level));
+        result.push_back(']');
+        if (!source.empty()) {
+            result.append(" [");
+            result.append(source);
+            result.push_back(']');
+        }
+        result.push_back(' ');
+        result.append(message);
+        return result;
     }
 };
 

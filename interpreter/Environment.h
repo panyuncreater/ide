@@ -141,6 +141,14 @@ public:
     }
 
     /// P1 fix: move 重载 — 避免 writeBack 中 std::move 静默退化为深拷贝
+    ///
+    /// 契约（P1-4 fix 显式标注）：
+    ///   - 返回 true:  val 已被 move 入目标变量，caller 不可再使用 val。
+    ///   - 返回 false: val 未被 move（caller 仍持有 val 的所有权，可继续使用）。
+    ///
+    /// 调用方必须检查返回值，否则在 false 路径下若按"已 move"语义使用 val
+    /// 会得到不一致行为（val 实际仍有效）。需要"无论是否找到都消费 val"
+    /// 语义时，使用 const Value& 重载或在调用后显式 val = Value::nullValue()。
     bool set(const std::string& name, Value&& val) {
         // PERF-02 fix: 递归改迭代
         // #21 fix: 同 set(const&)，缓存 lastCheckedInstance 跳过重复 boundInstance_ 字段查找

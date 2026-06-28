@@ -24,6 +24,7 @@
 #include <QSet>
 #include <QTimer>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -61,10 +62,12 @@ public:
 
     // ---- 编译结果与断点 ----
     /// 设置栈式 VM 编译结果（步进前必须调用，用于 initExecution）
-    void setCompileResult(const CompileResult& result) { lastCompileResult_ = &result; }
+    // P1-6 fix: 原存储裸指针，编译器状态变更（重新编译/移动 PipelineRunner）后可能悬垂。
+    // 改为按值拷贝（std::optional），VmStepper 持有独立所有权，与 Compiler 生命周期解耦。
+    void setCompileResult(const CompileResult& result) { lastCompileResult_ = result; }
     /// A1 fix: 设置 RegisterVM 编译结果（仅 useRegister_=true 时使用）
     void setRegisterCompileResult(const RegisterCompileResult& result) {
-        lastRegCompileResult_ = &result;
+        lastRegCompileResult_ = result;
     }
     /// A4 fix: 设置 VM 模式断点（复用 Interpreter 的 breakpoint 行号集合）
     void setBreakpoints(const QSet<int>& breakpoints) { vmBreakpoints_ = breakpoints; }
@@ -76,10 +79,10 @@ public:
         if (useRegister_ == enabled) return;
         // 切换前重置当前活跃后端，防止悬垂状态
         if (isVmRunning_) stop();
-        // 清空编译结果指针：切换后端后旧 CompileResult/RegisterCompileResult
-        // 可能与新后端不匹配（或已因重新编译而释放），强制下次 step 前必须重新编译同步。
-        lastCompileResult_ = nullptr;
-        lastRegCompileResult_ = nullptr;
+        // 清空编译结果：切换后端后旧 CompileResult/RegisterCompileResult
+        // 可能与新后端不匹配，强制下次 step 前必须重新编译同步。
+        lastCompileResult_.reset();
+        lastRegCompileResult_.reset();
         // 两个 VM 的 stepCallback 独立管理（stepByMode 中统一 disable），
         // 切换后端无需额外同步。
         useRegister_ = enabled;
@@ -165,8 +168,9 @@ private:
     // 不持有运行时资源（resetState 后 frames_/globals_ 均空），内存开销可忽略。
     VM vm_;
     RegisterVM regVm_;
-    const CompileResult* lastCompileResult_ = nullptr;
-    const RegisterCompileResult* lastRegCompileResult_ = nullptr;  // A1 fix
+    // P1-6 fix: 原 const T* 裸指针，编译器状态变更/移动可能悬垂。改为按值拷贝持有。
+    std::optional<CompileResult> lastCompileResult_;
+    std::optional<RegisterCompileResult> lastRegCompileResult_;  // A1 fix
 
     // ---- VM 步进状态 ----
     bool isVmRunning_ = false;
@@ -186,6 +190,6 @@ private:
     // 两个 VM 的 stepOnce 均返回 VMResult，无需 vtable，直接 if 分派更高效
     VMResult stepOnceActive();
     bool isActiveFinished() const;
-    void initActiveExecution();
+    bool initActiveExecution();  // P1-5 fix: 返回 false 表示编译结果为空，caller 不应标记 initialized
     void resetActiveState();
 };

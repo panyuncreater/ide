@@ -28,21 +28,26 @@ class SmallArgs {
     std::vector<T> heap_;
     size_t sz_ = 0;
 public:
-    SmallArgs() = default;
+    // P0 fix: 显式 value-initialize inline_ 数组——原 `= default` 在某些场景下
+    // 跳过元素默认构造，导致栈上 NaNBox 是随机位模式（包括 0xFFFFFFFFFFFFFFFF），
+    // 后续被 NaNBox::tag() 误判为合法 FLOAT（NaN）掩盖底层 UB。
+    SmallArgs() : sz_(0) {
+        for (size_t i = 0; i < N; ++i) inline_[i] = T();
+    }
     explicit SmallArgs(size_t count) : sz_(count) {
+        for (size_t i = 0; i < N; ++i) inline_[i] = T();
         if (count > N) heap_.resize(count);
     }
     size_t size() const { return sz_; }
     bool empty() const { return sz_ == 0; }
-    // 崩溃修复: Debug 构建下加 assert 边界检查，防止越界写破坏 inline_ 栈数组。
-    // 越界访问 inline_[i]（i >= N）会写穿到相邻成员（heap_/sz_）甚至栈 cookie，
-    // 触发 "Stack around the variable was corrupted"。
+    // P0 fix: assert 在 Release 被剥离，越界访问会读到栈垃圾（可能形成 0xFFFFFFFFFFFFFFFF），
+    // 被当作合法 Value 使用。改为运行时 abort，与 VMStack 一致风格。
     T& operator[](size_t i) {
-        assert(i < sz_ && "SmallArgs::operator[] index out of range");
+        if (i >= sz_) { std::abort(); }
         return (sz_ <= N) ? inline_[i] : heap_[i];
     }
     const T& operator[](size_t i) const {
-        assert(i < sz_ && "SmallArgs::operator[] index out of range");
+        if (i >= sz_) { std::abort(); }
         return (sz_ <= N) ? inline_[i] : heap_[i];
     }
     T* begin() { return (sz_ <= N) ? inline_ : heap_.data(); }
@@ -115,7 +120,15 @@ struct VMClassInfo {
 // ============================================================
 class VMStack {
 public:
-    VMStack() = default;
+    VMStack() : top_(0) {
+        // 显式 value-initialize 所有元素为 nullValue。
+        // 原 `Value data_[CAPACITY];` 在某些编译器/场景下可能跳过元素默认构造，
+        // 导致栈上 NaNBox 是随机位模式（包括 0xFFFFFFFFFFFFFFFF），后续读取
+        // 会被 NaNBox::tag() 误判为合法 FLOAT（NaN），掩盖底层 UB。
+        for (size_t i = 0; i < CAPACITY; ++i) {
+            data_[i] = Value::nullValue();
+        }
+    }
 
     // ---- 容量查询 ----
     size_t size() const { return top_; }
@@ -123,46 +136,51 @@ public:
     static constexpr size_t capacity() { return CAPACITY; }
 
     // ---- 元素访问 ----
+    // B6/P0 fix: assert 在 Release 构建被剥离，越界读会读到未初始化栈内存
+    // （可能形成 0xFFFFFFFFFFFFFFFF 位模式，被 NaNBox 误判为合法 NaN float）。
+    // 改为运行时 abort，与 RegisterVM::reg() 的 B3 fix 风格一致——显式失败优于静默继续。
     Value& operator[](size_t i) {
-        assert(i < top_ && "VMStack index out of range");
+        if (i >= top_) { std::abort(); }
         return data_[i];
     }
     const Value& operator[](size_t i) const {
-        assert(i < top_ && "VMStack index out of range");
+        if (i >= top_) { std::abort(); }
         return data_[i];
     }
     Value& back() {
-        assert(top_ > 0 && "VMStack::back() on empty stack");
+        if (top_ == 0) { std::abort(); }
         return data_[top_ - 1];
     }
     const Value& back() const {
-        assert(top_ > 0 && "VMStack::back() on empty stack");
+        if (top_ == 0) { std::abort(); }
         return data_[top_ - 1];
     }
 
     // ---- 栈操作 ----
     void push_back(const Value& v) {
-        assert(top_ < CAPACITY && "VMStack overflow");
+        if (top_ >= CAPACITY) { std::abort(); }
         data_[top_++] = v;
     }
     void push_back(Value&& v) {
-        assert(top_ < CAPACITY && "VMStack overflow");
+        if (top_ >= CAPACITY) { std::abort(); }
         data_[top_++] = std::move(v);
     }
     template<typename... Args>
     void emplace_back(Args&&... args) {
-        assert(top_ < CAPACITY && "VMStack overflow");
+        if (top_ >= CAPACITY) { std::abort(); }
         data_[top_++] = Value(std::forward<Args>(args)...);
     }
     void pop_back() {
-        assert(top_ > 0 && "VMStack::pop_back() on empty stack");
+        if (top_ == 0) { std::abort(); }
         --top_;
     }
 
     // ---- 批量操作 ----
     void clear() { top_ = 0; }
+    // B6/P0 fix: resize 仅能缩小，原 assert Release 被剥离可能导致 top_ 虚增
+    // 读到未初始化槽位（栈垃圾），改为运行时 abort。
     void resize(size_t n) {
-        assert(n <= top_ && "VMStack::resize() can only shrink");
+        if (n > top_) { std::abort(); }
         top_ = n;
     }
     /// no-op：定长数组无需预分配
@@ -176,7 +194,7 @@ public:
 private:
     static constexpr size_t CAPACITY = RuntimeLimits::MAX_STACK_SIZE;
     Value data_[CAPACITY];
-    size_t top_ = 0;
+    size_t top_;
 };
 
 /// 简单栈式虚拟机

@@ -60,8 +60,14 @@ ReplPanel::~ReplPanel() {
     // 仅把阻塞点从成员析构推迟到局部变量析构，5 秒超时形同虚设。
     // 此处显式 wait()，由 Interpreter 的 MAX_LOOP_ITERATIONS (10M) 保护正常程序
     // 不会无限循环；极端死循环场景下进程退出时由 OS 兜底回收。
-    // ReplPanel 是 Ide 的子组件，析构顺序保证 IdeController（ctrl）在 ReplPanel
-    // 之后析构，因此异步任务内对 ctrl 的访问是安全的。
+    //
+    // P0-4 fix: 原注释声称"IdeController 在 ReplPanel 之后析构"是错误的——
+    // controller_ 是裸指针，由 QObject parent 机制管理（new IdeController(this)），
+    // Qt 子对象析构顺序与声明顺序无关，取决于 parent 的 children 列表删除顺序。
+    // 但 replFuture_.wait() 在 ReplPanel 析构时阻塞，确保异步任务在 controller_
+    // 析构前完成，故异步任务内对 ctrl 的访问是安全的（任务已结束，不再访问 ctrl）。
+    // Ide::closeEvent 中的 forceStop 已确保 worker 停止，REPL 任务由
+    // MAX_LOOP_ITERATIONS 兜底，~ReplPanel 的 wait() 是最后一道防线。
     if (replFuture_.valid()) {
         replFuture_.wait();
     }

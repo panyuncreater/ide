@@ -35,6 +35,7 @@
 #include "interpreter/RefCounted.h"   // PERF-12: 侵入式引用计数基类
 #include "interpreter/NaNBox.h"       // PERF-12: 8字节 NaN-boxing 编码
 #include "interpreter/NumericUtils.h" // 共享溢出检查（B6 fix）
+#include "interpreter/GcManager.h"    // Bug2 fix: 循环引用 GC
 #include "common/RuntimeLimits.h"
 
 #include <string>
@@ -57,6 +58,8 @@
 // ============================================================
 
 struct Value {
+    // Bug2 fix: GcManager mark-sweep 需要访问 private 嵌套类型和 box_ 进行容器图遍历
+    friend class GcManager;
 private:
     // ---- 堆类型数据载体（继承 RefCounted， intrusive 引用计数）----
     struct StringData : RefCounted {
@@ -71,20 +74,31 @@ private:
 
     struct ArrayData : RefCounted {
         std::vector<Value> elements;
-        ArrayData() : RefCounted(ValueType::VAL_ARRAY) {}
-        explicit ArrayData(std::vector<Value> v) : RefCounted(ValueType::VAL_ARRAY), elements(std::move(v)) {}
+        ArrayData() : RefCounted(ValueType::VAL_ARRAY) {
+            // Bug2 fix: 注册到 GcManager 跟踪循环引用
+            GcManager::instance().registerTracked(this);
+        }
+        explicit ArrayData(std::vector<Value> v) : RefCounted(ValueType::VAL_ARRAY), elements(std::move(v)) {
+            GcManager::instance().registerTracked(this);
+        }
     };
 
     struct DictData : RefCounted {
         std::unordered_map<std::string, Value> entries;
-        DictData() : RefCounted(ValueType::VAL_DICT) {}
+        DictData() : RefCounted(ValueType::VAL_DICT) {
+            GcManager::instance().registerTracked(this);
+        }
     };
 
     struct InstanceData : RefCounted {
         std::string className;
         std::unordered_map<std::string, Value> fields;
-        InstanceData() : RefCounted(ValueType::VAL_INSTANCE) {}
-        explicit InstanceData(const std::string& cn) : RefCounted(ValueType::VAL_INSTANCE), className(cn) {}
+        InstanceData() : RefCounted(ValueType::VAL_INSTANCE) {
+            GcManager::instance().registerTracked(this);
+        }
+        explicit InstanceData(const std::string& cn) : RefCounted(ValueType::VAL_INSTANCE), className(cn) {
+            GcManager::instance().registerTracked(this);
+        }
     };
 
     struct ClosureData : RefCounted {
@@ -117,10 +131,16 @@ private:
         T* ptr = box_.asPtr<T>();
         if (!ptr->isUnique()) {
             // 引用计数 > 1：深拷贝一份新数据
-            T* cloned = new T(*ptr);  // 拷贝构造（RefCounted 拷贝 ctor 重置 refCount=1）
-            ptr->release();           // 释放旧引用
-            box_ = NaNBox::fromPtr(static_cast<const void*>(cloned));
-            return cloned;
+            // P0 fix: 用 unique_ptr 包裹 cloned，防止 new T(*ptr) 抛 bad_alloc 时
+            // 部分已克隆的子树泄漏（如 ArrayData/DictData/InstanceData 的 cloneImpl
+            // 递归克隆嵌套 Value，中途抛异常会泄漏已分配的子对象）。
+            // 异常安全：unique_ptr 析构时 delete cloned（释放已分配对象）；
+            //           ptr->release() 未执行，旧引用计数不变，仍由调用方持有。
+            auto cloned = std::make_unique<T>(*ptr);  // 拷贝构造（RefCounted 拷贝 ctor 重置 refCount=1）
+            ptr->release();                          // 释放旧引用
+            T* raw = cloned.release();
+            box_ = NaNBox::fromPtr(static_cast<const void*>(raw));
+            return raw;
         }
         return ptr;
     }

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cassert>
+#include <cstdlib>  // std::abort — Release 构建中 assert 兜底，避免 UB
 #include <string>
 
 // ============================================================
@@ -59,7 +60,9 @@ public:
     }
 
     static NaNBox fromInt(int64_t i) {
-        assert(canEncodeInt(i) && "int64 value exceeds int48 range");
+        // P0 fix: assert 在 Release 构建被剥离，超范围值静默截断导致数据损坏。
+        // 改为运行时 abort，与 VMStack 风格一致——显式失败优于静默继续。
+        if (!canEncodeInt(i)) { std::abort(); }
         NaNBox box;
         // 将 int64 截断为 int48（保留符号位扩展）
         uint64_t payload = static_cast<uint64_t>(i) & INT48_MASK;
@@ -82,8 +85,9 @@ public:
     static NaNBox fromPtr(const void* ptr) {
         NaNBox box;
         uint64_t ptrBits = reinterpret_cast<uint64_t>(ptr);
-        // x86-64 用户态指针高 16 位必须为 0（仅存储低 48 位）
-        assert((ptrBits & ~PTR_MASK) == 0);
+        // P0 fix: assert 在 Release 被剥离，内核指针（高 16 位非 0）静默截断
+        // 产生错误指针编码，后续 asPtr 解码出无效地址触发访问冲突。
+        if ((ptrBits & ~PTR_MASK) != 0) { std::abort(); }
         box.bits_ = PTR_TAG_BASE | (ptrBits & PTR_MASK);
         return box;
     }
@@ -113,16 +117,19 @@ public:
     }
 
     // ---- 值提取 ----
+    // P0 fix: 所有 asXxx 的 assert 在 Release 被剥离，类型不匹配时静默返回
+    // 垃圾值（如把指针当 int 解读），掩盖底层 bug。改为运行时 abort。
+    // 调用方应先调用 isXxx() 检查类型后再调用 asXxx()。
 
     double asFloat() const {
-        assert(isFloat());
+        if (!isFloat()) { std::abort(); }
         double d;
         std::memcpy(&d, &bits_, sizeof(double));
         return d;
     }
 
     int64_t asInt() const {
-        assert(isInt());
+        if (!isInt()) { std::abort(); }
         // int48 符号扩展：将 bit 47 扩展到高位
         uint64_t payload = bits_ & INT48_MASK;
         if (payload & INT47_SIGN_BIT) {
@@ -132,13 +139,13 @@ public:
     }
 
     bool asBool() const {
-        assert(isBool());
+        if (!isBool()) { std::abort(); }
         return (bits_ & 1ULL) != 0;
     }
 
     template<typename T>
     T* asPtr() const {
-        assert(isPointer());
+        if (!isPointer()) { std::abort(); }
         // 零扩展：x86-64 用户空间指针高 16 位始终为 0，直接取低 48 位即可。
         // 不能使用符号扩展——Windows x64 用户空间地址（如 0x00007FFD...）的
         // bit 47 = 1，符号扩展会错误地将高 16 位填为 0xFFFF，产生无效内核地址。

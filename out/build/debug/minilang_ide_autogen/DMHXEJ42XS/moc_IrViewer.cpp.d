@@ -1,8 +1,10 @@
 C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/DMHXEJ42XS/moc_IrViewer.cpp: C:/Users/v/Desktop/ide/ide/gui/IrViewer.h \
   C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
+  C:/Users/v/Desktop/ide/ide/common/Utf8Utils.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
   C:/Users/v/Desktop/ide/ide/compiler/GlobalSlotAllocator.h \
   C:/Users/v/Desktop/ide/ide/compiler/IR.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/GcManager.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NaNBox.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/RefCounted.h \

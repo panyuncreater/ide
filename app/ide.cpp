@@ -822,7 +822,13 @@ void Ide::highlightIRLine(size_t bytecodeOffset) {
 
 void Ide::onVmStep() {
     if (controller_->isVmRunning()) return;
-    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
+    // P0-1 fix: 按后端选择检查对象——原代码仅检查 lastCompileResult()（栈式 VM 结果），
+    // 但 useRegisterVM=true 时实际编译结果存在 getLastRegisterResult() 中，
+    // lastCompileResult() 为空导致 RegisterVM 模式下所有调试按钮点击无反应。
+    bool hasCode = controller_->getUseRegisterVM()
+        ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
+        : !controller_->lastCompileResult().mainChunk.code.empty();
+    if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点（用户可能在暂停期间增删断点）
     controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
@@ -848,7 +854,11 @@ void Ide::onVmStep() {
 
 void Ide::onVmStepOver() {
     if (controller_->isVmRunning()) return;
-    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
+    // P0-1 fix: 按后端选择检查对象（详见 onVmStep 注释）
+    bool hasCode = controller_->getUseRegisterVM()
+        ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
+        : !controller_->lastCompileResult().mainChunk.code.empty();
+    if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点
     controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
@@ -871,7 +881,11 @@ void Ide::onVmStepOver() {
 
 void Ide::onVmStepOut() {
     if (controller_->isVmRunning()) return;
-    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
+    // P0-1 fix: 按后端选择检查对象（详见 onVmStep 注释）
+    bool hasCode = controller_->getUseRegisterVM()
+        ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
+        : !controller_->lastCompileResult().mainChunk.code.empty();
+    if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点
     controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
@@ -894,7 +908,11 @@ void Ide::onVmStepOut() {
 
 void Ide::onVmRun() {
     if (controller_->isVmRunning()) return;
-    if (controller_->lastCompileResult().mainChunk.code.empty()) return;
+    // P0-1 fix: 按后端选择检查对象（详见 onVmStep 注释）
+    bool hasCode = controller_->getUseRegisterVM()
+        ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
+        : !controller_->lastCompileResult().mainChunk.code.empty();
+    if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点
     controller_->setVmBreakpoints(codeEditor_->getBreakpoints());

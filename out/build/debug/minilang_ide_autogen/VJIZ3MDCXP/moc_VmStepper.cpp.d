@@ -3,9 +3,13 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_V
   C:/Users/v/Desktop/ide/ide/common/IBackend.h \
   C:/Users/v/Desktop/ide/ide/common/Result.h \
   C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
+  C:/Users/v/Desktop/ide/ide/common/Utf8Utils.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
+  C:/Users/v/Desktop/ide/ide/compiler/RegisterBytecode.h \
+  C:/Users/v/Desktop/ide/ide/compiler/RegisterVM.h \
   C:/Users/v/Desktop/ide/ide/compiler/VM.h \
   C:/Users/v/Desktop/ide/ide/interpreter/BuiltinMethods.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/GcManager.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NaNBox.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/RefCounted.h \

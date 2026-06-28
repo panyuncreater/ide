@@ -36,6 +36,7 @@ set(MINILANG_CORE_SOURCES
     interpreter/InterpreterModules.cpp
     interpreter/BuiltinMethods.cpp
     interpreter/Value.cpp
+    interpreter/GcManager.cpp
     debug/DebugController.cpp
     compiler/Bytecode.cpp
     compiler/Compiler.cpp

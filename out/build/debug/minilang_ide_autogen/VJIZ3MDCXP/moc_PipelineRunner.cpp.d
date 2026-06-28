@@ -2,12 +2,15 @@ C:/Users/v/Desktop/ide/ide/out/build/debug/minilang_ide_autogen/VJIZ3MDCXP/moc_P
   C:/Users/v/Desktop/ide/ide/ast/ASTNode.h \
   C:/Users/v/Desktop/ide/ide/common/Diagnostic.h \
   C:/Users/v/Desktop/ide/ide/common/RuntimeLimits.h \
+  C:/Users/v/Desktop/ide/ide/common/TypeChecker.h \
+  C:/Users/v/Desktop/ide/ide/common/Utf8Utils.h \
   C:/Users/v/Desktop/ide/ide/compiler/Bytecode.h \
   C:/Users/v/Desktop/ide/ide/compiler/Compiler.h \
   C:/Users/v/Desktop/ide/ide/compiler/GlobalSlotAllocator.h \
   C:/Users/v/Desktop/ide/ide/compiler/IR.h \
   C:/Users/v/Desktop/ide/ide/compiler/RegisterBytecode.h \
   C:/Users/v/Desktop/ide/ide/formatter/Formatter.h \
+  C:/Users/v/Desktop/ide/ide/interpreter/GcManager.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NaNBox.h \
   C:/Users/v/Desktop/ide/ide/interpreter/NumericUtils.h \
   C:/Users/v/Desktop/ide/ide/interpreter/RefCounted.h \

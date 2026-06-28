@@ -16,12 +16,13 @@
 
 ### IDE 能力
 - **代码编辑器**：语法高亮、行号、断点标记、错误下划线、当前执行行高亮
-- **词法/语法分析可视化**：Token 表格、AST 树形图（可缩放/平移）
+- **词法/语法分析可视化**：Token 表格、AST 树形图（Reingold-Tilford 算法自动布局，可缩放/平移，父节点居中于子节点群）
 - **字节码反汇编**：主 chunk 与函数 chunk 分段显示，单步高亮当前指令
 - **IR 中间表示层**：可选 AST → IR → Bytecode 三段式编译，52 个 IROp 指令，支持 SSA-like 虚拟寄存器、多函数 lowering、闭包 upvalue 捕获、写回指令、全局槽位分配、优化 pass（常量折叠 / 死代码消除）、IR 可视化面板与 IR 调试器集成
-- **双执行引擎**：
+- **三执行引擎**：
   - 树遍历解释器（支持 REPL 续行输入）
   - 栈式字节码 VM（支持单步、栈/全局变量监视）
+  - 寄存器式 VM（32 虚拟寄存器 R0-R31，50+ RegOp，IR 三地址码直接 lowering）
 - **调试器**：断点（含条件断点）、单步进入/跳过/跳出、变量监视、调用栈
 - **代码格式化器**：可配置缩进/花括号风格/运算符空格，保留注释
 - **REPL 面板**：交互式求值，支持多行续行（未闭合 `{ ( [` 或字符串自动续行），异步执行不阻塞 UI
@@ -111,7 +112,7 @@ nmake
 
 ## 测试
 
-项目包含 **705 个 GoogleTest 单元测试**，覆盖所有核心模块：
+项目包含 **747 个 GoogleTest 单元测试**，覆盖所有核心模块：
 
 | 测试套件 | 覆盖模块 |
 |----------|----------|
@@ -182,8 +183,8 @@ var arr = [1, 2, 3];
 arr.push(4);
 print(arr.len());  // 4
 
-var dict = {"key": "value", "count": 42};
-print(dict["key"]);  // value
+var cfg = {"key": "value", "count": 42};
+print(cfg["key"]);  // value
 ```
 
 ## 工程约定
@@ -195,8 +196,11 @@ print(dict["key"]);  // value
 - **COW 优化**：Value 类型使用 Copy-On-Write，堆类型修改前通过 `ensureUnique<T>()` 检查 `isUnique()` 确保独占所有权
 - **DoS 防护**：源码 ≤10MB、Token ≤100 万、循环 ≤1000 万次、字符串 reserve ≤1MB
 - **递归保护**：Parser/Compiler/Formatter/equals() 均有深度限制（512/256）
-- **线程安全**：DebugController 使用 mutex + atomic，Worker 线程通过 Qt 信号回传
-- **异常安全**：UI 槽函数包裹 try/catch，确保异常时回滚 UI 状态
+- **线程安全**：DebugController 使用 mutex + atomic，Worker 线程通过 Qt 信号回传；`std::localtime()` 等非线程安全函数替换为 `localtime_s` (Windows) / `localtime_r` (POSIX)
+- **异常安全**：UI 槽函数包裹 try/catch，确保异常时回滚 UI 状态；深拷贝操作使用 `std::unique_ptr` 包裹防止 bad_alloc 泄漏
+- **内存安全**：所有 assert 检查的越界/类型保护在 Release 构建中使用运行时检查（`std::abort` / `runtimeError`）；Value 数组/容器强制 value-initialize 防止 NaN-box 未初始化内存被误判为合法 float
+- **防御性编程**：封闭枚举 switch 必须加 default 分支；边界检查覆盖全深度、全路径、全状态；测试 helper 检查中间错误状态而非仅断言输出
+- **生命周期安全**：不持有外部对象的裸指针（编译器结果、实例绑定等），改用 `std::optional` 按值拷贝或 `std::shared_ptr` 共享所有权；QThread::terminate 后立即退出进程（损坏状态无法安全析构）
 - **资源管理**：unique_ptr 管理 QThread（自定义删除器先 quit+wait 再 delete）
 - **IR 中间层**：可选 AST → IR → Bytecode 三段式编译，IRBuilder/IRBackend 抽象接口可扩展多后端；启用 `setIR(true)` + `setIROptimize(true)` 后在 lowering 前执行常量折叠 / 死代码消除 pass（最多 3 轮迭代）；寄存器式后端额外启用复制传播（`setUseRegisterVM(true)` + `setIROptimize(true)`）
 

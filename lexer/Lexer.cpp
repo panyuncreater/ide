@@ -89,7 +89,13 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     interpDepth_ = 0;  // L-P1-1: 重置插值嵌套深度
     // PERF-19 fix: 预分配 tokens_ 容量，避免大文件场景多次 realloc。
     // 估算：平均每 8 字符产生 1 个 token（关键字/标识符/字面量/运算符）
-    tokens_.reserve(source.size() / 8 + 16);
+    // P0 fix: 限制 reserve 在 MAX_TOKEN_COUNT 内——原 `source.size()/8 + 16` 对 10MB 源码
+    // 会预分配 1.25M 槽位（~110MB），超过 MAX_TOKEN_COUNT (1M) 25%，单次大额堆分配极易
+    // 抛 bad_alloc（特别是已运行过其他工具的内存压力下）。token 上限检查会强制 break，
+    // 预分配超过上限纯属浪费。
+    size_t reserveCap = source.size() / 8 + 16;
+    if (reserveCap > MAX_TOKEN_COUNT) reserveCap = MAX_TOKEN_COUNT;
+    tokens_.reserve(reserveCap);
 
     // 跳过 UTF-8 BOM（字节序标记）
     if (source_.size() >= 3 &&
@@ -117,8 +123,11 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     tokens_.emplace_back(TokenType::TK_EOF, "", std::monostate{}, line_, currentColumn());
 
     // 从 TK_ERROR Token 中提取诊断信息，并将注释 Token 分离到 comments_
+    // P0 fix: 不再 reserve(tokens_.size())——原代码会瞬时分配与 tokens_ 等大的内存，
+    // 峰值达 tokens_ + cleanTokens 双倍（~220MB）。改为让 cleanTokens 自然增长，
+    // 注释 Token 通常很少，cleanTokens.size() ≈ tokens_.size() - comments_.size()，
+    // move 后 tokens_ 释放，最终 cleanTokens 占用 ≈ 原大小。略多几次 realloc 但避免峰值翻倍。
     std::vector<Token> cleanTokens;
-    cleanTokens.reserve(tokens_.size());
     for (auto& tok : tokens_) {
         if (tok.type == TokenType::TK_ERROR) {
             diagnostics_.addError(tok.lexeme, tok.line, tok.column, DiagSource::Lexer);
@@ -175,6 +184,19 @@ bool Lexer::match(char expected) {
 }
 
 void Lexer::scanToken() {
+    // P0 fix: 在 scanToken 入口检查 token 上限，防止插值字符串路径（string() 中
+    // 递归调用 scanToken）绕过 scan() 外层循环的 MAX_TOKEN_COUNT 检查。
+    // 原检查仅在 scan() 外层 while 循环中，但 string() 的插值表达式循环会递归
+    // 调用 scanToken()，单次 string() 调用可能产生数百万 Token，远超上限，
+    // 导致 tokens_ 容器指数级 realloc 触发 bad_alloc。
+    // Hard Constraint #27: Lexer must check MAX_TOKEN_COUNT at start of scanToken().
+    if (tokens_.size() >= MAX_TOKEN_COUNT) {
+        diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                              "，源代码可能包含过多 token",
+                              line_, currentColumn(), DiagSource::Lexer);
+        return;
+    }
+
     char c = advance();
 
     switch (c) {
