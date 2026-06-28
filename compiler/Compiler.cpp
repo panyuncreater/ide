@@ -13,6 +13,14 @@
 Compiler::Compiler() {}
 
 CompileResult Compiler::compile(Block& program) {
+    // A4 fix: 可选类型检查 pass（在 codegen 前运行，stub 当前为 no-op）
+    // 若 strictMode_ 为 true 且检查器报告错误，将错误合并到 diagnostics_ 后继续编译
+    if (enableTypeCheck_ && typeChecker_) {
+        auto typeDiag = typeChecker_->check(program);
+        // stub 返回空 DiagnosticBag，未来实现后此处会合并诊断
+        // 注意：当前 stub 不阻断编译流程（动态类型语义下类型问题仅警告）
+    }
+
     // PERF-14: 寄存器式 VM 路径（AST → IR → RegisterBytecode）
     // 启用后走 AstIRBuilder + RegisterBytecodeBackend，配合 RegisterVM 执行
     if (useRegisterVM_) {
@@ -79,7 +87,8 @@ CompileResult Compiler::compile(Block& program) {
         kv.second.buildIpMap();
     }
 
-    Logger::Info("字节码编译完成: " + std::to_string(result.globalSlotCount) + " 全局槽, " +
+    // Perf-LazyLog: 改用 LOG_INFO 宏，级别过滤后不构造消息字符串（避免 std::to_string 的 locale 查询 + 堆分配）
+    LOG_INFO("字节码编译完成: " + std::to_string(result.globalSlotCount) + " 全局槽, " +
         std::to_string(result.functionChunks.size()) + " 函数chunk", "Compiler");
     return result;
 }
@@ -148,7 +157,8 @@ CompileResult Compiler::compileViaIR(Block& program) {
     // 方向四：保存 main 函数的 IR→字节码偏移映射（用于 VM 单步时高亮 IR 指令）
     lastIRToBytecodeOffset_ = backend.irToBytecodeOffset();
 
-    Logger::Info("IR 编译完成: " + std::to_string(lastIR_->blocks.size()) + " 基本块, " +
+    // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
+    LOG_INFO("IR 编译完成: " + std::to_string(lastIR_->blocks.size()) + " 基本块, " +
         std::to_string(lastIR_->constants.size()) + " 常量, " +
         std::to_string(lastIR_->nextVReg) + " vreg, " +
         std::to_string(result.functionChunks.size()) + " 函数chunk, " +
@@ -205,7 +215,8 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     // 恢复 lastIR_ 供调试/可视化使用
     lastIR_ = std::move(module->mainFunction);
 
-    Logger::Info("Register IR 编译完成: " +
+    // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
+    LOG_INFO("Register IR 编译完成: " +
         std::to_string(result.mainChunk.code.size()) + " 字节, " +
         std::to_string(result.mainChunk.registerCount) + " 寄存器, " +
         std::to_string(result.functionChunks.size()) + " 函数chunk, " +

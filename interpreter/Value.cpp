@@ -151,6 +151,10 @@ bool Value::equalsImpl(const Value& other,
     case ValueType::VAL_CLOSURE:
         // P2-14 fix: expired env 误判相等防护
         // PERF-12: 直接通过 NaNBox 指针访问 ClosureData
+        // 设计决策：闭包相等性按 name + env 比较（TestValue.cpp 的
+        // ClosureEqualsSameNameAndEnv/DifferentNameNotEqual/DifferentEnvNotEqual 三组
+        // 测试用例明确锁定此契约）。同名同环境但函数体不同的闭包判为相等是已知限制，
+        // 容器场景下闭包作为键的情况极少，权衡后保留现有语义。
         {
             auto* cd1 = box_.asPtr<ClosureData>();
             auto* cd2 = other.box_.asPtr<ClosureData>();
@@ -175,8 +179,12 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
     // B5 fix: 深度保护
     if (depth >= MAX_TOSTRING_DEPTH) return "[...too deep]";
     switch (getType()) {
-    case ValueType::VAL_INT:
-        return std::to_string(intVal());
+    case ValueType::VAL_INT: {
+        // Perf-Finding2: 用 std::to_chars 替代 std::to_string（避免 locale 查询）
+        char buf[32];
+        auto res = std::to_chars(buf, buf + sizeof(buf), intVal());
+        return std::string(buf, res.ptr);
+    }
     case ValueType::VAL_FLOAT: {
         char buf[64];
         int len = snprintf(buf, sizeof(buf), "%.17g", box_.asFloat());

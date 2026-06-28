@@ -10,8 +10,10 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <memory>
 #include "interpreter/Value.h"
 #include "debug/DebugTypes.h"  // ARCH-16 fix: 共享调试公共类型
+#include "debug/DebugEvaluator.h"  // A5 fix: 抽取条件断点求值器
 
 // ============================================================
 // DebugController 调试控制器
@@ -48,6 +50,7 @@ public:
     int getBreakpointHitCount(int line) const;
 
     /// 设置条件表达式求值回调（由 IDE 设置，接收条件字符串，返回 bool）
+    // A5 fix: 委托给 DebugEvaluator，DebugController 不再直接持有回调
     void setConditionEvaluator(std::function<bool(const std::string&)> evaluator);
 
     /// 步进控制
@@ -95,7 +98,8 @@ private:
     std::atomic<int> mode_{static_cast<int>(StepMode::MODE_RUN)};  // atomic for cross-thread access
     QSet<int> breakpoints_;     // 断点行号集合
     QMap<int, BreakpointInfo> breakpointInfos_;  // 条件断点详情（行号→信息）
-    std::function<bool(const std::string&)> conditionEvaluator_;  // 条件表达式求值器
+    // A5 fix: 抽取到独立 DebugEvaluator 类，DebugController 仅持有指针
+    std::unique_ptr<DebugEvaluator> evaluator_{std::make_unique<DebugEvaluator>()};
     // P0-9 fix: 跨线程读写的标量字段改为 atomic，避免数据竞争
     std::atomic<int> currentDepth_{0};      // 当前调用深度（worker 写，UI 读）
     int stepOverDepth_ = 0;     // stepOver 时的调用深度（mutex 保护）

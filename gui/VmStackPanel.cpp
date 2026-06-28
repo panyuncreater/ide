@@ -1,4 +1,5 @@
 #include "gui/VmStackPanel.h"
+#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include <QVBoxLayout>
 #include <QHeaderView>
 #include <QAbstractItemView>
@@ -39,7 +40,7 @@ VmStackPanel::VmStackPanel(QWidget* parent)
 
     stackList_ = new QListWidget(this);
     stackList_->setObjectName("vmStackList");
-    stackList_->setFont(QFont("Consolas", 10));
+    stackList_->setFont(GuiTextUtils::monospaceFont(10));
     stackLayout->addWidget(stackList_);
     splitter->addWidget(stackGroup);
 
@@ -62,7 +63,7 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     globalsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     globalsTable_->setAlternatingRowColors(true);
     globalsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    globalsTable_->setFont(QFont("Consolas", 10));
+    globalsTable_->setFont(GuiTextUtils::monospaceFont(10));
     globalsLayout->addWidget(globalsTable_);
     splitter->addWidget(globalsGroup);
 
@@ -102,6 +103,26 @@ void VmStackPanel::updateStack(const std::vector<Value>& stack) {
     }
 }
 
+// A1 fix: RegisterVM 寄存器列表显示。寄存器按 R0..Rn 顺序展示，
+// 与栈式 VM 的「栈顶在上」不同——寄存器无栈语义，按编号升序更直观。
+void VmStackPanel::updateRegisters(const std::vector<Value>& registers) {
+    stackList_->clear();
+
+    for (size_t i = 0; i < registers.size(); ++i) {
+        QString itemText = QString("R%1  %2")
+            .arg(static_cast<int>(i))
+            .arg(QString::fromStdString(registers[i].toString()));
+        auto* item = new QListWidgetItem(itemText);
+        stackList_->addItem(item);
+    }
+
+    if (registers.empty()) {
+        auto* item = new QListWidgetItem("(无激活寄存器)");
+        item->setForeground(palette().placeholderText().color());
+        stackList_->addItem(item);
+    }
+}
+
 void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& globals) {
     // P6 fix: 排序时只拷贝键的指针，避免深拷贝所有 Value
     std::vector<const std::pair<const std::string, Value>*> entries;
@@ -129,10 +150,12 @@ void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& g
     }
 }
 
-void VmStackPanel::updateCurrentOp(size_t ip, OpCode opcode, int line) {
-    QString opName = opCodeName(opcode);
-
-    opLabel_->setText(QString("IP: %1  |  %2  |  行: %3").arg(ip).arg(opName).arg(line));
+// A1 fix: 统一接受 opName 字符串，兼容栈式 VM (opCodeName) 和 RegisterVM (regOpName)
+void VmStackPanel::updateCurrentOp(size_t ip, const std::string& opName, int line) {
+    opLabel_->setText(QString("IP: %1  |  %2  |  行: %3")
+                        .arg(static_cast<qulonglong>(ip))
+                        .arg(QString::fromStdString(opName))
+                        .arg(line));
 }
 
 void VmStackPanel::clearAll() {

@@ -83,6 +83,21 @@ void Ide::closeEvent(QCloseEvent* event) {
         return;
     }
 
+    // B4 fix: REPL 异步任务在跑时弹窗告知用户关闭将阻塞（~ReplPanel 调用
+    // replFuture_.wait() 阻塞至任务完成，因 std::async 析构语义无法限时取消）。
+    // 让用户选择等待任务完成后再关，或强制关闭（仍会阻塞直到任务完成）。
+    if (replPanel_->isReplRunning()) {
+        auto ret = QMessageBox::warning(this,
+            QString::fromUtf8("REPL 仍在执行"),
+            QString::fromUtf8("REPL 有异步任务正在执行。\n关闭窗口将阻塞直至任务完成（极端死循环场景下需等待解释器的迭代上限触发 RuntimeError）。\n\n是否继续关闭？"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (ret != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+    }
+
     // 崩溃修复: forceStop 保证 worker 线程在返回前完全停止（正常退出或 terminate+join）。
     // 曾尝试异步关闭机制（closeEvent 触发停止、workerFinished 信号回调 close()），
     // 但 forceStop 重置 workerThread_ 会断开 finished 信号，导致 workerFinished 永不
@@ -740,6 +755,8 @@ void Ide::onShowIR() {
 
     if (pipelineResult.status != IdeController::PipelineStatus::OK) {
         irViewer_->clearIR();
+        // 失败时恢复 useIR=false，避免污染后续 run/debug 的编译路径
+        controller_->compiler().setUseIR(false);
         if (!pipelineResult.errorMessage.empty()) {
             irViewer_->setIR(nullptr);
             // 显示错误信息
@@ -754,19 +771,26 @@ void Ide::onShowIR() {
     }
     updateAstViewer();
 
-    if (!controller_->astRoot()) return;
+    if (!controller_->astRoot()) {
+        controller_->compiler().setUseIR(false);
+        return;
+    }
 
     // 编译（走 IR 路径）
     try {
         controller_->runCompiler();
     } catch (const std::exception& e) {
         irViewer_->clearIR();
+        controller_->compiler().setUseIR(false);
         outputPanel_->appendError(QString("IR 编译异常: %1").arg(e.what()));
         return;
     }
 
     // 填充 IR 可视化面板
     populateIRViewer();
+
+    // 恢复 useIR=false：onShowIR 仅用于 IR 可视化，不应影响后续 run/debug 的编译路径
+    controller_->compiler().setUseIR(false);
 
     // 切换到 IR Tab
     rightTabWidget_->setCurrentWidget(irViewer_);
@@ -941,13 +965,19 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
     case IdeController::VmStepResult::OK:
     case IdeController::VmStepResult::PAUSED_AT_BREAKPOINT:
         // 更新 UI：栈 + 全局变量 + 当前指令高亮 + 调用栈
-        vmStackPanel_->updateStack(controller_->getVmStack());
+        // A1 fix: RegisterVM 模式显示寄存器窗口；栈式 VM 模式显示操作数栈
+        if (controller_->isVmRegisterMode()) {
+            vmStackPanel_->updateRegisters(controller_->getVmStack());
+        } else {
+            vmStackPanel_->updateStack(controller_->getVmStack());
+        }
         vmStackPanel_->updateGlobals(controller_->getVmGlobals());
         {
             size_t currentIP = controller_->getVmCurrentIP();
-            OpCode currentOp = controller_->getVmCurrentOpCode();
+            // A1 fix: 统一使用 opCodeName 字符串，兼容 OpCode/RegOp
+            std::string opName = controller_->getVmCurrentOpCodeName();
             int opLine = controller_->getVmCurrentLine();
-            vmStackPanel_->updateCurrentOp(currentIP, currentOp, opLine);
+            vmStackPanel_->updateCurrentOp(currentIP, opName, opLine);
             highlightBytecodeLine(controller_->getVmCurrentChunkName(), currentIP);
             // 方向四：同步高亮 IR 视图中对应的 IR 指令（仅 main chunk 时有效）
             if (controller_->getVmCurrentChunkName() == "main") {

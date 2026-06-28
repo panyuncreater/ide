@@ -79,6 +79,10 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     current_ = 0;
     line_ = 1;
     lineStart_ = 0;
+    // Perf-Finding1: 失效 columnAt 缓存（source_ 已更换，旧 byteOffset 失效）
+    cachedLineStart_ = -1;
+    cachedByteOffset_ = -1;
+    cachedColumn_ = 1;
     tokens_.clear();
     comments_.clear();
     diagnostics_.clear();
@@ -177,10 +181,10 @@ void Lexer::scanToken() {
     // 空白字符
     case ' ':
     case '\t':
-    case '\r':
     case '\n':
     case '\f':   // L3 fix: form feed
     case '\v':   // L3 fix: vertical tab
+        // 注：'\r' 不会出现在此处，advance() 已将 \r 和 \r\n 统一返回 '\n'
         break;
 
     // 分隔符
@@ -607,9 +611,28 @@ int Lexer::currentColumn() const {
 int Lexer::columnAt(int byteOffset) const {
     // D11 fix: 按 UTF-8 码位计算列号，避免多字节字符（如中文）导致列号偏移过大。
     // 从 lineStart_ 遍历到 byteOffset，按首字节判断码位字节数。
-    if (byteOffset <= lineStart_) return 1;
-    int col = 1;
-    int i = lineStart_;
+    // Perf-Finding1: 单调前进缓存。行内 columnAt 调用的 byteOffset 单调非递减
+    // （start_/current_ 仅向前推进），命中时从缓存点续走，消除 O(n²) 重复扫描。
+    if (byteOffset <= lineStart_) {
+        // byteOffset 等于行首（或异常小于行首）：列为 1，并刷新缓存
+        cachedLineStart_ = lineStart_;
+        cachedByteOffset_ = byteOffset;
+        cachedColumn_ = 1;
+        return 1;
+    }
+
+    int i;
+    int col;
+    // 缓存命中条件：同一行（lineStart_ 未变）且 byteOffset 不回退
+    if (cachedLineStart_ == lineStart_ && cachedByteOffset_ >= lineStart_ && byteOffset >= cachedByteOffset_) {
+        i = cachedByteOffset_;
+        col = cachedColumn_;
+    } else {
+        // 缓存未命中：从行首重新计算
+        i = lineStart_;
+        col = 1;
+    }
+
     while (i < byteOffset && i < static_cast<int>(source_.size())) {
         unsigned char c = static_cast<unsigned char>(source_[i]);
         int len = Utf8::byteLength(c);
@@ -620,5 +643,10 @@ int Lexer::columnAt(int byteOffset) const {
         i += len;
         col++;
     }
+
+    // 更新缓存（行未变 + 单调前进）
+    cachedLineStart_ = lineStart_;
+    cachedByteOffset_ = byteOffset;
+    cachedColumn_ = col;
     return col;
 }

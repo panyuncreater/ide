@@ -32,16 +32,18 @@
 #include <unordered_set>
 #include <functional>
 #include <memory>
+#include <stdexcept>  // B3 fix: std::runtime_error 用于越界抛出
 #include <string>
 
 // 前向声明
 struct VMClassInfo;  // D-1: 与 VM.h 定义一致
 
 /// 寄存器式 VM 步进信息（用于调试/可视化）
+// P3-1 fix: 加默认成员初始化器，新增字段时不会漏初始化导致未定义行为
 struct RegVMStepInfo {
-    size_t ip;
-    RegOp opcode;
-    size_t frameCount;
+    size_t ip = 0;
+    RegOp opcode = RegOp::REG_RETURN_NULL;
+    size_t frameCount = 0;
 };
 
 // ============================================================
@@ -149,6 +151,13 @@ private:
         std::string parent;
         std::vector<std::string> fieldOrder;
         std::map<std::string, std::string> methods;  // 方法名 → 函数名
+        // perf2 fix: 预计算缓存，避免每次构造实例时重复遍历继承链。
+        // 懒计算：首次 REG_CLASS_NEW 时填充（此时所有父类必已定义，因构造前
+        // 所有顶层 REG_DEFINE_CLASS 已执行完毕）。REG_DEFINE_CLASS 重新定义时复位。
+        mutable bool flattenedComputed = false;
+        mutable std::vector<std::string> flattenedFieldOrder;  // 父类字段在前，子类在后
+        mutable std::string resolvedInitFunName;  // 沿继承链解析的 init 函数名
+        mutable bool hasInit = false;             // 继承链中是否存在 init
     };
     std::unordered_map<std::string, RegClassInfo> classInfo_;
 
@@ -180,14 +189,32 @@ private:
         size_t frameIndex;
     };
     std::vector<RegTryHandler> tryStack_;
+    // P1-4 fix: 待捕获的异常值。throwException 设置，REG_LOAD_EXCEPTION 读取。
+    // 替代原方案（固定写 R0 覆盖用户变量），避免破坏调用者寄存器。
+    Value pendingException_;
 
     // 常量
     static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
     static constexpr int64_t MAX_INSTRUCTIONS = RuntimeLimits::MAX_INSTRUCTIONS;
 
     // 辅助方法
-    RegCallFrame& currentFrame() { return frames_.back(); }
-    const RegCallFrame& currentFrame() const { return frames_.back(); }
+    // 调用方契约：execute/stepOnce 在调用前已检查 frames_.empty()
+    // B3 fix: 越界时调用 runtimeError（设置 hasError_ + 诊断）后抛 std::runtime_error，
+    // 替代原 std::abort()。调用方（VmStepper::stepByMode / runBatch）已用 try/catch 包裹，
+    // 抛出会被捕获并转化为 ERROR 状态，避免 IDE 整个进程崩溃。
+    RegCallFrame& currentFrame() {
+        if (frames_.empty()) {
+            runtimeError("currentFrame() on empty frames");
+            throw std::runtime_error("RegisterVM: currentFrame() on empty frames");
+        }
+        return frames_.back();
+    }
+    const RegCallFrame& currentFrame() const {
+        if (frames_.empty()) {
+            throw std::runtime_error("RegisterVM: currentFrame() on empty frames");
+        }
+        return frames_.back();
+    }
     Value& reg(uint8_t r);
     const Value& reg(uint8_t r) const;
 
@@ -240,6 +267,6 @@ private:
     // false=未匹配内建方法（caller 继续查找用户定义方法）。
     // 原实现无论是否匹配都返回 VM_OK，导致实例方法调用被静默吞掉（callBuiltinMethod
     // 对 instance 类型 fallthrough 到末尾 return VM_OK，caller 误以为已处理）。
-    bool callBuiltinMethod(const Value& obj, const std::string& methodName,
+    bool callBuiltinMethod(Value& obj, const std::string& methodName,
                            SmallArgs<Value>& args, Value& result);
 };

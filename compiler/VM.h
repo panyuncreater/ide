@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <cassert>
+#include <cstdlib>  // std::abort — Release 构建中 assert 兜底，避免 UB
 #include "compiler/Bytecode.h"
 #include "interpreter/Value.h"
 #include "interpreter/BuiltinMethods.h"  // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
@@ -71,10 +72,11 @@ enum class VMExecMode {
 };
 
 /// 每条指令执行后的状态信息（用于调试/可视化）
+// P3-1 fix: 加默认成员初始化器，新增字段时不会漏初始化导致未定义行为
 struct VMStepInfo {
-    size_t ip;                              // 当前指令指针
-    OpCode opcode;                          // 当前操作码
-    size_t frameCount;                      // A4 fix: 当前调用帧栈深度（用于 step-over/out 语义）
+    size_t ip = 0;                          // 当前指令指针
+    OpCode opcode = OpCode::OP_NULL;        // 当前操作码
+    size_t frameCount = 0;                  // A4 fix: 当前调用帧栈深度（用于 step-over/out 语义）
 };
 
 /// VM 调用帧
@@ -363,8 +365,23 @@ private:
     Value pop();
     const Value& peek(size_t distance = 0) const;
     // PERF-12 fix: 引用语义 + 栈槽复用优化
-    /// 非 const peek：返回栈槽引用，允许直接修改栈顶元素，避免 pop+push 往返原子操作
+    /// 非 const peek：返回栈顶引用，允许直接修改栈顶元素，避免 pop+push 往返原子操作
     Value& peekRef(size_t distance = 0);
+
+    // Dedup-7B: 解析可变全局变量引用。先查 globalSlots_（编译期槽位），
+    // 找不到再 fallback 到 globals_（runtime-defined）。失败返回 nullptr。
+    // 消除 VMContainers.cpp 中 4 处 OP_*_VAR 操作码的重复 lookup 模式。
+    Value* resolveMutableGlobal(const std::string& varName) {
+        auto gsIt = globalNameToSlot_.find(varName);
+        if (gsIt != globalNameToSlot_.end() &&
+            gsIt->second >= 0 &&
+            gsIt->second < static_cast<int>(globalSlots_.size())) {
+            return &globalSlots_[gsIt->second];
+        }
+        auto it = globals_.find(varName);
+        if (it == globals_.end()) return nullptr;
+        return &it->second;
+    }
     /// 批量 pop：一次 resize 替代多次 pop_back，避免多次析构 + 容量抖动。
     /// 不返回弹出值（调用方已通过 peek 读过），用于函数调用参数清理等场景。
     void popN(size_t n);

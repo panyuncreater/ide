@@ -9,6 +9,7 @@
 #include "compiler/RegisterBytecode.h"
 #include "interpreter/NumericUtils.h"
 #include "interpreter/BuiltinMethods.h"
+#include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include "common/Utf8Utils.h"
 #include "common/Logger.h"
 #include <cassert>
@@ -31,6 +32,7 @@ void RegisterVM::resetState() {
     classInfo_.clear();
     openUpvalues_.clear();
     tryStack_.clear();
+    pendingException_ = Value::nullValue();  // P1-4 fix: 清理异常值
     hasError_ = false;
     lastError_.clear();
     lastErrorLine_ = 0;
@@ -55,6 +57,10 @@ void RegisterVM::initExecution(const RegisterCompileResult& result) {
     resetState();
     mainChunk_ = result.mainChunk;
     functionChunks_ = result.functionChunks;
+
+    // 预分配到 MAX_FRAMES 上限：push_back 前已有 frames_.size() < MAX_FRAMES 检查，
+    // reserve 到上限可保证 push_back 永不 realloc / 抛 bad_alloc，消除帧推入异常安全窗口。
+    frames_.reserve(MAX_FRAMES);
 
     // 初始化全局槽位
     globalSlots_.resize(result.globalSlotCount);
@@ -110,16 +116,33 @@ bool RegisterVM::isFinished() const {
 // ============================================================
 
 Value& RegisterVM::reg(uint8_t r) {
-    assert(!frames_.empty() && "RegisterVM::reg() on empty frames");
+    // B3 fix: 越界时调用 runtimeError（设置 hasError_ + 诊断）后抛 std::runtime_error，
+    // 替代原 std::abort()。调用方已用 try/catch 包裹（VmStepper::stepByMode/runBatch），
+    // 抛出会被捕获并转化为 ERROR 状态，避免 IDE 整个进程崩溃。
+    if (frames_.empty()) {
+        runtimeError("RegisterVM::reg() on empty frames");
+        throw std::runtime_error("RegisterVM: reg() on empty frames");
+    }
     auto& frame = frames_.back();
-    assert(r < frame.registerCount && "寄存器号越界");
+    if (r >= frame.registerCount) {
+        runtimeError(ErrorFormat::format("寄存器号越界: r=%u, registerCount=%u",
+                                          static_cast<unsigned>(r),
+                                          static_cast<unsigned>(frame.registerCount)));
+        throw std::runtime_error("RegisterVM: register index out of range");
+    }
     return frame.registers[r];
 }
 
 const Value& RegisterVM::reg(uint8_t r) const {
-    assert(!frames_.empty() && "RegisterVM::reg() on empty frames");
+    // B3 fix: const 版本无法调用 non-const runtimeError，直接抛异常。
+    // 实际调用方 *this 总是 non-const（指令执行修改 VM 状态），const 版本仅在 const 访问器中被触发。
+    if (frames_.empty()) {
+        throw std::runtime_error("RegisterVM: reg() on empty frames (const)");
+    }
     const auto& frame = frames_.back();
-    assert(r < frame.registerCount && "寄存器号越界");
+    if (r >= frame.registerCount) {
+        throw std::runtime_error("RegisterVM: register index out of range (const)");
+    }
     return frame.registers[r];
 }
 
@@ -155,7 +178,7 @@ VMResult RegisterVM::executeOneInstruction() {
     }
 
     RegOp op = static_cast<RegOp>(chunk.code[ip]);
-    uint8_t instrSize = chunk.instructionSizeAt(ip);
+    size_t instrSize = chunk.instructionSizeAt(ip);
     if (ip + instrSize > chunk.code.size()) {
         return runtimeError("字节码截断: 指令不完整");
     }
@@ -230,6 +253,7 @@ VMResult RegisterVM::executeOneInstruction() {
     case RegOp::REG_TRY_BEGIN:
     case RegOp::REG_TRY_END:
     case RegOp::REG_THROW:
+    case RegOp::REG_LOAD_EXCEPTION:
     case RegOp::REG_PRINT:
     case RegOp::REG_WRITEBACK_MEMBER_VAR:
     case RegOp::REG_WRITEBACK_MEMBER_LOCAL:
@@ -241,7 +265,7 @@ VMResult RegisterVM::executeOneInstruction() {
         return executeMisc(op, ip);
 
     default:
-        return runtimeError("未知寄存器操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知寄存器操作码: %d", static_cast<int>(op)));
     }
 }
 
@@ -331,46 +355,40 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
         const Value& a = reg(s1);
         const Value& b = reg(s2);
 
+        // P1 fix: ADD 支持字符串拼接（与栈式 VM OP_ADD 语义一致）。
+        // 任一操作数为字符串即触发拼接；非字符串侧用 toString() 转换。
+        if (op == RegOp::REG_ADD && (a.isString() || b.isString())) {
+            std::string concat;
+            if (a.isString() && b.isString()) {
+                const auto& ls = a.stringVal();
+                const auto& rs = b.stringVal();
+                concat.reserve(ls.size() + rs.size());
+                concat.append(ls).append(rs);
+            } else if (a.isString()) {
+                const auto& ls = a.stringVal();
+                auto rs = b.toString();
+                concat.reserve(ls.size() + rs.size());
+                concat.append(ls).append(rs);
+            } else {
+                auto ls = a.toString();
+                const auto& rs = b.stringVal();
+                concat.reserve(ls.size() + rs.size());
+                concat.append(ls).append(rs);
+            }
+            reg(dst) = Value(std::move(concat));
+            ip += 4;
+            return VMResult::VM_OK;
+        }
+
         if (!a.isNumber() || !b.isNumber()) {
             return runtimeError("算术运算需要数值类型");
         }
 
         Value result;
-        switch (op) {
-        case RegOp::REG_ADD: {
-            if (a.isInt() && b.isInt()) {
-                if (OverflowCheck::addOverflow(a.intVal(), b.intVal())) {
-                    return runtimeError("整数加法溢出");
-                }
-                result = Value(a.intVal() + b.intVal());
-            } else {
-                result = Value(a.toDouble() + b.toDouble());
-            }
-            break;
-        }
-        case RegOp::REG_SUB: {
-            if (a.isInt() && b.isInt()) {
-                if (OverflowCheck::subOverflow(a.intVal(), b.intVal())) {
-                    return runtimeError("整数减法溢出");
-                }
-                result = Value(a.intVal() - b.intVal());
-            } else {
-                result = Value(a.toDouble() - b.toDouble());
-            }
-            break;
-        }
-        case RegOp::REG_MUL: {
-            if (a.isInt() && b.isInt()) {
-                if (OverflowCheck::mulOverflow(a.intVal(), b.intVal())) {
-                    return runtimeError("整数乘法溢出");
-                }
-                result = Value(a.intVal() * b.intVal());
-            } else {
-                result = Value(a.toDouble() * b.toDouble());
-            }
-            break;
-        }
-        case RegOp::REG_DIV: {
+        // E4 fix: 复用 NumericOps::computeArith，消除与栈式 VM 的重复算术逻辑。
+        // 注意 REG_DIV 保留 RegisterVM 的"真除"语义（int/int 不整除时返回 float），
+        // 与栈式 VM 的整数截断除法不同，故单独处理不并入 computeArith。
+        if (op == RegOp::REG_DIV) {
             if (b.isInt() && b.intVal() == 0) {
                 return runtimeError("除零错误");
             }
@@ -386,25 +404,36 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
             } else {
                 result = Value(a.toDouble() / b.toDouble());
             }
-            break;
-        }
-        case RegOp::REG_MOD: {
-            if (b.isInt() && b.intVal() == 0) {
-                return runtimeError("模零错误");
+        } else {
+            // E4 fix: ADD/SUB/MUL/MOD 复用共享 computeArith（与栈式 VM 一致）
+            NumericOps::ArithOp arithOp;
+            switch (op) {
+            case RegOp::REG_ADD: arithOp = NumericOps::ArithOp::Add; break;
+            case RegOp::REG_SUB: arithOp = NumericOps::ArithOp::Sub;  break;
+            case RegOp::REG_MUL: arithOp = NumericOps::ArithOp::Mul;  break;
+            case RegOp::REG_MOD: arithOp = NumericOps::ArithOp::Mod;  break;
+            default:
+                return runtimeError("executeArith: 未知操作码");
             }
-            if (a.isInt() && b.isInt()) {
-                // 检查溢出（INT64_MIN % -1）
-                if (a.intVal() == INT64_MIN && b.intVal() == -1) {
-                    return runtimeError("整数模运算溢出");
-                }
-                result = Value(a.intVal() % b.intVal());
-            } else {
-                result = Value(std::fmod(a.toDouble(), b.toDouble()));
+            auto r = NumericOps::computeArith(arithOp,
+                a.isInt(), a.isInt() ? a.intVal() : 0, a.toDouble(),
+                b.isInt(), b.isInt() ? b.intVal() : 0, b.toDouble());
+            switch (r.status) {
+            case NumericOps::ArithStatus::DivByZero:
+                // REG_MOD 触发除零时为"模零"，REG_DIV 不会走到此处（已单独处理）
+                return runtimeError(op == RegOp::REG_MOD ? "模零错误" : "除零错误");
+            case NumericOps::ArithStatus::IntOverflow:
+                return runtimeError("整数运算溢出");
+            case NumericOps::ArithStatus::NotNumeric:
+                return runtimeError("算术运算需要数值类型");
+            case NumericOps::ArithStatus::OK:
+                result = r.isIntResult ? Value(r.intVal) : Value(r.floatVal);
+                break;
+            // Bug-6 同型修复：与 VM.cpp:389 ArithStatus switch 对齐。落空时 result
+            // 保持默认值（VAL_NULL），下方 reg(dst) = std::move(result) 会写入脏结果。
+            default:
+                return runtimeError("内部错误: 未知算术状态");
             }
-            break;
-        }
-        default:
-            return runtimeError("executeArith: 未知操作码");
         }
         reg(dst) = std::move(result);
         ip += 4;
@@ -428,10 +457,8 @@ VMResult RegisterVM::executeCompare(RegOp op, size_t& ip) {
         uint8_t dst = chunk.code[ip + 1];
         uint8_t src = chunk.code[ip + 2];
         const Value& v = reg(src);
-        if (!v.isBool()) {
-            return runtimeError("逻辑非需要布尔类型");
-        }
-        reg(dst) = Value(!v.boolVal());
+        // 与栈式 VM OP_NOT 对齐：使用 isTruthy() 而非严格要求 bool 类型。
+        reg(dst) = Value(!v.isTruthy());
         ip += 3;
     } else {
         uint8_t dst = chunk.code[ip + 1];
@@ -634,6 +661,10 @@ VMResult RegisterVM::executeControl(RegOp op, size_t& ip) {
     switch (op) {
     case RegOp::REG_JUMP: {
         uint16_t offset = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        // 与栈式 VM 对齐：检查跳转目标越界，防止损坏字节码导致 ip 越界读取。
+        if (offset >= chunk.code.size()) {
+            return runtimeError("跳转目标越界");
+        }
         ip = offset;
         break;
     }
@@ -641,10 +672,13 @@ VMResult RegisterVM::executeControl(RegOp op, size_t& ip) {
         uint8_t src = chunk.code[ip + 1];
         uint16_t offset = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
         const Value& v = reg(src);
-        if (v.isBool() && !v.boolVal()) {
+        // 与栈式 VM OP_JUMP_IF_FALSE 对齐：使用 isTruthy() 而非严格要求 bool 类型。
+        // 原 impl 仅接受 bool，导致 `if (5)` / `while ("str")` 等合法 MiniLang 代码报错。
+        if (!v.isTruthy()) {
+            if (offset >= chunk.code.size()) {
+                return runtimeError("跳转目标越界");
+            }
             ip = offset;
-        } else if (!v.isBool()) {
-            return runtimeError("条件跳转需要布尔类型");
         } else {
             ip += 4;
         }
@@ -727,7 +761,7 @@ VMResult RegisterVM::executeContainers(RegOp op, size_t& ip) {
             if (!idx.isInt()) return runtimeError("字符串索引必须是整数");
             int64_t i = idx.intVal();
             const auto& str = obj.stringVal();
-            int64_t len = Utf8::codepointCount(str);
+            int64_t len = obj.codepointCount();  // perf1 fix: 带缓存的码位计数
             if (i < 0) i += len;
             if (i < 0 || i >= len) {
                 return runtimeError("字符串索引越界");
@@ -821,13 +855,16 @@ VMResult RegisterVM::executeContainers(RegOp op, size_t& ip) {
         if (fieldIdx >= chunk.constants.size() || !chunk.constants[fieldIdx].isString()) {
             return runtimeError("字段名索引无效");
         }
-        // 记录字段顺序（用于 init 方法）
-        // 简化：暂不实现 fieldOrder 跟踪
+        // P1-1 fix: fieldOrder 已在 REG_DEFINE_CLASS 中从类元数据完整填充（见 executeCalls），
+        // 此处无需重复记录。IR 层 visitClassDecl 不发射 INIT_FIELD（字段默认值由 init 方法
+        // 通过 MEMBER_SET 设置），此 case 仅为防御性处理保留。
         ip += 3;
         break;
     }
     case RegOp::REG_SUPER_MEMBER_GET: {
-        // 简化：与 REG_MEMBER_GET 相同（未来需查找父类方法）
+        // P1-2 fix: super.field 语义上等同于 this.field —— 字段存储在实例上，
+        // 父类 init 方法已通过 MEMBER_SET 将父类字段写入 this 实例。
+        // 因此与 REG_MEMBER_GET 实现一致，从实例字段表查找即可。
         uint8_t dst = chunk.code[ip + 1];
         uint8_t objReg = chunk.code[ip + 2];
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
@@ -987,6 +1024,7 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
         info.name = className;
         info.fieldOrder.clear();
         info.methods.clear();
+        info.flattenedComputed = false;  // perf2 fix: 重定义时使预计算缓存失效
 
         if (parentIdx != 0xFFFF) {
             if (parentIdx >= chunk.constants.size() || !chunk.constants[parentIdx].isString()) {
@@ -1067,6 +1105,11 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
     }
     case RegOp::REG_TRY_BEGIN: {
         uint16_t catchOffset = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        // R7 fix: catchOffset 是绝对字节偏移，越界时 throwException 会跳到错误地址静默执行。
+        // 与栈式 VM OP_TRY_BEGIN 对齐，入栈前校验边界，防止字节码损坏导致静默错误行为。
+        if (catchOffset >= chunk.code.size()) {
+            return runtimeError("REG_TRY_BEGIN: catch 目标越界");
+        }
         tryStack_.push_back({catchOffset, frames_.size() - 1});
         ip += 3;
         break;
@@ -1083,6 +1126,13 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         Value thrown = reg(src);
         ip += 2;
         return throwException(std::move(thrown));
+    }
+    case RegOp::REG_LOAD_EXCEPTION: {
+        // P1-4 fix: catch 块起始加载 pendingException_ 到目标寄存器
+        uint8_t dst = chunk.code[ip + 1];
+        reg(dst) = pendingException_;
+        ip += 2;
+        break;
     }
     case RegOp::REG_WRITEBACK_INDEX_LOCAL: {
         // C-1 fix: 将 lastMutatedReceiverReg_ 指向的变异后容器写回局部变量槽
@@ -1192,10 +1242,69 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         ip += 4;
         break;
     }
-    case RegOp::REG_SUPER_CALL:
-        // IR 从不发射此指令（NODE_SUPER_EXPR 在 visitNode 中 fallthrough 到 default），
-        // 保留 runtimeError 防御未来实现。
-        return runtimeError("super 调用尚未在 RegVM 实现");
+    case RegOp::REG_SUPER_CALL: {
+        // P1-3 fix: super.method(args) 实现
+        // 编码: op + dst(1B) + nameIdx(2B) + argCount(1B) + recvReg(1B) + classIdx(2B) + args...
+        uint8_t dst = chunk.code[ip + 1];
+        uint16_t nameIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
+        uint8_t argCount = chunk.code[ip + 4];
+        uint8_t recvReg = chunk.code[ip + 5];
+        uint16_t classIdx = chunk.code[ip + 6] | (chunk.code[ip + 7] << 8);
+
+        if (nameIdx >= chunk.constants.size() || !chunk.constants[nameIdx].isString()) {
+            return runtimeError("super 调用方法名索引无效");
+        }
+        if (classIdx >= chunk.constants.size() || !chunk.constants[classIdx].isString()) {
+            return runtimeError("super 调用类名索引无效");
+        }
+        const std::string& methodName = chunk.constants[nameIdx].stringVal();
+        const std::string& curClassName = chunk.constants[classIdx].stringVal();
+
+        // 查找当前类的父类
+        auto curIt = classInfo_.find(curClassName);
+        if (curIt == classInfo_.end() || curIt->second.parent.empty()) {
+            return runtimeError("类 " + curClassName + " 没有父类，不能使用 super");
+        }
+        // 从父类开始沿继承链查找方法
+        std::string searchClass = curIt->second.parent;
+        std::string foundFunName;
+        bool found = false;
+        for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
+            auto clsIt = classInfo_.find(searchClass);
+            if (clsIt == classInfo_.end()) break;
+            auto methodIt = clsIt->second.methods.find(methodName);
+            if (methodIt != clsIt->second.methods.end()) {
+                foundFunName = methodIt->second;
+                found = true;
+                break;
+            }
+            searchClass = clsIt->second.parent;
+        }
+        if (!found) {
+            return runtimeError("父类链中无方法: " + methodName);
+        }
+
+        // 构造参数列表（this/recvReg 作为第一个参数）
+        SmallArgs<uint8_t> fullArgRegs;
+        fullArgRegs.push_back(recvReg);
+        for (uint8_t i = 0; i < argCount; ++i) {
+            fullArgRegs.push_back(chunk.code[ip + 8 + i]);
+        }
+        size_t newIp = ip;
+        // REG_SUPER_CALL 指令长度 = 8 + argCount
+        // 防御性检查：argCount+1 溢出 uint8_t（backend 应已在编译期拦截）
+        if (argCount >= 255) return runtimeError("super 调用参数数量超过上限");
+        VMResult cr = executeCallImpl(newIp, foundFunName, argCount + 1, dst, fullArgRegs, 8u + argCount);
+        if (cr != VMResult::VM_OK) return cr;
+        // 标记为方法调用（用于字段同步）
+        if (!frames_.empty()) {
+            frames_.back().isMethodCall = true;
+            frames_.back().receiverReg = recvReg;
+            frames_.back().receiverVarName.clear();
+        }
+        ip = newIp;
+        break;
+    }
     default:
         return runtimeError("executeMisc: 未知操作码");
     }
@@ -1350,11 +1459,13 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
 
     // C-9/C-6 fix: 捕获方法帧的 this（slot 0）用于字段同步。
     // - init 方法：隐式返回 this 实例（而非 null），避免 caller 的 dstReg 被 null 覆盖。
-    // - 普通方法：即使返回非实例值（如数字），也需从 this 同步字段修改到 caller 的接收者。
+    //   无论是否直接修改字段都需捕获——super.init 可能已通过字段同步更新了 this。
+    // - 普通方法：仅当 fieldsModified 时捕获（避免不必要的拷贝），用于同步字段修改。
     // 原实现仅依赖 result.isInstance() 判断，导致返回非实例的方法修改 this 字段后被丢弃。
     Value methodThis;
     bool hasMethodThis = false;
-    if (wasMethodCall && fieldsModified &&
+    bool shouldCaptureThis = isInitCall || fieldsModified;
+    if (wasMethodCall && shouldCaptureThis &&
         frames_.back().registerCount > 0 &&
         frames_.back().registers[0].isInstance()) {
         methodThis = frames_.back().registers[0];  // copy（not move），frame 仍需 closeUpvalues
@@ -1454,8 +1565,11 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
     // 实例方法调用
     if (obj.isInstance()) {
         const std::string& className = obj.className();
-        auto classIt = classInfo_.find(className);
-        if (classIt != classInfo_.end()) {
+        // P1-1 fix: 沿继承链查找方法（子类优先，找不到则查父类）
+        std::string searchClass = className;
+        for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
+            auto classIt = classInfo_.find(searchClass);
+            if (classIt == classInfo_.end()) break;
             auto methodIt = classIt->second.methods.find(methodName);
             if (methodIt != classIt->second.methods.end()) {
                 const std::string& funName = methodIt->second;
@@ -1469,6 +1583,8 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
                 size_t newIp = ip;
                 // C-8 fix: REG_METHOD_CALL 指令长度 = 6 + argCount（argCount 不含 this）。
                 // executeCallImpl 收到 argCount+1（含 this），但 returnOffset 用原始 argCount 计算。
+                // 防御性检查：argCount+1 溢出 uint8_t（backend 应已在编译期拦截）
+                if (argCount >= 255) return runtimeError("方法调用参数数量超过上限");
                 VMResult cr = executeCallImpl(newIp, funName, argCount + 1, dstReg, fullArgRegs, 6u + argCount);
                 if (cr != VMResult::VM_OK) return cr;
                 // 标记为方法调用（用于字段同步）
@@ -1480,6 +1596,7 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
                 ip = newIp;
                 return VMResult::VM_OK;
             }
+            searchClass = classIt->second.parent;
         }
         return runtimeError("类 " + className + " 无方法: " + methodName);
     }
@@ -1539,21 +1656,59 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
     if (classIt == classInfo_.end()) {
         return runtimeError("未定义的类: " + className);
     }
+    RegClassInfo& info = classIt->second;
 
-    // 创建实例
+    // perf2 fix: 懒预计算展平字段顺序 + 解析 init 函数名（首次构造时计算，后续复用）。
+    // 原实现每次构造都遍历继承链两次（O(depth)），现降至 O(1) 查表。
+    // 此时所有父类必已定义（顶层 REG_DEFINE_CLASS 已全部执行）。
+    if (!info.flattenedComputed) {
+        // 沿继承链构建链（子→父→祖...）
+        std::vector<std::string> chain;
+        std::string cur = className;
+        for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
+            auto it = classInfo_.find(cur);
+            if (it == classInfo_.end()) break;
+            chain.push_back(cur);
+            cur = it->second.parent;
+        }
+        // 逆序初始化字段（父类字段在前，子类字段在后）
+        info.flattenedFieldOrder.clear();
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            auto clsIt = classInfo_.find(*it);
+            if (clsIt != classInfo_.end()) {
+                for (const auto& fieldName : clsIt->second.fieldOrder) {
+                    info.flattenedFieldOrder.push_back(fieldName);
+                }
+            }
+        }
+        // 沿继承链解析 init（子类优先，与栈式 VM findMethodChunk 语义一致）
+        info.hasInit = false;
+        info.resolvedInitFunName.clear();
+        std::string searchClass = className;
+        for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
+            auto clsIt = classInfo_.find(searchClass);
+            if (clsIt == classInfo_.end()) break;
+            auto mIt = clsIt->second.methods.find("init");
+            if (mIt != clsIt->second.methods.end()) {
+                info.resolvedInitFunName = mIt->second;
+                info.hasInit = true;
+                break;
+            }
+            searchClass = clsIt->second.parent;
+        }
+        info.flattenedComputed = true;
+    }
+
+    // 创建实例并初始化所有字段（使用预计算的展平字段顺序）
     Value instance = Value::makeInstance(className);
-
-    // 初始化字段
-    for (const auto& fieldName : classIt->second.fieldOrder) {
+    for (const auto& fieldName : info.flattenedFieldOrder) {
         instance.fields()[fieldName] = Value::nullValue();
     }
 
     reg(dstReg) = instance;
 
-    // 调用 init 方法（如果存在）
-    auto initIt = classIt->second.methods.find("init");
-    if (initIt != classIt->second.methods.end()) {
-        const std::string& initFunName = initIt->second;
+    // 调用 init 方法（使用预解析的函数名）
+    if (info.hasInit) {
         SmallArgs<uint8_t> fullArgRegs;
         fullArgRegs.push_back(dstReg);
         for (uint8_t i = 0; i < argCount; ++i) {
@@ -1563,7 +1718,9 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         // C-8 fix: REG_CLASS_NEW 指令长度 = 5 + argCount（argCount 不含 this）。
         // executeCallImpl 收到 argCount+1（含 instance），但 returnOffset 用原始 argCount 计算。
         // 原硬编码 ip+5+(argCount+1) 比真实下一条指令多 1，init 返回后调用者 ip 错位。
-        VMResult r = executeCallImpl(newIp, initFunName, argCount + 1, dstReg, fullArgRegs, 5u + argCount);
+        // 防御性检查：argCount+1 溢出 uint8_t（backend 应已在编译期拦截）
+        if (argCount >= 255) return runtimeError("类构造参数数量超过上限");
+        VMResult r = executeCallImpl(newIp, info.resolvedInitFunName, argCount + 1, dstReg, fullArgRegs, 5u + argCount);
         if (r != VMResult::VM_OK) return r;
         if (!frames_.empty()) {
             frames_.back().isMethodCall = true;
@@ -1598,7 +1755,7 @@ bool RegisterVM::fillDefaultArgs(const RegBytecodeChunk& chunk, uint8_t& argCoun
 // 内建方法
 // ============================================================
 
-bool RegisterVM::callBuiltinMethod(const Value& obj, const std::string& methodName,
+bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
                                    SmallArgs<Value>& args, Value& result) {
     // #20 fix: 复用共享 classifyBuiltinMethod 枚举分发，消除长串字符串比较。
     // 原实现按 obj 类型分支后逐个 if (methodName == "...")，最坏需 N 次字符串比较。
@@ -1616,11 +1773,13 @@ bool RegisterVM::callBuiltinMethod(const Value& obj, const std::string& methodNa
         }
         case BuiltinMethod::ARR_PUSH:
             if (args.size() != 1) { runtimeError("push 需要 1 个参数"); return true; }
-            const_cast<Value&>(obj).arrayVal().push_back(args[0]);
-            result = obj;
+            obj.arrayVal().push_back(args[0]);
+            // R7 fix: 与栈式 VM 对齐返回 null。原返回 obj（数组本身）会导致
+            // `var x = arr.push(1)` 在两后端产生不同值（栈式 VM x=null / RegisterVM x=arr）。
+            result = Value::nullValue();
             return true;
         case BuiltinMethod::ARR_POP: {
-            auto& arr = const_cast<Value&>(obj).arrayVal();
+            auto& arr = obj.arrayVal();
             if (arr.empty()) { runtimeError("pop 空数组"); return true; }
             result = arr.back();
             arr.pop_back();
@@ -1729,11 +1888,17 @@ VMResult RegisterVM::throwException(Value thrownValue) {
             frames_.pop_back();
         }
         if (!frames_.empty()) {
-            currentFrame().ip = handler.catchIp;
-            // 将异常值存入某个寄存器（简化：R0）
-            if (currentFrame().registerCount > 0) {
-                currentFrame().registers[0] = std::move(thrownValue);
+            // R7 fix: 跨帧异常展开后 handler.catchIp 可能相对于当前 chunk 越界
+            // （handler 在子帧注册，但展开到 caller 后 caller 的 chunk 不同）。
+            // defense-in-depth：入栈已校验，此处再校验当前 chunk 边界。
+            auto& curFrame = currentFrame();
+            if (handler.catchIp >= curFrame.chunk->code.size()) {
+                return runtimeError("throwException: catchIp 相对当前 chunk 越界");
             }
+            curFrame.ip = handler.catchIp;
+            // P1-4 fix: 异常值存入 pendingException_，由 REG_LOAD_EXCEPTION 读取到指定寄存器。
+            // 原方案固定写 R0 会覆盖用户变量/this（方法中 R0 是 this）。
+            pendingException_ = std::move(thrownValue);
         }
         tryStack_.pop_back();
         return VMResult::VM_OK;

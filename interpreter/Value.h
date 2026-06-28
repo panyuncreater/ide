@@ -41,12 +41,16 @@
 #include <unordered_map>
 #include <sstream>
 #include <cstdio>
+#include <charconv>   // Perf-Finding2: VAL_INT toString 用 to_chars 替代 std::to_string（避免 locale 查询）
+#include <array>
 #include <vector>
 #include <memory>
 #include <cstdint>
 #include <cmath>
 #include <cassert>
 #include <unordered_set>
+#include <optional>  // perf1 fix: StringData 缓存 codepointCount
+#include "common/Utf8Utils.h"  // perf1 fix: Value::codepointCount() 委托 Utf8::codepointCount
 
 // ============================================================
 // Value 运行时值结构体
@@ -57,6 +61,10 @@ private:
     // ---- 堆类型数据载体（继承 RefCounted， intrusive 引用计数）----
     struct StringData : RefCounted {
         std::string value;
+        // perf1 fix: 缓存 UTF-8 码位数，避免 len()/substr() 在循环中 O(n²) 重复扫描。
+        // mutable 允许 const stringVal() 路径的 codepointCount() 填充缓存。
+        // 非 const stringVal() 返回可变引用时 reset() 使缓存失效（字符串可能被修改）。
+        mutable std::optional<int64_t> cachedCodepointCount;
         StringData() : RefCounted(ValueType::VAL_STRING) {}
         explicit StringData(std::string v) : RefCounted(ValueType::VAL_STRING), value(std::move(v)) {}
     };
@@ -406,11 +414,23 @@ public:
     // -- stringVal --
     std::string& stringVal() {
         assert(isString() && "stringVal() called on non-string Value");
-        return ensureUnique<StringData>()->value;
+        auto* sd = ensureUnique<StringData>();
+        sd->cachedCodepointCount.reset();  // perf1 fix: 字符串可能被修改，使码位缓存失效
+        return sd->value;
     }
     const std::string& stringVal() const {
         assert(isString() && "stringVal() called on non-string Value");
         return box_.asPtr<StringData>()->value;
+    }
+    // perf1 fix: 返回字符串 UTF-8 码位数（带缓存，const 路径首次计算后复用）
+    // O(n) 首次 → O(1) 后续，消除 len()/substr() 循环中的 O(n²) 重复扫描。
+    int64_t codepointCount() const {
+        assert(isString() && "codepointCount() called on non-string Value");
+        StringData* sd = box_.asPtr<StringData>();
+        if (!sd->cachedCodepointCount.has_value()) {
+            sd->cachedCodepointCount = Utf8::codepointCount(sd->value);
+        }
+        return *sd->cachedCodepointCount;
     }
 
     // -- arrayVal --
@@ -591,8 +611,13 @@ private:
 public:
     std::string toString() const {
         switch (getType()) {
-        case ValueType::VAL_INT:
-            return std::to_string(intVal());
+        case ValueType::VAL_INT: {
+            // Perf-Finding2: std::to_string 在 MSVC 上触发 locale 查询 + 堆分配，
+            // 用 std::to_chars 写入栈缓冲消除 locale 开销（输出字节与 to_string 完全一致）
+            char buf[32];
+            auto res = std::to_chars(buf, buf + sizeof(buf), intVal());
+            return std::string(buf, res.ptr);
+        }
         case ValueType::VAL_FLOAT: {
             char buf[64];
             int len = snprintf(buf, sizeof(buf), "%.17g", box_.asFloat());

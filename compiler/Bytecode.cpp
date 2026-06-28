@@ -5,87 +5,98 @@
 // ============================================================
 // Bytecode.cpp — 反汇编实现（D9 fix: 从 Bytecode.h 提取）
 // ------------------------------------------------------------
-// 将 opCodeName / disassemble / disassembleInstruction 三个大型
-// switch 实现从头文件移到此处，减少 Bytecode.h 体积（约 400 行），
-// 加快编译速度，避免每个包含 Bytecode.h 的 TU 都解析这些 switch。
+// A3 fix: opCodeName 已内联到 Bytecode.h（基于元数据表查表）。
+// 本文件保留 disassemble / disassembleInstruction 实现，并定义元数据表。
 // ============================================================
 
-/// 操作码 → 名称字符串（统一映射，避免多处手工维护）
-const char* opCodeName(OpCode op) {
-    switch (op) {
-    case OpCode::OP_CONSTANT:      return "OP_CONSTANT";
-    case OpCode::OP_INT:            return "OP_INT";
-    case OpCode::OP_FLOAT:          return "OP_FLOAT";
-    case OpCode::OP_STRING:        return "OP_STRING";
-    case OpCode::OP_NULL:          return "OP_NULL";
-    case OpCode::OP_TRUE:          return "OP_TRUE";
-    case OpCode::OP_FALSE:         return "OP_FALSE";
-    case OpCode::OP_ADD:           return "OP_ADD";
-    case OpCode::OP_SUBTRACT:      return "OP_SUBTRACT";
-    case OpCode::OP_MULTIPLY:      return "OP_MULTIPLY";
-    case OpCode::OP_DIVIDE:        return "OP_DIVIDE";
-    case OpCode::OP_MODULO:        return "OP_MODULO";
-    case OpCode::OP_NEGATE:        return "OP_NEGATE";
-    case OpCode::OP_NOT:           return "OP_NOT";
-    case OpCode::OP_EQUAL:         return "OP_EQUAL";
-    case OpCode::OP_NOT_EQUAL:     return "OP_NOT_EQUAL";
-    case OpCode::OP_LESS:          return "OP_LESS";
-    case OpCode::OP_GREATER:       return "OP_GREATER";
-    case OpCode::OP_LESS_EQUAL:    return "OP_LESS_EQUAL";
-    case OpCode::OP_GREATER_EQUAL: return "OP_GREATER_EQUAL";
-    case OpCode::OP_AND:           return "OP_AND";
-    case OpCode::OP_OR:            return "OP_OR";
-    case OpCode::OP_PRINT:         return "OP_PRINT";
-    case OpCode::OP_POP:           return "OP_POP";
-    case OpCode::OP_DEFINE_VAR:    return "OP_DEFINE_VAR";
-    case OpCode::OP_GET_VAR:       return "OP_GET_VAR";
-    case OpCode::OP_SET_VAR:       return "OP_SET_VAR";
-    case OpCode::OP_DELETE_VAR:    return "OP_DELETE_VAR";
-    case OpCode::OP_JUMP:          return "OP_JUMP";
-    case OpCode::OP_JUMP_IF_FALSE: return "OP_JUMP_IF_FALSE";
-    case OpCode::OP_LOOP:          return "OP_LOOP";
-    case OpCode::OP_RETURN:        return "OP_RETURN";
-    case OpCode::OP_CALL:          return "OP_CALL";
-    case OpCode::OP_CALL_EXPR:     return "OP_CALL_EXPR";
-    case OpCode::OP_BUILD_ARRAY:   return "OP_BUILD_ARRAY";
-    case OpCode::OP_BUILD_DICT:    return "OP_BUILD_DICT";
-    case OpCode::OP_INDEX_GET:    return "OP_INDEX_GET";
-    case OpCode::OP_INDEX_SET:    return "OP_INDEX_SET";
-    case OpCode::OP_INDEX_SET_VAR: return "OP_INDEX_SET_VAR";
-    case OpCode::OP_INDEX_SET_LOCAL: return "OP_INDEX_SET_LOCAL";
-    case OpCode::OP_MEMBER_GET:   return "OP_MEMBER_GET";
-    case OpCode::OP_MEMBER_SET:   return "OP_MEMBER_SET";
-    case OpCode::OP_MEMBER_SET_VAR: return "OP_MEMBER_SET_VAR";
-    case OpCode::OP_MEMBER_SET_LOCAL: return "OP_MEMBER_SET_LOCAL";
-    case OpCode::OP_METHOD_CALL:  return "OP_METHOD_CALL";
-    case OpCode::OP_DUP:          return "OP_DUP";
-    case OpCode::OP_DUP_N:        return "OP_DUP_N";
-    case OpCode::OP_CLOSURE:      return "OP_CLOSURE";
-    case OpCode::OP_GET_LOCAL:    return "OP_GET_LOCAL";
-    case OpCode::OP_SET_LOCAL:    return "OP_SET_LOCAL";
-    case OpCode::OP_CLASS_NEW:    return "OP_CLASS_NEW";
-    case OpCode::OP_INIT_FIELD:   return "OP_INIT_FIELD";
-    case OpCode::OP_DEFINE_CLASS: return "OP_DEFINE_CLASS";
-    case OpCode::OP_WRITEBACK_MEMBER_VAR: return "OP_WRITEBACK_MEMBER_VAR";
-    case OpCode::OP_WRITEBACK_MEMBER_LOCAL: return "OP_WRITEBACK_MEMBER_LOCAL";
-    case OpCode::OP_WRITEBACK_INDEX_VAR: return "OP_WRITEBACK_INDEX_VAR";
-    case OpCode::OP_WRITEBACK_INDEX_LOCAL: return "OP_WRITEBACK_INDEX_LOCAL";
-    case OpCode::OP_SUPER_CALL:       return "OP_SUPER_CALL";
-    case OpCode::OP_SUPER_MEMBER_GET: return "OP_SUPER_MEMBER_GET";
-    case OpCode::OP_GET_GLOBAL:       return "OP_GET_GLOBAL";
-    case OpCode::OP_SET_GLOBAL:       return "OP_SET_GLOBAL";
-    case OpCode::OP_DEFINE_GLOBAL:    return "OP_DEFINE_GLOBAL";
-    case OpCode::OP_DELETE_GLOBAL:    return "OP_DELETE_GLOBAL";
-    case OpCode::OP_GET_UPVALUE:      return "OP_GET_UPVALUE";
-    case OpCode::OP_SET_UPVALUE:      return "OP_SET_UPVALUE";
-    case OpCode::OP_CLOSE_UPVALUE:    return "OP_CLOSE_UPVALUE";
-    case OpCode::OP_TRY_BEGIN:        return "OP_TRY_BEGIN";
-    case OpCode::OP_TRY_END:          return "OP_TRY_END";
-    case OpCode::OP_THROW:            return "OP_THROW";
-    case OpCode::OP_WRITEBACK_MEMBER_UPVALUE: return "OP_WRITEBACK_MEMBER_UPVALUE";
-    case OpCode::OP_WRITEBACK_INDEX_UPVALUE:  return "OP_WRITEBACK_INDEX_UPVALUE";
+// A3 fix: 统一 opcode 元数据表（名称/基础长度/是否变长）。
+// 索引与 OpCode enum 严格对齐（OP_CONSTANT=0, ..., OP_WRITEBACK_INDEX_UPVALUE=70）。
+// 新增 opcode 时只需在此表追加一行，无需修改 opCodeName/instructionSize/instructionSizeAt。
+namespace {
+constexpr OpCodeInfo kOpCodeInfo[] = {
+    /*  0 OP_CONSTANT            */ {"OP_CONSTANT",                3, false},
+    /*  1 OP_INT                 */ {"OP_INT",                     3, false},
+    /*  2 OP_FLOAT               */ {"OP_FLOAT",                   3, false},
+    /*  3 OP_STRING              */ {"OP_STRING",                  3, false},
+    /*  4 OP_NULL                */ {"OP_NULL",                     1, false},
+    /*  5 OP_TRUE                */ {"OP_TRUE",                     1, false},
+    /*  6 OP_FALSE               */ {"OP_FALSE",                    1, false},
+    /*  7 OP_ADD                 */ {"OP_ADD",                      1, false},
+    /*  8 OP_SUBTRACT            */ {"OP_SUBTRACT",                 1, false},
+    /*  9 OP_MULTIPLY            */ {"OP_MULTIPLY",                 1, false},
+    /* 10 OP_DIVIDE              */ {"OP_DIVIDE",                   1, false},
+    /* 11 OP_MODULO              */ {"OP_MODULO",                   1, false},
+    /* 12 OP_NEGATE              */ {"OP_NEGATE",                   1, false},
+    /* 13 OP_NOT                 */ {"OP_NOT",                      1, false},
+    /* 14 OP_EQUAL               */ {"OP_EQUAL",                    1, false},
+    /* 15 OP_NOT_EQUAL           */ {"OP_NOT_EQUAL",                1, false},
+    /* 16 OP_LESS                */ {"OP_LESS",                     1, false},
+    /* 17 OP_GREATER             */ {"OP_GREATER",                  1, false},
+    /* 18 OP_LESS_EQUAL          */ {"OP_LESS_EQUAL",               1, false},
+    /* 19 OP_GREATER_EQUAL       */ {"OP_GREATER_EQUAL",            1, false},
+    /* 20 OP_AND                 */ {"OP_AND",                      1, false},
+    /* 21 OP_OR                  */ {"OP_OR",                       1, false},
+    /* 22 OP_PRINT               */ {"OP_PRINT",                    1, false},
+    /* 23 OP_POP                 */ {"OP_POP",                     1, false},
+    /* 24 OP_DEFINE_VAR          */ {"OP_DEFINE_VAR",               3, false},
+    /* 25 OP_GET_VAR             */ {"OP_GET_VAR",                  3, false},
+    /* 26 OP_SET_VAR             */ {"OP_SET_VAR",                  3, false},
+    /* 27 OP_DELETE_VAR          */ {"OP_DELETE_VAR",               3, false},
+    /* 28 OP_JUMP                */ {"OP_JUMP",                     3, false},
+    /* 29 OP_JUMP_IF_FALSE       */ {"OP_JUMP_IF_FALSE",            3, false},
+    /* 30 OP_LOOP                */ {"OP_LOOP",                     3, false},
+    /* 31 OP_RETURN              */ {"OP_RETURN",                   1, false},
+    /* 32 OP_CALL                */ {"OP_CALL",                     4, false},
+    /* 33 OP_CALL_EXPR           */ {"OP_CALL_EXPR",                2, false},
+    /* 34 OP_BUILD_ARRAY         */ {"OP_BUILD_ARRAY",              2, false},
+    /* 35 OP_BUILD_DICT          */ {"OP_BUILD_DICT",               2, false},
+    /* 36 OP_INDEX_GET           */ {"OP_INDEX_GET",                1, false},
+    /* 37 OP_INDEX_SET           */ {"OP_INDEX_SET",                1, false},
+    /* 38 OP_INDEX_SET_VAR       */ {"OP_INDEX_SET_VAR",            3, false},
+    /* 39 OP_INDEX_SET_LOCAL     */ {"OP_INDEX_SET_LOCAL",          2, false},
+    /* 40 OP_MEMBER_GET          */ {"OP_MEMBER_GET",               3, false},
+    /* 41 OP_MEMBER_SET          */ {"OP_MEMBER_SET",               3, false},
+    /* 42 OP_MEMBER_SET_VAR      */ {"OP_MEMBER_SET_VAR",           5, false},
+    /* 43 OP_MEMBER_SET_LOCAL    */ {"OP_MEMBER_SET_LOCAL",         4, false},
+    /* 44 OP_METHOD_CALL         */ {"OP_METHOD_CALL",              7, false},
+    /* 45 OP_DUP                 */ {"OP_DUP",                      1, false},
+    /* 46 OP_DUP_N               */ {"OP_DUP_N",                    2, false},
+    /* 47 OP_CLOSURE             */ {"OP_CLOSURE",                  4, true},   // 变长: 4 + 2*upvalueCount
+    /* 48 OP_GET_LOCAL           */ {"OP_GET_LOCAL",                2, false},
+    /* 49 OP_SET_LOCAL           */ {"OP_SET_LOCAL",                2, false},
+    /* 50 OP_CLASS_NEW           */ {"OP_CLASS_NEW",                4, false},
+    /* 51 OP_INIT_FIELD          */ {"OP_INIT_FIELD",               3, false},
+    /* 52 OP_DEFINE_CLASS        */ {"OP_DEFINE_CLASS",             5, false},
+    /* 53 OP_WRITEBACK_MEMBER_VAR   */ {"OP_WRITEBACK_MEMBER_VAR",      5, false},
+    /* 54 OP_WRITEBACK_MEMBER_LOCAL */ {"OP_WRITEBACK_MEMBER_LOCAL",    4, false},
+    /* 55 OP_WRITEBACK_INDEX_VAR    */ {"OP_WRITEBACK_INDEX_VAR",       3, false},
+    /* 56 OP_WRITEBACK_INDEX_LOCAL  */ {"OP_WRITEBACK_INDEX_LOCAL",     2, false},
+    /* 57 OP_SUPER_CALL             */ {"OP_SUPER_CALL",                9, false},  // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B) + classIdx(2B)
+    /* 58 OP_SUPER_MEMBER_GET       */ {"OP_SUPER_MEMBER_GET",          3, false},
+    /* 59 OP_GET_GLOBAL             */ {"OP_GET_GLOBAL",                3, false},
+    /* 60 OP_SET_GLOBAL             */ {"OP_SET_GLOBAL",                3, false},
+    /* 61 OP_DEFINE_GLOBAL          */ {"OP_DEFINE_GLOBAL",             3, false},
+    /* 62 OP_DELETE_GLOBAL          */ {"OP_DELETE_GLOBAL",             3, false},
+    /* 63 OP_GET_UPVALUE            */ {"OP_GET_UPVALUE",               2, false},
+    /* 64 OP_SET_UPVALUE            */ {"OP_SET_UPVALUE",               2, false},
+    /* 65 OP_CLOSE_UPVALUE          */ {"OP_CLOSE_UPVALUE",             2, false},
+    /* 66 OP_TRY_BEGIN              */ {"OP_TRY_BEGIN",                 3, false},
+    /* 67 OP_TRY_END                */ {"OP_TRY_END",                   1, false},
+    /* 68 OP_THROW                  */ {"OP_THROW",                     1, false},
+    /* 69 OP_WRITEBACK_MEMBER_UPVALUE */ {"OP_WRITEBACK_MEMBER_UPVALUE", 4, false},
+    /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE",  2, false},
+};
+} // anonymous namespace
+
+/// 获取 opcode 元数据（name + baseSize + isVariableLength）
+/// A3 fix: 单一数据源，替代原 opCodeName switch + instructionSize 数组两处维护
+const OpCodeInfo& getOpCodeInfo(OpCode op) {
+    auto idx = static_cast<uint8_t>(op);
+    static const OpCodeInfo kUnknown{"OP_UNKNOWN", 1, false};
+    if (idx < sizeof(kOpCodeInfo) / sizeof(kOpCodeInfo[0])) {
+        return kOpCodeInfo[idx];
     }
-    return "OP_UNKNOWN";
+    return kUnknown;
 }
 
 /// 反汇编：输出字节码文本

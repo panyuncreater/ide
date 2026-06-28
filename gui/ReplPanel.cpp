@@ -55,16 +55,15 @@ ReplPanel::ReplPanel(QWidget* parent)
 ReplPanel::~ReplPanel() {
     // QT-R-06 fix: 析构时等待异步任务完成，避免悬垂访问
     if (pollTimer_) pollTimer_->stop();
+    // 注：std::async(std::launch::async, ...) 返回的 future 析构会阻塞至任务完成
+    // （C++ 标准保证），无法真正"超时放弃"——之前的 std::move 到局部变量的写法
+    // 仅把阻塞点从成员析构推迟到局部变量析构，5 秒超时形同虚设。
+    // 此处显式 wait()，由 Interpreter 的 MAX_LOOP_ITERATIONS (10M) 保护正常程序
+    // 不会无限循环；极端死循环场景下进程退出时由 OS 兜底回收。
+    // ReplPanel 是 Ide 的子组件，析构顺序保证 IdeController（ctrl）在 ReplPanel
+    // 之后析构，因此异步任务内对 ctrl 的访问是安全的。
     if (replFuture_.valid()) {
-        // 带超时等待：Interpreter 有 MAX_LOOP_ITERATIONS 保护，正常情况数秒内完成；
-        // 超时（如极端死循环未触发迭代上限）则放弃 join 让进程退出时回收，避免 UI 永久挂起。
-        auto status = replFuture_.wait_for(std::chrono::seconds(5));
-        if (status != std::future_status::ready) {
-            // 超时：分离 future，线程在进程退出时被强杀（仅关闭窗口场景可接受）
-            Logger::Warning("ReplPanel: REPL 异步任务未在 5 秒内完成，析构放弃等待");
-            auto discarded = std::move(replFuture_);  // 移走 future，避免析构时 abort
-            (void)discarded;
-        }
+        replFuture_.wait();
     }
 }
 
@@ -240,30 +239,40 @@ void ReplPanel::executeLine(const QString& line) {
     controller_->retainReplAst(std::move(ast));
 
     // 标记执行中，禁用输入
+    // Bug fix: std::async 可能在资源耗尽或线程数限制时抛 std::system_error，
+    // 此时若已设置 replRunning_=true / 禁用输入但未启动轮询定时器，
+    // REPL 将永久卡死（replRunning_ 早期返回守卫阻止后续输入）。
+    // 改为：先成功启动 async，再切换状态。AST 已在 replAsts_ 中保留，
+    // async 失败时该 AST 不会被使用（executeRepl 未执行），仅造成轻微内存占用。
+    IdeController* ctrl = controller_;  // 显式捕获
+    std::future<Value> newFuture;
+    try {
+        newFuture = std::async(std::launch::async, [ctrl, rawAst]() -> Value {
+            try {
+                return ctrl->executeRepl(*rawAst);
+            } catch (const RuntimeError& e) {
+                QMetaObject::invokeMethod(ctrl,
+                    [ctrl, msg = std::string(e.what()), line = e.line, col = e.column]() {
+                        emit ctrl->runtimeError(QString::fromStdString(msg), line, col);
+                    }, Qt::QueuedConnection);
+                return Value::nullValue();
+            } catch (const std::exception& e) {
+                QMetaObject::invokeMethod(ctrl,
+                    [ctrl, msg = std::string(e.what())]() {
+                        emit ctrl->genericError(QString::fromStdString(msg));
+                    }, Qt::QueuedConnection);
+                return Value::nullValue();
+            }
+        });
+    } catch (const std::exception& e) {
+        // async 启动失败：报告错误，REPL 保持可用状态（不切换 replRunning_）
+        appendError(QString("无法启动异步执行: %1").arg(e.what()));
+        return;
+    }
+    // async 启动成功，切换状态并启动轮询
+    replFuture_ = std::move(newFuture);
     replRunning_ = true;
     setInputEnabled(false);
-
-    // 异步执行 executeRepl
-    IdeController* ctrl = controller_;  // 显式捕获
-    replFuture_ = std::async(std::launch::async, [ctrl, rawAst]() -> Value {
-        try {
-            return ctrl->executeRepl(*rawAst);
-        } catch (const RuntimeError& e) {
-            QMetaObject::invokeMethod(ctrl,
-                [ctrl, msg = std::string(e.what()), line = e.line, col = e.column]() {
-                    emit ctrl->runtimeError(QString::fromStdString(msg), line, col);
-                }, Qt::QueuedConnection);
-            return Value::nullValue();
-        } catch (const std::exception& e) {
-            QMetaObject::invokeMethod(ctrl,
-                [ctrl, msg = std::string(e.what())]() {
-                    emit ctrl->genericError(QString::fromStdString(msg));
-                }, Qt::QueuedConnection);
-            return Value::nullValue();
-        }
-    });
-
-    // 启动轮询定时器
     pollTimer_->start();
 }
 

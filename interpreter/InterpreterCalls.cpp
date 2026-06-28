@@ -6,6 +6,7 @@
 
 #include "interpreter/Interpreter.h"
 #include "interpreter/BuiltinMethods.h"
+#include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include <unordered_set>
 
 // 依赖说明：
@@ -50,16 +51,20 @@ void Interpreter::visitFunCall(FunCall& node) {
     if (node.name == "dict" || node.name == "array") { lastValue_ = callBuiltinConstructor(node); return; }
     if (classRegistry_.find(node.name) != classRegistry_.end()) { lastValue_ = constructClassInstance(node); return; }
     // input() 函数（需要回调，单独处理）
+    // E3 fix: 改用共享层 executeSharedInput，统一与 VM 的 input() 语义。
+    // WorkerManager 的超时回调会抛 std::runtime_error，被 executeSharedInput
+    // 捕获并附上调用点行号/列号上抛 RuntimeError，调用方得到明确的错误信息
+    // 而非静默返回空串继续执行。
     if (node.name == "input") {
-        std::string prompt;
-        if (node.arguments.size() > 1) {
-            runtimeError("input 期望 0 或 1 个参数，但传入了 " +
-                std::to_string(node.arguments.size()) + " 个",
-                node.line, node.column);
-        }
-        if (node.arguments.size() == 1) {
-            Value promptVal = evaluate(node.arguments[0].get());
-            prompt = promptVal.toString();
+        std::vector<Value> argValues;
+        argValues.reserve(node.arguments.size());
+        // P2-3 fix: bad_alloc 转化为带行号的 RuntimeError，便于用户定位
+        try {
+            for (auto& arg : node.arguments) {
+                argValues.push_back(evaluate(arg.get()));
+            }
+        } catch (const std::bad_alloc&) {
+            runtimeError("内存不足：input() 参数收集失败", node.line, node.column);
         }
         // A6 fix: 加锁拷贝 callback 后解锁调用，避免持锁回调导致死锁
         std::function<std::string(const std::string&)> cb;
@@ -67,11 +72,13 @@ void Interpreter::visitFunCall(FunCall& node) {
             std::lock_guard<std::mutex> lock(callbackMutex_);
             cb = inputCallback_;
         }
-        if (cb) {
-            lastValue_ = Value(cb(prompt)); return;
+        auto r = executeSharedInput(cb, argValues.data(), argValues.size(),
+                                     node.line, node.column);
+        if (r.is_err()) {
+            throw to_runtime_error(r);  // A1 fix: 自由函数模板
         }
-        // 无回调时返回空字符串（允许非交互式运行不崩溃）
-        lastValue_ = Value(std::string()); return;
+        lastValue_ = std::move(r.value());
+        return;
     }
     // 顶层内置函数（用户自定义函数/类优先，仅当未定义时才使用内置）
     if (isBuiltinFunction(node.name)) {
@@ -98,17 +105,21 @@ Value Interpreter::callClosureValue(FunCall& node) {
     size_t argCount = node.arguments.size();
     if (argCount < static_cast<size_t>(funDecl->requiredParamCount) ||
         argCount > funDecl->params.size()) {
-        runtimeError("函数 " + effectiveName + " 期望 " +
-            std::to_string(funDecl->requiredParamCount) + "-" +
-            std::to_string(funDecl->params.size()) + " 个参数，但传入了 " +
-            std::to_string(argCount) + " 个",
+        runtimeError(ErrorFormat::format("函数 %s 期望 %d-%zu 个参数，但传入了 %zu 个",
+            effectiveName.c_str(), funDecl->requiredParamCount,
+            funDecl->params.size(), argCount),
             node.line, node.column);
     }
 
     std::vector<Value> argValues;
     argValues.reserve(argCount);
-    for (auto& arg : node.arguments) {
-        argValues.push_back(evaluate(arg.get()));
+    // P2-3 fix: bad_alloc 转化为带行号的 RuntimeError
+    try {
+        for (auto& arg : node.arguments) {
+            argValues.push_back(evaluate(arg.get()));
+        }
+    } catch (const std::bad_alloc&) {
+        runtimeError("内存不足：闭包调用参数收集失败", node.line, node.column);
     }
 
     // F10: 为缺失的参数填充默认值（在闭包环境中求值）
@@ -133,7 +144,7 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-        runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
+        runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
     }
     RecursionGuard recursionGuard{ recursionDepth_ };
 
@@ -225,8 +236,13 @@ Value Interpreter::callBuiltinFunction(FunCall& node) {
     // 求值参数
     std::vector<Value> argValues;
     argValues.reserve(node.arguments.size());
-    for (auto& arg : node.arguments) {
-        argValues.push_back(evaluate(arg.get()));
+    // P2-3 fix: bad_alloc 转化为带行号的 RuntimeError
+    try {
+        for (auto& arg : node.arguments) {
+            argValues.push_back(evaluate(arg.get()));
+        }
+    } catch (const std::bad_alloc&) {
+        runtimeError("内存不足：内置函数参数收集失败", node.line, node.column);
     }
 
     // 调用共享纯函数层
@@ -252,15 +268,14 @@ Value Interpreter::constructClassInstance(FunCall& node) {
         // P0-2 fix: 支持默认参数，参数数量可在 [requiredParamCount, params.size()] 范围内
         if (initMethod && (node.arguments.size() < initMethod->requiredParamCount ||
                            node.arguments.size() > initMethod->params.size())) {
-            runtimeError("构造函数 init 期望 " +
-                std::to_string(initMethod->requiredParamCount) + "-" +
-                std::to_string(initMethod->params.size()) + " 个参数，但传入了 " +
-                std::to_string(node.arguments.size()) + " 个",
+            runtimeError(ErrorFormat::format("构造函数 init 期望 %d-%zu 个参数，但传入了 %zu 个",
+                initMethod->requiredParamCount, initMethod->params.size(),
+                node.arguments.size()),
                 node.line, node.column);
         }
         if (!initMethod && !node.arguments.empty()) {
-            runtimeError("类 " + cls->name + " 没有 init 方法，但传入了 " +
-                std::to_string(node.arguments.size()) + " 个参数",
+            runtimeError(ErrorFormat::format("类 %s 没有 init 方法，但传入了 %zu 个参数",
+                cls->name.c_str(), node.arguments.size()),
                 node.line, node.column);
         }
 
@@ -268,8 +283,13 @@ Value Interpreter::constructClassInstance(FunCall& node) {
         std::vector<Value> argValues;
         argValues.reserve(node.arguments.size());
         std::string className = cls->name;  // #2 fix: 缓存类名
-        for (auto& arg : node.arguments) {
-            argValues.push_back(evaluate(arg.get()));
+        // P2-3 fix: bad_alloc 转化为带行号的 RuntimeError
+        try {
+            for (auto& arg : node.arguments) {
+                argValues.push_back(evaluate(arg.get()));
+            }
+        } catch (const std::bad_alloc&) {
+            runtimeError("内存不足：类构造参数收集失败", node.line, node.column);
         }
 
         // #2 fix: evaluate后重新查找
@@ -279,7 +299,7 @@ Value Interpreter::constructClassInstance(FunCall& node) {
 
         // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
         if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-            runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
+            runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
         }
         RecursionGuard recursionGuard{ recursionDepth_ };
 
@@ -293,8 +313,11 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             if (!visitedClasses.insert(curCls->name).second) break; // 检测到循环继承
             for (const auto& kv : curCls->fields) {
                 // 子类字段覆盖父类
-                if (instance.fields().find(kv.first) == instance.fields().end()) {
-                    instance.fields()[kv.first] = kv.second;
+                // Perf-Finding: 缓存 find 迭代器，避免 operator[] 二次 hash 查找同键
+                auto& flds = instance.fields();
+                auto it = flds.find(kv.first);
+                if (it == flds.end()) {
+                    flds.emplace(kv.first, kv.second);
                 }
             }
             if (!curCls->superClassName.empty()) {
@@ -458,18 +481,22 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     size_t argCount = node.arguments.size();
     if (argCount < static_cast<size_t>(funDecl->requiredParamCount) ||
         argCount > funDecl->params.size()) {
-        runtimeError("函数 " + node.name + " 期望 " +
-            std::to_string(funDecl->requiredParamCount) + "-" +
-            std::to_string(funDecl->params.size()) + " 个参数，但传入了 " +
-            std::to_string(argCount) + " 个",
+        runtimeError(ErrorFormat::format("函数 %s 期望 %d-%zu 个参数，但传入了 %zu 个",
+            node.name.c_str(), funDecl->requiredParamCount,
+            funDecl->params.size(), argCount),
             node.line, node.column);
     }
 
     // 求值参数
     std::vector<Value> argValues;
     argValues.reserve(argCount);
-    for (auto& arg : node.arguments) {
-        argValues.push_back(evaluate(arg.get()));
+    // P2-3 fix: bad_alloc 转化为带行号的 RuntimeError
+    try {
+        for (auto& arg : node.arguments) {
+            argValues.push_back(evaluate(arg.get()));
+        }
+    } catch (const std::bad_alloc&) {
+        runtimeError("内存不足：命名函数参数收集失败", node.line, node.column);
     }
 
     // F10: 为缺失的参数填充默认值
@@ -497,7 +524,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-        runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
+        runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
     }
     RecursionGuard recursionGuard{ recursionDepth_ };
 

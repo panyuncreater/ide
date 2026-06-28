@@ -3,6 +3,7 @@
 #include "interpreter/Value.h"
 #include "interpreter/NumericUtils.h"  // #14: OverflowCheck
 #include "Logger.h"
+#include <cassert>
 #include <sstream>
 #include <unordered_set>
 #include <cmath>
@@ -24,83 +25,6 @@
 // ============================================================
 
 namespace {
-
-/// 辅助：IR 操作码 → 字符串（调试用，覆盖全部 IROp）
-const char* irOpName(IROp op) {
-    switch (op) {
-    // 常量加载
-    case IROp::LOAD_CONST:      return "LOAD_CONST";
-    case IROp::LOAD_NULL:       return "LOAD_NULL";
-    case IROp::LOAD_TRUE:       return "LOAD_TRUE";
-    case IROp::LOAD_FALSE:      return "LOAD_FALSE";
-    // 变量访问
-    case IROp::LOAD_LOCAL:      return "LOAD_LOCAL";
-    case IROp::STORE_LOCAL:     return "STORE_LOCAL";
-    case IROp::LOAD_GLOBAL:     return "LOAD_GLOBAL";
-    case IROp::STORE_GLOBAL:    return "STORE_GLOBAL";
-    case IROp::DEFINE_GLOBAL:   return "DEFINE_GLOBAL";
-    case IROp::LOAD_UPVALUE:    return "LOAD_UPVALUE";
-    case IROp::STORE_UPVALUE:   return "STORE_UPVALUE";
-    case IROp::CLOSE_UPVALUE:   return "CLOSE_UPVALUE";
-    // 算术
-    case IROp::ADD:             return "ADD";
-    case IROp::SUB:             return "SUB";
-    case IROp::MUL:             return "MUL";
-    case IROp::DIV:             return "DIV";
-    case IROp::MOD:             return "MOD";
-    case IROp::NEGATE:          return "NEGATE";
-    // 比较
-    case IROp::EQ:              return "EQ";
-    case IROp::NEQ:             return "NEQ";
-    case IROp::LT:              return "LT";
-    case IROp::GT:              return "GT";
-    case IROp::LTE:             return "LTE";
-    case IROp::GTE:             return "GTE";
-    // 逻辑
-    case IROp::NOT:             return "NOT";
-    // 控制流
-    case IROp::JUMP:            return "JUMP";
-    case IROp::JUMP_IF_FALSE:   return "JUMP_IF_FALSE";
-    case IROp::LABEL:           return "LABEL";
-    // 调用
-    case IROp::CALL:            return "CALL";
-    case IROp::CALL_EXPR:       return "CALL_EXPR";
-    case IROp::RETURN:          return "RETURN";
-    case IROp::RETURN_NULL:     return "RETURN_NULL";
-    // 闭包
-    case IROp::MAKE_CLOSURE:    return "MAKE_CLOSURE";
-    // 容器
-    case IROp::BUILD_ARRAY:     return "BUILD_ARRAY";
-    case IROp::BUILD_DICT:      return "BUILD_DICT";
-    case IROp::INDEX_GET:       return "INDEX_GET";
-    case IROp::INDEX_SET:       return "INDEX_SET";
-    // 成员访问
-    case IROp::MEMBER_GET:      return "MEMBER_GET";
-    case IROp::MEMBER_SET:      return "MEMBER_SET";
-    // 方法调用
-    case IROp::METHOD_CALL:     return "METHOD_CALL";
-    // 类
-    case IROp::DEFINE_CLASS:    return "DEFINE_CLASS";
-    case IROp::CLASS_NEW:       return "CLASS_NEW";
-    case IROp::INIT_FIELD:      return "INIT_FIELD";
-    // 异常
-    case IROp::TRY_BEGIN:       return "TRY_BEGIN";
-    case IROp::TRY_END:         return "TRY_END";
-    case IROp::THROW:           return "THROW";
-    // 写回指令（限制2）
-    case IROp::WRITEBACK_MEMBER_VAR:    return "WRITEBACK_MEMBER_VAR";
-    case IROp::WRITEBACK_MEMBER_LOCAL:  return "WRITEBACK_MEMBER_LOCAL";
-    case IROp::WRITEBACK_INDEX_VAR:     return "WRITEBACK_INDEX_VAR";
-    case IROp::WRITEBACK_INDEX_LOCAL:   return "WRITEBACK_INDEX_LOCAL";
-    case IROp::WRITEBACK_MEMBER_UPVALUE: return "WRITEBACK_MEMBER_UPVALUE";
-    case IROp::WRITEBACK_INDEX_UPVALUE:  return "WRITEBACK_INDEX_UPVALUE";
-    // 其他
-    case IROp::PRINT:           return "PRINT";
-    case IROp::POP:             return "POP";
-    case IROp::DUP:             return "DUP";
-    }
-    return "?";
-}
 
 /// 简化版常量提取（限制4）：支持字面量和负数字面量
 /// 成功返回 true 并输出常量值；失败返回 false
@@ -126,6 +50,11 @@ bool extractConstant(ASTNode* node, Value& result) {
             Value operand;
             if (extractConstant(un->operand.get(), operand) && operand.isNumber()) {
                 if (operand.isInt()) {
+                    // R7 fix: -INT64_MIN 是有符号整数溢出（C++ UB），对齐
+                    // Compiler::tryFoldUnary 和 IR foldUnary 用 OverflowCheck 防护。
+                    if (OverflowCheck::negateOverflow(operand.intVal())) {
+                        return false;
+                    }
                     result = Value(-operand.intVal());
                 } else {
                     result = Value(-operand.floatVal());
@@ -164,7 +93,15 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
     preScanTopLevelDecls(program);
     // 遍历顶层语句，逐个转换
     for (auto& stmt : program.statements) {
-        if (stmt) visitNode(stmt.get());
+        if (!stmt) continue;
+        visitNode(stmt.get());
+        // 表达式语句（函数调用/方法调用）的返回值未被消费，
+        // 需 emit POP 防止栈式 VM (BytecodeIRBackend) 栈泄漏。
+        // RegisterBytecodeBackend 中 POP 是 no-op，不影响寄存器式 VM。
+        if (stmt->nodeType == NodeType::NODE_FUN_CALL ||
+            stmt->nodeType == NodeType::NODE_METHOD_CALL) {
+            emitIR(IROp::POP, {}, stmt->line);
+        }
     }
     // 将 ir_ 作为 mainFunction 存入 module_
     // 更新 main 的 localCount（顶层代码的 AND/OR 短路等会用 nextLocalSlot_ 分配临时 slot）
@@ -193,7 +130,9 @@ void AstIRBuilder::preScanTopLevelDecls(Block& program) {
 // ---- 块作用域（限制5）----
 
 void AstIRBuilder::enterBlockScope() {
-    blockScopes_.push_back(BlockScope{});
+    BlockScope bs;
+    bs.slotBase = nextLocalSlot_;  // 记录进入块时的槽位基址，退出时回收到此
+    blockScopes_.push_back(std::move(bs));
     blockDepth_++;
 }
 
@@ -203,10 +142,30 @@ void AstIRBuilder::leaveBlockScope() {
     BlockScope scope = std::move(blockScopes_.back());
     blockScopes_.pop_back();
     if (blockDepth_ > 0) blockDepth_--;
-    // 仅函数内：回收局部变量槽位
-    // 简化：不实际复用局部槽位编号（避免破坏 slot 编号一致性），
-    // 仅清空记录。全局槽位 freeSlots_ 不混入局部槽位。
-    (void)scope;
+    // 在回收前，确保 localCount 捕获了本块的峰值槽位使用。
+    // 回收后 nextLocalSlot_ 降低，但已 emit 的字节码仍引用被回收的 slot 编号，
+    // VM 帧必须足够大以容纳所有曾使用的 slot。用 max 更新避免回退。
+    if (static_cast<int>(nextLocalSlot_) > ir_->localCount) {
+        ir_->localCount = static_cast<int>(nextLocalSlot_);
+    }
+    // 回收局部变量槽位：仅当本块内未创建嵌套函数（闭包）时才回收。
+    // 闭包可能捕获了本块的局部变量 slot（通过 upvalue isLocal=true 指向 slot 编号），
+    // 回收会导致后续块复用同一 slot 编号，闭包指向错误数据。
+    // hasNestedFunction 在 visitFunDecl 中被设置（仅 inFunction_==true 时）。
+    if (!scope.hasNestedFunction) {
+        nextLocalSlot_ = scope.slotBase;
+        // 清除 varMap_ 中属于本块的局部变量条目，避免块外引用到已回收的 slot。
+        // 注意：临时 slot（AND/OR 短路）未记录在 localSlots，仅靠 slotBase 回收即可，
+        // 因其 varMap_ 无对应条目（临时 slot 不绑定变量名）。
+        for (uint32_t slot : scope.localSlots) {
+            for (auto it = varMap_.begin(); it != varMap_.end(); ++it) {
+                if (it->second.kind == VarInfo::Kind::LOCAL && it->second.index == slot) {
+                    varMap_.erase(it);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 // ---- 辅助方法 ----
@@ -250,6 +209,11 @@ IROperand AstIRBuilder::emitLoadVar(const std::string& name, int line) {
     case VarInfo::Kind::UPVALUE:
         emitIR(IROp::LOAD_UPVALUE, { dest, IROperand::upvalue(info.index) }, line);
         break;
+    default:
+        // VarInfo::Kind 是封闭枚举，落空会导致 dest vreg 已分配但无指令 emit，
+        // 后续 lowering 栈深度映射缺失，静默产生坏代码。
+        assert(false && "未知 VarInfo::Kind");
+        break;
     }
     return dest;
 }
@@ -268,6 +232,10 @@ void AstIRBuilder::emitStoreVar(const std::string& name, IROperand val, int line
         break;
     case VarInfo::Kind::UPVALUE:
         emitIR(IROp::STORE_UPVALUE, { IROperand::upvalue(info.index), val }, line);
+        break;
+    default:
+        // 落空会导致 store 被静默丢弃，变量赋值失效。
+        assert(false && "未知 VarInfo::Kind");
         break;
     }
 }
@@ -385,12 +353,27 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
     case NodeType::NODE_CONTINUE_STMT:  visitContinueStmt(static_cast<ContinueStmt*>(node)); return IROperand::vreg(0);
     case NodeType::NODE_TRY_STMT:       visitTryStmt(static_cast<TryStmt*>(node)); return IROperand::vreg(0);
     case NodeType::NODE_THROW_STMT:     visitThrowStmt(static_cast<ThrowStmt*>(node)); return IROperand::vreg(0);
-    // 未实现的复杂节点：跳过，返回空 vreg
+    // P1 fix: 插值字符串 → IR 字符串拼接链
     case NodeType::NODE_INTERPOLATED_STRING:
+        return visitInterpolatedString(static_cast<InterpolatedString*>(node));
+    // R7 fix: EXPORT 语义为编译其子声明（与 Compiler.cpp visitExportStmt 对齐）。
+    // 原实现静默跳过导致 export var x = 1 中的 x 在 IR/寄存器式路径整体丢失。
+    case NodeType::NODE_EXPORT_STMT: {
+        auto* exp = static_cast<ExportStmt*>(node);
+        if (exp->declaration) {
+            visitNode(exp->declaration.get());
+        }
+        return IROperand::vreg(0);
+    }
+    // R7 fix: IMPORT/SUPER 在 VM 路径不支持，应明确报错而非静默跳过。
+    // 对齐 Compiler.cpp visitImportStmt 的 error() 行为，避免两路径行为不一致。
     case NodeType::NODE_IMPORT_STMT:
-    case NodeType::NODE_EXPORT_STMT:
     case NodeType::NODE_SUPER_EXPR:
     default:
+        // 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
+        // 静默产生坏代码。用 assert 兜底，Release 构建中 assert 被剥离时返回空 vreg
+        // 至少不会 emit 错误指令。
+        assert(false && "AstIRBuilder::visitNode: 未支持的 AST 节点类型");
         return IROperand::vreg(0);
     }
 }
@@ -460,7 +443,11 @@ IROperand AstIRBuilder::visitBinaryOp(BinaryOp* node) {
     case BinOpType::BIN_GT:  emitIR(IROp::GT,  { dest, left, right }, node->line); break;
     case BinOpType::BIN_LTE: emitIR(IROp::LTE, { dest, left, right }, node->line); break;
     case BinOpType::BIN_GTE: emitIR(IROp::GTE, { dest, left, right }, node->line); break;
-    default: break;
+    default:
+        // R7 fix: 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
+        // 静默产生坏代码。用 assert 兜底，Release 构建中 assert 被剥离时 dest 仍返回（至少不崩溃）。
+        assert(false && "未处理的 BinOpType");
+        break;
     }
     return dest;
 }
@@ -617,6 +604,12 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
 
 void AstIRBuilder::visitFunDecl(FunDecl* node) {
     // 限制1：完整闭包 upvalue 捕获实现
+    // Bug 5 fix: 标记当前块作用域含嵌套函数（闭包）。
+    // 仅 inFunction_==true 时（即嵌套函数声明，非顶层函数）才标记，
+    // 使 leaveBlockScope 不回收本块局部槽位——闭包可能通过 upvalue 捕获了这些 slot。
+    if (inFunction_ && !blockScopes_.empty()) {
+        blockScopes_.back().hasNestedFunction = true;
+    }
     // 1. 保存父函数编译状态
     std::unique_ptr<IRFunction> savedIr = std::move(ir_);
     IRBasicBlock* savedBlock = currentBlock_;
@@ -626,6 +619,11 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     auto savedLoopStack = std::move(loopStack_);
     auto savedBlockScopes = std::move(blockScopes_);
     int savedBlockDepth = blockDepth_;
+    // R7 fix: 保存 compilingMethod_/compilingClassName_。原实现遗漏这两个字段，
+    // 导致类方法内声明的嵌套函数（非方法）被误当作方法处理：预留 slot 0 给 this、
+    // arity/requiredArity += 1，调用时实参数量错位且 this 槽为垃圾值。
+    bool savedCompilingMethod = compilingMethod_;
+    std::string savedCompilingClassName = compilingClassName_;
 
     // 保存外层变量/upvalue/内嵌函数信息（用于子函数捕获）
     auto savedOuterLocalSlots = std::move(outerLocalSlots_);
@@ -637,6 +635,10 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     auto savedInnerFunctionSlots = std::move(innerFunctionSlots_);
 
     // 2. 新建子 IRFunction
+    // 异常安全：645-727 行的子函数编译可能抛出（bad_alloc/IR 构建错误），
+    // 若不恢复 15 个 saved* 成员，父函数状态将停留在 moved-from 状态。
+    // 对齐 Compiler.cpp 的 CompileContextGuard RAII 模式：try/catch 保护 + 重抛前恢复。
+    try {
     ir_ = std::make_unique<IRFunction>();
     ir_->name = node->name;
     ir_->arity = static_cast<int>(node->params.size());
@@ -660,6 +662,12 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         varMap_["this"] = { VarInfo::Kind::LOCAL, 0 };
         ir_->arity += 1;
         ir_->requiredArity += 1;
+        // R7 fix: 处理完类方法 this 预留后立即重置 compilingMethod_。
+        // 这样方法体内声明的嵌套函数（递归 visitFunDecl）不会误被当作方法处理
+        // （避免嵌套函数预留 slot 0 给 this、arity += 1 导致参数错位）。
+        // visitClassDecl 每次调用 visitFunDecl 前会重新设置 compilingMethod_=true。
+        // 注意：compilingClassName_ 保留，供方法体内 super 调用查找父类使用。
+        compilingMethod_ = false;
     }
 
     // 3. 设置外层局部/upvalue 信息（供 addUpvalue 查找）
@@ -710,15 +718,40 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     emitIR(IROp::RETURN_NULL, {}, node->line);
 
     // 9. 设置 localCount 和 upvalues
-    ir_->localCount = static_cast<int>(nextLocalSlot_);
+    // Bug 5 fix: 用 max 更新而非直接赋值。leaveBlockScope 回收 slot 后 nextLocalSlot_ 可能
+    // 低于实际峰值，但已 emit 的字节码仍引用被回收的 slot 编号，VM 帧需容纳所有曾使用的 slot。
+    if (static_cast<int>(nextLocalSlot_) > ir_->localCount) {
+        ir_->localCount = static_cast<int>(nextLocalSlot_);
+    }
     ir_->upvalues.clear();
     for (const auto& uv : currentUpvalues_) {
         ir_->upvalues.push_back({ uv.outerIdx, uv.isLocal });
     }
 
     // 10. 将子 IRFunction 添加到 module_（不再丢弃 childIr）
-    std::string fnName = node->name;
     module_->addFunction(std::move(ir_));
+    } catch (...) {
+        // 异常路径：恢复父函数的 15 个成员状态，避免 moved-from 状态被上层复用
+        ir_ = std::move(savedIr);
+        currentBlock_ = savedBlock;
+        varMap_ = std::move(savedVarMap);
+        inFunction_ = savedInFunction;
+        nextLocalSlot_ = savedLocalSlot;
+        loopStack_ = std::move(savedLoopStack);
+        blockScopes_ = std::move(savedBlockScopes);
+        blockDepth_ = savedBlockDepth;
+        // R7 fix: 恢复 compilingMethod_/compilingClassName_
+        compilingMethod_ = savedCompilingMethod;
+        compilingClassName_ = std::move(savedCompilingClassName);
+        outerLocalSlots_ = std::move(savedOuterLocalSlots);
+        outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
+        outerFunctions_ = std::move(savedOuterFunctions);
+        currentUpvalues_ = std::move(savedCurrentUpvalues);
+        currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
+        innerFunctions_ = std::move(savedInnerFunctions);
+        innerFunctionSlots_ = std::move(savedInnerFunctionSlots);
+        throw;
+    }
 
     // 11. 恢复父函数状态
     ir_ = std::move(savedIr);
@@ -729,6 +762,9 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     loopStack_ = std::move(savedLoopStack);
     blockScopes_ = std::move(savedBlockScopes);
     blockDepth_ = savedBlockDepth;
+    // R7 fix: 恢复 compilingMethod_/compilingClassName_
+    compilingMethod_ = savedCompilingMethod;
+    compilingClassName_ = std::move(savedCompilingClassName);
     outerLocalSlots_ = std::move(savedOuterLocalSlots);
     outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
     outerFunctions_ = std::move(savedOuterFunctions);
@@ -739,6 +775,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
 
     // 12. 在父 IR 中 emit MAKE_CLOSURE（含 upvalue 描述符列表）
     //     编码：operands [dest, name_idx, uv_count, isLocal1, idx1, isLocal2, idx2, ...]
+    std::string fnName = node->name;
     uint32_t nameIdx = ir_->addGlobal(fnName);
     IROperand dest = ir_->allocVReg();
     IRFunction* fnIr = module_->findFunction(fnName);
@@ -822,7 +859,13 @@ void AstIRBuilder::visitBlock(Block* node) {
     // 限制5：函数内时 enterBlockScope + 编译语句 + leaveBlockScope
     if (inFunction_) enterBlockScope();
     for (auto& s : node->statements) {
-        if (s) visitNode(s.get());
+        if (!s) continue;
+        visitNode(s.get());
+        // 表达式语句（函数调用/方法调用）的返回值未被消费，需 emit POP。
+        if (s->nodeType == NodeType::NODE_FUN_CALL ||
+            s->nodeType == NodeType::NODE_METHOD_CALL) {
+            emitIR(IROp::POP, {}, s->line);
+        }
     }
     if (inFunction_) leaveBlockScope();
 }
@@ -886,10 +929,17 @@ void AstIRBuilder::visitIndexAssign(IndexAssign* node) {
 }
 
 IROperand AstIRBuilder::visitMemberAccess(MemberAccess* node) {
-    IROperand obj = visitNode(node->object.get());
+    // P1 fix: super.field → SUPER_MEMBER_GET（字段查找从 this 实例，实例已含继承字段）
+    bool isSuper = node->object && node->object->nodeType == NodeType::NODE_SUPER_EXPR;
+    // SuperExpr 本身不产生值，super 解析为当前 this 实例
+    IROperand obj = isSuper ? emitLoadVar("this", node->line) : visitNode(node->object.get());
     IROperand dest = ir_->allocVReg();
     uint32_t fieldIdx = ir_->addGlobal(node->fieldName);
-    emitIR(IROp::MEMBER_GET, { dest, obj, IROperand::field(fieldIdx) }, node->line);
+    if (isSuper) {
+        emitIR(IROp::SUPER_MEMBER_GET, { dest, obj, IROperand::field(fieldIdx) }, node->line);
+    } else {
+        emitIR(IROp::MEMBER_GET, { dest, obj, IROperand::field(fieldIdx) }, node->line);
+    }
     return dest;
 }
 
@@ -928,26 +978,66 @@ IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
     // 若接收者是 VarRef，需在 METHOD_CALL 后 emit STORE 将变异后的接收者写回变量槽，
     // 否则全局/upvalue 中的原值不变，下次读取得到旧值（字段修改丢失）。
     bool isVarRef = node->object && node->object->nodeType == NodeType::NODE_VAR_REF;
-    IROperand obj = visitNode(node->object.get());
+    // P1 fix: super.method() → SUPER_CALL，方法查找从父类开始
+    bool isSuperCall = node->object && node->object->nodeType == NodeType::NODE_SUPER_EXPR;
+    // SuperExpr 本身不产生值，super 解析为当前 this 实例
+    IROperand obj = isSuperCall ? emitLoadVar("this", node->line) : visitNode(node->object.get());
     IROperand dest = ir_->allocVReg();
     uint32_t methodIdx = ir_->addGlobal(node->methodName);
     std::vector<IROperand> ops;
     ops.push_back(dest);
     ops.push_back(obj);
     ops.push_back(IROperand::field(methodIdx));
+    if (isSuperCall) {
+        // SUPER_CALL 额外携带当前类名索引，供 VM 查找父类
+        uint32_t classIdx = ir_->addGlobal(compilingClassName_);
+        ops.push_back(IROperand::funcName(classIdx));
+    }
     ops.push_back(IROperand::imm(static_cast<uint32_t>(node->arguments.size())));
     for (auto& a : node->arguments) {
         ops.push_back(visitNode(a.get()));
     }
-    emitIR(IROp::METHOD_CALL, ops, node->line);
+    emitIR(isSuperCall ? IROp::SUPER_CALL : IROp::METHOD_CALL, ops, node->line);
     // C-6 fix: 方法调用后写回接收者（仅当 object 是 VarRef）。
     // METHOD_CALL 的 sync 逻辑（executeReturnImpl）或内建方法（callBuiltinMethod）
     // 会更新 obj 寄存器，此处将其写回到原始变量槽。
     if (isVarRef) {
         VarRef* vr = static_cast<VarRef*>(node->object.get());
         emitStoreVar(vr->name, obj, node->line);
+    } else if (isSuperCall) {
+        // P1 fix: super.method() 的接收者是 this（局部槽 0）。
+        // executeReturnImpl 的字段同步只写回 obj 寄存器（emitLoadVar("this") 产生的临时 vreg），
+        // 不会写回槽 0。若不补写回，super.init 中 this.field=v 的修改会丢失（槽 0 仍指向旧实例）。
+        emitStoreVar("this", obj, node->line);
     }
     return dest;
+}
+
+IROperand AstIRBuilder::visitInterpolatedString(InterpolatedString* node) {
+    // P1 fix: 插值字符串 → IR 字符串拼接链
+    // 语义：literals[0] + str(expr[0]) + literals[1] + ... + str(expr[n-1]) + literals[n]
+    // 发射首个字面量片段（或 null 若为空）
+    IROperand result;
+    if (!node->literals.empty()) {
+        result = emitConst(Value(node->literals[0]), node->line);
+    } else {
+        result = ir_->allocVReg();
+        emitIR(IROp::LOAD_NULL, { result }, node->line);
+    }
+    // 交替发射：表达式 → ADD → 字面量 → ADD
+    for (size_t i = 0; i < node->expressions.size(); ++i) {
+        IROperand expr = visitNode(node->expressions[i].get());
+        IROperand sum = ir_->allocVReg();
+        emitIR(IROp::ADD, { sum, result, expr }, node->line);
+        result = sum;
+        if (i + 1 < node->literals.size() && !node->literals[i + 1].empty()) {
+            IROperand lit = emitConst(Value(node->literals[i + 1]), node->line);
+            IROperand sum2 = ir_->allocVReg();
+            emitIR(IROp::ADD, { sum2, result, lit }, node->line);
+            result = sum2;
+        }
+    }
+    return result;
 }
 
 void AstIRBuilder::visitClassDecl(ClassDecl* node) {
@@ -1011,23 +1101,42 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
             std::string origName = fd->name;
             fd->name = node->name + "." + origName;
             compilingMethod_ = true;
-            visitFunDecl(fd);
+            compilingClassName_ = node->name;  // P1 fix: 供 super 调用查找父类
+            try {
+                visitFunDecl(fd);
+            } catch (...) {
+                // 异常路径恢复 AST 节点状态，防止编译失败后 AST 被永久修改
+                // （调用方可能重用同一 AST 重试编译，如 IDE/REPL 场景）。
+                fd->name = origName;
+                compilingMethod_ = false;
+                compilingClassName_.clear();
+                throw;
+            }
             compilingMethod_ = false;
+            compilingClassName_.clear();
             fd->name = origName;
         }
     }
 }
 
 void AstIRBuilder::visitBreakStmt(BreakStmt* node) {
-    if (!loopStack_.empty()) {
-        emitIR(IROp::JUMP, { IROperand::label(loopStack_.back().endLabel) }, node->line);
+    if (loopStack_.empty()) {
+        // R7 fix: 循环外 break 静默无操作会导致语义错误未报告。
+        // 对齐 Compiler.cpp 第 1141-1144 行的 error() 行为，避免两路径不一致。
+        Logger::Error("break 只能在循环体内使用", "IR");
+        return;
     }
+    emitIR(IROp::JUMP, { IROperand::label(loopStack_.back().endLabel) }, node->line);
 }
 
 void AstIRBuilder::visitContinueStmt(ContinueStmt* node) {
-    if (!loopStack_.empty()) {
-        emitIR(IROp::JUMP, { IROperand::label(loopStack_.back().continueLabel) }, node->line);
+    if (loopStack_.empty()) {
+        // R7 fix: 循环外 continue 静默无操作会导致语义错误未报告。
+        // 对齐 Compiler.cpp 第 1160-1163 行的 error() 行为，避免两路径不一致。
+        Logger::Error("continue 只能在循环体内使用", "IR");
+        return;
     }
+    emitIR(IROp::JUMP, { IROperand::label(loopStack_.back().continueLabel) }, node->line);
 }
 
 void AstIRBuilder::visitTryStmt(TryStmt* node) {
@@ -1040,6 +1149,32 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
     emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
     // catch 块
     emitIR(IROp::LABEL, { IROperand::label(catchLabel) }, node->line);
+    // P1-4 fix: catch 块起始，将异常值加载到 vreg 并绑定到 catch 变量。
+    // RegisterVM: throwException 将异常存入 pendingException_，REG_LOAD_EXCEPTION 读取。
+    // 栈式 VM: throwException 将异常推入栈顶，BytecodeIRBackend 的 LOAD_EXCEPTION 为 no-op（值已在栈上）。
+    if (!node->catchVarName.empty()) {
+        IROperand excVreg = ir_->allocVReg();
+        emitIR(IROp::LOAD_EXCEPTION, { excVreg }, node->line);
+        // 将 catch 变量声明为局部/global 并存储异常值
+        if (inFunction_) {
+            // 函数内：分配局部 slot 并绑定
+            uint32_t slot = nextLocalSlot_++;
+            varMap_[node->catchVarName] = { VarInfo::Kind::LOCAL, slot };
+            if (static_cast<int>(slot + 1) > ir_->localCount) {
+                ir_->localCount = static_cast<int>(slot + 1);
+            }
+            emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), excVreg }, node->line);
+            // Bug 5 fix: 记录到当前 BlockScope，使 leaveBlockScope 能清除 catchVar 的 varMap_ 条目。
+            // catch 变量作用域限于 catch 块，块退出后不应再被引用。
+            if (!blockScopes_.empty()) {
+                blockScopes_.back().localSlots.push_back(slot);
+            }
+        } else {
+            // 顶层：定义为全局变量
+            int gslot = allocateGlobalSlot(node->catchVarName);
+            emitIR(IROp::DEFINE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(gslot)), excVreg }, node->line);
+        }
+    }
     if (node->catchBlock) visitNode(node->catchBlock.get());
     emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
 }
@@ -1189,15 +1324,26 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     // ---- 变量访问 ----
     case IROp::LOAD_LOCAL: {
         if (instr.operands.size() < 2) return false;
+        // slot 编码为 1 字节，超 255 静默截断会读写错误栈槽
+        if (instr.operands[1].index >= 256) {
+            Logger::Error("IR lowering: 局部变量槽位索引超出 255 上限 (slot=" +
+                          std::to_string(instr.operands[1].index) + ")", "IR");
+            return false;
+        }
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_GET_LOCAL));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index & 0xFF));  // slot(1B)
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index));  // slot(1B)
         break;
     }
     case IROp::STORE_LOCAL: {
         if (instr.operands.size() < 2) return false;
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("IR lowering: 局部变量槽位索引超出 255 上限 (slot=" +
+                          std::to_string(instr.operands[0].index) + ")", "IR");
+            return false;
+        }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_SET_LOCAL));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // slot(1B)
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));  // slot(1B)
         break;
     }
     case IROp::LOAD_GLOBAL: {
@@ -1245,21 +1391,36 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     }
     case IROp::LOAD_UPVALUE: {
         if (instr.operands.size() < 2) return false;
+        if (instr.operands[1].index >= 256) {
+            Logger::Error("IR lowering: upvalue 索引超出 255 上限 (idx=" +
+                          std::to_string(instr.operands[1].index) + ")", "IR");
+            return false;
+        }
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_GET_UPVALUE));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index));
         break;
     }
     case IROp::STORE_UPVALUE: {
         if (instr.operands.size() < 2) return false;
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("IR lowering: upvalue 索引超出 255 上限 (idx=" +
+                          std::to_string(instr.operands[0].index) + ")", "IR");
+            return false;
+        }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_SET_UPVALUE));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
         break;
     }
     case IROp::CLOSE_UPVALUE: {
         if (instr.operands.empty()) return false;
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("IR lowering: upvalue 索引超出 255 上限 (idx=" +
+                          std::to_string(instr.operands[0].index) + ")", "IR");
+            return false;
+        }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CLOSE_UPVALUE));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
         break;
     }
 
@@ -1396,6 +1557,15 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         emitUint16(chunk_->code, nameConstIdx);
         break;
     }
+    case IROp::SUPER_MEMBER_GET: {
+        // P1 fix: super.field → OP_SUPER_MEMBER_GET（与 OP_MEMBER_GET 格式相同）
+        if (instr.operands.size() < 3) return false;
+        uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_SUPER_MEMBER_GET));
+        emitUint16(chunk_->code, nameConstIdx);
+        break;
+    }
 
     // ---- 方法调用 ----
     case IROp::METHOD_CALL: {
@@ -1411,16 +1581,39 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         chunk_->code.push_back(0xFF);       // recvSlot（简化占位）
         break;
     }
+    case IROp::SUPER_CALL: {
+        // P1 fix: super.method(args) → OP_SUPER_CALL
+        // operands: [dest, this_vreg, method_idx, class_idx, arg_count, args...]
+        // → OP_SUPER_CALL nameIdx(2B) argCount(1B) recvVarIdx(2B) recvSlot(1B) classIdx(2B)
+        if (instr.operands.size() < 5) return false;
+        uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        uint16_t classConstIdx = addStringConstant(globalName(instr.operands[3].index), ir);
+        vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_SUPER_CALL));
+        emitUint16(chunk_->code, nameConstIdx);
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[4].index & 0xFF));  // argCount
+        emitUint16(chunk_->code, 0xFFFF);  // recvVarIdx（简化占位）
+        chunk_->code.push_back(0xFF);       // recvSlot（简化占位）
+        emitUint16(chunk_->code, classConstIdx);  // classIdx
+        break;
+    }
 
     // ---- 类 ----
     case IROp::DEFINE_CLASS: {
-        if (instr.operands.empty()) return false;
+        // 操作数: [0]=className(FUNC_NAME), [1]=parentName(IMM_UINT, UINT32_MAX=无父类)
+        if (instr.operands.size() < 2) return false;
         uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[0].index), ir);
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_DEFINE_CLASS));
         emitUint16(chunk_->code, nameConstIdx);
-        // 简化填充：OP_DEFINE_CLASS 共 5 字节，补 2 字节占位
-        chunk_->code.push_back(0);
-        chunk_->code.push_back(0);
+        // 与 Compiler.cpp:1810-1817 对齐：编码父类名索引
+        // 0xFFFF 表示无父类；否则为父类名在常量池中的索引
+        uint32_t parentIdx = instr.operands[1].index;
+        if (parentIdx == UINT32_MAX) {
+            emitUint16(chunk_->code, 0xFFFF);
+        } else {
+            uint16_t superConstIdx = addStringConstant(globalName(parentIdx), ir);
+            emitUint16(chunk_->code, superConstIdx);
+        }
         break;
     }
     case IROp::CLASS_NEW: {
@@ -1456,6 +1649,11 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_THROW));
         break;
     }
+    case IROp::LOAD_EXCEPTION: {
+        // P1-4 fix: 栈式 VM 的 throwException 已将异常值推入栈顶，
+        // 此处为 no-op（不发射字节码）。后续 STORE_LOCAL/DEFINE_GLOBAL 从栈顶 pop。
+        break;
+    }
 
     // ---- 写回指令（限制2）----
     case IROp::WRITEBACK_MEMBER_VAR: {
@@ -1479,8 +1677,14 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // operands: [slot, field_idx]
         // → OP_WRITEBACK_MEMBER_LOCAL slot(1B) fieldIdx(2B)
         if (instr.operands.size() < 2) return false;
+        // Bug-14 同型修复：slot 超 255 静默截断会读写错误栈槽
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("IR lowering: WRITEBACK_MEMBER_LOCAL 槽位索引超出 255 上限 (slot=" +
+                          std::to_string(instr.operands[0].index) + ")", "IR");
+            return false;
+        }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_MEMBER_LOCAL));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // slot(1B)
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));  // slot(1B)
         uint16_t fieldConstIdx = addStringConstant(globalName(instr.operands[1].index), ir);
         emitUint16(chunk_->code, fieldConstIdx);
         break;
@@ -1502,16 +1706,28 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // operands: [slot]
         // → OP_WRITEBACK_INDEX_LOCAL slot(1B)
         if (instr.operands.size() < 1) return false;
+        // Bug-14 同型修复：slot 超 255 静默截断
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("IR lowering: WRITEBACK_INDEX_LOCAL 槽位索引超出 255 上限 (slot=" +
+                          std::to_string(instr.operands[0].index) + ")", "IR");
+            return false;
+        }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_INDEX_LOCAL));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // slot(1B)
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));  // slot(1B)
         break;
     }
     case IROp::WRITEBACK_MEMBER_UPVALUE: {
         // operands: [uv_idx, field_idx]
         // → OP_WRITEBACK_MEMBER_UPVALUE uvIdx(1B) fieldIdx(2B)
         if (instr.operands.size() < 2) return false;
+        // Bug-14 同型修复：uvIdx 超 255 静默截断
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("IR lowering: WRITEBACK_MEMBER_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+                          std::to_string(instr.operands[0].index) + ")", "IR");
+            return false;
+        }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_MEMBER_UPVALUE));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // uvIdx(1B)
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));  // uvIdx(1B)
         uint16_t fieldConstIdx = addStringConstant(globalName(instr.operands[1].index), ir);
         emitUint16(chunk_->code, fieldConstIdx);
         break;
@@ -1520,8 +1736,14 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // operands: [uv_idx]
         // → OP_WRITEBACK_INDEX_UPVALUE uvIdx(1B)
         if (instr.operands.size() < 1) return false;
+        // Bug-14 同型修复：uvIdx 超 255 静默截断
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("IR lowering: WRITEBACK_INDEX_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+                          std::to_string(instr.operands[0].index) + ")", "IR");
+            return false;
+        }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_INDEX_UPVALUE));
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));  // uvIdx(1B)
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));  // uvIdx(1B)
         break;
     }
 
@@ -1560,6 +1782,13 @@ bool BytecodeIRBackend::patchJumps() {
             return false;
         }
         // VM OP_JUMP/OP_JUMP_IF_FALSE/OP_TRY_BEGIN 用绝对偏移（ip = target）
+        // 16-bit 编码限制：字节码体积超过 64KB 时跳转目标会截断，需显式检查
+        // （对齐 Compiler::safeCodeOffset() 的 65535 上限保护）
+        if (it->second > 65535) {
+            Logger::Error("BytecodeIRBackend: 跳转目标偏移超过 64KB 限制 (offset=" +
+                          std::to_string(it->second) + ")", "IR");
+            return false;
+        }
         uint16_t target = static_cast<uint16_t>(it->second);
         if (pj.codeOffset + 1 >= chunk_->code.size()) {
             Logger::Error("BytecodeIRBackend: 跳转操作数越界", "IR");
@@ -1575,6 +1804,113 @@ bool BytecodeIRBackend::patchJumps() {
 // IRToString — 调试输出
 // ============================================================
 
+// Dedup-4E: 公共 API，供 IrViewer 与 IRToString 共用（避免 IrViewer 维护过时副本）
+const char* irOpName(IROp op) {
+    switch (op) {
+    // 常量加载
+    case IROp::LOAD_CONST:      return "LOAD_CONST";
+    case IROp::LOAD_NULL:       return "LOAD_NULL";
+    case IROp::LOAD_TRUE:       return "LOAD_TRUE";
+    case IROp::LOAD_FALSE:      return "LOAD_FALSE";
+    // 变量访问
+    case IROp::LOAD_LOCAL:      return "LOAD_LOCAL";
+    case IROp::STORE_LOCAL:     return "STORE_LOCAL";
+    case IROp::LOAD_GLOBAL:     return "LOAD_GLOBAL";
+    case IROp::STORE_GLOBAL:    return "STORE_GLOBAL";
+    case IROp::DEFINE_GLOBAL:   return "DEFINE_GLOBAL";
+    case IROp::LOAD_UPVALUE:    return "LOAD_UPVALUE";
+    case IROp::STORE_UPVALUE:   return "STORE_UPVALUE";
+    case IROp::CLOSE_UPVALUE:   return "CLOSE_UPVALUE";
+    // 算术
+    case IROp::ADD:             return "ADD";
+    case IROp::SUB:             return "SUB";
+    case IROp::MUL:             return "MUL";
+    case IROp::DIV:             return "DIV";
+    case IROp::MOD:             return "MOD";
+    case IROp::NEGATE:          return "NEGATE";
+    // 比较
+    case IROp::EQ:              return "EQ";
+    case IROp::NEQ:             return "NEQ";
+    case IROp::LT:              return "LT";
+    case IROp::GT:              return "GT";
+    case IROp::LTE:             return "LTE";
+    case IROp::GTE:             return "GTE";
+    // 逻辑
+    case IROp::NOT:             return "NOT";
+    // 控制流
+    case IROp::JUMP:            return "JUMP";
+    case IROp::JUMP_IF_FALSE:   return "JUMP_IF_FALSE";
+    case IROp::LABEL:           return "LABEL";
+    // 调用
+    case IROp::CALL:            return "CALL";
+    case IROp::CALL_EXPR:       return "CALL_EXPR";
+    case IROp::RETURN:          return "RETURN";
+    case IROp::RETURN_NULL:     return "RETURN_NULL";
+    // 闭包
+    case IROp::MAKE_CLOSURE:    return "MAKE_CLOSURE";
+    // 容器
+    case IROp::BUILD_ARRAY:     return "BUILD_ARRAY";
+    case IROp::BUILD_DICT:      return "BUILD_DICT";
+    case IROp::INDEX_GET:       return "INDEX_GET";
+    case IROp::INDEX_SET:       return "INDEX_SET";
+    // 成员访问
+    case IROp::MEMBER_GET:      return "MEMBER_GET";
+    case IROp::MEMBER_SET:      return "MEMBER_SET";
+    case IROp::SUPER_MEMBER_GET: return "SUPER_MEMBER_GET";
+    // 方法调用
+    case IROp::METHOD_CALL:     return "METHOD_CALL";
+    case IROp::SUPER_CALL:      return "SUPER_CALL";
+    // 类
+    case IROp::DEFINE_CLASS:    return "DEFINE_CLASS";
+    case IROp::CLASS_NEW:       return "CLASS_NEW";
+    case IROp::INIT_FIELD:      return "INIT_FIELD";
+    // 异常
+    case IROp::TRY_BEGIN:       return "TRY_BEGIN";
+    case IROp::TRY_END:         return "TRY_END";
+    case IROp::THROW:           return "THROW";
+    case IROp::LOAD_EXCEPTION:  return "LOAD_EXCEPTION";
+    // 写回指令（限制2）
+    case IROp::WRITEBACK_MEMBER_VAR:    return "WRITEBACK_MEMBER_VAR";
+    case IROp::WRITEBACK_MEMBER_LOCAL:  return "WRITEBACK_MEMBER_LOCAL";
+    case IROp::WRITEBACK_INDEX_VAR:     return "WRITEBACK_INDEX_VAR";
+    case IROp::WRITEBACK_INDEX_LOCAL:   return "WRITEBACK_INDEX_LOCAL";
+    case IROp::WRITEBACK_MEMBER_UPVALUE: return "WRITEBACK_MEMBER_UPVALUE";
+    case IROp::WRITEBACK_INDEX_UPVALUE:  return "WRITEBACK_INDEX_UPVALUE";
+    // 其他
+    case IROp::PRINT:           return "PRINT";
+    case IROp::POP:             return "POP";
+    case IROp::DUP:             return "DUP";
+    // Bug-6 同型修复：枚举扩展时静默走 "?"，加 default + assert 兜底
+    default:
+        assert(false && "irOpName: 未处理的 IROp 枚举值");
+        return "?";
+    }
+}
+
+// Dedup-4F: 单条 IR 指令格式化，IRToString 与 IrViewer 共用（避免 IrViewer 维护过时副本）
+std::string formatIRInstruction(const IRInstruction& instr) {
+    std::ostringstream oss;
+    oss << irOpName(instr.op);
+    for (const auto& operand : instr.operands) {
+        const char* kindStr = "?";
+        switch (operand.kind) {
+        case IROperandKind::CONSTANT:    kindStr = "c"; break;
+        case IROperandKind::VIRTUAL:     kindStr = "v"; break;
+        case IROperandKind::LABEL:       kindStr = "L"; break;
+        case IROperandKind::GLOBAL_NAME: kindStr = "g"; break;
+        case IROperandKind::LOCAL_SLOT:  kindStr = "s"; break;
+        case IROperandKind::UPVALUE_IDX: kindStr = "u"; break;
+        case IROperandKind::FIELD_NAME:  kindStr = "f"; break;
+        case IROperandKind::FUNC_NAME:   kindStr = "fn"; break;
+        case IROperandKind::IMM_UINT:    kindStr = "#"; break;
+        default:                          kindStr = "?"; break;  // Bug-6: 缺 default 防新增枚举静默走 ?
+        }
+        oss << " " << kindStr << operand.index;
+    }
+    if (instr.line > 0) oss << "  ; line " << instr.line;
+    return oss.str();
+}
+
 std::string IRToString(const IRFunction& ir) {
     std::ostringstream oss;
     oss << "IRFunction \"" << ir.name << "\" {\n";
@@ -1588,24 +1924,7 @@ std::string IRToString(const IRFunction& ir) {
         const auto& block = ir.blocks[bi];
         oss << "  BB" << bi << " (label=" << block.labelIndex << "):\n";
         for (const auto& instr : block.instructions) {
-            oss << "    " << irOpName(instr.op);
-            for (const auto& operand : instr.operands) {
-                const char* kindStr = "?";
-                switch (operand.kind) {
-                case IROperandKind::CONSTANT:    kindStr = "c"; break;
-                case IROperandKind::VIRTUAL:     kindStr = "v"; break;
-                case IROperandKind::LABEL:       kindStr = "L"; break;
-                case IROperandKind::GLOBAL_NAME: kindStr = "g"; break;
-                case IROperandKind::LOCAL_SLOT:  kindStr = "s"; break;
-                case IROperandKind::UPVALUE_IDX: kindStr = "u"; break;
-                case IROperandKind::FIELD_NAME:  kindStr = "f"; break;
-                case IROperandKind::FUNC_NAME:   kindStr = "fn"; break;
-                case IROperandKind::IMM_UINT:    kindStr = "#"; break;
-                }
-                oss << " " << kindStr << operand.index;
-            }
-            if (instr.line > 0) oss << "  ; line " << instr.line;
-            oss << "\n";
+            oss << "    " << formatIRInstruction(instr) << "\n";
         }
         oss << "\n";
     }
@@ -1945,6 +2264,10 @@ bool copyPropagationPass(IRFunction& ir) {
                             break;
                         case ConstKind::NONE:
                             break;
+                        // Bug-6 同型修复：枚举扩展时静默跳过替换，留下不一致状态
+                        default:
+                            assert(false && "copyPropagationPass: 未处理的 ConstKind 枚举值");
+                            break;
                         }
                     }
                 }
@@ -2001,7 +2324,8 @@ bool optimizeIR(IRFunction& ir, bool enableCopyPropagation) {
         if (!m1 && !m2 && !m3) break;  // 收敛
     }
     if (modified) {
-        Logger::Info("IR 优化完成: " + std::to_string(ir.constants.size()) + " 常量, " +
+        // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
+        LOG_INFO("IR 优化完成: " + std::to_string(ir.constants.size()) + " 常量, " +
                      std::to_string(ir.nextVReg) + " vreg" +
                      (enableCopyPropagation ? " (含复制传播)" : ""), "IR-Optimize");
     }

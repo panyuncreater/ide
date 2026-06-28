@@ -66,7 +66,11 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
 
     // PERF-22 fix: 用 per-character 掩码数组标记字符串/注释范围，
     // 将范围检查从 O(ranges) 线性扫描降为 O(1) 数组查找
-    std::vector<char> mask;
+    // Perf-Finding3: thread_local 复用底层数组容量，避免每次按键的堆分配。
+    // Qt UI 线程独占调用 highlightBlock，无并发；mask.clear() 保留 capacity
+    // 仅 size 归零，resize 触发的是 no-op 容量扩张（容量已够时）。
+    static thread_local std::vector<char> mask;
+    mask.clear();
     if (len > 0) mask.resize(len, 0);
 
     QList<QPair<int, int>> stringRanges;

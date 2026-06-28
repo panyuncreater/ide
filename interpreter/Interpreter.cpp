@@ -11,6 +11,8 @@
 #include <cmath>  // BUG 8.1 fix: std::fmod
 #include <sstream>
 #include <unordered_set>
+#include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
+#include "common/BoundsCheck.h"        // Dedup-7A: inBounds 替代重复的索引检查
 
 // ============================================================
 // Interpreter 解释器实现
@@ -40,6 +42,9 @@ Value Interpreter::execute(Block& program) {
     recursionDepth_ = 0;
     replAsts_.clear();  // 释放 REPL 保留的 AST
     diagnostics_.clear();  // 清空诊断信息
+    // R7 fix: 清理 classContextStack_，防止用户通过"停止"按钮终止运行（terminate）
+    // 时 CallFrameGuard 析构器未执行导致的残留——后续 super 调用会用错误类名分派。
+    classContextStack_.clear();
     // P0-1 fix: 清理模块缓存，避免 replAsts_.clear() 后缓存中的悬垂指针
     moduleCache_.clear();
     moduleExports_.clear();
@@ -61,6 +66,11 @@ Value Interpreter::executeRepl(Block& program) {
     currentEnv_ = globalEnv_;
     recursionDepth_ = 0;
     diagnostics_.clear();  // 清空诊断信息
+    // R7 fix: 清理执行栈状态，防止 terminate() 终止后残留（与 execute() 对齐）。
+    // 正常路径下 CallFrameGuard RAII 会清空，此处是防御性兜底。
+    callStack_.clear();
+    classContextStack_.clear();
+    currentFunctionReturnType_.clear();
 
     return runStatementsWithExceptionHandling(program);
 }
@@ -135,6 +145,13 @@ void Interpreter::restoreReplState() {
     moduleLoadingSet_ = std::move(replState_.savedModuleLoadingSet);  // D19 fix: 同步恢复 set
     replState_.savedGlobalEnv.reset();
     replState_.active = false;
+    // R7 fix: 清理执行栈状态，防止 Run 被 terminate() 终止后残留——
+    // saveReplState 在 terminate 后被调用，此时 classContextStack_/callStack_
+    // 可能残留未展开的条目，恢复 REPL 状态后必须清空。
+    callStack_.clear();
+    classContextStack_.clear();
+    currentFunctionReturnType_.clear();
+    recursionDepth_ = 0;
 }
 
 void Interpreter::setOutputCallback(std::function<void(const std::string&)> callback) {
@@ -353,8 +370,12 @@ Value Interpreter::numericBinaryOp(BinOpType opType, Value left,
         runtimeError("算术运算需要数值类型", line, col);
     case ArithStatus::OK:
         return r.isIntResult ? Value(r.intVal) : Value(r.floatVal);
+    // Bug-6 同型修复：ArithStatus 是封闭枚举，落空表示内部错误。
+    // 原代码 return Value::nullValue() 会让上层静默拿到 null 结果，
+    // 改为抛出明确错误（与 VM.cpp:389 / RegisterVM.cpp:421 对齐）。
+    default:
+        runtimeError("内部错误: 未知算术状态", line, col);
     }
-    return Value::nullValue();  // 不可达，但消除编译器警告
 }
 
 // ---- 类型检查辅助方法 ----
@@ -452,12 +473,15 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
         if (nd->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* ma = static_cast<MemberAccess*>(nd);
             if (parent.isInstance()) {
-                auto it = parent.fields().find(ma->fieldName);
-                info.vals[i] = (it != parent.fields().end()) ? it->second : Value::nullValue();
+                // Perf-Finding: 缓存 const 引用避免 fields() 二次调用与同键二次 hash 查找
+                const auto& flds = parent.fields();
+                auto it = flds.find(ma->fieldName);
+                info.vals[i] = (it != flds.end()) ? it->second : Value::nullValue();
             }
             else if (parent.isDict()) {
-                auto it = parent.dictVal().find(ma->fieldName);
-                info.vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
+                const auto& entries = parent.dictVal();
+                auto it = entries.find(ma->fieldName);
+                info.vals[i] = (it != entries.end()) ? it->second : Value::nullValue();
             }
             else {
                 runtimeError("该类型不支持成员访问", line, col);
@@ -469,7 +493,8 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
             const Value& indexVal = info.idxs[i];
             if (parent.isArray() && indexVal.isInt()) {
                 if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parent.arrayVal().size())
-                    runtimeError("数组索引越界: " + std::to_string(indexVal.intVal()) + ", 有效范围 [0, " + std::to_string(parent.arrayVal().size()) + ")", line, col);
+                    runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                        static_cast<long long>(indexVal.intVal()), parent.arrayVal().size()), line, col);
                 info.vals[i] = parent.arrayVal()[indexVal.intVal()];
             }
             else if (parent.isDict() && indexVal.isString()) {
@@ -517,7 +542,8 @@ void Interpreter::writeBackChain(ChainInfo& info, Value innermost, int line, int
             const Value& indexVal = info.idxs[i];
             if (parentVal.isArray() && indexVal.isInt()) {
                 if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parentVal.arrayVal().size())
-                    runtimeError("数组索引越界: " + std::to_string(indexVal.intVal()) + ", 有效范围 [0, " + std::to_string(parentVal.arrayVal().size()) + ")", line, col);
+                    runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                        static_cast<long long>(indexVal.intVal()), parentVal.arrayVal().size()), line, col);
                 // S1 fix: 优先使用 tryGetMutableArray 跳过 COW 深拷贝
                 if (auto* arr = parentVal.tryGetMutableArray()) {
                     (*arr)[indexVal.intVal()] = currentVal;
@@ -566,7 +592,8 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     if (isIndexAssign) {
         if (modifiedObj.isArray() && idx.isInt()) {
             if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= modifiedObj.arrayVal().size())
-                runtimeError("数组索引越界: " + std::to_string(idx.intVal()) + ", 有效范围 [0, " + std::to_string(modifiedObj.arrayVal().size()) + ")", line, col);
+                runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(idx.intVal()), modifiedObj.arrayVal().size()), line, col);
             modifiedObj.arrayVal()[idx.intVal()] = val;
         }
         else if (modifiedObj.isDict() && idx.isString()) {
@@ -742,8 +769,11 @@ void Interpreter::visitVarDecl(VarDecl& node) {
             while (curCls) {
                 if (!visitedClasses.insert(curCls->name).second) break; // 检测到循环继承
                 for (const auto& kv : curCls->fields) {
-                    if (instance.fields().find(kv.first) == instance.fields().end()) {
-                        instance.fields()[kv.first] = kv.second;
+                    // Perf-Finding: 缓存 find 迭代器，避免 operator[] 二次 hash 查找同键
+                    auto& flds = instance.fields();
+                    auto it = flds.find(kv.first);
+                    if (it == flds.end()) {
+                        flds.emplace(kv.first, kv.second);
                     }
                 }
                 if (!curCls->superClassName.empty()) {
@@ -778,7 +808,7 @@ void Interpreter::visitVarDecl(VarDecl& node) {
                 // #8 fix: recursionDepth_ guard for auto-construction
                 // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
                 if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-                    runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
+                    runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
                 }
                 RecursionGuard guard{ recursionDepth_ };
                 try {
@@ -874,8 +904,8 @@ void Interpreter::visitWhileStmt(WhileStmt& node) {
     while (evaluate(node.condition.get()).isTruthy()) {
         // S-01 fix: 防止无限循环导致 DoS
         if (++iterationCount > MAX_LOOP_ITERATIONS) {
-            runtimeError("循环迭代次数超过上限 " + std::to_string(MAX_LOOP_ITERATIONS) +
-                         "，疑似无限循环", node.line, node.column);
+            runtimeError(ErrorFormat::format("循环迭代次数超过上限 %lld，疑似无限循环",
+                static_cast<long long>(MAX_LOOP_ITERATIONS)), node.line, node.column);
         }
         // 每次迭代重新检查断点（MODE_RUN 下确保 while 行断点每次迭代都能命中；
         // STEP_IN/STEP_OVER 下 lastPausedLine_ 机制保证同行不重复暂停）
@@ -919,8 +949,8 @@ void Interpreter::visitForStmt(ForStmt& node) {
         while (true) {
             // S-01 fix: 防止无限循环导致 DoS
             if (++iterationCount > MAX_LOOP_ITERATIONS) {
-                runtimeError("循环迭代次数超过上限 " + std::to_string(MAX_LOOP_ITERATIONS) +
-                             "，疑似无限循环", node.line, node.column);
+                runtimeError(ErrorFormat::format("循环迭代次数超过上限 %lld，疑似无限循环",
+                    static_cast<long long>(MAX_LOOP_ITERATIONS)), node.line, node.column);
             }
             // 每次迭代重新检查断点（同 visitWhileStmt 的修复原因）
             checkBreak(&node);
@@ -1323,7 +1353,8 @@ void Interpreter::visitIndexAccess(IndexAccess& node) {
         int64_t i = idx.intVal();
         const auto& arr = objC.arrayVal();
         if (i < 0 || static_cast<size_t>(i) >= arr.size()) {
-            runtimeError("数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(arr.size()) + ")", node.line, node.column);
+            runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                static_cast<long long>(i), arr.size()), node.line, node.column);
         }
         lastValue_ = arr[static_cast<size_t>(i)]; return;
     }
@@ -1353,7 +1384,7 @@ void Interpreter::visitIndexAccess(IndexAccess& node) {
         // 纯 ASCII 字符串每码位 1 字节，可直接按字节索引 O(1)。
         // 按 StringData 指针缓存 ASCII 判定，循环 s[i] 访问时仅首次 O(n) 扫描，后续 O(1)。
         // 原实现每次访问都 O(i) 扫描到目标码位，循环退化 O(n²)。
-        if (i >= 0 && static_cast<size_t>(i) < s.size()) {
+        if (BoundsCheck::inBounds(i, s.size())) {
             const void* strPtr = static_cast<const void*>(&s);
             bool isAscii;
             if (lastAsciiStrPtr_ == strPtr) {
@@ -1391,8 +1422,8 @@ void Interpreter::visitIndexAccess(IndexAccess& node) {
             charCount++;
         }
         if (i < 0 || !found) {
-            runtimeError("字符串索引越界: " + std::to_string(i) + ", 有效范围 [0, "
-                + std::to_string(charCount) + ")", node.line, node.column);
+            runtimeError(ErrorFormat::format("字符串索引越界: %lld, 有效范围 [0, %lld)",
+                static_cast<long long>(i), static_cast<long long>(charCount)), node.line, node.column);
         }
         lastValue_ = Value(s.substr(targetBytePos, targetByteLen)); return;
     }
@@ -1503,10 +1534,9 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             size_t argCount = node.arguments.size();
             if (argCount < static_cast<size_t>(method->requiredParamCount) ||
                 argCount > method->params.size()) {
-                runtimeError("方法 " + node.methodName + " 期望 " +
-                    std::to_string(method->requiredParamCount) + "-" +
-                    std::to_string(method->params.size()) + " 个参数，但传入了 " +
-                    std::to_string(argCount) + " 个",
+                runtimeError(ErrorFormat::format("方法 %s 期望 %d-%zu 个参数，但传入了 %zu 个",
+                    node.methodName.c_str(), method->requiredParamCount,
+                    method->params.size(), argCount),
                     node.line, node.column);
             }
             argValues.reserve(argCount);
@@ -1562,7 +1592,7 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
 
             // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
             if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
-                runtimeError("递归深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
+                runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
             }
             RecursionGuard recursionGuard{ recursionDepth_ };
 

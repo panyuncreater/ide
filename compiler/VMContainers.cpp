@@ -9,6 +9,8 @@
 #include "interpreter/NumericUtils.h"    // 共享溢出检查（B6 fix）
 #include "interpreter/StringIntern.h"    // PERF-05 fix: 方法标记字符串驻留
 #include "common/Utf8Utils.h"            // P0-4 fix: UTF-8 码位工具
+#include "common/BoundsCheck.h"           // Dedup-7A: inBounds 替代重复的索引检查
+#include "interpreter/ErrorFormat.h"    // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include "Logger.h"
 #include <sstream>
 #include <climits>
@@ -69,10 +71,11 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         const Value obj = pop();
         if (obj.isArray() && idx.isInt()) {
             int64_t i = idx.intVal();
-            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+            if (BoundsCheck::inBounds(i, obj.arrayVal().size())) {
                 push(obj.arrayVal()[static_cast<size_t>(i)]);
             } else {
-                return runtimeError("数组索引越界: " + std::to_string(i) + ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), obj.arrayVal().size()));
             }
         } else if (obj.isDict() && idx.isString()) {
             auto it = obj.dictVal().find(idx.stringVal());
@@ -91,7 +94,7 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
             // P7 fix: ASCII 快速路径 — 纯 ASCII 字符串直接按字节索引 O(1)
             // S5 fix: 缓存 StringData* 指针，O(1) 指针比较替代 O(n) 字符串内容比较
             //         安全性：StringData 由 shared_ptr 持有，Value 在栈上时指针有效
-            if (i >= 0 && static_cast<size_t>(i) < s.size()) {
+            if (BoundsCheck::inBounds(i, s.size())) {
                 const void* strPtr = static_cast<const void*>(&s);
                 bool isAscii;
                 if (lastAsciiStrPtr_ == strPtr) {
@@ -128,8 +131,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                 charCount++;
             }
             if (i < 0 || !found) {
-                return runtimeError("字符串索引越界: " + std::to_string(i)
-                           + ", 有效范围 [0, " + std::to_string(charCount) + ")");
+                return runtimeError(ErrorFormat::format("字符串索引越界: %lld, 有效范围 [0, %lld)",
+                    static_cast<long long>(i), static_cast<long long>(charCount)));
             }
             push(Value(s.substr(targetBytePos, targetByteLen)));
         } else if (obj.isString()) {
@@ -152,10 +155,12 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         Value obj = pop();
         if (obj.isArray() && innerIdx.isInt()) {
             int64_t i = innerIdx.intVal();
-            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+            // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（pop 出的 obj 与原栈槽共享 ArrayData）
+            if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
             } else {
-                return runtimeError("数组索引越界: " + std::to_string(i));
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && innerIdx.isString()) {
             obj.dictVal()[innerIdx.stringVal()] = val;
@@ -178,26 +183,18 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_SET_VAR");
         Value val = pop();
         Value index = pop();
-        // A2: 先查 globalSlots_，再查 globals_
-        Value* objPtr = nullptr;
-        auto gsIt = globalNameToSlot_.find(varName);
-        if (gsIt != globalNameToSlot_.end()) {
-            objPtr = &globalSlots_[gsIt->second];
-        } else {
-            auto it = globals_.find(varName);
-            if (it == globals_.end()) {
-                return runtimeError("未定义的变量: " + varName);
-            }
-            objPtr = &it->second;
-        }
+        // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析（先 globalSlots_ 再 globals_）
+        Value* objPtr = resolveMutableGlobal(varName);
+        if (!objPtr) return runtimeError("未定义的变量: " + varName);
         Value& obj = *objPtr;  // 引用，直接修改
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
-            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+            // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（全局数组 refCount 常 >1）
+            if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
             } else {
-                return runtimeError("数组索引越界: " + std::to_string(i) +
-                             ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = val;
@@ -224,12 +221,13 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         Value& obj = stack_[bp + slot];  // 栈引用，直接修改
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
-            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+            // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（栈槽 obj 来自 this.arr 时 refCount 常 >1）
+            if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
                 if (slot == 0) currentFrame().fieldsModified = true;  // VM fix
             } else {
-                return runtimeError("数组索引越界: " + std::to_string(i) +
-                             ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")");
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = val;
@@ -317,18 +315,9 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         const std::string& varName = chunk.constants[varIdx].stringVal();
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
         Value val = pop();
-        // A2: 先查 globalSlots_，再查 globals_
-        Value* objPtr = nullptr;
-        auto gsIt = globalNameToSlot_.find(varName);
-        if (gsIt != globalNameToSlot_.end()) {
-            objPtr = &globalSlots_[gsIt->second];
-        } else {
-            auto it = globals_.find(varName);
-            if (it == globals_.end()) {
-                return runtimeError("未定义的变量: " + varName);
-            }
-            objPtr = &it->second;
-        }
+        // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析
+        Value* objPtr = resolveMutableGlobal(varName);
+        if (!objPtr) return runtimeError("未定义的变量: " + varName);
         Value& obj = *objPtr;  // 引用，直接修改
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
@@ -381,7 +370,7 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -405,18 +394,11 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[varIdx].stringVal();
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
-        // A2: 先查 globalSlots_，再查 globals_
-        Value* objPtr = nullptr;
-        auto gsIt = globalNameToSlot_.find(varName);
-        if (gsIt != globalNameToSlot_.end()) {
-            objPtr = &globalSlots_[gsIt->second];
-        } else {
-            auto it = globals_.find(varName);
-            if (it == globals_.end()) {
-                lastMutatedReceiver_ = Value::nullValue();
-                return runtimeError("未定义的变量: " + varName);
-            }
-            objPtr = &it->second;
+        // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析
+        Value* objPtr = resolveMutableGlobal(varName);
+        if (!objPtr) {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("未定义的变量: " + varName);
         }
         Value& obj = *objPtr;
         if (obj.isInstance()) {
@@ -488,27 +470,22 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
             return runtimeError("常量池索引越界");
         }
         const std::string& varName = chunk.constants[varIdx].stringVal();
-        // A2: 先查 globalSlots_，再查 globals_
-        Value* objPtr = nullptr;
-        auto gsIt = globalNameToSlot_.find(varName);
-        if (gsIt != globalNameToSlot_.end()) {
-            objPtr = &globalSlots_[gsIt->second];
-        } else {
-            auto it = globals_.find(varName);
-            if (it == globals_.end()) {
-                lastMutatedReceiver_ = Value::nullValue();
-                return runtimeError("未定义的变量: " + varName);
-            }
-            objPtr = &it->second;
+        // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析
+        Value* objPtr = resolveMutableGlobal(varName);
+        if (!objPtr) {
+            lastMutatedReceiver_ = Value::nullValue();
+            return runtimeError("未定义的变量: " + varName);
         }
         Value& obj = *objPtr;
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
-            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+            // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（全局数组 refCount 常 >1）
+            if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
                 obj.arrayVal()[static_cast<size_t>(i)] = std::move(lastMutatedReceiver_);
             } else {
                 lastMutatedReceiver_ = Value::nullValue();
-                return runtimeError("数组索引越界: " + std::to_string(i));
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = std::move(lastMutatedReceiver_);
@@ -534,11 +511,13 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         Value& obj = stack_[bp + slot];
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
-            if (i >= 0 && static_cast<size_t>(i) < obj.arrayVal().size()) {
+            // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（栈槽 obj 来自 this.arr 时 refCount 常 >1）
+            if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
                 obj.arrayVal()[static_cast<size_t>(i)] = std::move(lastMutatedReceiver_);
             } else {
                 lastMutatedReceiver_ = Value::nullValue();
-                return runtimeError("数组索引越界: " + std::to_string(i));
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = std::move(lastMutatedReceiver_);
@@ -606,7 +585,7 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -736,7 +715,7 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;

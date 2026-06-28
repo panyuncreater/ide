@@ -1,4 +1,5 @@
 #include "gui/IrViewer.h"
+#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QAbstractItemView>
@@ -23,7 +24,7 @@ IrViewer::IrViewer(QWidget* parent)
 
     list_ = new QListWidget(this);
     list_->setObjectName("irViewerList");
-    list_->setFont(QFont("Consolas", 10));
+    list_->setFont(GuiTextUtils::monospaceFont(10));
     list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     list_->setAlternatingRowColors(false);
     list_->setWordWrap(false);
@@ -31,91 +32,9 @@ IrViewer::IrViewer(QWidget* parent)
     mainLayout->addWidget(list_, 1);
 }
 
-// ---- IR 操作码名称（与 IR.cpp irOpName 保持一致）----
-// 复制而非暴露匿名命名空间函数，避免污染 IR.h 公共接口
-static const char* localIrOpName(IROp op) {
-    switch (op) {
-    case IROp::LOAD_CONST:      return "LOAD_CONST";
-    case IROp::LOAD_NULL:       return "LOAD_NULL";
-    case IROp::LOAD_TRUE:       return "LOAD_TRUE";
-    case IROp::LOAD_FALSE:      return "LOAD_FALSE";
-    case IROp::LOAD_LOCAL:      return "LOAD_LOCAL";
-    case IROp::STORE_LOCAL:     return "STORE_LOCAL";
-    case IROp::LOAD_GLOBAL:     return "LOAD_GLOBAL";
-    case IROp::STORE_GLOBAL:    return "STORE_GLOBAL";
-    case IROp::DEFINE_GLOBAL:   return "DEFINE_GLOBAL";
-    case IROp::LOAD_UPVALUE:    return "LOAD_UPVALUE";
-    case IROp::STORE_UPVALUE:   return "STORE_UPVALUE";
-    case IROp::CLOSE_UPVALUE:   return "CLOSE_UPVALUE";
-    case IROp::ADD:             return "ADD";
-    case IROp::SUB:             return "SUB";
-    case IROp::MUL:             return "MUL";
-    case IROp::DIV:             return "DIV";
-    case IROp::MOD:             return "MOD";
-    case IROp::NEGATE:          return "NEGATE";
-    case IROp::EQ:              return "EQ";
-    case IROp::NEQ:             return "NEQ";
-    case IROp::LT:              return "LT";
-    case IROp::GT:              return "GT";
-    case IROp::LTE:             return "LTE";
-    case IROp::GTE:             return "GTE";
-    case IROp::NOT:             return "NOT";
-    case IROp::JUMP:            return "JUMP";
-    case IROp::JUMP_IF_FALSE:   return "JUMP_IF_FALSE";
-    case IROp::LABEL:           return "LABEL";
-    case IROp::CALL:            return "CALL";
-    case IROp::CALL_EXPR:       return "CALL_EXPR";
-    case IROp::RETURN:          return "RETURN";
-    case IROp::RETURN_NULL:     return "RETURN_NULL";
-    case IROp::MAKE_CLOSURE:    return "MAKE_CLOSURE";
-    case IROp::BUILD_ARRAY:     return "BUILD_ARRAY";
-    case IROp::BUILD_DICT:      return "BUILD_DICT";
-    case IROp::INDEX_GET:       return "INDEX_GET";
-    case IROp::INDEX_SET:       return "INDEX_SET";
-    case IROp::MEMBER_GET:      return "MEMBER_GET";
-    case IROp::MEMBER_SET:      return "MEMBER_SET";
-    case IROp::METHOD_CALL:     return "METHOD_CALL";
-    case IROp::DEFINE_CLASS:    return "DEFINE_CLASS";
-    case IROp::CLASS_NEW:       return "CLASS_NEW";
-    case IROp::INIT_FIELD:      return "INIT_FIELD";
-    case IROp::TRY_BEGIN:       return "TRY_BEGIN";
-    case IROp::TRY_END:         return "TRY_END";
-    case IROp::THROW:           return "THROW";
-    case IROp::WRITEBACK_MEMBER_VAR:    return "WRITEBACK_MEMBER_VAR";
-    case IROp::WRITEBACK_MEMBER_LOCAL:  return "WRITEBACK_MEMBER_LOCAL";
-    case IROp::WRITEBACK_INDEX_VAR:     return "WRITEBACK_INDEX_VAR";
-    case IROp::WRITEBACK_INDEX_LOCAL:   return "WRITEBACK_INDEX_LOCAL";
-    case IROp::WRITEBACK_MEMBER_UPVALUE: return "WRITEBACK_MEMBER_UPVALUE";
-    case IROp::WRITEBACK_INDEX_UPVALUE:  return "WRITEBACK_INDEX_UPVALUE";
-    case IROp::PRINT:           return "PRINT";
-    case IROp::POP:             return "POP";
-    case IROp::DUP:             return "DUP";
-    }
-    return "?";
-}
-
-/// 格式化单条 IR 指令为可读字符串（与 IRToString 的 per-instruction 格式一致）
-static std::string formatIRInstruction(const IRInstruction& instr) {
-    std::ostringstream oss;
-    oss << localIrOpName(instr.op);
-    for (const auto& operand : instr.operands) {
-        const char* kindStr = "?";
-        switch (operand.kind) {
-        case IROperandKind::CONSTANT:    kindStr = "c"; break;
-        case IROperandKind::VIRTUAL:     kindStr = "v"; break;
-        case IROperandKind::LABEL:       kindStr = "L"; break;
-        case IROperandKind::GLOBAL_NAME: kindStr = "g"; break;
-        case IROperandKind::LOCAL_SLOT:  kindStr = "s"; break;
-        case IROperandKind::UPVALUE_IDX: kindStr = "u"; break;
-        case IROperandKind::FIELD_NAME:  kindStr = "f"; break;
-        case IROperandKind::FUNC_NAME:   kindStr = "fn"; break;
-        case IROperandKind::IMM_UINT:    kindStr = "#"; break;
-        }
-        oss << " " << kindStr << operand.index;
-    }
-    if (instr.line > 0) oss << "  ; line " << instr.line;
-    return oss.str();
-}
+// ---- IR 操作码名称与指令格式化（Dedup-4E/4F）----
+// 原本 IrViewer 维护了一份 localIrOpName 副本，缺失 SUPER_MEMBER_GET/SUPER_CALL case
+// 导致显示为 "?"，现统一使用 IR.h 公共 API irOpName() / formatIRInstruction()。
 
 void IrViewer::setIR(const IRFunction* ir) {
     list_->clear();
@@ -142,8 +61,9 @@ void IrViewer::setIR(const IRFunction* ir) {
     static constexpr size_t MAX_IR_ROWS = 10000;
 
     list_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
-    static const QFont irFont("Consolas", 10);
-    static const QFont headerFont("Consolas", 10, QFont::Bold);
+    // Dedup-4A: 通过 GuiTextUtils::monospaceFont 共享全局 QFont 缓存（原 static const QFont）
+    const QFont& irFont = GuiTextUtils::monospaceFont(10);
+    const QFont& headerFont = GuiTextUtils::monospaceFont(10, true);
 
     // ---- 函数元信息头 ----
     {

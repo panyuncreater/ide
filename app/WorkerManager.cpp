@@ -68,8 +68,11 @@ std::function<std::string(const std::string&)> WorkerManager::buildInputCallback
         if (future.wait_for(std::chrono::seconds(30)) == std::future_status::ready) {
             return future.get().toStdString();
         }
-        Logger::Warning("input() 超时（主线程 30 秒未响应），返回空串", "IDE");
-        return std::string();
+        // E3 fix: 超时不再静默返回空串（会导致 input() 调用方拿到看似正常的结果继续执行），
+        // 改为抛异常，由 executeSharedInput 捕获并附上调用点行号/列号上抛 RuntimeError。
+        // promise 仍由 shared_ptr 持有，主线程稍后 set_value 不会 use-after-free。
+        Logger::Warning("input() 超时（主线程 30 秒未响应），抛出 RuntimeError", "IDE");
+        throw std::runtime_error("input() 超时（主线程 30 秒未响应）");
     };
 }
 

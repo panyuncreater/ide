@@ -1,6 +1,7 @@
 #include "DebugCoordinator.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
+#include "common/Logger.h"  // E1 fix: 条件断点求值异常记录告警
 
 // ============================================================
 // DebugCoordinator — 调试状态协调实现（ARCH-11 拆分自 IdeController）
@@ -56,8 +57,14 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
                 Value result = interpreter->evaluateCondition(block->statements[0].get());
                 return result.isTruthy();
             }
+        } catch (const std::exception& e) {
+            // E1 fix: 条件断点求值异常记录告警，便于用户排查（条件 + 错误信息）。
+            // 上层 DebugController::shouldPauseAtBreakpoint 也会再次记录行号。
+            Logger::Warning("条件断点求值异常: " + std::string(e.what()) +
+                            "（条件: " + condition + "），视为条件不满足", "Debugger");
         } catch (...) {
-            // 条件求值失败视为 false（不暂停）
+            Logger::Warning("条件断点求值发生未知异常（条件: " + condition +
+                            "），视为条件不满足", "Debugger");
         }
         return false;
     });

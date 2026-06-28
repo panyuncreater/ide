@@ -14,6 +14,21 @@
 //   8. 字符串操作
 //   9. 类与继承
 //  10. 错误处理
+//
+// A6 fix: 关于与 TestVME2E.cpp 的用例重复
+// ------------------------------------------------------------
+// 本文件中 BasicArithmetic / VariableDeclaration / IfTrueBranch /
+// WhileLoopSum / FactorialRecursive / ArrayPush / StringLen /
+// ClassBasic 等用例在 TestVME2E.cpp 的 VME2E.* 测试套件中有同名的
+// 镜像用例（同样源码、同样断言）。这种重复是**有意的防御性覆盖**：
+//   - 本文件验证 Interpreter 后端独立正确性（catch Interpreter-only bugs）
+//   - TestVME2E.cpp 验证 Stack VM 后端独立正确性（catch VM-only bugs）
+//   - 跨后端等价性由 TestVME2E.cpp 中的 VMConsistency.* 测试套件覆盖
+//     （通过 runInterpreterOutputForConsistency / runVMOutputForConsistency
+//      两个 helper 对比同源码在两后端的输出）
+// 故不删除重复用例——每个用例独立守护其后端。
+// 如需新增跨后端一致性用例，请添加到 TestVME2E.cpp 的 VMConsistency.*
+// 或 BackendConsistency.* 套件，避免在此处与 VME2E.* 双向复制。
 // ============================================================
 
 #include <gtest/gtest.h>

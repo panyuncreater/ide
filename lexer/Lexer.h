@@ -37,6 +37,14 @@ private:
     int line_ = 1;                  // 当前行号
     int lineStart_ = 0;             // 当前行起始偏移
 
+    // Perf-Finding1: columnAt() 单调前进缓存。advance() 仅向前推进 current_/lineStart_，
+    // 行内 columnAt 调用 byteOffset 单调非递减。缓存 (lineStart, byteOffset, col)，
+    // 下次调用若 lineStart_ 未变且 byteOffset >= cachedByteOffset_ 则从缓存点续走，
+    // 将逐 token 列号计算从 O(L²) 降为 O(L)。mutable 因 columnAt 是 const。
+    mutable int cachedLineStart_ = -1;
+    mutable int cachedByteOffset_ = -1;
+    mutable int cachedColumn_ = 1;
+
     std::vector<Token> tokens_;     // 输出的 Token 列表
     std::vector<Token> comments_;   // 注释 Token 列表（从主流中分离，供 Formatter 使用）
     DiagnosticBag diagnostics_;      // 诊断收集器

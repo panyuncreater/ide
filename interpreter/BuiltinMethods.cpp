@@ -12,6 +12,7 @@
 #include "interpreter/NumericUtils.h"  // BUG9 fix: 溢出检查
 #include "common/RuntimeLimits.h"      // S1 fix: MAX_RANGE 统一定义
 #include "common/Utf8Utils.h"          // P0-4 fix: UTF-8 码位工具
+#include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include <cctype>
 #include <unordered_set>
 #include <cstdint>
@@ -76,8 +77,8 @@ Result<Value> checkExact(const char* name, size_t argCount, size_t expected,
                          int line, int column) {
     if (argCount != expected) {
         return Result<Value>::err(
-            std::string(name) + " 期望 " + std::to_string(expected) +
-            " 个参数，但传入了 " + std::to_string(argCount) + " 个", line, column);
+            ErrorFormat::format("%s 期望 %zu 个参数，但传入了 %zu 个", name, expected, argCount),
+            line, column);
     }
     return Result<Value>::ok(Value::nullValue());
 }
@@ -86,8 +87,8 @@ Result<Value> checkRange(const char* name, size_t argCount, size_t minExpected, 
                          int line, int column) {
     if (argCount < minExpected || argCount > maxExpected) {
         return Result<Value>::err(
-            std::string(name) + " 期望 " + std::to_string(minExpected) + "-" +
-            std::to_string(maxExpected) + " 个参数，但传入了 " + std::to_string(argCount) + " 个",
+            ErrorFormat::format("%s 期望 %zu-%zu 个参数，但传入了 %zu 个",
+                name, minExpected, maxExpected, argCount),
             line, column);
     }
     return Result<Value>::ok(Value::nullValue());
@@ -109,7 +110,8 @@ Result<Value> executeSharedLen(const Value& obj,
         return Result<Value>::ok(Value(static_cast<int64_t>(obj.dictVal().size())));
     } else if (obj.isString()) {
         // M6 fix: 按 UTF-8 码位计数而非字节数
-        return Result<Value>::ok(Value(Utf8::codepointCount(obj.stringVal())));
+        // perf1 fix: 使用 Value::codepointCount() 带缓存，避免循环中 O(n²) 重复扫描
+        return Result<Value>::ok(Value(obj.codepointCount()));
     } else {
         return Result<Value>::err("len 不支持类型 " + obj.typeName(), line, column);
     }
@@ -135,7 +137,10 @@ Result<Value> executeSharedDictHas(const Value& dict,
     if (argCount != 1) {
         return Result<Value>::err(method + " 期望 1 个参数(键)", line, column);
     }
-    return Result<Value>::ok(Value(dict.dictVal().find(args[0].toString()) != dict.dictVal().end()));
+    // Perf-Finding: 缓存 find 迭代器，避免 dictVal() 二次调用与同键二次 hash 查找
+    const auto& entries = dict.dictVal();
+    auto it = entries.find(args[0].toString());
+    return Result<Value>::ok(Value(it != entries.end()));
 }
 
 // ============================================================
@@ -165,7 +170,7 @@ Result<Value> executeSharedStrSubstr(const Value& str,
                                             const Value* args, size_t argCount,
                                             int line, int column) {
     if (argCount < 1 || argCount > 2) {
-        return Result<Value>::err("substr 期望 1-2 个参数(起始[, 长度])，但传入了 " + std::to_string(argCount) + " 个", line, column);
+        return Result<Value>::err(ErrorFormat::format("substr 期望 1-2 个参数(起始[, 长度])，但传入了 %zu 个", argCount), line, column);
     }
     if (!args[0].isInt()) {
         return Result<Value>::err("substr 起始位置必须是整数", line, column);
@@ -176,7 +181,7 @@ Result<Value> executeSharedStrSubstr(const Value& str,
     // BUG 1.1 fix: 将码位索引转换为字节索引，与 len()/indexOf() 的码位语义一致
     // P0-4 fix: 使用 Utf8 工具函数替代重复的内联 lambda
 
-    int64_t totalCp = Utf8::codepointCount(s);
+    int64_t totalCp = str.codepointCount();  // perf1 fix: 带缓存的码位计数
     if (start < 0 || start > totalCp) {
         return Result<Value>::ok(Value(std::string("")));
     }
@@ -227,7 +232,7 @@ Result<Value> executeSharedStrReplace(const Value& str,
                                             const Value* args, size_t argCount,
                                             int line, int column) {
     if (argCount != 2) {
-        return Result<Value>::err("replace 期望 2 个参数(旧串, 新串)，但传入了 " + std::to_string(argCount) + " 个", line, column);
+        return Result<Value>::err(ErrorFormat::format("replace 期望 2 个参数(旧串, 新串)，但传入了 %zu 个", argCount), line, column);
     }
     const std::string& src = str.stringVal();
     std::string from = args[0].toString();
@@ -376,7 +381,7 @@ Result<Value> executeSharedDictGet(const Value& dict,
                                          const Value* args, size_t argCount,
                                          int line, int column) {
     if (argCount < 1 || argCount > 2) {
-        return Result<Value>::err("get 期望 1-2 个参数(键[, 默认值])，但传入了 " + std::to_string(argCount) + " 个", line, column);
+        return Result<Value>::err(ErrorFormat::format("get 期望 1-2 个参数(键[, 默认值])，但传入了 %zu 个", argCount), line, column);
     }
     const auto& entries = dict.dictVal();
     std::string key = args[0].toString();
@@ -463,7 +468,7 @@ Result<Value> executeBuiltinInt(const Value* args, size_t argCount, int line, in
         // BUG 9.3 fix: 浮点转整数溢出检查
         double dv = v.floatVal();
         if (OverflowCheck::doubleToIntOverflow(dv)) {
-            return Result<Value>::err("int 转换溢出: " + std::to_string(dv) + " 超出 int64_t 范围", line, column);
+            return Result<Value>::err(ErrorFormat::format("int 转换溢出: %g 超出 int64_t 范围", dv), line, column);
         }
         // 截断小数部分（向零取整，与 C++ static_cast 一致）
         return Result<Value>::ok(Value(static_cast<int64_t>(dv)));
@@ -553,10 +558,10 @@ Result<Value> executeBuiltinRange(const Value* args, size_t argCount, int line, 
     }
     int64_t n = v.intVal();
     if (n < 0) {
-        return Result<Value>::err("range 参数不能为负数: " + std::to_string(n), line, column);
+        return Result<Value>::err(ErrorFormat::format("range 参数不能为负数: %lld", static_cast<long long>(n)), line, column);
     }
     if (n > RuntimeLimits::MAX_RANGE) {
-        return Result<Value>::err("range 参数超过上限 " + std::to_string(RuntimeLimits::MAX_RANGE), line, column);
+        return Result<Value>::err(ErrorFormat::format("range 参数超过上限 %lld", static_cast<long long>(RuntimeLimits::MAX_RANGE)), line, column);
     }
     std::vector<Value> elements;
     elements.reserve(static_cast<size_t>(n));
@@ -629,6 +634,36 @@ Result<Value> executeSharedBuiltinFunction(
         return Result<Value>::err("未知的内置函数: " + funcName, line, column);
     }
     return it->second(args, argCount, line, column);
+}
+
+// ============================================================
+// E3 fix: input() 共享实现（供 Interpreter 和 VM 共用）
+// ============================================================
+// 不走 executeSharedBuiltinFunction 注册表（依赖 callback 跨线程交互）。
+// 调用方（Interpreter/VM）注入 inputCallback；callback 抛出的异常会被捕获并附行号。
+// WorkerManager.buildInputCallback 超时路径抛 std::runtime_error 表示超时，
+// 此处 catch 后转 Result::err，使程序感知中断（替代原静默返回空串）。
+Result<Value> executeSharedInput(
+    const std::function<std::string(const std::string&)>& inputCallback,
+    const Value* args, size_t argCount,
+    int line, int column) {
+    if (auto r = checkRange("input", argCount, 0, 1, line, column); r.is_err()) return r;
+    std::string prompt;
+    if (argCount == 1) {
+        prompt = args[0].toString();
+    }
+    if (!inputCallback) {
+        // 无回调时返回空串（允许非交互式运行不崩溃，保留原行为）
+        return Result<Value>::ok(Value(std::string()));
+    }
+    try {
+        std::string userInput = inputCallback(prompt);
+        return Result<Value>::ok(Value(std::move(userInput)));
+    } catch (const std::exception& e) {
+        // E3 fix: callback 抛出异常（如超时）转 Result::err，
+        // 让程序能感知中断而非拿到空串继续执行
+        return Result<Value>::err(e.what(), line, column);
+    }
 }
 
 // ============================================================
@@ -714,7 +749,7 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
 
     if (method == "pop") {
         if (!args.empty())
-            throw RuntimeError("pop 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个", line, col);
+            throw RuntimeError(ErrorFormat::format("pop 期望 0 个参数，但传入了 %zu 个", args.size()), line, col);
         if (obj.arrayVal().empty())
             throw RuntimeError("对空数组调用 pop", line, col);
         Value last = obj.arrayVal().back();
@@ -729,7 +764,8 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
             throw RuntimeError("remove 参数必须是整数索引", line, col);
         int64_t idx = args[0].intVal();
         if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal().size())
-            throw RuntimeError("数组索引越界: " + std::to_string(idx) + ", 有效范围 [0, " + std::to_string(obj.arrayVal().size()) + ")", line, col);
+            throw RuntimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                static_cast<long long>(idx), obj.arrayVal().size()), line, col);
         obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(idx));
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }

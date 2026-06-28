@@ -109,8 +109,27 @@ enum class OpCode : uint8_t {
     OP_WRITEBACK_INDEX_UPVALUE,   // 索引写回到 upvalue（uvIdx(1B)），索引从栈顶 pop
 };
 
-/// 操作码 → 名称字符串（D9 fix: 实现移至 Bytecode.cpp）
-const char* opCodeName(OpCode op);
+// ============================================================
+// A3 fix: 统一 opcode 元数据表（名称/基础长度/是否变长）
+// ------------------------------------------------------------
+// 新增 opcode 时只需在此表登记一行，无需同步修改 opCodeName / instructionSize /
+// instructionSizeAt 三处 switch（避免遗漏导致 dispatch 错位）。
+// 表索引 = static_cast<uint8_t>(OpCode)，与 enum 顺序严格对齐。
+// ============================================================
+struct OpCodeInfo {
+    const char* name;            // 操作码名称（调试用）
+    uint8_t baseSize;            // 固定长度指令字节数；变长指令为最小长度
+    bool isVariableLength;        // 是否变长（需 instructionSizeAt 按操作数计算实际长度）
+};
+
+/// 获取 opcode 元数据（name + baseSize + isVariableLength）
+const OpCodeInfo& getOpCodeInfo(OpCode op);
+
+/// 操作码 → 名称字符串（基于元数据表，O(1) 查表）
+inline const char* opCodeName(OpCode op) { return getOpCodeInfo(op).name; }
+
+/// 操作码 → 是否变长指令
+inline bool isOpCodeVariableLength(OpCode op) { return getOpCodeInfo(op).isVariableLength; }
 
 /// VM-05/06: Upvalue 描述符（编译期生成，描述闭包捕获的外层变量）
 struct UpvalueDesc {
@@ -234,99 +253,33 @@ public:
     /// OP_CLOSURE 是唯一变长指令（4 + 2*upvalueCount 字节），
     /// 此方法封装变长逻辑，消除 buildIpMap/ide 遍历/TestCompiler 遍历 3 处特例处理。
     /// 若偏移越界或指令截断，返回 1 避免无限循环。
+    // A3 fix: 通过 isOpCodeVariableLength 元数据判断变长，无需硬编码 OP_CLOSURE 特例
     size_t instructionSizeAt(size_t offset) const {
         if (offset >= code.size()) return 1;
         OpCode op = static_cast<OpCode>(code[offset]);
-        if (op == OpCode::OP_CLOSURE) {
-            // 变长指令：OP_CLOSURE(1) + nameIdx(2) + upvalueCount(1) + upvalueCount*2
-            if (offset + 3 < code.size()) {
-                uint8_t upvalueCount = code[offset + 3];
-                return 4 + static_cast<size_t>(upvalueCount) * 2;
+        if (isOpCodeVariableLength(op)) {
+            // 变长指令按 opcode 分派计算实际长度
+            switch (op) {
+            case OpCode::OP_CLOSURE: {
+                // OP_CLOSURE(1) + nameIdx(2) + upvalueCount(1) + upvalueCount*2
+                if (offset + 3 < code.size()) {
+                    uint8_t upvalueCount = code[offset + 3];
+                    return 4 + static_cast<size_t>(upvalueCount) * 2;
+                }
+                return 1;  // 截断，返回 1 避免无限循环
             }
-            return 1;  // 截断，返回 1 避免无限循环
+            default:
+                // 元数据标记为变长但未实现实际长度计算的指令——返回 baseSize 兜底
+                return instructionSize(op);
+            }
         }
         return instructionSize(op);
     }
 
     /// 获取操作码对应的指令长度（字节数）
-    /// P5 fix: 用 constexpr 数组查表替代 switch，每条指令 O(1) 访问
+    /// A3 fix: 改用元数据表查表（与 opCodeName/isOpCodeVariableLength 共享 kOpCodeInfo）
     static size_t instructionSize(OpCode op) {
-        static constexpr uint8_t sizes[] = {
-            /*  0 OP_CONSTANT            */ 3,
-            /*  1 OP_INT                 */ 3,
-            /*  2 OP_FLOAT               */ 3,
-            /*  3 OP_STRING              */ 3,
-            /*  4 OP_NULL                */ 1,
-            /*  5 OP_TRUE                */ 1,
-            /*  6 OP_FALSE               */ 1,
-            /*  7 OP_ADD                 */ 1,
-            /*  8 OP_SUBTRACT            */ 1,
-            /*  9 OP_MULTIPLY            */ 1,
-            /* 10 OP_DIVIDE              */ 1,
-            /* 11 OP_MODULO              */ 1,
-            /* 12 OP_NEGATE              */ 1,
-            /* 13 OP_NOT                 */ 1,
-            /* 14 OP_EQUAL               */ 1,
-            /* 15 OP_NOT_EQUAL           */ 1,
-            /* 16 OP_LESS                */ 1,
-            /* 17 OP_GREATER             */ 1,
-            /* 18 OP_LESS_EQUAL          */ 1,
-            /* 19 OP_GREATER_EQUAL       */ 1,
-            /* 20 OP_AND                 */ 1,
-            /* 21 OP_OR                  */ 1,
-            /* 22 OP_PRINT               */ 1,
-            /* 23 OP_POP                 */ 1,
-            /* 24 OP_DEFINE_VAR          */ 3,
-            /* 25 OP_GET_VAR             */ 3,
-            /* 26 OP_SET_VAR             */ 3,
-            /* 27 OP_DELETE_VAR          */ 3,
-            /* 28 OP_JUMP                */ 3,
-            /* 29 OP_JUMP_IF_FALSE       */ 3,
-            /* 30 OP_LOOP                */ 3,
-            /* 31 OP_RETURN              */ 1,
-            /* 32 OP_CALL                */ 4,
-            /* 33 OP_CALL_EXPR           */ 2,
-            /* 34 OP_BUILD_ARRAY         */ 2,
-            /* 35 OP_BUILD_DICT          */ 2,
-            /* 36 OP_INDEX_GET           */ 1,
-            /* 37 OP_INDEX_SET           */ 1,
-            /* 38 OP_INDEX_SET_VAR       */ 3,
-            /* 39 OP_INDEX_SET_LOCAL     */ 2,
-            /* 40 OP_MEMBER_GET          */ 3,
-            /* 41 OP_MEMBER_SET          */ 3,
-            /* 42 OP_MEMBER_SET_VAR      */ 5,
-            /* 43 OP_MEMBER_SET_LOCAL    */ 4,
-            /* 44 OP_METHOD_CALL         */ 7,
-            /* 45 OP_DUP                 */ 1,
-            /* 46 OP_DUP_N               */ 2,
-            /* 47 OP_CLOSURE             */ 4,
-            /* 48 OP_GET_LOCAL           */ 2,
-            /* 49 OP_SET_LOCAL           */ 2,
-            /* 50 OP_CLASS_NEW           */ 4,
-            /* 51 OP_INIT_FIELD          */ 3,
-            /* 52 OP_DEFINE_CLASS        */ 5,
-            /* 53 OP_WRITEBACK_MEMBER_VAR   */ 5,
-            /* 54 OP_WRITEBACK_MEMBER_LOCAL */ 4,
-            /* 55 OP_WRITEBACK_INDEX_VAR    */ 3,
-            /* 56 OP_WRITEBACK_INDEX_LOCAL  */ 2,
-            /* 57 OP_SUPER_CALL             */ 9,  // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B) + classIdx(2B)
-            /* 58 OP_SUPER_MEMBER_GET       */ 3,
-            /* 59 OP_GET_GLOBAL             */ 3,
-            /* 60 OP_SET_GLOBAL             */ 3,
-            /* 61 OP_DEFINE_GLOBAL          */ 3,
-            /* 62 OP_DELETE_GLOBAL          */ 3,
-            /* 63 OP_GET_UPVALUE            */ 2,
-            /* 64 OP_SET_UPVALUE            */ 2,
-            /* 65 OP_CLOSE_UPVALUE          */ 2,
-            /* 66 OP_TRY_BEGIN              */ 3,
-            /* 67 OP_TRY_END                */ 1,
-            /* 68 OP_THROW                  */ 1,
-            /* 69 OP_WRITEBACK_MEMBER_UPVALUE */ 4,
-            /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ 2,
-        };
-        auto idx = static_cast<uint8_t>(op);
-        if (idx < sizeof(sizes)) return sizes[idx];
-        return 1;  // 安全兜底
+        return getOpCodeInfo(op).baseSize;
     }
 
     /// 反汇编：输出字节码文本（D9 fix: 实现移至 Bytecode.cpp）

@@ -54,8 +54,11 @@ public:
     void setConsoleOutput(bool enabled) { consoleOutput_.store(enabled); }
 
     /// 设置日志文件输出路径（空字符串则关闭文件输出）
+    // Bug fix: fileStream_ 由 flushBuffer() 在 ioMutex_ 下访问，setOutputFile()
+    // 必须同时持有 ioMutex_ 才能避免与并发 flushBuffer() 产生数据竞争。
     bool setOutputFile(const std::string& path) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> ioLock(ioMutex_);  // 序列化 fileStream_ 访问
+        std::lock_guard<std::mutex> lock(mutex_);       // 序列化 activeBuffer_ 访问
         if (fileStream_.is_open()) fileStream_.close();
         if (path.empty()) return true;
         fileStream_.open(path, std::ios::app);
@@ -63,19 +66,35 @@ public:
     }
 
     /// 输出一条日志
+    // P2-2 fix: 双缓冲避免持锁 I/O。log() 仅在 mutex_ 下格式化+入队，
+    // 当队列达阈值或级别为 ERROR 时，swap 出缓冲并在 ioMutex_ 下批量写
+    // （mutex_ 持有时间从 O(行数) 降至 O(格式化单行)）。
     void log(LogLevel level, const std::string& message, const std::string& source = "") {
         if (level < level_.load() || level == LogLevel::NONE) return;
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::string line = formatLine(level, message, source);
-        if (consoleOutput_.load()) {
-            if (level >= LogLevel::WARNING) std::cerr << line << '\n';
-            else std::cout << line << '\n';
+        std::vector<std::string> localBuffer;
+        bool shouldFlush = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            activeBuffer_.push_back(formatLine(level, message, source));
+            // ERROR 立即 flush；INFO/WARN/DEBUG 攒满阈值后批量 flush
+            if (level >= LogLevel::ERROR || activeBuffer_.size() >= FLUSH_THRESHOLD) {
+                localBuffer.swap(activeBuffer_);
+                shouldFlush = true;
+            }
         }
-        if (fileStream_.is_open()) {
-            fileStream_ << line << '\n';
-            // P2 fix: 仅 ERROR 级别 flush，避免高频日志每行 flush 导致性能下降
-            if (level >= LogLevel::ERROR) fileStream_.flush();
+        if (shouldFlush) {
+            flushBuffer(localBuffer);
         }
+    }
+
+    /// 强制刷新所有缓冲的日志（用于析构、关键节点）
+    void flush() {
+        std::vector<std::string> localBuffer;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            localBuffer.swap(activeBuffer_);
+        }
+        flushBuffer(localBuffer);
     }
 
     // ---- 实例方法便捷接口 ----
@@ -94,11 +113,41 @@ private:
     Logger() = default;
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
+    // P2-2 fix: 析构时强制 flush 缓冲，避免进程退出丢失未写日志
+    ~Logger() { flush(); }
 
     std::mutex mutex_;
+    // P2-2 fix: I/O 专用锁，与 mutex_ 解耦。log() 持有 mutex_ 仅做格式化+入队，
+    // 实际写文件/控制台在 flushBuffer() 中持有 ioMutex_ 进行，避免阻塞其他线程的 log() 调用
+    std::mutex ioMutex_;
     std::atomic<LogLevel> level_{LogLevel::WARNING};
     std::atomic<bool> consoleOutput_{true};  // P1 fix: atomic 防止数据竞争
     std::ofstream fileStream_;
+    // P2-2 fix: 双缓冲。activeBuffer_ 由 log() 在 mutex_ 下追加；
+    // 达阈值或 ERROR 时 swap 出到本地，由 flushBuffer() 在 ioMutex_ 下批量写
+    std::vector<std::string> activeBuffer_;
+    // 缓冲触发阈值：DEBUG/INFO/WARN 攒满 32 行批量写；ERROR 立即写
+    static constexpr size_t FLUSH_THRESHOLD = 32;
+
+    /// 批量写缓冲到控制台/文件（持 ioMutex_，不持 mutex_）
+    void flushBuffer(const std::vector<std::string>& buffer) {
+        if (buffer.empty()) return;
+        std::lock_guard<std::mutex> ioLock(ioMutex_);
+        bool toConsole = consoleOutput_.load();
+        bool toFile = fileStream_.is_open();
+        for (const auto& line : buffer) {
+            if (toConsole) {
+                // 注意：原实现按级别选 cerr/cout，但缓冲后级别信息丢失。
+                // 改进：行内已含级别标签（[WARN]/[ERROR]），统一用 cerr 输出便于合并。
+                // 若需严格区分可改用 pair<LogLevel,string>，但当前简化为合并写 cout
+                std::cout << line << '\n';
+            }
+            if (toFile) {
+                fileStream_ << line << '\n';
+            }
+        }
+        if (toFile) fileStream_.flush();  // 批量写后统一 flush
+    }
 
     /// 级别文本标签
     const char* levelString(LogLevel level) const {

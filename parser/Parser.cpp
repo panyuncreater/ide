@@ -378,6 +378,14 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
                             std::vector<std::shared_ptr<ASTNode>>& defaultValues) {
     if (check(TokenType::TK_RPAREN)) return;
     bool seenDefault = false;  // F10: 一旦出现默认参数，后续都必须有默认值
+    // Perf-Finding4 + Bug-5: 用 unordered_set 替代每参数 O(n) 线性扫描去重，
+    // 将 parseParamList 总复杂度从 O(n²) 降为 O(n)。初始化自 params 以兼容
+    // 调用方预填充场景（虽然当前 3 个调用点均传入空 vector）。
+    std::unordered_set<std::string> paramSet(params.begin(), params.end());
+    // 预留常见容量，避免 1-2 次小幅 reallocation
+    params.reserve(params.size() + 4);
+    paramTypes.reserve(paramTypes.size() + 4);
+    defaultValues.reserve(defaultValues.size() + 4);
     do {
         std::string pType;
         std::string paramName;
@@ -410,11 +418,9 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             }
         }
 
-        // M-新5 fix: 检测重复参数名
-        for (const auto& existing : params) {
-            if (existing == paramName) {
-                throw ParseError("重复的参数名 '" + paramName + "'", peek().line, peek().column);
-            }
+        // M-新5 fix: 检测重复参数名（Perf-Finding4: O(1) hash 查找替代 O(n) 线性扫描）
+        if (!paramSet.insert(paramName).second) {
+            throw ParseError("重复的参数名 '" + paramName + "'", peek().line, peek().column);
         }
         params.push_back(paramName);
         paramTypes.push_back(pType);
@@ -1106,6 +1112,7 @@ std::unique_ptr<ASTNode> Parser::call() {
             const Token& paren = previous();
             // 解析参数列表
             std::vector<std::shared_ptr<ASTNode>> args;
+            args.reserve(4);  // Perf-Finding4: 避免常见 1-3 参函数调用的 1-2 次 realloc
             if (!check(TokenType::TK_RPAREN)) {
                 do {
                     args.push_back(expression());
@@ -1145,6 +1152,7 @@ std::unique_ptr<ASTNode> Parser::call() {
             // 检查是否是方法调用: obj.method(args)
             if (match(TokenType::TK_LPAREN)) {
                 std::vector<std::shared_ptr<ASTNode>> args;
+                args.reserve(4);  // Perf-Finding4: 避免常见 1-3 参方法调用的 1-2 次 realloc
                 if (!check(TokenType::TK_RPAREN)) {
                     do {
                         args.push_back(expression());

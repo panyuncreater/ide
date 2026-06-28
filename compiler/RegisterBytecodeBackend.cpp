@@ -209,28 +209,44 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     // ---- upvalue ----
     case IROp::LOAD_UPVALUE: {
         if (instr.operands.size() < 2) return false;
+        // Bug-14 同型修复：upvalue 索引超 255 静默截断会读写错误槽
+        if (instr.operands[1].index >= 256) {
+            Logger::Error("RegBytecodeBackend: LOAD_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+                          std::to_string(instr.operands[1].index) + ")", "RegBackend");
+            return false;
+        }
         uint8_t dst = vregToReg(instr.operands[0].index);
         chunk_->writeOp(RegOp::REG_LOAD_UPVALUE, line);
         chunk_->writeReg(dst, line);
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index));
         while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size()))
             chunk_->lines.push_back(line);
         break;
     }
     case IROp::STORE_UPVALUE: {
         if (instr.operands.size() < 2) return false;
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("RegBytecodeBackend: STORE_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+                          std::to_string(instr.operands[0].index) + ")", "RegBackend");
+            return false;
+        }
         uint8_t src = vregToReg(instr.operands[1].index);
         chunk_->writeOp(RegOp::REG_STORE_UPVALUE, line);
         chunk_->writeReg(src, line);
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
         while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size()))
             chunk_->lines.push_back(line);
         break;
     }
     case IROp::CLOSE_UPVALUE: {
         if (instr.operands.empty()) return false;
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("RegBytecodeBackend: CLOSE_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+                          std::to_string(instr.operands[0].index) + ")", "RegBackend");
+            return false;
+        }
         chunk_->writeOp(RegOp::REG_CLOSE_UPVALUE, line);
-        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
         while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size()))
             chunk_->lines.push_back(line);
         break;
@@ -344,10 +360,16 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
 
     // ---- 调用 ----
     case IROp::CALL: {
-        // IR: CALL dest, name_idx, arg_count, arg1, arg2, ...
+        // IR: CALL dest, fun_name_idx, arg_count, arg1, ...
         if (instr.operands.size() < 3) return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
+        // 参数数量上限检查：CALL 无隐式 this，上限 255
+        if (instr.operands[2].index > 255) {
+            Logger::Error("RegisterBytecodeBackend: CALL 参数数量超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
         uint8_t argCount = static_cast<uint8_t>(instr.operands[2].index & 0xFF);
         chunk_->writeOp(RegOp::REG_CALL, line);
         chunk_->writeReg(dst, line);
@@ -365,6 +387,11 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         if (instr.operands.size() < 3) return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint8_t callee = vregToReg(instr.operands[1].index);
+        if (instr.operands[2].index > 255) {
+            Logger::Error("RegisterBytecodeBackend: CALL_EXPR 参数数量超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
         uint8_t argCount = static_cast<uint8_t>(instr.operands[2].index & 0xFF);
         chunk_->writeOp(RegOp::REG_CALL_EXPR, line);
         chunk_->writeReg(dst, line);
@@ -383,6 +410,12 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint8_t obj = vregToReg(instr.operands[1].index);
         uint16_t methodIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        // 参数数量上限检查：METHOD_CALL 运行时 +1（this），上限 254
+        if (instr.operands[3].index > 254) {
+            Logger::Error("RegisterBytecodeBackend: METHOD_CALL 参数数量超过 254 上限（含 this 共 255）", "RegIR");
+            hasError_ = true;
+            return false;
+        }
         uint8_t argCount = static_cast<uint8_t>(instr.operands[3].index & 0xFF);
         chunk_->writeOp(RegOp::REG_METHOD_CALL, line);
         chunk_->writeReg(dst, line);
@@ -392,6 +425,33 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         for (uint8_t i = 0; i < argCount; ++i) {
             if (4 + i >= instr.operands.size()) return false;
             uint8_t argReg = vregToReg(instr.operands[4 + i].index);
+            chunk_->writeReg(argReg, line);
+        }
+        break;
+    }
+    case IROp::SUPER_CALL: {
+        // P1-3 fix: IR: SUPER_CALL dest, this_vreg, method_idx, class_idx, arg_count, args...
+        // → REG_SUPER_CALL: op + dst(1B) + nameIdx(2B) + argCount(1B) + recvReg(1B) + classIdx(2B) + args...
+        if (instr.operands.size() < 5) return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t recvReg = vregToReg(instr.operands[1].index);
+        uint16_t methodIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        uint16_t classIdx = addStringConstant(globalName(instr.operands[3].index), ir);
+        if (instr.operands[4].index > 254) {
+            Logger::Error("RegisterBytecodeBackend: SUPER_CALL 参数数量超过 254 上限（含 this 共 255）", "RegIR");
+            hasError_ = true;
+            return false;
+        }
+        uint8_t argCount = static_cast<uint8_t>(instr.operands[4].index & 0xFF);
+        chunk_->writeOp(RegOp::REG_SUPER_CALL, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeShort(methodIdx, line);
+        chunk_->writeReg(argCount, line);
+        chunk_->writeReg(recvReg, line);
+        chunk_->writeShort(classIdx, line);
+        for (uint8_t i = 0; i < argCount; ++i) {
+            if (5 + i >= instr.operands.size()) return false;
+            uint8_t argReg = vregToReg(instr.operands[5 + i].index);
             chunk_->writeReg(argReg, line);
         }
         break;
@@ -422,6 +482,11 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         // IR: BUILD_ARRAY dest, count, arg1, arg2, ...
         if (instr.operands.size() < 2) return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
+        if (instr.operands[1].index > 255) {
+            Logger::Error("RegisterBytecodeBackend: BUILD_ARRAY 元素数量超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
         uint8_t count = static_cast<uint8_t>(instr.operands[1].index & 0xFF);
         chunk_->writeOp(RegOp::REG_BUILD_ARRAY, line);
         chunk_->writeReg(dst, line);
@@ -437,6 +502,11 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         // IR: BUILD_DICT dest, pair_count, k1, v1, k2, v2, ...
         if (instr.operands.size() < 2) return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
+        if (instr.operands[1].index > 255) {
+            Logger::Error("RegisterBytecodeBackend: BUILD_DICT 键值对数量超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
         uint8_t pairCount = static_cast<uint8_t>(instr.operands[1].index & 0xFF);
         chunk_->writeOp(RegOp::REG_BUILD_DICT, line);
         chunk_->writeReg(dst, line);
@@ -484,6 +554,19 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeShort(fieldIdx, line);
         break;
     }
+    case IROp::SUPER_MEMBER_GET: {
+        // P1-2 fix: super.field → REG_SUPER_MEMBER_GET（运行时与 MEMBER_GET 同语义，
+        // 字段已由父类 init 设置到实例上，但保留独立 op 以便未来语义扩展）
+        if (instr.operands.size() < 3) return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t obj = vregToReg(instr.operands[1].index);
+        uint16_t fieldIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        chunk_->writeOp(RegOp::REG_SUPER_MEMBER_GET, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeReg(obj, line);
+        chunk_->writeShort(fieldIdx, line);
+        break;
+    }
     case IROp::MEMBER_SET: {
         if (instr.operands.size() < 3) return false;
         uint8_t obj = vregToReg(instr.operands[0].index);
@@ -518,6 +601,18 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         if (instr.operands.size() < 3 + fieldCount + 1) return false;
         uint32_t methodCount = instr.operands[3 + fieldCount].index;
         if (instr.operands.size() < 3 + fieldCount + 1 + methodCount * 2) return false;
+        // R7 fix: fieldCount/methodCount 经 writeByte 编码为 uint8_t，超 255 时静默截断
+        // 会导致后续读取循环用截断值迭代，字段名/方法名索引完全错位，写出损坏字节码。
+        if (fieldCount > 255) {
+            Logger::Error("RegisterBytecodeBackend: DEFINE_CLASS fieldCount 超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
+        if (methodCount > 255) {
+            Logger::Error("RegisterBytecodeBackend: DEFINE_CLASS methodCount 超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
 
         chunk_->writeOp(RegOp::REG_DEFINE_CLASS, line);
         chunk_->writeShort(nameIdx, line);
@@ -542,6 +637,11 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         if (instr.operands.size() < 3) return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
+        if (instr.operands[2].index > 254) {
+            Logger::Error("RegisterBytecodeBackend: CLASS_NEW 参数数量超过 254 上限（含 instance 共 255）", "RegIR");
+            hasError_ = true;
+            return false;
+        }
         uint8_t argCount = static_cast<uint8_t>(instr.operands[2].index & 0xFF);
         chunk_->writeOp(RegOp::REG_CLASS_NEW, line);
         chunk_->writeReg(dst, line);
@@ -578,6 +678,14 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         uint8_t src = vregToReg(instr.operands[0].index);
         chunk_->writeOp(RegOp::REG_THROW, line);
         chunk_->writeReg(src, line);
+        break;
+    }
+    case IROp::LOAD_EXCEPTION: {
+        // P1-4 fix: catch 块起始加载 pendingException_ 到寄存器
+        if (instr.operands.empty()) return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        chunk_->writeOp(RegOp::REG_LOAD_EXCEPTION, line);
+        chunk_->writeReg(dst, line);
         break;
     }
 
@@ -623,15 +731,26 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::WRITEBACK_MEMBER_UPVALUE: {
         // #7 fix: 寄存器式 upvalue 写回（uvIdx 在运行时由 frame.upvalues 解释，不映射到寄存器）
         if (instr.operands.size() < 2) return false;
+        // Bug-14 同型修复：uvIdx 超 255 静默截断
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("RegBytecodeBackend: WRITEBACK_MEMBER_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+                          std::to_string(instr.operands[0].index) + ")", "RegBackend");
+            return false;
+        }
         chunk_->writeOp(RegOp::REG_WRITEBACK_MEMBER_UPVALUE, line);
-        chunk_->writeByte(static_cast<uint8_t>(instr.operands[0].index & 0xFF), line);
+        chunk_->writeByte(static_cast<uint8_t>(instr.operands[0].index), line);
         chunk_->writeShort(addStringConstant(globalName(instr.operands[1].index), ir), line);
         break;
     }
     case IROp::WRITEBACK_INDEX_UPVALUE: {
         if (instr.operands.empty()) return false;
+        if (instr.operands[0].index >= 256) {
+            Logger::Error("RegBytecodeBackend: WRITEBACK_INDEX_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+                          std::to_string(instr.operands[0].index) + ")", "RegBackend");
+            return false;
+        }
         chunk_->writeOp(RegOp::REG_WRITEBACK_INDEX_UPVALUE, line);
-        chunk_->writeByte(static_cast<uint8_t>(instr.operands[0].index & 0xFF), line);
+        chunk_->writeByte(static_cast<uint8_t>(instr.operands[0].index), line);
         break;
     }
 
@@ -672,6 +791,14 @@ bool RegisterBytecodeBackend::patchJumps() {
         if (it == labelToOffset_.end()) {
             Logger::Error("RegisterBytecodeBackend: 未找到标签 " +
                           std::to_string(pj.targetLabel), "RegIR");
+            return false;
+        }
+        // 与 BytecodeIRBackend::patchJumps 对齐：字节码体积超过 64KB 时跳转目标截断，
+        // 会导致 RegisterVM 跳到错误地址执行任意指令。
+        if (it->second > 65535) {
+            Logger::Error("RegisterBytecodeBackend: 跳转目标偏移超过 64KB 限制 (offset=" +
+                          std::to_string(it->second) + ", label=" +
+                          std::to_string(pj.targetLabel) + ")", "RegIR");
             return false;
         }
         uint16_t target = static_cast<uint16_t>(it->second);

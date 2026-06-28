@@ -63,10 +63,23 @@ IdeController::~IdeController() {
 // ============================================================
 
 bool IdeController::runCompiler() {
+    // B1 fix: VM RUN 模式活跃时拒绝 runCompiler，避免替换 CompileResult 致 frame.chunk 悬垂 UAF。
+    // 调用方（onShowBytecode/onShowIR）在 VM 运行时应先 vmStop()。
+    if (vmStepper_.isRunning()) {
+        emit genericError("VM RUN 模式正在执行，请先停止 VM 再重新编译");
+        return false;
+    }
     bool ok = pipeline_.runCompiler();
     // 编译成功后同步更新 VmStepper 的编译结果，使 VM 步进可用
     if (ok) {
-        vmStepper_.setCompileResult(pipeline_.lastCompileResult());
+        // A1 fix: 双后端编译结果同步。Compiler 根据 useRegisterVM_ 选择走栈式
+        // 还是寄存器式路径，分别产生 CompileResult 和 RegisterCompileResult。
+        // VmStepper 需要拿到对应后端的结果才能 initExecution。
+        if (pipeline_.compiler().getUseRegisterVM()) {
+            vmStepper_.setRegisterCompileResult(pipeline_.compiler().getLastRegisterResult());
+        } else {
+            vmStepper_.setCompileResult(pipeline_.lastCompileResult());
+        }
     }
     return ok;
 }
@@ -76,7 +89,12 @@ bool IdeController::runCompiler() {
 // ============================================================
 
 bool IdeController::prepareRun(bool isDebug, const std::string& source, const std::string& filePath) {
-    if (workerMgr_.isRunning()) return false;
+    // E2 fix: 各静默 return false 路径补 emit genericError，避免 UI 已 clearAll 后
+    // 用户看不到任何反馈（onRun/onDebug 调用 prepareRun 前已 clearAll 输出面板）。
+    if (workerMgr_.isRunning()) {
+        emit genericError("已有运行在进行，请先停止当前运行");
+        return false;
+    }
 
     // C9 fix: 使用统一前端管线（Lexer + Parser）
     auto pipelineResult = pipeline_.runFrontendPipeline(source);
@@ -89,15 +107,24 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
         return false;
     }
 
-    if (!pipeline_.astRoot()) return false;
+    if (!pipeline_.astRoot()) {
+        emit genericError("内部错误：前端管线返回成功但 AST 为空");
+        return false;
+    }
 
     // 委托 WorkerManager 设置模块加载器、调试模式、创建 worker 线程
     if (!workerMgr_.prepareRun(isDebug, pipeline_.astRoot(), filePath)) {
+        // WorkerManager 内部已 emit 错误或抛异常（catch 内回滚），此处不重复
         return false;
     }
 
     // 同步编译结果到 VmStepper（供 VM 模式调试使用）
-    vmStepper_.setCompileResult(pipeline_.lastCompileResult());
+    // A1 fix: 根据 useRegisterVM_ 选择同步栈式或寄存器式结果
+    if (pipeline_.compiler().getUseRegisterVM()) {
+        vmStepper_.setRegisterCompileResult(pipeline_.compiler().getLastRegisterResult());
+    } else {
+        vmStepper_.setCompileResult(pipeline_.lastCompileResult());
+    }
 
     return true;
 }

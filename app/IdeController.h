@@ -54,15 +54,19 @@ public:
 
     // ---- VM 状态访问（转发到 VmStepper）----
     // B6 fix: 语义化的 VM 调试状态快照接口（GUI 仅通过这些方法读取 VM 状态）
+    // A1 fix: 栈式 VM 返回操作数栈；RegisterVM 返回寄存器窗口（同形 vector<Value>）
     std::vector<Value> getVmStack() const { return vmStepper_.getStack(); }
     std::unordered_map<std::string, Value> getVmGlobals() const { return vmStepper_.getGlobals(); }
     size_t getVmCurrentIP() const { return vmStepper_.getCurrentIP(); }
-    OpCode getVmCurrentOpCode() const { return vmStepper_.getCurrentOpCode(); }
+    // A1 fix: 操作码统一返回名称字符串，兼容 OpCode (栈式) / RegOp (寄存器式)
+    std::string getVmCurrentOpCodeName() const { return vmStepper_.getCurrentOpCodeName(); }
     int getVmCurrentLine() const { return vmStepper_.getCurrentLine(); }
     std::string getVmCurrentChunkName() const { return vmStepper_.getCurrentChunkName(); }
     std::string getVmLastError() const { return vmStepper_.getLastError(); }
     int getVmLastErrorLine() const { return vmStepper_.getLastErrorLine(); }
     size_t getVmFrameCount() const { return vmStepper_.getFrameCount(); }
+    // A1 fix: 暴露当前活跃后端模式给 GUI（用于切换栈/寄存器视图）
+    bool isVmRegisterMode() const { return vmStepper_.isRegisterMode(); }
 
     // ---- 调试接口（转发到 DebugCoordinator）----
     void setBreakpointCondition(int line, const std::string& condition) {
@@ -128,6 +132,15 @@ public:
     void vmReset() { vmStepper_.reset(); }
     bool isVmRunning() const { return vmStepper_.isRunning(); }
     bool isVmInitialized() const { return vmStepper_.isInitialized(); }
+
+    // A1 fix: 启用/禁用 RegisterVM 后端（同步 Compiler 与 VmStepper）
+    // 启用后 compile() 走 AST → IR → RegisterBytecode 路径，VmStepper 转发到 regVm_。
+    // 切换时 VmStepper 自动 reset 防止状态污染；调用方应在 VM 未运行时切换。
+    void setUseRegisterVM(bool enabled) {
+        pipeline_.compiler().setUseRegisterVM(enabled);
+        vmStepper_.setUseRegister(enabled);
+    }
+    bool getUseRegisterVM() const { return pipeline_.compiler().getUseRegisterVM(); }
 
     // ---- 状态访问（转发到 PipelineRunner）----
     const std::vector<Token>& lastTokens() const { return pipeline_.lastTokens(); }

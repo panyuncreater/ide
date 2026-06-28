@@ -8,6 +8,7 @@
 #include "compiler/VM.h"
 #include "interpreter/BuiltinMethods.h"  // 共享纯函数层（len/contains/has）
 #include "interpreter/NumericUtils.h"    // 共享溢出检查（B6 fix）
+#include "interpreter/ErrorFormat.h"     // Dedup-5A: ErrorFormat::format 替代 std::to_string 拼接
 #include "common/Utf8Utils.h"            // P0-4 fix: UTF-8 码位工具
 #include "Logger.h"
 #include <sstream>
@@ -32,7 +33,7 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
     case OpCode::OP_CLASS_NEW:  return executeClassNew(ip, op);
     case OpCode::OP_DEFINE_CLASS: return executeDefineClass(ip, op);
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 }
 
@@ -46,6 +47,9 @@ VMResult VM::executeReturn(size_t& ip) {
     (void)chunk;  // OP_RETURN 不直接使用 chunk
 
     Value result = pop();
+    // pop() 在栈空时设置 hasError_ 并返回 nullValue()，继续执行会基于错误数据
+    // 修改栈/帧状态。提前退出避免状态进一步损坏。
+    if (hasError_) return VMResult::VM_RUNTIME_ERROR;
     // 提取标量字段 + move 字符串，避免拷贝整个 VMCallFrame（含 2 个 std::string）
     const size_t savedBp = frames_.back().basePointer;
     const size_t savedReturnIp = frames_.back().returnIp;
@@ -96,7 +100,10 @@ VMResult VM::executeReturn(size_t& ip) {
             // 路径 A：接收者是全局变量 → 写回 globals_ 或 globalSlots_
             if (!recvVarName.empty() && modifiedThisC.isInstance()) {
                 auto gsIt = globalNameToSlot_.find(recvVarName);
-                if (gsIt != globalNameToSlot_.end() && globalSlots_[gsIt->second].isInstance()) {
+                if (gsIt != globalNameToSlot_.end() &&
+                    gsIt->second >= 0 &&
+                    gsIt->second < static_cast<int>(globalSlots_.size()) &&
+                    globalSlots_[gsIt->second].isInstance()) {
                     for (const auto& field : modifiedThisC.fields()) {
                         globalSlots_[gsIt->second].fields()[field.first] = field.second;
                     }
@@ -122,7 +129,7 @@ VMResult VM::executeReturn(size_t& ip) {
                     // 用 #11 的 fieldSlotIndex O(1) 查找。语义等价：对 modifiedThis 中每个
                     // 字段，写入 caller this.fields()；若该字段在 caller 的 fieldOrder 中，
                     // 额外写入对应栈槽。
-                    if (stack_[callerBp].isInstance()) {
+                    if (callerBp < stack_.size() && stack_[callerBp].isInstance()) {
                         Value& callerThis = stack_[callerBp];
                         const bool hasCallerFieldOrder = callerFrame.chunk && !callerFrame.chunk->fieldOrder.empty();
                         for (const auto& field : modifiedThisC.fields()) {
@@ -143,7 +150,7 @@ VMResult VM::executeReturn(size_t& ip) {
                     stack_[receiverPos] = modifiedThis;
 
                     // 如果接收者是调用者 this 的字段（slot 1..N），也更新 this.fields()
-                    if (stack_[callerBp].isInstance() && callerFrame.chunk &&
+                    if (callerBp < stack_.size() && stack_[callerBp].isInstance() && callerFrame.chunk &&
                         recvLocalSlot <= static_cast<int>(callerFrame.chunk->fieldOrder.size())) {
                         const std::string& fieldName = callerFrame.chunk->fieldOrder[recvLocalSlot - 1];
                         stack_[callerBp].fields()[fieldName] = modifiedThis;
@@ -167,6 +174,9 @@ VMResult VM::executeReturn(size_t& ip) {
     }
 
     if (frames_.empty()) {
+        // 末帧返回：先截断栈清理 main 帧的局部变量/字段槽/参数，
+        // 仅保留返回值。否则 getStack() 会返回残留垃圾，影响调试器/UI 可视化。
+        stack_.resize(savedBp);
         // V-P2-21 fix: result 后续不再使用，std::move 入栈
         push(std::move(result));
         notifyStep(savedIp, OpCode::OP_RETURN);
@@ -231,10 +241,10 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
                     // P0-1 fix: 使用范围检查支持默认参数，并填充缺失的默认值
                     std::vector<Value> defaults;
                     if (!fillDefaultArgs(initChunk, argCount, funName, defaults)) {
-                        return runtimeError("构造函数 init 期望 " +
-                            std::to_string(initChunk.requiredArity) + "-" +
-                            std::to_string(initChunk.arity) + " 个参数，但传入了 " +
-                            std::to_string(argCount) + " 个");
+                        return runtimeError(ErrorFormat::format(
+                            "构造函数 init 期望 %d-%d 个参数，但传入了 %d 个",
+                            initChunk.requiredArity, initChunk.arity,
+                            static_cast<int>(argCount)));
                     }
                     // 将默认参数追加到 args 末尾
                     for (auto& d : defaults) {
@@ -248,16 +258,19 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
                     // 推入 this
                     push(instance);
                     // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
+                    // 性能修复: push(instance) 后 refCount=2，若用非 const fields() 会触发
+                    // ensureUnique COW 深拷贝整个 fields unordered_map。改用 std::as_const
+                    // 调用 const 重载，仅读不写时不触发 COW。类构造是高频热路径。
                     int fieldCount = 0;
                     if (initChunk.fieldOrder.empty()) {
-                        for (const auto& field : instance.fields()) {
+                        for (const auto& field : std::as_const(instance).fields()) {
                             push(field.second);
                         }
-                        fieldCount = static_cast<int>(instance.fields().size());
+                        fieldCount = static_cast<int>(std::as_const(instance).fields().size());
                     } else {
                         for (const auto& fieldName : initChunk.fieldOrder) {
-                            auto fieldIt = instance.fields().find(fieldName);
-                            if (fieldIt != instance.fields().end()) {
+                            auto fieldIt = std::as_const(instance).fields().find(fieldName);
+                            if (fieldIt != std::as_const(instance).fields().end()) {
                                 push(fieldIt->second);
                             } else {
                                 push(Value::nullValue());
@@ -275,9 +288,9 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
                     int extraSlots = initChunk.localCount - preAllocated;
                     // V-P2-1 fix: extraSlots 为负表示帧布局损坏（fieldCount 与编译期不一致）
                     if (extraSlots < 0) {
-                        return runtimeError("类 " + funName + " 的 init 方法帧布局损坏: localCount=" +
-                            std::to_string(initChunk.localCount) + " < preAllocated=" +
-                            std::to_string(preAllocated));
+                        return runtimeError(ErrorFormat::format(
+                            "类 %s 的 init 方法帧布局损坏: localCount=%d < preAllocated=%d",
+                            funName.c_str(), initChunk.localCount, preAllocated));
                     }
                     for (int i = 0; i < extraSlots; ++i) {
                         push(Value::nullValue());
@@ -300,8 +313,9 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
 
                 // 无 init 方法：检查是否有多余参数（与解释器行为保持一致）
                 if (argCount > 0) {
-                    return runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
-                                        std::to_string(argCount) + " 个参数");
+                    return runtimeError(ErrorFormat::format(
+                        "类 %s 没有 init 方法，但传入了 %d 个参数",
+                        cls.name.c_str(), static_cast<int>(argCount)));
                 }
                 push(instance);
                 notifyStep(ip, op);
@@ -310,22 +324,30 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
             }
 
             // 既不是函数也不是类：检查是否为 input() 函数
+            // E3 fix: 改用共享层 executeSharedInput，统一与 Interpreter 的 input() 语义。
+            // WorkerManager 超时回调会抛 std::runtime_error，被 executeSharedInput
+            // 捕获并返回 Result::err，此处转为 runtimeError 上报，避免静默返回空串。
             if (funName == "input") {
-                if (argCount > 1) {
-                    for (uint8_t i = 0; i < argCount; ++i) pop();
-                    return runtimeError("input 期望 0 或 1 个参数，但传入了 " + std::to_string(argCount) + " 个");
+                // 收集参数（栈上顺序: [arg0]，栈顶是最后一个参数）
+                if (stack_.size() < static_cast<size_t>(argCount)) {
+                    return runtimeError("栈下溢: OP_CALL input");
                 }
-                std::string prompt;
-                if (argCount == 1) {
-                    if (stack_.empty()) return runtimeError("栈下溢: OP_CALL input");
-                    Value promptVal = pop();
-                    prompt = promptVal.toString();
+                SmallArgs<Value> args(argCount);
+                for (int i = argCount - 1; i >= 0; --i) {
+                    args[i] = pop();
                 }
-                std::string userInput;
-                if (inputCallback_) {
-                    userInput = inputCallback_(prompt);
+
+                int line = 0;
+                if (!chunk.lines.empty() && ip < chunk.lines.size()) {
+                    line = chunk.lines[ip];
                 }
-                push(Value(std::move(userInput)));
+
+                auto r = executeSharedInput(inputCallback_,
+                    args.begin(), argCount, line, 0);
+                if (r.is_err()) {
+                    return runtimeError(r.error().message);
+                }
+                push(std::move(r.value()));
                 notifyStep(ip, op);
                 ip += 4;
                 return VMResult::VM_OK;
@@ -374,10 +396,10 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         // F10: 支持默认参数，参数数量可在 [requiredArity, arity] 范围内
         if (argCount < static_cast<uint8_t>(targetChunk.requiredArity) ||
             argCount > static_cast<uint8_t>(targetChunk.arity)) {
-            return runtimeError("函数 " + funName + " 期望 " +
-                std::to_string(targetChunk.requiredArity) + "-" +
-                std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
-                std::to_string(argCount) + " 个");
+            return runtimeError(ErrorFormat::format(
+                "函数 %s 期望 %d-%d 个参数，但传入了 %d 个",
+                funName.c_str(), targetChunk.requiredArity, targetChunk.arity,
+                static_cast<int>(argCount)));
         }
 
         // F10: 为缺失的尾部参数填充默认值
@@ -410,9 +432,9 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         int extraSlots = targetChunk.localCount - argCount;
         // V-P2-1 fix: extraSlots 为负表示帧布局损坏
         if (extraSlots < 0) {
-            return runtimeError("闭包调用帧布局损坏: localCount=" +
-                std::to_string(targetChunk.localCount) + " < argCount=" +
-                std::to_string(argCount));
+            return runtimeError(ErrorFormat::format(
+                "闭包调用帧布局损坏: localCount=%d < argCount=%d",
+                targetChunk.localCount, static_cast<int>(argCount)));
         }
         for (int i = 0; i < extraSlots; ++i) {
             push(Value::nullValue());
@@ -478,10 +500,10 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
             argCount > static_cast<uint8_t>(targetChunk.arity)) {
             // R3-1 fix: 弹出参数保持栈平衡
             for (int i = 0; i < argCount; ++i) pop();
-            return runtimeError("函数 " + callee.closureName() + " 期望 " +
-                std::to_string(targetChunk.requiredArity) + "-" +
-                std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
-                std::to_string(argCount) + " 个");
+            return runtimeError(ErrorFormat::format(
+                "函数 %s 期望 %d-%d 个参数，但传入了 %d 个",
+                callee.closureName().c_str(), targetChunk.requiredArity,
+                targetChunk.arity, static_cast<int>(argCount)));
         }
 
         // F10: 为缺失的尾部参数填充默认值
@@ -518,9 +540,9 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         int extraSlots = targetChunk.localCount - argCount;
         // V-P2-1 fix: extraSlots 为负表示帧布局损坏
         if (extraSlots < 0) {
-            return runtimeError("函数调用帧布局损坏: localCount=" +
-                std::to_string(targetChunk.localCount) + " < argCount=" +
-                std::to_string(argCount));
+            return runtimeError(ErrorFormat::format(
+                "函数调用帧布局损坏: localCount=%d < argCount=%d",
+                targetChunk.localCount, static_cast<int>(argCount)));
         }
         for (int i = 0; i < extraSlots; ++i) {
             push(Value::nullValue());
@@ -603,7 +625,9 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                 uint16_t classIdx = chunk.code[ip + 7] | (chunk.code[ip + 8] << 8);
                 // V-P1-7 fix: classIdx 越界应报错而非静默降级到运行时类名（可能导致错误的 super 查找）
                 if (classIdx >= chunk.constants.size()) {
-                    return runtimeError("内部错误: super 调用的类名常量索引越界 (" + std::to_string(classIdx) + ")");
+                    return runtimeError(ErrorFormat::format(
+                        "内部错误: super 调用的类名常量索引越界 (%d)",
+                        static_cast<int>(classIdx)));
                 }
                 searchClassName = chunk.constants[classIdx].stringVal();
                 auto clsIt = classInfo_.find(searchClassName);
@@ -622,10 +646,10 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                     argCount > static_cast<uint8_t>(targetChunk.arity)) {
                     // PERF-12 fix: 批量 pop 用 popN（参数 + 接收者）
                     popN(argCount + 1);
-                    return runtimeError("方法 " + methodName + " 期望 " +
-                        std::to_string(targetChunk.requiredArity) + "-" +
-                        std::to_string(targetChunk.arity) + " 个参数，但传入了 " +
-                        std::to_string(argCount) + " 个");
+                    return runtimeError(ErrorFormat::format(
+                        "方法 %s 期望 %d-%d 个参数，但传入了 %d 个",
+                        methodName.c_str(), targetChunk.requiredArity,
+                        targetChunk.arity, static_cast<int>(argCount)));
                 }
 
                 if (frames_.size() >= MAX_FRAMES) {
@@ -692,9 +716,9 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                 int extraSlots = targetChunk.localCount - preAllocated;
                 // V-P2-1 fix: extraSlots 为负表示帧布局损坏
                 if (extraSlots < 0) {
-                    return runtimeError("方法 " + methodName + " 帧布局损坏: localCount=" +
-                        std::to_string(targetChunk.localCount) + " < preAllocated=" +
-                        std::to_string(preAllocated));
+                    return runtimeError(ErrorFormat::format(
+                        "方法 %s 帧布局损坏: localCount=%d < preAllocated=%d",
+                        methodName.c_str(), targetChunk.localCount, preAllocated));
                 }
                 for (int i = 0; i < extraSlots; ++i) {
                     push(Value::nullValue());
@@ -709,7 +733,8 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                 newFrame.isMethodCall = true;
                 newFrame.isInitCall = (methodName == "init");  // init 返回 this 而非 null
                 // 记录接收者变量名（用于 writeBack 到 globals_）
-                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+                if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size() &&
+                    chunk.constants[receiverVarIdx].isString()) {
                     newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal();
                 }
                 // 记录接收者局部变量 slot（用于 writeBack 到调用者栈帧）
@@ -854,10 +879,10 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
             // P0-1 fix: 使用范围检查支持默认参数，并填充缺失的默认值
             std::vector<Value> defaults;
             if (!fillDefaultArgs(initChunk, argCount, className, defaults)) {
-                return runtimeError("构造函数 init 期望 " +
-                    std::to_string(initChunk.requiredArity) + "-" +
-                    std::to_string(initChunk.arity) + " 个参数，但传入了 " +
-                    std::to_string(argCount) + " 个");
+                return runtimeError(ErrorFormat::format(
+                    "构造函数 init 期望 %d-%d 个参数，但传入了 %d 个",
+                    initChunk.requiredArity, initChunk.arity,
+                    static_cast<int>(argCount)));
             }
             // 将默认参数追加到 args 末尾
             for (auto& d : defaults) {
@@ -899,9 +924,9 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
             int extraSlots = initChunk.localCount - preAllocated;
             // V-P2-1 fix: extraSlots 为负表示帧布局损坏
             if (extraSlots < 0) {
-                return runtimeError("类 " + className + " 的 init 方法帧布局损坏: localCount=" +
-                    std::to_string(initChunk.localCount) + " < preAllocated=" +
-                    std::to_string(preAllocated));
+                return runtimeError(ErrorFormat::format(
+                    "类 %s 的 init 方法帧布局损坏: localCount=%d < preAllocated=%d",
+                    className.c_str(), initChunk.localCount, preAllocated));
             }
             for (int i = 0; i < extraSlots; ++i) {
                 push(Value::nullValue());
@@ -925,16 +950,18 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
         // 无 init 或 init.arity 不匹配 argCount：推入实例（OP_INIT_FIELD 或手动 init 后续处理）
         // V-P1-8 fix: init 存在但参数不匹配（argCount==0 且 init.requiredArity>0）时报错，而非静默跳过
         if (initChunkPtr != nullptr && !shouldCallInit) {
-            return runtimeError("类 " + cls.name + " 的 init 期望至少 " +
-                std::to_string(initChunkPtr->requiredArity) + " 个参数，但传入了 " +
-                std::to_string(argCount) + " 个");
+            return runtimeError(ErrorFormat::format(
+                "类 %s 的 init 期望至少 %d 个参数，但传入了 %d 个",
+                cls.name.c_str(), initChunkPtr->requiredArity,
+                static_cast<int>(argCount)));
         }
         push(instance);
 
         // 无 init 但有参数：报错（与解释器一致）
         if (initChunkPtr == nullptr && argCount > 0) {
-            return runtimeError("类 " + cls.name + " 没有 init 方法，但传入了 " +
-                         std::to_string(argCount) + " 个参数");
+            return runtimeError(ErrorFormat::format(
+                "类 %s 没有 init 方法，但传入了 %d 个参数",
+                cls.name.c_str(), static_cast<int>(argCount)));
         }
 
         notifyStep(ip, op);

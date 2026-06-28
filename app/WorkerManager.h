@@ -22,6 +22,7 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <atomic>
 
 #include "interpreter/Interpreter.h"
 #include "debug/DebugController.h"
@@ -84,6 +85,9 @@ private:
     std::unique_ptr<QThread, QThreadDeleter> workerThread_;
     std::unique_ptr<InterpreterWorker> worker_;
 
-    bool isRunning_ = false;
-    bool isDebugRun_ = false;
+    // P2 fix: atomic<bool> 对齐 DebugController P0-9 fix 模式。
+    // 主线程写（startWorker/forceStop/prepareRun/cleanupWorker）与潜在跨线程读之间
+    // 需内存可见性保证。原子避免数据竞争导致的 UI 状态不一致。
+    std::atomic<bool> isRunning_{false};
+    std::atomic<bool> isDebugRun_{false};
 };

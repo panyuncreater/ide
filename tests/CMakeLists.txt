@@ -34,6 +34,7 @@ if(NOT TARGET minilang_core)
         ${MINILANG_ROOT_DIR}/interpreter/BuiltinMethods.cpp
         ${MINILANG_ROOT_DIR}/interpreter/Value.cpp
         ${MINILANG_ROOT_DIR}/debug/DebugController.cpp
+        ${MINILANG_ROOT_DIR}/compiler/Bytecode.cpp
         ${MINILANG_ROOT_DIR}/compiler/Compiler.cpp
         ${MINILANG_ROOT_DIR}/compiler/VM.cpp
         ${MINILANG_ROOT_DIR}/compiler/VMCalls.cpp

@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <functional>  // E3 fix: executeSharedInput 接收 std::function 回调
 #include "interpreter/Value.h"
 #include "interpreter/RuntimeExceptions.h"  // S6 fix: RuntimeError 完整定义
 #include "common/Result.h"                   // S6 fix: 统一错误处理 Result<Value>
@@ -213,6 +214,22 @@ bool isBuiltinFunction(const std::string& name);
 /// @param column     调用列号（用于错误报告）
 Result<Value> executeSharedBuiltinFunction(
     const std::string& funcName,
+    const Value* args, size_t argCount,
+    int line = 0, int column = 0);
+
+/// E3 fix: 执行 input() 函数（共享层，供 Interpreter 和 VM 共用）
+/// input() 不走 executeSharedBuiltinFunction 注册表（依赖 inputCallback 跨线程交互），
+/// 由调用方直接调用本函数并传入 callback。
+/// - input() 返回空串
+/// - input(prompt) 返回用户输入字符串
+/// callback 抛出的异常（如超时 RuntimeError）会被捕获并附上调用点行号/列号。
+/// @param inputCallback 输入回调（由 IDE 主线程注入；为空时返回空串，允许非交互式运行）
+/// @param args       参数列表首指针（argCount==0 时可为 nullptr）
+/// @param argCount   参数数量（input 期望 0 或 1）
+/// @param line       调用行号
+/// @param column     调用列号
+Result<Value> executeSharedInput(
+    const std::function<std::string(const std::string&)>& inputCallback,
     const Value* args, size_t argCount,
     int line = 0, int column = 0);
 

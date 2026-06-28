@@ -180,10 +180,10 @@ dog.speak();
 // 数据结构
 var arr = [1, 2, 3];
 arr.push(4);
-print(arr.length());  // 4
+print(arr.len());  // 4
 
 var dict = {"key": "value", "count": 42};
-print(dict["key"]);
+print(dict["key"]);  // value
 ```
 
 ## 工程约定

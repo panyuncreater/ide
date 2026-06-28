@@ -1,4 +1,5 @@
 #include "gui/DebugPanel.h"
+#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include <QHeaderView>
 #include <QSplitter>
 #include <tuple>
@@ -60,7 +61,7 @@ DebugPanel::DebugPanel(QWidget* parent)
 
     callStackList_ = new QListWidget;
     callStackList_->setAlternatingRowColors(true);
-    callStackList_->setFont(QFont("Consolas", 10));
+    callStackList_->setFont(GuiTextUtils::monospaceFont(10));
     stackLayout->addWidget(callStackList_);
 
     // 选中栈帧时显示该帧的局部变量
@@ -120,12 +121,18 @@ void DebugPanel::onStackFrameSelected(int index) {
 
     const auto& frame = currentStack_[index];
     // P1-14 fix: 委托给 populateVariableTree
+    // Bug-7 fix: scope 列语义与 populateFromSnapshot 保持一致——按帧深度标记
+    // "局部" (depth=0) / "外层" (depth>0)，而非函数名。函数名已在 callStackList_
+    // 中显示，重复填充 scope 列无信息增益且与快照路径的 "局部"/"外层"/"全局"
+    // 语义冲突。
+    const QString scopeLabel = (frame.depth == 0) ? QStringLiteral("局部")
+                                                  : QStringLiteral("外层");
     std::vector<std::tuple<QString, QString, QString>> rows;
     rows.reserve(frame.locals.size());
     for (const auto& kv : frame.locals) {
         rows.emplace_back(QString::fromStdString(kv.first),
                           QString::fromStdString(kv.second.toString()),
-                          QString::fromStdString(frame.functionName));  // 作用域 = 函数名
+                          scopeLabel);
     }
     populateVariableTree(rows);
 }

@@ -105,6 +105,7 @@ enum class RegOp : uint8_t {
     REG_TRY_BEGIN,     // catchOffset(2B)
     REG_TRY_END,       // (无操作数)
     REG_THROW,         // src
+    REG_LOAD_EXCEPTION, // dst                        P1-4 fix: 从 pendingException_ 加载异常值到寄存器
 
     // ---- I/O ----
     REG_PRINT,         // src                         输出 src
@@ -119,8 +120,27 @@ enum class RegOp : uint8_t {
     REG_WRITEBACK_INDEX_UPVALUE,  // uvIdx(1B)
 };
 
+// ============================================================
+// A3 fix: 统一 RegOp 元数据表（名称/基础长度/是否变长）
+// ------------------------------------------------------------
+// 新增 RegOp 时只需在 RegisterBytecode.cpp 的 kRegOpInfo[] 登记一行，
+// 无需同步修改 regOpName / instructionSize / instructionSizeAt 三处 switch。
+// ============================================================
+struct RegOpInfo {
+    const char* name;            // 操作码名称（调试用）
+    uint8_t baseSize;            // 固定长度指令字节数；变长指令为最小长度
+    bool isVariableLength;        // 是否变长（需 instructionSizeAt 按操作数计算实际长度）
+};
+
+/// 获取 RegOp 元数据
+const RegOpInfo& getRegOpInfo(RegOp op);
+
 /// 寄存器式操作码名称（调试用）
-const char* regOpName(RegOp op);
+// A3 fix: 改用元数据表查表（基于 getRegOpInfo）
+inline const char* regOpName(RegOp op) { return getRegOpInfo(op).name; }
+
+/// 寄存器式操作码 → 是否变长指令
+inline bool isRegOpVariableLength(RegOp op) { return getRegOpInfo(op).isVariableLength; }
 
 // ============================================================
 // 寄存器式字节码块
@@ -162,10 +182,12 @@ struct RegBytecodeChunk {
     void buildIpMap();
 
     /// 获取操作码的指令长度（字节数）
-    static uint8_t instructionSize(RegOp op);
+    // Bug fix: 返回 size_t 而非 uint8_t——变长指令（REG_BUILD_DICT/REG_MAKE_CLOSURE/
+    // REG_DEFINE_CLASS）实际长度可超过 255 字节，uint8_t 截断会导致 ip 推进错位
+    static size_t instructionSize(RegOp op);
 
     /// 获取指定偏移处的指令长度（处理变长指令）
-    uint8_t instructionSizeAt(size_t offset) const;
+    size_t instructionSizeAt(size_t offset) const;
 };
 
 // ============================================================

@@ -13,6 +13,7 @@
 #include <QKeyEvent>
 #include <QAbstractItemView>
 #include <QScrollBar>
+#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 
 // ============================================================
 // LineNumberArea 行号区域
@@ -38,8 +39,8 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
     // 字体只需设置一次（移出循环避免每行重建）
     // P2 fix: 使用 static const 避免 paintEvent 每次重绘都构造 QFont
-    static const QFont lineFont("Consolas", 10);
-    painter.setFont(lineFont);
+    // Dedup-4A: 通过 GuiTextUtils::monospaceFont 共享全局 QFont 缓存
+    painter.setFont(GuiTextUtils::monospaceFont(10));
 
     QTextBlock block = codeEditor->firstVisibleBlock();
     int blockNumber = block.blockNumber();
@@ -219,8 +220,8 @@ CodeEditor::CodeEditor(QWidget* parent)
     highlightCurrentLine();
 
     // 设置字体
-    QFont font("Consolas", 11);
-    setFont(font);
+    // Dedup-4A: monospaceFont 共享缓存
+    setFont(GuiTextUtils::monospaceFont(11));
     setTabStopDistance(fontMetrics().horizontalAdvance(' ') * 4);
 
     // F13: 初始化自动补全器

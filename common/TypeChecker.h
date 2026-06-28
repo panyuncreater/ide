@@ -109,4 +109,33 @@ private:
     // 未来扩展：符号表、类型环境、推断缓存等
 };
 
+// ============================================================
+// A4 fix: MiniLangTypeChecker — 具体可实例化的类型检查器 stub
+// ------------------------------------------------------------
+// 当前为 stub 实现：check() 返回空 DiagnosticBag（动态类型语言下无强制
+// 类型规则），但提供了完整的 API 表面（setStrictMode/inferType/check），
+// 可被 Compiler 通过 setEnableTypeCheck(true) 启用并接入 pipeline。
+// 未来扩展点：
+//   - 收集 VarDecl 类型注解（待 Parser 支持类型注解语法）
+//   - 表达式类型推断（NumberLiteral→INT, StringLiteral→STRING, ...）
+//   - 类型不匹配警告（如 int + string 报警告）
+//   - 严格模式下升级为错误
+// ============================================================
+class MiniLangTypeChecker : public TypeChecker {
+public:
+    MiniLangTypeChecker() = default;
+    ~MiniLangTypeChecker() override = default;
+
+    /// 类型检查 pass（stub：当前返回空 DiagnosticBag，未来扩展实际检查逻辑）
+    DiagnosticBag check(const class Block& /*program*/) override {
+        // A4 stub: 当前不产生任何诊断，未来填充实际类型检查
+        return DiagnosticBag{};
+    }
+
+    /// 推断变量类型（stub：当前返回 UNKNOWN，未来实现实际推断）
+    TypeInfo inferType(const std::string& /*name*/) const override {
+        return TypeInfo{};
+    }
+};
+
 } // namespace minilang

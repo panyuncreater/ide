@@ -13,6 +13,7 @@
 #include "Diagnostic.h"
 #include "interpreter/Visitor.h"  // 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式
 #include "common/RuntimeLimits.h"
+#include "common/TypeChecker.h"  // A4 fix: TypeChecker stub 接入 pipeline
 
 // ============================================================
 // Compiler 字节码编译器
@@ -59,6 +60,23 @@ public:
     void setUseRegisterVM(bool enabled) { useRegisterVM_ = enabled; }
     bool getUseRegisterVM() const { return useRegisterVM_; }
 
+    /// A4 fix: 启用/禁用静态类型检查 pass（在 codegen 前运行，默认关闭）
+    /// 当前 TypeChecker 为 stub 实现（返回空诊断），不影响编译结果，
+    /// 但提供了未来类型检查接入点。
+    void setEnableTypeCheck(bool enabled) {
+        enableTypeCheck_ = enabled;
+        if (enabled && !typeChecker_) {
+            typeChecker_ = std::make_unique<minilang::MiniLangTypeChecker>();
+        } else if (!enabled) {
+            typeChecker_.reset();
+        }
+    }
+    bool getEnableTypeCheck() const { return enableTypeCheck_; }
+
+    /// A4 fix: 获取类型检查器实例（用于配置 strictMode 等参数）
+    /// 返回 nullptr 表示未启用类型检查
+    minilang::TypeChecker* getTypeChecker() const { return typeChecker_.get(); }
+
     /// PERF-14: 寄存器式编译结果（compileViaRegisterIR 后有效）
     const RegisterCompileResult& getLastRegisterResult() const { return lastRegisterResult_; }
 
@@ -81,6 +99,10 @@ private:
     // PERF-14: 寄存器式 VM 状态
     bool useRegisterVM_ = false;  // 是否启用寄存器式 VM（默认关闭）
     RegisterCompileResult lastRegisterResult_;  // 最近一次寄存器式编译结果
+
+    // A4 fix: TypeChecker stub 状态
+    bool enableTypeCheck_ = false;  // 是否启用类型检查 pass（默认关闭）
+    std::unique_ptr<minilang::TypeChecker> typeChecker_;  // 类型检查器实例
 
     BytecodeChunk chunk_;                           // 当前字节码块
     std::unordered_map<std::string, uint16_t> varIndex_;  // 变量名 → 常量池索引

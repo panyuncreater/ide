@@ -1,6 +1,7 @@
 #include "compiler/VM.h"
 #include "interpreter/BuiltinMethods.h"  // 共享纯函数层（len/contains/has）
 #include "interpreter/NumericUtils.h"    // 共享溢出检查（B6 fix）
+#include "interpreter/ErrorFormat.h"     // Dedup-5A: ErrorFormat::format 替代 std::to_string 拼接
 #include "common/Utf8Utils.h"            // P0-4 fix: UTF-8 码位工具
 #include "Logger.h"
 #include <sstream>
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <cmath>  // BUG 8.1 fix: std::fmod
 #include <algorithm>
+#include <stdexcept>  // B3 fix: currentFrame 抛 std::runtime_error
 
 // ============================================================
 // VM 虚拟机实现
@@ -51,8 +53,8 @@ const Value& VM::peek(size_t distance) const {
     // P0 fix: hasError_ 改为 mutable，在 const 方法中也可设置
     static const Value nullSentinel;  // 静态 null 哨兵，用于越界访问
     if (distance >= stack_.size()) {
-        Logger::Error("VM 栈下溢: peek(distance=" + std::to_string(distance) +
-                      ") 但栈大小=" + std::to_string(stack_.size()), "VM");
+        Logger::Error(ErrorFormat::format("VM 栈下溢: peek(distance=%zu) 但栈大小=%zu",
+                                          distance, stack_.size()), "VM");
         hasError_ = true;  // P0 fix: 设置错误标志，防止调用方在 null 哨兵上继续执行
         return nullSentinel;
     }
@@ -63,8 +65,8 @@ Value& VM::peekRef(size_t distance) {
     // PERF-12 fix: 非 const peek 重载，允许直接修改栈槽
     static Value nullSentinel;  // 静态哨兵（与 const 版本一致）
     if (distance >= stack_.size()) {
-        Logger::Error("VM 栈下溢: peekRef(distance=" + std::to_string(distance) +
-                      ") 但栈大小=" + std::to_string(stack_.size()), "VM");
+        Logger::Error(ErrorFormat::format("VM 栈下溢: peekRef(distance=%zu) 但栈大小=%zu",
+                                          distance, stack_.size()), "VM");
         hasError_ = true;
         return nullSentinel;
     }
@@ -273,7 +275,17 @@ void VM::setStepCallbackEnabled(bool enabled) {
 
 
 VMCallFrame& VM::currentFrame() {
-    return frames_.back();  // 调用方应确保 frames_ 非空（execute/stepOnce 中已检查）
+    // 调用方契约：execute/stepOnce 在调用前已检查 frames_.empty()
+    // B3 fix: 越界时调用 runtimeError（设置 hasError_ + 诊断）后抛 std::runtime_error，
+    // 替代原 std::abort()。调用方（VmStepper::stepByMode / runBatch）已用 try/catch 包裹，
+    // 抛出会被捕获并转化为 ERROR 状态，避免 IDE 整个进程崩溃。
+    // 与 RegisterVM::currentFrame() 保持对称处理。
+    assert(!frames_.empty() && "currentFrame() on empty frames");
+    if (frames_.empty()) {
+        runtimeError("currentFrame() on empty frames");
+        throw std::runtime_error("VM: currentFrame() on empty frames");
+    }
+    return frames_.back();
 }
 
 const BytecodeChunk& VM::currentChunk() {
@@ -390,6 +402,10 @@ VMResult VM::numericOp(int opType) {
     case ArithStatus::OK:
         stack_[stack_.size() - 2] = r.isIntResult ? Value(r.intVal) : Value(r.floatVal);
         break;
+    default:
+        // ArithStatus 是封闭枚举，落空表示内部错误；不 break 以避免
+        // stack_[size-2] 未被写入却在下方 pop_back 后成为脏结果。
+        return runtimeError("内部错误: 未知算术状态");
     }
 
     stack_.pop_back();  // 弹出 right，保留结果在 left 原位
@@ -453,6 +469,12 @@ VMResult VM::writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlo
                                Value& mutatedObj, bool fieldsModified) {
     const BytecodeChunk& chunk = currentChunk();
     if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size()) {
+        // 防御性检查：常量条目应为字符串（编译期由 IR visitMethodCall 写入）。
+        // 若字节码被恶意构造或 lowering 存在 bug 写入了非字符串常量，
+        // stringVal() 行为未定义。显式报错优于静默 UB。
+        if (!chunk.constants[receiverVarIdx].isString()) {
+            return runtimeError("writeBackReceiver: 接收者常量非字符串类型");
+        }
         const std::string& recvName = chunk.constants[receiverVarIdx].stringVal();
         auto gsIt = globalNameToSlot_.find(recvName);
         if (gsIt != globalNameToSlot_.end()) {
@@ -546,7 +568,7 @@ VMResult VM::dispatchArrayBuiltin(const Value& obj, BuiltinMethod method,
         // P2-9 fix: 使用 getMutableArrayRef 统一 COW 变异模式
         auto& arr = getMutableArrayRef(mutableObj);
         if (ri < 0 || static_cast<size_t>(ri) >= arr.size())
-            return runtimeError("数组索引越界: " + std::to_string(ri));
+            return runtimeError(ErrorFormat::format("数组索引越界: %lld", static_cast<long long>(ri)));
         arr.erase(arr.begin() + static_cast<size_t>(ri));
     } else {
         return runtimeError("数组没有方法 " + methodName);
@@ -681,7 +703,10 @@ void VM::initExecution(const CompileResult& result) {
     hasError_ = false;
     diagnostics_.clear();
     frames_.clear();
-    frames_.reserve(64);  // 预分配调用帧空间，避免频繁 realloc
+    // 预分配到 MAX_FRAMES 上限：push_back 前已有 frames_.size() < MAX_FRAMES 检查，
+    // reserve 到上限可保证 push_back 永不 realloc / 抛 bad_alloc，从而消除
+    // OP_CALL 路径中"extraSlots 已推入栈但 frames_.push_back 抛异常"的状态不一致。
+    frames_.reserve(MAX_FRAMES);
     functionChunks_ = result.functionChunks;
     // #12 fix: 构建 类→方法名→chunk 两级索引（仅收录 "Class.method" 条目）。
     // 用首个 '.' 拆分；普通函数名（无 '.'）不入索引。functionChunks_ 是 std::map
@@ -780,7 +805,8 @@ VMResult VM::stepOnce() {
 
     // P1 fix: stepOnce 累计指令预算检查，防止通过循环调用 stepOnce 绕过 DoS 防护
     if (++stepInstructionCount_ > MAX_INSTRUCTIONS) {
-        lastError_ = "指令执行数超过上限 " + std::to_string(MAX_INSTRUCTIONS) + "，疑似无限循环";
+        lastError_ = ErrorFormat::format("指令执行数超过上限 %lld，疑似无限循环",
+                                          static_cast<long long>(MAX_INSTRUCTIONS));
         lastErrorLine_ = 0;
         hasError_ = true;
         return VMResult::VM_RUNTIME_ERROR;
@@ -873,7 +899,8 @@ VMResult VM::execute(const CompileResult& result) {
         if (hasError_) return VMResult::VM_RUNTIME_ERROR;
         // S-02 fix: 检查指令预算
         if (++instructionCount > MAX_INSTRUCTIONS) {
-            lastError_ = "指令执行数超过上限 " + std::to_string(MAX_INSTRUCTIONS) + "，疑似无限循环";
+            lastError_ = ErrorFormat::format("指令执行数超过上限 %lld，疑似无限循环",
+                                          static_cast<long long>(MAX_INSTRUCTIONS));
             lastErrorLine_ = 0;
             hasError_ = true;
             return VMResult::VM_RUNTIME_ERROR;
@@ -1011,7 +1038,7 @@ VMResult VM::executeOneInstruction() {
         return executeMiscOps(op, ip);
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1063,7 +1090,7 @@ VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
         break;
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1136,7 +1163,7 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1202,7 +1229,7 @@ VMResult VM::executeCompareOps(OpCode op, size_t& ip) {
     // 落入下方 default 返回错误。保留枚举值仅因指令长度表按位置索引。
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1219,7 +1246,8 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
     switch (op) {
     case OpCode::OP_DEFINE_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size() || !chunk.constants[idx].isString())
+            return runtimeError("常量池索引越界或类型错误");
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
         auto gsIt = globalNameToSlot_.find(name);
@@ -1239,7 +1267,8 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_GET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size() || !chunk.constants[idx].isString())
+            return runtimeError("常量池索引越界或类型错误");
         const std::string& name = chunk.constants[idx].stringVal();
 
         // A2: slot-based global fast path
@@ -1281,7 +1310,8 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_SET_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size() || !chunk.constants[idx].isString())
+            return runtimeError("常量池索引越界或类型错误");
         const std::string& name = chunk.constants[idx].stringVal();
         Value val = pop();
 
@@ -1323,7 +1353,8 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_DELETE_VAR: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size() || !chunk.constants[idx].isString())
+            return runtimeError("常量池索引越界或类型错误");
         const std::string& name = chunk.constants[idx].stringVal();
         auto gsIt = globalNameToSlot_.find(name);
         if (gsIt != globalNameToSlot_.end()) {
@@ -1386,7 +1417,7 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         uint8_t slot = chunk.code[ip + 1];
         size_t bp = currentFrame().basePointer;
         if (bp + slot >= stack_.size()) {
-            return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
+            return runtimeError(ErrorFormat::format("内部错误: 局部变量槽越界 (slot %d)", slot));
         }
         push(stack_[bp + slot]);
         notifyStep(ip, op);
@@ -1399,7 +1430,7 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         size_t bp = currentFrame().basePointer;
         const Value& val = peek(0);
         if (bp + slot >= stack_.size()) {
-            return runtimeError("内部错误: 局部变量槽越界 (slot " + std::to_string(slot) + ")");
+            return runtimeError(ErrorFormat::format("内部错误: 局部变量槽越界 (slot %d)", slot));
         }
         stack_[bp + slot] = val;
         // P0-7 fix: 若 slot 在字段范围内（1..fieldOrder.size()），标记字段已修改，
@@ -1417,7 +1448,7 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
     case OpCode::OP_GET_UPVALUE: {
         uint8_t uvIdx = chunk.code[ip + 1];
         if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
-            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
+            return runtimeError(ErrorFormat::format("内部错误: upvalue 索引越界 (%d)", static_cast<int>(uvIdx)));
         }
         auto& uv = frame.upvalues[uvIdx];
         if (uv->isClosed) {
@@ -1437,7 +1468,7 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
     case OpCode::OP_SET_UPVALUE: {
         uint8_t uvIdx = chunk.code[ip + 1];
         if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {
-            return runtimeError("内部错误: upvalue 索引越界 (" + std::to_string(uvIdx) + ")");
+            return runtimeError(ErrorFormat::format("内部错误: upvalue 索引越界 (%d)", static_cast<int>(uvIdx)));
         }
         auto& uv = frame.upvalues[uvIdx];
         const Value& val = peek(0); // peek 不消费（与 OP_SET_LOCAL 一致）
@@ -1494,7 +1525,7 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError("未知操作码: " + std::to_string(static_cast<int>(op)));
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;

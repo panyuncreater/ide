@@ -6,6 +6,7 @@
 #include <vector>
 #include <functional>
 #include <memory>
+#include <cassert>
 #include "interpreter/Value.h"
 
 // ============================================================
@@ -239,7 +240,15 @@ public:
     // 方法调用时绑定 this 实例，get/set 找不到变量时回退到实例字段
     // 避免将所有字段深拷贝到方法环境中
 
-    void bindInstance(Value* instance) { boundInstance_ = instance; }
+    void bindInstance(Value* instance) {
+        // instance 应为 nullptr（解绑）或指向 variables 中 "this" 条目的 Value*
+        // 调用方契约：instance 指向的 Value 在 Environment 销毁前必须有效
+        // unordered_map 是 node-based，rehash 不失效指针，但 erase/clear 会让指针失效
+        // resetForReuse 已正确处理（先 nullptr 再 clear）
+        // Debug 构建中 assert 捕获误用（绑定非实例值）
+        assert(instance == nullptr || instance->isInstance());
+        boundInstance_ = instance;
+    }
     Value* getBoundInstance() const { return boundInstance_; }
 
     /// PERF-07 fix: 重置 Environment 状态以便对象池复用。

@@ -23,7 +23,8 @@
 #include <string>
 #include <vector>
 #include <variant>
-#include <unordered_map>
+#include <stdexcept>
+#include <unordered_map>  // perf3 fix: addGlobal/addConstant hash 侧表
 #include <unordered_set>
 #include "compiler/Bytecode.h"  // IRBackend lowering 到 BytecodeChunk + UpvalueDesc
 #include "compiler/GlobalSlotAllocator.h"  // B4: 全局槽位分配器
@@ -117,9 +118,11 @@ enum class IROp : uint8_t {
     // ---- 成员访问 ----
     MEMBER_GET,      // dest = obj.field            operands: [dest, obj_vreg, field_idx]
     MEMBER_SET,      // obj.field = val             operands: [obj_vreg, field_idx, val_vreg]
+    SUPER_MEMBER_GET, // dest = super.field         operands: [dest, this_vreg, field_idx]
 
     // ---- 方法调用 ----
     METHOD_CALL,     // dest = obj.method(args)     operands: [dest, obj_vreg, method_idx, arg_count, args...]
+    SUPER_CALL,      // dest = super.method(args)   operands: [dest, this_vreg, method_idx, class_idx, arg_count, args...]
 
     // ---- 类 ----
     DEFINE_CLASS,    // define class name           operands: [name_idx]
@@ -130,6 +133,7 @@ enum class IROp : uint8_t {
     TRY_BEGIN,       // try block begin             operands: [catch_label_idx]
     TRY_END,         // try block end
     THROW,           // throw src                   operands: [src_vreg]
+    LOAD_EXCEPTION,  // dest = pendingException     operands: [dest_vreg]  P1-4 fix: catch 块起始加载异常值
 
     // ---- 写回指令（嵌套左值变异，B1/B6 fix）----
     // 当左值为 a.b.c 或 a[i] 时，变异结果需写回到原始变量/字段
@@ -173,6 +177,12 @@ struct IRFunction {
     std::vector<IRBasicBlock> blocks;
     std::vector<Value> constants;              // 常量池
     std::vector<std::string> globalNames;      // 全局变量名池（复用存储字段名/函数名）
+    // perf3 fix: hash 侧表加速 addGlobal/addConstant 去重（O(n²)→O(n)）。
+    // 仅经 addGlobal/addConstant 维护，constants/globalNames 不被外部直接修改，保持一致。
+    std::unordered_map<std::string, uint32_t> globalNameIdx_;
+    std::unordered_map<std::string, uint32_t> stringConstIdx_;
+    // P2-1 fix: 非字符串常量（int/float/bool）hash 侧表。key 编码方式见 scalarKey()
+    std::unordered_map<std::string, uint32_t> scalarConstIdx_;
     uint32_t nextVReg = 0;                     // 下一个虚拟寄存器号
     uint32_t nextLabel = 0;                    // 下一个标签号
 
@@ -187,22 +197,54 @@ struct IRFunction {
     IROperand allocVReg() { return IROperand::vreg(nextVReg++); }
     /// 分配标签
     uint32_t allocLabel() { return nextLabel++; }
+    /// P2-1 fix: 将 int/float/bool 标量常量编码为字符串 key（含类型标识避免 int 1 == bool true 等误判）
+    /// 使用 std::to_string 拼接前缀+值，调用频率低（编译期），可读性优先于极致性能
+    static std::string scalarKey(const Value& v) {
+        if (v.isInt())   return "I:" + std::to_string(v.intVal());
+        if (v.isFloat()) return "F:" + std::to_string(v.floatVal());
+        if (v.isBool())  return v.boolVal() ? "B:1" : "B:0";
+        return {};  // 不会触达
+    }
     /// 添加常量，返回索引（已存在则复用）
     uint32_t addConstant(const Value& v) {
-        // 简单去重：线性扫描相同值
-        for (size_t i = 0; i < constants.size(); ++i) {
-            if (constants[i].equals(v)) return static_cast<uint32_t>(i);
+        // P2-1 fix: 字符串与非字符串常量都用 hash 侧表 O(1) 查找。
+        // 字符串：以 stringVal() 为 key（O(n) 内容比较的 equals 在大常量池下退化）
+        // 数值/布尔：以 std::pair<int64_t,double>+类型 标识为 key，避免线性扫描。
+        // null/Instance/Array/Dict 等复杂类型：保留线性扫描（此类常量极少出现）
+        if (v.isString()) {
+            auto it = stringConstIdx_.find(v.stringVal());
+            if (it != stringConstIdx_.end()) return it->second;
+        } else if (v.isInt() || v.isFloat() || v.isBool()) {
+            auto it = scalarConstIdx_.find(scalarKey(v));
+            if (it != scalarConstIdx_.end()) return it->second;
+        } else {
+            for (size_t i = 0; i < constants.size(); ++i) {
+                if (constants[i].equals(v)) return static_cast<uint32_t>(i);
+            }
+        }
+        // 与 BytecodeChunk/RegBytecodeChunk 一致：常量池索引需 fit 到 uint16_t，
+        // 超限抛异常以避免调用方 static_cast<uint16_t> 静默截断。
+        if (constants.size() >= 65535) {
+            throw std::runtime_error("IR 常量池索引超出 65535 上限");
         }
         constants.push_back(v);
-        return static_cast<uint32_t>(constants.size() - 1);
+        uint32_t idx = static_cast<uint32_t>(constants.size() - 1);
+        if (v.isString()) {
+            stringConstIdx_[v.stringVal()] = idx;
+        } else if (v.isInt() || v.isFloat() || v.isBool()) {
+            scalarConstIdx_[scalarKey(v)] = idx;
+        }
+        return idx;
     }
     /// 添加全局变量名/字段名/函数名，返回索引
     uint32_t addGlobal(const std::string& name) {
-        for (size_t i = 0; i < globalNames.size(); ++i) {
-            if (globalNames[i] == name) return static_cast<uint32_t>(i);
-        }
+        // perf3 fix: hash 侧表 O(1) 查找替代 O(n) 线性扫描
+        auto it = globalNameIdx_.find(name);
+        if (it != globalNameIdx_.end()) return it->second;
         globalNames.push_back(name);
-        return static_cast<uint32_t>(globalNames.size() - 1);
+        uint32_t idx = static_cast<uint32_t>(globalNames.size() - 1);
+        globalNameIdx_[name] = idx;
+        return idx;
     }
     /// 添加基本块，返回引用
     IRBasicBlock& addBlock(uint32_t labelIdx) {
@@ -295,10 +337,16 @@ private:
     // 预留 slot 0 给隐式 this 参数，并将 varMap_["this"] 绑定到 slot 0。
     // 调用方（executeMethodCallImpl/executeClassNewImpl）将 this 作为第一个参数传入。
     bool compilingMethod_ = false;
+    // P1 fix: 当前编译的类名（visitClassDecl 设置，供 super 调用查找父类）。
+    // compilingMethod_=true 时有效，编译完类方法后清空。
+    std::string compilingClassName_;
 
     // 块作用域跟踪（限制5）
     struct BlockScope {
         std::vector<uint32_t> localSlots;  // 本块声明的局部变量槽位（退出时回收）
+        uint32_t slotBase = 0;             // 进入块时的 nextLocalSlot_ 值（退出时回收到此）
+        bool hasNestedFunction = false;     // 本块内是否创建了嵌套函数（闭包），
+                                            // 若有则不回收槽位（闭包可能捕获了本块的局部变量）
     };
     std::vector<BlockScope> blockScopes_;
     int blockDepth_ = 0;  // 当前块嵌套深度（仅在 inFunction_==true 时有效）
@@ -368,6 +416,7 @@ private:
     IROperand visitMemberAccess(class MemberAccess* node);
     void visitMemberAssign(class MemberAssign* node);
     IROperand visitMethodCall(class MethodCall* node);
+    IROperand visitInterpolatedString(class InterpolatedString* node);
     void visitClassDecl(class ClassDecl* node);
     void visitBreakStmt(class BreakStmt* node);
     void visitContinueStmt(class ContinueStmt* node);
@@ -479,3 +528,12 @@ bool optimizeIR(IRFunction& ir, bool enableCopyPropagation = false);
 
 /// 将 IRFunction 格式化为可读字符串（用于调试和 IR 可视化）
 std::string IRToString(const IRFunction& ir);
+
+/// IR 操作码 → 字符串名称（用于 IR 可视化面板，避免 IrViewer 重复维护一份映射）
+/// Dedup-4E: 原本此函数在 IR.cpp 匿名命名空间中，IrViewer.cpp 复制了一份 localIrOpName
+/// 因缺失 SUPER_MEMBER_GET/SUPER_CALL case 而产生显示 bug，现统一为公共 API。
+const char* irOpName(IROp op);
+
+/// 格式化单条 IR 指令为可读字符串（与 IRToString 中 per-instruction 格式一致）。
+/// Dedup-4F: IrViewer.cpp 曾复制此实现，现统一为公共 API，避免格式漂移。
+std::string formatIRInstruction(const IRInstruction& instr);
