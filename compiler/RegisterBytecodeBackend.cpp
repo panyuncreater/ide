@@ -58,6 +58,16 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
     chunk_->name = ir.name;
     chunk_->arity = ir.arity;
     chunk_->requiredArity = ir.requiredArity;
+    // P2-1 fix: localCount 超 32 会导致 chunk_->registerCount > 32，
+    // RegCallFrame::registers 是 std::array<Value, 32>，写入 registers[32+] 为 OOB。
+    // 与 vregToReg 的 reg >= 32 检查互补，硬失败阻止生成损坏字节码。
+    if (ir.localCount > 32) {
+        Logger::Error("RegisterBytecodeBackend: localCount 超出 32 寄存器上限 (" +
+                      std::to_string(ir.localCount) + "，函数 " + ir.name +
+                      ")，需减少局部变量或实现寄存器溢出", "RegIR");
+        hasError_ = true;
+        return false;
+    }
     chunk_->localCount = ir.localCount;
     chunk_->registerCount = ir.localCount;  // 初始为 localCount，vreg 分配后增长
     chunk_->defaultConstIndices = ir.defaultConstIndices;
@@ -135,8 +145,14 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         // IR: LOAD_LOCAL dest_vreg, slot
         // → REG_MOVE dest_vreg_reg, slot_reg
         if (instr.operands.size() < 2) return false;
+        // Bug-14 同型修复：local slot 超 32 寄存器硬上限静默截断会读写错误寄存器
+        if (instr.operands[1].index >= 32) {
+            Logger::Error("RegBytecodeBackend: LOAD_LOCAL local slot 超出 32 寄存器上限 (slot=" +
+                          std::to_string(instr.operands[1].index) + ")", "RegBackend");
+            return false;
+        }
         uint8_t dst = vregToReg(instr.operands[0].index);
-        uint8_t src = static_cast<uint8_t>(instr.operands[1].index & 0x1F);
+        uint8_t src = static_cast<uint8_t>(instr.operands[1].index);
         chunk_->writeOp(RegOp::REG_MOVE, line);
         chunk_->writeReg(dst, line);
         chunk_->writeReg(src, line);
@@ -146,7 +162,12 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         // IR: STORE_LOCAL slot, src_vreg
         // → REG_MOVE slot_reg, src_vreg_reg
         if (instr.operands.size() < 2) return false;
-        uint8_t dst = static_cast<uint8_t>(instr.operands[0].index & 0x1F);
+        if (instr.operands[0].index >= 32) {
+            Logger::Error("RegBytecodeBackend: STORE_LOCAL local slot 超出 32 寄存器上限 (slot=" +
+                          std::to_string(instr.operands[0].index) + ")", "RegBackend");
+            return false;
+        }
+        uint8_t dst = static_cast<uint8_t>(instr.operands[0].index);
         uint8_t src = vregToReg(instr.operands[1].index);
         chunk_->writeOp(RegOp::REG_MOVE, line);
         chunk_->writeReg(dst, line);
@@ -239,9 +260,11 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         break;
     }
     case IROp::CLOSE_UPVALUE: {
+        // B1 fix: operand 现为 slot_base（块作用域基址），运行时关闭所有
+        // 指向 slot >= frameIdx*MAX_REGISTERS+slot_base 的 open upvalues。
         if (instr.operands.empty()) return false;
         if (instr.operands[0].index >= 256) {
-            Logger::Error("RegBytecodeBackend: CLOSE_UPVALUE upvalue 索引超出 255 上限 (uvIdx=" +
+            Logger::Error("RegBytecodeBackend: CLOSE_UPVALUE slot_base 超出 255 上限 (slot=" +
                           std::to_string(instr.operands[0].index) + ")", "RegBackend");
             return false;
         }
@@ -461,9 +484,17 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::MAKE_CLOSURE: {
         // IR: MAKE_CLOSURE dest, name_idx, uv_count, [isLocal, idx]×uv_count
         if (instr.operands.size() < 3) return false;
+        // P2-3 fix: uvCount/isLocal/idx 经 writeReg 编码为 1 字节，
+        // & 0xFF 静默截断会生成错误 upvalue 描述符（闭包捕获错误变量）。
+        if (instr.operands[2].index >= 256) {
+            Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE uvCount 超出 255 上限 (" +
+                          std::to_string(instr.operands[2].index) + ")", "RegIR");
+            hasError_ = true;
+            return false;
+        }
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
-        uint8_t uvCount = static_cast<uint8_t>(instr.operands[2].index & 0xFF);
+        uint8_t uvCount = static_cast<uint8_t>(instr.operands[2].index);
         chunk_->writeOp(RegOp::REG_MAKE_CLOSURE, line);
         chunk_->writeReg(dst, line);
         chunk_->writeShort(nameIdx, line);
@@ -471,8 +502,20 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         for (uint8_t i = 0; i < uvCount; ++i) {
             size_t base = 3 + i * 2;
             if (base + 1 >= instr.operands.size()) return false;
-            chunk_->writeReg(static_cast<uint8_t>(instr.operands[base].index & 0xFF), line);       // isLocal
-            chunk_->writeReg(static_cast<uint8_t>(instr.operands[base + 1].index & 0xFF), line);   // idx
+            if (instr.operands[base].index >= 256) {
+                Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE isLocal 超出 255 上限 (" +
+                              std::to_string(instr.operands[base].index) + ")", "RegIR");
+                hasError_ = true;
+                return false;
+            }
+            if (instr.operands[base + 1].index >= 256) {
+                Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE upvalue idx 超出 255 上限 (" +
+                              std::to_string(instr.operands[base + 1].index) + ")", "RegIR");
+                hasError_ = true;
+                return false;
+            }
+            chunk_->writeReg(static_cast<uint8_t>(instr.operands[base].index), line);       // isLocal
+            chunk_->writeReg(static_cast<uint8_t>(instr.operands[base + 1].index), line);   // idx
         }
         break;
     }
@@ -705,8 +748,13 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     }
     case IROp::WRITEBACK_MEMBER_LOCAL: {
         if (instr.operands.size() < 2) return false;
+        if (instr.operands[0].index >= 32) {
+            Logger::Error("RegBytecodeBackend: WRITEBACK_MEMBER_LOCAL local slot 超出 32 寄存器上限 (slot=" +
+                          std::to_string(instr.operands[0].index) + ")", "RegBackend");
+            return false;
+        }
         chunk_->writeOp(RegOp::REG_WRITEBACK_MEMBER_LOCAL, line);
-        chunk_->writeReg(static_cast<uint8_t>(instr.operands[0].index & 0x1F), line);
+        chunk_->writeReg(static_cast<uint8_t>(instr.operands[0].index), line);
         chunk_->writeShort(addStringConstant(globalName(instr.operands[1].index), ir), line);
         break;
     }
@@ -724,8 +772,13 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     }
     case IROp::WRITEBACK_INDEX_LOCAL: {
         if (instr.operands.empty()) return false;
+        if (instr.operands[0].index >= 32) {
+            Logger::Error("RegBytecodeBackend: WRITEBACK_INDEX_LOCAL local slot 超出 32 寄存器上限 (slot=" +
+                          std::to_string(instr.operands[0].index) + ")", "RegBackend");
+            return false;
+        }
         chunk_->writeOp(RegOp::REG_WRITEBACK_INDEX_LOCAL, line);
-        chunk_->writeReg(static_cast<uint8_t>(instr.operands[0].index & 0x1F), line);
+        chunk_->writeReg(static_cast<uint8_t>(instr.operands[0].index), line);
         break;
     }
     case IROp::WRITEBACK_MEMBER_UPVALUE: {
@@ -774,6 +827,14 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_MOVE, line);
         chunk_->writeReg(dst, line);
         chunk_->writeReg(src, line);
+        break;
+    }
+    case IROp::LOAD_MUTATED: {
+        // MEDIUM-1/2 fix: dest = reg(lastMutatedReceiverReg_)
+        if (instr.operands.empty()) return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        chunk_->writeOp(RegOp::REG_LOAD_MUTATED, line);
+        chunk_->writeReg(dst, line);
         break;
     }
 

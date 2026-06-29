@@ -292,6 +292,30 @@ int main() {
                 }
             }
         }
+        // Error-path consistency: when both backends error, verify the error
+        // category is consistent. The previous logic skipped all comparison
+        // when both hadError, letting two completely different error messages
+        // (e.g. "未定义的变量: x" vs "类型错误") pass as consistent.
+        // We compare the error category prefix (LEX:/PARSE:/RT:/EX:) which
+        // identifies which pipeline stage failed; a stage mismatch indicates
+        // one backend accepts code the other rejects — a real divergence.
+        if (ir.hasError && vr.hasError) {
+            auto categoryOf = [](const std::string& err) -> std::string {
+                if (err.rfind("LEX:", 0) == 0) return "LEX";
+                if (err.rfind("PARSE:", 0) == 0) return "PARSE";
+                if (err.rfind("RT:", 0) == 0) return "RT";
+                if (err.rfind("EX:", 0) == 0) return "EX";
+                return "OTHER";
+            };
+            std::string irCat = categoryOf(ir.error);
+            std::string vrCat = categoryOf(vr.error);
+            if (irCat != vrCat) {
+                match = false;
+                detail = "error-category mismatch: interp=" + irCat
+                       + " (" + ir.error + ") vm=" + vrCat
+                       + " (" + vr.error + ")";
+            }
+        }
 
         if (match) {
             pass++;

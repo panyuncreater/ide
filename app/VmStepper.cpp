@@ -115,6 +115,19 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         vmStepMode_ = mode;
         vmStepStartFrameCount_ = getFrameCount();
 
+        // #3 fix: pre-execution 断点检查 — 首次初始化后检查首行是否为断点行。
+        // 原实现直接进入 stepOnce 循环，导致首行断点被先执行再检测（post-execution），
+        // 与 Interpreter 的 pre-execution 语义不一致。此处补齐：若首行是断点且
+        // 之前未在该行暂停过（vmLastPausedLine_ 刚被重置为 0），则执行前先暂停。
+        if (!vmBreakpoints_.isEmpty()) {
+            int initLine = getCurrentLine();
+            if (checkBreakpointHit(initLine) && initLine != vmLastPausedLine_) {
+                vmLastPausedLine_ = initLine;
+                isVmRunning_ = false;
+                return VmStepResult::PAUSED_AT_BREAKPOINT;
+            }
+        }
+
         // A4 fix: 步进循环期间禁用 stepCallback（避免每条指令 emit 信号拖慢 UI）。
         // UI 更新由 stepByMode 返回后调用方一次性完成。
         vm_.setStepCallbackEnabled(false);
@@ -129,6 +142,11 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         }
 
         // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
+        // #5 注：VM 断点检查在 stepOnce 之后（post-execution），即执行完一条指令后
+        // 检查 IP 指向的下一条指令是否在断点行。变量快照反映的是上一条指令执行后
+        // 的状态（= 断点行的前置状态）。这与 Interpreter 的 pre-execution 暂停
+        // （节点副作用未应用）在语义上等价——用户看到的是"即将执行这行前的状态"。
+        // 唯一差异：多语句行（a=1; b=2;）VM 可能在执行完 a=1 后才检测到 b=2 所在行。
         constexpr int64_t MAX_STEP_LOOP = 1000000;
         int64_t stepCount = 0;
 
@@ -159,9 +177,8 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             size_t currentFrameCount = getFrameCount();
 
             // 断点命中检查（所有模式都检查，使 RUN 能停在断点）
-            if (!vmBreakpoints_.isEmpty() && currentLine > 0
-                && vmBreakpoints_.contains(currentLine)
-                && currentLine != vmLastPausedLine_) {
+            // #4 fix: 改用 checkBreakpointHit 支持条件断点求值
+            if (checkBreakpointHit(currentLine) && currentLine != vmLastPausedLine_) {
                 vmLastPausedLine_ = currentLine;
                 isVmRunning_ = false;
                 return VmStepResult::PAUSED_AT_BREAKPOINT;
@@ -272,10 +289,9 @@ void VmStepper::runBatch() {
             }
 
             // 断点命中检查
+            // #4 fix: 改用 checkBreakpointHit 支持条件断点求值
             int currentLine = getCurrentLine();
-            if (!vmBreakpoints_.isEmpty() && currentLine > 0
-                && vmBreakpoints_.contains(currentLine)
-                && currentLine != vmLastPausedLine_) {
+            if (checkBreakpointHit(currentLine) && currentLine != vmLastPausedLine_) {
                 vmRunTimer_->stop();
                 vmLastPausedLine_ = currentLine;
                 isVmRunning_ = false;
@@ -303,3 +319,24 @@ void VmStepper::stop() {
     vmStepMode_ = VmStepMode::STEP_IN;
     vmLastPausedLine_ = 0;
 }
+
+// #4 fix: 检查断点命中（含条件求值）
+// 返回 true 表示应在此行暂停。无条件断点直接返回 true；
+// 条件断点调用 vmConditionEvaluator_ 求值，求值为真才暂停。
+bool VmStepper::checkBreakpointHit(int line) {
+    if (vmBreakpoints_.isEmpty() || line <= 0 || !vmBreakpoints_.contains(line)) {
+        return false;
+    }
+    // #4 fix: 检查是否有条件表达式
+    auto condIt = vmBreakpointConditions_.find(line);
+    if (condIt == vmBreakpointConditions_.end() || condIt->empty()) {
+        return true;  // 无条件断点：直接命中
+    }
+    // #4 fix: 条件断点：调用求值器（由 IdeController 注入，使用临时 Interpreter + VM 全局变量）
+    if (vmConditionEvaluator_) {
+        return vmConditionEvaluator_(condIt.value());
+    }
+    // 无求值器时视为无条件（降级处理，不应出现在正常流程中）
+    return true;
+}
+

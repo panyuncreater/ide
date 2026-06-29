@@ -83,7 +83,7 @@ enum class IROp : uint8_t {
     DEFINE_GLOBAL,   // define globalNames[idx] = src  operands: [global_idx, src_vreg]
     LOAD_UPVALUE,    // dest = upvalue[idx]         operands: [dest_vreg, uv_idx]
     STORE_UPVALUE,   // upvalue[idx] = src          operands: [uv_idx, src_vreg]
-    CLOSE_UPVALUE,   // close upvalue[idx]          operands: [uv_idx]
+    CLOSE_UPVALUE,   // close all open upvalues with slot >= slot_base  operands: [slot_base]
 
     // ---- 算术运算（三地址码：dest = src1 OP src2）----
     ADD, SUB, MUL, DIV, MOD,
@@ -149,6 +149,9 @@ enum class IROp : uint8_t {
     PRINT,           // print src                   operands: [src_vreg]
     POP,             // 释放 src                    operands: [src_vreg]
     DUP,             // 复制 src 到 dest             operands: [dest, src_vreg]
+    LOAD_MUTATED,    // dest = lastMutatedReceiver_  operands: [dest_vreg]
+                     // MEDIUM-1/2 fix: 嵌套左值写回链中读取上一级 SET 产生的变异后容器。
+                     // 不清除 lastMutatedReceiver_，后续 SET/WRITEBACK 会覆盖。
 };
 
 /// IR 指令
@@ -241,6 +244,11 @@ struct IRFunction {
         // perf3 fix: hash 侧表 O(1) 查找替代 O(n) 线性扫描
         auto it = globalNameIdx_.find(name);
         if (it != globalNameIdx_.end()) return it->second;
+        // P2-2 fix: 与 addConstant 对齐——globalNames 索引经 writeShort 编码为 uint16_t，
+        // 超限抛异常以避免调用方 static_cast<uint16_t> 静默截断（读写错误全局名）。
+        if (globalNames.size() >= 65535) {
+            throw std::runtime_error("IR 全局名池索引超出 65535 上限");
+        }
         globalNames.push_back(name);
         uint32_t idx = static_cast<uint32_t>(globalNames.size() - 1);
         globalNameIdx_[name] = idx;
@@ -260,6 +268,12 @@ struct IRModule {
     std::unique_ptr<IRFunction> mainFunction;           // 主函数（顶层代码）
     std::vector<std::unique_ptr<IRFunction>> functions;  // 子函数列表
     std::unordered_map<std::string, size_t> functionIndex;  // 函数名 → functions 索引
+    // BUG-NEW fix: 全局槽位名表（slot → name），供 BytecodeIRBackend lowering 时
+    // 将 WRITEBACK_*_VAR 的 GLOBAL_SLOT (IMM_UINT) 转换为名称常量索引。
+    // 栈式 VM 的 OP_WRITEBACK_*_VAR 将 varIdx 当作常量池索引处理（取 stringVal()），
+    // 若直接 emit 槽位号会误读为常量索引，导致 "未定义的变量" 或类型断言失败。
+    // RegisterBytecodeBackend 用高 bit 标记区分 SLOT/NAME，无需此表。
+    std::vector<std::string> globalSlotNames;
 
     void addFunction(std::unique_ptr<IRFunction> fn) {
         functionIndex[fn->name] = functions.size();
@@ -347,6 +361,15 @@ private:
         uint32_t slotBase = 0;             // 进入块时的 nextLocalSlot_ 值（退出时回收到此）
         bool hasNestedFunction = false;     // 本块内是否创建了嵌套函数（闭包），
                                             // 若有则不回收槽位（闭包可能捕获了本块的局部变量）
+        // CRITICAL-2 fix: 块作用域遮蔽保存栈。当内块 var x 与外块同名时，
+        // visitVarDecl 覆盖 varMap_ 前将旧条目压入此栈，leaveBlockScope 时恢复。
+        // 保证外层绑定在块退出后可达，对齐 Interpreter 的作用域链语义。
+        struct ShadowedVar {
+            std::string name;
+            VarInfo info;
+            bool hadOld;  // varMap_ 中是否已有同名旧条目（无则块退出时删除）
+        };
+        std::vector<ShadowedVar> shadowedVars;
     };
     std::vector<BlockScope> blockScopes_;
     int blockDepth_ = 0;  // 当前块嵌套深度（仅在 inFunction_==true 时有效）
@@ -389,6 +412,16 @@ private:
     void enterBlockScope();
     void leaveBlockScope();
     void preScanTopLevelDecls(Block& program);
+
+    // CRITICAL-1 fix: 前向自由变量分析（对齐 Interpreter::computeFreeVariables）。
+    // 在编译子函数体前，先收集所有自由变量名，为每个能在外层捕获的变量预建 upvalue。
+    // 这确保中间函数即使不直接引用某变量，也会捕获它供更内层函数透传。
+    std::unordered_set<std::string> computeFreeVars(const class FunDecl& fn);
+    void collectFreeVars(const class ASTNode& node,
+                         std::vector<std::unordered_set<std::string>>& scopes,
+                         std::unordered_set<std::string>& freeVars);
+    bool isDefinedInScopes(const std::vector<std::unordered_set<std::string>>& scopes,
+                           const std::string& name) const;
 
     // ---- AST 节点转换 ----
     IROperand visitNode(class ASTNode* node);
@@ -456,7 +489,7 @@ public:
 
     /// lower 整个 IRModule（main + 子函数），返回 CompileResult 兼容的结构
     /// 成功后 takeChunk() 返回 main chunk，takeFunctionChunks() 返回函数 chunks
-    bool lowerModule(const IRModule& module);
+    bool lowerModule(const IRModule& module);  // BUG-NEW: module.globalSlotNames 用于 WRITEBACK_*_VAR slot→name 转换
 
     /// 取生成的函数 chunks（lowerModule 后有效）
     std::map<std::string, BytecodeChunk> takeFunctionChunks() { return std::move(functionChunks_); }
@@ -479,10 +512,17 @@ private:
     // 待回填跳转
     struct PendingJump { size_t codeOffset; uint32_t targetLabel; bool isLoop; };
     std::vector<PendingJump> pendingJumps_;
+    // BUG-NEW fix: 全局槽位名表指针（lowerModule 设置，lowerInstruction 中
+    // WRITEBACK_*_VAR IMM_UINT 分支用其将 slot→name 转为字符串常量索引）
+    const std::vector<std::string>* globalSlotNames_ = nullptr;
 
     // 辅助
     void emitUint16(std::vector<uint8_t>& code, uint16_t v);
     uint16_t addStringConstant(const std::string& s, const IRFunction& ir);
+    // BUG-NEW fix: 将全局槽位号转换为变量名字符串常量索引。
+    // 栈式 VM 的 OP_WRITEBACK_*_VAR 把 varIdx 当作常量池索引取 stringVal()，
+    // GLOBAL_SLOT 路径需查 globalSlotNames_ 得到变量名再入常量池。
+    uint16_t slotToNameConstant(uint32_t slot, const IRFunction& ir);
     bool lowerInstruction(const IRInstruction& instr, const IRFunction& ir);
     bool patchJumps();
     void resetState();

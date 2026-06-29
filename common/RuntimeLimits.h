@@ -40,7 +40,13 @@ constexpr int64_t MAX_RANGE = 10000000;
 
 // ---- 编译期深度保护 ----
 // Parser 最大递归深度
-constexpr int MAX_PARSE_DEPTH = 512;
+// AUDIT-P0 fix: 从 512 降至 256。原值 512 在 Debug 模式下会先栈溢出：
+// 每层括号递归经过 expression→assignment→or_→and_→equality→comparison→
+// term→factor→unary→call→primary 共 11 个栈帧，但只有 expression/assignment
+// 各 +1 depth。512/2=256 层括号 × 11 帧 × ~3KB ≈ 8MB，远超 1MB 默认栈。
+// 256 在 Release 1MB 栈下安全（128 层 × 11 × 500B ≈ 700KB），在 Debug
+// 8MB 栈下也安全（128 层 × 11 × 3KB ≈ 4.2MB）。
+constexpr int MAX_PARSE_DEPTH = 256;
 // Parser 最大块嵌套深度
 constexpr int MAX_BLOCK_DEPTH = 256;
 // Compiler 最大编译嵌套深度

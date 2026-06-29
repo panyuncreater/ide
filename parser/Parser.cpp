@@ -796,6 +796,8 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
     if (check(TokenType::TK_LBRACE)) {
         advance();  // 消耗 '{'
         do {
+            // AUDIT-BUG-P5 fix: 允许尾逗号 — 逗号后紧跟 } 则结束
+            if (check(TokenType::TK_RBRACE)) break;
             const Token& name = consume(TokenType::TK_IDENTIFIER, "期望导入名称");
             names.push_back(name.lexeme);
         } while (match(TokenType::TK_COMMA));
@@ -1289,6 +1291,14 @@ std::unique_ptr<ASTNode> Parser::primary() {
 
     // 分组表达式
     if (match(TokenType::TK_LPAREN)) {
+        // AUDIT-P0 fix: 在分组表达式递归入口处检查深度。
+        // expression() 入口已有检查，但 or_→and_→...→call→primary 链路上
+        // 共 9 个无 DepthGuard 的函数帧，在此补充检查可确保在栈溢出前抛出。
+        if (parseDepth_ >= MAX_PARSE_DEPTH) {
+            const Token& lp = previous();
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
+                             lp.line, lp.column);
+        }
         auto expr = expression();
         consume(TokenType::TK_RPAREN, "期望 ')' 结束分组表达式");
         return expr;
@@ -1324,6 +1334,14 @@ void Parser::synchronize() {
         case TokenType::TK_BREAK:      // break 作为同步点
         case TokenType::TK_CONTINUE:   // continue 作为同步点
         case TokenType::TK_ELSE:  // PARSE-11 fix: else 作为同步点
+        // AUDIT-BUG-P2/P3/P4 fix: 补充 try/catch/throw/import/export 作为同步点。
+        // 原实现缺少这些关键字，导致错误恢复时 panic mode 跳过 catch 子句、
+        // try 块、import/export 声明，产生误导性错误链。
+        case TokenType::TK_TRY:
+        case TokenType::TK_CATCH:
+        case TokenType::TK_THROW:
+        case TokenType::TK_IMPORT:
+        case TokenType::TK_EXPORT:
         case TokenType::TK_INT:
         case TokenType::TK_FLOAT:
         case TokenType::TK_BOOL:
@@ -1365,16 +1383,15 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
             throw ParseError("期望插值起始 '{'", tok.line, tok.column);
         }
 
-        // 解析表达式（直到 TK_INTERP_END）
-        // expression() 调用链最终会调用 primary()，若 primary 遇到 TK_INTERP_END 会抛出 ParseError
-        // 此处捕获该错误，将空表达式视为空字符串
-        std::unique_ptr<ASTNode> expr;
-        try {
-            expr = expression();
-        } catch (const ParseError&) {
-            // 表达式为空（如 "{}"），视为空字符串
-            expr = std::make_unique<StringLiteral>(std::string(), startLine, startCol);
+        // AUDIT-BUG-P1 fix: 空插值表达式 "{}" 应报错而非静默接受。
+        // 原实现用 try/catch 吞掉所有 ParseError 并替换为空 StringLiteral，
+        // 导致 "{}" 和 "{bad syntax}" 都被静默接受为空字符串。
+        // 现改为：显式检查 TK_INTERP_END（空插值）并报错；其他 ParseError 正常传播。
+        if (check(TokenType::TK_INTERP_END)) {
+            const Token& tok = peek();
+            throw ParseError("插值表达式不能为空", tok.line, tok.column);
         }
+        auto expr = expression();
 
         interp->expressions.push_back(std::move(expr));
 

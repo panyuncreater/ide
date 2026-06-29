@@ -93,6 +93,9 @@ void ReplPanel::clearHistory() {
     outputArea_->clear();
     history_.clear();
     historyIndex_ = -1;
+    // AUDIT-BUG-R1 fix: 重置续行状态，防止 clearHistory 后遗留脏状态
+    pendingInput_.clear();
+    inContinuation_ = false;
 }
 
 void ReplPanel::setInputEnabled(bool enabled) {
@@ -307,7 +310,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
     int parenDepth = 0;   // ()
     int bracketDepth = 0; // []
     bool inString = false;
-    bool inBlockComment = false;  // BUG-R2 fix: 跟踪块注释状态
+    int blockCommentDepth = 0;  // AUDIT-BUG-R2 fix: 跟踪嵌套块注释深度（与 Lexer 一致）
     bool inLineComment = false;
     int tryCount = 0;     // BUG-R1 fix: 跟踪 try/catch 配对
     int catchCount = 0;
@@ -315,10 +318,13 @@ bool ReplPanel::isInputComplete(const QString& input) {
     for (int i = 0; i < input.length(); ++i) {
         QChar c = input[i];
 
-        // 处理块注释（跳过内部字符）
-        if (inBlockComment) {
+        // 处理块注释（跳过内部字符，支持嵌套）
+        if (blockCommentDepth > 0) {
             if (c == '*' && i + 1 < input.length() && input[i + 1] == '/') {
-                inBlockComment = false;
+                --blockCommentDepth;
+                ++i;
+            } else if (c == '/' && i + 1 < input.length() && input[i + 1] == '*') {
+                ++blockCommentDepth;
                 ++i;
             }
             continue;
@@ -326,7 +332,8 @@ bool ReplPanel::isInputComplete(const QString& input) {
 
         // 处理行注释（跳过内部字符）
         if (inLineComment) {
-            if (c == '\n') {
+            // AUDIT-BUG-R3 fix: \r 也标志行注释结束（Windows \r\n / 旧 Mac \r）
+            if (c == '\n' || c == '\r') {
                 inLineComment = false;
             }
             continue;
@@ -357,7 +364,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
                 continue;
             }
             if (input[i + 1] == '*') {
-                inBlockComment = true;
+                ++blockCommentDepth;
                 ++i;
                 continue;
             }
@@ -391,8 +398,8 @@ bool ReplPanel::isInputComplete(const QString& input) {
         }
     }
 
-    // BUG-R2 fix: 未闭合的块注释视为输入不完整
-    if (inBlockComment) return false;
+    // AUDIT-BUG-R2 fix: 未闭合的嵌套块注释视为输入不完整
+    if (blockCommentDepth > 0) return false;
     // 未闭合的字符串
     if (inString) return false;
     // 括号不匹配

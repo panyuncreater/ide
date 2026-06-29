@@ -1005,8 +1005,10 @@ TEST(VME2E, StringInterpolationNoInterp) {
 }
 
 TEST(VME2E, StringInterpolationEmpty) {
-    // 空插值 {}
-    EXPECT_EQ(runVMOutput("print(\"a{}b\");"), "ab");
+    // AUDIT-BUG-P1 fix: 空插值 {} 现在是语法错误（原实现静默接受为空字符串）
+    // Lexer 接受 "{}" 但 Parser 在 parseInterpolatedString 中报错
+    std::string output = runVMOutput("print(\"a{}b\");");
+    EXPECT_TRUE(output.empty()) << "空插值应导致语法错误，无输出";
 }
 
 TEST(VMConsistency, StringInterpolation) {
@@ -1980,22 +1982,43 @@ TEST(BackendConsistency, StringMethods) {
     EXPECT_EQ(interp, regVm);
 }
 
-// ---- A2 fix: RegisterVM 缺失字符串方法显式文档化 ----
-// RegisterVM 的 callBuiltinMethod 尚未实现 str.replace（及其他若干字符串方法），
-// 调用时返回 "不支持方法调用的类型" 错误。这是 RegisterVM 已知功能缺失，
-// 非 bug——文档化以避免误判为回归。Stack VM 与 Interpreter 通过共享
-// BuiltinMethods 层支持完整字符串方法。
-TEST(BackendConsistency, RegVmUnsupportedStringMethods) {
+// ---- P1-1 fix: RegisterVM 字符串方法已补齐 ----
+// 原 RegisterVM 缺失 str.replace/substr/indexOf/split/trim 等方法，
+// 现已通过共享 executeShared* 层补齐。三后端行为一致。
+TEST(BackendConsistency, RegVmStringMethodsNowSupported) {
     std::string src = "print(\"Hello\".replace(\"ell\", \"X\"));";
-    // Stack VM 与 Interpreter 支持 replace
     std::string stackVm = runVMOutputForConsistency(src);
     std::string interp = runInterpreterOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src);
     EXPECT_EQ(stackVm, "HXo");
     EXPECT_EQ(interp, "HXo");
-    // RegisterVM 不支持 replace，输出为空（运行时错误）
-    // P1-7 fix: 显式传 expectError=true 跳过 hasError 断言（此为已知功能缺失）
-    std::string regVm = runRegVMOutput(src, /*expectError=*/true);
-    EXPECT_TRUE(regVm.empty());
+    EXPECT_EQ(regVm, "HXo");
+}
+
+// ---- P1-1 fix: RegisterVM 字符串方法三后端一致性 ----
+TEST(BackendConsistency, StringMethodsAllBackends) {
+    // 测试所有字符串方法在三后端行为一致
+    struct TestCase { const char* src; const char* expected; };
+    TestCase cases[] = {
+        {"print(\"Hello World\".upper());", "HELLO WORLD"},
+        {"print(\"HELLO\".lower());", "hello"},
+        {"print(\"Hello\".contains(\"ell\"));", "true"},
+        {"print(\"Hello\".startsWith(\"He\"));", "true"},
+        {"print(\"Hello\".endsWith(\"lo\"));", "true"},
+        {"print(\"Hello\".replace(\"l\", \"r\"));", "Herro"},
+        {"print(\"Hello\".substr(1, 3));", "ell"},
+        {"print(\"Hello\".indexOf(\"l\"));", "2"},
+        {"print(\"  hi  \".trim());", "hi"},
+        {"var parts = \"a,b,c\".split(\",\"); print(parts.len());", "3"},
+    };
+    for (const auto& tc : cases) {
+        std::string interp = runInterpreterOutputForConsistency(tc.src);
+        std::string stackVm = runVMOutputForConsistency(tc.src);
+        std::string regVm = runRegVMOutput(tc.src);
+        EXPECT_EQ(interp, tc.expected) << "Interpreter: " << tc.src;
+        EXPECT_EQ(stackVm, tc.expected) << "Stack VM: " << tc.src;
+        EXPECT_EQ(regVm, tc.expected) << "RegisterVM: " << tc.src;
+    }
 }
 
 // ---- 三后端一致：数组操作 ----
@@ -2090,4 +2113,30 @@ TEST(BackendConsistency, DivMixedSemantics) {
     // RegisterVM：4, 4.5, 4, 4.5（第二项因 9/2 不整除返回 float）
     std::string regVm = runRegVMOutput(src);
     EXPECT_EQ(regVm, "44.544.5");
+}
+
+// P1-6 fix: 负索引在所有后端都应报错（不做 Python 式 wraparound）
+TEST(BackendConsistency, NegativeIndexAllError) {
+    std::string src = "var arr = [10, 20, 30]; print(arr[-1]);";
+    // 三个后端都应抛运行时错误，无输出
+    std::string interp = runInterpreterOutputForConsistency(src);
+    std::string stackVm = runVMOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src, true);
+    EXPECT_EQ(interp, "");
+    EXPECT_EQ(stackVm, "");
+    EXPECT_EQ(regVm, "");
+}
+
+// P1-7 fix: 字典键不存在时所有后端都应返回 null
+TEST(BackendConsistency, DictMissingKeyReturnsNull) {
+    std::string src =
+        "var d = {\"a\": 1, \"b\": 2};"
+        "print(d[\"a\"]);"
+        "print(d[\"missing\"]);"
+        "print(d.get(\"b\"));"
+        "print(d.get(\"nope\"));";
+    std::string expected = "1null2null";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src), expected);
+    EXPECT_EQ(runVMOutputForConsistency(src), expected);
+    EXPECT_EQ(runRegVMOutput(src), expected);
 }

@@ -107,6 +107,9 @@ enum class OpCode : uint8_t {
     // #7 fix: upvalue 写回指令（嵌套左值变异 a.b.c=.. 或 a[i]=.. 其中 a 是 upvalue）
     OP_WRITEBACK_MEMBER_UPVALUE,  // 成员写回到 upvalue（uvIdx(1B) + fieldIdx(2B)）
     OP_WRITEBACK_INDEX_UPVALUE,   // 索引写回到 upvalue（uvIdx(1B)），索引从栈顶 pop
+
+    // MEDIUM-1/2 fix: 读取 lastMutatedReceiver_ 到栈顶（不清除，供嵌套左值写回链使用）
+    OP_LOAD_MUTATED,  // push(lastMutatedReceiver_)  无操作数
 };
 
 // ============================================================

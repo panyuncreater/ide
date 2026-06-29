@@ -1,5 +1,8 @@
 #include "IdeController.h"
 #include "Logger.h"
+#include "lexer/Lexer.h"      // #4 fix: VM 条件断点求值
+#include "parser/Parser.h"     // #4 fix: VM 条件断点求值
+#include "interpreter/Environment.h"  // #4 fix: VM 条件断点求值
 
 // ============================================================
 // IdeController — 业务逻辑层 Facade 实现（ARCH-11 重构）
@@ -39,6 +42,37 @@ IdeController::IdeController(QObject* parent)
         emit outputReady(QString::fromStdString(text));
     });
     vmStepper_.setInputCallback(workerMgr_.buildInputCallback());
+
+    // #4 fix: VM 条件断点求值器 — 使用临时 Interpreter + VM 全局变量求值
+    // VM 模式下 Interpreter 空闲，可安全创建临时实例。
+    // 求值在沙箱中进行（evaluateCondition 已实现 #1 变量快照/恢复），
+    // 条件中的赋值/声明不会影响 VM 状态。
+    // 限制：仅支持引用全局变量（VM 局部变量在寄存器/栈中，无法按名访问）。
+    vmStepper_.setConditionEvaluator([this](const std::string& condition) -> bool {
+        try {
+            Lexer condLexer;
+            auto tokens = condLexer.scan(condition);
+            Parser condParser;
+            auto ast = condParser.parse(tokens);
+            if (!ast || ast->statements.empty() || condParser.getDiagnostics().hasErrors()) {
+                return false;
+            }
+            Interpreter tempInterp;
+            auto env = std::make_shared<Environment>();
+            for (const auto& kv : vmStepper_.getGlobals()) {
+                env->define(kv.first, kv.second);
+            }
+            tempInterp.setGlobalEnvironment(env);
+            Value result = tempInterp.evaluateCondition(ast->statements[0].get());
+            return result.isTruthy();
+        } catch (const std::exception& e) {
+            Logger::Warning("VM 条件断点求值异常: " + std::string(e.what()) +
+                            "（条件: " + condition + "），视为条件不满足", "VmStepper");
+            return false;
+        } catch (...) {
+            return false;
+        }
+    });
 
     // ---- 转发协作类信号到 IdeController 信号（GUI 层连接 IdeController 信号）----
     connect(&pipeline_, &PipelineRunner::diagnosticsReady, this, &IdeController::diagnosticsReady);

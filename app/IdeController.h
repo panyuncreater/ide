@@ -128,6 +128,10 @@ public:
     VmStepResult vmStep() { return vmStepper_.step(); }
     VmStepResult vmStepByMode(VmStepMode mode) { return vmStepper_.stepByMode(mode); }
     void setVmBreakpoints(const QSet<int>& breakpoints) { vmStepper_.setBreakpoints(breakpoints); }
+    /// #4 fix: 设置 VM 模式条件断点
+    void setVmBreakpointConditions(const QMap<int, std::string>& conditions) {
+        vmStepper_.setBreakpointConditions(conditions);
+    }
     void vmStop() { vmStepper_.stop(); }
     void vmReset() { vmStepper_.reset(); }
     bool isVmRunning() const { return vmStepper_.isRunning(); }

@@ -126,6 +126,9 @@ private:
     /// 窗口关闭事件：确保调试器和VM安全停止
     void closeEvent(QCloseEvent* event) override;
 
+    /// #4 fix: 同步 VM 断点及条件到 VmStepper（消除 4 处重复代码）
+    void syncVmBreakpoints();
+
     // ---- 业务逻辑层 ----
     IdeController* controller_ = nullptr;
 

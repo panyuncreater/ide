@@ -112,6 +112,18 @@ void Ide::closeEvent(QCloseEvent* event) {
     event->accept();
 }
 
+// #4 fix: 同步 VM 断点及条件到 VmStepper
+void Ide::syncVmBreakpoints() {
+    QSet<int> bps = codeEditor_->getBreakpoints();
+    QMap<int, std::string> conds;
+    for (int line : bps) {
+        std::string cond = codeEditor_->getBreakpointCondition(line);
+        if (!cond.empty()) conds[line] = cond;
+    }
+    controller_->setVmBreakpoints(bps);
+    controller_->setVmBreakpointConditions(conds);
+}
+
 // ============================================================
 // UI 初始化
 // ============================================================
@@ -831,7 +843,7 @@ void Ide::onVmStep() {
     if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点（用户可能在暂停期间增删断点）
-    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
+    syncVmBreakpoints();  // #4 fix: 同步断点及条件
 
     // 禁用所有 VM 步进按钮防止重入
     setVmStepActionsEnabled(false);
@@ -861,7 +873,7 @@ void Ide::onVmStepOver() {
     if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点
-    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
+    syncVmBreakpoints();  // #4 fix: 同步断点及条件
 
     setVmStepActionsEnabled(false);
     IdeController::VmStepResult result;
@@ -888,7 +900,7 @@ void Ide::onVmStepOut() {
     if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点
-    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
+    syncVmBreakpoints();  // #4 fix: 同步断点及条件
 
     setVmStepActionsEnabled(false);
     IdeController::VmStepResult result;
@@ -915,7 +927,7 @@ void Ide::onVmRun() {
     if (!hasCode) return;
 
     // A4 fix: 每次步进前同步断点
-    controller_->setVmBreakpoints(codeEditor_->getBreakpoints());
+    syncVmBreakpoints();  // #4 fix: 同步断点及条件
 
     setVmStepActionsEnabled(false);
     IdeController::VmStepResult result;

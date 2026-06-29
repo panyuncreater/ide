@@ -71,12 +71,13 @@ VMResult VM::executeReturn(size_t& ip) {
     }
 
     // 方法调用字段同步：将方法内修改的字段槽（bp+1..N）同步回 this（bp）
-    // VM fix: 仅在字段被修改时执行同步，跳过只读方法和无字段写入的 init
-    // PERF-13 fix: 移除 wasInitCall 强制同步——init 的字段槽从 instance.fields() 拷贝初始化，
-    // 若 init 未修改任何字段，槽值与实例字段一致，同步是冗余的。
-    // fieldsModified 标志在 init 写入 this.field（slot 0）或字段槽（OP_SET_LOCAL）时被置位，
-    // 因此有字段写入的 init 仍会触发同步，语义无变化。
-    if (wasMethodCall && savedBp < stack_.size() && fieldsModified) {
+    // B2 fix: 对齐 RegisterVM executeReturnImpl 的 (fieldsModified || isInitCall) 条件。
+    // PERF-13 曾移除 wasInitCall 认为 fieldsModified 已覆盖 init 字段写入，但该论证在
+    // 多层 super.init() 链中失效：中间层 init 仅调用 super.init() 不直接写字段
+    // (fieldsModified=false)，父类 init 修改的 this 经父类帧返回时同步到中间层 this，
+    // 但中间层返回时 fieldsModified=false 导致不同步 → caller 丢失父类 init 的修改。
+    // 补回 || wasInitCall 保证 init 调用链的 this 修改逐层传播回 caller。
+    if (wasMethodCall && savedBp < stack_.size() && (fieldsModified || wasInitCall)) {
         Value& modifiedThis = stack_[savedBp];
 
         // 先把方法内的字段槽（bp+1..N）同步回 this
@@ -158,6 +159,16 @@ VMResult VM::executeReturn(size_t& ip) {
                 }
             }
         }
+    }
+
+    // CRITICAL-4 fix: 方法返回时记录 this 到 lastMutatedReceiver_，
+    // 供 IR 路径中 visitMethodCall 的 LOAD_MUTATED + STORE 写回变异后接收者。
+    // 对于只读方法（fieldsModified == false），stack_[savedBp] 持有原值（未被修改），
+    // 写回原值等于不写，安全。对于变异方法，字段同步已将变异后实例写入 stack_[savedBp]。
+    // 必须在所有 wasMethodCall 路径设置，否则只读方法的 LOAD_MUTATED 会读到
+    // 上一次设置的错误值，导致写回错误对象（回归：ClassMethodNoThis 等）。
+    if (wasMethodCall && savedBp < stack_.size()) {
+        lastMutatedReceiver_ = stack_[savedBp];
     }
 
     // init 方法返回 this 实例而非 null（在字段同步之后读取）
@@ -263,10 +274,8 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
                     // 调用 const 重载，仅读不写时不触发 COW。类构造是高频热路径。
                     int fieldCount = 0;
                     if (initChunk.fieldOrder.empty()) {
-                        for (const auto& field : std::as_const(instance).fields()) {
-                            push(field.second);
-                        }
-                        fieldCount = static_cast<int>(std::as_const(instance).fields().size());
+                        // IR 路径方法不预留字段槽（见 executeClassNew 同名分支注释）
+                        fieldCount = 0;
                     } else {
                         for (const auto& fieldName : initChunk.fieldOrder) {
                             auto fieldIt = std::as_const(instance).fields().find(fieldName);
@@ -669,11 +678,8 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                 // 按方法 chunk 声明的字段顺序推入实例字段值
                 int fieldCount = 0;
                 if (targetChunk.fieldOrder.empty()) {
-                    // 回退：按 unordered_map 顺序（不保证正确，但兼容旧字节码）
-                    for (const auto& field : objCopy.fields()) {
-                        push(field.second);
-                    }
-                    fieldCount = static_cast<int>(objCopy.fields().size());
+                    // IR 路径方法不预留字段槽（见 executeClassNew 同名分支注释）
+                    fieldCount = 0;
                 } else {
                     for (const auto& fieldName : targetChunk.fieldOrder) {
                         auto fieldIt = objCopy.fields().find(fieldName);
@@ -898,10 +904,10 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
             // 按方法 chunk 声明的字段顺序（含继承字段）推入字段值
             int fieldCount = 0;
             if (initChunk.fieldOrder.empty()) {
-                for (const auto& field : instance.fields()) {
-                    push(field.second);
-                }
-                fieldCount = static_cast<int>(instance.fields().size());
+                // IR 路径方法不预留字段槽（字段通过 this.field 成员访问，非本地槽）。
+                // Compiler 路径方法总有 fieldOrder（即使空类也设为空 vector，此时
+                // instance.fields() 也为空），故此处推 0 个字段对两端均安全。
+                fieldCount = 0;
             } else {
                 for (const auto& fieldName : initChunk.fieldOrder) {
                     auto fieldIt = instance.fields().find(fieldName);

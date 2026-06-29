@@ -30,6 +30,7 @@ BuiltinMethod classifyBuiltinMethod(const std::string& name) {
         if (name == "len") return BuiltinMethod::ARR_LEN; // 数组/字典/字符串共用
         if (name == "has") return BuiltinMethod::DICT_HAS;
         if (name == "get") return BuiltinMethod::DICT_GET;
+        if (name == "set") return BuiltinMethod::DICT_SET;
         break;
     case 4:
         if (name == "push") return BuiltinMethod::ARR_PUSH;
@@ -793,6 +794,12 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(
         if (args.size() != 1)
             throw RuntimeError("remove 期望 1 个参数(键)", line, col);
         obj.dictVal().erase(args[0].toString());
+        return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
+    }
+    if (method == "set") {
+        if (args.size() != 2)
+            throw RuntimeError("set 期望 2 个参数(键, 值)", line, col);
+        obj.dictVal()[args[0].toString()] = args[1];
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
 

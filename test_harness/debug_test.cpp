@@ -31,10 +31,8 @@ struct DebugResult : RunResult {
     int pauseCount = 0;
     int maxDepth = 0;
     std::vector<int> pauseLines;
-    // Variable consistency: at each pause, did snapshot match env?
-    int variableMismatches = 0;
-    // Call stack consistency
-    int callStackMismatches = 0;
+    // Pause line bounds check: count of pauseLines outside [1, sourceLineCount]
+    int pauseLinesOutOfBounds = 0;
 };
 
 // ─── Group A: Full execution ────────────────────────────────────────
@@ -177,17 +175,21 @@ static DebugResult runDebug(const std::string& source, StepMode mode,
     res.maxDepth = dbg->maxDepthSeen();
     res.pauseLines = dbg->pauseLines();
 
-    // Variable consistency check: compare last pause snapshot with final globals
-    const auto& events = dbg->pauseEvents();
-    if (!events.empty()) {
-        const auto& lastEvent = events.back();
-        for (auto& [vname, vstr] : lastEvent.variables) {
-            // Check against final globals (only for globals, not locals)
-            auto it = res.globals.find(vname);
-            if (it != res.globals.end() && it->second != vstr) {
-                // This is expected for variables that change after the last pause
-                // Only flag if it's a type mismatch
-            }
+    // Pause-line bounds check: every reported pause line must fall within
+    // [1, sourceLineCount]. A pause line of 0 or > lineCount indicates the
+    // debugger's line tracking is broken (e.g. stale AST node line numbers,
+    // or pauseEvents recorded after AST destruction).
+    // Note: the previous "variable consistency check" here compared the last
+    // pause's variable snapshot against FINAL globals, which is meaningless —
+    // variables legitimately change after the last pause. Replaced with a
+    // real invariant the audit can meaningfully verify.
+    int sourceLineCount = 1;
+    for (char ch : source) {
+        if (ch == '\n') ++sourceLineCount;
+    }
+    for (int ln : res.pauseLines) {
+        if (ln < 1 || ln > sourceLineCount) {
+            ++res.pauseLinesOutOfBounds;
         }
     }
 
@@ -363,6 +365,13 @@ int main() {
             match = false;
             if (!detail.empty()) detail += "; ";
             detail += "no debug pauses recorded";
+        }
+        // Pause-line bounds check: pauseLines must reference valid source lines.
+        // Out-of-bounds pause lines indicate broken debugger line tracking.
+        if (stepRes.pauseLinesOutOfBounds > 0) {
+            match = false;
+            if (!detail.empty()) detail += "; ";
+            detail += "pauseLines out of bounds: " + std::to_string(stepRes.pauseLinesOutOfBounds);
         }
 
         if (match) {

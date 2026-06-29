@@ -11,6 +11,7 @@
 #include <cmath>  // BUG 8.1 fix: std::fmod
 #include <sstream>
 #include <unordered_set>
+#include <map>  // #1 fix: 条件断点沙箱化 — 实例字段快照去重
 #include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include "common/BoundsCheck.h"        // Dedup-7A: inBounds 替代重复的索引检查
 
@@ -32,6 +33,11 @@ Interpreter::~Interpreter() {
 
 Value Interpreter::execute(Block& program) {
     // 重置状态
+    // B1 fix: 关闭旧 globalEnv_ 上的闭包捕获，将最终值写回闭包 capturedVars。
+    // 旧 globalEnv_ 即将被替换，其上的 weak_ptr 会失效，闭包需依赖 capturedVars 快照。
+    if (globalEnv_) {
+        globalEnv_->closeCapturedVariables();
+    }
     globalEnv_ = std::make_shared<Environment>();
     currentEnv_ = globalEnv_;
     callStack_.clear();
@@ -219,32 +225,69 @@ Value Interpreter::evaluateExpr(ASTNode* node) {
     return std::move(lastValue_);
 }
 
-// GUI-03 fix + DBG-A fix: 安全条件断点求值 — 保存/恢复所有可变状态（含 currentEnv_），防止重入损坏
+// GUI-03 fix + DBG-A fix + #1 fix: 安全条件断点求值
+// 沙箱化：求值前快照整个作用域链的变量绑定 + 绑定实例字段，求值后恢复，
+// 防止条件中的赋值（x = 5）、声明（var y = ...）、实例字段写（this.f = v）
+// 修改程序状态。
+// 残余限制：容器变异（arr.push, arr[i] = v）仍影响共享 ref-counted 对象，
+// 因 Value 是引用语义——完全隔离需深拷贝所有 Value，代价过高。
 Value Interpreter::evaluateCondition(ASTNode* node) {
     if (!node) return Value::nullValue();
+
+    // #1 fix: 快照作用域链所有变量绑定
+    struct EnvSnapshot {
+        Environment* env;
+        std::unordered_map<std::string, Value> variables;
+    };
+    std::vector<EnvSnapshot> envSnaps;
+    // #1 fix: 快照绑定实例字段（防止 this.field = val）
+    // boundInstance_ 沿链继承（同一实例可能出现多次），用指针去重
+    std::map<Value*, std::unordered_map<std::string, Value>> instSnaps;
+    Environment* snapEnv = currentEnv_.get();
+    while (snapEnv) {
+        envSnaps.push_back({snapEnv, snapEnv->snapshotLocalVariables()});
+        Value* inst = snapEnv->getBoundInstance();
+        if (inst && inst->isInstance() && instSnaps.find(inst) == instSnaps.end()) {
+            instSnaps[inst] = inst->fields();
+        }
+        snapEnv = snapEnv->parent.get();
+    }
+
     auto savedCallStack = callStack_;
     auto savedClassCtx = classContextStack_;
-    auto savedEnv = currentEnv_;  // DBG-A fix: 保存环境指针，条件求值不修改程序状态
+    auto savedEnv = currentEnv_;
     int savedDepth = recursionDepth_;
     bool savedDebugMode = debugMode_;
     debugMode_ = false;
     try {
-        // A1 fix: accept 返回 void，结果通过 lastValue_ 传递。
-        // A1 bug fix: 预先清空 lastValue_，避免未覆盖的节点类型返回陈旧值
         lastValue_ = Value::nullValue();
         node->accept(*this);
         Value result = std::move(lastValue_);
+        // #1 fix: 恢复变量绑定（撤销条件中的赋值/声明副作用）
+        for (auto& snap : envSnaps) {
+            snap.env->restoreLocalVariables(snap.variables);
+        }
+        // #1 fix: 恢复实例字段（撤销 this.field = val 副作用）
+        for (auto& [inst, fields] : instSnaps) {
+            inst->fields() = fields;
+        }
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);
-        currentEnv_ = savedEnv;  // DBG-A fix: 恢复环境
+        currentEnv_ = savedEnv;
         recursionDepth_ = savedDepth;
         debugMode_ = savedDebugMode;
         return result;
     }
     catch (...) {
+        for (auto& snap : envSnaps) {
+            snap.env->restoreLocalVariables(snap.variables);
+        }
+        for (auto& [inst, fields] : instSnaps) {
+            inst->fields() = fields;
+        }
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);
-        currentEnv_ = savedEnv;  // DBG-A fix: 异常时也恢复环境
+        currentEnv_ = savedEnv;
         recursionDepth_ = savedDepth;
         debugMode_ = savedDebugMode;
         throw;
@@ -821,7 +864,7 @@ void Interpreter::visitVarDecl(VarDecl& node) {
                 }
                 RecursionGuard guard{ recursionDepth_ };
                 try {
-                    evaluate(initMethod->body.get());
+                    executeFunctionBody(static_cast<Block&>(*initMethod->body));
                 }
                 catch (const ReturnException&) {
                 }
@@ -947,6 +990,8 @@ void Interpreter::visitForStmt(ForStmt& node) {
         }
         catch (...) {
             // M2 fix: 初始化器异常时恢复外层环境，再传播异常
+            // B1 fix: 关闭捕获（初始化器异常时通常无闭包，但兜底）
+            forEnv->closeCapturedVariables();
             currentEnv_ = forEnv->parent;
             throw;
         }
@@ -962,6 +1007,9 @@ void Interpreter::visitForStmt(ForStmt& node) {
                     static_cast<long long>(MAX_LOOP_ITERATIONS)), node.line, node.column);
             }
             // 每次迭代重新检查断点（同 visitWhileStmt 的修复原因）
+            // #6 注：此处 checkBreak 暂停时，变量快照反映的是上一轮 upd 执行后的状态
+            // （当前轮的 cond/body/upd 均未执行）。即循环变量 i 的值是上一轮更新后的值，
+            // 而非"即将进入本轮 body 时的值"——由于 cond 通常是只读判断，两者实际等价。
             checkBreak(&node);
 
             // 条件检查
@@ -983,6 +1031,8 @@ void Interpreter::visitForStmt(ForStmt& node) {
             }
             catch (const ReturnException&) {
                 // 恢复环境，传播 return
+                // B1 fix: 关闭捕获 — 循环变量终值写回闭包 capturedVars
+                forEnv->closeCapturedVariables();
                 currentEnv_ = forEnv->parent;
                 throw;
             }
@@ -994,10 +1044,15 @@ void Interpreter::visitForStmt(ForStmt& node) {
         }
     }
     catch (...) {
+        // B1 fix: 关闭捕获 — 异常退出时也将最终值写回闭包 capturedVars
+        forEnv->closeCapturedVariables();
         currentEnv_ = forEnv->parent;
         throw;
     }
 
+    // B1 fix: 关闭捕获 — 循环正常退出时将循环变量终值写回闭包 capturedVars。
+    // 这是关键：循环变量 i 在此关闭为终值（如 3），使所有捕获 i 的闭包返回终值。
+    forEnv->closeCapturedVariables();
     currentEnv_ = forEnv->parent;
     lastValue_ = std::move(result); return;
 }
@@ -1183,12 +1238,26 @@ void Interpreter::visitFunDecl(FunDecl& node) {
     // 原 C1 fix 复制 allVariablesMap() 的全部可见变量，REPL 模式下随变量积累越来越慢；
     // 现通过静态分析 AST 仅捕获实际需要的变量。getVariableOnly 确保不捕获实例字段
     // （与原 collectVariables 行为一致）。
+    //
+    // B1 open/close upvalue: 同时在"定义该变量的 env"上注册闭包捕获，
+    // 作用域退出时 closeCapturedVariables() 将最终值写回 capturedVars。
+    // 这使循环变量 i 在 for 退出时关闭为终值 3，循环体变量在 block 退出时关闭为当次值。
     auto freeVars = computeFreeVariables(node);
     auto& captured = funVal.capturedVars();
     captured.reserve(freeVars.size());
     for (const auto& name : freeVars) {
         if (const Value* val = currentEnv_->getVariableOnly(name)) {
             captured.emplace(name, *val);
+        }
+        // B1 fix: 在定义该变量的 env 上注册闭包捕获（等价于 VM 的 open upvalue）。
+        // 作用域退出时 closeCapturedVariables() 将最终值写回 capturedVars。
+        Environment* definingEnv = currentEnv_.get();
+        while (definingEnv) {
+            if (definingEnv->getLocalVariable(name)) break;
+            definingEnv = definingEnv->parent.get();
+        }
+        if (definingEnv) {
+            definingEnv->registerClosureCapture(funVal, name);
         }
     }
 
@@ -1200,6 +1269,15 @@ void Interpreter::visitFunDecl(FunDecl& node) {
     funRegistryGen_++;  // M7: 函数注册/重定义时递增代数，使旧缓存失效
 
     lastValue_ = std::move(funVal); return;
+}
+
+void Interpreter::executeFunctionBody(Block& body) {
+    // B1 fix: 直接在 currentEnv_（funEnv）中执行函数体语句，不创建嵌套块作用域。
+    // 异常处理（ReturnException/BreakException 等）由调用方（callClosureValue 等）的
+    // try-catch 负责，closeCapturedVariables 也由调用方在 funEnv 上调用。
+    for (auto& stmt : body.statements) {
+        evaluate(stmt.get());
+    }
 }
 
 void Interpreter::visitReturnStmt(ReturnStmt& node) {
@@ -1252,9 +1330,13 @@ void Interpreter::visitTryStmt(TryStmt& node) {
                 evaluate(node.catchBlock.get());
             }
         } catch (...) {
+            // B1 fix: 关闭捕获 — catch 块退出时将最终值写回闭包 capturedVars
+            catchEnv->closeCapturedVariables();
             currentEnv_ = savedEnv;
             throw;  // 重新抛出 break/continue/return/throw
         }
+        // B1 fix: 关闭捕获 — catch 块正常退出
+        catchEnv->closeCapturedVariables();
         currentEnv_ = savedEnv;
     }
     lastValue_ = Value::nullValue(); return;
@@ -1303,15 +1385,24 @@ void Interpreter::visitBlock(Block& node) {
     }
     catch (...) {
         currentEnv_ = savedEnv;
+        // B1 fix: 异常路径也需关闭捕获 — 将最终值写回闭包 capturedVars
+        blockEnv->closeCapturedVariables();
         // 异常路径不回收（blockEnv 可能已被闭包捕获，安全起见让 shared_ptr 自然销毁）
         throw;
     }
 
     currentEnv_ = savedEnv;
 
+    // B1 fix: 关闭捕获 — 将 block 内声明的变量的最终值写回闭包 capturedVars。
+    // 必须在检查 hasClosureCaptures 之前调用（close 会清空列表）。
+    bool hadCaptures = blockEnv->hasClosureCaptures();
+    blockEnv->closeCapturedVariables();
+
     // PERF-07: 若 blockEnv 独占所有权（未被闭包/子作用域捕获），回收至池复用。
     // use_count()==1 表示仅 blockEnv 本地变量持有，可安全 reset。
-    if (blockEnv.use_count() == 1) {
+    // B1 fix: 有捕获的 env 不回收 — weak_ptr 仍指向它，回收后 resetForReuse 清空
+    // variables 会导致闭包调用时闭包环境"看似存活但内容陈旧"，绕过 capturedVars 回退。
+    if (blockEnv.use_count() == 1 && !hadCaptures) {
         envPool_.push_back(std::move(blockEnv));
     }
 
@@ -1339,8 +1430,12 @@ void Interpreter::visitDictLiteral(DictLiteral& node) {
     for (auto& pair : node.pairs) {
         Value key = evaluate(pair.first.get());
         Value val = evaluate(pair.second.get());
-        // 字典的键必须是字符串
-        dict[key.toString()] = std::move(val);
+        // B6 fix: 对齐 RegisterVM REG_BUILD_DICT——非 string 键显式报错，
+        // 不再静默 toString() 转换（与索引访问 d[k] 要求 string 键一致）。
+        if (!key.isString()) {
+            runtimeError("字典键必须是字符串", node.line, node.column);
+        }
+        dict[key.stringVal()] = std::move(val);
     }
     lastValue_ = Value(std::move(dict)); return;
 }
@@ -1638,7 +1733,10 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
                 // 压入类上下文（super 解析用）
                 classContextStack_.push_back(searchClass->name);
 
-                result = evaluate(method->body.get());
+                // B1 fix: 直接在 methodEnv 中执行方法体，避免 visitBlock 创建嵌套块作用域
+                // 导致 envPool_ 碰撞（与 callClosureValue 同理）。
+                executeFunctionBody(static_cast<Block&>(*method->body));
+                result = std::move(lastValue_);
             }
             catch (ReturnException& e) {
                 result = std::move(e.returnValue);
@@ -1647,6 +1745,8 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
                 // 运行时错误：先恢复调用状态，再重抛
                 // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
                 // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
+                // B1 fix: 关闭捕获 — 方法异常退出时将局部变量最终值写回闭包 capturedVars
+                if (methodEnv) methodEnv->closeCapturedVariables();
                 currentEnv_ = prevEnv;
                 throw;
             }
@@ -1654,6 +1754,9 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             // 从方法环境中读取 this 的更新值
             auto* thisPtr = methodEnv->get("this");
             Value updatedThis = thisPtr ? *thisPtr : Value::nullValue();
+
+            // B1 fix: 关闭捕获 — 方法正常退出时将局部变量最终值写回闭包 capturedVars
+            if (methodEnv) methodEnv->closeCapturedVariables();
 
             // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
             // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复

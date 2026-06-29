@@ -173,7 +173,7 @@ Value Interpreter::callClosureValue(FunCall& node) {
 
         callStack_.emplace_back(effectiveName, funEnv, node.line, recursionDepth_);
         currentEnv_ = funEnv;
-        evaluate(funDecl->body.get());
+        executeFunctionBody(static_cast<Block&>(*funDecl->body));
     }
     catch (ReturnException& e) {
         result = std::move(e.returnValue);
@@ -182,6 +182,8 @@ Value Interpreter::callClosureValue(FunCall& node) {
         // C1 fix: 运行时错误时恢复解释器状态，再重抛
         // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复，此处只需恢复 env
         // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
+        // B1 fix: 关闭捕获 — 异常退出时将函数局部变量的最终值写回闭包 capturedVars
+        if (funEnv) funEnv->closeCapturedVariables();
         currentEnv_ = prevEnv;
         throw;
     }
@@ -192,6 +194,11 @@ Value Interpreter::callClosureValue(FunCall& node) {
     if (!closureEnv && envFromSnapshot) {
         writeBackCapturedVars(calleeVal, funEnv);
     }
+
+    // B1 fix: 关闭捕获 — 函数返回时将函数局部变量的最终值写回闭包 capturedVars。
+    // 闭包若捕获了函数参数或局部变量（如 func outer() { var x=1; func f(){return x;} return f; }），
+    // 需在 funEnv 销毁前将最终值快照到 capturedVars，否则 weak_ptr 失效后无法访问。
+    if (funEnv) funEnv->closeCapturedVariables();
 
     // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复
     // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
@@ -380,7 +387,7 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             classContextStack_.push_back(cls->name);
 
             try {
-                evaluate(initMethod->body.get());
+                executeFunctionBody(static_cast<Block&>(*initMethod->body));
             }
             catch (const ReturnException&) {
                 // init 方法的返回值忽略，但更新实例字段
@@ -388,6 +395,8 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             catch (...) {
                 // B1 fix: RAII guard 自动恢复 recursionDepth_，此处只需恢复其他状态
                 // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
+                // B1 fix: 关闭捕获 — init 异常退出时将局部变量最终值写回闭包 capturedVars
+                initEnv->closeCapturedVariables();
                 currentEnv_ = prevEnv;
                 throw;
             }
@@ -399,6 +408,9 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             }
 
             // M3 fix: 移除冗余的局部变量→字段同步（同 VarDecl 路径，P5 bindInstance 已处理）
+
+            // B1 fix: 关闭捕获 — init 正常退出时将局部变量最终值写回闭包 capturedVars
+            initEnv->closeCapturedVariables();
 
             // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
             currentEnv_ = prevEnv;
@@ -568,7 +580,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         currentEnv_ = funEnv;
 
         // 执行函数体（不求值返回值：无 return 语句时函数应返回 null）
-        evaluate(funDecl->body.get());
+        executeFunctionBody(static_cast<Block&>(*funDecl->body));
     }
     catch (ReturnException& e) {
         result = std::move(e.returnValue);
@@ -577,6 +589,8 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         // 运行时错误：先恢复调用状态，再重抛
         // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复，此处只需恢复 env
         // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
+        // B1 fix: 关闭捕获 — 异常退出时将函数局部变量的最终值写回闭包 capturedVars
+        if (funEnv) funEnv->closeCapturedVariables();
         currentEnv_ = prevEnv;
         throw;
     }
@@ -587,6 +601,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     if (!closureEnv && envFromSnapshot && closureValPtr && funEnv) {
         writeBackCapturedVars(*closureValPtr, funEnv);
     }
+
+    // B1 fix: 关闭捕获 — 函数返回时将函数局部变量的最终值写回闭包 capturedVars
+    if (funEnv) funEnv->closeCapturedVariables();
 
     // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复
     // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复

@@ -51,12 +51,12 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         for (uint8_t i = 0; i < pairCount; ++i) {
             Value val = pop();
             Value key = pop();
-            // S5 fix: 字符串键直接用 stringVal() 引用，避免 toString() 中间临时对象
-            if (key.isString()) {
-                dict.emplace(key.stringVal(), std::move(val));
-            } else {
-                dict.emplace(key.toString(), std::move(val));
+            // B6 fix: 对齐 RegisterVM REG_BUILD_DICT——非 string 键显式报错，
+            // 不再静默 toString() 转换（与索引访问 d[k] 要求 string 键一致）。
+            if (!key.isString()) {
+                return runtimeError("字典键必须是字符串");
             }
+            dict.emplace(key.stringVal(), std::move(val));
         }
         push(Value(std::move(dict)));
         notifyStep(ip, op);
@@ -136,7 +136,11 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
             }
             push(Value(s.substr(targetBytePos, targetByteLen)));
         } else if (obj.isString()) {
-            return runtimeError("字符串索引需要整数类型");
+            return runtimeError("字符串索引必须是整数");
+        } else if (obj.isDict()) {
+            // B5 fix: 对齐 RegisterVM/Interpreter——dict 非 string 索引原落入通用
+            // "该类型不支持索引访问" 分支，现显式报 "字典键必须是字符串"。
+            return runtimeError("字典键必须是字符串");
         } else {
             return runtimeError("该类型不支持索引访问");
         }
@@ -389,26 +393,23 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
     switch (op) {
     case OpCode::OP_WRITEBACK_MEMBER_VAR: {
         // 操作数: varIdx(2B) + fieldIdx(2B)
+        // BUG-NEW fix: 语义对齐 RegisterVM 的 REG_WRITEBACK_MEMBER_VAR ——
+        // 将 lastMutatedReceiver_（MEMBER_SET 产生的变异后整个容器）整体替换全局变量，
+        // 而非写入 obj.field。原实现 obj.field = lastMutatedReceiver_ 导致
+        // d.x = 42 把整个变异后 d 赋给 d["x"]，产生嵌套字典。
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[varIdx].stringVal();
-        const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
+        // fieldIdx 仅用于反汇编/调试，运行时不需要（整体替换语义）
+        (void)chunk.constants[fieldIdx];
         // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析
         Value* objPtr = resolveMutableGlobal(varName);
         if (!objPtr) {
             lastMutatedReceiver_ = Value::nullValue();
             return runtimeError("未定义的变量: " + varName);
         }
-        Value& obj = *objPtr;
-        if (obj.isInstance()) {
-            obj.fields()[fieldName] = std::move(lastMutatedReceiver_);
-        } else if (obj.isDict()) {
-            obj.dictVal()[fieldName] = std::move(lastMutatedReceiver_);
-        } else {
-            lastMutatedReceiver_ = Value::nullValue();
-            return runtimeError("类型 " + obj.typeName() + " 不支持成员赋值");
-        }
+        *objPtr = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
         ip += 5;
@@ -417,44 +418,22 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_WRITEBACK_MEMBER_LOCAL: {
         // 操作数: slot(1B) + fieldIdx(2B)
+        // BUG-NEW fix: 语义对齐 RegisterVM —— 整体替换栈槽为 lastMutatedReceiver_，
+        // 而非写入 obj.field。原实现 obj.field = mutated 导致局部 d.x = 42 把整个
+        // 变异后 d 赋给 d["x"]。IR 路径不使用字段槽（fieldSlot），故移除 slot==0
+        // 的字段槽同步逻辑（该逻辑仅服务于 Compiler.cpp 非 IR 路径，但本指令仅由
+        // IR 路径发射，不会冲突）。
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
         if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
-        const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
+        // fieldIdx 仅用于反汇编/调试，运行时不需要（整体替换语义）
+        (void)chunk.constants[fieldIdx];
         size_t bp = currentFrame().basePointer;
         if (bp + slot >= stack_.size()) {
             lastMutatedReceiver_ = Value::nullValue();
             return runtimeError("OP_WRITEBACK_MEMBER_LOCAL: 栈槽越界");
         }
-        Value& obj = stack_[bp + slot];
-        if (obj.isInstance()) {
-            // MEM-06 fix: 原代码先 std::move(lastMutatedReceiver_) 到 obj.fields()[fieldName]，
-            // 再对已 moved-from 的 lastMutatedReceiver_ 二次 move 到字段槽 → UB。
-            // 改为先 move 到字段槽，再用副本（拷贝）写入 fields()。字段槽是权威来源，
-            // OP_RETURN 时从字段槽同步到 fields()，两者需一致。
-            // 此处用 std::move 一次到局部副本，然后拷贝到两个目标，确保无 moved-from 二次使用。
-            Value newVal = std::move(lastMutatedReceiver_);
-            obj.fields()[fieldName] = newVal;  // 拷贝（newVal 仍有效）
-            // 如果 slot==0（this），也同步更新对应字段槽
-            if (slot == 0) {
-                VMCallFrame& curFrame = currentFrame();
-                if (curFrame.chunk) {
-                    // #11 fix: 用 BytecodeChunk::fieldSlotIndex O(1) 查找替代线性扫描
-                    size_t i = curFrame.chunk->fieldSlotIndex(fieldName);
-                    if (i != SIZE_MAX) {
-                        size_t fieldSlot = bp + 1 + i;
-                        if (fieldSlot < stack_.size()) {
-                            stack_[fieldSlot] = std::move(newVal);  // 最后一次 move
-                        }
-                    }
-                }
-            }
-        } else if (obj.isDict()) {
-            obj.dictVal()[fieldName] = std::move(lastMutatedReceiver_);
-        } else {
-            lastMutatedReceiver_ = Value::nullValue();
-            return runtimeError("类型 " + obj.typeName() + " 不支持成员赋值");
-        }
+        stack_[bp + slot] = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
         ip += 4;
@@ -462,9 +441,12 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_WRITEBACK_INDEX_VAR: {
-        // 操作数: varIdx(2B)，索引从栈顶 pop
+        // 操作数: varIdx(2B)
+        // BUG-NEW fix: 语义对齐 RegisterVM 的 REG_WRITEBACK_INDEX_VAR ——
+        // 整体替换全局变量为 lastMutatedReceiver_，不 pop 索引。
+        // 原实现 pop 索引后做 obj[index] = mutated，但 IR 路径不向栈推入索引，
+        // 导致栈下溢；且语义应为整体替换而非写入 obj[index]。
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        Value index = pop();
         if (varIdx >= chunk.constants.size()) {
             lastMutatedReceiver_ = Value::nullValue();
             return runtimeError("常量池索引越界");
@@ -476,23 +458,7 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
             lastMutatedReceiver_ = Value::nullValue();
             return runtimeError("未定义的变量: " + varName);
         }
-        Value& obj = *objPtr;
-        if (obj.isArray() && index.isInt()) {
-            int64_t i = index.intVal();
-            // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（全局数组 refCount 常 >1）
-            if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
-                obj.arrayVal()[static_cast<size_t>(i)] = std::move(lastMutatedReceiver_);
-            } else {
-                lastMutatedReceiver_ = Value::nullValue();
-                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
-            }
-        } else if (obj.isDict() && index.isString()) {
-            obj.dictVal()[index.stringVal()] = std::move(lastMutatedReceiver_);
-        } else {
-            lastMutatedReceiver_ = Value::nullValue();
-            return runtimeError("该类型不支持索引赋值");
-        }
+        *objPtr = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
         ip += 3;
@@ -500,31 +466,15 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_WRITEBACK_INDEX_LOCAL: {
-        // 操作数: slot(1B)，索引从栈顶 pop
+        // 操作数: slot(1B)
+        // BUG-NEW fix: 同 OP_WRITEBACK_INDEX_VAR，整体替换栈槽，不 pop 索引。
         uint8_t slot = chunk.code[ip + 1];
-        Value index = pop();
         size_t bp = currentFrame().basePointer;
         if (bp + slot >= stack_.size()) {
             lastMutatedReceiver_ = Value::nullValue();
             return runtimeError("OP_WRITEBACK_INDEX_LOCAL: 栈槽越界");
         }
-        Value& obj = stack_[bp + slot];
-        if (obj.isArray() && index.isInt()) {
-            int64_t i = index.intVal();
-            // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（栈槽 obj 来自 this.arr 时 refCount 常 >1）
-            if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
-                obj.arrayVal()[static_cast<size_t>(i)] = std::move(lastMutatedReceiver_);
-            } else {
-                lastMutatedReceiver_ = Value::nullValue();
-                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
-            }
-        } else if (obj.isDict() && index.isString()) {
-            obj.dictVal()[index.stringVal()] = std::move(lastMutatedReceiver_);
-        } else {
-            lastMutatedReceiver_ = Value::nullValue();
-            return runtimeError("该类型不支持索引赋值");
-        }
+        stack_[bp + slot] = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
         ip += 2;
@@ -551,6 +501,19 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
                 return runtimeError("OP_WRITEBACK_MEMBER_UPVALUE: upvalue 栈槽越界");
             }
             stack_[uv->stackSlot] = std::move(lastMutatedReceiver_);
+            // P0-3 fix: 与 OP_SET_UPVALUE 对齐——若修改的是某外层帧的字段槽，
+            // 标记该帧 fieldsModified，确保 OP_RETURN 时字段同步回实例。
+            // 闭包内 `capturedField.subfield = v` 的变异必须传播回 this 实例。
+            if (uv->owningFrameIdx < frames_.size()) {
+                VMCallFrame& of = frames_[uv->owningFrameIdx];
+                if (of.chunk && !of.chunk->fieldOrder.empty()) {
+                    size_t fieldStart = of.basePointer + 1;
+                    size_t fieldEnd = fieldStart + of.chunk->fieldOrder.size();
+                    if (uv->stackSlot >= fieldStart && uv->stackSlot < fieldEnd) {
+                        of.fieldsModified = true;
+                    }
+                }
+            }
         }
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
@@ -577,6 +540,19 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
                 return runtimeError("OP_WRITEBACK_INDEX_UPVALUE: upvalue 栈槽越界");
             }
             stack_[uv->stackSlot] = std::move(lastMutatedReceiver_);
+            // P0-3 fix: 与 OP_SET_UPVALUE 对齐——若修改的是某外层帧的字段槽，
+            // 标记该帧 fieldsModified，确保 OP_RETURN 时字段同步回实例。
+            // 闭包内 `capturedArr[i] = v` 的变异必须传播回 this 实例。
+            if (uv->owningFrameIdx < frames_.size()) {
+                VMCallFrame& of = frames_[uv->owningFrameIdx];
+                if (of.chunk && !of.chunk->fieldOrder.empty()) {
+                    size_t fieldStart = of.basePointer + 1;
+                    size_t fieldEnd = fieldStart + of.chunk->fieldOrder.size();
+                    if (uv->stackSlot >= fieldStart && uv->stackSlot < fieldEnd) {
+                        of.fieldsModified = true;
+                    }
+                }
+            }
         }
         lastMutatedReceiver_ = Value::nullValue();
         notifyStep(ip, op);
@@ -620,6 +596,16 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
         notifyStep(ip, op);
         ip += 1;
         break;
+
+    case OpCode::OP_LOAD_MUTATED: {
+        // MEDIUM-1/2 fix: 读取 lastMutatedReceiver_ 到栈顶（不清除）。
+        // 嵌套左值写回链中，上一级 MEMBER_SET/INDEX_SET 将变异后容器存入
+        // lastMutatedReceiver_，此处读取供下一级 SET 作为 val 使用。
+        push(lastMutatedReceiver_);
+        notifyStep(ip, op);
+        ip += 1;
+        break;
+    }
 
     case OpCode::OP_DUP_N: {
         uint8_t depth = chunk.code[ip + 1];

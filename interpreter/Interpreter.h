@@ -115,6 +115,12 @@ public:
     /// GUI-03 fix: 安全求值条件断点表达式（保存/恢复所有可变状态，防止重入损坏）
     Value evaluateCondition(ASTNode* node);
 
+    /// #4 fix: 设置全局环境用于 VM 条件断点求值（VM 路径无运行中的 Interpreter）
+    void setGlobalEnvironment(std::shared_ptr<Environment> env) {
+        globalEnv_ = env;
+        currentEnv_ = env;
+    }
+
     /// 获取诊断信息（ARCH-09 fix: IBackend override）
     const DiagnosticBag& getDiagnostics() const override { return diagnostics_; }
 
@@ -383,4 +389,12 @@ private:
     void collectFreeVars(const ASTNode& node,
                          std::vector<std::unordered_set<std::string>>& scopes,
                          std::unordered_set<std::string>& freeVars);
+
+    /// B1 fix: 在当前环境中直接执行函数体语句（不创建嵌套块作用域）。
+    /// 函数体本身就是 Block，若通过 evaluate→visitBlock 执行会创建额外块作用域，
+    /// 该块作用域可能从 envPool_ 取得与闭包 env weak_ptr 指向相同的 Environment 对象，
+    /// resetForReuse 会修改其 parent 指针，形成 funEnv→blockEnv→funEnv 的父指针环，
+    /// 导致变量查找死循环（MAX_SCOPE_DEPTH 后返回"未定义的变量"）。
+    /// 直接在 funEnv 中执行语句可避免此问题，且符合参数与函数体变量同作用域的标准语义。
+    void executeFunctionBody(Block& body);
 };

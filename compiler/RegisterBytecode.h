@@ -118,6 +118,8 @@ enum class RegOp : uint8_t {
     // #7 fix: upvalue 写回
     REG_WRITEBACK_MEMBER_UPVALUE, // uvIdx(1B), fieldIdx(2B)
     REG_WRITEBACK_INDEX_UPVALUE,  // uvIdx(1B)
+    // MEDIUM-1/2 fix: 读取 lastMutatedReceiverReg_ 到目标寄存器（不清除）
+    REG_LOAD_MUTATED,  // dst(1B)
 };
 
 // ============================================================

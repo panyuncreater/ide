@@ -576,9 +576,16 @@ void Lexer::string(bool isInterp) {
             case 'a':  value += '\a'; break;
             case 'v':  value += '\v'; break;
             default:
-                value += '\\';
-                value += esc;
-                break;
+                // AUDIT-BUG-L1 fix: 未知转义序列应报错，而非静默接受为字面字符。
+                // 原实现将 \q 等存储为 "\\q" 两字符，违反"非法输入应被拒绝"原则。
+                errorToken(std::string("未知转义序列 '\\") + esc + "'", startLine, startCol);
+                // 恢复：跳过到字符串结束或 EOF，避免级联产生误导性错误
+                while (!isAtEnd() && peek() != '"') {
+                    if (peek() == '\\') { advance(); if (!isAtEnd()) advance(); }
+                    else advance();
+                }
+                if (!isAtEnd()) advance(); // 消耗闭合的 '"'
+                return;
             }
         } else {
             value += advance();

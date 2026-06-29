@@ -261,6 +261,7 @@ VMResult RegisterVM::executeOneInstruction() {
     case RegOp::REG_WRITEBACK_INDEX_LOCAL:
     case RegOp::REG_WRITEBACK_MEMBER_UPVALUE:
     case RegOp::REG_WRITEBACK_INDEX_UPVALUE:
+    case RegOp::REG_LOAD_MUTATED:
     case RegOp::REG_SUPER_CALL:
         return executeMisc(op, ip);
 
@@ -344,7 +345,7 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
         } else if (v.isFloat()) {
             reg(dst) = Value(-v.floatVal());
         } else {
-            return runtimeError("一元负号需要数值类型");
+            return runtimeError("一元减运算需要数值类型");
         }
         ip += 3;
     } else {
@@ -421,7 +422,7 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
             switch (r.status) {
             case NumericOps::ArithStatus::DivByZero:
                 // REG_MOD 触发除零时为"模零"，REG_DIV 不会走到此处（已单独处理）
-                return runtimeError(op == RegOp::REG_MOD ? "模零错误" : "除零错误");
+                return runtimeError("除零错误");
             case NumericOps::ArithStatus::IntOverflow:
                 return runtimeError("整数运算溢出");
             case NumericOps::ArithStatus::NotNumeric:
@@ -533,7 +534,7 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
                 if (it != globals_.end()) {
                     reg(dst) = it->second;
                 } else {
-                    return runtimeError("未定义的全局变量: " + name);
+                    return runtimeError("未定义的变量: " + name);
                 }
             }
         } else {
@@ -624,19 +625,11 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
         break;
     }
     case RegOp::REG_CLOSE_UPVALUE: {
-        uint8_t uvIdx = chunk.code[ip + 1];
-        if (uvIdx >= frame.upvalues.size()) {
-            return runtimeError("upvalue 索引越界");
-        }
-        auto& uv = frame.upvalues[uvIdx];
-        if (!uv->isClosed) {
-            // C-3 fix: 块作用域退出时关闭单个 upvalue，从编码帧读取当前值
-            Value* slot = resolveOpenUpvalueSlot(*uv);
-            if (slot) {
-                uv->value = *slot;
-            }
-            uv->isClosed = true;
-        }
+        // B1 fix: 关闭所有指向 slot >= frameIdx*MAX_REGISTERS+slotBase 的 open upvalues，
+        // 使块作用域退出时闭包捕获退出时刻的值快照（对齐 Interpreter per-block env）。
+        uint8_t slotBase = chunk.code[ip + 1];
+        size_t currentFrameIdx = frames_.size() - 1;
+        closeUpvaluesFrom(currentFrameIdx * RegCallFrame::MAX_REGISTERS + slotBase);
         ip += 2;
         break;
     }
@@ -746,31 +739,37 @@ VMResult RegisterVM::executeContainers(RegOp op, size_t& ip) {
             if (!idx.isInt()) return runtimeError("数组索引必须是整数");
             int64_t i = idx.intVal();
             const auto& arr = obj.arrayVal();
-            if (i < 0) i += arr.size();
+            // P1-6 fix: 对齐 Interpreter/栈式VM——负索引直接报错，不做 Python 式 wraparound
             if (i < 0 || i >= static_cast<int64_t>(arr.size())) {
-                return runtimeError("数组索引越界");
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), arr.size()));
             }
             reg(dst) = arr[static_cast<size_t>(i)];
         } else if (obj.isDict()) {
             if (!idx.isString()) return runtimeError("字典键必须是字符串");
             const auto& dict = obj.dictVal();
             auto it = dict.find(idx.stringVal());
-            if (it == dict.end()) return runtimeError("键不存在: " + idx.stringVal());
-            reg(dst) = it->second;
+            // P1-7 fix: 对齐 Interpreter/栈式VM——字典键不存在时返回 null 而非 throw
+            if (it == dict.end()) {
+                reg(dst) = Value::nullValue();
+            } else {
+                reg(dst) = it->second;
+            }
         } else if (obj.isString()) {
             if (!idx.isInt()) return runtimeError("字符串索引必须是整数");
             int64_t i = idx.intVal();
             const auto& str = obj.stringVal();
             int64_t len = obj.codepointCount();  // perf1 fix: 带缓存的码位计数
-            if (i < 0) i += len;
+            // P1-6 fix: 对齐 Interpreter/栈式VM——负索引直接报错
             if (i < 0 || i >= len) {
-                return runtimeError("字符串索引越界");
+                return runtimeError(ErrorFormat::format("字符串索引越界: %lld, 有效范围 [0, %lld)",
+                    static_cast<long long>(i), static_cast<long long>(len)));
             }
             size_t bytePos = Utf8::codepointToByteIndex(str, i);
             int charLen = Utf8::byteLength(static_cast<unsigned char>(str[bytePos]));
             reg(dst) = Value(str.substr(bytePos, static_cast<size_t>(charLen)));
         } else {
-            return runtimeError("不支持索引访问的类型");
+            return runtimeError("该类型不支持索引访问");
         }
         ip += 4;
         break;
@@ -786,9 +785,10 @@ VMResult RegisterVM::executeContainers(RegOp op, size_t& ip) {
             if (!idx.isInt()) return runtimeError("数组索引必须是整数");
             int64_t i = idx.intVal();
             auto& arr = obj.arrayVal();
-            if (i < 0) i += arr.size();
+            // P1-6 fix: 对齐 Interpreter/栈式VM——负索引直接报错
             if (i < 0 || i >= static_cast<int64_t>(arr.size())) {
-                return runtimeError("数组索引越界");
+                return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
+                    static_cast<long long>(i), arr.size()));
             }
             arr[static_cast<size_t>(i)] = val;
         } else if (obj.isDict()) {
@@ -819,10 +819,14 @@ VMResult RegisterVM::executeContainers(RegOp op, size_t& ip) {
         } else if (obj.isDict()) {
             const auto& dict = obj.dictVal();
             auto it = dict.find(fieldName);
-            if (it == dict.end()) return runtimeError("键不存在: " + fieldName);
-            reg(dst) = it->second;
+            // P1-7 fix: 对齐 Interpreter/栈式VM——字典键不存在时返回 null 而非 throw
+            if (it == dict.end()) {
+                reg(dst) = Value::nullValue();
+            } else {
+                reg(dst) = it->second;
+            }
         } else {
-            return runtimeError("不支持成员访问的类型");
+            return runtimeError("该类型不支持成员访问");
         }
         ip += 5;
         break;
@@ -1134,6 +1138,15 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         ip += 2;
         break;
     }
+    case RegOp::REG_LOAD_MUTATED: {
+        // MEDIUM-1/2 fix: 读取 lastMutatedReceiverReg_ 到目标寄存器（不清除）。
+        // 嵌套左值写回链中，上一级 MEMBER_SET/INDEX_SET 将变异后容器所在寄存器
+        // 记录到 lastMutatedReceiverReg_，此处读取供下一级 SET 作为 val 使用。
+        uint8_t dst = chunk.code[ip + 1];
+        reg(dst) = reg(lastMutatedReceiverReg_);
+        ip += 2;
+        break;
+    }
     case RegOp::REG_WRITEBACK_INDEX_LOCAL: {
         // C-1 fix: 将 lastMutatedReceiverReg_ 指向的变异后容器写回局部变量槽
         uint8_t slot = chunk.code[ip + 1];
@@ -1297,8 +1310,11 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         VMResult cr = executeCallImpl(newIp, foundFunName, argCount + 1, dst, fullArgRegs, 8u + argCount);
         if (cr != VMResult::VM_OK) return cr;
         // 标记为方法调用（用于字段同步）
+        // P0-1/P1-5 fix: 对齐栈式 VM (VMCalls.cpp:734)——super.init() 调用也需设置 isInitCall，
+        // 使 executeReturnImpl 在多层 super.init() 链中即使 fieldsModified=false 也捕获 methodThis 并同步。
         if (!frames_.empty()) {
             frames_.back().isMethodCall = true;
+            frames_.back().isInitCall = (methodName == "init");
             frames_.back().receiverReg = recvReg;
             frames_.back().receiverVarName.clear();
         }
@@ -1392,8 +1408,10 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName,
         uint8_t adjustedArgCount = argCount;
         std::vector<Value> defaults;
         if (!fillDefaultArgs(calleeChunk, adjustedArgCount, funName, defaults)) {
-            return runtimeError("参数数量不足: " + funName + " 需要 " +
-                               std::to_string(calleeChunk.requiredArity) + " 个");
+            return runtimeError(ErrorFormat::format(
+                "函数 %s 期望 %d-%d 个参数，但传入了 %d 个",
+                funName.c_str(), static_cast<int>(calleeChunk.requiredArity),
+                static_cast<int>(calleeChunk.arity), static_cast<int>(argCount)));
         }
         // 创建新帧
         RegCallFrame newFrame;
@@ -1467,6 +1485,16 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
     int receiverReg = frames_.back().receiverReg;
     std::string receiverVarName = std::move(frames_.back().receiverVarName);
 
+    // CRITICAL-4 fix: 方法返回时记录 receiverReg 到 lastMutatedReceiverReg_，
+    // 供 IR 路径中 visitMethodCall 的 LOAD_MUTATED + STORE 写回变异后接收者。
+    // 对于只读方法，receiverReg 持有原值（未被修改），写回原值等于不写，安全。
+    // 对于变异方法，executeReturnImpl 的字段同步已将变异后实例写入 receiverReg。
+    // 必须在所有 wasMethodCall 路径设置，否则只读方法的 LOAD_MUTATED 会读到
+    // 上一次设置的错误值，导致写回错误对象（回归：ClassMethodNoThis 等）。
+    if (wasMethodCall && receiverReg >= 0) {
+        lastMutatedReceiverReg_ = static_cast<uint8_t>(receiverReg);
+    }
+
     // C-9/C-6 fix: 捕获方法帧的 this（slot 0）用于字段同步。
     // - init 方法：隐式返回 this 实例（而非 null），避免 caller 的 dstReg 被 null 覆盖。
     //   无论是否直接修改字段都需捕获——super.init 可能已通过字段同步更新了 this。
@@ -1502,7 +1530,9 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
     // 原实现仅当 result.isInstance() 时同步，导致返回非实例值的方法（如 increment 返回数字）
     // 修改 this 字段后被丢弃。改为从 methodThis（方法帧 slot 0 的 this）同步字段。
     // 优先使用 methodThis（C-6），回退到 result（保留原行为供返回实例的方法使用）。
-    if (wasMethodCall && fieldsModified && !frames_.empty()) {
+    // P0-1 fix: isInitCall 也需同步——多层 super.init() 链中中间层可能不直接写字段
+    // (fieldsModified=false)，但父类 init 修改的 this 必须传播回 caller。
+    if (wasMethodCall && (fieldsModified || isInitCall) && !frames_.empty()) {
         const Value* syncSource = nullptr;
         if (hasMethodThis) {
             syncSource = &methodThis;
@@ -1586,6 +1616,11 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
     bool handled = callBuiltinMethod(obj, methodName, args, builtinResult);
     if (handled) {
         if (hasError_) return VMResult::VM_RUNTIME_ERROR;
+        // CRITICAL-4 fix: 内建方法（push/pop/set 等）通过引用修改 obj（即 reg(objReg)）。
+        // 若 objReg 持有 COW 共享副本（如来自 LOAD_GLOBAL），修改产生的新实例仅存在于 objReg，
+        // 原始位置（全局变量槽/upvalue）未更新。记录 objReg 到 lastMutatedReceiverReg_，
+        // 供后续 LOAD_MUTATED + STORE 写回到原始位置（VarRef 路径）。
+        lastMutatedReceiverReg_ = objReg;
         reg(dstReg) = std::move(builtinResult);
         ip += 6 + argCount;
         return VMResult::VM_OK;
@@ -1617,8 +1652,11 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
                 VMResult cr = executeCallImpl(newIp, funName, argCount + 1, dstReg, fullArgRegs, 6u + argCount);
                 if (cr != VMResult::VM_OK) return cr;
                 // 标记为方法调用（用于字段同步）
+                // P0-1/P1-5 fix: 对齐栈式 VM (VMCalls.cpp:734)——所有 init 调用都设置 isInitCall，
+                // 使 executeReturnImpl 在多层 super.init() 链中即使 fieldsModified=false 也捕获 methodThis 并同步。
                 if (!frames_.empty()) {
                     frames_.back().isMethodCall = true;
+                    frames_.back().isInitCall = (methodName == "init");
                     frames_.back().receiverReg = objReg;
                     frames_.back().receiverVarName.clear();
                 }
@@ -1630,7 +1668,7 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
         return runtimeError("类 " + className + " 无方法: " + methodName);
     }
 
-    return runtimeError("不支持方法调用的类型");
+    return runtimeError("方法调用需要类实例");
 }
 
 VMResult RegisterVM::executeClosureImpl(size_t& ip, const std::string& name,
@@ -1809,7 +1847,7 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
             return true;
         case BuiltinMethod::ARR_POP: {
             auto& arr = obj.arrayVal();
-            if (arr.empty()) { runtimeError("pop 空数组"); return true; }
+            if (arr.empty()) { runtimeError("对空数组调用 pop"); return true; }
             result = arr.back();
             arr.pop_back();
             return true;
@@ -1818,6 +1856,30 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
             auto r = executeSharedArrayContains(obj, args.data(), args.size());
             if (r.is_ok()) { result = r.value(); return true; }
             runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::ARR_JOIN: {
+            // B3 fix: 对齐栈式 VM dispatchArrayBuiltin——原缺失此 case，
+            // arr.join() 落入 default:break → 返回 false → 调用方误报"方法调用需要类实例"。
+            auto r = executeSharedArrayJoin(obj, args.data(), args.size());
+            if (r.is_ok()) { result = r.value(); return true; }
+            runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::ARR_REMOVE: {
+            // B3 fix: 对齐栈式 VM dispatchArrayBuiltin 的 ARR_REMOVE 实现。
+            // 原缺失此 case，arr.remove(i) 误报"方法调用需要类实例"。
+            if (args.size() != 1) { runtimeError("remove 期望 1 个参数(索引)"); return true; }
+            if (!args[0].isInt()) { runtimeError("remove 参数必须是整数索引"); return true; }
+            int64_t ri = args[0].intVal();
+            auto& arr = obj.arrayVal();
+            if (ri < 0 || static_cast<size_t>(ri) >= arr.size()) {
+                runtimeError(ErrorFormat::format("数组索引越界: %lld",
+                    static_cast<long long>(ri)));
+                return true;
+            }
+            arr.erase(arr.begin() + static_cast<size_t>(ri));
+            result = Value::nullValue();
             return true;
         }
         default: break;
@@ -1847,6 +1909,25 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
             auto r = executeSharedDictHas(obj, methodName, args.data(), args.size());
             if (r.is_ok()) { result = r.value(); return true; }
             runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::DICT_GET: {
+            // P1-7 fix: 对齐栈式VM——补齐 dict.get() 方法分发
+            auto r = executeSharedDictGet(obj, args.data(), args.size());
+            if (r.is_ok()) { result = r.value(); return true; }
+            runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::DICT_REMOVE: {
+            if (args.size() != 1) { runtimeError("remove 期望 1 个参数(键)"); return true; }
+            obj.dictVal().erase(args[0].toString());
+            result = Value::nullValue();
+            return true;
+        }
+        case BuiltinMethod::DICT_SET: {
+            if (args.size() != 2) { runtimeError("set 期望 2 个参数(键, 值)"); return true; }
+            obj.dictVal()[args[0].toString()] = args[1];
+            result = Value::nullValue();
             return true;
         }
         default: break;
@@ -1887,6 +1968,36 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
         }
         case BuiltinMethod::STR_ENDS_WITH: {
             auto r = executeSharedStrEndsWith(obj, args.data(), args.size());
+            if (r.is_ok()) { result = r.value(); return true; }
+            runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::STR_REPLACE: {
+            auto r = executeSharedStrReplace(obj, args.data(), args.size());
+            if (r.is_ok()) { result = r.value(); return true; }
+            runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::STR_SUBSTR: {
+            auto r = executeSharedStrSubstr(obj, args.data(), args.size());
+            if (r.is_ok()) { result = r.value(); return true; }
+            runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::STR_INDEX_OF: {
+            auto r = executeSharedStrIndexOf(obj, args.data(), args.size());
+            if (r.is_ok()) { result = r.value(); return true; }
+            runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::STR_SPLIT: {
+            auto r = executeSharedStrSplit(obj, args.data(), args.size());
+            if (r.is_ok()) { result = r.value(); return true; }
+            runtimeError(r.error().message);
+            return true;
+        }
+        case BuiltinMethod::STR_TRIM: {
+            auto r = executeSharedStrTrim(obj, args.data(), args.size());
             if (r.is_ok()) { result = r.value(); return true; }
             runtimeError(r.error().message);
             return true;
@@ -1933,9 +2044,11 @@ VMResult RegisterVM::throwException(Value thrownValue) {
         return VMResult::VM_OK;
     }
     // 未捕获的异常
-    std::string msg = "未捕获的异常";
-    if (thrownValue.isString()) msg = thrownValue.stringVal();
-    else if (thrownValue.isInstance()) msg = thrownValue.className() + " 异常";
+    // 与栈式 VM (VM.cpp:132) 对齐："未捕获的异常: " + 值
+    std::string msg;
+    if (thrownValue.isString()) msg = "未捕获的异常: " + thrownValue.stringVal();
+    else if (thrownValue.isInstance()) msg = "未捕获的异常: " + thrownValue.className() + " 异常";
+    else msg = "未捕获的异常: " + thrownValue.toString();
     return runtimeError(msg);
 }
 

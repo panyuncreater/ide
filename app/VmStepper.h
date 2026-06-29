@@ -22,6 +22,7 @@
 #include <QObject>
 #include <QString>
 #include <QSet>
+#include <QMap>
 #include <QTimer>
 #include <functional>
 #include <optional>
@@ -71,6 +72,16 @@ public:
     }
     /// A4 fix: 设置 VM 模式断点（复用 Interpreter 的 breakpoint 行号集合）
     void setBreakpoints(const QSet<int>& breakpoints) { vmBreakpoints_ = breakpoints; }
+
+    /// #4 fix: 设置 VM 模式条件断点（行号→条件表达式）
+    void setBreakpointConditions(const QMap<int, std::string>& conditions) {
+        vmBreakpointConditions_ = conditions;
+    }
+
+    /// #4 fix: 设置条件求值器回调（由 IdeController 注入，使用临时 Interpreter + VM 全局变量求值）
+    void setConditionEvaluator(std::function<bool(const std::string&)> evaluator) {
+        vmConditionEvaluator_ = std::move(evaluator);
+    }
 
     // ---- A1 fix: 后端模式切换 ----
     /// 启用/禁用 RegisterVM 后端。true 时所有步进/状态访问转发到 regVm_。
@@ -182,6 +193,8 @@ private:
     size_t vmStepStartFrameCount_ = 0;  // step-over/out 起始帧深度
     int vmLastPausedLine_ = 0;          // 上次暂停的行号（防同行重复触发）
     QSet<int> vmBreakpoints_;          // VM 模式断点行号集合（复用 Editor 断点）
+    QMap<int, std::string> vmBreakpointConditions_;  // #4 fix: 条件断点表达式
+    std::function<bool(const std::string&)> vmConditionEvaluator_;  // #4 fix: 条件求值回调
     // QT-R-01 fix: RUN 模式异步分批执行的定时器
     QTimer* vmRunTimer_ = nullptr;
     int64_t vmRunStepCount_ = 0;        // RUN 模式累计执行步数（用于总量上限保护）
@@ -192,4 +205,9 @@ private:
     bool isActiveFinished() const;
     bool initActiveExecution();  // P1-5 fix: 返回 false 表示编译结果为空，caller 不应标记 initialized
     void resetActiveState();
+
+    /// #4 fix: 检查断点命中（含条件求值）。返回 true 表示应在此行暂停。
+    /// line: 当前 IP 所在行号。若该行有条件断点，调用 evaluator 求值；
+    /// 无条件或求值为真时返回 true。
+    bool checkBreakpointHit(int line);
 };

@@ -953,9 +953,10 @@ TEST(InterpreterE2E, ModuleCacheKeyNormalization) {
 
 // P2-3 fix: Windows 路径分隔符规范化
 TEST(InterpreterE2E, ModuleCacheKeyBackslashNormalization) {
+    // AUDIT-BUG-L1 fix: \m 是未知转义，必须用 \\ 表示字面反斜杠
     std::string src =
         "import \"sub/mod.mini\";"
-        "import \"sub\\mod.mini\";"
+        "import \"sub\\\\mod.mini\";"
         "print(\"ok\");";
     std::unordered_map<std::string, std::string> modules = {
         {"sub/mod.mini",

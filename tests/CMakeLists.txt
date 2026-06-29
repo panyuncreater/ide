@@ -100,6 +100,11 @@ add_executable(minilang_tests
     TestCompiler.cpp
     TestIR.cpp
     TestNaNBox.cpp
+    TestIRShadowFix.cpp
+    TestNestedLvalueProbe.cpp
+    TestMethodCallProbe.cpp
+    TestConsistencyDiff.cpp
+    TestLexerParserAudit.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
@@ -109,6 +114,10 @@ target_link_libraries(minilang_tests PRIVATE
 
 if(MSVC)
     target_compile_options(minilang_tests PRIVATE /W3 /utf-8 /EHsc /permissive- /wd4996)
+    # AUDIT-P0 fix: 测试二进制栈扩至 8MB。Debug 模式下递归下降解析器的
+    # 每个栈帧较大（~3KB），MAX_PARSE_DEPTH=256 对应 ~128 层括号 × 11 帧
+    # × 3KB ≈ 4.2MB，需大于默认 1MB 栈才能让深度检查正常触发而非栈溢出。
+    target_link_options(minilang_tests PRIVATE /STACK:8388608)
 endif()
 
 # ============================================================

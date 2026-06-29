@@ -620,6 +620,9 @@ VMResult VM::dispatchDictBuiltin(const Value& obj, BuiltinMethod method,
         if (args.size() != 1) return runtimeError("remove 期望 1 个参数(键)");
         // P2-9 fix: 使用 getMutableDictRef 统一 COW 变异模式
         getMutableDictRef(mutableObj).erase(args[0].toString());
+    } else if (method == BuiltinMethod::DICT_SET) {
+        if (args.size() != 2) return runtimeError("set 期望 2 个参数(键, 值)");
+        getMutableDictRef(mutableObj)[args[0].toString()] = args[1];
     } else {
         return runtimeError("字典没有方法 " + methodName);
     }
@@ -1035,6 +1038,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_TRY_BEGIN:
     case OpCode::OP_TRY_END:
     case OpCode::OP_THROW:
+    case OpCode::OP_LOAD_MUTATED:
         return executeMiscOps(op, ip);
 
     default:
@@ -1501,24 +1505,10 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_CLOSE_UPVALUE: {
-        uint8_t uvIdx = chunk.code[ip + 1];
-        if (static_cast<size_t>(uvIdx) < frame.upvalues.size()) {
-            auto& uv = frame.upvalues[uvIdx];
-            if (!uv->isClosed && uv->stackSlot < stack_.size()) {
-                uv->value = stack_[uv->stackSlot];
-                uv->isClosed = true;
-                // L-新1 fix: 从 openUpvalues_ 移除已关闭的 upvalue
-                // B5 fix: openUpvalues_ 现为 multimap，按 stackSlot 定位候选范围，
-                // 再按 weak_ptr owner_before 匹配同一对象擦除（O(log n + k)）
-                auto range = openUpvalues_.equal_range(uv->stackSlot);
-                for (auto it = range.first; it != range.second; ++it) {
-                    if (auto locked = it->second.lock(); locked == uv) {
-                        openUpvalues_.erase(it);
-                        break;
-                    }
-                }
-            }
-        }
+        // B1 fix: 关闭所有指向 slot >= basePointer+slotBase 的 open upvalues，
+        // 使块作用域退出时闭包捕获退出时刻的值快照（对齐 Interpreter per-block env）。
+        uint8_t slotBase = chunk.code[ip + 1];
+        closeUpvaluesFrom(frame.basePointer + slotBase);
         notifyStep(ip, op);
         ip += 2;
         break;

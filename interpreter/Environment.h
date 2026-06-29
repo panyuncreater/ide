@@ -244,6 +244,17 @@ public:
         return variables;
     }
 
+    // ---- 条件断点沙箱化 (#1 fix) ----
+    // 条件断点求值前快照变量绑定，求值后恢复，防止条件中的赋值/声明
+    // 修改程序状态。注意：Value 是 ref-counted，容器变异（arr.push）仍
+    // 影响共享对象——这是残余限制，文档化在 project_memory 中。
+    std::unordered_map<std::string, Value> snapshotLocalVariables() const {
+        return variables;
+    }
+    void restoreLocalVariables(const std::unordered_map<std::string, Value>& snap) {
+        variables = snap;
+    }
+
     // ---- P5 fix: 实例字段绑定 ----
     // 方法调用时绑定 this 实例，get/set 找不到变量时回退到实例字段
     // 避免将所有字段深拷贝到方法环境中
@@ -259,6 +270,46 @@ public:
     }
     Value* getBoundInstance() const { return boundInstance_; }
 
+    // ---- B1 fix: 闭包捕获的 open/close upvalue 机制 ----
+    // 闭包创建时，将其注册到"定义被捕获变量的 env"上。
+    // 作用域退出时调用 closeCapturedVariables()，将变量的最终值写回闭包的 capturedVars，
+    // 实现等价于 VM 的 OP_CLOSE_UPVALUE——循环变量 i 在 for 作用域退出时关闭为终值 3，
+    // 循环体变量 captured 在 block 退出时关闭为当次迭代的值。
+
+    /// 仅查本作用域的局部变量（不含父作用域和 boundInstance 字段）。
+    /// 用于确定被捕获变量定义在哪个 env 上。
+    const Value* getLocalVariable(const std::string& name) const {
+        auto it = variables.find(name);
+        return it != variables.end() ? &it->second : nullptr;
+    }
+
+    /// 注册闭包捕获 — 记录某个闭包捕获了本 env 中的变量。
+    /// closureVal 是闭包值的副本（共享 ClosureData，保持其存活）。
+    void registerClosureCapture(Value closureVal, const std::string& capturedName) {
+        closureCaptures_.push_back({std::move(closureVal), capturedName});
+    }
+
+    /// 作用域退出时，将本 env 中被捕获的变量的最终值写回闭包的 capturedVars。
+    /// 实现等价于 VM 的 OP_CLOSE_UPVALUE（关闭 open upvalue）。
+    void closeCapturedVariables() {
+        for (auto& cap : closureCaptures_) {
+            auto it = variables.find(cap.capturedName);
+            if (it != variables.end()) {
+                // B1 fix: 直接修改共享 ClosureData 的 capturedVars，不触发 COW。
+                // capturedVars() 的非 const 重载会 ensureUnique → refCount>1 时创建副本，
+                // 导致修改写到副本而非原件，closures 数组中的原始闭包 capturedVars 保持陈旧。
+                // 使用 const 引用 + const_cast 绕过 COW，直接修改共享的 ClosureData。
+                const auto& constCaptured = const_cast<const Value&>(cap.closureVal).capturedVars();
+                const_cast<std::unordered_map<std::string, Value>&>(constCaptured)[cap.capturedName] = it->second;
+            }
+        }
+        closureCaptures_.clear();
+    }
+
+    /// 是否有闭包捕获了本 env 的变量（用于判断是否可回收至 envPool_）。
+    /// 有捕获的 env 不能回收（resetForReuse 会清空 variables，导致 weak_ptr 仍有效但内容陈旧）。
+    bool hasClosureCaptures() const { return !closureCaptures_.empty(); }
+
     /// PERF-07 fix: 重置 Environment 状态以便对象池复用。
     /// 清空 variables/typeAnnotations_/boundInstance_，更新 parent 指针。
     /// 用于 visitBlock 退出时回收未捕获的块作用域 Environment，避免重复堆分配。
@@ -270,6 +321,8 @@ public:
         if (parent) {
             boundInstance_ = parent->boundInstance_;
         }
+        // B1 fix: 防御性清空 — 有捕获的 env 不应被回收，但此处兜底避免悬垂引用
+        closureCaptures_.clear();
     }
 
     // ---- B2 fix: 作用域感知的类型注解 ----
@@ -306,6 +359,16 @@ private:
     std::unordered_map<std::string, Value> variables;
     std::unordered_map<std::string, std::string> typeAnnotations_; // B2: 作用域感知类型注解
     Value* boundInstance_ = nullptr;  // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
+
+    // B1 fix: 闭包捕获追踪。记录哪些闭包捕获了本 env 中的变量。
+    // 作用域退出时 closeCapturedVariables() 将最终值写回闭包 capturedVars。
+    // Value 副本共享 ClosureData（intrusive refcount），不构成循环引用
+    // （ClosureData.env 是 weak_ptr）。
+    struct ClosureCapture {
+        Value closureVal;
+        std::string capturedName;
+    };
+    std::vector<ClosureCapture> closureCaptures_;
 
     // P0-5 fix: 已移除有缺陷的深度缓存（DepthEntry/depthCache_/generation_/
     //   findTargetEnv/getAtDepth/setAtDepth/getWithDepth），改用简单作用域链遍历。

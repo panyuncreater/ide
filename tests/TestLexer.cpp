@@ -446,13 +446,12 @@ TEST(LexerTest, String_AdditionalEscapeSequences) {
     }
 }
 
-// 测试：未知转义字符保留原样（\x → \x）
-TEST(LexerTest, String_UnknownEscapeKeptAsIs) {
+// AUDIT-BUG-L1 fix: 未知转义字符应报错（原实现静默保留为 \x）
+TEST(LexerTest, String_UnknownEscapeRejected) {
     auto tokens = scanTokens("\"a\\xb\"");
     ASSERT_EQ(tokens.size(), 1u);
-    ASSERT_TRUE(tokens[0].literalIsString());
-    // 未知转义 \x 保留为 \x
-    EXPECT_EQ(tokens[0].literalString(), "a\\xb");
+    EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
+    EXPECT_NE(tokens[0].lexeme.find("未知转义"), std::string::npos);
 }
 
 // 测试：未闭合字符串应产生错误

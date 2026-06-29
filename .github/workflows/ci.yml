@@ -24,8 +24,10 @@ jobs:
   # 作业 1：构建 + 单元测试（Windows + MSVC + Qt6）
   # ------------------------------------------------------------
   # 使用 windows-latest 自带的 Visual Studio 2022 + MSVC 工具链。
-  # 通过 CMake "Visual Studio 17 2022" 生成器自动检测 MSVC，
-  # 无需任何第三方 action 设置开发环境。
+  # 通过 ilammy/msvc-dev-cmd 显式初始化 MSVC Developer Command
+  # Prompt（vcvars）环境，确保 CMake 的 "Visual Studio 17 2022"
+  # 生成器能稳定探测到 VS 实例（修复 "could not find any instance
+  # of Visual Studio" 错误）。
   # ============================================================
   build-test:
     name: Build & Test (Windows MSVC)
@@ -45,6 +47,11 @@ jobs:
           target: desktop
           arch: win64_msvc2019_64
           cache: true
+
+      - name: 设置 MSVC 开发环境（Developer Command Prompt）
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: 配置 CMake（Visual Studio 2022 + MSVC）
         run: cmake -B build -G "Visual Studio 17 2022" -A x64

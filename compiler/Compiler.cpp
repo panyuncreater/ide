@@ -120,6 +120,9 @@ CompileResult Compiler::compileViaIR(Block& program) {
     // build() 返回时已 move 出 module_->mainFunction，需临时放回
     IRModule* module = irBuilder.getModule();
     module->mainFunction = std::move(lastIR_);
+    // BUG-NEW fix: 在 lowerModule 前填充全局槽位名表，供 BytecodeIRBackend
+    // 将 WRITEBACK_*_VAR 的 GLOBAL_SLOT 转换为变量名常量索引。
+    module->globalSlotNames = irBuilder.getGlobalSlotNames();
 
     // 阶段 2：IR → Bytecode（整个 module: main + 子函数）
     BytecodeIRBackend backend;

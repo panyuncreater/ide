@@ -106,6 +106,14 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
     // 将 ir_ 作为 mainFunction 存入 module_
     // 更新 main 的 localCount（顶层代码的 AND/OR 短路等会用 nextLocalSlot_ 分配临时 slot）
     ir_->localCount = static_cast<int>(nextLocalSlot_);
+    // P2-1 fix: localCount 超 32 寄存器硬上限会在 RegisterBytecodeBackend.lower()
+    // 设置 chunk_->registerCount > 32，导致 RegCallFrame::registers[32+] OOB 访问。
+    // 此处早期告警；RegisterBytecodeBackend::lower 会硬失败阻止生成损坏字节码。
+    if (ir_->localCount > 32) {
+        Logger::Error("AstIRBuilder: localCount 超出 32 寄存器上限 (" +
+                      std::to_string(ir_->localCount) +
+                      "，函数 " + ir_->name + ")，RegisterVM 将无法加载此函数", "IR");
+    }
     module_->mainFunction = std::move(ir_);
     // 返回 ir_（转移所有权给调用者；module_ 通过 getModule() 仍可访问 functions）
     return std::move(module_->mainFunction);
@@ -147,6 +155,20 @@ void AstIRBuilder::leaveBlockScope() {
     // VM 帧必须足够大以容纳所有曾使用的 slot。用 max 更新避免回退。
     if (static_cast<int>(nextLocalSlot_) > ir_->localCount) {
         ir_->localCount = static_cast<int>(nextLocalSlot_);
+        // P2-1 fix: 同 build()，对 leaveBlockScope 路径的 localCount 更新做上限告警
+        if (ir_->localCount > 32) {
+            Logger::Error("AstIRBuilder: localCount 超出 32 寄存器上限 (" +
+                          std::to_string(ir_->localCount) +
+                          "，函数 " + ir_->name + ")，RegisterVM 将无法加载此函数", "IR");
+        }
+    }
+    // B1 fix: 块作用域退出时关闭指向本块局部 slot 的 open upvalues，使闭包捕获
+    // 退出时刻的值快照（而非函数返回时的终值）。对齐 Interpreter visitBlock 每次执行
+    // 创建独立 blockEnv 的语义。仅函数内、有局部 slot 的块 emit（顶层无 upvalue）。
+    // closeUpvaluesFrom(slotBase) 关闭 slot >= slotBase 的全部 open upvalues，
+    // 若无匹配 upvalue 则为 no-op，运行时开销 O(log n + k)。
+    if (inFunction_ && !scope.localSlots.empty()) {
+        emitIR(IROp::CLOSE_UPVALUE, { IROperand::imm(scope.slotBase) }, 0);
     }
     // 回收局部变量槽位：仅当本块内未创建嵌套函数（闭包）时才回收。
     // 闭包可能捕获了本块的局部变量 slot（通过 upvalue isLocal=true 指向 slot 编号），
@@ -164,6 +186,17 @@ void AstIRBuilder::leaveBlockScope() {
                     break;
                 }
             }
+        }
+    }
+    // CRITICAL-2 fix: 恢复外层绑定。无论是否回收槽位，都需恢复被遮蔽的旧 varMap_ 条目，
+    // 否则外层变量在块退出后不可达（原 bug：varMap_ 无作用域栈，内块覆盖后外层丢失）。
+    // 遍历顺序：逆序恢复以处理多重遮蔽（虽实践中单层遮蔽居多）。
+    for (auto it = scope.shadowedVars.rbegin(); it != scope.shadowedVars.rend(); ++it) {
+        if (it->hadOld) {
+            varMap_[it->name] = it->info;
+        } else {
+            // 块外原本无此变量，删除块内新增的条目
+            varMap_.erase(it->name);
         }
     }
 }
@@ -321,6 +354,134 @@ uint32_t AstIRBuilder::addUpvalue(const std::string& name) {
     }
 
     return 0;  // 未找到
+}
+
+// CRITICAL-1 fix: 前向自由变量分析。对齐 Interpreter::computeFreeVariables 的语义，
+// 但用于 IR 层——在编译子函数体前预建 upvalue，使中间函数捕获内层引用的变量供透传。
+// 实现：递归遍历 AST，收集所有 VarRef/Assignment 中引用但未在函数内定义的变量名。
+// 嵌套函数的自由变量若不在外层作用域定义，传播为外层自由变量。
+bool AstIRBuilder::isDefinedInScopes(
+    const std::vector<std::unordered_set<std::string>>& scopes,
+    const std::string& name) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->count(name)) return true;
+    }
+    return false;
+}
+
+void AstIRBuilder::collectFreeVars(const ASTNode& node,
+                                   std::vector<std::unordered_set<std::string>>& scopes,
+                                   std::unordered_set<std::string>& freeVars) {
+    switch (node.nodeType) {
+        case NodeType::NODE_VAR_REF: {
+            const auto& ref = static_cast<const VarRef&>(node);
+            if (!isDefinedInScopes(scopes, ref.name)) {
+                freeVars.insert(ref.name);
+            }
+            break;
+        }
+        case NodeType::NODE_ASSIGNMENT: {
+            const auto& assign = static_cast<const Assignment&>(node);
+            if (!isDefinedInScopes(scopes, assign.name)) {
+                freeVars.insert(assign.name);
+            }
+            if (assign.value) collectFreeVars(*assign.value, scopes, freeVars);
+            break;
+        }
+        case NodeType::NODE_VAR_DECL: {
+            const auto& decl = static_cast<const VarDecl&>(node);
+            if (decl.initializer) collectFreeVars(*decl.initializer, scopes, freeVars);
+            scopes.back().insert(decl.name);
+            break;
+        }
+        case NodeType::NODE_FUN_DECL: {
+            const auto& nestedFn = static_cast<const FunDecl&>(node);
+            for (const auto& dv : nestedFn.defaultValues) {
+                if (dv) collectFreeVars(*dv, scopes, freeVars);
+            }
+            std::vector<std::unordered_set<std::string>> nestedScopes;
+            nestedScopes.emplace_back();
+            for (const auto& p : nestedFn.params) nestedScopes.back().insert(p);
+            nestedScopes.back().insert(nestedFn.name);
+            std::unordered_set<std::string> nestedFree;
+            if (nestedFn.body) collectFreeVars(*nestedFn.body, nestedScopes, nestedFree);
+            for (const auto& name : nestedFree) {
+                if (!isDefinedInScopes(scopes, name)) {
+                    freeVars.insert(name);
+                }
+            }
+            scopes.back().insert(nestedFn.name);
+            break;
+        }
+        case NodeType::NODE_FUN_CALL: {
+            const auto& call = static_cast<const FunCall&>(node);
+            if (call.callee) {
+                collectFreeVars(*call.callee, scopes, freeVars);
+            } else if (!call.name.empty()) {
+                if (!isDefinedInScopes(scopes, call.name)) {
+                    freeVars.insert(call.name);
+                }
+            }
+            for (const auto& arg : call.arguments) {
+                if (arg) collectFreeVars(*arg, scopes, freeVars);
+            }
+            break;
+        }
+        case NodeType::NODE_BLOCK: {
+            const auto& block = static_cast<const Block&>(node);
+            scopes.emplace_back();
+            for (const auto& stmt : block.statements) {
+                if (stmt) collectFreeVars(*stmt, scopes, freeVars);
+            }
+            scopes.pop_back();
+            break;
+        }
+        case NodeType::NODE_FOR_STMT: {
+            const auto& forStmt = static_cast<const ForStmt&>(node);
+            scopes.emplace_back();
+            if (forStmt.initializer) collectFreeVars(*forStmt.initializer, scopes, freeVars);
+            if (forStmt.condition) collectFreeVars(*forStmt.condition, scopes, freeVars);
+            if (forStmt.update) collectFreeVars(*forStmt.update, scopes, freeVars);
+            if (forStmt.body) collectFreeVars(*forStmt.body, scopes, freeVars);
+            scopes.pop_back();
+            break;
+        }
+        case NodeType::NODE_TRY_STMT: {
+            const auto& tryStmt = static_cast<const TryStmt&>(node);
+            if (tryStmt.tryBlock) collectFreeVars(*tryStmt.tryBlock, scopes, freeVars);
+            if (tryStmt.catchBlock) {
+                scopes.emplace_back();
+                if (!tryStmt.catchVarName.empty()) scopes.back().insert(tryStmt.catchVarName);
+                collectFreeVars(*tryStmt.catchBlock, scopes, freeVars);
+                scopes.pop_back();
+            }
+            break;
+        }
+        case NodeType::NODE_CLASS_DECL: {
+            const auto& cls = static_cast<const ClassDecl&>(node);
+            scopes.back().insert(cls.name);
+            break;
+        }
+        default:
+            for (auto* child : node.children()) {
+                if (child) collectFreeVars(*child, scopes, freeVars);
+            }
+            break;
+    }
+}
+
+std::unordered_set<std::string> AstIRBuilder::computeFreeVars(const FunDecl& fn) {
+    std::vector<std::unordered_set<std::string>> scopes;
+    scopes.emplace_back();
+    for (const auto& param : fn.params) scopes.back().insert(param);
+    scopes.back().insert(fn.name);
+
+    std::unordered_set<std::string> freeVars;
+    for (const auto& dv : fn.defaultValues) {
+        if (dv) collectFreeVars(*dv, scopes, freeVars);
+    }
+    if (fn.body) collectFreeVars(*fn.body, scopes, freeVars);
+    return freeVars;
 }
 
 // ---- AST 节点转换：分派 ----
@@ -525,6 +686,17 @@ void AstIRBuilder::visitVarDecl(VarDecl* node) {
     if (inFunction_) {
         // 函数内：注册为 LOCAL（限制5：记录到当前 BlockScope）
         uint32_t slot = nextLocalSlot_++;
+        // CRITICAL-2 fix: 覆盖 varMap_ 前保存旧条目，供 leaveBlockScope 恢复外层绑定
+        if (!blockScopes_.empty()) {
+            auto it = varMap_.find(node->name);
+            if (it != varMap_.end()) {
+                blockScopes_.back().shadowedVars.push_back(
+                    { node->name, it->second, true });
+            } else {
+                blockScopes_.back().shadowedVars.push_back(
+                    { node->name, VarInfo{}, false });
+            }
+        }
         varMap_[node->name] = { VarInfo::Kind::LOCAL, slot };
         emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), val }, node->line);
         // 记录到当前 BlockScope 的 localSlots
@@ -702,6 +874,25 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         varMap_[node->params[i]] = { VarInfo::Kind::LOCAL, slot };
     }
 
+    // CRITICAL-1 fix: 前向自由变量分析。在编译函数体前，先收集所有自由变量，
+    // 为每个能在外层捕获的变量预建 upvalue。这确保中间函数即使不直接引用某变量，
+    // 也会捕获它供更内层函数透传（对齐 Interpreter 的 computeFreeVariables 传播逻辑）。
+    // 仅对有外层作用域的嵌套函数执行（顶层函数的自由变量都是全局，无需 upvalue）。
+    if (inFunction_ || blockDepth_ > 0 || !outerLocalSlots_.empty() || !outerUpvalueNames_.empty()) {
+        auto freeVars = computeFreeVars(*node);
+        for (const auto& name : freeVars) {
+            // addUpvalue 仅在 outerLocalSlots_/outerUpvalueNames_ 命中时才真正捕获。
+            // 预建后立即写入 varMap_，使后续嵌套函数的 savedVarMap 能传播 UPVALUE 信息，
+            // 否则 inner 的 outerUpvalueNames_ 不会有 x（mid 的 upvalue 未记录到 varMap_）。
+            addUpvalue(name);
+            auto uvNameIt = currentUpvalueNames_.find(name);
+            if (uvNameIt != currentUpvalueNames_.end()) {
+                varMap_[name] = { VarInfo::Kind::UPVALUE, static_cast<uint32_t>(uvNameIt->second) };
+            }
+            // 未命中的（全局变量/全局函数）不写入 varMap_，resolveVar 后续走 GLOBAL_NAME
+        }
+    }
+
     // 5. 编译默认参数值（限制4）
     //    对每个非 null 的默认值表达式，尝试用 extractConstant 提取常量
     //    成功则 addConstant 记录索引；失败则记录 0xFFFF（表示复杂表达式，不支持）
@@ -734,6 +925,12 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     // 低于实际峰值，但已 emit 的字节码仍引用被回收的 slot 编号，VM 帧需容纳所有曾使用的 slot。
     if (static_cast<int>(nextLocalSlot_) > ir_->localCount) {
         ir_->localCount = static_cast<int>(nextLocalSlot_);
+        // P2-1 fix: 同 build()，对 visitFunDecl 路径的 localCount 更新做上限告警
+        if (ir_->localCount > 32) {
+            Logger::Error("AstIRBuilder: localCount 超出 32 寄存器上限 (" +
+                          std::to_string(ir_->localCount) +
+                          "，函数 " + ir_->name + ")，RegisterVM 将无法加载此函数", "IR");
+        }
     }
     ir_->upvalues.clear();
     for (const auto& uv : currentUpvalues_) {
@@ -806,13 +1003,19 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
 
     // 13. 在父函数中注册该函数（供后续引用）
     if (inFunction_) {
-        // 函数内：注册为 LOCAL
+        // 函数内：注册为 LOCAL，并把闭包值从 dest vreg 写入对应 slot，
+        // 否则后续 LOAD_LOCAL 读到未初始化的槽（CRITICAL-1 fix 配套——
+        // visitFunCall 现在通过 LOAD_LOCAL + CALL_EXPR 调用嵌套闭包）。
         uint32_t slot = nextLocalSlot_++;
         varMap_[fnName] = { VarInfo::Kind::LOCAL, slot };
         innerFunctions_.insert(fnName);
         innerFunctionSlots_[fnName] = static_cast<int>(slot);
+        emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), dest }, node->line);
     } else {
         // 顶层：注册为全局（有槽位则 GLOBAL_SLOT，否则 GLOBAL_NAME）
+        // 顶层函数无外层作用域，MAKE_CLOSURE 创建的闭包 upvalue 列表为空，
+        // visitFunCall 命中 GLOBAL_* 时走 CALL 命名调用，由 functionChunks_/
+        // functionClosures_ 查找，无需把闭包值 STORE 到全局槽位。
         int slot = lookupGlobalSlot(fnName);
         if (slot >= 0) {
             varMap_[fnName] = { VarInfo::Kind::GLOBAL_SLOT, static_cast<uint32_t>(slot) };
@@ -820,6 +1023,9 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
             uint32_t idx = ir_->addGlobal(fnName);
             varMap_[fnName] = { VarInfo::Kind::GLOBAL_NAME, idx };
         }
+        // MAKE_CLOSURE 写到 dest vreg 后未消费——pop 释放避免栈泄漏
+        // （栈式 VM MAKE_CLOSURE 会 push 到栈，RegisterVM 写入 dst reg）。
+        emitIR(IROp::POP, { dest }, node->line);
     }
 }
 
@@ -836,18 +1042,38 @@ IROperand AstIRBuilder::visitFunCall(FunCall* node) {
             ops.push_back(visitNode(arg.get()));
         }
         emitIR(IROp::CALL_EXPR, ops, node->line);
-    } else {
-        // 命名调用：编译参数，emit CALL nameIdx argCount
-        uint32_t nameIdx = ir_->addGlobal(node->name);
+        return dest;
+    }
+    // CRITICAL-1 fix: 命名调用若 name 解析为 LOCAL 或 UPVALUE（嵌套闭包值），
+    // 必须走 CALL_EXPR 通过闭包值调用——MAKE_CLOSURE 创建的闭包存储在局部/upvalue 槽中，
+    // 携带 upvalue 绑定。若走 CALL 命名调用，RegisterVM 的 functionClosures_ 不含
+    // 嵌套闭包（仅栈式 VM MAKE_CLOSURE 才注册到 functionClosures_），且即便注册了
+    // 也无法处理同名嵌套闭包按帧隔离的情况（对齐 Compiler.cpp H5 fix 的实现策略）。
+    auto varIt = varMap_.find(node->name);
+    if (varIt != varMap_.end() &&
+        (varIt->second.kind == VarInfo::Kind::LOCAL ||
+         varIt->second.kind == VarInfo::Kind::UPVALUE)) {
+        IROperand calleeVreg = emitLoadVar(node->name, node->line);
         std::vector<IROperand> ops;
         ops.push_back(dest);
-        ops.push_back(IROperand::funcName(nameIdx));
+        ops.push_back(calleeVreg);
         ops.push_back(IROperand::imm(static_cast<uint32_t>(node->arguments.size())));
         for (auto& arg : node->arguments) {
             ops.push_back(visitNode(arg.get()));
         }
-        emitIR(IROp::CALL, ops, node->line);
+        emitIR(IROp::CALL_EXPR, ops, node->line);
+        return dest;
     }
+    // 全局命名调用：emit CALL nameIdx argCount
+    uint32_t nameIdx = ir_->addGlobal(node->name);
+    std::vector<IROperand> ops;
+    ops.push_back(dest);
+    ops.push_back(IROperand::funcName(nameIdx));
+    ops.push_back(IROperand::imm(static_cast<uint32_t>(node->arguments.size())));
+    for (auto& arg : node->arguments) {
+        ops.push_back(visitNode(arg.get()));
+    }
+    emitIR(IROp::CALL, ops, node->line);
     return dest;
 }
 
@@ -869,17 +1095,103 @@ void AstIRBuilder::visitPrintStmt(PrintStmt* node) {
 
 void AstIRBuilder::visitBlock(Block* node) {
     // 限制5：函数内时 enterBlockScope + 编译语句 + leaveBlockScope
-    if (inFunction_) enterBlockScope();
-    for (auto& s : node->statements) {
-        if (!s) continue;
-        visitNode(s.get());
-        // 表达式语句（函数调用/方法调用）的返回值未被消费，需 emit POP。
-        if (s->nodeType == NodeType::NODE_FUN_CALL ||
-            s->nodeType == NodeType::NODE_METHOD_CALL) {
-            emitIR(IROp::POP, {}, s->line);
+    if (inFunction_) {
+        enterBlockScope();
+        for (auto& s : node->statements) {
+            if (!s) continue;
+            visitNode(s.get());
+            // 表达式语句（函数调用/方法调用）的返回值未被消费，需 emit POP。
+            if (s->nodeType == NodeType::NODE_FUN_CALL ||
+                s->nodeType == NodeType::NODE_METHOD_CALL) {
+                emitIR(IROp::POP, {}, s->line);
+            }
         }
+        leaveBlockScope();
+    } else {
+        // 顶层块：实现全局变量遮蔽保护（对齐 Compiler.cpp:1362-1455）
+        // CRITICAL-3 fix: 原实现仅当 lookupGlobalSlot(name) >= 0 时 save/restore，
+        // 导致嵌套顶层块（外层已 removeMapping）的内层块不 save，内层块 var 写入
+        // 污染外层块的全局槽位且退出不 restore。修复：基于 varMap_ 判断是否需要遮蔽，
+        // 支持 GLOBAL_SLOT 和 GLOBAL_NAME 两种旧绑定。
+        blockDepth_++;
+        struct ShadowedSave {
+            std::string varName;
+            VarInfo oldInfo;       // varMap_ 旧条目
+            IROperand savedVreg;   // 保存运行时原值的 vreg
+            bool hadOld;           // varMap_ 是否有旧条目
+            bool wasGlobalSlot;    // 旧条目是否为 GLOBAL_SLOT（需要 removeMapping/restoreMapping）
+            int slot;              // GLOBAL_SLOT 时的 slot 编号
+            uint32_t nameIdx;      // GLOBAL_NAME 时的名称索引
+        };
+        std::vector<ShadowedSave> shadowedSaves;
+        for (auto& s : node->statements) {
+            if (s && s->nodeType == NodeType::NODE_VAR_DECL) {
+                VarDecl* vd = static_cast<VarDecl*>(s.get());
+                auto it = varMap_.find(vd->name);
+                if (it != varMap_.end()) {
+                    ShadowedSave sv;
+                    sv.varName = vd->name;
+                    sv.oldInfo = it->second;
+                    sv.hadOld = true;
+                    sv.savedVreg = ir_->allocVReg();
+                    if (it->second.kind == VarInfo::Kind::GLOBAL_SLOT) {
+                        sv.wasGlobalSlot = true;
+                        sv.slot = static_cast<int>(it->second.index);
+                        sv.nameIdx = 0;
+                        emitIR(IROp::LOAD_GLOBAL,
+                               { sv.savedVreg, IROperand::imm(static_cast<uint32_t>(sv.slot)) },
+                               vd->line);
+                    } else if (it->second.kind == VarInfo::Kind::GLOBAL_NAME) {
+                        sv.wasGlobalSlot = false;
+                        sv.slot = -1;
+                        sv.nameIdx = it->second.index;
+                        emitIR(IROp::LOAD_GLOBAL,
+                               { sv.savedVreg, IROperand::global(sv.nameIdx) },
+                               vd->line);
+                    } else {
+                        // LOCAL/UPVALUE 在顶层不应出现（inFunction_==false），跳过
+                        sv.hadOld = false;
+                    }
+                    shadowedSaves.push_back(std::move(sv));
+                }
+            }
+        }
+        // 临时移除 GLOBAL_SLOT 映射，使块内 visitVarDecl 走 GLOBAL_NAME 路径
+        // （GLOBAL_NAME 旧条目无需 removeMapping，本就不在 globalSlotAllocator_ 中）
+        for (auto& sv : shadowedSaves) {
+            if (sv.hadOld && sv.wasGlobalSlot) {
+                globalSlotAllocator_.removeMapping(sv.varName);
+            }
+        }
+        // 编译块体
+        for (auto& s : node->statements) {
+            if (!s) continue;
+            visitNode(s.get());
+            if (s->nodeType == NodeType::NODE_FUN_CALL ||
+                s->nodeType == NodeType::NODE_METHOD_CALL) {
+                emitIR(IROp::POP, {}, s->line);
+            }
+        }
+        // 恢复：varMap_ 旧条目 + 全局槽位映射 + 运行时原值
+        // 逆序恢复以处理多重嵌套遮蔽
+        for (auto svIt = shadowedSaves.rbegin(); svIt != shadowedSaves.rend(); ++svIt) {
+            auto& sv = *svIt;
+            if (!sv.hadOld) continue;
+            if (sv.wasGlobalSlot) {
+                globalSlotAllocator_.restoreMapping(sv.varName, sv.slot);
+                varMap_[sv.varName] = { VarInfo::Kind::GLOBAL_SLOT, static_cast<uint32_t>(sv.slot) };
+                emitIR(IROp::STORE_GLOBAL,
+                       { IROperand::imm(static_cast<uint32_t>(sv.slot)), sv.savedVreg },
+                       node->line);
+            } else {
+                varMap_[sv.varName] = { VarInfo::Kind::GLOBAL_NAME, sv.nameIdx };
+                emitIR(IROp::STORE_GLOBAL,
+                       { IROperand::global(sv.nameIdx), sv.savedVreg },
+                       node->line);
+            }
+        }
+        blockDepth_--;
     }
-    if (inFunction_) leaveBlockScope();
 }
 
 IROperand AstIRBuilder::visitArrayLiteral(ArrayLiteral* node) {
@@ -937,7 +1249,82 @@ void AstIRBuilder::visitIndexAssign(IndexAssign* node) {
             // 副本会丢失，导致闭包内 arr[i]=v 修改被静默吞掉。
             emitIR(IROp::WRITEBACK_INDEX_UPVALUE, { IROperand::upvalue(info.index) }, node->line);
         }
+        return;
     }
+
+    // MEDIUM-1/2 fix: 2 层嵌套左值（base.outer[i] = val）
+    // 对齐 Compiler.cpp 的 M1 fix：检测 node.object 是否是 IndexAccess(VarRef) 或 MemberAccess(VarRef)
+    IndexAccess* outerIdx = (node->object && node->object->nodeType == NodeType::NODE_INDEX_ACCESS)
+                            ? static_cast<IndexAccess*>(node->object.get()) : nullptr;
+    MemberAccess* outerMem = (node->object && node->object->nodeType == NodeType::NODE_MEMBER_ACCESS)
+                             ? static_cast<MemberAccess*>(node->object.get()) : nullptr;
+    VarRef* baseVar = nullptr;
+    if (outerIdx && outerIdx->object && outerIdx->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerIdx->object.get());
+    else if (outerMem && outerMem->object && outerMem->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerMem->object.get());
+
+    if (baseVar) {
+        // 上一级 INDEX_SET 已将变异后的内层容器存入 lastMutatedReceiver_。
+        // 此处重新加载基变量（全局槽/局部槽均未被修改，仍是原始值），
+        // 然后读取 lastMutatedReceiver_，再发射外层 SET 将变异传播到基变量，
+        // 最后用 WRITEBACK（整体替换语义）将变异后的基变量写回变量槽。
+        // 栈序约束（栈式 VM）：
+        //   - 外层 INDEX_SET 需 [obj, idx, val] → 先 base2，再 outerIdxVal，再 mut
+        //   - 外层 MEMBER_SET 需 [obj, val]      → 先 base2，再 mut
+        IROperand base2 = emitLoadVar(baseVar->name, node->line);
+        IROperand mut = ir_->allocVReg();
+        if (outerIdx) {
+            // 外层是索引：base[outerIdx] = mut
+            IROperand outerIdxVal = visitNode(outerIdx->index.get());
+            emitIR(IROp::LOAD_MUTATED, { mut }, node->line);
+            emitIR(IROp::INDEX_SET, { base2, outerIdxVal, mut }, node->line);
+        } else {
+            // 外层是成员：base.field = mut
+            uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+            emitIR(IROp::LOAD_MUTATED, { mut }, node->line);
+            emitIR(IROp::MEMBER_SET, { base2, IROperand::field(outerFieldIdx), mut }, node->line);
+        }
+        // 最终 WRITEBACK（整体替换语义，将变异后的 base 写回变量槽）
+        VarInfo info = resolveVar(baseVar->name);
+        if (info.kind == VarInfo::Kind::LOCAL) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_LOCAL, { IROperand::local(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_LOCAL,
+                    { IROperand::local(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        } else if (info.kind == VarInfo::Kind::GLOBAL_SLOT) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::imm(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_VAR,
+                    { IROperand::imm(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        } else if (info.kind == VarInfo::Kind::GLOBAL_NAME) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::global(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_VAR,
+                    { IROperand::global(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        } else if (info.kind == VarInfo::Kind::UPVALUE) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_UPVALUE, { IROperand::upvalue(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_UPVALUE,
+                    { IROperand::upvalue(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        }
+        return;
+    }
+
+    // C-P2-2 fix: 3+ 层嵌套或复杂表达式：不支持，报错而非静默丢失修改
+    Logger::Error("AstIRBuilder: 不支持 3 层及以上或复杂表达式嵌套索引赋值", "IR");
 }
 
 IROperand AstIRBuilder::visitMemberAccess(MemberAccess* node) {
@@ -981,7 +1368,81 @@ void AstIRBuilder::visitMemberAssign(MemberAssign* node) {
             emitIR(IROp::WRITEBACK_MEMBER_UPVALUE,
                 { IROperand::upvalue(info.index), IROperand::field(fieldIdx) }, node->line);
         }
+        return;
     }
+
+    // MEDIUM-1/2 fix: 2 层嵌套左值（base.outer.field = val）
+    // 对齐 Compiler.cpp 的 M1 fix：检测 node.object 是否是 IndexAccess(VarRef) 或 MemberAccess(VarRef)
+    IndexAccess* outerIdx = (node->object && node->object->nodeType == NodeType::NODE_INDEX_ACCESS)
+                            ? static_cast<IndexAccess*>(node->object.get()) : nullptr;
+    MemberAccess* outerMem = (node->object && node->object->nodeType == NodeType::NODE_MEMBER_ACCESS)
+                             ? static_cast<MemberAccess*>(node->object.get()) : nullptr;
+    VarRef* baseVar = nullptr;
+    if (outerIdx && outerIdx->object && outerIdx->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerIdx->object.get());
+    else if (outerMem && outerMem->object && outerMem->object->nodeType == NodeType::NODE_VAR_REF)
+        baseVar = static_cast<VarRef*>(outerMem->object.get());
+
+    if (baseVar) {
+        // 上一级 MEMBER_SET 已将变异后的内层容器存入 lastMutatedReceiver_。
+        // 此处重新加载基变量，读取 lastMutatedReceiver_，发射外层 SET 传播变异，
+        // 最后用 WRITEBACK 写回变量槽。
+        // 栈序约束（栈式 VM）：
+        //   - 外层 INDEX_SET 需 [obj, idx, val] → 先 base2，再 outerIdxVal，再 mut
+        //   - 外层 MEMBER_SET 需 [obj, val]      → 先 base2，再 mut
+        IROperand base2 = emitLoadVar(baseVar->name, node->line);
+        IROperand mut = ir_->allocVReg();
+        if (outerIdx) {
+            // 外层是索引：base[outerIdx] = mut
+            IROperand outerIdxVal = visitNode(outerIdx->index.get());
+            emitIR(IROp::LOAD_MUTATED, { mut }, node->line);
+            emitIR(IROp::INDEX_SET, { base2, outerIdxVal, mut }, node->line);
+        } else {
+            // 外层是成员：base.field = mut
+            uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+            emitIR(IROp::LOAD_MUTATED, { mut }, node->line);
+            emitIR(IROp::MEMBER_SET, { base2, IROperand::field(outerFieldIdx), mut }, node->line);
+        }
+        // 最终 WRITEBACK（整体替换语义，将变异后的 base 写回变量槽）
+        VarInfo info = resolveVar(baseVar->name);
+        if (info.kind == VarInfo::Kind::LOCAL) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_LOCAL, { IROperand::local(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_LOCAL,
+                    { IROperand::local(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        } else if (info.kind == VarInfo::Kind::GLOBAL_SLOT) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::imm(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_VAR,
+                    { IROperand::imm(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        } else if (info.kind == VarInfo::Kind::GLOBAL_NAME) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::global(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_VAR,
+                    { IROperand::global(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        } else if (info.kind == VarInfo::Kind::UPVALUE) {
+            if (outerIdx) {
+                emitIR(IROp::WRITEBACK_INDEX_UPVALUE, { IROperand::upvalue(info.index) }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::WRITEBACK_MEMBER_UPVALUE,
+                    { IROperand::upvalue(info.index), IROperand::field(outerFieldIdx) }, node->line);
+            }
+        }
+        return;
+    }
+
+    // C-P2-2 fix: 3+ 层嵌套或复杂表达式：不支持，报错而非静默丢失修改
+    Logger::Error("AstIRBuilder: 不支持 3 层及以上或复杂表达式嵌套成员赋值", "IR");
 }
 
 IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
@@ -1010,17 +1471,89 @@ IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
         ops.push_back(visitNode(a.get()));
     }
     emitIR(isSuperCall ? IROp::SUPER_CALL : IROp::METHOD_CALL, ops, node->line);
-    // C-6 fix: 方法调用后写回接收者（仅当 object 是 VarRef）。
-    // METHOD_CALL 的 sync 逻辑（executeReturnImpl）或内建方法（callBuiltinMethod）
-    // 会更新 obj 寄存器，此处将其写回到原始变量槽。
+    // CRITICAL-4 fix: 方法调用后写回变异后的接收者。
+    // 栈式 VM 的变异内建方法（dispatchArrayBuiltin/dispatchDictBuiltin）在 recvVarIdx/recvSlot
+    // 均为 0xFFFF/0xFF 时将变异后对象存入 lastMutatedReceiver_；实例方法（OP_RETURN）的
+    // fallback 路径也设置 lastMutatedReceiver_。RegVM 的 callBuiltinMethod/executeReturnImpl
+    // 将变异后对象存入 lastMutatedReceiverReg_。此处通过 LOAD_MUTATED 读取，再 STORE 写回。
+    // 原 emitStoreVar(obj) 在栈式 VM 下会栈下溢（obj vreg 栈位置在 METHOD_CALL 后已被 pop），
+    // 在 RegVM 下虽有效但与栈式 VM 行为不一致。统一改用 LOAD_MUTATED + STORE 模式。
     if (isVarRef) {
         VarRef* vr = static_cast<VarRef*>(node->object.get());
-        emitStoreVar(vr->name, obj, node->line);
+        IROperand mutated = ir_->allocVReg();
+        emitIR(IROp::LOAD_MUTATED, { mutated }, node->line);
+        emitStoreVar(vr->name, mutated, node->line);
     } else if (isSuperCall) {
-        // P1 fix: super.method() 的接收者是 this（局部槽 0）。
-        // executeReturnImpl 的字段同步只写回 obj 寄存器（emitLoadVar("this") 产生的临时 vreg），
-        // 不会写回槽 0。若不补写回，super.init 中 this.field=v 的修改会丢失（槽 0 仍指向旧实例）。
-        emitStoreVar("this", obj, node->line);
+        // super.method() 的接收者是 this（局部槽 0）。
+        // executeReturnImpl 的字段同步只写回 objReg，不会写回槽 0。
+        // 通过 LOAD_MUTATED + STORE("this") 把变异后的 this 写回槽 0。
+        IROperand mutated = ir_->allocVReg();
+        emitIR(IROp::LOAD_MUTATED, { mutated }, node->line);
+        emitStoreVar("this", mutated, node->line);
+    } else {
+        // CRITICAL-4 extension: 嵌套接收者（IndexAccess(VarRef) 或 MemberAccess(VarRef)）
+        // 方法调用后通过 LOAD_MUTATED + INDEX_SET/MEMBER_SET + WRITEBACK 链写回变异后接收者。
+        // 对齐 fix-3b 的嵌套左值赋值模式：方法调用产生变异内层容器存入 lastMutatedReceiver_，
+        // 随后重新加载基变量，通过 INDEX_SET/MEMBER_SET 将变异内层写回外层容器，
+        // 最终 WRITEBACK 整体替换基变量。
+        IndexAccess* outerIdx = (node->object && node->object->nodeType == NodeType::NODE_INDEX_ACCESS)
+                                ? static_cast<IndexAccess*>(node->object.get()) : nullptr;
+        MemberAccess* outerMem = (node->object && node->object->nodeType == NodeType::NODE_MEMBER_ACCESS)
+                                 ? static_cast<MemberAccess*>(node->object.get()) : nullptr;
+        VarRef* baseVar = nullptr;
+        if (outerIdx && outerIdx->object && outerIdx->object->nodeType == NodeType::NODE_VAR_REF)
+            baseVar = static_cast<VarRef*>(outerIdx->object.get());
+        else if (outerMem && outerMem->object && outerMem->object->nodeType == NodeType::NODE_VAR_REF)
+            baseVar = static_cast<VarRef*>(outerMem->object.get());
+
+        if (baseVar) {
+            IROperand base2 = emitLoadVar(baseVar->name, node->line);
+            IROperand mut = ir_->allocVReg();
+            if (outerIdx) {
+                IROperand outerIdxVal = visitNode(outerIdx->index.get());
+                emitIR(IROp::LOAD_MUTATED, { mut }, node->line);
+                emitIR(IROp::INDEX_SET, { base2, outerIdxVal, mut }, node->line);
+            } else {
+                uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                emitIR(IROp::LOAD_MUTATED, { mut }, node->line);
+                emitIR(IROp::MEMBER_SET, { base2, IROperand::field(outerFieldIdx), mut }, node->line);
+            }
+            VarInfo info = resolveVar(baseVar->name);
+            if (info.kind == VarInfo::Kind::LOCAL) {
+                if (outerIdx) {
+                    emitIR(IROp::WRITEBACK_INDEX_LOCAL, { IROperand::local(info.index) }, node->line);
+                } else {
+                    uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                    emitIR(IROp::WRITEBACK_MEMBER_LOCAL,
+                        { IROperand::local(info.index), IROperand::field(outerFieldIdx) }, node->line);
+                }
+            } else if (info.kind == VarInfo::Kind::GLOBAL_SLOT) {
+                if (outerIdx) {
+                    emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::imm(info.index) }, node->line);
+                } else {
+                    uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                    emitIR(IROp::WRITEBACK_MEMBER_VAR,
+                        { IROperand::imm(info.index), IROperand::field(outerFieldIdx) }, node->line);
+                }
+            } else if (info.kind == VarInfo::Kind::GLOBAL_NAME) {
+                if (outerIdx) {
+                    emitIR(IROp::WRITEBACK_INDEX_VAR, { IROperand::global(info.index) }, node->line);
+                } else {
+                    uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                    emitIR(IROp::WRITEBACK_MEMBER_VAR,
+                        { IROperand::global(info.index), IROperand::field(outerFieldIdx) }, node->line);
+                }
+            } else if (info.kind == VarInfo::Kind::UPVALUE) {
+                if (outerIdx) {
+                    emitIR(IROp::WRITEBACK_INDEX_UPVALUE, { IROperand::upvalue(info.index) }, node->line);
+                } else {
+                    uint32_t outerFieldIdx = ir_->addGlobal(outerMem->fieldName);
+                    emitIR(IROp::WRITEBACK_MEMBER_UPVALUE,
+                        { IROperand::upvalue(info.index), IROperand::field(outerFieldIdx) }, node->line);
+                }
+            }
+        }
+        // else: 复杂表达式接收者，不写回（方法结果在 dest 中）
     }
     return dest;
 }
@@ -1182,9 +1715,28 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 blockScopes_.back().localSlots.push_back(slot);
             }
         } else {
-            // 顶层：定义为全局变量
-            int gslot = allocateGlobalSlot(node->catchVarName);
-            emitIR(IROp::DEFINE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(gslot)), excVreg }, node->line);
+            // 顶层：检查 catchVarName 是否与全局槽位变量同名（对齐 Compiler.cpp:1272-1311）
+            int existingSlot = lookupGlobalSlot(node->catchVarName);
+            if (existingSlot >= 0) {
+                // 遮蔽保护：保存原值，临时移除映射，catch 变量走 GLOBAL_NAME 路径
+                IROperand saved = ir_->allocVReg();
+                emitIR(IROp::LOAD_GLOBAL, { saved, IROperand::imm(static_cast<uint32_t>(existingSlot)) }, node->line);
+                globalSlotAllocator_.removeMapping(node->catchVarName);
+                uint32_t idx = ir_->addGlobal(node->catchVarName);
+                varMap_[node->catchVarName] = { VarInfo::Kind::GLOBAL_NAME, idx };
+                emitIR(IROp::DEFINE_GLOBAL, { IROperand::global(idx), excVreg }, node->line);
+                // 编译 catch 块后恢复映射 + varMap_ + 原值
+                if (node->catchBlock) visitNode(node->catchBlock.get());
+                globalSlotAllocator_.restoreMapping(node->catchVarName, existingSlot);
+                varMap_[node->catchVarName] = { VarInfo::Kind::GLOBAL_SLOT, static_cast<uint32_t>(existingSlot) };
+                emitIR(IROp::STORE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(existingSlot)), saved }, node->line);
+                emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
+                return;  // catch 块已编译，提前返回
+            } else {
+                // 无遮蔽：直接定义为全局变量
+                int gslot = allocateGlobalSlot(node->catchVarName);
+                emitIR(IROp::DEFINE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(gslot)), excVreg }, node->line);
+            }
         }
     }
     if (node->catchBlock) visitNode(node->catchBlock.get());
@@ -1207,8 +1759,14 @@ bool BytecodeIRBackend::lower(const IRFunction& ir) {
     // 全新 chunk，避免旧哈希表/状态残留
     chunk_ = std::make_unique<BytecodeChunk>();
     chunk_->name = ir.name;
-    chunk_->arity = ir.arity;
-    chunk_->requiredArity = ir.requiredArity;
+    // 栈式 VM 约定：方法的 arity/requiredArity 不含 this（this 作为 slot 0 单独推送）。
+    // 但 IR 在 visitFunDecl 中为 RegVM 约定对方法 arity/requiredArity += 1（含 this）。
+    // 此处还原为栈式 VM 约定：方法名含 '.'（ClassName.method）即视为方法，减去 this。
+    // 否则栈 VM 的 executeCall/executeClassNew 会因 argCount < requiredArity 触发
+    // "构造函数 init 期望 1-1 个参数，但传入了 0 个" 错误（回归：NestedMemberAccessPush）。
+    const bool isMethod = ir.name.find('.') != std::string::npos;
+    chunk_->arity = isMethod ? (ir.arity > 0 ? ir.arity - 1 : 0) : ir.arity;
+    chunk_->requiredArity = isMethod ? (ir.requiredArity > 0 ? ir.requiredArity - 1 : 0) : ir.requiredArity;
     chunk_->localCount = ir.localCount;
     chunk_->defaultConstIndices = ir.defaultConstIndices;
     chunk_->upvalues = ir.upvalues;  // VM-05/06: 复制 upvalue 描述符
@@ -1253,9 +1811,29 @@ uint16_t BytecodeIRBackend::addStringConstant(const std::string& s, const IRFunc
     return chunk_->addConstant(Value(s));
 }
 
+uint16_t BytecodeIRBackend::slotToNameConstant(uint32_t slot, const IRFunction& ir) {
+    // BUG-NEW fix: GLOBAL_SLOT (IMM_UINT) → 变量名 → 字符串常量索引
+    // globalSlotNames_ 由 lowerModule 从 IRModule 设置；若未设置（独立 lower 调用），
+    // 回退到空名并记录错误，避免静默产生坏字节码。
+    std::string name;
+    if (globalSlotNames_ && slot < globalSlotNames_->size()) {
+        name = (*globalSlotNames_)[slot];
+    } else {
+        Logger::Error("BytecodeIRBackend: slotToNameConstant 槽位名表缺失或越界 (slot=" +
+                      std::to_string(slot) + ")", "IR");
+        name = "__unknown_slot_" + std::to_string(slot) + "__";
+    }
+    (void)ir;  // ir 仅用于签名一致性，addStringConstant 不依赖 ir
+    return chunk_->addConstant(Value(name));
+}
+
 bool BytecodeIRBackend::lowerModule(const IRModule& module) {
     // 重置状态
     resetState();
+
+    // BUG-NEW fix: 保存全局槽位名表，供 lowerInstruction 中 WRITEBACK_*_VAR
+    // IMM_UINT 分支将 slot→name 转为字符串常量索引。
+    globalSlotNames_ = &module.globalSlotNames;
 
     // 降低 main 函数 → chunk_
     if (module.mainFunction) {
@@ -1270,6 +1848,8 @@ bool BytecodeIRBackend::lowerModule(const IRModule& module) {
     for (const auto& fn : module.functions) {
         if (!fn) continue;
         BytecodeIRBackend fnBackend;
+        // 子函数共享同一全局槽位名表
+        fnBackend.globalSlotNames_ = globalSlotNames_;
         if (!fnBackend.lower(*fn)) return false;
         auto fnChunk = fnBackend.takeChunk();
         if (fnChunk) {
@@ -1425,9 +2005,11 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         break;
     }
     case IROp::CLOSE_UPVALUE: {
+        // B1 fix: operand 现为 slot_base（块作用域基址），非 upvalue 索引。
+        // 运行时关闭所有指向 slot >= basePointer+slot_base 的 open upvalues。
         if (instr.operands.empty()) return false;
         if (instr.operands[0].index >= 256) {
-            Logger::Error("IR lowering: upvalue 索引超出 255 上限 (idx=" +
+            Logger::Error("IR lowering: CLOSE_UPVALUE slot_base 超出 255 上限 (slot=" +
                           std::to_string(instr.operands[0].index) + ")", "IR");
             return false;
         }
@@ -1613,8 +2195,38 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     // ---- 类 ----
     case IROp::DEFINE_CLASS: {
         // 操作数: [0]=className(FUNC_NAME), [1]=parentName(IMM_UINT, UINT32_MAX=无父类)
+        //         [2] fieldCount (IMM_UINT)
+        //         [3 .. 3+F-1] field names (FIELD_NAME)
+        //         [3+F] methodCount (IMM_UINT)
+        //         [3+F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
         if (instr.operands.size() < 2) return false;
-        uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+        uint32_t nameIdx = instr.operands[0].index;
+        uint16_t nameConstIdx = addStringConstant(globalName(nameIdx), ir);
+
+        // 与 Compiler.cpp visitClassDecl (1792-1823) 对齐：stack VM 的 executeDefineClass
+        // 期望栈顶有模板实例（OP_CLASS_NEW 推入），并从 pendingFieldOrder_ 提取字段顺序
+        // （OP_INIT_FIELD 填充）。若仅 emit OP_DEFINE_CLASS，pop() 会读到错误栈值导致
+        // "模板值不是实例" 运行时错误（回归：NestedMemberAccessPush）。
+        // 注意：IR DEFINE_CLASS 不携带字段初始值表达式（AST 已脱离），此处所有字段
+        // 默认值为 null。字段实际初始化应由 init() 方法完成（与 RegVM 路径一致）。
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CLASS_NEW));
+        emitUint16(chunk_->code, nameConstIdx);
+        chunk_->code.push_back(static_cast<uint8_t>(0));  // argCount = 0
+
+        // 为每个字段 emit OP_NULL + OP_INIT_FIELD（按 IR 操作数中的字段名顺序）
+        if (instr.operands.size() >= 3) {
+            uint32_t fieldCount = instr.operands[2].index;
+            for (uint32_t fi = 0; fi < fieldCount; ++fi) {
+                uint32_t operandIdx = 3 + fi;
+                if (operandIdx >= instr.operands.size()) return false;
+                uint32_t fieldGlobalIdx = instr.operands[operandIdx].index;
+                uint16_t fieldConstIdx = addStringConstant(globalName(fieldGlobalIdx), ir);
+                chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_NULL));
+                chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_INIT_FIELD));
+                emitUint16(chunk_->code, fieldConstIdx);
+            }
+        }
+
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_DEFINE_CLASS));
         emitUint16(chunk_->code, nameConstIdx);
         // 与 Compiler.cpp:1810-1817 对齐：编码父类名索引
@@ -1673,9 +2285,14 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // → OP_WRITEBACK_MEMBER_VAR varIdx(2B) fieldIdx(2B)
         if (instr.operands.size() < 2) return false;
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_MEMBER_VAR));
-        // varIdx(2B)：槽位号或名称常量索引
+        // varIdx(2B)：栈式 VM 的 OP_WRITEBACK_*_VAR 将 varIdx 当作常量池索引处理
+        // （取 chunk.constants[varIdx].stringVal() 作为变量名）。GLOBAL_SLOT (IMM_UINT)
+        // 携带的是槽位号，不是常量索引，直接 emit 会导致误读常量池。
+        // BUG-NEW fix: 对 IMM_UINT 分支查 globalSlotNames_ 将 slot→name，再以字符串常量
+        // 索引形式 emit，与 GLOBAL_NAME 路径统一。
         if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
-            emitUint16(chunk_->code, static_cast<uint16_t>(instr.operands[0].index));
+            uint16_t nameConstIdx = slotToNameConstant(instr.operands[0].index, ir);
+            emitUint16(chunk_->code, nameConstIdx);
         } else {
             uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[0].index), ir);
             emitUint16(chunk_->code, nameConstIdx);
@@ -1706,8 +2323,10 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // → OP_WRITEBACK_INDEX_VAR varIdx(2B)
         if (instr.operands.size() < 1) return false;
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_INDEX_VAR));
+        // BUG-NEW fix: 同 WRITEBACK_MEMBER_VAR，IMM_UINT 需转 slot→name 常量索引
         if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
-            emitUint16(chunk_->code, static_cast<uint16_t>(instr.operands[0].index));
+            uint16_t nameConstIdx = slotToNameConstant(instr.operands[0].index, ir);
+            emitUint16(chunk_->code, nameConstIdx);
         } else {
             uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[0].index), ir);
             emitUint16(chunk_->code, nameConstIdx);
@@ -1773,6 +2392,14 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
             vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_DUP));
+        break;
+    }
+    case IROp::LOAD_MUTATED: {
+        // MEDIUM-1/2 fix: 读取 lastMutatedReceiver_ 到栈顶（不清除）
+        if (!instr.operands.empty()) {
+            vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
+        }
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_LOAD_MUTATED));
         break;
     }
 
@@ -1892,6 +2519,7 @@ const char* irOpName(IROp op) {
     case IROp::PRINT:           return "PRINT";
     case IROp::POP:             return "POP";
     case IROp::DUP:             return "DUP";
+    case IROp::LOAD_MUTATED:    return "LOAD_MUTATED";
     // Bug-6 同型修复：枚举扩展时静默走 "?"，加 default + assert 兜底
     default:
         // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。

@@ -8,7 +8,7 @@
 // ============================================================
 // A3 fix: 统一 RegOp 元数据表（名称/基础长度/是否变长）
 // ------------------------------------------------------------
-// 索引与 RegOp enum 严格对齐（REG_LOAD_CONST=0, ..., REG_WRITEBACK_INDEX_UPVALUE=末位）。
+// 索引与 RegOp enum 严格对齐（REG_LOAD_CONST=0, ..., REG_LOAD_MUTATED=末位）。
 // 新增 RegOp 时只需在此表追加一行，无需修改 regOpName/instructionSize/instructionSizeAt。
 // regOpName() 已内联到头文件基于此表查询；instructionSize 也改用此表。
 // ============================================================
@@ -69,6 +69,7 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_WRITEBACK_INDEX_LOCAL   */ {"REG_WRITEBACK_INDEX_LOCAL",    2, false},
     /* REG_WRITEBACK_MEMBER_UPVALUE*/ {"REG_WRITEBACK_MEMBER_UPVALUE", 4, false},
     /* REG_WRITEBACK_INDEX_UPVALUE */ {"REG_WRITEBACK_INDEX_UPVALUE",  2, false},
+    /* REG_LOAD_MUTATED            */ {"REG_LOAD_MUTATED",             2, false},
 };
 } // anonymous namespace
 
