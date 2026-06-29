@@ -98,13 +98,45 @@ void Ide::closeEvent(QCloseEvent* event) {
         }
     }
 
-    // 崩溃修复: forceStop 保证 worker 线程在返回前完全停止（正常退出或 terminate+join）。
-    // 曾尝试异步关闭机制（closeEvent 触发停止、workerFinished 信号回调 close()），
-    // 但 forceStop 重置 workerThread_ 会断开 finished 信号，导致 workerFinished 永不
-    // 发射、窗口永远无法关闭，故改为同步停止。#24 fix 已移除残留的 pendingClose_ 死分支。
-    // forceStop 最多阻塞 5 秒（worker 协作式退出期间），对关闭场景可接受。
+    // 2026-06-29 审计修复 R4: 关闭路径优先使用 stopForClose（协作式超时），
+    // 失败再 forceStop（terminate+_Exit 兜底）。
+    // 原实现直接 forceStop，其 terminate 路径会调用 std::_Exit(0) 跳过所有析构，
+    // 用户未保存的代码丢失。stopForClose 给 worker 3 秒协作式退出窗口，
+    // 正常 MiniLang 程序（循环体含 checkBreak）几乎都能在此窗口内退出，
+    // 避免 terminate 触发。仅当 worker 卡死（如原生 C++ 死循环）才回退 forceStop。
     if (controller_->isRunning()) {
-        controller_->forceStop();
+        if (!controller_->stopForClose(3000)) {
+            // 2026-06-29 审计修复 R5: 协作式超时失败，forceStop 即将进入
+            // terminate+_Exit(0) 路径（跳过所有析构）。在此提示用户保存未保存的代码，
+            // 避免 terminate 后用户数据丢失。_Exit 后进程立即退出，无法再弹窗。
+            // 注：maybeSave() 已在 closeEvent 开头调用过，但用户可能在 maybeSave 后
+            // 又编辑了代码（如关闭确认期间触发文本变更信号），此处再次检查 isModified
+            // 作为最后防线。
+            if (codeEditor_->document()->isModified()) {
+                auto ret = QMessageBox::warning(this,
+                    QString::fromUtf8("程序无响应，即将强制终止"),
+                    QString::fromUtf8("解释器线程未在 3 秒内响应停止请求，将强制终止进程。\n"
+                                      "强制终止会跳过正常析构，未保存的代码将丢失。\n\n"
+                                      "是否现在保存？"),
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+                    QMessageBox::Save);
+                if (ret == QMessageBox::Save) {
+                    onSave();
+                    // onSave 可能因文件打开失败而未实际保存，检查 modified 状态
+                    if (codeEditor_->document()->isModified()) {
+                        // 保存失败（用户取消另存为对话框或文件不可写），取消关闭
+                        event->ignore();
+                        return;
+                    }
+                } else if (ret == QMessageBox::Cancel) {
+                    event->ignore();
+                    return;
+                }
+                // Discard: 继续强制终止
+            }
+            // 回退 forceStop（可能触发 terminate+_Exit）
+            controller_->forceStop();
+        }
     }
     if (controller_->isVmRunning()) {
         onVmStop();

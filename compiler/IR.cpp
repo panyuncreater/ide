@@ -279,6 +279,15 @@ void AstIRBuilder::emitStoreVar(const std::string& name, IROperand val, int line
     }
 }
 
+// 2026-06-29: 发射 TYPE_CHECK IR — 将类型注解字符串加入常量池，发射 TYPE_CHECK 指令
+// 注意：直接用 addConstant + IROperand::constant，不走 emitConst（后者会额外发射 LOAD_CONST
+// 并返回 vreg，而 TYPE_CHECK 的 lowering 期望 operands[1] 为常量池索引而非 vreg）。
+void AstIRBuilder::emitTypeCheckIR(IROperand val, const std::string& typeAnnotation, int line) {
+    if (typeAnnotation.empty()) return;
+    uint32_t typeIdx = ir_->addConstant(Value(typeAnnotation));
+    emitIR(IROp::TYPE_CHECK, { val, IROperand::constant(typeIdx) }, line);
+}
+
 AstIRBuilder::VarInfo AstIRBuilder::resolveVar(const std::string& name) {
     // 1. 优先查 varMap_（当前作用域已声明的变量）
     auto it = varMap_.find(name);
@@ -670,6 +679,11 @@ IROperand AstIRBuilder::visitVarRef(VarRef* node) {
 
 IROperand AstIRBuilder::visitAssignment(Assignment* node) {
     IROperand val = visitNode(node->value.get());
+    // 2026-06-29: 类型注解运行时检查（赋值时强制）
+    const std::string* varType = findVarType(node->name);
+    if (varType) {
+        emitTypeCheckIR(val, *varType, node->line);
+    }
     emitStoreVar(node->name, val, node->line);
     return val;  // 赋值表达式返回所赋的值
 }
@@ -682,6 +696,11 @@ void AstIRBuilder::visitVarDecl(VarDecl* node) {
         // 无初始化器：初始化为 null
         val = ir_->allocVReg();
         emitIR(IROp::LOAD_NULL, { val }, node->line);
+    }
+    // 2026-06-29: 类型注解运行时检查（在 STORE 前检查 val）
+    emitTypeCheckIR(val, node->typeAnnotation, node->line);
+    if (!node->typeAnnotation.empty()) {
+        varTypes_[node->name] = node->typeAnnotation;
     }
     if (inFunction_) {
         // 函数内：注册为 LOCAL（限制5：记录到当前 BlockScope）
@@ -798,6 +817,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     std::unique_ptr<IRFunction> savedIr = std::move(ir_);
     IRBasicBlock* savedBlock = currentBlock_;
     auto savedVarMap = std::move(varMap_);
+    auto savedVarTypes = std::move(varTypes_);  // 2026-06-29: 类型注解快照
     bool savedInFunction = inFunction_;
     uint32_t savedLocalSlot = nextLocalSlot_;
     auto savedLoopStack = std::move(loopStack_);
@@ -830,6 +850,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     inFunction_ = true;
     nextLocalSlot_ = 0;
     varMap_.clear();
+    varTypes_.clear();  // 2026-06-29: 清空子函数类型注解
     loopStack_.clear();
     blockScopes_.clear();
     blockDepth_ = 0;
@@ -944,6 +965,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         ir_ = std::move(savedIr);
         currentBlock_ = savedBlock;
         varMap_ = std::move(savedVarMap);
+        varTypes_ = std::move(savedVarTypes);  // 2026-06-29
         inFunction_ = savedInFunction;
         nextLocalSlot_ = savedLocalSlot;
         loopStack_ = std::move(savedLoopStack);
@@ -966,6 +988,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     ir_ = std::move(savedIr);
     currentBlock_ = savedBlock;
     varMap_ = std::move(savedVarMap);
+    varTypes_ = std::move(savedVarTypes);  // 2026-06-29
     inFunction_ = savedInFunction;
     nextLocalSlot_ = savedLocalSlot;
     loopStack_ = std::move(savedLoopStack);
@@ -2403,6 +2426,21 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         break;
     }
 
+    // 2026-06-29: 类型注解运行时检查
+    // operands: [src_vreg, type_const_idx]  src_vreg 已在栈顶，peek 不弹栈
+    case IROp::TYPE_CHECK: {
+        if (instr.operands.size() < 2) {
+            Logger::Error("BytecodeIRBackend: TYPE_CHECK 操作数不足", "IR");
+            return false;
+        }
+        // type_const_idx 已在常量池复制阶段（lower() 行 1799-1802）同步到 BytecodeChunk
+        uint16_t typeIdx = static_cast<uint16_t>(instr.operands[1].index);
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_TYPE_CHECK));
+        chunk_->code.push_back(static_cast<uint8_t>(typeIdx & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>((typeIdx >> 8) & 0xFF));
+        break;
+    }
+
     default:
         Logger::Error("BytecodeIRBackend: 未知 IR 操作码 " +
                       std::to_string(static_cast<int>(instr.op)), "IR");
@@ -2520,6 +2558,7 @@ const char* irOpName(IROp op) {
     case IROp::POP:             return "POP";
     case IROp::DUP:             return "DUP";
     case IROp::LOAD_MUTATED:    return "LOAD_MUTATED";
+    case IROp::TYPE_CHECK:      return "TYPE_CHECK";
     // Bug-6 同型修复：枚举扩展时静默走 "?"，加 default + assert 兜底
     default:
         // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。

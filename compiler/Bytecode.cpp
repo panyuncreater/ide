@@ -86,6 +86,7 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 69 OP_WRITEBACK_MEMBER_UPVALUE */ {"OP_WRITEBACK_MEMBER_UPVALUE", 4, false},
     /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE",  2, false},
     /* 71 OP_LOAD_MUTATED             */ {"OP_LOAD_MUTATED",              1, false},
+    /* 72 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK",                3, false},  // opcode(1B) + typeAnnotationConstIdx(2B)
 };
 } // anonymous namespace
 
@@ -456,6 +457,15 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         str += "OP_LOAD_MUTATED";
         offset += 1;
         break;
+    case OpCode::OP_TYPE_CHECK: {
+        uint16_t typeIdx = code[offset + 1] | (code[offset + 2] << 8);
+        str += "OP_TYPE_CHECK typeIdx=" + std::to_string(typeIdx);
+        if (typeIdx < constants.size()) {
+            str += " (\"" + constants[typeIdx].toString() + "\")";
+        }
+        offset += 3;
+        break;
+    }
     default:
         str += "OP_UNKNOWN(" + std::to_string(static_cast<int>(op)) + ")";
         offset += 1;

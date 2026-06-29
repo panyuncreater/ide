@@ -152,6 +152,11 @@ enum class IROp : uint8_t {
     LOAD_MUTATED,    // dest = lastMutatedReceiver_  operands: [dest_vreg]
                      // MEDIUM-1/2 fix: 嵌套左值写回链中读取上一级 SET 产生的变异后容器。
                      // 不清除 lastMutatedReceiver_，后续 SET/WRITEBACK 会覆盖。
+
+    // 2026-06-29: 运行时类型注解检查
+    // operands: [src_vreg, type_const_idx]  type_const_idx 为 CONSTANT 类型（字符串注解）
+    // lower 到 OP_TYPE_CHECK（栈式）/ REG_TYPE_CHECK（寄存器式）
+    TYPE_CHECK,
 };
 
 /// IR 指令
@@ -345,6 +350,7 @@ private:
         uint32_t index;  // LOCAL→slot, GLOBAL_SLOT→槽位号, GLOBAL_NAME→globalNames idx, UPVALUE→uv idx
     };
     std::unordered_map<std::string, VarInfo> varMap_;
+    std::unordered_map<std::string, std::string> varTypes_;  // 2026-06-29: 变量名→类型注解
     bool inFunction_ = false;
     uint32_t nextLocalSlot_ = 0;
     // C-9 fix: 编译类方法时为 true。visitFunDecl 检查此标记，
@@ -408,6 +414,14 @@ private:
     IROperand emitLoadVar(const std::string& name, int line = 0);
     void emitStoreVar(const std::string& name, IROperand val, int line = 0);
     VarInfo resolveVar(const std::string& name);
+
+    /// 2026-06-29: 查找变量类型注解
+    const std::string* findVarType(const std::string& name) const {
+        auto it = varTypes_.find(name);
+        return it != varTypes_.end() ? &it->second : nullptr;
+    }
+    /// 2026-06-29: 发射 TYPE_CHECK IR（检查 val 是否兼容类型注解）
+    void emitTypeCheckIR(IROperand val, const std::string& typeAnnotation, int line);
     uint32_t addUpvalue(const std::string& name);
     void enterBlockScope();
     void leaveBlockScope();

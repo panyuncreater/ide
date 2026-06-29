@@ -26,6 +26,7 @@ set(CMAKE_AUTORCC ON)
 # 核心模块源文件（不含 GUI 和 main）
 # ============================================================
 set(MINILANG_CORE_SOURCES
+    common/TypeChecker.cpp
     lexer/Lexer.cpp
     ast/ASTNode.cpp
     parser/Parser.cpp

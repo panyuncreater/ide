@@ -3,6 +3,11 @@
 #include <string>
 #include <vector>
 #include "Diagnostic.h"
+#include "interpreter/Value.h"  // 2026-06-29: typeMatchValue 需要 Value 类型
+
+// 前向声明全局命名空间下的 AST 节点（避免在 minilang 命名空间内
+// 用 `class Block` 隐式创建 minilang::Block）
+class Block;
 
 // ============================================================
 // TypeChecker 静态类型检查接口（ARCH-10 预留）
@@ -27,6 +32,40 @@
 //   （如 int+int 生成整数加法指令而非通用 OP_ADD）
 
 namespace minilang {
+
+// ============================================================
+// 2026-06-29: 共享运行时类型匹配函数（VM/RegisterVM/Interpreter 复用）
+// ============================================================
+// 提取自 Interpreter::typeMatch，供三后端统一类型注解强制逻辑。
+// 处理：原始类型(int/float/bool/string)、null（兼容所有注解）、
+// array/dict、数组元素类型注解(如 "int[]")、实例精确类名匹配。
+// 实例继承链检查由调用方扩展（Interpreter 用 classRegistry_，VM 用 classInfo_）。
+inline bool typeMatchValue(const Value& val, const std::string& annotation) {
+    if (annotation.empty()) return true;
+    // null 兼容所有类型注解（2026-06-29 用户决策）
+    if (val.isNull()) return true;
+    if (annotation == TypeName::INT) return val.isInt();
+    if (annotation == TypeName::FLOAT) return val.isFloat() || val.isInt();
+    if (annotation == TypeName::BOOL) return val.isBool();
+    if (annotation == TypeName::STRING) return val.isString();
+    if (annotation == TypeName::ARRAY) return val.isArray();
+    if (annotation == TypeName::DICT) return val.isDict();
+    if (annotation == TypeName::NULL_T) return val.isNull();
+    // 数组元素类型注解，如 "int[]"
+    if (annotation.size() >= 2 && annotation.back() == ']' && annotation[annotation.size() - 2] == '[') {
+        if (!val.isArray()) return false;
+        std::string elemType = annotation.substr(0, annotation.size() - 2);
+        for (const auto& elem : val.arrayVal()) {
+            if (!typeMatchValue(elem, elemType)) return false;
+        }
+        return true;
+    }
+    // 实例类型注解：精确类名匹配（继承链由调用方扩展）
+    if (val.isInstance()) {
+        return val.className() == annotation;
+    }
+    return false;
+}
 
 /// 类型种类（预留，未来扩展）
 enum class TypeKind {
@@ -87,7 +126,7 @@ public:
     /// @param program AST 根节点（Block）
     /// @return 类型检查产生的诊断（警告/错误）
     /// @note 当前为空实现，未来扩展时填充具体逻辑
-    virtual DiagnosticBag check(const class Block& /*program*/) {
+    virtual DiagnosticBag check(const Block& /*program*/) {
         // ARCH-10 预留：当前动态类型语言无需静态检查，返回空诊断包
         return DiagnosticBag{};
     }
@@ -126,16 +165,12 @@ public:
     MiniLangTypeChecker() = default;
     ~MiniLangTypeChecker() override = default;
 
-    /// 类型检查 pass（stub：当前返回空 DiagnosticBag，未来扩展实际检查逻辑）
-    DiagnosticBag check(const class Block& /*program*/) override {
-        // A4 stub: 当前不产生任何诊断，未来填充实际类型检查
-        return DiagnosticBag{};
-    }
+    /// 类型检查 pass（2026-06-29: 实现基础字面量类型检查，见 TypeChecker.cpp）
+    /// 检查 VarDecl/Assignment 的字面量初始化器是否匹配类型注解，不匹配则产生警告
+    DiagnosticBag check(const Block& program) override;
 
-    /// 推断变量类型（stub：当前返回 UNKNOWN，未来实现实际推断）
-    TypeInfo inferType(const std::string& /*name*/) const override {
-        return TypeInfo{};
-    }
+    /// 推断变量类型（当前返回 UNKNOWN，未来实现实际推断）
+    TypeInfo inferType(const std::string& name) const override;
 };
 
 } // namespace minilang

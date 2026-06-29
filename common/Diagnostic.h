@@ -26,7 +26,8 @@ enum class DiagSource {
     Interpreter,
     VM,
     Formatter,
-    IDE
+    IDE,
+    TypeChecker  // 2026-06-29: 静态类型检查诊断
 };
 
 /// 单条诊断信息

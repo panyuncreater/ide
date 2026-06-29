@@ -11,6 +11,7 @@
 #include <QColor>
 #include <future>  // QT-R-06 fix: std::async 异步执行
 #include <sstream>
+#include <vector>  // AUDIT-REPL-1 fix: isInputComplete 插值栈
 
 // ============================================================
 // ReplPanel REPL 交互面板实现
@@ -108,8 +109,26 @@ void ReplPanel::setInputEnabled(bool enabled) {
 }
 
 void ReplPanel::onReturnPressed() {
+    // AUDIT-REPL-7 fix: 在任何状态变更前检查异步执行状态。
+    // 原实现 executeLine 内部检查后仍清空 pendingInput_，导致续行累积输入丢失。
+    // 改为入口拒绝并保留 inputLine_ 内容，用户可调整输入或等待。
+    if (replRunning_) {
+        appendError("上一次执行尚未完成，请稍候...");
+        return;
+    }
+
     QString line = inputLine_->text();
     QString trimmedLine = line.trimmed();
+
+    // AUDIT-REPL-3 fix: 续行模式下空行中止续行（等价 Ctrl+C 中断）。
+    // 用户误触续行（如多打 `{`）时无需闭合，直接回车即可丢弃并重启。
+    if (inContinuation_ && trimmedLine.isEmpty()) {
+        appendOutput("[续行已中止]");
+        pendingInput_.clear();
+        inContinuation_ = false;
+        inputLine_->clear();
+        return;
+    }
 
     // R4: 续行模式 — 累积输入
     if (inContinuation_) {
@@ -168,7 +187,12 @@ void ReplPanel::onReturnPressed() {
                 "  {\"key\": val}        字典字面量\n"
                 "  null                 空值\n"
                 "  class Name { ... }   类声明\n"
-                "  多行输入: 未闭合的 { ( [ 会自动续行\n"
+                "  多行输入: 未闭合的 { ( [ 或未闭合字符串会自动续行\n"
+                "  续行中按回车(空行)可中止续行\n"
+                "REPL 行为说明:\n"
+                "  - 表达式语句(如 '1 + 2;')自动求值并打印结果\n"
+                "  - 'clear' 仅清空输出区与续行缓冲,不重置已定义变量/函数/类\n"
+                "  - 重置全部状态需重启 IDE\n"
             );
             pendingInput_.clear();
             inputLine_->clear();
@@ -203,7 +227,20 @@ void ReplPanel::executeLine(const QString& line) {
         return;
     }
 
-    // 确保语句以分号结尾（简单表达式除外）
+    // 2026-06-29 审计修复 R1/R2: 第二道防线——显式检查 worker 是否正在运行。
+    // 原互斥是单向的（onRun 检查 isReplRunning，但 ReplPanel 不检查 isRunning），
+    // 仅依赖 setInputEnabled(false) 禁用输入框。若 UI 禁用因异常路径未生效，
+    // 或未来重构绕过 UI 直接调用 executeLine，会导致 worker 线程与 REPL 异步任务
+    // 并发访问同一 Interpreter 的 globalEnv_/classRegistry_ 等共享状态 → 数据竞争。
+    // 此处显式检查 isRunning() 作为第二道防线，不依赖 UI 状态。
+    if (controller_->isRunning()) {
+        appendError("程序正在运行，请先停止后再使用 REPL");
+        return;
+    }
+
+    // AUDIT-REPL-5 fix: 移除误导性死代码注释"确保语句以分号结尾（简单表达式除外）"。
+    // 实际无任何分号补全逻辑——Parser::expressionStatement 强制 consume(TK_SEMICOLON)，
+    // 故裸表达式必须以 ';' 结尾否则报"期望 ';'"。用户需显式输入分号。
     std::string source = line.toStdString();
 
     // 词法分析（主线程，轻量）
@@ -294,7 +331,25 @@ void ReplPanel::pollReplFuture() {
     if (status != std::future_status::ready) return;  // 仍在执行
 
     pollTimer_->stop();
-    Value result = replFuture_.get();
+
+    // AUDIT-REPL-8 fix: get() 可能抛未捕获异常（如 std::bad_alloc 不属 std::exception 派生，
+    // 或异步 lambda 内漏捕获的异常类型）。外层 try/catch 兜底防止传播到 Qt 事件循环致崩溃。
+    Value result;
+    try {
+        result = replFuture_.get();
+    } catch (const std::exception& e) {
+        appendError(QString("REPL 执行异常: %1").arg(e.what()));
+        replRunning_ = false;
+        setInputEnabled(true);
+        inputLine_->setFocus();
+        return;
+    } catch (...) {
+        appendError("REPL 执行未知异常");
+        replRunning_ = false;
+        setInputEnabled(true);
+        inputLine_->setFocus();
+        return;
+    }
 
     // PANEL-03 fix: null 结果也打印
     appendOutput(QString::fromStdString(result.toString()));
@@ -314,6 +369,13 @@ bool ReplPanel::isInputComplete(const QString& input) {
     bool inLineComment = false;
     int tryCount = 0;     // BUG-R1 fix: 跟踪 try/catch 配对
     int catchCount = 0;
+
+    // AUDIT-REPL-1 fix: 字符串插值栈。MiniLang 字符串支持 "...{expr}..." 插值，
+    // { 在字符串内开启表达式上下文（可能含嵌套字符串/字典/数组），} 闭合插值回到字符串模式。
+    // 栈元素 true = 该 { 由插值开启（闭合时回到字符串模式），false = 普通代码 {。
+    // 原 bug: inString 状态下跳过所有字符，不识别 { 的插值语义，导致
+    // `var x = "{";` 被判定为完整（实际 { 开启插值，" 开启嵌套字符串，EOF 未闭合）。
+    std::vector<bool> interpOpens;
 
     for (int i = 0; i < input.length(); ++i) {
         QChar c = input[i];
@@ -339,7 +401,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
             continue;
         }
 
-        // 处理字符串字面量（跳过内部字符）
+        // 处理字符串字面量（跳过内部字符，识别插值 { ）
         if (inString) {
             if (c == '\\' && i + 1 < input.length()) {
                 ++i; // 跳过转义字符
@@ -347,8 +409,16 @@ bool ReplPanel::isInputComplete(const QString& input) {
             }
             if (c == '"') {
                 inString = false;
+                continue;
             }
-            continue;
+            // AUDIT-REPL-1 fix: { 在字符串内开启插值表达式上下文
+            if (c == '{') {
+                interpOpens.push_back(true);  // 标记此 { 为插值开启
+                ++braceDepth;
+                inString = false;  // 退出字符串模式，进入表达式扫描
+                continue;
+            }
+            continue;  // 字符串内其他字符跳过
         }
 
         if (c == '"') {
@@ -389,8 +459,21 @@ bool ReplPanel::isInputComplete(const QString& input) {
         }
 
         switch (c.toLatin1()) {
-        case '{': ++braceDepth; break;
-        case '}': --braceDepth; break;
+        case '{':
+            interpOpens.push_back(false);  // 普通代码 {
+            ++braceDepth;
+            break;
+        case '}':
+            --braceDepth;
+            // AUDIT-REPL-1 fix: 若此 } 闭合的是插值 {，回到字符串模式
+            if (!interpOpens.empty()) {
+                bool wasInterp = interpOpens.back();
+                interpOpens.pop_back();
+                if (wasInterp) {
+                    inString = true;
+                }
+            }
+            break;
         case '(': ++parenDepth; break;
         case ')': --parenDepth; break;
         case '[': ++bracketDepth; break;
@@ -400,7 +483,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
 
     // AUDIT-BUG-R2 fix: 未闭合的嵌套块注释视为输入不完整
     if (blockCommentDepth > 0) return false;
-    // 未闭合的字符串
+    // 未闭合的字符串（含插值内未闭合的嵌套字符串）
     if (inString) return false;
     // 括号不匹配
     if (braceDepth != 0 || parenDepth != 0 || bracketDepth != 0) return false;

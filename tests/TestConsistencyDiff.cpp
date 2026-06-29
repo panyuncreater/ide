@@ -960,17 +960,24 @@ TEST(ConsistencyDiff, G10_ModInt64MinByNegOneErrors) {
 }
 
 // G11: 字符串方法在非字符串类型上调用
-// 不变量:三后端都应报错。Interpreter 消息"类型 int 不支持方法调用",
-//         VM 消息"方法调用需要类实例"。用 EXPECT_NE 锁定已知差异。
+// 不变量:三后端都应报错,且错误消息完全一致(BUG-1 修复后统一)。
+//   修复前:Interpreter "类型 int 不支持方法调用" / StackVM "方法调用需要类实例"
+//           / RegisterVM "方法调用需要类实例"。三后端两两不一致,且 StackVM/RegisterVM
+//           消息具有误导性(暗示需要类实例,但实际是类型不支持该方法)。
+//   修复后(2026-06-29 BUG-1):三后端统一为"类型 int 不支持方法 upper"。
 TEST(ConsistencyDiff, G11_StringMethodOnIntErrorMessageDivergence) {
     std::string src = "print((42).upper());\n";
     auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
     EXPECT_TRUE(isRuntimeError(ri));
     EXPECT_TRUE(isRuntimeError(rs));
     EXPECT_TRUE(isRuntimeError(rr));
-    // Interpreter 和 VM 错误消息不同(已知差异)
-    EXPECT_NE(errMsg(ri), errMsg(rs));
-    EXPECT_EQ(errMsg(rs), errMsg(rr));  // StackVM 和 RegisterVM 一致
+    // BUG-1 修复后三后端错误消息完全一致
+    EXPECT_EQ(errMsg(ri), errMsg(rs)) << "Interpreter vs StackVM";
+    EXPECT_EQ(errMsg(rs), errMsg(rr)) << "StackVM vs RegisterVM";
+    EXPECT_EQ(errMsg(ri), errMsg(rr)) << "Interpreter vs RegisterVM";
+    // 验证统一消息包含"类型 int 不支持方法 upper"(errMsg 末尾带 ">"
+    // 是 runInterp helper 包裹 "<runtime:...>" 的副产物,不影响一致性检查)
+    EXPECT_NE(errMsg(ri).find("类型 int 不支持方法 upper"), std::string::npos);
 }
 
 // G12: while 块内声明闭包 — 每次迭代应独立捕获

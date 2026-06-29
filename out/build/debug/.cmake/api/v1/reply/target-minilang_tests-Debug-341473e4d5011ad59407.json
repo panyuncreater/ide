@@ -38,19 +38,19 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 92,
+				"line" : 93,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 120,
+				"line" : 121,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 110,
+				"line" : 111,
 				"parent" : 0
 			},
 			{
@@ -59,7 +59,7 @@
 			{
 				"command" : 2,
 				"file" : 1,
-				"line" : 105,
+				"line" : 106,
 				"parent" : 4
 			},
 			{
@@ -110,7 +110,7 @@
 			{
 				"command" : 6,
 				"file" : 0,
-				"line" : 116,
+				"line" : 117,
 				"parent" : 0
 			}
 		]
@@ -282,19 +282,19 @@
 			"id" : "minilang_core::@6890427a1f51a3e7e1df"
 		},
 		{
-			"backtrace" : 3,
-			"id" : "gtest::@1ea2dfc0605fe3ab2a3f"
+			"backtrace" : 0,
+			"id" : "minilang_tests_autogen::@a44f0ac069e85531cdee"
 		},
 		{
 			"backtrace" : 3,
 			"id" : "gtest_main::@1ea2dfc0605fe3ab2a3f"
 		},
 		{
-			"id" : "minilang_tests_autogen_timestamp_deps::@a44f0ac069e85531cdee"
+			"backtrace" : 3,
+			"id" : "gtest::@1ea2dfc0605fe3ab2a3f"
 		},
 		{
-			"backtrace" : 0,
-			"id" : "minilang_tests_autogen::@a44f0ac069e85531cdee"
+			"id" : "minilang_tests_autogen_timestamp_deps::@a44f0ac069e85531cdee"
 		}
 	],
 	"id" : "minilang_tests::@a44f0ac069e85531cdee",
@@ -378,11 +378,11 @@
 			"id" : "Qt6::uic::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "minilang_tests_autogen_timestamp_deps::@a44f0ac069e85531cdee"
-		},
-		{
 			"backtrace" : 0,
 			"id" : "minilang_tests_autogen::@a44f0ac069e85531cdee"
+		},
+		{
+			"id" : "minilang_tests_autogen_timestamp_deps::@a44f0ac069e85531cdee"
 		}
 	],
 	"paths" : 

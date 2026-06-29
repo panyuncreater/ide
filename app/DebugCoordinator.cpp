@@ -14,7 +14,13 @@ DebugCoordinator::DebugCoordinator(std::shared_ptr<Interpreter> interpreter,
     , interpreter_(std::move(interpreter))
     , debugger_(std::move(debugger)) {
     // 转发调试器暂停信号
-    connect(debugger_.get(), &DebugController::pausedAt, this, &DebugCoordinator::pausedAt);
+    // 2026-06-29 审计修复 R3: 显式指定 Qt::QueuedConnection。
+    // pausedAt 在 worker 线程的 doPause 中 emit，DebugCoordinator 在主线程。
+    // 原 AutoConnection 虽会自动升级为 QueuedConnection，但依赖接收方线程亲和性
+    // 不变的隐式假设。显式 QueuedConnection 防止未来重构（如将 DebugController
+    // move 到 worker 线程）破坏跨线程投递语义，导致信号在错误线程直接执行。
+    connect(debugger_.get(), &DebugController::pausedAt, this, &DebugCoordinator::pausedAt,
+            Qt::QueuedConnection);
 }
 
 DebugCoordinator::~DebugCoordinator() {

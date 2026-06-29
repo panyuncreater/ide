@@ -434,6 +434,12 @@ Value Interpreter::numericBinaryOp(BinOpType opType, Value left,
 
 bool Interpreter::typeMatch(const Value& val, const std::string& annotation) const {
     if (annotation.empty()) return true;
+    // 2026-06-29 fix: null 兼容所有类型注解（必须在所有具体类型检查之前）
+    // 理由：null 作为"无值"标记应可赋给任何类型（如 string s = null, int x = null），
+    // 与常见动态语言惯例一致。M7 fix 使 null 仅匹配 "null" 注解过于严格。
+    // 原回退将 null 检查放在函数末尾，但 INT/FLOAT/BOOL/STRING 的早返回使 null 永远
+    // 到不了末尾检查，导致 int a = null 抛错。此处移到最前修复。
+    if (val.isNull()) return true;
     // P2-8 fix: 使用 TypeName 常量替代硬编码字符串
     if (annotation == TypeName::INT) return val.isInt();
     if (annotation == TypeName::FLOAT) return val.isFloat() || val.isInt();
@@ -465,8 +471,6 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
             }
         }
     }
-    // M7 fix: null 不再隐式匹配所有类型注解，仅匹配 "null" 类型
-    if (val.isNull() && annotation == TypeName::NULL_T) return true;
     return false;
 }
 
@@ -1596,7 +1600,9 @@ void Interpreter::visitMethodCall(MethodCall& node) {
         lastValue_ = std::move(result); return;
     }
 
-    runtimeError("类型 " + obj.typeName() + " 不支持方法调用", node.line, node.column);
+    // 2026-06-29 BUG-1 fix (与 StackVM/RegisterVM 对齐): 加入方法名，
+    // 三后端统一为"类型 X 不支持方法 Y"格式（原消息缺少方法名）。
+    runtimeError("类型 " + obj.typeName() + " 不支持方法 " + node.methodName, node.line, node.column);
 }
 
 // ---- P1 重构：类实例方法调用（含 super.method() 处理）----

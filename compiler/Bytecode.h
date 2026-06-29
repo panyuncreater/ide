@@ -110,6 +110,11 @@ enum class OpCode : uint8_t {
 
     // MEDIUM-1/2 fix: 读取 lastMutatedReceiver_ 到栈顶（不清除，供嵌套左值写回链使用）
     OP_LOAD_MUTATED,  // push(lastMutatedReceiver_)  无操作数
+
+    // 2026-06-29: 运行时类型注解检查（三后端统一强制）
+    // 操作数: typeAnnotationConstIdx(2B) — 常量池中类型注解字符串的索引
+    // 语义: peek 栈顶值，检查是否兼容类型注解，不匹配则 runtimeError。不弹栈。
+    OP_TYPE_CHECK,    // peek(stack_top) vs constants[typeIdx]
 };
 
 // ============================================================

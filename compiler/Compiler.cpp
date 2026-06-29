@@ -13,18 +13,23 @@
 Compiler::Compiler() {}
 
 CompileResult Compiler::compile(Block& program) {
-    // A4 fix: 可选类型检查 pass（在 codegen 前运行，stub 当前为 no-op）
-    // 若 strictMode_ 为 true 且检查器报告错误，将错误合并到 diagnostics_ 后继续编译
+    // A4 fix: 可选类型检查 pass（在 codegen 前运行）
+    // 2026-06-29: 接线——将 TypeChecker 诊断合并到 diagnostics_ 输出为警告（不阻断编译）
+    // 注意：typeDiag 必须在 diagnostics_.clear() 之后合并，否则会被各路径的
+    // clear() 清空。此处先收集，待 clear 后再合并。
+    DiagnosticBag typeDiag;
     if (enableTypeCheck_ && typeChecker_) {
-        auto typeDiag = typeChecker_->check(program);
-        // stub 返回空 DiagnosticBag，未来实现后此处会合并诊断
-        // 注意：当前 stub 不阻断编译流程（动态类型语义下类型问题仅警告）
+        typeDiag = typeChecker_->check(program);
     }
 
     // PERF-14: 寄存器式 VM 路径（AST → IR → RegisterBytecode）
     // 启用后走 AstIRBuilder + RegisterBytecodeBackend，配合 RegisterVM 执行
     if (useRegisterVM_) {
         lastRegisterResult_ = compileViaRegisterIR(program);
+        // compileViaRegisterIR 已清空 diagnostics_，此处合并类型检查诊断
+        for (const auto& d : typeDiag.all()) {
+            diagnostics_.add(d);
+        }
         // 寄存器式路径返回空 CompileResult（调用方应使用 getLastRegisterResult()）
         CompileResult emptyResult;
         return emptyResult;
@@ -33,7 +38,12 @@ CompileResult Compiler::compile(Block& program) {
     // ARCH-06: 可选 IR 中间层路径（AST → IR → Bytecode）
     // 启用后走 AstIRBuilder + BytecodeIRBackend（含完整特性 + 可选优化 pass）
     if (useIR_) {
-        return compileViaIR(program);
+        CompileResult irResult = compileViaIR(program);
+        // compileViaIR 已清空 diagnostics_，此处合并类型检查诊断
+        for (const auto& d : typeDiag.all()) {
+            diagnostics_.add(d);
+        }
+        return irResult;
     }
 
     chunk_ = BytecodeChunk();
@@ -43,6 +53,10 @@ CompileResult Compiler::compile(Block& program) {
     varIndex_.clear();
     stringConstIndex_.clear();  // PERF-29 fix: 清空字符串常量去重 map
     diagnostics_.clear();
+    // 合并类型检查诊断（在 clear 之后，确保不被清空）
+    for (const auto& d : typeDiag.all()) {
+        diagnostics_.add(d);
+    }
     functionChunks_.clear();
     currentLocals_.clear();
     inFunction_ = false;
@@ -249,6 +263,15 @@ uint16_t Compiler::identifierIndex(const std::string& name) {
     return idx;
 }
 
+// 2026-06-29: 发射 OP_TYPE_CHECK — 将类型注解字符串加入常量池，发射检查指令
+// 语义：peek 栈顶值，检查是否兼容类型注解，不弹栈。在 SET 操作前调用。
+void Compiler::emitTypeCheck(const std::string& typeAnnotation, int line) {
+    if (typeAnnotation.empty()) return;
+    uint16_t typeIdx = chunk_.addConstant(Value(typeAnnotation));
+    chunk_.writeOp(OpCode::OP_TYPE_CHECK, line);
+    chunk_.writeShort(typeIdx, line);
+}
+
 // ============================================================
 // C3 fix: 编译上下文 RAII 守卫实现
 // ============================================================
@@ -262,6 +285,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.chunk = std::move(chunk_);
     ctx.varIndex = std::move(varIndex_);
     ctx.currentLocals = std::move(currentLocals_);
+    ctx.varTypes = std::move(varTypes_);  // 2026-06-29: 类型注解快照
     ctx.inFunction = inFunction_;
     ctx.outerLocals = std::move(outerLocals_);
     ctx.peakLocals = peakLocals_;
@@ -281,6 +305,7 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     chunk_ = std::move(ctx.chunk);
     varIndex_ = std::move(ctx.varIndex);
     currentLocals_ = std::move(ctx.currentLocals);
+    varTypes_ = std::move(ctx.varTypes);  // 2026-06-29: 类型注解恢复
     inFunction_ = ctx.inFunction;
     outerLocals_ = std::move(ctx.outerLocals);
     peakLocals_ = ctx.peakLocals;
@@ -518,6 +543,15 @@ void Compiler::visitVarDecl(VarDecl& node) {
         chunk_.writeOp(OpCode::OP_NULL, node.line);
     }
 
+    // 2026-06-29: 类型注解运行时检查（三后端统一强制）
+    // 在 SET 操作前发射 OP_TYPE_CHECK，peek 栈顶值检查类型兼容性
+    // 类名注解也检查（实例类型匹配），null 兼容所有类型
+    emitTypeCheck(node.typeAnnotation, node.line);
+    // 记录类型注解，供后续 Assignment 检查
+    if (!node.typeAnnotation.empty()) {
+        varTypes_[node.name] = node.typeAnnotation;
+    }
+
     // 在函数体内使用局部变量
     if (inFunction_) {
         auto it = currentLocals_.find(node.name);
@@ -561,6 +595,13 @@ void Compiler::visitVarDecl(VarDecl& node) {
 
 void Compiler::visitAssignment(Assignment& node) {
     compileNode(node.value.get());
+
+    // 2026-06-29: 类型注解运行时检查（赋值时强制）
+    // 查找变量声明的类型注解，有则发射 OP_TYPE_CHECK（peek 栈顶，不弹栈）
+    const std::string* varType = findVarType(node.name);
+    if (varType) {
+        emitTypeCheck(*varType, node.line);
+    }
 
     // C2 fix: 赋值作为表达式应产生值。先 DUP 保留一份在栈上，
     // SET 操作消费原始值后，DUP 的副本留在栈顶供外层表达式使用。

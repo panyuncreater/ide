@@ -838,6 +838,18 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         break;
     }
 
+    // 2026-06-29: 类型注解运行时检查
+    // operands: [src_vreg, type_const_idx]
+    case IROp::TYPE_CHECK: {
+        if (instr.operands.size() < 2) return false;
+        uint8_t src = vregToReg(instr.operands[0].index);
+        uint16_t typeIdx = static_cast<uint16_t>(instr.operands[1].index);
+        chunk_->writeOp(RegOp::REG_TYPE_CHECK, line);
+        chunk_->writeReg(src, line);
+        chunk_->writeShort(typeIdx, line);
+        break;
+    }
+
     default:
         Logger::Error("RegisterBytecodeBackend: 未支持的 IR 指令 " +
                       std::to_string(static_cast<int>(instr.op)), "RegIR");

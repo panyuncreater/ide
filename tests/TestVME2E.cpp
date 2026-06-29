@@ -2140,3 +2140,96 @@ TEST(BackendConsistency, DictMissingKeyReturnsNull) {
     EXPECT_EQ(runVMOutputForConsistency(src), expected);
     EXPECT_EQ(runRegVMOutput(src), expected);
 }
+
+// ============================================================
+// 2026-06-29: OP_TYPE_CHECK / REG_TYPE_CHECK 三后端运行时类型强制
+// ------------------------------------------------------------
+// 验证带类型注解的变量在运行时收到不兼容值时，三后端统一报错；
+// 兼容值在三后端统一通过。null 兼容所有类型注解。
+// ============================================================
+
+// 类型注解合规赋值：三后端应一致通过并产生输出
+TEST(BackendConsistency, TypeAnnotationCompatibleAssignment) {
+    std::string src =
+        "int a = 5;"
+        "a = 10;"
+        "print(a);";
+    std::string expected = "10";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src), expected);
+    EXPECT_EQ(runVMOutputForConsistency(src), expected);
+    EXPECT_EQ(runRegVMOutput(src), expected);
+}
+
+// 类型注解违反赋值（int 接收 string）：三后端应一致报错（无输出）
+TEST(BackendConsistency, TypeAnnotationViolationStringToInt) {
+    std::string src =
+        "int a = 5;"
+        "a = \"hello\";"
+        "print(a);";
+    std::string interp = runInterpreterOutputForConsistency(src);
+    std::string stackVm = runVMOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src, true);
+    // 三后端都不应打印 "hello"（类型违反应中断执行）
+    EXPECT_EQ(interp.find("hello"), std::string::npos);
+    EXPECT_EQ(stackVm.find("hello"), std::string::npos);
+    EXPECT_EQ(regVm.find("hello"), std::string::npos);
+}
+
+// 类型注解违反赋值（int 接收 bool）：三后端应一致报错
+TEST(BackendConsistency, TypeAnnotationViolationBoolToInt) {
+    std::string src =
+        "int a = 5;"
+        "a = true;"
+        "print(a);";
+    std::string interp = runInterpreterOutputForConsistency(src);
+    std::string stackVm = runVMOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src, true);
+    // 三后端都不应打印 "true"
+    EXPECT_EQ(interp.find("true"), std::string::npos);
+    EXPECT_EQ(stackVm.find("true"), std::string::npos);
+    EXPECT_EQ(regVm.find("true"), std::string::npos);
+}
+
+// null 兼容所有类型注解：三后端应一致通过
+TEST(BackendConsistency, NullCompatibleWithAllAnnotations) {
+    std::string src =
+        "int a = null;"
+        "string b = null;"
+        "bool c = null;"
+        "print(a);"
+        "print(b);"
+        "print(c);";
+    std::string expected = "nullnullnull";
+    EXPECT_EQ(runInterpreterOutputForConsistency(src), expected);
+    EXPECT_EQ(runVMOutputForConsistency(src), expected);
+    EXPECT_EQ(runRegVMOutput(src), expected);
+}
+
+// int→float 宽化：三后端应一致通过
+TEST(BackendConsistency, IntWidensToFloatAnnotation) {
+    std::string src =
+        "float a = 5;"
+        "a = 10;"
+        "print(a);";
+    // Interpreter/VM 对 int→float 宽化的输出格式可能不同（5 vs 5.0）
+    // 仅验证三后端都通过（无错误），输出值相同
+    std::string interp = runInterpreterOutputForConsistency(src);
+    std::string stackVm = runVMOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src);
+    EXPECT_FALSE(interp.empty());
+    EXPECT_EQ(interp, stackVm);
+    EXPECT_EQ(interp, regVm);
+}
+
+// 类型注解违反初始化（int a = "hello"）：三后端应一致报错
+TEST(BackendConsistency, TypeAnnotationViolationOnVarDeclInit) {
+    std::string src =
+        "int a = \"hello\";"
+        "print(a);";
+    std::string interp = runInterpreterOutputForConsistency(src);
+    std::string stackVm = runVMOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src, true);
+    EXPECT_EQ(interp.find("hello"), std::string::npos);
+    EXPECT_EQ(stackVm.find("hello"), std::string::npos);
+    EXPECT_EQ(regVm.find("hello"), std::string::npos);
+}

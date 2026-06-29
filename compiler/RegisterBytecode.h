@@ -120,6 +120,11 @@ enum class RegOp : uint8_t {
     REG_WRITEBACK_INDEX_UPVALUE,  // uvIdx(1B)
     // MEDIUM-1/2 fix: 读取 lastMutatedReceiverReg_ 到目标寄存器（不清除）
     REG_LOAD_MUTATED,  // dst(1B)
+
+    // 2026-06-29: 运行时类型注解检查（三后端统一强制）
+    // 操作数: src(1B) + typeAnnotationConstIdx(2B)
+    // 语义: 检查 reg[src] 是否兼容类型注解，不匹配则 runtimeError
+    REG_TYPE_CHECK,    // src(1B), typeAnnotationConstIdx(2B)
 };
 
 // ============================================================

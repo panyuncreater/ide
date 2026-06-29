@@ -23,6 +23,7 @@ if(NOT TARGET minilang_core)
 
     # 核心静态库
     add_library(minilang_core STATIC
+        ${MINILANG_ROOT_DIR}/common/TypeChecker.cpp
         ${MINILANG_ROOT_DIR}/lexer/Lexer.cpp
         ${MINILANG_ROOT_DIR}/ast/ASTNode.cpp
         ${MINILANG_ROOT_DIR}/parser/Parser.cpp

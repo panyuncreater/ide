@@ -12,6 +12,7 @@
 #include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include "common/Utf8Utils.h"
 #include "common/Logger.h"
+#include "common/TypeChecker.h"        // 2026-06-29: typeMatchValue（REG_TYPE_CHECK）
 #include <cassert>
 #include <cmath>
 
@@ -263,6 +264,7 @@ VMResult RegisterVM::executeOneInstruction() {
     case RegOp::REG_WRITEBACK_INDEX_UPVALUE:
     case RegOp::REG_LOAD_MUTATED:
     case RegOp::REG_SUPER_CALL:
+    case RegOp::REG_TYPE_CHECK:
         return executeMisc(op, ip);
 
     default:
@@ -1147,6 +1149,36 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         ip += 2;
         break;
     }
+    // 2026-06-29: 运行时类型注解检查（三后端统一强制）
+    case RegOp::REG_TYPE_CHECK: {
+        uint8_t src = chunk.code[ip + 1];
+        uint16_t typeIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
+        if (typeIdx >= chunk.constants.size()) {
+            return runtimeError("REG_TYPE_CHECK: 类型注解常量索引越界");
+        }
+        const std::string& annotation = chunk.constants[typeIdx].stringVal();
+        const Value& val = reg(src);
+        if (!minilang::typeMatchValue(val, annotation)) {
+            // 实例继承链检查
+            if (val.isInstance() && !annotation.empty()) {
+                auto classIt = classInfo_.find(val.className());
+                int depth = 0;
+                bool found = false;
+                while (classIt != classInfo_.end() && depth < 64) {
+                    if (classIt->second.name == annotation) { found = true; break; }
+                    if (classIt->second.parent.empty()) break;
+                    classIt = classInfo_.find(classIt->second.parent);
+                    ++depth;
+                }
+                if (found) { ip += 4; break; }
+            }
+            return runtimeError(ErrorFormat::format(
+                "类型注解违反: 期望类型 %s，实际为 %s",
+                annotation.c_str(), val.typeName().c_str()));
+        }
+        ip += 4;  // op(1B) + src(1B) + typeIdx(2B)
+        break;
+    }
     case RegOp::REG_WRITEBACK_INDEX_LOCAL: {
         // C-1 fix: 将 lastMutatedReceiverReg_ 指向的变异后容器写回局部变量槽
         uint8_t slot = chunk.code[ip + 1];
@@ -1882,7 +1914,10 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
             result = Value::nullValue();
             return true;
         }
-        default: break;
+        default:
+            // 2026-06-29 BUG-1 fix: 已知内置方法但不适用于数组（如 dict.keys 对数组调用）
+            runtimeError("数组没有方法 " + methodName);
+            return true;
         }
     } else if (obj.isDict()) {
         switch (method) {
@@ -1930,7 +1965,10 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
             result = Value::nullValue();
             return true;
         }
-        default: break;
+        default:
+            // 2026-06-29 BUG-1 fix: 已知内置方法但不适用于字典（如 arr.push 对字典调用）
+            runtimeError("字典没有方法 " + methodName);
+            return true;
         }
     } else if (obj.isString()) {
         switch (method) {
@@ -2002,11 +2040,21 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName,
             runtimeError(r.error().message);
             return true;
         }
-        default: break;
+        default:
+            // 2026-06-29 BUG-1 fix: 已知内置方法但不适用于字符串（如 arr.push 对字符串调用）
+            runtimeError("字符串没有方法 " + methodName);
+            return true;
         }
     }
-    // 未识别为内建方法：返回 false 让 caller 继续查找用户定义方法
-    return false;
+    // 2026-06-29 BUG-1 fix: obj 不是 array/dict/string。
+    // - 若为实例：返回 false 让 caller 查找用户定义方法（用户类可能定义了与内置方法同名的方法）
+    // - 若为原始类型(null/int/float/bool/closure)：原代码 return false 导致 caller 误报
+    //   "方法调用需要类实例"，消息具有误导性。改为发出准确的类型错误消息。
+    if (obj.isInstance()) {
+        return false;
+    }
+    runtimeError("类型 " + obj.typeName() + " 不支持方法 " + methodName);
+    return true;
 }
 
 // ============================================================

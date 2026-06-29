@@ -11,6 +11,7 @@
 #include "common/Utf8Utils.h"            // P0-4 fix: UTF-8 码位工具
 #include "common/BoundsCheck.h"           // Dedup-7A: inBounds 替代重复的索引检查
 #include "interpreter/ErrorFormat.h"    // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
+#include "common/TypeChecker.h"        // 2026-06-29: typeMatchValue（OP_TYPE_CHECK）
 #include "Logger.h"
 #include <sstream>
 #include <climits>
@@ -604,6 +605,37 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
         push(lastMutatedReceiver_);
         notifyStep(ip, op);
         ip += 1;
+        break;
+    }
+
+    // 2026-06-29: 运行时类型注解检查（三后端统一强制）
+    case OpCode::OP_TYPE_CHECK: {
+        uint16_t typeIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (typeIdx >= chunk.constants.size()) {
+            return runtimeError("OP_TYPE_CHECK: 类型注解常量索引越界");
+        }
+        const std::string& annotation = chunk.constants[typeIdx].stringVal();
+        const Value& val = peek(0);
+        if (!minilang::typeMatchValue(val, annotation)) {
+            // 实例继承链检查（typeMatchValue 仅做精确类名匹配）
+            if (val.isInstance() && !annotation.empty()) {
+                auto classIt = classInfo_.find(val.className());
+                int depth = 0;
+                bool found = false;
+                while (classIt != classInfo_.end() && depth < 64) {
+                    if (classIt->second.name == annotation) { found = true; break; }
+                    if (classIt->second.superClassName.empty()) break;
+                    classIt = classInfo_.find(classIt->second.superClassName);
+                    ++depth;
+                }
+                if (found) { ip += 3; break; }  // 匹配，通过
+            }
+            return runtimeError(ErrorFormat::format(
+                "类型注解违反: 期望类型 %s，实际为 %s",
+                annotation.c_str(), val.typeName().c_str()));
+        }
+        notifyStep(ip, op);
+        ip += 3;  // opcode(1B) + typeIdx(2B)
         break;
     }
 

@@ -469,3 +469,112 @@ TEST(CompilerGlobalSlotTest, DefineGlobalSlotOperand) {
     EXPECT_EQ(definedSlots[0], 0);
     EXPECT_EQ(definedSlots[1], 1);
 }
+
+// ============================================================
+// 8. 类型注解强制与 TypeChecker 警告（2026-06-29）
+// ------------------------------------------------------------
+// 验证三件事：
+//   (a) TypeChecker 在编译期对字面量初始化/赋值产生 DiagSource::TypeChecker 警告
+//   (b) 编译器对带类型注解的 VarDecl/Assignment 发射 OP_TYPE_CHECK 指令
+//   (c) 三后端运行时（Interpreter/VM/RegisterVM）在类型违反时统一抛错
+// ============================================================
+
+/// 辅助：以类型检查启用模式编译，返回 (result, diagnostics 引用)
+struct TypeCheckCompile {
+    CompileResult result;
+    Compiler compiler;  // 保留所有权以访问 diagnostics
+};
+static TypeCheckCompile compileWithTypeCheck(const std::string& source) {
+    TypeCheckCompile tc;
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    if (!ast) return tc;
+    tc.compiler.setEnableTypeCheck(true);
+    tc.result = tc.compiler.compile(*ast);
+    return tc;
+}
+
+/// 辅助：统计 DiagSource::TypeChecker 的警告数量
+static int countTypeCheckerWarnings(const DiagnosticBag& bag) {
+    int n = 0;
+    for (const auto& d : bag.all()) {
+        if (d.source == DiagSource::TypeChecker && d.isWarning()) ++n;
+    }
+    return n;
+}
+
+/// A1: `int a = "hello"` — 字面量初始化器类型不匹配 → 产生 TypeChecker 警告
+TEST(CompilerTypeCheckTest, A1_LiteralMismatchOnVarDecl) {
+    auto tc = compileWithTypeCheck("int a = \"hello\";");
+    int warns = countTypeCheckerWarnings(tc.compiler.getDiagnostics());
+    EXPECT_GE(warns, 1) << "TypeChecker 应对 int a = \"hello\" 产生至少一条警告";
+}
+
+/// A2: `int a = 5; a = "hello"` — 字面量赋值类型不匹配 → 产生 TypeChecker 警告
+TEST(CompilerTypeCheckTest, A2_LiteralMismatchOnAssignment) {
+    auto tc = compileWithTypeCheck("int a = 5; a = \"hello\";");
+    int warns = countTypeCheckerWarnings(tc.compiler.getDiagnostics());
+    EXPECT_GE(warns, 1) << "TypeChecker 应对 a = \"hello\" 产生警告";
+}
+
+/// A3: `float a = 5` — int 字面量可宽化为 float 注解 → 不应产生警告
+TEST(CompilerTypeCheckTest, A3_IntWidensToFloat) {
+    auto tc = compileWithTypeCheck("float a = 5;");
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
+        << "int→float 宽化应为合法，无警告";
+}
+
+/// A4: `string a = 5` — 字面量 int 不匹配 string 注解 → 产生警告
+TEST(CompilerTypeCheckTest, A4_IntToStringMismatch) {
+    auto tc = compileWithTypeCheck("string a = 5;");
+    EXPECT_GE(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 1);
+}
+
+/// A5: `bool a = "true"` — 字面量 string 不匹配 bool 注解 → 产生警告
+TEST(CompilerTypeCheckTest, A5_StringToBoolMismatch) {
+    auto tc = compileWithTypeCheck("bool a = \"true\";");
+    EXPECT_GE(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 1);
+}
+
+/// A6: `int a = null` — null 兼容所有类型注解 → 不应产生警告
+TEST(CompilerTypeCheckTest, A6_NullCompatibleWithAllAnnotations) {
+    auto tc = compileWithTypeCheck("int a = null;");
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
+        << "null 应兼容所有类型注解，无警告";
+}
+
+/// A7: `int a = 5` — 带类型注解的 VarDecl 应发射 OP_TYPE_CHECK 指令
+TEST(CompilerTypeCheckTest, A7_EmitsOpTypeCheckForAnnotatedVarDecl) {
+    auto tc = compileWithTypeCheck("int a = 5;");
+    EXPECT_TRUE(containsOp(tc.result.mainChunk, OpCode::OP_TYPE_CHECK))
+        << "带 int 类型注解的 VarDecl 应发射 OP_TYPE_CHECK";
+}
+
+/// A8: `var a = 5` — 无类型注解的 VarDecl 不应发射 OP_TYPE_CHECK
+TEST(CompilerTypeCheckTest, A8_NoOpTypeCheckForUnannotatedVarDecl) {
+    auto tc = compileWithTypeCheck("var a = 5;");
+    EXPECT_FALSE(containsOp(tc.result.mainChunk, OpCode::OP_TYPE_CHECK))
+        << "无类型注解的 VarDecl 不应发射 OP_TYPE_CHECK";
+}
+
+/// A9: `int a = 5; a = 10` — 后续字面量赋值仍应发射 OP_TYPE_CHECK
+TEST(CompilerTypeCheckTest, A9_EmitsOpTypeCheckForAnnotatedAssignment) {
+    auto tc = compileWithTypeCheck("int a = 5; a = 10;");
+    int typeCheckCount = 0;
+    auto ops = collectOps(tc.result.mainChunk);
+    for (auto op : ops) {
+        if (op == OpCode::OP_TYPE_CHECK) ++typeCheckCount;
+    }
+    EXPECT_GE(typeCheckCount, 2)
+        << "VarDecl 和 Assignment 各应发射一次 OP_TYPE_CHECK";
+}
+
+/// A10: `int[] a = [1, 2, 3]` — 数组类型注解应发射 OP_TYPE_CHECK
+TEST(CompilerTypeCheckTest, A10_ArrayTypeAnnotationEmitsCheck) {
+    auto tc = compileWithTypeCheck("int[] a = [1, 2, 3];");
+    EXPECT_TRUE(containsOp(tc.result.mainChunk, OpCode::OP_TYPE_CHECK));
+    // 数组字面量在编译期不做元素级检查（运行时 OP_TYPE_CHECK 检查）
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0);
+}

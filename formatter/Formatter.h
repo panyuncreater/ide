@@ -62,7 +62,10 @@ struct FormatOptions {
     bool spaceAroundOperators = true;  // 二元运算符两侧加空格
     bool spaceAfterComma = true;       // 逗号后加空格
     bool blankLineBetweenFunctions = true;  // 函数/类声明之间加空行
-    bool semicolons = true;            // 语句末尾加分号
+    // AUDIT-FMT-P1 fix: 移除 semicolons 字段——它是死代码（声明但从未被读取）。
+    // MiniLang 解析器严格要求语句以 ';' 结束（Parser.cpp 中 var/expr/break/continue
+    // 等均 consume(TK_SEMICOLON)），若实现 semicolons=false 会产生无法重新解析的代码，
+    // 破坏往返不变量。原配置项误导用户以为可选关闭分号，移除以避免误用。
 
     /// 预设：紧凑风格
     static FormatOptions compact() {

@@ -114,6 +114,7 @@ private:
     // 使 std::move 给 CompileResult 时类型匹配。
     std::map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
     std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
+    std::unordered_map<std::string, std::string> varTypes_;  // 2026-06-29: 变量名→类型注解（local+global）
     bool inFunction_ = false;                       // 是否在函数体内
     std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;  // 类名 → 字段名列表（含继承字段）
     std::unordered_map<std::string, int> outerLocals_;  // 外层函数的局部变量（用于检测闭包捕获）
@@ -158,6 +159,7 @@ private:
         BytecodeChunk chunk;
         std::unordered_map<std::string, uint16_t> varIndex;
         std::unordered_map<std::string, int> currentLocals;
+        std::unordered_map<std::string, std::string> varTypes;  // 2026-06-29: 类型注解快照
         bool inFunction = false;
         std::unordered_map<std::string, int> outerLocals;
         int peakLocals = 0;
@@ -204,6 +206,15 @@ private:
 
     /// A2: 查找全局槽位（委托给 globalSlotAllocator_）
     int lookupGlobalSlot(const std::string& name) const { return globalSlotAllocator_.lookup(name); }
+
+    /// 2026-06-29: 查找变量的类型注解（沿 outerLocals_ 链不追踪，仅当前作用域）
+    const std::string* findVarType(const std::string& name) const {
+        auto it = varTypes_.find(name);
+        return it != varTypes_.end() ? &it->second : nullptr;
+    }
+
+    /// 2026-06-29: 发射 OP_TYPE_CHECK 指令（检查栈顶值是否兼容类型注解）
+    void emitTypeCheck(const std::string& typeAnnotation, int line);
 
     /// 编译 AST 节点（通过 Visitor 模式的 accept 分派）
     void compileNode(ASTNode* node);

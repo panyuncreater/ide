@@ -371,21 +371,21 @@ static bool needsParens(ASTNode* child, BinOpType parentOpType, bool isRight) {
             return !isRight;  // 右结合：左操作数需要括号
         } else {
             // 左结合：右操作数同优先级子表达式必须加括号以保持原始分组。
-            // #15 fix: ADD/MUL 也需加括号——浮点运算不满足结合律：
-            //   (a+b)+c ≠ a+(b+c)（舍入误差），(a*b)*c ≠ a*(b*c)。
-            // 原实现误认为 ADD/MUL 满足结合律而漏加括号，导致 a+(b+c) 被格式化为 a+b+c，
-            // 重新解析为 (a+b)+c，浮点语义被改变。整数虽结合律成立，但为统一分组语义一并加括号。
-            // SUB/DIV/MOD 本就不满足结合律；MUL 右操作数为 DIV/MOD 同理需括号（分配律不成立）。
+            // AUDIT-FMT-P0 fix: 原实现仅对 ADD/SUB/MUL/DIV/MOD 加括号（#15 fix），
+            // EQ/NEQ/LT/GT/LTE/GTE/AND/OR 漏处理，导致 1 == (2 == 3) 被格式化为 1 == 2 == 3，
+            // 重新解析得到 (1 == 2) == 3，AST 结构改变，往返不变量被破坏。
+            // 修复方案：移除运算符特判，对所有左结合运算符的右操作数同优先级子表达式统一加括号。
+            // 理由：
+            //   - 浮点算术不满足结合律：(a+b)+c ≠ a+(b+c)（舍入误差）
+            //   - SUB/DIV/MOD 本就不满足结合律
+            //   - EQ/NEQ/LT/GT/LTE/GTE 返回 bool，重新分组会改变比较语义
+            //     （如 (1 < 2) < 3 → true < 3 → true；1 < (2 < 3) → 1 < true → 1 < 1 → false）
+            //   - AND/OR 虽短-circuit 行为在多数情况下等价，但 AST 分组改变违反保形变换原则
+            //   - 左操作数同优先级无需括号（左结合天然保持分组）
             if (isRight) {
-                if (parentOpType == BinOpType::BIN_ADD ||
-                    parentOpType == BinOpType::BIN_SUB ||
-                    parentOpType == BinOpType::BIN_MUL ||
-                    parentOpType == BinOpType::BIN_DIV ||
-                    parentOpType == BinOpType::BIN_MOD) {
-                    return true;
-                }
+                return true;
             }
-            return false;   // 左操作数同优先级无需括号（左结合天然保持分组）
+            return false;
         }
     }
     return false;

@@ -70,6 +70,7 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_WRITEBACK_MEMBER_UPVALUE*/ {"REG_WRITEBACK_MEMBER_UPVALUE", 4, false},
     /* REG_WRITEBACK_INDEX_UPVALUE */ {"REG_WRITEBACK_INDEX_UPVALUE",  2, false},
     /* REG_LOAD_MUTATED            */ {"REG_LOAD_MUTATED",             2, false},
+    /* REG_TYPE_CHECK              */ {"REG_TYPE_CHECK",               4, false},  // op(1B) + src(1B) + typeAnnotationConstIdx(2B)
 };
 } // anonymous namespace
 

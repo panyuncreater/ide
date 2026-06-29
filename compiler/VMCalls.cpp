@@ -757,12 +757,16 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
         // 先保存类型信息，因为 pop 会使 obj 引用失效
         bool wasInstance = obj.isInstance();
         std::string clsName = wasInstance ? obj.className() : "";
+        // 2026-06-29 BUG-1 fix (与 RegisterVM 对齐): 非 array/dict/string/instance
+        // 类型（null/int/float/bool/closure）调用方法时，原消息"方法调用需要类实例"
+        // 具有误导性。改为与 RegisterVM/Interpreter 一致的"类型 X 不支持方法 Y"。
+        std::string typeName = wasInstance ? "" : obj.typeName();
         for (uint8_t i = 0; i < argCount; ++i) pop();
         pop();
         if (wasInstance) {
             return runtimeError("类 " + clsName + " 没有方法 " + methodName);
         } else {
-            return runtimeError("方法调用需要类实例");
+            return runtimeError("类型 " + typeName + " 不支持方法 " + methodName);
         }
 }
 

@@ -1039,6 +1039,7 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_TRY_END:
     case OpCode::OP_THROW:
     case OpCode::OP_LOAD_MUTATED:
+    case OpCode::OP_TYPE_CHECK:
         return executeMiscOps(op, ip);
 
     default:
