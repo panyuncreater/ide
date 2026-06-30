@@ -2075,19 +2075,17 @@ TEST(BackendConsistency, DivEvenlyDivisible) {
     EXPECT_EQ(interp, regVm);
 }
 
-// REG_DIV 不整除：栈式 VM 与 Interpreter 截断为 int，RegisterVM 返回 float
+// REG_DIV 不整除：AUDIT-DIV-UNIFY fix 后三后端一致截断为 int
 TEST(BackendConsistency, DivNotEvenlyDivisible_StackVsRegister) {
     std::string src = "print(7 / 2);";
-    // 栈式 VM 与 Interpreter：7 / 2 = 3（int 截断除法）
+    // AUDIT-DIV-UNIFY fix: 三后端均 7 / 2 = 3（int 截断除法，向零截断）
     std::string stackVm = runVMOutputForConsistency(src);
     std::string interp = runInterpreterOutputForConsistency(src);
-    EXPECT_EQ(stackVm, interp);  // 两者均为 "3"
-    EXPECT_EQ(stackVm, "3");
-
-    // RegisterVM：7 / 2 = 3.5（真除，不整除返回 float）
     std::string regVm = runRegVMOutput(src);
-    EXPECT_EQ(regVm, "3.5");
-    EXPECT_NE(regVm, stackVm);  // 显式断言：后端在此场景下行为不同
+    EXPECT_EQ(stackVm, interp);
+    EXPECT_EQ(stackVm, "3");
+    EXPECT_EQ(regVm, "3");  // 原 RegVM 返回 "3.5"（真除），已统一为截断
+    EXPECT_EQ(regVm, stackVm);  // 三后端一致
 }
 
 // REG_DIV 涉及 float：三后端一致（均返回 float）
@@ -2116,22 +2114,22 @@ TEST(BackendConsistency, DivByZero) {
     EXPECT_TRUE(regVm.empty());
 }
 
-// REG_DIV 综合差异：混合整除/不整除/float
+// REG_DIV 综合一致性：AUDIT-DIV-UNIFY fix 后三后端一致
 TEST(BackendConsistency, DivMixedSemantics) {
     std::string src =
         "print(8 / 2);"
         "print(9 / 2);"
         "print(8.0 / 2);"
         "print(9.0 / 2);";
-    // 栈式 VM（与 Interpreter 一致）：4, 4, 4, 4.5
+    // AUDIT-DIV-UNIFY fix: 三后端一致 4, 4, 4, 4.5
+    // （9/2 整数截断为 4，9.0/2 float 除法为 4.5）
     std::string stackVm = runVMOutputForConsistency(src);
     std::string interp = runInterpreterOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src);
     EXPECT_EQ(stackVm, interp);
     EXPECT_EQ(stackVm, "4444.5");
-
-    // RegisterVM：4, 4.5, 4, 4.5（第二项因 9/2 不整除返回 float）
-    std::string regVm = runRegVMOutput(src);
-    EXPECT_EQ(regVm, "44.544.5");
+    EXPECT_EQ(regVm, "4444.5");  // 原 RegVM 返回 "44.544.5"（9/2 真除为 4.5），已统一
+    EXPECT_EQ(regVm, stackVm);
 }
 
 // P1-6 fix: 负索引在所有后端都应报错（不做 Python 式 wraparound）

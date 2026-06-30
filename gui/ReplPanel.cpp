@@ -54,29 +54,29 @@ ReplPanel::ReplPanel(QWidget* parent)
 }
 
 ReplPanel::~ReplPanel() {
-    // QT-R-06 fix: 析构时等待异步任务完成，避免悬垂访问
     if (pollTimer_) pollTimer_->stop();
-    // 注：std::async(std::launch::async, ...) 返回的 future 析构会阻塞至任务完成
-    // （C++ 标准保证），无法真正"超时放弃"——之前的 std::move 到局部变量的写法
-    // 仅把阻塞点从成员析构推迟到局部变量析构，5 秒超时形同虚设。
-    // 此处显式 wait()，由 Interpreter 的 MAX_LOOP_ITERATIONS (10M) 保护正常程序
-    // 不会无限循环；极端死循环场景下进程退出时由 OS 兜底回收。
-    //
-    // P0-4 fix: 原注释声称"IdeController 在 ReplPanel 之后析构"是错误的——
-    // controller_ 是裸指针，由 QObject parent 机制管理（new IdeController(this)），
-    // Qt 子对象析构顺序与声明顺序无关，取决于 parent 的 children 列表删除顺序。
-    //
-    // AUDIT-LIFECYCLE fix: Ide::closeEvent 现在在 event->accept() 前显式调用
-    // waitReplFuture()，确保 REPL 异步任务在任何析构开始前完成。~ReplPanel 中的
-    // wait() 退化为深度防御（closeEvent 路径已 wait 完成，此处为 no-op；
-    // 非 closeEvent 路径如直接 delete 仍需此兜底）。
-    waitReplFuture();
-}
-
-void ReplPanel::waitReplFuture() {
+    // 深度防御：closeEvent 路径已通过 waitReplFuture() 处理，此处为 no-op。
+    // 非 closeEvent 路径（如直接 delete）controller_ 可能已析构，不能调用
+    // requestReplStop()，直接 wait() 阻塞至完成（由 MAX_LOOP_ITERATIONS 兜底）。
     if (replFuture_.valid()) {
         replFuture_.wait();
     }
+}
+
+void ReplPanel::waitReplFuture() {
+    if (!replFuture_.valid()) return;
+    // REPL-TIMEOUT fix: 协作中止 + 超时等待，避免 closeEvent 永久阻塞。
+    // 原 wait() 无超时，死循环场景下 closeEvent 卡死。现改为：
+    // 1. 设置 stopRequested_ 标志（checkBreak 在每个语句节点检查并抛异常）
+    // 2. wait_for(5s) 等待协作中止生效
+    // 3. 超时则回退阻塞 wait()（进程即将退出，由 OS 兜底）
+    if (controller_) {
+        controller_->requestReplStop();
+        auto status = replFuture_.wait_for(std::chrono::seconds(5));
+        if (status == std::future_status::ready) return;
+        Logger::Warning("REPL 异步任务未在 5 秒内响应中止请求，等待强制完成");
+    }
+    replFuture_.wait();
 }
 
 void ReplPanel::setController(IdeController* controller) {
@@ -192,13 +192,37 @@ void ReplPanel::onReturnPressed() {
                 "  {\"key\": val}        字典字面量\n"
                 "  null                 空值\n"
                 "  class Name { ... }   类声明\n"
+                "  import \"mod\" { f }; 模块导入\n"
                 "  多行输入: 未闭合的 { ( [ 或未闭合字符串会自动续行\n"
                 "  续行中按回车(空行)可中止续行\n"
                 "REPL 行为说明:\n"
                 "  - 表达式语句(如 '1 + 2;')自动求值并打印结果\n"
                 "  - 'clear' 仅清空输出区与续行缓冲,不重置已定义变量/函数/类\n"
+                "  - 'reload \"mod\"' 清除模块缓存,下次 import 重新加载源码\n"
+                "  - 'reload all' 清除所有模块缓存\n"
                 "  - 重置全部状态需重启 IDE\n"
             );
+            pendingInput_.clear();
+            inputLine_->clear();
+            return;
+        }
+        // 模块缓存刷新命令：reload "mod" 或 reload all
+        // 场景：用户修改了模块源文件后，需在 REPL 中获取最新版本
+        if (trimmedLine.startsWith("reload")) {
+            QString arg = trimmedLine.mid(6).trimmed();
+            if (arg.isEmpty()) {
+                appendError("用法: reload \"模块路径\" 或 reload all");
+            } else if (arg == "all") {
+                controller_->clearAllModuleCache();
+                appendOutput("[已清除所有模块缓存，下次 import 将重新加载源码]");
+            } else if (arg.startsWith("\"") && arg.endsWith("\"") && arg.length() >= 2) {
+                std::string path = arg.mid(1, arg.length() - 2).toStdString();
+                controller_->clearModuleCache(path);
+                appendOutput(QString::fromStdString(
+                    "[已清除模块 " + path + " 缓存，下次 import 将重新加载]"));
+            } else {
+                appendError("用法: reload \"模块路径\" 或 reload all");
+            }
             pendingInput_.clear();
             inputLine_->clear();
             return;

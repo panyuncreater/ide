@@ -75,6 +75,7 @@ Value Interpreter::executeRepl(Block& program) {
     // 不重置环境，保留已有变量/函数/类定义
     // 清除 funRegistry_ 中的 AST 裸指针（旧 AST 可能已被销毁，闭包自带 body 指针不受影响）
     funRegistry_.clear();
+    stopRequested_.store(false, std::memory_order_relaxed);  // 重置中止标志
     funRegistryGen_++;  // H5 fix: 使所有旧缓存的 resolvedDecl 指针失效，防止野指针访问
     // classRegistry_ 不清除 — 类定义需要跨 REPL 行保留（AST 由 replAsts_ 保持存活）
     // 确保当前环境回到全局
@@ -349,6 +350,11 @@ Value Interpreter::evaluate(ASTNode* node) {
 }
 
 void Interpreter::checkBreak(ASTNode* node) {
+    // REPL 协作中止：closeEvent 超时路径设置 stopRequested_，
+    // 在每个语句节点检查，抛异常中断执行（被异步 lambda 的 catch 捕获）
+    if (stopRequested_.load(std::memory_order_relaxed)) {
+        throw std::runtime_error("REPL 执行已被中止（用户关闭或超时）");
+    }
     if (debugMode_ && debugger_) {
         // 同步调用深度到调试控制器（Step Over 依赖此值判断是否进入函数）
         debugger_->setCurrentDepth(recursionDepth_);

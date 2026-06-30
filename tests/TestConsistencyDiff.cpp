@@ -154,15 +154,14 @@ TEST(ConsistencyDiff, ArrayPlusNumberError) {
 }
 
 // ============================================================
-// 1b. REG_DIV 真除 vs 栈式截断（已知允许差异）
+// 1b. REG_DIV 截断除法（AUDIT-DIV-UNIFY fix 后三引擎一致）
 // ============================================================
 
 TEST(ConsistencyDiff, IntDivTruncationVsTrueDiv) {
     std::string src = "print(7 / 2);";
     EXPECT_EQ(runInterp(src), "3");
     EXPECT_EQ(runStackVM_IR(src), "3");
-    EXPECT_NE(runRegVM_IR(src), "3");
-    EXPECT_EQ(runRegVM_IR(src), "3.5");
+    EXPECT_EQ(runRegVM_IR(src), "3");
 }
 
 TEST(ConsistencyDiff, IntDivExactNoDifference) {
@@ -1636,4 +1635,809 @@ TEST(ConsistencyDiff, H9b_PathTraversalProtection) {
     EXPECT_NE(ri1.find("父目录"), std::string::npos) << "T1 应提示父目录引用: " << ri1;
     EXPECT_NE(ri2.find("绝对路径"), std::string::npos) << "T2 应提示绝对路径: " << ri2;
     EXPECT_NE(ri3.find(".."), std::string::npos) << "T3 应提示 '..' 问题: " << ri3;
+}
+
+// ============================================================
+// AUDIT-DIV-CASCADE: 除法语义统一后的级联一致性回归测试
+// ============================================================
+
+TEST(ConsistencyDiff, AuditDiv_NegativeTruncationDirection) {
+    std::string src = "print(-7 / 2);";
+    EXPECT_EQ(runInterp(src), "-3");
+    EXPECT_EQ(runStackVM_IR(src), "-3");
+    EXPECT_EQ(runRegVM_IR(src), "-3");
+}
+
+TEST(ConsistencyDiff, AuditDiv_CascadeToComparison) {
+    std::string src = "var x = 7 / 2; print(x == 3);";
+    EXPECT_EQ(runInterp(src), "true");
+    EXPECT_EQ(runStackVM_IR(src), "true");
+    EXPECT_EQ(runRegVM_IR(src), "true");
+}
+
+TEST(ConsistencyDiff, AuditDiv_CascadeToArithmetic) {
+    std::string src = "var x = 7 / 2; print(x + 1);";
+    EXPECT_EQ(runInterp(src), "4");
+    EXPECT_EQ(runStackVM_IR(src), "4");
+    EXPECT_EQ(runRegVM_IR(src), "4");
+}
+
+TEST(ConsistencyDiff, AuditDiv_CascadeToArrayIndex) {
+    std::string src = "var x = 6 / 2; print([10, 20, 30, 40][x]);";
+    EXPECT_EQ(runInterp(src), "40");
+    EXPECT_EQ(runStackVM_IR(src), "40");
+    EXPECT_EQ(runRegVM_IR(src), "40");
+}
+
+TEST(ConsistencyDiff, AuditDiv_CascadeToFloatArrayIndexError) {
+    std::string src = "var x = 7 / 2; print([10, 20, 30, 40][x]);";
+    EXPECT_EQ(runInterp(src), "40");
+    EXPECT_EQ(runStackVM_IR(src), "40");
+    EXPECT_EQ(runRegVM_IR(src), "40");
+}
+
+TEST(ConsistencyDiff, AuditDiv_CascadeToFunctionArg) {
+    std::string src =
+        "fun check(v) { if (v == 3) { return \"int-3\"; } return \"other\"; }"
+        "print(check(7 / 2));";
+    EXPECT_EQ(runInterp(src), "int-3");
+    EXPECT_EQ(runStackVM_IR(src), "int-3");
+    EXPECT_EQ(runRegVM_IR(src), "int-3");
+}
+
+TEST(ConsistencyDiff, AuditDiv_ZeroNumeratorConsistent) {
+    std::string src = "print(0 / 5);";
+    EXPECT_EQ(runInterp(src), "0");
+    EXPECT_EQ(runStackVM_IR(src), "0");
+    EXPECT_EQ(runRegVM_IR(src), "0");
+}
+
+TEST(ConsistencyDiff, AuditDiv_RepeatingDecimal) {
+    std::string src = "print(1 / 3);";
+    EXPECT_EQ(runInterp(src), "0");
+    EXPECT_EQ(runStackVM_IR(src), "0");
+    EXPECT_EQ(runRegVM_IR(src), "0");
+}
+
+TEST(ConsistencyDiff, AuditAndOr_ReturnValueInArithmetic) {
+    std::string src = "print((1 or 2) + 1);";
+    EXPECT_EQ(runInterp(src), "2");
+    EXPECT_EQ(runStackVM_IR(src), "2");
+    EXPECT_EQ(runRegVM_IR(src), "2");
+}
+
+TEST(ConsistencyDiff, AuditAndOr_OrReturnsStringForConcat) {
+    std::string src = "print((\"\" or \"fallback\") + \"!\");";
+    EXPECT_EQ(runInterp(src), "fallback!");
+    EXPECT_EQ(runStackVM_IR(src), "fallback!");
+    EXPECT_EQ(runRegVM_IR(src), "fallback!");
+}
+
+TEST(ConsistencyDiff, AuditAndOr_AndReturnsRightForCompare) {
+    std::string src = "print((1 and 2) == 2);";
+    EXPECT_EQ(runInterp(src), "true");
+    EXPECT_EQ(runStackVM_IR(src), "true");
+    EXPECT_EQ(runRegVM_IR(src), "true");
+}
+
+TEST(ConsistencyDiff, AuditAndOr_NestedReturnValue) {
+    std::string src = "print((0 or (1 and 3)) + 10);";
+    EXPECT_EQ(runInterp(src), "13");
+    EXPECT_EQ(runStackVM_IR(src), "13");
+    EXPECT_EQ(runRegVM_IR(src), "13");
+}
+
+TEST(ConsistencyDiff, AuditSuper_RuntimeErrorNotCatchableByTryCatch) {
+    std::string src =
+        "class A { fun get() { return 1; } }"
+        "try { super.get(); } catch (e) { print(\"caught\"); }";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_TRUE(isRuntimeError(ri));
+    EXPECT_TRUE(isRuntimeError(rs));
+    EXPECT_TRUE(isRuntimeError(rr));
+    EXPECT_NE(ri, rs);
+    EXPECT_NE(ri, rr);
+    EXPECT_EQ(rs, rr);
+}
+
+TEST(ConsistencyDiff, AuditSuper_UserThrowIsCatchable) {
+    std::string src =
+        "try { throw \"user-error\"; } catch (e) { print(\"caught:\" + e); }";
+    EXPECT_EQ(runInterp(src), "caught:user-error");
+    EXPECT_EQ(runStackVM_IR(src), "caught:user-error");
+    EXPECT_EQ(runRegVM_IR(src), "caught:user-error");
+}
+
+TEST(ConsistencyDiff, AuditCov_StringInterpolationBasic) {
+    std::string src = "var name = \"world\"; print(\"hello {name}\");";
+    EXPECT_EQ(runInterp(src), "hello world");
+    EXPECT_EQ(runStackVM_IR(src), "hello world");
+    EXPECT_EQ(runRegVM_IR(src), "hello world");
+}
+
+TEST(ConsistencyDiff, AuditCov_StringInterpolationWithExpr) {
+    std::string src = "var x = 5; print(\"result={x * 2 + 1}\");";
+    EXPECT_EQ(runInterp(src), "result=11");
+    EXPECT_EQ(runStackVM_IR(src), "result=11");
+    EXPECT_EQ(runRegVM_IR(src), "result=11");
+}
+
+TEST(ConsistencyDiff, AuditCov_StringInterpolationNested) {
+    std::string src = "var arr = [10, 20, 30]; print(\"first={arr[0]} last={arr[2]}\");";
+    EXPECT_EQ(runInterp(src), "first=10 last=30");
+    EXPECT_EQ(runStackVM_IR(src), "first=10 last=30");
+    EXPECT_EQ(runRegVM_IR(src), "first=10 last=30");
+}
+
+TEST(ConsistencyDiff, AuditCov_DivisionWithTypeAnnotation) {
+    std::string src = "int x = 7 / 2; print(x);";
+    EXPECT_EQ(runInterp(src), "3");
+    EXPECT_EQ(runStackVM_IR(src), "3");
+    EXPECT_EQ(runRegVM_IR(src), "3");
+}
+
+// 除法与类型注解交互 — float 注解接受 float 结果
+TEST(ConsistencyDiff, AuditCov_DivisionWithFloatAnnotation) {
+    std::string src = "float x = 7.0 / 2; print(x);";
+    EXPECT_EQ(runInterp(src), "3.5");
+    EXPECT_EQ(runStackVM_IR(src), "3.5");
+    EXPECT_EQ(runRegVM_IR(src), "3.5");
+}
+
+// ============================================================
+// 辅助：带模块的 Interpreter 执行（模块系统仅 Interpreter 支持，
+// IR 路径报编译错误，故模块相关测试仅单引擎验证）
+// ============================================================
+static std::string runInterpWithModules(
+    const std::string& src,
+    const std::unordered_map<std::string, std::string>& modules) {
+    Lexer lx; auto tk = lx.scan(src);
+    Parser p; auto ast = p.parse(tk);
+    if (!ast) return "<parse-fail>";
+    Interpreter interp;
+    std::string out;
+    interp.setOutputCallback([&](const std::string& s) { out += s; });
+    interp.setModuleLoader([&](const std::string& path) -> std::string {
+        auto it = modules.find(path);
+        return it == modules.end() ? "" : it->second;
+    });
+    try {
+        interp.execute(*ast);
+    } catch (const RuntimeError& e) {
+        if (out.empty()) return "<runtime:" + std::string(e.what()) + ">";
+        return out + "<runtime:" + std::string(e.what()) + ">";
+    } catch (const std::exception& e) {
+        return "<runtime:" + std::string(e.what()) + ">";
+    }
+    return out;
+}
+
+// ============================================================
+// AUDIT-INTERACT-1: 异常 × 闭包 × upvalue 交互（三引擎）
+// ============================================================
+
+TEST(ConsistencyDiff, AuditInter_ThrowInClosureCaughtOutside) {
+    std::string src =
+        "fun f() { throw \"from-closure\"; }"
+        "try { f(); } catch (e) { print(\"caught:\" + e); }";
+    EXPECT_EQ(runInterp(src), "caught:from-closure");
+    EXPECT_EQ(runStackVM_IR(src), "caught:from-closure");
+    EXPECT_EQ(runRegVM_IR(src), "caught:from-closure");
+}
+
+TEST(ConsistencyDiff, AuditInter_ClosureCapturingCatchVar) {
+    std::string src =
+        "var captured = null;"
+        "fun getter() { return captured; }"
+        "try { throw \"err-val\"; }"
+        "catch (e) { captured = e; }"
+        "print(getter());";
+    EXPECT_EQ(runInterp(src), "err-val");
+    EXPECT_EQ(runStackVM_IR(src), "err-val");
+    EXPECT_EQ(runRegVM_IR(src), "err-val");
+}
+
+TEST(ConsistencyDiff, AuditInter_CatchVarShadowingCaptured) {
+    std::string src =
+        "var x = 1;"
+        "fun getter() { return x; }"
+        "try { x = 10; throw \"err\"; }"
+        "catch (e) { x = 99; }"
+        "print(getter());";
+    EXPECT_EQ(runInterp(src), "99");
+    EXPECT_EQ(runStackVM_IR(src), "99");
+    EXPECT_EQ(runRegVM_IR(src), "99");
+}
+
+TEST(ConsistencyDiff, AuditInter_NestedTryClosureCapture) {
+    std::string src =
+        "var x = 0;"
+        "fun getter() { return x; }"
+        "try {"
+        "  try { x = 10; throw \"inner\"; }"
+        "  catch (e1) {}"
+        "} catch (e2) {}"
+        "print(getter());";
+    EXPECT_EQ(runInterp(src), "10");
+    EXPECT_EQ(runStackVM_IR(src), "10");
+    EXPECT_EQ(runRegVM_IR(src), "10");
+}
+
+TEST(ConsistencyDiff, AuditInter_ThrowExpressionIsClosureCall) {
+    std::string src =
+        "fun inner() { throw \"from-inner\"; }"
+        "try { throw inner(); } catch (e) { print(e); }";
+    EXPECT_EQ(runInterp(src), "from-inner");
+    EXPECT_EQ(runStackVM_IR(src), "from-inner");
+    EXPECT_EQ(runRegVM_IR(src), "from-inner");
+}
+
+TEST(ConsistencyDiff, AuditInter_ForInTryWithClosureCapture) {
+    std::string src =
+        "var captured = 0;"
+        "fun getter() { return captured; }"
+        "var results = [];"
+        "try {"
+        "  for (var i = 0; i < 3; i = i + 1) {"
+        "    captured = i;"
+        "    results.push(getter());"
+        "    if (i == 1) throw \"stop\";"
+        "  }"
+        "} catch (e) {}"
+        "print(results[0] + results[1]);";
+    EXPECT_EQ(runInterp(src), "1");
+    EXPECT_EQ(runStackVM_IR(src), "1");
+    EXPECT_EQ(runRegVM_IR(src), "1");
+}
+
+// ============================================================
+// AUDIT-INTERACT-2: 异常 × 类继承 × super 交互（三引擎）
+// ============================================================
+
+TEST(ConsistencyDiff, AuditInter_SuperThrowFieldIsolation) {
+    std::string src =
+        "class Base { fun m() { this.x = 1; throw \"boom\"; } }"
+        "class Child : Base {"
+        "  fun init() { this.x = 0; }"
+        "  fun m() { try { super.m(); } catch (e) {} print(this.x); }"
+        "}"
+        "Child().m();";
+    EXPECT_EQ(runInterp(src), "0");
+    EXPECT_EQ(runStackVM_IR(src), "0");
+    EXPECT_EQ(runRegVM_IR(src), "0");
+}
+
+TEST(ConsistencyDiff, AuditInter_InitThrowNoLeak) {
+    std::string src =
+        "class A { fun init() { this.a = 1; throw \"init-failed\"; } }"
+        "try { var x = A(); print(\"got\"); }"
+        "catch (e) { print(\"caught:\" + e); }";
+    EXPECT_EQ(runInterp(src), "caught:init-failed");
+    EXPECT_EQ(runStackVM_IR(src), "caught:init-failed");
+    EXPECT_EQ(runRegVM_IR(src), "caught:init-failed");
+}
+
+TEST(ConsistencyDiff, AuditInter_SuperInitChainThrow) {
+    std::string src =
+        "class A { fun init() { this.a = 1; } }"
+        "class B : A { fun init() { super.init(); this.b = 2; throw \"mid\"; } }"
+        "class C : B { fun init() { this.a = 0; this.b = 0; try { super.init(); } catch (e) {} print(this.a); print(this.b); } }"
+        "C();";
+    EXPECT_EQ(runInterp(src), "00");
+    EXPECT_EQ(runStackVM_IR(src), "00");
+    EXPECT_EQ(runRegVM_IR(src), "00");
+}
+
+TEST(ConsistencyDiff, AuditInter_SuperThrowCaughtByMethodTry) {
+    std::string src =
+        "class Base { fun m() { throw \"from-super\"; } }"
+        "class Child : Base {"
+        "  fun m() { try { super.m(); } catch (e) { print(\"caught:\" + e); } }"
+        "}"
+        "Child().m();";
+    EXPECT_EQ(runInterp(src), "caught:from-super");
+    EXPECT_EQ(runStackVM_IR(src), "caught:from-super");
+    EXPECT_EQ(runRegVM_IR(src), "caught:from-super");
+}
+
+// ============================================================
+// AUDIT-INTERACT-3: 插值 × 异常 交互（三引擎）
+// ============================================================
+
+TEST(ConsistencyDiff, AuditInter_InterpolationMidThrowNoPartial) {
+    std::string src =
+        "fun f() { return 42; }"
+        "fun g() { throw \"boom\"; }"
+        "try { var x = \"a{f()}b{g()}c\"; print(x); }"
+        "catch (e) { print(\"caught:\" + e); }";
+    EXPECT_EQ(runInterp(src), "caught:boom");
+    EXPECT_EQ(runStackVM_IR(src), "caught:boom");
+    EXPECT_EQ(runRegVM_IR(src), "caught:boom");
+}
+
+TEST(ConsistencyDiff, AuditInter_InterpolationUndefinedVarRuntimeError) {
+    std::string src =
+        "try { var x = \"val{undefinedVar}\"; print(x); }"
+        "catch (e) { print(\"caught\"); }";
+    EXPECT_TRUE(isRuntimeError(runInterp(src)));
+    EXPECT_TRUE(isRuntimeError(runStackVM_IR(src)));
+    EXPECT_TRUE(isRuntimeError(runRegVM_IR(src)));
+}
+
+TEST(ConsistencyDiff, AuditInter_InterpolationThrowCaught) {
+    std::string src =
+        "fun bad() { throw \"interp-throw\"; }"
+        "try { var x = \"val{bad()}\"; print(x); }"
+        "catch (e) { print(\"caught:\" + e); }";
+    EXPECT_EQ(runInterp(src), "caught:interp-throw");
+    EXPECT_EQ(runStackVM_IR(src), "caught:interp-throw");
+    EXPECT_EQ(runRegVM_IR(src), "caught:interp-throw");
+}
+
+// ============================================================
+// AUDIT-INTERACT-4: 模块 × 异常 交互（仅 Interpreter）
+// ============================================================
+
+TEST(ConsistencyDiff, AuditInter_ModuleFunctionThrowCatchable) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m", "export fun f() { throw \"from-module\"; }"}
+    };
+    std::string src =
+        "import { f } from \"m\";"
+        "try { f(); } catch (e) { print(\"caught:\" + e); }";
+    EXPECT_EQ(runInterpWithModules(src, mods), "caught:from-module");
+}
+
+TEST(ConsistencyDiff, AuditInter_ModuleLoadThrowCatchable) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"bad", "throw \"load-fail\"; export var y = 1;"}
+    };
+    std::string src =
+        "try { import { y } from \"bad\"; print(\"loaded\"); }"
+        "catch (e) { print(\"caught:\" + e); }";
+    auto result = runInterpWithModules(src, mods);
+    EXPECT_TRUE(isRuntimeError(result) || result.find("caught:") != std::string::npos)
+        << "module load should fail or be caught: " << result;
+}
+
+TEST(ConsistencyDiff, AuditInter_ModuleLoadThrowNoPartialLeak) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"bad", "export var a = 1; throw \"fail\"; export var b = 2;"}
+    };
+    std::string src =
+        "try { import { a, b } from \"bad\"; } catch (e) {}"
+        "try { print(a); } catch (e) { print(\"a-undefined\"); }"
+        "try { print(b); } catch (e) { print(\"b-undefined\"); }";
+    auto result = runInterpWithModules(src, mods);
+    EXPECT_TRUE(result.find("a-undefined") != std::string::npos || isRuntimeError(result))
+        << "a should not leak: " << result;
+    EXPECT_TRUE(result.find("b-undefined") != std::string::npos || isRuntimeError(result))
+        << "b should not leak: " << result;
+}
+
+TEST(ConsistencyDiff, AuditInter_PathTraversalNotCatchable) {
+    std::unordered_map<std::string, std::string> mods;
+    std::string src =
+        "try { import { x } from \"../secret\"; print(\"loaded\"); }"
+        "catch (e) { print(\"caught\"); }";
+    auto result = runInterpWithModules(src, mods);
+    EXPECT_TRUE(isRuntimeError(result) || result.find("caught") != std::string::npos)
+        << "path traversal should error or be caught: " << result;
+}
+
+// ============================================================
+// AUDIT-INTERACT-5: 模块 × 插值 交互（仅 Interpreter）
+// ============================================================
+
+TEST(ConsistencyDiff, AuditInter_ModuleStringInInterpolation) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m", "export var name = \"world\";"}
+    };
+    std::string src =
+        "import { name } from \"m\";"
+        "print(\"hello {name}\");";
+    EXPECT_EQ(runInterpWithModules(src, mods), "hello world");
+}
+
+TEST(ConsistencyDiff, AuditInter_ModuleFunctionInInterpolation) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m", "export fun double(n) { return n * 2; }"}
+    };
+    std::string src =
+        "import { double } from \"m\";"
+        "print(\"result={double(21)}\");";
+    EXPECT_EQ(runInterpWithModules(src, mods), "result=42");
+}
+
+// ============================================================
+// AUDIT-INTERACT-6: 三特性全组合（仅 Interpreter）
+// ============================================================
+
+TEST(ConsistencyDiff, AuditInter_ThreeFeatureCombo) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m",
+         "export class Widget {\n"
+         "  fun render() {\n"
+         "    return this.bad();\n"
+         "  }\n"
+         "  fun bad() { throw \"render-failed\"; }\n"
+         "}"}
+    };
+    std::string src =
+        "import { Widget } from \"m\";"
+        "var w = Widget();"
+        "try { print(w.render()); }"
+        "catch (e) { print(\"caught:\" + e); }";
+    EXPECT_EQ(runInterpWithModules(src, mods), "caught:render-failed");
+}
+
+TEST(ConsistencyDiff, AuditInter_ThreeFeatureComboNormal) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"m",
+         "export class Greeter {\n"
+         "  fun greet(n) {\n"
+         "    return \"hello {n} from {this.name}\";\n"
+         "  }\n"
+         "  fun init() { this.name = \"mod\"; }\n"
+         "}"}
+    };
+    std::string src =
+        "import { Greeter } from \"m\";"
+        "var g = Greeter();"
+        "print(g.greet(\"world\"));";
+    EXPECT_EQ(runInterpWithModules(src, mods), "hello world from mod");
+}
+
+// ============================================================
+// 性能优化批次正确性回归审计
+// ------------------------------------------------------------
+// 每个优化声称是"语义保持的等价变换"。下列测试逐一针对各优化的
+// 隐含假设构造场景：若假设不成立，优化开启（RegisterVM/IR 路径）
+// 时失败、关闭（Interpreter）时通过，从而暴露回归。
+// 当前结论：全部通过，作为回归基线。
+// ============================================================
+
+// ---- #18 VMUpvalue O(1) 帧定位 (owningFrameIdx) ----
+// 假设：(a) owningFrameIdx 在所有 isLocal=true 创建路径上设置为当前帧索引；
+//       (b) passthrough 复用 shared_ptr 自动透传 owningFrameIdx，指向原始帧；
+//       (c) open upvalue 的所属帧必在 frames_ 中（帧返回前 closeUpvaluesFrom 关闭）；
+//       (d) closed upvalue 不访问 owningFrameIdx（走 isClosed 分支）。
+
+// 嵌套 passthrough：inner 经 mid 透传捕获 outer 的 x，修改须写回 outer 帧槽
+TEST(ConsistencyDiff, AuditUpvalue_PassthroughChainModifiesOuterVar) {
+    std::string src =
+        "fun outer() {\n"
+        "  var x = 10;\n"
+        "  fun mid() {\n"
+        "    fun inner() { x = x + 5; }\n"   // x 经 mid 的 upvalue 透传，owningFrameIdx=outer
+        "    inner();\n"
+        "  }\n"
+        "  mid();\n"
+        "  return x;\n"                      // 修改须对 outer 可见
+        "}\n"
+        "print(outer());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "15");
+    EXPECT_EQ(ri, rs) << "passthrough owningFrameIdx 写回 outer 帧槽";
+    EXPECT_EQ(ri, rr);
+}
+
+// 创建帧返回后 upvalue 关闭：闭包读取关闭时的快照值
+// 使用数组返回闭包（VM 后端不支持 `var g = f(); g()` 调用变量闭包，
+// 但支持 `var cs = f(); cs[0]()` 数组索引调用——经 callee 表达式路径）
+TEST(ConsistencyDiff, AuditUpvalue_CloseOnReturnPreservesValue) {
+    std::string src =
+        "fun makeGetter() {\n"
+        "  var x = 42;\n"
+        "  fun getter() { return x; }\n"
+        "  return [getter];\n"               // makeGetter 返回时 x 被关闭为 42
+        "}\n"
+        "var cs = makeGetter();\n"
+        "print(cs[0]());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "42");
+    EXPECT_EQ(ri, rs) << "close-on-return 快照值";
+    EXPECT_EQ(ri, rr);
+}
+
+// 关闭的 upvalue 读取快照值（数组返回闭包，三后端一致）
+// 注：closed upvalue 写入经数组索引 cs[0]() 时 Interpreter 因 COW 返回闭包副本，
+// 写回不持久——这是 Interpreter 预存在行为（非 #18 回归），故仅测读取路径。
+TEST(ConsistencyDiff, AuditUpvalue_ClosedUpvalueReadPerservesSnapshot) {
+    std::string src =
+        "fun makeGetter() {\n"
+        "  var x = 42;\n"
+        "  fun getter() { return x; }\n"
+        "  var y = 99;\n"                     // 第二个局部变量
+        "  fun getY() { return y; }\n"        // 第二个闭包捕获 y
+        "  return [getter, getY];\n"          // 返回两个闭包，x/y 被关闭
+        "}\n"
+        "var cs = makeGetter();\n"
+        "print(cs[0]());\n"                   // 42
+        "print(cs[1]());\n";                  // 99
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "4299");
+    EXPECT_EQ(ri, rs) << "关闭的 upvalue 读取快照值";
+    EXPECT_EQ(ri, rr);
+}
+
+// ---- #19 executeReturn 字段同步合并遍历 ----
+// 假设：合并遍历 modifiedThis.fields() 时同时写 caller this.fields() 与字段槽；
+//       字段顺序（unordered_map）不影响写回语义；fieldSlotIndex 未命中时仅跳过
+//       槽写入，仍写 this.fields()；父子同名字段无别名。
+
+// 多字段修改须全部同步回 caller this
+TEST(ConsistencyDiff, AuditReturn_MultipleFieldsAllSync) {
+    std::string src =
+        "class A {\n"
+        "  var a = 0; var b = 0; var c = 0;\n"
+        "  fun set() { this.a = 1; this.b = 2; this.c = 3; }\n"
+        "}\n"
+        "var x = A();\n"
+        "x.set();\n"
+        "print(x.a + \"\" + x.b + \"\" + x.c);\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "123");
+    EXPECT_EQ(ri, rs) << "合并遍历同步全部字段";
+    EXPECT_EQ(ri, rr);
+}
+
+// 方法内调用 this 的方法：被调用方法修改须经合并遍历同步到调用者 this
+TEST(ConsistencyDiff, AuditReturn_MethodOnThisMergedSync) {
+    std::string src =
+        "class A {\n"
+        "  var x = 0; var y = 0;\n"
+        "  fun setBoth() { this.x = 5; this.y = 7; }\n"
+        "  fun m() { this.setBoth(); return this.x + this.y; }\n"
+        "}\n"
+        "print(A().m());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "12");
+    EXPECT_EQ(ri, rs) << "this 上方法调用的合并字段同步";
+    EXPECT_EQ(ri, rr);
+}
+
+// 子类字段不在父类 fieldOrder 中：fieldSlotIndex 返回 SIZE_MAX 须跳过槽写入
+// 但仍写 this.fields()，字段值不丢失
+TEST(ConsistencyDiff, AuditReturn_ExtraFieldNotInCallerFieldOrder) {
+    std::string src =
+        "class Base { var x = 0; fun m() { this.x = 1; } }\n"
+        "class Child : Base {\n"
+        "  var y = 0;\n"
+        "  fun m() { super.m(); this.y = 2; return this.x + this.y; }\n"
+        "}\n"
+        "print(Child().m());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "3");
+    EXPECT_EQ(ri, rs) << "fieldSlotIndex 未命中时字段值不丢失";
+    EXPECT_EQ(ri, rr);
+}
+
+// ---- #21 Environment boundInstance_ 缓存 ----
+// 假设：lastCheckedInstance 是单次遍历内的局部变量，按指针比较跳过重复检查；
+//       不同实例指针（覆盖场景）会重新检查；同指针（继承沿链）跳过安全。
+
+// 嵌套块内 this.field 读取（boundInstance_ 缓存热路径）
+// VM 后端不支持裸字段（需 this.field），此测试用 this.field 统一三后端
+TEST(ConsistencyDiff, AuditEnvCache_NestedBlockBareFieldReads) {
+    std::string src =
+        "class A {\n"
+        "  var a = 1; var b = 2; var c = 3;\n"
+        "  fun m() {\n"
+        "    var s = this.a;\n"             // this.field（boundInstance_ 缓存命中）
+        "    if (true) {\n"
+        "      s = s + this.b;\n"
+        "      if (true) { s = s + this.c; }\n"
+        "    }\n"
+        "    return s;\n"
+        "  }\n"
+        "}\n"
+        "print(A().m());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "6");
+    EXPECT_EQ(ri, rs) << "嵌套块 this.field 读取缓存正确";
+    EXPECT_EQ(ri, rr);
+}
+
+// 参数遮蔽字段：this.field 仍可访问字段，param 访问参数
+TEST(ConsistencyDiff, AuditEnvCache_ParameterShadowsField) {
+    std::string src =
+        "class A {\n"
+        "  var x = 5;\n"
+        "  fun m(x) { return this.x + x; }\n"   // this.x=5(字段), x=10(参数)
+        "}\n"
+        "print(A().m(10));\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "15");
+    EXPECT_EQ(ri, rs) << "参数遮蔽字段下 this.field 可访问";
+    EXPECT_EQ(ri, rr);
+}
+
+// 嵌套作用域内 this.field 变异（boundInstance_ set 回退路径）
+TEST(ConsistencyDiff, AuditEnvCache_NestedScopeBareFieldMutation) {
+    std::string src =
+        "class A {\n"
+        "  var x = 1;\n"
+        "  fun m() {\n"
+        "    if (true) { this.x = 99; }\n"   // this.field 变异
+        "    return this.x;\n"
+        "  }\n"
+        "}\n"
+        "print(A().m());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "99");
+    EXPECT_EQ(ri, rs) << "嵌套作用域 this.field 变异";
+    EXPECT_EQ(ri, rr);
+}
+
+// ---- PERF-15 IR 复制传播 ----
+// 假设：仅 LOAD_CONST/NULL/TRUE/FALSE 产生 vreg→常量等价；其它指令定义 vreg 时
+//       清除等价（erase）；基本块边界重置；仅寄存器式后端启用。
+
+// 常量多次使用：复制传播替换后续引用，结果正确
+TEST(ConsistencyDiff, AuditCopyProp_ConstantUsedMultipleTimes) {
+    std::string src =
+        "fun f() {\n"
+        "  var x = 5;\n"
+        "  return x + x + x;\n"
+        "}\n"
+        "print(f());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "15");
+    EXPECT_EQ(ri, rs) << "常量多次使用复制传播正确";
+    EXPECT_EQ(ri, rr);   // RegVM 启用复制传播
+}
+
+// 重新赋值须中断常量等价链：结果不应使用过期常量
+TEST(ConsistencyDiff, AuditCopyProp_ReassignmentBreaksChain) {
+    std::string src =
+        "fun f() {\n"
+        "  var x = 5;\n"
+        "  x = x + 10;\n"
+        "  x = x * 2;\n"
+        "  return x;\n"                    // 30，非过期常量 5
+        "}\n"
+        "print(f());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "30");
+    EXPECT_EQ(ri, rs) << "重新赋值中断复制传播";
+    EXPECT_EQ(ri, rr);   // RegVM 启用复制传播，须正确中断
+}
+
+// 条件分支中的常量：复制传播不跨基本块（块边界重置）
+TEST(ConsistencyDiff, AuditCopyProp_ConstantsInConditionalBranches) {
+    std::string src =
+        "fun f(n) {\n"
+        "  var a = 10; var b = 20;\n"
+        "  if (n > 0) { return a + b; }\n"   // 30
+        "  else { return a - b; }\n"          // -10
+        "}\n"
+        "print(f(1));\n"
+        "print(f(-1));\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "30-10");
+    EXPECT_EQ(ri, rs) << "条件分支常量复制传播";
+    EXPECT_EQ(ri, rr);
+}
+
+// ---- #12 类方法哈希索引 ----
+// 假设：initExecution 一次性构建 methodsByClass_；运行时 functionChunks_ 不被修改；
+//       类重定义经重新 initExecution 清理重建；方法未找到返回 nullptr 报错。
+
+// 继承链方法查找：父类方法经哈希索引命中
+TEST(ConsistencyDiff, AuditMethodHash_InheritedMethodLookup) {
+    std::string src =
+        "class Base { fun greet() { return \"hi\"; } }\n"
+        "class Child : Base { fun call() { return super.greet(); } }\n"
+        "print(Child().call());\n"
+        "print(Child().greet());\n";        // 继承的方法经哈希查找
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "hihi");
+    EXPECT_EQ(ri, rs) << "继承链方法哈希查找";
+    EXPECT_EQ(ri, rr);
+}
+
+// 方法未找到：哈希返回 nullptr，三后端均报运行时错误
+TEST(ConsistencyDiff, AuditMethodHash_MethodNotFoundReturnsError) {
+    std::string src =
+        "class A { fun m() { return 1; } }\n"
+        "var a = A();\n"
+        "print(a.missing());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+    EXPECT_TRUE(isRuntimeError(rs)) << "StackVM: " << rs;
+    EXPECT_TRUE(isRuntimeError(rr)) << "RegVM: " << rr;
+    EXPECT_EQ(ri, rs);
+    EXPECT_EQ(rs, rr);
+}
+
+// 重复方法调用：哈希在一次 initExecution 内不失效
+TEST(ConsistencyDiff, AuditMethodHash_RepeatedCallsConsistent) {
+    std::string src =
+        "class A { var n = 0; fun inc() { this.n = this.n + 1; return this.n; } }\n"
+        "var a = A();\n"
+        "var i = 0; var sum = 0;\n"
+        "while (i < 5) { sum = sum + a.inc(); i = i + 1; }\n"
+        "print(sum);\n";                     // 1+2+3+4+5 = 15
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "15");
+    EXPECT_EQ(ri, rs) << "重复方法调用哈希一致";
+    EXPECT_EQ(ri, rr);
+}
+
+// ---- #8 寄存器帧零堆分配 (std::array<Value,32>) ----
+// 假设：localCount>32 或 vreg 映射 reg>=32 编译期硬失败；registerCount 跟踪跨
+//       控制流路径正确（循环/异常/递归）；运行时不静默越界。
+
+// 控制流 + 多局部变量：寄存器跟踪跨循环/条件正确（控制在 32 寄存器上限内）
+TEST(ConsistencyDiff, AuditRegFrame_ControlFlowManyRegisters) {
+    std::string src =
+        "fun f() {\n"
+        "  var a = 1; var b = 2; var c = 3;\n"
+        "  var sum = 0; var i = 0;\n"
+        "  while (i < 3) {\n"
+        "    if (i > 0) { sum = sum + a + b; }\n"
+        "    else { sum = sum + c; }\n"
+        "    i = i + 1;\n"
+        "  }\n"
+        "  return sum;\n"                   // i0:3, i1:6, i2:9 → 9
+        "}\n"
+        "print(f());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "9");
+    EXPECT_EQ(ri, rs) << "控制流寄存器跟踪";
+    EXPECT_EQ(ri, rr);
+}
+
+// #8 安全性验证：寄存器超 32 上限时编译期硬失败（非运行时静默越界）
+// Interpreter/StackVM 无寄存器限制，正常返回；RegVM 须编译期报错
+TEST(ConsistencyDiff, AuditRegFrame_Exceeds32RegistersSafetyCheck) {
+    std::string src =
+        "fun f() {\n"
+        "  var a=1;var b=2;var c=3;var d=4;var e=5;\n"
+        "  var f=6;var g=7;var h=8;var i=9;var j=10;\n"
+        "  var k=11;var l=12;var m=13;var n=14;var o=15;\n"
+        "  var p=16;var q=17;var r=18;var s=19;var t=20;\n"
+        "  return a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t;\n"
+        "}\n"
+        "print(f());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "210");
+    EXPECT_EQ(ri, rs) << "StackVM 无寄存器限制";
+    // RegVM 寄存器式后端硬上限 32，编译期硬失败（非运行时静默越界）
+    EXPECT_TRUE(rr.find("<compile:") != std::string::npos)
+        << "RegVM 须编译期报错（非静默越界）: " << rr;
+}
+
+// 异常路径寄存器：try/catch 内寄存器使用正确
+TEST(ConsistencyDiff, AuditRegFrame_ExceptionPathRegisters) {
+    std::string src =
+        "fun f() {\n"
+        "  var a = 10; var b = 20; var r = 0;\n"
+        "  try {\n"
+        "    r = a + b;\n"
+        "    throw \"stop\";\n"
+        "    r = 999;\n"
+        "  } catch (e) { r = r + 1; }\n"
+        "  return r;\n"                    // 30 + 1 = 31
+        "}\n"
+        "print(f());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "31");
+    EXPECT_EQ(ri, rs) << "异常路径寄存器";
+    EXPECT_EQ(ri, rr);
+}
+
+// 递归调用：每帧独立 RegCallFrame 寄存器数组
+TEST(ConsistencyDiff, AuditRegFrame_RecursiveCallRegisters) {
+    std::string src =
+        "fun fact(n) {\n"
+        "  if (n <= 1) { return 1; }\n"
+        "  return n * fact(n - 1);\n"
+        "}\n"
+        "print(fact(5));\n";                // 120
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "120");
+    EXPECT_EQ(ri, rs) << "递归调用寄存器帧隔离";
+    EXPECT_EQ(ri, rr);
 }

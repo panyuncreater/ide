@@ -130,6 +130,23 @@ public:
     /// 清空诊断信息
     void clearDiagnostics() { diagnostics_.clear(); }
 
+    /// REPL 模块缓存刷新：清除指定模块的缓存，下次 import 将重新加载源码
+    /// 场景：用户修改了模块源文件后希望在 REPL 中获取最新版本
+    void clearModuleCache(const std::string& path) {
+        moduleCache_.erase(path);
+        moduleExports_.erase(path);
+    }
+    /// 清除所有模块缓存
+    void clearAllModuleCache() {
+        moduleCache_.clear();
+        moduleExports_.clear();
+    }
+
+    /// 请求中止当前执行（REPL 超时/关闭时调用）
+    /// checkBreak 会在每个语句节点检查此标志并抛异常，实现协作式中止
+    void requestStop() { stopRequested_.store(true, std::memory_order_relaxed); }
+    bool isStopRequested() const { return stopRequested_.load(std::memory_order_relaxed); }
+
     // ---- 25 个 visit 方法实现 ----
 
     void visitBinaryOp(BinaryOp& node) override;
@@ -188,6 +205,8 @@ private:
     // checkBreak() 读操作之间的数据竞争。A6 fix 已确保主线程不在 worker 运行时
     // 调用 setDebugMode，但 atomic 提供额外的内存可见性保证和防御性保护。
     std::atomic<bool> debugMode_{false};            // 是否处于调试模式（快速跳过 checkBreak）
+    // REPL 协作中止标志：closeEvent 超时路径设置，checkBreak 检查并抛异常
+    std::atomic<bool> stopRequested_{false};
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     std::function<std::string(const std::string&)> moduleLoader_; // F12: 模块加载回调

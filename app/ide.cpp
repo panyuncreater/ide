@@ -83,13 +83,13 @@ void Ide::closeEvent(QCloseEvent* event) {
         return;
     }
 
-    // B4 fix: REPL 异步任务在跑时弹窗告知用户关闭将阻塞（~ReplPanel 调用
-    // replFuture_.wait() 阻塞至任务完成，因 std::async 析构语义无法限时取消）。
-    // 让用户选择等待任务完成后再关，或强制关闭（仍会阻塞直到任务完成）。
+    // B4 fix: REPL 异步任务在跑时弹窗告知用户关闭将阻塞。
+    // REPL-TIMEOUT fix: waitReplFuture 现在会先 requestStop + wait_for(5s)，
+    // 正常 MiniLang 代码（含 checkBreak 调用）能在 5 秒内协作中止。
     if (replPanel_->isReplRunning()) {
         auto ret = QMessageBox::warning(this,
             QString::fromUtf8("REPL 仍在执行"),
-            QString::fromUtf8("REPL 有异步任务正在执行。\n关闭窗口将阻塞直至任务完成（极端死循环场景下需等待解释器的迭代上限触发 RuntimeError）。\n\n是否继续关闭？"),
+            QString::fromUtf8("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒；正常代码会协作退出，极端死循环可能仍需等待迭代上限触发。\n\n是否继续关闭？"),
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No);
         if (ret != QMessageBox::Yes) {

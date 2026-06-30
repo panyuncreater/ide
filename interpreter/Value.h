@@ -49,6 +49,7 @@
 #include <cstdint>
 #include <cmath>
 #include <cassert>
+#include <cstdlib>     // AUDIT-NANBOX fix: std::abort — Release 构建中 assert 被剥离，类型不匹配时静默返回垃圾值（如指针间类型混淆 reinterpret_cast 错误类型），改为运行时 abort 与 NaNBox::asXxx 风格一致
 #include <unordered_set>
 #include <optional>  // perf1 fix: StringData 缓存 codepointCount
 #include "common/Utf8Utils.h"  // perf1 fix: Value::codepointCount() 委托 Utf8::codepointCount
@@ -414,38 +415,39 @@ public:
 
     // -- intVal --
     int64_t intVal() const {
-        assert(isInt() && "intVal() called on non-int Value");
+        // AUDIT-NANBOX fix: assert 在 Release 被剥离，改为运行时 abort（与 NaNBox::asXxx 一致）
+        if (!isInt()) { std::abort(); }
         if (box_.isInt()) return box_.asInt();  // 内联 int48
         return box_.asPtr<BoxedIntData>()->value;  // 装箱 int64
     }
 
     // -- floatVal --
     double floatVal() const {
-        assert(isFloat() && "floatVal() called on non-float Value");
+        if (!isFloat()) { std::abort(); }
         return box_.asFloat();
     }
 
     // -- boolVal --
     bool boolVal() const {
-        assert(isBool() && "boolVal() called on non-bool Value");
+        if (!isBool()) { std::abort(); }
         return box_.asBool();
     }
 
     // -- stringVal --
     std::string& stringVal() {
-        assert(isString() && "stringVal() called on non-string Value");
+        if (!isString()) { std::abort(); }
         auto* sd = ensureUnique<StringData>();
         sd->cachedCodepointCount.reset();  // perf1 fix: 字符串可能被修改，使码位缓存失效
         return sd->value;
     }
     const std::string& stringVal() const {
-        assert(isString() && "stringVal() called on non-string Value");
+        if (!isString()) { std::abort(); }
         return box_.asPtr<StringData>()->value;
     }
     // perf1 fix: 返回字符串 UTF-8 码位数（带缓存，const 路径首次计算后复用）
     // O(n) 首次 → O(1) 后续，消除 len()/substr() 循环中的 O(n²) 重复扫描。
     int64_t codepointCount() const {
-        assert(isString() && "codepointCount() called on non-string Value");
+        if (!isString()) { std::abort(); }
         StringData* sd = box_.asPtr<StringData>();
         if (!sd->cachedCodepointCount.has_value()) {
             sd->cachedCodepointCount = Utf8::codepointCount(sd->value);
@@ -455,93 +457,93 @@ public:
 
     // -- arrayVal --
     std::vector<Value>& arrayVal() {
-        assert(isArray() && "arrayVal() called on non-array Value");
+        if (!isArray()) { std::abort(); }
         return ensureUnique<ArrayData>()->elements;
     }
     const std::vector<Value>& arrayVal() const {
-        assert(isArray() && "arrayVal() called on non-array Value");
+        if (!isArray()) { std::abort(); }
         return box_.asPtr<ArrayData>()->elements;
     }
 
     // -- dictVal --
     std::unordered_map<std::string, Value>& dictVal() {
-        assert(isDict() && "dictVal() called on non-dict Value");
+        if (!isDict()) { std::abort(); }
         return ensureUnique<DictData>()->entries;
     }
     const std::unordered_map<std::string, Value>& dictVal() const {
-        assert(isDict() && "dictVal() called on non-dict Value");
+        if (!isDict()) { std::abort(); }
         return box_.asPtr<DictData>()->entries;
     }
 
     // -- className（实例专用）--
     std::string& className() {
-        assert(isInstance() && "className() called on non-instance Value");
+        if (!isInstance()) { std::abort(); }
         return ensureUnique<InstanceData>()->className;
     }
     const std::string& className() const {
-        assert(isInstance() && "className() called on non-instance Value");
+        if (!isInstance()) { std::abort(); }
         return box_.asPtr<InstanceData>()->className;
     }
 
     // -- fields（实例字段）--
     std::unordered_map<std::string, Value>& fields() {
-        assert(isInstance() && "fields() called on non-instance Value");
+        if (!isInstance()) { std::abort(); }
         return ensureUnique<InstanceData>()->fields;
     }
     const std::unordered_map<std::string, Value>& fields() const {
-        assert(isInstance() && "fields() called on non-instance Value");
+        if (!isInstance()) { std::abort(); }
         return box_.asPtr<InstanceData>()->fields;
     }
 
     // -- 闭包字段 --
     std::string& closureName() {
-        assert(isClosure() && "closureName() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return ensureUnique<ClosureData>()->name;
     }
     const std::string& closureName() const {
-        assert(isClosure() && "closureName() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return box_.asPtr<ClosureData>()->name;
     }
 
     std::shared_ptr<Environment> closureEnv() const {
-        assert(isClosure() && "closureEnv() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return box_.asPtr<ClosureData>()->env.lock();
     }
 
     std::vector<std::string>& closureParams() {
-        assert(isClosure() && "closureParams() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return ensureUnique<ClosureData>()->params;
     }
     const std::vector<std::string>& closureParams() const {
-        assert(isClosure() && "closureParams() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return box_.asPtr<ClosureData>()->params;
     }
 
     FunDecl* closureBody() const {
-        assert(isClosure() && "closureBody() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return box_.asPtr<ClosureData>()->body.get();
     }
     std::shared_ptr<FunDecl> closureBodyShared() const {
-        assert(isClosure() && "closureBodyShared() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return box_.asPtr<ClosureData>()->body;
     }
 
     std::unordered_map<std::string, Value>& capturedVars() {
-        assert(isClosure() && "capturedVars() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return ensureUnique<ClosureData>()->capturedVars;
     }
     const std::unordered_map<std::string, Value>& capturedVars() const {
-        assert(isClosure() && "capturedVars() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return box_.asPtr<ClosureData>()->capturedVars;
     }
 
     // VM-05/06: VM 闭包数据访问器
     std::shared_ptr<VMClosureData>& vmClosure() {
-        assert(isClosure() && "vmClosure() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return ensureUnique<ClosureData>()->vmClosure;
     }
     const std::shared_ptr<VMClosureData>& vmClosure() const {
-        assert(isClosure() && "vmClosure() called on non-closure Value");
+        if (!isClosure()) { std::abort(); }
         return box_.asPtr<ClosureData>()->vmClosure;
     }
 

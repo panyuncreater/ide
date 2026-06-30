@@ -390,32 +390,17 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
 
         Value result;
         // E4 fix: 复用 NumericOps::computeArith，消除与栈式 VM 的重复算术逻辑。
-        // 注意 REG_DIV 保留 RegisterVM 的"真除"语义（int/int 不整除时返回 float），
-        // 与栈式 VM 的整数截断除法不同，故单独处理不并入 computeArith。
-        if (op == RegOp::REG_DIV) {
-            if (b.isInt() && b.intVal() == 0) {
-                return runtimeError("除零错误");
-            }
-            if (b.isFloat() && b.floatVal() == 0.0) {
-                return runtimeError("除零错误");
-            }
-            // C-5 fix: INT64_MIN / -1 是有符号整数溢出 UB（与 REG_MOD 一致）
-            if (a.isInt() && b.isInt() && a.intVal() == INT64_MIN && b.intVal() == -1) {
-                // BUG-OVF-2 fix: 错误消息与 Interpreter/StackVM computeArith DIV 分支一致
-                return runtimeError("整数运算溢出");
-            }
-            if (a.isInt() && b.isInt() && a.intVal() % b.intVal() == 0) {
-                result = Value(a.intVal() / b.intVal());
-            } else {
-                result = Value(a.toDouble() / b.toDouble());
-            }
-        } else {
-            // E4 fix: ADD/SUB/MUL/MOD 复用共享 computeArith（与栈式 VM 一致）
+        // AUDIT-DIV-UNIFY fix: REG_DIV 原保留"真除"语义（int/int 不整除时返回 float），
+        // 与 Interpreter/StackVM 的整数截断除法不同。审计发现该差异级联到比较、
+        // 算术、数组索引（一个引擎正常返回、另一个报运行时错误），用户可写出
+        // "换引擎就错"的代码。现统一为 computeArith 截断除法，三引擎语义一致。
+        {
             NumericOps::ArithOp arithOp;
             switch (op) {
             case RegOp::REG_ADD: arithOp = NumericOps::ArithOp::Add; break;
             case RegOp::REG_SUB: arithOp = NumericOps::ArithOp::Sub;  break;
             case RegOp::REG_MUL: arithOp = NumericOps::ArithOp::Mul;  break;
+            case RegOp::REG_DIV: arithOp = NumericOps::ArithOp::Div;  break;
             case RegOp::REG_MOD: arithOp = NumericOps::ArithOp::Mod;  break;
             default:
                 return runtimeError("executeArith: 未知操作码");
@@ -425,7 +410,6 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
                 b.isInt(), b.isInt() ? b.intVal() : 0, b.toDouble());
             switch (r.status) {
             case NumericOps::ArithStatus::DivByZero:
-                // REG_MOD 触发除零时为"模零"，REG_DIV 不会走到此处（已单独处理）
                 return runtimeError("除零错误");
             case NumericOps::ArithStatus::IntOverflow:
                 return runtimeError("整数运算溢出");

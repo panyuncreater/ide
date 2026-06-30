@@ -480,6 +480,87 @@ static int test_interp() {
     return fail;
 }
 
+// ─── 8. 语句级 AST 往返等价性 ───────────────────────────────────────
+// 审计盲区修复：原 test_precedence 仅覆盖表达式级（19 用例），
+// 语句级结构（if/for/while/class/try）无 AST 往返验证——若 Formatter
+// 在格式化这些结构时丢失或重组子节点，幂等性测试无法发现（format=format 恒成立）。
+// 本测试对语句级结构做 Parse(src) vs Parse(format(src)) 的 AST 结构等价比较。
+
+static int test_statements() {
+    std::cout << "\n===== 8. 语句级 AST 往返等价性 =====\n";
+    std::vector<AuditCase> cases = {
+        // if/else 分支结构——验证 then/else 分支不被合并或丢失
+        {"S1", "if-else 完整结构",       "if (x > 0) { print(1); } else { print(2); }"},
+        {"S2", "if 无 else",             "if (x > 0) { print(1); }"},
+        {"S3", "嵌套 if-else",           "if (a) { if (b) { print(1); } else { print(2); } } else { print(3); }"},
+        // 循环结构——验证 init/cond/update/body 不被重组
+        {"S4", "for 循环",               "for (var i = 0; i < 10; i = i + 1) { print(i); }"},
+        {"S5", "while 循环",             "while (x < 100) { x = x * 2; }"},
+        {"S6", "嵌套循环",               "for (var i = 0; i < 3; i = i + 1) { for (var j = 0; j < 3; j = j + 1) { print(i + j); } }"},
+        // 函数声明——验证参数列表和函数体不被修改
+        {"S7", "函数声明带默认参数",     "fun add(a, b) { return a + b; }"},
+        {"S8", "嵌套函数声明",           "fun outer() { fun inner() { return 1; } return inner(); }"},
+        // 类声明——验证字段和方法列表不被重排或丢失
+        {"S9", "类声明带继承",           "class Dog extends Animal { var name; fun bark() { print(\"woof\"); } }"},
+        {"S10", "类声明多方法",          "class Point { var x; var y; fun init(a, b) { x = a; y = b; } fun dist() { return x + y; } }"},
+        // try/catch——验证 try 块和 catch 块结构不被重组
+        {"S11", "try-catch 完整",        "try { print(risky()); } catch (e) { print(e); }"},
+        {"S12", "嵌套 try-catch",        "try { try { throw 1; } catch (e) { throw 2; } } catch (e) { print(e); }"},
+        // 复合语句序列——验证语句顺序不被重排
+        {"S13", "多语句序列",            "var a = 1; var b = 2; var c = a + b; print(c);"},
+        {"S14", "语句内嵌表达式",        "var x = 1 + 2 * 3; if (x > 5) { print(x - (2 - 1)); }"},
+        // break/continue/return 在循环和函数中
+        {"S15", "break/continue in 循环", "var i = 0; while (true) { if (i >= 10) { break; } if (i % 2 == 0) { i = i + 1; continue; } print(i); i = i + 1; }"},
+        {"S16", "return 在函数中",       "fun f(x) { if (x > 0) { return x * 2; } return 0; }"},
+    };
+
+    int fail = 0;
+    for (auto& tc : cases) {
+        bool eFmt1, eFmt2, eParse1, eParse2;
+        std::string fmt1 = formatCode(tc.source, eFmt1);
+        std::string fmt2 = formatCode(fmt1, eFmt2);
+        bool idempotent = (fmt1 == fmt2) && !eFmt1 && !eFmt2;
+
+        // 语句级 AST 往返等价性：比较 Parse(src) 与 Parse(format(src)) 的 AST 结构
+        auto ast1 = parseSource(tc.source, eParse1);
+        auto ast2 = parseSource(fmt1, eParse2);
+        bool roundTripOk = false;
+        if (ast1 && ast2 && !eParse1 && !eParse2) {
+            if (ast1->statements.size() != ast2->statements.size()) {
+                roundTripOk = false;
+            } else {
+                roundTripOk = true;
+                for (size_t i = 0; i < ast1->statements.size(); ++i) {
+                    if (!astEqual(ast1->statements[i].get(), ast2->statements[i].get())) {
+                        roundTripOk = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        bool ok = idempotent && roundTripOk;
+        std::cout << (ok ? " PASS " : " FAIL ") << tc.id << " " << tc.name;
+        if (!roundTripOk && idempotent) {
+            std::cout << "  [!! AST 结构改变 !!]";
+        } else if (!idempotent) {
+            std::cout << "  [!! 非幂等 !!]";
+        }
+        std::cout << "\n";
+        if (!ok) {
+            fail++;
+            std::cout << "   source: [" << tc.source << "]\n";
+            std::cout << "   fmt1:   [" << fmt1 << "]\n";
+            std::cout << "   fmt2:   [" << fmt2 << "]\n";
+            if (!roundTripOk && idempotent) {
+                std::cout << "   *** Parse(src) 与 Parse(fmt1) 的 AST 结构不等价 ***\n";
+                std::cout << "   *** 语句级往返不变量被破坏 ***\n";
+            }
+        }
+    }
+    return fail;
+}
+
 int main() {
     std::cout << "=== Formatter 深度审计验证 ===\n";
     std::cout << "目标：验证格式化是语义保持的保形变换\n";
@@ -493,6 +574,7 @@ int main() {
     totalFail += test_config();
     totalFail += test_containers();
     totalFail += test_interp();
+    totalFail += test_statements();
 
     std::cout << "\n=== 总计 ===\n";
     std::cout << "失败用例数: " << totalFail << "\n";

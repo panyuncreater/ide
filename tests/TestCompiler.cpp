@@ -578,3 +578,74 @@ TEST(CompilerTypeCheckTest, A10_ArrayTypeAnnotationEmitsCheck) {
     // 数组字面量在编译期不做元素级检查（运行时 OP_TYPE_CHECK 检查）
     EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0);
 }
+
+// ============================================================
+// A11-A15 + 断言强化：覆盖测试质量审计发现的盲区
+// ------------------------------------------------------------
+// 审计发现：
+//   1. int 注解拒绝 float（float→int）零覆盖——A1 仅测 string→int
+//   2. 现有断言仅 EXPECT_GE(warns, 1) 计数，不验证警告消息内容
+//      若 TypeChecker 误报无关警告，测试仍通过
+// 强化方案：A11 新增 float→int 拒绝测试；
+//          A12-A15 验证警告消息包含期望的类型名，防止误报通过
+// ============================================================
+
+/// 辅助：查找 TypeChecker 警告中是否包含指定子串
+/// 用于强化断言——不仅验证警告数量，还验证警告内容正确
+static bool hasTypeCheckerWarningContaining(const DiagnosticBag& bag, const std::string& substr) {
+    for (const auto& d : bag.all()) {
+        if (d.source == DiagSource::TypeChecker && d.isWarning() &&
+            d.message.find(substr) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// A11: `int a = 3.14` — float 字面量不匹配 int 注解 → 产生警告
+/// 审计盲区修复：原 A1 仅测 string→int，float→int 拒绝完全无覆盖。
+/// 变异测试：若 typeMatchLiteral 的 INT 分支改为 `return true`（接受 float），
+/// 本测试能检测；A1 因 string≠int 仍被间接捕获，但本测试直接验证目标规则。
+TEST(CompilerTypeCheckTest, A11_FloatToIntRejectedOnVarDecl) {
+    auto tc = compileWithTypeCheck("int a = 3.14;");
+    int warns = countTypeCheckerWarnings(tc.compiler.getDiagnostics());
+    EXPECT_GE(warns, 1) << "int a = 3.14 应产生类型不匹配警告";
+    // 强化：验证警告消息包含 int 和 float 类型名（防止误报无关警告通过）
+    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "int"))
+        << "警告消息应提及 int 注解";
+    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "float"))
+        << "警告消息应提及 float 实际类型";
+}
+
+/// A12: `int a = 5; a = 2.5` — 后续赋值 float 给 int 注解变量 → 产生警告
+TEST(CompilerTypeCheckTest, A12_FloatToIntRejectedOnAssignment) {
+    auto tc = compileWithTypeCheck("int a = 5; a = 2.5;");
+    int warns = countTypeCheckerWarnings(tc.compiler.getDiagnostics());
+    EXPECT_GE(warns, 1) << "a = 2.5（int 变量赋 float）应产生警告";
+    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "float"))
+        << "警告消息应提及 float 实际类型";
+}
+
+/// A13: `bool a = 1` — int 字面量不匹配 bool 注解 → 产生警告并验证内容
+TEST(CompilerTypeCheckTest, A13_IntToBoolMismatch) {
+    auto tc = compileWithTypeCheck("bool a = 1;");
+    EXPECT_GE(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 1);
+    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "bool"))
+        << "警告消息应提及 bool 注解";
+}
+
+/// A14: `string a = true` — bool 字面量不匹配 string 注解 → 产生警告并验证内容
+TEST(CompilerTypeCheckTest, A14_BoolToStringMismatch) {
+    auto tc = compileWithTypeCheck("string a = true;");
+    EXPECT_GE(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 1);
+    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "string"))
+        << "警告消息应提及 string 注解";
+}
+
+/// A15: `float a = 5; float b = 3; a = b` — float 变量赋 int 字面量 → 无警告（宽化允许）
+/// 验证 int→float 宽化在赋值路径也生效（A3 仅测声明路径）
+TEST(CompilerTypeCheckTest, A15_IntWidensToFloatOnAssignment) {
+    auto tc = compileWithTypeCheck("float a = 1.5; a = 5;");
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
+        << "float 变量赋 int 字面量应宽化，无警告";
+}

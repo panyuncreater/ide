@@ -11,7 +11,7 @@
 - **函数**：`fun f(x) { ... }`，支持闭包与 upvalue 捕获（3+ 层）。函数无提升——`f(); fun f() {}` 会报"未定义的函数"。支持默认参数（`fun f(a=1, b=2)`），参数从左到右求值，不允许前向引用
 - **类与继承**：`class A extends B { ... }`，支持 `super.method()` 调用与字段同步回实例。类继承父类名存字符串运行时查找，支持跨行定义（REPL 中先 `class A {}` 再 `class B extends A {}`）。类方法自动预留 slot 0 给 `this`，字段按继承链展平存储。三后端 super 调用语义一致（BUG-INH-4 修复：IR 路径 LOAD_MUTATED + STORE_LOCAL 后补发 OP_POP 消费残留值，确保 super.method() 返回值正确）
 - **数据结构**：数组 `[1, 2, 3]`、字典 `{"key": val}`，支持索引读写。字典键强制为 string（B6 fix），键不存在时返回 null。数组/字典使用 Copy-On-Write（COW），写前检查 `isUnique()` 确保独占所有权
-- **运算符**：算术 `+ - * / %`、比较 `== != < > <= >=`、逻辑 `and or not`。除法：栈式 VM 整数截断，RegisterVM 真除。`and/or` 短路求值——左操作数决定结果时跳过右操作数求值。`+` 支持字符串拼接（任一操作数为字符串即触发）
+- **运算符**：算术 `+ - * / %`、比较 `== != < > <= >=`、逻辑 `and or not`。整数除法截断向零（三后端统一，AUDIT-DIV-UNIFY 修复）。`and/or` 短路求值——左操作数决定结果时跳过右操作数求值，返回操作数原值（三后端统一，非布尔）。`+` 支持字符串拼接（任一操作数为字符串即触发）
 - **内置方法**：`push` / `pop` / `length` / `substr` / `replace` / `join` / `has` / `contains` / `get` / `set` 等。`len`/`contains` 跨类型复用（数组/字典/字符串共用）。`substr` 负索引/超长索引返回空串。`replace` 全局字面量替换（非正则）
 - **字符串插值**：`"hello {name}, count={x+1}"` 支持表达式嵌入。插值支持嵌套字符串、字典、数组，嵌套深度限制 64 层防栈溢出。空插值 `{}` 报语法错误
 - **异常处理**：`try { ... } catch (e) { ... } throw expr`。`throw` 可抛任意值。`catch` 参数独占 slot（防止覆盖外层变量）。`try` 缺失 `catch` 会导致 REPL 续行提示
@@ -25,7 +25,7 @@
 - **三执行引擎**：
   - 树遍历解释器（支持 REPL 续行输入、条件断点沙箱求值）
   - 栈式字节码 VM（支持单步、栈/全局变量监视、条件断点）
-  - 寄存器式 VM（32 虚拟寄存器 R0-R31，50+ RegOp，IR 三地址码直接 lowering，真除语义）
+  - 寄存器式 VM（32 虚拟寄存器 R0-R31，50+ RegOp，IR 三地址码直接 lowering）
 - **调试器**：断点（含条件断点，条件求值沙箱隔离程序状态）、单步进入/跳过/跳出、变量监视、调用栈、首行断点 pre-execution 检查。双后端调试路径暂停语义文档化：Interpreter pre-execution 暂停，VM post-execution 检查（IP 指向下条指令，变量快照反映断点行 pre-execution 状态）
 - **类型检查器**：编译期类型注解检查（MiniLangTypeChecker + LiteralTypeWalker），三后端运行时统一强制（OP_TYPE_CHECK / REG_TYPE_CHECK / TYPE_CHECK），共享 `typeMatchValue` 函数统一类型匹配逻辑。类型违反报告 DiagSource::TypeChecker 警告
 - **代码格式化器**：可配置缩进/花括号风格/运算符空格，保留注释。幂等性 + 往返不变量验证（AST 结构比较），括号保留遵循运算符优先级（右嵌套同优先级加括号，左嵌套冗余括号丢弃）
@@ -146,7 +146,7 @@ ctest
 测试覆盖要点：
 - **正常路径**：所有语言特性的 happy path 覆盖
 - **错误路径**：除零、类型违反、数组越界、空指针访问、未定义变量/函数等
-- **三后端一致性**：同一代码在 Interpreter / StackVM / RegisterVM 行为一致（已知差异：除法语义、`and/or` 返回值、非方法上下文 super 错误消息）。整数溢出检测三后端统一（BUG-OVF-1/2 修复）
+- **三后端一致性**：同一代码在 Interpreter / StackVM / RegisterVM 行为一致（已知差异：非方法上下文 super 错误消息文本不同——Interpreter 报 "super 只能在类方法中使用"，IR 路径报 "未定义的变量: this"；错误类型相同均为 RuntimeError，三引擎均不被 try/catch 捕获，行为一致）。整数除法截断向零、`and/or` 返回操作数原值均已三后端统一（AUDIT-DIV-UNIFY / AUDIT-ANDOR 修复）。整数溢出检测三后端统一（BUG-OVF-1/2 修复）
 - **边界条件**：接近 MAX_RECURSION_DEPTH、MAX_FRAMES 的极限场景
 - **类型检查**：类型注解强制、null 兼容性、int/float 宽化规则
 
@@ -258,7 +258,7 @@ REPL 面板位于 IDE 底部，支持交互式求值与多行输入：
 - **BUG-INH-1**（P0）：IR 路径丢失类字段默认值表达式——`AstIRBuilder::visitClassDecl` 未收集字段初始化器字面量，所有字段被硬编码为 null。修复：DEFINE_CLASS IR 操作数新增 fieldDefaultConstIdx，lowering 时按 Value 类型 emit 对应常量加载指令
 - **BUG-INH-4**（P0）：StackVM IR 路径 `super.method()` 返回错误值——`LOAD_MUTATED + STORE_LOCAL` 后值残留导致 `RETURN` 弹出错误值。修复：visitMethodCall 的 isVarRef/isSuperCall 分支在 emitStoreVar 后，若存储目标是 LOCAL/UPVALUE 则显式 emit IROp::POP 消费残留值
 - **BUG-INH-3**（P2）：super 方法未找到时三后端错误消息不一致——RegVM 报 "父类链中无方法"/"无方法:" 与 Interpreter/StackVM 的 "没有方法" 不一致。修复：统一为 "类 X 没有方法 Y"
-- **BUG-INH-2**（P2，文档化）：非方法上下文中使用 super 时错误消息不一致——Interpreter 报 "super 只能在类方法中使用"，IR 路径报 "未定义的变量: this"。文档化为已知差异（不崩溃，错误类型不同）
+- **BUG-INH-2**（P2，文档化）：非方法上下文中使用 super 时错误消息不一致——Interpreter 报 "super 只能在类方法中使用"，IR 路径报 "未定义的变量: this"。文档化为已知差异（不崩溃；错误类型相同均为 RuntimeError，三引擎均不被 try/catch 捕获，仅消息文本不同）
 
 ### 整数溢出与模块系统修复（BUG-OVF / BUG-MOD / SEC 系列）
 

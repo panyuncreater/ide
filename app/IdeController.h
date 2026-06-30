@@ -90,6 +90,12 @@ public:
     }
     /// 执行 REPL 程序，返回求值结果（异常向上传播由调用方处理）
     Value executeRepl(Block& program) { return interpreter_->executeRepl(program); }
+    /// 清除指定模块的缓存（REPL reload 命令使用，下次 import 重新加载源码）
+    void clearModuleCache(const std::string& path) { interpreter_->clearModuleCache(path); }
+    /// 清除所有模块缓存
+    void clearAllModuleCache() { interpreter_->clearAllModuleCache(); }
+    /// 请求中止当前 REPL 异步执行（closeEvent 超时路径使用）
+    void requestReplStop() { interpreter_->requestStop(); }
 
     // ---- 管线操作（转发到 PipelineRunner）----
     bool runLexer(const std::string& source) { return pipeline_.runLexer(source); }

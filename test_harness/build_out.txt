@@ -1,0 +1,676 @@
+test_main.cpp
+C:\Users\v\Desktop\ide\ide\test_harness\test_main.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(40): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(40): error C2146: 语法错误: 缺少“;”(在标识符“literal”的前面)
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(43): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(44): error C2550: “Token”: 构造函数初始值设定项列表只能在构造函数定义中使用
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(44): warning C4508: “Token”: 函数应返回一个值；假定“void”返回类型
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(46): error C2061: 语法错误: 标识符“TokenLiteral”
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(46): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “lit”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “ln”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “col”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2550: “Token”: 构造函数初始值设定项列表只能在构造函数定义中使用
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): warning C4508: “Token”: 函数应返回一个值；假定“void”返回类型
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(50): error C2270: “literalIsFloat”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(50): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(51): error C2270: “literalIsString”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(51): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(52): error C2270: “literalIsBool”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(52): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(53): error C2270: “literalIsNull”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(53): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(56): error C2270: “literalFloat”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(56): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(57): error C2270: “literalString”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(57): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(58): error C2270: “literalBool”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(58): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2838: “TK_VAR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2065: “TK_VAR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2838: “TK_FUN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2065: “TK_FUN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2838: “TK_IF”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2065: “TK_IF”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2838: “TK_ELSE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2065: “TK_ELSE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2838: “TK_WHILE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2065: “TK_WHILE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2838: “TK_FOR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2065: “TK_FOR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2838: “TK_RETURN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2065: “TK_RETURN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2838: “TK_INT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2065: “TK_INT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2838: “TK_FLOAT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2065: “TK_FLOAT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2838: “TK_BOOL”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2065: “TK_BOOL”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(87): error C2838: “TK_STRING_TYPE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(87): error C2065: “TK_STRING_TYPE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(88): error C2838: “TK_FUNCTION”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(88): error C2065: “TK_FUNCTION”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(89): error C2838: “TK_FUNC”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(89): error C2065: “TK_FUNC”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(90): error C2838: “TK_CLASS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(90): error C2065: “TK_CLASS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(91): error C2838: “TK_EXTENDS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(91): error C2065: “TK_EXTENDS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(92): error C2838: “TK_SUPER”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(92): error C2065: “TK_SUPER”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(93): error C2838: “TK_DICT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(93): error C2065: “TK_DICT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(94): error C2838: “TK_ARRAY”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(94): error C2065: “TK_ARRAY”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(95): error C2838: “TK_NULL”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(95): error C2065: “TK_NULL”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(96): error C2838: “TK_IDENTIFIER”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(96): error C2065: “TK_IDENTIFIER”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(97): error C2838: “TK_INT_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(97): error C2065: “TK_INT_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(98): error C2838: “TK_FLOAT_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(98): error C2065: “TK_FLOAT_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(99): error C2838: “TK_STRING_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(99): error C2065: “TK_STRING_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(100): error C2838: “TK_PLUS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(100): error C2065: “TK_PLUS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(101): error C2838: “TK_MINUS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(101): error C2065: “TK_MINUS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(102): error C2838: “TK_STAR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(102): error C2065: “TK_STAR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(103): error C2838: “TK_SLASH”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(103): error C2065: “TK_SLASH”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(104): error C2838: “TK_PERCENT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(104): error C2065: “TK_PERCENT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(111): error C2838: “TK_ASSIGN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(111): error C2065: “TK_ASSIGN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(112): error C2838: “TK_LPAREN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(112): error C2065: “TK_LPAREN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(113): error C2838: “TK_RPAREN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(113): error C2065: “TK_RPAREN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(114): error C2838: “TK_LBRACE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(114): error C2065: “TK_LBRACE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(115): error C2838: “TK_RBRACE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(115): error C2065: “TK_RBRACE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(118): error C2838: “TK_LBRACKET”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(118): error C2065: “TK_LBRACKET”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(126): error C2838: “TK_INTERP_START”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(126): error C2065: “TK_INTERP_START”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): fatal error C1003: 错误计数超过 100；正在停止编译
+Lexer.cpp
+C:\Users\v\Desktop\ide\ide\lexer\Lexer.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Lexer.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(40): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(40): error C2146: 语法错误: 缺少“;”(在标识符“literal”的前面)
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(43): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(44): error C2550: “Token”: 构造函数初始值设定项列表只能在构造函数定义中使用
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(44): warning C4508: “Token”: 函数应返回一个值；假定“void”返回类型
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(46): error C2061: 语法错误: 标识符“TokenLiteral”
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(46): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “lit”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “ln”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “col”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2550: “Token”: 构造函数初始值设定项列表只能在构造函数定义中使用
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): warning C4508: “Token”: 函数应返回一个值；假定“void”返回类型
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(50): error C2270: “literalIsFloat”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(50): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(51): error C2270: “literalIsString”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(51): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(52): error C2270: “literalIsBool”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(52): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(53): error C2270: “literalIsNull”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(53): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(56): error C2270: “literalFloat”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(56): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(57): error C2270: “literalString”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(57): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(58): error C2270: “literalBool”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(58): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2838: “TK_VAR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2065: “TK_VAR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2838: “TK_FUN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2065: “TK_FUN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2838: “TK_IF”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2065: “TK_IF”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2838: “TK_ELSE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2065: “TK_ELSE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2838: “TK_WHILE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2065: “TK_WHILE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2838: “TK_FOR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2065: “TK_FOR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2838: “TK_RETURN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2065: “TK_RETURN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2838: “TK_INT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2065: “TK_INT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2838: “TK_FLOAT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2065: “TK_FLOAT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2838: “TK_BOOL”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2065: “TK_BOOL”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(87): error C2838: “TK_STRING_TYPE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(87): error C2065: “TK_STRING_TYPE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(88): error C2838: “TK_FUNCTION”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(88): error C2065: “TK_FUNCTION”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(89): error C2838: “TK_FUNC”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(89): error C2065: “TK_FUNC”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(90): error C2838: “TK_CLASS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(90): error C2065: “TK_CLASS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(91): error C2838: “TK_EXTENDS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(91): error C2065: “TK_EXTENDS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(92): error C2838: “TK_SUPER”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(92): error C2065: “TK_SUPER”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(93): error C2838: “TK_DICT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(93): error C2065: “TK_DICT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(94): error C2838: “TK_ARRAY”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(94): error C2065: “TK_ARRAY”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(95): error C2838: “TK_NULL”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(95): error C2065: “TK_NULL”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(96): error C2838: “TK_IDENTIFIER”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(96): error C2065: “TK_IDENTIFIER”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(97): error C2838: “TK_INT_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(97): error C2065: “TK_INT_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(98): error C2838: “TK_FLOAT_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(98): error C2065: “TK_FLOAT_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(99): error C2838: “TK_STRING_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(99): error C2065: “TK_STRING_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(100): error C2838: “TK_PLUS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(100): error C2065: “TK_PLUS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(101): error C2838: “TK_MINUS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(101): error C2065: “TK_MINUS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(102): error C2838: “TK_STAR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(102): error C2065: “TK_STAR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(103): error C2838: “TK_SLASH”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(103): error C2065: “TK_SLASH”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(104): error C2838: “TK_PERCENT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(104): error C2065: “TK_PERCENT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(111): error C2838: “TK_ASSIGN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(111): error C2065: “TK_ASSIGN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(112): error C2838: “TK_LPAREN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(112): error C2065: “TK_LPAREN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(113): error C2838: “TK_RPAREN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(113): error C2065: “TK_RPAREN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(114): error C2838: “TK_LBRACE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(114): error C2065: “TK_LBRACE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(115): error C2838: “TK_RBRACE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(115): error C2065: “TK_RBRACE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(118): error C2838: “TK_LBRACKET”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(118): error C2065: “TK_LBRACKET”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(126): error C2838: “TK_INTERP_START”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(126): error C2065: “TK_INTERP_START”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): fatal error C1003: 错误计数超过 100；正在停止编译
+Parser.cpp
+C:\Users\v\Desktop\ide\ide\parser\Parser.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\parser/Parser.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(40): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(40): error C2146: 语法错误: 缺少“;”(在标识符“literal”的前面)
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(43): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(44): error C2550: “Token”: 构造函数初始值设定项列表只能在构造函数定义中使用
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(44): warning C4508: “Token”: 函数应返回一个值；假定“void”返回类型
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(46): error C2061: 语法错误: 标识符“TokenLiteral”
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(46): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “lit”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “ln”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2065: “col”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): error C2550: “Token”: 构造函数初始值设定项列表只能在构造函数定义中使用
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(47): warning C4508: “Token”: 函数应返回一个值；假定“void”返回类型
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(50): error C2270: “literalIsFloat”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(50): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(51): error C2270: “literalIsString”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(51): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(52): error C2270: “literalIsBool”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(52): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(53): error C2270: “literalIsNull”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(53): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(56): error C2270: “literalFloat”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(56): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(57): error C2270: “literalString”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(57): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(58): error C2270: “literalBool”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(58): error C2065: “literal”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2838: “TK_VAR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2065: “TK_VAR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2838: “TK_FUN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2065: “TK_FUN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2838: “TK_IF”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2065: “TK_IF”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2838: “TK_ELSE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2065: “TK_ELSE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2838: “TK_WHILE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2065: “TK_WHILE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2838: “TK_FOR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2065: “TK_FOR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2838: “TK_RETURN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2065: “TK_RETURN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2838: “TK_INT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2065: “TK_INT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2838: “TK_FLOAT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2065: “TK_FLOAT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2838: “TK_BOOL”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2065: “TK_BOOL”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(87): error C2838: “TK_STRING_TYPE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(87): error C2065: “TK_STRING_TYPE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(88): error C2838: “TK_FUNCTION”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(88): error C2065: “TK_FUNCTION”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(89): error C2838: “TK_FUNC”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(89): error C2065: “TK_FUNC”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(90): error C2838: “TK_CLASS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(90): error C2065: “TK_CLASS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(91): error C2838: “TK_EXTENDS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(91): error C2065: “TK_EXTENDS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(92): error C2838: “TK_SUPER”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(92): error C2065: “TK_SUPER”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(93): error C2838: “TK_DICT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(93): error C2065: “TK_DICT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(94): error C2838: “TK_ARRAY”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(94): error C2065: “TK_ARRAY”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(95): error C2838: “TK_NULL”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(95): error C2065: “TK_NULL”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(96): error C2838: “TK_IDENTIFIER”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(96): error C2065: “TK_IDENTIFIER”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(97): error C2838: “TK_INT_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(97): error C2065: “TK_INT_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(98): error C2838: “TK_FLOAT_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(98): error C2065: “TK_FLOAT_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(99): error C2838: “TK_STRING_LIT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(99): error C2065: “TK_STRING_LIT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(100): error C2838: “TK_PLUS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(100): error C2065: “TK_PLUS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(101): error C2838: “TK_MINUS”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(101): error C2065: “TK_MINUS”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(102): error C2838: “TK_STAR”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(102): error C2065: “TK_STAR”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(103): error C2838: “TK_SLASH”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(103): error C2065: “TK_SLASH”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(104): error C2838: “TK_PERCENT”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(104): error C2065: “TK_PERCENT”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(111): error C2838: “TK_ASSIGN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(111): error C2065: “TK_ASSIGN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(112): error C2838: “TK_LPAREN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(112): error C2065: “TK_LPAREN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(113): error C2838: “TK_RPAREN”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(113): error C2065: “TK_RPAREN”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(114): error C2838: “TK_LBRACE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(114): error C2065: “TK_LBRACE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(115): error C2838: “TK_RBRACE”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(115): error C2065: “TK_RBRACE”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(118): error C2838: “TK_LBRACKET”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(118): error C2065: “TK_LBRACKET”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(126): error C2838: “TK_INTERP_START”: 成员声明中的限定名称非法
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(126): error C2065: “TK_INTERP_START”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(63): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(64): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(65): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(66): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(67): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(68): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(69): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(84): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(85): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): error C2051: case 表达式不是常量
+C:\Users\v\Desktop\ide\ide\lexer/Token.h(86): fatal error C1003: 错误计数超过 100；正在停止编译
+ASTNode.cpp
+C:\Users\v\Desktop\ide\ide\ast\ASTNode.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\ast/ASTNode.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\ast/ASTNode.h(708): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(26): error C2059: 语法错误:“,”
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(34): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(34): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(67): error C3158: “visitBinaryOp”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(67): error C2575: “visitBinaryOp”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(67): error C2601: “visitBinaryOp”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(68): error C3158: “visitUnaryOp”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(68): error C2575: “visitUnaryOp”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(68): error C2601: “visitUnaryOp”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(69): error C3158: “visitNumberLiteral”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(69): error C2575: “visitNumberLiteral”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(69): error C2601: “visitNumberLiteral”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(70): error C3158: “visitStringLiteral”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(70): error C2575: “visitStringLiteral”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(70): error C2601: “visitStringLiteral”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(71): error C3158: “visitBoolLiteral”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(71): error C2575: “visitBoolLiteral”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(71): error C2601: “visitBoolLiteral”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(72): error C3158: “visitVarDecl”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(72): error C2575: “visitVarDecl”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(72): error C2601: “visitVarDecl”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(73): error C3158: “visitAssignment”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(73): error C2575: “visitAssignment”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(73): error C2601: “visitAssignment”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(74): error C3158: “visitVarRef”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(74): error C2575: “visitVarRef”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(74): error C2601: “visitVarRef”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(75): error C3158: “visitIfStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(75): error C2575: “visitIfStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(75): error C2601: “visitIfStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(76): error C3158: “visitWhileStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(76): error C2575: “visitWhileStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(76): error C2601: “visitWhileStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(77): error C3158: “visitForStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(77): error C2575: “visitForStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(77): error C2601: “visitForStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(78): error C3158: “visitFunDecl”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(78): error C2575: “visitFunDecl”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(78): error C2601: “visitFunDecl”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(79): error C3158: “visitFunCall”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(79): error C2575: “visitFunCall”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(79): error C2601: “visitFunCall”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(80): error C3158: “visitReturnStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(80): error C2575: “visitReturnStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(80): error C2601: “visitReturnStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(81): error C3158: “visitPrintStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(81): error C2575: “visitPrintStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(81): error C2601: “visitPrintStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(82): error C3158: “visitBlock”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(82): error C2575: “visitBlock”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(82): error C2601: “visitBlock”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(83): error C3158: “visitArrayLiteral”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(83): error C2575: “visitArrayLiteral”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(83): error C2601: “visitArrayLiteral”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(84): error C3158: “visitDictLiteral”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(84): error C2575: “visitDictLiteral”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(84): error C2601: “visitDictLiteral”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(85): error C3158: “visitIndexAccess”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(85): error C2575: “visitIndexAccess”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(85): error C2601: “visitIndexAccess”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(86): error C3158: “visitIndexAssign”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(86): error C2575: “visitIndexAssign”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(86): error C2601: “visitIndexAssign”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(87): error C3158: “visitClassDecl”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(87): error C2575: “visitClassDecl”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(87): error C2601: “visitClassDecl”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(88): error C3158: “visitMemberAccess”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(88): error C2575: “visitMemberAccess”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(88): error C2601: “visitMemberAccess”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(89): error C3158: “visitMemberAssign”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(89): error C2575: “visitMemberAssign”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(89): error C2601: “visitMemberAssign”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(90): error C3158: “visitMethodCall”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(90): error C2575: “visitMethodCall”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(90): error C2601: “visitMethodCall”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(91): error C3158: “visitNullLiteral”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(91): error C2575: “visitNullLiteral”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(91): error C2601: “visitNullLiteral”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(92): error C3158: “visitSuperExpr”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(92): error C2575: “visitSuperExpr”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(92): error C2601: “visitSuperExpr”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(93): error C3158: “visitBreakStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(93): error C2575: “visitBreakStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(93): error C2601: “visitBreakStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(94): error C3158: “visitContinueStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(94): error C2575: “visitContinueStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(94): error C2601: “visitContinueStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(95): error C3158: “visitTryStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(95): error C2575: “visitTryStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(95): error C2601: “visitTryStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(96): error C3158: “visitThrowStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(96): error C2575: “visitThrowStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(96): error C2601: “visitThrowStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(97): error C3158: “visitImportStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(97): error C2575: “visitImportStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(97): error C2601: “visitImportStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(98): error C3158: “visitExportStmt”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(98): error C2575: “visitExportStmt”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(98): error C2601: “visitExportStmt”: 本地函数定义是非法的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(99): error C3158: “visitInterpolatedString”:“override”只能应用于虚成员函数
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(99): error C2575: “visitInterpolatedString”: 只有成员函数和基可以是虚拟的
+C:\Users\v\Desktop\ide\ide\interpreter/Visitor.h(99): fatal error C1003: 错误计数超过 100；正在停止编译
+Interpreter.cpp
+C:\Users\v\Desktop\ide\ide\interpreter\Interpreter.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Interpreter.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(26): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(27): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(28): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(29): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(30): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(31): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(32): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(34): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(33): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(34): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(48): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(48): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(57): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(57): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): error C3646: “type”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2061: 语法错误: 标识符“ValueType”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3646: “fetch_add”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C2059: 语法错误:“(”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(62): error C2628: “RefCounted”后面接“void”是非法的(是否忘记了“;”?)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(62): error C2270: “release”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(63): error C2065: “refCount”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(64): error C2355: “this”: 只能在非静态成员函数或非静态数据成员初始值设定项的内部引用
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2065: “t”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2789: “RefCounted::ValueType”: 必须初始化常量限定类型的对象
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): note: 参见“RefCounted::ValueType”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2614: “RefCounted”: 非法的成员初始化:“type”不是基或成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(49): error C2039: "type": 不是 "RefCounted" 的成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(40): note: 参见“RefCounted”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(49): error C2789: “RefCounted::ValueType”: 必须初始化常量限定类型的对象
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): note: 参见“RefCounted::ValueType”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(49): error C2614: “RefCounted”: 非法的成员初始化:“type”不是基或成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(50): error C2039: "type": 不是 "RefCounted" 的成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(40): note: 参见“RefCounted”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(50): error C2789: “RefCounted::ValueType”: 必须初始化常量限定类型的对象
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): note: 参见“RefCounted::ValueType”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(50): error C2614: “RefCounted”: 非法的成员初始化:“type”不是基或成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(69): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(70): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(70): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(73): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(73): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(76): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(76): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(27): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(28): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(29): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(30): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(37): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(38): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(38): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(42): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(42): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(46): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(46): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(51): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(51): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(53): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(53): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(60): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(60): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C3646: “status”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C2059: 语法错误:“=”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C2653: “ArithStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(76): error C2065: “status”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(76): error C2653: “ArithStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(76): error C2065: “OK”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(80): error C2062: 意外的类型“bool” 
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(81): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(81): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(81): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(139): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(141): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(140): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(141): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C3646: “status”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C2059: 语法错误:“=”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C2653: “CompareStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(148): error C2065: “status”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(148): error C2653: “CompareStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C2143: 语法错误: 缺少“;”(在“&”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C2226: 语法错误: 意外的“std::string”类型
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): warning C4228: 使用了非标准扩展: 忽略声明符列表中逗号后面的限定符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C2530: “rightStr”: 必须初始化引用
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2062: 意外的类型“double” 
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(166): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(166): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(166): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(172): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(173): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(173): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(175): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(175): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\common/RuntimeLimits.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\common/RuntimeLimits.h(12): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\common/RuntimeLimits.h(12): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\common/Utf8Utils.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\common/Utf8Utils.h(22): error C2059: 语法错误:“for”
+C:\Users\v\Desktop\ide\ide\common/Utf8Utils.h(22): fatal error C1003: 错误计数超过 100；正在停止编译
+Environment.cpp
+C:\Users\v\Desktop\ide\ide\interpreter\Environment.cpp(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Environment.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/Value.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(26): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(27): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(28): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(29): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(30): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(31): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(32): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(34): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(33): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(34): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(48): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(48): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(57): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/ValueTypes.h(57): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): error C3646: “type”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2061: 语法错误: 标识符“ValueType”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3927: "->": 非函数声明符后不允许尾随返回类型
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3484: 语法错误: 返回类型前应为“->”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3613: “->”后缺少返回类型(假定为“int”)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C3646: “fetch_add”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C2059: 语法错误:“(”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(58): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(62): error C2628: “RefCounted”后面接“void”是非法的(是否忘记了“;”?)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(62): error C2270: “release”: 非成员函数上不允许修饰符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(63): error C2065: “refCount”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(64): error C2355: “this”: 只能在非静态成员函数或非静态数据成员初始值设定项的内部引用
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2065: “t”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2789: “RefCounted::ValueType”: 必须初始化常量限定类型的对象
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): note: 参见“RefCounted::ValueType”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(46): error C2614: “RefCounted”: 非法的成员初始化:“type”不是基或成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(49): error C2039: "type": 不是 "RefCounted" 的成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(40): note: 参见“RefCounted”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(49): error C2789: “RefCounted::ValueType”: 必须初始化常量限定类型的对象
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): note: 参见“RefCounted::ValueType”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(49): error C2614: “RefCounted”: 非法的成员初始化:“type”不是基或成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(50): error C2039: "type": 不是 "RefCounted" 的成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(40): note: 参见“RefCounted”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(50): error C2789: “RefCounted::ValueType”: 必须初始化常量限定类型的对象
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(42): note: 参见“RefCounted::ValueType”的声明
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(50): error C2614: “RefCounted”: 非法的成员初始化:“type”不是基或成员
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(69): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(70): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(70): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(73): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(73): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(76): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/RefCounted.h(76): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(27): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(28): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(29): error C2059: 语法错误:“if”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(30): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(37): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(38): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(38): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(42): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(42): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(46): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(46): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(51): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(51): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(53): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(53): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(60): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(60): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C3646: “status”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C2059: 语法错误:“=”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C2653: “ArithStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(73): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(76): error C2065: “status”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(76): error C2653: “ArithStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(76): error C2065: “OK”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(80): error C2062: 意外的类型“bool” 
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(81): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(81): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(81): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(139): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(141): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(140): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(141): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C3646: “status”: 未知重写说明符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C2059: 语法错误:“=”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C2653: “CompareStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(145): error C2238: 意外的标记位于“;”之前
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(148): error C2065: “status”: 未声明的标识符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(148): error C2653: “CompareStatus”: 不是类或命名空间名称
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C2143: 语法错误: 缺少“;”(在“&”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C2226: 语法错误: 意外的“std::string”类型
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): warning C4228: 使用了非标准扩展: 忽略声明符列表中逗号后面的限定符
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C4430: 缺少类型说明符 - 假定为 int。注意: C++ 不支持默认 int
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(153): error C2530: “rightStr”: 必须初始化引用
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2062: 意外的类型“double” 
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2059: 语法错误:“)”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(154): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(166): error C2059: 语法错误:“switch”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(166): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(166): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(172): error C2059: 语法错误:“return”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(173): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(173): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(175): error C2143: 语法错误: 缺少“;”(在“}”的前面)
+C:\Users\v\Desktop\ide\ide\interpreter/NumericUtils.h(175): error C2059: 语法错误:“}”
+C:\Users\v\Desktop\ide\ide\common/RuntimeLimits.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\common/RuntimeLimits.h(12): error C2143: 语法错误: 缺少“;”(在“{”的前面)
+C:\Users\v\Desktop\ide\ide\common/RuntimeLimits.h(12): error C2447: “{”: 缺少函数标题(是否是老式的形式表?)
+C:\Users\v\Desktop\ide\ide\common/Utf8Utils.h(1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+C:\Users\v\Desktop\ide\ide\common/Utf8Utils.h(22): error C2059: 语法错误:“for”
+C:\Users\v\Desktop\ide\ide\common/Utf8Utils.h(22): fatal error C1003: 错误计数超过 100；正在停止编译
+正在生成代码...
+EXIT_CODE=2
