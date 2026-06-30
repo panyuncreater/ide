@@ -15,7 +15,14 @@ static std::string runInterp(const std::string& src) {
     Interpreter interp;
     std::string out;
     interp.setOutputCallback([&](const std::string& s) { out += s; });
-    interp.execute(*ast);
+    // AUDIT-HELPER fix: 对齐 TestConsistencyDiff.cpp 的 runInterp，catch RuntimeError
+    try {
+        interp.execute(*ast);
+    } catch (const RuntimeError& e) {
+        return out + "<runtime:" + std::string(e.what()) + ">";
+    } catch (const std::exception& e) {
+        return out + "<runtime:" + std::string(e.what()) + ">";
+    }
     return out;
 }
 static std::string runStackVM_IR(const std::string& src) {

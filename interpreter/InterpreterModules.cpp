@@ -15,6 +15,45 @@
 void Interpreter::visitImportStmt(ImportStmt& node) {
     checkBreak(&node);
 
+    // 解析模块路径（相对于当前文件）— SEC-1 fix: 路径校验在 loader 检查之前，
+    // 输入验证应在资源加载前，确保即使无 loader 也能拒绝恶意路径。
+    std::string modulePath = node.modulePath;
+    // P2-3 fix: 路径规范化 — 统一路径分隔符为 '/'，去除多余的 "./" 前缀
+    // 避免相同模块因路径表示不同（如 "foo\bar.mini" vs "foo/bar.mini"）被重复加载
+    for (char& c : modulePath) {
+        if (c == '\\') c = '/';
+    }
+    if (modulePath.size() >= 2 && modulePath[0] == '.' && modulePath[1] == '/') {
+        modulePath.erase(0, 2);
+    }
+    // SEC-1 fix: 路径遍历攻击防护 — 拒绝 ".." 路径段和绝对路径，防止 import 读取项目目录外文件。
+    // 检查 ".." 作为完整路径段（避免误判 "foo..bar" 这样的合法文件名）。
+    if (modulePath.empty()) {
+        runtimeError("模块路径不能为空", node.line, node.column);
+    }
+    // 绝对路径检测（Unix 以 '/' 开头，Windows 以 'C:/' 或 'C:\\' 形式）
+    if (modulePath[0] == '/' || (modulePath.size() >= 3 && modulePath[1] == ':' &&
+        (modulePath[2] == '/' || modulePath[2] == '\\'))) {
+        runtimeError("模块路径不能为绝对路径: " + modulePath, node.line, node.column);
+    }
+    // ".." 路径段检测（按 '/' 分割检查每个段）
+    {
+        std::string normalized = modulePath;
+        size_t pos = 0;
+        while (pos < normalized.size()) {
+            size_t next = normalized.find('/', pos);
+            std::string segment = (next == std::string::npos)
+                ? normalized.substr(pos) : normalized.substr(pos, next - pos);
+            if (segment == "..") {
+                runtimeError("模块路径不能包含父目录引用 '..': " + modulePath, node.line, node.column);
+            }
+            if (next == std::string::npos) break;
+            pos = next + 1;
+        }
+    }
+    // 简单路径解析：如果模块路径是相对路径且当前文件路径非空，拼接目录
+    // （完整路径解析由 moduleLoader_ 回调负责）
+
     // F12: 模块加载
     // A6 fix: 加锁拷贝 callback 后解锁检查，避免跨线程数据竞争
     std::function<std::string(const std::string&)> loader;
@@ -25,19 +64,6 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     if (!loader) {
         runtimeError("未设置模块加载器，无法执行 import", node.line, node.column);
     }
-
-    // 解析模块路径（相对于当前文件）
-    std::string modulePath = node.modulePath;
-    // P2-3 fix: 路径规范化 — 统一路径分隔符为 '/'，去除多余的 "./" 前缀
-    // 避免相同模块因路径表示不同（如 "foo\bar.mini" vs "foo/bar.mini"）被重复加载
-    for (char& c : modulePath) {
-        if (c == '\\') c = '/';
-    }
-    if (modulePath.size() >= 2 && modulePath[0] == '.' && modulePath[1] == '/') {
-        modulePath.erase(0, 2);
-    }
-    // 简单路径解析：如果模块路径是相对路径且当前文件路径非空，拼接目录
-    // （完整路径解析由 moduleLoader_ 回调负责）
 
     // 循环依赖检测（D19 fix: 用 unordered_set 实现 O(1) 查找，替代线性扫描）
     if (moduleLoadingSet_.count(modulePath) > 0) {

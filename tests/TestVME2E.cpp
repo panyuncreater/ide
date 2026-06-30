@@ -35,6 +35,7 @@
 #include "compiler/RegisterVM.h"
 #include "interpreter/Value.h"
 #include "interpreter/Interpreter.h"
+#include "interpreter/RuntimeExceptions.h"  // AUDIT-HELPER fix: catch RuntimeError
 
 #include <string>
 #include <vector>
@@ -44,7 +45,9 @@
 // ============================================================
 
 // 执行源码，返回所有 print 输出拼接后的字符串
-// 若编译或运行时出错，返回空字符串并通过 GTest 失败标识
+// AUDIT-HELPER fix: 原实现忽略 vm.hasError()（注释称"调用方可通过 vm.hasError() 检查"
+// 但 VM 是局部变量，调用方无法检查——文档谎言）。VM 出错时返回部分输出，
+// 测试以"输出不匹配"误报掩盖真实失败原因。现改为检查 hasError 并编码错误。
 static std::string runVMOutput(const std::string& source) {
     Lexer lexer;
     auto tokens = lexer.scan(source);
@@ -56,14 +59,14 @@ static std::string runVMOutput(const std::string& source) {
 
     Compiler compiler;
     CompileResult result = compiler.compile(*ast);
-    // 编译错误不强制失败（某些用例可能预期编译失败），由调用方判断
 
     VM vm;
     std::string captured;
     vm.setOutputCallback([&](const std::string& s) { captured += s; });
-    VMResult vmr = vm.execute(result);
-    // 调用方可通过 vm.hasError() 检查错误
-    (void)vmr;
+    vm.execute(result);
+    if (vm.hasError()) {
+        return captured + "<runtime:" + vm.getLastError() + ">";
+    }
     return captured;
 }
 
@@ -97,6 +100,8 @@ static VMResult runVMResult(const std::string& source, std::string& output,
 }
 
 // 执行源码，返回 VM 全局变量表
+// AUDIT-HELPER fix: 原实现忽略 vm.hasError()，VM 执行中途出错时全局变量表不完整，
+// EXPECT_EQ(globals["x"].intVal(), 42) 可能误报"globals 中无 x"或碰巧通过。
 static std::unordered_map<std::string, Value> runVMGlobals(const std::string& source) {
     Lexer lexer;
     auto tokens = lexer.scan(source);
@@ -111,6 +116,9 @@ static std::unordered_map<std::string, Value> runVMGlobals(const std::string& so
     VM vm;
     vm.setOutputCallback([](const std::string&) {});
     vm.execute(result);
+    // 不强制失败：某些测试可能预期部分全局变量存在即使 VM 出错。
+    // 但通过 hasError_ 状态供调用方判断（vm 是局部变量无法外部检查，
+    // 如需错误检查请用 runVMResult）。
     return vm.getGlobals();
 }
 
@@ -613,6 +621,8 @@ TEST(VME2E, ErrorLineNumber) {
 // ============================================================
 
 // 辅助：在 Interpreter 上执行并返回输出
+// AUDIT-HELPER fix: 原实现静默吞掉 RuntimeError 返回部分输出，跨后端比较时
+// "部分输出 == 部分输出"可能误判通过。现改为编码错误为 <runtime:msg> 前缀。
 static std::string runInterpreterOutputForConsistency(const std::string& source) {
     Lexer lexer;
     auto tokens = lexer.scan(source);
@@ -626,13 +636,17 @@ static std::string runInterpreterOutputForConsistency(const std::string& source)
     interp.setOutputCallback([&](const std::string& s) { captured += s; });
     try {
         interp.execute(*ast);
-    } catch (const RuntimeError&) {
-        // 运行时错误时返回已捕获的部分输出
+    } catch (const RuntimeError& e) {
+        return captured + "<runtime:" + std::string(e.what()) + ">";
+    } catch (const std::exception& e) {
+        return captured + "<runtime:" + std::string(e.what()) + ">";
     }
     return captured;
 }
 
-// 辅助：在 VM 上执行并返回输出（忽略错误状态）
+// 辅助：在 VM 上执行并返回输出
+// AUDIT-HELPER fix: 原实现忽略 vm.hasError()，VM 出错时返回部分输出可能误判通过。
+// 现改为检查 hasError 并编码错误为 <runtime:msg> 前缀。
 static std::string runVMOutputForConsistency(const std::string& source) {
     Lexer lexer;
     auto tokens = lexer.scan(source);
@@ -648,6 +662,9 @@ static std::string runVMOutputForConsistency(const std::string& source) {
     std::string captured;
     vm.setOutputCallback([&](const std::string& s) { captured += s; });
     vm.execute(result);
+    if (vm.hasError()) {
+        return captured + "<runtime:" + vm.getLastError() + ">";
+    }
     return captured;
 }
 
@@ -1918,20 +1935,19 @@ TEST(BackendConsistency, ComparisonOps) {
     EXPECT_EQ(interp, regVm);
 }
 
-// ---- A2 fix: and/or 语义差异显式文档化 ----
-// Interpreter 的 `true and false` 返回 null（短路求值返回左操作数的"假值"），
-// 而 Stack VM / RegisterVM 返回 false（标准布尔逻辑）。此差异由 Interpreter 的
-// 短路求值实现导致，非 bug——文档化以避免误判。
+// ---- AUDIT-ANDOR fix: and/or 语义三后端一致 ----
+// 原 Interpreter 的 `true and false` 返回 null（evaluate(right) 返回值被丢弃，
+// lastValue_ 被 std::move 置空）。已修复为 lastValue_ = evaluate(node.right.get())。
+// 三后端现在一致返回右操作数值：true and false = false, false or true = true。
 TEST(BackendConsistency, AndOrSemanticDivergence) {
     std::string src = "print(true and false); print(false or true);";
     std::string interp = runInterpreterOutputForConsistency(src);
     std::string stackVm = runVMOutputForConsistency(src);
     std::string regVm = runRegVMOutput(src);
-    // VM 后端语义一致：true and false = false, false or true = true
+    // 三后端语义一致：true and false = false, false or true = true
+    EXPECT_EQ(interp, "falsetrue");
     EXPECT_EQ(stackVm, "falsetrue");
     EXPECT_EQ(regVm, "falsetrue");
-    // Interpreter 短路求值返回 null（与 VM 不同）
-    EXPECT_NE(interp, stackVm);
 }
 
 // ---- 三后端一致：控制流 ----
@@ -2084,16 +2100,19 @@ TEST(BackendConsistency, DivWithFloat) {
     EXPECT_EQ(interp, regVm);
 }
 
-// REG_DIV 除零：三后端一致（均报错，输出为空）
+// REG_DIV 除零：三后端一致（均报错，无部分输出）
 TEST(BackendConsistency, DivByZero) {
     std::string src = "print(10 / 0);";
     std::string interp = runInterpreterOutputForConsistency(src);
     std::string stackVm = runVMOutputForConsistency(src);
     // P1-7 fix: 显式传 expectError=true 跳过 hasError 断言（除零是预期错误）
     std::string regVm = runRegVMOutput(src, /*expectError=*/true);
-    // 三后端均触发除零错误，print 输出为空
-    EXPECT_TRUE(interp.empty());
-    EXPECT_TRUE(stackVm.empty());
+    // AUDIT-HELPER fix: ForConsistency helpers 现编码错误为 <runtime:msg>。
+    // 三后端均触发除零错误，无部分 print 输出：
+    //   interp/stackVm: 输出以 <runtime: 开头（无前缀输出）
+    //   regVm: runRegVMOutput(expectError=true) 返回 captured（空）
+    EXPECT_NE(interp.find("<runtime:"), std::string::npos) << "interp: " << interp;
+    EXPECT_NE(stackVm.find("<runtime:"), std::string::npos) << "stackVm: " << stackVm;
     EXPECT_TRUE(regVm.empty());
 }
 
@@ -2118,13 +2137,16 @@ TEST(BackendConsistency, DivMixedSemantics) {
 // P1-6 fix: 负索引在所有后端都应报错（不做 Python 式 wraparound）
 TEST(BackendConsistency, NegativeIndexAllError) {
     std::string src = "var arr = [10, 20, 30]; print(arr[-1]);";
-    // 三个后端都应抛运行时错误，无输出
+    // 三个后端都应抛运行时错误，无部分输出
     std::string interp = runInterpreterOutputForConsistency(src);
     std::string stackVm = runVMOutputForConsistency(src);
     std::string regVm = runRegVMOutput(src, true);
-    EXPECT_EQ(interp, "");
-    EXPECT_EQ(stackVm, "");
-    EXPECT_EQ(regVm, "");
+    // AUDIT-HELPER fix: ForConsistency helpers 现编码错误为 <runtime:msg>。
+    //   interp/stackVm: 输出以 <runtime: 开头（无前缀输出）
+    //   regVm: runRegVMOutput(expectError=true) 返回 captured（空）
+    EXPECT_NE(interp.find("<runtime:"), std::string::npos) << "interp: " << interp;
+    EXPECT_NE(stackVm.find("<runtime:"), std::string::npos) << "stackVm: " << stackVm;
+    EXPECT_TRUE(regVm.empty());
 }
 
 // P1-7 fix: 字典键不存在时所有后端都应返回 null

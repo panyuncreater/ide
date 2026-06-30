@@ -293,12 +293,11 @@ int main() {
             }
         }
         // Error-path consistency: when both backends error, verify the error
-        // category is consistent. The previous logic skipped all comparison
-        // when both hadError, letting two completely different error messages
-        // (e.g. "未定义的变量: x" vs "类型错误") pass as consistent.
-        // We compare the error category prefix (LEX:/PARSE:/RT:/EX:) which
-        // identifies which pipeline stage failed; a stage mismatch indicates
-        // one backend accepts code the other rejects — a real divergence.
+        // category AND message content are consistent.
+        // AUDIT-ERRPATH fix: 原实现仅比较错误类别前缀（LEX/PARSE/RT/EX），导致
+        // 两条语义完全不同的 RT 错误（如 "未定义的变量: x" vs "类型错误"）被判为一致。
+        // 修复：类别不同 → 一定不一致；类别相同（RT）→ 进一步比较错误消息内容。
+        // 三后端已统一错误消息（BUG-1 fix），RT 错误消息应完全一致。
         if (ir.hasError && vr.hasError) {
             auto categoryOf = [](const std::string& err) -> std::string {
                 if (err.rfind("LEX:", 0) == 0) return "LEX";
@@ -314,6 +313,12 @@ int main() {
                 detail = "error-category mismatch: interp=" + irCat
                        + " (" + ir.error + ") vm=" + vrCat
                        + " (" + vr.error + ")";
+            } else if (irCat == "RT" && ir.error != vr.error) {
+                // AUDIT-ERRPATH: RT 错误消息应完全一致（三后端已统一）。
+                // 消息不一致表示同一运行时错误在后端间有不同描述——真正的语义分歧。
+                match = false;
+                detail = "error-message mismatch: interp='" + ir.error
+                       + "' vm='" + vr.error + "'";
             }
         }
 

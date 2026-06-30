@@ -48,6 +48,12 @@ public:
     /// REPL 异步任务是否正在执行（用于 Run/Debug 前互斥检查，避免并发访问 Interpreter）
     bool isReplRunning() const { return replRunning_.load(); }
 
+    /// AUDIT-LIFECYCLE fix: 显式等待 REPL 异步任务完成。
+    /// 在 Ide::closeEvent 中析构开始前调用，消除对 Qt 子对象删除顺序的隐式依赖。
+    /// 原实现仅在 ~ReplPanel 中 wait()，若 Qt 未来版本改变 children 删除顺序导致
+    /// ~IdeController 先于 ~ReplPanel 运行，异步任务将访问半析构的 controller_ → UAF。
+    void waitReplFuture();
+
 private slots:
     /// 处理输入
     void onReturnPressed();

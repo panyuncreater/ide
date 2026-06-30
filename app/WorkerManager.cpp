@@ -264,7 +264,15 @@ void WorkerManager::forceStop() {
             // 因此到达此分支的 worker 通常在执行用户代码（未持有 DebugController 锁）。
             Logger::Error("Worker 未在 5 秒内响应取消请求，回退 terminate() + join（确保 close 路径安全）", "IDE");
             workerThread_->terminate();
-            workerThread_->wait();
+            // AUDIT-LIFECYCLE fix: 原 wait() 无超时。Windows 上 TerminateThread 立即生效，
+            // 但 Unix 上 pthread_cancel 为延迟取消（PTHREAD_CANCEL_DEFERRED），
+            // 若 worker 卡在无取消点的纯 CPU 循环则永不生效，wait() 永久阻塞，
+            // std::_Exit(0) 无法触发。加 2 秒超时，超时后直接 _Exit 退出进程。
+            if (!workerThread_->wait(2000)) {
+                Logger::Error("Worker terminate 后 2 秒仍未退出，强制 _Exit", "IDE");
+                Logger::instance().flush();
+                std::_Exit(0);
+            }
             worker_.reset();
             workerThread_.reset();
             // P0 fix: terminate() 在任意指令处杀死 worker，留下损坏的 Interpreter 状态：

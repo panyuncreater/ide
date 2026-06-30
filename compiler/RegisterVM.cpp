@@ -341,7 +341,8 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
         const Value& v = reg(src);
         if (v.isInt()) {
             if (OverflowCheck::negateOverflow(v.intVal())) {
-                return runtimeError("整数溢出");
+                // BUG-OVF-1 fix: 错误消息与 Interpreter.cpp:802 / VM.cpp:1160 一致
+                return runtimeError("整数溢出：无法对最小值取负");
             }
             reg(dst) = Value(-v.intVal());
         } else if (v.isFloat()) {
@@ -400,7 +401,8 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
             }
             // C-5 fix: INT64_MIN / -1 是有符号整数溢出 UB（与 REG_MOD 一致）
             if (a.isInt() && b.isInt() && a.intVal() == INT64_MIN && b.intVal() == -1) {
-                return runtimeError("整数除法溢出");
+                // BUG-OVF-2 fix: 错误消息与 Interpreter/StackVM computeArith DIV 分支一致
+                return runtimeError("整数运算溢出");
             }
             if (a.isInt() && b.isInt() && a.intVal() % b.intVal() == 0) {
                 result = Value(a.intVal() / b.intVal());
@@ -622,6 +624,16 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
             Value* slot = resolveOpenUpvalueSlot(*uv);
             if (!slot) return VMResult::VM_RUNTIME_ERROR;
             *slot = reg(src);
+            // BUG-UPVAL-1 fix: 对齐 StackVM OP_SET_UPVALUE 的 V-P1-6 fix——
+            // 若修改的是外层方法帧的 registers[0]（this 槽），标记 fieldsModified，
+            // 确保 executeReturnImpl 同步 methodThis 到 caller 的 receiverReg。
+            // RegisterVM 无独立字段槽，字段直接存在 instance.fields() 中，
+            // 故只需检查 slot == 0（this 槽）。
+            size_t frameIdx = uv->stackSlot / RegCallFrame::MAX_REGISTERS;
+            size_t slotIdx = uv->stackSlot % RegCallFrame::MAX_REGISTERS;
+            if (slotIdx == 0 && frameIdx < frames_.size() && frames_[frameIdx].isMethodCall) {
+                frames_[frameIdx].fieldsModified = true;
+            }
         }
         ip += 3;
         break;
@@ -1017,7 +1029,9 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
     case RegOp::REG_DEFINE_CLASS: {
         // C-9 fix: 完整填充 classInfo_ 的 name/parent/fieldOrder/methods。
         // 原实现仅设置 .name，导致方法调用/构造全部失败。
-        // 编码：op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B) + [fieldIdx(2B)×F]
+        // BUG-INH-1 fix: 新增字段默认值常量索引
+        // 编码：op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B)
+        //      + [fieldIdx(2B) + defaultConstIdx(2B)]×F
         //      + methodCount(1B) + [methodIdx(2B)+funIdx(2B)]×M
         uint16_t nameIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t parentIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
@@ -1030,6 +1044,7 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
         info.name = className;
         info.fieldOrder.clear();
         info.methods.clear();
+        info.fieldDefaults.clear();  // BUG-INH-1 fix
         info.flattenedComputed = false;  // perf2 fix: 重定义时使预计算缓存失效
 
         if (parentIdx != 0xFFFF) {
@@ -1048,15 +1063,25 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
         uint8_t fieldCount = chunk.code[cursor];
         cursor += 1;
         for (uint8_t i = 0; i < fieldCount; ++i) {
-            if (cursor + 1 >= chunk.code.size()) {
-                return runtimeError("DEFINE_CLASS: 字段名索引截断");
+            if (cursor + 3 >= chunk.code.size()) {
+                return runtimeError("DEFINE_CLASS: 字段名/默认值索引截断");
             }
             uint16_t fIdx = chunk.code[cursor] | (chunk.code[cursor + 1] << 8);
+            uint16_t defaultIdx = chunk.code[cursor + 2] | (chunk.code[cursor + 3] << 8);
             if (fIdx >= chunk.constants.size() || !chunk.constants[fIdx].isString()) {
                 return runtimeError("字段名索引无效");
             }
             info.fieldOrder.push_back(chunk.constants[fIdx].stringVal());
-            cursor += 2;
+            // BUG-INH-1 fix: 读取字段默认值
+            if (defaultIdx == 0xFFFF) {
+                info.fieldDefaults.push_back(Value::nullValue());
+            } else {
+                if (defaultIdx >= chunk.constants.size()) {
+                    return runtimeError("字段默认值索引无效");
+                }
+                info.fieldDefaults.push_back(chunk.constants[defaultIdx]);
+            }
+            cursor += 4;  // fieldIdx(2B) + defaultIdx(2B)
         }
 
         if (cursor >= chunk.code.size()) {
@@ -1116,7 +1141,10 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         if (catchOffset >= chunk.code.size()) {
             return runtimeError("REG_TRY_BEGIN: catch 目标越界");
         }
-        tryStack_.push_back({catchOffset, frames_.size() - 1});
+        // BUG-EXC-5 fix: 记录 try 块开始时的寄存器数，throwException 命中 handler 时
+        // 关闭 [registerBase, registerCount) 范围的 open upvalues。
+        uint8_t regBase = currentFrame().registerCount;
+        tryStack_.push_back({catchOffset, frames_.size() - 1, regBase});
         ip += 3;
         break;
     }
@@ -1264,6 +1292,14 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
             Value* slot = resolveOpenUpvalueSlot(*uv);
             if (!slot) return VMResult::VM_RUNTIME_ERROR;
             *slot = mutated;
+            // BUG-UPVAL-2 fix: 对齐 StackVM OP_WRITEBACK_INDEX_UPVALUE 的 P0-3 fix——
+            // 若修改的是外层方法帧的 registers[0]（this 槽），标记 fieldsModified，
+            // 确保 executeReturnImpl 同步 methodThis 到 caller 的 receiverReg。
+            size_t frameIdx = uv->stackSlot / RegCallFrame::MAX_REGISTERS;
+            size_t slotIdx = uv->stackSlot % RegCallFrame::MAX_REGISTERS;
+            if (slotIdx == 0 && frameIdx < frames_.size() && frames_[frameIdx].isMethodCall) {
+                frames_[frameIdx].fieldsModified = true;
+            }
         }
         ip += 2;
         break;
@@ -1283,6 +1319,14 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
             Value* slot = resolveOpenUpvalueSlot(*uv);
             if (!slot) return VMResult::VM_RUNTIME_ERROR;
             *slot = mutated;
+            // BUG-UPVAL-2 fix: 对齐 StackVM OP_WRITEBACK_MEMBER_UPVALUE 的 P0-3 fix——
+            // 若修改的是外层方法帧的 registers[0]（this 槽），标记 fieldsModified，
+            // 确保 executeReturnImpl 同步 methodThis 到 caller 的 receiverReg。
+            size_t frameIdx = uv->stackSlot / RegCallFrame::MAX_REGISTERS;
+            size_t slotIdx = uv->stackSlot % RegCallFrame::MAX_REGISTERS;
+            if (slotIdx == 0 && frameIdx < frames_.size() && frames_[frameIdx].isMethodCall) {
+                frames_[frameIdx].fieldsModified = true;
+            }
         }
         ip += 4;
         break;
@@ -1326,7 +1370,8 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
             searchClass = clsIt->second.parent;
         }
         if (!found) {
-            return runtimeError("父类链中无方法: " + methodName);
+            // BUG-INH-3 fix: 错误消息与 Interpreter/StackVM 一致（"类 X 没有方法 Y"）
+            return runtimeError("类 " + curClassName + " 没有方法 " + methodName);
         }
 
         // 构造参数列表（this/recvReg 作为第一个参数）
@@ -1697,10 +1742,14 @@ VMResult RegisterVM::executeMethodCallImpl(size_t& ip, const std::string& method
             }
             searchClass = classIt->second.parent;
         }
-        return runtimeError("类 " + className + " 无方法: " + methodName);
+        // BUG-INH-3 fix: 错误消息与 Interpreter/StackVM 一致（"类 X 没有方法 Y"）
+        return runtimeError("类 " + className + " 没有方法 " + methodName);
     }
 
-    return runtimeError("方法调用需要类实例");
+    // AUDIT-ERRPATH fix: obj 不是 instance 且方法不是已识别的内置方法。
+    // 原消息"方法调用需要类实例"对 null/int/float/bool/closure 具有误导性。
+    // 与 callBuiltinMethod 的 final fallthrough 对齐，发出准确的类型错误。
+    return runtimeError("类型 " + obj.typeName() + " 不支持方法 " + methodName);
 }
 
 VMResult RegisterVM::executeClosureImpl(size_t& ip, const std::string& name,
@@ -1771,12 +1820,25 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
             cur = it->second.parent;
         }
         // 逆序初始化字段（父类字段在前，子类字段在后）
+        // BUG-INH-1 fix: 同时收集字段默认值（对齐 StackVM 的 mergedDefaults 语义）。
+        // 父类字段先入表，子类同名字段覆盖（与 StackVM 的 "if not found then add" 行为
+        // 等价：后写入的会覆盖先写入的）。注意 StackVM 用 unordered_map 去重，
+        // 这里我们保留所有字段（含被遮蔽的），最终 instance.fields()[name] = ... 时
+        // 后写入的子类默认值会覆盖父类的，与 StackVM 一致。
         info.flattenedFieldOrder.clear();
+        info.flattenedFieldDefaults.clear();
         for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
             auto clsIt = classInfo_.find(*it);
             if (clsIt != classInfo_.end()) {
-                for (const auto& fieldName : clsIt->second.fieldOrder) {
-                    info.flattenedFieldOrder.push_back(fieldName);
+                const auto& cls = clsIt->second;
+                for (size_t i = 0; i < cls.fieldOrder.size(); ++i) {
+                    info.flattenedFieldOrder.push_back(cls.fieldOrder[i]);
+                    // fieldDefaults 与 fieldOrder 平行存储；长度不足时回退 null
+                    if (i < cls.fieldDefaults.size()) {
+                        info.flattenedFieldDefaults.push_back(cls.fieldDefaults[i]);
+                    } else {
+                        info.flattenedFieldDefaults.push_back(Value::nullValue());
+                    }
                 }
             }
         }
@@ -1798,10 +1860,12 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         info.flattenedComputed = true;
     }
 
-    // 创建实例并初始化所有字段（使用预计算的展平字段顺序）
+    // 创建实例并初始化所有字段（使用预计算的展平字段顺序 + 默认值）
+    // BUG-INH-1 fix: 使用 flattenedFieldDefaults 而非硬编码 null，对齐 StackVM
+    // 的 instance.fields() = cls.fieldDefaults 语义。
     Value instance = Value::makeInstance(className);
-    for (const auto& fieldName : info.flattenedFieldOrder) {
-        instance.fields()[fieldName] = Value::nullValue();
+    for (size_t i = 0; i < info.flattenedFieldOrder.size(); ++i) {
+        instance.fields()[info.flattenedFieldOrder[i]] = info.flattenedFieldDefaults[i];
     }
 
     reg(dstReg) = instance;
@@ -2083,6 +2147,13 @@ VMResult RegisterVM::throwException(Value thrownValue) {
             if (handler.catchIp >= curFrame.chunk->code.size()) {
                 return runtimeError("throwException: catchIp 相对当前 chunk 越界");
             }
+            // BUG-EXC-5 fix: 关闭 catch 帧 try 块遗留的 open upvalues，对齐 StackVM
+            // throwException 的 closeUpvaluesFrom(handler.stackBase)。try 块中声明的局部变量
+            // （寄存器 [registerBase, registerCount)）若被闭包捕获，需在 catch 块覆盖前
+            // 关闭 upvalue（拷贝值到 heap）。不重置 registerCount——catch 块的 vreg 映射
+            // 可能引用 try 块之后分配的寄存器，重置会导致 reg() 边界检查失败。
+            size_t fromSlot = handler.frameIndex * RegCallFrame::MAX_REGISTERS + handler.registerBase;
+            closeUpvaluesFrom(fromSlot);
             curFrame.ip = handler.catchIp;
             // P1-4 fix: 异常值存入 pendingException_，由 REG_LOAD_EXCEPTION 读取到指定寄存器。
             // 原方案固定写 R0 会覆盖用户变量/this（方法中 R0 是 this）。

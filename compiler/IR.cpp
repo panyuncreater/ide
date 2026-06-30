@@ -541,9 +541,19 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
         }
         return IROperand::vreg(0);
     }
-    // R7 fix: IMPORT/SUPER 在 VM 路径不支持，应明确报错而非静默跳过。
-    // 对齐 Compiler.cpp visitImportStmt 的 error() 行为，避免两路径行为不一致。
-    case NodeType::NODE_IMPORT_STMT:
+    // BUG-MOD-1 fix: IMPORT 在 IR 路径不支持，应明确报错而非 assert 崩溃。
+    // 对齐 Compiler.cpp visitImportStmt 的 error() 行为。
+    // 原实现将 NODE_IMPORT_STMT 与 default 共用 assert(false) 分支：
+    //   - Debug 构建崩溃（abort）
+    //   - Release 构建静默返回 vreg(0)，生成损坏 IR，用户无任何错误提示
+    // 现改为设置 hasError_ 标志，由 compileViaIR/compileViaRegisterIR 转化为用户可见 diagnostic。
+    case NodeType::NODE_IMPORT_STMT: {
+        hasError_ = true;
+        errorMessage_ = "VM 不支持 import 语句，请使用解释器模式";
+        errorLine_ = node->line;
+        Logger::Error("AstIRBuilder: " + errorMessage_, "IR");
+        return IROperand::vreg(0);
+    }
     case NodeType::NODE_SUPER_EXPR:
     default:
         // 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
@@ -763,7 +773,7 @@ void AstIRBuilder::visitWhileStmt(WhileStmt* node) {
     uint32_t startLabel = ir_->allocLabel();
     uint32_t endLabel = ir_->allocLabel();
     // while 的 continue 目标 = 条件检查点（startLabel）
-    loopStack_.push_back({ startLabel, endLabel, startLabel });
+    loopStack_.push_back({ startLabel, endLabel, startLabel, tryDepth_ });
     emitIR(IROp::LABEL, { IROperand::label(startLabel) }, node->line);
     IROperand cond = visitNode(node->condition.get());
     emitIR(IROp::JUMP_IF_FALSE, { cond, IROperand::label(endLabel) }, node->line);
@@ -783,7 +793,7 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     uint32_t endLabel = ir_->allocLabel();
     uint32_t continueLabel = ir_->allocLabel();
     // continue 目标 = update 块（continueLabel 在 body 之后、update 之前）
-    loopStack_.push_back({ startLabel, endLabel, continueLabel });
+    loopStack_.push_back({ startLabel, endLabel, continueLabel, tryDepth_ });
     emitIR(IROp::LABEL, { IROperand::label(startLabel) }, node->line);
     // 条件（nullptr 时视为永真，不 emit 任何指令——循环体由 body 内的 break 控制退出）
     // C-10 fix: 原 else 分支 emit LOAD_TRUE 分配 vreg 但永不消费，
@@ -823,6 +833,8 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     auto savedLoopStack = std::move(loopStack_);
     auto savedBlockScopes = std::move(blockScopes_);
     int savedBlockDepth = blockDepth_;
+    // BUG-EXC-2 fix: 保存 tryDepth_，子函数内 try 嵌套不泄漏到父函数
+    int savedTryDepth = tryDepth_;
     // R7 fix: 保存 compilingMethod_/compilingClassName_。原实现遗漏这两个字段，
     // 导致类方法内声明的嵌套函数（非方法）被误当作方法处理：预留 slot 0 给 this、
     // arity/requiredArity += 1，调用时实参数量错位且 this 槽为垃圾值。
@@ -854,6 +866,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     loopStack_.clear();
     blockScopes_.clear();
     blockDepth_ = 0;
+    tryDepth_ = 0;  // BUG-EXC-2 fix: 子函数内 try 嵌套从 0 开始
     currentUpvalues_.clear();
     currentUpvalueNames_.clear();
     innerFunctions_.clear();
@@ -971,6 +984,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         loopStack_ = std::move(savedLoopStack);
         blockScopes_ = std::move(savedBlockScopes);
         blockDepth_ = savedBlockDepth;
+        tryDepth_ = savedTryDepth;  // BUG-EXC-2 fix
         // R7 fix: 恢复 compilingMethod_/compilingClassName_
         compilingMethod_ = savedCompilingMethod;
         compilingClassName_ = std::move(savedCompilingClassName);
@@ -994,6 +1008,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     loopStack_ = std::move(savedLoopStack);
     blockScopes_ = std::move(savedBlockScopes);
     blockDepth_ = savedBlockDepth;
+    tryDepth_ = savedTryDepth;  // BUG-EXC-2 fix
     // R7 fix: 恢复 compilingMethod_/compilingClassName_
     compilingMethod_ = savedCompilingMethod;
     compilingClassName_ = std::move(savedCompilingClassName);
@@ -1506,6 +1521,14 @@ IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
         IROperand mutated = ir_->allocVReg();
         emitIR(IROp::LOAD_MUTATED, { mutated }, node->line);
         emitStoreVar(vr->name, mutated, node->line);
+        // BUG-INH-4 fix: LOAD_MUTATED push 值到栈顶，emitStoreVar 对 LOCAL/UPVALUE 使用
+        // OP_SET_LOCAL/OP_SET_UPVALUE（peek 不 pop），值残留在栈上 dest 之上。后续基于 dest
+        // 的 POP/RETURN 会错误地弹出此残留值。对 LOCAL/UPVALUE 显式 emit IROp::POP 消费。
+        // GLOBAL_SLOT/GLOBAL_NAME 的 OP_SET_GLOBAL 已 pop，无需额外 POP。
+        VarInfo vi = resolveVar(vr->name);
+        if (vi.kind == VarInfo::Kind::LOCAL || vi.kind == VarInfo::Kind::UPVALUE) {
+            emitIR(IROp::POP, {}, node->line);
+        }
     } else if (isSuperCall) {
         // super.method() 的接收者是 this（局部槽 0）。
         // executeReturnImpl 的字段同步只写回 objReg，不会写回槽 0。
@@ -1513,6 +1536,9 @@ IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
         IROperand mutated = ir_->allocVReg();
         emitIR(IROp::LOAD_MUTATED, { mutated }, node->line);
         emitStoreVar("this", mutated, node->line);
+        // BUG-INH-4 fix: 同 isVarRef 分支，LOAD_MUTATED 的残留值需 POP 消费。
+        // this 是 LOCAL（槽 0），OP_SET_LOCAL 不 pop，必须补 POP。
+        emitIR(IROp::POP, {}, node->line);
     } else {
         // CRITICAL-4 extension: 嵌套接收者（IndexAccess(VarRef) 或 MemberAccess(VarRef)）
         // 方法调用后通过 LOAD_MUTATED + INDEX_SET/MEMBER_SET + WRITEBACK 链写回变异后接收者。
@@ -1618,12 +1644,25 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
         ? UINT32_MAX
         : ir_->addGlobal(node->superClassName);
 
-    // 收集字段名（按声明顺序，仅 VarDecl）
+    // 收集字段名和默认值常量索引（BUG-INH-1 fix: 原实现丢失字段默认值表达式，
+    // 所有字段在 IR 路径下被初始化为 null。现在对字面量初始值提取 Value 并存入常量池，
+    // 非字面量表达式保持 UINT32_MAX 标记 = null，对齐 Compiler.cpp:1843-1847 直接路径）
     std::vector<uint32_t> fieldIdxs;
+    std::vector<uint32_t> fieldDefaultConstIdxs;  // BUG-INH-1 fix
     for (auto& m : node->members) {
         if (m && m->nodeType == NodeType::NODE_VAR_DECL) {
             VarDecl* vd = static_cast<VarDecl*>(m.get());
             fieldIdxs.push_back(ir_->addGlobal(vd->name));
+            // BUG-INH-1 fix: 提取字面量默认值
+            uint32_t defaultIdx = UINT32_MAX;  // 默认 null
+            if (vd->initializer) {
+                Value defaultVal;
+                if (extractConstant(vd->initializer.get(), defaultVal)) {
+                    defaultIdx = ir_->addConstant(defaultVal);
+                }
+                // 非字面量表达式保持 UINT32_MAX（null），文档化为已知限制
+            }
+            fieldDefaultConstIdxs.push_back(defaultIdx);
         }
     }
 
@@ -1640,19 +1679,21 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
         }
     }
 
-    // DEFINE_CLASS 操作数布局：
+    // DEFINE_CLASS 操作数布局（BUG-INH-1 fix: 新增字段默认值常量索引）：
     //   [0] className (FUNC_NAME)
     //   [1] parentName (IMM_UINT, UINT32_MAX=无父类)
     //   [2] fieldCount (IMM_UINT)
-    //   [3 .. 3+F-1] field names (FIELD_NAME)
-    //   [3+F] methodCount (IMM_UINT)
-    //   [3+F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+    //   [3+i*2] field name (FIELD_NAME)
+    //   [3+i*2+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值)
+    //   [3+2F] methodCount (IMM_UINT)
+    //   [3+2F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
     std::vector<IROperand> ops;
     ops.push_back(IROperand::funcName(nameIdx));
     ops.push_back(IROperand::imm(parentIdx));
     ops.push_back(IROperand::imm(static_cast<uint32_t>(fieldIdxs.size())));
-    for (uint32_t fidx : fieldIdxs) {
-        ops.push_back(IROperand::field(fidx));
+    for (size_t i = 0; i < fieldIdxs.size(); ++i) {
+        ops.push_back(IROperand::field(fieldIdxs[i]));
+        ops.push_back(IROperand::imm(fieldDefaultConstIdxs[i]));  // BUG-INH-1 fix
     }
     ops.push_back(IROperand::imm(static_cast<uint32_t>(methodIdxs.size())));
     for (auto& mp : methodIdxs) {
@@ -1694,6 +1735,12 @@ void AstIRBuilder::visitBreakStmt(BreakStmt* node) {
         Logger::Error("break 只能在循环体内使用", "IR");
         return;
     }
+    // BUG-EXC-2 fix: break 跳出循环时，需为循环内的每个 try 块发射 TRY_END 弹出 handler，
+    // 对齐 Compiler.cpp:1194 的 tryDepthInLoop 逻辑，否则 tryStack_ handler 泄漏。
+    int tryDepthInLoop = tryDepth_ - loopStack_.back().tryDepthAtStart;
+    for (int i = 0; i < tryDepthInLoop; ++i) {
+        emitIR(IROp::TRY_END, {}, node->line);
+    }
     emitIR(IROp::JUMP, { IROperand::label(loopStack_.back().endLabel) }, node->line);
 }
 
@@ -1704,6 +1751,11 @@ void AstIRBuilder::visitContinueStmt(ContinueStmt* node) {
         Logger::Error("continue 只能在循环体内使用", "IR");
         return;
     }
+    // BUG-EXC-2 fix: continue 跳回循环开头时，同样需为循环内的 try 块发射 TRY_END。
+    int tryDepthInLoop = tryDepth_ - loopStack_.back().tryDepthAtStart;
+    for (int i = 0; i < tryDepthInLoop; ++i) {
+        emitIR(IROp::TRY_END, {}, node->line);
+    }
     emitIR(IROp::JUMP, { IROperand::label(loopStack_.back().continueLabel) }, node->line);
 }
 
@@ -1712,7 +1764,10 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
     uint32_t endLabel = ir_->allocLabel();
     // try 块开始，记录 catch 跳转目标
     emitIR(IROp::TRY_BEGIN, { IROperand::label(catchLabel) }, node->line);
+    // BUG-EXC-2 fix: 跟踪 try 嵌套深度，break/continue 需为差额层级发射 TRY_END
+    ++tryDepth_;
     if (node->tryBlock) visitNode(node->tryBlock.get());
+    --tryDepth_;
     emitIR(IROp::TRY_END, {}, node->line);
     emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
     // catch 块
@@ -1730,6 +1785,14 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
             varMap_[node->catchVarName] = { VarInfo::Kind::LOCAL, slot };
             if (static_cast<int>(slot + 1) > ir_->localCount) {
                 ir_->localCount = static_cast<int>(slot + 1);
+                // AUDIT-TRYLOCAL fix: 对齐 build()/leaveBlockScope()/visitFunDecl() 的 P2-1 fix，
+                // catch 变量 slot 绑定路径也需 localCount > 32 上限告警。
+                // RegisterBytecodeBackend::lower() 的硬门会兜底拦截，此处仅早期留痕。
+                if (ir_->localCount > 32) {
+                    Logger::Error("AstIRBuilder: localCount 超出 32 寄存器上限 (" +
+                                  std::to_string(ir_->localCount) +
+                                  "，函数 " + ir_->name + ")，RegisterVM 将无法加载此函数", "IR");
+                }
             }
             emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), excVreg }, node->line);
             // Bug 5 fix: 记录到当前 BlockScope，使 leaveBlockScope 能清除 catchVar 的 varMap_ 条目。
@@ -1959,6 +2022,10 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_SET_LOCAL));
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));  // slot(1B)
+        // 注意：OP_SET_LOCAL 用 peek(0) 不消费栈顶值（与 Compiler.cpp 一致）。
+        // IR 的 and/or 短路逻辑依赖此行为：STORE_LOCAL 将值写入 temp slot 后值仍在栈上，
+        // 后续 LOAD_LOCAL 从同一 slot 读取。需要消费源值的场景（如 super.method() 的
+        // LOAD_MUTATED + STORE_LOCAL）应在 IR 层面显式 emit IROp::POP。
         break;
     }
     case IROp::LOAD_GLOBAL: {
@@ -2025,6 +2092,8 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         }
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_SET_UPVALUE));
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
+        // 注意：OP_SET_UPVALUE 用 peek(0) 不消费栈顶值（与 STORE_LOCAL 一致）。
+        // 需要消费源值的场景应在 IR 层面显式 emit IROp::POP。
         break;
     }
     case IROp::CLOSE_UPVALUE: {
@@ -2116,17 +2185,34 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     case IROp::MAKE_CLOSURE: {
         // MAKE_CLOSURE dest, name_idx, uv_count, [isLocal, idx]×uv_count
         if (instr.operands.size() < 3) return false;
+        // AUDIT-STACKCLOSURE fix: 对齐 RegisterBytecodeBackend 的 P2-3 fix，
+        // uvCount/isLocal/idx 编码为 1 字节，原 & 0xFF 静默截断会生成错误 upvalue 描述符。
+        if (instr.operands[2].index >= 256) {
+            Logger::Error("BytecodeIRBackend: MAKE_CLOSURE uvCount 超出 255 上限 (" +
+                          std::to_string(instr.operands[2].index) + ")", "IR");
+            return false;
+        }
         uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[1].index), ir);
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CLOSURE));
         emitUint16(chunk_->code, nameConstIdx);
         uint32_t uvCount = instr.operands[2].index;
-        chunk_->code.push_back(static_cast<uint8_t>(uvCount & 0xFF));
+        chunk_->code.push_back(static_cast<uint8_t>(uvCount));
         for (uint32_t i = 0; i < uvCount; ++i) {
             size_t base = 3 + i * 2;
             if (base + 1 >= instr.operands.size()) return false;
-            chunk_->code.push_back(static_cast<uint8_t>(instr.operands[base].index & 0xFF));     // isLocal
-            chunk_->code.push_back(static_cast<uint8_t>(instr.operands[base + 1].index & 0xFF)); // idx
+            if (instr.operands[base].index >= 256) {
+                Logger::Error("BytecodeIRBackend: MAKE_CLOSURE isLocal 超出 255 上限 (" +
+                              std::to_string(instr.operands[base].index) + ")", "IR");
+                return false;
+            }
+            if (instr.operands[base + 1].index >= 256) {
+                Logger::Error("BytecodeIRBackend: MAKE_CLOSURE upvalue idx 超出 255 上限 (" +
+                              std::to_string(instr.operands[base + 1].index) + ")", "IR");
+                return false;
+            }
+            chunk_->code.push_back(static_cast<uint8_t>(instr.operands[base].index));     // isLocal
+            chunk_->code.push_back(static_cast<uint8_t>(instr.operands[base + 1].index)); // idx
         }
         break;
     }
@@ -2217,11 +2303,13 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
 
     // ---- 类 ----
     case IROp::DEFINE_CLASS: {
-        // 操作数: [0]=className(FUNC_NAME), [1]=parentName(IMM_UINT, UINT32_MAX=无父类)
-        //         [2] fieldCount (IMM_UINT)
-        //         [3 .. 3+F-1] field names (FIELD_NAME)
-        //         [3+F] methodCount (IMM_UINT)
-        //         [3+F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+        // 操作数（BUG-INH-1 fix: 新增字段默认值常量索引）:
+        //   [0]=className(FUNC_NAME), [1]=parentName(IMM_UINT, UINT32_MAX=无父类)
+        //   [2] fieldCount (IMM_UINT)
+        //   [3+i*2] field name (FIELD_NAME)
+        //   [3+i*2+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值)
+        //   [3+2F] methodCount (IMM_UINT)
+        //   [3+2F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
         if (instr.operands.size() < 2) return false;
         uint32_t nameIdx = instr.operands[0].index;
         uint16_t nameConstIdx = addStringConstant(globalName(nameIdx), ir);
@@ -2230,21 +2318,51 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // 期望栈顶有模板实例（OP_CLASS_NEW 推入），并从 pendingFieldOrder_ 提取字段顺序
         // （OP_INIT_FIELD 填充）。若仅 emit OP_DEFINE_CLASS，pop() 会读到错误栈值导致
         // "模板值不是实例" 运行时错误（回归：NestedMemberAccessPush）。
-        // 注意：IR DEFINE_CLASS 不携带字段初始值表达式（AST 已脱离），此处所有字段
-        // 默认值为 null。字段实际初始化应由 init() 方法完成（与 RegVM 路径一致）。
+        // BUG-INH-1 fix: 原实现所有字段默认值为 null，现在从 IR 常量池提取字面量默认值，
+        // 对齐 Compiler.cpp:1843-1847 直接路径。
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CLASS_NEW));
         emitUint16(chunk_->code, nameConstIdx);
         chunk_->code.push_back(static_cast<uint8_t>(0));  // argCount = 0
 
-        // 为每个字段 emit OP_NULL + OP_INIT_FIELD（按 IR 操作数中的字段名顺序）
+        // 为每个字段 emit 默认值 + OP_INIT_FIELD（按 IR 操作数中的字段名顺序）
         if (instr.operands.size() >= 3) {
             uint32_t fieldCount = instr.operands[2].index;
             for (uint32_t fi = 0; fi < fieldCount; ++fi) {
-                uint32_t operandIdx = 3 + fi;
-                if (operandIdx >= instr.operands.size()) return false;
-                uint32_t fieldGlobalIdx = instr.operands[operandIdx].index;
+                size_t nameOpIdx = 3 + fi * 2;
+                size_t defaultOpIdx = 3 + fi * 2 + 1;
+                if (defaultOpIdx >= instr.operands.size()) return false;
+                uint32_t fieldGlobalIdx = instr.operands[nameOpIdx].index;
                 uint16_t fieldConstIdx = addStringConstant(globalName(fieldGlobalIdx), ir);
-                chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_NULL));
+                // BUG-INH-1 fix: 从 IR 常量池提取字段默认值
+                uint32_t defaultConstIdx = instr.operands[defaultOpIdx].index;
+                if (defaultConstIdx == UINT32_MAX) {
+                    chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_NULL));
+                } else {
+                    if (defaultConstIdx >= ir.constants.size()) {
+                        Logger::Error("BytecodeIRBackend: DEFINE_CLASS 字段默认值常量索引越界", "IR");
+                        return false;
+                    }
+                    const Value& defaultVal = ir.constants[defaultConstIdx];
+                    // 根据 Value 类型 emit 对应字节码（对齐 Compiler.cpp 直接路径）
+                    if (defaultVal.isInt()) {
+                        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_INT));
+                        uint16_t constIdx = chunk_->addConstant(defaultVal);
+                        emitUint16(chunk_->code, constIdx);
+                    } else if (defaultVal.isFloat()) {
+                        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_FLOAT));
+                        uint16_t constIdx = chunk_->addConstant(defaultVal);
+                        emitUint16(chunk_->code, constIdx);
+                    } else if (defaultVal.isString()) {
+                        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_STRING));
+                        uint16_t constIdx = chunk_->addConstant(defaultVal);
+                        emitUint16(chunk_->code, constIdx);
+                    } else if (defaultVal.isBool()) {
+                        chunk_->code.push_back(static_cast<uint8_t>(
+                            defaultVal.boolVal() ? OpCode::OP_TRUE : OpCode::OP_FALSE));
+                    } else {
+                        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_NULL));
+                    }
+                }
                 chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_INIT_FIELD));
                 emitUint16(chunk_->code, fieldConstIdx);
             }
@@ -2284,7 +2402,8 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     case IROp::TRY_BEGIN: {
         if (instr.operands.empty()) return false;
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_TRY_BEGIN));
-        pendingJumps_.push_back({ chunk_->code.size(), instr.operands[0].index, false });
+        // BUG-EXC-1 fix: 标记 isTryBegin=true，patchJumps 对 TRY_BEGIN 写相对偏移
+        pendingJumps_.push_back({ chunk_->code.size(), instr.operands[0].index, false, true });
         emitUint16(chunk_->code, 0);  // catchOffset 占位符，第二遍回填
         break;
     }
@@ -2458,15 +2577,30 @@ bool BytecodeIRBackend::patchJumps() {
                           std::to_string(pj.targetLabel), "IR");
             return false;
         }
-        // VM OP_JUMP/OP_JUMP_IF_FALSE/OP_TRY_BEGIN 用绝对偏移（ip = target）
-        // 16-bit 编码限制：字节码体积超过 64KB 时跳转目标会截断，需显式检查
-        // （对齐 Compiler::safeCodeOffset() 的 65535 上限保护）
-        if (it->second > 65535) {
-            Logger::Error("BytecodeIRBackend: 跳转目标偏移超过 64KB 限制 (offset=" +
-                          std::to_string(it->second) + ")", "IR");
-            return false;
+        // BUG-EXC-1 fix: OP_JUMP/OP_JUMP_IF_FALSE 用绝对偏移（ip = target），
+        // 但 OP_TRY_BEGIN 用相对偏移（catchIp = ip + 3 + catchOffset）。
+        // pj.codeOffset 指向操作数首字节（opcode 在 codeOffset-1），
+        // StackVM 执行时 ip = codeOffset-1，故相对偏移 = target - (ip+3) = target - (codeOffset+2)。
+        size_t targetOffset = it->second;
+        uint16_t target;
+        if (pj.isTryBegin) {
+            if (targetOffset < pj.codeOffset + 2) {
+                Logger::Error("BytecodeIRBackend: TRY_BEGIN catch 目标在 TRY_BEGIN 之前 (catch=" +
+                              std::to_string(targetOffset) + ", tryBegin=" +
+                              std::to_string(pj.codeOffset - 1) + ")", "IR");
+                return false;
+            }
+            target = static_cast<uint16_t>(targetOffset - (pj.codeOffset + 2));
+        } else {
+            // 16-bit 编码限制：字节码体积超过 64KB 时跳转目标会截断，需显式检查
+            // （对齐 Compiler::safeCodeOffset() 的 65535 上限保护）
+            if (targetOffset > 65535) {
+                Logger::Error("BytecodeIRBackend: 跳转目标偏移超过 64KB 限制 (offset=" +
+                              std::to_string(targetOffset) + ")", "IR");
+                return false;
+            }
+            target = static_cast<uint16_t>(targetOffset);
         }
-        uint16_t target = static_cast<uint16_t>(it->second);
         if (pj.codeOffset + 1 >= chunk_->code.size()) {
             Logger::Error("BytecodeIRBackend: 跳转操作数越界", "IR");
             return false;

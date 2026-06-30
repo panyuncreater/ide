@@ -65,10 +65,15 @@ ReplPanel::~ReplPanel() {
     // P0-4 fix: 原注释声称"IdeController 在 ReplPanel 之后析构"是错误的——
     // controller_ 是裸指针，由 QObject parent 机制管理（new IdeController(this)），
     // Qt 子对象析构顺序与声明顺序无关，取决于 parent 的 children 列表删除顺序。
-    // 但 replFuture_.wait() 在 ReplPanel 析构时阻塞，确保异步任务在 controller_
-    // 析构前完成，故异步任务内对 ctrl 的访问是安全的（任务已结束，不再访问 ctrl）。
-    // Ide::closeEvent 中的 forceStop 已确保 worker 停止，REPL 任务由
-    // MAX_LOOP_ITERATIONS 兜底，~ReplPanel 的 wait() 是最后一道防线。
+    //
+    // AUDIT-LIFECYCLE fix: Ide::closeEvent 现在在 event->accept() 前显式调用
+    // waitReplFuture()，确保 REPL 异步任务在任何析构开始前完成。~ReplPanel 中的
+    // wait() 退化为深度防御（closeEvent 路径已 wait 完成，此处为 no-op；
+    // 非 closeEvent 路径如直接 delete 仍需此兜底）。
+    waitReplFuture();
+}
+
+void ReplPanel::waitReplFuture() {
     if (replFuture_.valid()) {
         replFuture_.wait();
     }

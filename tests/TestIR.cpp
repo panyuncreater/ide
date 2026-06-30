@@ -234,6 +234,9 @@ TEST(IRToStringTest, IncludesInstructionInfo) {
 namespace {
 
 /// 辅助：通过 IR 路径执行源码，返回 print 输出
+// AUDIT-HELPER fix: 原实现忽略 vm.hasError()，VM 出错时返回部分输出，
+// 与 runViaIROptimized 对比时"部分输出 == 部分输出"可能误判通过，
+// 掩盖优化 pass 引入的语义错误。现改为检查 hasError 并编码错误。
 static std::string runViaIR(const std::string& source) {
     Lexer lexer;
     auto tokens = lexer.scan(source);
@@ -250,10 +253,14 @@ static std::string runViaIR(const std::string& source) {
     std::string captured;
     vm.setOutputCallback([&](const std::string& s) { captured += s; });
     vm.execute(result);
+    if (vm.hasError()) {
+        return captured + "<runtime:" + vm.getLastError() + ">";
+    }
     return captured;
 }
 
 /// 辅助：通过 IR + 优化 pass 路径执行源码，返回 print 输出
+// AUDIT-HELPER fix: 同 runViaIR，检查 hasError 防止掩盖优化 pass 引入的错误。
 static std::string runViaIROptimized(const std::string& source) {
     Lexer lexer;
     auto tokens = lexer.scan(source);
@@ -271,6 +278,9 @@ static std::string runViaIROptimized(const std::string& source) {
     std::string captured;
     vm.setOutputCallback([&](const std::string& s) { captured += s; });
     vm.execute(result);
+    if (vm.hasError()) {
+        return captured + "<runtime:" + vm.getLastError() + ">";
+    }
     return captured;
 }
 

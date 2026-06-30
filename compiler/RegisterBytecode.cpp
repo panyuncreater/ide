@@ -213,13 +213,17 @@ size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
     case RegOp::REG_DEFINE_CLASS: {
         // C-9 fix: op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B) + [fieldIdx(2B)×F]
         //        + methodCount(1B) + [methodIdx(2B)+funIdx(2B)]×M
-        // 最小 7B；需读取 fieldCount（offset+5）和 methodCount（offset+6+F*2）
+        // BUG-INH-1 fix: 每个字段新增 defaultConstIdx(2B)，故字段段为 [fieldIdx(2B)+defaultIdx(2B)]×F
+        // 新布局：op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B)
+        //       + [fieldIdx(2B)+defaultIdx(2B)]×F
+        //       + methodCount(1B) + [methodIdx(2B)+funIdx(2B)]×M
+        // 最小 7B；需读取 fieldCount（offset+5）和 methodCount（offset+6+F*4）
         if (offset + 6 < code.size()) {
             uint8_t fieldCount = code[offset + 5];
-            size_t methodCountPos = offset + 6 + static_cast<size_t>(fieldCount) * 2;
+            size_t methodCountPos = offset + 6 + static_cast<size_t>(fieldCount) * 4;
             if (methodCountPos < code.size()) {
                 uint8_t methodCount = code[methodCountPos];
-                return static_cast<size_t>(7 + static_cast<size_t>(fieldCount) * 2
+                return static_cast<size_t>(7 + static_cast<size_t>(fieldCount) * 4
                                            + static_cast<size_t>(methodCount) * 4);
             }
         }

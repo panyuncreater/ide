@@ -124,6 +124,13 @@ CompileResult Compiler::compileViaIR(Block& program) {
         CompileResult emptyResult;
         return emptyResult;
     }
+    // BUG-MOD-1 fix: 检查 IR 构建错误（如 import 语句不支持），转化为用户可见 diagnostic。
+    // 原实现 build() 总返回非空 IR，hasError_ 错误被完全吞掉，用户无任何提示。
+    if (irBuilder.hasError()) {
+        error(irBuilder.errorMessage(), irBuilder.errorLine(), 0);
+        CompileResult emptyResult;
+        return emptyResult;
+    }
 
     // 方向二：IR 优化 pass（可选）
     if (irOptimize_) {
@@ -196,6 +203,12 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     lastIR_ = irBuilder.build(program);
     if (!lastIR_) {
         error("IR 构建失败", 0, 0);
+        RegisterCompileResult emptyResult;
+        return emptyResult;
+    }
+    // BUG-MOD-1 fix: 检查 IR 构建错误（如 import 语句不支持），转化为用户可见 diagnostic。
+    if (irBuilder.hasError()) {
+        error(irBuilder.errorMessage(), irBuilder.errorLine(), 0);
         RegisterCompileResult emptyResult;
         return emptyResult;
     }

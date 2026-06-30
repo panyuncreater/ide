@@ -229,12 +229,45 @@ Value Interpreter::evaluateExpr(ASTNode* node) {
 // 沙箱化：求值前快照整个作用域链的变量绑定 + 绑定实例字段，求值后恢复，
 // 防止条件中的赋值（x = 5）、声明（var y = ...）、实例字段写（this.f = v）
 // 修改程序状态。
-// 残余限制：容器变异（arr.push, arr[i] = v）仍影响共享 ref-counted 对象，
-// 因 Value 是引用语义——完全隔离需深拷贝所有 Value，代价过高。
+//
+// AUDIT-SANDBOX-DEEP fix: 原实现仅浅拷贝 Value（递增 refCount），依赖 COW ensureUnique
+// 在变异时触发深拷贝。但对嵌套容器（如 obj["arr"].push(1)），若字典索引访问未触发
+// dict 的 COW（例如通过 const 引用链获取内部数组引用），数组 refCount 仍为 1，
+// push 会原地修改共享 ArrayData，污染程序状态。
+// 修复：快照时对所有 array/dict Value 递归深拷贝，确保沙箱内操作的是独立副本。
+// 恢复时直接用深拷贝副本替换，无论条件是否变异容器都能正确还原。
+namespace {
+Value deepCloneForSandbox(const Value& v) {
+    if (v.isArray()) {
+        const auto& arr = v.arrayVal();
+        std::vector<Value> newElements;
+        newElements.reserve(arr.size());
+        for (const auto& elem : arr) {
+            newElements.push_back(deepCloneForSandbox(elem));
+        }
+        return Value(std::move(newElements));
+    }
+    if (v.isDict()) {
+        const auto& entries = v.dictVal();
+        std::unordered_map<std::string, Value> newEntries;
+        newEntries.reserve(entries.size());
+        for (const auto& [k, val] : entries) {
+            newEntries[k] = deepCloneForSandbox(val);
+        }
+        return Value(std::move(newEntries));
+    }
+    // 非容器类型（int/float/bool/null/string/instance/closure）：
+    // - 标量：值语义，拷贝即独立
+    // - string：不可变（BuiltinMethods 的 replace/substr 返回新串而非原地修改）
+    // - instance/closure：条件断点不应修改实例结构或闭包代码，浅拷贝足够
+    return v;
+}
+} // anonymous namespace
+
 Value Interpreter::evaluateCondition(ASTNode* node) {
     if (!node) return Value::nullValue();
 
-    // #1 fix: 快照作用域链所有变量绑定
+    // #1 fix: 快照作用域链所有变量绑定（深拷贝容器）
     struct EnvSnapshot {
         Environment* env;
         std::unordered_map<std::string, Value> variables;
@@ -245,10 +278,20 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     std::map<Value*, std::unordered_map<std::string, Value>> instSnaps;
     Environment* snapEnv = currentEnv_.get();
     while (snapEnv) {
-        envSnaps.push_back({snapEnv, snapEnv->snapshotLocalVariables()});
+        auto locals = snapEnv->snapshotLocalVariables();
+        // AUDIT-SANDBOX-DEEP: 深拷贝容器值，防止条件中的容器变异污染程序状态
+        for (auto& [k, v] : locals) {
+            v = deepCloneForSandbox(v);
+        }
+        envSnaps.push_back({snapEnv, std::move(locals)});
         Value* inst = snapEnv->getBoundInstance();
         if (inst && inst->isInstance() && instSnaps.find(inst) == instSnaps.end()) {
-            instSnaps[inst] = inst->fields();
+            auto fields = inst->fields();
+            // AUDIT-SANDBOX-DEEP: 深拷贝实例字段中的容器值
+            for (auto& [k, v] : fields) {
+                v = deepCloneForSandbox(v);
+            }
+            instSnaps[inst] = std::move(fields);
         }
         snapEnv = snapEnv->parent.get();
     }
@@ -697,12 +740,16 @@ void Interpreter::visitBinaryOp(BinaryOp& node) {
     case BinOpType::BIN_AND: {
         Value left = evaluate(node.left.get());
         if (!left.isTruthy()) { lastValue_ = std::move(left); return; }   // M1 fix: 返回原始左值而非 Value(false)
-        evaluate(node.right.get()); return;   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
+        // AUDIT-ANDOR fix: evaluate() 内部 return std::move(lastValue_) 会将 lastValue_
+        // 置为 moved-from (null) 状态。原代码 evaluate(node.right.get()); return; 丢弃了
+        // 返回值，导致外层 evaluate 返回 null。必须捕获返回值并赋给 lastValue_。
+        lastValue_ = evaluate(node.right.get()); return;
     }
     case BinOpType::BIN_OR: {
         Value left = evaluate(node.left.get());
         if (left.isTruthy()) { lastValue_ = std::move(left); return; }    // M1 fix: 返回原始左值而非 Value(true)
-        evaluate(node.right.get()); return;   // M1 fix: 返回原始右值而非 Value(right.isTruthy())
+        // AUDIT-ANDOR fix: 同 BIN_AND，必须捕获 evaluate 返回值。
+        lastValue_ = evaluate(node.right.get()); return;
     }
     case BinOpType::BIN_EQ: {
         Value left = evaluate(node.left.get());

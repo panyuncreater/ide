@@ -151,11 +151,18 @@ private:
         std::string parent;
         std::vector<std::string> fieldOrder;
         std::map<std::string, std::string> methods;  // 方法名 → 函数名
+        // BUG-INH-1 fix: 字段默认值（字面量），对齐 StackVM 的 OP_INIT_FIELD 路径。
+        // 无默认值或非字面量表达式的字段为 nullValue()。
+        std::vector<Value> fieldDefaults;
         // perf2 fix: 预计算缓存，避免每次构造实例时重复遍历继承链。
         // 懒计算：首次 REG_CLASS_NEW 时填充（此时所有父类必已定义，因构造前
         // 所有顶层 REG_DEFINE_CLASS 已执行完毕）。REG_DEFINE_CLASS 重新定义时复位。
         mutable bool flattenedComputed = false;
         mutable std::vector<std::string> flattenedFieldOrder;  // 父类字段在前，子类在后
+        // BUG-INH-1 fix: 与 flattenedFieldOrder 并行存储的字段默认值。
+        // 沿继承链合并（父类在前），子类同名字段覆盖父类。对齐 StackVM 的
+        // mergedDefaults 语义，避免 IR 路径所有字段被硬编码为 null。
+        mutable std::vector<Value> flattenedFieldDefaults;
         mutable std::string resolvedInitFunName;  // 沿继承链解析的 init 函数名
         mutable bool hasInit = false;             // 继承链中是否存在 init
     };
@@ -187,6 +194,12 @@ private:
     struct RegTryHandler {
         size_t catchIp;
         size_t frameIndex;
+        // BUG-EXC-5 fix: try 块开始时的寄存器数，catch 命中时关闭
+        // [registerBase, registerCount) 范围的 open upvalues，对齐 StackVM
+        // closeUpvaluesFrom(handler.stackBase)。try 块中声明的局部变量若被闭包捕获，
+        // 需在 catch 块覆盖前关闭 upvalue（拷贝值到 heap），防止 catch 块复用寄存器时
+        // 闭包读到错误值。
+        uint8_t registerBase = 0;
     };
     std::vector<RegTryHandler> tryStack_;
     // P1-4 fix: 待捕获的异常值。throwException 设置，REG_LOAD_EXCEPTION 读取。

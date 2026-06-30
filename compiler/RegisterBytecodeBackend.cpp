@@ -484,7 +484,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::MAKE_CLOSURE: {
         // IR: MAKE_CLOSURE dest, name_idx, uv_count, [isLocal, idx]×uv_count
         if (instr.operands.size() < 3) return false;
-        // P2-3 fix: uvCount/isLocal/idx 经 writeReg 编码为 1 字节，
+        // P2-3 fix: uvCount/isLocal/idx 经 writeByte 编码为 1 字节，
         // & 0xFF 静默截断会生成错误 upvalue 描述符（闭包捕获错误变量）。
         if (instr.operands[2].index >= 256) {
             Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE uvCount 超出 255 上限 (" +
@@ -496,9 +496,12 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
         uint8_t uvCount = static_cast<uint8_t>(instr.operands[2].index);
         chunk_->writeOp(RegOp::REG_MAKE_CLOSURE, line);
-        chunk_->writeReg(dst, line);
+        chunk_->writeReg(dst, line);  // dst 是真正的寄存器号，用 writeReg
         chunk_->writeShort(nameIdx, line);
-        chunk_->writeReg(uvCount, line);
+        // AUDIT-REGVB fix: uvCount/isLocal/idx 不是寄存器号，是 upvalue 描述符。
+        // 原用 writeReg（含 assert(reg < 32)），uvCount >= 32 或 idx >= 32 时 Debug 构建崩溃。
+        // 改用 writeByte（无 assert），合法范围 0-255 已由上方 >= 256 检查保证。
+        chunk_->writeByte(uvCount, line);
         for (uint8_t i = 0; i < uvCount; ++i) {
             size_t base = 3 + i * 2;
             if (base + 1 >= instr.operands.size()) return false;
@@ -514,8 +517,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
                 hasError_ = true;
                 return false;
             }
-            chunk_->writeReg(static_cast<uint8_t>(instr.operands[base].index), line);       // isLocal
-            chunk_->writeReg(static_cast<uint8_t>(instr.operands[base + 1].index), line);   // idx
+            chunk_->writeByte(static_cast<uint8_t>(instr.operands[base].index), line);       // isLocal
+            chunk_->writeByte(static_cast<uint8_t>(instr.operands[base + 1].index), line);   // idx
         }
         break;
     }
@@ -625,13 +628,15 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     // ---- 类 ----
     case IROp::DEFINE_CLASS: {
         // C-9 fix: 携带完整类元数据（父类、字段顺序、方法名→函数名映射）
+        // BUG-INH-1 fix: 新增字段默认值常量索引
         // 操作数布局（见 IR.cpp visitClassDecl）：
         //   [0] className (FUNC_NAME)
         //   [1] parentName (IMM_UINT, UINT32_MAX=无父类)
         //   [2] fieldCount (IMM_UINT)
-        //   [3 .. 3+F-1] field names (FIELD_NAME)
-        //   [3+F] methodCount (IMM_UINT)
-        //   [3+F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+        //   [3+i*2] field name (FIELD_NAME)
+        //   [3+i*2+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值)
+        //   [3+2F] methodCount (IMM_UINT)
+        //   [3+2F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
         if (instr.operands.size() < 3) return false;
         uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
 
@@ -641,9 +646,9 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             : addStringConstant(globalName(parentRaw), ir);
 
         uint32_t fieldCount = instr.operands[2].index;
-        if (instr.operands.size() < 3 + fieldCount + 1) return false;
-        uint32_t methodCount = instr.operands[3 + fieldCount].index;
-        if (instr.operands.size() < 3 + fieldCount + 1 + methodCount * 2) return false;
+        if (instr.operands.size() < 3 + fieldCount * 2 + 1) return false;
+        uint32_t methodCount = instr.operands[3 + fieldCount * 2].index;
+        if (instr.operands.size() < 3 + fieldCount * 2 + 1 + methodCount * 2) return false;
         // R7 fix: fieldCount/methodCount 经 writeByte 编码为 uint8_t，超 255 时静默截断
         // 会导致后续读取循环用截断值迭代，字段名/方法名索引完全错位，写出损坏字节码。
         if (fieldCount > 255) {
@@ -662,12 +667,28 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeShort(parentIdx, line);
         chunk_->writeByte(static_cast<uint8_t>(fieldCount), line);
         for (uint32_t i = 0; i < fieldCount; ++i) {
-            uint16_t fIdx = addStringConstant(globalName(instr.operands[3 + i].index), ir);
+            size_t nameOpIdx = 3 + i * 2;
+            size_t defaultOpIdx = 3 + i * 2 + 1;
+            uint16_t fIdx = addStringConstant(globalName(instr.operands[nameOpIdx].index), ir);
             chunk_->writeShort(fIdx, line);
+            // BUG-INH-1 fix: 编码字段默认值常量索引（UINT32_MAX → 0xFFFF 表示 null）
+            uint32_t defaultConstIdx = instr.operands[defaultOpIdx].index;
+            if (defaultConstIdx == UINT32_MAX) {
+                chunk_->writeShort(0xFFFF, line);
+            } else {
+                if (defaultConstIdx >= ir.constants.size()) {
+                    Logger::Error("RegisterBytecodeBackend: DEFINE_CLASS 字段默认值常量索引越界", "RegIR");
+                    hasError_ = true;
+                    return false;
+                }
+                const Value& defaultVal = ir.constants[defaultConstIdx];
+                uint16_t constIdx = chunk_->addConstant(defaultVal);
+                chunk_->writeShort(constIdx, line);
+            }
         }
         chunk_->writeByte(static_cast<uint8_t>(methodCount), line);
         for (uint32_t i = 0; i < methodCount; ++i) {
-            size_t base = 3 + fieldCount + 1 + i * 2;
+            size_t base = 3 + fieldCount * 2 + 1 + i * 2;
             uint16_t mIdx = addStringConstant(globalName(instr.operands[base].index), ir);
             uint16_t fIdx = addStringConstant(globalName(instr.operands[base + 1].index), ir);
             chunk_->writeShort(mIdx, line);

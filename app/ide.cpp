@@ -141,6 +141,12 @@ void Ide::closeEvent(QCloseEvent* event) {
     if (controller_->isVmRunning()) {
         onVmStop();
     }
+    // AUDIT-LIFECYCLE fix: 在 event->accept() 前、任何析构开始前显式等待 REPL
+    // 异步任务完成。原实现依赖 ~ReplPanel 中的 wait()，而 ~ReplPanel 的运行时机
+    // 取决于 Qt children 删除顺序（未文档化的实现细节）。若 ~IdeController 先于
+    // ~ReplPanel 运行，异步任务将访问半析构的 controller_ → UAF。
+    // 此处显式 wait 消除析构顺序依赖，~ReplPanel 中的 wait 退化为深度防御。
+    replPanel_->waitReplFuture();
     event->accept();
 }
 

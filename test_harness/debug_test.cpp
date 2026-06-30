@@ -373,6 +373,15 @@ int main() {
             if (!detail.empty()) detail += "; ";
             detail += "pauseLines out of bounds: " + std::to_string(stepRes.pauseLinesOutOfBounds);
         }
+        // AUDIT-INVARIANT fix: maxDepth sanity check.
+        // 原实现 maxDepth 仅在 PASS 输出中打印，主循环中为空操作不变量。
+        // maxDepth 超过 MAX_RECURSION_DEPTH (256) 表示调用栈跟踪损坏或
+        // 栈溢出检测失败——真正的调试器不变量违反。
+        if (stepRes.maxDepth > 256) {
+            match = false;
+            if (!detail.empty()) detail += "; ";
+            detail += "maxDepth exceeds MAX_RECURSION_DEPTH: " + std::to_string(stepRes.maxDepth);
+        }
 
         if (match) {
             pass++;

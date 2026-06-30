@@ -339,10 +339,20 @@ public:
     /// 获取全局槽位名表（build() 后有效，供 Compiler 填充 CompileResult）
     const std::vector<std::string>& getGlobalSlotNames() const { return globalSlotAllocator_.names(); }
 
+    /// BUG-MOD-1 fix: IR 构建错误报告接口。
+    /// AstIRBuilder 不直接访问 Compiler::diagnostics_，通过 hasError/errorMessage 暴露错误状态。
+    /// compileViaIR/compileViaRegisterIR 在 build() 后检查并转化为用户可见 diagnostic。
+    bool hasError() const { return hasError_; }
+    const std::string& errorMessage() const { return errorMessage_; }
+    int errorLine() const { return errorLine_; }
+
 private:
     std::unique_ptr<IRFunction> ir_;
     IRBasicBlock* currentBlock_ = nullptr;  // 当前基本块（指令追加目标）
     std::unique_ptr<IRModule> module_;       // IR 模块（收集所有函数）
+    bool hasError_ = false;                  // BUG-MOD-1: IR 构建错误标志
+    std::string errorMessage_;               // BUG-MOD-1: 错误消息
+    int errorLine_ = 0;                      // BUG-MOD-1: 错误行号
 
     // 变量解析状态
     struct VarInfo {
@@ -399,12 +409,17 @@ private:
     std::unordered_map<std::string, int> innerFunctionSlots_;
 
     // 循环上下文（break/continue 跳转目标）
+    // BUG-EXC-2 fix: tryDepthAtStart 记录循环开始时的 try 嵌套深度，
+    // break/continue 时需为差额层级的 try 发射 TRY_END 弹出 handler，
+    // 对齐 Compiler.cpp:1194 的 tryDepthInLoop 逻辑。
     struct LoopContext {
         uint32_t startLabel;
         uint32_t endLabel;
         uint32_t continueLabel;  // continue 目标（for 的 update 块）
+        int tryDepthAtStart = 0;
     };
     std::vector<LoopContext> loopStack_;
+    int tryDepth_ = 0;  // 当前 try 嵌套深度（BUG-EXC-2 fix）
 
     // ---- 辅助方法 ----
     IRBasicBlock& newBlock();
@@ -524,7 +539,10 @@ private:
     // 标签 → 字节码偏移映射
     std::unordered_map<uint32_t, size_t> labelToOffset_;
     // 待回填跳转
-    struct PendingJump { size_t codeOffset; uint32_t targetLabel; bool isLoop; };
+    // BUG-EXC-1 fix: isTryBegin=true 时 patchJumps 写相对偏移（target - (codeOffset+2)），
+    // 因为 StackVM OP_TRY_BEGIN 用 `catchIp = ip + 3 + catchOffset` 解码（相对偏移），
+    // 而 OP_JUMP/OP_JUMP_IF_FALSE 用 `ip = jump`（绝对偏移）。
+    struct PendingJump { size_t codeOffset; uint32_t targetLabel; bool isLoop; bool isTryBegin = false; };
     std::vector<PendingJump> pendingJumps_;
     // BUG-NEW fix: 全局槽位名表指针（lowerModule 设置，lowerInstruction 中
     // WRITEBACK_*_VAR IMM_UINT 分支用其将 slot→name 转为字符串常量索引）
