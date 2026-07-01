@@ -19,6 +19,8 @@ x64/
 *.pdb
 *.ilk
 *.exp
+*.pch
+*.err
 
 # --- CMake 生成文件 ---
 CMakeCache.txt
@@ -29,29 +31,35 @@ build.ninja
 rules.ninja
 .ninja_*
 _deps/
+compile_commands.json
+.ctest
+CTestTestfile.cmake
+.cmake/api/
 
 # --- Qt 自动生成 ---
 moc_*.cpp
 ui_*.h
 qrc_*.cpp
 
-# --- 测试产物 ---
-test_vm
-test_vm_advanced
-/test_harness/x64/
-/test_harness/debug
-/test_harness/*.exe
-/test_harness/*.obj
-
 # --- 用户本地配置 ---
 CMakeUserPresets.json
 
 # --- IDE/编辑器 ---
 .trae/
+.idea/
+.vscode/
 *.swp
+*.swo
+*~
 
-# --- 日志 ---
+# --- 日志/临时输出 ---
 *.log
+*.txt
+!CMakeLists.txt
+!README.md
+!LICENSE
+!CODEOWNERS
+!CONTRIBUTORS
 
 # --- 文档生成 ---
 docs/api/
