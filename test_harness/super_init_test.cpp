@@ -41,8 +41,8 @@ int main() {
 
     Parser parser;
     auto ast = parser.parse(tokens);
-    if (!parser.getErrors().empty()) {
-        std::cerr << "Parse error: " << parser.getErrors()[0].what() << "\n";
+    if (parser.hasErrors()) {
+        std::cerr << "Parse error: " << parser.getDiagnostics().all()[0].message << "\n";
         return 1;
     }
 

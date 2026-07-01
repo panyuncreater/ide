@@ -69,6 +69,35 @@ bool extractConstant(ASTNode* node, Value& result) {
     }
 }
 
+/// 表达式语句是否需要 emit POP：与 Compiler.cpp:365-386 的 16 种节点类型对齐。
+/// IR 路径的 BytecodeIRBackend lowering 会将这些节点的 vreg 物化为 StackVM 栈值
+/// （LOAD_CONST→OP_INT、ADD→OP_ADD、CALL→OP_CALL 等均压栈），
+/// 表达式语句的结果不被消费，需 POP 防止栈泄漏。
+/// 声明/控制流节点（VarDecl/IfStmt/WhileStmt 等）已自行平衡栈，不需 POP。
+bool needsPopForExprStmt(NodeType nt) {
+    switch (nt) {
+    case NodeType::NODE_ASSIGNMENT:
+    case NodeType::NODE_FUN_CALL:
+    case NodeType::NODE_METHOD_CALL:
+    case NodeType::NODE_BINARY_OP:
+    case NodeType::NODE_UNARY_OP:
+    case NodeType::NODE_VAR_REF:
+    case NodeType::NODE_MEMBER_ACCESS:
+    case NodeType::NODE_INDEX_ACCESS:
+    case NodeType::NODE_NUMBER_LITERAL:
+    case NodeType::NODE_STRING_LITERAL:
+    case NodeType::NODE_BOOL_LITERAL:
+    case NodeType::NODE_NULL_LITERAL:
+    case NodeType::NODE_SUPER_EXPR:
+    case NodeType::NODE_ARRAY_LITERAL:
+    case NodeType::NODE_DICT_LITERAL:
+    case NodeType::NODE_INTERPOLATED_STRING:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } // anonymous namespace
 
 // ============================================================
@@ -95,15 +124,13 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
     for (auto& stmt : program.statements) {
         if (!stmt) continue;
         visitNode(stmt.get());
-        // 表达式语句（函数调用/方法调用）的返回值未被消费，
-        // 需 emit POP 防止栈式 VM (BytecodeIRBackend) 栈泄漏。
+        // 表达式语句的返回值未被消费，需 emit POP 防止栈式 VM (BytecodeIRBackend) 栈泄漏。
         // RegisterBytecodeBackend 中 POP 是 no-op，不影响寄存器式 VM。
-        // AUDIT-BUG-C2 回退: IR 路径与 StackVM 直接路径语义不同。
-        // IR 是 vreg 形式，表达式结果通过 vreg 传递不压栈（visitAssignment/visitBinaryOp 等均返回 vreg）；
-        // 仅 FUN_CALL/METHOD_CALL 在 BytecodeIRBackend 翻译时压栈（返回值），
-        // 故只对这两种 emit POP。对其他节点 emit POP 会导致栈下溢。
-        if (stmt->nodeType == NodeType::NODE_FUN_CALL ||
-            stmt->nodeType == NodeType::NODE_METHOD_CALL) {
+        // BytecodeIRBackend 将所有表达式 vreg 物化为 StackVM 栈值
+        // （LOAD_CONST→OP_INT、ADD→OP_ADD、CALL→OP_CALL 等均压栈），
+        // 故需对全部 16 种表达式语句节点 emit POP，与 Compiler.cpp:365-386 对齐。
+        // visitAssignment 对 GLOBAL 存储已 emit LOAD 重载值，确保 POP 安全。
+        if (needsPopForExprStmt(stmt->nodeType)) {
             emitIR(IROp::POP, {}, stmt->line);
         }
     }
@@ -707,8 +734,20 @@ IROperand AstIRBuilder::visitAssignment(Assignment* node) {
     if (varType) {
         emitTypeCheckIR(val, *varType, node->line);
     }
+    // STORE_GLOBAL lowers to OP_SET_GLOBAL which pops the value off the stack,
+    // while STORE_LOCAL/STORE_UPVALUE use peek (don't pop). To keep the
+    // assignment expression's result consistently on the stack (matching the
+    // normal Compiler path which uses OP_DUP), reload the value for global stores.
+    // This ensures expression-statement POP is always safe and assignment-as-
+    // sub-expression works for globals.
+    VarInfo info = resolveVar(node->name);
+    bool isGlobalStore = (info.kind == VarInfo::Kind::GLOBAL_SLOT ||
+                          info.kind == VarInfo::Kind::GLOBAL_NAME);
     emitStoreVar(node->name, val, node->line);
-    return val;  // 赋值表达式返回所赋的值
+    if (isGlobalStore) {
+        return emitLoadVar(node->name, node->line);
+    }
+    return val;  // LOCAL/UPVALUE: value still on stack (peek), return original vreg
 }
 
 void AstIRBuilder::visitVarDecl(VarDecl* node) {
@@ -820,7 +859,14 @@ void AstIRBuilder::visitWhileStmt(WhileStmt* node) {
 
 void AstIRBuilder::visitForStmt(ForStmt* node) {
     // 编译初始化表达式
-    if (node->initializer) visitNode(node->initializer.get());
+    if (node->initializer) {
+        visitNode(node->initializer.get());
+        // 表达式初始化器（如 i = 0）的返回值未被消费，需 POP。
+        // VarDecl 初始化器已自行平衡栈（STORE_LOCAL+POP 或 DEFINE_GLOBAL pop），不需 POP。
+        if (needsPopForExprStmt(node->initializer->nodeType)) {
+            emitIR(IROp::POP, {}, node->line);
+        }
+    }
     uint32_t startLabel = ir_->allocLabel();
     uint32_t endLabel = ir_->allocLabel();   // break 目标（栈已空，无需 POP）
     uint32_t continueLabel = ir_->allocLabel();
@@ -847,7 +893,14 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     // continue 目标：update 块入口
     emitIR(IROp::LABEL, { IROperand::label(continueLabel) }, node->line);
     // 编译 update 表达式
-    if (node->update) visitNode(node->update.get());
+    if (node->update) {
+        visitNode(node->update.get());
+        // update 表达式（如 i = i + 1）的返回值未被消费，需 POP。
+        // 与 Compiler.cpp visitForStmt 对齐：update 后 emit OP_POP。
+        if (needsPopForExprStmt(node->update->nodeType)) {
+            emitIR(IROp::POP, {}, node->line);
+        }
+    }
     emitIR(IROp::JUMP, { IROperand::label(startLabel) }, node->line);
     if (node->condition) {
         // 条件假路径：条件值在栈上（JUMP_IF_FALSE peek），POP 消费
@@ -1093,6 +1146,9 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         innerFunctions_.insert(fnName);
         innerFunctionSlots_[fnName] = static_cast<int>(slot);
         emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), dest }, node->line);
+        // STORE_LOCAL → OP_SET_LOCAL（peek 不 pop），MAKE_CLOSURE 的值残留在栈上。
+        // 需 POP 消费，与顶层路径的 POP 对齐，防止栈泄漏。
+        emitIR(IROp::POP, {}, node->line);
     } else {
         // 顶层：注册为全局（有槽位则 GLOBAL_SLOT，否则 GLOBAL_NAME）
         // 顶层函数无外层作用域，MAKE_CLOSURE 创建的闭包 upvalue 列表为空，
@@ -1182,11 +1238,9 @@ void AstIRBuilder::visitBlock(Block* node) {
         for (auto& s : node->statements) {
             if (!s) continue;
             visitNode(s.get());
-            // 表达式语句（函数调用/方法调用）的返回值未被消费，需 emit POP。
-            // AUDIT-BUG-C2 回退: IR 是 vreg 形式，表达式结果不压栈；
-            // 仅 FUN_CALL/METHOD_CALL 在 BytecodeIRBackend 压栈，故只对这两种 emit POP。
-            if (s->nodeType == NodeType::NODE_FUN_CALL ||
-                s->nodeType == NodeType::NODE_METHOD_CALL) {
+            // 表达式语句的返回值未被消费，需 emit POP。与 build() 对齐使用
+            // needsPopForExprStmt 覆盖全部 16 种表达式语句节点类型。
+            if (needsPopForExprStmt(s->nodeType)) {
                 emitIR(IROp::POP, {}, s->line);
             }
         }
@@ -1251,10 +1305,9 @@ void AstIRBuilder::visitBlock(Block* node) {
         for (auto& s : node->statements) {
             if (!s) continue;
             visitNode(s.get());
-            // AUDIT-BUG-C2 回退: IR 是 vreg 形式，表达式结果不压栈；
-            // 仅 FUN_CALL/METHOD_CALL 在 BytecodeIRBackend 压栈，故只对这两种 emit POP。
-            if (s->nodeType == NodeType::NODE_FUN_CALL ||
-                s->nodeType == NodeType::NODE_METHOD_CALL) {
+            // 表达式语句的返回值未被消费，需 emit POP。与 build() 对齐使用
+            // needsPopForExprStmt 覆盖全部 16 种表达式语句节点类型。
+            if (needsPopForExprStmt(s->nodeType)) {
                 emitIR(IROp::POP, {}, s->line);
             }
         }
@@ -3218,7 +3271,10 @@ bool optimizeIR(IRFunction& ir, bool enableCopyPropagation) {
     for (int round = 0; round < 3; ++round) {
         bool m1 = constantFoldingPass(ir);
         bool m2 = enableCopyPropagation ? copyPropagationPass(ir) : false;
-        bool m3 = deadCodeEliminationPass(ir);
+        // DCE 仅在寄存器式后端启用（enableCopyPropagation=true）。
+        // 栈式后端中 POP 的 operands 为空，DCE 无法看到 POP 对 vreg 的消费关系，
+        // 会删除仅被 POP 消费的 LOAD_CONST 等纯计算指令，导致栈式 VM OP_POP 栈下溢。
+        bool m3 = enableCopyPropagation ? deadCodeEliminationPass(ir) : false;
         modified = modified || m1 || m2 || m3;
         if (!m1 && !m2 && !m3) break;  // 收敛
     }

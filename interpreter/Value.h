@@ -588,6 +588,13 @@ public:
         return box_.asPtr<RefCounted>()->isUnique();
     }
 
+    const void* gcRootPtr() const {
+        if (isArray()) return static_cast<const void*>(box_.asPtr<ArrayData>());
+        if (isDict()) return static_cast<const void*>(box_.asPtr<DictData>());
+        if (isInstance()) return static_cast<const void*>(box_.asPtr<InstanceData>());
+        return nullptr;
+    }
+
     // ============================================================
     // 工具方法
     // ============================================================

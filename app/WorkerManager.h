@@ -44,7 +44,11 @@ public:
     bool prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, const std::string& filePath);
     /// 启动 worker 线程执行
     void startWorker();
-    /// 关闭前安全停止，返回 false 表示超时需强制终止
+    /// 关闭前安全停止。
+    /// 返回 true: worker 已正常停止，状态已清理。
+    /// 返回 false: worker 未在 timeoutMs 内响应，interpreter/debugger 状态未清理
+    ///           （线程仍在运行，无法安全并发访问 interpreter）。
+    ///           调用方 MUST 调用 forceStop() 完成清理，否则 UI 卡在运行态。
     bool stopForClose(int timeoutMs = 3000);
     /// 强制终止 worker 线程
     void forceStop();

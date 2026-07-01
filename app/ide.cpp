@@ -41,26 +41,163 @@ Ide::Ide(QWidget* parent)
     // B6 fix: REPL 面板通过 IdeController（业务层）间接执行，不直接持有 Interpreter*
     replPanel_->setController(controller_);
 
-    // 设置默认示例代码
+    // 设置默认示例代码：覆盖 MiniLang 全部语言特性，可用于
+    // Interpreter / StackVM / RegisterVM 三后端 + IR 路径 +
+    // 调试器 + 格式化器 + 类型检查器的回归验证。
     codeEditor_->setPlainText(
-        "// MiniLang 示例程序\n"
-        "var x = 10;\n"
-        "var y = 20;\n"
-        "var sum = x + y;\n"
-        "print(sum);\n"
+        "// ============================================================\n"
+        "// MiniLang 功能演示程序\n"
+        "// ------------------------------------------------------------\n"
+        "// 覆盖：基础类型/类型注解、运算符、控制流、函数/闭包/默认参数、\n"
+        "//       类与继承/super、数组/字典/内置方法、字符串插值、\n"
+        "//       异常处理、注释。可直接 Run / Debug / Format 验证。\n"
+        "// ============================================================\n"
         "\n"
-        "fun factorial(n) {\n"
-        "    if (n <= 1) {\n"
-        "        return 1;\n"
+        "// ---- 1. 基础类型与类型注解 ----\n"
+        "int a = 42;\n"
+        "float pi = 3.14159;\n"
+        "string name = \"MiniLang\";\n"
+        "bool flag = true;\n"
+        "var nothing = null;\n"
+        "print(\"int=\" + a + \" float=\" + pi + \" bool=\" + flag);\n"
+        "print(\"name=\" + name + \" nothing=\" + nothing);\n"
+        "\n"
+        "// ---- 2. 运算符与短路求值 ----\n"
+        "print(10 + 3 * 2);              // 16\n"
+        "print(7 % 3);                   // 1\n"
+        "print(10 / 3);                  // 3 (整数除法截断向零)\n"
+        "print(1 or 2);                  // 1 (短路，返回操作数原值)\n"
+        "print(0 and 2);                 // 0\n"
+        "print(not flag);                // false\n"
+        "print(1 == 1 and 2 < 3);        // true\n"
+        "\n"
+        "// ---- 3. 控制流：if/else if/else、while、for + break/continue ----\n"
+        "fun fizzbuzz(n) {\n"
+        "    for (var i = 1; i <= n; i = i + 1) {\n"
+        "        if (i % 15 == 0) {\n"
+        "            print(\"FizzBuzz\");\n"
+        "        } else if (i % 3 == 0) {\n"
+        "            print(\"Fizz\");\n"
+        "        } else if (i % 5 == 0) {\n"
+        "            print(\"Buzz\");\n"
+        "        } else {\n"
+        "            print(i);\n"
+        "        }\n"
         "    }\n"
+        "}\n"
+        "fizzbuzz(5);\n"
+        "\n"
+        "var i = 0;\n"
+        "var oddSum = 0;\n"
+        "while (i < 10) {\n"
+        "    i = i + 1;\n"
+        "    if (i % 2 == 0) { continue; }\n"
+        "    if (i > 7) { break; }\n"
+        "    oddSum = oddSum + i;\n"
+        "}\n"
+        "print(\"odd-sum=\" + oddSum);    // 1+3+5+7 = 16\n"
+        "\n"
+        "// ---- 4. 函数：递归、默认参数、闭包 upvalue 捕获 ----\n"
+        "fun factorial(n) {\n"
+        "    if (n <= 1) { return 1; }\n"
         "    return n * factorial(n - 1);\n"
         "}\n"
+        "print(\"5!=\" + factorial(5));   // 120\n"
         "\n"
-        "print(factorial(5));\n"
-        "\n"
-        "for (var i = 0; i < 5; i = i + 1) {\n"
-        "    print(i);\n"
+        "fun add(a, b = 10, c = 100) {\n"
+        "    return a + b + c;\n"
         "}\n"
+        "print(add(1));                  // 111\n"
+        "print(add(1, 2));               // 103\n"
+        "print(add(1, 2, 3));            // 6\n"
+        "\n"
+        "fun makeCounter() {\n"
+        "    var count = 0;\n"
+        "    fun increment() {\n"
+        "        count = count + 1;      // 捕获外层 count (upvalue)\n"
+        "        return count;\n"
+        "    }\n"
+        "    return increment;\n"
+        "}\n"
+        "var counter = makeCounter();\n"
+        "print(counter());               // 1\n"
+        "print(counter());               // 2\n"
+        "print(counter());               // 3\n"
+        "\n"
+        "// ---- 5. 类与继承 + super 调用 + 字段默认值 ----\n"
+        "class Animal {\n"
+        "    var sound = \"...\";\n"
+        "    fun init(name) {\n"
+        "        this.name = name;\n"
+        "    }\n"
+        "    fun speak() {\n"
+        "        print(this.name + \" says \" + this.sound);\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "class Dog extends Animal {\n"
+        "    var sound = \"Woof\";        // 覆盖父类字段默认值\n"
+        "    fun speak() {\n"
+        "        super.speak();         // 调用父类方法\n"
+        "        print(this.name + \" wags tail\");\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "var dog = Dog(\"Rex\");\n"
+        "dog.speak();\n"
+        "\n"
+        "// ---- 6. 数据结构：数组 / 字典 + 内置方法 ----\n"
+        "var arr = [1, 2, 3];\n"
+        "arr.push(4);\n"
+        "arr.push(5);\n"
+        "print(\"len=\" + arr.len());     // 5\n"
+        "print(\"contains 3: \" + arr.contains(3));   // true\n"
+        "print(\"join: \" + arr.join(\",\"));           // 1,2,3,4,5\n"
+        "print(\"arr[2]=\" + arr[2]);                 // 3\n"
+        "\n"
+        "var cfg = {\"name\": \"Alice\", \"age\": 30};\n"
+        "cfg[\"city\"] = \"Beijing\";\n"
+        "print(cfg.has(\"age\"));         // true\n"
+        "print(cfg[\"name\"] + \" / \" + cfg[\"city\"]);\n"
+        "\n"
+        "// ---- 7. 字符串操作与插值 ----\n"
+        "string s = \"Hello, World\";\n"
+        "print(s.len());                 // 12\n"
+        "print(s.substr(0, 5));          // Hello\n"
+        "print(s.replace(\"World\", \"MiniLang\"));  // Hello, MiniLang\n"
+        "\n"
+        "var who = \"World\";\n"
+        "var n = 42;\n"
+        "print(\"Hello, {who}! n+1={n + 1}\");   // Hello, World! n+1=43\n"
+        "\n"
+        "// ---- 8. 异常处理：try / catch / throw + 嵌套 ----\n"
+        "fun risky(x) {\n"
+        "    if (x < 0) {\n"
+        "        throw \"negative not allowed\";\n"
+        "    }\n"
+        "    return x * 2;\n"
+        "}\n"
+        "\n"
+        "try {\n"
+        "    print(risky(10));           // 20\n"
+        "    print(risky(-1));           // throws\n"
+        "    print(\"unreachable\");\n"
+        "} catch (e) {\n"
+        "    print(\"caught: \" + e);     // caught: negative not allowed\n"
+        "}\n"
+        "\n"
+        "try {\n"
+        "    try {\n"
+        "        throw \"inner\";\n"
+        "    } catch (e1) {\n"
+        "        print(\"inner caught: \" + e1);\n"
+        "        throw \"outer\";\n"
+        "    }\n"
+        "} catch (e2) {\n"
+        "    print(\"outer caught: \" + e2);\n"
+        "}\n"
+        "\n"
+        "print(\"done\");\n"
     );
 
     // F9: 加载保存的主题偏好
@@ -992,6 +1129,10 @@ void Ide::onVmRun() {
         vmStepOutAction_->setEnabled(false);
         vmRunAction_->setEnabled(false);
         vmStopAction_->setEnabled(true);
+        // BUG-EXTRA-3 fix: 也禁用 Run/Debug 按钮，防止 VM 运行期间触发文件执行
+        runAction_->setEnabled(false);
+        debugAction_->setEnabled(false);
+        codeEditor_->setReadOnly(true);
         return;
     }
     handleVmStepResult(result);
@@ -1002,6 +1143,9 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
     switch (result) {
     case IdeController::VmStepResult::NOT_READY:
         setVmStepActionsEnabled(true, /*running=*/false);
+        runAction_->setEnabled(true);
+        debugAction_->setEnabled(true);
+        codeEditor_->setReadOnly(false);
         return;
 
     case IdeController::VmStepResult::RUNNING:
@@ -1025,6 +1169,9 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
         }
         vmStackPanel_->clearAll();
         setVmStepActionsEnabled(true, /*running=*/false);
+        runAction_->setEnabled(true);
+        debugAction_->setEnabled(true);
+        codeEditor_->setReadOnly(false);
         return;
     }
 
@@ -1032,6 +1179,9 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
         outputPanel_->appendOutput("--- VM 执行结束 ---");
         vmStackPanel_->clearAll();
         setVmStepActionsEnabled(true, /*running=*/false);
+        runAction_->setEnabled(true);
+        debugAction_->setEnabled(true);
+        codeEditor_->setReadOnly(false);
         return;
 
     case IdeController::VmStepResult::OK:
@@ -1092,8 +1242,15 @@ void Ide::onVmStop() {
     vmStackPanel_->clearAll();
     // GUI-11 fix: 清除字节码列表当前行高亮
     bytecodeList_->setCurrentRow(-1);
+    // BUG-EXTRA-2 fix: 清除编辑器当前行高亮和 IR 查看器高亮
+    codeEditor_->setCurrentLine(-1);
+    if (irViewer_) irViewer_->clearHighlight();
 
     setVmStepActionsEnabled(true, /*running=*/false);
+    // BUG-DBG-R2-1 fix: VM 停止后恢复 Run/Debug 按钮和编辑器可写状态
+    runAction_->setEnabled(true);
+    debugAction_->setEnabled(true);
+    codeEditor_->setReadOnly(false);
 }
 
 // ============================================================
@@ -1481,6 +1638,16 @@ void Ide::setRunningState(bool running) {
     // AUDIT fix: IR 查看器在运行期间也应禁用，避免查看正在编译/执行的 IR 导致状态不一致
     if (irAction_) irAction_->setEnabled(!running);
     codeEditor_->setReadOnly(running);
+    // BUG-DBG-2 fix: Worker 线程运行期间也必须禁用 VM 步进按钮，防止并发访问
+    // 共享 Compiler/CompileResult 状态导致 UAF
+    // BUG-DBG-R2-2 fix: 文件执行结束后必须恢复 VM 步进按钮，否则 VM 调试永久不可用。
+    // 若 VM 正在异步运行（isVmRunning），不干涉其按钮状态；若 VM 暂停（isVmInitialized），
+    // 恢复为暂停态；否则恢复为未初始化态。
+    if (running) {
+        setVmStepActionsEnabled(false, false);
+    } else if (!controller_->isVmRunning()) {
+        setVmStepActionsEnabled(true, controller_->isVmInitialized());
+    }
 }
 
 // ============================================================

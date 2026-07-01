@@ -15,6 +15,8 @@
 #include "interpreter/Interpreter.h"
 #include "interpreter/Value.h"
 #include "interpreter/Environment.h"
+#include "debug/DebugTypes.h"
+// Include stub DebugController (test_harness/debug/ via target_include_directories BEFORE)
 #include "debug/DebugController.h"
 #include "Diagnostic.h"
 
@@ -51,7 +53,7 @@ static RunResult runFull(const std::string& source) {
     if (parser.hasErrors() || !ast) {
         res.hasError = true;
         std::string e;
-        for (auto& pe : parser.getErrors()) { if (!e.empty()) e += "; "; e += pe.what(); }
+        for (auto& pe : parser.getDiagnostics().all()) { if (!e.empty()) e += "; "; e += pe.message; }
         res.error = "PARSE:" + (e.empty() ? "unknown" : e);
         return res;
     }
@@ -94,7 +96,7 @@ static DebugResult runDebug(const std::string& source, StepMode mode,
     if (parser.hasErrors() || !ast) {
         res.hasError = true;
         std::string e;
-        for (auto& pe : parser.getErrors()) { if (!e.empty()) e += "; "; e += pe.what(); }
+        for (auto& pe : parser.getDiagnostics().all()) { if (!e.empty()) e += "; "; e += pe.message; }
         res.error = "PARSE:" + (e.empty() ? "unknown" : e);
         return res;
     }

@@ -7,10 +7,43 @@
 cmake_minimum_required(VERSION 3.20)
 project(MiniLangIDE VERSION 1.0 LANGUAGES CXX)
 
+# ============================================================
+# CMake 模块路径
+# 修复问题 1（CMAKE_MODULE_PATH 未声明）
+# ============================================================
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 # C++ 标准
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# ============================================================
+# 构建选项
+# ============================================================
+# 修复问题 10：Warnings as errors 选项化
+option(MINILANG_WERROR "Treat warnings as errors" OFF)
+# 修复问题 17：ccache 支持
+option(MINILANG_USE_CCACHE "Use ccache/sccache to accelerate builds" OFF)
+if(MINILANG_USE_CCACHE)
+    find_program(CCACHE_PROGRAM ccache)
+    if(NOT CCACHE_PROGRAM)
+        find_program(CCACHE_PROGRAM sccache)
+    endif()
+    if(CCACHE_PROGRAM)
+        message(STATUS "Using compiler cache: ${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    else()
+        message(WARNING "MINILANG_USE_CCACHE=ON but neither ccache nor sccache found")
+    endif()
+endif()
+
+# 修复问题 5：Release LTO 开关
+option(MINILANG_ENABLE_LTO "Enable Link Time Optimization in Release builds" ON)
+if(MINILANG_ENABLE_LTO AND MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG /OPT:REF /OPT:ICF")
+endif()
 
 # ============================================================
 # 查找 Qt6（Core/Gui/Widgets）
@@ -20,76 +53,13 @@ find_package(Qt6 6.0 COMPONENTS Core Gui Widgets REQUIRED)
 # 自动处理 MOC/UIC/RCC
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTORC ON)
 
 # ============================================================
-# 核心模块源文件（不含 GUI 和 main）
+# 包含共享模块：源文件列表 + 编译选项 + 配置函数
+# 修复问题 2（源文件列表重复维护）
 # ============================================================
-set(MINILANG_CORE_SOURCES
-    common/TypeChecker.cpp
-    lexer/Lexer.cpp
-    ast/ASTNode.cpp
-    parser/Parser.cpp
-    interpreter/Environment.cpp
-    interpreter/Interpreter.cpp
-    interpreter/InterpreterCalls.cpp
-    interpreter/InterpreterClasses.cpp
-    interpreter/InterpreterModules.cpp
-    interpreter/BuiltinMethods.cpp
-    interpreter/Value.cpp
-    interpreter/GcManager.cpp
-    debug/DebugController.cpp
-    compiler/Bytecode.cpp
-    compiler/Compiler.cpp
-    compiler/VM.cpp
-    compiler/VMCalls.cpp
-    compiler/VMContainers.cpp
-    compiler/IR.cpp
-    compiler/RegisterBytecode.cpp
-    compiler/RegisterBytecodeBackend.cpp
-    compiler/RegisterVM.cpp
-    formatter/Formatter.cpp
-)
-
-# 核心模块需要 MOC 的头文件
-set(MINILANG_CORE_MOC_HEADERS
-    debug/DebugController.h
-)
-
-# ============================================================
-# GUI 模块源文件
-# ============================================================
-set(MINILANG_GUI_SOURCES
-    gui/CodeEditor.cpp
-    gui/SyntaxHighlighter.cpp
-    gui/AstViewer.cpp
-    gui/OutputPanel.cpp
-    gui/DebugPanel.cpp
-    gui/ReplPanel.cpp
-    gui/VmStackPanel.cpp
-    gui/IrViewer.cpp
-    gui/FindReplacePanel.cpp
-)
-
-# GUI 模块需要 MOC 的头文件
-set(MINILANG_GUI_MOC_HEADERS
-    app/ide.h
-    app/IdeController.h
-    app/InterpreterWorker.h
-    app/PipelineRunner.h
-    app/WorkerManager.h
-    app/DebugCoordinator.h
-    app/VmStepper.h
-    gui/CodeEditor.h
-    gui/AstViewer.h
-    gui/OutputPanel.h
-    gui/DebugPanel.h
-    gui/SyntaxHighlighter.h
-    gui/ReplPanel.h
-    gui/VmStackPanel.h
-    gui/IrViewer.h
-    gui/FindReplacePanel.h
-)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/minilang_core.cmake)
 
 # ============================================================
 # minilang_core 静态库（供 IDE 和测试复用）
@@ -98,27 +68,7 @@ add_library(minilang_core STATIC
     ${MINILANG_CORE_SOURCES}
 )
 
-target_include_directories(minilang_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/common
-)
-
-target_link_libraries(minilang_core PUBLIC Qt6::Core)
-
-# S4 fix: 预编译头（PCH）—— 包含常用标准库头文件，减少重复解析
-# 仅用于 minilang_core（10 个 .cpp 共享相同的标准库头文件）
-target_precompile_headers(minilang_core PRIVATE common/pch.h)
-
-if(MSVC)
-    target_compile_options(minilang_core PRIVATE
-        /W3
-        /utf-8
-        /EHsc
-        /permissive-
-        /wd4996
-        /MP
-    )
-endif()
+minilang_configure_core_target(minilang_core ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ============================================================
 # minilang_ide 可执行目标（GUI 应用）
@@ -146,18 +96,8 @@ target_link_libraries(minilang_ide PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    minilang_compile_options
 )
-
-if(MSVC)
-    target_compile_options(minilang_ide PRIVATE
-        /W3
-        /utf-8
-        /EHsc
-        /permissive-
-        /wd4996
-        /MP
-    )
-endif()
 
 # Debug 配置生成调试信息
 target_compile_definitions(minilang_ide PRIVATE $<$<CONFIG:Debug>:QT_DEBUG>)
@@ -172,8 +112,116 @@ if(MINILANG_BUILD_TESTS)
 endif()
 
 # ============================================================
-# 安装规则（可选）
+# test_harness 子目录（独立审计/压力测试工具）
+# 修复问题 3（test_harness 未集成 CMake）
+# ============================================================
+option(MINILANG_BUILD_TEST_HARNESS "Build MiniLang test harness (audit/stress tools)" OFF)
+if(MINILANG_BUILD_TEST_HARNESS)
+    add_subdirectory(test_harness)
+endif()
+
+# ============================================================
+# 安装规则
+# ------------------------------------------------------------
+# IDE 应用分发：安装可执行文件
+# SDK 分发：安装 minilang_core 静态库 + 公共头文件目录
+# 修复问题 B-2（安装规则不完整，原仅安装 minilang_ide）
 # ============================================================
 install(TARGETS minilang_ide
     RUNTIME DESTINATION bin
 )
+
+# 安装 minilang_core 静态库（供 SDK 用途链接）
+install(TARGETS minilang_core
+    ARCHIVE DESTINATION lib
+)
+
+# 安装公共头文件目录（保留子目录结构）
+install(DIRECTORY
+    ${CMAKE_CURRENT_SOURCE_DIR}/lexer
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser
+    ${CMAKE_CURRENT_SOURCE_DIR}/ast
+    ${CMAKE_CURRENT_SOURCE_DIR}/interpreter
+    ${CMAKE_CURRENT_SOURCE_DIR}/compiler
+    ${CMAKE_CURRENT_SOURCE_DIR}/debug
+    ${CMAKE_CURRENT_SOURCE_DIR}/formatter
+    ${CMAKE_CURRENT_SOURCE_DIR}/common
+    DESTINATION include/minilang
+    FILES_MATCHING PATTERN "*.h"
+)
+
+# ============================================================
+# Windows 平台自动部署 Qt 运行时依赖
+# ------------------------------------------------------------
+# 构建后调用 windeployqt 把 Qt6 DLL（Qt6Core/Qt6Gui/Qt6Widgets）
+# 与 platforms/qwindows.dll 插件复制到可执行文件同目录，
+# 使 minilang_ide.exe / minilang_tests.exe 可直接双击运行，
+# 无需手动将 Qt bin 目录加入 PATH。
+# 修复问题 E-1/E-2/B-1（exe 缺少 Qt DLL 与平台插件）。
+# ============================================================
+if(WIN32 AND TARGET Qt6::qmake)
+    # 通过 qmake 推导 windeployqt 路径（同 bin 目录）
+    get_target_property(_qmake_location Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_qt_bin_dir "${_qmake_location}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXE windeployqt HINTS "${_qt_bin_dir}")
+    if(WINDEPLOYQT_EXE)
+        message(STATUS "Found windeployqt: ${WINDEPLOYQT_EXE}")
+        # 为 GUI 主程序部署 Qt 依赖（含 platforms 插件）
+        # 注：minilang_tests 的 windeployqt 在 tests/CMakeLists.txt 中调用，
+        # 因为 add_custom_command(TARGET ...) 要求目标在同一目录定义。
+        add_custom_command(TARGET minilang_ide POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXE}"
+                    --no-translations
+                    --no-system-d3d-compiler
+                    --no-opengl-sw
+                    "$<TARGET_FILE:minilang_ide>"
+            COMMENT "Deploying Qt runtime for minilang_ide..."
+        )
+        # 修复问题 7：安装时也部署 Qt DLL 到安装目录
+        install(CODE "
+            execute_process(
+                COMMAND \"${WINDEPLOYQT_EXE}\"
+                        --no-translations
+                        --no-system-d3d-compiler
+                        --no-opengl-sw
+                        \"\${CMAKE_INSTALL_PREFIX}/bin/$<TARGET_FILE_NAME:minilang_ide>\"
+                RESULT_VARIABLE _deploy_result
+            )
+            if(NOT _deploy_result EQUAL 0)
+                message(WARNING \"windeployqt failed during install (code \${_deploy_result})\")
+            endif()
+        ")
+    else()
+        message(WARNING "windeployqt not found near Qt6 bin (${_qt_bin_dir}). "
+                        "Built executables will need Qt bin in PATH to run.")
+    endif()
+endif()
+
+# ============================================================
+# Sanitizer 支持
+# 修复问题 8：Address/Undefined Behavior Sanitizer 预设
+# 用法：cmake -DMINILANG_SANITIZE=address ...  (MSVC: /fsanitize=address)
+# ============================================================
+set(MINILANG_SANITIZE "" CACHE STRING "Enable sanitizer: address, undefined")
+if(MINILANG_SANITIZE STREQUAL "address" AND MSVC)
+    target_compile_options(minilang_compile_options INTERFACE /fsanitize=address)
+    target_link_options(minilang_compile_options INTERFACE /fsanitize=address)
+endif()
+
+# ============================================================
+# CPack 打包
+# 修复问题 13：生成安装包（ZIP / NSIS）
+# 用法：
+#   cmake --build out/build/release
+#   cd out/build/release && cpack -G ZIP
+# ============================================================
+include(CPack)
+set(CPACK_PACKAGE_NAME "MiniLangIDE")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VENDOR "MiniLang")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "C++20 / Qt6 MiniLang IDE")
+# 仅打包已安装的文件（cmake --install 之后）
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+endif()

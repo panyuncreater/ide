@@ -88,14 +88,14 @@ public:
     /// 切换时自动 reset 两个后端，避免遗留状态污染。
     void setUseRegister(bool enabled) {
         if (useRegister_ == enabled) return;
-        // 切换前重置当前活跃后端，防止悬垂状态
-        if (isVmRunning_) stop();
+        // BUG-EXTRA-1 fix: 必须始终调用 reset() 而非仅在 isVmRunning_ 时调用 stop()。
+        // VM 暂停时（isVmRunning_=false, isVmInitialized_=true）frame.chunk 指向旧编译结果，
+        // 下方 reset() 会释放编译结果导致悬垂指针。reset() 同时清理 isVmInitialized_。
+        reset();
         // 清空编译结果：切换后端后旧 CompileResult/RegisterCompileResult
         // 可能与新后端不匹配，强制下次 step 前必须重新编译同步。
         lastCompileResult_.reset();
         lastRegCompileResult_.reset();
-        // 两个 VM 的 stepCallback 独立管理（stepByMode 中统一 disable），
-        // 切换后端无需额外同步。
         useRegister_ = enabled;
     }
     bool isRegisterMode() const { return useRegister_; }

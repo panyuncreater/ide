@@ -53,7 +53,7 @@ enum class OpCode : uint8_t {
 
     OP_RETURN,       // 返回
     OP_CALL,         // 函数调用（参数个数）
-    OP_CALL_EXPR,    // 表达式调用：栈顶为闭包，下方为参数（1字节参数个数）
+    OP_CALL_EXPR,    // 表达式调用：闭包在参数下方（编译器先push闭包再push参数）（1字节参数个数）
 
     OP_BUILD_ARRAY,  // 构建数组（元素个数）
     OP_BUILD_DICT,   // 构建字典（键值对个数）

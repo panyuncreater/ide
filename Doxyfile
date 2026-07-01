@@ -1,0 +1,59 @@
+# MiniLang IDE Doxygen 配置
+# 生成 C++ API 文档：doxygen Doxyfile
+
+PROJECT_NAME           = "MiniLang IDE"
+PROJECT_BRIEF          = "C++20 / Qt6 轻量级教学型编程语言 IDE"
+OUTPUT_DIRECTORY       = docs/api
+GENERATE_LATEX         = NO
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+OPTIMIZE_OUTPUT_FOR_C  = NO
+
+# 输入
+INPUT                  = lexer parser ast interpreter compiler debug formatter common gui app
+FILE_PATTERNS          = *.h *.cpp *.hpp
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = third_party/* tests/* test_harness/* out/* build_*/*
+EXCLUDE_SYMBOLS        = std::* _details::* detail::*
+
+# 提取
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = NO
+EXTRACT_LOCAL_CLASSES  = NO
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+# C++ 特性
+CPP_STANDARD           = c++20
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = Q_DECL_EXPORT= Q_DECL_IMPORT=
+
+# 输出样式
+HTML_COLORSTYLE_HUE    = 220
+HTML_EXTRA_STYLESHEET  =
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = YES
+
+# 图表
+HAVE_DOT               = NO
+CLASS_DIAGRAMS         = YES
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+
+# 搜索
+SEARCHENGINE           = YES
+SERVER_BASED_SEARCH    = NO
+
+# 行号
+SOURCE_BROWSER         = YES
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES

@@ -81,6 +81,10 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     statements.reserve(tokens_->size() / 4);
 
     while (!isAtEnd()) {
+        // FIX: '}' 不是顶层语句的合法起始 token。若 synchronize() 在 '}' 处停下，
+        // 主循环必须也停下来，否则 declaration() → primary() 不识别 '}' → 抛异常 →
+        // synchronize() 又看到 '}' → 死循环。
+        if (check(TokenType::TK_RBRACE)) break;
         try {
             auto decl = declaration();
             if (decl) {
@@ -454,7 +458,7 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             }
             defaultValues.push_back(nullptr);
         }
-    } while (match(TokenType::TK_COMMA));
+    } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
 
     // BUG-P1 fix: 默认参数值不能引用后续参数（如 fun f(a = b, b = 1) 应报错）
     for (size_t i = 0; i < defaultValues.size(); ++i) {
@@ -798,9 +802,12 @@ std::unique_ptr<ThrowStmt> Parser::throwStmt() {
 
 std::unique_ptr<ImportStmt> Parser::importStmt() {
     // BUG 5b fix: import 只能在顶层使用
+    // FIX: 不抛异常，改为记录诊断后继续解析。抛异常会导致 synchronize()
+    // 跳过 try 块内的 catch 子句，使 tryStmt() 找不到 catch 而进入死循环。
     if (blockDepth_ > 0) {
         const Token& tok = peek();
-        throw ParseError("import 语句只能在顶层使用", tok.line, tok.column);
+        diagnostics_.addError("import 语句只能在顶层使用", tok.line, tok.column, DiagSource::Parser);
+        // 继续解析 import 语句，不抛异常
     }
     const Token& importTok = consume(TokenType::TK_IMPORT, "期望 'import'");
 
@@ -838,9 +845,10 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
 
 std::unique_ptr<ExportStmt> Parser::exportStmt() {
     // BUG 5b fix: export 只能在顶层使用
+    // FIX: 同 importStmt()，不抛异常，改为记录诊断后继续解析。
     if (blockDepth_ > 0) {
         const Token& tok = peek();
-        throw ParseError("export 语句只能在顶层使用", tok.line, tok.column);
+        diagnostics_.addError("export 语句只能在顶层使用", tok.line, tok.column, DiagSource::Parser);
     }
     const Token& exportTok = consume(TokenType::TK_EXPORT, "期望 'export'");
 
@@ -884,7 +892,7 @@ std::unique_ptr<PrintStmt> Parser::printStmt() {
     if (!check(TokenType::TK_RPAREN)) {
         do {
             values.push_back(expression());
-        } while (match(TokenType::TK_COMMA));
+        } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
     }
 
     consume(TokenType::TK_RPAREN, "期望 ')'");
@@ -908,6 +916,8 @@ std::unique_ptr<Block> Parser::block() {
     stmts.reserve(8);
 
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
+        // FIX: catch 也是块边界（try 块的 tryBlock 以 catch 结束）
+        if (check(TokenType::TK_CATCH)) break;
         try {
             auto decl = declaration();
             if (decl) {
@@ -1332,6 +1342,39 @@ std::unique_ptr<ASTNode> Parser::primary() {
 // ---- 错误恢复 ----
 
 void Parser::synchronize() {
+    // 不跳过块边界/EOF——advance() 前先检查当前 token 是否已是同步点。
+    // 原 advance() 无条件跳过当前 token，若当前 token 是 }，
+    // 会被跳过而 previous() 检查仅识别 TK_SEMICOLON，导致块边界丢失产生级联错误。
+    //
+    // FIX-1: 分号必须消耗（advance），否则主循环再次调用 declaration() 时
+    // primary() 不识别 ';' 抛异常 → synchronize() 又看到 ';' 直接 return → 死循环。
+    // FIX-2: 插值字符串 token（TK_INTERP_END/TK_STRING_PART/TK_INTERP_START）
+    // 只在插值字符串上下文中有意义，顶层 parse 循环中无法处理。
+    // 若不消耗而直接 return，primary() 不识别这些 token → 抛异常 → synchronize() 又
+    // 看到同样 token → 死循环。必须消耗所有插值相关 token 以跳过断裂的字符串上下文。
+    // '}' 是结构边界，不能消耗；EOF 无需消耗（isAtEnd 会终止循环）。
+    if (peek().type == TokenType::TK_RBRACE ||
+        peek().type == TokenType::TK_EOF) {
+        return;
+    }
+    if (peek().type == TokenType::TK_SEMICOLON) {
+        advance();  // 消耗分号以确保向前推进
+        return;
+    }
+    // 消耗所有插值字符串相关 token，跳过断裂的字符串上下文
+    while (peek().type == TokenType::TK_INTERP_END ||
+           peek().type == TokenType::TK_STRING_PART ||
+           peek().type == TokenType::TK_INTERP_START) {
+        advance();
+    }
+    if (isAtEnd()) return;
+    // 如果消耗插值 token 后到达了同步点，停止
+    if (peek().type == TokenType::TK_RBRACE ||
+        peek().type == TokenType::TK_EOF ||
+        peek().type == TokenType::TK_SEMICOLON) {
+        if (peek().type == TokenType::TK_SEMICOLON) advance();
+        return;
+    }
     advance();
 
     while (!isAtEnd()) {
@@ -1341,10 +1384,14 @@ void Parser::synchronize() {
         // P1-2 fix: '}' 标记块结束，作为同步点避免跳过块边界
         if (peek().type == TokenType::TK_RBRACE) return;
 
-        // AUDIT-BUG-P1 fix: 插值闭合标记作为同步点。
-        // 原实现不识别 TK_INTERP_END，错误恢复时跳过插值边界，
-        // 导致后续 TK_STRING_PART 等被当作语句解析产生级联错误。
-        if (peek().type == TokenType::TK_INTERP_END) return;
+        // FIX: 插值字符串 token 不是同步点——它们是断裂字符串上下文的残留，
+        // 必须消耗（跳过）才能到达真正的语句边界。
+        if (peek().type == TokenType::TK_INTERP_END ||
+            peek().type == TokenType::TK_STRING_PART ||
+            peek().type == TokenType::TK_INTERP_START) {
+            advance();
+            continue;
+        }
 
         // 关键字标记声明开始
         switch (peek().type) {

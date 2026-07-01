@@ -3,8 +3,11 @@
 # ------------------------------------------------------------
 # 触发条件：push / pull_request 到 main / master 分支
 # 作业：
-#   build-test       — Windows + MSVC + Qt6 构建并运行全部单元测试
+#   build-test       — Windows + MSVC + Qt6 构建并运行全部测试
+#   coverage         — 代码覆盖率（手动/每周触发）
 #   static-analysis  — cppcheck 静态代码分析
+#
+# 修复问题 9（ctest 并行）/ 问题 7（覆盖率）/ 问题 17（ccache）
 # ============================================================
 
 name: CI
@@ -14,6 +17,9 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  schedule:
+    - cron: '0 4 * * 0'   # 每周日自动运行覆盖率
+  workflow_dispatch: {}     # 允许手动触发
 
 env:
   CMAKE_BUILD_TYPE: Release
@@ -22,16 +28,69 @@ env:
 jobs:
   # ============================================================
   # 作业 1：构建 + 单元测试（Windows + MSVC + Qt6）
-  # ------------------------------------------------------------
-  # 使用 windows-latest 自带的 Visual Studio 2022 + MSVC 工具链。
-  # 通过 ilammy/msvc-dev-cmd 显式初始化 MSVC Developer Command
-  # Prompt（vcvars）环境，确保 CMake 的 "Visual Studio 17 2022"
-  # 生成器能稳定探测到 VS 实例（修复 "could not find any instance
-  # of Visual Studio" 错误）。
   # ============================================================
   build-test:
     name: Build & Test (Windows MSVC)
     runs-on: windows-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      # 修复问题 17：ccache + GHA cache 加速构建
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-${{ env.CMAKE_BUILD_TYPE }}
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          cache: true
+
+      - name: 设置 MSVC 开发环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 配置 CMake（使用 Preset，与本地一致）
+        run: cmake --preset windows-msvc-release -DMINILANG_USE_CCACHE=ON
+
+      - name: 构建项目
+        run: cmake --build out/build/release --parallel
+
+      # 修复问题 9：ctest -j 4 并行运行
+      - name: 运行单元测试（并行）
+        working-directory: out/build/release
+        run: ctest -C ${{ env.CMAKE_BUILD_TYPE }} -j 4 --output-on-failure --verbose
+
+      - name: 上传测试结果（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: out/build/release/Testing/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ============================================================
+  # 作业 2：代码覆盖率（Debug + OpenCppCoverage）
+  # 修复问题 7：代码覆盖率报告
+  # ============================================================
+  coverage:
+    name: Code Coverage (Debug)
+    runs-on: windows-latest
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Checkout 代码
@@ -48,32 +107,45 @@ jobs:
           arch: win64_msvc2019_64
           cache: true
 
-      - name: 设置 MSVC 开发环境（Developer Command Prompt）
+      - name: 设置 MSVC 开发环境
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: 配置 CMake（Visual Studio 2022 + MSVC）
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
-      - name: 构建项目
-        run: cmake --build build --config ${{ env.CMAKE_BUILD_TYPE }} --parallel
+      - name: 安装 OpenCppCoverage
+        run: choco install opencppcoverage -y --no-progress
 
-      - name: 运行单元测试
-        working-directory: build
-        run: ctest -C ${{ env.CMAKE_BUILD_TYPE }} --output-on-failure --verbose
+      - name: 配置 CMake（Debug）
+        run: cmake --preset windows-msvc-debug
 
-      - name: 上传测试结果（失败时）
-        if: failure()
+      - name: 构建测试
+        run: cmake --build out/build/debug --target minilang_tests --parallel
+
+      - name: 运行覆盖率分析
+        working-directory: out/build/debug
+        run: |
+          OpenCppCoverage.exe `
+            --export_type cobertura:coverage.xml `
+            --export_type html:coverage_html `
+            --sources "${env:GITHUB_WORKSPACE}\lexer;${env:GITHUB_WORKSPACE}\parser;${env:GITHUB_WORKSPACE}\ast;${env:GITHUB_WORKSPACE}\interpreter;${env:GITHUB_WORKSPACE}\compiler;${env:GITHUB_WORKSPACE}\debug;${env:GITHUB_WORKSPACE}\formatter" `
+            -- tests\minilang_tests.exe --gtest_brief=1
+
+      - name: 上传覆盖率报告
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results
-          path: build/Testing/**/*.xml
-          if-no-files-found: ignore
-          retention-days: 7
+          name: code-coverage
+          path: |
+            out/build/debug/coverage.xml
+            out/build/debug/coverage_html/
+          retention-days: 14
 
   # ============================================================
-  # 作业 2：静态代码分析（cppcheck）
+  # 作业 3：静态代码分析（cppcheck）
   # ============================================================
   static-analysis:
     name: Static Analysis (cppcheck)

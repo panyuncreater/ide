@@ -5,6 +5,7 @@
 #include "parser/Parser.h"
 #include "formatter/Formatter.h"
 #include "ast/ASTNode.h"
+#include "interpreter/Value.h"
 #include <iostream>
 #include <string>
 #include <vector>
@@ -285,8 +286,8 @@ static TestResult runTest(const std::string& source) {
     }
     Parser parser1;
     auto ast1 = parser1.parse(tokens1);
-    if (!parser1.getErrors().empty()) {
-        r.detail = "parse1 error: " + std::string(parser1.getErrors()[0].what());
+    if (parser1.hasErrors()) {
+        r.detail = "parse1 error: " + parser1.getDiagnostics().all()[0].message;
         return r;
     }
     r.parse1Ok = true;
@@ -315,8 +316,8 @@ static TestResult runTest(const std::string& source) {
     }
     Parser parser2;
     auto ast2 = parser2.parse(tokens2);
-    if (!parser2.getErrors().empty()) {
-        r.detail = "parse2 error: " + std::string(parser2.getErrors()[0].what());
+    if (parser2.hasErrors()) {
+        r.detail = "parse2 error: " + parser2.getDiagnostics().all()[0].message;
         return r;
     }
     r.parse2Ok = true;

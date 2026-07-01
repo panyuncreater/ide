@@ -12,6 +12,7 @@
 // ============================================================
 
 #include <gtest/gtest.h>
+#include <iostream>
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 #include "compiler/Compiler.h"
@@ -2615,4 +2616,192 @@ TEST(ConsistencyDiff, AuditG3_FormatterWhileBareCompoundNoDoubleIndent) {
     std::string result = fmt.format(*ast);
     EXPECT_TRUE(result.find("    break;") != std::string::npos)
         << "裸 while 块内语句应缩进 1 级: " << result;
+}
+
+// G4: IR 路径表达式语句 POP——函数体内多种表达式语句不应导致栈泄漏。
+// 原 IR 路径 build()/visitBlock() 仅对 FUN_CALL/METHOD_CALL emit POP，
+// 其余 14 种表达式语句（ASSIGNMENT/BINARY_OP/VAR_REF 等）的返回值残留在栈上，
+// 循环内泄漏必然触发栈溢出。修复：needsPopForExprStmt 覆盖全部 16 种节点类型。
+TEST(ConsistencyDiff, AuditG4_IRExprStmtPopAllTypes) {
+    std::string src =
+        "fun test() {\n"
+        "  var x = 1;\n"
+        "  x = 2;\n"           // ASSIGNMENT to LOCAL
+        "  x + 1;\n"           // BINARY_OP
+        "  -x;\n"              // UNARY_OP
+        "  x;\n"               // VAR_REF
+        "  42;\n"              // NUMBER_LITERAL
+        "  \"hi\";\n"          // STRING_LITERAL
+        "  true;\n"            // BOOL_LITERAL
+        "  null;\n"            // NULL_LITERAL
+        "  [1, 2];\n"          // ARRAY_LITERAL
+        "  {\"a\": 1};\n"      // DICT_LITERAL
+        "  return x;\n"
+        "}\n"
+        "print(test());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "2");
+    EXPECT_EQ(ri, rs) << "StackVM IR 表达式语句 POP: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR 表达式语句 POP: " << rr;
+}
+
+// G4 续：循环内表达式语句泄漏——多次迭代累积栈值导致栈溢出
+TEST(ConsistencyDiff, AuditG4_IRExprStmtLeakInLoop) {
+    std::string src =
+        "fun sum(n) {\n"
+        "  var s = 0;\n"
+        "  var i = 0;\n"
+        "  while (i < n) {\n"
+        "    s = s + i;\n"   // ASSIGNMENT 表达式语句——每次迭代泄漏 1 值
+        "    i = i + 1;\n"   // ASSIGNMENT 表达式语句——每次迭代泄漏 1 值
+        "  }\n"
+        "  return s;\n"
+        "}\n"
+        "print(sum(100));\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "4950");
+    EXPECT_EQ(ri, rs) << "StackVM IR 循环内赋值表达式 POP: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR 循环内赋值表达式 POP: " << rr;
+}
+
+// G4 续：for 循环 update 表达式 POP——update 语句的返回值未被消费
+// 原 visitForStmt 在 visitNode(update) 后不 emit POP，每次迭代泄漏 1 值
+TEST(ConsistencyDiff, AuditG4_IRForLoopUpdatePop) {
+    std::string src =
+        "fun sum(n) {\n"
+        "  var s = 0;\n"
+        "  for (var i = 0; i < n; i = i + 1) {\n"
+        "    s = s + i;\n"
+        "  }\n"
+        "  return s;\n"
+        "}\n"
+        "print(sum(100));\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "4950");
+    EXPECT_EQ(ri, rs) << "StackVM IR for-update POP: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR for-update POP: " << rr;
+}
+
+// G4 续：全局变量赋值表达式语句——STORE_GLOBAL pops，visitAssignment reload
+// 确保 POP 安全（不导致栈下溢），且赋值结果正确
+TEST(ConsistencyDiff, AuditG4_IRGlobalAssignmentExprStmt) {
+    std::string src =
+        "var g = 1;\n"
+        "g = 42;\n"           // 顶层全局赋值表达式语句
+        "print(g);\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "42");
+    EXPECT_EQ(ri, rs) << "StackVM IR 全局赋值表达式语句: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR 全局赋值表达式语句: " << rr;
+}
+
+// G4 续：函数内全局变量赋值——STORE_GLOBAL pops + LOAD_GLOBAL reload + POP
+TEST(ConsistencyDiff, AuditG4_IRFunctionGlobalAssignment) {
+    std::string src =
+        "var g = 1;\n"
+        "fun setG(v) { g = v; }\n"  // 函数内全局赋值
+        "setG(99);\n"
+        "print(g);\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "99");
+    EXPECT_EQ(ri, rs) << "StackVM IR 函数内全局赋值: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR 函数内全局赋值: " << rr;
+}
+
+// G4 续：for 循环表达式初始化器（非 VarDecl）POP
+TEST(ConsistencyDiff, AuditG4_IRForLoopExprInitPop) {
+    std::string src =
+        "var i = 0;\n"
+        "var s = 0;\n"
+        "for (i = 0; i < 50; i = i + 1) {\n"  // 表达式初始化器 i = 0
+        "  s = s + 1;\n"
+        "}\n"
+        "print(s);\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "50");
+    EXPECT_EQ(ri, rs) << "StackVM IR for-init 表达式 POP: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR for-init 表达式 POP: " << rr;
+}
+
+// ============================================================
+// H5 round: OP_CALL_EXPR stack-order fix regression tests
+// ============================================================
+
+static std::string runStackVM(const std::string& src) {
+    Lexer lx; auto tk = lx.scan(src);
+    Parser p; auto ast = p.parse(tk);
+    if (!ast) return "<parse-fail>";
+    Compiler c;
+    auto cr = c.compile(*ast);
+    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    VM vm;
+    std::string out;
+    vm.setOutputCallback([&](const std::string& s) { out += s; });
+    vm.execute(cr);
+    if (vm.hasError()) {
+        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        return out + "<runtime:" + vm.getLastError() + ">";
+    }
+    return out;
+}
+
+TEST(ConsistencyDiff, AuditH5_CallExprWithOneArg) {
+    std::string src =
+        "fun outer(x) {\n"
+        "  fun inner(y) { return x + y; }\n"
+        "  return inner(10);\n"
+        "}\n"
+        "print(outer(5));\n";
+    auto ri = runInterp(src), rs = runStackVM(src), rsir = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "15");
+    EXPECT_EQ(ri, rs) << "StackVM closure call 1 arg: " << rs;
+    EXPECT_EQ(ri, rsir) << "StackVM IR closure call 1 arg: " << rsir;
+    EXPECT_EQ(ri, rr) << "RegVM IR closure call 1 arg: " << rr;
+}
+
+TEST(ConsistencyDiff, AuditH5_CallExprWithMultipleArgs) {
+    std::string src =
+        "fun outer(x) {\n"
+        "  fun inner(y, z) { return x + y + z; }\n"
+        "  return inner(10, 20);\n"
+        "}\n"
+        "print(outer(5));\n";
+    auto ri = runInterp(src), rs = runStackVM(src), rsir = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "35");
+    EXPECT_EQ(ri, rs) << "StackVM closure call multi-args: " << rs;
+    EXPECT_EQ(ri, rsir) << "StackVM IR closure call multi-args: " << rsir;
+    EXPECT_EQ(ri, rr) << "RegVM IR closure call multi-args: " << rr;
+}
+
+TEST(ConsistencyDiff, AuditH5_CallExprZeroArgs) {
+    std::string src =
+        "fun outer(x) {\n"
+        "  fun inner() { return x; }\n"
+        "  return inner();\n"
+        "}\n"
+        "print(outer(5));\n";
+    auto ri = runInterp(src), rs = runStackVM(src), rsir = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "5");
+    EXPECT_EQ(ri, rs) << "StackVM closure call zero-args: " << rs;
+    EXPECT_EQ(ri, rsir) << "StackVM IR closure call zero-args: " << rsir;
+    EXPECT_EQ(ri, rr) << "RegVM IR closure call zero-args: " << rr;
+}
+
+TEST(ConsistencyDiff, AuditH5_CallExprInLoop) {
+    std::string src =
+        "fun outer(base) {\n"
+        "  fun adder(n) { return base + n; }\n"
+        "  var total = 0;\n"
+        "  for (var i = 1; i <= 3; i = i + 1) {\n"
+        "    total = total + adder(i);\n"
+        "  }\n"
+        "  return total;\n"
+        "}\n"
+        "print(outer(100));\n";
+    // adder(1)=101, adder(2)=102, adder(3)=103, total=306
+    auto ri = runInterp(src), rs = runStackVM(src), rsir = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "306");
+    EXPECT_EQ(ri, rs) << "StackVM closure call in loop: " << rs;
+    EXPECT_EQ(ri, rsir) << "StackVM IR closure call in loop: " << rsir;
+    EXPECT_EQ(ri, rr) << "RegVM IR closure call in loop: " << rr;
 }

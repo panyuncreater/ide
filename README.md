@@ -68,7 +68,7 @@
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/调试面板等） |
 | `app/` | IdeController、InterpreterWorker、main、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
-| `tests/` | GoogleTest 单元测试（1031 个） |
+| `tests/` | GoogleTest 单元测试（1047 个） |
 | `test_harness/` | 独立测试工具（AST/格式化器/调试一致性审计，formatter_audit 含 100+ 审计用例） |
 
 ## 构建与运行
@@ -79,33 +79,51 @@
 - **Qt6** ≥ 6.0（Core / Gui / Widgets）
 - **GoogleTest**（随 `third_party/` 提供，CMake 自动拉取）
 
-### Windows 构建（NMake Makefiles + MSVC）
+### Windows 一键构建（推荐）
+
+项目提供 `configure.bat` 自动检测本机 Visual Studio 与 Qt6 安装位置，调用对应的 CMake Preset 完成配置：
 
 ```powershell
-# 1. 配置（首次）
+# 1. 配置（首次）—— 自动初始化 MSVC 环境 + 检测 Qt6
+configure.bat              # Debug（默认）
+configure.bat release      # Release
+
+# 2. 编译
+cmake --build out/build/Qt-Debug
+# 或：cmake --build out/build/Qt-Release
+
+# 3. 运行 IDE（Qt DLL 已由 windeployqt 自动部署到同目录，可直接双击运行）
+.\out\build\Qt-Debug\minilang_ide.exe
+
+# 4. 运行单元测试
+.\out\build\Qt-Debug\tests\minilang_tests.exe
+# 或：cd out/build/Qt-Debug && ctest -R LexerTest.* --verbose  # 筛选单个用例
+```
+
+> **Qt 路径**：`configure.bat` 默认查找 `D:\qt\6.*\msvc2022_64` 与 `C:\qt\6.*\msvc2022_64`。如安装在别处，先设置环境变量：
+> `set QTDIR=<你的Qt路径>\msvc2022_64` 再运行 `configure.bat`。
+
+### 手动配置（替代方式）
+
+若不使用 `configure.bat`，可直接调用 CMake（需自行初始化 MSVC 开发环境并设置 Qt 路径）：
+
+```powershell
+# 方式 A：使用 CMake Preset（需 CMakeUserPresets.json 指定 QTDIR）
+cmake --preset Qt-Debug
+cmake --build out/build/Qt-Debug
+
+# 方式 B：手动指定生成器与 Qt 路径
 cmake -S . -B build -G "NMake Makefiles" `
-  -DCMAKE_PREFIX_PATH="D:/qt/6.10.3/msvc2022_64" `
-  -DCMAKE_CXX_COMPILER="D:/vs/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe"
-
-# 2. 初始化 VS 开发环境
-Import-Module "D:\vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
-Enter-VsDevShell -VsInstallPath "D:\vs" -SkipAutomaticLocation -Arch amd64
-$env:PATH = "D:\qt\6.10.3\msvc2022_64\bin;" + $env:PATH
-
-# 3. 编译
-cd build
-nmake
+  -DCMAKE_PREFIX_PATH="<Qt路径>\msvc2022_64"
+cmake --build build
 ```
 
-### 运行
+### Qt 运行时依赖部署
 
-```powershell
-# 启动 IDE
-.\minilang_ide.exe
+构建完成后，CMake 会自动调用 `windeployqt` 将 Qt6 DLL（`Qt6Core[d].dll` / `Qt6Gui[d].dll` / `Qt6Widgets[d].dll`）和 `platforms\qwindows[d].dll` 插件复制到可执行文件同目录。因此：
 
-# 运行单元测试
-.\tests\minilang_tests.exe
-```
+- **构建产物目录下的 `.exe` 可直接双击运行**，无需手动配置 PATH。
+- 若手动拷贝 `.exe` 到其他目录，需重新运行 `windeployqt <exe路径>` 部署依赖，或确保目标机器已安装 Qt6 且其 `bin` 目录在 PATH 中。
 
 ### 快捷脚本
 
@@ -114,33 +132,41 @@ nmake
 .\scripts\run_tests.bat   # 构建并运行测试
 ```
 
+> 注意：`scripts/*.bat` 中包含机器特定的硬编码路径（如 `D:\qt\6.10.3\...`），在其他机器上需按本机环境修改。**首次构建建议使用 `configure.bat`**，它会自动探测路径。
+
 ## 测试
 
-项目包含 **1031 个 GoogleTest 单元测试**，覆盖所有核心模块：
+项目包含 **1047 个 GoogleTest 单元测试**（66 个测试套件），覆盖所有核心模块：
 
 | 测试套件 | 覆盖模块 |
 |----------|----------|
 | `LexerTest` | lexer/ |
 | `ParserTest` | parser/ |
-| `TestInterpreterE2E` | interpreter/ (端到端) |
-| `TestBuiltinMethods` | interpreter/BuiltinMethods |
-| `TestCompiler` | compiler/Compiler |
-| `TestVME2E` | compiler/VM (端到端) |
-| `TestValue` | interpreter/Value |
-| `TestIR` | compiler/IR（中间表示层） |
-| `CompilerConstantPoolTest` | compiler/ 常量池 |
-| `CompilerGlobalSlotTest` | compiler/ 全局槽位 |
-| `TestConsistencyDiff` | 三后端一致性差分测试（90+ 用例） |
-| `CompilerTypeCheckTest` | 类型检查器（15 用例，含 float→int 拒绝断言强化） |
-| `BackendConsistency` | 三后端类型注解一致性（6 用例） |
+| `InterpreterE2E` | interpreter/ (端到端) |
+| `ArrayBuiltin*Test` / `DictBuiltin*Test` / `StringBuiltin*Test` | interpreter/BuiltinMethods（按类型分组） |
+| `BuiltinErrorHandlingTest` / `BuiltinObjectModifiedTest` | 内建方法错误路径 |
+| `CompilerBasicTest` / `CompilerVariableTest` / `CompilerControlFlowTest` / `CompilerFunctionTest` / `CompilerClassTest` | compiler/Compiler |
+| `VME2E` / `RegVME2E` / `VMConsistency` | compiler/VM / RegisterVM (端到端 + 一致性) |
+| `Value*Test`（13 个套件） | interpreter/Value（构造/COW/深拷贝/相等/数组/字典/实例/闭包等） |
+| `IRFunctionTest` / `IRBuilderTest` / `BytecodeIRBackendTest` / `IRE2E` / `IROptimizeTest` / `IRToStringTest` | compiler/IR（中间表示层） |
+| `CompilerConstantPoolTest` / `CompilerGlobalSlotTest` | compiler/ 常量池 / 全局槽位 |
+| `ConsistencyDiff` | 三后端一致性差分测试（190 用例） |
+| `CompilerTypeCheckTest` | 类型检查器（含 float→int 拒绝断言强化） |
+| `BackendConsistency` | 三后端类型注解一致性 |
+| `LexerAudit` / `ParserAudit` / `ASTCompleteness` / `IntegrationAudit` | 审计套件 |
+| `NaNBoxTest` / `IRShadowFix` / `NestedLvalueProbe` / `MethodCallProbe` | 回归与探针测试 |
 
 运行测试：
 
 ```powershell
-cd build
-.\tests\minilang_tests.exe
-# 或通过 CTest
-ctest
+# 方式 1：直接运行测试二进制
+.\out\build\Qt-Debug\tests\minilang_tests.exe
+
+# 方式 2：通过 CTest（已用 gtest_discover_tests 注册为独立用例，可筛选）
+cd out\build\Qt-Debug
+ctest                                  # 运行全部
+ctest -R LexerTest.* --verbose         # 筛选指定套件
+ctest -R "VME2E\..*" --output-on-failure
 ```
 
 测试覆盖要点：
@@ -240,7 +266,7 @@ REPL 面板位于 IDE 底部，支持交互式求值与多行输入：
 
 ### 性能优化与正确性阶段成果
 
-近期完成了多个性能与正确性优化批次，全部通过 1031/1031 单元测试 + 100+ formatter_audit 审计用例：
+近期完成了多个性能与正确性优化批次，全部通过 1047/1047 单元测试 + 100+ formatter_audit 审计用例：
 
 > **测试质量审计 2026-06-30**：审计发现并修复 2 个测试覆盖缺口：(1) TypeChecker `int` 注解拒绝 `float` 值零覆盖——新增 5 个 CompilerTypeCheckTest 测试（A11-A15），覆盖声明/赋值路径的 float→int 拒绝，并强化断言：不仅验证警告计数，还验证警告消息内容含期望类型名，防止误报通过。(2) Formatter 语句级 AST 往返等价性仅覆盖表达式级（19 用例）——新增 `test_statements()` 函数 + 16 个 S1-S16 测试用例覆盖 if/for/while/class/try 等语句结构，对每条语句做 `Parse(src)` vs `Parse(format(src))` 的 AST 结构等价比较，检测 Formatter 在格式化时是否丢失或重组子节点。
 
@@ -280,7 +306,7 @@ REPL 面板位于 IDE 底部，支持交互式求值与多行输入：
 
 ### 第六轮 Bug 修复（AUDIT-BUG-F1~F13 系列）
 
-通过三个并行 agent 覆盖 Lexer/BuiltinFunctions/DebugController/GUI/Compiler/Interpreter 边界，共修复 13 个 bug（2 HIGH / 7 MED / 4 LOW），新增 5 个回归测试，全部 1031/1031 测试通过：
+通过三个并行 agent 覆盖 Lexer/BuiltinFunctions/DebugController/GUI/Compiler/Interpreter 边界，共修复 13 个 bug（2 HIGH / 7 MED / 4 LOW），新增 5 个回归测试，全部 1047/1047 测试通过：
 
 - **F1**（HIGH）：`constructClassInstance` 中 `callStack_.emplace_back` 在 `CallFrameGuard` 构造之前执行，guard 保存错误的 `savedStackDepth` 导致 init 帧不弹出，循环构造实例时 callStack_ 泄漏。修复：交换两行顺序，guard 先于 emplace_back
 - **F2**（HIGH）：REPL `reload` 命令用 `startsWith("reload")` 误匹配 `reloadable`/`reloadX` 等标识符，命中后清空用户输入。修复：改为精确匹配 + 空格前缀
@@ -295,6 +321,28 @@ REPL 面板位于 IDE 底部，支持交互式求值与多行输入：
 - **F11**（LOW）：`substr` 对负 `start` 静默返回空串，但对负 `len` 报错，错误处理不对称。修复：负 `start` 改为报错
 - **F12**（LOW）：`SyntaxHighlighter` 不识别字符串插值 `{expr}`，整个字符串统一着色。修复：识别 `{` 作为插值起始，用 braceDepth 跟踪嵌套，插值表达式内字符不标记 mask
 - **F13**（LOW）：`CodeEditor` 空白区域点击 `cursorForPosition` 返回文档末尾光标，导致在最后一行设置断点。修复：检查 Y 坐标是否超出最后一个块的下边界
+
+### 第七轮 Bug 修复（AUDIT-BUG-G1~G4 + H5 系列）
+
+针对三后端 IR 路径栈语义、Parser 类型注解识别、Formatter 缩进、默认参数 RAII 等问题，共修复 12 个 bug（2 P0 / 4 P1 / 6 P2），新增 16 个回归测试（G1~G4 + H5 系列），全部 1047/1047 测试通过：
+
+- **G1**（P0）：IR 路径 `AND/OR` 短路在顶层代码使用 `STORE_LOCAL/LOAD_LOCAL` 临时槽（`nextLocalSlot_` 分配），但 StackVM 主帧 `basePointer=0` 且栈初始为空，`OP_SET_LOCAL/OP_GET_LOCAL` 的 `bp+slot` 越界检查失败（"局部变量槽越界"）。修复：`VM::initExecution` 为主帧预留 `mainChunk_.localCount` 个 null 槽。正常 Compiler 路径顶层代码用 `OP_DEFINE_VAR`（globals_ 哈希），`localCount=0`，此处为 no-op
+- **G2**（P1）：Parser `parseParamList` / `forStmt` 初始化用 `checkNext(TK_IDENTIFIER)` 识别 `ClassName paramName` 模式，遇到 `ClassName[] paramName` 时下一 token 是 `[` 而非标识符，导致误判为非类型声明。修复：新增 `isClassTypeDeclStart()` 同时识别 `ClassName paramName` 与 `ClassName[] paramName` 两种序列
+- **G3**（P1）：Formatter 裸复合语句（if/while/for 作为 `thenBranch`/`body`）出现双重缩进——L17 "修复" 在 4 处 `isSelfTerminating` 分支额外添加了 `currentIndent_++/--`，但 `formatNode` 内部已用 `currentIndent_++` 处理 body 缩进。修复：移除 4 处额外缩进对（revert L17）
+- **G4**（P0，IR 栈泄漏）：IR 路径 `build()/visitBlock()` 仅对 `FUN_CALL/METHOD_CALL` emit POP，其余 14 种表达式语句（`ASSIGNMENT/BINARY_OP/VAR_REF/UNARY_OP/NUMBER_LITERAL/STRING_LITERAL/BOOL_LITERAL/NULL_LITERAL/ARRAY_LITERAL/DICT_LITERAL/MEMBER_GET/INDEX_GET/TERNARY/INTERPOLATION`）的返回值残留在栈上，循环内泄漏必然触发栈溢出。修复：`needsPopForExprStmt(NodeType)` 覆盖全部 16 种节点类型；`visitForStmt` 对 update 表达式与表达式 initializer emit POP；`visitAssignment` 对 GLOBAL 存储后 emit `LOAD_GLOBAL` 重载值确保 POP 安全
+- **H5**（P1）：StackVM `OP_CALL_EXPR`（闭包作为表达式调用）参数压栈顺序与 `OP_CALL` 不一致，导致闭包调用取到错误参数。修复：与 `OP_CALL` 对齐参数压栈顺序，新增 4 个 H5 回归测试覆盖 0/1/多参数与循环内调用
+- **BUGFIX-P2 / H2**（P2，条件断点 UAF）：`evaluateCondition` 恢复阶段先调用 `restoreLocalVariables`（整表替换 `variables`）会使 `inst` 指针悬垂，再执行 `inst->fields() = fields` 触发 UAF。修复：恢复顺序改为先恢复实例字段（`inst` 仍有效）再恢复局部变量；`Environment::restoreLocalVariables` 内部在新 map 中重新锚定 `boundInstance_` 防止悬垂
+- **L1**（P2，IR 栈残留）：IR 路径 `visitForStmt` 的 `JUMP_IF_FALSE` peek 不 pop，条件值在循环体/退出路径均残留栈上；`visitTryStmt` catchVarName 为空时异常值残留栈上。修复：for 循环引入 `exitLabel`（条件假路径，需 POP）与 `endLabel`（break 路径，栈已空）双标签模式；try 块 `STORE_LOCAL` 后 emit POP 对齐直接 Compiler 路径；catchVarName 为空时显式 emit POP
+- **BUGFIX-P2**（P2，RegisterVM 字段未找到无方法回退）：`REG_MEMBER_GET` / `REG_SUPER_MEMBER_GET` 字段未找到时直接报错，无方法回退（StackVM `OP_MEMBER_GET` 有 `findMethodChunk` 回退）。修复：沿继承链查找方法（与 StackVM 一致），未找到才报 "类 X 没有字段或方法 'Y'"
+- **BUGFIX-P2**（P2，RegisterVM 默认参数非字面量）：`fillDefaultArgs` 未处理 `0xFFFF` 哨兵值（表示非字面量默认表达式），错误地将 0xFFFF 当作常量索引导致越界。修复：与 StackVM 对齐，`0xFFFF` 返回 false 回退到 Interpreter 路径求值
+- **BUGFIX-P2**（P2，VM ASCII 缓存误命中）：`lastAsciiStrPtr_` 仅比对指针，堆地址复用（原 string 释放后新 string 复用同地址）会导致非 ASCII 字符串误判为 ASCII。修复：新增 `lastAsciiStrSize_` 同时比对指针 + size
+- **BUGFIX-P2**（P2，currentEnv_ 异常泄漏）：`callClosureValue` / `constructClassInstance` / `callNamedFunction` 中默认参数求值使用 `auto savedEnv = currentEnv_; ... currentEnv_ = savedEnv;` 手动恢复，`evaluate()` 抛异常时 `currentEnv_` 不恢复导致泄漏错误 scope。修复：改为 RAII guard（结构体析构函数恢复）
+- **AUDIT**（GUI/REPL 一致性）：(1) `irAction_` 在运行期间未禁用，查看正在编译/执行的 IR 导致状态不一致；(2) `onNew/onOpen` 在运行/调试期间未禁止，清空/替换正在执行的代码导致状态混乱；(3) `loadFile` 文件大小检查使用裸 `MAX_SOURCE_SIZE` 而非 `RuntimeLimits::MAX_SOURCE_SIZE`；(4) `ReplPanel` 异步执行 RuntimeError 经信号显示后，`pollReplFuture` 仍打印 "null" 结果造成重复输出——新增 `hadReplError_` 原子标志，错误时跳过结果输出；(5) `WorkerManager::stopForClose` 成功路径未与 `forceStop` 对齐做完整清理（debugMode / REPL 状态 / debugger / 主回调），导致下次运行读到脏状态；(6) `IdeController` VM 条件断点求值器每次命中都重新 Lexer+Parser 严重影响循环内条件断点性能——改用 `shared_ptr<unordered_map>` 缓存条件 AST
+
+### 工程基础设施改进
+
+- **Windows 一键配置脚本**：新增 `configure.bat`，自动检测本机 Visual Studio 与 Qt6 安装位置（默认查找 `D:\qt\6.*\msvc2022_64` 与 `C:\qt\6.*\msvc2022_64`，可通过 `QTDIR` 环境变量覆盖），自动初始化 MSVC 开发环境后调用对应 CMake Preset 完成配置。新增 `windows-msvc-debug` / `windows-msvc-release` 两个共享 Preset（Ninja 生成器）
+- **CMake Preset 体系**：CMakePresets.json + CMakeUserPresets.json 双层分离——共享 Preset 在 `CMakePresets.json`（仓库内），机器特定 Qt 路径在 `CMakeUserPresets.json`（gitignore），避免硬编码路径污染仓库
 
 ## 许可证
 

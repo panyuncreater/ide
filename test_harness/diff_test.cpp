@@ -43,7 +43,7 @@ static ExecResult runInterpreter(const std::string& source) {
     if (parser.hasErrors() || !ast) {
         res.hasError = true;
         std::string e;
-        for (auto& pe : parser.getErrors()) { if (!e.empty()) e += "; "; e += pe.what(); }
+        for (auto& pe : parser.getDiagnostics().all()) { if (!e.empty()) e += "; "; e += pe.message; }
         res.error = "PARSE:" + (e.empty() ? "unknown" : e);
         return res;
     }
@@ -86,7 +86,7 @@ static ExecResult runVM(const std::string& source) {
     if (parser.hasErrors() || !ast) {
         res.hasError = true;
         std::string e;
-        for (auto& pe : parser.getErrors()) { if (!e.empty()) e += "; "; e += pe.what(); }
+        for (auto& pe : parser.getDiagnostics().all()) { if (!e.empty()) e += "; "; e += pe.message; }
         res.error = "PARSE:" + (e.empty() ? "unknown" : e);
         return res;
     }

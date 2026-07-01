@@ -61,9 +61,18 @@ Value Interpreter::execute(Block& program) {
     // Bug2 fix: 在 resetState 之后、runStatements 之前触发 GcManager mark-sweep。
     // 此时上一轮残留的循环引用容器 refCount>0 仍存活（aliveSet_ 中），
     // 而非循环容器已在上述 clear() 中被自然释放（析构时从 aliveSet_ 移除）。
-    // 传入空根集：所有 aliveSet_ 中存活但 tracked_ 未标记的节点都是循环孤岛。
-    // 放在 runStatements 之前确保不破坏本轮程序新建的容器状态。
-    GcManager::instance().collectCycle({});
+    // BUG-INT-1 fix: 若 REPL 状态已保存（saveReplState），其 savedGlobalEnv 中的
+    // 循环引用容器仍在 aliveSet_ 中存活。传入空根集会误清空这些容器的子元素，
+    // 导致 restoreReplState 后 REPL 变量损坏。必须将 savedGlobalEnv 中的容器作为根集传入。
+    std::vector<const void*> gcRoots;
+    if (replState_.active && replState_.savedGlobalEnv) {
+        auto vars = replState_.savedGlobalEnv->snapshotLocalVariables();
+        for (const auto& var : vars) {
+            const void* ptr = var.second.gcRootPtr();
+            if (ptr) gcRoots.push_back(ptr);
+        }
+    }
+    GcManager::instance().collectCycle(gcRoots);
 
     // 顶层块不创建新作用域，直接在全局环境中执行语句
     Value result = runStatementsWithExceptionHandling(program);
@@ -314,8 +323,13 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         // inst 指针指向旧 variables["this"] 条目，restoreLocalVariables
         // 整表替换 variables 会使 inst 悬垂。先恢复字段可保证 inst 仍有效。
         // restoreLocalVariables 内部会重新锚定 boundInstance_ 到新 map。
+        // BUG-INT-3 fix: 条件可能重新赋值 this（如 this = 5），使 inst 指向的
+        // Value 不再是实例。调用 fields() 会 std::abort。跳过非实例的 inst，
+        // 后续 restoreLocalVariables 会恢复 variables["this"] 到原始实例。
         for (auto& [inst, fields] : instSnaps) {
-            inst->fields() = fields;
+            if (inst->isInstance()) {
+                inst->fields() = fields;
+            }
         }
         // #1 fix: 恢复变量绑定（撤销条件中的赋值/声明副作用）
         for (auto& snap : envSnaps) {
@@ -330,9 +344,12 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     }
     catch (...) {
         // H2 fix: 同 try 块，先恢复实例字段（inst 仍有效），再恢复局部变量
+        // BUG-INT-3 fix: 同 try 块，条件可能重新赋值 this 使 inst 非实例
         for (auto& [inst, fields] : instSnaps) {
-            const_cast<std::unordered_map<std::string, Value>&>(
-                static_cast<const Value*>(inst)->fields()) = fields;
+            if (inst->isInstance()) {
+                const_cast<std::unordered_map<std::string, Value>&>(
+                    static_cast<const Value*>(inst)->fields()) = fields;
+            }
         }
         for (auto& snap : envSnaps) {
             snap.env->restoreLocalVariables(snap.variables);

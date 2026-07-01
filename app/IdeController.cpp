@@ -165,6 +165,8 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
 
     // 同步编译结果到 VmStepper（供 VM 模式调试使用）
     // A1 fix: 根据 useRegisterVM_ 选择同步栈式或寄存器式结果
+    // BUG-DBG-2 fix: 先重置 VM 状态，防止旧 isVmInitialized_=true 时 frame.chunk 悬垂
+    vmStepper_.reset();
     if (pipeline_.compiler().getUseRegisterVM()) {
         vmStepper_.setRegisterCompileResult(pipeline_.compiler().getLastRegisterResult());
     } else {

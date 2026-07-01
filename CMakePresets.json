@@ -16,7 +16,7 @@
     {
       "name": "windows-msvc-debug",
       "displayName": "Windows MSVC Debug (Ninja)",
-      "description": "MSVC + Ninja Debug 构建。需在 VS Developer 命令提示符中运行，或使用 configure.bat 自动初始化环境。",
+      "description": "MSVC + Ninja Debug 构建",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/debug",
       "inherits": "Qt",
@@ -32,13 +32,46 @@
     {
       "name": "windows-msvc-release",
       "displayName": "Windows MSVC Release (Ninja)",
-      "description": "MSVC + Ninja Release 构建。需在 VS Developer 命令提示符中运行，或使用 configure.bat --preset windows-msvc-release 自动初始化环境。",
+      "description": "MSVC + Ninja Release 构建（含 LTO）",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/release",
       "inherits": "Qt",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "MINILANG_WERROR": "ON",
+        "MINILANG_ENABLE_LTO": "ON"
       },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msvc-asan",
+      "displayName": "Windows MSVC Debug + ASan (Ninja)",
+      "description": "MSVC + Ninja Debug 构建，启用 Address Sanitizer（修复问题 8）",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/asan",
+      "inherits": "Qt",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "MINILANG_SANITIZE": "address"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msvc-vs",
+      "displayName": "Windows MSVC Debug (VS IDE)",
+      "description": "Visual Studio 2022 多配置生成器，用于 IDE 打开",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/vs",
+      "inherits": "Qt",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",

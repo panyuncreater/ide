@@ -479,10 +479,15 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
             return runtimeError("栈下溢: OP_CALL_EXPR");
         }
 
-        // R3-1 fix: 只弹出闭包值（在栈顶），参数保留在栈上供新帧使用
-        // 栈布局: [..., arg0, arg1, ..., argN-1, closure]
-        // 弹出 closure 后: [..., arg0, arg1, ..., argN-1] — 参数就位
-        Value callee = pop();
+        // 编译器先 push 闭包值再 push 参数（Compiler.cpp:1150-1158, IR.cpp visitFunCall），
+        // 实际栈布局: [..., closure, arg0, arg1, ..., argN-1]
+        // 需从栈中移除闭包值（在参数下方），保留参数在栈顶供新帧使用。
+        size_t closurePos = stack_.size() - argCount - 1;
+        Value callee = std::move(stack_[closurePos]);
+        for (size_t i = 0; i < static_cast<size_t>(argCount); ++i) {
+            stack_[closurePos + i] = std::move(stack_[closurePos + 1 + i]);
+        }
+        stack_.pop_back();
 
         if (!callee.isClosure()) {
             // R3-1 fix: 弹出参数以保持栈平衡

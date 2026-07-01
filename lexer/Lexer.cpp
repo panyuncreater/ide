@@ -532,7 +532,7 @@ void Lexer::string(bool isInterp) {
                     // 原实现缺少 start_=current_，导致嵌套字符串首 token 列号/lexeme 错误。
                     start_ = current_;
                     advance();
-                    string(true);  // 递归扫描嵌套字符串
+                    string(false);  // 嵌套字符串作为独立 TK_STRING_LIT，非插值片段
                     start_ = current_;  // 更新 start_ 以便后续 scanToken 正确提取
                 } else {
                     start_ = current_;  // 更新 start_ 以便 scanToken 正确提取

@@ -58,9 +58,9 @@ static RunResult runCode(const std::string& source) {
     if (parser.hasErrors() || parseDiag.hasErrors() || !ast) {
         result.hasError = true;
         std::string errMsg;
-        for (auto& e : parser.getErrors()) {
+        for (auto& e : parser.getDiagnostics().all()) {
             if (!errMsg.empty()) errMsg += "; ";
-            errMsg += e.what();
+            errMsg += e.message;
         }
         if (errMsg.empty()) errMsg = parseDiag.summary();
         result.error = "Parser: " + errMsg;

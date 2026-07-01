@@ -4,6 +4,7 @@
 
 # --- 构建输出目录 ---
 build_*/
+out/
 x64/
 .vs/
 
@@ -41,6 +42,19 @@ test_vm_advanced
 /test_harness/debug
 /test_harness/*.exe
 /test_harness/*.obj
+
+# --- 用户本地配置 ---
+CMakeUserPresets.json
+
+# --- IDE/编辑器 ---
+.trae/
+*.swp
+
+# --- 日志 ---
+*.log
+
+# --- 文档生成 ---
+docs/api/
 
 # --- 杂项 ---
 nul

@@ -38,6 +38,14 @@ public:
         return intern(combined);
     }
 
+    /// 清空驻留池（仅在测试间调用，释放累积的字符串内存）。
+    /// 注意：清空后之前 intern() 返回的引用全部失效，仅在所有 Interpreter/VM
+    /// 实例已析构时调用（测试 fixture 的 OnTestEnd 保证此条件）。
+    static void clear() {
+        std::lock_guard<std::mutex> lock(mutex_());
+        pool_().clear();
+    }
+
 private:
     // Meyers singleton，避免静态初始化顺序问题
     static std::mutex& mutex_() {

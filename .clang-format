@@ -1,0 +1,32 @@
+# MiniLang IDE clang-format 配置
+# 基于 LLVM 风格，适配 C++20 和项目现有风格
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+PointerAlignment: Left
+AccessModifierOffset: -4
+NamespaceIndentation: None
+IndentCaseLabels: false
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+AlignConsecutiveAssignments: false
+AlignTrailingComments: true
+DerivePointerAlignment: false
+FixNamespaceComments: true
+IncludeBlocks: Preserve
+SortIncludes: Never
+ReflowComments: true
+---
+Language: CMake
+IndentWidth: 2
+TabWidth: 2
+ColumnLimit: 100

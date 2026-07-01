@@ -1,0 +1,29 @@
+# MiniLang IDE CODEOWNERS
+# 自动指派对应用户审阅 Pull Request
+
+# 全局默认
+* @v
+
+# 构建系统（CMake / CI）
+CMakeLists.txt @v
+cmake/ @v
+CMakePresets.json @v
+.github/ @v
+scripts/ @v
+
+# 核心模块
+lexer/ @v
+parser/ @v
+ast/ @v
+interpreter/ @v
+compiler/ @v
+debug/ @v
+formatter/ @v
+
+# GUI
+gui/ @v
+app/ @v
+
+# 测试
+tests/ @v
+test_harness/ @v

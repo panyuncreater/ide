@@ -29,8 +29,8 @@ static std::string runMiniLang(const std::string& source, std::string& error) {
     }
     Parser parser;
     auto ast = parser.parse(tokens);
-    if (!parser.getErrors().empty()) {
-        error = "parse: " + std::string(parser.getErrors()[0].what());
+    if (parser.hasErrors()) {
+        error = "parse: " + parser.getDiagnostics().all()[0].message;
         return "";
     }
 

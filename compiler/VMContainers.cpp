@@ -630,7 +630,7 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
                     classIt = classInfo_.find(classIt->second.superClassName);
                     ++depth;
                 }
-                if (found) { ip += 3; break; }  // 匹配，通过
+                if (found) { notifyStep(ip, op); ip += 3; break; }  // 匹配，通过
             }
             return runtimeError(ErrorFormat::format(
                 "类型注解违反: 期望类型 %s，实际为 %s",

@@ -62,6 +62,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     //   2: 块注释（向后兼容，深度=1）
     //   100 + depth (depth >= 1): 嵌套块注释（支持 /* /* */ */ 嵌套）
     //   200 + braceDepth (braceDepth >= 1): 字符串插值表达式内（支持跨行插值）
+    //   300 + braceDepth (braceDepth >= 1): 插值表达式内的字符串体内（跨行嵌套）
     int pos = 0;
     int len = text.length();
 
@@ -73,6 +74,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     int interpBraceDepth = 0;
     if (prevState == 1) inString = true;
     else if (prevState == 2) blockCommentDepth = 1;  // 向后兼容
+    else if (prevState >= 300) { inString = true; interpBraceDepth = prevState - 300; }
     else if (prevState >= 200) interpBraceDepth = prevState - 200;
     else if (prevState >= 100) blockCommentDepth = prevState - 100;
 
@@ -339,9 +341,10 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         pos++;
     }
 
-    // 设置块状态（支持多行字符串、嵌套块注释、跨行插值）
+    // 设置块状态（支持多行字符串、嵌套块注释、跨行插值、插值内嵌套字符串）
     int newState = 0;
-    if (inString) newState = 1;
+    if (inString && interpBraceDepth > 0) newState = 300 + interpBraceDepth;
+    else if (inString) newState = 1;
     else if (blockCommentDepth > 0) newState = 100 + blockCommentDepth;
     else if (interpBraceDepth > 0) newState = 200 + interpBraceDepth;
     setCurrentBlockState(newState);
