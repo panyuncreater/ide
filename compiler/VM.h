@@ -335,6 +335,7 @@ private:
     //         O(1) 指针比较替代 O(n) 字符串内容比较；miss 时无需拷贝整个字符串
     //         安全性：StringData 由 shared_ptr 持有，只要 Value 在栈上指针就有效
     const void* lastAsciiStrPtr_ = nullptr;
+    size_t lastAsciiStrSize_ = 0;  // BUGFIX-P2 fix: 缓存 size 防止堆地址复用误命中
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
     // #12 fix: 类→方法名→chunk 两级索引，替代 findMethodChunk 冷路径每层继承链

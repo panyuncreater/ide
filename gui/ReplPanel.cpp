@@ -323,18 +323,23 @@ void ReplPanel::executeLine(const QString& line) {
     // 改为：先成功启动 async，再切换状态。AST 已在 replAsts_ 中保留，
     // async 失败时该 AST 不会被使用（executeRepl 未执行），仅造成轻微内存占用。
     IdeController* ctrl = controller_;  // 显式捕获
+    // AUDIT fix: 重置错误标志，避免上次执行的残余状态影响本次输出判断
+    hadReplError_.store(false);
+    std::atomic<bool>* errFlag = &hadReplError_;
     std::future<Value> newFuture;
     try {
-        newFuture = std::async(std::launch::async, [ctrl, rawAst]() -> Value {
+        newFuture = std::async(std::launch::async, [ctrl, rawAst, errFlag]() -> Value {
             try {
                 return ctrl->executeRepl(*rawAst);
             } catch (const RuntimeError& e) {
+                errFlag->store(true);
                 QMetaObject::invokeMethod(ctrl,
                     [ctrl, msg = std::string(e.what()), line = e.line, col = e.column]() {
                         emit ctrl->runtimeError(QString::fromStdString(msg), line, col);
                     }, Qt::QueuedConnection);
                 return Value::nullValue();
             } catch (const std::exception& e) {
+                errFlag->store(true);
                 QMetaObject::invokeMethod(ctrl,
                     [ctrl, msg = std::string(e.what())]() {
                         emit ctrl->genericError(QString::fromStdString(msg));
@@ -384,7 +389,10 @@ void ReplPanel::pollReplFuture() {
     }
 
     // PANEL-03 fix: null 结果也打印
-    appendOutput(QString::fromStdString(result.toString()));
+    // AUDIT fix: 若异步执行已通过信号显示错误，跳过结果输出避免 "null" 重复显示
+    if (!hadReplError_.load()) {
+        appendOutput(QString::fromStdString(result.toString()));
+    }
 
     // 恢复输入
     replRunning_ = false;

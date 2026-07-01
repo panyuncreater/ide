@@ -582,16 +582,22 @@ IROperand AstIRBuilder::visitBinaryOp(BinaryOp* node) {
         uint32_t endLabel = ir_->allocLabel();
         uint32_t tempSlot = nextLocalSlot_++;  // 临时 slot 存放结果
         // 左值为假则短路（结果 = left）
+        // L1 fix: JUMP_IF_FALSE 在 StackVM lowering 中用 OP_JUMP_IF_FALSE（peek 不 pop），
+        // STORE_LOCAL 用 OP_SET_LOCAL（peek 不 pop）。两条路径都会残留 left/right 在栈上，
+        // 导致 endLabel 汇合点栈深度不一致（非短路路径 [left,right] vs 短路路径 [left]）。
+        // 修复：每个 STORE_LOCAL 后显式 emit POP 消费残留值，保证两路径在 endLabel 栈深度均为 0。
         emitIR(IROp::JUMP_IF_FALSE, { left, IROperand::label(shortCircuitLabel) }, node->line);
-        // 非短路路径：left 在栈顶，先存入 tempSlot（pop left 保持栈平衡），
-        // 再求值 right 并覆盖 tempSlot
+        // 非短路路径：left 在栈顶，存入 tempSlot，POP 消费残留
         emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
+        emitIR(IROp::POP, {}, node->line);
         IROperand right = visitNode(node->right.get());
         emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), right }, node->line);
+        emitIR(IROp::POP, {}, node->line);
         emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
-        // 短路路径：left 在栈顶，存入 tempSlot（pop left）
+        // 短路路径：left 在栈顶（JUMP_IF_FALSE peek），存入 tempSlot，POP 消费残留
         emitIR(IROp::LABEL, { IROperand::label(shortCircuitLabel) }, node->line);
         emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
+        emitIR(IROp::POP, {}, node->line);
         // 汇合：加载结果到 dest（两条路径栈均已空，LOAD_LOCAL push dest）
         emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
         IROperand dest = ir_->allocVReg();
@@ -604,16 +610,19 @@ IROperand AstIRBuilder::visitBinaryOp(BinaryOp* node) {
         uint32_t endLabel = ir_->allocLabel();
         uint32_t tempSlot = nextLocalSlot_++;  // 临时 slot 存放结果
         // 左值为假则去求值右操作数
+        // L1 fix: 同 BIN_AND，STORE_LOCAL 残留值需 POP 消费，保证汇合点栈深度一致。
         emitIR(IROp::JUMP_IF_FALSE, { left, IROperand::label(evalRightLabel) }, node->line);
-        // 左值为真，短路（结果 = left）：left 在栈顶，存入 tempSlot（pop left）
+        // 左值为真，短路（结果 = left）：left 在栈顶，存入 tempSlot，POP 消费残留
         emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
+        emitIR(IROp::POP, {}, node->line);
         emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
-        // 非短路路径：left 在栈顶，先存入 tempSlot（pop left 保持栈平衡），
-        // 再求值 right 并覆盖 tempSlot
+        // 非短路路径：left 在栈顶（JUMP_IF_FALSE peek），存入 tempSlot，POP 消费残留
         emitIR(IROp::LABEL, { IROperand::label(evalRightLabel) }, node->line);
         emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), left }, node->line);
+        emitIR(IROp::POP, {}, node->line);
         IROperand right = visitNode(node->right.get());
         emitIR(IROp::STORE_LOCAL, { IROperand::local(tempSlot), right }, node->line);
+        emitIR(IROp::POP, {}, node->line);
         // 汇合：加载结果到 dest
         emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
         IROperand dest = ir_->allocVReg();
@@ -732,6 +741,10 @@ void AstIRBuilder::visitVarDecl(VarDecl* node) {
         }
         varMap_[node->name] = { VarInfo::Kind::LOCAL, slot };
         emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), val }, node->line);
+        // L1 fix: STORE_LOCAL 在 StackVM lowering 中用 OP_SET_LOCAL（peek 不 pop），
+        // 初始化值残留在栈上。函数内 var 声明是语句，结果值不被消费，需 POP 消费。
+        // （顶层 GLOBAL_SLOT/GLOBAL_NAME 用 DEFINE_GLOBAL → OP_DEFINE_GLOBAL 已 pop，无需 POP）
+        emitIR(IROp::POP, {}, node->line);
         // 记录到当前 BlockScope 的 localSlots
         if (!blockScopes_.empty()) {
             blockScopes_.back().localSlots.push_back(slot);
@@ -757,14 +770,19 @@ void AstIRBuilder::visitIfStmt(IfStmt* node) {
     uint32_t elseLabel = ir_->allocLabel();
     uint32_t endLabel = ir_->allocLabel();
     // 条件为假跳到 else
+    // L1 fix: JUMP_IF_FALSE 在 StackVM lowering 中用 OP_JUMP_IF_FALSE（peek 不 pop），
+    // 条件值残留在栈上。对齐直接 Compiler.cpp visitIfStmt 的模式：在 then 和 else
+    // 两条路径各自 emit POP 消费条件值，保证 endLabel 汇合点栈深度一致。
     emitIR(IROp::JUMP_IF_FALSE, { cond, IROperand::label(elseLabel) }, node->line);
-    // then 分支（限制5：块作用域包裹）
+    // then 分支：先 POP 消费条件值（peek 残留），再编译 then 体
+    emitIR(IROp::POP, {}, node->line);
     if (inFunction_) enterBlockScope();
     visitNode(node->thenBranch.get());
     if (inFunction_) leaveBlockScope();
     emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
-    // else 分支（限制5：块作用域包裹）
+    // else 分支：先 POP 消费条件值（peek 残留），再编译 else 体
     emitIR(IROp::LABEL, { IROperand::label(elseLabel) }, node->line);
+    emitIR(IROp::POP, {}, node->line);
     if (node->elseBranch) {
         if (inFunction_) enterBlockScope();
         visitNode(node->elseBranch.get());
@@ -775,17 +793,27 @@ void AstIRBuilder::visitIfStmt(IfStmt* node) {
 
 void AstIRBuilder::visitWhileStmt(WhileStmt* node) {
     uint32_t startLabel = ir_->allocLabel();
-    uint32_t endLabel = ir_->allocLabel();
+    uint32_t exitLabel = ir_->allocLabel();  // L1 fix: JUMP_IF_FALSE 目标（条件值在栈上）
+    uint32_t endLabel = ir_->allocLabel();   // break 目标（栈已空，无需 POP）
     // while 的 continue 目标 = 条件检查点（startLabel）
     loopStack_.push_back({ startLabel, endLabel, startLabel, tryDepth_ });
     emitIR(IROp::LABEL, { IROperand::label(startLabel) }, node->line);
     IROperand cond = visitNode(node->condition.get());
-    emitIR(IROp::JUMP_IF_FALSE, { cond, IROperand::label(endLabel) }, node->line);
+    // L1 fix: JUMP_IF_FALSE peek 不 pop，条件值残留在栈上。
+    // 需要两个出口标签：exitLabel（条件假路径，条件值在栈上，需 POP）和
+    // endLabel（break 路径，循环体已清空栈，无需 POP）。对齐直接 Compiler.cpp 的
+    // exitTarget + breakTarget 双目标模式。
+    emitIR(IROp::JUMP_IF_FALSE, { cond, IROperand::label(exitLabel) }, node->line);
+    emitIR(IROp::POP, {}, node->line);  // 循环体路径：POP 消费条件值
     // 循环体（限制5：块作用域包裹）
     if (inFunction_) enterBlockScope();
     visitNode(node->body.get());
     if (inFunction_) leaveBlockScope();
     emitIR(IROp::JUMP, { IROperand::label(startLabel) }, node->line);
+    // 条件假路径：条件值在栈上（JUMP_IF_FALSE peek），POP 消费
+    emitIR(IROp::LABEL, { IROperand::label(exitLabel) }, node->line);
+    emitIR(IROp::POP, {}, node->line);  // 循环退出路径：POP 消费条件值
+    // break 目标：循环体已清空栈，无需 POP
     emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
     loopStack_.pop_back();
 }
@@ -794,8 +822,10 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     // 编译初始化表达式
     if (node->initializer) visitNode(node->initializer.get());
     uint32_t startLabel = ir_->allocLabel();
-    uint32_t endLabel = ir_->allocLabel();
+    uint32_t endLabel = ir_->allocLabel();   // break 目标（栈已空，无需 POP）
     uint32_t continueLabel = ir_->allocLabel();
+    // L1 fix: exitLabel 仅在条件存在时分配（条件假路径，条件值在栈上需 POP）
+    uint32_t exitLabel = node->condition ? ir_->allocLabel() : 0;
     // continue 目标 = update 块（continueLabel 在 body 之后、update 之前）
     loopStack_.push_back({ startLabel, endLabel, continueLabel, tryDepth_ });
     emitIR(IROp::LABEL, { IROperand::label(startLabel) }, node->line);
@@ -804,7 +834,11 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     // 栈式 VM 后端 lowering 时每次循环迭代压一个 true 入栈而永不弹出 → 死循环程序栈溢出。
     if (node->condition) {
         IROperand cond = visitNode(node->condition.get());
-        emitIR(IROp::JUMP_IF_FALSE, { cond, IROperand::label(endLabel) }, node->line);
+        // L1 fix: JUMP_IF_FALSE peek 不 pop，条件值残留在栈上。
+        // 同 visitWhileStmt 的双标签模式：exitLabel（条件假路径，需 POP）和
+        // endLabel（break 路径，栈已空，无需 POP）。
+        emitIR(IROp::JUMP_IF_FALSE, { cond, IROperand::label(exitLabel) }, node->line);
+        emitIR(IROp::POP, {}, node->line);  // 循环体路径：POP 消费条件值
     }
     // 编译循环体（限制5：块作用域包裹）
     if (inFunction_) enterBlockScope();
@@ -815,6 +849,12 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     // 编译 update 表达式
     if (node->update) visitNode(node->update.get());
     emitIR(IROp::JUMP, { IROperand::label(startLabel) }, node->line);
+    if (node->condition) {
+        // 条件假路径：条件值在栈上（JUMP_IF_FALSE peek），POP 消费
+        emitIR(IROp::LABEL, { IROperand::label(exitLabel) }, node->line);
+        emitIR(IROp::POP, {}, node->line);  // 循环退出路径：POP 消费条件值
+    }
+    // break 目标：循环体已清空栈，无需 POP
     emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
     loopStack_.pop_back();
 }
@@ -1810,6 +1850,10 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 }
             }
             emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), excVreg }, node->line);
+            // L1 fix: STORE_LOCAL → OP_SET_LOCAL（peek 不 pop），异常值残留在栈上。
+            // 对齐直接 Compiler.cpp visitTryStmt 的模式：OP_SET_LOCAL 后紧跟 OP_POP 消费异常值。
+            // 顶层 GLOBAL 路径用 DEFINE_GLOBAL → OP_DEFINE_VAR（pop），无需额外 POP。
+            emitIR(IROp::POP, {}, node->line);
             // Bug 5 fix: 记录到当前 BlockScope，使 leaveBlockScope 能清除 catchVar 的 varMap_ 条目。
             // catch 变量作用域限于 catch 块，块退出后不应再被引用。
             if (!blockScopes_.empty()) {
@@ -1855,6 +1899,12 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 return;  // AUDIT-BUG-F7: catch 块已编译，提前返回
             }
         }
+    }
+    // L1 fix: catchVarName 为空时，异常值仍残留在栈上（throwException push 到栈顶，
+    // StackVM lowering 中无 LOAD_EXCEPTION/STORE 消费它）。emit POP 消费残留异常值。
+    // RegisterVM 中 POP 为 no-op（异常值在 pendingException_ 中，不占栈）。
+    if (node->catchVarName.empty()) {
+        emitIR(IROp::POP, {}, node->line);
     }
     if (node->catchBlock) visitNode(node->catchBlock.get());
     emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);

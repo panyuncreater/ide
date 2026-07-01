@@ -502,11 +502,9 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
         auto* block = static_cast<Block*>(node.thenBranch.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.thenBranch.get())) {
-        // L17 fix: 裸复合语句（if/while/for）作为 thenBranch 时，需要额外缩进层级
-        // 注意：else-if 链不受影响，因为 else 分支中的 IfStmt 走下面的 "else " + formatNode 路径
-        currentIndent_++;
+        // L17 revert: 裸复合语句（if/while/for）的 formatNode 内部已用
+        // currentIndent_++ 处理 body 缩进，此处再 +1 会导致双重缩进。
         result += indent() + formatNode(node.thenBranch.get()) + "\n";
-        currentIndent_--;
     } else {
         result += indent() + formatNode(node.thenBranch.get()) + ";\n";
     }
@@ -553,10 +551,8 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
         auto* block = static_cast<Block*>(node.body.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
-        // L17 fix: 裸复合语句需要额外缩进层级
-        currentIndent_++;
+        // L17 revert: formatNode 内部已处理 body 缩进，无需额外 +1
         result += indent() + formatNode(node.body.get()) + "\n";
-        currentIndent_--;
     } else {
         result += indent() + formatNode(node.body.get()) + ";\n";
     }
@@ -580,10 +576,8 @@ std::string Formatter::formatForStmt(ForStmt& node) {
         auto* block = static_cast<Block*>(node.body.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
-        // L17 fix: 裸复合语句需要额外缩进层级
-        currentIndent_++;
+        // L17 revert: formatNode 内部已处理 body 缩进，无需额外 +1
         result += indent() + formatNode(node.body.get()) + "\n";
-        currentIndent_--;
     } else {
         result += indent() + formatNode(node.body.get()) + ";\n";
     }
@@ -619,10 +613,8 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
         auto* block = static_cast<Block*>(node.body.get());
         result += formatBlock(*block);
     } else if (isSelfTerminating(node.body.get())) {
-        // L17 fix: 裸复合语句需要额外缩进层级
-        currentIndent_++;
+        // L17 revert: formatNode 内部已处理 body 缩进，无需额外 +1
         result += indent() + formatNode(node.body.get()) + "\n";
-        currentIndent_--;
     } else {
         result += indent() + formatNode(node.body.get()) + ";\n";
     }

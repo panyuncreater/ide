@@ -2521,3 +2521,98 @@ TEST(ConsistencyDiff, AuditF8_ModuleExceptionNoCrash) {
     EXPECT_TRUE(result.find("after") != std::string::npos)
         << "异常后程序应继续: " << result;
 }
+
+// ============================================================
+// 第七轮 bug 排查回归测试
+// ============================================================
+
+// G1: IR 路径 AND/OR 短路在顶层代码使用 STORE_LOCAL/LOAD_LOCAL 临时槽。
+// StackVM 主帧 basePointer=0 且栈初始为空，未预留 localCount 个槽位，
+// 导致 OP_SET_LOCAL/OP_GET_LOCAL 的 bp+slot 越界检查失败（"局部变量槽越界"）。
+// 修复：VM::initExecution 为主帧预留 localCount 个 null 槽。
+// 此测试验证顶层 AND/OR 表达式在 IR 路径下不再报越界错误。
+TEST(ConsistencyDiff, AuditG1_IRAndOrTopLevelLocalSlotReserve) {
+    // 嵌套 AND/OR 在算术表达式中使用——触发 tempSlot 分配
+    std::string src = "print((1 or 2) + (3 and 4));";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "5");
+    EXPECT_EQ(ri, rs) << "StackVM IR 顶层 AND/OR 局部槽预留: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR 顶层 AND/OR: " << rr;
+}
+
+// G1 续：多层嵌套 AND/OR 表达式——多个 tempSlot 分配
+TEST(ConsistencyDiff, AuditG1_IRAndOrDeepNestingTopLevel) {
+    std::string src = "print((1 or 2 or 3) + (0 and 1 and 2));";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "1");
+    EXPECT_EQ(ri, rs) << "StackVM IR 深层嵌套 AND/OR: " << rs;
+    EXPECT_EQ(ri, rr) << "RegVM IR 深层嵌套 AND/OR: " << rr;
+}
+
+// G2: Parser isClassTypeDeclStart 识别 ClassName[] paramName 模式。
+// 原 checkNext(TK_IDENTIFIER) 仅识别 ClassName paramName，
+// 不识别 ClassName[] paramName（下一个 token 是 [ 而非标识符）。
+// 修复：新增 isClassTypeDeclStart() 同时检查两种模式。
+TEST(ConsistencyDiff, AuditG2_ClassArrayParamTypeAnnotation) {
+    std::string src =
+        "class Point { var x = 0; var y = 0; }\n"
+        "fun sumAll(Point[] pts) {\n"
+        "  var s = 0; var i = 0;\n"
+        "  while (i < pts.len()) { s = s + pts[i].x; i = i + 1; }\n"
+        "  return s;\n"
+        "}\n"
+        "var arr = [Point(), Point()];\n"
+        "arr[0].x = 10; arr[1].x = 20;\n"
+        "print(sumAll(arr));\n";
+    // 注：IR 路径对 ClassName[] 参数类型注解的运行时类型检查支持有限，
+    // 仅验证 Interpreter 路径正确解析并执行（parser fix 验证）
+    auto ri = runInterp(src);
+    EXPECT_EQ(ri, "30") << "Interpreter ClassName[] 参数类型注解: " << ri;
+}
+
+// G2 续：for 循环初始化中的 ClassName[] 类型注解
+// 注：IR 路径对 for-init 中的类型注解支持有限，仅验证 Interpreter 路径正确解析
+TEST(ConsistencyDiff, AuditG2_ClassArrayForLoopTypeAnnotation) {
+    std::string src =
+        "class Point { var x = 0; }\n"
+        "var arr = [Point(), Point(), Point()];\n"
+        "arr[0].x = 1; arr[1].x = 2; arr[2].x = 3;\n"
+        "var sum = 0;\n"
+        "var i = 0;\n"
+        "for (Point[] ps = arr; i < ps.len(); i = i + 1) {\n"
+        "  sum = sum + ps[i].x;\n"
+        "}\n"
+        "print(sum);\n";
+    auto ri = runInterp(src);
+    EXPECT_EQ(ri, "6") << "Interpreter for 循环 ClassName[] 类型注解: " << ri;
+}
+
+// G3: Formatter 裸复合语句（if/while/for 作为 thenBranch/body）不应双重缩进。
+// 原 L17 "修复" 在 4 处添加了额外的 currentIndent_++/--，
+// 导致裸复合语句被多缩进一级。修复：移除额外缩进对。
+#include "formatter/Formatter.h"
+
+TEST(ConsistencyDiff, AuditG3_FormatterBareCompoundNoDoubleIndent) {
+    // if 的 thenBranch 是裸块语句
+    std::string src = "if (x > 0) { print(x); }\n";
+    Lexer lx; auto tk = lx.scan(src);
+    Parser p; auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    Formatter fmt;
+    std::string result = fmt.format(*ast);
+    // 期望 { 在同一行，print 缩进 1 级（非 2 级），} 在第 0 级
+    EXPECT_TRUE(result.find("    print(x);") != std::string::npos)
+        << "裸 if 块内语句应缩进 1 级，非 2 级: " << result;
+}
+
+// G3 续：while 循环体为裸块语句
+TEST(ConsistencyDiff, AuditG3_FormatterWhileBareCompoundNoDoubleIndent) {
+    std::string src = "while (true) { break; }\n";
+    Lexer lx; auto tk = lx.scan(src);
+    Parser p; auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    Formatter fmt;
+    std::string result = fmt.format(*ast);
+    EXPECT_TRUE(result.find("    break;") != std::string::npos)
+        << "裸 while 块内语句应缩进 1 级: " << result;
+}

@@ -812,8 +812,27 @@ VMResult RegisterVM::executeContainers(RegOp op, size_t& ip) {
         if (obj.isInstance()) {
             const auto& fields = obj.fields();
             auto it = fields.find(fieldName);
-            if (it == fields.end()) return runtimeError("字段不存在: " + fieldName);
-            reg(dst) = it->second;
+            if (it != fields.end()) {
+                reg(dst) = it->second;
+            } else {
+                // 方法回退：沿继承链查找方法（与 StackVM OP_MEMBER_GET 一致）
+                std::string searchClass = obj.className();
+                bool methodFound = false;
+                for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
+                    auto classIt = classInfo_.find(searchClass);
+                    if (classIt == classInfo_.end()) break;
+                    auto methodIt = classIt->second.methods.find(fieldName);
+                    if (methodIt != classIt->second.methods.end()) {
+                        reg(dst) = Value("method:" + obj.className() + "." + fieldName);
+                        methodFound = true;
+                        break;
+                    }
+                    searchClass = classIt->second.parent;
+                }
+                if (!methodFound) {
+                    return runtimeError("类 " + obj.className() + " 没有字段或方法 '" + fieldName + "'");
+                }
+            }
         } else if (obj.isDict()) {
             const auto& dict = obj.dictVal();
             auto it = dict.find(fieldName);
@@ -878,8 +897,27 @@ VMResult RegisterVM::executeContainers(RegOp op, size_t& ip) {
         if (obj.isInstance()) {
             const auto& fields = obj.fields();
             auto it = fields.find(fieldName);
-            if (it == fields.end()) return runtimeError("字段不存在: " + fieldName);
-            reg(dst) = it->second;
+            if (it != fields.end()) {
+                reg(dst) = it->second;
+            } else {
+                // 方法回退：沿继承链查找方法（与 StackVM OP_SUPER_MEMBER_GET 一致）
+                std::string searchClass = obj.className();
+                bool methodFound = false;
+                for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
+                    auto classIt = classInfo_.find(searchClass);
+                    if (classIt == classInfo_.end()) break;
+                    auto methodIt = classIt->second.methods.find(fieldName);
+                    if (methodIt != classIt->second.methods.end()) {
+                        reg(dst) = Value("method:" + obj.className() + "." + fieldName);
+                        methodFound = true;
+                        break;
+                    }
+                    searchClass = classIt->second.parent;
+                }
+                if (!methodFound) {
+                    return runtimeError("类 " + obj.className() + " 没有字段或方法 '" + fieldName + "'");
+                }
+            }
         } else {
             return runtimeError("super 成员访问需要实例类型");
         }
@@ -1895,6 +1933,8 @@ bool RegisterVM::fillDefaultArgs(const RegBytecodeChunk& chunk, uint8_t& argCoun
         size_t defaultIdx = i - chunk.requiredArity;
         if (defaultIdx >= chunk.defaultConstIndices.size()) break;
         uint16_t constIdx = chunk.defaultConstIndices[defaultIdx];
+        // BUGFIX-P2 fix: 与 Stack VM (VM.cpp) 对齐，0xFFFF 表示非字面量默认表达式
+        if (constIdx == 0xFFFF) return false;
         if (constIdx >= chunk.constants.size()) return false;
         defaults.push_back(chunk.constants[constIdx]);
     }

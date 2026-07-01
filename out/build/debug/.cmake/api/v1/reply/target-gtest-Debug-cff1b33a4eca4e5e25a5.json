@@ -133,11 +133,11 @@
 	"dependencies" : 
 	[
 		{
-			"id" : "gtest_autogen_timestamp_deps::@1ea2dfc0605fe3ab2a3f"
-		},
-		{
 			"backtrace" : 0,
 			"id" : "gtest_autogen::@1ea2dfc0605fe3ab2a3f"
+		},
+		{
+			"id" : "gtest_autogen_timestamp_deps::@1ea2dfc0605fe3ab2a3f"
 		}
 	],
 	"id" : "gtest::@1ea2dfc0605fe3ab2a3f",
@@ -166,11 +166,11 @@
 			"id" : "Qt6::uic::@6890427a1f51a3e7e1df"
 		},
 		{
-			"id" : "gtest_autogen_timestamp_deps::@1ea2dfc0605fe3ab2a3f"
-		},
-		{
 			"backtrace" : 0,
 			"id" : "gtest_autogen::@1ea2dfc0605fe3ab2a3f"
+		},
+		{
+			"id" : "gtest_autogen_timestamp_deps::@1ea2dfc0605fe3ab2a3f"
 		}
 	],
 	"paths" : 

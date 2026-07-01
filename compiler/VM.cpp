@@ -164,6 +164,11 @@ void VM::closeUpvaluesFrom(size_t fromSlot) {
             if (!uv->isClosed) {
                 if (uv->stackSlot < stack_.size()) {
                     uv->value = stack_[uv->stackSlot];
+                } else {
+                    // BUGFIX-P2 fix: 防御性警告 — 正常情况下不应到达此分支
+                    // 若触发说明 close/truncate 顺序有误，闭包将静默捕获 null
+                    Logger::Warning("closeUpvaluesFrom: slot " + std::to_string(uv->stackSlot) +
+                                 " >= stack size " + std::to_string(stack_.size()), "VM");
                 }
                 uv->isClosed = true;
             }
@@ -747,7 +752,7 @@ void VM::initExecution(const CompileResult& result) {
     for (int i = 0; i < result.globalSlotCount; ++i) {
         globalNameToSlot_[result.globalSlotNames[i]] = i;
     }
-    mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬空指针
+    mainChunk_ = result.mainChunk;  // 持有主 chunk 副本，避免悬垂指针
 
     // 设置主帧
     VMCallFrame mainFrame;
@@ -756,6 +761,16 @@ void VM::initExecution(const CompileResult& result) {
     mainFrame.basePointer = 0;
     mainFrame.functionName = "main";
     frames_.push_back(std::move(mainFrame));
+
+    // IR 路径主帧局部槽预留：IR 的 AND/OR 短路等在顶层代码用 STORE_LOCAL/LOAD_LOCAL
+    // 访问临时局部槽（nextLocalSlot_ 分配），但 StackVM 主帧 basePointer=0 且栈初始为空，
+    // OP_SET_LOCAL/OP_GET_LOCAL 的 bp+slot 越界检查会失败（"局部变量槽越界"）。
+    // 正常 Compiler 路径顶层代码用 OP_DEFINE_VAR（globals_ 哈希），localCount=0，此处为 no-op。
+    if (mainChunk_.localCount > 0) {
+        for (int i = 0; i < mainChunk_.localCount; ++i) {
+            stack_.push_back(Value::nullValue());
+        }
+    }
 
     initialized_ = true;
 }

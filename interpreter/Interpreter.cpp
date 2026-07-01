@@ -310,13 +310,16 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         lastValue_ = Value::nullValue();
         node->accept(*this);
         Value result = std::move(lastValue_);
+        // H2 fix: 必须先恢复实例字段，再恢复局部变量。
+        // inst 指针指向旧 variables["this"] 条目，restoreLocalVariables
+        // 整表替换 variables 会使 inst 悬垂。先恢复字段可保证 inst 仍有效。
+        // restoreLocalVariables 内部会重新锚定 boundInstance_ 到新 map。
+        for (auto& [inst, fields] : instSnaps) {
+            inst->fields() = fields;
+        }
         // #1 fix: 恢复变量绑定（撤销条件中的赋值/声明副作用）
         for (auto& snap : envSnaps) {
             snap.env->restoreLocalVariables(snap.variables);
-        }
-        // #1 fix: 恢复实例字段（撤销 this.field = val 副作用）
-        for (auto& [inst, fields] : instSnaps) {
-            inst->fields() = fields;
         }
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);
@@ -326,13 +329,13 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         return result;
     }
     catch (...) {
-        for (auto& snap : envSnaps) {
-            snap.env->restoreLocalVariables(snap.variables);
-        }
-        // AUDIT-BUG-I2 fix: 同 try 块，用 const_cast 避免触发 COW 分离
+        // H2 fix: 同 try 块，先恢复实例字段（inst 仍有效），再恢复局部变量
         for (auto& [inst, fields] : instSnaps) {
             const_cast<std::unordered_map<std::string, Value>&>(
                 static_cast<const Value*>(inst)->fields()) = fields;
+        }
+        for (auto& snap : envSnaps) {
+            snap.env->restoreLocalVariables(snap.variables);
         }
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);

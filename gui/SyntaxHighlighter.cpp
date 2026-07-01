@@ -56,19 +56,29 @@ void SyntaxHighlighter::initRules() {
 }
 
 void SyntaxHighlighter::highlightBlock(const QString& text) {
-    // P1 fix: 使用扫描器方式正确跟踪多行块注释状态
-    // 块状态: 0 = 正常, 1 = 字符串内, 2 = 块注释内
+    // 状态编码:
+    //   0: 正常
+    //   1: 字符串体内
+    //   2: 块注释（向后兼容，深度=1）
+    //   100 + depth (depth >= 1): 嵌套块注释（支持 /* /* */ */ 嵌套）
+    //   200 + braceDepth (braceDepth >= 1): 字符串插值表达式内（支持跨行插值）
     int pos = 0;
     int len = text.length();
 
-    bool inString = (previousBlockState() == 1);
-    bool inBlockComment = (previousBlockState() == 2);
+    int prevState = previousBlockState();
+    if (prevState < 0) prevState = 0;
+
+    bool inString = false;
+    int blockCommentDepth = 0;
+    int interpBraceDepth = 0;
+    if (prevState == 1) inString = true;
+    else if (prevState == 2) blockCommentDepth = 1;  // 向后兼容
+    else if (prevState >= 200) interpBraceDepth = prevState - 200;
+    else if (prevState >= 100) blockCommentDepth = prevState - 100;
 
     // PERF-22 fix: 用 per-character 掩码数组标记字符串/注释范围，
     // 将范围检查从 O(ranges) 线性扫描降为 O(1) 数组查找
     // Perf-Finding3: thread_local 复用底层数组容量，避免每次按键的堆分配。
-    // Qt UI 线程独占调用 highlightBlock，无并发；mask.clear() 保留 capacity
-    // 仅 size 归零，resize 触发的是 no-op 容量扩张（容量已够时）。
     static thread_local std::vector<char> mask;
     mask.clear();
     if (len > 0) mask.resize(len, 0);
@@ -77,25 +87,86 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     QList<QPair<int, int>> commentRanges;
 
     int stringStart = inString ? 0 : -1;
-    int commentStart = inBlockComment ? 0 : -1;
+    int commentStart = (blockCommentDepth > 0) ? 0 : -1;
 
     // ---- 第一遍：扫描字符串/注释，填充 mask + ranges ----
     while (pos < len) {
-        if (inBlockComment) {
+        // ---- 块注释内（depth > 0）：跟踪嵌套 /* */ ----
+        if (blockCommentDepth > 0) {
             mask[pos] = 1;
+            if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '*') {
+                mask[pos + 1] = 1;
+                pos += 2;
+                blockCommentDepth++;
+                continue;
+            }
             if (pos + 1 < len && text[pos] == '*' && text[pos + 1] == '/') {
-                pos++;
-                mask[pos] = 1;
-                pos++;
-                commentRanges.append({commentStart, pos - commentStart});
-                inBlockComment = false;
-                commentStart = -1;
+                mask[pos + 1] = 1;
+                pos += 2;
+                blockCommentDepth--;
+                if (blockCommentDepth == 0) {
+                    commentRanges.append({commentStart, pos - commentStart});
+                    commentStart = -1;
+                }
                 continue;
             }
             pos++;
             continue;
         }
 
+        // ---- 字符串插值表达式内（braceDepth > 0）：扫描为代码 ----
+        if (interpBraceDepth > 0) {
+            // 嵌套字符串：单行扫描，标记为字符串颜色
+            if (text[pos] == '"') {
+                int nestedStart = pos;
+                mask[pos] = 1;
+                pos++;
+                while (pos < len) {
+                    mask[pos] = 1;
+                    if (text[pos] == '\\' && pos + 1 < len) {
+                        mask[pos + 1] = 1;
+                        pos += 2;
+                        continue;
+                    }
+                    if (text[pos] == '"') {
+                        pos++;
+                        break;
+                    }
+                    pos++;
+                }
+                stringRanges.append({nestedStart, pos - nestedStart});
+                continue;
+            }
+            // 嵌套块注释
+            if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '*') {
+                commentStart = pos;
+                mask[pos] = 1; mask[pos + 1] = 1;
+                pos += 2;
+                blockCommentDepth = 1;
+                continue;
+            }
+            if (text[pos] == '{') {
+                interpBraceDepth++;
+                pos++;
+                continue;
+            }
+            if (text[pos] == '}') {
+                interpBraceDepth--;
+                if (interpBraceDepth == 0) {
+                    mask[pos] = 1;  // } 标记为字符串颜色（插值分隔符）
+                    pos++;
+                    inString = true;
+                    stringStart = pos;
+                } else {
+                    pos++;
+                }
+                continue;
+            }
+            pos++;
+            continue;
+        }
+
+        // ---- 字符串体内 ----
         if (inString) {
             if (text[pos] == '\\' && pos + 1 < len) {
                 mask[pos] = 1;
@@ -112,32 +183,12 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
                 stringStart = -1;
                 continue;
             }
-            // AUDIT-BUG-F12 fix: 识别字符串插值 {expr}，插值表达式内字符不清除 mask
-            // 让第二遍扫描高亮为代码颜色。{ 和 } 本身标记为字符串颜色（插值分隔符）。
-            // 用 braceDepth 跟踪嵌套大括号（如字典字面量），与 Lexer 插值扫描一致。
-            // 已知限制：不处理插值表达式内的嵌套字符串（少见场景，影响仅高亮颜色）。
+            // 识别字符串插值 {expr}，进入插值模式（支持跨行）
             if (text[pos] == '{') {
-                // 结束当前字符串片段（不含 {）
                 stringRanges.append({stringStart, pos - stringStart});
                 mask[pos] = 1;  // { 标记为字符串颜色
                 pos++;
-                int braceDepth = 1;
-                while (pos < len && braceDepth > 0) {
-                    if (text[pos] == '{') {
-                        braceDepth++;
-                    } else if (text[pos] == '}') {
-                        braceDepth--;
-                        if (braceDepth == 0) {
-                            mask[pos] = 1;  // } 标记为字符串颜色
-                            pos++;
-                            break;
-                        }
-                    }
-                    // 插值表达式内的字符不标记 mask，让第二遍扫描高亮为代码
-                    pos++;
-                }
-                // 恢复字符串模式（} 之后的字符继续作为字符串扫描）
-                stringStart = pos;
+                interpBraceDepth = 1;
                 continue;
             }
             mask[pos] = 1;
@@ -145,6 +196,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
             continue;
         }
 
+        // ---- 正常模式 ----
         if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '/') {
             commentRanges.append({pos, len - pos});
             for (int i = pos; i < len; ++i) mask[i] = 1;
@@ -153,7 +205,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
 
         if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '*') {
             commentStart = pos;
-            inBlockComment = true;
+            blockCommentDepth = 1;
             mask[pos] = 1;
             mask[pos + 1] = 1;
             pos += 2;
@@ -174,7 +226,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     if (inString && stringStart >= 0) {
         stringRanges.append({stringStart, len - stringStart});
     }
-    if (inBlockComment && commentStart >= 0) {
+    if (blockCommentDepth > 0 && commentStart >= 0) {
         commentRanges.append({commentStart, len - commentStart});
     }
 
@@ -287,5 +339,10 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         pos++;
     }
 
-    setCurrentBlockState(inString ? 1 : (inBlockComment ? 2 : 0));
+    // 设置块状态（支持多行字符串、嵌套块注释、跨行插值）
+    int newState = 0;
+    if (inString) newState = 1;
+    else if (blockCommentDepth > 0) newState = 100 + blockCommentDepth;
+    else if (interpBraceDepth > 0) newState = 200 + interpBraceDepth;
+    setCurrentBlockState(newState);
 }

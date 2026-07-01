@@ -2109,15 +2109,8 @@ void Compiler::visitMethodCall(MethodCall& node) {
             if (ia->object && ia->object->nodeType == NodeType::NODE_VAR_REF) {
                 auto* baseVar = static_cast<VarRef*>(ia->object.get());
                 auto localIt = currentLocals_.find(baseVar->name);
-                // 推入缓存的索引值（OP_WRITEBACK_INDEX_LOCAL/VAR 需要索引在栈上）
-                if (!cachedIndexVar.empty()) {
-                    uint16_t cacheIdx = identifierIndex(cachedIndexVar);
-                    chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
-                    chunk_.writeShort(cacheIdx, node.line);
-                } else {
-                    // 降级路径：不应到达此处（cachedIndexVar 总会在上方设置）
-                    compileNode(ia->index.get());
-                }
+                // BUGFIX-P1 fix: WRITEBACK_INDEX handler 已改为整体替换语义，不再 pop 索引，
+                // 因此不再向栈推入索引值（原实现每次泄漏 1 个栈值）。
                 if (localIt != currentLocals_.end()) {
                     // 局部变量索引写回：OP_WRITEBACK_INDEX_LOCAL(slot)
                     chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);

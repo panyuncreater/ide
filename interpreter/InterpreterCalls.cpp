@@ -123,8 +123,13 @@ Value Interpreter::callClosureValue(FunCall& node) {
     }
 
     // F10: 为缺失的参数填充默认值（在闭包环境中求值）
+    // BUGFIX-P2 fix: 使用 RAII guard 恢复 currentEnv_，防止 evaluate() 抛异常时泄漏错误 scope
     if (argCount < funDecl->params.size()) {
         auto savedEnv = currentEnv_;
+        struct EnvGuard {
+            Interpreter& interp; std::shared_ptr<Environment> prev;
+            ~EnvGuard() { interp.currentEnv_ = prev; }
+        } guard{ *this, currentEnv_ };
         if (closureEnv) {
             currentEnv_ = closureEnv;
         }
@@ -135,7 +140,6 @@ Value Interpreter::callClosureValue(FunCall& node) {
                 argValues.push_back(Value::nullValue());
             }
         }
-        currentEnv_ = savedEnv;
     }
 
     // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复
@@ -356,12 +360,16 @@ Value Interpreter::constructClassInstance(FunCall& node) {
                     if (i < initMethod->defaultValues.size() && initMethod->defaultValues[i]) {
                         // I-P1-1 fix: 默认值表达式应在类定义的闭包环境中求值
                         // （与 callNamedFunction/callClosureValue/callInstanceMethod 保持一致）
+                        // BUGFIX-P2 fix: RAII guard 防止 evaluate() 抛异常时 currentEnv_ 不恢复
                         auto savedEnv = currentEnv_;
+                        struct EnvGuard {
+                            Interpreter& interp; std::shared_ptr<Environment> prev;
+                            ~EnvGuard() { interp.currentEnv_ = prev; }
+                        } guard{ *this, currentEnv_ };
                         if (cls->closureEnv) {
                             currentEnv_ = cls->closureEnv;
                         }
                         Value defaultVal = evaluate(initMethod->defaultValues[i].get());
-                        currentEnv_ = savedEnv;
                         initEnv->define(initMethod->params[i], std::move(defaultVal));
                     } else {
                         initEnv->define(initMethod->params[i], Value::nullValue());
@@ -516,8 +524,13 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
     // F10: 为缺失的参数填充默认值
     // 默认值在函数定义时的闭包环境中求值（与函数体同级）
+    // BUGFIX-P2 fix: 使用 RAII guard 恢复 currentEnv_，防止 evaluate() 抛异常时泄漏错误 scope
     if (argCount < funDecl->params.size()) {
         auto savedEnv = currentEnv_;
+        struct EnvGuard {
+            Interpreter& interp; std::shared_ptr<Environment> prev;
+            ~EnvGuard() { interp.currentEnv_ = prev; }
+        } guard{ *this, currentEnv_ };
         // 切换到闭包环境（函数定义时的环境），使默认值表达式能访问外层变量
         if (closureEnv) {
             currentEnv_ = closureEnv;
@@ -530,7 +543,6 @@ Value Interpreter::callNamedFunction(FunCall& node) {
                 argValues.push_back(Value::nullValue());
             }
         }
-        currentEnv_ = savedEnv;
     }
 
     // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复

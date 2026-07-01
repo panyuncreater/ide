@@ -5,7 +5,7 @@
 		"commands" : [],
 		"files" : 
 		[
-			"CMakeLists.txt"
+			"tests/CMakeLists.txt"
 		],
 		"nodes" : 
 		[
@@ -24,11 +24,15 @@
 		{
 			"backtrace" : 0,
 			"id" : "minilang_core::@6890427a1f51a3e7e1df"
+		},
+		{
+			"backtrace" : 0,
+			"id" : "gtest_main::@1ea2dfc0605fe3ab2a3f"
 		}
 	],
-	"id" : "minilang_ide_autogen_timestamp_deps::@6890427a1f51a3e7e1df",
+	"id" : "minilang_tests_autogen_timestamp_deps::@a44f0ac069e85531cdee",
 	"isGeneratorProvided" : true,
-	"name" : "minilang_ide_autogen_timestamp_deps",
+	"name" : "minilang_tests_autogen_timestamp_deps",
 	"orderDependencies" : 
 	[
 		{
@@ -37,15 +41,7 @@
 		},
 		{
 			"backtrace" : 0,
-			"id" : "Qt6::Gui::@6890427a1f51a3e7e1df"
-		},
-		{
-			"backtrace" : 0,
-			"id" : "Qt6::Core::@6890427a1f51a3e7e1df"
-		},
-		{
-			"backtrace" : 0,
-			"id" : "Qt6::Widgets::@6890427a1f51a3e7e1df"
+			"id" : "minilang_core::@6890427a1f51a3e7e1df"
 		},
 		{
 			"backtrace" : 0,
@@ -53,13 +49,13 @@
 		},
 		{
 			"backtrace" : 0,
-			"id" : "minilang_core::@6890427a1f51a3e7e1df"
+			"id" : "gtest_main::@1ea2dfc0605fe3ab2a3f"
 		}
 	],
 	"paths" : 
 	{
-		"build" : ".",
-		"source" : "."
+		"build" : "tests",
+		"source" : "tests"
 	},
 	"sources" : [],
 	"type" : "UTILITY"

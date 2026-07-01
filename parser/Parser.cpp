@@ -169,6 +169,23 @@ bool Parser::isTypeKeyword() const {
            t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
 }
 
+bool Parser::isClassTypeDeclStart() const {
+    // 识别类类型声明起始：ClassName paramName 或 ClassName[] paramName
+    // 原 checkNext(TK_IDENTIFIER) 只覆盖 ClassName paramName，漏掉 ClassName[] paramName
+    if (!check(TokenType::TK_IDENTIFIER)) return false;
+    int idx = current_ + 1;
+    int size = static_cast<int>(tokens_->size());
+    if (idx >= size) return false;
+    // ClassName paramName
+    if ((*tokens_)[idx].type == TokenType::TK_IDENTIFIER) return true;
+    // ClassName[] paramName
+    if ((*tokens_)[idx].type != TokenType::TK_LBRACKET) return false;
+    idx++;
+    if (idx >= size || (*tokens_)[idx].type != TokenType::TK_RBRACKET) return false;
+    idx++;
+    return idx < size && (*tokens_)[idx].type == TokenType::TK_IDENTIFIER;
+}
+
 std::string Parser::parseTypeAnnotation() {
     const Token& typeTok = advance();  // 消耗类型关键字或标识符
     std::string typeAnn = typeTok.lexeme;
@@ -396,8 +413,8 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
 
             const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
             paramName = param.lexeme;
-        } else if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_IDENTIFIER)) {
-            // PARSE-02 fix: C 风格类类型参数: ClassName paramName
+        } else if (isClassTypeDeclStart()) {
+            // PARSE-02 fix: C 风格类类型参数: ClassName paramName 或 ClassName[] paramName
             pType = parseTypeAnnotation();
             const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
             paramName = param.lexeme;
@@ -679,8 +696,8 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
             init = expression();
             consume(TokenType::TK_SEMICOLON, "期望 ';'");
         }
-    } else if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_IDENTIFIER)) {
-        // H2 fix: 类名类型注解声明，如 Point p = create();
+    } else if (isClassTypeDeclStart()) {
+        // H2 fix: 类名类型注解声明，如 Point p = create(); 或 Point[] arr = build();
         int savePos = current_;
         std::string typeAnn = parseTypeAnnotation();  // 消耗类名 + 可选 []
         if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_LPAREN)) {
@@ -1121,7 +1138,7 @@ std::unique_ptr<ASTNode> Parser::call() {
             if (!check(TokenType::TK_RPAREN)) {
                 do {
                     args.push_back(expression());
-                } while (match(TokenType::TK_COMMA));
+                } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
             }
             consume(TokenType::TK_RPAREN, "期望 ')' 结束参数列表");
 
@@ -1161,7 +1178,7 @@ std::unique_ptr<ASTNode> Parser::call() {
                 if (!check(TokenType::TK_RPAREN)) {
                     do {
                         args.push_back(expression());
-                    } while (match(TokenType::TK_COMMA));
+                    } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束方法参数列表");
 

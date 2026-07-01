@@ -12,6 +12,38 @@
           "checksum": "wVa86FgEkvdCTVp1/nxvrkaemJc="
         }
       }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Windows MSVC Debug (Ninja)",
+      "description": "MSVC + Ninja Debug 构建。需在 VS Developer 命令提示符中运行，或使用 configure.bat 自动初始化环境。",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/debug",
+      "inherits": "Qt",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Windows MSVC Release (Ninja)",
+      "description": "MSVC + Ninja Release 构建。需在 VS Developer 命令提示符中运行，或使用 configure.bat --preset windows-msvc-release 自动初始化环境。",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/release",
+      "inherits": "Qt",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
     }
   ],
   "vendor": {

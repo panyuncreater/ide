@@ -239,7 +239,15 @@ bool WorkerManager::stopForClose(int timeoutMs) {
         worker_.reset();
         workerThread_.reset();
     }
+    // AUDIT fix: stopForClose 成功路径需与 forceStop 对齐执行完整状态清理，
+    // 否则 interpreter 残留 debugMode、REPL 状态未恢复、debugger 未 reset，
+    // 下次运行时可能读到脏状态。
     isRunning_ = false;
+    isDebugRun_ = false;
+    interpreter_->setDebugMode(false);
+    interpreter_->restoreReplState();
+    debugger_->reset();
+    setupMainCallbacks();
     return true;
 }
 

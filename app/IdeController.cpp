@@ -48,14 +48,24 @@ IdeController::IdeController(QObject* parent)
     // 求值在沙箱中进行（evaluateCondition 已实现 #1 变量快照/恢复），
     // 条件中的赋值/声明不会影响 VM 状态。
     // 限制：仅支持引用全局变量（VM 局部变量在寄存器/栈中，无法按名访问）。
-    vmStepper_.setConditionEvaluator([this](const std::string& condition) -> bool {
+    // AUDIT fix: 缓存条件 AST，避免每次断点命中都重新 Lexer+Parser（循环内条件断点性能）。
+    auto condAstCache = std::make_shared<std::unordered_map<std::string, std::shared_ptr<Block>>>();
+    vmStepper_.setConditionEvaluator([this, condAstCache](const std::string& condition) -> bool {
         try {
-            Lexer condLexer;
-            auto tokens = condLexer.scan(condition);
-            Parser condParser;
-            auto ast = condParser.parse(tokens);
-            if (!ast || ast->statements.empty() || condParser.getDiagnostics().hasErrors()) {
-                return false;
+            std::shared_ptr<Block> ast;
+            auto cacheIt = condAstCache->find(condition);
+            if (cacheIt != condAstCache->end()) {
+                ast = cacheIt->second;
+            } else {
+                Lexer condLexer;
+                auto tokens = condLexer.scan(condition);
+                Parser condParser;
+                auto parsed = condParser.parse(tokens);
+                if (!parsed || parsed->statements.empty() || condParser.getDiagnostics().hasErrors()) {
+                    return false;
+                }
+                ast = std::shared_ptr<Block>(std::move(parsed));
+                condAstCache->emplace(condition, ast);
             }
             Interpreter tempInterp;
             auto env = std::make_shared<Environment>();

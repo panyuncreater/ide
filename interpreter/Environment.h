@@ -253,6 +253,18 @@ public:
     }
     void restoreLocalVariables(const std::unordered_map<std::string, Value>& snap) {
         variables = snap;
+        // H2 fix: variables = snap 整表替换会使旧 map 中所有 Value* 失效，
+        // boundInstance_ 指向旧 variables["this"] 条目，现已悬垂。
+        // 必须在新 map 中重新定位 "this" 并重新锚定 boundInstance_，
+        // 否则后续 cur->boundInstance_->fields() 将解引用悬垂指针 (UAF)。
+        if (boundInstance_ != nullptr) {
+            auto it = variables.find("this");
+            if (it != variables.end() && it->second.isInstance()) {
+                boundInstance_ = &it->second;
+            } else {
+                boundInstance_ = nullptr;
+            }
+        }
     }
 
     // ---- P5 fix: 实例字段绑定 ----

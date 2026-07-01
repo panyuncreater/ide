@@ -98,7 +98,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
             if (BoundsCheck::inBounds(i, s.size())) {
                 const void* strPtr = static_cast<const void*>(&s);
                 bool isAscii;
-                if (lastAsciiStrPtr_ == strPtr) {
+                // BUGFIX-P2 fix: 同时比对指针 + size，防止堆地址复用导致非 ASCII 字符串误判为 ASCII
+                if (lastAsciiStrPtr_ == strPtr && lastAsciiStrSize_ == s.size()) {
                     isAscii = lastAsciiStrIsAscii_;
                 } else {
                     isAscii = true;
@@ -106,6 +107,7 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                         if (static_cast<unsigned char>(s[b]) >= 0x80) { isAscii = false; break; }
                     }
                     lastAsciiStrPtr_ = strPtr;
+                    lastAsciiStrSize_ = s.size();
                     lastAsciiStrIsAscii_ = isAscii;
                 }
                 if (isAscii) {

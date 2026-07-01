@@ -78,6 +78,9 @@ private:
     QTimer* pollTimer_ = nullptr;
     /// 异步执行期间禁用输入
     std::atomic<bool> replRunning_{false};
+    /// AUDIT fix: 标记异步执行中是否已发生 RuntimeError/genericError，
+    /// 避免错误信号已显示后又打印 "null" 结果造成重复输出
+    std::atomic<bool> hadReplError_{false};
 
     /// 执行单行代码
     void executeLine(const QString& line);

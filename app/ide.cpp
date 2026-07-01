@@ -1478,6 +1478,8 @@ void Ide::setRunningState(bool running) {
     stopAction_->setEnabled(running);
     formatAction_->setEnabled(!running);
     bytecodeAction_->setEnabled(!running);
+    // AUDIT fix: IR 查看器在运行期间也应禁用，避免查看正在编译/执行的 IR 导致状态不一致
+    if (irAction_) irAction_->setEnabled(!running);
     codeEditor_->setReadOnly(running);
 }
 
@@ -1486,6 +1488,8 @@ void Ide::setRunningState(bool running) {
 // ============================================================
 
 void Ide::onNew() {
+    // AUDIT fix: 程序运行/调试期间禁止新建文件，避免清空正在执行的代码导致状态混乱
+    if (controller_->isRunning() || controller_->isVmRunning()) return;
     if (!maybeSave()) return;
     codeEditor_->clear();
     currentFilePath_.clear();
@@ -1495,6 +1499,8 @@ void Ide::onNew() {
 }
 
 void Ide::onOpen() {
+    // AUDIT fix: 程序运行/调试期间禁止打开文件，避免替换正在执行的代码导致状态混乱
+    if (controller_->isRunning() || controller_->isVmRunning()) return;
     if (!maybeSave()) return;
     QString path = QFileDialog::getOpenFileName(this,
         QString::fromUtf8("打开文件"), QString(),
@@ -1566,11 +1572,11 @@ void Ide::loadFile(const QString& path) {
     }
     // AUDIT-BUG-E3 fix: 文件大小检查，防止大文件冻结 UI
     qint64 fileSize = file.size();
-    if (fileSize > static_cast<qint64>(MAX_SOURCE_SIZE)) {
+    if (fileSize > static_cast<qint64>(RuntimeLimits::MAX_SOURCE_SIZE)) {
         QMessageBox::warning(this, QString::fromUtf8("错误"),
             QString::fromUtf8("文件过大 (") + QString::number(fileSize) +
             QString::fromUtf8(" 字节)，超过上限 (") +
-            QString::number(MAX_SOURCE_SIZE) + QString::fromUtf8(" 字节)"));
+            QString::number(RuntimeLimits::MAX_SOURCE_SIZE) + QString::fromUtf8(" 字节)"));
         file.close();
         return;
     }
