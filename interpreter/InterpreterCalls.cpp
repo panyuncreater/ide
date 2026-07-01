@@ -373,11 +373,14 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
             if (thisInEnv) initEnv->bindInstance(thisInEnv);
 
+            // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
+            // AUDIT-BUG-F1 fix: CallFrameGuard 必须在 emplace_back 之前构造，使其保存的
+            // savedStackDepth = N（不含新条目），析构时才能正确弹回到 N。若顺序颠倒，
+            // savedStackDepth = N+1，析构时不弹出 init 帧，循环构造实例导致 callStack_ 泄漏。
+            CallFrameGuard frameGuard{ *this, initMethod->returnType, /*manageCtx=*/true };
+
             // 压入调用帧
             callStack_.emplace_back(node.name + ".init", initEnv, node.line, recursionDepth_);
-
-            // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
-            CallFrameGuard frameGuard{ *this, initMethod->returnType, /*manageCtx=*/true };
 
             // 切换环境
             auto prevEnv = currentEnv_;

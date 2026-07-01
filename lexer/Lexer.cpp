@@ -528,6 +528,9 @@ void Lexer::string(bool isInterp) {
                     scanToken();
                 } else if (peek() == '"') {
                     // 嵌套字符串（可能含插值）
+                    // AUDIT-BUG-F10 fix: advance 前更新 start_，与 { } 默认分支一致。
+                    // 原实现缺少 start_=current_，导致嵌套字符串首 token 列号/lexeme 错误。
+                    start_ = current_;
                     advance();
                     string(true);  // 递归扫描嵌套字符串
                     start_ = current_;  // 更新 start_ 以便后续 scanToken 正确提取

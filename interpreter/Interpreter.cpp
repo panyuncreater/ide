@@ -287,7 +287,10 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         envSnaps.push_back({snapEnv, std::move(locals)});
         Value* inst = snapEnv->getBoundInstance();
         if (inst && inst->isInstance() && instSnaps.find(inst) == instSnaps.end()) {
-            auto fields = inst->fields();
+            // AUDIT-BUG-I2 fix: 用 const 访问避免触发 COW 分离——非 const fields()
+            // 在 refCount>1 时会 ensureUnique，使 inst 与其他共享变量分离，
+            // 破坏后续程序中 b=a 后修改 a.field b 可见的引用语义。
+            auto fields = static_cast<const Value*>(inst)->fields();
             // AUDIT-SANDBOX-DEEP: 深拷贝实例字段中的容器值
             for (auto& [k, v] : fields) {
                 v = deepCloneForSandbox(v);
@@ -326,8 +329,10 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         for (auto& snap : envSnaps) {
             snap.env->restoreLocalVariables(snap.variables);
         }
+        // AUDIT-BUG-I2 fix: 同 try 块，用 const_cast 避免触发 COW 分离
         for (auto& [inst, fields] : instSnaps) {
-            inst->fields() = fields;
+            const_cast<std::unordered_map<std::string, Value>&>(
+                static_cast<const Value*>(inst)->fields()) = fields;
         }
         callStack_ = std::move(savedCallStack);
         classContextStack_ = std::move(savedClassCtx);
@@ -597,14 +602,14 @@ Interpreter::ChainInfo Interpreter::collectAndEvaluateChain(ASTNode* objectNode,
             info.idxs[i] = evaluate(ia->index.get());
             const Value& indexVal = info.idxs[i];
             if (parent.isArray() && indexVal.isInt()) {
-                if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= parent.arrayVal().size())
+                if (indexVal.intVal() < 0 || static_cast<size_t>(indexVal.intVal()) >= std::as_const(parent).arrayVal().size())
                     runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                        static_cast<long long>(indexVal.intVal()), parent.arrayVal().size()), line, col);
-                info.vals[i] = parent.arrayVal()[indexVal.intVal()];
+                        static_cast<long long>(indexVal.intVal()), std::as_const(parent).arrayVal().size()), line, col);
+                info.vals[i] = std::as_const(parent).arrayVal()[indexVal.intVal()];
             }
             else if (parent.isDict() && indexVal.isString()) {
-                auto it = parent.dictVal().find(indexVal.stringVal());
-                info.vals[i] = (it != parent.dictVal().end()) ? it->second : Value::nullValue();
+                auto it = std::as_const(parent).dictVal().find(indexVal.stringVal());
+                info.vals[i] = (it != std::as_const(parent).dictVal().end()) ? it->second : Value::nullValue();
             }
             else {
                 runtimeError("该类型不支持索引访问", line, col);
@@ -696,9 +701,9 @@ Value Interpreter::writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* i
     Value modifiedObj = std::move(info.vals[0]); // A2: move 而非拷贝，保持 refcount=1 跳过 COW detach
     if (isIndexAssign) {
         if (modifiedObj.isArray() && idx.isInt()) {
-            if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= modifiedObj.arrayVal().size())
+            if (idx.intVal() < 0 || static_cast<size_t>(idx.intVal()) >= std::as_const(modifiedObj).arrayVal().size())
                 runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                    static_cast<long long>(idx.intVal()), modifiedObj.arrayVal().size()), line, col);
+                    static_cast<long long>(idx.intVal()), std::as_const(modifiedObj).arrayVal().size()), line, col);
             modifiedObj.arrayVal()[idx.intVal()] = val;
         }
         else if (modifiedObj.isDict() && idx.isString()) {
@@ -1291,6 +1296,12 @@ void Interpreter::visitFunDecl(FunDecl& node) {
     // 创建闭包值，捕获当前环境并存储函数体指针（自包含，不依赖 funRegistry_）
     Value funVal = Value::makeClosure(node.name, currentEnv_, node.params, nodeShared);
 
+    // AUDIT-BUG-I1 fix: 标记当前 env 被闭包引用（env weak_ptr 目标），
+    // 防止 visitBlock 退出时将 blockEnv 回收到 envPool_——即使闭包仅捕获父级变量
+    // （hasClosureCaptures()=false），blockEnv 也不能回收，否则 resetForReuse
+    // 会清空 variables 并替换 parent，导致闭包调用时变量查找失败。
+    currentEnv_->markClosureEnvRef();
+
     // B1 fix: 仅捕获自由变量（函数体实际引用的外层变量），而非整个环境快照。
     // 原 C1 fix 复制 allVariablesMap() 的全部可见变量，REPL 模式下随变量积累越来越慢；
     // 现通过静态分析 AST 仅捕获实际需要的变量。getVariableOnly 确保不捕获实例字段
@@ -1459,7 +1470,9 @@ void Interpreter::visitBlock(Block& node) {
     // use_count()==1 表示仅 blockEnv 本地变量持有，可安全 reset。
     // B1 fix: 有捕获的 env 不回收 — weak_ptr 仍指向它，回收后 resetForReuse 清空
     // variables 会导致闭包调用时闭包环境"看似存活但内容陈旧"，绕过 capturedVars 回退。
-    if (blockEnv.use_count() == 1 && !hadCaptures) {
+    // AUDIT-BUG-I1 fix: 也检查 hasClosureEnvRef — 闭包 env weak_ptr 指向本 env 时
+    // 不能回收（即使 hasClosureCaptures=false，闭包可能仅捕获父级变量）。
+    if (blockEnv.use_count() == 1 && !hadCaptures && !blockEnv->hasClosureEnvRef()) {
         envPool_.push_back(std::move(blockEnv));
     }
 

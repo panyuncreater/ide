@@ -66,11 +66,12 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
         } catch (const std::exception& e) {
             // E1 fix: 条件断点求值异常记录告警，便于用户排查（条件 + 错误信息）。
             // 上层 DebugController::shouldPauseAtBreakpoint 也会再次记录行号。
-            Logger::Warning("条件断点求值异常: " + std::string(e.what()) +
-                            "（条件: " + condition + "），视为条件不满足", "Debugger");
+            // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
+            LOG_WARNING("条件断点求值异常: " + std::string(e.what()) +
+                        "（条件: " + condition + "），视为条件不满足", "Debugger");
         } catch (...) {
-            Logger::Warning("条件断点求值发生未知异常（条件: " + condition +
-                            "），视为条件不满足", "Debugger");
+            LOG_WARNING("条件断点求值发生未知异常（条件: " + condition +
+                        "），视为条件不满足", "Debugger");
         }
         return false;
     });
@@ -78,40 +79,57 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
     // 调试变量回调
     debugger_->setVariableCallback([interpreter = interpreter_]() -> std::vector<VariableSnapshot> {
         std::vector<VariableSnapshot> result;
-        Environment* env = interpreter->currentEnvironment();
-        if (env) {
-            int depth = 0;
-            Environment* current = env;
-            while (current) {
-                const auto& locals = current->localVariables();
-                for (const auto& kv : locals) {
-                    VariableSnapshot snap;
-                    snap.name = kv.first;
-                    snap.value = kv.second;
-                    snap.scope = (depth == 0) ? "局部" : (current->parent ? "外层" : "全局");
-                    result.push_back(snap);
+        // AUDIT-BUG-C4 fix: 调试回调必须用 try/catch 包裹防止崩溃（硬约束 #16）。
+        // 同文件 conditionEvaluator 已有 try/catch，原 variableCallback 遗漏。
+        // Interpreter 异常态下遍历 Environment 链/拷贝容器可能抛 bad_alloc，
+        // 未捕获会传播到 UI 线程导致 IDE 崩溃。
+        try {
+            Environment* env = interpreter->currentEnvironment();
+            if (env) {
+                int depth = 0;
+                Environment* current = env;
+                while (current) {
+                    const auto& locals = current->localVariables();
+                    for (const auto& kv : locals) {
+                        VariableSnapshot snap;
+                        snap.name = kv.first;
+                        snap.value = kv.second;
+                        snap.scope = (depth == 0) ? "局部" : (current->parent ? "外层" : "全局");
+                        result.push_back(snap);
+                    }
+                    current = current->parent.get();
+                    depth++;
                 }
-                current = current->parent.get();
-                depth++;
             }
+        } catch (const std::exception& e) {
+            Logger::Warning(std::string("变量快照回调异常: ") + e.what(), "Debugger");
+        } catch (...) {
+            Logger::Warning("变量快照回调发生未知异常", "Debugger");
         }
         return result;
     });
 
     debugger_->setCallStackCallback([interpreter = interpreter_]() -> std::vector<CallStackEntry> {
         std::vector<CallStackEntry> result;
-        const auto& stack = interpreter->getCallStack();
-        for (const auto& frame : stack) {
-            CallStackEntry entry;
-            entry.functionName = frame.functionName;
-            entry.line = frame.line;
-            entry.depth = frame.depth;
-            if (frame.env) {
-                for (const auto& kv : frame.env->localVariables()) {
-                    entry.locals.emplace_back(kv.first, kv.second);
+        // AUDIT-BUG-C5 fix: 调试回调必须用 try/catch 包裹防止崩溃（硬约束 #16）。
+        try {
+            const auto& stack = interpreter->getCallStack();
+            for (const auto& frame : stack) {
+                CallStackEntry entry;
+                entry.functionName = frame.functionName;
+                entry.line = frame.line;
+                entry.depth = frame.depth;
+                if (frame.env) {
+                    for (const auto& kv : frame.env->localVariables()) {
+                        entry.locals.emplace_back(kv.first, kv.second);
+                    }
                 }
+                result.push_back(entry);
             }
-            result.push_back(entry);
+        } catch (const std::exception& e) {
+            Logger::Warning(std::string("调用栈回调异常: ") + e.what(), "Debugger");
+        } catch (...) {
+            Logger::Warning("调用栈回调发生未知异常", "Debugger");
         }
         return result;
     });

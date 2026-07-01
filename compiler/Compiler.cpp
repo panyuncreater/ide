@@ -213,9 +213,14 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
         return emptyResult;
     }
 
-    // PERF-15: IR 优化 pass（寄存器式下复制传播安全启用）
+    // PERF-15: IR 优化 pass
+    // AUDIT-BUG-E4 fix: 寄存器式下复制传播不安全——copyPropagationPass 将 VIRTUAL
+    // 操作数替换为 CONSTANT kind，但 RegisterBytecodeBackend::lowerInstruction 不检查
+    // 操作数 kind，直接 vregToReg(operand.index) 把常量索引当 vreg 编号，读错寄存器。
+    // 修复方向：在 RegisterBytecodeBackend 中对 CONSTANT kind 操作数先 emit REG_LOAD_CONST
+    // 到临时寄存器。在此修复落地前，寄存器路径禁用复制传播（常量折叠+DCE仍安全）。
     if (irOptimize_) {
-        optimizeIR(*lastIR_, true);  // enableCopyPropagation=true
+        optimizeIR(*lastIR_, false);  // enableCopyPropagation=false（暂时禁用）
     }
 
     // 把 mainFunction 放回 module_ 供 lowerModule 使用
@@ -1087,6 +1092,19 @@ void Compiler::visitFunDecl(FunDecl& node) {
     // 此时已恢复外层上下文，在主 chunk 中 emit OP_CLOSURE
     uint16_t nameIdx = identifierIndex(node.name);
     const BytecodeChunk& funChunk = functionChunks_[node.name];
+    // AUDIT-BUG-C3 fix: upvalueCount 经 static_cast<uint8_t> 编码，
+    // > 255 时静默截断低 8 位，解码端按截断值读取 upvalue 描述符导致闭包捕获错误变量集。
+    // 与 RegisterBytecodeBackend.cpp:489 对齐，发射前显式检查上限，避免半成品字节码。
+    if (upvalueCount > 255) {
+        error("闭包 upvalue 数量超过 255 上限", node.line, 0);
+        return;
+    }
+    for (int i = 0; i < upvalueCount; ++i) {
+        if (funChunk.upvalues[i].index > 255) {
+            error("闭包 upvalue 索引超过 255 上限", node.line, 0);
+            return;
+        }
+    }
     chunk_.writeOp(OpCode::OP_CLOSURE, node.line);
     chunk_.writeShort(nameIdx, node.line);
     chunk_.write(static_cast<uint8_t>(upvalueCount), node.line);

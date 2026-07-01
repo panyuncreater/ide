@@ -68,6 +68,7 @@ struct Diagnostic {
         case DiagSource::VM:          return "虚拟机";
         case DiagSource::Formatter:   return "格式化器";
         case DiagSource::IDE:         return "IDE";
+        case DiagSource::TypeChecker: return "类型检查";
         }
         return "未知";
     }

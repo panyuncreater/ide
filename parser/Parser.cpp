@@ -1077,25 +1077,28 @@ std::unique_ptr<ASTNode> Parser::factor() {
 
 std::unique_ptr<ASTNode> Parser::unary() {
     // P1 fix: 一元运算符递归也需深度保护（---...x 可深度嵌套）
-    if (match(TokenType::TK_NOT, TokenType::TK_MINUS)) {
+    // AUDIT-BUG-P3 fix: 深度检查移到 match() 之前，避免 match 消耗 token 后
+    // 抛出错误导致 synchronize() 多丢失一个 token。
+    if (check(TokenType::TK_NOT) || check(TokenType::TK_MINUS)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
             throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                              peek().line, peek().column);
         }
         DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
-
+        advance();  // 消耗一元运算符
         const Token& op = previous();
         auto operand = unary();
         auto uopType = (op.type == TokenType::TK_NOT) ? UnaryOp::UnaryOpType::UOP_NOT : UnaryOp::UnaryOpType::UOP_NEGATE;
         return std::make_unique<UnaryOp>(uopType, std::move(operand), op.line, op.column);
     }
     // PARSE-07 fix: 一元 + 创建 UnaryOp 节点保留 AST 保真度
-    if (match(TokenType::TK_PLUS)) {
+    if (check(TokenType::TK_PLUS)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
             throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                              peek().line, peek().column);
         }
         DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
+        advance();  // 消耗 +
 
         const Token& op = previous();
         auto operand = unary();
@@ -1320,6 +1323,11 @@ void Parser::synchronize() {
 
         // P1-2 fix: '}' 标记块结束，作为同步点避免跳过块边界
         if (peek().type == TokenType::TK_RBRACE) return;
+
+        // AUDIT-BUG-P1 fix: 插值闭合标记作为同步点。
+        // 原实现不识别 TK_INTERP_END，错误恢复时跳过插值边界，
+        // 导致后续 TK_STRING_PART 等被当作语句解析产生级联错误。
+        if (peek().type == TokenType::TK_INTERP_END) return;
 
         // 关键字标记声明开始
         switch (peek().type) {

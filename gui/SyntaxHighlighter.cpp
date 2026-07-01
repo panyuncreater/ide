@@ -97,20 +97,50 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         }
 
         if (inString) {
-            mask[pos] = 1;
             if (text[pos] == '\\' && pos + 1 < len) {
+                mask[pos] = 1;
                 pos++;
                 mask[pos] = 1;
                 pos++;
                 continue;
             }
             if (text[pos] == '"') {
+                mask[pos] = 1;
                 pos++;
                 stringRanges.append({stringStart, pos - stringStart});
                 inString = false;
                 stringStart = -1;
                 continue;
             }
+            // AUDIT-BUG-F12 fix: 识别字符串插值 {expr}，插值表达式内字符不清除 mask
+            // 让第二遍扫描高亮为代码颜色。{ 和 } 本身标记为字符串颜色（插值分隔符）。
+            // 用 braceDepth 跟踪嵌套大括号（如字典字面量），与 Lexer 插值扫描一致。
+            // 已知限制：不处理插值表达式内的嵌套字符串（少见场景，影响仅高亮颜色）。
+            if (text[pos] == '{') {
+                // 结束当前字符串片段（不含 {）
+                stringRanges.append({stringStart, pos - stringStart});
+                mask[pos] = 1;  // { 标记为字符串颜色
+                pos++;
+                int braceDepth = 1;
+                while (pos < len && braceDepth > 0) {
+                    if (text[pos] == '{') {
+                        braceDepth++;
+                    } else if (text[pos] == '}') {
+                        braceDepth--;
+                        if (braceDepth == 0) {
+                            mask[pos] = 1;  // } 标记为字符串颜色
+                            pos++;
+                            break;
+                        }
+                    }
+                    // 插值表达式内的字符不标记 mask，让第二遍扫描高亮为代码
+                    pos++;
+                }
+                // 恢复字符串模式（} 之后的字符继续作为字符串扫描）
+                stringStart = pos;
+                continue;
+            }
+            mask[pos] = 1;
             pos++;
             continue;
         }

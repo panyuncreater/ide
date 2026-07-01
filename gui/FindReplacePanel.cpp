@@ -150,10 +150,8 @@ void FindReplacePanel::onFindTextChanged(const QString& text) {
         return;
     }
     highlightMatches(text);
-    // 文本变化时从头查找
-    QTextCursor cursor = editor_->textCursor();
-    cursor.movePosition(QTextCursor::Start);
-    editor_->setTextCursor(cursor);
+    // AUDIT-BUG-E6 fix: 不再将编辑器光标移到文档开头——这会破坏用户的编辑位置。
+    // findText 内部从当前光标位置查找，首次查找从当前位置开始是合理行为。
     findText(true);
 }
 
@@ -250,21 +248,25 @@ void FindReplacePanel::onReplaceAll() {
     if (caseSensitiveCheck_->isChecked()) flags |= QTextDocument::FindCaseSensitively;
     if (wholeWordCheck_->isChecked()) flags |= QTextDocument::FindWholeWords;
 
-    QTextCursor cursor(editor_->document());
-    cursor.beginEditBlock();
+    // AUDIT-BUG-E7 fix: beginEditBlock/endEditBlock 必须在同一 cursor 上调用。
+    // 原实现 cursor=found 后 endEditBlock 在新 cursor 上调用，违反 Qt API 契约。
+    // 修复：用单独的 editCursor 管理 edit block，搜索用 found cursor。
+    QTextCursor editCursor(editor_->document());
+    editCursor.beginEditBlock();
 
     int replaceCount = 0;
-    cursor.movePosition(QTextCursor::Start);
+    QTextCursor searchCursor(editor_->document());
+    searchCursor.movePosition(QTextCursor::Start);
     // P2 fix: 限制替换数量上限，防止超大文档阻塞 UI
     // D14 fix: 上限统一引用 RuntimeLimits::MAX_REPLACE_ALL
     while (replaceCount < RuntimeLimits::MAX_REPLACE_ALL) {
-        QTextCursor found = editor_->document()->find(findTextStr, cursor, flags);
+        QTextCursor found = editor_->document()->find(findTextStr, searchCursor, flags);
         if (found.isNull()) break;
-        cursor = found;
-        cursor.insertText(replaceTextStr);
+        searchCursor = found;
+        searchCursor.insertText(replaceTextStr);
         replaceCount++;
     }
-    cursor.endEditBlock();
+    editCursor.endEditBlock();
 
     statusLabel_->setText(QString("已替换 %1 处").arg(replaceCount));
     statusLabel_->setStyleSheet("color: green;");

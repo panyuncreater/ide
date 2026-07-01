@@ -98,6 +98,10 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
         // 表达式语句（函数调用/方法调用）的返回值未被消费，
         // 需 emit POP 防止栈式 VM (BytecodeIRBackend) 栈泄漏。
         // RegisterBytecodeBackend 中 POP 是 no-op，不影响寄存器式 VM。
+        // AUDIT-BUG-C2 回退: IR 路径与 StackVM 直接路径语义不同。
+        // IR 是 vreg 形式，表达式结果通过 vreg 传递不压栈（visitAssignment/visitBinaryOp 等均返回 vreg）；
+        // 仅 FUN_CALL/METHOD_CALL 在 BytecodeIRBackend 翻译时压栈（返回值），
+        // 故只对这两种 emit POP。对其他节点 emit POP 会导致栈下溢。
         if (stmt->nodeType == NodeType::NODE_FUN_CALL ||
             stmt->nodeType == NodeType::NODE_METHOD_CALL) {
             emitIR(IROp::POP, {}, stmt->line);
@@ -1139,6 +1143,8 @@ void AstIRBuilder::visitBlock(Block* node) {
             if (!s) continue;
             visitNode(s.get());
             // 表达式语句（函数调用/方法调用）的返回值未被消费，需 emit POP。
+            // AUDIT-BUG-C2 回退: IR 是 vreg 形式，表达式结果不压栈；
+            // 仅 FUN_CALL/METHOD_CALL 在 BytecodeIRBackend 压栈，故只对这两种 emit POP。
             if (s->nodeType == NodeType::NODE_FUN_CALL ||
                 s->nodeType == NodeType::NODE_METHOD_CALL) {
                 emitIR(IROp::POP, {}, s->line);
@@ -1205,6 +1211,8 @@ void AstIRBuilder::visitBlock(Block* node) {
         for (auto& s : node->statements) {
             if (!s) continue;
             visitNode(s.get());
+            // AUDIT-BUG-C2 回退: IR 是 vreg 形式，表达式结果不压栈；
+            // 仅 FUN_CALL/METHOD_CALL 在 BytecodeIRBackend 压栈，故只对这两种 emit POP。
             if (s->nodeType == NodeType::NODE_FUN_CALL ||
                 s->nodeType == NodeType::NODE_METHOD_CALL) {
                 emitIR(IROp::POP, {}, s->line);
@@ -1782,6 +1790,13 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
         if (inFunction_) {
             // 函数内：分配局部 slot 并绑定
             uint32_t slot = nextLocalSlot_++;
+            // AUDIT-BUG-F7 fix: 保存 varMap_ 旧条目，catch 块编译后恢复。
+            // 原实现 catch 变量绑定到外层 varMap_ 且不恢复，catch 块后仍可引用，
+            // 与 Interpreter/StackVM 语义不一致（后者 catch 变量仅 catch 块内可见）。
+            auto savedIt_f7 = varMap_.find(node->catchVarName);
+            VarInfo savedInfo_f7;
+            bool hadSaved_f7 = (savedIt_f7 != varMap_.end());
+            if (hadSaved_f7) savedInfo_f7 = savedIt_f7->second;
             varMap_[node->catchVarName] = { VarInfo::Kind::LOCAL, slot };
             if (static_cast<int>(slot + 1) > ir_->localCount) {
                 ir_->localCount = static_cast<int>(slot + 1);
@@ -1800,6 +1815,15 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
             if (!blockScopes_.empty()) {
                 blockScopes_.back().localSlots.push_back(slot);
             }
+            // AUDIT-BUG-F7 fix: catch 块在此编译（而非延后到统一位置），编译后立即恢复 varMap_。
+            if (node->catchBlock) visitNode(node->catchBlock.get());
+            if (hadSaved_f7) {
+                varMap_[node->catchVarName] = std::move(savedInfo_f7);
+            } else {
+                varMap_.erase(node->catchVarName);
+            }
+            emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
+            return;  // AUDIT-BUG-F7: catch 块已编译，提前返回
         } else {
             // 顶层：检查 catchVarName 是否与全局槽位变量同名（对齐 Compiler.cpp:1272-1311）
             int existingSlot = lookupGlobalSlot(node->catchVarName);
@@ -1822,6 +1846,13 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 // 无遮蔽：直接定义为全局变量
                 int gslot = allocateGlobalSlot(node->catchVarName);
                 emitIR(IROp::DEFINE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(gslot)), excVreg }, node->line);
+                // AUDIT-BUG-F7 fix: catch 块在此编译，编译后移除 varMap_ 映射。
+                // 原实现 catch 变量变为永久全局变量，与 StackVM OP_DELETE_VAR 语义不一致。
+                // 移除 varMap_ 映射后，catch 块后引用该变量会报"未定义的变量"（对齐 StackVM）。
+                if (node->catchBlock) visitNode(node->catchBlock.get());
+                varMap_.erase(node->catchVarName);
+                emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
+                return;  // AUDIT-BUG-F7: catch 块已编译，提前返回
             }
         }
     }

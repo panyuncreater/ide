@@ -112,7 +112,9 @@ bool DebugController::shouldPauseAtBreakpoint(int line, const QSet<int>& localBr
     // C3 fix + DBG-03: 单行循环断点重触发——用 crossedLine_ 检测是否跨过不同行
     if ((line != lastSeenLine_.load() || crossedLine_.load()) &&
         line >= snapMinBreakpointLine && localBreakpoints.contains(line)) {
-        crossedLine_.store(false);  // 命中后重置，同行后续子表达式不再触发
+        // AUDIT-BUG-F4 fix: crossedLine_ 重置必须推迟到断点真正命中（return true）之前。
+        // 原实现在条件求值之前重置，条件不满足时 crossedLine_ 已被清 false，
+        // 单行循环中行号不变 → crossedLine_ 永不再变 true → 条件断点首次不满足后永不再触发。
         // 检查是否为条件断点
         auto infoIt = localBreakpointInfos.find(line);
         if (infoIt != localBreakpointInfos.end() && infoIt->isConditional()) {
@@ -124,8 +126,10 @@ bool DebugController::shouldPauseAtBreakpoint(int line, const QSet<int>& localBr
                         auto realIt = breakpointInfos_.find(line);
                         if (realIt != breakpointInfos_.end()) realIt->hitCount++;
                     }
+                    crossedLine_.store(false);  // 命中后重置，同行后续子表达式不再触发
                     return true;
                 }
+                // 条件不满足：保留 crossedLine_ 状态，允许下次迭代重新求值
             }
         } else {
             // 无条件断点：直接暂停
@@ -134,6 +138,7 @@ bool DebugController::shouldPauseAtBreakpoint(int line, const QSet<int>& localBr
                 auto realIt = breakpointInfos_.find(line);
                 if (realIt != breakpointInfos_.end()) realIt->hitCount++;
             }
+            crossedLine_.store(false);  // 命中后重置，同行后续子表达式不再触发
             return true;
         }
     }

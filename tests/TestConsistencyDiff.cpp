@@ -1086,10 +1086,14 @@ TEST(ConsistencyDiff, G5_NullAsDictKeyErrorMessageDivergence) {
 // 不变量:负起始位置 → 返回空串(不报错);负长度 → 报错。
 //         三后端共享 executeSharedStrSubstr 实现,行为应一致。
 TEST(ConsistencyDiff, G6_NegativeSubstrStartReturnsEmpty) {
+    // AUDIT-BUG-F11 fix: 负 start 现在报错（与 len<0 一致），不再静默返回空串。
     std::string src = "print(\"hello\".substr(-2));\n";
-    EXPECT_EQ(runInterp(src), "");
-    EXPECT_EQ(runStackVM_IR(src), "");
-    EXPECT_EQ(runRegVM_IR(src), "");
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+    EXPECT_TRUE(isRuntimeError(rs)) << "StackVM: " << rs;
+    EXPECT_TRUE(isRuntimeError(rr)) << "RegVM: " << rr;
+    EXPECT_EQ(ri, rs);
+    EXPECT_EQ(rs, rr);
 }
 
 TEST(ConsistencyDiff, G6_NegativeSubstrLengthErrors) {
@@ -1299,10 +1303,14 @@ TEST(ConsistencyDiff, E4_SubstrOutOfRange) {
 
 // E5: 字符串方法 substr 负索引 — 三后端应一致返回空串
 TEST(ConsistencyDiff, E5_SubstrNegativeIndex) {
+    // AUDIT-BUG-F11 fix: 负 start 现在报错（与 len<0 一致），不再静默返回空串。
     std::string src = "print(\"abc\".substr(-1, 5));";
-    EXPECT_EQ(runInterp(src), "");
-    EXPECT_EQ(runStackVM_IR(src), "");
-    EXPECT_EQ(runRegVM_IR(src), "");
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+    EXPECT_TRUE(isRuntimeError(rs)) << "StackVM: " << rs;
+    EXPECT_TRUE(isRuntimeError(rr)) << "RegVM: " << rr;
+    EXPECT_EQ(ri, rs);
+    EXPECT_EQ(rs, rr);
 }
 
 // E6: 深递归溢出 — 三后端应一致报错（不崩溃）
@@ -2440,4 +2448,76 @@ TEST(ConsistencyDiff, AuditRegFrame_RecursiveCallRegisters) {
     EXPECT_EQ(ri, "120");
     EXPECT_EQ(ri, rs) << "递归调用寄存器帧隔离";
     EXPECT_EQ(ri, rr);
+}
+
+// ============================================================
+// 第六轮 bug 排查回归测试
+// ============================================================
+
+// F1: constructClassInstance callStack_ 条目泄漏——循环构造多个实例验证不泄漏
+TEST(ConsistencyDiff, AuditF1_ClassConstructorLoopNoCallStackLeak) {
+    std::string src =
+        "class Foo { init() { this.x = 42; } }\n"
+        "var i = 0; var sum = 0;\n"
+        "while (i < 100) { var f = Foo(); sum = sum + f.x; i = i + 1; }\n"
+        "print(sum);\n";  // 42 * 100 = 4200
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "4200");
+    EXPECT_EQ(ri, rs) << "StackVM 循环构造实例";
+    EXPECT_EQ(ri, rr) << "RegVM 循环构造实例";
+}
+
+// F7: IR 路径 catch 变量作用域泄漏——catch 块后引用 catch 变量应报错
+TEST(ConsistencyDiff, AuditF7_CatchVarScopeLeakFunction) {
+    std::string src =
+        "fun f() {\n"
+        "  try { throw 42; } catch (e) { print(e); }\n"
+        "  print(e);\n"  // catch 块外引用 e，应报"未定义的变量"
+        "}\n"
+        "f();\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+    EXPECT_TRUE(isRuntimeError(rs)) << "StackVM: " << rs;
+    EXPECT_TRUE(isRuntimeError(rr)) << "RegVM: " << rr;
+    EXPECT_EQ(ri, rs) << "catch 变量作用域——Interpreter vs StackVM";
+    EXPECT_EQ(rs, rr) << "catch 变量作用域——StackVM vs RegVM";
+}
+
+// F7: 顶层 catch 变量作用域——catch 块后引用应报错
+// 注：IR 路径（StackVM/RegVM）无 DELETE_GLOBAL 指令，顶层 catch 变量泄漏是已知限制。
+// 仅验证 Interpreter 路径正确报错。
+TEST(ConsistencyDiff, AuditF7_CatchVarScopeLeakTopLevel) {
+    std::string src =
+        "try { throw \"err\"; } catch (e) { print(e); }\n"
+        "print(e);\n";  // 顶层 catch 块外引用 e，应报"未定义的变量"
+    auto ri = runInterp(src);
+    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+}
+
+// F7: catch 变量遮蔽外层同名变量——catch 块后外层变量应恢复
+// 注：IR 路径遮蔽执行顺序有预存在 bug，仅验证 Interpreter。
+TEST(ConsistencyDiff, AuditF7_CatchVarShadowingRestored) {
+    std::string src =
+        "var e = 100;\n"
+        "try { throw 42; } catch (e) { print(e); }\n"  // catch 内 e=42
+        "print(e);\n";  // catch 块外 e 应恢复为 100
+    auto ri = runInterp(src);
+    EXPECT_EQ(ri, "42100") << "Interpreter: catch 内输出 42，catch 外输出 100";
+}
+
+// F8: 模块异常路径不崩溃——closeCapturedVariables 在异常路径正确调用
+// F8 fix 在异常路径添加 closeCapturedVariables 调用，确保模块 env 的闭包 upvalue
+// 被正确关闭。此测试验证异常路径不崩溃，程序可继续执行。
+// 注：模块异常后 catch 变量绑定及后续模块导出存在预存在限制（非 F8 修复引入）。
+TEST(ConsistencyDiff, AuditF8_ModuleExceptionNoCrash) {
+    std::unordered_map<std::string, std::string> mods = {
+        {"bad", "throw \"fail\""}
+    };
+    std::string src =
+        "try { import \"bad\"; } catch (e) { print(\"caught\"); }\n"
+        "print(\"after\");\n";
+    auto result = runInterpWithModules(src, mods);
+    // F8 fix: 异常路径调用 closeCapturedVariables，确保不崩溃
+    EXPECT_TRUE(result.find("after") != std::string::npos)
+        << "异常后程序应继续: " << result;
 }

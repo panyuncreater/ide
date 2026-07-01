@@ -186,10 +186,13 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
         return std::string(buf, res.ptr);
     }
     case ValueType::VAL_FLOAT: {
+        // AUDIT-BUG-C2 fix: 用 std::to_chars 替代 snprintf——locale-independent，
+        // 与 Value.h toString() 路径保持一致。此函数用于容器 toString 时嵌套 float 输出。
         char buf[64];
-        int len = snprintf(buf, sizeof(buf), "%.17g", box_.asFloat());
-        if (len < 0) return "nan";
-        return std::string(buf, len);
+        auto res = std::to_chars(buf, buf + sizeof(buf), box_.asFloat(),
+                                 std::chars_format::general, 17);
+        if (res.ec != std::errc{}) return "nan";
+        return std::string(buf, res.ptr);
     }
     case ValueType::VAL_BOOL:
         return box_.asBool() ? "true" : "false";

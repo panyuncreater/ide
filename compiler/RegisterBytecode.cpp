@@ -4,6 +4,7 @@
 
 #include "compiler/RegisterBytecode.h"
 #include <cassert>
+#include <cstdlib>  // AUDIT-BUG-R1: std::abort 替代 assert（Release 构建保护）
 
 // ============================================================
 // A3 fix: 统一 RegOp 元数据表（名称/基础长度/是否变长）

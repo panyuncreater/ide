@@ -139,18 +139,23 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
         if (marked.find(obj) != marked.end()) continue;
 
         // 不可达的循环孤岛：清空子元素打破循环，让 refCount 降至 0 自然释放。
-        // 注意：清空后 obj 可能被级联释放，不能再访问 obj。
+        // AUDIT-BUG-I3 fix: 先 move 出子元素到局部变量再清空，防止自引用容器
+        // （如 a.append(a)）在 clear() 期间级联析构重入 vector 析构器导致 use-after-free。
+        // move 后 obj->elements/entries/fields 为空，级联析构 obj 时其析构器看到空容器，安全。
         switch (obj->type) {
         case ValueType::VAL_ARRAY: {
-            static_cast<Value::ArrayData*>(obj)->elements.clear();
+            auto tmp = std::move(static_cast<Value::ArrayData*>(obj)->elements);
+            (void)tmp;  // tmp 析构时若级联释放 obj，obj->elements 已空
             break;
         }
         case ValueType::VAL_DICT: {
-            static_cast<Value::DictData*>(obj)->entries.clear();
+            auto tmp = std::move(static_cast<Value::DictData*>(obj)->entries);
+            (void)tmp;
             break;
         }
         case ValueType::VAL_INSTANCE: {
-            static_cast<Value::InstanceData*>(obj)->fields.clear();
+            auto tmp = std::move(static_cast<Value::InstanceData*>(obj)->fields);
+            (void)tmp;
             break;
         }
         default:

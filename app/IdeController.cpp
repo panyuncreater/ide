@@ -66,8 +66,9 @@ IdeController::IdeController(QObject* parent)
             Value result = tempInterp.evaluateCondition(ast->statements[0].get());
             return result.isTruthy();
         } catch (const std::exception& e) {
-            Logger::Warning("VM 条件断点求值异常: " + std::string(e.what()) +
-                            "（条件: " + condition + "），视为条件不满足", "VmStepper");
+            // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
+            LOG_WARNING("VM 条件断点求值异常: " + std::string(e.what()) +
+                        "（条件: " + condition + "），视为条件不满足", "VmStepper");
             return false;
         } catch (...) {
             return false;

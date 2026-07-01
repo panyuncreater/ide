@@ -183,7 +183,12 @@ Result<Value> executeSharedStrSubstr(const Value& str,
     // P0-4 fix: 使用 Utf8 工具函数替代重复的内联 lambda
 
     int64_t totalCp = str.codepointCount();  // perf1 fix: 带缓存的码位计数
-    if (start < 0 || start > totalCp) {
+    // AUDIT-BUG-F11 fix: 负 start 报错（与 len<0 一致），而非静默返回空串。
+    // 原 start<0 静默返回 ""，len<0 报错，错误处理不对称。用户无法区分"空串"与"负索引错误"。
+    if (start < 0) {
+        return Result<Value>::err("substr 起始位置不能为负数", line, column);
+    }
+    if (start > totalCp) {
         return Result<Value>::ok(Value(std::string("")));
     }
 
@@ -751,9 +756,12 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
     if (method == "pop") {
         if (!args.empty())
             throw RuntimeError(ErrorFormat::format("pop 期望 0 个参数，但传入了 %zu 个", args.size()), line, col);
-        if (obj.arrayVal().empty())
+        // AUDIT-BUG-C5 fix: 空数组检查用 const 访问器避免 COW detach。
+        // 非 const arrayVal() 在 refCount>1 时会 ensureUnique 深拷贝整个数组，
+        // 此处仅为检查 empty() 却触发不必要的克隆。
+        if (std::as_const(obj).arrayVal().empty())
             throw RuntimeError("对空数组调用 pop", line, col);
-        Value last = obj.arrayVal().back();
+        Value last = std::as_const(obj).arrayVal().back();
         obj.arrayVal().pop_back();
         return BuiltinMethodResult(std::move(last), /*objectModified=*/true);
     }
@@ -764,9 +772,9 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
         if (!args[0].isInt())
             throw RuntimeError("remove 参数必须是整数索引", line, col);
         int64_t idx = args[0].intVal();
-        if (idx < 0 || static_cast<size_t>(idx) >= obj.arrayVal().size())
+        if (idx < 0 || static_cast<size_t>(idx) >= std::as_const(obj).arrayVal().size())
             throw RuntimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                static_cast<long long>(idx), obj.arrayVal().size()), line, col);
+                static_cast<long long>(idx), std::as_const(obj).arrayVal().size()), line, col);
         obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(idx));
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }

@@ -21,7 +21,7 @@ void WorkerManager::QThreadDeleter::operator()(QThread* thread) const {
         if (thread->isRunning()) {
             thread->quit();
             if (!thread->wait(5000)) {
-                Logger::Error("QThreadDeleter: Worker 未在 5 秒内退出，回退 terminate()（避免 delete running QThread UB）", "IDE");
+                LOG_ERROR("QThreadDeleter: Worker 未在 5 秒内退出，回退 terminate()（避免 delete running QThread UB）", "IDE");
                 thread->terminate();
                 thread->wait();
             }
@@ -72,7 +72,7 @@ std::function<std::string(const std::string&)> WorkerManager::buildInputCallback
         // E3 fix: 超时不再静默返回空串（会导致 input() 调用方拿到看似正常的结果继续执行），
         // 改为抛异常，由 executeSharedInput 捕获并附上调用点行号/列号上抛 RuntimeError。
         // promise 仍由 shared_ptr 持有，主线程稍后 set_value 不会 use-after-free。
-        Logger::Warning("input() 超时（主线程 30 秒未响应），抛出 RuntimeError", "IDE");
+        LOG_WARNING("input() 超时（主线程 30 秒未响应），抛出 RuntimeError", "IDE");
         throw std::runtime_error("input() 超时（主线程 30 秒未响应）");
     };
 }
@@ -93,7 +93,7 @@ WorkerManager::~WorkerManager() {
         debugger_->stop();
         workerThread_->quit();
         if (!workerThread_->wait(5000)) {
-            Logger::Error("析构时 Worker 未在 5 秒内停止，回退到 terminate()（进程退出阶段）", "IDE");
+            LOG_ERROR("析构时 Worker 未在 5 秒内停止，回退到 terminate()（进程退出阶段）", "IDE");
             workerThread_->terminate();
             workerThread_->wait();
         }
@@ -119,7 +119,7 @@ void WorkerManager::setupMainCallbacks() {
 bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, const std::string& filePath) {
     if (isRunning_) return false;
 
-    Logger::Info(isDebug ? "启动调试运行" : "启动程序运行", "IDE");
+    LOG_INFO(isDebug ? "启动调试运行" : "启动程序运行", "IDE");
 
     // P0-1 fix: 设置模块加载器，使 F12 模块系统在 IDE 中可用
     // 模块路径解析：相对于当前文件所在目录查找 <modulePath>.mini 文件
@@ -262,14 +262,14 @@ void WorkerManager::forceStop() {
             // terminate 风险（pauseMutex_ 可能被持有）：仅当 worker 卡在 checkBreak()
             // 才会持有该锁，但卡在 checkBreak 的 worker 会检测到 stopped_ 并正常退出，
             // 因此到达此分支的 worker 通常在执行用户代码（未持有 DebugController 锁）。
-            Logger::Error("Worker 未在 5 秒内响应取消请求，回退 terminate() + join（确保 close 路径安全）", "IDE");
+            LOG_ERROR("Worker 未在 5 秒内响应取消请求，回退 terminate() + join（确保 close 路径安全）", "IDE");
             workerThread_->terminate();
             // AUDIT-LIFECYCLE fix: 原 wait() 无超时。Windows 上 TerminateThread 立即生效，
             // 但 Unix 上 pthread_cancel 为延迟取消（PTHREAD_CANCEL_DEFERRED），
             // 若 worker 卡在无取消点的纯 CPU 循环则永不生效，wait() 永久阻塞，
             // std::_Exit(0) 无法触发。加 2 秒超时，超时后直接 _Exit 退出进程。
             if (!workerThread_->wait(2000)) {
-                Logger::Error("Worker terminate 后 2 秒仍未退出，强制 _Exit", "IDE");
+                LOG_ERROR("Worker terminate 后 2 秒仍未退出，强制 _Exit", "IDE");
                 Logger::instance().flush();
                 std::_Exit(0);
             }

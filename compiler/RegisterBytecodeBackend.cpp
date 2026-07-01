@@ -397,7 +397,10 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_CALL, line);
         chunk_->writeReg(dst, line);
         chunk_->writeShort(nameIdx, line);
-        chunk_->writeReg(argCount, line);
+        // AUDIT-BUG-C1 fix: argCount 是数量操作数（合法 0-255），不是寄存器号。
+        // 原用 writeReg（含 assert(reg < 32)），argCount >= 32 时 Debug 构建崩溃。
+        // 改用 writeByte（无 assert），与 MAKE_CLOSURE:504 一致。
+        chunk_->writeByte(argCount, line);
         for (uint8_t i = 0; i < argCount; ++i) {
             if (3 + i >= instr.operands.size()) return false;
             uint8_t argReg = vregToReg(instr.operands[3 + i].index);
@@ -419,7 +422,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_CALL_EXPR, line);
         chunk_->writeReg(dst, line);
         chunk_->writeReg(callee, line);
-        chunk_->writeReg(argCount, line);
+        // AUDIT-BUG-C1 fix: argCount 是数量操作数，改用 writeByte（详见 MAKE_CLOSURE:504）。
+        chunk_->writeByte(argCount, line);
         for (uint8_t i = 0; i < argCount; ++i) {
             if (3 + i >= instr.operands.size()) return false;
             uint8_t argReg = vregToReg(instr.operands[3 + i].index);
@@ -444,7 +448,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(dst, line);
         chunk_->writeReg(obj, line);
         chunk_->writeShort(methodIdx, line);
-        chunk_->writeReg(argCount, line);
+        // AUDIT-BUG-C1 fix: argCount 是数量操作数，改用 writeByte（详见 MAKE_CLOSURE:504）。
+        chunk_->writeByte(argCount, line);
         for (uint8_t i = 0; i < argCount; ++i) {
             if (4 + i >= instr.operands.size()) return false;
             uint8_t argReg = vregToReg(instr.operands[4 + i].index);
@@ -469,7 +474,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_SUPER_CALL, line);
         chunk_->writeReg(dst, line);
         chunk_->writeShort(methodIdx, line);
-        chunk_->writeReg(argCount, line);
+        // AUDIT-BUG-C1 fix: argCount 是数量操作数，改用 writeByte（详见 MAKE_CLOSURE:504）。
+        chunk_->writeByte(argCount, line);
         chunk_->writeReg(recvReg, line);
         chunk_->writeShort(classIdx, line);
         for (uint8_t i = 0; i < argCount; ++i) {
@@ -536,7 +542,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         uint8_t count = static_cast<uint8_t>(instr.operands[1].index & 0xFF);
         chunk_->writeOp(RegOp::REG_BUILD_ARRAY, line);
         chunk_->writeReg(dst, line);
-        chunk_->writeReg(count, line);
+        // AUDIT-BUG-C1 fix: count 是数量操作数，改用 writeByte（详见 MAKE_CLOSURE:504）。
+        chunk_->writeByte(count, line);
         for (uint8_t i = 0; i < count; ++i) {
             if (2 + i >= instr.operands.size()) return false;
             uint8_t elemReg = vregToReg(instr.operands[2 + i].index);
@@ -556,7 +563,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         uint8_t pairCount = static_cast<uint8_t>(instr.operands[1].index & 0xFF);
         chunk_->writeOp(RegOp::REG_BUILD_DICT, line);
         chunk_->writeReg(dst, line);
-        chunk_->writeReg(pairCount, line);
+        // AUDIT-BUG-C1 fix: pairCount 是数量操作数，改用 writeByte（详见 MAKE_CLOSURE:504）。
+        chunk_->writeByte(pairCount, line);
         for (uint8_t i = 0; i < pairCount; ++i) {
             size_t kBase = 2 + i * 2;
             if (kBase + 1 >= instr.operands.size()) return false;
@@ -710,7 +718,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_CLASS_NEW, line);
         chunk_->writeReg(dst, line);
         chunk_->writeShort(nameIdx, line);
-        chunk_->writeReg(argCount, line);
+        // AUDIT-BUG-C1 fix: argCount 是数量操作数，改用 writeByte（详见 MAKE_CLOSURE:504）。
+        chunk_->writeByte(argCount, line);
         for (uint8_t i = 0; i < argCount; ++i) {
             if (3 + i >= instr.operands.size()) return false;
             chunk_->writeReg(vregToReg(instr.operands[3 + i].index), line);

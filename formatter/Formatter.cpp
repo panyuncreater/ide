@@ -425,7 +425,20 @@ std::string Formatter::formatUnaryOp(UnaryOp& node) {
 }
 
 std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
-    return node.getValue().toString();  // A1 fix: getValue() 按需构造
+    // AUDIT-BUG-P2 fix: float 值为整数时 toString 输出无小数点（如 1.0 → "1"），
+    // 重新解析时被识别为 int，破坏 AST 往返不变量。检测并附加 ".0"。
+    const Value& v = node.getValue();
+    if (v.isFloat()) {
+        std::string s = v.toString();
+        // 若输出中无 '.' 和 'e'/'E'（纯整数形式），附加 ".0" 保持 float 类型
+        if (s.find('.') == std::string::npos &&
+            s.find('e') == std::string::npos &&
+            s.find('E') == std::string::npos) {
+            return s + ".0";
+        }
+        return s;
+    }
+    return v.toString();  // A1 fix: getValue() 按需构造
 }
 
 std::string Formatter::formatStringLiteral(StringLiteral& node) {

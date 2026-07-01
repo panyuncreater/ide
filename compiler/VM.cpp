@@ -835,8 +835,10 @@ VMResult VM::stepOnce() {
             currentFrame().ip = returnIp;  // 恢复调用者 ip，避免重复执行调用指令
             // V-P1-5 fix: 先截断栈清理 callee 残留局部变量，再 push 返回值
             // 原代码直接 push 导致栈布局为 [调用者数据][callee 残留局部变量][返回值]
+            // AUDIT-BUG-V1 fix: wasInit 分支访问 stack_[savedBp] 需 savedBp < stack_.size()，
+            // 原条件 savedBp <= stack_.size() 允许 savedBp == top_ 触发 VMStack::operator[] abort。
             if (savedBp <= stack_.size()) {
-                if (wasInit) {
+                if (wasInit && savedBp < stack_.size()) {
                     Value thisVal = stack_[savedBp];  // 先拷出 this
                     stack_.resize(savedBp);            // 清理 callee 残留
                     push(std::move(thisVal));
@@ -883,8 +885,9 @@ VMResult VM::execute(const CompileResult& result) {
             if (!frames_.empty()) {
                 currentFrame().ip = returnIp;   // 恢复调用者 ip，避免重复执行调用指令
                 // V-P1-5 fix: 先截断栈清理 callee 残留局部变量，再 push 返回值
+                // AUDIT-BUG-V1 fix: wasInit 分支访问 stack_[savedBp] 需 savedBp < stack_.size()
                 if (savedBp <= stack_.size()) {
-                    if (wasInit) {
+                    if (wasInit && savedBp < stack_.size()) {
                         Value thisVal = stack_[savedBp];
                         stack_.resize(savedBp);
                         push(std::move(thisVal));
@@ -1410,9 +1413,9 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_DELETE_GLOBAL: {
         uint16_t slot = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (slot < globalSlots_.size()) {
-            globalSlots_[slot] = Value::nullValue();
-        }
+        // AUDIT-BUG-V3 fix: 越界时报错而非静默无操作，与其他 OP_*_GLOBAL 一致
+        if (slot >= globalSlots_.size()) return runtimeError("全局变量槽越界");
+        globalSlots_[slot] = Value::nullValue();
         notifyStep(ip, op);
         ip += 3;
         break;

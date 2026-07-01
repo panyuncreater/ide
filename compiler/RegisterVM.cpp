@@ -1433,7 +1433,11 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName,
             for (uint8_t i = 0; i < argCount; ++i) {
                 args.push_back(reg(argRegs[i]));
             }
-            auto result = executeSharedBuiltinFunction(funName, args.data(), argCount);
+            // AUDIT-BUG-F9 fix: 传入实际源码行号，对齐 StackVM 路径（VMCalls.cpp:380-386）。
+            // 原实现仅传 3 参数，line/column 取默认值 0,0，错误消息显示"行 0:0"。
+            const RegBytecodeChunk& curChunk = *currentFrame().chunk;
+            int line = (ip < curChunk.lines.size()) ? curChunk.lines[ip] : 0;
+            auto result = executeSharedBuiltinFunction(funName, args.data(), argCount, line, 0);
             if (result.is_ok()) {
                 reg(dstReg) = result.value();
                 // C-8 fix: 内建函数同步返回，用调用者传入的 returnOffset 前进 ip

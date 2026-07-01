@@ -187,6 +187,8 @@ VMResult VM::executeReturn(size_t& ip) {
     if (frames_.empty()) {
         // 末帧返回：先截断栈清理 main 帧的局部变量/字段槽/参数，
         // 仅保留返回值。否则 getStack() 会返回残留垃圾，影响调试器/UI 可视化。
+        // AUDIT-BUG-V5 fix: 防御性检查 savedBp <= stack_.size()，防止栈损坏时 resize abort
+        if (savedBp > stack_.size()) return runtimeError("返回时栈布局损坏: savedBp > stack size");
         stack_.resize(savedBp);
         // V-P2-21 fix: result 后续不再使用，std::move 入栈
         push(std::move(result));
@@ -194,6 +196,8 @@ VMResult VM::executeReturn(size_t& ip) {
         return VMResult::VM_OK;
     }
     // 恢复栈：清理当前帧的局部变量和参数
+    // AUDIT-BUG-V5 fix: 同末帧路径，防御性检查
+    if (savedBp > stack_.size()) return runtimeError("返回时栈布局损坏: savedBp > stack size");
     stack_.resize(savedBp);
     // V-P2-21 fix: result 后续不再使用，std::move 入栈
     push(std::move(result));
@@ -549,6 +553,8 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         int extraSlots = targetChunk.localCount - argCount;
         // V-P2-1 fix: extraSlots 为负表示帧布局损坏
         if (extraSlots < 0) {
+            // AUDIT-BUG-V4 fix: 弹出栈上残留参数保持栈平衡，与其他错误路径一致
+            for (int i = 0; i < argCount; ++i) pop();
             return runtimeError(ErrorFormat::format(
                 "函数调用帧布局损坏: localCount=%d < argCount=%d",
                 targetChunk.localCount, static_cast<int>(argCount)));
@@ -1034,9 +1040,12 @@ VMResult VM::executeDefineClass(size_t& ip, OpCode op) {
     if (!cur.empty()) {
         return runtimeError("类继承链过深或存在循环继承: " + className + " -> " + cur);
     }
-    // 倒序遍历链（最远的祖先在前），保证子类字段覆盖父类字段
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        auto clsIt = classInfo_.find(*it);
+    // AUDIT-BUG-C3 fix: 正序遍历链（直接父类在前，根祖先在后），
+    // 配合 "if not found then add" 去重——直接父类同名字段先入表，根祖先被跳过。
+    // 原倒序遍历导致根祖先先入表，直接父类同名字段被跳过，三后端不一致。
+    // 与 Interpreter InterpreterCalls.cpp:317-337 语义对齐。
+    for (const auto& clsName : chain) {
+        auto clsIt = classInfo_.find(clsName);
         if (clsIt == classInfo_.end()) continue;
         for (const auto& fieldName : clsIt->second.fieldOrder) {
             if (mergedDefaults.find(fieldName) == mergedDefaults.end()) {

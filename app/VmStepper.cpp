@@ -114,6 +114,9 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         isVmRunning_ = true;
         vmStepMode_ = mode;
         vmStepStartFrameCount_ = getFrameCount();
+        // AUDIT-BUG-F3 fix: 每次步进调用前重置 vmCrossedDeeper_。原实现仅在 stop() 中重置，
+        // 导致首次 STEP_OVER 跨帧后标志残留 true，后续每条指令立即暂停（STEP_OVER 退化为 STEP_IN）。
+        vmCrossedDeeper_ = false;
 
         // #3 fix: pre-execution 断点检查 — 首次初始化后检查首行是否为断点行。
         // 原实现直接进入 stepOnce 循环，导致首行断点被先执行再检测（post-execution），
@@ -192,6 +195,13 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 shouldPause = true;
                 break;
             case VmStepMode::STEP_OVER:
+                // AUDIT-BUG-D2 fix: 跟踪是否进入过更深的帧（crossedDeeper）。
+                // 同行函数调用（如 foo(); bar(); 同在第5行）STEP_OVER foo() 后
+                // currentLine 仍为 5 == vmLastPausedLine_，原逻辑不暂停直接执行 bar()。
+                // crossedDeeper 标志确保从更深帧返回后即使行号不变也暂停。
+                if (currentFrameCount > vmStepStartFrameCount_) {
+                    vmCrossedDeeper_ = true;
+                }
                 // 帧深度回到起始或更浅，且行号变化（行号为 0 时仅按帧深度判断）
                 if (currentFrameCount <= vmStepStartFrameCount_) {
                     if (currentLine == 0) {
@@ -199,9 +209,10 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                         if (currentFrameCount != vmStepStartFrameCount_) {
                             shouldPause = true;
                         }
-                    } else if (currentLine != vmLastPausedLine_) {
+                    } else if (currentLine != vmLastPausedLine_ || vmCrossedDeeper_) {
                         shouldPause = true;
                     }
+                    // 暂停后 crossedDeeper_ 在 resetVmStepState 中重置
                 }
                 break;
             case VmStepMode::STEP_OUT:
@@ -318,6 +329,7 @@ void VmStepper::stop() {
     isVmRunning_ = false;
     vmStepMode_ = VmStepMode::STEP_IN;
     vmLastPausedLine_ = 0;
+    vmCrossedDeeper_ = false;  // AUDIT-BUG-D2 fix: reset 重置
 }
 
 // #4 fix: 检查断点命中（含条件求值）
@@ -336,7 +348,9 @@ bool VmStepper::checkBreakpointHit(int line) {
     if (vmConditionEvaluator_) {
         return vmConditionEvaluator_(condIt.value());
     }
-    // 无求值器时视为无条件（降级处理，不应出现在正常流程中）
-    return true;
+    // 无求值器时视为条件不满足（不暂停）——与 DebugEvaluator::evaluate 语义一致。
+    // AUDIT-BUG-D1 fix: 原返回 true 会导致条件断点被当作无条件断点，
+    // 用户设置的条件被完全忽略。返回 false 更安全（不暂停而非总是暂停）。
+    return false;
 }
 

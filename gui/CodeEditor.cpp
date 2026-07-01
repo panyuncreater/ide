@@ -126,6 +126,17 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
     QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->position().y())));
     int lineNumber = cursor.blockNumber() + 1;
 
+    // AUDIT-BUG-F13 fix: 检查点击是否在文档内容区域内。
+    // cursorForPosition 对最后一行下方的空白区域返回文档末尾光标（最后一个块号），
+    // 导致空白区域点击在最后一行设置断点。检查 Y 坐标是否超出最后一个块的下边界。
+    QTextBlock lastBlock = codeEditor->document()->lastBlock();
+    qreal lastBlockBottom = static_cast<qreal>(
+        codeEditor->blockBoundingGeometry(lastBlock)
+            .translated(codeEditor->contentOffset()).bottom());
+    if (static_cast<qreal>(event->position().y()) >= lastBlockBottom) {
+        return;  // 点击在最后一行下方的空白区域，不设置断点
+    }
+
     // DB-2 fix: 不允许在空行/纯注释行设置断点
     QTextBlock block = codeEditor->document()->findBlockByNumber(lineNumber - 1);
     if (block.isValid()) {

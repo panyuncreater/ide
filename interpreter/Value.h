@@ -140,6 +140,12 @@ private:
             auto cloned = std::make_unique<T>(*ptr);  // 拷贝构造（RefCounted 拷贝 ctor 重置 refCount=1）
             ptr->release();                          // 释放旧引用
             T* raw = cloned.release();
+            // AUDIT-BUG-C1 fix: 拷贝构造不会调用 GcManager::registerTracked（仅显式构造函数调用）。
+            // COW 克隆的容器必须注册到 GcManager，否则循环引用（如 b.push(b) 后 COW detach）
+            // 不会被 collectCycle 回收，导致永久内存泄漏。
+            if constexpr (std::is_same_v<T, ArrayData> || std::is_same_v<T, DictData> || std::is_same_v<T, InstanceData>) {
+                GcManager::instance().registerTracked(raw);
+            }
             box_ = NaNBox::fromPtr(static_cast<const void*>(raw));
             return raw;
         }
@@ -181,7 +187,9 @@ public:
     explicit Value(std::string&& v)
         : box_(NaNBox::fromPtr(static_cast<const void*>(new StringData(std::move(v))))) {}
     explicit Value(const char* v)
-        : box_(NaNBox::fromPtr(static_cast<const void*>(new StringData(std::string(v))))) {}
+        // AUDIT-BUG-I5 fix: nullptr 防御——std::string(nullptr) 是 UB
+        : box_(NaNBox::fromPtr(static_cast<const void*>(
+              new StringData(v ? std::string(v) : std::string())))) {}
 
     // 数组构造
     explicit Value(const std::vector<Value>& v)
@@ -641,10 +649,14 @@ public:
             return std::string(buf, res.ptr);
         }
         case ValueType::VAL_FLOAT: {
+            // AUDIT-BUG-I4 fix: 用 std::to_chars 替代 snprintf——locale-independent，
+            // 避免非 "C" locale 下十进制分隔符变为 ',' 导致解析失败。
+            // 与 VAL_INT 路径风格一致，使用 general 格式 + 17 位精度（round-trip 保证）。
             char buf[64];
-            int len = snprintf(buf, sizeof(buf), "%.17g", box_.asFloat());
-            if (len < 0) return "nan";
-            return std::string(buf, len);
+            auto res = std::to_chars(buf, buf + sizeof(buf), box_.asFloat(),
+                                     std::chars_format::general, 17);
+            if (res.ec != std::errc{}) return "nan";
+            return std::string(buf, res.ptr);
         }
         case ValueType::VAL_BOOL:
             return box_.asBool() ? "true" : "false";

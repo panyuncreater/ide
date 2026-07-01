@@ -649,3 +649,30 @@ TEST(CompilerTypeCheckTest, A15_IntWidensToFloatOnAssignment) {
     EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
         << "float 变量赋 int 字面量应宽化，无警告";
 }
+
+// AUDIT-BUG-E1: TypeChecker 作用域泄漏——if/while/for 块内变量类型注解污染外层
+TEST(CompilerTypeCheckTest, A16_BlockScopeTypeLeak) {
+    // if 块内声明的同名变量不应影响外层类型注解
+    auto tc = compileWithTypeCheck(R"(
+var x: int = 1
+if (true) {
+    var x: string = "hello"
+}
+x = 42
+)");
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
+        << "if 块内的 var x: string 不应泄漏到外层，x = 42 应无警告";
+}
+
+TEST(CompilerTypeCheckTest, A17_WhileScopeTypeLeak) {
+    auto tc = compileWithTypeCheck(R"(
+var x: int = 1
+while (true) {
+    var x: string = "hello"
+    break
+}
+x = 42
+)");
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
+        << "while 块内的 var x: string 不应泄漏到外层";
+}

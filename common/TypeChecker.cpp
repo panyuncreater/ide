@@ -91,27 +91,45 @@ public:
     }
 
     void visitBlock(Block& node) override {
+        // AUDIT-BUG-E1 fix: 块作用域隔离——保存/恢复 varTypes，
+        // 防止内层块（if/while/for body）的变量类型注解污染外层。
+        // visitFunDecl 已有此模式，此处对齐。
+        auto saved = varTypes;
         for (auto& stmt : node.statements) {
             if (stmt) stmt->accept(*this);
         }
+        varTypes = std::move(saved);
     }
 
     void visitIfStmt(IfStmt& node) override {
         if (node.condition) node.condition->accept(*this);
+        // AUDIT-BUG-E1 fix: then/else 分支是独立作用域
+        auto saved = varTypes;
         if (node.thenBranch) node.thenBranch->accept(*this);
+        varTypes = saved;
         if (node.elseBranch) node.elseBranch->accept(*this);
+        varTypes = std::move(saved);
     }
 
     void visitWhileStmt(WhileStmt& node) override {
         if (node.condition) node.condition->accept(*this);
+        // AUDIT-BUG-E1 fix: 循环体是独立作用域
+        auto saved = varTypes;
         if (node.body) node.body->accept(*this);
+        varTypes = std::move(saved);
     }
 
     void visitForStmt(ForStmt& node) override {
+        // AUDIT-BUG-E1 fix: for 的 initializer/condition/update/body 各为独立作用域
+        auto saved = varTypes;
         if (node.initializer) node.initializer->accept(*this);
+        varTypes = saved;
         if (node.condition) node.condition->accept(*this);
+        varTypes = saved;
         if (node.update) node.update->accept(*this);
+        varTypes = saved;
         if (node.body) node.body->accept(*this);
+        varTypes = std::move(saved);
     }
 
     void visitFunDecl(FunDecl& node) override {

@@ -61,6 +61,10 @@ void IrViewer::setIR(const IRFunction* ir) {
     static constexpr size_t MAX_IR_ROWS = 10000;
 
     list_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
+    // AUDIT-BUG-F5 fix: 用 try/catch 保护填充逻辑，确保异常路径也恢复 updatesEnabled。
+    // 原实现无异常保护，formatIRInstruction 或 new QListWidgetItem 抛异常时
+    // setUpdatesEnabled(true) 永不执行，列表永久冻结不可重绘。
+    try {
     // Dedup-4A: 通过 GuiTextUtils::monospaceFont 共享全局 QFont 缓存（原 static const QFont）
     const QFont& irFont = GuiTextUtils::monospaceFont(10);
     const QFont& headerFont = GuiTextUtils::monospaceFont(10, true);
@@ -122,6 +126,11 @@ void IrViewer::setIR(const IRFunction* ir) {
     }
 
     list_->setUpdatesEnabled(true);
+    }  // end try
+    catch (...) {
+        list_->setUpdatesEnabled(true);  // AUDIT-BUG-F5 fix: 异常路径恢复重绘
+        throw;  // 重新抛出，让上层处理
+    }
 }
 
 void IrViewer::clearIR() {

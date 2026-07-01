@@ -310,6 +310,13 @@ public:
     /// 有捕获的 env 不能回收（resetForReuse 会清空 variables，导致 weak_ptr 仍有效但内容陈旧）。
     bool hasClosureCaptures() const { return !closureCaptures_.empty(); }
 
+    /// AUDIT-BUG-I1 fix: 是否有闭包以本 env 作为 env weak_ptr 目标。
+    /// 即使闭包仅捕获父级变量（不在本 env 注册 capture），本 env 也不能回收——
+    /// 因为闭包的 env weak_ptr 指向本 env，回收后 resetForReuse 会清空 variables
+    /// 并替换 parent，导致闭包调用时变量查找失败。
+    void markClosureEnvRef() { hasClosureEnvRef_ = true; }
+    bool hasClosureEnvRef() const { return hasClosureEnvRef_; }
+
     /// PERF-07 fix: 重置 Environment 状态以便对象池复用。
     /// 清空 variables/typeAnnotations_/boundInstance_，更新 parent 指针。
     /// 用于 visitBlock 退出时回收未捕获的块作用域 Environment，避免重复堆分配。
@@ -323,6 +330,8 @@ public:
         }
         // B1 fix: 防御性清空 — 有捕获的 env 不应被回收，但此处兜底避免悬垂引用
         closureCaptures_.clear();
+        // AUDIT-BUG-I1 fix: 重置闭包 env 引用标记
+        hasClosureEnvRef_ = false;
     }
 
     // ---- B2 fix: 作用域感知的类型注解 ----
@@ -369,6 +378,10 @@ private:
         std::string capturedName;
     };
     std::vector<ClosureCapture> closureCaptures_;
+
+    // AUDIT-BUG-I1 fix: 标记是否有闭包以本 env 作为 env weak_ptr 目标。
+    // 用于防止 envPool_ 回收破坏闭包 env weak_ptr。
+    bool hasClosureEnvRef_ = false;
 
     // P0-5 fix: 已移除有缺陷的深度缓存（DepthEntry/depthCache_/generation_/
     //   findTargetEnv/getAtDepth/setAtDepth/getWithDepth），改用简单作用域链遍历。

@@ -1,5 +1,6 @@
 #include "ide.h"
 #include "Logger.h"
+#include "common/RuntimeLimits.h"
 #include <QVBoxLayout>
 #include <QAbstractItemView>
 #include <QFileDialog>
@@ -490,17 +491,19 @@ void Ide::initConnections() {
 void Ide::onRun() {
     std::string source = codeEditor_->toPlainText().toStdString();
 
+    // 互斥检查：REPL 异步任务在跑时拒绝运行，避免并发访问 Interpreter 数据竞争
+    // AUDIT-BUG-F6 fix: 互斥检查必须在 clearAll 之前，否则 REPL 运行时清空用户历史输出后
+    // 才报错，用户输出不可恢复。
+    if (replPanel_->isReplRunning()) {
+        outputPanel_->appendError("REPL 正在执行，请等待其完成后再运行");
+        return;
+    }
+
     // 清空输出和调试面板
     outputPanel_->clearAll();
     debugPanel_->clearAll();
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
-
-    // 互斥检查：REPL 异步任务在跑时拒绝运行，避免并发访问 Interpreter 数据竞争
-    if (replPanel_->isReplRunning()) {
-        outputPanel_->appendError("REPL 正在执行，请等待其完成后再运行");
-        return;
-    }
 
     if (!controller_->prepareRun(false, source, currentFilePath_.toStdString())) return;
 
@@ -527,17 +530,18 @@ void Ide::onRun() {
 void Ide::onDebug() {
     std::string source = codeEditor_->toPlainText().toStdString();
 
+    // 互斥检查：REPL 异步任务在跑时拒绝调试，避免并发访问 Interpreter 数据竞争
+    // AUDIT-BUG-F6 fix: 互斥检查必须在 clearAll 之前（同 onRun）。
+    if (replPanel_->isReplRunning()) {
+        outputPanel_->appendError("REPL 正在执行，请等待其完成后再调试");
+        return;
+    }
+
     // 清空输出和调试面板
     outputPanel_->clearAll();
     debugPanel_->clearAll();  // H7 fix: 清空旧调试数据
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
-
-    // 互斥检查：REPL 异步任务在跑时拒绝调试，避免并发访问 Interpreter 数据竞争
-    if (replPanel_->isReplRunning()) {
-        outputPanel_->appendError("REPL 正在执行，请等待其完成后再调试");
-        return;
-    }
 
     if (!controller_->prepareRun(true, source, currentFilePath_.toStdString())) return;
 
@@ -1106,7 +1110,9 @@ void Ide::onReplace() {
 
 void Ide::onFindNext() {
     if (findReplacePanel_->isVisible()) {
-        // 面板可见时由面板处理
+        // AUDIT-BUG-E5 fix: 面板可见时直接调用面板查找，而非 return 无操作。
+        // 原实现在面板可见但焦点在编辑器时 return，导致 F3 完全无响应。
+        findReplacePanel_->onFindNext();
         return;
     }
     // 面板不可见时，使用上次查找内容（显示面板）
@@ -1115,6 +1121,7 @@ void Ide::onFindNext() {
 
 void Ide::onFindPrev() {
     if (findReplacePanel_->isVisible()) {
+        findReplacePanel_->onFindPrev();
         return;
     }
     findReplacePanel_->showFind();
@@ -1557,10 +1564,26 @@ void Ide::loadFile(const QString& path) {
             QString::fromUtf8("无法打开文件: ") + file.errorString());
         return;
     }
+    // AUDIT-BUG-E3 fix: 文件大小检查，防止大文件冻结 UI
+    qint64 fileSize = file.size();
+    if (fileSize > static_cast<qint64>(MAX_SOURCE_SIZE)) {
+        QMessageBox::warning(this, QString::fromUtf8("错误"),
+            QString::fromUtf8("文件过大 (") + QString::number(fileSize) +
+            QString::fromUtf8(" 字节)，超过上限 (") +
+            QString::number(MAX_SOURCE_SIZE) + QString::fromUtf8(" 字节)"));
+        file.close();
+        return;
+    }
     QTextStream in(&file);
     in.setEncoding(QStringConverter::Utf8);
-    codeEditor_->setPlainText(in.readAll());
+    QString content = in.readAll();
     file.close();
+    // AUDIT-BUG-E2 fix: 跳过 UTF-8 BOM（EF BB BF → U+FEFF）
+    // QStringConverter::Utf8 不会自动跳过 BOM，需手动处理
+    if (!content.isEmpty() && content[0] == QChar(0xFEFF)) {
+        content.remove(0, 1);
+    }
+    codeEditor_->setPlainText(content);
     currentFilePath_ = path;
     isDirty_ = false;
     codeEditor_->document()->setModified(false);

@@ -26,13 +26,14 @@ public:
     void showReplace();
     /// 关闭面板并清除高亮
     void closePanel();
+    // AUDIT-BUG-E5 fix: 公开 onFindNext/onFindPrev 供 Ide 快捷键直接调用
+    void onFindNext();
+    void onFindPrev();
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private slots:
-    void onFindNext();
-    void onFindPrev();
     void onReplace();
     void onReplaceAll();
     void onFindTextChanged(const QString& text);

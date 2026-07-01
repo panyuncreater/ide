@@ -74,7 +74,8 @@ void ReplPanel::waitReplFuture() {
         controller_->requestReplStop();
         auto status = replFuture_.wait_for(std::chrono::seconds(5));
         if (status == std::future_status::ready) return;
-        Logger::Warning("REPL 异步任务未在 5 秒内响应中止请求，等待强制完成");
+        // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
+        LOG_WARNING("REPL 异步任务未在 5 秒内响应中止请求，等待强制完成", "REPL");
     }
     replFuture_.wait();
 }
@@ -208,8 +209,10 @@ void ReplPanel::onReturnPressed() {
         }
         // 模块缓存刷新命令：reload "mod" 或 reload all
         // 场景：用户修改了模块源文件后，需在 REPL 中获取最新版本
-        if (trimmedLine.startsWith("reload")) {
-            QString arg = trimmedLine.mid(6).trimmed();
+        // AUDIT-BUG-F2 fix: 用精确匹配 + 空格前缀，避免误匹配 reloadable/reloadX 等标识符，
+        // 原 startsWith("reload") 会命中这些标识符并清空用户输入。
+        if (trimmedLine == "reload" || trimmedLine.startsWith("reload ")) {
+            QString arg = trimmedLine == "reload" ? QString() : trimmedLine.mid(7).trimmed();
             if (arg.isEmpty()) {
                 appendError("用法: reload \"模块路径\" 或 reload all");
             } else if (arg == "all") {

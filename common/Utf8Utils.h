@@ -37,6 +37,10 @@ inline size_t codepointToByteIndex(const std::string& s, int64_t cpIdx) {
         bytePos += byteLength(static_cast<unsigned char>(s[bytePos]));
         cp++;
     }
+    // AUDIT-BUG-C4 fix: 钳制到 s.size()——byteLength 对不完整 UTF-8 序列（如 4 字节
+    // leader 仅剩 1-3 字节）返回 4，可将 bytePos 推进到 s.size() 之外。
+    // 调用方（如 substr）若直接用作索引会越界抛 std::out_of_range。
+    if (bytePos > s.size()) bytePos = s.size();
     return bytePos;
 }
 

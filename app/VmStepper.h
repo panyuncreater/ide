@@ -192,6 +192,10 @@ private:
     VmStepMode vmStepMode_ = VmStepMode::STEP_IN;
     size_t vmStepStartFrameCount_ = 0;  // step-over/out 起始帧深度
     int vmLastPausedLine_ = 0;          // 上次暂停的行号（防同行重复触发）
+    // AUDIT-BUG-D2 fix: STEP_OVER 期间是否进入过更深的帧。
+    // 与 Interpreter DebugController::crossedDeeper_ 对齐——
+    // 同行函数调用返回后即使行号不变也应暂停。
+    bool vmCrossedDeeper_ = false;
     QSet<int> vmBreakpoints_;          // VM 模式断点行号集合（复用 Editor 断点）
     QMap<int, std::string> vmBreakpointConditions_;  // #4 fix: 条件断点表达式
     std::function<bool(const std::string&)> vmConditionEvaluator_;  // #4 fix: 条件求值回调

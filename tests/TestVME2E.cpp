@@ -2037,6 +2037,157 @@ TEST(BackendConsistency, StringMethodsAllBackends) {
     }
 }
 
+// ============================================================
+// AUDIT-BUG 回归测试（2026-06-30 第二轮 bug 排查）
+// ============================================================
+
+// AUDIT-BUG-I1: envPool_ 回收破坏闭包 env weak_ptr
+// 闭包在块内定义、仅捕获父级变量时，blockEnv 不应被回收到 envPool_，
+// 否则后续块复用该 env 后，闭包调用时变量查找失败。
+TEST(BackendConsistency, AuditBugI1_ClosureInBlockCapturingParentVar) {
+    std::string src = R"(
+func outer() {
+    var x = 10;
+    var g = null;
+    if (true) {
+        func f() { return x; }
+        g = f;
+    }
+    if (true) {
+        var dummy = 0;
+    }
+    return g();
+}
+print(outer());
+)";
+    std::string interp = runInterpreterOutputForConsistency(src);
+    EXPECT_EQ(interp, "10");
+}
+
+// AUDIT-BUG-I1 变体：多层嵌套块 + 闭包捕获祖父层变量
+TEST(BackendConsistency, AuditBugI1_DeepNestedBlockClosure) {
+    std::string src = R"(
+func outer() {
+    var x = 42;
+    var g = null;
+    if (true) {
+        if (true) {
+            func f() { return x + 1; }
+            g = f;
+        }
+    }
+    if (true) { var d = 1; }
+    if (true) { var d = 2; }
+    return g();
+}
+print(outer());
+)";
+    std::string interp = runInterpreterOutputForConsistency(src);
+    EXPECT_EQ(interp, "43");
+}
+
+// AUDIT-BUG-I3: GcManager 自引用容器重入析构
+// a = []; a.push(a) 形成自引用循环，execute() 结束后 collectCycle
+// 清空 elements 时不应触发重入析构导致 use-after-free 崩溃。
+TEST(VME2E, AuditBugI3_SelfReferencingContainerGc) {
+    std::string src = R"(
+var a = [];
+a.push(a);
+print("ok");
+)";
+    // 运行两次触发 collectCycle（execute 开头会回收上一轮的循环孤岛）
+    std::string out1 = runVMOutput(src);
+    std::string out2 = runVMOutput(src);
+    EXPECT_EQ(out1, "ok");
+    EXPECT_EQ(out2, "ok");
+
+    // Interpreter 路径也验证
+    std::string interp1 = runInterpreterOutputForConsistency(src);
+    std::string interp2 = runInterpreterOutputForConsistency(src);
+    EXPECT_EQ(interp1, "ok");
+    EXPECT_EQ(interp2, "ok");
+}
+
+// AUDIT-BUG-I3 变体：字典自引用
+TEST(VME2E, AuditBugI3_SelfReferencingDictGc) {
+    std::string src = R"(
+var d = {};
+d["self"] = d;
+print("ok");
+)";
+    std::string out1 = runVMOutput(src);
+    std::string out2 = runVMOutput(src);
+    EXPECT_EQ(out1, "ok");
+    EXPECT_EQ(out2, "ok");
+}
+
+// AUDIT-BUG-I4: VAL_FLOAT toString locale-independent
+// 验证浮点数 toString 输出使用 '.' 而非 locale 相关的分隔符
+// 使用精确二进制表示的值避免 17 位精度输出差异
+TEST(VME2E, AuditBugI4_FloatToStringLocaleIndependent) {
+    std::string src = "print(0.5);";
+    std::string out = runVMOutput(src);
+    EXPECT_EQ(out, "0.5");
+
+    std::string src2 = "print(1.5 + 2.5);";
+    std::string out2 = runVMOutput(src2);
+    EXPECT_EQ(out2, "4");
+}
+
+// AUDIT-BUG-C3: StackVM 字段继承合并顺序错误
+// 3 级继承链中，直接父类同名字段应覆盖根祖先后字段
+TEST(BackendConsistency, AuditBugC3_FieldInheritanceMergeOrder) {
+    std::string src = R"(
+class A { var x = 1; }
+class B extends A { var x = 2; }
+class C extends B {}
+var c = C();
+print(c.x);
+)";
+    std::string interp = runInterpreterOutputForConsistency(src);
+    std::string stackVm = runVMOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src);
+    EXPECT_EQ(interp, "2");
+    EXPECT_EQ(stackVm, "2");
+    EXPECT_EQ(regVm, "2");
+}
+
+// AUDIT-BUG-C3 变体：4 级继承链
+TEST(BackendConsistency, AuditBugC3_DeepInheritanceFieldOverride) {
+    std::string src = R"(
+class A { var x = 10; }
+class B extends A { var x = 20; }
+class C extends B { var x = 30; }
+class D extends C {}
+var d = D();
+print(d.x);
+)";
+    std::string interp = runInterpreterOutputForConsistency(src);
+    std::string stackVm = runVMOutputForConsistency(src);
+    std::string regVm = runRegVMOutput(src);
+    EXPECT_EQ(interp, "30");
+    EXPECT_EQ(stackVm, "30");
+    EXPECT_EQ(regVm, "30");
+}
+
+// AUDIT-BUG-C1: ensureUnique COW 克隆注册到 GcManager
+// 共享数组 COW detach 后形成自引用循环，collectCycle 应回收
+TEST(VME2E, AuditBugC1_CowCloneGcManagerRegistration) {
+    std::string src = R"(
+var a = [];
+var b = a;
+b.push(b);
+a = null;
+b = null;
+print("ok");
+)";
+    // 运行两次触发 collectCycle
+    std::string out1 = runVMOutput(src);
+    std::string out2 = runVMOutput(src);
+    EXPECT_EQ(out1, "ok");
+    EXPECT_EQ(out2, "ok");
+}
+
 // ---- 三后端一致：数组操作 ----
 TEST(BackendConsistency, ArrayOps) {
     std::string src =

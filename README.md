@@ -68,8 +68,8 @@
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/调试面板等） |
 | `app/` | IdeController、InterpreterWorker、main、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
-| `tests/` | GoogleTest 单元测试（942 个） |
-| `test_harness/` | 独立测试工具（AST/格式化器/调试一致性审计） |
+| `tests/` | GoogleTest 单元测试（1031 个） |
+| `test_harness/` | 独立测试工具（AST/格式化器/调试一致性审计，formatter_audit 含 100+ 审计用例） |
 
 ## 构建与运行
 
@@ -116,7 +116,7 @@ nmake
 
 ## 测试
 
-项目包含 **942 个 GoogleTest 单元测试**，覆盖所有核心模块：
+项目包含 **1031 个 GoogleTest 单元测试**，覆盖所有核心模块：
 
 | 测试套件 | 覆盖模块 |
 |----------|----------|
@@ -131,7 +131,7 @@ nmake
 | `CompilerConstantPoolTest` | compiler/ 常量池 |
 | `CompilerGlobalSlotTest` | compiler/ 全局槽位 |
 | `TestConsistencyDiff` | 三后端一致性差分测试（90+ 用例） |
-| `CompilerTypeCheckTest` | 类型检查器（10 用例） |
+| `CompilerTypeCheckTest` | 类型检查器（15 用例，含 float→int 拒绝断言强化） |
 | `BackendConsistency` | 三后端类型注解一致性（6 用例） |
 
 运行测试：
@@ -148,7 +148,9 @@ ctest
 - **错误路径**：除零、类型违反、数组越界、空指针访问、未定义变量/函数等
 - **三后端一致性**：同一代码在 Interpreter / StackVM / RegisterVM 行为一致（已知差异：非方法上下文 super 错误消息文本不同——Interpreter 报 "super 只能在类方法中使用"，IR 路径报 "未定义的变量: this"；错误类型相同均为 RuntimeError，三引擎均不被 try/catch 捕获，行为一致）。整数除法截断向零、`and/or` 返回操作数原值均已三后端统一（AUDIT-DIV-UNIFY / AUDIT-ANDOR 修复）。整数溢出检测三后端统一（BUG-OVF-1/2 修复）
 - **边界条件**：接近 MAX_RECURSION_DEPTH、MAX_FRAMES 的极限场景
-- **类型检查**：类型注解强制、null 兼容性、int/float 宽化规则
+- **类型检查**：类型注解强制、null 兼容性、int/float 宽化规则、float→int 拒绝（断言强化：同时验证警告消息内容含期望类型名）
+- **格式化器质量**：幂等性 + 表达式级 AST 往返等价性（19 用例）+ 语句级 AST 往返等价性（16 用例，覆盖 if/for/while/class/try 等结构）
+- **test_harness**：独立 cl.exe 编译，含 formatter_audit（100+ 审计用例）、stress_test（100 个压力测试）、debug_test（调试不变量审计）
 
 ## 语言示例
 
@@ -211,7 +213,9 @@ REPL 面板位于 IDE 底部，支持交互式求值与多行输入：
 - **特殊命令**：
   - `help` — 显示语法与 REPL 行为帮助
   - `clear` — 清空输出区与续行缓冲（**不**重置已定义的变量/函数/类，重置全部状态需重启 IDE）
-- **异步执行**：每行输入通过 `std::async` 在独立线程执行，UI 不阻塞。执行期间输入框禁用，完成后自动恢复并打印结果
+  - `reload "mod"` — 清除指定模块缓存，下次 import 重新加载源码（模块缓存刷新）
+  - `reload all` — 清除所有模块缓存
+- **异步执行**：每行输入通过 `std::async` 在独立线程执行，UI 不阻塞。执行期间输入框禁用，完成后自动恢复并打印结果。协作式中止：closeEvent 发送 `stopRequested_` 标志，checkBreak 在每个语句节点检查并抛异常，最多等待 5 秒后强制退出
 - **跨行定义**：REPL 支持跨行定义函数与类。先 `class A {}` 再 `class B extends A {}` 可正常解析父类（类继承父类名存字符串运行时查找，与文件模式一致）。函数无提升——`f(); fun f() {}` 会报"未定义的函数: f"
 
 ## 工程约定
@@ -234,9 +238,11 @@ REPL 面板位于 IDE 底部，支持交互式求值与多行输入：
 - **安全性硬约束**：所有 assert 检查的越界/类型保护改为运行时 `std::abort`；NaNBox 类型访问前必须用 `isXxx()` 校验；容器越界错误路径强制走 const 访问器避免 COW 深拷贝；`std::localtime()` 替换为线程安全的 `localtime_s`/`localtime_r`
 - **异常安全**：UI 槽函数包裹 try/catch；深拷贝操作使用 `std::unique_ptr` 包裹防止 bad_alloc 泄漏；ensureUnique<T>() 深拷贝用 unique_ptr 包裹
 
-### 性能优化阶段成果
+### 性能优化与正确性阶段成果
 
-近期完成了多个性能与正确性优化批次，全部通过 942/942 单元测试：
+近期完成了多个性能与正确性优化批次，全部通过 1031/1031 单元测试 + 100+ formatter_audit 审计用例：
+
+> **测试质量审计 2026-06-30**：审计发现并修复 2 个测试覆盖缺口：(1) TypeChecker `int` 注解拒绝 `float` 值零覆盖——新增 5 个 CompilerTypeCheckTest 测试（A11-A15），覆盖声明/赋值路径的 float→int 拒绝，并强化断言：不仅验证警告计数，还验证警告消息内容含期望类型名，防止误报通过。(2) Formatter 语句级 AST 往返等价性仅覆盖表达式级（19 用例）——新增 `test_statements()` 函数 + 16 个 S1-S16 测试用例覆盖 if/for/while/class/try 等语句结构，对每条语句做 `Parse(src)` vs `Parse(format(src))` 的 AST 结构等价比较，检测 Formatter 在格式化时是否丢失或重组子节点。
 
 - **VMUpvalue O(1) 帧定位**（#18）：`VMUpvalue` 新增 `owningFrameIdx` 字段，`OP_SET_UPVALUE` 用 O(1) 索引替代原 O(frames) 线性扫描定位目标帧；passthrough upvalue 复用 shared_ptr 自动透传该字段
 - **executeReturn 字段同步合并遍历**（#19）：Path B1 中"写 caller `this.fields()`"与"写 caller field slots"两次 O(fieldCount) 遍历合并为单次遍历，slot 索引用 `BytecodeChunk::fieldSlotIndex` O(1) 查找
@@ -266,6 +272,29 @@ REPL 面板位于 IDE 底部，支持交互式求值与多行输入：
 - **BUG-OVF-2**（P1）：RegisterVM REG_DIV 整数溢出错误消息不一致——统一为 "整数运算溢出"（对齐 Interpreter/StackVM 的 computeArith DIV 分支）
 - **BUG-MOD-1**（P0）：IR 路径 import 语句崩溃（Debug）/静默生成坏 IR（Release）——AstIRBuilder 新增 hasError_/errorMessage_ 错误报告接口，NODE_IMPORT_STMT 独立 case 设置错误标志，compileViaIR/compileViaRegisterIR 检查并转化为用户可见 diagnostic
 - **SEC-1**（P0）：模块路径遍历攻击漏洞——路径校验移到 loader 检查之前，拒绝 ".." 父目录引用和绝对路径，防止 import 读取项目目录外文件
+
+### REPL 正确性修复
+
+- **REPL 模块缓存刷新**：原重新 import 模块时 `moduleCache_` 命中即复用旧 moduleEnv，不重新调用 loader 读源码——用户修改模块源文件后重新 import 仍得旧值。新增 `Interpreter::clearModuleCache(path)` / `clearAllModuleCache()` 方法；ReplPanel 新增 `reload "mod"` / `reload all` 命令清除缓存后下次 import 重新加载
+- **REPL 异步执行超时**：原 `waitReplFuture()` 调用 `replFuture_.wait()` 无超时，死循环场景下 closeEvent 永久阻塞。新增 `Interpreter::stopRequested_` 原子标志；`checkBreak` 在每个语句节点检查标志并抛 `std::runtime_error`（被异步 lambda 的 catch 捕获）；`waitReplFuture` 改为 `requestReplStop()` + `wait_for(5s)` + 超时回退阻塞。正常代码（含 checkBreak 调用）能在毫秒级响应中止
+
+### 第六轮 Bug 修复（AUDIT-BUG-F1~F13 系列）
+
+通过三个并行 agent 覆盖 Lexer/BuiltinFunctions/DebugController/GUI/Compiler/Interpreter 边界，共修复 13 个 bug（2 HIGH / 7 MED / 4 LOW），新增 5 个回归测试，全部 1031/1031 测试通过：
+
+- **F1**（HIGH）：`constructClassInstance` 中 `callStack_.emplace_back` 在 `CallFrameGuard` 构造之前执行，guard 保存错误的 `savedStackDepth` 导致 init 帧不弹出，循环构造实例时 callStack_ 泄漏。修复：交换两行顺序，guard 先于 emplace_back
+- **F2**（HIGH）：REPL `reload` 命令用 `startsWith("reload")` 误匹配 `reloadable`/`reloadX` 等标识符，命中后清空用户输入。修复：改为精确匹配 + 空格前缀
+- **F3**（MED）：`VmStepper::vmCrossedDeeper_` 仅在 `stop()` 中重置，`stepByMode` 入口未重置，导致 STEP_OVER 退化为 STEP_IN。修复：在 stepByMode 入口添加重置
+- **F4**（MED）：`DebugController::crossedLine_` 在条件断点求值之前重置，条件不满足时已清 false，单行循环中条件断点永不再触发。修复：将重置推迟到断点真正命中之前
+- **F5**（MED）：`IrViewer::setUpdatesEnabled(false)` 后填充逻辑无异常保护，异常时 `setUpdatesEnabled(true)` 永不执行，列表永久冻结。修复：用 try/catch 包裹填充逻辑
+- **F6**（MED）：`onRun`/`onDebug` 在 `isReplRunning()` 检查之前执行 `clearAll()`，REPL 运行时清空用户历史输出后才报错。修复：将互斥检查移到 `clearAll()` 之前
+- **F7**（MED）：IR 路径 `visitTryStmt` 的 catch 变量绑定到外层 `varMap_` 且不恢复，catch 块后仍可引用，与 Interpreter/StackVM 语义不一致。修复：为三条路径（函数内、顶层遮蔽、顶层无遮蔽）添加 varMap_ 保存/恢复
+- **F8**（MED）：模块导入的 try/catch 块在异常时未调用 `moduleEnv->closeCapturedVariables()`，逃逸闭包的 capturedVars 保持初始值。修复：在 catch 块中添加 closeCapturedVariables 调用
+- **F9**（MED）：`RegisterVM::executeSharedBuiltinFunction` 调用仅传 3 参数，line/column 取默认值 0,0，错误消息显示"行 0:0"。修复：从当前帧的 chunk 获取行号并传入
+- **F10**（LOW）：Lexer 插值表达式中嵌套字符串的 `start_` 未在 `advance()` 前更新，导致 token 列号/lexeme 错误。修复：添加 `start_ = current_`
+- **F11**（LOW）：`substr` 对负 `start` 静默返回空串，但对负 `len` 报错，错误处理不对称。修复：负 `start` 改为报错
+- **F12**（LOW）：`SyntaxHighlighter` 不识别字符串插值 `{expr}`，整个字符串统一着色。修复：识别 `{` 作为插值起始，用 braceDepth 跟踪嵌套，插值表达式内字符不标记 mask
+- **F13**（LOW）：`CodeEditor` 空白区域点击 `cursorForPosition` 返回文档末尾光标，导致在最后一行设置断点。修复：检查 Y 坐标是否超出最后一个块的下边界
 
 ## 许可证
 
