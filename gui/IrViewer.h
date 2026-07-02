@@ -1,20 +1,22 @@
 #pragma once
 
 #include <QWidget>
-#include <QListWidget>
+#include <QTextBrowser>
 #include <vector>
 #include "compiler/IR.h"
 
 // ============================================================
-// IrViewer - IR 中间表示可视化面板（方向三）
+// IrViewer - IR 中间表示可视化面板（第八轮重构）
 // ------------------------------------------------------------
-// 在 IDE 右侧 Tab 中显示 AST → IR 转换后的中间表示：
-//   - 函数元信息（常量数/全局变量数/vreg 数/基本块数）
-//   - 每个基本块的指令序列（含源码行号注释）
-//   - 支持源码行号 → IR 指令高亮联动
+// 使用 QTextBrowser + HTML 富文本实现语法高亮：
+//   - opcode（LOAD_*/ADD/CALL 等）→ #0078d4 蓝色
+//   - 寄存器/局部变量（v0..vN）→ #107c10 绿色
+//   - 常量/字符串/数字 → #d83b01 橙色
+//   - 行号注释（; line N）→ #6e6e6e 灰色
+//   - 函数标题分隔线（---- xxx ----）→ #8764b8 紫色加粗
 //
-// 方向四扩展：VM 单步执行字节码时，通过 IR→字节码偏移映射
-// 高亮对应的 IR 指令（highlightByBytecodeOffset）。
+// 支持源码行号 → IR 指令高亮联动（背景黄色）
+// 支持 VM 单步执行时按字节码偏移高亮（背景亮绿色）
 // ============================================================
 
 class IrViewer : public QWidget {
@@ -33,10 +35,7 @@ public:
     /// line <= 0 时清除高亮
     void highlightBySourceLine(int line);
 
-    /// 方向四：按字节码偏移高亮 IR 指令
-    /// irToBytecodeOffset 是 IR 指令行号 → 字节码偏移的映射表
-    /// currentBytecodeOffset 是当前 VM 执行到的字节码偏移
-    /// 找到 ≤ currentBytecodeOffset 的最大映射项，高亮对应的 IR 行
+    /// 按字节码偏移高亮 IR 指令
     void highlightByBytecodeOffset(const std::vector<std::pair<size_t, size_t>>& irToBytecodeOffset,
                                     size_t currentBytecodeOffset);
 
@@ -44,15 +43,21 @@ public:
     void clearHighlight();
 
 private:
-    QListWidget* list_ = nullptr;
+    QTextBrowser* browser_ = nullptr;
 
     /// 每行对应的源码行号（0 表示无关联，如头部/块头）
+    /// 索引对应 QTextDocument 的 block 编号
     std::vector<int> rowToSourceLine_;
 
-    /// 每行对应的 IR 指令索引（在所有基本块指令展平后的序号）
-    /// 用于方向四的 IR→字节码偏射映射定位
+    /// 每行对应的 IR 指令索引
     std::vector<size_t> rowToInstrIndex_;
 
     /// 当前高亮的行号（-1 表示无）
     int highlightedRow_ = -1;
+
+    /// 将单条 IR 指令文本转为带语法高亮的 HTML
+    QString formatIRLineHtml(const std::string& text) const;
+
+    /// HTML 转义
+    static QString htmlEscape(const std::string& s);
 };

@@ -48,12 +48,34 @@ endif()
 # ============================================================
 # 查找 Qt6（Core/Gui/Widgets）
 # ============================================================
-find_package(Qt6 6.0 COMPONENTS Core Gui Widgets REQUIRED)
+find_package(Qt6 6.0 COMPONENTS Core Gui Widgets Svg Xml REQUIRED)
 
 # 自动处理 MOC/UIC/RCC
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORC ON)
+
+# ============================================================
+# 第三方依赖：Qt Advanced Docking System (ADS)
+# ------------------------------------------------------------
+# ADS 以静态库方式编入项目，不构建其示例程序。
+# ADS_VERSION 必须手动设置（作为子目录时 git describe 不可用）。
+# ============================================================
+set(ADS_VERSION "5.0.0" CACHE STRING "ADS version (override git describe)" FORCE)
+set(BUILD_STATIC ON CACHE BOOL "Build ADS as static library" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "Build ADS examples" FORCE)
+add_subdirectory(third_party/ads)
+
+# ============================================================
+# 第三方依赖：QFluentKit (Fluent Design Widgets)
+# ------------------------------------------------------------
+# QFluent 构建为 SHARED 库。
+# 保存/恢复 CMAKE_INSTALL_PREFIX，防止 QFluent 的 FORCE 设置污染父项目。
+# ============================================================
+set(_saved_install_prefix "${CMAKE_INSTALL_PREFIX}")
+add_subdirectory(third_party/QFluentKit)
+set(CMAKE_INSTALL_PREFIX "${_saved_install_prefix}" CACHE PATH "" FORCE)
+unset(_saved_install_prefix)
 
 # ============================================================
 # 包含共享模块：源文件列表 + 编译选项 + 配置函数
@@ -96,7 +118,24 @@ target_link_libraries(minilang_ide PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    Qt6::Svg
+    Qt6::Xml
     minilang_compile_options
+    qtadvanceddocking-qt6
+    QFluent
+)
+
+# Windows: 链接 dwmapi 用于深色标题栏 (DWMWA_USE_IMMERSIVE_DARK_MODE)
+if(WIN32)
+    target_link_libraries(minilang_ide PRIVATE dwmapi)
+endif()
+
+# 部署 QFluent 动态库到 exe 同目录（QFluent 为 SHARED 库，运行时需 DLL）
+add_custom_command(TARGET minilang_ide POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:QFluent>"
+            "$<TARGET_FILE_DIR:minilang_ide>"
+    COMMENT "Deploying QFluent runtime for minilang_ide..."
 )
 
 # Debug 配置生成调试信息

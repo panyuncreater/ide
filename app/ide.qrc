@@ -3,4 +3,36 @@
         <file>styles.qss</file>
         <file>styles_dark.qss</file>
     </qresource>
+    <qresource prefix="/icons">
+        <file alias="play_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Play_black.svg</file>
+        <file alias="play_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Play_white.svg</file>
+        <file alias="stop_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/StopWatch_black.svg</file>
+        <file alias="stop_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/StopWatch_white.svg</file>
+        <file alias="stepin_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/ChevronRight_black.svg</file>
+        <file alias="stepin_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/ChevronRight_white.svg</file>
+        <file alias="stepover_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/SkipForward_black.svg</file>
+        <file alias="stepover_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/SkipForward_white.svg</file>
+        <file alias="stepout_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/SkipBack_black.svg</file>
+        <file alias="stepout_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/SkipBack_white.svg</file>
+        <file alias="format_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Broom_black.svg</file>
+        <file alias="format_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Broom_white.svg</file>
+        <file alias="visualize_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/View_black.svg</file>
+        <file alias="visualize_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/View_white.svg</file>
+        <file alias="ast_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Code_black.svg</file>
+        <file alias="ast_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Code_white.svg</file>
+        <file alias="save_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Save_black.svg</file>
+        <file alias="save_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Save_white.svg</file>
+        <file alias="newfile_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Document_black.svg</file>
+        <file alias="newfile_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Document_white.svg</file>
+        <file alias="openfolder_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Folder_black.svg</file>
+        <file alias="openfolder_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Folder_white.svg</file>
+        <file alias="search_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Search_black.svg</file>
+        <file alias="search_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Search_white.svg</file>
+        <file alias="debug_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/DeveloperTools_black.svg</file>
+        <file alias="debug_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/DeveloperTools_white.svg</file>
+        <file alias="theme_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Brightness_black.svg</file>
+        <file alias="theme_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Brightness_white.svg</file>
+        <file alias="close_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Close_black.svg</file>
+        <file alias="close_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Close_white.svg</file>
+    </qresource>
 </RCC>

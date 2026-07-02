@@ -58,6 +58,9 @@ public:
     /// 清除当前执行行
     void clearCurrentLine();
 
+    /// 跳转到指定行并居中显示
+    void gotoLine(int line);
+
     /// 获取断点集合
     QSet<int> getBreakpoints() const;
 

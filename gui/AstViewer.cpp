@@ -4,10 +4,14 @@
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>
 #include <QGraphicsLineItem>
+#include <QPainterPath>
 #include <QWheelEvent>
+#include <QMouseEvent>
 #include <QScrollBar>  // G-P2-20 fix: horizontalScrollBar() 需要 QScrollBar 完整定义
+#include <QToolTip>
 #include <algorithm>
 #include <limits>
+#include <cmath>
 
 // ============================================================
 // AstViewer AST 树形可视化实现
@@ -15,30 +19,31 @@
 // P1 fix: 采用完整的 Reingold-Tilford 算法（RT, 1981），
 // 替代原先的"按子树宽度均分可用空间"启发式。
 //
-// RT 算法核心思想：
-//   1. 后序遍历：先递归布局每个子树
-//   2. 自底向上合并：相邻子树通过 rightContour vs leftContour 检测重叠，
-//      平移右侧子树直至无重叠（保留 SIBLING_SPACING 间距）
-//   3. 轮廓追踪：每棵子树维护 leftContour/rightContour（每层最左/最右 x），
-//      父节点合并子树轮廓时延伸至自身层
-//
-// 优势：生成的树更紧凑、节点居中对齐父节点、宽度最优；
-//       原"均分可用空间"方法在深度不均时会留出过多空白。
+// 第四轮迭代增强：
+//   - Ctrl+滚轮缩放、无修饰滚轮平移、Shift+滚轮水平滚动
+//   - 节点点击展开/折叠（折叠状态以 (line,col,name) 为键跨 AST 重建保留）
+//   - 节点悬停 tooltip 显示完整信息（节点名 / 行:列 / 子节点数）
+//   - 深色 / 浅色主题适配（setDarkTheme）
 // ============================================================
 
 AstViewer::AstViewer(QWidget* parent)
     : QGraphicsView(parent) {
     scene_ = new QGraphicsScene(this);
-    scene_->setBackgroundBrush(QColor(255, 255, 255));
+    scene_->setBackgroundBrush(sceneBackgroundColor());
     setScene(scene_);
     setRenderHint(QPainter::Antialiasing);
     setDragMode(QGraphicsView::ScrollHandDrag);
     setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+    // 鼠标悬停事件启用（tooltip 依赖）
+    setMouseTracking(true);
+    viewport()->setMouseTracking(true);
 }
 
 void AstViewer::setAst(ASTNode* root) {
     scene_->clear();
     rtPool_.clear();
+    itemToNode_.clear();
+    root_ = root;
 
     if (!root) return;
 
@@ -51,7 +56,7 @@ void AstViewer::setAst(ASTNode* root) {
             QString("AST 节点数 %1 超过上限 %2，已跳过渲染以避免 UI 卡顿。\n"
                     "请考虑简化代码或使用字节码视图查看。")
                 .arg(nodeCount).arg(MAX_AST_NODES));
-        warning->setDefaultTextColor(QColor(200, 0, 0));
+        warning->setDefaultTextColor(isDarkTheme_ ? QColor(0xf4, 0x87, 0x71) : QColor(200, 0, 0));
         auto font = warning->font();
         font.setPointSize(12);
         font.setBold(true);
@@ -66,6 +71,9 @@ void AstViewer::setAst(ASTNode* root) {
     // Pass 1: 构建 RtNode 树结构
     RtNode* rtRoot = buildRtTree(root);
     if (!rtRoot) return;
+
+    // 同步折叠状态（基于 line+col+name 键，跨 AST 重建保留）
+    syncCollapsedState(rtRoot);
 
     // Pass 2: 递归布局（后序），填充各节点的 finalX（相对父）与 leftContour/rightContour
     layoutSubtree(rtRoot);
@@ -104,10 +112,39 @@ void AstViewer::countNodes(ASTNode* node, int& count) {
 void AstViewer::clearAst() {
     scene_->clear();
     rtPool_.clear();
+    itemToNode_.clear();
+    root_ = nullptr;
 }
 
+void AstViewer::setDarkTheme(bool dark) {
+    isDarkTheme_ = dark;
+    scene_->setBackgroundBrush(sceneBackgroundColor());
+    // 若已有 AST，重新渲染以应用主题配色到所有节点
+    if (root_) {
+        ASTNode* savedRoot = root_;
+        root_ = nullptr;
+        setAst(savedRoot);
+    } else {
+        viewport()->update();
+    }
+}
+
+// ============================================================
+// 第四轮迭代：滚轮 / 点击 / 悬停交互
+// ============================================================
+
 void AstViewer::wheelEvent(QWheelEvent* event) {
-    // G-P2-20 fix: Shift+滚轮 → 水平滚动；无修饰 → 缩放（保持原行为）
+    // 第八轮：直接滚轮缩放（无需 Ctrl），对齐 VS Code Magnus/AST 视图行为
+    // Ctrl/无修饰 → 缩放；Shift → 水平滚动；Alt → 垂直滚动
+    if (event->modifiers() & Qt::AltModifier) {
+        QScrollBar* vBar = verticalScrollBar();
+        if (vBar) {
+            int delta = event->angleDelta().y();
+            vBar->setValue(vBar->value() - delta);
+        }
+        event->accept();
+        return;
+    }
     if (event->modifiers() & Qt::ShiftModifier) {
         QScrollBar* hBar = horizontalScrollBar();
         if (hBar) {
@@ -117,7 +154,7 @@ void AstViewer::wheelEvent(QWheelEvent* event) {
         event->accept();
         return;
     }
-    // GUI-13 fix: 缩放范围限制 (0.1x ~ 10x)
+    // 默认：滚轮直接缩放（GUI-13 fix: 范围限制 0.1x ~ 10x）
     double factor = 1.15;
     double currentScale = transform().m11();
     if (event->angleDelta().y() > 0) {
@@ -128,6 +165,161 @@ void AstViewer::wheelEvent(QWheelEvent* event) {
             scale(1.0 / factor, 1.0 / factor);
     }
     event->accept();
+}
+
+void AstViewer::mousePressEvent(QMouseEvent* event) {
+    // 左键按下：记录起点，若未拖动则视为点击（在 mouseReleaseEvent 中处理）
+    // 仍交给基类以维持 ScrollHandDrag 拖拽平移行为
+    if (event->button() == Qt::LeftButton) {
+        pressPos_ = event->pos();
+        pressWasClick_ = true;
+    }
+    QGraphicsView::mousePressEvent(event);
+}
+
+void AstViewer::mouseMoveEvent(QMouseEvent* event) {
+    // 拖动距离超过阈值则取消"点击"判定（避免拖动平移误触发折叠）
+    if (pressWasClick_ && (event->buttons() & Qt::LeftButton)) {
+        QPoint diff = event->pos() - pressPos_;
+        if (diff.manhattanLength() > 4) {
+            pressWasClick_ = false;
+        }
+    }
+    // 委托给基类处理鼠标移动（含 ScrollHandDrag 拖拽）
+    QGraphicsView::mouseMoveEvent(event);
+}
+
+void AstViewer::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && pressWasClick_) {
+        // 视为点击：检测是否命中节点
+        QPointF scenePos = mapToScene(event->pos());
+        QGraphicsItem* item = scene_->itemAt(scenePos, QTransform());
+        if (item && item->type() == QGraphicsRectItem::Type) {
+            auto it = itemToNode_.find(static_cast<QGraphicsRectItem*>(item));
+            if (it != itemToNode_.end() && it->second) {
+                RtNode* rt = it->second;
+                if (!rt->children.empty()) {
+                    rt->collapsed = !rt->collapsed;
+                    // 同步到 collapsedKeys_ 以跨重建保留
+                    CollapseKey key = makeCollapseKey(rt->astNode);
+                    if (rt->collapsed) {
+                        collapsedKeys_.insert(key);
+                    } else {
+                        collapsedKeys_.erase(key);
+                    }
+                    // 重新渲染（保留场景视图变换）
+                    QTransform savedTransform = transform();
+                    QPointF savedCenter = mapToScene(viewport()->rect().center());
+                    rebuildSceneKeepingView(savedTransform, savedCenter);
+                    event->accept();
+                    return;
+                }
+            }
+        }
+    }
+    pressWasClick_ = false;
+    QGraphicsView::mouseReleaseEvent(event);
+}
+
+void AstViewer::rebuildSceneKeepingView(const QTransform& savedTransform,
+                                         const QPointF& savedCenter) {
+    // 清空场景但保留 rtPool_ 与 collapsed 状态
+    scene_->clear();
+    itemToNode_.clear();
+
+    if (rtPool_.empty() || !rtPool_[0]) return;
+    RtNode* rtRoot = rtPool_[0].get();
+
+    // 重新布局（折叠后子树不参与布局，整体更紧凑）
+    // 先重置轮廓与 finalX，因为上次布局的值已被修改
+    resetLayoutState(rtRoot);
+    layoutSubtree(rtRoot);
+    buildParentContour(rtRoot);
+
+    std::vector<std::pair<double, double>> bounds;
+    computeAbsoluteCoords(rtRoot, 0.0, 0, bounds);
+
+    double globalMinX = std::numeric_limits<double>::max();
+    for (const auto& b : bounds) {
+        if (b.first < globalMinX) globalMinX = b.first;
+    }
+    double shiftX = -globalMinX;
+
+    drawRtNode(rtRoot, shiftX);
+
+    QRectF rect = scene_->itemsBoundingRect().adjusted(-30, -30, 30, 30);
+    scene_->setSceneRect(rect);
+
+    // 恢复视图变换与中心点
+    setTransform(savedTransform);
+    centerOn(savedCenter);
+}
+
+void AstViewer::resetLayoutState(RtNode* node) {
+    if (!node) return;
+    node->finalX = 0;
+    node->finalY = 0;
+    node->leftContour.clear();
+    node->rightContour.clear();
+    // 折叠节点的子树不重置（不参与布局）
+    if (!node->collapsed) {
+        for (RtNode* child : node->children) {
+            resetLayoutState(child);
+        }
+    }
+}
+
+AstViewer::CollapseKey AstViewer::makeCollapseKey(ASTNode* node) const {
+    if (!node) return CollapseKey{0, 0, std::string()};
+    return CollapseKey{node->line, node->column, node->nodeName()};
+}
+
+void AstViewer::syncCollapsedState(RtNode* node) {
+    if (!node) return;
+    CollapseKey key = makeCollapseKey(node->astNode);
+    node->collapsed = (collapsedKeys_.find(key) != collapsedKeys_.end());
+    for (RtNode* child : node->children) {
+        syncCollapsedState(child);
+    }
+}
+
+// ============================================================
+// 主题配色
+// ============================================================
+
+QColor AstViewer::sceneBackgroundColor() const {
+    return isDarkTheme_ ? QColor(0x1e, 0x1e, 0x1e) : QColor(0xff, 0xff, 0xff);
+}
+
+QColor AstViewer::nodeBorderColor() const {
+    return isDarkTheme_ ? QColor(0x55, 0x55, 0x55) : QColor(0x64, 0x64, 0x64);
+}
+
+QColor AstViewer::lineColor() const {
+    return isDarkTheme_ ? QColor(0x5a, 0x5a, 0x5a) : QColor(0x96, 0x96, 0x96);
+}
+
+QColor AstViewer::textColor() const {
+    return isDarkTheme_ ? QColor(0xd4, 0xd4, 0xd4) : QColor(0x1f, 0x1f, 0x1f);
+}
+
+QColor AstViewer::nodeBgColor(const QString& name) const {
+    // 深色主题使用低饱和度深色，浅色主题使用低饱和度浅色
+    // 保证文字与背景对比度 >= 4.5:1 (WCAG)
+    if (name.startsWith("BinaryOp") || name.startsWith("UnaryOp")) {
+        return isDarkTheme_ ? QColor(0x6b, 0x4a, 0x2a) : QColor(0xff, 0xe6, 0xcc);
+    } else if (name.startsWith("Number") || name.startsWith("String") || name.startsWith("Bool")) {
+        return isDarkTheme_ ? QColor(0x2a, 0x4a, 0x6b) : QColor(0xcc, 0xe8, 0xff);
+    } else if (name.startsWith("VarDecl") || name.startsWith("Assign") || name.startsWith("VarRef")) {
+        return isDarkTheme_ ? QColor(0x2a, 0x55, 0x2a) : QColor(0xcc, 0xff, 0xcc);
+    } else if (name.startsWith("If") || name.startsWith("While") || name.startsWith("For")) {
+        return isDarkTheme_ ? QColor(0x55, 0x2a, 0x55) : QColor(0xff, 0xcc, 0xff);
+    } else if (name.startsWith("FunDecl") || name.startsWith("FunCall")) {
+        return isDarkTheme_ ? QColor(0x55, 0x55, 0x2a) : QColor(0xff, 0xff, 0xcc);
+    } else if (name.startsWith("Return") || name.startsWith("Print")) {
+        return isDarkTheme_ ? QColor(0x2a, 0x55, 0x55) : QColor(0xcc, 0xff, 0xff);
+    }
+    return isDarkTheme_ ? QColor(0x38, 0x38, 0x38) : QColor(0xf0, 0xf0, 0xf0);
 }
 
 // ============================================================
@@ -154,6 +346,12 @@ AstViewer::RtNode* AstViewer::buildRtTree(ASTNode* node) {
 
 void AstViewer::layoutSubtree(RtNode* node) {
     if (!node) return;
+
+    // 折叠节点：不布局子树，轮廓仅含自身
+    if (node->collapsed) {
+        node->finalX = 0;
+        return;
+    }
 
     // 先递归布局每个子树（后序）
     for (RtNode* child : node->children) {
@@ -299,6 +497,11 @@ void AstViewer::buildParentContour(RtNode* node) {
     node->leftContour.push_back(-NODE_WIDTH / 2.0);
     node->rightContour.push_back(NODE_WIDTH / 2.0);
 
+    // 折叠节点：轮廓仅含自身（无子树参与）
+    if (node->collapsed) {
+        return;
+    }
+
     // 计算所有子树的最大深度（决定父轮廓层数）
     size_t maxChildDepth = 0;
     for (const RtNode* child : node->children) {
@@ -350,6 +553,9 @@ void AstViewer::computeAbsoluteCoords(RtNode* node, double parentAbsX, int depth
     if (left < bounds[depth].first) bounds[depth].first = left;
     if (right > bounds[depth].second) bounds[depth].second = right;
 
+    // 折叠节点：不递归子节点
+    if (node->collapsed) return;
+
     for (RtNode* child : node->children) {
         computeAbsoluteCoords(child, absX, depth + 1, bounds);
     }
@@ -368,53 +574,62 @@ void AstViewer::drawRtNode(RtNode* node, double offsetX) {
     double nodeX = centerX - NODE_WIDTH / 2.0;
     double nodeY = centerY;
 
-    // 根据节点类型选择颜色
-    QColor bgColor;
-    if (name.startsWith("BinaryOp") || name.startsWith("UnaryOp")) {
-        bgColor = QColor(255, 230, 200);   // 运算：浅橙
-    } else if (name.startsWith("Number") || name.startsWith("String") || name.startsWith("Bool")) {
-        bgColor = QColor(200, 230, 255);   // 字面量：浅蓝
-    } else if (name.startsWith("VarDecl") || name.startsWith("Assign") || name.startsWith("VarRef")) {
-        bgColor = QColor(200, 255, 200);   // 变量：浅绿
-    } else if (name.startsWith("If") || name.startsWith("While") || name.startsWith("For")) {
-        bgColor = QColor(255, 220, 255);   // 控制流：浅紫
-    } else if (name.startsWith("FunDecl") || name.startsWith("FunCall")) {
-        bgColor = QColor(255, 255, 200);   // 函数：浅黄
-    } else if (name.startsWith("Return") || name.startsWith("Print")) {
-        bgColor = QColor(220, 255, 255);   // 语句：浅青
-    } else {
-        bgColor = QColor(240, 240, 240);   // 默认：浅灰
-    }
+    // 根据节点类型 + 主题选择颜色
+    QColor bgColor = nodeBgColor(name);
+    QColor borderColor = nodeBorderColor();
+    QColor txtColor = textColor();
 
     QRectF rect(nodeX, nodeY, NODE_WIDTH, NODE_HEIGHT);
     QGraphicsRectItem* rectItem = scene_->addRect(rect,
-        QPen(QColor(100, 100, 100), 1.5), QBrush(bgColor));
+        QPen(borderColor, 1.5), QBrush(bgColor));
     rectItem->setZValue(1);
+    // 注册到 itemToNode_ 以支持点击命中检测
+    itemToNode_[rectItem] = node;
+    // 设置 tooltip：完整节点名 + 行:列 + 子节点数
+    QString tooltip = QString::fromUtf8("节点: %1\n位置: %2:%3\n子节点: %4")
+        .arg(name)
+        .arg(node->astNode->line)
+        .arg(node->astNode->column)
+        .arg(static_cast<int>(node->children.size()));
+    rectItem->setToolTip(tooltip);
 
-    // 绘制文本
+    // 绘制文本（折叠节点附加 [+N] 指示）
     QString displayText = name;
     if (displayText.length() > 14) {
         displayText = displayText.left(12) + "..";
+    }
+    if (node->collapsed && !node->children.empty()) {
+        displayText += QString(" [+%1]").arg(node->children.size());
     }
     QGraphicsTextItem* textItem = scene_->addText(displayText);
     textItem->setPos(nodeX + 4, nodeY + 8);
     // Dedup-4A: monospaceFont 共享缓存（原 static const QFont astFont("Consolas", 8)）
     textItem->setFont(GuiTextUtils::monospaceFont(8));
+    textItem->setDefaultTextColor(txtColor);
     textItem->setZValue(2);
+    // 文本也参与 tooltip（覆盖在 rect 上方时鼠标在 textItem 上）
+    textItem->setToolTip(tooltip);
+
+    // 折叠节点：不绘制子树连线与子节点
+    if (node->collapsed) return;
 
     // 父节点底部中心
     double parentCenterX = centerX;
     double parentBottomY = nodeY + NODE_HEIGHT;
 
-    // 递归绘制子节点 + 连线
+    // 递归绘制子节点 + 平滑连线（第八轮：三次贝塞尔曲线替代直线）
     for (RtNode* child : node->children) {
         if (!child || !child->astNode) continue;
         double childCenterX = child->finalX + offsetX;
         double childTopY = child->finalY;
 
-        scene_->addLine(parentCenterX, parentBottomY,
-                        childCenterX, childTopY,
-                        QPen(QColor(150, 150, 150), 1.5))->setZValue(0);
+        // 三次贝塞尔：控制点位于父子垂直中点，形成 S 形平滑过渡
+        double midY = (parentBottomY + childTopY) / 2.0;
+        QPainterPath path;
+        path.moveTo(parentCenterX, parentBottomY);
+        path.cubicTo(parentCenterX, midY, childCenterX, midY, childCenterX, childTopY);
+        auto* lineItem = scene_->addPath(path, QPen(lineColor(), 1.5));
+        lineItem->setZValue(0);
 
         drawRtNode(child, offsetX);
     }

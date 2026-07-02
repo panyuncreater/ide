@@ -747,11 +747,11 @@ TEST(IROptimizeTest, OptimizeReducesInstructionCount) {
     size_t beforeCount = ir.blocks[0].instructions.size();
     EXPECT_EQ(beforeCount, 6u);
 
-    bool modified = optimizeIR(ir);
+    bool modified = optimizeIR(ir, /*enableCopyPropagation=*/true);
     EXPECT_TRUE(modified);
 
     size_t afterCount = ir.blocks[0].instructions.size();
-    // 优化后应减少指令数（常量折叠 + 死代码消除后应剩 LOAD_CONST 6 + PRINT）
+    // 优化后应减少指令数（常量折叠 + 复制传播 + 死代码消除后应剩 LOAD_CONST 6 + PRINT）
     EXPECT_LT(afterCount, beforeCount);
     EXPECT_LE(afterCount, 3u);  // 至少 LOAD_CONST + PRINT，可能还有残留
 }

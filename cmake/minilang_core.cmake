@@ -44,6 +44,7 @@ set(MINILANG_GUI_SOURCES
     gui/VmStackPanel.cpp
     gui/IrViewer.cpp
     gui/FindReplacePanel.cpp
+    gui/ActivityBar.cpp
 )
 
 # ============================================================

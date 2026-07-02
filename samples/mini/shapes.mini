@@ -1,0 +1,35 @@
+// shapes.mini - 图形类模块
+import { PI } from "math_utils.mini";
+
+export class Shape {
+    fun init(name) {
+        this.name = name;
+    }
+    fun area() {
+        return 0;
+    }
+    fun describe() {
+        return this.name + " area = " + this.area();
+    }
+}
+
+export class Circle extends Shape {
+    fun init(radius) {
+        super.init("Circle");
+        this.radius = radius;
+    }
+    fun area() {
+        return PI * this.radius * this.radius;
+    }
+}
+
+export class Rectangle extends Shape {
+    fun init(w, h) {
+        super.init("Rectangle");
+        this.width = w;
+        this.height = h;
+    }
+    fun area() {
+        return this.width * this.height;
+    }
+}

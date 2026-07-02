@@ -2,7 +2,6 @@
 
 #include <QMainWindow>
 #include <QCloseEvent>
-#include <QSplitter>
 #include <QTabWidget>
 #include <QToolBar>
 #include <QAction>
@@ -10,31 +9,41 @@
 #include <QTextEdit>
 #include <QListWidget>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QStackedWidget>
+#include <QToolButton>
 #include <memory>
+#include <vector>
+
+#include <QSettings>
+
+// ADS 停靠框架
+#include "DockManager.h"
+#include "DockWidget.h"
+
+// QFluentKit 主题
+#include "FluentGlobal.h"
 
 #include "Diagnostic.h"
 #include "IdeController.h"
 #include "gui/CodeEditor.h"
 #include "gui/SyntaxHighlighter.h"
 #include "gui/AstViewer.h"
-#include "gui/OutputPanel.h"
 #include "gui/DebugPanel.h"
 #include "gui/ReplPanel.h"
 #include "gui/VmStackPanel.h"
 #include "gui/IrViewer.h"
 #include "gui/FindReplacePanel.h"
+#include "gui/ActivityBar.h"
+
+class Pivot;
+class QStatusBar;
+class QLabel;
 
 // ============================================================
-// Ide — GUI 交互层
+// Ide — MiniLang IDE 主窗口
 // ------------------------------------------------------------
-// 从原上帝对象拆分而来，仅负责：
-//   - GUI 组件创建与布局
-//   - 文件操作（新建/打开/保存）
-//   - 用户操作槽函数（委托给 IdeController 处理业务逻辑）
-//   - 通过 IdeController 信号更新 UI
-//
-// 业务逻辑层 → IdeController
-// Worker 任务处理层 → InterpreterWorker（已拆分至独立文件）
+// 第六轮重构：活动栏 + Pivot 标签 + Fluent 组件 + AST 独立窗口
 // ============================================================
 
 class Ide : public QMainWindow {
@@ -45,114 +54,125 @@ public:
     ~Ide();
 
 private slots:
-    /// 运行程序
     void onRun();
-
-    /// 调试运行
     void onDebug();
 
-    /// 单步进入
     void onStepIn();
-
-    /// 单步跳过
     void onStepOver();
-
-    /// 单步跳出
     void onStepOut();
-
-    /// 继续运行（到下一个断点）
     void onResume();
-
-    /// 停止运行
     void onStop();
 
-    /// 清空输出
     void onClearOutput();
 
-    /// GUI-04: 文件操作
     void onNew();
     void onOpen();
+    void onOpenFolder();
     void onSave();
     void onSaveAs();
 
-    /// 调试暂停在某行
     void onPausedAt(int line);
 
-    /// 格式化代码
     void onFormat();
+    void onCompileAnalysis();
+    void onShowAstTree();
+    void onRightTabChanged(int index);
 
-    /// 显示字节码
-    void onShowBytecode();
-
-    /// 方向三：显示 IR 中间表示
-    void onShowIR();
-
-    /// VM 单步执行字节码（step-in）
     void onVmStep();
-
-    /// A4 fix: VM 单步跨过（step-over，不进入函数调用）
     void onVmStepOver();
-
-    /// A4 fix: VM 单步跨出（step-out，跳出当前函数）
     void onVmStepOut();
-
-    /// A4 fix: VM 全速运行（命中断点时暂停）
     void onVmRun();
-
-    /// VM 停止执行
     void onVmStop();
 
-    // A4 fix: VM 步进共享辅助方法
-    /// 处理 vmStepByMode 结果，更新 UI（栈/全局变量/调用栈/高亮）
     void handleVmStepResult(IdeController::VmStepResult result);
-    /// 批量启用/禁用 VM 步进按钮
-    /// running=true 表示 VM 处于暂停状态（可继续步进），需启用所有步进按钮
-    /// running=false 表示 VM 已停止/未初始化
     void setVmStepActionsEnabled(bool enabled, bool running = false);
 
-    /// F6: 显示查找面板 (Ctrl+F)
     void onFind();
-    /// F6: 显示替换面板 (Ctrl+H)
     void onReplace();
-    /// F6: 查找下一个 (F3)
     void onFindNext();
-    /// F6: 查找上一个 (Shift+F3)
     void onFindPrev();
 
-    /// F9: 切换深色/浅色主题
-    void onToggleTheme(bool dark);
+    void onFileTreeItemActivated(QTreeWidgetItem* item, int column);
+    void onCurrentTabChanged(int index);
+    void onEditorTabCloseRequested(int index);
+
+    void onFileTreeContextMenu(const QPoint& pos);
+    void onNewFileInTree();
+    void onNewFolderInTree();
+    void onRenameInTree();
+    void onDeleteInTree();
+
+    /// 编辑器右键标签菜单
+    void onEditorTabContextMenu(const QPoint& pos);
+    void onCloseOtherTabs();
+    void onCloseAllTabs();
 
 private:
-    /// 窗口关闭事件：确保调试器和VM安全停止
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
-    /// #4 fix: 同步 VM 断点及条件到 VmStepper（消除 4 处重复代码）
     void syncVmBreakpoints();
+    void updateTabCloseButtons(int hoveredIndex);
 
-    // ---- 业务逻辑层 ----
+    struct EditorTabData {
+        QWidget* container = nullptr;
+        CodeEditor* editor = nullptr;
+        SyntaxHighlighter* highlighter = nullptr;
+        FindReplacePanel* findPanel = nullptr;
+        QString filePath;
+        bool isUntitled = true;
+    };
+
     IdeController* controller_ = nullptr;
 
-    // ---- GUI 组件 ----
+    // ---- 当前活跃编辑器（由 editorTabWidget_ 当前标签驱动）----
     CodeEditor* codeEditor_ = nullptr;
     FindReplacePanel* findReplacePanel_ = nullptr;
     SyntaxHighlighter* highlighter_ = nullptr;
-    AstViewer* astViewer_ = nullptr;
-    OutputPanel* outputPanel_ = nullptr;
+
+    std::vector<EditorTabData> editorTabs_;
+
+    // ---- 中央区域：欢迎页 ↔ 编辑器标签页 ----
+    QWidget* welcomePage_ = nullptr;
+    QStackedWidget* centerStack_ = nullptr;
+    QTabWidget* editorTabWidget_ = nullptr;
+    int untitledCount_ = 0;
+
+    // ---- ADS 停靠管理器 ----
+    ads::CDockManager* dockManager_ = nullptr;
+
+    // 活动栏
+    ActivityBar* activityBar_ = nullptr;
+
+    // 左侧面板
+    ads::CDockWidget* fileTreeDock_ = nullptr;
+    ads::CDockWidget* debugPanelDock_ = nullptr;
+    QTreeWidget* fileTree_ = nullptr;
     DebugPanel* debugPanel_ = nullptr;
+
+    // 底部面板（单一 dock + Pivot 标签切换）
+    ads::CDockWidget* bottomDock_ = nullptr;
+    Pivot* bottomPivot_ = nullptr;
+    QStackedWidget* bottomStack_ = nullptr;
+    QTextEdit* outputTextEdit_ = nullptr;
+    QListWidget* errorListWidget_ = nullptr;
     ReplPanel* replPanel_ = nullptr;
+    bool errorPanelHasErrors_ = false;
 
-    QTabWidget* rightTabWidget_ = nullptr;   // 右侧 Tab：Token 列表 / AST 视图 / 字节码视图
-    QTabWidget* bottomTabWidget_ = nullptr;  // 底部 Tab：输出 / 调试 / REPL
+    // 右侧面板（单一 dock + Pivot 标签切换）
+    ads::CDockWidget* rightDock_ = nullptr;
+    Pivot* rightPivot_ = nullptr;
+    QStackedWidget* rightStack_ = nullptr;
+    QTableWidget* tokenTable_ = nullptr;
+    QListWidget* bytecodeList_ = nullptr;
+    VmStackPanel* vmStackPanel_ = nullptr;
+    IrViewer* irViewer_ = nullptr;
 
-    QTableWidget* tokenTable_ = nullptr;    // Token 列表表格
-    QListWidget* bytecodeList_ = nullptr;   // 字节码指令列表（支持行高亮）
-    VmStackPanel* vmStackPanel_ = nullptr;  // VM 栈状态面板
-    IrViewer* irViewer_ = nullptr;          // IR 中间表示可视化面板（方向三）
+    // AST 独立窗口（不嵌入停靠系统）
+    QWidget* astWindow_ = nullptr;
+    AstViewer* astViewer_ = nullptr;
 
-    QSplitter* mainSplitter_ = nullptr;      // 主水平分割
-    QSplitter* vSplitter_ = nullptr;         // 垂直分割
-
-    // ---- 工具栏动作 ----
+    // ---- 工具栏 ----
     QAction* runAction_ = nullptr;
     QAction* debugAction_ = nullptr;
     QAction* stepInAction_ = nullptr;
@@ -162,100 +182,151 @@ private:
     QAction* stopAction_ = nullptr;
     QAction* clearAction_ = nullptr;
     QAction* formatAction_ = nullptr;
-    QAction* bytecodeAction_ = nullptr;
-    QAction* irAction_ = nullptr;           // 方向三：IR 可视化按钮
+    QAction* compileAnalysisAction_ = nullptr;
+    QAction* astAction_ = nullptr;
+    QAction* openFolderAction_ = nullptr;
 
-    QAction* vmStepAction_ = nullptr;       // VM 单步（step-in）
-    QAction* vmStepOverAction_ = nullptr;   // A4 fix: VM 单步跨过（step-over）
-    QAction* vmStepOutAction_ = nullptr;    // A4 fix: VM 单步跨出（step-out）
-    QAction* vmRunAction_ = nullptr;        // A4 fix: VM 全速运行（命中断点暂停）
-    QAction* vmStopAction_ = nullptr;       // VM 停止
+    QWidget* debugButtonContainer_ = nullptr;
+    bool debugButtonsVisible_ = false;
+    QAction* debugSepAction_ = nullptr;   // 第八轮：动态分隔线，随调试按钮显隐
 
-    // F9: 主题切换
-    QAction* darkThemeAction_ = nullptr;    // 深色主题（checkable）
-    bool isDarkTheme_ = false;              // 当前主题状态
+    QAction* vmStepAction_ = nullptr;
+    QAction* vmStepOverAction_ = nullptr;
+    QAction* vmStepOutAction_ = nullptr;
+    QAction* vmRunAction_ = nullptr;
+    QAction* vmStopAction_ = nullptr;
 
-    // GUI-04: 文件操作 actions
+    QWidget* vmButtonContainer_ = nullptr;
+    QAction* vmSepAction_ = nullptr;      // 第八轮：动态分隔线，随 VM 按钮显隐
+
     QAction* newAction_ = nullptr;
     QAction* openAction_ = nullptr;
     QAction* saveAction_ = nullptr;
     QAction* saveAsAction_ = nullptr;
 
-    // GUI-04: 文件状态
-    QString currentFilePath_;              // 当前文件路径（空=未保存）
-    bool isDirty_ = false;                 // 是否有未保存修改
+    // 视图菜单面板显隐
+    QAction* viewExplorerAction_ = nullptr;
+    QAction* viewDebugAction_ = nullptr;
+    QAction* viewOutputAction_ = nullptr;
+    QAction* viewCompileAnalysisAction_ = nullptr;
 
-    // F13: 补全词更新防抖定时器
-    QTimer* completionTimer_ = nullptr;    // 文本变化后延迟更新补全词
-    QStringList staticCompletionWords_;    // 静态补全词（关键字 + 内置函数）
+    // 状态栏
+    QLabel* statusLineLabel_ = nullptr;
+    QLabel* statusColLabel_ = nullptr;
+    QLabel* statusSaveLabel_ = nullptr;
+    QLabel* statusRunLabel_ = nullptr;
+    QLabel* statusEncodingLabel_ = nullptr;  // 第八轮：文件编码显示
 
-    /// chunk→行号映射（用于多 chunk 高亮定位）
+    // ---- 状态 ----
+    QString workspaceDir_;
+    QString currentFilePath_;
+    bool isDirty_ = false;
+    bool hasWorkspace_ = false;
+    int bottomPanelHeight_ = 220;  // 第八轮：输出面板默认高度，用户调整后记忆
+
+    // ---- 防抖定时器 ----
+    QTimer* completionTimer_ = nullptr;     // 补全词刷新（500ms）
+    QTimer* syntaxCheckTimer_ = nullptr;    // 语法检查（300ms）
+    QTimer* splitterSaveTimer_ = nullptr;   // 布局保存防抖（500ms）
+    QStringList staticCompletionWords_;
+
+    // ---- 欢迎页：最近打开列表 ----
+    QListWidget* recentListWidget_ = nullptr;
+    QStringList recentWorkspaces_;
+    void loadRecentWorkspaces();
+    void addRecentWorkspace(const QString& dir);
+    void refreshRecentList();
+
+    // ---- 字节码/IR 辅助 ----
     struct ChunkRowInfo {
-        std::string name;   // chunk 名称（"main" 或函数名）
-        int startRow;       // 在 bytecodeList_ 中的起始行
-        int rowCount;       // 该 chunk 占用的行数
+        std::string name;
+        int startRow;
+        int rowCount;
     };
     std::vector<ChunkRowInfo> chunkRowMap_;
 
-    // D21 fix: 缓存上次编译的源码哈希，若源码未变则跳过字节码列表重建
     size_t lastBytecodeSourceHash_ = 0;
-
-    // 方向四：IR 指令 → 字节码偏移映射（IR 调试器集成）
-    // 在 compileViaIR 后由 BytecodeIRBackend 生成的映射表，
-    // 用于 VM 单步执行时高亮对应的 IR 指令。
-    // first = IR 指令展平序号, second = 字节码偏移
     std::vector<std::pair<size_t, size_t>> irToBytecodeOffset_;
 
-    /// 初始化 UI
+    // ---- 拼写纠错候选词 ----
+    std::vector<std::string> spellCandidates_;
+
+    // ---- 初始化 ----
     void initUI();
-
-    /// 初始化工具栏
     void initToolbar();
-
-    /// 初始化信号连接（工具栏 + controller 信号）
     void initConnections();
-
-    /// F9: 应用主题（true=深色，false=浅色）
-    void applyTheme(bool dark);
-
-    /// F13: 初始化自动补全（关键字 + 内置函数）
+    void initFileTree();
+    void initWelcomePage();
+    void initMenuBar();
+    void initStatusBar();
+    void applyFluentStyle();
     void setupCompletion();
-
-    /// F13: 从当前文档扫描用户定义的符号（var/fun/class 名称）
     void updateCompletionWords();
+    void updateStatusBar();
 
-    /// 更新字节码指令列表高亮
+    // ---- 输出/错误 ----
+    void appendOutput(const QString& text);
+    void appendError(const QString& text, int line = 0, int column = 0);
+    void clearOutput();
+
+    // ---- 可视化 ----
     void highlightBytecodeLine(const std::string& chunkName, size_t ip);
-
-    /// 填充字节码指令列表
     void populateBytecodeList();
-
-    /// 方向三：填充 IR 可视化面板
     void populateIRViewer();
-
-    /// 方向四：VM 单步时高亮对应 IR 指令
     void highlightIRLine(size_t bytecodeOffset);
-
-    /// 更新 Token 列表表格
     void updateTokenTable();
-
-    /// 更新 AST 视图
     void updateAstViewer();
-
-    /// 更新调试面板
     void updateDebugInfo();
-
-    /// 将诊断信息输出到输出面板，并标记编辑器错误行
     void displayDiagnostics(const DiagnosticBag& bag);
-
-    /// 设置运行状态（启用/禁用按钮）
     void setRunningState(bool running);
-
-    /// Worker 线程结束后的 UI 清理
     void onWorkerFinished(bool wasDebug);
+    void loadVisualizationForTab(int tabIndex);
 
-    // GUI-04: 文件操作辅助方法
-    bool maybeSave();                        // 未保存提示，返回 true 可以继续
-    void updateWindowTitle();                // 更新窗口标题
-    void loadFile(const QString& path);      // 加载文件到编辑器
+    /// 第八轮：运行/调试前检查编译错误，存在错误时显示诊断并返回 true 拦截
+    bool blockIfHasErrors();
+
+    /// 第八轮：实时语法检查（300ms 防抖触发）
+    /// 清空旧错误标记 → 全量扫描 → 按行号排序展示 → 更新波浪下划线
+    void runRealTimeSyntaxCheck();
+
+    // ---- 面板控制 ----
+    void showBottomPanel(int tabIndex = 0);
+    void hideBottomPanel();
+    void showRightPanel(int tabIndex = 0);
+    void hideRightPanel();
+    void toggleBottomPanel();
+    void toggleRightPanel();
+    void switchLeftToFileTree();
+    void switchLeftToDebugPanel();
+    void showAstWindow();
+    void onActivityChanged(int index);
+    void onRightPivotChanged(const QString& routeKey);
+    void onBottomPivotChanged(const QString& routeKey);
+
+    void showDebugButtons(bool show);
+    void showVmButtons(bool show);
+
+    // ---- 帮助弹窗 ----
+    void showHelpDialog();
+
+    // ---- AST 窗口 ----
+    void saveAstWindowGeometry();
+    void restoreAstWindowGeometry();
+
+    // ---- 文件树 ----
+    void populateFileTree();
+
+    // ---- 编辑器标签 ----
+    int createNewEditorTab(const QString& filePath = QString(), const QString& content = QString());
+    void switchToTab(int index);
+    int findTabForFile(const QString& path);
+    void loadFileIntoTab(int tabIndex, const QString& path);
+
+    bool maybeSave();
+    void updateWindowTitle();
+    void loadFile(const QString& path);
+    void openWorkspace(const QString& dirPath);
+    void saveLayout();
+    void restoreLayout();
+    void ensureEditorVisible();
 };

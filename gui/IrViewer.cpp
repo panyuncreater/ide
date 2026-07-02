@@ -1,73 +1,165 @@
 #include "gui/IrViewer.h"
-#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
+#include "gui/GuiTextUtils.h"  // monospaceFont()
+#include "QFluent/ScrollBar.h"
 #include <QVBoxLayout>
-#include <QLabel>
-#include <QAbstractItemView>
+#include <QTextCursor>
+#include <QTextBlock>
+#include <QTextCharFormat>
 #include <QColor>
-#include <QScrollBar>
 #include <sstream>
+#include <regex>
 
 // ============================================================
-// IrViewer 实现（方向三：IR 可视化面板）
+// IrViewer 实现（第八轮：QTextBrowser + HTML 语法高亮）
 // ============================================================
 
 IrViewer::IrViewer(QWidget* parent)
     : QWidget(parent) {
 
     auto* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(4, 4, 4, 4);
-    mainLayout->setSpacing(2);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
 
-    auto* title = new QLabel("IR 中间表示", this);
-    title->setObjectName("irViewerTitle");
-    mainLayout->addWidget(title);
-
-    list_ = new QListWidget(this);
-    list_->setObjectName("irViewerList");
-    list_->setFont(GuiTextUtils::monospaceFont(10));
-    list_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    list_->setAlternatingRowColors(false);
-    list_->setWordWrap(false);
-    list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    mainLayout->addWidget(list_, 1);
+    browser_ = new QTextBrowser(this);
+    browser_->setObjectName("irViewerBrowser");
+    browser_->setFont(GuiTextUtils::monospaceFont(10));
+    browser_->setOpenExternalLinks(false);
+    browser_->setLineWrapMode(QTextBrowser::NoWrap);
+    browser_->setVerticalScrollBar(new ScrollBar(browser_));
+    browser_->setHorizontalScrollBar(new ScrollBar(browser_));
+    // 第八轮：#f8f8f8 背景，8px 内边距
+    browser_->setStyleSheet(
+        "QTextBrowser { background: #f8f8f8; border: none; padding: 8px; }");
+    mainLayout->addWidget(browser_, 1);
 }
 
-// ---- IR 操作码名称与指令格式化（Dedup-4E/4F）----
-// 原本 IrViewer 维护了一份 localIrOpName 副本，缺失 SUPER_MEMBER_GET/SUPER_CALL case
-// 导致显示为 "?"，现统一使用 IR.h 公共 API irOpName() / formatIRInstruction()。
+QString IrViewer::htmlEscape(const std::string& s) {
+    QString q = QString::fromStdString(s);
+    return q.toHtmlEscaped();
+}
+
+// 判断是否为 IR opcode（大写字母+下划线，至少 2 字符）
+static bool isIROpcode(const std::string& tok) {
+    if (tok.size() < 2) return false;
+    for (char c : tok) {
+        if (!((c >= 'A' && c <= 'Z') || c == '_')) return false;
+    }
+    return true;
+}
+
+// 判断是否为寄存器/局部变量（v 数字 或 t 数字）
+static bool isRegister(const std::string& tok) {
+    if (tok.size() < 2) return false;
+    if (tok[0] != 'v' && tok[0] != 't') return false;
+    for (size_t i = 1; i < tok.size(); ++i) {
+        if (tok[i] < '0' || tok[i] > '9') return false;
+    }
+    return true;
+}
+
+// 判断是否为数字常量
+static bool isNumericConst(const std::string& tok) {
+    if (tok.empty()) return false;
+    bool hasDigit = false;
+    for (char c : tok) {
+        if (c >= '0' && c <= '9') { hasDigit = true; continue; }
+        if (c == '.' || c == '-') continue;
+        return false;
+    }
+    return hasDigit;
+}
+
+// 判断是否为字符串字面量（含引号）
+static bool isStringLiteral(const std::string& tok) {
+    return !tok.empty() && tok.front() == '"' && tok.back() == '"';
+}
+
+QString IrViewer::formatIRLineHtml(const std::string& text) const {
+    // 分离注释（; 开头到行尾）
+    std::string code = text;
+    std::string comment;
+    size_t semiPos = code.find(';');
+    if (semiPos != std::string::npos) {
+        comment = code.substr(semiPos);
+        code = code.substr(0, semiPos);
+    }
+
+    // 按空白拆分 token
+    std::vector<std::string> tokens;
+    std::istringstream iss(code);
+    std::string tok;
+    while (iss >> tok) {
+        tokens.push_back(tok);
+    }
+
+    QString html;
+    bool firstToken = true;
+    for (const auto& t : tokens) {
+        if (!firstToken) html += "&nbsp;";
+        firstToken = false;
+
+        // 去除尾随逗号
+        std::string core = t;
+        std::string suffix;
+        if (!core.empty() && core.back() == ',') {
+            suffix = ",";
+            core.pop_back();
+        }
+
+        QString esc = htmlEscape(core);
+        if (isIROpcode(core)) {
+            html += "<span style=\"color:#0078d4;font-weight:bold;\">" + esc + "</span>";
+        } else if (isRegister(core)) {
+            html += "<span style=\"color:#107c10;\">" + esc + "</span>";
+        } else if (isStringLiteral(core)) {
+            html += "<span style=\"color:#d83b01;\">" + esc + "</span>";
+        } else if (isNumericConst(core)) {
+            html += "<span style=\"color:#d83b01;\">" + esc + "</span>";
+        } else if (core == "=" || core == "->" || core == "|" || core == "&") {
+            html += "<span style=\"color:#6e6e6e;\">" + esc + "</span>";
+        } else {
+            // 标识符（函数名、标签等）默认色
+            html += "<span style=\"color:#1e1e1e;\">" + esc + "</span>";
+        }
+        if (!suffix.empty()) {
+            html += "<span style=\"color:#6e6e6e;\">" + QString::fromStdString(suffix).toHtmlEscaped() + "</span>";
+        }
+    }
+
+    if (!comment.empty()) {
+        if (!html.isEmpty()) html += "&nbsp;";
+        html += "<span style=\"color:#6e6e6e;font-style:italic;\">" + htmlEscape(comment) + "</span>";
+    }
+
+    return html;
+}
 
 void IrViewer::setIR(const IRFunction* ir) {
-    list_->clear();
+    browser_->clear();
     rowToSourceLine_.clear();
     rowToInstrIndex_.clear();
     highlightedRow_ = -1;
 
     if (!ir) {
-        list_->addItem("(未启用 IR 编译 — 点击工具栏 🔮 IR 按钮生成)");
+        browser_->setHtml("<div style='color:#6e6e6e;padding:8px;'>(未启用 IR 编译 — 在视图菜单勾选编译分析面板后查看)</div>");
         return;
     }
 
     if (ir->blocks.empty()) {
-        list_->addItem("(空 IR — 无基本块)");
+        browser_->setHtml("<div style='color:#6e6e6e;padding:8px;'>(空 IR — 无基本块)</div>");
         return;
     }
 
-    // PERF: 大 IR 保护（与 AstViewer MAX_AST_NODES 同理）
-    // 统计指令总数，超过上限则截断显示
+    // PERF: 大 IR 保护
     size_t totalInstrs = 0;
     for (const auto& block : ir->blocks) {
         totalInstrs += block.instructions.size();
     }
     static constexpr size_t MAX_IR_ROWS = 10000;
 
-    list_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
-    // AUDIT-BUG-F5 fix: 用 try/catch 保护填充逻辑，确保异常路径也恢复 updatesEnabled。
-    // 原实现无异常保护，formatIRInstruction 或 new QListWidgetItem 抛异常时
-    // setUpdatesEnabled(true) 永不执行，列表永久冻结不可重绘。
-    try {
-    // Dedup-4A: 通过 GuiTextUtils::monospaceFont 共享全局 QFont 缓存（原 static const QFont）
-    const QFont& irFont = GuiTextUtils::monospaceFont(10);
-    const QFont& headerFont = GuiTextUtils::monospaceFont(10, true);
+    QString html;
+    html.reserve(64 * 1024);
+    html += "<div style='font-family:Consolas,monospace;font-size:13px;line-height:1.6;'>";
 
     // ---- 函数元信息头 ----
     {
@@ -77,25 +169,20 @@ void IrViewer::setIR(const IRFunction* ir) {
             << "constants=" << ir->constants.size() << "  "
             << "globals=" << ir->globalNames.size() << "  "
             << "vregs=" << ir->nextVReg;
-        auto* item = new QListWidgetItem(QString::fromStdString(oss.str()));
-        item->setFont(headerFont);
-        item->setForeground(QColor("#569CD6"));  // 与字节码 chunk 头同色
-        list_->addItem(item);
+        html += QString("<div style='color:#8764b8;font-weight:bold;padding:2px 0;'>%1</div>")
+                    .arg(htmlEscape(oss.str()));
         rowToSourceLine_.push_back(0);
-        rowToInstrIndex_.push_back(SIZE_MAX);  // 非指令行
+        rowToInstrIndex_.push_back(SIZE_MAX);
     }
 
-    size_t instrIndex = 0;  // 展平的全局指令序号（用于方向四映射）
+    size_t instrIndex = 0;
 
     for (size_t bi = 0; bi < ir->blocks.size(); ++bi) {
         const auto& block = ir->blocks[bi];
 
-        // 截断保护
-        if (static_cast<size_t>(list_->count()) > MAX_IR_ROWS) {
-            auto* item = new QListWidgetItem("... (IR 超过 10000 行，已截断显示)");
-            item->setFont(irFont);
-            item->setForeground(QColor("#808080"));
-            list_->addItem(item);
+        if (static_cast<size_t>(rowToSourceLine_.size()) > MAX_IR_ROWS) {
+            html += QString("<div style='color:#808080;padding:2px 0;'>... (IR 超过 %1 行，已截断显示)</div>")
+                        .arg(MAX_IR_ROWS);
             rowToSourceLine_.push_back(0);
             rowToInstrIndex_.push_back(SIZE_MAX);
             break;
@@ -105,10 +192,8 @@ void IrViewer::setIR(const IRFunction* ir) {
         {
             std::ostringstream oss;
             oss << "  BB" << bi << " (label=" << block.labelIndex << "):";
-            auto* item = new QListWidgetItem(QString::fromStdString(oss.str()));
-            item->setFont(headerFont);
-            item->setForeground(QColor("#4EC9B0"));  // 青色区分基本块
-            list_->addItem(item);
+            html += QString("<div style='color:#8764b8;font-weight:bold;padding:2px 0;'>%1</div>")
+                        .arg(htmlEscape(oss.str()));
             rowToSourceLine_.push_back(0);
             rowToInstrIndex_.push_back(SIZE_MAX);
         }
@@ -116,25 +201,20 @@ void IrViewer::setIR(const IRFunction* ir) {
         // ---- 块内指令 ----
         for (const auto& instr : block.instructions) {
             std::string text = formatIRInstruction(instr);
-            auto* item = new QListWidgetItem(QString::fromStdString("    " + text));
-            item->setFont(irFont);
-            list_->addItem(item);
+            html += QString("<div style='padding:0 0 0 16px;'>%1</div>")
+                        .arg(formatIRLineHtml(text));
             rowToSourceLine_.push_back(instr.line);
             rowToInstrIndex_.push_back(instrIndex);
             instrIndex++;
         }
     }
 
-    list_->setUpdatesEnabled(true);
-    }  // end try
-    catch (...) {
-        list_->setUpdatesEnabled(true);  // AUDIT-BUG-F5 fix: 异常路径恢复重绘
-        throw;  // 重新抛出，让上层处理
-    }
+    html += "</div>";
+    browser_->setHtml(html);
 }
 
 void IrViewer::clearIR() {
-    list_->clear();
+    browser_->clear();
     rowToSourceLine_.clear();
     rowToInstrIndex_.clear();
     highlightedRow_ = -1;
@@ -142,27 +222,34 @@ void IrViewer::clearIR() {
 
 void IrViewer::highlightBySourceLine(int line) {
     // 清除旧高亮
-    if (highlightedRow_ >= 0 && highlightedRow_ < list_->count()) {
-        auto* item = list_->item(highlightedRow_);
-        if (item) {
-            item->setBackground(QColor("transparent"));
+    if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {
+        QTextBlock block = browser_->document()->findBlockByNumber(highlightedRow_);
+        if (block.isValid()) {
+            QTextCursor c(block);
+            QTextCharFormat fmt;
+            fmt.setBackground(Qt::transparent);
+            c.select(QTextCursor::LineUnderCursor);
+            c.setCharFormat(fmt);
         }
     }
     highlightedRow_ = -1;
 
     if (line <= 0) return;
 
-    // 找到第一个匹配源码行的指令并高亮
     for (int i = 0; i < static_cast<int>(rowToSourceLine_.size()); ++i) {
         if (rowToSourceLine_[i] == line) {
-            auto* item = list_->item(i);
-            if (item) {
-                item->setBackground(QColor("#FFF09B"));  // 与编辑器当前行高亮同色系
+            QTextBlock block = browser_->document()->findBlockByNumber(i);
+            if (block.isValid()) {
+                QTextCursor c(block);
+                QTextCharFormat fmt;
+                fmt.setBackground(QColor("#FFF09B"));
+                c.select(QTextCursor::LineUnderCursor);
+                c.setCharFormat(fmt);
+                browser_->setTextCursor(c);
+                browser_->scrollToAnchor(QString::number(i));
             }
             highlightedRow_ = i;
-            // 滚动到可见
-            list_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
-            break;  // 只高亮第一个匹配
+            break;
         }
     }
 }
@@ -170,18 +257,20 @@ void IrViewer::highlightBySourceLine(int line) {
 void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, size_t>>& irToBytecodeOffset,
                                           size_t currentBytecodeOffset) {
     // 清除旧高亮
-    if (highlightedRow_ >= 0 && highlightedRow_ < list_->count()) {
-        auto* item = list_->item(highlightedRow_);
-        if (item) {
-            item->setBackground(QColor("transparent"));
+    if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {
+        QTextBlock block = browser_->document()->findBlockByNumber(highlightedRow_);
+        if (block.isValid()) {
+            QTextCursor c(block);
+            QTextCharFormat fmt;
+            fmt.setBackground(Qt::transparent);
+            c.select(QTextCursor::LineUnderCursor);
+            c.setCharFormat(fmt);
         }
     }
     highlightedRow_ = -1;
 
     if (irToBytecodeOffset.empty()) return;
 
-    // 二分查找：找到 ≤ currentBytecodeOffset 的最大映射项
-    // irToBytecodeOffset 按 .second（字节码偏移）升序排列
     size_t bestInstrIdx = SIZE_MAX;
     size_t lo = 0, hi = irToBytecodeOffset.size();
     while (lo < hi) {
@@ -196,25 +285,32 @@ void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, siz
 
     if (bestInstrIdx == SIZE_MAX) return;
 
-    // 在 rowToInstrIndex_ 中找到 bestInstrIdx 对应的行
     for (int i = 0; i < static_cast<int>(rowToInstrIndex_.size()); ++i) {
         if (rowToInstrIndex_[i] == bestInstrIdx) {
-            auto* item = list_->item(i);
-            if (item) {
-                item->setBackground(QColor("#7CFC00"));  // 亮绿色，区别于源码行高亮
+            QTextBlock block = browser_->document()->findBlockByNumber(i);
+            if (block.isValid()) {
+                QTextCursor c(block);
+                QTextCharFormat fmt;
+                fmt.setBackground(QColor("#7CFC00"));
+                c.select(QTextCursor::LineUnderCursor);
+                c.setCharFormat(fmt);
+                browser_->setTextCursor(c);
             }
             highlightedRow_ = i;
-            list_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
             break;
         }
     }
 }
 
 void IrViewer::clearHighlight() {
-    if (highlightedRow_ >= 0 && highlightedRow_ < list_->count()) {
-        auto* item = list_->item(highlightedRow_);
-        if (item) {
-            item->setBackground(QColor("transparent"));
+    if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {
+        QTextBlock block = browser_->document()->findBlockByNumber(highlightedRow_);
+        if (block.isValid()) {
+            QTextCursor c(block);
+            QTextCharFormat fmt;
+            fmt.setBackground(Qt::transparent);
+            c.select(QTextCursor::LineUnderCursor);
+            c.setCharFormat(fmt);
         }
     }
     highlightedRow_ = -1;

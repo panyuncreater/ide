@@ -23,7 +23,7 @@ on:
 
 env:
   CMAKE_BUILD_TYPE: Release
-  QT_VERSION: '6.7.0'
+  QT_VERSION: '6.8.0'
 
 jobs:
   # ============================================================
@@ -51,7 +51,7 @@ jobs:
           version: ${{ env.QT_VERSION }}
           host: windows
           target: desktop
-          arch: win64_msvc2019_64
+          arch: win64_msvc2022_64
           cache: true
 
       - name: 设置 MSVC 开发环境
@@ -104,7 +104,7 @@ jobs:
           version: ${{ env.QT_VERSION }}
           host: windows
           target: desktop
-          arch: win64_msvc2019_64
+          arch: win64_msvc2022_64
           cache: true
 
       - name: 设置 MSVC 开发环境

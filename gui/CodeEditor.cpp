@@ -322,6 +322,16 @@ void CodeEditor::clearCurrentLine() {
     highlightCurrentLine();
 }
 
+void CodeEditor::gotoLine(int line) {
+    if (line <= 0) return;
+    QTextBlock block = document()->findBlockByNumber(line - 1);
+    if (!block.isValid()) return;
+    QTextCursor cursor(block);
+    setTextCursor(cursor);
+    centerCursor();
+    setFocus();
+}
+
 QSet<int> CodeEditor::getBreakpoints() const {
     return breakpoints_;
 }
@@ -553,6 +563,31 @@ void CodeEditor::toggleFold(int blockNumber) {
 
 void CodeEditor::setDarkTheme(bool dark) {
     isDarkTheme_ = dark;
+
+    // 第四轮迭代：设置 QPalette 实现编辑器基底色 / 选中区域 / 光标颜色主题化
+    // VS Code 规范：
+    //   浅色：base #ffffff, text #1f1f1f, selection #add6ff (半透明)
+    //   深色：base #1e1e1e, text #d4d4d4, selection #264f78 (半透明)
+    QPalette pal = this->palette();
+    if (dark) {
+        pal.setColor(QPalette::Base, QColor(0x1e, 0x1e, 0x1e));
+        pal.setColor(QPalette::AlternateBase, QColor(0x25, 0x25, 0x26));
+        pal.setColor(QPalette::Text, QColor(0xd4, 0xd4, 0xd4));
+        pal.setColor(QPalette::Highlight, QColor(0x26, 0x4f, 0x78));
+        pal.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
+        pal.setColor(QPalette::PlaceholderText, QColor(0x80, 0x80, 0x80));
+    } else {
+        pal.setColor(QPalette::Base, QColor(0xff, 0xff, 0xff));
+        pal.setColor(QPalette::AlternateBase, QColor(0xf8, 0xf8, 0xf8));
+        pal.setColor(QPalette::Text, QColor(0x1f, 0x1f, 0x1f));
+        pal.setColor(QPalette::Highlight, QColor(0xad, 0xd6, 0xff));
+        pal.setColor(QPalette::HighlightedText, QColor(0x1f, 0x1f, 0x1f));
+        pal.setColor(QPalette::PlaceholderText, QColor(0x9a, 0x9a, 0x9a));
+    }
+    setPalette(pal);
+    // viewport 也需应用 palette（QPlainTextEdit 的实际绘制发生在 viewport）
+    viewport()->setPalette(pal);
+
     highlightCurrentLine();  // 刷新当前行高亮配色
     lineNumberArea_->update();  // 刷新行号区域
     viewport()->update();  // 刷新编辑器视口

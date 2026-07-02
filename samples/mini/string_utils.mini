@@ -1,0 +1,24 @@
+// string_utils.mini - 字符串工具模块
+export fun greet(name) {
+    return "Hello, " + name + "!";
+}
+
+export fun repeat(str, times) {
+    var result = "";
+    for (var i = 0; i < times; i = i + 1) {
+        result = result + str;
+    }
+    return result;
+}
+
+export fun isEmpty(s) {
+    return s.len() == 0;
+}
+
+export fun padLeft(str, width, ch) {
+    var result = str;
+    while (result.len() < width) {
+        result = ch + result;
+    }
+    return result;
+}

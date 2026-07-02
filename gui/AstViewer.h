@@ -2,11 +2,15 @@
 
 #include <QGraphicsView>
 #include <QGraphicsScene>
+#include <QColor>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <vector>
+#include <tuple>
 
 class ASTNode;
+class QGraphicsRectItem;
 
 // ============================================================
 // AstViewer AST 树形可视化
@@ -25,12 +29,27 @@ public:
     /// 清空视图
     void clearAst();
 
+    /// 主题切换：true=深色，false=浅色
+    void setDarkTheme(bool dark);
+
 protected:
-    /// 鼠标滚轮缩放
+    /// 鼠标滚轮：Ctrl+滚轮缩放，无修饰滚动平移，Shift+滚轮水平滚动
     void wheelEvent(QWheelEvent* event) override;
+
+    /// 鼠标按下：记录按下位置，判断是否为点击（vs 拖动）
+    void mousePressEvent(QMouseEvent* event) override;
+
+    /// 鼠标移动：检测拖动距离以区分点击与拖动
+    void mouseMoveEvent(QMouseEvent* event) override;
+
+    /// 鼠标释放：若判定为点击且命中节点，切换展开/折叠
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     QGraphicsScene* scene_ = nullptr;
+    bool isDarkTheme_ = false;
+    /// 当前 AST 根节点（非拥有指针，用于主题切换时重新渲染）
+    ASTNode* root_ = nullptr;
 
     /// 节点宽度
     static constexpr int NODE_WIDTH = 120;
@@ -53,6 +72,7 @@ private:
         std::vector<double> leftContour;   // 左轮廓：每层最左 x（相对此节点中心）
         std::vector<double> rightContour;  // 右轮廓：每层最右 x（相对此节点中心）
         std::vector<RtNode*> children;     // 拥有的子 RtNode（不管理生命周期）
+        bool collapsed = false;            // 用户是否折叠了此节点
     };
 
     /// PERF-24 fix: 递归统计 AST 节点数（用于大 AST 上限保护）
@@ -85,6 +105,7 @@ private:
                                std::vector<std::pair<double, double>>& bounds);
 
     /// P1 fix: 第三遍——按绝对坐标绘制节点与连线（带全局偏移使最左 x=0）。
+    /// 折叠节点的子树不绘制，节点上显示 [+N] 折叠指示。
     void drawRtNode(RtNode* node, double offsetX);
 
     /// RtNode 内存池（避免递归 new/delete，析构时统一释放）
@@ -92,4 +113,43 @@ private:
 
     /// 从内存池分配一个 RtNode
     RtNode* allocRtNode();
+
+    /// 折叠状态键：(line, column, nodeName) —— 在 AST 重建后仍可恢复折叠状态
+    using CollapseKey = std::tuple<int, int, std::string>;
+    struct CollapseKeyHash {
+        size_t operator()(const CollapseKey& k) const noexcept {
+            size_t h1 = std::hash<int>{}(std::get<0>(k));
+            size_t h2 = std::hash<int>{}(std::get<1>(k));
+            size_t h3 = std::hash<std::string>{}(std::get<2>(k));
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        }
+    };
+    std::unordered_set<CollapseKey, CollapseKeyHash> collapsedKeys_;
+
+    /// 点击命中检测：QGraphicsRectItem → RtNode 映射
+    std::unordered_map<QGraphicsRectItem*, RtNode*> itemToNode_;
+
+    /// 点击 vs 拖动判定状态
+    QPoint pressPos_;
+    bool pressWasClick_ = false;
+
+    /// 折叠/展开后重新渲染（保留视图变换与中心点）
+    void rebuildSceneKeepingView(const QTransform& savedTransform, const QPointF& savedCenter);
+
+    /// 重置节点的布局状态（finalX/finalY/contour）以便重新布局
+    void resetLayoutState(RtNode* node);
+
+    /// 生成节点的折叠键
+    CollapseKey makeCollapseKey(ASTNode* node) const;
+
+    /// 根据折叠键同步 RtNode 的 collapsed 状态
+    void syncCollapsedState(RtNode* node);
+
+    /// 主题相关颜色：根据 isDarkTheme_ 返回对应配色
+    QColor sceneBackgroundColor() const;
+    QColor nodeBorderColor() const;
+    QColor lineColor() const;
+    QColor textColor() const;
+    /// 节点背景色：根据节点名 + 主题
+    QColor nodeBgColor(const QString& name) const;
 };

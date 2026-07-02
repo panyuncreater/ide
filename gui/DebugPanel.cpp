@@ -2,23 +2,89 @@
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include <QHeaderView>
 #include <QSplitter>
+#include <QTreeWidgetItem>
 #include <tuple>
 #include <vector>
 
 // ============================================================
 // DebugPanel 调试面板实现
+// Round 7: 变量按作用域分层展示（全局/局部/闭包）
 // ============================================================
 
-// P1-14 fix: 变量树填充共享逻辑（updateVariables/onStackFrameSelected 共用）
+// 作用域分组样式：灰色小字号标题，不可选中
+static void styleScopeGroupHeader(QTreeWidgetItem* item) {
+    QFont f = item->font(0);
+    f.setBold(true);
+    f.setPointSize(f.pointSize() - 1);  // 小字号
+    item->setFont(0, f);
+    item->setFont(1, f);
+    // 灰色文字
+    QBrush grayBrush(QColor("#616161"));
+    item->setForeground(0, grayBrush);
+    item->setForeground(1, grayBrush);
+    // 分组标题不可选中
+    item->setFlags(item->flags() & ~(Qt::ItemIsSelectable | Qt::ItemIsEditable));
+}
+
+QTreeWidgetItem* DebugPanel::createScopeGroup(const QString& title, int count) {
+    auto* group = new QTreeWidgetItem(variableTree_);
+    group->setText(0, title);
+    group->setText(1, count > 0 ? QString("(%1)").arg(count) : QString());
+    styleScopeGroupHeader(group);
+    return group;
+}
+
 void DebugPanel::populateVariableTree(
     const std::vector<std::tuple<QString, QString, QString>>& rows) {
     variableTree_->clear();
+
+    // Round 7: 按作用域分三组
+    // scope 值来自 DebugCoordinator.cpp: "局部"(depth 0) / "外层"(depth>0, has parent) / "全局"(depth>0, no parent)
+    std::vector<std::tuple<QString, QString>> globalVars;
+    std::vector<std::tuple<QString, QString>> localVars;
+    std::vector<std::tuple<QString, QString>> closureVars;
+
     for (const auto& [name, value, scope] : rows) {
-        auto* item = new QTreeWidgetItem(variableTree_);
+        if (scope == QStringLiteral("全局")) {
+            globalVars.emplace_back(name, value);
+        } else if (scope == QStringLiteral("局部")) {
+            localVars.emplace_back(name, value);
+        } else {
+            // "外层" 或其他 → 闭包作用域
+            closureVars.emplace_back(name, value);
+        }
+    }
+
+    // 固定顺序：全局 → 局部 → 闭包
+    auto* globalGroup = createScopeGroup(QStringLiteral("全局作用域"),
+                                         static_cast<int>(globalVars.size()));
+    for (const auto& [name, value] : globalVars) {
+        auto* item = new QTreeWidgetItem(globalGroup);
         item->setText(0, name);
         item->setText(1, value);
-        item->setText(2, scope);
+        item->setToolTip(1, value);
     }
+
+    auto* localGroup = createScopeGroup(QStringLiteral("当前函数局部作用域"),
+                                        static_cast<int>(localVars.size()));
+    for (const auto& [name, value] : localVars) {
+        auto* item = new QTreeWidgetItem(localGroup);
+        item->setText(0, name);
+        item->setText(1, value);
+        item->setToolTip(1, value);
+    }
+
+    auto* closureGroup = createScopeGroup(QStringLiteral("闭包作用域"),
+                                          static_cast<int>(closureVars.size()));
+    for (const auto& [name, value] : closureVars) {
+        auto* item = new QTreeWidgetItem(closureGroup);
+        item->setText(0, name);
+        item->setText(1, value);
+        item->setToolTip(1, value);
+    }
+
+    // 展开所有分组
+    variableTree_->expandAll();
 }
 
 DebugPanel::DebugPanel(QWidget* parent)
@@ -37,14 +103,21 @@ DebugPanel::DebugPanel(QWidget* parent)
 
     auto* varLabel = new QLabel("变量监视");
     varLabel->setObjectName("debugVarLabel");
+    varLabel->setStyleSheet("color: #616161; font-size: 12px; font-weight: 500; padding: 2px;");
     varLayout->addWidget(varLabel);
 
     variableTree_ = new QTreeWidget;
-    variableTree_->setHeaderLabels({"名称", "值", "作用域"});
+    // Round 7: 移除作用域列（分组已替代），仅保留 名称/值 两列
+    variableTree_->setHeaderLabels({"名称", "值"});
     variableTree_->header()->setStretchLastSection(true);
-    variableTree_->setAlternatingRowColors(true);
+    variableTree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    variableTree_->setAlternatingRowColors(false);
     variableTree_->setColumnWidth(0, 120);
     variableTree_->setColumnWidth(1, 150);
+    variableTree_->setStyleSheet(
+        "QTreeWidget { background: #ffffff; border: 1px solid #e5e5e5; }"
+        "QTreeWidget::item { padding: 2px 0px; }"
+        "QTreeWidget::item:selected { background: #cfe4f5; color: #1e1e1e; }");
     varLayout->addWidget(variableTree_);
 
     splitter->addWidget(varWidget);
@@ -57,11 +130,16 @@ DebugPanel::DebugPanel(QWidget* parent)
 
     auto* stackLabel = new QLabel("调用栈");
     stackLabel->setObjectName("debugStackLabel");
+    stackLabel->setStyleSheet("color: #616161; font-size: 12px; font-weight: 500; padding: 2px;");
     stackLayout->addWidget(stackLabel);
 
     callStackList_ = new QListWidget;
-    callStackList_->setAlternatingRowColors(true);
+    callStackList_->setAlternatingRowColors(false);
     callStackList_->setFont(GuiTextUtils::monospaceFont(10));
+    callStackList_->setStyleSheet(
+        "QListWidget { background: #ffffff; border: 1px solid #e5e5e5; }"
+        "QListWidget::item { padding: 2px 4px; }"
+        "QListWidget::item:selected { background: #cfe4f5; color: #1e1e1e; }");
     stackLayout->addWidget(callStackList_);
 
     // 选中栈帧时显示该帧的局部变量
@@ -78,7 +156,6 @@ DebugPanel::DebugPanel(QWidget* parent)
 }
 
 void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
-    // P1-14 fix: 委托给 populateVariableTree
     std::vector<std::tuple<QString, QString, QString>> rows;
     rows.reserve(vars.size());
     for (const auto& v : vars) {
@@ -90,11 +167,9 @@ void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
 }
 
 void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
-    // G-P2-5 fix: 使用 std::move 避免拷贝（参数虽为 const 引用，但此处保存的是拷贝；
-    //   改为按值传递 + std::move 更优，但为最小改动此处保持接口不变）
-    currentStack_ = stack;  // 保存完整数据（含局部变量）
+    currentStack_ = stack;
 
-    // G-P2-6 fix: 保存当前选中行，刷新后恢复（避免调试步进时选中丢失）
+    // 保存当前选中行，刷新后恢复
     int savedRow = callStackList_->currentRow();
 
     // 阻塞信号防止 clear/addItem 触发 currentRowChanged 级联更新变量树
@@ -110,7 +185,7 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
     }
     callStackList_->blockSignals(false);
 
-    // G-P2-6 fix: 恢复选中行（若仍在有效范围内）
+    // 恢复选中行（若仍在有效范围内）
     if (savedRow >= 0 && savedRow < callStackList_->count()) {
         callStackList_->setCurrentRow(savedRow);
     }
@@ -120,11 +195,8 @@ void DebugPanel::onStackFrameSelected(int index) {
     if (index < 0 || index >= static_cast<int>(currentStack_.size())) return;
 
     const auto& frame = currentStack_[index];
-    // P1-14 fix: 委托给 populateVariableTree
-    // Bug-7 fix: scope 列语义与 populateFromSnapshot 保持一致——按帧深度标记
-    // "局部" (depth=0) / "外层" (depth>0)，而非函数名。函数名已在 callStackList_
-    // 中显示，重复填充 scope 列无信息增益且与快照路径的 "局部"/"外层"/"全局"
-    // 语义冲突。
+    // Round 7: 选中栈帧时按作用域分组展示
+    // depth==0 的帧标记为"局部"，其他帧标记为"外层"（闭包）
     const QString scopeLabel = (frame.depth == 0) ? QStringLiteral("局部")
                                                   : QStringLiteral("外层");
     std::vector<std::tuple<QString, QString, QString>> rows;

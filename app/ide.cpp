@@ -1,7 +1,12 @@
 #include "ide.h"
 #include "Logger.h"
 #include "common/RuntimeLimits.h"
+#include "common/SpellChecker.h"
+#include "gui/GuiTextUtils.h"
+#include "gui/PanelAnimator.h"
+
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -14,243 +19,361 @@
 #include <QTextStream>
 #include <QMenuBar>
 #include <QFileInfo>
+#include <QInputDialog>
+#include <QDialog>
+#include <QMouseEvent>
 #include <QShortcut>
 #include <QSettings>
 #include <QRegularExpression>
 #include <QSet>
 #include <QHash>
+#include <QDir>
+#include <QToolButton>
+#include <QMenu>
+#include <QLabel>
+#include <QFrame>
+#include <QPushButton>
+#include <QSizePolicy>
+#include <QToolTip>
+#include <QSplitter>
+#include <QStackedWidget>
+#include <QTabWidget>
+#include <QAction>
+#include <QToolBar>
+#include <QTableWidget>
+#include <QListWidget>
+#include <QTreeWidget>
+#include <QTextDocument>
+#include <QTextEdit>
+#include <QStatusBar>
+#include <QTimer>
+#include <QStyledItemDelegate>
 #include <sstream>
-#include <algorithm>  // A-P2-8 fix: std::min
+#include <algorithm>
+
+// ADS headers
+#include "DockManager.h"
+#include "DockWidget.h"
+#include "DockAreaWidget.h"
+
+// QFluentKit Theme
+#include "Theme.h"
+
+// QFluentKit components (sixth-round UI refactor)
+#include "QFluent/Navigation/Pivot.h"
+#include "QFluent/Menu/RoundMenu.h"
+#include "QFluent/Flyout.h"
+#include "QFluent/InfoBar.h"
+#include "QFluent/PushButton.h"
+#include "QFluent/ToolButton.h"
+#include "QFluent/TableView.h"
+#include "QFluent/ScrollBar.h"
+#include "StyleSheet.h"
+#include "FluentIcon.h"
+
+// GUI: ActivityBar (sixth-round)
+#include "gui/ActivityBar.h"
 
 // ============================================================
-// Ide — GUI 交互层实现
-// ------------------------------------------------------------
-// 仅负责 GUI 创建/布局/事件处理，业务逻辑委托给 IdeController。
+// Static helpers
+// ============================================================
+
+static void populateDirChildren(QTreeWidget* tree, QTreeWidgetItem* parentItem,
+                                const QString& dirPath, int depth) {
+    if (depth > 8) return;
+    QDir dir(dirPath);
+    if (!dir.exists()) return;
+
+    QStringList filters;
+    filters << "*.mini" << "*.ml";
+    QFileInfoList files = dir.entryInfoList(filters, QDir::Files, QDir::Name);
+    for (const QFileInfo& fi : files) {
+        auto* item = new QTreeWidgetItem(parentItem);
+        item->setText(0, fi.fileName());
+        QStyle::StandardPixmap icon = QStyle::SP_FileIcon;
+        if (fi.suffix() == "ml") icon = QStyle::SP_FileDialogContentsView;
+        item->setIcon(0, tree->style()->standardIcon(icon));
+        item->setData(0, Qt::UserRole, fi.absoluteFilePath());
+        item->setData(0, Qt::UserRole + 1, false);
+    }
+
+    QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo& fi : dirs) {
+        auto* item = new QTreeWidgetItem(parentItem);
+        item->setText(0, fi.fileName());
+        item->setIcon(0, tree->style()->standardIcon(QStyle::SP_DirIcon));
+        item->setData(0, Qt::UserRole, fi.absoluteFilePath());
+        item->setData(0, Qt::UserRole + 1, true);
+        item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+    }
+}
+
+static QString resolveTreeContextMenuTargetDir(QTreeWidget* tree, QTreeWidgetItem* item) {
+    if (!item) return QString();
+    bool isDir = item->data(0, Qt::UserRole + 1).toBool();
+    if (isDir) return item->data(0, Qt::UserRole).toString();
+    QTreeWidgetItem* parent = item->parent();
+    if (parent) return parent->data(0, Qt::UserRole).toString();
+    return item->data(0, Qt::UserRole).toString();
+}
+
+/// Extract a quoted identifier from an error message (e.g., "未定义的变量 'it'" -> "it")
+static std::string extractQuotedIdentifier(const std::string& msg) {
+    // Try single quotes first
+    size_t sq1 = msg.find('\'');
+    if (sq1 != std::string::npos) {
+        size_t sq2 = msg.find('\'', sq1 + 1);
+        if (sq2 != std::string::npos && sq2 > sq1 + 1) {
+            return msg.substr(sq1 + 1, sq2 - sq1 - 1);
+        }
+    }
+    // Try double quotes
+    size_t dq1 = msg.find('"');
+    if (dq1 != std::string::npos) {
+        size_t dq2 = msg.find('"', dq1 + 1);
+        if (dq2 != std::string::npos && dq2 > dq1 + 1) {
+            return msg.substr(dq1 + 1, dq2 - dq1 - 1);
+        }
+    }
+    return {};
+}
+
+// ============================================================
+// CleanToolButton — 第八轮：完全自绘工具栏图标按钮
+// 不调用 QToolButton::paintEvent，杜绝文字/菜单指示器/焦点框/QSS 边框残留
+// 28px 固定高度，16x16 图标居中，基线对齐
+// ============================================================
+class CleanToolButton : public TransparentToolButton {
+public:
+    explicit CleanToolButton(Fluent::IconType type, QWidget* parent = nullptr)
+        : TransparentToolButton(type, parent) {
+        setFixedSize(28, 28);
+        setCursor(Qt::PointingHandCursor);
+        setAttribute(Qt::WA_Hover, true);
+        setFocusPolicy(Qt::NoFocus);
+        setToolButtonStyle(Qt::ToolButtonIconOnly);
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        // 背景：checked > pressed > hover
+        if (isChecked()) {
+            p.fillRect(rect(), QColor(0, 102, 184, 30));
+        } else if (isDown()) {
+            p.fillRect(rect(), QColor(0, 0, 0, 30));
+        } else if (underMouse()) {
+            p.fillRect(rect(), QColor(0, 0, 0, 12));
+        }
+        // 图标 16x16 居中（与文字垂直居中、基线对齐）
+        QRect ir((width() - 16) / 2, (height() - 16) / 2, 16, 16);
+        if (!isEnabled()) p.setOpacity(0.4);
+        fluentIcon().paint(&p, ir);
+    }
+};
+
+// ============================================================
+// RichTextItemDelegate — 第八轮：QListWidget HTML 富文本渲染代理
+// 用于字节码列表的语法高亮（opcode/常量/注释多色渲染）
+// ============================================================
+class RichTextItemDelegate : public QStyledItemDelegate {
+public:
+    static constexpr int kHtmlRole = Qt::UserRole + 2;
+
+    explicit RichTextItemDelegate(QObject* parent = nullptr)
+        : QStyledItemDelegate(parent) {}
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override {
+        painter->save();
+
+        // 背景：选中 / 交替行
+        if (option.state & QStyle::State_Selected) {
+            painter->fillRect(option.rect, QColor("#cfe4f5"));
+        } else if (option.features & QStyleOptionViewItem::Alternate) {
+            painter->fillRect(option.rect, QColor("#ffffff"));
+        } else {
+            painter->fillRect(option.rect, QColor("#f8f8f8"));
+        }
+
+        QString html = index.data(kHtmlRole).toString();
+        if (html.isEmpty()) {
+            // 回退到普通文本
+            QStyledItemDelegate::paint(painter, option, index);
+            painter->restore();
+            return;
+        }
+
+        QTextDocument doc;
+        doc.setDefaultFont(option.font);
+        doc.setDocumentMargin(2);
+        doc.setHtml(html);
+
+        painter->translate(option.rect.left() + 6, option.rect.top());
+        QRect clip(0, 0, option.rect.width() - 8, option.rect.height());
+        doc.setTextWidth(clip.width());
+        painter->setClipRect(clip);
+        doc.drawContents(painter);
+        painter->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem& option,
+                   const QModelIndex& index) const override {
+        QString html = index.data(kHtmlRole).toString();
+        if (html.isEmpty()) {
+            return QStyledItemDelegate::sizeHint(option, index);
+        }
+        QTextDocument doc;
+        doc.setDefaultFont(option.font);
+        doc.setDocumentMargin(2);
+        doc.setHtml(html);
+        doc.setTextWidth(option.rect.width() > 0 ? option.rect.width() : 400);
+        return QSize(static_cast<int>(doc.idealWidth()) + 12,
+                     static_cast<int>(doc.size().height()));
+    }
+};
+
+/// 将字节码指令文本转为带语法高亮的 HTML
+/// opcode（OP_*）蓝色，常量/字符串/数字橙色，注释灰色，函数头紫色
+static QString formatBytecodeHtml(const std::string& text) {
+    QString qtext = QString::fromStdString(text);
+    // 函数头分隔线 ---- xxx ---- → 紫色加粗
+    if (qtext.startsWith("----") && qtext.endsWith("----")) {
+        return QString("<span style='color:#8764b8;font-weight:bold;'>%1</span>")
+                    .arg(qtext.toHtmlEscaped());
+    }
+    // 拆分注释（# 开头到行尾，或行内 # 注释）
+    QString code = qtext;
+    QString comment;
+    int hashPos = qtext.indexOf('#');
+    if (hashPos >= 0) {
+        code = qtext.left(hashPos);
+        comment = qtext.mid(hashPos);
+    }
+
+    // 按空白拆分
+    QStringList tokens = code.split(' ', Qt::SkipEmptyParts);
+    QString html;
+    bool first = true;
+    for (const QString& t : tokens) {
+        if (!first) html += "&nbsp;";
+        first = false;
+
+        QString core = t;
+        QString suffix;
+        if (core.endsWith(',')) {
+            suffix = ",";
+            core.chop(1);
+        }
+
+        QString esc = core.toHtmlEscaped();
+        // OP_ 开头 → opcode 蓝色加粗
+        if (core.startsWith("OP_") || core.startsWith("REG_") || core.startsWith("TAG_")) {
+            html += "<span style='color:#0078d4;font-weight:bold;'>" + esc + "</span>";
+        }
+        // 数字常量
+        else if (!core.isEmpty() && core[0].isDigit()) {
+            html += "<span style='color:#d83b01;'>" + esc + "</span>";
+        }
+        // 字符串字面量
+        else if (core.startsWith('"') && core.endsWith('"')) {
+            html += "<span style='color:#d83b01;'>" + esc + "</span>";
+        }
+        // 标签 Lxx / BBxx → 绿色
+        else if ((core.startsWith('L') || core.startsWith('B')) && core.size() > 1 &&
+                 core.mid(1).toInt() > 0) {
+            html += "<span style='color:#107c10;'>" + esc + "</span>";
+        }
+        // = / -> / | 等符号
+        else if (core == "=" || core == "->" || core == "|" || core == "&" || core == ":") {
+            html += "<span style='color:#6e6e6e;'>" + esc + "</span>";
+        }
+        // 标识符默认色
+        else {
+            html += "<span style='color:#1e1e1e;'>" + esc + "</span>";
+        }
+        if (!suffix.isEmpty()) {
+            html += "<span style='color:#6e6e6e;'>" + suffix.toHtmlEscaped() + "</span>";
+        }
+    }
+
+    if (!comment.isEmpty()) {
+        if (!html.isEmpty()) html += "&nbsp;";
+        html += "<span style='color:#6e6e6e;font-style:italic;'>" + comment.toHtmlEscaped() + "</span>";
+    }
+
+    return html;
+}
+
+// ============================================================
+// Constructor / Destructor
 // ============================================================
 
 Ide::Ide(QWidget* parent)
     : QMainWindow(parent) {
 
-    // 创建业务逻辑层（作为子 QObject，自动释放）
     controller_ = new IdeController(this);
 
     initUI();
     initToolbar();
+    initMenuBar();
     initConnections();
+    initFileTree();
+    initStatusBar();
 
-    // B6 fix: REPL 面板通过 IdeController（业务层）间接执行，不直接持有 Interpreter*
     replPanel_->setController(controller_);
 
-    // 设置默认示例代码：覆盖 MiniLang 全部语言特性，可用于
-    // Interpreter / StackVM / RegisterVM 三后端 + IR 路径 +
-    // 调试器 + 格式化器 + 类型检查器的回归验证。
-    codeEditor_->setPlainText(
-        "// ============================================================\n"
-        "// MiniLang 功能演示程序\n"
-        "// ------------------------------------------------------------\n"
-        "// 覆盖：基础类型/类型注解、运算符、控制流、函数/闭包/默认参数、\n"
-        "//       类与继承/super、数组/字典/内置方法、字符串插值、\n"
-        "//       异常处理、注释。可直接 Run / Debug / Format 验证。\n"
-        "// ============================================================\n"
-        "\n"
-        "// ---- 1. 基础类型与类型注解 ----\n"
-        "int a = 42;\n"
-        "float pi = 3.14159;\n"
-        "string name = \"MiniLang\";\n"
-        "bool flag = true;\n"
-        "var nothing = null;\n"
-        "print(\"int=\" + a + \" float=\" + pi + \" bool=\" + flag);\n"
-        "print(\"name=\" + name + \" nothing=\" + nothing);\n"
-        "\n"
-        "// ---- 2. 运算符与短路求值 ----\n"
-        "print(10 + 3 * 2);              // 16\n"
-        "print(7 % 3);                   // 1\n"
-        "print(10 / 3);                  // 3 (整数除法截断向零)\n"
-        "print(1 or 2);                  // 1 (短路，返回操作数原值)\n"
-        "print(0 and 2);                 // 0\n"
-        "print(not flag);                // false\n"
-        "print(1 == 1 and 2 < 3);        // true\n"
-        "\n"
-        "// ---- 3. 控制流：if/else if/else、while、for + break/continue ----\n"
-        "fun fizzbuzz(n) {\n"
-        "    for (var i = 1; i <= n; i = i + 1) {\n"
-        "        if (i % 15 == 0) {\n"
-        "            print(\"FizzBuzz\");\n"
-        "        } else if (i % 3 == 0) {\n"
-        "            print(\"Fizz\");\n"
-        "        } else if (i % 5 == 0) {\n"
-        "            print(\"Buzz\");\n"
-        "        } else {\n"
-        "            print(i);\n"
-        "        }\n"
-        "    }\n"
-        "}\n"
-        "fizzbuzz(5);\n"
-        "\n"
-        "var i = 0;\n"
-        "var oddSum = 0;\n"
-        "while (i < 10) {\n"
-        "    i = i + 1;\n"
-        "    if (i % 2 == 0) { continue; }\n"
-        "    if (i > 7) { break; }\n"
-        "    oddSum = oddSum + i;\n"
-        "}\n"
-        "print(\"odd-sum=\" + oddSum);    // 1+3+5+7 = 16\n"
-        "\n"
-        "// ---- 4. 函数：递归、默认参数、闭包 upvalue 捕获 ----\n"
-        "fun factorial(n) {\n"
-        "    if (n <= 1) { return 1; }\n"
-        "    return n * factorial(n - 1);\n"
-        "}\n"
-        "print(\"5!=\" + factorial(5));   // 120\n"
-        "\n"
-        "fun add(a, b = 10, c = 100) {\n"
-        "    return a + b + c;\n"
-        "}\n"
-        "print(add(1));                  // 111\n"
-        "print(add(1, 2));               // 103\n"
-        "print(add(1, 2, 3));            // 6\n"
-        "\n"
-        "fun makeCounter() {\n"
-        "    var count = 0;\n"
-        "    fun increment() {\n"
-        "        count = count + 1;      // 捕获外层 count (upvalue)\n"
-        "        return count;\n"
-        "    }\n"
-        "    return increment;\n"
-        "}\n"
-        "var counter = makeCounter();\n"
-        "print(counter());               // 1\n"
-        "print(counter());               // 2\n"
-        "print(counter());               // 3\n"
-        "\n"
-        "// ---- 5. 类与继承 + super 调用 + 字段默认值 ----\n"
-        "class Animal {\n"
-        "    var sound = \"...\";\n"
-        "    fun init(name) {\n"
-        "        this.name = name;\n"
-        "    }\n"
-        "    fun speak() {\n"
-        "        print(this.name + \" says \" + this.sound);\n"
-        "    }\n"
-        "}\n"
-        "\n"
-        "class Dog extends Animal {\n"
-        "    var sound = \"Woof\";        // 覆盖父类字段默认值\n"
-        "    fun speak() {\n"
-        "        super.speak();         // 调用父类方法\n"
-        "        print(this.name + \" wags tail\");\n"
-        "    }\n"
-        "}\n"
-        "\n"
-        "var dog = Dog(\"Rex\");\n"
-        "dog.speak();\n"
-        "\n"
-        "// ---- 6. 数据结构：数组 / 字典 + 内置方法 ----\n"
-        "var arr = [1, 2, 3];\n"
-        "arr.push(4);\n"
-        "arr.push(5);\n"
-        "print(\"len=\" + arr.len());     // 5\n"
-        "print(\"contains 3: \" + arr.contains(3));   // true\n"
-        "print(\"join: \" + arr.join(\",\"));           // 1,2,3,4,5\n"
-        "print(\"arr[2]=\" + arr[2]);                 // 3\n"
-        "\n"
-        "var cfg = {\"name\": \"Alice\", \"age\": 30};\n"
-        "cfg[\"city\"] = \"Beijing\";\n"
-        "print(cfg.has(\"age\"));         // true\n"
-        "print(cfg[\"name\"] + \" / \" + cfg[\"city\"]);\n"
-        "\n"
-        "// ---- 7. 字符串操作与插值 ----\n"
-        "string s = \"Hello, World\";\n"
-        "print(s.len());                 // 12\n"
-        "print(s.substr(0, 5));          // Hello\n"
-        "print(s.replace(\"World\", \"MiniLang\"));  // Hello, MiniLang\n"
-        "\n"
-        "var who = \"World\";\n"
-        "var n = 42;\n"
-        "print(\"Hello, {who}! n+1={n + 1}\");   // Hello, World! n+1=43\n"
-        "\n"
-        "// ---- 8. 异常处理：try / catch / throw + 嵌套 ----\n"
-        "fun risky(x) {\n"
-        "    if (x < 0) {\n"
-        "        throw \"negative not allowed\";\n"
-        "    }\n"
-        "    return x * 2;\n"
-        "}\n"
-        "\n"
-        "try {\n"
-        "    print(risky(10));           // 20\n"
-        "    print(risky(-1));           // throws\n"
-        "    print(\"unreachable\");\n"
-        "} catch (e) {\n"
-        "    print(\"caught: \" + e);     // caught: negative not allowed\n"
-        "}\n"
-        "\n"
-        "try {\n"
-        "    try {\n"
-        "        throw \"inner\";\n"
-        "    } catch (e1) {\n"
-        "        print(\"inner caught: \" + e1);\n"
-        "        throw \"outer\";\n"
-        "    }\n"
-        "} catch (e2) {\n"
-        "    print(\"outer caught: \" + e2);\n"
-        "}\n"
-        "\n"
-        "print(\"done\");\n"
-    );
+    // Light-only Fluent theme (Round 7: dark theme removed)
+    Theme::setThemeMode(Fluent::ThemeMode::LIGHT);
+    applyFluentStyle();
 
-    // F9: 加载保存的主题偏好
-    QSettings settings("MiniLang", "MiniLang IDE");
-    bool savedDark = settings.value("theme/dark", false).toBool();
-    darkThemeAction_->setChecked(savedDark);  // 触发 toggled → onToggleTheme → applyTheme
-
-    // F13: 初始化自动补全
     setupCompletion();
+
+    // Layout save timer (debounced)
+    splitterSaveTimer_ = new QTimer(this);
+    splitterSaveTimer_->setSingleShot(true);
+    splitterSaveTimer_->setInterval(500);
+    connect(splitterSaveTimer_, &QTimer::timeout, this, &Ide::saveLayout);
+
+    // Restore AST window geometry (independent top-level window)
+    restoreAstWindowGeometry();
+
+    // Startup: show welcome page, hide non-essential panels
+    centerStack_->setCurrentWidget(welcomePage_);
+
+    restoreLayout();
+    updateWindowTitle();
+    updateStatusBar();
 }
 
 Ide::~Ide() {
-    // controller_ 是子 QObject，由 QObject 析构链自动释放
-    // 其析构函数会安全停止 worker 线程
+    saveLayout();
 }
 
+// ============================================================
+// Close event
+// ============================================================
+
 void Ide::closeEvent(QCloseEvent* event) {
-    // GUI-04: 关闭前检查未保存的修改
     if (!maybeSave()) {
         event->ignore();
         return;
     }
 
-    // B4 fix: REPL 异步任务在跑时弹窗告知用户关闭将阻塞。
-    // REPL-TIMEOUT fix: waitReplFuture 现在会先 requestStop + wait_for(5s)，
-    // 正常 MiniLang 代码（含 checkBreak 调用）能在 5 秒内协作中止。
     if (replPanel_->isReplRunning()) {
         auto ret = QMessageBox::warning(this,
             QString::fromUtf8("REPL 仍在执行"),
-            QString::fromUtf8("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒；正常代码会协作退出，极端死循环可能仍需等待迭代上限触发。\n\n是否继续关闭？"),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No);
+            QString::fromUtf8("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒。\n\n是否继续关闭？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (ret != QMessageBox::Yes) {
             event->ignore();
             return;
         }
     }
 
-    // 2026-06-29 审计修复 R4: 关闭路径优先使用 stopForClose（协作式超时），
-    // 失败再 forceStop（terminate+_Exit 兜底）。
-    // 原实现直接 forceStop，其 terminate 路径会调用 std::_Exit(0) 跳过所有析构，
-    // 用户未保存的代码丢失。stopForClose 给 worker 3 秒协作式退出窗口，
-    // 正常 MiniLang 程序（循环体含 checkBreak）几乎都能在此窗口内退出，
-    // 避免 terminate 触发。仅当 worker 卡死（如原生 C++ 死循环）才回退 forceStop。
     if (controller_->isRunning()) {
         if (!controller_->stopForClose(3000)) {
-            // 2026-06-29 审计修复 R5: 协作式超时失败，forceStop 即将进入
-            // terminate+_Exit(0) 路径（跳过所有析构）。在此提示用户保存未保存的代码，
-            // 避免 terminate 后用户数据丢失。_Exit 后进程立即退出，无法再弹窗。
-            // 注：maybeSave() 已在 closeEvent 开头调用过，但用户可能在 maybeSave 后
-            // 又编辑了代码（如关闭确认期间触发文本变更信号），此处再次检查 isModified
-            // 作为最后防线。
-            if (codeEditor_->document()->isModified()) {
+            if (codeEditor_ && codeEditor_->document()->isModified()) {
                 auto ret = QMessageBox::warning(this,
                     QString::fromUtf8("程序无响应，即将强制终止"),
                     QString::fromUtf8("解释器线程未在 3 秒内响应停止请求，将强制终止进程。\n"
@@ -260,9 +383,7 @@ void Ide::closeEvent(QCloseEvent* event) {
                     QMessageBox::Save);
                 if (ret == QMessageBox::Save) {
                     onSave();
-                    // onSave 可能因文件打开失败而未实际保存，检查 modified 状态
                     if (codeEditor_->document()->isModified()) {
-                        // 保存失败（用户取消另存为对话框或文件不可写），取消关闭
                         event->ignore();
                         return;
                     }
@@ -270,26 +391,26 @@ void Ide::closeEvent(QCloseEvent* event) {
                     event->ignore();
                     return;
                 }
-                // Discard: 继续强制终止
             }
-            // 回退 forceStop（可能触发 terminate+_Exit）
             controller_->forceStop();
         }
     }
     if (controller_->isVmRunning()) {
         onVmStop();
     }
-    // AUDIT-LIFECYCLE fix: 在 event->accept() 前、任何析构开始前显式等待 REPL
-    // 异步任务完成。原实现依赖 ~ReplPanel 中的 wait()，而 ~ReplPanel 的运行时机
-    // 取决于 Qt children 删除顺序（未文档化的实现细节）。若 ~IdeController 先于
-    // ~ReplPanel 运行，异步任务将访问半析构的 controller_ → UAF。
-    // 此处显式 wait 消除析构顺序依赖，~ReplPanel 中的 wait 退化为深度防御。
     replPanel_->waitReplFuture();
+    // Save AST independent window geometry before closing
+    if (astWindow_ && !astWindow_->isHidden()) saveAstWindowGeometry();
+    saveLayout();
     event->accept();
 }
 
-// #4 fix: 同步 VM 断点及条件到 VmStepper
+// ============================================================
+// VM breakpoint sync
+// ============================================================
+
 void Ide::syncVmBreakpoints() {
+    if (!codeEditor_) return;
     QSet<int> bps = codeEditor_->getBreakpoints();
     QMap<int, std::string> conds;
     for (int line : bps) {
@@ -301,22 +422,945 @@ void Ide::syncVmBreakpoints() {
 }
 
 // ============================================================
-// UI 初始化
+// Event filter: editor tab middle-click close + hover close button
+// ============================================================
+
+bool Ide::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == editorTabWidget_->tabBar()) {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::MiddleButton) {
+                int idx = editorTabWidget_->tabBar()->tabAt(me->pos());
+                if (idx >= 0) {
+                    onEditorTabCloseRequested(idx);
+                    return true;
+                }
+            }
+        } else if (event->type() == QEvent::MouseMove) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            int hovered = editorTabWidget_->tabBar()->tabAt(me->pos());
+            updateTabCloseButtons(hovered);
+        } else if (event->type() == QEvent::Leave) {
+            updateTabCloseButtons(-1);
+        } else if (event->type() == QEvent::ContextMenu) {
+            auto* ce = static_cast<QContextMenuEvent*>(event);
+            onEditorTabContextMenu(ce->globalPos());
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void Ide::updateTabCloseButtons(int hoveredIndex) {
+    int current = editorTabWidget_->currentIndex();
+    for (int i = 0; i < editorTabWidget_->count(); ++i) {
+        bool show = (i == current) || (i == hoveredIndex);
+        QWidget* btn = editorTabWidget_->tabBar()->tabButton(i, QTabBar::RightSide);
+        if (btn) btn->setVisible(show);
+    }
+}
+
+// ============================================================
+// Multi-tab editor management
+// ============================================================
+
+int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
+    EditorTabData data;
+    data.container = new QWidget;
+    data.isUntitled = filePath.isEmpty();
+    data.filePath = filePath;
+
+    auto* layout = new QVBoxLayout(data.container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    data.editor = new CodeEditor(data.container);
+    data.editor->setMinimumWidth(200);
+    data.highlighter = new SyntaxHighlighter(data.editor->document());
+
+    data.findPanel = new FindReplacePanel(data.editor, data.container);
+    data.findPanel->hide();
+
+    layout->addWidget(data.findPanel);
+    layout->addWidget(data.editor, 1);
+
+    if (!content.isEmpty()) {
+        data.editor->setPlainText(content);
+        data.editor->document()->setModified(false);
+    }
+
+    QString tabTitle;
+    if (data.isUntitled) {
+        untitledCount_++;
+        tabTitle = QString::fromUtf8("未命名-%1").arg(untitledCount_);
+    } else {
+        QFileInfo fi(filePath);
+        tabTitle = fi.fileName();
+    }
+
+    int idx = editorTabWidget_->addTab(data.container, tabTitle);
+    data.container->setProperty("tabIndex", idx);
+
+    editorTabs_.push_back(data);
+
+    CodeEditor* editorPtr = data.editor;
+
+    // Unsaved dot mark: "● filename.min" means unsaved
+    auto updateTabDirtyMark = [this](int tabIdx, bool changed) {
+        if (tabIdx < 0 || tabIdx >= editorTabWidget_->count()) return;
+        QString text = editorTabWidget_->tabText(tabIdx);
+        const QString dot = QString(QChar(0x25CF)) + " ";
+        bool hasDot = text.startsWith(dot);
+        if (text.endsWith("*")) text.chop(1);
+        if (changed && !hasDot) {
+            editorTabWidget_->setTabText(tabIdx, dot + text);
+        } else if (!changed && hasDot) {
+            text.remove(0, dot.length());
+            editorTabWidget_->setTabText(tabIdx, text);
+        }
+    };
+
+    connect(data.editor->document(), &QTextDocument::modificationChanged,
+            this, [this, editorPtr, updateTabDirtyMark](bool changed) {
+        int tabIdx = -1;
+        for (int i = 0; i < static_cast<int>(editorTabs_.size()); ++i) {
+            if (editorTabs_[i].editor == editorPtr) { tabIdx = i; break; }
+        }
+        if (tabIdx < 0) return;
+        updateTabDirtyMark(tabIdx, changed);
+        if (tabIdx == editorTabWidget_->currentIndex()) {
+            isDirty_ = changed;
+            updateWindowTitle();
+        }
+    });
+
+    connect(data.editor, &CodeEditor::breakpointConditionRequested,
+            this, [this](int line, const QString& condition) {
+        controller_->setBreakpointCondition(line, condition.toStdString());
+    });
+
+    data.editor->setCompletionWords(staticCompletionWords_);
+
+    // Wire textChanged for debounce timers
+    connect(data.editor, &QPlainTextEdit::textChanged, this, [this]() {
+        if (completionTimer_) completionTimer_->start();
+        if (syntaxCheckTimer_) syntaxCheckTimer_->start();
+    });
+
+    // Update status bar (line/column) when cursor moves or text changes
+    connect(data.editor, &QPlainTextEdit::cursorPositionChanged,
+            this, [this]() { if (codeEditor_ == sender()) updateStatusBar(); });
+
+    return idx;
+}
+
+void Ide::switchToTab(int index) {
+    if (index < 0 || index >= static_cast<int>(editorTabs_.size())) return;
+    auto& data = editorTabs_[index];
+    codeEditor_ = data.editor;
+    highlighter_ = data.highlighter;
+    findReplacePanel_ = data.findPanel;
+    currentFilePath_ = data.filePath;
+    isDirty_ = codeEditor_->document()->isModified();
+    editorTabWidget_->setCurrentIndex(index);
+    updateWindowTitle();
+    updateStatusBar();
+}
+
+int Ide::findTabForFile(const QString& path) {
+    QFileInfo targetFi(path);
+    for (int i = 0; i < static_cast<int>(editorTabs_.size()); ++i) {
+        if (editorTabs_[i].filePath.isEmpty()) continue;
+        QFileInfo tabFi(editorTabs_[i].filePath);
+        if (tabFi.absoluteFilePath() == targetFi.absoluteFilePath()) return i;
+    }
+    return -1;
+}
+
+void Ide::loadFileIntoTab(int tabIndex, const QString& path) {
+    if (tabIndex < 0 || tabIndex >= static_cast<int>(editorTabs_.size())) return;
+    auto& data = editorTabs_[tabIndex];
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        InfoBar::warning(QString::fromUtf8("错误"),
+            QString::fromUtf8("无法打开文件: ") + file.errorString(),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    qint64 fileSize = file.size();
+    if (fileSize > static_cast<qint64>(RuntimeLimits::MAX_SOURCE_SIZE)) {
+        InfoBar::warning(QString::fromUtf8("错误"),
+            QString::fromUtf8("文件过大 (") + QString::number(fileSize) +
+            QString::fromUtf8(" 字节)，超过上限 (") +
+            QString::number(RuntimeLimits::MAX_SOURCE_SIZE) + QString::fromUtf8(" 字节)"),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        file.close();
+        return;
+    }
+    QTextStream in(&file);
+    in.setEncoding(QStringConverter::Utf8);
+    QString content = in.readAll();
+    file.close();
+    if (!content.isEmpty() && content[0] == QChar(0xFEFF)) content.remove(0, 1);
+
+    data.editor->setPlainText(content);
+    data.editor->document()->setModified(false);
+    data.filePath = path;
+    data.isUntitled = false;
+
+    QFileInfo fi(path);
+    editorTabWidget_->setTabText(tabIndex, fi.fileName());
+
+    if (tabIndex == editorTabWidget_->currentIndex()) {
+        currentFilePath_ = path;
+        isDirty_ = false;
+        updateWindowTitle();
+    }
+}
+
+void Ide::onCurrentTabChanged(int index) {
+    if (index < 0 || index >= static_cast<int>(editorTabs_.size())) return;
+    switchToTab(index);
+    if (codeEditor_) codeEditor_->setFocus();
+    updateTabCloseButtons(index);
+}
+
+void Ide::onEditorTabCloseRequested(int index) {
+    if (index < 0 || index >= static_cast<int>(editorTabs_.size())) return;
+    auto& data = editorTabs_[index];
+    if (data.editor->document()->isModified()) {
+        codeEditor_ = data.editor;
+        currentFilePath_ = data.filePath;
+        if (!maybeSave()) return;
+    }
+
+    // Close last tab: clear editor area, return to welcome page
+    if (static_cast<int>(editorTabs_.size()) <= 1) {
+        editorTabWidget_->removeTab(0);
+        data.container->deleteLater();
+        editorTabs_.clear();
+        codeEditor_ = nullptr;
+        highlighter_ = nullptr;
+        findReplacePanel_ = nullptr;
+        currentFilePath_.clear();
+        isDirty_ = false;
+        hideBottomPanel();
+        hideRightPanel();
+        centerStack_->setCurrentWidget(welcomePage_);
+        updateWindowTitle();
+        return;
+    }
+
+    int currIdx = editorTabWidget_->currentIndex();
+    int newCurrent = currIdx;
+    if (index == currIdx) {
+        newCurrent = (index > 0) ? index - 1 : 0;
+    } else if (index < currIdx) {
+        newCurrent = currIdx - 1;
+    }
+    editorTabWidget_->removeTab(index);
+    data.container->deleteLater();
+    editorTabs_.erase(editorTabs_.begin() + index);
+    for (int i = index; i < static_cast<int>(editorTabs_.size()); ++i) {
+        editorTabs_[i].container->setProperty("tabIndex", i);
+    }
+    switchToTab(newCurrent);
+}
+
+void Ide::ensureEditorVisible() {
+    if (centerStack_ && centerStack_->currentWidget() != editorTabWidget_) {
+        centerStack_->setCurrentWidget(editorTabWidget_);
+    }
+}
+
+void Ide::onEditorTabContextMenu(const QPoint& pos) {
+    int idx = editorTabWidget_->tabBar()->tabAt(editorTabWidget_->tabBar()->mapFromGlobal(pos));
+    if (idx < 0) return;
+
+    QMenu menu(this);
+    auto* closeAct = menu.addAction(QString::fromUtf8("关闭"));
+    auto* closeOthersAct = menu.addAction(QString::fromUtf8("关闭其他"));
+    auto* closeAllAct = menu.addAction(QString::fromUtf8("关闭全部"));
+
+    // Store the clicked index for the action handlers
+    int clickedIdx = idx;
+
+    auto* chosen = menu.exec(pos);
+    if (!chosen) return;
+
+    if (chosen == closeAct) {
+        onEditorTabCloseRequested(clickedIdx);
+    } else if (chosen == closeOthersAct) {
+        // Close all tabs except clickedIdx
+        // Close from right to left to preserve indices
+        for (int i = static_cast<int>(editorTabs_.size()) - 1; i >= 0; --i) {
+            if (i == clickedIdx) continue;
+            onEditorTabCloseRequested(i);
+            if (i < clickedIdx) clickedIdx--;
+        }
+    } else if (chosen == closeAllAct) {
+        onCloseAllTabs();
+    }
+}
+
+void Ide::onCloseOtherTabs() {
+    int current = editorTabWidget_->currentIndex();
+    for (int i = static_cast<int>(editorTabs_.size()) - 1; i >= 0; --i) {
+        if (i == current) continue;
+        onEditorTabCloseRequested(i);
+        if (i < current) current--;
+    }
+}
+
+void Ide::onCloseAllTabs() {
+    while (!editorTabs_.empty()) {
+        onEditorTabCloseRequested(static_cast<int>(editorTabs_.size()) - 1);
+    }
+}
+
+// ============================================================
+// Welcome page
+// ============================================================
+
+void Ide::initWelcomePage() {
+    welcomePage_ = new QWidget;
+    welcomePage_->setObjectName("welcomePage");
+    welcomePage_->setStyleSheet(
+        "#welcomePage { background: #ffffff; }"
+        "#welcomeRecentPanel { background: #f8f8f8; border-right: 1px solid #e5e5e5; }"
+        "#welcomeRecentHeader { color: #616161; font-size: 12px; padding: 8px 16px;"
+        "  font-weight: 500; }"
+        "#welcomeRecentList { background: transparent; border: none; outline: none; }"
+        "#welcomeRecentList::item { padding: 6px 16px; height: 32px; color: #1e1e1e; }"
+        "#welcomeRecentList::item:hover { background: #e6f2fa; }"
+        "#welcomeRecentList::item:selected { background: #cfe4f5; color: #1e1e1e; }"
+        "#welcomeIcon { color: #0078d4; }"
+        "#welcomeTitle { color: #1e1e1e; }"
+        "#welcomeSubtitle { color: #616161; }");
+
+    auto* outerLayout = new QHBoxLayout(welcomePage_);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+
+    // Left: recent workspaces (fixed 240px)
+    auto* recentPanel = new QWidget;
+    recentPanel->setObjectName("welcomeRecentPanel");
+    recentPanel->setFixedWidth(240);
+    auto* recentLayout = new QVBoxLayout(recentPanel);
+    recentLayout->setContentsMargins(0, 12, 0, 0);
+    recentLayout->setSpacing(0);
+
+    auto* recentHeader = new QLabel(QString::fromUtf8("最近打开"));
+    recentHeader->setObjectName("welcomeRecentHeader");
+    recentLayout->addWidget(recentHeader);
+
+    recentListWidget_ = new QListWidget;
+    recentListWidget_->setObjectName("welcomeRecentList");
+    recentListWidget_->setFrameStyle(QFrame::NoFrame);
+    recentListWidget_->setSpacing(0);
+    recentListWidget_->setCursor(Qt::PointingHandCursor);
+    // 第八轮：最近打开列表项高度 32px，hover 浅蓝背景
+    recentListWidget_->setStyleSheet(
+        "QListWidget { background: transparent; border: none; }"
+        "QListWidget::item { height: 32px; padding: 6px 12px; border: none; }"
+        "QListWidget::item:hover { background: #e8f0fc; }"
+        "QListWidget::item:selected { background: #cfe4f5; }");
+    connect(recentListWidget_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
+        if (!item) return;
+        QString dir = item->data(Qt::UserRole).toString();
+        if (!dir.isEmpty() && QDir(dir).exists()) openWorkspace(dir);
+    });
+    connect(recentListWidget_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        if (!item) return;
+        QString dir = item->data(Qt::UserRole).toString();
+        if (!dir.isEmpty() && QDir(dir).exists()) openWorkspace(dir);
+    });
+    recentLayout->addWidget(recentListWidget_, 1);
+    outerLayout->addWidget(recentPanel);
+
+    // Center area
+    auto* centerArea = new QWidget;
+    centerArea->setObjectName("welcomeCenter");
+    auto* centerLayout = new QVBoxLayout(centerArea);
+    centerLayout->setAlignment(Qt::AlignCenter);
+    centerLayout->setSpacing(16);
+
+    // 48px code icon (use Fluent CODE icon via text glyph fallback)
+    auto* iconLabel = new QLabel(QString::fromUtf8("{ }"));
+    iconLabel->setObjectName("welcomeIcon");
+    iconLabel->setAlignment(Qt::AlignCenter);
+    QFont iconFont = iconLabel->font();
+    iconFont.setPointSize(40);
+    iconFont.setBold(true);
+    iconFont.setStyleHint(QFont::Monospace);
+    iconLabel->setFont(iconFont);
+
+    auto* titleLabel = new QLabel(QString::fromUtf8("MiniLang IDE"));
+    titleLabel->setObjectName("welcomeTitle");
+    titleLabel->setAlignment(Qt::AlignCenter);
+    QFont titleFont = titleLabel->font();
+    titleFont.setPointSize(20);
+    titleFont.setWeight(QFont::Medium);
+    titleLabel->setFont(titleFont);
+
+    auto* subtitleLabel = new QLabel(QString::fromUtf8("MiniLang 编程语言开发环境"));
+    subtitleLabel->setObjectName("welcomeSubtitle");
+    subtitleLabel->setAlignment(Qt::AlignCenter);
+    QFont subFont = subtitleLabel->font();
+    subFont.setPointSize(14);
+    subtitleLabel->setFont(subFont);
+
+    centerLayout->addStretch(2);
+    centerLayout->addWidget(iconLabel);
+    centerLayout->addSpacing(4);
+    centerLayout->addWidget(titleLabel);
+    centerLayout->addWidget(subtitleLabel);
+    centerLayout->addSpacing(20);
+
+    // Primary button: 打开文件夹 (PrimaryPushButton — blue fill, white text, 8px corners)
+    auto* primaryBtn = new PrimaryPushButton(
+        QString::fromUtf8("打开文件夹"), Fluent::IconType::FOLDER, this);
+    primaryBtn->setMinimumSize(280, 38);
+    primaryBtn->setCursor(Qt::PointingHandCursor);
+    connect(primaryBtn, &PrimaryPushButton::clicked, this, &Ide::onOpenFolder);
+    centerLayout->addWidget(primaryBtn, 0, Qt::AlignCenter);
+
+    centerLayout->addSpacing(8);
+
+    // Secondary button: 新建文件 (PushButton — light border, 8px corners)
+    auto* secondaryBtn = new PushButton(
+        QString::fromUtf8("新建文件"), Fluent::IconType::DOCUMENT, this);
+    secondaryBtn->setMinimumSize(280, 38);
+    secondaryBtn->setCursor(Qt::PointingHandCursor);
+    connect(secondaryBtn, &PushButton::clicked, this, [this]() {
+        ensureEditorVisible();
+        onNew();
+    });
+    centerLayout->addWidget(secondaryBtn, 0, Qt::AlignCenter);
+
+    centerLayout->addSpacing(12);
+
+    // Shortcut links
+    auto* shortcutLayout = new QHBoxLayout;
+    shortcutLayout->setAlignment(Qt::AlignCenter);
+    shortcutLayout->setSpacing(24);
+    auto* sampleLabel = new QLabel(QString::fromUtf8(
+        "<a href=\"sample\" style=\"color:#0078d4;text-decoration:none;\">语法示例</a>"));
+    sampleLabel->setCursor(Qt::PointingHandCursor);
+    connect(sampleLabel, &QLabel::linkActivated, this, [this]() {
+        QString sampleDir = QApplication::applicationDirPath() + "/../../samples/mini";
+        if (!QDir(sampleDir).exists())
+            sampleDir = QApplication::applicationDirPath() + "/samples/mini";
+        if (QDir(sampleDir).exists()) openWorkspace(sampleDir);
+        else onOpenFolder();
+    });
+    auto* helpLabel = new QLabel(QString::fromUtf8(
+        "<a href=\"help\" style=\"color:#0078d4;text-decoration:none;\">帮助文档</a>"));
+    helpLabel->setCursor(Qt::PointingHandCursor);
+    connect(helpLabel, &QLabel::linkActivated, this, [this]() { showHelpDialog(); });
+    shortcutLayout->addWidget(sampleLabel);
+    shortcutLayout->addWidget(helpLabel);
+    centerLayout->addLayout(shortcutLayout);
+
+    centerLayout->addStretch(3);
+    outerLayout->addWidget(centerArea, 1);
+
+    loadRecentWorkspaces();
+}
+
+void Ide::loadRecentWorkspaces() {
+    QSettings settings("MiniLang", "MiniLang IDE");
+    recentWorkspaces_ = settings.value("recent/workspaces").toStringList();
+    refreshRecentList();
+}
+
+void Ide::addRecentWorkspace(const QString& dir) {
+    if (dir.isEmpty()) return;
+    QString normalized = QDir(dir).absolutePath();
+    recentWorkspaces_.removeAll(normalized);
+    recentWorkspaces_.prepend(normalized);
+    while (recentWorkspaces_.size() > 10) recentWorkspaces_.removeLast();
+    QSettings settings("MiniLang", "MiniLang IDE");
+    settings.setValue("recent/workspaces", recentWorkspaces_);
+    refreshRecentList();
+}
+
+void Ide::refreshRecentList() {
+    if (!recentListWidget_) return;
+    recentListWidget_->clear();
+    for (const QString& ws : recentWorkspaces_) {
+        if (!QDir(ws).exists()) continue;
+        QFileInfo fi(ws);
+        auto* item = new QListWidgetItem(fi.fileName());
+        item->setToolTip(ws);
+        item->setData(Qt::UserRole, ws);
+        recentListWidget_->addItem(item);
+    }
+}
+
+// ============================================================
+// UI initialization (ADS-based + ActivityBar + Pivot panels)
 // ============================================================
 
 void Ide::initUI() {
-    // GUI-04: 菜单栏
+    setMinimumSize(800, 600);
+    resize(1280, 800);
+
+    // ---- Create content widgets before ADS docks ----
+
+    // File tree
+    fileTree_ = new QTreeWidget;
+    fileTree_->setObjectName("fileTree");
+    fileTree_->setHeaderHidden(true);
+    fileTree_->setAnimated(true);
+    fileTree_->setIndentation(12);
+    fileTree_->setExpandsOnDoubleClick(true);
+    fileTree_->setContextMenuPolicy(Qt::CustomContextMenu);
+
+    // Debug panel
+    debugPanel_ = new DebugPanel;
+
+    // Output text edit
+    outputTextEdit_ = new QTextEdit;
+    outputTextEdit_->setReadOnly(true);
+    QFont outputFont("Consolas", 10);
+    outputFont.setStyleHint(QFont::Monospace);
+    outputTextEdit_->setFont(outputFont);
+    outputTextEdit_->document()->setMaximumBlockCount(10000);
+    outputTextEdit_->setObjectName("outputEdit");
+    outputTextEdit_->setStyleSheet(
+        "QTextEdit { background: #f8f8f8; color: #1e1e1e; border: none;"
+        "  padding: 4px; }");
+
+    // Error list
+    errorListWidget_ = new QListWidget;
+    errorListWidget_->setObjectName("errorList");
+    errorListWidget_->setFont(GuiTextUtils::monospaceFont(10));
+    errorListWidget_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    errorListWidget_->setSpacing(0);
+    errorListWidget_->setStyleSheet(
+        "QListWidget { background: #f8f8f8; border: none; padding: 4px; }"
+        "QListWidget::item { color: #d13438; padding: 2px 4px; }"
+        "QListWidget::item:selected { background: #fde7e9; }");
+    connect(errorListWidget_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        if (!item) return;
+        bool ok = false;
+        int line = item->data(Qt::UserRole).toInt(&ok);
+        if (ok && line > 0 && codeEditor_) codeEditor_->gotoLine(line);
+    });
+
+    // REPL panel
+    replPanel_ = new ReplPanel;
+
+    // Token table (第八轮：列顺序 行号、列号、类型、词素、字面量)
+    tokenTable_ = new QTableWidget;
+    tokenTable_->setColumnCount(5);
+    tokenTable_->setHorizontalHeaderLabels(
+        {QString::fromUtf8("行号"), QString::fromUtf8("列号"),
+         QString::fromUtf8("类型"), QString::fromUtf8("词素"),
+         QString::fromUtf8("字面量")});
+    tokenTable_->horizontalHeader()->setStretchLastSection(true);
+    tokenTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tokenTable_->setAlternatingRowColors(true);
+    tokenTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    tokenTable_->setFont(GuiTextUtils::monospaceFont(10));
+    tokenTable_->setStyleSheet(
+        "QTableWidget { background: #f8f8f8; border: none; gridline-color: #ececec; }"
+        "QTableWidget::item { padding: 4px 8px; color: #1e1e1e; }"
+        "QTableWidget::item:selected { background: #cfe4f5; }"
+        "QHeaderView::section { background: #f0f0f0; color: #555; "
+        "padding: 6px 8px; border: none; border-bottom: 1px solid #e0e0e0; "
+        "font-weight: bold; }");
+    tokenTable_->setVerticalScrollBar(new ScrollBar(tokenTable_));
+    tokenTable_->setHorizontalScrollBar(new ScrollBar(tokenTable_));
+    tokenTable_->verticalHeader()->setVisible(false);
+
+    // IR viewer
+    irViewer_ = new IrViewer;
+
+    // Bytecode list + VM stack panel (will be placed in a splitter on the bytecode page)
+    // 第八轮：使用 RichTextItemDelegate 支持语法高亮
+    bytecodeList_ = new QListWidget;
+    bytecodeList_->setObjectName("bytecodeList");
+    bytecodeList_->setFont(GuiTextUtils::monospaceFont(10));
+    bytecodeList_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    bytecodeList_->setAlternatingRowColors(true);
+    bytecodeList_->setItemDelegate(new RichTextItemDelegate(bytecodeList_));
+    bytecodeList_->setStyleSheet(
+        "QListWidget { background: #f8f8f8; border: none; padding: 8px; }"
+        "QListWidget::item { padding: 2px 4px; border: none; }"
+        "QListWidget::item:selected { background: #cfe4f5; }");
+    vmStackPanel_ = new VmStackPanel;
+    vmStackPanel_->setMinimumWidth(180);
+
+    // AST viewer (lives in an independent top-level window)
+    astViewer_ = new AstViewer;
+
+    // Welcome page
+    initWelcomePage();
+
+    // Editor tab widget
+    editorTabWidget_ = new QTabWidget;
+    editorTabWidget_->setObjectName("editorTabWidget");
+    editorTabWidget_->setTabsClosable(true);
+    editorTabWidget_->setMovable(true);
+    editorTabWidget_->setDocumentMode(true);
+    editorTabWidget_->tabBar()->installEventFilter(this);
+    editorTabWidget_->tabBar()->setAutoHide(false);
+    editorTabWidget_->tabBar()->setMouseTracking(true);
+    editorTabWidget_->setMouseTracking(true);
+
+    // Central stack: welcome page <-> editor tabs
+    centerStack_ = new QStackedWidget;
+    centerStack_->addWidget(welcomePage_);
+    centerStack_->addWidget(editorTabWidget_);
+
+    // ---- Activity bar (left-most 48px) ----
+    activityBar_ = new ActivityBar;
+    activityBar_->addItem(QString::fromUtf8("资源管理器"), Fluent::IconType::FOLDER);
+    activityBar_->addItem(QString::fromUtf8("调试"), Fluent::IconType::DEVELOPER_TOOLS);
+    connect(activityBar_, &ActivityBar::currentChanged, this, &Ide::onActivityChanged);
+
+    // ---- Bottom panel container: Pivot + QStackedWidget ----
+    // 第八轮：默认高度 220px，最小 120px 防止缩成一小条
+    auto* bottomContainer = new QWidget;
+    bottomContainer->setObjectName("bottomPanelContainer");
+    bottomContainer->setMinimumHeight(120);
+    bottomContainer->setStyleSheet(
+        "#bottomPanelContainer { background: #f8f8f8; }"
+        "Pivot { background: #ffffff; border-bottom: 1px solid #e5e5e5; }");
+    auto* bottomLayout = new QVBoxLayout(bottomContainer);
+    bottomLayout->setContentsMargins(0, 0, 0, 0);
+    bottomLayout->setSpacing(0);
+
+    bottomPivot_ = new Pivot(bottomContainer);
+    bottomPivot_->setObjectName("bottomPivot");
+    // 第八轮：12px 小字号，2px 主题蓝下划线，标签栏 ≤ 32px
+    bottomPivot_->setItemFontSize(12);
+    bottomPivot_->setIndicatorColor(QColor("#0066b8"), QColor("#0066b8"));
+    bottomPivot_->setFixedHeight(32);
+    bottomPivot_->addItem("output", QString::fromUtf8("输出"));
+    bottomPivot_->addItem("errors", QString::fromUtf8("错误"));
+    bottomPivot_->addItem("repl", QString::fromUtf8("REPL"));
+    bottomLayout->addWidget(bottomPivot_);
+
+    bottomStack_ = new QStackedWidget(bottomContainer);
+    bottomStack_->addWidget(outputTextEdit_);
+    bottomStack_->addWidget(errorListWidget_);
+    bottomStack_->addWidget(replPanel_);
+    bottomLayout->addWidget(bottomStack_, 1);
+    connect(bottomPivot_, &Pivot::currentItemChanged, this, &Ide::onBottomPivotChanged);
+
+    // ---- Right panel container: Pivot + QStackedWidget ----
+    auto* rightContainer = new QWidget;
+    rightContainer->setObjectName("rightPanelContainer");
+    rightContainer->setMinimumWidth(320);
+    rightContainer->setMaximumWidth(560);   // 第八轮：限制浮动宽度范围
+    rightContainer->setStyleSheet(
+        "#rightPanelContainer { background: #f8f8f8; }"
+        "Pivot { background: #ffffff; border-bottom: 1px solid #e5e5e5; }");
+    auto* rightLayout = new QVBoxLayout(rightContainer);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+
+    rightPivot_ = new Pivot(rightContainer);
+    rightPivot_->setObjectName("rightPivot");
+    // 第八轮：12px 小字号，2px 主题蓝下划线，标签栏 ≤ 32px
+    rightPivot_->setItemFontSize(12);
+    rightPivot_->setIndicatorColor(QColor("#0066b8"), QColor("#0066b8"));
+    rightPivot_->setFixedHeight(32);
+    rightPivot_->addItem("token", QString::fromUtf8("词法Token"));
+    rightPivot_->addItem("ir", QString::fromUtf8("中间IR"));
+    rightPivot_->addItem("bytecode", QString::fromUtf8("字节码"));
+    rightLayout->addWidget(rightPivot_);
+
+    rightStack_ = new QStackedWidget(rightContainer);
+    rightStack_->addWidget(tokenTable_);    // index 0 → token
+    rightStack_->addWidget(irViewer_);      // index 1 → IR
+
+    // Bytecode page: bytecode list + VM stack panel in a splitter
+    // 第八轮：普通查看模式仅展示纯字节码，VM 调试状态才追加操作数栈/全局变量
+    auto* bytecodePage = new QWidget;
+    auto* bcLayout = new QHBoxLayout(bytecodePage);
+    bcLayout->setContentsMargins(0, 0, 0, 0);
+    bcLayout->setSpacing(2);
+    auto* bcSplitter = new QSplitter(Qt::Horizontal, bytecodePage);
+    bcSplitter->addWidget(bytecodeList_);
+    bcSplitter->addWidget(vmStackPanel_);
+    bcSplitter->setStretchFactor(0, 3);
+    bcSplitter->setStretchFactor(1, 2);
+    bcSplitter->setHandleWidth(3);
+    bcLayout->addWidget(bcSplitter);
+    rightStack_->addWidget(bytecodePage);   // index 2 → bytecode
+    // 普通模式隐藏 VM 调试面板（仅 VM 单步调试时显示）
+    vmStackPanel_->hide();
+
+    rightLayout->addWidget(rightStack_, 1);
+    connect(rightPivot_, &Pivot::currentItemChanged, this, &Ide::onRightPivotChanged);
+
+    // ---- AST independent window ----
+    astWindow_ = new QWidget(nullptr);
+    astWindow_->setWindowTitle(QString::fromUtf8("AST 树形图"));
+    astWindow_->setWindowFlags(Qt::Window);
+    astWindow_->resize(800, 600);
+    auto* astLayout = new QVBoxLayout(astWindow_);
+    astLayout->setContentsMargins(0, 0, 0, 0);
+    astLayout->setSpacing(0);
+    astLayout->addWidget(astViewer_);
+    // Re-parent the astViewer now that it's in the window
+    astViewer_->setParent(astWindow_);
+
+    // ---- Main container: ActivityBar + ADS dock manager ----
+    auto* mainContainer = new QWidget;
+    mainContainer->setObjectName("mainContainer");
+    auto* mainLayout = new QHBoxLayout(mainContainer);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+    mainLayout->addWidget(activityBar_);
+
+    // ---- ADS Dock Manager setup ----
+    // Config flags must be set BEFORE creating the manager
+    ads::CDockManager::setConfigFlags(
+        ads::CDockManager::DefaultOpaqueConfig
+        | ads::CDockManager::MiddleMouseButtonClosesTab
+        | ads::CDockManager::FocusHighlighting);
+    ads::CDockManager::setAutoHideConfigFlags(
+        ads::CDockManager::DefaultAutoHideConfig);
+
+    dockManager_ = new ads::CDockManager(mainContainer);
+    dockManager_->setColorSchemeMode(
+        ads::CDockManager::ColorSchemeMode::FollowPalette);
+    mainLayout->addWidget(dockManager_, 1);
+
+    setCentralWidget(mainContainer);
+
+    // Central dock widget (editor area) — must be set FIRST
+    auto* centralDock = dockManager_->createDockWidget("Editor");
+    centralDock->setWidget(centerStack_, ads::CDockWidget::ForceNoScrollArea);
+    centralDock->setFeature(ads::CDockWidget::NoTab, true);
+    dockManager_->setCentralWidget(centralDock);
+
+    // Left panel: file tree
+    fileTreeDock_ = dockManager_->createDockWidget(QString::fromUtf8("资源管理器"));
+    fileTreeDock_->setWidget(fileTree_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::LeftDockWidgetArea, fileTreeDock_);
+
+    // Left panel: debug (tabbed with file tree)
+    debugPanelDock_ = dockManager_->createDockWidget(QString::fromUtf8("调试"));
+    debugPanelDock_->setWidget(debugPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidgetTabToArea(
+        debugPanelDock_, fileTreeDock_->dockAreaWidget());
+
+    // Bottom panel: single dock containing Pivot + stack (output/errors/REPL)
+    bottomDock_ = dockManager_->createDockWidget(QString::fromUtf8("面板"));
+    bottomDock_->setWidget(bottomContainer, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::BottomDockWidgetArea, bottomDock_);
+
+    // Right panel: single dock containing Pivot + stack (token/IR/bytecode)
+    rightDock_ = dockManager_->createDockWidget(QString::fromUtf8("编译分析"));
+    rightDock_->setWidget(rightContainer, ads::CDockWidget::ForceNoScrollArea);
+    // 第八轮：锁定右侧停靠，禁止浮动/移动到其他区域
+    rightDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, false);
+    rightDock_->setFeature(ads::CDockWidget::DockWidgetMovable, false);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, rightDock_);
+    // 初始宽度 380px：延迟到布局稳定后调整 dock 区域宽度
+    QTimer::singleShot(0, this, [this]() {
+        if (rightDock_ && !rightDock_->isClosed()) {
+            if (auto* area = rightDock_->dockAreaWidget()) {
+                area->resize(380, area->height());
+            }
+        }
+    });
+
+    // Initially hide bottom and right panels
+    bottomDock_->toggleView(false);
+    rightDock_->toggleView(false);
+
+    // Connect file tree context menu
+    connect(fileTree_, &QWidget::customContextMenuRequested,
+            this, &Ide::onFileTreeContextMenu);
+
+    // Connect dock widget state changes to debounced layout save.
+    // Only the consolidated docks need to be tracked now.
+    auto connectDockSave = [this](ads::CDockWidget* dock) {
+        if (dock) {
+            connect(dock, &ads::CDockWidget::viewToggled,
+                    this, [this]() { if (splitterSaveTimer_) splitterSaveTimer_->start(); });
+        }
+    };
+    connectDockSave(fileTreeDock_);
+    connectDockSave(debugPanelDock_);
+    connectDockSave(bottomDock_);
+    connectDockSave(rightDock_);
+    // 第八轮：同步 View 菜单勾选状态与 dock 实际显隐
+    connect(rightDock_, &ads::CDockWidget::viewToggled, this, [this]() {
+        if (viewCompileAnalysisAction_ && rightDock_) {
+            viewCompileAnalysisAction_->setChecked(!rightDock_->isClosed());
+        }
+    });
+    // focusedDockWidgetChanged fires when user interacts with dock widgets (drag/dock)
+    connect(dockManager_, &ads::CDockManager::focusedDockWidgetChanged,
+            this, [this]() { if (splitterSaveTimer_) splitterSaveTimer_->start(); });
+}
+
+// ============================================================
+// Toolbar initialization (QFluentKit-based)
+// ============================================================
+
+void Ide::initToolbar() {
+    auto* toolbar = addToolBar("mainToolbar");
+    toolbar->setObjectName("mainToolbar");
+    toolbar->setMovable(false);
+    toolbar->setIconSize(QSize(16, 16));
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    toolbar->setContextMenuPolicy(Qt::PreventContextMenu);
+    // 第八轮：工具栏固定高度，统一内边距
+    toolbar->setFixedHeight(36);
+    toolbar->layout()->setContentsMargins(4, 0, 4, 0);
+    toolbar->layout()->setSpacing(4);
+
+    // ---- Run split button (QFluentKit SplitPushButton + RoundMenu flyout) ----
+    runAction_ = new QAction(QString::fromUtf8("运行"), this);
+    runAction_->setShortcut(Qt::Key_F5);
+    connect(runAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onRun(); });
+
+    debugAction_ = new QAction(QString::fromUtf8("调试"), this);
+    debugAction_->setShortcut(Qt::Key_F6);
+    connect(debugAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onDebug(); });
+
+    auto* runSplit = new SplitPushButton(QString::fromUtf8("运行"), Fluent::IconType::PLAY_SOLID, this);
+    runSplit->setToolTip(QString::fromUtf8("运行程序 (F5)\n点击主体运行，点击右侧箭头选择运行/调试"));
+    connect(runSplit, &SplitPushButton::clicked, runAction_, &QAction::trigger);
+
+    auto* runMenu = new RoundMenu(QString(), this);
+    runMenu->addAction(runAction_);
+    runMenu->addAction(debugAction_);
+    runSplit->setFlyout(runMenu);
+    toolbar->addWidget(runSplit);
+
+    // 分组分隔线 1（运行组 ↔ 格式化/AST 组）
+    toolbar->addSeparator();
+
+    // ---- Format / AST actions (CleanToolButton: 无文字/无装饰点) ----
+    formatAction_ = new QAction(QString::fromUtf8("格式化"), this);
+    formatAction_->setToolTip(QString::fromUtf8("格式化代码 (Ctrl+Shift+F)"));
+    formatAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
+    auto* formatBtn = new CleanToolButton(Fluent::IconType::BROOM, this);
+    formatBtn->setToolTip(QString::fromUtf8("格式化代码 (Ctrl+Shift+F)"));
+    formatBtn->setDefaultAction(formatAction_);
+    toolbar->addWidget(formatBtn);
+
+    // 编译分析按钮已移除（第八轮：改由「视图」菜单勾选控制）
+    compileAnalysisAction_ = new QAction(QString::fromUtf8("编译分析"), this);
+    compileAnalysisAction_->setToolTip(QString::fromUtf8("查看 Token / IR / 字节码"));
+    // 快捷键 Ctrl+Shift+V 已移至「视图」菜单的勾选项
+
+    astAction_ = new QAction(QString::fromUtf8("AST"), this);
+    astAction_->setToolTip(QString::fromUtf8("查看 AST 树形图 (Ctrl+Shift+A)"));
+    astAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_A);
+    auto* astBtn = new CleanToolButton(Fluent::IconType::DICTIONARY, this);
+    astBtn->setToolTip(QString::fromUtf8("查看 AST 树形图 (Ctrl+Shift+A)"));
+    astBtn->setDefaultAction(astAction_);
+    toolbar->addWidget(astBtn);
+
+    // ---- 调试按钮组：仅调试启动时动态显示（分隔线随容器显隐）----
+    debugSepAction_ = toolbar->addSeparator();
+    debugButtonContainer_ = new QWidget;
+    debugButtonContainer_->setObjectName("debugButtonContainer");
+    auto* dbgLayout = new QHBoxLayout(debugButtonContainer_);
+    dbgLayout->setContentsMargins(0, 0, 0, 0);
+    dbgLayout->setSpacing(2);
+
+    auto makeDebugBtn = [this](QAction*& action, const QString& text,
+                               const QString& tip, const QKeySequence& shortcut,
+                               Fluent::IconType icon) {
+        action = new QAction(text, this);
+        action->setToolTip(tip);
+        action->setShortcut(shortcut);
+        auto* btn = new CleanToolButton(icon, this);
+        btn->setToolTip(tip);
+        btn->setDefaultAction(action);
+        return btn;
+    };
+
+    dbgLayout->addWidget(makeDebugBtn(stepInAction_, QString::fromUtf8("步入"),
+        QString::fromUtf8("单步进入 (F11)"), Qt::Key_F11, Fluent::IconType::CHEVRON_RIGHT_MED));
+    dbgLayout->addWidget(makeDebugBtn(stepOverAction_, QString::fromUtf8("跨过"),
+        QString::fromUtf8("单步跳过 (F10)"), Qt::Key_F10, Fluent::IconType::CHEVRON_DOWN_MED));
+    dbgLayout->addWidget(makeDebugBtn(stepOutAction_, QString::fromUtf8("跨出"),
+        QString::fromUtf8("单步跳出 (Shift+F11)"), Qt::SHIFT | Qt::Key_F11, Fluent::IconType::CHEVRON_RIGHT));
+    dbgLayout->addWidget(makeDebugBtn(resumeAction_, QString::fromUtf8("继续"),
+        QString::fromUtf8("继续运行到下一个断点 (F9)"), Qt::Key_F9, Fluent::IconType::PLAY));
+    dbgLayout->addWidget(makeDebugBtn(stopAction_, QString::fromUtf8("停止"),
+        QString::fromUtf8("停止运行 (Shift+F5)"), Qt::SHIFT | Qt::Key_F5, Fluent::IconType::CANCEL));
+
+    toolbar->addWidget(debugButtonContainer_);
+    debugButtonContainer_->hide();
+    debugSepAction_->setVisible(false);
+    debugButtonsVisible_ = false;
+
+    // ---- VM 按钮组：仅 VM 单步模式启动时动态显示 ----
+    vmSepAction_ = toolbar->addSeparator();
+    vmButtonContainer_ = new QWidget;
+    vmButtonContainer_->setObjectName("vmButtonContainer");
+    auto* vmLayout = new QHBoxLayout(vmButtonContainer_);
+    vmLayout->setContentsMargins(0, 0, 0, 0);
+    vmLayout->setSpacing(2);
+
+    auto makeVmBtn = [this](QAction*& action, const QString& text,
+                             const QString& tip, const QKeySequence& shortcut,
+                             Fluent::IconType icon) {
+        action = new QAction(text, this);
+        action->setToolTip(tip);
+        action->setShortcut(shortcut);
+        action->setEnabled(false);
+        auto* btn = new CleanToolButton(icon, this);
+        btn->setToolTip(tip);
+        btn->setDefaultAction(action);
+        return btn;
+    };
+
+    vmLayout->addWidget(makeVmBtn(vmStepAction_, QString::fromUtf8("VM单步"),
+        QString::fromUtf8("VM 单步 (Ctrl+Shift+N)"), Qt::CTRL | Qt::SHIFT | Qt::Key_N, Fluent::IconType::CHEVRON_RIGHT_MED));
+    vmLayout->addWidget(makeVmBtn(vmStepOverAction_, QString::fromUtf8("VM跨过"),
+        QString::fromUtf8("VM 跨过 (Ctrl+Shift+O)"), Qt::CTRL | Qt::SHIFT | Qt::Key_O, Fluent::IconType::CHEVRON_DOWN_MED));
+    vmLayout->addWidget(makeVmBtn(vmStepOutAction_, QString::fromUtf8("VM跨出"),
+        QString::fromUtf8("VM 跨出 (Ctrl+Shift+U)"), Qt::CTRL | Qt::SHIFT | Qt::Key_U, Fluent::IconType::CHEVRON_RIGHT));
+    vmLayout->addWidget(makeVmBtn(vmRunAction_, QString::fromUtf8("VM运行"),
+        QString::fromUtf8("VM 运行 (Ctrl+Shift+R)"), Qt::CTRL | Qt::SHIFT | Qt::Key_R, Fluent::IconType::PLAY));
+    vmLayout->addWidget(makeVmBtn(vmStopAction_, QString::fromUtf8("VM停止"),
+        QString::fromUtf8("停止 VM"), QKeySequence(), Fluent::IconType::CANCEL));
+
+    toolbar->addWidget(vmButtonContainer_);
+    vmButtonContainer_->hide();
+    vmSepAction_->setVisible(false);
+
+    clearAction_ = new QAction(QString::fromUtf8("清空"), this);
+    clearAction_->setToolTip(QString::fromUtf8("清空输出面板"));
+}
+
+// ============================================================
+// Menu bar initialization (extracted from initUI)
+// ============================================================
+
+void Ide::initMenuBar() {
+    // ---- File menu ----
     auto* fileMenu = menuBar()->addMenu(QString::fromUtf8("文件(&F)"));
 
     newAction_ = new QAction(QString::fromUtf8("新建(&N)"), this);
     newAction_->setShortcut(QKeySequence::New);
-    connect(newAction_, &QAction::triggered, this, &Ide::onNew);
+    connect(newAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onNew(); });
     fileMenu->addAction(newAction_);
 
-    openAction_ = new QAction(QString::fromUtf8("打开(&O)..."), this);
+    openAction_ = new QAction(QString::fromUtf8("打开文件(&O)..."), this);
     openAction_->setShortcut(QKeySequence::Open);
     connect(openAction_, &QAction::triggered, this, &Ide::onOpen);
     fileMenu->addAction(openAction_);
+
+    openFolderAction_ = new QAction(QString::fromUtf8("打开文件夹(&D)..."), this);
+    connect(openFolderAction_, &QAction::triggered, this, &Ide::onOpenFolder);
+    fileMenu->addAction(openFolderAction_);
 
     fileMenu->addSeparator();
 
@@ -326,217 +1370,195 @@ void Ide::initUI() {
     fileMenu->addAction(saveAction_);
 
     saveAsAction_ = new QAction(QString::fromUtf8("另存为(&A)..."), this);
-    saveAsAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    saveAsAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_S);
     connect(saveAsAction_, &QAction::triggered, this, &Ide::onSaveAs);
     fileMenu->addAction(saveAsAction_);
 
-    // F9: 视图菜单（主题切换）
+    // ---- Edit menu ----
+    auto* editMenu = menuBar()->addMenu(QString::fromUtf8("编辑(&E)"));
+    auto* formatMenuAct = new QAction(QString::fromUtf8("格式化"), this);
+    formatMenuAct->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
+    connect(formatMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onFormat(); });
+    editMenu->addAction(formatMenuAct);
+    auto* findMenuAct = new QAction(QString::fromUtf8("查找"), this);
+    findMenuAct->setShortcut(QKeySequence::Find);
+    connect(findMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onFind(); });
+    editMenu->addAction(findMenuAct);
+    auto* replaceMenuAct = new QAction(QString::fromUtf8("替换"), this);
+    replaceMenuAct->setShortcut(QKeySequence::Replace);
+    connect(replaceMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onReplace(); });
+    editMenu->addAction(replaceMenuAct);
+
+    // ---- View menu ----
     auto* viewMenu = menuBar()->addMenu(QString::fromUtf8("视图(&V)"));
-    darkThemeAction_ = new QAction(QString::fromUtf8("深色主题(&D)"), this);
-    darkThemeAction_->setCheckable(true);
-    darkThemeAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_T);
-    connect(darkThemeAction_, &QAction::toggled, this, &Ide::onToggleTheme);
-    viewMenu->addAction(darkThemeAction_);
 
-    // 中央部件
-    auto* centralWidget = new QWidget(this);
-    setCentralWidget(centralWidget);
+    viewExplorerAction_ = new QAction(QString::fromUtf8("资源管理器"), this);
+    viewExplorerAction_->setCheckable(true);
+    viewExplorerAction_->setChecked(true);
+    connect(viewExplorerAction_, &QAction::toggled, this, [this](bool on) {
+        if (fileTreeDock_) fileTreeDock_->toggleView(on);
+    });
+    viewMenu->addAction(viewExplorerAction_);
 
-    auto* mainLayout = new QVBoxLayout(centralWidget);
-    mainLayout->setContentsMargins(4, 4, 4, 4);
-    mainLayout->setSpacing(4);
+    viewDebugAction_ = new QAction(QString::fromUtf8("调试面板"), this);
+    viewDebugAction_->setCheckable(true);
+    connect(viewDebugAction_, &QAction::toggled, this, [this](bool on) {
+        if (debugPanelDock_) debugPanelDock_->toggleView(on);
+    });
+    viewMenu->addAction(viewDebugAction_);
 
-    // ---- 垂直分割器（上：编辑区 + 下：输出区）----
-    vSplitter_ = new QSplitter(Qt::Vertical, this);
+    viewOutputAction_ = new QAction(QString::fromUtf8("输出面板"), this);
+    viewOutputAction_->setCheckable(true);
+    connect(viewOutputAction_, &QAction::toggled, this, [this](bool on) {
+        if (bottomDock_) bottomDock_->toggleView(on);
+    });
+    viewMenu->addAction(viewOutputAction_);
 
-    // ---- 水平分割器（左：代码编辑 + 右：视图）----
-    mainSplitter_ = new QSplitter(Qt::Horizontal, this);
+    viewCompileAnalysisAction_ = new QAction(QString::fromUtf8("编译分析面板"), this);
+    viewCompileAnalysisAction_->setCheckable(true);
+    viewCompileAnalysisAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_V);
+    connect(viewCompileAnalysisAction_, &QAction::toggled, this, [this](bool on) {
+        if (!rightDock_) return;
+        if (on) {
+            rightDock_->toggleView(true);
+            rightDock_->setAsCurrentTab();
+            // 默认激活「词法Token」标签并异步加载编译结果
+            if (rightPivot_) rightPivot_->setCurrentItem("token");
+            if (codeEditor_) {
+                onCompileAnalysis();
+            }
+        } else {
+            rightDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewCompileAnalysisAction_);
 
-    // 左侧：代码编辑器（含查找替换面板）
-    auto* editorContainer = new QWidget(this);
-    auto* editorLayout = new QVBoxLayout(editorContainer);
-    editorLayout->setContentsMargins(0, 0, 0, 0);
-    editorLayout->setSpacing(0);
+    viewMenu->addSeparator();
 
-    codeEditor_ = new CodeEditor(this);
-    codeEditor_->setMinimumWidth(300);
-    highlighter_ = new SyntaxHighlighter(codeEditor_->document());
+    // ---- Run menu ----
+    auto* runMenu = menuBar()->addMenu(QString::fromUtf8("运行(&R)"));
+    auto* runMenuAct = new QAction(QString::fromUtf8("运行"), this);
+    runMenuAct->setShortcut(Qt::Key_F5);
+    connect(runMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onRun(); });
+    runMenu->addAction(runMenuAct);
+    auto* debugMenuAct = new QAction(QString::fromUtf8("调试"), this);
+    debugMenuAct->setShortcut(Qt::Key_F6);
+    connect(debugMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onDebug(); });
+    runMenu->addAction(debugMenuAct);
+    runMenu->addSeparator();
+    auto* stepInMenuAct = new QAction(QString::fromUtf8("单步进入"), this);
+    stepInMenuAct->setShortcut(Qt::Key_F11);
+    connect(stepInMenuAct, &QAction::triggered, this, &Ide::onStepIn);
+    runMenu->addAction(stepInMenuAct);
+    auto* stepOverMenuAct = new QAction(QString::fromUtf8("单步跳过"), this);
+    stepOverMenuAct->setShortcut(Qt::Key_F10);
+    connect(stepOverMenuAct, &QAction::triggered, this, &Ide::onStepOver);
+    runMenu->addAction(stepOverMenuAct);
+    auto* stepOutMenuAct = new QAction(QString::fromUtf8("单步跳出"), this);
+    stepOutMenuAct->setShortcut(Qt::SHIFT | Qt::Key_F11);
+    connect(stepOutMenuAct, &QAction::triggered, this, &Ide::onStepOut);
+    runMenu->addAction(stepOutMenuAct);
+    auto* resumeMenuAct = new QAction(QString::fromUtf8("继续"), this);
+    resumeMenuAct->setShortcut(Qt::Key_F9);
+    connect(resumeMenuAct, &QAction::triggered, this, &Ide::onResume);
+    runMenu->addAction(resumeMenuAct);
+    auto* stopMenuAct = new QAction(QString::fromUtf8("停止"), this);
+    stopMenuAct->setShortcut(Qt::SHIFT | Qt::Key_F5);
+    connect(stopMenuAct, &QAction::triggered, this, &Ide::onStop);
+    runMenu->addAction(stopMenuAct);
 
-    findReplacePanel_ = new FindReplacePanel(codeEditor_, this);
-    editorLayout->addWidget(findReplacePanel_);
-    editorLayout->addWidget(codeEditor_, 1);
-
-    // 右侧：Tab Widget（Token 列表 / AST 视图 / 字节码视图）
-    rightTabWidget_ = new QTabWidget(this);
-
-    // Token 列表表格
-    tokenTable_ = new QTableWidget(this);
-    tokenTable_->setColumnCount(5);
-    tokenTable_->setHorizontalHeaderLabels({"类型", "词素", "字面量", "行", "列"});
-    tokenTable_->horizontalHeader()->setStretchLastSection(true);
-    tokenTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    tokenTable_->setAlternatingRowColors(true);
-    tokenTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    rightTabWidget_->addTab(tokenTable_, "Token 列表");
-
-    // AST 视图
-    astViewer_ = new AstViewer(this);
-    rightTabWidget_->addTab(astViewer_, "AST 视图");
-
-    // 方向三：IR 中间表示视图
-    irViewer_ = new IrViewer(this);
-    rightTabWidget_->addTab(irViewer_, "IR 视图");
-
-    // 字节码视图：左右分割（左：指令列表 + 右：栈状态面板）
-    auto* bytecodeSplitter = new QSplitter(Qt::Horizontal, this);
-
-    bytecodeList_ = new QListWidget(this);
-    bytecodeList_->setObjectName("bytecodeList");
-    bytecodeList_->setFont(QFont("Consolas", 10));
-    bytecodeList_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-
-    vmStackPanel_ = new VmStackPanel(this);
-    vmStackPanel_->setMinimumWidth(200);
-
-    bytecodeSplitter->addWidget(bytecodeList_);
-    bytecodeSplitter->addWidget(vmStackPanel_);
-    bytecodeSplitter->setStretchFactor(0, 3);
-    bytecodeSplitter->setStretchFactor(1, 2);
-
-    rightTabWidget_->addTab(bytecodeSplitter, "字节码视图");
-
-    mainSplitter_->addWidget(editorContainer);
-    mainSplitter_->addWidget(rightTabWidget_);
-    mainSplitter_->setStretchFactor(0, 3);  // 60% : 40%
-    mainSplitter_->setStretchFactor(1, 2);
-
-    // 底部：Tab Widget（输出 / 调试 / REPL）
-    bottomTabWidget_ = new QTabWidget(this);
-
-    outputPanel_ = new OutputPanel(this);
-    bottomTabWidget_->addTab(outputPanel_, "输出");
-
-    debugPanel_ = new DebugPanel(this);
-    bottomTabWidget_->addTab(debugPanel_, "调试");
-
-    replPanel_ = new ReplPanel(this);
-    bottomTabWidget_->addTab(replPanel_, "REPL");
-
-    vSplitter_->addWidget(mainSplitter_);
-    vSplitter_->addWidget(bottomTabWidget_);
-    vSplitter_->setStretchFactor(0, 3);
-    vSplitter_->setStretchFactor(1, 1);
-
-    mainLayout->addWidget(vSplitter_);
-
-    // 窗口属性
-    updateWindowTitle();
-    resize(1200, 800);
+    // ---- Help menu ----
+    auto* helpMenu = menuBar()->addMenu(QString::fromUtf8("帮助(&H)"));
+    auto* samplesAct = new QAction(QString::fromUtf8("语法示例"), this);
+    connect(samplesAct, &QAction::triggered, this, [this]() {
+        QString sampleDir = QApplication::applicationDirPath() + "/../../samples/mini";
+        if (!QDir(sampleDir).exists())
+            sampleDir = QApplication::applicationDirPath() + "/samples/mini";
+        if (QDir(sampleDir).exists()) openWorkspace(sampleDir);
+        else onOpenFolder();
+    });
+    helpMenu->addAction(samplesAct);
+    auto* helpAct = new QAction(QString::fromUtf8("帮助"), this);
+    connect(helpAct, &QAction::triggered, this, &Ide::showHelpDialog);
+    helpMenu->addAction(helpAct);
 }
 
-void Ide::initToolbar() {
-    auto* toolbar = addToolBar("工具栏");
-    toolbar->setMovable(false);
-    toolbar->setIconSize(QSize(20, 20));
+// ============================================================
+// Status bar initialization
+// ============================================================
 
-    // 运行
-    runAction_ = toolbar->addAction("▶ 运行");
-    runAction_->setToolTip("运行程序 (F5)");
-    runAction_->setShortcut(Qt::Key_F5);
+void Ide::initStatusBar() {
+    auto* sb = statusBar();
+    sb->setFixedHeight(24);
+    statusLineLabel_ = new QLabel(QString::fromUtf8("行 1"));
+    statusColLabel_ = new QLabel(QString::fromUtf8("列 1"));
+    statusSaveLabel_ = new QLabel(QString());
+    statusRunLabel_ = new QLabel(QString());
+    statusEncodingLabel_ = new QLabel(QString::fromUtf8("UTF-8"));
 
-    // 调试
-    debugAction_ = toolbar->addAction("🐛 调试");
-    debugAction_->setToolTip("调试运行 (F6)");
-    debugAction_->setShortcut(Qt::Key_F6);
-
-    toolbar->addSeparator();
-
-    // Step In
-    stepInAction_ = toolbar->addAction("⬇ Step In");
-    stepInAction_->setToolTip("单步进入 (F11)");
-    stepInAction_->setShortcut(Qt::Key_F11);
-    stepInAction_->setEnabled(false);
-
-    // Step Over
-    stepOverAction_ = toolbar->addAction("⬆ Step Over");
-    stepOverAction_->setToolTip("单步跳过 (F10)");
-    stepOverAction_->setShortcut(Qt::Key_F10);
-    stepOverAction_->setEnabled(false);
-
-    // Step Out
-    stepOutAction_ = toolbar->addAction("⬅ Step Out");
-    stepOutAction_->setToolTip("单步跳出 (Shift+F11)");
-    stepOutAction_->setShortcut(Qt::SHIFT | Qt::Key_F11);
-    stepOutAction_->setEnabled(false);
-
-    // Resume（继续运行到下一个断点）
-    resumeAction_ = toolbar->addAction("▶ Resume");
-    resumeAction_->setToolTip("继续运行到下一个断点 (F9)");
-    resumeAction_->setShortcut(Qt::Key_F9);
-    resumeAction_->setEnabled(false);
-
-    toolbar->addSeparator();
-
-    // 停止
-    stopAction_ = toolbar->addAction("⏹ 停止");
-    stopAction_->setToolTip("停止运行 (Shift+F5)");
-    stopAction_->setShortcut(Qt::SHIFT | Qt::Key_F5);
-    stopAction_->setEnabled(false);
-
-    // 清空输出
-    clearAction_ = toolbar->addAction("🗑 清空输出");
-    clearAction_->setToolTip("清空输出面板");
-
-    toolbar->addSeparator();
-
-    // 格式化
-    formatAction_ = toolbar->addAction("📝 格式化");
-    formatAction_->setToolTip("格式化代码 (Ctrl+Shift+F)");
-    formatAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
-
-    // 字节码
-    bytecodeAction_ = toolbar->addAction("🔧 字节码");
-    bytecodeAction_->setToolTip("查看字节码 (Ctrl+B)");
-    bytecodeAction_->setShortcut(Qt::CTRL | Qt::Key_B);
-
-    // 方向三：IR 中间表示
-    irAction_ = toolbar->addAction("🔮 IR");
-    irAction_->setToolTip("查看 IR 中间表示 (Ctrl+Shift+I)");
-    irAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_I);
-
-    toolbar->addSeparator();
-
-    // ---- VM 调试按钮 ----
-    vmStepAction_ = toolbar->addAction("👉 VM单步");
-    vmStepAction_->setToolTip("单步执行字节码 (Ctrl+Shift+N)");
-    vmStepAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_N);
-    vmStepAction_->setEnabled(false);
-
-    // A4 fix: 新增 VM 步进语义按钮（与 Interpreter 调试按钮对齐）
-    vmStepOverAction_ = toolbar->addAction("⏭ VM跨过");
-    vmStepOverAction_->setToolTip("VM 单步跨过函数调用 (Ctrl+Shift+O)");
-    vmStepOverAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_O);
-    vmStepOverAction_->setEnabled(false);
-
-    vmStepOutAction_ = toolbar->addAction("⤴ VM跨出");
-    vmStepOutAction_->setToolTip("VM 跳出当前函数 (Ctrl+Shift+U)");
-    vmStepOutAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_U);
-    vmStepOutAction_->setEnabled(false);
-
-    vmRunAction_ = toolbar->addAction("▶ VM运行");
-    vmRunAction_->setToolTip("VM 全速运行（命中断点暂停）(Ctrl+Shift+R)");
-    vmRunAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_R);
-    vmRunAction_->setEnabled(false);
-
-    vmStopAction_ = toolbar->addAction("⏹ VM停止");
-    vmStopAction_->setToolTip("停止 VM 执行");
-    vmStopAction_->setEnabled(false);
+    // 第八轮：左侧显示行列，右侧显示编码/保存/运行状态
+    sb->addWidget(statusLineLabel_);
+    sb->addWidget(statusColLabel_);
+    sb->addPermanentWidget(statusEncodingLabel_);
+    sb->addPermanentWidget(statusSaveLabel_);
+    sb->addPermanentWidget(statusRunLabel_);
 }
+
+// ============================================================
+// Fluent styling
+// ============================================================
+
+void Ide::applyFluentStyle() {
+    // Register native widgets with QFluentKit style sheet manager
+    if (fileTree_)         StyleSheet::registerWidget(fileTree_, Fluent::ThemeStyle::LIST_VIEW);
+    if (editorTabWidget_)  StyleSheet::registerWidget(editorTabWidget_, Fluent::ThemeStyle::TAB_VIEW);
+    if (errorListWidget_)  StyleSheet::registerWidget(errorListWidget_, Fluent::ThemeStyle::LIST_VIEW);
+    if (bytecodeList_)     StyleSheet::registerWidget(bytecodeList_, Fluent::ThemeStyle::LIST_VIEW);
+    if (menuBar())         StyleSheet::registerWidget(menuBar(), Fluent::ThemeStyle::MENU);
+    if (recentListWidget_) StyleSheet::registerWidget(recentListWidget_, Fluent::ThemeStyle::LIST_VIEW);
+
+    // Replace native scrollbars with Fluent scrollbars on key text widgets
+    if (outputTextEdit_) {
+        outputTextEdit_->setVerticalScrollBar(new ScrollBar(outputTextEdit_));
+        outputTextEdit_->setHorizontalScrollBar(new ScrollBar(Qt::Horizontal, outputTextEdit_));
+    }
+    if (errorListWidget_) {
+        errorListWidget_->setVerticalScrollBar(new ScrollBar(errorListWidget_));
+    }
+    if (bytecodeList_) {
+        bytecodeList_->setVerticalScrollBar(new ScrollBar(bytecodeList_));
+    }
+    if (fileTree_) {
+        fileTree_->setVerticalScrollBar(new ScrollBar(fileTree_));
+    }
+}
+
+// ============================================================
+// Status bar update (cursor position + save/run state)
+// ============================================================
+
+void Ide::updateStatusBar() {
+    if (statusLineLabel_ && codeEditor_) {
+        QTextCursor cur = codeEditor_->textCursor();
+        int line = cur.blockNumber() + 1;
+        int col = cur.columnNumber() + 1;
+        statusLineLabel_->setText(QString::fromUtf8("行 %1").arg(line));
+        statusColLabel_->setText(QString::fromUtf8("列 %1").arg(col));
+    } else if (statusLineLabel_) {
+        statusLineLabel_->setText(QString::fromUtf8("行 1"));
+        statusColLabel_->setText(QString::fromUtf8("列 1"));
+    }
+    if (statusSaveLabel_) {
+        statusSaveLabel_->setText(isDirty_ ? QString::fromUtf8("● 未保存")
+                                            : QString());
+    }
+}
+
+// ============================================================
+// Connections
+// ============================================================
 
 void Ide::initConnections() {
-    // ---- 工具栏动作 ----
-    connect(runAction_, &QAction::triggered, this, &Ide::onRun);
-    connect(debugAction_, &QAction::triggered, this, &Ide::onDebug);
     connect(stepInAction_, &QAction::triggered, this, &Ide::onStepIn);
     connect(stepOverAction_, &QAction::triggered, this, &Ide::onStepOver);
     connect(stepOutAction_, &QAction::triggered, this, &Ide::onStepOut);
@@ -544,218 +1566,686 @@ void Ide::initConnections() {
     connect(stopAction_, &QAction::triggered, this, &Ide::onStop);
     connect(clearAction_, &QAction::triggered, this, &Ide::onClearOutput);
     connect(formatAction_, &QAction::triggered, this, &Ide::onFormat);
-    connect(bytecodeAction_, &QAction::triggered, this, &Ide::onShowBytecode);
-    connect(irAction_, &QAction::triggered, this, &Ide::onShowIR);
+    // 第八轮：compileAnalysisAction_ 改为切换视图菜单的勾选状态
+    connect(compileAnalysisAction_, &QAction::triggered, this, [this]() {
+        if (viewCompileAnalysisAction_) viewCompileAnalysisAction_->toggle();
+    });
+    connect(astAction_, &QAction::triggered, this, &Ide::onShowAstTree);
 
-    // 条件断点：编辑器右键设置条件时同步到调试控制器
-    connect(codeEditor_, &CodeEditor::breakpointConditionRequested,
-            this, [this](int line, const QString& condition) {
-                controller_->setBreakpointCondition(line, condition.toStdString());
-            });
-
-    // VM 调试连接
     connect(vmStepAction_, &QAction::triggered, this, &Ide::onVmStep);
     connect(vmStepOverAction_, &QAction::triggered, this, &Ide::onVmStepOver);
     connect(vmStepOutAction_, &QAction::triggered, this, &Ide::onVmStepOut);
     connect(vmRunAction_, &QAction::triggered, this, &Ide::onVmRun);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
 
-    // F6: 查找替换快捷键
-    auto* findShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
-    connect(findShortcut, &QShortcut::activated, this, &Ide::onFind);
-    auto* replaceShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_H), this);
-    connect(replaceShortcut, &QShortcut::activated, this, &Ide::onReplace);
-    auto* findNextShortcut = new QShortcut(QKeySequence(Qt::Key_F3), this);
-    connect(findNextShortcut, &QShortcut::activated, this, &Ide::onFindNext);
-    auto* findPrevShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), this);
-    connect(findPrevShortcut, &QShortcut::activated, this, &Ide::onFindPrev);
-    auto* escShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    connect(escShortcut, &QShortcut::activated, this, [this]() {
-        if (findReplacePanel_ && findReplacePanel_->isVisible()) {
+    connect(editorTabWidget_, &QTabWidget::currentChanged, this, &Ide::onCurrentTabChanged);
+    connect(editorTabWidget_, &QTabWidget::tabCloseRequested, this, &Ide::onEditorTabCloseRequested);
+
+    // Shortcuts
+    auto* findSc = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    connect(findSc, &QShortcut::activated, this, [this]() { ensureEditorVisible(); onFind(); });
+    auto* replaceSc = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_H), this);
+    connect(replaceSc, &QShortcut::activated, this, [this]() { ensureEditorVisible(); onReplace(); });
+    auto* findNextSc = new QShortcut(QKeySequence(Qt::Key_F3), this);
+    connect(findNextSc, &QShortcut::activated, this, [this]() {
+        if (centerStack_->currentWidget() == editorTabWidget_) onFindNext();
+    });
+    auto* findPrevSc = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), this);
+    connect(findPrevSc, &QShortcut::activated, this, [this]() {
+        if (centerStack_->currentWidget() == editorTabWidget_) onFindPrev();
+    });
+    auto* escSc = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(escSc, &QShortcut::activated, this, [this]() {
+        if (findReplacePanel_ && findReplacePanel_->isVisible())
             findReplacePanel_->closePanel();
-        }
     });
 
-    // GUI-04: 文件修改追踪
-    connect(codeEditor_->document(), &QTextDocument::modificationChanged,
-            this, [this](bool changed) {
-        isDirty_ = changed;
-        updateWindowTitle();
+    connect(fileTree_, &QTreeWidget::itemActivated, this, &Ide::onFileTreeItemActivated);
+
+    // Controller signals
+    connect(controller_, &IdeController::outputReady, this, [this](const QString& msg) {
+        appendOutput(msg);
+        showBottomPanel(0);
     });
-
-    // ---- IdeController 信号 → UI 更新 ----
-    connect(controller_, &IdeController::outputReady, outputPanel_, &OutputPanel::appendOutput);
-
     connect(controller_, &IdeController::runOk, this, [this]() {
-        outputPanel_->appendOutput("--- 程序执行结束 ---");
+        appendOutput(QString::fromUtf8("--- 程序执行结束 ---"));
+        showBottomPanel(0);
     });
-
     connect(controller_, &IdeController::stoppedByUser, this, [this]() {
-        outputPanel_->appendOutput("--- 调试终止 ---");
+        appendOutput(QString::fromUtf8("--- 调试终止 ---"));
+        showBottomPanel(0);
     });
-
-    connect(controller_, &IdeController::runtimeError, this, [this](const QString& msg, int line, int column) {
+    connect(controller_, &IdeController::runtimeError, this,
+        [this](const QString& msg, int line, int column) {
         Diagnostic diag(DiagLevel::Error, msg.toStdString(), line, column, DiagSource::Interpreter);
-        outputPanel_->appendError(QString::fromStdString(diag.format()));
-        // GUI-07 fix: 标记错误行（line > 0 时才标记）
-        if (line > 0) {
+        appendError(QString::fromStdString(diag.format()), line, column);
+        showBottomPanel(1);
+        if (line > 0 && codeEditor_) {
             QSet<int> errorLines;
             errorLines.insert(line);
             codeEditor_->setErrorLines(errorLines);
         }
     });
-
     connect(controller_, &IdeController::genericError, this, [this](const QString& msg) {
-        outputPanel_->appendError(msg);
+        appendError(msg);
+        showBottomPanel(1);
     });
-
     connect(controller_, &IdeController::pausedAt, this, &Ide::onPausedAt);
-
     connect(controller_, &IdeController::workerFinished, this, &Ide::onWorkerFinished);
-
-    // QT-R-01 fix: RUN 模式异步执行暂停时，通过信号通知 UI 更新
     connect(controller_, &IdeController::vmRunPaused, this, &Ide::handleVmStepResult);
-
-    // B6 bug fix: 移除未使用的 vmStepInfo 信号连接（全代码库无 emit，死代码）
-
     connect(controller_, &IdeController::diagnosticsReady, this, &Ide::displayDiagnostics);
 }
 
 // ============================================================
-// 运行 / 调试
+// File tree
 // ============================================================
 
-void Ide::onRun() {
-    std::string source = codeEditor_->toPlainText().toStdString();
+void Ide::initFileTree() {
+    connect(fileTree_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
+        bool isDir = item->data(0, Qt::UserRole + 1).toBool();
+        if (!isDir) return;
+        if (item->childCount() > 0) return;
+        QString dirPath = item->data(0, Qt::UserRole).toString();
+        populateDirChildren(fileTree_, item, dirPath, 0);
+    });
+}
 
-    // 互斥检查：REPL 异步任务在跑时拒绝运行，避免并发访问 Interpreter 数据竞争
-    // AUDIT-BUG-F6 fix: 互斥检查必须在 clearAll 之前，否则 REPL 运行时清空用户历史输出后
-    // 才报错，用户输出不可恢复。
-    if (replPanel_->isReplRunning()) {
-        outputPanel_->appendError("REPL 正在执行，请等待其完成后再运行");
+void Ide::populateFileTree() {
+    fileTree_->clear();
+    if (workspaceDir_.isEmpty()) return;
+
+    QDir rootDir(workspaceDir_);
+    if (!rootDir.exists()) return;
+
+    auto* rootItem = new QTreeWidgetItem(fileTree_);
+    rootItem->setText(0, rootDir.dirName());
+    rootItem->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+    rootItem->setData(0, Qt::UserRole, workspaceDir_);
+    rootItem->setData(0, Qt::UserRole + 1, true);
+    rootItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+
+    populateDirChildren(fileTree_, rootItem, workspaceDir_, 0);
+    rootItem->setExpanded(true);
+}
+
+void Ide::onFileTreeItemActivated(QTreeWidgetItem* item, int column) {
+    Q_UNUSED(column);
+    QString path = item->data(0, Qt::UserRole).toString();
+    if (path.isEmpty()) return;
+    QFileInfo fi(path);
+    if (fi.isDir()) {
+        if (item->isExpanded()) {
+            item->setExpanded(false);
+        } else {
+            if (item->childCount() == 0)
+                populateDirChildren(fileTree_, item, path, 0);
+            item->setExpanded(true);
+        }
+    } else if (fi.isFile()) {
+        ensureEditorVisible();
+        int existingIdx = findTabForFile(path);
+        if (existingIdx >= 0) switchToTab(existingIdx);
+        else loadFile(path);
+    }
+}
+
+void Ide::onFileTreeContextMenu(const QPoint& pos) {
+    QTreeWidgetItem* item = fileTree_->itemAt(pos);
+    QMenu menu(this);
+    menu.setObjectName("fileTreeMenu");
+    auto* newFileAct = menu.addAction(QString::fromUtf8("新建文件"));
+    auto* newFolderAct = menu.addAction(QString::fromUtf8("新建文件夹"));
+    menu.addSeparator();
+    auto* renameAct = menu.addAction(QString::fromUtf8("重命名"));
+    auto* deleteAct = menu.addAction(QString::fromUtf8("删除"));
+    bool isRootOrEmpty = (!item || !item->parent());
+    renameAct->setEnabled(!isRootOrEmpty);
+    deleteAct->setEnabled(!isRootOrEmpty);
+
+    auto* chosen = menu.exec(fileTree_->viewport()->mapToGlobal(pos));
+    if (!chosen) return;
+    if (chosen == newFileAct) onNewFileInTree();
+    else if (chosen == newFolderAct) onNewFolderInTree();
+    else if (chosen == renameAct) onRenameInTree();
+    else if (chosen == deleteAct) onDeleteInTree();
+}
+
+void Ide::onNewFileInTree() {
+    QTreeWidgetItem* cur = fileTree_->currentItem();
+    QString targetDir = resolveTreeContextMenuTargetDir(fileTree_, cur);
+    if (targetDir.isEmpty()) targetDir = workspaceDir_;
+    if (targetDir.isEmpty()) return;
+    bool ok = false;
+    QString name = QInputDialog::getText(this, QString::fromUtf8("新建文件"),
+        QString::fromUtf8("文件名 (将以 .mini 扩展名创建):"), QLineEdit::Normal,
+        "untitled.mini", &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+    if (!name.endsWith(".mini") && !name.endsWith(".ml")) name += ".mini";
+    if (name.contains("..") || name.contains('/') || name.contains('\\')) {
+        InfoBar::warning(QString::fromUtf8("非法文件名"),
+            QString::fromUtf8("文件名不得包含路径分隔符或父目录引用"),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    QString path = QDir(targetDir).filePath(name);
+    QFile f(path);
+    if (f.exists()) {
+        InfoBar::warning(QString::fromUtf8("已存在"),
+            QString::fromUtf8("文件已存在：") + name,
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    if (!f.open(QIODevice::WriteOnly)) {
+        InfoBar::warning(QString::fromUtf8("错误"),
+            QString::fromUtf8("无法创建文件：") + f.errorString(),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    f.close();
+    populateFileTree();
+}
+
+void Ide::onNewFolderInTree() {
+    QTreeWidgetItem* cur = fileTree_->currentItem();
+    QString targetDir = resolveTreeContextMenuTargetDir(fileTree_, cur);
+    if (targetDir.isEmpty()) targetDir = workspaceDir_;
+    if (targetDir.isEmpty()) return;
+    bool ok = false;
+    QString name = QInputDialog::getText(this, QString::fromUtf8("新建文件夹"),
+        QString::fromUtf8("文件夹名:"), QLineEdit::Normal, "", &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+    if (name.contains("..") || name.contains('/') || name.contains('\\')) {
+        InfoBar::warning(QString::fromUtf8("非法名称"),
+            QString::fromUtf8("名称不得包含路径分隔符或父目录引用"),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    QString path = QDir(targetDir).filePath(name);
+    if (!QDir().mkdir(path)) {
+        InfoBar::warning(QString::fromUtf8("错误"),
+            QString::fromUtf8("无法创建文件夹（可能已存在）"),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    populateFileTree();
+}
+
+void Ide::onRenameInTree() {
+    QTreeWidgetItem* cur = fileTree_->currentItem();
+    if (!cur || !cur->parent()) return;
+    QString oldPath = cur->data(0, Qt::UserRole).toString();
+    QString oldName = cur->text(0);
+    bool ok = false;
+    QString newName = QInputDialog::getText(this, QString::fromUtf8("重命名"),
+        QString::fromUtf8("新名称:"), QLineEdit::Normal, oldName, &ok);
+    if (!ok || newName.trimmed().isEmpty() || newName == oldName) return;
+    newName = newName.trimmed();
+    if (newName.contains("..") || newName.contains('/') || newName.contains('\\')) {
+        InfoBar::warning(QString::fromUtf8("非法名称"),
+            QString::fromUtf8("名称不得包含路径分隔符或父目录引用"),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    QString newPath = QFileInfo(oldPath).absolutePath() + "/" + newName;
+    if (!QFile::rename(oldPath, newPath)) {
+        InfoBar::warning(QString::fromUtf8("错误"),
+            QString::fromUtf8("重命名失败"),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    populateFileTree();
+}
+
+void Ide::onDeleteInTree() {
+    QTreeWidgetItem* cur = fileTree_->currentItem();
+    if (!cur || !cur->parent()) return;
+    QString path = cur->data(0, Qt::UserRole).toString();
+    bool isDir = cur->data(0, Qt::UserRole + 1).toBool();
+    auto ret = QMessageBox::question(this, QString::fromUtf8("确认删除"),
+        QString::fromUtf8("确定删除 %1 ？").arg(cur->text(0)),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+    bool ok = false;
+    if (isDir) ok = QDir(path).removeRecursively();
+    else ok = QFile::remove(path);
+    if (!ok) {
+        InfoBar::warning(QString::fromUtf8("错误"),
+            QString::fromUtf8("删除失败"),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+    populateFileTree();
+}
+
+void Ide::openWorkspace(const QString& dirPath) {
+    QDir dir(dirPath);
+    if (!dir.exists()) return;
+    workspaceDir_ = dir.absolutePath();
+    hasWorkspace_ = true;
+    QDir::setCurrent(workspaceDir_);
+
+    QSettings settings("MiniLang", "MiniLang IDE");
+    settings.setValue("workspace/path", workspaceDir_);
+
+    addRecentWorkspace(workspaceDir_);
+    populateFileTree();
+
+    centerStack_->setCurrentWidget(editorTabWidget_);
+    switchLeftToFileTree();
+}
+
+// ============================================================
+// Layout save/restore (ADS)
+// ============================================================
+
+void Ide::saveLayout() {
+    QSettings settings("MiniLang", "MiniLang IDE");
+    if (dockManager_) {
+        settings.setValue("layout/dockState", dockManager_->saveState());
+    }
+    settings.setValue("window/geometry", saveGeometry());
+    settings.setValue("window/state", QMainWindow::saveState());
+    // 第八轮：记忆输出面板高度
+    if (bottomDock_ && !bottomDock_->isClosed()) {
+        if (auto* area = bottomDock_->dockAreaWidget()) {
+            int h = area->height();
+            if (h >= 120 && h <= 800) {
+                bottomPanelHeight_ = h;
+                settings.setValue("layout/bottomPanelHeight", h);
+            }
+        }
+    }
+}
+
+void Ide::restoreLayout() {
+    QSettings settings("MiniLang", "MiniLang IDE");
+    if (dockManager_) {
+        QByteArray dockState = settings.value("layout/dockState").toByteArray();
+        if (!dockState.isEmpty()) {
+            dockManager_->restoreState(dockState);
+        }
+    }
+    // 第八轮：恢复输出面板记忆高度
+    int savedH = settings.value("layout/bottomPanelHeight", 220).toInt();
+    if (savedH >= 120 && savedH <= 800) bottomPanelHeight_ = savedH;
+    QByteArray geometry = settings.value("window/geometry").toByteArray();
+    if (!geometry.isEmpty()) restoreGeometry(geometry);
+    QByteArray winState = settings.value("window/state").toByteArray();
+    if (!winState.isEmpty()) QMainWindow::restoreState(winState);
+}
+
+// ============================================================
+// Panel control (consolidated docks + Pivot switching)
+// ============================================================
+
+void Ide::showBottomPanel(int tabIndex) {
+    if (!bottomDock_) return;
+    if (bottomDock_->isClosed()) {
+        bottomDock_->toggleView(true);
+        // 第八轮：弹出时恢复记忆高度（默认 220px）
+        QTimer::singleShot(0, this, [this]() {
+            if (bottomDock_ && !bottomDock_->isClosed()) {
+                if (auto* area = bottomDock_->dockAreaWidget()) {
+                    area->resize(area->width(), bottomPanelHeight_);
+                }
+            }
+        });
+    }
+    bottomDock_->setAsCurrentTab();
+    static const char* keys[] = {"output", "errors", "repl"};
+    if (tabIndex < 0 || tabIndex >= 3) tabIndex = 0;
+    if (bottomPivot_) bottomPivot_->setCurrentItem(keys[tabIndex]);
+}
+
+void Ide::hideBottomPanel() {
+    if (bottomDock_) bottomDock_->toggleView(false);
+}
+
+void Ide::showRightPanel(int tabIndex) {
+    if (!rightDock_) return;
+    if (rightDock_->isClosed()) rightDock_->toggleView(true);
+    rightDock_->setAsCurrentTab();
+    static const char* keys[] = {"token", "ir", "bytecode"};
+    if (tabIndex < 0 || tabIndex >= 3) tabIndex = 0;
+    if (rightPivot_) rightPivot_->setCurrentItem(keys[tabIndex]);
+}
+
+void Ide::hideRightPanel() {
+    if (rightDock_) rightDock_->toggleView(false);
+}
+
+void Ide::toggleBottomPanel() {
+    if (!bottomDock_) return;
+    bottomDock_->toggleView(!bottomDock_->isClosed() ? false : true);
+}
+
+void Ide::toggleRightPanel() {
+    if (!rightDock_) return;
+    rightDock_->toggleView(!rightDock_->isClosed() ? false : true);
+}
+
+void Ide::switchLeftToFileTree() {
+    if (fileTreeDock_ && fileTreeDock_->isClosed())
+        fileTreeDock_->toggleView(true);
+    if (fileTreeDock_) fileTreeDock_->setAsCurrentTab();
+    if (activityBar_) activityBar_->setCurrentIndex(0);
+}
+
+void Ide::switchLeftToDebugPanel() {
+    if (debugPanelDock_ && debugPanelDock_->isClosed())
+        debugPanelDock_->toggleView(true);
+    if (debugPanelDock_) debugPanelDock_->setAsCurrentTab();
+    if (activityBar_) activityBar_->setCurrentIndex(1);
+}
+
+void Ide::showAstWindow() {
+    if (!astWindow_) return;
+    restoreAstWindowGeometry();
+    if (astWindow_->isHidden()) {
+        astWindow_->show();
+    } else {
+        astWindow_->raise();
+        astWindow_->activateWindow();
+    }
+}
+
+void Ide::saveAstWindowGeometry() {
+    if (!astWindow_) return;
+    QSettings settings("MiniLang", "MiniLang IDE");
+    settings.setValue("astWindow/geometry", astWindow_->saveGeometry());
+}
+
+void Ide::restoreAstWindowGeometry() {
+    if (!astWindow_) return;
+    QSettings settings("MiniLang", "MiniLang IDE");
+    QByteArray geo = settings.value("astWindow/geometry").toByteArray();
+    if (!geo.isEmpty()) astWindow_->restoreGeometry(geo);
+}
+
+void Ide::showDebugButtons(bool show) {
+    if (debugButtonsVisible_ == show) return;
+    debugButtonsVisible_ = show;
+    if (debugButtonContainer_) debugButtonContainer_->setVisible(show);
+    // 第八轮：分隔线随容器显隐，禁止灰化占位
+    if (debugSepAction_) debugSepAction_->setVisible(show);
+}
+
+void Ide::showVmButtons(bool show) {
+    if (vmButtonContainer_) vmButtonContainer_->setVisible(show);
+    if (vmSepAction_) vmSepAction_->setVisible(show);
+    // 第八轮：VM 调试面板（操作数栈/全局变量）仅 VM 单步模式时显示
+    if (vmStackPanel_) vmStackPanel_->setVisible(show);
+}
+
+// ============================================================
+// Output helpers
+// ============================================================
+
+void Ide::appendOutput(const QString& text) {
+    GuiTextUtils::appendLine(outputTextEdit_, text);
+}
+
+void Ide::appendError(const QString& text, int line, int column) {
+    if (!errorPanelHasErrors_) {
+        errorListWidget_->clear();
+        errorPanelHasErrors_ = true;
+    }
+    auto* item = new QListWidgetItem(text);
+    item->setData(Qt::UserRole, line);
+    errorListWidget_->addItem(item);
+}
+
+void Ide::clearOutput() {
+    outputTextEdit_->clear();
+    errorListWidget_->clear();
+    errorPanelHasErrors_ = false;
+}
+
+void Ide::onClearOutput() {
+    clearOutput();
+}
+
+// ============================================================
+// Run / Debug
+// ============================================================
+
+bool Ide::blockIfHasErrors() {
+    // 第八轮：运行/调试前拦截编译错误，0 错误才允许执行
+    if (!codeEditor_) return false;
+    std::string source = codeEditor_->toPlainText().toStdString();
+    auto result = controller_->runFrontendPipeline(source);
+    if (result.diagnostics && result.diagnostics->hasErrors()) {
+        displayDiagnostics(*result.diagnostics);
+        showBottomPanel(1);  // 错误标签
+        return true;
+    }
+    // 清除残留的错误标记
+    codeEditor_->clearErrorLines();
+    return false;
+}
+
+void Ide::runRealTimeSyntaxCheck() {
+    // 第八轮：实时语法检查（300ms 防抖触发）
+    // 清空旧错误 → 全量扫描 → 按行号排序展示 → 更新波浪下划线（常驻不消失）
+    if (!codeEditor_) return;
+
+    std::string source = codeEditor_->toPlainText().toStdString();
+    auto result = controller_->runFrontendPipeline(source);
+
+    // 先清空旧的错误列表和波浪下划线，防止累积
+    errorListWidget_->clear();
+    errorPanelHasErrors_ = false;
+    codeEditor_->clearErrorLines();
+
+    if (!result.diagnostics || result.diagnostics->empty()) {
+        // 无错误：确保标记清除，不弹出底部面板
         return;
     }
 
-    // 清空输出和调试面板
-    outputPanel_->clearAll();
+    // 按行号排序（同按列号），确保错误面板按行号顺序展示
+    // diagnostics 是 const 指针，需拷贝后排序
+    std::vector<Diagnostic> sortedDiags = result.diagnostics->all();
+    std::stable_sort(sortedDiags.begin(), sortedDiags.end(),
+        [](const Diagnostic& a, const Diagnostic& b) {
+            if (a.line != b.line) return a.line < b.line;
+            return a.column < b.column;
+        });
+
+    // 收集所有错误行用于波浪下划线
+    std::vector<CodeEditor::ErrorRange> ranges;
+    bool hasErrors = false;
+
+    const auto& allDiags = sortedDiags;
+    for (const auto& diag : allDiags) {
+        std::string msg = diag.message;
+
+        // 智能拼写纠错提示
+        if (diag.isError() && !spellCandidates_.empty()) {
+            std::string ident = extractQuotedIdentifier(msg);
+            if (!ident.empty() && ident.size() > 1) {
+                auto suggestion = SpellChecker::suggestSuffix(
+                    ident, spellCandidates_, 2);
+                if (!suggestion.empty()) {
+                    msg += suggestion;
+                }
+            }
+        }
+
+        // 构建展示文本：[级别] (行 X, 列 Y): 消息
+        QString text = QString::fromStdString(
+            "[" + diag.sourceString() + "] " + diag.levelString());
+        if (diag.line > 0) {
+            text += QString(" (行 %1").arg(diag.line);
+            if (diag.column > 0) text += QString(", 列 %1").arg(diag.column);
+            text += ")";
+        }
+        text += ": " + QString::fromStdString(msg);
+
+        if (diag.isError()) {
+            appendError(text, diag.line, diag.column);
+            hasErrors = true;
+            if (diag.line > 0) {
+                ranges.push_back({diag.line, diag.column, 0});
+            }
+        } else if (diag.isWarning()) {
+            appendOutput(QString("[警告] ") + text);
+        } else {
+            appendOutput(text);
+        }
+    }
+
+    // 更新波浪下划线（常驻，直到下次扫描清除）
+    if (!ranges.empty()) {
+        codeEditor_->setErrorRanges(ranges);
+    }
+
+    // 仅在有错误时弹出底部错误面板
+    if (hasErrors) {
+        showBottomPanel(1);
+    }
+}
+
+void Ide::onRun() {
+    if (!codeEditor_) return;
+    std::string source = codeEditor_->toPlainText().toStdString();
+
+    if (replPanel_->isReplRunning()) {
+        appendError(QString::fromUtf8("REPL 正在执行，请等待其完成后再运行"));
+        showBottomPanel(1);
+        return;
+    }
+
+    clearOutput();
     debugPanel_->clearAll();
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
+    // 第八轮：存在编译错误时拦截运行
+    if (blockIfHasErrors()) return;
+
     if (!controller_->prepareRun(false, source, currentFilePath_.toStdString())) return;
 
-    // 更新 UI
     updateTokenTable();
     updateAstViewer();
     setRunningState(true);
     replPanel_->setInputEnabled(false);
 
-    // A-P1-5 fix: startWorker 失败时回滚 UI 状态，避免界面卡在"运行中"
     try {
         controller_->startWorker();
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("启动失败: %1").arg(e.what()));
+        appendError(QString::fromUtf8("启动失败: %1").arg(e.what()));
+        showBottomPanel(1);
         setRunningState(false);
         replPanel_->setInputEnabled(true);
     } catch (...) {
-        outputPanel_->appendError("启动发生未知异常");
+        appendError(QString::fromUtf8("启动发生未知异常"));
+        showBottomPanel(1);
         setRunningState(false);
         replPanel_->setInputEnabled(true);
     }
 }
 
 void Ide::onDebug() {
+    if (!codeEditor_) return;
     std::string source = codeEditor_->toPlainText().toStdString();
 
-    // 互斥检查：REPL 异步任务在跑时拒绝调试，避免并发访问 Interpreter 数据竞争
-    // AUDIT-BUG-F6 fix: 互斥检查必须在 clearAll 之前（同 onRun）。
     if (replPanel_->isReplRunning()) {
-        outputPanel_->appendError("REPL 正在执行，请等待其完成后再调试");
+        appendError(QString::fromUtf8("REPL 正在执行，请等待其完成后再调试"));
+        showBottomPanel(1);
         return;
     }
 
-    // 清空输出和调试面板
-    outputPanel_->clearAll();
-    debugPanel_->clearAll();  // H7 fix: 清空旧调试数据
+    clearOutput();
+    debugPanel_->clearAll();
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
 
+    // 第八轮：存在编译错误时拦截调试
+    if (blockIfHasErrors()) return;
+
     if (!controller_->prepareRun(true, source, currentFilePath_.toStdString())) return;
 
-    // 更新 UI
     updateTokenTable();
     updateAstViewer();
     setRunningState(true);
     replPanel_->setInputEnabled(false);
+    switchLeftToDebugPanel();
+    showDebugButtons(true);
 
-    // 设置断点及条件
     QSet<int> breakpoints = codeEditor_->getBreakpoints();
     QMap<int, std::string> conditions;
     for (int line : breakpoints) {
         std::string cond = codeEditor_->getBreakpointCondition(line);
-        if (!cond.empty()) {
-            conditions[line] = cond;
-        }
+        if (!cond.empty()) conditions[line] = cond;
     }
 
-    // A-P1-5 fix: startWorker 失败时回滚 UI 状态，避免界面卡在"运行中"
-    // P2 fix: setupDebug 也纳入异常保护，防止抛出时 UI 卡在"运行中"
     try {
         controller_->setupDebug(breakpoints, conditions);
         controller_->startWorker();
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("启动调试失败: %1").arg(e.what()));
+        appendError(QString::fromUtf8("启动调试失败: %1").arg(e.what()));
+        showBottomPanel(1);
         setRunningState(false);
         replPanel_->setInputEnabled(true);
+        switchLeftToFileTree();
+        showDebugButtons(false);
     } catch (...) {
-        outputPanel_->appendError("启动调试发生未知异常");
+        appendError(QString::fromUtf8("启动调试发生未知异常"));
+        showBottomPanel(1);
         setRunningState(false);
         replPanel_->setInputEnabled(true);
+        switchLeftToFileTree();
+        showDebugButtons(false);
     }
 }
 
 void Ide::onStepIn() {
-    // P2 fix: 异常保护，防止 controller 抛出时 UI 状态不一致
+    if (!codeEditor_) return;
     try {
         controller_->setBreakpoints(codeEditor_->getBreakpoints());
         controller_->stepIn();
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("单步进入失败: %1").arg(e.what()));
+        appendError(QString::fromUtf8("单步进入失败: %1").arg(e.what()));
     } catch (...) {
-        outputPanel_->appendError("单步进入发生未知异常");
+        appendError(QString::fromUtf8("单步进入发生未知异常"));
     }
 }
 
 void Ide::onStepOver() {
+    if (!codeEditor_) return;
     try {
         controller_->setBreakpoints(codeEditor_->getBreakpoints());
         controller_->stepOver();
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("单步跳过失败: %1").arg(e.what()));
+        appendError(QString::fromUtf8("单步跳过失败: %1").arg(e.what()));
     } catch (...) {
-        outputPanel_->appendError("单步跳过发生未知异常");
+        appendError(QString::fromUtf8("单步跳过发生未知异常"));
     }
 }
 
 void Ide::onStepOut() {
+    if (!codeEditor_) return;
     try {
         controller_->setBreakpoints(codeEditor_->getBreakpoints());
         controller_->stepOut();
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("单步跳出失败: %1").arg(e.what()));
+        appendError(QString::fromUtf8("单步跳出失败: %1").arg(e.what()));
     } catch (...) {
-        outputPanel_->appendError("单步跳出发生未知异常");
+        appendError(QString::fromUtf8("单步跳出发生未知异常"));
     }
 }
 
 void Ide::onResume() {
+    if (!codeEditor_) return;
     try {
         controller_->setBreakpoints(codeEditor_->getBreakpoints());
         controller_->resume();
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("继续执行失败: %1").arg(e.what()));
+        appendError(QString::fromUtf8("继续执行失败: %1").arg(e.what()));
     } catch (...) {
-        outputPanel_->appendError("继续执行发生未知异常");
+        appendError(QString::fromUtf8("继续执行发生未知异常"));
     }
 }
 
@@ -763,57 +2253,59 @@ void Ide::onStop() {
     controller_->stop();
 }
 
-void Ide::onClearOutput() {
-    outputPanel_->clearAll();
-}
-
 void Ide::onPausedAt(int line) {
-    // P2 fix: 异常保护调试回调
     try {
-        codeEditor_->setCurrentLine(line);
+        if (codeEditor_) codeEditor_->setCurrentLine(line);
         updateDebugInfo();
-        // GUI-09 fix: 暂停时自动切换到调试面板
-        bottomTabWidget_->setCurrentWidget(debugPanel_);
+        switchLeftToDebugPanel();
+        showDebugButtons(true);
+        showBottomPanel(0);
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("调试信息更新失败: %1").arg(e.what()));
+        appendError(QString::fromUtf8("调试信息更新失败: %1").arg(e.what()));
     } catch (...) {
-        outputPanel_->appendError("调试信息更新发生未知异常");
+        appendError(QString::fromUtf8("调试信息更新发生未知异常"));
     }
 }
 
 void Ide::onWorkerFinished(bool wasDebug) {
     setRunningState(false);
-    codeEditor_->clearCurrentLine();
-    codeEditor_->clearErrorLines();  // L-新2 fix: 运行结束时清除错误标记
+    if (codeEditor_) {
+        codeEditor_->clearCurrentLine();
+        codeEditor_->clearErrorLines();
+    }
     replPanel_->setInputEnabled(true);
+    if (wasDebug) {
+        switchLeftToFileTree();
+        showDebugButtons(false);
+    }
 }
 
 // ============================================================
-// 格式化
+// Formatting
 // ============================================================
 
 void Ide::onFormat() {
+    if (!codeEditor_) return;
     std::string source = codeEditor_->toPlainText().toStdString();
 
-    // QT-R-10 fix: 大文件格式化时显示等待光标，避免用户以为 UI 冻结。
-    // RAII 守卫确保所有 return 路径都恢复光标。
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } cursorGuard;
+    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } guard;
 
-    // C9 fix: 使用统一前端管线
     auto pipelineResult = controller_->runFrontendPipeline(source);
     updateTokenTable();
 
     if (pipelineResult.status != IdeController::PipelineStatus::OK) {
-        // 错误诊断已由 runLexer/runParser 内部 emit diagnosticsReady
         if (!pipelineResult.errorMessage.empty()) {
-            outputPanel_->appendError(QString("[格式化] %1: %2")
-                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed ? "词法异常" : "解析异常")
+            appendError(QString("[格式化] %1: %2")
+                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed
+                     ? QString::fromUtf8("词法异常") : QString::fromUtf8("解析异常"))
                 .arg(QString::fromStdString(pipelineResult.errorMessage)));
+            showBottomPanel(1);
         } else if (pipelineResult.diagnostics) {
             for (const auto& diag : pipelineResult.diagnostics->all()) {
-                outputPanel_->appendError(QString::fromStdString("[格式化] " + diag.format()));
+                appendError(QString::fromStdString("[格式化] " + diag.format()));
             }
+            showBottomPanel(1);
         }
         updateAstViewer();
         return;
@@ -822,34 +2314,29 @@ void Ide::onFormat() {
 
     if (!controller_->astRoot()) return;
 
-    // 格式化：行号会变化，需清除断点并保存光标位置
-    bool hadBreakpoints = controller_->hasBreakpoints();
-
+    QSet<int> bps;
+    if (codeEditor_) bps = codeEditor_->getBreakpoints();
+    bool hadBreakpoints = !bps.isEmpty();
     QTextCursor savedCursor = codeEditor_->textCursor();
     int scrollPos = codeEditor_->verticalScrollBar()->value();
 
     std::string formatted;
     try {
-        if (!controller_->formatCode(formatted)) {
-            return;
-        }
+        if (!controller_->formatCode(formatted)) return;
         codeEditor_->setPlainText(QString::fromStdString(formatted));
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("[格式化] 格式化异常: %1").arg(e.what()));
-        return;  // D4 fix: 格式化失败时断点保留不清除
+        appendError(QString("[格式化] 格式化异常: %1").arg(e.what()));
+        showBottomPanel(1);
+        return;
     }
 
-    // D4 fix: 格式化成功后才清除断点
     if (hadBreakpoints) {
-        outputPanel_->appendOutput(QString("[格式化] 断点已清除（行号变化，断点不再有效）"));
+        appendOutput(QString::fromUtf8("[格式化] 断点已清除（行号变化，断点不再有效）"));
     }
     codeEditor_->setBreakpoints(QSet<int>());
     controller_->setBreakpoints(QSet<int>());
-
-    // D3 fix: 刷新 AST 查看器（格式化后 astRoot_ 已更新）
     updateAstViewer();
 
-    // 恢复光标位置和滚动位置（尽可能）
     if (savedCursor.position() <= codeEditor_->document()->characterCount()) {
         codeEditor_->setTextCursor(savedCursor);
     }
@@ -857,214 +2344,195 @@ void Ide::onFormat() {
 }
 
 // ============================================================
-// 字节码视图
+// Visualization (Token / IR / Bytecode) + AST
 // ============================================================
 
-void Ide::onShowBytecode() {
-    std::string source = codeEditor_->toPlainText().toStdString();
-
-    // QT-R-10 fix: 大文件字节码生成时显示等待光标，避免用户以为 UI 冻结。
-    // RAII 守卫确保所有 return 路径都恢复光标。
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } cursorGuard;
-
-    // L15 fix: 清除编辑器中残留的错误行标记
-    codeEditor_->clearErrorLines();
-    // GUI-10 fix: 清除调试执行行高亮
-    codeEditor_->clearCurrentLine();
-
-    // C9 fix: 使用统一前端管线
-    auto pipelineResult = controller_->runFrontendPipeline(source);
-    updateTokenTable();
-
-    if (pipelineResult.status != IdeController::PipelineStatus::OK) {
-        bytecodeList_->clear();
-        lastBytecodeSourceHash_ = 0;  // D21 fix: 失效缓存
-        if (!pipelineResult.errorMessage.empty()) {
-            bytecodeList_->addItem(QString("字节码生成失败 - %1: %2")
-                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed ? "词法异常" : "解析异常")
-                .arg(QString::fromStdString(pipelineResult.errorMessage)));
-        } else if (pipelineResult.diagnostics) {
-            for (const auto& diag : pipelineResult.diagnostics->all()) {
-                bytecodeList_->addItem(QString::fromStdString("[编译] " + diag.format()));
-            }
-        }
-        updateAstViewer();
+void Ide::onCompileAnalysis() {
+    if (!codeEditor_) {
+        InfoBar::warning(QString::fromUtf8("编译分析"),
+            QString::fromUtf8("请先打开或新建一个文件再进行编译分析。"),
+            Qt::Horizontal, true, 3000, InfoBar::Position::TOP_RIGHT, this);
         return;
     }
+    std::string source = codeEditor_->toPlainText().toStdString();
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } guard;
+
+    codeEditor_->clearErrorLines();
+    codeEditor_->clearCurrentLine();
+
+    auto pipelineResult = controller_->runFrontendPipeline(source);
+    updateTokenTable();
     updateAstViewer();
 
+    if (pipelineResult.status != IdeController::PipelineStatus::OK) {
+        if (pipelineResult.diagnostics) {
+            displayDiagnostics(*pipelineResult.diagnostics);
+        } else if (!pipelineResult.errorMessage.empty()) {
+            appendError(QString("%1: %2")
+                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed
+                     ? QString::fromUtf8("词法异常") : QString::fromUtf8("解析异常"))
+                .arg(QString::fromStdString(pipelineResult.errorMessage)));
+            showBottomPanel(1);
+        }
+        bytecodeList_->clear();
+        lastBytecodeSourceHash_ = 0;
+        irViewer_->clearIR();
+        showRightPanel(0);
+        return;
+    }
+
+    showRightPanel(0);
+    loadVisualizationForTab(0);
+}
+
+void Ide::onRightTabChanged(int index) {
+    // Legacy slot retained for header compatibility.
+    // Right-panel switching is now driven by onRightPivotChanged.
+    Q_UNUSED(index);
+}
+
+void Ide::onActivityChanged(int index) {
+    if (index == 0) {
+        // Explorer: show file tree, hide debug panel
+        if (debugPanelDock_ && !debugPanelDock_->isClosed())
+            debugPanelDock_->toggleView(false);
+        if (fileTreeDock_ && fileTreeDock_->isClosed())
+            fileTreeDock_->toggleView(true);
+        if (fileTreeDock_) fileTreeDock_->setAsCurrentTab();
+    } else if (index == 1) {
+        // Debug: show debug panel, hide file tree
+        if (fileTreeDock_ && !fileTreeDock_->isClosed())
+            fileTreeDock_->toggleView(false);
+        if (debugPanelDock_ && debugPanelDock_->isClosed())
+            debugPanelDock_->toggleView(true);
+        if (debugPanelDock_) debugPanelDock_->setAsCurrentTab();
+    }
+}
+
+void Ide::onRightPivotChanged(const QString& routeKey) {
+    if (!rightStack_ || !rightPivot_) return;
+    // Only auto-load when the right panel is actually visible
+    if (rightDock_ && rightDock_->isClosed()) return;
+
+    int idx = 0;
+    if (routeKey == "token") idx = 0;
+    else if (routeKey == "ir") idx = 1;
+    else if (routeKey == "bytecode") idx = 2;
+    rightStack_->setCurrentIndex(idx);
+    loadVisualizationForTab(idx);
+}
+
+void Ide::onBottomPivotChanged(const QString& routeKey) {
+    if (!bottomStack_) return;
+    if (routeKey == "output") bottomStack_->setCurrentIndex(0);
+    else if (routeKey == "errors") bottomStack_->setCurrentIndex(1);
+    else if (routeKey == "repl") bottomStack_->setCurrentIndex(2);
+}
+
+void Ide::loadVisualizationForTab(int tabIndex) {
     if (!controller_->astRoot()) return;
 
-    // 编译
-    try {
-        controller_->runCompiler();
-    } catch (const std::exception& e) {
-        bytecodeList_->clear();
-        lastBytecodeSourceHash_ = 0;  // D21 fix: 失效缓存
-        bytecodeList_->addItem(QString("字节码编译异常: %1").arg(e.what()));
-        return;
-    }
-
-    // 填充指令列表
-    populateBytecodeList();
-
-    // 清空栈面板
-    vmStackPanel_->clearAll();
-
-    // 启用 VM 调试按钮
-    vmStepAction_->setEnabled(true);
-    vmStopAction_->setEnabled(false);
-
-    // 重置 VM 状态
-    controller_->vmReset();
-
-    // 切换到字节码 Tab（方向三新增 IR Tab 后，用 setCurrentWidget 避免索引漂移）
-    rightTabWidget_->setCurrentWidget(bytecodeList_->parentWidget());
-}
-
-// ============================================================
-// 方向三：IR 中间表示可视化
-// ============================================================
-
-void Ide::onShowIR() {
-    std::string source = codeEditor_->toPlainText().toStdString();
-
-    // QT-R-10 fix: 大文件 IR 生成时显示等待光标
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } cursorGuard;
+    struct CursorGuard { ~CursorGuard() { QApplication::restoreOverrideCursor(); } } guard;
 
-    codeEditor_->clearErrorLines();
-    codeEditor_->clearCurrentLine();
-
-    // 方向三：启用 IR 编译路径
-    controller_->compiler().setUseIR(true);
-
-    // C9 fix: 使用统一前端管线
-    auto pipelineResult = controller_->runFrontendPipeline(source);
-    updateTokenTable();
-
-    if (pipelineResult.status != IdeController::PipelineStatus::OK) {
-        irViewer_->clearIR();
-        // 失败时恢复 useIR=false，避免污染后续 run/debug 的编译路径
-        controller_->compiler().setUseIR(false);
-        if (!pipelineResult.errorMessage.empty()) {
-            irViewer_->setIR(nullptr);
-            // 显示错误信息
-            outputPanel_->appendError(QString("IR 生成失败 - %1: %2")
-                .arg(pipelineResult.status == IdeController::PipelineStatus::LexerFailed ? "词法异常" : "解析异常")
-                .arg(QString::fromStdString(pipelineResult.errorMessage)));
-        } else if (pipelineResult.diagnostics) {
-            displayDiagnostics(*pipelineResult.diagnostics);
+    switch (tabIndex) {
+    case 0: // Token
+        updateTokenTable();
+        break;
+    case 1: { // IR
+        controller_->compiler().setUseIR(true);
+        try {
+            controller_->runCompiler();
+            populateIRViewer();
+        } catch (const std::exception& e) {
+            irViewer_->clearIR();
+            appendError(QString("IR 编译异常: %1").arg(e.what()));
+            showBottomPanel(1);
         }
-        updateAstViewer();
-        return;
+        controller_->compiler().setUseIR(false);
+        break;
     }
+    case 2: { // Bytecode
+        try {
+            controller_->runCompiler();
+            populateBytecodeList();
+            vmStackPanel_->clearAll();
+            vmStepAction_->setEnabled(true);
+            vmStopAction_->setEnabled(false);
+            controller_->vmReset();
+            showVmButtons(true);
+        } catch (const std::exception& e) {
+            bytecodeList_->clear();
+            lastBytecodeSourceHash_ = 0;
+            bytecodeList_->addItem(QString("字节码编译异常: %1").arg(e.what()));
+        }
+        break;
+    }
+    }
+}
+
+void Ide::onShowAstTree() {
+    if (!codeEditor_) return;
+    std::string source = codeEditor_->toPlainText().toStdString();
+    auto pipelineResult = controller_->runFrontendPipeline(source);
     updateAstViewer();
-
-    if (!controller_->astRoot()) {
-        controller_->compiler().setUseIR(false);
-        return;
-    }
-
-    // 编译（走 IR 路径）
-    try {
-        controller_->runCompiler();
-    } catch (const std::exception& e) {
-        irViewer_->clearIR();
-        controller_->compiler().setUseIR(false);
-        outputPanel_->appendError(QString("IR 编译异常: %1").arg(e.what()));
-        return;
-    }
-
-    // 填充 IR 可视化面板
-    populateIRViewer();
-
-    // 恢复 useIR=false：onShowIR 仅用于 IR 可视化，不应影响后续 run/debug 的编译路径
-    controller_->compiler().setUseIR(false);
-
-    // 切换到 IR Tab
-    rightTabWidget_->setCurrentWidget(irViewer_);
-}
-
-void Ide::populateIRViewer() {
-    const IRFunction* ir = controller_->lastIR();
-    irViewer_->setIR(ir);
-
-    // 方向四：同步保存 IR→字节码偏移映射（供 VM 单步时高亮）
-    irToBytecodeOffset_ = controller_->lastIRToBytecodeOffset();
+    showAstWindow();
 }
 
 // ============================================================
-// 方向四：IR 调试器集成 — VM 单步时高亮对应 IR 指令
-// ============================================================
-
-void Ide::highlightIRLine(size_t bytecodeOffset) {
-    if (irToBytecodeOffset_.empty()) return;
-    irViewer_->highlightByBytecodeOffset(irToBytecodeOffset_, bytecodeOffset);
-}
-
-// ============================================================
-// A4 fix: VM 调试槽函数
-// ------------------------------------------------------------
-// 4 种步进模式共享同一 UI 更新逻辑（handleVmStepResult），
-// 仅 vmStepByMode 的模式参数不同。
+// VM debugging
 // ============================================================
 
 void Ide::onVmStep() {
     if (controller_->isVmRunning()) return;
-    // P0-1 fix: 按后端选择检查对象——原代码仅检查 lastCompileResult()（栈式 VM 结果），
-    // 但 useRegisterVM=true 时实际编译结果存在 getLastRegisterResult() 中，
-    // lastCompileResult() 为空导致 RegisterVM 模式下所有调试按钮点击无反应。
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
     if (!hasCode) return;
 
-    // A4 fix: 每次步进前同步断点（用户可能在暂停期间增删断点）
-    syncVmBreakpoints();  // #4 fix: 同步断点及条件
-
-    // 禁用所有 VM 步进按钮防止重入
+    syncVmBreakpoints();
     setVmStepActionsEnabled(false);
 
     IdeController::VmStepResult result;
     try {
         result = controller_->vmStepByMode(IdeController::VmStepMode::STEP_IN);
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("VM 单步异常: %1").arg(e.what()));
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString("VM 单步异常: %1").arg(e.what()));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     } catch (...) {
-        outputPanel_->appendError("VM 单步发生未知异常");
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString::fromUtf8("VM 单步发生未知异常"));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     }
-
     handleVmStepResult(result);
 }
 
 void Ide::onVmStepOver() {
     if (controller_->isVmRunning()) return;
-    // P0-1 fix: 按后端选择检查对象（详见 onVmStep 注释）
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
     if (!hasCode) return;
 
-    // A4 fix: 每次步进前同步断点
-    syncVmBreakpoints();  // #4 fix: 同步断点及条件
-
+    syncVmBreakpoints();
     setVmStepActionsEnabled(false);
     IdeController::VmStepResult result;
     try {
         result = controller_->vmStepByMode(IdeController::VmStepMode::STEP_OVER);
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("VM 跨过异常: %1").arg(e.what()));
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString("VM 跨过异常: %1").arg(e.what()));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     } catch (...) {
-        outputPanel_->appendError("VM 跨过发生未知异常");
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString::fromUtf8("VM 跨过发生未知异常"));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     }
     handleVmStepResult(result);
@@ -1072,26 +2540,25 @@ void Ide::onVmStepOver() {
 
 void Ide::onVmStepOut() {
     if (controller_->isVmRunning()) return;
-    // P0-1 fix: 按后端选择检查对象（详见 onVmStep 注释）
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
     if (!hasCode) return;
 
-    // A4 fix: 每次步进前同步断点
-    syncVmBreakpoints();  // #4 fix: 同步断点及条件
-
+    syncVmBreakpoints();
     setVmStepActionsEnabled(false);
     IdeController::VmStepResult result;
     try {
         result = controller_->vmStepByMode(IdeController::VmStepMode::STEP_OUT);
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("VM 跨出异常: %1").arg(e.what()));
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString("VM 跨出异常: %1").arg(e.what()));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     } catch (...) {
-        outputPanel_->appendError("VM 跨出发生未知异常");
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString::fromUtf8("VM 跨出发生未知异常"));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     }
     handleVmStepResult(result);
@@ -1099,95 +2566,84 @@ void Ide::onVmStepOut() {
 
 void Ide::onVmRun() {
     if (controller_->isVmRunning()) return;
-    // P0-1 fix: 按后端选择检查对象（详见 onVmStep 注释）
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
     if (!hasCode) return;
 
-    // A4 fix: 每次步进前同步断点
-    syncVmBreakpoints();  // #4 fix: 同步断点及条件
-
+    syncVmBreakpoints();
     setVmStepActionsEnabled(false);
     IdeController::VmStepResult result;
     try {
         result = controller_->vmStepByMode(IdeController::VmStepMode::RUN);
     } catch (const std::exception& e) {
-        outputPanel_->appendError(QString("VM 运行异常: %1").arg(e.what()));
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString("VM 运行异常: %1").arg(e.what()));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     } catch (...) {
-        outputPanel_->appendError("VM 运行发生未知异常");
-        setVmStepActionsEnabled(true, /*running=*/false);
+        appendError(QString::fromUtf8("VM 运行发生未知异常"));
+        setVmStepActionsEnabled(true, false);
+        showBottomPanel(1);
         return;
     }
-    // QT-R-01 fix: RUNNING 表示异步 RUN 已启动，等待 vmRunPaused 信号
     if (result == IdeController::VmStepResult::RUNNING) {
-        // 异步运行中：禁用步进按钮，仅启用 Stop 按钮
         vmStepAction_->setEnabled(false);
         vmStepOverAction_->setEnabled(false);
         vmStepOutAction_->setEnabled(false);
         vmRunAction_->setEnabled(false);
         vmStopAction_->setEnabled(true);
-        // BUG-EXTRA-3 fix: 也禁用 Run/Debug 按钮，防止 VM 运行期间触发文件执行
         runAction_->setEnabled(false);
         debugAction_->setEnabled(false);
-        codeEditor_->setReadOnly(true);
+        if (codeEditor_) codeEditor_->setReadOnly(true);
         return;
     }
     handleVmStepResult(result);
 }
 
-/// A4 fix: 处理 vmStepByMode 的结果，更新 UI（栈/全局变量/调用栈/高亮）
 void Ide::handleVmStepResult(IdeController::VmStepResult result) {
     switch (result) {
     case IdeController::VmStepResult::NOT_READY:
-        setVmStepActionsEnabled(true, /*running=*/false);
+        setVmStepActionsEnabled(true, false);
         runAction_->setEnabled(true);
         debugAction_->setEnabled(true);
-        codeEditor_->setReadOnly(false);
+        if (codeEditor_) codeEditor_->setReadOnly(false);
         return;
-
     case IdeController::VmStepResult::RUNNING:
-        // QT-R-01 fix: 异步 RUN 已启动，不应走到这里（onVmRun 中已处理）
-        // 防御性处理：仅启用 Stop 按钮
         vmStepAction_->setEnabled(false);
         vmStepOverAction_->setEnabled(false);
         vmStepOutAction_->setEnabled(false);
         vmRunAction_->setEnabled(false);
         vmStopAction_->setEnabled(true);
         return;
-
     case IdeController::VmStepResult::ERROR: {
         Diagnostic diag(DiagLevel::Error, controller_->getVmLastError(),
                         controller_->getVmLastErrorLine(), 0, DiagSource::VM);
-        outputPanel_->appendError(QString::fromStdString(diag.format()));
-        if (controller_->getVmLastErrorLine() > 0) {
+        appendError(QString::fromStdString(diag.format()));
+        showBottomPanel(1);
+        if (controller_->getVmLastErrorLine() > 0 && codeEditor_) {
             QSet<int> errorLines;
             errorLines.insert(controller_->getVmLastErrorLine());
             codeEditor_->setErrorLines(errorLines);
         }
         vmStackPanel_->clearAll();
-        setVmStepActionsEnabled(true, /*running=*/false);
+        setVmStepActionsEnabled(true, false);
         runAction_->setEnabled(true);
         debugAction_->setEnabled(true);
-        codeEditor_->setReadOnly(false);
+        if (codeEditor_) codeEditor_->setReadOnly(false);
         return;
     }
-
     case IdeController::VmStepResult::FINISHED:
-        outputPanel_->appendOutput("--- VM 执行结束 ---");
+        appendOutput(QString::fromUtf8("--- VM 执行结束 ---"));
+        showBottomPanel(0);
         vmStackPanel_->clearAll();
-        setVmStepActionsEnabled(true, /*running=*/false);
+        setVmStepActionsEnabled(true, false);
         runAction_->setEnabled(true);
         debugAction_->setEnabled(true);
-        codeEditor_->setReadOnly(false);
+        if (codeEditor_) codeEditor_->setReadOnly(false);
         return;
-
     case IdeController::VmStepResult::OK:
     case IdeController::VmStepResult::PAUSED_AT_BREAKPOINT:
-        // 更新 UI：栈 + 全局变量 + 当前指令高亮 + 调用栈
-        // A1 fix: RegisterVM 模式显示寄存器窗口；栈式 VM 模式显示操作数栈
         if (controller_->isVmRegisterMode()) {
             vmStackPanel_->updateRegisters(controller_->getVmStack());
         } else {
@@ -1196,203 +2652,210 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
         vmStackPanel_->updateGlobals(controller_->getVmGlobals());
         {
             size_t currentIP = controller_->getVmCurrentIP();
-            // A1 fix: 统一使用 opCodeName 字符串，兼容 OpCode/RegOp
             std::string opName = controller_->getVmCurrentOpCodeName();
             int opLine = controller_->getVmCurrentLine();
             vmStackPanel_->updateCurrentOp(currentIP, opName, opLine);
             highlightBytecodeLine(controller_->getVmCurrentChunkName(), currentIP);
-            // 方向四：同步高亮 IR 视图中对应的 IR 指令（仅 main chunk 时有效）
             if (controller_->getVmCurrentChunkName() == "main") {
                 highlightIRLine(currentIP);
             }
         }
-        // A4 fix: 同步断点行高亮（命中断点时跳转到该行）
         if (result == IdeController::VmStepResult::PAUSED_AT_BREAKPOINT) {
             int breakLine = controller_->getVmCurrentLine();
-            if (breakLine > 0) {
+            if (breakLine > 0 && codeEditor_) {
                 codeEditor_->setCurrentLine(breakLine);
-                outputPanel_->appendOutput(
-                    QString("🔴 VM 命中断点: 第 %1 行").arg(breakLine));
+                appendOutput(QString("🔴 VM 命中断点: 第 %1 行").arg(breakLine));
+                showBottomPanel(0);
             }
         }
-        setVmStepActionsEnabled(true, /*running=*/true);
+        setVmStepActionsEnabled(true, true);
         return;
     }
 }
 
-/// A4 fix: 批量启用/禁用 VM 步进按钮
-/// running=true 表示 VM 处于暂停状态（可继续步进），需启用所有步进按钮
-/// running=false 表示 VM 已停止/未初始化，仅启用 vmStep + vmRun，禁用 vmStop
 void Ide::setVmStepActionsEnabled(bool enabled, bool running) {
     vmStepAction_->setEnabled(enabled);
     vmStepOverAction_->setEnabled(enabled);
     vmStepOutAction_->setEnabled(enabled);
     vmRunAction_->setEnabled(enabled);
     vmStopAction_->setEnabled(enabled && running);
-    // 首次启动后禁用「查看字节码」按钮（避免运行中重新编译导致状态不一致）
-    if (enabled && running) {
-        bytecodeAction_->setEnabled(false);
-    } else {
-        bytecodeAction_->setEnabled(true);
-    }
+    compileAnalysisAction_->setEnabled(enabled && !running);
 }
 
 void Ide::onVmStop() {
     controller_->vmStop();
     vmStackPanel_->clearAll();
-    // GUI-11 fix: 清除字节码列表当前行高亮
     bytecodeList_->setCurrentRow(-1);
-    // BUG-EXTRA-2 fix: 清除编辑器当前行高亮和 IR 查看器高亮
-    codeEditor_->setCurrentLine(-1);
+    if (codeEditor_) codeEditor_->setCurrentLine(-1);
     if (irViewer_) irViewer_->clearHighlight();
-
-    setVmStepActionsEnabled(true, /*running=*/false);
-    // BUG-DBG-R2-1 fix: VM 停止后恢复 Run/Debug 按钮和编辑器可写状态
+    setVmStepActionsEnabled(true, false);
     runAction_->setEnabled(true);
     debugAction_->setEnabled(true);
-    codeEditor_->setReadOnly(false);
+    if (codeEditor_) codeEditor_->setReadOnly(false);
 }
 
 // ============================================================
-// F6: 查找替换功能
+// Find / Replace
 // ============================================================
 
-void Ide::onFind() {
-    findReplacePanel_->showFind();
-}
-
-void Ide::onReplace() {
-    findReplacePanel_->showReplace();
-}
+void Ide::onFind() { if (findReplacePanel_) findReplacePanel_->showFind(); }
+void Ide::onReplace() { if (findReplacePanel_) findReplacePanel_->showReplace(); }
 
 void Ide::onFindNext() {
-    if (findReplacePanel_->isVisible()) {
-        // AUDIT-BUG-E5 fix: 面板可见时直接调用面板查找，而非 return 无操作。
-        // 原实现在面板可见但焦点在编辑器时 return，导致 F3 完全无响应。
+    if (findReplacePanel_ && findReplacePanel_->isVisible()) {
         findReplacePanel_->onFindNext();
         return;
     }
-    // 面板不可见时，使用上次查找内容（显示面板）
-    findReplacePanel_->showFind();
+    if (findReplacePanel_) findReplacePanel_->showFind();
 }
 
 void Ide::onFindPrev() {
-    if (findReplacePanel_->isVisible()) {
+    if (findReplacePanel_ && findReplacePanel_->isVisible()) {
         findReplacePanel_->onFindPrev();
         return;
     }
-    findReplacePanel_->showFind();
+    if (findReplacePanel_) findReplacePanel_->showFind();
 }
 
 // ============================================================
-// F9: 主题切换
+// Help dialog (Fluent-style, two-column shortcut layout)
 // ============================================================
 
-void Ide::onToggleTheme(bool dark) {
-    applyTheme(dark);
-    // 持久化保存主题偏好
-    QSettings settings("MiniLang", "MiniLang IDE");
-    settings.setValue("theme/dark", dark);
-}
+void Ide::showHelpDialog() {
+    auto* dlg = new QDialog(this);
+    dlg->setWindowTitle(QString::fromUtf8("帮助"));
+    dlg->setWindowFlags(dlg->windowFlags() & ~Qt::WindowContextHelpButtonHint);
+    dlg->setMinimumWidth(400);
+    dlg->setStyleSheet(
+        "QDialog { background: #ffffff; border-radius: 8px; }"
+        "QLabel#helpTitle { font-size: 16px; font-weight: 600; color: #1e1e1e; }"
+        "QLabel#helpKey { font-family: 'Consolas','Cascadia Mono','Courier New',monospace;"
+        "  font-size: 13px; color: #0078d4; }"
+        "QLabel#helpDesc { font-size: 13px; color: #1e1e1e; }"
+        "QPushButton { background: #0078d4; color: #ffffff; border: none;"
+        "  border-radius: 4px; padding: 6px 20px; min-width: 72px; }"
+        "QPushButton:hover { background: #1a86d9; }");
 
-void Ide::applyTheme(bool dark) {
-    isDarkTheme_ = dark;
+    auto* layout = new QVBoxLayout(dlg);
+    layout->setContentsMargins(24, 20, 24, 20);
+    layout->setSpacing(12);
 
-    // 加载对应的 QSS 样式表
-    QString qssResource = dark ? ":/styles_dark.qss" : ":/styles.qss";
-    QFile styleFile(qssResource);
-    if (styleFile.open(QFile::ReadOnly | QFile::Text)) {
-        QTextStream ts(&styleFile);
-        qApp->setStyleSheet(ts.readAll());
-        styleFile.close();
+    auto* title = new QLabel(QString::fromUtf8("MiniLang IDE 快捷键"), dlg);
+    title->setObjectName("helpTitle");
+    layout->addWidget(title);
+
+    // Shortcut rows: (key, description)
+    struct Shortcut { const char* key; const char* desc; };
+    const Shortcut rows[] = {
+        {"F5",                "运行程序"},
+        {"F6",                "调试程序"},
+        {"F10",               "单步跳过"},
+        {"F11",               "单步进入"},
+        {"Shift+F11",         "单步跳出"},
+        {"Shift+F5",          "停止运行"},
+        {"Ctrl+Shift+F",      "格式化代码"},
+        {"Ctrl+F",            "查找"},
+        {"Ctrl+H",            "替换"},
+        {"Esc",               "关闭查找面板"},
+        {"Ctrl+Shift+V",      "编译分析面板"},
+        {"Ctrl+Shift+A",      "AST 树形图"},
+    };
+    for (const auto& r : rows) {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(16);
+        auto* k = new QLabel(QString::fromUtf8(r.key), dlg);
+        k->setObjectName("helpKey");
+        k->setMinimumWidth(110);
+        auto* d = new QLabel(QString::fromUtf8(r.desc), dlg);
+        d->setObjectName("helpDesc");
+        row->addWidget(k);
+        row->addWidget(d, 1);
+        layout->addLayout(row);
     }
 
-    // 同步语法高亮器配色
-    if (highlighter_) {
-        highlighter_->setDarkTheme(dark);
-    }
+    layout->addSpacing(8);
+    auto* tipLabel = new QLabel(
+        QString::fromUtf8("在代码行号左侧点击可设置/取消断点，右键点击断点可设置条件。"), dlg);
+    tipLabel->setStyleSheet("color: #616161; font-size: 12px;");
+    tipLabel->setWordWrap(true);
+    layout->addWidget(tipLabel);
 
-    // F9: 同步代码编辑器配色（行号区域、当前行高亮）
-    if (codeEditor_) {
-        codeEditor_->setDarkTheme(dark);
-    }
+    layout->addStretch(1);
+    auto* btnRow = new QHBoxLayout;
+    btnRow->addStretch(1);
+    auto* okBtn = new QPushButton(QString::fromUtf8("确定"), dlg);
+    okBtn->setCursor(Qt::PointingHandCursor);
+    connect(okBtn, &QPushButton::clicked, dlg, &QDialog::accept);
+    btnRow->addWidget(okBtn);
+    layout->addLayout(btnRow);
+
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->exec();
 }
 
 // ============================================================
-// F13: 自动补全
+// Completion + Spell check candidates
 // ============================================================
 
 void Ide::setupCompletion() {
-    // 构建静态补全词列表：关键字 + 内置函数 + 内置方法
     staticCompletionWords_.clear();
+    spellCandidates_.clear();
 
-    // 1. 从 Lexer 获取所有关键字（B6 fix: 通过语义化接口）
     const auto& keywords = controller_->getKeywords();
     for (const auto& kv : keywords) {
         staticCompletionWords_ << QString::fromStdString(kv.first);
+        spellCandidates_.push_back(kv.first);
     }
 
-    // 2. 内置函数
-    staticCompletionWords_ << "print" << "input"
-                           << "len" << "type" << "str" << "int" << "abs"
-                           << "min" << "max" << "range" << "sum";
+    // Built-in functions and methods
+    std::vector<std::string> builtins = {
+        "print", "input", "len", "type", "str", "int", "abs",
+        "min", "max", "range", "sum", "push", "pop", "split", "join",
+        "indexOf", "startsWith", "endsWith", "substr", "keys", "values",
+        "contains", "true", "false", "null"
+    };
+    for (const auto& b : builtins) {
+        staticCompletionWords_ << QString::fromStdString(b);
+        spellCandidates_.push_back(b);
+    }
 
-    // 3. 常用内置方法（字符串/数组/字典）
-    staticCompletionWords_ << "push" << "pop" << "split" << "join"
-                           << "indexOf" << "startsWith" << "endsWith"
-                           << "substr" << "keys" << "values" << "contains";
-
-    // 4. 布尔常量
-    staticCompletionWords_ << "true" << "false" << "null";
-
-    // 去重并排序
     staticCompletionWords_.removeDuplicates();
     staticCompletionWords_.sort(Qt::CaseInsensitive);
+    if (codeEditor_) codeEditor_->setCompletionWords(staticCompletionWords_);
 
-    // 设置到编辑器
-    codeEditor_->setCompletionWords(staticCompletionWords_);
-
-    // 创建防抖定时器：文本变化后延迟 500ms 更新用户符号
+    // 500ms completion word refresh timer
     completionTimer_ = new QTimer(this);
     completionTimer_->setSingleShot(true);
     completionTimer_->setInterval(500);
     connect(completionTimer_, &QTimer::timeout, this, &Ide::updateCompletionWords);
 
-    // 连接文本变化信号（防抖）
-    connect(codeEditor_, &QPlainTextEdit::textChanged, this, [this]() {
-        if (completionTimer_) {
-            completionTimer_->start();
-        }
+    // 300ms syntax check debounce timer
+    syntaxCheckTimer_ = new QTimer(this);
+    syntaxCheckTimer_->setSingleShot(true);
+    syntaxCheckTimer_->setInterval(300);
+    connect(syntaxCheckTimer_, &QTimer::timeout, this, [this]() {
+        runRealTimeSyntaxCheck();
     });
 
-    // 首次更新（扫描默认示例代码中的符号）
+    // Wire textChanged for existing tabs
+    for (auto& tab : editorTabs_) {
+        if (!tab.editor) continue;
+        connect(tab.editor, &QPlainTextEdit::textChanged, this, [this]() {
+            if (completionTimer_) completionTimer_->start();
+            if (syntaxCheckTimer_) syntaxCheckTimer_->start();
+        });
+    }
     updateCompletionWords();
 }
 
 void Ide::updateCompletionWords() {
     if (!codeEditor_) return;
-
-    // 从当前文档扫描用户定义的符号
     QString text = codeEditor_->toPlainText();
-
-    // 合并静态词 + 用户符号
     QStringList words = staticCompletionWords_;
 
-    // P2-5 fix: 先移除字符串字面量和块注释内容，避免正则误匹配字符串内的 var/fun/class
-    // D13 fix: 正则支持转义序列，避免 "He said \"hello\"" 被错误拆分为两段，
-    // 导致 hello 被当作代码扫描。模式 "(?:\\.|[^"\\\n])*" 匹配：
-    //   "        起始引号
-    //   (?:      非捕获组，重复以下二者之一：
-    //     \\.    转义序列（反斜杠 + 任意字符，如 \" \\ \n）
-    //     |      或
-    //     [^"\\\n]  非引号、非反斜杠、非换行的任意字符
-    //   )*       重复 0 次或多次
-    //   "        结束引号
     text.remove(QRegularExpression("\"(?:\\\\.|[^\"\\\\\\n])*\""));
     text.remove(QRegularExpression("/\\*.*?\\*/", QRegularExpression::DotMatchesEverythingOption));
 
-    // P2-2 fix: 使用 static 正则避免每次调用都重新编译
-    // P2-4 fix: 扩展匹配模式，覆盖参数名、for 循环变量、类字段
     static const QRegularExpression pattern(
         "\\b(?:var|fun|class)\\s+([A-Za-z_][A-Za-z0-9_]*)");
     auto matchIt = pattern.globalMatch(text);
@@ -1400,52 +2863,102 @@ void Ide::updateCompletionWords() {
     while (matchIt.hasNext()) {
         QRegularExpressionMatch match = matchIt.next();
         QString name = match.captured(1);
-        if (!name.isEmpty()) {
-            userSymbols.insert(name);
-        }
+        if (!name.isEmpty()) userSymbols.insert(name);
     }
 
-    // P2-3 fix: 使用 QSet 做 O(1) 查重，避免 words.contains() 的 O(n) 线性扫描
     QSet<QString> existingWords;
-    for (const QString& w : words) {
-        existingWords.insert(w.toLower());
-    }
+    for (const QString& w : words) existingWords.insert(w.toLower());
     for (const QString& sym : userSymbols) {
-        if (!existingWords.contains(sym.toLower())) {
-            words << sym;
-        }
+        if (!existingWords.contains(sym.toLower())) words << sym;
     }
 
     words.sort(Qt::CaseInsensitive);
-    codeEditor_->setCompletionWords(words);
+    for (auto& tab : editorTabs_) {
+        if (tab.editor) tab.editor->setCompletionWords(words);
+    }
 }
 
 // ============================================================
-// 字节码列表 UI 辅助
+// Diagnostics display (with smart spell correction)
+// ============================================================
+
+void Ide::displayDiagnostics(const DiagnosticBag& bag) {
+    const auto& allDiags = bag.all();
+    for (const auto& diag : allDiags) {
+        std::string msg = diag.message;
+
+        // Smart spell correction: for error diagnostics, try to find
+        // a close match among keywords/builtins
+        if (diag.isError() && !spellCandidates_.empty()) {
+            std::string ident = extractQuotedIdentifier(msg);
+            if (!ident.empty() && ident.size() > 1) {
+                auto suggestion = SpellChecker::suggestSuffix(
+                    ident, spellCandidates_, 2);
+                if (!suggestion.empty()) {
+                    msg += suggestion;
+                }
+            }
+        }
+
+        // Build display text
+        QString text = QString::fromStdString(
+            "[" + diag.sourceString() + "] " + diag.levelString());
+        if (diag.line > 0) {
+            text += QString(" (行 %1").arg(diag.line);
+            if (diag.column > 0) text += QString(", 列 %1").arg(diag.column);
+            text += ")";
+        }
+        text += ": " + QString::fromStdString(msg);
+
+        if (diag.isError()) {
+            appendError(text, diag.line, diag.column);
+        } else if (diag.isWarning()) {
+            appendOutput(QString("[警告] ") + text);
+        } else {
+            appendOutput(text);
+        }
+    }
+
+    if (bag.hasErrors()) {
+        showBottomPanel(1);
+    }
+
+    // Mark error ranges in editor with wavy underlines
+    if (!bag.empty()) {
+        std::vector<CodeEditor::ErrorRange> ranges;
+        for (const auto& diag : allDiags) {
+            if (diag.isError() && diag.line > 0) {
+                ranges.push_back({diag.line, diag.column, 0});
+            }
+        }
+        if (!ranges.empty() && codeEditor_) codeEditor_->setErrorRanges(ranges);
+    }
+
+    if (bag.size() > 1) {
+        appendOutput(QString::fromStdString("--- " + bag.summary() + " ---"));
+    }
+}
+
+// ============================================================
+// Bytecode / IR / Token / AST helpers
 // ============================================================
 
 void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
     const CompileResult& compileResult = controller_->lastCompileResult();
     const BytecodeChunk* targetChunk = nullptr;
 
-    // 找到目标 chunk
     if (chunkName == "main" || chunkName.empty()) {
         targetChunk = &compileResult.mainChunk;
     } else {
         auto it = compileResult.functionChunks.find(chunkName);
-        if (it != compileResult.functionChunks.end()) {
-            targetChunk = &it->second;
-        }
+        if (it != compileResult.functionChunks.end()) targetChunk = &it->second;
     }
     if (!targetChunk || targetChunk->code.empty()) return;
 
-    // O(1) 查找：ip → 指令索引
     int instrIndex = 0;
     if (ip < targetChunk->ipToInstrIndex.size() && targetChunk->ipToInstrIndex[ip] >= 0) {
         instrIndex = targetChunk->ipToInstrIndex[ip];
     } else {
-        // fallback：遍历查找（不应发生）
-        // D7 fix: 使用 instructionSizeAt 统一处理 OP_CLOSURE 变长指令
         size_t offset = 0;
         while (offset < targetChunk->code.size()) {
             if (offset == ip) break;
@@ -1454,13 +2967,9 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
         }
     }
 
-    // 在 chunkRowMap_ 中找到该 chunk 的起始行
     int startRow = 0;
     for (const auto& info : chunkRowMap_) {
-        if (info.name == chunkName) {
-            startRow = info.startRow;
-            break;
-        }
+        if (info.name == chunkName) { startRow = info.startRow; break; }
     }
 
     int targetRow = startRow + instrIndex;
@@ -1472,14 +2981,9 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
 
 void Ide::populateBytecodeList() {
     const CompileResult& compileResult = controller_->lastCompileResult();
-
-    // D21 fix: 计算当前源码哈希，若与上次相同则跳过全量重建。
-    // 常见场景：用户多次点击"运行"而代码未修改，避免 O(n) 清空+重建列表。
     QString currentSource = codeEditor_ ? codeEditor_->toPlainText() : QString();
     size_t currentHash = qHash(currentSource);
-    if (currentHash == lastBytecodeSourceHash_ && bytecodeList_->count() > 0) {
-        return;  // 源码未变，复用现有列表
-    }
+    if (currentHash == lastBytecodeSourceHash_ && bytecodeList_->count() > 0) return;
     lastBytecodeSourceHash_ = currentHash;
 
     bytecodeList_->clear();
@@ -1490,88 +2994,109 @@ void Ide::populateBytecodeList() {
         return;
     }
 
-    bytecodeList_->setUpdatesEnabled(false);  // P6 fix: 批量填充时禁用重绘
-    int currentRow = 0;
-    // G-P2-3 fix: QFont 静态化，避免循环内重复构造
-    static const QFont bytecodeFont("Consolas", 10);
+    // Wrap setUpdatesEnabled in try/catch (project constraint)
+    bytecodeList_->setUpdatesEnabled(false);
+    try {
+        int currentRow = 0;
+        const QFont& bytecodeFont = GuiTextUtils::monospaceFont(10);
 
-    // ---- 主 chunk ----
-    {
-        int startRow = currentRow;
-        size_t offset = 0;
-        while (offset < compileResult.mainChunk.code.size()) {
-            std::string instr = compileResult.mainChunk.disassembleInstruction(offset);
-            auto* item = new QListWidgetItem(QString::fromStdString(instr));
-            item->setFont(bytecodeFont);
-            bytecodeList_->addItem(item);
-            currentRow++;
+        {
+            int startRow = currentRow;
+            size_t offset = 0;
+            while (offset < compileResult.mainChunk.code.size()) {
+                std::string instr = compileResult.mainChunk.disassembleInstruction(offset);
+                auto* item = new QListWidgetItem;
+                item->setText(QString::fromStdString(instr));
+                item->setFont(bytecodeFont);
+                // 第八轮：设置 HTML 数据供 RichTextItemDelegate 渲染
+                item->setData(RichTextItemDelegate::kHtmlRole,
+                              formatBytecodeHtml(instr));
+                bytecodeList_->addItem(item);
+                currentRow++;
+                offset += compileResult.mainChunk.instructionSizeAt(offset);
+            }
+            chunkRowMap_.push_back({"main", startRow, currentRow - startRow});
         }
-        chunkRowMap_.push_back({"main", startRow, currentRow - startRow});
-    }
 
-    // ---- 函数 chunk ----
-    for (const auto& kv : compileResult.functionChunks) {
-        auto* header = new QListWidgetItem(QString("---- %1 (arity=%2) ----")
-                                               .arg(QString::fromStdString(kv.first))
-                                               .arg(kv.second.arity));
-        header->setFont(bytecodeFont);
-        header->setForeground(QColor("#569CD6"));
-        bytecodeList_->addItem(header);
-        currentRow++;
-
-        int startRow = currentRow;
-
-        size_t funcOffset = 0;
-        while (funcOffset < kv.second.code.size()) {
-            std::string instr = kv.second.disassembleInstruction(funcOffset);
-            auto* item = new QListWidgetItem(QString::fromStdString(instr));
-            item->setFont(bytecodeFont);
-            bytecodeList_->addItem(item);
+        for (const auto& kv : compileResult.functionChunks) {
+            std::string headerText = "---- " + kv.first + " (arity=" +
+                                      std::to_string(kv.second.arity) + ") ----";
+            auto* header = new QListWidgetItem;
+            header->setText(QString::fromStdString(headerText));
+            header->setFont(bytecodeFont);
+            header->setData(RichTextItemDelegate::kHtmlRole,
+                            formatBytecodeHtml(headerText));
+            bytecodeList_->addItem(header);
             currentRow++;
+
+            int startRow = currentRow;
+            size_t funcOffset = 0;
+            while (funcOffset < kv.second.code.size()) {
+                std::string instr = kv.second.disassembleInstruction(funcOffset);
+                auto* item = new QListWidgetItem;
+                item->setText(QString::fromStdString(instr));
+                item->setFont(bytecodeFont);
+                item->setData(RichTextItemDelegate::kHtmlRole,
+                              formatBytecodeHtml(instr));
+                bytecodeList_->addItem(item);
+                currentRow++;
+                funcOffset += kv.second.instructionSizeAt(funcOffset);
+            }
+            chunkRowMap_.push_back({kv.first, startRow, currentRow - startRow});
         }
-        chunkRowMap_.push_back({kv.first, startRow, currentRow - startRow});
+    } catch (...) {
+        // Ensure updates are re-enabled even on exception
     }
-    bytecodeList_->setUpdatesEnabled(true);  // P6 fix: 恢复重绘
+    bytecodeList_->setUpdatesEnabled(true);
 }
 
-// ============================================================
-// UI 更新辅助方法
-// ============================================================
+void Ide::populateIRViewer() {
+    const IRFunction* ir = controller_->lastIR();
+    irViewer_->setIR(ir);
+    irToBytecodeOffset_ = controller_->lastIRToBytecodeOffset();
+}
+
+void Ide::highlightIRLine(size_t bytecodeOffset) {
+    if (irToBytecodeOffset_.empty()) return;
+    irViewer_->highlightByBytecodeOffset(irToBytecodeOffset_, bytecodeOffset);
+}
 
 void Ide::updateTokenTable() {
     const std::vector<Token>& tokens = controller_->lastTokens();
-    // A-P2-8 fix: 分页保护，防止超大 Token 列表（如 1M Token）创建过多行导致 UI 卡死
     static constexpr int MAX_DISPLAY = 10000;
     int displayCount = static_cast<int>(std::min(tokens.size(), static_cast<size_t>(MAX_DISPLAY)));
     tokenTable_->setRowCount(displayCount);
     tokenTable_->setUpdatesEnabled(false);
-    for (int i = 0; i < displayCount; ++i) {
-        const Token& tok = tokens[i];
-        tokenTable_->setItem(i, 0, new QTableWidgetItem(
-            QString::fromStdString(Token::typeToString(tok.type))));
-        tokenTable_->setItem(i, 1, new QTableWidgetItem(
-            QString::fromStdString(tok.lexeme)));
-        tokenTable_->setItem(i, 2, new QTableWidgetItem(
-            QString::fromStdString(tok.literalToString())));  // A1 fix: Token 字面量调试输出
-        tokenTable_->setItem(i, 3, new QTableWidgetItem(
-            QString::number(tok.line)));
-        tokenTable_->setItem(i, 4, new QTableWidgetItem(
-            QString::number(tok.column)));
-
-        // 错误 Token 红色标记
-        if (tok.type == TokenType::TK_ERROR) {
+    try {
+        for (int i = 0; i < displayCount; ++i) {
+            const Token& tok = tokens[i];
+            // 第八轮：列顺序 行号、列号、类型、词素、字面量
+            tokenTable_->setItem(i, 0, new QTableWidgetItem(QString::number(tok.line)));
+            tokenTable_->setItem(i, 1, new QTableWidgetItem(QString::number(tok.column)));
+            tokenTable_->setItem(i, 2, new QTableWidgetItem(
+                QString::fromStdString(Token::typeToString(tok.type))));
+            tokenTable_->setItem(i, 3, new QTableWidgetItem(
+                QString::fromStdString(tok.lexeme)));
+            tokenTable_->setItem(i, 4, new QTableWidgetItem(
+                QString::fromStdString(tok.literalToString())));
+            // 错误 token 红色高亮；行号/列号列使用浅灰
             for (int col = 0; col < 5; ++col) {
-                tokenTable_->item(i, col)->setForeground(Qt::red);
+                tokenTable_->item(i, col)->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+                if (tok.type == TokenType::TK_ERROR) {
+                    tokenTable_->item(i, col)->setForeground(QColor("#d83b01"));
+                } else if (col < 2) {
+                    tokenTable_->item(i, col)->setForeground(QColor("#6e6e6e"));
+                }
             }
         }
+    } catch (...) {
+        // Ensure updates are re-enabled even on exception
     }
     tokenTable_->setUpdatesEnabled(true);
     tokenTable_->resizeColumnsToContents();
-
-    // 超出限制时提示
     if (tokens.size() > static_cast<size_t>(MAX_DISPLAY)) {
-        outputPanel_->appendOutput(QString("[提示] Token 数量 %1 超过显示上限 %2，仅显示前 %2 条")
-                                   .arg(tokens.size()).arg(MAX_DISPLAY));
+        appendOutput(QString("[提示] Token 数量 %1 超过显示上限 %2，仅显示前 %2 条")
+                       .arg(tokens.size()).arg(MAX_DISPLAY));
     }
 }
 
@@ -1586,46 +3111,12 @@ void Ide::updateAstViewer() {
 void Ide::updateDebugInfo() {
     auto vars = controller_->getDebugVariableSnapshot();
     debugPanel_->updateVariables(vars);
-
     auto stack = controller_->getDebugCallStack();
     debugPanel_->updateCallStack(stack);
 }
 
-void Ide::displayDiagnostics(const DiagnosticBag& bag) {
-    // A-P2-13 fix: 缓存 bag.all() 一次，避免重复遍历（all() 可能返回拷贝或视图）
-    const auto& allDiags = bag.all();
-    for (const auto& diag : allDiags) {
-        QString text = QString::fromStdString(diag.format());
-        if (diag.isError()) {
-            outputPanel_->appendError(text);
-        } else if (diag.isWarning()) {
-            outputPanel_->appendOutput(QString("[警告] ") + text);
-        } else {
-            outputPanel_->appendOutput(text);
-        }
-    }
-
-    // 标记编辑器错误行（EU-1 fix: 使用精确列范围）
-    if (!bag.empty()) {
-        std::vector<CodeEditor::ErrorRange> ranges;
-        for (const auto& diag : allDiags) {
-            if (diag.isError() && diag.line > 0) {
-                ranges.push_back({diag.line, diag.column, 0});
-            }
-        }
-        if (!ranges.empty()) {
-            codeEditor_->setErrorRanges(ranges);
-        }
-    }
-
-    // 显示摘要（当有多条诊断时）
-    if (bag.size() > 1) {
-        outputPanel_->appendOutput(QString::fromStdString("--- " + bag.summary() + " ---"));
-    }
-}
-
 void Ide::setRunningState(bool running) {
-    bool isDebug = controller_->isDebugRun() && running;  // GUI-01 fix: 普通运行时禁用单步按钮
+    bool isDebug = controller_->isDebugRun() && running;
     runAction_->setEnabled(!running);
     debugAction_->setEnabled(!running);
     stepInAction_->setEnabled(isDebug);
@@ -1634,57 +3125,82 @@ void Ide::setRunningState(bool running) {
     resumeAction_->setEnabled(isDebug);
     stopAction_->setEnabled(running);
     formatAction_->setEnabled(!running);
-    bytecodeAction_->setEnabled(!running);
-    // AUDIT fix: IR 查看器在运行期间也应禁用，避免查看正在编译/执行的 IR 导致状态不一致
-    if (irAction_) irAction_->setEnabled(!running);
-    codeEditor_->setReadOnly(running);
-    // BUG-DBG-2 fix: Worker 线程运行期间也必须禁用 VM 步进按钮，防止并发访问
-    // 共享 Compiler/CompileResult 状态导致 UAF
-    // BUG-DBG-R2-2 fix: 文件执行结束后必须恢复 VM 步进按钮，否则 VM 调试永久不可用。
-    // 若 VM 正在异步运行（isVmRunning），不干涉其按钮状态；若 VM 暂停（isVmInitialized），
-    // 恢复为暂停态；否则恢复为未初始化态。
+    compileAnalysisAction_->setEnabled(!running);
+    if (codeEditor_) codeEditor_->setReadOnly(running);
+    if (isDebug) {
+        showDebugButtons(true);
+    } else if (!running) {
+        showDebugButtons(false);
+    }
     if (running) {
         setVmStepActionsEnabled(false, false);
     } else if (!controller_->isVmRunning()) {
-        setVmStepActionsEnabled(true, controller_->isVmInitialized());
+        bool vmInit = controller_->isVmInitialized();
+        setVmStepActionsEnabled(vmInit, vmInit);
+        showVmButtons(vmInit);
+    }
+    // 第八轮：状态栏运行状态提示
+    if (statusRunLabel_) {
+        if (running) {
+            statusRunLabel_->setText(isDebug ? QString::fromUtf8("调试中")
+                                             : QString::fromUtf8("运行中"));
+        } else {
+            statusRunLabel_->setText(QString());
+        }
     }
 }
 
 // ============================================================
-// GUI-04: 文件操作实现
+// File operations
 // ============================================================
 
 void Ide::onNew() {
-    // AUDIT fix: 程序运行/调试期间禁止新建文件，避免清空正在执行的代码导致状态混乱
     if (controller_->isRunning() || controller_->isVmRunning()) return;
-    if (!maybeSave()) return;
-    codeEditor_->clear();
-    currentFilePath_.clear();
-    isDirty_ = false;
-    codeEditor_->document()->setModified(false);
-    updateWindowTitle();
+    int idx = createNewEditorTab();
+    switchToTab(idx);
+    ensureEditorVisible();
+    if (codeEditor_) codeEditor_->setFocus();
 }
 
 void Ide::onOpen() {
-    // AUDIT fix: 程序运行/调试期间禁止打开文件，避免替换正在执行的代码导致状态混乱
     if (controller_->isRunning() || controller_->isVmRunning()) return;
-    if (!maybeSave()) return;
+    QString startDir = workspaceDir_.isEmpty() ? QDir::homePath() : workspaceDir_;
     QString path = QFileDialog::getOpenFileName(this,
-        QString::fromUtf8("打开文件"), QString(),
+        QString::fromUtf8("打开文件"), startDir,
         "MiniLang (*.mini *.ml);;All Files (*)");
     if (path.isEmpty()) return;
-    loadFile(path);
+
+    int existingIdx = findTabForFile(path);
+    if (existingIdx >= 0) {
+        ensureEditorVisible();
+        switchToTab(existingIdx);
+        return;
+    }
+
+    ensureEditorVisible();
+    int idx = createNewEditorTab();
+    switchToTab(idx);
+    loadFileIntoTab(idx, path);
+    if (codeEditor_) codeEditor_->setFocus();
+}
+
+void Ide::onOpenFolder() {
+    QString startDir = workspaceDir_.isEmpty() ? QDir::homePath() : workspaceDir_;
+    QString dir = QFileDialog::getExistingDirectory(this,
+        QString::fromUtf8("打开文件夹"), startDir,
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (dir.isEmpty()) return;
+    openWorkspace(dir);
 }
 
 void Ide::onSave() {
-    if (currentFilePath_.isEmpty()) {
-        onSaveAs();
-        return;
-    }
+    if (!codeEditor_) return;
+    if (currentFilePath_.isEmpty()) { onSaveAs(); return; }
     QFile file(currentFilePath_);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, QString::fromUtf8("错误"),
-            QString::fromUtf8("无法保存文件: ") + file.errorString());
+        InfoBar::warning(QString::fromUtf8("错误"),
+            QString::fromUtf8("无法保存文件: ") + file.errorString(),
+            Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
         return;
     }
     QTextStream out(&file);
@@ -1693,72 +3209,67 @@ void Ide::onSave() {
     file.close();
     isDirty_ = false;
     codeEditor_->document()->setModified(false);
+    int currIdx = editorTabWidget_->currentIndex();
+    if (currIdx >= 0 && currIdx < static_cast<int>(editorTabs_.size())) {
+        editorTabs_[currIdx].filePath = currentFilePath_;
+        editorTabs_[currIdx].isUntitled = false;
+    }
     updateWindowTitle();
+    populateFileTree();
 }
 
 void Ide::onSaveAs() {
+    QString startDir = workspaceDir_.isEmpty() ? QDir::homePath() : workspaceDir_;
     QString path = QFileDialog::getSaveFileName(this,
-        QString::fromUtf8("保存文件"), QString(),
+        QString::fromUtf8("保存文件"), startDir,
         "MiniLang (*.mini *.ml);;All Files (*)");
     if (path.isEmpty()) return;
     currentFilePath_ = path;
+    int currIdx = editorTabWidget_->currentIndex();
+    if (currIdx >= 0 && currIdx < static_cast<int>(editorTabs_.size())) {
+        editorTabs_[currIdx].filePath = path;
+        editorTabs_[currIdx].isUntitled = false;
+        QFileInfo fi(path);
+        editorTabWidget_->setTabText(currIdx, fi.fileName());
+    }
     onSave();
+    populateFileTree();
 }
 
 bool Ide::maybeSave() {
-    if (!isDirty_) return true;
+    if (!codeEditor_) return true;
+    if (!codeEditor_->document()->isModified()) return true;
     auto ret = QMessageBox::question(this,
         QString::fromUtf8("MiniLang IDE"),
         QString::fromUtf8("文件已修改，是否保存？"),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
         QMessageBox::Save);
-    if (ret == QMessageBox::Save) {
-        onSave();
-        return !isDirty_;
-    }
+    if (ret == QMessageBox::Save) { onSave(); return !codeEditor_->document()->isModified(); }
     if (ret == QMessageBox::Cancel) return false;
-    return true; // Discard
+    return true;
 }
 
 void Ide::updateWindowTitle() {
     QString title = "MiniLang IDE";
+    if (!workspaceDir_.isEmpty()) {
+        QFileInfo fi(workspaceDir_);
+        title += " - " + fi.fileName();
+    }
     if (!currentFilePath_.isEmpty()) {
         QFileInfo fi(currentFilePath_);
-        title += " - " + fi.fileName();
+        title += " / " + fi.fileName();
     }
     if (isDirty_) title += " *";
     setWindowTitle(title);
 }
 
 void Ide::loadFile(const QString& path) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, QString::fromUtf8("错误"),
-            QString::fromUtf8("无法打开文件: ") + file.errorString());
+    int existingIdx = findTabForFile(path);
+    if (existingIdx >= 0) {
+        switchToTab(existingIdx);
         return;
     }
-    // AUDIT-BUG-E3 fix: 文件大小检查，防止大文件冻结 UI
-    qint64 fileSize = file.size();
-    if (fileSize > static_cast<qint64>(RuntimeLimits::MAX_SOURCE_SIZE)) {
-        QMessageBox::warning(this, QString::fromUtf8("错误"),
-            QString::fromUtf8("文件过大 (") + QString::number(fileSize) +
-            QString::fromUtf8(" 字节)，超过上限 (") +
-            QString::number(RuntimeLimits::MAX_SOURCE_SIZE) + QString::fromUtf8(" 字节)"));
-        file.close();
-        return;
-    }
-    QTextStream in(&file);
-    in.setEncoding(QStringConverter::Utf8);
-    QString content = in.readAll();
-    file.close();
-    // AUDIT-BUG-E2 fix: 跳过 UTF-8 BOM（EF BB BF → U+FEFF）
-    // QStringConverter::Utf8 不会自动跳过 BOM，需手动处理
-    if (!content.isEmpty() && content[0] == QChar(0xFEFF)) {
-        content.remove(0, 1);
-    }
-    codeEditor_->setPlainText(content);
-    currentFilePath_ = path;
-    isDirty_ = false;
-    codeEditor_->document()->setModified(false);
-    updateWindowTitle();
+    int idx = createNewEditorTab();
+    switchToTab(idx);
+    loadFileIntoTab(idx, path);
 }
