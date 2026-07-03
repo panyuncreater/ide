@@ -338,6 +338,9 @@ void ReplPanel::executeLine(const QString& line) {
                         emit ctrl->runtimeError(QString::fromStdString(msg), line, col);
                     }, Qt::QueuedConnection);
                 return Value::nullValue();
+            } catch (const DebugStopException&) {
+                // RA-C fix: REPL 中止（closeEvent 超时 / 用户停止）——静默退出，不报错
+                return Value::nullValue();
             } catch (const std::exception& e) {
                 errFlag->store(true);
                 QMetaObject::invokeMethod(ctrl,

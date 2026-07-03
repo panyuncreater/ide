@@ -34,7 +34,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
     QPainter painter(this);
     // F9: 主题感知背景色
-    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(45, 45, 45) : QColor(245, 245, 245);
+    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(37, 37, 37) : QColor(245, 245, 245);
     painter.fillRect(event->rect(), bgColor);
 
     // 字体只需设置一次（移出循环避免每行重建）
@@ -67,7 +67,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
             // 绘制行号
             // F9: 主题感知文字颜色
-            QColor numColor = codeEditor->isDarkTheme_ ? QColor(133, 133, 133) : QColor(120, 120, 120);
+    QColor numColor = codeEditor->isDarkTheme_ ? QColor(115, 115, 115) : QColor(100, 100, 100);
             painter.setPen(numColor);
             painter.drawText(0, top, width() - 20, bottom - top,
                              Qt::AlignRight | Qt::AlignVCenter,
@@ -385,8 +385,8 @@ void CodeEditor::highlightCurrentLine() {
     // GUI-12 fix: 光标行先添加（蓝色），执行行后添加（黄色）
     // Qt ExtraSelection 后添加的覆盖先添加的，黄色要在蓝色之上
     // F9: 主题感知高亮颜色
-    QColor cursorLineColor = isDarkTheme_ ? QColor(42, 45, 46) : QColor(235, 243, 255);
-    QColor execLineColor = isDarkTheme_ ? QColor(90, 93, 46) : QColor(255, 255, 180);
+    QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : QColor(232, 244, 255);
+    QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : QColor(255, 255, 195);
 
     QTextEdit::ExtraSelection cursorSel;
     cursorSel.cursor = textCursor();

@@ -101,24 +101,27 @@ Value Interpreter::executeRepl(Block& program) {
 }
 
 // P1-4 fix: execute/executeRepl 共享的语句执行 + 异常处理逻辑。
-// 捕获 5 类异常：ReturnException/BreakException/ContinueException/ThrowException/RuntimeError。
+// 捕获 4 类异常：ReturnException/ThrowException/RuntimeError。
+// RA-C fix: BreakException/ContinueException 已改为状态标志，不再走异常路径。
+// 顶层出现未消费的 break/continue 标志时，在 for 循环内检查并报错（等价于原兜底 catch）。
 Value Interpreter::runStatementsWithExceptionHandling(Block& program) {
     Value result = Value::nullValue();
     try {
         for (auto& stmt : program.statements) {
             result = evaluate(stmt.get());
+            // RA-C fix: 顶层出现未消费的 break/continue 标志，报错
+            // （等价于原 catch BreakException/ContinueException 兜底）
+            if (loopFlow_ != LoopFlow::None) {
+                std::string msg = (loopFlow_ == LoopFlow::Break)
+                    ? "break 只能在循环体内使用"
+                    : "continue 只能在循环体内使用";
+                loopFlow_ = LoopFlow::None;
+                runtimeError(msg, stmt ? stmt->line : 0, stmt ? stmt->column : 0);
+            }
         }
     }
     catch (const ReturnException&) {
         runtimeError("return 只能在函数体内使用", 0, 0);
-    }
-    catch (const BreakException&) {
-        // BUG-I1 fix: 捕获泄漏的 BreakException，提供友好错误信息
-        runtimeError("break 只能在循环体内使用", 0, 0);
-    }
-    catch (const ContinueException&) {
-        // BUG-I1 fix: 捕获泄漏的 ContinueException，提供友好错误信息
-        runtimeError("continue 只能在循环体内使用", 0, 0);
     }
     catch (const ThrowException& e) {
         runtimeError("未捕获的异常: " + e.thrownValue.toString(), 0, 0);
@@ -315,52 +318,50 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     int savedDepth = recursionDepth_;
     bool savedDebugMode = debugMode_;
     debugMode_ = false;
-    try {
-        lastValue_ = Value::nullValue();
-        node->accept(*this);
-        Value result = std::move(lastValue_);
-        // H2 fix: 必须先恢复实例字段，再恢复局部变量。
-        // inst 指针指向旧 variables["this"] 条目，restoreLocalVariables
-        // 整表替换 variables 会使 inst 悬垂。先恢复字段可保证 inst 仍有效。
-        // restoreLocalVariables 内部会重新锚定 boundInstance_ 到新 map。
-        // BUG-INT-3 fix: 条件可能重新赋值 this（如 this = 5），使 inst 指向的
-        // Value 不再是实例。调用 fields() 会 std::abort。跳过非实例的 inst，
-        // 后续 restoreLocalVariables 会恢复 variables["this"] 到原始实例。
-        for (auto& [inst, fields] : instSnaps) {
-            if (inst->isInstance()) {
-                inst->fields() = fields;
+
+    // RA-A fix: RAII 守卫统一管理沙箱状态恢复（实例字段 + 局部变量 + 调用栈/环境/深度/调试模式），
+    // 消除原 catch(...) + throw; 的 rethrow。正常路径和异常路径恢复逻辑完全一致。
+    struct SandboxGuard {
+        Interpreter& interp;
+        std::map<Value*, std::unordered_map<std::string, Value>>& instSnaps;
+        std::vector<EnvSnapshot>& envSnaps;
+        std::vector<CallFrame> savedCallStack;
+        std::vector<std::string> savedClassCtx;
+        std::shared_ptr<Environment> savedEnv;
+        int savedDepth;
+        bool savedDebugMode;
+        ~SandboxGuard() {
+            // H2 fix: 必须先恢复实例字段，再恢复局部变量。
+            // inst 指针指向旧 variables["this"] 条目，restoreLocalVariables
+            // 整表替换 variables 会使 inst 悬垂。先恢复字段可保证 inst 仍有效。
+            // restoreLocalVariables 内部会重新锚定 boundInstance_ 到新 map。
+            // BUG-INT-3 fix: 条件可能重新赋值 this（如 this = 5），使 inst 指向的
+            // Value 不再是实例。调用 fields() 会 std::abort。跳过非实例的 inst，
+            // 后续 restoreLocalVariables 会恢复 variables["this"] 到原始实例。
+            for (auto& [inst, fields] : instSnaps) {
+                if (inst->isInstance()) {
+                    inst->fields() = fields;
+                }
             }
-        }
-        // #1 fix: 恢复变量绑定（撤销条件中的赋值/声明副作用）
-        for (auto& snap : envSnaps) {
-            snap.env->restoreLocalVariables(snap.variables);
-        }
-        callStack_ = std::move(savedCallStack);
-        classContextStack_ = std::move(savedClassCtx);
-        currentEnv_ = savedEnv;
-        recursionDepth_ = savedDepth;
-        debugMode_ = savedDebugMode;
-        return result;
-    }
-    catch (...) {
-        // H2 fix: 同 try 块，先恢复实例字段（inst 仍有效），再恢复局部变量
-        // BUG-INT-3 fix: 同 try 块，条件可能重新赋值 this 使 inst 非实例
-        for (auto& [inst, fields] : instSnaps) {
-            if (inst->isInstance()) {
-                const_cast<std::unordered_map<std::string, Value>&>(
-                    static_cast<const Value*>(inst)->fields()) = fields;
+            // #1 fix: 恢复变量绑定（撤销条件中的赋值/声明副作用）
+            for (auto& snap : envSnaps) {
+                snap.env->restoreLocalVariables(snap.variables);
             }
+            interp.callStack_ = std::move(savedCallStack);
+            interp.classContextStack_ = std::move(savedClassCtx);
+            interp.currentEnv_ = savedEnv;
+            interp.recursionDepth_ = savedDepth;
+            interp.debugMode_ = savedDebugMode;
         }
-        for (auto& snap : envSnaps) {
-            snap.env->restoreLocalVariables(snap.variables);
-        }
-        callStack_ = std::move(savedCallStack);
-        classContextStack_ = std::move(savedClassCtx);
-        currentEnv_ = savedEnv;
-        recursionDepth_ = savedDepth;
-        debugMode_ = savedDebugMode;
-        throw;
-    }
+    } sandboxGuard{ *this, instSnaps, envSnaps,
+                    std::move(savedCallStack), std::move(savedClassCtx),
+                    savedEnv, savedDepth, savedDebugMode };
+
+    lastValue_ = Value::nullValue();
+    node->accept(*this);
+    Value result = std::move(lastValue_);
+    // RA-A fix: sandboxGuard 析构会统一恢复所有状态，无需手动还原
+    return result;
 }
 
 // ---- 辅助方法 ----
@@ -377,8 +378,11 @@ Value Interpreter::evaluate(ASTNode* node) {
 void Interpreter::checkBreak(ASTNode* node) {
     // REPL 协作中止：closeEvent 超时路径设置 stopRequested_，
     // 在每个语句节点检查，抛异常中断执行（被异步 lambda 的 catch 捕获）
+    // RA-C fix: 改抛 DebugStopException（原 std::runtime_error）——类型更明确，
+    // 顶层 catch 可区分用户错误（RuntimeError）与中止信号（DebugStopException），
+    // 中止信号静默处理（stoppedByUser），不再误报为 genericError。
     if (stopRequested_.load(std::memory_order_relaxed)) {
-        throw std::runtime_error("REPL 执行已被中止（用户关闭或超时）");
+        throw DebugStopException();
     }
     if (debugMode_ && debugger_) {
         // 同步调用深度到调试控制器（Step Over 依赖此值判断是否进入函数）
@@ -945,18 +949,25 @@ void Interpreter::visitVarDecl(VarDecl& node) {
                     runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
                 }
                 RecursionGuard guard{ recursionDepth_ };
+
+                // RA-A fix: RAII 守卫统一恢复 currentEnv_，消除原 catch(...) + throw; 的 rethrow。
+                struct PrevEnvGuard {
+                    Interpreter& interp;
+                    std::shared_ptr<Environment>& prev;
+                    bool dismissed = false;
+                    ~PrevEnvGuard() { if (!dismissed) interp.currentEnv_ = prev; }
+                } envGuard{ *this, prevEnv };
+
                 try {
                     executeFunctionBody(static_cast<Block&>(*initMethod->body));
                 }
                 catch (const ReturnException&) {
                 }
-                catch (...) {
-                    // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
-                    currentEnv_ = prevEnv;
-                    throw;
-                }
+                // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复 currentEnv_
 
                 // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
+                // RA-A fix: 由 envGuard 析构统一恢复 currentEnv_，此处 dismiss 避免重复
+                envGuard.dismissed = true;
                 currentEnv_ = prevEnv;
 
                 auto* thisPtr = initEnv->get("this");
@@ -1044,17 +1055,17 @@ void Interpreter::visitWhileStmt(WhileStmt& node) {
         // 每次迭代重新检查断点（MODE_RUN 下确保 while 行断点每次迭代都能命中；
         // STEP_IN/STEP_OVER 下 lastPausedLine_ 机制保证同行不重复暂停）
         checkBreak(&node);
-        try {
-            result = evaluate(node.body.get());
-        }
-        catch (const BreakException&) {
-            // break 跳出循环
+        result = evaluate(node.body.get());
+        // RA-C fix: 检查 break/continue 状态标志（替代原 catch BreakException/ContinueException）
+        if (loopFlow_ == LoopFlow::Break) {
+            loopFlow_ = LoopFlow::None;  // 消费标志，恢复执行
             break;
         }
-        catch (const ContinueException&) {
-            // continue 跳到下一次条件检查
+        if (loopFlow_ == LoopFlow::Continue) {
+            loopFlow_ = LoopFlow::None;  // 消费标志，跳到下次条件检查
             continue;
         }
+        // ReturnException 仍按异常穿透（不在标志检查范围内）
     }
     lastValue_ = std::move(result); return;
 }
@@ -1066,74 +1077,69 @@ void Interpreter::visitForStmt(ForStmt& node) {
     auto forEnv = std::make_shared<Environment>(currentEnv_);
     currentEnv_ = forEnv;
 
+    // RA-A fix: RAII 守卫统一管理 forEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
+    // 消除原 3 处 catch(...) + throw; 的 rethrow（初始化器、循环体 ReturnException、外层兜底）。
+    // 守卫在正常路径和异常路径都执行清理，逻辑与原代码严格一致。
+    struct ForEnvGuard {
+        Interpreter& interp;
+        std::shared_ptr<Environment>& env;
+        bool dismissed = false;
+        ~ForEnvGuard() {
+            if (!dismissed) {
+                env->closeCapturedVariables();
+                interp.currentEnv_ = env->parent;
+            }
+        }
+    } envGuard{ *this, forEnv };
+
     if (node.initializer) {
-        try {
-            evaluate(node.initializer.get());
-        }
-        catch (...) {
-            // M2 fix: 初始化器异常时恢复外层环境，再传播异常
-            // B1 fix: 关闭捕获（初始化器异常时通常无闭包，但兜底）
-            forEnv->closeCapturedVariables();
-            currentEnv_ = forEnv->parent;
-            throw;
-        }
+        // RA-A fix: envGuard 已覆盖异常恢复，无需 try/catch + throw
+        evaluate(node.initializer.get());
     }
 
     Value result = Value::nullValue();
     int64_t iterationCount = 0;  // S-01 fix: 循环迭代计数
-    try {
-        while (true) {
-            // S-01 fix: 防止无限循环导致 DoS
-            if (++iterationCount > MAX_LOOP_ITERATIONS) {
-                runtimeError(ErrorFormat::format("循环迭代次数超过上限 %lld，疑似无限循环",
-                    static_cast<long long>(MAX_LOOP_ITERATIONS)), node.line, node.column);
-            }
-            // 每次迭代重新检查断点（同 visitWhileStmt 的修复原因）
-            // #6 注：此处 checkBreak 暂停时，变量快照反映的是上一轮 upd 执行后的状态
-            // （当前轮的 cond/body/upd 均未执行）。即循环变量 i 的值是上一轮更新后的值，
-            // 而非"即将进入本轮 body 时的值"——由于 cond 通常是只读判断，两者实际等价。
-            checkBreak(&node);
-
-            // 条件检查
-            if (node.condition) {
-                Value cond = evaluate(node.condition.get());
-                if (!cond.isTruthy()) break;
-            }
-
-            // 执行循环体
-            try {
-                result = evaluate(node.body.get());
-            }
-            catch (const BreakException&) {
-                // break 跳出循环
-                break;
-            }
-            catch (const ContinueException&) {
-                // continue 跳到更新步骤
-            }
-            catch (const ReturnException&) {
-                // 恢复环境，传播 return
-                // B1 fix: 关闭捕获 — 循环变量终值写回闭包 capturedVars
-                forEnv->closeCapturedVariables();
-                currentEnv_ = forEnv->parent;
-                throw;
-            }
-
-            // 更新
-            if (node.update) {
-                evaluate(node.update.get());
-            }
+    while (true) {
+        // S-01 fix: 防止无限循环导致 DoS
+        if (++iterationCount > MAX_LOOP_ITERATIONS) {
+            runtimeError(ErrorFormat::format("循环迭代次数超过上限 %lld，疑似无限循环",
+                static_cast<long long>(MAX_LOOP_ITERATIONS)), node.line, node.column);
         }
-    }
-    catch (...) {
-        // B1 fix: 关闭捕获 — 异常退出时也将最终值写回闭包 capturedVars
-        forEnv->closeCapturedVariables();
-        currentEnv_ = forEnv->parent;
-        throw;
+        // 每次迭代重新检查断点（同 visitWhileStmt 的修复原因）
+        // #6 注：此处 checkBreak 暂停时，变量快照反映的是上一轮 upd 执行后的状态
+        // （当前轮的 cond/body/upd 均未执行）。即循环变量 i 的值是上一轮更新后的值，
+        // 而非"即将进入本轮 body 时的值"——由于 cond 通常是只读判断，两者实际等价。
+        checkBreak(&node);
+
+        // 条件检查
+        if (node.condition) {
+            Value cond = evaluate(node.condition.get());
+            if (!cond.isTruthy()) break;
+        }
+
+        // 执行循环体
+        result = evaluate(node.body.get());
+        // RA-C fix: 检查 break/continue 状态标志（替代原 catch BreakException/ContinueException）
+        if (loopFlow_ == LoopFlow::Break) {
+            loopFlow_ = LoopFlow::None;  // 消费标志，跳出循环
+            break;
+        }
+        if (loopFlow_ == LoopFlow::Continue) {
+            loopFlow_ = LoopFlow::None;  // 消费标志，跳到更新步骤
+            // 注意：不 continue，落到 update 步骤（与原 catch ContinueException 后空体一致）
+        }
+        // RA-A fix: ReturnException 仍按异常穿透（不在标志检查范围内）
+
+        // 更新
+        if (node.update) {
+            evaluate(node.update.get());
+        }
     }
 
     // B1 fix: 关闭捕获 — 循环正常退出时将循环变量终值写回闭包 capturedVars。
     // 这是关键：循环变量 i 在此关闭为终值（如 3），使所有捕获 i 的闭包返回终值。
+    // RA-A fix: 由 envGuard 析构统一执行，此处 dismiss 避免重复
+    envGuard.dismissed = true;
     forEnv->closeCapturedVariables();
     currentEnv_ = forEnv->parent;
     lastValue_ = std::move(result); return;
@@ -1361,10 +1367,21 @@ void Interpreter::visitFunDecl(FunDecl& node) {
 
 void Interpreter::executeFunctionBody(Block& body) {
     // B1 fix: 直接在 currentEnv_（funEnv）中执行函数体语句，不创建嵌套块作用域。
-    // 异常处理（ReturnException/BreakException 等）由调用方（callClosureValue 等）的
+    // 异常处理（ReturnException 等）由调用方（callClosureValue 等）的
     // try-catch 负责，closeCapturedVariables 也由调用方在 funEnv 上调用。
+    // RA-C fix: break/continue 改用标志后，函数体顶层出现未消费的标志属于语义错误
+    // （break/continue 只能在循环体内使用）。原代码靠 BreakException/ContinueException
+    // 穿透到 runStatementsWithExceptionHandling 的兜底 catch 报错，此处等价检查标志。
     for (auto& stmt : body.statements) {
         evaluate(stmt.get());
+        if (loopFlow_ != LoopFlow::None) {
+            // 清理标志后报错（与原 runStatementsWithExceptionHandling 兜底语义一致）
+            std::string msg = (loopFlow_ == LoopFlow::Break)
+                ? "break 只能在循环体内使用"
+                : "continue 只能在循环体内使用";
+            loopFlow_ = LoopFlow::None;
+            runtimeError(msg, stmt ? stmt->line : 0, stmt ? stmt->column : 0);
+        }
     }
 }
 
@@ -1386,12 +1403,18 @@ void Interpreter::visitReturnStmt(ReturnStmt& node) {
 
 void Interpreter::visitBreakStmt(BreakStmt& node) {
     checkBreak(&node);
-    throw BreakException();
+    // RA-C fix: 改用状态标志替代 C++ 异常。循环边界（visitWhileStmt/visitForStmt）检查标志。
+    // 标志会向上传播：visitBlock/visitIfStmt 在 evaluate 后检查 loopFlow_ 并提前退出。
+    loopFlow_ = LoopFlow::Break;
+    lastValue_ = Value::nullValue(); return;
 }
 
 void Interpreter::visitContinueStmt(ContinueStmt& node) {
     checkBreak(&node);
-    throw ContinueException();
+    // RA-C fix: 改用状态标志替代 C++ 异常。循环边界（visitWhileStmt/visitForStmt）检查标志。
+    // 标志会向上传播：visitBlock/visitIfStmt 在 evaluate 后检查 loopFlow_ 并提前退出。
+    loopFlow_ = LoopFlow::Continue;
+    lastValue_ = Value::nullValue(); return;
 }
 
 void Interpreter::visitThrowStmt(ThrowStmt& node) {
@@ -1413,17 +1436,30 @@ void Interpreter::visitTryStmt(TryStmt& node) {
         currentEnv_ = catchEnv;
         // P2-1 fix: 使用 std::move 避免不必要的 Value 拷贝
         currentEnv_->define(node.catchVarName, std::move(e.thrownValue));
-        try {
-            if (node.catchBlock) {
-                evaluate(node.catchBlock.get());
+
+        // RA-A fix: RAII 守卫统一管理 catchEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
+        // 消除原 catch(...) + throw; 的 rethrow。
+        // catch 块内若抛出 return/break/continue/throw，envGuard 析构恢复 catchEnv 后异常自然传播。
+        struct CatchEnvGuard {
+            Interpreter& interp;
+            std::shared_ptr<Environment>& env;
+            std::shared_ptr<Environment>& saved;
+            bool dismissed = false;
+            ~CatchEnvGuard() {
+                if (!dismissed) {
+                    // B1 fix: 关闭捕获 — catch 块退出时将最终值写回闭包 capturedVars
+                    env->closeCapturedVariables();
+                    interp.currentEnv_ = saved;
+                }
             }
-        } catch (...) {
-            // B1 fix: 关闭捕获 — catch 块退出时将最终值写回闭包 capturedVars
-            catchEnv->closeCapturedVariables();
-            currentEnv_ = savedEnv;
-            throw;  // 重新抛出 break/continue/return/throw
+        } envGuard{ *this, catchEnv, savedEnv };
+
+        if (node.catchBlock) {
+            evaluate(node.catchBlock.get());
         }
+        // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
         // B1 fix: 关闭捕获 — catch 块正常退出
+        envGuard.dismissed = true;
         catchEnv->closeCapturedVariables();
         currentEnv_ = savedEnv;
     }
@@ -1466,19 +1502,34 @@ void Interpreter::visitBlock(Block& node) {
     currentEnv_ = blockEnv;
 
     Value result = Value::nullValue();
-    try {
-        for (auto& stmt : node.statements) {
-            result = evaluate(stmt.get());
+
+    // RA-A fix: RAII 守卫统一管理异常路径下的 currentEnv_ 恢复与 closeCapturedVariables，
+    // 消除原 catch(...) + throw; 的 rethrow。正常路径通过 dismiss 跳过守卫清理，
+    // 走完整的池化回收逻辑。
+    struct BlockEnvGuard {
+        Interpreter& interp;
+        std::shared_ptr<Environment>& env;
+        std::shared_ptr<Environment>& saved;
+        bool dismissed = false;
+        ~BlockEnvGuard() {
+            if (!dismissed) {
+                interp.currentEnv_ = saved;
+                // B1 fix: 异常路径也需关闭捕获 — 将最终值写回闭包 capturedVars
+                env->closeCapturedVariables();
+                // 异常路径不回收（blockEnv 可能已被闭包捕获，安全起见让 shared_ptr 自然销毁）
+            }
         }
-    }
-    catch (...) {
-        currentEnv_ = savedEnv;
-        // B1 fix: 异常路径也需关闭捕获 — 将最终值写回闭包 capturedVars
-        blockEnv->closeCapturedVariables();
-        // 异常路径不回收（blockEnv 可能已被闭包捕获，安全起见让 shared_ptr 自然销毁）
-        throw;
+    } envGuard{ *this, blockEnv, savedEnv };
+
+    for (auto& stmt : node.statements) {
+        result = evaluate(stmt.get());
+        // RA-C fix: break/continue 标志需穿透 block 边界到达循环。
+        // 若不提前退出，后续语句会执行不该执行的副作用，且标志可能在循环外被误消费。
+        if (loopFlow_ != LoopFlow::None) break;
     }
 
+    // RA-A fix: 正常路径，dismiss 守卫后手动执行完整清理（含池化回收）
+    envGuard.dismissed = true;
     currentEnv_ = savedEnv;
 
     // B1 fix: 关闭捕获 — 将 block 内声明的变量的最终值写回闭包 capturedVars。
@@ -1792,6 +1843,21 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             }
             RecursionGuard recursionGuard{ recursionDepth_ };
 
+            // RA-A fix: RAII 守卫统一管理 methodEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
+            // 消除原 catch(...) + throw; 的 rethrow。
+            struct MethodEnvGuard {
+                Interpreter& interp;
+                std::shared_ptr<Environment>& env;
+                std::shared_ptr<Environment>& prev;
+                bool dismissed = false;
+                ~MethodEnvGuard() {
+                    if (!dismissed) {
+                        if (env) env->closeCapturedVariables();
+                        interp.currentEnv_ = prev;
+                    }
+                }
+            } envGuard{ *this, methodEnv, prevEnv };
+
             try {
                 // O5: 使用类定义时捕获的环境作为父级（闭包），而非调用者的环境
                 auto parentEnv = cachedParentEnv ? cachedParentEnv : currentEnv_;  // #2 fix: 使用缓存值
@@ -1833,25 +1899,16 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             catch (ReturnException& e) {
                 result = std::move(e.returnValue);
             }
-            catch (...) {
-                // 运行时错误：先恢复调用状态，再重抛
-                // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
-                // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
-                // B1 fix: 关闭捕获 — 方法异常退出时将局部变量最终值写回闭包 capturedVars
-                if (methodEnv) methodEnv->closeCapturedVariables();
-                currentEnv_ = prevEnv;
-                throw;
-            }
+            // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
 
             // 从方法环境中读取 this 的更新值
             auto* thisPtr = methodEnv->get("this");
             Value updatedThis = thisPtr ? *thisPtr : Value::nullValue();
 
             // B1 fix: 关闭捕获 — 方法正常退出时将局部变量最终值写回闭包 capturedVars
+            // RA-A fix: 由 envGuard 析构统一执行，此处 dismiss 避免重复
+            envGuard.dismissed = true;
             if (methodEnv) methodEnv->closeCapturedVariables();
-
-            // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
-            // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
             currentEnv_ = prevEnv;
 
             // P0-4 fix: 不再调用 writeBack（会重复求值对象链），

@@ -155,6 +155,23 @@ Value Interpreter::callClosureValue(FunCall& node) {
     std::shared_ptr<Environment> funEnv;
     bool envFromSnapshot = false;
     Value result = Value::nullValue();
+
+    // RA-A fix: 用 RAII 守卫统一管理 funEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
+    // 消除原 catch(...) + throw; 的 rethrow（减少 First-chance Exception 日志噪声）。
+    // 守卫在正常路径和异常路径都执行清理，逻辑与原代码严格一致。
+    struct FunEnvGuard {
+        Interpreter& interp;
+        std::shared_ptr<Environment>& env;
+        std::shared_ptr<Environment>& prev;
+        bool dismissed = false;
+        ~FunEnvGuard() {
+            if (!dismissed) {
+                if (env) env->closeCapturedVariables();
+                interp.currentEnv_ = prev;
+            }
+        }
+    } envGuard{ *this, funEnv, prevEnv };
+
     try {
         funEnv = std::make_shared<Environment>(
             closureEnv ? closureEnv : currentEnv_);
@@ -182,15 +199,8 @@ Value Interpreter::callClosureValue(FunCall& node) {
     catch (ReturnException& e) {
         result = std::move(e.returnValue);
     }
-    catch (...) {
-        // C1 fix: 运行时错误时恢复解释器状态，再重抛
-        // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复，此处只需恢复 env
-        // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
-        // B1 fix: 关闭捕获 — 异常退出时将函数局部变量的最终值写回闭包 capturedVars
-        if (funEnv) funEnv->closeCapturedVariables();
-        currentEnv_ = prevEnv;
-        throw;
-    }
+    // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构会恢复 env + closeCaptured，
+    // 异常自然向上传播。B3/S2 由 CallFrameGuard/RecursionGuard 自动恢复。
 
     // C1 fix: 从快照恢复环境时，将变异写回 capturedVars，使后续调用可见
     // P0-6 fix: 仅写回原始 capturedVars 中已存在的键（捕获变量），
@@ -202,11 +212,11 @@ Value Interpreter::callClosureValue(FunCall& node) {
     // B1 fix: 关闭捕获 — 函数返回时将函数局部变量的最终值写回闭包 capturedVars。
     // 闭包若捕获了函数参数或局部变量（如 func outer() { var x=1; func f(){return x;} return f; }），
     // 需在 funEnv 销毁前将最终值快照到 capturedVars，否则 weak_ptr 失效后无法访问。
+    // RA-A fix: 由 envGuard 析构统一执行，此处 dismiss 避免重复
+    envGuard.dismissed = true;
     if (funEnv) funEnv->closeCapturedVariables();
-
-    // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复
-    // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
     currentEnv_ = prevEnv;
+
     return result;
 }
 
@@ -397,20 +407,28 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             // 压入类上下文（super 解析用）
             classContextStack_.push_back(cls->name);
 
+            // RA-A fix: RAII 守卫统一管理 initEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
+            // 消除原 catch(...) + throw; 的 rethrow。
+            struct InitEnvGuard {
+                Interpreter& interp;
+                std::shared_ptr<Environment>& env;
+                std::shared_ptr<Environment>& prev;
+                bool dismissed = false;
+                ~InitEnvGuard() {
+                    if (!dismissed) {
+                        env->closeCapturedVariables();
+                        interp.currentEnv_ = prev;
+                    }
+                }
+            } envGuard{ *this, initEnv, prevEnv };
+
             try {
                 executeFunctionBody(static_cast<Block&>(*initMethod->body));
             }
             catch (const ReturnException&) {
                 // init 方法的返回值忽略，但更新实例字段
             }
-            catch (...) {
-                // B1 fix: RAII guard 自动恢复 recursionDepth_，此处只需恢复其他状态
-                // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
-                // B1 fix: 关闭捕获 — init 异常退出时将局部变量最终值写回闭包 capturedVars
-                initEnv->closeCapturedVariables();
-                currentEnv_ = prevEnv;
-                throw;
-            }
+            // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
 
             // 从 init 环境中读取 this 的更新值
             auto* thisPtr = initEnv->get("this");
@@ -421,9 +439,9 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             // M3 fix: 移除冗余的局部变量→字段同步（同 VarDecl 路径，P5 bindInstance 已处理）
 
             // B1 fix: 关闭捕获 — init 正常退出时将局部变量最终值写回闭包 capturedVars
+            // RA-A fix: 由 envGuard 析构统一执行，此处 dismiss 避免重复
+            envGuard.dismissed = true;
             initEnv->closeCapturedVariables();
-
-            // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
             currentEnv_ = prevEnv;
         }
 
@@ -558,8 +576,23 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     Value result = Value::nullValue();
     std::shared_ptr<Environment> funEnv;  // C1 fix: 声明在 try 外以便写回
     bool envFromSnapshot = false;
-    try {
 
+    // RA-A fix: RAII 守卫统一管理 funEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
+    // 消除原 catch(...) + throw; 的 rethrow。
+    struct FunEnvGuard {
+        Interpreter& interp;
+        std::shared_ptr<Environment>& env;
+        std::shared_ptr<Environment>& prev;
+        bool dismissed = false;
+        ~FunEnvGuard() {
+            if (!dismissed) {
+                if (env) env->closeCapturedVariables();
+                interp.currentEnv_ = prev;
+            }
+        }
+    } envGuard{ *this, funEnv, prevEnv };
+
+    try {
         // 参数类型检查
         for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
             if (!funDecl->paramTypes[i].empty()) {
@@ -600,15 +633,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     catch (ReturnException& e) {
         result = std::move(e.returnValue);
     }
-    catch (...) {
-        // 运行时错误：先恢复调用状态，再重抛
-        // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复，此处只需恢复 env
-        // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
-        // B1 fix: 关闭捕获 — 异常退出时将函数局部变量的最终值写回闭包 capturedVars
-        if (funEnv) funEnv->closeCapturedVariables();
-        currentEnv_ = prevEnv;
-        throw;
-    }
+    // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
 
     // C1 fix: 从快照恢复环境时，将变异写回 capturedVars，使后续调用可见
     // P0-6 fix: 仅写回原始 capturedVars 中已存在的键（捕获变量），
@@ -618,10 +643,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     }
 
     // B1 fix: 关闭捕获 — 函数返回时将函数局部变量的最终值写回闭包 capturedVars
+    // RA-A fix: 由 envGuard 析构统一执行，此处 dismiss 避免重复
+    envGuard.dismissed = true;
     if (funEnv) funEnv->closeCapturedVariables();
-
-    // B3 fix: callStack_/returnType 由 CallFrameGuard 自动恢复
-    // S2 fix: recursionDepth_ 由 RecursionGuard 自动恢复
     currentEnv_ = prevEnv;
 
     return result;

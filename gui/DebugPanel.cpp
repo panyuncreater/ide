@@ -15,7 +15,9 @@
 static void styleScopeGroupHeader(QTreeWidgetItem* item) {
     QFont f = item->font(0);
     f.setBold(true);
-    f.setPointSize(f.pointSize() - 1);  // 小字号
+    // RA-C fix: 全局字体用 setPixelSize(14) 设置（main.cpp），pointSize() 返回 -1，
+    // pointSize()-1 = -2 触发 QFont::setPointSize 警告。改用 pixelSize 对齐项目策略。
+    f.setPixelSize(f.pixelSize() - 1);  // 小字号
     item->setFont(0, f);
     item->setFont(1, f);
     // 灰色文字

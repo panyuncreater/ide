@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <functional>  // VM-IMPORT: std::function for moduleLoader_
 #include <string>
 #include <vector>
 #include <variant>
@@ -28,6 +29,7 @@
 #include <unordered_set>
 #include "compiler/Bytecode.h"  // IRBackend lowering 到 BytecodeChunk + UpvalueDesc
 #include "compiler/GlobalSlotAllocator.h"  // B4: 全局槽位分配器
+#include "ast/ASTNode.h"  // VM-IMPORT: Block 完整定义（moduleAsts_ 需要 unique_ptr<Block> 析构）
 
 // ============================================================
 // IR 操作数
@@ -346,6 +348,12 @@ public:
     const std::string& errorMessage() const { return errorMessage_; }
     int errorLine() const { return errorLine_; }
 
+    // VM-IMPORT: 模块加载器（使 IR 路径也支持 import 语句的内联编译）
+    // Compiler 在 compileViaIR/compileViaRegisterIR 中调用 setModuleLoader 注入。
+    // build() 后调用 takeModuleAsts() 转移模块 AST 所有权给 Compiler 保留。
+    void setModuleLoader(std::function<std::string(const std::string&)> loader) { moduleLoader_ = std::move(loader); }
+    std::vector<std::unique_ptr<Block>> takeModuleAsts() { return std::move(moduleAsts_); }
+
 private:
     std::unique_ptr<IRFunction> ir_;
     IRBasicBlock* currentBlock_ = nullptr;  // 当前基本块（指令追加目标）
@@ -395,6 +403,15 @@ private:
 
     int allocateGlobalSlot(const std::string& name) { return globalSlotAllocator_.allocate(name); }
     int lookupGlobalSlot(const std::string& name) const { return globalSlotAllocator_.lookup(name); }
+
+    // VM-IMPORT: 模块系统状态（对齐 Compiler 的 moduleLoadingSet_/linkedModuleSet_）
+    std::function<std::string(const std::string&)> moduleLoader_;
+    std::unordered_set<std::string> moduleLoadingSet_;  // 正在编译中（循环检测）
+    std::unordered_set<std::string> linkedModuleSet_;   // 已完成（run-once）
+    std::vector<std::unique_ptr<Block>> moduleAsts_;    // 保留模块 AST
+
+    /// VM-IMPORT: 处理 import 语句（内联编译模块代码到当前 IR）
+    void handleImportStmt(ImportStmt& node);
 
     // 闭包 upvalue 追踪（限制1）
     struct UpvalueInfo { uint32_t index; bool isLocal; int outerIdx; };

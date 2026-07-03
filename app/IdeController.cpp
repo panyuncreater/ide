@@ -3,6 +3,11 @@
 #include "lexer/Lexer.h"      // #4 fix: VM 条件断点求值
 #include "parser/Parser.h"     // #4 fix: VM 条件断点求值
 #include "interpreter/Environment.h"  // #4 fix: VM 条件断点求值
+// VM-IMPORT: Compiler 模块加载器所需的 Qt 头文件
+#include <QFileInfo>
+#include <QDir>
+#include <QFile>
+#include <QStringList>
 
 // ============================================================
 // IdeController — 业务逻辑层 Facade 实现（ARCH-11 重构）
@@ -114,6 +119,8 @@ bool IdeController::runCompiler() {
         emit genericError("VM RUN 模式正在执行，请先停止 VM 再重新编译");
         return false;
     }
+    // VM-IMPORT: 编译前为 Compiler 设置模块加载器（使 VM 路径支持 import 语句）
+    setupCompilerModuleLoader(currentFilePath_);
     bool ok = pipeline_.runCompiler();
     // 编译成功后同步更新 VmStepper 的编译结果，使 VM 步进可用
     if (ok) {
@@ -140,6 +147,10 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
         emit genericError("已有运行在进行，请先停止当前运行");
         return false;
     }
+
+    // VM-IMPORT: 保存文件路径，并为 Compiler 设置模块加载器（VM 编译路径需要）
+    currentFilePath_ = filePath;
+    setupCompilerModuleLoader(filePath);
 
     // C9 fix: 使用统一前端管线（Lexer + Parser）
     auto pipelineResult = pipeline_.runFrontendPipeline(source);
@@ -174,4 +185,46 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
     }
 
     return true;
+}
+
+// ============================================================
+// VM-IMPORT: Compiler 模块加载器设置
+// ------------------------------------------------------------
+// 对齐 WorkerManager::prepareRun 中为 Interpreter 设置的模块加载器逻辑，
+// 使 VM 编译路径（栈式 / IR / 寄存器式）也能处理 import 语句。
+// 模块路径解析策略：
+//   1. 以当前文件所在目录为基准查找 <modulePath>.mini
+//   2. 若 baseDir 为空，则按字面路径查找
+//   3. 自动补充 .mini 后缀
+// 找不到时返回空字符串，由 Compiler::visitImportStmt 报错
+// ============================================================
+void IdeController::setupCompilerModuleLoader(const std::string& filePath) {
+    QString baseDir;
+    if (!filePath.empty()) {
+        QFileInfo fi(QString::fromStdString(filePath));
+        baseDir = fi.absolutePath();
+    }
+    // 设置当前文件路径（Compiler 用于相对路径解析）
+    pipeline_.compiler().setCurrentFilePath(filePath);
+    // 捕获 baseDir 副本到 lambda（独立于 IdeController 生命周期，
+    // Compiler 持有 std::function 直到下次设置或析构）
+    pipeline_.compiler().setModuleLoader([baseDir](const std::string& modulePath) -> std::string {
+        QString qPath = QString::fromStdString(modulePath);
+        if (!qPath.endsWith(".mini", Qt::CaseInsensitive)) {
+            qPath += ".mini";
+        }
+        QStringList candidates;
+        if (baseDir.isEmpty()) {
+            candidates << qPath;
+        } else {
+            candidates << QDir(baseDir).filePath(qPath) << qPath;
+        }
+        for (const QString& candidate : candidates) {
+            QFile file(candidate);
+            if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                return QString::fromUtf8(file.readAll()).toStdString();
+            }
+        }
+        return "";
+    });
 }

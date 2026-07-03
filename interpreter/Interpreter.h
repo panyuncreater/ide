@@ -236,6 +236,16 @@ private:
     std::string currentFunctionReturnType_;         // 当前函数的返回类型
     std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
 
+    // RA-C fix: break/continue 改用状态标志而非 C++ 异常。
+    // 仅在循环结构（visitWhileStmt/visitForStmt）内有效，传播路径短。
+    // visitBlock/visitIfStmt 在 evaluate 后检查此标志并提前退出，
+    // 避免后续语句覆盖标志或执行不该执行的副作用。
+    // ReturnException 仍保留异常机制（跨函数非局部跳转，状态标志侵入性大）。
+    // 用户级 try-catch 不受影响：break/continue 是标志不是异常，
+    // 绝不会被 catch (ThrowException&) 误捕，自然穿透 try 块到达循环。
+    enum class LoopFlow { None, Break, Continue };
+    LoopFlow loopFlow_ = LoopFlow::None;
+
     // ARCH-12 fix: REPL 状态暂存聚合为 ReplState 结构体（原为 10 个散布的 saved* 字段）。
     // 将 REPL 状态管理的完整边界集中在一处，便于理解和未来进一步提取为独立类。
     // 语义：saveReplState() 将当前 REPL 状态 move 到 ReplState，restoreReplState() 反向 move 回。

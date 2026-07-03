@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <functional>  // VM-IMPORT: std::function for moduleLoader_
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -80,6 +81,13 @@ public:
     /// PERF-14: 寄存器式编译结果（compileViaRegisterIR 后有效）
     const RegisterCompileResult& getLastRegisterResult() const { return lastRegisterResult_; }
 
+    // VM-IMPORT: 模块加载器（使 VM 编译路径支持 import 语句）
+    // 语义对齐 Interpreter::setModuleLoader：IDE 在编译前注入基于当前文件路径的加载回调。
+    // 直接路径在 visitImportStmt 中使用；IR/寄存器路径在 compileViaIR/compileViaRegisterIR
+    // 中转发给 AstIRBuilder。
+    void setModuleLoader(std::function<std::string(const std::string&)> loader) { moduleLoader_ = std::move(loader); }
+    void setCurrentFilePath(const std::string& path) { currentFilePath_ = path; }
+
     /// ARCH-06: 获取最近一次 IR 构建结果（用于调试/可视化）。
     /// 仅当 useIR_=true 且 compile() 成功后有效。返回 nullptr 表示未启用 IR 或构建失败。
     const IRFunction* getLastIR() const { return lastIR_.get(); }
@@ -149,6 +157,27 @@ private:
 
     // P0-4 fix: 跟踪当前 try 块嵌套深度，break/continue 跳出 try 块时需发射 OP_TRY_END
     int tryDepth_ = 0;
+
+    // VM-IMPORT: 模块系统状态（对齐 Interpreter 的 moduleCache_/moduleLoadingSet_ 设计）
+    // 直接路径与 IR 路径共用此状态，确保模块只编译一次（run-once 语义）。
+    std::function<std::string(const std::string&)> moduleLoader_;  // 模块源码加载回调
+    std::string currentFilePath_;                                  // 当前文件路径（相对路径解析基准）
+    std::unordered_set<std::string> moduleLoadingSet_;             // 正在编译中的模块（循环依赖检测）
+    std::unordered_set<std::string> linkedModuleSet_;              // 已完成编译的模块（run-once 语义）
+    std::vector<std::unique_ptr<Block>> moduleAsts_;               // 保留模块 AST（确保函数/类定义指针在编译期有效）
+
+    /// VM-IMPORT: 模块路径规范化与安全校验（对齐 InterpreterModules.cpp SEC-1 防护）
+    /// 返回空字符串表示路径非法（调用方应报错）
+    std::string normalizeModulePath(const std::string& rawPath) const;
+
+    /// VM-IMPORT: 加载并解析模块源码，返回模块 AST（nullptr 表示失败）
+    std::unique_ptr<Block> loadAndParseModule(const std::string& modulePath, int line);
+
+    /// VM-IMPORT: 预扫描模块顶层声明，分配全局槽位（VarDecl/FunDecl/ClassDecl/ExportStmt）
+    void preScanModuleGlobals(Block& moduleAst);
+
+    /// VM-IMPORT: 从 ExportStmt 中提取声明名（返回空字符串表示无法提取）
+    static std::string extractExportName(const ExportStmt& node);
 
     // ---- C3 fix: 编译上下文 RAII 守卫 ----
     // visitFunDecl 需保存/恢复 15 个成员变量。原代码手动 std::move 保存 + 手动恢复

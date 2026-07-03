@@ -194,4 +194,11 @@ private:
     WorkerManager workerMgr_;
     DebugCoordinator debugCoord_;
     VmStepper vmStepper_;
+
+    // VM-IMPORT: 当前文件路径（供 runCompiler 设置 Compiler 模块加载器的相对路径基准）
+    std::string currentFilePath_;
+
+    /// VM-IMPORT: 为 Compiler 设置模块加载器（对齐 WorkerManager 为 Interpreter 设置的 loader）
+    /// 基于 filePath 的目录解析相对模块路径，自动添加 .mini 后缀
+    void setupCompilerModuleLoader(const std::string& filePath);
 };

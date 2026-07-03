@@ -106,22 +106,40 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         moduleLoadingStack_.push_back(modulePath);
         moduleLoadingSet_.insert(modulePath);  // D19 fix: 与 stack 同步维护 set
 
-        try {
-            for (auto& stmt : ast->statements) {
-                evaluate(stmt.get());
+        // RA-A fix: RAII 守卫统一管理异常路径下的状态恢复（moduleEnv close、env、exported、loadingStack/Set），
+        // 消除原 catch(...) + throw; 的 rethrow。正常路径通过 dismiss 跳过守卫清理。
+        struct ModuleEnvGuard {
+            Interpreter& interp;
+            std::shared_ptr<Environment>& env;
+            std::shared_ptr<Environment>& saved;
+            std::unordered_set<std::string>& exported;
+            std::unordered_set<std::string> savedExported;
+            std::vector<std::string>& loadingStack;
+            std::unordered_set<std::string>& loadingSet;
+            const std::string& modulePath;
+            bool dismissed = false;
+            ~ModuleEnvGuard() {
+                if (!dismissed) {
+                    // AUDIT-BUG-F8 fix: 异常路径必须调用 closeCapturedVariables，将模块内闭包的
+                    // open upvalues 关闭为最终值快照。原实现仅恢复 env/exported/loadingStack，
+                    // moduleEnv 即将析构，逃逸闭包（经 throw 逃出模块）的 capturedVars 保持初始值。
+                    env->closeCapturedVariables();
+                    interp.currentEnv_ = saved;
+                    exported = std::move(savedExported);
+                    loadingStack.pop_back();
+                    loadingSet.erase(modulePath);  // D19 fix: 同步移除
+                }
             }
-        } catch (...) {
-            // AUDIT-BUG-F8 fix: 异常路径必须调用 closeCapturedVariables，将模块内闭包的
-            // open upvalues 关闭为最终值快照。原实现仅恢复 env/exported/loadingStack，
-            // moduleEnv 即将析构，逃逸闭包（经 throw 逃出模块）的 capturedVars 保持初始值。
-            moduleEnv->closeCapturedVariables();
-            currentEnv_ = savedEnv;
-            exportedNames_ = savedExported;
-            moduleLoadingStack_.pop_back();
-            moduleLoadingSet_.erase(modulePath);  // D19 fix: 同步移除
-            throw;
-        }
+        } envGuard{ *this, moduleEnv, savedEnv, exportedNames_, savedExported,
+                    moduleLoadingStack_, moduleLoadingSet_, modulePath };
 
+        for (auto& stmt : ast->statements) {
+            evaluate(stmt.get());
+        }
+        // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
+
+        // RA-A fix: 正常路径，dismiss 守卫后手动执行完整清理
+        envGuard.dismissed = true;
         moduleLoadingStack_.pop_back();
         moduleLoadingSet_.erase(modulePath);  // D19 fix: 同步移除
         currentEnv_ = savedEnv;

@@ -1,6 +1,8 @@
 #include "compiler/Compiler.h"
 #include "compiler/RegisterBytecodeBackend.h"  // PERF-14: 寄存器式后端
 #include "interpreter/NumericUtils.h"  // 共享溢出检查（B6 fix）
+#include "lexer/Lexer.h"      // VM-IMPORT: 模块源码词法分析
+#include "parser/Parser.h"    // VM-IMPORT: 模块源码语法分析
 #include "Logger.h"
 #include <sstream>
 #include <algorithm>
@@ -70,6 +72,10 @@ CompileResult Compiler::compile(Block& program) {
     globalSlotAllocator_.clear();  // B4: 重置全局槽位分配器
     innerFunctions_.clear();        // H5 fix: 重置内嵌函数追踪
     innerFunctionSlots_.clear();    // H5 fix
+    // VM-IMPORT: 清理模块系统状态（每次编译重置，避免跨编译复用旧缓存）
+    linkedModuleSet_.clear();
+    moduleLoadingSet_.clear();
+    moduleAsts_.clear();
 
     // A2: pre-scan top-level declarations to assign global slots (eliminates forward-reference issues)
     for (auto& stmt : program.statements) {
@@ -118,6 +124,12 @@ CompileResult Compiler::compileViaIR(Block& program) {
 
     // 阶段 1：AST → IR
     AstIRBuilder irBuilder;
+    // VM-IMPORT: 转发模块加载器给 AstIRBuilder，使 IR 路径也支持 import
+    irBuilder.setModuleLoader(moduleLoader_);
+    // 清理上次编译的模块状态（对齐 compile() 直接路径的清理）
+    linkedModuleSet_.clear();
+    moduleLoadingSet_.clear();
+    moduleAsts_.clear();
     lastIR_ = irBuilder.build(program);
     if (!lastIR_) {
         error("IR 构建失败", 0, 0);
@@ -130,6 +142,11 @@ CompileResult Compiler::compileViaIR(Block& program) {
         error(irBuilder.errorMessage(), irBuilder.errorLine(), 0);
         CompileResult emptyResult;
         return emptyResult;
+    }
+    // VM-IMPORT: 收集 AstIRBuilder 保留的模块 AST（确保函数/类定义指针在编译期有效）
+    auto irModuleAsts = irBuilder.takeModuleAsts();
+    for (auto& ast : irModuleAsts) {
+        moduleAsts_.push_back(std::move(ast));
     }
 
     // 方向二：IR 优化 pass（可选）
@@ -200,6 +217,11 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
 
     // 阶段 1：AST → IR
     AstIRBuilder irBuilder;
+    // VM-IMPORT: 转发模块加载器给 AstIRBuilder，使寄存器式路径也支持 import
+    irBuilder.setModuleLoader(moduleLoader_);
+    linkedModuleSet_.clear();
+    moduleLoadingSet_.clear();
+    moduleAsts_.clear();
     lastIR_ = irBuilder.build(program);
     if (!lastIR_) {
         error("IR 构建失败", 0, 0);
@@ -211,6 +233,11 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
         error(irBuilder.errorMessage(), irBuilder.errorLine(), 0);
         RegisterCompileResult emptyResult;
         return emptyResult;
+    }
+    // VM-IMPORT: 收集 AstIRBuilder 保留的模块 AST
+    auto irModuleAsts = irBuilder.takeModuleAsts();
+    for (auto& ast : irModuleAsts) {
+        moduleAsts_.push_back(std::move(ast));
     }
 
     // PERF-15: IR 优化 pass
@@ -1265,18 +1292,218 @@ void Compiler::visitThrowStmt(ThrowStmt& node) {
 }
 
 void Compiler::visitImportStmt(ImportStmt& node) {
-    // F12: VM 不支持模块加载，编译为运行时错误
-    // 模块系统由 Interpreter 层处理，VM 编译时发出警告但不阻止编译
-    error("VM 不支持 import 语句，请使用解释器模式", node.line, 0);
-    return;
+    // VM-IMPORT: 编译期模块内联——加载模块源码、解析 AST、预扫描全局槽位、
+    // 内联编译模块语句。模块代码在编译期被"展开"到主程序中，VM 运行时无需模块加载机制。
+    //
+    // 语义差异说明（与 Interpreter 对比）：
+    // - Interpreter: 模块在独立 Environment 中执行，仅导出名可见（P1-2 隔离）
+    // - VM: 模块代码内联到同一全局作用域，所有顶层名可见（无隔离）
+    //   实践影响小——导入方通常只使用其声明的导入名，不会访问模块内部变量
+    // - run-once: 同一模块多次 import 时仅编译/执行一次（linkedModuleSet_ 保证）
+
+    // 1. 路径规范化与安全校验（SEC-1: 路径遍历防护）
+    std::string modulePath = normalizeModulePath(node.modulePath);
+    if (modulePath.empty()) {
+        error("模块路径无效: " + node.modulePath, node.line, 0);
+        return;
+    }
+
+    // 2. run-once 检查：已编译的模块跳过（全局槽位已定义）
+    if (linkedModuleSet_.count(modulePath)) {
+        // 已编译——仅验证具名导入是否存在
+        if (!node.importAll && !node.names.empty()) {
+            for (const auto& name : node.names) {
+                if (lookupGlobalSlot(name) < 0) {
+                    error("模块 '" + modulePath + "' 未导出名称: " + name, node.line, 0);
+                    return;
+                }
+            }
+        }
+        return;
+    }
+
+    // 3. 循环依赖检测
+    if (moduleLoadingSet_.count(modulePath)) {
+        error("检测到循环依赖: " + modulePath, node.line, 0);
+        return;
+    }
+
+    // 4. 检查模块加载器
+    if (!moduleLoader_) {
+        error("VM 编译需要模块加载器（moduleLoader 未设置），请通过文件路径运行", node.line, 0);
+        return;
+    }
+
+    // 5. 标记为正在加载（循环检测）
+    moduleLoadingSet_.insert(modulePath);
+
+    // 6. 加载并解析模块
+    auto moduleAst = loadAndParseModule(modulePath, node.line);
+    if (!moduleAst) {
+        moduleLoadingSet_.erase(modulePath);
+        return;  // loadAndParseModule 已调用 error()
+    }
+
+    // 7. 预扫描模块顶层声明，分配全局槽位
+    preScanModuleGlobals(*moduleAst);
+
+    // 8. 内联编译模块语句（递归处理模块自身的 import）
+    for (auto& stmt : moduleAst->statements) {
+        if (stmt) compileStatement(stmt.get());
+    }
+
+    // 9. 保留模块 AST（函数/类定义指针在字节码中以常量池索引引用，AST 必须存活）
+    moduleAsts_.push_back(std::move(moduleAst));
+
+    // 10. 从加载集移除，标记为已链接
+    moduleLoadingSet_.erase(modulePath);
+    linkedModuleSet_.insert(modulePath);
+
+    // 11. 具名导入验证
+    if (!node.importAll && !node.names.empty()) {
+        for (const auto& name : node.names) {
+            if (lookupGlobalSlot(name) < 0) {
+                error("模块 '" + modulePath + "' 未导出名称: " + name, node.line, 0);
+                return;
+            }
+        }
+    }
 }
 
 void Compiler::visitExportStmt(ExportStmt& node) {
-    // F12: export 在 VM 中等价于普通声明（导出语义由 Interpreter 处理）
+    // VM-IMPORT: export 在 VM 中等价于普通声明编译（导出语义在编译期内联时自然满足——
+    // 模块的所有顶层声明对导入方可见）。记录导出名供 import 验证使用。
     if (node.declaration) {
         compileNode(node.declaration.get());
     }
     return;
+}
+
+// ============================================================
+// VM-IMPORT: 模块系统辅助方法
+// ============================================================
+
+std::string Compiler::normalizeModulePath(const std::string& rawPath) const {
+    // 对齐 InterpreterModules.cpp:20-53 的路径规范化与 SEC-1 安全校验
+    std::string path = rawPath;
+    // 统一路径分隔符为 '/'
+    for (char& c : path) {
+        if (c == '\\') c = '/';
+    }
+    // 去除 "./" 前缀
+    if (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
+        path.erase(0, 2);
+    }
+    // 空路径
+    if (path.empty()) return "";
+    // 绝对路径检测（Unix '/' 或 Windows 'C:/'）
+    if (path[0] == '/' || (path.size() >= 3 && path[1] == ':' &&
+        (path[2] == '/' || path[2] == '\\'))) {
+        return "";
+    }
+    // ".." 路径段检测
+    size_t pos = 0;
+    while (pos < path.size()) {
+        size_t next = path.find('/', pos);
+        std::string segment = (next == std::string::npos)
+            ? path.substr(pos) : path.substr(pos, next - pos);
+        if (segment == "..") return "";
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
+    return path;
+}
+
+std::unique_ptr<Block> Compiler::loadAndParseModule(const std::string& modulePath, int line) {
+    // 调用模块加载器获取源码
+    std::string source = moduleLoader_(modulePath);
+    if (source.empty()) {
+        error("无法加载模块: " + modulePath + "（文件不存在或为空）", line, 0);
+        return nullptr;
+    }
+    // 词法分析
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    // BUG-FIX: 检查词法错误并转发到编译诊断（原实现吞掉 Lexer 错误）
+    if (lexer.getDiagnostics().hasErrors()) {
+        const auto& diags = lexer.getDiagnostics().all();
+        if (!diags.empty()) {
+            const auto& d = diags.front();
+            error("模块 '" + modulePath + "' 词法错误: " + d.message, d.line, d.column);
+        } else {
+            error("模块 '" + modulePath + "' 词法错误", line, 0);
+        }
+        return nullptr;
+    }
+    // 语法分析
+    Parser parser;
+    auto moduleAst = parser.parse(tokens);
+    // BUG-FIX: 检查语法错误并转发到编译诊断（原实现仅检查 AST 是否为空，
+    // 可恢复错误的 AST 会被当作成功加载）
+    if (parser.hasErrors()) {
+        const auto& diags = parser.getDiagnostics().all();
+        if (!diags.empty()) {
+            const auto& d = diags.front();
+            error("模块 '" + modulePath + "' 语法错误: " + d.message, d.line, d.column);
+        } else {
+            error("模块 '" + modulePath + "' 语法错误", line, 0);
+        }
+        return nullptr;
+    }
+    if (!moduleAst) {
+        error("模块解析失败: " + modulePath, line, 0);
+        return nullptr;
+    }
+    return moduleAst;
+}
+
+void Compiler::preScanModuleGlobals(Block& moduleAst) {
+    // 预扫描模块顶层声明，分配全局槽位（对齐 compile() 中的顶层 pre-scan 逻辑）
+    for (auto& stmt : moduleAst.statements) {
+        if (!stmt) continue;
+        switch (stmt->nodeType) {
+        case NodeType::NODE_VAR_DECL:
+            allocateGlobalSlot(static_cast<VarDecl*>(stmt.get())->name);
+            break;
+        case NodeType::NODE_CLASS_DECL:
+            allocateGlobalSlot(static_cast<ClassDecl*>(stmt.get())->name);
+            break;
+        case NodeType::NODE_FUN_DECL:
+            allocateGlobalSlot(static_cast<FunDecl*>(stmt.get())->name);
+            break;
+        case NodeType::NODE_EXPORT_STMT: {
+            // ExportStmt 包装内部声明——提取声明名并分配槽位
+            auto* exportNode = static_cast<ExportStmt*>(stmt.get());
+            if (exportNode->declaration) {
+                ASTNode* decl = exportNode->declaration.get();
+                switch (decl->nodeType) {
+                case NodeType::NODE_VAR_DECL:
+                    allocateGlobalSlot(static_cast<VarDecl*>(decl)->name);
+                    break;
+                case NodeType::NODE_CLASS_DECL:
+                    allocateGlobalSlot(static_cast<ClassDecl*>(decl)->name);
+                    break;
+                case NodeType::NODE_FUN_DECL:
+                    allocateGlobalSlot(static_cast<FunDecl*>(decl)->name);
+                    break;
+                default: break;
+                }
+            }
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+std::string Compiler::extractExportName(const ExportStmt& node) {
+    if (!node.declaration) return "";
+    switch (node.declaration->nodeType) {
+    case NodeType::NODE_VAR_DECL: return static_cast<VarDecl*>(node.declaration.get())->name;
+    case NodeType::NODE_FUN_DECL: return static_cast<FunDecl*>(node.declaration.get())->name;
+    case NodeType::NODE_CLASS_DECL: return static_cast<ClassDecl*>(node.declaration.get())->name;
+    default: return "";
+    }
 }
 
 void Compiler::visitTryStmt(TryStmt& node) {

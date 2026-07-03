@@ -110,6 +110,7 @@ private slots:
 private:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
 
     void syncVmBreakpoints();
     void updateTabCloseButtons(int hoveredIndex);
@@ -143,6 +144,18 @@ private:
 
     // 活动栏
     ActivityBar* activityBar_ = nullptr;
+
+    // ---- 第九轮：自定义顶部区域（标题栏 + 菜单栏 + 工具栏）----
+    QWidget* titleBar_ = nullptr;           // 自定义标题栏容器
+    QLabel* titleIconLabel_ = nullptr;      // 程序图标
+    QLabel* titleTextLabel_ = nullptr;      // "MiniLang IDE" 文字
+    QLabel* titlePathLabel_ = nullptr;      // 当前文件路径（灰色小字）
+    QToolButton* titleMinBtn_ = nullptr;    // 最小化
+    QToolButton* titleMaxBtn_ = nullptr;    // 最大化/还原
+    QToolButton* titleCloseBtn_ = nullptr;  // 关闭
+    QMenuBar* customMenuBar_ = nullptr;     // 自定义菜单栏（非 QMainWindow 内置）
+    QToolBar* mainToolbar_ = nullptr;       // 自定义工具栏（非 QMainWindow 内置）
+    bool syncingViewAction_ = false;        // 防止视图菜单与面板 toggleView 递归
 
     // 左侧面板
     ads::CDockWidget* fileTreeDock_ = nullptr;
@@ -222,7 +235,7 @@ private:
     QString currentFilePath_;
     bool isDirty_ = false;
     bool hasWorkspace_ = false;
-    int bottomPanelHeight_ = 220;  // 第八轮：输出面板默认高度，用户调整后记忆
+    int bottomPanelHeight_ = 240;  // 第九轮：输出面板默认高度，用户调整后记忆
 
     // ---- 防抖定时器 ----
     QTimer* completionTimer_ = nullptr;     // 补全词刷新（500ms）
@@ -259,10 +272,14 @@ private:
     void initWelcomePage();
     void initMenuBar();
     void initStatusBar();
+    void initTitleBar();       // 第九轮：自定义标题栏
     void applyFluentStyle();
     void setupCompletion();
     void updateCompletionWords();
     void updateStatusBar();
+
+    /// 第九轮：同步视图菜单勾选状态与 dock 实际显隐
+    void syncViewMenuChecks();
 
     // ---- 输出/错误 ----
     void appendOutput(const QString& text);

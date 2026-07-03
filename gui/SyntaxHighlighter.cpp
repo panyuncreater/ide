@@ -22,23 +22,23 @@ void SyntaxHighlighter::initRules() {
     keywordSet_.clear();
 
     if (isDarkTheme_) {
-        // 深色主题（VS Code Dark+ 风格）
-        keywordFormat_.setForeground(QColor(0x56, 0x9c, 0xd6));   // 蓝色
+        // 深色主题（VS Code Dark+ 2024 风格）
+        keywordFormat_.setForeground(QColor(0x56, 0x9c, 0xd6));   // 蓝色关键字
         keywordFormat_.setFontWeight(QFont::Bold);
-        stringFormat_.setForeground(QColor(0xce, 0x91, 0x78));    // 橙棕色
-        numberFormat_.setForeground(QColor(0xb5, 0xce, 0xa8));    // 浅绿色
-        commentFormat_.setForeground(QColor(0x6a, 0x99, 0x55));   // 绿色
+        stringFormat_.setForeground(QColor(0xce, 0x91, 0x78));    // 橙棕色字符串
+        numberFormat_.setForeground(QColor(0xb5, 0xce, 0xa8));    // 浅绿色数字
+        commentFormat_.setForeground(QColor(0x6a, 0x99, 0x55));   // 绿色注释
         commentFormat_.setFontItalic(true);
-        operatorFormat_.setForeground(QColor(0xd4, 0xd4, 0xd4));  // 浅灰色
+        operatorFormat_.setForeground(QColor(0xd4, 0xd4, 0xd4));  // 浅灰色运算符
     } else {
-        // 浅色主题（原有配色）
-        keywordFormat_.setForeground(QColor(0, 0, 180));           // 蓝色
+        // 浅色主题（VS Code Light+ 2024 风格 — 更鲜艳、层次更清晰）
+        keywordFormat_.setForeground(QColor(0x00, 0x00, 0xc8));   // 深蓝色关键字
         keywordFormat_.setFontWeight(QFont::Bold);
-        stringFormat_.setForeground(QColor(0, 128, 0));            // 绿色
-        numberFormat_.setForeground(QColor(200, 100, 0));          // 橙色
-        commentFormat_.setForeground(QColor(128, 128, 128));       // 灰色
+        stringFormat_.setForeground(QColor(0x01, 0x65, 0x2e));    // 深绿色字符串
+        numberFormat_.setForeground(QColor(0x09, 0x86, 0x48));     // 绿色数字
+        commentFormat_.setForeground(QColor(0x00, 0x80, 0x00));     // 绿色注释
         commentFormat_.setFontItalic(true);
-        operatorFormat_.setForeground(QColor(128, 0, 128));        // 紫色
+        operatorFormat_.setForeground(QColor(0x38, 0x3a, 0x42));   // 深灰色运算符
     }
 
     // ---- 添加高亮规则 ----

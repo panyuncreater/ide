@@ -2,6 +2,8 @@
 #include "ast/ASTNode.h"
 #include "interpreter/Value.h"
 #include "interpreter/NumericUtils.h"  // #14: OverflowCheck
+#include "lexer/Lexer.h"      // VM-IMPORT: 模块源码词法分析
+#include "parser/Parser.h"    // VM-IMPORT: 模块源码语法分析
 #include "Logger.h"
 #include <cassert>
 #include <sstream>
@@ -124,6 +126,8 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
     for (auto& stmt : program.statements) {
         if (!stmt) continue;
         visitNode(stmt.get());
+        // BUG-FIX: import 失败后立即中止，避免基于不完整状态继续生成坏 IR
+        if (hasError_) return nullptr;
         // 表达式语句的返回值未被消费，需 emit POP 防止栈式 VM (BytecodeIRBackend) 栈泄漏。
         // RegisterBytecodeBackend 中 POP 是 no-op，不影响寄存器式 VM。
         // BytecodeIRBackend 将所有表达式 vreg 物化为 StackVM 栈值
@@ -153,15 +157,177 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
 // ---- 全局槽位管理（限制3 / B4: 已内联到 IR.h，委托给 globalSlotAllocator_）----
 
 void AstIRBuilder::preScanTopLevelDecls(Block& program) {
-    // 遍历顶层语句，为 VarDecl 和 ClassDecl 分配全局槽位
+    // 遍历顶层语句，为 VarDecl/ClassDecl/FunDecl/ExportStmt 分配全局槽位
+    // BUG-FIX: 原实现漏掉 NODE_FUN_DECL 和 NODE_EXPORT_STMT，导致前向函数引用
+    // 和主程序 export 声明在 IR 路径下全局槽位未预分配。对齐 Compiler::preScanModuleGlobals。
     for (auto& stmt : program.statements) {
         if (!stmt) continue;
-        if (stmt->nodeType == NodeType::NODE_VAR_DECL) {
-            VarDecl* vd = static_cast<VarDecl*>(stmt.get());
-            allocateGlobalSlot(vd->name);
-        } else if (stmt->nodeType == NodeType::NODE_CLASS_DECL) {
-            ClassDecl* cd = static_cast<ClassDecl*>(stmt.get());
-            allocateGlobalSlot(cd->name);
+        switch (stmt->nodeType) {
+        case NodeType::NODE_VAR_DECL:
+            allocateGlobalSlot(static_cast<VarDecl*>(stmt.get())->name);
+            break;
+        case NodeType::NODE_CLASS_DECL:
+            allocateGlobalSlot(static_cast<ClassDecl*>(stmt.get())->name);
+            break;
+        case NodeType::NODE_FUN_DECL:
+            allocateGlobalSlot(static_cast<FunDecl*>(stmt.get())->name);
+            break;
+        case NodeType::NODE_EXPORT_STMT: {
+            auto* exp = static_cast<ExportStmt*>(stmt.get());
+            if (exp->declaration) {
+                ASTNode* decl = exp->declaration.get();
+                switch (decl->nodeType) {
+                case NodeType::NODE_VAR_DECL:
+                    allocateGlobalSlot(static_cast<VarDecl*>(decl)->name);
+                    break;
+                case NodeType::NODE_CLASS_DECL:
+                    allocateGlobalSlot(static_cast<ClassDecl*>(decl)->name);
+                    break;
+                case NodeType::NODE_FUN_DECL:
+                    allocateGlobalSlot(static_cast<FunDecl*>(decl)->name);
+                    break;
+                default: break;
+                }
+            }
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+// ============================================================
+// VM-IMPORT: 模块系统（IR 路径）
+// ============================================================
+// 对齐 Compiler::visitImportStmt 的语义：编译期内联模块代码。
+// 模块源码被加载、解析为 AST，然后逐条 visitNode 内联到当前 IR 中。
+// 全局槽位由 globalSlotAllocator_ 统一分配，模块的顶层声明自然成为主程序的全局变量。
+
+void AstIRBuilder::handleImportStmt(ImportStmt& node) {
+    // 1. 路径规范化与安全校验（对齐 Compiler::normalizeModulePath）
+    std::string path = node.modulePath;
+    for (char& c : path) { if (c == '\\') c = '/'; }
+    if (path.size() >= 2 && path[0] == '.' && path[1] == '/') path.erase(0, 2);
+    if (path.empty()) {
+        hasError_ = true; errorMessage_ = "模块路径不能为空"; errorLine_ = node.line;
+        return;
+    }
+    if (path[0] == '/' || (path.size() >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\'))) {
+        hasError_ = true; errorMessage_ = "模块路径不能为绝对路径: " + path; errorLine_ = node.line;
+        return;
+    }
+    // ".." 路径段检测
+    for (size_t pos = 0; pos < path.size(); ) {
+        size_t next = path.find('/', pos);
+        std::string seg = (next == std::string::npos) ? path.substr(pos) : path.substr(pos, next - pos);
+        if (seg == "..") {
+            hasError_ = true; errorMessage_ = "模块路径不能包含父目录引用 '..': " + path; errorLine_ = node.line;
+            return;
+        }
+        if (next == std::string::npos) break;
+        pos = next + 1;
+    }
+
+    // 2. run-once 检查
+    if (linkedModuleSet_.count(path)) {
+        // 已编译——验证具名导入
+        if (!node.importAll && !node.names.empty()) {
+            for (const auto& name : node.names) {
+                if (lookupGlobalSlot(name) < 0) {
+                    hasError_ = true;
+                    errorMessage_ = "模块 '" + path + "' 未导出名称: " + name;
+                    errorLine_ = node.line;
+                    return;
+                }
+            }
+        }
+        return;
+    }
+
+    // 3. 循环依赖检测
+    if (moduleLoadingSet_.count(path)) {
+        hasError_ = true; errorMessage_ = "检测到循环依赖: " + path; errorLine_ = node.line;
+        return;
+    }
+
+    // 4. 检查模块加载器
+    if (!moduleLoader_) {
+        hasError_ = true; errorMessage_ = "VM 编译需要模块加载器（moduleLoader 未设置）"; errorLine_ = node.line;
+        return;
+    }
+
+    // 5. 加载源码
+    std::string source = moduleLoader_(path);
+    if (source.empty()) {
+        hasError_ = true; errorMessage_ = "无法加载模块: " + path + "（文件不存在或为空）"; errorLine_ = node.line;
+        return;
+    }
+
+    // 6. 解析模块 AST
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    // BUG-FIX: 检查词法错误（原实现吞掉 Lexer 错误）
+    if (lexer.getDiagnostics().hasErrors()) {
+        const auto& diags = lexer.getDiagnostics().all();
+        std::string msg = "模块 '" + path + "' 词法错误";
+        if (!diags.empty()) {
+            msg += ": " + diags.front().message;
+        }
+        hasError_ = true; errorMessage_ = msg; errorLine_ = node.line;
+        return;
+    }
+    Parser parser;
+    auto moduleAst = parser.parse(tokens);
+    // BUG-FIX: 检查语法错误（原实现仅检查 AST 是否为空）
+    if (parser.hasErrors()) {
+        const auto& diags = parser.getDiagnostics().all();
+        std::string msg = "模块 '" + path + "' 语法错误";
+        if (!diags.empty()) {
+            msg += ": " + diags.front().message;
+        }
+        hasError_ = true; errorMessage_ = msg; errorLine_ = node.line;
+        return;
+    }
+    if (!moduleAst) {
+        hasError_ = true; errorMessage_ = "模块解析失败: " + path; errorLine_ = node.line;
+        return;
+    }
+
+    // 7. 标记为正在加载
+    moduleLoadingSet_.insert(path);
+
+    // 8. 预扫描模块顶层声明，分配全局槽位
+    preScanTopLevelDecls(*moduleAst);
+    // 注：preScanTopLevelDecls 已处理 ExportStmt 包装的声明（BUG-FIX 后对齐 Compiler）
+
+    // 9. 内联 visitNode 模块语句（递归处理模块自身的 import）
+    for (auto& stmt : moduleAst->statements) {
+        if (stmt) {
+            visitNode(stmt.get());
+            // BUG-FIX: 嵌套 import 失败后立即中止，避免基于不完整状态继续生成坏 IR
+            if (hasError_) {
+                moduleLoadingSet_.erase(path);
+                return;
+            }
+            // 表达式语句的返回值需 POP（对齐 build() 中的逻辑）
+            // visitNode 产生的 vreg 若未被消费，IR lowering 时 BytecodeIRBackend 会压栈
+        }
+    }
+
+    // 10. 保留模块 AST，从加载集移除
+    moduleAsts_.push_back(std::move(moduleAst));
+    moduleLoadingSet_.erase(path);
+    linkedModuleSet_.insert(path);
+
+    // 11. 具名导入验证
+    if (!node.importAll && !node.names.empty()) {
+        for (const auto& name : node.names) {
+            if (lookupGlobalSlot(name) < 0) {
+                hasError_ = true;
+                errorMessage_ = "模块 '" + path + "' 未导出名称: " + name;
+                errorLine_ = node.line;
+                return;
+            }
         }
     }
 }
@@ -572,17 +738,12 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
         }
         return IROperand::vreg(0);
     }
-    // BUG-MOD-1 fix: IMPORT 在 IR 路径不支持，应明确报错而非 assert 崩溃。
-    // 对齐 Compiler.cpp visitImportStmt 的 error() 行为。
-    // 原实现将 NODE_IMPORT_STMT 与 default 共用 assert(false) 分支：
-    //   - Debug 构建崩溃（abort）
-    //   - Release 构建静默返回 vreg(0)，生成损坏 IR，用户无任何错误提示
-    // 现改为设置 hasError_ 标志，由 compileViaIR/compileViaRegisterIR 转化为用户可见 diagnostic。
+    // VM-IMPORT: IR 路径支持 import 语句的内联编译。
+    // 对齐 Compiler::visitImportStmt 的语义：加载模块源码、解析 AST、
+    // 预扫描全局槽位、内联 visitNode 模块语句。
     case NodeType::NODE_IMPORT_STMT: {
-        hasError_ = true;
-        errorMessage_ = "VM 不支持 import 语句，请使用解释器模式";
-        errorLine_ = node->line;
-        Logger::Error("AstIRBuilder: " + errorMessage_, "IR");
+        auto* importNode = static_cast<ImportStmt*>(node);
+        handleImportStmt(*importNode);
         return IROperand::vreg(0);
     }
     case NodeType::NODE_SUPER_EXPR:
