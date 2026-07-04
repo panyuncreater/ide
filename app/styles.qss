@@ -315,18 +315,18 @@ QSplitter::handle:hover {
 }
 
 /* ============================================================
-   Welcome Page — centered, spacious, refined
+   Welcome Page — centered, spacious, refined (Claude DS inspired)
    ============================================================ */
 
 QWidget#welcomePage {
-    background: #ffffff;
+    background: #faf9f5;
 }
 QWidget#welcomeRecentPanel {
-    background: #fafafa;
-    border-right: 1px solid #e8e8e8;
+    background: #f3f2ee;
+    border-right: 1px solid #e8e7e3;
 }
 QLabel#welcomeRecentHeader {
-    color: #5a5a5a;
+    color: #8a8578;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -342,55 +342,56 @@ QListWidget#welcomeRecentList {
 QListWidget#welcomeRecentList::item {
     padding: 7px 12px;
     border-radius: 5px;
-    color: #1e1e1e;
+    color: #3d3929;
     font-size: 13px;
 }
 QListWidget#welcomeRecentList::item:hover {
-    background: #e8f4fd;
+    background: rgba(201, 100, 66, 8);
 }
 QListWidget#welcomeRecentList::item:selected {
-    background: #cce4f7;
-    color: #005a9e;
+    background: rgba(201, 100, 66, 16);
+    color: #8b5e3c;
 }
 QWidget#welcomeCenter {
-    background: #ffffff;
+    background: #faf9f5;
 }
 QLabel#welcomeIcon {
-    color: #0078d4;
+    color: #C96442;
     font-family: "Cascadia Code", "Consolas", "SF Mono", monospace;
 }
 QLabel#welcomeTitle {
-    color: #1e1e1e;
+    color: #3d3929;
     font-size: 28px;
     font-weight: 600;
     letter-spacing: -0.3px;
 }
 QLabel#welcomeSubtitle {
-    color: #5a5a5a;
+    color: #8a8578;
     font-size: 14px;
     font-weight: 400;
 }
 QLabel#welcomeShortcut {
-    color: #5a5a5a;
+    color: #8a8578;
     font-size: 12px;
 }
 QLabel#welcomeShortcut:hover {
-    color: #0078d4;
+    color: #C96442;
 }
 QPushButton#welcomePrimaryBtn {
-    background: #0078d4;
+    background: #C96442;
     color: #ffffff;
     border: none;
     padding: 9px 28px;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 14px;
     font-weight: 500;
+    icon-size: 16px;
 }
 QPushButton#welcomePrimaryBtn:hover {
-    background: #106ebe;
+    background: #d97757;
 }
 QPushButton#welcomePrimaryBtn:pressed {
-    background: #005a9e;
+    background: #a8523a;
 }
 QPushButton#welcomePrimaryBtn:disabled {
     background: #c8c8c8;
@@ -398,28 +399,33 @@ QPushButton#welcomePrimaryBtn:disabled {
 }
 QPushButton#welcomeSecondaryBtn {
     background: transparent;
-    color: #1e1e1e;
-    border: 1px solid #d4d4d4;
+    color: #3d3929;
+    border: 1px solid #dad9d4;
     padding: 9px 28px;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 14px;
     font-weight: 500;
+    icon-size: 16px;
 }
 QPushButton#welcomeSecondaryBtn:hover {
-    background: #f5f5f5;
-    border-color: #0078d4;
-    color: #0078d4;
+    background: rgba(201, 100, 66, 6);
+    border-color: #C96442;
+    color: #C96442;
 }
 QPushButton#welcomeSecondaryBtn:pressed {
-    background: #e8e8e8;
+    background: rgba(201, 100, 66, 12);
 }
 QPushButton#welcomeSecondaryBtn:disabled {
     color: #b0b0b0;
     border-color: #e0e0e0;
 }
 
+QWidget#welcomeBtnContainer {
+    background: transparent;
+}
+
 /* ============================================================
-   Activity Bar (left 48px icon strip)
+   Activity Bar (left 32px icon strip)
    ============================================================ */
 
 QFrame#ActivityBar {
@@ -573,6 +579,28 @@ QTabWidget#bottomTabWidget QTabBar::tab:hover:!selected,
 QTabWidget#rightTabWidget QTabBar::tab:hover:!selected {
     color: #1e1e1e;
     background: #e8e8e8;
+}
+
+/* ---- Bottom/Right Pivot Row (title bar replacement) ---- */
+QWidget#bottomPivotRow,
+QWidget#rightPivotRow {
+    background: #f3f3f3;
+    border-bottom: 1px solid #e8e8e8;
+}
+QWidget#bottomPivotRow QToolButton#panelCloseBtn,
+QWidget#rightPivotRow QToolButton#panelCloseBtn {
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: #8c8c8c;
+    font-size: 14px;
+    padding: 0;
+    margin: 0;
+}
+QWidget#bottomPivotRow QToolButton#panelCloseBtn:hover,
+QWidget#rightPivotRow QToolButton#panelCloseBtn:hover {
+    background: #e0e0e0;
+    color: #1e1e1e;
 }
 
 /* ---- Bottom Panel ---- */

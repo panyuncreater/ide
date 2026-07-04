@@ -6,18 +6,18 @@
 
 ActivityBar::ActivityBar(QWidget* parent)
     : QFrame(parent) {
-    setFixedWidth(48);
+    setFixedWidth(32);
     setObjectName("ActivityBar");
     layout_ = new QVBoxLayout(this);
     layout_->setContentsMargins(0, 8, 0, 0);
-    layout_->setSpacing(4);
+    layout_->setSpacing(2);
     layout_->addStretch();
 }
 
 int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
     auto* btn = new TransparentToolButton(icon, this);
-    btn->setFixedSize(40, 40);
-    btn->setIconSize(QSize(20, 20));
+    btn->setFixedSize(28, 28);
+    btn->setIconSize(QSize(16, 16));
     btn->setToolTip(text);
     btn->setCheckable(true);
 

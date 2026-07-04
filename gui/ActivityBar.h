@@ -7,7 +7,7 @@
 class TransparentToolButton;
 class QVBoxLayout;
 
-/// 活动栏（VS Code 风格）：主窗口最左侧 48px 宽的图标条
+/// 活动栏（VS Code 风格）：主窗口最左侧 32px 宽的图标条
 /// 放置「资源管理器」「调试」等图标，点击切换左侧面板
 class ActivityBar : public QFrame {
     Q_OBJECT

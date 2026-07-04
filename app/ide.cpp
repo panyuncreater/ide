@@ -8,6 +8,10 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QUrl>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QThread>
@@ -77,15 +81,18 @@
 // QFluentKit Theme
 #include "Theme.h"
 
-// QFluentKit components (sixth-round UI refactor)
+// QFluentKit components (sixth-round UI refactor → twelfth-round unified title bar)
 #include "QFluent/Navigation/Pivot.h"
 #include "QFluent/Menu/RoundMenu.h"
 #include "QFluent/Flyout.h"
 #include "QFluent/InfoBar.h"
 #include "QFluent/PushButton.h"
 #include "QFluent/ToolButton.h"
+#include "QFluent/ComboBox.h"
 #include "QFluent/TableView.h"
 #include "QFluent/ScrollBar.h"
+#include "QFluent/Progress/IndeterminateProgressBar.h"
+#include "QFluent/TabBar.h"
 #include "StyleSheet.h"
 #include "FluentIcon.h"
 
@@ -338,12 +345,8 @@ Ide::Ide(QWidget* parent)
 
     controller_ = new IdeController(this);
 
-    // 第十轮：修正初始化顺序——标题栏/菜单栏/工具栏必须先创建，再由 initUI 组装到 mainLayout
-    // 之前顺序为 initUI→initToolbar→initMenuBar→initTitleBar，导致 initUI 拿到 nullptr
-    // 无法将顶部三层加入布局，控件作为 QMainWindow 顶级子部件漂浮重叠
+    // 第十二轮：统一标题栏包含菜单+工具栏+窗口控制，initUI 仅需 titleBar_
     initTitleBar();
-    initToolbar();
-    initMenuBar();
     initUI();
     initConnections();
     initFileTree();
@@ -351,8 +354,11 @@ Ide::Ide(QWidget* parent)
 
     replPanel_->setController(controller_);
 
-    // Light-only Fluent theme (Round 7: dark theme removed)
-    Theme::setThemeMode(Fluent::ThemeMode::LIGHT);
+    // 第十二轮：主题跟随 QSettings（main.cpp 已预设），支持亮/暗切换
+    // 注册主题变更回调：切换主题时自动刷新所有 QSS
+    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
+        applyFluentStyle();
+    });
     applyFluentStyle();
 
     setupCompletion();
@@ -492,14 +498,22 @@ void Ide::syncVmBreakpoints() {
 // ============================================================
 
 bool Ide::eventFilter(QObject* watched, QEvent* event) {
-    // 第九轮：标题栏拖拽移动窗口（Windows SendMessage 保留 Aero Snap）
+    // 第十二轮：统一标题栏拖拽（仅在非交互控件区域触发窗口拖动）
     if (watched == titleBar_) {
         if (event->type() == QEvent::MouseButtonPress) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
-                // 只在非按钮区域拖拽
+                // 排除所有可交互控件：按钮（含 Fluent ComboBox/PushButton/SplitButton）等
                 auto* child = titleBar_->childAt(me->pos());
-                if (!child || !qobject_cast<QToolButton*>(child)) {
+                bool isInteractive = false;
+                while (child && child != titleBar_) {
+                    if (qobject_cast<QAbstractButton*>(child)) {
+                        isInteractive = true;
+                        break;
+                    }
+                    child = child->parentWidget();
+                }
+                if (!isInteractive) {
 #ifdef Q_OS_WIN
                     HWND hwnd = reinterpret_cast<HWND>(winId());
                     ReleaseCapture();
@@ -511,7 +525,15 @@ bool Ide::eventFilter(QObject* watched, QEvent* event) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
                 auto* child = titleBar_->childAt(me->pos());
-                if (!child || !qobject_cast<QToolButton*>(child)) {
+                bool isInteractive = false;
+                while (child && child != titleBar_) {
+                    if (qobject_cast<QAbstractButton*>(child)) {
+                        isInteractive = true;
+                        break;
+                    }
+                    child = child->parentWidget();
+                }
+                if (!isInteractive) {
                     if (isMaximized()) showNormal();
                     else showMaximized();
                 }
@@ -539,6 +561,28 @@ bool Ide::eventFilter(QObject* watched, QEvent* event) {
             auto* ce = static_cast<QContextMenuEvent*>(event);
             onEditorTabContextMenu(ce->globalPos());
             return true;
+        }
+    }
+    // 第十一轮：欢迎页支持拖拽文件夹打开
+    if (watched == welcomePage_ || watched == welcomePage_->findChild<QWidget*>("welcomeCenter")) {
+        if (event->type() == QEvent::DragEnter) {
+            auto* de = static_cast<QDragEnterEvent*>(event);
+            if (de->mimeData()->hasUrls()) {
+                de->acceptProposedAction();
+                return true;
+            }
+        } else if (event->type() == QEvent::Drop) {
+            auto* de = static_cast<QDropEvent*>(event);
+            if (de->mimeData()->hasUrls()) {
+                for (const QUrl& url : de->mimeData()->urls()) {
+                    QString path = url.toLocalFile();
+                    QFileInfo fi(path);
+                    if (fi.isDir()) {
+                        openWorkspace(path);
+                        return true;
+                    }
+                }
+            }
         }
     }
     return QMainWindow::eventFilter(watched, event);
@@ -819,16 +863,18 @@ void Ide::onCloseAllTabs() {
 void Ide::initWelcomePage() {
     welcomePage_ = new QWidget;
     welcomePage_->setObjectName("welcomePage");
+    // 第十一轮：支持拖拽文件夹到欢迎页打开
+    welcomePage_->setAcceptDrops(true);
     auto* outerLayout = new QHBoxLayout(welcomePage_);
     outerLayout->setContentsMargins(0, 0, 0, 0);
     outerLayout->setSpacing(0);
 
-    // Left: recent workspaces (fixed 240px)
+    // Left: recent workspaces (第十一轮：220px 宽)
     auto* recentPanel = new QWidget;
     recentPanel->setObjectName("welcomeRecentPanel");
-    recentPanel->setFixedWidth(240);
+    recentPanel->setFixedWidth(220);
     auto* recentLayout = new QVBoxLayout(recentPanel);
-    recentLayout->setContentsMargins(0, 12, 0, 0);
+    recentLayout->setContentsMargins(0, 16, 0, 0);
     recentLayout->setSpacing(0);
 
     auto* recentHeader = new QLabel(QString::fromUtf8("最近打开"));
@@ -856,71 +902,89 @@ void Ide::initWelcomePage() {
     // Center area
     auto* centerArea = new QWidget;
     centerArea->setObjectName("welcomeCenter");
+    centerArea->setAcceptDrops(true);
     auto* centerLayout = new QVBoxLayout(centerArea);
     centerLayout->setAlignment(Qt::AlignCenter);
-    centerLayout->setSpacing(16);
+    centerLayout->setSpacing(12);
 
-    // 48px code icon (use Fluent CODE icon via text glyph fallback)
+    // 第十一轮：48px 蓝色代码花括号图标 { }
     auto* iconLabel = new QLabel(QString::fromUtf8("{ }"));
     iconLabel->setObjectName("welcomeIcon");
     iconLabel->setAlignment(Qt::AlignCenter);
     QFont iconFont = iconLabel->font();
-    iconFont.setPointSize(40);
+    iconFont.setPointSize(48);
     iconFont.setBold(true);
     iconFont.setStyleHint(QFont::Monospace);
     iconLabel->setFont(iconFont);
 
+    // 第十一轮：标题 24px Medium，副标题 14px 灰色
     auto* titleLabel = new QLabel(QString::fromUtf8("MiniLang IDE"));
     titleLabel->setObjectName("welcomeTitle");
     titleLabel->setAlignment(Qt::AlignCenter);
     QFont titleFont = titleLabel->font();
-    titleFont.setPointSize(20);
+    titleFont.setPointSize(24);
     titleFont.setWeight(QFont::Medium);
     titleLabel->setFont(titleFont);
 
-    auto* subtitleLabel = new QLabel(QString::fromUtf8("MiniLang 编程语言开发环境"));
+    auto* subtitleLabel = new QLabel(QString::fromUtf8("现代化 MiniLang 编程语言开发环境"));
     subtitleLabel->setObjectName("welcomeSubtitle");
     subtitleLabel->setAlignment(Qt::AlignCenter);
+    subtitleLabel->setWordWrap(true);
     QFont subFont = subtitleLabel->font();
     subFont.setPointSize(14);
     subtitleLabel->setFont(subFont);
 
-    centerLayout->addStretch(2);
+    centerLayout->addStretch(3);
     centerLayout->addWidget(iconLabel);
-    centerLayout->addSpacing(4);
-    centerLayout->addWidget(titleLabel);
-    centerLayout->addWidget(subtitleLabel);
-    centerLayout->addSpacing(20);
-
-    // Primary button: 打开文件夹 (PrimaryPushButton — blue fill, white text, 8px corners)
-    auto* primaryBtn = new PrimaryPushButton(
-        QString::fromUtf8("打开文件夹"), Fluent::IconType::FOLDER, this);
-    primaryBtn->setMinimumSize(280, 38);
-    primaryBtn->setCursor(Qt::PointingHandCursor);
-    connect(primaryBtn, &PrimaryPushButton::clicked, this, &Ide::onOpenFolder);
-    centerLayout->addWidget(primaryBtn, 0, Qt::AlignCenter);
-
     centerLayout->addSpacing(8);
+    centerLayout->addWidget(titleLabel);
+    centerLayout->addSpacing(2);
+    centerLayout->addWidget(subtitleLabel);
+    centerLayout->addSpacing(24);
 
-    // Secondary button: 新建文件 (PushButton — light border, 8px corners)
-    auto* secondaryBtn = new PushButton(
-        QString::fromUtf8("新建文件"), Fluent::IconType::DOCUMENT, this);
-    secondaryBtn->setMinimumSize(280, 38);
+    // 第十一轮：按钮区域，最大宽度 400px，8px 圆角
+    auto* btnContainer = new QWidget;
+    btnContainer->setObjectName("welcomeBtnContainer");
+    auto* btnLayout = new QVBoxLayout(btnContainer);
+    btnLayout->setContentsMargins(0, 0, 0, 0);
+    btnLayout->setSpacing(10);
+
+    // Primary button: 打开文件夹 (Claude DS 风格 — terra-cotta 填充)
+    // 使用原生 QPushButton + QSS 而非 QFluentKit PrimaryPushButton，
+    // 因为 QFluentKit 自绘不读 QSS，无法应用 Claude DS 配色
+    auto* primaryBtn = new QPushButton(QString::fromUtf8("  打开文件夹"), btnContainer);
+    primaryBtn->setObjectName("welcomePrimaryBtn");
+    primaryBtn->setMinimumHeight(38);
+    primaryBtn->setMinimumWidth(220);
+    primaryBtn->setCursor(Qt::PointingHandCursor);
+    primaryBtn->setIcon(QIcon(QString::fromUtf8(":/icons/openfolder_black.svg")));
+    connect(primaryBtn, &QPushButton::clicked, this, &Ide::onOpenFolder);
+    btnLayout->addWidget(primaryBtn);
+
+    // Secondary button: 新建文件 (白底 terra-cotta 边框)
+    auto* secondaryBtn = new QPushButton(QString::fromUtf8("  新建文件"), btnContainer);
+    secondaryBtn->setObjectName("welcomeSecondaryBtn");
+    secondaryBtn->setMinimumHeight(38);
+    secondaryBtn->setMinimumWidth(220);
     secondaryBtn->setCursor(Qt::PointingHandCursor);
-    connect(secondaryBtn, &PushButton::clicked, this, [this]() {
+    secondaryBtn->setIcon(QIcon(QString::fromUtf8(":/icons/newfile_black.svg")));
+    connect(secondaryBtn, &QPushButton::clicked, this, [this]() {
         ensureEditorVisible();
         onNew();
     });
-    centerLayout->addWidget(secondaryBtn, 0, Qt::AlignCenter);
+    btnLayout->addWidget(secondaryBtn);
 
-    centerLayout->addSpacing(12);
+    centerLayout->addWidget(btnContainer, 0, Qt::AlignCenter);
 
-    // Shortcut links
+    centerLayout->addSpacing(16);
+
+    // 第十一轮：辅助链接（语法示例、帮助文档）12px 蓝色
     auto* shortcutLayout = new QHBoxLayout;
     shortcutLayout->setAlignment(Qt::AlignCenter);
     shortcutLayout->setSpacing(24);
     auto* sampleLabel = new QLabel(QString::fromUtf8(
-        "<a href=\"sample\" style=\"color:#0078d4;text-decoration:none;\">语法示例</a>"));
+        "<a href=\"sample\" style=\"color:#C96442;text-decoration:none;font-size:12px;\">语法示例</a>"));
+    sampleLabel->setObjectName("welcomeShortcut");
     sampleLabel->setCursor(Qt::PointingHandCursor);
     connect(sampleLabel, &QLabel::linkActivated, this, [this]() {
         QString sampleDir = QApplication::applicationDirPath() + "/../../samples/mini";
@@ -930,15 +994,20 @@ void Ide::initWelcomePage() {
         else onOpenFolder();
     });
     auto* helpLabel = new QLabel(QString::fromUtf8(
-        "<a href=\"help\" style=\"color:#0078d4;text-decoration:none;\">帮助文档</a>"));
+        "<a href=\"help\" style=\"color:#C96442;text-decoration:none;font-size:12px;\">帮助文档</a>"));
+    helpLabel->setObjectName("welcomeShortcut");
     helpLabel->setCursor(Qt::PointingHandCursor);
     connect(helpLabel, &QLabel::linkActivated, this, [this]() { showHelpDialog(); });
     shortcutLayout->addWidget(sampleLabel);
     shortcutLayout->addWidget(helpLabel);
     centerLayout->addLayout(shortcutLayout);
 
-    centerLayout->addStretch(3);
+    centerLayout->addStretch(4);
     outerLayout->addWidget(centerArea, 1);
+
+    // 第十一轮：安装拖拽 eventFilter
+    welcomePage_->installEventFilter(this);
+    centerArea->installEventFilter(this);
 
     loadRecentWorkspaces();
 }
@@ -963,6 +1032,7 @@ void Ide::addRecentWorkspace(const QString& dir) {
 void Ide::refreshRecentList() {
     if (!recentListWidget_) return;
     recentListWidget_->clear();
+    bool hasItems = false;
     for (const QString& ws : recentWorkspaces_) {
         if (!QDir(ws).exists()) continue;
         QFileInfo fi(ws);
@@ -970,6 +1040,14 @@ void Ide::refreshRecentList() {
         item->setToolTip(ws);
         item->setData(Qt::UserRole, ws);
         recentListWidget_->addItem(item);
+        hasItems = true;
+    }
+    // 第十一轮：列表为空时显示浅灰色提示
+    if (!hasItems) {
+        auto* emptyItem = new QListWidgetItem(QString::fromUtf8("暂无最近打开的工作区"));
+        emptyItem->setFlags(Qt::NoItemFlags);
+        emptyItem->setData(Qt::ForegroundRole, QColor(180, 180, 180));
+        recentListWidget_->addItem(emptyItem);
     }
 }
 
@@ -979,15 +1057,19 @@ void Ide::refreshRecentList() {
 // ============================================================
 
 void Ide::initTitleBar() {
+    // ============================================================
+    // 第十二轮：统一 36px 标题栏（融合菜单 + 工具栏 + 窗口控制）
+    // 取代旧三层结构（标题栏32px + 菜单栏28px + 工具栏34px = 94px）
+    // ============================================================
     titleBar_ = new QWidget(this);
     titleBar_->setObjectName("titleBar");
-    titleBar_->setFixedHeight(32);
+    titleBar_->setFixedHeight(36);
 
     auto* layout = new QHBoxLayout(titleBar_);
-    layout->setContentsMargins(8, 0, 0, 0);
-    layout->setSpacing(6);
+    layout->setContentsMargins(12, 0, 0, 0);
+    layout->setSpacing(8);
 
-    // 程序图标（使用 FluentIcon CODE 图标）
+    // ---- 左侧：应用图标 + 名称 ----
     titleIconLabel_ = new QLabel(titleBar_);
     titleIconLabel_->setFixedSize(16, 16);
     titleIconLabel_->setPixmap(Fluent::icon(Fluent::IconType::CODE).pixmap(QSize(16, 16)));
@@ -1009,12 +1091,326 @@ void Ide::initTitleBar() {
     titlePathLabel_->setFont(pathFont);
     layout->addWidget(titlePathLabel_);
 
+    // ---- 系统菜单按钮（Fluent DropDownToolButton + RoundMenu 替代 QMenuBar）----
+    auto* menuBtn = new DropDownToolButton(Fluent::IconType::MENU, titleBar_);
+    menuBtn->setFixedSize(32, 32);
+    menuBtn->setToolTip(QString::fromUtf8("菜单"));
+
+    // 创建主菜单（File / Edit / View / Run / Help 子菜单）
+    auto* mainMenu = new RoundMenu(QString(), titleBar_);
+
+    // -- File --
+    auto* fileMenu = new RoundMenu(QString::fromUtf8("文件"), titleBar_);
+    newAction_ = new QAction(QString::fromUtf8("新建(&N)"), this);
+    newAction_->setShortcut(QKeySequence::New);
+    connect(newAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onNew(); });
+    fileMenu->addAction(newAction_);
+
+    openAction_ = new QAction(QString::fromUtf8("打开文件(&O)..."), this);
+    openAction_->setShortcut(QKeySequence::Open);
+    connect(openAction_, &QAction::triggered, this, &Ide::onOpen);
+    fileMenu->addAction(openAction_);
+
+    openFolderAction_ = new QAction(QString::fromUtf8("打开文件夹(&D)..."), this);
+    connect(openFolderAction_, &QAction::triggered, this, &Ide::onOpenFolder);
+    fileMenu->addAction(openFolderAction_);
+    fileMenu->addSeparator();
+
+    saveAction_ = new QAction(QString::fromUtf8("保存(&S)"), this);
+    saveAction_->setShortcut(QKeySequence::Save);
+    connect(saveAction_, &QAction::triggered, this, &Ide::onSave);
+    fileMenu->addAction(saveAction_);
+
+    saveAsAction_ = new QAction(QString::fromUtf8("另存为(&A)..."), this);
+    saveAsAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_S);
+    connect(saveAsAction_, &QAction::triggered, this, &Ide::onSaveAs);
+    fileMenu->addAction(saveAsAction_);
+    mainMenu->addMenu(fileMenu);
+
+    // -- Edit --
+    auto* editMenu = new RoundMenu(QString::fromUtf8("编辑"), titleBar_);
+    auto* formatMenuAct = new QAction(QString::fromUtf8("格式化"), this);
+    formatMenuAct->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
+    connect(formatMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onFormat(); });
+    editMenu->addAction(formatMenuAct);
+    auto* findMenuAct = new QAction(QString::fromUtf8("查找"), this);
+    findMenuAct->setShortcut(QKeySequence::Find);
+    connect(findMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onFind(); });
+    editMenu->addAction(findMenuAct);
+    auto* replaceMenuAct = new QAction(QString::fromUtf8("替换"), this);
+    replaceMenuAct->setShortcut(QKeySequence::Replace);
+    connect(replaceMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onReplace(); });
+    editMenu->addAction(replaceMenuAct);
+    mainMenu->addMenu(editMenu);
+
+    // -- View --
+    auto* viewMenu = new RoundMenu(QString::fromUtf8("视图"), titleBar_);
+    viewExplorerAction_ = new QAction(QString::fromUtf8("资源管理器"), this);
+    viewExplorerAction_->setCheckable(true);
+    connect(viewExplorerAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (fileTreeDock_) fileTreeDock_->toggleView(on);
+    });
+    viewMenu->addAction(viewExplorerAction_);
+
+    viewDebugAction_ = new QAction(QString::fromUtf8("调试面板"), this);
+    viewDebugAction_->setCheckable(true);
+    connect(viewDebugAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (debugPanelDock_) debugPanelDock_->toggleView(on);
+    });
+    viewMenu->addAction(viewDebugAction_);
+
+    viewOutputAction_ = new QAction(QString::fromUtf8("输出面板"), this);
+    viewOutputAction_->setCheckable(true);
+    connect(viewOutputAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (bottomDock_) bottomDock_->toggleView(on);
+    });
+    viewMenu->addAction(viewOutputAction_);
+
+    viewCompileAnalysisAction_ = new QAction(QString::fromUtf8("编译分析面板"), this);
+    viewCompileAnalysisAction_->setCheckable(true);
+    viewCompileAnalysisAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_V);
+    connect(viewCompileAnalysisAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!rightDock_) return;
+        if (on) {
+            rightDock_->toggleView(true);
+            rightDock_->setAsCurrentTab();
+            if (rightPivot_) rightPivot_->setCurrentItem("token");
+            if (codeEditor_) onCompileAnalysis();
+        } else {
+            rightDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewCompileAnalysisAction_);
+    mainMenu->addMenu(viewMenu);
+
+    // -- Run --
+    auto* runMenu = new RoundMenu(QString::fromUtf8("运行"), titleBar_);
+    auto* runMenuAct = new QAction(QString::fromUtf8("运行"), this);
+    runMenuAct->setShortcut(Qt::Key_F5);
+    connect(runMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onRun(); });
+    runMenu->addAction(runMenuAct);
+    auto* debugMenuAct = new QAction(QString::fromUtf8("调试"), this);
+    debugMenuAct->setShortcut(Qt::Key_F6);
+    connect(debugMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onDebug(); });
+    runMenu->addAction(debugMenuAct);
+    runMenu->addSeparator();
+    auto* stepInMenuAct = new QAction(QString::fromUtf8("单步进入"), this);
+    stepInMenuAct->setShortcut(Qt::Key_F11);
+    connect(stepInMenuAct, &QAction::triggered, this, &Ide::onStepIn);
+    runMenu->addAction(stepInMenuAct);
+    auto* stepOverMenuAct = new QAction(QString::fromUtf8("单步跳过"), this);
+    stepOverMenuAct->setShortcut(Qt::Key_F10);
+    connect(stepOverMenuAct, &QAction::triggered, this, &Ide::onStepOver);
+    runMenu->addAction(stepOverMenuAct);
+    auto* stepOutMenuAct = new QAction(QString::fromUtf8("单步跳出"), this);
+    stepOutMenuAct->setShortcut(Qt::SHIFT | Qt::Key_F11);
+    connect(stepOutMenuAct, &QAction::triggered, this, &Ide::onStepOut);
+    runMenu->addAction(stepOutMenuAct);
+    auto* resumeMenuAct = new QAction(QString::fromUtf8("继续"), this);
+    resumeMenuAct->setShortcut(Qt::Key_F9);
+    connect(resumeMenuAct, &QAction::triggered, this, &Ide::onResume);
+    runMenu->addAction(resumeMenuAct);
+    auto* stopMenuAct = new QAction(QString::fromUtf8("停止"), this);
+    stopMenuAct->setShortcut(Qt::SHIFT | Qt::Key_F5);
+    connect(stopMenuAct, &QAction::triggered, this, &Ide::onStop);
+    runMenu->addAction(stopMenuAct);
+    mainMenu->addMenu(runMenu);
+
+    // -- Help --
+    auto* helpMenu = new RoundMenu(QString::fromUtf8("帮助"), titleBar_);
+    auto* samplesAct = new QAction(QString::fromUtf8("语法示例"), this);
+    connect(samplesAct, &QAction::triggered, this, [this]() {
+        QString sampleDir = QApplication::applicationDirPath() + "/../../samples/mini";
+        if (!QDir(sampleDir).exists())
+            sampleDir = QApplication::applicationDirPath() + "/samples/mini";
+        if (QDir(sampleDir).exists()) openWorkspace(sampleDir);
+        else onOpenFolder();
+    });
+    helpMenu->addAction(samplesAct);
+    auto* helpAct = new QAction(QString::fromUtf8("帮助"), this);
+    connect(helpAct, &QAction::triggered, this, &Ide::showHelpDialog);
+    helpMenu->addAction(helpAct);
+    mainMenu->addMenu(helpMenu);
+
+    menuBtn->setMenu(mainMenu);
+    layout->addWidget(menuBtn);
+
+    // 分隔线：菜单 ↔ 工具栏
+    auto addSeparator = [&layout, this]() {
+        auto* sep = new QFrame(titleBar_);
+        sep->setFrameShape(QFrame::VLine);
+        sep->setFixedWidth(1);
+        sep->setStyleSheet("background: transparent;");
+        sep->setObjectName("titleBarSep");
+        layout->addWidget(sep);
+    };
+    addSeparator();
+
+    // ---- 中间区域：工具栏按钮 ----
+
+    // Run split button (PrimarySplitPushButton with dropdown for run/debug)
+    runAction_ = new QAction(QString::fromUtf8("运行"), this);
+    runAction_->setShortcut(Qt::Key_F5);
+    connect(runAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onRun(); });
+
+    debugAction_ = new QAction(QString::fromUtf8("调试"), this);
+    debugAction_->setShortcut(Qt::Key_F6);
+    connect(debugAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onDebug(); });
+
+    auto* runSplit = new PrimarySplitPushButton(QString::fromUtf8("运行"), Fluent::IconType::PLAY_SOLID, titleBar_);
+    runSplit->setToolTip(QString::fromUtf8("运行程序 (F5)"));
+    connect(runSplit, &PrimarySplitPushButton::clicked, runAction_, &QAction::trigger);
+    auto* runFlyout = new RoundMenu(QString(), titleBar_);
+    runFlyout->addAction(runAction_);
+    runFlyout->addAction(debugAction_);
+    runSplit->setFlyout(runFlyout);
+    layout->addWidget(runSplit);
+
+    // 编译按钮
+    compileAnalysisAction_ = new QAction(QString::fromUtf8("编译分析"), this);
+    compileAnalysisAction_->setToolTip(QString::fromUtf8("查看 Token / IR / 字节码"));
+
+    // 格式化按钮
+    formatAction_ = new QAction(QString::fromUtf8("格式化"), this);
+    formatAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
+    auto* formatBtn = new CleanToolButton(Fluent::IconType::BROOM, titleBar_);
+    formatBtn->setToolTip(QString::fromUtf8("格式化代码 (Ctrl+Shift+F)"));
+    formatBtn->setDefaultAction(formatAction_);
+    layout->addWidget(formatBtn);
+
+    // AST 按钮
+    astAction_ = new QAction(QString::fromUtf8("AST"), this);
+    astAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_A);
+    auto* astBtn = new CleanToolButton(Fluent::IconType::DICTIONARY, titleBar_);
+    astBtn->setToolTip(QString::fromUtf8("查看 AST 树形图 (Ctrl+Shift+A)"));
+    astBtn->setDefaultAction(astAction_);
+    layout->addWidget(astBtn);
+
+    // ---- 调试按钮组（动态显隐）----
+    debugSepAction_ = nullptr;  // 无独立分隔线，用布局间距控制
+    debugButtonContainer_ = new QWidget(titleBar_);
+    debugButtonContainer_->setObjectName("debugButtonContainer");
+    auto* dbgLayout = new QHBoxLayout(debugButtonContainer_);
+    dbgLayout->setContentsMargins(0, 0, 0, 0);
+    dbgLayout->setSpacing(2);
+
+    auto makeDebugBtn = [this](QAction*& action, const QString& text,
+                               const QString& tip, const QKeySequence& shortcut,
+                               Fluent::IconType icon) {
+        action = new QAction(text, this);
+        action->setToolTip(tip);
+        action->setShortcut(shortcut);
+        auto* btn = new CleanToolButton(icon, titleBar_);
+        btn->setToolTip(tip);
+        btn->setDefaultAction(action);
+        return btn;
+    };
+
+    dbgLayout->addWidget(makeDebugBtn(stepInAction_, QString::fromUtf8("步入"),
+        QString::fromUtf8("单步进入 (F11)"), Qt::Key_F11, Fluent::IconType::CHEVRON_RIGHT_MED));
+    dbgLayout->addWidget(makeDebugBtn(stepOverAction_, QString::fromUtf8("跨过"),
+        QString::fromUtf8("单步跳过 (F10)"), Qt::Key_F10, Fluent::IconType::CHEVRON_DOWN_MED));
+    dbgLayout->addWidget(makeDebugBtn(stepOutAction_, QString::fromUtf8("跨出"),
+        QString::fromUtf8("单步跳出 (Shift+F11)"), Qt::SHIFT | Qt::Key_F11, Fluent::IconType::CHEVRON_RIGHT));
+    dbgLayout->addWidget(makeDebugBtn(resumeAction_, QString::fromUtf8("继续"),
+        QString::fromUtf8("继续运行到下一个断点 (F9)"), Qt::Key_F9, Fluent::IconType::PLAY));
+    dbgLayout->addWidget(makeDebugBtn(stopAction_, QString::fromUtf8("停止"),
+        QString::fromUtf8("停止运行 (Shift+F5)"), Qt::SHIFT | Qt::Key_F5, Fluent::IconType::CANCEL));
+
+    layout->addWidget(debugButtonContainer_);
+    debugButtonContainer_->hide();
+    debugButtonsVisible_ = false;
+
+    // ---- VM 按钮组（动态显隐）----
+    vmSepAction_ = nullptr;
+    vmButtonContainer_ = new QWidget(titleBar_);
+    vmButtonContainer_->setObjectName("vmButtonContainer");
+    auto* vmLayout = new QHBoxLayout(vmButtonContainer_);
+    vmLayout->setContentsMargins(0, 0, 0, 0);
+    vmLayout->setSpacing(2);
+
+    auto makeVmBtn = [this](QAction*& action, const QString& text,
+                             const QString& tip, const QKeySequence& shortcut,
+                             Fluent::IconType icon) {
+        action = new QAction(text, this);
+        action->setToolTip(tip);
+        action->setShortcut(shortcut);
+        action->setEnabled(false);
+        auto* btn = new CleanToolButton(icon, titleBar_);
+        btn->setToolTip(tip);
+        btn->setDefaultAction(action);
+        return btn;
+    };
+
+    vmLayout->addWidget(makeVmBtn(vmStepAction_, QString::fromUtf8("VM单步"),
+        QString::fromUtf8("VM 单步 (Ctrl+Shift+N)"), Qt::CTRL | Qt::SHIFT | Qt::Key_N, Fluent::IconType::CHEVRON_RIGHT_MED));
+    vmLayout->addWidget(makeVmBtn(vmStepOverAction_, QString::fromUtf8("VM跨过"),
+        QString::fromUtf8("VM 跨过 (Ctrl+Shift+O)"), Qt::CTRL | Qt::SHIFT | Qt::Key_O, Fluent::IconType::CHEVRON_DOWN_MED));
+    vmLayout->addWidget(makeVmBtn(vmStepOutAction_, QString::fromUtf8("VM跨出"),
+        QString::fromUtf8("VM 跨出 (Ctrl+Shift+U)"), Qt::CTRL | Qt::SHIFT | Qt::Key_U, Fluent::IconType::CHEVRON_RIGHT));
+    vmLayout->addWidget(makeVmBtn(vmRunAction_, QString::fromUtf8("VM运行"),
+        QString::fromUtf8("VM 运行 (Ctrl+Shift+R)"), Qt::CTRL | Qt::SHIFT | Qt::Key_R, Fluent::IconType::PLAY));
+    vmLayout->addWidget(makeVmBtn(vmStopAction_, QString::fromUtf8("VM停止"),
+        QString::fromUtf8("停止 VM"), QKeySequence(), Fluent::IconType::CANCEL));
+
+    layout->addWidget(vmButtonContainer_);
+    vmButtonContainer_->hide();
+
+    clearAction_ = new QAction(QString::fromUtf8("清空"), this);
+    clearAction_->setToolTip(QString::fromUtf8("清空输出面板"));
+
+    // 弹性空间
     layout->addStretch(1);
 
-    // 窗口按钮：最小化 / 最大化 / 关闭
+    // ---- 执行引擎切换 ComboBox ----
+    engineCombo_ = new ComboBox(titleBar_);
+    engineCombo_->setObjectName("engineCombo");
+    engineCombo_->addItem(QString::fromUtf8("树遍历解释器"));
+    engineCombo_->addItem(QString::fromUtf8("栈式 VM"));
+    engineCombo_->addItem(QString::fromUtf8("寄存器式 VM"));
+    engineCombo_->setCurrentIndex(0);
+    engineCombo_->setToolTip(QString::fromUtf8("切换执行引擎"));
+    layout->addWidget(engineCombo_);
+
+    // ---- 主题切换按钮 ----
+    themeToggleBtn_ = new QToolButton(titleBar_);
+    themeToggleBtn_->setObjectName("themeToggleBtn");
+    themeToggleBtn_->setFixedSize(32, 32);
+    themeToggleBtn_->setAutoRaise(true);
+    themeToggleBtn_->setCursor(Qt::PointingHandCursor);
+    themeToggleBtn_->setFocusPolicy(Qt::NoFocus);
+    themeToggleBtn_->setToolTip(QString::fromUtf8("切换亮/暗主题"));
+    themeToggleBtn_->setIcon(Fluent::icon(Fluent::IconType::BRIGHTNESS));
+    themeToggleBtn_->setIconSize(QSize(16, 16));
+    connect(themeToggleBtn_, &QToolButton::clicked, this, [this]() {
+        Theme::toggleTheme();
+        bool dark = Theme::isDark();
+        QSettings settings("MiniLang", "MiniLang IDE");
+        settings.setValue("theme/dark", dark);
+        // 同步编辑器主题
+        if (codeEditor_) codeEditor_->setDarkTheme(dark);
+        // 同步 ADS 配色
+        if (dockManager_) {
+            dockManager_->setColorSchemeMode(
+                ads::CDockManager::ColorSchemeMode::FollowPalette);
+        }
+        // 刷新所有 QSS
+        StyleSheet::updateStyleSheet();
+        applyFluentStyle();
+    });
+    layout->addWidget(themeToggleBtn_);
+
+    // 分隔线：工具栏 ↔ 窗口按钮
+    addSeparator();
+
+    // ---- 右侧：窗口控制按钮 ----
     auto makeWinBtn = [this](Fluent::IconType icon, const QString& tip) {
         auto* btn = new QToolButton(titleBar_);
-        btn->setFixedSize(40, 28);
+        btn->setFixedSize(40, 36);
         btn->setAutoRaise(true);
         btn->setFocusPolicy(Qt::NoFocus);
         btn->setCursor(Qt::ArrowCursor);
@@ -1152,24 +1548,51 @@ void Ide::initUI() {
     connect(activityBar_, &ActivityBar::currentChanged, this, &Ide::onActivityChanged);
 
     // ---- Bottom panel container: Pivot + QStackedWidget ----
-    // 第九轮：默认高度 240px，最小 150px；标签栏压缩到 28px，紧凑左对齐
+    // 第十一轮：默认高度 600px，最小 200px；标签栏压缩到 28px，紧凑左对齐
     auto* bottomContainer = new QWidget;
     bottomContainer->setObjectName("bottomPanelContainer");
-    bottomContainer->setMinimumHeight(150);
+    bottomContainer->setMinimumHeight(200);
     auto* bottomLayout = new QVBoxLayout(bottomContainer);
     bottomLayout->setContentsMargins(0, 0, 0, 0);
     bottomLayout->setSpacing(0);
 
+    // 第十一轮：Pivot 标签栏行（标签左对齐 + 右侧关闭按钮）
+    auto* pivotRow = new QHBoxLayout;
+    pivotRow->setContentsMargins(8, 0, 4, 0);
+    pivotRow->setSpacing(0);
+
     bottomPivot_ = new Pivot(bottomContainer);
     bottomPivot_->setObjectName("bottomPivot");
-    // 第九轮：12px 字号字重400，标签栏压缩到 28px，2px 主题蓝下划线
+    // 第十一轮：标签紧凑化 — 12px 字号，28px 行高，主题蓝下划线
     bottomPivot_->setItemFontSize(12);
     bottomPivot_->setIndicatorColor(QColor("#0078d4"), QColor("#0078d4"));
     bottomPivot_->setFixedHeight(28);
     bottomPivot_->addItem("output", QString::fromUtf8("输出"));
-    bottomPivot_->addItem("errors", QString::fromUtf8("错误"));
+    bottomPivot_->addItem("errors", QString::fromUtf8("问题"));
     bottomPivot_->addItem("repl", QString::fromUtf8("REPL"));
-    bottomLayout->addWidget(bottomPivot_);
+    pivotRow->addWidget(bottomPivot_);
+
+    pivotRow->addStretch();
+
+    // 第十一轮：右侧关闭按钮（紧凑圆形，与 VS Code 一致）
+    auto* bottomCloseBtn = new QToolButton(bottomContainer);
+    bottomCloseBtn->setObjectName("panelCloseBtn");
+    bottomCloseBtn->setText(QString::fromUtf8("×"));
+    bottomCloseBtn->setFixedSize(20, 20);
+    bottomCloseBtn->setToolTip(QString::fromUtf8("关闭面板"));
+    bottomCloseBtn->setCursor(Qt::PointingHandCursor);
+    connect(bottomCloseBtn, &QToolButton::clicked, this, [this]() {
+        hideBottomPanel();
+    });
+    pivotRow->addWidget(bottomCloseBtn);
+
+    auto* pivotRowWidget = new QWidget;
+    pivotRowWidget->setObjectName("bottomPivotRow");
+    auto* pivotRowLayout = new QVBoxLayout(pivotRowWidget);
+    pivotRowLayout->setContentsMargins(0, 0, 0, 0);
+    pivotRowLayout->setSpacing(0);
+    pivotRowLayout->addLayout(pivotRow);
+    bottomLayout->addWidget(pivotRowWidget);
 
     bottomStack_ = new QStackedWidget(bottomContainer);
     bottomStack_->addWidget(outputTextEdit_);
@@ -1178,26 +1601,53 @@ void Ide::initUI() {
     bottomLayout->addWidget(bottomStack_, 1);
     connect(bottomPivot_, &Pivot::currentItemChanged, this, &Ide::onBottomPivotChanged);
 
-    // ---- Right panel container: Pivot + QStackedWidget ----
-    // 第十轮：默认宽度 450px，最小 350px；标签栏 28px 紧凑
+    // ---- Right panel container: Pivot + close button + QStackedWidget ----
+    // 第十一轮：默认宽度 800px，最小 500px；标签栏 28px 紧凑
     auto* rightContainer = new QWidget;
     rightContainer->setObjectName("rightPanelContainer");
-    rightContainer->setMinimumWidth(350);
-    rightContainer->setMaximumWidth(720);
+    rightContainer->setMinimumWidth(500);
+    rightContainer->setMaximumWidth(1200);
     auto* rightLayout = new QVBoxLayout(rightContainer);
     rightLayout->setContentsMargins(0, 0, 0, 0);
     rightLayout->setSpacing(0);
 
+    // 第十一轮：Pivot 标签栏行（标签左对齐 + 右侧关闭按钮）
+    auto* rightPivotRow = new QHBoxLayout;
+    rightPivotRow->setContentsMargins(8, 0, 4, 0);
+    rightPivotRow->setSpacing(0);
+
     rightPivot_ = new Pivot(rightContainer);
     rightPivot_->setObjectName("rightPivot");
-    // 第九轮：12px 字号，标签栏 28px，2px 主题蓝下划线
+    // 第十一轮：12px 字号，标签栏 28px，2px 主题蓝下划线
     rightPivot_->setItemFontSize(12);
     rightPivot_->setIndicatorColor(QColor("#0078d4"), QColor("#0078d4"));
     rightPivot_->setFixedHeight(28);
     rightPivot_->addItem("token", QString::fromUtf8("词法Token"));
     rightPivot_->addItem("ir", QString::fromUtf8("中间IR"));
     rightPivot_->addItem("bytecode", QString::fromUtf8("字节码"));
-    rightLayout->addWidget(rightPivot_);
+    rightPivotRow->addWidget(rightPivot_);
+
+    rightPivotRow->addStretch();
+
+    // 第十一轮：右侧关闭按钮
+    auto* rightCloseBtn = new QToolButton(rightContainer);
+    rightCloseBtn->setObjectName("panelCloseBtn");
+    rightCloseBtn->setText(QString::fromUtf8("×"));
+    rightCloseBtn->setFixedSize(20, 20);
+    rightCloseBtn->setToolTip(QString::fromUtf8("关闭面板"));
+    rightCloseBtn->setCursor(Qt::PointingHandCursor);
+    connect(rightCloseBtn, &QToolButton::clicked, this, [this]() {
+        hideRightPanel();
+    });
+    rightPivotRow->addWidget(rightCloseBtn);
+
+    auto* rightPivotRowWidget = new QWidget;
+    rightPivotRowWidget->setObjectName("rightPivotRow");
+    auto* rightPivotRowLayout = new QVBoxLayout(rightPivotRowWidget);
+    rightPivotRowLayout->setContentsMargins(0, 0, 0, 0);
+    rightPivotRowLayout->setSpacing(0);
+    rightPivotRowLayout->addLayout(rightPivotRow);
+    rightLayout->addWidget(rightPivotRowWidget);
 
     rightStack_ = new QStackedWidget(rightContainer);
     rightStack_->addWidget(tokenTable_);    // index 0 → token
@@ -1243,10 +1693,8 @@ void Ide::initUI() {
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    // 顶部三层：标题栏(32px) + 菜单栏(28px) + 工具栏(32px)
+    // 第十二轮：顶部仅统一标题栏（36px，已融合菜单+工具栏+窗口控制）
     mainLayout->addWidget(titleBar_);
-    mainLayout->addWidget(customMenuBar_);
-    mainLayout->addWidget(mainToolbar_);
 
     // 中间区域：活动栏 + ADS 停靠管理器
     auto* middleArea = new QWidget;
@@ -1298,36 +1746,38 @@ void Ide::initUI() {
     // Right panel: single dock containing Pivot + stack (token/IR/bytecode)
     rightDock_ = dockManager_->createDockWidget(QString::fromUtf8("编译分析"));
     rightDock_->setWidget(rightContainer, ads::CDockWidget::ForceNoScrollArea);
-    // 第八轮：锁定右侧停靠，禁止浮动/移动到其他区域
-    rightDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, false);
-    rightDock_->setFeature(ads::CDockWidget::DockWidgetMovable, false);
     dockManager_->addDockWidget(ads::RightDockWidgetArea, rightDock_);
-    // 第九轮：锁定底部停靠，禁止浮动/移区，固定停在底部
-    bottomDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, false);
-    bottomDock_->setFeature(ads::CDockWidget::DockWidgetMovable, false);
-    // 左侧面板也禁止浮动，防止拖成独立窗口
-    fileTreeDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, false);
-    debugPanelDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, false);
+    // 第十二轮：所有面板支持完整拖拽重组、浮动、标签分组（移除旧的浮动/移动锁定）
 
-    // 第九轮：所有面板默认尺寸标准化
-    // 左侧文件树/调试面板：默认宽度 220px，最小宽度 180px
-    fileTree_->setMinimumWidth(180);
-    debugPanel_->setMinimumWidth(180);
-    // 底部输出面板：默认高度 240px，最小高度 150px
-    bottomContainer->setMinimumHeight(150);
-    // 第十轮：右侧编译分析面板：默认宽度 450px，最小宽度 350px（最小已在 rightContainer 设置）
+    // 第十二轮：面板尺寸对齐规范（左260px、底220px、右320px）
+    // 所有面板支持拖拽重组、浮动、标签分组（布局持久化由 saveLayout/restoreLayout 处理）
+    fileTree_->setMinimumWidth(200);
+    debugPanel_->setMinimumWidth(200);
+    bottomContainer->setMinimumHeight(160);
+    rightContainer->setMinimumWidth(280);
+    rightContainer->setMaximumWidth(1200);
 
-    // 延迟到布局稳定后调整 dock 区域尺寸（左侧 220px，右侧 450px）
+    // 延迟调整 dock 区域尺寸 + 隐藏单 widget 标题栏
     QTimer::singleShot(0, this, [this]() {
         if (fileTreeDock_ && !fileTreeDock_->isClosed()) {
             if (auto* area = fileTreeDock_->dockAreaWidget()) {
-                area->resize(220, area->height());
+                area->resize(260, area->height());
             }
         }
         if (rightDock_ && !rightDock_->isClosed()) {
             if (auto* area = rightDock_->dockAreaWidget()) {
-                area->resize(450, area->height());
+                area->resize(320, area->height());
             }
+        }
+        // 隐藏底部 dock 的 ADS 标题栏（Pivot 作为唯一标题行）
+        if (bottomDock_ && bottomDock_->dockAreaWidget()) {
+            bottomDock_->dockAreaWidget()->setDockAreaFlag(
+                ads::CDockAreaWidget::HideSingleWidgetTitleBar, true);
+        }
+        // 隐藏右侧 dock 的 ADS 标题栏（Pivot 作为标签栏）
+        if (rightDock_ && rightDock_->dockAreaWidget()) {
+            rightDock_->dockAreaWidget()->setDockAreaFlag(
+                ads::CDockAreaWidget::HideSingleWidgetTitleBar, true);
         }
     });
 
@@ -1360,300 +1810,7 @@ void Ide::initUI() {
             this, [this]() { if (splitterSaveTimer_) splitterSaveTimer_->start(); });
 }
 
-// ============================================================
-// Toolbar initialization (QFluentKit-based)
-// ============================================================
 
-void Ide::initToolbar() {
-    // 第十轮：自定义工具栏（非 QMainWindow::addToolBar），嵌入顶部布局
-    mainToolbar_ = new QToolBar(this);
-    mainToolbar_->setObjectName("mainToolbar");
-    mainToolbar_->setMovable(false);
-    mainToolbar_->setIconSize(QSize(16, 16));
-    mainToolbar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    mainToolbar_->setContextMenuPolicy(Qt::PreventContextMenu);
-    // 第十轮：工具栏固定高度 34px，白色背景，统一内边距，按钮间距 8px
-    mainToolbar_->setFixedHeight(34);
-    mainToolbar_->layout()->setContentsMargins(6, 0, 6, 0);
-    mainToolbar_->layout()->setSpacing(8);
-    // 便于后续代码引用
-    QToolBar* toolbar = mainToolbar_;
-
-    // ---- Run split button (QFluentKit SplitPushButton + RoundMenu flyout) ----
-    runAction_ = new QAction(QString::fromUtf8("运行"), this);
-    runAction_->setShortcut(Qt::Key_F5);
-    connect(runAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onRun(); });
-
-    debugAction_ = new QAction(QString::fromUtf8("调试"), this);
-    debugAction_->setShortcut(Qt::Key_F6);
-    connect(debugAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onDebug(); });
-
-    auto* runSplit = new SplitPushButton(QString::fromUtf8("运行"), Fluent::IconType::PLAY_SOLID, this);
-    runSplit->setToolTip(QString::fromUtf8("运行程序 (F5)\n点击主体运行，点击右侧箭头选择运行/调试"));
-    connect(runSplit, &SplitPushButton::clicked, runAction_, &QAction::trigger);
-
-    auto* runMenu = new RoundMenu(QString(), this);
-    runMenu->addAction(runAction_);
-    runMenu->addAction(debugAction_);
-    runSplit->setFlyout(runMenu);
-    toolbar->addWidget(runSplit);
-
-    // 分组分隔线 1（运行组 ↔ 格式化/AST 组）
-    toolbar->addSeparator();
-
-    // ---- Format / AST actions (CleanToolButton: 无文字/无装饰点) ----
-    formatAction_ = new QAction(QString::fromUtf8("格式化"), this);
-    formatAction_->setToolTip(QString::fromUtf8("格式化代码 (Ctrl+Shift+F)"));
-    formatAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
-    auto* formatBtn = new CleanToolButton(Fluent::IconType::BROOM, this);
-    formatBtn->setToolTip(QString::fromUtf8("格式化代码 (Ctrl+Shift+F)"));
-    formatBtn->setDefaultAction(formatAction_);
-    toolbar->addWidget(formatBtn);
-
-    // 编译分析按钮已移除（第八轮：改由「视图」菜单勾选控制）
-    compileAnalysisAction_ = new QAction(QString::fromUtf8("编译分析"), this);
-    compileAnalysisAction_->setToolTip(QString::fromUtf8("查看 Token / IR / 字节码"));
-    // 快捷键 Ctrl+Shift+V 已移至「视图」菜单的勾选项
-
-    astAction_ = new QAction(QString::fromUtf8("AST"), this);
-    astAction_->setToolTip(QString::fromUtf8("查看 AST 树形图 (Ctrl+Shift+A)"));
-    astAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_A);
-    auto* astBtn = new CleanToolButton(Fluent::IconType::DICTIONARY, this);
-    astBtn->setToolTip(QString::fromUtf8("查看 AST 树形图 (Ctrl+Shift+A)"));
-    astBtn->setDefaultAction(astAction_);
-    toolbar->addWidget(astBtn);
-
-    // ---- 调试按钮组：仅调试启动时动态显示（分隔线随容器显隐）----
-    debugSepAction_ = toolbar->addSeparator();
-    debugButtonContainer_ = new QWidget;
-    debugButtonContainer_->setObjectName("debugButtonContainer");
-    auto* dbgLayout = new QHBoxLayout(debugButtonContainer_);
-    dbgLayout->setContentsMargins(0, 0, 0, 0);
-    dbgLayout->setSpacing(2);
-
-    auto makeDebugBtn = [this](QAction*& action, const QString& text,
-                               const QString& tip, const QKeySequence& shortcut,
-                               Fluent::IconType icon) {
-        action = new QAction(text, this);
-        action->setToolTip(tip);
-        action->setShortcut(shortcut);
-        auto* btn = new CleanToolButton(icon, this);
-        btn->setToolTip(tip);
-        btn->setDefaultAction(action);
-        return btn;
-    };
-
-    dbgLayout->addWidget(makeDebugBtn(stepInAction_, QString::fromUtf8("步入"),
-        QString::fromUtf8("单步进入 (F11)"), Qt::Key_F11, Fluent::IconType::CHEVRON_RIGHT_MED));
-    dbgLayout->addWidget(makeDebugBtn(stepOverAction_, QString::fromUtf8("跨过"),
-        QString::fromUtf8("单步跳过 (F10)"), Qt::Key_F10, Fluent::IconType::CHEVRON_DOWN_MED));
-    dbgLayout->addWidget(makeDebugBtn(stepOutAction_, QString::fromUtf8("跨出"),
-        QString::fromUtf8("单步跳出 (Shift+F11)"), Qt::SHIFT | Qt::Key_F11, Fluent::IconType::CHEVRON_RIGHT));
-    dbgLayout->addWidget(makeDebugBtn(resumeAction_, QString::fromUtf8("继续"),
-        QString::fromUtf8("继续运行到下一个断点 (F9)"), Qt::Key_F9, Fluent::IconType::PLAY));
-    dbgLayout->addWidget(makeDebugBtn(stopAction_, QString::fromUtf8("停止"),
-        QString::fromUtf8("停止运行 (Shift+F5)"), Qt::SHIFT | Qt::Key_F5, Fluent::IconType::CANCEL));
-
-    toolbar->addWidget(debugButtonContainer_);
-    debugButtonContainer_->hide();
-    debugSepAction_->setVisible(false);
-    debugButtonsVisible_ = false;
-
-    // ---- VM 按钮组：仅 VM 单步模式启动时动态显示 ----
-    vmSepAction_ = toolbar->addSeparator();
-    vmButtonContainer_ = new QWidget;
-    vmButtonContainer_->setObjectName("vmButtonContainer");
-    auto* vmLayout = new QHBoxLayout(vmButtonContainer_);
-    vmLayout->setContentsMargins(0, 0, 0, 0);
-    vmLayout->setSpacing(2);
-
-    auto makeVmBtn = [this](QAction*& action, const QString& text,
-                             const QString& tip, const QKeySequence& shortcut,
-                             Fluent::IconType icon) {
-        action = new QAction(text, this);
-        action->setToolTip(tip);
-        action->setShortcut(shortcut);
-        action->setEnabled(false);
-        auto* btn = new CleanToolButton(icon, this);
-        btn->setToolTip(tip);
-        btn->setDefaultAction(action);
-        return btn;
-    };
-
-    vmLayout->addWidget(makeVmBtn(vmStepAction_, QString::fromUtf8("VM单步"),
-        QString::fromUtf8("VM 单步 (Ctrl+Shift+N)"), Qt::CTRL | Qt::SHIFT | Qt::Key_N, Fluent::IconType::CHEVRON_RIGHT_MED));
-    vmLayout->addWidget(makeVmBtn(vmStepOverAction_, QString::fromUtf8("VM跨过"),
-        QString::fromUtf8("VM 跨过 (Ctrl+Shift+O)"), Qt::CTRL | Qt::SHIFT | Qt::Key_O, Fluent::IconType::CHEVRON_DOWN_MED));
-    vmLayout->addWidget(makeVmBtn(vmStepOutAction_, QString::fromUtf8("VM跨出"),
-        QString::fromUtf8("VM 跨出 (Ctrl+Shift+U)"), Qt::CTRL | Qt::SHIFT | Qt::Key_U, Fluent::IconType::CHEVRON_RIGHT));
-    vmLayout->addWidget(makeVmBtn(vmRunAction_, QString::fromUtf8("VM运行"),
-        QString::fromUtf8("VM 运行 (Ctrl+Shift+R)"), Qt::CTRL | Qt::SHIFT | Qt::Key_R, Fluent::IconType::PLAY));
-    vmLayout->addWidget(makeVmBtn(vmStopAction_, QString::fromUtf8("VM停止"),
-        QString::fromUtf8("停止 VM"), QKeySequence(), Fluent::IconType::CANCEL));
-
-    toolbar->addWidget(vmButtonContainer_);
-    vmButtonContainer_->hide();
-    vmSepAction_->setVisible(false);
-
-    clearAction_ = new QAction(QString::fromUtf8("清空"), this);
-    clearAction_->setToolTip(QString::fromUtf8("清空输出面板"));
-}
-
-// ============================================================
-// Menu bar initialization (extracted from initUI)
-// ============================================================
-
-void Ide::initMenuBar() {
-    // 第九轮：自定义菜单栏（非 QMainWindow::menuBar），嵌入顶部布局
-    customMenuBar_ = new QMenuBar(this);
-    customMenuBar_->setObjectName("customMenuBar");
-    customMenuBar_->setFixedHeight(28);
-
-    // ---- File menu ----
-    auto* fileMenu = customMenuBar_->addMenu(QString::fromUtf8("文件(&F)"));
-
-    newAction_ = new QAction(QString::fromUtf8("新建(&N)"), this);
-    newAction_->setShortcut(QKeySequence::New);
-    connect(newAction_, &QAction::triggered, this, [this]() { ensureEditorVisible(); onNew(); });
-    fileMenu->addAction(newAction_);
-
-    openAction_ = new QAction(QString::fromUtf8("打开文件(&O)..."), this);
-    openAction_->setShortcut(QKeySequence::Open);
-    connect(openAction_, &QAction::triggered, this, &Ide::onOpen);
-    fileMenu->addAction(openAction_);
-
-    openFolderAction_ = new QAction(QString::fromUtf8("打开文件夹(&D)..."), this);
-    connect(openFolderAction_, &QAction::triggered, this, &Ide::onOpenFolder);
-    fileMenu->addAction(openFolderAction_);
-
-    fileMenu->addSeparator();
-
-    saveAction_ = new QAction(QString::fromUtf8("保存(&S)"), this);
-    saveAction_->setShortcut(QKeySequence::Save);
-    connect(saveAction_, &QAction::triggered, this, &Ide::onSave);
-    fileMenu->addAction(saveAction_);
-
-    saveAsAction_ = new QAction(QString::fromUtf8("另存为(&A)..."), this);
-    saveAsAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_S);
-    connect(saveAsAction_, &QAction::triggered, this, &Ide::onSaveAs);
-    fileMenu->addAction(saveAsAction_);
-
-    // ---- Edit menu ----
-    auto* editMenu = customMenuBar_->addMenu(QString::fromUtf8("编辑(&E)"));
-    auto* formatMenuAct = new QAction(QString::fromUtf8("格式化"), this);
-    formatMenuAct->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
-    connect(formatMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onFormat(); });
-    editMenu->addAction(formatMenuAct);
-    auto* findMenuAct = new QAction(QString::fromUtf8("查找"), this);
-    findMenuAct->setShortcut(QKeySequence::Find);
-    connect(findMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onFind(); });
-    editMenu->addAction(findMenuAct);
-    auto* replaceMenuAct = new QAction(QString::fromUtf8("替换"), this);
-    replaceMenuAct->setShortcut(QKeySequence::Replace);
-    connect(replaceMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onReplace(); });
-    editMenu->addAction(replaceMenuAct);
-
-    // ---- View menu ----
-    auto* viewMenu = customMenuBar_->addMenu(QString::fromUtf8("视图(&V)"));
-
-    // 第九轮：所有面板启动时隐藏，视图菜单初始全部不勾选
-    viewExplorerAction_ = new QAction(QString::fromUtf8("资源管理器"), this);
-    viewExplorerAction_->setCheckable(true);
-    viewExplorerAction_->setChecked(false);
-    connect(viewExplorerAction_, &QAction::toggled, this, [this](bool on) {
-        if (syncingViewAction_) return;
-        if (fileTreeDock_) fileTreeDock_->toggleView(on);
-    });
-    viewMenu->addAction(viewExplorerAction_);
-
-    viewDebugAction_ = new QAction(QString::fromUtf8("调试面板"), this);
-    viewDebugAction_->setCheckable(true);
-    viewDebugAction_->setChecked(false);
-    connect(viewDebugAction_, &QAction::toggled, this, [this](bool on) {
-        if (syncingViewAction_) return;
-        if (debugPanelDock_) debugPanelDock_->toggleView(on);
-    });
-    viewMenu->addAction(viewDebugAction_);
-
-    viewOutputAction_ = new QAction(QString::fromUtf8("输出面板"), this);
-    viewOutputAction_->setCheckable(true);
-    viewOutputAction_->setChecked(false);
-    connect(viewOutputAction_, &QAction::toggled, this, [this](bool on) {
-        if (syncingViewAction_) return;
-        if (bottomDock_) bottomDock_->toggleView(on);
-    });
-    viewMenu->addAction(viewOutputAction_);
-
-    viewCompileAnalysisAction_ = new QAction(QString::fromUtf8("编译分析面板"), this);
-    viewCompileAnalysisAction_->setCheckable(true);
-    viewCompileAnalysisAction_->setChecked(false);
-    viewCompileAnalysisAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_V);
-    connect(viewCompileAnalysisAction_, &QAction::toggled, this, [this](bool on) {
-        if (syncingViewAction_) return;
-        if (!rightDock_) return;
-        if (on) {
-            rightDock_->toggleView(true);
-            rightDock_->setAsCurrentTab();
-            // 默认激活「词法Token」标签并异步加载编译结果
-            if (rightPivot_) rightPivot_->setCurrentItem("token");
-            if (codeEditor_) {
-                onCompileAnalysis();
-            }
-        } else {
-            rightDock_->toggleView(false);
-        }
-    });
-    viewMenu->addAction(viewCompileAnalysisAction_);
-
-    viewMenu->addSeparator();
-
-    // ---- Run menu ----
-    auto* runMenu = customMenuBar_->addMenu(QString::fromUtf8("运行(&R)"));
-    auto* runMenuAct = new QAction(QString::fromUtf8("运行"), this);
-    runMenuAct->setShortcut(Qt::Key_F5);
-    connect(runMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onRun(); });
-    runMenu->addAction(runMenuAct);
-    auto* debugMenuAct = new QAction(QString::fromUtf8("调试"), this);
-    debugMenuAct->setShortcut(Qt::Key_F6);
-    connect(debugMenuAct, &QAction::triggered, this, [this]() { ensureEditorVisible(); onDebug(); });
-    runMenu->addAction(debugMenuAct);
-    runMenu->addSeparator();
-    auto* stepInMenuAct = new QAction(QString::fromUtf8("单步进入"), this);
-    stepInMenuAct->setShortcut(Qt::Key_F11);
-    connect(stepInMenuAct, &QAction::triggered, this, &Ide::onStepIn);
-    runMenu->addAction(stepInMenuAct);
-    auto* stepOverMenuAct = new QAction(QString::fromUtf8("单步跳过"), this);
-    stepOverMenuAct->setShortcut(Qt::Key_F10);
-    connect(stepOverMenuAct, &QAction::triggered, this, &Ide::onStepOver);
-    runMenu->addAction(stepOverMenuAct);
-    auto* stepOutMenuAct = new QAction(QString::fromUtf8("单步跳出"), this);
-    stepOutMenuAct->setShortcut(Qt::SHIFT | Qt::Key_F11);
-    connect(stepOutMenuAct, &QAction::triggered, this, &Ide::onStepOut);
-    runMenu->addAction(stepOutMenuAct);
-    auto* resumeMenuAct = new QAction(QString::fromUtf8("继续"), this);
-    resumeMenuAct->setShortcut(Qt::Key_F9);
-    connect(resumeMenuAct, &QAction::triggered, this, &Ide::onResume);
-    runMenu->addAction(resumeMenuAct);
-    auto* stopMenuAct = new QAction(QString::fromUtf8("停止"), this);
-    stopMenuAct->setShortcut(Qt::SHIFT | Qt::Key_F5);
-    connect(stopMenuAct, &QAction::triggered, this, &Ide::onStop);
-    runMenu->addAction(stopMenuAct);
-
-    // ---- Help menu ----
-    auto* helpMenu = customMenuBar_->addMenu(QString::fromUtf8("帮助(&H)"));
-    auto* samplesAct = new QAction(QString::fromUtf8("语法示例"), this);
-    connect(samplesAct, &QAction::triggered, this, [this]() {
-        QString sampleDir = QApplication::applicationDirPath() + "/../../samples/mini";
-        if (!QDir(sampleDir).exists())
-            sampleDir = QApplication::applicationDirPath() + "/samples/mini";
-        if (QDir(sampleDir).exists()) openWorkspace(sampleDir);
-        else onOpenFolder();
-    });
-    helpMenu->addAction(samplesAct);
-    auto* helpAct = new QAction(QString::fromUtf8("帮助"), this);
-    connect(helpAct, &QAction::triggered, this, &Ide::showHelpDialog);
-    helpMenu->addAction(helpAct);
-}
 
 // ============================================================
 // syncViewMenuChecks — 第九轮：视图菜单勾选状态与 dock 显隐双向同步
@@ -1699,28 +1856,395 @@ void Ide::initStatusBar() {
 // ============================================================
 
 void Ide::applyFluentStyle() {
-    // Register native widgets with QFluentKit style sheet manager
+    // ---- Register native widgets with QFluentKit style sheet manager ----
     if (fileTree_)         StyleSheet::registerWidget(fileTree_, Fluent::ThemeStyle::LIST_VIEW);
     if (editorTabWidget_)  StyleSheet::registerWidget(editorTabWidget_, Fluent::ThemeStyle::TAB_VIEW);
     if (errorListWidget_)  StyleSheet::registerWidget(errorListWidget_, Fluent::ThemeStyle::LIST_VIEW);
     if (bytecodeList_)     StyleSheet::registerWidget(bytecodeList_, Fluent::ThemeStyle::LIST_VIEW);
-    if (customMenuBar_)    StyleSheet::registerWidget(customMenuBar_, Fluent::ThemeStyle::MENU);
     if (recentListWidget_) StyleSheet::registerWidget(recentListWidget_, Fluent::ThemeStyle::LIST_VIEW);
+    if (tokenTable_)       StyleSheet::registerWidget(tokenTable_, Fluent::ThemeStyle::TABLE_VIEW);
 
-    // Replace native scrollbars with Fluent scrollbars on key text widgets
+    // ---- Replace native scrollbars with Fluent scrollbars ----
     if (outputTextEdit_) {
         outputTextEdit_->setVerticalScrollBar(new ScrollBar(outputTextEdit_));
         outputTextEdit_->setHorizontalScrollBar(new ScrollBar(Qt::Horizontal, outputTextEdit_));
     }
-    if (errorListWidget_) {
-        errorListWidget_->setVerticalScrollBar(new ScrollBar(errorListWidget_));
+    if (errorListWidget_) errorListWidget_->setVerticalScrollBar(new ScrollBar(errorListWidget_));
+    if (bytecodeList_)    bytecodeList_->setVerticalScrollBar(new ScrollBar(bytecodeList_));
+    if (fileTree_)        fileTree_->setVerticalScrollBar(new ScrollBar(fileTree_));
+
+    // ---- Theme-aware color palette ----
+    bool dark = Theme::isDark();
+    QString bgMain    = dark ? "#1e1e1e" : "#ffffff";
+    QString bgPanel   = dark ? "#252526" : "#f3f3f3";
+    QString bgSidebar = dark ? "#181818" : "#f8f8f8";
+    QString fgPrimary = dark ? "#cccccc" : "#1e1e1e";
+    QString fgSecondary = dark ? "#858585" : "#6e6e6e";
+    QString borderColor = dark ? "#3c3c3c" : "#e5e5e5";
+    QString accentColor = dark ? "#4cc2ff" : "#0078d4";
+    QString hoverBg   = dark ? "#2a2d2e" : "#f0f0f0";
+    QString selectedBg = dark ? "#37373d" : "#e8e8e8";
+    QString titleBg   = dark ? "#1f1f1f" : "#ffffff";
+    QString statusBg  = dark ? "#181818" : "#f3f3f3";
+    QString editorBg  = dark ? "#1e1e1e" : "#ffffff";
+    QString lineNumBg = dark ? "#1e1e1e" : "#f5f5f5";
+    QString lineNumFg = dark ? "#858585" : "#999999";
+
+    // ============================================================
+    // ADS (Qt Advanced Docking System) comprehensive QSS override
+    // 完全覆盖 ADS 默认样式，对齐 Fluent Design 规范
+    // ============================================================
+    QString adsQss = QString(R"(
+        /* ---- ADS Tab Bar ---- */
+        ads--CDockAreaWidget {
+            background: %1;
+        }
+        ads--CDockAreaTabBar {
+            background: transparent;
+            border: none;
+        }
+        ads--CDockWidgetTab {
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 4px 12px;
+            color: %2;
+            font-size: 12px;
+            min-height: 32px;
+        }
+        ads--CDockWidgetTab[activeTab="true"] {
+            background: %1;
+            border-bottom: 2px solid %3;
+            color: %4;
+        }
+        ads--CDockWidgetTab:hover:!activeTab {
+            background: %5;
+        }
+
+        /* Tab close button: only show on hover */
+        ads--CDockWidgetTab QPushButton#tabCloseButton {
+            background: transparent;
+            border: none;
+            padding: 2px;
+            min-width: 16px;
+            min-height: 16px;
+            max-width: 16px;
+            max-height: 16px;
+        }
+        ads--CDockWidgetTab QPushButton#tabCloseButton:hover {
+            background: %6;
+            border-radius: 3px;
+        }
+
+        /* ---- ADS Title Bar (dock area header) ---- */
+        ads--CDockAreaTitleBar {
+            background: transparent;
+            border: none;
+            min-height: 28px;
+            padding: 0 4px;
+        }
+        ads--CDockAreaTitleBar QLabel {
+            color: %2;
+            font-size: 12px;
+            padding-left: 4px;
+        }
+        ads--CDockAreaTitleBar QPushButton {
+            background: transparent;
+            border: none;
+            min-width: 20px;
+            min-height: 20px;
+            max-width: 20px;
+            max-height: 20px;
+            padding: 2px;
+        }
+        ads--CDockAreaTitleBar QPushButton:hover {
+            background: %5;
+            border-radius: 3px;
+        }
+
+        /* ---- ADS Splitter (1px thin line, hover → 2px accent) ---- */
+        ads--CDockSplitter {
+            background: %1;
+        }
+        ads--CDockSplitter::handle {
+            background: %7;
+        }
+        ads--CDockSplitter::handle:horizontal {
+            width: 1px;
+        }
+        ads--CDockSplitter::handle:vertical {
+            height: 1px;
+        }
+        ads--CDockSplitter::handle:hover {
+            background: %3;
+        }
+        ads--CDockSplitter::handle:horizontal:hover {
+            width: 2px;
+        }
+        ads--CDockSplitter::handle:vertical:hover {
+            height: 2px;
+        }
+
+        /* ---- ADS Floating Window ---- */
+        ads--CFloatingDockContainer {
+            background: %1;
+        }
+
+        /* ---- ADS Dock Widget ---- */
+        ads--CDockWidget {
+            background: %1;
+            border: none;
+        }
+
+        /* ---- ADS AutoHide Tabs ---- */
+        ads--CAutoHideTab {
+            background: %8;
+            border: none;
+            color: %2;
+            padding: 4px 8px;
+            min-height: 24px;
+        }
+        ads--CAutoHideTab:hover {
+            background: %5;
+        }
+        ads--CAutoHideTab[activeTab="true"] {
+            background: %1;
+            border-left: 2px solid %3;
+        }
+        ads--CAutoHideSideBar {
+            background: %8;
+            border: none;
+        }
+    )").arg(bgMain, fgPrimary, accentColor, fgPrimary, hoverBg,
+            dark ? "#505050" : "#d0d0d0",  /* close btn hover */
+            borderColor, bgSidebar);
+
+    // ---- Apply ADS QSS globally ----
+    if (dockManager_) {
+        qApp->setStyleSheet(qApp->styleSheet() + "\n" + adsQss);
+        dockManager_->setColorSchemeMode(
+            ads::CDockManager::ColorSchemeMode::FollowPalette);
     }
-    if (bytecodeList_) {
-        bytecodeList_->setVerticalScrollBar(new ScrollBar(bytecodeList_));
+
+    // ============================================================
+    // Title bar styling (统一标题栏)
+    // ============================================================
+    if (titleBar_) {
+        titleBar_->setStyleSheet(QString(R"(
+            #titleBar {
+                background: %1;
+                border-bottom: 1px solid %2;
+            }
+            #titleText {
+                color: %3;
+                background: transparent;
+                border: none;
+            }
+            #titlePath {
+                color: %4;
+                background: transparent;
+                border: none;
+                padding-left: 4px;
+            }
+            #titleBarSep {
+                background: %2;
+                max-width: 1px;
+            }
+            #titleMinBtn, #titleMaxBtn {
+                background: transparent;
+                border: none;
+            }
+            #titleMinBtn:hover, #titleMaxBtn:hover {
+                background: %5;
+            }
+            #titleCloseBtn {
+                background: transparent;
+                border: none;
+            }
+            #titleCloseBtn:hover {
+                background: #e81123;
+            }
+            #themeToggleBtn {
+                background: transparent;
+                border: none;
+            }
+            #themeToggleBtn:hover {
+                background: %5;
+                border-radius: 4px;
+            }
+        )").arg(titleBg, borderColor, fgPrimary, fgSecondary, hoverBg));
     }
-    if (fileTree_) {
-        fileTree_->setVerticalScrollBar(new ScrollBar(fileTree_));
+
+    // ============================================================
+    // Status bar styling
+    // ============================================================
+    if (auto* sb = statusBar()) {
+        sb->setStyleSheet(QString(R"(
+            QStatusBar {
+                background: %1;
+                border-top: 1px solid %2;
+                color: %3;
+                font-size: 12px;
+                padding: 0 8px;
+            }
+            QStatusBar QLabel {
+                color: %3;
+                padding: 0 6px;
+                background: transparent;
+            }
+        )").arg(statusBg, borderColor, fgSecondary));
     }
+
+    // ============================================================
+    // Panel container styling (bottom + right)
+    // ============================================================
+    QString panelQss = QString(R"(
+        #bottomPanelContainer, #rightPanelContainer {
+            background: %1;
+            border: none;
+        }
+        #bottomPivotRow, #rightPivotRow {
+            background: %1;
+            border-bottom: 1px solid %2;
+        }
+        #panelCloseBtn {
+            background: transparent;
+            border: none;
+            color: %3;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        #panelCloseBtn:hover {
+            background: %4;
+            border-radius: 3px;
+        }
+    )").arg(bgPanel, borderColor, fgSecondary, hoverBg);
+
+    // Apply panel styling via findChildren
+    for (auto* obj : findChildren<QWidget*>()) {
+        QString name = obj->objectName();
+        if (name == "bottomPanelContainer" || name == "rightPanelContainer" ||
+            name == "bottomPivotRow" || name == "rightPivotRow" ||
+            name == "panelCloseBtn") {
+            obj->setStyleSheet(panelQss);
+        }
+    }
+
+    // ============================================================
+    // Editor tab widget styling
+    // ============================================================
+    if (editorTabWidget_) {
+        editorTabWidget_->setStyleSheet(QString(R"(
+            QTabWidget::pane {
+                background: %1;
+                border: none;
+            }
+            QTabBar::tab {
+                background: %2;
+                border: none;
+                border-bottom: 2px solid transparent;
+                padding: 6px 16px;
+                color: %3;
+                min-width: 80px;
+                max-height: 32px;
+            }
+            QTabBar::tab:selected {
+                background: %1;
+                border-bottom: 2px solid %4;
+                color: %5;
+            }
+            QTabBar::tab:hover:!selected {
+                background: %6;
+            }
+            QTabBar::close-button {
+                background: transparent;
+                border: none;
+                padding: 2px;
+            }
+            QTabBar::close-button:hover {
+                background: %7;
+                border-radius: 3px;
+            }
+        )").arg(bgMain, bgPanel, fgSecondary, accentColor, fgPrimary,
+                hoverBg, dark ? "#505050" : "#d0d0d0"));
+    }
+
+    // ============================================================
+    // Tree/Table/List view common styling
+    // ============================================================
+    QString itemViewQss = QString(R"(
+        QTreeView, QTableView, QListView {
+            background: %1;
+            border: none;
+            color: %2;
+            font-size: 13px;
+            outline: none;
+        }
+        QTreeView::item, QTableView::item, QListView::item {
+            padding: 2px 4px;
+            border: none;
+        }
+        QTreeView::item:selected, QTableView::item:selected, QListView::item:selected {
+            background: %3;
+            color: %2;
+        }
+        QTreeView::item:hover, QTableView::item:hover, QListView::item:hover {
+            background: %4;
+        }
+        QHeaderView::section {
+            background: %5;
+            color: %2;
+            border: none;
+            border-right: 1px solid %6;
+            border-bottom: 1px solid %6;
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+        QTableWidget {
+            gridline-color: %6;
+        }
+    )").arg(bgMain, fgPrimary, selectedBg, hoverBg, bgPanel, borderColor);
+
+    // Apply to all tree/table/list views
+    if (fileTree_)       fileTree_->setStyleSheet(itemViewQss);
+    if (errorListWidget_) errorListWidget_->setStyleSheet(itemViewQss);
+    if (bytecodeList_)    bytecodeList_->setStyleSheet(itemViewQss);
+    if (tokenTable_)      tokenTable_->setStyleSheet(itemViewQss);
+    if (recentListWidget_) recentListWidget_->setStyleSheet(itemViewQss);
+
+    // ============================================================
+    // Activity bar styling
+    // ============================================================
+    if (activityBar_) {
+        activityBar_->setStyleSheet(QString(R"(
+            ActivityBar {
+                background: %1;
+                border-right: 1px solid %2;
+            }
+        )").arg(bgSidebar, borderColor));
+    }
+
+    // ============================================================
+    // Main container / middle area
+    // ============================================================
+    for (auto* w : findChildren<QWidget*>()) {
+        if (w->objectName() == "mainContainer" || w->objectName() == "middleArea") {
+            w->setStyleSheet(QString("background: %1; border: none;").arg(bgMain));
+        }
+    }
+
+    // ============================================================
+    // Debug/VM button containers
+    // ============================================================
+    for (auto* w : findChildren<QWidget*>()) {
+        if (w->objectName() == "debugButtonContainer" ||
+            w->objectName() == "vmButtonContainer") {
+            w->setStyleSheet("background: transparent; border: none;");
+        }
+    }
+
+    // ---- Sync editor theme ----
+    if (codeEditor_) codeEditor_->setDarkTheme(dark);
 }
 
 // ============================================================
@@ -1767,6 +2291,17 @@ void Ide::initConnections() {
     connect(vmStepOutAction_, &QAction::triggered, this, &Ide::onVmStepOut);
     connect(vmRunAction_, &QAction::triggered, this, &Ide::onVmRun);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
+
+    // 第十二轮：执行引擎切换（0=树遍历解释器，1=栈式VM，2=寄存器式VM）
+    if (engineCombo_) {
+        connect(engineCombo_, &ComboBox::currentIndexChanged, this, [this](int index) {
+            if (!controller_) return;
+            // 寄存器式 VM 使用 setUseRegisterVM(true)
+            // 栈式 VM / 树遍历解释器 使用 setUseRegisterVM(false)
+            controller_->setUseRegisterVM(index == 2);
+            appendOutput(QString::fromUtf8("--- 执行引擎切换: %1 ---").arg(engineCombo_->currentText()));
+        });
+    }
 
     connect(editorTabWidget_, &QTabWidget::currentChanged, this, &Ide::onCurrentTabChanged);
     connect(editorTabWidget_, &QTabWidget::tabCloseRequested, this, &Ide::onEditorTabCloseRequested);
@@ -2040,11 +2575,11 @@ void Ide::saveLayout() {
     }
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/state", QMainWindow::saveState());
-    // 第九轮：记忆输出面板高度（最小 150px）
+    // 第九轮：记忆输出面板高度（最小 200px）
     if (bottomDock_ && !bottomDock_->isClosed()) {
         if (auto* area = bottomDock_->dockAreaWidget()) {
             int h = area->height();
-            if (h >= 150 && h <= 800) {
+            if (h >= 200 && h <= 1200) {
                 bottomPanelHeight_ = h;
                 settings.setValue("layout/bottomPanelHeight", h);
             }
@@ -2060,13 +2595,24 @@ void Ide::restoreLayout() {
             dockManager_->restoreState(dockState);
         }
     }
-    // 第九轮：恢复输出面板记忆高度（默认 240px，最小 150px）
-    int savedH = settings.value("layout/bottomPanelHeight", 240).toInt();
-    if (savedH >= 150 && savedH <= 800) bottomPanelHeight_ = savedH;
+    // 第十一轮：恢复输出面板记忆高度（默认 600px，最小 200px）
+    int savedH = settings.value("layout/bottomPanelHeight", 600).toInt();
+    if (savedH >= 200 && savedH <= 1200) bottomPanelHeight_ = savedH;
     QByteArray geometry = settings.value("window/geometry").toByteArray();
     if (!geometry.isEmpty()) restoreGeometry(geometry);
     QByteArray winState = settings.value("window/state").toByteArray();
     if (!winState.isEmpty()) QMainWindow::restoreState(winState);
+    // 第十一轮：恢复后重新隐藏底部/右侧 dock 标题栏
+    QTimer::singleShot(0, this, [this]() {
+        if (bottomDock_ && bottomDock_->dockAreaWidget()) {
+            bottomDock_->dockAreaWidget()->setDockAreaFlag(
+                ads::CDockAreaWidget::HideSingleWidgetTitleBar, true);
+        }
+        if (rightDock_ && rightDock_->dockAreaWidget()) {
+            rightDock_->dockAreaWidget()->setDockAreaFlag(
+                ads::CDockAreaWidget::HideSingleWidgetTitleBar, true);
+        }
+    });
     // 第九轮：恢复后同步视图菜单勾选状态
     syncViewMenuChecks();
 }
@@ -2079,7 +2625,7 @@ void Ide::showBottomPanel(int tabIndex) {
     if (!bottomDock_) return;
     if (bottomDock_->isClosed()) {
         bottomDock_->toggleView(true);
-        // 第九轮：弹出时恢复记忆高度（默认 240px）
+        // 第十一轮：弹出时恢复记忆高度（默认 600px）
         QTimer::singleShot(0, this, [this]() {
             if (bottomDock_ && !bottomDock_->isClosed()) {
                 if (auto* area = bottomDock_->dockAreaWidget()) {
@@ -2104,11 +2650,11 @@ void Ide::showRightPanel(int tabIndex) {
     if (!rightDock_) return;
     if (rightDock_->isClosed()) {
         rightDock_->toggleView(true);
-        // 第十轮：弹出时恢复默认宽度 450px
+        // 第十一轮：弹出时恢复默认宽度 800px
         QTimer::singleShot(0, this, [this]() {
             if (rightDock_ && !rightDock_->isClosed()) {
                 if (auto* area = rightDock_->dockAreaWidget()) {
-                    area->resize(450, area->height());
+                    area->resize(800, area->height());
                 }
             }
         });
@@ -2937,21 +3483,32 @@ void Ide::showHelpDialog() {
     auto* dlg = new QDialog(this);
     dlg->setWindowTitle(QString::fromUtf8("帮助"));
     dlg->setWindowFlags(dlg->windowFlags() & ~Qt::WindowContextHelpButtonHint);
-    // 第十轮：宽度 420px，8px 圆角，柔和阴影，浅色 Fluent 风格
-    dlg->setFixedSize(420, 480);
-    dlg->setStyleSheet(
-        "QDialog { background: #ffffff; border-radius: 8px; }"
-        "QLabel#helpTitle { font-size: 16px; font-weight: 600; color: #1e1e1e; }"
-        "QLabel#helpKey { font-family: 'Consolas','Cascadia Mono','Courier New',monospace;"
-        "  font-size: 13px; color: #0078d4; }"
-        "QLabel#helpDesc { font-size: 13px; color: #1e1e1e; }"
-        "QLabel#helpTip { color: #5a5a5a; font-size: 12px; }"
-        "QPushButton#helpOkBtn { background: #0078d4; color: #ffffff; border: none;"
-        "  border-radius: 5px; padding: 7px 24px; min-width: 80px; font-size: 13px; }"
-        "QPushButton#helpOkBtn:hover { background: #1f8cd6; }"
-        "QPushButton#helpOkBtn:pressed { background: #005a9e; }");
+    // 第十一轮：宽 520px 高 420px，8px 圆角，柔和阴影
+    dlg->setFixedSize(520, 420);
 
-    // 柔和阴影（QSS 不支持 box-shadow，用 QGraphicsDropShadowEffect）
+    // 第十一轮：主题感知样式（自动适配深色/浅色）
+    bool isDark = (palette().color(QPalette::Window).lightness() < 128);
+    QString bg = isDark ? QStringLiteral("#252526") : QStringLiteral("#ffffff");
+    QString text = isDark ? QStringLiteral("#cccccc") : QStringLiteral("#1e1e1e");
+    QString muted = isDark ? QStringLiteral("#737373") : QStringLiteral("#5a5a5a");
+    QString keyColor = isDark ? QStringLiteral("#4fc1ff") : QStringLiteral("#0078d4");
+    QString btnBg = isDark ? QStringLiteral("#0078d4") : QStringLiteral("#0078d4");
+    QString btnHover = isDark ? QStringLiteral("#1f8cd6") : QStringLiteral("#106ebe");
+    QString btnPressed = isDark ? QStringLiteral("#005a9e") : QStringLiteral("#005a9e");
+    dlg->setStyleSheet(
+        QString("QDialog { background: %1; border-radius: 8px; }"
+                "QLabel#helpTitle { font-size: 16px; font-weight: 600; color: %2; }"
+                "QLabel#helpKey { font-family: 'Consolas','Cascadia Mono','Courier New',monospace;"
+                "  font-size: 12px; color: %4; }"
+                "QLabel#helpDesc { font-size: 12px; color: %2; }"
+                "QLabel#helpTip { color: %3; font-size: 11px; }"
+                "QPushButton#helpOkBtn { background: %5; color: #ffffff; border: none;"
+                "  border-radius: 5px; padding: 7px 28px; min-width: 80px; font-size: 13px; }"
+                "QPushButton#helpOkBtn:hover { background: %6; }"
+                "QPushButton#helpOkBtn:pressed { background: %7; }")
+            .arg(bg, text, muted, keyColor, btnBg, btnHover, btnPressed));
+
+    // 柔和阴影
     auto* shadow = new QGraphicsDropShadowEffect(dlg);
     shadow->setBlurRadius(24);
     shadow->setOffset(0, 4);
@@ -2959,45 +3516,56 @@ void Ide::showHelpDialog() {
     dlg->setGraphicsEffect(shadow);
 
     auto* layout = new QVBoxLayout(dlg);
-    layout->setContentsMargins(24, 20, 24, 20);
-    layout->setSpacing(10);
+    layout->setContentsMargins(24, 20, 24, 16);
+    layout->setSpacing(12);
 
     auto* title = new QLabel(QString::fromUtf8("MiniLang IDE 快捷键"), dlg);
     title->setObjectName("helpTitle");
     layout->addWidget(title);
 
-    layout->addSpacing(4);
+    // 第十一轮：两列网格布局（左列快捷键、右列描述）
+    auto* grid = new QGridLayout;
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setSpacing(6);
+    grid->setColumnMinimumWidth(0, 120);
+    grid->setColumnStretch(1, 1);
 
-    // Shortcut rows: (key, description)
     struct Shortcut { const char* key; const char* desc; };
     const Shortcut rows[] = {
         {"F5",                "运行程序"},
         {"F6",                "调试程序"},
+        {"Ctrl+F",            "查找"},
+        {"Ctrl+H",            "替换"},
         {"F10",               "单步跳过"},
         {"F11",               "单步进入"},
         {"Shift+F11",         "单步跳出"},
         {"Shift+F5",          "停止运行"},
         {"Ctrl+Shift+F",      "格式化代码"},
-        {"Ctrl+F",            "查找"},
-        {"Ctrl+H",            "替换"},
         {"Esc",               "关闭查找面板"},
         {"Ctrl+Shift+V",      "编译分析面板"},
         {"Ctrl+Shift+A",      "AST 树形图"},
     };
-    for (const auto& r : rows) {
-        auto* row = new QHBoxLayout;
-        row->setSpacing(16);
-        auto* k = new QLabel(QString::fromUtf8(r.key), dlg);
-        k->setObjectName("helpKey");
-        k->setMinimumWidth(110);
-        auto* d = new QLabel(QString::fromUtf8(r.desc), dlg);
-        d->setObjectName("helpDesc");
-        row->addWidget(k);
-        row->addWidget(d, 1);
-        layout->addLayout(row);
-    }
+    int row = 0;
+    int leftCol = 0, rightCol = 2;
+    int leftRow = 0, rightRow = 0;
+    for (int i = 0; i < 12; ++i) {
+        int col = (i < 6) ? leftCol : rightCol;
+        int r = (i < 6) ? leftRow++ : rightRow++;
 
-    layout->addSpacing(8);
+        auto* k = new QLabel(QString::fromUtf8(rows[i].key), dlg);
+        k->setObjectName("helpKey");
+        k->setFixedWidth(110);
+        auto* d = new QLabel(QString::fromUtf8(rows[i].desc), dlg);
+        d->setObjectName("helpDesc");
+        grid->addWidget(k, r * 2, col);
+        grid->addWidget(d, r * 2, col + 1);
+    }
+    // 设置行间距（每行之间稍大间距）
+    grid->setVerticalSpacing(4);
+    grid->setRowMinimumHeight(0, 28);
+    layout->addLayout(grid);
+
+    layout->addSpacing(4);
     auto* tipLabel = new QLabel(
         QString::fromUtf8("在代码行号左侧点击可设置/取消断点，右键点击断点可设置条件。"), dlg);
     tipLabel->setObjectName("helpTip");
@@ -3014,7 +3582,7 @@ void Ide::showHelpDialog() {
     btnRow->addWidget(okBtn);
     layout->addLayout(btnRow);
 
-    // 第十轮：居中显示在父窗口
+    // 居中显示在父窗口
     if (parentWidget()) {
         dlg->move(parentWidget()->geometry().center() - QPoint(dlg->width() / 2, dlg->height() / 2));
     }
