@@ -23,7 +23,7 @@ on:
 
 env:
   CMAKE_BUILD_TYPE: Release
-  QT_VERSION: '6.8.0'
+  QT_VERSION: '6.10.3'
 
 jobs:
   # ============================================================
@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -76,7 +76,7 @@ jobs:
 
       - name: 上传测试结果（失败时）
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: out/build/release/Testing/**/*.xml
@@ -94,7 +94,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           submodules: recursive
 
@@ -116,6 +116,11 @@ jobs:
         shell: bash
         run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-Debug
+
       - name: 安装 OpenCppCoverage
         run: choco install opencppcoverage -y --no-progress
 
@@ -136,7 +141,7 @@ jobs:
 
       - name: 上传覆盖率报告
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: code-coverage
           path: |
@@ -144,8 +149,59 @@ jobs:
             out/build/debug/coverage_html/
           retention-days: 14
 
+      - name: 上传覆盖率到 Codecov（趋势追踪）
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: out/build/debug/coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   # ============================================================
-  # 作业 3：静态代码分析（cppcheck）
+  # 作业 3：test_harness 审计工具（确保不随代码演进而坏掉）
+  # ============================================================
+  test-harness:
+    name: Test Harness (Windows MSVC)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-harness
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: 设置 MSVC 开发环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 配置 CMake（含 test_harness）
+        run: cmake --preset windows-msvc-debug -DMINILANG_BUILD_TEST_HARNESS=ON -DMINILANG_USE_CCACHE=ON
+
+      - name: 构建 test_harness 工具
+        run: cmake --build out/build/debug --target formatter_audit stress_test diff_test ast_test --parallel
+
+  # ============================================================
+  # 作业 4：静态代码分析（cppcheck）
   # ============================================================
   static-analysis:
     name: Static Analysis (cppcheck)
@@ -153,16 +209,19 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: 安装 cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
 
+      # 注：cppcheck 在 Ubuntu 上运行，缺少 Qt 头文件，
+          # missingInclude 误报已通过 suppress 过滤。此为 best-effort 检查。
       - name: 运行 cppcheck 静态分析
         run: |
           cppcheck \
             --enable=warning,style,performance,portability \
             --suppress=missingIncludeSystem \
+            --suppress=missingInclude \
             --suppress=unmatchedSuppression \
             --suppress=noExplicitConstructor \
             --inline-suppr \
@@ -171,7 +230,7 @@ jobs:
             -I lexer -I parser -I ast -I interpreter -I compiler -I debug -I formatter -I gui \
             -DQT_CORE_LIB -DQT_GUI_LIB -DQT_WIDGETS_LIB \
             --output-file=cppcheck-report.xml \
-            lexer parser ast interpreter compiler debug formatter gui 2>&1 | tee cppcheck-stdout.txt || true
+            lexer parser ast interpreter compiler debug formatter gui common 2>&1 | tee cppcheck-stdout.txt || true
 
       - name: 显示分析摘要
         run: |
@@ -182,7 +241,7 @@ jobs:
 
       - name: 上传 cppcheck 报告
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: cppcheck-report
           path: |

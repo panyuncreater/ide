@@ -68,6 +68,10 @@ private:
 
     QStringList history_;               // 命令历史
     int historyIndex_ = -1;             // 历史浏览索引
+    // BUG-REPL-G7 (P2, 已知限制): history_ 仅存储单行首行，多行续行输入（如
+    // 函数定义）不会被整体保存与重放。完整修复需引入多行历史编辑器（QPlainTextEdit
+    // 替换 QLineEdit），工程量较大，作为 UX 增强暂不实现。当前行为：多行输入后
+    // 通过 Up 键只能回溯到首行，用户需重新输入续行部分。
 
     QString pendingInput_;              // R4: 多行累积输入缓冲
     bool inContinuation_ = false;       // R4: 是否在续行模式

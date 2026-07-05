@@ -18,6 +18,7 @@ void DebugController::stepIn() {
     mode_ = StepMode::MODE_STEP_IN;
     running_ = true;
     stopped_ = false;
+    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 void DebugController::stepOver() {
@@ -25,6 +26,7 @@ void DebugController::stepOver() {
     stepOverDepth_ = currentDepth_;
     running_ = true;
     stopped_ = false;
+    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 void DebugController::stepOut() {
@@ -32,12 +34,14 @@ void DebugController::stepOut() {
     stepOutDepth_ = currentDepth_;
     running_ = true;
     stopped_ = false;
+    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 void DebugController::resume() {
     mode_ = StepMode::MODE_RUN;
     running_ = true;
     stopped_ = false;
+    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 void DebugController::stop() {
@@ -60,6 +64,15 @@ void DebugController::checkBreak(ASTNode* node) {
         return;
     }
 
+    // BUG-DBG-14 fix: crossedLine_ 机制（F4 fix）—— 单行循环断点重新触发。
+    // 原实现仅用 line != lastPausedLine_ 去重，单行循环断点首次命中后永不再触发。
+    if (line > 0) {
+        if (line != lastSeenLine_) {
+            crossedLine_ = true;
+        }
+        lastSeenLine_ = line;
+    }
+
     bool shouldPause = false;
 
     switch (mode_) {
@@ -67,19 +80,49 @@ void DebugController::checkBreak(ASTNode* node) {
         shouldPause = ((line != lastPausedLine_ || currentDepth_ != lastPausedDepth_) && line > 0);
         break;
     case StepMode::MODE_STEP_OVER:
-        shouldPause = (currentDepth_ <= stepOverDepth_ && line != lastPausedLine_ && line > 0);
+        // BUG-DBG-14 fix: crossedDeeper_ 机制（DBG-B fix）——
+        // 同行函数调用（如 foo(); bar(); 同在第5行）STEP_OVER foo() 后
+        // currentLine 仍为 5 == lastPausedLine_，原逻辑不暂停直接执行 bar()。
+        // crossedDeeper_ 确保从更深帧返回后即使行号不变也暂停。
+        if (currentDepth_ > stepOverDepth_) {
+            crossedDeeper_ = true;
+        }
+        if (currentDepth_ <= stepOverDepth_) {
+            shouldPause = (line > 0 && (line != lastPausedLine_ || crossedDeeper_));
+        }
         break;
     case StepMode::MODE_STEP_OUT:
-        shouldPause = (currentDepth_ < stepOutDepth_ && line != lastPausedLine_ && line > 0);
+        // BUG-DBG-14 fix: 顶层 STEP_OUT 用 crossedLine_ 允许单行循环暂停
+        if (currentDepth_ < stepOutDepth_) {
+            shouldPause = true;
+        } else if (currentDepth_ <= 1 && line > 0
+                   && (line != lastPausedLine_ || crossedLine_)) {
+            shouldPause = true;
+        }
         break;
     case StepMode::MODE_RUN:
-        shouldPause = breakpoints_.count(line) > 0;
+        // BUG-DBG-14 fix: 条件断点求值 + crossedLine_ 机制
+        if (breakpoints_.count(line) > 0) {
+            // 检查是否有条件
+            auto condIt = breakpointConditions_.find(line);
+            if (condIt == breakpointConditions_.end() || condIt->second.empty()) {
+                // 无条件断点：用 crossedLine_ 避免同行重复触发
+                shouldPause = (line != lastPausedLine_ || crossedLine_);
+            } else if (conditionEvaluator_) {
+                // 条件断点：求值为真才暂停，用 crossedLine_ 允许单行循环重新触发
+                shouldPause = conditionEvaluator_(condIt->second)
+                    && (line != lastPausedLine_ || crossedLine_);
+            }
+            // 无求值器时视为条件不满足（不暂停）
+        }
         break;
     }
 
     if (shouldPause) {
         lastPausedLine_ = line;
         lastPausedDepth_ = currentDepth_;
+        crossedLine_ = false;  // 命中后重置，同行后续指令不再触发
+        crossedDeeper_ = false;  // 命中后重置
         pauseCount_++;
         pauseLines_.push_back(line);
         pauseDepths_.push_back(currentDepth_);
@@ -153,6 +196,10 @@ void DebugController::reset() {
     lastPausedDepth_ = -1;
     running_ = false;
     stopped_ = false;
+    // BUG-DBG-14 fix: 重置 crossedLine_/crossedDeeper_ 状态
+    lastSeenLine_ = -1;
+    crossedLine_ = false;
+    crossedDeeper_ = false;
     pauseCount_ = 0;
     pauseLines_.clear();
     pauseDepths_.clear();

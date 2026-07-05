@@ -20,6 +20,10 @@ class QGraphicsRectItem;
 class AstViewer : public QGraphicsView {
     Q_OBJECT
 
+signals:
+    /// 节点被点击时发射，参数为源码行号（0表示无效）
+    void nodeClicked(int line);
+
 public:
     explicit AstViewer(QWidget* parent = nullptr);
 
@@ -59,8 +63,10 @@ private:
     static constexpr int SIBLING_SPACING = 20;
     /// 层与层之间的垂直间距
     static constexpr int LEVEL_SPACING = 60;
-    /// 子树间距（不同子树之间额外的水平距离）
-    static constexpr int SUBTREE_SPACING = 40;
+
+    /// BUG-AV-1 fix: 递归遍历最大深度保护，避免病态 AST 触发栈溢出。
+    /// 超过此深度的节点自身会被处理（如计数/绘制），但其子节点不再递归。
+    static constexpr int MAX_AST_DEPTH = 400;
 
     /// P1 fix: Reingold-Tilford 布局节点信息。
     /// 每个节点维护自身坐标系下的 leftContour/rightContour（相对节点中心）。
@@ -76,15 +82,18 @@ private:
     };
 
     /// PERF-24 fix: 递归统计 AST 节点数（用于大 AST 上限保护）
-    void countNodes(ASTNode* node, int& count);
+    /// BUG-AV-1 fix: depth 参数用于深度守卫，超深度时当前节点仍计数但不再递归子节点
+    void countNodes(ASTNode* node, int& count, int depth = 0);
 
     /// P1 fix: 构建 RtNode 树（不计算坐标，仅建立结构）
-    RtNode* buildRtTree(ASTNode* node);
+    /// BUG-AV-1 fix: depth 参数用于深度守卫
+    RtNode* buildRtTree(ASTNode* node, int depth = 0);
 
     /// P1 fix: Reingold-Tilford 第一遍——递归布局子树。
     /// 为每个子节点分配相对父节点的 x 偏移，并合并子树轮廓。
     /// 算法核心：相邻子树通过右轮廓 vs 左轮廓的最小间距检测，平移右侧子树直至无重叠。
-    void layoutSubtree(RtNode* node);
+    /// BUG-AV-1 fix: depth 参数用于深度守卫
+    void layoutSubtree(RtNode* node, int depth = 0);
 
     /// P1 fix: 合并相邻两棵子树的轮廓，返回右侧子树需要的平移量。
     /// - leftNode: 左侧子树，rightNode: 右侧子树
@@ -92,21 +101,20 @@ private:
     /// - 所需平移 = 最大重叠 + SIBLING_SPACING
     double computeShift(const RtNode* leftNode, const RtNode* rightNode) const;
 
-    /// P1 fix: 平移子树（轮廓与 finalX 都加 offset），并提升浅子树轮廓以对齐深层。
-    void shiftSubtree(RtNode* node, double offset);
-
     /// P1 fix: 合并多个子树的轮廓到父节点，生成父节点的 leftContour/rightContour。
     /// 父节点轮廓 = 自身节点矩形 ± 各子树轮廓的极值。
     void buildParentContour(RtNode* node);
 
     /// P1 fix: 第二遍——将相对坐标递归累加为绝对坐标。
     /// node->finalX += parentX, node->finalY 由 depth 决定。
+    /// BUG-AV-1 fix: depth 同时作为深度守卫（超 MAX_AST_DEPTH 不再递归子节点）
     void computeAbsoluteCoords(RtNode* node, double parentAbsX, int depth,
                                std::vector<std::pair<double, double>>& bounds);
 
     /// P1 fix: 第三遍——按绝对坐标绘制节点与连线（带全局偏移使最左 x=0）。
     /// 折叠节点的子树不绘制，节点上显示 [+N] 折叠指示。
-    void drawRtNode(RtNode* node, double offsetX);
+    /// BUG-AV-1 fix: depth 参数用于深度守卫
+    void drawRtNode(RtNode* node, double offsetX, int depth = 0);
 
     /// RtNode 内存池（避免递归 new/delete，析构时统一释放）
     std::vector<std::unique_ptr<RtNode>> rtPool_;
@@ -114,14 +122,16 @@ private:
     /// 从内存池分配一个 RtNode
     RtNode* allocRtNode();
 
-    /// 折叠状态键：(line, column, nodeName) —— 在 AST 重建后仍可恢复折叠状态
-    using CollapseKey = std::tuple<int, int, std::string>;
+    /// 折叠状态键：(line, column, nodeName, childCount) —— 在 AST 重建后仍可恢复折叠状态
+    /// BUG-AV-4 fix: 增加子节点数维度，避免同位置同类型不同子节点数的节点折叠键碰撞
+    using CollapseKey = std::tuple<int, int, std::string, int>;
     struct CollapseKeyHash {
         size_t operator()(const CollapseKey& k) const noexcept {
             size_t h1 = std::hash<int>{}(std::get<0>(k));
             size_t h2 = std::hash<int>{}(std::get<1>(k));
             size_t h3 = std::hash<std::string>{}(std::get<2>(k));
-            return h1 ^ (h2 << 1) ^ (h3 << 2);
+            size_t h4 = std::hash<int>{}(std::get<3>(k));
+            return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
         }
     };
     std::unordered_set<CollapseKey, CollapseKeyHash> collapsedKeys_;
@@ -137,13 +147,15 @@ private:
     void rebuildSceneKeepingView(const QTransform& savedTransform, const QPointF& savedCenter);
 
     /// 重置节点的布局状态（finalX/finalY/contour）以便重新布局
-    void resetLayoutState(RtNode* node);
+    /// BUG-AV-1 fix: depth 参数用于深度守卫
+    void resetLayoutState(RtNode* node, int depth = 0);
 
     /// 生成节点的折叠键
     CollapseKey makeCollapseKey(ASTNode* node) const;
 
     /// 根据折叠键同步 RtNode 的 collapsed 状态
-    void syncCollapsedState(RtNode* node);
+    /// BUG-AV-1 fix: depth 参数用于深度守卫
+    void syncCollapsedState(RtNode* node, int depth = 0);
 
     /// 主题相关颜色：根据 isDarkTheme_ 返回对应配色
     QColor sceneBackgroundColor() const;

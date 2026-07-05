@@ -8,10 +8,12 @@
 
 #include "Theme.h"
 #include "FluentGlobal.h"
+#include "gui/I18n.h"  // D2: i18n 翻译辅助层
 
 // ============================================================
 // MiniLang IDE 程序入口
 // 第五轮重构：接入 QFluentKit 主题系统 + DPI 自适应
+// D2: 接入 i18n 翻译加载
 // ============================================================
 
 int main(int argc, char *argv[]) {
@@ -29,6 +31,10 @@ int main(int argc, char *argv[]) {
     a.setApplicationVersion("1.0");
     a.setOrganizationName("MiniLang");
 
+    // D2: 加载翻译（MINILANG_ENABLE_I18N=ON 时查找 minilang_<locale>.qm；
+    //     未启用时为 no-op，下方 mlTr 调用退化为 QString::fromUtf8）
+    loadMiniLangTranslations();
+
     // 使用 Fusion 作为基础样式（QFluentKit QSS 覆盖其调色板驱动的背景）
     a.setStyle(QStyleFactory::create("Fusion"));
 
@@ -38,12 +44,8 @@ int main(int argc, char *argv[]) {
     font.setPixelSize(14);
     a.setFont(font);
 
-    // 读取上次主题选择，在创建窗口前设置 QFluentKit 全局主题
-    {
-        QSettings settings("MiniLang", "MiniLang IDE");
-        bool dark = settings.value("theme/dark", false).toBool();
-        Theme::setThemeMode(dark ? Fluent::ThemeMode::DARK : Fluent::ThemeMode::LIGHT);
-    }
+    // 固定使用亮色主题
+    Theme::setThemeMode(Fluent::ThemeMode::LIGHT);
 
     // MAIN-01 fix: 顶层异常捕获保护
     // 崩溃修复: Ide 改为堆分配。QMainWindow 是大型对象，栈分配会在 MSVC /RTC1 Debug
@@ -55,12 +57,12 @@ int main(int argc, char *argv[]) {
         w->show();
         return a.exec();
     } catch (const std::exception& e) {
-        QMessageBox::critical(nullptr, "MiniLang IDE - 启动错误",
+        QMessageBox::critical(nullptr, mlTr("MiniLang IDE - 启动错误"),
                               QString::fromStdString(e.what()));
         return 1;
     } catch (...) {
-        QMessageBox::critical(nullptr, "MiniLang IDE - 启动错误",
-                              "未知的启动异常");
+        QMessageBox::critical(nullptr, mlTr("MiniLang IDE - 启动错误"),
+                              mlTr("未知的启动异常"));
         return 1;
     }
 }

@@ -339,7 +339,20 @@ void Lexer::scanToken() {
         }
         // 无法识别的字符
         else {
-            errorToken(std::string("意外字符 '") + c + "'");
+            // BUG-LPA-06 fix: 检测 UTF-8 多字节字符首字节，消费完整码位生成单个错误。
+            //   原实现按单字节处理，3 字节 UTF-8 字符（如中文）产生 3 个错误，
+            //   且错误消息中字符显示为单字节乱码，无法识别原字符。
+            unsigned char uc = static_cast<unsigned char>(c);
+            int codepointLen = Utf8::byteLength(uc);
+            if (codepointLen > 1) {
+                std::string utf8char(1, c);
+                for (int i = 1; i < codepointLen && !isAtEnd(); ++i) {
+                    utf8char += advance();
+                }
+                errorToken("意外字符 '" + utf8char + "'（标识符仅支持 ASCII）");
+            } else {
+                errorToken(std::string("意外字符 '") + c + "'");
+            }
         }
         break;
     }

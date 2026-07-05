@@ -1,3 +1,26 @@
+/**
+ * @file common/IBackend.h
+ * @brief MiniLang 后端抽象接口（ARCH-09）。
+ *
+ * 定义 IBackend 抽象基类，为 Interpreter / VM / RegisterVM 等执行后端
+ * 提供统一的回调与诊断查询接口。上层（IdeController / WorkerManager）
+ * 通过 IBackend* 操作公共能力，便于未来替换或新增后端（如纯编译到
+ * WASM、JIT 后端等）。
+ *
+ * 设计原则：
+ *   - 只抽象签名完全一致的方法（避免引入适配器层）
+ *   - 执行入口不纳入接口（Interpreter 输入 Block(AST)，VM 输入 CompileResult）
+ *   - 错误查询不纳入接口（错误通道不同：Interpreter 抛异常，VM 返回码）
+ *   - 单步执行不纳入接口（粒度不同：Interpreter AST 节点级，VM 指令级）
+ *
+ * 已纳入接口的方法：
+ *   - setOutputCallback：print 语句输出回调
+ *   - setInputCallback：input 函数输入回调
+ *   - getDiagnostics：错误/警告诊断包
+ *
+ * @see DiagnosticBag
+ * @since ARCH-09
+ */
 #pragma once
 
 #include <functional>

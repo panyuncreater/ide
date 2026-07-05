@@ -1,3 +1,27 @@
+/**
+ * @file parser/Parser.h
+ * @brief MiniLang 递归下降语法分析器。
+ *
+ * 将 Token 流解析为 AST（抽象语法树），根节点为 Block。支持：
+ *   - 表达式优先级链（assignment → or → and → equality → comparison
+ *     → term → factor → unary → call → primary）
+ *   - 控制流（if/elif/else、while、for-in、break、continue）
+ *   - 函数声明与 lambda（含默认参数、类型注解）
+ *   - 类与继承（class/extends、字段、方法、super）
+ *   - 模块系统（import/export，含路径安全校验、循环依赖检测）
+ *   - 异常处理（try/catch/finally/throw）
+ *   - 字符串插值（解析 `\(expr)` 嵌套表达式为 InterpolatedString AST 节点）
+ *
+ * 错误恢复：
+ *   - parse() 中 catch ParseError 后调用 synchronize() 跳到下个语句边界继续
+ *   - 单条语句错误不影响后续解析，支持 IDE 多错误一次性展示
+ *
+ * DoS 防护：
+ *   - MAX_PARSE_DEPTH（256）：递归深度上限，防止恶意嵌套栈溢出
+ *   - MAX_BLOCK_DEPTH（256）：块嵌套深度上限
+ *
+ * @see Lexer ASTNode Formatter
+ */
 #pragma once
 
 #include <vector>

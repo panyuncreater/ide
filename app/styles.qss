@@ -319,17 +319,16 @@ QSplitter::handle:hover {
    ============================================================ */
 
 QWidget#welcomePage {
-    background: #faf9f5;
+    background: #FFFFFF;
 }
 QWidget#welcomeRecentPanel {
-    background: #f3f2ee;
-    border-right: 1px solid #e8e7e3;
+    background: #F7F7F7;
+    border-right: 1px solid #E8E8E8;
 }
 QLabel#welcomeRecentHeader {
-    color: #8a8578;
+    color: #5A5A5A;
     font-size: 11px;
     font-weight: 600;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
     padding: 4px 16px 8px 16px;
 }
@@ -342,31 +341,32 @@ QListWidget#welcomeRecentList {
 QListWidget#welcomeRecentList::item {
     padding: 7px 12px;
     border-radius: 5px;
-    color: #3d3929;
+    color: #1E1E1E;
     font-size: 13px;
 }
 QListWidget#welcomeRecentList::item:hover {
-    background: rgba(201, 100, 66, 8);
+    background: rgba(0,120,212,0.08);
 }
 QListWidget#welcomeRecentList::item:selected {
-    background: rgba(201, 100, 66, 16);
-    color: #8b5e3c;
+    background: #CCE4F7;
+    color: #0078D4;
 }
 QWidget#welcomeCenter {
-    background: #faf9f5;
+    background: #FFFFFF;
 }
 QLabel#welcomeIcon {
-    color: #C96442;
-    font-family: "Cascadia Code", "Consolas", "SF Mono", monospace;
+    qproperty-alignment: AlignCenter;
+    min-width: 96px;
+    min-height: 96px;
 }
 QLabel#welcomeTitle {
-    color: #3d3929;
-    font-size: 28px;
+    color: #1E1E1E;
+    font-size: 24px;
     font-weight: 600;
-    letter-spacing: -0.3px;
+    letter-spacing: -0.5px;
 }
 QLabel#welcomeSubtitle {
-    color: #8a8578;
+    color: #5A5A5A;
     font-size: 14px;
     font-weight: 400;
 }
@@ -375,23 +375,23 @@ QLabel#welcomeShortcut {
     font-size: 12px;
 }
 QLabel#welcomeShortcut:hover {
-    color: #C96442;
+    color: #0078D4;
 }
 QPushButton#welcomePrimaryBtn {
-    background: #C96442;
+    background: #0078D4;
     color: #ffffff;
     border: none;
-    padding: 9px 28px;
-    border-radius: 8px;
+    padding: 10px 32px;
+    border-radius: 6px;
     font-size: 14px;
     font-weight: 500;
     icon-size: 16px;
 }
 QPushButton#welcomePrimaryBtn:hover {
-    background: #d97757;
+    background: #106EBE;
 }
 QPushButton#welcomePrimaryBtn:pressed {
-    background: #a8523a;
+    background: #005A9E;
 }
 QPushButton#welcomePrimaryBtn:disabled {
     background: #c8c8c8;
@@ -399,21 +399,21 @@ QPushButton#welcomePrimaryBtn:disabled {
 }
 QPushButton#welcomeSecondaryBtn {
     background: transparent;
-    color: #3d3929;
-    border: 1px solid #dad9d4;
-    padding: 9px 28px;
-    border-radius: 8px;
+    color: #1E1E1E;
+    border: 1px solid #D4D4D4;
+    padding: 10px 32px;
+    border-radius: 6px;
     font-size: 14px;
     font-weight: 500;
     icon-size: 16px;
 }
 QPushButton#welcomeSecondaryBtn:hover {
-    background: rgba(201, 100, 66, 6);
-    border-color: #C96442;
-    color: #C96442;
+    background: rgba(0,120,212,0.08);
+    border-color: #0078D4;
+    color: #0078D4;
 }
 QPushButton#welcomeSecondaryBtn:pressed {
-    background: rgba(201, 100, 66, 12);
+    background: rgba(0,120,212,0.12);
 }
 QPushButton#welcomeSecondaryBtn:disabled {
     color: #b0b0b0;
@@ -422,6 +422,15 @@ QPushButton#welcomeSecondaryBtn:disabled {
 
 QWidget#welcomeBtnContainer {
     background: transparent;
+}
+QLabel#welcomeShortcutHint {
+    color: #8C8C8C;
+    font-size: 11px;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    background: rgba(0, 0, 0, 4);
+    border: 1px solid #E8E8E8;
+    border-radius: 4px;
+    padding: 2px 8px;
 }
 
 /* ============================================================
@@ -456,7 +465,6 @@ QLabel#panelHeaderLabel {
     color: #5a5a5a;
     font-size: 11px;
     font-weight: 600;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
 }
 QToolButton#panelToolBtn {
@@ -628,32 +636,34 @@ QTextEdit, QPlainTextEdit {
     selection-color: #1e1e1e;
 }
 QTextEdit#outputEdit {
-    background-color: #fafafa;
+    background-color: #ffffff;
     color: #1e1e1e;
     border: none;
-    padding: 10px 12px;
-    line-height: 150%;
+    border-top: 1px solid #e8e8e8;
+    padding: 8px 14px;
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
     font-size: 13px;
 }
 
 /* ---- Error List (clickable) ---- */
 QListWidget#errorList {
-    background-color: #fafafa;
+    background-color: #ffffff;
     color: #d13438;
     border: none;
+    border-top: 1px solid #e8e8e8;
     outline: none;
-    padding: 8px 12px;
+    padding: 4px 8px;
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
     font-size: 13px;
 }
 QListWidget#errorList::item {
-    padding: 5px 12px;
-    border-bottom: 1px solid #f0f0f0;
-    border-radius: 3px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #f5f5f5;
+    border-radius: 4px;
+    margin: 1px 4px;
 }
 QListWidget#errorList::item:hover {
-    background: #fef0f1;
+    background: #fef6f6;
 }
 QListWidget#errorList::item:selected {
     background: #fce4e6;
@@ -745,7 +755,6 @@ QHeaderView::section {
     border-bottom: 1px solid #e8e8e8;
     font-weight: 600;
     font-size: 11px;
-    text-transform: uppercase;
     letter-spacing: 0.5px;
     min-height: 30px;
 }
@@ -791,7 +800,6 @@ QLabel#vmGlobalsTitle {
     font-size: 11px;
     font-weight: 600;
     padding: 4px 8px;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
 }
 QListWidget#vmStackList {
@@ -826,7 +834,6 @@ QTableWidget#vmGlobalsTable QHeaderView::section {
     border-right: 1px solid #f0f0f0;
     border-bottom: 1px solid #e8e8e8;
     font-weight: 500;
-    text-transform: none;
     letter-spacing: 0;
 }
 
@@ -1017,7 +1024,6 @@ QWidget#debugStackLabel {
     font-weight: 600;
     color: #5a5a5a;
     font-size: 11px;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
 }
 QLabel#errorLabel {

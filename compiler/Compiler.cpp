@@ -3,6 +3,8 @@
 #include "interpreter/NumericUtils.h"  // 共享溢出检查（B6 fix）
 #include "lexer/Lexer.h"      // VM-IMPORT: 模块源码词法分析
 #include "parser/Parser.h"    // VM-IMPORT: 模块源码语法分析
+#include "common/RuntimeLimits.h"  // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "ast/ModuleIsolation.h"  // BUG-AUDIT-MOD-2: VM 模块隔离（非导出顶层名前缀化）
 #include "Logger.h"
 #include <sstream>
 #include <algorithm>
@@ -75,14 +77,43 @@ CompileResult Compiler::compile(Block& program) {
     // VM-IMPORT: 清理模块系统状态（每次编译重置，避免跨编译复用旧缓存）
     linkedModuleSet_.clear();
     moduleLoadingSet_.clear();
+    moduleLoadingStack_.clear();  // BUG-AUDIT-MOD-3: 深度保护栈
+    moduleExports_.clear();       // BUG-AUDIT-MOD-1: export 名称集合
     moduleAsts_.clear();
 
     // A2: pre-scan top-level declarations to assign global slots (eliminates forward-reference issues)
+    // BUG-PRES-1 fix: 与 preScanModuleGlobals() 保持一致，覆盖 ExportStmt（解包 VarDecl/ClassDecl 内部声明）。
+    // 原实现仅覆盖 VarDecl + ClassDecl，导致顶层 `export var x` / `export class C` 使用慢路径（OP_DEFINE_VAR），
+    // 且前向引用行为不一致（普通变量返回 null，导出变量报运行时错误）。
+    // 注意：不预扫描 FunDecl/ExportStmt(FunDecl)——visitFunDecl 顶层路径不写入 globalSlots_[slot]，
+    // 预扫描会导致 `var f = funName` 从"报错"变为"静默 null"。函数引用作为值传递是独立的待解决问题。
     for (auto& stmt : program.statements) {
-        if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
+        if (!stmt) continue;
+        switch (stmt->nodeType) {
+        case NodeType::NODE_VAR_DECL:
             allocateGlobalSlot(static_cast<VarDecl*>(stmt.get())->name);
-        } else if (stmt && stmt->nodeType == NodeType::NODE_CLASS_DECL) {
+            break;
+        case NodeType::NODE_CLASS_DECL:
             allocateGlobalSlot(static_cast<ClassDecl*>(stmt.get())->name);
+            break;
+        case NodeType::NODE_EXPORT_STMT: {
+            // ExportStmt 包装内部声明——提取声明名并分配槽位（仅 VarDecl/ClassDecl）
+            auto* exportNode = static_cast<ExportStmt*>(stmt.get());
+            if (exportNode->declaration) {
+                ASTNode* decl = exportNode->declaration.get();
+                switch (decl->nodeType) {
+                case NodeType::NODE_VAR_DECL:
+                    allocateGlobalSlot(static_cast<VarDecl*>(decl)->name);
+                    break;
+                case NodeType::NODE_CLASS_DECL:
+                    allocateGlobalSlot(static_cast<ClassDecl*>(decl)->name);
+                    break;
+                default: break;  // FunDecl 不预扫描（见上方注释）
+                }
+            }
+            break;
+        }
+        default: break;
         }
     }
 
@@ -149,11 +180,6 @@ CompileResult Compiler::compileViaIR(Block& program) {
         moduleAsts_.push_back(std::move(ast));
     }
 
-    // 方向二：IR 优化 pass（可选）
-    if (irOptimize_) {
-        optimizeIR(*lastIR_);
-    }
-
     // 把 mainFunction 放回 module_ 供 lowerModule 使用
     // build() 返回时已 move 出 module_->mainFunction，需临时放回
     IRModule* module = irBuilder.getModule();
@@ -161,6 +187,18 @@ CompileResult Compiler::compileViaIR(Block& program) {
     // BUG-NEW fix: 在 lowerModule 前填充全局槽位名表，供 BytecodeIRBackend
     // 将 WRITEBACK_*_VAR 的 GLOBAL_SLOT 转换为变量名常量索引。
     module->globalSlotNames = irBuilder.getGlobalSlotNames();
+
+    // 方向二：IR 优化 pass（可选）
+    // BUG-IR-DCE-2 fix: 栈式后端 DCE 不安全（POP operands 为空导致误删 LOAD_CONST），
+    // 显式传 enableDCE=false。
+    // BUG-IR-OPT-1 fix: 不仅优化 main 函数，还需遍历 module->functions 优化所有子函数，
+    // 否则子函数错过常量折叠等优化，与栈式非 IR 路径行为不一致。
+    if (irOptimize_) {
+        optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/false);
+        for (auto& fn : module->functions) {
+            if (fn) optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/false);
+        }
+    }
 
     // 阶段 2：IR → Bytecode（整个 module: main + 子函数）
     BytecodeIRBackend backend;
@@ -240,19 +278,25 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
         moduleAsts_.push_back(std::move(ast));
     }
 
+    // 把 mainFunction 放回 module_ 供 lowerModule 使用
+    IRModule* module = irBuilder.getModule();
+    module->mainFunction = std::move(lastIR_);
+
     // PERF-15: IR 优化 pass
     // AUDIT-BUG-E4 fix: 寄存器式下复制传播不安全——copyPropagationPass 将 VIRTUAL
     // 操作数替换为 CONSTANT kind，但 RegisterBytecodeBackend::lowerInstruction 不检查
     // 操作数 kind，直接 vregToReg(operand.index) 把常量索引当 vreg 编号，读错寄存器。
     // 修复方向：在 RegisterBytecodeBackend 中对 CONSTANT kind 操作数先 emit REG_LOAD_CONST
     // 到临时寄存器。在此修复落地前，寄存器路径禁用复制传播（常量折叠+DCE仍安全）。
+    // BUG-IR-DCE-2 fix: 解耦 DCE 控制——寄存器式后端 DCE 安全，启用 enableDCE=true。
+    // BUG-IR-OPT-1 fix: 不仅优化 main 函数，还需遍历 module->functions 优化所有子函数，
+    // 否则子函数错过常量折叠/DCE 等优化。
     if (irOptimize_) {
-        optimizeIR(*lastIR_, false);  // enableCopyPropagation=false（暂时禁用）
+        optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+        for (auto& fn : module->functions) {
+            if (fn) optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+        }
     }
-
-    // 把 mainFunction 放回 module_ 供 lowerModule 使用
-    IRModule* module = irBuilder.getModule();
-    module->mainFunction = std::move(lastIR_);
 
     // 阶段 2：IR → RegisterBytecode（整个 module: main + 子函数）
     RegisterBytecodeBackend backend;
@@ -610,6 +654,11 @@ void Compiler::visitVarDecl(VarDecl& node) {
             }
             currentLocals_[node.name] = slot;
             peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
+            // BUG-IDE-12 fix: 记录 slot→name 映射（跨作用域累积，不随作用域退出清除）
+            if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
+                localSlotNames_.resize(slot + 1);
+            }
+            localSlotNames_[slot] = node.name;
             chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
             chunk_.write(static_cast<uint8_t>(slot), node.line);
         } else {
@@ -728,6 +777,134 @@ int Compiler::resolveUpvalue(const std::string& name, int line) {
         return idx;
     }
     return -1;
+}
+
+// BUG-UV-1 fix: 前向自由变量分析实现（对齐 IR 路径 AstIRBuilder::computeFreeVars）
+// 在编译子函数体前预建 upvalue，使中间函数捕获内层引用的变量供透传。
+// 解决 3+ 层嵌套闭包问题：fun outer(){var x=1; fun mid(){ fun inner(){return x;} ... }}
+// mid 不直接引用 x，但 inner 需要，mid 必须捕获 x 供 inner 透传。
+bool Compiler::isDefinedInScopes(
+    const std::vector<std::unordered_set<std::string>>& scopes,
+    const std::string& name) const {
+    for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
+        if (it->count(name)) return true;
+    }
+    return false;
+}
+
+void Compiler::collectFreeVars(const ASTNode& node,
+                                std::vector<std::unordered_set<std::string>>& scopes,
+                                std::unordered_set<std::string>& freeVars) {
+    switch (node.nodeType) {
+        case NodeType::NODE_VAR_REF: {
+            const auto& ref = static_cast<const VarRef&>(node);
+            if (!isDefinedInScopes(scopes, ref.name)) {
+                freeVars.insert(ref.name);
+            }
+            break;
+        }
+        case NodeType::NODE_ASSIGNMENT: {
+            const auto& assign = static_cast<const Assignment&>(node);
+            if (!isDefinedInScopes(scopes, assign.name)) {
+                freeVars.insert(assign.name);
+            }
+            if (assign.value) collectFreeVars(*assign.value, scopes, freeVars);
+            break;
+        }
+        case NodeType::NODE_VAR_DECL: {
+            const auto& decl = static_cast<const VarDecl&>(node);
+            if (decl.initializer) collectFreeVars(*decl.initializer, scopes, freeVars);
+            scopes.back().insert(decl.name);
+            break;
+        }
+        case NodeType::NODE_FUN_DECL: {
+            const auto& nestedFn = static_cast<const FunDecl&>(node);
+            for (const auto& dv : nestedFn.defaultValues) {
+                if (dv) collectFreeVars(*dv, scopes, freeVars);
+            }
+            std::vector<std::unordered_set<std::string>> nestedScopes;
+            nestedScopes.emplace_back();
+            for (const auto& p : nestedFn.params) nestedScopes.back().insert(p);
+            nestedScopes.back().insert(nestedFn.name);
+            std::unordered_set<std::string> nestedFree;
+            if (nestedFn.body) collectFreeVars(*nestedFn.body, nestedScopes, nestedFree);
+            for (const auto& name : nestedFree) {
+                if (!isDefinedInScopes(scopes, name)) {
+                    freeVars.insert(name);
+                }
+            }
+            scopes.back().insert(nestedFn.name);
+            break;
+        }
+        case NodeType::NODE_FUN_CALL: {
+            const auto& call = static_cast<const FunCall&>(node);
+            if (call.callee) {
+                collectFreeVars(*call.callee, scopes, freeVars);
+            } else if (!call.name.empty()) {
+                if (!isDefinedInScopes(scopes, call.name)) {
+                    freeVars.insert(call.name);
+                }
+            }
+            for (const auto& arg : call.arguments) {
+                if (arg) collectFreeVars(*arg, scopes, freeVars);
+            }
+            break;
+        }
+        case NodeType::NODE_BLOCK: {
+            const auto& block = static_cast<const Block&>(node);
+            scopes.emplace_back();
+            for (const auto& stmt : block.statements) {
+                if (stmt) collectFreeVars(*stmt, scopes, freeVars);
+            }
+            scopes.pop_back();
+            break;
+        }
+        case NodeType::NODE_FOR_STMT: {
+            const auto& forStmt = static_cast<const ForStmt&>(node);
+            scopes.emplace_back();
+            if (forStmt.initializer) collectFreeVars(*forStmt.initializer, scopes, freeVars);
+            if (forStmt.condition) collectFreeVars(*forStmt.condition, scopes, freeVars);
+            if (forStmt.update) collectFreeVars(*forStmt.update, scopes, freeVars);
+            if (forStmt.body) collectFreeVars(*forStmt.body, scopes, freeVars);
+            scopes.pop_back();
+            break;
+        }
+        case NodeType::NODE_TRY_STMT: {
+            const auto& tryStmt = static_cast<const TryStmt&>(node);
+            if (tryStmt.tryBlock) collectFreeVars(*tryStmt.tryBlock, scopes, freeVars);
+            if (tryStmt.catchBlock) {
+                scopes.emplace_back();
+                if (!tryStmt.catchVarName.empty()) scopes.back().insert(tryStmt.catchVarName);
+                collectFreeVars(*tryStmt.catchBlock, scopes, freeVars);
+                scopes.pop_back();
+            }
+            break;
+        }
+        case NodeType::NODE_CLASS_DECL: {
+            const auto& cls = static_cast<const ClassDecl&>(node);
+            scopes.back().insert(cls.name);
+            break;
+        }
+        default:
+            for (auto* child : node.children()) {
+                if (child) collectFreeVars(*child, scopes, freeVars);
+            }
+            break;
+    }
+}
+
+std::unordered_set<std::string> Compiler::computeFreeVars(const FunDecl& fn) {
+    std::vector<std::unordered_set<std::string>> scopes;
+    scopes.emplace_back();
+    for (const auto& param : fn.params) scopes.back().insert(param);
+    scopes.back().insert(fn.name);
+
+    std::unordered_set<std::string> freeVars;
+    for (const auto& dv : fn.defaultValues) {
+        if (dv) collectFreeVars(*dv, scopes, freeVars);
+    }
+    if (fn.body) collectFreeVars(*fn.body, scopes, freeVars);
+    return freeVars;
 }
 
 void Compiler::visitVarRef(VarRef& node) {
@@ -1019,6 +1196,7 @@ void Compiler::visitFunDecl(FunDecl& node) {
         currentLocals_.clear();
         currentUpvalues_.clear();  // VM-05/06: 新的 upvalue 列表
         currentUpvalueNames_.clear(); // VM-05/06: 新的 upvalue 名称映射
+        localSlotNames_.clear();  // BUG-IDE-12 fix: 清空槽位名映射
         inFunction_ = true;
         // C-P0-1/C-P0-3 fix: 函数体的循环栈和 try 深度从 0 开始
         loopStack_.clear();
@@ -1032,8 +1210,27 @@ void Compiler::visitFunDecl(FunDecl& node) {
         }
         for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
             currentLocals_[node.params[i]] = i;
+            // BUG-IDE-12 fix: 记录参数 slot→name
+            if (static_cast<size_t>(i) >= localSlotNames_.size()) {
+                localSlotNames_.resize(i + 1);
+            }
+            localSlotNames_[i] = node.params[i];
         }
         peakLocals_ = static_cast<int>(node.params.size());
+
+        // BUG-UV-1 fix: 前向自由变量分析——在编译函数体前预建 upvalue。
+        // 解决 3+ 层嵌套闭包问题：中间函数即使不直接引用外层变量，也需捕获供更内层函数透传。
+        // 对齐 IR 路径 AstIRBuilder::visitFunDecl 的 computeFreeVars 调用。
+        // 实现要点：computeFreeVars 递归遍历 AST 收集自由变量（含嵌套函数传播），
+        // 然后对每个自由变量调用 resolveUpvalue 预建 upvalue 条目。
+        // 注意：resolveUpvalue 依赖 outerLocals_/outerUpvalueNames_/outerFunctions_，
+        // 这些已在上方 guard.saved.inFunction 分支中正确设置。
+        if (guard.saved.inFunction) {
+            auto freeVars = computeFreeVars(node);
+            for (const auto& name : freeVars) {
+                resolveUpvalue(name, node.line);
+            }
+        }
 
         // 编译函数体
         if (node.body) {
@@ -1046,6 +1243,8 @@ void Compiler::visitFunDecl(FunDecl& node) {
 
         // 记录局部变量总槽位数
         chunk_.localCount = peakLocals_;
+        // BUG-IDE-12 fix: 保存 slot→name 映射到 chunk，供 VM 条件断点求值
+        chunk_.localSlotNames = localSlotNames_;
 
         // F10: 编译默认参数值为常量
         // 仅支持字面量（Number/String/Bool/Null）和负数字面量，复杂表达式需通过 Interpreter 执行
@@ -1295,11 +1494,14 @@ void Compiler::visitImportStmt(ImportStmt& node) {
     // VM-IMPORT: 编译期模块内联——加载模块源码、解析 AST、预扫描全局槽位、
     // 内联编译模块语句。模块代码在编译期被"展开"到主程序中，VM 运行时无需模块加载机制。
     //
-    // 语义差异说明（与 Interpreter 对比）：
-    // - Interpreter: 模块在独立 Environment 中执行，仅导出名可见（P1-2 隔离）
-    // - VM: 模块代码内联到同一全局作用域，所有顶层名可见（无隔离）
-    //   实践影响小——导入方通常只使用其声明的导入名，不会访问模块内部变量
+    // BUG-AUDIT-MOD-2 fix: 模块隔离（AST 重写 + 作用域分析）
+    // 在内联编译前，对模块 AST 调用 ModuleTopLevelRenamer::rename，将模块的
+    // 非导出顶层声明名前缀化为 `__mod_<hash>__<name>`，并递归重写模块内对这些
+    // 名字的引用。导入方无法用原名访问模块的非导出名，与 Interpreter 的模块
+    // 隔离语义（独立 Environment）对齐。导出名保持原名，导入方正常访问。
     // - run-once: 同一模块多次 import 时仅编译/执行一次（linkedModuleSet_ 保证）
+    // - 安全保障: export 标记检查（BUG-AUDIT-MOD-1）+ 深度限制（BUG-AUDIT-MOD-3）
+    //   + AST 隔离（BUG-AUDIT-MOD-2，本处实施）
 
     // 1. 路径规范化与安全校验（SEC-1: 路径遍历防护）
     std::string modulePath = normalizeModulePath(node.modulePath);
@@ -1310,12 +1512,15 @@ void Compiler::visitImportStmt(ImportStmt& node) {
 
     // 2. run-once 检查：已编译的模块跳过（全局槽位已定义）
     if (linkedModuleSet_.count(modulePath)) {
-        // 已编译——仅验证具名导入是否存在
+        // BUG-AUDIT-MOD-1 fix: 已编译模块的具名导入验证也检查 export 集合（对齐 Interpreter）
         if (!node.importAll && !node.names.empty()) {
-            for (const auto& name : node.names) {
-                if (lookupGlobalSlot(name) < 0) {
-                    error("模块 '" + modulePath + "' 未导出名称: " + name, node.line, 0);
-                    return;
+            auto expIt = moduleExports_.find(modulePath);
+            if (expIt != moduleExports_.end()) {
+                for (const auto& name : node.names) {
+                    if (expIt->second.find(name) == expIt->second.end()) {
+                        error("模块 " + modulePath + " 中未导出名称: " + name, node.line, 0);
+                        return;
+                    }
                 }
             }
         }
@@ -1328,24 +1533,60 @@ void Compiler::visitImportStmt(ImportStmt& node) {
         return;
     }
 
+    // BUG-AUDIT-MOD-3 fix: 模块加载深度保护（对齐 InterpreterModules.cpp:76-78）
+    // Interpreter 有 moduleLoadingStack_.size() >= MAX_RECURSION_DEPTH 检查，
+    // VM/IR 路径原缺失此检查，深嵌套导入链可能 C++ 栈溢出崩溃。
+    if (moduleLoadingStack_.size() >= RuntimeLimits::MAX_RECURSION_DEPTH) {
+        error("模块导入深度超过限制 (" + std::to_string(RuntimeLimits::MAX_RECURSION_DEPTH) + ")", node.line, 0);
+        return;
+    }
+
     // 4. 检查模块加载器
     if (!moduleLoader_) {
         error("VM 编译需要模块加载器（moduleLoader 未设置），请通过文件路径运行", node.line, 0);
         return;
     }
 
-    // 5. 标记为正在加载（循环检测）
+    // 5. 标记为正在加载（循环检测 + 深度保护）
     moduleLoadingSet_.insert(modulePath);
+    moduleLoadingStack_.push_back(modulePath);
 
     // 6. 加载并解析模块
     auto moduleAst = loadAndParseModule(modulePath, node.line);
     if (!moduleAst) {
         moduleLoadingSet_.erase(modulePath);
+        moduleLoadingStack_.pop_back();  // BUG-AUDIT-MOD-3
         return;  // loadAndParseModule 已调用 error()
     }
 
+    // 6.5 BUG-AUDIT-MOD-2 fix: 模块隔离——重命名非导出顶层名为 `__mod_<hash>__<name>`
+    // 在预扫描前重写 AST，确保重命名后的名字进入全局槽位分配与 export 集合
+    ModuleTopLevelRenamer::rename(*moduleAst, modulePath);
+
     // 7. 预扫描模块顶层声明，分配全局槽位
     preScanModuleGlobals(*moduleAst);
+
+    // 7.5 BUG-AUDIT-MOD-1 fix: 收集模块导出名称（对齐 InterpreterModules.cpp:172-188）
+    // 仅 ExportStmt 包装的声明名计入导出集合，普通顶层声明不算导出
+    {
+        std::unordered_set<std::string> exports;
+        for (auto& stmt : moduleAst->statements) {
+            if (!stmt || stmt->nodeType != NodeType::NODE_EXPORT_STMT) continue;
+            auto* exp = static_cast<ExportStmt*>(stmt.get());
+            if (!exp->declaration) continue;
+            ASTNode* decl = exp->declaration.get();
+            switch (decl->nodeType) {
+            case NodeType::NODE_VAR_DECL:
+                exports.insert(static_cast<VarDecl*>(decl)->name); break;
+            case NodeType::NODE_CLASS_DECL:
+                exports.insert(static_cast<ClassDecl*>(decl)->name); break;
+            case NodeType::NODE_FUN_DECL:
+                exports.insert(static_cast<FunDecl*>(decl)->name); break;
+            default: break;
+            }
+        }
+        moduleExports_[modulePath] = std::move(exports);
+    }
 
     // 8. 内联编译模块语句（递归处理模块自身的 import）
     for (auto& stmt : moduleAst->statements) {
@@ -1357,14 +1598,21 @@ void Compiler::visitImportStmt(ImportStmt& node) {
 
     // 10. 从加载集移除，标记为已链接
     moduleLoadingSet_.erase(modulePath);
+    moduleLoadingStack_.pop_back();  // BUG-AUDIT-MOD-3
     linkedModuleSet_.insert(modulePath);
 
-    // 11. 具名导入验证
+    // 11. BUG-AUDIT-MOD-1 fix: 具名导入验证改为检查 export 集合（对齐 Interpreter）
+    // 原实现仅检查 lookupGlobalSlot(name) < 0（名称存在即通过），
+    // 导致非导出名称可被导入，违反模块封装语义。
     if (!node.importAll && !node.names.empty()) {
-        for (const auto& name : node.names) {
-            if (lookupGlobalSlot(name) < 0) {
-                error("模块 '" + modulePath + "' 未导出名称: " + name, node.line, 0);
-                return;
+        auto expIt = moduleExports_.find(modulePath);
+        if (expIt != moduleExports_.end()) {
+            for (const auto& name : node.names) {
+                if (expIt->second.find(name) == expIt->second.end()) {
+                    // BUG-AUDIT-MOD-6 fix: 错误消息对齐 Interpreter（"模块 X 中未导出名称: Y"）
+                    error("模块 " + modulePath + " 中未导出名称: " + name, node.line, 0);
+                    return;
+                }
             }
         }
     }
@@ -1396,9 +1644,12 @@ std::string Compiler::normalizeModulePath(const std::string& rawPath) const {
     }
     // 空路径
     if (path.empty()) return "";
-    // 绝对路径检测（Unix '/' 或 Windows 'C:/'）
-    if (path[0] == '/' || (path.size() >= 3 && path[1] == ':' &&
-        (path[2] == '/' || path[2] == '\\'))) {
+    // 绝对路径检测（Unix '/' 或 Windows 驱动器路径 'X:...'）
+    // BUG-MOD-1 fix: 原实现仅检测 'C:/' 形式，未拒绝 'C:foo'（Windows 驱动器相对路径），
+    // 可能被 moduleLoader_ 解析到模块目录外的文件。修复：拒绝所有 'X:' 开头形式
+    //（X 为任意字符），覆盖 'C:/'、'C:foo'、'D:path' 等。
+    // 注：反斜杠已在上方统一转为正斜杠，无需再检测 '\\'。
+    if (path[0] == '/' || (path.size() >= 2 && path[1] == ':')) {
         return "";
     }
     // ".." 路径段检测
@@ -1458,7 +1709,15 @@ std::unique_ptr<Block> Compiler::loadAndParseModule(const std::string& modulePat
 }
 
 void Compiler::preScanModuleGlobals(Block& moduleAst) {
-    // 预扫描模块顶层声明，分配全局槽位（对齐 compile() 中的顶层 pre-scan 逻辑）
+    // 预扫描模块顶层声明，分配全局槽位。
+    // BUG-PRES-1 fix: 覆盖 ExportStmt（解包 VarDecl/ClassDecl/FunDecl 内部声明）。
+    //
+    // 与 compile() 的 pre-scan 存在有意的不对称：
+    // - compile() 不预扫描 FunDecl：visitFunDecl 顶层路径只 OP_POP 闭包值，不写入
+    //   globalSlots_[slot]。预扫描会让 `var f = funName` 从"报错"变为"静默 null"。
+    // - preScanModuleGlobals() 预扫描 FunDecl：模块函数导入验证（visitImportStmt 第 11 步）
+    //   使用 lookupGlobalSlot(name) 检查导出名是否存在。不预扫描 FunDecl 会导致
+    //   `import { greet } from "m"` 误报"模块未导出名称: greet"。
     for (auto& stmt : moduleAst.statements) {
         if (!stmt) continue;
         switch (stmt->nodeType) {
@@ -1493,16 +1752,6 @@ void Compiler::preScanModuleGlobals(Block& moduleAst) {
         }
         default: break;
         }
-    }
-}
-
-std::string Compiler::extractExportName(const ExportStmt& node) {
-    if (!node.declaration) return "";
-    switch (node.declaration->nodeType) {
-    case NodeType::NODE_VAR_DECL: return static_cast<VarDecl*>(node.declaration.get())->name;
-    case NodeType::NODE_FUN_DECL: return static_cast<FunDecl*>(node.declaration.get())->name;
-    case NodeType::NODE_CLASS_DECL: return static_cast<ClassDecl*>(node.declaration.get())->name;
-    default: return "";
     }
 }
 
@@ -1566,6 +1815,11 @@ void Compiler::visitTryStmt(TryStmt& node) {
         }
         currentLocals_[node.catchVarName] = slot;
         peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
+        // BUG-IDE-12 fix: 记录 catch 变量 slot→name
+        if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
+            localSlotNames_.resize(slot + 1);
+        }
+        localSlotNames_[slot] = node.catchVarName;
         chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
         chunk_.write(static_cast<uint8_t>(slot), node.line);
         chunk_.writeOp(OpCode::OP_POP, node.line);
@@ -1591,31 +1845,98 @@ void Compiler::visitTryStmt(TryStmt& node) {
     }
 
     // 6. 编译 catch 块
+    // BUG-TRY-1 fix: 若 catch 块内 throw，原实现跳过清理代码，导致 catch 变量泄漏、
+    // 被遮蔽的全局值未恢复。修复：用 OP_TRY_BEGIN 包装 catch 块，捕获内层 throw，
+    // 跳到 cleanupThrowIp 执行清理代码后 OP_THROW rethrow。
+    // 字节码布局：
+    //   catchIp: <bind exception>
+    //     OP_TRY_BEGIN <cleanupThrowOffset>
+    //     <catch block>
+    //     OP_TRY_END
+    //     <cleanup code>           ← 正常路径
+    //     OP_JUMP <afterCatch>
+    //   cleanupThrowIp:
+    //     <cleanup code>           ← 异常路径（复制）
+    //     OP_THROW                 ← rethrow（异常值已在栈顶）
+    //   afterCatch:
+    //
+    // cleanup 字节码栈平衡为 0（OP_DELETE_VAR 不影响栈；OP_GET_VAR+OP_SET_GLOBAL+OP_DELETE_VAR = 0），
+    // 异常值保持在栈顶，OP_THROW 可正确 rethrow。
+    bool needsCleanupWrap = needCatchVarCleanup || hasShadowedGlobal;
+    size_t innerTryBeginIp = 0;
+    size_t innerCatchOffsetPatch = std::string::npos;
+    if (needsCleanupWrap) {
+        innerTryBeginIp = chunk_.code.size();
+        chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
+        innerCatchOffsetPatch = chunk_.code.size();
+        chunk_.writeShort(0, node.line);  // 占位，稍后回填为 cleanupThrowOffset
+    }
     if (node.catchBlock) {
         compileNode(node.catchBlock.get());
     }
-
-    // 7. 清理顶层 catch 变量并恢复被遮蔽的全局值
-    if (needCatchVarCleanup) {
-        uint16_t nameIdx = identifierIndex(node.catchVarName);
-        chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-        chunk_.writeShort(nameIdx, node.line);
+    if (needsCleanupWrap) {
+        chunk_.writeOp(OpCode::OP_TRY_END, node.line);
     }
+
+    // 7. 清理顶层 catch 变量并恢复被遮蔽的全局值（正常路径）
+    // cleanup 字节码发射逻辑提取为 lambda，正常路径和异常路径各调用一次
+    auto emitCleanupBytecode = [&]() {
+        if (needCatchVarCleanup) {
+            uint16_t nameIdx = identifierIndex(node.catchVarName);
+            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+            chunk_.writeShort(nameIdx, node.line);
+        }
+        if (hasShadowedGlobal) {
+            uint16_t saveIdx = identifierIndex(shadowedSaveName);
+            chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+            chunk_.writeShort(saveIdx, node.line);
+            chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
+            chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
+            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+            chunk_.writeShort(saveIdx, node.line);
+        }
+    };
+    emitCleanupBytecode();
+
+    size_t skipCleanupThrowJumpPatch = std::string::npos;
+    if (needsCleanupWrap) {
+        // 正常路径：跳过 cleanupThrow 块
+        skipCleanupThrowJumpPatch = chunk_.code.size();
+        chunk_.writeOp(OpCode::OP_JUMP, node.line);
+        chunk_.writeShort(0, node.line);  // 占位，稍后回填为 afterCatch
+
+        // 异常路径：cleanupThrowIp
+        size_t cleanupThrowIp = chunk_.code.size();
+        size_t cleanupThrowOffset = cleanupThrowIp - (innerTryBeginIp + 3);
+        if (cleanupThrowOffset > 65535) {
+            error("catch 块过大，cleanupThrow 偏移溢出 65535", node.line, 0);
+            // BUG-TRY-LEAK-1 fix: early return 前必须恢复编译期状态，否则
+            // globalSlotAllocator_ 状态不一致 + currentLocals_ 泄漏 catch 变量。
+            // 对齐 L1840-L1845 的正常路径恢复逻辑。
+            if (hasShadowedGlobal) {
+                globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);
+            }
+            currentLocals_ = std::move(savedCatchLocals);
+            return;
+        }
+        chunk_.code[innerCatchOffsetPatch] = static_cast<uint8_t>(cleanupThrowOffset & 0xFF);
+        chunk_.code[innerCatchOffsetPatch + 1] = static_cast<uint8_t>((cleanupThrowOffset >> 8) & 0xFF);
+
+        // 异常路径：发射 cleanup 字节码 + OP_THROW rethrow
+        // 此时异常值在栈顶，cleanup 字节码栈平衡为 0，异常值保持栈顶
+        emitCleanupBytecode();
+        chunk_.writeOp(OpCode::OP_THROW, node.line);
+    }
+
+    // restoreMapping 是编译期操作（修改 slots_ map），不影响运行时字节码，只调用一次
     if (hasShadowedGlobal) {
-        uint16_t saveIdx = identifierIndex(shadowedSaveName);
-        chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
-        chunk_.writeShort(saveIdx, node.line);
-        chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
-        chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
-        chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-        chunk_.writeShort(saveIdx, node.line);
         globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);  // B4: 恢复遮蔽
     }
 
     // 恢复 currentLocals_，使 catch 变量不泄漏到外层作用域
     currentLocals_ = std::move(savedCatchLocals);
 
-    // 7. 回填跳过 catch 块的跳转目标（OP_JUMP 使用绝对地址）
+    // 8. 回填跳过 catch 块的跳转目标（OP_JUMP 使用绝对地址）
     size_t afterCatch = chunk_.code.size();
     // P1-3 fix: 检查 afterCatch 是否溢出 uint16_t
     if (afterCatch > 65535) {
@@ -1625,6 +1946,10 @@ void Compiler::visitTryStmt(TryStmt& node) {
     uint16_t afterCatchTarget = static_cast<uint16_t>(afterCatch);
     chunk_.code[skipCatchJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
     chunk_.code[skipCatchJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
+    if (skipCleanupThrowJumpPatch != std::string::npos) {
+        chunk_.code[skipCleanupThrowJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
+        chunk_.code[skipCleanupThrowJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
+    }
 
     return;
 }
@@ -1848,15 +2173,9 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
         compileNode(node.value.get());
         // OP_INDEX_SET: 弹出 val/innerIdx/outerValue → 修改 → lastMutatedReceiver_
         chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
-        // 推外层索引（write-back 需要）
-        if (outerIdx) {
-            compileNode(outerIdx->index.get());
-        } else {
-            uint16_t fieldIdx = identifierIndex(outerMem->fieldName);
-            chunk_.writeOp(OpCode::OP_STRING, node.line);
-            chunk_.writeShort(fieldIdx, node.line);
-        }
-        // write-back: 将 lastMutatedReceiver_ 写回基变量
+        // BUG-CP-2 fix: WRITEBACK_INDEX handler 已改为整体替换语义（不 pop 索引），
+        // 因此不再向栈推入外层索引/字段（原实现每次泄漏 2 个栈值，循环内必触发栈溢出）。
+        // 对齐 visitMethodCall L2441-2452 的 BUGFIX-P1 修复模式。
         if (isLocal) {
             if (outerIdx) {
                 chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);
@@ -1954,6 +2273,7 @@ void Compiler::visitClassDecl(ClassDecl& node) {
         currentLocals_.clear();
         currentUpvalues_.clear();  // C-P2-10 fix: 方法编译使用独立的 upvalue 列表
         currentUpvalueNames_.clear();
+        localSlotNames_.clear();  // BUG-IDE-12 fix: 清空槽位名映射
         currentClassName_ = node.name;  // B1 fix: 记录当前类名供 super 使用
         // O5: 如果类定义在函数内，设置 outerLocals_ 以检测不支持的闭包捕获
         if (savedInFunction) {
@@ -1973,11 +2293,14 @@ void Compiler::visitClassDecl(ClassDecl& node) {
         // 局部变量映射：slot 0 = this，slot 1..N = 字段（含继承字段），slot N+1.. = 参数
         int slot = 0;
         currentLocals_["this"] = slot++;  // slot 0: this
+        localSlotNames_.push_back("this");  // BUG-IDE-12 fix
         for (const auto& fieldName : allFieldNames) {
             currentLocals_[fieldName] = slot++;  // slot 1..N: 实例字段（含继承）
+            localSlotNames_.push_back(fieldName);  // BUG-IDE-12 fix
         }
         for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
             currentLocals_[funDecl->params[i]] = slot++;  // slot N+1..: 参数
+            localSlotNames_.push_back(funDecl->params[i]);  // BUG-IDE-12 fix
         }
         peakLocals_ = slot;
         // C-P1-2 fix: 方法局部变量槽位上限 255（uint8_t 编码限制，含 this/字段/参数）
@@ -2017,6 +2340,8 @@ void Compiler::visitClassDecl(ClassDecl& node) {
 
         // 记录局部变量总槽位数（含 this/字段/参数和方法体内 var 声明），供 VM 预分配栈空间
         chunk_.localCount = peakLocals_;
+        // BUG-IDE-12 fix: 保存 slot→name 映射到 chunk，供 VM 条件断点求值
+        chunk_.localSlotNames = localSlotNames_;
 
         // F10: 编译默认参数值为常量（与 visitFunDecl 一致）
         for (size_t i = 0; i < funDecl->defaultValues.size(); ++i) {
@@ -2188,15 +2513,9 @@ void Compiler::visitMemberAssign(MemberAssign& node) {
         uint16_t fieldNameIdx = identifierIndex(node.fieldName);
         chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
         chunk_.writeShort(fieldNameIdx, node.line);
-        // 推外层索引（write-back 需要）
-        if (outerIdx) {
-            compileNode(outerIdx->index.get());
-        } else {
-            uint16_t outerFieldIdx = identifierIndex(outerMem->fieldName);
-            chunk_.writeOp(OpCode::OP_STRING, node.line);
-            chunk_.writeShort(outerFieldIdx, node.line);
-        }
-        // write-back: 将 lastMutatedReceiver_ 写回基变量
+        // BUG-CP-3 fix: WRITEBACK_MEMBER handler 已改为整体替换语义（不 pop 索引/字段），
+        // 因此不再向栈推入外层索引/字段（原实现每次泄漏 2 个栈值，循环内必触发栈溢出）。
+        // 对齐 visitMethodCall L2441-2452 的 BUGFIX-P1 修复模式。
         if (isLocal) {
             if (outerIdx) {
                 chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);

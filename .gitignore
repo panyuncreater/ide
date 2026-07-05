@@ -3,7 +3,8 @@
 # ============================================================
 
 # --- 构建输出目录 ---
-build*/
+# 注：统一使用 out/ 目录（CMakePresets 配置）。build/ 为历史残留，可安全删除。
+build/
 out/
 x64/
 .vs/
@@ -54,12 +55,8 @@ CMakeUserPresets.json
 
 # --- 日志/临时输出 ---
 *.log
-*.txt
-!CMakeLists.txt
-!README.md
-!LICENSE
-!CODEOWNERS
-!CONTRIBUTORS
+# 注：不再使用 *.txt 通配忽略，避免误伤测试数据等文本文件。
+# CMake 生成文件已由上方 CMakeCache.txt / CMakeFiles/ 等规则覆盖。
 
 # --- 文档生成 ---
 docs/api/

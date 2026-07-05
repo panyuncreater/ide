@@ -111,7 +111,10 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
 
     // F8: 检查是否点击了折叠区域（右侧 14px）
     int clickX = static_cast<int>(event->position().x());
-    if (clickX >= width() - 16) {
+    // BUG-CE-6 fix: 与 paintEvent 绘制区域一致。绘制位置 bx = width()-14，boxSize=9，
+    // 覆盖 [width()-14, width()-5)。原判定 >= width()-16 比绘制区域宽，导致点击
+    // 行号右侧空白也触发折叠。统一为 [width()-14, width()-4)。
+    if (clickX >= width() - 14 && clickX < width() - 4) {
         // 映射 Y 坐标到块号
         QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->position().y())));
         int blockNumber = cursor.blockNumber();
@@ -141,7 +144,11 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
     QTextBlock block = codeEditor->document()->findBlockByNumber(lineNumber - 1);
     if (block.isValid()) {
         QString text = block.text().trimmed();
-        if (text.isEmpty() || text.startsWith("//")) {
+        // BUG-CE-7 fix: 不仅识别行注释 //，也识别块注释行（userState >= 100
+        // 或向后兼容编码 2 表示块注释跨行上下文）
+        int s = block.userState();
+        bool isCommentLine = text.startsWith("//") || s == 2 || s >= 100;
+        if (text.isEmpty() || isCommentLine) {
             return;  // 跳过不可执行行
         }
     }
@@ -165,6 +172,17 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
     // 将 Y 坐标映射到行号
     QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->pos().y())));
     int lineNumber = cursor.blockNumber() + 1;
+
+    // BUG-CE-5 fix: 与 mousePressEvent 一致，检查点击是否在文档内容区域内。
+    // cursorForPosition 对最后一行下方的空白区域返回文档末尾光标（最后一个块号），
+    // 导致空白区域右键在最后一行误触发条件菜单。
+    QTextBlock lastBlock = codeEditor->document()->lastBlock();
+    qreal lastBlockBottom = static_cast<qreal>(
+        codeEditor->blockBoundingGeometry(lastBlock)
+            .translated(codeEditor->contentOffset()).bottom());
+    if (static_cast<qreal>(event->pos().y()) >= lastBlockBottom) {
+        return;  // 点击在最后一行下方的空白区域
+    }
 
     if (!codeEditor->breakpoints_.contains(lineNumber)) return;
 
@@ -226,6 +244,12 @@ CodeEditor::CodeEditor(QWidget* parent)
     connect(this, &CodeEditor::cursorPositionChanged, this, [this]() {
         if (lineHighlightTimer_) lineHighlightTimer_->start();
     });
+
+    // BUG-CE-2/CE-3 fix: 监听文档内容变化，文档修改后调整断点/折叠块号偏移。
+    // 原实现未监听 contentsChange，文档修改后断点和折叠停留在原行号，导致行号错位。
+    contentsChangeConn_ = connect(document(), &QTextDocument::contentsChange,
+        this, &CodeEditor::onContentsChange);
+    lastBlockCount_ = document()->blockCount();
 
     updateLineNumberAreaWidth(0);
     highlightCurrentLine();
@@ -290,6 +314,8 @@ void CodeEditor::setErrorRanges(const std::vector<ErrorRange>& ranges) {
             // EU-1 fix: 从列位置开始，精确标记错误 token
             int col = (r.column > 0) ? r.column - 1 : 0;
             int blockTextLen = block.length() - 1;  // block.length() includes the newline
+            // BUG-CE-4 fix: 空行跳过，避免 len=1 选中换行符产生无效选区
+            if (blockTextLen <= 0) continue;
             if (col >= blockTextLen) col = (blockTextLen > 0) ? blockTextLen - 1 : 0;
             int len = (r.length > 0) ? r.length : blockTextLen - col;
             if (len <= 0) len = blockTextLen - col;
@@ -345,7 +371,11 @@ void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
         QTextBlock block = document()->findBlockByNumber(line - 1);
         if (block.isValid()) {
             QString text = block.text().trimmed();
-            if (text.isEmpty() || text.startsWith("//")) continue;
+            // BUG-CE-7 fix: 不仅识别行注释 //，也识别块注释行（userState >= 100
+            // 或向后兼容编码 2 表示块注释跨行上下文）
+            int s = block.userState();
+            bool isCommentLine = text.startsWith("//") || s == 2 || s >= 100;
+            if (text.isEmpty() || isCommentLine) continue;
         }
         breakpoints_.insert(line);
     }
@@ -368,6 +398,69 @@ std::string CodeEditor::getBreakpointCondition(int line) const {
     return "";
 }
 
+void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded) {
+    Q_UNUSED(charsRemoved);
+    Q_UNUSED(charsAdded);
+
+    // BUG-CE-2/CE-3 fix: 文档内容变化后，断点（1-based 行号）、断点条件、
+    // 折叠块（0-based blockNumber）以行号为 key，文档修改导致行号变化时需同步偏移。
+    //
+    // 实现说明：contentsChange 在变更已应用后发射，被删除文本不可访问，无法直接
+    // 统计其换行符数量。改为通过文档块数变化计算 delta（lastBlockCount_ 在上次
+    // 变更后/构造时更新），保证纯插入/纯删除/替换三类场景均正确。
+    int newBlockCount = document()->blockCount();
+    int delta = newBlockCount - lastBlockCount_;
+    lastBlockCount_ = newBlockCount;
+    if (delta == 0) return;
+
+    // 计算 position 所在行（1-based），仅调整 >= startLine 的行号
+    QTextBlock block = document()->findBlock(position);
+    if (!block.isValid()) return;
+    int startLine = block.blockNumber() + 1;  // 1-based，变更起始行
+
+    // 调整断点行号（1-based）
+    QSet<int> newBreakpoints;
+    newBreakpoints.reserve(breakpoints_.size());
+    for (int line : breakpoints_) {
+        if (line < startLine) {
+            newBreakpoints.insert(line);
+        } else {
+            int newLine = line + delta;
+            if (newLine > 0) newBreakpoints.insert(newLine);
+        }
+    }
+    breakpoints_ = newBreakpoints;
+
+    // 调整断点条件（1-based）
+    QMap<int, std::string> newConditions;
+    for (auto it = breakpointConditions_.begin(); it != breakpointConditions_.end(); ++it) {
+        int line = it.key();
+        if (line < startLine) {
+            newConditions[line] = it.value();
+        } else {
+            int newLine = line + delta;
+            if (newLine > 0) newConditions[newLine] = it.value();
+        }
+    }
+    breakpointConditions_ = std::move(newConditions);
+
+    // BUG-CE-3 fix: 调整 foldedBlocks_（0-based blockNumber）
+    QSet<int> newFolded;
+    newFolded.reserve(foldedBlocks_.size());
+    int startBlockNumber = startLine - 1;  // 0-based
+    for (int bn : foldedBlocks_) {
+        if (bn < startBlockNumber) {
+            newFolded.insert(bn);
+        } else {
+            int newBn = bn + delta;
+            if (newBn >= 0) newFolded.insert(newBn);
+        }
+    }
+    foldedBlocks_ = newFolded;
+
+    update();
+}
+
 void CodeEditor::resizeEvent(QResizeEvent* event) {
     QPlainTextEdit::resizeEvent(event);
     QRect cr = contentsRect();
@@ -388,6 +481,15 @@ void CodeEditor::highlightCurrentLine() {
     QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : QColor(232, 244, 255);
     QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : QColor(255, 255, 195);
 
+    // BUG-CE-8 fix: 查找高亮先添加（底层），错误下划线次之（不冲突），
+    // 光标行再次（蓝色覆盖查找高亮），执行行最后（黄色覆盖光标行和查找高亮）。
+    // 原顺序将 findSelections_ 放在最后，导致查找高亮覆盖执行行高亮。
+    // BUG 4.2 fix: 合并查找高亮，不覆盖编辑器自身 selections
+    selections.append(findSelections_);
+
+    // 错误下划线（使用预构建的缓存，避免每次光标移动都遍历）
+    selections.append(cachedErrorSelections_);
+
     QTextEdit::ExtraSelection cursorSel;
     cursorSel.cursor = textCursor();
     cursorSel.cursor.select(QTextCursor::LineUnderCursor);
@@ -395,7 +497,7 @@ void CodeEditor::highlightCurrentLine() {
     cursorSel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
     selections.append(cursorSel);
 
-    // 当前执行行高亮（黄色背景，后添加以覆盖蓝色）
+    // 当前执行行高亮（黄色背景，后添加以覆盖蓝色和查找高亮）
     if (currentLine_ > 0) {
         QTextBlock block = document()->findBlockByNumber(currentLine_ - 1);
         if (block.isValid()) {
@@ -407,12 +509,6 @@ void CodeEditor::highlightCurrentLine() {
             selections.append(sel);
         }
     }
-
-    // 错误下划线（使用预构建的缓存，避免每次光标移动都遍历）
-    selections.append(cachedErrorSelections_);
-
-    // BUG 4.2 fix: 合并查找高亮，不覆盖编辑器自身 selections
-    selections.append(findSelections_);
 
     setExtraSelections(selections);
 }
@@ -488,11 +584,16 @@ int countBracesInLine(const QString& text, bool& inBlockComment) {
 bool CodeEditor::isFoldable(const QTextBlock& block) const {
     if (!block.isValid()) return false;
     // P2 fix: 使用语法高亮器的块状态 (userState) 判断是否处于块注释中，O(1) 而非 O(N)
-    // 状态 2 = 块注释内（由 SyntaxHighlighter 设置）
+    // BUG-CE-1 fix: 兼容两种块注释状态编码——向后兼容编码 2（depth=1）
+    // 与嵌套编码 100+depth（depth>=1）。原代码仅检查 == 2，导致 SyntaxHighlighter
+    // 设置的 100+depth 状态不被识别，折叠判定在块注释行失效。
     bool inBlockComment = false;
     QTextBlock prev = block.previous();
-    if (prev.isValid() && prev.userState() == 2) {
-        inBlockComment = true;
+    if (prev.isValid()) {
+        int s = prev.userState();
+        if (s == 2 || s >= 100) {
+            inBlockComment = true;
+        }
     }
     int depth = countBracesInLine(block.text(), inBlockComment);
     return depth > 0;
@@ -506,10 +607,14 @@ int CodeEditor::foldEndBlock(const QTextBlock& startBlock) const {
     if (!startBlock.isValid()) return -1;
 
     // P2 fix: 使用语法高亮器的块状态 (userState) 判断是否处于块注释中，O(1) 而非 O(N)
+    // BUG-CE-1 fix: 同 isFoldable，兼容状态编码 2 与 100+depth
     bool inBlockComment = false;
     QTextBlock prev = startBlock.previous();
-    if (prev.isValid() && prev.userState() == 2) {
-        inBlockComment = true;
+    if (prev.isValid()) {
+        int s = prev.userState();
+        if (s == 2 || s >= 100) {
+            inBlockComment = true;
+        }
     }
     int depth = countBracesInLine(startBlock.text(), inBlockComment);
     if (depth <= 0) return -1;

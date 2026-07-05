@@ -2,31 +2,30 @@
 setlocal enabledelayedexpansion
 
 REM ============================================================
-REM MiniLang IDE test script — 仅运行已构建的测试（无构建步骤）
+REM MiniLang test script -- run already-built tests (no build step)
 REM ------------------------------------------------------------
-REM 修复问题 4（scripts/ 硬编码路径）。
+REM Usage:
+REM   run_tests_only.bat            Run Debug tests via CTest
+REM   run_tests_only.bat release    Run Release tests via CTest
 REM ============================================================
 
-REM --- Detect Qt6 path (测试需要 Qt DLL) ---
-if not defined QTDIR (
-    for /f "delims=" %%v in ('dir /b /ad "D:\qt\6.*" 2^>nul') do (
-        if exist "D:\qt\%%v\msvc2022_64\lib\cmake\Qt6" set "QTDIR=D:\qt\%%v\msvc2022_64"
-    )
-    for /f "delims=" %%v in ('dir /b /ad "C:\qt\6.*" 2^>nul') do (
-        if exist "C:\qt\%%v\msvc2022_64\lib\cmake\Qt6" set "QTDIR=C:\qt\%%v\msvc2022_64"
-    )
-)
-if defined QTDIR set "PATH=!QTDIR!\bin;%PATH%"
+REM --- Build type ---
+set "BUILD_TYPE=debug"
+if /i "%~1"=="release" set "BUILD_TYPE=release"
 
-set "PROJECT_ROOT=%~dp0.."
-cd /d "%PROJECT_ROOT%\out\build\debug\tests"
+REM --- Use shared header: VS detection + MSVC init + Qt detection ---
+call "%~dp0_common.bat"
+if errorlevel 1 exit /b 1
 
-if not exist "minilang_tests.exe" (
-    echo [ERROR] minilang_tests.exe not found. Run scripts\build_ide.bat or scripts\run_tests.bat first.
+cd /d "%PROJECT_ROOT%\out\build\%BUILD_TYPE%"
+
+if not exist "tests\minilang_tests.exe" (
+    echo [ERROR] minilang_tests.exe not found. Build tests first.
     exit /b 1
 )
 
-minilang_tests.exe --gtest_brief=1
+echo [INFO] Running tests via CTest (%BUILD_TYPE%)...
+ctest --output-on-failure
 set "TESTS_EXIT_CODE=!errorlevel!"
 echo TESTS_EXIT_CODE=!TESTS_EXIT_CODE!
 exit /b !TESTS_EXIT_CODE!

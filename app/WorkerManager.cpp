@@ -153,14 +153,18 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
 
     if (!astRoot) return false;
 
+    // BUG-DBG-11 fix: 状态设置移入 try 块内，确保任何抛出都能被 catch 回滚。
+    // 原实现将 setDebugMode/isDebugRun_/isRunning_ 设在 try 块外，若 try 块内
+    // 第一条语句（setBreakpoints）抛出，catch 能回滚；但若未来在 try 块外
+    // 插入其他代码抛出，状态将永久泄漏（UI 卡在"运行中"）。
+    // A-P1-1 fix: isRunning_=true 之后的代码若抛出异常，需回滚 isRunning_ 状态，
+    // 否则 UI 永久卡在"运行中"
+    try {
     // GUI-01 fix: 启用 debugMode 使 checkBreak 生效
     interpreter_->setDebugMode(true);
     isDebugRun_ = isDebug;
     isRunning_ = true;
 
-    // A-P1-1 fix: isRunning_=true 之后的代码若抛出异常，需回滚 isRunning_ 状态，
-    // 否则 UI 永久卡在"运行中"
-    try {
     // A-P1-1 fix: 非调试运行时清除残留断点，避免普通运行在调试会话后意外暂停
     // （DebugController::reset() 保留断点供下次调试复用，普通运行需显式清除）
     if (!isDebug) {
@@ -209,13 +213,23 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
         emit workerFinished(wasDebug);
     }, Qt::QueuedConnection);
     } catch (...) {
+        // BUG-DBG-10 fix: 重置顺序与 cleanupWorker() 对齐。
+        // 原顺序 worker_.reset() 在 workerThread_.reset() 之前，且 workerThread_
+        // 未 quit/wait 就直接 reset。worker 生活于 workerThread_（moveToThread），
+        // 线程亲和性规则要求先 quit+wait 再删除 worker。虽然 catch 路径下线程
+        // 尚未 start，但与 cleanupWorker 保持一致避免未来回归。
         isRunning_ = false;
         isDebugRun_ = false;
         interpreter_->setDebugMode(false);
         interpreter_->restoreReplState();
         debugger_->reset();
+        // A-P2-1 fix: 先确保线程完全退出，再删除 worker（符合 Qt 线程亲和性规则）
+        if (workerThread_) {
+            workerThread_->quit();
+            workerThread_->wait();
+            workerThread_.reset();
+        }
         worker_.reset();
-        workerThread_.reset();
         setupMainCallbacks();
         throw;
     }
@@ -235,6 +249,13 @@ bool WorkerManager::stopForClose(int timeoutMs) {
         if (!workerThread_->wait(timeoutMs)) {
             return false;  // 超时，需强制终止
         }
+        // BUG-IDE-15 fix: stopForClose 成功路径需断开 QThread::finished 信号到
+        // cleanupWorker lambda 的连接，否则 workerThread_.reset() 后已投递到主线程
+        // 事件队列的 QueuedConnection 回调仍会执行 cleanupWorker，导致
+        // restoreReplState/debugger_->reset/setupMainCallbacks 被调用两次
+        // （一次在下方手动清理，一次在异步 lambda），造成 REPL 状态二次恢复、
+        // debugger 重复 reset 等不一致。disconnectAll 确保线程对象的所有信号不再触发。
+        workerThread_->disconnect(this);
         // 7.1 fix: unique_ptr 自动释放，无需手动 delete
         worker_.reset();
         workerThread_.reset();

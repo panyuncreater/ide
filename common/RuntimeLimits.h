@@ -1,3 +1,28 @@
+/**
+ * @file common/RuntimeLimits.h
+ * @brief 统一运行时限制常量。
+ *
+ * 消除 17 个限制常量散布在 7 个文件（Interpreter.h / VM.h / Parser.h /
+ * Lexer.h / Formatter.h / Value.h / Compiler.h）的重复定义问题。
+ * 所有模块共享同一组常量，避免对齐遗漏（如 MAX_INHERITANCE_DEPTH
+ * 曾重复定义在 Interpreter.h 和 VM.h 两处）。
+ *
+ * 设计原则：
+ *   - 所有常量为 constexpr，可供编译期常量折叠
+ *   - 不依赖任何标准库头文件，无循环依赖风险
+ *   - 常量值与原各自定义保持一致，纯重构无行为变更
+ *
+ * 限制分类：
+ *   - 递归/调用栈深度：MAX_RECURSION_DEPTH / MAX_FRAMES / MAX_STACK_SIZE
+ *   - 继承链：MAX_INHERITANCE_DEPTH
+ *   - DoS 防护：MAX_LOOP_ITERATIONS / MAX_INSTRUCTIONS / MAX_RANGE
+ *   - 编译期深度：MAX_PARSE_DEPTH / MAX_BLOCK_DEPTH / MAX_COMPILE_DEPTH / MAX_FORMAT_DEPTH
+ *   - 序列化/比较：MAX_TOSTRING_DEPTH / MAX_EQUALS_DEPTH / MAX_CLONE_DEPTH
+ *   - Lexer 输入：MAX_SOURCE_SIZE / MAX_TOKEN_COUNT / MAX_INTERP_DEPTH
+ *   - GUI 查找/替换：MAX_FIND_HIGHLIGHTS / MAX_REPLACE_ALL
+ *
+ * @see Interpreter VM Parser Lexer Formatter Value
+ */
 #pragma once
 
 // ============================================================

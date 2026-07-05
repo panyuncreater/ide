@@ -407,8 +407,10 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
 
         const BytecodeChunk& targetChunk = cachedChunk ? *cachedChunk : it->second;
         // F10: 支持默认参数，参数数量可在 [requiredArity, arity] 范围内
+        // BUG-VM-02 fix: 错误返回前 popN(argCount) 清理栈上参数，与 OP_CALL_EXPR 路径一致
         if (argCount < static_cast<uint8_t>(targetChunk.requiredArity) ||
             argCount > static_cast<uint8_t>(targetChunk.arity)) {
+            popN(argCount);
             return runtimeError(ErrorFormat::format(
                 "函数 %s 期望 %d-%d 个参数，但传入了 %d 个",
                 funName.c_str(), targetChunk.requiredArity, targetChunk.arity,
@@ -419,16 +421,19 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         if (argCount < static_cast<uint8_t>(targetChunk.arity)) {
             int missingCount = targetChunk.arity - argCount;
             int defaultStartIdx = static_cast<int>(targetChunk.defaultConstIndices.size()) - missingCount;
-            if (defaultStartIdx < 0 || 
+            if (defaultStartIdx < 0 ||
                 static_cast<size_t>(defaultStartIdx + missingCount) > targetChunk.defaultConstIndices.size()) {
+                popN(argCount);
                 return runtimeError("函数 " + funName + " 默认参数索引越界");
             }
             for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
                 uint16_t constIdx = targetChunk.defaultConstIndices[i];
                 if (constIdx == 0xFFFF) {
+                    popN(argCount);
                     return runtimeError("函数 " + funName + " 的默认参数包含非字面量表达式，VM 不支持");
                 }
                 if (constIdx >= targetChunk.constants.size()) {
+                    popN(argCount);
                     return runtimeError("函数 " + funName + " 默认参数常量索引越界");
                 }
                 push(targetChunk.constants[constIdx]);
@@ -437,6 +442,7 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         }
 
         if (frames_.size() >= MAX_FRAMES) {
+            popN(argCount);
             return runtimeError("调用栈溢出");
         }
 
@@ -445,6 +451,7 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
         int extraSlots = targetChunk.localCount - argCount;
         // V-P2-1 fix: extraSlots 为负表示帧布局损坏
         if (extraSlots < 0) {
+            popN(argCount);
             return runtimeError(ErrorFormat::format(
                 "闭包调用帧布局损坏: localCount=%d < argCount=%d",
                 targetChunk.localCount, static_cast<int>(argCount)));
@@ -673,6 +680,9 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                 }
 
                 if (frames_.size() >= MAX_FRAMES) {
+                    // BUG-VM-03 fix: 错误返回前 popN(argCount + 1) 清理栈上参数 + 接收者，
+                    // 与同函数 argCount 检查（L665-673）一致
+                    popN(argCount + 1);
                     return runtimeError("调用栈溢出");
                 }
 
@@ -976,14 +986,17 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
                 cls.name.c_str(), initChunkPtr->requiredArity,
                 static_cast<int>(argCount)));
         }
-        push(instance);
 
         // 无 init 但有参数：报错（与解释器一致）
+        // BUG-VM-01 fix: 检查必须在 push(instance) 之前，错误返回时栈上不残留 instance。
+        // 与同文件 executeCall 类构造路径（L327-336 检查在 push 之前）顺序一致。
         if (initChunkPtr == nullptr && argCount > 0) {
             return runtimeError(ErrorFormat::format(
                 "类 %s 没有 init 方法，但传入了 %d 个参数",
                 cls.name.c_str(), static_cast<int>(argCount)));
         }
+
+        push(instance);
 
         notifyStep(ip, op);
         ip += 4;

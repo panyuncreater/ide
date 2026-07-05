@@ -1,59 +1,120 @@
 # MiniLang IDE Doxygen 配置
-# 生成 C++ API 文档：doxygen Doxyfile
+# ------------------------------------------------------------
+# 生成 C++ API 文档：
+#   cmake -DMINILANG_BUILD_DOCS=ON -B out/build/debug
+#   cmake --build out/build/debug --target docs
+# 输出位置：docs/api/html/index.html
+# ============================================================
 
 PROJECT_NAME           = "MiniLang IDE"
-PROJECT_BRIEF          = "C++20 / Qt6 轻量级教学型编程语言 IDE"
+PROJECT_NUMBER         = 1.0
+PROJECT_BRIEF          = "C++20 / Qt6 轻量级教学型编程语言 IDE（Lexer + Parser + AST + 三套执行引擎 + 调试器 + 格式化器 + 教学面板）"
+PROJECT_ICON           = app/res/icons/minilang_logo.svg
+
 OUTPUT_DIRECTORY       = docs/api
 GENERATE_LATEX         = NO
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
 OPTIMIZE_OUTPUT_FOR_C  = NO
+OPTIMIZE_OUTPUT_JAVA   = NO
+OPTIMIZE_FOR_FORTRAN   = NO
+OPTIMIZE_OUTPUT_VHDL   = NO
+AUTOLINK_SUPPORT       = YES
 
-# 输入
+# 输入：项目源码目录（third_party / tests / test_harness / build 已排除）
 INPUT                  = lexer parser ast interpreter compiler debug formatter common gui app
 FILE_PATTERNS          = *.h *.cpp *.hpp
 RECURSIVE              = YES
-EXCLUDE_PATTERNS       = third_party/* tests/* test_harness/* out/* build_*/*
-EXCLUDE_SYMBOLS        = std::* _details::* detail::*
+EXCLUDE_PATTERNS       = third_party/* tests/* test_harness/* out/* build_*/* docs/*
+EXCLUDE_SYMBOLS        = std::* _details::* detail::* QFluent* qtadvanceddocking*
 
-# 提取
+# 提取策略（D1: 暴露 protected/private 以辅助扩展开发者）
 EXTRACT_ALL            = YES
-EXTRACT_PRIVATE        = NO
-EXTRACT_STATIC         = NO
-EXTRACT_LOCAL_CLASSES  = NO
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_LOCAL_METHODS  = NO
 HIDE_UNDOC_MEMBERS     = NO
 HIDE_UNDOC_CLASSES     = NO
+HIDE_SCOPE_NAMES       = NO
+HIDE_COMPOUND_REFERENCE= NO
 
 # C++ 特性
 CPP_STANDARD           = c++20
 ENABLE_PREPROCESSING   = YES
 MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = YES
-PREDEFINED             = Q_DECL_EXPORT= Q_DECL_IMPORT=
+PREDEFINED             = Q_DECL_EXPORT= \
+                         Q_DECL_IMPORT= \
+                         Q_OBJECT= \
+                         Q_DECLARE_METATYPE=
+SKIP_FUNCTION_MACROS   = YES
+
+# 文档化行为
+INLINE_INHERITED_MEMB  = NO
+ALLOW_UNICODE_NAMES    = YES
+BUILTIN_STL_SUPPORT    = YES
+IDL_PROPERTY_SUPPORT   = NO
+EXTRACT_ANON_NSPACES   = NO
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = NO
+SORT_GROUP_NAMES       = YES
+SORT_BY_SCOPE_NAME     = YES
 
 # 输出样式
 HTML_COLORSTYLE_HUE    = 220
+HTML_COLORSTYLE_SAT    = 100
+HTML_COLORSTYLE_GAMMA  = 80
 HTML_EXTRA_STYLESHEET  =
 GENERATE_TREEVIEW      = YES
 DISABLE_INDEX          = NO
 FULL_SIDEBAR           = YES
+HTML_DYNAMIC_SECTIONS  = YES
+HTML_INDEX_NUM_ENTRIES = 100
 
-# 图表
+# 图表（HAVE_DOT=NO 保持零外部依赖，使用文本类图）
 HAVE_DOT               = NO
 CLASS_DIAGRAMS         = YES
 CLASS_GRAPH            = YES
 COLLABORATION_GRAPH    = YES
 INCLUDE_GRAPH          = YES
 INCLUDED_BY_GRAPH      = YES
+GRAPHICAL_HIERARCHY    = YES
+DIRECTORY_GRAPH        = YES
 CALL_GRAPH             = NO
 CALLER_GRAPH           = NO
 
 # 搜索
 SEARCHENGINE           = YES
 SERVER_BASED_SEARCH    = NO
+EXT_SEARCH_ENGINE      = NO
 
-# 行号
+# 源码浏览（带行号交叉引用）
 SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
 STRIP_CODE_COMMENTS    = NO
 REFERENCED_BY_RELATION = YES
 REFERENCES_RELATION    = YES
+REFERENCES_LINK_SOURCE = YES
+SOURCE_TOOLTIPS        = YES
+USE_HTAGS              = NO
+
+# 警告（D1: 让缺失文档可见，便于后续补充）
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+WARN_FORMAT            = "$file:$line: $text"
+WARN_LOGFILE           = docs/api/doxygen_warnings.log
+
+# Qt/DSL 增强
+ALIASES               += briefcn="\\brief 中文描述" \
+                         qtslot="@<Qt slot\\>"
+
+# 启用 XML 输出（供 IDE 工具/未来 doc-portal 消费）
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+XML_PROGRAMLISTING     = YES
+
+# 命名空间处理（minilang:: 命名空间作为顶层分组）
+HIDE_UNDOC_RELATIONS   = NO

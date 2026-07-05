@@ -710,7 +710,8 @@ TEST(IROptimizeTest, OptimizeIRStackModeSkipsCopyPropagation) {
     ir.blocks.push_back(std::move(block));
 
     // 栈式模式（enableCopyPropagation=false）不应触发复制传播
-    optimizeIR(ir, false);
+    // BUG-IR-DCE-2 fix: optimizeIR 新增 enableDCE 参数，栈式后端 DCE 不安全故传 false
+    optimizeIR(ir, /*enableCopyPropagation=*/false, /*enableDCE=*/false);
     // PRINT 的操作数应仍为 vreg（未被替换为 constant）
     EXPECT_EQ(ir.blocks[0].instructions[1].operands[0].kind, IROperandKind::VIRTUAL);
 }
@@ -747,7 +748,7 @@ TEST(IROptimizeTest, OptimizeReducesInstructionCount) {
     size_t beforeCount = ir.blocks[0].instructions.size();
     EXPECT_EQ(beforeCount, 6u);
 
-    bool modified = optimizeIR(ir, /*enableCopyPropagation=*/true);
+    bool modified = optimizeIR(ir, /*enableCopyPropagation=*/true, /*enableDCE=*/true);
     EXPECT_TRUE(modified);
 
     size_t afterCount = ir.blocks[0].instructions.size();

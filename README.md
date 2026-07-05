@@ -3,7 +3,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Qt6](https://img.shields.io/badge/Qt-6-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-1047-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1352-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境，包含自研词法分析器、递归下降解析器、栈式字节码虚拟机、树遍历解释器、调试器、代码格式化器、IR 中间表示层与完整 GUI。
@@ -66,6 +66,63 @@
 - **类型检查器**：编译期类型注解检查，三后端运行时统一强制，类型违反报告警告
 - **代码格式化器**：可配置缩进/花括号风格/运算符空格，保留注释。幂等性 + 往返不变量验证（AST 结构比较），括号保留遵循运算符优先级（右嵌套同优先级加括号，左嵌套冗余括号丢弃）
 - **REPL 面板**：交互式求值，支持多行续行（未闭合 `{ ( [` / 未闭合字符串 / 未闭合块注释 / `try` 缺失 `catch` 自动续行，正确处理字符串插值嵌套上下文），续行中按空行可中止；表达式语句自动求值并打印结果；异步执行不阻塞 UI；`help`/`clear` 特殊命令
+
+### 教学增强面板（第一波 + 第三波）
+
+围绕"三套执行引擎 + 共享 IR 层 + 历史真实 Bug 沉淀"三大独特性设计，强化 IDE 的教学价值：
+
+- **编译管线可视化面板**（Ctrl+Shift+P）：5 步流程导航条（源码 → Token → AST → IR → 字节码），逐步展示编译管线每一阶段的中间产物。Token 表格含 type/lexeme/line/column 字段；AST 步骤展示 dumpAst 摘要；IR 步骤展示 IRModule 反汇编；字节码步骤展示 BytecodeChunk 反汇编
+- **三后端并行对比面板**（Ctrl+Shift+B）：同一源码顺序运行 Interpreter / StackVM / RegisterVM 三条路径，每路径独立计时（微秒精度）+ 输出比对，自动统计行级差异并给出一致性 PASS/FAIL 结论。三后端输出一致即"三后端语义等价"教学验证
+- **Bug 狩猎面板**（Ctrl+Shift+H）：基于项目历史真实 Bug 训练调试能力。题库 10 道（BUG-CP-1/CP-2/UV-1/IR-POP-2/DEF-1/MOD-1/DBG-1/REGVM-2/REPL-1/F-04），每题含背景/源码/期望行为/Bug 行为/递进提示/根因分析。三栏布局：题目列表 + 背景说明 + 内嵌编辑器/输出。可一键加载源码到主编辑器进一步调试
+- **交互式语法探索器**（Ctrl+Shift+S）：10 条核心产生式参考（var-decl/if-stmt/while-stmt/for-stmt/fun-decl/class-decl/try-stmt/import-stmt/string-interp/data-structures/operators），每条配 EBNF 形式 + 文字说明 + 可运行样例代码。三栏布局：产生式列表 + 说明 + 代码/输出
+- **内置实验手册**（Ctrl+Shift+L）：8 个实验章节（lab-01~lab-08：词法分析 / 递归下降 / 树遍历解释器 / 栈式 VM / 寄存器式 VM / 三后端一致性 / 内存模型 / Bug 狩猎），每章含目标/关键概念/实验步骤/验证断言/进阶/可一键加载样例代码。Markdown 内容通过 QTextBrowser 渲染
+
+### 教学增强面板（第二波）
+
+围绕"内存模型 + IR 变换 + 性能剖析"三大运行时内部细节进一步深化教学价值：
+
+- **内存模型可视化面板**：3 个子页 — (1) NaN-boxing 编码：8 字节 Value 的 64 位分段图示（tag/payload），含 int48 范围/边界/超范围装箱演示，7 个示例（int-inline-pos/neg/boundary + float + bool + null + ptr）；(2) RefCounted 引用计数 & COW：4 个场景（数组基础生命周期 / COW 写时复制 detach / 字符串共享 / 实例字段引用），每场景含步骤表展示 refCount 变化；(3) GcManager mark-sweep：6 个阶段说明（注册/触发时机/Mark/Sweep/UAF 防护/已知限制）+ 实时 tracked 节点数
+- **IR 变换过程面板**：3 个子页 — (1) AST → IR lowering：8 个典型 AST 节点的 lowering 演示（整数字面量 / 二元加法 / 变量声明 / if / while / 函数调用 / 闭包捕获 / 类方法），每个含 AST 摘要 + 源码 + lowering 后 IR 文本；(2) 优化 pass 对比：3 个 pass（常量折叠 / 死代码消除 / 复制传播）的前后 IR 对比 + 指令数变化；(3) 当前源码 IR：从当前 AST 实时生成 IRModule 反汇编（复用 IRToString 公共 API）
+- **性能剖析仪表盘**：6 个性能场景（fib 递归 / 循环求和 / 字符串拼接 / 类实例化 / 闭包捕获 / 字典访问）+ 三后端多次测量取平均与标准差 + 柱状图（QPainter 自绘，避免 QtCharts 强依赖）+ 加速比分析。每场景含分类标签与迭代次数配置
+
+> 第二波 3 个面板同样作为独立 ads::CDockWidget 注册到右侧 dock area，启动时默认隐藏。性能剖析面板顺序运行三后端（与 BackendComparePanel 一致），柱状图通过 paintEvent 自绘（蓝/橙/绿三色对应 Interpreter/StackVM/RegisterVM）。
+
+### 教学增强面板（第三波）
+
+围绕 IdeController Facade 已暴露的 VM/调试状态 API（`getVmCallStack` / `getVmGlobals` / `getDebugVariableSnapshot` / `getVmCurrentIP` / `getVmCurrentOpCodeName` / `getVmStack` 等），无需引擎层改造即可消费运行期状态，强化"运行时状态可见性"教学维度：
+
+- **调用栈可视化面板**（CallStackPanel）：2 个子页 — (1) 实时调用栈：优先消费 `getVmCallStack()` 走 VM 路径，回退到 `getDebugCallStack()` 走 Interpreter debug 路径，显示栈帧列表（函数名 / 行号 / 深度 / 本地变量），500ms 自动刷新；(2) 教学场景库：6 个场景（simple-call 普通调用 / recursion 递归 / closure-capture 闭包捕获 / method-dispatch 方法分派 / try-catch 异常传播 / mutual-recursion 互递归），每场景含源码 + 期望栈帧序列 + 教学注释。教学价值：理解函数调用栈、闭包 upvalue、递归与异常传播
+- **变量检查器面板**（VariableInspectorPanel）：2 个子页 — (1) 实时变量树：消费 `getVmGlobals()` + `getDebugVariableSnapshot()`，按作用域分组（全局变量组 + 局部变量按 scope 二次分组），每变量显示名 / 类型名（`Value::typeName()`）/ 值字符串 / NaN-boxing 位编码十六进制；(2) 类型教学库：9 种类型示例（int / int-boundary / float / bool / null / string / array / dict / instance / closure），每示例含值 + 位编码 + 文字说明。教学价值：理解作用域、类型注解、NaN-boxing 位编码
+- **字节码执行轨迹面板**（BytecodeTracePanel）：2 个子页 — (1) 执行轨迹时间轴：消费 `getVmCurrentIP()` / `getVmCurrentOpCodeName()` / `getVmFrameCount()` / `getVmStack()`，记录单步执行序列（step / IP / OpCode / frameCount / 栈快照），最多保留 1000 条历史，500ms 轮询自动捕获；(2) OpCode 教学库：18 个 OpCode 文档条目（OP_INT / OP_FLOAT / OP_STRING / OP_NULL / OP_ADD / OP_GET_GLOBAL / OP_SET_GLOBAL / OP_JUMP / OP_JUMP_IF_FALSE / OP_LOOP / OP_CALL / OP_RETURN / OP_BUILD_ARRAY / OP_BUILD_DICT / OP_CLOSURE / OP_GET_UPVALUE / OP_CLASS_NEW / OP_METHOD_CALL），每条含分类 + 文字说明 + 栈效应 + 示例代码。教学价值：理解栈式 VM 的 push/pop 平衡、寄存器分配、IP 前进机制
+
+> 第三波 3 个面板同样作为独立 ads::CDockWidget 注册到右侧 dock area，启动时默认隐藏。关键架构决策：BytecodeTracePanel 使用 QTimer 500ms 轮询而非订阅 IdeController 信号，避免测试目标链接 IdeController.cpp（测试目标仅链接 minilang_core + Panel.cpp 中的 Library 静态数据）；CallStackPanel/VariableInspectorPanel 优先走 VM 路径（`isVmInitialized()`），回退到 Interpreter debug 路径（`isRunning() && isDebugRun()`）。
+
+### 教学增强面板（第二档：轻量引擎改造）
+
+围绕 ProfileDashboardPanel 的真实 instrumentation 改造与条件断点可视化，强化"性能剖析真实性"与"调试条件断点"教学维度：
+
+- **性能剖析仪表盘（指令计数增强版）**：在原有"时间对比"tab 之外，新增"指令计数"tab。直接 new 一个独立 VM/RegisterVM 实例（绕过 VmStepper 的 stepCallback 禁用逻辑），启用 VM/RegisterVM 已有的 `stepCallback_` 机制，每条指令执行后累加 `opProfileCounts_[static_cast<uint8_t>(op)]`。执行完毕后聚合 Top 10 热点 OpCode，并在右侧 QTableWidget 显示。同时附带 12 条 OpCode 性能文档（含分类 / 栈效应 / perfNote 性能提示），帮助学习者识别热路径并理解 OpCode 代价差异
+- **条件断点可视化面板**（BreakpointConditionPanel）：2 个子页 — (1) 实时断点列表：消费 `IdeController::getBreakpoints()` / `getBreakpointCondition(line)` / `getBreakpointHitCount(line)`（新增 Facade getter，转发到 DebugCoordinator），500ms 轮询刷新，显示当前所有断点（行号 / 条件表达式 / 命中次数）；(2) 教学场景库：8 个场景（simple-line 普通行断点 / conditional-loop-count 循环计数条件 / conditional-state 状态条件 / data-driven 数据驱动 / error-catch 异常捕获 / breakpoint-with-closure 闭包断点 / watchpoint 变量监视 / temporary-breakpoint 临时断点），每场景含源码 + 期望断点行 + 教学注释。教学价值：理解条件断点表达式语义、命中次数累计、断点生命周期
+
+> 第二档 2 个面板同样作为独立 ads::CDockWidget 注册到右侧 dock area，启动时默认隐藏。关键架构决策：ProfileDashboardPanel 直接 new VM/RegisterVM 实例进行指令计数（绕过 VmStepper），避免修改 VmStepper 的 stepCallback 禁用逻辑；BreakpointConditionPanel 使用 QTimer 500ms 轮询而非订阅 IdeController 信号，避免测试目标链接 IdeController.cpp（测试目标仅链接 minilang_core + Panel.cpp 中的 Library 静态数据）。IdeController/DebugCoordinator 新增 3 个只读 getter（getBreakpoints / getBreakpointCondition / getBreakpointHitCount），均为 const noexcept 转发，不影响现有语义。
+
+### 教学增强面板（第四档：已有面板动画增强）
+
+围绕 IRTransformPanel 与 PipelineViewer 的子页切换动画，强化"过渡平滑性"教学体验：
+
+- **IR 变换过程面板（动画化）**：在原有 3 个子页（AST → IR lowering / 优化 pass 对比 / 当前源码 IR）切换时，通过 `PanelAnimator::fadeInWidget` 驱动 QGraphicsOpacityEffect，使新子页 opacity 0→1 平滑淡入（220ms OutCubic 缓动）。同时 lowering 详情刷新、优化前后 IR 刷新均加入淡入动画，避免生硬跳变
+- **编译管线可视化面板（动画化）**：在原有 step 切换（Lexer / Parser / AST / IR / Bytecode / 运行）时，通过 `PanelAnimator::fadeInWidget` 驱动子页淡入，使管线步骤切换更流畅
+
+> 第四档 2 个面板仅扩展 `gui/PanelAnimator.h` 新增 `fadeInWidget` 工具函数（QGraphicsOpacityEffect 驱动 opacity 0→1，220ms OutCubic），并在 IRTransformPanel.cpp / PipelineViewer.cpp 的子页切换 lambda 末尾调用该函数。无引擎层改造，无新增源文件，无新增测试目标。
+
+### 教学增强面板（第三档：异常流 + 闭包 upvalue 可视化）
+
+围绕异常传播路径与闭包 upvalue 生命周期两个"动态语义"教学难点，强化"控制流跨函数跳跃"与"堆化变量捕获"教学维度：
+
+- **异常流可视化面板**（ExceptionFlowPanel）：2 个子页 — (1) 教学场景库：8 个异常场景（simple-try-catch 简单 try/catch / uncaught-exception 未捕获异常终止 / nested-try-catch 嵌套 try/catch / finally-semantics finally 块语义 / cross-function-propagation 跨函数传播 / recursive-exception 递归异常 / exception-object-field 异常对象字段访问 / rethrow 重抛），每场景含 sampleCode + propagationPath（传播路径列表，例：`main() → try-block → throw → catch-block → main()`）+ teachingNote 教学注释；(2) 传播阶段图解：6 个阶段（throw 抛出 / search 查找 catch / catch 捕获 / finally 清理 / unwind 栈展开 / recovery 恢复），每阶段含 category + description + stackEffect（栈/堆效应）。教学价值：理解异常控制流跨函数跳跃、栈展开顺序、finally 与 catch 的执行先后
+- **闭包检查器面板**（ClosureInspectorPanel）：2 个子页 — (1) 教学场景库：8 个闭包场景（simple-capture 简单捕获 / counter-pattern 计数器模式 / multi-capture 多变量捕获 / nested-closure 嵌套闭包 / closure-as-return 闭包作为返回值 / closure-array 闭包数组 / iife 立即调用 / closure-escape 闭包逃逸），每场景含 sampleCode + capturedVars 捕获变量列表 + captureType 捕获类型（by-reference upvalue / by-value / heap-escaped）+ teachingNote 教学注释；(2) upvalue 生命周期图解：6 个阶段（create 创建 / capture 捕获 / heap 堆化 / access 访问 / close 关闭 / destroy 销毁），每阶段含 category + description + stackEffect（栈/堆效应）。教学价值：理解 OP_CLOSURE 指令、upvalue 堆化时机、闭包逃逸与堆栈过渡
+
+> 第三档 2 个面板均为纯静态教学面板（Library 静态数据嵌入 .cpp），不依赖 IdeController，不需要引擎层改造，不订阅信号——与第三波 BytecodeTracePanel 的"避免测试目标链接 IdeController.cpp"设计模式一致，确保测试目标仅链接 minilang_core + Panel.cpp 静态数据。子页切换与详情刷新复用第四档的 `PanelAnimator::fadeInWidget` 工具函数。
 
 ## 架构
 
@@ -131,7 +188,7 @@
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/调试面板等） |
 | `app/` | IdeController、InterpreterWorker、main、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
-| `tests/` | GoogleTest 单元测试（1047 个） |
+| `tests/` | GoogleTest 单元测试（1329 个） |
 | `test_harness/` | 独立测试工具（AST/格式化器/调试一致性审计） |
 | `samples/mini/` | MiniLang 示例程序（模块系统演示） |
 | `docs/` | 开发指南与文档 |
@@ -210,6 +267,25 @@ cmake --build build
 
 > 注意：`scripts/*.bat` 中包含机器特定的硬编码路径（如 `D:\qt\6.10.3\...`），在其他机器上需按本机环境修改。**首次构建建议使用 `configure.bat`**，它会自动探测路径。
 
+### CMake 选项
+
+| 选项 | 默认 | 说明 |
+|------|------|------|
+| `MINILANG_UNITY_BUILD` | OFF | C1：Unity Build 批量编译，首次构建加速 30-50% |
+| `MINILANG_VM_PROFILING` | OFF | C3：VM 解释循环 opcode 执行计数 profiling |
+| `MINILANG_BUILD_DOCS` | OFF | D1：Doxygen API 文档生成（target `docs`） |
+| `MINILANG_ENABLE_I18N` | OFF | D2：Qt Linguist 国际化 i18n 工具链 |
+| `MINILANG_ENABLE_LTO` | ON | Release 构建启用链接时优化（LTO） |
+| `MINILANG_USE_CCACHE` | OFF | 启用 ccache 缓存（如可用） |
+
+```powershell
+# 启用 VM profiling + Doxygen 文档
+cmake --preset windows-msvc-debug -DMINILANG_VM_PROFILING=ON -DMINILANG_BUILD_DOCS=ON
+cmake --build out/build/debug --target minilang_tests docs
+```
+
+> **构建问题排查**：若遇到大规模 SEH 0xc0000005 崩溃（尤其是修改头文件 struct 布局后），优先删除整个 `out/build/debug` 目录后全量重配置 + 重编译——Ninja 的头文件依赖追踪在某些 struct 布局修改场景下会失效，导致 stale `.obj` 文件 ABI 不一致。
+
 ## 快速开始
 
 构建完成后，运行 IDE：
@@ -268,13 +344,13 @@ for (var i = 0; i < 10; i = i + 1) {
 ### 代码规范
 
 - 编码风格遵循项目现有约定（参见 `AGENTS.md`）
-- 新增代码需通过全量测试（1047/1047）+ formatter_audit 审计
+- 新增代码需通过全量测试（1329/1329）+ formatter_audit 审计
 - 提交前运行 `./scripts/run_tests.bat` 确认无回归
 - 详细工程约定参见 [docs/development.md](./docs/development.md)
 
 ## 测试
 
-项目包含 **1047 个 GoogleTest 单元测试**（66 个测试套件），覆盖所有核心模块：
+项目包含 **1329 个 GoogleTest 单元测试**（104 个测试套件），覆盖所有核心模块：
 
 ### 前端模块
 
@@ -300,6 +376,8 @@ for (var i = 0; i < 10; i = i + 1) {
 | `CompilerBasicTest` / `CompilerVariableTest` / `CompilerControlFlowTest` / `CompilerFunctionTest` / `CompilerClassTest` | compiler/Compiler |
 | `VME2E` / `RegVME2E` / `VMConsistency` | compiler/VM / RegisterVM (端到端 + 一致性) |
 | `CompilerConstantPoolTest` / `CompilerGlobalSlotTest` | compiler/ 常量池 / 全局槽位 |
+| `CompilerAuditCP1` / `CompilerAuditPRES1` / `CompilerAuditTRY1` / `CompilerAuditMOD1` | compiler/ 审计套件（常量池去重 / 预扫描 / try-catch / 模块路径） |
+| `CompilerAudit2CP2` / `CompilerAudit2CP3` / `CompilerAudit2UV1` / `CompilerAudit2IRPOP1` / `CompilerAudit2INHIR1` / `CompilerAudit2TRYLEAK1` / `CompilerAudit2IRPRES1` / `CompilerAudit2DEF1` / `CompilerAudit2INHREG1` / `CompilerAudit2DEAD1` / `CompilerAudit2InstrSize` | compiler/ + IR + RegisterVM 第二轮深度审计（嵌套左值 / 闭包 / IR POP / 字段默认值 / try-catch 恢复 / 预扫描 / 默认参数 / 字段去重 / 死代码） |
 
 ### IR 中间层
 
@@ -320,7 +398,22 @@ for (var i = 0; i < 10; i = i + 1) {
 | 测试套件 | 覆盖模块 |
 |----------|----------|
 | `ASTCompleteness` / `IntegrationAudit` | 审计套件 |
+| `CompilerAudit` / `CompilerAudit2` / `IRAudit` | Compiler/IR 模块审计回归（含 P0/P1/P2 修复） |
+| `ThreeEngAudit*`（13 个套件） | 三执行引擎审计回归（Interpreter + StackVM + RegisterVM，含 INTP-1/2/3 + VM-01~05 + REGVM-1/2/3/4 共 12 个 P2 修复） |
+| `DebugAuditMainFrame` / `DebugAuditStopReset` / `DebugAuditModuleCache` / `DebugAuditSandbox` / `DebugAuditCallStack` / `DebugAuditRegression`（6 个套件） | DebugController + REPL 审计回归（调用栈 main 帧 / stopRequested 重置 / 模块缓存路径规范化 / 沙箱状态隔离 / 闭包调用栈名 共 15 个 P1/P2 修复） |
+| `FormatterAuditF01` / `FormatterAuditF03` / `FormatterAuditF04` / `FormatterAuditF05` / `FormatterAuditF06` / `FormatterAuditF07` / `FormatterAuditF08` / `FormatterAuditIdempotency` / `FormatterAuditRoundTrip` / `FormatterAuditEdge` / `FormatterAuditExport`（11 个套件，25 用例） | Formatter + GUI 全模块审计回归（1 P0 + 9 P1 + 56 P2 = 66 Bug，63 个已修复 + 3 个已知限制。覆盖格式化器缩进/幂等性/往返等价、export 空行、类方法空行、NaN 格式化、空 throw 等） |
 | `NaNBoxTest` / `IRShadowFix` / `NestedLvalueProbe` / `MethodCallProbe` | 回归与探针测试 |
+| `TeachingPanelsBugHunt` / `TeachingPanelsSyntax` / `TeachingPanelsLabManual`（3 个套件，17 用例） | 教学面板数据完整性审计：BugHuntLibrary（10 道历史 Bug 题目 ID 唯一性 / 关键字段非空 / severity 在 P0/P1/P2 集合 / sourceCode 可被 Lexer 解析）、SyntaxProductionLibrary（10 条产生式 name 唯一 / 关键字段非空 / sampleCode 可被 Lexer 解析 / 核心产生式 ID 齐全）、LabManualContent（8 章节 id 唯一 / lab-NN 命名约定 / markdown 含"目标"和"实验步骤"两节 / sampleCode 可被 Lexer 解析） |
+| `TeachingPanelsMemoryModel` / `TeachingPanelsIRTransform` / `TeachingPanelsProfile`（3 个套件，23 用例） | 第二波教学面板数据完整性审计：MemoryModelLibrary（7 个 NaN-boxing 示例 ID 唯一 / bits 与 NaNBox 编码一致 / 4 个 RefCount 场景步骤非空 / 6 个 GC 阶段说明非空）、IRTransformLibrary（8 个 lowering 示例 + 3 个优化 pass，IR 文本含 'function' 关键字，优化后指令数 ≤ 优化前）、ProfileLibrary（6 个性能场景 ID 唯一 / category 在合法集合 / iterations ≥ 1） |
+| `TeachingPanelsCallStack` / `TeachingPanelsVariableInspector` / `TeachingPanelsBytecodeTrace`（3 个套件，13 用例） | 第三波教学面板数据完整性审计：CallStackLibrary（6 个调用栈场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / expectedFrames 非空）、VariableInspectorLibrary（9 种类型示例 ID 唯一 / 关键字段非空 / 关键类型名齐全 / 标量示例含 NaN-boxing 位编码）、BytecodeTraceLibrary（18 个 OpCode 文档 ID 唯一 / 关键字段非空 / category 合法 / 关键 OpCode 齐全） |
+| `TeachingPanelsOpCodeProfile` / `TeachingPanelsBreakpointCondition`（2 个套件，14 用例） | 第二档教学面板数据完整性审计：OpCodeProfileLibrary（12 个 OpCode 性能文档 ID 唯一 / 关键字段非空 / category 合法 / 关键 OpCode 齐全 / perfNote 含性能提示关键词）、BreakpointConditionLibrary（8 个条件断点场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / condition 为表达式 / sampleCode 含断点行 / description 提及条件语义） |
+| `TeachingPanelsExceptionFlow` / `TeachingPanelsClosureInspector`（2 个套件，24 用例） | 第三档教学面板数据完整性审计：ExceptionFlowLibrary（8 个异常场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / sampleCode 含 throw / propagationPath 非空 / description 提及异常语义，6 个传播阶段 phase/category/stackEffect 合法）、ClosureInspectorLibrary（8 个闭包场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / sampleCode 含闭包 / captureType 含 upvalue / description 提及闭包语义，6 个 upvalue 阶段 phase/category/stackEffect 合法） |
+
+### GUI 编辑器审计
+
+| 审计范围 | 修复内容 |
+|----------|----------|
+| `gui/CodeEditor` + `gui/SyntaxHighlighter` + `gui/FindReplacePanel` | GUI 编辑器三模块系统性审计（2 P1 + 14 P2，共 16 个 Bug，15 个已修复 + 1 个跳过）。覆盖块注释状态编码不匹配、文档修改后断点/折叠偏移补偿、行号区域事件处理、查找替换面板交互、语法高亮状态机（插值内嵌套块注释/字符串跨行、数字字面量 0x/0b/0o 前缀、关键字长度上限）等。仅修改 gui/ 目录下 3 个模块共 5 个文件，不影响其他模块。详见 CHANGELOG 2026-07-04 GUI 编辑器三模块审计条目 |
 
 运行测试：
 

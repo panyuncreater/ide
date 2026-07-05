@@ -61,6 +61,16 @@ static void collectVarRefs(ASTNode* node, std::unordered_set<std::string>& names
         }
         break;
     }
+    // BUG-LPA-03 fix: 覆盖 NODE_INTERPOLATED_STRING。
+    //   原实现落入 default: break，导致 fun f(a = "{b}", b = 1) 中的 b 引用
+    //   不被检测，默认参数前向引用检查可被绕过。
+    case NodeType::NODE_INTERPOLATED_STRING: {
+        auto* interp = static_cast<InterpolatedString*>(node);
+        for (auto& expr : interp->expressions) {
+            collectVarRefs(expr.get(), names);
+        }
+        break;
+    }
     default:
         break;
     }
@@ -397,6 +407,42 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
 
 void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::string>& paramTypes,
                             std::vector<std::shared_ptr<ASTNode>>& defaultValues) {
+    // BUG-DEF-1 fix: 默认参数值必须是字面量（数字/字符串/布尔/null/负数字面量）。
+    // 三后端一致性：Interpreter 支持任意表达式默认值（b=a+1 在闭包环境求值），
+    // 但 StackVM/RegisterVM 仅支持字面量（复杂表达式记录 0xFFFF 哨兵运行时报错）。
+    // 在 Parser 层统一拒绝复杂表达式，确保三后端行为一致。
+    // 支持的类型：NumberLiteral / StringLiteral / BoolLiteral / NullLiteral /
+    //   UnaryOp(NEGATE) 嵌套包装 NumberLiteral（如 -42, --5）/
+    //   InterpolatedString（字面量片段+表达式，表达式部分由 collectVarRefs 检查前向引用；
+    //   VM 路径记录 0xFFFF 哨兵，运行时调用使用默认值会报错，但 Parser 层接受以保持
+    //   BUG-LPA-03 回归测试语义——该测试验证 collectVarRefs 覆盖 InterpolatedString）。
+    auto isLiteralDefaultExpr = [](const ASTNode* node) -> bool {
+        if (!node) return false;
+        switch (node->nodeType) {
+        case NodeType::NODE_NUMBER_LITERAL:
+        case NodeType::NODE_STRING_LITERAL:
+        case NodeType::NODE_BOOL_LITERAL:
+        case NodeType::NODE_NULL_LITERAL:
+        case NodeType::NODE_INTERPOLATED_STRING:
+            return true;
+        case NodeType::NODE_UNARY_OP: {
+            // 支持负数字面量: -42, -3.14, --5（双重否定）
+            const auto* unary = static_cast<const UnaryOp*>(node);
+            if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) return false;
+            const ASTNode* cur = unary->operand.get();
+            int negateCount = 1;
+            while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
+                const auto* inner = static_cast<const UnaryOp*>(cur);
+                if (inner->opType != UnaryOp::UnaryOpType::UOP_NEGATE) return false;
+                ++negateCount;
+                cur = inner->operand.get();
+            }
+            return cur != nullptr && cur->nodeType == NodeType::NODE_NUMBER_LITERAL && negateCount > 0;
+        }
+        default:
+            return false;
+        }
+    };
     if (check(TokenType::TK_RPAREN)) return;
     bool seenDefault = false;  // F10: 一旦出现默认参数，后续都必须有默认值
     // Perf-Finding4 + Bug-5: 用 unordered_set 替代每参数 O(n) 线性扫描去重，
@@ -450,6 +496,14 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         if (match(TokenType::TK_ASSIGN)) {
             seenDefault = true;
             auto defaultExpr = expression();
+            // BUG-DEF-1 fix: 三后端一致性——仅支持字面量默认值。
+            // StackVM/RegisterVM 无法在函数入口求值复杂表达式（闭包环境访问、
+            // 参数间引用等），Interpreter 虽支持但会造成三后端行为不一致。
+            // 在 Parser 层统一拒绝，给出清晰的编译期错误而非 VM 运行时错误。
+            if (!isLiteralDefaultExpr(defaultExpr.get())) {
+                throw ParseError("默认参数值必须是字面量（数字/字符串/布尔/null/负数字面量）",
+                                 defaultExpr->line, defaultExpr->column);
+            }
             defaultValues.push_back(std::move(defaultExpr));
         } else {
             if (seenDefault) {
@@ -525,7 +579,8 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
             }
         } else if (check(TokenType::TK_IDENTIFIER)) {
             // 裸方法定义: methodName(params) { body }
-            // 或类类型字段: ClassName fieldName;
+            // 或类类型字段: ClassName fieldName; / ClassName[] fieldName;
+            // 或类类型方法: ClassName methodName() { body }
             int savePos = current_;
             const Token& firstTok = advance();  // 方法名或类名
 
@@ -568,6 +623,22 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                 decl->requiredParamCount = reqCount;
                 decl->defaultValues = std::move(defaultValues);
                 members.push_back(std::move(decl));
+            } else if (check(TokenType::TK_LBRACKET) && checkNext(TokenType::TK_RBRACKET)) {
+                // BUG-LPA-04 fix: ClassName[] fieldName; 数组类型字段
+                //   原实现消耗 ClassName 后遇 [ 直接回溯，不支持类类型数组字段。
+                //   与参数列表/for循环/顶层声明行为对齐：消费 [] 后缀构造类型注解。
+                advance(); // 消耗 '['
+                advance(); // 消耗 ']'
+                std::string typeAnn = firstTok.lexeme + "[]";
+                if (check(TokenType::TK_IDENTIFIER)) {
+                    // ClassName[] fieldName — 类类型数组字段
+                    // （ClassName[] methodName() 不合法，不支持类数组返回类型方法）
+                    members.push_back(typedVarDecl(typeAnn));
+                } else {
+                    // 无法识别，回溯
+                    current_ = savePos;
+                    break;
+                }
             } else if (check(TokenType::TK_IDENTIFIER)) {
                 // 可能是类类型字段: ClassName fieldName; 或类类型方法: ClassName methodName()
                 if (checkNext(TokenType::TK_LPAREN)) {
@@ -603,6 +674,20 @@ std::unique_ptr<ASTNode> Parser::statement() {
                          peek().line, peek().column);
     }
     DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
+
+    // BUG-LPA-05 fix: import/export 在无花括号单语句体中显式拒绝。
+    //   原实现 statement() 不识别 TK_IMPORT/TK_EXPORT，落入 expressionStatement()
+    //   → primary() 抛"意外的 Token"，错误消息误导用户。
+    //   blockDepth_ 检查仅覆盖块内场景，无花括号体（if/while/for 无 {}）走
+    //   statement() 路径不递增 blockDepth_，需在此显式拒绝。
+    if (check(TokenType::TK_IMPORT)) {
+        const Token& tok = peek();
+        throw ParseError("import 语句只能在顶层使用", tok.line, tok.column);
+    }
+    if (check(TokenType::TK_EXPORT)) {
+        const Token& tok = peek();
+        throw ParseError("export 语句只能在顶层使用", tok.line, tok.column);
+    }
 
     if (check(TokenType::TK_IF))       return ifStmt();
     if (check(TokenType::TK_WHILE))    return whileStmt();

@@ -33,6 +33,10 @@ Interpreter::~Interpreter() {
 
 Value Interpreter::execute(Block& program) {
     // 重置状态
+    // BUG-DBG-9 fix: 重置 stopRequested_ 标志，避免上一轮"停止"按钮终止后残留 true
+    // 导致本轮立即在首个 checkBreak 抛 DebugStopException。原 execute() 遗漏此重置
+    //（executeRepl 有重置但 execute 没有），Run 模式下连续运行会立即中止。
+    stopRequested_.store(false, std::memory_order_relaxed);
     // B1 fix: 关闭旧 globalEnv_ 上的闭包捕获，将最终值写回闭包 capturedVars。
     // 旧 globalEnv_ 即将被替换，其上的 weak_ptr 会失效，闭包需依赖 capturedVars 快照。
     if (globalEnv_) {
@@ -74,6 +78,13 @@ Value Interpreter::execute(Block& program) {
     }
     GcManager::instance().collectCycle(gcRoots);
 
+    // BUG-DBG-5 fix: 压入顶层 main 帧，与 VM 的 mainFrame 对齐。
+    // 原实现 callStack_ 在顶层为空，导致调试暂停在顶层代码时调用栈面板无显示，
+    // 而 VM 路径显示 "main" 帧。checkBreak (BUG-DBG-1 fix) 会更新顶帧行号为当前执行行。
+    // CallFrameGuard 会保护此帧（savedStackDepth 包含 main 帧，函数调用只 push 更深帧）。
+    // 下次 execute() 入口 callStack_.clear() 自动清理。
+    callStack_.emplace_back("main", globalEnv_, 0, 0);
+
     // 顶层块不创建新作用域，直接在全局环境中执行语句
     Value result = runStatementsWithExceptionHandling(program);
 
@@ -96,6 +107,8 @@ Value Interpreter::executeRepl(Block& program) {
     callStack_.clear();
     classContextStack_.clear();
     currentFunctionReturnType_.clear();
+    // BUG-DBG-5 fix: REPL 模式同样压入 main 帧，与 execute() 和 VM 行为对齐
+    callStack_.emplace_back("main", globalEnv_, 0, 0);
 
     return runStatementsWithExceptionHandling(program);
 }
@@ -124,7 +137,11 @@ Value Interpreter::runStatementsWithExceptionHandling(Block& program) {
         runtimeError("return 只能在函数体内使用", 0, 0);
     }
     catch (const ThrowException& e) {
-        runtimeError("未捕获的异常: " + e.thrownValue.toString(), 0, 0);
+        // BUG-IBACKEND-4 fix: 三后端未捕获异常消息一致——统一 toString + 200 字符截断
+        //（对齐 StackVM VM.cpp:130-132 与 RegisterVM）
+        std::string str = e.thrownValue.toString();
+        if (str.size() > 200) str = str.substr(0, 200) + "...";
+        runtimeError("未捕获的异常: " + str, 0, 0);
     }
     catch (const RuntimeError& e) {
         // 记录到诊断包后重新抛出，保持原有异常传播机制
@@ -269,10 +286,25 @@ Value deepCloneForSandbox(const Value& v) {
         }
         return Value(std::move(newEntries));
     }
-    // 非容器类型（int/float/bool/null/string/instance/closure）：
+    // BUG-INTP-1 fix: instance 递归深拷贝 fields。原实现浅拷贝（共享嵌套 InstanceData），
+    // 条件中的 this.inner.field = 99 会通过 boundInstance_ 链找到原嵌套 InstanceData
+    // 原地修改，SandboxGuard 析构恢复外层 fields map 但内层实例仍被污染。
+    // 注意：深拷贝破坏引用语义（条件前 var x = this.inner，沙箱后 this.inner 指向新副本），
+    // 这是沙箱隔离的固有矛盾，与 array/dict 深拷贝行为一致，已在文档中标注为已知行为。
+    if (v.isInstance()) {
+        Value newInst = Value::makeInstance(v.className());
+        const auto& oldFields = v.fields();
+        auto& newFields = newInst.fields();
+        newFields.reserve(oldFields.size());
+        for (const auto& [k, val] : oldFields) {
+            newFields.emplace(k, deepCloneForSandbox(val));
+        }
+        return newInst;
+    }
+    // 非容器类型（int/float/bool/null/string/closure）：
     // - 标量：值语义，拷贝即独立
     // - string：不可变（BuiltinMethods 的 replace/substr 返回新串而非原地修改）
-    // - instance/closure：条件断点不应修改实例结构或闭包代码，浅拷贝足够
+    // - closure：条件断点不应修改闭包代码，浅拷贝足够
     return v;
 }
 } // anonymous namespace
@@ -288,7 +320,10 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     std::vector<EnvSnapshot> envSnaps;
     // #1 fix: 快照绑定实例字段（防止 this.field = val）
     // boundInstance_ 沿链继承（同一实例可能出现多次），用指针去重
-    std::map<Value*, std::unordered_map<std::string, Value>> instSnaps;
+    // BUG-INTP-2 fix: 同时记录原始 InstanceData 指针，析构时比较。
+    // 若条件中 this 被重赋值为另一实例（仍 isInstance==true），inst 指向的
+    // Value 内容已变（InstanceData 指针不同），不应把旧字段快照写入新实例。
+    std::map<Value*, std::pair<const void*, std::unordered_map<std::string, Value>>> instSnaps;
     Environment* snapEnv = currentEnv_.get();
     while (snapEnv) {
         auto locals = snapEnv->snapshotLocalVariables();
@@ -307,7 +342,7 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
             for (auto& [k, v] : fields) {
                 v = deepCloneForSandbox(v);
             }
-            instSnaps[inst] = std::move(fields);
+            instSnaps[inst] = {inst->gcRootPtr(), std::move(fields)};
         }
         snapEnv = snapEnv->parent.get();
     }
@@ -318,18 +353,38 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     int savedDepth = recursionDepth_;
     bool savedDebugMode = debugMode_;
     debugMode_ = false;
+    // BUG-DBG-7 fix: 沙箱求值前重置 recursionDepth_ 为 0。
+    // 原实现仅保存不重置，条件中调用函数会从当前深度（可能已接近 MAX_RECURSION）
+    // 起递增，触发"递归深度超限"假阳性。条件求值应视为独立调用栈上下文。
+    recursionDepth_ = 0;
+    // BUG-DBG-8 fix: 沙箱未保存/恢复 funRegistry_/classRegistry_ 及其代数计数器。
+    // 条件中 `fun foo() {} true` 或 `class X {} true` 会污染注册表，使主程序
+    // 后续 FunCall/ClassNew 命中沙箱新增的函数/类。代数不恢复还会使缓存失效逻辑错乱。
+    auto savedFunRegistry = funRegistry_;
+    auto savedFunRegistryGen = funRegistryGen_;
+    auto savedClassRegistry = classRegistry_;
+    auto savedClassRegistryGen = classRegistryGen_;
+    // BUG-REPL-2 fix: 沙箱未保存/恢复 lastValue_。
+    // 沙箱内 node->accept 会覆盖 lastValue_，主程序表达式求值中间状态丢失
+    //（若条件断点在表达式子节点求值过程中触发，主程序的 lastValue_ 会被污染）。
+    Value savedLastValue = lastValue_;
 
     // RA-A fix: RAII 守卫统一管理沙箱状态恢复（实例字段 + 局部变量 + 调用栈/环境/深度/调试模式），
     // 消除原 catch(...) + throw; 的 rethrow。正常路径和异常路径恢复逻辑完全一致。
     struct SandboxGuard {
         Interpreter& interp;
-        std::map<Value*, std::unordered_map<std::string, Value>>& instSnaps;
+        std::map<Value*, std::pair<const void*, std::unordered_map<std::string, Value>>>& instSnaps;
         std::vector<EnvSnapshot>& envSnaps;
         std::vector<CallFrame> savedCallStack;
         std::vector<std::string> savedClassCtx;
         std::shared_ptr<Environment> savedEnv;
         int savedDepth;
         bool savedDebugMode;
+        std::unordered_map<std::string, std::shared_ptr<FunDecl>> savedFunRegistry;
+        int savedFunRegistryGen;
+        std::unordered_map<std::string, ClassInfo> savedClassRegistry;
+        int savedClassRegistryGen;
+        Value savedLastValue;
         ~SandboxGuard() {
             // H2 fix: 必须先恢复实例字段，再恢复局部变量。
             // inst 指针指向旧 variables["this"] 条目，restoreLocalVariables
@@ -338,9 +393,12 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
             // BUG-INT-3 fix: 条件可能重新赋值 this（如 this = 5），使 inst 指向的
             // Value 不再是实例。调用 fields() 会 std::abort。跳过非实例的 inst，
             // 后续 restoreLocalVariables 会恢复 variables["this"] 到原始实例。
-            for (auto& [inst, fields] : instSnaps) {
-                if (inst->isInstance()) {
-                    inst->fields() = fields;
+            // BUG-INTP-2 fix: 即使 inst 仍是实例，也可能 this 被重赋值为另一实例
+            //（InstanceData 指针不同）。比较 gcRootPtr()，不匹配则跳过字段恢复，
+            // 避免把旧 A 字段快照写入新 B 实例污染新对象。
+            for (auto& [inst, snap] : instSnaps) {
+                if (inst->isInstance() && inst->gcRootPtr() == snap.first) {
+                    inst->fields() = snap.second;
                 }
             }
             // #1 fix: 恢复变量绑定（撤销条件中的赋值/声明副作用）
@@ -352,14 +410,24 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
             interp.currentEnv_ = savedEnv;
             interp.recursionDepth_ = savedDepth;
             interp.debugMode_ = savedDebugMode;
+            // BUG-DBG-8 fix: 恢复函数/类注册表及代数
+            interp.funRegistry_ = std::move(savedFunRegistry);
+            interp.funRegistryGen_ = savedFunRegistryGen;
+            interp.classRegistry_ = std::move(savedClassRegistry);
+            interp.classRegistryGen_ = savedClassRegistryGen;
+            // BUG-REPL-2 fix: 恢复 lastValue_
+            interp.lastValue_ = std::move(savedLastValue);
         }
     } sandboxGuard{ *this, instSnaps, envSnaps,
                     std::move(savedCallStack), std::move(savedClassCtx),
-                    savedEnv, savedDepth, savedDebugMode };
+                    savedEnv, savedDepth, savedDebugMode,
+                    std::move(savedFunRegistry), savedFunRegistryGen,
+                    std::move(savedClassRegistry), savedClassRegistryGen,
+                    std::move(savedLastValue) };
 
     lastValue_ = Value::nullValue();
     node->accept(*this);
-    Value result = std::move(lastValue_);
+    Value result = lastValue_;  // BUG-REPL-2 fix: 用拷贝而非 move，sandboxGuard 析构会恢复 lastValue_
     // RA-A fix: sandboxGuard 析构会统一恢复所有状态，无需手动还原
     return result;
 }
@@ -383,6 +451,13 @@ void Interpreter::checkBreak(ASTNode* node) {
     // 中止信号静默处理（stoppedByUser），不再误报为 genericError。
     if (stopRequested_.load(std::memory_order_relaxed)) {
         throw DebugStopException();
+    }
+    // BUG-DBG-1 fix: 更新调用栈顶帧行号为当前执行行号。
+    // 原实现仅压栈时记录调用点行号（node.line of caller），帧压栈后从不更新，
+    // 导致暂停时顶帧显示调用点行而非当前执行行。VM 路径通过 frame.ip 读取当前行，
+    // 此处对齐 VM 行为，使 Interpreter 调用栈顶帧也显示当前执行行。
+    if (node && node->line > 0 && !callStack_.empty()) {
+        callStack_.back().line = node->line;
     }
     if (debugMode_ && debugger_) {
         // 同步调用深度到调试控制器（Step Over 依赖此值判断是否进入函数）
@@ -1631,8 +1706,10 @@ void Interpreter::visitIndexAccess(IndexAccess& node) {
         // 原实现每次访问都 O(i) 扫描到目标码位，循环退化 O(n²)。
         if (BoundsCheck::inBounds(i, s.size())) {
             const void* strPtr = static_cast<const void*>(&s);
+            size_t strLen = s.size();
             bool isAscii;
-            if (lastAsciiStrPtr_ == strPtr) {
+            // BUG-INTP-3 fix: 缓存 key 包含 (ptr, len)，原地 append 后 len 变化使缓存失效
+            if (lastAsciiStrPtr_ == strPtr && lastAsciiStrLen_ == strLen) {
                 isAscii = lastAsciiStrIsAscii_;
             } else {
                 isAscii = true;
@@ -1640,6 +1717,7 @@ void Interpreter::visitIndexAccess(IndexAccess& node) {
                     if (static_cast<unsigned char>(s[b]) >= 0x80) { isAscii = false; break; }
                 }
                 lastAsciiStrPtr_ = strPtr;
+                lastAsciiStrLen_ = strLen;
                 lastAsciiStrIsAscii_ = isAscii;
             }
             if (isAscii) {

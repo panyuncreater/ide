@@ -48,6 +48,15 @@ public:
     }
     bool hasBreakpoints() const { return !debugger_->getBreakpoints().isEmpty(); }
 
+    // P1-2: 断点查询接口（供 BreakpointConditionPanel 消费）
+    QSet<int> getBreakpoints() const { return debugger_->getBreakpoints(); }
+    std::string getBreakpointCondition(int line) const {
+        return debugger_->getBreakpointCondition(line);
+    }
+    int getBreakpointHitCount(int line) const {
+        return debugger_->getBreakpointHitCount(line);
+    }
+
     // ---- 步进控制 ----
     void stepIn()  { debugger_->stepIn(); }
     void stepOver() { debugger_->stepOver(); }

@@ -1,3 +1,30 @@
+/**
+ * @file common/TypeChecker.h
+ * @brief 静态类型检查接口（ARCH-10 预留）+ 共享运行时类型匹配。
+ *
+ * 为 MiniLang 预留静态类型检查通道。当前 MiniLang 是动态类型语言，
+ * 所有类型检查在运行时进行。本接口为未来引入可选的渐进式类型注解
+ *（如 `var x: int = 10;`）和编译期类型推断预留扩展点。
+ *
+ * 2026-06-29 新增的 typeMatchValue 自由函数是三后端（VM/RegisterVM/
+ * Interpreter）共享的运行时类型注解强制逻辑，处理：
+ *   - 原始类型（int/float/bool/string）
+ *   - null 兼容所有注解
+ *   - array/dict 容器类型
+ *   - 数组元素类型注解（如 "int[]"）
+ *   - 实例精确类名匹配（继承链检查由调用方扩展）
+ *
+ * 设计原则：
+ *   1. 不破坏现有动态类型语义 — 类型检查是可选 pass，失败时仅产生警告
+ *   2. 不侵入 Compiler — TypeChecker 作为独立 pass 在 AST→字节码之间运行
+ *   3. 渐进式采用 — 用户可逐步添加类型注解，未注解部分保持动态类型
+ *
+ * 与 IR 框架（ARCH-06）的协同：
+ *   TypeChecker 在 IR 生成前运行，可为 IR 提供类型信息用于特化优化
+ *   （如 int+int 生成整数加法指令而非通用 OP_ADD）
+ *
+ * @see DiagnosticBag Value
+ */
 #pragma once
 
 #include <string>

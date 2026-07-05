@@ -1,3 +1,35 @@
+/**
+ * @file compiler/VM.h
+ * @brief 栈式字节码虚拟机（MiniLang 三套执行引擎之一）。
+ *
+ * 执行 Compiler 编译生成的 BytecodeChunk（约 60 种 OpCode）。
+ * 与 Interpreter 树遍历后端语义等价，与 RegisterVM 寄存器式后端共享
+ * 大量逻辑（BuiltinMethods / NumericUtils / ErrorFormat / Utf8Utils）。
+ *
+ * 核心特性：
+ *   - 操作数栈：VMStack 定长数组 Value[1024]，PERF-13 替代 std::vector
+ *   - 调用帧：std::vector<VMCallFrame>，MAX_FRAMES=256
+ *   - 闭包 upvalue：openUpvalues_ multimap，按 stackSlot 排序，
+ *     closeUpvaluesFrom O(log n + k) 关闭
+ *   - 异常处理：tryStack_ 搜索处理器，跨帧传播
+ *   - 全局变量：slot-based（编译期分配）+ map-based（运行时 fallback）
+ *   - 内联缓存：callCache_ / globalCache_ / methodCache_ 三级缓存
+ *   - 单步调试：initExecution + stepOnce + VMStepInfo 回调
+ *
+ * 性能优化：
+ *   - PERF-13: VMStack 替代 vector，零堆分配
+ *   - PERF-14: 内联缓存 unordered_map 替代固定数组线性扫描
+ *   - PERF-12: Value 8 字节 NaN-boxing，栈缓存局部性 3 倍
+ *   - #12 fix: methodsByClass_ 两级索引消除继承链字符串拼接
+ *
+ * 调试支持：
+ *   - getCurrentIP/getCurrentLine/getCurrentChunkName（UI 高亮）
+ *   - getCallStack（调用栈面板）
+ *   - getStack/getGlobals（变量检视）
+ *   - VMStepInfo 回调（每条指令执行后通知）
+ *
+ * @see IBackend BytecodeChunk Compiler RegisterVM Interpreter
+ */
 #pragma once
 
 #include <vector>
@@ -8,6 +40,7 @@
 #include <memory>
 #include <cassert>
 #include <cstdlib>  // std::abort — Release 构建中 assert 兜底，避免 UB
+#include <array>   // C3: opcode profiling 计数数组
 #include "compiler/Bytecode.h"
 #include "interpreter/Value.h"
 #include "interpreter/BuiltinMethods.h"  // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
@@ -290,6 +323,26 @@ public:
     /// A4 fix: 获取当前调用帧栈深度（用于 step-over/out 判断）
     size_t getFrameCount() const { return frames_.size(); }
 
+#ifdef MINILANG_VM_PROFILING
+    // ============================================================
+    // C3: VM 解释循环热路径 profiling
+    // ------------------------------------------------------------
+    // 编译时启用（-DMINILANG_VM_PROFILING=ON）后，每条 opcode 的执行计数被
+    // 记录到 opProfileCounts_[static_cast<uint8_t>(op)]。execute() 完成后可通过
+    // getOpCodeProfile() 拿到排序后的 (opcode, count) 列表，用于识别热路径
+    // 并指导手动内联/特殊化优化。
+    // 注：profiling 启用会引入每指令 ~1ns 计数器自增开销（< 1% 性能影响）。
+    // ============================================================
+    struct OpCodeProfileEntry {
+        OpCode op;
+        uint64_t count;
+    };
+    /// 取按计数降序排列的 opcode 使用统计（profiling 启用时有效）
+    std::vector<OpCodeProfileEntry> getOpCodeProfile() const;
+    /// 重置 opcode 计数器（多次 execute 间分场景统计时使用）
+    void resetOpCodeProfile();
+#endif
+
     /// A4 fix: 获取调用栈快照（用于 UI 调用栈面板显示）
     /// 返回从栈底到栈顶的调用帧信息（函数名 + 当前行号 + ip）
     struct VMCallStackEntry {
@@ -298,6 +351,11 @@ public:
         size_t ip;                   // 当前指令指针
     };
     std::vector<VMCallStackEntry> getCallStack() const;
+
+    /// BUG-IDE-12 fix: 获取当前帧的局部变量名→值映射（用于 VM 条件断点求值）。
+    /// 结合当前帧 chunk 的 localSlotNames + 栈槽（basePointer + slot）反查。
+    /// 空帧/主程序帧（无 localSlotNames）返回空映射。
+    std::unordered_map<std::string, Value> getCurrentFrameLocals() const;
 
 private:
     VMStack stack_;                                // PERF-13: 定长数组操作数栈
@@ -334,6 +392,10 @@ private:
     // S5 fix: 改为缓存 StringData* 指针（shared_ptr 管理的对象地址稳定），
     //         O(1) 指针比较替代 O(n) 字符串内容比较；miss 时无需拷贝整个字符串
     //         安全性：StringData 由 shared_ptr 持有，只要 Value 在栈上指针就有效
+    // BUG-VM-05 fix: (ptr, size) 双重验证已大幅降低内存复用误命中风险。
+    //         已知限制：极端场景下（StringData 释放后内存复用 + 相同长度 + 不同 ASCII 状态）
+    //         仍可能误命中。完全消除需缓存 StringData shared_ptr（复杂度高）或每次清除缓存
+    //         （破坏循环 s[i] 场景的缓存价值）。当前 (ptr, size) 验证为合理折中。
     const void* lastAsciiStrPtr_ = nullptr;
     size_t lastAsciiStrSize_ = 0;  // BUGFIX-P2 fix: 缓存 size 防止堆地址复用误命中
     bool lastAsciiStrIsAscii_ = false;
@@ -377,6 +439,13 @@ private:
     // P1 fix: stepOnce 累计指令计数器，防止通过循环调用 stepOnce 绕过 DoS 防护
     int64_t stepInstructionCount_ = 0;
     static constexpr int MAX_INHERITANCE_DEPTH = RuntimeLimits::MAX_INHERITANCE_DEPTH;
+
+#ifdef MINILANG_VM_PROFILING
+    // C3: opcode 执行计数数组，索引 = static_cast<uint8_t>(OpCode)
+    // 256 项覆盖所有可能的 opcode（uint8_t 范围），未使用 opcode 计数为 0。
+    // 数组在 VM 构造时零初始化（std::array<uint64_t, 256> 默认 value-init 为 0）。
+    std::array<uint64_t, 256> opProfileCounts_{};
+#endif
 
     /// 栈操作
     void push(const Value& val);
@@ -514,10 +583,13 @@ private:
     }
 
     /// 获取当前帧
+    // D3 fix: 补 const 重载，对齐 RegisterVM::currentFrame() const，便于调试器只读访问
     VMCallFrame& currentFrame();
+    const VMCallFrame& currentFrame() const;
 
     /// 获取当前 chunk
-    const BytecodeChunk& currentChunk();
+    // D3 fix: 标记为 const（已返回 const 引用，方法本身应 const，与 findMethodChunk 一致）
+    const BytecodeChunk& currentChunk() const;
 
     /// 沿继承链查找方法 chunk（返回 nullptr 表示未找到）
     /// 先在 className 对应类查 methodName，未命中则查 superClass，递归到根。

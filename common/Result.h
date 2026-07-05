@@ -1,3 +1,34 @@
+/**
+ * @file common/Result.h
+ * @brief 统一错误处理模板 Result<T>。
+ *
+ * S6 fix: 替代项目中分散的 SharedBuiltinResult / BuiltinMethodResult /
+ * VMResult 等特化结构体，提供统一的成功值/错误值承载类型。
+ *
+ * 设计要点：
+ *   - 持有成功值 T 或错误 ErrorInfo，不抛异常
+ *   - 错误信息含 message + line + column，与 RuntimeError 对齐
+ *   - 提供 ok() / err() 工厂函数，is_ok() / is_err() 查询
+ *   - value() / error() 访问器（不安全，调用方需先检查）
+ *   - unwrap_or() 提供默认值回退
+ *
+ * 依赖约束：common 层不反向依赖 interpreter 层。to_runtime_error()
+ * 转换由调用方所在的 interpreter 层自行实现（见 RuntimeExceptions.h
+ * 末尾的自由函数模板 to_runtime_error(const Result<T>&)）。
+ *
+ * 用法示例：
+ * @code
+ *   Result<int> parseInt(const std::string& s) {
+ *       if (s.empty()) return Result<int>::err("空字符串");
+ *       return Result<int>::ok(std::stoi(s));
+ *   }
+ *   auto r = parseInt("42");
+ *   if (r.is_ok()) use(r.value());
+ *   else log(r.error().message);
+ * @endcode
+ *
+ * @see ErrorInfo RuntimeExceptions.h
+ */
 #pragma once
 
 // ============================================================

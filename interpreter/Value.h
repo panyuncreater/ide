@@ -1,3 +1,36 @@
+/**
+ * @file interpreter/Value.h
+ * @brief 运行时值结构体 Value（NaN-boxing + 侵入式引用计数）。
+ *
+ * PERF-12: 将 Value 从 std::variant<..., shared_ptr<XData>, ...>（24 字节）
+ * 迁移到 NaNBox（8 字节）+ 侵入式引用计数。
+ *
+ * 核心改进：
+ *   - sizeof(Value) = 8 字节（原 24 字节），VM 栈缓存局部性提升 3 倍
+ *   - 标量拷贝（int/float/bool/null）：零原子操作，仅拷贝 8 字节
+ *   - 堆类型拷贝（string/array/dict/instance/closure）：一次原子递增
+ *   - int48 范围内的整数内联存储，超范围自动装箱（BoxedIntData）
+ *   - COW 语义保留：写入前检查 refCount==1，否则深拷贝
+ *   - 公开 API 完全向后兼容（调用方无需修改）
+ *
+ * 存储布局：
+ *   NaNBox box_  (8 字节)
+ *     ├─ 标量类型：直接编码（int48/float64/bool/null）
+ *     └─ 堆类型：  PTR_TAG_BASE | 48位 RefCounted* 指针
+ *
+ * 引用计数：
+ *   - 堆数据类型继承 RefCounted（atomic refCount + ValueType type）
+ *   - Value 的拷贝/移动/析构手动管理 addRef/release
+ *   - COW detach 通过 isUnique() 判断
+ *
+ * 已知限制：环形容器泄漏（见 RefCounted.h 的 "#9 文档化" 章节）
+ *   - 自引用容器（如 `a=[]; a.append(a)` 或 `d={}; d.self=d`）
+ *     会形成引用计数永不归零的循环，导致内存泄漏直至进程退出。
+ *   - 闭包场景的循环已通过 ClosureData.env = weak_ptr<Environment>
+ *     静态打破；用户层容器循环依赖 OS 退出回收，视为可接受。
+ *
+ * @see NaNBox RefCounted GcManager Environment
+ */
 #pragma once
 
 // ============================================================

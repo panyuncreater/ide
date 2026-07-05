@@ -122,6 +122,9 @@ private:
     // 使 std::move 给 CompileResult 时类型匹配。
     std::map<std::string, BytecodeChunk> functionChunks_;  // 函数字节码块
     std::unordered_map<std::string, int> currentLocals_;  // 当前函数的局部变量槽位映射
+    // BUG-IDE-12 fix: 局部变量槽位→名称映射（索引即 slot），跨作用域累积（不随作用域退出清除）。
+    // 函数最终化时复制到 chunk_.localSlotNames，供 VM 条件断点求值反查变量名。
+    std::vector<std::string> localSlotNames_;
     std::unordered_map<std::string, std::string> varTypes_;  // 2026-06-29: 变量名→类型注解（local+global）
     bool inFunction_ = false;                       // 是否在函数体内
     std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;  // 类名 → 字段名列表（含继承字段）
@@ -163,8 +166,12 @@ private:
     std::function<std::string(const std::string&)> moduleLoader_;  // 模块源码加载回调
     std::string currentFilePath_;                                  // 当前文件路径（相对路径解析基准）
     std::unordered_set<std::string> moduleLoadingSet_;             // 正在编译中的模块（循环依赖检测）
+    std::vector<std::string> moduleLoadingStack_;                  // BUG-AUDIT-MOD-3: 模块加载栈（深度保护，对齐 Interpreter 的 moduleLoadingStack_）
     std::unordered_set<std::string> linkedModuleSet_;              // 已完成编译的模块（run-once 语义）
     std::vector<std::unique_ptr<Block>> moduleAsts_;               // 保留模块 AST（确保函数/类定义指针在编译期有效）
+    // BUG-AUDIT-MOD-1: 模块导出名称集合（key=模块路径，value=该模块 export 的名称集合）
+    // 对齐 InterpreterModules.cpp 的 export 检查——具名导入只能导入显式 export 的名称
+    std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
 
     /// VM-IMPORT: 模块路径规范化与安全校验（对齐 InterpreterModules.cpp SEC-1 防护）
     /// 返回空字符串表示路径非法（调用方应报错）
@@ -173,11 +180,11 @@ private:
     /// VM-IMPORT: 加载并解析模块源码，返回模块 AST（nullptr 表示失败）
     std::unique_ptr<Block> loadAndParseModule(const std::string& modulePath, int line);
 
-    /// VM-IMPORT: 预扫描模块顶层声明，分配全局槽位（VarDecl/FunDecl/ClassDecl/ExportStmt）
+    /// VM-IMPORT: 预扫描模块顶层声明，分配全局槽位
+    ///（VarDecl/ClassDecl/FunDecl/ExportStmt(VarDecl|ClassDecl|FunDecl)）。
+    /// 注意：与 compile() 的 pre-scan 存在有意的不对称——此处预扫描 FunDecl，
+    /// 因为模块函数导入验证（visitImportStmt）使用 lookupGlobalSlot 检查导出名。
     void preScanModuleGlobals(Block& moduleAst);
-
-    /// VM-IMPORT: 从 ExportStmt 中提取声明名（返回空字符串表示无法提取）
-    static std::string extractExportName(const ExportStmt& node);
 
     // ---- C3 fix: 编译上下文 RAII 守卫 ----
     // visitFunDecl 需保存/恢复 15 个成员变量。原代码手动 std::move 保存 + 手动恢复
@@ -293,6 +300,17 @@ private:
 
     /// VM-05/06: 解析闭包捕获变量为 upvalue 索引（返回 -1 表示未找到）
     int resolveUpvalue(const std::string& name, int line);
+
+    /// BUG-UV-1 fix: 前向自由变量分析。对齐 IR 路径 computeFreeVars 的语义，
+    /// 在编译子函数体前预建 upvalue，使中间函数捕获内层引用的变量供透传。
+    /// 实现：递归遍历 AST，收集所有 VarRef/Assignment 中引用但未在函数内定义的变量名。
+    /// 嵌套函数的自由变量若不在外层作用域定义，传播为外层自由变量。
+    std::unordered_set<std::string> computeFreeVars(const FunDecl& fn);
+    void collectFreeVars(const ASTNode& node,
+                         std::vector<std::unordered_set<std::string>>& scopes,
+                         std::unordered_set<std::string>& freeVars);
+    bool isDefinedInScopes(const std::vector<std::unordered_set<std::string>>& scopes,
+                           const std::string& name) const;
 
     /// 安全获取当前字节码偏移量（溢出检查）
     uint16_t safeCodeOffset() {

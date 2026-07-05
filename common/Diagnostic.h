@@ -1,3 +1,21 @@
+/**
+ * @file common/Diagnostic.h
+ * @brief 统一诊断体系（错误/警告/信息/建议）。
+ *
+ * 为 Lexer、Parser、Compiler、Interpreter、VM、Formatter、IDE、TypeChecker
+ * 等所有模块提供统一的诊断报告格式，便于 IDE 集中展示和处理。
+ *
+ * 核心类型：
+ *   - DiagLevel：诊断严重级别（Error/Warning/Info/Hint）
+ *   - DiagSource：诊断来源模块标识
+ *   - Diagnostic：单条诊断信息，含 format() 格式化输出
+ *   - DiagnosticBag：诊断收集器，O(1) 错误/警告计数 + errorLines() 编辑器高亮
+ *
+ * 线程安全性：DiagnosticBag 内部使用 std::vector，**非线程安全**。
+ * 多线程场景需通过外层互斥锁保护（如 IdeController::diagnosticsMutex_）。
+ *
+ * @see IBackend::getDiagnostics
+ */
 #pragma once
 
 #include <string>
@@ -25,6 +43,7 @@ enum class DiagSource {
     Compiler,
     Interpreter,
     VM,
+    RegisterVM,  // BUG-IBACKEND-3: 区分 StackVM 与 RegisterVM 诊断来源
     Formatter,
     IDE,
     TypeChecker  // 2026-06-29: 静态类型检查诊断
@@ -66,6 +85,7 @@ struct Diagnostic {
         case DiagSource::Compiler:    return "编译器";
         case DiagSource::Interpreter: return "解释器";
         case DiagSource::VM:          return "虚拟机";
+        case DiagSource::RegisterVM:  return "寄存器虚拟机";  // BUG-IBACKEND-3
         case DiagSource::Formatter:   return "格式化器";
         case DiagSource::IDE:         return "IDE";
         case DiagSource::TypeChecker: return "类型检查";

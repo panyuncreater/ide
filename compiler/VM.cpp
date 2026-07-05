@@ -88,7 +88,15 @@ VMResult VM::runtimeError(const std::string& msg) {
     lastError_ = msg;
     lastErrorLine_ = getCurrentLine();
     hasError_ = true;
-    diagnostics_.addError(msg, lastErrorLine_, 0, DiagSource::VM);
+    // BUG-IBACKEND-2: 从 chunk 读取列号（Compiler 未传入列号时默认 0）
+    int col = 0;
+    if (!frames_.empty()) {
+        const auto& frame = frames_.back();
+        if (frame.chunk && frame.ip < frame.chunk->columns.size()) {
+            col = frame.chunk->columns[frame.ip];
+        }
+    }
+    diagnostics_.addError(msg, lastErrorLine_, col, DiagSource::VM);
     // P1-9 fix: 使用 ErrorFormat::formatWithLine 替代 std::to_string + operator+
     Logger::Error(ErrorFormat::formatWithLine(msg, lastErrorLine_), "VM");
     return VMResult::VM_RUNTIME_ERROR;
@@ -215,8 +223,38 @@ bool VM::hasError() const {
 }
 
 std::vector<Value> VM::getStack() const {
-    return stack_.toVector();
+    return stack_.toVector();  // PERF-13: VMStack 定长数组转 vector
 }
+
+#ifdef MINILANG_VM_PROFILING
+// ============================================================
+// C3: VM opcode profiling 实现
+// ------------------------------------------------------------
+// 仅 MINILANG_VM_PROFILING 启用时编译，提供热路径分析能力。
+// 用法：cmake -DMINILANG_VM_PROFILING=ON 配合 ProfileDashboardPanel 或
+// 单独调用 vm.getOpCodeProfile() 拿到 (opcode, count) 排序列表，
+// 识别高频指令并指导手动内联/特殊化优化。
+// ============================================================
+std::vector<VM::OpCodeProfileEntry> VM::getOpCodeProfile() const {
+    std::vector<OpCodeProfileEntry> result;
+    result.reserve(64);
+    for (size_t i = 0; i < opProfileCounts_.size(); ++i) {
+        if (opProfileCounts_[i] > 0) {
+            result.push_back({ static_cast<OpCode>(i), opProfileCounts_[i] });
+        }
+    }
+    // 按计数降序排序（最大热点在前）
+    std::sort(result.begin(), result.end(),
+        [](const OpCodeProfileEntry& a, const OpCodeProfileEntry& b) {
+            return a.count > b.count;
+        });
+    return result;
+}
+
+void VM::resetOpCodeProfile() {
+    opProfileCounts_.fill(0);
+}
+#endif
 
 size_t VM::getCurrentIP() const {
     if (frames_.empty()) return 0;
@@ -262,6 +300,24 @@ std::vector<VM::VMCallStackEntry> VM::getCallStack() const {
     return result;
 }
 
+// BUG-IDE-12 fix: 获取当前帧的局部变量名→值映射
+std::unordered_map<std::string, Value> VM::getCurrentFrameLocals() const {
+    std::unordered_map<std::string, Value> result;
+    if (frames_.empty()) return result;
+    const auto& frame = frames_.back();
+    if (!frame.chunk) return result;
+    // 遍历 chunk 的 localSlotNames，从栈槽反查值
+    const auto& names = frame.chunk->localSlotNames;
+    size_t bp = frame.basePointer;
+    for (size_t slot = 0; slot < names.size() && slot < static_cast<size_t>(frame.chunk->localCount); ++slot) {
+        if (names[slot].empty()) continue;
+        size_t stackIdx = bp + slot;
+        if (stackIdx >= stack_.size()) break;
+        result[names[slot]] = stack_[stackIdx];
+    }
+    return result;
+}
+
 void VM::setOutputCallback(std::function<void(const std::string&)> callback) {
     outputCallback_ = callback;
 }
@@ -293,7 +349,21 @@ VMCallFrame& VM::currentFrame() {
     return frames_.back();
 }
 
-const BytecodeChunk& VM::currentChunk() {
+// D3 fix: const 重载——只读路径（调试器检视面板/UI 显示）使用 const 引用避免误改帧状态
+const VMCallFrame& VM::currentFrame() const {
+    // 调用方契约：与上面非 const 版本一致，调用前应检查 frames_.empty()
+    // const 路径不调用 runtimeError（runtimeError 修改 hasError_/diagnostics_），
+    // 仅记录日志后抛异常。
+    assert(!frames_.empty() && "currentFrame() const on empty frames");
+    if (frames_.empty()) {
+        Logger::Error("VM currentFrame() const on empty frames", "VM");
+        throw std::runtime_error("VM: currentFrame() const on empty frames");
+    }
+    return frames_.back();
+}
+
+// D3 fix: 标记为 const（与 VM.h 中 const 声明对齐）
+const BytecodeChunk& VM::currentChunk() const {
     return *currentFrame().chunk;  // chunk 由 initExecution 设置，始终有效
 }
 
@@ -953,6 +1023,11 @@ VMResult VM::executeOneInstruction() {
     size_t& ip = frame.ip;
 
     OpCode op = static_cast<OpCode>(chunk.code[ip]);
+
+#ifdef MINILANG_VM_PROFILING
+    // C3: 热路径 profiling — 每条指令执行前递增对应 opcode 计数器
+    ++opProfileCounts_[static_cast<uint8_t>(op)];
+#endif
 
     // M-新2 fix: OP_CLOSURE 是变长指令，需要计算完整长度再做边界检查
     size_t instrSize = BytecodeChunk::instructionSize(op);

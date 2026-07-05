@@ -33,10 +33,11 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     stackLayout->setContentsMargins(0, 0, 0, 0);
     stackLayout->setSpacing(2);
 
-    auto* stackTitle = new QLabel("操作数栈 (栈顶 ↑)", this);
+    // BUG-VSP-6 fix: stackTitle 改为成员变量，便于在栈式/寄存器模式切换时更新标题
+    stackTitle_ = new QLabel("操作数栈 (栈顶 ↑)", this);
     // D12 fix: 移除内联样式，由 styles.qss 的 QLabel#vmStackTitle 规则统一定义
-    stackTitle->setObjectName("vmStackTitle");
-    stackLayout->addWidget(stackTitle);
+    stackTitle_->setObjectName("vmStackTitle");
+    stackLayout->addWidget(stackTitle_);
 
     stackList_ = new QListWidget(this);
     stackList_->setObjectName("vmStackList");
@@ -73,16 +74,29 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     mainLayout->addWidget(splitter);
 }
 
-void VmStackPanel::updateStack(const std::vector<Value>& stack) {
+void VmStackPanel::updateStack(std::vector<Value> stack) {
+    // BUG-VSP-6 fix: 模式切换时标题适配——栈式 VM 模式
+    if (stackTitle_) {
+        stackTitle_->setText(QString::fromUtf8("操作数栈 (栈顶 ↑)"));
+    }
+
     stackList_->clear();
 
     // 栈顶在上，栈底在下
     for (int i = static_cast<int>(stack.size()) - 1; i >= 0; --i) {
+        // BUG-VSP-1 fix: toString() 可能抛异常（如 NaN-boxing 解码失败），用 try/catch 兜底
+        std::string valStr;
+        try {
+            valStr = stack[i].toString();
+            if (valStr.size() > 200) valStr = valStr.substr(0, 200) + "...";
+        } catch (...) {
+            valStr = "<error>";
+        }
         QString itemText;
         if (i == static_cast<int>(stack.size()) - 1) {
-            itemText = QString("TOP [%1]  %2").arg(i).arg(QString::fromStdString(stack[i].toString()));
+            itemText = QString("TOP [%1]  %2").arg(i).arg(QString::fromStdString(valStr));
         } else {
-            itemText = QString("    [%1]  %2").arg(i).arg(QString::fromStdString(stack[i].toString()));
+            itemText = QString("    [%1]  %2").arg(i).arg(QString::fromStdString(valStr));
         }
         auto* item = new QListWidgetItem(itemText);
 
@@ -105,13 +119,26 @@ void VmStackPanel::updateStack(const std::vector<Value>& stack) {
 
 // A1 fix: RegisterVM 寄存器列表显示。寄存器按 R0..Rn 顺序展示，
 // 与栈式 VM 的「栈顶在上」不同——寄存器无栈语义，按编号升序更直观。
-void VmStackPanel::updateRegisters(const std::vector<Value>& registers) {
+void VmStackPanel::updateRegisters(std::vector<Value> registers) {
+    // BUG-VSP-6 fix: 模式切换时标题适配——寄存器 VM 模式
+    if (stackTitle_) {
+        stackTitle_->setText(QString::fromUtf8("寄存器 (R0..Rn)"));
+    }
+
     stackList_->clear();
 
     for (size_t i = 0; i < registers.size(); ++i) {
+        // BUG-VSP-1 fix: toString() 可能抛异常，用 try/catch 兜底
+        std::string valStr;
+        try {
+            valStr = registers[i].toString();
+            if (valStr.size() > 200) valStr = valStr.substr(0, 200) + "...";
+        } catch (...) {
+            valStr = "<error>";
+        }
         QString itemText = QString("R%1  %2")
             .arg(static_cast<int>(i))
-            .arg(QString::fromStdString(registers[i].toString()));
+            .arg(QString::fromStdString(valStr));
         auto* item = new QListWidgetItem(itemText);
         stackList_->addItem(item);
     }
@@ -123,15 +150,17 @@ void VmStackPanel::updateRegisters(const std::vector<Value>& registers) {
     }
 }
 
-void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& globals) {
-    // P6 fix: 排序时只拷贝键的指针，避免深拷贝所有 Value
-    std::vector<const std::pair<const std::string, Value>*> entries;
+void VmStackPanel::updateGlobals(std::unordered_map<std::string, Value> globals) {
+    // BUG-VSP-4 fix: 原实现用 unordered_map 元素裸指针排序，若 globals 在排序后
+    // 被修改/销毁，指针即悬垂。改为按值接收参数（BUG-VSP-2），并 move 到本地 vector，
+    // 排序与访问均基于本地 vector，生命周期完全独立。
+    std::vector<std::pair<std::string, Value>> entries;
     entries.reserve(globals.size());
-    for (const auto& kv : globals) {
-        entries.push_back(&kv);
+    for (auto& kv : globals) {
+        entries.push_back(std::move(kv));
     }
     std::sort(entries.begin(), entries.end(),
-              [](const auto* a, const auto* b) { return a->first < b->first; });
+              [](const auto& a, const auto& b) { return a.first < b.first; });
 
     // G-P2-4 fix: 仅在行数变化时调用 resizeColumnsToContents（O(n) 操作），避免每次更新都重算列宽
     const int newRowCount = static_cast<int>(entries.size());
@@ -139,23 +168,44 @@ void VmStackPanel::updateGlobals(const std::unordered_map<std::string, Value>& g
     globalsTable_->setRowCount(newRowCount);
 
     int row = 0;
-    for (const auto* entry : entries) {
-        globalsTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(entry->first)));
-        globalsTable_->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(entry->second.toString())));
+    int maxValueWidth = 0;  // BUG-VSP-3 fix: 跟踪值列最大文本长度
+    for (const auto& entry : entries) {
+        // BUG-VSP-1 fix: toString() 可能抛异常，用 try/catch 兜底
+        std::string valStr;
+        try {
+            valStr = entry.second.toString();
+            if (valStr.size() > 200) valStr = valStr.substr(0, 200) + "...";
+        } catch (...) {
+            valStr = "<error>";
+        }
+        QString valQStr = QString::fromStdString(valStr);
+        globalsTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(entry.first)));
+        globalsTable_->setItem(row, 1, new QTableWidgetItem(valQStr));
+        if (valQStr.size() > maxValueWidth) maxValueWidth = valQStr.size();
         ++row;
     }
 
-    if (rowCountChanged) {
+    // BUG-VSP-3 fix: 除行数变化外，值列最大文本长度增长超过阈值时也重算列宽，
+    // 否则同行数下列宽不会随内容变长而扩展，导致长值被截断。
+    if (rowCountChanged || maxValueWidth > lastMaxValueWidth_ + 5) {
         globalsTable_->resizeColumnsToContents();
+        lastMaxValueWidth_ = maxValueWidth;
     }
 }
 
 // A1 fix: 统一接受 opName 字符串，兼容栈式 VM (opCodeName) 和 RegisterVM (regOpName)
 void VmStackPanel::updateCurrentOp(size_t ip, const std::string& opName, int line) {
+    // BUG-VSP-5 fix: 对空 opName 与无效行号（<=0）显示兜底占位文本，避免显示空白
+    QString opDisplay = opName.empty()
+        ? QString::fromUtf8("(未知指令)")
+        : QString::fromStdString(opName);
+    QString lineDisplay = (line <= 0)
+        ? QString::fromUtf8("(无行号)")
+        : QString::number(line);
     opLabel_->setText(QString("IP: %1  |  %2  |  行: %3")
                         .arg(static_cast<qulonglong>(ip))
-                        .arg(QString::fromStdString(opName))
-                        .arg(line));
+                        .arg(opDisplay)
+                        .arg(lineDisplay));
 }
 
 void VmStackPanel::clearAll() {

@@ -23,7 +23,7 @@ AlignTrailingComments: true
 DerivePointerAlignment: false
 FixNamespaceComments: true
 IncludeBlocks: Preserve
-SortIncludes: Never
+SortIncludes: CaseSensitive
 ReflowComments: true
 ---
 Language: CMake

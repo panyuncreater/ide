@@ -156,6 +156,7 @@ struct RegBytecodeChunk {
     std::vector<uint8_t> code;       // 指令字节流
     std::vector<Value> constants;    // 常量池
     std::vector<int> lines;          // 每条指令对应的行号（按字节偏移索引）
+    std::vector<int> columns;        // BUG-IBACKEND-2: 每条指令对应的列号（与 lines 平行，默认 0）
     std::string name;                // chunk 名称
     int arity = 0;                   // 参数个数
     int requiredArity = 0;           // 必需参数个数
@@ -165,6 +166,10 @@ struct RegBytecodeChunk {
     int localCount = 0;              // 局部变量寄存器数量（不含临时寄存器）
     int registerCount = 0;           // 总寄存器数量（localCount + 临时寄存器），上限 32
     std::vector<UpvalueDesc> upvalues;
+    // BUG-IDE-12 fix: 局部变量寄存器→名称映射（索引即寄存器号）。
+    // 用于 RegisterVM 条件断点求值：从当前帧的寄存器反查变量名，注入临时 Interpreter 环境。
+    // 限制：槽位复用时（兄弟作用域）后声明的变量名覆盖先前的，属于已知限制。
+    std::vector<std::string> localRegNames;
 
     RegBytecodeChunk() = default;
     explicit RegBytecodeChunk(const std::string& chunkName, int argCount = 0)
@@ -174,16 +179,16 @@ struct RegBytecodeChunk {
     uint16_t addConstant(const Value& value);
 
     /// 写入操作码
-    void writeOp(RegOp op, int line);
+    void writeOp(RegOp op, int line, int column = 0);
 
     /// 写入单字节寄存器号
-    void writeReg(uint8_t reg, int line);
+    void writeReg(uint8_t reg, int line, int column = 0);
 
     /// 写入 2 字节小端序
-    void writeShort(uint16_t v, int line);
+    void writeShort(uint16_t v, int line, int column = 0);
 
     /// 写入单字节原始值（用于非寄存器编号，如 upvalue 索引）
-    void writeByte(uint8_t v, int line);
+    void writeByte(uint8_t v, int line, int column = 0);
 
     /// 构建字节偏移 → 指令索引映射（调试器用）
     void buildIpMap();

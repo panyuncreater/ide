@@ -105,6 +105,8 @@ private slots:
     void updateLineNumberArea(const QRect& rect, int dy);
     /// F13: 插入选中的补全项
     void insertCompletion(const QString& completion);
+    /// BUG-CE-2/CE-3 fix: 文档内容变化时调整断点/折叠块号偏移
+    void onContentsChange(int position, int charsRemoved, int charsAdded);
 
 private:
     LineNumberArea* lineNumberArea_ = nullptr;
@@ -127,6 +129,10 @@ private:
     // F13: 自动补全
     QCompleter* completer_ = nullptr;           // 补全器
     QStringListModel* completionModel_ = nullptr; // 补全单词模型
+
+    // BUG-CE-2 fix: 文档内容变化监听，用于断点行号偏移补偿
+    QMetaObject::Connection contentsChangeConn_;
+    int lastBlockCount_ = 0;  // 上次文档块数（用于计算 delta）
 
     /// F13: 获取光标下的单词前缀
     QString textUnderCursor() const;

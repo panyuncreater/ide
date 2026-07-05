@@ -622,7 +622,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         }
 
         // 压入调用栈
-        callStack_.emplace_back(node.name, funEnv, node.line, recursionDepth_);
+        // BUG-DBG-4 fix: 使用 effectiveName 而非 node.name，与 callClosureValue (L195) 一致。
+        // 原实现使用 node.name（调用变量名），闭包赋值给不同变量时显示变量名而非闭包名。
+        callStack_.emplace_back(effectiveName, funEnv, node.line, recursionDepth_);
 
         // 切换环境
         currentEnv_ = funEnv;

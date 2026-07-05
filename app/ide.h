@@ -36,6 +36,20 @@
 #include "gui/IrViewer.h"
 #include "gui/FindReplacePanel.h"
 #include "gui/ActivityBar.h"
+#include "gui/PipelineViewer.h"
+#include "gui/BackendComparePanel.h"
+#include "gui/BugHuntPanel.h"
+#include "gui/SyntaxExplorerPanel.h"
+#include "gui/LabManualPanel.h"
+#include "gui/MemoryModelPanel.h"
+#include "gui/IRTransformPanel.h"
+#include "gui/ProfileDashboardPanel.h"
+#include "gui/CallStackPanel.h"
+#include "gui/VariableInspectorPanel.h"
+#include "gui/BytecodeTracePanel.h"
+#include "gui/BreakpointConditionPanel.h"
+#include "gui/ExceptionFlowPanel.h"
+#include "gui/ClosureInspectorPanel.h"
 
 class Pivot;
 class QLabel;
@@ -46,6 +60,15 @@ class ComboBox;   // QFluentKit ComboBox
 // ------------------------------------------------------------
 // 第六轮重构：活动栏 + Pivot 标签 + Fluent 组件 + AST 独立窗口
 // ============================================================
+
+// Output level for structured output panel
+enum class OutputLevel {
+    Plain,      // User program output (default, no icon prefix)
+    Info,       // Compilation progress messages
+    Success,    // Completion / pass messages
+    Warning,    // Warning messages
+    ErrorMsg    // Error messages (named ErrorMsg to avoid conflict with ERROR macro)
+};
 
 class Ide : public QMainWindow {
     Q_OBJECT
@@ -155,7 +178,6 @@ private:
     QToolButton* titleMaxBtn_ = nullptr;    // 最大化/还原
     QToolButton* titleCloseBtn_ = nullptr;  // 关闭
     ComboBox* engineCombo_ = nullptr;       // 执行引擎切换
-    QToolButton* themeToggleBtn_ = nullptr; // 亮/暗主题切换
     bool syncingViewAction_ = false;        // 防止视图菜单与面板 toggleView 递归
 
     // 左侧面板
@@ -185,6 +207,54 @@ private:
     // AST 独立窗口（不嵌入停靠系统）
     QWidget* astWindow_ = nullptr;
     AstViewer* astViewer_ = nullptr;
+
+    // ---- 教学增强面板（第一波 + 第三波）----
+    // 第一波 P0-1：编译管线可视化（源码→Token→AST→IR→字节码）
+    ads::CDockWidget* pipelineDock_ = nullptr;
+    PipelineViewer* pipelineViewer_ = nullptr;
+    // 第一波 P0-3：三后端并行对比
+    ads::CDockWidget* backendCompareDock_ = nullptr;
+    BackendComparePanel* backendComparePanel_ = nullptr;
+    // 第一波 P1-3：Bug 狩猎模式
+    ads::CDockWidget* bugHuntDock_ = nullptr;
+    BugHuntPanel* bugHuntPanel_ = nullptr;
+    // 第三波 P2-1：交互式语法探索器
+    ads::CDockWidget* syntaxExplorerDock_ = nullptr;
+    SyntaxExplorerPanel* syntaxExplorerPanel_ = nullptr;
+    // 第三波 P2-2：内置实验手册
+    ads::CDockWidget* labManualDock_ = nullptr;
+    LabManualPanel* labManualPanel_ = nullptr;
+
+    // ---- 教学增强面板（第二波）----
+    // P0-2：内存模型可视化（NaN-boxing / RefCounted / COW / GC）
+    ads::CDockWidget* memoryModelDock_ = nullptr;
+    MemoryModelPanel* memoryModelPanel_ = nullptr;
+    // P1-1：IR 变换过程动画（AST → IR lowering + 优化 pass 前后对比）
+    ads::CDockWidget* irTransformDock_ = nullptr;
+    IRTransformPanel* irTransformPanel_ = nullptr;
+    // P1-2：性能剖析仪表盘（三后端时间对比 + 热点 + 内存/GC 统计）
+    ads::CDockWidget* profileDashboardDock_ = nullptr;
+    ProfileDashboardPanel* profileDashboardPanel_ = nullptr;
+
+    // ---- 教学增强面板（第三波）----
+    // P0-1：调用栈可视化（运行期函数调用层次 + 本地变量）
+    ads::CDockWidget* callStackDock_ = nullptr;
+    CallStackPanel* callStackPanel_ = nullptr;
+    // P0-2：变量检查器（按作用域分组 + NaN-boxing 位详情）
+    ads::CDockWidget* variableInspectorDock_ = nullptr;
+    VariableInspectorPanel* variableInspectorPanel_ = nullptr;
+    // P0-3：字节码执行轨迹（IP/OpCode/栈快照时间轴）
+    ads::CDockWidget* bytecodeTraceDock_ = nullptr;
+    BytecodeTracePanel* bytecodeTracePanel_ = nullptr;
+    // 第二档 P1-2：条件断点可视化（断点列表 + 条件表达式 + 命中次数）
+    ads::CDockWidget* breakpointConditionDock_ = nullptr;
+    BreakpointConditionPanel* breakpointConditionPanel_ = nullptr;
+    // 第三档 P2-3a：异常流可视化（教学场景库 + 传播图解）
+    ads::CDockWidget* exceptionFlowDock_ = nullptr;
+    ExceptionFlowPanel* exceptionFlowPanel_ = nullptr;
+    // 第三档 P2-3b：闭包检查器（教学场景库 + upvalue 生命周期）
+    ads::CDockWidget* closureInspectorDock_ = nullptr;
+    ClosureInspectorPanel* closureInspectorPanel_ = nullptr;
 
     // ---- 工具栏 ----
     QAction* runAction_ = nullptr;
@@ -223,6 +293,25 @@ private:
     QAction* viewDebugAction_ = nullptr;
     QAction* viewOutputAction_ = nullptr;
     QAction* viewCompileAnalysisAction_ = nullptr;
+    // 教学增强面板视图菜单项
+    QAction* viewPipelineAction_       = nullptr;
+    QAction* viewBackendCompareAction_ = nullptr;
+    QAction* viewBugHuntAction_        = nullptr;
+    QAction* viewSyntaxExplorerAction_ = nullptr;
+    QAction* viewLabManualAction_      = nullptr;
+    // 第二波教学面板视图菜单项
+    QAction* viewMemoryModelAction_       = nullptr;
+    QAction* viewIRTransformAction_       = nullptr;
+    QAction* viewProfileDashboardAction_  = nullptr;
+    // 第三波教学面板视图菜单项
+    QAction* viewCallStackAction_           = nullptr;
+    QAction* viewVariableInspectorAction_   = nullptr;
+    QAction* viewBytecodeTraceAction_       = nullptr;
+    // 第二档 P1-2 教学面板视图菜单项
+    QAction* viewBreakpointConditionAction_ = nullptr;
+    // 第三档 P2-3 教学面板视图菜单项
+    QAction* viewExceptionFlowAction_      = nullptr;
+    QAction* viewClosureInspectorAction_    = nullptr;
 
     // 状态栏
     QLabel* statusLineLabel_ = nullptr;
@@ -236,7 +325,7 @@ private:
     QString currentFilePath_;
     bool isDirty_ = false;
     bool hasWorkspace_ = false;
-    int bottomPanelHeight_ = 600;  // 第十一轮：输出面板默认高度，用户调整后记忆
+    int bottomPanelHeight_ = 220;  // 第十二轮：输出面板默认高度，用户调整后记忆
 
     // ---- 防抖定时器 ----
     QTimer* completionTimer_ = nullptr;     // 补全词刷新（500ms）
@@ -281,9 +370,11 @@ private:
     void syncViewMenuChecks();
 
     // ---- 输出/错误 ----
-    void appendOutput(const QString& text);
-    void appendError(const QString& text, int line = 0, int column = 0);
+    void appendOutput(const QString& text, OutputLevel level = OutputLevel::Plain);
+    void appendError(const QString& text, int line = 0, int column = 0,
+                     DiagLevel level = DiagLevel::Error);
     void clearOutput();
+    void updateErrorBadge();
 
     // ---- 可视化 ----
     void highlightBytecodeLine(const std::string& chunkName, size_t ip);
@@ -345,4 +436,7 @@ private:
     void saveLayout();
     void restoreLayout();
     void ensureEditorVisible();
+
+    // ---- 教学增强面板：将面板内代码加载到主编辑器 ----
+    void loadCodeIntoMainEditor(const QString& code);
 };

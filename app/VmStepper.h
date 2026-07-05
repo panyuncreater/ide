@@ -35,6 +35,7 @@
 #include "compiler/RegisterVM.h"  // A1 fix: 寄存器式 VM 后端
 #include "compiler/RegisterBytecode.h"
 #include "interpreter/Value.h"
+#include "debug/DebugTypes.h"  // BUG-DBG-6 fix: CallStackEntry 用于 VM 调用栈显示
 
 class VmStepper : public QObject {
     Q_OBJECT
@@ -126,6 +127,10 @@ public:
         regVm_.resetState();
         isVmInitialized_ = false;
         vmStepMode_ = VmStepMode::STEP_IN;
+        // BUG-DBG-2 fix: 同步重置 crossedLine_/crossedDeeper_ 状态
+        vmLastSeenLine_ = -1;
+        vmCrossedLine_ = false;
+        vmCrossedDeeper_ = false;
     }
 
     bool isRunning() const { return isVmRunning_; }
@@ -140,6 +145,11 @@ public:
     }
     std::unordered_map<std::string, Value> getGlobals() const {
         return useRegister_ ? regVm_.getGlobals() : vm_.getGlobalsRef();
+    }
+    /// BUG-IDE-12 fix: 获取当前帧的局部变量名→值映射（用于 VM 条件断点求值）。
+    /// 分派到当前激活后端的 getCurrentFrameLocals()。空帧/主程序帧返回空映射。
+    std::unordered_map<std::string, Value> getCurrentFrameLocals() const {
+        return useRegister_ ? regVm_.getCurrentFrameLocals() : vm_.getCurrentFrameLocals();
     }
     size_t getCurrentIP() const {
         return useRegister_ ? regVm_.getCurrentIP() : vm_.getCurrentIP();
@@ -164,6 +174,42 @@ public:
     // A4 fix: 暴露 VM 调用栈深度（用于 step-over/out 判断）
     size_t getFrameCount() const {
         return useRegister_ ? regVm_.getFrameCount() : vm_.getFrameCount();
+    }
+    // BUG-DBG-6 fix: 暴露 VM 调用栈快照（用于 GUI 调用栈面板显示）。
+    // 原实现 VmStepper 未转发 VM::getCallStack()/RegisterVM::getCallStack()，
+    // 导致 VM 模式调试时 DebugPanel 调用栈列表永远空白（数据源是 Interpreter 的空 callStack_）。
+    // 转换 VMCallStackEntry/RegCallStackEntry → CallStackEntry：
+    //   functionName → functionName
+    //   line → line
+    //   depth → 帧索引（0=栈底 main，递增到栈顶）
+    //   locals → 空（VM 帧无 Environment*，局部变量需从槽位反查，暂不支持）
+    std::vector<CallStackEntry> getCallStack() const {
+        std::vector<CallStackEntry> result;
+        if (useRegister_) {
+            auto frames = regVm_.getCallStack();
+            result.reserve(frames.size());
+            int depth = 0;
+            for (const auto& f : frames) {
+                CallStackEntry entry;
+                entry.functionName = f.functionName;
+                entry.line = f.line;
+                entry.depth = depth++;
+                // locals 留空：VM 帧无 Environment，局部变量需从槽位反查
+                result.push_back(std::move(entry));
+            }
+        } else {
+            auto frames = vm_.getCallStack();
+            result.reserve(frames.size());
+            int depth = 0;
+            for (const auto& f : frames) {
+                CallStackEntry entry;
+                entry.functionName = f.functionName;
+                entry.line = f.line;
+                entry.depth = depth++;
+                result.push_back(std::move(entry));
+            }
+        }
+        return result;
     }
 
 signals:
@@ -196,6 +242,11 @@ private:
     // 与 Interpreter DebugController::crossedDeeper_ 对齐——
     // 同行函数调用返回后即使行号不变也应暂停。
     bool vmCrossedDeeper_ = false;
+    // BUG-DBG-2 fix: crossedLine 机制，与 DebugController::crossedLine_ 对齐。
+    // 单行循环断点（如 for (...; ...; ...) print(i);）在 RUN 模式下需每次迭代重新触发。
+    // 原实现仅用 currentLine != vmLastPausedLine_ 去重，导致首次命中后永不再触发。
+    int vmLastSeenLine_ = -1;          // 上次见到的行号
+    bool vmCrossedLine_ = false;        // 是否跨过不同行（允许同行断点重新触发）
     QSet<int> vmBreakpoints_;          // VM 模式断点行号集合（复用 Editor 断点）
     QMap<int, std::string> vmBreakpointConditions_;  // #4 fix: 条件断点表达式
     std::function<bool(const std::string&)> vmConditionEvaluator_;  // #4 fix: 条件求值回调

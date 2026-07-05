@@ -94,7 +94,8 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
                         VariableSnapshot snap;
                         snap.name = kv.first;
                         snap.value = kv.second;
-                        snap.scope = (depth == 0) ? "局部" : (current->parent ? "外层" : "全局");
+                        snap.scope = (current->parent == nullptr) ? "全局"
+                                   : (depth == 0) ? "局部" : "外层";
                         result.push_back(snap);
                     }
                     current = current->parent.get();

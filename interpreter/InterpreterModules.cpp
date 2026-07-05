@@ -31,9 +31,12 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     if (modulePath.empty()) {
         runtimeError("模块路径不能为空", node.line, node.column);
     }
-    // 绝对路径检测（Unix 以 '/' 开头，Windows 以 'C:/' 或 'C:\\' 形式）
-    if (modulePath[0] == '/' || (modulePath.size() >= 3 && modulePath[1] == ':' &&
-        (modulePath[2] == '/' || modulePath[2] == '\\'))) {
+    // 绝对路径检测（Unix 以 '/' 开头，Windows 以 'X:...' 驱动器路径形式）
+    // BUG-MOD-1 fix: 原实现仅检测 'C:/' 形式，未拒绝 'C:foo'（Windows 驱动器相对路径），
+    // 可能被 loader 解析到模块目录外的文件。修复：拒绝所有 'X:' 开头形式
+    //（X 为任意字符），覆盖 'C:/'、'C:foo'、'D:path' 等。
+    // 注：反斜杠已在上方统一转为正斜杠，无需再检测 '\\'。
+    if (modulePath[0] == '/' || (modulePath.size() >= 2 && modulePath[1] == ':')) {
         runtimeError("模块路径不能为绝对路径: " + modulePath, node.line, node.column);
     }
     // ".." 路径段检测（按 '/' 分割检查每个段）

@@ -1,3 +1,48 @@
+/**
+ * @file compiler/IR.h
+ * @brief 中间表示层（ARCH-06 完整实现）。
+ *
+ * ARCH-06 fix: 引入 IR 抽象层，打破 Compiler 直接生成字节码的紧耦合。
+ * 长期目标：AST → IR → 后端（VM 字节码 / 寄存器字节码 / 未来 JS / WASM）。
+ *
+ * 数据结构层次：
+ *   - IROp：IR 指令操作码（约 50 种，覆盖赋值/算术/比较/跳转/调用/
+ *     返回/闭包/类/异常/模块等）
+ *   - IROperand：操作数（vreg/常量/标签/全局槽位/字段名等）
+ *   - IRInstruction：单条 IR 指令（op + operands + 行号）
+ *   - IRBasicBlock：基本块（label + 指令列表 + 后继块）
+ *   - IRFunction：函数 IR（基本块列表 + vreg 分配器 + 字段映射）
+ *   - IRModule：模块 IR（函数表 + 全局变量 + 类信息 + 模块依赖）
+ *
+ * 接口层：
+ *   - IRBuilder：抽象接口，将 AST 转换为 IRModule
+ *   - AstIRBuilder：具体实现，AST → IRModule
+ *   - IRBackend：抽象接口，将 IRModule 转换为目标后端字节码
+ *   - BytecodeIRBackend：IR → 栈式 VM 字节码 BytecodeChunk
+ *   - RegisterBytecodeBackend：IR → 寄存器式 VM 字节码 RegBytecodeChunk
+ *
+ * IR 优化 pass（C4 增强）：
+ *   - constantFoldingPass：常量折叠（编译期可计算的算术/比较）
+ *   - copyPropagationPass：复制传播（vreg_a = vreg_b 后续用 vreg_b 替代 vreg_a）
+ *   - deadCodeEliminationPass：死代码消除（无副作用指令的 dest vreg 无引用则删除）
+ *   - commonSubexpressionEliminationPass：公共子表达式消除（基本块内值编号）
+ *   - loopUnrollingPass：循环展开（for 循环体 ≤20 指令且 N≤4 时展开）
+ *   - optimizeIR：组合 pass，按 round 重复执行直到收敛（最多 3 轮）
+ *
+ * 设计原则：
+ *   - IR 与现有字节码解耦，可独立扩展为 SSA / Dataflow 等高级形式
+ *   - 现有 AST→字节码路径保持不变，IR 作为可选中间层（Compiler::setUseIR(true)）
+ *   - IRBuilder/IRBackend 为抽象接口，便于未来添加新前端和新后端
+ *
+ * 安全约束：
+ *   - CSE 默认 false（栈式 VM 后端不安全，CSE 替换 dest vreg 引用后
+ *     原指令变为死指令但仍 emit，导致栈上残留未被 POP 的值，与
+ *     BUG-IR-DCE-1 同源问题）。仅寄存器式后端可显式传 true 启用。
+ *   - DCE 不能删除算术指令（除零/溢出副作用），仅删除无副作用的
+ *     纯赋值/拷贝指令。
+ *
+ * @see Compiler AstIRBuilder BytecodeIRBackend RegisterBytecodeBackend
+ */
 #pragma once
 
 // ============================================================
@@ -19,11 +64,11 @@
 // ============================================================
 
 #include <cstdint>
+#include <cstring>  // BUG-AUDIT-VAL-1: std::memcpy for scalarKey float 位模式编码
 #include <memory>
 #include <functional>  // VM-IMPORT: std::function for moduleLoader_
 #include <string>
 #include <vector>
-#include <variant>
 #include <stdexcept>
 #include <unordered_map>  // perf3 fix: addGlobal/addConstant hash 侧表
 #include <unordered_set>
@@ -83,6 +128,7 @@ enum class IROp : uint8_t {
     LOAD_GLOBAL,     // dest = globalNames[idx]     operands: [dest_vreg, global_idx]
     STORE_GLOBAL,    // globalNames[idx] = src      operands: [global_idx, src_vreg]
     DEFINE_GLOBAL,   // define globalNames[idx] = src  operands: [global_idx, src_vreg]
+    DELETE_VAR,      // delete global var by name   operands: [global_idx]  BUG-IR-TRY-1 fix
     LOAD_UPVALUE,    // dest = upvalue[idx]         operands: [dest_vreg, uv_idx]
     STORE_UPVALUE,   // upvalue[idx] = src          operands: [uv_idx, src_vreg]
     CLOSE_UPVALUE,   // close all open upvalues with slot >= slot_base  operands: [slot_base]
@@ -202,16 +248,26 @@ struct IRFunction {
     int localCount = 0;             // 局部变量总槽位数
     std::vector<uint16_t> defaultConstIndices;  // 默认参数值的常量索引
     std::vector<UpvalueDesc> upvalues;           // 闭包 upvalue 描述符列表
+    // BUG-IDE-12 fix: 局部变量槽位→名称映射（索引即 slot），供 RegisterVM 条件断点求值反查。
+    // 由 AstIRBuilder 在分配 LOCAL slot 时增量维护，函数最终化时复制到 ir_->localSlotNames。
+    // 限制：槽位复用（兄弟作用域）时后声明的变量名覆盖先前的，属于已知限制。
+    std::vector<std::string> localSlotNames;
 
     /// 分配虚拟寄存器
     IROperand allocVReg() { return IROperand::vreg(nextVReg++); }
     /// 分配标签
     uint32_t allocLabel() { return nextLabel++; }
     /// P2-1 fix: 将 int/float/bool 标量常量编码为字符串 key（含类型标识避免 int 1 == bool true 等误判）
-    /// 使用 std::to_string 拼接前缀+值，调用频率低（编译期），可读性优先于极致性能
+    /// BUG-AUDIT-VAL-1 fix: float 改用位模式编码，避免 std::to_string(double) 仅 6 位小数导致
+    /// 不同位模式的 double（如 0.1000001 与 0.1000002）被错误合并为同一常量。
     static std::string scalarKey(const Value& v) {
         if (v.isInt())   return "I:" + std::to_string(v.intVal());
-        if (v.isFloat()) return "F:" + std::to_string(v.floatVal());
+        if (v.isFloat()) {
+            double d = v.floatVal();
+            uint64_t bits;
+            std::memcpy(&bits, &d, sizeof(double));
+            return "F:" + std::to_string(bits);
+        }
         if (v.isBool())  return v.boolVal() ? "B:1" : "B:0";
         return {};  // 不会触达
     }
@@ -336,7 +392,9 @@ public:
     std::unique_ptr<IRFunction> build(Block& program) override;
 
     /// 获取构建的 IR 模块（含所有子函数）。build() 后有效。
+    // D3 fix: 补 const 重载，便于编译后只读检查 IR 模块（如 IRTransformPanel 渲染）
     IRModule* getModule() { return module_.get(); }
+    const IRModule* getModule() const { return module_.get(); }
 
     /// 获取全局槽位名表（build() 后有效，供 Compiler 填充 CompileResult）
     const std::vector<std::string>& getGlobalSlotNames() const { return globalSlotAllocator_.names(); }
@@ -371,6 +429,9 @@ private:
     std::unordered_map<std::string, std::string> varTypes_;  // 2026-06-29: 变量名→类型注解
     bool inFunction_ = false;
     uint32_t nextLocalSlot_ = 0;
+    // BUG-IDE-12 fix: 局部变量 slot→name 映射（索引即 slot），跨作用域累积（不随块退出清除）。
+    // 函数最终化时复制到 ir_->localSlotNames，供 RegisterVM 条件断点求值反查变量名。
+    std::vector<std::string> localSlotNames_;
     // C-9 fix: 编译类方法时为 true。visitFunDecl 检查此标记，
     // 预留 slot 0 给隐式 this 参数，并将 varMap_["this"] 绑定到 slot 0。
     // 调用方（executeMethodCallImpl/executeClassNewImpl）将 this 作为第一个参数传入。
@@ -378,6 +439,10 @@ private:
     // P1 fix: 当前编译的类名（visitClassDecl 设置，供 super 调用查找父类）。
     // compilingMethod_=true 时有效，编译完类方法后清空。
     std::string compilingClassName_;
+    // BUG-IR-VARDECL-1 fix: 已定义的类名集合（visitClassDecl 时填充）。
+    // visitVarDecl 无初始化器时检查类型注解是否为类名，若是则自动构造实例，
+    // 对齐 Compiler.cpp visitVarDecl L620-626 的 S2 fix 语义。
+    std::unordered_set<std::string> definedClassNames_;
 
     // 块作用域跟踪（限制5）
     struct BlockScope {
@@ -407,8 +472,11 @@ private:
     // VM-IMPORT: 模块系统状态（对齐 Compiler 的 moduleLoadingSet_/linkedModuleSet_）
     std::function<std::string(const std::string&)> moduleLoader_;
     std::unordered_set<std::string> moduleLoadingSet_;  // 正在编译中（循环检测）
+    std::vector<std::string> moduleLoadingStack_;       // BUG-AUDIT-MOD-3: 深度保护栈
     std::unordered_set<std::string> linkedModuleSet_;   // 已完成（run-once）
     std::vector<std::unique_ptr<Block>> moduleAsts_;    // 保留模块 AST
+    // BUG-AUDIT-MOD-1: 模块导出名称集合（对齐 Compiler::moduleExports_）
+    std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
 
     /// VM-IMPORT: 处理 import 语句（内联编译模块代码到当前 IR）
     void handleImportStmt(ImportStmt& node);
@@ -417,9 +485,7 @@ private:
     struct UpvalueInfo { uint32_t index; bool isLocal; int outerIdx; };
     std::vector<UpvalueInfo> currentUpvalues_;
     std::unordered_map<std::string, int> currentUpvalueNames_;
-    std::vector<std::string> outerLocals_;
     std::unordered_map<std::string, int> outerLocalSlots_;
-    std::vector<UpvalueDesc> outerUpvalues_;
     std::unordered_map<std::string, int> outerUpvalueNames_;
     std::unordered_map<std::string, int> outerFunctions_;
     std::unordered_set<std::string> innerFunctions_;
@@ -428,7 +494,7 @@ private:
     // 循环上下文（break/continue 跳转目标）
     // BUG-EXC-2 fix: tryDepthAtStart 记录循环开始时的 try 嵌套深度，
     // break/continue 时需为差额层级的 try 发射 TRY_END 弹出 handler，
-    // 对齐 Compiler.cpp:1194 的 tryDepthInLoop 逻辑。
+    // 对齐 Compiler.cpp visitBreakStmt 的 tryDepthInLoop 逻辑。
     struct LoopContext {
         uint32_t startLabel;
         uint32_t endLabel;
@@ -457,7 +523,7 @@ private:
     uint32_t addUpvalue(const std::string& name);
     void enterBlockScope();
     void leaveBlockScope();
-    void preScanTopLevelDecls(Block& program);
+    void preScanTopLevelDecls(Block& program, bool isMainModule = false);
 
     // CRITICAL-1 fix: 前向自由变量分析（对齐 Interpreter::computeFreeVariables）。
     // 在编译子函数体前，先收集所有自由变量名，为每个能在外层捕获的变量预建 upvalue。
@@ -471,6 +537,12 @@ private:
 
     // ---- AST 节点转换 ----
     IROperand visitNode(class ASTNode* node);
+    // BUG-IR-POP-2/3 fix: 统一处理语句上下文的表达式语句 POP。
+    // 对齐 Compiler::compileStatement 的语义：调用 visitNode 后，
+    // 若节点是表达式语句（needsPopForExprStmt 返回 true）则 emit POP 消费结果值。
+    // 在所有"语句上下文"（if then/else、while body、for body）使用此方法，
+    // 避免手动 POP 遗漏导致栈泄漏/不平衡。
+    void visitStatement(class ASTNode* node);
     IROperand visitBinaryOp(class BinaryOp* node);
     IROperand visitUnaryOp(class UnaryOp* node);
     IROperand visitNumberLiteral(class NumberLiteral* node);
@@ -571,7 +643,9 @@ private:
     // BUG-NEW fix: 将全局槽位号转换为变量名字符串常量索引。
     // 栈式 VM 的 OP_WRITEBACK_*_VAR 把 varIdx 当作常量池索引取 stringVal()，
     // GLOBAL_SLOT 路径需查 globalSlotNames_ 得到变量名再入常量池。
-    uint16_t slotToNameConstant(uint32_t slot, const IRFunction& ir);
+    // BUG-IR-SLOTNAME-1 fix: 返回 bool，失败时不再生成占位名静默产生坏字节码。
+    // 调用方需检查返回值，false 时中止 lowering 并向上传递错误。
+    bool slotToNameConstant(uint32_t slot, const IRFunction& ir, uint16_t& outIdx);
     bool lowerInstruction(const IRInstruction& instr, const IRFunction& ir);
     bool patchJumps();
     void resetState();
@@ -604,12 +678,55 @@ bool deadCodeEliminationPass(IRFunction& ir);
 /// 返回：是否修改了 IR
 bool copyPropagationPass(IRFunction& ir);
 
-/// 运行全部优化 pass（常量折叠 → [复制传播] → 死代码消除）
+/// C4: 公共子表达式消除（CSE，局部 — 基本块内）
+/// 规则：
+///   1. 在每个基本块内维护"值编号"表：hash((op, operand1_kind, operand1_idx, operand2_kind, operand2_idx)) → dest_vreg
+///   2. 遇到纯计算指令（EQ/NEQ/LT/GT/LTE/GTE/NOT/DUP/NEGATE/算术）时，若表达式已存在，
+///      将本指令 dest vreg 的所有后续引用替换为已存在的 dest vreg，本指令标记为待删除
+///   3. 块边界（JUMP/JUMP_IF_FALSE/RETURN/THROW 等）清空值编号表
+/// 安全性：
+///   - SSA 风格 vreg 不会被重定义，相同 operand 必产生相同结果
+///   - 仅在基本块内有效（避免跨块分析复杂度）
+///   - 算术指令也参与 CSE（与 BUG-IR-DCE-1 不同：CSE 不删除指令，只替换引用，副作用保留）
+///     副作用指令即使 dest 已被替换引用，仍保留原指令执行以触发除零/溢出错误
+/// 返回：是否修改了 IR（true 表示有引用被替换）
+bool commonSubexpressionEliminationPass(IRFunction& ir);
+
+/// C4: 循环展开（保守策略 — 仅展开常量边界的小循环）
+/// 规则：
+///   1. 识别模式：LABEL L1; cond_load; LOAD_CONST N; LT; JUMP_IF_FALSE L_exit; POP;
+///      <body>; counter_load; LOAD_CONST 1; ADD; STORE_LOCAL slot; JUMP L1; LABEL L_exit; POP
+///   2. 当 N 为常量且 1 ≤ N ≤ kMaxUnrollCount(默认 4) 时，展开 N 次循环体
+///      （展开后删除原循环结构，直接生成 N 份顺序 body）
+///   3. body 必须不包含 break/continue/return/throw（保守安全门）
+///   4. body 指令数 ≤ kMaxUnrollBodySize(默认 20)，避免代码膨胀失控
+/// 限制：
+///   - 仅支持步长为 1 的整数计数 for 循环（最常见模式）
+///   - 不支持嵌套循环展开（外层展开后内层不变）
+///   - 不支持含 break/continue 的循环（保守跳过）
+/// 返回：是否修改了 IR（true 表示有循环被展开）
+bool loopUnrollingPass(IRFunction& ir);
+
+/// 运行全部优化 pass（常量折叠 → [复制传播] → [CSE] → [循环展开] → 死代码消除）
 /// @param enableCopyPropagation 是否启用复制传播。
 ///   - 栈式 VM 后端：false（删除 LOAD_CONST 会导致栈下溢）
 ///   - 寄存器式 VM 后端：true（LOAD_CONST 写寄存器，无引用时 DCE 安全删除）
+/// @param enableDCE 是否启用死代码消除。
+///   - 栈式 VM 后端：false（POP operands 为空，DCE 看不到 POP 对 vreg 的消费关系，
+///     会删除仅被 POP 消费的 LOAD_CONST 等纯计算指令，导致栈式 VM OP_POP 栈下溢）
+///   - 寄存器式 VM 后端：true（vreg 物化为寄存器，无引用时安全删除）
+///   - BUG-IR-DCE-2 fix: 解耦 DCE 与复制传播控制，避免禁用复制传播时连带禁用 DCE
+/// @param enableCSE 是否启用公共子表达式消除（C4 新增）。
+///   - 栈式 VM 后端：必须 false（CSE 替换后续指令对 dest vreg 的引用，原 dest 变为
+///     死指令但仍 emit，导致栈上残留未被 POP 的值，与 BUG-IR-DCE-1 同源问题）
+///   - 寄存器式 VM 后端：可 true（vreg 物化为寄存器，死指令无栈影响，配合 DCE 安全清理）
+///   - 默认 false：与 enableDCE 解耦（仅 DCE=true 的寄存器式后端显式传 true 启用）
+/// @param enableLoopUnroll 是否启用循环展开（C4 新增）。
+///   - 默认 false：循环展开改变代码结构，可能影响调试器行号映射，默认关闭
+///   - 性能场景（ProfileDashboardPanel）可显式启用
 /// 返回：是否修改了 IR
-bool optimizeIR(IRFunction& ir, bool enableCopyPropagation = false);
+bool optimizeIR(IRFunction& ir, bool enableCopyPropagation = false, bool enableDCE = false,
+                bool enableCSE = false, bool enableLoopUnroll = false);
 
 // ============================================================
 // IR 打印（调试用）

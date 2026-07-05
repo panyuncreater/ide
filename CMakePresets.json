@@ -79,6 +79,32 @@
       }
     }
   ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "windows-msvc-debug",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "default"
+      },
+      "execution": {
+        "jobs": 4,
+        "timeout": 300
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "windows-msvc-release",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "default"
+      },
+      "execution": {
+        "jobs": 4,
+        "timeout": 300
+      }
+    }
+  ],
   "vendor": {
     "qt-project.org/Presets": {
       "checksum": "67SmY24ZeVbebyKD0fGfIzb/bGI="

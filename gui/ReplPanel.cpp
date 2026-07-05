@@ -28,6 +28,10 @@ ReplPanel::ReplPanel(QWidget* parent)
     outputArea_ = new QTextEdit(this);
     outputArea_->setReadOnly(true);
     outputArea_->setPlaceholderText("MiniLang REPL 输出\n输入表达式或语句后按回车执行");
+    // BUG-REPL-G1 fix (P1): 设置输出区行数上限，避免长时间运行（如 while 循环
+    // 大量 print）导致 QTextDocument 内部块链表无限增长、内存膨胀。
+    // 与 OutputPanel 保持一致（10000 行）。
+    outputArea_->document()->setMaximumBlockCount(10000);
     layout->addWidget(outputArea_);
 
     // 输入行
@@ -57,9 +61,20 @@ ReplPanel::~ReplPanel() {
     if (pollTimer_) pollTimer_->stop();
     // 深度防御：closeEvent 路径已通过 waitReplFuture() 处理，此处为 no-op。
     // 非 closeEvent 路径（如直接 delete）controller_ 可能已析构，不能调用
-    // requestReplStop()，直接 wait() 阻塞至完成（由 MAX_LOOP_ITERATIONS 兜底）。
+    // requestReplStop()（C++ 异常不能捕获 UAF），直接 wait() 阻塞至完成
+    // （由 MAX_LOOP_ITERATIONS 兜底）。
+    // BUG-REPL-G5 fix (P2): 原实现直接 wait() 无超时，若 closeEvent 路径异常
+    // 未调用 waitReplFuture() 且异步任务陷入死循环（且未触发 MAX_LOOP_ITERATIONS），
+    // 析构会无限阻塞。改为 wait_for(5s) + 日志告警，超时后仍回退阻塞 wait()
+    // 作为最后手段（进程即将退出，由 OS 兜底）。controller_ 已可能析构，不调用
+    // requestReplStop()，仅等待异步任务自然完成或被外部中止。
     if (replFuture_.valid()) {
-        replFuture_.wait();
+        auto status = replFuture_.wait_for(std::chrono::seconds(5));
+        if (status != std::future_status::ready) {
+            // 超时未完成：记录告警后回退阻塞等待（避免 future 析构时 anyway 阻塞）
+            LOG_WARNING("REPL 析构等待异步任务超时（5s），回退阻塞等待", "REPL");
+            replFuture_.wait();
+        }
     }
 }
 
@@ -212,6 +227,17 @@ void ReplPanel::onReturnPressed() {
         // AUDIT-BUG-F2 fix: 用精确匹配 + 空格前缀，避免误匹配 reloadable/reloadX 等标识符，
         // 原 startsWith("reload") 会命中这些标识符并清空用户输入。
         if (trimmedLine == "reload" || trimmedLine.startsWith("reload ")) {
+            // BUG-REPL-G2 fix (P2): reload 命令绕过 isRunning() 检查。
+            // reload 会清空模块缓存，若 worker 线程正在执行 import，缓存失效会导致
+            // worker 后续访问已加载模块时崩溃或行为不一致。executeLine 入口虽已检查
+            // isRunning()，但 reload 在 onReturnPressed 中提前 return，绕过该检查。
+            // 此处显式拦截，与 executeLine 的检查语义一致。
+            if (controller_ && controller_->isRunning()) {
+                appendError("程序正在运行，请先停止后再使用 reload");
+                pendingInput_.clear();
+                inputLine_->clear();
+                return;
+            }
             QString arg = trimmedLine == "reload" ? QString() : trimmedLine.mid(7).trimmed();
             if (arg.isEmpty()) {
                 appendError("用法: reload \"模块路径\" 或 reload all");
@@ -326,13 +352,26 @@ void ReplPanel::executeLine(const QString& line) {
     // AUDIT fix: 重置错误标志，避免上次执行的残余状态影响本次输出判断
     hadReplError_.store(false);
     std::atomic<bool>* errFlag = &hadReplError_;
+    // BUG-REPL-G6 fix (P2): 捕获 this 以便将错误同时投递到 REPL 输出区。
+    // 原实现仅 emit ctrl->runtimeError/genericError 信号（由 Ide 连接到主错误面板），
+    // REPL 用户看不到错误反馈。生命周期安全：~ReplPanel 的 wait() 保证异步任务
+    // 完成前 ReplPanel 不会析构，invokeMethod 投递的 lambda 不会访问已析构对象。
+    ReplPanel* self = this;
     std::future<Value> newFuture;
     try {
-        newFuture = std::async(std::launch::async, [ctrl, rawAst, errFlag]() -> Value {
+        newFuture = std::async(std::launch::async, [ctrl, rawAst, errFlag, self]() -> Value {
             try {
                 return ctrl->executeRepl(*rawAst);
             } catch (const RuntimeError& e) {
                 errFlag->store(true);
+                // BUG-REPL-G6 fix (P2): 同时投递到 REPL 输出区，让用户在 REPL 中
+                // 直接看到错误反馈（原有 emit ctrl->runtimeError 仍保留，由 Ide
+                // 连接到主错误面板）
+                std::string msg = e.what();
+                QMetaObject::invokeMethod(self,
+                    [self, msg]() {
+                        self->appendError(QString::fromStdString(msg));
+                    }, Qt::QueuedConnection);
                 QMetaObject::invokeMethod(ctrl,
                     [ctrl, msg = std::string(e.what()), line = e.line, col = e.column]() {
                         emit ctrl->runtimeError(QString::fromStdString(msg), line, col);
@@ -343,6 +382,12 @@ void ReplPanel::executeLine(const QString& line) {
                 return Value::nullValue();
             } catch (const std::exception& e) {
                 errFlag->store(true);
+                // BUG-REPL-G6 fix (P2): 同理投递到 REPL 输出区
+                std::string msg = e.what();
+                QMetaObject::invokeMethod(self,
+                    [self, msg]() {
+                        self->appendError(QString::fromStdString(msg));
+                    }, Qt::QueuedConnection);
                 QMetaObject::invokeMethod(ctrl,
                     [ctrl, msg = std::string(e.what())]() {
                         emit ctrl->genericError(QString::fromStdString(msg));
@@ -508,6 +553,12 @@ bool ReplPanel::isInputComplete(const QString& input) {
             break;
         case '}':
             --braceDepth;
+            // BUG-REPL-G3 fix (P2): 负 braceDepth 表示括号不匹配（如多余 }），
+            // 视为输入不完整避免误判完整后送入 Parser 触发无法定位的语法错误。
+            // 原 isInputComplete 仅在末尾检查 braceDepth!=0，负深度会被末尾的
+            // "!= 0" 判断捕获，但中途负深度可能因后续 { 重新归零而漏判
+            // （如 "}{" 末尾 braceDepth=0 误判完整）。此处提前返回更准确。
+            if (braceDepth < 0) return false;
             // AUDIT-REPL-1 fix: 若此 } 闭合的是插值 {，回到字符串模式
             if (!interpOpens.empty()) {
                 bool wasInterp = interpOpens.back();
@@ -517,10 +568,22 @@ bool ReplPanel::isInputComplete(const QString& input) {
                 }
             }
             break;
-        case '(': ++parenDepth; break;
-        case ')': --parenDepth; break;
-        case '[': ++bracketDepth; break;
-        case ']': --bracketDepth; break;
+        case '(':
+            ++parenDepth;
+            break;
+        case ')':
+            --parenDepth;
+            // BUG-REPL-G3 fix (P2): 同理负 parenDepth 视为不完整
+            if (parenDepth < 0) return false;
+            break;
+        case '[':
+            ++bracketDepth;
+            break;
+        case ']':
+            --bracketDepth;
+            // BUG-REPL-G3 fix (P2): 同理负 bracketDepth 视为不完整
+            if (bracketDepth < 0) return false;
+            break;
         }
     }
 

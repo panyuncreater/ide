@@ -55,6 +55,9 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
             // B6 fix: 对齐 RegisterVM REG_BUILD_DICT——非 string 键显式报错，
             // 不再静默 toString() 转换（与索引访问 d[k] 要求 string 键一致）。
             if (!key.isString()) {
+                // BUG-VM-04 fix: 错误返回前清理栈上剩余未处理的键值对，
+                // 避免错误路径栈残留 2 * (pairCount - i - 1) 个 Value
+                popN(static_cast<size_t>(pairCount - i - 1) * 2);
                 return runtimeError("字典键必须是字符串");
             }
             dict.emplace(key.stringVal(), std::move(val));

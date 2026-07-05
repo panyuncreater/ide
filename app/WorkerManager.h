@@ -63,8 +63,9 @@ public:
     std::function<std::string(const std::string&)> buildInputCallback();
 
     // ---- 引擎访问（供 DebugCoordinator / IdeController 使用）----
-    std::shared_ptr<Interpreter> interpreter() { return interpreter_; }
-    std::shared_ptr<DebugController> debugger() { return debugger_; }
+    // D3 fix: 标记为 const，仅拷贝 shared_ptr 不修改成员状态
+    std::shared_ptr<Interpreter> interpreter() const { return interpreter_; }
+    std::shared_ptr<DebugController> debugger() const { return debugger_; }
 
 signals:
     void outputReady(const QString& text);

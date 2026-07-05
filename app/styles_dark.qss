@@ -321,7 +321,6 @@ QLabel#welcomeRecentHeader {
     color: #737373;
     font-size: 11px;
     font-weight: 600;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
     padding: 4px 16px 8px 16px;
 }
@@ -446,7 +445,6 @@ QLabel#panelHeaderLabel {
     color: #737373;
     font-size: 11px;
     font-weight: 600;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
 }
 QToolButton#panelToolBtn {
@@ -621,7 +619,6 @@ QTextEdit#outputEdit {
     color: #cccccc;
     border: none;
     padding: 10px 12px;
-    line-height: 150%;
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
     font-size: 13px;
 }
@@ -734,7 +731,6 @@ QHeaderView::section {
     border-bottom: 1px solid #1e1e1e;
     font-weight: 600;
     font-size: 11px;
-    text-transform: uppercase;
     letter-spacing: 0.5px;
     min-height: 30px;
 }
@@ -780,7 +776,6 @@ QLabel#vmGlobalsTitle {
     font-size: 11px;
     font-weight: 600;
     padding: 4px 8px;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
 }
 QListWidget#vmStackList {
@@ -815,7 +810,6 @@ QTableWidget#vmGlobalsTable QHeaderView::section {
     border-right: 1px solid #2d2d30;
     border-bottom: 1px solid #1e1e1e;
     font-weight: 500;
-    text-transform: none;
     letter-spacing: 0;
 }
 
@@ -1006,7 +1000,6 @@ QWidget#debugStackLabel {
     font-weight: 600;
     color: #737373;
     font-size: 11px;
-    text-transform: uppercase;
     letter-spacing: 0.8px;
 }
 QLabel#errorLabel {

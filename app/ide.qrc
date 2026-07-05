@@ -34,5 +34,9 @@
         <file alias="theme_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Brightness_white.svg</file>
         <file alias="close_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Close_black.svg</file>
         <file alias="close_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Close_white.svg</file>
+
+    <!-- MiniLang Brand Logo (第十三轮：ML 几何 Logo 替代原 { } 文字) -->
+    <file alias="minilang_logo.svg">res/icons/minilang_logo.svg</file>
+    <file alias="minilang_logo_dark.svg">res/icons/minilang_logo_dark.svg</file>
     </qresource>
 </RCC>

@@ -496,3 +496,171 @@ TEST(IntegrationAudit, InterpolatedStringGeneratesCorrectNode) {
     EXPECT_EQ(interp->literals[0], "Hello ");
     EXPECT_EQ(interp->literals[1], "!");
 }
+
+// ============================================================
+// 5. BUG-LPA-01~06 回归测试
+// ============================================================
+
+// BUG-LPA-03 fix: 默认参数含 InterpolatedString 时的前向引用检查
+TEST(ParserAudit, DefaultParamInterpolatedStringForwardRef) {
+    // fun f(a = "{b}", b = 1) 应报"默认参数值不能引用后续参数: 'b'"
+    Parser parser;
+    auto block = parseSourceWithDiag(
+        "fun f(a = \"{b}\", b = 1) { print(a); }", parser);
+    EXPECT_TRUE(parser.hasErrors());
+    // 错误消息应包含"默认参数值不能引用后续参数"
+    bool found = false;
+    for (const auto& msg : parser.getDiagnostics().all()) {
+        if (msg.message.find("默认参数值不能引用后续参数") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "应报前向引用错误，实际诊断: "
+                       << parser.getDiagnostics().summary();
+}
+
+// BUG-LPA-03 fix: 默认参数含合法 InterpolatedString 不应报错
+TEST(ParserAudit, DefaultParamInterpolatedStringValid) {
+    // fun f(a = "x{1}y", b = 2) — 插值表达式不含变量引用，应通过
+    Parser parser;
+    auto block = parseSourceWithDiag(
+        "fun f(a = \"x{1}y\", b = 2) { print(a); }", parser);
+    EXPECT_FALSE(parser.hasErrors()) << "合法插值不应报错: "
+                                     << parser.getDiagnostics().summary();
+}
+
+// BUG-LPA-04 fix: 类成员支持 ClassName[] fieldName; 数组类型字段
+TEST(ParserAudit, ClassMemberArrayTypeField) {
+    // 先声明类 Item，再在 Container 中声明 Item[] items 字段
+    auto block = parseSource(
+        "class Item { var x = 0; }\n"
+        "class Container {\n"
+        "  Item[] items;\n"
+        "  Item single;\n"
+        "  int[] counts;\n"
+        "}\n");
+    ASSERT_NE(block, nullptr);
+    ASSERT_EQ(block->statements.size(), 2u);
+    auto* containerDecl = static_cast<ClassDecl*>(block->statements[1].get());
+    EXPECT_EQ(containerDecl->name, "Container");
+    // 应有 3 个成员：items、single、counts
+    EXPECT_EQ(containerDecl->members.size(), 3u);
+    // 第一个成员 Item[] items
+    auto* m0 = containerDecl->members[0].get();
+    EXPECT_EQ(m0->nodeType, NodeType::NODE_VAR_DECL);
+    auto* vd0 = static_cast<VarDecl*>(m0);
+    EXPECT_EQ(vd0->name, "items");
+    EXPECT_EQ(vd0->typeAnnotation, "Item[]");
+    // 第二个成员 Item single
+    auto* vd1 = static_cast<VarDecl*>(containerDecl->members[1].get());
+    EXPECT_EQ(vd1->name, "single");
+    EXPECT_EQ(vd1->typeAnnotation, "Item");
+    // 第三个成员 int[] counts
+    auto* vd2 = static_cast<VarDecl*>(containerDecl->members[2].get());
+    EXPECT_EQ(vd2->name, "counts");
+    EXPECT_EQ(vd2->typeAnnotation, "int[]");
+}
+
+// BUG-LPA-05 fix: import/export 在无花括号 if 单语句体中报明确错误
+TEST(ParserAudit, ImportInIfWithoutBracesRejected) {
+    Parser parser;
+    auto block = parseSourceWithDiag("if (true) import \"m\";", parser);
+    EXPECT_TRUE(parser.hasErrors());
+    bool found = false;
+    for (const auto& msg : parser.getDiagnostics().all()) {
+        if (msg.message.find("import 语句只能在顶层使用") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "应报'import 语句只能在顶层使用'，实际诊断: "
+                       << parser.getDiagnostics().summary();
+}
+
+// BUG-LPA-05 fix: export 在无花括号 while 单语句体中报明确错误
+TEST(ParserAudit, ExportInWhileWithoutBracesRejected) {
+    Parser parser;
+    auto block = parseSourceWithDiag("while (false) export var x = 1;", parser);
+    EXPECT_TRUE(parser.hasErrors());
+    bool found = false;
+    for (const auto& msg : parser.getDiagnostics().all()) {
+        if (msg.message.find("export 语句只能在顶层使用") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "应报'export 语句只能在顶层使用'，实际诊断: "
+                       << parser.getDiagnostics().summary();
+}
+
+// BUG-LPA-05 fix: 块内 import 仍报"只能在顶层使用"（blockDepth_ 路径）
+TEST(ParserAudit, ImportInBlockStillRejected) {
+    Parser parser;
+    auto block = parseSourceWithDiag("{ import \"m\"; }", parser);
+    EXPECT_TRUE(parser.hasErrors());
+    bool found = false;
+    for (const auto& msg : parser.getDiagnostics().all()) {
+        if (msg.message.find("import 语句只能在顶层使用") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "块内 import 应报'只能在顶层使用'";
+}
+
+// BUG-LPA-06 fix: 非法多字节 UTF-8 字符产生单个错误
+TEST(LexerAudit, Utf8MultibyteCharProducesSingleError) {
+    // 中文字符"变"= UTF-8 0xE5 0x8F 0x98（3 字节）
+    // 单个 3 字节 UTF-8 字符：原 bug 产生 3 个错误（每字节一个），
+    // 修复后应只产生 1 个错误（消费完整码位）。
+    std::string src = "var \xE5\x8F\x98;";
+    Lexer lexer;
+    lexer.scan(src);
+    int diagCount = 0;
+    for (const auto& msg : lexer.getDiagnostics().all()) {
+        if (msg.message.find("意外字符") != std::string::npos) ++diagCount;
+    }
+    EXPECT_EQ(diagCount, 1) << "单个 3 字节 UTF-8 字符应只产生 1 个错误，实际: "
+                            << diagCount;
+}
+
+// BUG-LPA-06 fix: 多个非法多字节 UTF-8 字符各产生单个错误
+TEST(LexerAudit, MultipleUtf8MultibyteCharsProduceOneErrorEach) {
+    // "变量"= 2 个中文字符，每个 3 字节 UTF-8
+    // 原 bug 会产生 6 个错误（每字节一个）；修复后应产生 2 个错误（每字符一个）
+    std::string src = "var \xE5\x8F\x98\xE9\x87\x8F;";
+    Lexer lexer;
+    lexer.scan(src);
+    int diagCount = 0;
+    for (const auto& msg : lexer.getDiagnostics().all()) {
+        if (msg.message.find("意外字符") != std::string::npos) ++diagCount;
+    }
+    EXPECT_EQ(diagCount, 2) << "2 个 3 字节 UTF-8 字符应产生 2 个错误（每字符一个），实际: "
+                            << diagCount;
+}
+
+// BUG-LPA-06 fix: UTF-8 错误消息包含完整字符
+TEST(LexerAudit, Utf8MultibyteErrorMessageContainsChar) {
+    // 中文字符"变"= UTF-8 0xE5 0x8F 0x98
+    std::string src = "var \xE5\x8F\x98;";
+    Lexer lexer;
+    lexer.scan(src);
+    bool found = false;
+    for (const auto& msg : lexer.getDiagnostics().all()) {
+        if (msg.message.find("\xE5\x8F\x98") != std::string::npos ||
+            msg.message.find("标识符仅支持 ASCII") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found) << "错误消息应包含完整 UTF-8 字符或提示 ASCII 限制";
+}
+
+// BUG-LPA-06 fix: 单字节非法字符仍正常报错
+TEST(LexerAudit, SingleByteInvalidCharStillErrors) {
+    // '$' 不是合法字符
+    auto tokens = scanTokens("$");
+    EXPECT_EQ(tokens.size(), 1u);
+    EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
+}

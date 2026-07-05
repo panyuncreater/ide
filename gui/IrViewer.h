@@ -26,12 +26,14 @@ public:
     explicit IrViewer(QWidget* parent = nullptr);
 
     /// 设置 IR 函数并渲染（nullptr 时清空）
+    /// BUG-IRV-1 fix: 内部用 try/catch 包裹，渲染失败时显示错误占位文本
     void setIR(const IRFunction* ir);
 
     /// 清空显示
     void clearIR();
 
-    /// 按源码行号高亮 IR 指令（高亮所有 line 匹配的指令行）
+    /// 按源码行号高亮 IR 指令。
+    /// BUG-IRV-2 fix: 修正注释——只高亮第一个 line 匹配的指令行（非所有匹配行）。
     /// line <= 0 时清除高亮
     void highlightBySourceLine(int line);
 

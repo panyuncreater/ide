@@ -51,8 +51,10 @@ public:
         std::memcpy(&box.bits_, &d, sizeof(double));
         // 如果 double 恰好落入 NaN-boxed tag 范围，需要规范化
         // 罕见情况：double 是一个 quiet NaN 且高 16 位与我们的 tag 冲突
-        // 此时将 payload 的最高位（bit 47）清零以避免与 tag 冲突
-        // （这会略微改变 NaN 的 payload，但 NaN 比较语义仍正确）
+        //（INT_TAG_BASE=0x7FF8, BOOL_TAG_BASE=0x7FF9, NULL_BITS=0x7FFA, PTR_TAG_BASE=0x7FFB）
+        // 必须将整个 64 位替换为 NAN_BOXED_FLOAT_MARKER（0x7FFC...），
+        // 丢弃原始 NaN payload——否则低 48 位可能形成合法 int/bool/null/ptr 位模式，
+        // 导致 tag() 误判。NaN != NaN（IEEE 754），payload 丢弃不影响语义正确性。
         if (isBoxedNaN(box.bits_)) {
             box.bits_ = NAN_BOXED_FLOAT_MARKER;
         }

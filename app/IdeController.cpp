@@ -48,12 +48,16 @@ IdeController::IdeController(QObject* parent)
     });
     vmStepper_.setInputCallback(workerMgr_.buildInputCallback());
 
-    // #4 fix: VM 条件断点求值器 — 使用临时 Interpreter + VM 全局变量求值
+    // #4 fix: VM 条件断点求值器 — 使用临时 Interpreter + VM 全局变量 + 局部变量求值
     // VM 模式下 Interpreter 空闲，可安全创建临时实例。
     // 求值在沙箱中进行（evaluateCondition 已实现 #1 变量快照/恢复），
     // 条件中的赋值/声明不会影响 VM 状态。
-    // 限制：仅支持引用全局变量（VM 局部变量在寄存器/栈中，无法按名访问）。
+    // BUG-IDE-12 fix: 现已支持局部变量。Compiler/AstIRBuilder 在编译时记录 slot→name 映射，
+    // VM/RegisterVM 通过 getCurrentFrameLocals() 反查当前帧的局部变量名→值，注入临时环境。
+    // 局部变量遮蔽同名的全局变量（后注入覆盖先注入）。
     // AUDIT fix: 缓存条件 AST，避免每次断点命中都重新 Lexer+Parser（循环内条件断点性能）。
+    // BUG-IDE-04 fix: 缓存添加上限（32 条），防止用户反复切换条件表达式无限增长。
+    constexpr size_t COND_AST_CACHE_MAX = 32;
     auto condAstCache = std::make_shared<std::unordered_map<std::string, std::shared_ptr<Block>>>();
     vmStepper_.setConditionEvaluator([this, condAstCache](const std::string& condition) -> bool {
         try {
@@ -70,19 +74,29 @@ IdeController::IdeController(QObject* parent)
                     return false;
                 }
                 ast = std::shared_ptr<Block>(std::move(parsed));
+                // BUG-IDE-04 fix: 缓存上限保护，超出时移除最旧条目（unordered_map 迭代顺序
+                // 非严格 LRU，但能限制总量；32 条对用户调试场景足够）。
+                if (condAstCache->size() >= COND_AST_CACHE_MAX) {
+                    condAstCache->erase(condAstCache->begin());
+                }
                 condAstCache->emplace(condition, ast);
             }
             Interpreter tempInterp;
             auto env = std::make_shared<Environment>();
+            // BUG-IDE-12 fix: 先注入全局变量，再注入当前帧局部变量（局部变量遮蔽同名全局）
             for (const auto& kv : vmStepper_.getGlobals()) {
+                env->define(kv.first, kv.second);
+            }
+            for (const auto& kv : vmStepper_.getCurrentFrameLocals()) {
                 env->define(kv.first, kv.second);
             }
             tempInterp.setGlobalEnvironment(env);
             Value result = tempInterp.evaluateCondition(ast->statements[0].get());
             return result.isTruthy();
         } catch (const std::exception& e) {
+            std::string msg = e.what();
             // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
-            LOG_WARNING("VM 条件断点求值异常: " + std::string(e.what()) +
+            LOG_WARNING("VM 条件断点求值异常: " + msg +
                         "（条件: " + condition + "），视为条件不满足", "VmStepper");
             return false;
         } catch (...) {
@@ -147,6 +161,13 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
         emit genericError("已有运行在进行，请先停止当前运行");
         return false;
     }
+    // BUG-IDE-02 fix: 检查 VM 是否正在运行。VM RUN 模式异步执行期间 isRunning() 仅反映
+    // workerMgr 状态，VM 步进/RUN 仍可能活跃。若不同步停止，runCompiler/编译结果同步
+    // 会让 frame.chunk 悬垂，且 workerMgr 启动新 worker 时 VM 仍在动旧 CompileResult。
+    if (vmStepper_.isRunning()) {
+        emit genericError("VM RUN 模式正在执行，请先停止 VM 再启动新运行");
+        return false;
+    }
 
     // VM-IMPORT: 保存文件路径，并为 Compiler 设置模块加载器（VM 编译路径需要）
     currentFilePath_ = filePath;
@@ -165,6 +186,15 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
 
     if (!pipeline_.astRoot()) {
         emit genericError("内部错误：前端管线返回成功但 AST 为空");
+        return false;
+    }
+
+    // BUG-IDE-PREP-1 fix: prepareRun 必须重新编译当前源码，否则同步到 VmStepper 的
+    // 是上一次编译结果（pipeline_.lastCompileResult() / getLastRegisterResult()），
+    // 与本次源码不对应——用户修改源码后不点"编译"直接点"运行/调试"会执行旧字节码。
+    // 注意：runCompiler 内部已检查 vmStepper_.isRunning()（上方 BUG-IDE-02 已先拦截），
+    // 且编译错误通过 diagnosticsReady 信号报告，此处不再 emit 重复错误。
+    if (!runCompiler()) {
         return false;
     }
 

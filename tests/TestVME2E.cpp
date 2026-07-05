@@ -40,6 +40,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <set>
 
 // ============================================================
 // 辅助：执行源码并捕获 VM 的 print 输出
@@ -2962,3 +2963,534 @@ TEST(VME2EImportReg, ForwardFunctionReference) {
         "fun double(x) { return x * 2; }";
     EXPECT_EQ(runVMWithModulesReg(src, {}), "10");
 }
+
+// ============================================================
+// BUG-AUDIT-MOD-2 回归测试：VM/IR/RegVM 模块隔离
+// ------------------------------------------------------------
+// 验证模块的非导出顶层名被前缀化重命名，导入方无法用原名访问。
+// 与 Interpreter 的独立 Environment 隔离语义对齐。
+// ============================================================
+
+// 辅助：检查结果字符串是否表示编译错误
+static bool isCompileError(const std::string& result) {
+    return result.find("<compile:") == 0;
+}
+// 辅助：检查结果字符串是否表示运行时错误
+static bool isRuntimeError(const std::string& result) {
+    return result.find("<runtime:") != std::string::npos;
+}
+
+// VM 路径：非导出变量不可被导入方访问
+TEST(VME2EImportIsolation, VM_NonExportedVarInaccessible) {
+    std::string src =
+        "import \"mymod\";"
+        "print(count);";  // 试图访问模块非导出变量
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"}
+    };
+    std::string result = runVMWithModules(src, modules);
+    // 模块内 count 已重命名为 __mod_<hash>__count，导入方用原名访问应失败
+    EXPECT_TRUE(isCompileError(result) || isRuntimeError(result))
+        << "实际结果: " << result;
+}
+
+// VM 路径：非导出函数不可被导入方调用
+TEST(VME2EImportIsolation, VM_NonExportedFuncInaccessible) {
+    std::string src =
+        "import \"mymod\";"
+        "print(helper());";  // 试图调用模块非导出函数
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "fun helper() { return 42; }"
+         "export fun api() { return helper(); }"}
+    };
+    std::string result = runVMWithModules(src, modules);
+    EXPECT_TRUE(isCompileError(result) || isRuntimeError(result))
+        << "实际结果: " << result;
+}
+
+// VM 路径：非导出类不可被导入方实例化
+TEST(VME2EImportIsolation, VM_NonExportedClassInaccessible) {
+    std::string src =
+        "import \"mymod\";"
+        "var p = Internal(3, 4);";  // 试图实例化模块非导出类
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "class Internal { var x = 0; fun init(a) { x = a; } }"
+         "export fun makeInternal() { return Internal(99); }"}
+    };
+    std::string result = runVMWithModules(src, modules);
+    EXPECT_TRUE(isCompileError(result) || isRuntimeError(result))
+        << "实际结果: " << result;
+}
+
+// VM 路径：导出名仍可正常访问
+TEST(VME2EImportIsolation, VM_ExportedStillAccessible) {
+    std::string src =
+        "import \"mymod\";"
+        "print(getCount());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"}
+    };
+    EXPECT_EQ(runVMWithModules(src, modules), "10");
+}
+
+// VM 路径：模块内部引用非导出名仍正常工作（重写后引用一致）
+TEST(VME2EImportIsolation, VM_InternalRefsWork) {
+    std::string src =
+        "import \"mymod\";"
+        "print(getCount());"
+        "print(inc());"
+        "print(getCount());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"
+         "export fun inc() { count = count + 5; return count; }"}
+    };
+    // 模块内 count 被重命名，但 getCount/inc 内的引用也被重写，语义保持
+    EXPECT_EQ(runVMWithModules(src, modules), "101515");
+}
+
+// VM 路径：导入方可以有与模块非导出名同名的变量（无冲突）
+TEST(VME2EImportIsolation, VM_SameNameNoCollision) {
+    std::string src =
+        "import \"mymod\";"
+        "var count = 999;"  // 导入方自己的 count，与模块非导出 count 不冲突
+        "print(count);"
+        "print(getCount());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"}
+    };
+    // 导入方 count=999，模块 count 重命名后=10，两者互不影响
+    EXPECT_EQ(runVMWithModules(src, modules), "99910");
+}
+
+// VM 路径：模块局部变量（函数内）不受重命名影响
+TEST(VME2EImportIsolation, VM_LocalVarNotRenamed) {
+    std::string src =
+        "import \"mymod\";"
+        "print(run());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"  // 顶层非导出 → 重命名
+         "export fun run() {"
+         "  var count = 99;"  // 函数局部 → 不重命名，遮蔽顶层
+         "  return count;"    // 引用局部，不重命名
+         "}"}
+    };
+    // 局部 count=99 遮蔽模块顶层 count，返回 99
+    EXPECT_EQ(runVMWithModules(src, modules), "99");
+}
+
+// VM 路径：模块非导出类的继承链仍正常工作
+TEST(VME2EImportIsolation, VM_NonExportedClassInheritance) {
+    std::string src =
+        "import \"mymod\";"
+        "print(makeAndCall());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "class Base { fun greet() { return 1; } }"  // 非导出类 → 重命名
+         "export class Derived : Base {"  // 导出类 → 不重命名，继承重命名后的 Base
+         "  fun init() {}"
+         "}"
+         "export fun makeAndCall() { return Derived().greet(); }"}
+    };
+    // Derived 继承被重命名的 Base，调用继承的 greet() 返回 1
+    EXPECT_EQ(runVMWithModules(src, modules), "1");
+}
+
+// IR 路径：非导出变量不可被导入方访问
+TEST(VME2EImportIsolation, IR_NonExportedVarInaccessible) {
+    std::string src =
+        "import \"mymod\";"
+        "print(count);";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"}
+    };
+    std::string result = runVMWithModulesIR(src, modules);
+    EXPECT_TRUE(isCompileError(result) || isRuntimeError(result))
+        << "实际结果: " << result;
+}
+
+// IR 路径：导出名仍可正常访问 + 内部引用工作
+TEST(VME2EImportIsolation, IR_ExportedAndInternalRefs) {
+    std::string src =
+        "import \"mymod\";"
+        "print(getCount());"
+        "print(inc());"
+        "print(getCount());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"
+         "export fun inc() { count = count + 5; return count; }"}
+    };
+    EXPECT_EQ(runVMWithModulesIR(src, modules), "101515");
+}
+
+// IR 路径：导入方同名变量不冲突
+TEST(VME2EImportIsolation, IR_SameNameNoCollision) {
+    std::string src =
+        "import \"mymod\";"
+        "var count = 999;"
+        "print(count);"
+        "print(getCount());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"}
+    };
+    EXPECT_EQ(runVMWithModulesIR(src, modules), "99910");
+}
+
+// RegVM 路径：非导出变量不可被导入方访问
+TEST(VME2EImportIsolation, Reg_NonExportedVarInaccessible) {
+    std::string src =
+        "import \"mymod\";"
+        "print(count);";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"}
+    };
+    std::string result = runVMWithModulesReg(src, modules);
+    EXPECT_TRUE(isCompileError(result) || isRuntimeError(result))
+        << "实际结果: " << result;
+}
+
+// RegVM 路径：导出名仍可正常访问 + 内部引用工作
+TEST(VME2EImportIsolation, Reg_ExportedAndInternalRefs) {
+    std::string src =
+        "import \"mymod\";"
+        "print(getCount());"
+        "print(inc());"
+        "print(getCount());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"
+         "export fun inc() { count = count + 5; return count; }"}
+    };
+    EXPECT_EQ(runVMWithModulesReg(src, modules), "101515");
+}
+
+// RegVM 路径：导入方同名变量不冲突
+TEST(VME2EImportIsolation, Reg_SameNameNoCollision) {
+    std::string src =
+        "import \"mymod\";"
+        "var count = 999;"
+        "print(count);"
+        "print(getCount());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var count = 10;"
+         "export fun getCount() { return count; }"}
+    };
+    EXPECT_EQ(runVMWithModulesReg(src, modules), "99910");
+}
+
+// 三后端一致性：模块隔离后，导出函数+内部状态在三条路径上行为一致
+TEST(VME2EImportIsolation, ThreeBackendConsistency) {
+    std::string src =
+        "import \"mymod\";"
+        "print(api());"
+        "print(api());"
+        "print(api());";
+    std::unordered_map<std::string, std::string> modules = {
+        {"mymod",
+         "var state = 0;"
+         "export fun api() { state = state + 1; return state; }"}
+    };
+    std::string vmOut = runVMWithModules(src, modules);
+    std::string irOut = runVMWithModulesIR(src, modules);
+    std::string regOut = runVMWithModulesReg(src, modules);
+    EXPECT_EQ(vmOut, "123");
+    EXPECT_EQ(irOut, "123");
+    EXPECT_EQ(regOut, "123");
+}
+
+// ============================================================
+// BUG-IDE-12 回归测试：VM 条件断点支持局部变量
+// ------------------------------------------------------------
+// 验证 Compiler/AstIRBuilder 在编译时记录 slot→name 映射，
+// VM/RegisterVM 通过 getCurrentFrameLocals() 反查当前帧局部变量。
+// 覆盖三条路径：直接栈式 VM / IR 栈式 VM / RegisterVM。
+// ============================================================
+
+// 辅助：编译源码，返回 CompileResult（栈式 VM 直接路径）
+static CompileResult compileStackVM(const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    EXPECT_TRUE(ast != nullptr);
+    if (!ast) return {};
+    Compiler compiler;
+    return compiler.compile(*ast);
+}
+
+// 辅助：编译源码，返回 CompileResult（栈式 VM IR 路径）
+static CompileResult compileStackVMIR(const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    EXPECT_TRUE(ast != nullptr);
+    if (!ast) return {};
+    Compiler compiler;
+    compiler.setUseIR(true);
+    return compiler.compile(*ast);
+}
+
+// 辅助：编译源码，返回 RegisterCompileResult
+static RegisterCompileResult compileRegVM(const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    EXPECT_TRUE(ast != nullptr);
+    if (!ast) return {};
+    Compiler compiler;
+    compiler.setUseRegisterVM(true);
+    compiler.compile(*ast);
+    return compiler.getLastRegisterResult();
+}
+
+// 直接栈式 VM：函数 chunk 的 localSlotNames 包含参数和局部变量
+TEST(VMConditionalBreakpoint, StackVM_Direct_LocalSlotNamesPopulated) {
+    std::string src =
+        "fun add(a, b) {"
+        "  var sum = a + b;"
+        "  return sum;"
+        "}"
+        "print(add(3, 4));";
+    CompileResult result = compileStackVM(src);
+    auto it = result.functionChunks.find("add");
+    ASSERT_NE(it, result.functionChunks.end());
+    const auto& names = it->second.localSlotNames;
+    // slot 0 = a, slot 1 = b, slot 2 = sum
+    ASSERT_GE(names.size(), 3u);
+    EXPECT_EQ(names[0], "a");
+    EXPECT_EQ(names[1], "b");
+    EXPECT_EQ(names[2], "sum");
+}
+
+// IR 栈式 VM：函数 chunk 的 localSlotNames 包含参数和局部变量
+TEST(VMConditionalBreakpoint, StackVM_IR_LocalSlotNamesPopulated) {
+    std::string src =
+        "fun add(a, b) {"
+        "  var sum = a + b;"
+        "  return sum;"
+        "}"
+        "print(add(3, 4));";
+    CompileResult result = compileStackVMIR(src);
+    auto it = result.functionChunks.find("add");
+    ASSERT_NE(it, result.functionChunks.end());
+    const auto& names = it->second.localSlotNames;
+    ASSERT_GE(names.size(), 3u);
+    EXPECT_EQ(names[0], "a");
+    EXPECT_EQ(names[1], "b");
+    EXPECT_EQ(names[2], "sum");
+}
+
+// RegisterVM：函数 chunk 的 localRegNames 包含参数和局部变量
+TEST(VMConditionalBreakpoint, RegVM_LocalRegNamesPopulated) {
+    std::string src =
+        "fun add(a, b) {"
+        "  var sum = a + b;"
+        "  return sum;"
+        "}"
+        "print(add(3, 4));";
+    RegisterCompileResult result = compileRegVM(src);
+    auto it = result.functionChunks.find("add");
+    ASSERT_NE(it, result.functionChunks.end());
+    const auto& names = it->second.localRegNames;
+    ASSERT_GE(names.size(), 3u);
+    EXPECT_EQ(names[0], "a");
+    EXPECT_EQ(names[1], "b");
+    EXPECT_EQ(names[2], "sum");
+}
+
+// 类方法：localSlotNames 包含 this、字段、参数
+TEST(VMConditionalBreakpoint, StackVM_Direct_MethodLocalSlotNames) {
+    std::string src =
+        "class Point {"
+        "  var x = 0;"
+        "  var y = 0;"
+        "  fun init(ax, ay) { x = ax; y = ay; }"
+        "  fun norm() { return x * x + y * y; }"
+        "}"
+        "var p = Point(3, 4);"
+        "print(p.norm());";
+    CompileResult result = compileStackVM(src);
+    // 方法名使用 "ClassName.method" 命名
+    auto it = result.functionChunks.find("Point.init");
+    ASSERT_NE(it, result.functionChunks.end()) << "应找到 Point.init 方法 chunk";
+    const auto& initNames = it->second.localSlotNames;
+    // 方法 slot 0 = this, slot 1..2 = 字段 x/y, slot 3..4 = 参数 ax/ay
+    ASSERT_GE(initNames.size(), 5u) << "localSlotNames 应至少有 5 个条目";
+    EXPECT_EQ(initNames[0], "this");
+    // ax/ay 参数在字段之后
+    bool foundAx = false, foundAy = false;
+    for (const auto& n : initNames) {
+        if (n == "ax") foundAx = true;
+        if (n == "ay") foundAy = true;
+    }
+    EXPECT_TRUE(foundAx) << "localSlotNames 应包含参数 ax";
+    EXPECT_TRUE(foundAy) << "localSlotNames 应包含参数 ay";
+}
+
+// VM::getCurrentFrameLocals() 在函数执行期间返回正确的局部变量
+TEST(VMConditionalBreakpoint, StackVM_GetCurrentFrameLocals) {
+    std::string src =
+        "fun compute(a, b) {"
+        "  var c = a + b;"
+        "  var d = c * 2;"
+        "  return d;"
+        "}"
+        "print(compute(3, 4));";
+    CompileResult result = compileStackVM(src);
+
+    VM vm;
+    std::string captured;
+    vm.setOutputCallback([&](const std::string& s) { captured += s; });
+    vm.initExecution(result);
+
+    // 单步执行，在函数帧中捕获 locals
+    std::unordered_map<std::string, Value> capturedLocals;
+    bool capturedInCompute = false;
+    vm.setStepCallbackEnabled(true);
+    vm.setStepCallback([&](const VMStepInfo&) {
+        if (vm.getFrameCount() >= 2 && !capturedInCompute) {
+            // 在 compute 函数帧中
+            std::string chunkName = vm.getCurrentChunkName();
+            if (chunkName == "compute") {
+                capturedLocals = vm.getCurrentFrameLocals();
+                capturedInCompute = true;
+            }
+        }
+    });
+
+    while (!vm.isFinished()) {
+        if (vm.stepOnce() != VMResult::VM_OK) break;
+    }
+    ASSERT_FALSE(vm.hasError()) << "VM 出错: " << vm.getLastError();
+    ASSERT_TRUE(capturedInCompute) << "未在 compute 函数中捕获 locals";
+    // a=3, b=4 应在 locals 中（c/d 可能在执行初期未初始化，但 a/b 作为参数必然存在）
+    ASSERT_TRUE(capturedLocals.count("a")) << "locals 中应有参数 a";
+    ASSERT_TRUE(capturedLocals.count("b")) << "locals 中应有参数 b";
+    EXPECT_EQ(capturedLocals["a"].intVal(), 3);
+    EXPECT_EQ(capturedLocals["b"].intVal(), 4);
+    EXPECT_EQ(captured, "14");
+}
+
+// RegisterVM::getCurrentFrameLocals() 在函数执行期间返回正确的局部变量
+TEST(VMConditionalBreakpoint, RegVM_GetCurrentFrameLocals) {
+    std::string src =
+        "fun compute(a, b) {"
+        "  var c = a + b;"
+        "  var d = c * 2;"
+        "  return d;"
+        "}"
+        "print(compute(3, 4));";
+    RegisterCompileResult result = compileRegVM(src);
+
+    RegisterVM vm;
+    std::string captured;
+    vm.setOutputCallback([&](const std::string& s) { captured += s; });
+    vm.initExecution(result);
+
+    // 单步执行，在函数帧中捕获 locals
+    std::unordered_map<std::string, Value> capturedLocals;
+    bool capturedInCompute = false;
+    vm.setStepCallbackEnabled(true);
+    vm.setStepCallback([&](const RegVMStepInfo&) {
+        if (vm.getFrameCount() >= 2 && !capturedInCompute) {
+            std::string chunkName = vm.getCurrentChunkName();
+            if (chunkName == "compute") {
+                capturedLocals = vm.getCurrentFrameLocals();
+                capturedInCompute = true;
+            }
+        }
+    });
+
+    while (!vm.isFinished()) {
+        if (vm.stepOnce() != VMResult::VM_OK) break;
+    }
+    ASSERT_FALSE(vm.hasError()) << "RegisterVM 出错: " << vm.getLastError();
+    ASSERT_TRUE(capturedInCompute) << "未在 compute 函数中捕获 locals";
+    ASSERT_TRUE(capturedLocals.count("a")) << "locals 中应有参数 a";
+    ASSERT_TRUE(capturedLocals.count("b")) << "locals 中应有参数 b";
+    EXPECT_EQ(capturedLocals["a"].intVal(), 3);
+    EXPECT_EQ(capturedLocals["b"].intVal(), 4);
+    EXPECT_EQ(captured, "14");
+}
+
+// catch 变量也应出现在 localSlotNames 中
+TEST(VMConditionalBreakpoint, StackVM_CatchVarInLocalSlotNames) {
+    std::string src =
+        "fun safeDiv(a, b) {"
+        "  try {"
+        "    if (b == 0) { throw 999; }"
+        "    return a / b;"
+        "  } catch (e) {"
+        "    return e;"
+        "  }"
+        "}"
+        "print(safeDiv(10, 0));";
+    CompileResult result = compileStackVM(src);
+    auto it = result.functionChunks.find("safeDiv");
+    ASSERT_NE(it, result.functionChunks.end());
+    const auto& names = it->second.localSlotNames;
+    // catch 变量 e 应出现在 localSlotNames 中
+    bool foundCatchVar = false;
+    for (const auto& n : names) {
+        if (n == "e") { foundCatchVar = true; break; }
+    }
+    EXPECT_TRUE(foundCatchVar) << "catch 变量 e 应出现在 localSlotNames 中";
+}
+
+// 三后端一致性：localSlotNames/localRegNames 在三条路径上包含相同的变量名集合
+TEST(VMConditionalBreakpoint, ThreeBackendLocalNamesConsistency) {
+    std::string src =
+        "fun compute(a, b) {"
+        "  var c = a + b;"
+        "  return c;"
+        "}"
+        "print(compute(3, 4));";
+    CompileResult directResult = compileStackVM(src);
+    CompileResult irResult = compileStackVMIR(src);
+    RegisterCompileResult regResult = compileRegVM(src);
+
+    auto collectNames = [](const auto& names) {
+        std::set<std::string> s;
+        for (const auto& n : names) if (!n.empty()) s.insert(n);
+        return s;
+    };
+
+    auto dit = directResult.functionChunks.find("compute");
+    auto iit = irResult.functionChunks.find("compute");
+    auto rit = regResult.functionChunks.find("compute");
+    ASSERT_NE(dit, directResult.functionChunks.end());
+    ASSERT_NE(iit, irResult.functionChunks.end());
+    ASSERT_NE(rit, regResult.functionChunks.end());
+
+    auto directNames = collectNames(dit->second.localSlotNames);
+    auto irNames = collectNames(iit->second.localSlotNames);
+    auto regNames = collectNames(rit->second.localRegNames);
+
+    // 三条路径都应包含 a, b, c
+    EXPECT_EQ(directNames, (std::set<std::string>{"a", "b", "c"}));
+    EXPECT_EQ(irNames, (std::set<std::string>{"a", "b", "c"}));
+    EXPECT_EQ(regNames, (std::set<std::string>{"a", "b", "c"}));
+}
+

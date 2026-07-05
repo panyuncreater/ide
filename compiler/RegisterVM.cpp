@@ -29,7 +29,7 @@ void RegisterVM::resetState() {
     globals_.clear();
     globalSlots_.clear();
     globalNameToSlot_.clear();
-    functionClosures_.clear();
+    // BUG-REGVM-3 fix: functionClosures_ 已删除（死代码字段）
     classInfo_.clear();
     openUpvalues_.clear();
     tryStack_.clear();
@@ -150,15 +150,21 @@ const Value& RegisterVM::reg(uint8_t r) const {
 VMResult RegisterVM::runtimeError(const std::string& msg) {
     hasError_ = true;
     lastError_ = msg;
-    // 获取当前行号
+    // 获取当前行号 + 列号
+    int col = 0;
     if (!frames_.empty()) {
         const auto& frame = frames_.back();
         if (frame.chunk && frame.ip < frame.chunk->lines.size()) {
             lastErrorLine_ = frame.chunk->lines[frame.ip];
         }
+        // BUG-IBACKEND-2: 从 chunk 读取列号（Compiler 未传入列号时默认 0）
+        if (frame.chunk && frame.ip < frame.chunk->columns.size()) {
+            col = frame.chunk->columns[frame.ip];
+        }
     }
-    diagnostics_.addError(msg, lastErrorLine_, 0, DiagSource::VM);
-    Logger::Error("RegisterVM: " + msg, "RegVM");
+    // BUG-IBACKEND-3: DiagSource 改为 RegisterVM 与 StackVM 区分；Logger 标签统一为 "RegisterVM"
+    diagnostics_.addError(msg, lastErrorLine_, col, DiagSource::RegisterVM);
+    Logger::Error("RegisterVM: " + msg, "RegisterVM");
     return VMResult::VM_RUNTIME_ERROR;
 }
 
@@ -361,6 +367,8 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
 
         // P1 fix: ADD 支持字符串拼接（与栈式 VM OP_ADD 语义一致）。
         // 任一操作数为字符串即触发拼接；非字符串侧用 toString() 转换。
+        // BUG-REGVM-1 fix: 字符串拼接路径不可直接 return，需落入函数末尾统一
+        // stepCallback_ 调用点，否则调试器单步模式丢失步进事件。改用 goto 跳转。
         if (op == RegOp::REG_ADD && (a.isString() || b.isString())) {
             std::string concat;
             if (a.isString() && b.isString()) {
@@ -381,19 +389,13 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
             }
             reg(dst) = Value(std::move(concat));
             ip += 4;
-            return VMResult::VM_OK;
+            goto arithDone;
         }
 
         if (!a.isNumber() || !b.isNumber()) {
             return runtimeError("算术运算需要数值类型");
         }
 
-        Value result;
-        // E4 fix: 复用 NumericOps::computeArith，消除与栈式 VM 的重复算术逻辑。
-        // AUDIT-DIV-UNIFY fix: REG_DIV 原保留"真除"语义（int/int 不整除时返回 float），
-        // 与 Interpreter/StackVM 的整数截断除法不同。审计发现该差异级联到比较、
-        // 算术、数组索引（一个引擎正常返回、另一个报运行时错误），用户可写出
-        // "换引擎就错"的代码。现统一为 computeArith 截断除法，三引擎语义一致。
         {
             NumericOps::ArithOp arithOp;
             switch (op) {
@@ -416,7 +418,7 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
             case NumericOps::ArithStatus::NotNumeric:
                 return runtimeError("算术运算需要数值类型");
             case NumericOps::ArithStatus::OK:
-                result = r.isIntResult ? Value(r.intVal) : Value(r.floatVal);
+                reg(dst) = r.isIntResult ? Value(r.intVal) : Value(r.floatVal);
                 break;
             // Bug-6 同型修复：与 VM.cpp:389 ArithStatus switch 对齐。落空时 result
             // 保持默认值（VAL_NULL），下方 reg(dst) = std::move(result) 会写入脏结果。
@@ -424,10 +426,10 @@ VMResult RegisterVM::executeArith(RegOp op, size_t& ip) {
                 return runtimeError("内部错误: 未知算术状态");
             }
         }
-        reg(dst) = std::move(result);
         ip += 4;
     }
 
+arithDone:
     if (stepCallbackEnabled_ && stepCallback_) {
         stepCallback_({ip, op, frames_.size()});
     }
@@ -946,10 +948,20 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
     case RegOp::REG_RETURN: {
         uint8_t src = chunk.code[ip + 1];
         Value result = reg(src);
-        return executeReturnImpl(ip, std::move(result));
+        // BUG-REGVM-2 fix: executeReturnImpl 成功返回时帧已弹出、ip 已更新到调用者，
+        // 需调用 stepCallback_ 反映调用者帧状态，否则调试器单步丢失步进事件。
+        VMResult r = executeReturnImpl(ip, std::move(result));
+        if (r == VMResult::VM_OK && stepCallbackEnabled_ && stepCallback_) {
+            stepCallback_({ip, op, frames_.size()});
+        }
+        return r;
     }
     case RegOp::REG_RETURN_NULL: {
-        return executeReturnImpl(ip, Value::nullValue());
+        VMResult r = executeReturnImpl(ip, Value::nullValue());
+        if (r == VMResult::VM_OK && stepCallbackEnabled_ && stepCallback_) {
+            stepCallback_({ip, op, frames_.size()});
+        }
+        return r;
     }
     case RegOp::REG_CALL: {
         uint8_t dst = chunk.code[ip + 1];
@@ -1052,9 +1064,11 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
         // C-9 fix: 完整填充 classInfo_ 的 name/parent/fieldOrder/methods。
         // 原实现仅设置 .name，导致方法调用/构造全部失败。
         // BUG-INH-1 fix: 新增字段默认值常量索引
+        // BUG-INH-IR-1 fix: 新增字段表达式寄存器（非字面量默认值从寄存器读取）
         // 编码：op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B)
-        //      + [fieldIdx(2B) + defaultConstIdx(2B)]×F
+        //      + [fieldIdx(2B) + defaultConstIdx(2B) + exprReg(1B)]×F
         //      + methodCount(1B) + [methodIdx(2B)+funIdx(2B)]×M
+        // exprReg: 0xFF=使用常量/null, 否则从 reg(exprReg) 读取运行时求值结果
         uint16_t nameIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t parentIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
         if (nameIdx >= chunk.constants.size() || !chunk.constants[nameIdx].isString()) {
@@ -1085,17 +1099,20 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
         uint8_t fieldCount = chunk.code[cursor];
         cursor += 1;
         for (uint8_t i = 0; i < fieldCount; ++i) {
-            if (cursor + 3 >= chunk.code.size()) {
-                return runtimeError("DEFINE_CLASS: 字段名/默认值索引截断");
+            if (cursor + 4 >= chunk.code.size()) {
+                return runtimeError("DEFINE_CLASS: 字段名/默认值/表达式寄存器截断");
             }
             uint16_t fIdx = chunk.code[cursor] | (chunk.code[cursor + 1] << 8);
             uint16_t defaultIdx = chunk.code[cursor + 2] | (chunk.code[cursor + 3] << 8);
+            uint8_t exprReg = chunk.code[cursor + 4];
             if (fIdx >= chunk.constants.size() || !chunk.constants[fIdx].isString()) {
                 return runtimeError("字段名索引无效");
             }
             info.fieldOrder.push_back(chunk.constants[fIdx].stringVal());
-            // BUG-INH-1 fix: 读取字段默认值
-            if (defaultIdx == 0xFFFF) {
+            // BUG-INH-IR-1 fix: 非字面量表达式从寄存器读取运行时求值结果
+            if (exprReg != 0xFF) {
+                info.fieldDefaults.push_back(reg(exprReg));
+            } else if (defaultIdx == 0xFFFF) {
                 info.fieldDefaults.push_back(Value::nullValue());
             } else {
                 if (defaultIdx >= chunk.constants.size()) {
@@ -1103,7 +1120,7 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
                 }
                 info.fieldDefaults.push_back(chunk.constants[defaultIdx]);
             }
-            cursor += 4;  // fieldIdx(2B) + defaultIdx(2B)
+            cursor += 5;  // fieldIdx(2B) + defaultIdx(2B) + exprReg(1B)
         }
 
         if (cursor >= chunk.code.size()) {
@@ -1181,7 +1198,13 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         uint8_t src = chunk.code[ip + 1];
         Value thrown = reg(src);
         ip += 2;
-        return throwException(std::move(thrown));
+        // BUG-REGVM-2 fix: throwException 成功跳转到 catch 块时需调用 stepCallback_，
+        // 反映 catch 块状态；未捕获异常返回 VM_RUNTIME_ERROR 时无需调用。
+        VMResult r = throwException(std::move(thrown));
+        if (r == VMResult::VM_OK && stepCallbackEnabled_ && stepCallback_) {
+            stepCallback_({ip, op, frames_.size()});
+        }
+        return r;
     }
     case RegOp::REG_LOAD_EXCEPTION: {
         // P1-4 fix: catch 块起始加载 pendingException_ 到目标寄存器
@@ -1452,29 +1475,35 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName,
     // 查找函数 chunk
     auto it = functionChunks_.find(funName);
     if (it == functionChunks_.end()) {
-        // 查找闭包
-        auto closureIt = functionClosures_.find(funName);
-        if (closureIt != functionClosures_.end()) {
-            // 闭包调用：使用绑定的函数 chunk
-            const Value& closure = closureIt->second;
-            if (closure.isClosure()) {
-                const std::string& closureFunName = closure.closureName();
-                auto cit = functionChunks_.find(closureFunName);
-                if (cit != functionChunks_.end()) {
-                    it = cit;
-                }
-            }
-        }
-        if (it == functionChunks_.end()) {
-            // 检查内建函数
+        // BUG-REGVM-3 fix: 删除 functionClosures_ 死代码路径。该字段无任何写入点
+        //（仅 resetState clear、此处 find），是死代码。若被激活，REG_CALL 命中此路径
+        // 时 closureData 为 null，populateUpvalues 不填充任何 upvalue，方法体内
+        // REG_LOAD_UPVALUE/REG_STORE_UPVALUE 报"upvalue 索引越界"。
+        // 闭包调用通过 REG_CALL_EXPR + MAKE_CLOSURE 正确处理（closureValue 非空）。
+        {
+            // 收集参数（寄存器顺序: argRegs[0..argCount-1]）
             SmallArgs<Value> args;
             for (uint8_t i = 0; i < argCount; ++i) {
                 args.push_back(reg(argRegs[i]));
             }
             // AUDIT-BUG-F9 fix: 传入实际源码行号，对齐 StackVM 路径（VMCalls.cpp:380-386）。
-            // 原实现仅传 3 参数，line/column 取默认值 0,0，错误消息显示"行 0:0"。
             const RegBytecodeChunk& curChunk = *currentFrame().chunk;
             int line = (ip < curChunk.lines.size()) ? curChunk.lines[ip] : 0;
+
+            // BUG-IBACKEND-1 fix: input() 函数特殊处理（镜像 VMCalls.cpp:343-367）。
+            // 原实现 inputCallback_ 字段仅在 setInputCallback 赋值，无任何调用点（死代码），
+            // 导致 RegisterVM 路径下 input() 报"未定义的函数: input"。
+            if (funName == "input") {
+                auto r = executeSharedInput(inputCallback_,
+                    args.begin(), argCount, line, 0);
+                if (r.is_err()) {
+                    return runtimeError(r.error().message);
+                }
+                reg(dstReg) = std::move(r.value());
+                ip += returnOffset;
+                return VMResult::VM_OK;
+            }
+
             auto result = executeSharedBuiltinFunction(funName, args.data(), argCount, line, 0);
             if (result.is_ok()) {
                 reg(dstReg) = result.value();
@@ -1847,23 +1876,35 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         }
         // 逆序初始化字段（父类字段在前，子类字段在后）
         // BUG-INH-1 fix: 同时收集字段默认值（对齐 StackVM 的 mergedDefaults 语义）。
-        // 父类字段先入表，子类同名字段覆盖（与 StackVM 的 "if not found then add" 行为
-        // 等价：后写入的会覆盖先写入的）。注意 StackVM 用 unordered_map 去重，
-        // 这里我们保留所有字段（含被遮蔽的），最终 instance.fields()[name] = ... 时
-        // 后写入的子类默认值会覆盖父类的，与 StackVM 一致。
+        // BUG-INH-REG-1 fix: 去重——子类覆盖的父类同名字段不再重复入表。
+        // 原实现沿继承链逆序遍历无去重，子类覆盖的父类同名字段在链中每个类都 push 一次，
+        // 导致 flattenedFieldOrder 含重复项（无语义影响但浪费初始化迭代）。
+        // 对齐 StackVM 的 mergedOrder "if not found then add" 语义：
+        // 父类字段先入表，子类同名字段仅更新默认值不重复入表。
         info.flattenedFieldOrder.clear();
         info.flattenedFieldDefaults.clear();
+        std::unordered_map<std::string, size_t> fieldIndexMap;  // fieldName → flattenedFieldOrder 索引
         for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
             auto clsIt = classInfo_.find(*it);
             if (clsIt != classInfo_.end()) {
                 const auto& cls = clsIt->second;
                 for (size_t i = 0; i < cls.fieldOrder.size(); ++i) {
-                    info.flattenedFieldOrder.push_back(cls.fieldOrder[i]);
-                    // fieldDefaults 与 fieldOrder 平行存储；长度不足时回退 null
-                    if (i < cls.fieldDefaults.size()) {
-                        info.flattenedFieldDefaults.push_back(cls.fieldDefaults[i]);
+                    const std::string& fieldName = cls.fieldOrder[i];
+                    auto mapIt = fieldIndexMap.find(fieldName);
+                    if (mapIt == fieldIndexMap.end()) {
+                        // 新字段：添加到展平表
+                        fieldIndexMap[fieldName] = info.flattenedFieldOrder.size();
+                        info.flattenedFieldOrder.push_back(fieldName);
+                        if (i < cls.fieldDefaults.size()) {
+                            info.flattenedFieldDefaults.push_back(cls.fieldDefaults[i]);
+                        } else {
+                            info.flattenedFieldDefaults.push_back(Value::nullValue());
+                        }
                     } else {
-                        info.flattenedFieldDefaults.push_back(Value::nullValue());
+                        // 已存在（子类覆盖父类同名字段）：仅更新默认值
+                        if (i < cls.fieldDefaults.size()) {
+                            info.flattenedFieldDefaults[mapIt->second] = cls.fieldDefaults[i];
+                        }
                     }
                 }
             }
@@ -1918,6 +1959,13 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
         }
         ip = newIp;
     } else {
+        // BUG-VM-01 fix (RegisterVM): 无 init 但有参数时报错，与 StackVM 行为一致。
+        // 原实现静默忽略参数，三后端语义不一致。
+        if (argCount > 0) {
+            return runtimeError(ErrorFormat::format(
+                "类 %s 没有 init 方法，但传入了 %d 个参数",
+                className.c_str(), static_cast<int>(argCount)));
+        }
         ip += 5 + argCount;
     }
 
@@ -2191,12 +2239,11 @@ VMResult RegisterVM::throwException(Value thrownValue) {
         return VMResult::VM_OK;
     }
     // 未捕获的异常
-    // 与栈式 VM (VM.cpp:132) 对齐："未捕获的异常: " + 值
-    std::string msg;
-    if (thrownValue.isString()) msg = "未捕获的异常: " + thrownValue.stringVal();
-    else if (thrownValue.isInstance()) msg = "未捕获的异常: " + thrownValue.className() + " 异常";
-    else msg = "未捕获的异常: " + thrownValue.toString();
-    return runtimeError(msg);
+    // BUG-IBACKEND-4 fix: 三后端消息一致——统一 toString + 200 字符截断
+    //（对齐 StackVM VM.cpp:130-132 与 Interpreter）
+    std::string str = thrownValue.toString();
+    if (str.size() > 200) str = str.substr(0, 200) + "...";
+    return runtimeError("未捕获的异常: " + str);
 }
 
 void RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
@@ -2213,6 +2260,13 @@ void RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
                 if (slot < targetFrame.registerCount) {
                     uv->value = targetFrame.registers[slot];
                 }
+            } else {
+                // BUG-REGVM-4 fix: 防御性日志。当前调用契约保证 frameIdx < frames_.size()
+                //（closeUpvaluesFrom 在帧弹出前调用），此分支不可达。若触达说明调用契约被破坏，
+                // upvalue 将保留默认 null 值，可能导致闭包读取错误值。留痕以便排查。
+                Logger::Warning("closeUpvaluesFrom: upvalue 指向已弹出的帧 (frameIdx=" +
+                                std::to_string(frameIdx) + ", frames_.size()=" +
+                                std::to_string(frames_.size()) + ")", "RegisterVM");  // BUG-IBACKEND-3
             }
             uv->isClosed = true;
         }
@@ -2303,6 +2357,21 @@ std::vector<RegisterVM::RegCallStackEntry> RegisterVM::getCallStack() const {
         }
         entry.line = line;
         result.push_back(entry);
+    }
+    return result;
+}
+
+// BUG-IDE-12 fix: 获取当前帧的局部变量名→值映射
+std::unordered_map<std::string, Value> RegisterVM::getCurrentFrameLocals() const {
+    std::unordered_map<std::string, Value> result;
+    if (frames_.empty()) return result;
+    const auto& frame = frames_.back();
+    if (!frame.chunk) return result;
+    // 遍历 chunk 的 localRegNames，从寄存器窗口反查值
+    const auto& names = frame.chunk->localRegNames;
+    for (size_t reg = 0; reg < names.size() && reg < frame.registers.size(); ++reg) {
+        if (names[reg].empty()) continue;
+        result[names[reg]] = frame.registers[reg];
     }
     return result;
 }

@@ -11,6 +11,7 @@ set(MINILANG_CORE_SOURCES
     common/TypeChecker.cpp
     lexer/Lexer.cpp
     ast/ASTNode.cpp
+    ast/ModuleIsolation.cpp
     parser/Parser.cpp
     interpreter/Environment.cpp
     interpreter/Interpreter.cpp
@@ -38,13 +39,32 @@ set(MINILANG_GUI_SOURCES
     gui/CodeEditor.cpp
     gui/SyntaxHighlighter.cpp
     gui/AstViewer.cpp
-    gui/OutputPanel.cpp
     gui/DebugPanel.cpp
     gui/ReplPanel.cpp
     gui/VmStackPanel.cpp
     gui/IrViewer.cpp
     gui/FindReplacePanel.cpp
     gui/ActivityBar.cpp
+    # 教学增强面板（第一波 + 第三波）
+    gui/PipelineViewer.cpp
+    gui/BackendComparePanel.cpp
+    gui/BugHuntPanel.cpp
+    gui/BugHuntLibrary.cpp
+    gui/SyntaxExplorerPanel.cpp
+    gui/SyntaxProductionLibrary.cpp
+    gui/LabManualPanel.cpp
+    gui/LabManualContent.cpp
+    gui/MemoryModelPanel.cpp
+    gui/IRTransformPanel.cpp
+    gui/ProfileDashboardPanel.cpp
+    # 教学增强面板（第三波）
+    gui/CallStackPanel.cpp
+    gui/VariableInspectorPanel.cpp
+    gui/BytecodeTracePanel.cpp
+    gui/BreakpointConditionPanel.cpp
+    # 教学增强面板（第三档）
+    gui/ExceptionFlowPanel.cpp
+    gui/ClosureInspectorPanel.cpp
 )
 
 # ============================================================
@@ -60,6 +80,10 @@ if(MSVC)
         /permissive-
         /wd4996
         /MP
+        # C1: /Zf — MSVC 19.20+ 支持"更快 PCH"，允许多个 CL 进程共享同一 PCH 缓存，
+        # 显著降低 minilang_core + minilang_ide 联合编译时的 PCH 重复生成开销。
+        # 配合 Ninja 多任务并行编译时收益最大（典型场景冷构建 -15%）。
+        /Zf
     )
     if(MINILANG_WERROR)
         target_compile_options(minilang_compile_options INTERFACE /WX)

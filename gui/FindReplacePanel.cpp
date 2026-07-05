@@ -101,7 +101,10 @@ void FindReplacePanel::showPanel(bool showReplace) {
     findEdit_->selectAll();
     // 如果编辑器有选中文本，填充到查找框
     QString selected = editor_->textCursor().selectedText();
-    if (!selected.isEmpty() && !selected.contains('\n')) {
+    // BUG-FR-1 fix: QTextCursor::selectedText() 返回的换行符是 QChar::ParagraphSeparator
+    // （U+2029），而非 '\n'。原判断 contains('\n') 无法识别跨行选中文本，导致跨行
+    // 选中被填充到单行查找框中（含 U+2029 显示异常）。
+    if (!selected.isEmpty() && !selected.contains(QChar::ParagraphSeparator)) {
         findEdit_->setText(selected);
     }
     if (!findEdit_->text().isEmpty()) {
@@ -149,10 +152,11 @@ void FindReplacePanel::onFindTextChanged(const QString& text) {
         statusLabel_->setText("");
         return;
     }
+    // BUG-FR-5 fix: 仅更新高亮，不调用 findText(true)。
+    // 原实现在文本变化时调用 findText(true) 会移动编辑器光标到匹配位置，
+    // 打断用户在编辑器中的编辑操作（光标跳动）。高亮已通过 highlightMatches
+    // 更新，用户按 F3/回车时再主动查找。
     highlightMatches(text);
-    // AUDIT-BUG-E6 fix: 不再将编辑器光标移到文档开头——这会破坏用户的编辑位置。
-    // findText 内部从当前光标位置查找，首次查找从当前位置开始是合理行为。
-    findText(true);
 }
 
 bool FindReplacePanel::findText(bool forward) {
@@ -233,7 +237,12 @@ void FindReplacePanel::onReplace() {
     }
 
     if (match) {
+        // BUG-FR-4 fix: 用 beginEditBlock/endEditBlock 包裹替换操作。
+        // 原实现直接 insertText 会产生独立的撤销步骤，替换 + 查找下一个
+        // 无法作为单步撤销。包裹后替换为一个原子编辑操作，Ctrl+Z 一次撤销。
+        cursor.beginEditBlock();
         cursor.insertText(replaceTextStr);
+        cursor.endEditBlock();
     }
     // 查找下一个
     findText(true);
@@ -259,8 +268,9 @@ void FindReplacePanel::onReplaceAll() {
     searchCursor.movePosition(QTextCursor::Start);
     // P2 fix: 限制替换数量上限，防止超大文档阻塞 UI
     // D14 fix: 上限统一引用 RuntimeLimits::MAX_REPLACE_ALL
+    QTextCursor found;  // BUG-FR-2: 提升到循环外，用于退出后判断是否达上限
     while (replaceCount < RuntimeLimits::MAX_REPLACE_ALL) {
-        QTextCursor found = editor_->document()->find(findTextStr, searchCursor, flags);
+        found = editor_->document()->find(findTextStr, searchCursor, flags);
         if (found.isNull()) break;
         searchCursor = found;
         searchCursor.insertText(replaceTextStr);
@@ -268,8 +278,17 @@ void FindReplacePanel::onReplaceAll() {
     }
     editCursor.endEditBlock();
 
-    statusLabel_->setText(QString("已替换 %1 处").arg(replaceCount));
-    statusLabel_->setStyleSheet("color: green;");
+    // BUG-FR-2 fix: 循环退出后检查 found 是否仍非 null。
+    // 若 found 非 null，说明因达到 MAX_REPLACE_ALL 上限退出（而非无更多匹配），
+    // 此时文档中可能仍有剩余匹配未替换，需提示用户。
+    if (!found.isNull()) {
+        statusLabel_->setText(
+            QString("已替换 %1+ 处（达到上限，仍有剩余匹配）").arg(replaceCount));
+        statusLabel_->setStyleSheet("color: orange;");
+    } else {
+        statusLabel_->setText(QString("已替换 %1 处").arg(replaceCount));
+        statusLabel_->setStyleSheet("color: green;");
+    }
     clearHighlights();
 }
 

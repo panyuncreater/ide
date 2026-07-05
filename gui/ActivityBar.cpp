@@ -6,18 +6,18 @@
 
 ActivityBar::ActivityBar(QWidget* parent)
     : QFrame(parent) {
-    setFixedWidth(32);
+    setFixedWidth(48);
     setObjectName("ActivityBar");
     layout_ = new QVBoxLayout(this);
-    layout_->setContentsMargins(0, 8, 0, 0);
-    layout_->setSpacing(2);
+    layout_->setContentsMargins(0, 12, 0, 0);
+    layout_->setSpacing(4);
     layout_->addStretch();
 }
 
 int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
     auto* btn = new TransparentToolButton(icon, this);
-    btn->setFixedSize(28, 28);
-    btn->setIconSize(QSize(16, 16));
+    btn->setFixedSize(36, 36);
+    btn->setIconSize(QSize(20, 20));
     btn->setToolTip(text);
     btn->setCheckable(true);
 
@@ -65,9 +65,9 @@ void ActivityBar::paintEvent(QPaintEvent* event) {
     QWidget* btn = items_[currentIndex_].button;
     QRect btnRect = btn->geometry();
 
-    // Draw left indicator bar (第八轮：2px 宽主题蓝竖条)
+    // 选中指示条（2px 宽主题色竖条，垂直居中于按钮）
     QColor accent = palette().color(QPalette::Highlight);
     p.setPen(Qt::NoPen);
     p.setBrush(accent);
-    p.drawRoundedRect(QRect(0, btnRect.y() + 6, 2, btnRect.height() - 12), 1.0, 1.0);
+    p.drawRoundedRect(QRect(0, btnRect.y() + 8, 2, btnRect.height() - 16), 1.0, 1.0);
 }

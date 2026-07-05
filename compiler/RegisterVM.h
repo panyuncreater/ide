@@ -127,6 +127,11 @@ public:
     };
     std::vector<RegCallStackEntry> getCallStack() const;
 
+    /// BUG-IDE-12 fix: 获取当前帧的局部变量名→值映射（用于 RegisterVM 条件断点求值）。
+    /// 结合当前帧 chunk 的 localRegNames + 寄存器窗口反查。
+    /// 空帧/主程序帧（无 localRegNames）返回空映射。
+    std::unordered_map<std::string, Value> getCurrentFrameLocals() const;
+
     /// 步进回调
     void setStepCallback(std::function<void(const RegVMStepInfo&)> cb) { stepCallback_ = cb; }
     void setStepCallbackEnabled(bool enabled) { stepCallbackEnabled_ = enabled; }
@@ -142,8 +147,9 @@ private:
     std::vector<Value> globalSlots_;
     std::unordered_map<std::string, int> globalNameToSlot_;
 
-    // 函数闭包（函数名 → 闭包值）
-    std::unordered_map<std::string, Value> functionClosures_;
+    // BUG-REGVM-3 fix: 删除 functionClosures_ 死代码字段。该字段无任何写入点，
+    // 仅 resetState clear 和 executeCallImpl find，是死代码。
+    // 闭包调用通过 REG_CALL_EXPR + MAKE_CLOSURE 正确处理。
 
     // 类信息
     struct RegClassInfo {

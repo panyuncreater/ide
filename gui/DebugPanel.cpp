@@ -1,6 +1,7 @@
 #include "gui/DebugPanel.h"
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include <QHeaderView>
+#include <QListWidgetItem>  // BUG-DBG-G3 fix: 超长调用栈提示项
 #include <QSplitter>
 #include <QTreeWidgetItem>
 #include <tuple>
@@ -17,7 +18,11 @@ static void styleScopeGroupHeader(QTreeWidgetItem* item) {
     f.setBold(true);
     // RA-C fix: 全局字体用 setPixelSize(14) 设置（main.cpp），pointSize() 返回 -1，
     // pointSize()-1 = -2 触发 QFont::setPointSize 警告。改用 pixelSize 对齐项目策略。
-    f.setPixelSize(f.pixelSize() - 1);  // 小字号
+    // BUG-DBG-G4 fix (P2): pixelSize() 在字体未显式设置 pixelSize 时返回 1（而非
+    // 实际像素值），直接 -1 会得到 0 甚至负数导致字体渲染异常。增加 >1 守卫，
+    // 仅当 pixelSize 有效（>1）时才缩减 1 像素，否则保持原字号。
+    int ps = f.pixelSize();
+    if (ps > 1) f.setPixelSize(ps - 1);  // 小字号
     item->setFont(0, f);
     item->setFont(1, f);
     // 灰色文字
@@ -116,6 +121,11 @@ DebugPanel::DebugPanel(QWidget* parent)
     variableTree_->setAlternatingRowColors(false);
     variableTree_->setColumnWidth(0, 120);
     variableTree_->setColumnWidth(1, 150);
+    // BUG-DBG-G5 (P2, 功能缺失/已知限制): 变量值列当前为只读展示，不支持就地编辑。
+    // 完整实现需双向绑定机制：itemChanged 信号 → 写回 Interpreter/VM 当前作用域变量、
+    // 类型校验、COW 容器写回、跨后端（Interpreter/StackVM/RegisterVM）一致性处理。
+    // 工程量大且调试场景下修改变量易引发状态不一致，作为功能增强暂不实现。
+    // TODO: 未来可通过 DebugController::setVariable(name, value) 接口实现。
     variableTree_->setStyleSheet(
         "QTreeWidget { background: #ffffff; border: 1px solid #e5e5e5; }"
         "QTreeWidget::item { padding: 2px 0px; }"
@@ -178,18 +188,41 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
     callStackList_->blockSignals(true);
     callStackList_->clear();
 
-    for (const auto& frame : stack) {
+    // BUG-DBG-G3 fix (P2): 限制调用栈显示帧数上限，避免深度递归（如未优化的
+    // 斐波那契 fib(40)）产生上万帧导致 QListWidget 卡顿与内存膨胀。
+    // 上限 200 帧对调试场景足够（用户通常只关心最近的调用层级）。
+    constexpr int MAX_CALL_STACK_DISPLAY = 200;
+    int displayed = 0;
+    for (size_t i = 0; i < stack.size() && displayed < MAX_CALL_STACK_DISPLAY; ++i) {
+        const auto& frame = stack[i];
         QString text = QString("函数: %1 @ 行 %2 (深度: %3)")
                            .arg(QString::fromStdString(frame.functionName))
                            .arg(frame.line)
                            .arg(frame.depth);
         callStackList_->addItem(text);
+        ++displayed;
+    }
+    if (static_cast<int>(stack.size()) > MAX_CALL_STACK_DISPLAY) {
+        // 添加提示项标注未显示的帧数
+        auto* item = new QListWidgetItem(
+            QString::fromUtf8("... (还有 %1 帧未显示)")
+                .arg(static_cast<int>(stack.size()) - MAX_CALL_STACK_DISPLAY));
+        // 提示项设为不可选中，避免与真实栈帧混淆
+        item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+        callStackList_->addItem(item);
     }
     callStackList_->blockSignals(false);
 
     // 恢复选中行（若仍在有效范围内）
+    // BUG-DBG-G1 fix (P2): 原 setCurrentRow(savedRow) 在 blockSignals(false) 之后调用，
+    // 会触发 currentRowChanged 信号 → onStackFrameSelected → populateVariableTree，
+    // 覆盖刚由 updateVariables 设置的完整变量视图（仅显示选中帧的局部变量）。
+    // 此处保持 blockSignals(true) 阻塞信号，仅恢复视觉选中状态，不触发变量树更新，
+    // 让用户保留 updateVariables 提供的完整作用域视图。
     if (savedRow >= 0 && savedRow < callStackList_->count()) {
+        bool wasBlocked = callStackList_->blockSignals(true);
         callStackList_->setCurrentRow(savedRow);
+        callStackList_->blockSignals(wasBlocked);
     }
 }
 

@@ -126,6 +126,23 @@ static bool isSelfTerminating(ASTNode* node) {
     }
 }
 
+// BUG-F-01 fix: 多行块注释的 lexeme 内含 '\n'，后续行继承源码原始缩进，
+// 与格式化后的缩进不一致。此辅助函数在每个 '\n' 后插入当前 indent()，
+// 使多行块注释的后续行对齐到格式化后的缩进级别。
+static std::string reindentBlockComment(const std::string& lexeme, const std::string& indent) {
+    std::string result;
+    result.reserve(lexeme.size() + 16);
+    for (size_t i = 0; i < lexeme.size(); ++i) {
+        char c = lexeme[i];
+        result += c;
+        // 在每个换行后（除最后一行外）插入当前缩进
+        if (c == '\n' && i + 1 < lexeme.size()) {
+            result += indent;
+        }
+    }
+    return result;
+}
+
 std::string Formatter::formatNode(ASTNode* node) {
     if (!node) return "null";
 
@@ -305,6 +322,10 @@ void Formatter::visitThrowStmt(ThrowStmt& node) {
     std::string result = "throw";
     if (node.expression) {
         result += " " + formatNode(node.expression.get());
+    } else {
+        // BUG-F-08 fix: 空 throw（expression 为 nullptr）时输出 "throw null" 作为兜底。
+        // Parser 强制要求表达式故正常路径不会产生此 AST，但外部构造的 AST 会触发。
+        result += " null";
     }
     lastFormatResult_ = result;
     return;
@@ -430,13 +451,16 @@ std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
     const Value& v = node.getValue();
     if (v.isFloat()) {
         std::string s = v.toString();
-        // 若输出中无 '.' 和 'e'/'E'（纯整数形式），附加 ".0" 保持 float 类型
-        if (s.find('.') == std::string::npos &&
-            s.find('e') == std::string::npos &&
-            s.find('E') == std::string::npos) {
-            return s + ".0";
+        // BUG-F-07 fix: NaN/Infinity 经 toString 返回 "nan"/"inf"/"-inf"，
+        // 附加 ".0" 会产生 "nan.0"/"inf.0" 等非合法 NumberLiteral。
+        // 这些特殊值保持原样输出，不附加 ".0"。
+        if (s == "nan" || s == "inf" || s == "-inf" ||
+            s.find('.') != std::string::npos ||
+            s.find('e') != std::string::npos ||
+            s.find('E') != std::string::npos) {
+            return s;
         }
-        return s;
+        return s + ".0";
     }
     return v.toString();  // A1 fix: getValue() 按需构造
 }
@@ -675,17 +699,29 @@ std::string Formatter::formatBlock(Block& node) {
         if (!stmt) continue;
 
         // F1 fix: 输出当前语句之前的所有独立注释（行号严格小于语句行号）
+        // BUG-F-01 fix: 多行块注释经 reindentBlockComment 重新缩进，使后续行对齐当前缩进
         while (commentIndex_ < comments_.size() &&
                comments_[commentIndex_].line < stmt->line) {
-            result += indent() + comments_[commentIndex_].lexeme + "\n";
+            result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
             commentIndex_++;
         }
 
         // 函数/类声明前加空行（BUG1 fix: 原代码在任意自终止语句间插入空行）
+        // BUG-F-04 fix: isFunOrClass 解包 NODE_EXPORT_STMT，使 export fun/class 之间也插入空行
         if (options_.blankLineBetweenFunctions && i > 0) {
             auto isFunOrClass = [](ASTNode* n) {
-                return n && (n->nodeType == NodeType::NODE_FUN_DECL ||
-                             n->nodeType == NodeType::NODE_CLASS_DECL);
+                if (!n) return false;
+                if (n->nodeType == NodeType::NODE_FUN_DECL ||
+                    n->nodeType == NodeType::NODE_CLASS_DECL) return true;
+                if (n->nodeType == NodeType::NODE_EXPORT_STMT) {
+                    auto* exp = static_cast<ExportStmt*>(n);
+                    if (exp->declaration) {
+                        auto innerType = exp->declaration->nodeType;
+                        return innerType == NodeType::NODE_FUN_DECL ||
+                               innerType == NodeType::NODE_CLASS_DECL;
+                    }
+                }
+                return false;
             };
             if (isFunOrClass(stmt)) {
                 result += "\n";
@@ -695,16 +731,25 @@ std::string Formatter::formatBlock(Block& node) {
         // 格式化语句
         std::string stmtText;
         if (isSelfTerminating(stmt)) {
-            stmtText = indent() + formatNode(stmt);
+            std::string nodeText = formatNode(stmt);
+            // BUG-F-03 fix: 独立块（NODE_BLOCK 作为语句）经 visitBlock 输出 " {..."，
+            // K&R 风格下 openBrace() 返回 " {" 带前置空格，作为独立语句时首部多余空格。
+            // 去除 NODE_BLOCK 节点格式化结果开头的前置空格。
+            if (stmt->nodeType == NodeType::NODE_BLOCK &&
+                !nodeText.empty() && nodeText[0] == ' ') {
+                nodeText.erase(0, 1);
+            }
+            stmtText = indent() + nodeText;
         } else {
             stmtText = indent() + formatNode(stmt) + ";";
         }
 
         // F1+ fix: 同行行内注释追加到语句末尾
+        // BUG-F-01 fix: 多行块注释经 reindentBlockComment 重新缩进
         std::string trailing;
         while (commentIndex_ < comments_.size() &&
                comments_[commentIndex_].line == stmt->line) {
-            trailing += " " + comments_[commentIndex_].lexeme;
+            trailing += " " + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
             commentIndex_++;
         }
 
@@ -713,17 +758,18 @@ std::string Formatter::formatBlock(Block& node) {
 
     // F1 fix: 块末尾输出尾部注释
     // L18 fix: 对所有块都刷新尾部注释，不仅仅是顶层块
+    // BUG-F-01 fix: 多行块注释经 reindentBlockComment 重新缩进
     if (node.closingBraceLine > 0) {
         // 非顶层块：输出 closingBraceLine 之前的注释
         while (commentIndex_ < comments_.size() &&
                comments_[commentIndex_].line < node.closingBraceLine) {
-            result += indent() + comments_[commentIndex_].lexeme + "\n";
+            result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
             commentIndex_++;
         }
     } else {
         // 顶层块（closingBraceLine == 0）：输出所有剩余注释
         while (commentIndex_ < comments_.size()) {
-            result += indent() + comments_[commentIndex_].lexeme + "\n";
+            result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
             commentIndex_++;
         }
     }
@@ -783,9 +829,19 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     }
     result += openBrace() + "\n";
     currentIndent_++;
-    for (auto& member : node.members) {
+    for (size_t i = 0; i < node.members.size(); ++i) {
+        auto& member = node.members[i];
         // F-P2-8 fix: 跳过空成员指针，避免 formatNode 返回 "null" 作为类成员
         if (!member) continue;
+        // BUG-F-05 fix: blankLineBetweenFunctions 选项传播到类成员，
+        // 当前后两个成员都是方法（FunDecl）时插入空行
+        if (options_.blankLineBetweenFunctions && i > 0) {
+            auto& prev = node.members[i - 1];
+            if (prev && prev->nodeType == NodeType::NODE_FUN_DECL &&
+                member->nodeType == NodeType::NODE_FUN_DECL) {
+                result += "\n";
+            }
+        }
         // 方法（FunDecl）以 } 结尾，不需要额外 ;
         if (isSelfTerminating(member.get())) {
             result += indent() + formatNode(member.get()) + "\n";
@@ -876,6 +932,14 @@ std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
         result += '{';
         result += formatNode(node.expressions[i].get());
         result += '}';
+        // BUG-F-06 fix: formatNode 不消费 comments_ 数组，插值表达式行号范围内的注释
+        // 会落入外层语句的"同行尾部注释"分支被误用。跳过这些注释（推进游标但不输出）。
+        // 完整修复需重构注释游标机制（按列范围匹配），此处为部分修复。
+        int exprLine = node.expressions[i]->line;
+        while (commentIndex_ < comments_.size() &&
+               comments_[commentIndex_].line <= exprLine) {
+            ++commentIndex_;
+        }
         if (i + 1 < node.literals.size()) {
             result += escapeString(node.literals[i + 1]);
         }

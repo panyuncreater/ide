@@ -83,6 +83,12 @@ private:
     int lastPausedDepth_ = -1;
     bool running_ = false;
     bool stopped_ = false;
+    // BUG-DBG-14 fix: 补齐与真实 DebugController 对齐的关键修复机制
+    // crossedLine_: 单行循环断点重新触发（F4 fix）
+    int lastSeenLine_ = -1;
+    bool crossedLine_ = false;
+    // crossedDeeper_: STEP_OVER 从更深帧返回后即使同行也暂停（DBG-B fix）
+    bool crossedDeeper_ = false;
 
     // Recording
     int pauseCount_ = 0;

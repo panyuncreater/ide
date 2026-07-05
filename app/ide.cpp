@@ -4,6 +4,7 @@
 #include "common/SpellChecker.h"
 #include "gui/GuiTextUtils.h"
 #include "gui/PanelAnimator.h"
+#include "gui/I18n.h"  // D2: i18n 翻译宏 mlTr
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -35,6 +36,8 @@
 #include <QToolButton>
 #include <QMenu>
 #include <QLabel>
+#include <QComboBox>
+#include <QLineEdit>
 #include <QFrame>
 #include <QPushButton>
 #include <QSizePolicy>
@@ -49,6 +52,7 @@
 #include <QTreeWidget>
 #include <QTextDocument>
 #include <QTextEdit>
+#include <QDateTime>
 #include <QStatusBar>
 #include <QTimer>
 #include <QStyledItemDelegate>
@@ -354,11 +358,8 @@ Ide::Ide(QWidget* parent)
 
     replPanel_->setController(controller_);
 
-    // 第十二轮：主题跟随 QSettings（main.cpp 已预设），支持亮/暗切换
-    // 注册主题变更回调：切换主题时自动刷新所有 QSS
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        applyFluentStyle();
-    });
+    // 第十二轮：固定使用亮色主题（移除暗色主题支持）
+    Theme::setThemeMode(Fluent::ThemeMode::LIGHT);
     applyFluentStyle();
 
     setupCompletion();
@@ -396,8 +397,8 @@ void Ide::closeEvent(QCloseEvent* event) {
 
     if (replPanel_->isReplRunning()) {
         auto ret = QMessageBox::warning(this,
-            QString::fromUtf8("REPL 仍在执行"),
-            QString::fromUtf8("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒。\n\n是否继续关闭？"),
+            mlTr("REPL 仍在执行"),
+            mlTr("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒。\n\n是否继续关闭？"),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (ret != QMessageBox::Yes) {
             event->ignore();
@@ -409,8 +410,8 @@ void Ide::closeEvent(QCloseEvent* event) {
         if (!controller_->stopForClose(3000)) {
             if (codeEditor_ && codeEditor_->document()->isModified()) {
                 auto ret = QMessageBox::warning(this,
-                    QString::fromUtf8("程序无响应，即将强制终止"),
-                    QString::fromUtf8("解释器线程未在 3 秒内响应停止请求，将强制终止进程。\n"
+                    mlTr("程序无响应，即将强制终止"),
+                    mlTr("解释器线程未在 3 秒内响应停止请求，将强制终止进程。\n"
                                       "强制终止会跳过正常析构，未保存的代码将丢失。\n\n"
                                       "是否现在保存？"),
                     QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
@@ -430,7 +431,17 @@ void Ide::closeEvent(QCloseEvent* event) {
         }
     }
     if (controller_->isVmRunning()) {
-        onVmStop();
+        // BUG-IDE-10 fix: 直接调用 controller_->vmStop() 仅停止 VM，避免调用 onVmStop()
+        // 触发 UI 更新（setVmStepActionsEnabled/codeEditor->setReadOnly 等），这些 UI 操作
+        // 在 closeEvent 路径下既无必要也可能与正在进行的清理产生竞态。
+        controller_->vmStop();
+    }
+    // BUG-IDE-08 fix: 对话框承诺"发送中止请求并等待最多 5 秒"，但原实现仅调用
+    // waitReplFuture() 等待 future 完成而未先发送中止请求，REPL 中的死循环会等到默认
+    // 超时才结束（或永远不结束）。先 requestReplStop() 设置 interpreter 的 stop 标志，
+    // 让 worker 在下次 checkBreak 时抛 DebugStopException 主动退出。
+    if (replPanel_->isReplRunning()) {
+        controller_->requestReplStop();
     }
     replPanel_->waitReplFuture();
     // Save AST independent window geometry before closing
@@ -504,10 +515,15 @@ bool Ide::eventFilter(QObject* watched, QEvent* event) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
                 // 排除所有可交互控件：按钮（含 Fluent ComboBox/PushButton/SplitButton）等
+                // BUG-IDE-13 fix: 扩展交互控件检测范围。QFluentKit 的 ComboBox 继承自
+                // QPushButton（已能被 QAbstractButton 匹配），此处额外加 QComboBox 与
+                // QLineEdit 是为防御性覆盖未来可能改用其他基类或新增输入控件的场景。
                 auto* child = titleBar_->childAt(me->pos());
                 bool isInteractive = false;
                 while (child && child != titleBar_) {
-                    if (qobject_cast<QAbstractButton*>(child)) {
+                    if (qobject_cast<QAbstractButton*>(child) ||
+                        qobject_cast<QComboBox*>(child) ||
+                        qobject_cast<QLineEdit*>(child)) {
                         isInteractive = true;
                         break;
                     }
@@ -527,7 +543,9 @@ bool Ide::eventFilter(QObject* watched, QEvent* event) {
                 auto* child = titleBar_->childAt(me->pos());
                 bool isInteractive = false;
                 while (child && child != titleBar_) {
-                    if (qobject_cast<QAbstractButton*>(child)) {
+                    if (qobject_cast<QAbstractButton*>(child) ||
+                        qobject_cast<QComboBox*>(child) ||
+                        qobject_cast<QLineEdit*>(child)) {
                         isInteractive = true;
                         break;
                     }
@@ -720,17 +738,17 @@ void Ide::loadFileIntoTab(int tabIndex, const QString& path) {
 
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        InfoBar::warning(QString::fromUtf8("错误"),
-            QString::fromUtf8("无法打开文件: ") + file.errorString(),
+        InfoBar::warning(mlTr("错误"),
+            mlTr("无法打开文件: ") + file.errorString(),
             Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
         return;
     }
     qint64 fileSize = file.size();
     if (fileSize > static_cast<qint64>(RuntimeLimits::MAX_SOURCE_SIZE)) {
-        InfoBar::warning(QString::fromUtf8("错误"),
-            QString::fromUtf8("文件过大 (") + QString::number(fileSize) +
-            QString::fromUtf8(" 字节)，超过上限 (") +
-            QString::number(RuntimeLimits::MAX_SOURCE_SIZE) + QString::fromUtf8(" 字节)"),
+        InfoBar::warning(mlTr("错误"),
+            mlTr("文件过大 (") + QString::number(fileSize) +
+            mlTr(" 字节)，超过上限 (") +
+            QString::number(RuntimeLimits::MAX_SOURCE_SIZE) + mlTr(" 字节)"),
             Qt::Horizontal, true, 2500, InfoBar::Position::TOP_RIGHT, this);
         file.close();
         return;
@@ -782,6 +800,13 @@ void Ide::onEditorTabCloseRequested(int index) {
         findReplacePanel_ = nullptr;
         currentFilePath_.clear();
         isDirty_ = false;
+        // BUG-IDE-11 fix: 关闭最后一个编辑器标签时清空 Interpreter/VM 断点。
+        // 原实现仅清空本地 editor 引用，DebugController/VmStepper 仍持有旧断点行号。
+        // 下次新建/打开文件时若行号重叠会在新文件的对应行意外暂停（断点行号是全局的，
+        // 不与文件绑定）。
+        controller_->setBreakpoints(QSet<int>());
+        controller_->setVmBreakpoints(QSet<int>());
+        controller_->setVmBreakpointConditions(QMap<int, std::string>());
         hideBottomPanel();
         hideRightPanel();
         centerStack_->setCurrentWidget(welcomePage_);
@@ -816,9 +841,9 @@ void Ide::onEditorTabContextMenu(const QPoint& pos) {
     if (idx < 0) return;
 
     QMenu menu(this);
-    auto* closeAct = menu.addAction(QString::fromUtf8("关闭"));
-    auto* closeOthersAct = menu.addAction(QString::fromUtf8("关闭其他"));
-    auto* closeAllAct = menu.addAction(QString::fromUtf8("关闭全部"));
+    auto* closeAct = menu.addAction(mlTr("关闭"));
+    auto* closeOthersAct = menu.addAction(mlTr("关闭其他"));
+    auto* closeAllAct = menu.addAction(mlTr("关闭全部"));
 
     // Store the clicked index for the action handlers
     int clickedIdx = idx;
@@ -877,7 +902,7 @@ void Ide::initWelcomePage() {
     recentLayout->setContentsMargins(0, 16, 0, 0);
     recentLayout->setSpacing(0);
 
-    auto* recentHeader = new QLabel(QString::fromUtf8("最近打开"));
+    auto* recentHeader = new QLabel(mlTr("最近打开"));
     recentHeader->setObjectName("welcomeRecentHeader");
     recentLayout->addWidget(recentHeader);
 
@@ -907,18 +932,22 @@ void Ide::initWelcomePage() {
     centerLayout->setAlignment(Qt::AlignCenter);
     centerLayout->setSpacing(12);
 
-    // 第十一轮：48px 蓝色代码花括号图标 { }
-    auto* iconLabel = new QLabel(QString::fromUtf8("{ }"));
+    // 第十三轮：ML 几何品牌 Logo（精致连笔版，替代原 { } 文字）
+    auto* iconLabel = new QLabel;
     iconLabel->setObjectName("welcomeIcon");
     iconLabel->setAlignment(Qt::AlignCenter);
-    QFont iconFont = iconLabel->font();
-    iconFont.setPointSize(48);
-    iconFont.setBold(true);
-    iconFont.setStyleHint(QFont::Monospace);
-    iconLabel->setFont(iconFont);
+    {
+        QPixmap logoPixmap(":/icons/minilang_logo.svg");
+        if (logoPixmap.isNull()) {
+            logoPixmap = Fluent::icon(Fluent::IconType::CODE).pixmap(96, 96);
+        }
+        iconLabel->setPixmap(logoPixmap.scaled(
+            96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        iconLabel->setFixedSize(96, 96);
+    }
 
     // 第十一轮：标题 24px Medium，副标题 14px 灰色
-    auto* titleLabel = new QLabel(QString::fromUtf8("MiniLang IDE"));
+    auto* titleLabel = new QLabel(mlTr("MiniLang IDE"));
     titleLabel->setObjectName("welcomeTitle");
     titleLabel->setAlignment(Qt::AlignCenter);
     QFont titleFont = titleLabel->font();
@@ -926,7 +955,7 @@ void Ide::initWelcomePage() {
     titleFont.setWeight(QFont::Medium);
     titleLabel->setFont(titleFont);
 
-    auto* subtitleLabel = new QLabel(QString::fromUtf8("现代化 MiniLang 编程语言开发环境"));
+    auto* subtitleLabel = new QLabel(mlTr("现代化 MiniLang 编程语言开发环境"));
     subtitleLabel->setObjectName("welcomeSubtitle");
     subtitleLabel->setAlignment(Qt::AlignCenter);
     subtitleLabel->setWordWrap(true);
@@ -952,22 +981,24 @@ void Ide::initWelcomePage() {
     // Primary button: 打开文件夹 (Claude DS 风格 — terra-cotta 填充)
     // 使用原生 QPushButton + QSS 而非 QFluentKit PrimaryPushButton，
     // 因为 QFluentKit 自绘不读 QSS，无法应用 Claude DS 配色
-    auto* primaryBtn = new QPushButton(QString::fromUtf8("  打开文件夹"), btnContainer);
+    auto* primaryBtn = new QPushButton(mlTr("打开文件夹"), btnContainer);
     primaryBtn->setObjectName("welcomePrimaryBtn");
     primaryBtn->setMinimumHeight(38);
     primaryBtn->setMinimumWidth(220);
     primaryBtn->setCursor(Qt::PointingHandCursor);
-    primaryBtn->setIcon(QIcon(QString::fromUtf8(":/icons/openfolder_black.svg")));
+    primaryBtn->setIcon(Fluent::icon(Fluent::IconType::FOLDER));
+    primaryBtn->setIconSize(QSize(18, 18));
     connect(primaryBtn, &QPushButton::clicked, this, &Ide::onOpenFolder);
     btnLayout->addWidget(primaryBtn);
 
     // Secondary button: 新建文件 (白底 terra-cotta 边框)
-    auto* secondaryBtn = new QPushButton(QString::fromUtf8("  新建文件"), btnContainer);
+    auto* secondaryBtn = new QPushButton(mlTr("新建文件"), btnContainer);
     secondaryBtn->setObjectName("welcomeSecondaryBtn");
     secondaryBtn->setMinimumHeight(38);
     secondaryBtn->setMinimumWidth(220);
     secondaryBtn->setCursor(Qt::PointingHandCursor);
-    secondaryBtn->setIcon(QIcon(QString::fromUtf8(":/icons/newfile_black.svg")));
+    secondaryBtn->setIcon(Fluent::icon(Fluent::IconType::DOCUMENT));
+    secondaryBtn->setIconSize(QSize(18, 18));
     connect(secondaryBtn, &QPushButton::clicked, this, [this]() {
         ensureEditorVisible();
         onNew();
@@ -978,28 +1009,49 @@ void Ide::initWelcomePage() {
 
     centerLayout->addSpacing(16);
 
-    // 第十一轮：辅助链接（语法示例、帮助文档）12px 蓝色
+    // 第十三轮：辅助链接带 Fluent 图标（BOOK_SHELF + HELP）
     auto* shortcutLayout = new QHBoxLayout;
     shortcutLayout->setAlignment(Qt::AlignCenter);
-    shortcutLayout->setSpacing(24);
-    auto* sampleLabel = new QLabel(QString::fromUtf8(
-        "<a href=\"sample\" style=\"color:#C96442;text-decoration:none;font-size:12px;\">语法示例</a>"));
-    sampleLabel->setObjectName("welcomeShortcut");
-    sampleLabel->setCursor(Qt::PointingHandCursor);
-    connect(sampleLabel, &QLabel::linkActivated, this, [this]() {
+    shortcutLayout->setSpacing(32);
+
+    // 语法示例 — BOOK_SHELF 图标 + Fluent Blue
+    auto* sampleContainer = new QWidget;
+    sampleContainer->setStyleSheet("background:transparent;");
+    auto* sampleHLayout = new QHBoxLayout(sampleContainer);
+    sampleHLayout->setContentsMargins(0, 0, 0, 0);
+    sampleHLayout->setSpacing(6);
+    auto* sampleIcon = new QLabel;
+    sampleIcon->setPixmap(Fluent::icon(Fluent::IconType::BOOK_SHELF).pixmap(16, 16));
+    auto* sampleLink = new QLabel(QString::fromUtf8(
+        "<a href=\"sample\" style=\"color:#0078D4;text-decoration:none;font-size:12px;\">\u8bed\u6cd5\u793a\u4f8b</a>"));
+    sampleLink->setCursor(Qt::PointingHandCursor);
+    connect(sampleLink, &QLabel::linkActivated, this, [this]() {
         QString sampleDir = QApplication::applicationDirPath() + "/../../samples/mini";
         if (!QDir(sampleDir).exists())
             sampleDir = QApplication::applicationDirPath() + "/samples/mini";
         if (QDir(sampleDir).exists()) openWorkspace(sampleDir);
         else onOpenFolder();
     });
-    auto* helpLabel = new QLabel(QString::fromUtf8(
-        "<a href=\"help\" style=\"color:#C96442;text-decoration:none;font-size:12px;\">帮助文档</a>"));
-    helpLabel->setObjectName("welcomeShortcut");
-    helpLabel->setCursor(Qt::PointingHandCursor);
-    connect(helpLabel, &QLabel::linkActivated, this, [this]() { showHelpDialog(); });
-    shortcutLayout->addWidget(sampleLabel);
-    shortcutLayout->addWidget(helpLabel);
+    sampleHLayout->addWidget(sampleIcon);
+    sampleHLayout->addWidget(sampleLink);
+
+    // 帮助文档 — HELP 图标 + Fluent Blue
+    auto* helpContainer = new QWidget;
+    helpContainer->setStyleSheet("background:transparent;");
+    auto* helpHLayout = new QHBoxLayout(helpContainer);
+    helpHLayout->setContentsMargins(0, 0, 0, 0);
+    helpHLayout->setSpacing(6);
+    auto* helpIcon = new QLabel;
+    helpIcon->setPixmap(Fluent::icon(Fluent::IconType::HELP).pixmap(16, 16));
+    auto* helpLink = new QLabel(QString::fromUtf8(
+        "<a href=\"help\" style=\"color:#0078D4;text-decoration:none;font-size:12px;\">\u5e2e\u52a9\u6587\u6863</a>"));
+    helpLink->setCursor(Qt::PointingHandCursor);
+    connect(helpLink, &QLabel::linkActivated, this, [this]() { showHelpDialog(); });
+    helpHLayout->addWidget(helpIcon);
+    helpHLayout->addWidget(helpLink);
+
+    shortcutLayout->addWidget(sampleContainer);
+    shortcutLayout->addWidget(helpContainer);
     centerLayout->addLayout(shortcutLayout);
 
     centerLayout->addStretch(4);
@@ -1037,6 +1089,7 @@ void Ide::refreshRecentList() {
         if (!QDir(ws).exists()) continue;
         QFileInfo fi(ws);
         auto* item = new QListWidgetItem(fi.fileName());
+        item->setIcon(Fluent::icon(Fluent::IconType::FOLDER).pixmap(16, 16));
         item->setToolTip(ws);
         item->setData(Qt::UserRole, ws);
         recentListWidget_->addItem(item);
@@ -1044,7 +1097,7 @@ void Ide::refreshRecentList() {
     }
     // 第十一轮：列表为空时显示浅灰色提示
     if (!hasItems) {
-        auto* emptyItem = new QListWidgetItem(QString::fromUtf8("暂无最近打开的工作区"));
+        auto* emptyItem = new QListWidgetItem(mlTr("暂无最近打开的工作区"));
         emptyItem->setFlags(Qt::NoItemFlags);
         emptyItem->setData(Qt::ForegroundRole, QColor(180, 180, 180));
         recentListWidget_->addItem(emptyItem);
@@ -1185,6 +1238,213 @@ void Ide::initTitleBar() {
         }
     });
     viewMenu->addAction(viewCompileAnalysisAction_);
+
+    // ---- 教学增强面板（第一波 + 第三波）----
+    viewPipelineAction_ = new QAction(QString::fromUtf8("编译管线可视化"), this);
+    viewPipelineAction_->setCheckable(true);
+    viewPipelineAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_P);
+    connect(viewPipelineAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!pipelineDock_) return;
+        if (on) {
+            pipelineDock_->toggleView(true);
+            pipelineDock_->setAsCurrentTab();
+            if (pipelineViewer_) pipelineViewer_->reloadCurrentStep();
+        } else {
+            pipelineDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewPipelineAction_);
+
+    viewBackendCompareAction_ = new QAction(QString::fromUtf8("三后端对比"), this);
+    viewBackendCompareAction_->setCheckable(true);
+    viewBackendCompareAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_B);
+    connect(viewBackendCompareAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!backendCompareDock_) return;
+        if (on) {
+            backendCompareDock_->toggleView(true);
+            backendCompareDock_->setAsCurrentTab();
+        } else {
+            backendCompareDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewBackendCompareAction_);
+
+    viewBugHuntAction_ = new QAction(QString::fromUtf8("Bug 狩猎"), this);
+    viewBugHuntAction_->setCheckable(true);
+    viewBugHuntAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_H);
+    connect(viewBugHuntAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!bugHuntDock_) return;
+        if (on) {
+            bugHuntDock_->toggleView(true);
+            bugHuntDock_->setAsCurrentTab();
+        } else {
+            bugHuntDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewBugHuntAction_);
+
+    viewSyntaxExplorerAction_ = new QAction(QString::fromUtf8("语法探索器"), this);
+    viewSyntaxExplorerAction_->setCheckable(true);
+    connect(viewSyntaxExplorerAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!syntaxExplorerDock_) return;
+        if (on) {
+            syntaxExplorerDock_->toggleView(true);
+            syntaxExplorerDock_->setAsCurrentTab();
+        } else {
+            syntaxExplorerDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewSyntaxExplorerAction_);
+
+    viewLabManualAction_ = new QAction(QString::fromUtf8("实验手册"), this);
+    viewLabManualAction_->setCheckable(true);
+    connect(viewLabManualAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!labManualDock_) return;
+        if (on) {
+            labManualDock_->toggleView(true);
+            labManualDock_->setAsCurrentTab();
+        } else {
+            labManualDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewLabManualAction_);
+
+    // 第二波教学面板视图菜单项
+    viewMemoryModelAction_ = new QAction(QString::fromUtf8("内存模型"), this);
+    viewMemoryModelAction_->setCheckable(true);
+    connect(viewMemoryModelAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!memoryModelDock_) return;
+        if (on) {
+            memoryModelDock_->toggleView(true);
+            memoryModelDock_->setAsCurrentTab();
+        } else {
+            memoryModelDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewMemoryModelAction_);
+
+    viewIRTransformAction_ = new QAction(QString::fromUtf8("IR 变换"), this);
+    viewIRTransformAction_->setCheckable(true);
+    connect(viewIRTransformAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!irTransformDock_) return;
+        if (on) {
+            irTransformDock_->toggleView(true);
+            irTransformDock_->setAsCurrentTab();
+        } else {
+            irTransformDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewIRTransformAction_);
+
+    viewProfileDashboardAction_ = new QAction(QString::fromUtf8("性能剖析"), this);
+    viewProfileDashboardAction_->setCheckable(true);
+    connect(viewProfileDashboardAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!profileDashboardDock_) return;
+        if (on) {
+            profileDashboardDock_->toggleView(true);
+            profileDashboardDock_->setAsCurrentTab();
+        } else {
+            profileDashboardDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewProfileDashboardAction_);
+
+    // 第三波教学面板视图菜单项
+    viewCallStackAction_ = new QAction(QString::fromUtf8("调用栈"), this);
+    viewCallStackAction_->setCheckable(true);
+    connect(viewCallStackAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!callStackDock_) return;
+        if (on) {
+            callStackDock_->toggleView(true);
+            callStackDock_->setAsCurrentTab();
+        } else {
+            callStackDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewCallStackAction_);
+
+    viewVariableInspectorAction_ = new QAction(QString::fromUtf8("变量检查器"), this);
+    viewVariableInspectorAction_->setCheckable(true);
+    connect(viewVariableInspectorAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!variableInspectorDock_) return;
+        if (on) {
+            variableInspectorDock_->toggleView(true);
+            variableInspectorDock_->setAsCurrentTab();
+        } else {
+            variableInspectorDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewVariableInspectorAction_);
+
+    viewBytecodeTraceAction_ = new QAction(QString::fromUtf8("字节码轨迹"), this);
+    viewBytecodeTraceAction_->setCheckable(true);
+    connect(viewBytecodeTraceAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!bytecodeTraceDock_) return;
+        if (on) {
+            bytecodeTraceDock_->toggleView(true);
+            bytecodeTraceDock_->setAsCurrentTab();
+        } else {
+            bytecodeTraceDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewBytecodeTraceAction_);
+
+    // 第二档 P1-2：条件断点可视化
+    viewBreakpointConditionAction_ = new QAction(QString::fromUtf8("条件断点"), this);
+    viewBreakpointConditionAction_->setCheckable(true);
+    connect(viewBreakpointConditionAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!breakpointConditionDock_) return;
+        if (on) {
+            breakpointConditionDock_->toggleView(true);
+            breakpointConditionDock_->setAsCurrentTab();
+        } else {
+            breakpointConditionDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewBreakpointConditionAction_);
+
+    // 第三档 P2-3a：异常流可视化
+    viewExceptionFlowAction_ = new QAction(QString::fromUtf8("异常流"), this);
+    viewExceptionFlowAction_->setCheckable(true);
+    connect(viewExceptionFlowAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!exceptionFlowDock_) return;
+        if (on) {
+            exceptionFlowDock_->toggleView(true);
+            exceptionFlowDock_->setAsCurrentTab();
+        } else {
+            exceptionFlowDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewExceptionFlowAction_);
+
+    // 第三档 P2-3b：闭包检查器
+    viewClosureInspectorAction_ = new QAction(QString::fromUtf8("闭包检查器"), this);
+    viewClosureInspectorAction_->setCheckable(true);
+    connect(viewClosureInspectorAction_, &QAction::toggled, this, [this](bool on) {
+        if (syncingViewAction_) return;
+        if (!closureInspectorDock_) return;
+        if (on) {
+            closureInspectorDock_->toggleView(true);
+            closureInspectorDock_->setAsCurrentTab();
+        } else {
+            closureInspectorDock_->toggleView(false);
+        }
+    });
+    viewMenu->addAction(viewClosureInspectorAction_);
+
     mainMenu->addMenu(viewMenu);
 
     // -- Run --
@@ -1376,33 +1636,7 @@ void Ide::initTitleBar() {
     engineCombo_->setToolTip(QString::fromUtf8("切换执行引擎"));
     layout->addWidget(engineCombo_);
 
-    // ---- 主题切换按钮 ----
-    themeToggleBtn_ = new QToolButton(titleBar_);
-    themeToggleBtn_->setObjectName("themeToggleBtn");
-    themeToggleBtn_->setFixedSize(32, 32);
-    themeToggleBtn_->setAutoRaise(true);
-    themeToggleBtn_->setCursor(Qt::PointingHandCursor);
-    themeToggleBtn_->setFocusPolicy(Qt::NoFocus);
-    themeToggleBtn_->setToolTip(QString::fromUtf8("切换亮/暗主题"));
-    themeToggleBtn_->setIcon(Fluent::icon(Fluent::IconType::BRIGHTNESS));
-    themeToggleBtn_->setIconSize(QSize(16, 16));
-    connect(themeToggleBtn_, &QToolButton::clicked, this, [this]() {
-        Theme::toggleTheme();
-        bool dark = Theme::isDark();
-        QSettings settings("MiniLang", "MiniLang IDE");
-        settings.setValue("theme/dark", dark);
-        // 同步编辑器主题
-        if (codeEditor_) codeEditor_->setDarkTheme(dark);
-        // 同步 ADS 配色
-        if (dockManager_) {
-            dockManager_->setColorSchemeMode(
-                ads::CDockManager::ColorSchemeMode::FollowPalette);
-        }
-        // 刷新所有 QSS
-        StyleSheet::updateStyleSheet();
-        applyFluentStyle();
-    });
-    layout->addWidget(themeToggleBtn_);
+    // 第十二轮：固定使用亮色主题（移除暗色主题支持）
 
     // 分隔线：工具栏 ↔ 窗口按钮
     addSeparator();
@@ -1479,6 +1713,7 @@ void Ide::initUI() {
     errorListWidget_->setFont(GuiTextUtils::monospaceFont(10));
     errorListWidget_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     errorListWidget_->setSpacing(0);
+    errorListWidget_->setItemDelegate(new RichTextItemDelegate(errorListWidget_));
     connect(errorListWidget_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
         if (!item) return;
         bool ok = false;
@@ -1674,7 +1909,10 @@ void Ide::initUI() {
     connect(rightPivot_, &Pivot::currentItemChanged, this, &Ide::onRightPivotChanged);
 
     // ---- AST independent window ----
-    astWindow_ = new QWidget(nullptr);
+    // BUG-LEAK-01 fix: 原 new QWidget(nullptr) 无 Qt parent 所有权，析构时泄漏。
+    // 传入 this 作为 parent，Qt 会在 Ide 析构时自动 delete astWindow_。
+    // Qt::Window flag 仍保持其为独立顶层窗口（非嵌入子控件）。
+    astWindow_ = new QWidget(this);
     astWindow_->setWindowTitle(QString::fromUtf8("AST 树形图"));
     astWindow_->setWindowFlags(Qt::Window);
     astWindow_->resize(800, 600);
@@ -1749,6 +1987,129 @@ void Ide::initUI() {
     dockManager_->addDockWidget(ads::RightDockWidgetArea, rightDock_);
     // 第十二轮：所有面板支持完整拖拽重组、浮动、标签分组（移除旧的浮动/移动锁定）
 
+    // ---- 教学增强面板（第一波 + 第三波）----
+    // P0-1 编译管线可视化
+    pipelineViewer_ = new PipelineViewer(this);
+    pipelineViewer_->setController(controller_);
+    pipelineDock_ = dockManager_->createDockWidget(QString::fromUtf8("编译管线"));
+    pipelineDock_->setWidget(pipelineViewer_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, pipelineDock_);
+
+    // P0-3 三后端并行对比
+    backendComparePanel_ = new BackendComparePanel(this);
+    backendComparePanel_->setController(controller_);
+    backendCompareDock_ = dockManager_->createDockWidget(QString::fromUtf8("三后端对比"));
+    backendCompareDock_->setWidget(backendComparePanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, backendCompareDock_);
+
+    // P1-3 Bug 狩猎模式
+    bugHuntPanel_ = new BugHuntPanel(this);
+    bugHuntPanel_->setController(controller_);
+    bugHuntDock_ = dockManager_->createDockWidget(QString::fromUtf8("Bug 狩猎"));
+    bugHuntDock_->setWidget(bugHuntPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, bugHuntDock_);
+
+    // P2-1 交互式语法探索器
+    syntaxExplorerPanel_ = new SyntaxExplorerPanel(this);
+    syntaxExplorerPanel_->setController(controller_);
+    syntaxExplorerDock_ = dockManager_->createDockWidget(QString::fromUtf8("语法探索器"));
+    syntaxExplorerDock_->setWidget(syntaxExplorerPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, syntaxExplorerDock_);
+
+    // P2-2 内置实验手册
+    labManualPanel_ = new LabManualPanel(this);
+    labManualPanel_->setController(controller_);
+    labManualDock_ = dockManager_->createDockWidget(QString::fromUtf8("实验手册"));
+    labManualDock_->setWidget(labManualPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, labManualDock_);
+
+    // ---- 第二波教学增强面板 ----
+    // P0-2 内存模型可视化（NaN-boxing / RefCounted / COW / GC）
+    memoryModelPanel_ = new MemoryModelPanel(this);
+    memoryModelPanel_->setController(controller_);
+    memoryModelDock_ = dockManager_->createDockWidget(QString::fromUtf8("内存模型"));
+    memoryModelDock_->setWidget(memoryModelPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, memoryModelDock_);
+
+    // P1-1 IR 变换过程可视化（AST → IR lowering + 优化 pass）
+    irTransformPanel_ = new IRTransformPanel(this);
+    irTransformPanel_->setController(controller_);
+    irTransformDock_ = dockManager_->createDockWidget(QString::fromUtf8("IR 变换"));
+    irTransformDock_->setWidget(irTransformPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, irTransformDock_);
+
+    // P1-2 性能剖析仪表盘（三后端时间对比 + 热点分析）
+    profileDashboardPanel_ = new ProfileDashboardPanel(this);
+    profileDashboardPanel_->setController(controller_);
+    profileDashboardDock_ = dockManager_->createDockWidget(QString::fromUtf8("性能剖析"));
+    profileDashboardDock_->setWidget(profileDashboardPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, profileDashboardDock_);
+
+    // ---- 第三波教学增强面板 ----
+    // P0-1 调用栈可视化（运行期函数调用层次 + 本地变量）
+    callStackPanel_ = new CallStackPanel(this);
+    callStackPanel_->setController(controller_);
+    callStackDock_ = dockManager_->createDockWidget(QString::fromUtf8("调用栈"));
+    callStackDock_->setWidget(callStackPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, callStackDock_);
+
+    // P0-2 变量检查器（按作用域分组 + NaN-boxing 位详情）
+    variableInspectorPanel_ = new VariableInspectorPanel(this);
+    variableInspectorPanel_->setController(controller_);
+    variableInspectorDock_ = dockManager_->createDockWidget(QString::fromUtf8("变量检查器"));
+    variableInspectorDock_->setWidget(variableInspectorPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, variableInspectorDock_);
+
+    // P0-3 字节码执行轨迹（IP/OpCode/栈快照时间轴）
+    bytecodeTracePanel_ = new BytecodeTracePanel(this);
+    bytecodeTracePanel_->setController(controller_);
+    bytecodeTraceDock_ = dockManager_->createDockWidget(QString::fromUtf8("字节码轨迹"));
+    bytecodeTraceDock_->setWidget(bytecodeTracePanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, bytecodeTraceDock_);
+
+    // 第二档 P1-2：条件断点可视化（断点列表 + 条件表达式 + 命中次数）
+    breakpointConditionPanel_ = new BreakpointConditionPanel(this);
+    breakpointConditionPanel_->setController(controller_);
+    breakpointConditionDock_ = dockManager_->createDockWidget(QString::fromUtf8("条件断点"));
+    breakpointConditionDock_->setWidget(breakpointConditionPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, breakpointConditionDock_);
+
+    // 第三档 P2-3a：异常流可视化（教学场景库 + 传播图解）
+    exceptionFlowPanel_ = new ExceptionFlowPanel(this);
+    exceptionFlowDock_ = dockManager_->createDockWidget(QString::fromUtf8("异常流"));
+    exceptionFlowDock_->setWidget(exceptionFlowPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, exceptionFlowDock_);
+
+    // 第三档 P2-3b：闭包检查器（教学场景库 + upvalue 生命周期）
+    closureInspectorPanel_ = new ClosureInspectorPanel(this);
+    closureInspectorDock_ = dockManager_->createDockWidget(QString::fromUtf8("闭包检查器"));
+    closureInspectorDock_->setWidget(closureInspectorPanel_, ads::CDockWidget::ForceNoScrollArea);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, closureInspectorDock_);
+
+    // 教学增强面板：连接 loadSampleRequested 信号到 loadCodeIntoMainEditor
+    connect(syntaxExplorerPanel_, &SyntaxExplorerPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+    connect(bugHuntPanel_, &BugHuntPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+    connect(labManualPanel_, &LabManualPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+
+    // 第三波教学面板：连接 loadSampleRequested 信号
+    connect(callStackPanel_, &CallStackPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+    connect(variableInspectorPanel_, &VariableInspectorPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+    connect(bytecodeTracePanel_, &BytecodeTracePanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+    // 第二档 P1-2 教学面板：连接 loadSampleRequested 信号
+    connect(breakpointConditionPanel_, &BreakpointConditionPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+    // 第三档 P2-3 教学面板：连接 loadSampleRequested 信号
+    connect(exceptionFlowPanel_, &ExceptionFlowPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+    connect(closureInspectorPanel_, &ClosureInspectorPanel::loadSampleRequested,
+            this, &Ide::loadCodeIntoMainEditor);
+
     // 第十二轮：面板尺寸对齐规范（左260px、底220px、右320px）
     // 所有面板支持拖拽重组、浮动、标签分组（布局持久化由 saveLayout/restoreLayout 处理）
     fileTree_->setMinimumWidth(200);
@@ -1786,6 +2147,25 @@ void Ide::initUI() {
     debugPanelDock_->toggleView(false);
     bottomDock_->toggleView(false);
     rightDock_->toggleView(false);
+    // 教学增强面板：启动时隐藏
+    pipelineDock_->toggleView(false);
+    backendCompareDock_->toggleView(false);
+    bugHuntDock_->toggleView(false);
+    syntaxExplorerDock_->toggleView(false);
+    labManualDock_->toggleView(false);
+    // 第二波教学面板：启动时隐藏
+    memoryModelDock_->toggleView(false);
+    irTransformDock_->toggleView(false);
+    profileDashboardDock_->toggleView(false);
+    // 第三波教学面板：启动时隐藏
+    callStackDock_->toggleView(false);
+    variableInspectorDock_->toggleView(false);
+    bytecodeTraceDock_->toggleView(false);
+    // 第二档 P1-2 教学面板：启动时隐藏
+    breakpointConditionDock_->toggleView(false);
+    // 第三档 P2-3 教学面板：启动时隐藏
+    exceptionFlowDock_->toggleView(false);
+    closureInspectorDock_->toggleView(false);
 
     // Connect file tree context menu
     connect(fileTree_, &QWidget::customContextMenuRequested,
@@ -1805,6 +2185,25 @@ void Ide::initUI() {
     connectDockSave(debugPanelDock_);
     connectDockSave(bottomDock_);
     connectDockSave(rightDock_);
+    // 教学增强面板：连接 viewToggled → 防抖保存 + 视图菜单勾选同步
+    connectDockSave(pipelineDock_);
+    connectDockSave(backendCompareDock_);
+    connectDockSave(bugHuntDock_);
+    connectDockSave(syntaxExplorerDock_);
+    connectDockSave(labManualDock_);
+    // 第二波教学面板：连接 viewToggled → 防抖保存 + 视图菜单勾选同步
+    connectDockSave(memoryModelDock_);
+    connectDockSave(irTransformDock_);
+    connectDockSave(profileDashboardDock_);
+    // 第三波教学面板：连接 viewToggled → 防抖保存 + 视图菜单勾选同步
+    connectDockSave(callStackDock_);
+    connectDockSave(variableInspectorDock_);
+    connectDockSave(bytecodeTraceDock_);
+    // 第二档 P1-2 教学面板：连接 viewToggled → 防抖保存 + 视图菜单勾选同步
+    connectDockSave(breakpointConditionDock_);
+    // 第三档 P2-3 教学面板：连接 viewToggled → 防抖保存 + 视图菜单勾选同步
+    connectDockSave(exceptionFlowDock_);
+    connectDockSave(closureInspectorDock_);
     // focusedDockWidgetChanged fires when user interacts with dock widgets (drag/dock)
     connect(dockManager_, &ads::CDockManager::focusedDockWidgetChanged,
             this, [this]() { if (splitterSaveTimer_) splitterSaveTimer_->start(); });
@@ -1827,7 +2226,61 @@ void Ide::syncViewMenuChecks() {
         viewOutputAction_->setChecked(bottomDock_ && !bottomDock_->isClosed());
     if (viewCompileAnalysisAction_)
         viewCompileAnalysisAction_->setChecked(rightDock_ && !rightDock_->isClosed());
+    // 教学增强面板：同步勾选
+    if (viewPipelineAction_)
+        viewPipelineAction_->setChecked(pipelineDock_ && !pipelineDock_->isClosed());
+    if (viewBackendCompareAction_)
+        viewBackendCompareAction_->setChecked(backendCompareDock_ && !backendCompareDock_->isClosed());
+    if (viewBugHuntAction_)
+        viewBugHuntAction_->setChecked(bugHuntDock_ && !bugHuntDock_->isClosed());
+    if (viewSyntaxExplorerAction_)
+        viewSyntaxExplorerAction_->setChecked(syntaxExplorerDock_ && !syntaxExplorerDock_->isClosed());
+    if (viewLabManualAction_)
+        viewLabManualAction_->setChecked(labManualDock_ && !labManualDock_->isClosed());
+    if (viewMemoryModelAction_)
+        viewMemoryModelAction_->setChecked(memoryModelDock_ && !memoryModelDock_->isClosed());
+    if (viewIRTransformAction_)
+        viewIRTransformAction_->setChecked(irTransformDock_ && !irTransformDock_->isClosed());
+    if (viewProfileDashboardAction_)
+        viewProfileDashboardAction_->setChecked(profileDashboardDock_ && !profileDashboardDock_->isClosed());
+    if (viewCallStackAction_)
+        viewCallStackAction_->setChecked(callStackDock_ && !callStackDock_->isClosed());
+    if (viewVariableInspectorAction_)
+        viewVariableInspectorAction_->setChecked(variableInspectorDock_ && !variableInspectorDock_->isClosed());
+    if (viewBytecodeTraceAction_)
+        viewBytecodeTraceAction_->setChecked(bytecodeTraceDock_ && !bytecodeTraceDock_->isClosed());
+    if (viewBreakpointConditionAction_)
+        viewBreakpointConditionAction_->setChecked(breakpointConditionDock_ && !breakpointConditionDock_->isClosed());
+    if (viewExceptionFlowAction_)
+        viewExceptionFlowAction_->setChecked(exceptionFlowDock_ && !exceptionFlowDock_->isClosed());
+    if (viewClosureInspectorAction_)
+        viewClosureInspectorAction_->setChecked(closureInspectorDock_ && !closureInspectorDock_->isClosed());
     syncingViewAction_ = false;
+}
+
+// ============================================================
+// loadCodeIntoMainEditor — 教学增强面板：将面板内代码加载到主编辑器
+// ============================================================
+
+void Ide::loadCodeIntoMainEditor(const QString& code) {
+    if (code.isEmpty()) return;
+    ensureEditorVisible();
+    if (!codeEditor_) {
+        // 创建新标签
+        createNewEditorTab(QString(), code);
+        return;
+    }
+    codeEditor_->setPlainText(code);
+    // 标记为未保存
+    if (!editorTabs_.empty()) {
+        int idx = editorTabWidget_ ? editorTabWidget_->currentIndex() : 0;
+        if (idx >= 0 && idx < (int)editorTabs_.size()) {
+            editorTabs_[idx].isUntitled = true;
+            editorTabs_[idx].filePath.clear();
+        }
+    }
+    isDirty_ = true;
+    updateWindowTitle();
 }
 
 // ============================================================
@@ -1917,6 +2370,11 @@ void Ide::applyFluentStyle() {
             border-bottom: 2px solid %3;
             color: %4;
         }
+        ads--CDockWidgetTab[focused="true"] {
+            background: %1;
+            border-bottom: 2px solid %3;
+            color: %4;
+        }
         ads--CDockWidgetTab:hover:!activeTab {
             background: %5;
         }
@@ -1994,6 +2452,15 @@ void Ide::applyFluentStyle() {
         ads--CDockWidget {
             background: %1;
             border: none;
+        }
+        ads--CDockWidget[focused="true"] {
+            border: none;
+        }
+        ads--CDockAreaWidget[focused="true"] {
+            border: none;
+        }
+        ads--CDockAreaTitleBar[focused="true"] {
+            background: transparent;
         }
 
         /* ---- ADS AutoHide Tabs ---- */
@@ -2740,24 +3207,117 @@ void Ide::showVmButtons(bool show) {
 // Output helpers
 // ============================================================
 
-void Ide::appendOutput(const QString& text) {
-    GuiTextUtils::appendLine(outputTextEdit_, text);
+void Ide::appendOutput(const QString& text, OutputLevel level) {
+    QString timestamp = QDateTime::currentDateTime().toString("[HH:mm:ss]");
+    QString escaped = text.toHtmlEscaped();
+
+    // Inline style constants (QTextEdit HTML does not support <style> blocks)
+    static const char* kTs      = "color:#8C8C8C;";
+    static const char* kInfo    = "color:#0078D4;font-weight:600;";
+    static const char* kSuccess = "color:#1A7F37;font-weight:600;";
+    static const char* kWarn    = "color:#C2721D;font-weight:600;";
+    static const char* kError   = "color:#D13438;font-weight:600;";
+    static const char* kBody    = "color:#1E1E1E;";
+
+    const char* iconChar = "&#x25B6;";  // default ▶
+    const char* iconStyle = kBody;
+    const char* bodyStyle = kBody;
+
+    switch (level) {
+    case OutputLevel::Info:
+        iconChar = "&#x2139;"; iconStyle = kInfo; break;
+    case OutputLevel::Success:
+        iconChar = "&#x2713;"; iconStyle = kSuccess; break;
+    case OutputLevel::Warning:
+        iconChar = "&#x26A0;"; iconStyle = kWarn; bodyStyle = kWarn; break;
+    case OutputLevel::ErrorMsg:
+        iconChar = "&#x2717;"; iconStyle = kError; bodyStyle = kError; break;
+    default:
+        break;
+    }
+
+    QString html;
+    if (level == OutputLevel::Plain) {
+        html = QString("<p style='margin:2px 0;'>"
+                       "<span style='%1'>%2</span> "
+                       "<span style='%3'>%4</span>"
+                       "</p>")
+                       .arg(kTs, timestamp, kBody, escaped);
+    } else {
+        html = QString("<p style='margin:2px 0;'>"
+                       "<span style='%1'>%2</span> "
+                       "<span style='%3'>%4</span> "
+                       "<span style='%5'>%6</span>"
+                       "</p>")
+                       .arg(kTs, timestamp, iconStyle, iconChar,
+                            bodyStyle, escaped);
+    }
+
+    outputTextEdit_->append(html);
 }
 
-void Ide::appendError(const QString& text, int line, int column) {
+void Ide::appendError(const QString& text, int line, int column, DiagLevel level) {
     if (!errorPanelHasErrors_) {
         errorListWidget_->clear();
         errorPanelHasErrors_ = true;
     }
-    auto* item = new QListWidgetItem(text);
-    item->setData(Qt::UserRole, line);
+    auto* item = new QListWidgetItem();
+
+    // DiagLevel -> icon character + color
+    const char* iconChar;
+    const char* iconColor;
+    switch (level) {
+        case DiagLevel::Error:   iconChar = "\u25CF"; iconColor = "#D13438"; break;  // ●
+        case DiagLevel::Warning: iconChar = "\u25D0"; iconColor = "#C2721D"; break;  // ◐
+        case DiagLevel::Info:    iconChar = "\u25CB"; iconColor = "#0078D4"; break;  // ○
+        case DiagLevel::Hint:    iconChar = "\u25C7"; iconColor = "#8C8C8C"; break;  // ◇
+    }
+
+    const char* textColor =
+        (level == DiagLevel::Error)   ? "#D13438" :
+        (level == DiagLevel::Warning) ? "#C2721D" :
+        (level == DiagLevel::Hint)    ? "#8C8C8C" :
+                                        "#0078D4";
+
+    // Build rich-text HTML (all inline styles, no class selectors)
+    QString html = QString(
+        "<table style='width:100%;border-collapse:collapse;border-spacing:0;'>"
+        "<tr>"
+        "  <td style='width:22px;color:%1;font-size:14px;'>%2</td>"
+        "  <td style='color:%3;'>%4</td>"
+        "</tr></table>"
+    ).arg(iconColor, iconChar, textColor, text.toHtmlEscaped());
+
+    item->setData(RichTextItemDelegate::kHtmlRole, html);
+    item->setData(Qt::UserRole, line);   // keep click-to-goto-line working
+    item->setData(Qt::UserRole + 3, static_cast<int>(level));  // for badge count
+    item->setToolTip(text);
+
     errorListWidget_->addItem(item);
+    updateErrorBadge();
 }
 
 void Ide::clearOutput() {
     outputTextEdit_->clear();
     errorListWidget_->clear();
     errorPanelHasErrors_ = false;
+    updateErrorBadge();
+}
+
+void Ide::updateErrorBadge() {
+    int errors = 0, warnings = 0;
+    for (int i = 0; i < errorListWidget_->count(); ++i) {
+        int lv = errorListWidget_->item(i)->data(Qt::UserRole + 3).toInt();
+        switch (static_cast<DiagLevel>(lv)) {
+            case DiagLevel::Error:   errors++;   break;
+            case DiagLevel::Warning: warnings++; break;
+            default: break;
+        }
+    }
+    QString label = QString::fromUtf8("\u95EE\u9898");  // 问题
+    if (errors > 0 || warnings > 0)
+        label += QString(" (%1/%2)").arg(errors).arg(warnings);
+    bottomPivot_->setItemText("errors", label);
 }
 
 void Ide::onClearOutput() {
@@ -2841,15 +3401,15 @@ void Ide::runRealTimeSyntaxCheck() {
         text += ": " + QString::fromStdString(msg);
 
         if (diag.isError()) {
-            appendError(text, diag.line, diag.column);
+            appendError(text, diag.line, diag.column, diag.level);
             hasErrors = true;
             if (diag.line > 0) {
                 ranges.push_back({diag.line, diag.column, 0});
             }
         } else if (diag.isWarning()) {
-            appendOutput(QString("[警告] ") + text);
+            appendOutput(text, OutputLevel::Warning);
         } else {
-            appendOutput(text);
+            appendOutput(text, OutputLevel::Info);
         }
     }
 
@@ -2892,11 +3452,18 @@ void Ide::onRun() {
     try {
         controller_->startWorker();
     } catch (const std::exception& e) {
+        // BUG-ORCH-1 fix: startWorker 异常后必须执行业务层清理（forceStop 重置
+        // WorkerManager::isRunning_ / isDebugRun_、restoreReplState、reset debugger），
+        // 否则 isRunning_ 永久卡死，IDE 无法再次运行。
+        // 注意：workerThread_ 未真正启动（start 抛异常），forceStop 内 wait(5000)
+        // 立即返回 true，不会阻塞 UI。
+        try { controller_->forceStop(); } catch (...) {}
         appendError(QString::fromUtf8("启动失败: %1").arg(e.what()));
         showBottomPanel(1);
         setRunningState(false);
         replPanel_->setInputEnabled(true);
     } catch (...) {
+        try { controller_->forceStop(); } catch (...) {}
         appendError(QString::fromUtf8("启动发生未知异常"));
         showBottomPanel(1);
         setRunningState(false);
@@ -2942,6 +3509,8 @@ void Ide::onDebug() {
         controller_->setupDebug(breakpoints, conditions);
         controller_->startWorker();
     } catch (const std::exception& e) {
+        // BUG-ORCH-1 fix: startWorker 异常后必须执行业务层清理（对齐 onRun）
+        try { controller_->forceStop(); } catch (...) {}
         appendError(QString::fromUtf8("启动调试失败: %1").arg(e.what()));
         showBottomPanel(1);
         setRunningState(false);
@@ -2949,6 +3518,7 @@ void Ide::onDebug() {
         switchLeftToFileTree();
         showDebugButtons(false);
     } catch (...) {
+        try { controller_->forceStop(); } catch (...) {}
         appendError(QString::fromUtf8("启动调试发生未知异常"));
         showBottomPanel(1);
         setRunningState(false);
@@ -3034,6 +3604,10 @@ void Ide::onWorkerFinished(bool wasDebug) {
     if (wasDebug) {
         switchLeftToFileTree();
         showDebugButtons(false);
+        // BUG-DBG-G2 fix (P2): worker 结束后清理调用栈与变量树，避免上次调试会话
+        // 的陈旧数据残留显示。原 onRun/onDebug 入口虽已 clearAll()，但若 worker
+        // 异常结束或用户停止，残留的调用栈/变量会误导用户以为仍在调试中。
+        debugPanel_->clearAll();
     }
 }
 
@@ -3200,7 +3774,12 @@ void Ide::loadVisualizationForTab(int tabIndex) {
         updateTokenTable();
         break;
     case 1: { // IR
+        // BUG-ORCH-3 fix: RegisterVM 模式下 useRegisterVM_ 优先于 useIR_，
+        // 需临时禁用 useRegisterVM_ 才能走 IR 路径，否则 IR 标签页静默失效。
+        bool savedRegVM = controller_->compiler().getUseRegisterVM();
+        controller_->compiler().setUseRegisterVM(false);
         controller_->compiler().setUseIR(true);
+        // BUG-AUDIT-MOD-5 fix: 捕获所有异常（含非 std::exception），确保 setUseIR(false) 必定执行
         try {
             controller_->runCompiler();
             populateIRViewer();
@@ -3208,8 +3787,13 @@ void Ide::loadVisualizationForTab(int tabIndex) {
             irViewer_->clearIR();
             appendError(QString("IR 编译异常: %1").arg(e.what()));
             showBottomPanel(1);
+        } catch (...) {
+            irViewer_->clearIR();
+            appendError(QString::fromUtf8("IR 编译发生未知异常"));
+            showBottomPanel(1);
         }
         controller_->compiler().setUseIR(false);
+        controller_->compiler().setUseRegisterVM(savedRegVM);  // 恢复原引擎状态
         break;
     }
     case 2: { // Bytecode
@@ -3245,6 +3829,13 @@ void Ide::onShowAstTree() {
 
 void Ide::onVmStep() {
     if (controller_->isVmRunning()) return;
+    // BUG-ORCH-8 fix: REPL 异步执行期间 VM 步进会与 REPL 输出交错，且 Interpreter 被
+    // REPL worker 持有，VM 步进操作 compiler/VM 状态可能与之冲突。拒绝并提示用户。
+    if (replPanel_ && replPanel_->isReplRunning()) {
+        appendError(QString::fromUtf8("REPL 正在执行，请先停止 REPL 再使用 VM 单步"));
+        showBottomPanel(1);
+        return;
+    }
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
@@ -3272,6 +3863,12 @@ void Ide::onVmStep() {
 
 void Ide::onVmStepOver() {
     if (controller_->isVmRunning()) return;
+    // BUG-ORCH-8 fix: 同 onVmStep，REPL 执行期间拒绝 VM 跨过操作
+    if (replPanel_ && replPanel_->isReplRunning()) {
+        appendError(QString::fromUtf8("REPL 正在执行，请先停止 REPL 再使用 VM 跨过"));
+        showBottomPanel(1);
+        return;
+    }
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
@@ -3298,6 +3895,12 @@ void Ide::onVmStepOver() {
 
 void Ide::onVmStepOut() {
     if (controller_->isVmRunning()) return;
+    // BUG-ORCH-8 fix: 同 onVmStep，REPL 执行期间拒绝 VM 跨出操作
+    if (replPanel_ && replPanel_->isReplRunning()) {
+        appendError(QString::fromUtf8("REPL 正在执行，请先停止 REPL 再使用 VM 跨出"));
+        showBottomPanel(1);
+        return;
+    }
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
@@ -3324,6 +3927,12 @@ void Ide::onVmStepOut() {
 
 void Ide::onVmRun() {
     if (controller_->isVmRunning()) return;
+    // BUG-ORCH-8 fix: 同 onVmStep，REPL 执行期间拒绝 VM RUN 操作
+    if (replPanel_ && replPanel_->isReplRunning()) {
+        appendError(QString::fromUtf8("REPL 正在执行，请先停止 REPL 再使用 VM 运行"));
+        showBottomPanel(1);
+        return;
+    }
     bool hasCode = controller_->getUseRegisterVM()
         ? !controller_->compiler().getLastRegisterResult().mainChunk.code.empty()
         : !controller_->lastCompileResult().mainChunk.code.empty();
@@ -3426,6 +4035,8 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
                 showBottomPanel(0);
             }
         }
+        // BUG-ORCH-5 fix: VM 暂停期间禁止编辑代码，避免产生陈旧字节码
+        if (codeEditor_) codeEditor_->setReadOnly(true);
         setVmStepActionsEnabled(true, true);
         return;
     }
@@ -3709,11 +4320,11 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
         text += ": " + QString::fromStdString(msg);
 
         if (diag.isError()) {
-            appendError(text, diag.line, diag.column);
+            appendError(text, diag.line, diag.column, diag.level);
         } else if (diag.isWarning()) {
-            appendOutput(QString("[警告] ") + text);
+            appendOutput(text, OutputLevel::Warning);
         } else {
-            appendOutput(text);
+            appendOutput(text, OutputLevel::Info);
         }
     }
 
@@ -3780,7 +4391,9 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
 void Ide::populateBytecodeList() {
     const CompileResult& compileResult = controller_->lastCompileResult();
     QString currentSource = codeEditor_ ? codeEditor_->toPlainText() : QString();
-    size_t currentHash = qHash(currentSource);
+    // BUG-ORCH-2 fix: 缓存哈希需区分引擎模式，否则引擎切换后显示陈旧字节码
+    int engineMode = engineCombo_ ? engineCombo_->currentIndex() : 0;
+    size_t currentHash = qHash(currentSource) ^ (static_cast<size_t>(engineMode) << 32);
     if (currentHash == lastBytecodeSourceHash_ && bytecodeList_->count() > 0) return;
     lastBytecodeSourceHash_ = currentHash;
 
@@ -3877,12 +4490,66 @@ void Ide::updateTokenTable() {
                 QString::fromStdString(tok.lexeme)));
             tokenTable_->setItem(i, 4, new QTableWidgetItem(
                 QString::fromStdString(tok.literalToString())));
-            // 错误 token 红色高亮；行号/列号列使用浅灰
+            // Token type color coding
+            QColor typeColor;
+            switch (tok.type) {
+            // Keywords: blue
+            case TokenType::TK_VAR: case TokenType::TK_FUN:
+            case TokenType::TK_IF: case TokenType::TK_ELSE:
+            case TokenType::TK_WHILE: case TokenType::TK_FOR:
+            case TokenType::TK_RETURN: case TokenType::TK_IMPORT:
+            case TokenType::TK_FROM: case TokenType::TK_EXPORT:
+            case TokenType::TK_CLASS: case TokenType::TK_EXTENDS:
+            case TokenType::TK_SUPER: case TokenType::TK_PRINT:
+            case TokenType::TK_BREAK: case TokenType::TK_CONTINUE:
+            case TokenType::TK_TRY: case TokenType::TK_CATCH:
+            case TokenType::TK_THROW: case TokenType::TK_AND:
+            case TokenType::TK_OR: case TokenType::TK_NOT:
+            case TokenType::TK_TRUE: case TokenType::TK_FALSE:
+            case TokenType::TK_NULL: case TokenType::TK_DICT:
+            case TokenType::TK_ARRAY:
+            case TokenType::TK_INT: case TokenType::TK_FLOAT:
+            case TokenType::TK_BOOL: case TokenType::TK_STRING_TYPE:
+                typeColor = QColor("#0000FF"); break;
+            // Number literals: green
+            case TokenType::TK_INT_LIT: case TokenType::TK_FLOAT_LIT:
+                typeColor = QColor("#098658"); break;
+            // String literals: red
+            case TokenType::TK_STRING_LIT: case TokenType::TK_STRING_PART:
+            case TokenType::TK_INTERP_START: case TokenType::TK_INTERP_END:
+                typeColor = QColor("#A31515"); break;
+            // Comments: green italic
+            case TokenType::TK_LINE_COMMENT: case TokenType::TK_BLOCK_COMMENT:
+                typeColor = QColor("#008000"); break;
+            // Operators: red
+            case TokenType::TK_PLUS: case TokenType::TK_MINUS:
+            case TokenType::TK_STAR: case TokenType::TK_SLASH:
+            case TokenType::TK_PERCENT: case TokenType::TK_EQ:
+            case TokenType::TK_NEQ: case TokenType::TK_LT:
+            case TokenType::TK_GT: case TokenType::TK_LEQ:
+            case TokenType::TK_GEQ: case TokenType::TK_ASSIGN:
+                typeColor = QColor("#D13438"); break;
+            // Error: bright red
+            case TokenType::TK_ERROR:
+                typeColor = QColor("#d83b01"); break;
+            // Identifier / default: normal black
+            default:
+                typeColor = QColor("#1E1E1E"); break;
+            }
+
             for (int col = 0; col < 5; ++col) {
                 tokenTable_->item(i, col)->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-                if (tok.type == TokenType::TK_ERROR) {
-                    tokenTable_->item(i, col)->setForeground(QColor("#d83b01"));
+                if (col == 2) {
+                    // Type column: use token type color
+                    tokenTable_->item(i, col)->setForeground(typeColor);
+                    if (tok.type == TokenType::TK_LINE_COMMENT ||
+                        tok.type == TokenType::TK_BLOCK_COMMENT) {
+                        QFont f = tokenTable_->item(i, col)->font();
+                        f.setItalic(true);
+                        tokenTable_->item(i, col)->setFont(f);
+                    }
                 } else if (col < 2) {
+                    // Line/column: gray
                     tokenTable_->item(i, col)->setForeground(QColor("#6e6e6e"));
                 }
             }
@@ -3909,7 +4576,16 @@ void Ide::updateAstViewer() {
 void Ide::updateDebugInfo() {
     auto vars = controller_->getDebugVariableSnapshot();
     debugPanel_->updateVariables(vars);
-    auto stack = controller_->getDebugCallStack();
+    std::vector<CallStackEntry> stack;
+    // BUG-DBG-6 fix: VM 模式下使用 VM 调用栈（VmStepper::getCallStack → IdeController::getVmCallStack），
+    // 原 updateDebugInfo 始终使用 Interpreter 调用栈，VM 模式下显示空栈。
+    // BUG-ORCH-6 fix: 用 isVmInitialized()/isVmRunning() 判断 VM 模式，
+    // 不依赖 vmStackPanel_->isVisible()（dock 隐藏时走 Interpreter 路径不可靠）
+    if (controller_->isVmInitialized() || controller_->isVmRunning()) {
+        stack = controller_->getVmCallStack();
+    } else {
+        stack = controller_->getDebugCallStack();
+    }
     debugPanel_->updateCallStack(stack);
 }
 
@@ -3924,6 +4600,8 @@ void Ide::setRunningState(bool running) {
     stopAction_->setEnabled(running);
     formatAction_->setEnabled(!running);
     compileAnalysisAction_->setEnabled(!running);
+    // BUG-ORCH-4 fix: 运行/VM RUN 期间禁用引擎切换，避免中途切换导致状态不一致
+    if (engineCombo_) engineCombo_->setEnabled(!running);
     if (codeEditor_) codeEditor_->setReadOnly(running);
     if (isDebug) {
         showDebugButtons(true);

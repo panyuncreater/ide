@@ -1,3 +1,28 @@
+/**
+ * @file interpreter/Interpreter.h
+ * @brief 树遍历解释器（Visitor 模式）。
+ *
+ * MiniLang 三套执行引擎之一：直接遍历 AST 执行，无需中间字节码生成。
+ * 实现 Visitor 接口的 33 个 visit* 方法，覆盖全部 AST 节点类型。
+ *
+ * 核心特性：
+ *   - Environment 链式作用域（global → block → function）
+ *   - 闭包捕获（共享 Environment shared_ptr，自动生命周期管理）
+ *   - 类与继承（classRegistry_ + super 查找沿继承链）
+ *   - 模块系统（import/export，含路径安全、循环依赖检测、预扫描）
+ *   - 异常处理（try/catch/throw，C++ 异常 unwind + 作用域清理）
+ *   - REPL 模式（saveReplState/restoreReplState，保留环境）
+ *   - 调试器集成（DebugController，AST 节点级单步）
+ *
+ * 与 VM/RegisterVM 的语义一致性（三后端约束）：
+ *   - 整数除法截断向零
+ *   - and/or 短路返回操作数原值（非布尔）
+ *   - 类型注解强制（typeMatchValue 共享）
+ *   - super 调用语义
+ *   - 错误消息文本统一
+ *
+ * @see IBackend Visitor Value Environment VM
+ */
 #pragma once
 
 #include <string>
@@ -132,9 +157,20 @@ public:
 
     /// REPL 模块缓存刷新：清除指定模块的缓存，下次 import 将重新加载源码
     /// 场景：用户修改了模块源文件后希望在 REPL 中获取最新版本
+    /// BUG-REPL-1 fix: 原实现直接用 path 查 erase，未做路径规范化。
+    /// visitImportStmt 会将 "\\" 转 "/" 并去除 "./" 前缀后存入 moduleCache_，
+    /// 导致用户用 "foo\\bar.mini" 或 "./foo.mini" 调用本方法时无法命中缓存。
+    /// 修复：与 visitImportStmt 保持一致的规范化（\→/，strip ./）。
     void clearModuleCache(const std::string& path) {
-        moduleCache_.erase(path);
-        moduleExports_.erase(path);
+        std::string normalized = path;
+        for (char& c : normalized) {
+            if (c == '\\') c = '/';
+        }
+        if (normalized.size() >= 2 && normalized[0] == '.' && normalized[1] == '/') {
+            normalized.erase(0, 2);
+        }
+        moduleCache_.erase(normalized);
+        moduleExports_.erase(normalized);
     }
     /// 清除所有模块缓存
     void clearAllModuleCache() {
@@ -219,6 +255,7 @@ private:
     // 循环 s[i] 访问时，首次判定字符串是否纯 ASCII 并缓存（按 StringData 指针），
     // 后续访问 O(1) 按字节索引，避免每次 O(i) 码位扫描导致的 O(n²) 退化。
     const void* lastAsciiStrPtr_ = nullptr;
+    size_t lastAsciiStrLen_ = 0;
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache_; // F12: 模块缓存
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_; // F12: 模块导出名称缓存

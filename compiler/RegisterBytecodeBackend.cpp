@@ -9,7 +9,7 @@
 // ============================================================
 
 #include "compiler/RegisterBytecodeBackend.h"
-#include "common/Logger.h"
+#include "Logger.h"
 
 RegisterBytecodeBackend::RegisterBytecodeBackend() = default;
 
@@ -72,16 +72,13 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
     chunk_->registerCount = ir.localCount;  // 初始为 localCount，vreg 分配后增长
     chunk_->defaultConstIndices = ir.defaultConstIndices;
     chunk_->upvalues = ir.upvalues;
+    // BUG-IDE-12 fix: 复制 slot→name 映射，供 RegisterVM 条件断点求值反查变量名
+    chunk_->localRegNames = ir.localSlotNames;
 
     // 复制常量池（保持索引一致）
     for (const auto& c : ir.constants) {
         chunk_->constants.push_back(c);
     }
-
-    // 辅助：从 globalNames 取名
-    auto globalName = [&](uint32_t idx) -> std::string {
-        return idx < ir.globalNames.size() ? ir.globalNames[idx] : std::string{};
-    };
 
     // 遍历所有基本块的所有指令，逐条 lowering
     size_t instrIndex = 0;
@@ -92,8 +89,10 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
                 return false;  // lowering 失败或 vreg 溢出：不生成损坏的字节码
             }
             // 填充行号表
+            // BUG-IBACKEND-2: 同步填充 columns（IRInstruction 暂无 column 字段，默认 0）
             while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
                 chunk_->lines.push_back(instr.line);
+                chunk_->columns.push_back(0);
             }
             ++instrIndex;
         }
@@ -226,6 +225,25 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         }
         break;
     }
+    case IROp::DELETE_VAR: {
+        // BUG-IR-TRY-1 fix: 删除全局变量（catch 块退出后清理 catch 变量）
+        // operands: [global_idx]，kind 可为 IMM_UINT (GLOBAL_SLOT) 或 GLOBAL_NAME
+        // → REG_DELETE_GLOBAL nameConstIdx(2B)
+        // 注意：REG_DELETE_GLOBAL 按 name 常量索引删除，无高 bit 标记区分
+        if (instr.operands.size() < 1) return false;
+        uint16_t nameIdx;
+        if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
+            // IMM_UINT (slot) 路径：RegisterBytecodeBackend 无 globalSlotNames 表，
+            // 理论上不会触达（visitTryStmt 用 GLOBAL_NAME kind），此处保守返回 false。
+            Logger::Error("RegisterBytecodeBackend: DELETE_VAR 不支持 IMM_UINT kind（无 slot→name 表）", "RegIR");
+            return false;
+        } else {
+            nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+        }
+        chunk_->writeOp(RegOp::REG_DELETE_GLOBAL, line);
+        chunk_->writeShort(nameIdx, line);
+        break;
+    }
 
     // ---- upvalue ----
     case IROp::LOAD_UPVALUE: {
@@ -240,8 +258,10 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_LOAD_UPVALUE, line);
         chunk_->writeReg(dst, line);
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index));
-        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size()))
+        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
             chunk_->lines.push_back(line);
+            chunk_->columns.push_back(0);  // BUG-IBACKEND-2
+        }
         break;
     }
     case IROp::STORE_UPVALUE: {
@@ -255,8 +275,10 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_STORE_UPVALUE, line);
         chunk_->writeReg(src, line);
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
-        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size()))
+        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
             chunk_->lines.push_back(line);
+            chunk_->columns.push_back(0);  // BUG-IBACKEND-2
+        }
         break;
     }
     case IROp::CLOSE_UPVALUE: {
@@ -270,8 +292,10 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         }
         chunk_->writeOp(RegOp::REG_CLOSE_UPVALUE, line);
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[0].index));
-        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size()))
+        while (static_cast<int>(chunk_->lines.size()) < static_cast<int>(chunk_->code.size())) {
             chunk_->lines.push_back(line);
+            chunk_->columns.push_back(0);  // BUG-IBACKEND-2
+        }
         break;
     }
 
@@ -637,14 +661,16 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::DEFINE_CLASS: {
         // C-9 fix: 携带完整类元数据（父类、字段顺序、方法名→函数名映射）
         // BUG-INH-1 fix: 新增字段默认值常量索引
+        // BUG-INH-IR-1 fix: 新增字段表达式临时局部变量槽位（=寄存器号）
         // 操作数布局（见 IR.cpp visitClassDecl）：
         //   [0] className (FUNC_NAME)
         //   [1] parentName (IMM_UINT, UINT32_MAX=无父类)
         //   [2] fieldCount (IMM_UINT)
-        //   [3+i*2] field name (FIELD_NAME)
-        //   [3+i*2+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值)
-        //   [3+2F] methodCount (IMM_UINT)
-        //   [3+2F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+        //   [3+i*3] field name (FIELD_NAME)
+        //   [3+i*3+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值/有表达式)
+        //   [3+i*3+2] fieldExprLocalSlot (IMM_UINT, UINT32_MAX=使用常量或null, 否则使用临时 local slot)
+        //   [3+3F] methodCount (IMM_UINT)
+        //   [3+3F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
         if (instr.operands.size() < 3) return false;
         uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
 
@@ -654,9 +680,9 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             : addStringConstant(globalName(parentRaw), ir);
 
         uint32_t fieldCount = instr.operands[2].index;
-        if (instr.operands.size() < 3 + fieldCount * 2 + 1) return false;
-        uint32_t methodCount = instr.operands[3 + fieldCount * 2].index;
-        if (instr.operands.size() < 3 + fieldCount * 2 + 1 + methodCount * 2) return false;
+        if (instr.operands.size() < 3 + fieldCount * 3 + 1) return false;
+        uint32_t methodCount = instr.operands[3 + fieldCount * 3].index;
+        if (instr.operands.size() < 3 + fieldCount * 3 + 1 + methodCount * 2) return false;
         // R7 fix: fieldCount/methodCount 经 writeByte 编码为 uint8_t，超 255 时静默截断
         // 会导致后续读取循环用截断值迭代，字段名/方法名索引完全错位，写出损坏字节码。
         if (fieldCount > 255) {
@@ -675,14 +701,28 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeShort(parentIdx, line);
         chunk_->writeByte(static_cast<uint8_t>(fieldCount), line);
         for (uint32_t i = 0; i < fieldCount; ++i) {
-            size_t nameOpIdx = 3 + i * 2;
-            size_t defaultOpIdx = 3 + i * 2 + 1;
+            size_t nameOpIdx = 3 + i * 3;
+            size_t defaultOpIdx = 3 + i * 3 + 1;
+            size_t exprSlotOpIdx = 3 + i * 3 + 2;
             uint16_t fIdx = addStringConstant(globalName(instr.operands[nameOpIdx].index), ir);
             chunk_->writeShort(fIdx, line);
             // BUG-INH-1 fix: 编码字段默认值常量索引（UINT32_MAX → 0xFFFF 表示 null）
+            // BUG-INH-IR-1 fix: 若有非字面量表达式，default const 写 0xFFFF，
+            //   额外编码 1 字节 exprReg（= local slot 号，RegisterVM 中 local slot = register）
             uint32_t defaultConstIdx = instr.operands[defaultOpIdx].index;
-            if (defaultConstIdx == UINT32_MAX) {
+            uint32_t exprSlot = instr.operands[exprSlotOpIdx].index;
+            if (exprSlot != UINT32_MAX) {
+                // 非字面量表达式：default const 写 0xFFFF，exprReg 写 slot 号
+                if (exprSlot >= 32) {
+                    Logger::Error("RegisterBytecodeBackend: DEFINE_CLASS 字段临时局部变量槽位超出 32 寄存器上限", "RegIR");
+                    hasError_ = true;
+                    return false;
+                }
                 chunk_->writeShort(0xFFFF, line);
+                chunk_->writeByte(static_cast<uint8_t>(exprSlot), line);
+            } else if (defaultConstIdx == UINT32_MAX) {
+                chunk_->writeShort(0xFFFF, line);
+                chunk_->writeByte(0xFF, line);  // 0xFF = 无表达式寄存器
             } else {
                 if (defaultConstIdx >= ir.constants.size()) {
                     Logger::Error("RegisterBytecodeBackend: DEFINE_CLASS 字段默认值常量索引越界", "RegIR");
@@ -692,11 +732,12 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
                 const Value& defaultVal = ir.constants[defaultConstIdx];
                 uint16_t constIdx = chunk_->addConstant(defaultVal);
                 chunk_->writeShort(constIdx, line);
+                chunk_->writeByte(0xFF, line);  // 0xFF = 无表达式寄存器
             }
         }
         chunk_->writeByte(static_cast<uint8_t>(methodCount), line);
         for (uint32_t i = 0; i < methodCount; ++i) {
-            size_t base = 3 + fieldCount * 2 + 1 + i * 2;
+            size_t base = 3 + fieldCount * 3 + 1 + i * 2;
             uint16_t mIdx = addStringConstant(globalName(instr.operands[base].index), ir);
             uint16_t fIdx = addStringConstant(globalName(instr.operands[base + 1].index), ir);
             chunk_->writeShort(mIdx, line);

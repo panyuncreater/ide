@@ -4,6 +4,8 @@
 #include "interpreter/NumericUtils.h"  // #14: OverflowCheck
 #include "lexer/Lexer.h"      // VM-IMPORT: 模块源码词法分析
 #include "parser/Parser.h"    // VM-IMPORT: 模块源码语法分析
+#include "common/RuntimeLimits.h"  // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "ast/ModuleIsolation.h"  // BUG-AUDIT-MOD-2: IR 模块隔离（非导出顶层名前缀化）
 #include "Logger.h"
 #include <cassert>
 #include <sstream>
@@ -121,7 +123,8 @@ AstIRBuilder::AstIRBuilder() {
 
 std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
     // 限制3：预扫描顶层声明，分配全局槽位
-    preScanTopLevelDecls(program);
+    // BUG-IR-PRES-1 fix: 主模块不预扫描 FunDecl（对齐 compile() 的有意不对称设计）
+    preScanTopLevelDecls(program, true);
     // 遍历顶层语句，逐个转换
     for (auto& stmt : program.statements) {
         if (!stmt) continue;
@@ -149,6 +152,8 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
                       std::to_string(ir_->localCount) +
                       "，函数 " + ir_->name + ")，RegisterVM 将无法加载此函数", "IR");
     }
+    // BUG-IDE-12 fix: 保存 main 函数 slot→name 映射（顶层局部变量）
+    ir_->localSlotNames = localSlotNames_;
     module_->mainFunction = std::move(ir_);
     // 返回 ir_（转移所有权给调用者；module_ 通过 getModule() 仍可访问 functions）
     return std::move(module_->mainFunction);
@@ -156,10 +161,15 @@ std::unique_ptr<IRFunction> AstIRBuilder::build(Block& program) {
 
 // ---- 全局槽位管理（限制3 / B4: 已内联到 IR.h，委托给 globalSlotAllocator_）----
 
-void AstIRBuilder::preScanTopLevelDecls(Block& program) {
+void AstIRBuilder::preScanTopLevelDecls(Block& program, bool isMainModule) {
     // 遍历顶层语句，为 VarDecl/ClassDecl/FunDecl/ExportStmt 分配全局槽位
     // BUG-FIX: 原实现漏掉 NODE_FUN_DECL 和 NODE_EXPORT_STMT，导致前向函数引用
     // 和主程序 export 声明在 IR 路径下全局槽位未预分配。对齐 Compiler::preScanModuleGlobals。
+    // BUG-IR-PRES-1 fix: 主模块不预扫描 FunDecl（对齐 compile() 的有意不对称设计）。
+    // compile() 不预扫描 FunDecl 是为了避免 `var f = funName` 静默 null——函数声明
+    // 在运行时才将函数值写入全局槽位，预扫描会提前分配槽位但值为 null，导致前向引用
+    // 返回 null 而非报错。模块预扫描仍包含 FunDecl（visitImportStmt 用 lookupGlobalSlot
+    // 验证导出名是否存在）。
     for (auto& stmt : program.statements) {
         if (!stmt) continue;
         switch (stmt->nodeType) {
@@ -170,7 +180,9 @@ void AstIRBuilder::preScanTopLevelDecls(Block& program) {
             allocateGlobalSlot(static_cast<ClassDecl*>(stmt.get())->name);
             break;
         case NodeType::NODE_FUN_DECL:
-            allocateGlobalSlot(static_cast<FunDecl*>(stmt.get())->name);
+            if (!isMainModule) {  // BUG-IR-PRES-1 fix: 主模块跳过 FunDecl
+                allocateGlobalSlot(static_cast<FunDecl*>(stmt.get())->name);
+            }
             break;
         case NodeType::NODE_EXPORT_STMT: {
             auto* exp = static_cast<ExportStmt*>(stmt.get());
@@ -184,7 +196,9 @@ void AstIRBuilder::preScanTopLevelDecls(Block& program) {
                     allocateGlobalSlot(static_cast<ClassDecl*>(decl)->name);
                     break;
                 case NodeType::NODE_FUN_DECL:
-                    allocateGlobalSlot(static_cast<FunDecl*>(decl)->name);
+                    if (!isMainModule) {  // BUG-IR-PRES-1 fix: 主模块跳过 FunDecl
+                        allocateGlobalSlot(static_cast<FunDecl*>(decl)->name);
+                    }
                     break;
                 default: break;
                 }
@@ -204,6 +218,18 @@ void AstIRBuilder::preScanTopLevelDecls(Block& program) {
 // 全局槽位由 globalSlotAllocator_ 统一分配，模块的顶层声明自然成为主程序的全局变量。
 
 void AstIRBuilder::handleImportStmt(ImportStmt& node) {
+    // BUG-AUDIT-MOD-2 fix: 模块隔离（AST 重写 + 作用域分析）
+    // -----------------------------------------------------------
+    // VM/IR 编译期模块内联——加载模块源码、解析 AST、IR lowering 模块语句。
+    // 模块代码在编译期被"展开"到主程序 IR 中，VM/RegisterVM 运行时无需模块加载机制。
+    //
+    // 在 IR lowering 前对模块 AST 调用 ModuleTopLevelRenamer::rename，将模块的
+    // 非导出顶层声明名前缀化为 `__mod_<hash>__<name>`，并递归重写模块内引用。
+    // 导入方无法用原名访问模块的非导出名，与 Interpreter 的模块隔离语义对齐。
+    // - run-once: 同一模块多次 import 时仅编译/lowering 一次（linkedModuleSet_ 保证）
+    // - 安全保障: export 标记检查（BUG-AUDIT-MOD-1）+ 深度限制（BUG-AUDIT-MOD-3）
+    //   + AST 隔离（BUG-AUDIT-MOD-2，本处实施）
+
     // 1. 路径规范化与安全校验（对齐 Compiler::normalizeModulePath）
     std::string path = node.modulePath;
     for (char& c : path) { if (c == '\\') c = '/'; }
@@ -212,7 +238,9 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
         hasError_ = true; errorMessage_ = "模块路径不能为空"; errorLine_ = node.line;
         return;
     }
-    if (path[0] == '/' || (path.size() >= 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\'))) {
+    // BUG-MOD-1 fix: 与 Compiler::normalizeModulePath 保持一致——拒绝所有 'X:' 开头形式，
+    // 覆盖 'C:/'、'C:foo'、'D:path' 等 Windows 驱动器路径。
+    if (path[0] == '/' || (path.size() >= 2 && path[1] == ':')) {
         hasError_ = true; errorMessage_ = "模块路径不能为绝对路径: " + path; errorLine_ = node.line;
         return;
     }
@@ -230,14 +258,17 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
 
     // 2. run-once 检查
     if (linkedModuleSet_.count(path)) {
-        // 已编译——验证具名导入
+        // BUG-AUDIT-MOD-1 fix: 已编译模块的具名导入验证也检查 export 集合（对齐 Interpreter）
         if (!node.importAll && !node.names.empty()) {
-            for (const auto& name : node.names) {
-                if (lookupGlobalSlot(name) < 0) {
-                    hasError_ = true;
-                    errorMessage_ = "模块 '" + path + "' 未导出名称: " + name;
-                    errorLine_ = node.line;
-                    return;
+            auto expIt = moduleExports_.find(path);
+            if (expIt != moduleExports_.end()) {
+                for (const auto& name : node.names) {
+                    if (expIt->second.find(name) == expIt->second.end()) {
+                        hasError_ = true;
+                        errorMessage_ = "模块 " + path + " 中未导出名称: " + name;
+                        errorLine_ = node.line;
+                        return;
+                    }
                 }
             }
         }
@@ -247,6 +278,14 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
     // 3. 循环依赖检测
     if (moduleLoadingSet_.count(path)) {
         hasError_ = true; errorMessage_ = "检测到循环依赖: " + path; errorLine_ = node.line;
+        return;
+    }
+
+    // BUG-AUDIT-MOD-3 fix: 模块加载深度保护（对齐 InterpreterModules.cpp:76-78）
+    if (moduleLoadingStack_.size() >= RuntimeLimits::MAX_RECURSION_DEPTH) {
+        hasError_ = true;
+        errorMessage_ = "模块导入深度超过限制 (" + std::to_string(RuntimeLimits::MAX_RECURSION_DEPTH) + ")";
+        errorLine_ = node.line;
         return;
     }
 
@@ -293,12 +332,38 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
         return;
     }
 
-    // 7. 标记为正在加载
+    // 6.5 BUG-AUDIT-MOD-2 fix: 模块隔离——重命名非导出顶层名为 `__mod_<hash>__<name>`
+    // 在预扫描前重写 AST，确保重命名后的名字进入全局槽位分配与 export 集合
+    ModuleTopLevelRenamer::rename(*moduleAst, path);
+
+    // 7. 标记为正在加载（循环检测 + 深度保护）
     moduleLoadingSet_.insert(path);
+    moduleLoadingStack_.push_back(path);
 
     // 8. 预扫描模块顶层声明，分配全局槽位
     preScanTopLevelDecls(*moduleAst);
     // 注：preScanTopLevelDecls 已处理 ExportStmt 包装的声明（BUG-FIX 后对齐 Compiler）
+
+    // 8.5 BUG-AUDIT-MOD-1 fix: 收集模块导出名称（对齐 Compiler::visitImportStmt 第 7.5 步）
+    {
+        std::unordered_set<std::string> exports;
+        for (auto& stmt : moduleAst->statements) {
+            if (!stmt || stmt->nodeType != NodeType::NODE_EXPORT_STMT) continue;
+            auto* exp = static_cast<ExportStmt*>(stmt.get());
+            if (!exp->declaration) continue;
+            ASTNode* decl = exp->declaration.get();
+            switch (decl->nodeType) {
+            case NodeType::NODE_VAR_DECL:
+                exports.insert(static_cast<VarDecl*>(decl)->name); break;
+            case NodeType::NODE_CLASS_DECL:
+                exports.insert(static_cast<ClassDecl*>(decl)->name); break;
+            case NodeType::NODE_FUN_DECL:
+                exports.insert(static_cast<FunDecl*>(decl)->name); break;
+            default: break;
+            }
+        }
+        moduleExports_[path] = std::move(exports);
+    }
 
     // 9. 内联 visitNode 模块语句（递归处理模块自身的 import）
     for (auto& stmt : moduleAst->statements) {
@@ -307,26 +372,33 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
             // BUG-FIX: 嵌套 import 失败后立即中止，避免基于不完整状态继续生成坏 IR
             if (hasError_) {
                 moduleLoadingSet_.erase(path);
+                moduleLoadingStack_.pop_back();  // BUG-AUDIT-MOD-3
                 return;
             }
-            // 表达式语句的返回值需 POP（对齐 build() 中的逻辑）
-            // visitNode 产生的 vreg 若未被消费，IR lowering 时 BytecodeIRBackend 会压栈
+            // BUG-IR-POP-1 fix: 表达式语句的返回值需 POP（对齐 build() L137-139 中的逻辑）
+            if (needsPopForExprStmt(stmt->nodeType)) {
+                emitIR(IROp::POP, {}, stmt->line);
+            }
         }
     }
 
     // 10. 保留模块 AST，从加载集移除
     moduleAsts_.push_back(std::move(moduleAst));
     moduleLoadingSet_.erase(path);
+    moduleLoadingStack_.pop_back();  // BUG-AUDIT-MOD-3
     linkedModuleSet_.insert(path);
 
-    // 11. 具名导入验证
+    // 11. BUG-AUDIT-MOD-1 fix: 具名导入验证改为检查 export 集合（对齐 Interpreter）
     if (!node.importAll && !node.names.empty()) {
-        for (const auto& name : node.names) {
-            if (lookupGlobalSlot(name) < 0) {
-                hasError_ = true;
-                errorMessage_ = "模块 '" + path + "' 未导出名称: " + name;
-                errorLine_ = node.line;
-                return;
+        auto expIt = moduleExports_.find(path);
+        if (expIt != moduleExports_.end()) {
+            for (const auto& name : node.names) {
+                if (expIt->second.find(name) == expIt->second.end()) {
+                    hasError_ = true;
+                    errorMessage_ = "模块 " + path + " 中未导出名称: " + name;
+                    errorLine_ = node.line;
+                    return;
+                }
             }
         }
     }
@@ -665,7 +737,15 @@ void AstIRBuilder::collectFreeVars(const ASTNode& node,
         }
         case NodeType::NODE_CLASS_DECL: {
             const auto& cls = static_cast<const ClassDecl&>(node);
+            // BUG-IR-FV-1 fix: 类名先入当前作用域，使方法体/字段初始化器可引用类名（如 new C()）
             scopes.back().insert(cls.name);
+            // 递归分析类成员：方法（FunDecl）在嵌套作用域中分析并向上传播自由变量，
+            // 字段初始化器（VarDecl）在当前作用域中分析。
+            // 原实现仅插入类名后 break，不递归成员，导致类方法体中引用的外层变量
+            // 未被识别为外层函数的自由变量，upvalue 传递链断裂。
+            for (const auto& member : cls.members) {
+                if (member) collectFreeVars(*member, scopes, freeVars);
+            }
             break;
         }
         default:
@@ -691,6 +771,18 @@ std::unordered_set<std::string> AstIRBuilder::computeFreeVars(const FunDecl& fn)
 }
 
 // ---- AST 节点转换：分派 ----
+
+// BUG-IR-POP-2/3 fix: 语句上下文统一 POP 处理。
+// 对齐 Compiler::compileStatement 的语义：表达式语句的返回值需 POP 消费。
+// 在 if then/else、while body、for body 等语句上下文使用此方法，
+// 避免手动 POP 遗漏导致栈泄漏（循环内单表达式语句）或栈不平衡（then/else 路径栈深度不一致）。
+void AstIRBuilder::visitStatement(ASTNode* node) {
+    if (!node) return;
+    visitNode(node);
+    if (needsPopForExprStmt(node->nodeType)) {
+        emitIR(IROp::POP, {}, node->line);
+    }
+}
 
 IROperand AstIRBuilder::visitNode(ASTNode* node) {
     if (!node) return IROperand::vreg(0);  // 空节点返回空 vreg
@@ -746,14 +838,26 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
         handleImportStmt(*importNode);
         return IROperand::vreg(0);
     }
-    case NodeType::NODE_SUPER_EXPR:
+    case NodeType::NODE_SUPER_EXPR: {
+        // BUG-IR-SUPER-1 fix: super 表达式编译为加载 this（对齐 Compiler::visitSuperExpr
+        // 发射 OP_GET_LOCAL 0 的语义）。调用点（visitMethodCall/visitMemberAccess）
+        // 检测 super 对象并使用父类查找。
+        // 原实现落入 default case 不发射任何 IR，Release 构建中 assert 被剥离后
+        // 返回空 vreg，后续 emit POP 无对应压栈导致栈下溢。
+        return emitLoadVar("this", node->line);
+    }
     default:
         // 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
         // 静默产生坏代码。用 assert 兜底，Release 构建中 assert 被剥离时返回空 vreg
         // 至少不会 emit 错误指令。
         // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+        // BUG-IR-VISITNODE-ERR fix: 同时设置 hasError_ 阻止 build() 继续生成坏 IR。
         Logger::Error("AstIRBuilder::visitNode: 未支持的 AST 节点类型 " +
                       std::to_string(static_cast<int>(node->nodeType)), "IR");
+        hasError_ = true;
+        errorMessage_ = "AstIRBuilder: 未支持的 AST 节点类型 " +
+                        std::to_string(static_cast<int>(node->nodeType));
+        errorLine_ = node->line;
         assert(false && "AstIRBuilder::visitNode: 未支持的 AST 节点类型");
         return IROperand::vreg(0);
     }
@@ -915,6 +1019,15 @@ void AstIRBuilder::visitVarDecl(VarDecl* node) {
     IROperand val;
     if (node->initializer) {
         val = visitNode(node->initializer.get());
+    } else if (!node->typeAnnotation.empty() &&
+               definedClassNames_.find(node->typeAnnotation) != definedClassNames_.end()) {
+        // BUG-IR-VARDECL-1 fix: 类名类型注解无初始化器 → 自动构造实例，
+        // 对齐 Compiler.cpp visitVarDecl L620-626 的 S2 fix 语义。
+        // 原实现统一初始化为 null，导致 IR 路径 `var x MyClass;` 得到 null
+        // 而 Compiler 路径得到 new MyClass()，三后端不一致。
+        val = ir_->allocVReg();
+        uint32_t nameIdx = ir_->addGlobal(node->typeAnnotation);
+        emitIR(IROp::CLASS_NEW, { val, IROperand::funcName(nameIdx), IROperand::imm(0) }, node->line);
     } else {
         // 无初始化器：初始化为 null
         val = ir_->allocVReg();
@@ -928,6 +1041,11 @@ void AstIRBuilder::visitVarDecl(VarDecl* node) {
     if (inFunction_) {
         // 函数内：注册为 LOCAL（限制5：记录到当前 BlockScope）
         uint32_t slot = nextLocalSlot_++;
+        // BUG-IDE-12 fix: 记录 slot→name 映射（跨作用域累积，不随块退出清除）
+        if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
+            localSlotNames_.resize(slot + 1);
+        }
+        localSlotNames_[slot] = node->name;
         // CRITICAL-2 fix: 覆盖 varMap_ 前保存旧条目，供 leaveBlockScope 恢复外层绑定
         if (!blockScopes_.empty()) {
             auto it = varMap_.find(node->name);
@@ -977,7 +1095,9 @@ void AstIRBuilder::visitIfStmt(IfStmt* node) {
     // then 分支：先 POP 消费条件值（peek 残留），再编译 then 体
     emitIR(IROp::POP, {}, node->line);
     if (inFunction_) enterBlockScope();
-    visitNode(node->thenBranch.get());
+    // BUG-IR-POP-3 fix: 使用 visitStatement 统一处理表达式语句 POP，
+    // 避免无花括号单语句体（如 `if (c) foo();`）栈不平衡。
+    visitStatement(node->thenBranch.get());
     if (inFunction_) leaveBlockScope();
     emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
     // else 分支：先 POP 消费条件值（peek 残留），再编译 else 体
@@ -985,7 +1105,8 @@ void AstIRBuilder::visitIfStmt(IfStmt* node) {
     emitIR(IROp::POP, {}, node->line);
     if (node->elseBranch) {
         if (inFunction_) enterBlockScope();
-        visitNode(node->elseBranch.get());
+        // BUG-IR-POP-3 fix: 使用 visitStatement 统一处理表达式语句 POP
+        visitStatement(node->elseBranch.get());
         if (inFunction_) leaveBlockScope();
     }
     emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
@@ -1007,7 +1128,9 @@ void AstIRBuilder::visitWhileStmt(WhileStmt* node) {
     emitIR(IROp::POP, {}, node->line);  // 循环体路径：POP 消费条件值
     // 循环体（限制5：块作用域包裹）
     if (inFunction_) enterBlockScope();
-    visitNode(node->body.get());
+    // BUG-IR-POP-2 fix: 使用 visitStatement 统一处理表达式语句 POP，
+    // 避免无花括号单语句体（如 `while (c) foo();`）循环内栈泄漏导致栈溢出。
+    visitStatement(node->body.get());
     if (inFunction_) leaveBlockScope();
     emitIR(IROp::JUMP, { IROperand::label(startLabel) }, node->line);
     // 条件假路径：条件值在栈上（JUMP_IF_FALSE peek），POP 消费
@@ -1019,6 +1142,12 @@ void AstIRBuilder::visitWhileStmt(WhileStmt* node) {
 }
 
 void AstIRBuilder::visitForStmt(ForStmt* node) {
+    // BUG-IR-SCOPE-1 fix: 对整个 for 语句包裹单一 block scope，
+    // 使 initializer 声明的变量（如 `for (var i = 0; ...)`）作用域限定在循环内，
+    // 循环结束后从 varMap_ 移除，对齐 Compiler.cpp 的 savedLocals 语义。
+    // 原实现仅对 body 包裹 block scope，initializer 在外层作用域编译，
+    // 导致 `for (var i...) {}` 后 `i` 仍可达（三后端不一致）。
+    if (inFunction_) enterBlockScope();
     // 编译初始化表达式
     if (node->initializer) {
         visitNode(node->initializer.get());
@@ -1049,7 +1178,9 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     }
     // 编译循环体（限制5：块作用域包裹）
     if (inFunction_) enterBlockScope();
-    visitNode(node->body.get());
+    // BUG-IR-POP-2 fix: 使用 visitStatement 统一处理表达式语句 POP，
+    // 避免无花括号单语句体（如 `for (...) foo();`）循环内栈泄漏导致栈溢出。
+    visitStatement(node->body.get());
     if (inFunction_) leaveBlockScope();
     // continue 目标：update 块入口
     emitIR(IROp::LABEL, { IROperand::label(continueLabel) }, node->line);
@@ -1071,6 +1202,31 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     // break 目标：循环体已清空栈，无需 POP
     emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
     loopStack_.pop_back();
+    // BUG-IR-SCOPE-1 fix: 整个 for 语句的 block scope 在此退出，
+    // 回收 initializer 声明的局部变量槽位并从 varMap_ 移除。
+    if (inFunction_) {
+        leaveBlockScope();
+    } else {
+        // 顶层 for 循环：对齐 Compiler.cpp visitForStmt L1131-L1147 的语义，
+        // 循环退出后从 varMap_ 移除 initializer 声明的变量并发射 DELETE_VAR 清理全局。
+        // 原实现仅对 inFunction_ 路径用 block scope 清理，顶层路径遗留 varMap_ 映射，
+        // 导致 `for (var i...) {}` 后 `i` 仍可引用（与 StackVM/Interpreter 不一致）。
+        std::vector<std::string> cleanupNames;
+        // 收集 initializer 中声明的变量名（VarDecl 节点）
+        if (node->initializer && node->initializer->nodeType == NodeType::NODE_VAR_DECL) {
+            const auto* varDecl = static_cast<const VarDecl*>(node->initializer.get());
+            cleanupNames.push_back(varDecl->name);
+        }
+        for (const auto& name : cleanupNames) {
+            // 仅清理 name-based 全局变量（无预分配槽位），对齐 StackVM L1141 检查
+            auto it = varMap_.find(name);
+            if (it != varMap_.end() && it->second.kind == VarInfo::Kind::GLOBAL_NAME) {
+                uint32_t nameIdx = it->second.index;
+                emitIR(IROp::DELETE_VAR, { IROperand::global(nameIdx) }, node->line);
+                varMap_.erase(it);
+            }
+        }
+    }
 }
 
 void AstIRBuilder::visitFunDecl(FunDecl* node) {
@@ -1088,6 +1244,8 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     auto savedVarTypes = std::move(varTypes_);  // 2026-06-29: 类型注解快照
     bool savedInFunction = inFunction_;
     uint32_t savedLocalSlot = nextLocalSlot_;
+    // BUG-IDE-12 fix: 保存父函数的 slot→name 映射，子函数独立维护
+    auto savedLocalSlotNames = std::move(localSlotNames_);
     auto savedLoopStack = std::move(loopStack_);
     auto savedBlockScopes = std::move(blockScopes_);
     int savedBlockDepth = blockDepth_;
@@ -1121,6 +1279,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     nextLocalSlot_ = 0;
     varMap_.clear();
     varTypes_.clear();  // 2026-06-29: 清空子函数类型注解
+    localSlotNames_.clear();  // BUG-IDE-12 fix: 清空 slot→name 映射
     loopStack_.clear();
     blockScopes_.clear();
     blockDepth_ = 0;
@@ -1136,6 +1295,9 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     if (compilingMethod_) {
         nextLocalSlot_ = 1;
         varMap_["this"] = { VarInfo::Kind::LOCAL, 0 };
+        // BUG-IDE-12 fix: 记录 slot 0 → "this"
+        localSlotNames_.resize(1);
+        localSlotNames_[0] = "this";
         ir_->arity += 1;
         ir_->requiredArity += 1;
         // R7 fix: 处理完类方法 this 预留后立即重置 compilingMethod_。
@@ -1164,6 +1326,11 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     for (size_t i = 0; i < node->params.size(); ++i) {
         uint32_t slot = nextLocalSlot_++;
         varMap_[node->params[i]] = { VarInfo::Kind::LOCAL, slot };
+        // BUG-IDE-12 fix: 记录参数 slot→name
+        if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
+            localSlotNames_.resize(slot + 1);
+        }
+        localSlotNames_[slot] = node->params[i];
     }
 
     // CRITICAL-1 fix: 前向自由变量分析。在编译函数体前，先收集所有自由变量，
@@ -1228,6 +1395,8 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     for (const auto& uv : currentUpvalues_) {
         ir_->upvalues.push_back({ uv.outerIdx, uv.isLocal });
     }
+    // BUG-IDE-12 fix: 保存 slot→name 映射到 IRFunction，供 RegisterBytecodeBackend 复制到 chunk
+    ir_->localSlotNames = localSlotNames_;
 
     // 10. 将子 IRFunction 添加到 module_（不再丢弃 childIr）
     module_->addFunction(std::move(ir_));
@@ -1239,6 +1408,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         varTypes_ = std::move(savedVarTypes);  // 2026-06-29
         inFunction_ = savedInFunction;
         nextLocalSlot_ = savedLocalSlot;
+        localSlotNames_ = std::move(savedLocalSlotNames);  // BUG-IDE-12 fix
         loopStack_ = std::move(savedLoopStack);
         blockScopes_ = std::move(savedBlockScopes);
         blockDepth_ = savedBlockDepth;
@@ -1263,6 +1433,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     varTypes_ = std::move(savedVarTypes);  // 2026-06-29
     inFunction_ = savedInFunction;
     nextLocalSlot_ = savedLocalSlot;
+    localSlotNames_ = std::move(savedLocalSlotNames);  // BUG-IDE-12 fix
     loopStack_ = std::move(savedLoopStack);
     blockScopes_ = std::move(savedBlockScopes);
     blockDepth_ = savedBlockDepth;
@@ -1304,6 +1475,11 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         // visitFunCall 现在通过 LOAD_LOCAL + CALL_EXPR 调用嵌套闭包）。
         uint32_t slot = nextLocalSlot_++;
         varMap_[fnName] = { VarInfo::Kind::LOCAL, slot };
+        // BUG-IDE-12 fix: 记录 slot→name 映射
+        if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
+            localSlotNames_.resize(slot + 1);
+        }
+        localSlotNames_[slot] = fnName;
         innerFunctions_.insert(fnName);
         innerFunctionSlots_[fnName] = static_cast<int>(slot);
         emitIR(IROp::STORE_LOCAL, { IROperand::local(slot), dest }, node->line);
@@ -1901,6 +2077,8 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
     // 使 REG_DEFINE_CLASS 能填充 classInfo_ 的 methods/fieldOrder/parent。
     // 原实现仅 emit DEFINE_CLASS{name}，导致 executeMethodCallImpl/executeClassNewImpl
     // 查 classInfo_[cls].methods 永远为空，类系统完全不可用。
+    // BUG-IR-VARDECL-1 fix: 记录类名，供 visitVarDecl 检查类型注解是否为类名。
+    definedClassNames_.insert(node->name);
     uint32_t nameIdx = ir_->addGlobal(node->name);
     uint32_t parentIdx = node->superClassName.empty()
         ? UINT32_MAX
@@ -1909,22 +2087,37 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
     // 收集字段名和默认值常量索引（BUG-INH-1 fix: 原实现丢失字段默认值表达式，
     // 所有字段在 IR 路径下被初始化为 null。现在对字面量初始值提取 Value 并存入常量池，
     // 非字面量表达式保持 UINT32_MAX 标记 = null，对齐 Compiler.cpp:1843-1847 直接路径）
+    // BUG-INH-IR-1 fix: 非字面量表达式不再降级为 null，改为在 DEFINE_CLASS 之前 emit 求值 IR 序列，
+    // 将求值结果存入临时局部变量，DEFINE_CLASS 携带局部变量槽位，后端 lowering 时 emit OP_GET_LOCAL + OP_INIT_FIELD。
+    // 这对齐 Compiler.cpp 直接路径的 compileNode(initializer) 栈传递模式，实现三后端一致性。
     std::vector<uint32_t> fieldIdxs;
     std::vector<uint32_t> fieldDefaultConstIdxs;  // BUG-INH-1 fix
+    std::vector<uint32_t> fieldExprLocalSlots;    // BUG-INH-IR-1 fix: 非字面量表达式的临时局部变量槽位
     for (auto& m : node->members) {
         if (m && m->nodeType == NodeType::NODE_VAR_DECL) {
             VarDecl* vd = static_cast<VarDecl*>(m.get());
             fieldIdxs.push_back(ir_->addGlobal(vd->name));
             // BUG-INH-1 fix: 提取字面量默认值
             uint32_t defaultIdx = UINT32_MAX;  // 默认 null
+            uint32_t exprSlot = UINT32_MAX;    // BUG-INH-IR-1 fix: 非字面量表达式临时槽位
             if (vd->initializer) {
                 Value defaultVal;
                 if (extractConstant(vd->initializer.get(), defaultVal)) {
                     defaultIdx = ir_->addConstant(defaultVal);
+                } else {
+                    // BUG-INH-IR-1 fix: 非字面量表达式，emit 求值 IR 序列，存入临时局部变量。
+                    // 对齐 BIN_AND/BIN_OR 短路路径的 STORE_LOCAL + POP 模式（IR.cpp visitBinaryOp 的 BIN_AND 分支）：
+                    //   visitNode 推 vreg 到栈顶 → STORE_LOCAL peek 写入 slot → POP 清栈
+                    // DEFINE_CLASS lowering 时 emit OP_GET_LOCAL slot 读取并 OP_INIT_FIELD 设置。
+                    // local slot 在当前函数帧内有效，class 声明通常在顶层，slot 生命周期足够。
+                    IROperand val = visitNode(vd->initializer.get());
+                    exprSlot = nextLocalSlot_++;
+                    emitIR(IROp::STORE_LOCAL, { IROperand::local(exprSlot), val }, vd->line);
+                    emitIR(IROp::POP, {}, vd->line);  // 清栈（STORE_LOCAL peek 不 pop）
                 }
-                // 非字面量表达式保持 UINT32_MAX（null），文档化为已知限制
             }
             fieldDefaultConstIdxs.push_back(defaultIdx);
+            fieldExprLocalSlots.push_back(exprSlot);
         }
     }
 
@@ -1941,14 +2134,16 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
         }
     }
 
-    // DEFINE_CLASS 操作数布局（BUG-INH-1 fix: 新增字段默认值常量索引）：
+    // DEFINE_CLASS 操作数布局（BUG-INH-1 fix: 新增字段默认值常量索引；
+    //   BUG-INH-IR-1 fix: 新增字段表达式临时局部变量槽位）：
     //   [0] className (FUNC_NAME)
     //   [1] parentName (IMM_UINT, UINT32_MAX=无父类)
     //   [2] fieldCount (IMM_UINT)
-    //   [3+i*2] field name (FIELD_NAME)
-    //   [3+i*2+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值)
-    //   [3+2F] methodCount (IMM_UINT)
-    //   [3+2F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+    //   [3+i*3] field name (FIELD_NAME)
+    //   [3+i*3+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值/有表达式)
+    //   [3+i*3+2] fieldExprLocalSlot (IMM_UINT, UINT32_MAX=使用常量或null, 否则使用临时局部变量)
+    //   [3+3F] methodCount (IMM_UINT)
+    //   [3+3F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
     std::vector<IROperand> ops;
     ops.push_back(IROperand::funcName(nameIdx));
     ops.push_back(IROperand::imm(parentIdx));
@@ -1956,6 +2151,7 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
     for (size_t i = 0; i < fieldIdxs.size(); ++i) {
         ops.push_back(IROperand::field(fieldIdxs[i]));
         ops.push_back(IROperand::imm(fieldDefaultConstIdxs[i]));  // BUG-INH-1 fix
+        ops.push_back(IROperand::imm(fieldExprLocalSlots[i]));    // BUG-INH-IR-1 fix
     }
     ops.push_back(IROperand::imm(static_cast<uint32_t>(methodIdxs.size())));
     for (auto& mp : methodIdxs) {
@@ -1993,12 +2189,12 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
 void AstIRBuilder::visitBreakStmt(BreakStmt* node) {
     if (loopStack_.empty()) {
         // R7 fix: 循环外 break 静默无操作会导致语义错误未报告。
-        // 对齐 Compiler.cpp 第 1141-1144 行的 error() 行为，避免两路径不一致。
+        // 对齐 Compiler.cpp visitBreakStmt 的 error() 行为，避免两路径不一致。
         Logger::Error("break 只能在循环体内使用", "IR");
         return;
     }
     // BUG-EXC-2 fix: break 跳出循环时，需为循环内的每个 try 块发射 TRY_END 弹出 handler，
-    // 对齐 Compiler.cpp:1194 的 tryDepthInLoop 逻辑，否则 tryStack_ handler 泄漏。
+    // 对齐 Compiler.cpp visitBreakStmt 的 tryDepthInLoop 逻辑，否则 tryStack_ handler 泄漏。
     int tryDepthInLoop = tryDepth_ - loopStack_.back().tryDepthAtStart;
     for (int i = 0; i < tryDepthInLoop; ++i) {
         emitIR(IROp::TRY_END, {}, node->line);
@@ -2009,7 +2205,7 @@ void AstIRBuilder::visitBreakStmt(BreakStmt* node) {
 void AstIRBuilder::visitContinueStmt(ContinueStmt* node) {
     if (loopStack_.empty()) {
         // R7 fix: 循环外 continue 静默无操作会导致语义错误未报告。
-        // 对齐 Compiler.cpp 第 1160-1163 行的 error() 行为，避免两路径不一致。
+        // 对齐 Compiler.cpp visitContinueStmt 的 error() 行为，避免两路径不一致。
         Logger::Error("continue 只能在循环体内使用", "IR");
         return;
     }
@@ -2044,6 +2240,11 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
         if (inFunction_) {
             // 函数内：分配局部 slot 并绑定
             uint32_t slot = nextLocalSlot_++;
+            // BUG-IDE-12 fix: 记录 catch 变量 slot→name 映射
+            if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
+                localSlotNames_.resize(slot + 1);
+            }
+            localSlotNames_[slot] = node->catchVarName;
             // AUDIT-BUG-F7 fix: 保存 varMap_ 旧条目，catch 块编译后恢复。
             // 原实现 catch 变量绑定到外层 varMap_ 且不恢复，catch 块后仍可引用，
             // 与 Interpreter/StackVM 语义不一致（后者 catch 变量仅 catch 块内可见）。
@@ -2093,22 +2294,57 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 uint32_t idx = ir_->addGlobal(node->catchVarName);
                 varMap_[node->catchVarName] = { VarInfo::Kind::GLOBAL_NAME, idx };
                 emitIR(IROp::DEFINE_GLOBAL, { IROperand::global(idx), excVreg }, node->line);
-                // 编译 catch 块后恢复映射 + varMap_ + 原值
+                // BUG-IR-TRY-CATCH-WRAP fix: 用内层 TRY_BEGIN 包装 catch 块，确保 catch 块内
+                // throw 时 cleanup IR（恢复遮蔽全局原值）仍执行。对齐 Compiler.cpp
+                // visitTryStmt L1794-L1858 的 needsCleanupWrap 模式。
+                uint32_t cleanupThrowLabel = ir_->allocLabel();
+                emitIR(IROp::TRY_BEGIN, { IROperand::label(cleanupThrowLabel) }, node->line);
                 if (node->catchBlock) visitNode(node->catchBlock.get());
+                emitIR(IROp::TRY_END, {}, node->line);
+                // 正常路径：恢复映射 + varMap_ + 原值
                 globalSlotAllocator_.restoreMapping(node->catchVarName, existingSlot);
                 varMap_[node->catchVarName] = { VarInfo::Kind::GLOBAL_SLOT, static_cast<uint32_t>(existingSlot) };
                 emitIR(IROp::STORE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(existingSlot)), saved }, node->line);
+                emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
+                // 异常路径：重新加载原值 + 恢复 + rethrow
+                // StackVM: 异常值在栈顶，LOAD_EXCEPTION 为 no-op，LOAD_GLOBAL push saved2，
+                //          STORE_GLOBAL pop saved2，THROW(OP_THROW) pop 栈顶异常值 rethrow。
+                // RegisterVM: 异常值在 pendingException_，LOAD_EXCEPTION 加载到 excVreg2，
+                //             LOAD_GLOBAL/STORE_GLOBAL 操作寄存器，THROW(REG_THROW) 读取 excVreg2 rethrow。
+                emitIR(IROp::LABEL, { IROperand::label(cleanupThrowLabel) }, node->line);
+                IROperand excVreg2 = ir_->allocVReg();
+                emitIR(IROp::LOAD_EXCEPTION, { excVreg2 }, node->line);
+                IROperand saved2 = ir_->allocVReg();
+                emitIR(IROp::LOAD_GLOBAL, { saved2, IROperand::imm(static_cast<uint32_t>(existingSlot)) }, node->line);
+                emitIR(IROp::STORE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(existingSlot)), saved2 }, node->line);
+                emitIR(IROp::THROW, { excVreg2 }, node->line);
                 emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
                 return;  // catch 块已编译，提前返回
             } else {
                 // 无遮蔽：直接定义为全局变量
-                int gslot = allocateGlobalSlot(node->catchVarName);
-                emitIR(IROp::DEFINE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(gslot)), excVreg }, node->line);
-                // AUDIT-BUG-F7 fix: catch 块在此编译，编译后移除 varMap_ 映射。
-                // 原实现 catch 变量变为永久全局变量，与 StackVM OP_DELETE_VAR 语义不一致。
-                // 移除 varMap_ 映射后，catch 块后引用该变量会报"未定义的变量"（对齐 StackVM）。
+                // BUG-IR-TRY-1 fix: 使用 GLOBAL_NAME kind（→ OP_DEFINE_VAR）而非 IMM_UINT
+                // kind（→ OP_DEFINE_GLOBAL slot）。原因：OP_DELETE_VAR 对 slot-based 变量置
+                // null（仍可访问），对 name-based 变量从 globals_ 擦除（→ undefined）。
+                // 对齐 StackVM Compiler.cpp visitTryStmt L1770-L1772 的 OP_DEFINE_VAR 语义。
+                uint32_t nameIdx = ir_->addGlobal(node->catchVarName);
+                varMap_[node->catchVarName] = { VarInfo::Kind::GLOBAL_NAME, nameIdx };
+                emitIR(IROp::DEFINE_GLOBAL, { IROperand::global(nameIdx), excVreg }, node->line);
+                // BUG-IR-TRY-CATCH-WRAP fix: 用内层 TRY_BEGIN 包装 catch 块，确保 catch 块内
+                // throw 时 cleanup IR（DELETE_VAR 清理 catch 变量）仍执行。
+                uint32_t cleanupThrowLabel = ir_->allocLabel();
+                emitIR(IROp::TRY_BEGIN, { IROperand::label(cleanupThrowLabel) }, node->line);
                 if (node->catchBlock) visitNode(node->catchBlock.get());
+                emitIR(IROp::TRY_END, {}, node->line);
+                // 正常路径：移除 varMap_ 映射 + 清理 catch 变量
                 varMap_.erase(node->catchVarName);
+                emitIR(IROp::DELETE_VAR, { IROperand::global(nameIdx) }, node->line);
+                emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
+                // 异常路径：清理 catch 变量 + rethrow
+                emitIR(IROp::LABEL, { IROperand::label(cleanupThrowLabel) }, node->line);
+                IROperand excVreg2 = ir_->allocVReg();
+                emitIR(IROp::LOAD_EXCEPTION, { excVreg2 }, node->line);
+                emitIR(IROp::DELETE_VAR, { IROperand::global(nameIdx) }, node->line);
+                emitIR(IROp::THROW, { excVreg2 }, node->line);
                 emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
                 return;  // AUDIT-BUG-F7: catch 块已编译，提前返回
             }
@@ -2151,6 +2387,8 @@ bool BytecodeIRBackend::lower(const IRFunction& ir) {
     chunk_->localCount = ir.localCount;
     chunk_->defaultConstIndices = ir.defaultConstIndices;
     chunk_->upvalues = ir.upvalues;  // VM-05/06: 复制 upvalue 描述符
+    // BUG-IDE-12 fix: 复制 slot→name 映射，供栈式 VM 条件断点求值反查变量名
+    chunk_->localSlotNames = ir.localSlotNames;
     vregStackDepth_.clear();
     labelToOffset_.clear();
     pendingJumps_.clear();
@@ -2171,8 +2409,10 @@ bool BytecodeIRBackend::lower(const IRFunction& ir) {
                 return false;
             }
             // 填充行号表（每条 IR 指令对应若干字节，统一用 instr.line）
+            // BUG-IBACKEND-2: 同步填充 columns（IRInstruction 暂无 column 字段，默认 0）
             while (chunk_->lines.size() < chunk_->code.size()) {
                 chunk_->lines.push_back(instr.line);
+                chunk_->columns.push_back(0);
             }
             ++instrIndex;
         }
@@ -2192,20 +2432,21 @@ uint16_t BytecodeIRBackend::addStringConstant(const std::string& s, const IRFunc
     return chunk_->addConstant(Value(s));
 }
 
-uint16_t BytecodeIRBackend::slotToNameConstant(uint32_t slot, const IRFunction& ir) {
+bool BytecodeIRBackend::slotToNameConstant(uint32_t slot, const IRFunction& ir, uint16_t& outIdx) {
     // BUG-NEW fix: GLOBAL_SLOT (IMM_UINT) → 变量名 → 字符串常量索引
     // globalSlotNames_ 由 lowerModule 从 IRModule 设置；若未设置（独立 lower 调用），
     // 回退到空名并记录错误，避免静默产生坏字节码。
-    std::string name;
-    if (globalSlotNames_ && slot < globalSlotNames_->size()) {
-        name = (*globalSlotNames_)[slot];
-    } else {
+    // BUG-IR-SLOTNAME-1 fix: 失败时不再生成占位名 "__unknown_slot_X__" 静默产生坏字节码，
+    // 改为返回 false 让调用方中止 lowering 并向上传递错误。
+    if (!globalSlotNames_ || slot >= globalSlotNames_->size()) {
         Logger::Error("BytecodeIRBackend: slotToNameConstant 槽位名表缺失或越界 (slot=" +
                       std::to_string(slot) + ")", "IR");
-        name = "__unknown_slot_" + std::to_string(slot) + "__";
+        return false;
     }
+    const std::string& name = (*globalSlotNames_)[slot];
     (void)ir;  // ir 仅用于签名一致性，addStringConstant 不依赖 ir
-    return chunk_->addConstant(Value(name));
+    outIdx = chunk_->addConstant(Value(name));
+    return true;
 }
 
 bool BytecodeIRBackend::lowerModule(const IRModule& module) {
@@ -2366,6 +2607,24 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         }
         break;
     }
+    case IROp::DELETE_VAR: {
+        // BUG-IR-TRY-1 fix: 删除全局变量（catch 块退出后清理 catch 变量）
+        // operands: [global_idx]，kind 可为 IMM_UINT (GLOBAL_SLOT) 或 GLOBAL_NAME
+        // → OP_DELETE_VAR nameConstIdx(2B)（栈式 VM 按名称常量删除）
+        if (instr.operands.size() < 1) return false;
+        if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
+            // BUG-IR-SLOTNAME-1 fix: slot→name 转换可能失败，需检查返回值
+            uint16_t nameConstIdx = 0;
+            if (!slotToNameConstant(instr.operands[0].index, ir, nameConstIdx)) return false;
+            chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_DELETE_VAR));
+            emitUint16(chunk_->code, nameConstIdx);
+        } else {
+            uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_DELETE_VAR));
+            emitUint16(chunk_->code, nameConstIdx);
+        }
+        break;
+    }
     case IROp::LOAD_UPVALUE: {
         if (instr.operands.size() < 2) return false;
         if (instr.operands[1].index >= 256) {
@@ -2451,6 +2710,12 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     case IROp::CALL: {
         // CALL dest, name_idx, arg_count, args... → OP_CALL nameIdx argCount
         if (instr.operands.size() < 3) return false;
+        // BUG-IR-BOUND-1 fix: 检查 argCount 8 位上限，对齐 RegisterBytecodeBackend L410-414
+        if (instr.operands[2].index > 255) {
+            Logger::Error("BytecodeIRBackend: CALL argCount 超出 255 上限 (" +
+                          std::to_string(instr.operands[2].index) + ")", "IR");
+            return false;
+        }
         uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[1].index), ir);
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CALL));
@@ -2460,6 +2725,12 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     }
     case IROp::CALL_EXPR: {
         if (instr.operands.size() < 3) return false;
+        // BUG-IR-BOUND-1 fix: 检查 argCount 8 位上限，对齐 RegisterBytecodeBackend L435-439
+        if (instr.operands[2].index > 255) {
+            Logger::Error("BytecodeIRBackend: CALL_EXPR argCount 超出 255 上限 (" +
+                          std::to_string(instr.operands[2].index) + ")", "IR");
+            return false;
+        }
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CALL_EXPR));
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[2].index & 0xFF));  // argCount
@@ -2515,6 +2786,12 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     // ---- 容器 ----
     case IROp::BUILD_ARRAY: {
         if (instr.operands.size() < 2) return false;
+        // BUG-IR-BOUND-1 fix: 检查 count 8 位上限，对齐 RegisterBytecodeBackend L556-560
+        if (instr.operands[1].index > 255) {
+            Logger::Error("BytecodeIRBackend: BUILD_ARRAY count 超出 255 上限 (" +
+                          std::to_string(instr.operands[1].index) + ")", "IR");
+            return false;
+        }
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_BUILD_ARRAY));
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index & 0xFF));  // count
@@ -2522,6 +2799,12 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     }
     case IROp::BUILD_DICT: {
         if (instr.operands.size() < 2) return false;
+        // BUG-IR-BOUND-1 fix: 检查 pairCount 8 位上限，对齐 RegisterBytecodeBackend L577-581
+        if (instr.operands[1].index > 255) {
+            Logger::Error("BytecodeIRBackend: BUILD_DICT pairCount 超出 255 上限 (" +
+                          std::to_string(instr.operands[1].index) + ")", "IR");
+            return false;
+        }
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_BUILD_DICT));
         chunk_->code.push_back(static_cast<uint8_t>(instr.operands[1].index & 0xFF));  // pairCount
@@ -2570,6 +2853,12 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // METHOD_CALL dest, obj, method_idx, arg_count, args...
         // → OP_METHOD_CALL nameIdx(2B) argCount(1B) recvVarIdx(2B) recvSlot(1B)
         if (instr.operands.size() < 4) return false;
+        // BUG-IR-BOUND-1 fix: 检查 argCount 8 位上限（含 this 共 255），对齐 RegisterBytecodeBackend L460-464
+        if (instr.operands[3].index > 254) {
+            Logger::Error("BytecodeIRBackend: METHOD_CALL argCount 超出 254 上限（含 this 共 255）(" +
+                          std::to_string(instr.operands[3].index) + ")", "IR");
+            return false;
+        }
         uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[2].index), ir);
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_METHOD_CALL));
@@ -2584,6 +2873,12 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // operands: [dest, this_vreg, method_idx, class_idx, arg_count, args...]
         // → OP_SUPER_CALL nameIdx(2B) argCount(1B) recvVarIdx(2B) recvSlot(1B) classIdx(2B)
         if (instr.operands.size() < 5) return false;
+        // BUG-IR-BOUND-1 fix: 检查 argCount 8 位上限（含 this 共 255），对齐 RegisterBytecodeBackend L487-491
+        if (instr.operands[4].index > 254) {
+            Logger::Error("BytecodeIRBackend: SUPER_CALL argCount 超出 254 上限（含 this 共 255）(" +
+                          std::to_string(instr.operands[4].index) + ")", "IR");
+            return false;
+        }
         uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[2].index), ir);
         uint16_t classConstIdx = addStringConstant(globalName(instr.operands[3].index), ir);
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
@@ -2598,13 +2893,15 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
 
     // ---- 类 ----
     case IROp::DEFINE_CLASS: {
-        // 操作数（BUG-INH-1 fix: 新增字段默认值常量索引）:
+        // 操作数（BUG-INH-1 fix: 新增字段默认值常量索引；
+        //   BUG-INH-IR-1 fix: 新增字段表达式临时局部变量槽位）:
         //   [0]=className(FUNC_NAME), [1]=parentName(IMM_UINT, UINT32_MAX=无父类)
         //   [2] fieldCount (IMM_UINT)
-        //   [3+i*2] field name (FIELD_NAME)
-        //   [3+i*2+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值)
-        //   [3+2F] methodCount (IMM_UINT)
-        //   [3+2F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
+        //   [3+i*3] field name (FIELD_NAME)
+        //   [3+i*3+1] fieldDefaultConstIdx (IMM_UINT, UINT32_MAX=null/无默认值/有表达式)
+        //   [3+i*3+2] fieldExprLocalSlot (IMM_UINT, UINT32_MAX=使用常量或null, 否则使用临时 local slot)
+        //   [3+3F] methodCount (IMM_UINT)
+        //   [3+3F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
         if (instr.operands.size() < 2) return false;
         uint32_t nameIdx = instr.operands[0].index;
         uint16_t nameConstIdx = addStringConstant(globalName(nameIdx), ir);
@@ -2623,14 +2920,26 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         if (instr.operands.size() >= 3) {
             uint32_t fieldCount = instr.operands[2].index;
             for (uint32_t fi = 0; fi < fieldCount; ++fi) {
-                size_t nameOpIdx = 3 + fi * 2;
-                size_t defaultOpIdx = 3 + fi * 2 + 1;
-                if (defaultOpIdx >= instr.operands.size()) return false;
+                size_t nameOpIdx = 3 + fi * 3;
+                size_t defaultOpIdx = 3 + fi * 3 + 1;
+                size_t exprLocalSlotOpIdx = 3 + fi * 3 + 2;
+                if (exprLocalSlotOpIdx >= instr.operands.size()) return false;
                 uint32_t fieldGlobalIdx = instr.operands[nameOpIdx].index;
                 uint16_t fieldConstIdx = addStringConstant(globalName(fieldGlobalIdx), ir);
                 // BUG-INH-1 fix: 从 IR 常量池提取字段默认值
                 uint32_t defaultConstIdx = instr.operands[defaultOpIdx].index;
-                if (defaultConstIdx == UINT32_MAX) {
+                // BUG-INH-IR-1 fix: 非字面量表达式，从临时 local slot 读取求值结果
+                uint32_t exprLocalSlot = instr.operands[exprLocalSlotOpIdx].index;
+                if (exprLocalSlot != UINT32_MAX) {
+                    // 非字面量表达式：emit OP_GET_LOCAL 将求值结果压栈
+                    // （visitClassDecl 已在 DEFINE_CLASS 之前 emit STORE_LOCAL 存入 slot）
+                    if (exprLocalSlot >= 256) {
+                        Logger::Error("BytecodeIRBackend: DEFINE_CLASS 字段临时局部变量槽位超出 255 上限", "IR");
+                        return false;
+                    }
+                    chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_GET_LOCAL));
+                    chunk_->code.push_back(static_cast<uint8_t>(exprLocalSlot));
+                } else if (defaultConstIdx == UINT32_MAX) {
                     chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_NULL));
                 } else {
                     if (defaultConstIdx >= ir.constants.size()) {
@@ -2678,6 +2987,12 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
     }
     case IROp::CLASS_NEW: {
         if (instr.operands.size() < 3) return false;
+        // BUG-IR-BOUND-1 fix: 检查 argCount 8 位上限（含 this 共 255），对齐 RegisterBytecodeBackend L748-752
+        if (instr.operands[2].index > 254) {
+            Logger::Error("BytecodeIRBackend: CLASS_NEW argCount 超出 254 上限（含 this 共 255）(" +
+                          std::to_string(instr.operands[2].index) + ")", "IR");
+            return false;
+        }
         uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[1].index), ir);
         vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_CLASS_NEW));
@@ -2728,7 +3043,8 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // BUG-NEW fix: 对 IMM_UINT 分支查 globalSlotNames_ 将 slot→name，再以字符串常量
         // 索引形式 emit，与 GLOBAL_NAME 路径统一。
         if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
-            uint16_t nameConstIdx = slotToNameConstant(instr.operands[0].index, ir);
+            uint16_t nameConstIdx = 0;
+            if (!slotToNameConstant(instr.operands[0].index, ir, nameConstIdx)) return false;
             emitUint16(chunk_->code, nameConstIdx);
         } else {
             uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[0].index), ir);
@@ -2762,7 +3078,8 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_WRITEBACK_INDEX_VAR));
         // BUG-NEW fix: 同 WRITEBACK_MEMBER_VAR，IMM_UINT 需转 slot→name 常量索引
         if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
-            uint16_t nameConstIdx = slotToNameConstant(instr.operands[0].index, ir);
+            uint16_t nameConstIdx = 0;
+            if (!slotToNameConstant(instr.operands[0].index, ir, nameConstIdx)) return false;
             emitUint16(chunk_->code, nameConstIdx);
         } else {
             uint16_t nameConstIdx = addStringConstant(globalName(instr.operands[0].index), ir);
@@ -2847,7 +3164,7 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
             Logger::Error("BytecodeIRBackend: TYPE_CHECK 操作数不足", "IR");
             return false;
         }
-        // type_const_idx 已在常量池复制阶段（lower() 行 1799-1802）同步到 BytecodeChunk
+        // type_const_idx 已在常量池复制阶段（lower() 的 for 循环）同步到 BytecodeChunk
         uint16_t typeIdx = static_cast<uint16_t>(instr.operands[1].index);
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_TYPE_CHECK));
         chunk_->code.push_back(static_cast<uint8_t>(typeIdx & 0xFF));
@@ -2885,7 +3202,15 @@ bool BytecodeIRBackend::patchJumps() {
                               std::to_string(pj.codeOffset - 1) + ")", "IR");
                 return false;
             }
-            target = static_cast<uint16_t>(targetOffset - (pj.codeOffset + 2));
+            // BUG-IR-PATCH-1 fix: 检查 catch 相对偏移 64KB 上限，对齐 Compiler.cpp visitTryStmt 的 cleanupThrowOffset > 65535 检查。
+            // 原实现 static_cast<uint16_t> 静默截断，导致 VM 跳转到错误位置执行乱码字节码（三后端不一致）。
+            size_t relOff = targetOffset - (pj.codeOffset + 2);
+            if (relOff > 65535) {
+                Logger::Error("BytecodeIRBackend: TRY_BEGIN catch 相对偏移超过 64KB 限制 (relOff=" +
+                              std::to_string(relOff) + ")", "IR");
+                return false;
+            }
+            target = static_cast<uint16_t>(relOff);
         } else {
             // 16-bit 编码限制：字节码体积超过 64KB 时跳转目标会截断，需显式检查
             // （对齐 Compiler::safeCodeOffset() 的 65535 上限保护）
@@ -2924,6 +3249,7 @@ const char* irOpName(IROp op) {
     case IROp::LOAD_GLOBAL:     return "LOAD_GLOBAL";
     case IROp::STORE_GLOBAL:    return "STORE_GLOBAL";
     case IROp::DEFINE_GLOBAL:   return "DEFINE_GLOBAL";
+    case IROp::DELETE_VAR:      return "DELETE_VAR";
     case IROp::LOAD_UPVALUE:    return "LOAD_UPVALUE";
     case IROp::STORE_UPVALUE:   return "STORE_UPVALUE";
     case IROp::CLOSE_UPVALUE:   return "CLOSE_UPVALUE";
@@ -3077,8 +3403,11 @@ bool isPureCompute(IROp op) {
     // 变量是否定义并可能抛"未定义的变量"错误。若 DCE 删除 dest 未引用的加载，
     // 会抑制该错误（如 `undefinedVar;` 表达式语句本应报错却被静默删除）。
     // LOAD_LOCAL 可保留：局部变量由编译期静态绑定，不存在运行时未定义。
-    case IROp::ADD: case IROp::SUB: case IROp::MUL: case IROp::DIV: case IROp::MOD:
-    case IROp::NEGATE: case IROp::NOT:
+    // BUG-IR-DCE-1 fix: 算术指令 ADD/SUB/MUL/DIV/MOD/NEGATE 不列为纯计算——
+    // 它们在运行时可能触发副作用：整数溢出检查、除零错误、字符串拼接（ADD）。
+    // 若 DCE 删除 dest 未引用的算术指令（如 `1/0;` 表达式语句），会抑制运行时错误。
+    // 比较指令 EQ/NEQ/LT/GT/LTE/GTE 与逻辑 NOT 可保留：MiniLang 语义中无副作用。
+    case IROp::NOT:
     case IROp::EQ: case IROp::NEQ: case IROp::LT: case IROp::GT: case IROp::LTE: case IROp::GTE:
     case IROp::DUP:
         return true;
@@ -3423,27 +3752,269 @@ bool copyPropagationPass(IRFunction& ir) {
     return modified;
 }
 
-// ---- 运行全部优化 pass ----
-bool optimizeIR(IRFunction& ir, bool enableCopyPropagation) {
+// ---- 公共子表达式消除（CSE，局部 — 基本块内）----
+// C4: 在每个基本块内对纯计算指令做值编号，相同表达式 dest 复用。
+// 与 BUG-IR-DCE-1 的关键差异：本 pass 不删除指令，仅替换后续引用。
+// 算术指令（含副作用：除零/溢出）即使 dest 已被替换，仍保留原指令执行。
+bool commonSubexpressionEliminationPass(IRFunction& ir) {
     bool modified = false;
-    // PERF-15: 常量折叠 → [复制传播] → 死代码消除
+    // 值编号 key：将 (op, operands) 编码为字符串
+    auto encodeKey = [](const IRInstruction& instr) -> std::string {
+        std::string key;
+        key.push_back(static_cast<char>(instr.op));
+        key.push_back('|');
+        for (const auto& op : instr.operands) {
+            key.push_back(static_cast<char>(op.kind));
+            key.push_back(':');
+            key.append(std::to_string(op.index));
+            key.push_back(',');
+        }
+        return key;
+    };
+    // 判断指令是否可参与 CSE（纯计算 + 有 dest vreg）
+    auto isCSEable = [](const IRInstruction& instr) -> bool {
+        if (instr.operands.empty()) return false;
+        if (instr.operands[0].kind != IROperandKind::VIRTUAL) return false;
+        // 包含算术（保留原指令执行副作用，仅替换 dest 引用）
+        switch (instr.op) {
+        case IROp::ADD: case IROp::SUB: case IROp::MUL:
+        case IROp::DIV: case IROp::MOD: case IROp::NEGATE:
+        case IROp::EQ: case IROp::NEQ: case IROp::LT:
+        case IROp::GT: case IROp::LTE: case IROp::GTE:
+        case IROp::NOT: case IROp::DUP:
+            return true;
+        default:
+            return false;
+        }
+    };
+
+    for (auto& block : ir.blocks) {
+        // 块内值编号表：key → 已记录的 dest vreg
+        std::unordered_map<std::string, uint32_t> valueMap;
+        // 替换映射：被替换的 dest vreg → 替代 vreg
+        std::unordered_map<uint32_t, uint32_t> replacements;
+        // 待标记为"dest 已替换"的指令索引（保留指令以触发副作用，但 dest 不再被引用）
+        // 实际操作：在第二轮遍历中替换后续指令对该 dest 的引用
+
+        // 第一遍：构建替换映射
+        for (auto& instr : block.instructions) {
+            // 先按替换映射更新本指令的 operands（处理级联替换）
+            for (auto& op : instr.operands) {
+                if (op.kind == IROperandKind::VIRTUAL) {
+                    auto it = replacements.find(op.index);
+                    if (it != replacements.end()) {
+                        op.index = it->second;
+                        modified = true;
+                    }
+                }
+            }
+
+            if (!isCSEable(instr)) continue;
+            // 二元/一元运算的 dest vreg
+            uint32_t destVReg = instr.operands[0].index;
+            std::string key = encodeKey(instr);
+            auto it = valueMap.find(key);
+            if (it != valueMap.end()) {
+                // 已存在相同表达式：本指令 dest 引用替换为已存在的 vreg
+                replacements[destVReg] = it->second;
+                // 不删除本指令（保留副作用），后续对该 dest 的引用会在循环开头被替换
+            } else {
+                valueMap[key] = destVReg;
+            }
+        }
+    }
+    return modified;
+}
+
+// ---- 循环展开（保守策略 — 仅展开常量边界的小循环）----
+// C4: 检测 `for (var i = 0; i < N; i = i + 1) { body }` 模式，N 为小整常量时展开 N 次。
+// 实现：扫描 IR 指令序列，识别循环模式（LABEL start; cond; JUMP_IF_FALSE exit; POP; body;
+// counter update; JUMP start; LABEL exit; POP），将 body 复制 N 份替换原循环。
+bool loopUnrollingPass(IRFunction& ir) {
+    constexpr int kMaxUnrollCount = 4;        // 最大展开次数（避免代码膨胀）
+    constexpr size_t kMaxUnrollBodySize = 20; // body 指令数上限
+    bool modified = false;
+
+    for (auto& block : ir.blocks) {
+        const auto& instrs = block.instructions;
+        if (instrs.size() < 12) continue;  // 最小循环长度估算
+
+        bool unrolled = false;
+        for (size_t i = 0; i + 11 < instrs.size(); ++i) {
+            // 模式检测：
+            // [i+0] LABEL L1
+            // [i+1] LOAD_LOCAL slot        (i)
+            // [i+2] LOAD_CONST N
+            // [i+3] LT dest, i, N
+            // [i+4] JUMP_IF_FALSE dest, L_exit
+            // [i+5] POP
+            // [i+6..i+6+bodySize-1] body
+            // [i+6+bodySize] LOAD_LOCAL slot  (i)
+            // [i+6+bodySize+1] LOAD_CONST 1
+            // [i+6+bodySize+2] ADD dest, i, 1
+            // [i+6+bodySize+3] STORE_LOCAL slot, dest
+            // [i+6+bodySize+4] JUMP L1
+            // [i+6+bodySize+5] LABEL L_exit
+            // [i+6+bodySize+6] POP
+
+            const auto& labelStart = instrs[i];
+            if (labelStart.op != IROp::LABEL) continue;
+            uint32_t startLabel = labelStart.operands[0].index;
+
+            const auto& loadI1 = instrs[i + 1];
+            if (loadI1.op != IROp::LOAD_LOCAL || loadI1.operands.size() < 2) continue;
+            if (loadI1.operands[1].kind != IROperandKind::LOCAL_SLOT) continue;
+            uint32_t counterSlot = loadI1.operands[1].index;
+
+            const auto& loadN = instrs[i + 2];
+            if (loadN.op != IROp::LOAD_CONST || loadN.operands.size() < 2) continue;
+            if (loadN.operands[1].kind != IROperandKind::CONSTANT) continue;
+            uint32_t nConstIdx = loadN.operands[1].index;
+            if (nConstIdx >= ir.constants.size()) continue;
+            const Value& nVal = ir.constants[nConstIdx];
+            if (!nVal.isInt()) continue;
+            int64_t nInt = nVal.intVal();
+            if (nInt < 1 || nInt > kMaxUnrollCount) continue;
+
+            const auto& ltInstr = instrs[i + 3];
+            if (ltInstr.op != IROp::LT || ltInstr.operands.size() < 3) continue;
+
+            const auto& jumpFalse = instrs[i + 4];
+            if (jumpFalse.op != IROp::JUMP_IF_FALSE || jumpFalse.operands.size() < 2) continue;
+            uint32_t exitLabel = jumpFalse.operands[1].index;
+
+            const auto& pop1 = instrs[i + 5];
+            if (pop1.op != IROp::POP) continue;
+
+            // 在剩余指令中找模式尾部：LOAD_LOCAL slot; LOAD_CONST 1; ADD; STORE_LOCAL slot; JUMP L1; LABEL L_exit; POP
+            size_t tailStart = i + 6;
+            // bodySize 上限保护：从 tailStart 开始最多扫 kMaxUnrollBodySize 条
+            size_t bodyEnd = tailStart;
+            bool foundTail = false;
+            for (size_t probe = 0; probe < kMaxUnrollBodySize && bodyEnd + 7 <= instrs.size(); ++probe, ++bodyEnd) {
+                const auto& t0 = instrs[bodyEnd];
+                const auto& t1 = instrs[bodyEnd + 1];
+                const auto& t2 = instrs[bodyEnd + 2];
+                const auto& t3 = instrs[bodyEnd + 3];
+                const auto& t4 = instrs[bodyEnd + 4];
+                const auto& t5 = instrs[bodyEnd + 5];
+                const auto& t6 = instrs[bodyEnd + 6];
+                if (t0.op != IROp::LOAD_LOCAL || t0.operands.size() < 2) continue;
+                if (t0.operands[1].kind != IROperandKind::LOCAL_SLOT) continue;
+                if (t0.operands[1].index != counterSlot) continue;
+                if (t1.op != IROp::LOAD_CONST) continue;
+                if (t2.op != IROp::ADD) continue;
+                if (t3.op != IROp::STORE_LOCAL || t3.operands.size() < 2) continue;
+                if (t3.operands[0].kind != IROperandKind::LOCAL_SLOT) continue;
+                if (t3.operands[0].index != counterSlot) continue;
+                if (t4.op != IROp::JUMP || t4.operands.size() < 1) continue;
+                if (t4.operands[0].kind != IROperandKind::LABEL) continue;
+                if (t4.operands[0].index != startLabel) continue;
+                if (t5.op != IROp::LABEL || t5.operands.size() < 1) continue;
+                if (t5.operands[0].index != exitLabel) continue;
+                if (t6.op != IROp::POP) continue;
+                foundTail = true;
+                break;
+            }
+            if (!foundTail) continue;
+
+            // body 范围：[tailStart, bodyEnd)
+            size_t bodySize = bodyEnd - tailStart;
+            if (bodySize == 0 || bodySize > kMaxUnrollBodySize) continue;
+
+            // body 必须不包含 break/continue/return/throw
+            bool bodySafe = true;
+            for (size_t j = tailStart; j < bodyEnd; ++j) {
+                IROp op = instrs[j].op;
+                if (op == IROp::RETURN || op == IROp::RETURN_NULL ||
+                    op == IROp::THROW || op == IROp::JUMP) {
+                    bodySafe = false;
+                    break;
+                }
+            }
+            if (!bodySafe) continue;
+
+            // 展开：生成 nInt 份 body 副本 + 计数器初始化（LOAD_CONST 0; STORE_LOCAL slot）
+            // 注意：原模式不包含 i 的初始化（在循环外），展开时需补上 i=0
+            std::vector<IRInstruction> newInstrs;
+            newInstrs.reserve(static_cast<size_t>(nInt) * bodySize + 4);
+            // 补 i=0 初始化
+            uint32_t zeroConst = ir.addConstant(Value(static_cast<int64_t>(0)));
+            newInstrs.emplace_back(IROp::LOAD_CONST,
+                std::vector<IROperand>{ IROperand::vreg(ir.nextVReg++), IROperand::constant(zeroConst) },
+                labelStart.line);
+            newInstrs.emplace_back(IROp::STORE_LOCAL,
+                std::vector<IROperand>{ IROperand::local(counterSlot), IROperand::vreg(ir.nextVReg - 1) },
+                labelStart.line);
+            // 生成 nInt 份 body
+            for (int64_t iter = 0; iter < nInt; ++iter) {
+                for (size_t j = tailStart; j < bodyEnd; ++j) {
+                    newInstrs.push_back(instrs[j]);  // 复制指令（含 operands）
+                }
+                // 计数器递增：LOAD_LOCAL slot; LOAD_CONST 1; ADD; STORE_LOCAL slot
+                uint32_t oneConst = ir.addConstant(Value(static_cast<int64_t>(1)));
+                uint32_t iReg = ir.nextVReg++;
+                uint32_t oneReg = ir.nextVReg++;
+                uint32_t sumReg = ir.nextVReg++;
+                newInstrs.emplace_back(IROp::LOAD_LOCAL,
+                    std::vector<IROperand>{ IROperand::vreg(iReg), IROperand::local(counterSlot) },
+                    instrs[bodyEnd].line);
+                newInstrs.emplace_back(IROp::LOAD_CONST,
+                    std::vector<IROperand>{ IROperand::vreg(oneReg), IROperand::constant(oneConst) },
+                    instrs[bodyEnd].line);
+                newInstrs.emplace_back(IROp::ADD,
+                    std::vector<IROperand>{ IROperand::vreg(sumReg), IROperand::vreg(iReg), IROperand::vreg(oneReg) },
+                    instrs[bodyEnd].line);
+                newInstrs.emplace_back(IROp::STORE_LOCAL,
+                    std::vector<IROperand>{ IROperand::local(counterSlot), IROperand::vreg(sumReg) },
+                    instrs[bodyEnd].line);
+            }
+
+            // 替换原循环结构 [i, bodyEnd+7) 为 newInstrs
+            auto& blockInstrs = block.instructions;
+            size_t replaceEnd = bodyEnd + 7;
+            blockInstrs.erase(blockInstrs.begin() + i, blockInstrs.begin() + replaceEnd);
+            blockInstrs.insert(blockInstrs.begin() + i, newInstrs.begin(), newInstrs.end());
+            modified = true;
+            unrolled = true;
+            break;  // 本块已修改，跳出内层循环重新扫描
+        }
+        if (unrolled) {
+            // 块已修改，外层 for 会继续扫描后续块
+        }
+    }
+    return modified;
+}
+
+// ---- 运行全部优化 pass ----
+bool optimizeIR(IRFunction& ir, bool enableCopyPropagation, bool enableDCE,
+                bool enableCSE, bool enableLoopUnroll) {
+    bool modified = false;
+    // PERF-15: 常量折叠 → [复制传播] → [CSE] → [循环展开] → 死代码消除
     // 复制传播仅在寄存器式后端启用（栈式后端删除 LOAD_CONST 会导致栈下溢）
+    // BUG-IR-DCE-2 fix: DCE 与复制传播控制解耦——DCE 通过 enableDCE 独立控制，
+    // 避免禁用复制传播时连带禁用 DCE（寄存器式后端复制传播暂禁但 DCE 仍可安全启用）。
+    // C4: CSE 默认启用（仅替换引用，对栈式 VM 安全）；循环展开默认关闭（影响行号映射）。
     // 多轮迭代直到收敛（最多 3 轮，避免无限循环）
     for (int round = 0; round < 3; ++round) {
         bool m1 = constantFoldingPass(ir);
         bool m2 = enableCopyPropagation ? copyPropagationPass(ir) : false;
-        // DCE 仅在寄存器式后端启用（enableCopyPropagation=true）。
+        bool m3 = enableCSE ? commonSubexpressionEliminationPass(ir) : false;
+        bool m4 = enableLoopUnroll ? loopUnrollingPass(ir) : false;
+        // DCE 仅在寄存器式后端启用（enableDCE=true）。
         // 栈式后端中 POP 的 operands 为空，DCE 无法看到 POP 对 vreg 的消费关系，
         // 会删除仅被 POP 消费的 LOAD_CONST 等纯计算指令，导致栈式 VM OP_POP 栈下溢。
-        bool m3 = enableCopyPropagation ? deadCodeEliminationPass(ir) : false;
-        modified = modified || m1 || m2 || m3;
-        if (!m1 && !m2 && !m3) break;  // 收敛
+        bool m5 = enableDCE ? deadCodeEliminationPass(ir) : false;
+        modified = modified || m1 || m2 || m3 || m4 || m5;
+        if (!m1 && !m2 && !m3 && !m4 && !m5) break;  // 收敛
     }
     if (modified) {
         // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
         LOG_INFO("IR 优化完成: " + std::to_string(ir.constants.size()) + " 常量, " +
                      std::to_string(ir.nextVReg) + " vreg" +
-                     (enableCopyPropagation ? " (含复制传播)" : ""), "IR-Optimize");
+                     (enableCopyPropagation ? " (含复制传播)" : "") +
+                     (enableCSE ? " (含CSE)" : "") +
+                     (enableLoopUnroll ? " (含循环展开)" : ""), "IR-Optimize");
     }
     return modified;
 }

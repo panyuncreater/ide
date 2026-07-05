@@ -5,6 +5,7 @@
 #include <QTextCursor>
 #include <QTextBlock>
 #include <QTextCharFormat>
+#include <QTextBlockFormat>  // BUG-IRV-3 fix: 使用 block 格式设置整行背景，避免覆盖 span char 格式
 #include <QColor>
 #include <sstream>
 #include <regex>
@@ -58,12 +59,16 @@ static bool isRegister(const std::string& tok) {
 }
 
 // 判断是否为数字常量
+// BUG-IRV-5 fix: 收紧规则——仅允许首字符为 '-'，避免 "1-2" 等非法字面量被误识别。
 static bool isNumericConst(const std::string& tok) {
     if (tok.empty()) return false;
     bool hasDigit = false;
-    for (char c : tok) {
+    for (size_t i = 0; i < tok.size(); ++i) {
+        char c = tok[i];
         if (c >= '0' && c <= '9') { hasDigit = true; continue; }
-        if (c == '.' || c == '-') continue;
+        // 仅允许首字符为 '-'（负号），其余位置的 '-' 视为非法
+        if (i == 0 && c == '-') continue;
+        if (c == '.') continue;
         return false;
     }
     return hasDigit;
@@ -135,82 +140,97 @@ QString IrViewer::formatIRLineHtml(const std::string& text) const {
 }
 
 void IrViewer::setIR(const IRFunction* ir) {
-    browser_->clear();
-    rowToSourceLine_.clear();
-    rowToInstrIndex_.clear();
-    highlightedRow_ = -1;
+    // BUG-IRV-1 fix: 用 try/catch 包裹整个函数体，避免 formatIRInstruction / HTML 构造
+    // 抛出异常时导致面板进入未定义状态。捕获后显示错误占位文本。
+    try {
+        browser_->clear();
+        rowToSourceLine_.clear();
+        rowToInstrIndex_.clear();
+        highlightedRow_ = -1;
 
-    if (!ir) {
-        browser_->setHtml("<div style='color:#6e6e6e;padding:8px;'>(未启用 IR 编译 — 在视图菜单勾选编译分析面板后查看)</div>");
-        return;
-    }
-
-    if (ir->blocks.empty()) {
-        browser_->setHtml("<div style='color:#6e6e6e;padding:8px;'>(空 IR — 无基本块)</div>");
-        return;
-    }
-
-    // PERF: 大 IR 保护
-    size_t totalInstrs = 0;
-    for (const auto& block : ir->blocks) {
-        totalInstrs += block.instructions.size();
-    }
-    static constexpr size_t MAX_IR_ROWS = 10000;
-
-    QString html;
-    html.reserve(64 * 1024);
-    html += "<div style='font-family:Consolas,monospace;font-size:13px;line-height:1.6;'>";
-
-    // ---- 函数元信息头 ----
-    {
-        std::ostringstream oss;
-        oss << "IRFunction \"" << ir->name << "\"  "
-            << "blocks=" << ir->blocks.size() << "  "
-            << "constants=" << ir->constants.size() << "  "
-            << "globals=" << ir->globalNames.size() << "  "
-            << "vregs=" << ir->nextVReg;
-        html += QString("<div style='color:#8764b8;font-weight:bold;padding:2px 0;'>%1</div>")
-                    .arg(htmlEscape(oss.str()));
-        rowToSourceLine_.push_back(0);
-        rowToInstrIndex_.push_back(SIZE_MAX);
-    }
-
-    size_t instrIndex = 0;
-
-    for (size_t bi = 0; bi < ir->blocks.size(); ++bi) {
-        const auto& block = ir->blocks[bi];
-
-        if (static_cast<size_t>(rowToSourceLine_.size()) > MAX_IR_ROWS) {
-            html += QString("<div style='color:#808080;padding:2px 0;'>... (IR 超过 %1 行，已截断显示)</div>")
-                        .arg(MAX_IR_ROWS);
-            rowToSourceLine_.push_back(0);
-            rowToInstrIndex_.push_back(SIZE_MAX);
-            break;
+        if (!ir) {
+            browser_->setHtml("<div style='color:#6e6e6e;padding:8px;'>(未启用 IR 编译 — 在视图菜单勾选编译分析面板后查看)</div>");
+            return;
         }
 
-        // ---- 基本块头 ----
+        if (ir->blocks.empty()) {
+            browser_->setHtml("<div style='color:#6e6e6e;padding:8px;'>(空 IR — 无基本块)</div>");
+            return;
+        }
+
+        // PERF: 大 IR 保护
+        size_t totalInstrs = 0;
+        for (const auto& block : ir->blocks) {
+            totalInstrs += block.instructions.size();
+        }
+        static constexpr size_t MAX_IR_ROWS = 10000;
+
+        QString html;
+        html.reserve(64 * 1024);
+        html += "<div style='font-family:Consolas,monospace;font-size:13px;line-height:1.6;'>";
+
+        // ---- 函数元信息头 ----
         {
             std::ostringstream oss;
-            oss << "  BB" << bi << " (label=" << block.labelIndex << "):";
+            oss << "IRFunction \"" << ir->name << "\"  "
+                << "blocks=" << ir->blocks.size() << "  "
+                << "constants=" << ir->constants.size() << "  "
+                << "globals=" << ir->globalNames.size() << "  "
+                << "vregs=" << ir->nextVReg;
             html += QString("<div style='color:#8764b8;font-weight:bold;padding:2px 0;'>%1</div>")
                         .arg(htmlEscape(oss.str()));
             rowToSourceLine_.push_back(0);
             rowToInstrIndex_.push_back(SIZE_MAX);
         }
 
-        // ---- 块内指令 ----
-        for (const auto& instr : block.instructions) {
-            std::string text = formatIRInstruction(instr);
-            html += QString("<div style='padding:0 0 0 16px;'>%1</div>")
-                        .arg(formatIRLineHtml(text));
-            rowToSourceLine_.push_back(instr.line);
-            rowToInstrIndex_.push_back(instrIndex);
-            instrIndex++;
-        }
-    }
+        size_t instrIndex = 0;
 
-    html += "</div>";
-    browser_->setHtml(html);
+        for (size_t bi = 0; bi < ir->blocks.size(); ++bi) {
+            const auto& block = ir->blocks[bi];
+
+            if (static_cast<size_t>(rowToSourceLine_.size()) > MAX_IR_ROWS) {
+                html += QString("<div style='color:#808080;padding:2px 0;'>... (IR 超过 %1 行，已截断显示)</div>")
+                            .arg(MAX_IR_ROWS);
+                rowToSourceLine_.push_back(0);
+                rowToInstrIndex_.push_back(SIZE_MAX);
+                break;
+            }
+
+            // ---- 基本块头 ----
+            {
+                std::ostringstream oss;
+                oss << "  BB" << bi << " (label=" << block.labelIndex << "):";
+                html += QString("<div style='color:#8764b8;font-weight:bold;padding:2px 0;'>%1</div>")
+                            .arg(htmlEscape(oss.str()));
+                rowToSourceLine_.push_back(0);
+                rowToInstrIndex_.push_back(SIZE_MAX);
+            }
+
+            // ---- 块内指令 ----
+            for (const auto& instr : block.instructions) {
+                std::string text = formatIRInstruction(instr);
+                html += QString("<div style='padding:0 0 0 16px;'>%1</div>")
+                            .arg(formatIRLineHtml(text));
+                rowToSourceLine_.push_back(instr.line);
+                rowToInstrIndex_.push_back(instrIndex);
+                instrIndex++;
+            }
+        }
+
+        html += "</div>";
+        browser_->setHtml(html);
+    } catch (const std::exception& e) {
+        rowToSourceLine_.clear();
+        rowToInstrIndex_.clear();
+        highlightedRow_ = -1;
+        browser_->setHtml(QString("<div style='color:red;padding:8px;'>(IR 渲染失败: %1)</div>")
+                          .arg(QString::fromUtf8(e.what())));
+    } catch (...) {
+        rowToSourceLine_.clear();
+        rowToInstrIndex_.clear();
+        highlightedRow_ = -1;
+        browser_->setHtml("<div style='color:red;padding:8px;'>(IR 渲染失败: 未知错误)</div>");
+    }
 }
 
 void IrViewer::clearIR() {
@@ -221,30 +241,31 @@ void IrViewer::clearIR() {
 }
 
 void IrViewer::highlightBySourceLine(int line) {
+    // BUG-IRV-3 fix: 改用 QTextBlockFormat 设置整行背景，避免 setCharFormat 覆盖
+    // HTML span 标签产生的字符级语法高亮（颜色/粗体等）。
     // 清除旧高亮
     if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {
         QTextBlock block = browser_->document()->findBlockByNumber(highlightedRow_);
         if (block.isValid()) {
             QTextCursor c(block);
-            QTextCharFormat fmt;
-            fmt.setBackground(Qt::transparent);
-            c.select(QTextCursor::LineUnderCursor);
-            c.setCharFormat(fmt);
+            QTextBlockFormat fmt;
+            fmt.clearBackground();
+            c.setBlockFormat(fmt);
         }
     }
     highlightedRow_ = -1;
 
     if (line <= 0) return;
 
+    // BUG-IRV-2 fix: 此处仅高亮第一个匹配的指令行（注释已同步修正于头文件）
     for (int i = 0; i < static_cast<int>(rowToSourceLine_.size()); ++i) {
         if (rowToSourceLine_[i] == line) {
             QTextBlock block = browser_->document()->findBlockByNumber(i);
             if (block.isValid()) {
                 QTextCursor c(block);
-                QTextCharFormat fmt;
+                QTextBlockFormat fmt;
                 fmt.setBackground(QColor("#FFF09B"));
-                c.select(QTextCursor::LineUnderCursor);
-                c.setCharFormat(fmt);
+                c.setBlockFormat(fmt);
                 browser_->setTextCursor(c);
                 browser_->scrollToAnchor(QString::number(i));
             }
@@ -256,30 +277,30 @@ void IrViewer::highlightBySourceLine(int line) {
 
 void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, size_t>>& irToBytecodeOffset,
                                           size_t currentBytecodeOffset) {
+    // BUG-IRV-3 fix: 改用 QTextBlockFormat 设置整行背景
     // 清除旧高亮
     if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {
         QTextBlock block = browser_->document()->findBlockByNumber(highlightedRow_);
         if (block.isValid()) {
             QTextCursor c(block);
-            QTextCharFormat fmt;
-            fmt.setBackground(Qt::transparent);
-            c.select(QTextCursor::LineUnderCursor);
-            c.setCharFormat(fmt);
+            QTextBlockFormat fmt;
+            fmt.clearBackground();
+            c.setBlockFormat(fmt);
         }
     }
     highlightedRow_ = -1;
 
     if (irToBytecodeOffset.empty()) return;
 
+    // BUG-IRV-4 fix: 二分查找假设 irToBytecodeOffset 按 .second 严格升序排列，
+    // 但实际语义未强制保证。改为线性查找最大的 <= currentBytecodeOffset 项，
+    // 同时假设大致有序（遇到大于值即停止），既稳健又不损失常见路径效率。
     size_t bestInstrIdx = SIZE_MAX;
-    size_t lo = 0, hi = irToBytecodeOffset.size();
-    while (lo < hi) {
-        size_t mid = lo + (hi - lo) / 2;
-        if (irToBytecodeOffset[mid].second <= currentBytecodeOffset) {
-            bestInstrIdx = irToBytecodeOffset[mid].first;
-            lo = mid + 1;
+    for (size_t i = 0; i < irToBytecodeOffset.size(); ++i) {
+        if (irToBytecodeOffset[i].second <= currentBytecodeOffset) {
+            bestInstrIdx = irToBytecodeOffset[i].first;
         } else {
-            hi = mid;
+            break;  // 假设大致有序，遇到大于的即停止
         }
     }
 
@@ -290,10 +311,9 @@ void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, siz
             QTextBlock block = browser_->document()->findBlockByNumber(i);
             if (block.isValid()) {
                 QTextCursor c(block);
-                QTextCharFormat fmt;
+                QTextBlockFormat fmt;
                 fmt.setBackground(QColor("#7CFC00"));
-                c.select(QTextCursor::LineUnderCursor);
-                c.setCharFormat(fmt);
+                c.setBlockFormat(fmt);
                 browser_->setTextCursor(c);
             }
             highlightedRow_ = i;
@@ -303,14 +323,14 @@ void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, siz
 }
 
 void IrViewer::clearHighlight() {
+    // BUG-IRV-3 fix: 改用 QTextBlockFormat 清除背景
     if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {
         QTextBlock block = browser_->document()->findBlockByNumber(highlightedRow_);
         if (block.isValid()) {
             QTextCursor c(block);
-            QTextCharFormat fmt;
-            fmt.setBackground(Qt::transparent);
-            c.select(QTextCursor::LineUnderCursor);
-            c.setCharFormat(fmt);
+            QTextBlockFormat fmt;
+            fmt.clearBackground();
+            c.setBlockFormat(fmt);
         }
     }
     highlightedRow_ = -1;

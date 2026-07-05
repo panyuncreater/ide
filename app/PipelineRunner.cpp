@@ -40,6 +40,12 @@ bool PipelineRunner::formatCode(std::string& formatted) {
 
 // C9 fix: 统一前端管线实现
 PipelineRunner::PipelineResult PipelineRunner::runFrontendPipeline(const std::string& source) {
+    // BUG-ORCH-7 fix: 源码级缓存——同一源码的连续调用（如 blockIfHasErrors + prepareRun）
+    // 直接复用上次的 Lexer/Parser 结果，避免重复执行前端管线
+    if (!cachedPipelineSource_.empty() && cachedPipelineSource_ == source) {
+        return cachedPipelineResult_;
+    }
+
     PipelineResult result;
 
     // 词法分析
@@ -47,11 +53,13 @@ PipelineRunner::PipelineResult PipelineRunner::runFrontendPipeline(const std::st
         if (!runLexer(source)) {
             result.status = PipelineStatus::LexerFailed;
             result.diagnostics = &lexer_.getDiagnostics();
+            cachePipelineResult(source, result);
             return result;
         }
     } catch (const std::exception& e) {
         result.status = PipelineStatus::LexerFailed;
         result.errorMessage = e.what();
+        cachePipelineResult(source, result);
         return result;
     }
 
@@ -60,13 +68,21 @@ PipelineRunner::PipelineResult PipelineRunner::runFrontendPipeline(const std::st
         if (!runParser()) {
             result.status = PipelineStatus::ParserFailed;
             result.diagnostics = &parser_.getDiagnostics();
+            cachePipelineResult(source, result);
             return result;
         }
     } catch (const std::exception& e) {
         result.status = PipelineStatus::ParserFailed;
         result.errorMessage = e.what();
+        cachePipelineResult(source, result);
         return result;
     }
 
+    cachePipelineResult(source, result);
     return result;  // OK
+}
+
+void PipelineRunner::cachePipelineResult(const std::string& source, const PipelineResult& result) {
+    cachedPipelineSource_ = source;
+    cachedPipelineResult_ = result;
 }

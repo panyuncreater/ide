@@ -47,10 +47,17 @@ public:
     using PipelineResult = PipelineRunner::PipelineResult;
 
     // ---- 引擎访问（转发到 PipelineRunner）----
+    // D3 fix: 补齐 const 重载，允许 const 上下文（如 DebugCoordinator、
+    // const IdeController& 形参）只读访问引擎。与 PipelineRunner.h 的 const/非 const
+    // 双重载对齐。
     Formatter& formatter() { return pipeline_.formatter(); }
     Lexer& lexer() { return pipeline_.lexer(); }
     Parser& parser() { return pipeline_.parser(); }
     Compiler& compiler() { return pipeline_.compiler(); }
+    const Formatter& formatter() const { return pipeline_.formatter(); }
+    const Lexer& lexer() const { return pipeline_.lexer(); }
+    const Parser& parser() const { return pipeline_.parser(); }
+    const Compiler& compiler() const { return pipeline_.compiler(); }
 
     // ---- VM 状态访问（转发到 VmStepper）----
     // B6 fix: 语义化的 VM 调试状态快照接口（GUI 仅通过这些方法读取 VM 状态）
@@ -67,12 +74,22 @@ public:
     size_t getVmFrameCount() const { return vmStepper_.getFrameCount(); }
     // A1 fix: 暴露当前活跃后端模式给 GUI（用于切换栈/寄存器视图）
     bool isVmRegisterMode() const { return vmStepper_.isRegisterMode(); }
+    // BUG-DBG-6 fix: 暴露 VM 调用栈快照，供 GUI 在 VM 调试模式下显示调用栈
+    std::vector<CallStackEntry> getVmCallStack() const { return vmStepper_.getCallStack(); }
 
     // ---- 调试接口（转发到 DebugCoordinator）----
     void setBreakpointCondition(int line, const std::string& condition) {
         debugCoord_.setBreakpointCondition(line, condition);
     }
     bool hasBreakpoints() const { return debugCoord_.hasBreakpoints(); }
+    // P1-2: 断点查询接口（供 BreakpointConditionPanel 消费）
+    QSet<int> getBreakpoints() const { return debugCoord_.getBreakpoints(); }
+    std::string getBreakpointCondition(int line) const {
+        return debugCoord_.getBreakpointCondition(line);
+    }
+    int getBreakpointHitCount(int line) const {
+        return debugCoord_.getBreakpointHitCount(line);
+    }
     std::vector<VariableSnapshot> getDebugVariableSnapshot() const {
         return debugCoord_.getDebugVariableSnapshot();
     }
@@ -147,6 +164,12 @@ public:
     // 启用后 compile() 走 AST → IR → RegisterBytecode 路径，VmStepper 转发到 regVm_。
     // 切换时 VmStepper 自动 reset 防止状态污染；调用方应在 VM 未运行时切换。
     void setUseRegisterVM(bool enabled) {
+        // BUG-IDE-23 fix: VM 运行中切换后端会导致 frame.chunk/RegChunk 悬垂，
+        // 必须先停止 VM 再切换引擎。
+        if (vmStepper_.isRunning()) {
+            emit genericError("VM 正在运行，请先停止再切换引擎");
+            return;
+        }
         pipeline_.compiler().setUseRegisterVM(enabled);
         vmStepper_.setUseRegister(enabled);
     }

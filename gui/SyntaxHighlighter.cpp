@@ -62,7 +62,11 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     //   2: 块注释（向后兼容，深度=1）
     //   100 + depth (depth >= 1): 嵌套块注释（支持 /* /* */ */ 嵌套）
     //   200 + braceDepth (braceDepth >= 1): 字符串插值表达式内（支持跨行插值）
-    //   300 + braceDepth (braceDepth >= 1): 插值表达式内的字符串体内（跨行嵌套）
+    //   300 + braceDepth*10 + blockCommentDepth: 插值表达式内且处于块注释中
+    //       （BUG-SH-1 fix：原编码 blockCommentDepth > 0 优先于 interpBraceDepth > 0，
+    //       导致插值内块注释跨行时 interpBraceDepth 上下文丢失）
+    //   400 + braceDepth (braceDepth >= 1): 插值表达式内的嵌套字符串体内（跨行）
+    //       （BUG-SH-2 fix：原实现嵌套字符串为单行扫描，未闭合时下一行错误处理）
     int pos = 0;
     int len = text.length();
 
@@ -70,11 +74,18 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     if (prevState < 0) prevState = 0;
 
     bool inString = false;
+    bool inNestedString = false;  // BUG-SH-2: 插值内嵌套字符串跨行
     int blockCommentDepth = 0;
     int interpBraceDepth = 0;
+    // 解码顺序：高范围优先（400 > 300 > 200 > 100），避免误匹配
     if (prevState == 1) inString = true;
     else if (prevState == 2) blockCommentDepth = 1;  // 向后兼容
-    else if (prevState >= 300) { inString = true; interpBraceDepth = prevState - 300; }
+    else if (prevState >= 400) { inNestedString = true; interpBraceDepth = prevState - 400; }
+    else if (prevState >= 300) {
+        // BUG-SH-1 fix: 插值内块注释组合状态
+        interpBraceDepth = (prevState - 300) / 10;
+        blockCommentDepth = (prevState - 300) % 10;
+    }
     else if (prevState >= 200) interpBraceDepth = prevState - 200;
     else if (prevState >= 100) blockCommentDepth = prevState - 100;
 
@@ -90,6 +101,8 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
 
     int stringStart = inString ? 0 : -1;
     int commentStart = (blockCommentDepth > 0) ? 0 : -1;
+    // BUG-SH-2 fix: 嵌套字符串跨行时，起始位置为行首（0）
+    int nestedStringStart = inNestedString ? 0 : -1;
 
     // ---- 第一遍：扫描字符串/注释，填充 mask + ranges ----
     while (pos < len) {
@@ -118,11 +131,8 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
 
         // ---- 字符串插值表达式内（braceDepth > 0）：扫描为代码 ----
         if (interpBraceDepth > 0) {
-            // 嵌套字符串：单行扫描，标记为字符串颜色
-            if (text[pos] == '"') {
-                int nestedStart = pos;
-                mask[pos] = 1;
-                pos++;
+            // BUG-SH-2 fix: 处理跨行嵌套字符串（从上一行延续的未闭合嵌套字符串）
+            if (inNestedString) {
                 while (pos < len) {
                     mask[pos] = 1;
                     if (text[pos] == '\\' && pos + 1 < len) {
@@ -132,11 +142,39 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
                     }
                     if (text[pos] == '"') {
                         pos++;
+                        inNestedString = false;
                         break;
                     }
                     pos++;
                 }
-                stringRanges.append({nestedStart, pos - nestedStart});
+                stringRanges.append({nestedStringStart, pos - nestedStringStart});
+                continue;
+            }
+            // 嵌套字符串：扫描至闭合 " 或行末
+            if (text[pos] == '"') {
+                nestedStringStart = pos;
+                mask[pos] = 1;
+                pos++;
+                bool closed = false;
+                while (pos < len) {
+                    mask[pos] = 1;
+                    if (text[pos] == '\\' && pos + 1 < len) {
+                        mask[pos + 1] = 1;
+                        pos += 2;
+                        continue;
+                    }
+                    if (text[pos] == '"') {
+                        pos++;
+                        closed = true;
+                        break;
+                    }
+                    pos++;
+                }
+                // BUG-SH-2 fix: 未闭合则标记跨行状态，下一行继续扫描
+                if (!closed) {
+                    inNestedString = true;
+                }
+                stringRanges.append({nestedStringStart, pos - nestedStringStart});
                 continue;
             }
             // 嵌套块注释
@@ -263,8 +301,10 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
                 pos++;
             }
             int wordLen = pos - start;
-            // 关键字不会太长，跳过过长的标识符
-            if (wordLen <= 20 && !keywordSet_.isEmpty() &&
+            // BUG-SH-4 fix: 移除 wordLen <= 20 上限检查。原检查跳过过长标识符的
+            // keywordSet_ 查找，但 QSet::contains 对任意长度都是 O(1)+平均 O(L) 哈希，
+            // 无性能问题。上限 20 会漏掉理论上的长关键字（虽当前无，但为防御性修复）。
+            if (!keywordSet_.isEmpty() &&
                 keywordSet_.contains(text.mid(start, wordLen))) {
                 setFormat(start, wordLen, keywordFormat_);
             }
@@ -275,6 +315,21 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         // 支持：整数(123)、浮点(1.23)、科学计数(1e5/1.23e-5)、
         //       前导点(.123)、尾点(123.)
         // 判定条件：首字符是数字，或者首字符是 '.' 且下一个字符是数字
+        // BUG-SH-3 fix: 识别 0x/0b/0o 前缀。MiniLang 不支持这些前缀，将整个
+        // 非法字面量高亮为错误格式（红色），避免被当作普通数字 0 处理后剩余
+        // 字符（如 xFF）被误识别为标识符。
+        if (c == '0' && pos + 1 < len &&
+            (text[pos + 1] == 'x' || text[pos + 1] == 'X' ||
+             text[pos + 1] == 'b' || text[pos + 1] == 'B' ||
+             text[pos + 1] == 'o' || text[pos + 1] == 'O')) {
+            int start = pos;
+            pos += 2;
+            while (pos < len && (text[pos].isLetterOrNumber() || text[pos] == '_')) ++pos;
+            QTextCharFormat errFmt;
+            errFmt.setForeground(QColor(0xff, 0x00, 0x00));
+            setFormat(start, pos - start, errFmt);
+            continue;
+        }
         if (c.isDigit() || (c == '.' && pos + 1 < len && text[pos + 1].isDigit())) {
             int start = pos;
             bool hasDot = false;
@@ -341,11 +396,20 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         pos++;
     }
 
-    // 设置块状态（支持多行字符串、嵌套块注释、跨行插值、插值内嵌套字符串）
+    // 设置块状态（支持多行字符串、嵌套块注释、跨行插值、插值内嵌套字符串/块注释）
+    // BUG-SH-1 fix: 插值内块注释跨行时用 300+braceDepth*10+blockCommentDepth
+    //   编码同时保留两个上下文。原编码 blockCommentDepth > 0 优先导致
+    //   interpBraceDepth 丢失，下一行块注释结束后无法回到插值模式。
+    // BUG-SH-2 fix: 插值内嵌套字符串跨行用 400+braceDepth 编码。
+    //   原实现嵌套字符串仅单行扫描，未闭合时下一行按普通代码处理。
+    // 注：inString 在 interpBraceDepth > 0 期间恒为 true（进入插值时未清除，
+    //   退出插值时显式重置），无需单独编码，200+braceDepth 即可覆盖。
     int newState = 0;
-    if (inString && interpBraceDepth > 0) newState = 300 + interpBraceDepth;
-    else if (inString) newState = 1;
+    if (inNestedString) newState = 400 + interpBraceDepth;
+    else if (blockCommentDepth > 0 && interpBraceDepth > 0)
+        newState = 300 + interpBraceDepth * 10 + blockCommentDepth;
     else if (blockCommentDepth > 0) newState = 100 + blockCommentDepth;
     else if (interpBraceDepth > 0) newState = 200 + interpBraceDepth;
+    else if (inString) newState = 1;
     setCurrentBlockState(newState);
 }

@@ -85,6 +85,13 @@ public:
     const DiagnosticBag& parserDiagnostics() const { return parser_.getDiagnostics(); }
     const DiagnosticBag& compilerDiagnostics() const { return compiler_.getDiagnostics(); }
 
+    /// BUG-ORCH-7 fix: 失效前端管线缓存（Compiler 设置变更或外部强制刷新时调用）
+    void invalidatePipelineCache() { cachedPipelineSource_.clear(); }
+
+private:
+    /// BUG-ORCH-7 fix: 缓存前端管线结果
+    void cachePipelineResult(const std::string& source, const PipelineResult& result);
+
 signals:
     void diagnosticsReady(const DiagnosticBag& bag);
 
@@ -98,4 +105,7 @@ private:
     std::shared_ptr<Block> astRoot_;
     std::vector<Token> lastTokens_;
     CompileResult lastCompileResult_;
+    // BUG-ORCH-7 fix: 前端管线源码级缓存，避免 blockIfHasErrors + prepareRun 重复执行 Lexer/Parser
+    std::string cachedPipelineSource_;
+    PipelineResult cachedPipelineResult_;
 };

@@ -1,3 +1,32 @@
+/**
+ * @file common/Logger.h
+ * @brief 轻量级日志系统（单例，线程安全）。
+ *
+ * 为 MiniLang 各模块（Lexer/Parser/Interpreter/Compiler/VM/Debugger/IDE）
+ * 提供统一的内部日志输出能力，支持分级过滤、多目标输出（控制台/文件），
+ * 线程安全（双缓冲避免持锁 I/O）。
+ *
+ * 与 Diagnostic.h 的区别：
+ *   - DiagnosticBag 面向用户（IDE 输出面板展示，影响执行流程）
+ *   - Logger 面向开发者（调试、监控、问题定位，不影响执行流程）
+ *
+ * 设计要点：
+ *   - 单例模式（Logger::instance()），全局唯一
+ *   - 双缓冲：log() 仅在 mutex_ 下格式化+入队；达阈值或 ERROR 时 swap 出
+ *     到本地，由 flushBuffer() 在 ioMutex_ 下批量写
+ *   - 毫秒精度时间戳，线程安全 localtime_s/localtime_r
+ *   - 便捷宏 LOG_DEBUG/LOG_INFO/LOG_WARNING/LOG_ERROR 真正懒求值
+ *   - ErrorFormat 命名空间提供零堆分配的错误消息格式化（热路径优化）
+ *
+ * 用法示例：
+ * @code
+ *   Logger::instance().setLevel(LogLevel::INFO);
+ *   LOG_INFO("Parser started", "Parser");
+ *   LOG_ERROR("Stack underflow at ip=" + std::to_string(ip), "VM");
+ * @endcode
+ *
+ * @see DiagnosticBag
+ */
 #pragma once
 
 // ============================================================

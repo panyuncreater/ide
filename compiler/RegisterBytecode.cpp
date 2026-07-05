@@ -90,8 +90,10 @@ const RegOpInfo& getRegOpInfo(RegOp op) {
 
 uint16_t RegBytecodeChunk::addConstant(const Value& value) {
     // 简单线性扫描去重（常量池通常较小）
+    // BUG-CP-1 fix: 类型严格匹配，避免 Value::equals() 跨类型数值相等性
+    //（如 Value(0).equals(Value(0.0)) == true）导致 int/float 常量被错误去重。
     for (size_t i = 0; i < constants.size(); ++i) {
-        if (constants[i].equals(value)) {
+        if (constants[i].getType() == value.getType() && constants[i].equals(value)) {
             return static_cast<uint16_t>(i);
         }
     }
@@ -103,33 +105,37 @@ uint16_t RegBytecodeChunk::addConstant(const Value& value) {
     return static_cast<uint16_t>(constants.size() - 1);
 }
 
-void RegBytecodeChunk::writeOp(RegOp op, int line) {
+void RegBytecodeChunk::writeOp(RegOp op, int line, int column) {
     code.push_back(static_cast<uint8_t>(op));
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
+        columns.push_back(column);  // BUG-IBACKEND-2
     }
 }
 
-void RegBytecodeChunk::writeReg(uint8_t reg, int line) {
+void RegBytecodeChunk::writeReg(uint8_t reg, int line, int column) {
     assert(reg < 32 && "寄存器号超出 32 上限");
     code.push_back(reg);
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
+        columns.push_back(column);  // BUG-IBACKEND-2
     }
 }
 
-void RegBytecodeChunk::writeShort(uint16_t v, int line) {
+void RegBytecodeChunk::writeShort(uint16_t v, int line, int column) {
     code.push_back(static_cast<uint8_t>(v & 0xFF));
     code.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
+        columns.push_back(column);  // BUG-IBACKEND-2
     }
 }
 
-void RegBytecodeChunk::writeByte(uint8_t v, int line) {
+void RegBytecodeChunk::writeByte(uint8_t v, int line, int column) {
     code.push_back(v);
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
+        columns.push_back(column);  // BUG-IBACKEND-2
     }
 }
 
@@ -215,16 +221,17 @@ size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
         // C-9 fix: op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B) + [fieldIdx(2B)×F]
         //        + methodCount(1B) + [methodIdx(2B)+funIdx(2B)]×M
         // BUG-INH-1 fix: 每个字段新增 defaultConstIdx(2B)，故字段段为 [fieldIdx(2B)+defaultIdx(2B)]×F
+        // BUG-INH-IR-1 fix: 每个字段再新增 exprReg(1B)，故字段段为 [fieldIdx(2B)+defaultIdx(2B)+exprReg(1B)]×F
         // 新布局：op + nameIdx(2B) + parentIdx(2B) + fieldCount(1B)
-        //       + [fieldIdx(2B)+defaultIdx(2B)]×F
+        //       + [fieldIdx(2B)+defaultIdx(2B)+exprReg(1B)]×F
         //       + methodCount(1B) + [methodIdx(2B)+funIdx(2B)]×M
-        // 最小 7B；需读取 fieldCount（offset+5）和 methodCount（offset+6+F*4）
+        // 最小 7B；需读取 fieldCount（offset+5）和 methodCount（offset+6+F*5）
         if (offset + 6 < code.size()) {
             uint8_t fieldCount = code[offset + 5];
-            size_t methodCountPos = offset + 6 + static_cast<size_t>(fieldCount) * 4;
+            size_t methodCountPos = offset + 6 + static_cast<size_t>(fieldCount) * 5;
             if (methodCountPos < code.size()) {
                 uint8_t methodCount = code[methodCountPos];
-                return static_cast<size_t>(7 + static_cast<size_t>(fieldCount) * 4
+                return static_cast<size_t>(7 + static_cast<size_t>(fieldCount) * 5
                                            + static_cast<size_t>(methodCount) * 4);
             }
         }

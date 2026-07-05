@@ -92,6 +92,110 @@ static bool astEqual(ASTNode* a, ASTNode* b) {
         }
         return true;
     }
+    // BUG-LPA-01 fix: 为所有含自身字段的节点添加显式 case，比较节点自身字段
+    //   原实现 default 分支仅比较 children()，不比较节点自身字段，导致
+    //   VarDecl/FunDecl/ImportStmt/ClassDecl/TryStmt/Assignment/MemberAccess/
+    //   MemberAssign/MethodCall/FunCall 的字段差异被忽略，Formatter 往返等价性
+    //   验证漏检。
+    case NodeType::NODE_VAR_DECL: {
+        auto* va = static_cast<VarDecl*>(a);
+        auto* vb = static_cast<VarDecl*>(b);
+        if (va->name != vb->name) return false;
+        if (va->typeAnnotation != vb->typeAnnotation) return false;
+        return astEqual(va->initializer.get(), vb->initializer.get());
+    }
+    case NodeType::NODE_ASSIGNMENT: {
+        auto* aa = static_cast<Assignment*>(a);
+        auto* ab = static_cast<Assignment*>(b);
+        if (aa->name != ab->name) return false;
+        return astEqual(aa->value.get(), ab->value.get());
+    }
+    case NodeType::NODE_FUN_DECL: {
+        auto* fa = static_cast<FunDecl*>(a);
+        auto* fb = static_cast<FunDecl*>(b);
+        if (fa->name != fb->name) return false;
+        if (fa->params != fb->params) return false;
+        if (fa->paramTypes != fb->paramTypes) return false;
+        if (fa->returnType != fb->returnType) return false;
+        if (fa->defaultValues.size() != fb->defaultValues.size()) return false;
+        for (size_t i = 0; i < fa->defaultValues.size(); ++i) {
+            if (!astEqual(fa->defaultValues[i].get(), fb->defaultValues[i].get())) return false;
+        }
+        return astEqual(fa->body.get(), fb->body.get());
+    }
+    case NodeType::NODE_FUN_CALL: {
+        auto* ca = static_cast<FunCall*>(a);
+        auto* cb = static_cast<FunCall*>(b);
+        if (ca->name != cb->name) return false;
+        if ((ca->callee == nullptr) != (cb->callee == nullptr)) return false;
+        if (ca->callee && !astEqual(ca->callee.get(), cb->callee.get())) return false;
+        if (ca->arguments.size() != cb->arguments.size()) return false;
+        for (size_t i = 0; i < ca->arguments.size(); ++i) {
+            if (!astEqual(ca->arguments[i].get(), cb->arguments[i].get())) return false;
+        }
+        return true;
+    }
+    case NodeType::NODE_MEMBER_ACCESS: {
+        auto* ma = static_cast<MemberAccess*>(a);
+        auto* mb = static_cast<MemberAccess*>(b);
+        if (ma->fieldName != mb->fieldName) return false;
+        return astEqual(ma->object.get(), mb->object.get());
+    }
+    case NodeType::NODE_MEMBER_ASSIGN: {
+        auto* ma = static_cast<MemberAssign*>(a);
+        auto* mb = static_cast<MemberAssign*>(b);
+        if (ma->fieldName != mb->fieldName) return false;
+        if (!astEqual(ma->object.get(), mb->object.get())) return false;
+        return astEqual(ma->value.get(), mb->value.get());
+    }
+    case NodeType::NODE_METHOD_CALL: {
+        auto* ma = static_cast<MethodCall*>(a);
+        auto* mb = static_cast<MethodCall*>(b);
+        if (ma->methodName != mb->methodName) return false;
+        if (!astEqual(ma->object.get(), mb->object.get())) return false;
+        if (ma->arguments.size() != mb->arguments.size()) return false;
+        for (size_t i = 0; i < ma->arguments.size(); ++i) {
+            if (!astEqual(ma->arguments[i].get(), mb->arguments[i].get())) return false;
+        }
+        return true;
+    }
+    case NodeType::NODE_CLASS_DECL: {
+        auto* ca = static_cast<ClassDecl*>(a);
+        auto* cb = static_cast<ClassDecl*>(b);
+        if (ca->name != cb->name) return false;
+        if (ca->superClassName != cb->superClassName) return false;
+        if (ca->members.size() != cb->members.size()) return false;
+        for (size_t i = 0; i < ca->members.size(); ++i) {
+            if (!astEqual(ca->members[i].get(), cb->members[i].get())) return false;
+        }
+        return true;
+    }
+    case NodeType::NODE_TRY_STMT: {
+        auto* ta = static_cast<TryStmt*>(a);
+        auto* tb = static_cast<TryStmt*>(b);
+        if (ta->catchVarName != tb->catchVarName) return false;
+        if (!astEqual(ta->tryBlock.get(), tb->tryBlock.get())) return false;
+        return astEqual(ta->catchBlock.get(), tb->catchBlock.get());
+    }
+    case NodeType::NODE_IMPORT_STMT: {
+        auto* ia = static_cast<ImportStmt*>(a);
+        auto* ib = static_cast<ImportStmt*>(b);
+        return ia->modulePath == ib->modulePath
+            && ia->names == ib->names
+            && ia->importAll == ib->importAll;
+    }
+    // BUG-LPA-02 fix: InterpolatedString.literals 是 std::vector<std::string>，
+    //   不在 children() 中（children() 仅返回 expressions），必须显式比较。
+    case NodeType::NODE_INTERPOLATED_STRING: {
+        auto* ia = static_cast<InterpolatedString*>(a);
+        auto* ib = static_cast<InterpolatedString*>(b);
+        if (ia->literals != ib->literals) return false;
+        if (ia->expressions.size() != ib->expressions.size()) return false;
+        for (size_t i = 0; i < ia->expressions.size(); ++i) {
+            if (!astEqual(ia->expressions[i].get(), ib->expressions[i].get())) return false;
+        }
+        return true;
+    }
     default:
         // 未覆盖的节点类型回退到子节点递归比较
         auto ca = a->children();

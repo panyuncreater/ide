@@ -1,3 +1,13 @@
+/**
+ * @file common/BoundsCheck.h
+ * @brief 共享的索引越界检查工具。
+ *
+ * Dedup-7A fix: 提取分散在 VMContainers.cpp（7 处）和 Interpreter.cpp（1 处）
+ * 中的 `i >= 0 && static_cast<size_t>(i) < container.size()` 重复模式。
+ * 消除每处 ~50 字节的样板，统一负索引与溢出语义。
+ *
+ * @see BoundsCheck::inBounds
+ */
 #pragma once
 
 // ============================================================

@@ -1,5 +1,6 @@
 #include "VmStepper.h"
 #include "Logger.h"
+#include <QCoreApplication>  // BUG-IDE-18 fix: processEvents 让出事件循环
 
 // ============================================================
 // VmStepper — VM 单步执行状态机实现（ARCH-11 拆分自 IdeController）
@@ -157,6 +158,20 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             VMResult result = stepOnceActive();
             ++stepCount;
 
+            // BUG-IDE-18 fix: STEP_OVER/OUT 在深递归或长循环上同步执行可达数十万步，
+            // 期间不处理任何事件会让 UI 看似冻结（标题栏"无响应"、面板不重绘）。
+            // 每 2000 步让出事件循环处理绘制/定时器事件（ExcludeUserInputEvents
+            // 排除用户输入事件以避免重入触发 stop/step 等槽函数）。若期间 VM 被异步
+            // 停止（isVmRunning_ 被置 false），立即返回 OK 让 UI 更新。
+            // 注意：processEvents 有可重入风险，但 STEP_OVER/OUT 是用户主动触发的
+            // 同步操作，且已排除用户输入事件，重入风险可控。
+            if (stepCount % 2000 == 0) {
+                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+                if (!isVmRunning_) {
+                    return VmStepResult::OK;
+                }
+            }
+
             if (result == VMResult::VM_RUNTIME_ERROR) {
                 isVmInitialized_ = false;
                 isVmRunning_ = false;
@@ -181,8 +196,21 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
 
             // 断点命中检查（所有模式都检查，使 RUN 能停在断点）
             // #4 fix: 改用 checkBreakpointHit 支持条件断点求值
-            if (checkBreakpointHit(currentLine) && currentLine != vmLastPausedLine_) {
+            // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制。
+            // 原实现仅用 currentLine != vmLastPausedLine_ 去重，单行循环断点
+            // （如 for (...; ...; ...) print(i);）首次命中后永不再触发。
+            // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
+            // 仅在断点真正命中（含条件满足）时清 false，与 DebugController F4 修复一致。
+            if (currentLine > 0) {
+                if (currentLine != vmLastSeenLine_) {
+                    vmCrossedLine_ = true;
+                }
+                vmLastSeenLine_ = currentLine;
+            }
+            if (checkBreakpointHit(currentLine) &&
+                (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                 vmLastPausedLine_ = currentLine;
+                vmCrossedLine_ = false;  // 命中后重置，同行后续指令不再触发
                 isVmRunning_ = false;
                 return VmStepResult::PAUSED_AT_BREAKPOINT;
             }
@@ -212,7 +240,9 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                     } else if (currentLine != vmLastPausedLine_ || vmCrossedDeeper_) {
                         shouldPause = true;
                     }
-                    // 暂停后 crossedDeeper_ 在 resetVmStepState 中重置
+                    // BUG-DBG-13 fix: crossedDeeper_ 在每次 stepByMode 入口处重置
+                    // （见上方 AUDIT-BUG-F3 fix: vmCrossedDeeper_ = false），而非不存在的
+                    // resetVmStepState 函数。原注释引用的函数从未定义，误导维护者。
                 }
                 break;
             case VmStepMode::STEP_OUT:
@@ -222,8 +252,13 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 }
                 // A4 fix: 若已在栈底无法跨出（frameCount == startFrameCount == 1），
                 // 执行到下一条有行号的指令即暂停（避免死循环）
+                // BUG-DBG-3 fix: 顶层 STEP_OUT 行为与 STEP_OVER 顶层不一致——
+                // STEP_OVER 用 crossedDeeper_ 允许同行暂停，STEP_OUT 顶层仅用行号变化判断，
+                // 单行循环（如 for (...; ...; ...) foo();）STEP_OUT 后永不暂停（行号不变），
+                // 直到循环结束才停止。修复：与 STEP_OVER 顶层对齐，使用 crossedLine_ 机制
+                // 允许跨行后同行暂停。同时引入 vmCrossedDeeper_ 判断，与 STEP_OVER 一致。
                 else if (currentFrameCount <= 1 && currentLine > 0
-                         && currentLine != vmLastPausedLine_) {
+                         && (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                     shouldPause = true;
                 }
                 break;
@@ -301,10 +336,30 @@ void VmStepper::runBatch() {
 
             // 断点命中检查
             // #4 fix: 改用 checkBreakpointHit 支持条件断点求值
+            // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制（与 stepByMode 对齐）。
+            // 原实现仅用 currentLine != vmLastPausedLine_ 去重，单行循环断点
+            // （如 for (...; ...; ...) print(i);）首次命中后永不再触发。
+            // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
+            // 仅在断点真正命中（含条件满足）时清 false。
+            //
+            // BUG-IDE-19（已知限制）：条件断点求值（checkBreakpointHit →
+            // vmConditionEvaluator_）在主线程同步执行，每次命中都会创建临时
+            // Interpreter + Lexer + Parser + Environment 拷贝全局变量。当条件表达式
+            // 复杂或全局变量规模大时，单次求值可达毫秒级，循环内频繁命中条件断点会
+            // 拖慢 RUN 模式。这是用户主动设置的功能，性能可接受；彻底修复需要将求值
+            // 移到独立线程或缓存求值环境，工程量大，暂列为已知限制。
             int currentLine = getCurrentLine();
-            if (checkBreakpointHit(currentLine) && currentLine != vmLastPausedLine_) {
+            if (currentLine > 0) {
+                if (currentLine != vmLastSeenLine_) {
+                    vmCrossedLine_ = true;
+                }
+                vmLastSeenLine_ = currentLine;
+            }
+            if (checkBreakpointHit(currentLine) &&
+                (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                 vmRunTimer_->stop();
                 vmLastPausedLine_ = currentLine;
+                vmCrossedLine_ = false;  // 命中后重置，同行后续指令不再触发
                 isVmRunning_ = false;
                 emit vmRunPaused(VmStepResult::PAUSED_AT_BREAKPOINT);
                 return;
@@ -330,6 +385,9 @@ void VmStepper::stop() {
     vmStepMode_ = VmStepMode::STEP_IN;
     vmLastPausedLine_ = 0;
     vmCrossedDeeper_ = false;  // AUDIT-BUG-D2 fix: reset 重置
+    // BUG-DBG-2 fix: 同步重置 crossedLine_ 状态，避免下一轮运行残留旧状态
+    vmLastSeenLine_ = -1;
+    vmCrossedLine_ = false;
 }
 
 // #4 fix: 检查断点命中（含条件求值）

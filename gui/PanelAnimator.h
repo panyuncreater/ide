@@ -10,12 +10,16 @@
 #include <QPropertyAnimation>
 #include <QParallelAnimationGroup>
 #include <QEasingCurve>
+#include <QGraphicsOpacityEffect>
 #include <QWidget>
 
 namespace PanelAnimator {
 
 /// 动画持续时间（毫秒），对齐 VS Code 面板节奏
 constexpr int DURATION_MS = 150;
+
+/// 子页面切换淡入持续时间（毫秒），略长于面板弹出节奏，过渡更柔和
+constexpr int FADE_DURATION_MS = 220;
 
 /// 滑动展开动画：从 0 高度滑动到 targetHeight，同时淡入
 /// 适用于底部面板/右侧面板的弹出
@@ -120,6 +124,25 @@ inline void animateHideHorizontal(QWidget* panel, std::function<void()> onFinish
     });
 
     widthAnim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+/// 子页面切换淡入动画：通过 QGraphicsOpacityEffect 驱动 opacity 0→1
+/// 适用于 QStackedWidget 子页切换、列表选中详情刷新等场景
+/// 注：QGraphicsOpacityEffect 由 widget parent 自动释放，无需手动管理
+inline void fadeInWidget(QWidget* widget, int duration = FADE_DURATION_MS) {
+    if (!widget) return;
+    auto* effect = qobject_cast<QGraphicsOpacityEffect*>(widget->graphicsEffect());
+    if (!effect) {
+        effect = new QGraphicsOpacityEffect(widget);
+        widget->setGraphicsEffect(effect);
+    }
+    effect->setOpacity(0.0);
+    auto* anim = new QPropertyAnimation(effect, "opacity", widget);
+    anim->setDuration(duration);
+    anim->setStartValue(0.0);
+    anim->setEndValue(1.0);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 } // namespace PanelAnimator

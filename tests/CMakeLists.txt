@@ -5,6 +5,13 @@
 # 也可独立构建（standalone）：cmake -B build && cmake --build build
 # ============================================================
 
+# BUILDFIX: 父项目未设置 MINILANG_ROOT_DIR，子目录需自行推导。
+# 独立构建分支在下方再次设置（覆盖），此处仅作为 fallback 保证
+# include(${MINILANG_ROOT_DIR}/cmake/windeployqt.cmake) 路径有效。
+if(NOT DEFINED MINILANG_ROOT_DIR)
+    set(MINILANG_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
+endif()
+
 # 支持独立构建（不通过父项目 add_subdirectory 时）
 if(NOT TARGET minilang_core)
     cmake_minimum_required(VERSION 3.20)
@@ -84,10 +91,43 @@ add_executable(minilang_tests
     TestMethodCallProbe.cpp
     TestConsistencyDiff.cpp
     TestLexerParserAudit.cpp
+    TestCompilerAudit.cpp
+    TestCompilerAudit2.cpp
+    TestIRAudit.cpp
+    TestThreeEnginesAudit.cpp
+    TestDebugAudit.cpp
+    TestFormatterGUISuiteAudit.cpp
+    TestTeachingPanelsAudit.cpp
+    TestTeachingPanelsAudit2.cpp
+    TestTeachingPanelsAudit3.cpp
+    TestTeachingPanelsAudit4.cpp
+    TestTeachingPanelsAudit5.cpp
+    # 教学面板数据类（位于 MINILANG_GUI_SOURCES，但仅含纯数据，
+    # 通过显式编译进测试目标以避免 minilang_core 强依赖 Qt6::Widgets）
+    ${MINILANG_ROOT_DIR}/gui/BugHuntLibrary.cpp
+    ${MINILANG_ROOT_DIR}/gui/SyntaxProductionLibrary.cpp
+    ${MINILANG_ROOT_DIR}/gui/LabManualContent.cpp
+    # 第二波面板：MemoryModelLibrary/IRTransformLibrary/ProfileLibrary
+    # 实现位于对应的 Panel.cpp 中（非独立 Library.cpp），整体加入测试目标
+    ${MINILANG_ROOT_DIR}/gui/MemoryModelPanel.cpp
+    ${MINILANG_ROOT_DIR}/gui/IRTransformPanel.cpp
+    ${MINILANG_ROOT_DIR}/gui/ProfileDashboardPanel.cpp
+    # 第三波面板：CallStackLibrary/VariableInspectorLibrary/BytecodeTraceLibrary
+    ${MINILANG_ROOT_DIR}/gui/CallStackPanel.cpp
+    ${MINILANG_ROOT_DIR}/gui/VariableInspectorPanel.cpp
+    ${MINILANG_ROOT_DIR}/gui/BytecodeTracePanel.cpp
+    # 第二档 P1-2：BreakpointConditionLibrary
+    ${MINILANG_ROOT_DIR}/gui/BreakpointConditionPanel.cpp
+    # 第三档 P2-3：ExceptionFlowLibrary/ClosureInspectorLibrary
+    ${MINILANG_ROOT_DIR}/gui/ExceptionFlowPanel.cpp
+    ${MINILANG_ROOT_DIR}/gui/ClosureInspectorPanel.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
     minilang_core
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
     gtest
     minilang_compile_options
 )
@@ -118,24 +158,9 @@ gtest_discover_tests(minilang_tests
 
 # ============================================================
 # Windows 平台自动部署 Qt 运行时依赖到测试可执行文件同目录
-# ------------------------------------------------------------
-# minilang_tests 链接了 Qt6::Widgets，运行时需要 Qt6 DLL。
-# 此处与父项目 CMakeLists.txt 中 minilang_ide 的部署逻辑呼应，
-# 保证测试二进制也可直接运行无需手动配置 PATH。
-# 修复问题 E-1/E-2（测试 exe 缺少 Qt DLL）。
+# 使用共享模块 cmake/windeployqt.cmake（与 minilang_ide 一致）
 # ============================================================
-if(WIN32 AND TARGET Qt6::qmake)
-    get_target_property(_qmake_location Qt6::qmake IMPORTED_LOCATION)
-    get_filename_component(_qt_bin_dir "${_qmake_location}" DIRECTORY)
-    find_program(WINDEPLOYQT_EXE windeployqt HINTS "${_qt_bin_dir}")
-    if(WINDEPLOYQT_EXE)
-        add_custom_command(TARGET minilang_tests POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXE}"
-                    --no-translations
-                    --no-system-d3d-compiler
-                    --no-opengl-sw
-                    "$<TARGET_FILE:minilang_tests>"
-            COMMENT "Deploying Qt runtime for minilang_tests..."
-        )
-    endif()
+if(NOT COMMAND minilang_deploy_qt_runtime)
+    include(${MINILANG_ROOT_DIR}/cmake/windeployqt.cmake)
 endif()
+minilang_deploy_qt_runtime(minilang_tests)

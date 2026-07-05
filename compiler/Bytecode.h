@@ -150,6 +150,7 @@ struct BytecodeChunk {
     std::vector<uint8_t> code;       // 指令字节流
     std::vector<Value> constants;    // 常量池
     std::vector<int> lines;         // 每条指令对应的行号
+    std::vector<int> columns;       // BUG-IBACKEND-2: 每条指令对应的列号（与 lines 平行，默认 0）
     std::string name;               // chunk 名称（函数名）
     int arity = 0;                  // 参数个数（F10: 含默认参数的总数）
     int requiredArity = 0;          // F10: 必需参数个数（无默认值的前缀参数数量）
@@ -158,6 +159,10 @@ struct BytecodeChunk {
     std::vector<std::string> fieldOrder; // 方法所属类的字段声明顺序（用于 OP_METHOD_CALL 栈布局）
     int localCount = 0;              // 局部变量总槽位数（含参数/this/字段/方法体内var声明），用于 VM 帧创建时预分配栈空间
     std::vector<UpvalueDesc> upvalues; // VM-05/06: 闭包捕获的 upvalue 描述符列表
+    // BUG-IDE-12 fix: 局部变量槽位→名称映射（索引即 slot）。
+    // 用于 VM 条件断点求值：从当前帧的栈槽反查变量名，注入临时 Interpreter 环境。
+    // 限制：槽位复用时（兄弟作用域）后声明的变量名覆盖先前的，属于已知限制。
+    std::vector<std::string> localSlotNames;
     // #11 fix: fieldOrder 的字段名→索引懒缓存。OP_MEMBER_SET_LOCAL 在 slot==0 时
     // 原线性扫描 fieldOrder（每次 this.field=v 都 O(n)）；改为首次访问时建 map，
     // 后续 O(1) 查找。mutable 因访问发生在 const 上下文（VM 执行 const chunk）。
@@ -181,36 +186,47 @@ struct BytecodeChunk {
     BytecodeChunk() = default;
     explicit BytecodeChunk(const std::string& chunkName, int argCount = 0)
         : name(chunkName), arity(argCount), requiredArity(argCount) {}
+    BytecodeChunk(const BytecodeChunk&) = default;
+    BytecodeChunk(BytecodeChunk&&) noexcept = default;
+    BytecodeChunk& operator=(const BytecodeChunk&) = default;
+    BytecodeChunk& operator=(BytecodeChunk&&) noexcept = default;
 
     /// C21: 预分配字节码空间，避免编译期间频繁 realloc
     void reserveCode(size_t estimatedBytes) {
         code.reserve(estimatedBytes);
         lines.reserve(estimatedBytes);
+        columns.reserve(estimatedBytes);
     }
 
     /// 追加一个字节
-    void write(uint8_t byte, int line) {
+    void write(uint8_t byte, int line, int column = 0) {
         code.push_back(byte);
         lines.push_back(line);
+        columns.push_back(column);
     }
 
     /// 追加一个操作码
-    void writeOp(OpCode op, int line) {
-        write(static_cast<uint8_t>(op), line);
+    void writeOp(OpCode op, int line, int column = 0) {
+        write(static_cast<uint8_t>(op), line, column);
     }
 
     /// 追加一个 16 位操作数（小端序）
-    void writeShort(uint16_t value, int line) {
-        write(static_cast<uint8_t>(value & 0xFF), line);
-        write(static_cast<uint8_t>((value >> 8) & 0xFF), line);
+    void writeShort(uint16_t value, int line, int column = 0) {
+        write(static_cast<uint8_t>(value & 0xFF), line, column);
+        write(static_cast<uint8_t>((value >> 8) & 0xFF), line, column);
     }
 
     /// 添加常量，返回索引（哈希去重，O(1) 均摊）
+    /// BUG-CP-1 fix: 必须额外检查 getType() 严格匹配——Value::equals 允许
+    /// int/float 跨类型比较（Value(0).equals(Value(0.0)) == true），若仅依赖
+    /// equals 会导致 int 0 和 float 0.0 在常量池中错误合并为同一索引，
+    /// 后续 OP_INT/OP_FLOAT 加载到的 Value 类型与编译期预期不符，
+    /// 触发 toString/format/类型注解等路径的语义错误甚至 VM 崩溃。
     uint16_t addConstant(const Value& val) {
         size_t h = hashValue(val);
         auto& bucket = constantHashMap_[h];
         for (uint16_t i : bucket) {
-            if (constants[i].equals(val)) return i;
+            if (constants[i].getType() == val.getType() && constants[i].equals(val)) return i;
         }
         if (constants.size() >= 65535) {
             throw std::runtime_error("编译错误: 常量池超出限制 (65535)");
@@ -288,6 +304,12 @@ public:
     /// A3 fix: 改用元数据表查表（与 opCodeName/isOpCodeVariableLength 共享 kOpCodeInfo）
     static size_t instructionSize(OpCode op) {
         return getOpCodeInfo(op).baseSize;
+    }
+
+    /// BUG-IBACKEND-2: 获取指令列号
+    int getColumn(size_t offset) const {
+        if (offset < columns.size()) return columns[offset];
+        return 0;
     }
 
     /// 反汇编：输出字节码文本（D9 fix: 实现移至 Bytecode.cpp）

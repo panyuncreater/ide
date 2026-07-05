@@ -1,3 +1,28 @@
+/**
+ * @file formatter/Formatter.h
+ * @brief 代码格式化器（AST → 标准代码文本）。
+ *
+ * 将 AST 重新格式化为标准代码文本，统一缩进/空格/换行风格。
+ * 继承 DefaultVisitor，统一 AST 分派为 Visitor 模式：
+ * formatNode 通过 node->accept(*this) 分派到对应的 visit* 方法，
+ * visit* 方法内部调用原 format* 逻辑并将结果存入 lastFormatResult_。
+ *
+ * 核心特性：
+ *   - 32 种 AST 节点类型的格式化（覆盖全部 NodeType）
+ *   - 三种花括号风格预设（compact / allman / tabbed）
+ *   - F1 fix: 注释保留（setComments 注入注释 Token，按行号插入）
+ *   - 运算符优先级正确加括号（needsParens + opPrecedence）
+ *   - 字符串插值保留（C5 fix: formatInterpolatedString）
+ *
+ * 往返等价性约束（formatter_audit 测试套件）：
+ *   - format(parse(source)) 解析后 AST 结构等价于 parse(source)
+ *   - 缩进双重计算、括号保留规则、AST 结构不等价是已知高频 Bug
+ *
+ * DoS 防护：
+ *   - MAX_FORMAT_DEPTH（256）：递归深度上限
+ *
+ * @see Parser ASTNode DefaultVisitor
+ */
 #pragma once
 
 #include <string>
