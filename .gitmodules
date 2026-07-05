@@ -2,3 +2,13 @@
 	path = third_party/googletest
 	url = https://github.com/google/googletest.git
 	branch = main
+
+[submodule "third_party/ads"]
+	path = third_party/ads
+	url = https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System.git
+	branch = master
+
+[submodule "third_party/QFluentKit"]
+	path = third_party/QFluentKit
+	url = https://github.com/toddming/QFluentKit.git
+	branch = main
