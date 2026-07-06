@@ -14,6 +14,9 @@
 #include <sstream>
 #include <algorithm>
 
+#include "Label.h"                // QFluentKit（CaptionLabel）
+#include "gui/TeachingTheme.h"
+
 // ============================================================
 // BreakpointConditionLibrary — 静态教学场景库
 // ============================================================
@@ -177,7 +180,7 @@ void BreakpointConditionPanel::buildLivePage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    liveStatusLabel_ = new QLabel(QString::fromUtf8("未绑定控制器"), host);
+    liveStatusLabel_ = new CaptionLabel(QString::fromUtf8("未绑定控制器"), host);
     layout->addWidget(liveStatusLabel_);
 
     // 4 列：行号 / 条件表达式 / 命中次数 / 状态
@@ -274,7 +277,8 @@ void BreakpointConditionPanel::populateScenarioDetail(int index) {
     os << "<p>" << s.description << "</p>";
     os << "<p><b>触发行为：</b> " << s.expectedBehavior << "</p>";
     os << "<h4>示例代码：</h4>";
-    os << "<pre style='background:#f5f5f5; padding:8px; font-family:Consolas;'>" << s.sampleCode << "</pre>";
+    os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()
+       << "; padding:8px; font-family:Consolas;'>" << s.sampleCode << "</pre>";
     scenarioDetail_->setHtml(QString::fromUtf8(os.str().c_str()));
     PanelAnimator::fadeInWidget(scenarioDetail_);
 }

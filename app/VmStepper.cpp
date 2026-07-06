@@ -160,11 +160,19 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
 
             // BUG-IDE-18 fix: STEP_OVER/OUT 在深递归或长循环上同步执行可达数十万步，
             // 期间不处理任何事件会让 UI 看似冻结（标题栏"无响应"、面板不重绘）。
-            // 每 2000 步让出事件循环处理绘制/定时器事件（ExcludeUserInputEvents
+            // 每 2000 步让出事件循环处理绘制事件（ExcludeUserInputEvents
             // 排除用户输入事件以避免重入触发 stop/step 等槽函数）。若期间 VM 被异步
             // 停止（isVmRunning_ 被置 false），立即返回 OK 让 UI 更新。
-            // 注意：processEvents 有可重入风险，但 STEP_OVER/OUT 是用户主动触发的
-            // 同步操作，且已排除用户输入事件，重入风险可控。
+            //
+            // BUG-GUI-AUDIT-1 fix attempt: 原审计建议增加 ExcludeTimers 排除定时器事件，
+            // 避免 CallStackPanel/VariableInspectorPanel 等 500ms 轮询定时器在
+            // STEP 中途触发重入。但 Qt 6 的 QEventLoop 已移除通用 ExcludeTimers flag
+            //（仅保留 X11 平台特定的 X11ExcludeTimers，Windows 上无效）。
+            // 替代方案: 1) 临时停止特定定时器（需访问 timer 对象，VmStepper 不持有）；
+            //          2) 改用 sendPostedEvents()（仅处理 posted events，不刷新绘制）。
+            // 当前折中: 保持 ExcludeUserInputEvents，定时器重入风险作为已知限制保留。
+            // CallStackPanel/VariableInspectorPanel 的轮询代码已通过 isVmRunning_ 检查
+            // 防御 STEP 中途读取（参见 VariableInspectorPanel 的 refreshLocals 实现）。
             if (stepCount % 2000 == 0) {
                 QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
                 if (!isVmRunning_) {
@@ -393,6 +401,10 @@ void VmStepper::stop() {
 // #4 fix: 检查断点命中（含条件求值）
 // 返回 true 表示应在此行暂停。无条件断点直接返回 true；
 // 条件断点调用 vmConditionEvaluator_ 求值，求值为真才暂停。
+// BUG-DBG-AUDIT-2 fix: 命中时（无条件直接返回 true 前 / 条件求值为 true 后）
+// 递增 vmBreakpointHitCounts_[line]，对齐 DebugController::shouldPauseAtBreakpoint
+// 中 breakpointInfos_[line].hitCount++ 语义，使 BreakpointConditionPanel 在 VM 模式
+// 下能显示真实命中次数。
 bool VmStepper::checkBreakpointHit(int line) {
     if (vmBreakpoints_.isEmpty() || line <= 0 || !vmBreakpoints_.contains(line)) {
         return false;
@@ -400,11 +412,18 @@ bool VmStepper::checkBreakpointHit(int line) {
     // #4 fix: 检查是否有条件表达式
     auto condIt = vmBreakpointConditions_.find(line);
     if (condIt == vmBreakpointConditions_.end() || condIt->empty()) {
+        // BUG-DBG-AUDIT-2 fix: 无条件断点命中 → 递增 hitCount
+        vmBreakpointHitCounts_[line]++;
         return true;  // 无条件断点：直接命中
     }
     // #4 fix: 条件断点：调用求值器（由 IdeController 注入，使用临时 Interpreter + VM 全局变量）
     if (vmConditionEvaluator_) {
-        return vmConditionEvaluator_(condIt.value());
+        if (vmConditionEvaluator_(condIt.value())) {
+            // BUG-DBG-AUDIT-2 fix: 条件断点求值为真 → 递增 hitCount
+            vmBreakpointHitCounts_[line]++;
+            return true;
+        }
+        return false;
     }
     // 无求值器时视为条件不满足（不暂停）——与 DebugEvaluator::evaluate 语义一致。
     // AUDIT-BUG-D1 fix: 原返回 true 会导致条件断点被当作无条件断点，

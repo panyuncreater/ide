@@ -1,0 +1,163 @@
+#include "gui/CodeJourneyInfoPanel.h"
+#include "gui/I18n.h"
+#include "gui/TeachingTheme.h"
+
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QTextBrowser>
+#include <QPushButton>
+#include <QLabel>
+
+#include "Label.h"   // QFluentKit（TitleLabel）
+
+CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
+    : QWidget(parent) {
+    auto* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(4, 4, 4, 4);
+    mainLayout->setSpacing(4);
+
+    // 顶部说明
+    auto* titleLabel = new TitleLabel(mlTr("🚀 代码的生命旅程"), this);
+    mainLayout->addWidget(titleLabel);
+
+    // 主体：静态信息图（HTML 渲染）
+    infoBrowser_ = new QTextBrowser(this);
+    infoBrowser_->setHtml(buildJourneyHtml());
+    infoBrowser_->setOpenExternalLinks(false);
+    mainLayout->addWidget(infoBrowser_, 1);
+
+    // 底部：跳转按钮（对应管线 5 个阶段）
+    auto* btnBar = new QHBoxLayout;
+    auto* btnEditor   = new QPushButton(mlTr("① 编辑器"), this);
+    auto* btnTokens   = new QPushButton(mlTr("② Token 表"), this);
+    auto* btnAst      = new QPushButton(mlTr("③ AST"), this);
+    auto* btnIr       = new QPushButton(mlTr("④ IR"), this);
+    auto* btnBytecode = new QPushButton(mlTr("⑤ 字节码"), this);
+    auto* btnOutput   = new QPushButton(mlTr("⑥ 输出"), this);
+    btnBar->addWidget(btnEditor);
+    btnBar->addWidget(btnTokens);
+    btnBar->addWidget(btnAst);
+    btnBar->addWidget(btnIr);
+    btnBar->addWidget(btnBytecode);
+    btnBar->addWidget(btnOutput);
+    btnBar->addStretch();
+    mainLayout->addLayout(btnBar);
+
+    connect(btnEditor,   &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToEditor);
+    connect(btnTokens,   &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToTokens);
+    connect(btnAst,      &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToAst);
+    connect(btnIr,       &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToIr);
+    connect(btnBytecode, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToBytecode);
+    connect(btnOutput,   &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToOutput);
+}
+
+QString CodeJourneyInfoPanel::buildJourneyHtml() const {
+    // 教学语义色：5 阶段保留固定颜色（绿/橙/紫/红/青/棕），便于视觉记忆
+    // 示例代码 <pre> 背景改用 TeachingTheme::surface()，跟随亮/暗主题
+    const QString surfaceHex = TeachingTheme::surface().name();
+    return QString(
+        "<html><body style='font-family: Consolas, monospace; font-size: 13px; line-height: 1.6;'>"
+        "<h2 style='color: #2196F3;'>🚀 代码的生命旅程</h2>"
+        "<p style='color: #666;'>从你写下代码到看到结果，中间发生了什么？</p>"
+        "<hr>"
+        "<h3 style='color: #4CAF50;'>示例代码</h3>"
+        "<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>"
+        "<p>👆 这行代码最终输出 <b>7</b>。它是怎么变成 7 的？</p>"
+        "<hr>"
+
+        "<h3 style='color: #FF9800;'>① 你写的代码（源码）</h3>"
+        "<p>编辑器中的纯文本。计算机还不理解这些字符的含义。</p>"
+        "<pre style='background: #fff3e0; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>"
+        "<p style='color: #888;'>👇 词法分析</p>"
+        "<hr>"
+
+        "<h3 style='color: #9C27B0;'>② Token 表（词法分析）</h3>"
+        "<p>词法分析器将源码切分为有类型的片段：</p>"
+        "<pre style='background: #f3e5f5; padding: 8px; border-radius: 4px;'>"
+        "Token  | 类型       | lexeme<br>"
+        "------|-----------|--------<br>"
+        "  1   | IDENT     | print<br>"
+        "  2   | LPAREN    | (<br>"
+        "  3   | INT       | 1<br>"
+        "  4   | PLUS      | +<br>"
+        "  5   | INT       | 2<br>"
+        "  6   | STAR      | *<br>"
+        "  7   | INT       | 3<br>"
+        "  8   | RPAREN    | )<br>"
+        "  9   | SEMICOLON | ;"
+        "</pre>"
+        "<p>💡 注释被分离出主流（不计入 Token 表）</p>"
+        "<p style='color: #888;'>👇 语法分析</p>"
+        "<hr>"
+
+        "<h3 style='color: #F44336;'>③ AST（语法分析）</h3>"
+        "<p>解析器根据优先级规则构建树形结构：</p>"
+        "<pre style='background: #ffebee; padding: 8px; border-radius: 4px;'>"
+        "Print<br>"
+        " └── BinaryOp(+)<br>"
+        "      ├── Number(1)<br>"
+        "      └── BinaryOp(*)<br>"
+        "           ├── Number(2)<br>"
+        "           └── Number(3)"
+        "</pre>"
+        "<p>💡 注意 <b>*</b> 节点在 <b>+</b> 节点的下面——乘法优先级更高！</p>"
+        "<p>括号改变结构：<code>(1+2)*3</code> 会变成 * 在根、+ 在左子树</p>"
+        "<p style='color: #888;'>👇 编译</p>"
+        "<hr>"
+
+        "<h3 style='color: #00BCD4;'>④ IR（中间表示）</h3>"
+        "<p>AST 被转换为 IR（三地址码），便于优化：</p>"
+        "<pre style='background: #e0f7fa; padding: 8px; border-radius: 4px;'>"
+        "function main:<br>"
+        "  LOAD_CONST v1, 1      ; v1 = 1<br>"
+        "  LOAD_CONST v2, 2      ; v2 = 2<br>"
+        "  LOAD_CONST v3, 3      ; v3 = 3<br>"
+        "  MUL v4, v2, v3        ; v4 = v2 * v3 = 6<br>"
+        "  ADD v5, v1, v4        ; v5 = v1 + v4 = 7<br>"
+        "  PRINT v5              ; 输出 7<br>"
+        "  RETURN"
+        "</pre>"
+        "<p>💡 IR 优化 pass 可在此阶段进行：常量折叠、DCE、复制传播等</p>"
+        "<p style='color: #888;'>👇 后端 lowering</p>"
+        "<hr>"
+
+        "<h3 style='color: #795548;'>⑤ 字节码（虚拟机指令）</h3>"
+        "<p>IR 被翻译为栈式 VM 字节码：</p>"
+        "<pre style='background: #efebe9; padding: 8px; border-radius: 4px;'>"
+        "StackVM 字节码:<br>"
+        "  OP_INT 1        ; push 1<br>"
+        "  OP_INT 2        ; push 2<br>"
+        "  OP_INT 3        ; push 3<br>"
+        "  OP_MUL          ; pop 2,3 → push 6<br>"
+        "  OP_ADD          ; pop 1,6 → push 7<br>"
+        "  OP_PRINT        ; pop 7 → 输出"
+        "</pre>"
+        "<p>💡 三后端一致性：Interpreter / StackVM / RegisterVM 三条路径都输出 7</p>"
+        "<p style='color: #888;'>👇 执行</p>"
+        "<hr>"
+
+        "<h3 style='color: #4CAF50;'>⑥ 输出结果</h3>"
+        "<p>VM 执行字节码，得到最终结果：</p>"
+        "<pre style='background: #e8f5e9; padding: 8px; border-radius: 4px; font-size: 16px; font-weight: bold;'>7</pre>"
+        "<p>🎉 这就是代码的生命旅程！</p>"
+        "<hr>"
+
+        "<h3 style='color: #2196F3;'>📝 关键概念回顾</h3>"
+        "<ul>"
+        "<li><b>词法分析</b>：源码 → Token 序列（切分字符流）</li>"
+        "<li><b>语法分析</b>：Token → AST（按优先级构建树）</li>"
+        "<li><b>IR 生成</b>：AST → 三地址码（便于优化）</li>"
+        "<li><b>后端 lowering</b>：IR → 字节码（VM 可执行）</li>"
+        "<li><b>VM 执行</b>：字节码 → 结果（push/pop 或寄存器运算）</li>"
+        "</ul>"
+        "<p style='color: #888; font-size: 11px;'>提示：点击底部按钮跳转到对应面板，亲手探索每个阶段！</p>"
+        "</body></html>"
+    ).arg(surfaceHex);
+}
+
+void CodeJourneyInfoPanel::onJumpToEditor()   { emit jumpToPanelRequested("editor"); }
+void CodeJourneyInfoPanel::onJumpToTokens()   { emit jumpToPanelRequested("tokens"); }
+void CodeJourneyInfoPanel::onJumpToAst()      { emit jumpToPanelRequested("ast"); }
+void CodeJourneyInfoPanel::onJumpToIr()       { emit jumpToPanelRequested("ir"); }
+void CodeJourneyInfoPanel::onJumpToBytecode() { emit jumpToPanelRequested("bytecode"); }
+void CodeJourneyInfoPanel::onJumpToOutput()   { emit jumpToPanelRequested("output"); }

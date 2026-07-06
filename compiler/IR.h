@@ -503,6 +503,11 @@ private:
     };
     std::vector<LoopContext> loopStack_;
     int tryDepth_ = 0;  // 当前 try 嵌套深度（BUG-EXC-2 fix）
+    // BUG-IR-SHADOW-SAVE fix: catch 变量遮蔽全局时，原值保存到临时 name-based 全局变量。
+    // 不能用 vreg 保存——StackVM 后端的 LOAD_EXCEPTION 是 no-op（异常值已在栈上），
+    // LOAD_GLOBAL 再 push 会使 DEFINE_GLOBAL pop 错误值（saved 而非 exception）。
+    // 对齐 Compiler.cpp 的 __catch_save_<counter>_<name> 模式。
+    uint32_t catchSaveCounter_ = 0;
 
     // ---- 辅助方法 ----
     IRBasicBlock& newBlock();

@@ -7,6 +7,10 @@
 #include <QTextBlock>
 #include <QTimer>
 #include <string>
+#include <utility>
+#include <vector>
+
+#include "gui/CodeSnippetEngine.h"  // 功能 13：代码模板系统
 
 // ============================================================
 // CodeEditor 代码编辑器
@@ -14,6 +18,8 @@
 
 class QCompleter;
 class QStringListModel;
+class QDialog;
+class QListWidget;
 
 /// 行号区域部件
 class LineNumberArea : public QWidget {
@@ -107,6 +113,8 @@ private slots:
     void insertCompletion(const QString& completion);
     /// BUG-CE-2/CE-3 fix: 文档内容变化时调整断点/折叠块号偏移
     void onContentsChange(int position, int charsRemoved, int charsAdded);
+    /// H2: 括号匹配高亮（光标停在 ([{ 时高亮对应 )]}）
+    void highlightBracketMatch();
 
 private:
     LineNumberArea* lineNumberArea_ = nullptr;
@@ -116,6 +124,7 @@ private:
     int currentLine_ = -1;      // 当前执行行号
     QList<QTextEdit::ExtraSelection> cachedErrorSelections_;  // 缓存的错误行选择（仅 errorLines_ 变化时重建）
     QList<QTextEdit::ExtraSelection> findSelections_;  // BUG 4.2 fix: 查找高亮（独立存储，不覆盖编辑器自身 selections）
+    QList<QTextEdit::ExtraSelection> bracketSelections_;  // H2: 括号匹配高亮（由 highlightCurrentLine 合并）
 
     // F8: 代码折叠相关
     QSet<int> foldedBlocks_;    // 已折叠的块号（blockNumber，从0开始）
@@ -149,6 +158,46 @@ private:
 
     /// F8: 获取块的折叠范围（返回结束块号，-1 表示不可折叠）
     int foldEndBlock(const QTextBlock& startBlock) const;
+
+    // ========================================================
+    // 功能 13：代码模板 / Snippets 系统
+    // ========================================================
+    /// 当前展开的占位符绝对位置列表 [start, end)（文档字符偏移）
+    std::vector<std::pair<int, int>> currentPlaceholders_;
+    int currentPlaceholderIdx_ = -1;   ///< 当前占位符索引，-1 表示未在占位符导航模式
+    bool isSnippetNavigating_ = false; ///< 标记程序化光标移动（避免触发"光标移出占位符"清理）
+
+    /// 尝试展开 snippet：检测光标前触发词，匹配则删除触发词并插入展开文本
+    /// \return true 表示已展开（事件已消费），false 表示无匹配（事件应继续传播）
+    bool tryExpandSnippet();
+
+    /// 选中当前占位符（currentPlaceholders_[currentPlaceholderIdx_]）
+    void selectCurrentPlaceholder();
+
+    /// Tab 跳到下一个占位符；已是最后一个则退出占位符模式
+    void jumpToNextPlaceholder();
+
+    /// Shift+Tab 跳到上一个占位符；已是第一个则保持不动
+    void jumpToPrevPlaceholder();
+
+    /// 清除占位符导航状态
+    void clearSnippetState();
+
+    /// 文档内容变化时同步更新占位符范围（基于 position/charsRemoved/charsAdded 增量）
+    void updatePlaceholderRanges(int position, int charsRemoved, int charsAdded);
+
+    /// 打开 Ctrl+T 模板列表对话框，选中后插入到光标位置
+    void showSnippetListDialog();
+
+    // ========================================================
+    // H1/H4: 编辑器增强（缩进/注释切换）
+    // ========================================================
+    /// H1: 对选中范围每行行首插入或移除 4 空格（addIndent=true 缩进，false 反缩进）
+    void indentSelection(QTextCursor& tc, bool addIndent);
+    /// H1: 移除光标所在行行首最多 4 空格（或 1 Tab）
+    void unindentLine(QTextCursor& tc);
+    /// H4: 对选中范围切换 // 注释（行首有 // 则移除，否则插入）
+    void toggleCommentSelection(QTextCursor& tc);
 
     friend class LineNumberArea;
 };

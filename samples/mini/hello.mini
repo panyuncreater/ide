@@ -1,0 +1,16 @@
+// hello.mini - 你好世界
+// 覆盖特性：print 输出、字符串插值、var 变量声明
+// ============================================================
+
+var name = "MiniLang";
+var version = 1.0;
+
+// 字符串插值：在双引号字符串中用 {表达式} 嵌入变量值
+print("Hello, {name}!");
+print("Version: {version}");
+print("Welcome to MiniLang IDE!");
+
+// 预期输出：
+// Hello, MiniLang!
+// Version: 1.0
+// Welcome to MiniLang IDE!

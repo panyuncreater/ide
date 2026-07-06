@@ -214,6 +214,18 @@ void Interpreter::setModuleLoader(std::function<std::string(const std::string&)>
     moduleLoader_ = loader;
 }
 
+// BUG-REPL-AUDIT-9 fix: 检查是否已设置模块加载器
+bool Interpreter::hasModuleLoader() const {
+    std::lock_guard<std::mutex> lock(callbackMutex_);
+    return static_cast<bool>(moduleLoader_);
+}
+
+// BUG-REPL-AUDIT-1 fix: 模块文件 mtime 检查器设置
+void Interpreter::setModuleMtimeChecker(std::function<int64_t(const std::string&)> checker) {
+    std::lock_guard<std::mutex> lock(callbackMutex_);
+    moduleMtimeChecker_ = checker;
+}
+
 void Interpreter::setCurrentFilePath(const std::string& path) {
     currentFilePath_ = path;
 }
@@ -1500,43 +1512,70 @@ void Interpreter::visitThrowStmt(ThrowStmt& node) {
 
 void Interpreter::visitTryStmt(TryStmt& node) {
     checkBreak(&node);
+    // BUG-AUDIT-FINALLY-1: finally 块语义
+    // - 正常退出（try/catch 正常完成）：执行 finally
+    // - 异常退出（try/catch 抛出未捕获异常）：执行 finally 后 re-throw
+    // - return/break/continue：不执行 finally（与 VM 路径一致，已知限制）
+    // - try-finally（无 catch）：异常不被捕获，finally 执行后 re-throw
+    bool finallyRun = false;
     try {
-        if (node.tryBlock) {
-            evaluate(node.tryBlock.get());
-        }
-    } catch (ThrowException& e) {
-        // 在 catch 块的新作用域中绑定异常变量
-        auto catchEnv = std::make_shared<Environment>(currentEnv_);
-        auto savedEnv = currentEnv_;
-        currentEnv_ = catchEnv;
-        // P2-1 fix: 使用 std::move 避免不必要的 Value 拷贝
-        currentEnv_->define(node.catchVarName, std::move(e.thrownValue));
-
-        // RA-A fix: RAII 守卫统一管理 catchEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
-        // 消除原 catch(...) + throw; 的 rethrow。
-        // catch 块内若抛出 return/break/continue/throw，envGuard 析构恢复 catchEnv 后异常自然传播。
-        struct CatchEnvGuard {
-            Interpreter& interp;
-            std::shared_ptr<Environment>& env;
-            std::shared_ptr<Environment>& saved;
-            bool dismissed = false;
-            ~CatchEnvGuard() {
-                if (!dismissed) {
-                    // B1 fix: 关闭捕获 — catch 块退出时将最终值写回闭包 capturedVars
-                    env->closeCapturedVariables();
-                    interp.currentEnv_ = saved;
+        if (!node.catchVarName.empty()) {
+            // try-catch(-finally)：有 catch 子句，捕获异常
+            try {
+                if (node.tryBlock) {
+                    evaluate(node.tryBlock.get());
                 }
-            }
-        } envGuard{ *this, catchEnv, savedEnv };
+            } catch (ThrowException& e) {
+                // 在 catch 块的新作用域中绑定异常变量
+                auto catchEnv = std::make_shared<Environment>(currentEnv_);
+                auto savedEnv = currentEnv_;
+                currentEnv_ = catchEnv;
+                // P2-1 fix: 使用 std::move 避免不必要的 Value 拷贝
+                currentEnv_->define(node.catchVarName, std::move(e.thrownValue));
 
-        if (node.catchBlock) {
-            evaluate(node.catchBlock.get());
+                // RA-A fix: RAII 守卫统一管理 catchEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
+                // 消除原 catch(...) + throw; 的 rethrow。
+                // catch 块内若抛出 return/break/continue/throw，envGuard 析构恢复 catchEnv 后异常自然传播。
+                struct CatchEnvGuard {
+                    Interpreter& interp;
+                    std::shared_ptr<Environment>& env;
+                    std::shared_ptr<Environment>& saved;
+                    bool dismissed = false;
+                    ~CatchEnvGuard() {
+                        if (!dismissed) {
+                            // B1 fix: 关闭捕获 — catch 块退出时将最终值写回闭包 capturedVars
+                            env->closeCapturedVariables();
+                            interp.currentEnv_ = saved;
+                        }
+                    }
+                } envGuard{ *this, catchEnv, savedEnv };
+
+                if (node.catchBlock) {
+                    evaluate(node.catchBlock.get());
+                }
+                // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
+                // B1 fix: 关闭捕获 — catch 块正常退出
+                envGuard.dismissed = true;
+                catchEnv->closeCapturedVariables();
+                currentEnv_ = savedEnv;
+            }
+        } else {
+            // try-finally（无 catch）：不捕获异常，让异常传播到外层 catch
+            if (node.tryBlock) {
+                evaluate(node.tryBlock.get());
+            }
         }
-        // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
-        // B1 fix: 关闭捕获 — catch 块正常退出
-        envGuard.dismissed = true;
-        catchEnv->closeCapturedVariables();
-        currentEnv_ = savedEnv;
+        // 正常退出：执行 finally
+        if (node.finallyBlock) {
+            evaluate(node.finallyBlock.get());
+        }
+        finallyRun = true;
+    } catch (const ThrowException&) {
+        // 异常路径：执行 finally 后 re-throw
+        if (!finallyRun && node.finallyBlock) {
+            evaluate(node.finallyBlock.get());
+        }
+        throw;
     }
     lastValue_ = Value::nullValue(); return;
 }

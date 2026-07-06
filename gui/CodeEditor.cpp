@@ -13,7 +13,13 @@
 #include <QKeyEvent>
 #include <QAbstractItemView>
 #include <QScrollBar>
+#include <QDialog>
+#include <QListWidget>
+#include <QVBoxLayout>
+#include <QDialogButtonBox>
+#include <QLabel>
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
+#include "gui/I18n.h"           // 功能 13：mlTr() 国际化
 
 // ============================================================
 // LineNumberArea 行号区域
@@ -243,6 +249,17 @@ CodeEditor::CodeEditor(QWidget* parent)
     connect(lineHighlightTimer_, &QTimer::timeout, this, &CodeEditor::highlightCurrentLine);
     connect(this, &CodeEditor::cursorPositionChanged, this, [this]() {
         if (lineHighlightTimer_) lineHighlightTimer_->start();
+        // 功能 13：光标移出当前占位符范围时清理 snippet 导航状态。
+        // isSnippetNavigating_ 用于排除程序化光标移动（Tab 跳转 / 初始展开选中）。
+        if (currentPlaceholderIdx_ >= 0 && !isSnippetNavigating_) {
+            const auto& range = currentPlaceholders_[currentPlaceholderIdx_];
+            const int pos = textCursor().position();
+            // 占位符范围 [start, end)，光标在 [start, end] 内视为有效（含 end
+            // 便于紧贴占位符末尾编辑）。超出此区间则退出导航模式。
+            if (pos < range.first || pos > range.second) {
+                clearSnippetState();
+            }
+        }
     });
 
     // BUG-CE-2/CE-3 fix: 监听文档内容变化，文档修改后调整断点/折叠块号偏移。
@@ -250,6 +267,18 @@ CodeEditor::CodeEditor(QWidget* parent)
     contentsChangeConn_ = connect(document(), &QTextDocument::contentsChange,
         this, &CodeEditor::onContentsChange);
     lastBlockCount_ = document()->blockCount();
+
+    // 功能 13：监听文档内容变化，同步更新 snippet 占位符范围。
+    // 与 onContentsChange 独立连接，互不干扰——breakpoint 偏移按行号 delta，
+    // 占位符偏移按字符 delta，两者维度不同。
+    connect(document(), &QTextDocument::contentsChange,
+        this, [this](int position, int charsRemoved, int charsAdded) {
+            updatePlaceholderRanges(position, charsRemoved, charsAdded);
+        });
+
+    // H2: 光标移动时高亮匹配的括号
+    connect(this, &QPlainTextEdit::cursorPositionChanged,
+            this, &CodeEditor::highlightBracketMatch);
 
     updateLineNumberAreaWidth(0);
     highlightCurrentLine();
@@ -418,6 +447,32 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     if (!block.isValid()) return;
     int startLine = block.blockNumber() + 1;  // 1-based，变更起始行
 
+    // BUG-GUI-AUDIT-2 fix: 区分"行末插入换行符"与"行首插入换行符"两种场景。
+    //   - 行首插入换行符（光标在行首按 Enter）：新行创建在当前行之前，原行内容下移，
+    //     断点应 +1（当前实现已正确）。
+    //   - 行末插入换行符（光标在行末按 Enter）：新行创建在当前行之后，原行内容不变，
+    //     断点应保持原行号（不应 +1）。原实现错误地对原行断点也 +1。
+    //   - 删除整行（含换行符）：原行内容消失，下移内容上移。VS Code 语义是断点保持
+    //     原行号（指向新移入的内容），原实现错误地 -1。
+    // 通过检查 position 是否位于块末尾换行符位置来区分插入场景。
+    // block.length() 含换行符，position == block.position() + block.length() - 1
+    // 表示光标在块末尾换行符之前（即行末）。
+    if (delta > 0) {
+        // 插入场景：若插入发生在块末尾换行符位置，原行内容不变，断点不应偏移。
+        // 将 startLine +1 使原行 line < startLine，不参与偏移。
+        if (position >= block.position() + block.length() - 1) {
+            ++startLine;
+        }
+    } else if (delta < 0) {
+        // 删除场景：若删除整行（含换行符）导致块数减少，原行被新内容占据。
+        // 断点应保持原行号（指向新移入的内容），不应 -1。
+        // 将 startLine +1 使原行 line < startLine，不参与偏移。
+        // 注：仅当 position 在块开头时才应用此修正（整行删除）。
+        if (position == block.position()) {
+            ++startLine;
+        }
+    }
+
     // 调整断点行号（1-based）
     QSet<int> newBreakpoints;
     newBreakpoints.reserve(breakpoints_.size());
@@ -489,6 +544,9 @@ void CodeEditor::highlightCurrentLine() {
 
     // 错误下划线（使用预构建的缓存，避免每次光标移动都遍历）
     selections.append(cachedErrorSelections_);
+
+    // H2: 括号匹配高亮（在错误下划线之后、光标行之前，避免覆盖）
+    selections.append(bracketSelections_);
 
     QTextEdit::ExtraSelection cursorSel;
     cursorSel.cursor = textCursor();
@@ -790,11 +848,106 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
         }
     }
 
+    // ========================================================
+    // 功能 13：代码模板 / Snippets 系统的键盘交互
+    // ========================================================
+    // Ctrl+T 打开模板列表对话框
+    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_T) {
+        showSnippetListDialog();
+        return;
+    }
+
+    // Tab 键：占位符导航 or 触发词展开 or 默认缩进
+    if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier) {
+        if (currentPlaceholderIdx_ >= 0) {
+            // 已在占位符导航模式 → 跳到下一个占位符
+            jumpToNextPlaceholder();
+            return;
+        }
+        // 未在导航模式 → 检测触发词并尝试展开
+        if (tryExpandSnippet()) {
+            return;  // 已展开，事件已消费
+        }
+        // H1: 无匹配触发词 → 多行缩进 or 插入 4 空格
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            indentSelection(tc, /*addIndent=*/true);
+        } else {
+            // 单行：插入 4 空格而非 \t（保持与 setTabStopDistance 一致）
+            tc.insertText(QString(4, ' '));
+        }
+        return;
+    }
+
+    // Shift+Tab：占位符反向导航 or 默认反向缩进
+    if (event->key() == Qt::Key_Backtab ||
+        (event->key() == Qt::Key_Tab && (event->modifiers() & Qt::ShiftModifier))) {
+        if (currentPlaceholderIdx_ >= 0) {
+            jumpToPrevPlaceholder();
+            return;
+        }
+        // H1: 反向缩进
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            indentSelection(tc, /*addIndent=*/false);
+        } else {
+            unindentLine(tc);
+        }
+        return;
+    }
+
+    // Escape：退出占位符导航模式
+    if (event->key() == Qt::Key_Escape && currentPlaceholderIdx_ >= 0) {
+        clearSnippetState();
+        return;
+    }
+
     // P1-2 fix: Ctrl+Space 在中文 IME 下会被系统拦截切换输入法，增加 Ctrl+J 作为备选触发键
     if (event->modifiers() == Qt::ControlModifier &&
         (event->key() == Qt::Key_Space || event->key() == Qt::Key_J)) {
         triggerCompletion();
         return;
+    }
+
+    // H4: Ctrl+/ 注释切换
+    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Slash) {
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            toggleCommentSelection(tc);
+        } else {
+            // 当前行：选中整行后切换
+            tc.select(QTextCursor::LineUnderCursor);
+            toggleCommentSelection(tc);
+        }
+        return;
+    }
+
+    // H1: 回车自动缩进（无选择时，复制上一行缩进；上一行以 { 结尾则加一级）
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        event->modifiers() == Qt::NoModifier) {
+        QTextCursor tc = textCursor();
+        if (!tc.hasSelection()) {
+            // 获取当前行完整文本
+            QTextCursor lineCursor = tc;
+            lineCursor.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
+            QString lineText = lineCursor.selectedText();
+            // 提取行首空白
+            QString indent;
+            for (QChar c : lineText) {
+                if (c == ' ' || c == '\t') indent += c;
+                else break;
+            }
+            // 光标前的部分：若以 { 结尾则加一级缩进
+            int cursorCol = tc.position() - lineCursor.position();
+            QString beforeCursor = lineText.left(cursorCol);
+            if (beforeCursor.trimmed().endsWith('{')) {
+                indent += QString(4, ' ');
+            }
+            // 插入换行 + 缩进
+            tc.insertText('\n' + indent);
+            setTextCursor(tc);
+            return;
+        }
     }
 
     // 先处理按键（插入字符等）
@@ -842,4 +995,449 @@ void CodeEditor::focusOutEvent(QFocusEvent* event) {
         completer_->popup()->hide();
     }
     QPlainTextEdit::focusOutEvent(event);
+}
+
+// ============================================================
+// 功能 13：代码模板 / Snippets 系统实现
+// ------------------------------------------------------------
+// Tab 键触发流程：
+//   1. 检测光标前的触发词（连续非空白字符，前方是空白或行首）
+//   2. 删除触发词
+//   3. 插入展开后的模板文本
+//   4. 选中第一个占位符，进入导航模式
+//   5. Tab 跳到下一个占位符，Shift+Tab 跳到上一个
+//   6. Esc 或光标移出占位符 → 退出导航模式
+// ============================================================
+
+bool CodeEditor::tryExpandSnippet() {
+    // 获取光标前全部文本
+    QTextCursor tc = textCursor();
+    const int cursorPos = tc.position();
+    QTextCursor scan = tc;
+    scan.movePosition(QTextCursor::Start, QTextCursor::KeepAnchor);
+    const QString textBefore = scan.selectedText();
+
+    const CodeSnippet* snip = CodeSnippetEngine::matchTrigger(textBefore);
+    if (!snip) return false;
+
+    // 计算触发词在文档中的范围并删除
+    const QString trigger = QString::fromStdString(snip->trigger);
+    const int triggerStart = cursorPos - trigger.length();
+    if (triggerStart < 0) return false;  // 防御性：触发词长度超过文档长度
+
+    QTextCursor del = textCursor();
+    del.setPosition(triggerStart);
+    del.setPosition(cursorPos, QTextCursor::KeepAnchor);
+    del.removeSelectedText();
+
+    // 展开模板并插入
+    const auto expansion = CodeSnippetEngine::expand(*snip);
+    const int insertPos = triggerStart;  // 插入起点（触发词已被删除）
+
+    QTextCursor ins = textCursor();
+    ins.setPosition(insertPos);
+    ins.insertText(expansion.text);
+
+    // 构造占位符的绝对位置列表（在文档中的字符偏移）
+    currentPlaceholders_.clear();
+    currentPlaceholders_.reserve(expansion.placeholderRanges.size());
+    for (const auto& [relStart, relEnd] : expansion.placeholderRanges) {
+        currentPlaceholders_.push_back({insertPos + relStart, insertPos + relEnd});
+    }
+
+    if (currentPlaceholders_.empty()) {
+        // 无占位符：光标置于展开文本末尾，不进入导航模式
+        currentPlaceholderIdx_ = -1;
+        QTextCursor end = textCursor();
+        end.setPosition(insertPos + expansion.text.length());
+        isSnippetNavigating_ = true;
+        setTextCursor(end);
+        isSnippetNavigating_ = false;
+    } else {
+        // 有占位符：选中第一个占位符，进入导航模式
+        currentPlaceholderIdx_ = 0;
+        selectCurrentPlaceholder();
+    }
+    return true;
+}
+
+void CodeEditor::selectCurrentPlaceholder() {
+    if (currentPlaceholderIdx_ < 0 ||
+        currentPlaceholderIdx_ >= static_cast<int>(currentPlaceholders_.size())) {
+        return;
+    }
+    const auto& [start, end] = currentPlaceholders_[currentPlaceholderIdx_];
+    QTextCursor tc = textCursor();
+    tc.setPosition(start);
+    tc.setPosition(end, QTextCursor::KeepAnchor);
+    // 标记程序化移动，避免 cursorPositionChanged 触发清理
+    isSnippetNavigating_ = true;
+    setTextCursor(tc);
+    isSnippetNavigating_ = false;
+}
+
+void CodeEditor::jumpToNextPlaceholder() {
+    if (currentPlaceholderIdx_ < 0) return;
+    if (currentPlaceholderIdx_ < static_cast<int>(currentPlaceholders_.size()) - 1) {
+        ++currentPlaceholderIdx_;
+        selectCurrentPlaceholder();
+    } else {
+        // 已是最后一个占位符：退出导航模式，光标置于当前占位符末尾
+        const auto& range = currentPlaceholders_[currentPlaceholderIdx_];
+        QTextCursor tc = textCursor();
+        tc.setPosition(range.second);
+        isSnippetNavigating_ = true;
+        setTextCursor(tc);
+        isSnippetNavigating_ = false;
+        clearSnippetState();
+    }
+}
+
+void CodeEditor::jumpToPrevPlaceholder() {
+    if (currentPlaceholderIdx_ < 0) return;
+    if (currentPlaceholderIdx_ > 0) {
+        --currentPlaceholderIdx_;
+        selectCurrentPlaceholder();
+    }
+    // 已是第一个占位符：保持不动（不退出导航模式，与 VS Code 行为一致）
+}
+
+void CodeEditor::clearSnippetState() {
+    currentPlaceholders_.clear();
+    currentPlaceholderIdx_ = -1;
+}
+
+void CodeEditor::updatePlaceholderRanges(int position, int charsRemoved, int charsAdded) {
+    if (currentPlaceholderIdx_ < 0 || currentPlaceholders_.empty()) return;
+
+    const int delta = charsAdded - charsRemoved;
+    if (delta == 0) return;  // 长度未变，无需调整
+
+    const int editEnd = position + charsRemoved;  // 被删除文本的结束位置
+
+    // 遍历所有占位符范围，按编辑位置相对关系调整
+    for (auto& [start, end] : currentPlaceholders_) {
+        if (position >= end) {
+            // 编辑完全在本占位符之后 → 不变
+            continue;
+        }
+        if (editEnd <= start) {
+            // 编辑完全在本占位符之前 → 整体平移 delta
+            start += delta;
+            end += delta;
+            continue;
+        }
+        // 编辑与占位符范围重叠
+        if (position >= start) {
+            // 编辑起点在占位符内 → 调整 end（用户在当前占位符内输入/删除）
+            end += delta;
+        } else {
+            // 编辑起点在占位符之前但延伸到占位符内 → 整体平移
+            start += delta;
+            end += delta;
+        }
+    }
+}
+
+void CodeEditor::showSnippetListDialog() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(mlTr("代码模板"));
+    QVBoxLayout* layout = new QVBoxLayout(&dlg);
+
+    QLabel* hint = new QLabel(mlTr("选择要插入的模板（双击或选中后点击确定）："), &dlg);
+    layout->addWidget(hint);
+
+    QListWidget* list = new QListWidget(&dlg);
+    const auto& all = CodeSnippetEngine::snippets();
+    for (const auto& snip : all) {
+        const QString item = QString("%1\t— %2")
+            .arg(QString::fromStdString(snip.trigger))
+            .arg(QString::fromStdString(snip.description));
+        list->addItem(item);
+    }
+    list->setCurrentRow(0);
+    layout->addWidget(list);
+
+    QDialogButtonBox* btns = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    layout->addWidget(btns);
+
+    // 双击直接确定
+    connect(list, &QListWidget::itemDoubleClicked, &dlg, &QDialog::accept);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    const int row = list->currentRow();
+    if (row < 0 || row >= static_cast<int>(all.size())) return;
+
+    const CodeSnippet& snip = all[row];
+    const auto expansion = CodeSnippetEngine::expand(snip);
+
+    // 在当前光标位置插入展开文本
+    QTextCursor ins = textCursor();
+    const int insertPos = ins.position();
+    ins.insertText(expansion.text);
+
+    // 构造占位符的绝对位置列表
+    currentPlaceholders_.clear();
+    currentPlaceholders_.reserve(expansion.placeholderRanges.size());
+    for (const auto& [relStart, relEnd] : expansion.placeholderRanges) {
+        currentPlaceholders_.push_back({insertPos + relStart, insertPos + relEnd});
+    }
+
+    if (currentPlaceholders_.empty()) {
+        currentPlaceholderIdx_ = -1;
+        QTextCursor end = textCursor();
+        end.setPosition(insertPos + expansion.text.length());
+        isSnippetNavigating_ = true;
+        setTextCursor(end);
+        isSnippetNavigating_ = false;
+    } else {
+        currentPlaceholderIdx_ = 0;
+        selectCurrentPlaceholder();
+    }
+}
+
+// ============================================================
+// H1/H2/H4: 编辑器增强（缩进 / 括号匹配 / 注释切换）
+// -------------------------------------------------------------
+
+/// H1: 对选中范围每行行首插入或移除 4 空格
+void CodeEditor::indentSelection(QTextCursor& tc, bool addIndent) {
+    int start = tc.selectionStart();
+    int end = tc.selectionEnd();
+    QTextCursor cur = tc;
+    cur.setPosition(start);
+    cur.beginEditBlock();  // 合并为单次 undo
+
+    while (cur.position() <= end) {
+        cur.movePosition(QTextCursor::StartOfLine);
+        int lineStart = cur.position();
+        // 计算行尾位置以判断是否到达最后一行
+        cur.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+        int lineEnd = cur.position();
+        cur.setPosition(lineStart);
+
+        if (addIndent) {
+            cur.insertText(QString(4, ' '));
+            end += 4;
+        } else {
+            // 移除行首最多 4 空格 或 1 Tab
+            QTextCursor scan = cur;
+            scan.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 4);
+            QString head = scan.selectedText();
+            int removeCount = 0;
+            if (!head.isEmpty() && head[0] == '\t') {
+                removeCount = 1;
+            } else {
+                for (QChar c : head) {
+                    if (c == ' ') removeCount++;
+                    else break;
+                    if (removeCount >= 4) break;
+                }
+            }
+            if (removeCount > 0) {
+                cur.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, removeCount);
+                cur.removeSelectedText();
+                end -= removeCount;
+            }
+        }
+
+        // 移到下一行行首
+        cur.setPosition(lineEnd);
+        if (!cur.movePosition(QTextCursor::Down)) break;
+        // 如果 Down 后位置没变说明到文件末尾
+        if (cur.position() <= lineEnd && cur.position() >= end) break;
+    }
+    cur.endEditBlock();
+    tc.setPosition(start);
+    tc.setPosition(end, QTextCursor::KeepAnchor);
+    setTextCursor(tc);
+}
+
+/// H1: 移除光标所在行行首最多 4 空格（或 1 Tab）
+void CodeEditor::unindentLine(QTextCursor& tc) {
+    tc.beginEditBlock();
+    tc.movePosition(QTextCursor::StartOfLine);
+    QTextCursor scan = tc;
+    scan.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 4);
+    QString head = scan.selectedText();
+    int removeCount = 0;
+    if (!head.isEmpty() && head[0] == '\t') {
+        removeCount = 1;
+    } else {
+        for (QChar c : head) {
+            if (c == ' ') removeCount++;
+            else break;
+            if (removeCount >= 4) break;
+        }
+    }
+    if (removeCount > 0) {
+        tc.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, removeCount);
+        tc.removeSelectedText();
+    }
+    tc.endEditBlock();
+}
+
+/// H4: 对选中范围切换 // 注释（行首有 // 则移除，否则插入）
+void CodeEditor::toggleCommentSelection(QTextCursor& tc) {
+    int start = tc.selectionStart();
+    int end = tc.selectionEnd();
+    QTextCursor cur = tc;
+    cur.setPosition(start);
+    cur.beginEditBlock();
+
+    // 第一遍：检查所有行是否都已注释
+    bool allCommented = true;
+    QTextCursor scan = cur;
+    scan.setPosition(start);
+    while (scan.position() <= end) {
+        scan.movePosition(QTextCursor::StartOfLine);
+        QTextCursor lineScan = scan;
+        lineScan.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
+        if (lineScan.selectedText() != "//") {
+            allCommented = false;
+            break;
+        }
+        scan.movePosition(QTextCursor::EndOfLine);
+        if (!scan.movePosition(QTextCursor::Down)) break;
+    }
+
+    // 第二遍：添加或移除注释
+    cur.setPosition(start);
+    while (cur.position() <= end) {
+        cur.movePosition(QTextCursor::StartOfLine);
+        int lineStart = cur.position();
+        cur.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+        int lineEnd = cur.position();
+        cur.setPosition(lineStart);
+
+        if (allCommented) {
+            // 移除 //
+            cur.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
+            if (cur.selectedText() == "//") {
+                cur.removeSelectedText();
+                end -= 2;
+            }
+        } else {
+            // 添加 //
+            cur.insertText("//");
+            end += 2;
+        }
+
+        cur.setPosition(lineEnd);
+        if (!cur.movePosition(QTextCursor::Down)) break;
+        if (cur.position() <= lineEnd && cur.position() >= end) break;
+    }
+    cur.endEditBlock();
+    tc.setPosition(start);
+    tc.setPosition(end, QTextCursor::KeepAnchor);
+    setTextCursor(tc);
+}
+
+/// H2: 括号匹配高亮（光标停在 ([{ 时高亮对应 )]}）
+void CodeEditor::highlightBracketMatch() {
+    bracketSelections_.clear();
+
+    // 仅在没有补全弹窗时处理
+    if (completer_ && completer_->popup() && completer_->popup()->isVisible()) {
+        highlightCurrentLine();  // 仍需重绘以清除旧高亮
+        return;
+    }
+
+    QTextCursor tc = textCursor();
+    if (tc.hasSelection()) {
+        highlightCurrentLine();
+        return;
+    }
+
+    int pos = tc.position();
+    if (pos <= 0 || pos >= document()->characterCount()) {
+        highlightCurrentLine();
+        return;
+    }
+
+    QChar leftChar = document()->characterAt(pos - 1);
+    QChar rightChar = document()->characterAt(pos);
+
+    QChar open, close;
+    int curBracketPos = -1;
+    bool forward = true;
+
+    // 光标左侧是开括号 → 正向找闭括号
+    if (leftChar == '(' || leftChar == '[' || leftChar == '{') {
+        open = leftChar;
+        close = (leftChar == '(') ? ')' : (leftChar == '[') ? ']' : '}';
+        curBracketPos = pos - 1;
+        forward = true;
+    } else if (leftChar == ')' || leftChar == ']' || leftChar == '}') {
+        // 光标左侧是闭括号 → 反向找开括号
+        close = leftChar;
+        open = (leftChar == ')') ? '(' : (leftChar == ']') ? '[' : '{';
+        curBracketPos = pos - 1;
+        forward = false;
+    } else if (rightChar == '(' || rightChar == '[' || rightChar == '{') {
+        // 光标右侧是开括号 → 正向找闭括号
+        open = rightChar;
+        close = (rightChar == '(') ? ')' : (rightChar == '[') ? ']' : '}';
+        curBracketPos = pos;
+        forward = true;
+    } else if (rightChar == ')' || rightChar == ']' || rightChar == '}') {
+        // 光标右侧是闭括号 → 反向找开括号
+        close = rightChar;
+        open = (rightChar == ')') ? '(' : (rightChar == ']') ? '[' : '{';
+        curBracketPos = pos;
+        forward = false;
+    } else {
+        highlightCurrentLine();
+        return;
+    }
+
+    // 搜索匹配的括号
+    int matchPos = -1;
+    int depth = 0;
+    int charCount = static_cast<int>(document()->characterCount());
+
+    if (forward) {
+        for (int i = curBracketPos; i < charCount; ++i) {
+            QChar c = document()->characterAt(i);
+            if (c == open) depth++;
+            else if (c == close) {
+                depth--;
+                if (depth == 0) { matchPos = i; break; }
+            }
+        }
+    } else {
+        for (int i = curBracketPos; i >= 0; --i) {
+            QChar c = document()->characterAt(i);
+            if (c == close) depth++;
+            else if (c == open) {
+                depth--;
+                if (depth == 0) { matchPos = i; break; }
+            }
+        }
+    }
+
+    if (matchPos < 0) {
+        highlightCurrentLine();
+        return;
+    }
+
+    // 构建 bracket selections（半透明黄色背景）
+    QColor matchColor(255, 220, 0, 120);  // F9: 可改主题感知，当前用黄色
+
+    QTextEdit::ExtraSelection curSel;
+    curSel.cursor.setPosition(curBracketPos);
+    curSel.cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor);
+    curSel.format.setBackground(matchColor);
+    bracketSelections_.append(curSel);
+
+    QTextEdit::ExtraSelection matchSel;
+    matchSel.cursor.setPosition(matchPos);
+    matchSel.cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor);
+    matchSel.format.setBackground(matchColor);
+    bracketSelections_.append(matchSel);
+
+    highlightCurrentLine();  // 合并所有 selections 并重绘
 }

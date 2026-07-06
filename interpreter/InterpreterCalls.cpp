@@ -101,6 +101,17 @@ Value Interpreter::callClosureValue(FunCall& node) {
     auto closureEnv = calleeVal.closureEnv();
     std::string effectiveName = calleeVal.closureName();
 
+    // BUG-DBG-AUDIT-1 fix: VM 后端创建的闭包（OP_CLOSURE / REG_CLOSURE）仅持有
+    // vmClosure（VMClosureData，含 chunkPtr）而无 AST body（closureBody() 返回 nullptr）。
+    // 当条件断点求值沙箱注入 VM 全局变量（含此类闭包）后，条件表达式中调用该闭包会
+    // 在下方 funDecl->requiredParamCount 处解引用空指针崩溃（segfault，无法被 try/catch 捕获）。
+    // 此处给出明确的运行时错误而非崩溃。
+    if (!funDecl) {
+        runtimeError(ErrorFormat::format(
+            "无法在条件断点沙箱中调用 VM 闭包 %s（缺少 AST body，仅 VM 后端可调用）",
+            effectiveName.c_str()), node.line, node.column);
+    }
+
     // F10: 支持默认参数
     size_t argCount = node.arguments.size();
     if (argCount < static_cast<size_t>(funDecl->requiredParamCount) ||

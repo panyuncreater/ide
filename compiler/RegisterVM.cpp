@@ -26,6 +26,7 @@ void RegisterVM::resetState() {
     frames_.clear();
     mainChunk_ = RegBytecodeChunk{};
     functionChunks_.clear();
+    callCache_.clear();  // PERF-AUDIT-5: 失效内联缓存
     globals_.clear();
     globalSlots_.clear();
     globalNameToSlot_.clear();
@@ -116,36 +117,10 @@ bool RegisterVM::isFinished() const {
 // 辅助方法
 // ============================================================
 
-Value& RegisterVM::reg(uint8_t r) {
-    // B3 fix: 越界时调用 runtimeError（设置 hasError_ + 诊断）后抛 std::runtime_error，
-    // 替代原 std::abort()。调用方已用 try/catch 包裹（VmStepper::stepByMode/runBatch），
-    // 抛出会被捕获并转化为 ERROR 状态，避免 IDE 整个进程崩溃。
-    if (frames_.empty()) {
-        runtimeError("RegisterVM::reg() on empty frames");
-        throw std::runtime_error("RegisterVM: reg() on empty frames");
-    }
-    auto& frame = frames_.back();
-    if (r >= frame.registerCount) {
-        runtimeError(ErrorFormat::format("寄存器号越界: r=%u, registerCount=%u",
-                                          static_cast<unsigned>(r),
-                                          static_cast<unsigned>(frame.registerCount)));
-        throw std::runtime_error("RegisterVM: register index out of range");
-    }
-    return frame.registers[r];
-}
-
-const Value& RegisterVM::reg(uint8_t r) const {
-    // B3 fix: const 版本无法调用 non-const runtimeError，直接抛异常。
-    // 实际调用方 *this 总是 non-const（指令执行修改 VM 状态），const 版本仅在 const 访问器中被触发。
-    if (frames_.empty()) {
-        throw std::runtime_error("RegisterVM: reg() on empty frames (const)");
-    }
-    const auto& frame = frames_.back();
-    if (r >= frame.registerCount) {
-        throw std::runtime_error("RegisterVM: register index out of range (const)");
-    }
-    return frame.registers[r];
-}
+// PERF-AUDIT-5 fix: reg() 已内联到 RegisterVM.h 头文件中。
+// 原实现定义在 .cpp 中，每次寄存器访问是跨翻译单元函数调用，
+// 阻断编译器内联优化。在 fib(24) 基准中约 150-225 万次非内联调用，
+// 是 RegisterVM 慢于 StackVM 的主因。
 
 VMResult RegisterVM::runtimeError(const std::string& msg) {
     hasError_ = true;
@@ -1083,11 +1058,46 @@ VMResult RegisterVM::executeCalls(RegOp op, size_t& ip) {
         info.fieldDefaults.clear();  // BUG-INH-1 fix
         info.flattenedComputed = false;  // perf2 fix: 重定义时使预计算缓存失效
 
+        // BUG-INH-AUDIT-7 fix: 父类重定义时，所有依赖此父类的子类缓存失效。
+        // 遍历所有已注册类，若其继承链包含当前重定义的类，置 flattenedComputed=false
+        // 强制下次访问时重新计算 flattenedFieldOrder/flattenedFieldDefaults/hasInit。
+        for (auto& kv : classInfo_) {
+            if (kv.first == className) continue;  // 跳过当前类
+            std::string cur = kv.second.parent;
+            for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
+                if (cur == className) {
+                    kv.second.flattenedComputed = false;
+                    break;
+                }
+                auto it = classInfo_.find(cur);
+                if (it == classInfo_.end()) break;
+                cur = it->second.parent;
+            }
+        }
+
         if (parentIdx != 0xFFFF) {
             if (parentIdx >= chunk.constants.size() || !chunk.constants[parentIdx].isString()) {
                 return runtimeError("父类名索引无效");
             }
             info.parent = chunk.constants[parentIdx].stringVal();
+            // BUG-INH-AUDIT-8 fix: 父类存在性检查。StackVM 的 executeDefineClass
+            // （VMCalls.cpp）在定义时立即检查父类是否已注册，RegisterVM 原实现静默通过，
+            // 延迟到构造时才报错（或永不报错），三后端错误检测时机不一致。
+            if (classInfo_.find(info.parent) == classInfo_.end()) {
+                return runtimeError("未定义的父类: " + info.parent);
+            }
+            // BUG-INH-AUDIT-9 fix: 循环继承检测。StackVM 在定义时沿继承链构建 chain，
+            // guard 耗尽后 cur 仍非空则报循环。RegisterVM 原实现延迟到 lazy flattened
+            // 计算时检测，若循环类从未构造则永不报错。此处对齐 StackVM 在定义时检测。
+            std::string cur = info.parent;
+            for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
+                if (cur == className) {
+                    return runtimeError("类继承链过深或存在循环继承: " + className + " -> " + cur);
+                }
+                auto it = classInfo_.find(cur);
+                if (it == classInfo_.end()) break;
+                cur = it->second.parent;
+            }
         } else {
             info.parent.clear();
         }
@@ -1401,14 +1411,16 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         }
         // 从父类开始沿继承链查找方法
         std::string searchClass = curIt->second.parent;
-        std::string foundFunName;
+        // PERF-AUDIT-5: 用 const std::string* 直接指向 classInfo_ map 中的稳定字符串，
+        // 避免 foundFunName 局部副本导致 callCache_ 键指针悬垂。
+        const std::string* foundFunNamePtr = nullptr;
         bool found = false;
         for (int guard = 0; guard < 64 && !searchClass.empty(); ++guard) {
             auto clsIt = classInfo_.find(searchClass);
             if (clsIt == classInfo_.end()) break;
             auto methodIt = clsIt->second.methods.find(methodName);
             if (methodIt != clsIt->second.methods.end()) {
-                foundFunName = methodIt->second;
+                foundFunNamePtr = &methodIt->second;
                 found = true;
                 break;
             }
@@ -1429,7 +1441,7 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         // REG_SUPER_CALL 指令长度 = 8 + argCount
         // 防御性检查：argCount+1 溢出 uint8_t（backend 应已在编译期拦截）
         if (argCount >= 255) return runtimeError("super 调用参数数量超过上限");
-        VMResult cr = executeCallImpl(newIp, foundFunName, argCount + 1, dst, fullArgRegs, 8u + argCount);
+        VMResult cr = executeCallImpl(newIp, *foundFunNamePtr, argCount + 1, dst, fullArgRegs, 8u + argCount);
         if (cr != VMResult::VM_OK) return cr;
         // 标记为方法调用（用于字段同步）
         // P0-1/P1-5 fix: 对齐栈式 VM (VMCalls.cpp:734)——super.init() 调用也需设置 isInitCall，
@@ -1472,9 +1484,25 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName,
     const std::shared_ptr<VMClosureData>& closureData =
         (closureValue && closureValue->isClosure()) ? closureValue->vmClosure() : nullptr;
 
+    // PERF-AUDIT-5 fix: 内联缓存快速路径。仅对 REG_CALL（closureValue==nullptr）缓存，
+    // 因 funName 来自常量池（稳定指针）；REG_CALL_EXPR 的 funName 来自闭包对象
+    //（callee.closureName()），闭包销毁后指针悬垂，不可缓存。与 StackVM callCache_
+    // 只在 OP_CALL 路径缓存、OP_CALL_EXPR 不缓存的模式一致。
+    const RegBytecodeChunk* cachedChunk = nullptr;
+    const std::string* namePtr = &funName;
+    if (!closureValue) {
+        auto ccIt = callCache_.find(namePtr);
+        if (ccIt != callCache_.end()) {
+            cachedChunk = ccIt->second;
+        }
+    }
+
     // 查找函数 chunk
-    auto it = functionChunks_.find(funName);
-    if (it == functionChunks_.end()) {
+    auto it = cachedChunk
+        ? functionChunks_.end()  // 缓存命中，跳过 O(log n) 查找
+        : functionChunks_.find(funName);
+
+    if (!cachedChunk && it == functionChunks_.end()) {
         // BUG-REGVM-3 fix: 删除 functionClosures_ 死代码路径。该字段无任何写入点
         //（仅 resetState clear、此处 find），是死代码。若被激活，REG_CALL 命中此路径
         // 时 closureData 为 null，populateUpvalues 不填充任何 upvalue，方法体内
@@ -1522,7 +1550,12 @@ VMResult RegisterVM::executeCallImpl(size_t& ip, const std::string& funName,
         }
     }
 
-    const RegBytecodeChunk& calleeChunk = it->second;
+    // PERF-AUDIT-5: 缓存未命中时写入缓存（仅 REG_CALL 路径，funName 来自常量池）
+    if (!cachedChunk && !closureValue) {
+        callCache_[namePtr] = &it->second;
+    }
+
+    const RegBytecodeChunk& calleeChunk = cachedChunk ? *cachedChunk : it->second;
 
     // C-2 fix: 从闭包值提取 upvalues（若有），填入新帧供 LOAD/STORE_UPVALUE 访问
     auto populateUpvalues = [&closureData](RegCallFrame& newFrame) {
@@ -1874,6 +1907,13 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
             chain.push_back(cur);
             cur = it->second.parent;
         }
+        // BUG-INH-AUDIT-3 fix: 循环继承检测 — guard 耗尽但 cur 仍非空说明存在继承环。
+        // 对齐 StackVM executeDefineClass 的 V-P2 fix (VMCalls.cpp:1058)。
+        // 原实现缺少此检查，模块化间接循环（a.mini: class A : B + b.mini: class B : A）
+        // 绕过 Parser 静态检查后将导致后续方法查找/init 解析陷入死循环。
+        if (!cur.empty()) {
+            return runtimeError("类继承链过深或存在循环继承: " + className + " -> " + cur);
+        }
         // 逆序初始化字段（父类字段在前，子类字段在后）
         // BUG-INH-1 fix: 同时收集字段默认值（对齐 StackVM 的 mergedDefaults 语义）。
         // BUG-INH-REG-1 fix: 去重——子类覆盖的父类同名字段不再重复入表。
@@ -1924,6 +1964,10 @@ VMResult RegisterVM::executeClassNewImpl(size_t& ip, const std::string& classNam
             }
             searchClass = clsIt->second.parent;
         }
+        // BUG-INH-AUDIT-3 fix: 循环继承检测已在上方链构建循环中完成（guard 耗尽即报错）。
+        // 此处 init 解析遍历相同的（已验证无环的）继承链，guard < 64 足以防止死循环。
+        // 注意：不能在此处检查 !searchClass.empty()——init 找到时 break 退出，searchClass
+        // 仍指向含 init 的类名（非空），会被误判为循环。hasInit 标志已正确记录查找结果。
         info.flattenedComputed = true;
     }
 

@@ -1,0 +1,84 @@
+// oop_shapes.mini - 面向对象图形系统
+// 覆盖特性：class 类定义、extends 继承、super 调用父类方法、
+//           this 引用、方法重写（多态）、构造函数 init
+// ============================================================
+
+// 基类：图形
+class Shape {
+    fun init(name, color) {
+        this.name = name;
+        this.color = color;
+    }
+
+    fun area() {
+        return 0;
+    }
+
+    fun describe() {
+        return "{this.color} {this.name}: area = {this.area()}";
+    }
+
+    fun greet() {
+        return "I am a {this.name}";
+    }
+}
+
+// 圆形：继承 Shape
+class Circle extends Shape {
+    fun init(radius, color) {
+        super.init("Circle", color);
+        this.radius = radius;
+    }
+
+    fun area() {
+        return 3.14159 * this.radius * this.radius;
+    }
+}
+
+// 矩形：继承 Shape
+class Rectangle extends Shape {
+    fun init(w, h, color) {
+        super.init("Rectangle", color);
+        this.width = w;
+        this.height = h;
+    }
+
+    fun area() {
+        return this.width * this.height;
+    }
+}
+
+// 三角形：继承 Shape
+class Triangle extends Shape {
+    fun init(base, height, color) {
+        super.init("Triangle", color);
+        this.base = base;
+        this.height = height;
+    }
+
+    fun area() {
+        return 0.5 * this.base * this.height;
+    }
+}
+
+// 测试多态
+var shapes = [
+    Circle(5, "red"),
+    Rectangle(4, 6, "blue"),
+    Triangle(3, 8, "green")
+];
+
+print("=== OOP Shapes ===");
+for (var i = 0; i < shapes.len(); i = i + 1) {
+    print(shapes[i].describe());
+    print("  " + shapes[i].greet());
+}
+
+// 预期输出：
+// === OOP Shapes ===
+// red Circle: area = 78.5398
+//   I am a Circle
+// blue Rectangle: area = 24
+//   I am a Rectangle
+// green Triangle: area = 12
+//   I am a Triangle

@@ -8,6 +8,9 @@
 #include <QFile>
 #include <QTextStream>
 
+#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
+#include "Label.h"        // QFluentKit（CaptionLabel）
+
 LabManualPanel::LabManualPanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -16,8 +19,8 @@ LabManualPanel::LabManualPanel(QWidget* parent)
 
     // 顶部按钮栏
     auto* btnBar = new QHBoxLayout;
-    loadBtn_ = new QPushButton(QString::fromUtf8("加载章节示例到主编辑器"), this);
-    statusLabel_ = new QLabel(QString::fromUtf8("请选择章节"), this);
+    loadBtn_ = new PrimaryPushButton(QString::fromUtf8("加载章节示例到主编辑器"), this);
+    statusLabel_ = new CaptionLabel(QString::fromUtf8("请选择章节"), this);
     btnBar->addWidget(loadBtn_);
     btnBar->addStretch();
     btnBar->addWidget(statusLabel_);

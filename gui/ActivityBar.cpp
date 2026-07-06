@@ -14,7 +14,10 @@ ActivityBar::ActivityBar(QWidget* parent)
     layout_->addStretch();
 }
 
-int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
+int ActivityBar::addItem(const QString& id, const QString& text, Fluent::IconType icon) {
+    // 唯一性校验
+    if (indexOf(id) >= 0) return -1;
+
     auto* btn = new TransparentToolButton(icon, this);
     btn->setFixedSize(36, 36);
     btn->setIconSize(QSize(20, 20));
@@ -22,7 +25,7 @@ int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
     btn->setCheckable(true);
 
     int index = items_.size();
-    items_.append({btn, text});
+    items_.append({btn, id, text});
 
     // Insert before the stretch
     layout_->insertWidget(layout_->count() - 1, btn, 0, Qt::AlignHCenter);
@@ -38,12 +41,38 @@ int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
     return index;
 }
 
+int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
+    // 旧式调用：用索引转字符串作为 id
+    QString autoId = QString::number(items_.size());
+    return addItem(autoId, text, icon);
+}
+
 void ActivityBar::setCurrentIndex(int index) {
     if (index < 0 || index >= items_.size()) return;
     if (currentIndex_ == index) return;
     currentIndex_ = index;
     updateSelection();
     emit currentChanged(index);
+    emit currentChangedById(items_[index].id);
+}
+
+bool ActivityBar::setCurrentId(const QString& id) {
+    int idx = indexOf(id);
+    if (idx < 0) return false;
+    setCurrentIndex(idx);
+    return true;
+}
+
+QString ActivityBar::currentId() const {
+    if (currentIndex_ < 0 || currentIndex_ >= items_.size()) return QString();
+    return items_[currentIndex_].id;
+}
+
+int ActivityBar::indexOf(const QString& id) const {
+    for (int i = 0; i < items_.size(); ++i) {
+        if (items_[i].id == id) return i;
+    }
+    return -1;
 }
 
 void ActivityBar::updateSelection() {

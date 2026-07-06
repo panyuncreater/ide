@@ -87,7 +87,15 @@ public:
     std::string getBreakpointCondition(int line) const {
         return debugCoord_.getBreakpointCondition(line);
     }
+    // BUG-DBG-AUDIT-2 fix: VM 模式活跃时分派到 VmStepper 的 hitCount，
+    // 否则转发到 Interpreter 模式的 debugCoord_。原实现无条件转发到 debugCoord_，
+    // 导致 VM 模式调试时 BreakpointConditionPanel::refreshLive 获取的 hitCount 始终为 0。
+    // VM 模式活跃判定：vmStepper_.isRunning()（RUN 异步执行中）||
+    //                 vmStepper_.isInitialized()（STEP 间歇期，VM 已初始化）。
     int getBreakpointHitCount(int line) const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized()) {
+            return vmStepper_.getBreakpointHitCount(line);
+        }
         return debugCoord_.getBreakpointHitCount(line);
     }
     std::vector<VariableSnapshot> getDebugVariableSnapshot() const {
@@ -105,8 +113,10 @@ public:
     void retainReplAst(std::unique_ptr<Block> ast) {
         interpreter_->retainReplAst(std::move(ast));
     }
-    /// 执行 REPL 程序，返回求值结果（异常向上传播由调用方处理）
-    Value executeRepl(Block& program) { return interpreter_->executeRepl(program); }
+    /// BUG-REPL-AUDIT-9 fix: 执行 REPL 程序，返回求值结果（异常向上传播由调用方处理）。
+    /// 非内联实现（见 IdeController.cpp）：执行前调用 setupReplModuleCallbacks() 确保
+    /// Interpreter 已设置模块加载器，使 REPL 中 import 语句可用。
+    Value executeRepl(Block& program);
     /// 清除指定模块的缓存（REPL reload 命令使用，下次 import 重新加载源码）
     void clearModuleCache(const std::string& path) { interpreter_->clearModuleCache(path); }
     /// 清除所有模块缓存
@@ -129,6 +139,11 @@ public:
     /// 准备运行（词法+解析+创建 worker），返回 true 表示已就绪
     /// filePath: 当前文件路径（用于模块加载的相对路径解析），为空表示未保存文件
     bool prepareRun(bool isDebug, const std::string& source, const std::string& filePath = "");
+
+    /// BUG-REPL-AUDIT-9 fix: 通知当前活动文件路径（GUI 在文件切换/加载/保存时调用）。
+    /// 使 REPL 在未 Run 的情况下也能基于当前文件目录解析 import 相对路径。
+    /// prepareRun 会覆盖此值（Run 时以传入 filePath 为准）。
+    void setActiveFilePath(const std::string& path) { currentFilePath_ = path; }
     void startWorker() { workerMgr_.startWorker(); }
     bool stopForClose(int timeoutMs = 3000) { return workerMgr_.stopForClose(timeoutMs); }
     void forceStop() { workerMgr_.forceStop(); }
@@ -224,4 +239,10 @@ private:
     /// VM-IMPORT: 为 Compiler 设置模块加载器（对齐 WorkerManager 为 Interpreter 设置的 loader）
     /// 基于 filePath 的目录解析相对模块路径，自动添加 .mini 后缀
     void setupCompilerModuleLoader(const std::string& filePath);
+
+    /// BUG-REPL-AUDIT-9 fix: 为 REPL 路径补设 Interpreter 模块加载器/mtimeChecker/currentFilePath。
+    /// 若 Interpreter 已有 moduleLoader_（先 Run 过），不重复设置，避免覆盖 Run 时建立的
+    /// baseDir（防止 Run 后 REPL 用不同的 baseDir 导致模块缓存基准不一致）。
+    /// 路径遍历防护（拒绝 ".." 和绝对路径）由 Interpreter::visitImportStmt 前置检查保证。
+    void setupReplModuleCallbacks();
 };

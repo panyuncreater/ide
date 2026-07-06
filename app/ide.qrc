@@ -1,8 +1,4 @@
 <RCC>
-    <qresource prefix="/">
-        <file>styles.qss</file>
-        <file>styles_dark.qss</file>
-    </qresource>
     <qresource prefix="/icons">
         <file alias="play_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Play_black.svg</file>
         <file alias="play_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Play_white.svg</file>
@@ -37,6 +33,5 @@
 
     <!-- MiniLang Brand Logo (第十三轮：ML 几何 Logo 替代原 { } 文字) -->
     <file alias="minilang_logo.svg">res/icons/minilang_logo.svg</file>
-    <file alias="minilang_logo_dark.svg">res/icons/minilang_logo_dark.svg</file>
     </qresource>
 </RCC>

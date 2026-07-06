@@ -18,8 +18,7 @@ VmStackPanel::VmStackPanel(QWidget* parent)
 
     // 当前指令信息
     opLabel_ = new QLabel("等待执行...", this);
-    // D12 fix: 移除内联硬编码样式表，改用 objectName 让 styles.qss 集中管理，
-    // 便于主题切换时统一调整颜色（原内联 #2d2d2d/#00ff88/#444 不适配浅色主题）。
+    // 样式由 Ide::applyFluentStyle() 通过 objectName 集中管理（亮/暗主题自适应）。
     opLabel_->setObjectName("vmOpLabel");
     opLabel_->setWordWrap(true);
     mainLayout->addWidget(opLabel_);
@@ -35,7 +34,7 @@ VmStackPanel::VmStackPanel(QWidget* parent)
 
     // BUG-VSP-6 fix: stackTitle 改为成员变量，便于在栈式/寄存器模式切换时更新标题
     stackTitle_ = new QLabel("操作数栈 (栈顶 ↑)", this);
-    // D12 fix: 移除内联样式，由 styles.qss 的 QLabel#vmStackTitle 规则统一定义
+    // 样式由 Ide::applyFluentStyle() 通过 objectName 集中管理（亮/暗主题自适应）
     stackTitle_->setObjectName("vmStackTitle");
     stackLayout->addWidget(stackTitle_);
 
@@ -52,7 +51,7 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     globalsLayout->setSpacing(2);
 
     auto* globalsTitle = new QLabel("全局变量", this);
-    // D12 fix: 移除内联样式，由 styles.qss 的 QLabel#vmGlobalsTitle 规则统一定义
+    // 样式由 Ide::applyFluentStyle() 通过 objectName 集中管理（亮/暗主题自适应）
     globalsTitle->setObjectName("vmGlobalsTitle");
     globalsLayout->addWidget(globalsTitle);
 

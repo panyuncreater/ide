@@ -1,0 +1,49 @@
+# ============================================================
+# MiniLang IDE .dockerignore
+# 减少 docker build context 体积，排除构建产物和本地配置
+# ============================================================
+
+# --- 构建输出 ---
+out/
+build/
+x64/
+
+# --- Git ---
+.git/
+.gitignore
+.gitattributes
+
+# --- IDE/编辑器 ---
+.vs/
+.vscode/
+.idea/
+.trae/
+
+# --- 日志/临时文件 ---
+*.log
+build_log*.txt
+build_error.log
+
+# --- CMake 生成 ---
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+build.ninja
+.ninja_*
+_deps/
+compile_commands.json
+.ctest
+CTestTestfile.cmake
+.cmake/api/
+
+# --- Docker 自身 ---
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# --- 文档生成 ---
+docs/api/
+
+# --- 用户本地配置 ---
+CMakeUserPresets.json

@@ -229,19 +229,25 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
             return runtimeError("内部错误: 局部变量槽越界");
         }
         Value& obj = stack_[bp + slot];  // 栈引用，直接修改
+        // BUG-INH-AUDIT-4 fix: slot==0 谓词对 OP_INDEX_SET_LOCAL 是死代码——slot 0 是
+        // this 实例（非数组/字典），数组/字典分支永不命中。正确谓词应与 OP_SET_LOCAL
+        // 对齐：slot 在字段范围 [1, fieldOrder.size()] 时标记 fieldsModified，确保
+        // this.arr[i]=val 的 COW detach 后字段同步回 this.fields()。
+        bool isFieldSlot = (slot > 0 && currentFrame().chunk &&
+                            slot <= currentFrame().chunk->fieldOrder.size());
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
             // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（栈槽 obj 来自 this.arr 时 refCount 常 >1）
             if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
-                if (slot == 0) currentFrame().fieldsModified = true;  // VM fix
+                if (isFieldSlot) currentFrame().fieldsModified = true;
             } else {
                 return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
                     static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = val;
-            if (slot == 0) currentFrame().fieldsModified = true;  // VM fix
+            if (isFieldSlot) currentFrame().fieldsModified = true;
         } else if (obj.isArray()) {
             return runtimeError("数组索引需要整数类型");
         } else {
@@ -429,6 +435,10 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         // 变异后 d 赋给 d["x"]。IR 路径不使用字段槽（fieldSlot），故移除 slot==0
         // 的字段槽同步逻辑（该逻辑仅服务于 Compiler.cpp 非 IR 路径，但本指令仅由
         // IR 路径发射，不会冲突）。
+        //
+        // BUG-INH-AUDIT-4 fix: 若 slot 是字段槽（this.field 的字段位置），
+        // 标记 fieldsModified=true，确保 OP_RETURN 时字段同步回 this 实例。
+        // 否则 this.obj.field = val 的 COW detach 后字段不会写回 this.fields()。
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
         if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
@@ -441,6 +451,11 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         }
         stack_[bp + slot] = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
+        // BUG-INH-AUDIT-4 fix: 字段槽写回需标记 fieldsModified
+        if (slot > 0 && currentFrame().chunk &&
+            slot <= currentFrame().chunk->fieldOrder.size()) {
+            currentFrame().fieldsModified = true;
+        }
         notifyStep(ip, op);
         ip += 4;
         break;
@@ -474,6 +489,10 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
     case OpCode::OP_WRITEBACK_INDEX_LOCAL: {
         // 操作数: slot(1B)
         // BUG-NEW fix: 同 OP_WRITEBACK_INDEX_VAR，整体替换栈槽，不 pop 索引。
+        // BUG-INH-AUDIT-4 fix: 若 slot 是字段槽（this.arr[i]=val 的字段位置），
+        // 标记 fieldsModified=true，确保 OP_RETURN 时字段同步回 this 实例。
+        // 否则 OP_INDEX_SET 的 COW detach 后新数组虽写回 stack_[bp+slot]，
+        // 但 this.fields() 仍指向旧数组，OP_RETURN 不会同步。
         uint8_t slot = chunk.code[ip + 1];
         size_t bp = currentFrame().basePointer;
         if (bp + slot >= stack_.size()) {
@@ -482,6 +501,11 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         }
         stack_[bp + slot] = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
+        // BUG-INH-AUDIT-4 fix: 字段槽写回需标记 fieldsModified
+        if (slot > 0 && currentFrame().chunk &&
+            slot <= currentFrame().chunk->fieldOrder.size()) {
+            currentFrame().fieldsModified = true;
+        }
         notifyStep(ip, op);
         ip += 2;
         break;

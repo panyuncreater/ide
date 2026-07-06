@@ -44,8 +44,8 @@ int main(int argc, char *argv[]) {
     font.setPixelSize(14);
     a.setFont(font);
 
-    // 固定使用亮色主题
-    Theme::setThemeMode(Fluent::ThemeMode::LIGHT);
+    // 主题模式：由 Ide 构造函数从 QSettings 读取并应用（默认 light，用户可切换并持久化）。
+    // 此处不再硬编码 LIGHT，避免覆盖用户上次选择的主题。
 
     // MAIN-01 fix: 顶层异常捕获保护
     // 崩溃修复: Ide 改为堆分配。QMainWindow 是大型对象，栈分配会在 MSVC /RTC1 Debug

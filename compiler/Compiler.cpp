@@ -162,15 +162,17 @@ CompileResult Compiler::compileViaIR(Block& program) {
     moduleLoadingSet_.clear();
     moduleAsts_.clear();
     lastIR_ = irBuilder.build(program);
-    if (!lastIR_) {
-        error("IR 构建失败", 0, 0);
+    // BUG-INH-AUDIT-1 fix: 先检查 hasError() 再检查 !lastIR_。
+    // build() 在 hasError_ 时返回 nullptr，原顺序下 !lastIR_ 先触发 "IR 构建失败"，
+    // 吞掉具体错误消息（如 super 编译错误）。改为先检查 hasError() 传播具体消息。
+    if (irBuilder.hasError()) {
+        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(),
+              irBuilder.errorLine(), 0);
         CompileResult emptyResult;
         return emptyResult;
     }
-    // BUG-MOD-1 fix: 检查 IR 构建错误（如 import 语句不支持），转化为用户可见 diagnostic。
-    // 原实现 build() 总返回非空 IR，hasError_ 错误被完全吞掉，用户无任何提示。
-    if (irBuilder.hasError()) {
-        error(irBuilder.errorMessage(), irBuilder.errorLine(), 0);
+    if (!lastIR_) {
+        error("IR 构建失败", 0, 0);
         CompileResult emptyResult;
         return emptyResult;
     }
@@ -261,14 +263,15 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     moduleLoadingSet_.clear();
     moduleAsts_.clear();
     lastIR_ = irBuilder.build(program);
-    if (!lastIR_) {
-        error("IR 构建失败", 0, 0);
+    // BUG-INH-AUDIT-1 fix: 先检查 hasError() 再检查 !lastIR_（同 compile IR 路径）。
+    if (irBuilder.hasError()) {
+        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(),
+              irBuilder.errorLine(), 0);
         RegisterCompileResult emptyResult;
         return emptyResult;
     }
-    // BUG-MOD-1 fix: 检查 IR 构建错误（如 import 语句不支持），转化为用户可见 diagnostic。
-    if (irBuilder.hasError()) {
-        error(irBuilder.errorMessage(), irBuilder.errorLine(), 0);
+    if (!lastIR_) {
+        error("IR 构建失败", 0, 0);
         RegisterCompileResult emptyResult;
         return emptyResult;
     }
@@ -963,9 +966,21 @@ void Compiler::visitIfStmt(IfStmt& node) {
     // 保存外层作用域，then 分支内声明的变量不泄漏
     auto savedLocals = currentLocals_;
 
+    // BUG-AUDIT-CLOSE-1 fix: 记录 then/else 分支的 slot 基址，分支退出时关闭 upvalue。
+    // 对齐 IR 路径 leaveBlockScope 的 CLOSE_UPVALUE 发射语义。
+    // 仅函数内（inFunction_）需要——顶层 if 块用 OP_DEFINE_VAR/OP_DELETE_VAR 操作 globals_，
+    // 闭包不会捕获全局变量为 upvalue。对齐 IR.cpp leaveBlockScope 的 inFunction_ 守卫。
+    size_t branchSlotBase = currentLocals_.size();
+    bool needCloseUpvalue = inFunction_;
+
     // 编译 then 分支
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
     compileStatement(node.thenBranch.get());
+    // BUG-AUDIT-CLOSE-1 fix: then 分支退出时关闭指向本分支 slot 的 open upvalues
+    if (needCloseUpvalue && currentLocals_.size() > branchSlotBase && branchSlotBase <= 255) {
+        chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+        chunk_.write(static_cast<uint8_t>(branchSlotBase), node.line);
+    }
 
     // then 分支变量不泄漏到 else/后续代码
     currentLocals_ = savedLocals;
@@ -985,6 +1000,11 @@ void Compiler::visitIfStmt(IfStmt& node) {
     // 编译 else 分支（使用同样的 savedLocals，then 分支变量不可见）
     if (node.elseBranch) {
         compileStatement(node.elseBranch.get());
+        // BUG-AUDIT-CLOSE-1 fix: else 分支退出时同样关闭 upvalue
+        if (needCloseUpvalue && currentLocals_.size() > branchSlotBase && branchSlotBase <= 255) {
+            chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+            chunk_.write(static_cast<uint8_t>(branchSlotBase), node.line);
+        }
     }
 
     // else 分支变量也不泄漏
@@ -1017,8 +1037,20 @@ void Compiler::visitWhileStmt(WhileStmt& node) {
     // break 跳转目标在循环编译完成后回填（跳过出口 OP_POP，因 break 时条件值已弹出）
     loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, false, 0, tryDepth_});
 
+    // BUG-AUDIT-CLOSE-1 fix: 记录循环体 slot 基址，循环体每次迭代退出时关闭 upvalue。
+    // 对齐 IR 路径 leaveBlockScope 的 CLOSE_UPVALUE 发射语义。
+    // 闭包捕获循环局部变量时，每次迭代退出时关闭 upvalue 产生该次迭代的快照（by-value），
+    // 否则所有闭包指向同一 slot，最终都返回最后一次迭代的值（by-reference）。
+    size_t bodySlotBase = currentLocals_.size();
+    bool needCloseUpvalue = inFunction_;
+
     // 编译循环体
     compileStatement(node.body.get());
+    // BUG-AUDIT-CLOSE-1 fix: 循环体每次迭代退出时关闭 upvalue
+    if (needCloseUpvalue && currentLocals_.size() > bodySlotBase && bodySlotBase <= 255) {
+        chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+        chunk_.write(static_cast<uint8_t>(bodySlotBase), node.line);
+    }
 
     // 取出本层循环的 break/continue 跳转列表
     auto ctx = std::move(loopStack_.back());
@@ -1098,8 +1130,18 @@ void Compiler::visitForStmt(ForStmt& node) {
     bool hasUpdate = (node.update != nullptr);
     loopStack_.push_back({loopStart, exitJumpPatch, {}, {}, hasUpdate, 0, tryDepth_});
 
+    // BUG-AUDIT-CLOSE-1 fix: 记录循环体 slot 基址，循环体每次迭代退出时关闭 upvalue。
+    // 对齐 IR 路径 leaveBlockScope 的 CLOSE_UPVALUE 发射语义。
+    size_t bodySlotBase = currentLocals_.size();
+    bool needCloseUpvalue = inFunction_;
+
     // 编译循环体
     compileStatement(node.body.get());
+    // BUG-AUDIT-CLOSE-1 fix: 循环体每次迭代退出时关闭 upvalue（在 update 之前）
+    if (needCloseUpvalue && currentLocals_.size() > bodySlotBase && bodySlotBase <= 255) {
+        chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+        chunk_.write(static_cast<uint8_t>(bodySlotBase), node.line);
+    }
 
     // 取出本层循环的 break/continue 跳转列表
     auto ctx = std::move(loopStack_.back());
@@ -1765,7 +1807,39 @@ void Compiler::visitTryStmt(TryStmt& node) {
     //   <bind exception to catchVar>
     //   <catch block>
     // afterCatch:
+    //
+    // BUG-AUDIT-FINALLY-1: 如果有 finally 块，外层再包一个 OP_TRY_BEGIN/END：
+    //   OP_TRY_BEGIN <finallyCatchOffset>    ← 外层 try（捕获异常路径）
+    //     <内层 try-catch>
+    //   OP_TRY_END                            ← 弹出外层 handler
+    //   <finally block>                       ← 正常路径执行 finally
+    //   OP_JUMP <afterFinally>
+    // finallyCatchIp:                         ← 异常路径
+    //   <finally block>（重复一次）
+    //   OP_THROW                              ← re-throw（异常值在栈顶）
+    // afterFinally:
+    //
+    // 已知限制：break/continue/return 不会执行 finally（三后端一致）。
+    // 异常值在异常路径的 finally 执行期间保留在栈顶（Block 是栈平衡的），
+    // OP_THROW pop 并 re-throw。若 finally 自身 throw，throwException 会截断
+    // 栈到外层 handler 的 stackBase（丢弃原异常值），新异常正常传播。
 
+    // 0. 如果有 finally，发射外层 OP_TRY_BEGIN
+    size_t outerTryBeginIp = 0;
+    size_t finallyCatchOffsetPatch = std::string::npos;
+    if (node.finallyBlock) {
+        outerTryBeginIp = chunk_.code.size();
+        chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
+        finallyCatchOffsetPatch = chunk_.code.size();
+        chunk_.writeShort(0, node.line);  // 占位
+        ++tryDepth_;  // 外层 try 计入深度，使 break/continue 发射对应 OP_TRY_END
+    }
+
+    // BUG-AUDIT-FINALLY-1: try-finally（无 catch）路径。
+    // catchVarName 为空表示无 catch 子句，异常不应被捕获。
+    // 外层 OP_TRY_BEGIN（finallyCatchOffset）会捕获异常 → 执行 finally → rethrow。
+    // 跳过内层 try-catch 的全部字节码（OP_TRY_BEGIN/catchOffset/catch 变量绑定/cleanup）。
+    if (!node.catchVarName.empty()) {
     // 1. 发射 OP_TRY_BEGIN（catchOffset 占位，稍后回填）
     size_t tryBeginIp = chunk_.code.size();
     chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
@@ -1805,6 +1879,10 @@ void Compiler::visitTryStmt(TryStmt& node) {
     bool hasShadowedGlobal = false;
     int shadowedGlobalSlot = -1;
     std::string shadowedSaveName;
+    // BUG-AUDIT-EXC-CATCH-CLOSE fix: 记录 catch 变量 slot，catch 块退出时
+    // 发射 OP_CLOSE_UPVALUE 关闭指向该 slot 的 open upvalue，防止 slot 复用后
+    // 闭包读取错误值（对齐 IR 路径 leaveBlockScope 和 Interpreter closeCapturedVariables）。
+    int catchVarSlot = -1;
 
     if (inFunction_) {
         // 函数内：始终分配新局部变量槽位（shadow 外层同名变量，不覆盖其值）
@@ -1815,6 +1893,7 @@ void Compiler::visitTryStmt(TryStmt& node) {
         }
         currentLocals_[node.catchVarName] = slot;
         peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
+        catchVarSlot = slot;
         // BUG-IDE-12 fix: 记录 catch 变量 slot→name
         if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
             localSlotNames_.resize(slot + 1);
@@ -1870,11 +1949,17 @@ void Compiler::visitTryStmt(TryStmt& node) {
         chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
         innerCatchOffsetPatch = chunk_.code.size();
         chunk_.writeShort(0, node.line);  // 占位，稍后回填为 cleanupThrowOffset
+        // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: cleanup wrap 的内层 OP_TRY_BEGIN
+        // 必须计入 tryDepth_，使 catch 块内的 break/continue 能发射对应的 OP_TRY_END，
+        // 避免 tryStack_ handler 残留导致后续异常被错误捕获到已失效的 cleanupThrowIp。
+        ++tryDepth_;
     }
     if (node.catchBlock) {
         compileNode(node.catchBlock.get());
     }
     if (needsCleanupWrap) {
+        // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: 对应的 --tryDepth_
+        --tryDepth_;
         chunk_.writeOp(OpCode::OP_TRY_END, node.line);
     }
 
@@ -1933,6 +2018,16 @@ void Compiler::visitTryStmt(TryStmt& node) {
         globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);  // B4: 恢复遮蔽
     }
 
+    // BUG-AUDIT-EXC-CATCH-CLOSE fix: 函数内 catch 变量 slot 在恢复 currentLocals_ 前
+    // 必须发射 OP_CLOSE_UPVALUE 关闭指向该 slot 的 open upvalue。否则后续代码声明新
+    // 局部变量会复用该 slot 覆盖原值，逃逸的闭包通过 upvalue 读取到错误值（等价悬垂引用）。
+    // 对齐 IR 路径 leaveBlockScope（IR.cpp:439-441）和 Interpreter CatchEnvGuard 析构
+    // 调用 closeCapturedVariables 的语义。顶层 catch 变量用 OP_DELETE_VAR 清理，无需此处理。
+    if (inFunction_ && catchVarSlot >= 0 && catchVarSlot <= 255) {
+        chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+        chunk_.write(static_cast<uint8_t>(catchVarSlot), node.line);
+    }
+
     // 恢复 currentLocals_，使 catch 变量不泄漏到外层作用域
     currentLocals_ = std::move(savedCatchLocals);
 
@@ -1949,6 +2044,54 @@ void Compiler::visitTryStmt(TryStmt& node) {
     if (skipCleanupThrowJumpPatch != std::string::npos) {
         chunk_.code[skipCleanupThrowJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
         chunk_.code[skipCleanupThrowJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
+    }
+    }  // end if (!node.catchVarName.empty())
+    else {
+        // try-finally（无 catch）：只编译 try 块，不发射内层 try-catch。
+        // 外层 OP_TRY_BEGIN（finallyCatchOffset）会捕获异常 → 执行 finally → rethrow。
+        if (node.tryBlock) {
+            compileNode(node.tryBlock.get());
+        }
+    }
+
+    // 9. BUG-AUDIT-FINALLY-1: finally 块字节码
+    if (node.finallyBlock) {
+        --tryDepth_;
+        chunk_.writeOp(OpCode::OP_TRY_END, node.line);  // 弹出外层 try 处理器
+
+        // 正常路径：执行 finally
+        compileNode(node.finallyBlock.get());
+
+        // 跳过异常路径
+        size_t skipFinallyExceptionJumpPatch = chunk_.code.size();
+        chunk_.writeOp(OpCode::OP_JUMP, node.line);
+        chunk_.writeShort(0, node.line);  // 占位
+
+        // 异常路径：finallyCatchIp
+        size_t finallyCatchIp = chunk_.code.size();
+        size_t finallyCatchOffset = finallyCatchIp - (outerTryBeginIp + 3);
+        if (finallyCatchOffset > 65535) {
+            error("try-finally 块过大，finallyCatch 偏移溢出 65535", node.line, 0);
+            return;
+        }
+        chunk_.code[finallyCatchOffsetPatch] = static_cast<uint8_t>(finallyCatchOffset & 0xFF);
+        chunk_.code[finallyCatchOffsetPatch + 1] = static_cast<uint8_t>((finallyCatchOffset >> 8) & 0xFF);
+
+        // 执行 finally（异常路径，重复一次）
+        // 异常值已在栈顶（throwException push），finally 块作为 Block 是栈平衡的，
+        // 执行后异常值仍在栈顶，OP_THROW 会 pop 并 re-throw。
+        compileNode(node.finallyBlock.get());
+        chunk_.writeOp(OpCode::OP_THROW, node.line);
+
+        // afterFinally
+        size_t afterFinally = chunk_.code.size();
+        if (afterFinally > 65535) {
+            error("代码量过大，跳转目标溢出 65535", node.line, 0);
+            return;
+        }
+        uint16_t afterFinallyTarget = static_cast<uint16_t>(afterFinally);
+        chunk_.code[skipFinallyExceptionJumpPatch + 1] = static_cast<uint8_t>(afterFinallyTarget & 0xFF);
+        chunk_.code[skipFinallyExceptionJumpPatch + 2] = static_cast<uint8_t>((afterFinallyTarget >> 8) & 0xFF);
     }
 
     return;
@@ -2072,9 +2215,20 @@ void Compiler::visitBlock(Block& node) {
             chunk_.writeShort(nameIdx, node.line);
         }
     } else {
-        // 函数内块作用域：局部变量使用栈槽，无需清理（VM 帧退出时自动释放）
+        // 函数内块作用域：局部变量使用栈槽。
+        // BUG-AUDIT-CLOSE-1 fix: 块退出时需发射 OP_CLOSE_UPVALUE，关闭指向本块 slot 的
+        // open upvalues，使闭包捕获块退出时刻的值快照（by-value），对齐 IR 路径
+        // leaveBlockScope（IR.cpp:439-441）和 Interpreter 的 closeCapturedVariables。
+        // 原实现注释"VM 帧退出时自动释放"是误解——closeUpvaluesFrom 在 OP_RETURN 时
+        // 关闭 upvalue 产生的是函数返回时刻的快照（by-reference），与块退出快照语义不一致。
+        size_t slotBase = currentLocals_.size();  // 块内第一个新 slot 的编号
         for (auto& stmt : node.statements) {
             compileStatement(stmt.get());
+        }
+        // 块退出时关闭指向 slot >= slotBase 的全部 open upvalues
+        if (currentLocals_.size() > slotBase && slotBase <= 255) {
+            chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+            chunk_.write(static_cast<uint8_t>(slotBase), node.line);
         }
         currentLocals_.swap(savedLocals);  // P28: swap
     }
@@ -2163,9 +2317,9 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
         auto localIt = currentLocals_.find(baseVar->name);
         bool isLocal = (localIt != currentLocals_.end());
 
-        // 编译基变量 → push base
-        compileNode(baseVar);
         // 编译外层表达式 → push base[outerIdx] 或 base.field（正确求值中间值）
+        // 注意：不再 push base 变量本身——WRITEBACK_*_LOCAL/VAR 和 MEMBER_SET_LOCAL/VAR
+        // 均不需要 base 在栈上，原 push base 会导致栈泄漏（每次嵌套赋值泄漏 1 个 Value）。
         compileNode(node.object.get());
         // 编译内层索引 → push innerIdx
         compileNode(node.index.get());
@@ -2173,17 +2327,25 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
         compileNode(node.value.get());
         // OP_INDEX_SET: 弹出 val/innerIdx/outerValue → 修改 → lastMutatedReceiver_
         chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
-        // BUG-CP-2 fix: WRITEBACK_INDEX handler 已改为整体替换语义（不 pop 索引），
-        // 因此不再向栈推入外层索引/字段（原实现每次泄漏 2 个栈值，循环内必触发栈溢出）。
-        // 对齐 visitMethodCall L2441-2452 的 BUGFIX-P1 修复模式。
+        // BUG-INH-AUDIT-4 fix: 对齐 IR 路径（IR.cpp visitIndexAssign L1758-1770），
+        // 使用 LOAD_MUTATED + MEMBER_SET_LOCAL/VAR 将变异后的内层容器写回 base.field。
+        // 原 MEMBER_SET + WRITEBACK_MEMBER_LOCAL 方案存在两个问题：
+        // 1. WRITEBACK_MEMBER_LOCAL slot==0 不设置 fieldsModified（slot>0 谓词遗漏）
+        // 2. WRITEBACK_MEMBER_LOCAL 不更新字段槽（slot 1..N 仍为旧值），
+        //    OP_RETURN 的字段同步会用旧值覆盖 this.fields()。
+        // MEMBER_SET_LOCAL 直接修改 stack_[bp+slot].fields()[field] = val，
+        // 同时更新字段槽并设置 fieldsModified=true（当 slot==0 时），三件事一步完成。
         if (isLocal) {
             if (outerIdx) {
+                // base[outerIdx] = mutated → WRITEBACK_INDEX_LOCAL（整体替换 slot）
                 chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, node.line);
                 chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
             } else {
-                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_LOCAL, node.line);
-                chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
+                // base.field = mutated → LOAD_MUTATED + MEMBER_SET_LOCAL
                 uint16_t fieldIdx = identifierIndex(outerMem->fieldName);
+                chunk_.writeOp(OpCode::OP_LOAD_MUTATED, node.line);
+                chunk_.writeOp(OpCode::OP_MEMBER_SET_LOCAL, node.line);
+                chunk_.write(static_cast<uint8_t>(localIt->second), node.line);
                 chunk_.writeShort(fieldIdx, node.line);
             }
         } else {
@@ -2192,9 +2354,11 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
                 chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_VAR, node.line);
                 chunk_.writeShort(nameIdx, node.line);
             } else {
+                // base.field = mutated → LOAD_MUTATED + MEMBER_SET_VAR
                 uint16_t varIdx = identifierIndex(baseVar->name);
                 uint16_t fieldIdx = identifierIndex(outerMem->fieldName);
-                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_VAR, node.line);
+                chunk_.writeOp(OpCode::OP_LOAD_MUTATED, node.line);
+                chunk_.writeOp(OpCode::OP_MEMBER_SET_VAR, node.line);
                 chunk_.writeShort(varIdx, node.line);
                 chunk_.writeShort(fieldIdx, node.line);
             }
@@ -2685,10 +2849,33 @@ void Compiler::visitNullLiteral(NullLiteral& node) {
 }
 
 void Compiler::visitSuperExpr(SuperExpr& node) {
-    // super 编译为 OP_GET_LOCAL 0（this），与方法中访问 this 相同
-    // 调用点（visitMethodCall/visitMemberAccess）检测 super 对象并使用父类查找
-    chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
-    chunk_.write(0, node.line);  // slot 0 = this
+    // 注：super 在非方法上下文中的错误为运行时错误（非编译期）。
+    // 直接 Compiler 路径 currentClassName_ 在 visitClassDecl 中设置，方法编译完后恢复。
+    // 嵌套函数（FunDecl）内的 super 调用是合法的——visitFunDecl 入口保存 currentClassName_
+    // 后不会清除，方法体内嵌套函数仍能继承外层方法名作为 super 上下文。
+    // 顶层或非方法体内访问 super 时 currentClassName_ 为空。
+    //
+    // BUG-INH-AUDIT-6 fix: 原实现无条件 emit OP_GET_LOCAL 0，在顶层运行时
+    // 报"内部错误: 局部变量槽越界 (slot 0)"（误导为 VM bug）。现改为：
+    // - 方法上下文（currentClassName_ 非空）：emit OP_GET_LOCAL 0（this 槽）
+    // - 非方法上下文（currentClassName_ 为空）：emit OP_GET_VAR "this"
+    //   VM 在 GLOBAL_NAME 查找失败时报 "未定义的变量: this"，与 IR 路径对齐。
+    // 此运行时错误不可被 try/catch 捕获（在 try 块进入前即触发）。
+    // 顶层 / 普通函数内 super 的运行时错误行为由 ConsistencyDiff.H7b 与
+    // AuditSuper_RuntimeErrorNotCatchableByTryCatch 测试覆盖。
+    // 注：Interpreter 报 "super 只能在类方法中使用"（更友好），VM 路径报
+    // "未定义的变量: this"——此 2-way 差异文档化为已知，由 H7b 测试 EXPECT_NE 覆盖。
+    if (currentClassName_.empty()) {
+        // 非方法上下文：emit OP_GET_VAR "this" → 运行时报 "未定义的变量: this"
+        uint16_t nameIdx = chunk_.addConstant(Value(std::string("this")));
+        chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+        chunk_.write(static_cast<uint8_t>(nameIdx & 0xFF), node.line);
+        chunk_.write(static_cast<uint8_t>((nameIdx >> 8) & 0xFF), node.line);
+    } else {
+        // 方法上下文：emit OP_GET_LOCAL 0（this 槽）
+        chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
+        chunk_.write(0, node.line);  // slot 0 = this
+    }
     return;
 }
 

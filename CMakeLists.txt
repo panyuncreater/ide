@@ -70,6 +70,7 @@ endif()
 # D2: 国际化 i18n（Qt Linguist）—— 提取用户可见字符串到 .ts 翻译文件
 option(MINILANG_ENABLE_I18N "Enable Qt Linguist i18n infrastructure (tr() wrapping + .ts catalog)" OFF)
 if(MINILANG_ENABLE_I18N)
+    add_compile_definitions(MINILANG_ENABLE_I18N)
     find_package(Qt6 COMPONENTS LinguistTools QUIET)
     if(Qt6LinguistTools_FOUND)
         message(STATUS "i18n enabled: Qt Linguist tools available")
@@ -196,6 +197,10 @@ add_executable(minilang_ide WIN32
 
 target_include_directories(minilang_ide PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    # QFluentKit 组件头文件（PushButton.h / Label.h / CardWidget.h 等）位于 src/QFluent/
+    # 子目录，而 QFluent 目标仅导出 src/。补充此路径以支持 #include "PushButton.h" 风格。
+    # 注：QFluentKit 为 git submodule，不修改其内部 CMakeLists。
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/QFluentKit/QFluent/src/QFluent
 )
 
 target_link_libraries(minilang_ide PRIVATE
@@ -301,14 +306,41 @@ if(WIN32 AND MINILANG_WINDEPLOYQT_EXE)
 endif()
 
 # ============================================================
-# Sanitizer 支持
-# 修复问题 8：Address/Undefined Behavior Sanitizer 预设
-# 用法：cmake -DMINILANG_SANITIZE=address ...  (MSVC: /fsanitize=address)
+# Sanitizer 支持（跨平台）
+# 用法: cmake -DMINILANG_SANITIZE=address ...
 # ============================================================
-set(MINILANG_SANITIZE "" CACHE STRING "Enable sanitizer: address, undefined")
-if(MINILANG_SANITIZE STREQUAL "address" AND MSVC)
-    target_compile_options(minilang_compile_options INTERFACE /fsanitize=address)
-    target_link_options(minilang_compile_options INTERFACE /fsanitize=address)
+set(MINILANG_SANITIZE "" CACHE STRING "Enable sanitizer: address, undefined, both")
+if(MINILANG_SANITIZE)
+    if(MINILANG_SANITIZE STREQUAL "address")
+        if(MSVC)
+            target_compile_options(minilang_compile_options INTERFACE /fsanitize=address)
+            target_link_options(minilang_compile_options INTERFACE /fsanitize=address)
+        else()
+            target_compile_options(minilang_compile_options INTERFACE
+                -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls)
+            target_link_options(minilang_compile_options INTERFACE -fsanitize=address)
+        endif()
+    elseif(MINILANG_SANITIZE STREQUAL "undefined")
+        if(NOT MSVC)
+            target_compile_options(minilang_compile_options INTERFACE
+                -fsanitize=undefined -fno-omit-frame-pointer)
+            target_link_options(minilang_compile_options INTERFACE -fsanitize=undefined)
+        else()
+            message(WARNING "MINILANG_SANITIZE=undefined has limited support on MSVC")
+        endif()
+    elseif(MINILANG_SANITIZE STREQUAL "both")
+        if(MSVC)
+            target_compile_options(minilang_compile_options INTERFACE /fsanitize=address)
+            target_link_options(minilang_compile_options INTERFACE /fsanitize=address)
+        else()
+            target_compile_options(minilang_compile_options INTERFACE
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
+            target_link_options(minilang_compile_options INTERFACE -fsanitize=address,undefined)
+        endif()
+    else()
+        message(FATAL_ERROR "Unknown MINILANG_SANITIZE value: ${MINILANG_SANITIZE}"
+                " Supported: address, undefined, both")
+    endif()
 endif()
 
 # ============================================================
@@ -318,7 +350,6 @@ endif()
 #   cmake --build out/build/release
 #   cd out/build/release && cpack -G ZIP
 # ============================================================
-include(CPack)
 set(CPACK_PACKAGE_NAME "MiniLangIDE")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_VENDOR "MiniLang")
@@ -327,4 +358,9 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "C++20 / Qt6 MiniLang IDE")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
 if(WIN32)
     set(CPACK_GENERATOR "ZIP")
+elseif(APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+else()
+    set(CPACK_GENERATOR "TGZ;DEB")
 endif()
+include(CPack)

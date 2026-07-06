@@ -1,5 +1,6 @@
 #include "gui/IrViewer.h"
 #include "gui/GuiTextUtils.h"  // monospaceFont()
+#include "gui/TeachingTheme.h"
 #include "QFluent/ScrollBar.h"
 #include <QVBoxLayout>
 #include <QTextCursor>
@@ -28,9 +29,10 @@ IrViewer::IrViewer(QWidget* parent)
     browser_->setLineWrapMode(QTextBrowser::NoWrap);
     browser_->setVerticalScrollBar(new ScrollBar(browser_));
     browser_->setHorizontalScrollBar(new ScrollBar(browser_));
-    // 第八轮：#f8f8f8 背景，8px 内边距
-    browser_->setStyleSheet(
-        "QTextBrowser { background: #f8f8f8; border: none; padding: 8px; }");
+    // 第八轮：背景色跟随 TeachingTheme 主题（亮色 #ffffff / 暗色 #2d2d2d）
+    browser_->setStyleSheet(QString(
+        "QTextBrowser { background: %1; border: none; padding: 8px; }")
+        .arg(TeachingTheme::surface().name()));
     mainLayout->addWidget(browser_, 1);
 }
 

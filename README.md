@@ -3,7 +3,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Qt6](https://img.shields.io/badge/Qt-6-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-1352-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1668-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境，包含自研词法分析器、递归下降解析器、栈式字节码虚拟机、树遍历解释器、调试器、代码格式化器、IR 中间表示层与完整 GUI。
@@ -54,7 +54,7 @@
 
 ### IDE 能力
 
-- **代码编辑器**：语法高亮、行号、断点标记、错误下划线、当前执行行高亮、代码折叠（基于块结构）、查找替换（带迭代限制防 UI 阻塞）
+- **代码编辑器**：语法高亮、行号、断点标记、错误下划线、当前执行行高亮、代码折叠（基于块结构）、查找替换（带迭代限制防 UI 阻塞）、Tab/Shift+Tab 多行缩进、回车自动缩进、括号匹配高亮、Ctrl+G 跳转行、Ctrl+/ 注释切换
 - **词法/语法分析可视化**：Token 表格（10000 行显示上限）、AST 树形图（自动布局，可缩放/平移）
 - **字节码反汇编**：主 chunk 与函数 chunk 分段显示，单步高亮当前指令，同时兼容栈式 VM（OpCode）和寄存器式 VM（RegOp）
 - **IR 中间表示层**：可选 AST -> IR -> Bytecode 三段式编译，52 个 IROp 指令，支持 SSA-like 虚拟寄存器、多函数 lowering、闭包 upvalue 捕获、写回指令、全局槽位分配、优化 pass（常量折叠 / 死代码消除 / 复制传播）、IR 可视化面板与 IR 调试器集成。IR 路径退出后自动恢复配置，不污染后续编译路径
@@ -65,7 +65,8 @@
 - **调试器**：断点（含条件断点，条件求值沙箱隔离程序状态）、单步进入/跳过/跳出、变量监视、调用栈、首行断点 pre-execution 检查。双后端调试路径暂停语义文档化：Interpreter pre-execution 暂停，VM post-execution 检查（IP 指向下条指令，变量快照反映断点行 pre-execution 状态）
 - **类型检查器**：编译期类型注解检查，三后端运行时统一强制，类型违反报告警告
 - **代码格式化器**：可配置缩进/花括号风格/运算符空格，保留注释。幂等性 + 往返不变量验证（AST 结构比较），括号保留遵循运算符优先级（右嵌套同优先级加括号，左嵌套冗余括号丢弃）
-- **REPL 面板**：交互式求值，支持多行续行（未闭合 `{ ( [` / 未闭合字符串 / 未闭合块注释 / `try` 缺失 `catch` 自动续行，正确处理字符串插值嵌套上下文），续行中按空行可中止；表达式语句自动求值并打印结果；异步执行不阻塞 UI；`help`/`clear` 特殊命令
+- **REPL 面板**：交互式求值，支持多行续行（未闭合 `{ ( [` / 未闭合字符串 / 未闭合块注释 / `try` 缺失 `catch` 自动续行，正确处理字符串插值嵌套上下文），续行中按空行可中止；表达式语句自动求值并打印结果；异步执行不阻塞 UI；`help`/`clear` 特殊命令；`%magic` 命令系统（功能 11）：10 个 magic 命令（`%help` / `%version` / `%disassemble` / `%ir` / `%ast` / `%tokens` / `%memory` / `%profile` / `%compare` / `%reset`），在 REPL 输入 `%` 前缀即可快速调用各面板的数据获取逻辑，复用 IdeController Facade API
+- **工作区 UX**：状态栏最右侧实时显示当前执行引擎（`⚙ 树遍历解释器`/`⚙ 栈式 VM`/`⚙ 寄存器式 VM`，随引擎切换同步）；文件树顶部搜索过滤框（按文件名小写包含递归过滤，目录按可见子项决定显隐）；文件树右键菜单扩展 3 项（复制路径 / 复制相对路径 / 在文件资源管理器中显示）；错误列表类型过滤栏（错误/警告/信息/提示 4 个 toggle 按钮，按 DiagLevel 显隐过滤，新增错误项自动遵循当前过滤状态）
 
 ### 教学增强面板（第一波 + 第三波）
 
@@ -73,7 +74,7 @@
 
 - **编译管线可视化面板**（Ctrl+Shift+P）：5 步流程导航条（源码 → Token → AST → IR → 字节码），逐步展示编译管线每一阶段的中间产物。Token 表格含 type/lexeme/line/column 字段；AST 步骤展示 dumpAst 摘要；IR 步骤展示 IRModule 反汇编；字节码步骤展示 BytecodeChunk 反汇编
 - **三后端并行对比面板**（Ctrl+Shift+B）：同一源码顺序运行 Interpreter / StackVM / RegisterVM 三条路径，每路径独立计时（微秒精度）+ 输出比对，自动统计行级差异并给出一致性 PASS/FAIL 结论。三后端输出一致即"三后端语义等价"教学验证
-- **Bug 狩猎面板**（Ctrl+Shift+H）：基于项目历史真实 Bug 训练调试能力。题库 10 道（BUG-CP-1/CP-2/UV-1/IR-POP-2/DEF-1/MOD-1/DBG-1/REGVM-2/REPL-1/F-04），每题含背景/源码/期望行为/Bug 行为/递进提示/根因分析。三栏布局：题目列表 + 背景说明 + 内嵌编辑器/输出。可一键加载源码到主编辑器进一步调试
+- **Bug 狩猎面板**（Ctrl+Shift+H）：基于项目历史真实 Bug 训练调试能力。题库 15 道，按难度分三级——🟢 **入门级** 5 道阅读理解型（BUG-READ-01~05：预测输出 / 块作用域 / Formatter 展开 / 循环内 vs 循环外 var / COW refCount），🟡 **进阶级** 4 道（BUG-DEF-1/REGVM-2/REPL-1/F-04），🔴 **专家级** 6 道（BUG-IR-POP-2/CP-1/UV-1/DBG-1/CP-2/MOD-1）。每题含背景/源码/期望行为/Bug 行为/递进提示/根因分析。难度筛选栏 4 互斥按钮（全部 / 入门 / 进阶 / 专家），默认显示入门级。三栏布局：题目列表 + 背景说明 + 内嵌编辑器/输出。可一键加载源码到主编辑器进一步调试
 - **交互式语法探索器**（Ctrl+Shift+S）：10 条核心产生式参考（var-decl/if-stmt/while-stmt/for-stmt/fun-decl/class-decl/try-stmt/import-stmt/string-interp/data-structures/operators），每条配 EBNF 形式 + 文字说明 + 可运行样例代码。三栏布局：产生式列表 + 说明 + 代码/输出
 - **内置实验手册**（Ctrl+Shift+L）：8 个实验章节（lab-01~lab-08：词法分析 / 递归下降 / 树遍历解释器 / 栈式 VM / 寄存器式 VM / 三后端一致性 / 内存模型 / Bug 狩猎），每章含目标/关键概念/实验步骤/验证断言/进阶/可一键加载样例代码。Markdown 内容通过 QTextBrowser 渲染
 
@@ -123,6 +124,127 @@
 - **闭包检查器面板**（ClosureInspectorPanel）：2 个子页 — (1) 教学场景库：8 个闭包场景（simple-capture 简单捕获 / counter-pattern 计数器模式 / multi-capture 多变量捕获 / nested-closure 嵌套闭包 / closure-as-return 闭包作为返回值 / closure-array 闭包数组 / iife 立即调用 / closure-escape 闭包逃逸），每场景含 sampleCode + capturedVars 捕获变量列表 + captureType 捕获类型（by-reference upvalue / by-value / heap-escaped）+ teachingNote 教学注释；(2) upvalue 生命周期图解：6 个阶段（create 创建 / capture 捕获 / heap 堆化 / access 访问 / close 关闭 / destroy 销毁），每阶段含 category + description + stackEffect（栈/堆效应）。教学价值：理解 OP_CLOSURE 指令、upvalue 堆化时机、闭包逃逸与堆栈过渡
 
 > 第三档 2 个面板均为纯静态教学面板（Library 静态数据嵌入 .cpp），不依赖 IdeController，不需要引擎层改造，不订阅信号——与第三波 BytecodeTracePanel 的"避免测试目标链接 IdeController.cpp"设计模式一致，确保测试目标仅链接 minilang_core + Panel.cpp 静态数据。子页切换与详情刷新复用第四档的 `PanelAnimator::fadeInWidget` 工具函数。
+
+### 教学增强面板（第五档：高价值改进方向 Top 3）
+
+围绕 IR 优化过程、内存模型动态、Bug 修复交互三个高价值教学维度，对已有三面板各新增一子页：
+
+- **IR 变换过程面板（第四子页：IR 优化逐步回放 + 决策解释）**：5 个回放场景（replay-const-fold 常量折叠 / replay-dce 死代码消除 / replay-copy-prop 复制传播 / replay-cse 公共子表达式消除 / replay-loop-unroll 循环展开），每场景含 3 步 `IROptStepRecord`，每步记录 passName / passRound / irSnapshot / instrCount / modifiedCount + decisions（指令级别修改原因列表，例如"折叠 `1 + 2 → 3`"、"删除不可达 OP_RETURN"、"vreg1 → vreg2 等价替换"）。教学价值：理解 IR 优化的逐 pass 演进、修改/删除决策依据、收敛条件
+- **内存模型面板（第四子页：实时动画 + VM 单步联动）**：4 个 GC 阶段动画（mark 标记可达 / sweep 回收孤岛 / reset 复位标志 / idle 空闲，4 色 #3079C0/#C03030/#709030/#909090 区分）+ 6 种堆对象类型（ArrayData / DictData / InstanceData / StringData / ClosureData / BoundMethodData）+ VM 单步联动（500ms QTimer 轮询 `IdeController::isVmInitialized` / `getVmStack` / `getVmGlobals`，实时展示堆对象图、refCount 变化曲线、GC mark-sweep 阶段切换）。教学价值：理解 GC mark-sweep 算法、循环引用回收、refCount 与可达性的关系
+- **Bug 狩猎面板（交互式修复模式 + 三后端对比 + 变体挑战）**：新增"三后端对比"按钮（同时运行 Interpreter / StackVM / RegisterVM 三条路径，对比输出/异常/耗时）+ 7 个变体挑战题（基于 7 个父题 CP-1/UV-1/IR-POP-2/DEF-1/MOD-1/DBG-1/REGVM-2 各生成一个变体，含 sourceCode / challengeGoal / hint）+ 变体模式切换（变体列表默认隐藏，点击"变体模式"按钮切换显示）。教学价值：理解三后端语义一致性、变体题目设计思路、Bug 修复验证流程
+
+> 第五档 3 个面板新增子页均复用已有 Panel.cpp 的 Library 静态数据模式。关键架构决策：BugHuntVariantLibrary::variants() 拆分到独立 `gui/BugHuntVariantLibrary.cpp` 编译单元（与 BugHuntLibrary.cpp 模式一致），避免测试目标链接 IdeController.h 依赖。MemoryModelPanel 第四子页新增 `Value::isPointer()` / `asPointer()` 公共访问器（line 452-463），便于面板读取堆对象指针元数据。IRTransformPanel 第四子页静态 5 场景 × 3 步共 15 个 IROptStepRecord，irSnapshot 字段含 `function` 关键字验证 IR 文本格式正确性。
+
+### 教学增强面板（功能 6：学习路径地图）
+
+作为中央导航枢纽，将所有教学面板与实验组织为 5 阶段渐进式学习路径，配合进度持久化与智能推荐：
+
+- **学习路径地图面板**（LearningPathPanel）：顶部总进度条 + 垂直滚动 5 阶段卡片列表（阶段零 首次接触 / 阶段一 编译前端 / 阶段二 执行引擎 / 阶段三 深入理解 / 阶段四 实战训练），每阶段含阶段标题 + 阶段进度条 + 活动项列表。共 21 个学习活动（welcome 导览 / code-journey 动画 / token-puzzle 拼图 / ast-toy 玩具 / vm-sandbox 沙盒 / lab-01~08 八个实验 / syntax-explorer / op-priority-challenge / backend-compare / ir-transform / profile-dashboard / bug-hunt-beginner/intermediate/expert 三档 Bug 狩猎 / freeform-project 自由项目）
+- **解锁机制**：基于 `prerequisites` 字段，前置活动全部完成后才能解锁后续活动。阶段零所有活动无前置（首次启动即可解锁），lab-N 通常前置为 lab-(N-1)（递进学习），bug-hunt 三档必须按顺序通关
+- **推荐算法**：当前推荐 = 未完成 + 已解锁 + stage 最小，同 stage 内优先 attemptCount 最少 → estimatedMinutes 最少 → id 字典序
+- **进度持久化**：JSON 文件存储（QStandardPaths::AppDataLocation + minilang_progress.json），记录 completed / attemptCount / lastAccessTime / currentStage。加载失败/格式不匹配时回退到空进度，不崩溃
+- **信号路由**：点击活动项发射 `activityRequested(activityId)` 信号，主窗口连接后路由到对应面板
+
+> 关键架构决策：LearnerProgress.cpp 与 LearningPathData.cpp 拆分为独立编译单元（仅依赖 Qt6::Core，不依赖 IdeController / Qt6::Widgets），测试目标可安全链接。LearningPathPanel.cpp 依赖 Qt Widgets + PanelAnimator + QScrollArea，不加入测试目标。活动行使用 QPushButton flat 模式实现可点击（避免 installEventFilter）。
+
+### 教学增强面板（功能 4：AST 节点搭建玩具）
+
+通过点击/组装 AST 节点让学习者理解「AST 是代码的结构化表示」，6 道题由浅入深：
+
+- **AST 搭建玩具面板**（AstBuilderToyPanel）：顶部 QComboBox 题目选择 + 进度 QLabel；左侧 7 个工具箱按钮（Number / Add / Sub / Mul / Div / Print / VarDecl）；右侧 QTreeWidget 显示已搭建树；底部 5 个操作按钮（检查 / 查看标准答案 / 下一题 / 删除选中节点 / 清空）+ 反馈 QLabel + 题目说明 QLabel
+- **6 道题设计**：(1) `42` — 最简叶子节点；(2) `1 + 2` — 二元运算根+两叶；(3) `1 + 2 * 3` — 优先级：* 在 + 下面；(4) `(1 + 2) * 3` — 括号改变结构：+ 在 * 下面；(5) `print(x)` — 函数调用；(6) `var x = 1 + 2;` — 完整语句 VarDecl+initializer
+- **核心教学时刻**：题目 3 vs 题目 4——同样的数字 1/2/3 与运算符 +/*，仅括号不同就导致完全不同的树结构。这个"顿悟瞬间"是整个玩具的核心价值
+- **交互逻辑**：点击工具箱节点添加到 QTreeWidget（树空时为根，否则为选中项子节点）；Number/VarDecl 弹 QInputDialog 询问值/名称；Delete 键或按钮删除选中节点；检查答案递归比对玩家树与标准答案的拓扑结构（label 严格相等 + children 顺序）；查看标准答案将 answer 树渲染到画布
+- **信号**：`activityCompleted(levelId)` 在检查通过时发射，levelId 格式 `ast-toy-level-N`，供 LearningPathPanel 标记活动完成
+
+> 关键架构决策：AstToyLevels.cpp 拆分为独立编译单元（仅依赖 Qt6::Core / 标准库，不依赖 Qt6::Widgets / IdeController），测试目标可安全链接。AstBuilderToyPanel.cpp 依赖 Qt6::Widgets（QTreeWidget / QComboBox / QInputDialog），不加入测试目标。使用 QTreeWidget 而非 QGraphicsScene，实现简单、测试容易。所有用户可见文本用 mlTr() 包裹（i18n）。
+
+### 教学增强面板（功能 5：VM 栈沙盒）
+
+通过亲手操作理解"栈式 VM 就是 push 和 pop"，5 关卡由浅入深：
+
+- **VM 栈沙盒面板**（VmStackSandboxPanel）：顶部关卡选择 QComboBox + 目标/教学点 QLabel；中部三栏——左侧可用指令按钮区（点击执行该指令）/ 中间操作数栈可视化 QListWidget（栈顶在顶部，深色背景）/ 右侧已执行指令序列 QListWidget；底部输出区 QTextEdit + [↩ 撤销] [🔄 重置] [✓ 检查] 按钮 + 反馈 QLabel
+- **5 关卡设计**：(1) 计算 `1 + 2` → 输出 "3"，最基本的 push-pop；(2) 计算 `1 + 2 * 3` → 输出 "7"，运算顺序由指令决定（先 MUL 后 ADD）；(3) 计算 `(1 + 2) * 3` → 输出 "9"，与关卡 2 相同可用指令但不同执行顺序（先 ADD 后 MUL）；(4) 打印 `"hello"` → 输出 "hello"，字符串也是值；(5) 自由模式，全部指令可用（PUSH_INT/PUSH_STRING/ADD/SUB/MUL/DIV/MOD/NEG/PRINT/HALT）
+- **核心教学时刻**：关卡 2 vs 关卡 3——同样的可用指令集（1/2/3 + ADD + MUL + PRINT），不同的执行顺序得到不同结果（7 vs 9）。这正体现了栈式 VM 的"指令即语义"
+- **栈状态机模拟**（不连接真实 VM）：`std::vector<std::string>` 模拟操作数栈，PUSH 压栈 / 二元运算 pop 两个 int 运算后压回 / PRINT pop 栈顶加到输出。栈不足 2 / 除数为 0 / 非整数操作数均有明确错误反馈。撤销通过快照实现（每步前保存栈与输出状态）
+- **信号**：`activityCompleted(levelId)` 在检查通过时发射，levelId 格式 `level-N`，供 LearningPathPanel 标记活动完成
+
+> 关键架构决策：SandboxLevels.cpp 拆分为独立编译单元（仅依赖 Qt6::Core / 标准库，不依赖 Qt6::Widgets / IdeController），测试目标可安全链接。VmStackSandboxPanel.cpp 依赖 Qt6::Widgets（QComboBox / QListWidget / QTextEdit），不加入测试目标。栈状态机用 std::vector<std::string> 而非真实 Value，纯前端游戏不依赖引擎层，整数除法截断向零与 MiniLang 三后端一致。所有用户可见文本用 mlTr() 包裹（i18n）。
+
+### 教学增强面板（功能 3：交互式 Token 拼图游戏）
+
+通过游戏化方式让学习者理解「词法分析就是切分字符流」，5 关卡由浅入深：
+
+- **Token 拼图面板**（TokenPuzzlePanel）：顶部 QComboBox 关卡选择 + 得分 QLabel（⭐ 总分 / 满分 15）+ 关卡进度 QLabel；中部上为目标语句展示（只读，Consolas 等宽字体 + 灰底卡片）+ 教学点说明（斜体灰字）；中部中为打乱的 token 按钮（QGridLayout 排列，点击添加到答案区并禁用原按钮）；中部下为玩家答案区（QListWidget 横向排列，点击移除并恢复对应按钮）；底部 4 个操作按钮（✓ 检查答案 / 💡 提示 / ⏭ 跳过 / 🔄 重置）+ 反馈 QLabel
+- **5 关卡设计**（由浅入深）：(1) `var x = 42;` — 基本 5 个 token（⭐）；(2) `print("hello");` — 字符串是一个 token 而非 7 个（⭐）；(3) `x > 0 and y < 10;` — 运算符优先级不影响 token 切分（⭐⭐）；(4) `// 这是注释\nprint(1);` — 注释被分离出主流（⭐⭐）；(5) `a[0] = b["key"] + 1;` — 复杂表达式 12 个 token（⭐⭐⭐）
+- **星级评分**：0 次提示 = ⭐⭐⭐，1 次提示 = ⭐⭐☆，2+ 次提示 = ⭐☆☆，跳过 = ☆☆☆。检查答案错误时高亮错误位置的 token（红底），反馈"第 N 个 token 不对：你填了「X」，应该是「Y」"
+- **解锁机制**：初始仅第 1 关解锁（QStandardItemModel 逐项 enable/disable），完成或跳过当前关后自动解锁下一关
+- **信号**：`activityCompleted(levelId)` 在检查通过或跳过时发射，levelId 格式 `token-puzzle-N`，供 LearningPathPanel 标记活动完成
+
+> 关键架构决策：TokenPuzzleData.cpp 拆分为独立编译单元（仅依赖标准库 std::string / std::vector，不依赖 Qt Widgets / IdeController），测试目标可安全链接。TokenPuzzlePanel.cpp 依赖 Qt6::Widgets（QComboBox / QListWidget / QPushButton / QStandardItemModel），不加入测试目标。纯前端游戏，不调用 Lexer/Parser/Interpreter。shuffledTokens 为 tokens 的固定乱序（硬编码非运行时随机），保证可重现。所有用户可见文本用 mlTr() 包裹（i18n）。
+
+### 教学增强面板（功能 1：Welcome 向导 / 首次启动导览）
+
+让从没听过"编译原理"的人在 3 分钟内感受到"原来我写的代码是这样变成程序的"，首次启动模态弹出独立向导对话框：
+
+- **Welcome 向导**（WelcomeWizard，继承 QDialog）：QStackedWidget 3 步交互式导览 + 顶部"步骤 N / 3"进度指示 + 底部 [← 上一步] [下一步 →]/[完成 ✓] 导航
+- **Step 1：欢迎页 + 角色选择** — 标题"👋 欢迎使用 MiniLang IDE！"+ 副标题；3 个角色 QRadioButton（QButtonGroup 互斥）："我完全新手" / "我懂一点编程" → 走完整 3 步导览；"我学过编译原理" → 跳过导览直接关闭；按钮 [▶ 开始探索] [跳过]
+- **Step 2：Token 概念（词法分析）** — 左侧只读 QTextEdit 预填 `print("Hello!");`（Consolas 等宽字体 + 深色主题）；右侧 QTableWidget 3 行 Token（print / "Hello!" / ;，含类型列 IDENTIFIER/STRING/SEMICOLON 与说明列）；点击 Token 表行通过 `QTextEdit::setExtraSelections` 高亮编辑器中对应字符区间（蓝底白字）；文字说明"① 你写的代码被切成了 3 个 Token —— 这就是「词法分析」"
+- **Step 3：字节码与运行** — 左侧 QTreeWidget 简化 AST 树（Print → StringLiteral "Hello!"）；右侧 QListWidget 字节码（OP_STRING "Hello!" / OP_PRINT）；底部 [▶ 运行] 按钮 + 输出区 QTextEdit（深色终端风格）；点击 [▶ 运行] 通过 QTimer 延迟模拟执行（600ms × 3 步：高亮 OP_STRING → 高亮 OP_PRINT → 输出 "Hello!"），可重复点击"再次运行"；文字说明"②③④ 代码 → AST → 字节码 → 执行，得到结果！"
+- **进度持久化**：QSettings `welcome_completed` (bool) 标记，首次启动（false 或不存在）显示，完成/跳过后置 true，下次启动不再弹出
+- **"再次显示欢迎向导"菜单项**：帮助菜单新增入口，点击后重置标记并重新弹出向导
+- **QFluentKit 主题化**：按钮使用 QFluentKit 组件（主操作 [▶ 开始探索] / [开始学习 ✓] → `PrimaryPushButton` 主题色自动驱动；次操作 [跳过] / [← 上一步] / [下一步 →] → `PushButton`；[▶ 运行] 保留 QPushButton 但用 `TeachingTheme::success()` 绿色着色）；标题/副标题用 `TitleLabel` / `CaptionLabel`；所有硬编码颜色（#0078d4 / #5a5a5a / #666 / #8a8a8a / #3060c0 / #107d58 等）替换为 `gui/TeachingTheme.h` 主题色板（primary / textSecondary / textHint / surface / warning / success），亮/暗主题自适应。代码编辑器深色主题（#1e1e1e）、运行输出终端色、Step 4 五阶段语义色卡片保留不变
+
+> 关键架构决策：WelcomeWizard 作为独立 QDialog 模态弹出，在 `Ide::Ide()` 构造函数末尾（所有 UI 初始化完成后）显示，避免改动现有 `welcomePage_` 结构（最近文件/新建/打开/拖放功能保持不变）。向导内"运行"是 QTimer 纯前端模拟，不调用 IdeController / 真实引擎层。WelcomeWizard.cpp 依赖 Qt6::Widgets（QDialog / QStackedWidget / QTableWidget / QTreeWidget）+ QFluentKit（PushButton / Label），仅在 minilang_ide 主程序链接，不加入测试目标（无单元测试要求）。所有用户可见文本用 mlTr() 包裹（i18n）。
+
+### 教学增强面板（功能 2 降级：代码生命旅程静态信息图）
+
+原方案是 30 秒动画展示代码从源码到输出的全过程，但维护成本高（与语言特性紧耦合，每次语法变更都需更新）。降级为静态信息图：用一张 HTML 风格的图展示编译管线，配合"逐步查看"按钮可跳转到对应面板。成本低且不易过时。
+
+- **代码旅程信息面板**（CodeJourneyInfoPanel）：顶部标题"🚀 代码的生命旅程"；主体 QTextBrowser 渲染静态 HTML 信息图，展示 `print(1 + 2 * 3);` 这行代码的完整生命旅程：① 源码 → ② Token 表（9 个 token）→ ③ AST（树形结构，强调 * 在 + 的右子树）→ ④ IR（三地址码 v1=1, v2=2, v3=3, v4=v2*v3=6, v5=v1+v4=7）→ ⑤ 字节码（OP_INT/OP_MUL/OP_ADD/OP_PRINT）→ ⑥ 输出（7）；底部 6 个跳转按钮（① 编辑器 / ② Token 表 / ③ AST / ④ IR / ⑤ 字节码 / ⑥ 输出）
+- **跳转信号**：`jumpToPanelRequested(panelId)` 在点击跳转按钮时发射，panelId 取值 "editor"/"tokens"/"ast"/"ir"/"bytecode"/"output"，供 Ide 主窗口分发到对应面板
+- **关键教学点**：① 词法分析（切分字符流）→ ② 语法分析（按优先级构建树）→ ③ IR 生成（三地址码便于优化）→ ④ 后端 lowering（IR → 字节码）→ ⑤ VM 执行（push/pop 或寄存器运算）；强调"括号改变 AST 结构"（`(1+2)*3` 与 `1+2*3` 的 AST 不同）和"三后端一致性"（Interpreter / StackVM / RegisterVM 三条路径都输出 7）
+
+> 关键架构决策：CodeJourneyInfoPanel.cpp 依赖 Qt6::Widgets（QTextBrowser / QPushButton / QLabel），不依赖 IdeController / 引擎层，仅在 minilang_ide 主程序链接，不加入测试目标（纯静态信息图无单元测试要求）。原方案的 30 秒动画与语言特性紧耦合（每次语法/字节码/IR 变更都需同步更新动画脚本），维护成本过高；静态信息图 + 跳转按钮的方案让学习者直接跳转到对应面板亲手探索，反而比被动观看动画更有效。所有用户可见文本用 mlTr() 包裹（i18n）。
+
+### 第四档教学面板 UI 接线（功能 1-6 IDE 集成）
+
+将 5 个教学面板（CodeJourneyInfoPanel / AstBuilderToyPanel / TokenPuzzlePanel / VmStackSandboxPanel / LearningPathPanel）正式接入 IDE 主窗口的 dock 系统、视图菜单与跨面板信号路由网络。用户现在可以从「视图」菜单打开这些面板，并通过 LearningPathPanel 的活动项点击跨面板跳转。
+
+- **8 触点完整注册**（每个面板）：ide.h include + ide.h 成员变量 + view QAction 创建 + dock 创建/添加到 dockManager + 信号连接 + 启动隐藏 + connectDockSave 防抖 + syncViewMenuChecks 勾选同步
+- **视图菜单新增 5 项**：学习路径地图 / Token 拼图游戏 / AST 搭建玩具 / VM 栈沙盒 / 代码生命旅程
+- **跨面板信号路由**：
+  - `CodeJourneyInfoPanel::jumpToPanelRequested(panelId)` → `Ide::onJumpToPanel`：6 目标路由（editor→主编辑器 / tokens→rightPivot token tab / ast→AST 独立窗口 / ir→rightPivot ir tab / bytecode→rightPivot bytecode tab / output→bottomPivot output tab）
+  - `LearningPathPanel::activityRequested(activityId)` → `Ide::onActivityRequested`：21 活动 ID 路由（welcome→WelcomeWizard / journey→codeJourney / token-puzzle / ast-toy / vm-sandbox / lab-XX→labManual / syntax-explorer / op-priority-challenge→ast-toy / backend-compare / ir-transform / profile-dashboard / bug-hunt-XX→bugHunt / freeform-project→editor）
+  - 3 游戏 `activityCompleted` → `LearningPathPanel::markActivityCompleted`：含 ID 映射（"token-puzzle-N"→"token-puzzle" / "ast-toy-level-N"→"ast-toy" / "level-N"→"vm-sandbox"）
+
+> 关键架构决策：5 个面板均为纯静态面板（无 setController 调用），与 ExceptionFlowPanel/ClosureInspectorPanel 模式一致——不依赖 IdeController / 引擎层，仅作为静态教学内容的展示与交互。ID 映射逻辑放在 Ide slot 中而非面板内部，保持面板的独立性与可测试性。showDock lambda 复用（`auto showDock = [this](ads::CDockWidget* dock) {...}`）让 12 个活动路由分支共用同一个显隐逻辑。LearningPathPanel 显示时自动 refresh（view action toggled=true 时调用 `learningPathPanel_->refresh()`），确保进度从持久化存储重新加载。
+
+### 教学导航增强（学习中心 + 标题栏 + 主题色板 + 首次展开）
+
+针对「视图菜单 24 项平铺」「教学面板无说明」「窗口样式不统一」三大新手体验问题，实施完整的教学导航增强方案：
+
+- **学习中心对话框**（LearningHubDialog）：ActivityBar 新增「学习」项（EDUCATION 图标），点击弹出 4 分组卡片导航对话框——入门导览(3) / 编译前端(4) / 执行引擎(8) / 深入实战(5)。点击卡片项发 panelRequested 信号并关闭对话框。视图菜单从 24 项平铺重构为 4 子菜单 + 学习中心入口（Ctrl+Shift+L）。使用 QFluentKit TitleLabel/CaptionLabel/SimpleCardWidget/PrimaryPushButton
+- **教学面板统一标题栏**（TeachingPanelHeader）：19 个教学面板顶部统一包装为 `[标题] [这是什么？] [学习路径]` 三段式。「这是什么？」弹出 480x360 帮助对话框，含面板用途/推荐使用顺序/关联概念三段；「学习路径」按钮发 learningPathRequested 信号由 Ide slot 路由到 LearningPathPanel
+- **主题色板工具**（TeachingTheme.h）：集中教学面板色板（primary/primaryHover/primaryPressed/textPrimary/textSecondary/textHint/surface/surfaceHover/border/accent/success/warning/error），全部跟随 QFluentKit Theme::isDark() + Theme::themeColor() 自适应亮/暗主题。提供 primaryButtonStyle()/secondaryButtonStyle() 便捷样式表
+- **WelcomeWizard Step 4 学习路径推荐**：新增第 4 步，5 阶段彩色卡片（绿/黄/蓝/紫/红）+「开始学习 ✓」按钮，点击发 learningPathRequested 信号并 accept。3 处 WelcomeWizard 创建点（首次启动 / helpMenu / onActivityRequested "welcome"）均连接信号
+- **WelcomeWizard Fluent 化**：主操作按钮 → PrimaryPushButton（主题色自动驱动）；次操作按钮 → PushButton；标题/副标题 → TitleLabel/CaptionLabel；硬编码颜色 → TeachingTheme 主题色板。代码编辑器深色主题与 Step 4 五阶段语义色保留
+- **首次用户 LearningPathPanel 默认展开**：首次用户（welcome_completed=false）完成向导后，无论跳过还是完成，都自动展开 LearningPathPanel 作为学习起点；老用户保持上次布局
+- **3 个第三波面板子页淡入动画**：CallStackPanel / VariableInspectorPanel / BytecodeTracePanel 子页切换新增 PanelAnimator::fadeInWidget 调用，与第二档已动画化的 8 个面板风格统一
+
+> 关键架构决策：TeachingTheme 用 inline 函数而非静态常量，保证每次调用动态读取 Theme::isDark()/themeColor()，主题切换时无需手动刷新。首次展开放在 wizard exec 之后（用户已了解概念再展开面板，避免布局抢占注意力）。3 处 WelcomeWizard 创建点信号连接一致，保证任何入口触发向导都能正确展开 LearningPathPanel。LearningHubDialog/TeachingPanelHeader 依赖 QFluentKit（PushButton/CardWidget/Label），不依赖 IdeController / 引擎层，仅在 minilang_ide 主程序链接，不加入测试目标。
+
+### 教学面板 QFluentKit 控件统一迁移
+
+将 19 个教学面板的原生 QWidget 控件批量迁移到 QFluentKit 控件，统一视觉风格与滚动条样式，遵循「最小侵入」原则：
+
+- **主操作按钮 → PrimaryPushButton**：8 类面板的主操作按钮（运行/检查/刷新/加载）替换为 QFluentKit `PrimaryPushButton`（主题色填充），覆盖 BugHunt/LearningPath/IRTransform/TokenPuzzle/AstBuilderToy/VmStackSandbox/MemoryModel/BackendCompare/ProfileDashboard/LabManual/SyntaxExplorer。`PrimaryPushButton` 继承自 `QPushButton`（经 `PushButton` 中间层），原 `&QPushButton::clicked` 信号连接与 `findChildren<QPushButton*>()` 兼容性保持不变
+- **标题/状态 QLabel → Fluent Label**：19 个面板的标题/状态 QLabel 按语义替换为 `TitleLabel`（顶部大标题，仅 CodeJourneyInfoPanel）/ `CaptionLabel`（状态/副标题，10 个面板的 statusLabel_）/ `StrongBodyLabel`（强调数据标签，6 个面板的 scoreLabel_/progressLabel_ 等），区分主次信息层级
+- **滚动条统一 Fluent 化**：`wrapTeachingPanel()` 包装器新增 `applyFluentScrollBars` lambda，遍历所有 `QAbstractScrollArea*` 子类（QListWidget/QTableWidget/QTreeWidget/QTextBrowser/QScrollArea），替换原生 `QScrollBar` 为 QFluentKit `ScrollBar`，通过 `metaObject()->className()` 检查避免重复替换
+- **硬编码颜色热点清理**：IrViewer 的 `#f8f8f8`、CodeJourneyInfoPanel 的 `#f5f5f5`、VmStackSandboxPanel 的标签背景，以及 BreakpointConditionPanel/IRTransformPanel 中 `<pre>` 代码块背景，全部替换为 `TeachingTheme::surface()` 等主题色板，跟随亮/暗主题自适应
+- **关键约束遵循**：不动 CodeEditor.cpp 与主题切换逻辑；保留全部信号连接、QTimer、QStackedWidget 子页切换；工具箱/导航按钮保留原生 QPushButton 避免视觉过载
+
+> 关键架构决策：PrimaryPushButton 仅用于主操作按钮以提供视觉强调，工具箱/导航按钮保留原生 QPushButton；滚动条替换用 className 检查防御性防重复；`<pre>` 背景用 TeachingTheme::surface().name() 跟随主题，无需在 HTML 中重复定义两套配色。全量 1668/1668 测试通过。
 
 ## 架构
 
@@ -188,7 +310,7 @@
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/调试面板等） |
 | `app/` | IdeController、InterpreterWorker、main、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
-| `tests/` | GoogleTest 单元测试（1329 个） |
+| `tests/` | GoogleTest 单元测试（1668 个） |
 | `test_harness/` | 独立测试工具（AST/格式化器/调试一致性审计） |
 | `samples/mini/` | MiniLang 示例程序（模块系统演示） |
 | `docs/` | 开发指南与文档 |
@@ -344,13 +466,13 @@ for (var i = 0; i < 10; i = i + 1) {
 ### 代码规范
 
 - 编码风格遵循项目现有约定（参见 `AGENTS.md`）
-- 新增代码需通过全量测试（1329/1329）+ formatter_audit 审计
+- 新增代码需通过全量测试（1668/1668）+ formatter_audit 审计用例验证
 - 提交前运行 `./scripts/run_tests.bat` 确认无回归
 - 详细工程约定参见 [docs/development.md](./docs/development.md)
 
 ## 测试
 
-项目包含 **1329 个 GoogleTest 单元测试**（104 个测试套件），覆盖所有核心模块：
+项目包含 **1668 个 GoogleTest 单元测试**（191 个测试套件），覆盖所有核心模块：
 
 ### 前端模块
 
@@ -408,6 +530,12 @@ for (var i = 0; i < 10; i = i + 1) {
 | `TeachingPanelsCallStack` / `TeachingPanelsVariableInspector` / `TeachingPanelsBytecodeTrace`（3 个套件，13 用例） | 第三波教学面板数据完整性审计：CallStackLibrary（6 个调用栈场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / expectedFrames 非空）、VariableInspectorLibrary（9 种类型示例 ID 唯一 / 关键字段非空 / 关键类型名齐全 / 标量示例含 NaN-boxing 位编码）、BytecodeTraceLibrary（18 个 OpCode 文档 ID 唯一 / 关键字段非空 / category 合法 / 关键 OpCode 齐全） |
 | `TeachingPanelsOpCodeProfile` / `TeachingPanelsBreakpointCondition`（2 个套件，14 用例） | 第二档教学面板数据完整性审计：OpCodeProfileLibrary（12 个 OpCode 性能文档 ID 唯一 / 关键字段非空 / category 合法 / 关键 OpCode 齐全 / perfNote 含性能提示关键词）、BreakpointConditionLibrary（8 个条件断点场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / condition 为表达式 / sampleCode 含断点行 / description 提及条件语义） |
 | `TeachingPanelsExceptionFlow` / `TeachingPanelsClosureInspector`（2 个套件，24 用例） | 第三档教学面板数据完整性审计：ExceptionFlowLibrary（8 个异常场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / sampleCode 含 throw / propagationPath 非空 / description 提及异常语义，6 个传播阶段 phase/category/stackEffect 合法）、ClosureInspectorLibrary（8 个闭包场景 ID 唯一 / 关键字段非空 / 关键场景 ID 齐全 / sampleCode 含闭包 / captureType 含 upvalue / description 提及闭包语义，6 个 upvalue 阶段 phase/category/stackEffect 合法） |
+| `IROptReplayAudit` / `MemoryAnimLibraryPhases` / `MemoryAnimLibraryTypes` / `MemoryAnimLibraryConsistency` / `BugHuntVariantAudit`（5 个套件，37 用例） | 第五档 Top 3 改进方向数据完整性审计：IROptReplayLibrary（5 个 IR 优化回放场景 ID 唯一 / 关键场景 ID 齐全 / 每场景 3 步骤 / passName/passRound/irSnapshot/instrCount/decisions/modifiedCount 字段非空，irSnapshot 含 'function' 关键字）、MemoryAnimLibrary（4 个 GC 阶段 mark/sweep/reset/idle 顺序与 color #RRGGBB 格式 / 6 种堆对象类型 ArrayData/DictData/InstanceData/StringData/ClosureData/BoundMethodData 字段非空 / phase 与 type 一致性）、BugHuntVariantLibrary（7 个变体 ID 唯一 / 关键变体 ID 齐全 / parentId 必须存在于 BugHuntLibrary / sourceCode 可被 Lexer 解析 / description 含"差异"+"挑战点"关键词） |
+| `LearningPathDataAudit` / `LearningPathProgressAudit` / `LearningPathPrereqAudit`（3 个套件，15 用例） | 功能 6 学习路径地图数据完整性审计：LearningPathData（活动数 ≥ 18 / ID 唯一 / 关键 ID 齐全 / stage 0-4 / prerequisites 引用已存在 ID）、LearnerProgressStore（初始空进度 / markCompleted 解锁联动 / stageProgress 计算 / overallProgress 计算 / nextRecommended 返回未完成+已解锁 / reset 清空）、Prerequisites（DFS 环检测 / 阶段零无前置 / lab-02 前置含 lab-01 / bug-hunt-expert 前置含 intermediate） |
+| `ErrorHintEngineSpelling` / `ErrorHintEnginePatterns`（2 个套件，12 用例） | 功能 12 错误信息友好化引擎审计：Levenshtein 编辑距离计算 / 阈值边界 / 空候选集 / 多候选择优 / 大小写敏感 / 数字符号 / 缺分号模式 / 未知模式透传 / 未定义变量拼写建议 / 未定义函数无提升提示 / 除零提示 / 越界提示 / 类型错误提示 |
+| `SandboxLibraryAudit`（1 个套件，18 用例） | 功能 5 VM 栈沙盒关卡数据完整性审计：SandboxLibrary（5 关卡 / level 1-5 连续 / goal/availableOps/teachingPoint/hint 非空 / difficulty 1-3 / 关卡 1 expectedSequence 含 PUSH_INT+ADD+PRINT / 关卡 2 与 3 availableOps 相同但 expectedSequence 不同 / 关卡 4 含 PUSH_STRING / 关卡 1-3 expectedOutput 为 "3"/"7"/"9" / 关卡 1-4 expectedSequence 执行后确实得到 expectedOutput 自洽性验证） |
+| `MagicCommandsLibraryAudit` / `MagicCommandsHandlerAudit`（2 个套件，13 用例） | 功能 11 REPL %magic 命令系统审计：命令数 ≥ 10 / 命令名唯一 / 必需命令齐全（help/disassemble/ir/compare/profile/memory/ast/tokens/reset/version）/ description 非空 / syntax 以 % 开头 / %version 输出含 "MiniLang" / %help 输出含所有命令名 / %disassemble+controller=null 友好错误 / %ir+controller=null 友好错误 / %unknown 未知命令提示 / 空输入不处理 / 非 % 开头不处理 |
+| `TeachingPanelsE2E.*`（9 个套件，55 用例） | 教学面板端到端交互测试：8 个面板（ExceptionFlow / ClosureInspector / MemoryModel / IRTransform / CallStack / VariableInspector / BytecodeTrace / BreakpointCondition）实例化 + 子页切换（QStackedWidget 索引验证）+ 列表选择 → 详情刷新联动 + 列表项数与 Library 静态数据一致 + QTimer 在 nullptr controller 下不触发（防御性 `stopAllTimers` + 无活动定时器断言）+ 跨面板所有 8 个面板均含 QStackedWidget。验证 `controller_=nullptr` 构造路径安全（refreshLive/refreshAnimState 早返回） |
 
 ### GUI 编辑器审计
 

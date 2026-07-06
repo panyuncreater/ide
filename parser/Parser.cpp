@@ -95,6 +95,14 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
         // 主循环必须也停下来，否则 declaration() → primary() 不识别 '}' → 抛异常 →
         // synchronize() 又看到 '}' → 死循环。
         if (check(TokenType::TK_RBRACE)) break;
+        // BUG-PARSER-AUDIT-5 fix: 错误数量上限，防止恶意输入触发 O(N) 诊断内存膨胀。
+        // 原实现无上限，100 万个 ';' 可累积 ~100 万条 Diagnostic（~200MB）。
+        if (diagnostics_.errorCount() >= MAX_PARSE_ERRORS) {
+            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) +
+                                  " 条），停止解析",
+                                  peek().line, peek().column, DiagSource::Parser);
+            break;
+        }
         try {
             auto decl = declaration();
             if (decl) {
@@ -344,10 +352,21 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     // 可选的返回值类型注解 : type 或 -> type
     std::string returnType;
     if (match(TokenType::TK_COLON)) {
+        // BUG-PARSER-AUDIT-1 fix: 在 parseTypeAnnotation 前预检 token 类型，
+        // 防止 `fun foo(): ;` 或 `fun foo(): {}` 中的 `;`/`{` 被吞作类型名，
+        // 导致误导性错误消息与块结构污染。与 parseParamList 第 479-484 行模式对齐。
+        if (!isIdentifierOrType()) {
+            const Token& tok = peek();
+            throw ParseError("期望返回类型名", tok.line, tok.column);
+        }
         returnType = parseTypeAnnotation();
     } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
         advance(); // 消耗 '-'
         advance(); // 消耗 '>'
+        if (!isIdentifierOrType()) {  // BUG-PARSER-AUDIT-1
+            const Token& tok = peek();
+            throw ParseError("期望返回类型名", tok.line, tok.column);
+        }
         returnType = parseTypeAnnotation();
     }
 
@@ -548,6 +567,11 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
     std::vector<std::shared_ptr<ASTNode>> members;
 
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
+        // BUG-PARSER-AUDIT-2 fix: classDecl 成员循环需 try/catch 错误恢复，
+        // 与 block() 模式一致。原实现无恢复，单个坏成员抛异常会穿透到外层 block，
+        // synchronize 在 class 的 '}' 处返回，外层 block 消费 class 的 '}' 作为
+        // 自己的闭合，导致整个类丢失 + 外层块结构错乱。
+        try {
         // 类成员可以是：
         // - var 声明（字段）
         // - fun/function 声明（方法）
@@ -598,10 +622,19 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                 // PARSE-06 fix: 可选的返回类型注解（支持 : type 和 -> type）
                 std::string returnType;
                 if (match(TokenType::TK_COLON)) {
+                    // BUG-PARSER-AUDIT-1 fix: 裸方法 `:` 后预检类型 token
+                    if (!isIdentifierOrType()) {
+                        const Token& tok = peek();
+                        throw ParseError("期望返回类型名", tok.line, tok.column);
+                    }
                     returnType = parseTypeAnnotation();
                 } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
                     advance(); // 消耗 '-'
                     advance(); // 消耗 '>'
+                    if (!isIdentifierOrType()) {  // BUG-PARSER-AUDIT-1
+                        const Token& tok = peek();
+                        throw ParseError("期望返回类型名", tok.line, tok.column);
+                    }
                     returnType = parseTypeAnnotation();
                 }
 
@@ -656,6 +689,13 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
             }
         } else {
             break;
+        }
+        } catch (const ParseError& e) {
+            // BUG-PARSER-AUDIT-2 fix: 成员解析错误恢复
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            synchronize();
+            // synchronize 在 '}' 处返回（不消费），循环条件 check(RBRACE) 退出，
+            // 由下方 consume(TK_RBRACE) 消费 class 的闭合花括号。
         }
     }
 
@@ -867,15 +907,41 @@ std::unique_ptr<TryStmt> Parser::tryStmt() {
     consume(TokenType::TK_LBRACE, "try 后期望 '{'");
     auto tryBlock = block();
 
-    consume(TokenType::TK_CATCH, "期望 'catch'");
-    consume(TokenType::TK_LPAREN, "catch 后期望 '('");
-    const Token& varTok = consume(TokenType::TK_IDENTIFIER, "期望 catch 变量名");
-    consume(TokenType::TK_RPAREN, "期望 ')'");
-    consume(TokenType::TK_LBRACE, "catch 后期望 '{'");
-    auto catchBlock = block();
+    // BUG-AUDIT-FINALLY-1: catch 子句可选（支持 try-finally 无 catch 语法）。
+    // 至少需有 catch 或 finally 之一，否则报错。
+    std::string catchVarName;
+    std::unique_ptr<Block> catchBlock;
+    std::unique_ptr<Block> finallyBlock;
 
-    return std::make_unique<TryStmt>(std::move(tryBlock), varTok.lexeme,
-                                      std::move(catchBlock), tryTok.line, tryTok.column);
+    bool hasCatch = check(TokenType::TK_CATCH);
+    bool hasFinally = check(TokenType::TK_FINALLY);
+    if (!hasCatch && !hasFinally) {
+        throw ParseError("try 语句后必须跟 catch 或 finally", tryTok.line, tryTok.column);
+    }
+
+    if (hasCatch) {
+        advance();  // 消耗 'catch'
+        consume(TokenType::TK_LPAREN, "catch 后期望 '('");
+        const Token& varTok = consume(TokenType::TK_IDENTIFIER, "期望 catch 变量名");
+        consume(TokenType::TK_RPAREN, "期望 ')'");
+        consume(TokenType::TK_LBRACE, "catch 后期望 '{'");
+        catchBlock = block();
+        catchVarName = varTok.lexeme;
+        // catch 后可选 finally
+        if (check(TokenType::TK_FINALLY)) {
+            hasFinally = true;
+        }
+    }
+
+    if (hasFinally) {
+        advance();  // 消耗 'finally'
+        consume(TokenType::TK_LBRACE, "finally 后期望 '{'");
+        finallyBlock = block();
+    }
+
+    return std::make_unique<TryStmt>(std::move(tryBlock), catchVarName,
+                                      std::move(catchBlock), std::move(finallyBlock),
+                                      tryTok.line, tryTok.column);
 }
 
 std::unique_ptr<ThrowStmt> Parser::throwStmt() {
@@ -1003,6 +1069,14 @@ std::unique_ptr<Block> Parser::block() {
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
         // FIX: catch 也是块边界（try 块的 tryBlock 以 catch 结束）
         if (check(TokenType::TK_CATCH)) break;
+        // BUG-PARSER-AUDIT-5 fix: block() 主循环也需错误上限检查，
+        // 防止恶意嵌套块内含大量错误触发 O(N) 诊断内存膨胀。
+        if (diagnostics_.errorCount() >= MAX_PARSE_ERRORS) {
+            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) +
+                                  " 条），停止解析",
+                                  peek().line, peek().column, DiagSource::Parser);
+            break;
+        }
         try {
             auto decl = declaration();
             if (decl) {
@@ -1405,15 +1479,17 @@ std::unique_ptr<ASTNode> Parser::primary() {
     }
 
     // 分组表达式
-    if (match(TokenType::TK_LPAREN)) {
-        // AUDIT-P0 fix: 在分组表达式递归入口处检查深度。
-        // expression() 入口已有检查，但 or_→and_→...→call→primary 链路上
-        // 共 9 个无 DepthGuard 的函数帧，在此补充检查可确保在栈溢出前抛出。
+    // BUG-PARSER-AUDIT-7 fix: 深度检查移到 match() 之前，与 unary() 的
+    // AUDIT-BUG-P3 fix 模式对齐。原实现先 match 消耗 '(' 再检查深度，
+    // 超限时抛异常 → synchronize() 的初始 advance() 会多消耗一个 token，
+    // 导致恢复时多丢失一个 token。
+    if (check(TokenType::TK_LPAREN)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
-            const Token& lp = previous();
+            const Token& lp = peek();
             throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
                              lp.line, lp.column);
         }
+        advance();  // 消耗 '('
         auto expr = expression();
         consume(TokenType::TK_RPAREN, "期望 ')' 结束分组表达式");
         return expr;

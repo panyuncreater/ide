@@ -1039,6 +1039,32 @@ VMResult VM::executeDefineClass(size_t& ip, OpCode op) {
     info.superClassName = superClassName;
     classInfo_[className] = info;
 
+    // BUG-INH-AUDIT-7 fix: 父类重定义时，所有子类的 fieldOrder/fieldDefaults/methodCache
+    // 缓存失效（原实现仅更新当前类，子类仍用旧父类字段布局）。
+    // 遍历所有已注册类，若其继承链包含当前重定义的类，清空其缓存。
+    // methodCache 是 mutable 需单独清空，fieldOrder/fieldDefaults 在下次构造时
+    // 由 executeClassNew 重新合并（实际上 executeDefineClass 已合并，这里清空
+    // 子类缓存的 fieldOrder/fieldDefaults 强制下次重定义时重新计算）。
+    // 注意：单次运行（单文件编译执行）下，类定义按声明顺序处理，子类总在父类
+    // 之后定义，此循环通常是空操作。此修复主要针对 REPL 场景下的重定义。
+    for (auto& kv : classInfo_) {
+        if (kv.first == className) continue;  // 跳过当前类
+        // 沿继承链查找是否依赖当前重定义的类
+        std::string cur = kv.second.superClassName;
+        for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
+            if (cur == className) {
+                // 子类 kv.first 依赖重定义的父类 className，清空缓存
+                kv.second.fieldOrder.clear();
+                kv.second.fieldDefaults.clear();
+                kv.second.methodCache.clear();
+                break;
+            }
+            auto it = classInfo_.find(cur);
+            if (it == classInfo_.end()) break;
+            cur = it->second.superClassName;
+        }
+    }
+
     // 沿继承链合并父类字段（父类字段在前，子类覆盖同名字段）
     // 先按"父→子"顺序收集字段名，子类已存在的字段不重复添加
     std::vector<std::string> mergedOrder;

@@ -8,14 +8,24 @@
 #include "interpreter/NaNBox.h"
 #include "interpreter/RefCounted.h"
 #include "interpreter/GcManager.h"
+#include "gui/PanelAnimator.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QSplitter>
 #include <QHeaderView>
 #include <QApplication>
+#include <QTimer>
+#include <QColor>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
+#include <cstdint>
+
+#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
+#include "Label.h"        // QFluentKit（StrongBodyLabel）
 
 // ============================================================
 // MemoryModelLibrary — 静态教学场景库
@@ -250,6 +260,119 @@ const std::vector<GcPhaseInfo>& MemoryModelLibrary::gcPhases() {
 }
 
 // ============================================================
+// MemoryAnimLibrary — 第 4 子页"实时动画"场景静态库（P4-4）
+// ============================================================
+
+const std::vector<MemoryAnimPhase>& MemoryAnimLibrary::gcAnimPhases() {
+    static const std::vector<MemoryAnimPhase> kPhases = {
+        {
+            "mark",
+            "Mark 阶段：从根集（VM 操作数栈、globals、调用帧）出发，"
+            "递归标记所有可达的容器节点（ArrayData/DictData/InstanceData）。"
+            "已标记节点 marked=true，避免重复遍历；环形引用在第二次相遇时跳过。",
+            "#3079C0"  // 蓝色：标记中
+        },
+        {
+            "sweep",
+            "Sweep 阶段：迭代 tracked_ 列表，对 aliveSet_ 仍在但 marked 未标记的节点"
+            "（即不可达的循环孤岛）清空其子元素打破循环，refCount 自然降为 0 触发析构。"
+            "存活节点重置 marked=false 为下一轮做准备。",
+            "#C03030"  // 红色：回收中
+        },
+        {
+            "reset",
+            "Reset 阶段：存活节点的 marked 标志复位为 false，aliveSet_ 与 tracked_ 保持一致。"
+            "新一轮 collectCycle 触发前，所有节点状态干净，避免上一轮残留影响。",
+            "#709030"  // 绿色：复位
+        },
+        {
+            "idle",
+            "Idle 阶段：GC 空闲。当前 collectCycle 已结束，下一次触发时机为"
+            "Interpreter::execute() 起点（resetState 之后、runStatements 之前）。"
+            "期间 refCount 正常管理对象生命周期，仅循环孤岛等待下轮回收。",
+            "#909090"  // 灰色：空闲
+        },
+    };
+    return kPhases;
+}
+
+const std::vector<std::pair<std::string, std::string>>& MemoryAnimLibrary::heapObjectTypes() {
+    static const std::vector<std::pair<std::string, std::string>> kTypes = {
+        {"ArrayData",       "数组容器（持有 std::vector<Value> elements）"},
+        {"DictData",        "字典容器（持有 std::unordered_map<string,Value> entries）"},
+        {"InstanceData",    "类实例（持有 className + fields 字段表）"},
+        {"StringData",      "字符串堆数据（持有 std::string + UTF-8 码位缓存）"},
+        {"ClosureData",     "闭包数据（持有 env weak_ptr + params + capturedVars + body）"},
+        {"BoundMethodData", "绑定的方法（实例 + 方法指针的绑定载体）"},
+    };
+    return kTypes;
+}
+
+// ============================================================
+// 第 4 子页匿名辅助（堆对象类型名 + 字段数）
+// ============================================================
+
+namespace {
+
+/// 根据 ValueType 返回堆对象 C++ 结构名（用于"地址/类型"表格展示）
+std::string heapStructName(const Value& v) {
+    if (!v.isPointer()) return "<scalar>";
+    RefCounted* p = v.asPointer();
+    if (!p) return "<null-ptr>";
+    switch (p->type) {
+    case ValueType::VAL_INT:      return "BoxedIntData";
+    case ValueType::VAL_STRING:   return "StringData";
+    case ValueType::VAL_ARRAY:    return "ArrayData";
+    case ValueType::VAL_DICT:     return "DictData";
+    case ValueType::VAL_INSTANCE: return "InstanceData";
+    case ValueType::VAL_CLOSURE:  return "ClosureData";
+    case ValueType::VAL_NULL:
+    case ValueType::VAL_FLOAT:
+    case ValueType::VAL_BOOL:
+        return "<scalar-in-heap>";
+    }
+    return "<unknown>";
+}
+
+/// 返回堆对象的字段数/元素数（用于"字段数/元素数"列展示）
+/// 对 Array 返回元素数，Dict/Instance 返回字段数，Closure 返回 capturedVars 数，
+/// String 返回字符数，BoxedInt 返回 1（仅 value 字段）。
+size_t heapFieldCount(const Value& v) {
+    if (!v.isPointer()) return 0;
+    RefCounted* p = v.asPointer();
+    if (!p) return 0;
+    switch (p->type) {
+    case ValueType::VAL_INT:
+        return 1;  // BoxedIntData.value
+    case ValueType::VAL_STRING:
+        return static_cast<size_t>(v.codepointCount());
+    case ValueType::VAL_ARRAY:
+        return v.arrayVal().size();
+    case ValueType::VAL_DICT:
+        return v.dictVal().size();
+    case ValueType::VAL_INSTANCE:
+        return v.fields().size();
+    case ValueType::VAL_CLOSURE:
+        return v.capturedVars().size();
+    case ValueType::VAL_NULL:
+    case ValueType::VAL_FLOAT:
+    case ValueType::VAL_BOOL:
+        return 0;
+    }
+    return 0;
+}
+
+/// 将指针格式化为 16 进制字符串
+std::string ptrToHex(const void* p) {
+    std::ostringstream os;
+    os << "0x" << std::hex << std::setfill('0') << std::setw(16)
+       << reinterpret_cast<uintptr_t>(p);
+    return os.str();
+}
+
+}  // namespace
+
+// ============================================================
 // MemoryModelPanel 实现
 // ============================================================
 
@@ -259,17 +382,20 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
 
-    // 顶部页签按钮
+    // 顶部页签按钮（4 个子页）
     auto* pageBar = new QHBoxLayout;
     pageNanBoxBtn_   = new QPushButton(QString::fromUtf8("NaN-boxing 编码"), this);
     pageRefCountBtn_ = new QPushButton(QString::fromUtf8("引用计数 & COW"), this);
-    pageGcBtn_        = new QPushButton(QString::fromUtf8("GcManager mark-sweep"), this);
+    pageGcBtn_       = new QPushButton(QString::fromUtf8("GcManager mark-sweep"), this);
+    pageAnimBtn_     = new QPushButton(QString::fromUtf8("实时动画"), this);
     pageNanBoxBtn_->setCheckable(true);
     pageRefCountBtn_->setCheckable(true);
     pageGcBtn_->setCheckable(true);
+    pageAnimBtn_->setCheckable(true);
     pageBar->addWidget(pageNanBoxBtn_);
     pageBar->addWidget(pageRefCountBtn_);
     pageBar->addWidget(pageGcBtn_);
+    pageBar->addWidget(pageAnimBtn_);
     pageBar->addStretch();
     mainLayout->addLayout(pageBar);
 
@@ -279,12 +405,21 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
     auto* pageNanBox = new QWidget(this);
     auto* pageRefCount = new QWidget(this);
     auto* pageGc = new QWidget(this);
+    auto* pageAnim = new QWidget(this);
     buildNanBoxPage(pageNanBox);
     buildRefCountPage(pageRefCount);
     buildGcPage(pageGc);
+    buildAnimPage(pageAnim);
     stack_->addWidget(pageNanBox);
     stack_->addWidget(pageRefCount);
     stack_->addWidget(pageGc);
+    stack_->addWidget(pageAnim);
+
+    // 第 4 子页自动刷新定时器（500ms，默认关闭）
+    animTimer_ = new QTimer(this);
+    animTimer_->setInterval(500);
+    animTimer_->setSingleShot(false);
+    connect(animTimer_, &QTimer::timeout, this, [this]() { refreshAnimState(); });
 
     // 默认显示第一个页面
     pageNanBoxBtn_->setChecked(true);
@@ -295,19 +430,34 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
         pageNanBoxBtn_->setChecked(true);
         pageRefCountBtn_->setChecked(false);
         pageGcBtn_->setChecked(false);
+        pageAnimBtn_->setChecked(false);
+        PanelAnimator::fadeInWidget(stack_->currentWidget());
     });
     connect(pageRefCountBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(1);
         pageNanBoxBtn_->setChecked(false);
         pageRefCountBtn_->setChecked(true);
         pageGcBtn_->setChecked(false);
+        pageAnimBtn_->setChecked(false);
+        PanelAnimator::fadeInWidget(stack_->currentWidget());
     });
     connect(pageGcBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(2);
         pageNanBoxBtn_->setChecked(false);
         pageRefCountBtn_->setChecked(false);
         pageGcBtn_->setChecked(true);
+        pageAnimBtn_->setChecked(false);
         refreshGcStats();
+        PanelAnimator::fadeInWidget(stack_->currentWidget());
+    });
+    connect(pageAnimBtn_, &QPushButton::clicked, this, [this]() {
+        stack_->setCurrentIndex(3);
+        pageNanBoxBtn_->setChecked(false);
+        pageRefCountBtn_->setChecked(false);
+        pageGcBtn_->setChecked(false);
+        pageAnimBtn_->setChecked(true);
+        refreshAnimState();
+        PanelAnimator::fadeInWidget(stack_->currentWidget());
     });
 
     populateNanBoxList();
@@ -404,8 +554,8 @@ void MemoryModelPanel::buildGcPage(QWidget* host) {
     layout->setSpacing(4);
 
     auto* statusbar = new QHBoxLayout;
-    gcTrackedCountLabel_ = new QLabel(QString::fromUtf8("tracked 节点数：—"), host);
-    gcRefreshBtn_ = new QPushButton(QString::fromUtf8("刷新统计"), host);
+    gcTrackedCountLabel_ = new StrongBodyLabel(QString::fromUtf8("tracked 节点数：—"), host);
+    gcRefreshBtn_ = new PrimaryPushButton(QString::fromUtf8("刷新统计"), host);
     statusbar->addWidget(gcTrackedCountLabel_);
     statusbar->addStretch();
     statusbar->addWidget(gcRefreshBtn_);
@@ -516,4 +666,211 @@ void MemoryModelPanel::refreshGcStats() {
     if (!gcTrackedCountLabel_) return;
     size_t tracked = GcManager::instance().trackedCount();
     gcTrackedCountLabel_->setText(QString::fromUtf8("tracked 节点数：%1").arg(tracked));
+}
+
+// ============================================================
+// 第 4 子页：实时动画（与 VM 单步执行联动）
+// ============================================================
+
+void MemoryModelPanel::buildAnimPage(QWidget* host) {
+    auto* layout = new QVBoxLayout(host);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
+
+    // ---- 顶部状态栏：5 个 QLabel 横向排列 ----
+    auto* statusbar = new QHBoxLayout;
+    animStatusLabel_     = new QLabel(QString::fromUtf8("VM 状态：—"), host);
+    animOpCodeLabel_     = new QLabel(QString::fromUtf8("OpCode：—"), host);
+    animStackDepthLabel_ = new QLabel(QString::fromUtf8("栈深度：—"), host);
+    animFrameCountLabel_ = new QLabel(QString::fromUtf8("栈帧数：—"), host);
+    animGcTrackedLabel_  = new QLabel(QString::fromUtf8("GC tracked：—"), host);
+    // 统一样式：浅灰底 + 边框，便于视觉区分
+    const char* labelStyle =
+        "QLabel { background-color: #F5F5F5; padding: 4px 8px; "
+        "border: 1px solid #CCC; border-radius: 3px; }";
+    for (auto* l : {animStatusLabel_, animOpCodeLabel_, animStackDepthLabel_,
+                    animFrameCountLabel_, animGcTrackedLabel_}) {
+        l->setStyleSheet(QString::fromUtf8(labelStyle));
+        l->setAlignment(Qt::AlignCenter);
+    }
+    statusbar->addWidget(animStatusLabel_);
+    statusbar->addWidget(animOpCodeLabel_);
+    statusbar->addWidget(animStackDepthLabel_);
+    statusbar->addWidget(animFrameCountLabel_);
+    statusbar->addWidget(animGcTrackedLabel_);
+    layout->addLayout(statusbar);
+
+    // ---- 中间堆对象表：4 列（地址 / 类型 / refCount / 字段数·元素数）----
+    heapObjectTable_ = new QTableWidget(0, 4, host);
+    heapObjectTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    heapObjectTable_->setHorizontalHeaderLabels({
+        QString::fromUtf8("地址"),
+        QString::fromUtf8("类型"),
+        QString::fromUtf8("refCount"),
+        QString::fromUtf8("字段数/元素数"),
+    });
+    heapObjectTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    heapObjectTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    heapObjectTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    heapObjectTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    layout->addWidget(heapObjectTable_, 2);
+
+    // ---- 底部 GC 阶段说明（QLabel + QTextBrowser 显示 4 阶段说明）----
+    gcPhaseLabel_ = new QLabel(
+        QString::fromUtf8("GC 动画阶段说明（mark / sweep / reset / idle）："), host);
+    layout->addWidget(gcPhaseLabel_);
+    gcPhaseBrowser_ = new QTextBrowser(host);
+    gcPhaseBrowser_->setOpenExternalLinks(false);
+    gcPhaseBrowser_->setOpenLinks(false);
+    layout->addWidget(gcPhaseBrowser_, 1);
+
+    // 静态填充 4 阶段 + 6 类型说明（来自 MemoryAnimLibrary，仅初始化一次）
+    {
+        std::ostringstream os;
+        os << "<h3>GC 动画 4 阶段</h3>";
+        os << "<p>本面板与 VM 单步执行联动，实时展示堆对象图、refCount 变化与 GC 阶段。</p>";
+        const auto& phases = MemoryAnimLibrary::gcAnimPhases();
+        for (const auto& p : phases) {
+            os << "<p><span style='color:" << p.color << ";font-weight:bold;font-size:14pt;'>●</span> "
+               << "<b>" << p.phase << "</b>: " << p.description << "</p>";
+        }
+        os << "<hr><p><b>堆对象类型说明（6 种）：</b></p><ul>";
+        const auto& types = MemoryAnimLibrary::heapObjectTypes();
+        for (const auto& kv : types) {
+            os << "<li><code>" << kv.first << "</code> — " << kv.second << "</li>";
+        }
+        os << "</ul>";
+        gcPhaseBrowser_->setHtml(QString::fromUtf8(os.str().c_str()));
+    }
+
+    // ---- 底部按钮：刷新 + 自动刷新切换 ----
+    auto* btnbar = new QHBoxLayout;
+    animRefreshBtn_     = new QPushButton(QString::fromUtf8("刷新"), host);
+    animAutoRefreshBtn_ = new QPushButton(QString::fromUtf8("自动刷新（500ms）"), host);
+    animAutoRefreshBtn_->setCheckable(true);
+    btnbar->addWidget(animRefreshBtn_);
+    btnbar->addWidget(animAutoRefreshBtn_);
+    btnbar->addStretch();
+    layout->addLayout(btnbar);
+
+    connect(animRefreshBtn_, &QPushButton::clicked, this, [this]() {
+        refreshAnimState();
+        QApplication::beep();
+    });
+    connect(animAutoRefreshBtn_, &QPushButton::clicked, this, [this]() {
+        if (animAutoRefreshBtn_->isChecked()) {
+            animTimer_->start(500);
+            animAutoRefreshBtn_->setText(QString::fromUtf8("停止自动刷新"));
+            refreshAnimState();
+        } else {
+            animTimer_->stop();
+            animAutoRefreshBtn_->setText(QString::fromUtf8("自动刷新（500ms）"));
+        }
+    });
+}
+
+void MemoryModelPanel::refreshAnimState() {
+    if (!animStatusLabel_) return;
+
+    // ---- 未绑定 controller 时显示占位 ----
+    if (!controller_) {
+        animStatusLabel_->setText(QString::fromUtf8("VM 状态：未绑定"));
+        animOpCodeLabel_->setText(QString::fromUtf8("OpCode：—"));
+        animStackDepthLabel_->setText(QString::fromUtf8("栈深度：—"));
+        animFrameCountLabel_->setText(QString::fromUtf8("栈帧数：—"));
+        animGcTrackedLabel_->setText(QString::fromUtf8("GC tracked：—"));
+        if (heapObjectTable_) heapObjectTable_->setRowCount(0);
+        return;
+    }
+
+    // ---- VM 未初始化时显示占位 ----
+    if (!controller_->isVmInitialized()) {
+        animStatusLabel_->setText(QString::fromUtf8("VM 状态：未初始化"));
+        animOpCodeLabel_->setText(QString::fromUtf8("OpCode：—"));
+        animStackDepthLabel_->setText(QString::fromUtf8("栈深度：—"));
+        animFrameCountLabel_->setText(QString::fromUtf8("栈帧数：—"));
+        animGcTrackedLabel_->setText(QString::fromUtf8("GC tracked：—"));
+        if (heapObjectTable_) heapObjectTable_->setRowCount(0);
+        return;
+    }
+
+    // ---- VM 状态：运行中 / 已暂停 ----
+    QString status = controller_->isVmRunning()
+        ? QString::fromUtf8("运行中")
+        : QString::fromUtf8("已暂停");
+    animStatusLabel_->setText(QString::fromUtf8("VM 状态：%1").arg(status));
+
+    // ---- 当前 OpCode 名 ----
+    std::string opName = controller_->getVmCurrentOpCodeName();
+    animOpCodeLabel_->setText(QString::fromUtf8("OpCode：%1").arg(
+        opName.empty() ? QString::fromUtf8("—") : QString::fromUtf8(opName.c_str())));
+
+    // ---- 操作数栈深度（getVmStack 返回 by-value 拷贝，下方继续用于堆对象提取）----
+    auto stack = controller_->getVmStack();
+    animStackDepthLabel_->setText(QString::fromUtf8("栈深度：%1").arg(stack.size()));
+
+    // ---- 栈帧数 ----
+    size_t frameCount = controller_->getVmFrameCount();
+    animFrameCountLabel_->setText(QString::fromUtf8("栈帧数：%1").arg(frameCount));
+
+    // ---- GC tracked 节点数 ----
+    size_t tracked = GcManager::instance().trackedCount();
+    animGcTrackedLabel_->setText(QString::fromUtf8("GC tracked：%1").arg(tracked));
+
+    // ---- 收集堆对象：遍历 stack + globals 中的 Value，按地址去重 ----
+    // 注意：使用裸 Value* 指向 stack/globals 中的元素，避免 Value 拷贝导致
+    // useCount() 被自身临时引用膨胀（保持显示的 refCount 为真实值）。
+    auto globals = controller_->getVmGlobals();
+
+    std::vector<const Value*> heapValuePtrs;
+    heapValuePtrs.reserve(stack.size() + globals.size());
+    for (const auto& v : stack) {
+        if (v.isPointer() && v.asPointer()) heapValuePtrs.push_back(&v);
+    }
+    for (const auto& kv : globals) {
+        if (kv.second.isPointer() && kv.second.asPointer()) heapValuePtrs.push_back(&kv.second);
+    }
+
+    // 按地址去重（保留首次出现的 Value 引用）
+    std::unordered_set<const void*> seenAddrs;
+    std::vector<const Value*> uniqueValues;
+    uniqueValues.reserve(heapValuePtrs.size());
+    for (const Value* vp : heapValuePtrs) {
+        const void* addr = static_cast<const void*>(vp->asPointer());
+        if (seenAddrs.insert(addr).second) {
+            uniqueValues.push_back(vp);
+        }
+    }
+
+    // 按地址升序排序
+    std::sort(uniqueValues.begin(), uniqueValues.end(),
+              [](const Value* a, const Value* b) {
+                  return static_cast<const void*>(a->asPointer())
+                       < static_cast<const void*>(b->asPointer());
+              });
+
+    // ---- 填充堆对象表 ----
+    if (!heapObjectTable_) return;
+    heapObjectTable_->setRowCount((int)uniqueValues.size());
+    for (int i = 0; i < (int)uniqueValues.size(); ++i) {
+        const Value* vp = uniqueValues[i];
+        RefCounted* p = vp->asPointer();
+
+        // 地址列
+        heapObjectTable_->setItem(i, 0, new QTableWidgetItem(
+            QString::fromUtf8(ptrToHex(p).c_str())));
+
+        // 类型列
+        heapObjectTable_->setItem(i, 1, new QTableWidgetItem(
+            QString::fromUtf8(heapStructName(*vp).c_str())));
+
+        // refCount 列
+        auto* rcItem = new QTableWidgetItem(QString::number(p->useCount()));
+        rcItem->setTextAlignment(Qt::AlignCenter);
+        heapObjectTable_->setItem(i, 2, rcItem);
+
+        // 字段数/元素数列
+        heapObjectTable_->setItem(i, 3, new QTableWidgetItem(
+            QString::number(static_cast<qulonglong>(heapFieldCount(*vp)))));
+    }
 }

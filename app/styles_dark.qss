@@ -223,11 +223,11 @@ QToolBar {
     border: none;
     border-bottom: 1px solid #1e1e1e;
     spacing: 8px;
-    padding: 6px 8px;
+    padding: 4px 8px;
 }
 QToolBar QToolButton {
-    padding: 6px 12px;
-    border: 1px solid transparent;
+    padding: 0;
+    border: none;
     border-radius: 5px;
     background: transparent;
     color: #cccccc;
@@ -236,7 +236,7 @@ QToolBar QToolButton {
 }
 QToolBar QToolButton:hover {
     background: #3e3e42;
-    border: 1px solid transparent;
+    border: none;
     color: #ffffff;
 }
 QToolBar QToolButton:pressed {
@@ -250,7 +250,7 @@ QToolBar QToolButton:disabled {
 QToolBar QToolButton:checked {
     background: #0078d4;
     color: #ffffff;
-    border: 1px solid transparent;
+    border: none;
 }
 QToolBar QToolButton:checked:hover {
     background: #1f8cd6;
@@ -282,7 +282,8 @@ QToolBar QToolButton#runDropdownBtn::menu-indicator {
 QToolBar::separator {
     background: #3e3e42;
     width: 1px;
-    margin: 6px 4px;
+    height: 1px;
+    margin: 8px 4px;
 }
 
 /* ---- Debug/VM Button Containers ---- */
@@ -618,6 +619,7 @@ QTextEdit#outputEdit {
     background-color: #1e1e1e;
     color: #cccccc;
     border: none;
+    border-top: 1px solid #2d2d30;
     padding: 10px 12px;
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
     font-size: 13px;
@@ -628,6 +630,7 @@ QListWidget#errorList {
     background-color: #1e1e1e;
     color: #f48771;
     border: none;
+    border-top: 1px solid #2d2d30;
     outline: none;
     padding: 8px 12px;
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;

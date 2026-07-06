@@ -19,6 +19,9 @@
 #include <sstream>
 #include <algorithm>
 
+#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
+#include "Label.h"        // QFluentKit（CaptionLabel）
+
 BackendComparePanel::BackendComparePanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -27,8 +30,8 @@ BackendComparePanel::BackendComparePanel(QWidget* parent)
 
     // 顶部按钮栏
     auto* btnBar = new QHBoxLayout;
-    runButton_ = new QPushButton(QString::fromUtf8("运行三后端对比"), this);
-    diffLabel_ = new QLabel(QString::fromUtf8("尚未运行"), this);
+    runButton_ = new PrimaryPushButton(QString::fromUtf8("运行三后端对比"), this);
+    diffLabel_ = new CaptionLabel(QString::fromUtf8("尚未运行"), this);
     btnBar->addWidget(runButton_);
     btnBar->addStretch();
     btnBar->addWidget(diffLabel_);
@@ -74,7 +77,10 @@ void BackendComparePanel::runComparison() {
     }
     runButton_->setEnabled(false);
     diffLabel_->setText(QString::fromUtf8("运行中..."));
-    QApplication::processEvents();
+    // BUG-GUI-AUDIT-1 fix attempt: 原审计建议排除定时器事件，但 Qt 6 已移除通用
+    // ExcludeTimers flag（仅保留 X11 平台特定的 X11ExcludeTimers，Windows 上无效）。
+    // 保持 ExcludeUserInputEvents（防止用户点击重入），定时器重入风险作为已知限制。
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // 直接从 astRoot 调用三后端
     // 注：ast 是 controller 持有的，三后端只读取，安全

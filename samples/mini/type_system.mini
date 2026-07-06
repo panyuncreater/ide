@@ -1,0 +1,90 @@
+// type_system.mini - 类型系统演示
+// 覆盖特性：类型注解（int/float/string/bool）、int 边界值、
+//           float 精度、null 类型、类型自动推断
+// ============================================================
+
+// ---- 类型注解变量声明 ----
+print("=== 类型注解 ===");
+int x = 42;
+float y = 3.14;
+string name = "MiniLang";
+bool flag = true;
+
+print("int x = {x}");
+print("float y = {y}");
+print("string name = {name}");
+print("bool flag = {flag}");
+
+// ---- int 边界值 ----
+print("");
+print("=== int 边界值 ===");
+int maxInt = 281474976710655;   // 2^48 - 1（NaN-boxing int48 上限）
+int minInt = -281474976710656;  // -2^48（NaN-boxing int48 下限）
+print("max int48 = {maxInt}");
+print("min int48 = {minInt}");
+
+// 超出 int48 范围时自动提升为 float
+int bigVal = 281474976710655;
+print("bigVal = {bigVal}");
+print("bigVal + 1 = {bigVal + 1}");
+
+// ---- float 精度 ----
+print("");
+print("=== float 精度 ===");
+float pi = 3.14159265358979;
+float e = 2.71828182845905;
+print("pi = {pi}");
+print("e = {e}");
+print("pi + e = {pi + e}");
+
+// ---- null 类型 ----
+print("");
+print("=== null 类型 ===");
+var nothing = null;
+print("nothing = {nothing}");
+print("nothing == null: {nothing == null}");
+
+// null 赋给已有变量
+var maybe = 42;
+print("before: {maybe}");
+maybe = null;
+print("after: {maybe}");
+
+// ---- 动态类型（var 自动推断）----
+print("");
+print("=== 动态类型 ===");
+var dynamic = 10;
+print("dynamic = {dynamic} (int)");
+dynamic = "hello";
+print("dynamic = {dynamic} (string)");
+dynamic = [1, 2, 3];
+print("dynamic = {dynamic} (array)");
+
+// 预期输出：
+// === 类型注解 ===
+// int x = 42
+// float y = 3.14
+// string name = MiniLang
+// bool flag = true
+//
+// === int 边界值 ===
+// max int48 = 281474976710655
+// min int48 = -281474976710656
+// bigVal = 281474976710655
+// bigVal + 1 = 281474976710656
+//
+// === float 精度 ===
+// pi = 3.14159
+// e = 2.71828
+// pi + e = 5.85987
+//
+// === null 类型 ===
+// nothing = null
+// nothing == null: true
+// before: 42
+// after: null
+//
+// === 动态类型 ===
+// dynamic = 10 (int)
+// dynamic = hello (string)
+// dynamic = [1, 2, 3] (array)

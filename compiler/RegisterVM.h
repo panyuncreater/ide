@@ -141,6 +141,10 @@ private:
     std::vector<RegCallFrame> frames_;
     RegBytecodeChunk mainChunk_;
     std::map<std::string, RegBytecodeChunk> functionChunks_;
+    // PERF-AUDIT-5 fix: 内联缓存，避免每次 REG_CALL 的 O(log n) 红黑树字符串查找。
+    // 与 StackVM 的 callCache_ 模式一致：用指向 functionChunks_ key 的裸指针作键
+    // （std::map 节点稳定，key 地址在 chunk 生命周期内不变），O(1) 哈希 + 指针比较。
+    std::unordered_map<const std::string*, const RegBytecodeChunk*> callCache_;
 
     // 全局变量
     std::unordered_map<std::string, Value> globals_;
@@ -234,8 +238,32 @@ private:
         }
         return frames_.back();
     }
-    Value& reg(uint8_t r);
-    const Value& reg(uint8_t r) const;
+    // PERF-AUDIT-5 fix: reg() 内联到头文件。原实现定义在 .cpp 中，每次寄存器访问
+    // 是跨翻译单元函数调用，阻断编译器内联优化（寄存器分配/常量传播/死存储消除）。
+    // 在 fib(24) 基准中约 150-225 万次非内联调用，是 RegisterVM 慢于 StackVM 的主因。
+    // 热路径（合法访问）内联，冷路径（越界）调用 runtimeError 后抛异常。
+    Value& reg(uint8_t r) {
+        if (frames_.empty()) {
+            runtimeError("RegisterVM::reg() on empty frames");
+            throw std::runtime_error("RegisterVM: reg() on empty frames");
+        }
+        auto& frame = frames_.back();
+        if (r >= frame.registerCount) {
+            runtimeError("RegisterVM: register index out of range");
+            throw std::runtime_error("RegisterVM: register index out of range");
+        }
+        return frame.registers[r];
+    }
+    const Value& reg(uint8_t r) const {
+        if (frames_.empty()) {
+            throw std::runtime_error("RegisterVM: reg() on empty frames (const)");
+        }
+        const auto& frame = frames_.back();
+        if (r >= frame.registerCount) {
+            throw std::runtime_error("RegisterVM: register index out of range (const)");
+        }
+        return frame.registers[r];
+    }
 
     VMResult runtimeError(const std::string& msg);
     VMResult executeOneInstruction();

@@ -80,6 +80,8 @@ private:
     int blockDepth_ = 0;             // P0-1 fix: 块嵌套深度计数器
     static constexpr int MAX_PARSE_DEPTH = RuntimeLimits::MAX_PARSE_DEPTH;
     static constexpr int MAX_BLOCK_DEPTH = RuntimeLimits::MAX_BLOCK_DEPTH;
+    // BUG-PARSER-AUDIT-5: 错误数量上限，防止恶意输入触发 O(N) 诊断内存膨胀
+    static constexpr int MAX_PARSE_ERRORS = RuntimeLimits::MAX_PARSE_ERRORS;
 
     // ---- 辅助方法 ----
 

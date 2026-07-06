@@ -32,11 +32,17 @@ set(MINILANG_CORE_SOURCES
     compiler/RegisterBytecodeBackend.cpp
     compiler/RegisterVM.cpp
     formatter/Formatter.cpp
+    # 功能 12：错误信息友好化增强引擎（core 层使用，Interpreter.cpp 集成需要）
+    gui/ErrorHintEngine.cpp
+    # 功能 11：REPL %magic 命令系统（仅依赖 IdeController 内联方法 + minilang_core 符号，
+    # 可被测试目标安全链接。ReplPanel.cpp 在 GUI_SOURCES 中调用 MagicCommands::handle）
+    gui/MagicCommands.cpp
 )
 
 # GUI 模块源文件
 set(MINILANG_GUI_SOURCES
     gui/CodeEditor.cpp
+    gui/CodeSnippetEngine.cpp
     gui/SyntaxHighlighter.cpp
     gui/AstViewer.cpp
     gui/DebugPanel.cpp
@@ -50,6 +56,7 @@ set(MINILANG_GUI_SOURCES
     gui/BackendComparePanel.cpp
     gui/BugHuntPanel.cpp
     gui/BugHuntLibrary.cpp
+    gui/BugHuntVariantLibrary.cpp
     gui/SyntaxExplorerPanel.cpp
     gui/SyntaxProductionLibrary.cpp
     gui/LabManualPanel.cpp
@@ -65,6 +72,38 @@ set(MINILANG_GUI_SOURCES
     # 教学增强面板（第三档）
     gui/ExceptionFlowPanel.cpp
     gui/ClosureInspectorPanel.cpp
+    # 教学增强面板（功能 6：学习路径地图）
+    gui/LearningPathPanel.cpp
+    gui/LearningPathData.cpp
+    gui/LearnerProgress.cpp
+    # 功能 3：交互式 Token 拼图游戏
+    # TokenPuzzleData.cpp 为独立编译单元（仅依赖标准库，不依赖 Qt Widgets / IdeController）
+    # TokenPuzzlePanel.cpp 依赖 Qt Widgets
+    gui/TokenPuzzleData.cpp
+    gui/TokenPuzzlePanel.cpp
+    # 教学增强面板（功能 5：VM 栈沙盒）
+    # SandboxLevels.cpp 为独立编译单元（仅依赖 Qt6::Core），可被测试目标链接；
+    # VmStackSandboxPanel.cpp 依赖 Qt6::Widgets，仅在主 IDE 中链接。
+    gui/SandboxLevels.cpp
+    gui/VmStackSandboxPanel.cpp
+    # 功能 4：AST 节点搭建玩具——AstToyLevels.cpp 为独立编译单元
+    # （仅依赖 Qt6::Core，不依赖 IdeController.h），可被测试目标安全链接。
+    # AstBuilderToyPanel.cpp 依赖 Qt6::Widgets（QTreeWidget/QComboBox 等），
+    # 不依赖 IdeController / 引擎层，不加入测试目标。
+    gui/AstToyLevels.cpp
+    gui/AstBuilderToyPanel.cpp
+    # 功能 1：Welcome 向导 / 首次启动导览——依赖 Qt6::Widgets（QDialog /
+    # QStackedWidget），不依赖 IdeController / 引擎层，不加入测试目标。
+    gui/WelcomeWizard.cpp
+    # 功能 2（降级）：代码生命旅程静态信息图——依赖 Qt6::Widgets（QTextBrowser），
+    # 不依赖 IdeController / 引擎层，不加入测试目标。
+    gui/CodeJourneyInfoPanel.cpp
+    # 学习中心对话框——教学面板统一入口，依赖 QFluentKit（PushButton/CardWidget/Label），
+    # 不依赖 IdeController / 引擎层，不加入测试目标。
+    gui/LearningHubDialog.cpp
+    # 教学面板统一标题栏组件——含帮助按钮与学习路径跳转，依赖 QFluentKit，
+    # 不依赖 IdeController / 引擎层，不加入测试目标。
+    gui/TeachingPanelHeader.cpp
 )
 
 # ============================================================

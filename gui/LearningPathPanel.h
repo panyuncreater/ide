@@ -1,0 +1,92 @@
+// ============================================================
+// LearningPathPanel.h — 学习路径地图面板（功能 6）
+// ------------------------------------------------------------
+// 中央导航枢纽：4 阶段学习路径地图 + 进度持久化 + 当前推荐标记。
+//
+// UI 结构：
+//   顶部：总进度条 + "总进度: XX%"
+//   主体：垂直滚动的 4 阶段卡片列表
+//     每个阶段：
+//       - 阶段标题 + 阶段进度条
+//       - 该阶段所有活动项（图标 + 标题 + 描述 + 预计耗时）
+//       - 推荐活动高亮 + "← 当前推荐" 标签
+//   底部：刷新按钮 + 重置进度按钮（带确认对话框）
+//
+// 信号：
+//   activityRequested(activityId) — 点击活动项时发射，主窗口连接打开对应面板
+//
+// 关键架构决策：
+//   - LearningPathPanel.cpp 依赖 Qt Widgets（QWidget/QPushButton 等），
+//     测试目标无法链接（Qt6::Widgets 在测试目标中可用但 Panel.cpp 引入
+//     IdeController 依赖会破坏独立编译）。因此 LearnerProgress.cpp
+//     与 LearningPathData.cpp 拆分为独立编译单元，测试仅链接这两者。
+// ============================================================
+
+#pragma once
+
+#include "gui/LearningPathData.h"
+#include "gui/LearnerProgress.h"
+
+#include <QWidget>
+#include <QScrollArea>
+#include <QProgressBar>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <QFrame>
+#include <QList>
+#include <vector>
+#include <string>
+
+class LearningPathPanel : public QWidget {
+    Q_OBJECT
+public:
+    explicit LearningPathPanel(QWidget* parent = nullptr);
+
+public slots:
+    /// 刷新整个面板的显示（从 LearnerProgressStore 重新读取进度）
+    void refresh();
+
+    /// 标记指定活动为已完成（外部面板完成后调用）
+    void markActivityCompleted(const QString& activityId);
+
+signals:
+    /// 请求打开某个活动对应的面板（主窗口连接后路由到具体 Panel）
+    void activityRequested(const QString& activityId);
+
+private slots:
+    void onRefresh();
+    void onResetProgress();
+    void onActivityClicked(const QString& activityId);
+
+private:
+    // 顶部
+    QProgressBar* overallProgress_ = nullptr;
+    QLabel*       overallLabel_    = nullptr;
+
+    // 主体
+    QScrollArea* scrollArea_   = nullptr;
+    QWidget*     scrollContent_ = nullptr;
+    QVBoxLayout* stagesLayout_ = nullptr;
+
+    // 底部
+    QPushButton* refreshBtn_ = nullptr;
+    QPushButton* resetBtn_   = nullptr;
+
+    // 阶段颜色（绿/黄/蓝/紫/红）
+    static QString stageColor(int stage);
+    static QString stageTitle(int stage);
+
+    /// 构造单个阶段卡片
+    QFrame* buildStageCard(int stage);
+
+    /// 构造单个活动项行
+    QWidget* buildActivityRow(const LearningActivity& activity,
+                              bool unlocked, bool completed,
+                              bool recommended);
+
+    /// 收集所有活动数据
+    const std::vector<LearningActivity>& allActivities() const {
+        return LearningPathData::activities();
+    }
+};

@@ -1,0 +1,21 @@
+services:
+  dev:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - .:/src
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    stdin_open: true
+    tty: true
+    # Qt GUI X11 转发使用说明：
+    #   Linux: 先执行 xhost +local: 然后 docker compose up dev
+    #   macOS: 安装 XQuartz，设置 DISPLAY=host.docker.internal:0
+    #   Windows: 安装 VcXsrv，设置 DISPLAY=:0
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+
+  build:
+    build:
+      context: .
+      target: builder

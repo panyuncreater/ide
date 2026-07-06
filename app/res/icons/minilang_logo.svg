@@ -1,31 +1,81 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<svg viewBox="0 0 580 620" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="mlGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0078D4"/>
-      <stop offset="50%" stop-color="#0A85D2"/>
-      <stop offset="100%" stop-color="#50E6FF"/>
+    <linearGradient id="topFaceT" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7"/><stop offset="100%" stop-color="#6366f1"/>
     </linearGradient>
+    <linearGradient id="rightFaceT" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="leftFaceT" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#312e81"/><stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="textGradT" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0f172a"/><stop offset="45%" stop-color="#0f172a"/>
+      <stop offset="55%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="barL" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="barR" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <filter id="shadowT" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#4f46e5" flood-opacity="0.28"/>
+    </filter>
+    <filter id="textShadowT" x="-10%" y="-10%" width="120%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#6366f1" flood-opacity="0.15"/>
+    </filter>
   </defs>
 
-  <!-- M: continuous stroke, no overlapping segments -->
-  <path d="M 28 42 L 28 86 L 42 56 L 56 86 L 56 42"
-        stroke="url(#mlGrad)"
-        stroke-width="7"
-        fill="none"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-opacity="0.95"/>
+  <!-- Ground shadow -->
+  <ellipse cx="290" cy="380" rx="145" ry="14" fill="#000" opacity="0.13"/>
 
-  <!-- L: separate stroke, 12px gap from M -->
-  <path d="M 68 60 L 68 86 L 96 86"
-        stroke="url(#mlGrad)"
-        stroke-width="7"
-        fill="none"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-opacity="0.95"/>
+  <!-- Top face: thinner, smaller V crease -->
+  <polygon points="290,20 115,125 188,175 290,132 392,175 465,125" fill="url(#topFaceT)" filter="url(#shadowT)"/>
 
-  <!-- Central decorative diamond (double-layer) -->
-  <polygon points="62,50 70,58 62,66 54,58" fill="#0078D4" opacity="0.25"/>
-  <polygon points="62,52 68,58 62,64 56,58" fill="#50E6FF" opacity="0.55"/>
+  <!-- Left leg: compact inward -->
+  <polygon points="105,138 105,350 222,380 222,190" fill="url(#leftFaceT)"/>
+  <polygon points="105,138 222,190 222,228 105,180" fill="#312e81" opacity="0.5"/>
+
+  <!-- Right leg: compact inward -->
+  <polygon points="475,138 358,190 358,380 475,350" fill="url(#rightFaceT)"/>
+  <polygon points="475,138 358,190 358,228 475,180" fill="rgba(255,255,255,0.12)"/>
+
+  <!-- Narrow tight center crease -->
+  <polygon points="222,190 290,242 358,190 358,248 290,302 222,248" fill="#1e40af" opacity="0.9"/>
+  <polygon points="222,248 290,302 358,248 358,260 290,313 222,260" fill="#1e3a8a" opacity="0.65"/>
+
+  <!-- Code lines on left face -->
+  <rect x="120" y="225" width="58" height="10" rx="5" fill="#8b5cf6"/>
+  <rect x="120" y="248" width="110" height="10" rx="5" fill="#e0e7ff"/>
+  <rect x="130" y="273" width="45" height="10" rx="5" fill="#a855f7"/>
+  <rect x="130" y="296" width="82" height="10" rx="5" fill="#7c3aed"/>
+  <rect x="130" y="319" width="70" height="10" rx="5" fill="#8b5cf6"/>
+  <rect x="130" y="342" width="50" height="10" rx="5" fill="#a855f7"/>
+  <rect x="185" y="296" width="38" height="10" rx="5" fill="#06b6d4"/>
+  <rect x="225" y="296" width="32" height="10" rx="5" fill="#e0e7ff"/>
+  <rect x="225" y="273" width="52" height="10" rx="5" fill="#e0e7ff" opacity="0.85"/>
+  <rect x="225" y="319" width="35" height="10" rx="5" fill="#c4b5fd" opacity="0.7"/>
+
+  <!-- Pixel particle dispersion effect -->
+  <rect x="450" y="205" width="26" height="26" rx="4" fill="#fff"/>
+  <rect x="420" y="250" width="28" height="28" rx="4" fill="#fff"/>
+  <rect x="435" y="295" width="31" height="31" rx="4" fill="#fff"/>
+  <rect x="468" y="338" width="22" height="26" rx="4" fill="#fff"/>
+  <rect x="482" y="168" width="30" height="30" rx="5" fill="#1d4ed8"/>
+  <rect x="472" y="225" width="26" height="26" rx="4" fill="#2563eb"/>
+  <rect x="505" y="192" width="24" height="24" rx="4" fill="#3b82f6"/>
+  <rect x="488" y="275" width="28" height="28" rx="4" fill="#2563eb"/>
+  <rect x="512" y="338" width="24" height="24" rx="4" fill="#3b82f6"/>
+  <rect x="522" y="238" width="26" height="26" rx="4" fill="#0ea5e9"/>
+  <rect x="536" y="197" width="24" height="24" rx="4" fill="#8b5cf6"/>
+  <rect x="526" y="298" width="22" height="22" rx="4" fill="#7c3aed"/>
+
+  <!-- Centered rounded brand text, separated from icon -->
+  <text x="290" y="470" text-anchor="middle" font-family="'SF Pro Rounded', 'Nunito', 'Segoe UI', 'Roboto Rounded', sans-serif" font-size="122" font-weight="800" letter-spacing="-2" fill="url(#textGradT)" filter="url(#textShadowT)">minilang</text>
+
+  <!-- COMPILER tagline with accent bars -->
+  <rect x="173" y="542" width="50" height="6" rx="3" fill="url(#barL)"/>
+  <text x="290" y="548" text-anchor="middle" font-family="'SF Pro Rounded', 'Nunito', 'Segoe UI', sans-serif" font-size="44" font-weight="600" letter-spacing="14" fill="#475569">COMPILER</text>
+  <rect x="357" y="542" width="50" height="6" rx="3" fill="url(#barR)"/>
 </svg>

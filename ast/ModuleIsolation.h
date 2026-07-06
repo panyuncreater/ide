@@ -39,6 +39,12 @@ private:
     std::unordered_map<std::string, std::string> renameMap_;  // oldName -> newName
     std::vector<std::unordered_set<std::string>> scopeStack_; // 作用域栈，栈底是模块顶层
     std::string modulePath_;                                  // 模块路径（用于生成前缀）
+    // BUG-INH-AUDIT-5 fix: 标记当前正在处理类成员（字段声明）。
+    // 字段声明（ClassDecl 内的 VarDecl）不应登记到作用域——字段只能通过
+    // this.field 访问（MemberAccess），不参与变量名解析。原实现将字段名
+    // 登记到类作用域，导致方法体内引用同名模块顶层变量时被遮蔽（不重命名），
+    // 运行时报"未定义变量"。
+    bool inClassBody_ = false;
 
     explicit ModuleTopLevelRenamer(const std::string& modulePath);
 

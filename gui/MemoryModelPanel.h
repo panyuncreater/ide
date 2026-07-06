@@ -23,6 +23,7 @@
 #include <QListWidget>
 #include <QTextBrowser>
 #include <QTableWidget>
+#include <QTimer>
 #include <string>
 #include <vector>
 
@@ -67,6 +68,23 @@ struct GcPhaseInfo {
     std::string description;
 };
 
+// ---- 第 4 子页：实时动画场景库（P4-4）----
+
+/// GC 动画阶段描述（mark/sweep/reset/idle）
+struct MemoryAnimPhase {
+    std::string phase;          // 阶段 ID: "mark" / "sweep" / "reset" / "idle"
+    std::string description;    // 阶段说明
+    std::string color;          // 显示颜色提示（用于 paintEvent 自绘）
+};
+
+/// MemoryAnimLibrary — 实时动画场景静态库
+/// 提供 GC 动画 4 阶段说明 + 6 种堆对象类型说明，供第 4 子页消费。
+class MemoryAnimLibrary {
+public:
+    static const std::vector<MemoryAnimPhase>& gcAnimPhases();
+    static const std::vector<std::pair<std::string, std::string>>& heapObjectTypes();
+};
+
 /// MemoryModelLibrary — 静态教学场景库
 class MemoryModelLibrary {
 public:
@@ -92,10 +110,11 @@ signals:
 private:
     IdeController* controller_ = nullptr;
 
-    // 三个子页切换
+    // 子页切换按钮（4 个子页）
     QPushButton* pageNanBoxBtn_   = nullptr;
     QPushButton* pageRefCountBtn_ = nullptr;
-    QPushButton* pageGcBtn_        = nullptr;
+    QPushButton* pageGcBtn_       = nullptr;
+    QPushButton* pageAnimBtn_     = nullptr;  // P4-4: 第 4 子页"实时动画"
     QStackedWidget* stack_         = nullptr;
 
     // 子页 1：NaN-boxing
@@ -113,10 +132,24 @@ private:
     QLabel* gcTrackedCountLabel_   = nullptr;
     QPushButton* gcRefreshBtn_     = nullptr;
 
+    // 子页 4：实时动画（与 VM 单步联动）
+    QLabel* animStatusLabel_         = nullptr;  // VM 状态：运行中 / 已暂停 / 未初始化
+    QLabel* animOpCodeLabel_         = nullptr;  // 当前 OpCode 名
+    QLabel* animStackDepthLabel_     = nullptr;  // 操作数栈深度
+    QLabel* animFrameCountLabel_     = nullptr;  // 栈帧数
+    QLabel* animGcTrackedLabel_      = nullptr;  // GC tracked 节点数
+    QTableWidget* heapObjectTable_   = nullptr;  // 堆对象表：地址 / 类型 / refCount / 字段数
+    QLabel* gcPhaseLabel_            = nullptr;  // GC 阶段说明（来自 MemoryAnimLibrary）
+    QTextBrowser* gcPhaseBrowser_    = nullptr;  // 4 阶段说明详细展示
+    QPushButton* animRefreshBtn_     = nullptr;  // 手动刷新按钮
+    QPushButton* animAutoRefreshBtn_ = nullptr;  // 切换自动刷新（500ms）
+    QTimer* animTimer_               = nullptr;  // 500ms 自动刷新定时器
+
     // 构造辅助
     void buildNanBoxPage(QWidget* host);
     void buildRefCountPage(QWidget* host);
     void buildGcPage(QWidget* host);
+    void buildAnimPage(QWidget* host);  // P4-4: 第 4 子页
 
     // 数据填充
     void populateNanBoxList();
@@ -125,4 +158,5 @@ private:
     void populateRefCountDetail(int index);
     void populateGcPhases();
     void refreshGcStats();
+    void refreshAnimState();  // P4-4: 刷新第 4 子页状态
 };

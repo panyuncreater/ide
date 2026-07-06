@@ -1,13 +1,17 @@
 # ============================================================
-# MiniLang CI/CD 流水线
+# MiniLang CI/CD 流水线（跨平台）
 # ------------------------------------------------------------
 # 触发条件：push / pull_request 到 main / master 分支
 # 作业：
-#   build-test       — Windows + MSVC + Qt6 构建并运行全部测试
-#   coverage         — 代码覆盖率（手动/每周触发）
-#   static-analysis  — cppcheck 静态代码分析
+#   build-test         — 跨平台构建并运行全部测试
+#                        (Windows MSVC / Ubuntu GCC / macOS Clang)
+#   coverage           — Windows 代码覆盖率（OpenCppCoverage）
+#   coverage-linux     — Linux 代码覆盖率（gcovr + codecov）
+#   test-harness       — Windows test_harness 审计工具
+#   static-analysis    — cppcheck 静态代码分析
 #
 # 修复问题 9（ctest 并行）/ 问题 7（覆盖率）/ 问题 17（ccache）
+# Phase 3: 1.1 跨平台 CI / 2.3 codecov 集成
 # ============================================================
 
 name: CI
@@ -27,11 +31,31 @@ env:
 
 jobs:
   # ============================================================
-  # 作业 1：构建 + 单元测试（Windows + MSVC + Qt6）
+  # 作业 1：跨平台构建 + 单元测试
+  # Phase 3 Task 1.1: 策略矩阵覆盖 Windows / Ubuntu / macOS
   # ============================================================
   build-test:
-    name: Build & Test (Windows MSVC)
-    runs-on: windows-latest
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: win64_msvc2022_64
+            generator: Ninja
+            c_compiler: cl
+            cpp_compiler: cl
+          - os: ubuntu-latest
+            arch: gcc_64
+            generator: Ninja
+            c_compiler: gcc
+            cpp_compiler: g++
+          - os: macos-latest
+            arch: clang_64
+            generator: Ninja
+            c_compiler: clang
+            cpp_compiler: clang++
 
     steps:
       - name: Checkout 代码
@@ -43,52 +67,101 @@ jobs:
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1
         with:
-          key: ${{ runner.os }}-${{ env.CMAKE_BUILD_TYPE }}
+          key: ${{ matrix.os }}-${{ env.CMAKE_BUILD_TYPE }}-${{ matrix.arch }}
 
-      - name: 安装 Qt6
+      # ---- Windows: 安装 Qt6（MSVC 工具链）----
+      - name: 安装 Qt6 (Windows)
+        if: runner.os == 'Windows'
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
           host: windows
           target: desktop
-          arch: win64_msvc2022_64
+          arch: ${{ matrix.arch }}
           cache: true
 
+      # ---- Ubuntu / macOS: 安装 Qt6 ----
+      - name: 安装 Qt6 (Unix)
+        if: runner.os != 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: ${{ runner.os == 'Linux' && 'linux' || 'mac' }}
+          target: desktop
+          arch: ${{ matrix.arch }}
+          cache: true
+
+      # ---- Windows 专属: MSVC 开发环境 ----
       - name: 设置 MSVC 开发环境
+        if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: 设置 QTDIR 环境变量
+      # ---- Windows: 使用 CMake Preset ----
+      - name: 设置 QTDIR (Windows)
+        if: runner.os == 'Windows'
         shell: bash
         run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
-      - name: 配置 CMake（使用 Preset，与本地一致）
+      - name: 配置 CMake (Windows Preset)
+        if: runner.os == 'Windows'
         run: cmake --preset windows-msvc-release -DMINILANG_USE_CCACHE=ON
 
-      - name: 构建项目
+      # ---- Unix: 直接指定 CMake 参数（无 Preset）----
+      - name: 设置 QTDIR (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
+
+      - name: 配置 CMake (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -B build -G "${{ matrix.generator }}" \
+            -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} \
+            -DCMAKE_PREFIX_PATH="${Qt6_DIR}" \
+            -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} \
+            -DMINILANG_USE_CCACHE=ON
+
+      # ---- 构建 ----
+      - name: 构建项目 (Windows)
+        if: runner.os == 'Windows'
         run: cmake --build out/build/release --parallel
 
+      - name: 构建项目 (Unix)
+        if: runner.os != 'Windows'
+        run: cmake --build build --parallel
+
+      # ---- 测试 ----
       # 修复问题 9：ctest -j 4 并行运行
-      - name: 运行单元测试（并行）
+      - name: 运行单元测试（并行, Windows）
+        if: runner.os == 'Windows'
         working-directory: out/build/release
+        run: ctest -C ${{ env.CMAKE_BUILD_TYPE }} -j 4 --output-on-failure --verbose
+
+      - name: 运行单元测试（并行, Unix）
+        if: runner.os != 'Windows'
+        working-directory: build
         run: ctest -C ${{ env.CMAKE_BUILD_TYPE }} -j 4 --output-on-failure --verbose
 
       - name: 上传测试结果（失败时）
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
-          path: out/build/release/Testing/**/*.xml
+          name: test-results-${{ matrix.os }}
+          path: |
+            out/build/release/Testing/**/*.xml
+            build/Testing/**/*.xml
           if-no-files-found: ignore
           retention-days: 7
 
   # ============================================================
-  # 作业 2：代码覆盖率（Debug + OpenCppCoverage）
+  # 作业 2：代码覆盖率 — Windows（Debug + OpenCppCoverage）
   # 修复问题 7：代码覆盖率报告
   # ============================================================
   coverage:
-    name: Code Coverage (Debug)
+    name: Code Coverage - Windows (Debug)
     runs-on: windows-latest
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
@@ -143,7 +216,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: code-coverage
+          name: code-coverage-windows
           path: |
             out/build/debug/coverage.xml
             out/build/debug/coverage_html/
@@ -154,6 +227,93 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           files: out/build/debug/coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # ============================================================
+  # 作业 2b：代码覆盖率 — Linux（Debug + gcovr + codecov）
+  # Phase 3 Task 2.3: gcov/gcovr 覆盖率上传 codecov
+  # ============================================================
+  coverage-linux:
+    name: Code Coverage - Linux (gcovr)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: gcc_64
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-Debug-coverage
+
+      - name: 安装 gcovr
+        run: pip install gcovr
+
+      - name: 配置 CMake（Debug + --coverage）
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="${Qt6_DIR}" \
+            -DCMAKE_CXX_FLAGS="--coverage" \
+            -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
+            -DMINILANG_USE_CCACHE=ON
+
+      - name: 构建测试
+        run: cmake --build build --target minilang_tests --parallel
+
+      - name: 运行测试
+        working-directory: build
+        run: ctest -C Debug -j 4 --output-on-failure --verbose
+
+      - name: 生成覆盖率报告 (gcovr)
+        run: |
+          gcovr \
+            --root . \
+            --filter lexer/ \
+            --filter parser/ \
+            --filter ast/ \
+            --filter interpreter/ \
+            --filter compiler/ \
+            --filter debug/ \
+            --filter formatter/ \
+            --exclude-unreachable-branches \
+            --cobertura coverage.xml \
+            --txt \
+            --html coverage.html
+
+      - name: 上传覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-linux
+          path: |
+            coverage.xml
+            coverage.html
+          retention-days: 14
+
+      - name: 上传覆盖率到 Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -227,7 +387,7 @@ jobs:
             --inline-suppr \
             --xml \
             --xml-version=2 \
-            -I lexer -I parser -I ast -I interpreter -I compiler -I debug -I formatter -I gui \
+            -I lexer -I parser -I ast -I interpreter -I compiler -I debug -I formatter -I gui -I common \
             -DQT_CORE_LIB -DQT_GUI_LIB -DQT_WIDGETS_LIB \
             --output-file=cppcheck-report.xml \
             lexer parser ast interpreter compiler debug formatter gui common 2>&1 | tee cppcheck-stdout.txt || true

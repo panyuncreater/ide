@@ -60,9 +60,11 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     // F12: 模块加载
     // A6 fix: 加锁拷贝 callback 后解锁检查，避免跨线程数据竞争
     std::function<std::string(const std::string&)> loader;
+    std::function<int64_t(const std::string&)> mtimeChecker;
     {
         std::lock_guard<std::mutex> lock(callbackMutex_);
         loader = moduleLoader_;
+        mtimeChecker = moduleMtimeChecker_;  // BUG-REPL-AUDIT-1 fix
     }
     if (!loader) {
         runtimeError("未设置模块加载器，无法执行 import", node.line, node.column);
@@ -80,6 +82,20 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     // 检查缓存
     auto cacheIt = moduleCache_.find(modulePath);
     std::shared_ptr<Environment> moduleEnv;
+    if (cacheIt != moduleCache_.end()) {
+        // BUG-REPL-AUDIT-1 fix: 检查文件 mtime 是否变化，若变化则缓存失效
+        if (mtimeChecker) {
+            int64_t currentMtime = mtimeChecker(modulePath);
+            auto mtimeIt = moduleMtimes_.find(modulePath);
+            if (mtimeIt != moduleMtimes_.end() && mtimeIt->second != currentMtime) {
+                // 文件已修改，缓存失效
+                moduleCache_.erase(cacheIt);
+                moduleExports_.erase(modulePath);
+                moduleMtimes_.erase(modulePath);
+                cacheIt = moduleCache_.end();  // 标记为未命中
+            }
+        }
+    }
     if (cacheIt != moduleCache_.end()) {
         moduleEnv = cacheIt->second;
     } else {
@@ -150,6 +166,10 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         // 缓存模块环境和导出名称（必须在恢复 savedExported 之前捕获当前模块的 exports）
         moduleCache_[modulePath] = moduleEnv;
         moduleExports_[modulePath] = exportedNames_;
+        // BUG-REPL-AUDIT-1 fix: 记录模块文件 mtime，下次 import 时检查是否变化
+        if (mtimeChecker) {
+            moduleMtimes_[modulePath] = mtimeChecker(modulePath);
+        }
         exportedNames_ = savedExported;
 
         // 保留模块 AST（确保函数/类定义指针有效）

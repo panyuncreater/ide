@@ -449,6 +449,19 @@ public:
     }
     bool isNumber()   const { return isInt() || isFloat(); }
 
+    // ---- 堆指针访问（诊断/可视化用，P4-4: MemoryModelPanel 第 4 子页"实时动画"消费）----
+    // 返回 true 当且仅当 NaN-box tag 为 POINTER（即承载堆对象）。
+    // 涵盖 StringData/ArrayData/DictData/InstanceData/ClosureData/BoxedIntData。
+    // 注意：BoxedIntData 的 type==VAL_INT，但通过 isPointer() 可与内联 int48 区分。
+    bool isPointer() const { return box_.isPointer(); }
+
+    // 返回底层 RefCounted* 指针（仅当 isPointer() 为 true 时有效，否则 nullptr）。
+    // 调用方可通过 p->type 区分具体堆类型，p->useCount() 读取引用计数。
+    // 不增加引用计数：调用方仅用于只读诊断展示，不持有指针所有权。
+    RefCounted* asPointer() const {
+        return box_.isPointer() ? box_.asPtr<RefCounted>() : nullptr;
+    }
+
     // ---- 访问器 ----
     // 标量访问器返回 by value（NaNBox 内联存储，非地址able lvalue）
     // 堆类型访问器返回引用（需 dereference 指针）
@@ -625,6 +638,13 @@ public:
         if (isArray()) return static_cast<const void*>(box_.asPtr<ArrayData>());
         if (isDict()) return static_cast<const void*>(box_.asPtr<DictData>());
         if (isInstance()) return static_cast<const void*>(box_.asPtr<InstanceData>());
+        // BUG-REPL-AUDIT-7 fix: 闭包也需作为 GC 根——capturedVars 可能持有循环容器
+        // （如 a.append(a) 后被闭包捕获）。原实现仅遍历 savedGlobalEnv 顶层变量，
+        // 但 gcRootPtr() 对闭包返回 nullptr，导致闭包内部的 capturedVars 不会被 mark，
+        // GcManager 误判为不可达循环孤岛并清空其 elements，破坏 REPL 状态。
+        // ClosureData 本身不在 tracked_（GcManager.h 注释），不会被 sweep，
+        // 但作为根可让 collectCycle 的 markPhase 进入 capturedVars 标记可达容器。
+        if (isClosure()) return static_cast<const void*>(box_.asPtr<ClosureData>());
         return nullptr;
     }
 

@@ -75,8 +75,21 @@ public:
     void setBreakpoints(const QSet<int>& breakpoints) { vmBreakpoints_ = breakpoints; }
 
     /// #4 fix: 设置 VM 模式条件断点（行号→条件表达式）
+    // BUG-DBG-AUDIT-2 fix: 条件变更时重置对应行的 hitCount（对齐
+    // DebugController::setBreakpointCondition 行 308-313，条件变更 → hitCount 清零）。
     void setBreakpointConditions(const QMap<int, std::string>& conditions) {
         vmBreakpointConditions_ = conditions;
+        for (auto it = conditions.begin(); it != conditions.end(); ++it) {
+            vmBreakpointHitCounts_.remove(it.key());
+        }
+    }
+
+    /// BUG-DBG-AUDIT-2 fix: 获取 VM 模式断点命中次数。
+    /// 对齐 DebugController::getBreakpointHitCount 语义——返回 vmBreakpointHitCounts_[line]，
+    /// 不存在时返回 0。仅 VM 模式活跃时由 IdeController::getBreakpointHitCount 分派调用。
+    int getBreakpointHitCount(int line) const {
+        auto it = vmBreakpointHitCounts_.find(line);
+        return it != vmBreakpointHitCounts_.end() ? it.value() : 0;
     }
 
     /// #4 fix: 设置条件求值器回调（由 IdeController 注入，使用临时 Interpreter + VM 全局变量求值）
@@ -131,6 +144,9 @@ public:
         vmLastSeenLine_ = -1;
         vmCrossedLine_ = false;
         vmCrossedDeeper_ = false;
+        // BUG-DBG-AUDIT-2 fix: 清空断点命中计数（对齐 DebugController::reset 行 485，
+        // 重置所有断点 hitCount，保留断点和条件本身）。
+        vmBreakpointHitCounts_.clear();
     }
 
     bool isRunning() const { return isVmRunning_; }
@@ -249,6 +265,10 @@ private:
     bool vmCrossedLine_ = false;        // 是否跨过不同行（允许同行断点重新触发）
     QSet<int> vmBreakpoints_;          // VM 模式断点行号集合（复用 Editor 断点）
     QMap<int, std::string> vmBreakpointConditions_;  // #4 fix: 条件断点表达式
+    // BUG-DBG-AUDIT-2 fix: VM 模式断点命中计数（行号→次数），对齐
+    // DebugController::breakpointInfos_[line].hitCount。checkBreakpointHit 命中时递增，
+    // reset() 清空，setBreakpointConditions 重置对应行。
+    QMap<int, int> vmBreakpointHitCounts_;
     std::function<bool(const std::string&)> vmConditionEvaluator_;  // #4 fix: 条件求值回调
     // QT-R-01 fix: RUN 模式异步分批执行的定时器
     QTimer* vmRunTimer_ = nullptr;

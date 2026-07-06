@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "gui/CallStackPanel.h"
+#include "gui/PanelAnimator.h"
 #include "app/IdeController.h"
 #include "interpreter/Value.h"
 #include "debug/DebugTypes.h"
@@ -13,6 +14,8 @@
 #include <QHeaderView>
 #include <QApplication>
 #include <sstream>
+
+#include "Label.h"   // QFluentKit（CaptionLabel）
 
 // ============================================================
 // CallStackLibrary — 静态教学场景库
@@ -102,8 +105,8 @@ CallStackPanel::CallStackPanel(QWidget* parent) : QWidget(parent) {
     stack_->addWidget(libraryPage);
     outer->addWidget(stack_, 1);
 
-    connect(pageLiveBtn_,    &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); });
-    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageLiveBtn_->setChecked(false); });
+    connect(pageLiveBtn_,    &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
+    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageLiveBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
 
     autoTimer_ = new QTimer(this);
     autoTimer_->setInterval(500);
@@ -118,7 +121,7 @@ void CallStackPanel::buildLivePage(QWidget* host) {
     v->setSpacing(4);
 
     auto* bar = new QHBoxLayout;
-    liveStatusLabel_ = new QLabel(tr("状态：未初始化"));
+    liveStatusLabel_ = new CaptionLabel(tr("状态：未初始化"));
     refreshBtn_       = new QPushButton(tr("刷新"));
     autoRefreshCheck_ = new QCheckBox(tr("自动刷新 (500ms)"));
     bar->addWidget(liveStatusLabel_);

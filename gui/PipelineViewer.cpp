@@ -20,6 +20,8 @@
 #include <sstream>
 #include <cstring>
 
+#include "Label.h"   // QFluentKit（CaptionLabel）
+
 PipelineViewer::PipelineViewer(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -92,7 +94,7 @@ PipelineViewer::PipelineViewer(QWidget* parent)
     mainLayout->addWidget(stack_, 1);
 
     // 底部状态条
-    statusLabel_ = new QLabel(QString::fromUtf8("步骤: 源码 | 光标: 行 1, 列 1"), this);
+    statusLabel_ = new CaptionLabel(QString::fromUtf8("步骤: 源码 | 光标: 行 1, 列 1"), this);
     mainLayout->addWidget(statusLabel_);
 
     switchToStep(0);

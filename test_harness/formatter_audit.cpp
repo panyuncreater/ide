@@ -175,7 +175,13 @@ static bool astEqual(ASTNode* a, ASTNode* b) {
         auto* tb = static_cast<TryStmt*>(b);
         if (ta->catchVarName != tb->catchVarName) return false;
         if (!astEqual(ta->tryBlock.get(), tb->tryBlock.get())) return false;
-        return astEqual(ta->catchBlock.get(), tb->catchBlock.get());
+        if (!astEqual(ta->catchBlock.get(), tb->catchBlock.get())) return false;
+        // BUG-FE-AUDIT-5 fix: finallyBlock 字段遗漏比较。BUG-AUDIT-FINALLY-1 新增
+        // finallyBlock 字段后 astEqual 未同步，导致 Formatter 对 finally 块的回归
+        // 被往返等价性测试错误通过。
+        if ((ta->finallyBlock == nullptr) != (tb->finallyBlock == nullptr)) return false;
+        if (ta->finallyBlock && !astEqual(ta->finallyBlock.get(), tb->finallyBlock.get())) return false;
+        return true;
     }
     case NodeType::NODE_IMPORT_STMT: {
         auto* ia = static_cast<ImportStmt*>(a);

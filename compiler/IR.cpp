@@ -844,6 +844,13 @@ IROperand AstIRBuilder::visitNode(ASTNode* node) {
         // 检测 super 对象并使用父类查找。
         // 原实现落入 default case 不发射任何 IR，Release 构建中 assert 被剥离后
         // 返回空 vreg，后续 emit POP 无对应压栈导致栈下溢。
+        //
+        // 注：super 在非方法上下文中的错误为运行时错误（非编译期），由 VM 在
+        // emitLoadVar("this") 回退到 GLOBAL_NAME 查找失败时报 "未定义的变量: this"。
+        // 此运行时错误不可被 try/catch 捕获（在 try 块进入前即触发），与 Interpreter
+        // 报 "super 只能在类方法中使用" 消息不同——文档化为已知三后端差异。
+        // 顶层 / 普通函数内 super 的运行时错误行为由 ConsistencyDiff.H7b 与
+        // AuditSuper_RuntimeErrorNotCatchableByTryCatch 测试覆盖。
         return emitLoadVar("this", node->line);
     }
     default:
@@ -1806,6 +1813,9 @@ void AstIRBuilder::visitIndexAssign(IndexAssign* node) {
 IROperand AstIRBuilder::visitMemberAccess(MemberAccess* node) {
     // P1 fix: super.field → SUPER_MEMBER_GET（字段查找从 this 实例，实例已含继承字段）
     bool isSuper = node->object && node->object->nodeType == NodeType::NODE_SUPER_EXPR;
+    // 注：super 在非方法上下文中的错误为运行时错误（详见 NODE_SUPER_EXPR 注释）。
+    // visitMemberAccess 直接 emitLoadVar("this") 而非走 visitNode(SUPER_EXPR)，
+    // 但 emitLoadVar 在顶层回退到 GLOBAL_NAME 查找，运行时报 "未定义的变量: this"。
     // SuperExpr 本身不产生值，super 解析为当前 this 实例
     IROperand obj = isSuper ? emitLoadVar("this", node->line) : visitNode(node->object.get());
     IROperand dest = ir_->allocVReg();
@@ -1929,6 +1939,9 @@ IROperand AstIRBuilder::visitMethodCall(MethodCall* node) {
     bool isVarRef = node->object && node->object->nodeType == NodeType::NODE_VAR_REF;
     // P1 fix: super.method() → SUPER_CALL，方法查找从父类开始
     bool isSuperCall = node->object && node->object->nodeType == NodeType::NODE_SUPER_EXPR;
+    // 注：super 在非方法上下文中的错误为运行时错误（详见 NODE_SUPER_EXPR 注释）。
+    // visitMethodCall 直接 emitLoadVar("this") 而非走 visitNode(SUPER_EXPR)，
+    // 但 emitLoadVar 在顶层回退到 GLOBAL_NAME 查找，运行时报 "未定义的变量: this"。
     // SuperExpr 本身不产生值，super 解析为当前 this 实例
     IROperand obj = isSuperCall ? emitLoadVar("this", node->line) : visitNode(node->object.get());
     IROperand dest = ir_->allocVReg();
@@ -2218,18 +2231,38 @@ void AstIRBuilder::visitContinueStmt(ContinueStmt* node) {
 }
 
 void AstIRBuilder::visitTryStmt(TryStmt* node) {
-    uint32_t catchLabel = ir_->allocLabel();
+    // BUG-AUDIT-FINALLY-1: 如果有 finally 块，外层包一层 TRY_BEGIN/TRY_END，
+    // 捕获异常路径执行 finally 后 rethrow。对齐 Compiler.cpp visitTryStmt 的外层包装模式。
+    uint32_t finallyCatchLabel = 0;
+    uint32_t finallyEndLabel = 0;
+    bool hasFinally = (node->finallyBlock != nullptr);
+    if (hasFinally) {
+        finallyCatchLabel = ir_->allocLabel();
+        finallyEndLabel = ir_->allocLabel();
+        emitIR(IROp::TRY_BEGIN, { IROperand::label(finallyCatchLabel) }, node->line);
+        ++tryDepth_;  // 外层 try 计入深度（break/continue 多发一个 TRY_END）
+    }
+    // BUG-AUDIT-FINALLY-1: try-finally（无 catch）路径。
+    // catchVarName 为空时跳过内层 TRY_BEGIN/TRY_END/catchLabel，
+    // 外层 TRY_BEGIN(finallyCatchLabel) 捕获异常 → 执行 finally → rethrow。
+    uint32_t catchLabel = 0;
     uint32_t endLabel = ir_->allocLabel();
-    // try 块开始，记录 catch 跳转目标
-    emitIR(IROp::TRY_BEGIN, { IROperand::label(catchLabel) }, node->line);
-    // BUG-EXC-2 fix: 跟踪 try 嵌套深度，break/continue 需为差额层级发射 TRY_END
-    ++tryDepth_;
-    if (node->tryBlock) visitNode(node->tryBlock.get());
-    --tryDepth_;
-    emitIR(IROp::TRY_END, {}, node->line);
-    emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
-    // catch 块
-    emitIR(IROp::LABEL, { IROperand::label(catchLabel) }, node->line);
+    if (!node->catchVarName.empty()) {
+        catchLabel = ir_->allocLabel();
+        // try 块开始，记录 catch 跳转目标
+        emitIR(IROp::TRY_BEGIN, { IROperand::label(catchLabel) }, node->line);
+        // BUG-EXC-2 fix: 跟踪 try 嵌套深度，break/continue 需为差额层级发射 TRY_END
+        ++tryDepth_;
+        if (node->tryBlock) visitNode(node->tryBlock.get());
+        --tryDepth_;
+        emitIR(IROp::TRY_END, {}, node->line);
+        emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
+        // catch 块
+        emitIR(IROp::LABEL, { IROperand::label(catchLabel) }, node->line);
+    } else {
+        // try-finally（无 catch）：只编译 try 块，不发射内层 try-catch。
+        if (node->tryBlock) visitNode(node->tryBlock.get());
+    }
     // P1-4 fix: catch 块起始，将异常值加载到 vreg 并绑定到 catch 变量。
     // RegisterVM: throwException 将异常存入 pendingException_，REG_LOAD_EXCEPTION 读取。
     // 栈式 VM: throwException 将异常推入栈顶，BytecodeIRBackend 的 LOAD_EXCEPTION 为 no-op（值已在栈上）。
@@ -2282,14 +2315,37 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 varMap_.erase(node->catchVarName);
             }
             emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
+            // BUG-AUDIT-FINALLY-1: finally 块 IR 发射
+            if (hasFinally) {
+                --tryDepth_;
+                emitIR(IROp::TRY_END, {}, node->line);
+                visitNode(node->finallyBlock.get());
+                emitIR(IROp::JUMP, { IROperand::label(finallyEndLabel) }, node->line);
+                emitIR(IROp::LABEL, { IROperand::label(finallyCatchLabel) }, node->line);
+                IROperand excVregF = ir_->allocVReg();
+                emitIR(IROp::LOAD_EXCEPTION, { excVregF }, node->line);
+                visitNode(node->finallyBlock.get());
+                emitIR(IROp::THROW, { excVregF }, node->line);
+                emitIR(IROp::LABEL, { IROperand::label(finallyEndLabel) }, node->line);
+            }
             return;  // AUDIT-BUG-F7: catch 块已编译，提前返回
         } else {
             // 顶层：检查 catchVarName 是否与全局槽位变量同名（对齐 Compiler.cpp:1272-1311）
             int existingSlot = lookupGlobalSlot(node->catchVarName);
             if (existingSlot >= 0) {
-                // 遮蔽保护：保存原值，临时移除映射，catch 变量走 GLOBAL_NAME 路径
+                // BUG-IR-SHADOW-SAVE fix: 遮蔽保护——原值保存到临时 name-based 全局变量。
+                // 原实现用 vreg(saved) 保存，但 StackVM 后端的 LOAD_EXCEPTION 是 no-op
+                //（异常值已在栈上），LOAD_GLOBAL 再 push 会使 DEFINE_GLOBAL pop 错误值
+                //（saved 而非 exception）。改用临时全局变量对齐 Compiler.cpp 的
+                // __catch_save_<counter>_<name> 模式，值存储在 globals_ 中不受栈变化影响。
+                // 1. 加载原值到栈顶（StackVM: push; RegisterVM: 写 vreg）
                 IROperand saved = ir_->allocVReg();
                 emitIR(IROp::LOAD_GLOBAL, { saved, IROperand::imm(static_cast<uint32_t>(existingSlot)) }, node->line);
+                // 2. 保存到临时全局变量 __catch_save_<counter>_<catchVarName>
+                std::string saveName = "__catch_save_" + std::to_string(catchSaveCounter_++) + "_" + node->catchVarName;
+                uint32_t saveIdx = ir_->addGlobal(saveName);
+                emitIR(IROp::DEFINE_GLOBAL, { IROperand::global(saveIdx), saved }, node->line);
+                // 3. 移除映射 + 定义 catch 变量（exception 在栈顶，DEFINE_GLOBAL pop）
                 globalSlotAllocator_.removeMapping(node->catchVarName);
                 uint32_t idx = ir_->addGlobal(node->catchVarName);
                 varMap_[node->catchVarName] = { VarInfo::Kind::GLOBAL_NAME, idx };
@@ -2299,26 +2355,48 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 // visitTryStmt L1794-L1858 的 needsCleanupWrap 模式。
                 uint32_t cleanupThrowLabel = ir_->allocLabel();
                 emitIR(IROp::TRY_BEGIN, { IROperand::label(cleanupThrowLabel) }, node->line);
+                // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: cleanup wrap 的内层 TRY_BEGIN
+                // 必须计入 tryDepth_，使 catch 块内的 break/continue 能发射对应 TRY_END，
+                // 避免 tryStack_ handler 残留导致后续异常被错误捕获到已失效的 cleanupThrowLabel。
+                ++tryDepth_;
                 if (node->catchBlock) visitNode(node->catchBlock.get());
+                --tryDepth_;
                 emitIR(IROp::TRY_END, {}, node->line);
-                // 正常路径：恢复映射 + varMap_ + 原值
+                // 正常路径：恢复映射 + varMap_ + 原值（从临时全局变量重载）
                 globalSlotAllocator_.restoreMapping(node->catchVarName, existingSlot);
                 varMap_[node->catchVarName] = { VarInfo::Kind::GLOBAL_SLOT, static_cast<uint32_t>(existingSlot) };
-                emitIR(IROp::STORE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(existingSlot)), saved }, node->line);
+                IROperand savedRestore = ir_->allocVReg();
+                emitIR(IROp::LOAD_GLOBAL, { savedRestore, IROperand::global(saveIdx) }, node->line);
+                emitIR(IROp::STORE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(existingSlot)), savedRestore }, node->line);
+                emitIR(IROp::DELETE_VAR, { IROperand::global(saveIdx) }, node->line);
                 emitIR(IROp::JUMP, { IROperand::label(endLabel) }, node->line);
-                // 异常路径：重新加载原值 + 恢复 + rethrow
-                // StackVM: 异常值在栈顶，LOAD_EXCEPTION 为 no-op，LOAD_GLOBAL push saved2，
-                //          STORE_GLOBAL pop saved2，THROW(OP_THROW) pop 栈顶异常值 rethrow。
+                // 异常路径：从临时全局变量重载原值 + 恢复 + rethrow
+                // StackVM: 异常值在栈顶，LOAD_EXCEPTION 为 no-op，LOAD_GLOBAL push savedRestore2，
+                //          STORE_GLOBAL pop savedRestore2，THROW(OP_THROW) pop 栈顶异常值 rethrow。
                 // RegisterVM: 异常值在 pendingException_，LOAD_EXCEPTION 加载到 excVreg2，
                 //             LOAD_GLOBAL/STORE_GLOBAL 操作寄存器，THROW(REG_THROW) 读取 excVreg2 rethrow。
                 emitIR(IROp::LABEL, { IROperand::label(cleanupThrowLabel) }, node->line);
                 IROperand excVreg2 = ir_->allocVReg();
                 emitIR(IROp::LOAD_EXCEPTION, { excVreg2 }, node->line);
-                IROperand saved2 = ir_->allocVReg();
-                emitIR(IROp::LOAD_GLOBAL, { saved2, IROperand::imm(static_cast<uint32_t>(existingSlot)) }, node->line);
-                emitIR(IROp::STORE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(existingSlot)), saved2 }, node->line);
+                IROperand savedRestore2 = ir_->allocVReg();
+                emitIR(IROp::LOAD_GLOBAL, { savedRestore2, IROperand::global(saveIdx) }, node->line);
+                emitIR(IROp::STORE_GLOBAL, { IROperand::imm(static_cast<uint32_t>(existingSlot)), savedRestore2 }, node->line);
+                emitIR(IROp::DELETE_VAR, { IROperand::global(saveIdx) }, node->line);
                 emitIR(IROp::THROW, { excVreg2 }, node->line);
                 emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
+                // BUG-AUDIT-FINALLY-1: finally 块 IR 发射
+                if (hasFinally) {
+                    --tryDepth_;
+                    emitIR(IROp::TRY_END, {}, node->line);
+                    visitNode(node->finallyBlock.get());
+                    emitIR(IROp::JUMP, { IROperand::label(finallyEndLabel) }, node->line);
+                    emitIR(IROp::LABEL, { IROperand::label(finallyCatchLabel) }, node->line);
+                    IROperand excVregF = ir_->allocVReg();
+                    emitIR(IROp::LOAD_EXCEPTION, { excVregF }, node->line);
+                    visitNode(node->finallyBlock.get());
+                    emitIR(IROp::THROW, { excVregF }, node->line);
+                    emitIR(IROp::LABEL, { IROperand::label(finallyEndLabel) }, node->line);
+                }
                 return;  // catch 块已编译，提前返回
             } else {
                 // 无遮蔽：直接定义为全局变量
@@ -2333,7 +2411,11 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 // throw 时 cleanup IR（DELETE_VAR 清理 catch 变量）仍执行。
                 uint32_t cleanupThrowLabel = ir_->allocLabel();
                 emitIR(IROp::TRY_BEGIN, { IROperand::label(cleanupThrowLabel) }, node->line);
+                // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: 同步 ++tryDepth_/--tryDepth_，
+                // 使 catch 块内 break/continue 正确发射 TRY_END。
+                ++tryDepth_;
                 if (node->catchBlock) visitNode(node->catchBlock.get());
+                --tryDepth_;
                 emitIR(IROp::TRY_END, {}, node->line);
                 // 正常路径：移除 varMap_ 映射 + 清理 catch 变量
                 varMap_.erase(node->catchVarName);
@@ -2346,18 +2428,42 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 emitIR(IROp::DELETE_VAR, { IROperand::global(nameIdx) }, node->line);
                 emitIR(IROp::THROW, { excVreg2 }, node->line);
                 emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
+                // BUG-AUDIT-FINALLY-1: finally 块 IR 发射
+                if (hasFinally) {
+                    --tryDepth_;
+                    emitIR(IROp::TRY_END, {}, node->line);
+                    visitNode(node->finallyBlock.get());
+                    emitIR(IROp::JUMP, { IROperand::label(finallyEndLabel) }, node->line);
+                    emitIR(IROp::LABEL, { IROperand::label(finallyCatchLabel) }, node->line);
+                    IROperand excVregF = ir_->allocVReg();
+                    emitIR(IROp::LOAD_EXCEPTION, { excVregF }, node->line);
+                    visitNode(node->finallyBlock.get());
+                    emitIR(IROp::THROW, { excVregF }, node->line);
+                    emitIR(IROp::LABEL, { IROperand::label(finallyEndLabel) }, node->line);
+                }
                 return;  // AUDIT-BUG-F7: catch 块已编译，提前返回
             }
         }
     }
-    // L1 fix: catchVarName 为空时，异常值仍残留在栈上（throwException push 到栈顶，
-    // StackVM lowering 中无 LOAD_EXCEPTION/STORE 消费它）。emit POP 消费残留异常值。
-    // RegisterVM 中 POP 为 no-op（异常值在 pendingException_ 中，不占栈）。
-    if (node->catchVarName.empty()) {
-        emitIR(IROp::POP, {}, node->line);
-    }
+    // BUG-AUDIT-FINALLY-1: catchVarName 为空时（try-finally 无 catch），
+    // 不发射内层 TRY_BEGIN，异常不在栈上，无需 POP。
+    // 原 L1 fix 的 POP 仅在 catchVarName 非空但 catchBlock 为空时才需要
+    //（但 Parser 要求 catch 必须有变量名，所以 catchVarName 非空时 catchBlock 也非空）。
     if (node->catchBlock) visitNode(node->catchBlock.get());
     emitIR(IROp::LABEL, { IROperand::label(endLabel) }, node->line);
+    // BUG-AUDIT-FINALLY-1: finally 块 IR 发射
+    if (hasFinally) {
+        --tryDepth_;
+        emitIR(IROp::TRY_END, {}, node->line);
+        visitNode(node->finallyBlock.get());
+        emitIR(IROp::JUMP, { IROperand::label(finallyEndLabel) }, node->line);
+        emitIR(IROp::LABEL, { IROperand::label(finallyCatchLabel) }, node->line);
+        IROperand excVregF = ir_->allocVReg();
+        emitIR(IROp::LOAD_EXCEPTION, { excVregF }, node->line);
+        visitNode(node->finallyBlock.get());
+        emitIR(IROp::THROW, { excVregF }, node->line);
+        emitIR(IROp::LABEL, { IROperand::label(finallyEndLabel) }, node->line);
+    }
 }
 
 void AstIRBuilder::visitThrowStmt(ThrowStmt* node) {
@@ -3936,6 +4042,16 @@ bool loopUnrollingPass(IRFunction& ir) {
 
             // 展开：生成 nInt 份 body 副本 + 计数器初始化（LOAD_CONST 0; STORE_LOCAL slot）
             // 注意：原模式不包含 i 的初始化（在循环外），展开时需补上 i=0
+            //
+            // BUG-IR-OPT-AUDIT-5 fix: vreg 重命名。
+            // 原实现直接复制 body 指令（含 operands）N 次，导致同一 vreg 在多个迭代中
+            // 被重复定义（每个迭代的 ADD dest 都用同一个 vreg），违反 IR 的 SSA-like
+            // 不变量（每个 vreg 应只被赋值一次）。后续 CSE/DCE 等优化 pass 会因重复
+            // 定义而误判（如 DCE 看到 dest 被多个指令定义时无法正确删除无引用指令，
+            // CSE 的 valueMap 会因 dest vreg 已被覆盖而误命中）。
+            // 修复：对 iter >= 1 的副本，收集 body 内定义的 vreg（作为纯计算指令的 dest
+            // 或 LOAD_LOCAL/LOAD_CONST 的 dest），分配 fresh vreg 并重命名副本中所有引用
+            //（包括 dest 和 src），保证每个迭代的 vreg 唯一。
             std::vector<IRInstruction> newInstrs;
             newInstrs.reserve(static_cast<size_t>(nInt) * bodySize + 4);
             // 补 i=0 初始化
@@ -3946,10 +4062,38 @@ bool loopUnrollingPass(IRFunction& ir) {
             newInstrs.emplace_back(IROp::STORE_LOCAL,
                 std::vector<IROperand>{ IROperand::local(counterSlot), IROperand::vreg(ir.nextVReg - 1) },
                 labelStart.line);
+            // 收集 body 内定义的 vreg（dest 为 VIRTUAL 的指令：纯计算 / LOAD_LOCAL / LOAD_CONST 等）
+            std::unordered_set<uint32_t> bodyDefinedVRegs;
+            for (size_t j = tailStart; j < bodyEnd; ++j) {
+                const auto& instr = instrs[j];
+                if (instr.operands.empty()) continue;
+                if (instr.operands[0].kind == IROperandKind::VIRTUAL) {
+                    bodyDefinedVRegs.insert(instr.operands[0].index);
+                }
+            }
             // 生成 nInt 份 body
             for (int64_t iter = 0; iter < nInt; ++iter) {
+                // BUG-IR-OPT-AUDIT-5: 为本次迭代构建 vreg 重命名表
+                // iter 0 用原 vreg（与原 body 一致，保持 SSA 单赋值），
+                // iter >= 1 分配 fresh vreg 替换 body 内定义的 vreg，避免重复赋值。
+                std::unordered_map<uint32_t, uint32_t> vregRemap;
+                if (iter > 0) {
+                    for (uint32_t v : bodyDefinedVRegs) {
+                        vregRemap[v] = ir.nextVReg++;
+                    }
+                }
                 for (size_t j = tailStart; j < bodyEnd; ++j) {
-                    newInstrs.push_back(instrs[j]);  // 复制指令（含 operands）
+                    IRInstruction copy = instrs[j];  // 复制指令（含 operands）
+                    // 重命名所有 VIRTUAL 操作数（dest 和 src 都需重命名）
+                    for (auto& op : copy.operands) {
+                        if (op.kind == IROperandKind::VIRTUAL) {
+                            auto it = vregRemap.find(op.index);
+                            if (it != vregRemap.end()) {
+                                op.index = it->second;
+                            }
+                        }
+                    }
+                    newInstrs.push_back(std::move(copy));
                 }
                 // 计数器递增：LOAD_LOCAL slot; LOAD_CONST 1; ADD; STORE_LOCAL slot
                 uint32_t oneConst = ir.addConstant(Value(static_cast<int64_t>(1)));
@@ -3987,6 +4131,11 @@ bool loopUnrollingPass(IRFunction& ir) {
 }
 
 // ---- 运行全部优化 pass ----
+// BUG-IR-OPT-AUDIT-1/2/3/4 fix: IR 优化日志统一
+// - 统一 source tag 为 "IR-Opt"（原 "IR" / "IR-Optimize" 混用）
+// - 每个 pass 在 modified=true 时发射 LOG_DEBUG（原 4/5 pass 完全静默）
+// - 统一术语：常量折叠 / 复制传播 / CSE / 循环展开 / DCE（原中英混用）
+// - 汇总日志改用 LOG_INFO + 旗标矩阵（原仅报告启用旗标，缺失修改事实）
 bool optimizeIR(IRFunction& ir, bool enableCopyPropagation, bool enableDCE,
                 bool enableCSE, bool enableLoopUnroll) {
     bool modified = false;
@@ -3994,27 +4143,65 @@ bool optimizeIR(IRFunction& ir, bool enableCopyPropagation, bool enableDCE,
     // 复制传播仅在寄存器式后端启用（栈式后端删除 LOAD_CONST 会导致栈下溢）
     // BUG-IR-DCE-2 fix: DCE 与复制传播控制解耦——DCE 通过 enableDCE 独立控制，
     // 避免禁用复制传播时连带禁用 DCE（寄存器式后端复制传播暂禁但 DCE 仍可安全启用）。
-    // C4: CSE 默认启用（仅替换引用，对栈式 VM 安全）；循环展开默认关闭（影响行号映射）。
+    // C4: CSE 与循环展开默认禁用；详见 IR.h 的安全约束文档。
+    //
+    // BUG-IR-OPT-AUDIT-6 fix: 防御性检查——CSE 在栈式 VM 后端（enableDCE=false）不安全。
+    // CSE 替换后续指令对 dest vreg 的引用，但保留原指令（不删除）；栈式后端 lowering
+    // 仍 emit OP_ADD 等压栈指令，未被消费的栈值会残留 → 后续 OP_POP 栈下溢。
+    // 详见 IR.h:720-723 的安全约束文档。此处自动禁用并告警，防止误用。
+    if (enableCSE && !enableDCE) {
+        LOG_ERROR("optimizeIR: CSE 在栈式 VM 后端（enableDCE=false）不安全"
+                  "（栈残留 → 后续 OP_POP 栈下溢），已自动禁用 CSE", "IR-Opt");
+        enableCSE = false;
+    }
+    // 同理：复制传播在栈式后端也不安全（删除 LOAD_CONST 会导致栈下溢），
+    // 但寄存器式后端的复制传播因 RegisterBytecodeBackend 不检查操作数 kind 也暂禁（见 IR.h:720-723）。
+    // 此处仅做 CSE 的强校验；复制传播的默认禁用由调用方控制（Compiler.cpp:197/295 均传 false）。
+
+    // BUG-IR-OPT-AUDIT-1: 启动日志记录启用旗标
+    LOG_DEBUG("optimizeIR: 启用旗标 copyProp=" + std::string(enableCopyPropagation ? "Y" : "N") +
+              " dce=" + std::string(enableDCE ? "Y" : "N") +
+              " cse=" + std::string(enableCSE ? "Y" : "N") +
+              " loopUnroll=" + std::string(enableLoopUnroll ? "Y" : "N"), "IR-Opt");
+
     // 多轮迭代直到收敛（最多 3 轮，避免无限循环）
+    int totalRounds = 0;
     for (int round = 0; round < 3; ++round) {
         bool m1 = constantFoldingPass(ir);
+        // BUG-IR-OPT-AUDIT-2: 每个 pass 修改时发射 LOG_DEBUG（原 4/5 pass 静默）
+        if (m1) LOG_DEBUG("optimizeIR: round " + std::to_string(round) +
+                          " 常量折叠 修改", "IR-Opt");
         bool m2 = enableCopyPropagation ? copyPropagationPass(ir) : false;
+        if (m2) LOG_DEBUG("optimizeIR: round " + std::to_string(round) +
+                          " 复制传播 修改", "IR-Opt");
         bool m3 = enableCSE ? commonSubexpressionEliminationPass(ir) : false;
+        if (m3) LOG_DEBUG("optimizeIR: round " + std::to_string(round) +
+                          " CSE 修改", "IR-Opt");
         bool m4 = enableLoopUnroll ? loopUnrollingPass(ir) : false;
+        if (m4) LOG_DEBUG("optimizeIR: round " + std::to_string(round) +
+                          " 循环展开 修改", "IR-Opt");
         // DCE 仅在寄存器式后端启用（enableDCE=true）。
         // 栈式后端中 POP 的 operands 为空，DCE 无法看到 POP 对 vreg 的消费关系，
         // 会删除仅被 POP 消费的 LOAD_CONST 等纯计算指令，导致栈式 VM OP_POP 栈下溢。
         bool m5 = enableDCE ? deadCodeEliminationPass(ir) : false;
+        if (m5) LOG_DEBUG("optimizeIR: round " + std::to_string(round) +
+                          " DCE 修改", "IR-Opt");
         modified = modified || m1 || m2 || m3 || m4 || m5;
+        ++totalRounds;
         if (!m1 && !m2 && !m3 && !m4 && !m5) break;  // 收敛
     }
+    // BUG-IR-OPT-AUDIT-3/4: 汇总日志统一术语 + 报告迭代轮数与最终规模
     if (modified) {
         // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
-        LOG_INFO("IR 优化完成: " + std::to_string(ir.constants.size()) + " 常量, " +
-                     std::to_string(ir.nextVReg) + " vreg" +
-                     (enableCopyPropagation ? " (含复制传播)" : "") +
-                     (enableCSE ? " (含CSE)" : "") +
-                     (enableLoopUnroll ? " (含循环展开)" : ""), "IR-Optimize");
+        LOG_INFO("IR 优化完成: " + std::to_string(totalRounds) + " 轮迭代, " +
+                 std::to_string(ir.constants.size()) + " 常量, " +
+                 std::to_string(ir.nextVReg) + " vreg" +
+                 (enableCopyPropagation ? " [copyProp=on]" : "") +
+                 (enableCSE ? " [CSE=on]" : "") +
+                 (enableLoopUnroll ? " [loopUnroll=on]" : "") +
+                 (enableDCE ? " [DCE=on]" : ""), "IR-Opt");
+    } else {
+        LOG_DEBUG("IR 优化完成: 无修改 (rounds=" + std::to_string(totalRounds) + ")", "IR-Opt");
     }
     return modified;
 }

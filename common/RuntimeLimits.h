@@ -74,6 +74,10 @@ constexpr int64_t MAX_RANGE = 10000000;
 constexpr int MAX_PARSE_DEPTH = 256;
 // Parser 最大块嵌套深度
 constexpr int MAX_BLOCK_DEPTH = 256;
+// BUG-PARSER-AUDIT-5 fix: Parser 错误数量上限。
+// 原实现无上限，恶意输入（如 100 万个 ';'）可触发 O(N) 诊断内存膨胀（~200MB）。
+// 主流编译器（gcc/clang/MSVC）均在错误数超阈值后停止解析。100 与 MSVC 默认一致。
+constexpr int MAX_PARSE_ERRORS = 100;
 // Compiler 最大编译嵌套深度
 constexpr int MAX_COMPILE_DEPTH = 512;
 // Formatter 最大格式化嵌套深度

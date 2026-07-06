@@ -258,3 +258,77 @@ void IdeController::setupCompilerModuleLoader(const std::string& filePath) {
         return "";
     });
 }
+
+// ============================================================
+// BUG-REPL-AUDIT-9 fix: REPL 模块加载器补设
+// ------------------------------------------------------------
+// 原 executeRepl 仅裸转发 interpreter_->executeRepl，而 Interpreter 的
+// moduleLoader_/moduleMtimeChecker_/currentFilePath_ 仅在 WorkerManager::prepareRun
+// （Run/Debug 路径）中被设置。用户启动 IDE 后直接在 REPL 输入 import 会命中
+// "未设置模块加载器，无法执行 import"。
+//
+// 修复策略：executeRepl 执行前调用 setupReplModuleCallbacks()。若 Interpreter 已有
+// moduleLoader_（先 Run 过），不重复设置（避免覆盖 Run 建立的 baseDir）；否则基于
+// currentFilePath_（由 GUI 通过 setActiveFilePath 通知，或 prepareRun 设置）建立
+// loader/mtimeChecker，复用 WorkerManager::prepareRun 的路径解析逻辑。
+//
+// 路径遍历防护（拒绝 ".." 和绝对路径）由 Interpreter::visitImportStmt 前置检查
+// 保证（InterpreterModules.cpp 行 38-56），loader 不会收到非法路径。
+// ============================================================
+Value IdeController::executeRepl(Block& program) {
+    setupReplModuleCallbacks();
+    return interpreter_->executeRepl(program);
+}
+
+void IdeController::setupReplModuleCallbacks() {
+    // 若 Interpreter 已有 moduleLoader_（先 Run 过），不覆盖，保持 Run 时建立的
+    // baseDir 与模块缓存基准一致（避免 Run 后 REPL 用不同的 baseDir）。
+    if (interpreter_->hasModuleLoader()) {
+        return;
+    }
+
+    // 基于 currentFilePath_ 解析相对模块路径（对齐 WorkerManager::prepareRun 逻辑）
+    const std::string& filePath = currentFilePath_;
+    QString baseDir;
+    if (!filePath.empty()) {
+        QFileInfo fi(QString::fromStdString(filePath));
+        baseDir = fi.absolutePath();
+    }
+    interpreter_->setCurrentFilePath(filePath);
+
+    // 模块路径解析辅助函数，供 loader 和 mtime checker 共用
+    auto resolveModulePath = [baseDir](const std::string& modulePath) -> QString {
+        QString qPath = QString::fromStdString(modulePath);
+        if (!qPath.endsWith(".mini", Qt::CaseInsensitive)) {
+            qPath += ".mini";
+        }
+        QStringList candidates;
+        if (baseDir.isEmpty()) {
+            candidates << qPath;
+        } else {
+            candidates << QDir(baseDir).filePath(qPath) << qPath;
+        }
+        for (const QString& candidate : candidates) {
+            if (QFile::exists(candidate)) {
+                return candidate;
+            }
+        }
+        return {};
+    };
+    interpreter_->setModuleLoader([resolveModulePath](const std::string& modulePath) -> std::string {
+        QString resolved = resolveModulePath(modulePath);
+        if (resolved.isEmpty()) return "";
+        QFile file(resolved);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return QString::fromUtf8(file.readAll()).toStdString();
+        }
+        return "";
+    });
+    interpreter_->setModuleMtimeChecker([resolveModulePath](const std::string& modulePath) -> int64_t {
+        QString resolved = resolveModulePath(modulePath);
+        if (resolved.isEmpty()) return 0;
+        QFileInfo fi(resolved);
+        if (!fi.exists()) return 0;
+        return fi.lastModified().toMSecsSinceEpoch();
+    });
+}

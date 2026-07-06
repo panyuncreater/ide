@@ -89,19 +89,24 @@ add_executable(minilang_tests
     TestIRShadowFix.cpp
     TestNestedLvalueProbe.cpp
     TestMethodCallProbe.cpp
-    TestConsistencyDiff.cpp
+    TestThreeEnginesConsistency.cpp
     TestLexerParserAudit.cpp
     TestCompilerAudit.cpp
-    TestCompilerAudit2.cpp
+    TestCompilerIRIsolationAudit.cpp
     TestIRAudit.cpp
     TestThreeEnginesAudit.cpp
     TestDebugAudit.cpp
-    TestFormatterGUISuiteAudit.cpp
+    TestFormatterAudit.cpp
     TestTeachingPanelsAudit.cpp
     TestTeachingPanelsAudit2.cpp
     TestTeachingPanelsAudit3.cpp
     TestTeachingPanelsAudit4.cpp
     TestTeachingPanelsAudit5.cpp
+    TestAuditBatch1.cpp
+    TestAuditBatch2.cpp
+    TestAuditBatch3.cpp
+    TestAuditBatch4.cpp
+    TestAuditBatch5.cpp
     # 教学面板数据类（位于 MINILANG_GUI_SOURCES，但仅含纯数据，
     # 通过显式编译进测试目标以避免 minilang_core 强依赖 Qt6::Widgets）
     ${MINILANG_ROOT_DIR}/gui/BugHuntLibrary.cpp
@@ -121,6 +126,52 @@ add_executable(minilang_tests
     # 第三档 P2-3：ExceptionFlowLibrary/ClosureInspectorLibrary
     ${MINILANG_ROOT_DIR}/gui/ExceptionFlowPanel.cpp
     ${MINILANG_ROOT_DIR}/gui/ClosureInspectorPanel.cpp
+    # 高价值改进方向 Top 3：拆分独立 Library.cpp 避免引入 IdeController 依赖
+    ${MINILANG_ROOT_DIR}/gui/BugHuntVariantLibrary.cpp
+    # 功能 6：学习路径地图——LearnerProgress.cpp 与 LearningPathData.cpp 为独立编译单元，
+    # 不依赖 IdeController.h，可安全加入测试目标。LearningPathPanel.cpp 依赖 Qt Widgets +
+    # PanelAnimator + QScrollArea 等，不加入测试目标。
+    ${MINILANG_ROOT_DIR}/gui/LearnerProgress.cpp
+    ${MINILANG_ROOT_DIR}/gui/LearningPathData.cpp
+    # 功能 13：代码模板 / Snippets 系统——CodeSnippetEngine.cpp 为独立编译单元，
+    # 仅依赖 Qt6::Core（QString），不依赖 CodeEditor / IdeController / Qt6::Widgets，
+    # 可安全加入测试目标。CodeEditor.cpp 依赖 Qt6::Widgets 与多个 GUI 组件，不加入。
+    ${MINILANG_ROOT_DIR}/gui/CodeSnippetEngine.cpp
+    # 功能 5：VM 栈沙盒——SandboxLevels.cpp 为独立编译单元（仅依赖 Qt6::Core），
+    # 不依赖 IdeController / Qt6::Widgets，可安全加入测试目标。
+    # VmStackSandboxPanel.cpp 依赖 Qt6::Widgets（QComboBox/QListWidget 等），不加入。
+    ${MINILANG_ROOT_DIR}/gui/SandboxLevels.cpp
+    # 功能 3：交互式 Token 拼图游戏——TokenPuzzleData.cpp 为独立编译单元，
+    # 仅依赖标准库（std::string / std::vector），不依赖 Qt Widgets / IdeController，
+    # 可安全加入测试目标。TokenPuzzlePanel.cpp 依赖 Qt6::Widgets，不加入。
+    ${MINILANG_ROOT_DIR}/gui/TokenPuzzleData.cpp
+    # 功能 4：AST 节点搭建玩具——AstToyLevels.cpp 为独立编译单元（仅依赖
+    # Qt6::Core / 标准库），不依赖 IdeController / Qt6::Widgets，可安全加入测试目标。
+    # AstBuilderToyPanel.cpp 依赖 Qt6::Widgets（QTreeWidget / QComboBox / QInputDialog 等），不加入。
+    ${MINILANG_ROOT_DIR}/gui/AstToyLevels.cpp
+    # 高价值改进方向 Top 3 测试文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestIROptReplayAudit.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestMemoryAnimAudit.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestBugHuntVariantAudit.cpp
+    # 功能 9 测试文件（BugHuntLibrary.cpp 已在上方显式加入测试目标）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestBugHuntDifficultyAudit.cpp
+    # 功能 6 测试文件
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestLearningPathAudit.cpp
+    # 功能 13 测试文件（CodeSnippetEngine.cpp 已在上方显式加入测试目标）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCodeSnippetAudit.cpp
+    # 功能 12 测试文件（ErrorHintEngine.cpp 已在 minilang_core 的 CORE_SOURCES 中）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestErrorHintEngine.cpp
+    # 功能 5 测试文件（SandboxLevels.cpp 已在上方显式加入测试目标）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestSandboxAudit.cpp
+    # 功能 3 测试文件（TokenPuzzleData.cpp 已在上方显式加入测试目标）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestTokenPuzzleAudit.cpp
+    # 功能 4 测试文件（AstToyLevels.cpp 已在上方显式加入测试目标）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestAstToyAudit.cpp
+    # 教学面板端到端交互测试（验证 Panel 实例的子页切换/列表选择/QTimer 状态）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestTeachingPanelsE2E.cpp
+    # 功能 11 测试文件（MagicCommands.cpp 已在 minilang_core 的 CORE_SOURCES 中，
+    # 仅依赖 IdeController 内联方法 + minilang_core 符号，测试目标可安全链接）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestMagicCommandsAudit.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
@@ -130,6 +181,26 @@ target_link_libraries(minilang_tests PRIVATE
     Qt6::Widgets
     gtest
     minilang_compile_options
+)
+
+# QFluentKit 组件头文件（PushButton.h / Label.h / CardWidget.h 等）位于 src/QFluent/
+# 子目录，而 QFluent 目标仅导出 src/。补充两个路径以支持 #include "PushButton.h"
+# 与 #include "FluentGlobal.h" 风格。与 minilang_ide 目标保持一致（见父 CMakeLists.txt）。
+target_include_directories(minilang_tests PRIVATE
+    ${MINILANG_ROOT_DIR}/third_party/QFluentKit/QFluent/src
+    ${MINILANG_ROOT_DIR}/third_party/QFluentKit/QFluent/src/QFluent
+)
+
+# Panel.cpp 文件（MemoryModelPanel / IRTransformPanel / CallStackPanel 等）包含
+# QFluentKit 头文件并可能调用其内联函数，需链接 QFluent 共享库。
+target_link_libraries(minilang_tests PRIVATE QFluent)
+
+# 部署 QFluent 动态库到测试 exe 同目录（QFluent 为 SHARED 库，运行时需 DLL）
+add_custom_command(TARGET minilang_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:QFluent>"
+            "$<TARGET_FILE_DIR:minilang_tests>"
+    COMMENT "Deploying QFluent runtime for minilang_tests..."
 )
 
 if(MSVC)
@@ -156,6 +227,37 @@ gtest_discover_tests(minilang_tests
         TIMEOUT 300
 )
 
+
+# ============================================================
+# minilang_perf_test — CI 性能基准回归检测（独立可执行目标）
+# ------------------------------------------------------------
+# Phase 3 Task 3.5: 独立于 minilang_tests，避免基准测试拖慢常规单元测试。
+# 输出 JSON 到 stdout，不依赖 pass/fail 断言。
+# ============================================================
+add_executable(minilang_perf_test
+    TestPerformanceRegression.cpp
+)
+
+target_link_libraries(minilang_perf_test PRIVATE
+    minilang_core
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    gtest
+    minilang_compile_options
+)
+
+if(MSVC)
+    target_link_options(minilang_perf_test PRIVATE /STACK:8388608)
+endif()
+
+# 注册到 CTest（独立于 minilang_tests 的测试发现）
+gtest_discover_tests(minilang_perf_test
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES
+        TIMEOUT 600
+)
+
 # ============================================================
 # Windows 平台自动部署 Qt 运行时依赖到测试可执行文件同目录
 # 使用共享模块 cmake/windeployqt.cmake（与 minilang_ide 一致）
@@ -164,3 +266,4 @@ if(NOT COMMAND minilang_deploy_qt_runtime)
     include(${MINILANG_ROOT_DIR}/cmake/windeployqt.cmake)
 endif()
 minilang_deploy_qt_runtime(minilang_tests)
+minilang_deploy_qt_runtime(minilang_perf_test)

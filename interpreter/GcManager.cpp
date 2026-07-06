@@ -164,8 +164,24 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
         ++collectedCount;
     }
 
-    // Phase 3: 清理跟踪结构（已释放的节点指针失效，新一轮 execute 重新注册）
-    tracked_.clear();
+    // Phase 3: 重建跟踪结构。
+    // BUG-INTR-AUDIT-1 fix: 原实现无条件 tracked_.clear()，导致上一轮 marked 为可达
+    // 而存活的循环引用容器（如 a.push(a)）从 tracked_ 中移除，且不会在下一轮 execute
+    // 中重新 registerTracked（registerTracked 仅在容器构造时调用）。当这些容器后来
+    // 变为不可达时，sweep 阶段不会检查它们（不在 tracked_ 中），无法打破循环，导致
+    // 永久泄漏。修复：保留仍存活（在 aliveSet_ 中）且被标记为可达（在 marked 中）的
+    // 容器条目，仅清除已释放的悬垂指针和已被回收的孤岛。
+    std::vector<RefCounted*> survivors;
+    survivors.reserve(tracked_.size());
+    for (RefCounted* obj : tracked_) {
+        if (!obj) continue;
+        // 仅保留仍存活且本轮被标记为可达的容器（下一轮可能变为不可达，需要再次检查）
+        if (aliveSet_.find(obj) != aliveSet_.end() &&
+            marked.find(obj) != marked.end()) {
+            survivors.push_back(obj);
+        }
+    }
+    tracked_ = std::move(survivors);
     aliveSet_.clear();
 
     if (collectedCount > 0) {

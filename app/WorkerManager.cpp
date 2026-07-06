@@ -129,10 +129,9 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
         baseDir = fi.absolutePath();
     }
     interpreter_->setCurrentFilePath(filePath);
-    interpreter_->setModuleLoader([baseDir](const std::string& modulePath) -> std::string {
-        // 尝试解析模块路径：优先作为相对路径，其次在 baseDir 下查找
+    // BUG-REPL-AUDIT-1 fix: 模块路径解析辅助函数，供 loader 和 mtime checker 共用
+    auto resolveModulePath = [baseDir](const std::string& modulePath) -> QString {
         QString qPath = QString::fromStdString(modulePath);
-        // 如果没有 .mini 后缀，自动添加
         if (!qPath.endsWith(".mini", Qt::CaseInsensitive)) {
             qPath += ".mini";
         }
@@ -143,12 +142,29 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
             candidates << QDir(baseDir).filePath(qPath) << qPath;
         }
         for (const QString& candidate : candidates) {
-            QFile file(candidate);
-            if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                return QString::fromUtf8(file.readAll()).toStdString();
+            if (QFile::exists(candidate)) {
+                return candidate;
             }
         }
+        return {};
+    };
+    interpreter_->setModuleLoader([resolveModulePath](const std::string& modulePath) -> std::string {
+        QString resolved = resolveModulePath(modulePath);
+        if (resolved.isEmpty()) return "";
+        QFile file(resolved);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return QString::fromUtf8(file.readAll()).toStdString();
+        }
         return "";
+    });
+    // BUG-REPL-AUDIT-1 fix: 设置模块 mtime 检查器，REPL 模式下文件修改后自动失效缓存
+    interpreter_->setModuleMtimeChecker([resolveModulePath](const std::string& modulePath) -> int64_t {
+        QString resolved = resolveModulePath(modulePath);
+        if (resolved.isEmpty()) return 0;
+        QFileInfo fi(resolved);
+        if (!fi.exists()) return 0;
+        // 返回文件最后修改时间的毫秒时间戳
+        return fi.lastModified().toMSecsSinceEpoch();
     });
 
     if (!astRoot) return false;
@@ -209,7 +225,20 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
     connect(workerThread_.get(), &QThread::finished, this, [this]() {
         // P2 fix: 在 cleanupWorker 重置 isDebugRun_ 之前保存其值
         bool wasDebug = isDebugRun_;
-        cleanupWorker();
+        // BUG-REPL-AUDIT-8 fix: cleanupWorker 内部 restoreReplState()/debugger_->reset()
+        // 理论上可能抛异常（如 forceStop 终止后状态损坏），未捕获会导致 workerFinished
+        // 信号永不发射，UI 永久卡死（按钮禁用、编辑器只读、REPL 输入框禁用）。
+        // 此处 try/catch 包裹确保 workerFinished 总会发射，UI 状态总能恢复。
+        try {
+            cleanupWorker();
+        } catch (const std::exception& e) {
+            LOG_ERROR(std::string("cleanupWorker threw: ") + e.what(), "IDE");
+            isRunning_ = false;
+            isDebugRun_ = false;
+        } catch (...) {
+            isRunning_ = false;
+            isDebugRun_ = false;
+        }
         emit workerFinished(wasDebug);
     }, Qt::QueuedConnection);
     } catch (...) {

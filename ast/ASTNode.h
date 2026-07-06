@@ -698,23 +698,27 @@ public:
     std::vector<ASTNode*> children() const override { return {}; }
 };
 
-/// try-catch 语句节点
+/// try-catch-finally 语句节点
 class TryStmt : public ASTNode {
 public:
     std::shared_ptr<ASTNode> tryBlock;     // try 块
     std::string catchVarName;               // catch 绑定的变量名
     std::shared_ptr<ASTNode> catchBlock;    // catch 块
+    std::shared_ptr<ASTNode> finallyBlock;  // BUG-AUDIT-FINALLY-1: finally 块（可选）
 
     TryStmt(std::shared_ptr<ASTNode> tryB, const std::string& varName,
-            std::shared_ptr<ASTNode> catchB, int ln = 0, int col = 0)
+            std::shared_ptr<ASTNode> catchB,
+            std::shared_ptr<ASTNode> finallyB = nullptr,
+            int ln = 0, int col = 0)
         : ASTNode(ln, col), tryBlock(std::move(tryB)), catchVarName(varName),
-          catchBlock(std::move(catchB)) { nodeType = NodeType::NODE_TRY_STMT; }
+          catchBlock(std::move(catchB)), finallyBlock(std::move(finallyB)) { nodeType = NodeType::NODE_TRY_STMT; }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "TryStmt"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> c;
         if (tryBlock) c.push_back(tryBlock.get());
         if (catchBlock) c.push_back(catchBlock.get());
+        if (finallyBlock) c.push_back(finallyBlock.get());
         return c;
     }
 };

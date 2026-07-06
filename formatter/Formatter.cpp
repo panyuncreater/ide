@@ -333,8 +333,17 @@ void Formatter::visitThrowStmt(ThrowStmt& node) {
 
 void Formatter::visitTryStmt(TryStmt& node) {
     // P2 fix: visitBlock 以 " {" 开头，"try" 后无需额外空格
+    // BUG-FE-AUDIT-1 fix: 同步 BUG-AUDIT-FINALLY-1 的 finally 语法支持。
+    //   - catch 块可选（try-finally 无 catch 时不输出 " catch (...)"）
+    //   - finally 块可选，存在时输出 " finally" + formatNode(finallyBlock)
+    //   - 修复幂等性违反（原实现无条件输出 catch 且忽略 finally，导致 format 后重新 parse 报错）
     std::string result = "try" + formatNode(node.tryBlock.get());
-    result += " catch (" + node.catchVarName + ")" + formatNode(node.catchBlock.get());
+    if (node.catchBlock) {
+        result += " catch (" + node.catchVarName + ")" + formatNode(node.catchBlock.get());
+    }
+    if (node.finallyBlock) {
+        result += " finally" + formatNode(node.finallyBlock.get());
+    }
     lastFormatResult_ = result;
     return;
 }
@@ -438,9 +447,11 @@ std::string Formatter::formatUnaryOp(UnaryOp& node) {
     if (node.opType == UnaryOp::UnaryOpType::UOP_PLUS) {
         return "+" + operand;
     }
-    // FMT-03 fix: UOP_UNKNOWN 不应被格式化为 "-"
+    // BUG-FMT-P2-2 fix: UOP_UNKNOWN 输出 `/* unknown */` 注释会被 Lexer 剥离，
+    // 重新解析后丢失 UnaryOp 节点，AST 结构从 UnaryOp 变为裸 operand。
+    // 改为输出 UOP_PLUS（最接近"无操作"的语义），保持 AST 结构可重新解析。
     if (node.opType == UnaryOp::UnaryOpType::UOP_UNKNOWN) {
-        return "/* unknown */ " + operand;
+        return "+" + operand;
     }
     return "-" + operand;
 }
@@ -453,9 +464,13 @@ std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
         std::string s = v.toString();
         // BUG-F-07 fix: NaN/Infinity 经 toString 返回 "nan"/"inf"/"-inf"，
         // 附加 ".0" 会产生 "nan.0"/"inf.0" 等非合法 NumberLiteral。
-        // 这些特殊值保持原样输出，不附加 ".0"。
-        if (s == "nan" || s == "inf" || s == "-inf" ||
-            s.find('.') != std::string::npos ||
+        // BUG-FMT-P2-3 fix: MiniLang Lexer 不支持 nan/inf 字面量，直接输出
+        // "nan"/"inf" 会被重新解析为标识符（变量引用），破坏 AST 结构等价性。
+        // 改为输出 "0.0" 并附注释占位，牺牲精确往返但保持可解析性与 AST 类型一致。
+        if (s == "nan" || s == "inf" || s == "-inf") {
+            return "0.0/* " + s + " */";
+        }
+        if (s.find('.') != std::string::npos ||
             s.find('e') != std::string::npos ||
             s.find('E') != std::string::npos) {
             return s;
@@ -655,8 +670,13 @@ std::string Formatter::formatFunCall(FunCall& node) {
         // 链式调用 / 表达式调用
         std::string callee = formatNode(node.callee.get());
         // F-P2-12 fix: 移除冗余的 node.callee 二次检查（已在 if 分支内）
+        // BUG-FMT-P1-2 fix: NODE_MEMBER_ACCESS 类型的 callee 也需加括号。
+        // 原实现仅对 BINARY_OP/UNARY_OP 加括号，输出 `obj.field(args)` 会被
+        // Parser 重新解析为 MethodCall（绑定 this），而非 FunCall(callee=MemberAccess)，
+        // 破坏 AST 结构等价性与三后端语义。
         if (node.callee->nodeType == NodeType::NODE_BINARY_OP ||
-            node.callee->nodeType == NodeType::NODE_UNARY_OP)
+            node.callee->nodeType == NodeType::NODE_UNARY_OP ||
+            node.callee->nodeType == NodeType::NODE_MEMBER_ACCESS)
             callee = "(" + callee + ")";  // FMT-01 fix
         result = callee + "(";
     } else {
@@ -760,9 +780,14 @@ std::string Formatter::formatBlock(Block& node) {
     // L18 fix: 对所有块都刷新尾部注释，不仅仅是顶层块
     // BUG-F-01 fix: 多行块注释经 reindentBlockComment 重新缩进
     if (node.closingBraceLine > 0) {
-        // 非顶层块：输出 closingBraceLine 之前的注释
+        // 非顶层块：输出 closingBraceLine 及之前的注释
+        // BUG-FMT-P2-1 fix: 原实现用 `< closingBraceLine` 不消费与 '}' 同行的注释，
+        // 导致这些注释被外层 formatBlock 消费，注释位置错误（跑到外层块）。
+        // 改为 `<= closingBraceLine`：与 '}' 同行的注释在块末尾输出（'{' 之前），
+        // 虽非完美（原文是 `} // comment`，格式化后注释在 '}' 之前一行），
+        // 但保证注释留在正确的块内，不破坏 AST 结构等价性。
         while (commentIndex_ < comments_.size() &&
-               comments_[commentIndex_].line < node.closingBraceLine) {
+               comments_[commentIndex_].line <= node.closingBraceLine) {
             result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
             commentIndex_++;
         }
@@ -930,16 +955,22 @@ std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
     // 交替输出: {expr} literal
     for (size_t i = 0; i < node.expressions.size(); ++i) {
         result += '{';
-        result += formatNode(node.expressions[i].get());
-        result += '}';
-        // BUG-F-06 fix: formatNode 不消费 comments_ 数组，插值表达式行号范围内的注释
-        // 会落入外层语句的"同行尾部注释"分支被误用。跳过这些注释（推进游标但不输出）。
-        // 完整修复需重构注释游标机制（按列范围匹配），此处为部分修复。
-        int exprLine = node.expressions[i]->line;
-        while (commentIndex_ < comments_.size() &&
-               comments_[commentIndex_].line <= exprLine) {
-            ++commentIndex_;
+        // BUG-FMT-P2-4 fix: 防御性检查 expressions[i] 是否为 nullptr。
+        // 原实现直接解引用 node.expressions[i]->line，外部构造的 AST 可能含 nullptr。
+        if (node.expressions[i]) {
+            result += formatNode(node.expressions[i].get());
+            // BUG-F-06 fix / BUG-FMT-P1-1 fix: formatNode 不消费 comments_ 数组，
+            // 插值表达式行号范围内的注释会落入外层语句的"同行尾部注释"分支被误用。
+            // 原实现用 `<= exprLine` 会错误跳过与表达式同行的外层语句尾部注释
+            // （如 `var s = "hello ${x}"; // comment` 中的 `// comment`）。
+            // 改为 `< exprLine`：仅跳过严格在表达式之前的注释，保留同行注释给外层。
+            int exprLine = node.expressions[i]->line;
+            while (commentIndex_ < comments_.size() &&
+                   comments_[commentIndex_].line < exprLine) {
+                ++commentIndex_;
+            }
         }
+        result += '}';
         if (i + 1 < node.literals.size()) {
             result += escapeString(node.literals[i + 1]);
         }

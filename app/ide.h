@@ -24,6 +24,7 @@
 
 // QFluentKit 主题
 #include "FluentGlobal.h"
+#include "ToolButton.h"  // TransparentToolButton（主题切换按钮）
 
 #include "Diagnostic.h"
 #include "IdeController.h"
@@ -50,9 +51,17 @@
 #include "gui/BreakpointConditionPanel.h"
 #include "gui/ExceptionFlowPanel.h"
 #include "gui/ClosureInspectorPanel.h"
+#include "gui/LearningPathPanel.h"
+#include "gui/TokenPuzzlePanel.h"
+#include "gui/AstBuilderToyPanel.h"
+#include "gui/VmStackSandboxPanel.h"
+#include "gui/CodeJourneyInfoPanel.h"
+#include "gui/LearningHubDialog.h"
+#include "gui/TeachingPanelHeader.h"
 
 class Pivot;
 class QLabel;
+class QLineEdit;
 class ComboBox;   // QFluentKit ComboBox
 
 // ============================================================
@@ -88,6 +97,7 @@ private slots:
     void onStop();
 
     void onClearOutput();
+    void onThemeToggle();  // 亮/暗主题切换按钮
 
     void onNew();
     void onOpen();
@@ -177,6 +187,7 @@ private:
     QToolButton* titleMinBtn_ = nullptr;    // 最小化
     QToolButton* titleMaxBtn_ = nullptr;    // 最大化/还原
     QToolButton* titleCloseBtn_ = nullptr;  // 关闭
+    TransparentToolButton* themeToggleBtn_ = nullptr;  // 主题切换（亮/暗）
     ComboBox* engineCombo_ = nullptr;       // 执行引擎切换
     bool syncingViewAction_ = false;        // 防止视图菜单与面板 toggleView 递归
 
@@ -184,6 +195,7 @@ private:
     ads::CDockWidget* fileTreeDock_ = nullptr;
     ads::CDockWidget* debugPanelDock_ = nullptr;
     QTreeWidget* fileTree_ = nullptr;
+    QLineEdit* fileTreeFilterEdit_ = nullptr;  // 文件树搜索过滤框
     DebugPanel* debugPanel_ = nullptr;
 
     // 底部面板（单一 dock + Pivot 标签切换）
@@ -192,6 +204,11 @@ private:
     QStackedWidget* bottomStack_ = nullptr;
     QTextEdit* outputTextEdit_ = nullptr;
     QListWidget* errorListWidget_ = nullptr;
+    // 错误列表类型过滤按钮（可点击切换显隐某级别错误）
+    QToolButton* errFilterErrorBtn_ = nullptr;
+    QToolButton* errFilterWarningBtn_ = nullptr;
+    QToolButton* errFilterInfoBtn_ = nullptr;
+    QToolButton* errFilterHintBtn_ = nullptr;
     ReplPanel* replPanel_ = nullptr;
     bool errorPanelHasErrors_ = false;
 
@@ -256,6 +273,23 @@ private:
     ads::CDockWidget* closureInspectorDock_ = nullptr;
     ClosureInspectorPanel* closureInspectorPanel_ = nullptr;
 
+    // ---- 教学增强面板（第四档：MINILANG_IDE_IMPROVEMENT_PLAN 功能 1-6）----
+    // 功能 6：学习路径地图（中央导航枢纽，5 阶段 21 活动 + JSON 进度持久化）
+    ads::CDockWidget* learningPathDock_ = nullptr;
+    LearningPathPanel* learningPathPanel_ = nullptr;
+    // 功能 3：交互式 Token 拼图游戏（5 关卡，星级评分）
+    ads::CDockWidget* tokenPuzzleDock_ = nullptr;
+    TokenPuzzlePanel* tokenPuzzlePanel_ = nullptr;
+    // 功能 4：AST 节点搭建玩具（6 题，QTreeWidget + 工具箱）
+    ads::CDockWidget* astBuilderToyDock_ = nullptr;
+    AstBuilderToyPanel* astBuilderToyPanel_ = nullptr;
+    // 功能 5：VM 栈沙盒（5 关卡，push/pop 模拟栈状态机）
+    ads::CDockWidget* vmStackSandboxDock_ = nullptr;
+    VmStackSandboxPanel* vmStackSandboxPanel_ = nullptr;
+    // 功能 2 降级：代码生命旅程静态信息图（HTML 信息图 + 6 个跳转按钮）
+    ads::CDockWidget* codeJourneyDock_ = nullptr;
+    CodeJourneyInfoPanel* codeJourneyPanel_ = nullptr;
+
     // ---- 工具栏 ----
     QAction* runAction_ = nullptr;
     QAction* debugAction_ = nullptr;
@@ -312,6 +346,14 @@ private:
     // 第三档 P2-3 教学面板视图菜单项
     QAction* viewExceptionFlowAction_      = nullptr;
     QAction* viewClosureInspectorAction_    = nullptr;
+    // 第四档教学面板视图菜单项（功能 1-6）
+    QAction* viewLearningPathAction_      = nullptr;
+    QAction* viewTokenPuzzleAction_       = nullptr;
+    QAction* viewAstBuilderToyAction_     = nullptr;
+    QAction* viewVmStackSandboxAction_    = nullptr;
+    QAction* viewCodeJourneyAction_       = nullptr;
+    // 学习中心入口（ActivityBar + 视图菜单）
+    QAction* viewLearningHubAction_       = nullptr;
 
     // 状态栏
     QLabel* statusLineLabel_ = nullptr;
@@ -319,6 +361,7 @@ private:
     QLabel* statusSaveLabel_ = nullptr;
     QLabel* statusRunLabel_ = nullptr;
     QLabel* statusEncodingLabel_ = nullptr;  // 第八轮：文件编码显示
+    QLabel* statusEngineLabel_ = nullptr;    // 执行引擎显示
 
     // ---- 状态 ----
     QString workspaceDir_;
@@ -375,6 +418,7 @@ private:
                      DiagLevel level = DiagLevel::Error);
     void clearOutput();
     void updateErrorBadge();
+    void applyErrorFilter();   // 错误列表类型过滤
 
     // ---- 可视化 ----
     void highlightBytecodeLine(const std::string& chunkName, size_t ip);
@@ -407,8 +451,29 @@ private:
     void switchLeftToDebugPanel();
     void showAstWindow();
     void onActivityChanged(int index);
+    void onActivityChangedById(const QString& id);
     void onRightPivotChanged(const QString& routeKey);
     void onBottomPivotChanged(const QString& routeKey);
+
+    // ---- 第四档教学面板：跨面板跳转路由 ----
+    /// CodeJourneyInfoPanel 跳转按钮 → 显示对应面板 dock
+    /// panelId 取值 "editor"/"tokens"/"ast"/"ir"/"bytecode"/"output"
+    void onJumpToPanel(const QString& panelId);
+    /// LearningPathPanel 活动项点击 → 路由到对应面板 dock
+    /// activityId 取值参见 LearningPathData::activities()
+    void onActivityRequested(const QString& activityId);
+
+    // ---- 学习中心对话框（ActivityBar 「学习」入口）----
+    /// 弹出 LearningHubDialog；panelId 见 LearningHubDialog 实现
+    void showLearningHub();
+    /// LearningHubDialog 卡片点击 → 路由到对应教学面板 dock
+    void onLearningHubPanelRequested(const QString& panelId);
+
+    /// 教学面板包装器：在教学面板顶部插入 TeachingPanelHeader
+    /// panelId 用于查找帮助文案，title 为标题文本，panel 为原始面板
+    QWidget* wrapTeachingPanel(const QString& panelId,
+                                const QString& title,
+                                QWidget* panel);
 
     void showDebugButtons(bool show);
     void showVmButtons(bool show);

@@ -221,7 +221,7 @@ QToolBar {
     border: none;
     border-bottom: 1px solid #e8e8e8;
     spacing: 4px;
-    padding: 4px 4px;
+    padding: 4px 8px;
 }
 QToolBar QToolButton {
     padding: 0;
@@ -385,7 +385,6 @@ QPushButton#welcomePrimaryBtn {
     border-radius: 6px;
     font-size: 14px;
     font-weight: 500;
-    icon-size: 16px;
 }
 QPushButton#welcomePrimaryBtn:hover {
     background: #106EBE;
@@ -405,7 +404,6 @@ QPushButton#welcomeSecondaryBtn {
     border-radius: 6px;
     font-size: 14px;
     font-weight: 500;
-    icon-size: 16px;
 }
 QPushButton#welcomeSecondaryBtn:hover {
     background: rgba(0,120,212,0.08);
@@ -511,7 +509,6 @@ QTabWidget#editorTabWidget::pane {
 QTabWidget#editorTabWidget QTabBar {
     background: #efefef;
     border-bottom: none;
-    qproperty-drawBase: 0;
 }
 QTabWidget#editorTabWidget QTabBar::tab {
     background: transparent;

@@ -1,5 +1,7 @@
 #include "gui/ReplPanel.h"
 #include "gui/GuiTextUtils.h"  // P1-12 fix: 共享文本追加逻辑
+#include "gui/ErrorHintEngine.h"  // 功能 12：错误信息友好化增强
+#include "gui/MagicCommands.h"  // 功能 11：REPL %magic 命令
 #include "app/IdeController.h"  // B6 fix: 通过业务层调用 retainReplAst/executeRepl
 #include "common/Logger.h"  // 析构超时日志
 #include "interpreter/Interpreter.h"  // Value/RuntimeError 类型
@@ -274,6 +276,20 @@ void ReplPanel::onReturnPressed() {
 }
 
 void ReplPanel::executeLine(const QString& line) {
+    // 功能 11：REPL %magic 命令检测——在所有状态检查之前拦截
+    // 检测 % 前缀（允许前导空白），路由到 MagicCommands::handle
+    {
+        std::string src = line.toStdString();
+        size_t firstNonSpace = src.find_first_not_of(" \t\r\n");
+        if (firstNonSpace != std::string::npos && src[firstNonSpace] == '%') {
+            std::string result = MagicCommands::handle(src, controller_);
+            if (!result.empty()) {
+                appendOutput(QString::fromStdString(result));
+            }
+            return;
+        }
+    }
+
     if (!controller_) {
         appendError("解释器未初始化");
         return;
@@ -295,6 +311,13 @@ void ReplPanel::executeLine(const QString& line) {
         appendError("程序正在运行，请先停止后再使用 REPL");
         return;
     }
+    // BUG-REPL-AUDIT-14 fix: VM RUN 模式异步执行期间 isRunning() 仅反映 workerMgr 状态，
+    // VM RUN 仍可能活跃。prepareRun 已检查 vmStepper_.isRunning() 并拒绝，REPL 路径
+    // 需对称检查，避免 VM RUN 期间 REPL 启动并发访问 Compiler/CompileResult 共享状态。
+    if (controller_->isVmRunning()) {
+        appendError("VM RUN 模式正在执行，请先停止 VM 再使用 REPL");
+        return;
+    }
 
     // AUDIT-REPL-5 fix: 移除误导性死代码注释"确保语句以分号结尾（简单表达式除外）"。
     // 实际无任何分号补全逻辑——Parser::expressionStatement 强制 consume(TK_SEMICOLON)，
@@ -307,7 +330,9 @@ void ReplPanel::executeLine(const QString& line) {
     try {
         tokens = lexer.scan(source);
     } catch (const std::exception& e) {
-        appendError(QString("词法错误: %1").arg(e.what()));
+        appendError(QString("词法错误: %1")
+                        .arg(QString::fromStdString(
+                            ErrorHintEngine::enrichErrorMessage(e.what(), "parse", {}))));
         return;
     }
 
@@ -316,7 +341,8 @@ void ReplPanel::executeLine(const QString& line) {
         if (tok.type == TokenType::TK_ERROR) {
             appendError(QString("词法错误 (行 %1, 列 %2): %3")
                             .arg(tok.line).arg(tok.column)
-                            .arg(QString::fromStdString(tok.lexeme)));
+                            .arg(QString::fromStdString(
+                                ErrorHintEngine::enrichErrorMessage(tok.lexeme, "parse", {}))));
             return;
         }
     }
@@ -328,7 +354,9 @@ void ReplPanel::executeLine(const QString& line) {
         ast = parser.parse(tokens);
     } catch (const ParseError& e) {
         appendError(QString("语法错误 (行 %1, 列 %2): %3")
-                        .arg(e.line).arg(e.column).arg(e.what()));
+                        .arg(e.line).arg(e.column)
+                        .arg(QString::fromStdString(
+                            ErrorHintEngine::enrichErrorMessage(e.what(), "parse", {}))));
         return;
     }
 

@@ -145,6 +145,30 @@ public:
         }
     }
 
+    // BUG-FE-AUDIT-3 fix: try/catch/finally 三个块均为独立作用域，需递归检查
+    // 其中 VarDecl 的字面量类型注解冲突。原实现未 override，走 DefaultVisitor
+    // no-op，导致 try 块成为类型检查"黑洞"。
+    void visitTryStmt(TryStmt& node) override {
+        auto saved = varTypes;
+        if (node.tryBlock) node.tryBlock->accept(*this);
+        varTypes = saved;
+        // catch 块引入新作用域，catchVarName 是局部变量（无类型注解，不需登记）
+        if (node.catchBlock) node.catchBlock->accept(*this);
+        varTypes = saved;
+        if (node.finallyBlock) node.finallyBlock->accept(*this);
+        varTypes = std::move(saved);
+    }
+
+    // BUG-FE-AUDIT-4 fix: export 包装的声明需递归检查，否则 export var x: int = "str"
+    // 这类明显的类型注解冲突不会在编译期被捕获。
+    void visitExportStmt(ExportStmt& node) override {
+        if (node.declaration) node.declaration->accept(*this);
+    }
+
+    void visitThrowStmt(ThrowStmt& node) override {
+        if (node.expression) node.expression->accept(*this);
+    }
+
 private:
     // 字面量类型兼容性检查（编译期，仅字面量）
     static bool typeMatchLiteral(const std::string& actual, const std::string& annotation) {

@@ -43,6 +43,7 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["try"]     = TokenType::TK_TRY;
         m["catch"]   = TokenType::TK_CATCH;
         m["throw"]   = TokenType::TK_THROW;
+        m["finally"] = TokenType::TK_FINALLY;  // BUG-AUDIT-FINALLY-1
         m["import"]  = TokenType::TK_IMPORT;
         m["from"]    = TokenType::TK_FROM;
         m["export"]  = TokenType::TK_EXPORT;
@@ -246,13 +247,16 @@ void Lexer::scanToken() {
             tok.type = TokenType::TK_LINE_COMMENT;
             tok.lexeme = commentText;
             tok.line = line_;
-            tok.column = static_cast<int>(commentStart - lineStart_) + 1;
+            // BUG-LEX-AUDIT-3 fix: 统一用 UTF-8 感知 columnAt 计算列号，
+            // 与 addToken() 路径保持一致（D11 fix 遗漏了注释 token 路径）。
+            tok.column = columnAt(static_cast<int>(commentStart));
             tokens_.push_back(tok);
         } else if (match('*')) {
             // 块注释 /* ... */（支持嵌套）
             size_t commentStart = start_;
             int startLine = line_;
-            int startCol = static_cast<int>(commentStart - lineStart_) + 1;
+            // BUG-LEX-AUDIT-3 fix: 同行注释，统一用 columnAt
+            int startCol = columnAt(static_cast<int>(commentStart));
             int depth = 1;  // 嵌套深度
             while (!isAtEnd() && depth > 0) {
                 if (peek() == '/' && peekNext() == '*') {
@@ -482,12 +486,16 @@ void Lexer::string() {
 
 void Lexer::string(bool isInterp) {
     int startLine = line_;
-    int startCol = static_cast<int>(start_ - lineStart_) + 1;
+    // BUG-LEX-AUDIT-3 fix: 统一用 UTF-8 感知 columnAt 计算列号，
+    // 与 addToken() 路径保持一致（D11 fix 仅改了 addToken，遗漏直接 emplace_back 路径）。
+    int startCol = columnAt(start_);
     std::string value;
     // P-07 fix: 预估字符串容量，避免逐字符 += 反复 realloc
-    // P0 fix: 限制 reserve 上限为 1MB，防止未闭合字符串触发 GB 级内存分配
+    // P0 fix: 限制 reserve 上限，防止未闭合字符串触发 GB 级内存分配
+    // BUG-LEX-AUDIT-5 fix: 上限从 1MB 降为 64KB。原 1MB 在 MAX_INTERP_DEPTH=64 嵌套场景
+    // 峰值 reserved 达 64MB 但大多未使用；64KB 上限下嵌套峰值仅 4MB，平衡 OOM 防护与内存压力。
     size_t reserveCap = current_ < source_.size() ? (source_.size() - current_) : 0;
-    if (reserveCap > 1024 * 1024) reserveCap = 1024 * 1024;
+    if (reserveCap > 64 * 1024) reserveCap = 64 * 1024;
     value.reserve(reserveCap);
 
     while (!isAtEnd() && peek() != '"') {
@@ -504,21 +512,47 @@ void Lexer::string(bool isInterp) {
             // 如果是插值字符串的第一个片段，用 TK_STRING_LIT；后续片段用 TK_STRING_PART
             // 但为简化 Parser 逻辑，统一：插值字符串中所有文本片段都用 TK_STRING_PART，
             // 仅当整个字符串无插值时用 TK_STRING_LIT（由下方闭合处判断）
+            // BUG-LEX-AUDIT-4 fix: 直接 emplace_back 绕过 scanToken() 的 MAX_TOKEN_COUNT 检查，
+            // 需在此显式检查，防止含大量小插值的字符串绕过 DoS 防护。
+            if (tokens_.size() >= MAX_TOKEN_COUNT) {
+                diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                                      "，源代码可能包含过多 token",
+                                      startLine, startCol, DiagSource::Lexer);
+                return;
+            }
             std::string text(source_, start_, current_ - start_);
             tokens_.emplace_back(partType, std::move(text), std::move(value), startLine, startCol);  // A1 fix: variant string
 
+            // 发出 TK_INTERP_START
+            // BUG-LEX-AUDIT-2 fix: 在 advance() 消耗 '{' 之前记录列号，
+            // 原实现 advance 后用 start_ 计算，但 start_ 仍指向片段起始而非 '{' 位置。
+            int braceLine = line_;
+            int braceCol = columnAt(current_);
             // 消耗 {
             advance();
-            // 发出 TK_INTERP_START
-            int braceLine = line_;
-            int braceCol = static_cast<int>(start_ - lineStart_) + 1;
+            if (tokens_.size() >= MAX_TOKEN_COUNT) {  // BUG-LEX-AUDIT-4
+                diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                                      "，源代码可能包含过多 token",
+                                      braceLine, braceCol, DiagSource::Lexer);
+                return;
+            }
             tokens_.emplace_back(TokenType::TK_INTERP_START, "{", std::monostate{}, braceLine, braceCol);  // A1 fix: variant monostate
 
             // 扫描表达式直到 }（支持嵌套大括号，如对象字面量）
             // 更新 start_ 到表达式起始位置，确保 scanToken() 的 addToken() 正确提取 lexeme
             start_ = current_;
             int braceDepth = 1;
+            // BUG-LEX-AUDIT-1 fix: 内层插值循环必须检查 MAX_TOKEN_COUNT。
+            // 原实现仅 scanToken() 入口检查，但检查触发时 scanToken() "返回不前进"，
+            // 而 '{' 与 default 分支只调用 scanToken() 不调用 advance()，形成无限循环。
+            // 修复：循环体首行检查并 return，让 string() 退出，scan() 主循环也 break。
             while (!isAtEnd() && braceDepth > 0) {
+                if (tokens_.size() >= MAX_TOKEN_COUNT) {
+                    diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                                          "，源代码可能包含过多 token",
+                                          line_, currentColumn(), DiagSource::Lexer);
+                    return;
+                }
                 // 跳过空白
                 if (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') {
                     advance();
@@ -531,9 +565,16 @@ void Lexer::string(bool isInterp) {
                 } else if (peek() == '}') {
                     braceDepth--;
                     if (braceDepth == 0) {
-                        advance();  // 消耗 }
+                        // BUG-LEX-AUDIT-2 fix: 在 advance() 消耗 '}' 之前记录列号。
                         int endLine = line_;
-                        int endCol = static_cast<int>(start_ - lineStart_) + 1;
+                        int endCol = columnAt(current_);
+                        advance();  // 消耗 }
+                        if (tokens_.size() >= MAX_TOKEN_COUNT) {  // BUG-LEX-AUDIT-4
+                            diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                                                  "，源代码可能包含过多 token",
+                                                  endLine, endCol, DiagSource::Lexer);
+                            return;
+                        }
                         tokens_.emplace_back(TokenType::TK_INTERP_END, "}", std::monostate{}, endLine, endCol);  // A1 fix: variant monostate
                         break;
                     }
@@ -617,6 +658,13 @@ void Lexer::string(bool isInterp) {
 
     // F7: 如果是插值字符串的后续片段，用 TK_STRING_PART；否则用 TK_STRING_LIT
     TokenType finalType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
+    // BUG-LEX-AUDIT-4 fix: 末尾片段也需检查 MAX_TOKEN_COUNT
+    if (tokens_.size() >= MAX_TOKEN_COUNT) {
+        diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                              "，源代码可能包含过多 token",
+                              startLine, startCol, DiagSource::Lexer);
+        return;
+    }
     std::string text(source_, start_, current_ - start_);
     tokens_.emplace_back(finalType, std::move(text), std::move(value), startLine, startCol);  // A1 fix: variant string
 }

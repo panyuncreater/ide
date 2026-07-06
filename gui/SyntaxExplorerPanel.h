@@ -28,6 +28,7 @@ struct SyntaxProduction {
     std::string ebnf;          // EBNF 形式（如 'ifStmt := "if" "(" expr ")" block ("else" block)?'）
     std::string description;   // 文字说明
     std::string sampleCode;    // 可加载到样例代码编辑器的代码
+    std::string naturalLanguage; // F8: 自然语言描述（人话翻译，含示例和注意事项）
 };
 
 class SyntaxProductionLibrary {
@@ -42,6 +43,13 @@ public:
 
     void setController(IdeController* controller) { controller_ = controller; }
 
+    /// F8: 视图模式枚举
+    enum class ViewMode {
+        EBNF,        ///< 仅 EBNF 视图
+        Natural,     ///< 仅自然语言视图
+        Mixed        ///< 混合视图（默认）
+    };
+
 signals:
     /// 请求将样例代码加载到主编辑器
     void loadSampleRequested(const QString& code);
@@ -49,6 +57,7 @@ signals:
 private slots:
     void onItemSelected(int row);
     void onRunSample();
+    void onViewModeChanged(int mode);  // F8: 视图切换
 
 private:
     IdeController* controller_ = nullptr;
@@ -60,8 +69,15 @@ private:
     QPushButton* runBtn_       = nullptr;
     QPushButton* loadBtn_      = nullptr;
 
+    // F8: 视图模式切换按钮
+    QPushButton* ebnfBtn_       = nullptr;
+    QPushButton* naturalBtn_    = nullptr;
+    QPushButton* mixedBtn_      = nullptr;
+    ViewMode     viewMode_      = ViewMode::Mixed;  // 默认混合视图
+
     int currentItemIndex_ = -1;
 
     void populateItemList();
     void showCurrentItem();
+    void updateViewModeButtons();  // F8: 同步按钮选中态
 };

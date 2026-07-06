@@ -26,6 +26,9 @@
 #include <cmath>
 #include <sstream>
 
+#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
+#include "Label.h"        // QFluentKit（CaptionLabel）
+
 #ifdef MINILANG_HAVE_QTCHARTS
 // C2: QtCharts 头文件 — 仅在编译时启用 MINILANG_USE_QTCHARTS 时引入
 #include <QtCharts/QChartView>
@@ -190,8 +193,8 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent)
 
     // 顶部按钮栏
     auto* btnBar = new QHBoxLayout;
-    runProfileBtn_ = new QPushButton(QString::fromUtf8("运行剖析"), this);
-    statusLabel_ = new QLabel(QString::fromUtf8("请选择场景"), this);
+    runProfileBtn_ = new PrimaryPushButton(QString::fromUtf8("运行剖析"), this);
+    statusLabel_ = new CaptionLabel(QString::fromUtf8("请选择场景"), this);
     btnBar->addWidget(runProfileBtn_);
     btnBar->addStretch();
     btnBar->addWidget(statusLabel_);
@@ -480,7 +483,8 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
 
     runProfileBtn_->setEnabled(false);
     statusLabel_->setText(QString::fromUtf8("运行中..."));
-    QApplication::processEvents();
+    // BUG-GUI-AUDIT-1 fix attempt: Qt 6 已移除通用 ExcludeTimers flag，保持 ExcludeUserInputEvents。
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // 先 lex + parse 源码
     Lexer lexer;

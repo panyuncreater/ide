@@ -121,7 +121,13 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
         if (scopeStack_.size() == 1 && renameMap_.count(n->name)) {
             n->name = renameMap_[n->name];
         }
-        defineInCurrentScope(n->name);
+        // BUG-INH-AUDIT-5 fix: 类字段声明（inClassBody_=true）不登记到作用域。
+        // 字段只能通过 this.field 访问（MemberAccess），不参与变量名解析。
+        // 原实现将字段名登记到类作用域，遮蔽同名模块顶层变量，导致方法体内
+        // 引用该变量时不重命名，运行时报"未定义变量"。
+        if (!inClassBody_) {
+            defineInCurrentScope(n->name);
+        }
         if (n->initializer) renameInNode(n->initializer.get());
         break;
     }
@@ -132,10 +138,15 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
         }
         defineInCurrentScope(n->name);
         // 函数体进入新作用域，参数登记到函数作用域
+        // BUG-INH-AUDIT-5 fix: 进入函数体后不再处于类成员上下文
+        // （方法内的局部变量是普通变量，应正常登记到作用域）
+        bool savedInClassBody = inClassBody_;
+        inClassBody_ = false;
         pushScope();
         for (const auto& param : n->params) defineInCurrentScope(param);
         if (n->body) renameInNode(n->body.get());
         popScope();
+        inClassBody_ = savedInClassBody;
         // 默认参数表达式在函数作用域外求值，但也需要重命名其中的引用
         for (const auto& dv : n->defaultValues) {
             if (dv) renameInNode(dv.get());
@@ -156,9 +167,13 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
         // 类成员（方法）进入新作用域，this 隐式绑定
         pushScope();
         defineInCurrentScope("this");
+        // BUG-INH-AUDIT-5 fix: 标记进入类成员上下文，字段声明不登记到作用域
+        bool savedInClassBody = inClassBody_;
+        inClassBody_ = true;
         for (const auto& m : n->members) {
             if (m) renameInNode(m.get());
         }
+        inClassBody_ = savedInClassBody;
         popScope();
         break;
     }
@@ -301,6 +316,10 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
         if (!n->catchVarName.empty()) defineInCurrentScope(n->catchVarName);
         if (n->catchBlock) renameInNode(n->catchBlock.get());
         popScope();
+        // BUG-FE-AUDIT-2 fix: finally 块不引入新作用域（无 catch 变量），
+        // 但其内部对模块非导出顶层变量的引用必须重命名，否则 VM/IR 路径
+        // 模块隔离在 finally 块上失效，运行时报"未定义变量"。
+        if (n->finallyBlock) renameInNode(n->finallyBlock.get());
         break;
     }
     case NodeType::NODE_THROW_STMT: {

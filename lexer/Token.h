@@ -16,7 +16,7 @@ enum class TokenType {
     TK_VAR, TK_FUN, TK_IF, TK_ELSE, TK_WHILE, TK_FOR, TK_RETURN,
     TK_TRUE, TK_FALSE, TK_AND, TK_OR, TK_NOT, TK_PRINT,
     TK_BREAK, TK_CONTINUE,
-    TK_TRY, TK_CATCH, TK_THROW,
+    TK_TRY, TK_CATCH, TK_THROW, TK_FINALLY,  // BUG-AUDIT-FINALLY-1: finally 块语法
     TK_IMPORT, TK_FROM, TK_EXPORT,
     // 类型关键字
     TK_INT, TK_FLOAT, TK_BOOL, TK_STRING_TYPE,
@@ -105,6 +105,7 @@ struct Token {
         case TokenType::TK_TRY:         return "TRY";
         case TokenType::TK_CATCH:       return "CATCH";
         case TokenType::TK_THROW:       return "THROW";
+        case TokenType::TK_FINALLY:     return "FINALLY";
         case TokenType::TK_IMPORT:      return "IMPORT";
         case TokenType::TK_FROM:        return "FROM";
         case TokenType::TK_EXPORT:      return "EXPORT";

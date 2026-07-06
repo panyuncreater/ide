@@ -1,0 +1,53 @@
+// math_helpers.mini - 数学辅助模块
+// 覆盖特性：export 导出函数/变量、模块隔离（非导出名不可见）
+// ============================================================
+
+// 导出的常量
+export var E = 2.71828182846;
+export var PHI = 1.61803398875;
+
+// 导出的函数：幂运算（整数指数）
+export fun power(base, exp) {
+    var result = 1;
+    for (var i = 0; i < exp; i = i + 1) {
+        result = result * base;
+    }
+    return result;
+}
+
+// 导出的函数：绝对值
+export fun abs(x) {
+    if (x < 0) { return -x; }
+    return x;
+}
+
+// 导出的函数：最大值
+export fun max(a, b) {
+    if (a >= b) { return a; }
+    return b;
+}
+
+// 导出的函数：最小值
+export fun min(a, b) {
+    if (a <= b) { return a; }
+    return b;
+}
+
+// 非导出辅助函数（模块私有，外部不可见）
+fun validatePositive(n) {
+    if (n < 0) {
+        throw "Expected positive number, got " + n;
+    }
+    return n;
+}
+
+// 导出的函数：使用私有辅助
+export fun safeSqrt(x) {
+    var v = validatePositive(x);
+    // 牛顿迭代法近似平方根
+    var guess = v / 2.0;
+    for (var i = 0; i < 20; i = i + 1) {
+        guess = (guess + v / guess) / 2.0;
+    }
+    return guess;
+}

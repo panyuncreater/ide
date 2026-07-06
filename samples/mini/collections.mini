@@ -1,0 +1,66 @@
+// collections.mini - 集合操作演示
+// 覆盖特性：数组 [] 字面量、字典 {} 字面量、push/pop/len/has
+//           数组索引访问、字典键值访问
+// ============================================================
+
+// ---- 数组操作 ----
+print("=== 数组操作 ===");
+var fruits = ["apple", "banana", "cherry"];
+print("fruits: {fruits}");
+print("len: {fruits.len()}");
+
+// 追加元素
+fruits.push("durian");
+print("after push: {fruits}");
+
+// 弹出末尾元素
+var last = fruits.pop();
+print("popped: {last}");
+print("after pop: {fruits}");
+
+// 索引访问
+print("fruits[0] = {fruits[0]}");
+print("fruits[2] = {fruits[2]}");
+
+// ---- 字典操作 ----
+print("");
+print("=== 字典操作 ===");
+var person = {"name": "Alice", "age": 30, "city": "Beijing"};
+print("person: {person}");
+print("name = {person["name"]}");
+print("has 'age': {person.has("age")}");
+print("has 'email': {person.has("email")}");
+
+// 新增键值
+person["email"] = "alice@example.com";
+print("after add email: {person}");
+
+// ---- 嵌套结构 ----
+print("");
+print("=== 嵌套结构 ===");
+var matrix = [[1, 2], [3, 4], [5, 6]];
+for (var i = 0; i < matrix.len(); i = i + 1) {
+    print("row {i}: {matrix[i]}");
+}
+
+// 预期输出：
+// === 数组操作 ===
+// fruits: [apple, banana, cherry]
+// len: 3
+// after push: [apple, banana, cherry, durian]
+// popped: durian
+// after pop: [apple, banana, cherry]
+// fruits[0] = apple
+// fruits[2] = cherry
+//
+// === 字典操作 ===
+// person: {name: Alice, age: 30, city: Beijing}
+// name = Alice
+// has 'age': true
+// has 'email': false
+// after add email: {name: Alice, age: 30, city: Beijing, email: alice@example.com}
+//
+// === 嵌套结构 ===
+// row 0: [1, 2]
+// row 1: [3, 4]
+// row 2: [5, 6]

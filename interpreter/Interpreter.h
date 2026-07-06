@@ -117,6 +117,15 @@ public:
     /// 回调接收模块路径，返回模块源代码内容。若模块不存在则返回空字符串。
     void setModuleLoader(std::function<std::string(const std::string&)> loader);
 
+    /// BUG-REPL-AUDIT-9 fix: 检查是否已设置模块加载器。
+    /// REPL 路径据此判断是否需要补设 loader（避免覆盖 Run 已建立的 loader/baseDir）。
+    bool hasModuleLoader() const;
+
+    /// BUG-REPL-AUDIT-1 fix: 设置模块文件 mtime 检查回调（用于模块缓存失效）
+    /// 回调接收模块路径，返回文件的最后修改时间（毫秒时间戳，0 表示文件不存在或无法获取）。
+    /// 若未设置，模块缓存不做 mtime 检查（保持原有行为，适用于非 REPL 场景）。
+    void setModuleMtimeChecker(std::function<int64_t(const std::string&)> checker);
+
     /// F12: 设置当前文件路径（用于解析相对 import 路径）
     void setCurrentFilePath(const std::string& path);
 
@@ -171,11 +180,13 @@ public:
         }
         moduleCache_.erase(normalized);
         moduleExports_.erase(normalized);
+        moduleMtimes_.erase(normalized);  // BUG-REPL-AUDIT-1 fix
     }
     /// 清除所有模块缓存
     void clearAllModuleCache() {
         moduleCache_.clear();
         moduleExports_.clear();
+        moduleMtimes_.clear();  // BUG-REPL-AUDIT-1 fix
     }
 
     /// 请求中止当前执行（REPL 超时/关闭时调用）
@@ -246,6 +257,8 @@ private:
     std::function<void(const std::string&)> outputCallback_; // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     std::function<std::string(const std::string&)> moduleLoader_; // F12: 模块加载回调
+    // BUG-REPL-AUDIT-1 fix: 模块文件 mtime 检查回调
+    std::function<int64_t(const std::string&)> moduleMtimeChecker_;
     // A6 fix: callback 跨线程 mutex 保护。同一 Interpreter 实例被 worker 线程（execute）
     // 和主线程（REPL/条件断点求值/callback 设置）同时访问，std::function 成员无 mutex
     // 保护会导致数据竞争。setter 加锁写入，invocation 加锁拷贝后解锁调用（避免持锁回调）。
@@ -258,6 +271,8 @@ private:
     size_t lastAsciiStrLen_ = 0;
     bool lastAsciiStrIsAscii_ = false;
     std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache_; // F12: 模块缓存
+    // BUG-REPL-AUDIT-1 fix: 模块文件 mtime 缓存，用于检测文件修改后缓存失效
+    std::unordered_map<std::string, int64_t> moduleMtimes_;
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_; // F12: 模块导出名称缓存
     std::vector<std::string> moduleLoadingStack_;             // F12: 模块加载栈（顺序管理 + 深度保护）
     std::unordered_set<std::string> moduleLoadingSet_;        // D19 fix: 模块加载集合（O(1) 循环依赖检测，与 moduleLoadingStack_ 同步维护）

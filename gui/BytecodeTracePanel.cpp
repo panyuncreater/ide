@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "gui/BytecodeTracePanel.h"
+#include "gui/PanelAnimator.h"
 #include "app/IdeController.h"
 #include "interpreter/Value.h"
 
@@ -13,6 +14,8 @@
 #include <QTableWidgetItem>
 #include <QTimer>
 #include <sstream>
+
+#include "Label.h"   // QFluentKit（CaptionLabel）
 
 // ============================================================
 // BytecodeTraceLibrary — 静态 OpCode 教学库
@@ -161,8 +164,8 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     stack_->addWidget(libraryPage);
     outer->addWidget(stack_, 1);
 
-    connect(pageTraceBtn_,   &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); });
-    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageTraceBtn_->setChecked(false); });
+    connect(pageTraceBtn_,   &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
+    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageTraceBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
 
     // 自动捕获通过轮询定时器实现（500ms 间隔，VM 暂停时由用户手动按"立即捕获"按钮或开启自动）
     autoTimer_ = new QTimer(this);
@@ -178,7 +181,7 @@ void BytecodeTracePanel::buildTracePage(QWidget* host) {
     v->setSpacing(4);
 
     auto* bar = new QHBoxLayout;
-    liveStatusLabel_  = new QLabel(tr("状态：未初始化"));
+    liveStatusLabel_  = new CaptionLabel(tr("状态：未初始化"));
     captureBtn_       = new QPushButton(tr("立即捕获"));
     autoCaptureCheck_ = new QCheckBox(tr("自动捕获（VM 暂停时）"));
     clearBtn_          = new QPushButton(tr("清空"));
