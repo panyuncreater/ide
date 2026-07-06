@@ -59,6 +59,10 @@ private slots:
     void onResetProgress();
     void onActivityClicked(const QString& activityId);
 
+protected:
+    // M9: 键盘导航 — Up/Down 在已解锁活动行间循环，Enter 触发当前行点击
+    void keyPressEvent(QKeyEvent* event) override;
+
 private:
     // 顶部
     QProgressBar* overallProgress_ = nullptr;
@@ -72,6 +76,12 @@ private:
     // 底部
     QPushButton* refreshBtn_ = nullptr;
     QPushButton* resetBtn_   = nullptr;
+
+    // M9: 键盘导航状态——仅收集已解锁的活动行
+    QList<QPushButton*> activityRows_;
+    int                 currentNavIndex_ = -1;
+    QString             highlightedSavedStyle_;
+    void highlightActivityRow(int idx);
 
     // 阶段颜色（绿/黄/蓝/紫/红）
     static QString stageColor(int stage);

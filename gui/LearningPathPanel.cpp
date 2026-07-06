@@ -25,24 +25,21 @@
 #include <QFrame>
 #include <QMessageBox>
 #include <QSizePolicy>
+#include <QKeyEvent>
 
 #include <sstream>
 
 #include "PushButton.h"   // QFluentKit（PrimaryPushButton）
 #include "Label.h"        // QFluentKit（StrongBodyLabel）
+#include "gui/TeachingTheme.h"  // learningStageColor() 5 阶段统一配色
 
 // ============================================================
 // 阶段颜色与标题
+// 阶段色统一走 TeachingTheme::learningStageColor()，保证
+// LearningPathPanel / WelcomeWizard Step 4 / CodeJourneyInfoPanel 三处一致
 // ============================================================
 QString LearningPathPanel::stageColor(int stage) {
-    switch (stage) {
-        case 0: return QString::fromUtf8("#4CAF50"); // 绿
-        case 1: return QString::fromUtf8("#FFC107"); // 黄
-        case 2: return QString::fromUtf8("#2196F3"); // 蓝
-        case 3: return QString::fromUtf8("#9C27B0"); // 紫
-        case 4: return QString::fromUtf8("#F44336"); // 红
-        default: return QString::fromUtf8("#9E9E9E");
-    }
+    return TeachingTheme::learningStageColor(stage).name();
 }
 
 QString LearningPathPanel::stageTitle(int stage) {
@@ -61,6 +58,9 @@ QString LearningPathPanel::stageTitle(int stage) {
 // ============================================================
 LearningPathPanel::LearningPathPanel(QWidget* parent)
     : QWidget(parent) {
+
+    // M9: 让面板可接收键盘焦点，以支持 Up/Down/Enter 键盘导航
+    setFocusPolicy(Qt::StrongFocus);
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
@@ -115,6 +115,11 @@ LearningPathPanel::LearningPathPanel(QWidget* parent)
 // 刷新整个面板
 // ============================================================
 void LearningPathPanel::refresh() {
+    // M9: 清空键盘导航状态（旧 row 即将被销毁，引用不再有效）
+    activityRows_.clear();
+    currentNavIndex_ = -1;
+    highlightedSavedStyle_.clear();
+
     // 清空旧的阶段卡片（保留末尾的 stretch）
     while (stagesLayout_->count() > 1) {
         QLayoutItem* item = stagesLayout_->takeAt(0);
@@ -294,9 +299,61 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
         connect(row, &QPushButton::clicked, this, [this, actId]() {
             onActivityClicked(actId);
         });
+        // M9: 收集到键盘导航列表中（仅已解锁项可被导航选中）
+        activityRows_.append(row);
     }
 
     return row;
+}
+
+// ============================================================
+// M9: 键盘导航 — 高亮指定索引的活动行
+// ============================================================
+void LearningPathPanel::highlightActivityRow(int idx) {
+    // 还原上一行样式
+    if (currentNavIndex_ >= 0 && currentNavIndex_ < activityRows_.size()) {
+        QPushButton* prev = activityRows_[currentNavIndex_];
+        prev->setProperty("navHighlight", false);
+        prev->setStyleSheet(highlightedSavedStyle_);
+    }
+    currentNavIndex_ = idx;
+    if (idx >= 0 && idx < activityRows_.size()) {
+        QPushButton* cur = activityRows_[idx];
+        highlightedSavedStyle_ = cur->styleSheet();
+        // 在原样式后追加蓝色边框高亮规则（属性选择器，仅当 navHighlight=true 时生效）
+        cur->setProperty("navHighlight", true);
+        cur->setStyleSheet(highlightedSavedStyle_ +
+            " QPushButton[navHighlight=\"true\"] { border: 2px solid #2196F3; border-radius: 4px; }");
+        // 滚动到可见
+        scrollArea_->ensureWidgetVisible(cur);
+    }
+}
+
+// ============================================================
+// M9: 键盘导航 — Up/Down 切换行，Enter 触发点击
+// ============================================================
+void LearningPathPanel::keyPressEvent(QKeyEvent* event) {
+    if (!activityRows_.isEmpty()) {
+        if (event->key() == Qt::Key_Down) {
+            int next = (currentNavIndex_ < 0) ? 0
+                       : (currentNavIndex_ + 1) % activityRows_.size();
+            highlightActivityRow(next);
+            return;
+        }
+        if (event->key() == Qt::Key_Up) {
+            int prev = (currentNavIndex_ < 0) ? activityRows_.size() - 1
+                       : (currentNavIndex_ - 1 + activityRows_.size()) % activityRows_.size();
+            highlightActivityRow(prev);
+            return;
+        }
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            if (currentNavIndex_ >= 0 && currentNavIndex_ < activityRows_.size()) {
+                activityRows_[currentNavIndex_]->click();
+                return;
+            }
+        }
+    }
+    QWidget::keyPressEvent(event);
 }
 
 // ============================================================

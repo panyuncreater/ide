@@ -172,6 +172,9 @@ add_executable(minilang_tests
     # 功能 11 测试文件（MagicCommands.cpp 已在 minilang_core 的 CORE_SOURCES 中，
     # 仅依赖 IdeController 内联方法 + minilang_core 符号，测试目标可安全链接）
     ${CMAKE_CURRENT_SOURCE_DIR}/TestMagicCommandsAudit.cpp
+    # Markdown 渲染器测试（MarkdownRenderer.cpp 已在上方显式加入测试目标）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestMarkdownRendererAudit.cpp
+    ${MINILANG_ROOT_DIR}/gui/MarkdownRenderer.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE

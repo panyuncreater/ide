@@ -4,6 +4,7 @@
 
 #include "gui/CallStackPanel.h"
 #include "gui/PanelAnimator.h"
+#include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
 #include "interpreter/Value.h"
 #include "debug/DebugTypes.h"
@@ -25,51 +26,51 @@ const std::vector<CallStackScenario>& CallStackLibrary::scenarios() {
     static const std::vector<CallStackScenario> kScenarios = {
         CallStackScenario{
             "simple-call",
-            "简单函数调用",
-            "顶层调用 foo()，栈只有 2 帧：main + foo。",
+            "📞 简单函数调用",
+            "📞 顶层调用 foo()，栈只有 2 帧：main + foo。",
             "fun foo(n) { return n + 1; }\nprint(foo(10));\n",
             {"<main>", "foo"},
-            "最基础的调用栈形态：main 调用 foo，foo 返回后栈帧弹出。"
+            "💡 最基础的调用栈形态：main 调用 foo，foo 返回后栈帧弹出。"
         },
         CallStackScenario{
             "recursion",
-            "递归调用（fib）",
-            "fib(5) 递归展开，每层调用产生一个新栈帧，最大深度等于入参。",
+            "🔄 递归调用（fib）",
+            "🔄 fib(5) 递归展开，每层调用产生一个新栈帧，最大深度等于入参。",
             "fun fib(n) {\n  if (n < 2) return n;\n  return fib(n-1) + fib(n-2);\n}\nprint(fib(5));\n",
             {"<main>", "fib(5)", "fib(4)", "fib(3)", "fib(2)", "fib(1)"},
-            "递归调用栈：每一帧持有独立的 n 值，递归返回时帧逐层弹出。栈深度等于递归深度，过深会触发 MAX_RECURSION_DEPTH=256 保护。"
+            "💡 递归调用栈：每一帧持有独立的 n 值，递归返回时帧逐层弹出。栈深度等于递归深度，过深会触发 MAX_RECURSION_DEPTH=256 保护。"
         },
         CallStackScenario{
             "closure-capture",
-            "闭包 upvalue 捕获",
-            "makeCounter 返回闭包，闭包帧捕获外层 count 变量。",
+            "📦 闭包 upvalue 捕获",
+            "📦 makeCounter 返回闭包，闭包帧捕获外层 count 变量。",
             "fun makeCounter() {\n  var count = 0;\n  return fun() { count = count + 1; return count; };\n}\nvar c = makeCounter();\nprint(c());\nprint(c());\n",
             {"<main>", "makeCounter", "<closure>"},
-            "闭包调用栈：闭包帧不持有 count 的本地副本，而是通过 upvalue 引用外层 makeCounter 帧的 count。makeCounter 返回后帧已弹出，闭包通过 Upvalue 对象保持对 count 的引用（堆分配）。"
+            "💡 闭包调用栈：闭包帧不持有 count 的本地副本，而是通过 upvalue 引用外层 makeCounter 帧的 count。makeCounter 返回后帧已弹出，闭包通过 Upvalue 对象保持对 count 的引用（堆分配）。"
         },
         CallStackScenario{
             "method-dispatch",
-            "类方法分派",
-            "Point.new() 构造 + p.distance() 方法调用。",
+            "🎯 类方法分派",
+            "📞 Point.new() 构造 + p.distance() 方法调用。",
             "class Point {\n  var x; var y;\n  init(x, y) { this.x = x; this.y = y; }\n  fun distance() { return (x*x + y*y) ^ 0.5; }\n}\nvar p = Point.new(3, 4);\nprint(p.distance());\n",
             {"<main>", "Point.init", "Point.distance"},
-            "方法调用栈：distance 帧的 this 隐式绑定到 p 实例，可通过 this 访问字段 x/y。方法查找经过 ClassInfo::methodCache_ 缓存加速。"
+            "💡 方法调用栈：distance 帧的 this 隐式绑定到 p 实例，可通过 this 访问字段 x/y。方法查找经过 ClassInfo::methodCache_ 缓存加速。"
         },
         CallStackScenario{
             "try-catch",
-            "异常处理 try/catch",
-            "try 块内 throw 后栈迅速回退到 catch 帧。",
+            "⚠️ 异常处理 try/catch",
+            "🛡️ try 块内 throw 后栈迅速回退到 catch 帧。",
             "fun risky() { throw \"boom\"; }\ntry {\n  risky();\n} catch (e) {\n  print(\"caught: \" + e);\n}\n",
             {"<main>", "try-block", "risky", "<catch>"},
-            "异常传播：throw 时 VM 沿调用栈向上查找 try 块，沿途弹出栈帧（risky 帧被销毁），最终落到 catch 帧。注意 risky 的局部变量在异常后不可访问。"
+            "💡 异常传播：throw 时 VM 沿调用栈向上查找 try 块，沿途弹出栈帧（risky 帧被销毁），最终落到 catch 帧。注意 risky 的局部变量在异常后不可访问。"
         },
         CallStackScenario{
             "mutual-recursion",
-            "相互递归 isEven/isOdd",
-            "isEven 与 isOdd 互相调用直到 n=0/1，栈呈交替增长。",
+            "🔄 相互递归 isEven/isOdd",
+            "🔁 isEven 与 isOdd 互相调用直到 n=0/1，栈呈交替增长。",
             "fun isEven(n) { if (n == 0) return true; return isOdd(n-1); }\nfun isOdd(n) { if (n == 0) return false; return isEven(n-1); }\nprint(isEven(10));\n",
             {"<main>", "isEven(10)", "isOdd(9)", "isEven(8)", "isOdd(7)", "..."},
-            "相互递归：栈帧交替出现 isEven / isOdd，每帧 n 递减。注意 isOdd 在 isEven 之后定义但能被调用（前向引用通过 preScanModuleGlobals 修复）。"
+            "💡 相互递归：栈帧交替出现 isEven / isOdd，每帧 n 递减。注意 isOdd 在 isEven 之后定义但能被调用（前向引用通过 preScanModuleGlobals 修复）。"
         },
     };
     return kScenarios;
@@ -185,6 +186,24 @@ void CallStackPanel::onAutoRefreshToggled(bool checked) {
     else         autoTimer_->stop();
 }
 
+void CallStackPanel::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    // 面板重新可见时，若用户已勾选自动刷新则恢复 QTimer
+    if (autoRefreshCheck_ && autoRefreshCheck_->isChecked() &&
+        autoTimer_ && !autoTimer_->isActive()) {
+        refreshLive();
+        autoTimer_->start();
+    }
+}
+
+void CallStackPanel::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    // 面板隐藏时停止轮询，避免后台空转
+    if (autoTimer_ && autoTimer_->isActive()) {
+        autoTimer_->stop();
+    }
+}
+
 void CallStackPanel::refreshLive() {
     stackTree_->clear();
     if (!controller_) {
@@ -291,7 +310,7 @@ void CallStackPanel::showScenario(int index) {
     QString html = QString(
         "<h2>%1</h2>"
         "<p><b>ID:</b> <code>%2</code></p>"
-        "<p>%3</p>"
+        "%3"
         "<h3>期望栈帧序列</h3>"
         "<table border='1' cellspacing='0' cellpadding='4'>"
         "<tr><th>深度</th><th>帧名</th></tr>"
@@ -300,13 +319,13 @@ void CallStackPanel::showScenario(int index) {
         "<h3>源码</h3>"
         "<pre>%5</pre>"
         "<h3>教学注解</h3>"
-        "<p>%6</p>"
+        "%6"
     ).arg(QString::fromUtf8(s.title.c_str()))
      .arg(QString::fromUtf8(s.id.c_str()))
-     .arg(QString::fromUtf8(s.description.c_str()))
+     .arg(MarkdownRenderer::markdownToHtmlFragment(s.description))
      .arg(framesHtml)
      .arg(QString::fromUtf8(s.sourceCode.c_str()).toHtmlEscaped())
-     .arg(QString::fromUtf8(s.teachingNote.c_str()));
+     .arg(MarkdownRenderer::markdownToHtmlFragment(s.teachingNote));
     scenarioDetail_->setHtml(html);
 }
 

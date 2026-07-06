@@ -16,6 +16,8 @@
 
 #include "Label.h"                // QFluentKit（CaptionLabel）
 #include "gui/TeachingTheme.h"
+#include "gui/MarkdownRenderer.h"  // 散文式说明统一 Markdown 渲染
+#include "Theme.h"                // QFluentKit（onThemeModeChanged 信号）
 
 // ============================================================
 // BreakpointConditionLibrary — 静态教学场景库
@@ -39,72 +41,72 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
     static const std::vector<BreakpointScenario> kScenarios = {
         {
             "simple-equality",
-            "简单相等条件（i == 50）",
+            "🔴 简单相等条件（i == 50）",
             "i == 50",
-            "最基础的条件断点形式。当循环变量 i 等于 50 时暂停。"
+            "🔴 最基础的条件断点形式。当循环变量 i 等于 50 时暂停。"
             "条件在断点行命中时求值一次，结果为 truthy（非 0 / 非 null / 非 false）时暂停。",
             "循环执行到第 50 次迭代时暂停，其余迭代继续执行（不暂停）",
             "var i = 0;\nwhile (i < 100) {\n    i = i + 1;\n}\nprint i;"
         },
         {
             "modular-trigger",
-            "取模触发条件（i % 100 == 0）",
+            "🎯 取模触发条件（i % 100 == 0）",
             "i % 100 == 0",
-            "每隔 100 次迭代暂停一次。常用于在大循环中观察周期性状态，"
+            "🎯 每隔 100 次迭代暂停一次。常用于在大循环中观察周期性状态，"
             "避免每次迭代都暂停导致调试效率低下。",
             "i = 0, 100, 200, 300... 时暂停，共触发 10 次（假设循环 1000 次）",
             "var i = 0;\nwhile (i < 1000) {\n    i = i + 1;\n}\nprint i;"
         },
         {
             "string-equality",
-            "字符串相等条件（s == \"target\"）",
+            "🎯 字符串相等条件（s == \"target\"）",
             "s == \"target\"",
-            "字符串相等比较。MiniLang 字符串相等基于值比较（非引用），"
+            "🎯 字符串相等比较。MiniLang 字符串相等基于值比较（非引用），"
             "条件断点在沙箱中求值时使用 Interpreter 的 EQ 实现。",
             "当变量 s 等于 \"target\" 时暂停",
             "var s = \"\";\nvar i = 0;\nwhile (i < 100) {\n    if (i == 50) s = \"target\";\n    i = i + 1;\n}\nprint s;"
         },
         {
             "null-check",
-            "null 检查条件（x == null）",
+            "🔴 null 检查条件（x == null）",
             "x == null",
-            "null 检查条件断点。常用于排查变量未初始化导致的运行时错误。"
+            "🔴 null 检查条件断点。常用于排查变量未初始化导致的运行时错误。"
             "MiniLang 中 null 是一等值，可与任何变量比较。",
             "当 x 为 null 时暂停（如未初始化或显式赋值为 null）",
             "var x = null;\nvar i = 0;\nwhile (i < 10) {\n    if (i == 5) x = 42;\n    i = i + 1;\n}\nprint x;"
         },
         {
             "compound-condition",
-            "复合布尔条件（a > 0 && b < 100）",
+            "⚙️ 复合布尔条件（a > 0 && b < 100）",
             "a > 0 && b < 100",
-            "复合布尔表达式条件断点。MiniLang 的 and/or 短路求值（返回操作数原值而非布尔），"
+            "⚙️ 复合布尔表达式条件断点。MiniLang 的 and/or 短路求值（返回操作数原值而非布尔），"
             "条件断点求值时遵循相同语义：a > 0 为 falsy 时不会求值 b < 100。",
             "当 a > 0 且 b < 100 同时成立时暂停",
             "var a = 5;\nvar b = 50;\nvar i = 0;\nwhile (i < 100) {\n    b = b + 1;\n    i = i + 1;\n}\nprint a + b;"
         },
         {
             "boolean-shortcut",
-            "布尔短路条件（x && y > 0）",
+            "⚙️ 布尔短路条件（x && y > 0）",
             "x && y > 0",
-            "利用 and 短路特性。当 x 为 truthy 时才会求值 y > 0。"
+            "⚙️ 利用 and 短路特性。当 x 为 truthy 时才会求值 y > 0。"
             "条件断点求值时若 x 为 falsy，整个表达式直接返回 x（短路），不计算 y。",
             "当 x truthy 且 y > 0 时暂停",
             "var x = 1;\nvar y = 10;\nvar i = 0;\nwhile (i < 100) {\n    if (i == 50) x = 0;\n    i = i + 1;\n}\nprint x && y;"
         },
         {
             "method-call-condition",
-            "方法调用条件（this.value > 100）",
+            "🎯 方法调用条件（this.value > 100）",
             "this.value > 100",
-            "在方法内部设置条件断点，访问 this 的字段。"
+            "🎯 在方法内部设置条件断点，访问 this 的字段。"
             "条件求值时通过 boundInstance_ 缓存访问实例字段，与正常运行时语义一致。",
             "当方法被调用且 this.value > 100 时暂停",
             "class Counter {\n    var value;\n    fun new() { value = 0; }\n    fun inc() { value = value + 1; }\n}\nvar c = Counter.new();\nvar i = 0;\nwhile (i < 200) {\n    c.inc();\n    i = i + 1;\n}\nprint c.value;"
         },
         {
             "exception-condition",
-            "异常对象检查（e.message == \"expected\")",
+            "🛑 异常对象检查（e.message == \"expected\")",
             "e.message == \"expected\"",
-            "在 catch 块中设置条件断点，检查异常对象字段。"
+            "🛑 在 catch 块中设置条件断点，检查异常对象字段。"
             "MiniLang 异常通过 InstanceData 表示，字段访问通过 OP_GET_FIELD 完成，"
             "条件断点求值时与正常运行时路径一致。",
             "当 catch 块捕获异常且异常 message 字段等于 \"expected\" 时暂停",
@@ -169,11 +171,39 @@ BreakpointConditionPanel::BreakpointConditionPanel(QWidget* parent)
     }
     if (!items.empty()) scenarioList_->setCurrentRow(0);
 
-    // 启动实时断点列表轮询定时器（500ms）
+    // 创建实时断点列表轮询定时器（500ms）
+    // 注：不在构造时自动启动，改为在 showEvent 中启动 / hideEvent 中停止
+    // 避免 dock 隐藏时 QTimer 永久空转浪费 CPU（修复卡顿问题）
     refreshTimer_ = new QTimer(this);
     refreshTimer_->setInterval(500);
     connect(refreshTimer_, &QTimer::timeout, this, &BreakpointConditionPanel::refreshLive);
-    refreshTimer_->start();
+    // refreshTimer_->start() 移至 showEvent
+
+    // 主题切换时刷新教学场景详情 HTML（populateScenarioDetail 中 <pre> 背景使用
+    // TeachingTheme::surface()，需重新渲染以跟随新主题）。
+    // receiver=this 保证生命周期安全，析构自动断开。
+    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
+        if (scenarioList_ && scenarioDetail_) {
+            populateScenarioDetail(scenarioList_->currentRow());
+        }
+    });
+}
+
+void BreakpointConditionPanel::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    // 面板显示时启动轮询，首次立即刷新一次
+    if (refreshTimer_ && !refreshTimer_->isActive()) {
+        refreshLive();
+        refreshTimer_->start();
+    }
+}
+
+void BreakpointConditionPanel::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    // 面板隐藏时停止轮询，避免后台空转
+    if (refreshTimer_ && refreshTimer_->isActive()) {
+        refreshTimer_->stop();
+    }
 }
 
 void BreakpointConditionPanel::buildLivePage(QWidget* host) {
@@ -270,11 +300,14 @@ void BreakpointConditionPanel::populateScenarioDetail(int index) {
     if (index < 0 || index >= (int)items.size()) return;
     const auto& s = items[index];
 
+    // 散文式字段（description）走 Markdown 渲染，支持 **粗体** / `code` / 列表
+    QString descFragment = MarkdownRenderer::markdownToHtmlFragment(s.description);
+
     std::ostringstream os;
     os << "<h3>" << s.title << "</h3>";
     os << "<p><b>条件表达式：</b> <code>" << s.condition << "</code></p>";
     os << "<hr>";
-    os << "<p>" << s.description << "</p>";
+    os << descFragment.toStdString();
     os << "<p><b>触发行为：</b> " << s.expectedBehavior << "</p>";
     os << "<h4>示例代码：</h4>";
     os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()

@@ -189,25 +189,55 @@ TeachingPanelHeader::TeachingPanelHeader(const QString& panelId,
                                          const QString& title,
                                          QWidget* parent)
     : QWidget(parent), panelId_(panelId), title_(title) {
+    // WA_StyledBackground：确保 QSS background 在普通 QWidget 上生效
+    setObjectName("teachingPanelHeader");
+    setAttribute(Qt::WA_StyledBackground, true);
+
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(8, 6, 8, 6);
+    // 整体 padding 8px 12px（垂直 8 / 水平 12）
+    layout->setContentsMargins(12, 8, 12, 8);
     layout->setSpacing(8);
 
     titleLabel_ = new StrongBodyLabel(title, this);
     titleLabel_->setPixelFontSize(14);
+    titleLabel_->setObjectName("teachingPanelTitle");
+    // 标题加粗（StrongBodyLabel 已是强字重，显式 setBold 保证一致）
+    QFont titleFont = titleLabel_->font();
+    titleFont.setBold(true);
+    titleLabel_->setFont(titleFont);
     layout->addWidget(titleLabel_, 1);
 
     helpBtn_ = new PushButton(mlTr("这是什么？"), this);
     helpBtn_->setFixedHeight(28);
+    helpBtn_->setObjectName("teachingHeaderBtn");
     connect(helpBtn_, &PushButton::clicked, this, [this]() { showHelpDialog(); });
     layout->addWidget(helpBtn_);
 
     learningPathBtn_ = new PushButton(mlTr("学习路径"), this);
     learningPathBtn_->setFixedHeight(28);
+    learningPathBtn_->setObjectName("teachingHeaderBtn");
     connect(learningPathBtn_, &PushButton::clicked, this, [this]() {
         emit learningPathRequested();
     });
     layout->addWidget(learningPathBtn_);
+
+    // header 样式：浅蓝→白色渐变背景 + 底部分隔线 + 标题加粗 + 按钮 hover 圆角淡蓝
+    setStyleSheet(QStringLiteral(
+        "#teachingPanelHeader {"
+        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+        "    stop:0 #eaf3fc, stop:1 #ffffff);"
+        "  border-bottom: 1px solid #e5e5e5;"
+        "}"
+        "#teachingPanelTitle {"
+        "  font-size: 14px;"
+        "  font-weight: 600;"
+        "  color: #1e1e1e;"
+        "}"
+        "#teachingHeaderBtn:hover {"
+        "  background: #eaf3fc;"
+        "  border-radius: 4px;"
+        "}"
+    ));
 }
 
 void TeachingPanelHeader::setTitle(const QString& title) {

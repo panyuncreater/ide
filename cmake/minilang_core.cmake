@@ -61,6 +61,7 @@ set(MINILANG_GUI_SOURCES
     gui/SyntaxProductionLibrary.cpp
     gui/LabManualPanel.cpp
     gui/LabManualContent.cpp
+    gui/MarkdownRenderer.cpp
     gui/MemoryModelPanel.cpp
     gui/IRTransformPanel.cpp
     gui/ProfileDashboardPanel.cpp

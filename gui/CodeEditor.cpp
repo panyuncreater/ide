@@ -724,6 +724,22 @@ void CodeEditor::toggleFold(int blockNumber) {
     lineNumberArea_->update();
 }
 
+void CodeEditor::changeFontSize(int delta) {
+    QFont f = font();
+    int newSize = f.pointSize() + delta;
+    // 范围限制 [8, 32]：太小看不清，太大占用过多编辑区
+    newSize = qBound(8, newSize, 32);
+    if (newSize == f.pointSize()) return;  // 无变化
+    f.setPointSize(newSize);
+    setFont(f);
+    // 行号区域宽度依赖 fontMetrics，需重新计算
+    updateLineNumberAreaWidth(0);
+}
+
+int CodeEditor::fontSize() const {
+    return font().pointSize();
+}
+
 void CodeEditor::setDarkTheme(bool dark) {
     isDarkTheme_ = dark;
 
@@ -909,7 +925,7 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // H4: Ctrl+/ 注释切换
+    // H4: Ctrl+/ 行注释切换（//）
     if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Slash) {
         QTextCursor tc = textCursor();
         if (tc.hasSelection()) {
@@ -919,6 +935,55 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
             tc.select(QTextCursor::LineUnderCursor);
             toggleCommentSelection(tc);
         }
+        return;
+    }
+
+    // H4: Ctrl+Shift+/ 块注释切换（/* */）
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
+        (event->key() == Qt::Key_Slash || event->key() == Qt::Key_Question)) {
+        // 注意：Shift+/ 在某些键盘布局下产生 Key_Question
+        QTextCursor tc = textCursor();
+        toggleBlockComment(tc);
+        return;
+    }
+
+    // M8: Ctrl+D 选中下一个相同单词（简化版：单光标，无多光标）
+    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_D) {
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            // 已有选择：查找下一个相同文本
+            QString selectedText = tc.selectedText();
+            QTextDocument::FindFlags flags;
+            QTextCursor found = document()->find(selectedText, tc.position(), flags);
+            if (!found.isNull()) {
+                setTextCursor(found);
+            }
+        } else {
+            // 无选择：选中当前单词
+            tc.select(QTextCursor::WordUnderCursor);
+            setTextCursor(tc);
+        }
+        return;
+    }
+
+    // M8: Ctrl+Shift+K 删除当前行
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_K) {
+        QTextCursor tc = textCursor();
+        tc.beginEditBlock();
+        tc.select(QTextCursor::LineUnderCursor);
+        if (tc.hasSelection()) {
+            tc.removeSelectedText();
+            // 同时删除行尾换行符（如果不是最后一行）
+            tc.movePosition(QTextCursor::StartOfLine);
+            if (tc.position() < document()->characterCount() - 1) {
+                QTextCursor next = tc;
+                next.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 1);
+                if (next.selectedText() == "\n") {
+                    next.removeSelectedText();
+                }
+            }
+        }
+        tc.endEditBlock();
         return;
     }
 
@@ -1204,24 +1269,24 @@ void CodeEditor::showSnippetListDialog() {
 // -------------------------------------------------------------
 
 /// H1: 对选中范围每行行首插入或移除 4 空格
+/// 修复 P1 Bug：用 blockNumber() 跟踪行号，避免 lineEnd 在文档修改后过时
 void CodeEditor::indentSelection(QTextCursor& tc, bool addIndent) {
     int start = tc.selectionStart();
     int end = tc.selectionEnd();
     QTextCursor cur = tc;
     cur.setPosition(start);
+    int startBlock = cur.blockNumber();
+    cur.setPosition(end);
+    int endBlock = cur.blockNumber();
+
+    cur.setPosition(start);
     cur.beginEditBlock();  // 合并为单次 undo
 
-    while (cur.position() <= end) {
+    for (int block = startBlock; block <= endBlock; ++block) {
         cur.movePosition(QTextCursor::StartOfLine);
-        int lineStart = cur.position();
-        // 计算行尾位置以判断是否到达最后一行
-        cur.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
-        int lineEnd = cur.position();
-        cur.setPosition(lineStart);
 
         if (addIndent) {
             cur.insertText(QString(4, ' '));
-            end += 4;
         } else {
             // 移除行首最多 4 空格 或 1 Tab
             QTextCursor scan = cur;
@@ -1240,20 +1305,25 @@ void CodeEditor::indentSelection(QTextCursor& tc, bool addIndent) {
             if (removeCount > 0) {
                 cur.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, removeCount);
                 cur.removeSelectedText();
-                end -= removeCount;
             }
         }
 
-        // 移到下一行行首
-        cur.setPosition(lineEnd);
-        if (!cur.movePosition(QTextCursor::Down)) break;
-        // 如果 Down 后位置没变说明到文件末尾
-        if (cur.position() <= lineEnd && cur.position() >= end) break;
+        // 移到下一行（NextBlock 跳到下一块行首，文档末尾时返回 false）
+        if (!cur.movePosition(QTextCursor::NextBlock)) break;
     }
     cur.endEditBlock();
-    tc.setPosition(start);
-    tc.setPosition(end, QTextCursor::KeepAnchor);
-    setTextCursor(tc);
+
+    // 重新选中从 startBlock 行首到 endBlock 行尾
+    // startBlock 行首 = 原 start 位置（若第一行缩进/反缩进，位置已偏移，
+    // 但 StartOfLine 会回到行首，所以用 blockNumber 重新定位更稳妥）
+    QTextCursor sel = textCursor();
+    sel.movePosition(QTextCursor::Start);
+    sel.movePosition(QTextCursor::NextBlock, QTextCursor::MoveAnchor, startBlock);
+    int newStart = sel.position();
+    sel.movePosition(QTextCursor::Start);
+    sel.movePosition(QTextCursor::NextBlock, QTextCursor::MoveAnchor, endBlock);
+    sel.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+    setTextCursor(sel);
 }
 
 /// H1: 移除光标所在行行首最多 4 空格（或 1 Tab）
@@ -1281,68 +1351,124 @@ void CodeEditor::unindentLine(QTextCursor& tc) {
 }
 
 /// H4: 对选中范围切换 // 注释（行首有 // 则移除，否则插入）
+/// 修复 P1 Bug：用 blockNumber() 跟踪行号，避免 lineEnd 在文档修改后过时
 void CodeEditor::toggleCommentSelection(QTextCursor& tc) {
     int start = tc.selectionStart();
     int end = tc.selectionEnd();
     QTextCursor cur = tc;
     cur.setPosition(start);
-    cur.beginEditBlock();
+    int startBlock = cur.blockNumber();
+    cur.setPosition(end);
+    int endBlock = cur.blockNumber();
 
-    // 第一遍：检查所有行是否都已注释
+    // 第一遍：检查所有行是否都已注释（不修改文档，安全）
     bool allCommented = true;
-    QTextCursor scan = cur;
-    scan.setPosition(start);
-    while (scan.position() <= end) {
-        scan.movePosition(QTextCursor::StartOfLine);
-        QTextCursor lineScan = scan;
-        lineScan.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
-        if (lineScan.selectedText() != "//") {
-            allCommented = false;
-            break;
+    {
+        QTextCursor scan = cur;
+        scan.setPosition(start);
+        for (int block = startBlock; block <= endBlock; ++block) {
+            scan.movePosition(QTextCursor::StartOfLine);
+            QTextCursor lineScan = scan;
+            lineScan.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
+            if (lineScan.selectedText() != "//") {
+                allCommented = false;
+                break;
+            }
+            if (!scan.movePosition(QTextCursor::NextBlock)) break;
         }
-        scan.movePosition(QTextCursor::EndOfLine);
-        if (!scan.movePosition(QTextCursor::Down)) break;
     }
 
     // 第二遍：添加或移除注释
     cur.setPosition(start);
-    while (cur.position() <= end) {
+    cur.beginEditBlock();
+    for (int block = startBlock; block <= endBlock; ++block) {
         cur.movePosition(QTextCursor::StartOfLine);
-        int lineStart = cur.position();
-        cur.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
-        int lineEnd = cur.position();
-        cur.setPosition(lineStart);
 
         if (allCommented) {
             // 移除 //
             cur.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
             if (cur.selectedText() == "//") {
                 cur.removeSelectedText();
-                end -= 2;
             }
         } else {
             // 添加 //
             cur.insertText("//");
-            end += 2;
         }
 
-        cur.setPosition(lineEnd);
-        if (!cur.movePosition(QTextCursor::Down)) break;
-        if (cur.position() <= lineEnd && cur.position() >= end) break;
+        if (!cur.movePosition(QTextCursor::NextBlock)) break;
     }
     cur.endEditBlock();
-    tc.setPosition(start);
-    tc.setPosition(end, QTextCursor::KeepAnchor);
-    setTextCursor(tc);
+
+    // 重新选中从 startBlock 行首到 endBlock 行尾
+    QTextCursor sel = textCursor();
+    sel.movePosition(QTextCursor::Start);
+    sel.movePosition(QTextCursor::NextBlock, QTextCursor::MoveAnchor, startBlock);
+    sel.movePosition(QTextCursor::Start);
+    sel.movePosition(QTextCursor::NextBlock, QTextCursor::MoveAnchor, endBlock);
+    sel.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+    setTextCursor(sel);
+}
+
+/// H2 辅助：判断位置 pos 是否在字符串或注释内
+/// 通过从文档开头扫描到 pos，统计字符串/注释状态实现
+/// 支持：双引号字符串、// 行注释、/* */ 块注释
+bool CodeEditor::isInsideStringOrComment(int pos) const {
+    if (pos <= 0) return false;
+    int charCount = static_cast<int>(document()->characterCount());
+    // 性能优化：只扫描到 pos 位置
+    int scanEnd = qMin(pos, charCount);
+
+    bool inString = false;
+    bool inLineComment = false;
+    bool inBlockComment = false;
+
+    for (int i = 0; i < scanEnd; ++i) {
+        QChar c = document()->characterAt(i);
+        QChar next = (i + 1 < charCount) ? document()->characterAt(i + 1) : QChar();
+
+        if (inLineComment) {
+            // 行注释遇到换行结束
+            if (c == '\n') inLineComment = false;
+            continue;
+        }
+        if (inBlockComment) {
+            // 块注释遇到 */ 结束
+            if (c == '*' && next == '/') {
+                inBlockComment = false;
+                ++i;  // 跳过 /
+            }
+            continue;
+        }
+        if (inString) {
+            // 字符串遇到非转义 " 结束
+            if (c == '"') inString = false;
+            // 简化：不处理转义（MiniLang 字符串转义 \" 较少见，且此判断用于括号匹配容错）
+            continue;
+        }
+
+        // 不在任何上下文中，检测进入
+        if (c == '/' && next == '/') {
+            inLineComment = true;
+            ++i;
+        } else if (c == '/' && next == '*') {
+            inBlockComment = true;
+            ++i;
+        } else if (c == '"') {
+            inString = true;
+        }
+    }
+    return inString || inLineComment || inBlockComment;
 }
 
 /// H2: 括号匹配高亮（光标停在 ([{ 时高亮对应 )]}）
+/// 修复限制1：跳过字符串/注释内的括号
+/// 修复限制3：大文件性能优化（限制扫描范围 + 跳过字符串/注释块）
 void CodeEditor::highlightBracketMatch() {
     bracketSelections_.clear();
 
     // 仅在没有补全弹窗时处理
     if (completer_ && completer_->popup() && completer_->popup()->isVisible()) {
-        highlightCurrentLine();  // 仍需重绘以清除旧高亮
+        highlightCurrentLine();
         return;
     }
 
@@ -1372,19 +1498,16 @@ void CodeEditor::highlightBracketMatch() {
         curBracketPos = pos - 1;
         forward = true;
     } else if (leftChar == ')' || leftChar == ']' || leftChar == '}') {
-        // 光标左侧是闭括号 → 反向找开括号
         close = leftChar;
         open = (leftChar == ')') ? '(' : (leftChar == ']') ? '[' : '{';
         curBracketPos = pos - 1;
         forward = false;
     } else if (rightChar == '(' || rightChar == '[' || rightChar == '{') {
-        // 光标右侧是开括号 → 正向找闭括号
         open = rightChar;
         close = (rightChar == '(') ? ')' : (rightChar == '[') ? ']' : '}';
         curBracketPos = pos;
         forward = true;
     } else if (rightChar == ')' || rightChar == ']' || rightChar == '}') {
-        // 光标右侧是闭括号 → 反向找开括号
         close = rightChar;
         open = (rightChar == ')') ? '(' : (rightChar == ']') ? '[' : '{';
         curBracketPos = pos;
@@ -1394,14 +1517,27 @@ void CodeEditor::highlightBracketMatch() {
         return;
     }
 
-    // 搜索匹配的括号
+    // 限制1：当前括号在字符串/注释内 → 不高亮
+    if (isInsideStringOrComment(curBracketPos)) {
+        highlightCurrentLine();
+        return;
+    }
+
+    // 搜索匹配的括号（跳过字符串/注释内的同名括号）
+    // 限制3：大文件性能优化 — 限制扫描范围到 ±5000 字符
     int matchPos = -1;
     int depth = 0;
     int charCount = static_cast<int>(document()->characterCount());
+    const int kMaxScanRange = 5000;  // 性能阈值：单次扫描最多 5000 字符
+    int scanStart = forward ? curBracketPos : curBracketPos;
+    int scanEnd = forward ? qMin(charCount, curBracketPos + kMaxScanRange)
+                          : qMax(0, curBracketPos - kMaxScanRange);
 
     if (forward) {
-        for (int i = curBracketPos; i < charCount; ++i) {
+        for (int i = scanStart; i < scanEnd; ++i) {
             QChar c = document()->characterAt(i);
+            // 跳过字符串/注释内的字符
+            if (i > curBracketPos && isInsideStringOrComment(i)) continue;
             if (c == open) depth++;
             else if (c == close) {
                 depth--;
@@ -1409,8 +1545,9 @@ void CodeEditor::highlightBracketMatch() {
             }
         }
     } else {
-        for (int i = curBracketPos; i >= 0; --i) {
+        for (int i = scanStart; i >= scanEnd; --i) {
             QChar c = document()->characterAt(i);
+            if (i < curBracketPos && isInsideStringOrComment(i)) continue;
             if (c == close) depth++;
             else if (c == open) {
                 depth--;
@@ -1425,7 +1562,7 @@ void CodeEditor::highlightBracketMatch() {
     }
 
     // 构建 bracket selections（半透明黄色背景）
-    QColor matchColor(255, 220, 0, 120);  // F9: 可改主题感知，当前用黄色
+    QColor matchColor(255, 220, 0, 120);
 
     QTextEdit::ExtraSelection curSel;
     curSel.cursor.setPosition(curBracketPos);
@@ -1439,5 +1576,56 @@ void CodeEditor::highlightBracketMatch() {
     matchSel.format.setBackground(matchColor);
     bracketSelections_.append(matchSel);
 
-    highlightCurrentLine();  // 合并所有 selections 并重绘
+    highlightCurrentLine();
+}
+
+/// H4: 对选中范围切换 /* */ 块注释
+/// 选区首尾包裹 /* */ 或去除已有 /* */
+void CodeEditor::toggleBlockComment(QTextCursor& tc) {
+    if (!tc.hasSelection()) {
+        // 无选择时，对当前行整行添加 /* */ 包裹
+        tc.select(QTextCursor::LineUnderCursor);
+        if (!tc.hasSelection()) return;
+    }
+
+    int start = tc.selectionStart();
+    int end = tc.selectionEnd();
+
+    // 检查选区前 2 字符是否为 /* 且后 2 字符是否为 */
+    QTextCursor checkStart = tc;
+    checkStart.setPosition(start);
+    checkStart.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
+    bool hasBlockStart = (checkStart.selectedText() == "/*");
+
+    QTextCursor checkEnd = tc;
+    checkEnd.setPosition(end);
+    if (checkEnd.position() >= 2) {
+        checkEnd.setPosition(end - 2);
+        checkEnd.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
+    }
+    bool hasBlockEnd = (checkEnd.selectedText() == "*/");
+
+    tc.beginEditBlock();
+    if (hasBlockStart && hasBlockEnd) {
+        // 移除 /* 和 */
+        QTextCursor rmEnd = tc;
+        rmEnd.setPosition(end - 2);
+        rmEnd.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
+        rmEnd.removeSelectedText();
+
+        QTextCursor rmStart = tc;
+        rmStart.setPosition(start);
+        rmStart.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 2);
+        rmStart.removeSelectedText();
+    } else {
+        // 添加 /* 和 */
+        QTextCursor addEnd = tc;
+        addEnd.setPosition(end);
+        addEnd.insertText("*/");
+
+        QTextCursor addStart = tc;
+        addStart.setPosition(start);
+        addStart.insertText("/*");
+    }
+    tc.endEditBlock();
 }

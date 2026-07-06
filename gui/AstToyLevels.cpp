@@ -26,8 +26,8 @@ const std::vector<AstToyLevel>& AstToyLibrary::levels() {
         AstToyLevel{
             1,
             "42",
-            "最简 AST：单个表达式只有 1 个叶子节点",
-            "点击「Number」按钮，输入 42，然后点击「检查」",
+            "🌳 最简 AST：单个表达式只有 1 个叶子节点",
+            "💡 点击「Number」按钮，输入 42，然后点击「检查」",
             1,
             AstToyLevel::TreeNode{"Number:42"}
         },
@@ -36,8 +36,8 @@ const std::vector<AstToyLevel>& AstToyLibrary::levels() {
         AstToyLevel{
             2,
             "1 + 2",
-            "二元运算：根节点是运算符 +，左右各一个叶子",
-            "先放 Add 节点作为根，选中它，再依次添加 Number:1 和 Number:2 作为子节点",
+            "🌳 二元运算：根节点是运算符 +，左右各一个叶子",
+            "💡 先放 Add 节点作为根，选中它，再依次添加 Number:1 和 Number:2 作为子节点",
             1,
             AstToyLevel::TreeNode{
                 "BinaryOp:+",
@@ -53,8 +53,8 @@ const std::vector<AstToyLevel>& AstToyLibrary::levels() {
         AstToyLevel{
             3,
             "1 + 2 * 3",
-            "运算符优先级：* 比 + 优先级高，所以 * 在 + 下面（先结合）",
-            "根是 +，左子树是 Number:1，右子树是 * 节点（其下是 Number:2 和 Number:3）",
+            "🌳 运算符优先级：* 比 + 优先级高，所以 * 在 + 下面（先结合）",
+            "💡 根是 +，左子树是 Number:1，右子树是 * 节点（其下是 Number:2 和 Number:3）",
             2,
             AstToyLevel::TreeNode{
                 "BinaryOp:+",
@@ -76,8 +76,8 @@ const std::vector<AstToyLevel>& AstToyLibrary::levels() {
         AstToyLevel{
             4,
             "(1 + 2) * 3",
-            "括号改变结构：() 强制 + 先结合，所以 + 在 * 下面",
-            "根是 *，左子树是 + 节点（其下是 Number:1 和 Number:2），右子树是 Number:3",
+            "🌳 括号改变结构：() 强制 + 先结合，所以 + 在 * 下面",
+            "💡 根是 *，左子树是 + 节点（其下是 Number:1 和 Number:2），右子树是 Number:3",
             2,
             AstToyLevel::TreeNode{
                 "BinaryOp:*",
@@ -98,8 +98,8 @@ const std::vector<AstToyLevel>& AstToyLibrary::levels() {
         AstToyLevel{
             5,
             "print(x)",
-            "函数调用：根是 Print 节点，子节点是参数表达式",
-            "根是 Print，子节点是 Identifier:x",
+            "🌳 函数调用：根是 Print 节点，子节点是参数表达式",
+            "💡 根是 Print，子节点是 Identifier:x",
             2,
             AstToyLevel::TreeNode{
                 "Print",
@@ -113,8 +113,8 @@ const std::vector<AstToyLevel>& AstToyLibrary::levels() {
         AstToyLevel{
             6,
             "var x = 1 + 2;",
-            "完整语句：VarDecl 节点包含变量名 + initializer 表达式",
-            "根是 VarDecl:x，子节点是 initializer 表达式 +（其下是 Number:1 和 Number:2）",
+            "🌳 完整语句：VarDecl 节点包含变量名 + initializer 表达式",
+            "💡 根是 VarDecl:x，子节点是 initializer 表达式 +（其下是 Number:1 和 Number:2）",
             3,
             AstToyLevel::TreeNode{
                 "VarDecl:x",

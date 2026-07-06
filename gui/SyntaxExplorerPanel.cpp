@@ -1,4 +1,5 @@
 #include "gui/SyntaxExplorerPanel.h"
+#include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -140,8 +141,8 @@ void SyntaxExplorerPanel::showCurrentItem() {
     QString html;
     QString title = QString::fromUtf8(p.title.c_str());
     QString ebnf  = QString::fromUtf8(p.ebnf.c_str()).toHtmlEscaped();
-    QString desc  = QString::fromUtf8(p.description.c_str()).toHtmlEscaped();
-    QString nat   = QString::fromUtf8(p.naturalLanguage.c_str()).toHtmlEscaped();
+    QString desc  = MarkdownRenderer::markdownToHtmlFragment(p.description);
+    QString nat   = MarkdownRenderer::markdownToHtmlFragment(p.naturalLanguage);
 
     switch (viewMode_) {
         case ViewMode::EBNF:
@@ -149,7 +150,7 @@ void SyntaxExplorerPanel::showCurrentItem() {
                 "<html><body>"
                 "<h2>%1</h2>"
                 "<p><b>EBNF:</b></p><pre>%2</pre>"
-                "<p><b>说明:</b></p><p>%3</p>"
+                "<p><b>说明:</b></p>%3"
                 "</body></html>")
                 .arg(title).arg(ebnf).arg(desc);
             break;
@@ -157,7 +158,7 @@ void SyntaxExplorerPanel::showCurrentItem() {
             html = QString(
                 "<html><body>"
                 "<h2>%1</h2>"
-                "<p><b>📝 自然语言描述:</b></p><pre>%2</pre>"
+                "<p><b>📝 自然语言描述:</b></p>%2"
                 "</body></html>")
                 .arg(title).arg(nat);
             break;
@@ -167,9 +168,9 @@ void SyntaxExplorerPanel::showCurrentItem() {
                 "<html><body>"
                 "<h2>%1</h2>"
                 "<p><b>EBNF:</b></p><pre>%2</pre>"
-                "<p><b>说明:</b></p><p>%3</p>"
+                "<p><b>说明:</b></p>%3"
                 "<hr>"
-                "<p><b>📝 自然语言描述:</b></p><pre>%4</pre>"
+                "<p><b>📝 自然语言描述:</b></p>%4"
                 "</body></html>")
                 .arg(title).arg(ebnf).arg(desc).arg(nat);
             break;

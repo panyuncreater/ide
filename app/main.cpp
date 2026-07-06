@@ -5,6 +5,7 @@
 #include <QTextStream>
 #include <QMessageBox>
 #include <QStyleFactory>
+#include <QIcon>
 
 #include "Theme.h"
 #include "FluentGlobal.h"
@@ -30,6 +31,10 @@ int main(int argc, char *argv[]) {
     a.setApplicationName("MiniLang IDE");
     a.setApplicationVersion("1.0");
     a.setOrganizationName("MiniLang");
+
+    // 设置应用程序图标（Windows 任务栏/标题栏）
+    // 使用 QIcon 加载 SVG，Qt6 内置 QSvgRenderer 自动渲染
+    a.setWindowIcon(QIcon(":/icons/minilang_logo.svg"));
 
     // D2: 加载翻译（MINILANG_ENABLE_I18N=ON 时查找 minilang_<locale>.qm；
     //     未启用时为 no-op，下方 mlTr 调用退化为 QString::fromUtf8）

@@ -1,6 +1,7 @@
 #include "gui/CodeJourneyInfoPanel.h"
 #include "gui/I18n.h"
 #include "gui/TeachingTheme.h"
+#include "Theme.h"   // QFluentKit（onThemeModeChanged 信号）
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -49,31 +50,47 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
     connect(btnIr,       &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToIr);
     connect(btnBytecode, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToBytecode);
     connect(btnOutput,   &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToOutput);
+
+    // 主题切换时重建 HTML（buildJourneyHtml 内部使用 TeachingTheme::surface()
+    // 作为 <pre> 背景，需重新渲染以跟随新主题）。receiver=this 保证生命周期安全。
+    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
+        if (infoBrowser_) {
+            infoBrowser_->setHtml(buildJourneyHtml());
+        }
+    });
 }
 
 QString CodeJourneyInfoPanel::buildJourneyHtml() const {
-    // 教学语义色：5 阶段保留固定颜色（绿/橙/紫/红/青/棕），便于视觉记忆
-    // 示例代码 <pre> 背景改用 TeachingTheme::surface()，跟随亮/暗主题
+    // P2 视觉一致性：
+    // - 5 阶段色（绿/蓝/紫/红）走 TeachingTheme::learningStageColor()，与
+    //   LearningPathPanel / WelcomeWizard Step 4 三处保持一致
+    // - 橙(#FF9800)/青(#00BCD4)/棕(#795548) 是代码旅程特有语义色，保留不动
+    // - 所有浅色 <pre> 背景统一改为 TeachingTheme::surface()，跟随亮/暗主题
+    // - 灰色 #666/#888 保留（非阶段色，纯辅助文本色）
     const QString surfaceHex = TeachingTheme::surface().name();
+    const QString stage0Hex  = TeachingTheme::learningStageColor(0).name();  // 绿
+    const QString stage2Hex  = TeachingTheme::learningStageColor(2).name();  // 蓝
+    const QString stage3Hex  = TeachingTheme::learningStageColor(3).name();  // 紫
+    const QString stage4Hex  = TeachingTheme::learningStageColor(4).name();  // 红
     return QString(
         "<html><body style='font-family: Consolas, monospace; font-size: 13px; line-height: 1.6;'>"
-        "<h2 style='color: #2196F3;'>🚀 代码的生命旅程</h2>"
+        "<h2 style='color: %3;'>🚀 代码的生命旅程</h2>"
         "<p style='color: #666;'>从你写下代码到看到结果，中间发生了什么？</p>"
         "<hr>"
-        "<h3 style='color: #4CAF50;'>示例代码</h3>"
+        "<h3 style='color: %2;'>示例代码</h3>"
         "<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>"
         "<p>👆 这行代码最终输出 <b>7</b>。它是怎么变成 7 的？</p>"
         "<hr>"
 
         "<h3 style='color: #FF9800;'>① 你写的代码（源码）</h3>"
         "<p>编辑器中的纯文本。计算机还不理解这些字符的含义。</p>"
-        "<pre style='background: #fff3e0; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>"
+        "<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>"
         "<p style='color: #888;'>👇 词法分析</p>"
         "<hr>"
 
-        "<h3 style='color: #9C27B0;'>② Token 表（词法分析）</h3>"
+        "<h3 style='color: %4;'>② Token 表（词法分析）</h3>"
         "<p>词法分析器将源码切分为有类型的片段：</p>"
-        "<pre style='background: #f3e5f5; padding: 8px; border-radius: 4px;'>"
+        "<pre style='background: %1; padding: 8px; border-radius: 4px;'>"
         "Token  | 类型       | lexeme<br>"
         "------|-----------|--------<br>"
         "  1   | IDENT     | print<br>"
@@ -90,9 +107,9 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "<p style='color: #888;'>👇 语法分析</p>"
         "<hr>"
 
-        "<h3 style='color: #F44336;'>③ AST（语法分析）</h3>"
+        "<h3 style='color: %5;'>③ AST（语法分析）</h3>"
         "<p>解析器根据优先级规则构建树形结构：</p>"
-        "<pre style='background: #ffebee; padding: 8px; border-radius: 4px;'>"
+        "<pre style='background: %1; padding: 8px; border-radius: 4px;'>"
         "Print<br>"
         " └── BinaryOp(+)<br>"
         "      ├── Number(1)<br>"
@@ -107,7 +124,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
 
         "<h3 style='color: #00BCD4;'>④ IR（中间表示）</h3>"
         "<p>AST 被转换为 IR（三地址码），便于优化：</p>"
-        "<pre style='background: #e0f7fa; padding: 8px; border-radius: 4px;'>"
+        "<pre style='background: %1; padding: 8px; border-radius: 4px;'>"
         "function main:<br>"
         "  LOAD_CONST v1, 1      ; v1 = 1<br>"
         "  LOAD_CONST v2, 2      ; v2 = 2<br>"
@@ -123,7 +140,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
 
         "<h3 style='color: #795548;'>⑤ 字节码（虚拟机指令）</h3>"
         "<p>IR 被翻译为栈式 VM 字节码：</p>"
-        "<pre style='background: #efebe9; padding: 8px; border-radius: 4px;'>"
+        "<pre style='background: %1; padding: 8px; border-radius: 4px;'>"
         "StackVM 字节码:<br>"
         "  OP_INT 1        ; push 1<br>"
         "  OP_INT 2        ; push 2<br>"
@@ -136,13 +153,13 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "<p style='color: #888;'>👇 执行</p>"
         "<hr>"
 
-        "<h3 style='color: #4CAF50;'>⑥ 输出结果</h3>"
+        "<h3 style='color: %2;'>⑥ 输出结果</h3>"
         "<p>VM 执行字节码，得到最终结果：</p>"
-        "<pre style='background: #e8f5e9; padding: 8px; border-radius: 4px; font-size: 16px; font-weight: bold;'>7</pre>"
+        "<pre style='background: %1; padding: 8px; border-radius: 4px; font-size: 16px; font-weight: bold;'>7</pre>"
         "<p>🎉 这就是代码的生命旅程！</p>"
         "<hr>"
 
-        "<h3 style='color: #2196F3;'>📝 关键概念回顾</h3>"
+        "<h3 style='color: %3;'>📝 关键概念回顾</h3>"
         "<ul>"
         "<li><b>词法分析</b>：源码 → Token 序列（切分字符流）</li>"
         "<li><b>语法分析</b>：Token → AST（按优先级构建树）</li>"
@@ -152,7 +169,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "</ul>"
         "<p style='color: #888; font-size: 11px;'>提示：点击底部按钮跳转到对应面板，亲手探索每个阶段！</p>"
         "</body></html>"
-    ).arg(surfaceHex);
+    ).arg(surfaceHex, stage0Hex, stage2Hex, stage3Hex, stage4Hex);
 }
 
 void CodeJourneyInfoPanel::onJumpToEditor()   { emit jumpToPanelRequested("editor"); }

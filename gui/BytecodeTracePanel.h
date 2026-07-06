@@ -59,6 +59,11 @@ public:
 signals:
     void loadSampleRequested(const QString& code);
 
+protected:
+    /// 面板显示时恢复自动捕获（若用户已勾选），隐藏时停止 QTimer
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
 private slots:
     void onCaptureNow();
     void onAutoCaptureToggled(bool checked);

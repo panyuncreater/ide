@@ -3,7 +3,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Qt6](https://img.shields.io/badge/Qt-6-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-1668-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1693-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境，包含自研词法分析器、递归下降解析器、栈式字节码虚拟机、树遍历解释器、调试器、代码格式化器、IR 中间表示层与完整 GUI。
@@ -54,7 +54,7 @@
 
 ### IDE 能力
 
-- **代码编辑器**：语法高亮、行号、断点标记、错误下划线、当前执行行高亮、代码折叠（基于块结构）、查找替换（带迭代限制防 UI 阻塞）、Tab/Shift+Tab 多行缩进、回车自动缩进、括号匹配高亮、Ctrl+G 跳转行、Ctrl+/ 注释切换
+- **代码编辑器**：语法高亮、行号、断点标记、错误下划线、当前执行行高亮、代码折叠（基于块结构）、查找替换（带迭代限制防 UI 阻塞）、Tab/Shift+Tab 多行缩进、回车自动缩进、括号匹配高亮、Ctrl+G 跳转行、Ctrl+/ 注释切换、Ctrl+D 选中相同词（单光标简化版）、Ctrl+Shift+K 删除当前行
 - **词法/语法分析可视化**：Token 表格（10000 行显示上限）、AST 树形图（自动布局，可缩放/平移）
 - **字节码反汇编**：主 chunk 与函数 chunk 分段显示，单步高亮当前指令，同时兼容栈式 VM（OpCode）和寄存器式 VM（RegOp）
 - **IR 中间表示层**：可选 AST -> IR -> Bytecode 三段式编译，52 个 IROp 指令，支持 SSA-like 虚拟寄存器、多函数 lowering、闭包 upvalue 捕获、写回指令、全局槽位分配、优化 pass（常量折叠 / 死代码消除 / 复制传播）、IR 可视化面板与 IR 调试器集成。IR 路径退出后自动恢复配置，不污染后续编译路径
@@ -62,21 +62,21 @@
   - 树遍历解释器（支持 REPL 续行输入、条件断点沙箱求值）
   - 栈式字节码 VM（支持单步、栈/全局变量监视、条件断点）
   - 寄存器式 VM（32 虚拟寄存器 R0-R31，50+ RegOp，IR 三地址码直接 lowering）
-- **调试器**：断点（含条件断点，条件求值沙箱隔离程序状态）、单步进入/跳过/跳出、变量监视、调用栈、首行断点 pre-execution 检查。双后端调试路径暂停语义文档化：Interpreter pre-execution 暂停，VM post-execution 检查（IP 指向下条指令，变量快照反映断点行 pre-execution 状态）
+- **调试器**：断点（含条件断点，条件求值沙箱隔离程序状态）、单步进入/跳过/跳出、变量监视、调用栈（M5: 选中栈帧自动跳转到对应源码行）、首行断点 pre-execution 检查。双后端调试路径暂停语义文档化：Interpreter pre-execution 暂停，VM post-execution 检查（IP 指向下条指令，变量快照反映断点行 pre-execution 状态）
 - **类型检查器**：编译期类型注解检查，三后端运行时统一强制，类型违反报告警告
 - **代码格式化器**：可配置缩进/花括号风格/运算符空格，保留注释。幂等性 + 往返不变量验证（AST 结构比较），括号保留遵循运算符优先级（右嵌套同优先级加括号，左嵌套冗余括号丢弃）
 - **REPL 面板**：交互式求值，支持多行续行（未闭合 `{ ( [` / 未闭合字符串 / 未闭合块注释 / `try` 缺失 `catch` 自动续行，正确处理字符串插值嵌套上下文），续行中按空行可中止；表达式语句自动求值并打印结果；异步执行不阻塞 UI；`help`/`clear` 特殊命令；`%magic` 命令系统（功能 11）：10 个 magic 命令（`%help` / `%version` / `%disassemble` / `%ir` / `%ast` / `%tokens` / `%memory` / `%profile` / `%compare` / `%reset`），在 REPL 输入 `%` 前缀即可快速调用各面板的数据获取逻辑，复用 IdeController Facade API
-- **工作区 UX**：状态栏最右侧实时显示当前执行引擎（`⚙ 树遍历解释器`/`⚙ 栈式 VM`/`⚙ 寄存器式 VM`，随引擎切换同步）；文件树顶部搜索过滤框（按文件名小写包含递归过滤，目录按可见子项决定显隐）；文件树右键菜单扩展 3 项（复制路径 / 复制相对路径 / 在文件资源管理器中显示）；错误列表类型过滤栏（错误/警告/信息/提示 4 个 toggle 按钮，按 DiagLevel 显隐过滤，新增错误项自动遵循当前过滤状态）
+- **工作区 UX**：状态栏最右侧实时显示当前执行引擎（`⚙ 树遍历解释器`/`⚙ 栈式 VM`/`⚙ 寄存器式 VM`，随引擎切换同步）；状态栏选中范围显示（`选中 N 行 M 字符`，仅在有选中时显示）；文件树顶部搜索过滤框（按文件名小写包含递归过滤，目录按可见子项决定显隐）；文件树右键菜单扩展 3 项（复制路径 / 复制相对路径 / 在文件资源管理器中显示）；错误列表类型过滤栏（错误/警告/信息/提示 4 个 toggle 按钮，按 DiagLevel 显隐过滤，新增错误项自动遵循当前过滤状态）
 
 ### 教学增强面板（第一波 + 第三波）
 
 围绕"三套执行引擎 + 共享 IR 层 + 历史真实 Bug 沉淀"三大独特性设计，强化 IDE 的教学价值：
 
-- **编译管线可视化面板**（Ctrl+Shift+P）：5 步流程导航条（源码 → Token → AST → IR → 字节码），逐步展示编译管线每一阶段的中间产物。Token 表格含 type/lexeme/line/column 字段；AST 步骤展示 dumpAst 摘要；IR 步骤展示 IRModule 反汇编；字节码步骤展示 BytecodeChunk 反汇编
+- **编译管线可视化面板**（Ctrl+Shift+P）：5 步流程导航条（源码 → Token → AST → IR → 字节码），逐步展示编译管线每一阶段的中间产物。Token 表格含 type/lexeme/line/column 字段，支持右键菜单复制单元格/整行 + Ctrl+C 快捷复制；AST 步骤展示 dumpAst 摘要；IR 步骤展示 IRModule 反汇编；字节码步骤展示 BytecodeChunk 反汇编
 - **三后端并行对比面板**（Ctrl+Shift+B）：同一源码顺序运行 Interpreter / StackVM / RegisterVM 三条路径，每路径独立计时（微秒精度）+ 输出比对，自动统计行级差异并给出一致性 PASS/FAIL 结论。三后端输出一致即"三后端语义等价"教学验证
-- **Bug 狩猎面板**（Ctrl+Shift+H）：基于项目历史真实 Bug 训练调试能力。题库 15 道，按难度分三级——🟢 **入门级** 5 道阅读理解型（BUG-READ-01~05：预测输出 / 块作用域 / Formatter 展开 / 循环内 vs 循环外 var / COW refCount），🟡 **进阶级** 4 道（BUG-DEF-1/REGVM-2/REPL-1/F-04），🔴 **专家级** 6 道（BUG-IR-POP-2/CP-1/UV-1/DBG-1/CP-2/MOD-1）。每题含背景/源码/期望行为/Bug 行为/递进提示/根因分析。难度筛选栏 4 互斥按钮（全部 / 入门 / 进阶 / 专家），默认显示入门级。三栏布局：题目列表 + 背景说明 + 内嵌编辑器/输出。可一键加载源码到主编辑器进一步调试
+- **Bug 狩猎面板**（Ctrl+Shift+H）：基于项目历史真实 Bug 训练调试能力。题库 15 道，按难度分三级——🟢 **入门级** 5 道阅读理解型（BUG-READ-01~05：预测输出 / 块作用域 / Formatter 展开 / 循环内 vs 循环外 var / COW refCount），🟡 **进阶级** 4 道（BUG-DEF-1/REGVM-2/REPL-1/F-04），🔴 **专家级** 6 道（BUG-IR-POP-2/CP-1/UV-1/DBG-1/CP-2/MOD-1）。每题含背景/源码/期望行为/Bug 行为/递进提示/根因分析。难度筛选栏 4 互斥按钮（全部 / 入门 / 进阶 / 专家），默认显示入门级。题目列表上方搜索框按文本小写包含过滤。三栏布局：题目列表 + 背景说明 + 内嵌编辑器/输出。可一键加载源码到主编辑器进一步调试
 - **交互式语法探索器**（Ctrl+Shift+S）：10 条核心产生式参考（var-decl/if-stmt/while-stmt/for-stmt/fun-decl/class-decl/try-stmt/import-stmt/string-interp/data-structures/operators），每条配 EBNF 形式 + 文字说明 + 可运行样例代码。三栏布局：产生式列表 + 说明 + 代码/输出
-- **内置实验手册**（Ctrl+Shift+L）：8 个实验章节（lab-01~lab-08：词法分析 / 递归下降 / 树遍历解释器 / 栈式 VM / 寄存器式 VM / 三后端一致性 / 内存模型 / Bug 狩猎），每章含目标/关键概念/实验步骤/验证断言/进阶/可一键加载样例代码。Markdown 内容通过 QTextBrowser 渲染
+- **内置实验手册**（Ctrl+Shift+L）：8 个实验章节（lab-01~lab-08：词法分析 / 递归下降 / 树遍历解释器 / 栈式 VM / 寄存器式 VM / 三后端一致性 / 内存模型 / Bug 狩猎），每章含目标/关键概念/实验步骤/验证断言/进阶/可一键加载样例代码，并配备 📋 学习清单（任务列表）/ 💡 小贴士（引用块）/ ⚠️ 常见错误（表格）/ 🤔 思考题四类增强区块。Markdown 内容通过 MarkdownRenderer 渲染（支持任务列表/引用块/表格/围栏代码块）
 
 ### 教学增强面板（第二波）
 
@@ -144,6 +144,7 @@
 - **推荐算法**：当前推荐 = 未完成 + 已解锁 + stage 最小，同 stage 内优先 attemptCount 最少 → estimatedMinutes 最少 → id 字典序
 - **进度持久化**：JSON 文件存储（QStandardPaths::AppDataLocation + minilang_progress.json），记录 completed / attemptCount / lastAccessTime / currentStage。加载失败/格式不匹配时回退到空进度，不崩溃
 - **信号路由**：点击活动项发射 `activityRequested(activityId)` 信号，主窗口连接后路由到对应面板
+- **键盘导航**（M9）：面板设 StrongFocus 后，Up/Down 在已解锁活动行间循环高亮（蓝色边框 + 自动滚动可见），Enter 触发当前行点击，无需鼠标操作即可浏览学习路径
 
 > 关键架构决策：LearnerProgress.cpp 与 LearningPathData.cpp 拆分为独立编译单元（仅依赖 Qt6::Core，不依赖 IdeController / Qt6::Widgets），测试目标可安全链接。LearningPathPanel.cpp 依赖 Qt Widgets + PanelAnimator + QScrollArea，不加入测试目标。活动行使用 QPushButton flat 模式实现可点击（避免 installEventFilter）。
 
@@ -225,7 +226,7 @@
 针对「视图菜单 24 项平铺」「教学面板无说明」「窗口样式不统一」三大新手体验问题，实施完整的教学导航增强方案：
 
 - **学习中心对话框**（LearningHubDialog）：ActivityBar 新增「学习」项（EDUCATION 图标），点击弹出 4 分组卡片导航对话框——入门导览(3) / 编译前端(4) / 执行引擎(8) / 深入实战(5)。点击卡片项发 panelRequested 信号并关闭对话框。视图菜单从 24 项平铺重构为 4 子菜单 + 学习中心入口（Ctrl+Shift+L）。使用 QFluentKit TitleLabel/CaptionLabel/SimpleCardWidget/PrimaryPushButton
-- **教学面板统一标题栏**（TeachingPanelHeader）：19 个教学面板顶部统一包装为 `[标题] [这是什么？] [学习路径]` 三段式。「这是什么？」弹出 480x360 帮助对话框，含面板用途/推荐使用顺序/关联概念三段；「学习路径」按钮发 learningPathRequested 信号由 Ide slot 路由到 LearningPathPanel
+- **教学面板统一标题栏**（TeachingPanelHeader）：19 个教学面板顶部统一包装为 `[标题] [这是什么？] [学习路径]` 三段式。「这是什么？」弹出 480x360 帮助对话框，含面板用途/推荐使用顺序/关联概念三段；「学习路径」按钮发 learningPathRequested 信号由 Ide slot 路由到 LearningPathPanel。标题栏含浅蓝→白色渐变背景 + 底部分隔线，帮助按钮 hover 态圆角淡蓝高亮；面板容器卡片化（4px 圆角 + 1px 边框 + 白底，与 #f3f3f3 面板背景形成层次对比）
 - **主题色板工具**（TeachingTheme.h）：集中教学面板色板（primary/primaryHover/primaryPressed/textPrimary/textSecondary/textHint/surface/surfaceHover/border/accent/success/warning/error），全部跟随 QFluentKit Theme::isDark() + Theme::themeColor() 自适应亮/暗主题。提供 primaryButtonStyle()/secondaryButtonStyle() 便捷样式表
 - **WelcomeWizard Step 4 学习路径推荐**：新增第 4 步，5 阶段彩色卡片（绿/黄/蓝/紫/红）+「开始学习 ✓」按钮，点击发 learningPathRequested 信号并 accept。3 处 WelcomeWizard 创建点（首次启动 / helpMenu / onActivityRequested "welcome"）均连接信号
 - **WelcomeWizard Fluent 化**：主操作按钮 → PrimaryPushButton（主题色自动驱动）；次操作按钮 → PushButton；标题/副标题 → TitleLabel/CaptionLabel；硬编码颜色 → TeachingTheme 主题色板。代码编辑器深色主题与 Step 4 五阶段语义色保留
@@ -245,6 +246,45 @@
 - **关键约束遵循**：不动 CodeEditor.cpp 与主题切换逻辑；保留全部信号连接、QTimer、QStackedWidget 子页切换；工具箱/导航按钮保留原生 QPushButton 避免视觉过载
 
 > 关键架构决策：PrimaryPushButton 仅用于主操作按钮以提供视觉强调，工具箱/导航按钮保留原生 QPushButton；滚动条替换用 className 检查防御性防重复；`<pre>` 背景用 TeachingTheme::surface().name() 跟随主题，无需在 HTML 中重复定义两套配色。全量 1668/1668 测试通过。
+
+### 主题系统完整性增强（DebugPanel 主题化 + 调用栈帧跳转源码 + 教学面板 HTML 重建）
+
+针对主题系统三处不完整实现，独立但同主题的 3 项 P1 高优先级任务在同一批次内完成，保证主题切换语义一致性：
+
+- **M5 调用栈帧跳转源码**（gui/DebugPanel + app/ide.cpp）：DebugPanel 新增 `gotoLineRequested(int line)` 信号，`onStackFrameSelected` 末尾根据 `currentStack_[index].line` 发射信号（直接复用已验证的 CallStackEntry.line 字段，无需 UserRole 冗余存储），app/ide.cpp 连接到 `codeEditor_->gotoLine(line)`。调试时点击调用栈帧，主编辑器自动跳转到对应源码行，与 VS Code/CLion 调试器行为一致
+- **DebugPanel 主题化接入**（gui/DebugPanel）：7 处硬编码颜色（`#616161` / `#ffffff` / `#e5e5e5` / `#cfe4f5`）全部替换为 TeachingTheme 主题色板（textSecondary / surface / border / primary().lighter(160)）。新增 `applyThemeStyles()` 私有方法集中管理所有 setStyleSheet 调用，构造函数末尾添加 `Theme::onThemeModeChanged` 监听，主题切换时重新应用样式
+- **主题切换后教学面板 HTML 重建**（3 面板）：CodeJourneyInfoPanel / IRTransformPanel / BreakpointConditionPanel 构造函数末尾添加 `Theme::onThemeModeChanged` 监听，主题切换时重建/刷新 HTML 内容（buildJourneyHtml / populateLoweringDetail / populateScenarioDetail 内部使用 `TeachingTheme::surface()` 作为 `<pre>` 背景）
+
+> 关键架构决策：直接复用 CallStackEntry.line 而非 UserRole 冗余存储行号（避免数据双源不一致）；applyThemeStyles 集中管理样式避免构造函数与主题切换回调代码重复；styleScopeGroupHeader 在每次 populateVariableTree 时重新设置画刷，主题切换后下次刷新自动跟随新主题无需手动处理；IRTransformPanel 按当前页签 `stack_->currentIndex()` 分发到对应 populate 函数，确保所有子页内容都刷新。全量 1668/1668 测试通过。
+
+### P2 视觉一致性收尾（8 项独立任务批量处理）
+
+针对主题系统在 8 处遗留的视觉一致性问题进行批量收尾，所有改动严格遵循「不动 CodeEditor.cpp / DebugPanel.cpp / 3 教学面板 HTML 重建」约束，全量 1668/1668 测试通过：
+
+- **T1 5 阶段色集中管理**（gui/LearningPathPanel.cpp + gui/WelcomeWizard.cpp）：原本 LearningPathPanel::stageColor() 内嵌 switch 硬编码、WelcomeWizard Step 4 内嵌 QStringList 5 色数组，两处定义可能漂移。TeachingTheme.h 新增 `learningStageColor(int stage)` inline 函数（绿 #4CAF50 / 黄 #FFC107 / 蓝 #2196F3 / 紫 #9C27B0 / 红 #F44336），两处调用方均改为 `TeachingTheme::learningStageColor(stage).name()`，三处面板阶段色（含 CodeJourneyInfoPanel）自此统一走单一数据源
+- **T2 输出面板语义色**（app/ide.cpp）：错误列表 4 个 errFilter 按钮（errFilterErrorBtn_ / errFilterWarnBtn_ / errFilterInfoBtn_ / errFilterHintBtn_）原本硬编码 QColor(...)，改为 `TeachingTheme::error()` / `warning()` / `info()`（新增 `#0078D4`）/ `hint()`（新增 `#8C8C8C`）语义色。`kTs/kInfo/kSuccess/kWarn/kError/kBody` 与诊断图标色受 RichTextItemDelegate HTML 拼接的 `const char*` 限制保留，加注释标注语义关系
+- **T3 applyFluentStyle 14 色变量集中管理**（app/ide.cpp）：原本 applyFluentStyle 内 14 处 `isDark ? "#xxx" : "#yyy"` 三元硬编码，TeachingTheme.h 新增 14 个 `ide*()` inline 函数（ideBgMain/ideBgPanel/ideBgSidebar/ideFgPrimary/ideFgSecondary/ideBorder/ideAccent/ideHoverBg/ideSelectedBg/ideTitleBg/ideStatusBg/ideEditorBg/ideLineNumBg/ideLineNumFg），全部调用 `Theme::isDark()` 自适应，14 处样式表变量统一走 TeachingTheme
+- **T4 文件树 Fluent 图标**（app/ide.cpp）：文件树原本用 QStyle::SP_DirIcon / SP_FileIcon 系统图标，视觉与 Fluent Design 不一致。改为 `Fluent::icon(Fluent::IconType::FOLDER)` / `DOCUMENT` / `CODE`（按文件扩展名 .mini/.txt 选 CODE，其他选 DOCUMENT），与 QFluentKit 风格统一
+- **T5 Welcome 欢迎页 Fluent 化**（app/ide.cpp）：welcomePage_ 的标题 QLabel 与副标题 QLabel 改为 `TitleLabel` / `CaptionLabel`，与 WelcomeWizard Step 1 风格一致。按钮保留 QPushButton（暗色主题 Claude DS terra-cotta #D97757 品牌色，原代码注释明确说明 QFluentKit PrimaryPushButton 自绘不读 QSS）
+- **T6 QGroupBox 全局样式表统一外观**（app/ide.cpp applyFluentStyle 末尾）：原本 QGroupBox 使用系统默认样式（无圆角、无统一边距、标题色不跟随主题），与 Fluent Design 风格不一致。新增全局 QSS 样式表（1px border + 6px radius + 12px margin-top + 8px padding-top + 标题左偏移 8px + 标题色跟随 TeachingTheme::textPrimary()），所有 QGroupBox 自动级联 Fluent 外观。决策：不替换为 SimpleCardWidget（高风险，会改变 19 个面板的父类层级与布局），改用全局样式表是最小侵入方案
+- **T7 CodeJourneyInfoPanel Material 色清理**（gui/CodeJourneyInfoPanel.cpp buildJourneyHtml）：12 处 Material 色清理——6 处 5 阶段色（绿/蓝/紫/红 + 标题绿/输出绿）改为 `TeachingTheme::learningStageColor(0/2/3/4).name()`，6 处浅色 `<pre>` 背景（#f5f5f5 等）改为 `TeachingTheme::surface().name()` 跟随亮/暗主题。保留特有色 #FF9800（橙，源码阶段）/ #00BCD4（青，IR 阶段）/ #795548（棕，字节码阶段），这些是代码旅程特有语义色
+- **T8 帮助对话框硬编码色替换**（app/ide.cpp showHelpDialog）：原本 7 处 `isDark() ? "#xxx" : "#yyy"` 三元硬编码（标题色/正文色/边框色/背景色/链接色等），全部改为 TeachingTheme 函数（textPrimary / textSecondary / border / surface / primary 等），与 applyFluentStyle 主题色板一致
+
+> 关键架构决策：(1) TeachingTheme.h 仅新增 inline 函数（learningStageColor / info / hint + 14 个 ide*），不修改已有函数签名，保证向后兼容；(2) const char* HTML 拼接受限于 RichTextItemDelegate 接口，无法直接换 QColor::name()，保留并加注释标注语义关系是务实选择；(3) QGroupBox 全局样式表是比 SimpleCardWidget 替换更低风险的方案（避免改变父类层级与布局）；(4) Welcome 按钮保留 QPushButton 维持暗色主题 Claude DS terra-cotta 品牌色（原代码注释明确说明 QFluentKit 自绘不读 QSS）。全量 1668/1668 测试通过。
+
+### 教学面板 Markdown 渲染接入（7 面板散文字段统一）
+
+将 7 个教学面板的散文式说明字段统一通过 `gui/MarkdownRenderer.h` 的 `markdownToHtmlFragment` 渲染为 HTML 片段，替代各面板手写的 `"<p>" + raw_string + "</p>"` 模板，支持标题/粗体/斜体/行内代码/围栏代码块/列表/分割线等 markdown 子集：
+
+- **CallStackPanel**（showScenario）：`s.description` 与 `s.teachingNote` 改用 markdown fragment
+- **VariableInspectorPanel**（showExample）：`e.teachingNote` 与 `e.heapLayout` 改用 markdown fragment；保留 sourceExpr 的 `<pre>` 包裹
+- **BytecodeTracePanel**（showDoc）：`d.semantics` 改用 markdown fragment；保留 operandFormat / stackEffect 单行字段
+- **ClosureInspectorPanel**（populateScenarioDetail + populatePhaseDetail）：`s.description` / `s.teachingNote` / `p.description` 改用 markdown fragment；同时修复先前未调用 `toHtmlEscaped()` 的 HTML 注入隐患
+- **ExceptionFlowPanel**（populateScenarioDetail + populatePhaseDetail）：同前，3 处字段改 markdown fragment + HTML 注入修复
+- **MemoryModelPanel**（populateNanBoxDetail + populateGcPhases）：`b.description` 与 GcPhaseInfo 的 `p.description` 改用 markdown fragment
+- **SyntaxExplorerPanel**（showCurrentItem）：`p.description` 与 `p.naturalLanguage` 改用 markdown fragment；naturalLanguage 移除 `<pre>` 包裹改由 markdown 处理多段格式；保留 ebnf 的 `<pre>`（字面文法表示）
+
+> 关键架构决策：(1) 使用 `markdownToHtmlFragment` 而非 `markdownToHtml`——fragment 版本不含 `<html><body>` 包裹，便于嵌入各面板已有 HTML 模板（QString::arg 或 std::ostringstream 拼接）；(2) std::string 重载直接传递 Library 字段，避免调用点反复 `QString::fromUtf8`；(3) 移除手动 `<p>` 包裹避免与 markdown fragment 自带 `<p>...</p>` 嵌套产生无效 HTML；(4) 保留 id / title / ebnf / operandFormat / stackEffect / sampleCode 等单行字面字段不变，避免 markdown 误解析字面字符（如 EBNF 中的 `*` 会被识别为强调）；(5) ClosureInspector / ExceptionFlow 先前直接 `oss << s.description` 未转义，markdown 渲染器内部处理转义一并修复该潜在注入隐患。minilang_ide 构建成功，无编译错误。
 
 ## 架构
 
@@ -310,7 +350,7 @@
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/调试面板等） |
 | `app/` | IdeController、InterpreterWorker、main、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
-| `tests/` | GoogleTest 单元测试（1668 个） |
+| `tests/` | GoogleTest 单元测试（1693 个） |
 | `test_harness/` | 独立测试工具（AST/格式化器/调试一致性审计） |
 | `samples/mini/` | MiniLang 示例程序（模块系统演示） |
 | `docs/` | 开发指南与文档 |
@@ -466,13 +506,13 @@ for (var i = 0; i < 10; i = i + 1) {
 ### 代码规范
 
 - 编码风格遵循项目现有约定（参见 `AGENTS.md`）
-- 新增代码需通过全量测试（1668/1668）+ formatter_audit 审计用例验证
+- 新增代码需通过全量测试（1693/1693）+ formatter_audit 审计用例验证
 - 提交前运行 `./scripts/run_tests.bat` 确认无回归
 - 详细工程约定参见 [docs/development.md](./docs/development.md)
 
 ## 测试
 
-项目包含 **1668 个 GoogleTest 单元测试**（191 个测试套件），覆盖所有核心模块：
+项目包含 **1693 个 GoogleTest 单元测试**（194 个测试套件），覆盖所有核心模块：
 
 ### 前端模块
 

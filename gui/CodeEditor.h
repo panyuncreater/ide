@@ -82,6 +82,13 @@ public:
     /// F9: 设置深色主题（影响行号区域和当前行高亮配色）
     void setDarkTheme(bool dark);
 
+    /// 字号调节：delta 为正放大，为负缩小，范围限制 [8, 32]
+    /// 同步更新行号区域宽度（依赖 fontMetrics）
+    void changeFontSize(int delta);
+
+    /// 获取当前字号
+    int fontSize() const;
+
     /// BUG 4.2 fix: 设置查找高亮（独立存储，不覆盖编辑器自身 ExtraSelections）
     void setFindSelections(const QList<QTextEdit::ExtraSelection>& selections);
 
@@ -198,6 +205,17 @@ private:
     void unindentLine(QTextCursor& tc);
     /// H4: 对选中范围切换 // 注释（行首有 // 则移除，否则插入）
     void toggleCommentSelection(QTextCursor& tc);
+
+    /// H4: 对选中范围切换 /* */ 块注释（选区首尾包裹或去除）
+    void toggleBlockComment(QTextCursor& tc);
+
+    /// H2 辅助：判断位置 pos 是否在字符串或注释内（避免匹配字符串内的括号）
+    /// 通过从文档开头扫描到 pos，统计字符串/注释状态实现
+    bool isInsideStringOrComment(int pos) const;
+
+    /// H2 辅助：从 fromPos 开始扫描，找到下一个非字符串/注释内的字符 c 的位置
+    /// 返回 -1 表示未找到
+    int findCharOutsideStringComment(QChar c, int fromPos, bool forward) const;
 
     friend class LineNumberArea;
 };

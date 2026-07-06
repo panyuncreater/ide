@@ -17,6 +17,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QButtonGroup>
+#include <QLineEdit>
 #include <sstream>
 #include <chrono>
 
@@ -92,6 +93,18 @@ BugHuntPanel::BugHuntPanel(QWidget* parent)
     itemList_ = new QListWidget(this);
     variantList_ = new QListWidget(this);  // 变体列表（默认隐藏）
     variantList_->hide();
+
+    // M11: 题目列表上方放搜索框，包在容器内一并加入 splitter
+    auto* listContainer = new QWidget(this);
+    auto* listLayout = new QVBoxLayout(listContainer);
+    listLayout->setContentsMargins(0, 0, 0, 0);
+    listLayout->setSpacing(2);
+    searchEdit_ = new QLineEdit(listContainer);
+    searchEdit_->setPlaceholderText(mlTr("搜索题目..."));
+    searchEdit_->setClearButtonEnabled(true);
+    listLayout->addWidget(searchEdit_);
+    listLayout->addWidget(itemList_);
+
     descBrowser_ = new QTextBrowser(this);
     auto* rightContainer = new QWidget(this);
     auto* rightLayout = new QVBoxLayout(rightContainer);
@@ -104,7 +117,7 @@ BugHuntPanel::BugHuntPanel(QWidget* parent)
     rightLayout->addWidget(new QLabel(mlTr("运行结果：")), 0);
     rightLayout->addWidget(outputEdit_, 1);
 
-    splitter->addWidget(itemList_);
+    splitter->addWidget(listContainer);
     splitter->addWidget(variantList_);
     splitter->addWidget(descBrowser_);
     splitter->addWidget(rightContainer);
@@ -114,6 +127,18 @@ BugHuntPanel::BugHuntPanel(QWidget* parent)
     splitter->setStretchFactor(3, 3);
     splitter->setSizes({160, 160, 300, 400});
     mainLayout->addWidget(splitter, 1);
+
+    // M11: 搜索框 textChanged → 过滤题目列表（按文本小写包含匹配）
+    connect(searchEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
+        if (!itemList_) return;
+        QString filter = text.toLower();
+        for (int i = 0; i < itemList_->count(); ++i) {
+            auto* item = itemList_->item(i);
+            if (!item) continue;
+            bool match = filter.isEmpty() || item->text().toLower().contains(filter);
+            itemList_->setRowHidden(i, !match);
+        }
+    });
 
     populateItemList();
     // 填充变体列表

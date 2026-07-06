@@ -12,14 +12,14 @@
 const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
     static const std::vector<SyntaxProduction> kItems = {
         SyntaxProduction{
-            "var-decl", "var 声明",
+            "var-decl", "📝 var 声明",
             "varDecl := \"var\" IDENTIFIER (\":\" typeAnnotation)? \"=\" expression \";\"\n"
             "         | typeAnnotation IDENTIFIER \"=\" expression \";\"",
-            "动态声明变量，或使用类型注解强制类型。三后端统一强制类型注解，"
+            "📝 动态声明变量，或使用类型注解强制类型。三后端统一强制类型注解，"
             "null 兼容所有类型，float 注解接受 int 值（宽化），int 注解拒绝 float 值。",
             "var x = 10;\nint count = 0;\nfloat pi = 3.14;\nstring name = \"MiniLang\";\nprint(x);",
             // F8 自然语言描述
-            "var 声明的写法：\n\n"
+            "📝 var 声明的写法：\n\n"
             "  必须以 var 关键字开头（或直接用类型注解开头）\n"
             "  接着是变量名（标识符）\n"
             "  可选择性地加冒号和类型注解：var x: int\n"
@@ -37,13 +37,13 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • float 注解接受 int 值（宽化）"
         },
         SyntaxProduction{
-            "if-stmt", "if 语句",
+            "if-stmt", "🔀 if 语句",
             "ifStmt := \"if\" \"(\" expression \")\" block (\"else\" block)?\n"
             "        | \"if\" \"(\" expression \")\" statement (\"else\" statement)?",
-            "条件分支。then/else 分支可以是 block（{}包裹）或单语句（无花括号）。"
+            "🔀 条件分支。then/else 分支可以是 block（{}包裹）或单语句（无花括号）。"
             "Parser 层限制 import/export 不能在无花括号单语句体中使用。",
             "var x = 10;\nif (x > 5) {\n    print(\"big\");\n} else {\n    print(\"small\");\n}",
-            "if 语句的写法：\n\n"
+            "🔀 if 语句的写法：\n\n"
             "  必须以 if 关键字开头\n"
             "  接着是括号包裹的条件表达式: if (条件)\n"
             "  然后是代码块（用 { } 包围的一或多条语句）\n"
@@ -60,12 +60,12 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 支持 else if 链：if (...) {...} else if (...) {...} else {...}"
         },
         SyntaxProduction{
-            "while-stmt", "while 循环",
+            "while-stmt", "🔄 while 循环",
             "whileStmt := \"while\" \"(\" expression \")\" (block | statement)",
-            "条件循环。支持 break/continue。break 退出循环，continue 跳过当前迭代。"
+            "🔄 条件循环。支持 break/continue。break 退出循环，continue 跳过当前迭代。"
             "条件为假时跳过循环体。",
             "var i = 0;\nwhile (i < 5) {\n    print(i);\n    i = i + 1;\n}",
-            "while 循环的写法：\n\n"
+            "🔄 while 循环的写法：\n\n"
             "  必须以 while 关键字开头\n"
             "  接着是括号包裹的条件表达式: while (条件)\n"
             "  然后是循环体（代码块或单语句）\n\n"
@@ -81,13 +81,13 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • continue 跳过本次迭代剩余代码，进入下一轮条件判断"
         },
         SyntaxProduction{
-            "for-stmt", "for 循环",
+            "for-stmt", "🔁 for 循环",
             "forStmt := \"for\" \"(\" (varDecl | assignment | \";\") expression \";\" assignment \")\" \n"
             "          (block | statement)",
-            "C 风格 for 循环。init/condition/update 三段式，每段可空。"
+            "🔁 C 风格 for 循环。init/condition/update 三段式，每段可空。"
             "支持 break/continue。循环变量在顶层时退出后清理（DELETE_VAR）。",
             "var sum = 0;\nfor (var i = 0; i < 10; i = i + 1) {\n    sum = sum + i;\n}\nprint(sum);  // 45",
-            "for 循环的写法：\n\n"
+            "🔁 for 循环的写法：\n\n"
             "  C 风格三段式，每段用分号分隔：\n"
             "    for (初始化; 条件; 更新) { 循环体 }\n\n"
             "  示例:\n"
@@ -103,15 +103,15 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 支持 break / continue"
         },
         SyntaxProduction{
-            "fun-decl", "函数声明",
+            "fun-decl", "⚙️ 函数声明",
             "funDecl := \"fun\" IDENTIFIER \"(\" params \")\" (\":\" typeAnnotation)? block\n"
             "params := (param (\",\" param)*)?\n"
             "param  := IDENTIFIER (\":\" typeAnnotation)? (\"=\" literal)?",
-            "函数声明。支持默认参数（仅字面量 + 负数字面量，复杂表达式被 Parser 拒绝）。"
+            "⚙️ 函数声明。支持默认参数（仅字面量 + 负数字面量，复杂表达式被 Parser 拒绝）。"
             "函数无提升——f(); fun f() {} 会报\"未定义的函数\"。"
             "支持闭包与 upvalue 捕获（3+ 层）。",
             "fun add(a, b = 1) {\n    return a + b;\n}\nprint(add(5));     // 6\nprint(add(5, 2));  // 7",
-            "函数声明的写法：\n\n"
+            "⚙️ 函数声明的写法：\n\n"
             "  必须以 fun 关键字开头\n"
             "  接着是函数名（标识符）\n"
             "  然后是括号包裹的参数列表: fun name(参数)\n"
@@ -133,14 +133,14 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • return 不在函数末尾时需要明确返回值"
         },
         SyntaxProduction{
-            "class-decl", "类与继承",
+            "class-decl", "🏛️ 类与继承",
             "classDecl := \"class\" IDENTIFIER (\"extends\" IDENTIFIER)? classBody\n"
             "classBody := \"{\" (varDecl | funDecl)* \"}\"",
-            "类声明。extends 后父类名为字符串运行时查找。"
+            "🏛️ 类声明。extends 后父类名为字符串运行时查找。"
             "类方法自动预留 slot 0 给 this，字段按继承链展平存储。"
             "支持 super.method() 调用，三后端 super 调用语义一致。",
             "class Animal {\n    fun init(name) { this.name = name; }\n    fun speak() { print(this.name); }\n}\nclass Dog extends Animal {\n    fun speak() {\n        super.speak();\n        print(\"(woof)\");\n    }\n}\nDog(\"Rex\").speak();",
-            "类声明的写法：\n\n"
+            "🏛️ 类声明的写法：\n\n"
             "  必须以 class 关键字开头\n"
             "  接着是类名（标识符）\n"
             "  可选 extends 父类名: class Child extends Parent\n"
@@ -161,14 +161,14 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • init 是构造方法，实例化时自动调用: Dog(\"Rex\") 等价于 new Dog(\"Rex\")"
         },
         SyntaxProduction{
-            "try-stmt", "try/catch 异常处理",
+            "try-stmt", "🛡️ try/catch 异常处理",
             "tryStmt := \"try\" block \"catch\" \"(\" IDENTIFIER \")\" block\n"
             "throwStmt := \"throw\" expression? \";\"",
-            "异常处理。throw 可抛任意值。catch 参数独占 slot（防止覆盖外层变量）。"
+            "🛡️ 异常处理。throw 可抛任意值。catch 参数独占 slot（防止覆盖外层变量）。"
             "catch 块内 throw 会跳过清理代码——为正确处理，catch 块用 OP_TRY_BEGIN 包装，"
             "异常路径复制 cleanup 字节码后 OP_THROW rethrow。",
             "fun divide(a, b) {\n    if (b == 0) throw \"Division by zero\";\n    return a / b;\n}\ntry {\n    print(divide(10, 0));\n} catch (e) {\n    print(\"Error: \" + e);\n}",
-            "try/catch 异常处理的写法：\n\n"
+            "🛡️ try/catch 异常处理的写法：\n\n"
             "  try 后跟一个代码块（可能出错的代码）\n"
             "  catch 后跟括号包裹的异常变量名和代码块\n"
             "  throw 可抛出任意值（字符串、数字、对象等）\n"
@@ -186,14 +186,14 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • catch 块内 throw 会 rethrow，跳过清理代码（已正确处理）"
         },
         SyntaxProduction{
-            "import-stmt", "模块导入",
+            "import-stmt", "📦 模块导入",
             "importStmt := \"import\" (\"{\" IDENTIFIER (\",\" IDENTIFIER)* \"}\" | \"*\") \"from\" STRING \";\"\n"
             "exportStmt := \"export\" (varDecl | funDecl | classDecl)",
-            "模块系统。import/export 限制在顶层作用域（Parser 在 statement() 入口显式拒绝）。"
+            "📦 模块系统。import/export 限制在顶层作用域（Parser 在 statement() 入口显式拒绝）。"
             "模块路径非空校验，路径遍历防护（拒绝 .. 父目录引用和绝对路径）。"
             "VM 路径通过编译期模块内联支持 import。",
             "// 假设 utils.mini 中有 export fun greet(name) { ... }\nimport { greet } from \"utils.mini\";\nprint(greet(\"MiniLang\"));",
-            "import / export 模块系统的写法：\n\n"
+            "📦 import / export 模块系统的写法：\n\n"
             "  导入语法（两种形式）：\n"
             "    import { 名称1, 名称2 } from \"模块路径\";   // 命名导入\n"
             "    import * from \"模块路径\";                  // 全部导入\n\n"
@@ -215,13 +215,13 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 非导出顶层名称在导入方不可见（模块隔离）"
         },
         SyntaxProduction{
-            "string-interp", "字符串插值",
+            "string-interp", "🔤 字符串插值",
             "interpolatedString := '\"' (stringPart | \"{\" expression \"}\")* '\"'",
-            "字符串插值。支持表达式嵌入。空插值 {} 报语法错误。"
+            "🔤 字符串插值。支持表达式嵌入。空插值 {} 报语法错误。"
             "插值支持嵌套字符串、字典、数组，嵌套深度限制 64 层防栈溢出。"
             "Lexer 通过 INTERP_START/INTERP_END/STRING_PART 三种 token 类型识别。",
             "var name = \"World\";\nvar items = [1, 2, 3];\nprint(\"Hello, {name}! You have {items.len()} items.\");",
-            "字符串插值的写法：\n\n"
+            "🔤 字符串插值的写法：\n\n"
             "  用双引号 \" 包裹字符串\n"
             "  在字符串中用 { } 嵌入任意表达式\n"
             "  表达式会被求值并转换为字符串\n\n"
@@ -239,14 +239,14 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 表达式会被自动 toString()"
         },
         SyntaxProduction{
-            "data-structures", "数组与字典",
+            "data-structures", "📚 数组与字典",
             "arrayLiteral := \"[\" (expression (\",\" expression)*)? \"]\"\n"
             "dictLiteral   := \"{\" (STRING \":\" expression (\",\" STRING \":\" expression)*)? \"}\"",
-            "数组与字典字面量。字典键强制为 string，键不存在时返回 null。"
+            "📚 数组与字典字面量。字典键强制为 string，键不存在时返回 null。"
             "数组/字典使用 Copy-On-Write（COW），写前检查独占所有权。"
             "支持索引读写（a[0] / d[\"key\"]）和嵌套索引赋值（a[0][1]=x）。",
             "var arr = [1, 2, 3];\narr.push(4);\nprint(arr.len());  // 4\n\nvar cfg = {\"key\": \"value\", \"count\": 42};\nprint(cfg[\"key\"]);  // value",
-            "数组与字典字面量的写法：\n\n"
+            "📚 数组与字典字面量的写法：\n\n"
             "  数组：用方括号 [ ] 包裹，元素用逗号分隔\n"
             "    ✓ [1, 2, 3]\n"
             "    ✓ [\"a\", \"b\", \"c\"]\n"
@@ -265,7 +265,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 支持嵌套索引赋值：a[0][1] = x"
         },
         SyntaxProduction{
-            "operators", "运算符与短路求值",
+            "operators", "🔢 运算符与短路求值",
             "expression := assignment\n"
             "assignment := or_ (\"=\" assignment)?\n"
             "or_  := and_ (\"or\" and_)*\n"
@@ -275,11 +275,11 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "term := factor ((\"+\" | \"-\") factor)*\n"
             "factor := unary ((\"*\" | \"/\" | \"%\") unary)*\n"
             "unary := (\"not\" | \"-\") unary | call",
-            "运算符优先级链。整数除法截断向零（三后端统一）。"
+            "🔢 运算符优先级链。整数除法截断向零（三后端统一）。"
             "and/or 短路求值——左操作数决定结果时跳过右操作数求值，返回操作数原值（非布尔）。"
             "+ 支持字符串拼接（任一操作数为字符串即触发）。",
             "var x = 5;\nprint(x > 0 and \"positive\" or \"non-positive\");\nprint(7 / 2);    // 3\nprint(7.0 / 2);  // 3.5\nprint(0 or \"default\");  // 0（保留原值）",
-            "运算符的写法（按优先级从低到高）：\n\n"
+            "🔢 运算符的写法（按优先级从低到高）：\n\n"
             "  or          （最低优先级）\n"
             "  and\n"
             "  ==  !=\n"

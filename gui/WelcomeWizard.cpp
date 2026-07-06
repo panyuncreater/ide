@@ -351,7 +351,14 @@ void WelcomeWizard::buildStep4() {
         mlTr("阶段三 · 深入理解\n闭包检查 · 异常流 · 变量检查"),
         mlTr("阶段四 · 实战训练\nBug 狩猎 · 性能剖析 · 实验手册"),
     };
-    const QStringList colors = {"#4CAF50", "#FFC107", "#2196F3", "#9C27B0", "#F44336"};
+    // 5 阶段色统一走 TeachingTheme::learningStageColor()，与 LearningPathPanel 一致
+    const QStringList colors = {
+        TeachingTheme::learningStageColor(0).name(),
+        TeachingTheme::learningStageColor(1).name(),
+        TeachingTheme::learningStageColor(2).name(),
+        TeachingTheme::learningStageColor(3).name(),
+        TeachingTheme::learningStageColor(4).name(),
+    };
 
     auto* stagesLayout = new QHBoxLayout;
     stagesLayout->setSpacing(8);

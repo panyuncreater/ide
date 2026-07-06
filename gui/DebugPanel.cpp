@@ -1,5 +1,7 @@
 #include "gui/DebugPanel.h"
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
+#include "gui/TeachingTheme.h"  // 主题色板（替代硬编码颜色）
+#include "Theme.h"              // QFluentKit（onThemeModeChanged 信号）
 #include <QHeaderView>
 #include <QListWidgetItem>  // BUG-DBG-G3 fix: 超长调用栈提示项
 #include <QSplitter>
@@ -12,7 +14,9 @@
 // Round 7: 变量按作用域分层展示（全局/局部/闭包）
 // ============================================================
 
-// 作用域分组样式：灰色小字号标题，不可选中
+// 作用域分组样式：次要文本色小字号标题，不可选中
+// 注：每次 populateVariableTree 都会调用此函数重新设置画刷，
+// 因此主题切换后无需手动刷新已存在的分组项（下次刷新即跟随新主题）。
 static void styleScopeGroupHeader(QTreeWidgetItem* item) {
     QFont f = item->font(0);
     f.setBold(true);
@@ -25,8 +29,8 @@ static void styleScopeGroupHeader(QTreeWidgetItem* item) {
     if (ps > 1) f.setPixelSize(ps - 1);  // 小字号
     item->setFont(0, f);
     item->setFont(1, f);
-    // 灰色文字
-    QBrush grayBrush(QColor("#616161"));
+    // 次要文本色（原硬编码 #616161，跟随主题亮/暗自适应）
+    QBrush grayBrush(TeachingTheme::textSecondary());
     item->setForeground(0, grayBrush);
     item->setForeground(1, grayBrush);
     // 分组标题不可选中
@@ -108,10 +112,9 @@ DebugPanel::DebugPanel(QWidget* parent)
     varLayout->setContentsMargins(0, 0, 0, 0);
     varLayout->setSpacing(2);
 
-    auto* varLabel = new QLabel("变量监视");
-    varLabel->setObjectName("debugVarLabel");
-    varLabel->setStyleSheet("color: #616161; font-size: 12px; font-weight: 500; padding: 2px;");
-    varLayout->addWidget(varLabel);
+    varLabel_ = new QLabel("变量监视");
+    varLabel_->setObjectName("debugVarLabel");
+    varLayout->addWidget(varLabel_);
 
     variableTree_ = new QTreeWidget;
     // Round 7: 移除作用域列（分组已替代），仅保留 名称/值 两列
@@ -126,10 +129,6 @@ DebugPanel::DebugPanel(QWidget* parent)
     // 类型校验、COW 容器写回、跨后端（Interpreter/StackVM/RegisterVM）一致性处理。
     // 工程量大且调试场景下修改变量易引发状态不一致，作为功能增强暂不实现。
     // TODO: 未来可通过 DebugController::setVariable(name, value) 接口实现。
-    variableTree_->setStyleSheet(
-        "QTreeWidget { background: #ffffff; border: 1px solid #e5e5e5; }"
-        "QTreeWidget::item { padding: 2px 0px; }"
-        "QTreeWidget::item:selected { background: #cfe4f5; color: #1e1e1e; }");
     varLayout->addWidget(variableTree_);
 
     splitter->addWidget(varWidget);
@@ -140,18 +139,13 @@ DebugPanel::DebugPanel(QWidget* parent)
     stackLayout->setContentsMargins(0, 0, 0, 0);
     stackLayout->setSpacing(2);
 
-    auto* stackLabel = new QLabel("调用栈");
-    stackLabel->setObjectName("debugStackLabel");
-    stackLabel->setStyleSheet("color: #616161; font-size: 12px; font-weight: 500; padding: 2px;");
-    stackLayout->addWidget(stackLabel);
+    stackLabel_ = new QLabel("调用栈");
+    stackLabel_->setObjectName("debugStackLabel");
+    stackLayout->addWidget(stackLabel_);
 
     callStackList_ = new QListWidget;
     callStackList_->setAlternatingRowColors(false);
     callStackList_->setFont(GuiTextUtils::monospaceFont(10));
-    callStackList_->setStyleSheet(
-        "QListWidget { background: #ffffff; border: 1px solid #e5e5e5; }"
-        "QListWidget::item { padding: 2px 4px; }"
-        "QListWidget::item:selected { background: #cfe4f5; color: #1e1e1e; }");
     stackLayout->addWidget(callStackList_);
 
     // 选中栈帧时显示该帧的局部变量
@@ -165,6 +159,47 @@ DebugPanel::DebugPanel(QWidget* parent)
     splitter->setStretchFactor(1, 1);
 
     mainLayout->addWidget(splitter);
+
+    // 集中应用主题色板样式（替代原内联硬编码颜色）
+    applyThemeStyles();
+
+    // 主题切换时重新应用样式（receiver=this 保证生命周期安全，析构自动断开）
+    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
+        applyThemeStyles();
+    });
+}
+
+void DebugPanel::applyThemeStyles() {
+    // 标题标签：次要文本色 + 12px + 中等字重
+    // 原硬编码 #616161 → TeachingTheme::textSecondary()
+    const QString labelQss = QString(
+        "color: %1; font-size: 12px; font-weight: 500; padding: 2px;"
+    ).arg(TeachingTheme::textSecondary().name());
+    if (varLabel_)   varLabel_->setStyleSheet(labelQss);
+    if (stackLabel_) stackLabel_->setStyleSheet(labelQss);
+
+    // 变量树：surface 背景 + border 边框 + primary 选中态
+    // 原硬编码 #ffffff / #e5e5e5 / #cfe4f5 → TeachingTheme 主题色板
+    const QString treeQss = QString(
+        "QTreeWidget { background: %1; border: 1px solid %2; }"
+        "QTreeWidget::item { padding: 2px 0px; }"
+        "QTreeWidget::item:selected { background: %3; color: %4; }"
+    ).arg(TeachingTheme::surface().name(),
+          TeachingTheme::border().name(),
+          TeachingTheme::primary().lighter(160).name(),
+          TeachingTheme::textPrimary().name());
+    if (variableTree_) variableTree_->setStyleSheet(treeQss);
+
+    // 调用栈列表：同变量树配色
+    const QString listQss = QString(
+        "QListWidget { background: %1; border: 1px solid %2; }"
+        "QListWidget::item { padding: 2px 4px; }"
+        "QListWidget::item:selected { background: %3; color: %4; }"
+    ).arg(TeachingTheme::surface().name(),
+          TeachingTheme::border().name(),
+          TeachingTheme::primary().lighter(160).name(),
+          TeachingTheme::textPrimary().name());
+    if (callStackList_) callStackList_->setStyleSheet(listQss);
 }
 
 void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
@@ -242,6 +277,12 @@ void DebugPanel::onStackFrameSelected(int index) {
                           scopeLabel);
     }
     populateVariableTree(rows);
+
+    // M5: 通知主窗口跳转到该栈帧对应的源码行
+    // frame.line 来自 CallStackEntry，由 DebugCoordinator/VM 填充。
+    if (frame.line > 0) {
+        emit gotoLineRequested(frame.line);
+    }
 }
 
 void DebugPanel::clearAll() {

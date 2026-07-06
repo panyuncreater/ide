@@ -97,7 +97,7 @@ private slots:
     void onStop();
 
     void onClearOutput();
-    void onThemeToggle();  // 亮/暗主题切换按钮
+    // 深色主题已移除：onThemeToggle slot 已删除
 
     void onNew();
     void onOpen();
@@ -175,6 +175,8 @@ private:
 
     // ---- ADS 停靠管理器 ----
     ads::CDockManager* dockManager_ = nullptr;
+    /// 缓存上一次应用到 qApp 的 ADS QSS 片段，避免 setStyleSheet 追加导致全局样式表无限增长
+    QString lastAdsQss_;
 
     // 活动栏
     ActivityBar* activityBar_ = nullptr;
@@ -187,7 +189,7 @@ private:
     QToolButton* titleMinBtn_ = nullptr;    // 最小化
     QToolButton* titleMaxBtn_ = nullptr;    // 最大化/还原
     QToolButton* titleCloseBtn_ = nullptr;  // 关闭
-    TransparentToolButton* themeToggleBtn_ = nullptr;  // 主题切换（亮/暗）
+    // 深色主题已移除：themeToggleBtn_ 成员已删除
     ComboBox* engineCombo_ = nullptr;       // 执行引擎切换
     bool syncingViewAction_ = false;        // 防止视图菜单与面板 toggleView 递归
 
@@ -195,7 +197,8 @@ private:
     ads::CDockWidget* fileTreeDock_ = nullptr;
     ads::CDockWidget* debugPanelDock_ = nullptr;
     QTreeWidget* fileTree_ = nullptr;
-    QLineEdit* fileTreeFilterEdit_ = nullptr;  // 文件树搜索过滤框
+    QLineEdit* fileTreeFilterEdit_ = nullptr;
+    QTimer* fileTreeFilterTimer_ = nullptr;  // 文件树过滤防抖（200ms）  // 文件树搜索过滤框
     DebugPanel* debugPanel_ = nullptr;
 
     // 底部面板（单一 dock + Pivot 标签切换）
@@ -362,6 +365,7 @@ private:
     QLabel* statusRunLabel_ = nullptr;
     QLabel* statusEncodingLabel_ = nullptr;  // 第八轮：文件编码显示
     QLabel* statusEngineLabel_ = nullptr;    // 执行引擎显示
+    QLabel* statusSelectionLabel_ = nullptr; // M6：选中范围显示（行数 + 字符数）
 
     // ---- 状态 ----
     QString workspaceDir_;

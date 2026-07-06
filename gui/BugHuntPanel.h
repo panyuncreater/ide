@@ -6,6 +6,7 @@
 #include <QTextEdit>
 #include <QLabel>
 #include <QPushButton>
+#include <QLineEdit>
 #include <vector>
 #include <string>
 
@@ -98,6 +99,7 @@ private slots:
 private:
     IdeController* controller_ = nullptr;
     QListWidget* itemList_      = nullptr;
+    QLineEdit*   searchEdit_   = nullptr;  // M11: 题目搜索框
     QTextBrowser* descBrowser_ = nullptr;
     QTextEdit* codeEditor_      = nullptr;
     QTextEdit* outputEdit_      = nullptr;

@@ -107,6 +107,11 @@ signals:
     /// 请求加载样例代码到主编辑器（与第一波教学面板信号一致）
     void loadSampleRequested(const QString& code);
 
+protected:
+    /// 面板显示时恢复第 4 子页动画 QTimer（若已开启），隐藏时停止
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
 private:
     IdeController* controller_ = nullptr;
 

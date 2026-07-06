@@ -4,6 +4,7 @@
 
 #include "gui/VariableInspectorPanel.h"
 #include "gui/PanelAnimator.h"
+#include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
 #include "interpreter/Value.h"
 #include "interpreter/NaNBox.h"
@@ -26,69 +27,69 @@
 const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
     static const std::vector<VariableTypeExample> kExamples = {
         VariableTypeExample{
-            "type-int", "int", "int 类型",
+            "type-int", "int", "🔢 int 类型",
             "var x = 42;", "42",
             "0x7ff800000000002a", "—",
-            "标量内联：int48 直接存入 NaN-box 的低 48 位，无需堆分配。范围 |v| < 2^47。"
+            "💡 标量内联：int48 直接存入 NaN-box 的低 48 位，无需堆分配。范围 |v| < 2^47。"
         },
         VariableTypeExample{
-            "type-int-boundary", "int", "int 边界值",
+            "type-int-boundary", "int", "🔢 int 边界值",
             "var big = 70368744177663;", "70368744177663",
             "0x7ff8ffffffffffff", "—",
-            "int48 最大值 2^46-1 = 70368744177663（约 7×10^13）。超出此范围会触发装箱为 BoxedIntData*。"
+            "⚠️ int48 最大值 2^46-1 = 70368744177663（约 7×10^13）。超出此范围会触发装箱为 BoxedIntData*。"
         },
         VariableTypeExample{
-            "type-float", "float", "float 类型",
+            "type-float", "float", "🔢 float 类型",
             "var pi = 3.14;", "3.14",
             "0x40091EB851EB851F", "—",
-            "标量内联：IEEE 754 double 直接存入 NaN-box 的 64 位。注意 tag bits 与 NaN 模式不冲突。"
+            "💡 标量内联：IEEE 754 double 直接存入 NaN-box 的 64 位。注意 tag bits 与 NaN 模式不冲突。"
         },
         VariableTypeExample{
-            "type-bool", "bool", "bool 类型",
+            "type-bool", "bool", "🔢 bool 类型",
             "var ok = true;", "true",
             "0x7ff9000000000001", "—",
-            "标量内联：bool 编码为 int48（0/1），tag bits 与 int 不同（INT_TAG_BASE=0x7FF8 vs BOOL_TAG_BASE=0x7FF9）。"
+            "💡 标量内联：bool 编码为 int48（0/1），tag bits 与 int 不同（INT_TAG_BASE=0x7FF8 vs BOOL_TAG_BASE=0x7FF9）。"
         },
         VariableTypeExample{
-            "type-null", "null", "null 类型",
+            "type-null", "null", "🔢 null 类型",
             "var n = null;", "null",
             "0x7ffa000000000000", "—",
-            "标量内联：唯一编码 NULL_BITS=0x7FFA<<48，payload 全 0。"
+            "💡 标量内联：唯一编码 NULL_BITS=0x7FFA<<48，payload 全 0。"
         },
         VariableTypeExample{
-            "type-string", "string", "string 类型",
+            "type-string", "string", "📝 string 类型",
             "var s = \"hello\";", "hello",
             "（堆指针，tag bits=0x7FFB）",
             "StringData* (RefCounted) { refCount: 1; bytes: 'hello'; length: 5; }",
-            "堆分配：Value 存 StringData* 指针，对象继承 RefCounted 维护引用计数。COW：写时检查 refCount==1，否则深拷贝。"
+            "📦 堆分配：Value 存 StringData* 指针，对象继承 RefCounted 维护引用计数。COW：写时检查 refCount==1，否则深拷贝。"
         },
         VariableTypeExample{
-            "type-array", "array", "array 类型",
+            "type-array", "array", "📊 array 类型",
             "var arr = [1, 2, 3];", "[1, 2, 3]",
             "（堆指针，tag bits=0x7FFB）",
             "ArrayData* (RefCounted) { refCount: 1; elements: Value[3]; }",
-            "堆分配：COW 容器。`var b = a` 共享所有权 refCount=2，`b.push(4)` 触发 detach 深拷贝。"
+            "📦 堆分配：COW 容器。`var b = a` 共享所有权 refCount=2，`b.push(4)` 触发 detach 深拷贝。"
         },
         VariableTypeExample{
-            "type-dict", "dict", "dict 类型",
+            "type-dict", "dict", "📊 dict 类型",
             "var d = {\"x\": 1, \"y\": 2};", "{x: 1, y: 2}",
             "（堆指针，tag bits=0x7FFB）",
             "DictData* (RefCounted) { refCount: 1; entries: HashMap<String,Value>; }",
-            "堆分配：基于哈希表的 COW 容器。键需为 string 类型。"
+            "📦 堆分配：基于哈希表的 COW 容器。键需为 string 类型。"
         },
         VariableTypeExample{
-            "type-instance", "instance", "instance 类型",
+            "type-instance", "instance", "📦 instance 类型",
             "var p = Point.new(3, 4);", "<instance of Point>",
             "（堆指针，tag bits=0x7FFB）",
             "InstanceData* (RefCounted) { refCount: 1; className: 'Point'; fields: {x:3, y:4}; }",
-            "堆分配：实例字段表通过 ClassInfo::flattenedFieldOrder 描述。方法查找经 methodCache_ 加速。"
+            "📦 堆分配：实例字段表通过 ClassInfo::flattenedFieldOrder 描述。方法查找经 methodCache_ 加速。"
         },
         VariableTypeExample{
-            "type-closure", "closure", "closure 类型",
+            "type-closure", "closure", "🔗 closure 类型",
             "var f = fun(x) { return x+1; };", "<closure>",
             "（堆指针，tag bits=0x7FFB）",
             "ClosureData* (RefCounted) { refCount: 1; params: ['x']; env: Environment*; body: FunDecl*; }",
-            "堆分配：闭包捕获外层 Environment（弱引用链 parent）。env 链打破循环依赖。"
+            "📦 堆分配：闭包捕获外层 Environment（弱引用链 parent）。env 链打破循环依赖。"
         },
     };
     return kExamples;
@@ -234,6 +235,22 @@ void VariableInspectorPanel::onAutoRefreshToggled(bool checked) {
     else         autoTimer_->stop();
 }
 
+void VariableInspectorPanel::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    if (autoRefreshCheck_ && autoRefreshCheck_->isChecked() &&
+        autoTimer_ && !autoTimer_->isActive()) {
+        refreshLive();
+        autoTimer_->start();
+    }
+}
+
+void VariableInspectorPanel::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    if (autoTimer_ && autoTimer_->isActive()) {
+        autoTimer_->stop();
+    }
+}
+
 void VariableInspectorPanel::refreshLive() {
     varTree_->clear();
     if (!controller_) {
@@ -369,17 +386,17 @@ void VariableInspectorPanel::showExample(int index) {
         "<h3>NaN-boxing 位</h3>"
         "<p><code>%6</code></p>"
         "<h3>堆布局</h3>"
-        "<p><code>%7</code></p>"
+        "%7"
         "<h3>教学注解</h3>"
-        "<p>%8</p>"
+        "%8"
     ).arg(QString::fromUtf8(e.displayName.c_str()))
      .arg(QString::fromUtf8(e.id.c_str()))
      .arg(QString::fromUtf8(e.typeName.c_str()))
      .arg(QString::fromUtf8(e.sourceExpr.c_str()).toHtmlEscaped())
      .arg(QString::fromUtf8(e.valueRepr.c_str()).toHtmlEscaped())
      .arg(QString::fromUtf8(e.nanboxBits.c_str()))
-     .arg(QString::fromUtf8(e.heapLayout.c_str()).toHtmlEscaped())
-     .arg(QString::fromUtf8(e.teachingNote.c_str()));
+     .arg(MarkdownRenderer::markdownToHtmlFragment(e.heapLayout))
+     .arg(MarkdownRenderer::markdownToHtmlFragment(e.teachingNote));
     exampleDetail_->setHtml(html);
 }
 

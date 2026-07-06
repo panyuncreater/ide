@@ -60,6 +60,12 @@ signals:
     /// 请求加载样例代码到主编辑器
     void loadSampleRequested(const QString& code);
 
+protected:
+    /// 面板显示时恢复自动刷新（若用户已勾选），隐藏时停止 QTimer
+    /// 避免 dock 隐藏后定时器持续触发 controller 查询浪费 CPU
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
 private slots:
     void onRefresh();
     void onAutoRefreshToggled(bool checked);

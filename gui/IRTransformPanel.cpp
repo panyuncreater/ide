@@ -20,6 +20,7 @@
 #include "PushButton.h"   // QFluentKit（PrimaryPushButton）
 #include "Label.h"        // QFluentKit（CaptionLabel）
 #include "gui/TeachingTheme.h"
+#include "Theme.h"        // QFluentKit（onThemeModeChanged 信号）
 
 // ============================================================
 // IRTransformLibrary — 静态教学场景库
@@ -33,8 +34,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
     static const std::vector<IRLoweringExample> kExamples = {
         {
             "lit-int",
-            "整数字面量 42",
-            "整数字面量直接 LOAD_CONST 加载到虚拟寄存器。"
+            "🔢 整数字面量 42",
+            "🔢 整数字面量直接 LOAD_CONST 加载到虚拟寄存器。"
             "常量 42 加入 IRFunction.constants 常量池（重复时复用索引）。",
             "NumberLiteral(42)",
             "var x = 42;",
@@ -48,8 +49,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "binop-add",
-            "二元加法 a + b",
-            "BinaryOp(ADD) lowering：左侧操作数 → vreg0，右侧 → vreg1，"
+            "⚙️ 二元加法 a + b",
+            "⚙️ BinaryOp(ADD) lowering：左侧操作数 → vreg0，右侧 → vreg1，"
             "ADD 指令 → vreg2。三地址码形式 dest = OP src1, src2。",
             "BinaryOp(ADD, VarRef(a), VarRef(b))",
             "var c = a + b;",
@@ -64,8 +65,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "var-decl",
-            "变量声明 var x = expr",
-            "VarDecl lowering：先求值初始化表达式到 vreg，再 STORE_LOCAL 写入局部槽位。"
+            "📝 变量声明 var x = expr",
+            "📝 VarDecl lowering：先求值初始化表达式到 vreg，再 STORE_LOCAL 写入局部槽位。"
             "未初始化的 VarDecl 用 LOAD_NULL 占位。",
             "VarDecl(x, init=NumberLiteral(1))",
             "var x = 1;",
@@ -78,8 +79,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "if-stmt",
-            "条件分支 if (cond) {...} else {...}",
-            "IfStmt lowering：求值 cond → BRANCH_FALSE 跳到 L_else，"
+            "🔀 条件分支 if (cond) {...} else {...}",
+            "🔀 IfStmt lowering：求值 cond → BRANCH_FALSE 跳到 L_else，"
             "执行 then 块后 JUMP L_end，else 块从 L_else 开始。"
             "patchJumps 解析跳转目标。",
             "IfStmt(cond=VarRef(x), then=Block, else=Block)",
@@ -101,8 +102,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "while-stmt",
-            "循环 while (cond) {...}",
-            "WhileStmt lowering：L_start 处求值 cond → BRANCH_FALSE 跳到 L_end，"
+            "🔄 循环 while (cond) {...}",
+            "🔄 WhileStmt lowering：L_start 处求值 cond → BRANCH_FALSE 跳到 L_end，"
             "执行循环体后 JUMP L_start。每个基本块终结于 BRANCH/JUMP/RETURN。",
             "WhileStmt(cond=BinaryOp(LT, VarRef(i), NumberLiteral(10)))",
             "while (i < 10) { i = i + 1; }",
@@ -124,8 +125,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "fun-call",
-            "函数调用 f(a, b)",
-            "FunCall lowering：每个实参求值到独立 vreg，CALL 指令携带函数索引 + 参数数量。"
+            "⚙️ 函数调用 f(a, b)",
+            "⚙️ FunCall lowering：每个实参求值到独立 vreg，CALL 指令携带函数索引 + 参数数量。"
             "返回值若被使用则存入 vreg，否则由 CALL_POP 弃用。",
             "FunCall(f, args=[VarRef(a), VarRef(b)])",
             "var r = f(a, b);",
@@ -140,8 +141,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "closure",
-            "闭包捕获 makeCounter",
-            "闭包 lowering：捕获的局部变量提升为 upvalue，MAKE_CLOSURE 指令携带捕获列表。"
+            "📦 闭包捕获 makeCounter",
+            "📦 闭包 lowering：捕获的局部变量提升为 upvalue，MAKE_CLOSURE 指令携带捕获列表。"
             "ClosureData 通过 weak_ptr<Environment> 打破循环引用。",
             "FunDecl(makeCounter) → body returns FunDecl(counter)",
             "fun makeCounter() {\n  var c = 0;\n  fun counter() { c = c + 1; return c; }\n  return counter;\n}",
@@ -164,8 +165,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "class-method",
-            "类方法 Point.new()",
-            "ClassDecl lowering：方法体作为独立 IRFunction 编译，"
+            "🏛️ 类方法 Point.new()",
+            "🏛️ ClassDecl lowering：方法体作为独立 IRFunction 编译，"
             "slot 0 预留给隐式 this 参数。MethodCall 通过 GET_FIELD/SET_FIELD 访问实例字段。",
             "ClassDecl(Point) → methods=[new, distance]",
             "class Point {\n  var x;\n  var y;\n  fun new(px, py) { x = px; y = py; }\n}",
@@ -187,8 +188,8 @@ const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExampl
     static const std::vector<IROptimizationExample> kExamples = {
         {
             "const-fold",
-            "常量折叠 1 + 2 → 3",
-            "常量折叠 pass 识别 LOAD_CONST 操作数全为常量的算术指令，"
+            "✨ 常量折叠 1 + 2 → 3",
+            "✨ 常量折叠 pass 识别 LOAD_CONST 操作数全为常量的算术指令，"
             "在编译期求值替换为单一 LOAD_CONST。"
             "适用于 int/float 加减乘除、布尔逻辑、字符串拼接等。",
             "Constant Folding",
@@ -210,8 +211,8 @@ const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExampl
         },
         {
             "dead-code",
-            "死代码消除（未使用的赋值）",
-            "DCE pass 识别结果未被使用的指令（无副作用），直接消除。"
+            "🧹 死代码消除（未使用的赋值）",
+            "🧹 DCE pass 识别结果未被使用的指令（无副作用），直接消除。"
             "本例 x = 1 后从未读取 x，整条赋值链可消除。",
             "Dead Code Elimination",
             "function main {\n"
@@ -232,8 +233,8 @@ const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExampl
         },
         {
             "copy-prop",
-            "复制传播 + 跳转优化",
-            "复制传播 pass 识别 v_b = MOVE v_a 模式，将后续 v_b 的引用替换为 v_a。"
+            "📋 复制传播 + 跳转优化",
+            "📋 复制传播 pass 识别 v_b = MOVE v_a 模式，将后续 v_b 的引用替换为 v_a。"
             "消除 MOVE 后常触发 DCE 二次优化，进一步减少指令。",
             "Copy Propagation + DCE",
             "function main {\n"
@@ -341,6 +342,30 @@ IRTransformPanel::IRTransformPanel(QWidget* parent)
     populateLoweringList();
     populateOptList();
     populateReplayList();
+
+    // 主题切换时刷新当前页 HTML（populateLoweringDetail 中 <pre> 背景使用
+    // TeachingTheme::surface()，需重新渲染以跟随新主题）。
+    // receiver=this 保证生命周期安全，析构自动断开。
+    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
+        if (!stack_) return;
+        switch (stack_->currentIndex()) {
+            case 0:  // AST → IR lowering 页（HTML 含主题色 <pre> 背景）
+                if (loweringList_) populateLoweringDetail(loweringList_->currentRow());
+                break;
+            case 1:  // 优化 pass 对比页（setPlainText，无主题依赖，仍刷新以防未来扩展）
+                if (optList_) populateOptDetail(optList_->currentRow());
+                break;
+            case 2:  // 当前源码 IR 页（setPlainText，无主题依赖）
+                populateCurrentIR();
+                break;
+            case 3:  // 逐步优化回放页（setPlainText，无主题依赖）
+                if (replayList_ && replayStepsList_)
+                    populateReplayStep(replayList_->currentRow(), replayStepsList_->currentRow());
+                break;
+            default:
+                break;
+        }
+    });
 }
 
 void IRTransformPanel::buildLoweringPage(QWidget* host) {
@@ -532,7 +557,7 @@ IROptReplayLibrary::replayScenarios() {
             "replay-const-fold",
             {
                 {
-                    "常量折叠", "Round 1",
+                    "✨ 常量折叠", "Round 1",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_CONST #0 (1)\n"
@@ -552,7 +577,7 @@ IROptReplayLibrary::replayScenarios() {
                     8, 1
                 },
                 {
-                    "常量折叠", "Round 2",
+                    "✨ 常量折叠", "Round 2",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_CONST #0 (1)\n"
@@ -572,7 +597,7 @@ IROptReplayLibrary::replayScenarios() {
                     8, 1
                 },
                 {
-                    "常量折叠", "Round 3 (收敛)",
+                    "✨ 常量折叠", "Round 3 (收敛)",
                     "function main {\n"
                     "  block L0:\n"
                     "    v2 = LOAD_CONST #2 (3)        # 已折叠\n"
@@ -593,7 +618,7 @@ IROptReplayLibrary::replayScenarios() {
             "replay-dce",
             {
                 {
-                    "DCE", "Round 1",
+                    "🧹 DCE", "Round 1",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_CONST #0 (1)       # 待分析\n"
@@ -611,7 +636,7 @@ IROptReplayLibrary::replayScenarios() {
                     5, 1
                 },
                 {
-                    "DCE", "Round 2",
+                    "🧹 DCE", "Round 2",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_CONST #0 (1)       # 重新分析\n"
@@ -628,7 +653,7 @@ IROptReplayLibrary::replayScenarios() {
                     4, 1
                 },
                 {
-                    "DCE", "Round 3 (报告)",
+                    "🧹 DCE", "Round 3 (报告)",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_CONST #0 (1)       # 保留\n"
@@ -651,7 +676,7 @@ IROptReplayLibrary::replayScenarios() {
             "replay-copy-prop",
             {
                 {
-                    "复制传播", "Round 1",
+                    "📋 复制传播", "Round 1",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_LOCAL slot=0   # a\n"
@@ -669,7 +694,7 @@ IROptReplayLibrary::replayScenarios() {
                     5, 1
                 },
                 {
-                    "复制传播", "Round 2",
+                    "📋 复制传播", "Round 2",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_LOCAL slot=0   # a\n"
@@ -687,7 +712,7 @@ IROptReplayLibrary::replayScenarios() {
                     5, 1
                 },
                 {
-                    "复制传播", "Round 3 (DCE 二次清理)",
+                    "📋 复制传播", "Round 3 (DCE 二次清理)",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_LOCAL slot=0   # a\n"
@@ -710,7 +735,7 @@ IROptReplayLibrary::replayScenarios() {
             "replay-cse",
             {
                 {
-                    "CSE", "Round 1",
+                    "🔍 CSE", "Round 1",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_LOCAL slot=0   # a\n"
@@ -731,7 +756,7 @@ IROptReplayLibrary::replayScenarios() {
                     8, 1
                 },
                 {
-                    "CSE", "Round 2",
+                    "🔍 CSE", "Round 2",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_LOCAL slot=0   # a\n"
@@ -752,7 +777,7 @@ IROptReplayLibrary::replayScenarios() {
                     8, 1
                 },
                 {
-                    "CSE", "Round 3 (标记待删除)",
+                    "🔍 CSE", "Round 3 (标记待删除)",
                     "function main {\n"
                     "  block L0:\n"
                     "    v0 = LOAD_LOCAL slot=0   # a\n"
@@ -776,7 +801,7 @@ IROptReplayLibrary::replayScenarios() {
             "replay-loop-unroll",
             {
                 {
-                    "循环展开", "Round 1",
+                    "🔄 循环展开", "Round 1",
                     "function main {\n"
                     "  block L0:                    # start (已标记为待展开)\n"
                     "    v0 = LOAD_LOCAL slot=0   # i\n"
@@ -804,7 +829,7 @@ IROptReplayLibrary::replayScenarios() {
                     13, 1
                 },
                 {
-                    "循环展开", "Round 2",
+                    "🔄 循环展开", "Round 2",
                     "function main {\n"
                     "  block L0:                    # 展开第 1 次\n"
                     "    v3 = LOAD_LOCAL slot=1   # acc\n"
@@ -843,7 +868,7 @@ IROptReplayLibrary::replayScenarios() {
                     21, 8
                 },
                 {
-                    "循环展开", "Round 3 (删除原循环结构)",
+                    "🔄 循环展开", "Round 3 (删除原循环结构)",
                     "function main {\n"
                     "  block L0:                    # 展开第 1 次\n"
                     "    v3 = LOAD_LOCAL slot=1   # acc\n"

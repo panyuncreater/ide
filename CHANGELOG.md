@@ -1,6 +1,515 @@
 # Changelog
 
-本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试（1668/1668）+ formatter_audit 审计用例验证。
+本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试（1693/1693）+ formatter_audit 审计用例验证。
+
+## 2026-07-06 · MarkdownRenderer 扩展 + LabManualContent 内容丰富（窗口与教学内容美化）
+
+### 概述
+
+针对用户"美化窗口以及教学内容，让教学内容更详细生动"的需求实施两项核心改进：(1) 扩展 MarkdownRenderer 支持表格/引用块/任务列表 + CSS 样式注入；(2) 丰富 8 个实验章节内容，每章新增学习清单/小贴士/常见错误/思考题四类区块。全量 1693/1693 测试通过（原 1686 + MarkdownRenderer 新增 7 个测试）。
+
+### 1. MarkdownRenderer 扩展（gui/MarkdownRenderer.cpp/.h）
+
+新增 3 种 Markdown 语法支持：
+- **任务列表**：`- [ ]` 未完成 / `- [x]` 已完成，渲染为带复选框的列表项（CSS class `task-checkbox` / `task-checkbox checked`，已勾选显示 ✓ 符号）
+- **引用块**：`> text`，渲染为左侧 4px 蓝色边框 + 浅灰背景的引用块（`<blockquote>`）
+- **表格**：`| col1 | col2 |` + 分隔行 `| --- | --- |`，渲染为带表头/斑马纹的 HTML 表格
+
+新增 CSS 样式注入：
+- 输出 HTML 包含 `<style>` 块，统一管理标题/列表/代码块/表格/引用块/行内代码的样式
+- 标题：h1/h2 蓝色 + 底部边框，h3 蓝色，h4-h6 深灰
+- 代码块：圆角 6px + 1px 边框 + 浅灰背景
+- 行内代码：浅灰背景 + 红色文字（`#c7254e`）
+- 表格：斑马纹（偶数行 `#fafafa`）+ 表头浅灰背景
+- 引用块：左侧蓝色边框 + 浅蓝灰背景
+- 字体：`'Segoe UI', 'Microsoft YaHei', sans-serif`，行高 1.6
+
+新增代码块语言标签：围栏代码块 ` ```lang ` 的 lang 会显示在代码块上方（11px 灰色小标签）
+
+### 2. LabManualContent 内容丰富（gui/LabManualContent.cpp）
+
+8 个实验章节（lab-01 ~ lab-08）每章新增 4 类教学增强区块：
+- **📋 学习清单**（任务列表）：6 个任务项，位于迷你实验之后
+- **💡 小贴士**（引用块）：2 条小贴士，穿插在关键概念中
+- **⚠️ 常见错误**（表格）：3 行错误现象/原因/解决方案，位于验证断言之后
+- **🤔 思考题**（有序列表）：4 个基于本章内容的具体问题，位于章末
+
+各章新增约 330-340 字，合计约 2665 字。保持原有内容不变，只增不删。所有新增内容使用 Markdown 语法，通过扩展后的 MarkdownRenderer 渲染为美观的 HTML。
+
+### 3. 测试更新（tests/TestMarkdownRendererAudit.cpp）
+
+新增 7 个测试用例（原 15 + 新 7 = 22 个，加 3 个原有 = 25 个总测试）：
+- TaskListUnchecked / TaskListChecked：任务列表渲染
+- Blockquote：引用块渲染
+- Table：表格渲染（表头/数据行）
+- StylesheetInjected：CSS `<style>` 块存在性
+- FragmentStripsWrapper：Fragment API 正确剥离外壳
+- CodeBlockLanguageLabel：代码块语言标签
+
+### 修改文件清单
+
+- 修改：`gui/MarkdownRenderer.cpp`（+150 行：任务列表/引用块/表格/CSS 样式注入）
+- 修改：`gui/MarkdownRenderer.h`（头注释更新支持的语法列表）
+- 修改：`gui/LabManualContent.cpp`（8 章 × 4 类区块 ≈ 2665 字新增内容）
+- 修改：`tests/TestMarkdownRendererAudit.cpp`（+7 个新测试，更新 2 个旧测试适配新 HTML 结构）
+- `README.md`（测试徽章 1686→1693）+ `docs/development.md` 同步更新
+
+## 2026-07-06 · IDE 窗口样式美化（教学面板卡片化 + 标题栏渐变 + 状态栏紧凑化）
+
+### 概述
+
+对 IDE 主窗口实施 5 项 QSS 样式美化，重点提升教学面板的卡片化外观、标题栏层次感与状态栏紧凑度。所有修改仅涉及 QSS 字符串与 objectName 标注，不改 widget 结构，不引入新依赖。MSVC + Qt 6.10.3 构建通过（minilang_ide + minilang_tests 均 exit code 0）。
+
+### 修改内容
+
+1. **教学面板 header 样式增强**（`gui/TeachingPanelHeader.cpp`）
+   - 浅蓝→白色渐变背景（qlineargradient #eaf3fc → #ffffff）
+   - 底部 1px 分隔线（#e5e5e5）
+   - 整体 padding 8px 12px（原 6px 8px）
+   - 标题 14px 加粗（QFont::setBold）
+   - 帮助/学习路径按钮 hover 态：4px 圆角 + 淡蓝色背景（#eaf3fc）
+   - 设置 WA_StyledBackground 确保 QSS background 生效
+
+2. **教学面板容器卡片化**（`app/ide.cpp` wrapTeachingPanel + applyFluentStyle panelQss）
+   - 容器添加 objectName="teachingPanelCard" + WA_StyledBackground
+   - layout contentsMargins 0→8px（卡片内部 padding）
+   - panelQss 新增 #teachingPanelCard 规则：4px 圆角 + 1px 边框（#e5e5e5）+ 白色背景（与 panel bg #f3f3f3 形成对比）
+   - findChildren 迭代列表新增 "teachingPanelCard"
+
+3. **标题栏渐变**（`app/ide.cpp` applyFluentStyle #titleBar）
+   - 背景从纯色 #ffffff 改为 qlineargradient（#fafafa → #f0f0f0，自上而下）
+   - 移除未使用的 titleBg 变量，.arg() 参数重编号
+   - 保留 border-bottom: 1px solid #e5e5e5
+
+4. **工具栏按钮间距优化** — 跳过（项目无 QToolBar 实例，标题栏已融合菜单+工具栏+窗口控制为 36px 自定义 QWidget）
+
+5. **状态栏美化**（`app/ide.cpp` applyFluentStyle statusBar）
+   - 字号 12px → 11px（更紧凑）
+   - QLabel padding 0 6px → 0 8px（永久消息区右侧 8px padding）
+   - 保留顶部 1px 分隔线
+
+### 修改文件清单
+
+- 修改：`gui/TeachingPanelHeader.cpp`（构造函数：objectName + WA_StyledBackground + 渐变 QSS + 按钮 objectName + padding 调整 + 标题加粗）
+- 修改：`app/ide.cpp`（applyFluentStyle：titleBar 渐变 + statusBar 字号/padding + panelQss 新增 #teachingPanelCard；wrapTeachingPanel：容器 objectName + WA_StyledBackground + 8px margins；移除未使用 titleBg 变量）
+
+### 约束遵守
+
+- 只改 QSS 字符串与 objectName 标注，不改 widget 结构 ✓
+- 保持亮色主题（所有颜色用 TeachingTheme 亮色配色）✓
+- 不引入新依赖（仅 Qt 原生 QSS）✓
+- QSS 字符串增量 < 1KB ✓
+- MSVC + Qt 6.10.3 构建通过 ✓
+
+## 2026-07-06 · LabManualContent 实验手册教学内容丰富（8 章节四类区块）
+
+### 概述
+
+为 LabManualContent.cpp 中 8 个实验章节（lab-01 到 lab-08）的 markdown 内容批量添加四类教学增强区块，让实验手册更详细生动。严格不修改 id 字段与 sampleCode 字段，原有 markdown 内容只增不删。C++ 字符串字面量语法保持 `"...\n" "新增内容\n"` 拼接格式。构建（minilang_ide target）通过，exit code 0。
+
+### 修改文件清单
+
+- 修改：`gui/LabManualContent.cpp`（8 章节 × 4 类区块 = 32 处新增）
+
+### 每章新增的区块类型
+
+每章统一添加以下四类区块，利用 MarkdownRenderer 新支持的语法（任务列表 / 引用块 / 表格）：
+
+1. **📋 学习清单**（任务列表 `- [ ]`）：6 个任务项，位于迷你实验之后、目标之前
+2. **💡 小贴士**（引用块 `>`）：2 条小贴士，穿插在关键概念部分
+3. **⚠️ 常见错误**（表格 `| col |`）：3 行错误现象/原因/解决方案，位于验证断言之后、进阶之前
+4. **🤔 思考题**（有序列表）：4 个基于本章内容的具体问题，位于进阶之后
+
+### 各章新增字数（约）
+
+| 章节 | 主题 | 学习清单 | 小贴士 | 常见错误 | 思考题 | 合计 |
+| --- | --- | --- | --- | --- | --- | --- |
+| lab-01 | 词法分析 | ~90 字 | ~70 字 | ~80 字 | ~90 字 | ~330 字 |
+| lab-02 | 递归下降解析 | ~85 字 | ~75 字 | ~75 字 | ~95 字 | ~330 字 |
+| lab-03 | 树遍历解释器 | ~85 字 | ~80 字 | ~80 字 | ~95 字 | ~340 字 |
+| lab-04 | 栈式字节码 VM | ~85 字 | ~80 字 | ~80 字 | ~90 字 | ~335 字 |
+| lab-05 | 寄存器式 VM | ~85 字 | ~80 字 | ~80 字 | ~90 字 | ~335 字 |
+| lab-06 | 三后端一致性 | ~85 字 | ~75 字 | ~80 字 | ~90 字 | ~330 字 |
+| lab-07 | 内存模型 NaN-boxing/COW | ~85 字 | ~80 字 | ~75 字 | ~95 字 | ~335 字 |
+| lab-08 | Bug 狩猎 | ~80 字 | ~85 字 | ~75 字 | ~90 字 | ~330 字 |
+| **合计** | | | | | | **~2665 字** |
+
+### 思考题设计原则
+
+每章思考题基于本章具体内容设计，避免泛泛而谈：
+- lab-01：`var` 改 `Var` 的 token 类型变化 / `1.5e10` 切几个 token
+- lab-02：`1-2-3` 左结合 vs 右结合 / equality/comparison 互换位置的 AST 变化
+- lab-03：`fib(10)` 调用栈深度 / boundInstance_ 缓存作用
+- lab-04：操作数栈为何固定 1024 / `OP_ADD` 多态分发
+- lab-05：32 寄存器溢出处理 / SSA 让优化更容易的原因
+- lab-06：`7/2` 为何是 3 / `0 or "default"` 为何返回字符串
+- lab-07：NaN-boxing 为何用 NaN payload / 嵌套数组 COW 深浅拷贝
+- lab-08："push 在检查之前"反模式场景 / RAII guard 构造顺序
+
+### 测试兼容性
+
+- 现有测试不检查 markdown 文本内容（只检查 id 和结构）
+- LabManualContent.cpp 的修改不影响任何测试断言
+- 构建 minilang_ide target 通过（exit code 0）
+
+## 2026-07-06 · BugHunt + CallStack/Variable/BytecodeTrace 表情符号增强（4 文件）
+
+### 概述
+
+为本轮 4 个教学面板的内联静态库可读字段批量添加表情符号前缀，与先前两批表情增强（3 面板 + 7 文件）合并后覆盖全部 15 个教学内容数据文件。严格不修改 id / sourceCode / expectedFrames / expectedVariables / opCodeName / 字段名等结构化字段。现有测试（id 非空/唯一 + 字段非空 + 结构化字段）完全兼容。
+
+### 修改文件清单
+
+- 修改：`gui/BugHuntLibrary.cpp`（15 题 × title/background/expectedBehavior/buggyBehavior/3×hints/explanation ≈ 120 处表情；难度标识 🌱 BEGINNER / 🔧 INTERMEDIATE / 🚀 EXPERT；Bug 类型 🔍 📛 🔗 📜 🏗️ 🐞 📦 ⚙️）
+- 修改：`gui/BugHuntVariantLibrary.cpp`（7 变体 × title/description/challengeGoal/expectedBehavior/hint = 35 处表情；按 Bug 类型 🔬常量池 / 🔗闭包 / 📜IR栈 / 🔧默认参数 / 📦模块 / 🐞调试器 / ⚙️寄存器）
+- 修改：`gui/CallStackPanel.cpp`（6 调用栈场景 × title/description/teachingNote = 18 处表情；📞 simple-call / 🔄 recursion / 📦 closure-capture / 🎯 method-dispatch / ⚠️ try-catch / 🔁 mutual-recursion）
+- 修改：`gui/VariableInspectorPanel.cpp`（10 类型示例 × displayName + teachingNote = 20 处表情；🔢 标量 / 📝 string / 📊 array/dict / 📦 instance / 🔗 closure）
+- 修改：`gui/BytecodeTracePanel.cpp`（18 OpCodeDocEntry × semantics = 18 处表情；📜 常量加载 / 🔢 算术 / 📍 变量 / 🔄 控制流 / 📞 调用 / 📊 容器 / 🔗 闭包 / 📦 类）
+
+### 累计表情增强统计（三批合计）
+
+| 批次 | 文件数 | 表情数 | 覆盖面板 |
+|------|--------|--------|----------|
+| 第一批（3 面板） | 3 | 95 | MemoryModel / ClosureInspector / ExceptionFlow |
+| 第二批（7 数据文件） | 7 | 167 | Breakpoint / Syntax / IR / Token / Ast / Sandbox / LearningPath |
+| 第三批（本批次，4 文件） | 4 | 211 | BugHunt + BugHuntVariant + CallStack + VariableInspector + BytecodeTrace |
+| **合计** | **14** | **473+** | **15 个教学内容文件全覆盖** |
+
+## 2026-07-06 · 实验手册头歌风格 + 字号调节 + 启动优化 + Markdown 渲染（用户 8 项改进综合）
+
+### 概述
+
+针对用户提出的 8 项教学体验改进需求实施综合修复：彻底删除深色主题 + 修复 logo SVG、实验手册改头歌风格三栏布局、代码区/实验手册字号调节、所有教学内容支持 Markdown 渲染、IDE 启动性能优化、学习路径地图跳转、教学面板初始尺寸调大、教学面板 QTimer 卡顿修复 + 表情增强。全量 1686/1686 测试通过。
+
+### 1. 彻底删除深色主题 + Logo SVG 修复
+
+- `gui/TeachingTheme.h`：将所有 isDark() 分支硬编码为亮色（darkPrimary/darkSurface 等返回亮色值），保持 API 兼容但实际不再切换暗色
+- `app/main.cpp`：设置窗口图标（QIcon 加载 logo.svg，QSvgRenderer 路径），修复 SVG 加载问题
+- `app/ide.qrc`：移除 styles.qss / styles_dark.qss 资源注册（applyFluentStyle 集中管理 QSS）
+
+### 2. 实验手册头歌风格三栏布局（LabManualPanel）
+
+- `gui/LabManualPanel.h/.cpp`：原 2 栏（章节列表 | 内容）重构为 3 栏（章节列表 | Markdown 内容 | 样例代码编辑器）
+- 右侧新增 `QPlainTextEdit sampleCodeEdit_`（只读预览）显示当前章节的 `sampleCode` 字段，与中间内容并排，对齐头歌实验平台风格
+- `QSplitter` 尺寸 {150, 400, 400}，stretchFactor 1:2:2
+- 顶部按钮栏新增「📝 样例代码」标签头 + 字号调节 SpinBox（8-24pt，默认 11pt）
+
+### 3. 代码区/实验手册字号调节
+
+- `gui/CodeEditor.h/.cpp`：新增 `changeFontSize(int delta)` + `fontSize()` 方法，范围 [8, 32]，同步更新行号区域宽度
+- `app/ide.cpp`：View 菜单新增 3 个字号动作（Ctrl+= 放大 / Ctrl+- 缩小 / Ctrl+0 重置）
+- `gui/LabManualPanel.cpp`：顶部 SpinBox 调节 contentBrowser_ 字号（8-24pt），即时生效
+
+### 4. 所有教学内容 Markdown 渲染（MarkdownRenderer）
+
+- 新增：`gui/MarkdownRenderer.h/.cpp`（轻量 Markdown→HTML 渲染器，支持标题/粗体/斜体/行内代码/围栏代码块/无序/有序列表/分割线/段落，HTML 转义）
+- API：`markdownToHtml(markdown, codeBlockBg)` + `markdownToHtmlFragment(markdown, codeBlockBg)`
+- 性能：6 个 QRegularExpression 改为 `static const` 文件作用域，避免每次调用 pcre2_compile
+- 应用：9 个面板（LabManualPanel / BreakpointConditionPanel / CallStackPanel / VariableInspectorPanel / BytecodeTracePanel / ClosureInspectorPanel / ExceptionFlowPanel / MemoryModelPanel / SyntaxExplorerPanel）的散文字段统一通过 `markdownToHtmlFragment` 渲染，修复 3 个面板的潜在 HTML 注入
+- 新增：`tests/TestMarkdownRendererAudit.cpp`（15 单元测试覆盖所有语法 + 边界条件）
+
+### 5. IDE 启动性能优化（5 项）
+
+- **QSS 替换不追加**（`app/ide.cpp` line ~2882）：`qApp->setStyleSheet(qApp->styleSheet() + "\n" + adsQss)` 改为基于 `lastAdsQss_` 缓存的替换模式，避免每次主题切换 stylesheet 增长 ~5KB
+- **ScrollBar 防重分配**（`app/ide.cpp` line ~2701）：新增 `isFluentScrollBar` lambda 守卫，避免每次 `applyFluentStyle()` 重复分配 Fluent ScrollBar
+- **MarkdownRenderer 正则静态化**：6 个 QRegularExpression 改 `static const`，避免每次调用重新编译
+- **LabManualPanel 首次 showEvent 渲染**：`setCurrentRow(0)` 从构造函数推迟到首次 `showEvent`，避免 IDE 启动时为隐藏 dock 渲染第一章 Markdown（省 6 次正则编译 + HTML 转换）
+- **5 面板 QTimer showEvent/hideEvent**：CallStackPanel / VariableInspectorPanel / BytecodeTracePanel / MemoryModelPanel / BreakpointConditionPanel 新增 showEvent（仅在 autoRefresh 开启时启动 QTimer）+ hideEvent（停止 QTimer），避免 dock 隐藏后 QTimer 空转浪费 CPU
+
+### 6. 学习路径地图跳转
+
+- `gui/LearningPathPanel.cpp`：22 个 LearningActivity 卡片均支持点击触发 `activityRequested(activityId)` 信号
+- `app/ide.cpp` `onActivityRequested` slot：21 个活动 ID 路由到对应面板（welcome→WelcomeWizard / journey→codeJourney / token-puzzle→tokenPuzzle / ast-toy→astBuilderToy / vm-sandbox→vmStackSandbox / lab-XX→labManual / syntax-explorer / op-priority-challenge→ast-toy / backend-compare / ir-transform / profile-dashboard / bug-hunt-XX→bugHunt / freeform-project→editor）
+
+### 7. 教学面板初始尺寸调大
+
+- 19 个教学面板的 `ads::CDockWidget` 调用 `setMinimumSizeHintMode(MinimumSizeHintFromDockWidgetMinimumSize)` + 设置合理最小尺寸（左侧 220×200 / 底部 400×200 / 右侧 400×300）
+- 用户首次打开面板时获得更舒适的初始视野，避免过小需要手动拉伸
+
+### 8. 教学面板 QTimer 卡顿修复
+
+- 5 个含 QTimer 的面板（CallStack / VariableInspector / BytecodeTrace / MemoryModel / BreakpointCondition）新增 showEvent/hideEvent 控制：
+  - hideEvent：无条件停止 QTimer，避免 dock 隐藏后 500ms 空轮询浪费 CPU
+  - showEvent：仅当用户启用 autoRefresh 时恢复 QTimer，避免不必要的刷新
+- 修复"有些时候会卡一下"问题：原因为隐藏 dock 仍在运行 QTimer，多个 dock 累积导致主线程繁忙
+
+### 修改文件清单
+
+- 新增：`gui/MarkdownRenderer.h/.cpp` + `tests/TestMarkdownRendererAudit.cpp`
+- 修改：`gui/CodeEditor.h/.cpp`（changeFontSize + fontSize）
+- 修改：`gui/LabManualPanel.h/.cpp`（三栏布局 + 字号 SpinBox + showEvent 首次渲染）
+- 修改：`gui/TeachingTheme.h`（深色分支硬编码为亮色）
+- 修改：`gui/CallStackPanel.h/.cpp` + `gui/VariableInspectorPanel.h/.cpp` + `gui/BytecodeTracePanel.h/.cpp` + `gui/MemoryModelPanel.h/.cpp` + `gui/BreakpointConditionPanel.h/.cpp`（showEvent/hideEvent + Markdown 渲染接入）
+- 修改：`gui/ClosureInspectorPanel.cpp` + `gui/ExceptionFlowPanel.cpp` + `gui/SyntaxExplorerPanel.cpp`（Markdown 渲染接入 + HTML 注入修复）
+- 修改：`app/ide.cpp`（QSS 替换 + ScrollBar 防重分配 + 字号菜单 + onActivityRequested 路由 + 19 面板初始尺寸）
+- 修改：`app/ide.h`（lastAdsQss_ 成员）
+- 修改：`app/main.cpp`（窗口图标 + 移除硬编码 setThemeMode(LIGHT)）
+- 修改：`app/ide.qrc`（移除 styles.qss / styles_dark.qss 注册）
+- 修改：`cmake/minilang_core.cmake`（注册 MarkdownRenderer.cpp）
+- 修改：`tests/CMakeLists.txt`（新增 TestMarkdownRendererAudit.cpp）
+- `README.md` / `docs/development.md` 同步更新
+
+## 2026-07-06 · 教学内容数据文件表情符号增强（7 文件批量处理）
+
+### 概述
+
+为 7 个教学内容数据文件的可读字段（title / description / hint / teachingNote / naturalLanguage / passName / goal / teachingPoint）批量添加表情符号前缀，让教学面板内容更生动有趣，降低学习者阅读门槛。严格不修改 id / sourceCode / initialCode / expectedOutput / expectedTokens / expectedAst / activityId / nextModuleId / 字段名 / 数字字段等结构化与引用字段。表情按场景分类（断点 🔴🎯🛑⚙️ / 语法 📝🔀🔄🔁⚙️🏛️🛡️📦🔤📚🔢 / IR ⚙️🔢✨🧹📋🔍🔄 / Token 🔤💡 / AST 🌳💡 / VM 🎮💻💡 / 学习路径 👋🚀🧩🌳💻📖📜🏆⚖️📊🐛🎯📍），现有测试（id 非空/唯一 + 字段非空 + 结构化字段断言）完全兼容。
+
+### 已实现功能
+
+- **BreakpointConditionPanel.cpp**：BreakpointConditionLibrary 8 个断点场景的 title + description 添加表情（🔴🎯🛑⚙️），覆盖简单相等 / 取模触发 / 字符串相等 / null 检查 / 复合布尔 / 布尔短路 / 方法调用 / 异常对象检查
+- **SyntaxProductionLibrary.cpp**：11 条语法产生式的 title + description + naturalLanguage 添加表情（📝🔀🔄🔁⚙️🏛️🛡️📦🔤📚🔢），覆盖 var-decl / if-stmt / while-stmt / for-stmt / fun-decl / class-decl / try-stmt / import-stmt / string-interp / data-structures / operators
+- **IRTransformPanel.cpp**：IRTransformLibrary 8 个 lowering 示例的 title + description（🔢⚙️📝🔀🔄📦🏛️）+ 3 个 optimization 示例的 title + description（✨🧹📋）+ IROptReplayLibrary 15 个 IROptStepRecord 的 passName（5 个唯一值 × 3 次：✨常量折叠 / 🧹DCE / 📋复制传播 / 🔍CSE / 🔄循环展开）添加表情
+- **TokenPuzzleData.cpp**：5 个 Token 拼图关卡的 teachingPoint + hint 添加表情（🔤💡）
+- **AstToyLevels.cpp**：6 个 AST 搭建题目的 teachingPoint + hint 添加表情（🌳💡）
+- **SandboxLevels.cpp**：5 个 VM 沙盒关卡的 goal + teachingPoint + hint 添加表情（🎮💻💡）
+- **LearningPathData.cpp**：22 个 LearningActivity 的 title + description 添加表情（title 按活动类型：👋🚀🧩🌳💻📖📜🏆⚖️📊🐛🎯 / description 统一 📍）
+
+### 关键技术决策
+
+- **严格字段分类**：将字段分为「绝对禁止修改」（id / sourceCode / initialCode / expectedOutput / expectedTokens / expectedAst / activityId / nextModuleId / 字段名 / 数字字段）与「可添加表情」（title / description / hint / teachingNote / naturalLanguage / challengeGoal / explanation / decision / passName / goal / teachingPoint）两类，保证测试断言（id 非空/唯一 + 字段非空 + 结构化字段）完全兼容
+- **表情密度控制**：每个字段最多 1 个表情前缀，避免过度堆砌；重点在 title / description 开头添加，hint / teachingNote 同步增强
+- **表情语义匹配**：按场景类型选择表情——断点用 🔴🎯🛑（停止/目标/禁止）、语法用 📝🔀🔄（书写/分支/循环）、IR 优化用 ✨🧹📋🔍（变换/清理/复制/查找）、Token 用 🔤（字母）、AST 用 🌳（树）、VM 用 🎮💻（游戏/计算机）、学习路径用 📍（位置标记）
+- **passName 批量替换**：IROptReplayLibrary 中 5 个唯一 passName 各出现 3 次（共 15 个 IROptStepRecord），使用 replace_all 配合 `"<passName>", "Round` 上下文锚定，确保只匹配 replay 场景的 passName 字段，不影响 optimizationExamples 中的 description 文本
+- **学习路径 title 主题化**：22 个 LearningActivity 的 title 按活动类型分配不同表情（TOY→🎮/PUZZLE→🧩/LAB→📖/CHALLENGE→🏆/SANDBOX→💻/FREEFORM→🎯），description 统一用 📍 保持视觉一致性
+
+### 修改文件清单
+
+- 修改：`gui/BreakpointConditionPanel.cpp`（8 title + 8 description，共 16 处）
+- 修改：`gui/SyntaxProductionLibrary.cpp`（11 title + 11 description + 11 naturalLanguage，共 33 处）
+- 修改：`gui/IRTransformPanel.cpp`（8 lowering title+desc + 3 opt title+desc + 15 passName，共 37 处）
+- 修改：`gui/TokenPuzzleData.cpp`（5 teachingPoint + 5 hint，共 10 处）
+- 修改：`gui/AstToyLevels.cpp`（6 teachingPoint + 6 hint，共 12 处）
+- 修改：`gui/SandboxLevels.cpp`（5 goal + 5 teachingPoint + 5 hint，共 15 处）
+- 修改：`gui/LearningPathData.cpp`（22 title + 22 description，共 44 处）
+- `docs/development.md` 同步更新变更摘要表
+
+## 2026-07-06 · 教学面板表情符号增强（3 面板静态库字段）
+
+### 概述
+
+为 3 个教学面板（MemoryModelPanel / ClosureInspectorPanel / ExceptionFlowPanel）的内联静态教学库字段添加表情符号前缀，让内容更生动有趣，提升学习者阅读体验。表情符号严格遵循"只加在描述性字段、不动结构化字段与 id"的规则，现有测试（检查 id 非空/唯一、字段非空）完全兼容。
+
+### 已实现功能
+
+- **MemoryModelPanel.cpp**：NaN-boxing 7 个示例（title + description）、RefCount 4 个场景（title + description）、GcManager 6 个阶段（title + description）、GC 动画 4 个阶段（description）、堆对象 6 种类型（description）
+- **ClosureInspectorPanel.cpp**：8 个闭包场景（title + description + captureType + teachingNote）、6 个 upvalue 生命周期阶段（description）
+- **ExceptionFlowPanel.cpp**：8 个异常流场景（title + description + teachingNote）、6 个传播阶段（description）
+
+### 关键技术决策
+
+- **不动 id 字段**：simple-capture / throw / mark 等纯标识符字段保持原样
+- **不动结构化字段**：sourceCode / sampleCode / capturedVars / propagationPath / stackEffect / steps 等结构化字段保持原样
+- **不动 phase/category 标识**：UpvaluePhaseDoc / ExceptionPhaseDoc 的 phase 与 category 字段（create / throw 等短标识符）保持原样
+- **表情选择按场景**：内存用 📦/🔢/🎭、GC 用 🧹/🟢/🛡️、闭包用 🔗/🔄/📦、异常用 ⚠️/🚨/🛡️/✨/🌊、教学说明统一用 💡
+
+### 修改文件清单
+
+- 修改：`gui/MemoryModelPanel.cpp`（NaN-box 7 + RefCount 4 + GcPhase 6 + AnimPhase 4 + HeapType 6 = 27 处字段加表情）
+- 修改：`gui/ClosureInspectorPanel.cpp`（Scenario 8×4 + Phase 6 = 38 处字段加表情）
+- 修改：`gui/ExceptionFlowPanel.cpp`（Scenario 8×3 + Phase 6 = 30 处字段加表情）
+
+## 2026-07-06 · 教学面板 Markdown 渲染接入（7 面板散文字段统一）
+
+### 概述
+
+将 7 个教学面板的散文式说明字段（description / teachingNote / heapLayout / semantics / naturalLanguage）统一通过 `MarkdownRenderer::markdownToHtmlFragment` 渲染为 HTML 片段，替代各面板手写的 `"<p>" + raw_string + "</p>"` 模板。Markdown 渲染器内部处理 HTML 转义与 markdown 子集解析（标题/粗体/斜体/行内代码/围栏代码块/列表/分割线/段落），同时修复了 ClosureInspectorPanel / ExceptionFlowPanel 中先前直接插入 Library 字符串字段未调用 toHtmlEscaped() 的潜在 HTML 注入问题。minilang_ide 构建成功，无编译错误。
+
+### 已实现功能
+
+- **CallStackPanel.cpp `showScenario`**：`s.description` 与 `s.teachingNote` 改用 markdown fragment；移除手动 `<p>` `</p>` 包裹（markdown fragment 已自带）
+- **VariableInspectorPanel.cpp `showExample`**：`e.teachingNote` 与 `e.heapLayout` 改用 markdown fragment；保留 `<pre>` 用于 sourceExpr 样例代码
+- **BytecodeTracePanel.cpp `showDoc`**：`d.semantics` 改用 markdown fragment；保留 operandFormat / stackEffect 作为单行标识符字段（`<code>` 不变）
+- **ClosureInspectorPanel.cpp `populateScenarioDetail` + `populatePhaseDetail`**：`s.description` / `s.teachingNote` / `p.description` 改用 markdown fragment（`UpvaluePhaseDoc` 无 teachingNote 字段，仅渲染 description）；同时修复先前未调用 toHtmlEscaped() 的 HTML 注入隐患
+- **ExceptionFlowPanel.cpp `populateScenarioDetail` + `populatePhaseDetail`**：`s.description` / `s.teachingNote` / `p.description` 改用 markdown fragment（`ExceptionPhaseDoc` 无 teachingNote 字段）；同样修复 HTML 注入隐患
+- **MemoryModelPanel.cpp `populateNanBoxDetail` + `populateGcPhases`**：`b.description` 与 GcPhaseInfo 的 `p.description` 改用 markdown fragment；保留 `bitsToHex` / `bitsToBinary` 等 `<code>` 字段不变
+- **SyntaxExplorerPanel.cpp `showCurrentItem`**：`p.description` 与 `p.naturalLanguage` 改用 markdown fragment；移除 naturalLanguage 的 `<pre>` 包裹（改由 markdown 处理多段格式）；保留 ebnf 的 `<pre>`（EBNF 是字面文法表示）
+
+### 关键技术决策
+
+- **使用 `markdownToHtmlFragment` 而非 `markdownToHtml`**：fragment 版本不包含 `<html><body>` 包裹，便于嵌入各面板已有的 HTML 模板字符串中（QString::arg 或 std::ostringstream 拼接）
+- **std::string 重载直接传递**：Library 字段类型为 `std::string`，调用 `markdownToHtmlFragment(s.description)` 走 std::string 重载，避免调用点反复 `QString::fromUtf8`；ostringstream 拼接路径用 `.toStdString()` 转回 std::string
+- **移除手动 `<p>` 包裹**：markdown fragment 已包含 `<p>...</p>` 段落包裹，保留外层 `<p>` 会产生嵌套 `<p>` 标签（HTML 无效）；对于带 label 的行（如 `"<p><b>说明:</b> " + desc + "</p>"`），将 label 拆为独立段落 `"<p><b>说明:</b></p>"` 后追加 markdown fragment
+- **保留单行标识符字段**：id / title / ebnf / operandFormat / stackEffect / sampleCode 等单行字面字段保持原有 `<code>` 或 `<pre>` 包裹不变，避免 markdown 误解析字面字符（如 EBNF 中的 `*` 会被识别为强调）
+- **HTML 注入修复**：ClosureInspector / ExceptionFlow 先前直接 `oss << s.description` 未转义，markdown 渲染器内部处理转义，一并修复该潜在注入隐患
+
+### 修改文件清单
+
+- 修改：`gui/CallStackPanel.cpp`（+include MarkdownRenderer.h，showScenario 2 处字段改 markdown）
+- 修改：`gui/VariableInspectorPanel.cpp`（+include MarkdownRenderer.h，showExample 2 处字段改 markdown）
+- 修改：`gui/BytecodeTracePanel.cpp`（+include MarkdownRenderer.h，showDoc 1 处字段改 markdown）
+- 修改：`gui/ClosureInspectorPanel.cpp`（+include MarkdownRenderer.h，populateScenarioDetail + populatePhaseDetail 共 3 处字段改 markdown，附带 HTML 注入修复）
+- 修改：`gui/ExceptionFlowPanel.cpp`（+include MarkdownRenderer.h，populateScenarioDetail + populatePhaseDetail 共 3 处字段改 markdown，附带 HTML 注入修复）
+- 修改：`gui/MemoryModelPanel.cpp`（+include MarkdownRenderer.h，populateNanBoxDetail + populateGcPhases 共 2 处字段改 markdown）
+- 修改：`gui/SyntaxExplorerPanel.cpp`（+include MarkdownRenderer.h，showCurrentItem 2 处字段改 markdown，naturalLanguage 移除 `<pre>` 改 markdown 段落）
+- `docs/development.md` 同步更新变更摘要表
+
+## 2026-07-06 · P2 视觉一致性收尾（8 项独立任务批量处理）
+
+### 概述
+
+针对 IDE 中散布的硬编码颜色、原生系统图标、未 Fluent 化的组件，实施 8 项独立视觉一致性收尾任务。所有改动遵循「最小侵入」原则：在 gui/TeachingTheme.h 集中添加新函数，替换 app/ide.cpp / gui/* 中的硬编码值，不破坏现有信号连接与布局结构。全量 1668/1668 测试通过，minilang_ide 构建成功。
+
+### 已实现功能
+
+**任务 1: LearningPathPanel + WelcomeWizard 5 阶段色抽取**：
+- gui/TeachingTheme.h 新增 `learningStageColor(int stage)` inline 函数（阶段 0-4 + 默认灰色，共 6 色）
+- gui/LearningPathPanel.cpp 的 `stageColor()` 改为调用 `TeachingTheme::learningStageColor(stage).name()`
+- gui/WelcomeWizard.cpp Step 4 的 5 色数组改为循环调用 `TeachingTheme::learningStageColor(i).name()`
+- 三处（LearningPathPanel / WelcomeWizard / CodeJourneyInfoPanel）5 阶段色现在完全一致
+
+**任务 2: 输出面板 + 诊断图标色走 TeachingTheme**：
+- gui/TeachingTheme.h 新增 `info()` (#0078D4) 和 `hint()` (#8C8C8C) 两个 Fluent 语义色函数
+- app/ide.cpp 的 `errFilter*Btn_` 4 个过滤按钮 QColor 改为 `TeachingTheme::error()/warning()/info()/hint()`
+- app/ide.cpp 的 `kTs/kInfo/kSuccess/kWarn/kError/kBody` 6 个 const char* 保留（QTextEdit HTML 需要 const char*），添加注释标注与 TeachingTheme 对应函数的语义关系
+- app/ide.cpp 诊断图标色（`#D13438/#C2721D/#0078D4/#8C8C8C`）同样添加注释
+
+**任务 3: applyFluentStyle 14 色变量走 TeachingTheme**：
+- gui/TeachingTheme.h 新增 14 个 `ide*()` inline 函数（ideBgMain/ideBgPanel/ideBgSidebar/ideFgPrimary/ideFgSecondary/ideBorder/ideAccent/ideHoverBg/ideSelectedBg/ideTitleBg/ideStatusBg/ideEditorBg/ideLineNumBg/ideLineNumFg）
+- app/ide.cpp applyFluentStyle() 内 14 个 `dark ? "..." : "..."` 三元表达式改为 `TeachingTheme::ide*().name()`
+- 亮/暗主题切换时 applyFluentStyle() 重新调用，颜色自动跟随
+
+**任务 4: 文件树 Fluent 图标**：
+- app/ide.cpp 3 处 `QStyle::SP_DirIcon` → `Fluent::icon(Fluent::IconType::FOLDER)`
+- app/ide.cpp 文件图标 `QStyle::SP_FileIcon` → `Fluent::icon(Fluent::IconType::DOCUMENT)`，`.ml` 文件特殊用 `Fluent::IconType::CODE`（区分 MiniLang 源码文件）
+- FluentQIcon 继承自 QIcon，可直接传给 `QTreeWidgetItem::setIcon()`
+
+**任务 5: Welcome 欢迎页 Fluent 化**：
+- app/ide.cpp 欢迎页标题 QLabel → `TitleLabel`，副标题 QLabel → `CaptionLabel`（保留 setObjectName 以便 styles.qss / styles_dark.qss 的 QLabel#welcomeTitle 选择器仍生效）
+- 欢迎页按钮保留原生 QPushButton（暗色主题有 Claude DS terra-cotta #D97757 品牌色，原代码注释明确说明不用 PrimaryPushButton）
+
+**任务 6: QGroupBox 统一 Fluent 外观**：
+- app/ide.cpp applyFluentStyle() 末尾新增 QGroupBox 全局样式（border/border-radius/background/title color 走 TeachingTheme::border()/surface()/textPrimary()）
+- 覆盖 WelcomeWizard / VmStackSandboxPanel 等面板的 QGroupBox，无需逐个替换为 SimpleCardWidget
+
+**任务 7: CodeJourneyInfoPanel 16 处 Material 色清理**：
+- gui/CodeJourneyInfoPanel.cpp buildJourneyHtml() 中 6 处 5 阶段色（#4CAF50×2/#2196F3×2/#9C27B0/#F44336）→ `TeachingTheme::learningStageColor(N).name()`
+- 6 处浅色背景（#fff3e0/#f3e5f5/#ffebee/#e0f7fa/#efebe9/#e8f5e9）→ `TeachingTheme::surface().name()`
+- 保留特有语义色 #FF9800(橙)/#00BCD4(青)/#795548(棕) 和辅助灰 #666/#888
+
+**任务 8: 帮助对话框硬编码色替换**：
+- app/ide.cpp showHelpDialog() 中 7 组 `isDark ? "..." : "..."` 三元表达式改为 TeachingTheme 函数（surface/textPrimary/textSecondary/ideAccent/primary/primaryHover/primaryPressed）
+- 移除 `palette().color(QPalette::Window).lightness() < 128` 暗色检测，统一走 `Theme::isDark()`
+
+### 关键技术决策
+
+- **TeachingTheme 用 inline 函数而非静态常量**：保证每次调用动态读取 `Theme::isDark()` / `Theme::themeColor()`，主题切换时无需手动刷新
+- **const char* 保留策略**：QTextEdit HTML 与 RichTextItemDelegate 需要 const char* 拼接，无法直接用 QColor::name() 运行时拼接（会改变代码结构），故保留 const char* 但添加注释标注与 TeachingTheme 的语义关系
+- **Welcome 按钮不替换为 PrimaryPushButton**：暗色主题 styles_dark.qss 中 welcomePrimaryBtn 使用 Claude DS terra-cotta #D97757 品牌色，原代码注释明确说明"QFluentKit 自绘不读 QSS，无法应用 Claude DS 配色"，故保留 QPushButton
+- **QGroupBox 用全局样式表而非替换为 SimpleCardWidget**：避免改变布局结构的高风险改动，通过 `setStyleSheet()` 在主窗口设置 QGroupBox 选择器，级联到所有子 QGroupBox
+- **5 阶段色三处一致**：LearningPathPanel / WelcomeWizard Step 4 / CodeJourneyInfoPanel 三个面板的 5 阶段色现在全部走 `TeachingTheme::learningStageColor()`，未来修改一处即三处同步
+
+### 修改文件清单
+
+- 修改：`gui/TeachingTheme.h`（+learningStageColor +info +hint +14 个 ide* 函数，共 17 个新 inline 函数）
+- 修改：`gui/LearningPathPanel.cpp`（stageColor() 改为调用 TeachingTheme，+include TeachingTheme.h）
+- 修改：`gui/WelcomeWizard.cpp`（5 色数组改为 TeachingTheme::learningStageColor 循环）
+- 修改：`gui/CodeJourneyInfoPanel.cpp`（buildJourneyHtml 12 处颜色替换为 TeachingTheme）
+- 修改：`app/ide.cpp`（applyFluentStyle 14 色变量 + errFilter 按钮 + 诊断图标色注释 + 文件树图标 + Welcome 标题/副标题 + QGroupBox 样式 + showHelpDialog 7 色替换，+include TeachingTheme.h +include Label.h）
+- `README.md` / `docs/development.md` 同步更新
+
+## 2026-07-06 · P3 功能体验增强（M6/M8/M9/M10/M11）
+
+### 概述
+
+实施 5 项低优先级但能提升用户体验的功能增强，覆盖编辑器、状态栏、教学面板与可视化面板。所有改动遵循「最小侵入」原则，不破坏现有 H1-H4 已实现部分与 DebugPanel/教学面板 HTML 重建逻辑，全量 1668/1668 测试通过，minilang_ide 构建成功。
+
+### 已实现功能
+
+- **M6: 状态栏选中字符数显示**（app/ide.cpp / app/ide.h）：
+  - 状态栏新增第 6 个 permanent QLabel `statusSelectionLabel_`，灰色文本（`#6e6e6e`），默认隐藏
+  - 仅在 `codeEditor_` 存在选中时显示「选中 N 行 M 字符」（行数由 `blockNumber()` 差值 +1 计算）
+  - 复用已有 `cursorPositionChanged` → `updateStatusBar()` 信号链，零额外连接
+- **M8: Ctrl+D 选中相同词 / Ctrl+Shift+K 删除行**（gui/CodeEditor.cpp）：
+  - `Ctrl+D` 无选择时选中当前单词（`WordUnderCursor`），有选择时跳到下一个相同文本（`QTextDocument::find`，单光标简化版）
+  - `Ctrl+Shift+K` 删除当前行：`LineUnderCursor` 选中 + 删除，并吞掉行尾换行符（非末行），`beginEditBlock` 合并为单次 undo
+  - 插入位置在 H4 块注释之后、H1 回车自动缩进之前，避免冲突
+- **M9: LearningPathPanel 键盘导航**（gui/LearningPathPanel.cpp / gui/LearningPathPanel.h）：
+  - 面板 `setFocusPolicy(Qt::StrongFocus)` 使其可接收键盘焦点
+  - `keyPressEvent` 处理 `Up/Down` 在已解锁活动行间循环（`activityRows_` 仅收集 `unlocked=true` 的 QPushButton 行），`Enter` 触发当前行 `click()`
+  - `highlightActivityRow(idx)` 通过 `setProperty("navHighlight", true)` + 追加 `QPushButton[navHighlight="true"]{border:2px solid #2196F3}` 样式实现蓝色边框高亮，并 `ensureWidgetVisible` 滚动至该行
+  - `refresh()` 起点清空 `activityRows_/currentNavIndex_/highlightedSavedStyle_` 防止悬空引用
+- **M10: PipelineViewer Token 表格复制支持**（gui/PipelineViewer.cpp）：
+  - `tokenTable_` 设为 `SingleSelection` + `SelectItems` 行为
+  - `CustomContextMenu` 右键菜单：「复制单元格」+「复制整行」（整行用 `\t` 连接各列）
+  - `QShortcut(Ctrl+C)` 快捷键复制当前选中单元格文本
+- **M11: BugHuntPanel 题目搜索框**（gui/BugHuntPanel.cpp / gui/BugHuntPanel.h）：
+  - 新增 `QLineEdit* searchEdit_`，placeholder「搜索题目...」+ 清除按钮
+  - 题目列表 `itemList_` 与搜索框包在 `listContainer`（QVBoxLayout）内一并加入 `splitter`，保持原 splitter 4 段比例不变
+  - `textChanged` 信号触发 `setRowHidden` 按文本小写包含过滤，空 filter 全部显示
+
+### 关键技术决策
+
+- **M6 复用已有信号链**：`cursorPositionChanged` 已在第 762 行连接到 `updateStatusBar()`，选中范围显示无需新增连接，仅在 `updateStatusBar()` 内追加 `hasSelection()` 分支
+- **M8 Ctrl+D 简化版**：未实现多光标（VSCode 风格的「选中所有相同词」），仅单光标跳到下一个匹配；保持 `find()` 默认大小写敏感与精确匹配语义
+- **M9 适配 QPushButton 行结构**：LearningPathPanel 不使用 QListWidget（与任务原始假设不符），活动行是 flat QPushButton。采用「面板 StrongFocus + 面板级 keyPressEvent + activityRows_ 索引列表」方案，避免修改 row 的 NoFocus 策略（保留点击不夺焦的现有行为）
+- **M9 样式追加而非替换**：高亮通过 `setStyleSheet(savedStyle_ + " QPushButton[navHighlight=\"true\"]{...}")` 追加规则，恢复时 `setStyleSheet(savedStyle_)` 还原，不影响各状态原有样式（recommended/unlocked/locked 三种）
+- **M10 单选模式**：`SingleSelection + SelectItems` 让 Ctrl+C 行为可预测（只复制一个单元格），整行复制通过右键菜单单独提供
+- **M11 容器包装而非直接 addWidget**：`splitter->addWidget(listContainer)` 而非 `splitter->addWidget(itemList_)`，让搜索框与列表作为整体参与 splitter 尺寸分配，避免搜索框被挤压
+
+### 修改文件清单
+
+- 修改：`app/ide.h`（+`statusSelectionLabel_` 成员）
+- 修改：`app/ide.cpp`（initStatusBar 创建第 6 个 permanent QLabel + updateStatusBar 选中范围分支）
+- 修改：`gui/CodeEditor.cpp`（keyPressEvent M8 Ctrl+D / Ctrl+Shift+K 处理）
+- 修改：`gui/LearningPathPanel.h`（+keyPressEvent override +activityRows_/currentNavIndex_/highlightedSavedStyle_/highlightActivityRow）
+- 修改：`gui/LearningPathPanel.cpp`（构造 setFocusPolicy + refresh 清空导航状态 + buildActivityRow 收集 row + highlightActivityRow + keyPressEvent）
+- 修改：`gui/PipelineViewer.cpp`（+I18n.h / QApplication / QClipboard / QMenu / QShortcut includes + tokenTable_ 右键菜单 + Ctrl+C 快捷键）
+- 修改：`gui/BugHuntPanel.h`（+QLineEdit include +searchEdit_ 成员）
+- 修改：`gui/BugHuntPanel.cpp`（+QLineEdit include + listContainer 包装 + searchEdit_ 创建 + textChanged 过滤连接）
+- `README.md` / `docs/development.md` 同步更新
+
+## 2026-07-06 · 主题系统完整性增强（DebugPanel 主题化 + 调用栈帧跳转源码 + 教学面板 HTML 重建）
+
+### 概述
+
+针对主题系统三处不完整实现，独立但同主题的 3 项 P1 高优先级任务在同一批次内完成，保证主题切换语义一致性。所有改动遵循「最小侵入」原则，不修改 CodeEditor.cpp、不破坏现有信号连接、不动引擎层，全量 1668/1668 测试通过。
+
+### 已实现功能
+
+**任务 1: M5 调用栈帧跳转源码**（gui/DebugPanel.h + gui/DebugPanel.cpp + app/ide.cpp）：
+- DebugPanel 新增 `gotoLineRequested(int line)` 信号
+- `onStackFrameSelected(int index)` 末尾根据 `currentStack_[index].line` 发射信号（直接复用已验证的 CallStackEntry.line 字段，无需在 QListWidgetItem 的 UserRole 中冗余存储行号）
+- app/ide.cpp 在 `debugPanel_ = new DebugPanel;` 后连接信号到 `codeEditor_->gotoLine(line)`，与错误列表 itemClicked 跳转行复用同一套 CodeEditor API
+- 用户体验：调试时点击调用栈帧，主编辑器自动跳转到对应源码行，与 VS Code/CLion 调试器行为一致
+
+**任务 2: DebugPanel 主题化接入**（gui/DebugPanel.h + gui/DebugPanel.cpp）：
+- 7 处硬编码颜色全部替换为 TeachingTheme 主题色板：
+  - `styleScopeGroupHeader` 中 `QColor("#616161")` → `TeachingTheme::textSecondary()`（作用域分组标题灰色文字，跟随亮/暗主题）
+  - `varLabel` / `stackLabel` 内联 `color: #616161` → `TeachingTheme::textSecondary().name()`（标题标签）
+  - `variableTree_` / `callStackList_` 的 `background: #ffffff` → `TeachingTheme::surface().name()`
+  - `border: 1px solid #e5e5e5` → `TeachingTheme::border().name()`
+  - `selected: #cfe4f5` → `TeachingTheme::primary().lighter(160).name()`（选中态主色淡化）
+  - 选中态文字 `color: #1e1e1e` → `TeachingTheme::textPrimary().name()`
+- 新增 `applyThemeStyles()` 私有方法集中管理所有 setStyleSheet 调用，构造函数与主题切换回调均调用此方法
+- 新增 `varLabel_` / `stackLabel_` 成员保存指针以便主题刷新时重新设置样式
+- 构造函数末尾添加 `Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) { applyThemeStyles(); })` 回调，主题切换时重新应用样式（receiver=this 保证生命周期安全，析构自动断开）
+
+**任务 3: 主题切换后教学面板 HTML 重建**（gui/CodeJourneyInfoPanel.cpp + gui/IRTransformPanel.cpp + gui/BreakpointConditionPanel.cpp）：
+- 3 个教学面板构造函数末尾添加 `Theme::onThemeModeChanged` 监听，主题切换时重建/刷新 HTML 内容：
+  - **CodeJourneyInfoPanel**：`infoBrowser_->setHtml(buildJourneyHtml())`（buildJourneyHtml 内部使用 `TeachingTheme::surface()` 作为 `<pre>` 背景）
+  - **IRTransformPanel**：根据 `stack_->currentIndex()` 分发到对应 populate 函数（case 0 → `populateLoweringDetail` 含主题色 `<pre>` 背景；case 1-3 → setPlainText 页面也刷新以防未来扩展）
+  - **BreakpointConditionPanel**：`populateScenarioDetail(scenarioList_->currentRow())`（populateScenarioDetail 内部使用 `TeachingTheme::surface()` 作为 `<pre>` 背景）
+- 3 个面板均显式 `#include "Theme.h"`（虽 TeachingTheme.h 已传递包含，但显式声明依赖意图更清晰）
+- receiver=this 保证生命周期安全，析构自动断开
+
+### 关键技术决策
+
+- **直接复用 CallStackEntry.line 而非 UserRole 冗余存储**：`onStackFrameSelected(int index)` 已通过 index 校验访问 `currentStack_[index]`，`frame.line` 是 DebugCoordinator/VM 已填充的可靠数据源，无需在 QListWidgetItem 的 UserRole 中冗余存储行号（避免数据双源不一致风险）
+- **applyThemeStyles 集中管理样式**：将构造函数中散布的 7 处 setStyleSheet 调用集中到一个私有方法，构造函数与主题切换回调均调用此方法，避免代码重复，保证主题切换时样式与初始构造一致
+- **styleScopeGroupHeader 无需手动刷新**：作用域分组项的画刷在每次 `populateVariableTree` 调用时重新设置（直接调用 `TeachingTheme::textSecondary()`），主题切换后下次变量树刷新即跟随新主题，无需在 applyThemeStyles 中处理
+- **IRTransformPanel 按当前页签分发刷新**：4 个子页中只有 lowering 详情页使用主题色 HTML（`<pre>` 背景），但为完整性与未来扩展，主题切换时按 `stack_->currentIndex()` 分发到对应 populate 函数，确保所有页签内容都刷新
+- **lambda 参数 `(Fluent::ThemeMode)` 省略变量名**：回调不使用 mode 参数，仅作为 Theme::onThemeModeChanged 签名匹配，省略变量名避免未使用参数警告
+
+### 修改文件清单
+
+- 修改：`gui/DebugPanel.h`（+signals gotoLineRequested +private applyThemeStyles +varLabel_/stackLabel_ 成员）
+- 修改：`gui/DebugPanel.cpp`（+TeachingTheme/Theme include +styleScopeGroupHeader 用 TeachingTheme::textSecondary +构造函数移除内联样式改调 applyThemeStyles +新增 applyThemeStyles 实现 +onStackFrameSelected emit gotoLineRequested +onThemeModeChanged 监听）
+- 修改：`app/ide.cpp`（+debugPanel_ gotoLineRequested 信号连接到 codeEditor_->gotoLine）
+- 修改：`gui/CodeJourneyInfoPanel.cpp`（+Theme.h include +构造函数末尾 onThemeModeChanged 重建 HTML）
+- 修改：`gui/IRTransformPanel.cpp`（+Theme.h include +构造函数末尾 onThemeModeChanged 按当前页签刷新）
+- 修改：`gui/BreakpointConditionPanel.cpp`（+Theme.h include +构造函数末尾 onThemeModeChanged 刷新场景详情）
+- `README.md` / `docs/development.md` 同步更新
 
 ## 2026-07-06 · 编辑器核心功能增强 + 工作区 UX 增强
 

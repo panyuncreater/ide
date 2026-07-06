@@ -4,6 +4,7 @@
 
 #include "gui/BytecodeTracePanel.h"
 #include "gui/PanelAnimator.h"
+#include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
 #include "interpreter/Value.h"
 
@@ -26,109 +27,109 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
         OpCodeDocEntry{
             "OP_INT", "const",
             "nameIdx(2B)", "push 1",
-            "从常量池读取整数并压入栈顶。",
+            "📜 从常量池读取整数并压入栈顶。",
             "var x = 42;"
         },
         OpCodeDocEntry{
             "OP_FLOAT", "const",
             "nameIdx(2B)", "push 1",
-            "从常量池读取浮点数并压入栈顶。",
+            "📜 从常量池读取浮点数并压入栈顶。",
             "var pi = 3.14;"
         },
         OpCodeDocEntry{
             "OP_STRING", "const",
             "nameIdx(2B)", "push 1",
-            "从常量池读取字符串并压入栈顶。",
+            "📜 从常量池读取字符串并压入栈顶。",
             "var s = \"hello\";"
         },
         OpCodeDocEntry{
             "OP_NULL", "const",
             "无", "push 1",
-            "压入 null 值。",
+            "📜 压入 null 值。",
             "var n = null;"
         },
         OpCodeDocEntry{
             "OP_ADD", "arith",
             "无", "pop 2 / push 1",
-            "弹出栈顶两个值（右、左），相加后压入结果。注意：左操作数在栈深处，右操作数在栈顶。",
+            "🔢 弹出栈顶两个值（右、左），相加后压入结果。注意：左操作数在栈深处，右操作数在栈顶。",
             "var z = x + y;"
         },
         OpCodeDocEntry{
             "OP_GET_GLOBAL", "var",
             "slot(2B)", "push 1",
-            "读取全局槽位的值并压栈。slot 在编译期由 GlobalSlotAllocator 分配。",
+            "📍 读取全局槽位的值并压栈。slot 在编译期由 GlobalSlotAllocator 分配。",
             "print(x);"
         },
         OpCodeDocEntry{
             "OP_SET_GLOBAL", "var",
             "slot(2B)", "pop 1",
-            "弹出栈顶值写入全局槽位。",
+            "📍 弹出栈顶值写入全局槽位。",
             "x = 10;"
         },
         OpCodeDocEntry{
             "OP_JUMP", "control",
             "offset(2B)", "no effect",
-            "无条件跳转到 offset 指定的相对位置。",
+            "🔄 无条件跳转到 offset 指定的相对位置。",
             "if (true) { print(\"yes\"); }"
         },
         OpCodeDocEntry{
             "OP_JUMP_IF_FALSE", "control",
             "offset(2B)", "pop 1",
-            "弹出栈顶条件，若为 false 则跳转。",
+            "🔄 弹出栈顶条件，若为 false 则跳转。",
             "if (cond) { ... }"
         },
         OpCodeDocEntry{
             "OP_LOOP", "control",
             "offset(2B)", "no effect",
-            "回跳到循环入口（负偏移）。",
+            "🔄 回跳到循环入口（负偏移）。",
             "while (cond) { ... }"
         },
         OpCodeDocEntry{
             "OP_CALL", "call",
             "argCount(1B)", "pop N+1 / push 1",
-            "调用栈顶闭包：弹出 N 个参数 + 1 个闭包值，执行后压入返回值。",
+            "📞 调用栈顶闭包：弹出 N 个参数 + 1 个闭包值，执行后压入返回值。",
             "result = foo(1, 2);"
         },
         OpCodeDocEntry{
             "OP_RETURN", "call",
             "无", "pop frame",
-            "从当前函数返回，弹出整个调用帧，将返回值压入调用者栈顶。",
+            "📞 从当前函数返回，弹出整个调用帧，将返回值压入调用者栈顶。",
             "return x;"
         },
         OpCodeDocEntry{
             "OP_BUILD_ARRAY", "container",
             "count(1B)", "pop N / push 1",
-            "弹出栈顶 N 个元素构建 ArrayData 并压入。",
+            "📊 弹出栈顶 N 个元素构建 ArrayData 并压入。",
             "var arr = [1, 2, 3];"
         },
         OpCodeDocEntry{
             "OP_BUILD_DICT", "container",
             "pairCount(1B)", "pop 2N / push 1",
-            "弹出栈顶 2N 个值（key+value 对）构建 DictData 并压入。",
+            "📊 弹出栈顶 2N 个值（key+value 对）构建 DictData 并压入。",
             "var d = {\"x\": 1};"
         },
         OpCodeDocEntry{
             "OP_CLOSURE", "closure",
             "nameIdx(2B) + upvalueCount(1B)", "pop N / push 1",
-            "创建闭包值：从栈顶弹出 N 个 upvalue（每个为 isLocal+index 编码）+ 函数名，构造 ClosureData。",
+            "📦 创建闭包值：从栈顶弹出 N 个 upvalue（每个为 isLocal+index 编码）+ 函数名，构造 ClosureData。",
             "fun outer() { var x = 1; return fun() { return x; }; }"
         },
         OpCodeDocEntry{
             "OP_GET_UPVALUE", "closure",
             "upvalueIndex(1B)", "push 1",
-            "读取闭包捕获的外层变量。若 upvalue 仍开放则从栈帧读取，已关闭则从堆读取。",
+            "🔗 读取闭包捕获的外层变量。若 upvalue 仍开放则从栈帧读取，已关闭则从堆读取。",
             "// 闭包内访问外层变量"
         },
         OpCodeDocEntry{
             "OP_CLASS_NEW", "class",
             "nameIdx(2B) + argCount(1B)", "pop N+1 / push 1",
-            "类构造：弹出 N 个参数 + 类模板，创建 InstanceData 并调用 init 方法。",
+            "📦 类构造：弹出 N 个参数 + 类模板，创建 InstanceData 并调用 init 方法。",
             "var p = Point.new(3, 4);"
         },
         OpCodeDocEntry{
             "OP_METHOD_CALL", "class",
             "nameIdx(2B) + argCount(1B) + recvVarIdx(2B)", "pop N+1 / push 1",
-            "方法调用：通过 methodCache_ 查找方法，避免重复 ClassInfo 遍历。",
+            "📞 方法调用：通过 methodCache_ 查找方法，避免重复 ClassInfo 遍历。",
             "p.distance();"
         },
     };
@@ -252,6 +253,21 @@ void BytecodeTracePanel::onCaptureNow() {
 void BytecodeTracePanel::onAutoCaptureToggled(bool checked) {
     if (checked) autoTimer_->start();
     else         autoTimer_->stop();
+}
+
+void BytecodeTracePanel::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    if (autoCaptureCheck_ && autoCaptureCheck_->isChecked() &&
+        autoTimer_ && !autoTimer_->isActive()) {
+        autoTimer_->start();
+    }
+}
+
+void BytecodeTracePanel::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    if (autoTimer_ && autoTimer_->isActive()) {
+        autoTimer_->stop();
+    }
 }
 
 void BytecodeTracePanel::onClearTrace() {
@@ -390,14 +406,14 @@ void BytecodeTracePanel::showDoc(int index) {
         "<h3>栈效果</h3>"
         "<p><code>%4</code></p>"
         "<h3>语义</h3>"
-        "<p>%5</p>"
+        "%5"
         "<h3>样例代码</h3>"
         "<pre>%6</pre>"
     ).arg(QString::fromUtf8(d.opCodeName.c_str()))
      .arg(QString::fromUtf8(d.category.c_str()))
      .arg(QString::fromUtf8(d.operandFormat.c_str()))
      .arg(QString::fromUtf8(d.stackEffect.c_str()))
-     .arg(QString::fromUtf8(d.semantics.c_str()))
+     .arg(MarkdownRenderer::markdownToHtmlFragment(d.semantics))
      .arg(QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped());
     docDetail_->setHtml(html);
 }

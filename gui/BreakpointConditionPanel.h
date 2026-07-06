@@ -61,6 +61,11 @@ public:
 signals:
     void loadSampleRequested(const QString& code);
 
+protected:
+    /// 面板显示时启动 QTimer 轮询，隐藏时停止（避免后台空转浪费 CPU）
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
 private:
     IdeController* controller_ = nullptr;
 

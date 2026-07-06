@@ -26,8 +26,6 @@
         <file alias="search_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Search_white.svg</file>
         <file alias="debug_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/DeveloperTools_black.svg</file>
         <file alias="debug_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/DeveloperTools_white.svg</file>
-        <file alias="theme_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Brightness_black.svg</file>
-        <file alias="theme_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Brightness_white.svg</file>
         <file alias="close_black.svg">../third_party/QFluentKit/QFluent/res/images/icons/Close_black.svg</file>
         <file alias="close_white.svg">../third_party/QFluentKit/QFluent/res/images/icons/Close_white.svg</file>
 

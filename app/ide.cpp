@@ -5,6 +5,7 @@
 #include "gui/GuiTextUtils.h"
 #include "gui/PanelAnimator.h"
 #include "gui/I18n.h"  // D2: i18n 翻译宏 mlTr
+#include "gui/TeachingTheme.h"  // P2 视觉一致性：info/success/warning/error/hint 语义色集中管理
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -97,6 +98,7 @@
 #include "QFluent/Flyout.h"
 #include "QFluent/InfoBar.h"
 #include "QFluent/PushButton.h"
+#include "QFluent/Label.h"        // P2 视觉一致性：TitleLabel / CaptionLabel（Welcome 欢迎页）
 #include "QFluent/ToolButton.h"
 #include "QFluent/ComboBox.h"
 #include "QFluent/TableView.h"
@@ -129,9 +131,12 @@ static void populateDirChildren(QTreeWidget* tree, QTreeWidgetItem* parentItem,
         item->setText(0, fi.fileName());
         // 第九轮：文件名显示不全时悬浮显示完整路径 tooltip
         item->setToolTip(0, fi.absoluteFilePath());
-        QStyle::StandardPixmap icon = QStyle::SP_FileIcon;
-        if (fi.suffix() == "ml") icon = QStyle::SP_FileDialogContentsView;
-        item->setIcon(0, tree->style()->standardIcon(icon));
+        // P2 视觉一致性：文件树图标走 Fluent 图标（FOLDER / DOCUMENT / CODE）
+        // .ml 文件用 CODE 图标以区分 MiniLang 源码文件，其余用 DOCUMENT
+        Fluent::IconType iconType = (fi.suffix() == "ml")
+            ? Fluent::IconType::CODE
+            : Fluent::IconType::DOCUMENT;
+        item->setIcon(0, Fluent::icon(iconType));
         item->setData(0, Qt::UserRole, fi.absoluteFilePath());
         item->setData(0, Qt::UserRole + 1, false);
     }
@@ -141,7 +146,7 @@ static void populateDirChildren(QTreeWidget* tree, QTreeWidgetItem* parentItem,
         auto* item = new QTreeWidgetItem(parentItem);
         item->setText(0, fi.fileName());
         item->setToolTip(0, fi.absoluteFilePath());
-        item->setIcon(0, tree->style()->standardIcon(QStyle::SP_DirIcon));
+        item->setIcon(0, Fluent::icon(Fluent::IconType::FOLDER));
         item->setData(0, Qt::UserRole, fi.absoluteFilePath());
         item->setData(0, Qt::UserRole + 1, true);
         item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
@@ -366,30 +371,14 @@ Ide::Ide(QWidget* parent)
 
     replPanel_->setController(controller_);
 
-    // ---- 主题系统：QSettings 持久化 + onThemeModeChanged 响应 ----
-    // 注册主题变更回调：切换时重算 QSS、更新切换按钮图标、通知所有 CodeEditor。
-    // receiver=this 保证 Ide 析构时自动断开连接，无悬空回调。
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode mode) {
-        applyFluentStyle();  // 重算所有 QSS（applyFluentStyle 内部读取 Theme::isDark()）
-        // 更新切换按钮图标：亮色显示 CONSTRACT 原色（月亮），暗色显示 reversed（太阳）
-        if (themeToggleBtn_) {
-            themeToggleBtn_->setIcon(Fluent::icon(
-                Fluent::IconType::CONSTRACT, mode == Fluent::ThemeMode::DARK));
-        }
-        // 通知所有已打开的编辑器标签页更新深色主题
-        for (auto& tab : editorTabs_) {
-            if (tab.editor) tab.editor->setDarkTheme(mode == Fluent::ThemeMode::DARK);
-        }
+    // ---- 主题系统：仅使用亮色主题（深色主题已移除） ----
+    // 强制 LIGHT 模式，不再读取 QSettings 持久化（删除深色主题后无切换需求）。
+    // onThemeModeChanged 回调保留用于响应 ThemeColor（主题色）变更，但不再切换亮/暗。
+    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
+        applyFluentStyle();  // 主题色变更时重算 QSS
     });
-
-    // 从 QSettings 读取上次主题选择（默认 light），触发上面的回调完成首次样式应用
-    {
-        QSettings s;
-        QString mode = s.value("theme_mode", "light").toString();
-        Theme::setThemeMode(mode == "dark" ? Fluent::ThemeMode::DARK
-                                            : Fluent::ThemeMode::LIGHT);
-    }
-    applyFluentStyle();  // 兜底：确保首次样式一定应用（回调可能因时机问题未覆盖全部组件）
+    Theme::setThemeMode(Fluent::ThemeMode::LIGHT);
+    applyFluentStyle();  // 兜底：确保首次样式一定应用
 
     setupCompletion();
 
@@ -994,12 +983,19 @@ void Ide::initWelcomePage() {
     centerLayout->setSpacing(12);
 
     // 第十三轮：ML 几何品牌 Logo（精致连笔版，替代原 { } 文字）
+    // 修复：QPixmap(":/icons/minilang_logo.svg") 在某些 Qt6 安装下因 SVG plugin
+    // 加载时机问题返回空 pixmap。改用 QIcon 自动调用 QSvgRenderer 渲染，更可靠。
     auto* iconLabel = new QLabel;
     iconLabel->setObjectName("welcomeIcon");
     iconLabel->setAlignment(Qt::AlignCenter);
     {
-        QPixmap logoPixmap(":/icons/minilang_logo.svg");
+        QIcon logoIcon(":/icons/minilang_logo.svg");
+        QPixmap logoPixmap;
+        if (!logoIcon.isNull()) {
+            logoPixmap = logoIcon.pixmap(QSize(96, 96));
+        }
         if (logoPixmap.isNull()) {
+            // 回退到 QFluentKit 内置 CODE 图标
             logoPixmap = Fluent::icon(Fluent::IconType::CODE).pixmap(96, 96);
         }
         iconLabel->setPixmap(logoPixmap.scaled(
@@ -1008,7 +1004,10 @@ void Ide::initWelcomePage() {
     }
 
     // 第十一轮：标题 24px Medium，副标题 14px 灰色
-    auto* titleLabel = new QLabel(mlTr("MiniLang IDE"));
+    // P2 视觉一致性：标题/副标题改用 QFluentKit TitleLabel / CaptionLabel，
+    // 保留 setObjectName 以便 styles.qss / styles_dark.qss 的 QLabel#welcomeTitle
+    // / QLabel#welcomeSubtitle 选择器仍生效（TitleLabel/CaptionLabel 继承自 QLabel）。
+    auto* titleLabel = new TitleLabel(mlTr("MiniLang IDE"));
     titleLabel->setObjectName("welcomeTitle");
     titleLabel->setAlignment(Qt::AlignCenter);
     QFont titleFont = titleLabel->font();
@@ -1016,7 +1015,7 @@ void Ide::initWelcomePage() {
     titleFont.setWeight(QFont::Medium);
     titleLabel->setFont(titleFont);
 
-    auto* subtitleLabel = new QLabel(mlTr("现代化 MiniLang 编程语言开发环境"));
+    auto* subtitleLabel = new CaptionLabel(mlTr("现代化 MiniLang 编程语言开发环境"));
     subtitleLabel->setObjectName("welcomeSubtitle");
     subtitleLabel->setAlignment(Qt::AlignCenter);
     subtitleLabel->setWordWrap(true);
@@ -1628,6 +1627,32 @@ void Ide::initTitleBar() {
     viewMenu->addMenu(teachEngineMenu);
     viewMenu->addMenu(teachAdvancedMenu);
 
+    // ---- 字号调节（代码编辑器） ----
+    viewMenu->addSeparator();
+    auto* fontIncreaseAction = new QAction(mlTr("放大字号"), this);
+    fontIncreaseAction->setShortcut(Qt::CTRL | Qt::Key_Equal);  // Ctrl+= (与 Ctrl++ 同键)
+    connect(fontIncreaseAction, &QAction::triggered, this, [this]() {
+        if (codeEditor_) codeEditor_->changeFontSize(+1);
+    });
+    viewMenu->addAction(fontIncreaseAction);
+
+    auto* fontDecreaseAction = new QAction(mlTr("缩小字号"), this);
+    fontDecreaseAction->setShortcut(Qt::CTRL | Qt::Key_Minus);
+    connect(fontDecreaseAction, &QAction::triggered, this, [this]() {
+        if (codeEditor_) codeEditor_->changeFontSize(-1);
+    });
+    viewMenu->addAction(fontDecreaseAction);
+
+    auto* fontResetAction = new QAction(mlTr("重置字号"), this);
+    fontResetAction->setShortcut(Qt::CTRL | Qt::Key_0);
+    connect(fontResetAction, &QAction::triggered, this, [this]() {
+        if (codeEditor_) {
+            int cur = codeEditor_->fontSize();
+            codeEditor_->changeFontSize(11 - cur);  // 重置到默认 11pt
+        }
+    });
+    viewMenu->addAction(fontResetAction);
+
     mainMenu->addMenu(viewMenu);
 
     // -- Run --
@@ -1838,19 +1863,8 @@ void Ide::initTitleBar() {
     engineCombo_->setToolTip(mlTr("切换执行引擎"));
     layout->addWidget(engineCombo_);
 
-    // 主题切换按钮（亮/暗），位于窗口控制按钮组左侧
-    themeToggleBtn_ = new TransparentToolButton(titleBar_);
-    themeToggleBtn_->setObjectName("themeToggleBtn");
-    themeToggleBtn_->setFixedSize(40, 36);
-    themeToggleBtn_->setAutoRaise(true);
-    themeToggleBtn_->setFocusPolicy(Qt::NoFocus);
-    themeToggleBtn_->setCursor(Qt::ArrowCursor);
-    themeToggleBtn_->setIconSize(QSize(14, 14));
-    // 初始图标：亮色显示 CONSTRACT 原色（月亮形状），暗色显示 reversed（太阳形状）
-    themeToggleBtn_->setIcon(Fluent::icon(Fluent::IconType::CONSTRACT, Theme::isDark()));
-    themeToggleBtn_->setToolTip(mlTr("切换主题（亮/暗）"));
-    connect(themeToggleBtn_, &TransparentToolButton::clicked, this, &Ide::onThemeToggle);
-    layout->addWidget(themeToggleBtn_);
+    // 深色主题已移除：不再创建 themeToggleBtn_ 切换按钮
+    // 用户如需自定义主题色，仍可在 QFluentKit 设置中切换 ThemeColor
 
     // 分隔线：工具栏 ↔ 窗口按钮
     addSeparator();
@@ -1917,6 +1931,10 @@ void Ide::initUI() {
 
     // Debug panel
     debugPanel_ = new DebugPanel;
+    // M5: 选中调用栈帧时跳转到对应源码行
+    connect(debugPanel_, &DebugPanel::gotoLineRequested, this, [this](int line) {
+        if (codeEditor_) codeEditor_->gotoLine(line);
+    });
 
     // Output text edit
     outputTextEdit_ = new QTextEdit;
@@ -1952,10 +1970,10 @@ void Ide::initUI() {
                                    "QToolButton:checked { background: %1; color: white; }").arg(color.name()));
         return btn;
     };
-    errFilterErrorBtn_   = makeFilterBtn(mlTr("\u25CF 错误"), QColor("#D13438"));
-    errFilterWarningBtn_ = makeFilterBtn(mlTr("\u25D0 警告"), QColor("#C2721D"));
-    errFilterInfoBtn_    = makeFilterBtn(mlTr("\u25CB 信息"), QColor("#0078D4"));
-    errFilterHintBtn_    = makeFilterBtn(mlTr("\u25C7 提示"), QColor("#8C8C8C"));
+    errFilterErrorBtn_   = makeFilterBtn(mlTr("\u25CF 错误"), TeachingTheme::error());
+    errFilterWarningBtn_ = makeFilterBtn(mlTr("\u25D0 警告"), TeachingTheme::warning());
+    errFilterInfoBtn_    = makeFilterBtn(mlTr("\u25CB 信息"), TeachingTheme::info());
+    errFilterHintBtn_    = makeFilterBtn(mlTr("\u25C7 提示"), TeachingTheme::hint());
 
     // REPL panel
     replPanel_ = new ReplPanel;
@@ -2381,6 +2399,35 @@ void Ide::initUI() {
     codeJourneyDock_->setWidget(wrapTeachingPanel(QStringLiteral("code-journey"), mlTr("代码生命旅程"), codeJourneyPanel_), ads::CDockWidget::ForceNoScrollArea);
     dockManager_->addDockWidget(ads::RightDockWidgetArea, codeJourneyDock_);
 
+    // 教学面板初始尺寸调大：批量设置所有教学面板 dock 的最小尺寸提示模式
+    // 使 dock 使用 widget 的 minimumSize()（500x400，在 wrapTeachingPanel 中设置）
+    // 作为最小尺寸限制，避免面板显示时内容被挤压
+    {
+        auto setDockMinSize = [](ads::CDockWidget* dock) {
+            if (!dock) return;
+            dock->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromDockWidgetMinimumSize);
+        };
+        setDockMinSize(pipelineDock_);
+        setDockMinSize(backendCompareDock_);
+        setDockMinSize(bugHuntDock_);
+        setDockMinSize(syntaxExplorerDock_);
+        setDockMinSize(labManualDock_);
+        setDockMinSize(memoryModelDock_);
+        setDockMinSize(irTransformDock_);
+        setDockMinSize(profileDashboardDock_);
+        setDockMinSize(callStackDock_);
+        setDockMinSize(variableInspectorDock_);
+        setDockMinSize(bytecodeTraceDock_);
+        setDockMinSize(breakpointConditionDock_);
+        setDockMinSize(exceptionFlowDock_);
+        setDockMinSize(closureInspectorDock_);
+        setDockMinSize(learningPathDock_);
+        setDockMinSize(tokenPuzzleDock_);
+        setDockMinSize(astBuilderToyDock_);
+        setDockMinSize(vmStackSandboxDock_);
+        setDockMinSize(codeJourneyDock_);
+    }
+
     // 教学增强面板：连接 loadSampleRequested 信号到 loadCodeIntoMainEditor
     connect(syntaxExplorerPanel_, &SyntaxExplorerPanel::loadSampleRequested,
             this, &Ide::loadCodeIntoMainEditor);
@@ -2644,14 +2691,19 @@ void Ide::initStatusBar() {
     statusRunLabel_ = new QLabel(QString());
     statusEncodingLabel_ = new QLabel(mlTr("UTF-8"));
     statusEngineLabel_ = new QLabel(QString());
+    statusSelectionLabel_ = new QLabel(this);
+    statusSelectionLabel_->setStyleSheet("color: #6e6e6e; padding: 0 6px;");
+    statusSelectionLabel_->setVisible(false);
 
     // 第八轮：左侧显示行列，右侧显示编码/保存/运行状态/执行引擎
+    // M6：选中范围作为第 6 个 permanent widget，仅在有选中时显示
     sb->addWidget(statusLineLabel_);
     sb->addWidget(statusColLabel_);
     sb->addPermanentWidget(statusEncodingLabel_);
     sb->addPermanentWidget(statusSaveLabel_);
     sb->addPermanentWidget(statusRunLabel_);
     sb->addPermanentWidget(statusEngineLabel_);
+    sb->addPermanentWidget(statusSelectionLabel_);
 
     // 初始化引擎标签文本（engineCombo_ 已在 initTitleBar 中创建）
     if (engineCombo_) {
@@ -2673,30 +2725,41 @@ void Ide::applyFluentStyle() {
     if (tokenTable_)       StyleSheet::registerWidget(tokenTable_, Fluent::ThemeStyle::TABLE_VIEW);
 
     // ---- Replace native scrollbars with Fluent scrollbars ----
+    // PERF: 仅首次替换，避免每次主题切换重复分配（旧 ScrollBar 由 parent 管理）
+    // 通过检测现有 scrollbar 是否已是 Fluent::ScrollBar 实例来去重
+    auto isFluentScrollBar = [](QScrollBar* sb) -> bool {
+        return sb && sb->inherits("Fluent::ScrollBar");
+    };
     if (outputTextEdit_) {
-        outputTextEdit_->setVerticalScrollBar(new ScrollBar(outputTextEdit_));
-        outputTextEdit_->setHorizontalScrollBar(new ScrollBar(Qt::Horizontal, outputTextEdit_));
+        if (!isFluentScrollBar(outputTextEdit_->verticalScrollBar()))
+            outputTextEdit_->setVerticalScrollBar(new ScrollBar(outputTextEdit_));
+        if (!isFluentScrollBar(outputTextEdit_->horizontalScrollBar()))
+            outputTextEdit_->setHorizontalScrollBar(new ScrollBar(Qt::Horizontal, outputTextEdit_));
     }
-    if (errorListWidget_) errorListWidget_->setVerticalScrollBar(new ScrollBar(errorListWidget_));
-    if (bytecodeList_)    bytecodeList_->setVerticalScrollBar(new ScrollBar(bytecodeList_));
-    if (fileTree_)        fileTree_->setVerticalScrollBar(new ScrollBar(fileTree_));
+    if (errorListWidget_ && !isFluentScrollBar(errorListWidget_->verticalScrollBar()))
+        errorListWidget_->setVerticalScrollBar(new ScrollBar(errorListWidget_));
+    if (bytecodeList_ && !isFluentScrollBar(bytecodeList_->verticalScrollBar()))
+        bytecodeList_->setVerticalScrollBar(new ScrollBar(bytecodeList_));
+    if (fileTree_ && !isFluentScrollBar(fileTree_->verticalScrollBar()))
+        fileTree_->setVerticalScrollBar(new ScrollBar(fileTree_));
 
     // ---- Theme-aware color palette ----
+    // 14 色统一走 TeachingTheme::ide*()，亮/暗主题切换时 applyFluentStyle()
+    // 会被重新调用（onThemeModeChanged 信号触发），无需手动刷新各 widget。
     bool dark = Theme::isDark();
-    QString bgMain    = dark ? "#1e1e1e" : "#ffffff";
-    QString bgPanel   = dark ? "#252526" : "#f3f3f3";
-    QString bgSidebar = dark ? "#181818" : "#f8f8f8";
-    QString fgPrimary = dark ? "#cccccc" : "#1e1e1e";
-    QString fgSecondary = dark ? "#858585" : "#6e6e6e";
-    QString borderColor = dark ? "#3c3c3c" : "#e5e5e5";
-    QString accentColor = dark ? "#4cc2ff" : "#0078d4";
-    QString hoverBg   = dark ? "#2a2d2e" : "#f0f0f0";
-    QString selectedBg = dark ? "#37373d" : "#e8e8e8";
-    QString titleBg   = dark ? "#1f1f1f" : "#ffffff";
-    QString statusBg  = dark ? "#181818" : "#f3f3f3";
-    QString editorBg  = dark ? "#1e1e1e" : "#ffffff";
-    QString lineNumBg = dark ? "#1e1e1e" : "#f5f5f5";
-    QString lineNumFg = dark ? "#858585" : "#999999";
+    QString bgMain      = TeachingTheme::ideBgMain().name();
+    QString bgPanel     = TeachingTheme::ideBgPanel().name();
+    QString bgSidebar   = TeachingTheme::ideBgSidebar().name();
+    QString fgPrimary   = TeachingTheme::ideFgPrimary().name();
+    QString fgSecondary = TeachingTheme::ideFgSecondary().name();
+    QString borderColor = TeachingTheme::ideBorder().name();
+    QString accentColor = TeachingTheme::ideAccent().name();
+    QString hoverBg     = TeachingTheme::ideHoverBg().name();
+    QString selectedBg  = TeachingTheme::ideSelectedBg().name();
+    QString statusBg    = TeachingTheme::ideStatusBg().name();
+    QString editorBg    = TeachingTheme::ideEditorBg().name();
+    QString lineNumBg   = TeachingTheme::ideLineNumBg().name();
+    QString lineNumFg   = TeachingTheme::ideLineNumFg().name();
 
     // ============================================================
     // ADS (Qt Advanced Docking System) comprehensive QSS override
@@ -2842,8 +2905,21 @@ void Ide::applyFluentStyle() {
             borderColor, bgSidebar);
 
     // ---- Apply ADS QSS globally ----
+    // PERF fix: 原实现 qApp->setStyleSheet(qApp->styleSheet() + "\n" + adsQss)
+    // 每次主题切换都追加 ~5KB，导致全局样式表无限增长 + Qt 重复解析整个 sheet。
+    // 改为：先移除上一次的 ADS 片段，再拼接新片段，保持全局 sheet 大小稳定。
     if (dockManager_) {
-        qApp->setStyleSheet(qApp->styleSheet() + "\n" + adsQss);
+        QString currentSheet = qApp->styleSheet();
+        if (!lastAdsQss_.isEmpty() && currentSheet.contains(lastAdsQss_)) {
+            currentSheet.remove(lastAdsQss_);
+        }
+        currentSheet = currentSheet.trimmed();
+        if (!currentSheet.isEmpty()) {
+            currentSheet += "\n";
+        }
+        currentSheet += adsQss;
+        qApp->setStyleSheet(currentSheet);
+        lastAdsQss_ = adsQss;
         dockManager_->setColorSchemeMode(
             ads::CDockManager::ColorSchemeMode::FollowPalette);
     }
@@ -2852,24 +2928,26 @@ void Ide::applyFluentStyle() {
     // Title bar styling (统一标题栏)
     // ============================================================
     if (titleBar_) {
+        // 标题栏渐变背景：#fafafa → #f0f0f0（自上而下）
+        // 移除原 titleBg(%1) 占位，剩余参数重编号：%1=borderColor %2=fgPrimary %3=fgSecondary %4=hoverBg
         titleBar_->setStyleSheet(QString(R"(
             #titleBar {
-                background: %1;
-                border-bottom: 1px solid %2;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fafafa, stop:1 #f0f0f0);
+                border-bottom: 1px solid %1;
             }
             #titleText {
-                color: %3;
+                color: %2;
                 background: transparent;
                 border: none;
             }
             #titlePath {
-                color: %4;
+                color: %3;
                 background: transparent;
                 border: none;
                 padding-left: 4px;
             }
             #titleBarSep {
-                background: %2;
+                background: %1;
                 max-width: 1px;
             }
             #titleMinBtn, #titleMaxBtn {
@@ -2877,7 +2955,7 @@ void Ide::applyFluentStyle() {
                 border: none;
             }
             #titleMinBtn:hover, #titleMaxBtn:hover {
-                background: %5;
+                background: %4;
             }
             #titleCloseBtn {
                 background: transparent;
@@ -2891,27 +2969,28 @@ void Ide::applyFluentStyle() {
                 border: none;
             }
             #themeToggleBtn:hover {
-                background: %5;
+                background: %4;
                 border-radius: 4px;
             }
-        )").arg(titleBg, borderColor, fgPrimary, fgSecondary, hoverBg));
+        )").arg(borderColor, fgPrimary, fgSecondary, hoverBg));
     }
 
     // ============================================================
     // Status bar styling
     // ============================================================
     if (auto* sb = statusBar()) {
+        // 状态栏：顶部 1px 分隔线保留，字号 11px 更紧凑，QLabel padding 0 8px（永久消息区右侧 8px padding）
         sb->setStyleSheet(QString(R"(
             QStatusBar {
                 background: %1;
                 border-top: 1px solid %2;
                 color: %3;
-                font-size: 12px;
+                font-size: 11px;
                 padding: 0 8px;
             }
             QStatusBar QLabel {
                 color: %3;
-                padding: 0 6px;
+                padding: 0 8px;
                 background: transparent;
             }
         )").arg(statusBg, borderColor, fgSecondary));
@@ -2920,6 +2999,8 @@ void Ide::applyFluentStyle() {
     // ============================================================
     // Panel container styling (bottom + right)
     // ============================================================
+    // 教学面板卡片样式：4px 圆角 + 1px 柔和边框 + 白色背景（与 panel bg #f3f3f3 形成对比）
+    // 内部 padding 8px 由 wrapTeachingPanel 的 layout contentsMargins 提供
     QString panelQss = QString(R"(
         #bottomPanelContainer, #rightPanelContainer {
             background: %1;
@@ -2940,14 +3021,19 @@ void Ide::applyFluentStyle() {
             background: %4;
             border-radius: 3px;
         }
-    )").arg(bgPanel, borderColor, fgSecondary, hoverBg);
+        #teachingPanelCard {
+            background: %5;
+            border: 1px solid %2;
+            border-radius: 4px;
+        }
+    )").arg(bgPanel, borderColor, fgSecondary, hoverBg, bgMain);
 
     // Apply panel styling via findChildren
     for (auto* obj : findChildren<QWidget*>()) {
         QString name = obj->objectName();
         if (name == "bottomPanelContainer" || name == "rightPanelContainer" ||
             name == "bottomPivotRow" || name == "rightPivotRow" ||
-            name == "panelCloseBtn") {
+            name == "panelCloseBtn" || name == "teachingPanelCard") {
             obj->setStyleSheet(panelQss);
         }
     }
@@ -3135,10 +3221,31 @@ void Ide::applyFluentStyle() {
     // 应用到 VM 栈面板（若已创建）
     if (vmStackPanel_) vmStackPanel_->setStyleSheet(vmQss);
 
-    // ---- Sync editor theme（更新所有已打开的编辑器标签页，非仅当前活跃编辑器）----
-    if (codeEditor_) codeEditor_->setDarkTheme(dark);
+    // ============================================================
+    // P2-3/4: QGroupBox 统一 Fluent 外观
+    // WelcomeWizard / VmStackSandboxPanel 等面板使用 QGroupBox 作为分组容器，
+    // 此处通过全局样式表统一着色（边框/背景/标题色跟随 TeachingTheme 主题色板），
+    // 避免逐个 QGroupBox 替换为 SimpleCardWidget 的高风险改动。
+    // 注意：setStyleSheet 会覆盖主窗口之前的样式，但主窗口无其他样式，故安全。
+    // ============================================================
+    setStyleSheet(QString(
+        "QGroupBox { "
+        "  border: 1px solid %1; border-radius: 6px; "
+        "  margin-top: 12px; padding-top: 8px; "
+        "  background: %2; "
+        "} "
+        "QGroupBox::title { "
+        "  subcontrol-origin: margin; "
+        "  left: 8px; padding: 0 4px; "
+        "  color: %3; "
+        "}").arg(TeachingTheme::border().name())
+           .arg(TeachingTheme::surface().name())
+           .arg(TeachingTheme::textPrimary().name()));
+
+    // ---- Sync editor theme（深色主题已移除，强制 light 配色）----
+    if (codeEditor_) codeEditor_->setDarkTheme(false);
     for (auto& tab : editorTabs_) {
-        if (tab.editor && tab.editor != codeEditor_) tab.editor->setDarkTheme(dark);
+        if (tab.editor && tab.editor != codeEditor_) tab.editor->setDarkTheme(false);
     }
 }
 
@@ -3160,6 +3267,28 @@ void Ide::updateStatusBar() {
     if (statusSaveLabel_) {
         statusSaveLabel_->setText(isDirty_ ? mlTr("● 未保存")
                                             : QString());
+    }
+    // M6：选中范围（行数 + 字符数）
+    if (statusSelectionLabel_ && codeEditor_) {
+        QTextCursor cur = codeEditor_->textCursor();
+        if (cur.hasSelection()) {
+            int start = cur.selectionStart();
+            int end = cur.selectionEnd();
+            int charCount = end - start;
+            // 计算选中跨越的行数
+            QTextCursor lineCounter = cur;
+            lineCounter.setPosition(start);
+            int startLine = lineCounter.blockNumber();
+            lineCounter.setPosition(end);
+            int endLine = lineCounter.blockNumber();
+            int lineCount = endLine - startLine + 1;
+            statusSelectionLabel_->setText(mlTr("选中 %1 行 %2 字符").arg(lineCount).arg(charCount));
+            statusSelectionLabel_->setVisible(true);
+        } else {
+            statusSelectionLabel_->setVisible(false);
+        }
+    } else if (statusSelectionLabel_) {
+        statusSelectionLabel_->setVisible(false);
     }
 }
 
@@ -3226,11 +3355,14 @@ void Ide::initConnections() {
 
     connect(fileTree_, &QTreeWidget::itemActivated, this, &Ide::onFileTreeItemActivated);
 
-    // 文件树搜索过滤：递归隐藏不匹配的叶子，目录按可见子项决定显隐
+    // 文件树搜索过滤：200ms 防抖（避免大目录每次按键都全量遍历）
     if (fileTreeFilterEdit_) {
-        connect(fileTreeFilterEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
-            if (!fileTree_) return;
-            QString filter = text.toLower();
+        fileTreeFilterTimer_ = new QTimer(this);
+        fileTreeFilterTimer_->setSingleShot(true);
+        fileTreeFilterTimer_->setInterval(200);  // 200ms 防抖
+        connect(fileTreeFilterTimer_, &QTimer::timeout, this, [this]() {
+            if (!fileTree_ || !fileTreeFilterEdit_) return;
+            QString filter = fileTreeFilterEdit_->text().toLower();
             std::function<void(QTreeWidgetItem*)> applyFilter;
             applyFilter = [&](QTreeWidgetItem* item) {
                 if (item->childCount() == 0) {
@@ -3252,6 +3384,9 @@ void Ide::initConnections() {
             for (int i = 0; i < fileTree_->topLevelItemCount(); ++i) {
                 applyFilter(fileTree_->topLevelItem(i));
             }
+        });
+        connect(fileTreeFilterEdit_, &QLineEdit::textChanged, this, [this](const QString&) {
+            if (fileTreeFilterTimer_) fileTreeFilterTimer_->start();  // 重启定时器
         });
     }
 
@@ -3318,7 +3453,7 @@ void Ide::populateFileTree() {
 
     auto* rootItem = new QTreeWidgetItem(fileTree_);
     rootItem->setText(0, rootDir.dirName());
-    rootItem->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+    rootItem->setIcon(0, Fluent::icon(Fluent::IconType::FOLDER));
     rootItem->setData(0, Qt::UserRole, workspaceDir_);
     rootItem->setData(0, Qt::UserRole + 1, true);
     rootItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
@@ -3709,12 +3844,15 @@ void Ide::appendOutput(const QString& text, OutputLevel level) {
     QString escaped = text.toHtmlEscaped();
 
     // Inline style constants (QTextEdit HTML does not support <style> blocks)
-    static const char* kTs      = "color:#8C8C8C;";
-    static const char* kInfo    = "color:#0078D4;font-weight:600;";
-    static const char* kSuccess = "color:#1A7F37;font-weight:600;";
-    static const char* kWarn    = "color:#C2721D;font-weight:600;";
-    static const char* kError   = "color:#D13438;font-weight:600;";
-    static const char* kBody    = "color:#1E1E1E;";
+    // 注意：这些是亮色主题下的固定语义色，不随主题切换。
+    // 应与 TeachingTheme::info()/success()/warning()/error()/textPrimary()/textSecondary() 保持语义一致；
+    // 未来需要主题感知时，改为运行时拼接 QColor::name() 并替换此处 const char*。
+    static const char* kTs      = "color:#8C8C8C;";  // ≈ TeachingTheme::textSecondary() 亮色值
+    static const char* kInfo    = "color:#0078D4;font-weight:600;";  // = TeachingTheme::info()
+    static const char* kSuccess = "color:#1A7F37;font-weight:600;";  // ≈ TeachingTheme::success()
+    static const char* kWarn    = "color:#C2721D;font-weight:600;";  // ≈ TeachingTheme::warning()
+    static const char* kError   = "color:#D13438;font-weight:600;";  // ≈ TeachingTheme::error()
+    static const char* kBody    = "color:#1E1E1E;";  // ≈ TeachingTheme::textPrimary() 亮色值
 
     const char* iconChar = "&#x25B6;";  // default ▶
     const char* iconStyle = kBody;
@@ -3761,20 +3899,23 @@ void Ide::appendError(const QString& text, int line, int column, DiagLevel level
     auto* item = new QListWidgetItem();
 
     // DiagLevel -> icon character + color
+    // 注意：以下 4 色与 TeachingTheme::error()/warning()/info()/hint() 语义一致，
+    // 此处保留 const char* 是因为 RichTextItemDelegate 需要 const char* 拼接到 HTML；
+    // 未来主题感知时改为 QColor::name() 拼接。
     const char* iconChar;
     const char* iconColor;
     switch (level) {
-        case DiagLevel::Error:   iconChar = "\u25CF"; iconColor = "#D13438"; break;  // ●
-        case DiagLevel::Warning: iconChar = "\u25D0"; iconColor = "#C2721D"; break;  // ◐
-        case DiagLevel::Info:    iconChar = "\u25CB"; iconColor = "#0078D4"; break;  // ○
-        case DiagLevel::Hint:    iconChar = "\u25C7"; iconColor = "#8C8C8C"; break;  // ◇
+        case DiagLevel::Error:   iconChar = "\u25CF"; iconColor = "#D13438"; break;  // ●  = TeachingTheme::error()
+        case DiagLevel::Warning: iconChar = "\u25D0"; iconColor = "#C2721D"; break;  // ◐  ≈ TeachingTheme::warning()
+        case DiagLevel::Info:    iconChar = "\u25CB"; iconColor = "#0078D4"; break;  // ○  = TeachingTheme::info()
+        case DiagLevel::Hint:    iconChar = "\u25C7"; iconColor = "#8C8C8C"; break;  // ◇  = TeachingTheme::hint()
     }
 
     const char* textColor =
-        (level == DiagLevel::Error)   ? "#D13438" :
-        (level == DiagLevel::Warning) ? "#C2721D" :
-        (level == DiagLevel::Hint)    ? "#8C8C8C" :
-                                        "#0078D4";
+        (level == DiagLevel::Error)   ? "#D13438" :  // = TeachingTheme::error()
+        (level == DiagLevel::Warning) ? "#C2721D" :  // ≈ TeachingTheme::warning()
+        (level == DiagLevel::Hint)    ? "#8C8C8C" :  // = TeachingTheme::hint()
+                                        "#0078D4";   // = TeachingTheme::info()
 
     // Build rich-text HTML (all inline styles, no class selectors)
     QString html = QString(
@@ -3843,15 +3984,7 @@ void Ide::onClearOutput() {
     clearOutput();
 }
 
-void Ide::onThemeToggle() {
-    // 切换亮/暗主题并持久化到 QSettings。
-    // 实际的样式重算、图标更新、编辑器通知由 onThemeModeChanged 回调完成。
-    bool newDark = !Theme::isDark();
-    QSettings s;
-    s.setValue("theme_mode", newDark ? "dark" : "light");
-    Theme::setThemeMode(newDark ? Fluent::ThemeMode::DARK
-                                 : Fluent::ThemeMode::LIGHT);
-}
+// 深色主题已移除：onThemeToggle slot 已删除
 
 // ============================================================
 // Run / Debug
@@ -4331,7 +4464,7 @@ void Ide::onJumpToPanel(const QString& panelId) {
 }
 
 void Ide::onActivityRequested(const QString& activityId) {
-    // LearningPathPanel 活动项点击 → 路由到对应面板 dock
+    // LearningPathPanel / LearningHubDialog 活动项点击 → 路由到对应面板 dock
     // 辅助 lambda：显示指定 dock（隐藏则显示，并设为当前 tab）
     auto showDock = [this](ads::CDockWidget* dock) {
         if (!dock) return;
@@ -4357,8 +4490,13 @@ void Ide::onActivityRequested(const QString& activityId) {
         s.setValue(kWelcomeCompletedKey, true);
         wizard->deleteLater();
         if (learningPathPanel_) learningPathPanel_->markActivityCompleted("welcome");
-    } else if (activityId == "journey") {
+    } else if (activityId == "code-journey") {
+        // 修复：原代码检查 "journey" 与 LearningPathData 中的 "code-journey" 不匹配
         showDock(codeJourneyDock_);
+    } else if (activityId == "learning-path") {
+        // LearningHubDialog 卡片路由
+        showDock(learningPathDock_);
+        if (learningPathPanel_) learningPathPanel_->refresh();
     } else if (activityId == "token-puzzle") {
         showDock(tokenPuzzleDock_);
     } else if (activityId == "ast-toy") {
@@ -4366,21 +4504,45 @@ void Ide::onActivityRequested(const QString& activityId) {
     } else if (activityId == "vm-sandbox") {
         showDock(vmStackSandboxDock_);
     } else if (activityId.startsWith(QStringLiteral("lab-"))) {
-        // lab-01 ~ lab-08 → 实验手册面板
+        // lab-01 ~ lab-08 / lab-manual → 实验手册面板
         showDock(labManualDock_);
     } else if (activityId == "syntax-explorer") {
         showDock(syntaxExplorerDock_);
     } else if (activityId == "op-priority-challenge") {
         // 运算符优先级挑战：路由到 AST 玩具（最接近的场景）
         showDock(astBuilderToyDock_);
+    } else if (activityId == "pipeline") {
+        // LearningHubDialog 卡片路由：编译管线可视化
+        showDock(pipelineDock_);
     } else if (activityId == "backend-compare") {
         showDock(backendCompareDock_);
     } else if (activityId == "ir-transform") {
         showDock(irTransformDock_);
     } else if (activityId == "profile-dashboard") {
         showDock(profileDashboardDock_);
-    } else if (activityId.startsWith(QStringLiteral("bug-hunt-"))) {
-        // bug-hunt-beginner / intermediate / expert → Bug 狩猎面板
+    } else if (activityId == "memory-model") {
+        // LearningHubDialog 卡片路由：内存模型
+        showDock(memoryModelDock_);
+    } else if (activityId == "bytecode-trace") {
+        // LearningHubDialog 卡片路由：字节码执行轨迹
+        showDock(bytecodeTraceDock_);
+    } else if (activityId == "call-stack") {
+        // LearningHubDialog 卡片路由：调用栈
+        showDock(callStackDock_);
+    } else if (activityId == "variable-inspector") {
+        // LearningHubDialog 卡片路由：变量检查器
+        showDock(variableInspectorDock_);
+    } else if (activityId == "breakpoint-condition") {
+        // LearningHubDialog 卡片路由：条件断点
+        showDock(breakpointConditionDock_);
+    } else if (activityId == "exception-flow") {
+        // LearningHubDialog 卡片路由：异常流
+        showDock(exceptionFlowDock_);
+    } else if (activityId == "closure-inspector") {
+        // LearningHubDialog 卡片路由：闭包检查器
+        showDock(closureInspectorDock_);
+    } else if (activityId == "bug-hunt" || activityId.startsWith(QStringLiteral("bug-hunt-"))) {
+        // bug-hunt / bug-hunt-beginner / intermediate / expert → Bug 狩猎面板
         showDock(bugHuntDock_);
     } else if (activityId == "freeform-project") {
         // 自由项目：无对应面板，切到编辑器让用户开始编码
@@ -4414,9 +4576,13 @@ QWidget* Ide::wrapTeachingPanel(const QString& panelId,
                                  const QString& title,
                                  QWidget* panel) {
     // 教学面板包装器：顶部插入 TeachingPanelHeader（标题 + 帮助 + 学习路径跳转）
+    // 容器卡片化：objectName + WA_StyledBackground 让 applyFluentStyle 的 QSS 生效
     auto* container = new QWidget;
+    container->setObjectName("teachingPanelCard");
+    container->setAttribute(Qt::WA_StyledBackground, true);
     auto* layout = new QVBoxLayout(container);
-    layout->setContentsMargins(0, 0, 0, 0);
+    // 卡片内部 padding 8px
+    layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(0);
 
     auto* header = new TeachingPanelHeader(panelId, title, container);
@@ -4453,6 +4619,11 @@ QWidget* Ide::wrapTeachingPanel(const QString& panelId,
         }
     };
     applyFluentScrollBars(panel);
+
+    // 教学面板初始尺寸调大：设置最小尺寸（宽 500 / 高 400）
+    // 配合 dock 的 setMinimumSizeHintMode(MinimumSizeHintFromDockWidgetMinimumSize)
+    // 确保面板显示时有足够的可视空间，避免内容被挤压
+    container->setMinimumSize(500, 400);
 
     return container;
 }
@@ -4811,15 +4982,16 @@ void Ide::showHelpDialog() {
     // 第十一轮：宽 520px 高 420px，8px 圆角，柔和阴影
     dlg->setFixedSize(520, 420);
 
-    // 第十一轮：主题感知样式（自动适配深色/浅色）
-    bool isDark = (palette().color(QPalette::Window).lightness() < 128);
-    QString bg = isDark ? QStringLiteral("#252526") : QStringLiteral("#ffffff");
-    QString text = isDark ? QStringLiteral("#cccccc") : QStringLiteral("#1e1e1e");
-    QString muted = isDark ? QStringLiteral("#737373") : QStringLiteral("#5a5a5a");
-    QString keyColor = isDark ? QStringLiteral("#4fc1ff") : QStringLiteral("#0078d4");
-    QString btnBg = isDark ? QStringLiteral("#0078d4") : QStringLiteral("#0078d4");
-    QString btnHover = isDark ? QStringLiteral("#1f8cd6") : QStringLiteral("#106ebe");
-    QString btnPressed = isDark ? QStringLiteral("#005a9e") : QStringLiteral("#005a9e");
+    // P2 视觉一致性：硬编码色替换为 TeachingTheme 主题色板（亮/暗主题自适应）
+    // 原先通过 palette().lightness() 检测暗色并分支取色，现统一走 TeachingTheme，
+    // 与 applyFluentStyle / 教学面板 / WelcomeWizard 等保持一致。
+    QString bg = TeachingTheme::surface().name();
+    QString text = TeachingTheme::textPrimary().name();
+    QString muted = TeachingTheme::textSecondary().name();
+    QString keyColor = TeachingTheme::ideAccent().name();
+    QString btnBg = TeachingTheme::primary().name();
+    QString btnHover = TeachingTheme::primaryHover().name();
+    QString btnPressed = TeachingTheme::primaryPressed().name();
     dlg->setStyleSheet(
         QString("QDialog { background: %1; border-radius: 8px; }"
                 "QLabel#helpTitle { font-size: 16px; font-weight: 600; color: %2; }"

@@ -8,6 +8,7 @@
 #include "compiler/IR.h"
 #include "ast/ASTNode.h"
 #include "gui/PanelAnimator.h"
+#include "gui/I18n.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -17,6 +18,10 @@
 #include <QTextBrowser>
 #include <QLabel>
 #include <QHeaderView>
+#include <QApplication>
+#include <QClipboard>
+#include <QMenu>
+#include <QShortcut>
 #include <sstream>
 #include <cstring>
 
@@ -76,6 +81,39 @@ PipelineViewer::PipelineViewer(QWidget* parent)
     });
     tokenTable_->horizontalHeader()->setStretchLastSection(true);
     tokenTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tokenTable_->setSelectionBehavior(QAbstractItemView::SelectItems);
+    tokenTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+
+    // M10: 右键菜单 — 复制单元格 / 复制整行
+    tokenTable_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tokenTable_, &QTableWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        auto* item = tokenTable_->itemAt(pos);
+        if (!item) return;
+        QMenu menu(tokenTable_);
+        auto* copyAct = menu.addAction(mlTr("复制单元格"));
+        auto* copyRowAct = menu.addAction(mlTr("复制整行"));
+        QAction* selected = menu.exec(tokenTable_->viewport()->mapToGlobal(pos));
+        if (selected == copyAct) {
+            QApplication::clipboard()->setText(item->text());
+        } else if (selected == copyRowAct) {
+            int row = item->row();
+            QStringList cells;
+            for (int col = 0; col < tokenTable_->columnCount(); ++col) {
+                auto* cellItem = tokenTable_->item(row, col);
+                cells << (cellItem ? cellItem->text() : QString());
+            }
+            QApplication::clipboard()->setText(cells.join("\t"));
+        }
+    });
+
+    // M10: Ctrl+C 复制当前单元格
+    auto* copyShortcut = new QShortcut(QKeySequence::Copy, tokenTable_);
+    connect(copyShortcut, &QShortcut::activated, this, [this]() {
+        auto* item = tokenTable_->currentItem();
+        if (item) {
+            QApplication::clipboard()->setText(item->text());
+        }
+    });
 
     astSummary_ = new QTextBrowser(this);
     astSummary_->setFont(QFont("Consolas"));

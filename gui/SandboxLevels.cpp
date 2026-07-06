@@ -42,7 +42,7 @@ const std::vector<SandboxLevel>& SandboxLibrary::levels() {
         // ---- 关卡 1：1 + 2 = 3 ----
         SandboxLevel{
             1,
-            "计算 1 + 2，输出结果 3",
+            "🎮 计算 1 + 2，输出结果 3",
             {
                 {SandboxOpType::PUSH_INT, "1"},
                 {SandboxOpType::PUSH_INT, "2"},
@@ -56,14 +56,14 @@ const std::vector<SandboxLevel>& SandboxLibrary::levels() {
                 {SandboxOpType::PRINT,    ""},
             },
             "3",
-            "最基本的 push-pop：先压入两个操作数，再用 ADD 弹出它们并压入结果。",
-            "提示：先点 PUSH_INT 1，再点 PUSH_INT 2，最后点 ADD 和 PRINT。",
+            "💻 最基本的 push-pop：先压入两个操作数，再用 ADD 弹出它们并压入结果。",
+            "💡 提示：先点 PUSH_INT 1，再点 PUSH_INT 2，最后点 ADD 和 PRINT。",
             1
         },
         // ---- 关卡 2：1 + 2 * 3 = 7 ----
         SandboxLevel{
             2,
-            "计算 1 + 2 * 3，输出结果 7（注意：先乘后加）",
+            "🎮 计算 1 + 2 * 3，输出结果 7（注意：先乘后加）",
             {
                 {SandboxOpType::PUSH_INT, "1"},
                 {SandboxOpType::PUSH_INT, "2"},
@@ -81,14 +81,14 @@ const std::vector<SandboxLevel>& SandboxLibrary::levels() {
                 {SandboxOpType::PRINT,    ""},
             },
             "7",
-            "运算顺序由指令决定：源码表达式 1 + 2 * 3 优先算乘法，所以指令必须先 MUL 后 ADD。",
-            "提示：先把三个数都压入栈，再用 MUL 计算 2*3=6，最后用 ADD 计算 1+6=7。",
+            "💻 运算顺序由指令决定：源码表达式 1 + 2 * 3 优先算乘法，所以指令必须先 MUL 后 ADD。",
+            "💡 提示：先把三个数都压入栈，再用 MUL 计算 2*3=6，最后用 ADD 计算 1+6=7。",
             2
         },
         // ---- 关卡 3：(1 + 2) * 3 = 9 ----
         SandboxLevel{
             3,
-            "计算 (1 + 2) * 3，输出结果 9（注意：先加后乘）",
+            "🎮 计算 (1 + 2) * 3，输出结果 9（注意：先加后乘）",
             {
                 {SandboxOpType::PUSH_INT, "1"},
                 {SandboxOpType::PUSH_INT, "2"},
@@ -106,14 +106,14 @@ const std::vector<SandboxLevel>& SandboxLibrary::levels() {
                 {SandboxOpType::PRINT,    ""},
             },
             "9",
-            "同数不同顺序：与关卡 2 使用相同的可用指令，但执行顺序不同（先 ADD 后 MUL）得到不同结果。",
-            "提示：先压 1 和 2，用 ADD 得到 3，再压 3，最后用 MUL 得到 9。",
+            "💻 同数不同顺序：与关卡 2 使用相同的可用指令，但执行顺序不同（先 ADD 后 MUL）得到不同结果。",
+            "💡 提示：先压 1 和 2，用 ADD 得到 3，再压 3，最后用 MUL 得到 9。",
             2
         },
         // ---- 关卡 4：打印 "hello" ----
         SandboxLevel{
             4,
-            "打印字符串 hello",
+            "🎮 打印字符串 hello",
             {
                 {SandboxOpType::PUSH_STRING, "hello"},
                 {SandboxOpType::PRINT,       ""},
@@ -123,14 +123,14 @@ const std::vector<SandboxLevel>& SandboxLibrary::levels() {
                 {SandboxOpType::PRINT,       ""},
             },
             "hello",
-            "字符串也是值：PUSH_STRING 将字符串压入栈，PRINT 可以输出它。",
-            "提示：先点 PUSH_STRING hello，再点 PRINT。",
+            "💻 字符串也是值：PUSH_STRING 将字符串压入栈，PRINT 可以输出它。",
+            "💡 提示：先点 PUSH_STRING hello，再点 PRINT。",
             1
         },
         // ---- 关卡 5：自由模式 ----
         SandboxLevel{
             5,
-            "自由模式：尝试任意指令组合，观察栈的变化",
+            "🎮 自由模式：尝试任意指令组合，观察栈的变化",
             {
                 {SandboxOpType::PUSH_INT,    "1"},
                 {SandboxOpType::PUSH_INT,    "2"},
@@ -150,8 +150,8 @@ const std::vector<SandboxLevel>& SandboxLibrary::levels() {
             // 自由模式无 expectedSequence
             {},
             "",
-            "自由探索：尝试 NEG（一元负）、DIV/MOD（除法/取模）、SUB（减法）等指令，理解栈式 VM 的工作机制。",
-            "提示：尝试 PUSH_INT 5 → PUSH_INT 3 → SUB（结果 2），或 PUSH_INT 10 → PUSH_INT 4 → MOD（结果 2）。",
+            "💻 自由探索：尝试 NEG（一元负）、DIV/MOD（除法/取模）、SUB（减法）等指令，理解栈式 VM 的工作机制。",
+            "💡 提示：尝试 PUSH_INT 5 → PUSH_INT 3 → SUB（结果 2），或 PUSH_INT 10 → PUSH_INT 4 → MOD（结果 2）。",
             3
         },
     };
