@@ -15,20 +15,19 @@
 #include "gui/I18n.h"
 #include "gui/TeachingTheme.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QTimer>
+#include <QVBoxLayout>
 #include <QWidget>
 
 // ============================================================
 // 构造 / 析构
 // ============================================================
 
-GuidedTour::GuidedTour(QWidget* host, QObject* parent)
-    : QObject(parent), host_(host) {
-}
+GuidedTour::GuidedTour(QWidget* host, QObject* parent) : QObject(parent), host_(host) {}
 
 GuidedTour::~GuidedTour() {
     // 析构时恢复高亮目标样式并销毁气泡，避免遗留蓝色边框与资源泄漏。
@@ -42,10 +41,8 @@ GuidedTour::~GuidedTour() {
 // ============================================================
 
 /// 新增一个引导步骤（目标控件、标题、正文与按钮文案）。
-void GuidedTour::addStep(QWidget* target, const QString& title,
-                          const QString& description,
-                          const QString& primaryBtnText,
-                          const QString& secondaryBtnText) {
+void GuidedTour::addStep(QWidget* target, const QString& title, const QString& description,
+                         const QString& primaryBtnText, const QString& secondaryBtnText) {
     steps_.append({target, title, description, primaryBtnText, secondaryBtnText});
 }
 
@@ -55,7 +52,8 @@ void GuidedTour::addStep(QWidget* target, const QString& title,
 
 /// 启动引导：显示第一个步骤并启用遮罩。
 void GuidedTour::start() {
-    if (steps_.isEmpty()) return;
+    if (steps_.isEmpty())
+        return;
 
     if (!bubble_) {
         // ---- 创建气泡容器（host_ 子 widget，随 host_ 自动释放）----
@@ -67,11 +65,9 @@ void GuidedTour::start() {
         // WA_StyledBackground 确保 QSS background 在普通 QWidget 上生效
         bubble_->setAttribute(Qt::WA_StyledBackground, true);
         // 气泡外观：白底 + 1px 边框 + 8px 圆角
-        bubble_->setStyleSheet(QString(
-            "#guidedTourBubble { background: %1; border: 1px solid %2;"
-            "  border-radius: 8px; }"
-        ).arg(TeachingTheme::surface().name(),
-              TeachingTheme::border().name()));
+        bubble_->setStyleSheet(QString("#guidedTourBubble { background: %1; border: 1px solid %2;"
+                                       "  border-radius: 8px; }")
+                                   .arg(TeachingTheme::surface().name(), TeachingTheme::border().name()));
 
         auto* layout = new QVBoxLayout(bubble_);
         layout->setContentsMargins(14, 12, 14, 12);
@@ -79,17 +75,15 @@ void GuidedTour::start() {
 
         // ---- 标题（14px 加粗）----
         bubbleTitle_ = new QLabel(bubble_);
-        bubbleTitle_->setStyleSheet(QString(
-            "font-size: 14px; font-weight: bold; color: %1;"
-        ).arg(TeachingTheme::textPrimary().name()));
+        bubbleTitle_->setStyleSheet(
+            QString("font-size: 14px; font-weight: bold; color: %1;").arg(TeachingTheme::textPrimary().name()));
         layout->addWidget(bubbleTitle_);
 
         // ---- 分隔线（1px 主题边框色）----
         auto* separator = new QFrame(bubble_);
         separator->setFrameShape(QFrame::NoFrame);
         separator->setFixedHeight(1);
-        separator->setStyleSheet(
-            QString("background-color: %1;").arg(TeachingTheme::border().name()));
+        separator->setStyleSheet(QString("background-color: %1;").arg(TeachingTheme::border().name()));
         layout->addWidget(separator);
 
         // ---- 说明（12px，可多行，支持简单 HTML）----
@@ -97,10 +91,8 @@ void GuidedTour::start() {
         bubbleDesc_->setWordWrap(true);
         bubbleDesc_->setTextFormat(Qt::RichText);
         // 显式约束宽度上限，确保长文本在 adjustSize 前正确换行
-        bubbleDesc_->setMaximumWidth(360 - 28);  // 360 - 左右各 14px margin
-        bubbleDesc_->setStyleSheet(QString(
-            "font-size: 12px; color: %1;"
-        ).arg(TeachingTheme::textSecondary().name()));
+        bubbleDesc_->setMaximumWidth(360 - 28); // 360 - 左右各 14px margin
+        bubbleDesc_->setStyleSheet(QString("font-size: 12px; color: %1;").arg(TeachingTheme::textSecondary().name()));
         layout->addWidget(bubbleDesc_);
 
         // ---- 底部行：步骤指示器 + 跳过 + 下一步 ----
@@ -109,32 +101,26 @@ void GuidedTour::start() {
         bottomRow->setSpacing(8);
 
         stepIndicator_ = new QLabel(bubble_);
-        stepIndicator_->setStyleSheet(QString(
-            "font-size: 11px; color: %1;"
-        ).arg(TeachingTheme::textHint().name()));
+        stepIndicator_->setStyleSheet(QString("font-size: 11px; color: %1;").arg(TeachingTheme::textHint().name()));
         bottomRow->addWidget(stepIndicator_);
         bottomRow->addStretch(1);
 
         // 次按钮：透明背景 + 边框
         secondaryBtn_ = new QPushButton(bubble_);
-        secondaryBtn_->setStyleSheet(QString(
-            "QPushButton { background: transparent; color: %1;"
-            "  border: 1px solid %2; border-radius: 4px;"
-            "  padding: 6px 12px; font-size: 12px; }"
-            "QPushButton:hover { background: %3; }"
-        ).arg(TeachingTheme::textSecondary().name(),
-              TeachingTheme::border().name(),
-              TeachingTheme::surfaceHover().name()));
+        secondaryBtn_->setStyleSheet(QString("QPushButton { background: transparent; color: %1;"
+                                             "  border: 1px solid %2; border-radius: 4px;"
+                                             "  padding: 6px 12px; font-size: 12px; }"
+                                             "QPushButton:hover { background: %3; }")
+                                         .arg(TeachingTheme::textSecondary().name(), TeachingTheme::border().name(),
+                                              TeachingTheme::surfaceHover().name()));
         bottomRow->addWidget(secondaryBtn_);
 
         // 主按钮：主题色填充 + 白字
         primaryBtn_ = new QPushButton(bubble_);
-        primaryBtn_->setStyleSheet(QString(
-            "QPushButton { background: %1; color: white; border: none;"
-            "  border-radius: 4px; padding: 6px 16px; font-size: 12px; }"
-            "QPushButton:hover { background: %2; }"
-        ).arg(TeachingTheme::primary().name(),
-              TeachingTheme::primaryHover().name()));
+        primaryBtn_->setStyleSheet(QString("QPushButton { background: %1; color: white; border: none;"
+                                           "  border-radius: 4px; padding: 6px 16px; font-size: 12px; }"
+                                           "QPushButton:hover { background: %2; }")
+                                       .arg(TeachingTheme::primary().name(), TeachingTheme::primaryHover().name()));
         bottomRow->addWidget(primaryBtn_);
 
         layout->addLayout(bottomRow);
@@ -152,8 +138,10 @@ void GuidedTour::start() {
 
 /// 显示指定索引的步骤，定位气泡到目标控件。
 void GuidedTour::showStep(int index) {
-    if (index < 0 || index >= steps_.size()) return;
-    if (!bubble_) return;
+    if (index < 0 || index >= steps_.size())
+        return;
+    if (!bubble_)
+        return;
 
     currentIndex_ = index;
     const Step& step = steps_.at(index);
@@ -168,27 +156,27 @@ void GuidedTour::showStep(int index) {
     // ---- 高亮当前目标 widget（target 为 nullptr 时跳过，气泡将居中显示）----
     if (step.target) {
         savedStyleSheet_ = step.target->styleSheet();
-        step.target->setStyleSheet(QString(
-            "border: 2px solid %1; border-radius: 4px;"
-        ).arg(TeachingTheme::primary().name()));
+        step.target->setStyleSheet(
+            QString("border: 2px solid %1; border-radius: 4px;").arg(TeachingTheme::primary().name()));
         highlightedTarget_ = step.target;
     }
 
     // ---- 填充气泡内容 ----
     bubbleTitle_->setText(step.title);
     bubbleDesc_->setText(step.description);
-    stepIndicator_->setText(
-        mlTr("步骤 %1 / %2").arg(index + 1).arg(steps_.size()));
+    stepIndicator_->setText(mlTr("步骤 %1 / %2").arg(index + 1).arg(steps_.size()));
     primaryBtn_->setText(step.primaryBtnText);
     secondaryBtn_->setText(step.secondaryBtnText);
 
-    // ---- 调整气泡尺寸并定位 ----
-    bubble_->adjustSize();
+    // ---- 计算目标矩形并初步定位气泡 ----
+    // OPT-2 fix: 移除 show() 之前的 adjustSize()——首次显示前 Qt 布局尚未完成，
+    // sizeHint 可能不精确，导致 positionBubble 用的 bubble_->size() 偏差。
+    // 先用当前 size 初步定位，show() 之后再通过 QTimer::singleShot(0, ...) 在
+    // 事件循环空闲时 adjustSize() 并重新定位，确保首次气泡几何已就绪。
     QRect targetRect;
     if (step.target) {
         // 目标在 host_ 坐标系中的矩形
-        targetRect = QRect(step.target->mapTo(host_, QPoint(0, 0)),
-                           step.target->size());
+        targetRect = QRect(step.target->mapTo(host_, QPoint(0, 0)), step.target->size());
     } else {
         // 无目标：在 host_ 中央显示（零尺寸矩形触发居中逻辑）
         targetRect = QRect(host_->rect().center(), QSize(0, 0));
@@ -197,6 +185,15 @@ void GuidedTour::showStep(int index) {
 
     bubble_->show();
     bubble_->raise();
+
+    // 延迟到事件循环空闲：此时布局已计算完成，adjustSize 得到精确 sizeHint，
+    // 再用新尺寸重新定位气泡，修正首次显示定位偏差。
+    QTimer::singleShot(0, this, [this, targetRect]() {
+        if (!bubble_)
+            return;
+        bubble_->adjustSize();
+        positionBubble(targetRect);
+    });
 
     emit stepChanged(index);
 }
@@ -209,7 +206,8 @@ void GuidedTour::showStep(int index) {
 
 /// 依据目标控件矩形计算并定位引导气泡位置。
 void GuidedTour::positionBubble(const QRect& targetRect) {
-    if (!bubble_ || !host_) return;
+    if (!bubble_ || !host_)
+        return;
 
     const QSize bubbleSize = bubble_->size();
     const QRect hostRect = host_->rect();

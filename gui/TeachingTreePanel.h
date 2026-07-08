@@ -12,8 +12,8 @@
 
 #pragma once
 
-#include <QWidget>
 #include <QMap>
+#include <QWidget>
 
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -46,14 +46,14 @@ private slots:
 
 private:
     QTreeWidget* tree_ = nullptr;
-    QTreeWidgetItem* editorItem_ = nullptr;  // 「代码编辑器」特殊项
+    QTreeWidgetItem* editorItem_ = nullptr; // 「代码编辑器」特殊项
     /// panelId → tree item 映射，用于 setCurrentPanel 高亮
     QMap<QString, QTreeWidgetItem*> idToItem_;
 
     // B1: 顶部标题横幅
     QWidget* headerBanner_ = nullptr;
-    QLabel* bannerTitle_ = nullptr;     // 「学习中心」
-    QLabel* bannerSubtitle_ = nullptr;  // 「点击下方任意主题开始学习」
+    QLabel* bannerTitle_ = nullptr;    // 「学习中心」
+    QLabel* bannerSubtitle_ = nullptr; // 「点击下方任意主题开始学习」
     // B3: 搜索框
     QLineEdit* searchEdit_ = nullptr;
 

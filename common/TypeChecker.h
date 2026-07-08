@@ -27,10 +27,10 @@
  */
 #pragma once
 
+#include "Diagnostic.h"
+#include "interpreter/Value.h" // 2026-06-29: typeMatchValue 需要 Value 类型
 #include <string>
 #include <vector>
-#include "Diagnostic.h"
-#include "interpreter/Value.h"  // 2026-06-29: typeMatchValue 需要 Value 类型
 
 // 前向声明全局命名空间下的 AST 节点（避免在 minilang 命名空间内
 // 用 `class Block` 隐式创建 minilang::Block）
@@ -41,7 +41,7 @@ class Block;
 // ============================================================
 // 设计目标：为 MiniLang 预留静态类型检查通道。当前 MiniLang 是动态类型语言，
 // 所有类型检查在运行时进行。本接口为未来引入可选的渐进式类型注解
-//（如 `var x: int = 10;`）和编译期类型推断预留扩展点。
+// （如 `var x: int = 10;`）和编译期类型推断预留扩展点。
 //
 // 设计原则：
 //   1. 不破坏现有动态类型语义 — 类型检查是可选 pass，失败时仅产生警告
@@ -68,22 +68,33 @@ namespace minilang {
 // array/dict、数组元素类型注解(如 "int[]")、实例精确类名匹配。
 // 实例继承链检查由调用方扩展（Interpreter 用 classRegistry_，VM 用 classInfo_）。
 inline bool typeMatchValue(const Value& val, const std::string& annotation) {
-    if (annotation.empty()) return true;
+    if (annotation.empty())
+        return true;
     // null 兼容所有类型注解（2026-06-29 用户决策）
-    if (val.isNull()) return true;
-    if (annotation == TypeName::INT) return val.isInt();
-    if (annotation == TypeName::FLOAT) return val.isFloat() || val.isInt();
-    if (annotation == TypeName::BOOL) return val.isBool();
-    if (annotation == TypeName::STRING) return val.isString();
-    if (annotation == TypeName::ARRAY) return val.isArray();
-    if (annotation == TypeName::DICT) return val.isDict();
-    if (annotation == TypeName::NULL_T) return val.isNull();
+    if (val.isNull())
+        return true;
+    if (annotation == TypeName::INT)
+        return val.isInt();
+    if (annotation == TypeName::FLOAT)
+        return val.isFloat() || val.isInt();
+    if (annotation == TypeName::BOOL)
+        return val.isBool();
+    if (annotation == TypeName::STRING)
+        return val.isString();
+    if (annotation == TypeName::ARRAY)
+        return val.isArray();
+    if (annotation == TypeName::DICT)
+        return val.isDict();
+    if (annotation == TypeName::NULL_T)
+        return val.isNull();
     // 数组元素类型注解，如 "int[]"
     if (annotation.size() >= 2 && annotation.back() == ']' && annotation[annotation.size() - 2] == '[') {
-        if (!val.isArray()) return false;
+        if (!val.isArray())
+            return false;
         std::string elemType = annotation.substr(0, annotation.size() - 2);
         for (const auto& elem : val.arrayVal()) {
-            if (!typeMatchValue(elem, elemType)) return false;
+            if (!typeMatchValue(elem, elemType))
+                return false;
         }
         return true;
     }
@@ -96,24 +107,24 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
 
 /// 类型种类（预留，未来扩展）
 enum class TypeKind {
-    UNKNOWN,    // 未推断（动态类型）
-    INT,        // 整数
-    FLOAT,      // 浮点数
-    BOOL,       // 布尔
-    STRING,     // 字符串
-    NULL_T,     // null
-    ARRAY,      // 数组（元素类型待推断）
-    DICT,       // 字典（键/值类型待推断）
-    INSTANCE,   // 类实例（类名在 className 中）
-    CLOSURE,    // 闭包（参数/返回类型待推断）
-    ANY         // 任意类型（类型通配，与所有类型兼容）
+    UNKNOWN,  // 未推断（动态类型）
+    INT,      // 整数
+    FLOAT,    // 浮点数
+    BOOL,     // 布尔
+    STRING,   // 字符串
+    NULL_T,   // null
+    ARRAY,    // 数组（元素类型待推断）
+    DICT,     // 字典（键/值类型待推断）
+    INSTANCE, // 类实例（类名在 className 中）
+    CLOSURE,  // 闭包（参数/返回类型待推断）
+    ANY       // 任意类型（类型通配，与所有类型兼容）
 };
 
 /// 类型信息（预留，未来扩展）
 struct TypeInfo {
     TypeKind kind = TypeKind::UNKNOWN;
-    std::string className;  // INSTANCE 类型的类名
-    std::vector<TypeInfo> typeArgs;  // 泛型类型参数（ARRAY 的元素类型、CLOSURE 的参数/返回类型）
+    std::string className;          // INSTANCE 类型的类名
+    std::vector<TypeInfo> typeArgs; // 泛型类型参数（ARRAY 的元素类型、CLOSURE 的参数/返回类型）
 
     bool isNumeric() const { return kind == TypeKind::INT || kind == TypeKind::FLOAT; }
 
@@ -127,18 +138,29 @@ struct TypeInfo {
     /// 类型字符串表示（用于诊断信息）
     std::string toString() const {
         switch (kind) {
-        case TypeKind::INT:     return "int";
-        case TypeKind::FLOAT:   return "float";
-        case TypeKind::BOOL:    return "bool";
-        case TypeKind::STRING:  return "string";
-        case TypeKind::NULL_T:  return "null";
-        case TypeKind::ARRAY:   return "array";
-        case TypeKind::DICT:    return "dict";
-        case TypeKind::CLOSURE: return "closure";
-        case TypeKind::ANY:     return "any";
-        case TypeKind::INSTANCE: return className.empty() ? "instance" : className;
+        case TypeKind::INT:
+            return "int";
+        case TypeKind::FLOAT:
+            return "float";
+        case TypeKind::BOOL:
+            return "bool";
+        case TypeKind::STRING:
+            return "string";
+        case TypeKind::NULL_T:
+            return "null";
+        case TypeKind::ARRAY:
+            return "array";
+        case TypeKind::DICT:
+            return "dict";
+        case TypeKind::CLOSURE:
+            return "closure";
+        case TypeKind::ANY:
+            return "any";
+        case TypeKind::INSTANCE:
+            return className.empty() ? "instance" : className;
         case TypeKind::UNKNOWN:
-        default:                return "unknown";
+        default:
+            return "unknown";
         }
     }
 };

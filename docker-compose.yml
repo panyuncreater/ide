@@ -4,7 +4,7 @@ services:
       context: .
       target: dev
       args:
-        QT_VERSION: ${QT_VERSION:-6.10.2}
+        QT_VERSION: ${QT_VERSION:-6.8.3}
     volumes:
       - .:/src
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
@@ -22,5 +22,5 @@ services:
       context: .
       target: builder
       args:
-        QT_VERSION: ${QT_VERSION:-6.10.2}
+        QT_VERSION: ${QT_VERSION:-6.8.3}
     command: ["echo", "Build complete. Use 'docker compose run dev' for development."]

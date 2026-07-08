@@ -3,21 +3,21 @@
 // ============================================================
 
 #include "gui/BytecodeTracePanel.h"
-#include "gui/GuidedTour.h"
-#include "gui/PanelAnimator.h"
-#include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
+#include "gui/GuidedTour.h"
+#include "gui/MarkdownRenderer.h"
+#include "gui/PanelAnimator.h"
 #include "interpreter/Value.h"
 
-#include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QSplitter>
 #include <QHeaderView>
+#include <QSplitter>
 #include <QTableWidgetItem>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <sstream>
 
-#include "Label.h"   // QFluentKit（CaptionLabel）
+#include "Label.h" // QFluentKit（CaptionLabel）
 
 // ============================================================
 // BytecodeTraceLibrary — 静态 OpCode 教学库
@@ -28,114 +28,44 @@
 /// 供「OpCode 教学库」子页展示并支持加载样例到主编辑器。
 const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
     static const std::vector<OpCodeDocEntry> kDocs = {
+        OpCodeDocEntry{"OP_INT", "const", "nameIdx(2B)", "push 1", "📜 从常量池读取整数并压入栈顶。", "var x = 42;"},
+        OpCodeDocEntry{"OP_FLOAT", "const", "nameIdx(2B)", "push 1", "📜 从常量池读取浮点数并压入栈顶。",
+                       "var pi = 3.14;"},
+        OpCodeDocEntry{"OP_STRING", "const", "nameIdx(2B)", "push 1", "📜 从常量池读取字符串并压入栈顶。",
+                       "var s = \"hello\";"},
+        OpCodeDocEntry{"OP_NULL", "const", "无", "push 1", "📜 压入 null 值。", "var n = null;"},
+        OpCodeDocEntry{"OP_ADD", "arith", "无", "pop 2 / push 1",
+                       "🔢 弹出栈顶两个值（右、左），相加后压入结果。注意：左操作数在栈深处，右操作数在栈顶。",
+                       "var z = x + y;"},
+        OpCodeDocEntry{"OP_GET_GLOBAL", "var", "slot(2B)", "push 1",
+                       "📍 读取全局槽位的值并压栈。slot 在编译期由 GlobalSlotAllocator 分配。", "print(x);"},
+        OpCodeDocEntry{"OP_SET_GLOBAL", "var", "slot(2B)", "pop 1", "📍 弹出栈顶值写入全局槽位。", "x = 10;"},
+        OpCodeDocEntry{"OP_JUMP", "control", "offset(2B)", "no effect", "🔄 无条件跳转到 offset 指定的相对位置。",
+                       "if (true) { print(\"yes\"); }"},
+        OpCodeDocEntry{"OP_JUMP_IF_FALSE", "control", "offset(2B)", "pop 1", "🔄 弹出栈顶条件，若为 false 则跳转。",
+                       "if (cond) { ... }"},
+        OpCodeDocEntry{"OP_LOOP", "control", "offset(2B)", "no effect", "🔄 回跳到循环入口（负偏移）。",
+                       "while (cond) { ... }"},
+        OpCodeDocEntry{"OP_CALL", "call", "argCount(1B)", "pop N+1 / push 1",
+                       "📞 调用栈顶闭包：弹出 N 个参数 + 1 个闭包值，执行后压入返回值。", "result = foo(1, 2);"},
+        OpCodeDocEntry{"OP_RETURN", "call", "无", "pop frame",
+                       "📞 从当前函数返回，弹出整个调用帧，将返回值压入调用者栈顶。", "return x;"},
+        OpCodeDocEntry{"OP_BUILD_ARRAY", "container", "count(1B)", "pop N / push 1",
+                       "📊 弹出栈顶 N 个元素构建 ArrayData 并压入。", "var arr = [1, 2, 3];"},
+        OpCodeDocEntry{"OP_BUILD_DICT", "container", "pairCount(1B)", "pop 2N / push 1",
+                       "📊 弹出栈顶 2N 个值（key+value 对）构建 DictData 并压入。", "var d = {\"x\": 1};"},
         OpCodeDocEntry{
-            "OP_INT", "const",
-            "nameIdx(2B)", "push 1",
-            "📜 从常量池读取整数并压入栈顶。",
-            "var x = 42;"
-        },
-        OpCodeDocEntry{
-            "OP_FLOAT", "const",
-            "nameIdx(2B)", "push 1",
-            "📜 从常量池读取浮点数并压入栈顶。",
-            "var pi = 3.14;"
-        },
-        OpCodeDocEntry{
-            "OP_STRING", "const",
-            "nameIdx(2B)", "push 1",
-            "📜 从常量池读取字符串并压入栈顶。",
-            "var s = \"hello\";"
-        },
-        OpCodeDocEntry{
-            "OP_NULL", "const",
-            "无", "push 1",
-            "📜 压入 null 值。",
-            "var n = null;"
-        },
-        OpCodeDocEntry{
-            "OP_ADD", "arith",
-            "无", "pop 2 / push 1",
-            "🔢 弹出栈顶两个值（右、左），相加后压入结果。注意：左操作数在栈深处，右操作数在栈顶。",
-            "var z = x + y;"
-        },
-        OpCodeDocEntry{
-            "OP_GET_GLOBAL", "var",
-            "slot(2B)", "push 1",
-            "📍 读取全局槽位的值并压栈。slot 在编译期由 GlobalSlotAllocator 分配。",
-            "print(x);"
-        },
-        OpCodeDocEntry{
-            "OP_SET_GLOBAL", "var",
-            "slot(2B)", "pop 1",
-            "📍 弹出栈顶值写入全局槽位。",
-            "x = 10;"
-        },
-        OpCodeDocEntry{
-            "OP_JUMP", "control",
-            "offset(2B)", "no effect",
-            "🔄 无条件跳转到 offset 指定的相对位置。",
-            "if (true) { print(\"yes\"); }"
-        },
-        OpCodeDocEntry{
-            "OP_JUMP_IF_FALSE", "control",
-            "offset(2B)", "pop 1",
-            "🔄 弹出栈顶条件，若为 false 则跳转。",
-            "if (cond) { ... }"
-        },
-        OpCodeDocEntry{
-            "OP_LOOP", "control",
-            "offset(2B)", "no effect",
-            "🔄 回跳到循环入口（负偏移）。",
-            "while (cond) { ... }"
-        },
-        OpCodeDocEntry{
-            "OP_CALL", "call",
-            "argCount(1B)", "pop N+1 / push 1",
-            "📞 调用栈顶闭包：弹出 N 个参数 + 1 个闭包值，执行后压入返回值。",
-            "result = foo(1, 2);"
-        },
-        OpCodeDocEntry{
-            "OP_RETURN", "call",
-            "无", "pop frame",
-            "📞 从当前函数返回，弹出整个调用帧，将返回值压入调用者栈顶。",
-            "return x;"
-        },
-        OpCodeDocEntry{
-            "OP_BUILD_ARRAY", "container",
-            "count(1B)", "pop N / push 1",
-            "📊 弹出栈顶 N 个元素构建 ArrayData 并压入。",
-            "var arr = [1, 2, 3];"
-        },
-        OpCodeDocEntry{
-            "OP_BUILD_DICT", "container",
-            "pairCount(1B)", "pop 2N / push 1",
-            "📊 弹出栈顶 2N 个值（key+value 对）构建 DictData 并压入。",
-            "var d = {\"x\": 1};"
-        },
-        OpCodeDocEntry{
-            "OP_CLOSURE", "closure",
-            "nameIdx(2B) + upvalueCount(1B)", "pop N / push 1",
+            "OP_CLOSURE", "closure", "nameIdx(2B) + upvalueCount(1B)", "pop N / push 1",
             "📦 创建闭包值：从栈顶弹出 N 个 upvalue（每个为 isLocal+index 编码）+ 函数名，构造 ClosureData。",
-            "fun outer() { var x = 1; fun inner() { return x; } return inner; }"
-        },
-        OpCodeDocEntry{
-            "OP_GET_UPVALUE", "closure",
-            "upvalueIndex(1B)", "push 1",
-            "🔗 读取闭包捕获的外层变量。若 upvalue 仍开放则从栈帧读取，已关闭则从堆读取。",
-            "// 闭包内访问外层变量"
-        },
-        OpCodeDocEntry{
-            "OP_CLASS_NEW", "class",
-            "nameIdx(2B) + argCount(1B)", "pop N+1 / push 1",
-            "📦 类构造：弹出 N 个参数 + 类模板，创建 InstanceData 并调用 init 方法。",
-            "var p = Point(3, 4);"
-        },
-        OpCodeDocEntry{
-            "OP_METHOD_CALL", "class",
-            "nameIdx(2B) + argCount(1B) + recvVarIdx(2B)", "pop N+1 / push 1",
-            "📞 方法调用：通过 methodCache_ 查找方法，避免重复 ClassInfo 遍历。",
-            "p.distance();"
-        },
+            "fun outer() { var x = 1; fun inner() { return x; } return inner; }"},
+        OpCodeDocEntry{"OP_GET_UPVALUE", "closure", "upvalueIndex(1B)", "push 1",
+                       "🔗 读取闭包捕获的外层变量。若 upvalue 仍开放则从栈帧读取，已关闭则从堆读取。",
+                       "// 闭包内访问外层变量"},
+        OpCodeDocEntry{"OP_CLASS_NEW", "class", "nameIdx(2B) + argCount(1B)", "pop N+1 / push 1",
+                       "📦 类构造：弹出 N 个参数 + 类模板，创建 InstanceData 并调用 init 方法。",
+                       "var p = Point(3, 4);"},
+        OpCodeDocEntry{"OP_METHOD_CALL", "class", "nameIdx(2B) + argCount(1B) + recvVarIdx(2B)", "pop N+1 / push 1",
+                       "📞 方法调用：通过 methodCache_ 查找方法，避免重复 ClassInfo 遍历。", "p.distance();"},
     };
     return kDocs;
 }
@@ -153,7 +83,7 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     outer->setSpacing(4);
 
     auto* pageBar = new QHBoxLayout;
-    pageTraceBtn_   = new QPushButton(tr("执行轨迹"));
+    pageTraceBtn_ = new QPushButton(tr("执行轨迹"));
     pageLibraryBtn_ = new QPushButton(tr("OpCode 教学库"));
     pageTraceBtn_->setCheckable(true);
     pageLibraryBtn_->setCheckable(true);
@@ -164,7 +94,7 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     outer->addLayout(pageBar);
 
     stack_ = new QStackedWidget;
-    auto* tracePage   = new QWidget;
+    auto* tracePage = new QWidget;
     auto* libraryPage = new QWidget;
     buildTracePage(tracePage);
     buildLibraryPage(libraryPage);
@@ -172,8 +102,16 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     stack_->addWidget(libraryPage);
     outer->addWidget(stack_, 1);
 
-    connect(pageTraceBtn_,   &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::slideInWidget(stack_->currentWidget()); });
-    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageTraceBtn_->setChecked(false); PanelAnimator::slideInWidget(stack_->currentWidget()); });
+    connect(pageTraceBtn_, &QPushButton::clicked, [this]() {
+        stack_->setCurrentIndex(0);
+        pageLibraryBtn_->setChecked(false);
+        PanelAnimator::slideInWidget(stack_->currentWidget());
+    });
+    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() {
+        stack_->setCurrentIndex(1);
+        pageTraceBtn_->setChecked(false);
+        PanelAnimator::slideInWidget(stack_->currentWidget());
+    });
 
     // OPT-1: 自动捕获改为 vmStateChanged 监听器即时触发（见 setController）。
     // QTimer 降级为 2000ms 安全网，覆盖监听器未触达的边角场景。
@@ -187,7 +125,8 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
 /// 绑定/换绑 IdeController：注册 vmStateChanged 监听器（owner=this），
 /// 换绑前先反注册旧监听器，避免 controller 持有悬垂回调。
 void BytecodeTracePanel::setController(IdeController* controller) {
-    if (controller_ == controller) return;
+    if (controller_ == controller)
+        return;
     // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
     if (controller_) {
         controller_->removeVmStateChangedListener(this);
@@ -215,10 +154,10 @@ void BytecodeTracePanel::buildTracePage(QWidget* host) {
     v->setSpacing(4);
 
     auto* bar = new QHBoxLayout;
-    liveStatusLabel_  = new CaptionLabel(tr("状态：未初始化"));
-    captureBtn_       = new QPushButton(tr("立即捕获"));
+    liveStatusLabel_ = new CaptionLabel(tr("状态：未初始化"));
+    captureBtn_ = new QPushButton(tr("立即捕获"));
     autoCaptureCheck_ = new QCheckBox(tr("自动捕获（VM 暂停时）"));
-    clearBtn_          = new QPushButton(tr("清空"));
+    clearBtn_ = new QPushButton(tr("清空"));
     bar->addWidget(liveStatusLabel_);
     bar->addStretch();
     bar->addWidget(autoCaptureCheck_);
@@ -250,8 +189,7 @@ void BytecodeTracePanel::buildTracePage(QWidget* host) {
     connect(captureBtn_, &QPushButton::clicked, this, &BytecodeTracePanel::onCaptureNow);
     connect(autoCaptureCheck_, &QCheckBox::toggled, this, &BytecodeTracePanel::onAutoCaptureToggled);
     connect(clearBtn_, &QPushButton::clicked, this, &BytecodeTracePanel::onClearTrace);
-    connect(traceTable_, &QTableWidget::currentCellChanged,
-        [this](int, int, int, int) { onTraceRowSelected(); });
+    connect(traceTable_, &QTableWidget::currentCellChanged, [this](int, int, int, int) { onTraceRowSelected(); });
 }
 
 /// 构建「OpCode 教学库」子页：左侧 OpCode 列表 + 右侧说明浏览器 + 加载样例按钮，
@@ -262,7 +200,7 @@ void BytecodeTracePanel::buildLibraryPage(QWidget* host) {
     v->setSpacing(4);
 
     auto* splitter = new QSplitter(Qt::Horizontal);
-    docList_   = new QListWidget;
+    docList_ = new QListWidget;
     docDetail_ = new QTextBrowser;
     docDetail_->setOpenExternalLinks(false);
     splitter->addWidget(docList_);
@@ -288,15 +226,16 @@ void BytecodeTracePanel::onCaptureNow() {
 
 /// 自动捕获复选框切换：勾选启动 2s 定时器，取消则停止（即时刷新仍由 vmStateChanged 触发）。
 void BytecodeTracePanel::onAutoCaptureToggled(bool checked) {
-    if (checked) autoTimer_->start();
-    else         autoTimer_->stop();
+    if (checked)
+        autoTimer_->start();
+    else
+        autoTimer_->stop();
 }
 
 /// 面板重新可见时：若已勾选自动捕获则恢复 2s 定时器。
 void BytecodeTracePanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    if (autoCaptureCheck_ && autoCaptureCheck_->isChecked() &&
-        autoTimer_ && !autoTimer_->isActive()) {
+    if (autoCaptureCheck_ && autoCaptureCheck_->isChecked() && autoTimer_ && !autoTimer_->isActive()) {
         autoTimer_->start();
     }
 }
@@ -313,6 +252,8 @@ void BytecodeTracePanel::hideEvent(QHideEvent* event) {
 void BytecodeTracePanel::onClearTrace() {
     traceHistory_.clear();
     stepCounter_ = 0;
+    // OPT-2 fix: 清空时同步重置指纹，使下一次捕获不会被误判为"状态未变"而跳过。
+    lastCaptureFingerprint_.clear();
     traceTable_->setRowCount(0);
     stackDetail_->clear();
     liveStatusLabel_->setText(tr("状态：未运行（轨迹已清空）"));
@@ -342,11 +283,12 @@ void BytecodeTracePanel::captureCurrentState() {
     }
 
     TraceEntry e;
-    e.step        = ++stepCounter_;
-    e.ip          = controller_->getVmCurrentIP();
-    e.opCodeName  = controller_->getVmCurrentOpCodeName();
-    e.frameCount  = static_cast<int>(controller_->getVmFrameCount());
-    e.line        = controller_->getVmCurrentLine();
+    // OPT-2 fix: step 延迟到指纹检查通过后再赋值，避免状态未变时 stepCounter_
+    // 误增导致后续捕获步号跳号（autoTimer 2s 安全网可能在 VM 状态未变时触发）。
+    e.ip = controller_->getVmCurrentIP();
+    e.opCodeName = controller_->getVmCurrentOpCodeName();
+    e.frameCount = static_cast<int>(controller_->getVmFrameCount());
+    e.line = controller_->getVmCurrentLine();
 
     auto stack = controller_->getVmStack();
     e.stackSnapshot.reserve(stack.size());
@@ -355,17 +297,39 @@ void BytecodeTracePanel::captureCurrentState() {
     // VariableInspectorPanel 的 try/catch 防护，避免异常传播到 QTimer 槽。
     for (const auto& v : stack) {
         std::string s;
-        try { s = v.toString(); } catch (...) { s = "<error>"; }
+        try {
+            s = v.toString();
+        } catch (...) {
+            s = "<error>";
+        }
         e.stackSnapshot.push_back(std::move(s));
     }
 
+    // OPT-2 fix: autoTimer 2s 安全网无指纹对比会盲目累积重复轨迹（累积式 push_back）。
+    // 在 e 各字段已填充后计算指纹，与上次比对——状态未变则跳过本次捕获。
+    // 指纹不含 stackSnapshot 内容（避免长栈 O(n) 字符串拼接），仅用大小即可
+    // 区分绝大多数"状态未变"场景；如栈大小相同但内容变化，会多捕获一条，
+    // 不影响正确性，仅极小性能开销。
+    std::string fingerprint = std::to_string(e.ip) + "|" + e.opCodeName + "|" + std::to_string(e.frameCount) + "|" +
+                              std::to_string(e.stackSnapshot.size());
+    if (fingerprint == lastCaptureFingerprint_) {
+        // 状态未变，跳过本次捕获（不更新 stepCounter_，不追加历史，不刷新表格）
+        return;
+    }
+    lastCaptureFingerprint_ = std::move(fingerprint);
+
+    // 指纹检查通过，确认本次捕获有效，递增步号
+    e.step = ++stepCounter_;
+
     liveStatusLabel_->setText(tr("状态：已捕获 step=%1 | IP=%2 | OpCode=%3 | 帧数=%4")
-        .arg(e.step).arg(e.ip)
-        .arg(QString::fromUtf8(e.opCodeName.c_str()))
-        .arg(e.frameCount));
+                                  .arg(e.step)
+                                  .arg(e.ip)
+                                  .arg(QString::fromUtf8(e.opCodeName.c_str()))
+                                  .arg(e.frameCount));
 
     if (static_cast<int>(traceHistory_.size()) >= kMaxTraceEntries) {
-        traceHistory_.erase(traceHistory_.begin());
+        // AUDIT-P1 fix: deque pop_front O(1)（原 vector erase(begin()) O(n) 移位）
+        traceHistory_.pop_front();
     }
     traceHistory_.push_back(std::move(e));
     refreshTraceTable();
@@ -378,12 +342,25 @@ void BytecodeTracePanel::captureCurrentState() {
     }
 }
 
-/// 将 traceHistory_ 全部快照渲染为轨迹表：每行一个 TraceEntry（步/IP/OpCode/
-/// 帧数/栈大小），居中对齐并滚动到底部。
+/// 将 traceHistory_ 渲染为轨迹表。AUDIT-P1 fix: 改为增量更新——
+/// 仅追加新行 + 移除溢出行，避免每次 capture 都 setRowCount(0) 全量重建 N×5 个 item。
 void BytecodeTracePanel::refreshTraceTable() {
-    traceTable_->setRowCount(0);
-    traceTable_->setRowCount(static_cast<int>(traceHistory_.size()));
-    for (int i = 0; i < static_cast<int>(traceHistory_.size()); ++i) {
+    int histSize = static_cast<int>(traceHistory_.size());
+    int tableRows = traceTable_->rowCount();
+
+    // 表行多于历史（清空场景或溢出移除）→ 移除多余行
+    while (tableRows > histSize) {
+        traceTable_->removeRow(tableRows - 1);
+        --tableRows;
+    }
+
+    // 追加新行（仅新增部分）
+    for (int i = tableRows; i < histSize; ++i) {
+        traceTable_->insertRow(i);
+    }
+
+    // 填充新行的单元格数据（仅新行，旧行数据不变）
+    for (int i = tableRows; i < histSize; ++i) {
         const auto& e = traceHistory_[i];
         auto* c0 = new QTableWidgetItem(QString::number(e.step));
         auto* c1 = new QTableWidgetItem(QString::number(e.ip));
@@ -420,22 +397,20 @@ void BytecodeTracePanel::onTraceRowSelected() {
         stackHtml = tr("<h4>操作数栈（栈顶 → 栈底）</h4><ol>");
         // 倒序显示：栈顶在前
         for (auto it = e.stackSnapshot.rbegin(); it != e.stackSnapshot.rend(); ++it) {
-            stackHtml += QString("<li><code>%1</code></li>")
-                .arg(QString::fromUtf8(it->c_str()).toHtmlEscaped());
+            stackHtml += QString("<li><code>%1</code></li>").arg(QString::fromUtf8(it->c_str()).toHtmlEscaped());
         }
         stackHtml += QStringLiteral("</ol>");
     }
 
-    QString html = QString(
-        "<h3>Step %1: %2</h3>"
-        "<p><b>IP:</b> %3 | <b>行:</b> %4 | <b>帧数:</b> %5</p>"
-        "%6"
-    ).arg(e.step)
-     .arg(QString::fromUtf8(e.opCodeName.c_str()))
-     .arg(e.ip)
-     .arg(e.line)
-     .arg(e.frameCount)
-     .arg(stackHtml);
+    QString html = QString("<h3>Step %1: %2</h3>"
+                           "<p><b>IP:</b> %3 | <b>行:</b> %4 | <b>帧数:</b> %5</p>"
+                           "%6")
+                       .arg(e.step)
+                       .arg(QString::fromUtf8(e.opCodeName.c_str()))
+                       .arg(e.ip)
+                       .arg(e.line)
+                       .arg(e.frameCount)
+                       .arg(stackHtml);
     stackDetail_->setHtml(html);
 
     // Emit source line for editor highlighting
@@ -469,23 +444,22 @@ void BytecodeTracePanel::showDoc(int index) {
         return;
     }
     const auto& d = BytecodeTraceLibrary::opCodeDocs()[index];
-    QString html = QString(
-        "<h2>%1</h2>"
-        "<p><b>分类:</b> %2</p>"
-        "<h3>操作数格式</h3>"
-        "<p><code>%3</code></p>"
-        "<h3>栈效果</h3>"
-        "<p><code>%4</code></p>"
-        "<h3>语义</h3>"
-        "%5"
-        "<h3>样例代码</h3>"
-        "<pre>%6</pre>"
-    ).arg(QString::fromUtf8(d.opCodeName.c_str()))
-     .arg(QString::fromUtf8(d.category.c_str()))
-     .arg(QString::fromUtf8(d.operandFormat.c_str()))
-     .arg(QString::fromUtf8(d.stackEffect.c_str()))
-     .arg(MarkdownRenderer::markdownToHtmlFragment(d.semantics))
-     .arg(QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped());
+    QString html = QString("<h2>%1</h2>"
+                           "<p><b>分类:</b> %2</p>"
+                           "<h3>操作数格式</h3>"
+                           "<p><code>%3</code></p>"
+                           "<h3>栈效果</h3>"
+                           "<p><code>%4</code></p>"
+                           "<h3>语义</h3>"
+                           "%5"
+                           "<h3>样例代码</h3>"
+                           "<pre>%6</pre>")
+                       .arg(QString::fromUtf8(d.opCodeName.c_str()))
+                       .arg(QString::fromUtf8(d.category.c_str()))
+                       .arg(QString::fromUtf8(d.operandFormat.c_str()))
+                       .arg(QString::fromUtf8(d.stackEffect.c_str()))
+                       .arg(MarkdownRenderer::markdownToHtmlFragment(d.semantics))
+                       .arg(QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped());
     docDetail_->setHtml(html);
 }
 
@@ -505,20 +479,15 @@ void BytecodeTracePanel::onLoadDocCode() {
 /// 构建 5 步新手引导：高亮执行轨迹页、自动捕获、轨迹表、OpCode 教学库与加载样例按钮。
 GuidedTour* BytecodeTracePanel::createGuidedTour(QWidget* host) {
     auto* tour = new GuidedTour(host, host);
-    tour->addStep(pageTraceBtn_,
-                  QString::fromUtf8("执行轨迹"),
+    tour->addStep(pageTraceBtn_, QString::fromUtf8("执行轨迹"),
                   QString::fromUtf8("这里显示每条字节码指令执行后的栈状态快照。"));
-    tour->addStep(autoCaptureCheck_,
-                  QString::fromUtf8("自动捕获"),
+    tour->addStep(autoCaptureCheck_, QString::fromUtf8("自动捕获"),
                   QString::fromUtf8("勾选后，VM 暂停时会自动捕获一条轨迹，无需手动点击。"));
-    tour->addStep(traceTable_,
-                  QString::fromUtf8("轨迹表"),
+    tour->addStep(traceTable_, QString::fromUtf8("轨迹表"),
                   QString::fromUtf8("每行一条指令记录，包含 IP / OpCode / 栈快照。点击某行可定位到对应源码行。"));
-    tour->addStep(pageLibraryBtn_,
-                  QString::fromUtf8("OpCode 教学库"),
+    tour->addStep(pageLibraryBtn_, QString::fromUtf8("OpCode 教学库"),
                   QString::fromUtf8("切换到 OpCode 参考库，查看每条指令的语义说明与样例代码。"));
-    tour->addStep(loadCodeBtn_,
-                  QString::fromUtf8("加载样例"),
+    tour->addStep(loadCodeBtn_, QString::fromUtf8("加载样例"),
                   QString::fromUtf8("点击可将当前 OpCode 的示例代码加载到主编辑器，方便直接运行观察。"));
     return tour;
 }

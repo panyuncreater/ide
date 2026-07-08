@@ -29,44 +29,44 @@
 #include "gui/LearningPathData.h"
 
 #include <QString>
+#include <cstdint>
 #include <map>
 #include <string>
-#include <cstdint>
 #include <vector>
 
 // ============================================================
 // LearnerProgress — 进度数据
 // ============================================================
 struct LearnerProgress {
-    std::map<std::string, bool>    completed;        // 已完成的活动
-    std::map<std::string, int>     attemptCount;     // 尝试次数
-    std::map<std::string, int64_t> lastAccessTime;   // 最后访问时间（unix timestamp）
-    int currentStage = 0;                             // 当前阶段（0-4）
+    std::map<std::string, bool> completed;         // 已完成的活动
+    std::map<std::string, int> attemptCount;       // 尝试次数
+    std::map<std::string, int64_t> lastAccessTime; // 最后访问时间（unix timestamp）
+    int currentStage = 0;                          // 当前阶段（0-4）
     // P0-2 fix (F7): 细粒度关卡星级持久化。
     // key = 关卡 ID（如 "token-puzzle-1"），value = 星级（-1=未完成，0=跳过，1-3=星级）。
     // 游戏面板（TokenPuzzle/AstToy/VmSandbox）在构造时读取、在关卡完成时写入，
     // 解决原 levelStars_ 仅存内存、重启即丢失的问题。
-    std::map<std::string, int>     levelStars;
+    std::map<std::string, int> levelStars;
     // P2-3 fix (F9): 学情画像——多维进度数据，让进度从「打卡」升级为「画像」。
     // score:        key = 活动 ID, value = 得分（0-100）。recordScore 取最大值（保留历史最佳）。
     // bestStars:    key = 活动 ID, value = 1-3 星级（与 levelStars 不同——levelStars 针对子关卡，
     //               bestStars 针对活动整体，由 markActivityScore 在完成时一并记录）。
     // spentMinutes: key = 活动 ID, value = 累计花费分钟数。addSpentMinutes 累加。
     // failCount:    key = 活动 ID, value = 失败次数（用于 getWeakPoints 薄弱点判定）。
-    std::map<std::string, int>     score;
-    std::map<std::string, int>     bestStars;
-    std::map<std::string, int>     spentMinutes;
-    std::map<std::string, int>     failCount;
+    std::map<std::string, int> score;
+    std::map<std::string, int> bestStars;
+    std::map<std::string, int> spentMinutes;
+    std::map<std::string, int> failCount;
 };
 
 // ============================================================
 // WeakPoint — 薄弱点活动信息（P2-3 fix F9）
 // ============================================================
 struct WeakPoint {
-    std::string activityId;   // 活动 ID
-    int         attempts = 0;  // 尝试次数
-    int         fails    = 0;  // 失败次数
-    int         score    = 0;  // 当前得分（0 表示无得分记录）
+    std::string activityId; // 活动 ID
+    int attempts = 0;       // 尝试次数
+    int fails = 0;          // 失败次数
+    int score = 0;          // 当前得分（0 表示无得分记录）
 };
 
 // ============================================================
@@ -74,7 +74,7 @@ struct WeakPoint {
 // ============================================================
 class LearnerProgressStore {
 public:
-/// 返回全局单例实例。
+    /// 返回全局单例实例。
     static LearnerProgressStore& instance();
 
     /// 从 JSON 文件加载进度（找不到文件或格式不匹配时清空，不崩溃）
@@ -138,10 +138,8 @@ public:
     ///   - attemptCount >= minAttempts（默认 3 次）或 failCount >= 1
     /// 按失败次数降序、尝试次数降序排序。all 提供活动元数据。
     /// maxCount 限制返回数量（默认 5，0 表示不限制）。
-    std::vector<WeakPoint> getWeakPoints(
-        const std::vector<LearningActivity>& all,
-        int minAttempts = 3,
-        std::size_t maxCount = 5) const;
+    std::vector<WeakPoint> getWeakPoints(const std::vector<LearningActivity>& all, int minAttempts = 3,
+                                         std::size_t maxCount = 5) const;
 
     /// P2-3 fix (F9): 计算预计剩余时间（分钟）——所有未完成且已解锁活动的 estimatedMinutes 之和。
     /// all 提供活动元数据。
@@ -162,12 +160,10 @@ public:
     // ---- 查询接口 ----
 
     /// 检查活动是否已解锁（前置全部完成）
-    bool isUnlocked(const std::string& activityId,
-                    const std::vector<LearningActivity>& all) const;
+    bool isUnlocked(const std::string& activityId, const std::vector<LearningActivity>& all) const;
 
     /// 阶段进度百分比（0-100），分母为该阶段活动总数
-    int stageProgress(int stage,
-                      const std::vector<LearningActivity>& all) const;
+    int stageProgress(int stage, const std::vector<LearningActivity>& all) const;
 
     /// 总体进度百分比（0-100），分母为所有活动总数
     int overallProgress(const std::vector<LearningActivity>& all) const;
@@ -184,7 +180,7 @@ private:
     LearnerProgressStore& operator=(const LearnerProgressStore&) = delete;
 
     LearnerProgress data_;
-    QString filePathOverride_;  // 测试注入路径（空时使用默认路径）
+    QString filePathOverride_; // 测试注入路径（空时使用默认路径）
 
-    QString filePath() const;  // 默认 ~/.minilang_progress.json 或 Qt 标准路径
+    QString filePath() const; // 默认 ~/.minilang_progress.json 或 Qt 标准路径
 };

@@ -1,13 +1,13 @@
 #pragma once
 
-#include <QWidget>
-#include <QTreeWidget>
-#include <QListWidget>
-#include <QVBoxLayout>
-#include <QLabel>
-#include <vector>
-#include <tuple>
 #include "debug/DebugController.h"
+#include <QLabel>
+#include <QListWidget>
+#include <QTreeWidget>
+#include <QVBoxLayout>
+#include <QWidget>
+#include <tuple>
+#include <vector>
 
 // ============================================================
 // DebugPanel 调试面板
@@ -41,8 +41,7 @@ private slots:
 private:
     /// 按作用域分组填充变量树
     /// rows: (name, value, scope) — scope 为 "局部"/"外层"/"全局"
-    void populateVariableTree(
-        const std::vector<std::tuple<QString, QString, QString>>& rows);
+    void populateVariableTree(const std::vector<std::tuple<QString, QString, QString>>& rows);
 
     /// 创建作用域分组顶层节点
     QTreeWidgetItem* createScopeGroup(const QString& title, int count);
@@ -51,9 +50,9 @@ private:
     /// 主题切换时通过 Theme::onThemeModeChanged 重新调用此方法刷新
     void applyThemeStyles();
 
-    QTreeWidget* variableTree_ = nullptr;   // 变量监视树
-    QLabel* varLabel_ = nullptr;            // 变量监视区标题（保存以便主题刷新）
-    QLabel* stackLabel_ = nullptr;          // 调用栈区标题（保存以便主题刷新）
-    QListWidget* callStackList_ = nullptr;  // 调用栈列表
-    std::vector<CallStackEntry> currentStack_;  // 当前调用栈数据（含局部变量）
+    QTreeWidget* variableTree_ = nullptr;      // 变量监视树
+    QLabel* varLabel_ = nullptr;               // 变量监视区标题（保存以便主题刷新）
+    QLabel* stackLabel_ = nullptr;             // 调用栈区标题（保存以便主题刷新）
+    QListWidget* callStackList_ = nullptr;     // 调用栈列表
+    std::vector<CallStackEntry> currentStack_; // 当前调用栈数据（含局部变量）
 };

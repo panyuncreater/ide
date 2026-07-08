@@ -18,8 +18,8 @@
 // 消除每处 ~50 字节的样板，统一负索引与溢出语义。
 // ============================================================
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace BoundsCheck {
 

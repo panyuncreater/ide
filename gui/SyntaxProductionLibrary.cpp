@@ -19,7 +19,8 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "var-decl", "📝 var 声明",
             "varDecl := \"var\" IDENTIFIER (\":\" typeAnnotation)? \"=\" expression \";\"\n"
             "         | typeAnnotation IDENTIFIER \"=\" expression \";\"",
-            "📝 声明变量有两种写法：直说 `var x = 10`，或者干脆把类型写在前面（`int count = 0`）。一旦写了类型注解，三个后端都会盯着你——int 不收 float，float 倒能宽化收下 int，而 null 跟谁都合得来。"
+            "📝 声明变量有两种写法：直说 `var x = 10`，或者干脆把类型写在前面（`int count = "
+            "0`）。一旦写了类型注解，三个后端都会盯着你——int 不收 float，float 倒能宽化收下 int，而 null 跟谁都合得来。"
             "null 兼容所有类型，float 注解接受 int 值（宽化），int 注解拒绝 float 值。",
             "var x = 10;\nint count = 0;\nfloat pi = 3.14;\nstring name = \"MiniLang\";\nprint(x);",
             // F8 自然语言描述
@@ -38,57 +39,56 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "  注意事项:\n"
             "    • 类型注解一旦指定就强制检查（int 注解拒绝 float 值）\n"
             "    • null 兼容所有类型注解\n"
-            "    • float 注解接受 int 值（宽化）"
-        },
-        SyntaxProduction{
-            "if-stmt", "🔀 if 语句",
-            "ifStmt := \"if\" \"(\" expression \")\" block (\"else\" block)?\n"
-            "        | \"if\" \"(\" expression \")\" statement (\"else\" statement)?",
-            "🔀 最常见的分叉路口。`if` 后面跟条件，命中就走 then，否则走 else。分支体可以裹在 `{ }` 里，也可以只写一句光溜溜的语句——只是 import/export 这种重活，不许塞进没花括号的单句体里。"
-            "Parser 层限制 import/export 不能在无花括号单语句体中使用。",
-            "var x = 10;\nif (x > 5) {\n    print(\"big\");\n} else {\n    print(\"small\");\n}",
-            "🔀 if 语句的写法：\n\n"
-            "  必须以 if 关键字开头\n"
-            "  接着是括号包裹的条件表达式: if (条件)\n"
-            "  然后是代码块（用 { } 包围的一或多条语句）\n"
-            "  可以选择性地跟一个 else 和另一个代码块\n\n"
-            "  示例:\n"
-            "    ✓ if (x > 0) { print(x); }\n"
-            "    ✓ if (x > 0) { print(x); } else { print(\"non-positive\"); }\n"
-            "    ✗ if x > 0 { print(x); }        ← 缺少括号!\n"
-            "    ✗ if (x > 0) print(x);          ← 单语句体受限（import/export 不可用）\n\n"
-            "  注意事项:\n"
-            "    • 条件必须用圆括号 ( ) 包裹\n"
-            "    • 代码块建议用花括号 { } 包围\n"
-            "    • else 部分是可选的\n"
-            "    • 支持 else if 链：if (...) {...} else if (...) {...} else {...}"
-        },
-        SyntaxProduction{
-            "while-stmt", "🔄 while 循环",
-            "whileStmt := \"while\" \"(\" expression \")\" (block | statement)",
-            "🔄 只要条件还为真，就一遍遍跑循环体。`break` 直接掀桌子退出，`continue` 跳过这轮剩下的、乖乖进入下一轮判断；条件一旦变假，整个循环拍拍屁股走人。"
-            "条件为假时跳过循环体。",
-            "var i = 0;\nwhile (i < 5) {\n    print(i);\n    i = i + 1;\n}",
-            "🔄 while 循环的写法：\n\n"
-            "  必须以 while 关键字开头\n"
-            "  接着是括号包裹的条件表达式: while (条件)\n"
-            "  然后是循环体（代码块或单语句）\n\n"
-            "  示例:\n"
-            "    ✓ while (i < 10) { print(i); i = i + 1; }\n"
-            "    ✓ while (true) { if (x == 0) break; }\n"
-            "    ✗ while i < 10 { ... }     ← 缺少括号!\n"
-            "    ✗ while (i < 10) print(i); ← 忘记更新 i，死循环!\n\n"
-            "  注意事项:\n"
-            "    • 条件必须用圆括号包裹\n"
-            "    • 循环体内必须更新条件变量，否则死循环\n"
-            "    • break 立即退出循环\n"
-            "    • continue 跳过本次迭代剩余代码，进入下一轮条件判断"
-        },
+            "    • float 注解接受 int 值（宽化）"},
+        SyntaxProduction{"if-stmt", "🔀 if 语句",
+                         "ifStmt := \"if\" \"(\" expression \")\" block (\"else\" block)?\n"
+                         "        | \"if\" \"(\" expression \")\" statement (\"else\" statement)?",
+                         "🔀 最常见的分叉路口。`if` 后面跟条件，命中就走 then，否则走 else。分支体可以裹在 `{ }` "
+                         "里，也可以只写一句光溜溜的语句——只是 import/export 这种重活，不许塞进没花括号的单句体里。"
+                         "Parser 层限制 import/export 不能在无花括号单语句体中使用。",
+                         "var x = 10;\nif (x > 5) {\n    print(\"big\");\n} else {\n    print(\"small\");\n}",
+                         "🔀 if 语句的写法：\n\n"
+                         "  必须以 if 关键字开头\n"
+                         "  接着是括号包裹的条件表达式: if (条件)\n"
+                         "  然后是代码块（用 { } 包围的一或多条语句）\n"
+                         "  可以选择性地跟一个 else 和另一个代码块\n\n"
+                         "  示例:\n"
+                         "    ✓ if (x > 0) { print(x); }\n"
+                         "    ✓ if (x > 0) { print(x); } else { print(\"non-positive\"); }\n"
+                         "    ✗ if x > 0 { print(x); }        ← 缺少括号!\n"
+                         "    ✗ if (x > 0) print(x);          ← 单语句体受限（import/export 不可用）\n\n"
+                         "  注意事项:\n"
+                         "    • 条件必须用圆括号 ( ) 包裹\n"
+                         "    • 代码块建议用花括号 { } 包围\n"
+                         "    • else 部分是可选的\n"
+                         "    • 支持 else if 链：if (...) {...} else if (...) {...} else {...}"},
+        SyntaxProduction{"while-stmt", "🔄 while 循环",
+                         "whileStmt := \"while\" \"(\" expression \")\" (block | statement)",
+                         "🔄 只要条件还为真，就一遍遍跑循环体。`break` 直接掀桌子退出，`continue` "
+                         "跳过这轮剩下的、乖乖进入下一轮判断；条件一旦变假，整个循环拍拍屁股走人。"
+                         "条件为假时跳过循环体。",
+                         "var i = 0;\nwhile (i < 5) {\n    print(i);\n    i = i + 1;\n}",
+                         "🔄 while 循环的写法：\n\n"
+                         "  必须以 while 关键字开头\n"
+                         "  接着是括号包裹的条件表达式: while (条件)\n"
+                         "  然后是循环体（代码块或单语句）\n\n"
+                         "  示例:\n"
+                         "    ✓ while (i < 10) { print(i); i = i + 1; }\n"
+                         "    ✓ while (true) { if (x == 0) break; }\n"
+                         "    ✗ while i < 10 { ... }     ← 缺少括号!\n"
+                         "    ✗ while (i < 10) print(i); ← 忘记更新 i，死循环!\n\n"
+                         "  注意事项:\n"
+                         "    • 条件必须用圆括号包裹\n"
+                         "    • 循环体内必须更新条件变量，否则死循环\n"
+                         "    • break 立即退出循环\n"
+                         "    • continue 跳过本次迭代剩余代码，进入下一轮条件判断"},
         SyntaxProduction{
             "for-stmt", "🔁 for 循环",
-            "forStmt := \"for\" \"(\" (varDecl | assignment | \";\") expression \";\" assignment \")\" \n"
+            "forStmt := \"for\" \"(\" (varDecl | typedVarDecl | expression | \";\") expression \";\" assignment \")\" "
+            "\n"
             "          (block | statement)",
-            "🔁 老熟人 C 风格 for：初值、判断、步进三段排好，哪段空着都行。里头照样能用 break/continue。要是循环变量声明在最外层，循环一退，它就被清掉了（DELETE_VAR）。"
+            "🔁 老熟人 C 风格 for：初值、判断、步进三段排好，哪段空着都行。里头照样能用 "
+            "break/continue。要是循环变量声明在最外层，循环一退，它就被清掉了（DELETE_VAR）。"
             "支持 break/continue。循环变量在顶层时退出后清理（DELETE_VAR）。",
             "var sum = 0;\nfor (var i = 0; i < 10; i = i + 1) {\n    sum = sum + i;\n}\nprint(sum);  // 45",
             "🔁 for 循环的写法：\n\n"
@@ -104,14 +104,14 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • MiniLang 不支持 i++ / i--，必须写成 i = i + 1\n"
             "    • 三段式每段可以为空，但分号不可省略\n"
             "    • 循环变量在顶层声明时退出后清理（DELETE_VAR）\n"
-            "    • 支持 break / continue"
-        },
+            "    • 支持 break / continue"},
         SyntaxProduction{
             "fun-decl", "⚙️ 函数声明",
             "funDecl := \"fun\" IDENTIFIER \"(\" params \")\" (\":\" typeAnnotation)? block\n"
             "params := (param (\",\" param)*)?\n"
             "param  := IDENTIFIER (\":\" typeAnnotation)? (\"=\" literal)?",
-            "⚙️ 用 `fun` 起头就是声明函数。默认参数也支持，不过只认字面量（含负数）——你要是甩个复杂表达式过去，Parser 会直接摇头拒绝。"
+            "⚙️ 用 `fun` 起头就是声明函数。默认参数也支持，不过只认字面量（含负数）——你要是甩个复杂表达式过去，Parser "
+            "会直接摇头拒绝。"
             "函数无提升——f(); fun f() {} 会报\"未定义的函数\"。"
             "支持闭包与 upvalue 捕获（3+ 层）。",
             "fun add(a, b = 1) {\n    return a + b;\n}\nprint(add(5));     // 6\nprint(add(5, 2));  // 7",
@@ -134,36 +134,36 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 函数无提升（hoisting），必须先声明后使用\n"
             "    • 默认参数仅接受字面量 + 负数字面量\n"
             "    • 支持闭包与 upvalue 捕获（3+ 层嵌套）\n"
-            "    • return 不在函数末尾时需要明确返回值"
-        },
-        SyntaxProduction{
-            "class-decl", "🏛️ 类与继承",
-            "classDecl := \"class\" IDENTIFIER (\"extends\" IDENTIFIER)? classBody\n"
-            "classBody := \"{\" (varDecl | funDecl)* \"}\"",
-            "🏛️ 面向对象就靠它。`class` 里能装变量和方法，`extends` 后面跟父类名——这个名字是运行时才去字符串里翻找的，不是编译期绑死。"
-            "类方法自动预留 slot 0 给 this，字段按继承链展平存储。"
-            "支持 super.method() 调用，三后端 super 调用语义一致。",
-            "class Animal {\n    fun init(name) { this.name = name; }\n    fun speak() { print(this.name); }\n}\nclass Dog extends Animal {\n    fun speak() {\n        super.speak();\n        print(\"(woof)\");\n    }\n}\nDog(\"Rex\").speak();",
-            "🏛️ 类声明的写法：\n\n"
-            "  必须以 class 关键字开头\n"
-            "  接着是类名（标识符）\n"
-            "  可选 extends 父类名: class Child extends Parent\n"
-            "  然后是类体 { }，包含字段声明和方法\n\n"
-            "  示例:\n"
-            "    ✓ class Point {\n"
-            "        var x = 0;\n"
-            "        var y = 0;\n"
-            "        fun init(x, y) { this.x = x; this.y = y; }\n"
-            "      }\n"
-            "    ✓ class Dog extends Animal { fun speak() { super.speak(); } }\n"
-            "    ✗ class { ... }              ← 缺少类名!\n\n"
-            "  注意事项:\n"
-            "    • 类方法自动预留 slot 0 给 this\n"
-            "    • 字段按继承链展平存储\n"
-            "    • super.method() 调用父类方法（三后端语义一致）\n"
-            "    • super 只能在类方法中使用（非方法上下文为运行时错误）\n"
-            "    • init 是构造方法，实例化时自动调用: Dog(\"Rex\") 会调用 Dog 的 init 方法"
-        },
+            "    • return 不在函数末尾时需要明确返回值"},
+        SyntaxProduction{"class-decl", "🏛️ 类与继承",
+                         "classDecl := \"class\" IDENTIFIER (\"extends\" IDENTIFIER)? classBody\n"
+                         "classBody := \"{\" (varDecl | funDecl)* \"}\"",
+                         "🏛️ 面向对象就靠它。`class` 里能装变量和方法，`extends` "
+                         "后面跟父类名——这个名字是运行时才去字符串里翻找的，不是编译期绑死。"
+                         "类方法自动预留 slot 0 给 this，字段按继承链展平存储。"
+                         "支持 super.method() 调用，三后端 super 调用语义一致。",
+                         "class Animal {\n    fun init(name) { this.name = name; }\n    fun speak() { "
+                         "print(this.name); }\n}\nclass Dog extends Animal {\n    fun speak() {\n        "
+                         "super.speak();\n        print(\"(woof)\");\n    }\n}\nDog(\"Rex\").speak();",
+                         "🏛️ 类声明的写法：\n\n"
+                         "  必须以 class 关键字开头\n"
+                         "  接着是类名（标识符）\n"
+                         "  可选 extends 父类名: class Child extends Parent\n"
+                         "  然后是类体 { }，包含字段声明和方法\n\n"
+                         "  示例:\n"
+                         "    ✓ class Point {\n"
+                         "        var x = 0;\n"
+                         "        var y = 0;\n"
+                         "        fun init(x, y) { this.x = x; this.y = y; }\n"
+                         "      }\n"
+                         "    ✓ class Dog extends Animal { fun speak() { super.speak(); } }\n"
+                         "    ✗ class { ... }              ← 缺少类名!\n\n"
+                         "  注意事项:\n"
+                         "    • 类方法自动预留 slot 0 给 this\n"
+                         "    • 字段按继承链展平存储\n"
+                         "    • super.method() 调用父类方法（三后端语义一致）\n"
+                         "    • super 只能在类方法中使用（非方法上下文为运行时错误）\n"
+                         "    • init 是构造方法，实例化时自动调用: Dog(\"Rex\") 会调用 Dog 的 init 方法"},
         SyntaxProduction{
             "try-stmt", "🛡️ try/catch 异常处理",
             "tryStmt := \"try\" block \"catch\" \"(\" IDENTIFIER \")\" block\n"
@@ -171,7 +171,8 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "🛡️ 兜底用的。`throw` 什么都能抛；`catch` 接住的值自己独占一个变量槽，免得把外层同名变量不小心盖掉。"
             "catch 块内 throw 会跳过清理代码——为正确处理，catch 块用 OP_TRY_BEGIN 包装，"
             "异常路径复制 cleanup 字节码后 OP_THROW rethrow。",
-            "fun divide(a, b) {\n    if (b == 0) throw \"Division by zero\";\n    return a / b;\n}\ntry {\n    print(divide(10, 0));\n} catch (e) {\n    print(\"Error: \" + e);\n}",
+            "fun divide(a, b) {\n    if (b == 0) throw \"Division by zero\";\n    return a / b;\n}\ntry {\n    "
+            "print(divide(10, 0));\n} catch (e) {\n    print(\"Error: \" + e);\n}",
             "🛡️ try/catch 异常处理的写法：\n\n"
             "  try 后跟一个代码块（可能出错的代码）\n"
             "  catch 后跟括号包裹的异常变量名和代码块\n"
@@ -187,16 +188,17 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • throw 可抛任意值（不限于 Error 对象）\n"
             "    • catch 变量独占 slot，防止覆盖外层变量\n"
             "    • finally 块无论是否异常都会执行（含 return 中断）\n"
-            "    • catch 块内 throw 会 rethrow，跳过清理代码（已正确处理）"
-        },
+            "    • catch 块内 throw 会 rethrow，跳过清理代码（已正确处理）"},
         SyntaxProduction{
             "import-stmt", "📦 模块导入",
             "importStmt := \"import\" (\"{\" IDENTIFIER (\",\" IDENTIFIER)* \"}\" | \"*\") \"from\" STRING \";\"\n"
             "exportStmt := \"export\" (varDecl | funDecl | classDecl)",
-            "📦 拆代码、拼代码就靠它。但 `import`/`export` 只能在最顶层用——你想在别处写，Parser 在 statement() 刚进门就把你拦下了。"
+            "📦 拆代码、拼代码就靠它。但 `import`/`export` 只能在最顶层用——你想在别处写，Parser 在 statement() "
+            "刚进门就把你拦下了。"
             "模块路径非空校验，路径遍历防护（拒绝 .. 父目录引用和绝对路径）。"
             "VM 路径通过编译期模块内联支持 import。",
-            "// 假设 utils.mini 中有 export fun greet(name) { ... }\nimport { greet } from \"utils.mini\";\nprint(greet(\"MiniLang\"));",
+            "// 假设 utils.mini 中有 export fun greet(name) { ... }\nimport { greet } from "
+            "\"utils.mini\";\nprint(greet(\"MiniLang\"));",
             "📦 import / export 模块系统的写法：\n\n"
             "  导入语法（两种形式）：\n"
             "    import { 名称1, 名称2 } from \"模块路径\";   // 命名导入\n"
@@ -216,11 +218,9 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • import / export 只能在顶层作用域使用\n"
             "    • 模块路径必须是字符串字面量\n"
             "    • 路径遍历防护：拒绝 .. 和绝对路径\n"
-            "    • 非导出顶层名称在导入方不可见（模块隔离）"
-        },
+            "    • 非导出顶层名称在导入方不可见（模块隔离）"},
         SyntaxProduction{
-            "string-interp", "🔤 字符串插值",
-            "interpolatedString := '\"' (stringPart | \"{\" expression \"}\")* '\"'",
+            "string-interp", "🔤 字符串插值", "interpolatedString := '\"' (stringPart | \"${\" expression \"}\")* '\"'",
             "🔤 字符串里想算点东西？把表达式塞进 `${ }` 就行。不过空着 `{}` 可不行，Parser 会当你写错了报语法错误。"
             "插值支持嵌套字符串、字典、数组，嵌套深度限制 64 层防栈溢出。"
             "Lexer 通过 INTERP_START/INTERP_END/STRING_PART 三种 token 类型识别。",
@@ -240,73 +240,71 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 用双引号 \" 而非单引号 '\n"
             "    • 空插值 {} 报语法错误\n"
             "    • 嵌套深度限制 64 层防栈溢出\n"
-            "    • 表达式会被自动 toString()"
-        },
-        SyntaxProduction{
-            "data-structures", "📚 数组与字典",
-            "arrayLiteral := \"[\" (expression (\",\" expression)*)? \"]\"\n"
-            "dictLiteral   := \"{\" (STRING \":\" expression (\",\" STRING \":\" expression)*)? \"}\"",
-            "📚 装数据的两个篮子。`[ ]` 是数组，`{ }` 是字典——字典的键必须是字符串（加引号），查一个不存在的键，它淡定地返回 null。"
-            "数组/字典使用 Copy-On-Write（COW），写前检查独占所有权。"
-            "支持索引读写（a[0] / d[\"key\"]）和嵌套索引赋值（a[0][1]=x）。",
-            "var arr = [1, 2, 3];\narr.push(4);\nprint(arr.len());  // 4\n\nvar cfg = {\"key\": \"value\", \"count\": 42};\nprint(cfg[\"key\"]);  // value",
-            "📚 数组与字典字面量的写法：\n\n"
-            "  数组：用方括号 [ ] 包裹，元素用逗号分隔\n"
-            "    ✓ [1, 2, 3]\n"
-            "    ✓ [\"a\", \"b\", \"c\"]\n"
-            "    ✓ []                  // 空数组\n"
-            "    ✓ [[1, 2], [3, 4]]    // 嵌套数组\n\n"
-            "  字典：用花括号 { } 包裹，键必须是字符串，键值用冒号分隔\n"
-            "    ✓ {\"name\": \"Alice\", \"age\": 30}\n"
-            "    ✓ {}                  // 空字典\n"
-            "    ✗ {name: \"Alice\"}     ← 键必须是字符串字面量!\n"
-            "    ✗ {\"key\" = \"value\"}  ← 必须用冒号 : 而非等号 =\n\n"
-            "  注意事项:\n"
-            "    • 字典键强制为 string 类型\n"
-            "    • 不存在的键返回 null（不报错）\n"
-            "    • 数组/字典使用 Copy-On-Write：a=b 共享数据，写时才复制\n"
-            "    • 支持索引读写：a[0] / d[\"key\"]\n"
-            "    • 支持嵌套索引赋值：a[0][1] = x"
-        },
-        SyntaxProduction{
-            "operators", "🔢 运算符与短路求值",
-            "expression := assignment\n"
-            "assignment := or_ (\"=\" assignment)?\n"
-            "or_  := and_ (\"or\" and_)*\n"
-            "and_ := equality (\"and\" equality)*\n"
-            "equality   := comparison ((\"==\" | \"!=\") comparison)*\n"
-            "comparison := term ((\"<\" | \">\" | \"<=\" | \">=\") term)*\n"
-            "term := factor ((\"+\" | \"-\") factor)*\n"
-            "factor := unary ((\"*\" | \"/\" | \"%\") unary)*\n"
-            "unary := (\"not\" | \"-\") unary | call",
-            "🔢 一串运算符排排坐，`*` 比 `+` 优先那种老规矩。顺带一句：整数除法截断向零，三个后端都这么算，谁也不许特立独行。"
-            "and/or 短路求值——左操作数决定结果时跳过右操作数求值，返回操作数原值（非布尔）。"
-            "+ 支持字符串拼接（任一操作数为字符串即触发）。",
-            "var x = 5;\nprint(x > 0 and \"positive\" or \"non-positive\");\nprint(7 / 2);    // 3\nprint(7.0 / 2);  // 3.5\nprint(0 or \"default\");  // \"default\"（0 为假，返回右值）",
-            "🔢 运算符的写法（按优先级从低到高）：\n\n"
-            "  or          （最低优先级）\n"
-            "  and\n"
-            "  ==  !=\n"
-            "  <   >   <=  >=\n"
-            "  +   -\n"
-            "  *   /   %\n"
-            "  not  -（一元）     （最高优先级）\n\n"
-            "  示例:\n"
-            "    ✓ 1 + 2 * 3              // = 7（乘法优先）\n"
-            "    ✓ (1 + 2) * 3            // = 9（括号改变优先级）\n"
-            "    ✓ 7 / 2                  // = 3（整数除法截断向零）\n"
-            "    ✓ 7.0 / 2                // = 3.5（浮点除法）\n"
-            "    ✓ x > 0 and x < 10       // 等价于 (x > 0) and (x < 10)\n"
-            "    ✓ \"a\" + \"b\"             // = \"ab\"（字符串拼接）\n"
-            "    ✗ 1 + 2 * 3 == 7 + 1     // 注意：等价于 ((1+(2*3))==7)+1，不是 1+((2*3)==(7+1))\n\n"
-            "  注意事项:\n"
-            "    • 整数除法截断向零：-7 / 2 = -3（不是 -4）\n"
-            "    • and/or 短路返回操作数原值（非布尔）：\n"
-            "        - 0 or \"default\" → \"default\"（左为假，返回右值）\n"
-            "        - \"hi\" and 0 → 0\n"
-            "    • not 返回布尔值\n"
-            "    • + 任一操作数为字符串即触发拼接：\"a\" + 1 → \"a1\""
-        }
-    };
+            "    • 表达式会被自动 toString()"},
+        SyntaxProduction{"data-structures", "📚 数组与字典",
+                         "arrayLiteral := \"[\" (expression (\",\" expression)*)? \"]\"\n"
+                         "dictLiteral   := \"{\" (STRING \":\" expression (\",\" STRING \":\" expression)*)? \"}\"",
+                         "📚 装数据的两个篮子。`[ ]` 是数组，`{ }` "
+                         "是字典——字典的键必须是字符串（加引号），查一个不存在的键，它淡定地返回 null。"
+                         "数组/字典使用 Copy-On-Write（COW），写前检查独占所有权。"
+                         "支持索引读写（a[0] / d[\"key\"]）和嵌套索引赋值（a[0][1]=x）。",
+                         "var arr = [1, 2, 3];\narr.push(4);\nprint(arr.len());  // 4\n\nvar cfg = {\"key\": "
+                         "\"value\", \"count\": 42};\nprint(cfg[\"key\"]);  // value",
+                         "📚 数组与字典字面量的写法：\n\n"
+                         "  数组：用方括号 [ ] 包裹，元素用逗号分隔\n"
+                         "    ✓ [1, 2, 3]\n"
+                         "    ✓ [\"a\", \"b\", \"c\"]\n"
+                         "    ✓ []                  // 空数组\n"
+                         "    ✓ [[1, 2], [3, 4]]    // 嵌套数组\n\n"
+                         "  字典：用花括号 { } 包裹，键必须是字符串，键值用冒号分隔\n"
+                         "    ✓ {\"name\": \"Alice\", \"age\": 30}\n"
+                         "    ✓ {}                  // 空字典\n"
+                         "    ✗ {name: \"Alice\"}     ← 键必须是字符串字面量!\n"
+                         "    ✗ {\"key\" = \"value\"}  ← 必须用冒号 : 而非等号 =\n\n"
+                         "  注意事项:\n"
+                         "    • 字典键强制为 string 类型\n"
+                         "    • 不存在的键返回 null（不报错）\n"
+                         "    • 数组/字典使用 Copy-On-Write：a=b 共享数据，写时才复制\n"
+                         "    • 支持索引读写：a[0] / d[\"key\"]\n"
+                         "    • 支持嵌套索引赋值：a[0][1] = x"},
+        SyntaxProduction{"operators", "🔢 运算符与短路求值",
+                         "expression := assignment\n"
+                         "assignment := or_ (\"=\" assignment)?\n"
+                         "or_  := and_ (\"or\" and_)*\n"
+                         "and_ := equality (\"and\" equality)*\n"
+                         "equality   := comparison ((\"==\" | \"!=\") comparison)*\n"
+                         "comparison := term ((\"<\" | \">\" | \"<=\" | \">=\") term)*\n"
+                         "term := factor ((\"+\" | \"-\") factor)*\n"
+                         "factor := unary ((\"*\" | \"/\" | \"%\") unary)*\n"
+                         "unary := (\"not\" | \"-\") unary | call",
+                         "🔢 一串运算符排排坐，`*` 比 `+` "
+                         "优先那种老规矩。顺带一句：整数除法截断向零，三个后端都这么算，谁也不许特立独行。"
+                         "and/or 短路求值——左操作数决定结果时跳过右操作数求值，返回操作数原值（非布尔）。"
+                         "+ 支持字符串拼接（任一操作数为字符串即触发）。",
+                         "var x = 5;\nprint(x > 0 and \"positive\" or \"non-positive\");\nprint(7 / 2);    // "
+                         "3\nprint(7.0 / 2);  // 3.5\nprint(0 or \"default\");  // \"default\"（0 为假，返回右值）",
+                         "🔢 运算符的写法（按优先级从低到高）：\n\n"
+                         "  or          （最低优先级）\n"
+                         "  and\n"
+                         "  ==  !=\n"
+                         "  <   >   <=  >=\n"
+                         "  +   -\n"
+                         "  *   /   %\n"
+                         "  not  -（一元）     （最高优先级）\n\n"
+                         "  示例:\n"
+                         "    ✓ 1 + 2 * 3              // = 7（乘法优先）\n"
+                         "    ✓ (1 + 2) * 3            // = 9（括号改变优先级）\n"
+                         "    ✓ 7 / 2                  // = 3（整数除法截断向零）\n"
+                         "    ✓ 7.0 / 2                // = 3.5（浮点除法）\n"
+                         "    ✓ x > 0 and x < 10       // 等价于 (x > 0) and (x < 10)\n"
+                         "    ✓ \"a\" + \"b\"             // = \"ab\"（字符串拼接）\n"
+                         "    ✗ 1 + 2 * 3 == 7 + 1     // 注意：等价于 ((1+(2*3))==7)+1，不是 1+((2*3)==(7+1))\n\n"
+                         "  注意事项:\n"
+                         "    • 整数除法截断向零：-7 / 2 = -3（不是 -4）\n"
+                         "    • and/or 短路返回操作数原值（非布尔）：\n"
+                         "        - 0 or \"default\" → \"default\"（左为假，返回右值）\n"
+                         "        - \"hi\" and 0 → 0\n"
+                         "    • not 返回布尔值\n"
+                         "    • + 任一操作数为字符串即触发拼接：\"a\" + 1 → \"a1\""}};
     return kItems;
 }

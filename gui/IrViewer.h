@@ -1,9 +1,9 @@
 #pragma once
 
-#include <QWidget>
-#include <QTextBrowser>
-#include <vector>
 #include "compiler/IR.h"
+#include <QTextBrowser>
+#include <QWidget>
+#include <vector>
 
 // ============================================================
 // IrViewer - IR 中间表示可视化面板（第八轮重构）
@@ -39,7 +39,7 @@ public:
 
     /// 按字节码偏移高亮 IR 指令
     void highlightByBytecodeOffset(const std::vector<std::pair<size_t, size_t>>& irToBytecodeOffset,
-                                    size_t currentBytecodeOffset);
+                                   size_t currentBytecodeOffset);
 
     /// 清除高亮
     void clearHighlight();

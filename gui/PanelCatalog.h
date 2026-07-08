@@ -24,21 +24,21 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
 
 /// 单个教学面板元数据
 struct PanelEntry {
-    const char* id;       // 面板唯一标识（如 "vm-sandbox"）
-    const char* label;    // 显示名（如 "VM 沙盒"，已通过 mlTr 国际化）
-    const char* emoji;    // 前缀 emoji
+    const char* id;    // 面板唯一标识（如 "vm-sandbox"）
+    const char* label; // 显示名（如 "VM 沙盒"，已通过 mlTr 国际化）
+    const char* emoji; // 前缀 emoji
 };
 
 /// 教学面板分类节点
 struct PanelCategory {
-    const char* title;    // 分类标题（如 "入门导览"）
-    const char* emoji;    // 分类前缀 emoji
+    const char* title; // 分类标题（如 "入门导览"）
+    const char* emoji; // 分类前缀 emoji
     std::vector<PanelEntry> leaves;
 };
 

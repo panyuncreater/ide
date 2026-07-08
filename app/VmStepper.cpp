@@ -1,6 +1,6 @@
 #include "VmStepper.h"
 #include "Logger.h"
-#include <QCoreApplication>  // BUG-IDE-18 fix: processEvents 让出事件循环
+#include <QCoreApplication> // BUG-IDE-18 fix: processEvents 让出事件循环
 
 // ============================================================
 // VmStepper — VM 单步执行状态机实现（ARCH-11 拆分自 IdeController）
@@ -11,8 +11,7 @@
 // 状态机逻辑（步进循环/断点检查/RUN 异步分批）完全复用，与后端解耦。
 // ============================================================
 
-VmStepper::VmStepper(QObject* parent)
-    : QObject(parent) {
+VmStepper::VmStepper(QObject* parent) : QObject(parent) {
     // QT-R-01 fix: 创建 RUN 模式分批执行定时器（0ms 间隔 = 尽快触发但让出事件循环）
     vmRunTimer_ = new QTimer(this);
     vmRunTimer_->setInterval(0);
@@ -95,12 +94,12 @@ VmStepper::VmStepResult VmStepper::step() {
 
 /// 按当前单步模式（stepIn/Over/Out/Run）分派到对应推进策略。
 VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
-    if (isVmRunning_) return VmStepResult::NOT_READY;
+    if (isVmRunning_)
+        return VmStepResult::NOT_READY;
 
     // A1 fix: 编译结果存在性检查（双后端）
-    bool hasCompileResult = useRegister_
-        ? (lastRegCompileResult_ && !lastRegCompileResult_->mainChunk.code.empty())
-        : (lastCompileResult_ && !lastCompileResult_->mainChunk.code.empty());
+    bool hasCompileResult = useRegister_ ? (lastRegCompileResult_ && !lastRegCompileResult_->mainChunk.code.empty())
+                                         : (lastCompileResult_ && !lastCompileResult_->mainChunk.code.empty());
     if (!hasCompileResult) {
         return VmStepResult::NOT_READY;
     }
@@ -173,7 +172,7 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             // BUG-GUI-AUDIT-1 fix attempt: 原审计建议增加 ExcludeTimers 排除定时器事件，
             // 避免 CallStackPanel/VariableInspectorPanel 等 500ms 轮询定时器在
             // STEP 中途触发重入。但 Qt 6 的 QEventLoop 已移除通用 ExcludeTimers flag
-            //（仅保留 X11 平台特定的 X11ExcludeTimers，Windows 上无效）。
+            // （仅保留 X11 平台特定的 X11ExcludeTimers，Windows 上无效）。
             // 替代方案: 1) 临时停止特定定时器（需访问 timer 对象，VmStepper 不持有）；
             //          2) 改用 sendPostedEvents()（仅处理 posted events，不刷新绘制）。
             // 当前折中: 保持 ExcludeUserInputEvents，定时器重入风险作为已知限制保留。
@@ -201,7 +200,7 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             // A4 fix: 所有模式的循环上限保护
             if (stepCount >= MAX_STEP_LOOP) {
                 isVmRunning_ = false;
-                return VmStepResult::OK;  // 返回 OK 让 UI 更新，用户可继续
+                return VmStepResult::OK; // 返回 OK 让 UI 更新，用户可继续
             }
 
             // A4 fix: 检查是否应暂停
@@ -221,12 +220,11 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 }
                 vmLastSeenLine_ = currentLine;
             }
-            if (checkBreakpointHit(currentLine) &&
-                (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
+            if (checkBreakpointHit(currentLine) && (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                 // AUDIT-P2-CORRECT fix: hitCount 递增移到过滤条件通过后，避免过度递增
                 vmBreakpointHitCounts_[currentLine]++;
                 vmLastPausedLine_ = currentLine;
-                vmCrossedLine_ = false;  // 命中后重置，同行后续指令不再触发
+                vmCrossedLine_ = false; // 命中后重置，同行后续指令不再触发
                 isVmRunning_ = false;
                 return VmStepResult::PAUSED_AT_BREAKPOINT;
             }
@@ -273,8 +271,8 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 // 单行循环（如 for (...; ...; ...) foo();）STEP_OUT 后永不暂停（行号不变），
                 // 直到循环结束才停止。修复：与 STEP_OVER 顶层对齐，使用 crossedLine_ 机制
                 // 允许跨行后同行暂停。同时引入 vmCrossedDeeper_ 判断，与 STEP_OVER 一致。
-                else if (currentFrameCount <= 1 && currentLine > 0
-                         && (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                else if (currentFrameCount <= 1 && currentLine > 0 &&
+                         (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                     shouldPause = true;
                 }
                 break;
@@ -311,9 +309,8 @@ void VmStepper::runBatch() {
     // P1-5 fix: runBatch 缺少 hasCompileResult 保护。原实现假设 caller stepByMode
     // 已通过 initActiveExecution 检查，但若 VM 状态被外部清空（如 stop() 后定时器
     // 仍在 pending），会调用 stepOnceActive() 操作未初始化 VM。
-    bool hasCompileResult = useRegister_
-        ? (lastRegCompileResult_ && !lastRegCompileResult_->mainChunk.code.empty())
-        : (lastCompileResult_ && !lastCompileResult_->mainChunk.code.empty());
+    bool hasCompileResult = useRegister_ ? (lastRegCompileResult_ && !lastRegCompileResult_->mainChunk.code.empty())
+                                         : (lastCompileResult_ && !lastCompileResult_->mainChunk.code.empty());
     if (!hasCompileResult || !isVmInitialized_) {
         vmRunTimer_->stop();
         isVmRunning_ = false;
@@ -346,7 +343,7 @@ void VmStepper::runBatch() {
             if (vmRunStepCount_ >= MAX_TOTAL_STEPS) {
                 vmRunTimer_->stop();
                 isVmRunning_ = false;
-                emit vmRunPaused(VmStepResult::OK);  // 返回 OK 让 UI 更新，用户可继续
+                emit vmRunPaused(VmStepResult::OK); // 返回 OK 让 UI 更新，用户可继续
                 return;
             }
 
@@ -371,13 +368,12 @@ void VmStepper::runBatch() {
                 }
                 vmLastSeenLine_ = currentLine;
             }
-            if (checkBreakpointHit(currentLine) &&
-                (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
+            if (checkBreakpointHit(currentLine) && (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                 // AUDIT-P2-CORRECT fix: hitCount 递增移到过滤条件通过后，避免过度递增
                 vmBreakpointHitCounts_[currentLine]++;
                 vmRunTimer_->stop();
                 vmLastPausedLine_ = currentLine;
-                vmCrossedLine_ = false;  // 命中后重置，同行后续指令不再触发
+                vmCrossedLine_ = false; // 命中后重置，同行后续指令不再触发
                 isVmRunning_ = false;
                 emit vmRunPaused(VmStepResult::PAUSED_AT_BREAKPOINT);
                 return;
@@ -396,14 +392,15 @@ void VmStepper::runBatch() {
 /// 停止 VM 执行：中断运行循环并复位执行状态。
 void VmStepper::stop() {
     // QT-R-01 fix: 停止 RUN 模式定时器
-    if (vmRunTimer_) vmRunTimer_->stop();
+    if (vmRunTimer_)
+        vmRunTimer_->stop();
     // A1 fix: 重置当前活跃后端（非活跃后端已在 reset() 中重置，此处仅清理活跃方）
     resetActiveState();
     isVmInitialized_ = false;
     isVmRunning_ = false;
     vmStepMode_ = VmStepMode::STEP_IN;
     vmLastPausedLine_ = 0;
-    vmCrossedDeeper_ = false;  // AUDIT-BUG-D2 fix: reset 重置
+    vmCrossedDeeper_ = false; // AUDIT-BUG-D2 fix: reset 重置
     // BUG-DBG-2 fix: 同步重置 crossedLine_ 状态，避免下一轮运行残留旧状态
     vmLastSeenLine_ = -1;
     vmCrossedLine_ = false;
@@ -423,7 +420,7 @@ bool VmStepper::checkBreakpointHit(int line) {
     // #4 fix: 检查是否有条件表达式
     auto condIt = vmBreakpointConditions_.find(line);
     if (condIt == vmBreakpointConditions_.end() || condIt->empty()) {
-        return true;  // 无条件断点：直接命中
+        return true; // 无条件断点：直接命中
     }
     // #4 fix: 条件断点：调用求值器（由 IdeController 注入，使用临时 Interpreter + VM 全局变量）
     if (vmConditionEvaluator_) {
@@ -434,4 +431,3 @@ bool VmStepper::checkBreakpointHit(int line) {
     // 用户设置的条件被完全忽略。返回 false 更安全（不暂停而非总是暂停）。
     return false;
 }
-

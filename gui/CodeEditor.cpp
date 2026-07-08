@@ -1,26 +1,25 @@
 #include "gui/CodeEditor.h"
-#include <QPainter>
-#include <QTextBlock>
-#include <QMouseEvent>
-#include <QContextMenuEvent>
-#include <QScrollBar>
-#include <QTextCharFormat>
-#include <QMenu>
-#include <QLineEdit>
-#include <QCompleter>
-#include <QStringListModel>
-#include <QKeyEvent>
+#include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
+#include "gui/I18n.h"         // 功能 13：mlTr() 国际化
 #include <QAbstractItemView>
-#include <QScrollBar>
+#include <QCompleter>
+#include <QContextMenuEvent>
 #include <QDialog>
-#include <QListWidget>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QPushButton>
 #include <QDialogButtonBox>
+#include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
-#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
-#include "gui/I18n.h"           // 功能 13：mlTr() 国际化
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPushButton>
+#include <QScrollBar>
+#include <QStringListModel>
+#include <QTextBlock>
+#include <QTextCharFormat>
+#include <QVBoxLayout>
 
 // ============================================================
 // CodeEditor 代码编辑器实现
@@ -33,8 +32,7 @@
 // LineNumberArea 行号区域
 // ============================================================
 
-LineNumberArea::LineNumberArea(QPlainTextEdit* editor, QWidget* parent)
-    : QWidget(parent), editor_(editor) {
+LineNumberArea::LineNumberArea(QPlainTextEdit* editor, QWidget* parent) : QWidget(parent), editor_(editor) {
     setAutoFillBackground(true);
 }
 
@@ -44,7 +42,8 @@ QSize LineNumberArea::sizeHint() const {
 
 void LineNumberArea::paintEvent(QPaintEvent* event) {
     CodeEditor* codeEditor = qobject_cast<CodeEditor*>(editor_);
-    if (!codeEditor) return;
+    if (!codeEditor)
+        return;
 
     QPainter painter(this);
     // F9: 主题感知背景色
@@ -58,8 +57,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
     QTextBlock block = codeEditor->firstVisibleBlock();
     int blockNumber = block.blockNumber();
-    int top = static_cast<int>(codeEditor->blockBoundingGeometry(block)
-                                .translated(codeEditor->contentOffset()).top());
+    int top = static_cast<int>(codeEditor->blockBoundingGeometry(block).translated(codeEditor->contentOffset()).top());
     int bottom = top + static_cast<int>(codeEditor->blockBoundingRect(block).height());
 
     while (block.isValid() && top <= event->rect().bottom()) {
@@ -71,8 +69,8 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                 // P-IDE-5 fix: 重新设计断点圆点样式——抗锯齿 + 径向渐变 + 外环描边，
                 // 条件断点附加金色外环以增强视觉区分度。原实现在 paintEvent 全局
                 // 无抗锯齿且用纯色 drawEllipse，圆点边缘锯齿明显，视觉粗糙。
-                bool hasCondition = codeEditor->breakpointConditions_.contains(lineNumber)
-                                    && !codeEditor->breakpointConditions_[lineNumber].empty();
+                bool hasCondition = codeEditor->breakpointConditions_.contains(lineNumber) &&
+                                    !codeEditor->breakpointConditions_[lineNumber].empty();
                 // 抗锯齿：仅在此圆点绘制阶段开启，避免影响行号文字渲染
                 painter.save();
                 painter.setRenderHint(QPainter::Antialiasing, true);
@@ -92,8 +90,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                 painter.drawEllipse(QPointF(cx, cy), radius + 3.0, radius + 3.0);
 
                 // 2) 主圆点——径向渐变（中心高光 → 边缘深色），产生立体感
-                QRadialGradient gradient(QPointF(cx - radius * 0.3, cy - radius * 0.3),
-                                         radius * 1.4);
+                QRadialGradient gradient(QPointF(cx - radius * 0.3, cy - radius * 0.3), radius * 1.4);
                 QColor highlight = coreColor.lighter(140);
                 gradient.setColorAt(0.0, highlight);
                 gradient.setColorAt(1.0, coreColor);
@@ -112,10 +109,9 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
             // 绘制行号
             // F9: 主题感知文字颜色
-    QColor numColor = codeEditor->isDarkTheme_ ? QColor(115, 115, 115) : QColor(0x65, 0x7b, 0x83);
+            QColor numColor = codeEditor->isDarkTheme_ ? QColor(115, 115, 115) : QColor(0x65, 0x7b, 0x83);
             painter.setPen(numColor);
-            painter.drawText(0, top, width() - 20, bottom - top,
-                             Qt::AlignRight | Qt::AlignVCenter,
+            painter.drawText(0, top, width() - 20, bottom - top, Qt::AlignRight | Qt::AlignVCenter,
                              QString::number(lineNumber));
 
             // F8: 绘制折叠标记（右侧）—— VS Code 风格雪佛龙箭头
@@ -126,14 +122,14 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                 const int cx = width() - 9;
                 const int cy = (top + bottom) / 2;
                 // F9: 主题感知折叠标记颜色——折叠态用主题蓝强调，展开态用次要灰
-                QColor arrowColor = folded
-                    ? (codeEditor->isDarkTheme_ ? QColor(0x6c, 0x71, 0xc4) : QColor(0x26, 0x8b, 0xd2))
-                    : (codeEditor->isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x58, 0x6e, 0x75));
+                QColor arrowColor =
+                    folded ? (codeEditor->isDarkTheme_ ? QColor(0x6c, 0x71, 0xc4) : QColor(0x26, 0x8b, 0xd2))
+                           : (codeEditor->isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x58, 0x6e, 0x75));
                 painter.save();
                 painter.setRenderHint(QPainter::Antialiasing, true);
                 painter.setPen(QPen(arrowColor, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
                 painter.setBrush(Qt::NoBrush);
-                const int s = 4;  // 雪佛龙半臂长度
+                const int s = 4; // 雪佛龙半臂长度
                 if (folded) {
                     // 向右箭头 ▷：从左上到右尖再到左下
                     painter.drawLine(cx - s, cy - s, cx + s, cy);
@@ -156,7 +152,8 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
 void LineNumberArea::mousePressEvent(QMouseEvent* event) {
     CodeEditor* codeEditor = qobject_cast<CodeEditor*>(editor_);
-    if (!codeEditor) return;
+    if (!codeEditor)
+        return;
 
     // F8: 检查是否点击了折叠区域（右侧 14px）
     int clickX = static_cast<int>(event->position().x());
@@ -182,10 +179,9 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
     // 导致空白区域点击在最后一行设置断点。检查 Y 坐标是否超出最后一个块的下边界。
     QTextBlock lastBlock = codeEditor->document()->lastBlock();
     qreal lastBlockBottom = static_cast<qreal>(
-        codeEditor->blockBoundingGeometry(lastBlock)
-            .translated(codeEditor->contentOffset()).bottom());
+        codeEditor->blockBoundingGeometry(lastBlock).translated(codeEditor->contentOffset()).bottom());
     if (static_cast<qreal>(event->position().y()) >= lastBlockBottom) {
-        return;  // 点击在最后一行下方的空白区域，不设置断点
+        return; // 点击在最后一行下方的空白区域，不设置断点
     }
 
     // DB-2 fix: 不允许在空行/纯注释行设置断点
@@ -197,7 +193,7 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
         int s = block.userState();
         bool isCommentLine = text.startsWith("//") || s == 2 || s >= 100;
         if (text.isEmpty() || isCommentLine) {
-            return;  // 跳过不可执行行
+            return; // 跳过不可执行行
         }
     }
 
@@ -219,7 +215,8 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
 
 void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
     CodeEditor* codeEditor = qobject_cast<CodeEditor*>(editor_);
-    if (!codeEditor) return;
+    if (!codeEditor)
+        return;
 
     // 将 Y 坐标映射到行号
     QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->pos().y())));
@@ -230,21 +227,19 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
     // 导致空白区域右键在最后一行误触发条件菜单。
     QTextBlock lastBlock = codeEditor->document()->lastBlock();
     qreal lastBlockBottom = static_cast<qreal>(
-        codeEditor->blockBoundingGeometry(lastBlock)
-            .translated(codeEditor->contentOffset()).bottom());
+        codeEditor->blockBoundingGeometry(lastBlock).translated(codeEditor->contentOffset()).bottom());
     if (static_cast<qreal>(event->pos().y()) >= lastBlockBottom) {
-        return;  // 点击在最后一行下方的空白区域
+        return; // 点击在最后一行下方的空白区域
     }
 
-    if (!codeEditor->breakpoints_.contains(lineNumber)) return;
+    if (!codeEditor->breakpoints_.contains(lineNumber))
+        return;
 
     QMenu menu(this);
     QString currentCond = QString::fromStdString(codeEditor->getBreakpointCondition(lineNumber));
 
-    QAction* setCondAction = menu.addAction(
-        currentCond.isEmpty()
-            ? QString("设置条件... (行 %1)").arg(lineNumber)
-            : QString("修改条件: \"%1\"").arg(currentCond));
+    QAction* setCondAction = menu.addAction(currentCond.isEmpty() ? QString("设置条件... (行 %1)").arg(lineNumber)
+                                                                  : QString("修改条件: \"%1\"").arg(currentCond));
 
     QAction* removeCondAction = nullptr;
     if (!currentCond.isEmpty()) {
@@ -264,36 +259,36 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         // Fluent 色板（亮色主题，与 IDE 整体风格一致）
         const QString bgSurf = "#FDF6E3";
         const QString fgPrim = "#002B36";
-        const QString fgSec  = "#657B83";
+        const QString fgSec = "#657B83";
         const QString accent = "#268BD2";
         const QString border = "#93A1A1";
         const QString warnFg = "#B58900";
-        const QString btnBg  = "#268BD2";
+        const QString btnBg = "#268BD2";
         const QString btnHov = "#1E6FA3";
 
-        dlg.setStyleSheet(QString(
-            "QDialog { background: %1; border-radius: 8px; }"
-            "QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }"
-            "QLabel#condHint  { font-size: 11px; color: %3; }"
-            "QLabel#condWarn  { font-size: 11px; color: %4; }"
-            "QLineEdit#condEdit { "
-            "  background: #FFFFFF; color: %2; "
-            "  border: 1px solid %5; border-radius: 4px; "
-            "  padding: 6px 8px; font-family: 'Consolas','Cascadia Mono','Courier New',monospace; "
-            "  font-size: 13px; "
-            "} "
-            "QLineEdit#condEdit:focus { border: 1px solid %6; }"
-            "QPushButton#condOk { "
-            "  background: %7; color: #FFFFFF; border: none; border-radius: 4px; "
-            "  padding: 6px 18px; font-size: 13px; font-weight: 500; "
-            "} "
-            "QPushButton#condOk:hover { background: %8; }"
-            "QPushButton#condCancel { "
-            "  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; "
-            "  padding: 6px 14px; font-size: 13px; "
-            "} "
-            "QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"
-        ).arg(bgSurf, fgPrim, fgSec, warnFg, border, accent, btnBg, btnHov));
+        dlg.setStyleSheet(
+            QString("QDialog { background: %1; border-radius: 8px; }"
+                    "QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }"
+                    "QLabel#condHint  { font-size: 11px; color: %3; }"
+                    "QLabel#condWarn  { font-size: 11px; color: %4; }"
+                    "QLineEdit#condEdit { "
+                    "  background: #FFFFFF; color: %2; "
+                    "  border: 1px solid %5; border-radius: 4px; "
+                    "  padding: 6px 8px; font-family: 'Consolas','Cascadia Mono','Courier New',monospace; "
+                    "  font-size: 13px; "
+                    "} "
+                    "QLineEdit#condEdit:focus { border: 1px solid %6; }"
+                    "QPushButton#condOk { "
+                    "  background: %7; color: #FFFFFF; border: none; border-radius: 4px; "
+                    "  padding: 6px 18px; font-size: 13px; font-weight: 500; "
+                    "} "
+                    "QPushButton#condOk:hover { background: %8; }"
+                    "QPushButton#condCancel { "
+                    "  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; "
+                    "  padding: 6px 14px; font-size: 13px; "
+                    "} "
+                    "QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }")
+                .arg(bgSurf, fgPrim, fgSec, warnFg, border, accent, btnBg, btnHov));
 
         auto* layout = new QVBoxLayout(&dlg);
         layout->setContentsMargins(20, 16, 20, 16);
@@ -303,8 +298,7 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         titleLabel->setObjectName("condTitle");
         layout->addWidget(titleLabel);
 
-        auto* hintLabel = new QLabel(
-            QString("输入条件表达式（例如 i == 5 或 x > 10）"), &dlg);
+        auto* hintLabel = new QLabel(QString("输入条件表达式（例如 i == 5 或 x > 10）"), &dlg);
         hintLabel->setObjectName("condHint");
         hintLabel->setWordWrap(true);
         layout->addWidget(hintLabel);
@@ -314,8 +308,7 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         edit->setPlaceholderText("留空则变为无条件断点");
         layout->addWidget(edit);
 
-        auto* warnLabel = new QLabel(
-            QString("提示：条件为假时断点不会暂停；语法错误会导致断点失效。"), &dlg);
+        auto* warnLabel = new QLabel(QString("提示：条件为假时断点不会暂停；语法错误会导致断点失效。"), &dlg);
         warnLabel->setObjectName("condWarn");
         warnLabel->setWordWrap(true);
         layout->addWidget(warnLabel);
@@ -346,7 +339,7 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
                 codeEditor->breakpointConditions_[lineNumber] = condStr;
             }
             emit codeEditor->breakpointConditionRequested(lineNumber, condTrimmed);
-            update();  // 刷新颜色（红/橙）
+            update(); // 刷新颜色（红/橙）
         }
     } else if (chosen == removeCondAction) {
         codeEditor->breakpointConditions_.remove(lineNumber);
@@ -359,8 +352,7 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
 // CodeEditor 代码编辑器
 // ============================================================
 
-CodeEditor::CodeEditor(QWidget* parent)
-    : QPlainTextEdit(parent) {
+CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     lineNumberArea_ = new LineNumberArea(this, this);
 
     connect(this, &CodeEditor::blockCountChanged, this, &CodeEditor::updateLineNumberAreaWidth);
@@ -373,7 +365,8 @@ CodeEditor::CodeEditor(QWidget* parent)
     lineHighlightTimer_->setInterval(16);
     connect(lineHighlightTimer_, &QTimer::timeout, this, &CodeEditor::highlightCurrentLine);
     connect(this, &CodeEditor::cursorPositionChanged, this, [this]() {
-        if (lineHighlightTimer_) lineHighlightTimer_->start();
+        if (lineHighlightTimer_)
+            lineHighlightTimer_->start();
         // 功能 13：光标移出当前占位符范围时清理 snippet 导航状态。
         // isSnippetNavigating_ 用于排除程序化光标移动（Tab 跳转 / 初始展开选中）。
         if (currentPlaceholderIdx_ >= 0 && !isSnippetNavigating_) {
@@ -389,21 +382,18 @@ CodeEditor::CodeEditor(QWidget* parent)
 
     // BUG-CE-2/CE-3 fix: 监听文档内容变化，文档修改后调整断点/折叠块号偏移。
     // 原实现未监听 contentsChange，文档修改后断点和折叠停留在原行号，导致行号错位。
-    contentsChangeConn_ = connect(document(), &QTextDocument::contentsChange,
-        this, &CodeEditor::onContentsChange);
+    contentsChangeConn_ = connect(document(), &QTextDocument::contentsChange, this, &CodeEditor::onContentsChange);
     lastBlockCount_ = document()->blockCount();
 
     // 功能 13：监听文档内容变化，同步更新 snippet 占位符范围。
     // 与 onContentsChange 独立连接，互不干扰——breakpoint 偏移按行号 delta，
     // 占位符偏移按字符 delta，两者维度不同。
-    connect(document(), &QTextDocument::contentsChange,
-        this, [this](int position, int charsRemoved, int charsAdded) {
-            updatePlaceholderRanges(position, charsRemoved, charsAdded);
-        });
+    connect(document(), &QTextDocument::contentsChange, this, [this](int position, int charsRemoved, int charsAdded) {
+        updatePlaceholderRanges(position, charsRemoved, charsAdded);
+    });
 
     // H2: 光标移动时高亮匹配的括号
-    connect(this, &QPlainTextEdit::cursorPositionChanged,
-            this, &CodeEditor::highlightBracketMatch);
+    connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEditor::highlightBracketMatch);
 
     updateLineNumberAreaWidth(0);
     highlightCurrentLine();
@@ -421,45 +411,42 @@ CodeEditor::CodeEditor(QWidget* parent)
     completer_->setCompletionMode(QCompleter::PopupCompletion);
     completer_->setCaseSensitivity(Qt::CaseInsensitive);
     completer_->setFilterMode(Qt::MatchStartsWith);
-    connect(completer_, QOverload<const QString&>::of(&QCompleter::activated),
-            this, &CodeEditor::insertCompletion);
+    connect(completer_, QOverload<const QString&>::of(&QCompleter::activated), this, &CodeEditor::insertCompletion);
 
     // P-IDE-5 fix: 为补全弹窗应用 Fluent 风格 QSS，与 IDE 整体视觉语言统一。
     // 默认 QListView popup 在 Windows 原生主题下边框生硬、选中色为蓝色块状，
     // 与 IDE 的 Solarized 亮色 + Fluent 圆角风格不协调。
     if (completer_->popup()) {
-        completer_->popup()->setStyleSheet(
-            "QListView { "
-            "  background: #FDF6E3; "
-            "  color: #002B36; "
-            "  border: 1px solid #93A1A1; "
-            "  border-radius: 6px; "
-            "  padding: 4px; "
-            "  font-family: 'Consolas','Cascadia Mono','Courier New',monospace; "
-            "  font-size: 12px; "
-            "  outline: none; "
-            "} "
-            "QListView::item { "
-            "  padding: 4px 10px; "
-            "  border-radius: 4px; "
-            "} "
-            "QListView::item:selected { "
-            "  background: #268BD2; "
-            "  color: #FFFFFF; "
-            "} "
-            "QListView::item:hover:!selected { "
-            "  background: rgba(38, 139, 210, 0.12); "
-            "  color: #002B36; "
-            "} "
-            "QScrollBar:vertical { "
-            "  background: transparent; width: 8px; margin: 2px; "
-            "} "
-            "QScrollBar::handle:vertical { "
-            "  background: #93A1A1; border-radius: 4px; min-height: 20px; "
-            "} "
-            "QScrollBar::handle:vertical:hover { background: #657B83; } "
-            "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }"
-        );
+        completer_->popup()->setStyleSheet("QListView { "
+                                           "  background: #FDF6E3; "
+                                           "  color: #002B36; "
+                                           "  border: 1px solid #93A1A1; "
+                                           "  border-radius: 6px; "
+                                           "  padding: 4px; "
+                                           "  font-family: 'Consolas','Cascadia Mono','Courier New',monospace; "
+                                           "  font-size: 12px; "
+                                           "  outline: none; "
+                                           "} "
+                                           "QListView::item { "
+                                           "  padding: 4px 10px; "
+                                           "  border-radius: 4px; "
+                                           "} "
+                                           "QListView::item:selected { "
+                                           "  background: #268BD2; "
+                                           "  color: #FFFFFF; "
+                                           "} "
+                                           "QListView::item:hover:!selected { "
+                                           "  background: rgba(38, 139, 210, 0.12); "
+                                           "  color: #002B36; "
+                                           "} "
+                                           "QScrollBar:vertical { "
+                                           "  background: transparent; width: 8px; margin: 2px; "
+                                           "} "
+                                           "QScrollBar::handle:vertical { "
+                                           "  background: #93A1A1; border-radius: 4px; min-height: 20px; "
+                                           "} "
+                                           "QScrollBar::handle:vertical:hover { background: #657B83; } "
+                                           "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }");
     }
 }
 
@@ -512,14 +499,19 @@ void CodeEditor::setErrorRanges(const std::vector<ErrorRange>& ranges) {
             int startPos = block.position();
             // EU-1 fix: 从列位置开始，精确标记错误 token
             int col = (r.column > 0) ? r.column - 1 : 0;
-            int blockTextLen = block.length() - 1;  // block.length() includes the newline
+            int blockTextLen = block.length() - 1; // block.length() includes the newline
             // BUG-CE-4 fix: 空行跳过，避免 len=1 选中换行符产生无效选区
-            if (blockTextLen <= 0) continue;
-            if (col >= blockTextLen) col = (blockTextLen > 0) ? blockTextLen - 1 : 0;
+            if (blockTextLen <= 0)
+                continue;
+            if (col >= blockTextLen)
+                col = (blockTextLen > 0) ? blockTextLen - 1 : 0;
             int len = (r.length > 0) ? r.length : blockTextLen - col;
-            if (len <= 0) len = blockTextLen - col;
-            if (len <= 0) len = 1;
-            if (col + len > blockTextLen) len = blockTextLen - col;
+            if (len <= 0)
+                len = blockTextLen - col;
+            if (len <= 0)
+                len = 1;
+            if (col + len > blockTextLen)
+                len = blockTextLen - col;
             sel.cursor = QTextCursor(document());
             sel.cursor.setPosition(startPos + col);
             sel.cursor.setPosition(startPos + col + len, QTextCursor::KeepAnchor);
@@ -548,9 +540,11 @@ void CodeEditor::clearCurrentLine() {
 }
 
 void CodeEditor::gotoLine(int line) {
-    if (line <= 0) return;
+    if (line <= 0)
+        return;
     QTextBlock block = document()->findBlockByNumber(line - 1);
-    if (!block.isValid()) return;
+    if (!block.isValid())
+        return;
     QTextCursor cursor(block);
     setTextCursor(cursor);
     centerCursor();
@@ -585,7 +579,8 @@ void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
     // DB-2 fix: 过滤空行和纯注释行，与 mousePressEvent 行为一致
     for (int line : breakpoints) {
         // G-P1-2 fix: 校验行号合法性，过滤 <= 0 的无效行号避免 findBlockByNumber 越界
-        if (line <= 0) continue;
+        if (line <= 0)
+            continue;
         QTextBlock block = document()->findBlockByNumber(line - 1);
         if (block.isValid()) {
             QString text = block.text().trimmed();
@@ -593,12 +588,13 @@ void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
             // 或向后兼容编码 2 表示块注释跨行上下文）
             int s = block.userState();
             bool isCommentLine = text.startsWith("//") || s == 2 || s >= 100;
-            if (text.isEmpty() || isCommentLine) continue;
+            if (text.isEmpty() || isCommentLine)
+                continue;
         }
         breakpoints_.insert(line);
     }
     // 清理不再有效的断点条件
-    for (auto it = breakpointConditions_.begin(); it != breakpointConditions_.end(); ) {
+    for (auto it = breakpointConditions_.begin(); it != breakpointConditions_.end();) {
         if (!breakpoints_.contains(it.key())) {
             it = breakpointConditions_.erase(it);
         } else {
@@ -618,7 +614,8 @@ std::string CodeEditor::getBreakpointCondition(int line) const {
 
 void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded) {
     Q_UNUSED(charsRemoved);
-    Q_UNUSED(charsAdded);
+    // AUDIT-P1-CORRECT fix: charsAdded 用于多行删除场景推导实际删除行数，
+    // 不再 Q_UNUSED 丢弃。
 
     // BUG-CE-2/CE-3 fix: 文档内容变化后，断点（1-based 行号）、断点条件、
     // 折叠块（0-based blockNumber）以行号为 key，文档修改导致行号变化时需同步偏移。
@@ -629,12 +626,14 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     int newBlockCount = document()->blockCount();
     int delta = newBlockCount - lastBlockCount_;
     lastBlockCount_ = newBlockCount;
-    if (delta == 0) return;
+    if (delta == 0)
+        return;
 
     // 计算 position 所在行（1-based），仅调整 >= startLine 的行号
     QTextBlock block = document()->findBlock(position);
-    if (!block.isValid()) return;
-    int startLine = block.blockNumber() + 1;  // 1-based，变更起始行
+    if (!block.isValid())
+        return;
+    int startLine = block.blockNumber() + 1; // 1-based，变更起始行
 
     // BUG-GUI-AUDIT-2 fix: 区分"行末插入换行符"与"行首插入换行符"两种场景。
     //   - 行首插入换行符（光标在行首按 Enter）：新行创建在当前行之前，原行内容下移，
@@ -649,14 +648,75 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     if (delta > 0) {
         // 插入场景：若插入发生在块末尾换行符位置，原行内容不变，断点不应偏移。
         // 将 startLine +1 使原行 line < startLine，不参与偏移。
-        if (position >= block.position() + block.length() - 1) {
+        // AUDIT-P1-CORRECT fix: 添加 block.length() > 1 条件区分"行末插入"与"行首插入"。
+        //   - 行末插入：原块有内容（length > 1），position 在块末尾换行符位置 → 行末语义
+        //   - 行首插入：新块为空（length == 1），position 在块开头 → 行首语义（原行内容下移，断点应 +1）
+        // 原实现遗漏 length > 1 条件，导致行首插入被误判为行末插入，startLine 错误 +1，
+        // 原行断点未随内容下移（停留在新空行而非跟随原内容）。
+        if (block.length() > 1 && position >= block.position() + block.length() - 1) {
             ++startLine;
         }
     } else if (delta < 0) {
-        // 删除场景：若删除整行（含换行符）导致块数减少，原行被新内容占据。
-        // 断点应保持原行号（指向新移入的内容），不应 -1。
-        // 将 startLine +1 使原行 line < startLine，不参与偏移。
-        // 注：仅当 position 在块开头时才应用此修正（整行删除）。
+        // AUDIT-P1-CORRECT fix: 多行删除需正确处理被删除行区间内的断点。
+        // 原实现用 delta（NET 行数变化）统一偏移所有 >= startLine 的断点，
+        // 仅通过 startLine +1 保护一行。对于多行删除（delta = -N），中间被删除行
+        // 的断点被错误平移而非删除，导致断点指向错误行号。
+        //
+        // 利用 charsAdded 推导实际删除的行数：linesRemoved = linesAdded - delta
+        // （delta 为负，linesAdded 通常为 0 表示纯删除；替换场景 linesAdded > 0）
+        int linesAdded = 0;
+        if (charsAdded > 0) {
+            for (int i = position; i < position + charsAdded && i < document()->characterCount(); ++i) {
+                if (document()->characterAt(i) == '\n')
+                    ++linesAdded;
+            }
+        }
+        int linesRemoved = linesAdded - delta; // 实际删除的行数（delta 为负）
+
+        if (linesRemoved > 0) {
+            // 多行删除：需要删除被删除行区间内的断点
+            int firstDeletedLine = startLine;                   // 删除起始行
+            int lastDeletedLine = startLine + linesRemoved - 1; // 最后被删除行
+            // 断点 line <= firstDeletedLine：保持（VS Code 语义，指向合并后内容）
+            // 断点 firstDeletedLine < line <= lastDeletedLine：删除（不插入）
+            // 断点 line > lastDeletedLine：平移 delta
+            QSet<int> newBreakpoints;
+            QSet<int> breakpointsToRemove;
+            for (int line : breakpoints_) {
+                if (line <= firstDeletedLine) {
+                    newBreakpoints.insert(line);
+                } else if (line > lastDeletedLine) {
+                    int newLine = line + delta;
+                    if (newLine > 0)
+                        newBreakpoints.insert(newLine);
+                } else {
+                    breakpointsToRemove.insert(line);
+                }
+            }
+            breakpoints_ = newBreakpoints;
+            // 同理处理 breakpointConditions_：移除被删除行的条件
+            for (int line : breakpointsToRemove) {
+                breakpointConditions_.remove(line);
+            }
+            // 同理处理 foldedBlocks_（0-based blockNumber，与 1-based line 同步偏移）
+            QSet<int> newFolded;
+            for (int line : foldedBlocks_) {
+                if (line <= firstDeletedLine) {
+                    newFolded.insert(line);
+                } else if (line > lastDeletedLine) {
+                    int newLine = line + delta;
+                    if (newLine > 0)
+                        newFolded.insert(newLine);
+                }
+                // else: 在删除区间内，丢弃
+            }
+            foldedBlocks_ = newFolded;
+            update();
+            emit breakpointsChanged();
+            return;
+        }
+        // linesRemoved == 0：单行内删除（不改变行数，但 delta < 0 不应到达此处）
+        // 回退到原有单行删除逻辑
         if (position == block.position()) {
             ++startLine;
         }
@@ -670,7 +730,8 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
             newBreakpoints.insert(line);
         } else {
             int newLine = line + delta;
-            if (newLine > 0) newBreakpoints.insert(newLine);
+            if (newLine > 0)
+                newBreakpoints.insert(newLine);
         }
     }
     breakpoints_ = newBreakpoints;
@@ -683,7 +744,8 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
             newConditions[line] = it.value();
         } else {
             int newLine = line + delta;
-            if (newLine > 0) newConditions[newLine] = it.value();
+            if (newLine > 0)
+                newConditions[newLine] = it.value();
         }
     }
     breakpointConditions_ = std::move(newConditions);
@@ -691,13 +753,14 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     // BUG-CE-3 fix: 调整 foldedBlocks_（0-based blockNumber）
     QSet<int> newFolded;
     newFolded.reserve(foldedBlocks_.size());
-    int startBlockNumber = startLine - 1;  // 0-based
+    int startBlockNumber = startLine - 1; // 0-based
     for (int bn : foldedBlocks_) {
         if (bn < startBlockNumber) {
             newFolded.insert(bn);
         } else {
             int newBn = bn + delta;
-            if (newBn >= 0) newFolded.insert(newBn);
+            if (newBn >= 0)
+                newFolded.insert(newBn);
         }
     }
     foldedBlocks_ = newFolded;
@@ -776,7 +839,7 @@ void CodeEditor::highlightCurrentLine() {
 
 void CodeEditor::setFindSelections(const QList<QTextEdit::ExtraSelection>& selections) {
     findSelections_ = selections;
-    highlightCurrentLine();  // 触发重绘，合并所有 selections
+    highlightCurrentLine(); // 触发重绘，合并所有 selections
 }
 
 void CodeEditor::clearFindSelections() {
@@ -817,14 +880,15 @@ int countBracesInLine(const QString& text, bool& inBlockComment) {
         }
         if (inString) {
             if (c == '\\' && i + 1 < text.size()) {
-                i++;  // 跳过转义字符
+                i++; // 跳过转义字符
                 continue;
             }
-            if (c == '"') inString = false;
+            if (c == '"')
+                inString = false;
             continue;
         }
         if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') {
-            break;  // 行注释，忽略后续内容
+            break; // 行注释，忽略后续内容
         }
         if (c == '/' && i + 1 < text.size() && text[i + 1] == '*') {
             inBlockComment = true;
@@ -835,15 +899,18 @@ int countBracesInLine(const QString& text, bool& inBlockComment) {
             inString = true;
             continue;
         }
-        if (c == '{') depth++;
-        else if (c == '}') depth--;
+        if (c == '{')
+            depth++;
+        else if (c == '}')
+            depth--;
     }
     return depth;
 }
-}  // namespace
+} // namespace
 
 bool CodeEditor::isFoldable(const QTextBlock& block) const {
-    if (!block.isValid()) return false;
+    if (!block.isValid())
+        return false;
     // P2 fix: 使用语法高亮器的块状态 (userState) 判断是否处于块注释中，O(1) 而非 O(N)
     // BUG-CE-1 fix: 兼容两种块注释状态编码——向后兼容编码 2（depth=1）
     // 与嵌套编码 100+depth（depth>=1）。原代码仅检查 == 2，导致 SyntaxHighlighter
@@ -865,7 +932,8 @@ bool CodeEditor::isFolded(int blockNumber) const {
 }
 
 int CodeEditor::foldEndBlock(const QTextBlock& startBlock) const {
-    if (!startBlock.isValid()) return -1;
+    if (!startBlock.isValid())
+        return -1;
 
     // P2 fix: 使用语法高亮器的块状态 (userState) 判断是否处于块注释中，O(1) 而非 O(N)
     // BUG-CE-1 fix: 同 isFoldable，兼容状态编码 2 与 100+depth
@@ -878,12 +946,14 @@ int CodeEditor::foldEndBlock(const QTextBlock& startBlock) const {
         }
     }
     int depth = countBracesInLine(startBlock.text(), inBlockComment);
-    if (depth <= 0) return -1;
+    if (depth <= 0)
+        return -1;
 
     QTextBlock block = startBlock.next();
     while (block.isValid()) {
         depth += countBracesInLine(block.text(), inBlockComment);
-        if (depth <= 0) return block.blockNumber();
+        if (depth <= 0)
+            return block.blockNumber();
         block = block.next();
     }
     return -1;
@@ -891,10 +961,12 @@ int CodeEditor::foldEndBlock(const QTextBlock& startBlock) const {
 
 void CodeEditor::toggleFold(int blockNumber) {
     QTextBlock block = document()->findBlockByNumber(blockNumber);
-    if (!block.isValid() || !isFoldable(block)) return;
+    if (!block.isValid() || !isFoldable(block))
+        return;
 
     int endNum = foldEndBlock(block);
-    if (endNum < 0 || endNum <= blockNumber) return;
+    if (endNum < 0 || endNum <= blockNumber)
+        return;
 
     if (foldedBlocks_.contains(blockNumber)) {
         // 展开：显示范围内的块，但跳过仍折叠的嵌套块的子块
@@ -902,7 +974,8 @@ void CodeEditor::toggleFold(int blockNumber) {
         int i = blockNumber + 1;
         while (i <= endNum) {
             QTextBlock b = document()->findBlockByNumber(i);
-            if (!b.isValid()) break;
+            if (!b.isValid())
+                break;
             b.setVisible(true);
             // 如果此块自身也处于折叠状态，跳过其子块
             if (foldedBlocks_.contains(i)) {
@@ -919,7 +992,8 @@ void CodeEditor::toggleFold(int blockNumber) {
         foldedBlocks_.insert(blockNumber);
         for (int i = blockNumber + 1; i <= endNum; ++i) {
             QTextBlock b = document()->findBlockByNumber(i);
-            if (b.isValid()) b.setVisible(false);
+            if (b.isValid())
+                b.setVisible(false);
         }
     }
 
@@ -932,7 +1006,8 @@ void CodeEditor::changeFontSize(int delta) {
     int newSize = f.pointSize() + delta;
     // 范围限制 [8, 32]：太小看不清，太大占用过多编辑区
     newSize = qBound(8, newSize, 32);
-    if (newSize == f.pointSize()) return;  // 无变化
+    if (newSize == f.pointSize())
+        return; // 无变化
     f.setPointSize(newSize);
     setFont(f);
     // 行号区域宽度依赖 fontMetrics，需重新计算
@@ -973,9 +1048,9 @@ void CodeEditor::setDarkTheme(bool dark) {
     // viewport 也需应用 palette（QPlainTextEdit 的实际绘制发生在 viewport）
     viewport()->setPalette(pal);
 
-    highlightCurrentLine();  // 刷新当前行高亮配色
-    lineNumberArea_->update();  // 刷新行号区域
-    viewport()->update();  // 刷新编辑器视口
+    highlightCurrentLine();    // 刷新当前行高亮配色
+    lineNumberArea_->update(); // 刷新行号区域
+    viewport()->update();      // 刷新编辑器视口
 }
 
 // ============================================================
@@ -995,11 +1070,13 @@ QString CodeEditor::textUnderCursor() const {
 }
 
 void CodeEditor::insertCompletion(const QString& completion) {
-    if (!completer_ || completion.isEmpty()) return;
+    if (!completer_ || completion.isEmpty())
+        return;
 
     // 计算需要替换的前缀长度
     QString prefix = completer_->completionPrefix();
-    if (prefix.isEmpty()) return;
+    if (prefix.isEmpty())
+        return;
 
     QTextCursor tc = textCursor();
     // 选中当前单词（前缀部分），替换为完整补全文本
@@ -1010,7 +1087,8 @@ void CodeEditor::insertCompletion(const QString& completion) {
 }
 
 void CodeEditor::triggerCompletion() {
-    if (!completer_) return;
+    if (!completer_)
+        return;
 
     QString prefix = textUnderCursor();
     // 仅在有有效前缀时显示补全（至少 1 个字符）
@@ -1024,7 +1102,8 @@ void CodeEditor::triggerCompletion() {
 }
 
 void CodeEditor::updateCompletionPopup() {
-    if (!completer_) return;
+    if (!completer_)
+        return;
 
     // 如果没有匹配项，隐藏弹窗
     if (completer_->completionCount() == 0) {
@@ -1035,8 +1114,8 @@ void CodeEditor::updateCompletionPopup() {
     // 计算弹窗位置：光标所在行的下方
     QRect cr = cursorRect();
     // 弹窗宽度根据最长补全项调整
-    int popupWidth = completer_->popup()->sizeHintForColumn(0)
-                     + completer_->popup()->verticalScrollBar()->sizeHint().width();
+    int popupWidth =
+        completer_->popup()->sizeHintForColumn(0) + completer_->popup()->verticalScrollBar()->sizeHint().width();
     cr.setWidth(popupWidth);
     // P2-1 fix: QCompleter::complete() 会自动在 cr 下方显示弹窗，无需手动 translate
     completer_->complete(cr);
@@ -1058,13 +1137,13 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
         case Qt::Key_Tab:
         case Qt::Key_Backtab:
             event->ignore();
-            return;  // 让 completer 弹窗处理这些键
+            return; // 让 completer 弹窗处理这些键
         case Qt::Key_Up:
         case Qt::Key_Down:
         case Qt::Key_PageUp:
         case Qt::Key_PageDown:
             event->ignore();
-            return;  // 弹窗导航
+            return; // 弹窗导航
         default:
             break;
         }
@@ -1088,7 +1167,7 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
         }
         // 未在导航模式 → 检测触发词并尝试展开
         if (tryExpandSnippet()) {
-            return;  // 已展开，事件已消费
+            return; // 已展开，事件已消费
         }
         // H1: 无匹配触发词 → 多行缩进 or 插入 4 空格
         QTextCursor tc = textCursor();
@@ -1102,8 +1181,7 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
     }
 
     // Shift+Tab：占位符反向导航 or 默认反向缩进
-    if (event->key() == Qt::Key_Backtab ||
-        (event->key() == Qt::Key_Tab && (event->modifiers() & Qt::ShiftModifier))) {
+    if (event->key() == Qt::Key_Backtab || (event->key() == Qt::Key_Tab && (event->modifiers() & Qt::ShiftModifier))) {
         if (currentPlaceholderIdx_ >= 0) {
             jumpToPrevPlaceholder();
             return;
@@ -1125,8 +1203,7 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
     }
 
     // P1-2 fix: Ctrl+Space 在中文 IME 下会被系统拦截切换输入法，增加 Ctrl+J 作为备选触发键
-    if (event->modifiers() == Qt::ControlModifier &&
-        (event->key() == Qt::Key_Space || event->key() == Qt::Key_J)) {
+    if (event->modifiers() == Qt::ControlModifier && (event->key() == Qt::Key_Space || event->key() == Qt::Key_J)) {
         triggerCompletion();
         return;
     }
@@ -1194,8 +1271,7 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
     }
 
     // H1: 回车自动缩进（无选择时，复制上一行缩进；上一行以 { 结尾则加一级）
-    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
-        event->modifiers() == Qt::NoModifier) {
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && event->modifiers() == Qt::NoModifier) {
         QTextCursor tc = textCursor();
         if (!tc.hasSelection()) {
             // 获取当前行完整文本
@@ -1205,8 +1281,10 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
             // 提取行首空白
             QString indent;
             for (QChar c : lineText) {
-                if (c == ' ' || c == '\t') indent += c;
-                else break;
+                if (c == ' ' || c == '\t')
+                    indent += c;
+                else
+                    break;
             }
             // 光标前的部分：若以 { 结尾则加一级缩进
             int cursorCol = tc.position() - lineCursor.position();
@@ -1280,30 +1358,21 @@ void CodeEditor::contextMenuEvent(QContextMenuEvent* event) {
     // —— 项目特化操作 ——
     stdMenu->addSeparator();
 
-    QAction* toggleCommentAct = stdMenu->addAction(
-        QString::fromUtf8("注释切换 (Ctrl+/)"));
-    QAction* toggleBlockCommentAct = stdMenu->addAction(
-        QString::fromUtf8("块注释 (Ctrl+Shift+/)"));
-    QAction* formatAct = stdMenu->addAction(
-        QString::fromUtf8("格式化代码"));
-    QAction* gotoLineAct = stdMenu->addAction(
-        QString::fromUtf8("跳转到行... (Ctrl+G)"));
-    QAction* findAct = stdMenu->addAction(
-        QString::fromUtf8("查找... (Ctrl+F)"));
-    QAction* replaceAct = stdMenu->addAction(
-        QString::fromUtf8("替换... (Ctrl+H)"));
+    QAction* toggleCommentAct = stdMenu->addAction(QString::fromUtf8("注释切换 (Ctrl+/)"));
+    QAction* toggleBlockCommentAct = stdMenu->addAction(QString::fromUtf8("块注释 (Ctrl+Shift+/)"));
+    QAction* formatAct = stdMenu->addAction(QString::fromUtf8("格式化代码"));
+    QAction* gotoLineAct = stdMenu->addAction(QString::fromUtf8("跳转到行... (Ctrl+G)"));
+    QAction* findAct = stdMenu->addAction(QString::fromUtf8("查找... (Ctrl+F)"));
+    QAction* replaceAct = stdMenu->addAction(QString::fromUtf8("替换... (Ctrl+H)"));
 
     // —— 调试相关操作 ——
     // CodeEditor 始终持有 breakpoints_ 集合并暴露 setBreakpoints/getBreakpoints
     // 公共 API，断点切换能力始终可用，因此调试菜单无条件显示
     stdMenu->addSeparator();
 
-    QAction* toggleBreakpointAct = stdMenu->addAction(
-        QString::fromUtf8("添加/移除断点 (F9)"));
-    QAction* editBreakpointCondAct = stdMenu->addAction(
-        QString::fromUtf8("编辑断点条件..."));
-    QAction* runToCursorAct = stdMenu->addAction(
-        QString::fromUtf8("运行到当前行"));
+    QAction* toggleBreakpointAct = stdMenu->addAction(QString::fromUtf8("添加/移除断点 (F9)"));
+    QAction* editBreakpointCondAct = stdMenu->addAction(QString::fromUtf8("编辑断点条件..."));
+    QAction* runToCursorAct = stdMenu->addAction(QString::fromUtf8("运行到当前行"));
 
     // 在事件位置弹出菜单（exec 模态阻塞，返回被点击的 QAction 或 nullptr）
     QAction* chosen = stdMenu->exec(event->globalPos());
@@ -1356,12 +1425,14 @@ bool CodeEditor::tryExpandSnippet() {
     const QString textBefore = scan.selectedText();
 
     const CodeSnippet* snip = CodeSnippetEngine::matchTrigger(textBefore);
-    if (!snip) return false;
+    if (!snip)
+        return false;
 
     // 计算触发词在文档中的范围并删除
     const QString trigger = QString::fromStdString(snip->trigger);
     const int triggerStart = cursorPos - trigger.length();
-    if (triggerStart < 0) return false;  // 防御性：触发词长度超过文档长度
+    if (triggerStart < 0)
+        return false; // 防御性：触发词长度超过文档长度
 
     QTextCursor del = textCursor();
     del.setPosition(triggerStart);
@@ -1370,7 +1441,7 @@ bool CodeEditor::tryExpandSnippet() {
 
     // 展开模板并插入
     const auto expansion = CodeSnippetEngine::expand(*snip);
-    const int insertPos = triggerStart;  // 插入起点（触发词已被删除）
+    const int insertPos = triggerStart; // 插入起点（触发词已被删除）
 
     QTextCursor ins = textCursor();
     ins.setPosition(insertPos);
@@ -1400,8 +1471,7 @@ bool CodeEditor::tryExpandSnippet() {
 }
 
 void CodeEditor::selectCurrentPlaceholder() {
-    if (currentPlaceholderIdx_ < 0 ||
-        currentPlaceholderIdx_ >= static_cast<int>(currentPlaceholders_.size())) {
+    if (currentPlaceholderIdx_ < 0 || currentPlaceholderIdx_ >= static_cast<int>(currentPlaceholders_.size())) {
         return;
     }
     const auto& [start, end] = currentPlaceholders_[currentPlaceholderIdx_];
@@ -1415,7 +1485,8 @@ void CodeEditor::selectCurrentPlaceholder() {
 }
 
 void CodeEditor::jumpToNextPlaceholder() {
-    if (currentPlaceholderIdx_ < 0) return;
+    if (currentPlaceholderIdx_ < 0)
+        return;
     if (currentPlaceholderIdx_ < static_cast<int>(currentPlaceholders_.size()) - 1) {
         ++currentPlaceholderIdx_;
         selectCurrentPlaceholder();
@@ -1432,7 +1503,8 @@ void CodeEditor::jumpToNextPlaceholder() {
 }
 
 void CodeEditor::jumpToPrevPlaceholder() {
-    if (currentPlaceholderIdx_ < 0) return;
+    if (currentPlaceholderIdx_ < 0)
+        return;
     if (currentPlaceholderIdx_ > 0) {
         --currentPlaceholderIdx_;
         selectCurrentPlaceholder();
@@ -1446,12 +1518,14 @@ void CodeEditor::clearSnippetState() {
 }
 
 void CodeEditor::updatePlaceholderRanges(int position, int charsRemoved, int charsAdded) {
-    if (currentPlaceholderIdx_ < 0 || currentPlaceholders_.empty()) return;
+    if (currentPlaceholderIdx_ < 0 || currentPlaceholders_.empty())
+        return;
 
     const int delta = charsAdded - charsRemoved;
-    if (delta == 0) return;  // 长度未变，无需调整
+    if (delta == 0)
+        return; // 长度未变，无需调整
 
-    const int editEnd = position + charsRemoved;  // 被删除文本的结束位置
+    const int editEnd = position + charsRemoved; // 被删除文本的结束位置
 
     // 遍历所有占位符范围，按编辑位置相对关系调整
     for (auto& [start, end] : currentPlaceholders_) {
@@ -1488,16 +1562,14 @@ void CodeEditor::showSnippetListDialog() {
     QListWidget* list = new QListWidget(&dlg);
     const auto& all = CodeSnippetEngine::snippets();
     for (const auto& snip : all) {
-        const QString item = QString("%1\t— %2")
-            .arg(QString::fromStdString(snip.trigger))
-            .arg(QString::fromStdString(snip.description));
+        const QString item =
+            QString("%1\t— %2").arg(QString::fromStdString(snip.trigger)).arg(QString::fromStdString(snip.description));
         list->addItem(item);
     }
     list->setCurrentRow(0);
     layout->addWidget(list);
 
-    QDialogButtonBox* btns = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    QDialogButtonBox* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
     connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     layout->addWidget(btns);
@@ -1505,9 +1577,11 @@ void CodeEditor::showSnippetListDialog() {
     // 双击直接确定
     connect(list, &QListWidget::itemDoubleClicked, &dlg, &QDialog::accept);
 
-    if (dlg.exec() != QDialog::Accepted) return;
+    if (dlg.exec() != QDialog::Accepted)
+        return;
     const int row = list->currentRow();
-    if (row < 0 || row >= static_cast<int>(all.size())) return;
+    if (row < 0 || row >= static_cast<int>(all.size()))
+        return;
 
     const CodeSnippet& snip = all[row];
     const auto expansion = CodeSnippetEngine::expand(snip);
@@ -1553,7 +1627,7 @@ void CodeEditor::indentSelection(QTextCursor& tc, bool addIndent) {
     int endBlock = cur.blockNumber();
 
     cur.setPosition(start);
-    cur.beginEditBlock();  // 合并为单次 undo
+    cur.beginEditBlock(); // 合并为单次 undo
 
     for (int block = startBlock; block <= endBlock; ++block) {
         cur.movePosition(QTextCursor::StartOfLine);
@@ -1570,9 +1644,12 @@ void CodeEditor::indentSelection(QTextCursor& tc, bool addIndent) {
                 removeCount = 1;
             } else {
                 for (QChar c : head) {
-                    if (c == ' ') removeCount++;
-                    else break;
-                    if (removeCount >= 4) break;
+                    if (c == ' ')
+                        removeCount++;
+                    else
+                        break;
+                    if (removeCount >= 4)
+                        break;
                 }
             }
             if (removeCount > 0) {
@@ -1582,7 +1659,8 @@ void CodeEditor::indentSelection(QTextCursor& tc, bool addIndent) {
         }
 
         // 移到下一行（NextBlock 跳到下一块行首，文档末尾时返回 false）
-        if (!cur.movePosition(QTextCursor::NextBlock)) break;
+        if (!cur.movePosition(QTextCursor::NextBlock))
+            break;
     }
     cur.endEditBlock();
 
@@ -1611,9 +1689,12 @@ void CodeEditor::unindentLine(QTextCursor& tc) {
         removeCount = 1;
     } else {
         for (QChar c : head) {
-            if (c == ' ') removeCount++;
-            else break;
-            if (removeCount >= 4) break;
+            if (c == ' ')
+                removeCount++;
+            else
+                break;
+            if (removeCount >= 4)
+                break;
         }
     }
     if (removeCount > 0) {
@@ -1647,7 +1728,8 @@ void CodeEditor::toggleCommentSelection(QTextCursor& tc) {
                 allCommented = false;
                 break;
             }
-            if (!scan.movePosition(QTextCursor::NextBlock)) break;
+            if (!scan.movePosition(QTextCursor::NextBlock))
+                break;
         }
     }
 
@@ -1668,7 +1750,8 @@ void CodeEditor::toggleCommentSelection(QTextCursor& tc) {
             cur.insertText("//");
         }
 
-        if (!cur.movePosition(QTextCursor::NextBlock)) break;
+        if (!cur.movePosition(QTextCursor::NextBlock))
+            break;
     }
     cur.endEditBlock();
 
@@ -1686,7 +1769,8 @@ void CodeEditor::toggleCommentSelection(QTextCursor& tc) {
 /// 通过从文档开头扫描到 pos，统计字符串/注释状态实现
 /// 支持：双引号字符串、// 行注释、/* */ 块注释
 bool CodeEditor::isInsideStringOrComment(int pos) const {
-    if (pos <= 0) return false;
+    if (pos <= 0)
+        return false;
     int charCount = static_cast<int>(document()->characterCount());
     // 性能优化：只扫描到 pos 位置
     int scanEnd = qMin(pos, charCount);
@@ -1701,20 +1785,22 @@ bool CodeEditor::isInsideStringOrComment(int pos) const {
 
         if (inLineComment) {
             // 行注释遇到换行结束
-            if (c == '\n') inLineComment = false;
+            if (c == '\n')
+                inLineComment = false;
             continue;
         }
         if (inBlockComment) {
             // 块注释遇到 */ 结束
             if (c == '*' && next == '/') {
                 inBlockComment = false;
-                ++i;  // 跳过 /
+                ++i; // 跳过 /
             }
             continue;
         }
         if (inString) {
             // 字符串遇到非转义 " 结束
-            if (c == '"') inString = false;
+            if (c == '"')
+                inString = false;
             // 简化：不处理转义（MiniLang 字符串转义 \" 较少见，且此判断用于括号匹配容错）
             continue;
         }
@@ -1801,30 +1887,39 @@ void CodeEditor::highlightBracketMatch() {
     int matchPos = -1;
     int depth = 0;
     int charCount = static_cast<int>(document()->characterCount());
-    const int kMaxScanRange = 5000;  // 性能阈值：单次扫描最多 5000 字符
+    const int kMaxScanRange = 5000; // 性能阈值：单次扫描最多 5000 字符
     int scanStart = forward ? curBracketPos : curBracketPos;
-    int scanEnd = forward ? qMin(charCount, curBracketPos + kMaxScanRange)
-                          : qMax(0, curBracketPos - kMaxScanRange);
+    int scanEnd = forward ? qMin(charCount, curBracketPos + kMaxScanRange) : qMax(0, curBracketPos - kMaxScanRange);
 
     if (forward) {
         for (int i = scanStart; i < scanEnd; ++i) {
             QChar c = document()->characterAt(i);
             // 跳过字符串/注释内的字符
-            if (i > curBracketPos && isInsideStringOrComment(i)) continue;
-            if (c == open) depth++;
+            if (i > curBracketPos && isInsideStringOrComment(i))
+                continue;
+            if (c == open)
+                depth++;
             else if (c == close) {
                 depth--;
-                if (depth == 0) { matchPos = i; break; }
+                if (depth == 0) {
+                    matchPos = i;
+                    break;
+                }
             }
         }
     } else {
         for (int i = scanStart; i >= scanEnd; --i) {
             QChar c = document()->characterAt(i);
-            if (i < curBracketPos && isInsideStringOrComment(i)) continue;
-            if (c == close) depth++;
+            if (i < curBracketPos && isInsideStringOrComment(i))
+                continue;
+            if (c == close)
+                depth++;
             else if (c == open) {
                 depth--;
-                if (depth == 0) { matchPos = i; break; }
+                if (depth == 0) {
+                    matchPos = i;
+                    break;
+                }
             }
         }
     }
@@ -1835,7 +1930,7 @@ void CodeEditor::highlightBracketMatch() {
     }
 
     // 构建 bracket selections（半透明黄色背景）
-    QColor matchColor(0xb5, 0x89, 0x00, 120);  // Solarized yellow
+    QColor matchColor(0xb5, 0x89, 0x00, 120); // Solarized yellow
 
     QTextEdit::ExtraSelection curSel;
     curSel.cursor.setPosition(curBracketPos);
@@ -1858,7 +1953,8 @@ void CodeEditor::toggleBlockComment(QTextCursor& tc) {
     if (!tc.hasSelection()) {
         // 无选择时，对当前行整行添加 /* */ 包裹
         tc.select(QTextCursor::LineUnderCursor);
-        if (!tc.hasSelection()) return;
+        if (!tc.hasSelection())
+            return;
     }
 
     int start = tc.selectionStart();

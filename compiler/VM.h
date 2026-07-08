@@ -32,22 +32,22 @@
  */
 #pragma once
 
-#include <vector>
-#include <string>
+#include "Diagnostic.h"
+#include "common/IBackend.h" // ARCH-09 fix: 后端抽象接口
+#include "common/Result.h"
+#include "common/RuntimeLimits.h"
+#include "compiler/Bytecode.h"
+#include "interpreter/BuiltinMethods.h" // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
+#include "interpreter/Value.h"
+#include <array> // C3: opcode profiling 计数数组
+#include <cassert>
+#include <cstdlib> // std::abort — Release 构建中 assert 兜底，避免 UB
 #include <functional>
-#include <unordered_map>
 #include <map>
 #include <memory>
-#include <cassert>
-#include <cstdlib>  // std::abort — Release 构建中 assert 兜底，避免 UB
-#include <array>   // C3: opcode profiling 计数数组
-#include "compiler/Bytecode.h"
-#include "interpreter/Value.h"
-#include "interpreter/BuiltinMethods.h"  // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
-#include "common/Result.h"
-#include "Diagnostic.h"
-#include "common/RuntimeLimits.h"
-#include "common/IBackend.h"  // ARCH-09 fix: 后端抽象接口
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 // ============================================================
 // VM 虚拟机（简单栈机）
@@ -55,32 +55,39 @@
 
 /// P13 fix: 小缓冲区优化的参数容器，避免方法调用时的堆分配
 /// 对于 argCount <= N 使用栈上内联存储，超出时回退到 vector
-template<typename T, size_t N = 8>
-class SmallArgs {
+template <typename T, size_t N = 8> class SmallArgs {
     T inline_[N];
     std::vector<T> heap_;
     size_t sz_ = 0;
+
 public:
     // P0 fix: 显式 value-initialize inline_ 数组——原 `= default` 在某些场景下
     // 跳过元素默认构造，导致栈上 NaNBox 是随机位模式（包括 0xFFFFFFFFFFFFFFFF），
     // 后续被 NaNBox::tag() 误判为合法 FLOAT（NaN）掩盖底层 UB。
     SmallArgs() : sz_(0) {
-        for (size_t i = 0; i < N; ++i) inline_[i] = T();
+        for (size_t i = 0; i < N; ++i)
+            inline_[i] = T();
     }
     explicit SmallArgs(size_t count) : sz_(count) {
-        for (size_t i = 0; i < N; ++i) inline_[i] = T();
-        if (count > N) heap_.resize(count);
+        for (size_t i = 0; i < N; ++i)
+            inline_[i] = T();
+        if (count > N)
+            heap_.resize(count);
     }
     size_t size() const { return sz_; }
     bool empty() const { return sz_ == 0; }
     // P0 fix: assert 在 Release 被剥离，越界访问会读到栈垃圾（可能形成 0xFFFFFFFFFFFFFFFF），
     // 被当作合法 Value 使用。改为运行时 abort，与 VMStack 一致风格。
     T& operator[](size_t i) {
-        if (i >= sz_) { std::abort(); }
+        if (i >= sz_) {
+            std::abort();
+        }
         return (sz_ <= N) ? inline_[i] : heap_[i];
     }
     const T& operator[](size_t i) const {
-        if (i >= sz_) { std::abort(); }
+        if (i >= sz_) {
+            std::abort();
+        }
         return (sz_ <= N) ? inline_[i] : heap_[i];
     }
     T* begin() { return (sz_ <= N) ? inline_ : heap_.data(); }
@@ -90,54 +97,57 @@ public:
     T* data() { return begin(); }
     const T* data() const { return begin(); }
     void push_back(const T& v) {
-        if (sz_ < N) { inline_[sz_++] = v; }
-        else { if (sz_ == N) { heap_.assign(inline_, inline_ + N); } heap_.push_back(v); sz_++; }
+        if (sz_ < N) {
+            inline_[sz_++] = v;
+        } else {
+            if (sz_ == N) {
+                heap_.assign(inline_, inline_ + N);
+            }
+            heap_.push_back(v);
+            sz_++;
+        }
     }
 };
 
 /// 虚拟机执行结果
-enum class VMResult {
-    VM_OK,
-    VM_RUNTIME_ERROR,
-    VM_STACK_OVERFLOW
-};
+enum class VMResult { VM_OK, VM_RUNTIME_ERROR, VM_STACK_OVERFLOW };
 
 /// VM 执行模式
 enum class VMExecMode {
-    VM_MODE_NONE,       // 未初始化
-    VM_MODE_RUN,        // 全速运行
-    VM_MODE_STEP        // 单步模式
+    VM_MODE_NONE, // 未初始化
+    VM_MODE_RUN,  // 全速运行
+    VM_MODE_STEP  // 单步模式
 };
 
 /// 每条指令执行后的状态信息（用于调试/可视化）
 // P3-1 fix: 加默认成员初始化器，新增字段时不会漏初始化导致未定义行为
 struct VMStepInfo {
-    size_t ip = 0;                          // 当前指令指针
-    OpCode opcode = OpCode::OP_NULL;        // 当前操作码
-    size_t frameCount = 0;                  // A4 fix: 当前调用帧栈深度（用于 step-over/out 语义）
+    size_t ip = 0;                   // 当前指令指针
+    OpCode opcode = OpCode::OP_NULL; // 当前操作码
+    size_t frameCount = 0;           // A4 fix: 当前调用帧栈深度（用于 step-over/out 语义）
 };
 
 /// VM 调用帧
 struct VMCallFrame {
-    const BytecodeChunk* chunk = nullptr;   // 当前执行的字节码块
-    size_t ip = 0;                          // 当前帧的指令指针
-    size_t returnIp = 0;                    // 返回后的 ip
-    size_t basePointer = 0;                 // 帧基指针（栈中参数起始位置）
-    std::string functionName;               // 函数名
-    bool isMethodCall = false;              // 是否为方法调用（需要 writeBack）
-    bool isInitCall = false;                // 是否为 init 构造函数调用（返回 this 而非 null）
-    std::string receiverVarName;            // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
-    int receiverLocalSlot = -1;             // 方法调用时，接收者在调用者帧中的局部变量槽号（-1=非局部变量）
-    bool fieldsModified = false;            // VM fix: 方法内是否修改了字段（用于跳过只读方法的字段同步）
+    const BytecodeChunk* chunk = nullptr; // 当前执行的字节码块
+    size_t ip = 0;                        // 当前帧的指令指针
+    size_t returnIp = 0;                  // 返回后的 ip
+    size_t basePointer = 0;               // 帧基指针（栈中参数起始位置）
+    std::string functionName;             // 函数名
+    bool isMethodCall = false;            // 是否为方法调用（需要 writeBack）
+    bool isInitCall = false;              // 是否为 init 构造函数调用（返回 this 而非 null）
+    std::string receiverVarName;          // 方法调用时，接收者的全局变量名（用于 writeBack 到 globals_）
+    int receiverLocalSlot = -1;           // 方法调用时，接收者在调用者帧中的局部变量槽号（-1=非局部变量）
+    bool fieldsModified = false;          // VM fix: 方法内是否修改了字段（用于跳过只读方法的字段同步）
     // VM-05/06: 闭包 upvalue 列表
     std::vector<std::shared_ptr<VMUpvalue>> upvalues;
 };
 
 /// VM 类信息（用于构造函数调用）
 struct VMClassInfo {
-    std::string name;                                  // 类名
-    std::string superClassName;                        // 父类名（空表示无父类）
-    std::vector<std::string> fieldOrder;               // 字段声明顺序（含继承字段）
+    std::string name;                                     // 类名
+    std::string superClassName;                           // 父类名（空表示无父类）
+    std::vector<std::string> fieldOrder;                  // 字段声明顺序（含继承字段）
     std::unordered_map<std::string, Value> fieldDefaults; // 字段默认值（含继承字段）
     // P4 fix: 方法解析缓存（methodName -> chunk 指针），避免每次方法调用都拼接字符串+查继承链
     mutable std::unordered_map<std::string, const BytecodeChunk*> methodCache;
@@ -173,38 +183,53 @@ public:
     // （可能形成 0xFFFFFFFFFFFFFFFF 位模式，被 NaNBox 误判为合法 NaN float）。
     // 改为运行时 abort，与 RegisterVM::reg() 的 B3 fix 风格一致——显式失败优于静默继续。
     Value& operator[](size_t i) {
-        if (i >= top_) { std::abort(); }
+        if (i >= top_) {
+            std::abort();
+        }
         return data_[i];
     }
     const Value& operator[](size_t i) const {
-        if (i >= top_) { std::abort(); }
+        if (i >= top_) {
+            std::abort();
+        }
         return data_[i];
     }
     Value& back() {
-        if (top_ == 0) { std::abort(); }
+        if (top_ == 0) {
+            std::abort();
+        }
         return data_[top_ - 1];
     }
     const Value& back() const {
-        if (top_ == 0) { std::abort(); }
+        if (top_ == 0) {
+            std::abort();
+        }
         return data_[top_ - 1];
     }
 
     // ---- 栈操作 ----
     void push_back(const Value& v) {
-        if (top_ >= CAPACITY) { std::abort(); }
+        if (top_ >= CAPACITY) {
+            std::abort();
+        }
         data_[top_++] = v;
     }
     void push_back(Value&& v) {
-        if (top_ >= CAPACITY) { std::abort(); }
+        if (top_ >= CAPACITY) {
+            std::abort();
+        }
         data_[top_++] = std::move(v);
     }
-    template<typename... Args>
-    void emplace_back(Args&&... args) {
-        if (top_ >= CAPACITY) { std::abort(); }
+    template <typename... Args> void emplace_back(Args&&... args) {
+        if (top_ >= CAPACITY) {
+            std::abort();
+        }
         data_[top_++] = Value(std::forward<Args>(args)...);
     }
     void pop_back() {
-        if (top_ == 0) { std::abort(); }
+        if (top_ == 0) {
+            std::abort();
+        }
         --top_;
     }
 
@@ -213,16 +238,16 @@ public:
     // B6/P0 fix: resize 仅能缩小，原 assert Release 被剥离可能导致 top_ 虚增
     // 读到未初始化槽位（栈垃圾），改为运行时 abort。
     void resize(size_t n) {
-        if (n > top_) { std::abort(); }
+        if (n > top_) {
+            std::abort();
+        }
         top_ = n;
     }
     /// no-op：定长数组无需预分配
     void reserve(size_t) {}
 
     /// 转换为 vector（用于 GUI 调试视图，按值返回）
-    std::vector<Value> toVector() const {
-        return std::vector<Value>(data_, data_ + top_);
-    }
+    std::vector<Value> toVector() const { return std::vector<Value>(data_, data_ + top_); }
 
 private:
     static constexpr size_t CAPACITY = RuntimeLimits::MAX_STACK_SIZE;
@@ -346,9 +371,9 @@ public:
     /// A4 fix: 获取调用栈快照（用于 UI 调用栈面板显示）
     /// 返回从栈底到栈顶的调用帧信息（函数名 + 当前行号 + ip）
     struct VMCallStackEntry {
-        std::string functionName;   // "main" 或函数名
-        int line;                    // 当前源码行号
-        size_t ip;                   // 当前指令指针
+        std::string functionName; // "main" 或函数名
+        int line;                 // 当前源码行号
+        size_t ip;                // 当前指令指针
     };
     std::vector<VMCallStackEntry> getCallStack() const;
 
@@ -358,14 +383,14 @@ public:
     std::unordered_map<std::string, Value> getCurrentFrameLocals() const;
 
 private:
-    VMStack stack_;                                // PERF-13: 定长数组操作数栈
+    VMStack stack_;                                  // PERF-13: 定长数组操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表（runtime-defined fallback）
     // A2: 全局变量整数槽位存储（编译期分配，vector 直接访问）
-    std::vector<Value> globalSlots_;                        // slot-indexed 存储
+    std::vector<Value> globalSlots_; // slot-indexed 存储
     // B4: globalSlotNames_ 已删除（仅调试用，getGlobals 从 globalNameToSlot_ 重建逆映射）
     std::unordered_map<std::string, int> globalNameToSlot_; // name -> slot (runtime lookup + 调试重建)
-    std::vector<VMCallFrame> frames_;              // 调用帧栈
-    BytecodeChunk mainChunk_;                       // 主 chunk 副本（VM 自持，避免悬空指针）
+    std::vector<VMCallFrame> frames_;                       // 调用帧栈
+    BytecodeChunk mainChunk_;                               // 主 chunk 副本（VM 自持，避免悬空指针）
     // MEM-03/MEM-04 fix: 改用 std::map（节点式，插入不使引用/迭代器/指针失效）。
     // 原 unordered_map 在 rehash 后会使所有 VMClosureData::chunkPtr 和
     // VMCallFrame::chunk（裸指针）悬垂。std::map 的节点稳定性消除该风险。
@@ -384,8 +409,8 @@ private:
     // (bucket_count() << 16) ^ size() 组合，erase 不会改变 bucket_count 但会改变 size，
     // 使缓存条目自动失效，避免命中已被 erase 的全局变量槽位。
     struct GlobalCacheEntry {
-        Value* valuePtr = nullptr;      // 指向 globals_ 中的 Value（rehash 后失效）
-        size_t generation = 0;          // globals_ 状态快照（检测 rehash / erase）
+        Value* valuePtr = nullptr; // 指向 globals_ 中的 Value（rehash 后失效）
+        size_t generation = 0;     // globals_ 状态快照（检测 rehash / erase）
     };
     std::unordered_map<const std::string*, GlobalCacheEntry> globalCache_;
     // P7: ASCII 字符串索引缓存（记住上次检查过的字符串，避免循环中重复 O(n) 扫描）
@@ -397,9 +422,9 @@ private:
     //         仍可能误命中。完全消除需缓存 StringData shared_ptr（复杂度高）或每次清除缓存
     //         （破坏循环 s[i] 场景的缓存价值）。当前 (ptr, size) 验证为合理折中。
     const void* lastAsciiStrPtr_ = nullptr;
-    size_t lastAsciiStrSize_ = 0;  // BUGFIX-P2 fix: 缓存 size 防止堆地址复用误命中
+    size_t lastAsciiStrSize_ = 0; // BUGFIX-P2 fix: 缓存 size 防止堆地址复用误命中
     bool lastAsciiStrIsAscii_ = false;
-    std::unordered_map<std::string, VMClassInfo> classInfo_;        // 类信息注册表
+    std::unordered_map<std::string, VMClassInfo> classInfo_; // 类信息注册表
     // #12 fix: 类→方法名→chunk 两级索引，替代 findMethodChunk 冷路径每层继承链
     // 拼 "Class.method" 字符串。在 initExecution 中扫描 functionChunks_ 一次性构建。
     // 仅收录 "Class.method" 格式条目（按首个 '.' 拆分），普通函数名（无 '.'）不入索引。
@@ -411,27 +436,27 @@ private:
     // closeUpvaluesFrom 从 O(n) 线性扫描降为 O(log n + k)。value 用 weak_ptr 监视 shared_ptr 生命周期
     // （closure 持有强引用），closure 销毁后 weak_ptr 自动过期，不阻碍 upvalue 释放。
     std::multimap<size_t, std::weak_ptr<VMUpvalue>> openUpvalues_;
-    std::unordered_map<std::string, Value> functionClosures_;       // 函数名→闭包值（含 upvalue 绑定）
-    std::function<void(const std::string&)> outputCallback_; // 输出回调
+    std::unordered_map<std::string, Value> functionClosures_;      // 函数名→闭包值（含 upvalue 绑定）
+    std::function<void(const std::string&)> outputCallback_;       // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
-    std::function<void(const VMStepInfo&)> stepCallback_;    // 步进回调
-    bool stepCallbackEnabled_ = false;              // 是否启用步进回调
-    bool initialized_ = false;                      // 是否已初始化执行环境
-    std::string lastError_;                         // 最近一次运行时错误
-    int lastErrorLine_ = 0;                          // 最近一次运行时错误的源码行号（1-based，0=无位置）
+    std::function<void(const VMStepInfo&)> stepCallback_;          // 步进回调
+    bool stepCallbackEnabled_ = false;                             // 是否启用步进回调
+    bool initialized_ = false;                                     // 是否已初始化执行环境
+    std::string lastError_;                                        // 最近一次运行时错误
+    int lastErrorLine_ = 0;                                        // 最近一次运行时错误的源码行号（1-based，0=无位置）
     // P1 fix: mutable 允许 const peek() 在栈下溢时设置错误标志
-    mutable bool hasError_ = false;                 // 运行时错误标志（用于快速检测）
-    DiagnosticBag diagnostics_;                     // 诊断收集器
-    Value lastMutatedReceiver_;                     // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
-    std::vector<std::string> pendingFieldOrder_;    // M3: OP_INIT_FIELD 执行期间记录的字段声明顺序
+    mutable bool hasError_ = false;              // 运行时错误标志（用于快速检测）
+    DiagnosticBag diagnostics_;                  // 诊断收集器
+    Value lastMutatedReceiver_;                  // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
+    std::vector<std::string> pendingFieldOrder_; // M3: OP_INIT_FIELD 执行期间记录的字段声明顺序
 
     // F11: 异常处理
     struct TryHandler {
-        size_t catchIp;       // catch 块的 IP
-        size_t stackBase;     // try 开始时的栈大小（catch 时恢复）
-        size_t frameIndex;    // 所属调用帧索引
+        size_t catchIp;    // catch 块的 IP
+        size_t stackBase;  // try 开始时的栈大小（catch 时恢复）
+        size_t frameIndex; // 所属调用帧索引
     };
-    std::vector<TryHandler> tryStack_;              // try 处理器栈
+    std::vector<TryHandler> tryStack_; // try 处理器栈
     // S1 fix: 统一引用 common/RuntimeLimits.h，消除重复定义
     static constexpr size_t MAX_STACK_SIZE = RuntimeLimits::MAX_STACK_SIZE;
     static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
@@ -461,13 +486,13 @@ private:
     // 消除 VMContainers.cpp 中 4 处 OP_*_VAR 操作码的重复 lookup 模式。
     Value* resolveMutableGlobal(const std::string& varName) {
         auto gsIt = globalNameToSlot_.find(varName);
-        if (gsIt != globalNameToSlot_.end() &&
-            gsIt->second >= 0 &&
+        if (gsIt != globalNameToSlot_.end() && gsIt->second >= 0 &&
             gsIt->second < static_cast<int>(globalSlots_.size())) {
             return &globalSlots_[gsIt->second];
         }
         auto it = globals_.find(varName);
-        if (it == globals_.end()) return nullptr;
+        if (it == globals_.end())
+            return nullptr;
         return &it->second;
     }
     /// 批量 pop：一次 resize 替代多次 pop_back，避免多次析构 + 容量抖动。
@@ -475,8 +500,7 @@ private:
     void popN(size_t n);
     /// 在栈顶直接 emplace 构造 Value，避免临时 Value 构造+拷贝。
     /// PERF-13: VMStack 使用定长数组，emplace_back 直接写入栈槽。
-    template<typename... Args>
-    void emplace(Args&&... args) {
+    template <typename... Args> void emplace(Args&&... args) {
         if (stack_.size() >= MAX_STACK_SIZE) {
             runtimeError("栈溢出");
             return;
@@ -496,8 +520,8 @@ private:
 
     /// F10-fix: 为 init 方法填充缺失的默认参数，返回 true 表示成功
     /// argCount 会被更新为填充后的参数数量，默认值追加到 defaults 向量
-    bool fillDefaultArgs(const BytecodeChunk& chunk, uint8_t& argCount,
-                         const std::string& funName, std::vector<Value>& defaults);
+    bool fillDefaultArgs(const BytecodeChunk& chunk, uint8_t& argCount, const std::string& funName,
+                         std::vector<Value>& defaults);
 
     /// 数值二元运算（枚举分发）
     VMResult numericOp(int opType);
@@ -511,13 +535,13 @@ private:
     /// receiverLocalSlotByte: 接收者的本地槽字节（0xFF 表示无）
     /// mutatedObj: 被修改的对象引用（将被 std::move）
     /// fieldsModified: 是否修改了字段（影响实例字段同步）
-    VMResult writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
-                               Value& mutatedObj, bool fieldsModified);
+    VMResult writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte, Value& mutatedObj,
+                               bool fieldsModified);
 
     /// 有序比较：类型检查 + 比较 + 结果写回（<, >, <=, >= 共用模板）
-    template<typename Cmp>
-    VMResult orderedCompare(Cmp cmp, size_t& ip, OpCode opcode) {
-        if (stack_.size() < 2) return runtimeError("栈下溢：比较运算需要两个操作数");
+    template <typename Cmp> VMResult orderedCompare(Cmp cmp, size_t& ip, OpCode opcode) {
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢：比较运算需要两个操作数");
         const Value& right = stack_.back();
         const Value& left = stack_[stack_.size() - 2];
         // V2 fix: 支持字符串字典序比较，与解释器 M4 fix 一致
@@ -531,19 +555,16 @@ private:
 
     // ---- B7 fix: 内建方法分发（从 executeCallOps 提取，降低圈复杂度）----
     /// 数组内建方法分发。返回 VM_OK 表示已处理（caller 应 break），VM_RUNTIME_ERROR 表示出错。
-    VMResult dispatchArrayBuiltin(const Value& obj, BuiltinMethod method,
-                                   const std::string& methodName, uint8_t argCount,
-                                   uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
-                                   size_t& ip, OpCode op, int instrLen);
+    VMResult dispatchArrayBuiltin(const Value& obj, BuiltinMethod method, const std::string& methodName,
+                                  uint8_t argCount, uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte, size_t& ip,
+                                  OpCode op, int instrLen);
     /// 字典内建方法分发。语义同上。
-    VMResult dispatchDictBuiltin(const Value& obj, BuiltinMethod method,
-                                  const std::string& methodName, uint8_t argCount,
-                                  uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte,
-                                  size_t& ip, OpCode op, int instrLen);
+    VMResult dispatchDictBuiltin(const Value& obj, BuiltinMethod method, const std::string& methodName,
+                                 uint8_t argCount, uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte, size_t& ip,
+                                 OpCode op, int instrLen);
     /// 字符串内建方法分发（全部非变异，无需 writeBack 参数）。语义同上。
-    VMResult dispatchStringBuiltin(const Value& obj, BuiltinMethod method,
-                                    const std::string& methodName, uint8_t argCount,
-                                    size_t& ip, OpCode op, int instrLen);
+    VMResult dispatchStringBuiltin(const Value& obj, BuiltinMethod method, const std::string& methodName,
+                                   uint8_t argCount, size_t& ip, OpCode op, int instrLen);
 
     // ---- P0-3 fix: 共享内置方法分派样板提取 ----
     /// 非变异方法完成：检查错误 → pop 接收者 → push 结果 → 推进 ip。
@@ -561,24 +582,27 @@ private:
     /// 消除 dispatchArrayBuiltin 中 4 处重复的 tryGetMutableArray 模式。
     std::vector<Value>& getMutableArrayRef(Value& obj) {
         auto* arr = obj.tryGetMutableArray();
-        if (arr) return *arr;
+        if (arr)
+            return *arr;
         return obj.arrayVal();
     }
 
     /// 获取字典的可变引用：同上，针对字典类型。
     std::unordered_map<std::string, Value>& getMutableDictRef(Value& obj) {
         auto* dict = obj.tryGetMutableDict();
-        if (dict) return *dict;
+        if (dict)
+            return *dict;
         return obj.dictVal();
     }
 
     /// 通知步进回调（内联：禁用时直接返回，避免函数调用开销）
     void notifyStep(size_t ip, OpCode opcode) {
-        if (!stepCallbackEnabled_) return;
+        if (!stepCallbackEnabled_)
+            return;
         VMStepInfo info;
         info.ip = ip;
         info.opcode = opcode;
-        info.frameCount = frames_.size();  // A4 fix: 暴露调用深度供 step-over/out 判断
+        info.frameCount = frames_.size(); // A4 fix: 暴露调用深度供 step-over/out 判断
         stepCallback_(info);
     }
 
@@ -593,8 +617,7 @@ private:
 
     /// 沿继承链查找方法 chunk（返回 nullptr 表示未找到）
     /// 先在 className 对应类查 methodName，未命中则查 superClass，递归到根。
-    const BytecodeChunk* findMethodChunk(const std::string& className,
-                                         const std::string& methodName) const;
+    const BytecodeChunk* findMethodChunk(const std::string& className, const std::string& methodName) const;
 
     /// 按指令类别执行指令（executeOneInstruction 内部转发）
     VMResult executeConstantOps(OpCode op, size_t& ip);

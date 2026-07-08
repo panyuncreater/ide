@@ -13,16 +13,15 @@
 // ============================================================
 
 /// 构造语法高亮器：按当前主题初始化高亮规则。
-SyntaxHighlighter::SyntaxHighlighter(QTextDocument* parent)
-    : QSyntaxHighlighter(parent) {
+SyntaxHighlighter::SyntaxHighlighter(QTextDocument* parent) : QSyntaxHighlighter(parent) {
     initRules();
 }
 
 /// 切换亮/暗主题，更新各语法元素的配色规则。
 void SyntaxHighlighter::setDarkTheme(bool dark) {
     isDarkTheme_ = dark;
-    initRules();  // 重新初始化颜色规则
-    rehighlight();  // 重新高亮整个文档
+    initRules();   // 重新初始化颜色规则
+    rehighlight(); // 重新高亮整个文档
 }
 
 /// 依据当前主题初始化关键字/字符串/注释等正则高亮规则。
@@ -33,22 +32,22 @@ void SyntaxHighlighter::initRules() {
 
     if (isDarkTheme_) {
         // 深色主题（VS Code Dark+ 2024 风格）
-        keywordFormat_.setForeground(QColor(0x56, 0x9c, 0xd6));   // 蓝色关键字
+        keywordFormat_.setForeground(QColor(0x56, 0x9c, 0xd6)); // 蓝色关键字
         keywordFormat_.setFontWeight(QFont::Bold);
-        stringFormat_.setForeground(QColor(0xce, 0x91, 0x78));    // 橙棕色字符串
-        numberFormat_.setForeground(QColor(0xb5, 0xce, 0xa8));    // 浅绿色数字
-        commentFormat_.setForeground(QColor(0x6a, 0x99, 0x55));   // 绿色注释
+        stringFormat_.setForeground(QColor(0xce, 0x91, 0x78));  // 橙棕色字符串
+        numberFormat_.setForeground(QColor(0xb5, 0xce, 0xa8));  // 浅绿色数字
+        commentFormat_.setForeground(QColor(0x6a, 0x99, 0x55)); // 绿色注释
         commentFormat_.setFontItalic(true);
-        operatorFormat_.setForeground(QColor(0xd4, 0xd4, 0xd4));  // 浅灰色运算符
+        operatorFormat_.setForeground(QColor(0xd4, 0xd4, 0xd4)); // 浅灰色运算符
     } else {
         // 浅色主题（VS Code Light+ 2024 风格 — 更鲜艳、层次更清晰）
-        keywordFormat_.setForeground(QColor(0x26, 0x8b, 0xd2));   // 深蓝色关键字
+        keywordFormat_.setForeground(QColor(0x26, 0x8b, 0xd2)); // 深蓝色关键字
         keywordFormat_.setFontWeight(QFont::Bold);
-        stringFormat_.setForeground(QColor(0x2a, 0xa1, 0x98));    // 深绿色字符串
-        numberFormat_.setForeground(QColor(0xb5, 0x89, 0x00));     // 绿色数字
-        commentFormat_.setForeground(QColor(0x58, 0x6e, 0x75));     // 绿色注释
+        stringFormat_.setForeground(QColor(0x2a, 0xa1, 0x98));  // 深绿色字符串
+        numberFormat_.setForeground(QColor(0xb5, 0x89, 0x00));  // 绿色数字
+        commentFormat_.setForeground(QColor(0x58, 0x6e, 0x75)); // 绿色注释
         commentFormat_.setFontItalic(true);
-        operatorFormat_.setForeground(QColor(0x65, 0x7b, 0x83));   // 深灰色运算符
+        operatorFormat_.setForeground(QColor(0x65, 0x7b, 0x83)); // 深灰色运算符
     }
 
     // ---- 添加高亮规则 ----
@@ -82,30 +81,37 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     int len = text.length();
 
     int prevState = previousBlockState();
-    if (prevState < 0) prevState = 0;
+    if (prevState < 0)
+        prevState = 0;
 
     bool inString = false;
-    bool inNestedString = false;  // BUG-SH-2: 插值内嵌套字符串跨行
+    bool inNestedString = false; // BUG-SH-2: 插值内嵌套字符串跨行
     int blockCommentDepth = 0;
     int interpBraceDepth = 0;
     // 解码顺序：高范围优先（400 > 300 > 200 > 100），避免误匹配
-    if (prevState == 1) inString = true;
-    else if (prevState == 2) blockCommentDepth = 1;  // 向后兼容
-    else if (prevState >= 400) { inNestedString = true; interpBraceDepth = prevState - 400; }
-    else if (prevState >= 300) {
+    if (prevState == 1)
+        inString = true;
+    else if (prevState == 2)
+        blockCommentDepth = 1; // 向后兼容
+    else if (prevState >= 400) {
+        inNestedString = true;
+        interpBraceDepth = prevState - 400;
+    } else if (prevState >= 300) {
         // BUG-SH-1 fix: 插值内块注释组合状态
         interpBraceDepth = (prevState - 300) / 10;
         blockCommentDepth = (prevState - 300) % 10;
-    }
-    else if (prevState >= 200) interpBraceDepth = prevState - 200;
-    else if (prevState >= 100) blockCommentDepth = prevState - 100;
+    } else if (prevState >= 200)
+        interpBraceDepth = prevState - 200;
+    else if (prevState >= 100)
+        blockCommentDepth = prevState - 100;
 
     // PERF-22 fix: 用 per-character 掩码数组标记字符串/注释范围，
     // 将范围检查从 O(ranges) 线性扫描降为 O(1) 数组查找
     // Perf-Finding3: thread_local 复用底层数组容量，避免每次按键的堆分配。
     static thread_local std::vector<char> mask;
     mask.clear();
-    if (len > 0) mask.resize(len, 0);
+    if (len > 0)
+        mask.resize(len, 0);
 
     QList<QPair<int, int>> stringRanges;
     QList<QPair<int, int>> commentRanges;
@@ -191,7 +197,8 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
             // 嵌套块注释
             if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '*') {
                 commentStart = pos;
-                mask[pos] = 1; mask[pos + 1] = 1;
+                mask[pos] = 1;
+                mask[pos + 1] = 1;
                 pos += 2;
                 blockCommentDepth = 1;
                 continue;
@@ -204,7 +211,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
             if (text[pos] == '}') {
                 interpBraceDepth--;
                 if (interpBraceDepth == 0) {
-                    mask[pos] = 1;  // } 标记为字符串颜色（插值分隔符）
+                    mask[pos] = 1; // } 标记为字符串颜色（插值分隔符）
                     pos++;
                     inString = true;
                     stringStart = pos;
@@ -237,7 +244,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
             // 识别字符串插值 {expr}，进入插值模式（支持跨行）
             if (text[pos] == '{') {
                 stringRanges.append({stringStart, pos - stringStart});
-                mask[pos] = 1;  // { 标记为字符串颜色
+                mask[pos] = 1; // { 标记为字符串颜色
                 pos++;
                 interpBraceDepth = 1;
                 continue;
@@ -250,7 +257,8 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         // ---- 正常模式 ----
         if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '/') {
             commentRanges.append({pos, len - pos});
-            for (int i = pos; i < len; ++i) mask[i] = 1;
+            for (int i = pos; i < len; ++i)
+                mask[i] = 1;
             break;
         }
 
@@ -315,8 +323,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
             // BUG-SH-4 fix: 移除 wordLen <= 20 上限检查。原检查跳过过长标识符的
             // keywordSet_ 查找，但 QSet::contains 对任意长度都是 O(1)+平均 O(L) 哈希，
             // 无性能问题。上限 20 会漏掉理论上的长关键字（虽当前无，但为防御性修复）。
-            if (!keywordSet_.isEmpty() &&
-                keywordSet_.contains(text.mid(start, wordLen))) {
+            if (!keywordSet_.isEmpty() && keywordSet_.contains(text.mid(start, wordLen))) {
                 setFormat(start, wordLen, keywordFormat_);
             }
             continue;
@@ -330,12 +337,12 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         // 非法字面量高亮为错误格式（红色），避免被当作普通数字 0 处理后剩余
         // 字符（如 xFF）被误识别为标识符。
         if (c == '0' && pos + 1 < len &&
-            (text[pos + 1] == 'x' || text[pos + 1] == 'X' ||
-             text[pos + 1] == 'b' || text[pos + 1] == 'B' ||
+            (text[pos + 1] == 'x' || text[pos + 1] == 'X' || text[pos + 1] == 'b' || text[pos + 1] == 'B' ||
              text[pos + 1] == 'o' || text[pos + 1] == 'O')) {
             int start = pos;
             pos += 2;
-            while (pos < len && (text[pos].isLetterOrNumber() || text[pos] == '_')) ++pos;
+            while (pos < len && (text[pos].isLetterOrNumber() || text[pos] == '_'))
+                ++pos;
             QTextCharFormat errFmt;
             errFmt.setForeground(QColor(0xdc, 0x32, 0x2f));
             setFormat(start, pos - start, errFmt);
@@ -387,17 +394,15 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
         // 单字符运算符：+ - * / % < > = ( ) { } [ ] ; , :
         if (pos + 1 < len) {
             QChar c2 = text[pos + 1];
-            if ((c == '=' && c2 == '=') || (c == '!' && c2 == '=') ||
-                (c == '<' && c2 == '=') || (c == '>' && c2 == '=')) {
+            if ((c == '=' && c2 == '=') || (c == '!' && c2 == '=') || (c == '<' && c2 == '=') ||
+                (c == '>' && c2 == '=')) {
                 setFormat(pos, 2, operatorFormat_);
                 pos += 2;
                 continue;
             }
         }
-        if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' ||
-            c == '<' || c == '>' || c == '=' ||
-            c == '(' || c == ')' || c == '{' || c == '}' ||
-            c == '[' || c == ']' || c == ';' || c == ',' || c == ':') {
+        if (c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '<' || c == '>' || c == '=' || c == '(' ||
+            c == ')' || c == '{' || c == '}' || c == '[' || c == ']' || c == ';' || c == ',' || c == ':') {
             setFormat(pos, 1, operatorFormat_);
             pos++;
             continue;
@@ -416,11 +421,15 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     // 注：inString 在 interpBraceDepth > 0 期间恒为 true（进入插值时未清除，
     //   退出插值时显式重置），无需单独编码，200+braceDepth 即可覆盖。
     int newState = 0;
-    if (inNestedString) newState = 400 + interpBraceDepth;
+    if (inNestedString)
+        newState = 400 + interpBraceDepth;
     else if (blockCommentDepth > 0 && interpBraceDepth > 0)
         newState = 300 + interpBraceDepth * 10 + blockCommentDepth;
-    else if (blockCommentDepth > 0) newState = 100 + blockCommentDepth;
-    else if (interpBraceDepth > 0) newState = 200 + interpBraceDepth;
-    else if (inString) newState = 1;
+    else if (blockCommentDepth > 0)
+        newState = 100 + blockCommentDepth;
+    else if (interpBraceDepth > 0)
+        newState = 200 + interpBraceDepth;
+    else if (inString)
+        newState = 1;
     setCurrentBlockState(newState);
 }

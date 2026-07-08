@@ -6,18 +6,17 @@
  * 并高亮当前正在执行的指令，帮助学员把「代码」与「机器状态」对应起来。
  */
 #include "gui/VmStackPanel.h"
-#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
-#include <QVBoxLayout>
-#include <QHeaderView>
+#include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
 #include <QAbstractItemView>
-#include <algorithm>  // std::sort
+#include <QHeaderView>
+#include <QVBoxLayout>
+#include <algorithm> // std::sort
 
 // ============================================================
 // VmStackPanel 实现
 // ============================================================
 
-VmStackPanel::VmStackPanel(QWidget* parent)
-    : QWidget(parent) {
+VmStackPanel::VmStackPanel(QWidget* parent) : QWidget(parent) {
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
@@ -95,7 +94,8 @@ void VmStackPanel::updateStack(std::vector<Value> stack) {
         std::string valStr;
         try {
             valStr = stack[i].toString();
-            if (valStr.size() > 200) valStr = valStr.substr(0, 200) + "...";
+            if (valStr.size() > 200)
+                valStr = valStr.substr(0, 200) + "...";
         } catch (...) {
             valStr = "<error>";
         }
@@ -140,13 +140,12 @@ void VmStackPanel::updateRegisters(std::vector<Value> registers) {
         std::string valStr;
         try {
             valStr = registers[i].toString();
-            if (valStr.size() > 200) valStr = valStr.substr(0, 200) + "...";
+            if (valStr.size() > 200)
+                valStr = valStr.substr(0, 200) + "...";
         } catch (...) {
             valStr = "<error>";
         }
-        QString itemText = QString("R%1  %2")
-            .arg(static_cast<int>(i))
-            .arg(QString::fromStdString(valStr));
+        QString itemText = QString("R%1  %2").arg(static_cast<int>(i)).arg(QString::fromStdString(valStr));
         auto* item = new QListWidgetItem(itemText);
         stackList_->addItem(item);
     }
@@ -168,8 +167,7 @@ void VmStackPanel::updateGlobals(std::unordered_map<std::string, Value> globals)
     for (auto& kv : globals) {
         entries.push_back(std::move(kv));
     }
-    std::sort(entries.begin(), entries.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 
     // G-P2-4 fix: 仅在行数变化时调用 resizeColumnsToContents（O(n) 操作），避免每次更新都重算列宽
     const int newRowCount = static_cast<int>(entries.size());
@@ -177,20 +175,22 @@ void VmStackPanel::updateGlobals(std::unordered_map<std::string, Value> globals)
     globalsTable_->setRowCount(newRowCount);
 
     int row = 0;
-    int maxValueWidth = 0;  // BUG-VSP-3 fix: 跟踪值列最大文本长度
+    int maxValueWidth = 0; // BUG-VSP-3 fix: 跟踪值列最大文本长度
     for (const auto& entry : entries) {
         // BUG-VSP-1 fix: toString() 可能抛异常，用 try/catch 兜底
         std::string valStr;
         try {
             valStr = entry.second.toString();
-            if (valStr.size() > 200) valStr = valStr.substr(0, 200) + "...";
+            if (valStr.size() > 200)
+                valStr = valStr.substr(0, 200) + "...";
         } catch (...) {
             valStr = "<error>";
         }
         QString valQStr = QString::fromStdString(valStr);
         globalsTable_->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(entry.first)));
         globalsTable_->setItem(row, 1, new QTableWidgetItem(valQStr));
-        if (valQStr.size() > maxValueWidth) maxValueWidth = valQStr.size();
+        if (valQStr.size() > maxValueWidth)
+            maxValueWidth = valQStr.size();
         ++row;
     }
 
@@ -206,16 +206,10 @@ void VmStackPanel::updateGlobals(std::unordered_map<std::string, Value> globals)
 /// 高亮当前指令指针 ip 对应的操作（opName/源码行）。
 void VmStackPanel::updateCurrentOp(size_t ip, const std::string& opName, int line) {
     // BUG-VSP-5 fix: 对空 opName 与无效行号（<=0）显示兜底占位文本，避免显示空白
-    QString opDisplay = opName.empty()
-        ? QString::fromUtf8("(未知指令)")
-        : QString::fromStdString(opName);
-    QString lineDisplay = (line <= 0)
-        ? QString::fromUtf8("(无行号)")
-        : QString::number(line);
-    opLabel_->setText(QString("IP: %1  |  %2  |  行: %3")
-                        .arg(static_cast<qulonglong>(ip))
-                        .arg(opDisplay)
-                        .arg(lineDisplay));
+    QString opDisplay = opName.empty() ? QString::fromUtf8("(未知指令)") : QString::fromStdString(opName);
+    QString lineDisplay = (line <= 0) ? QString::fromUtf8("(无行号)") : QString::number(line);
+    opLabel_->setText(
+        QString("IP: %1  |  %2  |  行: %3").arg(static_cast<qulonglong>(ip)).arg(opDisplay).arg(lineDisplay));
 }
 
 /// 清空栈、寄存器与全局区视图。

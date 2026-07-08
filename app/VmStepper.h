@@ -19,10 +19,10 @@
 // 但独立实现（VM 是主线程同步执行，不复用 DebugController 跨线程机制）。
 // ============================================================
 
-#include <QObject>
-#include <QString>
-#include <QSet>
 #include <QMap>
+#include <QObject>
+#include <QSet>
+#include <QString>
 #include <QTimer>
 #include <atomic>
 #include <functional>
@@ -31,12 +31,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include "compiler/VM.h"
 #include "compiler/Bytecode.h"
-#include "compiler/RegisterVM.h"  // A1 fix: 寄存器式 VM 后端
 #include "compiler/RegisterBytecode.h"
+#include "compiler/RegisterVM.h" // A1 fix: 寄存器式 VM 后端
+#include "compiler/VM.h"
+#include "debug/DebugTypes.h" // BUG-DBG-6 fix: CallStackEntry 用于 VM 调用栈显示
 #include "interpreter/Value.h"
-#include "debug/DebugTypes.h"  // BUG-DBG-6 fix: CallStackEntry 用于 VM 调用栈显示
 
 class VmStepper : public QObject {
     Q_OBJECT
@@ -69,9 +69,7 @@ public:
     // 改为按值拷贝（std::optional），VmStepper 持有独立所有权，与 Compiler 生命周期解耦。
     void setCompileResult(const CompileResult& result) { lastCompileResult_ = result; }
     /// A1 fix: 设置 RegisterVM 编译结果（仅 useRegister_=true 时使用）
-    void setRegisterCompileResult(const RegisterCompileResult& result) {
-        lastRegCompileResult_ = result;
-    }
+    void setRegisterCompileResult(const RegisterCompileResult& result) { lastRegCompileResult_ = result; }
     /// A4 fix: 设置 VM 模式断点（复用 Interpreter 的 breakpoint 行号集合）
     void setBreakpoints(const QSet<int>& breakpoints) { vmBreakpoints_ = breakpoints; }
 
@@ -102,7 +100,8 @@ public:
     /// 启用/禁用 RegisterVM 后端。true 时所有步进/状态访问转发到 regVm_。
     /// 切换时自动 reset 两个后端，避免遗留状态污染。
     void setUseRegister(bool enabled) {
-        if (useRegister_ == enabled) return;
+        if (useRegister_ == enabled)
+            return;
         // BUG-EXTRA-1 fix: 必须始终调用 reset() 而非仅在 isVmRunning_ 时调用 stop()。
         // VM 暂停时（isVmRunning_=false, isVmInitialized_=true）frame.chunk 指向旧编译结果，
         // 下方 reset() 会释放编译结果导致悬垂指针。reset() 同时清理 isVmInitialized_。
@@ -134,7 +133,8 @@ public:
     // B2 fix: 停止 RUN 模式定时器并重置 isVmRunning_，避免 runBatch 在已 resetState 的 VM 上调用
     // currentFrame() 触发 std::abort。原 reset() 遗漏定时器停止 + 状态复位。
     void reset() {
-        if (vmRunTimer_) vmRunTimer_->stop();
+        if (vmRunTimer_)
+            vmRunTimer_->stop();
         isVmRunning_ = false;
         // A1 fix: 双后端都重置，确保切换后端时状态干净
         vm_.resetState();
@@ -157,9 +157,7 @@ public:
     // B6 bug fix: getStack 改返回 by value，避免返回 vm_.stack_ 引用导致调用方
     // 缓存引用后步进 VM 触发悬垂/use-after-free
     // A1 fix: 栈式 VM 返回操作数栈；RegisterVM 返回寄存器窗口（同样以 vector<Value> 形式）
-    std::vector<Value> getStack() const {
-        return useRegister_ ? regVm_.getRegisters() : vm_.getStack();
-    }
+    std::vector<Value> getStack() const { return useRegister_ ? regVm_.getRegisters() : vm_.getStack(); }
     std::unordered_map<std::string, Value> getGlobals() const {
         return useRegister_ ? regVm_.getGlobals() : vm_.getGlobalsRef();
     }
@@ -168,30 +166,20 @@ public:
     std::unordered_map<std::string, Value> getCurrentFrameLocals() const {
         return useRegister_ ? regVm_.getCurrentFrameLocals() : vm_.getCurrentFrameLocals();
     }
-    size_t getCurrentIP() const {
-        return useRegister_ ? regVm_.getCurrentIP() : vm_.getCurrentIP();
-    }
+    size_t getCurrentIP() const { return useRegister_ ? regVm_.getCurrentIP() : vm_.getCurrentIP(); }
     // A1 fix: 统一返回操作码名称字符串，兼容 OpCode/RegOp
     std::string getCurrentOpCodeName() const {
         return useRegister_ ? std::string(regOpName(regVm_.getCurrentOpCode()))
                             : std::string(opCodeName(vm_.getCurrentOpCode()));
     }
-    int getCurrentLine() const {
-        return useRegister_ ? regVm_.getCurrentLine() : vm_.getCurrentLine();
-    }
+    int getCurrentLine() const { return useRegister_ ? regVm_.getCurrentLine() : vm_.getCurrentLine(); }
     std::string getCurrentChunkName() const {
         return useRegister_ ? regVm_.getCurrentChunkName() : vm_.getCurrentChunkName();
     }
-    std::string getLastError() const {
-        return useRegister_ ? regVm_.getLastError() : vm_.getLastError();
-    }
-    int getLastErrorLine() const {
-        return useRegister_ ? regVm_.getLastErrorLine() : vm_.getLastErrorLine();
-    }
+    std::string getLastError() const { return useRegister_ ? regVm_.getLastError() : vm_.getLastError(); }
+    int getLastErrorLine() const { return useRegister_ ? regVm_.getLastErrorLine() : vm_.getLastErrorLine(); }
     // A4 fix: 暴露 VM 调用栈深度（用于 step-over/out 判断）
-    size_t getFrameCount() const {
-        return useRegister_ ? regVm_.getFrameCount() : vm_.getFrameCount();
-    }
+    size_t getFrameCount() const { return useRegister_ ? regVm_.getFrameCount() : vm_.getFrameCount(); }
     // BUG-DBG-6 fix: 暴露 VM 调用栈快照（用于 GUI 调用栈面板显示）。
     // 原实现 VmStepper 未转发 VM::getCallStack()/RegisterVM::getCallStack()，
     // 导致 VM 模式调试时 DebugPanel 调用栈列表永远空白（数据源是 Interpreter 的空 callStack_）。
@@ -244,7 +232,7 @@ private:
     RegisterVM regVm_;
     // P1-6 fix: 原 const T* 裸指针，编译器状态变更/移动可能悬垂。改为按值拷贝持有。
     std::optional<CompileResult> lastCompileResult_;
-    std::optional<RegisterCompileResult> lastRegCompileResult_;  // A1 fix
+    std::optional<RegisterCompileResult> lastRegCompileResult_; // A1 fix
 
     // ---- VM 步进状态 ----
     // IDE-ATOMIC-01 fix: isVmRunning_ 可能被 IdeController::isVmRunning() 跨线程查询
@@ -256,8 +244,8 @@ private:
     bool useRegister_ = false;
     // A4 fix: VM 步进状态机（轻量版，不依赖 DebugController 的跨线程机制）
     VmStepMode vmStepMode_ = VmStepMode::STEP_IN;
-    size_t vmStepStartFrameCount_ = 0;  // step-over/out 起始帧深度
-    int vmLastPausedLine_ = 0;          // 上次暂停的行号（防同行重复触发）
+    size_t vmStepStartFrameCount_ = 0; // step-over/out 起始帧深度
+    int vmLastPausedLine_ = 0;         // 上次暂停的行号（防同行重复触发）
     // AUDIT-BUG-D2 fix: STEP_OVER 期间是否进入过更深的帧。
     // 与 Interpreter DebugController::crossedDeeper_ 对齐——
     // 同行函数调用返回后即使行号不变也应暂停。
@@ -265,24 +253,24 @@ private:
     // BUG-DBG-2 fix: crossedLine 机制，与 DebugController::crossedLine_ 对齐。
     // 单行循环断点（如 for (...; ...; ...) print(i);）在 RUN 模式下需每次迭代重新触发。
     // 原实现仅用 currentLine != vmLastPausedLine_ 去重，导致首次命中后永不再触发。
-    int vmLastSeenLine_ = -1;          // 上次见到的行号
-    bool vmCrossedLine_ = false;        // 是否跨过不同行（允许同行断点重新触发）
-    QSet<int> vmBreakpoints_;          // VM 模式断点行号集合（复用 Editor 断点）
-    QMap<int, std::string> vmBreakpointConditions_;  // #4 fix: 条件断点表达式
+    int vmLastSeenLine_ = -1;                       // 上次见到的行号
+    bool vmCrossedLine_ = false;                    // 是否跨过不同行（允许同行断点重新触发）
+    QSet<int> vmBreakpoints_;                       // VM 模式断点行号集合（复用 Editor 断点）
+    QMap<int, std::string> vmBreakpointConditions_; // #4 fix: 条件断点表达式
     // BUG-DBG-AUDIT-2 fix: VM 模式断点命中计数（行号→次数），对齐
     // DebugController::breakpointInfos_[line].hitCount。checkBreakpointHit 命中时递增，
     // reset() 清空，setBreakpointConditions 重置对应行。
     QMap<int, int> vmBreakpointHitCounts_;
-    std::function<bool(const std::string&)> vmConditionEvaluator_;  // #4 fix: 条件求值回调
+    std::function<bool(const std::string&)> vmConditionEvaluator_; // #4 fix: 条件求值回调
     // QT-R-01 fix: RUN 模式异步分批执行的定时器
     QTimer* vmRunTimer_ = nullptr;
-    int64_t vmRunStepCount_ = 0;        // RUN 模式累计执行步数（用于总量上限保护）
+    int64_t vmRunStepCount_ = 0; // RUN 模式累计执行步数（用于总量上限保护）
 
     // ---- A1 fix: 单步执行分派辅助 ----
     // 两个 VM 的 stepOnce 均返回 VMResult，无需 vtable，直接 if 分派更高效
     VMResult stepOnceActive();
     bool isActiveFinished() const;
-    bool initActiveExecution();  // P1-5 fix: 返回 false 表示编译结果为空，caller 不应标记 initialized
+    bool initActiveExecution(); // P1-5 fix: 返回 false 表示编译结果为空，caller 不应标记 initialized
     void resetActiveState();
 
     /// #4 fix: 检查断点命中（含条件求值）。返回 true 表示应在此行暂停。

@@ -1,24 +1,24 @@
 #pragma once
 
-#include <QMainWindow>
-#include <QCloseEvent>
-#include <QTabWidget>
-#include <QToolBar>
 #include <QAction>
+#include <QCloseEvent>
+#include <QGridLayout>
+#include <QListWidget>
+#include <QMainWindow>
+#include <QMap>
+#include <QSplitter>
+#include <QStackedWidget>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTextEdit>
-#include <QListWidget>
 #include <QTimer>
-#include <QTreeWidget>
-#include <QStackedWidget>
+#include <QToolBar>
 #include <QToolButton>
-#include <QSplitter>
+#include <QTreeWidget>
 #include <QVariantAnimation>
-#include <QGridLayout>
-#include <QMap>
+#include <functional>
 #include <memory>
 #include <vector>
-#include <functional>
 
 #include <QSettings>
 
@@ -28,49 +28,49 @@
 
 // QFluentKit 主题
 #include "FluentGlobal.h"
-#include "ToolButton.h"  // TransparentToolButton（主题切换按钮）
+#include "ToolButton.h" // TransparentToolButton（主题切换按钮）
 
 #include "Diagnostic.h"
 #include "IdeController.h"
-#include "gui/CodeEditor.h"
-#include "gui/SyntaxHighlighter.h"
-#include "gui/AstViewer.h"
-#include "gui/DebugPanel.h"
-#include "gui/ReplPanel.h"
-#include "gui/VmStackPanel.h"
-#include "gui/IrViewer.h"
-#include "gui/FindReplacePanel.h"
 #include "gui/ActivityBar.h"
-#include "gui/PipelineViewer.h"
-#include "gui/BackendComparePanel.h"
-#include "gui/BugHuntPanel.h"
-#include "gui/SyntaxExplorerPanel.h"
-#include "gui/LabManualPanel.h"
-#include "gui/MemoryModelPanel.h"
-#include "gui/IRTransformPanel.h"
-#include "gui/ProfileDashboardPanel.h"
-#include "gui/CallStackPanel.h"
-#include "gui/VariableInspectorPanel.h"
-#include "gui/BytecodeTracePanel.h"
-#include "gui/BreakpointConditionPanel.h"
-#include "gui/ExceptionFlowPanel.h"
-#include "gui/ClosureInspectorPanel.h"
-#include "gui/LearningPathPanel.h"
-#include "gui/TokenPuzzlePanel.h"
 #include "gui/AstBuilderToyPanel.h"
-#include "gui/VmStackSandboxPanel.h"
+#include "gui/AstViewer.h"
+#include "gui/BackendComparePanel.h"
+#include "gui/BreakpointConditionPanel.h"
+#include "gui/BugHuntPanel.h"
+#include "gui/BytecodeTracePanel.h"
+#include "gui/CallStackPanel.h"
+#include "gui/ClosureInspectorPanel.h"
+#include "gui/CodeEditor.h"
 #include "gui/CodeJourneyInfoPanel.h"
-#include "gui/PanelCatalog.h"  // P2-1 fix: 替代废弃的 LearningHubDialog
+#include "gui/DebugPanel.h"
+#include "gui/ExceptionFlowPanel.h"
+#include "gui/FindReplacePanel.h"
 #include "gui/GlossaryPanel.h"
+#include "gui/IRTransformPanel.h"
+#include "gui/IrViewer.h"
+#include "gui/LabManualPanel.h"
+#include "gui/LearningPathPanel.h"
+#include "gui/MemoryModelPanel.h"
+#include "gui/PanelCatalog.h" // P2-1 fix: 替代废弃的 LearningHubDialog
+#include "gui/PipelineViewer.h"
+#include "gui/ProfileDashboardPanel.h"
+#include "gui/ReplPanel.h"
+#include "gui/SyntaxExplorerPanel.h"
+#include "gui/SyntaxHighlighter.h"
 #include "gui/TeachingPanelHeader.h"
 #include "gui/TeachingTreePanel.h"
+#include "gui/TokenPuzzlePanel.h"
+#include "gui/VariableInspectorPanel.h"
+#include "gui/VmStackPanel.h"
+#include "gui/VmStackSandboxPanel.h"
 
 class Pivot;
 class QLabel;
 class QLineEdit;
-class ComboBox;   // QFluentKit ComboBox
-class GuidedTour;  // 新手引导组件
-class QFileSystemWatcher;  // 文件外部修改监听
+class ComboBox;           // QFluentKit ComboBox
+class GuidedTour;         // 新手引导组件
+class QFileSystemWatcher; // 文件外部修改监听
 
 // ============================================================
 // Ide — MiniLang IDE 主窗口
@@ -80,11 +80,11 @@ class QFileSystemWatcher;  // 文件外部修改监听
 
 // Output level for structured output panel
 enum class OutputLevel {
-    Plain,      // User program output (default, no icon prefix)
-    Info,       // Compilation progress messages
-    Success,    // Completion / pass messages
-    Warning,    // Warning messages
-    ErrorMsg    // Error messages (named ErrorMsg to avoid conflict with ERROR macro)
+    Plain,   // User program output (default, no icon prefix)
+    Info,    // Compilation progress messages
+    Success, // Completion / pass messages
+    Warning, // Warning messages
+    ErrorMsg // Error messages (named ErrorMsg to avoid conflict with ERROR macro)
 };
 
 class Ide : public QMainWindow {
@@ -182,10 +182,10 @@ private:
 
     // ---- 中央区域：欢迎页 ↔ 编辑器标签页 ----
     QWidget* welcomePage_ = nullptr;
-    QStackedWidget* centerStack_ = nullptr;  // 教学面板/欢迎页栈
+    QStackedWidget* centerStack_ = nullptr; // 教学面板/欢迎页栈
     QTabWidget* editorTabWidget_ = nullptr;
-    QSplitter* centerSplitter_ = nullptr;    // 三栏布局：[centerStack_ | editorTabWidget_]
-    QVariantAnimation* splitterAnim_ = nullptr;  // centerSplitter_ 尺寸动画
+    QSplitter* centerSplitter_ = nullptr;       // 三栏布局：[centerStack_ | editorTabWidget_]
+    QVariantAnimation* splitterAnim_ = nullptr; // centerSplitter_ 尺寸动画
     int untitledCount_ = 0;
 
     // ---- ADS 停靠管理器 ----
@@ -197,23 +197,23 @@ private:
     ActivityBar* activityBar_ = nullptr;
 
     // ---- 第九轮 → 十二轮统一：单一 36px 标题栏（融合菜单+工具栏+窗口控制）----
-    QWidget* titleBar_ = nullptr;           // 统一标题栏容器
-    QLabel* titleIconLabel_ = nullptr;      // 程序图标
-    QLabel* titleTextLabel_ = nullptr;      // "MiniLang IDE" 文字
-    QLabel* titlePathLabel_ = nullptr;      // 当前文件路径（灰色小字）
-    QToolButton* titleMinBtn_ = nullptr;    // 最小化
-    QToolButton* titleMaxBtn_ = nullptr;    // 最大化/还原
-    QToolButton* titleCloseBtn_ = nullptr;  // 关闭
+    QWidget* titleBar_ = nullptr;          // 统一标题栏容器
+    QLabel* titleIconLabel_ = nullptr;     // 程序图标
+    QLabel* titleTextLabel_ = nullptr;     // "MiniLang IDE" 文字
+    QLabel* titlePathLabel_ = nullptr;     // 当前文件路径（灰色小字）
+    QToolButton* titleMinBtn_ = nullptr;   // 最小化
+    QToolButton* titleMaxBtn_ = nullptr;   // 最大化/还原
+    QToolButton* titleCloseBtn_ = nullptr; // 关闭
     // 深色主题已移除：themeToggleBtn_ 成员已删除
-    ComboBox* engineCombo_ = nullptr;       // 执行引擎切换
-    bool syncingViewAction_ = false;        // 防止视图菜单与面板 toggleView 递归
+    ComboBox* engineCombo_ = nullptr; // 执行引擎切换
+    bool syncingViewAction_ = false;  // 防止视图菜单与面板 toggleView 递归
 
     // 左侧面板
     ads::CDockWidget* fileTreeDock_ = nullptr;
     ads::CDockWidget* debugPanelDock_ = nullptr;
     QTreeWidget* fileTree_ = nullptr;
     QLineEdit* fileTreeFilterEdit_ = nullptr;
-    QTimer* fileTreeFilterTimer_ = nullptr;  // 文件树过滤防抖（200ms）  // 文件树搜索过滤框
+    QTimer* fileTreeFilterTimer_ = nullptr; // 文件树过滤防抖（200ms）  // 文件树搜索过滤框
     DebugPanel* debugPanel_ = nullptr;
 
     // 底部面板（主布局底部，非 ADS dock，覆盖全宽不挤压教学内容）
@@ -327,7 +327,7 @@ private:
 
     QWidget* debugButtonContainer_ = nullptr;
     bool debugButtonsVisible_ = false;
-    QAction* debugSepAction_ = nullptr;   // 第八轮：动态分隔线，随调试按钮显隐
+    QAction* debugSepAction_ = nullptr; // 第八轮：动态分隔线，随调试按钮显隐
 
     QAction* vmStepAction_ = nullptr;
     QAction* vmStepOverAction_ = nullptr;
@@ -336,7 +336,7 @@ private:
     QAction* vmStopAction_ = nullptr;
 
     QWidget* vmButtonContainer_ = nullptr;
-    QAction* vmSepAction_ = nullptr;      // 第八轮：动态分隔线，随 VM 按钮显隐
+    QAction* vmSepAction_ = nullptr; // 第八轮：动态分隔线，随 VM 按钮显隐
 
     QAction* newAction_ = nullptr;
     QAction* openAction_ = nullptr;
@@ -349,34 +349,34 @@ private:
     QAction* viewOutputAction_ = nullptr;
     QAction* viewCompileAnalysisAction_ = nullptr;
     // 教学增强面板视图菜单项
-    QAction* viewPipelineAction_       = nullptr;
+    QAction* viewPipelineAction_ = nullptr;
     QAction* viewBackendCompareAction_ = nullptr;
-    QAction* viewBugHuntAction_        = nullptr;
+    QAction* viewBugHuntAction_ = nullptr;
     QAction* viewSyntaxExplorerAction_ = nullptr;
-    QAction* viewLabManualAction_      = nullptr;
+    QAction* viewLabManualAction_ = nullptr;
     // 第二波教学面板视图菜单项
-    QAction* viewMemoryModelAction_       = nullptr;
-    QAction* viewIRTransformAction_       = nullptr;
-    QAction* viewProfileDashboardAction_  = nullptr;
+    QAction* viewMemoryModelAction_ = nullptr;
+    QAction* viewIRTransformAction_ = nullptr;
+    QAction* viewProfileDashboardAction_ = nullptr;
     // 第三波教学面板视图菜单项
-    QAction* viewCallStackAction_           = nullptr;
-    QAction* viewVariableInspectorAction_   = nullptr;
-    QAction* viewBytecodeTraceAction_       = nullptr;
+    QAction* viewCallStackAction_ = nullptr;
+    QAction* viewVariableInspectorAction_ = nullptr;
+    QAction* viewBytecodeTraceAction_ = nullptr;
     // 第二档 P1-2 教学面板视图菜单项
     QAction* viewBreakpointConditionAction_ = nullptr;
     // 第三档 P2-3 教学面板视图菜单项
-    QAction* viewExceptionFlowAction_      = nullptr;
-    QAction* viewClosureInspectorAction_    = nullptr;
+    QAction* viewExceptionFlowAction_ = nullptr;
+    QAction* viewClosureInspectorAction_ = nullptr;
     // 第四档教学面板视图菜单项（功能 1-6）
-    QAction* viewLearningPathAction_      = nullptr;
-    QAction* viewTokenPuzzleAction_       = nullptr;
-    QAction* viewAstBuilderToyAction_     = nullptr;
-    QAction* viewVmStackSandboxAction_    = nullptr;
-    QAction* viewCodeJourneyAction_       = nullptr;
+    QAction* viewLearningPathAction_ = nullptr;
+    QAction* viewTokenPuzzleAction_ = nullptr;
+    QAction* viewAstBuilderToyAction_ = nullptr;
+    QAction* viewVmStackSandboxAction_ = nullptr;
+    QAction* viewCodeJourneyAction_ = nullptr;
     // 学习中心入口（ActivityBar + 视图菜单）
-    QAction* viewLearningHubAction_       = nullptr;
+    QAction* viewLearningHubAction_ = nullptr;
     // P2-8：术语表视图入口
-    QAction* viewGlossaryAction_           = nullptr;
+    QAction* viewGlossaryAction_ = nullptr;
 
     // 状态栏
     QLabel* statusLineLabel_ = nullptr;
@@ -392,18 +392,18 @@ private:
     QString currentFilePath_;
     bool isDirty_ = false;
     bool hasWorkspace_ = false;
-    int bottomPanelHeight_ = 220;  // 第十二轮：输出面板默认高度，用户调整后记忆
-    int codeFontSize_ = 11;        // 代码编辑器全局字号（默认 11pt），应用于所有编辑器标签页
+    int bottomPanelHeight_ = 220; // 第十二轮：输出面板默认高度，用户调整后记忆
+    int codeFontSize_ = 11;       // 代码编辑器全局字号（默认 11pt），应用于所有编辑器标签页
 
     // ---- 文件外部修改监听 ----
     QFileSystemWatcher* fileWatcher_ = nullptr;
-    QString watchedFilePath_;        // 当前被监视的文件路径
-    bool selfSaving_ = false;        // 标识 IDE 自身保存触发 fileChanged，跳过外部修改弹框
+    QString watchedFilePath_; // 当前被监视的文件路径
+    bool selfSaving_ = false; // 标识 IDE 自身保存触发 fileChanged，跳过外部修改弹框
 
     // ---- 防抖定时器 ----
-    QTimer* completionTimer_ = nullptr;     // 补全词刷新（500ms）
-    QTimer* syntaxCheckTimer_ = nullptr;    // 语法检查（300ms）
-    QTimer* splitterSaveTimer_ = nullptr;   // 布局保存防抖（500ms）
+    QTimer* completionTimer_ = nullptr;   // 补全词刷新（500ms）
+    QTimer* syntaxCheckTimer_ = nullptr;  // 语法检查（300ms）
+    QTimer* splitterSaveTimer_ = nullptr; // 布局保存防抖（500ms）
     QStringList staticCompletionWords_;
 
     // ---- 欢迎页：最近打开列表 ----
@@ -433,7 +433,7 @@ private:
     void initFileTree();
     void initWelcomePage();
     void initStatusBar();
-    void initTitleBar();       // 十二轮：统一标题栏（融合菜单+工具栏+窗口控制，36px）
+    void initTitleBar(); // 十二轮：统一标题栏（融合菜单+工具栏+窗口控制，36px）
     void applyFluentStyle();
     void setupCompletion();
     void updateCompletionWords();
@@ -444,11 +444,10 @@ private:
 
     // ---- 输出/错误 ----
     void appendOutput(const QString& text, OutputLevel level = OutputLevel::Plain);
-    void appendError(const QString& text, int line = 0, int column = 0,
-                     DiagLevel level = DiagLevel::Error);
+    void appendError(const QString& text, int line = 0, int column = 0, DiagLevel level = DiagLevel::Error);
     void clearOutput();
     void updateErrorBadge();
-    void applyErrorFilter();   // 错误列表类型过滤
+    void applyErrorFilter(); // 错误列表类型过滤
 
     // ---- 可视化 ----
     void highlightBytecodeLine(const std::string& chunkName, size_t ip);
@@ -520,9 +519,7 @@ private:
 
     /// 教学面板包装器：在教学面板顶部插入 TeachingPanelHeader
     /// panelId 用于查找帮助文案，title 为标题文本，panel 为原始面板
-    QWidget* wrapTeachingPanel(const QString& panelId,
-                                const QString& title,
-                                QWidget* panel);
+    QWidget* wrapTeachingPanel(const QString& panelId, const QString& title, QWidget* panel);
 
     void showDebugButtons(bool show);
     void showVmButtons(bool show);

@@ -3,23 +3,25 @@
 // ============================================================
 
 #include "gui/VariableInspectorPanel.h"
-#include "gui/GuidedTour.h"
-#include "gui/PanelAnimator.h"
-#include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
-#include "interpreter/Value.h"
+#include "debug/DebugTypes.h"
+#include "gui/GuidedTour.h"
+#include "gui/MarkdownRenderer.h"
+#include "gui/PanelAnimator.h"
 #include "interpreter/NaNBox.h"
 #include "interpreter/RefCounted.h"
-#include "debug/DebugTypes.h"
+#include "interpreter/Value.h"
 
-#include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QSplitter>
 #include <QHeaderView>
-#include <sstream>
+#include <QSplitter>
+#include <QVBoxLayout>
+#include <algorithm> // AUDIT-P2 fix: std::sort 全局变量按名排序
 #include <iomanip>
+#include <sstream>
+#include <vector>
 
-#include "Label.h"   // QFluentKit（CaptionLabel）
+#include "Label.h" // QFluentKit（CaptionLabel）
 
 // ============================================================
 // VariableInspectorLibrary — 静态教学场景库
@@ -28,71 +30,43 @@
 /// 返回变量类型示例库数据（静态数据）。
 const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
     static const std::vector<VariableTypeExample> kExamples = {
+        VariableTypeExample{"type-int", "int", "🔢 int 类型", "var x = 42;", "42", "0x7ff800000000002a", "—",
+                            "💡 标量内联：int48 直接存入 NaN-box 的低 48 位，无需堆分配。范围 |v| < 2^47。"},
         VariableTypeExample{
-            "type-int", "int", "🔢 int 类型",
-            "var x = 42;", "42",
-            "0x7ff800000000002a", "—",
-            "💡 标量内联：int48 直接存入 NaN-box 的低 48 位，无需堆分配。范围 |v| < 2^47。"
-        },
-        VariableTypeExample{
-            "type-int-boundary", "int", "🔢 int 边界值",
-            "var big = 70368744177663;", "70368744177663",
+            "type-int-boundary", "int", "🔢 int 边界值", "var big = 70368744177663;", "70368744177663",
             "0x7ff8ffffffffffff", "—",
-            "⚠️ int48 最大值 2^46-1 = 70368744177663（约 7×10^13）。超出此范围会触发装箱为 BoxedIntData*。"
-        },
+            "⚠️ int48 最大值 2^46-1 = 70368744177663（约 7×10^13）。超出此范围会触发装箱为 BoxedIntData*。"},
         VariableTypeExample{
-            "type-float", "float", "🔢 float 类型",
-            "var pi = 3.14;", "3.14",
-            "0x40091EB851EB851F", "—",
-            "💡 标量内联：IEEE 754 double 直接存入 NaN-box 的 64 位。注意 tag bits 与 NaN 模式不冲突。"
-        },
+            "type-float", "float", "🔢 float 类型", "var pi = 3.14;", "3.14", "0x40091EB851EB851F", "—",
+            "💡 标量内联：IEEE 754 double 直接存入 NaN-box 的 64 位。注意 tag bits 与 NaN 模式不冲突。"},
+        VariableTypeExample{"type-bool", "bool", "🔢 bool 类型", "var ok = true;", "true", "0x7ff9000000000001", "—",
+                            "💡 标量内联：bool 编码为 int48（0/1），tag bits 与 int 不同（INT_TAG_BASE=0x7FF8 vs "
+                            "BOOL_TAG_BASE=0x7FF9）。"},
+        VariableTypeExample{"type-null", "null", "🔢 null 类型", "var n = null;", "null", "0x7ffa000000000000", "—",
+                            "💡 标量内联：唯一编码 NULL_BITS=0x7FFA<<48，payload 全 0。"},
+        VariableTypeExample{"type-string", "string", "📝 string 类型", "var s = \"hello\";", "hello",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "StringData* (RefCounted) { refCount: 1; bytes: 'hello'; length: 5; }",
+                            "📦 堆分配：Value 存 StringData* 指针，对象继承 RefCounted 维护引用计数。COW：写时检查 "
+                            "refCount==1，否则深拷贝。"},
+        VariableTypeExample{"type-array", "array", "📊 array 类型", "var arr = [1, 2, 3];", "[1, 2, 3]",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "ArrayData* (RefCounted) { refCount: 1; elements: Value[3]; }",
+                            "📦 堆分配：COW 容器。`var b = a` 共享所有权 refCount=2，`b.push(4)` 触发 detach 深拷贝。"},
+        VariableTypeExample{"type-dict", "dict", "📊 dict 类型", "var d = {\"x\": 1, \"y\": 2};", "{x: 1, y: 2}",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "DictData* (RefCounted) { refCount: 1; entries: HashMap<String,Value>; }",
+                            "📦 堆分配：基于哈希表的 COW 容器。键需为 string 类型。"},
         VariableTypeExample{
-            "type-bool", "bool", "🔢 bool 类型",
-            "var ok = true;", "true",
-            "0x7ff9000000000001", "—",
-            "💡 标量内联：bool 编码为 int48（0/1），tag bits 与 int 不同（INT_TAG_BASE=0x7FF8 vs BOOL_TAG_BASE=0x7FF9）。"
-        },
-        VariableTypeExample{
-            "type-null", "null", "🔢 null 类型",
-            "var n = null;", "null",
-            "0x7ffa000000000000", "—",
-            "💡 标量内联：唯一编码 NULL_BITS=0x7FFA<<48，payload 全 0。"
-        },
-        VariableTypeExample{
-            "type-string", "string", "📝 string 类型",
-            "var s = \"hello\";", "hello",
-            "（堆指针，tag bits=0x7FFB）",
-            "StringData* (RefCounted) { refCount: 1; bytes: 'hello'; length: 5; }",
-            "📦 堆分配：Value 存 StringData* 指针，对象继承 RefCounted 维护引用计数。COW：写时检查 refCount==1，否则深拷贝。"
-        },
-        VariableTypeExample{
-            "type-array", "array", "📊 array 类型",
-            "var arr = [1, 2, 3];", "[1, 2, 3]",
-            "（堆指针，tag bits=0x7FFB）",
-            "ArrayData* (RefCounted) { refCount: 1; elements: Value[3]; }",
-            "📦 堆分配：COW 容器。`var b = a` 共享所有权 refCount=2，`b.push(4)` 触发 detach 深拷贝。"
-        },
-        VariableTypeExample{
-            "type-dict", "dict", "📊 dict 类型",
-            "var d = {\"x\": 1, \"y\": 2};", "{x: 1, y: 2}",
-            "（堆指针，tag bits=0x7FFB）",
-            "DictData* (RefCounted) { refCount: 1; entries: HashMap<String,Value>; }",
-            "📦 堆分配：基于哈希表的 COW 容器。键需为 string 类型。"
-        },
-        VariableTypeExample{
-            "type-instance", "instance", "📦 instance 类型",
-            "var p = Point(3, 4);", "<instance of Point>",
+            "type-instance", "instance", "📦 instance 类型", "var p = Point(3, 4);", "<instance of Point>",
             "（堆指针，tag bits=0x7FFB）",
             "InstanceData* (RefCounted) { refCount: 1; className: 'Point'; fields: {x:3, y:4}; }",
-            "📦 堆分配：实例字段表通过 ClassInfo::flattenedFieldOrder 描述。方法查找经 methodCache_ 加速。"
-        },
+            "📦 堆分配：实例字段表通过 ClassInfo::flattenedFieldOrder 描述。方法查找经 methodCache_ 加速。"},
         VariableTypeExample{
-            "type-closure", "closure", "🔗 closure 类型",
-            "fun inc(x) { return x+1; }\nvar f = inc;", "<closure>",
+            "type-closure", "closure", "🔗 closure 类型", "fun inc(x) { return x+1; }\nvar f = inc;", "<closure>",
             "（堆指针，tag bits=0x7FFB）",
             "ClosureData* (RefCounted) { refCount: 1; params: ['x']; env: Environment*; body: FunDecl*; }",
-            "📦 堆分配：闭包捕获外层 Environment（弱引用链 parent）。env 链打破循环依赖。"
-        },
+            "📦 堆分配：闭包捕获外层 Environment（弱引用链 parent）。env 链打破循环依赖。"},
     };
     return kExamples;
 }
@@ -107,23 +81,29 @@ std::string valueToBitsHex(const Value& v) {
     std::ostringstream os;
     os << "0x" << std::hex << std::setfill('0') << std::setw(16);
     switch (v.getType()) {
-        case ValueType::VAL_INT:
-            // AUDIT-P1 fix: BoxedIntData（超大整数装箱为堆对象）的 type==VAL_INT
-            // 但 isPointer()==true，此时 intVal() 返回原始 int64（可能超出 int48 范围），
-            // 调用 NaNBox::fromInt 会触发 canEncodeInt 失败 → std::abort() 崩溃。
-            // 对 BoxedIntData 显示堆指针占位符，与堆类型 default 分支一致。
-            if (v.isPointer()) {
-                os << "7ffb????????????";
-            } else {
-                os << NaNBox::fromInt(v.intVal()).rawBits();
-            }
-            break;
-        case ValueType::VAL_FLOAT:  os << NaNBox::fromFloat(v.floatVal()).rawBits(); break;
-        case ValueType::VAL_BOOL:   os << NaNBox::fromBool(v.boolVal()).rawBits(); break;
-        case ValueType::VAL_NULL:  os << NaNBox::null().rawBits(); break;
-        default:
+    case ValueType::VAL_INT:
+        // AUDIT-P1 fix: BoxedIntData（超大整数装箱为堆对象）的 type==VAL_INT
+        // 但 isPointer()==true，此时 intVal() 返回原始 int64（可能超出 int48 范围），
+        // 调用 NaNBox::fromInt 会触发 canEncodeInt 失败 → std::abort() 崩溃。
+        // 对 BoxedIntData 显示堆指针占位符，与堆类型 default 分支一致。
+        if (v.isPointer()) {
             os << "7ffb????????????";
-            break;
+        } else {
+            os << NaNBox::fromInt(v.intVal()).rawBits();
+        }
+        break;
+    case ValueType::VAL_FLOAT:
+        os << NaNBox::fromFloat(v.floatVal()).rawBits();
+        break;
+    case ValueType::VAL_BOOL:
+        os << NaNBox::fromBool(v.boolVal()).rawBits();
+        break;
+    case ValueType::VAL_NULL:
+        os << NaNBox::null().rawBits();
+        break;
+    default:
+        os << "7ffb????????????";
+        break;
     }
     return os.str();
 }
@@ -131,12 +111,13 @@ std::string valueToBitsHex(const Value& v) {
 std::string bitsToBinary(uint64_t bits) {
     std::string s(64, '0');
     for (int i = 0; i < 64; ++i) {
-        if (bits & (1ULL << (63 - i))) s[i] = '1';
+        if (bits & (1ULL << (63 - i)))
+            s[i] = '1';
     }
     return s;
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================
 // VariableInspectorPanel 实现
@@ -149,7 +130,7 @@ VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent
     outer->setSpacing(4);
 
     auto* pageBar = new QHBoxLayout;
-    pageLiveBtn_    = new QPushButton(tr("实时变量树"));
+    pageLiveBtn_ = new QPushButton(tr("实时变量树"));
     pageLibraryBtn_ = new QPushButton(tr("类型教学库"));
     pageLiveBtn_->setCheckable(true);
     pageLibraryBtn_->setCheckable(true);
@@ -160,7 +141,7 @@ VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent
     outer->addLayout(pageBar);
 
     stack_ = new QStackedWidget;
-    auto* livePage    = new QWidget;
+    auto* livePage = new QWidget;
     auto* libraryPage = new QWidget;
     buildLivePage(livePage);
     buildLibraryPage(libraryPage);
@@ -168,7 +149,11 @@ VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent
     stack_->addWidget(libraryPage);
     outer->addWidget(stack_, 1);
 
-    connect(pageLiveBtn_,    &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::slideInWidget(stack_->currentWidget()); });
+    connect(pageLiveBtn_, &QPushButton::clicked, [this]() {
+        stack_->setCurrentIndex(0);
+        pageLibraryBtn_->setChecked(false);
+        PanelAnimator::slideInWidget(stack_->currentWidget());
+    });
     connect(pageLibraryBtn_, &QPushButton::clicked, [this]() {
         stack_->setCurrentIndex(1);
         pageLiveBtn_->setChecked(false);
@@ -193,7 +178,8 @@ VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent
 
 /// 绑定 IDE 控制器以订阅 VM 状态变化。
 void VariableInspectorPanel::setController(IdeController* controller) {
-    if (controller_ == controller) return;
+    if (controller_ == controller)
+        return;
     // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
     if (controller_) {
         controller_->removeVmStateChangedListener(this);
@@ -219,7 +205,7 @@ void VariableInspectorPanel::buildLivePage(QWidget* host) {
 
     auto* bar = new QHBoxLayout;
     liveStatusLabel_ = new CaptionLabel(tr("状态：未初始化"));
-    refreshBtn_       = new QPushButton(tr("刷新"));
+    refreshBtn_ = new QPushButton(tr("刷新"));
     autoRefreshCheck_ = new QCheckBox(tr("自动刷新 (2s)"));
     bar->addWidget(liveStatusLabel_);
     bar->addStretch();
@@ -228,7 +214,7 @@ void VariableInspectorPanel::buildLivePage(QWidget* host) {
     v->addLayout(bar);
 
     auto* splitter = new QSplitter(Qt::Vertical);
-    varTree_   = new QTreeWidget;
+    varTree_ = new QTreeWidget;
     varTree_->setHeaderLabels({tr("变量"), tr("类型"), tr("值")});
     varTree_->header()->setStretchLastSection(false);
     varTree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -245,7 +231,8 @@ void VariableInspectorPanel::buildLivePage(QWidget* host) {
 
     connect(refreshBtn_, &QPushButton::clicked, this, &VariableInspectorPanel::onRefresh);
     connect(autoRefreshCheck_, &QCheckBox::toggled, this, &VariableInspectorPanel::onAutoRefreshToggled);
-    connect(varTree_, &QTreeWidget::currentItemChanged, [this](QTreeWidgetItem*, QTreeWidgetItem*) { onVariableSelected(); });
+    connect(varTree_, &QTreeWidget::currentItemChanged,
+            [this](QTreeWidgetItem*, QTreeWidgetItem*) { onVariableSelected(); });
 }
 
 /// 构建「类型示例库」子页 UI。
@@ -281,15 +268,16 @@ void VariableInspectorPanel::onRefresh() {
 
 /// 自动刷新开关：开启后随 VM 状态变化自动刷新。
 void VariableInspectorPanel::onAutoRefreshToggled(bool checked) {
-    if (checked) autoTimer_->start();
-    else         autoTimer_->stop();
+    if (checked)
+        autoTimer_->start();
+    else
+        autoTimer_->stop();
 }
 
 /// 面板显示时触发一次刷新（按需加载数据）。
 void VariableInspectorPanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
-    if (autoRefreshCheck_ && autoRefreshCheck_->isChecked() &&
-        autoTimer_ && !autoTimer_->isActive()) {
+    if (autoRefreshCheck_ && autoRefreshCheck_->isChecked() && autoTimer_ && !autoTimer_->isActive()) {
         refreshLive();
         autoTimer_->start();
     }
@@ -327,7 +315,7 @@ void VariableInspectorPanel::refreshLive() {
             return;
         }
         modeLabel = tr("Interpreter (debug)");
-        locals    = controller_->getDebugVariableSnapshot();
+        locals = controller_->getDebugVariableSnapshot();
     } else if (controller_->isVmInitialized()) {
         // AUDIT-P1-CORRECT fix: VM RUN 模式（异步 QTimer 批量执行）期间 worker 可能
         // 修改 globalSlots_/globalNameToSlot_，并发读取触发 UB。添加 isVmRunning() 守卫，
@@ -338,7 +326,7 @@ void VariableInspectorPanel::refreshLive() {
             return;
         }
         modeLabel = controller_->getUseRegisterVM() ? tr("RegisterVM") : tr("StackVM");
-        globals   = controller_->getVmGlobals();
+        globals = controller_->getVmGlobals();
     } else {
         liveStatusLabel_->setText(tr("状态：未运行（启动调试或 VM 单步以查看变量）"));
         varDetail_->clear();
@@ -354,13 +342,26 @@ void VariableInspectorPanel::refreshLive() {
     QFont globalFont = globalGroup->font(0);
     globalFont.setBold(true);
     globalGroup->setFont(0, globalFont);
-    for (const auto& [name, val] : globals) {
+    // AUDIT-P2 fix: 全局变量按名排序，与局部变量（std::map）排序一致，
+    // 避免 unordered_map hash 桶序导致的非确定展示顺序（对齐 VmStackPanel 行 171-172）
+    std::vector<std::pair<std::string, Value>> globalEntries(globals.begin(), globals.end());
+    std::sort(globalEntries.begin(), globalEntries.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [name, val] : globalEntries) {
         auto* item = new QTreeWidgetItem(globalGroup);
         item->setText(0, QString::fromUtf8(name.c_str()));
         // AUDIT-P1 fix: toString()/typeName() 异常防护，与 VmStackPanel 一致。
         std::string valStr, typeStr;
-        try { typeStr = val.typeName(); } catch (...) { typeStr = "<error>"; }
-        try { valStr = val.toString(); } catch (...) { valStr = "<error>"; }
+        try {
+            typeStr = val.typeName();
+        } catch (...) {
+            typeStr = "<error>";
+        }
+        try {
+            valStr = val.toString();
+        } catch (...) {
+            valStr = "<error>";
+        }
         item->setText(1, QString::fromUtf8(typeStr.c_str()));
         item->setText(2, QString::fromUtf8(valStr.c_str()));
         item->setData(0, Qt::UserRole, QString::fromUtf8(name.c_str()));
@@ -369,21 +370,33 @@ void VariableInspectorPanel::refreshLive() {
 
     // 局部变量组（按 scope 二次分组）
     std::map<std::string, std::vector<const VariableSnapshot*>> byScope;
-    for (const auto& s : locals) byScope[s.scope].push_back(&s);
+    for (const auto& s : locals)
+        byScope[s.scope].push_back(&s);
 
     for (const auto& [scope, vec] : byScope) {
         auto* group = new QTreeWidgetItem(varTree_);
         QString label = QString::fromUtf8(scope.c_str());
-        if (label.isEmpty()) label = tr("本地作用域");
+        if (label.isEmpty())
+            label = tr("本地作用域");
         group->setText(0, tr("%1 (%2)").arg(label).arg(vec.size()));
-        QFont f = group->font(0); f.setBold(true); group->setFont(0, f);
+        QFont f = group->font(0);
+        f.setBold(true);
+        group->setFont(0, f);
         for (const auto* s : vec) {
             auto* item = new QTreeWidgetItem(group);
             item->setText(0, QString::fromUtf8(s->name.c_str()));
             // AUDIT-P1 fix: toString()/typeName() 异常防护。
             std::string valStr, typeStr;
-            try { typeStr = s->value.typeName(); } catch (...) { typeStr = "<error>"; }
-            try { valStr = s->value.toString(); } catch (...) { valStr = "<error>"; }
+            try {
+                typeStr = s->value.typeName();
+            } catch (...) {
+                typeStr = "<error>";
+            }
+            try {
+                valStr = s->value.toString();
+            } catch (...) {
+                valStr = "<error>";
+            }
             item->setText(1, QString::fromUtf8(typeStr.c_str()));
             item->setText(2, QString::fromUtf8(valStr.c_str()));
             item->setData(0, Qt::UserRole, QString::fromUtf8(s->name.c_str()));
@@ -416,14 +429,21 @@ void VariableInspectorPanel::onVariableSelected() {
             if (controller_->isDebugPaused()) {
                 auto locals = controller_->getDebugVariableSnapshot();
                 for (const auto& s : locals) {
-                    if (s.name == name.toStdString()) { v = s.value; found = true; break; }
+                    if (s.name == name.toStdString()) {
+                        v = s.value;
+                        found = true;
+                        break;
+                    }
                 }
             }
         } else if (controller_->isVmInitialized() && !controller_->isVmRunning()) {
             // AUDIT-P1-CORRECT fix: VM RUN 期间并发读取 globals 触发 UB，添加 isVmRunning() 守卫
             auto globals = controller_->getVmGlobals();
             auto it = globals.find(name.toStdString());
-            if (it != globals.end()) { v = it->second; found = true; }
+            if (it != globals.end()) {
+                v = it->second;
+                found = true;
+            }
         }
         // AUDIT-P1 fix: 原 `!v.isNull() || v.getType()==VAL_NULL` 是恒真表达式
         // （false||true=true 或 true||...=true），导致未找到变量时也显示 null 位模式。
@@ -433,12 +453,15 @@ void VariableInspectorPanel::onVariableSelected() {
         }
     }
 
-    QString html = QString(
-        "<h3>%1: %2</h3>"
-        "<p><b>类型:</b> %3</p>"
-        "<p><b>值 (toString):</b> %4</p>"
-        "<p><b>NaN-boxing 位:</b> <code>%5</code></p>"
-    ).arg(name).arg(type).arg(type).arg(value.toHtmlEscaped()).arg(bitsHex);
+    QString html = QString("<h3>%1: %2</h3>"
+                           "<p><b>类型:</b> %3</p>"
+                           "<p><b>值 (toString):</b> %4</p>"
+                           "<p><b>NaN-boxing 位:</b> <code>%5</code></p>")
+                       .arg(name)
+                       .arg(type)
+                       .arg(type)
+                       .arg(value.toHtmlEscaped())
+                       .arg(bitsHex);
     varDetail_->setHtml(html);
 }
 
@@ -466,28 +489,27 @@ void VariableInspectorPanel::showExample(int index) {
         return;
     }
     const auto& e = VariableInspectorLibrary::examples()[index];
-    QString html = QString(
-        "<h2>%1</h2>"
-        "<p><b>ID:</b> <code>%2</code></p>"
-        "<p><b>类型名:</b> <code>%3</code></p>"
-        "<h3>源码</h3>"
-        "<pre>%4</pre>"
-        "<h3>值表示</h3>"
-        "<p><code>%5</code></p>"
-        "<h3>NaN-boxing 位</h3>"
-        "<p><code>%6</code></p>"
-        "<h3>堆布局</h3>"
-        "%7"
-        "<h3>教学注解</h3>"
-        "%8"
-    ).arg(QString::fromUtf8(e.displayName.c_str()))
-     .arg(QString::fromUtf8(e.id.c_str()))
-     .arg(QString::fromUtf8(e.typeName.c_str()))
-     .arg(QString::fromUtf8(e.sourceExpr.c_str()).toHtmlEscaped())
-     .arg(QString::fromUtf8(e.valueRepr.c_str()).toHtmlEscaped())
-     .arg(QString::fromUtf8(e.nanboxBits.c_str()))
-     .arg(MarkdownRenderer::markdownToHtmlFragment(e.heapLayout))
-     .arg(MarkdownRenderer::markdownToHtmlFragment(e.teachingNote));
+    QString html = QString("<h2>%1</h2>"
+                           "<p><b>ID:</b> <code>%2</code></p>"
+                           "<p><b>类型名:</b> <code>%3</code></p>"
+                           "<h3>源码</h3>"
+                           "<pre>%4</pre>"
+                           "<h3>值表示</h3>"
+                           "<p><code>%5</code></p>"
+                           "<h3>NaN-boxing 位</h3>"
+                           "<p><code>%6</code></p>"
+                           "<h3>堆布局</h3>"
+                           "%7"
+                           "<h3>教学注解</h3>"
+                           "%8")
+                       .arg(QString::fromUtf8(e.displayName.c_str()))
+                       .arg(QString::fromUtf8(e.id.c_str()))
+                       .arg(QString::fromUtf8(e.typeName.c_str()))
+                       .arg(QString::fromUtf8(e.sourceExpr.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(e.valueRepr.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(e.nanboxBits.c_str()))
+                       .arg(MarkdownRenderer::markdownToHtmlFragment(e.heapLayout))
+                       .arg(MarkdownRenderer::markdownToHtmlFragment(e.teachingNote));
     exampleDetail_->setHtml(html);
 }
 
@@ -510,12 +532,10 @@ GuidedTour* VariableInspectorPanel::createGuidedTour(QWidget* host) {
     // 不高亮 autoRefreshCheck_/varTree_/loadCodeBtn_ 等位于 QStackedWidget
     // 某一页的控件——当目标页未显示时 mapTo 返回错误坐标导致气泡定位混乱。
     // 概念性步骤用 nullptr（居中气泡）+ 内嵌完整示例代码。
-    tour->addStep(pageLiveBtn_,
-                  QString::fromUtf8("实时变量树"),
+    tour->addStep(pageLiveBtn_, QString::fromUtf8("实时变量树"),
                   QString::fromUtf8("「实时变量」页在调试 / VM 运行时按作用域分组显示变量（global / local / upvalue）。"
                                     "勾选「自动刷新」每 2 秒刷新快照，点击变量可在右侧查看 NaN-boxing 位布局。"));
-    tour->addStep(nullptr,
-                  QString::fromUtf8("示例代码：观察变量类型"),
+    tour->addStep(nullptr, QString::fromUtf8("示例代码：观察变量类型"),
                   QString::fromUtf8(
                       "<p>将以下代码粘贴到编辑器，按 F5 调试，在变量树中观察各类型：</p>"
                       "<pre style='background:#EEE8D5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
@@ -530,12 +550,10 @@ GuidedTour* VariableInspectorPanel::createGuidedTour(QWidget* host) {
                       "print x, pi, s, arr, f;\n"
                       "</pre>"
                       "<p>调试时展开变量树节点，可看到 int/float 标量内联、string/array 堆指针的差异。</p>"));
-    tour->addStep(pageLibraryBtn_,
-                  QString::fromUtf8("类型教学库"),
+    tour->addStep(pageLibraryBtn_, QString::fromUtf8("类型教学库"),
                   QString::fromUtf8("点击「类型教学库」切换到静态教学页，查看 int / string / array / closure "
                                     "等类型的 NaN-boxing 位布局与堆对象结构详解。"));
-    tour->addStep(nullptr,
-                  QString::fromUtf8("开始实验"),
+    tour->addStep(nullptr, QString::fromUtf8("开始实验"),
                   QString::fromUtf8("切换到类型教学库后，选中任一类型条目，点击「加载样例代码到主编辑器」，"
                                     "再按 F5 运行即可在实时变量树中对照观察。"));
     return tour;

@@ -17,12 +17,12 @@
 // IdeController，不需要引擎层改造。
 // ============================================================
 
-#include <QWidget>
-#include <QStackedWidget>
 #include <QLabel>
-#include <QPushButton>
 #include <QListWidget>
+#include <QPushButton>
+#include <QStackedWidget>
 #include <QTextBrowser>
+#include <QWidget>
 #include <string>
 #include <vector>
 
@@ -30,13 +30,13 @@
 
 /// 闭包教学场景
 struct ClosureScenario {
-    std::string id;                  // 场景 ID
-    std::string title;               // 显示名
-    std::string description;         // 文字说明（闭包机制）
-    std::string sampleCode;          // 示例代码
-    std::vector<std::string> capturedVars;  // 捕获的变量列表
-    std::string captureType;         // 捕获类型（by-value / by-reference / upvalue）
-    std::string teachingNote;       // 教学注释
+    std::string id;                        // 场景 ID
+    std::string title;                     // 显示名
+    std::string description;               // 文字说明（闭包机制）
+    std::string sampleCode;                // 示例代码
+    std::vector<std::string> capturedVars; // 捕获的变量列表
+    std::string captureType;               // 捕获类型（by-value / by-reference / upvalue）
+    std::string teachingNote;              // 教学注释
 };
 
 /// ClosureInspectorLibrary — 静态教学场景库
@@ -52,7 +52,7 @@ struct UpvaluePhaseDoc {
     std::string phase;       // 阶段名
     std::string category;    // 分类（create/capture/heap/close/destroy）
     std::string description; // 文字说明
-    std::string stackEffect;  // 栈/堆效应
+    std::string stackEffect; // 栈/堆效应
 };
 
 /// UpvaluePhaseLibrary — 静态生命周期图解库
@@ -74,15 +74,15 @@ signals:
 private:
     // 顶部页面切换
     QPushButton* pageScenarioBtn_ = nullptr;
-    QPushButton* pagePhaseBtn_     = nullptr;
-    QStackedWidget* stack_         = nullptr;
+    QPushButton* pagePhaseBtn_ = nullptr;
+    QStackedWidget* stack_ = nullptr;
 
     // 子页 1：闭包机制教学场景库
-    QListWidget* scenarioList_    = nullptr;
+    QListWidget* scenarioList_ = nullptr;
     QTextBrowser* scenarioDetail_ = nullptr;
 
     // 子页 2：upvalue 生命周期图解
-    QListWidget* phaseList_    = nullptr;
+    QListWidget* phaseList_ = nullptr;
     QTextBrowser* phaseDetail_ = nullptr;
 
     /// 构造辅助

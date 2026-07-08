@@ -18,71 +18,26 @@
 // ============================================================
 const std::vector<CodeSnippet>& CodeSnippetEngine::snippets() {
     static const std::vector<CodeSnippet> kSnippets = {
-        CodeSnippet{
-            "fun",
-            "fun ${1:函数名}(${2:参数列表}) : ${3:返回类型} {\n    ${4:// 函数体}\n}",
-            "函数声明模板"
-        },
-        CodeSnippet{
-            "class",
-            "class ${1:类名} {\n    var ${2:属性} = ${3:默认值};\n    fun ${4:方法名}() {\n        ${5:// 方法体}\n    }\n}",
-            "类声明模板"
-        },
-        CodeSnippet{
-            "for",
-            "for (var ${1:i} = 0; ${1:i} < ${2:10}; ${1:i} = ${1:i} + 1) {\n    ${3:// 循环体}\n}",
-            "for 循环模板（含同步占位符）"
-        },
-        CodeSnippet{
-            "if",
-            "if (${1:条件}) {\n    ${2:// 条件为真}\n} else {\n    ${3:// 否则}\n}",
-            "if-else 条件分支模板"
-        },
-        CodeSnippet{
-            "while",
-            "while (${1:条件}) {\n    ${2:// 循环体}\n}",
-            "while 循环模板"
-        },
-        CodeSnippet{
-            "try",
-            "try {\n    ${1:// 可能出错}\n} catch (${2:e}) {\n    ${3:// 错误处理}\n}",
-            "try-catch 异常处理模板"
-        },
-        CodeSnippet{
-            "print",
-            "print(${1:表达式});",
-            "print 输出语句模板"
-        },
-        CodeSnippet{
-            "var",
-            "var ${1:name}: ${2:int} = ${3:0};",
-            "变量声明（可选类型注解）"
-        },
-        CodeSnippet{
-            "import",
-            "import { ${1:name} } from \"${2:module}\";",
-            "模块导入"
-        },
-        CodeSnippet{
-            "export",
-            "export ${1:fun} ${2:name}(${3:参数}) {\n    ${4:// 导出内容}\n}",
-            "模块导出"
-        },
-        CodeSnippet{
-            "return",
-            "return ${1:value};",
-            "返回语句"
-        },
-        CodeSnippet{
-            "array",
-            "var ${1:arr} = [${2:1, 2, 3}];\n${1:arr}.push(${3:4});\nprint(${1:arr}.len());",
-            "数组操作"
-        },
-        CodeSnippet{
-            "throw",
-            "throw \"${1:错误信息}\";",
-            "抛出异常"
-        },
+        CodeSnippet{"fun", "fun ${1:函数名}(${2:参数列表}) : ${3:返回类型} {\n    ${4:// 函数体}\n}", "函数声明模板"},
+        CodeSnippet{"class",
+                    "class ${1:类名} {\n    var ${2:属性} = ${3:默认值};\n    fun ${4:方法名}() {\n        ${5:// "
+                    "方法体}\n    }\n}",
+                    "类声明模板"},
+        CodeSnippet{"for", "for (var ${1:i} = 0; ${1:i} < ${2:10}; ${1:i} = ${1:i} + 1) {\n    ${3:// 循环体}\n}",
+                    "for 循环模板（含同步占位符）"},
+        CodeSnippet{"if", "if (${1:条件}) {\n    ${2:// 条件为真}\n} else {\n    ${3:// 否则}\n}",
+                    "if-else 条件分支模板"},
+        CodeSnippet{"while", "while (${1:条件}) {\n    ${2:// 循环体}\n}", "while 循环模板"},
+        CodeSnippet{"try", "try {\n    ${1:// 可能出错}\n} catch (${2:e}) {\n    ${3:// 错误处理}\n}",
+                    "try-catch 异常处理模板"},
+        CodeSnippet{"print", "print(${1:表达式});", "print 输出语句模板"},
+        CodeSnippet{"var", "var ${1:name}: ${2:int} = ${3:0};", "变量声明（可选类型注解）"},
+        CodeSnippet{"import", "import { ${1:name} } from \"${2:module}\";", "模块导入"},
+        CodeSnippet{"export", "export ${1:fun} ${2:name}(${3:参数}) {\n    ${4:// 导出内容}\n}", "模块导出"},
+        CodeSnippet{"return", "return ${1:value};", "返回语句"},
+        CodeSnippet{"array", "var ${1:arr} = [${2:1, 2, 3}];\n${1:arr}.push(${3:4});\nprint(${1:arr}.len());",
+                    "数组操作"},
+        CodeSnippet{"throw", "throw \"${1:错误信息}\";", "抛出异常"},
     };
     return kSnippets;
 }
@@ -105,7 +60,8 @@ const std::vector<CodeSnippet>& CodeSnippetEngine::snippets() {
 //   - 触发词未在 snippet 库中 → 返回 nullptr
 // ============================================================
 const CodeSnippet* CodeSnippetEngine::matchTrigger(const QString& textBeforeCursor) {
-    if (textBeforeCursor.isEmpty()) return nullptr;
+    if (textBeforeCursor.isEmpty())
+        return nullptr;
 
     const int total = textBeforeCursor.size();
     int end = total;
@@ -114,7 +70,8 @@ const CodeSnippet* CodeSnippetEngine::matchTrigger(const QString& textBeforeCurs
     while (end > 0 && textBeforeCursor[end - 1].isSpace()) {
         --end;
     }
-    if (end == 0) return nullptr;  // 全是空白
+    if (end == 0)
+        return nullptr; // 全是空白
 
     // 向前扫描连续的非空白字符
     int start = end;
@@ -125,7 +82,8 @@ const CodeSnippet* CodeSnippetEngine::matchTrigger(const QString& textBeforeCurs
     // 若 start == 0，则触发词位于文档开头，同样满足"前方是空白或行首"
 
     const QString candidate = textBeforeCursor.mid(start, end - start);
-    if (candidate.isEmpty()) return nullptr;
+    if (candidate.isEmpty())
+        return nullptr;
 
     const auto& all = snippets();
     for (const auto& snip : all) {

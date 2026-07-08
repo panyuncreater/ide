@@ -33,9 +33,9 @@ namespace MarkdownRenderer {
 
 /// P2-2 fix (F3): Markdown 标题信息（用于生成章节锚点目录）
 struct HeadingEntry {
-    int level;          // 1-6
-    QString text;       // 原始标题文本（未转义）
-    QString anchor;    // slug 化的 anchor id
+    int level;      // 1-6
+    QString text;   // 原始标题文本（未转义）
+    QString anchor; // slug 化的 anchor id
 };
 
 /// 将 Markdown 文本渲染为 HTML。
@@ -64,8 +64,7 @@ std::vector<HeadingEntry> extractHeadings(const QString& markdown);
 /// @param tocTitle 目录标题（如 "目录"），为空则不显示标题行
 /// @param maxLevel 最大显示级别（1-6），默认 3（仅显示 h1/h2/h3）
 /// @return HTML 片段，可直接拼接到 markdownToHtml 输出之前
-QString buildTableOfContents(const QString& markdown,
-                              const QString& tocTitle = QStringLiteral("📑 目录"),
-                              int maxLevel = 3);
+QString buildTableOfContents(const QString& markdown, const QString& tocTitle = QStringLiteral("📑 目录"),
+                             int maxLevel = 3);
 
 } // namespace MarkdownRenderer

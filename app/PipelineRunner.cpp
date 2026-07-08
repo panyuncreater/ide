@@ -4,9 +4,7 @@
 // PipelineRunner — 编译管线实现（ARCH-11 拆分自 IdeController）
 // ============================================================
 
-PipelineRunner::PipelineRunner(QObject* parent)
-    : QObject(parent) {
-}
+PipelineRunner::PipelineRunner(QObject* parent) : QObject(parent) {}
 
 // ============================================================
 // 管线操作
@@ -25,14 +23,16 @@ bool PipelineRunner::runParser() {
 }
 
 bool PipelineRunner::runCompiler() {
-    if (!astRoot_) return false;
+    if (!astRoot_)
+        return false;
     lastCompileResult_ = compiler_.compile(*astRoot_);
     emit diagnosticsReady(compiler_.getDiagnostics());
     return !compiler_.getDiagnostics().hasErrors();
 }
 
 bool PipelineRunner::formatCode(std::string& formatted) {
-    if (!astRoot_) return false;
+    if (!astRoot_)
+        return false;
     formatter_.setComments(lexer_.comments());
     formatted = formatter_.format(*astRoot_);
     return true;
@@ -79,7 +79,7 @@ PipelineRunner::PipelineResult PipelineRunner::runFrontendPipeline(const std::st
     }
 
     cachePipelineResult(source, result);
-    return result;  // OK
+    return result; // OK
 }
 
 void PipelineRunner::cachePipelineResult(const std::string& source, const PipelineResult& result) {

@@ -1,6 +1,6 @@
 #include "ast/ASTNode.h"
+#include "interpreter/Value.h" // A1 fix: getValue()/nodeName() 实现需要 Value 完整定义
 #include "interpreter/Visitor.h"
-#include "interpreter/Value.h"  // A1 fix: getValue()/nodeName() 实现需要 Value 完整定义
 
 // ============================================================
 // AST 节点的 accept 实现

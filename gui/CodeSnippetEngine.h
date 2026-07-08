@@ -25,9 +25,9 @@
 // CodeSnippet — 单个代码模板定义
 // ============================================================
 struct CodeSnippet {
-    std::string trigger;        // 触发关键字（如 "fun"）
-    std::string templateText;   // 模板文本（含 ${1:placeholder} 格式占位符）
-    std::string description;    // 描述（用于 Ctrl+T 模板列表对话框）
+    std::string trigger;      // 触发关键字（如 "fun"）
+    std::string templateText; // 模板文本（含 ${1:placeholder} 格式占位符）
+    std::string description;  // 描述（用于 Ctrl+T 模板列表对话框）
 };
 
 // ============================================================
@@ -47,9 +47,9 @@ public:
 
     /// 展开结果：包含展开后的文本与占位符位置列表
     struct Expansion {
-        QString text;                                   // 展开后的文本（占位符已替换为默认值）
+        QString text;                                       // 展开后的文本（占位符已替换为默认值）
         std::vector<std::pair<int, int>> placeholderRanges; // [start, end) 字符偏移
-        int primaryCursorPos = -1; // 展开后光标应定位的位置：第一个占位符起点，-1 表示末尾
+        int primaryCursorPos = -1;                          // 展开后光标应定位的位置：第一个占位符起点，-1 表示末尾
     };
 
     /// 展开模板：解析 ${N:default} 占位符，替换为 default 文本，记录每个占位符的范围

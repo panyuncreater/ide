@@ -7,18 +7,18 @@
  */
 #pragma once
 
-#include <QWidget>
-#include <QStackedWidget>
+#include "ast/ASTNode.h"
+#include <QColor>
 #include <QLabel>
 #include <QPushButton>
+#include <QStackedWidget>
+#include <QString>
 #include <QTableWidget>
 #include <QTextBrowser>
-#include <QColor>
-#include <QString>
-#include <vector>
-#include <string>
+#include <QWidget>
 #include <sstream>
-#include "ast/ASTNode.h"
+#include <string>
+#include <vector>
 
 // ============================================================
 // PipelineViewer — 编译管线可视化面板（第一波 P0-1）
@@ -37,14 +37,19 @@ class IdeController;
 class PipelineViewer : public QWidget {
     Q_OBJECT
 public:
-/// 构造编译流水线面板；parent 为父控件。
+    /// 构造编译流水线面板；parent 为父控件。
     explicit PipelineViewer(QWidget* parent = nullptr);
 
+    // AUDIT-P2 fix: 添加析构函数——反注册 vmStateChanged 监听器，避免 UAF
+    ~PipelineViewer();
+
     /// 绑定到 IdeController，所有数据从该 facade 获取
-    void setController(IdeController* controller) { controller_ = controller; }
+    // AUDIT-P2 fix: 注册 vmStateChanged 监听器，源码编辑后切页能拿到最新数据
+    void setController(IdeController* controller);
 
     /// 重新载入当前步骤的内容（用户切换 step 或编译完成后调用）
-    void reloadCurrentStep();
+    /// force=true 时绕过指纹缓存，强制重新填充（用于 switchToStep 等用户显式操作）
+    void reloadCurrentStep(bool force = false);
 
     /// 切换到指定步骤（0=源码, 1=Token, 2=AST, 3=IR, 4=字节码）
     void switchToStep(int step);
@@ -53,17 +58,17 @@ public:
     void onCursorPositionChanged(int line, int column);
 
 signals:
-/// 信号：请求主窗口跳转到指定源码行。
+    /// 信号：请求主窗口跳转到指定源码行。
     void sourceLineRequested(int line);
 
 private:
     IdeController* controller_ = nullptr;
 
     // 5 个步骤导航按钮
-    QPushButton* stepSourceBtn_   = nullptr;
-    QPushButton* stepTokenBtn_    = nullptr;
-    QPushButton* stepAstBtn_      = nullptr;
-    QPushButton* stepIrBtn_       = nullptr;
+    QPushButton* stepSourceBtn_ = nullptr;
+    QPushButton* stepTokenBtn_ = nullptr;
+    QPushButton* stepAstBtn_ = nullptr;
+    QPushButton* stepIrBtn_ = nullptr;
     QPushButton* stepBytecodeBtn_ = nullptr;
 
     QStackedWidget* stack_ = nullptr;
@@ -90,26 +95,35 @@ private:
     int cursorLine_ = 1;
     int cursorColumn_ = 1;
 
+    // AUDIT-P1 fix: 缓存指纹——避免 vmStateChanged 高频触发时重复 disassemble/IRToString。
+    // 用源数据指针作为指纹：指针相同意味着源数据未变化，populate 直接 return。
+    // 使用 const void* 避免在头文件引入 Token/IRFunction/CompileResult 完整定义。
+    const void* lastTokensPtr_ = nullptr;
+    const void* lastIRPtr_ = nullptr;
+    const void* lastCompileResultPtr_ = nullptr;
+    /// forceRefresh_=true 时绕过指纹缓存（由 reloadCurrentStep(true) 设置）
+    bool forceRefresh_ = false;
+
     // 构造辅助
-/// 构建左侧/顶部阶段步骤条 UI。
+    /// 构建左侧/顶部阶段步骤条 UI。
     void buildStepBar(QWidget* host);
-/// 构建各编译阶段的堆叠页面容器。
+    /// 构建各编译阶段的堆叠页面容器。
     void buildStepPages();
 
     // 数据填充方法
-/// 填充源码页内容。
+    /// 填充源码页内容。
     void populateSource();
-/// 填充词法分析页内容。
+    /// 填充词法分析页内容。
     void populateTokens();
-/// 填充语法树摘要页内容。
+    /// 填充语法树摘要页内容。
     void populateAstSummary();
-/// 填充中间表示页内容。
+    /// 填充中间表示页内容。
     void populateIR();
-/// 填充字节码页内容。
+    /// 填充字节码页内容。
     void populateBytecode();
 
     // 递归生成 AST 文本摘要
-/// 递归转储 AST 节点为缩进文本。
+    /// 递归转储 AST 节点为缩进文本。
     void dumpAst(std::ostringstream& os, ASTNode* node, int depth, int maxDepth);
 
     // === UI 美化（第二十五轮） ===

@@ -8,43 +8,44 @@
 // ============================================================
 
 #include "gui/TokenPuzzlePanel.h"
-#include "gui/TokenPuzzleData.h"
 #include "gui/I18n.h"
-#include "gui/LearnerProgress.h"  // P0-2 fix (F7): 关卡星级持久化
+#include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡星级持久化
+#include "gui/TokenPuzzleData.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGridLayout>
+#include <QBrush>
+#include <QColor>
 #include <QComboBox>
+#include <QFont>
+#include <QGridLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
-#include <QStandardItemModel>
-#include <QBrush>
-#include <QColor>
-#include <QSizePolicy>
-#include <QFont>
 #include <QSignalBlocker>
-#include <QStyle>  // style()->polish() / unpolish() 用于 QSS 动态属性刷新
+#include <QSizePolicy>
+#include <QStandardItemModel>
+#include <QStyle> // style()->polish() / unpolish() 用于 QSS 动态属性刷新
+#include <QVBoxLayout>
 
-#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
-#include "Label.h"        // QFluentKit（StrongBodyLabel）
+#include "Label.h"      // QFluentKit（StrongBodyLabel）
+#include "PushButton.h" // QFluentKit（PrimaryPushButton）
 
 // ============================================================
 // 构造
 // ============================================================
 
-TokenPuzzlePanel::TokenPuzzlePanel(QWidget* parent)
-    : QWidget(parent) {
+TokenPuzzlePanel::TokenPuzzlePanel(QWidget* parent) : QWidget(parent) {
     // 初始化完成记录：全部 -1（未完成）
     levelStars_.resize(TokenPuzzleLibrary::levelCount());
-    for (int& s : levelStars_) s = -1;
+    for (int& s : levelStars_)
+        s = -1;
 
     // P0-2 fix (F7): 从持久化存储加载已记录的关卡星级
     auto& store = LearnerProgressStore::instance();
     for (int i = 0; i < TokenPuzzleLibrary::levelCount(); ++i) {
         int s = store.getLevelStars(levelId(i).toStdString());
-        if (s >= 0) levelStars_[i] = s;
+        if (s >= 0)
+            levelStars_[i] = s;
     }
 
     buildUi();
@@ -100,7 +101,7 @@ void TokenPuzzlePanel::buildUi() {
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(new QLabel(mlTr("关卡:")));
     levelCombo_ = new QComboBox(this);
-    levelCombo_->setObjectName("levelCombo");  // QSS 选择器匹配
+    levelCombo_->setObjectName("levelCombo"); // QSS 选择器匹配
 
     // 使用 QStandardItemModel 支持逐项 enable/disable（解锁机制）
     auto* model = new QStandardItemModel(this);
@@ -108,21 +109,29 @@ void TokenPuzzlePanel::buildUi() {
     for (int i = 0; i < (int)levels.size(); ++i) {
         QString diffStars;
         switch (levels[i].difficulty) {
-            case 1:  diffStars = QString::fromUtf8("⭐");       break;
-            case 2:  diffStars = QString::fromUtf8("⭐⭐");     break;
-            case 3:  diffStars = QString::fromUtf8("⭐⭐⭐");   break;
-            default: diffStars = QString::fromUtf8("⭐");       break;
+        case 1:
+            diffStars = QString::fromUtf8("⭐");
+            break;
+        case 2:
+            diffStars = QString::fromUtf8("⭐⭐");
+            break;
+        case 3:
+            diffStars = QString::fromUtf8("⭐⭐⭐");
+            break;
+        default:
+            diffStars = QString::fromUtf8("⭐");
+            break;
         }
         QString text = mlTr("第 %1 关  %2").arg(i + 1).arg(diffStars);
         auto* item = new QStandardItem(text);
-        item->setEnabled(i == 0);  // 初始仅第 1 关解锁
+        item->setEnabled(i == 0); // 初始仅第 1 关解锁
         model->appendRow(item);
     }
     levelCombo_->setModel(model);
 
     topBar->addWidget(levelCombo_);
     topBar->addStretch();
-    scoreLabel_   = new StrongBodyLabel(mlTr("得分: 0 / 15"), this);
+    scoreLabel_ = new StrongBodyLabel(mlTr("得分: 0 / 15"), this);
     progressLabel_ = new QLabel(mlTr("已完成 0 / 5 关"), this);
     topBar->addWidget(scoreLabel_);
     topBar->addSpacing(12);
@@ -136,9 +145,8 @@ void TokenPuzzlePanel::buildUi() {
     monoFont.setStyleHint(QFont::Monospace);
     monoFont.setPointSize(12);
     targetCodeLabel_->setFont(monoFont);
-    targetCodeLabel_->setStyleSheet(
-        "background-color: #f5f5f5; padding: 8px; border: 1px solid #ddd;"
-        "border-radius: 4px;");
+    targetCodeLabel_->setStyleSheet("background-color: #f5f5f5; padding: 8px; border: 1px solid #ddd;"
+                                    "border-radius: 4px;");
     targetCodeLabel_->setTextFormat(Qt::PlainText);
     mainLayout->addWidget(targetCodeLabel_);
 
@@ -158,7 +166,7 @@ void TokenPuzzlePanel::buildUi() {
     mainLayout->addWidget(new QLabel(mlTr("你的答案（点击 token 可移除）:")));
     answerList_ = new QListWidget(this);
     answerList_->setFont(monoFont);
-    answerList_->setFlow(QListView::LeftToRight);   // 横向排列
+    answerList_->setFlow(QListView::LeftToRight); // 横向排列
     answerList_->setWrapping(true);
     answerList_->setSpacing(4);
     answerList_->setMinimumHeight(80);
@@ -170,8 +178,8 @@ void TokenPuzzlePanel::buildUi() {
     // ---- 底部：操作按钮 + 反馈 ----
     auto* bottomBar = new QHBoxLayout;
     checkBtn_ = new PrimaryPushButton(QString::fromUtf8("✓ ") + mlTr("检查答案"), this);
-    hintBtn_  = new QPushButton(QString::fromUtf8("💡 ") + mlTr("提示"), this);
-    skipBtn_  = new QPushButton(QString::fromUtf8("⏭ ") + mlTr("跳过"), this);
+    hintBtn_ = new QPushButton(QString::fromUtf8("💡 ") + mlTr("提示"), this);
+    skipBtn_ = new QPushButton(QString::fromUtf8("⏭ ") + mlTr("跳过"), this);
     resetBtn_ = new QPushButton(QString::fromUtf8("🔄 ") + mlTr("重置"), this);
     bottomBar->addWidget(checkBtn_);
     bottomBar->addWidget(hintBtn_);
@@ -186,15 +194,14 @@ void TokenPuzzlePanel::buildUi() {
     mainLayout->addWidget(feedbackLabel_);
 
     // ---- 信号连接 ----
-    connect(levelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &TokenPuzzlePanel::onLevelChanged);
+    connect(levelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TokenPuzzlePanel::onLevelChanged);
     connect(checkBtn_, &QPushButton::clicked, this, &TokenPuzzlePanel::onCheckAnswer);
-    connect(hintBtn_,  &QPushButton::clicked, this, &TokenPuzzlePanel::onShowHint);
-    connect(skipBtn_,  &QPushButton::clicked, this, &TokenPuzzlePanel::onSkipLevel);
+    connect(hintBtn_, &QPushButton::clicked, this, &TokenPuzzlePanel::onShowHint);
+    connect(skipBtn_, &QPushButton::clicked, this, &TokenPuzzlePanel::onSkipLevel);
     connect(resetBtn_, &QPushButton::clicked, this, &TokenPuzzlePanel::onResetLevel);
-    connect(answerList_, &QListWidget::itemClicked,
-            this, [this](QListWidgetItem* item) {
-        if (!item) return;
+    connect(answerList_, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
+        if (!item)
+            return;
         int row = answerList_->row(item);
         onAnswerItemClicked(row);
     });
@@ -202,18 +209,16 @@ void TokenPuzzlePanel::buildUi() {
     // ---- Solarized 风格 QSS（QComboBox + 关卡芯片按钮）----
     // 动态属性 [current='true'] / [locked='true'] 在 refreshLevelChips() 中
     // 通过 setProperty + style()->polish() 触发重新评估
-    setStyleSheet(QString::fromUtf8(
-        "QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
-        "border-radius: 4px; padding: 4px 8px; }"
-        "QComboBox#levelCombo:hover { border-color: #268BD2; }"
-        "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
-        "border-radius: 4px; font-size: 11px; }"
-        "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-        "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
-        "border-color: #1E6FA3; font-weight: bold; }"
-        "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
-        "border-color: #CCC; }"
-    ));
+    setStyleSheet(QString::fromUtf8("QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
+                                    "border-radius: 4px; padding: 4px 8px; }"
+                                    "QComboBox#levelCombo:hover { border-color: #268BD2; }"
+                                    "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+                                    "border-radius: 4px; font-size: 11px; }"
+                                    "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
+                                    "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
+                                    "border-color: #1E6FA3; font-weight: bold; }"
+                                    "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+                                    "border-color: #CCC; }"));
 }
 
 // ============================================================
@@ -222,7 +227,8 @@ void TokenPuzzlePanel::buildUi() {
 
 void TokenPuzzlePanel::loadLevel(int index) {
     const auto& levels = TokenPuzzleLibrary::levels();
-    if (index < 0 || index >= (int)levels.size()) return;
+    if (index < 0 || index >= (int)levels.size())
+        return;
     const auto& lv = levels[index];
 
     targetCodeLabel_->setText(QString::fromUtf8(lv.targetCode.c_str()));
@@ -232,7 +238,7 @@ void TokenPuzzlePanel::loadLevel(int index) {
     clearAnswer();
     hintUsedCount_ = 0;
     setFeedback(mlTr("第 %1 关已加载，点击下方打乱的 token 按正确顺序排列").arg(index + 1));
-    refreshLevelChips();  // 同步芯片栏状态（current 高亮等）
+    refreshLevelChips(); // 同步芯片栏状态（current 高亮等）
 }
 
 // ============================================================
@@ -259,7 +265,8 @@ void TokenPuzzlePanel::rebuildShuffledButtons() {
     shuffledButtons_.clear();
 
     const auto& levels = TokenPuzzleLibrary::levels();
-    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= (int)levels.size()) return;
+    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= (int)levels.size())
+        return;
     const auto& shuffled = levels[currentLevelIndex_].shuffledTokens;
 
     const int cols = (int)shuffled.size() > 6 ? 6 : (int)shuffled.size();
@@ -269,9 +276,7 @@ void TokenPuzzlePanel::rebuildShuffledButtons() {
         btn->setMinimumWidth(40);
         btn->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
         const int buttonIndex = i;
-        connect(btn, &QPushButton::clicked, this, [this, buttonIndex]() {
-            addShuffledTokenToAnswer(buttonIndex);
-        });
+        connect(btn, &QPushButton::clicked, this, [this, buttonIndex]() { addShuffledTokenToAnswer(buttonIndex); });
         grid->addWidget(btn, i / cols, i % cols);
         shuffledButtons_.append(btn);
     }
@@ -286,9 +291,11 @@ void TokenPuzzlePanel::clearAnswer() {
 }
 
 void TokenPuzzlePanel::addShuffledTokenToAnswer(int buttonIndex) {
-    if (buttonIndex < 0 || buttonIndex >= shuffledButtons_.size()) return;
+    if (buttonIndex < 0 || buttonIndex >= shuffledButtons_.size())
+        return;
     QPushButton* btn = shuffledButtons_[buttonIndex];
-    if (!btn || !btn->isEnabled()) return;
+    if (!btn || !btn->isEnabled())
+        return;
 
     const auto& levels = TokenPuzzleLibrary::levels();
     const auto& shuffled = levels[currentLevelIndex_].shuffledTokens;
@@ -304,9 +311,11 @@ void TokenPuzzlePanel::addShuffledTokenToAnswer(int buttonIndex) {
 }
 
 void TokenPuzzlePanel::onAnswerItemClicked(int row) {
-    if (row < 0 || row >= answerList_->count()) return;
+    if (row < 0 || row >= answerList_->count())
+        return;
     QListWidgetItem* item = answerList_->item(row);
-    if (!item) return;
+    if (!item)
+        return;
     int buttonIndex = item->data(Qt::UserRole).toInt();
     if (buttonIndex >= 0 && buttonIndex < shuffledButtons_.size()) {
         shuffledButtons_[buttonIndex]->setEnabled(true);
@@ -321,9 +330,11 @@ void TokenPuzzlePanel::onAnswerItemClicked(int row) {
 
 void TokenPuzzlePanel::onCheckAnswer() {
     // AUDIT-P2 fix: 防重复守卫
-    if (busy_) return;
+    if (busy_)
+        return;
     const auto& levels = TokenPuzzleLibrary::levels();
-    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= (int)levels.size()) return;
+    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= (int)levels.size())
+        return;
     // AUDIT-P2 fix: 通过 early return 后才禁用按钮+设标志，函数末尾恢复
     busy_ = true;
     checkBtn_->setEnabled(false);
@@ -342,8 +353,11 @@ void TokenPuzzlePanel::onCheckAnswer() {
 
     // 数量校验
     if (answer.size() != (int)tokens.size()) {
-        setFeedback(mlTr("❌ 答案数量不对：你排了 %1 个 token，正确需要 %2 个")
-            .arg(answer.size()).arg(tokens.size()), true);
+        setFeedback(mlTr("❌ 答案数量不对：你排了 %1 个 token，正确需要 %2 个").arg(answer.size()).arg(tokens.size()),
+                    true);
+        // AUDIT-P1 fix: 错误路径必须恢复 busy_ 守卫，否则一次错误尝试后按钮永久禁用
+        busy_ = false;
+        checkBtn_->setEnabled(true);
         return;
     }
 
@@ -351,7 +365,8 @@ void TokenPuzzlePanel::onCheckAnswer() {
     int firstWrong = -1;
     for (int i = 0; i < (int)tokens.size(); ++i) {
         if (answer[i] != QString::fromUtf8(tokens[i].c_str())) {
-            if (firstWrong < 0) firstWrong = i;
+            if (firstWrong < 0)
+                firstWrong = i;
         }
     }
 
@@ -363,9 +378,13 @@ void TokenPuzzlePanel::onCheckAnswer() {
             }
         }
         setFeedback(mlTr("❌ 第 %1 个 token 不对：你填了「%2」，应该是「%3」")
-            .arg(firstWrong + 1)
-            .arg(answer[firstWrong])
-            .arg(QString::fromUtf8(tokens[firstWrong].c_str())), true);
+                        .arg(firstWrong + 1)
+                        .arg(answer[firstWrong])
+                        .arg(QString::fromUtf8(tokens[firstWrong].c_str())),
+                    true);
+        // AUDIT-P1 fix: 错误路径必须恢复 busy_ 守卫，允许用户修正后重试
+        busy_ = false;
+        checkBtn_->setEnabled(true);
         return;
     }
 
@@ -375,8 +394,7 @@ void TokenPuzzlePanel::onCheckAnswer() {
         levelStars_[currentLevelIndex_] = stars;
     }
     // P0-2 fix (F7): 持久化关卡星级到 LearnerProgressStore
-    LearnerProgressStore::instance().markLevelStars(
-        levelId(currentLevelIndex_).toStdString(), stars);
+    LearnerProgressStore::instance().markLevelStars(levelId(currentLevelIndex_).toStdString(), stars);
     LearnerProgressStore::instance().save();
     setFeedback(mlTr("✅ 完全正确！获得 %1").arg(starsToText(stars)));
     unlockNextLevel();
@@ -393,12 +411,11 @@ void TokenPuzzlePanel::onCheckAnswer() {
 
 void TokenPuzzlePanel::onShowHint() {
     const auto& levels = TokenPuzzleLibrary::levels();
-    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= (int)levels.size()) return;
+    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= (int)levels.size())
+        return;
     hintUsedCount_++;
     const auto& hint = levels[currentLevelIndex_].hint;
-    setFeedback(mlTr("💡 提示（第 %1 次使用，星级降低）：%2")
-        .arg(hintUsedCount_)
-        .arg(QString::fromUtf8(hint.c_str())));
+    setFeedback(mlTr("💡 提示（第 %1 次使用，星级降低）：%2").arg(hintUsedCount_).arg(QString::fromUtf8(hint.c_str())));
 }
 
 // ============================================================
@@ -407,7 +424,8 @@ void TokenPuzzlePanel::onShowHint() {
 
 void TokenPuzzlePanel::onSkipLevel() {
     // AUDIT-P2 fix: 防重复守卫——快速双击会触发两次关卡切换（第二次跳两关）
-    if (busy_) return;
+    if (busy_)
+        return;
     busy_ = true;
     skipBtn_->setEnabled(false);
     // 跳过不计星（0 星），仅在未完成时标记
@@ -415,8 +433,7 @@ void TokenPuzzlePanel::onSkipLevel() {
         levelStars_[currentLevelIndex_] = 0;
     }
     // P0-2 fix (F7): 持久化跳过状态（0 星）
-    LearnerProgressStore::instance().markLevelStars(
-        levelId(currentLevelIndex_).toStdString(), 0);
+    LearnerProgressStore::instance().markLevelStars(levelId(currentLevelIndex_).toStdString(), 0);
     LearnerProgressStore::instance().save();
     setFeedback(mlTr("已跳过本关（不计星），下一关已解锁"));
     unlockNextLevel();
@@ -442,7 +459,8 @@ void TokenPuzzlePanel::onSkipLevel() {
 void TokenPuzzlePanel::onResetLevel() {
     clearAnswer();
     for (auto* btn : shuffledButtons_) {
-        if (btn) btn->setEnabled(true);
+        if (btn)
+            btn->setEnabled(true);
     }
     hintUsedCount_ = 0;
     setFeedback(mlTr("已重置，重新排列吧！"));
@@ -454,7 +472,8 @@ void TokenPuzzlePanel::onResetLevel() {
 
 void TokenPuzzlePanel::onLevelChanged(int index) {
     auto* model = qobject_cast<QStandardItemModel*>(levelCombo_->model());
-    if (!model || index < 0 || index >= model->rowCount()) return;
+    if (!model || index < 0 || index >= model->rowCount())
+        return;
 
     // 禁止切换到未解锁的关卡
     if (!model->item(index)->isEnabled()) {
@@ -474,7 +493,8 @@ void TokenPuzzlePanel::onLevelChanged(int index) {
 
 void TokenPuzzlePanel::unlockNextLevel() {
     int next = currentLevelIndex_ + 1;
-    if (next >= TokenPuzzleLibrary::levelCount()) return;  // 已是最后一关
+    if (next >= TokenPuzzleLibrary::levelCount())
+        return; // 已是最后一关
     auto* model = qobject_cast<QStandardItemModel*>(levelCombo_->model());
     if (model && next < model->rowCount()) {
         QStandardItem* it = model->item(next);
@@ -482,7 +502,7 @@ void TokenPuzzlePanel::unlockNextLevel() {
             it->setEnabled(true);
         }
     }
-    refreshLevelChips();  // 解锁后刷新芯片栏（locked → unlocked）
+    refreshLevelChips(); // 解锁后刷新芯片栏（locked → unlocked）
 }
 
 // ============================================================
@@ -493,13 +513,14 @@ void TokenPuzzlePanel::updateScoreDisplay() {
     int total = 0;
     int completed = 0;
     for (int s : levelStars_) {
-        if (s > 0) total += s;
-        if (s >= 0) completed++;   // 0（跳过）或 1-3（星级）均算"已通过"
+        if (s > 0)
+            total += s;
+        if (s >= 0)
+            completed++; // 0（跳过）或 1-3（星级）均算"已通过"
     }
     int maxStars = TokenPuzzleLibrary::levelCount() * 3;
     scoreLabel_->setText(mlTr("得分: %1 / %2").arg(total).arg(maxStars));
-    progressLabel_->setText(mlTr("已完成 %1 / %2 关")
-        .arg(completed).arg(TokenPuzzleLibrary::levelCount()));
+    progressLabel_->setText(mlTr("已完成 %1 / %2 关").arg(completed).arg(TokenPuzzleLibrary::levelCount()));
 }
 
 // ============================================================
@@ -512,17 +533,24 @@ QString TokenPuzzlePanel::levelId(int index) const {
 
 QString TokenPuzzlePanel::starsToText(int stars) const {
     switch (stars) {
-        case 3:  return QString::fromUtf8("⭐⭐⭐");
-        case 2:  return QString::fromUtf8("⭐⭐☆");
-        case 1:  return QString::fromUtf8("⭐☆☆");
-        case 0:  return QString::fromUtf8("☆☆☆（跳过）");
-        default: return QString::fromUtf8("☆☆☆");
+    case 3:
+        return QString::fromUtf8("⭐⭐⭐");
+    case 2:
+        return QString::fromUtf8("⭐⭐☆");
+    case 1:
+        return QString::fromUtf8("⭐☆☆");
+    case 0:
+        return QString::fromUtf8("☆☆☆（跳过）");
+    default:
+        return QString::fromUtf8("☆☆☆");
     }
 }
 
 int TokenPuzzlePanel::computeStars(int hintUsed) const {
-    if (hintUsed <= 0) return 3;
-    if (hintUsed == 1) return 2;
+    if (hintUsed <= 0)
+        return 3;
+    if (hintUsed == 1)
+        return 2;
     return 1;
 }
 
@@ -547,16 +575,19 @@ void TokenPuzzlePanel::setFeedback(const QString& text, bool isError) {
 
 void TokenPuzzlePanel::refreshLevelChips() {
     auto* model = qobject_cast<QStandardItemModel*>(levelCombo_->model());
-    if (!model) return;
+    if (!model)
+        return;
     const auto& levels = TokenPuzzleLibrary::levels();
     for (int i = 0; i < levelChips_.size(); ++i) {
         QPushButton* chip = levelChips_[i];
-        if (!chip) continue;
+        if (!chip)
+            continue;
 
         bool isLocked = false;
         if (i < model->rowCount()) {
             QStandardItem* it = model->item(i);
-            if (it) isLocked = !it->isEnabled();
+            if (it)
+                isLocked = !it->isEnabled();
         }
         bool isCurrent = (i == currentLevelIndex_);
 

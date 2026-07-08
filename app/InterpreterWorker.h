@@ -11,8 +11,8 @@
 #include <QString>
 #include <memory>
 
-#include "interpreter/Interpreter.h"
 #include "ast/ASTNode.h"
+#include "interpreter/Interpreter.h"
 
 class InterpreterWorker : public QObject {
     Q_OBJECT

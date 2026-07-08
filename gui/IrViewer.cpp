@@ -1,23 +1,22 @@
 #include "gui/IrViewer.h"
-#include "gui/GuiTextUtils.h"  // monospaceFont()
-#include "gui/TeachingTheme.h"
 #include "QFluent/ScrollBar.h"
-#include <QVBoxLayout>
-#include <QTextCursor>
-#include <QTextBlock>
-#include <QTextCharFormat>
-#include <QTextBlockFormat>  // BUG-IRV-3 fix: 使用 block 格式设置整行背景，避免覆盖 span char 格式
+#include "gui/GuiTextUtils.h" // monospaceFont()
+#include "gui/TeachingTheme.h"
 #include <QColor>
-#include <sstream>
+#include <QTextBlock>
+#include <QTextBlockFormat> // BUG-IRV-3 fix: 使用 block 格式设置整行背景，避免覆盖 span char 格式
+#include <QTextCharFormat>
+#include <QTextCursor>
+#include <QVBoxLayout>
 #include <regex>
+#include <sstream>
 
 // ============================================================
 // IrViewer 实现（第八轮：QTextBrowser + HTML 语法高亮）
 // ============================================================
 
 /// 构造 IR 查看器：初始化只读浏览器并应用主题背景。
-IrViewer::IrViewer(QWidget* parent)
-    : QWidget(parent) {
+IrViewer::IrViewer(QWidget* parent) : QWidget(parent) {
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -31,9 +30,8 @@ IrViewer::IrViewer(QWidget* parent)
     browser_->setVerticalScrollBar(new ScrollBar(browser_));
     browser_->setHorizontalScrollBar(new ScrollBar(browser_));
     // 第八轮：背景色跟随 TeachingTheme 主题（亮色 #ffffff / 暗色 #2d2d2d）
-    browser_->setStyleSheet(QString(
-        "QTextBrowser { background: #FDF6E3; border: none; padding: 8px; }")
-        .arg(TeachingTheme::surface().name()));
+    browser_->setStyleSheet(QString("QTextBrowser { background: #FDF6E3; border: none; padding: 8px; }")
+                                .arg(TeachingTheme::surface().name()));
     mainLayout->addWidget(browser_, 1);
 }
 
@@ -45,19 +43,24 @@ QString IrViewer::htmlEscape(const std::string& s) {
 
 // 判断是否为 IR opcode（大写字母+下划线，至少 2 字符）
 static bool isIROpcode(const std::string& tok) {
-    if (tok.size() < 2) return false;
+    if (tok.size() < 2)
+        return false;
     for (char c : tok) {
-        if (!((c >= 'A' && c <= 'Z') || c == '_')) return false;
+        if (!((c >= 'A' && c <= 'Z') || c == '_'))
+            return false;
     }
     return true;
 }
 
 // 判断是否为寄存器/局部变量（v 数字 或 t 数字）
 static bool isRegister(const std::string& tok) {
-    if (tok.size() < 2) return false;
-    if (tok[0] != 'v' && tok[0] != 't') return false;
+    if (tok.size() < 2)
+        return false;
+    if (tok[0] != 'v' && tok[0] != 't')
+        return false;
     for (size_t i = 1; i < tok.size(); ++i) {
-        if (tok[i] < '0' || tok[i] > '9') return false;
+        if (tok[i] < '0' || tok[i] > '9')
+            return false;
     }
     return true;
 }
@@ -65,14 +68,20 @@ static bool isRegister(const std::string& tok) {
 // 判断是否为数字常量
 // BUG-IRV-5 fix: 收紧规则——仅允许首字符为 '-'，避免 "1-2" 等非法字面量被误识别。
 static bool isNumericConst(const std::string& tok) {
-    if (tok.empty()) return false;
+    if (tok.empty())
+        return false;
     bool hasDigit = false;
     for (size_t i = 0; i < tok.size(); ++i) {
         char c = tok[i];
-        if (c >= '0' && c <= '9') { hasDigit = true; continue; }
+        if (c >= '0' && c <= '9') {
+            hasDigit = true;
+            continue;
+        }
         // 仅允许首字符为 '-'（负号），其余位置的 '-' 视为非法
-        if (i == 0 && c == '-') continue;
-        if (c == '.') continue;
+        if (i == 0 && c == '-')
+            continue;
+        if (c == '.')
+            continue;
         return false;
     }
     return hasDigit;
@@ -105,7 +114,8 @@ QString IrViewer::formatIRLineHtml(const std::string& text) const {
     QString html;
     bool firstToken = true;
     for (const auto& t : tokens) {
-        if (!firstToken) html += "&nbsp;";
+        if (!firstToken)
+            html += "&nbsp;";
         firstToken = false;
 
         // 去除尾随逗号
@@ -137,7 +147,8 @@ QString IrViewer::formatIRLineHtml(const std::string& text) const {
     }
 
     if (!comment.empty()) {
-        if (!html.isEmpty()) html += "&nbsp;";
+        if (!html.isEmpty())
+            html += "&nbsp;";
         html += "<span style=\"color:#586E75;font-style:italic;\">" + htmlEscape(comment) + "</span>";
     }
 
@@ -155,7 +166,8 @@ void IrViewer::setIR(const IRFunction* ir) {
         highlightedRow_ = -1;
 
         if (!ir) {
-            browser_->setHtml("<div style='color:#657B83;padding:8px;'>(未启用 IR 编译 — 在视图菜单勾选编译分析面板后查看)</div>");
+            browser_->setHtml(
+                "<div style='color:#657B83;padding:8px;'>(未启用 IR 编译 — 在视图菜单勾选编译分析面板后查看)</div>");
             return;
         }
 
@@ -215,8 +227,7 @@ void IrViewer::setIR(const IRFunction* ir) {
             // ---- 块内指令 ----
             for (const auto& instr : block.instructions) {
                 std::string text = formatIRInstruction(instr);
-                html += QString("<div style='padding:0 0 0 16px;'>%1</div>")
-                            .arg(formatIRLineHtml(text));
+                html += QString("<div style='padding:0 0 0 16px;'>%1</div>").arg(formatIRLineHtml(text));
                 rowToSourceLine_.push_back(instr.line);
                 rowToInstrIndex_.push_back(instrIndex);
                 instrIndex++;
@@ -230,7 +241,7 @@ void IrViewer::setIR(const IRFunction* ir) {
         rowToInstrIndex_.clear();
         highlightedRow_ = -1;
         browser_->setHtml(QString("<div style='color:#DC322F;padding:8px;'>(IR 渲染失败: %1)</div>")
-                          .arg(QString::fromUtf8(e.what())));
+                              .arg(QString::fromUtf8(e.what())));
     } catch (...) {
         rowToSourceLine_.clear();
         rowToInstrIndex_.clear();
@@ -263,7 +274,8 @@ void IrViewer::highlightBySourceLine(int line) {
     }
     highlightedRow_ = -1;
 
-    if (line <= 0) return;
+    if (line <= 0)
+        return;
 
     // BUG-IRV-2 fix: 此处仅高亮第一个匹配的指令行（注释已同步修正于头文件）
     for (int i = 0; i < static_cast<int>(rowToSourceLine_.size()); ++i) {
@@ -285,7 +297,7 @@ void IrViewer::highlightBySourceLine(int line) {
 
 /// 按字节码偏移量高亮对应的 IR 指令行。
 void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, size_t>>& irToBytecodeOffset,
-                                          size_t currentBytecodeOffset) {
+                                         size_t currentBytecodeOffset) {
     // BUG-IRV-3 fix: 改用 QTextBlockFormat 设置整行背景
     // 清除旧高亮
     if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {
@@ -299,7 +311,8 @@ void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, siz
     }
     highlightedRow_ = -1;
 
-    if (irToBytecodeOffset.empty()) return;
+    if (irToBytecodeOffset.empty())
+        return;
 
     // BUG-IRV-4 fix: 二分查找假设 irToBytecodeOffset 按 .second 严格升序排列，
     // 但实际语义未强制保证。改为线性查找最大的 <= currentBytecodeOffset 项，
@@ -309,11 +322,12 @@ void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, siz
         if (irToBytecodeOffset[i].second <= currentBytecodeOffset) {
             bestInstrIdx = irToBytecodeOffset[i].first;
         } else {
-            break;  // 假设大致有序，遇到大于的即停止
+            break; // 假设大致有序，遇到大于的即停止
         }
     }
 
-    if (bestInstrIdx == SIZE_MAX) return;
+    if (bestInstrIdx == SIZE_MAX)
+        return;
 
     for (int i = 0; i < static_cast<int>(rowToInstrIndex_.size()); ++i) {
         if (rowToInstrIndex_[i] == bestInstrIdx) {

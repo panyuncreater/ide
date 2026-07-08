@@ -7,12 +7,12 @@
 // 用于错误诊断信息增强："[行:列] 错误："it"未在此作用域内声明，你是不是想写"int"？"
 // ============================================================
 
-#include <string>
-#include <string_view>
-#include <vector>
-#include <unordered_set>
 #include <algorithm>
 #include <cstdint>
+#include <string>
+#include <string_view>
+#include <unordered_set>
+#include <vector>
 
 namespace SpellChecker {
 
@@ -21,17 +21,21 @@ namespace SpellChecker {
 inline int editDistance(std::string_view a, std::string_view b) {
     const int m = static_cast<int>(a.size());
     const int n = static_cast<int>(b.size());
-    if (m == 0) return n;
-    if (n == 0) return m;
+    if (m == 0)
+        return n;
+    if (n == 0)
+        return m;
 
     // 确保 a 是较短的串，节省空间（滚动数组只需长度+1 的一维向量）
-    if (m > n) return editDistance(b, a);
+    if (m > n)
+        return editDistance(b, a);
 
     std::vector<int> prev(n + 1);
     std::vector<int> curr(n + 1);
 
     // 边界初始化：prev[j] 表示将空串 a 变为 b[0..j] 需 j 次插入
-    for (int j = 0; j <= n; ++j) prev[j] = j;
+    for (int j = 0; j <= n; ++j)
+        prev[j] = j;
 
     for (int i = 1; i <= m; ++i) {
         // curr[0] 表示将 a[0..i] 变为空串需 i 次删除
@@ -55,13 +59,14 @@ inline int editDistance(std::string_view a, std::string_view b) {
 /// 在候选词集合中查找与 misspelled 最接近的词
 /// maxDistance: 最大允许编辑距离（默认2），超过则不推荐
 /// 返回空字符串表示无合适建议
-inline std::string findClosest(std::string_view misspelled,
-                                const std::vector<std::string>& candidates,
-                                int maxDistance = 2) {
-    if (misspelled.empty() || candidates.empty()) return {};
+inline std::string findClosest(std::string_view misspelled, const std::vector<std::string>& candidates,
+                               int maxDistance = 2) {
+    if (misspelled.empty() || candidates.empty())
+        return {};
 
     // 特殊处理：空串或单字符不纠错
-    if (misspelled.size() <= 1) return {};
+    if (misspelled.size() <= 1)
+        return {};
 
     std::string best;
     int bestDist = maxDistance + 1;
@@ -77,7 +82,8 @@ inline std::string findClosest(std::string_view misspelled,
         // 当 |长度差|>2 时按超出部分累加惩罚，压低长候选的优先级，
         // 使建议更贴近用户的真实意图（短词纠短词）。
         int lenDiff = static_cast<int>(cand.size()) - static_cast<int>(misspelled.size());
-        if (std::abs(lenDiff) > 2) dist += std::abs(lenDiff) - 2;
+        if (std::abs(lenDiff) > 2)
+            dist += std::abs(lenDiff) - 2;
 
         // 距离更优直接采纳；距离相等时偏向长度相同的候选（更可能是同一词的不同写法）
         if (dist < bestDist || (dist == bestDist && cand.size() == misspelled.size())) {
@@ -87,16 +93,17 @@ inline std::string findClosest(std::string_view misspelled,
     }
 
     // 如果最佳距离仍然太大，不推荐
-    if (bestDist > maxDistance) return {};
+    if (bestDist > maxDistance)
+        return {};
     return best;
 }
 
 /// 构建建议消息：如果找到建议，返回 "，你是不是想写"xxx"？"，否则返回空串
-inline std::string suggestSuffix(std::string_view misspelled,
-                                  const std::vector<std::string>& candidates,
-                                  int maxDistance = 2) {
+inline std::string suggestSuffix(std::string_view misspelled, const std::vector<std::string>& candidates,
+                                 int maxDistance = 2) {
     auto suggestion = findClosest(misspelled, candidates, maxDistance);
-    if (suggestion.empty() || suggestion == misspelled) return {};
+    if (suggestion.empty() || suggestion == misspelled)
+        return {};
     return "，你是不是想写\"" + suggestion + "\"？";
 }
 

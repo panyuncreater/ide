@@ -4,36 +4,36 @@
 
 #include "gui/VmStackSandboxPanel.h"
 #include "gui/I18n.h"
+#include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡完成状态持久化
 #include "gui/PanelAnimator.h"
 #include "gui/TeachingTheme.h"
-#include "gui/LearnerProgress.h"  // P0-2 fix (F7): 关卡完成状态持久化
 // P1-3 fix (F14): 引入真实 Lexer + Parser + Compiler + StackVM 用于对照验证
+#include "app/IdeController.h"
+#include "compiler/Compiler.h"
+#include "compiler/RegisterBytecode.h" // RegBytecodeChunk / regOpName
+#include "compiler/VM.h"
+#include "gui/BytecodeTracePanel.h" // BytecodeTraceLibrary::opCodeDocs()
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
-#include "compiler/RegisterBytecode.h"  // RegBytecodeChunk / regOpName
-#include "gui/BytecodeTracePanel.h"    // BytecodeTraceLibrary::opCodeDocs()
-#include "app/IdeController.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGridLayout>
-#include <QSplitter>
-#include <QGroupBox>
-#include <QMessageBox>
-#include <QApplication>  // QApplication::processEvents()（onTraceRunAll 长循环让出 UI 线程）
-#include <QFrame>
-#include <QStyle>  // style()->polish() / unpolish() 用于 QSS 动态属性刷新
-#include <QHeaderView>
-#include <QTableWidgetItem>
+#include <QApplication> // QApplication::processEvents()（onTraceRunAll 长循环让出 UI 线程）
 #include <QFont>
-#include <sstream>
+#include <QFrame>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QMessageBox>
+#include <QSplitter>
+#include <QStyle> // style()->polish() / unpolish() 用于 QSS 动态属性刷新
+#include <QTableWidgetItem>
+#include <QVBoxLayout>
 #include <cstdlib>
+#include <sstream>
 #include <stdexcept>
 
-#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
-#include "Label.h"        // QFluentKit（CaptionLabel / StrongBodyLabel）
+#include "Label.h"      // QFluentKit（CaptionLabel / StrongBodyLabel）
+#include "PushButton.h" // QFluentKit（PrimaryPushButton）
 
 // ============================================================
 // 构造
@@ -50,7 +50,7 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     pageBar->setContentsMargins(0, 0, 0, 0);
     pageBar->setSpacing(4);
     pageSandboxBtn_ = new QPushButton(mlTr("栈沙盒"), this);
-    pageTraceBtn_   = new QPushButton(mlTr("真实字节码追踪"), this);
+    pageTraceBtn_ = new QPushButton(mlTr("真实字节码追踪"), this);
     pageSandboxBtn_->setCheckable(true);
     pageTraceBtn_->setCheckable(true);
     pageSandboxBtn_->setChecked(true);
@@ -62,32 +62,31 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     mainLayout->addLayout(pageBar);
 
     // ---- 子页 QSS ----
-    setStyleSheet(QString::fromUtf8(
-        "QPushButton#pageBtn { padding: 6px 14px; border: 1px solid #93A1A1; "
-        "border-radius: 4px; background: #EEE8D5; }"
-        "QPushButton#pageBtn:hover { border-color: #268BD2; background: #E5F3FB; }"
-        "QPushButton#pageBtn:checked { background: #268BD2; color: white; "
-        "border-color: #1E6FA3; font-weight: bold; }"
-        "QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
-        "border-radius: 4px; padding: 4px 8px; }"
-        "QComboBox#levelCombo:hover { border-color: #268BD2; }"
-        "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
-        "border-radius: 4px; font-size: 11px; }"
-        "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-        "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
-        "border-color: #1E6FA3; font-weight: bold; }"
-        "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
-        "border-color: #CCC; }"
-        // 追踪页 QSS
-        "QListWidget#bytecodeList { font-family: Consolas, monospace; "
-        "border: 1px solid #93A1A1; }"
-        "QListWidget#bytecodeList::item { padding: 2px 4px; border-bottom: 1px solid #EEE8D5; }"
-        "QListWidget#bytecodeList::item:selected { background: #268BD2; color: white; }"
-        "QTableWidget#registerTable { gridline-color: #93A1A1; "
-        "font-family: Consolas, monospace; }"
-        "QTableWidget#registerTable QHeaderView::section { background: #EEE8D5; "
-        "padding: 4px; border: 1px solid #93A1A1; }"
-    ));
+    setStyleSheet(
+        QString::fromUtf8("QPushButton#pageBtn { padding: 6px 14px; border: 1px solid #93A1A1; "
+                          "border-radius: 4px; background: #EEE8D5; }"
+                          "QPushButton#pageBtn:hover { border-color: #268BD2; background: #E5F3FB; }"
+                          "QPushButton#pageBtn:checked { background: #268BD2; color: white; "
+                          "border-color: #1E6FA3; font-weight: bold; }"
+                          "QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
+                          "border-radius: 4px; padding: 4px 8px; }"
+                          "QComboBox#levelCombo:hover { border-color: #268BD2; }"
+                          "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+                          "border-radius: 4px; font-size: 11px; }"
+                          "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
+                          "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
+                          "border-color: #1E6FA3; font-weight: bold; }"
+                          "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+                          "border-color: #CCC; }"
+                          // 追踪页 QSS
+                          "QListWidget#bytecodeList { font-family: Consolas, monospace; "
+                          "border: 1px solid #93A1A1; }"
+                          "QListWidget#bytecodeList::item { padding: 2px 4px; border-bottom: 1px solid #EEE8D5; }"
+                          "QListWidget#bytecodeList::item:selected { background: #268BD2; color: white; }"
+                          "QTableWidget#registerTable { gridline-color: #93A1A1; "
+                          "font-family: Consolas, monospace; }"
+                          "QTableWidget#registerTable QHeaderView::section { background: #EEE8D5; "
+                          "padding: 4px; border: 1px solid #93A1A1; }"));
 
     // ---- QStackedWidget ----
     pageStack_ = new QStackedWidget(this);
@@ -131,8 +130,7 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     levelCombo_ = new QComboBox(sandboxPage);
     levelCombo_->setObjectName("levelCombo");
     for (const auto& lv : SandboxLibrary::levels()) {
-        QString title = QString::fromStdString(
-            "第 " + std::to_string(lv.level) + " 关 — " + lv.goal);
+        QString title = QString::fromStdString("第 " + std::to_string(lv.level) + " 关 — " + lv.goal);
         levelCombo_->addItem(title);
     }
     topLayout->addWidget(levelCombo_, 1);
@@ -140,16 +138,14 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
 
     goalLabel_ = new StrongBodyLabel(sandboxPage);
     goalLabel_->setWordWrap(true);
-    goalLabel_->setStyleSheet(QString::fromUtf8(
-        "padding: 4px; background: %1; border-left: 3px solid %2;")
-        .arg(TeachingTheme::surface().name(), TeachingTheme::primary().name()));
+    goalLabel_->setStyleSheet(QString::fromUtf8("padding: 4px; background: %1; border-left: 3px solid %2;")
+                                  .arg(TeachingTheme::surface().name(), TeachingTheme::primary().name()));
     sandboxLayout->addWidget(goalLabel_);
 
     teachingPointLabel_ = new CaptionLabel(sandboxPage);
     teachingPointLabel_->setWordWrap(true);
-    teachingPointLabel_->setStyleSheet(QString::fromUtf8(
-        "padding: 4px; background: %1; border-left: 3px solid %2;")
-        .arg(TeachingTheme::surface().name(), TeachingTheme::warning().name()));
+    teachingPointLabel_->setStyleSheet(QString::fromUtf8("padding: 4px; background: %1; border-left: 3px solid %2;")
+                                           .arg(TeachingTheme::surface().name(), TeachingTheme::warning().name()));
     sandboxLayout->addWidget(teachingPointLabel_);
 
     // ---- 中部：三栏（可用指令 / 操作数栈 / 已执行序列） ----
@@ -165,12 +161,10 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     auto* stackLayout = new QVBoxLayout(stackBox);
     stackLayout->setContentsMargins(4, 4, 4, 4);
     stackList_ = new QListWidget(stackBox);
-    stackList_->setStyleSheet(QString::fromUtf8(
-        "QListWidget { background: %1; color: %2; font-family: Consolas, monospace; }"
-        "QListWidget::item { padding: 4px; border-bottom: 1px solid %3; }")
-        .arg(TeachingTheme::surface().name(),
-             TeachingTheme::textPrimary().name(),
-             TeachingTheme::border().name()));
+    stackList_->setStyleSheet(
+        QString::fromUtf8("QListWidget { background: %1; color: %2; font-family: Consolas, monospace; }"
+                          "QListWidget::item { padding: 4px; border-bottom: 1px solid %3; }")
+            .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(), TeachingTheme::border().name()));
     stackLayout->addWidget(stackList_);
     splitter->addWidget(stackBox);
 
@@ -178,8 +172,7 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     auto* historyLayout = new QVBoxLayout(historyBox);
     historyLayout->setContentsMargins(4, 4, 4, 4);
     historyList_ = new QListWidget(historyBox);
-    historyList_->setStyleSheet(
-        "QListWidget { font-family: Consolas, monospace; }");
+    historyList_->setStyleSheet("QListWidget { font-family: Consolas, monospace; }");
     historyLayout->addWidget(historyList_);
     splitter->addWidget(historyBox);
 
@@ -196,21 +189,20 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     outputEdit_ = new QTextEdit(bottomBox);
     outputEdit_->setReadOnly(true);
     outputEdit_->setMaximumHeight(80);
-    outputEdit_->setStyleSheet(QString::fromUtf8(
-        "QTextEdit { background: %1; color: %2; font-family: Consolas, monospace; }")
-        .arg(TeachingTheme::surfaceHover().name(),
-             TeachingTheme::textPrimary().name()));
+    outputEdit_->setStyleSheet(
+        QString::fromUtf8("QTextEdit { background: %1; color: %2; font-family: Consolas, monospace; }")
+            .arg(TeachingTheme::surfaceHover().name(), TeachingTheme::textPrimary().name()));
     bottomLayout->addWidget(outputEdit_);
     sandboxLayout->addWidget(bottomBox);
 
     auto* btnRow = new QHBoxLayout();
     btnRow->setContentsMargins(0, 0, 0, 0);
-    undoBtn_   = new QPushButton(mlTr("↩ 撤销"), sandboxPage);
-    resetBtn_  = new QPushButton(mlTr("🔄 重置"), sandboxPage);
-    checkBtn_  = new PrimaryPushButton(mlTr("✓ 检查"), sandboxPage);
+    undoBtn_ = new QPushButton(mlTr("↩ 撤销"), sandboxPage);
+    resetBtn_ = new QPushButton(mlTr("🔄 重置"), sandboxPage);
+    checkBtn_ = new PrimaryPushButton(mlTr("✓ 检查"), sandboxPage);
     verifyBtn_ = new QPushButton(mlTr("🛠 用真实 StackVM 验证"), sandboxPage);
     verifyBtn_->setToolTip(mlTr("调用真实 Lexer+Parser+Compiler+StackVM 执行当前关卡对应的 MiniLang 源码，"
-                                 "把实际输出与预期输出对照显示"));
+                                "把实际输出与预期输出对照显示"));
     gotoTraceBtn_ = new QPushButton(mlTr("📊 查看追踪"), sandboxPage);
     gotoTraceBtn_->setToolTip(mlTr("切换到「真实字节码追踪」子页，单步观察真实字节码执行"));
     gotoTraceBtn_->setEnabled(false);
@@ -224,20 +216,17 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
 
     feedbackLabel_ = new QLabel(sandboxPage);
     feedbackLabel_->setWordWrap(true);
-    feedbackLabel_->setStyleSheet(QString::fromUtf8(
-        "padding: 4px; background: %1; border-left: 3px solid %2;")
-        .arg(TeachingTheme::surface().name(), TeachingTheme::textHint().name()));
+    feedbackLabel_->setStyleSheet(QString::fromUtf8("padding: 4px; background: %1; border-left: 3px solid %2;")
+                                      .arg(TeachingTheme::surface().name(), TeachingTheme::textHint().name()));
     sandboxLayout->addWidget(feedbackLabel_);
 
     // 沙盒操作对应的真实 OpCode 提示
     sandboxOpHintLabel_ = new QLabel(sandboxPage);
     sandboxOpHintLabel_->setWordWrap(true);
-    sandboxOpHintLabel_->setStyleSheet(QString::fromUtf8(
-        "padding: 3px; background: %1; border-left: 3px solid %2; "
-        "color: %3; font-size: 11px;")
-        .arg(TeachingTheme::surfaceHover().name(),
-             TeachingTheme::info().name(),
-             TeachingTheme::textHint().name()));
+    sandboxOpHintLabel_->setStyleSheet(
+        QString::fromUtf8("padding: 3px; background: %1; border-left: 3px solid %2; "
+                          "color: %3; font-size: 11px;")
+            .arg(TeachingTheme::surfaceHover().name(), TeachingTheme::info().name(), TeachingTheme::textHint().name()));
     sandboxOpHintLabel_->setText(mlTr("💡 点击左侧指令按钮执行，下方会显示对应的真实 OpCode。"));
     sandboxLayout->addWidget(sandboxOpHintLabel_);
 
@@ -263,18 +252,18 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     });
 
     // ---- 沙盒页信号连接 ----
-    connect(levelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &VmStackSandboxPanel::onLevelChanged);
-    connect(undoBtn_,  &QPushButton::clicked, this, &VmStackSandboxPanel::onUndo);
+    connect(levelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &VmStackSandboxPanel::onLevelChanged);
+    connect(undoBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onUndo);
     connect(resetBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onReset);
     connect(checkBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onCheck);
     connect(verifyBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onVerifyWithRealStackVM);
     connect(gotoTraceBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::switchToTracePage);
 
     // ---- 追踪页信号连接 ----
-    connect(compileBtn_,    &QPushButton::clicked, this, &VmStackSandboxPanel::onCompileAndLoad);
-    connect(stepBtn_,       &QPushButton::clicked, this, &VmStackSandboxPanel::onTraceStep);
-    connect(runAllBtn_,     &QPushButton::clicked, this, &VmStackSandboxPanel::onTraceRunAll);
+    connect(compileBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onCompileAndLoad);
+    connect(stepBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onTraceStep);
+    connect(runAllBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onTraceRunAll);
     connect(resetTraceBtn_, &QPushButton::clicked, this, &VmStackSandboxPanel::onTraceReset);
 
     // ---- 初始加载第一关 ----
@@ -332,14 +321,13 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     compileBtn_ = new QPushButton(mlTr("📦 编译并加载"), host);
     compileBtn_->setToolTip(mlTr("编译当前关卡源码为真实字节码并加载到 VM，准备单步追踪"));
     ipIndicator_ = new QLabel(mlTr("IP: -"), host);
-    ipIndicator_->setStyleSheet(QString::fromUtf8(
-        "padding: 2px 8px; background: %1; border: 1px solid %2; border-radius: 3px; "
-        "font-family: Consolas, monospace; font-weight: bold;")
-        .arg(TeachingTheme::surface().name(), TeachingTheme::border().name()));
+    ipIndicator_->setStyleSheet(
+        QString::fromUtf8("padding: 2px 8px; background: %1; border: 1px solid %2; border-radius: 3px; "
+                          "font-family: Consolas, monospace; font-weight: bold;")
+            .arg(TeachingTheme::surface().name(), TeachingTheme::border().name()));
     traceStatusLabel_ = new QLabel(mlTr("状态：未加载"), host);
-    traceStatusLabel_->setStyleSheet(QString::fromUtf8(
-        "padding: 2px 8px; color: %1;")
-        .arg(TeachingTheme::textHint().name()));
+    traceStatusLabel_->setStyleSheet(
+        QString::fromUtf8("padding: 2px 8px; color: %1;").arg(TeachingTheme::textHint().name()));
     topBar->addWidget(compileBtn_);
     topBar->addWidget(ipIndicator_);
     topBar->addWidget(traceStatusLabel_, 1);
@@ -364,12 +352,10 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     auto* stackLayout = new QVBoxLayout(stackBox);
     stackLayout->setContentsMargins(4, 4, 4, 4);
     traceStackView_ = new QListWidget(stackBox);
-    traceStackView_->setStyleSheet(QString::fromUtf8(
-        "QListWidget { background: %1; color: %2; font-family: Consolas, monospace; }"
-        "QListWidget::item { padding: 3px; border-bottom: 1px solid %3; }")
-        .arg(TeachingTheme::surface().name(),
-             TeachingTheme::textPrimary().name(),
-             TeachingTheme::border().name()));
+    traceStackView_->setStyleSheet(
+        QString::fromUtf8("QListWidget { background: %1; color: %2; font-family: Consolas, monospace; }"
+                          "QListWidget::item { padding: 3px; border-bottom: 1px solid %3; }")
+            .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(), TeachingTheme::border().name()));
     stackLayout->addWidget(traceStackView_);
     rightSplitter->addWidget(stackBox);
 
@@ -392,10 +378,9 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     traceOutputEdit_ = new QTextEdit(outBox);
     traceOutputEdit_->setReadOnly(true);
     traceOutputEdit_->setMaximumHeight(80);
-    traceOutputEdit_->setStyleSheet(QString::fromUtf8(
-        "QTextEdit { background: %1; color: %2; font-family: Consolas, monospace; }")
-        .arg(TeachingTheme::surfaceHover().name(),
-             TeachingTheme::textPrimary().name()));
+    traceOutputEdit_->setStyleSheet(
+        QString::fromUtf8("QTextEdit { background: %1; color: %2; font-family: Consolas, monospace; }")
+            .arg(TeachingTheme::surfaceHover().name(), TeachingTheme::textPrimary().name()));
     outLayout->addWidget(traceOutputEdit_);
     rightSplitter->addWidget(outBox);
 
@@ -414,8 +399,8 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     auto* btnRow = new QHBoxLayout();
     btnRow->setContentsMargins(0, 0, 0, 0);
     btnRow->setSpacing(6);
-    stepBtn_       = new QPushButton(mlTr("▶ 单步执行"), host);
-    runAllBtn_     = new QPushButton(mlTr("⏩ 运行到底"), host);
+    stepBtn_ = new QPushButton(mlTr("▶ 单步执行"), host);
+    runAllBtn_ = new QPushButton(mlTr("⏩ 运行到底"), host);
     resetTraceBtn_ = new QPushButton(mlTr("🔄 重置"), host);
     stepBtn_->setEnabled(false);
     runAllBtn_->setEnabled(false);
@@ -439,16 +424,15 @@ void VmStackSandboxPanel::onLevelChanged(int index) {
 /// 加载指定索引的关卡：重置栈/历史并刷新视图。
 void VmStackSandboxPanel::loadLevel(int index) {
     const auto& levels = SandboxLibrary::levels();
-    if (index < 0 || index >= static_cast<int>(levels.size())) return;
+    if (index < 0 || index >= static_cast<int>(levels.size()))
+        return;
     currentLevelIndex_ = index;
     const auto& lv = levels[index];
 
-    goalLabel_->setText(QString::fromStdString(
-        "<b>目标：</b>" + lv.goal +
-        "　<font color='#707070'>难度：" + std::string(lv.difficulty, '*') + "</font>"));
-    teachingPointLabel_->setText(QString::fromStdString(
-        "<b>教学点：</b>" + lv.teachingPoint +
-        "　<font color='#707070'>提示：" + lv.hint + "</font>"));
+    goalLabel_->setText(QString::fromStdString("<b>目标：</b>" + lv.goal + "　<font color='#707070'>难度：" +
+                                               std::string(lv.difficulty, '*') + "</font>"));
+    teachingPointLabel_->setText(QString::fromStdString("<b>教学点：</b>" + lv.teachingPoint +
+                                                        "　<font color='#707070'>提示：" + lv.hint + "</font>"));
 
     stack_.clear();
     history_.clear();
@@ -469,9 +453,11 @@ void VmStackSandboxPanel::loadLevel(int index) {
 /// 依据当前关卡可用指令重建操作按钮。
 void VmStackSandboxPanel::rebuildOpButtons() {
     auto* host = qobject_cast<QGroupBox*>(opButtonsHost_);
-    if (!host) return;
+    if (!host)
+        return;
     auto* layout = qobject_cast<QVBoxLayout*>(host->layout());
-    if (!layout) return;
+    if (!layout)
+        return;
     QLayoutItem* item = nullptr;
     while ((item = layout->takeAt(0)) != nullptr) {
         if (item->widget()) {
@@ -481,17 +467,15 @@ void VmStackSandboxPanel::rebuildOpButtons() {
     }
 
     const auto& levels = SandboxLibrary::levels();
-    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= static_cast<int>(levels.size())) return;
+    if (currentLevelIndex_ < 0 || currentLevelIndex_ >= static_cast<int>(levels.size()))
+        return;
     const auto& ops = levels[currentLevelIndex_].availableOps;
 
     for (const auto& op : ops) {
         auto* btn = new QPushButton(opButtonText(op), host);
-        btn->setStyleSheet(
-            "QPushButton { padding: 6px; text-align: left; font-family: Consolas, monospace; }"
-            "QPushButton:hover { background: #d0e0ff; }");
-        connect(btn, &QPushButton::clicked, this, [this, op]() {
-            executeOp(op);
-        });
+        btn->setStyleSheet("QPushButton { padding: 6px; text-align: left; font-family: Consolas, monospace; }"
+                           "QPushButton:hover { background: #d0e0ff; }");
+        connect(btn, &QPushButton::clicked, this, [this, op]() { executeOp(op); });
         layout->addWidget(btn);
     }
     layout->addStretch();
@@ -503,16 +487,16 @@ void VmStackSandboxPanel::rebuildOpButtons() {
 
 QHash<SandboxOpType, QString> VmStackSandboxPanel::buildSandboxToRealOpMap() {
     QHash<SandboxOpType, QString> m;
-    m[SandboxOpType::PUSH_INT]    = QStringLiteral("OP_INT");
+    m[SandboxOpType::PUSH_INT] = QStringLiteral("OP_INT");
     m[SandboxOpType::PUSH_STRING] = QStringLiteral("OP_STRING");
-    m[SandboxOpType::ADD]         = QStringLiteral("OP_ADD");
-    m[SandboxOpType::SUB]         = QStringLiteral("OP_SUBTRACT");
-    m[SandboxOpType::MUL]         = QStringLiteral("OP_MULTIPLY");
-    m[SandboxOpType::DIV]         = QStringLiteral("OP_DIVIDE");
-    m[SandboxOpType::MOD]         = QStringLiteral("OP_MODULO");
-    m[SandboxOpType::NEG]         = QStringLiteral("OP_NEGATE");
-    m[SandboxOpType::PRINT]       = QStringLiteral("OP_PRINT");
-    m[SandboxOpType::HALT]        = QStringLiteral("OP_RETURN");
+    m[SandboxOpType::ADD] = QStringLiteral("OP_ADD");
+    m[SandboxOpType::SUB] = QStringLiteral("OP_SUBTRACT");
+    m[SandboxOpType::MUL] = QStringLiteral("OP_MULTIPLY");
+    m[SandboxOpType::DIV] = QStringLiteral("OP_DIVIDE");
+    m[SandboxOpType::MOD] = QStringLiteral("OP_MODULO");
+    m[SandboxOpType::NEG] = QStringLiteral("OP_NEGATE");
+    m[SandboxOpType::PRINT] = QStringLiteral("OP_PRINT");
+    m[SandboxOpType::HALT] = QStringLiteral("OP_RETURN");
     return m;
 }
 
@@ -523,11 +507,13 @@ QHash<SandboxOpType, QString> VmStackSandboxPanel::buildSandboxToRealOpMap() {
 namespace {
 
 bool parseInt(const std::string& s, long long& out) {
-    if (s.empty()) return false;
+    if (s.empty())
+        return false;
     try {
         size_t pos = 0;
         long long v = std::stoll(s, &pos);
-        if (pos != s.size()) return false;
+        if (pos != s.size())
+            return false;
         out = v;
         return true;
     } catch (...) {
@@ -554,94 +540,106 @@ void VmStackSandboxPanel::executeOp(const SandboxOp& op) {
     };
 
     switch (op.type) {
-        case SandboxOpType::PUSH_INT:
-        case SandboxOpType::PUSH_STRING:
-            stack_.push_back(op.operand);
-            break;
+    case SandboxOpType::PUSH_INT:
+    case SandboxOpType::PUSH_STRING:
+        stack_.push_back(op.operand);
+        break;
 
-        case SandboxOpType::ADD:
-        case SandboxOpType::SUB:
-        case SandboxOpType::MUL:
-        case SandboxOpType::DIV:
-        case SandboxOpType::MOD: {
-            if (stack_.size() < 2) {
-                QString opName = QString::fromUtf8(sandboxOpTypeName(op.type));
-                showError(QString(mlTr("❌ %1 需要栈顶有两个值！当前栈只有 %2 个值。"))
-                          .arg(opName).arg(static_cast<int>(stack_.size())));
-                return;
-            }
-            std::string b = stack_.back(); stack_.pop_back();
-            std::string a = stack_.back(); stack_.pop_back();
-            long long ia = 0, ib = 0;
-            if (!parseInt(a, ia) || !parseInt(b, ib)) {
-                QString opName = QString::fromUtf8(sandboxOpTypeName(op.type));
-                showError(QString(mlTr("❌ %1 需要两个 int 操作数，但栈顶值不是有效整数（%2, %3）。"))
+    case SandboxOpType::ADD:
+    case SandboxOpType::SUB:
+    case SandboxOpType::MUL:
+    case SandboxOpType::DIV:
+    case SandboxOpType::MOD: {
+        if (stack_.size() < 2) {
+            QString opName = QString::fromUtf8(sandboxOpTypeName(op.type));
+            showError(QString(mlTr("❌ %1 需要栈顶有两个值！当前栈只有 %2 个值。"))
+                          .arg(opName)
+                          .arg(static_cast<int>(stack_.size())));
+            return;
+        }
+        std::string b = stack_.back();
+        stack_.pop_back();
+        std::string a = stack_.back();
+        stack_.pop_back();
+        long long ia = 0, ib = 0;
+        if (!parseInt(a, ia) || !parseInt(b, ib)) {
+            QString opName = QString::fromUtf8(sandboxOpTypeName(op.type));
+            showError(QString(mlTr("❌ %1 需要两个 int 操作数，但栈顶值不是有效整数（%2, %3）。"))
                           .arg(opName)
                           .arg(QString::fromStdString(a))
                           .arg(QString::fromStdString(b)));
+            stack_.push_back(a);
+            stack_.push_back(b);
+            return;
+        }
+        long long r = 0;
+        switch (op.type) {
+        case SandboxOpType::ADD:
+            r = ia + ib;
+            break;
+        case SandboxOpType::SUB:
+            r = ia - ib;
+            break;
+        case SandboxOpType::MUL:
+            r = ia * ib;
+            break;
+        case SandboxOpType::DIV:
+            if (ib == 0) {
+                showError(mlTr("❌ 除数不能为 0！"));
                 stack_.push_back(a);
                 stack_.push_back(b);
                 return;
             }
-            long long r = 0;
-            switch (op.type) {
-                case SandboxOpType::ADD: r = ia + ib; break;
-                case SandboxOpType::SUB: r = ia - ib; break;
-                case SandboxOpType::MUL: r = ia * ib; break;
-                case SandboxOpType::DIV:
-                    if (ib == 0) {
-                        showError(mlTr("❌ 除数不能为 0！"));
-                        stack_.push_back(a);
-                        stack_.push_back(b);
-                        return;
-                    }
-                    r = ia / ib;
-                    break;
-                case SandboxOpType::MOD:
-                    if (ib == 0) {
-                        showError(mlTr("❌ 取模的除数不能为 0！"));
-                        stack_.push_back(a);
-                        stack_.push_back(b);
-                        return;
-                    }
-                    r = ia % ib;
-                    break;
-                default: break;
-            }
-            stack_.push_back(std::to_string(r));
+            r = ia / ib;
             break;
-        }
-
-        case SandboxOpType::NEG: {
-            if (stack_.empty()) {
-                showError(mlTr("❌ NEG 需要栈顶有一个值！当前栈为空。"));
-                return;
-            }
-            std::string a = stack_.back(); stack_.pop_back();
-            long long ia = 0;
-            if (!parseInt(a, ia)) {
-                showError(QString(mlTr("❌ NEG 需要 int 操作数，但栈顶值不是有效整数（%1）。"))
-                          .arg(QString::fromStdString(a)));
+        case SandboxOpType::MOD:
+            if (ib == 0) {
+                showError(mlTr("❌ 取模的除数不能为 0！"));
                 stack_.push_back(a);
+                stack_.push_back(b);
                 return;
             }
-            stack_.push_back(std::to_string(-ia));
+            r = ia % ib;
+            break;
+        default:
             break;
         }
+        stack_.push_back(std::to_string(r));
+        break;
+    }
 
-        case SandboxOpType::PRINT: {
-            if (stack_.empty()) {
-                showError(mlTr("❌ PRINT 需要栈顶有一个值！当前栈为空。"));
-                return;
-            }
-            std::string v = stack_.back(); stack_.pop_back();
-            outputs_.push_back(v);
-            break;
+    case SandboxOpType::NEG: {
+        if (stack_.empty()) {
+            showError(mlTr("❌ NEG 需要栈顶有一个值！当前栈为空。"));
+            return;
         }
+        std::string a = stack_.back();
+        stack_.pop_back();
+        long long ia = 0;
+        if (!parseInt(a, ia)) {
+            showError(
+                QString(mlTr("❌ NEG 需要 int 操作数，但栈顶值不是有效整数（%1）。")).arg(QString::fromStdString(a)));
+            stack_.push_back(a);
+            return;
+        }
+        stack_.push_back(std::to_string(-ia));
+        break;
+    }
 
-        case SandboxOpType::HALT:
-            halted_ = true;
-            break;
+    case SandboxOpType::PRINT: {
+        if (stack_.empty()) {
+            showError(mlTr("❌ PRINT 需要栈顶有一个值！当前栈为空。"));
+            return;
+        }
+        std::string v = stack_.back();
+        stack_.pop_back();
+        outputs_.push_back(v);
+        break;
+    }
+
+    case SandboxOpType::HALT:
+        halted_ = true;
+        break;
     }
 
     history_.push_back(op);
@@ -657,9 +655,7 @@ void VmStackSandboxPanel::executeOp(const SandboxOp& op) {
     static const auto kMap = buildSandboxToRealOpMap();
     auto it = kMap.constFind(op.type);
     if (it != kMap.constEnd()) {
-        sandboxOpHintLabel_->setText(
-            QString(mlTr("→ 沙盒 %1 对应真实 OpCode: %2"))
-            .arg(opName).arg(it.value()));
+        sandboxOpHintLabel_->setText(QString(mlTr("→ 沙盒 %1 对应真实 OpCode: %2")).arg(opName).arg(it.value()));
     }
 }
 
@@ -722,11 +718,16 @@ void VmStackSandboxPanel::onCheck() {
 namespace {
 std::string levelToMiniLangSource(int levelIdx) {
     switch (levelIdx + 1) {
-        case 1: return "print(1 + 2);\n";
-        case 2: return "print(1 + 2 * 3);\n";
-        case 3: return "print((1 + 2) * 3);\n";
-        case 4: return "print(\"hello\");\n";
-        default: return "";
+    case 1:
+        return "print(1 + 2);\n";
+    case 2:
+        return "print(1 + 2 * 3);\n";
+    case 3:
+        return "print((1 + 2) * 3);\n";
+    case 4:
+        return "print(\"hello\");\n";
+    default:
+        return "";
     }
 }
 } // namespace
@@ -748,17 +749,16 @@ void VmStackSandboxPanel::onVerifyWithRealStackVM() {
 
     std::ostringstream os;
     os << "🛠 " << mlTr("用真实 StackVM 验证").toStdString() << "\n";
-    os << "📦 " << mlTr("关卡").toStdString() << " " << lv.level
-       << "：" << lv.goal << "\n";
-    os << "📝 " << mlTr("MiniLang 源码").toStdString() << ":\n    "
-       << source;
+    os << "📦 " << mlTr("关卡").toStdString() << " " << lv.level << "：" << lv.goal << "\n";
+    os << "📝 " << mlTr("MiniLang 源码").toStdString() << ":\n    " << source;
 
     Lexer lexer;
     auto tokens = lexer.scan(source);
     if (lexer.getDiagnostics().hasErrors()) {
         std::string errs;
         for (const auto& d : lexer.getDiagnostics().all()) {
-            if (d.isError()) errs += d.format() + "\n";
+            if (d.isError())
+                errs += d.format() + "\n";
         }
         setFeedback(QString::fromUtf8(("❌ " + mlTr("词法错误：\n").toStdString() + errs).c_str()), true);
         return;
@@ -769,7 +769,8 @@ void VmStackSandboxPanel::onVerifyWithRealStackVM() {
     if (parser.hasErrors() || !ast) {
         std::string errs;
         for (const auto& d : parser.getDiagnostics().all()) {
-            if (d.isError()) errs += d.format() + "\n";
+            if (d.isError())
+                errs += d.format() + "\n";
         }
         setFeedback(QString::fromUtf8(("❌ " + mlTr("解析错误：\n").toStdString() + errs).c_str()), true);
         return;
@@ -780,7 +781,8 @@ void VmStackSandboxPanel::onVerifyWithRealStackVM() {
     if (compiler.getDiagnostics().hasErrors()) {
         std::string errs;
         for (const auto& d : compiler.getDiagnostics().all()) {
-            if (d.isError()) errs += d.format() + "\n";
+            if (d.isError())
+                errs += d.format() + "\n";
         }
         setFeedback(QString::fromUtf8(("❌ " + mlTr("编译错误：\n").toStdString() + errs).c_str()), true);
         return;
@@ -795,15 +797,12 @@ void VmStackSandboxPanel::onVerifyWithRealStackVM() {
     if (vmResult == VMResult::VM_OK) {
         os << "✅ " << mlTr("VM 正常结束").toStdString() << "\n";
     } else if (vmResult == VMResult::VM_RUNTIME_ERROR) {
-        os << "⚠ " << mlTr("VM 运行时错误").toStdString() << "："
-           << vm.getLastError() << "\n";
+        os << "⚠ " << mlTr("VM 运行时错误").toStdString() << "：" << vm.getLastError() << "\n";
     } else {
         os << "⚠ " << mlTr("VM 栈溢出").toStdString() << "\n";
     }
-    os << "📤 " << mlTr("实际输出").toStdString() << ": \""
-       << actualOutput << "\"\n";
-    os << "🎯 " << mlTr("预期输出").toStdString() << ": \""
-       << lv.expectedOutput << "\"\n";
+    os << "📤 " << mlTr("实际输出").toStdString() << ": \"" << actualOutput << "\"\n";
+    os << "🎯 " << mlTr("预期输出").toStdString() << ": \"" << lv.expectedOutput << "\"\n";
 
     if (!lv.expectedOutput.empty()) {
         if (actualOutput == lv.expectedOutput) {
@@ -828,32 +827,33 @@ void VmStackSandboxPanel::onVerifyWithRealStackVM() {
 bool VmStackSandboxPanel::checkAnswer(QString* diag) const {
     const auto& levels = SandboxLibrary::levels();
     if (currentLevelIndex_ < 0 || currentLevelIndex_ >= static_cast<int>(levels.size())) {
-        if (diag) *diag = mlTr("未加载任何关卡。");
+        if (diag)
+            *diag = mlTr("未加载任何关卡。");
         return false;
     }
     const auto& lv = levels[currentLevelIndex_];
 
     if (lv.expectedSequence.empty()) {
-        if (diag) *diag = mlTr("🎉 自由模式：可以自由探索，无需检查答案。");
+        if (diag)
+            *diag = mlTr("🎉 自由模式：可以自由探索，无需检查答案。");
         return true;
     }
 
     if (history_.size() != lv.expectedSequence.size()) {
         if (diag) {
             *diag = QString(mlTr("❌ 指令数量不对。期望 %1 条，实际 %2 条。"))
-                    .arg(static_cast<int>(lv.expectedSequence.size()))
-                    .arg(static_cast<int>(history_.size()));
+                        .arg(static_cast<int>(lv.expectedSequence.size()))
+                        .arg(static_cast<int>(history_.size()));
         }
         return false;
     }
     for (size_t i = 0; i < history_.size(); ++i) {
-        if (history_[i].type != lv.expectedSequence[i].type ||
-            history_[i].operand != lv.expectedSequence[i].operand) {
+        if (history_[i].type != lv.expectedSequence[i].type || history_[i].operand != lv.expectedSequence[i].operand) {
             if (diag) {
                 *diag = QString(mlTr("❌ 第 %1 条指令不对。期望 %2，实际 %3。"))
-                        .arg(static_cast<int>(i + 1))
-                        .arg(opDisplayText(lv.expectedSequence[i]))
-                        .arg(opDisplayText(history_[i]));
+                            .arg(static_cast<int>(i + 1))
+                            .arg(opDisplayText(lv.expectedSequence[i]))
+                            .arg(opDisplayText(history_[i]));
             }
             return false;
         }
@@ -862,20 +862,22 @@ bool VmStackSandboxPanel::checkAnswer(QString* diag) const {
     if (!lv.expectedOutput.empty()) {
         std::string joined;
         for (size_t i = 0; i < outputs_.size(); ++i) {
-            if (i > 0) joined += "\n";
+            if (i > 0)
+                joined += "\n";
             joined += outputs_[i];
         }
         if (joined != lv.expectedOutput) {
             if (diag) {
                 *diag = QString(mlTr("❌ 输出不对。期望 \"%1\"，实际 \"%2\"。"))
-                        .arg(QString::fromStdString(lv.expectedOutput))
-                        .arg(QString::fromStdString(joined));
+                            .arg(QString::fromStdString(lv.expectedOutput))
+                            .arg(QString::fromStdString(joined));
             }
             return false;
         }
     } else {
         if (outputs_.empty()) {
-            if (diag) *diag = mlTr("💡 你已经算出了结果，记得用 PRINT 输出它！");
+            if (diag)
+                *diag = mlTr("💡 你已经算出了结果，记得用 PRINT 输出它！");
             return false;
         }
     }
@@ -910,9 +912,7 @@ void VmStackSandboxPanel::refreshStackView() {
 void VmStackSandboxPanel::refreshHistoryView() {
     historyList_->clear();
     for (size_t i = 0; i < history_.size(); ++i) {
-        QString text = QString("%1. %2")
-                       .arg(static_cast<int>(i + 1))
-                       .arg(opDisplayText(history_[i]));
+        QString text = QString("%1. %2").arg(static_cast<int>(i + 1)).arg(opDisplayText(history_[i]));
         historyList_->addItem(text);
     }
     if (history_.empty()) {
@@ -924,7 +924,8 @@ void VmStackSandboxPanel::refreshHistoryView() {
 void VmStackSandboxPanel::refreshOutputView() {
     std::string joined;
     for (size_t i = 0; i < outputs_.size(); ++i) {
-        if (i > 0) joined += "\n";
+        if (i > 0)
+            joined += "\n";
         joined += outputs_[i];
     }
     outputEdit_->setPlainText(QString::fromStdString(joined));
@@ -934,11 +935,9 @@ void VmStackSandboxPanel::refreshOutputView() {
 void VmStackSandboxPanel::setFeedback(const QString& text, bool isError) {
     feedbackLabel_->setText(text);
     if (isError) {
-        feedbackLabel_->setStyleSheet(
-            "padding: 4px; background: #fff0f0; border-left: 3px solid #c03030;");
+        feedbackLabel_->setStyleSheet("padding: 4px; background: #fff0f0; border-left: 3px solid #c03030;");
     } else {
-        feedbackLabel_->setStyleSheet(
-            "padding: 4px; background: #f0fff0; border-left: 3px solid #30a030;");
+        feedbackLabel_->setStyleSheet("padding: 4px; background: #f0fff0; border-left: 3px solid #30a030;");
     }
 }
 
@@ -973,7 +972,8 @@ void VmStackSandboxPanel::refreshLevelChips() {
     auto& store = LearnerProgressStore::instance();
     for (int i = 0; i < levelChips_.size(); ++i) {
         QPushButton* chip = levelChips_[i];
-        if (!chip) continue;
+        if (!chip)
+            continue;
 
         bool isCurrent = (i == currentLevelIndex_);
         bool isCompleted = false;
@@ -1031,10 +1031,19 @@ void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
     bytecodeOffsets_.clear();
     currentIp_ = 0;
 
+    // AUDIT-P2 fix: 错误路径（空源码/controller null/编译失败）未重置按钮与 VM 状态，
+    // 导致跨关卡切换时残留旧 VM 状态，用户点击单步会执行旧关卡指令。
+    // 在函数入口统一重置按钮禁用，成功路径末尾再按 bytecodeList_->count() 启用。
+    stepBtn_->setEnabled(false);
+    runAllBtn_->setEnabled(false);
+    resetTraceBtn_->setEnabled(false);
+
     if (!controller_) {
         traceStatusLabel_->setText(mlTr("状态：未绑定 controller"));
         return;
     }
+    // 重置 VM 状态，清空旧关卡的执行残留（成功路径会再次重置以准备新字节码）
+    controller_->vmReset();
 
     std::string source = levelToMiniLangSource(currentLevelIndex_);
     if (source.empty()) {
@@ -1101,10 +1110,10 @@ void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
             const char* opName = opCodeName(op);
             for (const auto& doc : BytecodeTraceLibrary::opCodeDocs()) {
                 if (doc.opCodeName == opName) {
-                    QString tip = QString::fromUtf8(doc.opCodeName.c_str()) + "\n"
-                                + QString::fromUtf8(doc.semantics.c_str()) + "\n"
-                                + mlTr("栈效果：") + QString::fromUtf8(doc.stackEffect.c_str()) + "\n"
-                                + mlTr("样例：") + QString::fromUtf8(doc.exampleCode.c_str());
+                    QString tip = QString::fromUtf8(doc.opCodeName.c_str()) + "\n" +
+                                  QString::fromUtf8(doc.semantics.c_str()) + "\n" + mlTr("栈效果：") +
+                                  QString::fromUtf8(doc.stackEffect.c_str()) + "\n" + mlTr("样例：") +
+                                  QString::fromUtf8(doc.exampleCode.c_str());
                     item->setToolTip(tip);
                     break;
                 }
@@ -1115,8 +1124,7 @@ void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
         }
     }
 
-    traceStatusLabel_->setText(QString(mlTr("状态：已加载 %1 条指令，等待单步执行"))
-                               .arg(bytecodeList_->count()));
+    traceStatusLabel_->setText(QString(mlTr("状态：已加载 %1 条指令，等待单步执行")).arg(bytecodeList_->count()));
     stepBtn_->setEnabled(bytecodeList_->count() > 0);
     runAllBtn_->setEnabled(bytecodeList_->count() > 0);
     resetTraceBtn_->setEnabled(true);
@@ -1126,7 +1134,12 @@ void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
 }
 
 /// 「编译并加载」按钮：编译关卡代码并载入跟踪视图。
+// AUDIT-P2 fix: 补齐 traceRunning_ 守卫——onTraceStep/onTraceReset 都有守卫，
+// 但 onCompileAndLoad 遗漏。loadBytecodeFromCurrentLevel 内部调用 vmReset()，
+// 会在追踪运行期间重置 VM，导致 IP 错乱、字节码列表与执行状态不一致。
 void VmStackSandboxPanel::onCompileAndLoad() {
+    if (traceRunning_)
+        return;
     loadBytecodeFromCurrentLevel();
 }
 
@@ -1141,7 +1154,8 @@ void VmStackSandboxPanel::onTraceStep() {
         return;
     }
     // AUDIT-P2 fix: onTraceRunAll 运行期间禁止单步（processEvents 重入守卫）
-    if (traceRunning_) return;
+    if (traceRunning_)
+        return;
     if (!controller_->isVmInitialized()) {
         traceStatusLabel_->setText(mlTr("状态：VM 未初始化，请先「编译并加载」"));
         return;
@@ -1149,22 +1163,21 @@ void VmStackSandboxPanel::onTraceStep() {
 
     auto result = controller_->vmStep();
     switch (result) {
-        case IdeController::VmStepResult::OK:
-            traceStatusLabel_->setText(mlTr("状态：单步执行中"));
-            break;
-        case IdeController::VmStepResult::FINISHED:
-            traceStatusLabel_->setText(mlTr("状态：执行完毕 ✅"));
-            break;
-        case IdeController::VmStepResult::ERROR:
-            traceStatusLabel_->setText(
-                QString(mlTr("状态：运行时错误 — %1"))
-                .arg(QString::fromStdString(controller_->getVmLastError())));
-            break;
-        case IdeController::VmStepResult::NOT_READY:
-            traceStatusLabel_->setText(mlTr("状态：VM 未就绪，请先「编译并加载」"));
-            break;
-        default:
-            break;
+    case IdeController::VmStepResult::OK:
+        traceStatusLabel_->setText(mlTr("状态：单步执行中"));
+        break;
+    case IdeController::VmStepResult::FINISHED:
+        traceStatusLabel_->setText(mlTr("状态：执行完毕 ✅"));
+        break;
+    case IdeController::VmStepResult::ERROR:
+        traceStatusLabel_->setText(
+            QString(mlTr("状态：运行时错误 — %1")).arg(QString::fromStdString(controller_->getVmLastError())));
+        break;
+    case IdeController::VmStepResult::NOT_READY:
+        traceStatusLabel_->setText(mlTr("状态：VM 未就绪，请先「编译并加载」"));
+        break;
+    default:
+        break;
     }
     refreshTraceViews();
 }
@@ -1177,16 +1190,20 @@ void VmStackSandboxPanel::onTraceRunAll() {
     }
     // AUDIT-P2 fix: 重入守卫——processEvents 期间用户可再次点击"运行到底"，
     // 导致两个循环并发修改 VM 状态。同时禁用相关按钮防止 step/reset 重入。
-    if (traceRunning_) return;
+    if (traceRunning_)
+        return;
     if (!controller_->isVmInitialized()) {
         traceStatusLabel_->setText(mlTr("状态：VM 未初始化，请先「编译并加载」"));
         return;
     }
 
     traceRunning_ = true;
-    if (stepBtn_) stepBtn_->setEnabled(false);
-    if (resetTraceBtn_) resetTraceBtn_->setEnabled(false);
-    if (runAllBtn_) runAllBtn_->setEnabled(false);
+    if (stepBtn_)
+        stepBtn_->setEnabled(false);
+    if (resetTraceBtn_)
+        resetTraceBtn_->setEnabled(false);
+    if (runAllBtn_)
+        runAllBtn_->setEnabled(false);
 
     // 循环单步直到结束/错误，设上限防止死循环
     constexpr int kMaxSteps = 100000;
@@ -1197,7 +1214,8 @@ void VmStackSandboxPanel::onTraceRunAll() {
     auto result = IdeController::VmStepResult::OK;
     while (stepCount < kMaxSteps) {
         result = controller_->vmStep();
-        if (result != IdeController::VmStepResult::OK) break;
+        if (result != IdeController::VmStepResult::OK)
+            break;
         ++stepCount;
         if ((stepCount % kYieldInterval) == 0) {
             QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
@@ -1205,25 +1223,25 @@ void VmStackSandboxPanel::onTraceRunAll() {
     }
 
     traceRunning_ = false;
-    if (stepBtn_) stepBtn_->setEnabled(true);
-    if (resetTraceBtn_) resetTraceBtn_->setEnabled(true);
-    if (runAllBtn_) runAllBtn_->setEnabled(true);
+    if (stepBtn_)
+        stepBtn_->setEnabled(true);
+    if (resetTraceBtn_)
+        resetTraceBtn_->setEnabled(true);
+    if (runAllBtn_)
+        runAllBtn_->setEnabled(true);
 
     switch (result) {
-        case IdeController::VmStepResult::FINISHED:
-            traceStatusLabel_->setText(
-                QString(mlTr("状态：运行完毕 ✅（共 %1 步）")).arg(stepCount));
-            break;
-        case IdeController::VmStepResult::ERROR:
-            traceStatusLabel_->setText(
-                QString(mlTr("状态：运行时错误 — %1"))
-                .arg(QString::fromStdString(controller_->getVmLastError())));
-            break;
-        default:
-            traceStatusLabel_->setText(
-                QString(mlTr("状态：运行中止（%1 步，result=%2）"))
-                .arg(stepCount).arg(static_cast<int>(result)));
-            break;
+    case IdeController::VmStepResult::FINISHED:
+        traceStatusLabel_->setText(QString(mlTr("状态：运行完毕 ✅（共 %1 步）")).arg(stepCount));
+        break;
+    case IdeController::VmStepResult::ERROR:
+        traceStatusLabel_->setText(
+            QString(mlTr("状态：运行时错误 — %1")).arg(QString::fromStdString(controller_->getVmLastError())));
+        break;
+    default:
+        traceStatusLabel_->setText(
+            QString(mlTr("状态：运行中止（%1 步，result=%2）")).arg(stepCount).arg(static_cast<int>(result)));
+        break;
     }
     refreshTraceViews();
 }
@@ -1235,7 +1253,8 @@ void VmStackSandboxPanel::onTraceReset() {
         return;
     }
     // AUDIT-P2 fix: onTraceRunAll 运行期间禁止重置（processEvents 重入守卫）
-    if (traceRunning_) return;
+    if (traceRunning_)
+        return;
     controller_->vmReset();
     currentIp_ = 0;
     traceOutputEdit_->clear();
@@ -1249,14 +1268,14 @@ void VmStackSandboxPanel::onTraceReset() {
 
 /// 刷新跟踪页的字节码、栈与寄存器全部视图。
 void VmStackSandboxPanel::refreshTraceViews() {
-    if (!controller_) return;
+    if (!controller_)
+        return;
 
     // 1. 更新 IP 指示器
     if (controller_->isVmInitialized()) {
         currentIp_ = static_cast<int>(controller_->getVmCurrentIP());
         QString opName = QString::fromStdString(controller_->getVmCurrentOpCodeName());
-        ipIndicator_->setText(QString(mlTr("IP: %1  OpCode: %2"))
-                              .arg(currentIp_).arg(opName));
+        ipIndicator_->setText(QString(mlTr("IP: %1  OpCode: %2")).arg(currentIp_).arg(opName));
     } else {
         ipIndicator_->setText(mlTr("IP: -"));
     }
@@ -1275,13 +1294,12 @@ void VmStackSandboxPanel::refreshTraceViews() {
         }
     }
     // 如果 currentIp_ 超过最后一个 offset，说明所有指令已执行
-    if (currentRow == -1 && !bytecodeOffsets_.empty() &&
-        currentIp_ >= bytecodeOffsets_.back()) {
+    if (currentRow == -1 && !bytecodeOffsets_.empty() && currentIp_ >= bytecodeOffsets_.back()) {
         currentRow = static_cast<int>(bytecodeOffsets_.size()) - 1;
     }
 
-    const QColor kExecutedBg(220, 240, 220);  // 浅绿
-    const QColor kCurrentBg(200, 220, 255);   // 浅蓝
+    const QColor kExecutedBg(220, 240, 220); // 浅绿
+    const QColor kCurrentBg(200, 220, 255);  // 浅蓝
     for (int i = 0; i < bytecodeList_->count(); ++i) {
         QListWidgetItem* item = bytecodeList_->item(i);
         if (i == currentRow) {
@@ -1306,8 +1324,7 @@ void VmStackSandboxPanel::refreshTraceViews() {
     }
     // 滚动到当前行
     if (currentRow >= 0 && currentRow < bytecodeList_->count()) {
-        bytecodeList_->scrollToItem(bytecodeList_->item(currentRow),
-                                     QAbstractItemView::PositionAtCenter);
+        bytecodeList_->scrollToItem(bytecodeList_->item(currentRow), QAbstractItemView::PositionAtCenter);
     }
 
     // 3. 刷新操作数栈视图（栈顶在上方）
@@ -1318,8 +1335,7 @@ void VmStackSandboxPanel::refreshTraceViews() {
         // AUDIT-P2 fix: 根据 isReg 动态设置 GroupBox 标题，避免 RegisterVM 模式下
         // 标题"操作数栈"与内容"R0=..."不符导致教学误导。
         if (auto* gb = qobject_cast<QGroupBox*>(traceStackView_->parentWidget())) {
-            gb->setTitle(isReg ? mlTr("寄存器窗口（R0-R31）")
-                               : mlTr("操作数栈（执行前）"));
+            gb->setTitle(isReg ? mlTr("寄存器窗口（R0-R31）") : mlTr("操作数栈（执行前）"));
         }
         for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
             QString text;
@@ -1327,8 +1343,7 @@ void VmStackSandboxPanel::refreshTraceViews() {
                 // RegisterVM 模式：getVmStack 返回寄存器窗口，下标从 0 开始
                 // rbegin 是高编号寄存器，rend 是 R0
                 int regIdx = static_cast<int>(stack.size() - 1 - std::distance(stack.rbegin(), it));
-                text = QString("R%1 = %2").arg(regIdx)
-                       .arg(QString::fromStdString(it->toString()));
+                text = QString("R%1 = %2").arg(regIdx).arg(QString::fromStdString(it->toString()));
             } else {
                 if (it == stack.rbegin()) {
                     text = QString::fromStdString(it->toString()) + mlTr("  ← 栈顶");
@@ -1341,8 +1356,7 @@ void VmStackSandboxPanel::refreshTraceViews() {
         if (stack.empty()) {
             // AUDIT-P2 fix: RegisterVM 模式下显示"无寄存器值"而非"栈为空"，
             // 与当前模式语义一致。
-            traceStackView_->addItem(isReg ? mlTr("（无寄存器值）")
-                                           : mlTr("（栈为空）"));
+            traceStackView_->addItem(isReg ? mlTr("（无寄存器值）") : mlTr("（栈为空）"));
         }
     } else {
         traceStackView_->addItem(mlTr("（VM 未初始化）"));
@@ -1380,7 +1394,7 @@ void VmStackSandboxPanel::refreshRegisterTable() {
     // RegisterVM 模式：显示 32 个虚拟寄存器
     constexpr int kRegCount = 32;
     registerTable_->setRowCount(kRegCount);
-    auto regs = controller_->getVmStack();  // RegisterVM 模式返回寄存器窗口
+    auto regs = controller_->getVmStack(); // RegisterVM 模式返回寄存器窗口
     for (int i = 0; i < kRegCount; ++i) {
         auto* nameItem = new QTableWidgetItem(QString("R%1").arg(i));
         nameItem->setTextAlignment(Qt::AlignCenter);

@@ -1,26 +1,22 @@
 #include "DebugCoordinator.h"
+#include "common/Logger.h" // E1 fix: 条件断点求值异常记录告警
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "common/Logger.h"  // E1 fix: 条件断点求值异常记录告警
 
 // ============================================================
 // DebugCoordinator — 调试状态协调实现（ARCH-11 拆分自 IdeController）
 // ============================================================
 
-DebugCoordinator::DebugCoordinator(std::shared_ptr<Interpreter> interpreter,
-                                   std::shared_ptr<DebugController> debugger,
+DebugCoordinator::DebugCoordinator(std::shared_ptr<Interpreter> interpreter, std::shared_ptr<DebugController> debugger,
                                    QObject* parent)
-    : QObject(parent)
-    , interpreter_(std::move(interpreter))
-    , debugger_(std::move(debugger)) {
+    : QObject(parent), interpreter_(std::move(interpreter)), debugger_(std::move(debugger)) {
     // 转发调试器暂停信号
     // 2026-06-29 审计修复 R3: 显式指定 Qt::QueuedConnection。
     // pausedAt 在 worker 线程的 doPause 中 emit，DebugCoordinator 在主线程。
     // 原 AutoConnection 虽会自动升级为 QueuedConnection，但依赖接收方线程亲和性
     // 不变的隐式假设。显式 QueuedConnection 防止未来重构（如将 DebugController
     // move 到 worker 线程）破坏跨线程投递语义，导致信号在错误线程直接执行。
-    connect(debugger_.get(), &DebugController::pausedAt, this, &DebugCoordinator::pausedAt,
-            Qt::QueuedConnection);
+    connect(debugger_.get(), &DebugController::pausedAt, this, &DebugCoordinator::pausedAt, Qt::QueuedConnection);
 }
 
 DebugCoordinator::~DebugCoordinator() {
@@ -33,7 +29,7 @@ DebugCoordinator::~DebugCoordinator() {
         debugger_->setConditionEvaluator({});
         debugger_->setVariableCallback({});
         debugger_->setCallStackCallback({});
-        debugger_->waitCallbacksIdle();  // 等待所有 callback 完成后再析构
+        debugger_->waitCallbacksIdle(); // 等待所有 callback 完成后再析构
     }
 }
 
@@ -41,8 +37,7 @@ DebugCoordinator::~DebugCoordinator() {
 // 调试操作
 // ============================================================
 
-void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
-                                  const QMap<int, std::string>& conditions) {
+void DebugCoordinator::setupDebug(const QSet<int>& breakpoints, const QMap<int, std::string>& conditions) {
     debugger_->setBreakpoints(breakpoints);
 
     // 同步断点条件
@@ -71,11 +66,10 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
             // E1 fix: 条件断点求值异常记录告警，便于用户排查（条件 + 错误信息）。
             // 上层 DebugController::shouldPauseAtBreakpoint 也会再次记录行号。
             // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
-            LOG_WARNING("条件断点求值异常: " + std::string(e.what()) +
-                        "（条件: " + condition + "），视为条件不满足", "Debugger");
+            LOG_WARNING("条件断点求值异常: " + std::string(e.what()) + "（条件: " + condition + "），视为条件不满足",
+                        "Debugger");
         } catch (...) {
-            LOG_WARNING("条件断点求值发生未知异常（条件: " + condition +
-                        "），视为条件不满足", "Debugger");
+            LOG_WARNING("条件断点求值发生未知异常（条件: " + condition + "），视为条件不满足", "Debugger");
         }
         return false;
     });
@@ -100,11 +94,10 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
                         VariableSnapshot snap;
                         snap.name = kv.first;
                         snap.value = kv.second;
-                        snap.scope = (currentShared->parent == nullptr) ? "全局"
-                                   : (depth == 0) ? "局部" : "外层";
+                        snap.scope = (currentShared->parent == nullptr) ? "全局" : (depth == 0) ? "局部" : "外层";
                         result.push_back(snap);
                     }
-                    currentShared = currentShared->parent;  // shared_ptr 赋值，延长 parent 生命周期
+                    currentShared = currentShared->parent; // shared_ptr 赋值，延长 parent 生命周期
                     depth++;
                 }
             }

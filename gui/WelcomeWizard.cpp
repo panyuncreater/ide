@@ -9,29 +9,28 @@
 #include "gui/I18n.h"
 #include "gui/TeachingTheme.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QGridLayout>
-#include <QGroupBox>
-#include <QSplitter>
-#include <QTimer>
-#include <QTextCursor>
-#include <QTextCharFormat>
-#include <QHeaderView>
+#include <QButtonGroup>
 #include <QFont>
 #include <QFrame>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
 #include <QSpacerItem>
-#include <QButtonGroup>
+#include <QSplitter>
+#include <QTextCharFormat>
+#include <QTextCursor>
+#include <QTimer>
+#include <QVBoxLayout>
 
-#include "PushButton.h"   // QFluentKit（PushButton / PrimaryPushButton，全局类）
-#include "Label.h"        // QFluentKit（TitleLabel / CaptionLabel，全局类）
+#include "Label.h"      // QFluentKit（TitleLabel / CaptionLabel，全局类）
+#include "PushButton.h" // QFluentKit（PushButton / PrimaryPushButton，全局类）
 
 // ============================================================
 // 构造
 // ============================================================
 
-WelcomeWizard::WelcomeWizard(QWidget* parent)
-    : QDialog(parent) {
+WelcomeWizard::WelcomeWizard(QWidget* parent) : QDialog(parent) {
     setWindowTitle(mlTr("欢迎使用 MiniLang IDE"));
     setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
     setFixedSize(720, 520);
@@ -39,11 +38,11 @@ WelcomeWizard::WelcomeWizard(QWidget* parent)
     // 预定义 Token 在 print("Hello!"); 中的字符区间
     // 索引： p(0)r(1)i(2)n(3)t(4) ((5) "(6)H(7)e(8)l(9)l(10)o(11)!(12)"(13) )(14) ;(15)
     tokenSpans_ = {
-        {0, 5},     // print
-        {5, 6},     // (  （左括号：函数调用起始）
-        {6, 14},    // "Hello!"  （含引号，8 字符）
-        {14, 15},   // )  （右括号：函数调用结束）
-        {15, 16},   // ;
+        {0, 5},   // print
+        {5, 6},   // (  （左括号：函数调用起始）
+        {6, 14},  // "Hello!"  （含引号，8 字符）
+        {14, 15}, // )  （右括号：函数调用结束）
+        {15, 16}, // ;
     };
 
     auto* root = new QVBoxLayout(this);
@@ -53,9 +52,8 @@ WelcomeWizard::WelcomeWizard(QWidget* parent)
     // ---- 顶部：步骤指示器 ----
     stepIndicator_ = new QLabel(this);
     stepIndicator_->setAlignment(Qt::AlignCenter);
-    stepIndicator_->setStyleSheet(QString(
-        "font-size: 12px; color: %1; padding: 2px;").arg(
-        TeachingTheme::textSecondary().name()));
+    stepIndicator_->setStyleSheet(
+        QString("font-size: 12px; color: %1; padding: 2px;").arg(TeachingTheme::textSecondary().name()));
     root->addWidget(stepIndicator_);
 
     // ---- 中央：3 步页面 ----
@@ -100,8 +98,7 @@ void WelcomeWizard::buildStep1() {
     titleLabel->setAlignment(Qt::AlignCenter);
     layout->addWidget(titleLabel);
 
-    auto* subtitleLabel = new CaptionLabel(
-        mlTr("让我们用 3 分钟看看你的代码是如何运行的"), page);
+    auto* subtitleLabel = new CaptionLabel(mlTr("让我们用 3 分钟看看你的代码是如何运行的"), page);
     subtitleLabel->setAlignment(Qt::AlignCenter);
     subtitleLabel->setWordWrap(true);
     layout->addWidget(subtitleLabel);
@@ -110,16 +107,12 @@ void WelcomeWizard::buildStep1() {
 
     auto* chooseLabel = new QLabel(mlTr("—— 选择你的起点 ——"), page);
     chooseLabel->setAlignment(Qt::AlignCenter);
-    chooseLabel->setStyleSheet(QString(
-        "color: %1; font-size: 11px;").arg(TeachingTheme::textHint().name()));
+    chooseLabel->setStyleSheet(QString("color: %1; font-size: 11px;").arg(TeachingTheme::textHint().name()));
     layout->addWidget(chooseLabel);
 
-    roleBeginner_ = new QRadioButton(
-        mlTr("我完全新手，从头开始"), page);
-    roleIntermediate_ = new QRadioButton(
-        mlTr("我懂一点编程，想了解编译原理"), page);
-    roleExpert_ = new QRadioButton(
-        mlTr("我学过编译原理，想看高级功能"), page);
+    roleBeginner_ = new QRadioButton(mlTr("我完全新手，从头开始"), page);
+    roleIntermediate_ = new QRadioButton(mlTr("我懂一点编程，想了解编译原理"), page);
+    roleExpert_ = new QRadioButton(mlTr("我学过编译原理，想看高级功能"), page);
     roleBeginner_->setChecked(true);
 
     auto* roleGroup = new QButtonGroup(page);
@@ -165,15 +158,13 @@ void WelcomeWizard::buildStep2() {
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(8);
 
-    auto* hintLabel = new QLabel(
-        mlTr("① 你写的代码被切成了 5 个 Token —— 这就是「词法分析」\n"
-             "点击右侧任意一行 Token，左侧代码对应字符会高亮。"), page);
+    auto* hintLabel = new QLabel(mlTr("① 你写的代码被切成了 5 个 Token —— 这就是「词法分析」\n"
+                                      "点击右侧任意一行 Token，左侧代码对应字符会高亮。"),
+                                 page);
     hintLabel->setWordWrap(true);
-    hintLabel->setStyleSheet(QString(
-        "padding: 6px; background: %1; border-left: 3px solid %2;"
-        "font-size: 12px;").arg(
-        TeachingTheme::surface().name(),
-        TeachingTheme::primary().name()));
+    hintLabel->setStyleSheet(QString("padding: 6px; background: %1; border-left: 3px solid %2;"
+                                     "font-size: 12px;")
+                                 .arg(TeachingTheme::surface().name(), TeachingTheme::primary().name()));
     layout->addWidget(hintLabel);
 
     auto* splitter = new QSplitter(Qt::Horizontal, page);
@@ -190,8 +181,7 @@ void WelcomeWizard::buildStep2() {
     monoFont.setStyleHint(QFont::Monospace);
     monoFont.setPointSize(13);
     codeEdit_->setFont(monoFont);
-    codeEdit_->setStyleSheet(
-        "QTextEdit { background: #1e1e1e; color: #d4d4d4; border: none; }");
+    codeEdit_->setStyleSheet("QTextEdit { background: #1e1e1e; color: #d4d4d4; border: none; }");
     codeLayout->addWidget(codeEdit_);
     splitter->addWidget(codeBox);
 
@@ -200,8 +190,7 @@ void WelcomeWizard::buildStep2() {
     auto* tokenLayout = new QVBoxLayout(tokenBox);
     tokenLayout->setContentsMargins(6, 6, 6, 6);
     tokenTable_ = new QTableWidget(5, 3, tokenBox);
-    tokenTable_->setHorizontalHeaderLabels(
-        QStringList() << mlTr("Token") << mlTr("类型") << mlTr("说明"));
+    tokenTable_->setHorizontalHeaderLabels(QStringList() << mlTr("Token") << mlTr("类型") << mlTr("说明"));
     tokenTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     tokenTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     tokenTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
@@ -211,13 +200,17 @@ void WelcomeWizard::buildStep2() {
     tokenTable_->setSelectionMode(QAbstractItemView::SingleSelection);
 
     // 5 行 Token 数据
-    struct TokenRow { const char* lexeme; const char* type; const char* desc; };
+    struct TokenRow {
+        const char* lexeme;
+        const char* type;
+        const char* desc;
+    };
     const TokenRow rows[] = {
-        { "print",      "IDENTIFIER", "标识符：函数名" },
-        { "(",          "LPAREN",     "左括号：函数调用起始" },
-        { "\"Hello!\"", "STRING",     "字符串字面量（含引号整体）" },
-        { ")",          "RPAREN",     "右括号：函数调用结束" },
-        { ";",          "SEMICOLON",  "分号：语句结束符" },
+        {"print", "IDENTIFIER", "标识符：函数名"},
+        {"(", "LPAREN", "左括号：函数调用起始"},
+        {"\"Hello!\"", "STRING", "字符串字面量（含引号整体）"},
+        {")", "RPAREN", "右括号：函数调用结束"},
+        {";", "SEMICOLON", "分号：语句结束符"},
     };
     for (int i = 0; i < 5; ++i) {
         tokenTable_->setItem(i, 0, new QTableWidgetItem(QString::fromLatin1(rows[i].lexeme)));
@@ -247,15 +240,13 @@ void WelcomeWizard::buildStep3() {
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(8);
 
-    runHint_ = new QLabel(
-        mlTr("②③④ 代码 → AST → 字节码 → 执行，得到结果！\n"
-             "点击 [▶ 运行] 看虚拟机如何执行这 2 条指令。"), page);
+    runHint_ = new QLabel(mlTr("②③④ 代码 → AST → 字节码 → 执行，得到结果！\n"
+                               "点击 [▶ 运行] 看虚拟机如何执行这 2 条指令。"),
+                          page);
     runHint_->setWordWrap(true);
-    runHint_->setStyleSheet(QString(
-        "padding: 6px; background: %1; border-left: 3px solid %2;"
-        "font-size: 12px;").arg(
-        TeachingTheme::surface().name(),
-        TeachingTheme::warning().name()));
+    runHint_->setStyleSheet(QString("padding: 6px; background: %1; border-left: 3px solid %2;"
+                                    "font-size: 12px;")
+                                .arg(TeachingTheme::surface().name(), TeachingTheme::warning().name()));
     layout->addWidget(runHint_);
 
     auto* splitter = new QSplitter(Qt::Horizontal, page);
@@ -267,13 +258,11 @@ void WelcomeWizard::buildStep3() {
     astTree_ = new QTreeWidget(astBox);
     astTree_->setHeaderHidden(true);
     auto* printNode = new QTreeWidgetItem(QStringList() << QStringLiteral("Print"));
-    auto* strNode = new QTreeWidgetItem(printNode,
-        QStringList() << QStringLiteral("StringLiteral  \"Hello!\""));
-    (void)strNode;  // 已挂载到 printNode
+    auto* strNode = new QTreeWidgetItem(printNode, QStringList() << QStringLiteral("StringLiteral  \"Hello!\""));
+    (void)strNode; // 已挂载到 printNode
     astTree_->addTopLevelItem(printNode);
     astTree_->expandAll();
-    astTree_->setStyleSheet(
-        "QTreeWidget { font-family: Consolas, monospace; font-size: 12px; }");
+    astTree_->setStyleSheet("QTreeWidget { font-family: Consolas, monospace; font-size: 12px; }");
     astLayout->addWidget(astTree_);
     splitter->addWidget(astBox);
 
@@ -284,8 +273,7 @@ void WelcomeWizard::buildStep3() {
     bytecodeList_ = new QListWidget(bcBox);
     bytecodeList_->addItem(QStringLiteral("OP_STRING  \"Hello!\""));
     bytecodeList_->addItem(QStringLiteral("OP_PRINT"));
-    bytecodeList_->setStyleSheet(
-        "QListWidget { font-family: Consolas, monospace; font-size: 12px; }");
+    bytecodeList_->setStyleSheet("QListWidget { font-family: Consolas, monospace; font-size: 12px; }");
     bcLayout->addWidget(bytecodeList_);
     splitter->addWidget(bcBox);
 
@@ -298,15 +286,13 @@ void WelcomeWizard::buildStep3() {
     runBtn_->setMinimumWidth(120);
     runBtn_->setMinimumHeight(32);
     // 运行按钮保留 QPushButton，用 TeachingTheme::success() 着色（绿色语义：执行）
-    runBtn_->setStyleSheet(QString(
-        "QPushButton { background: %1; color: white; border: none;"
-        "  border-radius: 5px; font-size: 13px; }"
-        "QPushButton:hover { background: %2; }"
-        "QPushButton:pressed { background: %3; }"
-        "QPushButton:disabled { background: #888; }").arg(
-        TeachingTheme::success().name(),
-        TeachingTheme::success().darker(112).name(),
-        TeachingTheme::success().darker(122).name()));
+    runBtn_->setStyleSheet(QString("QPushButton { background: %1; color: white; border: none;"
+                                   "  border-radius: 5px; font-size: 13px; }"
+                                   "QPushButton:hover { background: %2; }"
+                                   "QPushButton:pressed { background: %3; }"
+                                   "QPushButton:disabled { background: #888; }")
+                               .arg(TeachingTheme::success().name(), TeachingTheme::success().darker(112).name(),
+                                    TeachingTheme::success().darker(122).name()));
     connect(runBtn_, &QPushButton::clicked, this, &WelcomeWizard::onRunClicked);
     runRow->addWidget(runBtn_);
 
@@ -317,9 +303,8 @@ void WelcomeWizard::buildStep3() {
     runOutput_ = new QTextEdit(page);
     runOutput_->setReadOnly(true);
     runOutput_->setMaximumHeight(70);
-    runOutput_->setStyleSheet(
-        "QTextEdit { background: #101820; color: #90ffd0;"
-        "  font-family: Consolas, monospace; font-size: 13px; }");
+    runOutput_->setStyleSheet("QTextEdit { background: #101820; color: #90ffd0;"
+                              "  font-family: Consolas, monospace; font-size: 13px; }");
     runRow->addWidget(runOutput_, 1);
     layout->addLayout(runRow);
 
@@ -336,14 +321,11 @@ void WelcomeWizard::buildStep4() {
     layout->setSpacing(12);
 
     auto* titleLabel = new QLabel(mlTr("🚀 你的学习路径"), page);
-    titleLabel->setStyleSheet(QString(
-        "font-size: 18px; font-weight: bold; color: %1;").arg(
-        TeachingTheme::primary().name()));
+    titleLabel->setStyleSheet(
+        QString("font-size: 18px; font-weight: bold; color: %1;").arg(TeachingTheme::primary().name()));
     layout->addWidget(titleLabel);
 
-    auto* introLabel = new QLabel(
-        mlTr("导览到此结束！接下来推荐你按以下路径系统学习 MiniLang："),
-        page);
+    auto* introLabel = new QLabel(mlTr("导览到此结束！接下来推荐你按以下路径系统学习 MiniLang："), page);
     introLabel->setWordWrap(true);
     layout->addWidget(introLabel);
 
@@ -357,10 +339,8 @@ void WelcomeWizard::buildStep4() {
     };
     // 5 阶段色统一走 TeachingTheme::learningStageColor()，与 LearningPathPanel 一致
     const QStringList colors = {
-        TeachingTheme::learningStageColor(0).name(),
-        TeachingTheme::learningStageColor(1).name(),
-        TeachingTheme::learningStageColor(2).name(),
-        TeachingTheme::learningStageColor(3).name(),
+        TeachingTheme::learningStageColor(0).name(), TeachingTheme::learningStageColor(1).name(),
+        TeachingTheme::learningStageColor(2).name(), TeachingTheme::learningStageColor(3).name(),
         TeachingTheme::learningStageColor(4).name(),
     };
 
@@ -369,9 +349,9 @@ void WelcomeWizard::buildStep4() {
     for (int i = 0; i < stages.size(); ++i) {
         auto* stageCard = new QFrame(page);
         stageCard->setFrameShape(QFrame::StyledPanel);
-        stageCard->setStyleSheet(QString(
-            "QFrame { background: %1; color: white; border-radius: 6px; "
-            "padding: 8px; font-size: 11px; }").arg(colors[i]));
+        stageCard->setStyleSheet(QString("QFrame { background: %1; color: white; border-radius: 6px; "
+                                         "padding: 8px; font-size: 11px; }")
+                                     .arg(colors[i]));
         stageCard->setMinimumHeight(80);
         auto* stageLayout = new QVBoxLayout(stageCard);
         stageLayout->setContentsMargins(6, 6, 6, 6);
@@ -384,14 +364,12 @@ void WelcomeWizard::buildStep4() {
     }
     layout->addLayout(stagesLayout);
 
-    auto* tipLabel = new QLabel(
-        mlTr("💡 点击下方「开始学习」打开学习路径地图，跟踪你的进度。"
-             "左侧栏「学习」图标可随时打开学习中心。"),
-        page);
+    auto* tipLabel = new QLabel(mlTr("💡 点击下方「开始学习」打开学习路径地图，跟踪你的进度。"
+                                     "左侧栏「学习」图标可随时打开学习中心。"),
+                                page);
     tipLabel->setWordWrap(true);
-    tipLabel->setStyleSheet(QString(
-        "color: %1; font-size: 12px; padding: 8px;").arg(
-        TeachingTheme::textSecondary().name()));
+    tipLabel->setStyleSheet(
+        QString("color: %1; font-size: 12px; padding: 8px;").arg(TeachingTheme::textSecondary().name()));
     layout->addWidget(tipLabel);
 
     layout->addStretch(1);
@@ -419,7 +397,8 @@ void WelcomeWizard::buildStep4() {
 
 /// 切换到指定向导步骤并刷新页面。
 void WelcomeWizard::goToStep(int index) {
-    if (index < 0 || index >= pages_->count()) return;
+    if (index < 0 || index >= pages_->count())
+        return;
     pages_->setCurrentIndex(index);
     updateStepIndicator();
     updateNavButtons();
@@ -434,8 +413,7 @@ void WelcomeWizard::goToStep(int index) {
 /// 刷新步骤指示器（当前/总数与进度点）。
 void WelcomeWizard::updateStepIndicator() {
     int idx = pages_->currentIndex();
-    stepIndicator_->setText(
-        mlTr("步骤 %1 / %2").arg(idx + 1).arg(pages_->count()));
+    stepIndicator_->setText(mlTr("步骤 %1 / %2").arg(idx + 1).arg(pages_->count()));
 }
 
 /// 更新上一步/下一步/跳过按钮的可用与可见态。
@@ -476,7 +454,7 @@ void WelcomeWizard::onStartExplore() {
 /// 「跳过」按钮：放弃向导直接进入主界面。
 void WelcomeWizard::onSkip() {
     completed_ = true;
-    reject();  // 跳过也视为完成（已看过提示），用 reject 区分"主动跳过"
+    reject(); // 跳过也视为完成（已看过提示），用 reject 区分"主动跳过"
 }
 
 /// 进入下一步；末步则完成。
@@ -493,9 +471,9 @@ void WelcomeWizard::onNextStep() {
 /// 返回上一步。
 void WelcomeWizard::onPrevStep() {
     int idx = pages_->currentIndex();
-    if (idx > 0) goToStep(idx - 1);
+    if (idx > 0)
+        goToStep(idx - 1);
 }
-
 
 // ============================================================
 // Step 2：Token 行点击 → 高亮源码
@@ -503,13 +481,15 @@ void WelcomeWizard::onPrevStep() {
 
 /// 示例 token 行点击：高亮对应代码区间。
 void WelcomeWizard::onTokenRowClicked(int row) {
-    if (row < 0 || row >= tokenSpans_.size()) return;
+    if (row < 0 || row >= tokenSpans_.size())
+        return;
     highlightCodeRange(tokenSpans_[row].start, tokenSpans_[row].end);
 }
 
 /// 在示例编辑器中高亮 [start,end) 区间代码。
 void WelcomeWizard::highlightCodeRange(int start, int end) {
-    if (!codeEdit_) return;
+    if (!codeEdit_)
+        return;
     QTextCursor cursor(codeEdit_->document());
     QList<QTextEdit::ExtraSelection> selections;
 
@@ -543,10 +523,9 @@ void WelcomeWizard::onRunClicked() {
     // 高亮第一条指令
     if (bytecodeList_->count() > 0) {
         bytecodeList_->setCurrentRow(0);
-        bytecodeList_->setStyleSheet(QString(
-            "QListWidget { font-family: Consolas, monospace; font-size: 12px; }"
-            "QListWidget::item:selected { background: %1; color: white; }").arg(
-            TeachingTheme::primary().name()));
+        bytecodeList_->setStyleSheet(QString("QListWidget { font-family: Consolas, monospace; font-size: 12px; }"
+                                             "QListWidget::item:selected { background: %1; color: white; }")
+                                         .arg(TeachingTheme::primary().name()));
     }
 
     // 600ms 后切换到第二条指令 + 输出

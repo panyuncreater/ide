@@ -17,23 +17,23 @@
 //   - 转发协作类信号到 GUI 层
 // ============================================================
 
-#include <QObject>
-#include <QString>
-#include <QSet>
 #include <QMap>
+#include <QObject>
+#include <QSet>
+#include <QString>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "interpreter/Interpreter.h"
-#include "interpreter/Value.h"
-#include "debug/DebugController.h"
+#include "DebugCoordinator.h"
 #include "Diagnostic.h"
 #include "PipelineRunner.h"
-#include "WorkerManager.h"
-#include "DebugCoordinator.h"
 #include "VmStepper.h"
+#include "WorkerManager.h"
+#include "debug/DebugController.h"
+#include "interpreter/Interpreter.h"
+#include "interpreter/Value.h"
 
 class IdeController : public QObject {
     Q_OBJECT
@@ -89,9 +89,7 @@ public:
     bool hasBreakpoints() const { return debugCoord_.hasBreakpoints(); }
     // P1-2: 断点查询接口（供 BreakpointConditionPanel 消费）
     QSet<int> getBreakpoints() const { return debugCoord_.getBreakpoints(); }
-    std::string getBreakpointCondition(int line) const {
-        return debugCoord_.getBreakpointCondition(line);
-    }
+    std::string getBreakpointCondition(int line) const { return debugCoord_.getBreakpointCondition(line); }
     // BUG-DBG-AUDIT-2 fix: VM 模式活跃时分派到 VmStepper 的 hitCount，
     // 否则转发到 Interpreter 模式的 debugCoord_。原实现无条件转发到 debugCoord_，
     // 导致 VM 模式调试时 BreakpointConditionPanel::refreshLive 获取的 hitCount 始终为 0。
@@ -103,12 +101,8 @@ public:
         }
         return debugCoord_.getBreakpointHitCount(line);
     }
-    std::vector<VariableSnapshot> getDebugVariableSnapshot() const {
-        return debugCoord_.getDebugVariableSnapshot();
-    }
-    std::vector<CallStackEntry> getDebugCallStack() const {
-        return debugCoord_.getDebugCallStack();
-    }
+    std::vector<VariableSnapshot> getDebugVariableSnapshot() const { return debugCoord_.getDebugVariableSnapshot(); }
+    std::vector<CallStackEntry> getDebugCallStack() const { return debugCoord_.getDebugCallStack(); }
     /// AUDIT-P1 fix: 暴露调试暂停状态，供面板 autoTimer 在 resume 期间停止并发访问。
     /// 调试运行中（resume 后 worker 活跃）时调用 getDebugCallStack/getDebugVariableSnapshot
     /// 会与 worker 线程并发访问解释器内部数据结构（unordered_map/vector），导致 UB。
@@ -120,9 +114,7 @@ public:
 
     // ---- REPL 接口（转发到 Interpreter）----
     /// 保留 REPL AST 引用（防止类/闭包 body 指针悬空）
-    void retainReplAst(std::unique_ptr<Block> ast) {
-        interpreter_->retainReplAst(std::move(ast));
-    }
+    void retainReplAst(std::unique_ptr<Block> ast) { interpreter_->retainReplAst(std::move(ast)); }
     /// BUG-REPL-AUDIT-9 fix: 执行 REPL 程序，返回求值结果（异常向上传播由调用方处理）。
     /// 非内联实现（见 IdeController.cpp）：执行前调用 setupReplModuleCallbacks() 确保
     /// Interpreter 已设置模块加载器，使 REPL 中 import 语句可用。
@@ -153,9 +145,7 @@ public:
     /// 编译成功后同步更新 VmStepper 的编译结果，使 VM 步进可用。
     bool runCompiler();
     bool formatCode(std::string& formatted) { return pipeline_.formatCode(formatted); }
-    PipelineResult runFrontendPipeline(const std::string& source) {
-        return pipeline_.runFrontendPipeline(source);
-    }
+    PipelineResult runFrontendPipeline(const std::string& source) { return pipeline_.runFrontendPipeline(source); }
 
     // ---- Worker 线程管理（协调 PipelineRunner + WorkerManager + VmStepper）----
     /// 准备运行（词法+解析+创建 worker），返回 true 表示已就绪
@@ -173,8 +163,7 @@ public:
     bool isDebugRun() const { return workerMgr_.isDebugRun(); }
 
     // ---- 调试操作（转发到 DebugCoordinator）----
-    void setupDebug(const QSet<int>& breakpoints,
-                    const QMap<int, std::string>& conditions) {
+    void setupDebug(const QSet<int>& breakpoints, const QMap<int, std::string>& conditions) {
         debugCoord_.setupDebug(breakpoints, conditions);
         notifyVmStateChanged();
     }
@@ -182,11 +171,11 @@ public:
         debugCoord_.setBreakpoints(breakpoints);
         notifyVmStateChanged();
     }
-    void stepIn()  { debugCoord_.stepIn(); }
+    void stepIn() { debugCoord_.stepIn(); }
     void stepOver() { debugCoord_.stepOver(); }
     void stepOut() { debugCoord_.stepOut(); }
-    void resume()  { debugCoord_.resume(); }
-    void stop()    { debugCoord_.stop(); }
+    void resume() { debugCoord_.resume(); }
+    void stop() { debugCoord_.stop(); }
 
     // ---- VM 操作（转发到 VmStepper）----
     // OPT-1: 在状态变更后调用 notifyVmStateChanged() 通知订阅面板，
@@ -337,7 +326,8 @@ private:
         // 迭代副本：回调可能触发面板刷新，间接修改订阅者列表（理论上不会，但防御性）。
         auto snapshot = vmStateChangedListeners_;
         for (auto& lst : snapshot) {
-            if (lst.fn) lst.fn();
+            if (lst.fn)
+                lst.fn();
         }
     }
 

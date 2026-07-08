@@ -38,11 +38,11 @@
 // AstToyLevel — 单个 AST 搭建题目定义
 // ============================================================
 struct AstToyLevel {
-    int         level = 0;          // 题目序号 1-6
-    std::string targetExpression;   // 目标表达式（如 "1 + 2 * 3"）
-    std::string teachingPoint;      // 教学点（简短一句话，说明本题核心）
-    std::string hint;               // 操作提示
-    int         difficulty = 1;     // 难度 1-3（对应 ⭐ / ⭐⭐ / ⭐⭐⭐）
+    int level = 0;                // 题目序号 1-6
+    std::string targetExpression; // 目标表达式（如 "1 + 2 * 3"）
+    std::string teachingPoint;    // 教学点（简短一句话，说明本题核心）
+    std::string hint;             // 操作提示
+    int difficulty = 1;           // 难度 1-3（对应 ⭐ / ⭐⭐ / ⭐⭐⭐）
 
     // --------------------------------------------------------
     // TreeNode — 标准答案的树结构表示
@@ -51,19 +51,18 @@ struct AstToyLevel {
     // 叶子节点 children 为空 vector。
     // label 命名约定见文件头注释。
     struct TreeNode {
-        std::string              label;     // 节点标签
-        std::vector<TreeNode>    children;  // 子节点（按代码顺序）
+        std::string label;              // 节点标签
+        std::vector<TreeNode> children; // 子节点（按代码顺序）
 
         // 默认构造：空节点
         TreeNode() = default;
         // 便捷构造：叶子节点
         explicit TreeNode(std::string l) : label(std::move(l)) {}
         // 完整构造
-        TreeNode(std::string l, std::vector<TreeNode> c)
-            : label(std::move(l)), children(std::move(c)) {}
+        TreeNode(std::string l, std::vector<TreeNode> c) : label(std::move(l)), children(std::move(c)) {}
     };
 
-    TreeNode answer;   // 标准答案
+    TreeNode answer; // 标准答案
 };
 
 // ============================================================

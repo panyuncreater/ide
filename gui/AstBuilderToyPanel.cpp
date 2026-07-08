@@ -16,37 +16,36 @@
 
 #include "gui/AstBuilderToyPanel.h"
 #include "gui/I18n.h"
-#include "gui/LearnerProgress.h"  // P0-2 fix (F7): 关卡完成状态持久化
+#include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡完成状态持久化
 // P1-3 fix (F14): 引入真实 Lexer + Parser 用于对照验证
+#include "ast/ASTNode.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "ast/ASTNode.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QSplitter>
-#include <QTreeWidget>
 #include <QComboBox>
-#include <QLabel>
-#include <QPushButton>
-#include <QInputDialog>
-#include <QShortcut>
-#include <QKeySequence>
-#include <QMessageBox>
+#include <QHBoxLayout>
 #include <QHeaderView>
-#include <QStyle>  // style()->polish() / unpolish() 用于 QSS 动态属性刷新
-#include <sstream>
-#include <functional>
+#include <QInputDialog>
+#include <QKeySequence>
+#include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QShortcut>
+#include <QSplitter>
+#include <QStyle> // style()->polish() / unpolish() 用于 QSS 动态属性刷新
+#include <QTreeWidget>
+#include <QVBoxLayout>
 #include <algorithm>
+#include <functional>
+#include <sstream>
 
-#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
-#include "Label.h"        // QFluentKit（StrongBodyLabel）
+#include "Label.h"      // QFluentKit（StrongBodyLabel）
+#include "PushButton.h" // QFluentKit（PrimaryPushButton）
 
 // ============================================================
 // 构造函数
 // ============================================================
-AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
-    : QWidget(parent) {
+AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent) : QWidget(parent) {
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
@@ -81,15 +80,15 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(new QLabel(mlTr("题目：")), 0);
     levelCombo_ = new QComboBox(this);
-    levelCombo_->setObjectName("levelCombo");  // QSS 选择器匹配
+    levelCombo_->setObjectName("levelCombo"); // QSS 选择器匹配
     const auto& ls = AstToyLibrary::levels();
     for (const auto& lv : ls) {
         QString text = QString::fromUtf8("L%1 (%2) — %3")
-            .arg(lv.level)
-            .arg(QString::fromUtf8(lv.difficulty == 1 ? "⭐"
-                                       : lv.difficulty == 2 ? "⭐⭐"
-                                       : "⭐⭐⭐"))
-            .arg(QString::fromUtf8(lv.targetExpression.c_str()));
+                           .arg(lv.level)
+                           .arg(QString::fromUtf8(lv.difficulty == 1   ? "⭐"
+                                                  : lv.difficulty == 2 ? "⭐⭐"
+                                                                       : "⭐⭐⭐"))
+                           .arg(QString::fromUtf8(lv.targetExpression.c_str()));
         levelCombo_->addItem(text);
     }
     progressLabel_ = new StrongBodyLabel(mlTr("进度: 0/6"), this);
@@ -100,18 +99,16 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     // ---- Solarized 风格 QSS（QComboBox + 关卡芯片按钮）----
     // 所有题目均解锁（无解锁机制），芯片仅区分 current / unlocked
     // 动态属性 [current='true'] 在 refreshLevelChips() 中通过 setProperty + polish() 触发
-    setStyleSheet(QString::fromUtf8(
-        "QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
-        "border-radius: 4px; padding: 4px 8px; }"
-        "QComboBox#levelCombo:hover { border-color: #268BD2; }"
-        "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
-        "border-radius: 4px; font-size: 11px; }"
-        "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-        "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
-        "border-color: #1E6FA3; font-weight: bold; }"
-        "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
-        "border-color: #CCC; }"
-    ));
+    setStyleSheet(QString::fromUtf8("QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
+                                    "border-radius: 4px; padding: 4px 8px; }"
+                                    "QComboBox#levelCombo:hover { border-color: #268BD2; }"
+                                    "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+                                    "border-radius: 4px; font-size: 11px; }"
+                                    "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
+                                    "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
+                                    "border-color: #1E6FA3; font-weight: bold; }"
+                                    "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+                                    "border-color: #CCC; }"));
 
     // ---- 主体：左工具箱 + 右画布 ----
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -122,12 +119,12 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     toolboxLayout->setContentsMargins(0, 0, 0, 0);
     toolboxLayout->setSpacing(4);
     toolboxLayout->addWidget(new QLabel(mlTr("节点工具箱：")));
-    btnNumber_  = new QPushButton(mlTr("🔢 Number（数字）"), this);
-    btnAdd_     = new QPushButton(mlTr("➕ Add（+）"), this);
-    btnSub_     = new QPushButton(mlTr("➖ Sub（-）"), this);
-    btnMul_     = new QPushButton(mlTr("✖ Mul（*）"), this);
-    btnDiv_     = new QPushButton(mlTr("➗ Div（/）"), this);
-    btnPrint_   = new QPushButton(mlTr("🖨 Print"), this);
+    btnNumber_ = new QPushButton(mlTr("🔢 Number（数字）"), this);
+    btnAdd_ = new QPushButton(mlTr("➕ Add（+）"), this);
+    btnSub_ = new QPushButton(mlTr("➖ Sub（-）"), this);
+    btnMul_ = new QPushButton(mlTr("✖ Mul（*）"), this);
+    btnDiv_ = new QPushButton(mlTr("➗ Div（/）"), this);
+    btnPrint_ = new QPushButton(mlTr("🖨 Print"), this);
     btnVarDecl_ = new QPushButton(mlTr("📦 VarDecl（变量声明）"), this);
     toolboxLayout->addWidget(btnNumber_);
     toolboxLayout->addWidget(btnAdd_);
@@ -156,20 +153,19 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     // ---- 题目说明区 ----
     descLabel_ = new QLabel(this);
     descLabel_->setWordWrap(true);
-    descLabel_->setStyleSheet(QString::fromUtf8(
-        "QLabel { background: #f5f5f5; padding: 6px; border-radius: 4px; }"));
+    descLabel_->setStyleSheet(QString::fromUtf8("QLabel { background: #f5f5f5; padding: 6px; border-radius: 4px; }"));
     mainLayout->addWidget(descLabel_);
 
     // ---- 底部：操作按钮 + 反馈 ----
     auto* bottomBar = new QHBoxLayout;
-    checkBtn_  = new PrimaryPushButton(mlTr("✓ 检查"), this);
+    checkBtn_ = new PrimaryPushButton(mlTr("✓ 检查"), this);
     answerBtn_ = new QPushButton(mlTr("👁 查看标准答案"), this);
-    nextBtn_   = new QPushButton(mlTr("➡ 下一题"), this);
-    clearBtn_  = new QPushButton(mlTr("🔄 清空"), this);
+    nextBtn_ = new QPushButton(mlTr("➡ 下一题"), this);
+    clearBtn_ = new QPushButton(mlTr("🔄 清空"), this);
     deleteBtn_ = new QPushButton(mlTr("🗑 删除选中节点"), this);
-    verifyBtn_ = new QPushButton(mlTr("🛠 用真实 Parser 验证"), this);  // P1-3 fix
+    verifyBtn_ = new QPushButton(mlTr("🛠 用真实 Parser 验证"), this); // P1-3 fix
     verifyBtn_->setToolTip(mlTr("调用真实 Lexer + Parser 解析目标表达式，"
-                                 "把生成的 AST 树显示在反馈区供对照"));
+                                "把生成的 AST 树显示在反馈区供对照"));
     bottomBar->addWidget(checkBtn_);
     bottomBar->addWidget(answerBtn_);
     bottomBar->addWidget(nextBtn_);
@@ -181,28 +177,26 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
 
     feedback_ = new QLabel(this);
     feedback_->setWordWrap(true);
-    feedback_->setStyleSheet(QString::fromUtf8(
-        "QLabel { padding: 4px; }"));
+    feedback_->setStyleSheet(QString::fromUtf8("QLabel { padding: 4px; }"));
     mainLayout->addWidget(feedback_);
 
     // ---- 信号槽 ----
-    connect(levelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AstBuilderToyPanel::onLevelChanged);
-    connect(btnNumber_,  &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxNumber);
-    connect(btnAdd_,     &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxAdd);
-    connect(btnSub_,     &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxSub);
-    connect(btnMul_,     &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxMul);
-    connect(btnDiv_,     &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxDiv);
-    connect(btnPrint_,   &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxPrint);
+    connect(levelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &AstBuilderToyPanel::onLevelChanged);
+    connect(btnNumber_, &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxNumber);
+    connect(btnAdd_, &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxAdd);
+    connect(btnSub_, &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxSub);
+    connect(btnMul_, &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxMul);
+    connect(btnDiv_, &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxDiv);
+    connect(btnPrint_, &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxPrint);
     connect(btnVarDecl_, &QPushButton::clicked, this, &AstBuilderToyPanel::onToolboxVarDecl);
-    connect(checkBtn_,   &QPushButton::clicked, this, &AstBuilderToyPanel::onCheck);
-    connect(answerBtn_,  &QPushButton::clicked, this, &AstBuilderToyPanel::onShowAnswer);
-    connect(nextBtn_,    &QPushButton::clicked, this, &AstBuilderToyPanel::onNext);
-    connect(clearBtn_,   &QPushButton::clicked, this, &AstBuilderToyPanel::onClear);
-    connect(deleteBtn_,  &QPushButton::clicked, this, &AstBuilderToyPanel::onDeleteSelected);
-    connect(verifyBtn_,  &QPushButton::clicked, this, &AstBuilderToyPanel::onVerifyWithRealParser);
-    connect(tree_,       &QTreeWidget::currentItemChanged,
-            this, &AstBuilderToyPanel::onTreeItemChanged);
+    connect(checkBtn_, &QPushButton::clicked, this, &AstBuilderToyPanel::onCheck);
+    connect(answerBtn_, &QPushButton::clicked, this, &AstBuilderToyPanel::onShowAnswer);
+    connect(nextBtn_, &QPushButton::clicked, this, &AstBuilderToyPanel::onNext);
+    connect(clearBtn_, &QPushButton::clicked, this, &AstBuilderToyPanel::onClear);
+    connect(deleteBtn_, &QPushButton::clicked, this, &AstBuilderToyPanel::onDeleteSelected);
+    connect(verifyBtn_, &QPushButton::clicked, this, &AstBuilderToyPanel::onVerifyWithRealParser);
+    connect(tree_, &QTreeWidget::currentItemChanged, this, &AstBuilderToyPanel::onTreeItemChanged);
 
     // Delete 键删除选中节点
     auto* delShortcut = new QShortcut(QKeySequence::Delete, this);
@@ -237,7 +231,8 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
 // 题目切换
 // ============================================================
 void AstBuilderToyPanel::onLevelChanged(int index) {
-    if (index < 0) return;
+    if (index < 0)
+        return;
     loadLevel(index);
 }
 
@@ -248,20 +243,20 @@ void AstBuilderToyPanel::loadLevel(int index) {
     feedback_->clear();
 
     const auto& ls = AstToyLibrary::levels();
-    if (index < 0 || index >= (int)ls.size()) return;
+    if (index < 0 || index >= (int)ls.size())
+        return;
     const auto& lv = ls[index];
 
-    QString desc = QString::fromUtf8(
-        "<b>题目 %1</b>：搭建 <code>%2</code> 的 AST<br>"
-        "<b>教学点</b>：%3<br>"
-        "<b>提示</b>：%4")
-        .arg(lv.level)
-        .arg(QString::fromUtf8(lv.targetExpression.c_str()))
-        .arg(QString::fromUtf8(lv.teachingPoint.c_str()))
-        .arg(QString::fromUtf8(lv.hint.c_str()));
+    QString desc = QString::fromUtf8("<b>题目 %1</b>：搭建 <code>%2</code> 的 AST<br>"
+                                     "<b>教学点</b>：%3<br>"
+                                     "<b>提示</b>：%4")
+                       .arg(lv.level)
+                       .arg(QString::fromUtf8(lv.targetExpression.c_str()))
+                       .arg(QString::fromUtf8(lv.teachingPoint.c_str()))
+                       .arg(QString::fromUtf8(lv.hint.c_str()));
     descLabel_->setText(desc);
     refreshProgress();
-    refreshLevelChips();  // 同步芯片栏状态（current 高亮）
+    refreshLevelChips(); // 同步芯片栏状态（current 高亮）
 }
 
 void AstBuilderToyPanel::refreshProgress() {
@@ -341,26 +336,23 @@ void AstBuilderToyPanel::addNodeWithLabel(const QString& label) {
     // 避免连续添加叶子时形成错误嵌套（下一个叶子变成上一个叶子的子节点）。
     // 非叶子节点（BinaryOp:* / Print / VarDecl:*）添加后切换到新节点，
     // 方便为其继续添加子节点。
-    bool isLeaf = label.startsWith(QString::fromUtf8("Number:")) ||
-                  label.startsWith(QString::fromUtf8("Identifier:"));
+    bool isLeaf = label.startsWith(QString::fromUtf8("Number:")) || label.startsWith(QString::fromUtf8("Identifier:"));
     if (isLeaf) {
         tree_->setCurrentItem(current);
     } else {
         tree_->setCurrentItem(child);
     }
-    feedback_->setText(QString::fromUtf8("✓ 已添加子节点：%1（父节点：%2）")
-                           .arg(label).arg(current->text(0)));
+    feedback_->setText(QString::fromUtf8("✓ 已添加子节点：%1（父节点：%2）").arg(label).arg(current->text(0)));
 }
 
 // ============================================================
 // 弹输入对话框
 // ============================================================
-bool AstBuilderToyPanel::promptValue(const QString& title, const QString& label,
-                                     QString& outValue) {
+bool AstBuilderToyPanel::promptValue(const QString& title, const QString& label, QString& outValue) {
     bool ok = false;
-    QString text = QInputDialog::getText(this, title, label,
-                                         QLineEdit::Normal, QString(), &ok);
-    if (!ok) return false;
+    QString text = QInputDialog::getText(this, title, label, QLineEdit::Normal, QString(), &ok);
+    if (!ok)
+        return false;
     outValue = text;
     return true;
 }
@@ -385,7 +377,8 @@ void AstBuilderToyPanel::onCheck() {
     }
 
     const auto& ls = AstToyLibrary::levels();
-    if (currentIndex_ < 0 || currentIndex_ >= (int)ls.size()) return;
+    if (currentIndex_ < 0 || currentIndex_ >= (int)ls.size())
+        return;
     const auto& ans = ls[currentIndex_].answer;
 
     if (treeEquals(userTree, ans)) {
@@ -396,27 +389,29 @@ void AstBuilderToyPanel::onCheck() {
         QString userStr, ansStr;
         treeNodeToString(userTree, userStr);
         treeNodeToString(ans, ansStr);
-        feedback_->setText(QString::fromUtf8(
-            "❌ 不匹配。\n\n你的树：\n%1\n\n标准答案：\n%2").arg(userStr).arg(ansStr));
+        feedback_->setText(QString::fromUtf8("❌ 不匹配。\n\n你的树：\n%1\n\n标准答案：\n%2").arg(userStr).arg(ansStr));
     }
 }
 
 void AstBuilderToyPanel::markCurrentCompleted() {
     const auto& ls = AstToyLibrary::levels();
-    if (currentIndex_ < 0 || currentIndex_ >= (int)ls.size()) return;
+    if (currentIndex_ < 0 || currentIndex_ >= (int)ls.size())
+        return;
     int lvl = ls[currentIndex_].level;
-    if (std::find(completedLevels_.begin(), completedLevels_.end(), lvl)
-        == completedLevels_.end()) {
+    // AUDIT-P2 fix: 幂等守卫完整覆盖——原实现只保护 completedLevels_.push_back，
+    // 未保护 markLevelStars/save/emit。重复检查会重复发射信号 + 重复磁盘写入。
+    bool alreadyDone = std::find(completedLevels_.begin(), completedLevels_.end(), lvl) != completedLevels_.end();
+    if (!alreadyDone) {
         completedLevels_.push_back(lvl);
         refreshProgress();
+        // 仅首次完成时持久化 + 发射信号
+        std::string id = "ast-toy-level-" + std::to_string(lvl);
+        LearnerProgressStore::instance().markLevelStars(id, 3);
+        LearnerProgressStore::instance().save();
+        QString levelId = QString::fromUtf8("ast-toy-level-%1").arg(lvl);
+        emit activityCompleted(levelId);
     }
-    // P0-2 fix (F7): 持久化关卡完成状态（AST 玩具无星级评分，统一记 3 星）
-    std::string id = "ast-toy-level-" + std::to_string(lvl);
-    LearnerProgressStore::instance().markLevelStars(id, 3);
-    LearnerProgressStore::instance().save();
-    QString levelId = QString::fromUtf8("ast-toy-level-%1").arg(lvl);
-    emit activityCompleted(levelId);
-    refreshLevelChips();  // 完成后刷新芯片（显示已完成标记）
+    refreshLevelChips(); // 完成后刷新芯片（显示已完成标记）
 }
 
 // ============================================================
@@ -431,14 +426,14 @@ void AstBuilderToyPanel::refreshLevelChips() {
     const auto& levels = AstToyLibrary::levels();
     for (int i = 0; i < levelChips_.size(); ++i) {
         QPushButton* chip = levelChips_[i];
-        if (!chip) continue;
+        if (!chip)
+            continue;
 
         bool isCurrent = (i == currentIndex_);
         bool isCompleted = false;
         if (i < (int)levels.size()) {
             int lvl = levels[i].level;
-            isCompleted = std::find(completedLevels_.begin(),
-                                    completedLevels_.end(), lvl) != completedLevels_.end();
+            isCompleted = std::find(completedLevels_.begin(), completedLevels_.end(), lvl) != completedLevels_.end();
         }
 
         // 本面板所有题目均解锁，locked 恒为 false
@@ -496,12 +491,11 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
         return;
     }
     // 检测是否已是完整语句（含 ; 或 var/print 关键字开头）
-    bool isStatement = (expr.back() == ';') ||
-                       expr.find("var ") == 0 ||
-                       expr.find("print(") == 0;
+    bool isStatement = (expr.back() == ';') || expr.find("var ") == 0 || expr.find("print(") == 0;
     if (isStatement) {
         source = expr;
-        if (source.back() != ';') source += ";";
+        if (source.back() != ';')
+            source += ";";
     } else {
         // 包装成 var __toy_tmp = <expr>; 让 Parser 接受
         source = "var __toy_tmp = " + expr + ";";
@@ -513,10 +507,10 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
     if (lexer.getDiagnostics().hasErrors()) {
         std::string errs;
         for (const auto& d : lexer.getDiagnostics().all()) {
-            if (d.isError()) errs += d.format() + "\n";
+            if (d.isError())
+                errs += d.format() + "\n";
         }
-        feedback_->setText(QString::fromUtf8("❌ ") + mlTr("词法错误：\n") +
-            QString::fromUtf8(errs.c_str()));
+        feedback_->setText(QString::fromUtf8("❌ ") + mlTr("词法错误：\n") + QString::fromUtf8(errs.c_str()));
         return;
     }
 
@@ -525,10 +519,10 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
     if (parser.hasErrors()) {
         std::string errs;
         for (const auto& d : parser.getDiagnostics().all()) {
-            if (d.isError()) errs += d.format() + "\n";
+            if (d.isError())
+                errs += d.format() + "\n";
         }
-        feedback_->setText(QString::fromUtf8("❌ ") + mlTr("解析错误：\n") +
-            QString::fromUtf8(errs.c_str()));
+        feedback_->setText(QString::fromUtf8("❌ ") + mlTr("解析错误：\n") + QString::fromUtf8(errs.c_str()));
         return;
     }
     if (!ast) {
@@ -544,25 +538,33 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
     // 接受。此时真实 AST 根节点是 Block → VarDecl，而学员搭建的是裸表达式树。
     // 明确标注包装行为，避免学员误以为自己搭建的树错误。
     if (!isStatement) {
-        os << "💡 " << mlTr("注：纯表达式已包装为 var __toy_tmp = <expr>; 才能解析。"
-                           "下方 AST 根节点 Block/VarDecl 是包装语句，"
-                           "VarDecl 的子树才是目标表达式").toStdString() << "\n";
+        os << "💡 "
+           << mlTr("注：纯表达式已包装为 var __toy_tmp = <expr>; 才能解析。"
+                   "下方 AST 根节点 Block/VarDecl 是包装语句，"
+                   "VarDecl 的子树才是目标表达式")
+                  .toStdString()
+           << "\n";
     }
     os << "--- AST 树形结构 ---\n";
     // 递归 dump
     std::function<void(ASTNode*, int)> dumpRec = [&](ASTNode* node, int depth) {
-        if (!node) return;
-        for (int i = 0; i < depth; ++i) os << "  ";
+        if (!node)
+            return;
+        for (int i = 0; i < depth; ++i)
+            os << "  ";
         os << node->nodeName();
-        if (node->line > 0) os << "  [line " << node->line << "]";
+        if (node->line > 0)
+            os << "  [line " << node->line << "]";
         os << "\n";
         for (auto* child : node->children()) {
             dumpRec(child, depth + 1);
         }
     };
     dumpRec(ast.get(), 0);
-    os << "\n💡 " << mlTr("对比你搭建的树与上方真实 AST，理解优先级与括号如何"
-                          "影响树形结构").toStdString();
+    os << "\n💡 "
+       << mlTr("对比你搭建的树与上方真实 AST，理解优先级与括号如何"
+               "影响树形结构")
+              .toStdString();
     feedback_->setText(QString::fromUtf8(os.str().c_str()));
 }
 
@@ -571,7 +573,8 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
 // ============================================================
 void AstBuilderToyPanel::onShowAnswer() {
     const auto& ls = AstToyLibrary::levels();
-    if (currentIndex_ < 0 || currentIndex_ >= (int)ls.size()) return;
+    if (currentIndex_ < 0 || currentIndex_ >= (int)ls.size())
+        return;
     const auto& ans = ls[currentIndex_].answer;
 
     tree_->clear();
@@ -616,7 +619,8 @@ void AstBuilderToyPanel::onDeleteSelected() {
         parent->removeChild(current);
     } else {
         int idx = tree_->indexOfTopLevelItem(current);
-        if (idx >= 0) tree_->takeTopLevelItem(idx);
+        if (idx >= 0)
+            tree_->takeTopLevelItem(idx);
     }
     delete current;
     feedback_->setText(mlTr("🗑 已删除选中节点（及其子树）"));
@@ -630,7 +634,8 @@ void AstBuilderToyPanel::onTreeItemChanged(QTreeWidgetItem* /*current*/) {
 // 树转 TreeNode
 // ============================================================
 bool AstBuilderToyPanel::treeToTreeNode(AstToyLevel::TreeNode& out) const {
-    if (tree_->topLevelItemCount() == 0) return false;
+    if (tree_->topLevelItemCount() == 0)
+        return false;
     QTreeWidgetItem* root = tree_->topLevelItem(0);
     out = itemToTreeNode(root);
     return true;
@@ -650,7 +655,8 @@ QTreeWidgetItem* AstBuilderToyPanel::treeNodeToItem(const AstToyLevel::TreeNode&
     item->setText(0, QString::fromUtf8(node.label.c_str()));
     for (const auto& c : node.children) {
         QTreeWidgetItem* childItem = treeNodeToItem(c);
-        if (childItem) item->addChild(childItem);
+        if (childItem)
+            item->addChild(childItem);
     }
     return item;
 }
@@ -658,18 +664,19 @@ QTreeWidgetItem* AstBuilderToyPanel::treeNodeToItem(const AstToyLevel::TreeNode&
 // ============================================================
 // 树拓扑比对（label 严格相等 + children 顺序一致）
 // ============================================================
-bool AstBuilderToyPanel::treeEquals(const AstToyLevel::TreeNode& a,
-                                    const AstToyLevel::TreeNode& b) {
-    if (a.label != b.label) return false;
-    if (a.children.size() != b.children.size()) return false;
+bool AstBuilderToyPanel::treeEquals(const AstToyLevel::TreeNode& a, const AstToyLevel::TreeNode& b) {
+    if (a.label != b.label)
+        return false;
+    if (a.children.size() != b.children.size())
+        return false;
     for (size_t i = 0; i < a.children.size(); ++i) {
-        if (!treeEquals(a.children[i], b.children[i])) return false;
+        if (!treeEquals(a.children[i], b.children[i]))
+            return false;
     }
     return true;
 }
 
-void AstBuilderToyPanel::treeNodeToString(const AstToyLevel::TreeNode& node,
-                                          QString& out, int indent) {
+void AstBuilderToyPanel::treeNodeToString(const AstToyLevel::TreeNode& node, QString& out, int indent) {
     QString pad(indent * 2, QChar::fromLatin1(' '));
     out += pad + QString::fromUtf8(node.label.c_str()) + QString::fromUtf8("\n");
     for (const auto& c : node.children) {

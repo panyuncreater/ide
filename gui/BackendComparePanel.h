@@ -1,12 +1,12 @@
 #pragma once
 
-#include <QWidget>
-#include <QTextEdit>
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
-#include <vector>
+#include <QTextEdit>
+#include <QWidget>
 #include <string>
+#include <vector>
 
 // ============================================================
 // BackendComparePanel — 三后端并行对比面板（第一波 P0-3）
@@ -34,19 +34,21 @@ public:
 
 private:
     IdeController* controller_ = nullptr;
+    // AUDIT-P2 fix: runComparison 重入守卫——processEvents 期间定时器/信号链路可能重入
+    bool comparing_ = false;
 
-    QTextEdit* interpOutput_   = nullptr;
-    QTextEdit* stackVmOutput_  = nullptr;
-    QTextEdit* regVmOutput_    = nullptr;
-    QLabel*    interpStatus_   = nullptr;
-    QLabel*    stackVmStatus_  = nullptr;
-    QLabel*    regVmStatus_    = nullptr;
-    QLabel*    diffLabel_      = nullptr;
-    QPushButton* runButton_    = nullptr;
+    QTextEdit* interpOutput_ = nullptr;
+    QTextEdit* stackVmOutput_ = nullptr;
+    QTextEdit* regVmOutput_ = nullptr;
+    QLabel* interpStatus_ = nullptr;
+    QLabel* stackVmStatus_ = nullptr;
+    QLabel* regVmStatus_ = nullptr;
+    QLabel* diffLabel_ = nullptr;
+    QPushButton* runButton_ = nullptr;
 
     struct BackendResult {
         std::vector<std::string> outputLines;
-        std::string status;          // "OK" / "ERROR" / "NO_AST"
+        std::string status; // "OK" / "ERROR" / "NO_AST"
         std::string errorMessage;
         int64_t elapsedMicros = 0;
     };
@@ -57,12 +59,8 @@ private:
     BackendResult runRegisterVM(const std::string& source);
 
     /// 渲染对比结果到 UI
-    void renderComparison(const BackendResult& interp,
-                          const BackendResult& stackVm,
-                          const BackendResult& regVm);
+    void renderComparison(const BackendResult& interp, const BackendResult& stackVm, const BackendResult& regVm);
 
     /// 计算三后端输出差异（行级比对，标记差异行）
-    QString buildDiffSummary(const BackendResult& a,
-                              const BackendResult& b,
-                              const BackendResult& c);
+    QString buildDiffSummary(const BackendResult& a, const BackendResult& b, const BackendResult& c);
 };

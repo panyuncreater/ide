@@ -24,12 +24,12 @@
 
 #pragma once
 
-#include <QWidget>
 #include <QComboBox>
 #include <QLabel>
+#include <QList>
 #include <QListWidget>
 #include <QPushButton>
-#include <QList>
+#include <QWidget>
 
 class TokenPuzzlePanel : public QWidget {
     Q_OBJECT
@@ -50,31 +50,31 @@ private slots:
 
 private:
     // 顶部栏
-    QComboBox* levelCombo_   = nullptr;
-    QLabel*    scoreLabel_   = nullptr;
-    QLabel*    progressLabel_ = nullptr;
-    QList<QPushButton*> levelChips_;  // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
+    QComboBox* levelCombo_ = nullptr;
+    QLabel* scoreLabel_ = nullptr;
+    QLabel* progressLabel_ = nullptr;
+    QList<QPushButton*> levelChips_; // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
 
     // 中部
-    QLabel*    targetCodeLabel_   = nullptr;
-    QLabel*    teachingPointLabel_ = nullptr;
-    QWidget*   shuffledContainer_ = nullptr;   // 打乱 token 按钮容器
-    QListWidget* answerList_       = nullptr;  // 玩家答案区
+    QLabel* targetCodeLabel_ = nullptr;
+    QLabel* teachingPointLabel_ = nullptr;
+    QWidget* shuffledContainer_ = nullptr; // 打乱 token 按钮容器
+    QListWidget* answerList_ = nullptr;    // 玩家答案区
 
     // 底部
-    QPushButton* checkBtn_  = nullptr;
-    QPushButton* hintBtn_   = nullptr;
-    QPushButton* skipBtn_   = nullptr;
-    QPushButton* resetBtn_  = nullptr;
-    QLabel*      feedbackLabel_ = nullptr;
+    QPushButton* checkBtn_ = nullptr;
+    QPushButton* hintBtn_ = nullptr;
+    QPushButton* skipBtn_ = nullptr;
+    QPushButton* resetBtn_ = nullptr;
+    QLabel* feedbackLabel_ = nullptr;
 
     // 状态
-    int currentLevelIndex_ = 0;     // 当前关卡索引（0-4）
-    int hintUsedCount_     = 0;     // 当前关卡已使用提示次数
+    int currentLevelIndex_ = 0; // 当前关卡索引（0-4）
+    int hintUsedCount_ = 0;     // 当前关卡已使用提示次数
     // AUDIT-P2 fix: 防重复守卫——快速双击 checkBtn_/skipBtn_ 会触发重复 save() +
     // 重复关卡切换（onSkipLevel 第二次调用可能跳两关）
     bool busy_ = false;
-    QList<QPushButton*> shuffledButtons_;  // 当前关卡的打乱 token 按钮
+    QList<QPushButton*> shuffledButtons_; // 当前关卡的打乱 token 按钮
 
     // 完成记录（按关卡索引记录星级，-1=未完成，0=跳过，1-3=星级）
     QList<int> levelStars_;

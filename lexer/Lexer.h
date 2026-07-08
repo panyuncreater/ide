@@ -1,12 +1,12 @@
 #pragma once
 
-#include <string>
-#include <string_view>
-#include <vector>
-#include <unordered_map>
-#include "lexer/Token.h"
 #include "Diagnostic.h"
 #include "common/RuntimeLimits.h"
+#include "lexer/Token.h"
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 // ============================================================
 // Lexer 词法分析器
@@ -31,11 +31,11 @@ public:
     static const std::unordered_map<std::string, TokenType>& keywords();
 
 private:
-    std::string_view source_;        // P9 fix: string_view 避免全量拷贝（调用方保证生命周期）
-    int start_ = 0;                 // 当前 token 起始位置
-    int current_ = 0;               // 当前读取位置
-    int line_ = 1;                  // 当前行号
-    int lineStart_ = 0;             // 当前行起始偏移
+    std::string_view source_; // P9 fix: string_view 避免全量拷贝（调用方保证生命周期）
+    int start_ = 0;           // 当前 token 起始位置
+    int current_ = 0;         // 当前读取位置
+    int line_ = 1;            // 当前行号
+    int lineStart_ = 0;       // 当前行起始偏移
 
     // Perf-Finding1: columnAt() 单调前进缓存。advance() 仅向前推进 current_/lineStart_，
     // 行内 columnAt 调用 byteOffset 单调非递减。缓存 (lineStart, byteOffset, col)，
@@ -45,15 +45,15 @@ private:
     mutable int cachedByteOffset_ = -1;
     mutable int cachedColumn_ = 1;
 
-    std::vector<Token> tokens_;     // 输出的 Token 列表
-    std::vector<Token> comments_;   // 注释 Token 列表（从主流中分离，供 Formatter 使用）
-    DiagnosticBag diagnostics_;      // 诊断收集器
+    std::vector<Token> tokens_;   // 输出的 Token 列表
+    std::vector<Token> comments_; // 注释 Token 列表（从主流中分离，供 Formatter 使用）
+    DiagnosticBag diagnostics_;   // 诊断收集器
 
     // DoS 防护：源码大小上限和 Token 数量上限（统一引用 RuntimeLimits）
     static constexpr size_t MAX_SOURCE_SIZE = RuntimeLimits::MAX_SOURCE_SIZE;
     static constexpr size_t MAX_TOKEN_COUNT = RuntimeLimits::MAX_TOKEN_COUNT;
     static constexpr int MAX_INTERP_DEPTH = RuntimeLimits::MAX_INTERP_DEPTH;
-    int interpDepth_ = 0;                                         // L-P1-1: 当前插值嵌套深度
+    int interpDepth_ = 0; // L-P1-1: 当前插值嵌套深度
 
     /// 获取当前字符（不前进）
     char peek() const;

@@ -16,13 +16,13 @@
 //   - 测试桩可注入假 evaluator 验证断点逻辑，无需真实求值回调
 // ============================================================
 
-#include <string>
+#include "common/Logger.h"
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <mutex>
-#include <atomic>
+#include <string>
 #include <thread>
-#include <chrono>
-#include "common/Logger.h"
 
 class DebugEvaluator {
 public:
@@ -56,7 +56,8 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             snap = callback_;
         }
-        if (!snap) return false;
+        if (!snap)
+            return false;
         // AUDIT-P1 fix: snap() 调用期间增减活跃计数，供析构时 spin-wait
         activeCallbackCount_.fetch_add(1, std::memory_order_acq_rel);
         struct CountGuard {
@@ -67,13 +68,13 @@ public:
             return snap(condition);
         } catch (const std::exception& e) {
             // E1 fix: 求值异常记录告警便于用户排查（未定义变量、类型不匹配等）
-            Logger::Warning("条件断点(行 " + std::to_string(line) +
-                            ") 求值异常: " + e.what() + "（条件: " +
-                            condition + "），视为条件不满足", "Debugger");
+            Logger::Warning("条件断点(行 " + std::to_string(line) + ") 求值异常: " + e.what() + "（条件: " + condition +
+                                "），视为条件不满足",
+                            "Debugger");
         } catch (...) {
-            Logger::Warning("条件断点(行 " + std::to_string(line) +
-                            ") 求值发生未知异常（条件: " + condition +
-                            "），视为条件不满足", "Debugger");
+            Logger::Warning("条件断点(行 " + std::to_string(line) + ") 求值发生未知异常（条件: " + condition +
+                                "），视为条件不满足",
+                            "Debugger");
         }
         return false;
     }
@@ -85,10 +86,11 @@ public:
         constexpr int MAX_WAIT_MS = 3000;
         auto start = std::chrono::steady_clock::now();
         while (activeCallbackCount_.load(std::memory_order_acquire) > 0) {
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - start).count() > MAX_WAIT_MS) {
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+                    .count() > MAX_WAIT_MS) {
                 Logger::Warning("DebugEvaluator::waitCallbackIdle 超时（callback 可能挂死），"
-                                "继续析构（风险：worker 线程可能仍在执行 callback）", "Debugger");
+                                "继续析构（风险：worker 线程可能仍在执行 callback）",
+                                "Debugger");
                 break;
             }
             std::this_thread::yield();

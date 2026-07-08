@@ -43,25 +43,25 @@
 //     程序执行流程。
 // ============================================================
 
-#include <string>
-#include <iostream>
-#include <fstream>
-#include <chrono>
-#include <iomanip>
-#include <sstream>
-#include <mutex>
+#include <array>
 #include <atomic>
 #include <charconv>
-#include <array>
-#include <ctime>     // P0-2 fix: localtime_s/localtime_r 线程安全版本
+#include <chrono>
+#include <ctime> // P0-2 fix: localtime_s/localtime_r 线程安全版本
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <mutex>
+#include <sstream>
+#include <string>
 
 /// 日志级别（由低到高）
 enum class LogLevel {
-    DEBUG,    // 调试信息（最详细，仅开发时启用）
-    INFO,     // 一般信息（程序运行状态）
-    WARNING,  // 警告（潜在问题，不影响执行）
-    ERROR,    // 错误（严重问题，可能影响执行）
-    NONE      // 禁用所有日志输出
+    DEBUG,   // 调试信息（最详细，仅开发时启用）
+    INFO,    // 一般信息（程序运行状态）
+    WARNING, // 警告（潜在问题，不影响执行）
+    ERROR,   // 错误（严重问题，可能影响执行）
+    NONE     // 禁用所有日志输出
 };
 
 /// 轻量级日志器（单例，线程安全）
@@ -87,10 +87,12 @@ public:
     // Bug fix: fileStream_ 由 flushBuffer() 在 ioMutex_ 下访问，setOutputFile()
     // 必须同时持有 ioMutex_ 才能避免与并发 flushBuffer() 产生数据竞争。
     bool setOutputFile(const std::string& path) {
-        std::lock_guard<std::mutex> ioLock(ioMutex_);  // 序列化 fileStream_ 访问
-        std::lock_guard<std::mutex> lock(mutex_);       // 序列化 activeBuffer_ 访问
-        if (fileStream_.is_open()) fileStream_.close();
-        if (path.empty()) return true;
+        std::lock_guard<std::mutex> ioLock(ioMutex_); // 序列化 fileStream_ 访问
+        std::lock_guard<std::mutex> lock(mutex_);     // 序列化 activeBuffer_ 访问
+        if (fileStream_.is_open())
+            fileStream_.close();
+        if (path.empty())
+            return true;
         fileStream_.open(path, std::ios::app);
         return fileStream_.is_open();
     }
@@ -100,7 +102,8 @@ public:
     // 当队列达阈值或级别为 ERROR 时，swap 出缓冲并在 ioMutex_ 下批量写
     // （mutex_ 持有时间从 O(行数) 降至 O(格式化单行)）。
     void log(LogLevel level, const std::string& message, const std::string& source = "") {
-        if (level < level_.load() || level == LogLevel::NONE) return;
+        if (level < level_.load() || level == LogLevel::NONE)
+            return;
         std::vector<std::string> localBuffer;
         bool shouldFlush = false;
         {
@@ -134,10 +137,18 @@ public:
     void error(const std::string& msg, const std::string& source = "") { log(LogLevel::ERROR, msg, source); }
 
     // ---- 静态便捷接口（推荐使用，调用更简洁）----
-    static void Debug(const std::string& msg, const std::string& source = "") { instance().log(LogLevel::DEBUG, msg, source); }
-    static void Info(const std::string& msg, const std::string& source = "") { instance().log(LogLevel::INFO, msg, source); }
-    static void Warning(const std::string& msg, const std::string& source = "") { instance().log(LogLevel::WARNING, msg, source); }
-    static void Error(const std::string& msg, const std::string& source = "") { instance().log(LogLevel::ERROR, msg, source); }
+    static void Debug(const std::string& msg, const std::string& source = "") {
+        instance().log(LogLevel::DEBUG, msg, source);
+    }
+    static void Info(const std::string& msg, const std::string& source = "") {
+        instance().log(LogLevel::INFO, msg, source);
+    }
+    static void Warning(const std::string& msg, const std::string& source = "") {
+        instance().log(LogLevel::WARNING, msg, source);
+    }
+    static void Error(const std::string& msg, const std::string& source = "") {
+        instance().log(LogLevel::ERROR, msg, source);
+    }
 
 private:
     Logger() = default;
@@ -151,7 +162,7 @@ private:
     // 实际写文件/控制台在 flushBuffer() 中持有 ioMutex_ 进行，避免阻塞其他线程的 log() 调用
     std::mutex ioMutex_;
     std::atomic<LogLevel> level_{LogLevel::WARNING};
-    std::atomic<bool> consoleOutput_{true};  // P1 fix: atomic 防止数据竞争
+    std::atomic<bool> consoleOutput_{true}; // P1 fix: atomic 防止数据竞争
     std::ofstream fileStream_;
     // P2-2 fix: 双缓冲。activeBuffer_ 由 log() 在 mutex_ 下追加；
     // 达阈值或 ERROR 时 swap 出到本地，由 flushBuffer() 在 ioMutex_ 下批量写
@@ -161,7 +172,8 @@ private:
 
     /// 批量写缓冲到控制台/文件（持 ioMutex_，不持 mutex_）
     void flushBuffer(const std::vector<std::string>& buffer) {
-        if (buffer.empty()) return;
+        if (buffer.empty())
+            return;
         std::lock_guard<std::mutex> ioLock(ioMutex_);
         bool toConsole = consoleOutput_.load();
         bool toFile = fileStream_.is_open();
@@ -176,17 +188,23 @@ private:
                 fileStream_ << line << '\n';
             }
         }
-        if (toFile) fileStream_.flush();  // 批量写后统一 flush
+        if (toFile)
+            fileStream_.flush(); // 批量写后统一 flush
     }
 
     /// 级别文本标签
     const char* levelString(LogLevel level) const {
         switch (level) {
-        case LogLevel::DEBUG:   return "DEBUG";
-        case LogLevel::INFO:    return "INFO";
-        case LogLevel::WARNING: return "WARN";
-        case LogLevel::ERROR:   return "ERROR";
-        case LogLevel::NONE:    return "NONE";
+        case LogLevel::DEBUG:
+            return "DEBUG";
+        case LogLevel::INFO:
+            return "INFO";
+        case LogLevel::WARNING:
+            return "WARN";
+        case LogLevel::ERROR:
+            return "ERROR";
+        case LogLevel::NONE:
+            return "NONE";
         }
         return "?";
     }
@@ -201,8 +219,7 @@ private:
         // 时间戳
         auto now = std::chrono::system_clock::now();
         auto t = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()) % 1000;
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
         std::tm tmBuf{};
 #ifdef _WIN32
         localtime_s(&tmBuf, &t);
@@ -239,10 +256,26 @@ private:
 // ============================================================
 // 便捷宏（P2 fix: 真正懒求值，仅在级别启用时才构造字符串）
 // ============================================================
-#define LOG_DEBUG(msg, source)   do { if (Logger::instance().level() <= LogLevel::DEBUG)   Logger::Debug(msg, source); } while(0)
-#define LOG_INFO(msg, source)    do { if (Logger::instance().level() <= LogLevel::INFO)    Logger::Info(msg, source); } while(0)
-#define LOG_WARNING(msg, source) do { if (Logger::instance().level() <= LogLevel::WARNING) Logger::Warning(msg, source); } while(0)
-#define LOG_ERROR(msg, source)   do { if (Logger::instance().level() <= LogLevel::ERROR)   Logger::Error(msg, source); } while(0)
+#define LOG_DEBUG(msg, source)                                                                                         \
+    do {                                                                                                               \
+        if (Logger::instance().level() <= LogLevel::DEBUG)                                                             \
+            Logger::Debug(msg, source);                                                                                \
+    } while (0)
+#define LOG_INFO(msg, source)                                                                                          \
+    do {                                                                                                               \
+        if (Logger::instance().level() <= LogLevel::INFO)                                                              \
+            Logger::Info(msg, source);                                                                                 \
+    } while (0)
+#define LOG_WARNING(msg, source)                                                                                       \
+    do {                                                                                                               \
+        if (Logger::instance().level() <= LogLevel::WARNING)                                                           \
+            Logger::Warning(msg, source);                                                                              \
+    } while (0)
+#define LOG_ERROR(msg, source)                                                                                         \
+    do {                                                                                                               \
+        if (Logger::instance().level() <= LogLevel::ERROR)                                                             \
+            Logger::Error(msg, source);                                                                                \
+    } while (0)
 
 // ============================================================
 // P1-9 fix: 错误消息定位格式化（热路径优化）

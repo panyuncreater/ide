@@ -17,26 +17,26 @@
 //   - 返回值直接放入调用者帧的目标寄存器
 // ============================================================
 
-#include "common/IBackend.h"
 #include "common/Diagnostic.h"
+#include "common/IBackend.h"
 #include "common/RuntimeLimits.h"
 #include "compiler/RegisterBytecode.h"
-#include "compiler/VM.h"  // VMResult 枚举复用
+#include "compiler/VM.h" // VMResult 枚举复用
 #include "interpreter/Value.h"
 #include "interpreter/ValueData.h"  // VMUpvalue
-#include "interpreter/ValueTypes.h"  // VMClosureData
+#include "interpreter/ValueTypes.h" // VMClosureData
 #include <array>
-#include <vector>
+#include <functional>
 #include <map>
+#include <memory>
+#include <stdexcept> // B3 fix: std::runtime_error 用于越界抛出
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <functional>
-#include <memory>
-#include <stdexcept>  // B3 fix: std::runtime_error 用于越界抛出
-#include <string>
+#include <vector>
 
 // 前向声明
-struct VMClassInfo;  // D-1: 与 VM.h 定义一致
+struct VMClassInfo; // D-1: 与 VM.h 定义一致
 
 /// 寄存器式 VM 步进信息（用于调试/可视化）
 // P3-1 fix: 加默认成员初始化器，新增字段时不会漏初始化导致未定义行为
@@ -55,21 +55,21 @@ struct RegVMStepInfo {
 // 故定长 32 元素数组足够。registerCount 记录实际激活的寄存器数，
 // 用于 reg() 的边界检查（避免读/写未初始化的尾部槽位）。
 struct RegCallFrame {
-    static constexpr size_t MAX_REGISTERS = 32;  // 与 RegisterBytecodeBackend 的上限对齐
+    static constexpr size_t MAX_REGISTERS = 32; // 与 RegisterBytecodeBackend 的上限对齐
 
-    const RegBytecodeChunk* chunk = nullptr;  // 当前执行的 chunk
-    size_t ip = 0;                            // 指令指针
-    size_t returnIp = 0;                      // 返回后调用者的 ip
-    int returnReg = -1;                       // 返回值写入调用者的寄存器号（-1 = 丢弃）
-    std::array<Value, MAX_REGISTERS> registers{};  // 寄存器窗口（定长，零堆分配）
-    uint8_t registerCount = 0;                // 实际激活的寄存器数（≤ MAX_REGISTERS）
+    const RegBytecodeChunk* chunk = nullptr;      // 当前执行的 chunk
+    size_t ip = 0;                                // 指令指针
+    size_t returnIp = 0;                          // 返回后调用者的 ip
+    int returnReg = -1;                           // 返回值写入调用者的寄存器号（-1 = 丢弃）
+    std::array<Value, MAX_REGISTERS> registers{}; // 寄存器窗口（定长，零堆分配）
+    uint8_t registerCount = 0;                    // 实际激活的寄存器数（≤ MAX_REGISTERS）
     // 方法调用相关
     bool isMethodCall = false;
     bool isInitCall = false;
-    int receiverReg = -1;                     // 接收者在调用者帧中的寄存器号
-    std::string receiverVarName;              // 接收者变量名（用于写回全局变量）
-    int receiverLocalSlot = -1;               // 接收者局部变量槽（用于写回局部变量）
-    bool fieldsModified = false;              // 是否修改了实例字段
+    int receiverReg = -1;        // 接收者在调用者帧中的寄存器号
+    std::string receiverVarName; // 接收者变量名（用于写回全局变量）
+    int receiverLocalSlot = -1;  // 接收者局部变量槽（用于写回局部变量）
+    bool fieldsModified = false; // 是否修改了实例字段
     // upvalue 支持
     std::vector<std::shared_ptr<VMUpvalue>> upvalues;
 };
@@ -160,7 +160,7 @@ private:
         std::string name;
         std::string parent;
         std::vector<std::string> fieldOrder;
-        std::map<std::string, std::string> methods;  // 方法名 → 函数名
+        std::map<std::string, std::string> methods; // 方法名 → 函数名
         // BUG-INH-1 fix: 字段默认值（字面量），对齐 StackVM 的 OP_INIT_FIELD 路径。
         // 无默认值或非字面量表达式的字段为 nullValue()。
         std::vector<Value> fieldDefaults;
@@ -168,13 +168,13 @@ private:
         // 懒计算：首次 REG_CLASS_NEW 时填充（此时所有父类必已定义，因构造前
         // 所有顶层 REG_DEFINE_CLASS 已执行完毕）。REG_DEFINE_CLASS 重新定义时复位。
         mutable bool flattenedComputed = false;
-        mutable std::vector<std::string> flattenedFieldOrder;  // 父类字段在前，子类在后
+        mutable std::vector<std::string> flattenedFieldOrder; // 父类字段在前，子类在后
         // BUG-INH-1 fix: 与 flattenedFieldOrder 并行存储的字段默认值。
         // 沿继承链合并（父类在前），子类同名字段覆盖父类。对齐 StackVM 的
         // mergedDefaults 语义，避免 IR 路径所有字段被硬编码为 null。
         mutable std::vector<Value> flattenedFieldDefaults;
-        mutable std::string resolvedInitFunName;  // 沿继承链解析的 init 函数名
-        mutable bool hasInit = false;             // 继承链中是否存在 init
+        mutable std::string resolvedInitFunName; // 沿继承链解析的 init 函数名
+        mutable bool hasInit = false;            // 继承链中是否存在 init
     };
     std::unordered_map<std::string, RegClassInfo> classInfo_;
 
@@ -291,29 +291,23 @@ private:
     // C-8 fix: returnOffset 为调用者指令的总长度（字节数），用于计算 returnIp。
     //   原代码硬编码 ip+5+argCount 假定 REG_CALL 格式，对 REG_CALL_EXPR(4+argCount)
     //   和 REG_CLASS_NEW init(5+原argCount，但传入 argCount+1) 各偏移 +1，导致返回后 ip 错位。
-    VMResult executeCallImpl(size_t& ip, const std::string& funName,
-                             uint8_t argCount, uint8_t dstReg,
-                             const SmallArgs<uint8_t>& argRegs,
-                             size_t returnOffset,
+    VMResult executeCallImpl(size_t& ip, const std::string& funName, uint8_t argCount, uint8_t dstReg,
+                             const SmallArgs<uint8_t>& argRegs, size_t returnOffset,
                              const Value* closureValue = nullptr);
     VMResult executeReturnImpl(size_t& ip, Value result);
-    VMResult executeMethodCallImpl(size_t& ip, const std::string& methodName,
-                                   uint8_t argCount, uint8_t dstReg,
+    VMResult executeMethodCallImpl(size_t& ip, const std::string& methodName, uint8_t argCount, uint8_t dstReg,
                                    uint8_t objReg, const SmallArgs<uint8_t>& argRegs);
-    VMResult executeClosureImpl(size_t& ip, const std::string& name,
-                                uint8_t uvCount, const SmallArgs<uint8_t>& uvSpecs,
+    VMResult executeClosureImpl(size_t& ip, const std::string& name, uint8_t uvCount, const SmallArgs<uint8_t>& uvSpecs,
                                 uint8_t dstReg);
-    VMResult executeClassNewImpl(size_t& ip, const std::string& className,
-                                 uint8_t argCount, uint8_t dstReg,
+    VMResult executeClassNewImpl(size_t& ip, const std::string& className, uint8_t argCount, uint8_t dstReg,
                                  const SmallArgs<uint8_t>& argRegs);
-    bool fillDefaultArgs(const RegBytecodeChunk& chunk, uint8_t& argCount,
-                         const std::string& funName, std::vector<Value>& defaults);
+    bool fillDefaultArgs(const RegBytecodeChunk& chunk, uint8_t& argCount, const std::string& funName,
+                         std::vector<Value>& defaults);
 
     // 内建方法
     // C-9 fix: 返回 bool 而非 VMResult。true=已处理（caller 应 return，检查 hasError_），
     // false=未匹配内建方法（caller 继续查找用户定义方法）。
     // 原实现无论是否匹配都返回 VM_OK，导致实例方法调用被静默吞掉（callBuiltinMethod
     // 对 instance 类型 fallthrough 到末尾 return VM_OK，caller 误以为已处理）。
-    bool callBuiltinMethod(Value& obj, const std::string& methodName,
-                           SmallArgs<Value>& args, Value& result);
+    bool callBuiltinMethod(Value& obj, const std::string& methodName, SmallArgs<Value>& args, Value& result);
 };

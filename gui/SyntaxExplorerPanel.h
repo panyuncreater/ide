@@ -1,13 +1,13 @@
 #pragma once
 
-#include <QWidget>
+#include <QLabel>
 #include <QListWidget>
+#include <QPushButton>
 #include <QTextBrowser>
 #include <QTextEdit>
-#include <QPushButton>
-#include <QLabel>
-#include <vector>
+#include <QWidget>
 #include <string>
+#include <vector>
 
 // ============================================================
 // SyntaxExplorerPanel — 交互式语法探索器（第三波 P2-1，降级方案）
@@ -23,11 +23,11 @@
 class IdeController;
 
 struct SyntaxProduction {
-    std::string name;          // 产生式 ID（如 "if-stmt"）
-    std::string title;         // 显示名（如 "if 语句"）
-    std::string ebnf;          // EBNF 形式（如 'ifStmt := "if" "(" expr ")" block ("else" block)?'）
-    std::string description;   // 文字说明
-    std::string sampleCode;    // 可加载到样例代码编辑器的代码
+    std::string name;            // 产生式 ID（如 "if-stmt"）
+    std::string title;           // 显示名（如 "if 语句"）
+    std::string ebnf;            // EBNF 形式（如 'ifStmt := "if" "(" expr ")" block ("else" block)?'）
+    std::string description;     // 文字说明
+    std::string sampleCode;      // 可加载到样例代码编辑器的代码
     std::string naturalLanguage; // F8: 自然语言描述（人话翻译，含示例和注意事项）
 };
 
@@ -45,9 +45,9 @@ public:
 
     /// F8: 视图模式枚举
     enum class ViewMode {
-        EBNF,        ///< 仅 EBNF 视图
-        Natural,     ///< 仅自然语言视图
-        Mixed        ///< 混合视图（默认）
+        EBNF,    ///< 仅 EBNF 视图
+        Natural, ///< 仅自然语言视图
+        Mixed    ///< 混合视图（默认）
     };
 
 signals:
@@ -57,27 +57,27 @@ signals:
 private slots:
     void onItemSelected(int row);
     void onRunSample();
-    void onViewModeChanged(int mode);  // F8: 视图切换
+    void onViewModeChanged(int mode); // F8: 视图切换
 
 private:
     IdeController* controller_ = nullptr;
-    QListWidget* itemList_     = nullptr;
+    QListWidget* itemList_ = nullptr;
     QTextBrowser* descBrowser_ = nullptr;
-    QTextEdit* codeEditor_     = nullptr;
-    QTextEdit* outputEdit_     = nullptr;
-    QLabel* statusLabel_       = nullptr;
-    QPushButton* runBtn_       = nullptr;
-    QPushButton* loadBtn_      = nullptr;
+    QTextEdit* codeEditor_ = nullptr;
+    QTextEdit* outputEdit_ = nullptr;
+    QLabel* statusLabel_ = nullptr;
+    QPushButton* runBtn_ = nullptr;
+    QPushButton* loadBtn_ = nullptr;
 
     // F8: 视图模式切换按钮
-    QPushButton* ebnfBtn_       = nullptr;
-    QPushButton* naturalBtn_    = nullptr;
-    QPushButton* mixedBtn_      = nullptr;
-    ViewMode     viewMode_      = ViewMode::Mixed;  // 默认混合视图
+    QPushButton* ebnfBtn_ = nullptr;
+    QPushButton* naturalBtn_ = nullptr;
+    QPushButton* mixedBtn_ = nullptr;
+    ViewMode viewMode_ = ViewMode::Mixed; // 默认混合视图
 
     int currentItemIndex_ = -1;
 
     void populateItemList();
     void showCurrentItem();
-    void updateViewModeButtons();  // F8: 同步按钮选中态
+    void updateViewModeButtons(); // F8: 同步按钮选中态
 };

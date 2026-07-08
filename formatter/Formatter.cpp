@@ -1,8 +1,9 @@
 #include "formatter/Formatter.h"
 #include "ast/ASTNode.h"
-#include "interpreter/Value.h"  // ARCH-01 fix: getValue().toString() 需要 Value 完整定义
+#include "interpreter/Value.h" // ARCH-01 fix: getValue().toString() 需要 Value 完整定义
+#include <algorithm>           // F-P2-5 fix: std::sort
+#include <cstdio>              // AUDIT-P3.11 fix: snprintf 用于控制字符 \xNN 与非 BMP \u{XXXXXX} 转义
 #include <sstream>
-#include <algorithm>  // F-P2-5 fix: std::sort
 
 // ============================================================
 // Formatter 代码格式化器实现
@@ -11,22 +12,108 @@
 // AUDIT-P2 fix: 提取公共字符串转义函数，供 formatStringLiteral 和
 // formatInterpolatedString 共用，消除转义规则重复（原两处独立 switch
 // 存在同步风险——Lexer 新增转义序列时需同时修改三处）。
+// AUDIT-P3.11 fix: 原实现只转义 10 个常见控制字符，其余 25 个 C0 控制字符
+// (0x01-0x06, 0x0E-0x1F) 和 DEL (0x7F) 走 default 直接输出原始字节，导致
+// 格式化后的字符串含不可见控制字符，往返等价性虽不破坏但输出不可读且可能
+// 引入安全问题。改为用 \xNN 转义所有未显式处理的控制字符。
+// AUDIT-P3.12 fix: 非 BMP 字符（码点 > 0xFFFF，如 emoji）以 4 字节 UTF-8
+// 序列存储。原实现按单字节遍历将其拆为 4 个 >= 0x80 的字节直接输出，虽往返
+// 等价但无法与 Lexer 的 \u{XXXXXX} 扩展语法对应。现解析 UTF-8 多字节序列，
+// 对非 BMP 码点输出 \u{XXXXXX} 格式，BMP 码点（<= 0xFFFF）保持原字节输出。
 static std::string escapeStringContent(const std::string& s) {
     std::string escaped;
     escaped.reserve(s.size());
-    for (char c : s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
         switch (c) {
-        case '\\': escaped += "\\\\"; break;
-        case '"':  escaped += "\\\""; break;
-        case '\n': escaped += "\\n";  break;
-        case '\t': escaped += "\\t";  break;
-        case '\r': escaped += "\\r";  break;
-        case '\0': escaped += "\\0";  break;
-        case '\b': escaped += "\\b";  break;
-        case '\f': escaped += "\\f";  break;
-        case '\a': escaped += "\\a";  break;
-        case '\v': escaped += "\\v";  break;
-        default:   escaped += c;      break;
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\0':
+            escaped += "\\0";
+            break;
+        case '\b':
+            escaped += "\\b";
+            break;
+        case '\f':
+            escaped += "\\f";
+            break;
+        case '\a':
+            escaped += "\\a";
+            break;
+        case '\v':
+            escaped += "\\v";
+            break;
+        default:
+            // AUDIT-P3.12 fix: 处理多字节 UTF-8 字符（非 ASCII）
+            if (c >= 0x80) {
+                uint32_t codepoint = 0;
+                int extraBytes = 0;
+                if ((c & 0xE0) == 0xC0) {
+                    codepoint = c & 0x1F;
+                    extraBytes = 1;
+                } else if ((c & 0xF0) == 0xE0) {
+                    codepoint = c & 0x0F;
+                    extraBytes = 2;
+                } else if ((c & 0xF8) == 0xF0) {
+                    codepoint = c & 0x07;
+                    extraBytes = 3;
+                } else {
+                    // 无效 UTF-8 首字节，按单字节输出
+                    escaped += static_cast<char>(c);
+                    continue;
+                }
+                bool valid = true;
+                for (int j = 0; j < extraBytes; ++j) {
+                    if (i + 1 + j >= s.size()) {
+                        valid = false;
+                        break;
+                    }
+                    unsigned char next = static_cast<unsigned char>(s[i + 1 + j]);
+                    if ((next & 0xC0) != 0x80) {
+                        valid = false;
+                        break;
+                    }
+                    codepoint = (codepoint << 6) | (next & 0x3F);
+                }
+                if (valid) {
+                    if (codepoint > 0xFFFF) {
+                        // AUDIT-P3.12 fix: 非 BMP 字符输出 \u{XXXXXX}
+                        char buf[12];
+                        std::snprintf(buf, sizeof(buf), "\\u{%x}", codepoint);
+                        escaped += buf;
+                    } else {
+                        // BMP 字符保持原字节输出（含中文等 3 字节 UTF-8）
+                        escaped += s.substr(i, static_cast<size_t>(1 + extraBytes));
+                    }
+                    i += static_cast<size_t>(extraBytes); // 跳过多字节序列的剩余字节
+                } else {
+                    // 不完整 UTF-8 序列，按单字节输出
+                    escaped += static_cast<char>(c);
+                }
+                continue; // 已处理，跳过下方控制字符检查
+            }
+            // AUDIT-P3.11 fix: 转义所有未显式处理的 C0 控制字符和 DEL
+            if (c < 0x20 || c == 0x7F) {
+                char buf[5];
+                std::snprintf(buf, sizeof(buf), "\\x%02x", c);
+                escaped += buf;
+            } else {
+                escaped += static_cast<char>(c);
+            }
+            break;
         }
     }
     return escaped;
@@ -38,27 +125,27 @@ void Formatter::setComments(const std::vector<Token>& tokens) {
     comments_.clear();
     for (const auto& tok : tokens) {
         // P1 fix: 同时收集行注释和块注释，避免块注释格式化后丢失
-        if (tok.type == TokenType::TK_LINE_COMMENT ||
-            tok.type == TokenType::TK_BLOCK_COMMENT) {
+        if (tok.type == TokenType::TK_LINE_COMMENT || tok.type == TokenType::TK_BLOCK_COMMENT) {
             comments_.push_back(tok);
         }
     }
     // F-P2-5 fix: 按行号排序，确保 formatBlock 中的 commentIndex_ 单调递增游标正确工作
     // AUDIT-P2 fix: std::sort 非稳定排序，同行多注释的相对顺序未定义。改用 stable_sort
     // 并增加列号作为次要排序键，保证同行注释按源码出现顺序排列，避免格式化后注释顺序颠倒。
-    std::stable_sort(comments_.begin(), comments_.end(),
-              [](const Token& a, const Token& b) {
-                  if (a.line != b.line) return a.line < b.line;
-                  return a.column < b.column;
-              });
+    std::stable_sort(comments_.begin(), comments_.end(), [](const Token& a, const Token& b) {
+        if (a.line != b.line)
+            return a.line < b.line;
+        return a.column < b.column;
+    });
     commentIndex_ = 0;
 }
 
 void Formatter::setIndentSize(int size) {
     // F-P1-2 fix: 校验缩进大小，负值会导致 std::string 构造时 size_t 溢出触发 bad_alloc
-    if (size < 0 || size > 16) return;
+    if (size < 0 || size > 16)
+        return;
     options_.indentSize = size;
-    cachedIndentLevel_ = -1;  // P3: 使缩进缓存失效
+    cachedIndentLevel_ = -1; // P3: 使缩进缓存失效
 }
 
 void Formatter::setOptions(const FormatOptions& options) {
@@ -66,7 +153,7 @@ void Formatter::setOptions(const FormatOptions& options) {
     // P3: 选项变更时使缓存失效
     cachedIndentLevel_ = -1;
     commaCacheValid_ = false;
-    binOpKey_.clear();  // P30: 使 binOp 缓存失效
+    binOpKey_.clear(); // P30: 使 binOp 缓存失效
 }
 
 const FormatOptions& Formatter::getOptions() const {
@@ -83,7 +170,8 @@ std::string Formatter::indent() const {
         } else {
             // F-P1-2 fix: 防御性检查，防止负值乘积溢出
             int spaces = currentIndent_ * options_.indentSize;
-            if (spaces < 0) spaces = 0;
+            if (spaces < 0)
+                spaces = 0;
             indentCache_ = std::string(static_cast<size_t>(spaces), ' ');
         }
     }
@@ -94,7 +182,8 @@ std::string Formatter::indent() const {
 std::string Formatter::binOp(const std::string& op) const {
     if (options_.spaceAroundOperators) {
         // P30 fix: MRU 缓存 — 同一运算符连续调用时直接返回缓存
-        if (op == binOpKey_) return binOpVal_;
+        if (op == binOpKey_)
+            return binOpVal_;
         binOpKey_ = op;
         binOpVal_ = " " + op + " ";
         return binOpVal_;
@@ -124,13 +213,14 @@ std::string Formatter::openBrace() const {
 std::string Formatter::format(Block& program) {
     currentIndent_ = 0;
     formatDepth_ = 0;  // D5 fix: 重置递归深度计数器
-    commentIndex_ = 0;  // F-P1-4 fix: 重置注释游标，确保 Formatter 对象复用时注释正确输出
+    commentIndex_ = 0; // F-P1-4 fix: 重置注释游标，确保 Formatter 对象复用时注释正确输出
     return formatBlock(program);
 }
 
 /// 判断节点类型是否是自终止的复合语句（以 } 结尾，不需要额外 ;）
 static bool isSelfTerminating(ASTNode* node) {
-    if (!node) return false;
+    if (!node)
+        return false;
     switch (node->nodeType) {
     case NodeType::NODE_IF_STMT:
     case NodeType::NODE_WHILE_STMT:
@@ -138,9 +228,9 @@ static bool isSelfTerminating(ASTNode* node) {
     case NodeType::NODE_FUN_DECL:
     case NodeType::NODE_CLASS_DECL:
     case NodeType::NODE_BLOCK:
-    case NodeType::NODE_TRY_STMT:       // P0 fix: try/catch 以 } 结尾，自终止
+    case NodeType::NODE_TRY_STMT: // P0 fix: try/catch 以 } 结尾，自终止
         return true;
-    case NodeType::NODE_IMPORT_STMT:    // P0 fix: visitImportStmt 已自行添加 ;
+    case NodeType::NODE_IMPORT_STMT: // P0 fix: visitImportStmt 已自行添加 ;
         return true;
     case NodeType::NODE_EXPORT_STMT: {
         // P0 fix: export 的自终止性取决于内层声明类型
@@ -148,8 +238,7 @@ static bool isSelfTerminating(ASTNode* node) {
         auto* exportNode = static_cast<ExportStmt*>(node);
         if (exportNode->declaration) {
             auto innerType = exportNode->declaration->nodeType;
-            if (innerType == NodeType::NODE_FUN_DECL ||
-                innerType == NodeType::NODE_CLASS_DECL) {
+            if (innerType == NodeType::NODE_FUN_DECL || innerType == NodeType::NODE_CLASS_DECL) {
                 return true;
             }
         }
@@ -180,12 +269,17 @@ static std::string reindentBlockComment(const std::string& lexeme, const std::st
 
 /// 格式化任意 AST 节点：经 Visitor 模式分派到 visit*，带递归深度保护（超深返回占位），结果存入 lastFormatResult_。
 std::string Formatter::formatNode(ASTNode* node) {
-    if (!node) return "null";
+    if (!node)
+        return "null";
 
     // D5 fix: 递归深度保护，防止极端嵌套 AST 导致栈溢出
-    if (formatDepth_ >= MAX_FORMAT_DEPTH) return "/* 嵌套过深 */";
+    if (formatDepth_ >= MAX_FORMAT_DEPTH)
+        return "/* 嵌套过深 */";
     formatDepth_++;
-    struct DepthGuard { int& d; ~DepthGuard() { d--; } } guard{formatDepth_};
+    struct DepthGuard {
+        int& d;
+        ~DepthGuard() { d--; }
+    } guard{formatDepth_};
 
     // 统一通过 Visitor 模式分派：node->accept(*this) 调用对应的 visit* 方法，
     // visit* 方法将格式化结果存入 lastFormatResult_，替代原 25 路 switch。
@@ -373,11 +467,41 @@ void Formatter::visitTryStmt(TryStmt& node) {
     //   - catch 块可选（try-finally 无 catch 时不输出 " catch (...)"）
     //   - finally 块可选，存在时输出 " finally" + formatNode(finallyBlock)
     //   - 修复幂等性违反（原实现无条件输出 catch 且忽略 finally，导致 format 后重新 parse 报错）
+    // AUDIT-P2.9 fix: 在 tryBlock/catch/finally 之间注入独立注释。
+    //   formatBlock 只消费 closingBraceLine 及之前的注释，块间注释（closingBraceLine
+    //   与 catchKeywordLine/finallyKeywordLine 之间）原被外层 formatBlock 误消费
+    //   到下一个语句前。现由 visitTryStmt 在块衔接处精确注入。
     std::string result = "try" + formatNode(node.tryBlock.get());
     if (node.catchBlock) {
+        // AUDIT-P2.9 fix: 注入 tryBlock 闭合 '}' 与 catch 关键字之间的独立注释
+        // tryBlock/catchBlock 是 ASTNode*，需 static_cast<Block*> 访问 closingBraceLine
+        int tryEndLine = node.tryBlock ? static_cast<Block*>(node.tryBlock.get())->closingBraceLine : 0;
+        int catchStartLine =
+            node.catchKeywordLine > 0 ? node.catchKeywordLine : (node.catchBlock ? node.catchBlock->line : 0);
+        if (tryEndLine > 0 && catchStartLine > 0) {
+            while (commentIndex_ < comments_.size() && comments_[commentIndex_].line > tryEndLine &&
+                   comments_[commentIndex_].line < catchStartLine) {
+                result += "\n" + indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
+                commentIndex_++;
+            }
+        }
         result += " catch (" + node.catchVarName + ")" + formatNode(node.catchBlock.get());
     }
     if (node.finallyBlock) {
+        // AUDIT-P2.9 fix: 注入 catch/try 闭合 '}' 与 finally 关键字之间的独立注释
+        int prevEndLine = 0;
+        if (node.catchBlock)
+            prevEndLine = static_cast<Block*>(node.catchBlock.get())->closingBraceLine;
+        else if (node.tryBlock)
+            prevEndLine = static_cast<Block*>(node.tryBlock.get())->closingBraceLine;
+        int finallyStartLine = node.finallyKeywordLine > 0 ? node.finallyKeywordLine : node.finallyBlock->line;
+        if (prevEndLine > 0 && finallyStartLine > 0) {
+            while (commentIndex_ < comments_.size() && comments_[commentIndex_].line > prevEndLine &&
+                   comments_[commentIndex_].line < finallyStartLine) {
+                result += "\n" + indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
+                commentIndex_++;
+            }
+        }
         result += " finally" + formatNode(node.finallyBlock.get());
     }
     lastFormatResult_ = result;
@@ -389,7 +513,8 @@ void Formatter::visitImportStmt(ImportStmt& node) {
     if (!node.importAll && !node.names.empty()) {
         result += "{ ";
         for (size_t i = 0; i < node.names.size(); ++i) {
-            if (i > 0) result += ", ";
+            if (i > 0)
+                result += ", ";
             result += node.names[i];
         }
         result += " } from ";
@@ -426,17 +551,19 @@ bool Formatter::isRightAssoc(BinOpType opType) {
 
 /// 判断子表达式是否需要加括号
 static bool needsParens(ASTNode* child, BinOpType parentOpType, bool isRight) {
-    if (!child || child->nodeType != NodeType::NODE_BINARY_OP) return false;
+    if (!child || child->nodeType != NodeType::NODE_BINARY_OP)
+        return false;
     BinaryOp* childBin = static_cast<BinaryOp*>(child);
     int parentPrec = Formatter::opPrecedence(parentOpType);
-    int childPrec  = Formatter::opPrecedence(childBin->opType);
+    int childPrec = Formatter::opPrecedence(childBin->opType);
     // 子优先级更低 → 需要括号
-    if (childPrec < parentPrec) return true;
+    if (childPrec < parentPrec)
+        return true;
     // 同优先级时，右结合运算符的右操作数不需要括号，左操作数也不需要
     // 但对于左结合运算符的右操作数，如果子也是同优先级，需要括号（如 a - (b - c)）
     if (childPrec == parentPrec) {
         if (Formatter::isRightAssoc(parentOpType)) {
-            return !isRight;  // 右结合：左操作数需要括号
+            return !isRight; // 右结合：左操作数需要括号
         } else {
             // 左结合：右操作数同优先级子表达式必须加括号以保持原始分组。
             // AUDIT-FMT-P0 fix: 原实现仅对 ADD/SUB/MUL/DIV/MOD 加括号（#15 fix），
@@ -479,8 +606,8 @@ std::string Formatter::formatUnaryOp(UnaryOp& node) {
     std::string operand = formatNode(node.operand.get());
     // BinaryOp 优先级低于一元运算符，必须加括号保持语义正确
     // 例如 -(a + b) 不能格式化为 -a + b
-    if (node.operand && (node.operand->nodeType == NodeType::NODE_BINARY_OP ||
-                         node.operand->nodeType == NodeType::NODE_UNARY_OP)) {
+    if (node.operand &&
+        (node.operand->nodeType == NodeType::NODE_BINARY_OP || node.operand->nodeType == NodeType::NODE_UNARY_OP)) {
         operand = "(" + operand + ")";
     }
     if (node.opType == UnaryOp::UnaryOpType::UOP_NOT) {
@@ -514,14 +641,12 @@ std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
         if (s == "nan" || s == "inf" || s == "-inf") {
             return "0.0/* " + s + " */";
         }
-        if (s.find('.') != std::string::npos ||
-            s.find('e') != std::string::npos ||
-            s.find('E') != std::string::npos) {
+        if (s.find('.') != std::string::npos || s.find('e') != std::string::npos || s.find('E') != std::string::npos) {
             return s;
         }
         return s + ".0";
     }
-    return v.toString();  // A1 fix: getValue() 按需构造
+    return v.toString(); // A1 fix: getValue() 按需构造
 }
 
 /// 格式化字符串字面量：对源码字符串按 JSON 风格转义（\\、"、\n、\t、\r、\0 等），
@@ -554,7 +679,8 @@ std::string Formatter::formatVarDecl(VarDecl& node) {
 /// 而非崩溃，保持输出可解析。
 std::string Formatter::formatAssignment(Assignment& node) {
     // F-P2-10 fix: 检查 value 空指针，避免输出 "x = null" 语义错误
-    if (!node.value) return node.name + binOp("=") + "/* null */";
+    if (!node.value)
+        return node.name + binOp("=") + "/* null */";
     return node.name + binOp("=") + formatNode(node.value.get());
 }
 
@@ -574,7 +700,8 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
         // 单语句体路径：无花括号，与 Parser 的无花括号语法对应
         std::string result = "if (" + formatNode(node.condition.get()) + ") ";
         result += formatNode(node.thenBranch.get());
-        if (!isSelfTerminating(node.thenBranch.get())) result += ";";
+        if (!isSelfTerminating(node.thenBranch.get()))
+            result += ";";
         if (node.elseBranch) {
             if (node.elseBranch->nodeType == NodeType::NODE_IF_STMT) {
                 result += " else " + formatNode(node.elseBranch.get());
@@ -588,7 +715,8 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
             } else {
                 // else 单语句体：同样无花括号
                 result += " else " + formatNode(node.elseBranch.get());
-                if (!isSelfTerminating(node.elseBranch.get())) result += ";";
+                if (!isSelfTerminating(node.elseBranch.get()))
+                    result += ";";
             }
         }
         return result;
@@ -651,7 +779,8 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
         std::string result = "while (" + formatNode(node.condition.get()) + ") ";
         result += formatNode(node.body.get());
-        if (!isSelfTerminating(node.body.get())) result += ";";
+        if (!isSelfTerminating(node.body.get()))
+            result += ";";
         return result;
     }
     std::string result = "while (" + formatNode(node.condition.get()) + ")" + openBrace() + "\n";
@@ -677,23 +806,30 @@ std::string Formatter::formatForStmt(ForStmt& node) {
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
         std::string result = "for (";
-        if (node.initializer) result += formatNode(node.initializer.get());
+        if (node.initializer)
+            result += formatNode(node.initializer.get());
         result += ";";
-        if (node.condition) result += " " + formatNode(node.condition.get());
+        if (node.condition)
+            result += " " + formatNode(node.condition.get());
         result += ";";
-        if (node.update) result += " " + formatNode(node.update.get());
+        if (node.update)
+            result += " " + formatNode(node.update.get());
         result += ") ";
         result += formatNode(node.body.get());
-        if (!isSelfTerminating(node.body.get())) result += ";";
+        if (!isSelfTerminating(node.body.get()))
+            result += ";";
         return result;
     }
     // F-P2-9 fix: 条件化添加分号和空格，避免 update 为空时产生 "for (init; cond; ) {" 多余空格
     std::string result = "for (";
-    if (node.initializer) result += formatNode(node.initializer.get());
+    if (node.initializer)
+        result += formatNode(node.initializer.get());
     result += ";";
-    if (node.condition) result += " " + formatNode(node.condition.get());
+    if (node.condition)
+        result += " " + formatNode(node.condition.get());
     result += ";";
-    if (node.update) result += " " + formatNode(node.update.get());
+    if (node.update)
+        result += " " + formatNode(node.update.get());
     result += ")" + openBrace() + "\n";
     currentIndent_++;
     if (node.body->nodeType == NodeType::NODE_BLOCK) {
@@ -719,7 +855,8 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     result.reserve(32 + node.params.size() * 16 + node.name.size());
     result += "fun " + node.name + "(";
     for (size_t i = 0; i < node.params.size(); ++i) {
-        if (i > 0) result += comma();
+        if (i > 0)
+            result += comma();
         result += node.params[i];
         if (!node.paramTypes.empty() && i < node.paramTypes.size() && !node.paramTypes[i].empty()) {
             result += ": " + node.paramTypes[i];
@@ -764,16 +901,16 @@ std::string Formatter::formatFunCall(FunCall& node) {
         // 原实现仅对 BINARY_OP/UNARY_OP 加括号，输出 `obj.field(args)` 会被
         // Parser 重新解析为 MethodCall（绑定 this），而非 FunCall(callee=MemberAccess)，
         // 破坏 AST 结构等价性与三后端语义。
-        if (node.callee->nodeType == NodeType::NODE_BINARY_OP ||
-            node.callee->nodeType == NodeType::NODE_UNARY_OP ||
+        if (node.callee->nodeType == NodeType::NODE_BINARY_OP || node.callee->nodeType == NodeType::NODE_UNARY_OP ||
             node.callee->nodeType == NodeType::NODE_MEMBER_ACCESS)
-            callee = "(" + callee + ")";  // FMT-01 fix
+            callee = "(" + callee + ")"; // FMT-01 fix
         result = callee + "(";
     } else {
         result = node.name + "(";
     }
     for (size_t i = 0; i < node.arguments.size(); ++i) {
-        if (i > 0) result += comma();
+        if (i > 0)
+            result += comma();
         result += formatNode(node.arguments[i].get());
     }
     result += ")";
@@ -794,7 +931,8 @@ std::string Formatter::formatPrintStmt(PrintStmt& node) {
     std::string result = "print(";
     result.reserve(node.values.size() * 16 + 8);
     for (size_t i = 0; i < node.values.size(); ++i) {
-        if (i > 0) result += comma();
+        if (i > 0)
+            result += comma();
         result += formatNode(node.values[i].get());
     }
     result += ")";
@@ -810,12 +948,12 @@ std::string Formatter::formatBlock(Block& node) {
     for (size_t i = 0; i < node.statements.size(); ++i) {
         ASTNode* stmt = node.statements[i].get();
         // F-P1-3 fix: 跳过空语句指针，避免后续 stmt->line 解引用空指针崩溃
-        if (!stmt) continue;
+        if (!stmt)
+            continue;
 
         // F1 fix: 输出当前语句之前的所有独立注释（行号严格小于语句行号）
         // BUG-F-01 fix: 多行块注释经 reindentBlockComment 重新缩进，使后续行对齐当前缩进
-        while (commentIndex_ < comments_.size() &&
-               comments_[commentIndex_].line < stmt->line) {
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line < stmt->line) {
             result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
             commentIndex_++;
         }
@@ -824,15 +962,15 @@ std::string Formatter::formatBlock(Block& node) {
         // BUG-F-04 fix: isFunOrClass 解包 NODE_EXPORT_STMT，使 export fun/class 之间也插入空行
         if (options_.blankLineBetweenFunctions && i > 0) {
             auto isFunOrClass = [](ASTNode* n) {
-                if (!n) return false;
-                if (n->nodeType == NodeType::NODE_FUN_DECL ||
-                    n->nodeType == NodeType::NODE_CLASS_DECL) return true;
+                if (!n)
+                    return false;
+                if (n->nodeType == NodeType::NODE_FUN_DECL || n->nodeType == NodeType::NODE_CLASS_DECL)
+                    return true;
                 if (n->nodeType == NodeType::NODE_EXPORT_STMT) {
                     auto* exp = static_cast<ExportStmt*>(n);
                     if (exp->declaration) {
                         auto innerType = exp->declaration->nodeType;
-                        return innerType == NodeType::NODE_FUN_DECL ||
-                               innerType == NodeType::NODE_CLASS_DECL;
+                        return innerType == NodeType::NODE_FUN_DECL || innerType == NodeType::NODE_CLASS_DECL;
                     }
                 }
                 return false;
@@ -849,8 +987,7 @@ std::string Formatter::formatBlock(Block& node) {
             // BUG-F-03 fix: 独立块（NODE_BLOCK 作为语句）经 visitBlock 输出 " {..."，
             // K&R 风格下 openBrace() 返回 " {" 带前置空格，作为独立语句时首部多余空格。
             // 去除 NODE_BLOCK 节点格式化结果开头的前置空格。
-            if (stmt->nodeType == NodeType::NODE_BLOCK &&
-                !nodeText.empty() && nodeText[0] == ' ') {
+            if (stmt->nodeType == NodeType::NODE_BLOCK && !nodeText.empty() && nodeText[0] == ' ') {
                 nodeText.erase(0, 1);
             }
             stmtText = indent() + nodeText;
@@ -861,8 +998,7 @@ std::string Formatter::formatBlock(Block& node) {
         // F1+ fix: 同行行内注释追加到语句末尾
         // BUG-F-01 fix: 多行块注释经 reindentBlockComment 重新缩进
         std::string trailing;
-        while (commentIndex_ < comments_.size() &&
-               comments_[commentIndex_].line == stmt->line) {
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line == stmt->line) {
             trailing += " " + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
             commentIndex_++;
         }
@@ -880,8 +1016,7 @@ std::string Formatter::formatBlock(Block& node) {
         // 改为 `<= closingBraceLine`：与 '}' 同行的注释在块末尾输出（'{' 之前），
         // 虽非完美（原文是 `} // comment`，格式化后注释在 '}' 之前一行），
         // 但保证注释留在正确的块内，不破坏 AST 结构等价性。
-        while (commentIndex_ < comments_.size() &&
-               comments_[commentIndex_].line <= node.closingBraceLine) {
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line <= node.closingBraceLine) {
             result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
             commentIndex_++;
         }
@@ -904,7 +1039,8 @@ std::string Formatter::formatArrayLiteral(ArrayLiteral& node) {
     std::string result = "[";
     result.reserve(node.elements.size() * 16 + 2);
     for (size_t i = 0; i < node.elements.size(); ++i) {
-        if (i > 0) result += comma();
+        if (i > 0)
+            result += comma();
         result += formatNode(node.elements[i].get());
     }
     result += "]";
@@ -917,7 +1053,8 @@ std::string Formatter::formatDictLiteral(DictLiteral& node) {
     std::string result = "{";
     result.reserve(node.pairs.size() * 32 + 2);
     for (size_t i = 0; i < node.pairs.size(); ++i) {
-        if (i > 0) result += comma();
+        if (i > 0)
+            result += comma();
         result += formatNode(node.pairs[i].first.get()) + ": " + formatNode(node.pairs[i].second.get());
     }
     result += "}";
@@ -927,18 +1064,18 @@ std::string Formatter::formatDictLiteral(DictLiteral& node) {
 /// 格式化下标访问：obj[index]；当 obj 为低优先级的二元/一元表达式时加括号避免歧义。
 std::string Formatter::formatIndexAccess(IndexAccess& node) {
     std::string obj = formatNode(node.object.get());
-    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP))
-        obj = "(" + obj + ")";  // FMT-01 fix: 低优先级表达式需要括号
+    if (node.object &&
+        (node.object->nodeType == NodeType::NODE_BINARY_OP || node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")"; // FMT-01 fix: 低优先级表达式需要括号
     return obj + "[" + formatNode(node.index.get()) + "]";
 }
 
 /// 格式化下标赋值：obj[index] = value；obj 为低优先级表达式时加括号。
 std::string Formatter::formatIndexAssign(IndexAssign& node) {
     std::string obj = formatNode(node.object.get());
-    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP))
-        obj = "(" + obj + ")";  // FMT-01 fix
+    if (node.object &&
+        (node.object->nodeType == NodeType::NODE_BINARY_OP || node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")"; // FMT-01 fix
     return obj + "[" + formatNode(node.index.get()) + "]" + binOp("=") + formatNode(node.value.get());
 }
 
@@ -957,21 +1094,42 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     for (size_t i = 0; i < node.members.size(); ++i) {
         auto& member = node.members[i];
         // F-P2-8 fix: 跳过空成员指针，避免 formatNode 返回 "null" 作为类成员
-        if (!member) continue;
+        if (!member)
+            continue;
+        // AUDIT-P2.8 fix: 输出当前成员之前的所有独立注释（行号严格小于成员行号），
+        // 复用 formatBlock 的注释注入模式。
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line < member->line) {
+            result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
+            commentIndex_++;
+        }
         // BUG-F-05 fix: blankLineBetweenFunctions 选项传播到类成员，
         // 当前后两个成员都是方法（FunDecl）时插入空行
         if (options_.blankLineBetweenFunctions && i > 0) {
             auto& prev = node.members[i - 1];
-            if (prev && prev->nodeType == NodeType::NODE_FUN_DECL &&
-                member->nodeType == NodeType::NODE_FUN_DECL) {
+            if (prev && prev->nodeType == NodeType::NODE_FUN_DECL && member->nodeType == NodeType::NODE_FUN_DECL) {
                 result += "\n";
             }
         }
         // 方法（FunDecl）以 } 结尾，不需要额外 ;
+        std::string memberText;
         if (isSelfTerminating(member.get())) {
-            result += indent() + formatNode(member.get()) + "\n";
+            memberText = indent() + formatNode(member.get());
         } else {
-            result += indent() + formatNode(member.get()) + ";\n";
+            memberText = indent() + formatNode(member.get()) + ";";
+        }
+        // AUDIT-P2.8 fix: 同行行内注释追加到成员末尾
+        std::string trailing;
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line == member->line) {
+            trailing += " " + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
+            commentIndex_++;
+        }
+        result += memberText + trailing + "\n";
+    }
+    // AUDIT-P2.8 fix: 类体末尾输出 closingBraceLine 及之前的注释（对齐 formatBlock）
+    if (node.closingBraceLine > 0) {
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line <= node.closingBraceLine) {
+            result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
+            commentIndex_++;
         }
     }
     currentIndent_--;
@@ -982,18 +1140,18 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
 /// 格式化成员访问：obj.field；obj 为低优先级表达式时加括号，避免被错误解析为方法调用。
 std::string Formatter::formatMemberAccess(MemberAccess& node) {
     std::string obj = formatNode(node.object.get());
-    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP))
-        obj = "(" + obj + ")";  // FMT-01 fix
+    if (node.object &&
+        (node.object->nodeType == NodeType::NODE_BINARY_OP || node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")"; // FMT-01 fix
     return obj + "." + node.fieldName;
 }
 
 /// 格式化成员赋值：obj.field = value；obj 为低优先级表达式时加括号。
 std::string Formatter::formatMemberAssign(MemberAssign& node) {
     std::string obj = formatNode(node.object.get());
-    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP))
-        obj = "(" + obj + ")";  // FMT-01 fix
+    if (node.object &&
+        (node.object->nodeType == NodeType::NODE_BINARY_OP || node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")"; // FMT-01 fix
     return obj + "." + node.fieldName + binOp("=") + formatNode(node.value.get());
 }
 
@@ -1001,12 +1159,13 @@ std::string Formatter::formatMemberAssign(MemberAssign& node) {
 /// 否则形如 (a+b).foo() 会被错误重新解析为独立 FunCall。
 std::string Formatter::formatMethodCall(MethodCall& node) {
     std::string obj = formatNode(node.object.get());
-    if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
-                        node.object->nodeType == NodeType::NODE_UNARY_OP))
-        obj = "(" + obj + ")";  // FMT-01 fix
+    if (node.object &&
+        (node.object->nodeType == NodeType::NODE_BINARY_OP || node.object->nodeType == NodeType::NODE_UNARY_OP))
+        obj = "(" + obj + ")"; // FMT-01 fix
     std::string result = obj + "." + node.methodName + "(";
     for (size_t i = 0; i < node.arguments.size(); ++i) {
-        if (i > 0) result += comma();
+        if (i > 0)
+            result += comma();
         result += formatNode(node.arguments[i].get());
     }
     result += ")";
@@ -1024,11 +1183,12 @@ std::string Formatter::formatNullLiteral(NullLiteral& node) {
 std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
     // PERF-27 fix: 预估输出大小（literals + expressions），避免反复 realloc
     std::string result;
-    size_t estimatedSize = 2;  // 引号
-    for (const auto& lit : node.literals) estimatedSize += lit.size();
-    estimatedSize += node.expressions.size() * 8;  // 每个 {expr} 平均 8 字符
+    size_t estimatedSize = 2; // 引号
+    for (const auto& lit : node.literals)
+        estimatedSize += lit.size();
+    estimatedSize += node.expressions.size() * 8; // 每个 {expr} 平均 8 字符
     result.reserve(estimatedSize);
-    result += '"';  // 开头引号
+    result += '"'; // 开头引号
 
     // AUDIT-P2 fix: 复用 escapeStringContent 公共函数，消除转义规则重复
 
@@ -1050,8 +1210,7 @@ std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
             // （如 `var s = "hello ${x}"; // comment` 中的 `// comment`）。
             // 改为 `< exprLine`：仅跳过严格在表达式之前的注释，保留同行注释给外层。
             int exprLine = node.expressions[i]->line;
-            while (commentIndex_ < comments_.size() &&
-                   comments_[commentIndex_].line < exprLine) {
+            while (commentIndex_ < comments_.size() && comments_[commentIndex_].line < exprLine) {
                 ++commentIndex_;
             }
         }
@@ -1061,6 +1220,14 @@ std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
         }
     }
 
-    result += '"';  // 结尾引号
+    result += '"'; // 结尾引号
+    // AUDIT-P2.9 fix: 消费最后一个表达式与闭合引号之间的独立注释（多行插值字符串场景）。
+    //   插值字符串是单行构造，注释不能注入字符串内部（会破坏语法）。此处仅推进
+    //   commentIndex_ 游标，跳过行号严格小于 endLine 的注释，避免多行插值字符串
+    //   块内的注释泄漏到外层语句的同行尾部注释分支。单行插值字符串（line==endLine）
+    //   此处为 no-op，不影响同行尾部注释归属。
+    while (commentIndex_ < comments_.size() && comments_[commentIndex_].line < node.endLine) {
+        ++commentIndex_;
+    }
     return result;
 }

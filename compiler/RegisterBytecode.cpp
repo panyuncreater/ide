@@ -4,7 +4,7 @@
 
 #include "compiler/RegisterBytecode.h"
 #include <cassert>
-#include <cstdlib>  // AUDIT-BUG-R1: std::abort 替代 assert（Release 构建保护）
+#include <cstdlib> // AUDIT-BUG-R1: std::abort 替代 assert（Release 构建保护）
 
 // ============================================================
 // A3 fix: 统一 RegOp 元数据表（名称/基础长度/是否变长）
@@ -15,63 +15,63 @@
 // ============================================================
 namespace {
 constexpr RegOpInfo kRegOpInfo[] = {
-    /* REG_LOAD_CONST              */ {"REG_LOAD_CONST",                4, false},
-    /* REG_LOAD_NULL               */ {"REG_LOAD_NULL",                 2, false},
-    /* REG_LOAD_TRUE               */ {"REG_LOAD_TRUE",                 2, false},
-    /* REG_LOAD_FALSE              */ {"REG_LOAD_FALSE",                2, false},
-    /* REG_MOVE                    */ {"REG_MOVE",                      3, false},
-    /* REG_LOAD_GLOBAL             */ {"REG_LOAD_GLOBAL",               4, false},
-    /* REG_STORE_GLOBAL            */ {"REG_STORE_GLOBAL",              4, false},
-    /* REG_DEFINE_GLOBAL           */ {"REG_DEFINE_GLOBAL",            4, false},
-    /* REG_DELETE_GLOBAL           */ {"REG_DELETE_GLOBAL",            3, false},
-    /* REG_LOAD_UPVALUE            */ {"REG_LOAD_UPVALUE",              3, false},  // C-12 fix
-    /* REG_STORE_UPVALUE           */ {"REG_STORE_UPVALUE",             3, false},  // C-12 fix
-    /* REG_CLOSE_UPVALUE           */ {"REG_CLOSE_UPVALUE",             2, false},
-    /* REG_ADD                     */ {"REG_ADD",                       4, false},
-    /* REG_SUB                     */ {"REG_SUB",                       4, false},
-    /* REG_MUL                     */ {"REG_MUL",                       4, false},
-    /* REG_DIV                     */ {"REG_DIV",                       4, false},
-    /* REG_MOD                     */ {"REG_MOD",                       4, false},
-    /* REG_NEGATE                  */ {"REG_NEGATE",                    3, false},
-    /* REG_EQ                      */ {"REG_EQ",                        4, false},
-    /* REG_NEQ                     */ {"REG_NEQ",                       4, false},
-    /* REG_LT                      */ {"REG_LT",                        4, false},
-    /* REG_GT                      */ {"REG_GT",                        4, false},
-    /* REG_LTE                     */ {"REG_LTE",                       4, false},
-    /* REG_GTE                     */ {"REG_GTE",                       4, false},
-    /* REG_NOT                     */ {"REG_NOT",                       3, false},
-    /* REG_JUMP                    */ {"REG_JUMP",                      3, false},
-    /* REG_JUMP_IF_FALSE           */ {"REG_JUMP_IF_FALSE",             4, false},
-    /* REG_RETURN                  */ {"REG_RETURN",                    2, false},
-    /* REG_RETURN_NULL             */ {"REG_RETURN_NULL",               1, false},
-    /* REG_CALL                    */ {"REG_CALL",                      5, true},   // 变长: 5 + argCount
-    /* REG_CALL_EXPR               */ {"REG_CALL_EXPR",                4, true},   // 变长: 4 + argCount
-    /* REG_METHOD_CALL             */ {"REG_METHOD_CALL",               6, true},   // 变长: 6 + argCount
-    /* REG_MAKE_CLOSURE            */ {"REG_MAKE_CLOSURE",              5, true},   // 变长: 5 + 2*uvCount (op+dst+nameIdx(2B)+uvCount)
-    /* REG_BUILD_ARRAY             */ {"REG_BUILD_ARRAY",               3, true},   // 变长: 3 + count
-    /* REG_BUILD_DICT              */ {"REG_BUILD_DICT",                3, true},   // 变长: 3 + 2*pairCount
-    /* REG_INDEX_GET               */ {"REG_INDEX_GET",                 4, false},
-    /* REG_INDEX_SET               */ {"REG_INDEX_SET",                 4, false},
-    /* REG_MEMBER_GET              */ {"REG_MEMBER_GET",                5, false},
-    /* REG_MEMBER_SET              */ {"REG_MEMBER_SET",                5, false},
-    /* REG_CLASS_NEW               */ {"REG_CLASS_NEW",                 5, true},   // 变长: 5 + argCount
-    /* REG_DEFINE_CLASS            */ {"REG_DEFINE_CLASS",              7, true},   // 变长: 7 + 字段/方法元数据
-    /* REG_INIT_FIELD              */ {"REG_INIT_FIELD",                3, false},
-    /* REG_SUPER_CALL              */ {"REG_SUPER_CALL",                8, true},   // 变长: 8 + argCount
-    /* REG_SUPER_MEMBER_GET        */ {"REG_SUPER_MEMBER_GET",          5, false},
-    /* REG_TRY_BEGIN               */ {"REG_TRY_BEGIN",                 3, false},
-    /* REG_TRY_END                 */ {"REG_TRY_END",                   1, false},
-    /* REG_THROW                   */ {"REG_THROW",                     2, false},
-    /* REG_LOAD_EXCEPTION          */ {"REG_LOAD_EXCEPTION",            2, false},
-    /* REG_PRINT                   */ {"REG_PRINT",                     2, false},
-    /* REG_WRITEBACK_MEMBER_VAR    */ {"REG_WRITEBACK_MEMBER_VAR",     5, false},
-    /* REG_WRITEBACK_MEMBER_LOCAL  */ {"REG_WRITEBACK_MEMBER_LOCAL",   4, false},
-    /* REG_WRITEBACK_INDEX_VAR     */ {"REG_WRITEBACK_INDEX_VAR",      3, false},
-    /* REG_WRITEBACK_INDEX_LOCAL   */ {"REG_WRITEBACK_INDEX_LOCAL",    2, false},
+    /* REG_LOAD_CONST              */ {"REG_LOAD_CONST", 4, false},
+    /* REG_LOAD_NULL               */ {"REG_LOAD_NULL", 2, false},
+    /* REG_LOAD_TRUE               */ {"REG_LOAD_TRUE", 2, false},
+    /* REG_LOAD_FALSE              */ {"REG_LOAD_FALSE", 2, false},
+    /* REG_MOVE                    */ {"REG_MOVE", 3, false},
+    /* REG_LOAD_GLOBAL             */ {"REG_LOAD_GLOBAL", 4, false},
+    /* REG_STORE_GLOBAL            */ {"REG_STORE_GLOBAL", 4, false},
+    /* REG_DEFINE_GLOBAL           */ {"REG_DEFINE_GLOBAL", 4, false},
+    /* REG_DELETE_GLOBAL           */ {"REG_DELETE_GLOBAL", 3, false},
+    /* REG_LOAD_UPVALUE            */ {"REG_LOAD_UPVALUE", 3, false},  // C-12 fix
+    /* REG_STORE_UPVALUE           */ {"REG_STORE_UPVALUE", 3, false}, // C-12 fix
+    /* REG_CLOSE_UPVALUE           */ {"REG_CLOSE_UPVALUE", 2, false},
+    /* REG_ADD                     */ {"REG_ADD", 4, false},
+    /* REG_SUB                     */ {"REG_SUB", 4, false},
+    /* REG_MUL                     */ {"REG_MUL", 4, false},
+    /* REG_DIV                     */ {"REG_DIV", 4, false},
+    /* REG_MOD                     */ {"REG_MOD", 4, false},
+    /* REG_NEGATE                  */ {"REG_NEGATE", 3, false},
+    /* REG_EQ                      */ {"REG_EQ", 4, false},
+    /* REG_NEQ                     */ {"REG_NEQ", 4, false},
+    /* REG_LT                      */ {"REG_LT", 4, false},
+    /* REG_GT                      */ {"REG_GT", 4, false},
+    /* REG_LTE                     */ {"REG_LTE", 4, false},
+    /* REG_GTE                     */ {"REG_GTE", 4, false},
+    /* REG_NOT                     */ {"REG_NOT", 3, false},
+    /* REG_JUMP                    */ {"REG_JUMP", 3, false},
+    /* REG_JUMP_IF_FALSE           */ {"REG_JUMP_IF_FALSE", 4, false},
+    /* REG_RETURN                  */ {"REG_RETURN", 2, false},
+    /* REG_RETURN_NULL             */ {"REG_RETURN_NULL", 1, false},
+    /* REG_CALL                    */ {"REG_CALL", 5, true},         // 变长: 5 + argCount
+    /* REG_CALL_EXPR               */ {"REG_CALL_EXPR", 4, true},    // 变长: 4 + argCount
+    /* REG_METHOD_CALL             */ {"REG_METHOD_CALL", 6, true},  // 变长: 6 + argCount
+    /* REG_MAKE_CLOSURE            */ {"REG_MAKE_CLOSURE", 5, true}, // 变长: 5 + 2*uvCount (op+dst+nameIdx(2B)+uvCount)
+    /* REG_BUILD_ARRAY             */ {"REG_BUILD_ARRAY", 3, true},  // 变长: 3 + count
+    /* REG_BUILD_DICT              */ {"REG_BUILD_DICT", 3, true},   // 变长: 3 + 2*pairCount
+    /* REG_INDEX_GET               */ {"REG_INDEX_GET", 4, false},
+    /* REG_INDEX_SET               */ {"REG_INDEX_SET", 4, false},
+    /* REG_MEMBER_GET              */ {"REG_MEMBER_GET", 5, false},
+    /* REG_MEMBER_SET              */ {"REG_MEMBER_SET", 5, false},
+    /* REG_CLASS_NEW               */ {"REG_CLASS_NEW", 5, true},    // 变长: 5 + argCount
+    /* REG_DEFINE_CLASS            */ {"REG_DEFINE_CLASS", 7, true}, // 变长: 7 + 字段/方法元数据
+    /* REG_INIT_FIELD              */ {"REG_INIT_FIELD", 3, false},
+    /* REG_SUPER_CALL              */ {"REG_SUPER_CALL", 8, true}, // 变长: 8 + argCount
+    /* REG_SUPER_MEMBER_GET        */ {"REG_SUPER_MEMBER_GET", 5, false},
+    /* REG_TRY_BEGIN               */ {"REG_TRY_BEGIN", 3, false},
+    /* REG_TRY_END                 */ {"REG_TRY_END", 1, false},
+    /* REG_THROW                   */ {"REG_THROW", 2, false},
+    /* REG_LOAD_EXCEPTION          */ {"REG_LOAD_EXCEPTION", 2, false},
+    /* REG_PRINT                   */ {"REG_PRINT", 2, false},
+    /* REG_WRITEBACK_MEMBER_VAR    */ {"REG_WRITEBACK_MEMBER_VAR", 5, false},
+    /* REG_WRITEBACK_MEMBER_LOCAL  */ {"REG_WRITEBACK_MEMBER_LOCAL", 4, false},
+    /* REG_WRITEBACK_INDEX_VAR     */ {"REG_WRITEBACK_INDEX_VAR", 3, false},
+    /* REG_WRITEBACK_INDEX_LOCAL   */ {"REG_WRITEBACK_INDEX_LOCAL", 2, false},
     /* REG_WRITEBACK_MEMBER_UPVALUE*/ {"REG_WRITEBACK_MEMBER_UPVALUE", 4, false},
-    /* REG_WRITEBACK_INDEX_UPVALUE */ {"REG_WRITEBACK_INDEX_UPVALUE",  2, false},
-    /* REG_LOAD_MUTATED            */ {"REG_LOAD_MUTATED",             2, false},
-    /* REG_TYPE_CHECK              */ {"REG_TYPE_CHECK",               4, false},  // op(1B) + src(1B) + typeAnnotationConstIdx(2B)
+    /* REG_WRITEBACK_INDEX_UPVALUE */ {"REG_WRITEBACK_INDEX_UPVALUE", 2, false},
+    /* REG_LOAD_MUTATED            */ {"REG_LOAD_MUTATED", 2, false},
+    /* REG_TYPE_CHECK              */ {"REG_TYPE_CHECK", 4, false}, // op(1B) + src(1B) + typeAnnotationConstIdx(2B)
 };
 } // anonymous namespace
 
@@ -91,7 +91,7 @@ const RegOpInfo& getRegOpInfo(RegOp op) {
 uint16_t RegBytecodeChunk::addConstant(const Value& value) {
     // 简单线性扫描去重（常量池通常较小）
     // BUG-CP-1 fix: 类型严格匹配，避免 Value::equals() 跨类型数值相等性
-    //（如 Value(0).equals(Value(0.0)) == true）导致 int/float 常量被错误去重。
+    // （如 Value(0).equals(Value(0.0)) == true）导致 int/float 常量被错误去重。
     for (size_t i = 0; i < constants.size(); ++i) {
         if (constants[i].getType() == value.getType() && constants[i].equals(value)) {
             return static_cast<uint16_t>(i);
@@ -109,7 +109,7 @@ void RegBytecodeChunk::writeOp(RegOp op, int line, int column) {
     code.push_back(static_cast<uint8_t>(op));
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
-        columns.push_back(column);  // BUG-IBACKEND-2
+        columns.push_back(column); // BUG-IBACKEND-2
     }
 }
 
@@ -118,7 +118,7 @@ void RegBytecodeChunk::writeReg(uint8_t reg, int line, int column) {
     code.push_back(reg);
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
-        columns.push_back(column);  // BUG-IBACKEND-2
+        columns.push_back(column); // BUG-IBACKEND-2
     }
 }
 
@@ -127,7 +127,7 @@ void RegBytecodeChunk::writeShort(uint16_t v, int line, int column) {
     code.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
-        columns.push_back(column);  // BUG-IBACKEND-2
+        columns.push_back(column); // BUG-IBACKEND-2
     }
 }
 
@@ -135,7 +135,7 @@ void RegBytecodeChunk::writeByte(uint8_t v, int line, int column) {
     code.push_back(v);
     while (static_cast<int>(lines.size()) < static_cast<int>(code.size())) {
         lines.push_back(line);
-        columns.push_back(column);  // BUG-IBACKEND-2
+        columns.push_back(column); // BUG-IBACKEND-2
     }
 }
 
@@ -147,7 +147,8 @@ size_t RegBytecodeChunk::instructionSize(RegOp op) {
 }
 
 size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
-    if (offset >= code.size()) return 1;
+    if (offset >= code.size())
+        return 1;
     RegOp op = static_cast<RegOp>(code[offset]);
     size_t baseSize = instructionSize(op);
 
@@ -231,8 +232,8 @@ size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
             size_t methodCountPos = offset + 6 + static_cast<size_t>(fieldCount) * 5;
             if (methodCountPos < code.size()) {
                 uint8_t methodCount = code[methodCountPos];
-                return static_cast<size_t>(7 + static_cast<size_t>(fieldCount) * 5
-                                           + static_cast<size_t>(methodCount) * 4);
+                return static_cast<size_t>(7 + static_cast<size_t>(fieldCount) * 5 +
+                                           static_cast<size_t>(methodCount) * 4);
             }
         }
         return baseSize;

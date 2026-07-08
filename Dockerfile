@@ -7,8 +7,9 @@
 #   1. Qt 版本固定为 6.8.3 LTS，与 CI（.github/workflows/ci.yml 的 QT_VERSION）
 #      保持一致。Ubuntu 24.04 apt 仅提供 Qt 6.4.2，若代码使用了 6.5+ 引入的
 #      API，apt 版本会导致编译失败，因此改用 aqtinstall 安装精确版本。
-#      Qt 6.10.x 在 Linux 上的包结构已变更，aqtinstall 3.3.0 无法识别，
-#      故回退到 6.8.3 LTS（稳定且完全兼容）。
+#      Qt 6.10.x 在 Linux 上的包结构已变更，aqtinstall 无法识别；
+#      aqtinstall 3.2.0+ 在 Linux 上解析 Qt 6.8.x 元数据也有回归 bug，
+#      故固定 aqtinstall==3.1.21 + Qt 6.8.3 LTS（稳定且完全兼容）。
 #      可通过 docker build --build-arg QT_VERSION=6.x.y 覆盖。
 #   2. QTDIR 直接指向 Qt 安装前缀 /opt/qt6/<version>/gcc_64（内含
 #      lib/cmake/Qt6），供 CMakePresets 的 linux-gcc-release 预设通过
@@ -36,8 +37,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 安装指定版本 Qt（通过 aqtinstall，与 CI 同步）
 # 使用 venv 安装 aqtinstall，绕过 Ubuntu 24.04 PEP 668 限制
+# 固定 aqtinstall 3.1.21：3.2.0+ 在 Linux 上解析 Qt 6.8.x 包元数据存在回归
+# （"qt_base not found"），参见 https://github.com/miurahr/aqtinstall/issues/908
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir aqtinstall \
+    && /opt/venv/bin/pip install --no-cache-dir aqtinstall==3.1.21 \
     && /opt/venv/bin/python -m aqt install-qt linux desktop ${QT_VERSION} gcc_64 -m qtsvg qttools -O /opt/qt6
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV QTDIR=/opt/qt6/${QT_VERSION}/gcc_64

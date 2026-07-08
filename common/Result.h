@@ -62,13 +62,11 @@ struct ErrorInfo {
     int column = 0;
 
     ErrorInfo() = default;
-    ErrorInfo(std::string msg, int ln = 0, int col = 0)
-        : message(std::move(msg)), line(ln), column(col) {}
+    ErrorInfo(std::string msg, int ln = 0, int col = 0) : message(std::move(msg)), line(ln), column(col) {}
 };
 
 /// 统一结果类型：持有成功值 T 或错误 ErrorInfo
-template<typename T>
-class Result {
+template <typename T> class Result {
 public:
     /// 成功构造
     static Result ok(T value) {
@@ -100,9 +98,7 @@ public:
     const ErrorInfo& error() const { return std::get<1>(data_); }
 
     /// 获取成功值或默认值
-    T unwrap_or(T fallback) const {
-        return is_ok() ? std::get<0>(data_) : std::move(fallback);
-    }
+    T unwrap_or(T fallback) const { return is_ok() ? std::get<0>(data_) : std::move(fallback); }
 
 private:
     std::variant<T, ErrorInfo> data_;

@@ -28,13 +28,13 @@
 // TokenPuzzleLevel — 单个关卡数据
 // ============================================================
 struct TokenPuzzleLevel {
-    int         level;          // 关卡编号 1-5
-    std::string targetCode;     // 目标语句（如 "var x = 42;"）
+    int level;                               // 关卡编号 1-5
+    std::string targetCode;                  // 目标语句（如 "var x = 42;"）
     std::vector<std::string> tokens;         // 正确顺序的 token 字面量
     std::vector<std::string> shuffledTokens; // 打乱后的 token（供玩家点击）
-    std::string teachingPoint;  // 教学点说明
-    std::string hint;           // 提示文本
-    int         difficulty;     // 难度 1-3（⭐~⭐⭐⭐）
+    std::string teachingPoint;               // 教学点说明
+    std::string hint;                        // 提示文本
+    int difficulty;                          // 难度 1-3（⭐~⭐⭐⭐）
 };
 
 // ============================================================

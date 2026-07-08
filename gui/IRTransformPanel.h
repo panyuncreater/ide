@@ -17,12 +17,12 @@
 // 不修改引擎层。
 // ============================================================
 
-#include <QWidget>
-#include <QStackedWidget>
 #include <QLabel>
-#include <QPushButton>
 #include <QListWidget>
+#include <QPushButton>
+#include <QStackedWidget>
 #include <QTextBrowser>
+#include <QWidget>
 #include <string>
 #include <vector>
 
@@ -44,22 +44,22 @@ struct IRLoweringExample {
 struct IROptimizationExample {
     std::string id;
     std::string title;
-    std::string description;     // 优化 pass 文字说明
-    std::string passName;        // 优化 pass 名（如 "常量折叠"）
-    std::string irBefore;        // 优化前 IR 文本
-    std::string irAfter;         // 优化后 IR 文本
-    int         instrBefore = 0; // 优化前指令数
-    int         instrAfter = 0;  // 优化后指令数
+    std::string description; // 优化 pass 文字说明
+    std::string passName;    // 优化 pass 名（如 "常量折叠"）
+    std::string irBefore;    // 优化前 IR 文本
+    std::string irAfter;     // 优化后 IR 文本
+    int instrBefore = 0;     // 优化前指令数
+    int instrAfter = 0;      // 优化后指令数
 };
 
 /// 逐步优化回放的单步记录（第 4 子页）
 struct IROptStepRecord {
-    std::string passName;          // "常量折叠" / "DCE" / "复制传播" / "CSE" / "循环展开"
-    std::string passRound;         // "Round 1" / "Round 2" 等
-    std::string irSnapshot;        // 该 pass 执行后的 IR 文本快照（IRToString 格式）
-    std::vector<std::string> decisions;  // 该 pass 中每条指令被修改/删除的原因列表
-    int instrCount = 0;            // 快照后总指令数
-    int modifiedCount = 0;         // 该 pass 修改/删除的指令数
+    std::string passName;               // "常量折叠" / "DCE" / "复制传播" / "CSE" / "循环展开"
+    std::string passRound;              // "Round 1" / "Round 2" 等
+    std::string irSnapshot;             // 该 pass 执行后的 IR 文本快照（IRToString 格式）
+    std::vector<std::string> decisions; // 该 pass 中每条指令被修改/删除的原因列表
+    int instrCount = 0;                 // 快照后总指令数
+    int modifiedCount = 0;              // 该 pass 修改/删除的指令数
 };
 
 /// IRTransformLibrary — 静态教学场景库
@@ -104,31 +104,31 @@ private:
 
     QPushButton* pageLoweringBtn_ = nullptr;
     QPushButton* pageOptimizeBtn_ = nullptr;
-    QPushButton* pageCurrentBtn_   = nullptr;
-    QPushButton* pageReplayBtn_    = nullptr;  // 第 4 子页按钮
-    QStackedWidget* stack_         = nullptr;
+    QPushButton* pageCurrentBtn_ = nullptr;
+    QPushButton* pageReplayBtn_ = nullptr; // 第 4 子页按钮
+    QStackedWidget* stack_ = nullptr;
 
     // 子页 1：lowering 演示
-    QListWidget* loweringList_    = nullptr;
+    QListWidget* loweringList_ = nullptr;
     QTextBrowser* loweringDetail_ = nullptr;
 
     // 子页 2：优化 pass 对比
-    QListWidget* optList_         = nullptr;
-    QTextBrowser* optBefore_      = nullptr;
-    QTextBrowser* optAfter_       = nullptr;
-    QLabel* optSummary_          = nullptr;
+    QListWidget* optList_ = nullptr;
+    QTextBrowser* optBefore_ = nullptr;
+    QTextBrowser* optAfter_ = nullptr;
+    QLabel* optSummary_ = nullptr;
 
     // 子页 3：当前源码 IR
     QTextBrowser* currentIrBrowser_ = nullptr;
-    QPushButton* refreshBtn_         = nullptr;
-    QLabel* currentStatusLabel_     = nullptr;
+    QPushButton* refreshBtn_ = nullptr;
+    QLabel* currentStatusLabel_ = nullptr;
 
     // 子页 4：逐步优化回放
-    QListWidget* replayList_          = nullptr;  // 场景列表
-    QListWidget* replayStepsList_     = nullptr;  // 当前场景的步骤列表（passName + Round + modifiedCount）
-    QTextBrowser* replayIrBrowser_    = nullptr;  // 选中步骤的 IR 快照
-    QListWidget* replayDecisionsList_ = nullptr;  // 决策解释列表（每条指令被修改/删除的原因）
-    QLabel* replayStatusLabel_        = nullptr;  // 状态标签
+    QListWidget* replayList_ = nullptr;          // 场景列表
+    QListWidget* replayStepsList_ = nullptr;     // 当前场景的步骤列表（passName + Round + modifiedCount）
+    QTextBrowser* replayIrBrowser_ = nullptr;    // 选中步骤的 IR 快照
+    QListWidget* replayDecisionsList_ = nullptr; // 决策解释列表（每条指令被修改/删除的原因）
+    QLabel* replayStatusLabel_ = nullptr;        // 状态标签
 
     // 构造辅助
     void buildLoweringPage(QWidget* host);

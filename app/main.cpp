@@ -2,14 +2,14 @@
 
 #include <QApplication>
 #include <QFile>
-#include <QTextStream>
+#include <QIcon>
 #include <QMessageBox>
 #include <QStyleFactory>
-#include <QIcon>
+#include <QTextStream>
 
-#include "Theme.h"
 #include "FluentGlobal.h"
-#include "gui/I18n.h"  // D2: i18n 翻译辅助层
+#include "Theme.h"
+#include "gui/I18n.h" // D2: i18n 翻译辅助层
 
 // ============================================================
 // MiniLang IDE 程序入口
@@ -17,11 +17,10 @@
 // D2: 接入 i18n 翻译加载
 // ============================================================
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     // DPI 自适应：PassThrough 保留分数缩放（1.25x/1.5x），高分辨率屏幕清晰不模糊
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
-    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
-        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 #endif
     QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
 
@@ -62,12 +61,10 @@ int main(int argc, char *argv[]) {
         w->show();
         return a.exec();
     } catch (const std::exception& e) {
-        QMessageBox::critical(nullptr, mlTr("MiniLang IDE - 启动错误"),
-                              QString::fromStdString(e.what()));
+        QMessageBox::critical(nullptr, mlTr("MiniLang IDE - 启动错误"), QString::fromStdString(e.what()));
         return 1;
     } catch (...) {
-        QMessageBox::critical(nullptr, mlTr("MiniLang IDE - 启动错误"),
-                              mlTr("未知的启动异常"));
+        QMessageBox::critical(nullptr, mlTr("MiniLang IDE - 启动错误"), mlTr("未知的启动异常"));
         return 1;
     }
 }

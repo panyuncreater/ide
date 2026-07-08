@@ -4,37 +4,37 @@
 
 #include "gui/ProfileDashboardPanel.h"
 #include "app/IdeController.h"
+#include "compiler/Compiler.h"
+#include "compiler/IR.h"
+#include "compiler/RegisterVM.h"
+#include "compiler/VM.h"
+#include "interpreter/GcManager.h"
+#include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "interpreter/Interpreter.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/IR.h"
-#include "interpreter/GcManager.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QSplitter>
-#include <QHeaderView>
-#include <QPainter>
-#include <QPaintEvent>
 #include <QApplication>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidgetItem>
+#include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
 #include <sstream>
 
-#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
-#include "Label.h"        // QFluentKit（CaptionLabel）
+#include "Label.h"      // QFluentKit（CaptionLabel）
+#include "PushButton.h" // QFluentKit（PrimaryPushButton）
 
 #ifdef MINILANG_HAVE_QTCHARTS
 // C2: QtCharts 头文件 — 仅在编译时启用 MINILANG_USE_QTCHARTS 时引入
-#include <QtCharts/QChartView>
+#include <QtCharts/QBarCategoryAxis>
 #include <QtCharts/QBarSeries>
 #include <QtCharts/QBarSet>
-#include <QtCharts/QBarCategoryAxis>
+#include <QtCharts/QChartView>
 #include <QtCharts/QValueAxis>
 QT_CHARTS_USE_NAMESPACE
 #endif
@@ -46,54 +46,35 @@ QT_CHARTS_USE_NAMESPACE
 /// 返回预设的性能测试场景列表（静态数据）。
 const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
     static const std::vector<ProfileScenario> kScenarios = {
-        {
-            "fib-recursion",
-            "斐波那契递归（fib(15)）",
-            "递归型 fib(15)。栈式 VM 与 RegisterVM 在密集函数调用场景下都显著快于 Interpreter（解释器每个 AST 节点都需要虚函数分发）。"
-            "RegisterVM 通常略快于 StackVM（寄存器消除 push/pop 内存往返），但差距小于 Interpreter vs VM。",
-            "fun fib(n) { if (n < 2) return n; return fib(n-1) + fib(n-2); }\nprint(fib(15));",
-            "arithmetic", 3
-        },
-        {
-            "loop-sum",
-            "循环求和（1 到 100000）",
-            "纯算术循环。栈式 VM 与 RegisterVM 在热路径上优势最明显——单条 OP_ADD 比访问者模式 dispatch 快 5-10 倍。"
-            "RegisterVM 通过虚拟寄存器避免每次运算 push/pop，进一步降低内存带宽占用。",
-            "var sum = 0;\nvar i = 1;\nwhile (i <= 100000) { sum = sum + i; i = i + 1; }\nprint(sum);",
-            "loop", 3
-        },
-        {
-            "string-concat",
-            "字符串拼接循环（1000 次）",
-            "字符串 + 拼接。每次拼接会构造新 StringData（不可变语义），三后端性能相近（瓶颈在堆分配而非指令分发）。"
-            "GC 在此场景频繁触发，sweep 开销可能拉低三后端共同基线。",
-            "var s = \"\";\nvar i = 0;\nwhile (i < 1000) { s = s + \"x\"; i = i + 1; }\nprint(s.len());",
-            "string", 3
-        },
-        {
-            "class-instantiation",
-            "类实例化循环（10000 次）",
-            "Point 类构造 + 字段赋值循环。InstanceData 分配 + GcManager::registerTracked 是主要开销，"
-            "三后端差距较小（解释器仍稍慢，因为 MethodCall 的 Visitor 分发）。",
-            "class Point { var x; var y; fun init(px, py) { x = px; y = py; } }\nvar i = 0;\nwhile (i < 10000) { var p = Point(i, i); i = i + 1; }\nprint(\"done\");",
-            "class", 3
-        },
-        {
-            "closure-capture",
-            "闭包捕获循环（10000 次）",
-            "makeCounter 闭包捕获循环。ClosureData 通过 weak_ptr<Environment> 打破循环，"
-            "三后端在闭包捕获上开销相近，RegisterVM 因寄存器分配稍占优势。",
-            "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; }\nvar c = makeCounter();\nvar i = 0;\nwhile (i < 10000) { c(); i = i + 1; }\nprint(\"done\");",
-            "closure", 3
-        },
-        {
-            "dict-access",
-            "字典访问循环（2000 次）",
-            "字典键值读写循环。DictData 使用 unordered_map，每次访问涉及哈希计算，"
-            "三后端性能相近（瓶颈在 hash 而非指令分发），Interpreter 略慢。",
-            "var d = {};\nvar i = 0;\nwhile (i < 2000) { d[\"k\" + i] = i * 2; i = i + 1; }\nprint(d.len());",
-            "loop", 3
-        },
+        {"fib-recursion", "斐波那契递归（fib(15)）",
+         "递归型 fib(15)。栈式 VM 与 RegisterVM 在密集函数调用场景下都显著快于 Interpreter（解释器每个 AST "
+         "节点都需要虚函数分发）。"
+         "RegisterVM 通常略快于 StackVM（寄存器消除 push/pop 内存往返），但差距小于 Interpreter vs VM。",
+         "fun fib(n) { if (n < 2) return n; return fib(n-1) + fib(n-2); }\nprint(fib(15));", "arithmetic", 3},
+        {"loop-sum", "循环求和（1 到 100000）",
+         "纯算术循环。栈式 VM 与 RegisterVM 在热路径上优势最明显——单条 OP_ADD 比访问者模式 dispatch 快 5-10 倍。"
+         "RegisterVM 通过虚拟寄存器避免每次运算 push/pop，进一步降低内存带宽占用。",
+         "var sum = 0;\nvar i = 1;\nwhile (i <= 100000) { sum = sum + i; i = i + 1; }\nprint(sum);", "loop", 3},
+        {"string-concat", "字符串拼接循环（1000 次）",
+         "字符串 + 拼接。每次拼接会构造新 StringData（不可变语义），三后端性能相近（瓶颈在堆分配而非指令分发）。"
+         "GC 在此场景频繁触发，sweep 开销可能拉低三后端共同基线。",
+         "var s = \"\";\nvar i = 0;\nwhile (i < 1000) { s = s + \"x\"; i = i + 1; }\nprint(s.len());", "string", 3},
+        {"class-instantiation", "类实例化循环（10000 次）",
+         "Point 类构造 + 字段赋值循环。InstanceData 分配 + GcManager::registerTracked 是主要开销，"
+         "三后端差距较小（解释器仍稍慢，因为 MethodCall 的 Visitor 分发）。",
+         "class Point { var x; var y; fun init(px, py) { x = px; y = py; } }\nvar i = 0;\nwhile (i < 10000) { var p = "
+         "Point(i, i); i = i + 1; }\nprint(\"done\");",
+         "class", 3},
+        {"closure-capture", "闭包捕获循环（10000 次）",
+         "makeCounter 闭包捕获循环。ClosureData 通过 weak_ptr<Environment> 打破循环，"
+         "三后端在闭包捕获上开销相近，RegisterVM 因寄存器分配稍占优势。",
+         "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; }\nvar c = "
+         "makeCounter();\nvar i = 0;\nwhile (i < 10000) { c(); i = i + 1; }\nprint(\"done\");",
+         "closure", 3},
+        {"dict-access", "字典访问循环（2000 次）",
+         "字典键值读写循环。DictData 使用 unordered_map，每次访问涉及哈希计算，"
+         "三后端性能相近（瓶颈在 hash 而非指令分发），Interpreter 略慢。",
+         "var d = {};\nvar i = 0;\nwhile (i < 2000) { d[\"k\" + i] = i * 2; i = i + 1; }\nprint(d.len());", "loop", 3},
     };
     return kScenarios;
 }
@@ -109,76 +90,51 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
 /// 返回各 opcode 的性能说明文档列表（静态数据）。
 const std::vector<OpCodePerfDoc>& OpCodeProfileLibrary::docs() {
     static const std::vector<OpCodePerfDoc> kDocs = {
-        {
-            "OP_ADD", "arith",
-            "整数加法。在循环场景下是绝对热点——单条 OP_ADD 比解释器 Visitor dispatch 快 5-10 倍。"
-            "RegisterVM 通过虚拟寄存器避免 push/pop 内存往返，进一步降低开销。",
-            "var s = 0; var i = 1; while (i <= 100000) { s = s + i; i = i + 1; }"
-        },
-        {
-            "OP_SUBTRACT", "arith",
-            "整数减法。性能特征与 OP_ADD 一致，但热度通常较低（循环场景下递增多于递减）。",
-            "var d = 100; while (d > 0) { d = d - 1; }"
-        },
-        {
-            "OP_GET_LOCAL", "var",
-            "读取局部变量槽位。在 StackVM 中是热点——每次变量引用都触发一次栈读取。"
-            "RegisterVM 通过虚拟寄存器直接访问，无需 OP_GET_LOCAL 指令（指令密度显著降低）。",
-            "var x = 1; var y = 2; var z = x + y;"
-        },
-        {
-            "OP_SET_LOCAL", "var",
-            "写入局部变量槽位。在循环体内频繁触发（如 i = i + 1）。"
-            "与 OP_GET_LOCAL 配对出现，是 StackVM 指令密度的典型代表。",
-            "var i = 0; while (i < 100) { i = i + 1; }"
-        },
-        {
-            "OP_GET_GLOBAL", "var",
-            "读取全局变量。比 OP_GET_LOCAL 稍慢（需查 hash 表）。"
-            "在密集全局变量引用场景下可能成为热点。",
-            "var g = 42; fun f() { return g; } f();"
-        },
-        {
-            "OP_JUMP_IF_FALSE", "control",
-            "条件跳转。在 while/if 场景下每次迭代触发。"
-            "分支预测失败的代价高于指令本身，但 MiniLang VM 无分支预测（解释执行）。",
-            "var i = 0; while (i < 100) { i = i + 1; }"
-        },
-        {
-            "OP_CALL", "call",
-            "函数调用。开销最大——涉及帧栈分配、参数传递、返回地址保存。"
-            "fib(20) 场景下 OP_CALL 触发 ~21891 次，是 RegisterVM 相对 StackVM 优势最明显的指令。",
-            "fun add(a, b) { return a + b; } add(1, 2);"
-        },
-        {
-            "OP_RETURN", "call",
-            "函数返回。与 OP_CALL 配对，开销同样较大（帧栈回收、返回值传递）。",
-            "fun f() { return 42; } f();"
-        },
-        {
-            "OP_BUILD_ARRAY", "container",
-            "构造数组。涉及堆分配 + GcManager::registerTracked。"
-            "在大数组构造场景下是热点，且 GC 压力大。",
-            "var a = [1, 2, 3, 4, 5];"
-        },
-        {
-            "OP_CLOSURE", "call",
-            "构造闭包。涉及 ClosureData 分配 + upvalue 捕获。"
-            "在闭包循环场景下热点明显，开销高于普通函数调用。",
-            "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; }"
-        },
-        {
-            "OP_GET_UPVALUE", "call",
-            "读取闭包捕获变量。比 OP_GET_LOCAL 稍慢（需通过 upvalue 链间接访问）。"
-            "在密集闭包调用场景下与 OP_CLOSURE 配对出现。",
-            "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; } var f = makeCounter(); f();"
-        },
-        {
-            "OP_METHOD_CALL", "call",
-            "方法调用。比 OP_CALL 更昂贵——涉及方法查找（method resolution）。"
-            "在类实例方法密集调用场景下是热点。",
-            "class P { fun m() { return 1; } } var p = P(); p.m();"
-        },
+        {"OP_ADD", "arith",
+         "整数加法。在循环场景下是绝对热点——单条 OP_ADD 比解释器 Visitor dispatch 快 5-10 倍。"
+         "RegisterVM 通过虚拟寄存器避免 push/pop 内存往返，进一步降低开销。",
+         "var s = 0; var i = 1; while (i <= 100000) { s = s + i; i = i + 1; }"},
+        {"OP_SUBTRACT", "arith", "整数减法。性能特征与 OP_ADD 一致，但热度通常较低（循环场景下递增多于递减）。",
+         "var d = 100; while (d > 0) { d = d - 1; }"},
+        {"OP_GET_LOCAL", "var",
+         "读取局部变量槽位。在 StackVM 中是热点——每次变量引用都触发一次栈读取。"
+         "RegisterVM 通过虚拟寄存器直接访问，无需 OP_GET_LOCAL 指令（指令密度显著降低）。",
+         "var x = 1; var y = 2; var z = x + y;"},
+        {"OP_SET_LOCAL", "var",
+         "写入局部变量槽位。在循环体内频繁触发（如 i = i + 1）。"
+         "与 OP_GET_LOCAL 配对出现，是 StackVM 指令密度的典型代表。",
+         "var i = 0; while (i < 100) { i = i + 1; }"},
+        {"OP_GET_GLOBAL", "var",
+         "读取全局变量。比 OP_GET_LOCAL 稍慢（需查 hash 表）。"
+         "在密集全局变量引用场景下可能成为热点。",
+         "var g = 42; fun f() { return g; } f();"},
+        {"OP_JUMP_IF_FALSE", "control",
+         "条件跳转。在 while/if 场景下每次迭代触发。"
+         "分支预测失败的代价高于指令本身，但 MiniLang VM 无分支预测（解释执行）。",
+         "var i = 0; while (i < 100) { i = i + 1; }"},
+        {"OP_CALL", "call",
+         "函数调用。开销最大——涉及帧栈分配、参数传递、返回地址保存。"
+         "fib(20) 场景下 OP_CALL 触发 ~21891 次，是 RegisterVM 相对 StackVM 优势最明显的指令。",
+         "fun add(a, b) { return a + b; } add(1, 2);"},
+        {"OP_RETURN", "call", "函数返回。与 OP_CALL 配对，开销同样较大（帧栈回收、返回值传递）。",
+         "fun f() { return 42; } f();"},
+        {"OP_BUILD_ARRAY", "container",
+         "构造数组。涉及堆分配 + GcManager::registerTracked。"
+         "在大数组构造场景下是热点，且 GC 压力大。",
+         "var a = [1, 2, 3, 4, 5];"},
+        {"OP_CLOSURE", "call",
+         "构造闭包。涉及 ClosureData 分配 + upvalue 捕获。"
+         "在闭包循环场景下热点明显，开销高于普通函数调用。",
+         "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; }"},
+        {"OP_GET_UPVALUE", "call",
+         "读取闭包捕获变量。比 OP_GET_LOCAL 稍慢（需通过 upvalue 链间接访问）。"
+         "在密集闭包调用场景下与 OP_CLOSURE 配对出现。",
+         "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; } var f = "
+         "makeCounter(); f();"},
+        {"OP_METHOD_CALL", "call",
+         "方法调用。比 OP_CALL 更昂贵——涉及方法查找（method resolution）。"
+         "在类实例方法密集调用场景下是热点。",
+         "class P { fun m() { return 1; } } var p = P(); p.m();"},
     };
     return kDocs;
 }
@@ -188,8 +144,7 @@ const std::vector<OpCodePerfDoc>& OpCodeProfileLibrary::docs() {
 // ============================================================
 
 /// 构造性能基准面板：初始化场景选择器、图表区与状态动画。
-ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent)
-    : QWidget(parent) {
+ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -326,11 +281,13 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent)
     for (const auto& s : items) {
         scenarioList_->addItem(QString::fromUtf8(s.title.c_str()));
     }
-    if (!items.empty()) scenarioList_->setCurrentRow(0);
+    if (!items.empty())
+        scenarioList_->setCurrentRow(0);
 
     connect(scenarioList_, &QListWidget::currentRowChanged, this, [this](int row) {
         const auto& items = ProfileLibrary::scenarios();
-        if (row < 0 || row >= (int)items.size()) return;
+        if (row < 0 || row >= (int)items.size())
+            return;
         const auto& s = items[row];
         std::ostringstream os;
         os << "<b>" << s.title << "</b><br>";
@@ -413,8 +370,7 @@ double ProfileDashboardPanel::measureRegisterVMOnce(Block& ast) {
 //   - 性能开销：每条指令一次 std::function 调用（~20-50ns），对剖析场景可接受
 //   - 返回 std::pair<double, std::array<uint64_t, 256>>：时间 + opcode 计数
 
-std::pair<double, std::array<uint64_t, 256>>
-ProfileDashboardPanel::measureStackVMWithProfile(Block& ast) {
+std::pair<double, std::array<uint64_t, 256>> ProfileDashboardPanel::measureStackVMWithProfile(Block& ast) {
     Compiler compiler;
     auto result = compiler.compile(ast);
     if (compiler.getDiagnostics().hasErrors()) {
@@ -423,9 +379,7 @@ ProfileDashboardPanel::measureStackVMWithProfile(Block& ast) {
     VM vm;
     vm.setOutputCallback([](const std::string&) {});
     std::array<uint64_t, 256> counts{};
-    vm.setStepCallback([&counts](const VMStepInfo& info) {
-        counts[static_cast<uint8_t>(info.opcode)]++;
-    });
+    vm.setStepCallback([&counts](const VMStepInfo& info) { counts[static_cast<uint8_t>(info.opcode)]++; });
     vm.setStepCallbackEnabled(true);
     auto t0 = std::chrono::high_resolution_clock::now();
     auto vmres = vm.execute(result);
@@ -434,11 +388,10 @@ ProfileDashboardPanel::measureStackVMWithProfile(Block& ast) {
     if (vmres != VMResult::VM_OK) {
         throw std::runtime_error("VM runtime error");
     }
-    return { std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts };
+    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts};
 }
 
-std::pair<double, std::array<uint64_t, 256>>
-ProfileDashboardPanel::measureRegisterVMWithProfile(Block& ast) {
+std::pair<double, std::array<uint64_t, 256>> ProfileDashboardPanel::measureRegisterVMWithProfile(Block& ast) {
     Compiler compiler;
     compiler.setUseRegisterVM(true);
     auto regResult = compiler.compileViaRegisterIR(ast);
@@ -448,9 +401,7 @@ ProfileDashboardPanel::measureRegisterVMWithProfile(Block& ast) {
     RegisterVM vm;
     vm.setOutputCallback([](const std::string&) {});
     std::array<uint64_t, 256> counts{};
-    vm.setStepCallback([&counts](const RegVMStepInfo& info) {
-        counts[static_cast<uint8_t>(info.opcode)]++;
-    });
+    vm.setStepCallback([&counts](const RegVMStepInfo& info) { counts[static_cast<uint8_t>(info.opcode)]++; });
     vm.setStepCallbackEnabled(true);
     auto t0 = std::chrono::high_resolution_clock::now();
     auto vmres = vm.execute(regResult);
@@ -459,13 +410,12 @@ ProfileDashboardPanel::measureRegisterVMWithProfile(Block& ast) {
     if (vmres != VMResult::VM_OK) {
         throw std::runtime_error("RegisterVM runtime error");
     }
-    return { std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts };
+    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts};
 }
 
-ProfileDashboardPanel::BackendTiming ProfileDashboardPanel::measureBackend(
-    const std::string& name,
-    std::function<double(Block&)> measure,
-    Block& ast, int iterations) {
+ProfileDashboardPanel::BackendTiming ProfileDashboardPanel::measureBackend(const std::string& name,
+                                                                           std::function<double(Block&)> measure,
+                                                                           Block& ast, int iterations) {
     BackendTiming t;
     t.name = name;
     std::vector<double> samples;
@@ -500,7 +450,7 @@ void ProfileDashboardPanel::startStatusAnimation(const QString& base) {
             statusLabel_->setText(statusRunningBase_ + dots);
         });
     }
-    statusAnimTimer_->start(400);  // 400ms 切换一次
+    statusAnimTimer_->start(400); // 400ms 切换一次
     statusLabel_->setText(base + ".");
 }
 
@@ -514,15 +464,20 @@ void ProfileDashboardPanel::stopStatusAnimation() {
 /// 对指定场景在三后端上分别测速并收集计时结果。
 void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     const auto& items = ProfileLibrary::scenarios();
-    if (scenarioIndex < 0 || scenarioIndex >= (int)items.size()) return;
+    if (scenarioIndex < 0 || scenarioIndex >= (int)items.size())
+        return;
+    // AUDIT-P1 fix: 重入守卫——processEvents(ExcludeUserInputEvents) 期间定时器/信号槽
+    // 可能触发间接调用 runProfile，导致 lastResults_ 被覆盖、状态混乱。
+    if (profiling_)
+        return;
+    profiling_ = true;
     const auto& scenario = items[scenarioIndex];
 
     runProfileBtn_->setEnabled(false);
     // 问题 6: 醒目的"运行中"状态 — 橙色背景 + 动画圆点 + 进度
     startStatusAnimation(QString::fromUtf8("运行中 [1/3] Interpreter"));
-    statusLabel_->setStyleSheet(
-        "QLabel { background: #CB4B16; color: white; border-radius: 4px;"
-        "  padding: 4px 12px; font-weight: bold; }");
+    statusLabel_->setStyleSheet("QLabel { background: #CB4B16; color: white; border-radius: 4px;"
+                                "  padding: 4px 12px; font-weight: bold; }");
     // BUG-GUI-AUDIT-1 fix attempt: Qt 6 已移除通用 ExcludeTimers flag，保持 ExcludeUserInputEvents。
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
@@ -534,17 +489,17 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     if (parser.getDiagnostics().hasErrors()) {
         stopStatusAnimation();
         statusLabel_->setStyleSheet("");
-        statusLabel_->setText(QString::fromUtf8("解析失败：%1").arg(
-            QString::fromUtf8(parser.getDiagnostics().summary().c_str())));
+        statusLabel_->setText(
+            QString::fromUtf8("解析失败：%1").arg(QString::fromUtf8(parser.getDiagnostics().summary().c_str())));
         runProfileBtn_->setEnabled(true);
+        profiling_ = false; // AUDIT-P1 fix: 错误返回点恢复守卫
         return;
     }
 
     // 多次测量三后端
     std::vector<BackendTiming> results;
-    results.push_back(measureBackend("Interpreter",
-        [this](Block& a) { return measureInterpreterOnce(a); },
-        *ast, scenario.iterations));
+    results.push_back(measureBackend(
+        "Interpreter", [this](Block& a) { return measureInterpreterOnce(a); }, *ast, scenario.iterations));
 
     // 问题 7: 在后端之间处理事件，避免长时间阻塞 UI
     statusRunningBase_ = QString::fromUtf8("运行中 [2/3] StackVM");
@@ -552,7 +507,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
 
     // P1-1: StackVM / RegisterVM 走 measureXxxWithProfile，同时累加 opcode 计数
     // 自己实现多次测量循环（替代 measureBackend），累加每次的 opcode 计数
-    std::array<uint64_t, 256> stackVmCounts{};   // 累加 N 次的总计数
+    std::array<uint64_t, 256> stackVmCounts{}; // 累加 N 次的总计数
     std::array<uint64_t, 256> registerVmCounts{};
     {
         BackendTiming t;
@@ -563,7 +518,8 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
             for (int i = 0; i < scenario.iterations; ++i) {
                 auto [us, counts] = measureStackVMWithProfile(*ast);
                 samples.push_back(us);
-                for (size_t j = 0; j < 256; ++j) stackVmCounts[j] += counts[j];
+                for (size_t j = 0; j < 256; ++j)
+                    stackVmCounts[j] += counts[j];
             }
             t.avgMicros = mean(samples);
             t.stddevMicros = stddev(samples);
@@ -587,7 +543,8 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
             for (int i = 0; i < scenario.iterations; ++i) {
                 auto [us, counts] = measureRegisterVMWithProfile(*ast);
                 samples.push_back(us);
-                for (size_t j = 0; j < 256; ++j) registerVmCounts[j] += counts[j];
+                for (size_t j = 0; j < 256; ++j)
+                    registerVmCounts[j] += counts[j];
             }
             t.avgMicros = mean(samples);
             t.stddevMicros = stddev(samples);
@@ -603,7 +560,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
 
     // P1-1: 聚合 opcode 计数为 Top N 热点列表（按计数降序）
     auto aggregateTop10 = [](const std::array<uint64_t, 256>& counts,
-                              bool isRegisterVm) -> std::vector<OpCodeProfileEntry> {
+                             bool isRegisterVm) -> std::vector<OpCodeProfileEntry> {
         std::vector<OpCodeProfileEntry> all;
         uint64_t total = 0;
         for (size_t i = 0; i < 256; ++i) {
@@ -614,43 +571,44 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
                 } else {
                     name = opCodeName(static_cast<OpCode>(i));
                 }
-                all.push_back({ name, counts[i], 0.0 });
+                all.push_back({name, counts[i], 0.0});
                 total += counts[i];
             }
         }
         std::sort(all.begin(), all.end(),
-            [](const OpCodeProfileEntry& a, const OpCodeProfileEntry& b) {
-                return a.count > b.count;
-            });
-        if (all.size() > 10) all.resize(10);
+                  [](const OpCodeProfileEntry& a, const OpCodeProfileEntry& b) { return a.count > b.count; });
+        if (all.size() > 10)
+            all.resize(10);
         if (total > 0) {
-            for (auto& e : all) e.ratio = static_cast<double>(e.count) / static_cast<double>(total);
+            for (auto& e : all)
+                e.ratio = static_cast<double>(e.count) / static_cast<double>(total);
         }
         return all;
     };
-    lastStackVMOpProfile_     = aggregateTop10(stackVmCounts,    false);
-    lastRegisterVMOpProfile_  = aggregateTop10(registerVmCounts, true);
+    lastStackVMOpProfile_ = aggregateTop10(stackVmCounts, false);
+    lastRegisterVMOpProfile_ = aggregateTop10(registerVmCounts, true);
 
     renderResults(results, scenario);
     renderOpCodeProfile(lastStackVMOpProfile_, lastRegisterVMOpProfile_);
 #ifdef MINILANG_HAVE_QTCHARTS
-    renderChart(results);  // C2: QtCharts 模式刷新柱状图
+    renderChart(results); // C2: QtCharts 模式刷新柱状图
 #else
-    update();  // QPainter 模式触发 paintEvent 重绘柱状图
+    update(); // QPainter 模式触发 paintEvent 重绘柱状图
 #endif
     runProfileBtn_->setEnabled(true);
     stopStatusAnimation();
     statusLabel_->setStyleSheet("");
     statusLabel_->setText(QString::fromUtf8("剖析完成"));
+    profiling_ = false; // AUDIT-P1 fix: 正常结束点恢复守卫
 }
 
 /// 将测速结果渲染为后端对比柱状图与概览文本。
-void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& results,
-                                            const ProfileScenario& scenario) {
+void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& results, const ProfileScenario& scenario) {
     resultTable_->setRowCount((int)results.size());
     double minAvg = std::numeric_limits<double>::max();
     for (const auto& r : results) {
-        if (r.success && r.avgMicros < minAvg) minAvg = r.avgMicros;
+        if (r.success && r.avgMicros < minAvg)
+            minAvg = r.avgMicros;
     }
     for (int i = 0; i < (int)results.size(); ++i) {
         const auto& r = results[i];
@@ -659,14 +617,12 @@ void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& resu
             resultTable_->setItem(i, 1, new QTableWidgetItem(QString::number(r.avgMicros, 'f', 1)));
             resultTable_->setItem(i, 2, new QTableWidgetItem(QString::number(r.stddevMicros, 'f', 1)));
             double ratio = (minAvg > 0) ? r.avgMicros / minAvg : 0.0;
-            QString ratioText = (ratio > 1.001)
-                ? QString::fromUtf8("%1x 慢").arg(ratio, 0, 'f', 2)
-                : QString::fromUtf8("最快");
+            QString ratioText =
+                (ratio > 1.001) ? QString::fromUtf8("%1x 慢").arg(ratio, 0, 'f', 2) : QString::fromUtf8("最快");
             resultTable_->setItem(i, 3, new QTableWidgetItem(ratioText));
         } else {
             // 问题 7: 显示失败原因而非仅"失败"，帮助诊断后端兼容性问题
-            QString errText = QString::fromUtf8("失败: ") +
-                QString::fromUtf8(r.errorMessage.c_str()).left(60);
+            QString errText = QString::fromUtf8("失败: ") + QString::fromUtf8(r.errorMessage.c_str()).left(60);
             auto* errItem = new QTableWidgetItem(errText);
             errItem->setToolTip(QString::fromUtf8(r.errorMessage.c_str()));
             errItem->setForeground(QColor("#CC0000"));
@@ -680,9 +636,8 @@ void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& resu
 
 // P1-1: 渲染指令计数表格（StackVM / RegisterVM Top 10 热点 opcode）
 /// 渲染逐 opcode 的性能明细表（各后端耗时）。
-void ProfileDashboardPanel::renderOpCodeProfile(
-    const std::vector<OpCodeProfileEntry>& stackVmProfile,
-    const std::vector<OpCodeProfileEntry>& registerVmProfile) {
+void ProfileDashboardPanel::renderOpCodeProfile(const std::vector<OpCodeProfileEntry>& stackVmProfile,
+                                                const std::vector<OpCodeProfileEntry>& registerVmProfile) {
     // StackVM 表格
     stackVmOpTable_->setRowCount((int)stackVmProfile.size());
     for (int i = 0; i < (int)stackVmProfile.size(); ++i) {
@@ -703,7 +658,7 @@ void ProfileDashboardPanel::renderOpCodeProfile(
 
 /// 根据测速结果生成中文性能分析结论文本。
 QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& results,
-                                                const ProfileScenario& scenario) {
+                                             const ProfileScenario& scenario) {
     std::ostringstream os;
     os << "<h3>" << scenario.title << "</h3>";
     os << "<p><i>[" << scenario.category << "]</i> " << scenario.iterations << " 次迭代平均</p>";
@@ -720,8 +675,7 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
     if (!fastest) {
         os << "<p style='color:#cc0000;'><b>所有后端均失败</b></p>";
     } else {
-        os << "<p><b>最快后端：</b>" << fastest->name
-           << " (" << fastest->avgMicros << " μs)</p>";
+        os << "<p><b>最快后端：</b>" << fastest->name << " (" << fastest->avgMicros << " μs)</p>";
         // 计算与最慢的比值
         const BackendTiming* slowest = nullptr;
         for (const auto& r : results) {
@@ -731,16 +685,14 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
         }
         if (slowest && slowest != fastest) {
             double speedup = slowest->avgMicros / fastest->avgMicros;
-            os << "<p><b>最慢后端：</b>" << slowest->name
-               << " (" << slowest->avgMicros << " μs)</p>";
+            os << "<p><b>最慢后端：</b>" << slowest->name << " (" << slowest->avgMicros << " μs)</p>";
             os << "<p><b>加速比：</b>" << speedup << "x</p>";
         }
     }
     // 问题 7: 列出失败后端及其错误原因
     for (const auto& r : results) {
         if (!r.success) {
-            os << "<p style='color:#cc0000;'><b>" << r.name << " 失败：</b>"
-               << r.errorMessage << "</p>";
+            os << "<p style='color:#cc0000;'><b>" << r.name << " 失败：</b>" << r.errorMessage << "</p>";
         }
     }
     os << "<hr>";
@@ -756,7 +708,8 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
     QWidget::paintEvent(event);
     return;
 #else
-    if (lastResults_.empty()) return;
+    if (lastResults_.empty())
+        return;
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
@@ -780,31 +733,30 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
     // 找最大值用于归一化
     double maxVal = 0;
     for (const auto& r : lastResults_) {
-        if (r.success && r.avgMicros > maxVal) maxVal = r.avgMicros;
+        if (r.success && r.avgMicros > maxVal)
+            maxVal = r.avgMicros;
     }
-    if (maxVal <= 0) return;
+    if (maxVal <= 0)
+        return;
 
     // 三柱
     const QColor colors[3] = {
-        QColor(102, 153, 204),  // Interpreter 蓝
-        QColor(204, 153, 102),  // StackVM 橙
-        QColor(153, 204, 102),  // RegisterVM 绿
+        QColor(102, 153, 204), // Interpreter 蓝
+        QColor(204, 153, 102), // StackVM 橙
+        QColor(153, 204, 102), // RegisterVM 绿
     };
     int barWidth = chartRect.width() / 4;
     for (int i = 0; i < (int)lastResults_.size(); ++i) {
         const auto& r = lastResults_[i];
         int barHeight = r.success ? (int)(r.avgMicros / maxVal * (chartRect.height() - 30)) : 0;
-        QRect bar(chartRect.left() + barWidth / 2 + i * barWidth,
-                  chartRect.bottom() - barHeight - 20,
-                  barWidth, barHeight);
+        QRect bar(chartRect.left() + barWidth / 2 + i * barWidth, chartRect.bottom() - barHeight - 20, barWidth,
+                  barHeight);
         p.setBrush(QBrush(colors[i % 3]));
         p.drawRect(bar);
         p.setPen(QColor(0, 0, 0));
-        p.drawText(bar.left(), chartRect.bottom() - 5,
-                   QString::fromUtf8(r.name.c_str()));
+        p.drawText(bar.left(), chartRect.bottom() - 5, QString::fromUtf8(r.name.c_str()));
         if (r.success) {
-            p.drawText(bar.left(), bar.top() - 5,
-                       QString::number(r.avgMicros, 'f', 0));
+            p.drawText(bar.left(), bar.top() - 5, QString::number(r.avgMicros, 'f', 0));
         }
     }
 #endif
@@ -815,7 +767,8 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
 // 视觉优势：自带 hover tooltip / legend / 入场动画 / 抗锯齿
 /// 在面板内绘制后端计时对比柱状图。
 void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& results) {
-    if (!chart_) return;
+    if (!chart_)
+        return;
     // 清空旧数据
     chart_->removeAllSeries();
     for (const auto& axis : chart_->axes()) {
@@ -826,14 +779,15 @@ void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& result
     QStringList categories;
     double maxVal = 0;
     for (const auto& r : results) {
-        if (r.success && r.avgMicros > maxVal) maxVal = r.avgMicros;
+        if (r.success && r.avgMicros > maxVal)
+            maxVal = r.avgMicros;
     }
 
     // 三色柱（与 QPainter 模式保持一致：蓝/橙/绿）
     static const QColor kColors[3] = {
-        QColor(102, 153, 204),  // Interpreter
-        QColor(204, 153, 102),  // StackVM
-        QColor(153, 204, 102),  // RegisterVM
+        QColor(102, 153, 204), // Interpreter
+        QColor(204, 153, 102), // StackVM
+        QColor(153, 204, 102), // RegisterVM
     };
 
     for (int i = 0; i < (int)results.size(); ++i) {
@@ -843,7 +797,7 @@ void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& result
         if (r.success) {
             *barSet << r.avgMicros;
         } else {
-            *barSet << 0;  // 失败柱以 0 高度显示
+            *barSet << 0; // 失败柱以 0 高度显示
         }
         series->append(barSet);
         categories << QString::fromUtf8(r.name.c_str());
@@ -870,17 +824,21 @@ void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& result
 
 /// 计算多次测速样本的算术平均值。
 double ProfileDashboardPanel::mean(const std::vector<double>& xs) {
-    if (xs.empty()) return 0.0;
+    if (xs.empty())
+        return 0.0;
     double s = 0;
-    for (double x : xs) s += x;
+    for (double x : xs)
+        s += x;
     return s / xs.size();
 }
 
 /// 计算样本标准差，衡量后端耗时稳定性。
 double ProfileDashboardPanel::stddev(const std::vector<double>& xs) {
-    if (xs.size() < 2) return 0.0;
+    if (xs.size() < 2)
+        return 0.0;
     double m = mean(xs);
     double sq = 0;
-    for (double x : xs) sq += (x - m) * (x - m);
+    for (double x : xs)
+        sq += (x - m) * (x - m);
     return std::sqrt(sq / (xs.size() - 1));
 }

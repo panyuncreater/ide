@@ -18,9 +18,9 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <string>
 #include <vector>
-#include <algorithm>
 
 // ============================================================
 // Diagnostic 统一诊断体系
@@ -30,10 +30,10 @@
 
 /// 诊断严重级别
 enum class DiagLevel {
-    Error,       // 致命错误，阻止执行
-    Warning,     // 警告，不阻止执行
-    Info,        // 提示信息
-    Hint         // 改进建议
+    Error,   // 致命错误，阻止执行
+    Warning, // 警告，不阻止执行
+    Info,    // 提示信息
+    Hint     // 改进建议
 };
 
 /// 诊断来源模块
@@ -43,10 +43,10 @@ enum class DiagSource {
     Compiler,
     Interpreter,
     VM,
-    RegisterVM,  // BUG-IBACKEND-3: 区分 StackVM 与 RegisterVM 诊断来源
+    RegisterVM, // BUG-IBACKEND-3: 区分 StackVM 与 RegisterVM 诊断来源
     Formatter,
     IDE,
-    TypeChecker  // 2026-06-29: 静态类型检查诊断
+    TypeChecker // 2026-06-29: 静态类型检查诊断
 };
 
 /// 单条诊断信息
@@ -66,8 +66,7 @@ struct Diagnostic {
         : level(lv), message(msg), line(ln), column(col), source(src) {}
 
     /// P2 fix: 带 code 的构造重载（未来引擎迁移时使用）
-    Diagnostic(DiagLevel lv, const std::string& msg, int ln, int col, DiagSource src,
-               const std::string& diagCode)
+    Diagnostic(DiagLevel lv, const std::string& msg, int ln, int col, DiagSource src, const std::string& diagCode)
         : level(lv), message(msg), line(ln), column(col), source(src), code(diagCode) {}
 
     /// 是否为错误级别
@@ -79,10 +78,14 @@ struct Diagnostic {
     /// 获取严重级别的文本标签
     std::string levelString() const {
         switch (level) {
-        case DiagLevel::Error:   return "错误";
-        case DiagLevel::Warning: return "警告";
-        case DiagLevel::Info:    return "信息";
-        case DiagLevel::Hint:    return "建议";
+        case DiagLevel::Error:
+            return "错误";
+        case DiagLevel::Warning:
+            return "警告";
+        case DiagLevel::Info:
+            return "信息";
+        case DiagLevel::Hint:
+            return "建议";
         }
         return "未知";
     }
@@ -90,15 +93,24 @@ struct Diagnostic {
     /// 获取来源模块的文本标签
     std::string sourceString() const {
         switch (source) {
-        case DiagSource::Lexer:       return "词法分析";
-        case DiagSource::Parser:      return "语法分析";
-        case DiagSource::Compiler:    return "编译器";
-        case DiagSource::Interpreter: return "解释器";
-        case DiagSource::VM:          return "虚拟机";
-        case DiagSource::RegisterVM:  return "寄存器虚拟机";  // BUG-IBACKEND-3
-        case DiagSource::Formatter:   return "格式化器";
-        case DiagSource::IDE:         return "IDE";
-        case DiagSource::TypeChecker: return "类型检查";
+        case DiagSource::Lexer:
+            return "词法分析";
+        case DiagSource::Parser:
+            return "语法分析";
+        case DiagSource::Compiler:
+            return "编译器";
+        case DiagSource::Interpreter:
+            return "解释器";
+        case DiagSource::VM:
+            return "虚拟机";
+        case DiagSource::RegisterVM:
+            return "寄存器虚拟机"; // BUG-IBACKEND-3
+        case DiagSource::Formatter:
+            return "格式化器";
+        case DiagSource::IDE:
+            return "IDE";
+        case DiagSource::TypeChecker:
+            return "类型检查";
         }
         return "未知";
     }
@@ -126,19 +138,20 @@ public:
     void add(const Diagnostic& diag) {
         diagnostics_.push_back(diag);
         // P2 fix: 维护计数器实现 O(1) 查询
-        if (diag.isError()) ++errorCount_;
-        else if (diag.isWarning()) ++warningCount_;
+        if (diag.isError())
+            ++errorCount_;
+        else if (diag.isWarning())
+            ++warningCount_;
     }
 
     /// 便捷方法：添加错误
     void addError(const std::string& msg, int line, int col, DiagSource src) {
         diagnostics_.emplace_back(DiagLevel::Error, msg, line, col, src);
-        ++errorCount_;  // P2 fix: O(1) 计数
+        ++errorCount_; // P2 fix: O(1) 计数
     }
 
     /// P2 fix: 添加带 code 的错误
-    void addError(const std::string& msg, int line, int col, DiagSource src,
-                  const std::string& diagCode) {
+    void addError(const std::string& msg, int line, int col, DiagSource src, const std::string& diagCode) {
         diagnostics_.emplace_back(DiagLevel::Error, msg, line, col, src, diagCode);
         ++errorCount_;
     }
@@ -146,12 +159,11 @@ public:
     /// 便捷方法：添加警告
     void addWarning(const std::string& msg, int line, int col, DiagSource src) {
         diagnostics_.emplace_back(DiagLevel::Warning, msg, line, col, src);
-        ++warningCount_;  // P2 fix: O(1) 计数
+        ++warningCount_; // P2 fix: O(1) 计数
     }
 
     /// P2 fix: 添加带 code 的警告
-    void addWarning(const std::string& msg, int line, int col, DiagSource src,
-                    const std::string& diagCode) {
+    void addWarning(const std::string& msg, int line, int col, DiagSource src, const std::string& diagCode) {
         diagnostics_.emplace_back(DiagLevel::Warning, msg, line, col, src, diagCode);
         ++warningCount_;
     }
@@ -162,8 +174,7 @@ public:
     }
 
     /// P2 fix: 添加带 code 的信息
-    void addInfo(const std::string& msg, int line, int col, DiagSource src,
-                 const std::string& diagCode) {
+    void addInfo(const std::string& msg, int line, int col, DiagSource src, const std::string& diagCode) {
         diagnostics_.emplace_back(DiagLevel::Info, msg, line, col, src, diagCode);
     }
 
@@ -196,7 +207,11 @@ public:
     }
 
     /// 清空所有诊断
-    void clear() { diagnostics_.clear(); errorCount_ = 0; warningCount_ = 0; }
+    void clear() {
+        diagnostics_.clear();
+        errorCount_ = 0;
+        warningCount_ = 0;
+    }
 
     /// 诊断数量
     size_t size() const { return diagnostics_.size(); }
@@ -206,11 +221,11 @@ public:
 
     /// 按行号排序（同文件内的诊断按位置排列）
     void sortByLocation() {
-        std::stable_sort(diagnostics_.begin(), diagnostics_.end(),
-            [](const Diagnostic& a, const Diagnostic& b) {
-                if (a.line != b.line) return a.line < b.line;
-                return a.column < b.column;
-            });
+        std::stable_sort(diagnostics_.begin(), diagnostics_.end(), [](const Diagnostic& a, const Diagnostic& b) {
+            if (a.line != b.line)
+                return a.line < b.line;
+            return a.column < b.column;
+        });
     }
 
     /// 获取摘要文本（如 "3 个错误, 1 个警告"）
@@ -218,17 +233,20 @@ public:
         int errs = errorCount();
         int warns = warningCount();
         std::string result;
-        if (errs > 0) result += std::to_string(errs) + " 个错误";
+        if (errs > 0)
+            result += std::to_string(errs) + " 个错误";
         if (warns > 0) {
-            if (!result.empty()) result += ", ";
+            if (!result.empty())
+                result += ", ";
             result += std::to_string(warns) + " 个警告";
         }
-        if (result.empty()) result = "无错误";
+        if (result.empty())
+            result = "无错误";
         return result;
     }
 
 private:
     std::vector<Diagnostic> diagnostics_;
-    int errorCount_ = 0;    // P2 fix: O(1) 错误计数
-    int warningCount_ = 0;  // P2 fix: O(1) 警告计数
+    int errorCount_ = 0;   // P2 fix: O(1) 错误计数
+    int warningCount_ = 0; // P2 fix: O(1) 警告计数
 };

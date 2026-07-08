@@ -25,23 +25,29 @@
 // ActivityType — 活动类型分类
 // ============================================================
 enum class ActivityType {
-    LAB,        // 实验（lab-01~08）
-    PUZZLE,     // 拼图游戏（token-puzzle）
-    TOY,        // 玩具搭建（ast-toy）
-    SANDBOX,    // 沙盒（vm-sandbox）
-    CHALLENGE,  // 挑战（op-priority-challenge / bug-hunt-*）
-    FREEFORM    // 自由项目
+    LAB,       // 实验（lab-01~08）
+    PUZZLE,    // 拼图游戏（token-puzzle）
+    TOY,       // 玩具搭建（ast-toy）
+    SANDBOX,   // 沙盒（vm-sandbox）
+    CHALLENGE, // 挑战（op-priority-challenge / bug-hunt-*）
+    FREEFORM   // 自由项目
 };
 
 /// 将 ActivityType 转为字符串（用于 UI 显示与测试断言）
 inline const char* activityTypeToString(ActivityType t) {
     switch (t) {
-        case ActivityType::LAB:       return "LAB";
-        case ActivityType::PUZZLE:    return "PUZZLE";
-        case ActivityType::TOY:       return "TOY";
-        case ActivityType::SANDBOX:   return "SANDBOX";
-        case ActivityType::CHALLENGE: return "CHALLENGE";
-        case ActivityType::FREEFORM:  return "FREEFORM";
+    case ActivityType::LAB:
+        return "LAB";
+    case ActivityType::PUZZLE:
+        return "PUZZLE";
+    case ActivityType::TOY:
+        return "TOY";
+    case ActivityType::SANDBOX:
+        return "SANDBOX";
+    case ActivityType::CHALLENGE:
+        return "CHALLENGE";
+    case ActivityType::FREEFORM:
+        return "FREEFORM";
     }
     return "UNKNOWN";
 }
@@ -50,14 +56,14 @@ inline const char* activityTypeToString(ActivityType t) {
 // LearningActivity — 单个学习活动项
 // ============================================================
 struct LearningActivity {
-    std::string id;                          // 唯一标识（如 "lab-01" / "welcome" / "bug-hunt-beginner"）
-    std::string title;                       // 显示名称
-    std::string description;                 // 简短描述
-    int         stage = 0;                   // 所属阶段 (0-4)
-    std::vector<std::string> prerequisites;  // 前置活动 ID 列表（必须全部完成才能解锁）
-    int         estimatedMinutes = 0;        // 预计耗时（分钟）
-    ActivityType type = ActivityType::LAB;   // 活动类型
-    std::string iconHint;                    // 图标提示（emoji 或 icon name）
+    std::string id;                         // 唯一标识（如 "lab-01" / "welcome" / "bug-hunt-beginner"）
+    std::string title;                      // 显示名称
+    std::string description;                // 简短描述
+    int stage = 0;                          // 所属阶段 (0-4)
+    std::vector<std::string> prerequisites; // 前置活动 ID 列表（必须全部完成才能解锁）
+    int estimatedMinutes = 0;               // 预计耗时（分钟）
+    ActivityType type = ActivityType::LAB;  // 活动类型
+    std::string iconHint;                   // 图标提示（emoji 或 icon name）
 };
 
 // ============================================================

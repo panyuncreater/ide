@@ -20,12 +20,12 @@
 // PanelAnimator。不依赖 IdeController / 引擎层，纯静态数据。
 // ============================================================
 
-#include <QWidget>
-#include <QListWidget>
-#include <QTextBrowser>
 #include <QLineEdit>
 #include <QList>
+#include <QListWidget>
 #include <QStringList>
+#include <QTextBrowser>
+#include <QWidget>
 
 class GlossaryPanel : public QWidget {
     Q_OBJECT
@@ -48,12 +48,12 @@ private slots:
 
 private:
     struct TermEntry {
-        QString id;           // 术语 ID（如 "nan-boxing"）
-        QString term;         // 术语名（中英对照，如 "NaN-boxing NaN 装箱"）
-        QString category;     // 分类（"内存模型"/"编译"/"运行时"/"类型系统"/"测试"等）
-        QString shortDef;     // 一句话定义
-        QString fullDef;      // 详细解释（Markdown）
-        QStringList related;  // 关联术语 ID
+        QString id;          // 术语 ID（如 "nan-boxing"）
+        QString term;        // 术语名（中英对照，如 "NaN-boxing NaN 装箱"）
+        QString category;    // 分类（"内存模型"/"编译"/"运行时"/"类型系统"/"测试"等）
+        QString shortDef;    // 一句话定义
+        QString fullDef;     // 详细解释（Markdown）
+        QStringList related; // 关联术语 ID
     };
 
     QList<TermEntry> entries_;

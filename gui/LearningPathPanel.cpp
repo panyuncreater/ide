@@ -15,24 +15,24 @@
 #include "gui/LearningPathPanel.h"
 #include "gui/I18n.h"
 
-#include <QVBoxLayout>
+#include <QFrame>
 #include <QHBoxLayout>
-#include <QScrollArea>
-#include <QProgressBar>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
-#include <QFrame>
 #include <QMessageBox>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QScrollArea>
 #include <QSizePolicy>
-#include <QKeyEvent>
 #include <QTimer>
+#include <QVBoxLayout>
 
 #include <sstream>
 
-#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
-#include "Label.h"        // QFluentKit（StrongBodyLabel）
-#include "gui/TeachingTheme.h"  // learningStageColor() 5 阶段统一配色
+#include "Label.h"             // QFluentKit（StrongBodyLabel）
+#include "PushButton.h"        // QFluentKit（PrimaryPushButton）
+#include "gui/TeachingTheme.h" // learningStageColor() 5 阶段统一配色
 
 // ============================================================
 // 阶段颜色与标题
@@ -47,12 +47,18 @@ QString LearningPathPanel::stageColor(int stage) {
 /// 返回指定阶段的标题文案。
 QString LearningPathPanel::stageTitle(int stage) {
     switch (stage) {
-        case 0: return mlTr("阶段零：首次接触");
-        case 1: return mlTr("阶段一：编译前端");
-        case 2: return mlTr("阶段二：执行引擎");
-        case 3: return mlTr("阶段三：深入理解");
-        case 4: return mlTr("阶段四：实战训练");
-        default: return mlTr("未知阶段");
+    case 0:
+        return mlTr("阶段零：首次接触");
+    case 1:
+        return mlTr("阶段一：编译前端");
+    case 2:
+        return mlTr("阶段二：执行引擎");
+    case 3:
+        return mlTr("阶段三：深入理解");
+    case 4:
+        return mlTr("阶段四：实战训练");
+    default:
+        return mlTr("未知阶段");
     }
 }
 
@@ -60,8 +66,7 @@ QString LearningPathPanel::stageTitle(int stage) {
 // 构造函数
 // ============================================================
 /// 构造学习路径面板：初始化阶段列表容器与导航状态。
-LearningPathPanel::LearningPathPanel(QWidget* parent)
-    : QWidget(parent) {
+LearningPathPanel::LearningPathPanel(QWidget* parent) : QWidget(parent) {
 
     // M9: 让面板可接收键盘焦点，以支持 Up/Down/Enter 键盘导航
     setFocusPolicy(Qt::StrongFocus);
@@ -80,26 +85,23 @@ LearningPathPanel::LearningPathPanel(QWidget* parent)
     overallProgress_->setFixedHeight(18);
     // P1-2 fix (F8): 当前阶段提示 label，显示「你正处于：阶段 X — 标题」
     stageLabel_ = new QLabel(QString::fromUtf8(""), this);
-    stageLabel_->setStyleSheet(QString::fromUtf8(
-        "QLabel { padding: 2px 8px; border-radius: 4px;"
-        "  background: %1; color: white; font-weight: bold; }").arg(
-            TeachingTheme::primary().name()));
+    stageLabel_->setStyleSheet(QString::fromUtf8("QLabel { padding: 2px 8px; border-radius: 4px;"
+                                                 "  background: %1; color: white; font-weight: bold; }")
+                                   .arg(TeachingTheme::primary().name()));
     topBar->addWidget(overallLabel_, 0);
     topBar->addWidget(stageLabel_, 0);
     topBar->addWidget(overallProgress_, 1);
 
     // P2-3 fix (F9): 学情画像——薄弱点提示 + 预计剩余时间
     weakPointsLabel_ = new QLabel(this);
-    weakPointsLabel_->setStyleSheet(QString::fromUtf8(
-        "QLabel { padding: 2px 8px; border-radius: 4px;"
-        "  background: %1; color: white; font-weight: bold; }").arg(
-            TeachingTheme::warning().name()));
-    weakPointsLabel_->hide();  // 默认隐藏，仅在有薄弱点时显示
+    weakPointsLabel_->setStyleSheet(QString::fromUtf8("QLabel { padding: 2px 8px; border-radius: 4px;"
+                                                      "  background: %1; color: white; font-weight: bold; }")
+                                        .arg(TeachingTheme::warning().name()));
+    weakPointsLabel_->hide(); // 默认隐藏，仅在有薄弱点时显示
     remainingLabel_ = new QLabel(this);
-    remainingLabel_->setStyleSheet(QString::fromUtf8(
-        "QLabel { padding: 2px 8px; border-radius: 4px;"
-        "  background: %1; color: white; font-weight: bold; }").arg(
-            TeachingTheme::success().name()));
+    remainingLabel_->setStyleSheet(QString::fromUtf8("QLabel { padding: 2px 8px; border-radius: 4px;"
+                                                     "  background: %1; color: white; font-weight: bold; }")
+                                       .arg(TeachingTheme::success().name()));
     topBar->addWidget(weakPointsLabel_, 0);
     topBar->addWidget(remainingLabel_, 0);
 
@@ -108,14 +110,11 @@ LearningPathPanel::LearningPathPanel(QWidget* parent)
     searchEdit_->setPlaceholderText(mlTr("搜索活动..."));
     searchEdit_->setClearButtonEnabled(true);
     searchEdit_->setMaximumWidth(200);
-    searchEdit_->setStyleSheet(QString::fromUtf8(
-        "QLineEdit { padding: 4px 8px; border: 1px solid %1;"
-        "  border-radius: 4px; background: %2; color: %3; }"
-        "QLineEdit:focus { border: 1px solid %4; }").arg(
-            TeachingTheme::border().name(),
-            TeachingTheme::surface().name(),
-            TeachingTheme::textPrimary().name(),
-            TeachingTheme::primary().name()));
+    searchEdit_->setStyleSheet(QString::fromUtf8("QLineEdit { padding: 4px 8px; border: 1px solid %1;"
+                                                 "  border-radius: 4px; background: %2; color: %3; }"
+                                                 "QLineEdit:focus { border: 1px solid %4; }")
+                                   .arg(TeachingTheme::border().name(), TeachingTheme::surface().name(),
+                                        TeachingTheme::textPrimary().name(), TeachingTheme::primary().name()));
     // 搜索框防抖：避免逐字符触发 refresh() 导致重建风暴。
     // 用户停止输入 250ms 后才真正刷新列表。
     searchDebounceTimer_ = new QTimer(this);
@@ -123,7 +122,7 @@ LearningPathPanel::LearningPathPanel(QWidget* parent)
     searchDebounceTimer_->setInterval(250);
     connect(searchDebounceTimer_, &QTimer::timeout, this, [this]() { refresh(); });
     connect(searchEdit_, &QLineEdit::textChanged, this, [this](const QString&) {
-        searchDebounceTimer_->start();  // 重启计时器（防抖）
+        searchDebounceTimer_->start(); // 重启计时器（防抖）
     });
     topBar->addWidget(searchEdit_);
     mainLayout->addLayout(topBar);
@@ -146,7 +145,7 @@ LearningPathPanel::LearningPathPanel(QWidget* parent)
     // ---- 底部：刷新 + 重置 ----
     auto* bottomBar = new QHBoxLayout;
     refreshBtn_ = new PrimaryPushButton(mlTr("刷新"), this);
-    resetBtn_   = new QPushButton(mlTr("重置进度"), this);
+    resetBtn_ = new QPushButton(mlTr("重置进度"), this);
     bottomBar->addWidget(refreshBtn_);
     bottomBar->addStretch(1);
     bottomBar->addWidget(resetBtn_);
@@ -154,7 +153,7 @@ LearningPathPanel::LearningPathPanel(QWidget* parent)
 
     // ---- 信号连接 ----
     connect(refreshBtn_, &QPushButton::clicked, this, &LearningPathPanel::onRefresh);
-    connect(resetBtn_,   &QPushButton::clicked, this, &LearningPathPanel::onResetProgress);
+    connect(resetBtn_, &QPushButton::clicked, this, &LearningPathPanel::onResetProgress);
 
     // 首次加载进度并刷新显示
     LearnerProgressStore::instance().load();
@@ -199,18 +198,16 @@ void LearningPathPanel::refresh() {
         if (curStage >= LearningPathData::stageCount()) {
             // 全部通关
             stageLabel_->setText(QString::fromUtf8("🎉 %1").arg(mlTr("已通关所有阶段")));
-            stageLabel_->setStyleSheet(QString::fromUtf8(
-                "QLabel { padding: 2px 8px; border-radius: 4px;"
-                "  background: %1; color: white; font-weight: bold; }").arg(
-                    TeachingTheme::learningStageColor(
-                        LearningPathData::stageCount() - 1).name()));
+            stageLabel_->setStyleSheet(
+                QString::fromUtf8("QLabel { padding: 2px 8px; border-radius: 4px;"
+                                  "  background: %1; color: white; font-weight: bold; }")
+                    .arg(TeachingTheme::learningStageColor(LearningPathData::stageCount() - 1).name()));
         } else {
             // 显示当前阶段标题（标题已含「阶段X：标题」格式）
             stageLabel_->setText(QString::fromUtf8("📍 %1").arg(stageTitle(curStage)));
-            stageLabel_->setStyleSheet(QString::fromUtf8(
-                "QLabel { padding: 2px 8px; border-radius: 4px;"
-                "  background: %1; color: white; font-weight: bold; }").arg(
-                    TeachingTheme::learningStageColor(curStage).name()));
+            stageLabel_->setStyleSheet(QString::fromUtf8("QLabel { padding: 2px 8px; border-radius: 4px;"
+                                                         "  background: %1; color: white; font-weight: bold; }")
+                                           .arg(TeachingTheme::learningStageColor(curStage).name()));
         }
     }
 
@@ -223,12 +220,16 @@ void LearningPathPanel::refresh() {
             // 取第 1 个薄弱点活动标题展示（点击可跳转）
             const LearningActivity* wp = nullptr;
             for (const auto& a : all) {
-                if (a.id == weakPoints.front().activityId) { wp = &a; break; }
+                if (a.id == weakPoints.front().activityId) {
+                    wp = &a;
+                    break;
+                }
             }
             QString wpText;
             if (wp) {
-                wpText = mlTr("⚠ 薄弱点: %1 (失败 %2 次)").arg(
-                    QString::fromStdString(wp->title)).arg(weakPoints.front().fails);
+                wpText = mlTr("⚠ 薄弱点: %1 (失败 %2 次)")
+                             .arg(QString::fromStdString(wp->title))
+                             .arg(weakPoints.front().fails);
             } else {
                 wpText = mlTr("⚠ 薄弱点: %1 个").arg(weakPoints.size());
             }
@@ -238,12 +239,14 @@ void LearningPathPanel::refresh() {
                 for (const auto& wp2 : weakPoints) {
                     const LearningActivity* a2 = nullptr;
                     for (const auto& a : all) {
-                        if (a.id == wp2.activityId) { a2 = &a; break; }
+                        if (a.id == wp2.activityId) {
+                            a2 = &a;
+                            break;
+                        }
                     }
-                    QString title = a2 ? QString::fromStdString(a2->title)
-                                       : QString::fromStdString(wp2.activityId);
-                    detailLines << QString::fromUtf8("%1 (尝试 %2 / 失败 %3)")
-                        .arg(title).arg(wp2.attempts).arg(wp2.fails);
+                    QString title = a2 ? QString::fromStdString(a2->title) : QString::fromStdString(wp2.activityId);
+                    detailLines
+                        << QString::fromUtf8("%1 (尝试 %2 / 失败 %3)").arg(title).arg(wp2.attempts).arg(wp2.fails);
                 }
                 weakPointsLabel_->setToolTip(detailLines.join(QStringLiteral("\n")));
             } else {
@@ -291,9 +294,8 @@ QFrame* LearningPathPanel::buildStageCard(int stage) {
     frame->setFrameShape(QFrame::StyledPanel);
     QString color = stageColor(stage);
 
-    frame->setStyleSheet(QString::fromUtf8(
-        "QFrame#stageCard { border: 1px solid %1; border-radius: 6px; }"
-    ).arg(color));
+    frame->setStyleSheet(
+        QString::fromUtf8("QFrame#stageCard { border: 1px solid %1; border-radius: 6px; }").arg(color));
     frame->setObjectName(QString::fromUtf8("stageCard"));
 
     auto* layout = new QVBoxLayout(frame);
@@ -303,8 +305,7 @@ QFrame* LearningPathPanel::buildStageCard(int stage) {
     // 阶段标题 + 阶段进度条
     auto* header = new QHBoxLayout;
     QString title = stageTitle(stage);
-    auto* titleLabel = new QLabel(QString::fromUtf8("<b style='color:%1;'>%2</b>")
-                                       .arg(color).arg(title), frame);
+    auto* titleLabel = new QLabel(QString::fromUtf8("<b style='color:%1;'>%2</b>").arg(color).arg(title), frame);
 
     auto& store = LearnerProgressStore::instance();
     const auto& all = allActivities();
@@ -329,19 +330,19 @@ QFrame* LearningPathPanel::buildStageCard(int stage) {
     QString filter = searchEdit_ ? searchEdit_->text().trimmed() : QString();
     for (const auto* act : stageActivities) {
         if (!filter.isEmpty()) {
-            bool matches =
-                QString::fromStdString(act->id).contains(filter, Qt::CaseInsensitive) ||
-                QString::fromStdString(act->title).contains(filter, Qt::CaseInsensitive) ||
-                QString::fromStdString(act->description).contains(filter, Qt::CaseInsensitive);
+            bool matches = QString::fromStdString(act->id).contains(filter, Qt::CaseInsensitive) ||
+                           QString::fromStdString(act->title).contains(filter, Qt::CaseInsensitive) ||
+                           QString::fromStdString(act->description).contains(filter, Qt::CaseInsensitive);
             if (!matches) {
-                continue;  // 跳过不匹配的活动
+                continue; // 跳过不匹配的活动
             }
         }
 
         bool unlocked = store.isUnlocked(act->id, all);
         bool completed = false;
         auto cit = store.data().completed.find(act->id);
-        if (cit != store.data().completed.end() && cit->second) completed = true;
+        if (cit != store.data().completed.end() && cit->second)
+            completed = true;
         bool recommended = (act->id == recommendedId);
 
         auto* row = buildActivityRow(*act, unlocked, completed, recommended);
@@ -355,9 +356,8 @@ QFrame* LearningPathPanel::buildStageCard(int stage) {
 // 构造单个活动项行（使用 QPushButton 实现可点击）
 // ============================================================
 /// 构建单个活动的可点击行控件。
-QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
-                                              bool unlocked, bool completed,
-                                              bool recommended) {
+QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity, bool unlocked, bool completed,
+                                             bool recommended) {
     // 使用 QPushButton 作为行容器，flat 模式去除按钮样式
     auto* row = new QPushButton(scrollContent_);
     row->setFlat(true);
@@ -365,7 +365,7 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
     row->setFocusPolicy(Qt::NoFocus);
     row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     row->setCursor(unlocked ? Qt::PointingHandCursor : Qt::ArrowCursor);
-    row->setEnabled(unlocked);  // 未解锁的活动禁用点击
+    row->setEnabled(unlocked); // 未解锁的活动禁用点击
 
     auto* layout = new QHBoxLayout(row);
     layout->setContentsMargins(4, 2, 4, 2);
@@ -374,11 +374,11 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
     // 图标：☑ / ☐ / 🔒
     QString icon;
     if (completed) {
-        icon = QString::fromUtf8("\xe2\x98\x91");  // ☑ U+2611
+        icon = QString::fromUtf8("\xe2\x98\x91"); // ☑ U+2611
     } else if (!unlocked) {
-        icon = QString::fromUtf8("\xf0\x9f\x94\x92");  // 🔒 lock emoji
+        icon = QString::fromUtf8("\xf0\x9f\x94\x92"); // 🔒 lock emoji
     } else {
-        icon = QString::fromUtf8("\xe2\x98\x90");  // ☐ U+2610
+        icon = QString::fromUtf8("\xe2\x98\x90"); // ☐ U+2610
     }
     auto* iconLabel = new QLabel(icon, row);
     iconLabel->setFixedSize(22, 22);
@@ -435,17 +435,15 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
             // 用 ★ 字符显示星级
             QString starStr;
             for (int i = 0; i < stars && i < 3; ++i) {
-                starStr += QString::fromUtf8("\xe2\x98\x85");  // ★ U+2605
+                starStr += QString::fromUtf8("\xe2\x98\x85"); // ★ U+2605
             }
             parts << starStr;
         }
         if (!parts.isEmpty()) {
             auto* badge = new QLabel(parts.join(QString::fromUtf8(" · ")), row);
-            badge->setStyleSheet(QString::fromUtf8(
-                "color: %1; font-weight: bold; padding: 1px 6px;"
-                "  border: 1px solid %2; border-radius: 3px;").arg(
-                    TeachingTheme::success().name().left(7),
-                    TeachingTheme::success().name()));
+            badge->setStyleSheet(QString::fromUtf8("color: %1; font-weight: bold; padding: 1px 6px;"
+                                                   "  border: 1px solid %2; border-radius: 3px;")
+                                     .arg(TeachingTheme::success().name().left(7), TeachingTheme::success().name()));
             layout->addWidget(badge, 0);
         }
     }
@@ -453,8 +451,9 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
     // 推荐标签
     if (recommended && unlocked && !completed) {
         auto* recLabel = new QLabel(QString::fromUtf8("<b style='color:%1;'>\xe2\x86\x90 %2</b>")
-            .arg(stageColor(activity.stage))
-            .arg(mlTr("当前推荐")), row);
+                                        .arg(stageColor(activity.stage))
+                                        .arg(mlTr("当前推荐")),
+                                    row);
         recLabel->setTextFormat(Qt::RichText);
         layout->addWidget(recLabel, 0);
 
@@ -462,19 +461,17 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
         // AUDIT-P2 fix: 原 rgba(%1, 0.18) 传 hex 字符串 (#859900) 给 QSS rgba() 函数
         // 不合法，QSS rgba 只接受数字参数 rgba(r, g, b, a)。改为展开为数字格式。
         QColor sc = stageColor(activity.stage);
-        row->setStyleSheet(QString::fromUtf8(
-            "QPushButton { background-color: rgba(0,0,0,0); border-radius: 4px; }"
-            "QPushButton:hover { background-color: rgba(%1, %2, %3, 46); }"
-        ).arg(sc.red()).arg(sc.green()).arg(sc.blue()));
+        row->setStyleSheet(QString::fromUtf8("QPushButton { background-color: rgba(0,0,0,0); border-radius: 4px; }"
+                                             "QPushButton:hover { background-color: rgba(%1, %2, %3, 46); }")
+                               .arg(sc.red())
+                               .arg(sc.green())
+                               .arg(sc.blue()));
     } else if (unlocked) {
-        row->setStyleSheet(QString::fromUtf8(
-            "QPushButton { background-color: rgba(0,0,0,0); border: none; }"
-            "QPushButton:hover { background-color: rgba(0,0,0,0.06); }"
-        ));
+        row->setStyleSheet(QString::fromUtf8("QPushButton { background-color: rgba(0,0,0,0); border: none; }"
+                                             "QPushButton:hover { background-color: rgba(0,0,0,0.06); }"));
     } else {
-        row->setStyleSheet(QString::fromUtf8(
-            "QPushButton { background-color: rgba(0,0,0,0); border: none; color: #999; }"
-        ));
+        row->setStyleSheet(
+            QString::fromUtf8("QPushButton { background-color: rgba(0,0,0,0); border: none; color: #999; }"));
         // 未解锁：tooltip 提示需要先完成的前置活动
         QStringList prereqTitles;
         for (const auto& prereqId : activity.prerequisites) {
@@ -493,9 +490,7 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
     // 连接点击信号
     if (unlocked) {
         QString actId = QString::fromStdString(activity.id);
-        connect(row, &QPushButton::clicked, this, [this, actId]() {
-            onActivityClicked(actId);
-        });
+        connect(row, &QPushButton::clicked, this, [this, actId]() { onActivityClicked(actId); });
         // M9: 收集到键盘导航列表中（仅已解锁项可被导航选中）
         activityRows_.append(row);
 
@@ -503,16 +498,21 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
         int attempts = 0;
         {
             auto it = store.data().attemptCount.find(activity.id);
-            if (it != store.data().attemptCount.end()) attempts = it->second;
+            if (it != store.data().attemptCount.end())
+                attempts = it->second;
         }
         int fails = store.getFailCount(activity.id);
         if (attempts > 0 || fails > 0 || score > 0 || spent > 0 || stars > 0) {
             QStringList lines;
             lines << mlTr("尝试 %1 次").arg(attempts);
-            if (fails > 0) lines << mlTr("失败 %1 次").arg(fails);
-            if (score > 0) lines << mlTr("得分 %1").arg(score);
-            if (stars > 0) lines << mlTr("星级 %1/3").arg(stars);
-            if (spent > 0) lines << mlTr("已用 %1 分钟").arg(spent);
+            if (fails > 0)
+                lines << mlTr("失败 %1 次").arg(fails);
+            if (score > 0)
+                lines << mlTr("得分 %1").arg(score);
+            if (stars > 0)
+                lines << mlTr("星级 %1/3").arg(stars);
+            if (spent > 0)
+                lines << mlTr("已用 %1 分钟").arg(spent);
             row->setToolTip(lines.join(QStringLiteral(" · ")));
         }
     }
@@ -538,7 +538,7 @@ void LearningPathPanel::highlightActivityRow(int idx) {
         // 在原样式后追加蓝色边框高亮规则（属性选择器，仅当 navHighlight=true 时生效）
         cur->setProperty("navHighlight", true);
         cur->setStyleSheet(highlightedSavedStyle_ +
-            " QPushButton[navHighlight=\"true\"] { border: 2px solid #2196F3; border-radius: 4px; }");
+                           " QPushButton[navHighlight=\"true\"] { border: 2px solid #2196F3; border-radius: 4px; }");
         // 滚动到可见
         scrollArea_->ensureWidgetVisible(cur);
     }
@@ -551,14 +551,13 @@ void LearningPathPanel::highlightActivityRow(int idx) {
 void LearningPathPanel::keyPressEvent(QKeyEvent* event) {
     if (!activityRows_.isEmpty()) {
         if (event->key() == Qt::Key_Down) {
-            int next = (currentNavIndex_ < 0) ? 0
-                       : (currentNavIndex_ + 1) % activityRows_.size();
+            int next = (currentNavIndex_ < 0) ? 0 : (currentNavIndex_ + 1) % activityRows_.size();
             highlightActivityRow(next);
             return;
         }
         if (event->key() == Qt::Key_Up) {
             int prev = (currentNavIndex_ < 0) ? activityRows_.size() - 1
-                       : (currentNavIndex_ - 1 + activityRows_.size()) % activityRows_.size();
+                                              : (currentNavIndex_ - 1 + activityRows_.size()) % activityRows_.size();
             highlightActivityRow(prev);
             return;
         }
@@ -585,18 +584,22 @@ void LearningPathPanel::onRefresh() {
 // 重置进度按钮槽
 // ============================================================
 /// 「重置进度」按钮：清空学习者进度。
+// 当前行为：reset 后 save。save 失败时内存已清空但磁盘旧数据保留，
+// 弹窗告知用户（重启后旧数据回归，造成「假重置」）。这是已知的行为取舍。
 void LearningPathPanel::onResetProgress() {
     // 带确认对话框
-    QMessageBox::StandardButton reply = QMessageBox::question(
-        this,
-        mlTr("重置进度"),
-        mlTr("确定要重置所有学习进度吗？此操作不可撤销。"),
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No
-    );
+    QMessageBox::StandardButton reply =
+        QMessageBox::question(this, mlTr("重置进度"), mlTr("确定要重置所有学习进度吗？此操作不可撤销。"),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (reply == QMessageBox::Yes) {
         LearnerProgressStore::instance().reset();
-        LearnerProgressStore::instance().save();
+        if (!LearnerProgressStore::instance().save()) {
+            // AUDIT-P2 fix: save 失败时告知用户，不静默丢失
+            QMessageBox::warning(this, mlTr("重置失败"),
+                                 mlTr("进度文件写入失败（磁盘满或权限不足），"
+                                      "内存已重置但未落盘。重启后进度将恢复。"
+                                      "请检查磁盘空间与写权限后重试。"));
+        }
         refresh();
     }
 }
@@ -606,7 +609,8 @@ void LearningPathPanel::onResetProgress() {
 // ============================================================
 /// 活动行点击回调：请求打开对应面板。
 void LearningPathPanel::onActivityClicked(const QString& activityId) {
-    if (activityId.isEmpty()) return;
+    if (activityId.isEmpty())
+        return;
     auto& store = LearnerProgressStore::instance();
     store.recordAttempt(activityId.toStdString());
     store.save();
@@ -618,13 +622,13 @@ void LearningPathPanel::onActivityClicked(const QString& activityId) {
 // ============================================================
 /// 将某活动标记为已完成并刷新视图。
 void LearningPathPanel::markActivityCompleted(const QString& activityId) {
-    if (activityId.isEmpty()) return;
+    if (activityId.isEmpty())
+        return;
     auto& store = LearnerProgressStore::instance();
     // AUDIT-P2 fix: 活动已完成则跳过 save + refresh，避免重复磁盘 I/O 与 UI 重建。
     // 浏览型面板（visited-*）每次访问都触发 markActivityCompleted，原实现不检查
     // 已完成状态直接 save + refresh，对已通关活动产生大量冗余操作。
-    if (store.data().completed.count(activityId.toStdString()) &&
-        store.data().completed.at(activityId.toStdString())) {
+    if (store.data().completed.count(activityId.toStdString()) && store.data().completed.at(activityId.toStdString())) {
         return;
     }
     store.markCompleted(activityId.toStdString());

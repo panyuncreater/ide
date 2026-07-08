@@ -23,9 +23,9 @@
  */
 #pragma once
 
+#include "common/Diagnostic.h"
 #include <functional>
 #include <string>
-#include "common/Diagnostic.h"
 
 // ============================================================
 // IBackend 后端抽象接口（ARCH-09）

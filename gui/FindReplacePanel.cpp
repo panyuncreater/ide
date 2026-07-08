@@ -6,26 +6,25 @@
  * 并支持 Esc 关闭、回车查找等键盘交互。
  */
 #include "gui/FindReplacePanel.h"
+#include "Label.h"      // QFluentKit（CaptionLabel，全局类）
+#include "PushButton.h" // QFluentKit（PushButton / PrimaryPushButton，全局类）
+#include "common/RuntimeLimits.h"
 #include "gui/CodeEditor.h"
 #include "gui/TeachingTheme.h"
-#include "common/RuntimeLimits.h"
-#include "PushButton.h"   // QFluentKit（PushButton / PrimaryPushButton，全局类）
-#include "Label.h"         // QFluentKit（CaptionLabel，全局类）
-#include <QVBoxLayout>
+#include <QApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QShortcut>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
-#include <QTextCharFormat>
-#include <QShortcut>
-#include <QApplication>
+#include <QVBoxLayout>
 
 // ============================================================
 // FindReplacePanel 查找替换面板实现
 // ============================================================
 
-FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent)
-    : QWidget(parent), editor_(editor) {
+FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent) : QWidget(parent), editor_(editor) {
     // 构建面板 UI
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 2, 4, 2);
@@ -145,7 +144,7 @@ void FindReplacePanel::closePanel() {
 void FindReplacePanel::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         closePanel();
-        event->accept();   // QT-R-09 fix: 显式 accept，避免事件继续传播
+        event->accept(); // QT-R-09 fix: 显式 accept，避免事件继续传播
         return;
     }
     // F3 查找下一个, Shift+F3 查找上一个
@@ -155,7 +154,7 @@ void FindReplacePanel::keyPressEvent(QKeyEvent* event) {
         } else {
             onFindNext();
         }
-        event->accept();   // QT-R-09 fix: 显式 accept，避免事件继续传播
+        event->accept(); // QT-R-09 fix: 显式 accept，避免事件继续传播
         return;
     }
     QWidget::keyPressEvent(event);
@@ -178,12 +177,16 @@ void FindReplacePanel::onFindTextChanged(const QString& text) {
 /// 执行一次查找（forward 指定方向），返回是否找到。
 bool FindReplacePanel::findText(bool forward) {
     QString text = findEdit_->text();
-    if (text.isEmpty()) return false;
+    if (text.isEmpty())
+        return false;
 
     QTextDocument::FindFlags flags;
-    if (caseSensitiveCheck_->isChecked()) flags |= QTextDocument::FindCaseSensitively;
-    if (wholeWordCheck_->isChecked()) flags |= QTextDocument::FindWholeWords;
-    if (!forward) flags |= QTextDocument::FindBackward;
+    if (caseSensitiveCheck_->isChecked())
+        flags |= QTextDocument::FindCaseSensitively;
+    if (wholeWordCheck_->isChecked())
+        flags |= QTextDocument::FindWholeWords;
+    if (!forward)
+        flags |= QTextDocument::FindBackward;
 
     QTextCursor cursor = editor_->textCursor();
     QTextCursor found = editor_->document()->find(text, cursor, flags);
@@ -223,7 +226,8 @@ void FindReplacePanel::onFindPrev() {
 void FindReplacePanel::onReplace() {
     QString findTextStr = findEdit_->text();
     QString replaceTextStr = replaceEdit_->text();
-    if (findTextStr.isEmpty()) return;
+    if (findTextStr.isEmpty())
+        return;
 
     QTextCursor cursor = editor_->textCursor();
     // 如果当前有选中文本且匹配查找内容，替换它
@@ -272,11 +276,14 @@ void FindReplacePanel::onReplace() {
 void FindReplacePanel::onReplaceAll() {
     QString findTextStr = findEdit_->text();
     QString replaceTextStr = replaceEdit_->text();
-    if (findTextStr.isEmpty()) return;
+    if (findTextStr.isEmpty())
+        return;
 
     QTextDocument::FindFlags flags;
-    if (caseSensitiveCheck_->isChecked()) flags |= QTextDocument::FindCaseSensitively;
-    if (wholeWordCheck_->isChecked()) flags |= QTextDocument::FindWholeWords;
+    if (caseSensitiveCheck_->isChecked())
+        flags |= QTextDocument::FindCaseSensitively;
+    if (wholeWordCheck_->isChecked())
+        flags |= QTextDocument::FindWholeWords;
 
     // AUDIT-BUG-E7 fix: beginEditBlock/endEditBlock 必须在同一 cursor 上调用。
     // 原实现 cursor=found 后 endEditBlock 在新 cursor 上调用，违反 Qt API 契约。
@@ -289,10 +296,11 @@ void FindReplacePanel::onReplaceAll() {
     searchCursor.movePosition(QTextCursor::Start);
     // P2 fix: 限制替换数量上限，防止超大文档阻塞 UI
     // D14 fix: 上限统一引用 RuntimeLimits::MAX_REPLACE_ALL
-    QTextCursor found;  // BUG-FR-2: 提升到循环外，用于退出后判断是否达上限
+    QTextCursor found; // BUG-FR-2: 提升到循环外，用于退出后判断是否达上限
     while (replaceCount < RuntimeLimits::MAX_REPLACE_ALL) {
         found = editor_->document()->find(findTextStr, searchCursor, flags);
-        if (found.isNull()) break;
+        if (found.isNull())
+            break;
         searchCursor = found;
         searchCursor.insertText(replaceTextStr);
         replaceCount++;
@@ -303,8 +311,7 @@ void FindReplacePanel::onReplaceAll() {
     // 若 found 非 null，说明因达到 MAX_REPLACE_ALL 上限退出（而非无更多匹配），
     // 此时文档中可能仍有剩余匹配未替换，需提示用户。
     if (!found.isNull()) {
-        statusLabel_->setText(
-            QString("已替换 %1+ 处（达到上限，仍有剩余匹配）").arg(replaceCount));
+        statusLabel_->setText(QString("已替换 %1+ 处（达到上限，仍有剩余匹配）").arg(replaceCount));
         statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::warning().name()));
     } else {
         statusLabel_->setText(QString("已替换 %1 处").arg(replaceCount));
@@ -318,8 +325,10 @@ void FindReplacePanel::highlightMatches(const QString& text) {
     QList<QTextEdit::ExtraSelection> selections;
 
     QTextDocument::FindFlags flags;
-    if (caseSensitiveCheck_->isChecked()) flags |= QTextDocument::FindCaseSensitively;
-    if (wholeWordCheck_->isChecked()) flags |= QTextDocument::FindWholeWords;
+    if (caseSensitiveCheck_->isChecked())
+        flags |= QTextDocument::FindCaseSensitively;
+    if (wholeWordCheck_->isChecked())
+        flags |= QTextDocument::FindWholeWords;
 
     QTextCursor cursor(editor_->document());
     cursor.movePosition(QTextCursor::Start);
@@ -327,17 +336,19 @@ void FindReplacePanel::highlightMatches(const QString& text) {
     int count = 0;
     while (true) {
         QTextCursor found = editor_->document()->find(text, cursor, flags);
-        if (found.isNull()) break;
+        if (found.isNull())
+            break;
         cursor = found;
 
         QTextEdit::ExtraSelection sel;
         sel.cursor = found;
-        sel.format.setBackground(QColor(255, 255, 0, 100));  // 半透明黄色
+        sel.format.setBackground(QColor(255, 255, 0, 100)); // 半透明黄色
         selections.append(sel);
         count++;
         // P2 fix: 限制高亮匹配数量，防止大文档卡顿
         // D14 fix: 上限统一引用 RuntimeLimits::MAX_FIND_HIGHLIGHTS
-        if (count >= RuntimeLimits::MAX_FIND_HIGHLIGHTS) break;
+        if (count >= RuntimeLimits::MAX_FIND_HIGHLIGHTS)
+            break;
     }
 
     editor_->setFindSelections(selections);

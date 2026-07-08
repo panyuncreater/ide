@@ -25,13 +25,13 @@
  */
 #pragma once
 
-#include <string>
-#include <memory>
-#include <vector>
 #include "ast/ASTNode.h"
-#include "lexer/Token.h"
-#include "interpreter/Visitor.h"
 #include "common/RuntimeLimits.h"
+#include "interpreter/Visitor.h"
+#include "lexer/Token.h"
+#include <memory>
+#include <string>
+#include <vector>
 
 // ARCH-01 fix: 移除不必要的 #include "interpreter/Value.h"。
 // Formatter 的 visit 方法返回 void，lastFormatResult_ 是 std::string，
@@ -75,18 +75,18 @@ class ContinueStmt;
 
 /// 花括号风格
 enum class BraceStyle {
-    SAME_LINE,    // K&R 风格：if (x) {
-    NEXT_LINE     // Allman 风格：if (x)\n{
+    SAME_LINE, // K&R 风格：if (x) {
+    NEXT_LINE  // Allman 风格：if (x)\n{
 };
 
 /// 格式化选项
 struct FormatOptions {
-    int indentSize = 4;              // 缩进空格数
-    bool useTabs = false;            // 使用 tab 缩进（true 时忽略 indentSize）
+    int indentSize = 4;   // 缩进空格数
+    bool useTabs = false; // 使用 tab 缩进（true 时忽略 indentSize）
     BraceStyle braceStyle = BraceStyle::SAME_LINE;
-    bool spaceAroundOperators = true;  // 二元运算符两侧加空格
-    bool spaceAfterComma = true;       // 逗号后加空格
-    bool blankLineBetweenFunctions = true;  // 函数/类声明之间加空行
+    bool spaceAroundOperators = true;      // 二元运算符两侧加空格
+    bool spaceAfterComma = true;           // 逗号后加空格
+    bool blankLineBetweenFunctions = true; // 函数/类声明之间加空行
     // AUDIT-FMT-P1 fix: 移除 semicolons 字段——它是死代码（声明但从未被读取）。
     // MiniLang 解析器严格要求语句以 ';' 结束（Parser.cpp 中 var/expr/break/continue
     // 等均 consume(TK_SEMICOLON)），若实现 semicolons=false 会产生无法重新解析的代码，
@@ -159,7 +159,7 @@ public:
     void visitThrowStmt(ThrowStmt& node) override;
     void visitImportStmt(ImportStmt& node) override;
     void visitExportStmt(ExportStmt& node) override;
-    void visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
+    void visitInterpolatedString(InterpolatedString& node) override; // C5 fix
 
     /// 格式化 AST 为代码文本
     std::string format(Block& program);
@@ -182,20 +182,20 @@ public:
 
 private:
     FormatOptions options_;
-    int currentIndent_ = 0;      // 当前缩进级别
-    int formatDepth_ = 0;        // D5 fix: 格式化递归深度计数器
+    int currentIndent_ = 0; // 当前缩进级别
+    int formatDepth_ = 0;   // D5 fix: 格式化递归深度计数器
     static constexpr int MAX_FORMAT_DEPTH = RuntimeLimits::MAX_FORMAT_DEPTH;
-    std::vector<Token> comments_; // F1 fix: 注释 token 列表
-    size_t commentIndex_ = 0;    // 当前注释游标
-    std::string lastFormatResult_;  // 存储 visit* 方法的格式化结果
+    std::vector<Token> comments_;  // F1 fix: 注释 token 列表
+    size_t commentIndex_ = 0;      // 当前注释游标
+    std::string lastFormatResult_; // 存储 visit* 方法的格式化结果
 
     // P3 fix: 缓存频繁生成的小字符串，避免重复分配（mutable 因为 indent() 是 const）
-    mutable std::string indentCache_;     // 当前缩进字符串缓存
+    mutable std::string indentCache_;    // 当前缩进字符串缓存
     mutable int cachedIndentLevel_ = -1; // 缓存对应的缩进级别
-    std::string commaCache_;     // 逗号分隔符缓存
+    std::string commaCache_;             // 逗号分隔符缓存
     bool commaCacheValid_ = false;
-    mutable std::string binOpKey_;       // binOp 缓存键（上次使用的运算符）
-    mutable std::string binOpVal_;       // binOp 缓存值
+    mutable std::string binOpKey_; // binOp 缓存键（上次使用的运算符）
+    mutable std::string binOpVal_; // binOp 缓存值
 
     /// 生成缩进字符串（P3: 带缓存）
     std::string indent() const;
@@ -240,5 +240,5 @@ private:
     std::string formatMemberAssign(MemberAssign& node);
     std::string formatMethodCall(MethodCall& node);
     std::string formatNullLiteral(NullLiteral& node);
-    std::string formatInterpolatedString(InterpolatedString& node);  // C5 fix
+    std::string formatInterpolatedString(InterpolatedString& node); // C5 fix
 };

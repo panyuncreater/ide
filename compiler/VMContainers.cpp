@@ -4,21 +4,20 @@
 // (executeContainerOps / executeWritebackOps / executeMiscOps)
 // ============================================================
 
-#include "compiler/VM.h"
-#include "interpreter/BuiltinMethods.h"  // 共享纯函数层（len/contains/has）
-#include "interpreter/NumericUtils.h"    // 共享溢出检查（B6 fix）
-#include "interpreter/StringIntern.h"    // PERF-05 fix: 方法标记字符串驻留
-#include "common/Utf8Utils.h"            // P0-4 fix: UTF-8 码位工具
-#include "common/BoundsCheck.h"           // Dedup-7A: inBounds 替代重复的索引检查
-#include "interpreter/ErrorFormat.h"    // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
-#include "common/TypeChecker.h"        // 2026-06-29: typeMatchValue（OP_TYPE_CHECK）
 #include "Logger.h"
-#include <sstream>
-#include <climits>
-#include <cstdint>
-#include <cmath>  // BUG 8.1 fix: std::fmod
+#include "common/BoundsCheck.h" // Dedup-7A: inBounds 替代重复的索引检查
+#include "common/TypeChecker.h" // 2026-06-29: typeMatchValue（OP_TYPE_CHECK）
+#include "common/Utf8Utils.h"   // P0-4 fix: UTF-8 码位工具
+#include "compiler/VM.h"
+#include "interpreter/BuiltinMethods.h" // 共享纯函数层（len/contains/has）
+#include "interpreter/ErrorFormat.h"    // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
+#include "interpreter/NumericUtils.h"   // 共享溢出检查（B6 fix）
+#include "interpreter/StringIntern.h"   // PERF-05 fix: 方法标记字符串驻留
 #include <algorithm>
-
+#include <climits>
+#include <cmath> // BUG 8.1 fix: std::fmod
+#include <cstdint>
+#include <sstream>
 
 // ============================================================
 // 容器与成员操作类指令
@@ -46,7 +45,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     switch (op) {
     case OpCode::OP_BUILD_ARRAY: {
         uint8_t count = chunk.code[ip + 1];
-        if (stack_.size() < count) return runtimeError("栈下溢: OP_BUILD_ARRAY");
+        if (stack_.size() < count)
+            return runtimeError("栈下溢: OP_BUILD_ARRAY");
         std::vector<Value> elements(count);
         // 逆序弹出直接填入预分配槽位，无需 reverse
         for (int i = count - 1; i >= 0; --i) {
@@ -60,7 +60,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_BUILD_DICT: {
         uint8_t pairCount = chunk.code[ip + 1];
-        if (stack_.size() < static_cast<size_t>(pairCount) * 2) return runtimeError("栈下溢: OP_BUILD_DICT");
+        if (stack_.size() < static_cast<size_t>(pairCount) * 2)
+            return runtimeError("栈下溢: OP_BUILD_DICT");
         std::unordered_map<std::string, Value> dict;
         dict.reserve(pairCount);
         // 先入后出：倒序弹出键值对
@@ -84,7 +85,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_INDEX_GET: {
-        if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_GET");
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢: OP_INDEX_GET");
         Value idx = pop();
         // V-P2-15 fix: obj 只读不写，改为 const 避免 arrayVal/dictVal/stringVal 触发 COW 深拷贝
         const Value obj = pop();
@@ -94,14 +96,14 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                 push(obj.arrayVal()[static_cast<size_t>(i)]);
             } else {
                 return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                    static_cast<long long>(i), obj.arrayVal().size()));
+                                                        static_cast<long long>(i), obj.arrayVal().size()));
             }
         } else if (obj.isDict() && idx.isString()) {
             auto it = obj.dictVal().find(idx.stringVal());
             if (it != obj.dictVal().end()) {
                 push(it->second);
             } else {
-                push(Value::nullValue());  // 字典访问不存在的键返回 null（与解释器一致）
+                push(Value::nullValue()); // 字典访问不存在的键返回 null（与解释器一致）
             }
         } else if (obj.isArray()) {
             return runtimeError("数组索引需要整数类型");
@@ -122,7 +124,10 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                 } else {
                     isAscii = true;
                     for (size_t b = 0; b < s.size(); ++b) {
-                        if (static_cast<unsigned char>(s[b]) >= 0x80) { isAscii = false; break; }
+                        if (static_cast<unsigned char>(s[b]) >= 0x80) {
+                            isAscii = false;
+                            break;
+                        }
                     }
                     lastAsciiStrPtr_ = strPtr;
                     lastAsciiStrSize_ = s.size();
@@ -132,7 +137,7 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                     push(Value(s.substr(static_cast<size_t>(i), 1)));
                     notifyStep(ip, op);
                     ip += 1;
-                    break;  // 跳过慢路径，直接完成 OP_INDEX_GET
+                    break; // 跳过慢路径，直接完成 OP_INDEX_GET
                 }
             }
 
@@ -153,7 +158,7 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
             }
             if (i < 0 || !found) {
                 return runtimeError(ErrorFormat::format("字符串索引越界: %lld, 有效范围 [0, %lld)",
-                    static_cast<long long>(i), static_cast<long long>(charCount)));
+                                                        static_cast<long long>(i), static_cast<long long>(charCount)));
             }
             push(Value(s.substr(targetBytePos, targetByteLen)));
         } else if (obj.isString()) {
@@ -174,7 +179,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         // M1 fix: 嵌套索引赋值（如 arr[i][j] = val）
         // 栈序: [..., obj, outerIdx, innerIdx, val]
         // 弹出 val, innerIdx, obj → 修改 obj[innerIdx] → 存入 lastMutatedReceiver_
-        if (stack_.size() < 3) return runtimeError("栈下溢: OP_INDEX_SET");
+        if (stack_.size() < 3)
+            return runtimeError("栈下溢: OP_INDEX_SET");
         Value val = pop();
         Value innerIdx = pop();
         Value obj = pop();
@@ -185,7 +191,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
             } else {
                 return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
+                                                        static_cast<long long>(i),
+                                                        std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && innerIdx.isString()) {
             obj.dictVal()[innerIdx.stringVal()] = val;
@@ -203,15 +210,18 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     case OpCode::OP_INDEX_SET_VAR: {
         // 直接修改全局变量中的数组/字典元素
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[idx].stringVal();
-        if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_SET_VAR");
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢: OP_INDEX_SET_VAR");
         Value val = pop();
         Value index = pop();
         // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析（先 globalSlots_ 再 globals_）
         Value* objPtr = resolveMutableGlobal(varName);
-        if (!objPtr) return runtimeError("未定义的变量: " + varName);
-        Value& obj = *objPtr;  // 引用，直接修改
+        if (!objPtr)
+            return runtimeError("未定义的变量: " + varName);
+        Value& obj = *objPtr; // 引用，直接修改
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
             // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（全局数组 refCount 常 >1）
@@ -219,7 +229,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
             } else {
                 return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
+                                                        static_cast<long long>(i),
+                                                        std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = val;
@@ -236,33 +247,36 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     case OpCode::OP_INDEX_SET_LOCAL: {
         // 直接修改 stack_[bp+slot] 中的数组/字典元素（用于方法内 this.arr[i] = val）
         uint8_t slot = chunk.code[ip + 1];
-        if (stack_.size() < 2) return runtimeError("栈下溢: OP_INDEX_SET_LOCAL");
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢: OP_INDEX_SET_LOCAL");
         Value val = pop();
         Value index = pop();
         size_t bp = currentFrame().basePointer;
         if (bp + slot >= stack_.size()) {
             return runtimeError("内部错误: 局部变量槽越界");
         }
-        Value& obj = stack_[bp + slot];  // 栈引用，直接修改
+        Value& obj = stack_[bp + slot]; // 栈引用，直接修改
         // BUG-INH-AUDIT-4 fix: slot==0 谓词对 OP_INDEX_SET_LOCAL 是死代码——slot 0 是
         // this 实例（非数组/字典），数组/字典分支永不命中。正确谓词应与 OP_SET_LOCAL
         // 对齐：slot 在字段范围 [1, fieldOrder.size()] 时标记 fieldsModified，确保
         // this.arr[i]=val 的 COW detach 后字段同步回 this.fields()。
-        bool isFieldSlot = (slot > 0 && currentFrame().chunk &&
-                            slot <= currentFrame().chunk->fieldOrder.size());
+        bool isFieldSlot = (slot > 0 && currentFrame().chunk && slot <= currentFrame().chunk->fieldOrder.size());
         if (obj.isArray() && index.isInt()) {
             int64_t i = index.intVal();
             // Perf-Finding: 越界错误路径用 std::as_const 避免 COW detach（栈槽 obj 来自 this.arr 时 refCount 常 >1）
             if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
                 obj.arrayVal()[static_cast<size_t>(i)] = val;
-                if (isFieldSlot) currentFrame().fieldsModified = true;
+                if (isFieldSlot)
+                    currentFrame().fieldsModified = true;
             } else {
                 return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)",
-                    static_cast<long long>(i), std::as_const(obj).arrayVal().size()));
+                                                        static_cast<long long>(i),
+                                                        std::as_const(obj).arrayVal().size()));
             }
         } else if (obj.isDict() && index.isString()) {
             obj.dictVal()[index.stringVal()] = val;
-            if (isFieldSlot) currentFrame().fieldsModified = true;
+            if (isFieldSlot)
+                currentFrame().fieldsModified = true;
         } else if (obj.isArray()) {
             return runtimeError("数组索引需要整数类型");
         } else {
@@ -276,7 +290,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     case OpCode::OP_SUPER_MEMBER_GET:
     case OpCode::OP_MEMBER_GET: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[idx].stringVal();
         // V-P2-16 fix: obj 只读不写，改为 const 避免 fields/dictVal 触发 COW 深拷贝
         const Value obj = pop();
@@ -293,9 +308,8 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
                 if (methodChunk != nullptr) {
                     // PERF-05 fix: 驻留 "method:Class.field" 字符串，避免每次成员访问重复构造。
                     // 同一类+方法的成员访问频繁发生（如 obj.x 多次读取），驻留后池中复用同一 std::string。
-                    push(Value(StringIntern::internConcat(
-                        StringIntern::internConcat("method:", obj.className()),
-                        std::string(".") + fieldName)));
+                    push(Value(StringIntern::internConcat(StringIntern::internConcat("method:", obj.className()),
+                                                          std::string(".") + fieldName)));
                 } else {
                     return runtimeError("类 " + obj.className() + " 没有字段或方法 '" + fieldName + "'");
                 }
@@ -319,9 +333,11 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         // M1 fix: 嵌套成员赋值（如 obj.field.subfield = val 或 arr[i].field = val）
         // 栈序: [..., obj, val]
         // 弹出 val, obj → 修改 obj.field → 存入 lastMutatedReceiver_
-        if (stack_.size() < 2) return runtimeError("栈下溢: OP_MEMBER_SET");
+        if (stack_.size() < 2)
+            return runtimeError("栈下溢: OP_MEMBER_SET");
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[idx].stringVal();
         Value val = pop();
         Value obj = pop();
@@ -342,14 +358,16 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         // 直接修改全局变量.fields()[fieldName]
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
-        if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[varIdx].stringVal();
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
         Value val = pop();
         // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析
         Value* objPtr = resolveMutableGlobal(varName);
-        if (!objPtr) return runtimeError("未定义的变量: " + varName);
-        Value& obj = *objPtr;  // 引用，直接修改
+        if (!objPtr)
+            return runtimeError("未定义的变量: " + varName);
+        Value& obj = *objPtr; // 引用，直接修改
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
         } else if (obj.isDict()) {
@@ -366,18 +384,20 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
         // 直接修改 stack_[bp+slot].fields()[fieldName]（用于方法内 this.field = val）
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
-        if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (fieldIdx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[fieldIdx].stringVal();
         Value val = pop();
         size_t bp = currentFrame().basePointer;
         if (bp + slot >= stack_.size()) {
             return runtimeError("内部错误: 局部变量槽越界");
         }
-        Value& obj = stack_[bp + slot];  // 栈引用，直接修改
+        Value& obj = stack_[bp + slot]; // 栈引用，直接修改
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
             // VM fix: 标记字段已修改，OP_RETURN 可跳过只读方法的字段同步
-            if (slot == 0) currentFrame().fieldsModified = true;
+            if (slot == 0)
+                currentFrame().fieldsModified = true;
             // 当 slot==0（写 this.field）时，也需同步更新对应的字段槽
             // 否则 OP_RETURN 会用字段槽的旧值覆盖 this.fields()，导致 this.field 赋值丢失
             if (slot == 0 && currentFrame().chunk && !currentFrame().chunk->fieldOrder.empty()) {
@@ -426,7 +446,8 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         // d.x = 42 把整个变异后 d 赋给 d["x"]，产生嵌套字典。
         uint16_t varIdx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         uint16_t fieldIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
-        if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (varIdx >= chunk.constants.size() || fieldIdx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         const std::string& varName = chunk.constants[varIdx].stringVal();
         // fieldIdx 仅用于反汇编/调试，运行时不需要（整体替换语义）
         (void)chunk.constants[fieldIdx];
@@ -456,7 +477,8 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         // 否则 this.obj.field = val 的 COW detach 后字段不会写回 this.fields()。
         uint8_t slot = chunk.code[ip + 1];
         uint16_t fieldIdx = chunk.code[ip + 2] | (chunk.code[ip + 3] << 8);
-        if (fieldIdx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (fieldIdx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         // fieldIdx 仅用于反汇编/调试，运行时不需要（整体替换语义）
         (void)chunk.constants[fieldIdx];
         size_t bp = currentFrame().basePointer;
@@ -467,8 +489,7 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         stack_[bp + slot] = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
         // BUG-INH-AUDIT-4 fix: 字段槽写回需标记 fieldsModified
-        if (slot > 0 && currentFrame().chunk &&
-            slot <= currentFrame().chunk->fieldOrder.size()) {
+        if (slot > 0 && currentFrame().chunk && slot <= currentFrame().chunk->fieldOrder.size()) {
             currentFrame().fieldsModified = true;
         }
         notifyStep(ip, op);
@@ -517,8 +538,7 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
         stack_[bp + slot] = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
         // BUG-INH-AUDIT-4 fix: 字段槽写回需标记 fieldsModified
-        if (slot > 0 && currentFrame().chunk &&
-            slot <= currentFrame().chunk->fieldOrder.size()) {
+        if (slot > 0 && currentFrame().chunk && slot <= currentFrame().chunk->fieldOrder.size()) {
             currentFrame().fieldsModified = true;
         }
         notifyStep(ip, op);
@@ -667,19 +687,26 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
                 int depth = 0;
                 bool found = false;
                 while (classIt != classInfo_.end() && depth < 64) {
-                    if (classIt->second.name == annotation) { found = true; break; }
-                    if (classIt->second.superClassName.empty()) break;
+                    if (classIt->second.name == annotation) {
+                        found = true;
+                        break;
+                    }
+                    if (classIt->second.superClassName.empty())
+                        break;
                     classIt = classInfo_.find(classIt->second.superClassName);
                     ++depth;
                 }
-                if (found) { notifyStep(ip, op); ip += 3; break; }  // 匹配，通过
+                if (found) {
+                    notifyStep(ip, op);
+                    ip += 3;
+                    break;
+                } // 匹配，通过
             }
-            return runtimeError(ErrorFormat::format(
-                "类型注解违反: 期望类型 %s，实际为 %s",
-                annotation.c_str(), val.typeName().c_str()));
+            return runtimeError(ErrorFormat::format("类型注解违反: 期望类型 %s，实际为 %s", annotation.c_str(),
+                                                    val.typeName().c_str()));
         }
         notifyStep(ip, op);
-        ip += 3;  // opcode(1B) + typeIdx(2B)
+        ip += 3; // opcode(1B) + typeIdx(2B)
         break;
     }
 
@@ -696,7 +723,8 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_JUMP: {
         uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP");
+        if (jump >= chunk.code.size())
+            return runtimeError("跳转目标越界: OP_JUMP");
         notifyStep(ip, op);
         ip = jump;
         break;
@@ -704,7 +732,8 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_JUMP_IF_FALSE: {
         uint16_t jump = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (jump >= chunk.code.size()) return runtimeError("跳转目标越界: OP_JUMP_IF_FALSE");
+        if (jump >= chunk.code.size())
+            return runtimeError("跳转目标越界: OP_JUMP_IF_FALSE");
         // 注意：不弹出条件值——编译器在 OP_JUMP_IF_FALSE 后显式生成 OP_POP
         // 如果这里也 pop，会导致所有条件/短路表达式的栈操作双重弹出
         notifyStep(ip, op);
@@ -718,7 +747,8 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_LOOP: {
         uint16_t loop = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (loop >= chunk.code.size()) return runtimeError("跳转目标越界: OP_LOOP");
+        if (loop >= chunk.code.size())
+            return runtimeError("跳转目标越界: OP_LOOP");
         notifyStep(ip, op);
         ip = loop;
         break;
@@ -726,7 +756,8 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
 
     case OpCode::OP_INIT_FIELD: {
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
-        if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        if (idx >= chunk.constants.size())
+            return runtimeError("常量池索引越界");
         const std::string& fieldName = chunk.constants[idx].stringVal();
         Value val = pop();
         // 栈顶是实例（OP_CLASS_NEW 推入的），直接修改
@@ -746,7 +777,8 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
         // F11: push try handler，记录 catch 目标和当前栈深度
         uint16_t catchOffset = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         size_t catchIp = ip + 3 + catchOffset;
-        if (catchIp >= chunk.code.size()) return runtimeError("OP_TRY_BEGIN: catch 目标越界");
+        if (catchIp >= chunk.code.size())
+            return runtimeError("OP_TRY_BEGIN: catch 目标越界");
         tryStack_.push_back({catchIp, stack_.size(), frames_.size() - 1});
         notifyStep(ip, op);
         ip += 3;

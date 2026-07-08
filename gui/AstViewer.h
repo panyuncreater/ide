@@ -1,13 +1,13 @@
 #pragma once
 
-#include <QGraphicsView>
-#include <QGraphicsScene>
 #include <QColor>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <memory>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
-#include <memory>
 #include <vector>
-#include <tuple>
 
 class ASTNode;
 class QGraphicsRectItem;
@@ -73,12 +73,12 @@ private:
     /// 布局阶段记录轮廓，绘制阶段读取 finalX/finalY。
     struct RtNode {
         ASTNode* astNode = nullptr;
-        double finalX = 0;       // 绘制坐标（父坐标系下相对父节点中心的 x 偏移）
-        double finalY = 0;       // 绘制坐标（相对根节点的 y，逐层累加 LEVEL_SPACING + NODE_HEIGHT）
-        std::vector<double> leftContour;   // 左轮廓：每层最左 x（相对此节点中心）
-        std::vector<double> rightContour;  // 右轮廓：每层最右 x（相对此节点中心）
-        std::vector<RtNode*> children;     // 拥有的子 RtNode（不管理生命周期）
-        bool collapsed = false;            // 用户是否折叠了此节点
+        double finalX = 0;                // 绘制坐标（父坐标系下相对父节点中心的 x 偏移）
+        double finalY = 0;                // 绘制坐标（相对根节点的 y，逐层累加 LEVEL_SPACING + NODE_HEIGHT）
+        std::vector<double> leftContour;  // 左轮廓：每层最左 x（相对此节点中心）
+        std::vector<double> rightContour; // 右轮廓：每层最右 x（相对此节点中心）
+        std::vector<RtNode*> children;    // 拥有的子 RtNode（不管理生命周期）
+        bool collapsed = false;           // 用户是否折叠了此节点
     };
 
     /// PERF-24 fix: 递归统计 AST 节点数（用于大 AST 上限保护）

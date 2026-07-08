@@ -1,13 +1,13 @@
 #pragma once
 
-#include <QWidget>
-#include <QListWidget>
-#include <QTableWidget>
-#include <QLabel>
-#include <QSplitter>
-#include <string>
-#include "interpreter/Value.h"
 #include "compiler/Bytecode.h"
+#include "interpreter/Value.h"
+#include <QLabel>
+#include <QListWidget>
+#include <QSplitter>
+#include <QTableWidget>
+#include <QWidget>
+#include <string>
 
 // ============================================================
 // VmStackPanel - VM 栈状态可视化面板
@@ -44,10 +44,10 @@ public:
     void clearAll();
 
 private:
-    QLabel* opLabel_ = nullptr;          // 当前指令标签
-    QListWidget* stackList_ = nullptr;   // 栈内容列表
+    QLabel* opLabel_ = nullptr;            // 当前指令标签
+    QListWidget* stackList_ = nullptr;     // 栈内容列表
     QTableWidget* globalsTable_ = nullptr; // 全局变量表
-    QLabel* stackTitle_ = nullptr;       // BUG-VSP-6 fix: 栈/寄存器区标题（模式切换时适配）
+    QLabel* stackTitle_ = nullptr;         // BUG-VSP-6 fix: 栈/寄存器区标题（模式切换时适配）
 
     /// BUG-VSP-3 fix: 上次 updateGlobals 时值列的最大文本长度，
     /// 用于检测内容变长时重算列宽（仅行数变化时重算不足以覆盖所有场景）。

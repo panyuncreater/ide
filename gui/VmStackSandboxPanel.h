@@ -25,17 +25,17 @@
 
 #pragma once
 
-#include <QWidget>
 #include <QComboBox>
+#include <QHash>
 #include <QLabel>
-#include <QPushButton>
-#include <QListWidget>
 #include <QList>
+#include <QListWidget>
+#include <QPushButton>
 #include <QStackedWidget>
+#include <QString>
 #include <QTableWidget>
 #include <QTextEdit>
-#include <QString>
-#include <QHash>
+#include <QWidget>
 #include <string>
 #include <vector>
 
@@ -46,7 +46,7 @@ class IdeController;
 class VmStackSandboxPanel : public QWidget {
     Q_OBJECT
 public:
-/// 构造 VM 栈沙盒面板；parent 为父控件。
+    /// 构造 VM 栈沙盒面板；parent 为父控件。
     explicit VmStackSandboxPanel(QWidget* parent = nullptr);
     // AUDIT-P0 fix: 析构时反注册 IdeController 监听器。
     ~VmStackSandboxPanel() override;
@@ -60,99 +60,99 @@ signals:
     void activityCompleted(const QString& levelId);
 
 private slots:
-/// 关卡变更回调。
+    /// 关卡变更回调。
     void onLevelChanged(int index);
-/// 撤销一步操作。
+    /// 撤销一步操作。
     void onUndo();
-/// 重置当前关卡。
+    /// 重置当前关卡。
     void onReset();
-/// 校验当前答案。
+    /// 校验当前答案。
     void onCheck();
     /// P1-3 fix (F14): 用真实 Lexer+Parser+Compiler+StackVM 执行当前关卡对应的 MiniLang 源码
     void onVerifyWithRealStackVM();
 
     // ---- 真实字节码追踪页 slots ----
-/// 编译并加载到跟踪页。
+    /// 编译并加载到跟踪页。
     void onCompileAndLoad();
-/// 跟踪页单步执行。
+    /// 跟踪页单步执行。
     void onTraceStep();
-/// 跟踪页全速执行。
+    /// 跟踪页全速执行。
     void onTraceRunAll();
-/// 跟踪页重置。
+    /// 跟踪页重置。
     void onTraceReset();
 
 private:
     // ---- 页切换 ----
-    QPushButton*    pageSandboxBtn_  = nullptr;  ///< 「栈沙盒」子页按钮
-    QPushButton*    pageTraceBtn_    = nullptr;  ///< 「真实字节码追踪」子页按钮
-    QStackedWidget* pageStack_       = nullptr;  ///< 子页堆叠容器
+    QPushButton* pageSandboxBtn_ = nullptr; ///< 「栈沙盒」子页按钮
+    QPushButton* pageTraceBtn_ = nullptr;   ///< 「真实字节码追踪」子页按钮
+    QStackedWidget* pageStack_ = nullptr;   ///< 子页堆叠容器
 
     // ---- 沙盒页 UI 控件 ----
-    QComboBox*  levelCombo_       = nullptr;
-    QLabel*     goalLabel_        = nullptr;
-    QLabel*     teachingPointLabel_ = nullptr;
-    QList<QPushButton*> levelChips_;  // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
-    QWidget*    opButtonsHost_    = nullptr;  // 可用指令按钮的容器
-    QListWidget* stackList_       = nullptr;  // 操作数栈可视化
-    QListWidget* historyList_     = nullptr;  // 已执行指令序列
-    QTextEdit*  outputEdit_       = nullptr;
-    QPushButton* undoBtn_         = nullptr;
-    QPushButton* resetBtn_        = nullptr;
-    QPushButton* checkBtn_        = nullptr;
-    QPushButton* verifyBtn_       = nullptr;  ///< P1-3 fix: 用真实 StackVM 验证
-    QPushButton* gotoTraceBtn_    = nullptr;  ///< 验证后跳转到追踪页
-    QLabel*     feedbackLabel_    = nullptr;
-    QLabel*     sandboxOpHintLabel_ = nullptr;  ///< 沙盒操作对应的真实 OpCode 提示
+    QComboBox* levelCombo_ = nullptr;
+    QLabel* goalLabel_ = nullptr;
+    QLabel* teachingPointLabel_ = nullptr;
+    QList<QPushButton*> levelChips_;     // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
+    QWidget* opButtonsHost_ = nullptr;   // 可用指令按钮的容器
+    QListWidget* stackList_ = nullptr;   // 操作数栈可视化
+    QListWidget* historyList_ = nullptr; // 已执行指令序列
+    QTextEdit* outputEdit_ = nullptr;
+    QPushButton* undoBtn_ = nullptr;
+    QPushButton* resetBtn_ = nullptr;
+    QPushButton* checkBtn_ = nullptr;
+    QPushButton* verifyBtn_ = nullptr;    ///< P1-3 fix: 用真实 StackVM 验证
+    QPushButton* gotoTraceBtn_ = nullptr; ///< 验证后跳转到追踪页
+    QLabel* feedbackLabel_ = nullptr;
+    QLabel* sandboxOpHintLabel_ = nullptr; ///< 沙盒操作对应的真实 OpCode 提示
 
     // ---- 追踪页 UI 控件 ----
-    QWidget*        tracePage_         = nullptr;
-    QListWidget*    bytecodeList_      = nullptr;  ///< 真实字节码指令列表
-    QListWidget*    traceStackView_    = nullptr;  ///< 追踪时的栈状态
-    QTableWidget*   registerTable_     = nullptr;  ///< 寄存器视图
-    QTextEdit*      traceOutputEdit_   = nullptr;  ///< 追踪时的输出区
-    QPushButton*    compileBtn_        = nullptr;  ///< 「编译并加载」
-    QPushButton*    stepBtn_           = nullptr;  ///< 「单步执行」
-    QPushButton*    runAllBtn_         = nullptr;  ///< 「运行到底」
-    QPushButton*    resetTraceBtn_     = nullptr;  ///< 「重置」
-    QLabel*         ipIndicator_       = nullptr;  ///< IP 指示器
-    QLabel*         traceStatusLabel_  = nullptr;  ///< 状态标签
+    QWidget* tracePage_ = nullptr;
+    QListWidget* bytecodeList_ = nullptr;   ///< 真实字节码指令列表
+    QListWidget* traceStackView_ = nullptr; ///< 追踪时的栈状态
+    QTableWidget* registerTable_ = nullptr; ///< 寄存器视图
+    QTextEdit* traceOutputEdit_ = nullptr;  ///< 追踪时的输出区
+    QPushButton* compileBtn_ = nullptr;     ///< 「编译并加载」
+    QPushButton* stepBtn_ = nullptr;        ///< 「单步执行」
+    QPushButton* runAllBtn_ = nullptr;      ///< 「运行到底」
+    QPushButton* resetTraceBtn_ = nullptr;  ///< 「重置」
+    QLabel* ipIndicator_ = nullptr;         ///< IP 指示器
+    QLabel* traceStatusLabel_ = nullptr;    ///< 状态标签
 
     // ---- 追踪状态 ----
-    IdeController*  controller_        = nullptr;
-    std::vector<int> bytecodeOffsets_;  ///< 指令偏移量映射（list 行号 → 字节偏移）
-    int             currentIp_         = 0;  ///< 当前 IP（字节偏移）
+    IdeController* controller_ = nullptr;
+    std::vector<int> bytecodeOffsets_; ///< 指令偏移量映射（list 行号 → 字节偏移）
+    int currentIp_ = 0;                ///< 当前 IP（字节偏移）
 
     // ---- 栈状态机（沙盒页） ----
-    std::vector<std::string>  stack_;        // 操作数栈（栈顶在 vector 末尾，UI 显示时反向）
-    std::vector<SandboxOp>    history_;      // 已执行指令序列
-    std::vector<std::string>  outputs_;      // 输出列表
-    std::vector<std::vector<std::string>> snapshots_;  // 每步前的栈快照（用于撤销）
-    std::vector<std::vector<std::string>> outputSnapshots_;  // 每步前的输出快照
-    int  currentLevelIndex_ = 0;
-    bool halted_ = false;  // HALT 指令后停止接收新指令，需重置
+    std::vector<std::string> stack_;                        // 操作数栈（栈顶在 vector 末尾，UI 显示时反向）
+    std::vector<SandboxOp> history_;                        // 已执行指令序列
+    std::vector<std::string> outputs_;                      // 输出列表
+    std::vector<std::vector<std::string>> snapshots_;       // 每步前的栈快照（用于撤销）
+    std::vector<std::vector<std::string>> outputSnapshots_; // 每步前的输出快照
+    int currentLevelIndex_ = 0;
+    bool halted_ = false; // HALT 指令后停止接收新指令，需重置
     // AUDIT-P2 fix: onTraceRunAll 长循环期间 processEvents 会让渡控制权，
     // 用户可点击 stepBtn_/resetTraceBtn_ 触发重入，与正在跑的循环共享 vm_
     // 状态导致崩溃。traceRunning_ 守卫阻止重入。
     bool traceRunning_ = false;
 
     // ---- 内部方法 ----
-/// 加载指定关卡。
+    /// 加载指定关卡。
     void loadLevel(int index);
-/// 重建操作按钮。
+    /// 重建操作按钮。
     void rebuildOpButtons();
-/// 执行一条沙盒指令。
+    /// 执行一条沙盒指令。
     void executeOp(const SandboxOp& op);
-/// 刷新栈视图。
+    /// 刷新栈视图。
     void refreshStackView();
-/// 刷新历史视图。
+    /// 刷新历史视图。
     void refreshHistoryView();
-/// 刷新输出视图。
+    /// 刷新输出视图。
     void refreshOutputView();
-/// 设置反馈信息文本。
+    /// 设置反馈信息文本。
     void setFeedback(const QString& text, bool isError = false);
-/// 指令的历史展示文本。
+    /// 指令的历史展示文本。
     QString opDisplayText(const SandboxOp& op) const;
-/// 指令的按钮展示文本。
+    /// 指令的按钮展示文本。
     QString opButtonText(const SandboxOp& op) const;
 
     /// 检查答案：比对 history_ 与 expectedSequence
@@ -162,7 +162,7 @@ private:
     void refreshLevelChips();
 
     // ---- 追踪页内部方法 ----
-/// 构建字节码跟踪子页。
+    /// 构建字节码跟踪子页。
     void buildTracePage(QWidget* host);
     /// 编译当前关卡源码并填充 bytecodeList_，重置 VM
     void loadBytecodeFromCurrentLevel();

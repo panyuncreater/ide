@@ -15,17 +15,18 @@
 // 不修改引擎层。
 // ============================================================
 
-#include <QWidget>
+#include <QCheckBox>
+#include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QTextBrowser>
-#include <QLabel>
-#include <QPushButton>
-#include <QCheckBox>
-#include <QListWidget>
+#include <QWidget>
+#include <cstddef>
+#include <deque>
 #include <string>
 #include <vector>
-#include <cstddef>
 
 class IdeController;
 class GuidedTour;
@@ -35,11 +36,11 @@ class GuidedTour;
 /// 单个 OpCode 教学条目
 struct OpCodeDocEntry {
     std::string opCodeName;    // OpCode 名（如 "OP_CONST"）
-    std::string category;       // 分类（const / arith / control / call / container / closure）
-    std::string operandFormat;  // 操作数格式说明
-    std::string stackEffect;    // 栈效果（如 "push 1"）
-    std::string semantics;      // 语义说明
-    std::string exampleCode;    // 触发该 OpCode 的样例代码片段
+    std::string category;      // 分类（const / arith / control / call / container / closure）
+    std::string operandFormat; // 操作数格式说明
+    std::string stackEffect;   // 栈效果（如 "push 1"）
+    std::string semantics;     // 语义说明
+    std::string exampleCode;   // 触发该 OpCode 的样例代码片段
 };
 
 /// BytecodeTraceLibrary — 静态 OpCode 教学库
@@ -92,37 +93,41 @@ private:
     IdeController* controller_ = nullptr;
 
     // 子页切换
-    QPushButton*    pageTraceBtn_   = nullptr;
-    QPushButton*    pageLibraryBtn_ = nullptr;
-    QStackedWidget* stack_          = nullptr;
+    QPushButton* pageTraceBtn_ = nullptr;
+    QPushButton* pageLibraryBtn_ = nullptr;
+    QStackedWidget* stack_ = nullptr;
 
     // 子页 1：执行轨迹
-    QLabel*       liveStatusLabel_  = nullptr;
-    QPushButton* captureBtn_        = nullptr;
-    QCheckBox*   autoCaptureCheck_ = nullptr;
-    QTimer*      autoTimer_        = nullptr;
-    QPushButton* clearBtn_          = nullptr;
-    QTableWidget* traceTable_       = nullptr;
-    QTextBrowser* stackDetail_      = nullptr;
+    QLabel* liveStatusLabel_ = nullptr;
+    QPushButton* captureBtn_ = nullptr;
+    QCheckBox* autoCaptureCheck_ = nullptr;
+    QTimer* autoTimer_ = nullptr;
+    QPushButton* clearBtn_ = nullptr;
+    QTableWidget* traceTable_ = nullptr;
+    QTextBrowser* stackDetail_ = nullptr;
 
     // 子页 2：OpCode 教学库
-    QListWidget* docList_           = nullptr;
-    QTextBrowser* docDetail_       = nullptr;
-    QPushButton* loadCodeBtn_      = nullptr;
-    int          currentDocIdx_    = -1;
+    QListWidget* docList_ = nullptr;
+    QTextBrowser* docDetail_ = nullptr;
+    QPushButton* loadCodeBtn_ = nullptr;
+    int currentDocIdx_ = -1;
 
     // 轨迹历史
     struct TraceEntry {
-        int         step;
+        int step;
         std::size_t ip;
         std::string opCodeName;
-        int         frameCount;
-        std::vector<std::string> stackSnapshot;  // 栈顶到栈底的字符串表示
-        int         line;
+        int frameCount;
+        std::vector<std::string> stackSnapshot; // 栈顶到栈底的字符串表示
+        int line;
     };
-    std::vector<TraceEntry> traceHistory_;
-    int                     stepCounter_ = 0;
-    static constexpr int    kMaxTraceEntries = 1000;
+    // AUDIT-P1 fix: 改用 std::deque 实现 O(1) 头部删除（原 vector erase(begin()) 是 O(n)）
+    std::deque<TraceEntry> traceHistory_;
+    int stepCounter_ = 0;
+    static constexpr int kMaxTraceEntries = 1000;
+    // OPT-2 fix: autoTimer 安全网指纹——避免 VM 状态未变时盲目累积重复轨迹。
+    // 仅在 captureCurrentState 内 push_back 之前计算并比对。
+    std::string lastCaptureFingerprint_;
 
     // 构造辅助
     void buildTracePage(QWidget* host);

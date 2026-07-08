@@ -12,23 +12,22 @@
 // 与 WorkerManager 共享 Interpreter / DebugController 所有权。
 // ============================================================
 
-#include <QObject>
-#include <QString>
-#include <QSet>
 #include <QMap>
+#include <QObject>
+#include <QSet>
+#include <QString>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "interpreter/Interpreter.h"
 #include "debug/DebugController.h"
+#include "interpreter/Interpreter.h"
 
 class DebugCoordinator : public QObject {
     Q_OBJECT
 
 public:
-    DebugCoordinator(std::shared_ptr<Interpreter> interpreter,
-                     std::shared_ptr<DebugController> debugger,
+    DebugCoordinator(std::shared_ptr<Interpreter> interpreter, std::shared_ptr<DebugController> debugger,
                      QObject* parent = nullptr);
 
     // #10 fix: 析构时反注册 debugger_ 上的回调。debugger_ 与 WorkerManager 共享所有权，
@@ -38,11 +37,8 @@ public:
 
     // ---- 断点管理 ----
     /// 设置断点及条件表达式（GUI-03 fix: 使用 evaluateCondition 安全求值条件断点）
-    void setupDebug(const QSet<int>& breakpoints,
-                    const QMap<int, std::string>& conditions);
-    void setBreakpoints(const QSet<int>& breakpoints) {
-        debugger_->setBreakpoints(breakpoints);
-    }
+    void setupDebug(const QSet<int>& breakpoints, const QMap<int, std::string>& conditions);
+    void setBreakpoints(const QSet<int>& breakpoints) { debugger_->setBreakpoints(breakpoints); }
     void setBreakpointCondition(int line, const std::string& condition) {
         debugger_->setBreakpointCondition(line, condition);
     }
@@ -50,27 +46,19 @@ public:
 
     // P1-2: 断点查询接口（供 BreakpointConditionPanel 消费）
     QSet<int> getBreakpoints() const { return debugger_->getBreakpoints(); }
-    std::string getBreakpointCondition(int line) const {
-        return debugger_->getBreakpointCondition(line);
-    }
-    int getBreakpointHitCount(int line) const {
-        return debugger_->getBreakpointHitCount(line);
-    }
+    std::string getBreakpointCondition(int line) const { return debugger_->getBreakpointCondition(line); }
+    int getBreakpointHitCount(int line) const { return debugger_->getBreakpointHitCount(line); }
 
     // ---- 步进控制 ----
-    void stepIn()  { debugger_->stepIn(); }
+    void stepIn() { debugger_->stepIn(); }
     void stepOver() { debugger_->stepOver(); }
     void stepOut() { debugger_->stepOut(); }
-    void resume()  { debugger_->resume(); }
-    void stop()    { debugger_->stop(); }
+    void resume() { debugger_->resume(); }
+    void stop() { debugger_->stop(); }
 
     // ---- 调试状态查询 ----
-    std::vector<VariableSnapshot> getDebugVariableSnapshot() const {
-        return debugger_->getVariableSnapshot();
-    }
-    std::vector<CallStackEntry> getDebugCallStack() const {
-        return debugger_->getCallStack();
-    }
+    std::vector<VariableSnapshot> getDebugVariableSnapshot() const { return debugger_->getVariableSnapshot(); }
+    std::vector<CallStackEntry> getDebugCallStack() const { return debugger_->getCallStack(); }
     /// AUDIT-P1 fix: 转发 DebugController::isPaused()，供 IdeController::isDebugPaused() 使用。
     /// 面板 autoTimer 在调试 resume 期间调用快照接口会与 worker 线程并发访问解释器内部数据。
     bool isPaused() const { return debugger_->isPaused(); }

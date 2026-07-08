@@ -24,14 +24,14 @@
  */
 #pragma once
 
-#include <vector>
-#include <string>
+#include "Diagnostic.h"
+#include "ast/ASTNode.h"
+#include "common/RuntimeLimits.h"
+#include "lexer/Token.h"
 #include <memory>
 #include <stdexcept>
-#include "lexer/Token.h"
-#include "ast/ASTNode.h"
-#include "Diagnostic.h"
-#include "common/RuntimeLimits.h"
+#include <string>
+#include <vector>
 
 // ============================================================
 // Parser 语法分析器
@@ -43,8 +43,7 @@ public:
     int line;
     int column;
 
-    ParseError(const std::string& msg, int ln = 0, int col = 0)
-        : std::runtime_error(msg), line(ln), column(col) {}
+    ParseError(const std::string& msg, int ln = 0, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
 };
 
 /// 递归下降语法分析器
@@ -73,11 +72,11 @@ public:
     };
 
 private:
-    const std::vector<Token>* tokens_ = nullptr;  // Token 流（引用，避免深拷贝）
-    int current_ = 0;                        // 当前位置
-    DiagnosticBag diagnostics_;      // 诊断收集器
-    int parseDepth_ = 0;             // P15 fix: 递归深度计数器
-    int blockDepth_ = 0;             // P0-1 fix: 块嵌套深度计数器
+    const std::vector<Token>* tokens_ = nullptr; // Token 流（引用，避免深拷贝）
+    int current_ = 0;                            // 当前位置
+    DiagnosticBag diagnostics_;                  // 诊断收集器
+    int parseDepth_ = 0;                         // P15 fix: 递归深度计数器
+    int blockDepth_ = 0;                         // P0-1 fix: 块嵌套深度计数器
     static constexpr int MAX_PARSE_DEPTH = RuntimeLimits::MAX_PARSE_DEPTH;
     static constexpr int MAX_BLOCK_DEPTH = RuntimeLimits::MAX_BLOCK_DEPTH;
     // BUG-PARSER-AUDIT-5: 错误数量上限，防止恶意输入触发 O(N) 诊断内存膨胀
@@ -104,8 +103,7 @@ private:
     bool checkNext(TokenType type) const;
 
     /// 如果当前 Token 匹配任一类型则前进（C++17 折叠表达式，零分配）
-    template<typename... Ts>
-    bool match(Ts... types) {
+    template <typename... Ts> bool match(Ts... types) {
         return ((check(static_cast<TokenType>(types)) ? (advance(), true) : false) || ...);
     }
 
@@ -248,4 +246,3 @@ private:
     /// 同步到下一个声明边界
     void synchronize();
 };
-

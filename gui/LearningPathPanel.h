@@ -24,25 +24,25 @@
 
 #pragma once
 
-#include "gui/LearningPathData.h"
 #include "gui/LearnerProgress.h"
+#include "gui/LearningPathData.h"
 
-#include <QWidget>
-#include <QScrollArea>
-#include <QProgressBar>
+#include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
-#include <QVBoxLayout>
-#include <QFrame>
 #include <QList>
-#include <vector>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QVBoxLayout>
+#include <QWidget>
 #include <string>
+#include <vector>
 
 class LearningPathPanel : public QWidget {
     Q_OBJECT
 public:
-/// 构造学习路径面板；parent 为父控件。
+    /// 构造学习路径面板；parent 为父控件。
     explicit LearningPathPanel(QWidget* parent = nullptr);
 
 public slots:
@@ -57,62 +57,58 @@ signals:
     void activityRequested(const QString& activityId);
 
 private slots:
-/// 刷新按钮回调。
+    /// 刷新按钮回调。
     void onRefresh();
-/// 重置进度按钮回调。
+    /// 重置进度按钮回调。
     void onResetProgress();
-/// 活动点击回调。
+    /// 活动点击回调。
     void onActivityClicked(const QString& activityId);
 
 protected:
     // M9: 键盘导航 — Up/Down 在已解锁活动行间循环，Enter 触发当前行点击
-/// 键盘导航事件。
+    /// 键盘导航事件。
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
     // 顶部
     QProgressBar* overallProgress_ = nullptr;
-    QLabel*       overallLabel_    = nullptr;
-    QLabel*       stageLabel_      = nullptr;  ///< P1-2 fix: 当前阶段提示
-    QLabel*       weakPointsLabel_ = nullptr;  ///< P2-3 fix (F9): 薄弱点提示
-    QLabel*       remainingLabel_  = nullptr;  ///< P2-3 fix (F9): 预计剩余时间
-    QLineEdit*    searchEdit_      = nullptr;  // 活动搜索过滤框
+    QLabel* overallLabel_ = nullptr;
+    QLabel* stageLabel_ = nullptr;      ///< P1-2 fix: 当前阶段提示
+    QLabel* weakPointsLabel_ = nullptr; ///< P2-3 fix (F9): 薄弱点提示
+    QLabel* remainingLabel_ = nullptr;  ///< P2-3 fix (F9): 预计剩余时间
+    QLineEdit* searchEdit_ = nullptr;   // 活动搜索过滤框
 
     // 主体
-    QScrollArea* scrollArea_   = nullptr;
-    QWidget*     scrollContent_ = nullptr;
+    QScrollArea* scrollArea_ = nullptr;
+    QWidget* scrollContent_ = nullptr;
     QVBoxLayout* stagesLayout_ = nullptr;
 
     // 底部
     QPushButton* refreshBtn_ = nullptr;
-    QPushButton* resetBtn_   = nullptr;
+    QPushButton* resetBtn_ = nullptr;
 
     // M9: 键盘导航状态——仅收集已解锁的活动行
     QList<QPushButton*> activityRows_;
-    int                 currentNavIndex_ = -1;
-    QString             highlightedSavedStyle_;
-/// 高亮指定活动行。
+    int currentNavIndex_ = -1;
+    QString highlightedSavedStyle_;
+    /// 高亮指定活动行。
     void highlightActivityRow(int idx);
 
     // 搜索框防抖定时器——避免逐字符触发 refresh() 导致重建风暴
     QTimer* searchDebounceTimer_ = nullptr;
 
     // 阶段颜色（绿/黄/蓝/紫/红）
-/// 阶段主题配色。
+    /// 阶段主题配色。
     static QString stageColor(int stage);
-/// 阶段标题文案。
+    /// 阶段标题文案。
     static QString stageTitle(int stage);
 
     /// 构造单个阶段卡片
     QFrame* buildStageCard(int stage);
 
     /// 构造单个活动项行
-    QWidget* buildActivityRow(const LearningActivity& activity,
-                              bool unlocked, bool completed,
-                              bool recommended);
+    QWidget* buildActivityRow(const LearningActivity& activity, bool unlocked, bool completed, bool recommended);
 
     /// 收集所有活动数据
-    const std::vector<LearningActivity>& allActivities() const {
-        return LearningPathData::activities();
-    }
+    const std::vector<LearningActivity>& allActivities() const { return LearningPathData::activities(); }
 };

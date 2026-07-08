@@ -63,18 +63,18 @@
 //   - IRBuilder/IRBackend 为抽象接口，便于未来添加新前端和新后端
 // ============================================================
 
+#include "ast/ASTNode.h"                  // VM-IMPORT: Block 完整定义（moduleAsts_ 需要 unique_ptr<Block> 析构）
+#include "compiler/Bytecode.h"            // IRBackend lowering 到 BytecodeChunk + UpvalueDesc
+#include "compiler/GlobalSlotAllocator.h" // B4: 全局槽位分配器
 #include <cstdint>
-#include <cstring>  // BUG-AUDIT-VAL-1: std::memcpy for scalarKey float 位模式编码
+#include <cstring>    // BUG-AUDIT-VAL-1: std::memcpy for scalarKey float 位模式编码
+#include <functional> // VM-IMPORT: std::function for moduleLoader_
 #include <memory>
-#include <functional>  // VM-IMPORT: std::function for moduleLoader_
-#include <string>
-#include <vector>
 #include <stdexcept>
-#include <unordered_map>  // perf3 fix: addGlobal/addConstant hash 侧表
+#include <string>
+#include <unordered_map> // perf3 fix: addGlobal/addConstant hash 侧表
 #include <unordered_set>
-#include "compiler/Bytecode.h"  // IRBackend lowering 到 BytecodeChunk + UpvalueDesc
-#include "compiler/GlobalSlotAllocator.h"  // B4: 全局槽位分配器
-#include "ast/ASTNode.h"  // VM-IMPORT: Block 完整定义（moduleAsts_ 需要 unique_ptr<Block> 析构）
+#include <vector>
 
 // ============================================================
 // IR 操作数
@@ -82,31 +82,31 @@
 
 /// IR 操作数类型
 enum class IROperandKind : uint8_t {
-    CONSTANT,     // 常量（int/float/string/bool/null，索引到 IRFunction.constants）
-    VIRTUAL,      // 虚拟寄存器（SSA-like，由 IRBuilder 分配，lowering 到栈槽）
-    LABEL,        // 基本块标签（跳转目标）
-    GLOBAL_NAME,  // 全局变量名（索引到 IRFunction.globalNames）
-    LOCAL_SLOT,   // 局部变量槽位（函数内的栈槽编号）
-    UPVALUE_IDX,  // upvalue 索引（闭包捕获描述符）
-    FIELD_NAME,   // 字段名（索引到 IRFunction.globalNames，复用名称池）
-    FUNC_NAME,    // 函数名（索引到 IRFunction.globalNames，复用名称池）
-    IMM_UINT,     // 立即数（uint32_t，用于 arg_count/slot 等）
+    CONSTANT,    // 常量（int/float/string/bool/null，索引到 IRFunction.constants）
+    VIRTUAL,     // 虚拟寄存器（SSA-like，由 IRBuilder 分配，lowering 到栈槽）
+    LABEL,       // 基本块标签（跳转目标）
+    GLOBAL_NAME, // 全局变量名（索引到 IRFunction.globalNames）
+    LOCAL_SLOT,  // 局部变量槽位（函数内的栈槽编号）
+    UPVALUE_IDX, // upvalue 索引（闭包捕获描述符）
+    FIELD_NAME,  // 字段名（索引到 IRFunction.globalNames，复用名称池）
+    FUNC_NAME,   // 函数名（索引到 IRFunction.globalNames，复用名称池）
+    IMM_UINT,    // 立即数（uint32_t，用于 arg_count/slot 等）
 };
 
 /// IR 操作数
 struct IROperand {
     IROperandKind kind;
-    uint32_t index = 0;  // 由具体 kind 解释
+    uint32_t index = 0; // 由具体 kind 解释
 
-    static IROperand constant(uint32_t idx) { return { IROperandKind::CONSTANT, idx }; }
-    static IROperand vreg(uint32_t idx) { return { IROperandKind::VIRTUAL, idx }; }
-    static IROperand label(uint32_t idx) { return { IROperandKind::LABEL, idx }; }
-    static IROperand global(uint32_t idx) { return { IROperandKind::GLOBAL_NAME, idx }; }
-    static IROperand local(uint32_t slot) { return { IROperandKind::LOCAL_SLOT, slot }; }
-    static IROperand upvalue(uint32_t idx) { return { IROperandKind::UPVALUE_IDX, idx }; }
-    static IROperand field(uint32_t idx) { return { IROperandKind::FIELD_NAME, idx }; }
-    static IROperand funcName(uint32_t idx) { return { IROperandKind::FUNC_NAME, idx }; }
-    static IROperand imm(uint32_t val) { return { IROperandKind::IMM_UINT, val }; }
+    static IROperand constant(uint32_t idx) { return {IROperandKind::CONSTANT, idx}; }
+    static IROperand vreg(uint32_t idx) { return {IROperandKind::VIRTUAL, idx}; }
+    static IROperand label(uint32_t idx) { return {IROperandKind::LABEL, idx}; }
+    static IROperand global(uint32_t idx) { return {IROperandKind::GLOBAL_NAME, idx}; }
+    static IROperand local(uint32_t slot) { return {IROperandKind::LOCAL_SLOT, slot}; }
+    static IROperand upvalue(uint32_t idx) { return {IROperandKind::UPVALUE_IDX, idx}; }
+    static IROperand field(uint32_t idx) { return {IROperandKind::FIELD_NAME, idx}; }
+    static IROperand funcName(uint32_t idx) { return {IROperandKind::FUNC_NAME, idx}; }
+    static IROperand imm(uint32_t val) { return {IROperandKind::IMM_UINT, val}; }
 };
 
 // ============================================================
@@ -117,89 +117,98 @@ struct IROperand {
 /// 覆盖 MiniLang 所有 AST 节点语义，支持完整 AST → IR → Bytecode 管线
 enum class IROp : uint8_t {
     // ---- 常量加载 ----
-    LOAD_CONST,      // dest = constants[idx]       operands: [dest_vreg, const_idx]
-    LOAD_NULL,       // dest = null                 operands: [dest_vreg]
-    LOAD_TRUE,       // dest = true                 operands: [dest_vreg]
-    LOAD_FALSE,      // dest = false                operands: [dest_vreg]
+    LOAD_CONST, // dest = constants[idx]       operands: [dest_vreg, const_idx]
+    LOAD_NULL,  // dest = null                 operands: [dest_vreg]
+    LOAD_TRUE,  // dest = true                 operands: [dest_vreg]
+    LOAD_FALSE, // dest = false                operands: [dest_vreg]
 
     // ---- 变量访问（三态：local/global/upvalue/name）----
-    LOAD_LOCAL,      // dest = local[slot]          operands: [dest_vreg, slot]
-    STORE_LOCAL,     // local[slot] = src           operands: [slot, src_vreg]
-    LOAD_GLOBAL,     // dest = globalNames[idx]     operands: [dest_vreg, global_idx]
-    STORE_GLOBAL,    // globalNames[idx] = src      operands: [global_idx, src_vreg]
-    DEFINE_GLOBAL,   // define globalNames[idx] = src  operands: [global_idx, src_vreg]
-    DELETE_VAR,      // delete global var by name   operands: [global_idx]  BUG-IR-TRY-1 fix
-    LOAD_UPVALUE,    // dest = upvalue[idx]         operands: [dest_vreg, uv_idx]
-    STORE_UPVALUE,   // upvalue[idx] = src          operands: [uv_idx, src_vreg]
-    CLOSE_UPVALUE,   // close all open upvalues with slot >= slot_base  operands: [slot_base]
+    LOAD_LOCAL,    // dest = local[slot]          operands: [dest_vreg, slot]
+    STORE_LOCAL,   // local[slot] = src           operands: [slot, src_vreg]
+    LOAD_GLOBAL,   // dest = globalNames[idx]     operands: [dest_vreg, global_idx]
+    STORE_GLOBAL,  // globalNames[idx] = src      operands: [global_idx, src_vreg]
+    DEFINE_GLOBAL, // define globalNames[idx] = src  operands: [global_idx, src_vreg]
+    DELETE_VAR,    // delete global var by name   operands: [global_idx]  BUG-IR-TRY-1 fix
+    LOAD_UPVALUE,  // dest = upvalue[idx]         operands: [dest_vreg, uv_idx]
+    STORE_UPVALUE, // upvalue[idx] = src          operands: [uv_idx, src_vreg]
+    CLOSE_UPVALUE, // close all open upvalues with slot >= slot_base  operands: [slot_base]
 
     // ---- 算术运算（三地址码：dest = src1 OP src2）----
-    ADD, SUB, MUL, DIV, MOD,
-    NEGATE,          // dest = -src                 operands: [dest, src]
+    ADD,
+    SUB,
+    MUL,
+    DIV,
+    MOD,
+    NEGATE, // dest = -src                 operands: [dest, src]
 
     // ---- 比较 ----
-    EQ, NEQ, LT, GT, LTE, GTE,
+    EQ,
+    NEQ,
+    LT,
+    GT,
+    LTE,
+    GTE,
 
     // ---- 逻辑（非短路，短路在 AST 层已展开为分支）----
     NOT,
 
     // ---- 控制流 ----
-    JUMP,            // jump label                  operands: [label_idx]
-    JUMP_IF_FALSE,   // if !src jump label          operands: [src_vreg, label_idx]
-    LABEL,           // 基本块标记                   operands: [label_idx]
+    JUMP,          // jump label                  operands: [label_idx]
+    JUMP_IF_FALSE, // if !src jump label          operands: [src_vreg, label_idx]
+    LABEL,         // 基本块标记                   operands: [label_idx]
 
     // ---- 调用 ----
-    CALL,            // dest = call name(args)      operands: [dest, name_idx, arg_count, arg1, arg2, ...]
-    CALL_EXPR,       // dest = call(closure, args)  operands: [dest, closure_vreg, arg_count, arg1, ...]
-    RETURN,          // return src                  operands: [src_vreg]
-    RETURN_NULL,     // return null（隐式返回）
+    CALL,        // dest = call name(args)      operands: [dest, name_idx, arg_count, arg1, arg2, ...]
+    CALL_EXPR,   // dest = call(closure, args)  operands: [dest, closure_vreg, arg_count, arg1, ...]
+    RETURN,      // return src                  operands: [src_vreg]
+    RETURN_NULL, // return null（隐式返回）
 
     // ---- 闭包 ----
-    MAKE_CLOSURE,    // dest = closure(name, upvalues)  operands: [dest, name_idx, uv_count, uv1_isLocal, uv1_idx, ...]
+    MAKE_CLOSURE, // dest = closure(name, upvalues)  operands: [dest, name_idx, uv_count, uv1_isLocal, uv1_idx, ...]
 
     // ---- 容器 ----
-    BUILD_ARRAY,     // dest = [args...]            operands: [dest, count, arg1, arg2, ...]
-    BUILD_DICT,      // dest = {k1:v1, k2:v2, ...}  operands: [dest, pair_count, k1, v1, k2, v2, ...]
-    INDEX_GET,       // dest = obj[idx]             operands: [dest, obj_vreg, idx_vreg]
-    INDEX_SET,       // obj[idx] = val              operands: [obj_vreg, idx_vreg, val_vreg]
+    BUILD_ARRAY, // dest = [args...]            operands: [dest, count, arg1, arg2, ...]
+    BUILD_DICT,  // dest = {k1:v1, k2:v2, ...}  operands: [dest, pair_count, k1, v1, k2, v2, ...]
+    INDEX_GET,   // dest = obj[idx]             operands: [dest, obj_vreg, idx_vreg]
+    INDEX_SET,   // obj[idx] = val              operands: [obj_vreg, idx_vreg, val_vreg]
 
     // ---- 成员访问 ----
-    MEMBER_GET,      // dest = obj.field            operands: [dest, obj_vreg, field_idx]
-    MEMBER_SET,      // obj.field = val             operands: [obj_vreg, field_idx, val_vreg]
+    MEMBER_GET,       // dest = obj.field            operands: [dest, obj_vreg, field_idx]
+    MEMBER_SET,       // obj.field = val             operands: [obj_vreg, field_idx, val_vreg]
     SUPER_MEMBER_GET, // dest = super.field         operands: [dest, this_vreg, field_idx]
 
     // ---- 方法调用 ----
-    METHOD_CALL,     // dest = obj.method(args)     operands: [dest, obj_vreg, method_idx, arg_count, args...]
-    SUPER_CALL,      // dest = super.method(args)   operands: [dest, this_vreg, method_idx, class_idx, arg_count, args...]
+    METHOD_CALL, // dest = obj.method(args)     operands: [dest, obj_vreg, method_idx, arg_count, args...]
+    SUPER_CALL,  // dest = super.method(args)   operands: [dest, this_vreg, method_idx, class_idx, arg_count, args...]
 
     // ---- 类 ----
-    DEFINE_CLASS,    // define class name           operands: [name_idx]
-    CLASS_NEW,       // dest = new ClassName(args)  operands: [dest, name_idx, arg_count, args...]
-    INIT_FIELD,      // init field name from stack  operands: [field_idx]
+    DEFINE_CLASS, // define class name           operands: [name_idx]
+    CLASS_NEW,    // dest = new ClassName(args)  operands: [dest, name_idx, arg_count, args...]
+    INIT_FIELD,   // init field name from stack  operands: [field_idx]
 
     // ---- 异常处理 ----
-    TRY_BEGIN,       // try block begin             operands: [catch_label_idx]
-    TRY_END,         // try block end
-    THROW,           // throw src                   operands: [src_vreg]
-    LOAD_EXCEPTION,  // dest = pendingException     operands: [dest_vreg]  P1-4 fix: catch 块起始加载异常值
+    TRY_BEGIN,      // try block begin             operands: [catch_label_idx]
+    TRY_END,        // try block end
+    THROW,          // throw src                   operands: [src_vreg]
+    LOAD_EXCEPTION, // dest = pendingException     operands: [dest_vreg]  P1-4 fix: catch 块起始加载异常值
 
     // ---- 写回指令（嵌套左值变异，B1/B6 fix）----
     // 当左值为 a.b.c 或 a[i] 时，变异结果需写回到原始变量/字段
-    WRITEBACK_MEMBER_VAR,    // 成员写回到全局变量   operands: [var_idx, field_idx]
-    WRITEBACK_MEMBER_LOCAL,  // 成员写回到局部变量   operands: [slot, field_idx]
-    WRITEBACK_INDEX_VAR,     // 索引写回到全局变量   operands: [var_idx]
-    WRITEBACK_INDEX_LOCAL,   // 索引写回到局部变量   operands: [slot]
+    WRITEBACK_MEMBER_VAR,   // 成员写回到全局变量   operands: [var_idx, field_idx]
+    WRITEBACK_MEMBER_LOCAL, // 成员写回到局部变量   operands: [slot, field_idx]
+    WRITEBACK_INDEX_VAR,    // 索引写回到全局变量   operands: [var_idx]
+    WRITEBACK_INDEX_LOCAL,  // 索引写回到局部变量   operands: [slot]
     // #7 fix: upvalue 写回（嵌套左值变异 a[i]=.. / a.f=.. 其中 a 是 upvalue）
     WRITEBACK_MEMBER_UPVALUE, // 成员写回到 upvalue  operands: [uv_idx, field_idx]
     WRITEBACK_INDEX_UPVALUE,  // 索引写回到 upvalue  operands: [uv_idx]
 
     // ---- 其他 ----
-    PRINT,           // print src                   operands: [src_vreg]
-    POP,             // 释放 src                    operands: [src_vreg]
-    DUP,             // 复制 src 到 dest             operands: [dest, src_vreg]
-    LOAD_MUTATED,    // dest = lastMutatedReceiver_  operands: [dest_vreg]
-                     // MEDIUM-1/2 fix: 嵌套左值写回链中读取上一级 SET 产生的变异后容器。
-                     // 不清除 lastMutatedReceiver_，后续 SET/WRITEBACK 会覆盖。
+    PRINT,        // print src                   operands: [src_vreg]
+    POP,          // 释放 src                    operands: [src_vreg]
+    DUP,          // 复制 src 到 dest             operands: [dest, src_vreg]
+    LOAD_MUTATED, // dest = lastMutatedReceiver_  operands: [dest_vreg]
+                  // MEDIUM-1/2 fix: 嵌套左值写回链中读取上一级 SET 产生的变异后容器。
+                  // 不清除 lastMutatedReceiver_，后续 SET/WRITEBACK 会覆盖。
 
     // 2026-06-29: 运行时类型注解检查
     // operands: [src_vreg, type_const_idx]  type_const_idx 为 CONSTANT 类型（字符串注解）
@@ -211,10 +220,9 @@ enum class IROp : uint8_t {
 struct IRInstruction {
     IROp op;
     std::vector<IROperand> operands;
-    int line = 0;  // 源码行号（用于调试）
+    int line = 0; // 源码行号（用于调试）
 
-    IRInstruction(IROp o, std::vector<IROperand> ops, int ln = 0)
-        : op(o), operands(std::move(ops)), line(ln) {}
+    IRInstruction(IROp o, std::vector<IROperand> ops, int ln = 0) : op(o), operands(std::move(ops)), line(ln) {}
 };
 
 // ============================================================
@@ -224,30 +232,30 @@ struct IRInstruction {
 /// IR 基本块（指令序列 + 终结指令）
 struct IRBasicBlock {
     std::vector<IRInstruction> instructions;
-    uint32_t labelIndex = 0;  // 对应 IRFunction.labels 中的索引
+    uint32_t labelIndex = 0; // 对应 IRFunction.labels 中的索引
 };
 
 /// IR 函数（含 main chunk）
 struct IRFunction {
     std::string name;
     std::vector<IRBasicBlock> blocks;
-    std::vector<Value> constants;              // 常量池
-    std::vector<std::string> globalNames;      // 全局变量名池（复用存储字段名/函数名）
+    std::vector<Value> constants;         // 常量池
+    std::vector<std::string> globalNames; // 全局变量名池（复用存储字段名/函数名）
     // perf3 fix: hash 侧表加速 addGlobal/addConstant 去重（O(n²)→O(n)）。
     // 仅经 addGlobal/addConstant 维护，constants/globalNames 不被外部直接修改，保持一致。
     std::unordered_map<std::string, uint32_t> globalNameIdx_;
     std::unordered_map<std::string, uint32_t> stringConstIdx_;
     // P2-1 fix: 非字符串常量（int/float/bool）hash 侧表。key 编码方式见 scalarKey()
     std::unordered_map<std::string, uint32_t> scalarConstIdx_;
-    uint32_t nextVReg = 0;                     // 下一个虚拟寄存器号
-    uint32_t nextLabel = 0;                    // 下一个标签号
+    uint32_t nextVReg = 0;  // 下一个虚拟寄存器号
+    uint32_t nextLabel = 0; // 下一个标签号
 
     // 函数元数据（lowering 时使用）
-    int arity = 0;                  // 参数个数
-    int requiredArity = 0;          // 必需参数个数
-    int localCount = 0;             // 局部变量总槽位数
-    std::vector<uint16_t> defaultConstIndices;  // 默认参数值的常量索引
-    std::vector<UpvalueDesc> upvalues;           // 闭包 upvalue 描述符列表
+    int arity = 0;                             // 参数个数
+    int requiredArity = 0;                     // 必需参数个数
+    int localCount = 0;                        // 局部变量总槽位数
+    std::vector<uint16_t> defaultConstIndices; // 默认参数值的常量索引
+    std::vector<UpvalueDesc> upvalues;         // 闭包 upvalue 描述符列表
     // BUG-IDE-12 fix: 局部变量槽位→名称映射（索引即 slot），供 RegisterVM 条件断点求值反查。
     // 由 AstIRBuilder 在分配 LOCAL slot 时增量维护，函数最终化时复制到 ir_->localSlotNames。
     // 限制：槽位复用（兄弟作用域）时后声明的变量名覆盖先前的，属于已知限制。
@@ -261,15 +269,17 @@ struct IRFunction {
     /// BUG-AUDIT-VAL-1 fix: float 改用位模式编码，避免 std::to_string(double) 仅 6 位小数导致
     /// 不同位模式的 double（如 0.1000001 与 0.1000002）被错误合并为同一常量。
     static std::string scalarKey(const Value& v) {
-        if (v.isInt())   return "I:" + std::to_string(v.intVal());
+        if (v.isInt())
+            return "I:" + std::to_string(v.intVal());
         if (v.isFloat()) {
             double d = v.floatVal();
             uint64_t bits;
             std::memcpy(&bits, &d, sizeof(double));
             return "F:" + std::to_string(bits);
         }
-        if (v.isBool())  return v.boolVal() ? "B:1" : "B:0";
-        return {};  // 不会触达
+        if (v.isBool())
+            return v.boolVal() ? "B:1" : "B:0";
+        return {}; // 不会触达
     }
     /// 添加常量，返回索引（已存在则复用）
     uint32_t addConstant(const Value& v) {
@@ -279,13 +289,16 @@ struct IRFunction {
         // null/Instance/Array/Dict 等复杂类型：保留线性扫描（此类常量极少出现）
         if (v.isString()) {
             auto it = stringConstIdx_.find(v.stringVal());
-            if (it != stringConstIdx_.end()) return it->second;
+            if (it != stringConstIdx_.end())
+                return it->second;
         } else if (v.isInt() || v.isFloat() || v.isBool()) {
             auto it = scalarConstIdx_.find(scalarKey(v));
-            if (it != scalarConstIdx_.end()) return it->second;
+            if (it != scalarConstIdx_.end())
+                return it->second;
         } else {
             for (size_t i = 0; i < constants.size(); ++i) {
-                if (constants[i].equals(v)) return static_cast<uint32_t>(i);
+                if (constants[i].equals(v))
+                    return static_cast<uint32_t>(i);
             }
         }
         // 与 BytecodeChunk/RegBytecodeChunk 一致：常量池索引需 fit 到 uint16_t，
@@ -306,7 +319,8 @@ struct IRFunction {
     uint32_t addGlobal(const std::string& name) {
         // perf3 fix: hash 侧表 O(1) 查找替代 O(n) 线性扫描
         auto it = globalNameIdx_.find(name);
-        if (it != globalNameIdx_.end()) return it->second;
+        if (it != globalNameIdx_.end())
+            return it->second;
         // P2-2 fix: 与 addConstant 对齐——globalNames 索引经 writeShort 编码为 uint16_t，
         // 超限抛异常以避免调用方 static_cast<uint16_t> 静默截断（读写错误全局名）。
         if (globalNames.size() >= 65535) {
@@ -328,9 +342,9 @@ struct IRFunction {
 /// IR 模块（包含 main 函数和所有子函数）
 /// 用于多函数 lowering：AstIRBuilder 收集所有函数 IR，BytecodeIRBackend 逐个 lowering
 struct IRModule {
-    std::unique_ptr<IRFunction> mainFunction;           // 主函数（顶层代码）
-    std::vector<std::unique_ptr<IRFunction>> functions;  // 子函数列表
-    std::unordered_map<std::string, size_t> functionIndex;  // 函数名 → functions 索引
+    std::unique_ptr<IRFunction> mainFunction;              // 主函数（顶层代码）
+    std::vector<std::unique_ptr<IRFunction>> functions;    // 子函数列表
+    std::unordered_map<std::string, size_t> functionIndex; // 函数名 → functions 索引
     // BUG-NEW fix: 全局槽位名表（slot → name），供 BytecodeIRBackend lowering 时
     // 将 WRITEBACK_*_VAR 的 GLOBAL_SLOT (IMM_UINT) 转换为名称常量索引。
     // 栈式 VM 的 OP_WRITEBACK_*_VAR 将 varIdx 当作常量池索引处理（取 stringVal()），
@@ -344,7 +358,8 @@ struct IRModule {
     }
     IRFunction* findFunction(const std::string& name) const {
         auto it = functionIndex.find(name);
-        if (it == functionIndex.end()) return nullptr;
+        if (it == functionIndex.end())
+            return nullptr;
         return functions[it->second].get();
     }
 };
@@ -414,21 +429,21 @@ public:
 
 private:
     std::unique_ptr<IRFunction> ir_;
-    IRBasicBlock* currentBlock_ = nullptr;  // 当前基本块（指令追加目标）
-    std::unique_ptr<IRModule> module_;       // IR 模块（收集所有函数）
-    bool hasError_ = false;                  // BUG-MOD-1: IR 构建错误标志
-    std::string errorMessage_;               // BUG-MOD-1: 错误消息
-    int errorLine_ = 0;                      // BUG-MOD-1: 错误行号
+    IRBasicBlock* currentBlock_ = nullptr; // 当前基本块（指令追加目标）
+    std::unique_ptr<IRModule> module_;     // IR 模块（收集所有函数）
+    bool hasError_ = false;                // BUG-MOD-1: IR 构建错误标志
+    std::string errorMessage_;             // BUG-MOD-1: 错误消息
+    int errorLine_ = 0;                    // BUG-MOD-1: 错误行号
 
     // 变量解析状态
     struct VarInfo {
         enum class Kind { LOCAL, GLOBAL_SLOT, GLOBAL_NAME, UPVALUE } kind;
-        uint32_t index;  // LOCAL→slot, GLOBAL_SLOT→槽位号, GLOBAL_NAME→globalNames idx, UPVALUE→uv idx
+        uint32_t index; // LOCAL→slot, GLOBAL_SLOT→槽位号, GLOBAL_NAME→globalNames idx, UPVALUE→uv idx
     };
     std::unordered_map<std::string, VarInfo> varMap_;
-    std::unordered_map<std::string, std::string> varTypes_;  // 2026-06-29: 变量名→类型注解
+    std::unordered_map<std::string, std::string> varTypes_; // 2026-06-29: 变量名→类型注解
     bool inFunction_ = false;
-    std::string currentFunctionReturnType_;  // BUG-TYPE-1 fix: 当前函数返回类型注解
+    std::string currentFunctionReturnType_; // BUG-TYPE-1 fix: 当前函数返回类型注解
     uint32_t nextLocalSlot_ = 0;
     // BUG-IDE-12 fix: 局部变量 slot→name 映射（索引即 slot），跨作用域累积（不随块退出清除）。
     // 函数最终化时复制到 ir_->localSlotNames，供 RegisterVM 条件断点求值反查变量名。
@@ -447,22 +462,22 @@ private:
 
     // 块作用域跟踪（限制5）
     struct BlockScope {
-        std::vector<uint32_t> localSlots;  // 本块声明的局部变量槽位（退出时回收）
-        uint32_t slotBase = 0;             // 进入块时的 nextLocalSlot_ 值（退出时回收到此）
-        bool hasNestedFunction = false;     // 本块内是否创建了嵌套函数（闭包），
-                                            // 若有则不回收槽位（闭包可能捕获了本块的局部变量）
+        std::vector<uint32_t> localSlots; // 本块声明的局部变量槽位（退出时回收）
+        uint32_t slotBase = 0;            // 进入块时的 nextLocalSlot_ 值（退出时回收到此）
+        bool hasNestedFunction = false;   // 本块内是否创建了嵌套函数（闭包），
+                                          // 若有则不回收槽位（闭包可能捕获了本块的局部变量）
         // CRITICAL-2 fix: 块作用域遮蔽保存栈。当内块 var x 与外块同名时，
         // visitVarDecl 覆盖 varMap_ 前将旧条目压入此栈，leaveBlockScope 时恢复。
         // 保证外层绑定在块退出后可达，对齐 Interpreter 的作用域链语义。
         struct ShadowedVar {
             std::string name;
             VarInfo info;
-            bool hadOld;  // varMap_ 中是否已有同名旧条目（无则块退出时删除）
+            bool hadOld; // varMap_ 中是否已有同名旧条目（无则块退出时删除）
         };
         std::vector<ShadowedVar> shadowedVars;
     };
     std::vector<BlockScope> blockScopes_;
-    int blockDepth_ = 0;  // 当前块嵌套深度（仅在 inFunction_==true 时有效）
+    int blockDepth_ = 0; // 当前块嵌套深度（仅在 inFunction_==true 时有效）
 
     // 全局槽位管理（限制3 / B4: 委托给 GlobalSlotAllocator）
     GlobalSlotAllocator globalSlotAllocator_;
@@ -472,10 +487,10 @@ private:
 
     // VM-IMPORT: 模块系统状态（对齐 Compiler 的 moduleLoadingSet_/linkedModuleSet_）
     std::function<std::string(const std::string&)> moduleLoader_;
-    std::unordered_set<std::string> moduleLoadingSet_;  // 正在编译中（循环检测）
-    std::vector<std::string> moduleLoadingStack_;       // BUG-AUDIT-MOD-3: 深度保护栈
-    std::unordered_set<std::string> linkedModuleSet_;   // 已完成（run-once）
-    std::vector<std::unique_ptr<Block>> moduleAsts_;    // 保留模块 AST
+    std::unordered_set<std::string> moduleLoadingSet_; // 正在编译中（循环检测）
+    std::vector<std::string> moduleLoadingStack_;      // BUG-AUDIT-MOD-3: 深度保护栈
+    std::unordered_set<std::string> linkedModuleSet_;  // 已完成（run-once）
+    std::vector<std::unique_ptr<Block>> moduleAsts_;   // 保留模块 AST
     // BUG-AUDIT-MOD-1: 模块导出名称集合（对齐 Compiler::moduleExports_）
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
 
@@ -483,7 +498,11 @@ private:
     void handleImportStmt(ImportStmt& node);
 
     // 闭包 upvalue 追踪（限制1）
-    struct UpvalueInfo { uint32_t index; bool isLocal; int outerIdx; };
+    struct UpvalueInfo {
+        uint32_t index;
+        bool isLocal;
+        int outerIdx;
+    };
     std::vector<UpvalueInfo> currentUpvalues_;
     std::unordered_map<std::string, int> currentUpvalueNames_;
     std::unordered_map<std::string, int> outerLocalSlots_;
@@ -499,17 +518,17 @@ private:
     struct LoopContext {
         uint32_t startLabel;
         uint32_t endLabel;
-        uint32_t continueLabel;  // continue 目标（for 的 update 块）
+        uint32_t continueLabel; // continue 目标（for 的 update 块）
         int tryDepthAtStart = 0;
         // AUDIT-P2-CORRECT fix: break 需发射 CLOSE_UPVALUE 关闭循环体内声明的
         // 闭包捕获变量的 upvalue（对齐正常迭代退出时的 leaveBlockScope 发射）。
         // CLOSE_UPVALUE bodySlotBase 关闭 slot >= bodySlotBase 的全部 open upvalues，
         // 含循环体内嵌套块声明的变量（嵌套块 slot >= bodySlotBase）。
-        uint32_t bodySlotBase = 0;       // 循环体 block scope slot 基址
-        bool needCloseUpvalue = false;   // 是否需要关闭 upvalue（inFunction_）
+        uint32_t bodySlotBase = 0;     // 循环体 block scope slot 基址
+        bool needCloseUpvalue = false; // 是否需要关闭 upvalue（inFunction_）
     };
     std::vector<LoopContext> loopStack_;
-    int tryDepth_ = 0;  // 当前 try 嵌套深度（BUG-EXC-2 fix）
+    int tryDepth_ = 0; // 当前 try 嵌套深度（BUG-EXC-2 fix）
     // BUG-IR-SHADOW-SAVE fix: catch 变量遮蔽全局时，原值保存到临时 name-based 全局变量。
     // 不能用 vreg 保存——StackVM 后端的 LOAD_EXCEPTION 是 no-op（异常值已在栈上），
     // LOAD_GLOBAL 再 push 会使 DEFINE_GLOBAL pop 错误值（saved 而非 exception）。
@@ -541,11 +560,9 @@ private:
     // 在编译子函数体前，先收集所有自由变量名，为每个能在外层捕获的变量预建 upvalue。
     // 这确保中间函数即使不直接引用某变量，也会捕获它供更内层函数透传。
     std::unordered_set<std::string> computeFreeVars(const class FunDecl& fn);
-    void collectFreeVars(const class ASTNode& node,
-                         std::vector<std::unordered_set<std::string>>& scopes,
+    void collectFreeVars(const class ASTNode& node, std::vector<std::unordered_set<std::string>>& scopes,
                          std::unordered_set<std::string>& freeVars);
-    bool isDefinedInScopes(const std::vector<std::unordered_set<std::string>>& scopes,
-                           const std::string& name) const;
+    bool isDefinedInScopes(const std::vector<std::unordered_set<std::string>>& scopes, const std::string& name) const;
 
     // ---- AST 节点转换 ----
     IROperand visitNode(class ASTNode* node);
@@ -619,7 +636,7 @@ public:
 
     /// lower 整个 IRModule（main + 子函数），返回 CompileResult 兼容的结构
     /// 成功后 takeChunk() 返回 main chunk，takeFunctionChunks() 返回函数 chunks
-    bool lowerModule(const IRModule& module);  // BUG-NEW: module.globalSlotNames 用于 WRITEBACK_*_VAR slot→name 转换
+    bool lowerModule(const IRModule& module); // BUG-NEW: module.globalSlotNames 用于 WRITEBACK_*_VAR slot→name 转换
 
     /// 取生成的函数 chunks（lowerModule 后有效）
     std::map<std::string, BytecodeChunk> takeFunctionChunks() { return std::move(functionChunks_); }
@@ -632,8 +649,8 @@ public:
 
 private:
     std::unique_ptr<BytecodeChunk> chunk_;
-    std::map<std::string, BytecodeChunk> functionChunks_;  // 函数名 → chunk
-    std::vector<std::pair<size_t, size_t>> irToBytecodeOffset_;  // 方向四：IR→字节码偏移映射
+    std::map<std::string, BytecodeChunk> functionChunks_;       // 函数名 → chunk
+    std::vector<std::pair<size_t, size_t>> irToBytecodeOffset_; // 方向四：IR→字节码偏移映射
 
     // vreg → 栈深度映射
     std::unordered_map<uint32_t, uint32_t> vregStackDepth_;
@@ -643,7 +660,12 @@ private:
     // BUG-EXC-1 fix: isTryBegin=true 时 patchJumps 写相对偏移（target - (codeOffset+2)），
     // 因为 StackVM OP_TRY_BEGIN 用 `catchIp = ip + 3 + catchOffset` 解码（相对偏移），
     // 而 OP_JUMP/OP_JUMP_IF_FALSE 用 `ip = jump`（绝对偏移）。
-    struct PendingJump { size_t codeOffset; uint32_t targetLabel; bool isLoop; bool isTryBegin = false; };
+    struct PendingJump {
+        size_t codeOffset;
+        uint32_t targetLabel;
+        bool isLoop;
+        bool isTryBegin = false;
+    };
     std::vector<PendingJump> pendingJumps_;
     // BUG-NEW fix: 全局槽位名表指针（lowerModule 设置，lowerInstruction 中
     // WRITEBACK_*_VAR IMM_UINT 分支用其将 slot→name 转为字符串常量索引）
@@ -737,8 +759,8 @@ bool loopUnrollingPass(IRFunction& ir);
 ///   - 默认 false：循环展开改变代码结构，可能影响调试器行号映射，默认关闭
 ///   - 性能场景（ProfileDashboardPanel）可显式启用
 /// 返回：是否修改了 IR
-bool optimizeIR(IRFunction& ir, bool enableCopyPropagation = false, bool enableDCE = false,
-                bool enableCSE = false, bool enableLoopUnroll = false);
+bool optimizeIR(IRFunction& ir, bool enableCopyPropagation = false, bool enableDCE = false, bool enableCSE = false,
+                bool enableLoopUnroll = false);
 
 // ============================================================
 // IR 打印（调试用）

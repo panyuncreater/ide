@@ -36,21 +36,21 @@
 #include <QString>
 
 #ifdef MINILANG_ENABLE_I18N
-#  include <QCoreApplication>
-#  include <QTranslator>
-#  include <QFileInfo>
-#  include <QDir>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QTranslator>
 
 /// 主翻译上下文（顶层 GUI 字符串）
-#  define ML_TR_CONTEXT "MiniLang"
+#define ML_TR_CONTEXT "MiniLang"
 
 /// 翻译宏（默认 "MiniLang" 上下文）
 /// 展开为 QCoreApplication::translate，lupdate 自动提取
-#  define mlTr(string) QCoreApplication::translate(ML_TR_CONTEXT, string)
+#define mlTr(string) QCoreApplication::translate(ML_TR_CONTEXT, string)
 
 /// 翻译宏（带显式 context）
 /// @param context 翻译上下文（如 "CodeEditor"），用于 lupdate 分组
-#  define mlTrCtx(context, string) QCoreApplication::translate(context, string)
+#define mlTrCtx(context, string) QCoreApplication::translate(context, string)
 
 /// 加载翻译文件（main.cpp 在 QCoreApplication 实例化后调用）
 /// 查找路径顺序：
@@ -84,19 +84,19 @@ inline bool loadMiniLangTranslations(const QString& locale = QString()) {
     return false;
 }
 
-#else  // MINILANG_ENABLE_I18N 未启用 — 编译期退化为 QString::fromUtf8
+#else // MINILANG_ENABLE_I18N 未启用 — 编译期退化为 QString::fromUtf8
 
-#  define ML_TR_CONTEXT "MiniLang"
+#define ML_TR_CONTEXT "MiniLang"
 
 /// 翻译宏（默认上下文，i18n 关闭时退化为 fromUtf8）
-#  define mlTr(string) QString::fromUtf8(string)
+#define mlTr(string) QString::fromUtf8(string)
 
 /// 翻译宏（带 context，i18n 关闭时退化为 fromUtf8，context 被忽略）
-#  define mlTrCtx(context, string) QString::fromUtf8(string)
+#define mlTrCtx(context, string) QString::fromUtf8(string)
 
 /// 加载翻译文件（i18n 关闭时为 no-op）
 inline bool loadMiniLangTranslations(const QString& /*locale*/ = QString()) {
     return false;
 }
 
-#endif  // MINILANG_ENABLE_I18N
+#endif // MINILANG_ENABLE_I18N

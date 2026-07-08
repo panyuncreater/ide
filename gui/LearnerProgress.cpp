@@ -14,14 +14,14 @@
 // AUDIT-P1 fix: 需要 LearningPathData::stageCount() 用于 currentStage 校验上限。
 #include "gui/LearningPathData.h"
 
+#include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QDir>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
 #include <QStandardPaths>
-#include <QDateTime>
 
 #include <algorithm>
 #include <chrono>
@@ -83,6 +83,12 @@ bool LearnerProgressStore::load() {
     LearnerProgress loaded;
     QJsonObject root = doc.object();
 
+    // AUDIT-P2 fix: 校验 schemaVersion。缺失字段默认为 1（向后兼容旧文件），
+    // 高于当前支持版本(1)则拒绝加载，避免未来 schema 变更后误读旧结构。
+    int sv = root.value(QString::fromUtf8("schemaVersion")).toInt(1);
+    if (sv > 1)
+        return false;
+
     // completed: { "id": true, ... }
     QJsonObject completedObj = root.value(QString::fromUtf8("completed")).toObject();
     for (auto it = completedObj.begin(); it != completedObj.end(); ++it) {
@@ -108,8 +114,12 @@ bool LearnerProgressStore::load() {
     QJsonObject accessObj = root.value(QString::fromUtf8("lastAccessTime")).toObject();
     for (auto it = accessObj.begin(); it != accessObj.end(); ++it) {
         if (it.value().isDouble()) {
-            loaded.lastAccessTime[it.key().toStdString()] =
-                static_cast<int64_t>(it.value().toDouble());
+            // AUDIT-P2 fix: 负数时间戳兜底为 0，与其他数值字段的范围校验保持一致，
+            // 防止手动篡改的 JSON 破坏 nextRecommended 的时间排序语义。
+            int64_t ts = static_cast<int64_t>(it.value().toDouble());
+            if (ts < 0)
+                ts = 0;
+            loaded.lastAccessTime[it.key().toStdString()] = ts;
         }
     }
 
@@ -193,12 +203,18 @@ bool LearnerProgressStore::load() {
 // 保存进度
 // ============================================================
 /// 将内存中的进度数据写回文件。
+// AUDIT-P1 fix: 原子写入——写临时文件 → flush → close → remove 旧 → rename，
+// 避免崩溃/断电/磁盘满导致目标文件被截断为部分内容或空文件，全部进度丢失。
+// AUDIT-P2 fix: 写入 schemaVersion 字段，支持未来 schema 迁移。
 bool LearnerProgressStore::save() const {
     QString path = filePath();
     QFileInfo fi(path);
     QDir().mkpath(fi.absolutePath());
 
     QJsonObject root;
+
+    // AUDIT-P2 fix: schema 版本号，支持未来字段重命名/类型变更/语义变更的迁移
+    root.insert(QString::fromUtf8("schemaVersion"), 1);
 
     QJsonObject completedObj;
     for (const auto& [id, val] : data_.completed) {
@@ -215,8 +231,7 @@ bool LearnerProgressStore::save() const {
     QJsonObject accessObj;
     for (const auto& [id, val] : data_.lastAccessTime) {
         // int64_t 转为 double 存储（JSON 数字精度）
-        accessObj.insert(QString::fromStdString(id),
-                         static_cast<double>(val));
+        accessObj.insert(QString::fromStdString(id), static_cast<double>(val));
     }
     root.insert(QString::fromUtf8("lastAccessTime"), accessObj);
 
@@ -256,12 +271,33 @@ bool LearnerProgressStore::save() const {
 
     QJsonDocument doc(root);
 
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // AUDIT-P1 fix: 原子写入模式——写 .tmp → flush → close → remove 旧 → rename
+    QString tmpPath = path + QStringLiteral(".tmp");
+    QFile tmpFile(tmpPath);
+    if (!tmpFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         return false;
     }
-    file.write(doc.toJson(QJsonDocument::Indented));
-    file.close();
+    qint64 written = tmpFile.write(doc.toJson(QJsonDocument::Indented));
+    if (written < 0) {
+        tmpFile.close();
+        QFile::remove(tmpPath);
+        return false;
+    }
+    tmpFile.flush();
+    tmpFile.close();
+
+    // Windows 上 rename 不能覆盖已存在文件，需先 remove 旧文件
+    if (QFile::exists(path)) {
+        if (!QFile::remove(path)) {
+            QFile::remove(tmpPath);
+            return false;
+        }
+    }
+    if (!QFile::rename(tmpPath, path)) {
+        // rename 失败时 tmp 文件已被移走或保留，尝试清理
+        QFile::remove(tmpPath);
+        return false;
+    }
     return true;
 }
 
@@ -270,11 +306,11 @@ bool LearnerProgressStore::save() const {
 // ============================================================
 /// 标记某活动已完成并记录时间戳。
 void LearnerProgressStore::markCompleted(const std::string& activityId) {
-    if (activityId.empty()) return;
+    if (activityId.empty())
+        return;
     data_.completed[activityId] = true;
     auto now = static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     data_.lastAccessTime[activityId] = now;
     // P1-2 fix (F8): 完成状态变化后立即重算阶段，避免 currentStage 永远为 0。
     // 此处调用 recomputeStage 是幂等的——多次调用只覆盖 currentStage，无副作用。
@@ -296,7 +332,7 @@ void LearnerProgressStore::recomputeStage(const std::vector<LearningActivity>& a
         data_.currentStage = 0;
         return;
     }
-    int highestQualified = -1;  // 完成比例 >= 50% 的最高阶段
+    int highestQualified = -1; // 完成比例 >= 50% 的最高阶段
     for (int stage = 0; stage < LearningPathData::stageCount(); ++stage) {
         int sp = stageProgress(stage, all);
         if (sp >= 50) {
@@ -309,8 +345,7 @@ void LearnerProgressStore::recomputeStage(const std::vector<LearningActivity>& a
     } else if (highestQualified == LearningPathData::stageCount() - 1) {
         // 最后一阶段也过半——若已 100% 则标记为 stageCount（通关），否则停留在最后阶段
         int lastStageProgress = stageProgress(highestQualified, all);
-        data_.currentStage = (lastStageProgress >= 100) ? LearningPathData::stageCount()
-                                                        : highestQualified;
+        data_.currentStage = (lastStageProgress >= 100) ? LearningPathData::stageCount() : highestQualified;
     } else {
         // 下一未完成阶段
         data_.currentStage = highestQualified + 1;
@@ -319,11 +354,11 @@ void LearnerProgressStore::recomputeStage(const std::vector<LearningActivity>& a
 
 /// 记录一次尝试（即使未完成也计数）。
 void LearnerProgressStore::recordAttempt(const std::string& activityId) {
-    if (activityId.empty()) return;
+    if (activityId.empty())
+        return;
     data_.attemptCount[activityId] += 1;
     auto now = static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     data_.lastAccessTime[activityId] = now;
 }
 
@@ -347,7 +382,8 @@ void LearnerProgressStore::reset() {
 // ============================================================
 /// 为某关卡记录星级（0-3）。
 void LearnerProgressStore::markLevelStars(const std::string& levelId, int stars) {
-    if (levelId.empty()) return;
+    if (levelId.empty())
+        return;
     // 仅当新星级 >= 已记录星级时才覆盖（保留历史最佳成绩）
     auto it = data_.levelStars.find(levelId);
     if (it == data_.levelStars.end() || stars > it->second) {
@@ -356,8 +392,8 @@ void LearnerProgressStore::markLevelStars(const std::string& levelId, int stars)
     // stars >= 0 表示关卡至少被完成或跳过，同步记录访问时间
     if (stars >= 0) {
         auto now = static_cast<int64_t>(
-            std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count());
         data_.lastAccessTime[levelId] = now;
     }
 }
@@ -365,14 +401,15 @@ void LearnerProgressStore::markLevelStars(const std::string& levelId, int stars)
 /// 读取某关卡的星级。
 int LearnerProgressStore::getLevelStars(const std::string& levelId) const {
     auto it = data_.levelStars.find(levelId);
-    if (it == data_.levelStars.end()) return -1;  // 未记录 = 未完成
+    if (it == data_.levelStars.end())
+        return -1; // 未记录 = 未完成
     return it->second;
 }
 
 /// 判断给定关卡是否全部完成。
-bool LearnerProgressStore::areAllLevelsCompleted(
-    const std::vector<std::string>& levelIds) const {
-    if (levelIds.empty()) return false;
+bool LearnerProgressStore::areAllLevelsCompleted(const std::vector<std::string>& levelIds) const {
+    if (levelIds.empty())
+        return false;
     for (const auto& id : levelIds) {
         auto it = data_.levelStars.find(id);
         if (it == data_.levelStars.end() || it->second < 0) {
@@ -387,10 +424,13 @@ bool LearnerProgressStore::areAllLevelsCompleted(
 // ============================================================
 /// 记录某活动得分与星级。
 void LearnerProgressStore::recordScore(const std::string& activityId, int score, int stars) {
-    if (activityId.empty()) return;
+    if (activityId.empty())
+        return;
     // score 截断到 [0, 100]
-    if (score < 0) score = 0;
-    if (score > 100) score = 100;
+    if (score < 0)
+        score = 0;
+    if (score > 100)
+        score = 100;
     // 保留历史最佳得分（仅当新分 >= 旧分时覆盖）
     auto it = data_.score.find(activityId);
     if (it == data_.score.end() || score > it->second) {
@@ -405,8 +445,7 @@ void LearnerProgressStore::recordScore(const std::string& activityId, int score,
     }
     // 同步更新访问时间
     auto now = static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     data_.lastAccessTime[activityId] = now;
 }
 
@@ -424,8 +463,10 @@ int LearnerProgressStore::getBestStars(const std::string& activityId) const {
 
 /// 累加某活动投入分钟数。
 void LearnerProgressStore::addSpentMinutes(const std::string& activityId, int minutes) {
-    if (activityId.empty()) return;
-    if (minutes <= 0) return;  // 负数或零视为无操作
+    if (activityId.empty())
+        return;
+    if (minutes <= 0)
+        return; // 负数或零视为无操作
     data_.spentMinutes[activityId] += minutes;
     // 不更新 lastAccessTime——时间累加是异步操作，不应刷新访问时间戳
 }
@@ -438,11 +479,11 @@ int LearnerProgressStore::getSpentMinutes(const std::string& activityId) const {
 
 /// 记录一次失败（失败计数 +1）。
 void LearnerProgressStore::recordFailure(const std::string& activityId) {
-    if (activityId.empty()) return;
+    if (activityId.empty())
+        return;
     data_.failCount[activityId] += 1;
     auto now = static_cast<int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     data_.lastAccessTime[activityId] = now;
 }
 
@@ -460,28 +501,30 @@ int LearnerProgressStore::getFailCount(const std::string& activityId) const {
 //   3. 截取前 maxCount 个返回（maxCount=0 表示不限制）
 // ============================================================
 /// 基于失败/低星识别薄弱点列表。
-std::vector<WeakPoint> LearnerProgressStore::getWeakPoints(
-    const std::vector<LearningActivity>& all,
-    int minAttempts,
-    std::size_t maxCount) const {
+std::vector<WeakPoint> LearnerProgressStore::getWeakPoints(const std::vector<LearningActivity>& all, int minAttempts,
+                                                           std::size_t maxCount) const {
 
     std::vector<WeakPoint> candidates;
     for (const auto& a : all) {
         // 已完成则跳过——薄弱点仅针对未通过活动
         auto cit = data_.completed.find(a.id);
-        if (cit != data_.completed.end() && cit->second) continue;
+        if (cit != data_.completed.end() && cit->second)
+            continue;
 
         int attempts = 0;
         auto ait = data_.attemptCount.find(a.id);
-        if (ait != data_.attemptCount.end()) attempts = ait->second;
+        if (ait != data_.attemptCount.end())
+            attempts = ait->second;
 
         int fails = 0;
         auto fit = data_.failCount.find(a.id);
-        if (fit != data_.failCount.end()) fails = fit->second;
+        if (fit != data_.failCount.end())
+            fails = fit->second;
 
         int sc = 0;
         auto sit = data_.score.find(a.id);
-        if (sit != data_.score.end()) sc = sit->second;
+        if (sit != data_.score.end())
+            sc = sit->second;
 
         // 筛选条件：尝试次数 >= 阈值 或 至少失败过一次
         if (attempts >= minAttempts || fails >= 1) {
@@ -490,12 +533,13 @@ std::vector<WeakPoint> LearnerProgressStore::getWeakPoints(
     }
 
     // 排序：失败次数降序 → 尝试次数降序 → id 字典序
-    std::sort(candidates.begin(), candidates.end(),
-        [](const WeakPoint& a, const WeakPoint& b) {
-            if (a.fails != b.fails) return a.fails > b.fails;
-            if (a.attempts != b.attempts) return a.attempts > b.attempts;
-            return a.activityId < b.activityId;
-        });
+    std::sort(candidates.begin(), candidates.end(), [](const WeakPoint& a, const WeakPoint& b) {
+        if (a.fails != b.fails)
+            return a.fails > b.fails;
+        if (a.attempts != b.attempts)
+            return a.attempts > b.attempts;
+        return a.activityId < b.activityId;
+    });
 
     // 截取前 maxCount 个（maxCount=0 表示不限制）
     if (maxCount > 0 && candidates.size() > maxCount) {
@@ -510,16 +554,17 @@ std::vector<WeakPoint> LearnerProgressStore::getWeakPoints(
 // 注：未解锁活动不计入——因为它们当前无法开始，不应计入"剩余"。
 // ============================================================
 /// 估算完成剩余活动所需分钟数。
-int LearnerProgressStore::estimatedRemainingMinutes(
-    const std::vector<LearningActivity>& all) const {
+int LearnerProgressStore::estimatedRemainingMinutes(const std::vector<LearningActivity>& all) const {
     int total = 0;
     for (const auto& a : all) {
         // 已完成则跳过
         auto cit = data_.completed.find(a.id);
-        if (cit != data_.completed.end() && cit->second) continue;
+        if (cit != data_.completed.end() && cit->second)
+            continue;
 
         // 未解锁则跳过（不计入剩余时间）
-        if (!isUnlocked(a.id, all)) continue;
+        if (!isUnlocked(a.id, all))
+            continue;
 
         total += a.estimatedMinutes;
     }
@@ -539,14 +584,17 @@ int LearnerProgressStore::totalSpentMinutes() const {
 // 查询接口
 // ============================================================
 /// 判断某活动是否已解锁（前置依赖满足）。
-bool LearnerProgressStore::isUnlocked(const std::string& activityId,
-                                       const std::vector<LearningActivity>& all) const {
+bool LearnerProgressStore::isUnlocked(const std::string& activityId, const std::vector<LearningActivity>& all) const {
     // 找到该活动
     const LearningActivity* act = nullptr;
     for (const auto& a : all) {
-        if (a.id == activityId) { act = &a; break; }
+        if (a.id == activityId) {
+            act = &a;
+            break;
+        }
     }
-    if (!act) return false;
+    if (!act)
+        return false;
 
     // 检查所有前置是否完成
     for (const auto& preId : act->prerequisites) {
@@ -559,42 +607,46 @@ bool LearnerProgressStore::isUnlocked(const std::string& activityId,
 }
 
 /// 返回某阶段的完成进度百分比。
-int LearnerProgressStore::stageProgress(int stage,
-                                         const std::vector<LearningActivity>& all) const {
+int LearnerProgressStore::stageProgress(int stage, const std::vector<LearningActivity>& all) const {
     int total = 0;
     int done = 0;
     for (const auto& a : all) {
-        if (a.stage != stage) continue;
+        if (a.stage != stage)
+            continue;
         ++total;
         auto it = data_.completed.find(a.id);
-        if (it != data_.completed.end() && it->second) ++done;
+        if (it != data_.completed.end() && it->second)
+            ++done;
     }
-    if (total == 0) return 0;
+    if (total == 0)
+        return 0;
     return static_cast<int>((static_cast<int64_t>(done) * 100) / total);
 }
 
 /// 返回总体完成进度百分比。
 int LearnerProgressStore::overallProgress(const std::vector<LearningActivity>& all) const {
-    if (all.empty()) return 0;
+    if (all.empty())
+        return 0;
     int total = static_cast<int>(all.size());
     int done = 0;
     for (const auto& a : all) {
         auto it = data_.completed.find(a.id);
-        if (it != data_.completed.end() && it->second) ++done;
+        if (it != data_.completed.end() && it->second)
+            ++done;
     }
     return static_cast<int>((static_cast<int64_t>(done) * 100) / total);
 }
 
 /// 返回下一个推荐学习活动的 id/描述。
-std::string LearnerProgressStore::nextRecommended(
-    const std::vector<LearningActivity>& all) const {
+std::string LearnerProgressStore::nextRecommended(const std::vector<LearningActivity>& all) const {
 
     // 1. 筛选候选：未完成 + 已解锁
     std::vector<const LearningActivity*> candidates;
     for (const auto& a : all) {
         // 已完成则跳过
         auto cit = data_.completed.find(a.id);
-        if (cit != data_.completed.end() && cit->second) continue;
+        if (cit != data_.completed.end() && cit->second)
+            continue;
 
         // 检查所有前置完成
         bool unlocked = true;
@@ -605,10 +657,12 @@ std::string LearnerProgressStore::nextRecommended(
                 break;
             }
         }
-        if (unlocked) candidates.push_back(&a);
+        if (unlocked)
+            candidates.push_back(&a);
     }
 
-    if (candidates.empty()) return std::string();
+    if (candidates.empty())
+        return std::string();
 
     // 2. 排序：stage 升序 → attemptCount 升序 → estimatedMinutes 升序 → id 字典序
     auto attemptOf = [this](const std::string& id) -> int {
@@ -616,16 +670,17 @@ std::string LearnerProgressStore::nextRecommended(
         return it != data_.attemptCount.end() ? it->second : 0;
     };
 
-    std::sort(candidates.begin(), candidates.end(),
-        [&attemptOf](const LearningActivity* a, const LearningActivity* b) {
-            if (a->stage != b->stage) return a->stage < b->stage;
-            int aa = attemptOf(a->id);
-            int ab = attemptOf(b->id);
-            if (aa != ab) return aa < ab;
-            if (a->estimatedMinutes != b->estimatedMinutes)
-                return a->estimatedMinutes < b->estimatedMinutes;
-            return a->id < b->id;
-        });
+    std::sort(candidates.begin(), candidates.end(), [&attemptOf](const LearningActivity* a, const LearningActivity* b) {
+        if (a->stage != b->stage)
+            return a->stage < b->stage;
+        int aa = attemptOf(a->id);
+        int ab = attemptOf(b->id);
+        if (aa != ab)
+            return aa < ab;
+        if (a->estimatedMinutes != b->estimatedMinutes)
+            return a->estimatedMinutes < b->estimatedMinutes;
+        return a->id < b->id;
+    });
 
     return candidates.front()->id;
 }

@@ -44,18 +44,18 @@
 #pragma once
 
 #include "gui/AstToyLevels.h"
-#include "gui/I18n.h"  // mlTr() 国际化（头文件内联使用）
+#include "gui/I18n.h" // mlTr() 国际化（头文件内联使用）
 
-#include <QWidget>
-#include <QTreeWidget>
-#include <QTreeWidgetItem>
 #include <QComboBox>
 #include <QLabel>
-#include <QPushButton>
 #include <QList>
+#include <QPushButton>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
+#include <QWidget>
 #include <vector>
 
-class IdeController;  // P1-3 fix (F14): 前向声明，setController 占位接口
+class IdeController; // P1-3 fix (F14): 前向声明，setController 占位接口
 
 class AstBuilderToyPanel : public QWidget {
     Q_OBJECT
@@ -92,35 +92,35 @@ private slots:
 
 private:
     // 顶部
-    QComboBox* levelCombo_    = nullptr;
-    QLabel*    progressLabel_ = nullptr;
-    QList<QPushButton*> levelChips_;  // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
+    QComboBox* levelCombo_ = nullptr;
+    QLabel* progressLabel_ = nullptr;
+    QList<QPushButton*> levelChips_; // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
 
     // 主体
     QTreeWidget* tree_ = nullptr;
 
     // 工具箱按钮
-    QPushButton* btnNumber_  = nullptr;
-    QPushButton* btnAdd_     = nullptr;
-    QPushButton* btnSub_     = nullptr;
-    QPushButton* btnMul_     = nullptr;
-    QPushButton* btnDiv_     = nullptr;
-    QPushButton* btnPrint_   = nullptr;
+    QPushButton* btnNumber_ = nullptr;
+    QPushButton* btnAdd_ = nullptr;
+    QPushButton* btnSub_ = nullptr;
+    QPushButton* btnMul_ = nullptr;
+    QPushButton* btnDiv_ = nullptr;
+    QPushButton* btnPrint_ = nullptr;
     QPushButton* btnVarDecl_ = nullptr;
 
     // 底部
-    QPushButton* checkBtn_   = nullptr;
-    QPushButton* answerBtn_  = nullptr;
-    QPushButton* nextBtn_    = nullptr;
-    QPushButton* clearBtn_   = nullptr;
-    QPushButton* deleteBtn_  = nullptr;
-    QPushButton* verifyBtn_  = nullptr;  ///< P1-3 fix: 用真实 Parser 验证
-    QLabel*      feedback_   = nullptr;
-    QLabel*      descLabel_  = nullptr;
+    QPushButton* checkBtn_ = nullptr;
+    QPushButton* answerBtn_ = nullptr;
+    QPushButton* nextBtn_ = nullptr;
+    QPushButton* clearBtn_ = nullptr;
+    QPushButton* deleteBtn_ = nullptr;
+    QPushButton* verifyBtn_ = nullptr; ///< P1-3 fix: 用真实 Parser 验证
+    QLabel* feedback_ = nullptr;
+    QLabel* descLabel_ = nullptr;
 
-    int  currentIndex_ = 0;        // 当前题目在 levels() 中的索引
-    bool completed_     = false;   // 当前题目是否已检查通过
-    std::vector<int> completedLevels_;  // 已完成的 level 编号列表
+    int currentIndex_ = 0;             // 当前题目在 levels() 中的索引
+    bool completed_ = false;           // 当前题目是否已检查通过
+    std::vector<int> completedLevels_; // 已完成的 level 编号列表
 
     // ---- 内部辅助 ----
     /// 添加节点：树空 + 无选中 → 添加为根；有选中 → 添加为选中项的子节点

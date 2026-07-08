@@ -8,20 +8,20 @@
 // 目标：minilang_core（10 个 .cpp，编译时间下降约 20-35%）。
 // ============================================================
 
-#include <string>
-#include <vector>
-#include <memory>
-#include <unordered_map>
-#include <unordered_set>
+#include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <climits>
+#include <cmath>
 #include <cstdint>
 #include <functional>
-#include <algorithm>
-#include <sstream>
-#include <cctype>
-#include <cmath>
-#include <climits>
-#include <utility>
+#include <memory>
 #include <optional>
-#include <variant>
-#include <charconv>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <variant>
+#include <vector>

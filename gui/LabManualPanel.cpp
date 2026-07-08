@@ -1,27 +1,26 @@
 #include "gui/LabManualPanel.h"
 #include "app/IdeController.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QSplitter>
-#include <QMessageBox>
 #include <QFile>
-#include <QTextStream>
+#include <QHBoxLayout>
+#include <QMessageBox>
+#include <QRegularExpression> // P2 fix (长章折叠): 识别 ## 标题级别
 #include <QShowEvent>
+#include <QSplitter>
+#include <QTextStream>
 #include <QUrl>
-#include <QRegularExpression>  // P2 fix (长章折叠): 识别 ## 标题级别
+#include <QVBoxLayout>
 
-#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
-#include "Label.h"        // QFluentKit（CaptionLabel）
+#include "Label.h"                 // QFluentKit（CaptionLabel）
+#include "PushButton.h"            // QFluentKit（PrimaryPushButton）
+#include "gui/ErrorHintEngine.h"   // P1-F12 fix: buggy:tag 链接查表
 #include "gui/GuiTextUtils.h"      // monospaceFont()
-#include "gui/MarkdownRenderer.h"  // 统一 Markdown 渲染
 #include "gui/I18n.h"              // mlTr()
-#include "gui/LearnerProgress.h"  // P2-3 fix (F9): 学情画像持久化
-#include "gui/SyntaxHighlighter.h"  // MiniLang 语法高亮器
-#include "gui/ErrorHintEngine.h"    // P1-F12 fix: buggy:tag 链接查表
+#include "gui/LearnerProgress.h"   // P2-3 fix (F9): 学情画像持久化
+#include "gui/MarkdownRenderer.h"  // 统一 Markdown 渲染
+#include "gui/SyntaxHighlighter.h" // MiniLang 语法高亮器
 
-LabManualPanel::LabManualPanel(QWidget* parent)
-    : QWidget(parent) {
+LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(2, 2, 2, 2);
     mainLayout->setSpacing(2);
@@ -43,8 +42,7 @@ LabManualPanel::LabManualPanel(QWidget* parent)
     fontSizeSpin_->setFixedWidth(60);
     fontSizeSpin_->setFixedHeight(26);
     fontSizeSpin_->setToolTip(mlTr("调节正文字号"));
-    connect(fontSizeSpin_, QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [this](int size) {
+    connect(fontSizeSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int size) {
         if (contentBrowser_) {
             QFont f = contentBrowser_->font();
             f.setPointSize(size);
@@ -116,11 +114,8 @@ LabManualPanel::LabManualPanel(QWidget* parent)
     exercisesLayout_ = new QVBoxLayout(exercisesContainer_);
     exercisesLayout_->setContentsMargins(4, 4, 4, 4);
     exercisesLayout_->setSpacing(4);
-    auto* exercisesHeader = new QLabel(
-        QString::fromUtf8("📝 ") + mlTr("本章练习"),
-        exercisesContainer_);
-    exercisesHeader->setStyleSheet(QString::fromUtf8(
-        "font-weight:bold; padding:2px; border-bottom: 1px solid #ccc;"));
+    auto* exercisesHeader = new QLabel(QString::fromUtf8("📝 ") + mlTr("本章练习"), exercisesContainer_);
+    exercisesHeader->setStyleSheet(QString::fromUtf8("font-weight:bold; padding:2px; border-bottom: 1px solid #ccc;"));
     exercisesLayout_->addWidget(exercisesHeader);
     exercisesLayout_->addStretch(1);
     codeLayout->addWidget(exercisesContainer_, 2);
@@ -134,23 +129,18 @@ LabManualPanel::LabManualPanel(QWidget* parent)
     mainLayout->addWidget(splitter, 1);
 
     // issue 6: Solarized 风格 QSS（章节芯片按钮，二态：默认/当前）
-    setStyleSheet(QString::fromUtf8(
-        "QPushButton#labChapterChip { background: #EEE8D5; border: 1px solid #93A1A1; "
-        "border-radius: 4px; font-size: 11px; padding: 2px 10px; }"
-        "QPushButton#labChapterChip:hover { border-color: #268BD2; background: #E5F3FB; }"
-        "QPushButton#labChapterChip[current='true'] { background: #268BD2; color: white; "
-        "border-color: #1E6FA3; font-weight: bold; }"
-    ));
+    setStyleSheet(QString::fromUtf8("QPushButton#labChapterChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+                                    "border-radius: 4px; font-size: 11px; padding: 2px 10px; }"
+                                    "QPushButton#labChapterChip:hover { border-color: #268BD2; background: #E5F3FB; }"
+                                    "QPushButton#labChapterChip[current='true'] { background: #268BD2; color: white; "
+                                    "border-color: #1E6FA3; font-weight: bold; }"));
 
     populateChapterChips();
 
-    connect(loadBtn_, &QPushButton::clicked,
-            this, &LabManualPanel::onLoadSampleToEditor);
-    connect(runBtn_, &QPushButton::clicked,
-            this, &LabManualPanel::onRunSample);
+    connect(loadBtn_, &QPushButton::clicked, this, &LabManualPanel::onLoadSampleToEditor);
+    connect(runBtn_, &QPushButton::clicked, this, &LabManualPanel::onRunSample);
     // P1-4 fix (F16): Markdown 内 `panel:xxx` 链接 → 跳转到对应面板
-    connect(contentBrowser_, &QTextBrowser::anchorClicked,
-            this, &LabManualPanel::onAnchorClicked);
+    connect(contentBrowser_, &QTextBrowser::anchorClicked, this, &LabManualPanel::onAnchorClicked);
 
     // PERF: 不在构造时选中第一章，推迟到首次 showEvent。
     // 避免为隐藏 dock 渲染第一章 Markdown（省 6 次正则编译 + HTML 转换）。
@@ -181,9 +171,7 @@ void LabManualPanel::populateChapterChips() {
         chip->setToolTip(QString::fromUtf8(ch.title.c_str()));
         chip->setCursor(Qt::PointingHandCursor);
         const int chapterIdx = i;
-        connect(chip, &QPushButton::clicked, this, [this, chapterIdx]() {
-            onChapterSelected(chapterIdx);
-        });
+        connect(chip, &QPushButton::clicked, this, [this, chapterIdx]() { onChapterSelected(chapterIdx); });
         if (auto* lay = qobject_cast<QHBoxLayout*>(chapterChipBar_->layout())) {
             lay->addWidget(chip);
         }
@@ -196,7 +184,8 @@ void LabManualPanel::refreshChapterChips() {
     // issue 6: 刷新芯片状态（current 高亮）
     for (int i = 0; i < chapterChips_.size(); ++i) {
         QPushButton* chip = chapterChips_[i];
-        if (!chip) continue;
+        if (!chip)
+            continue;
         chip->setProperty("current", (i == currentChapterIndex_));
         chip->style()->unpolish(chip);
         chip->style()->polish(chip);
@@ -213,7 +202,8 @@ void LabManualPanel::showCurrentChapter() {
     const auto& chs = LabManualContent::chapters();
     if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size()) {
         contentBrowser_->clear();
-        if (sampleCodeEdit_) sampleCodeEdit_->clear();
+        if (sampleCodeEdit_)
+            sampleCodeEdit_->clear();
         statusLabel_->setText(mlTr("无选中章节"));
         rebuildExercises();
         return;
@@ -230,8 +220,10 @@ void LabManualPanel::showCurrentChapter() {
     markdownWithErrors += "| 错误模式 | 类别 | 触发示例 |\n";
     markdownWithErrors += "| --- | --- | --- |\n";
     for (const auto& p : ErrorHintEngine::errorPatterns()) {
-        markdownWithErrors += "| " + p.title + " | " + p.category + " | "
-                            "[▶ 触发](buggy:" + p.tag + ") |\n";
+        markdownWithErrors += "| " + p.title + " | " + p.category +
+                              " | "
+                              "[▶ 触发](buggy:" +
+                              p.tag + ") |\n";
     }
     markdownWithErrors += "\n> 提示：触发后请查看底部输出面板的错误信息，"
                           "ErrorHintEngine 会附加教学性提示与拼写建议。\n";
@@ -266,8 +258,7 @@ void LabManualPanel::showCurrentChapter() {
         sampleCodeEdit_->setPlainText(QString::fromUtf8(ch.sampleCode.c_str()));
     }
 
-    statusLabel_->setText(mlTr("当前章节：%1").arg(
-        QString::fromUtf8(ch.title.c_str())));
+    statusLabel_->setText(mlTr("当前章节：%1").arg(QString::fromUtf8(ch.title.c_str())));
 
     // P1-1 fix (F6): 重建当前章节的练习控件
     rebuildExercises();
@@ -279,8 +270,10 @@ void LabManualPanel::showCurrentChapter() {
 // ============================================================
 void LabManualPanel::rebuildExercises() {
     // 清空旧的按钮组与状态
+    // AUDIT-P2 fix: 用 deleteLater 替代 delete——若在信号分发期间触发重建，
+    // delete 直接销毁 QButtonGroup 会 UAF；同函数对 widget 已用 deleteLater。
     for (auto* grp : choiceGroups_) {
-        delete grp;
+        grp->deleteLater();
     }
     choiceGroups_.clear();
     exercisePassed_.clear();
@@ -302,8 +295,7 @@ void LabManualPanel::rebuildExercises() {
     const auto& exercises = chs[currentChapterIndex_].exercises;
     if (exercises.empty()) {
         // 无练习：显示提示
-        auto* noExLabel = new QLabel(
-            QString::fromUtf8("💡 ") + mlTr("本章暂无可机检练习"), exercisesContainer_);
+        auto* noExLabel = new QLabel(QString::fromUtf8("💡 ") + mlTr("本章暂无可机检练习"), exercisesContainer_);
         noExLabel->setStyleSheet(QString::fromUtf8("color:#888; padding:8px;"));
         exercisesLayout_->insertWidget(exercisesLayout_->count() - 1, noExLabel);
         return;
@@ -313,18 +305,16 @@ void LabManualPanel::rebuildExercises() {
     for (const auto& ex : exercises) {
         auto* frame = new QFrame(exercisesContainer_);
         frame->setFrameShape(QFrame::StyledPanel);
-        frame->setStyleSheet(QString::fromUtf8(
-            "QFrame { border: 1px solid #ddd; border-radius: 4px; padding: 6px; }"));
+        frame->setStyleSheet(QString::fromUtf8("QFrame { border: 1px solid #ddd; border-radius: 4px; padding: 6px; }"));
         auto* exLayout = new QVBoxLayout(frame);
         exLayout->setSpacing(4);
 
         // 题号 + 题干
-        QString typeTag = (ex.type == LabExerciseType::CHOICE)
-                          ? mlTr("选择题") : mlTr("预期输出题");
-        auto* promptLabel = new QLabel(
-            QString::fromUtf8("<b>%1 %2.</b> %3").arg(
-                typeTag, QString::number(exerciseIdx + 1),
-                QString::fromUtf8(ex.prompt.c_str())), frame);
+        QString typeTag = (ex.type == LabExerciseType::CHOICE) ? mlTr("选择题") : mlTr("预期输出题");
+        auto* promptLabel =
+            new QLabel(QString::fromUtf8("<b>%1 %2.</b> %3")
+                           .arg(typeTag, QString::number(exerciseIdx + 1), QString::fromUtf8(ex.prompt.c_str())),
+                       frame);
         promptLabel->setTextFormat(Qt::RichText);
         promptLabel->setWordWrap(true);
         exLayout->addWidget(promptLabel);
@@ -334,10 +324,9 @@ void LabManualPanel::rebuildExercises() {
             auto* grp = new QButtonGroup(exercisesContainer_);
             grp->setExclusive(true);
             for (int i = 0; i < (int)ex.options.size(); ++i) {
-                auto* btn = new QRadioButton(
-                    QString::fromUtf8(ex.options[i].c_str()) +
-                    QString::fromUtf8("  ") +
-                    QChar::fromLatin1('A' + i) + QString::fromUtf8(".") , frame);
+                auto* btn = new QRadioButton(QString::fromUtf8(ex.options[i].c_str()) + QString::fromUtf8("  ") +
+                                                 QChar::fromLatin1('A' + i) + QString::fromUtf8("."),
+                                             frame);
                 btn->setProperty("optionIndex", i);
                 grp->addButton(btn, i);
                 exLayout->addWidget(btn);
@@ -346,19 +335,16 @@ void LabManualPanel::rebuildExercises() {
             exercisePassed_.push_back(false);
 
             // 提交按钮
-            auto* submitBtn = new QPushButton(
-                QString::fromUtf8("✓ ") + mlTr("提交答案"), frame);
+            auto* submitBtn = new QPushButton(QString::fromUtf8("✓ ") + mlTr("提交答案"), frame);
             // AUDIT-P1 fix: 捕获选择题内序号而非全局练习索引。
             // choiceGroups_ 按 CHOICE 出现顺序追加，onSubmitChoiceExercise 期望
             // 接收选择题内序号（0..choiceCount-1）才能与 choiceGroups_ 下标对齐。
             // 原实现捕获全局 exerciseIdx 会导致混排时下标越界/匹配错题。
             int capturedChoiceIdx = static_cast<int>(choiceGroups_.size()) - 1;
             // AUDIT-P2 fix: 设置 objectName，便于答对后查找按钮并禁用防重复提交
-            submitBtn->setObjectName(
-                QString::fromUtf8("submit_choice_%1").arg(capturedChoiceIdx));
-            connect(submitBtn, &QPushButton::clicked, this, [this, capturedChoiceIdx]() {
-                onSubmitChoiceExercise(capturedChoiceIdx);
-            });
+            submitBtn->setObjectName(QString::fromUtf8("submit_choice_%1").arg(capturedChoiceIdx));
+            connect(submitBtn, &QPushButton::clicked, this,
+                    [this, capturedChoiceIdx]() { onSubmitChoiceExercise(capturedChoiceIdx); });
             exLayout->addWidget(submitBtn);
 
             // 反馈区（初始隐藏）
@@ -371,8 +357,7 @@ void LabManualPanel::rebuildExercises() {
             exLayout->addWidget(feedbackLabel);
         } else {
             // N1 fix: EXPECTED_OUTPUT 型——同步运行样例代码并自动比对输出
-            auto* codeLabel = new QLabel(
-                QString::fromUtf8("<b>%1</b>").arg(mlTr("样例代码：")), frame);
+            auto* codeLabel = new QLabel(QString::fromUtf8("<b>%1</b>").arg(mlTr("样例代码：")), frame);
             codeLabel->setTextFormat(Qt::RichText);
             exLayout->addWidget(codeLabel);
             auto* codeEdit = new QPlainTextEdit(frame);
@@ -382,29 +367,25 @@ void LabManualPanel::rebuildExercises() {
             codeEdit->setMaximumBlockCount(50);
             exLayout->addWidget(codeEdit);
 
-            auto* expectedLabel = new QLabel(
-                QString::fromUtf8("<b>%1</b> <code>%2</code>").arg(
-                    mlTr("预期输出："),
-                    QString::fromUtf8(ex.expectedOutput.c_str()).toHtmlEscaped()), frame);
+            auto* expectedLabel =
+                new QLabel(QString::fromUtf8("<b>%1</b> <code>%2</code>")
+                               .arg(mlTr("预期输出："), QString::fromUtf8(ex.expectedOutput.c_str()).toHtmlEscaped()),
+                           frame);
             expectedLabel->setTextFormat(Qt::RichText);
             exLayout->addWidget(expectedLabel);
 
             // N1 fix: 提交按钮（自动判分）
-            auto* submitBtn = new QPushButton(
-                QString::fromUtf8("✓ ") + mlTr("运行并验证"), frame);
+            auto* submitBtn = new QPushButton(QString::fromUtf8("✓ ") + mlTr("运行并验证"), frame);
             int capturedIdx = exerciseIdx;
             // AUDIT-P2 fix: 设置 objectName，便于答对后查找按钮并禁用防重复提交
-            submitBtn->setObjectName(
-                QString::fromUtf8("submit_output_%1").arg(capturedIdx));
-            connect(submitBtn, &QPushButton::clicked, this, [this, capturedIdx]() {
-                onSubmitExpectedOutputExercise(capturedIdx);
-            });
+            submitBtn->setObjectName(QString::fromUtf8("submit_output_%1").arg(capturedIdx));
+            connect(submitBtn, &QPushButton::clicked, this,
+                    [this, capturedIdx]() { onSubmitExpectedOutputExercise(capturedIdx); });
             exLayout->addWidget(submitBtn);
 
             // 反馈区（初始隐藏）
             auto* feedbackLabel = new QLabel(QString(), frame);
-            feedbackLabel->setObjectName(
-                QString::fromUtf8("output_feedback_%1").arg(exerciseIdx));
+            feedbackLabel->setObjectName(QString::fromUtf8("output_feedback_%1").arg(exerciseIdx));
             feedbackLabel->setWordWrap(true);
             feedbackLabel->setVisible(false);
             exLayout->addWidget(feedbackLabel);
@@ -423,16 +404,19 @@ void LabManualPanel::rebuildExercises() {
 void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
     // AUDIT-P2 fix: 防重复提交守卫——快速双击会触发重复 save() 磁盘 I/O
     // 与 recordFailure 计数虚高（答错时每次点击 failCount++）
-    if (submitting_) return;
-    if (choiceIndex < 0 || choiceIndex >= (int)choiceGroups_.size()) return;
+    if (submitting_)
+        return;
+    if (choiceIndex < 0 || choiceIndex >= (int)choiceGroups_.size())
+        return;
     const auto& chs = LabManualContent::chapters();
-    if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size()) return;
+    if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size())
+        return;
     const auto& exercises = chs[currentChapterIndex_].exercises;
 
     // AUDIT-P1 fix: choiceIndex 已是选择题内序号（与 choiceGroups_ 下标对齐），
     // 直接遍历 exercises 跳过 EXPECTED_OUTPUT 类型找到第 choiceIndex 个 CHOICE。
     int choiceCount = 0;
-    int globalIdx = -1;  // AUDIT-P2 fix: 记录全局练习索引用于 exercisePassed_
+    int globalIdx = -1; // AUDIT-P2 fix: 记录全局练习索引用于 exercisePassed_
     const LabExercise* target = nullptr;
     for (int i = 0; i < (int)exercises.size(); ++i) {
         if (exercises[i].type == LabExerciseType::CHOICE) {
@@ -444,7 +428,8 @@ void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
             ++choiceCount;
         }
     }
-    if (!target) return;
+    if (!target)
+        return;
 
     // AUDIT-P2 fix: 通过 early return 后才设标志，函数末尾恢复
     submitting_ = true;
@@ -455,14 +440,14 @@ void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
 
     // 找到对应的 feedback label
     // AUDIT-P1 fix: objectName 改为 feedback_choice_{choiceIdx} 与 rebuildExercises 一致。
-    QLabel* feedbackLabel = exercisesContainer_->findChild<QLabel*>(
-        QString::fromUtf8("feedback_choice_%1").arg(choiceIndex));
+    QLabel* feedbackLabel =
+        exercisesContainer_->findChild<QLabel*>(QString::fromUtf8("feedback_choice_%1").arg(choiceIndex));
     if (feedbackLabel) {
         QString color = correct ? QString::fromUtf8("#4CAF50") : QString::fromUtf8("#F44336");
         QString icon = correct ? QString::fromUtf8("✅ ") : QString::fromUtf8("❌ ");
-        QString msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>%3").arg(
-            color, icon + (correct ? mlTr("答对了！") : mlTr("答错了，再想想")),
-            QString::fromUtf8(target->explanation.c_str()).toHtmlEscaped());
+        QString msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>%3")
+                          .arg(color, icon + (correct ? mlTr("答对了！") : mlTr("答错了，再想想")),
+                               QString::fromUtf8(target->explanation.c_str()).toHtmlEscaped());
         feedbackLabel->setText(msg);
         feedbackLabel->setTextFormat(Qt::RichText);
         feedbackLabel->setVisible(true);
@@ -478,8 +463,8 @@ void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
         LearnerProgressStore::instance().recordScore(chs[currentChapterIndex_].id, 100, 1);
         LearnerProgressStore::instance().save();
         // AUDIT-P2 fix: 答对后禁用提交按钮，防止重复提交并视觉提示已通过
-        QPushButton* submitBtn = exercisesContainer_->findChild<QPushButton*>(
-            QString::fromUtf8("submit_choice_%1").arg(choiceIndex));
+        QPushButton* submitBtn =
+            exercisesContainer_->findChild<QPushButton*>(QString::fromUtf8("submit_choice_%1").arg(choiceIndex));
         if (submitBtn) {
             submitBtn->setEnabled(false);
             submitBtn->setText(QString::fromUtf8("✅ ") + mlTr("已通过"));
@@ -501,13 +486,17 @@ void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
 void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
     // AUDIT-P2 fix: 防重复提交守卫——同步运行样例代码期间快速双击会触发
     // 重复 runStringCaptureOutput + 重复 save() 磁盘 I/O
-    if (submitting_) return;
+    if (submitting_)
+        return;
     const auto& chs = LabManualContent::chapters();
-    if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size()) return;
+    if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size())
+        return;
     const auto& exercises = chs[currentChapterIndex_].exercises;
-    if (exerciseIndex < 0 || exerciseIndex >= (int)exercises.size()) return;
+    if (exerciseIndex < 0 || exerciseIndex >= (int)exercises.size())
+        return;
     const auto& ex = exercises[exerciseIndex];
-    if (ex.type != LabExerciseType::EXPECTED_OUTPUT) return;
+    if (ex.type != LabExerciseType::EXPECTED_OUTPUT)
+        return;
 
     // AUDIT-P2 fix: 通过 early return 后才设标志，函数末尾恢复
     submitting_ = true;
@@ -539,33 +528,28 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
     bool correct = controllerAvailable && (trimmedActual == trimmedExpected);
 
     // 更新反馈
-    QLabel* feedbackLabel = exercisesContainer_->findChild<QLabel*>(
-        QString::fromUtf8("output_feedback_%1").arg(exerciseIndex));
+    QLabel* feedbackLabel =
+        exercisesContainer_->findChild<QLabel*>(QString::fromUtf8("output_feedback_%1").arg(exerciseIndex));
     if (feedbackLabel) {
         QString color = correct ? QString::fromUtf8("#4CAF50") : QString::fromUtf8("#F44336");
         QString icon = correct ? QString::fromUtf8("✅ ") : QString::fromUtf8("❌ ");
         QString msg;
         if (!controllerAvailable) {
             // AUDIT-P2 fix: controller 未就绪的友好提示
-            msg = QString::fromUtf8(
-                "<span style='color:%1;'><b>%2</b></span><br>%3").arg(
-                color, icon + mlTr("运行环境未就绪"),
-                mlTr("请先在主界面运行一次程序以初始化引擎，再回来验证此题。"));
+            msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>%3")
+                      .arg(color, icon + mlTr("运行环境未就绪"),
+                           mlTr("请先在主界面运行一次程序以初始化引擎，再回来验证此题。"));
         } else if (correct) {
-            msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>%3").arg(
-                color, icon + mlTr("输出匹配！"),
-                QString::fromUtf8(ex.explanation.c_str()).toHtmlEscaped());
+            msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>%3")
+                      .arg(color, icon + mlTr("输出匹配！"), QString::fromUtf8(ex.explanation.c_str()).toHtmlEscaped());
         } else {
-            msg = QString::fromUtf8(
-                "<span style='color:%1;'><b>%2</b></span><br>"
-                "<b>%3</b> <code>%4</code><br>"
-                "<b>%5</b> <code>%6</code><br>%7").arg(
-                color, icon + mlTr("输出不匹配"),
-                mlTr("预期："),
-                QString::fromUtf8(trimmedExpected.c_str()).toHtmlEscaped(),
-                mlTr("实际："),
-                QString::fromUtf8(trimmedActual.c_str()).toHtmlEscaped(),
-                QString::fromUtf8(ex.explanation.c_str()).toHtmlEscaped());
+            msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>"
+                                    "<b>%3</b> <code>%4</code><br>"
+                                    "<b>%5</b> <code>%6</code><br>%7")
+                      .arg(color, icon + mlTr("输出不匹配"), mlTr("预期："),
+                           QString::fromUtf8(trimmedExpected.c_str()).toHtmlEscaped(), mlTr("实际："),
+                           QString::fromUtf8(trimmedActual.c_str()).toHtmlEscaped(),
+                           QString::fromUtf8(ex.explanation.c_str()).toHtmlEscaped());
         }
         feedbackLabel->setText(msg);
         feedbackLabel->setTextFormat(Qt::RichText);
@@ -577,8 +561,8 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
         LearnerProgressStore::instance().recordScore(chs[currentChapterIndex_].id, 100, 1);
         LearnerProgressStore::instance().save();
         // AUDIT-P2 fix: 答对后禁用提交按钮，防止重复提交并视觉提示已通过
-        QPushButton* submitBtn = exercisesContainer_->findChild<QPushButton*>(
-            QString::fromUtf8("submit_output_%1").arg(exerciseIndex));
+        QPushButton* submitBtn =
+            exercisesContainer_->findChild<QPushButton*>(QString::fromUtf8("submit_output_%1").arg(exerciseIndex));
         if (submitBtn) {
             submitBtn->setEnabled(false);
             submitBtn->setText(QString::fromUtf8("✅ ") + mlTr("已通过"));
@@ -600,19 +584,23 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
 void LabManualPanel::checkAllExercisesPassed() {
     bool allPassed = true;
     for (bool p : exercisePassed_) {
-        if (!p) { allPassed = false; break; }
+        if (!p) {
+            allPassed = false;
+            break;
+        }
     }
-    if (!allPassed) return;
+    if (!allPassed)
+        return;
 
     const auto& chs = LabManualContent::chapters();
-    if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size()) return;
+    if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size())
+        return;
     const auto& ch = chs[currentChapterIndex_];
     // P2-3 fix (F9): 全章通过——升级星级为 3 星（满星），保留历史最佳
     LearnerProgressStore::instance().recordScore(ch.id, 100, 3);
     LearnerProgressStore::instance().save();
     emit exerciseCompleted(QString::fromUtf8(ch.id.c_str()));
-    statusLabel_->setText(QString::fromUtf8("🎉 %1").arg(
-        mlTr("本章练习全部通过！")));
+    statusLabel_->setText(QString::fromUtf8("🎉 %1").arg(mlTr("本章练习全部通过！")));
 }
 
 void LabManualPanel::onLoadSampleToEditor() {
@@ -696,15 +684,13 @@ void LabManualPanel::onAnchorClicked(const QUrl& url) {
                     if (statusLabel_) {
                         statusLabel_->setText(
                             QString::fromUtf8("已触发错误示例 [%1] — %2，请查看输出面板的增强报错提示")
-                                .arg(QString::fromStdString(p.tag),
-                                     QString::fromStdString(p.title)));
+                                .arg(QString::fromStdString(p.tag), QString::fromStdString(p.title)));
                     }
                     return;
                 }
             }
             if (statusLabel_) {
-                statusLabel_->setText(
-                    QString::fromUtf8("未知错误标签: %1").arg(tag));
+                statusLabel_->setText(QString::fromUtf8("未知错误标签: %1").arg(tag));
             }
         }
     }
@@ -723,16 +709,13 @@ bool LabManualPanel::isMinorSection(const QString& headingText) {
     // 关键字表：识别"次要章节"——主章节（目标/概念/步骤/验证/概述/简介/示例/原理）
     // 始终展开，次章节（进阶/思考题/常见错误/延伸/拓展/参考/扩展/挑战/习题）可折叠
     static const QStringList kMinorKeywords = {
-        QStringLiteral("进阶"), QStringLiteral("思考题"),
-        QStringLiteral("延伸"), QStringLiteral("拓展"),
-        QStringLiteral("扩展"), QStringLiteral("参考"),
-        QStringLiteral("挑战"), QStringLiteral("习题"),
-        QStringLiteral("常见错误"), QStringLiteral("常见问题"),
-        QStringLiteral("FAQ"), QStringLiteral("补充"),
-        QStringLiteral("附录"), QStringLiteral("深入")
-    };
+        QStringLiteral("进阶"),     QStringLiteral("思考题"),   QStringLiteral("延伸"), QStringLiteral("拓展"),
+        QStringLiteral("扩展"),     QStringLiteral("参考"),     QStringLiteral("挑战"), QStringLiteral("习题"),
+        QStringLiteral("常见错误"), QStringLiteral("常见问题"), QStringLiteral("FAQ"),  QStringLiteral("补充"),
+        QStringLiteral("附录"),     QStringLiteral("深入")};
     for (const auto& kw : kMinorKeywords) {
-        if (headingText.contains(kw, Qt::CaseInsensitive)) return true;
+        if (headingText.contains(kw, Qt::CaseInsensitive))
+            return true;
     }
     return false;
 }
@@ -752,15 +735,14 @@ QString LabManualPanel::applyFolding(const std::string& markdown) const {
 
     bool inCodeBlock = false;
     bool inFoldableSection = false;
-    int foldableLevel = 0;  // 触发折叠的标题级别（仅 ## 视为可折叠，# 一级始终展开）
+    int foldableLevel = 0; // 触发折叠的标题级别（仅 ## 视为可折叠，# 一级始终展开）
 
     for (int i = 0; i < lines.size(); ++i) {
         const QString& line = lines[i];
         const QString trimmed = line.trimmed();
 
         // 跟踪围栏代码块状态（``` 或 ~~~）
-        if (trimmed.startsWith(QStringLiteral("```")) ||
-            trimmed.startsWith(QStringLiteral("~~~"))) {
+        if (trimmed.startsWith(QStringLiteral("```")) || trimmed.startsWith(QStringLiteral("~~~"))) {
             // AUDIT-P2 fix: 折叠区内不切换 inCodeBlock。折叠区内容已被跳过，
             // 若切换 inCodeBlock 会导致状态泄漏到折叠区外——未闭合的代码块
             // 会让 inCodeBlock 恒为 true，后续所有行（含真正标题）被当作
@@ -774,7 +756,8 @@ QString LabManualPanel::applyFolding(const std::string& markdown) const {
         }
         if (inCodeBlock) {
             // 代码块内的 # 不是标题，原样输出（折叠区已跳过）
-            if (!inFoldableSection) result += line + '\n';
+            if (!inFoldableSection)
+                result += line + '\n';
             continue;
         }
 
@@ -816,21 +799,20 @@ QString LabManualPanel::applyFolding(const std::string& markdown) const {
     }
 
     // 移除末尾多余换行（split + join 会引入）
-    if (result.endsWith('\n')) result.chop(1);
+    if (result.endsWith('\n'))
+        result.chop(1);
     return result;
 }
 
 void LabManualPanel::onToggleFold() {
     foldMinorSections_ = !foldMinorSections_;
     if (foldBtn_) {
-        foldBtn_->setText(foldMinorSections_
-            ? (QString::fromUtf8("📂 ") + mlTr("展开全部章节"))
-            : (QString::fromUtf8("📂 ") + mlTr("折叠次要章节")));
+        foldBtn_->setText(foldMinorSections_ ? (QString::fromUtf8("📂 ") + mlTr("展开全部章节"))
+                                             : (QString::fromUtf8("📂 ") + mlTr("折叠次要章节")));
     }
     if (statusLabel_) {
-        statusLabel_->setText(foldMinorSections_
-            ? mlTr("已折叠次要章节（进阶/思考题/常见错误等）")
-            : mlTr("已展开全部章节"));
+        statusLabel_->setText(foldMinorSections_ ? mlTr("已折叠次要章节（进阶/思考题/常见错误等）")
+                                                 : mlTr("已展开全部章节"));
     }
     // 重新渲染当前章节（应用/取消折叠）
     showCurrentChapter();

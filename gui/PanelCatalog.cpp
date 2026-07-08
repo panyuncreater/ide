@@ -16,35 +16,43 @@
 /// 返回全部面板分类树（含叶子面板元数据，静态数据）。
 const std::vector<PanelCategory>& PanelCatalog::categories() {
     static const std::vector<PanelCategory> kCategories = {
-        {"入门导览", "🌱", {
-            {"welcome",           "欢迎向导",       "🚀"},
-            {"code-journey",      "代码生命旅程",   "🛤️"},
-            {"learning-path",     "学习路径地图",   "🗺️"},
-            {"glossary",          "术语表",         "📚"},
-        }},
-        {"编译前端", "🔤", {
-            {"pipeline",          "编译管线可视化", "🔗"},
-            {"token-puzzle",      "Token 拼图",    "🧩"},
-            {"ast-toy",           "AST 构建器",    "🌳"},
-            {"syntax-explorer",   "语法浏览器",    "📖"},
-        }},
-        {"执行引擎", "⚙️", {
-            {"backend-compare",      "三后端对比",   "⚖️"},
-            {"vm-sandbox",           "VM 沙盒",      "🎮"},
-            {"memory-model",         "内存模型",     "🧠"},
-            {"ir-transform",         "IR 优化回放",  "✨"},
-            {"bytecode-trace",       "字节码追踪",   "📡"},
-            {"call-stack",           "调用栈检查器", "📚"},
-            {"variable-inspector",   "变量检查器",   "🔍"},
-            {"breakpoint-condition", "条件断点",     "🛑"},
-        }},
-        {"深入实战", "🏗️", {
-            {"bug-hunt",            "Bug 狩猎",      "🐛"},
-            {"exception-flow",      "异常流可视化",  "⚡"},
-            {"closure-inspector",   "闭包检查器",    "🔒"},
-            {"profile-dashboard",   "性能仪表盘",    "📊"},
-            {"lab-manual",          "实验手册",      "📘"},
-        }},
+        {"入门导览",
+         "🌱",
+         {
+             {"welcome", "欢迎向导", "🚀"},
+             {"code-journey", "代码生命旅程", "🛤️"},
+             {"learning-path", "学习路径地图", "🗺️"},
+             {"glossary", "术语表", "📚"},
+         }},
+        {"编译前端",
+         "🔤",
+         {
+             {"pipeline", "编译管线可视化", "🔗"},
+             {"token-puzzle", "Token 拼图", "🧩"},
+             {"ast-toy", "AST 构建器", "🌳"},
+             {"syntax-explorer", "语法浏览器", "📖"},
+         }},
+        {"执行引擎",
+         "⚙️",
+         {
+             {"backend-compare", "三后端对比", "⚖️"},
+             {"vm-sandbox", "VM 沙盒", "🎮"},
+             {"memory-model", "内存模型", "🧠"},
+             {"ir-transform", "IR 优化回放", "✨"},
+             {"bytecode-trace", "字节码追踪", "📡"},
+             {"call-stack", "调用栈检查器", "📚"},
+             {"variable-inspector", "变量检查器", "🔍"},
+             {"breakpoint-condition", "条件断点", "🛑"},
+         }},
+        {"深入实战",
+         "🏗️",
+         {
+             {"bug-hunt", "Bug 狩猎", "🐛"},
+             {"exception-flow", "异常流可视化", "⚡"},
+             {"closure-inspector", "闭包检查器", "🔒"},
+             {"profile-dashboard", "性能仪表盘", "📊"},
+             {"lab-manual", "实验手册", "📘"},
+         }},
     };
     return kCategories;
 }
@@ -95,12 +103,18 @@ std::string PanelCatalog::canonicalPanelId(const std::string& activityId) {
     }
     // P1-F2/F fix: 浏览型面板的"进入即完成"活动别名
     // 学习路径中的 visited-* 活动对应一个真实面板，需能被 canonicalPanelId 识别。
-    if (activityId == "visited-glossary")          return "glossary";
-    if (activityId == "visited-pipeline")          return "pipeline";
-    if (activityId == "visited-memory-model")      return "memory-model";
-    if (activityId == "visited-bytecode-trace")    return "bytecode-trace";
-    if (activityId == "visited-exception-flow")    return "exception-flow";
-    if (activityId == "visited-closure-inspector") return "closure-inspector";
+    if (activityId == "visited-glossary")
+        return "glossary";
+    if (activityId == "visited-pipeline")
+        return "pipeline";
+    if (activityId == "visited-memory-model")
+        return "memory-model";
+    if (activityId == "visited-bytecode-trace")
+        return "bytecode-trace";
+    if (activityId == "visited-exception-flow")
+        return "exception-flow";
+    if (activityId == "visited-closure-inspector")
+        return "closure-inspector";
     // 校验是否为已注册面板 id
     if (findById(activityId) != nullptr) {
         return activityId;

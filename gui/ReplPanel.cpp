@@ -6,30 +6,29 @@
  * 输出与错误分区展示，并支持多行输入完整性判断与历史清空。
  */
 #include "gui/ReplPanel.h"
-#include "gui/GuiTextUtils.h"  // P1-12 fix: 共享文本追加逻辑
-#include "gui/ErrorHintEngine.h"  // 功能 12：错误信息友好化增强
-#include "gui/MagicCommands.h"  // 功能 11：REPL %magic 命令
-#include "app/IdeController.h"  // B6 fix: 通过业务层调用 retainReplAst/executeRepl
-#include "common/Logger.h"  // 析构超时日志
-#include "interpreter/Interpreter.h"  // Value/RuntimeError 类型
+#include "app/IdeController.h"       // B6 fix: 通过业务层调用 retainReplAst/executeRepl
+#include "common/Logger.h"           // 析构超时日志
+#include "gui/ErrorHintEngine.h"     // 功能 12：错误信息友好化增强
+#include "gui/GuiTextUtils.h"        // P1-12 fix: 共享文本追加逻辑
+#include "gui/MagicCommands.h"       // 功能 11：REPL %magic 命令
+#include "interpreter/Interpreter.h" // Value/RuntimeError 类型
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include <QKeyEvent>
-#include <QTextCursor>
-#include <QTextCharFormat>
 #include <QColor>
+#include <QKeyEvent>
+#include <QTextCharFormat>
+#include <QTextCursor>
+#include <cstdlib> // IDE-CLOSE-01 fix: std::_Exit 强制进程退出
 #include <future>  // QT-R-06 fix: std::async 异步执行
-#include <cstdlib>  // IDE-CLOSE-01 fix: std::_Exit 强制进程退出
 #include <sstream>
-#include <vector>  // AUDIT-REPL-1 fix: isInputComplete 插值栈
+#include <vector> // AUDIT-REPL-1 fix: isInputComplete 插值栈
 
 // ============================================================
 // ReplPanel REPL 交互面板实现
 // ============================================================
 
 /// 构造 REPL 面板：初始化输出区、输入框与后台执行状态。
-ReplPanel::ReplPanel(QWidget* parent)
-    : QWidget(parent) {
+ReplPanel::ReplPanel(QWidget* parent) : QWidget(parent) {
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
@@ -65,12 +64,13 @@ ReplPanel::ReplPanel(QWidget* parent)
     // QT-R-06 fix: 用 QTimer 轮询 std::future 状态
     // 替代 QtConcurrent（Qt6::Concurrent 模块未安装）
     pollTimer_ = new QTimer(this);
-    pollTimer_->setInterval(50);  // 50ms 轮询间隔，足够响应
+    pollTimer_->setInterval(50); // 50ms 轮询间隔，足够响应
     connect(pollTimer_, &QTimer::timeout, this, &ReplPanel::pollReplFuture);
 }
 
 ReplPanel::~ReplPanel() {
-    if (pollTimer_) pollTimer_->stop();
+    if (pollTimer_)
+        pollTimer_->stop();
     // 深度防御：closeEvent 路径已通过 waitReplFuture() 处理，此处为 no-op。
     // 非 closeEvent 路径（如直接 delete）controller_ 可能已析构，不能调用
     // requestReplStop()（C++ 异常不能捕获 UAF），直接 wait() 阻塞至完成
@@ -92,7 +92,8 @@ ReplPanel::~ReplPanel() {
 
 /// 阻塞等待当前 REPL 异步任务结束，避免重复执行。
 void ReplPanel::waitReplFuture() {
-    if (!replFuture_.valid()) return;
+    if (!replFuture_.valid())
+        return;
     // REPL-TIMEOUT fix: 协作中止 + 超时等待，避免 closeEvent 永久阻塞。
     // 原 wait() 无超时，死循环场景下 closeEvent 卡死。现改为：
     // 1. 设置 stopRequested_ 标志（checkBreak 在每个语句节点检查并抛异常）
@@ -103,7 +104,8 @@ void ReplPanel::waitReplFuture() {
     if (controller_) {
         controller_->requestReplStop();
         auto status = replFuture_.wait_for(std::chrono::seconds(5));
-        if (status == std::future_status::ready) return;
+        if (status == std::future_status::ready)
+            return;
         // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
         LOG_WARNING("REPL 异步任务未在 5 秒内响应中止请求，强制退出进程", "REPL");
     }
@@ -218,42 +220,40 @@ void ReplPanel::onReturnPressed() {
     // 特殊命令（仅在非续行模式）
     if (!inContinuation_) {
         if (trimmedLine == "help") {
-            outputArea_->append(
-                "MiniLang 支持的语法:\n"
-                "  var x = 10;          变量声明\n"
-                "  int a = 5;           类型注解变量\n"
-                "  fun f(x) { ... }     函数声明\n"
-                "  if (cond) { ... }    条件语句\n"
-                "  while (cond) { ... } 循环语句\n"
-                "  for (init; cond; upd) { ... }  for循环\n"
-                "  print(expr);         输出\n"
-                "  [1, 2, 3]            数组字面量\n"
-                "  {\"key\": val}        字典字面量\n"
-                "  null                 空值\n"
-                "  class Name { ... }   类声明\n"
-                "  import \"mod\" { f }; 模块导入\n"
-                "  多行输入: 未闭合的 { ( [ 或未闭合字符串会自动续行\n"
-                "  续行中按回车(空行)可中止续行\n"
-                "REPL 行为说明:\n"
-                "  - 表达式语句(如 '1 + 2;')自动求值并打印结果\n"
-                "  - 'clear' 仅清空输出区与续行缓冲,不重置已定义变量/函数/类\n"
-                "  - 'reload \"mod\"' 清除模块缓存,下次 import 重新加载源码\n"
-                "  - 'reload all' 清除所有模块缓存\n"
-                "  - 重置全部状态需重启 IDE\n"
-                "─── Magic 命令 ─────────────────────────────\n"
-                "输入 %help 查看完整 magic 命令列表与详细说明。\n"
-                "常用 magic 命令速查:\n"
-                "  %ast <expr>       查看 AST\n"
-                "  %ir <expr>        查看 IR\n"
-                "  %disassemble      反汇编当前字节码\n"
-                "  %compare <expr>   三后端对比\n"
-                "  %profile <expr>   性能剖析\n"
-                "  %memory           内存模型\n"
-                "  %tokens <expr>    词法分析结果\n"
-                "  %reset            重置 REPL 环境\n"
-                "  %version          查看 MiniLang 版本\n"
-                "────────────────────────────────────────────\n"
-            );
+            outputArea_->append("MiniLang 支持的语法:\n"
+                                "  var x = 10;          变量声明\n"
+                                "  int a = 5;           类型注解变量\n"
+                                "  fun f(x) { ... }     函数声明\n"
+                                "  if (cond) { ... }    条件语句\n"
+                                "  while (cond) { ... } 循环语句\n"
+                                "  for (init; cond; upd) { ... }  for循环\n"
+                                "  print(expr);         输出\n"
+                                "  [1, 2, 3]            数组字面量\n"
+                                "  {\"key\": val}        字典字面量\n"
+                                "  null                 空值\n"
+                                "  class Name { ... }   类声明\n"
+                                "  import \"mod\" { f }; 模块导入\n"
+                                "  多行输入: 未闭合的 { ( [ 或未闭合字符串会自动续行\n"
+                                "  续行中按回车(空行)可中止续行\n"
+                                "REPL 行为说明:\n"
+                                "  - 表达式语句(如 '1 + 2;')自动求值并打印结果\n"
+                                "  - 'clear' 仅清空输出区与续行缓冲,不重置已定义变量/函数/类\n"
+                                "  - 'reload \"mod\"' 清除模块缓存,下次 import 重新加载源码\n"
+                                "  - 'reload all' 清除所有模块缓存\n"
+                                "  - 重置全部状态需重启 IDE\n"
+                                "─── Magic 命令 ─────────────────────────────\n"
+                                "输入 %help 查看完整 magic 命令列表与详细说明。\n"
+                                "常用 magic 命令速查:\n"
+                                "  %ast <expr>       查看 AST\n"
+                                "  %ir <expr>        查看 IR\n"
+                                "  %disassemble      反汇编当前字节码\n"
+                                "  %compare <expr>   三后端对比\n"
+                                "  %profile <expr>   性能剖析\n"
+                                "  %memory           内存模型\n"
+                                "  %tokens <expr>    词法分析结果\n"
+                                "  %reset            重置 REPL 环境\n"
+                                "  %version          查看 MiniLang 版本\n"
+                                "────────────────────────────────────────────\n");
             pendingInput_.clear();
             inputLine_->clear();
             return;
@@ -283,8 +283,7 @@ void ReplPanel::onReturnPressed() {
             } else if (arg.startsWith("\"") && arg.endsWith("\"") && arg.length() >= 2) {
                 std::string path = arg.mid(1, arg.length() - 2).toStdString();
                 controller_->clearModuleCache(path);
-                appendOutput(QString::fromStdString(
-                    "[已清除模块 " + path + " 缓存，下次 import 将重新加载]"));
+                appendOutput(QString::fromStdString("[已清除模块 " + path + " 缓存，下次 import 将重新加载]"));
             } else {
                 appendError("用法: reload \"模块路径\" 或 reload all");
             }
@@ -366,8 +365,7 @@ void ReplPanel::executeLine(const QString& line) {
         tokens = lexer.scan(source);
     } catch (const std::exception& e) {
         appendError(QString("词法错误: %1")
-                        .arg(QString::fromStdString(
-                            ErrorHintEngine::enrichErrorMessage(e.what(), "parse", {}))));
+                        .arg(QString::fromStdString(ErrorHintEngine::enrichErrorMessage(e.what(), "parse", {}))));
         return;
     }
 
@@ -375,9 +373,9 @@ void ReplPanel::executeLine(const QString& line) {
     for (const auto& tok : tokens) {
         if (tok.type == TokenType::TK_ERROR) {
             appendError(QString("词法错误 (行 %1, 列 %2): %3")
-                            .arg(tok.line).arg(tok.column)
-                            .arg(QString::fromStdString(
-                                ErrorHintEngine::enrichErrorMessage(tok.lexeme, "parse", {}))));
+                            .arg(tok.line)
+                            .arg(tok.column)
+                            .arg(QString::fromStdString(ErrorHintEngine::enrichErrorMessage(tok.lexeme, "parse", {}))));
             return;
         }
     }
@@ -389,13 +387,14 @@ void ReplPanel::executeLine(const QString& line) {
         ast = parser.parse(tokens);
     } catch (const ParseError& e) {
         appendError(QString("语法错误 (行 %1, 列 %2): %3")
-                        .arg(e.line).arg(e.column)
-                        .arg(QString::fromStdString(
-                            ErrorHintEngine::enrichErrorMessage(e.what(), "parse", {}))));
+                        .arg(e.line)
+                        .arg(e.column)
+                        .arg(QString::fromStdString(ErrorHintEngine::enrichErrorMessage(e.what(), "parse", {}))));
         return;
     }
 
-    if (!ast) return;
+    if (!ast)
+        return;
 
     // QT-R-06 fix: 异步执行解释器，避免主线程阻塞。
     // 词法/语法分析在主线程（轻量，<1ms），解释器执行可能耗时（如 while 循环）放后台。
@@ -411,7 +410,7 @@ void ReplPanel::executeLine(const QString& line) {
     // REPL 将永久卡死（replRunning_ 早期返回守卫阻止后续输入）。
     // 改为：先成功启动 async，再切换状态。AST 已在 replAsts_ 中保留，
     // async 失败时该 AST 不会被使用（executeRepl 未执行），仅造成轻微内存占用。
-    IdeController* ctrl = controller_;  // 显式捕获
+    IdeController* ctrl = controller_; // 显式捕获
     // AUDIT fix: 重置错误标志，避免上次执行的残余状态影响本次输出判断
     hadReplError_.store(false);
     std::atomic<bool>* errFlag = &hadReplError_;
@@ -440,17 +439,21 @@ void ReplPanel::executeLine(const QString& line) {
                 if (ctrl) {
                     scopeVars = ctrl->getReplScopeVariableNames();
                 }
-                std::string enriched = ErrorHintEngine::enrichErrorMessage(
-                    e.what(), "runtime", scopeVars);
+                std::string enriched = ErrorHintEngine::enrichErrorMessage(e.what(), "runtime", scopeVars);
                 std::string msg = enriched;
-                QMetaObject::invokeMethod(qApp,
+                QMetaObject::invokeMethod(
+                    qApp,
                     [self, msg]() {
-                        if (self) self->appendError(QString::fromStdString(msg));
-                    }, Qt::QueuedConnection);
-                QMetaObject::invokeMethod(ctrl,
+                        if (self)
+                            self->appendError(QString::fromStdString(msg));
+                    },
+                    Qt::QueuedConnection);
+                QMetaObject::invokeMethod(
+                    ctrl,
                     [ctrl, msg = std::string(e.what()), line = e.line, col = e.column]() {
                         emit ctrl->runtimeError(QString::fromStdString(msg), line, col);
-                    }, Qt::QueuedConnection);
+                    },
+                    Qt::QueuedConnection);
                 return Value::nullValue();
             } catch (const DebugStopException&) {
                 // RA-C fix: REPL 中止（closeEvent 超时 / 用户停止）——静默退出，不报错
@@ -463,17 +466,19 @@ void ReplPanel::executeLine(const QString& line) {
                 if (ctrl) {
                     scopeVars = ctrl->getReplScopeVariableNames();
                 }
-                std::string enriched = ErrorHintEngine::enrichErrorMessage(
-                    e.what(), "runtime", scopeVars);
+                std::string enriched = ErrorHintEngine::enrichErrorMessage(e.what(), "runtime", scopeVars);
                 std::string msg = enriched;
-                QMetaObject::invokeMethod(qApp,
+                QMetaObject::invokeMethod(
+                    qApp,
                     [self, msg]() {
-                        if (self) self->appendError(QString::fromStdString(msg));
-                    }, Qt::QueuedConnection);
-                QMetaObject::invokeMethod(ctrl,
-                    [ctrl, msg = std::string(e.what())]() {
-                        emit ctrl->genericError(QString::fromStdString(msg));
-                    }, Qt::QueuedConnection);
+                        if (self)
+                            self->appendError(QString::fromStdString(msg));
+                    },
+                    Qt::QueuedConnection);
+                QMetaObject::invokeMethod(
+                    ctrl,
+                    [ctrl, msg = std::string(e.what())]() { emit ctrl->genericError(QString::fromStdString(msg)); },
+                    Qt::QueuedConnection);
                 return Value::nullValue();
             }
         });
@@ -492,11 +497,13 @@ void ReplPanel::executeLine(const QString& line) {
 /// 轮询异步执行结果，完成后回写输出并恢复输入。
 void ReplPanel::pollReplFuture() {
     // QT-R-06 fix: 轮询 std::future 状态，完成则显示结果并恢复输入
-    if (!replFuture_.valid()) return;
+    if (!replFuture_.valid())
+        return;
 
     // 检查是否完成（非阻塞）
     auto status = replFuture_.wait_for(std::chrono::seconds(0));
-    if (status != std::future_status::ready) return;  // 仍在执行
+    if (status != std::future_status::ready)
+        return; // 仍在执行
 
     pollTimer_->stop();
 
@@ -537,11 +544,11 @@ bool ReplPanel::isInputComplete(const QString& input) {
     int parenDepth = 0;   // ()
     int bracketDepth = 0; // []
     bool inString = false;
-    int blockCommentDepth = 0;  // AUDIT-BUG-R2 fix: 跟踪嵌套块注释深度（与 Lexer 一致）
+    int blockCommentDepth = 0; // AUDIT-BUG-R2 fix: 跟踪嵌套块注释深度（与 Lexer 一致）
     bool inLineComment = false;
-    int tryCount = 0;     // BUG-R1 fix: 跟踪 try/catch 配对
+    int tryCount = 0; // BUG-R1 fix: 跟踪 try/catch 配对
     int catchCount = 0;
-    int finallyCount = 0;  // P2-C fix: 跟踪 finally 块
+    int finallyCount = 0; // P2-C fix: 跟踪 finally 块
 
     // AUDIT-REPL-1 fix: 字符串插值栈。MiniLang 字符串支持 "...{expr}..." 插值，
     // { 在字符串内开启表达式上下文（可能含嵌套字符串/字典/数组），} 闭合插值回到字符串模式。
@@ -586,12 +593,12 @@ bool ReplPanel::isInputComplete(const QString& input) {
             }
             // AUDIT-REPL-1 fix: { 在字符串内开启插值表达式上下文
             if (c == '{') {
-                interpOpens.push_back(true);  // 标记此 { 为插值开启
+                interpOpens.push_back(true); // 标记此 { 为插值开启
                 ++braceDepth;
-                inString = false;  // 退出字符串模式，进入表达式扫描
+                inString = false; // 退出字符串模式，进入表达式扫描
                 continue;
             }
-            continue;  // 字符串内其他字符跳过
+            continue; // 字符串内其他字符跳过
         }
 
         if (c == '"') {
@@ -623,12 +630,12 @@ bool ReplPanel::isInputComplete(const QString& input) {
             // 仅匹配完整单词 "try" / "catch" / "finally"，避免匹配 "trying" / "catcher"
             if (len == 3 && input[start] == 't' && input[start + 1] == 'r' && input[start + 2] == 'y') {
                 ++tryCount;
-            } else if (len == 5 && input[start] == 'c' && input[start + 1] == 'a' &&
-                       input[start + 2] == 't' && input[start + 3] == 'c' && input[start + 4] == 'h') {
+            } else if (len == 5 && input[start] == 'c' && input[start + 1] == 'a' && input[start + 2] == 't' &&
+                       input[start + 3] == 'c' && input[start + 4] == 'h') {
                 ++catchCount;
-            } else if (len == 7 && input[start] == 'f' && input[start + 1] == 'i' &&
-                       input[start + 2] == 'n' && input[start + 3] == 'a' &&
-                       input[start + 4] == 'l' && input[start + 5] == 'l' && input[start + 6] == 'y') {
+            } else if (len == 7 && input[start] == 'f' && input[start + 1] == 'i' && input[start + 2] == 'n' &&
+                       input[start + 3] == 'a' && input[start + 4] == 'l' && input[start + 5] == 'l' &&
+                       input[start + 6] == 'y') {
                 ++finallyCount;
             }
             --i; // 补偿 for 循环的 ++i
@@ -637,7 +644,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
 
         switch (c.toLatin1()) {
         case '{':
-            interpOpens.push_back(false);  // 普通代码 {
+            interpOpens.push_back(false); // 普通代码 {
             ++braceDepth;
             break;
         case '}':
@@ -647,7 +654,8 @@ bool ReplPanel::isInputComplete(const QString& input) {
             // 原 isInputComplete 仅在末尾检查 braceDepth!=0，负深度会被末尾的
             // "!= 0" 判断捕获，但中途负深度可能因后续 { 重新归零而漏判
             // （如 "}{" 末尾 braceDepth=0 误判完整）。此处提前返回更准确。
-            if (braceDepth < 0) return false;
+            if (braceDepth < 0)
+                return false;
             // AUDIT-REPL-1 fix: 若此 } 闭合的是插值 {，回到字符串模式
             if (!interpOpens.empty()) {
                 bool wasInterp = interpOpens.back();
@@ -663,7 +671,8 @@ bool ReplPanel::isInputComplete(const QString& input) {
         case ')':
             --parenDepth;
             // BUG-REPL-G3 fix (P2): 同理负 parenDepth 视为不完整
-            if (parenDepth < 0) return false;
+            if (parenDepth < 0)
+                return false;
             break;
         case '[':
             ++bracketDepth;
@@ -671,20 +680,25 @@ bool ReplPanel::isInputComplete(const QString& input) {
         case ']':
             --bracketDepth;
             // BUG-REPL-G3 fix (P2): 同理负 bracketDepth 视为不完整
-            if (bracketDepth < 0) return false;
+            if (bracketDepth < 0)
+                return false;
             break;
         }
     }
 
     // AUDIT-BUG-R2 fix: 未闭合的嵌套块注释视为输入不完整
-    if (blockCommentDepth > 0) return false;
+    if (blockCommentDepth > 0)
+        return false;
     // 未闭合的字符串（含插值内未闭合的嵌套字符串）
-    if (inString) return false;
+    if (inString)
+        return false;
     // 括号不匹配
-    if (braceDepth != 0 || parenDepth != 0 || bracketDepth != 0) return false;
+    if (braceDepth != 0 || parenDepth != 0 || bracketDepth != 0)
+        return false;
     // BUG-R1 fix: try 缺少 catch 或 finally 视为输入不完整
     // P2-C fix: try-finally（无 catch）也是合法结构，catch 或 finally 至少其一即可配对
-    if (tryCount > catchCount + finallyCount) return false;
+    if (tryCount > catchCount + finallyCount)
+        return false;
 
     return true;
 }

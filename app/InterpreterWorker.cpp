@@ -7,9 +7,7 @@
 
 void InterpreterWorker::run() {
     // MEM-01 fix: 使用 shared_ptr 持有 interp_，需通过 -> 访问
-    interp_->setOutputCallback([this](const std::string& text) {
-        emit outputReady(QString::fromStdString(text));
-    });
+    interp_->setOutputCallback([this](const std::string& text) { emit outputReady(QString::fromStdString(text)); });
 
     try {
         // QT-R-03 fix: 通过 shared_ptr 持有 ast_，解引用 *ast_ 传给 execute
@@ -24,8 +22,8 @@ void InterpreterWorker::run() {
     } catch (const std::exception& e) {
         // S-07 fix: 保留异常类型信息，便于诊断
         emit genericError(QString("未预期的错误 [%1]: %2")
-                          .arg(QString::fromStdString(typeid(e).name()))
-                          .arg(QString::fromStdString(e.what())));
+                              .arg(QString::fromStdString(typeid(e).name()))
+                              .arg(QString::fromStdString(e.what())));
     } catch (...) {
         // S-07 fix: catch(...) 兜底，无法获取类型信息但明确标注
         emit genericError("未预期的未知异常（无法获取类型信息）");

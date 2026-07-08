@@ -6,9 +6,9 @@
  */
 #include "ActivityBar.h"
 #include "QFluent/ToolButton.h"
-#include <QVBoxLayout>
-#include <QPainter>
 #include <QEvent>
+#include <QPainter>
+#include <QVBoxLayout>
 
 // ============================================================
 // ActivityBar 实现
@@ -16,8 +16,7 @@
 // 选中切换与左侧面板联动，绘制选中指示条。
 // ============================================================
 
-ActivityBar::ActivityBar(QWidget* parent)
-    : QFrame(parent) {
+ActivityBar::ActivityBar(QWidget* parent) : QFrame(parent) {
     setFixedWidth(48);
     setObjectName("ActivityBar");
     layout_ = new QVBoxLayout(this);
@@ -29,7 +28,8 @@ ActivityBar::ActivityBar(QWidget* parent)
 /// 以 id 添加带图标与文字的活动项，返回其索引。
 int ActivityBar::addItem(const QString& id, const QString& text, Fluent::IconType icon) {
     // 唯一性校验
-    if (indexOf(id) >= 0) return -1;
+    if (indexOf(id) >= 0)
+        return -1;
 
     auto* btn = new TransparentToolButton(icon, this);
     btn->setFixedSize(36, 36);
@@ -43,9 +43,7 @@ int ActivityBar::addItem(const QString& id, const QString& text, Fluent::IconTyp
     // Insert before the stretch
     layout_->insertWidget(layout_->count() - 1, btn, 0, Qt::AlignHCenter);
 
-    connect(btn, &QToolButton::clicked, this, [this, index]() {
-        setCurrentIndex(index);
-    });
+    connect(btn, &QToolButton::clicked, this, [this, index]() { setCurrentIndex(index); });
 
     if (currentIndex_ < 0) {
         setCurrentIndex(index);
@@ -63,8 +61,10 @@ int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
 
 /// 按索引设置当前选中活动项并刷新高亮。
 void ActivityBar::setCurrentIndex(int index) {
-    if (index < 0 || index >= items_.size()) return;
-    if (currentIndex_ == index) return;
+    if (index < 0 || index >= items_.size())
+        return;
+    if (currentIndex_ == index)
+        return;
     currentIndex_ = index;
     updateSelection();
     emit currentChanged(index);
@@ -74,21 +74,24 @@ void ActivityBar::setCurrentIndex(int index) {
 /// 按 id 设置当前选中项；成功返回 true。
 bool ActivityBar::setCurrentId(const QString& id) {
     int idx = indexOf(id);
-    if (idx < 0) return false;
+    if (idx < 0)
+        return false;
     setCurrentIndex(idx);
     return true;
 }
 
 /// 返回当前选中活动的 id。
 QString ActivityBar::currentId() const {
-    if (currentIndex_ < 0 || currentIndex_ >= items_.size()) return QString();
+    if (currentIndex_ < 0 || currentIndex_ >= items_.size())
+        return QString();
     return items_[currentIndex_].id;
 }
 
 /// 返回指定 id 对应活动项的索引；未找到返回 -1。
 int ActivityBar::indexOf(const QString& id) const {
     for (int i = 0; i < items_.size(); ++i) {
-        if (items_[i].id == id) return i;
+        if (items_[i].id == id)
+            return i;
     }
     return -1;
 }
@@ -105,7 +108,8 @@ void ActivityBar::updateSelection() {
 void ActivityBar::paintEvent(QPaintEvent* event) {
     QFrame::paintEvent(event);
     // Draw selection indicator bar (left side, 2px wide, theme color)
-    if (currentIndex_ < 0 || currentIndex_ >= items_.size()) return;
+    if (currentIndex_ < 0 || currentIndex_ >= items_.size())
+        return;
 
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);

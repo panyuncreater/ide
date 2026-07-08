@@ -26,16 +26,14 @@ public:
     /// 在 candidates 中找到与 target 编辑距离最小且 ≤ 2 的候选
     /// 返回最匹配的候选；无匹配时返回空字符串
     /// 距离为 0（完全相同）的候选不返回（视为同一名称）
-    static std::string suggestSpelling(const std::string& target,
-                                       const std::vector<std::string>& candidates);
+    static std::string suggestSpelling(const std::string& target, const std::vector<std::string>& candidates);
 
     // ---- 错误消息增强 ----
 
     /// 增强错误消息：根据 category 和模式匹配附加教学性提示
     /// scopeVars 提供当前作用域变量名列表（用于未定义变量拼写建议）
     /// 未知模式原样返回 msg
-    static std::string enrichErrorMessage(const std::string& msg,
-                                          const std::string& category,
+    static std::string enrichErrorMessage(const std::string& msg, const std::string& category,
                                           const std::vector<std::string>& scopeVars);
 
     /// P2 fix (错误码优先匹配): 带 stable diagnostic code 的增强重载。
@@ -46,19 +44,17 @@ public:
     /// @param code 稳定诊断码（如 "missing-semicolon"），与 errorPatterns() 表 tag 对应
     /// @param category 错误类别（"parse" / "runtime" / "type" 等）
     /// @param scopeVars 作用域变量名列表（用于未定义变量拼写建议）
-    static std::string enrichErrorMessage(const std::string& msg,
-                                          const std::string& code,
-                                          const std::string& category,
+    static std::string enrichErrorMessage(const std::string& msg, const std::string& code, const std::string& category,
                                           const std::vector<std::string>& scopeVars);
 
     // ---- P1-F12 fix: 错误模式表（带 tag），供手册「常见错误」表引用 ----
 
     /// 错误模式描述：tag / 标题 / 触发该错误的示例代码 / 所属类别
     struct ErrorPattern {
-        std::string tag;          // 稳定标识，如 "missing-semicolon"
-        std::string title;        // 中文标题，如 "缺少分号"
-        std::string buggyCode;    // 触发该错误的最小 MiniLang 代码
-        std::string category;     // 所属类别：parser / runtime / type
+        std::string tag;       // 稳定标识，如 "missing-semicolon"
+        std::string title;     // 中文标题，如 "缺少分号"
+        std::string buggyCode; // 触发该错误的最小 MiniLang 代码
+        std::string category;  // 所属类别：parser / runtime / type
     };
 
     /// 返回所有错误模式（带 tag）。手册「常见错误」表按 tag 引用此表，

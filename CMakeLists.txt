@@ -46,7 +46,11 @@ option(MINILANG_UNITY_BUILD "Batch-compile minilang_core as a single translation
 
 # C1: Ninja 响应文件 — 当源文件较多时通过 .rsp 文件传递编译参数，
 # 避免 Windows 命令行 32K 限制与减少进程启动开销。
-if(CMAKE_GENERATOR STREQUAL "Ninja" OR CMAKE_GENERATOR MATCHES "Ninja Multi-Config")
+# 注：macOS 系统 ar（来自 Xcode/Command Line Tools）不支持 @response_file 语法，
+# 强制开启会导致 "ar: @CMakeFiles/xxx.rsp: No such file or directory" 错误，
+# 故仅在非 Apple 平台启用。macOS preset 已通过 CMAKE_C/CXX_USE_RESPONSE_FILE_FOR_OBJECTS=OFF
+# 单独控制编译器响应文件行为。
+if((CMAKE_GENERATOR STREQUAL "Ninja" OR CMAKE_GENERATOR MATCHES "Ninja Multi-Config") AND NOT APPLE)
     set(CMAKE_NINJA_FORCE_RESPONSE_FILE ON CACHE BOOL "Force Ninja to use response files" FORCE)
 endif()
 
@@ -239,7 +243,9 @@ minilang_deploy_qfluent_runtime(minilang_ide)
 
 # D2: 部署翻译 .qm 到 exe 旁的 translations/，使 loadMiniLangTranslations() 运行时能加载
 # （仅当 i18n 启用且 LinguistTools 可用；否则 .qm 未生成，运行时回退到源字符串）
-if(MINILANG_ENABLE_I18N AND Qt6LinguistTools_FOUND)
+# 注：必须检查 MINILANG_QM_FILES 非空，否则 copy_if_different 只收到目标路径一个参数，
+# cmake -E 会打印 usage 并退出 1（曾导致 Windows CI 构建失败）。
+if(MINILANG_ENABLE_I18N AND Qt6LinguistTools_FOUND AND MINILANG_QM_FILES)
     add_custom_command(TARGET minilang_ide POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
                 "$<TARGET_FILE_DIR:minilang_ide>/translations"

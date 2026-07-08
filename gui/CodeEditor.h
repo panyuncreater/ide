@@ -1,16 +1,16 @@
 #pragma once
 
-#include <QPlainTextEdit>
-#include <QWidget>
-#include <QSet>
 #include <QMap>
+#include <QPlainTextEdit>
+#include <QSet>
 #include <QTextBlock>
 #include <QTimer>
+#include <QWidget>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "gui/CodeSnippetEngine.h"  // 功能 13：代码模板系统
+#include "gui/CodeSnippetEngine.h" // 功能 13：代码模板系统
 
 // ============================================================
 // CodeEditor 代码编辑器
@@ -52,7 +52,11 @@ public:
     void setErrorLines(const QSet<int>& lines);
 
     /// 设置精确错误范围（行+列+长度）
-    struct ErrorRange { int line; int column; int length; };
+    struct ErrorRange {
+        int line;
+        int column;
+        int length;
+    };
     void setErrorRanges(const std::vector<ErrorRange>& ranges);
 
     /// 清除错误行
@@ -147,31 +151,31 @@ private slots:
 
 private:
     LineNumberArea* lineNumberArea_ = nullptr;
-    QSet<int> errorLines_;      // 错误行号
-    QSet<int> breakpoints_;     // 断点行号
-    QMap<int, std::string> breakpointConditions_;  // 断点条件表达式
-    int currentLine_ = -1;      // 当前执行行号
-    int sourceHighlightLine_ = -1;  // IR/字节码面板点击高亮的源码行号
-    QList<QTextEdit::ExtraSelection> cachedErrorSelections_;  // 缓存的错误行选择（仅 errorLines_ 变化时重建）
-    QList<QTextEdit::ExtraSelection> findSelections_;  // BUG 4.2 fix: 查找高亮（独立存储，不覆盖编辑器自身 selections）
-    QList<QTextEdit::ExtraSelection> bracketSelections_;  // H2: 括号匹配高亮（由 highlightCurrentLine 合并）
+    QSet<int> errorLines_;                                   // 错误行号
+    QSet<int> breakpoints_;                                  // 断点行号
+    QMap<int, std::string> breakpointConditions_;            // 断点条件表达式
+    int currentLine_ = -1;                                   // 当前执行行号
+    int sourceHighlightLine_ = -1;                           // IR/字节码面板点击高亮的源码行号
+    QList<QTextEdit::ExtraSelection> cachedErrorSelections_; // 缓存的错误行选择（仅 errorLines_ 变化时重建）
+    QList<QTextEdit::ExtraSelection> findSelections_; // BUG 4.2 fix: 查找高亮（独立存储，不覆盖编辑器自身 selections）
+    QList<QTextEdit::ExtraSelection> bracketSelections_; // H2: 括号匹配高亮（由 highlightCurrentLine 合并）
 
     // F8: 代码折叠相关
-    QSet<int> foldedBlocks_;    // 已折叠的块号（blockNumber，从0开始）
+    QSet<int> foldedBlocks_; // 已折叠的块号（blockNumber，从0开始）
 
     // F9: 主题状态
-    bool isDarkTheme_ = false;  // 当前是否深色主题
+    bool isDarkTheme_ = false; // 当前是否深色主题
 
     // QT-R-08 fix: 光标行高亮防抖定时器，避免快速移动光标时频繁 setExtraSelections
     QTimer* lineHighlightTimer_ = nullptr;
 
     // F13: 自动补全
-    QCompleter* completer_ = nullptr;           // 补全器
+    QCompleter* completer_ = nullptr;             // 补全器
     QStringListModel* completionModel_ = nullptr; // 补全单词模型
 
     // BUG-CE-2 fix: 文档内容变化监听，用于断点行号偏移补偿
     QMetaObject::Connection contentsChangeConn_;
-    int lastBlockCount_ = 0;  // 上次文档块数（用于计算 delta）
+    int lastBlockCount_ = 0; // 上次文档块数（用于计算 delta）
 
     /// F13: 获取光标下的单词前缀
     QString textUnderCursor() const;

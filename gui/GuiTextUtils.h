@@ -8,14 +8,14 @@
 // Dedup-4A fix: 提取 11 处重复的 QFont("Consolas", N) 构造为 monospaceFont() 共享工厂。
 // ============================================================
 
-#include <QString>
-#include <QTextCursor>
-#include <QTextCharFormat>
-#include <QTextEdit>
-#include <QScrollBar>  // BUG-REPL-G4 fix: verticalScrollBar() 智能滚动判断
 #include <QFont>
+#include <QScrollBar> // BUG-REPL-G4 fix: verticalScrollBar() 智能滚动判断
+#include <QString>
+#include <QTextCharFormat>
+#include <QTextCursor>
+#include <QTextEdit>
 #include <map>
-#include <utility>  // std::pair
+#include <utility> // std::pair
 
 namespace GuiTextUtils {
 
@@ -23,9 +23,9 @@ namespace GuiTextUtils {
 /// @param edit 目标 QTextEdit
 /// @param text 待追加文本
 /// @param fmt  可选字符格式（错误用红色）；为 nullptr 时使用默认格式
-inline void appendLine(QTextEdit* edit, const QString& text,
-                       const QTextCharFormat* fmt = nullptr) {
-    if (!edit) return;  // BUG-REPL-G4 fix: 防御性空指针检查
+inline void appendLine(QTextEdit* edit, const QString& text, const QTextCharFormat* fmt = nullptr) {
+    if (!edit)
+        return; // BUG-REPL-G4 fix: 防御性空指针检查
     // BUG-REPL-G4 / BUG-OUT-G2 fix: 智能滚动——仅当用户已滚动到底部时才自动跟随。
     // 原实现无条件 ensureCursorVisible()，会强制把用户手动滚到上方查看历史的视图
     // 拉回底部，破坏阅读体验。追加新内容前先记录是否在底部，仅在底部时才滚动。
@@ -37,10 +37,13 @@ inline void appendLine(QTextEdit* edit, const QString& text,
     }
     // 去除尾部换行，避免多余空行
     QString trimmed = text;
-    while (trimmed.endsWith('\n') || trimmed.endsWith('\r')) trimmed.chop(1);
-    if (fmt) cursor.setCharFormat(*fmt);
+    while (trimmed.endsWith('\n') || trimmed.endsWith('\r'))
+        trimmed.chop(1);
+    if (fmt)
+        cursor.setCharFormat(*fmt);
     cursor.insertText(trimmed);
-    if (fmt) cursor.setCharFormat(QTextCharFormat());
+    if (fmt)
+        cursor.setCharFormat(QTextCharFormat());
     edit->setTextCursor(cursor);
     if (atBottom) {
         edit->ensureCursorVisible();
@@ -57,9 +60,11 @@ inline const QFont& monospaceFont(int pointSize = 10, bool bold = false) {
     static std::map<Key, QFont> cache;
     Key key{pointSize, bold};
     auto it = cache.find(key);
-    if (it != cache.end()) return it->second;
+    if (it != cache.end())
+        return it->second;
     QFont f("Consolas", pointSize);
-    if (bold) f.setBold(true);
+    if (bold)
+        f.setBold(true);
     auto emplaced = cache.emplace(key, std::move(f));
     return emplaced.first->second;
 }

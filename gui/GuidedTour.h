@@ -24,11 +24,11 @@
 
 #pragma once
 
+#include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QRect> // positionBubble(const QRect&)
 #include <QString>
-#include <QList>
-#include <QRect>  // positionBubble(const QRect&)
 
 class QWidget;
 class QLabel;
@@ -44,33 +44,32 @@ class QPushButton;
 class GuidedTour : public QObject {
     Q_OBJECT
 public:
-/// 构造引导漫游；host 为被引导的宿主窗口。
+    /// 构造引导漫游；host 为被引导的宿主窗口。
     explicit GuidedTour(QWidget* host, QObject* parent = nullptr);
     ~GuidedTour() override;
 
     struct Step {
-        QPointer<QWidget> target;   // 要高亮的 widget（nullptr 表示无目标，居中显示）
-        QString title;              // 气泡标题
-        QString description;        // 气泡说明（支持简单 HTML）
-        QString primaryBtnText;     // 主按钮文本（默认"下一步 →"）
-        QString secondaryBtnText;   // 次按钮文本（默认"跳过"）
+        QPointer<QWidget> target; // 要高亮的 widget（nullptr 表示无目标，居中显示）
+        QString title;            // 气泡标题
+        QString description;      // 气泡说明（支持简单 HTML）
+        QString primaryBtnText;   // 主按钮文本（默认"下一步 →"）
+        QString secondaryBtnText; // 次按钮文本（默认"跳过"）
     };
 
     void addStep(QWidget* target, const QString& title, const QString& description,
-                 const QString& primaryBtnText = "下一步 →",
-                 const QString& secondaryBtnText = "跳过");
+                 const QString& primaryBtnText = "下一步 →", const QString& secondaryBtnText = "跳过");
 
-    void start();   // 开始引导，从第 0 步
-    void next();    // 下一步
-    void skip();    // 跳过引导
+    void start(); // 开始引导，从第 0 步
+    void next();  // 下一步
+    void skip();  // 跳过引导
 
 signals:
-/// 信号：当前步骤索引变化。
+    /// 信号：当前步骤索引变化。
     void stepChanged(int index);
-    void finished(bool completed);  // completed=true 表示走完所有步骤，false 表示跳过
+    void finished(bool completed); // completed=true 表示走完所有步骤，false 表示跳过
 
 private:
-    QWidget* host_;  // 宿主窗口（通常为 MainWindow）
+    QWidget* host_; // 宿主窗口（通常为 MainWindow）
     QList<Step> steps_;
     int currentIndex_ = -1;
 
@@ -92,10 +91,10 @@ private:
     QPointer<QWidget> highlightedTarget_;
     QString savedStyleSheet_;
 
-/// 显示指定步骤。
+    /// 显示指定步骤。
     void showStep(int index);
-/// 隐藏遮罩结束引导。
+    /// 隐藏遮罩结束引导。
     void hideOverlay();
-/// 定位气泡到目标矩形。
+    /// 定位气泡到目标矩形。
     void positionBubble(const QRect& targetRect);
 };

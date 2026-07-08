@@ -21,7 +21,8 @@ public:
     /// 分配全局槽位（已有则返回现有，否则从 freeSlots_ 或新分配）
     int allocate(const std::string& name) {
         auto it = slots_.find(name);
-        if (it != slots_.end()) return it->second;
+        if (it != slots_.end())
+            return it->second;
         int slot;
         if (!freeSlots_.empty()) {
             slot = freeSlots_.back();
@@ -40,7 +41,8 @@ public:
     /// 释放全局槽位（从 slots_ 移除，推入 freeSlots_，清空 names_ 对应位置）
     void release(const std::string& name) {
         auto it = slots_.find(name);
-        if (it == slots_.end()) return;
+        if (it == slots_.end())
+            return;
         int slot = it->second;
         slots_.erase(it);
         if (slot < static_cast<int>(names_.size())) {
@@ -61,16 +63,15 @@ public:
     /// 因为遮蔽是临时的，稍后会用 restoreMapping() 恢复。
     int removeMapping(const std::string& name) {
         auto it = slots_.find(name);
-        if (it == slots_.end()) return -1;
+        if (it == slots_.end())
+            return -1;
         int slot = it->second;
         slots_.erase(it);
         return slot;
     }
 
     /// B4: 恢复之前 removeMapping 移除的槽位映射
-    void restoreMapping(const std::string& name, int slot) {
-        slots_[name] = slot;
-    }
+    void restoreMapping(const std::string& name, int slot) { slots_[name] = slot; }
 
     /// 取槽位名表（slot → name，最终传递给 CompileResult）
     const std::vector<std::string>& names() const { return names_; }
@@ -89,7 +90,7 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, int> slots_;  // name → slot index
-    std::vector<std::string> names_;               // slot → name (parallel array)
-    std::vector<int> freeSlots_;                   // recycled slot indices
+    std::unordered_map<std::string, int> slots_; // name → slot index
+    std::vector<std::string> names_;             // slot → name (parallel array)
+    std::vector<int> freeSlots_;                 // recycled slot indices
 };

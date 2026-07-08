@@ -27,9 +27,9 @@
 
 #pragma once
 
+#include "Theme.h" // QFluentKit
 #include <QColor>
 #include <QString>
-#include "Theme.h"  // QFluentKit
 
 namespace TeachingTheme {
 
@@ -52,32 +52,32 @@ inline QColor primaryPressed() {
 
 /// 主文本色：深灰（亮色固定）
 inline QColor textPrimary() {
-    return QColor(0x00, 0x2b, 0x36);   // Solarized base03
+    return QColor(0x00, 0x2b, 0x36); // Solarized base03
 }
 
 /// 次要文本色：中灰
 inline QColor textSecondary() {
-    return QColor(0x58, 0x6e, 0x75);   // Solarized base01
+    return QColor(0x58, 0x6e, 0x75); // Solarized base01
 }
 
 /// 提示文本色：比次要更弱
 inline QColor textHint() {
-    return QColor(0x65, 0x7b, 0x83);   // Solarized base00
+    return QColor(0x65, 0x7b, 0x83); // Solarized base00
 }
 
 /// 卡片/面板背景色：白色
 inline QColor surface() {
-    return QColor(0xfd, 0xf6, 0xe3);   // Solarized base3
+    return QColor(0xfd, 0xf6, 0xe3); // Solarized base3
 }
 
 /// 卡片悬浮态背景色
 inline QColor surfaceHover() {
-    return QColor(0xee, 0xe8, 0xd5);   // Solarized base2
+    return QColor(0xee, 0xe8, 0xd5); // Solarized base2
 }
 
 /// 边框色
 inline QColor border() {
-    return QColor(0x93, 0xa1, 0xa1);   // Solarized base1
+    return QColor(0x93, 0xa1, 0xa1); // Solarized base1
 }
 
 /// 强调色（用于标题、链接）
@@ -87,17 +87,17 @@ inline QColor accent() {
 
 /// 成功色（绿色系）
 inline QColor success() {
-    return QColor(0x85, 0x99, 0x00);   // Solarized green
+    return QColor(0x85, 0x99, 0x00); // Solarized green
 }
 
 /// 警告色（橙色系）
 inline QColor warning() {
-    return QColor(0xb5, 0x89, 0x00);   // Solarized yellow
+    return QColor(0xb5, 0x89, 0x00); // Solarized yellow
 }
 
 /// 错误色（红色系）
 inline QColor error() {
-    return QColor(0xdc, 0x32, 0x2f);   // Solarized red
+    return QColor(0xdc, 0x32, 0x2f); // Solarized red
 }
 
 /// 信息色（Fluent 语义蓝）
@@ -114,12 +114,18 @@ inline QColor hint() {
 /// 用于 LearningPathPanel / WelcomeWizard Step 4 / CodeJourneyInfoPanel 5 阶段图
 inline QColor learningStageColor(int stage) {
     switch (stage) {
-        case 0: return QColor("#859900");  // 阶段零：绿色（首次接触）
-        case 1: return QColor("#B58900");  // 阶段一：黄色（编译前端）
-        case 2: return QColor("#268BD2");  // 阶段二：蓝色（执行引擎）
-        case 3: return QColor("#6C71C4");  // 阶段三：紫色（深入理解）
-        case 4: return QColor("#DC322F");  // 阶段四：红色（实战训练）
-        default: return QColor("#839496"); // 未开始/失败：灰色
+    case 0:
+        return QColor("#859900"); // 阶段零：绿色（首次接触）
+    case 1:
+        return QColor("#B58900"); // 阶段一：黄色（编译前端）
+    case 2:
+        return QColor("#268BD2"); // 阶段二：蓝色（执行引擎）
+    case 3:
+        return QColor("#6C71C4"); // 阶段三：紫色（深入理解）
+    case 4:
+        return QColor("#DC322F"); // 阶段四：红色（实战训练）
+    default:
+        return QColor("#839496"); // 未开始/失败：灰色
     }
 }
 
@@ -128,42 +134,67 @@ inline QColor learningStageColor(int stage) {
 // 用于 app/ide.cpp::applyFluentStyle() 的 ADS QSS / 文件树 / 状态栏等
 // 亮色固定配色（深色主题已移除）
 // ============================================================
-inline QColor ideBgMain()      { return QColor("#FDF6E3"); }
-inline QColor ideBgPanel()     { return QColor("#EEE8D5"); }
-inline QColor ideBgSidebar()   { return QColor("#EEE8D5"); }
-inline QColor ideFgPrimary()   { return QColor("#002B36"); }
-inline QColor ideFgSecondary() { return QColor("#657B83"); }
-inline QColor ideBorder()      { return QColor("#93A1A1"); }
-inline QColor ideAccent()      { return QColor("#268BD2"); }
-inline QColor ideHoverBg()     { return QColor("#EEE8D5"); }
-inline QColor ideSelectedBg()  { return QColor("#EEE8D5"); }
-inline QColor ideTitleBg()     { return QColor("#FDF6E3"); }
-inline QColor ideStatusBg()    { return QColor("#f3f3f3"); }
-inline QColor ideEditorBg()    { return QColor("#FDF6E3"); }
-inline QColor ideLineNumBg()   { return QColor("#EEE8D5"); }
-inline QColor ideLineNumFg()   { return QColor("#657B83"); }
+inline QColor ideBgMain() {
+    return QColor("#FDF6E3");
+}
+inline QColor ideBgPanel() {
+    return QColor("#EEE8D5");
+}
+inline QColor ideBgSidebar() {
+    return QColor("#EEE8D5");
+}
+inline QColor ideFgPrimary() {
+    return QColor("#002B36");
+}
+inline QColor ideFgSecondary() {
+    return QColor("#657B83");
+}
+inline QColor ideBorder() {
+    return QColor("#93A1A1");
+}
+inline QColor ideAccent() {
+    return QColor("#268BD2");
+}
+inline QColor ideHoverBg() {
+    return QColor("#EEE8D5");
+}
+inline QColor ideSelectedBg() {
+    return QColor("#EEE8D5");
+}
+inline QColor ideTitleBg() {
+    return QColor("#FDF6E3");
+}
+inline QColor ideStatusBg() {
+    return QColor("#f3f3f3");
+}
+inline QColor ideEditorBg() {
+    return QColor("#FDF6E3");
+}
+inline QColor ideLineNumBg() {
+    return QColor("#EEE8D5");
+}
+inline QColor ideLineNumFg() {
+    return QColor("#657B83");
+}
 
 /// 主按钮样式表（用于 QPushButton 模拟 PrimaryPushButton 视觉）
 /// 注：优先使用 QFluentKit PrimaryPushButton；此函数仅用于无法替换的旧代码
 inline QString primaryButtonStyle() {
-    return QString(
-        "QPushButton { background: %1; color: white; border: none;"
-        "  border-radius: 5px; padding: 8px 20px; font-size: 13px; }"
-        "QPushButton:hover { background: %2; }"
-        "QPushButton:pressed { background: %3; }"
-        "QPushButton:disabled { background: #888; }"
-    ).arg(primary().name(), primaryHover().name(), primaryPressed().name());
+    return QString("QPushButton { background: %1; color: white; border: none;"
+                   "  border-radius: 5px; padding: 8px 20px; font-size: 13px; }"
+                   "QPushButton:hover { background: %2; }"
+                   "QPushButton:pressed { background: %3; }"
+                   "QPushButton:disabled { background: #888; }")
+        .arg(primary().name(), primaryHover().name(), primaryPressed().name());
 }
 
 /// 次按钮样式表（透明背景 + 边框）
 inline QString secondaryButtonStyle() {
-    return QString(
-        "QPushButton { background: transparent; color: %1; border: 1px solid %2;"
-        "  border-radius: 5px; padding: 8px 20px; font-size: 13px; }"
-        "QPushButton:hover { background: %3; }"
-        "QPushButton:pressed { background: %4; }"
-    ).arg(textPrimary().name(), border().name(),
-          surfaceHover().name(), surfaceHover().darker(110).name());
+    return QString("QPushButton { background: transparent; color: %1; border: 1px solid %2;"
+                   "  border-radius: 5px; padding: 8px 20px; font-size: 13px; }"
+                   "QPushButton:hover { background: %3; }"
+                   "QPushButton:pressed { background: %4; }")
+        .arg(textPrimary().name(), border().name(), surfaceHover().name(), surfaceHover().darker(110).name());
 }
 
 } // namespace TeachingTheme

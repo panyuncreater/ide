@@ -32,10 +32,16 @@ on:
 
 env:
   CMAKE_BUILD_TYPE: Release
-  # Qt 6.10.x 在 Linux 上的包结构已变更，aqtinstall 3.3.0（最新版）无法识别，
-  # 报 "qt_base not found" 错误。回退到 6.8.3 LTS（稳定且完全兼容）。
-  # 可通过 Actions → Run workflow → qt_version 手动覆盖。
+  # Qt 6.10.x 在 Linux 上的包结构已变更，aqtinstall 无法识别；
+  # aqtinstall 3.2.0+ 在 Linux 上解析 Qt 6.8.x 元数据也有回归 bug
+  # （"qt_base not found"）。故固定 aqtinstall==3.1.21 + Qt 6.8.3 LTS。
+  # 可通过 Actions → Run workflow → qt_version 手动覆盖 Qt 版本。
   QT_VERSION: ${{ inputs.qt_version != '' && inputs.qt_version || '6.8.3' }}
+  # 固定 aqtinstall 版本：3.2.0+ 在 Linux 上解析 Qt 6.8.x 包元数据存在回归
+  # （"The packages ['qt_base'] were not found while parsing XML"）。
+  # 3.1.21 已验证可正确安装 Qt 6.8.3 Linux/gcc_64。
+  # 参见 https://github.com/miurahr/aqtinstall/issues/908
+  AQT_VERSION: '==3.1.21'
   # 消除 macOS Homebrew 的 aws/tap 不受信任警告（ccache-action 内部 brew install 触发）
   HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
 
@@ -88,6 +94,8 @@ jobs:
           host: windows
           target: desktop
           arch: ${{ matrix.arch }}
+          modules: qttools
+          aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
       # ---- Ubuntu / macOS: 安装 Qt6 ----
@@ -99,6 +107,8 @@ jobs:
           host: ${{ runner.os == 'Linux' && 'linux' || 'mac' }}
           target: desktop
           arch: ${{ matrix.arch }}
+          modules: qttools
+          aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
       # ---- Windows 专属: MSVC 开发环境 ----
@@ -262,6 +272,8 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
+          modules: qttools
+          aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
       - name: 设置 MSVC 开发环境
@@ -338,6 +350,8 @@ jobs:
           host: linux
           target: desktop
           arch: gcc_64
+          modules: qttools
+          aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
       - name: 设置 QTDIR 环境变量
@@ -423,6 +437,8 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
+          modules: qttools
+          aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
       - name: 设置 MSVC 开发环境

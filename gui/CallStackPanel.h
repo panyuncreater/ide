@@ -15,15 +15,15 @@
 // 不修改引擎层。
 // ============================================================
 
-#include <QWidget>
-#include <QStackedWidget>
-#include <QTreeWidget>
-#include <QTextBrowser>
-#include <QLabel>
-#include <QPushButton>
 #include <QCheckBox>
-#include <QTimer>
+#include <QLabel>
 #include <QListWidget>
+#include <QPushButton>
+#include <QStackedWidget>
+#include <QTextBrowser>
+#include <QTimer>
+#include <QTreeWidget>
+#include <QWidget>
 #include <string>
 #include <vector>
 
@@ -94,23 +94,23 @@ private:
     IdeController* controller_ = nullptr;
 
     // 子页切换
-    QPushButton*    pageLiveBtn_    = nullptr;
-    QPushButton*    pageLibraryBtn_ = nullptr;
-    QStackedWidget* stack_          = nullptr;
+    QPushButton* pageLiveBtn_ = nullptr;
+    QPushButton* pageLibraryBtn_ = nullptr;
+    QStackedWidget* stack_ = nullptr;
 
     // 子页 1：实时调用栈
-    QLabel*       liveStatusLabel_  = nullptr;
-    QPushButton* refreshBtn_        = nullptr;
-    QCheckBox*   autoRefreshCheck_ = nullptr;
-    QTreeWidget* stackTree_         = nullptr;
-    QTextBrowser* frameDetail_      = nullptr;
-    QTimer*       autoTimer_        = nullptr;
+    QLabel* liveStatusLabel_ = nullptr;
+    QPushButton* refreshBtn_ = nullptr;
+    QCheckBox* autoRefreshCheck_ = nullptr;
+    QTreeWidget* stackTree_ = nullptr;
+    QTextBrowser* frameDetail_ = nullptr;
+    QTimer* autoTimer_ = nullptr;
 
     // 子页 2：教学场景库
-    QListWidget* scenarioList_     = nullptr;
-    QTextBrowser* scenarioDetail_  = nullptr;
-    QPushButton* loadCodeBtn_      = nullptr;
-    int          currentScenarioIdx_ = -1;
+    QListWidget* scenarioList_ = nullptr;
+    QTextBrowser* scenarioDetail_ = nullptr;
+    QPushButton* loadCodeBtn_ = nullptr;
+    int currentScenarioIdx_ = -1;
 
     // 构造辅助
     void buildLivePage(QWidget* host);

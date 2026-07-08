@@ -16,21 +16,19 @@
 // 「返回编辑器」按钮发 returnToEditorRequested 信号，切回代码编辑区
 // ============================================================
 
-#include <QWidget>
 #include <QString>
+#include <QWidget>
 
 class QPushButton;
-class StrongBodyLabel;   // QFluentKit（titleLabel_ 实际类型）
-class QDialog;           // showHelpDialog / adjustHelpDialogSize 用到
-class QTextBrowser;      // adjustHelpDialogSize 形参类型
+class StrongBodyLabel; // QFluentKit（titleLabel_ 实际类型）
+class QDialog;         // showHelpDialog / adjustHelpDialogSize 用到
+class QTextBrowser;    // adjustHelpDialogSize 形参类型
 
 class TeachingPanelHeader : public QWidget {
     Q_OBJECT
 public:
     /// 构造：panelId 用于查找帮助文案，title 为显示标题
-    explicit TeachingPanelHeader(const QString& panelId,
-                                  const QString& title,
-                                  QWidget* parent = nullptr);
+    explicit TeachingPanelHeader(const QString& panelId, const QString& title, QWidget* parent = nullptr);
 
     /// 设置标题文本
     void setTitle(const QString& title);
@@ -53,9 +51,9 @@ private:
     QString title_;
     StrongBodyLabel* titleLabel_ = nullptr;
     QPushButton* helpBtn_ = nullptr;
-    QPushButton* tourBtn_ = nullptr;          // 「新手引导」按钮
+    QPushButton* tourBtn_ = nullptr; // 「新手引导」按钮
     QPushButton* learningPathBtn_ = nullptr;
-    QPushButton* backBtn_ = nullptr;          // 「返回编辑器」按钮
+    QPushButton* backBtn_ = nullptr; // 「返回编辑器」按钮
 
     void showHelpDialog();
 

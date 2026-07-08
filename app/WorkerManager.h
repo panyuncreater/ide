@@ -14,26 +14,25 @@
 // 与 DebugCoordinator 协作：共享 Interpreter / DebugController 所有权。
 // ============================================================
 
+#include <QMap>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QThread>
-#include <QMap>
-#include <QSet>
-#include <memory>
-#include <functional>
-#include <string>
 #include <atomic>
+#include <functional>
+#include <memory>
+#include <string>
 
-#include "interpreter/Interpreter.h"
-#include "debug/DebugController.h"
 #include "InterpreterWorker.h"
+#include "debug/DebugController.h"
+#include "interpreter/Interpreter.h"
 
 class WorkerManager : public QObject {
     Q_OBJECT
 
 public:
-    WorkerManager(std::shared_ptr<Interpreter> interpreter,
-                  std::shared_ptr<DebugController> debugger,
+    WorkerManager(std::shared_ptr<Interpreter> interpreter, std::shared_ptr<DebugController> debugger,
                   QObject* parent = nullptr);
     ~WorkerManager();
 

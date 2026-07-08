@@ -1,26 +1,26 @@
 #include "gui/BackendComparePanel.h"
 #include "app/IdeController.h"
+#include "compiler/Compiler.h"
+#include "compiler/IR.h"
+#include "compiler/RegisterVM.h"
+#include "compiler/VM.h"
+#include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "interpreter/Interpreter.h"
-#include "compiler/Compiler.h"
-#include "compiler/VM.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/IR.h"
 
-#include <QVBoxLayout>
+#include <QApplication>
 #include <QHBoxLayout>
-#include <QSplitter>
-#include <QTextEdit>
 #include <QLabel>
 #include <QPushButton>
-#include <QApplication>
+#include <QSplitter>
+#include <QTextEdit>
+#include <QVBoxLayout>
+#include <algorithm>
 #include <chrono>
 #include <sstream>
-#include <algorithm>
 
-#include "PushButton.h"   // QFluentKit（PrimaryPushButton）
-#include "Label.h"        // QFluentKit（CaptionLabel）
+#include "Label.h"      // QFluentKit（CaptionLabel）
+#include "PushButton.h" // QFluentKit（PrimaryPushButton）
 
 // ============================================================
 // BackendComparePanel 实现
@@ -31,8 +31,7 @@
 /// 构造面板：组装顶部「运行三后端对比」按钮与差异标签，水平三列
 /// （Interpreter / StackVM / RegisterVM）只读输出区与状态标签，
 /// 并绑定运行按钮信号。
-BackendComparePanel::BackendComparePanel(QWidget* parent)
-    : QWidget(parent) {
+BackendComparePanel::BackendComparePanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -69,8 +68,7 @@ BackendComparePanel::BackendComparePanel(QWidget* parent)
     splitter->setSizes({400, 400, 400});
     mainLayout->addWidget(splitter, 1);
 
-    connect(runButton_, &QPushButton::clicked,
-            this, &BackendComparePanel::runComparison);
+    connect(runButton_, &QPushButton::clicked, this, &BackendComparePanel::runComparison);
 }
 
 /// 顺序运行三后端并对比：直接从 controller 取已编译的 AST，分别执行
@@ -111,6 +109,7 @@ void BackendComparePanel::runComparison() {
 
     renderComparison(interp, stackVm, regVm);
     runButton_->setEnabled(true);
+    comparing_ = false;
 }
 
 /// 运行 Interpreter 后端：用 controller 持有的 AST 执行，捕获输出与耗时，
@@ -125,9 +124,7 @@ BackendComparePanel::BackendResult BackendComparePanel::runInterpreter(const std
     auto t0 = std::chrono::high_resolution_clock::now();
     try {
         Interpreter interp;
-        interp.setOutputCallback([&out](const std::string& s) {
-            out << s << "\n";
-        });
+        interp.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
         interp.execute(*controller_->astRoot());
         r.status = "OK";
     } catch (const std::exception& e) {
@@ -140,7 +137,8 @@ BackendComparePanel::BackendResult BackendComparePanel::runInterpreter(const std
     std::string s = out.str();
     std::istringstream iss(s);
     std::string line;
-    while (std::getline(iss, line)) r.outputLines.push_back(line);
+    while (std::getline(iss, line))
+        r.outputLines.push_back(line);
     return r;
 }
 
@@ -163,9 +161,7 @@ BackendComparePanel::BackendResult BackendComparePanel::runStackVM(const std::st
             out << "[Compile Error]\n" << r.errorMessage;
         } else {
             VM vm;
-            vm.setOutputCallback([&out](const std::string& s) {
-                out << s << "\n";
-            });
+            vm.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
             auto vmres = vm.execute(result);
             r.status = (vmres == VMResult::VM_OK) ? "OK" : "ERROR";
             if (vmres != VMResult::VM_OK) {
@@ -183,7 +179,8 @@ BackendComparePanel::BackendResult BackendComparePanel::runStackVM(const std::st
     std::string s = out.str();
     std::istringstream iss(s);
     std::string line;
-    while (std::getline(iss, line)) r.outputLines.push_back(line);
+    while (std::getline(iss, line))
+        r.outputLines.push_back(line);
     return r;
 }
 
@@ -207,9 +204,7 @@ BackendComparePanel::BackendResult BackendComparePanel::runRegisterVM(const std:
             out << "[Compile Error]\n" << r.errorMessage;
         } else {
             RegisterVM vm;
-            vm.setOutputCallback([&out](const std::string& s) {
-                out << s << "\n";
-            });
+            vm.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
             auto vmres = vm.execute(regResult);
             r.status = (vmres == VMResult::VM_OK) ? "OK" : "ERROR";
             if (vmres != VMResult::VM_OK) {
@@ -227,15 +222,15 @@ BackendComparePanel::BackendResult BackendComparePanel::runRegisterVM(const std:
     std::string s = out.str();
     std::istringstream iss(s);
     std::string line;
-    while (std::getline(iss, line)) r.outputLines.push_back(line);
+    while (std::getline(iss, line))
+        r.outputLines.push_back(line);
     return r;
 }
 
 /// 将三后端结果渲染到对应列：填充输出文本与状态标签（状态 + 耗时），
 /// 并调用 buildDiffSummary 生成一致性汇总写入差异标签。
-void BackendComparePanel::renderComparison(const BackendResult& interp,
-                                            const BackendResult& stackVm,
-                                            const BackendResult& regVm) {
+void BackendComparePanel::renderComparison(const BackendResult& interp, const BackendResult& stackVm,
+                                           const BackendResult& regVm) {
     auto renderResult = [](const BackendResult& r, QTextEdit* output, QLabel* status, const QString& name) {
         if (r.status == "NO_AST") {
             output->setPlainText(QString::fromUtf8("（无 AST）"));
@@ -248,10 +243,8 @@ void BackendComparePanel::renderComparison(const BackendResult& interp,
         }
         output->setPlainText(text);
         double ms = r.elapsedMicros / 1000.0;
-        status->setText(QString::fromUtf8("%1 [%2] %3 ms")
-            .arg(name)
-            .arg(QString::fromUtf8(r.status.c_str()))
-            .arg(ms, 0, 'f', 2));
+        status->setText(
+            QString::fromUtf8("%1 [%2] %3 ms").arg(name).arg(QString::fromUtf8(r.status.c_str())).arg(ms, 0, 'f', 2));
     };
     renderResult(interp, interpOutput_, interpStatus_, QString::fromUtf8("Interpreter"));
     renderResult(stackVm, stackVmOutput_, stackVmStatus_, QString::fromUtf8("StackVM"));
@@ -262,9 +255,14 @@ void BackendComparePanel::renderComparison(const BackendResult& interp,
 
 /// 逐行比对三后端输出（按最大行数对齐，缺失行视为空），统计差异行数，
 /// 生成「三后端输出一致 / 差异 N 行」的汇总文本，供差异标签显示。
-QString BackendComparePanel::buildDiffSummary(const BackendResult& a,
-                                                 const BackendResult& b,
-                                                 const BackendResult& c) {
+// AUDIT-P2 fix: 三后端全错误时不能误报「一致性 PASS」——原实现只比较 outputLines，
+// 不检查 status。三后端均报相同错误时 diffCount=0 误报 PASS，用户以为代码正确。
+QString BackendComparePanel::buildDiffSummary(const BackendResult& a, const BackendResult& b, const BackendResult& c) {
+    // 先检查三后端是否全部成功
+    bool allOk = (a.status == "OK" && b.status == "OK" && c.status == "OK");
+    // 三后端状态是否一致
+    bool statusConsistent = (a.status == b.status && b.status == c.status);
+
     // 三后端输出差异比对
     size_t maxLines = std::max({a.outputLines.size(), b.outputLines.size(), c.outputLines.size()});
     int diffCount = 0;
@@ -272,11 +270,20 @@ QString BackendComparePanel::buildDiffSummary(const BackendResult& a,
         std::string la = (i < a.outputLines.size()) ? a.outputLines[i] : "";
         std::string lb = (i < b.outputLines.size()) ? b.outputLines[i] : "";
         std::string lc = (i < c.outputLines.size()) ? c.outputLines[i] : "";
-        if (la != lb || lb != lc) diffCount++;
+        if (la != lb || lb != lc)
+            diffCount++;
     }
+
+    // 三后端均失败时不应报 PASS
+    if (!allOk) {
+        if (statusConsistent && diffCount == 0) {
+            return QString::fromUtf8("三后端均失败（错误一致）— 请修复代码");
+        }
+        return QString::fromUtf8("三后端均失败且错误不一致 — 请修复代码");
+    }
+
     if (diffCount == 0) {
         return QString::fromUtf8("三后端输出一致（%1 行）— 一致性 PASS").arg(maxLines);
     }
-    return QString::fromUtf8("三后端差异 %1 行 / 共 %2 行 — 一致性 FAIL")
-        .arg(diffCount).arg(maxLines);
+    return QString::fromUtf8("三后端差异 %1 行 / 共 %2 行 — 一致性 FAIL").arg(diffCount).arg(maxLines);
 }

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <QWidget>
 #include <QHash>
+#include <QWidget>
 
 class QTextBrowser;
 class QPushButton;
@@ -43,7 +43,7 @@ protected:
 
 private:
     QTextBrowser* infoBrowser_ = nullptr;
-    QLabel* progressLabel_     = nullptr;
+    QLabel* progressLabel_ = nullptr;
 
     // 完成状态跟踪：首次显示即标记完成
     bool journeyCompleted_ = false;

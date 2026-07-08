@@ -20,13 +20,13 @@
 #include <string>
 #include <vector>
 
+#include "Diagnostic.h"
+#include "ast/ASTNode.h"
+#include "compiler/Bytecode.h"
+#include "compiler/Compiler.h"
+#include "formatter/Formatter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "compiler/Compiler.h"
-#include "compiler/Bytecode.h"
-#include "formatter/Formatter.h"
-#include "ast/ASTNode.h"
-#include "Diagnostic.h"
 
 class PipelineRunner : public QObject {
     Q_OBJECT
@@ -46,16 +46,16 @@ public:
 
     /// C9 fix: 前端管线结果状态码
     enum class PipelineStatus {
-        OK,            ///< Lexer+Parser 均成功
-        LexerFailed,   ///< Lexer 异常或错误
-        ParserFailed   ///< Parser 异常或错误
+        OK,          ///< Lexer+Parser 均成功
+        LexerFailed, ///< Lexer 异常或错误
+        ParserFailed ///< Parser 异常或错误
     };
 
     /// C9 fix: 前端管线结果
     struct PipelineResult {
         PipelineStatus status = PipelineStatus::OK;
-        std::string errorMessage;  ///< 异常消息（status != OK 时有效）
-        const DiagnosticBag* diagnostics = nullptr;  ///< 错误诊断包指针
+        std::string errorMessage;                   ///< 异常消息（status != OK 时有效）
+        const DiagnosticBag* diagnostics = nullptr; ///< 错误诊断包指针
     };
 
     /// C9 fix: 统一前端管线（Lexer + Parser），消除重复。

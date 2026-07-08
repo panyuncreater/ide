@@ -9,10 +9,10 @@
 // 可被生产实现（debug/DebugController.h，QObject 派生）和
 // 测试桩实现（test_harness/debug/DebugController.h，无 Qt）共同包含。
 
-#include <string>
-#include <vector>
-#include <utility>
 #include "interpreter/Value.h"
+#include <string>
+#include <utility>
+#include <vector>
 
 // ============================================================
 // 调试公共类型
@@ -31,7 +31,7 @@ enum class StepMode {
 struct VariableSnapshot {
     std::string name;
     Value value;
-    std::string scope;  // 作用域描述
+    std::string scope; // 作用域描述
 };
 
 /// 调用栈条目
@@ -39,18 +39,17 @@ struct CallStackEntry {
     std::string functionName;
     int line;
     int depth;
-    std::vector<std::pair<std::string, Value>> locals;  // 该帧的局部变量快照
+    std::vector<std::pair<std::string, Value>> locals; // 该帧的局部变量快照
 };
 
 /// 断点信息（支持条件断点）
 struct BreakpointInfo {
     int line;
-    std::string condition;  // 条件表达式（空字符串 = 无条件断点）
-    int hitCount = 0;       // 命中次数
+    std::string condition; // 条件表达式（空字符串 = 无条件断点）
+    int hitCount = 0;      // 命中次数
 
     BreakpointInfo() : line(0) {}
-    BreakpointInfo(int ln, const std::string& cond = "")
-        : line(ln), condition(cond) {}
+    BreakpointInfo(int ln, const std::string& cond = "") : line(ln), condition(cond) {}
 
     bool isConditional() const { return !condition.empty(); }
 };

@@ -6,19 +6,19 @@
  */
 #pragma once
 
-#include <QWidget>
-#include <QLineEdit>
-#include <QTextEdit>
-#include <QVBoxLayout>
-#include <QStringList>
-#include <QTimer>
-#include <QPointer>
 #include <QCoreApplication>
+#include <QLineEdit>
+#include <QPointer>
+#include <QStringList>
+#include <QTextEdit>
+#include <QTimer>
+#include <QVBoxLayout>
+#include <QWidget>
+#include <atomic>
 #include <future>
 #include <memory>
-#include <atomic>
 
-#include "interpreter/Value.h"  // QT-R-06 fix: std::future<Value> 需 Value 完整定义
+#include "interpreter/Value.h" // QT-R-06 fix: std::future<Value> 需 Value 完整定义
 
 // B6 fix: ReplPanel 不再直接持有 Interpreter*，改由 IdeController（业务层）
 // 提供 retainReplAst + executeRepl 接口，避免 GUI 层直接接触引擎内部。
@@ -35,7 +35,7 @@ class ReplPanel : public QWidget {
     Q_OBJECT
 
 public:
-/// 构造 REPL 面板；parent 为父控件。
+    /// 构造 REPL 面板；parent 为父控件。
     explicit ReplPanel(QWidget* parent = nullptr);
     ~ReplPanel();
 
@@ -71,19 +71,19 @@ private slots:
     void pollReplFuture();
 
 private:
-    QTextEdit* outputArea_ = nullptr;   // 输出区域
-    QLineEdit* inputLine_ = nullptr;    // 输入行
+    QTextEdit* outputArea_ = nullptr;     // 输出区域
+    QLineEdit* inputLine_ = nullptr;      // 输入行
     IdeController* controller_ = nullptr; // 业务层指针（不拥有）
 
-    QStringList history_;               // 命令历史
-    int historyIndex_ = -1;             // 历史浏览索引
+    QStringList history_;   // 命令历史
+    int historyIndex_ = -1; // 历史浏览索引
     // BUG-REPL-G7 (P2, 已知限制): history_ 仅存储单行首行，多行续行输入（如
     // 函数定义）不会被整体保存与重放。完整修复需引入多行历史编辑器（QPlainTextEdit
     // 替换 QLineEdit），工程量较大，作为 UX 增强暂不实现。当前行为：多行输入后
     // 通过 Up 键只能回溯到首行，用户需重新输入续行部分。
 
-    QString pendingInput_;              // R4: 多行累积输入缓冲
-    bool inContinuation_ = false;       // R4: 是否在续行模式
+    QString pendingInput_;        // R4: 多行累积输入缓冲
+    bool inContinuation_ = false; // R4: 是否在续行模式
 
     // QT-R-06 fix: 异步执行支持
     // 用 std::future + QTimer 轮询替代 QtConcurrent（Qt6::Concurrent 模块未安装）

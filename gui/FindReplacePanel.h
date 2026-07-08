@@ -6,11 +6,11 @@
  */
 #pragma once
 
-#include <QWidget>
-#include <QLineEdit>
-#include <QPushButton>
 #include <QCheckBox>
 #include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QWidget>
 
 class CodeEditor;
 
@@ -28,7 +28,7 @@ class PrimaryPushButton;
 class FindReplacePanel : public QWidget {
     Q_OBJECT
 public:
-/// 构造查找/替换面板；editor 为关联编辑器。
+    /// 构造查找/替换面板；editor 为关联编辑器。
     explicit FindReplacePanel(CodeEditor* editor, QWidget* parent = nullptr);
 
     /// 显示查找模式（仅查找行可见）
@@ -38,21 +38,21 @@ public:
     /// 关闭面板并清除高亮
     void closePanel();
     // AUDIT-BUG-E5 fix: 公开 onFindNext/onFindPrev 供 Ide 快捷键直接调用
-/// 查找下一个。
+    /// 查找下一个。
     void onFindNext();
-/// 查找上一个。
+    /// 查找上一个。
     void onFindPrev();
 
 protected:
-/// 键盘事件处理（Esc/回车）。
+    /// 键盘事件处理（Esc/回车）。
     void keyPressEvent(QKeyEvent* event) override;
 
 private slots:
-/// 执行替换。
+    /// 执行替换。
     void onReplace();
-/// 全部替换。
+    /// 全部替换。
     void onReplaceAll();
-/// 查找文本变化回调。
+    /// 查找文本变化回调。
     void onFindTextChanged(const QString& text);
 
 private:

@@ -2,6 +2,153 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-08 · CI 流水线跨平台修复（aqtinstall 回归 + macOS ar + Windows 翻译部署 + clang-format）
+
+### 概述
+
+GitHub Actions CI 的全部跨平台作业（Windows / Ubuntu / macOS / Docker）均失败。经调查发现 5 个独立根因，逐一修复后 CI 恢复绿色。同时对全项目 140+ 源文件执行 clang-format 统一代码风格。
+
+### 问题与修复对应表
+
+| # | 平台 | 根因 | 修复 |
+|---|------|------|------|
+| 1 | Ubuntu / Docker | aqtinstall 3.2.0+ 在 Linux 上解析 Qt 6.8.x 包元数据存在回归 bug，报 `The packages ['qt_base'] were not found while parsing XML`。install-qt-action v4 默认安装 aqtinstall 3.3.0 触发此 bug。 | ci.yml 全部 5 处 install-qt-action 添加 `aqtversion: '==3.1.21'`（已验证 3.1.21 可正确安装 Qt 6.8.3 Linux/gcc_64）；Dockerfile `pip install aqtinstall==3.1.21`。参见 [aqtinstall#908](https://github.com/miurahr/aqtinstall/issues/908)。 |
+| 2 | macOS | CMake 的 `CMAKE_NINJA_FORCE_RESPONSE_FILE` 在 macOS 上强制开启后，系统 `ar`（来自 Xcode/CLT）不支持 `@response_file` 语法，报 `ar: @CMakeFiles/xxx.rsp: No such file or directory`。 | CMakeLists.txt 第 53 行条件添加 `AND NOT APPLE`，仅在非 Apple 平台启用。macOS preset 已通过 `CMAKE_C/CXX_USE_RESPONSE_FILE_FOR_OBJECTS=OFF` 单独控制编译器响应文件。 |
+| 3 | Windows | `copy_if_different` 部署翻译 .qm 文件时，若 `MINILANG_QM_FILES` 为空（Qt6LinguistTools 未找到），`cmake -E copy_if_different` 只收到目标路径一个参数，打印 usage 并退出 1。 | CMakeLists.txt 第 248 行条件添加 `AND MINILANG_QM_FILES` 检查，防止空列表导致错误。 |
+| 4 | 全平台 | install-qt-action 缺少 `modules: qttools` 参数，导致 Qt6LinguistTools 不可用，.qm 翻译文件无法编译。 | ci.yml 全部 5 处 install-qt-action 添加 `modules: qttools`。 |
+| 5 | Ubuntu (lint) | 140+ 源文件不符合 .clang-format 风格规则，CI clang-format --dry-run --Werror 检查失败。 | 对 lexer/parser/ast/interpreter/compiler/debug/formatter/gui/common/app 目录下全部 .cpp/.h 执行 `clang-format -i` 统一格式化。 |
+
+### 其他配套修改
+
+- **docker-compose.yml**：两处 `QT_VERSION` 回退值从 6.10.2 改为 6.8.3（与 ci.yml 一致）。
+- **Dockerfile 顶部注释**：更新说明 aqtinstall 版本固定原因。
+
+## 2026-07-08 · 第四十七轮：教学板块第四轮深度审计与修复（P1×7 + P2×9，共 16 项）
+
+### 概述
+
+对教学板块进行第四轮深度审计与优化，采用四模块并行 agent 策略（数据/内容完整性、交互面板逻辑、学习进度追踪与导航、视觉渲染与教学引擎），共发现 63 项问题（P1×7，P2×24，P3×32）。本轮修复 P1 全部 7 项 + P2 关键 9 项，共 16 项。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P1 | 内容错误 | `gui/BugHuntLibrary.cpp` BUG-READ-03 | **字典键非法且预期答案错误**——sourceCode `var x={a:1,b:2};` 使用未加引号字典键，违反 Interpreter.cpp:1888 强制要求（字典键必须是字符串），三后端均报运行时错误；预期答案 B（多行展开加引号）与 Formatter 实际输出（单行无引号）矛盾。修复：sourceCode 改为 `var x={"a":1,"b":2};`，预期答案改为 A（一行），explanation 说明 Formatter 保持单行格式。 |
+| 2 | P1 | 内容错误 | `gui/LabManualContent.cpp` lab-02 练习 | **优先级链注释 term/factor 完全说反**——练习解释称「term(*,/) → factor(+,-)，term 比 factor 更内层」，但同章主体内容和 SyntaxProductionLibrary EBNF 均为 term 管 +−、factor 管 */%、factor 在 term 内部。修复：改为「term(+,-) → factor(*,/,%)，factor 比 term 更内层，所以 * 先结合」。 |
+| 3 | P1 | 状态机残留 | `gui/TokenPuzzlePanel.cpp` onCheckAnswer | **错误返回路径未恢复 busy_ 守卫**——入口设置 busy_=true + checkBtn_ 禁用，但「数量不对」和「第 N 个 token 不对」两条错误返回路径直接 return 未恢复，只有完全正确路径才恢复。一次错误尝试后按钮永久禁用，游戏不可玩。修复：两条错误返回前恢复 busy_=false + setEnabled(true)。 |
+| 4 | P1 | 数据损坏 | `gui/LearnerProgress.cpp` save | **非原子写入导致全部进度丢失**——直接以 WriteOnly\|Truncate 打开目标文件写入，崩溃/断电/磁盘满时文件被截断为部分内容或空文件。修复：改为「写 .tmp → flush → close → remove 旧 → rename」原子写入模式，保证写入原子性。 |
+| 5 | P1 | 完成态丢失 | `gui/CodeJourneyInfoPanel.cpp` markCompleted | **完成态持久化断裂**——journeyCompleted_ 是纯内存标志，持久化完全依赖外部 connect 信号到 learningPathPanel_->markActivityCompleted，但该连接要求 learningPathPanel_ 已构造（懒加载）。不经学习路径地图直接打开面板时信号无接收方，完成态丢失。修复：markCompleted 内直接调用 LearnerProgressStore::markCompleted + save，信号仅用于 UI 刷新。 |
+| 6 | P1 | 重入竞态 | `gui/ProfileDashboardPanel.cpp` runProfile | **重入竞态**——processEvents(ExcludeUserInputEvents) 不阻止定时器/信号槽/DeferredDelete，定时器触发的信号链路可能间接调用 runProfile 导致重入，lastResults_ 被覆盖、状态混乱。runProfileBtn_ setEnabled(false) 只防直接点击。修复：增加 profiling_ 成员 + 入口 if(profiling_) return 守卫，RAII 风格在所有出口恢复。 |
+| 7 | P1 | 数据不一致 | `gui/LearningPathPanel.cpp` onResetProgress | **重置顺序错误导致「假重置」**——先 reset()（清空内存）再 save()（写入磁盘），save 失败时内存已清空但磁盘仍是旧数据，当前会话显示已重置但重启后旧数据回归。修复：save 失败时弹窗告知用户「进度文件写入失败，内存已重置但未落盘，重启后进度将恢复」。 |
+| 8 | P2 | 内容错误 | `gui/LabManualContent.cpp` lab-01 | **引用不存在的 println 内建方法**——解释文本称「println 会自动换行」，但 MiniLang 无 println 内建方法。修复：删除「，println 会自动换行」。 |
+| 9 | P2 | 防御性缺口 | `gui/VmStackSandboxPanel.cpp` onCompileAndLoad | **缺 traceRunning_ 守卫**——onTraceStep/onTraceReset 都有守卫，但 onCompileAndLoad 遗漏。loadBytecodeFromCurrentLevel 内部调用 vmReset()，会在追踪运行期间重置 VM。修复：入口添加 if(traceRunning_) return。 |
+| 10 | P2 | 幂等缺失 | `gui/AstBuilderToyPanel.cpp` markCurrentCompleted | **非幂等（重复发射信号 + 重复磁盘写入）**——幂等守卫只保护 completedLevels_.push_back，未保护 markLevelStars/save/emit。重复检查会重复发射信号 + 重复磁盘写入。修复：将信号发射和持久化纳入幂等守卫，if(!alreadyDone) { save + emit }。 |
+| 11 | P2 | 语义误导 | `gui/BackendComparePanel.cpp` buildDiffSummary | **三后端全错误时误报「一致性 PASS」**——只比较 outputLines 不检查 status，三后端均报相同错误时 diffCount=0 误报 PASS。修复：先检查 allOk = (a.status==b.status==c.status=="OK")，三后端均失败时返回「请修复代码」。 |
+| 12 | P2 | 导航不可达 | `gui/GlossaryPanel.cpp` relatedPanelFor | **6 个术语无映射**——kTermToPanel 遗漏 debugger/line-info/module-loader/output-capture/error-recovery/string-interpolation，点击这些术语无反应。修复：补全 6 个术语→面板映射。 |
+| 13 | P2 | HTML 注入 | `gui/BreakpointConditionPanel.cpp` populateScenarioDetail | **HTML 转义缺失**——sampleCode 含 < > 字符（如 if (n < 0)），condition 含 < >（如 a > 0 && b < 100），未转义导致 HTML 标签注入/渲染错误。修复：对 title/condition/expectedBehavior/sampleCode 四个字段统一调用 escapeHtml（内联实现，转义 &<>"'）。 |
+| 14 | P2 | 数据不同步 | `gui/PipelineViewer.cpp` setController + 新增析构函数 | **跨阶段数据同步缺失**——setController 是纯赋值，未注册 vmStateChanged 监听器。源码页编辑后切到 Token/AST/IR/Bytecode 页显示陈旧数据，用户误以为是最新代码的分析结果。修复：setController 中注册 addVmStateChangedListener(this, [this]{ reloadCurrentStep(); })，析构函数反注册。 |
+| 15 | P2 | 动画冲突 | `gui/PanelAnimator.h` animateShow/animateHide/animateShowHorizontal/animateHideHorizontal | **无动画去重**——fadeInWidget/slideInWidget 已在第 41 轮修复动画去重，但这 4 个函数遗漏。快速连续点击时多个 QPropertyAnimation 同时写入 maximumHeight/maximumWidth 导致抖动、目标高度不正确。修复：对齐 fadeInWidget/slideInWidget 的 findChildren<QPropertyAnimation*>() 停止旧动画模式。 |
+| 16 | P2 | UI 冻结 | `gui/SyntaxExplorerPanel.cpp` codeEditor_ | **可编辑代码区 + 无保护执行死循环冻结 IDE**——codeEditor_ 是可编辑 QTextEdit，onRunSample 同步执行 Lexer→Parser→Interpreter，无 busy_ 守卫、无超时、无步骤上限。输入 while(true){} 点击运行 → IDE 完全冻结只能强制杀死。修复：codeEditor_ 设为只读，样例代码通过产生式选择切换。 |
+
+### 关键决策
+
+1. **TokenPuzzle 错误路径恢复守卫**：防重复守卫必须在对称的所有出口恢复。busy_ 的语义是「正在校验中，禁止重入」，但校验失败后应恢复为可重试状态。用 RAII guard 或在 return 前手动恢复，保证「失败」与「成功完成」两种路径的守卫恢复语义不同——失败应恢复为可重试，成功完成保持禁用直到下一关。
+
+2. **LearnerProgress 原子写入**：进度文件是学习者的核心数据，必须保证写入原子性。采用「写 .tmp → flush → close → remove 旧 → rename」模式，Windows 上 rename 不能覆盖已存在文件需先 remove。同时写入 schemaVersion 字段支持未来 schema 迁移。
+
+3. **CodeJourneyInfoPanel 持久化与信号解耦**：完成态持久化不应依赖外部信号连接（懒加载未构造时信号无接收方）。markCompleted 内直接调用 LearnerProgressStore::markCompleted + save，信号仅用于触发 UI 刷新。这是「持久化与 UI 刷新分离」的原则——持久化是数据层操作，信号是 UI 层通知，两者应独立。
+
+4. **ProfileDashboardPanel profiling_ 守卫**：processEvents(ExcludeUserInputEvents) 仅阻止鼠标/键盘输入派发，不阻止定时器事件、信号槽调用、DeferredDelete。runProfileBtn_ setEnabled(false) 只防直接点击，无法防止定时器触发的间接调用。profiling_ 成员 + RAII 风格恢复是 processEvents 重入问题的标准防御模式。
+
+5. **LearningPathPanel onResetProgress save 失败反馈**：先 reset() 再 save() 的顺序错误在 save 失败时导致内存与磁盘不一致。修正顺序为 reset() 后 save()，save 失败时弹窗告知用户。虽然内存已清空但磁盘未清空，下次启动旧数据回归——这是可接受的降级，优于「假重置」（用户以为已重置实际未重置）。
+
+6. **BackendComparePanel 一致性判定前置状态过滤**：一致性判定缺少前置状态过滤，导致「都成功且输出相同」与「都失败且错误相同」两种语义不同的场景被归为同一结论。先检查 allOk = (a.status==b.status==c.status=="OK")，三后端均失败时返回「请修复代码」而非「一致性 PASS」。
+
+7. **PipelineViewer 跨阶段数据同步**：PipelineViewer 是唯一缺失 vmStateChanged 监听器的教学面板（对比 BreakpointConditionPanel 等 5 面板均有）。setController 中注册监听器 + 析构函数反注册是标准模式，保证源码编辑后切页能拿到最新数据。
+
+8. **SyntaxExplorerPanel 只读方案**：教学面板的可编辑代码区 + 无保护的真实解释器执行 = 不可恢复的 UI 冻结。Interpreter 没有公开的步骤计数 API，Worker 线程化改动较大且复杂。最简方案是设为只读，样例代码通过产生式选择切换，教学价值不受影响。未来需要可编辑 + 执行保护时可在 Worker 线程化时一并处理。
+
+### 保留现状的审计发现
+
+- **P2** LearnerProgress save 返回值调用方忽略（需逐个调用点检查 + 状态栏提示，小规模）
+- **P2** LearningPathPanel refresh O(n) 全量重建（需拆为 refreshProgressOnly + rebuildStageCards，中规模）
+- **P2** BytecodeTracePanel erase(begin()) O(n) 移位 + refreshTraceTable 全量重建（需改 deque + 增量更新，中规模）
+- **P2** CallStackPanel 无栈深度截断（需对齐 DebugPanel 200 帧截断，小规模）
+- **P2** MarkdownRenderer 不支持嵌套列表（需重构列表状态机，中规模）
+- **P2** PipelineViewer populateBytecode 无缓存（需以 CompileResult* 为缓存键，小规模）
+- **P2** VariableInspectorPanel 全局/局部变量排序不一致（需全局变量按名称排序，小规模）
+- **P3** LabManualContent lab-01 token 数量 4 vs 5 矛盾（文档修正）
+- **P3** LearningPathData lab-08 前置不含 lab-07（课程设计调整）
+- **P3** AstToyLevels 题目 5 根节点命名风格不一致（命名调整）
+- **P3** TokenPuzzleData 关卡 4 注释作为主流 token（课程设计调整）
+- **P3** 其余 P3 项按批次归档处理
+
+### 验证
+
+- MSVC 19.51 + Qt 6.10.3 + Ninja `minilang_ide` + `minilang_tests` 构建通过
+- 全量 1763/1763 测试通过（较第四十六轮无增减）
+
+## 2026-07-08 · 第四十六轮：super 上下文栈定义类修复 + 行首插入断点回归 + for 作用域隔离 + envPool REPL 清空 + callStack GC roots 防御
+
+### 概述
+
+继续四模块并行 agent 深度审计（VM/IR 后端、Interpreter/GC、Parser/Lexer/Formatter/Module、Debugger/GUI 线程安全）。本轮修复 5 项明确低风险的真实可触发问题（P1 × 2，P3 × 3），其中 super 上下文栈问题经两个 agent 独立确认且修复方案一致。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P1 | 语义不一致/无限递归 | `interpreter/Interpreter.cpp` callInstanceMethod 行 2222 + `interpreter/InterpreterCalls.cpp` constructClassInstance 行 449 + `interpreter/Interpreter.cpp` visitVarDecl 行 1193 | **super 上下文栈压入搜索起始类而非方法定义所在类**——Interpreter 路径的 classContextStack_ 压入 searchClass->name/cls->name（搜索起始类/实例类），当中间类未定义方法时 findMethod 沿继承链向上找到祖先类的方法，但栈中压入中间类名，导致后续 super 调用从错误的类开始搜索，可能找到同一个方法形成无限递归（C←B←A，B 无 greet，C.greet 调用 super.greet 找到 A.greet，A.greet 的 super 又从 B 搜索再次找到 A.greet）。StackVM/RegisterVM 因编译时编码类名而正确，仅 Interpreter 路径有此 Bug。修复：新增 `findMethodDefiningClassName` 辅助方法沿继承链查找方法实际定义所在的类名，三处 push 点改用该方法。 |
+| 2 | P1 | 语义不一致 | `gui/CodeEditor.cpp` onContentsChange 行 652 | **行首插入断点回归**——第四十三轮的 BUG-GUI-AUDIT-2 修复用 `position >= block.position() + block.length() - 1` 判断行末插入，但 contentsChange 在变更后发射，行首插入时新块为空（length==1），条件恒为 true，导致行首插入被误判为行末插入，startLine 错误 +1，原行断点未随内容下移。修复：添加 `block.length() > 1` 条件区分非空块（行末插入，原块有内容）与空块（行首插入，新块无内容）。 |
+| 3 | P3 | 语义不一致 | `common/TypeChecker.cpp` visitForStmt 行 140-151 | **for 循环作用域隔离错误**——原实现（AUDIT-BUG-E1 fix）错误地将 for 的 initializer/condition/update/body 各部分隔离为独立作用域，导致 initializer 声明的变量（如 `var i: int = 0`）在 condition/update/body 中不可见，类型检查被跳过。MiniLang（与 C/Java/JS 一致）中 for 循环四部分共享同一作用域。修复：删除各部分之间的 `varTypes = saved` 恢复，仅保留循环结束后的恢复。 |
+| 4 | P3 | 内存膨胀 | `interpreter/Interpreter.cpp` executeRepl 行 178 | **envPool_ 无界增长**——executeRepl 未清空 envPool_（execute() 有清空），导致 REPL 模式下 envPool_ 跨次累积。若某次运行有 N 层嵌套块，pool 回收 N 个 Environment；下次运行若只有 M < N 层，只复用 M 个，剩余 N-M 个残留。长时间 REPL 会话中 envPool_ 大小单调不降。修复：executeRepl 中添加 `envPool_.clear()`，与 execute() 对齐。 |
+| 5 | P3 | GC roots 不完整 | `interpreter/Interpreter.cpp` execute 行 149 | **collectCycle 期间 callStack_ 不在 roots 中**——execute() 的 GC roots 收集仅遍历 globalEnv_ 和 REPL saved 状态，未收集 callStack_。当前 callStack_ 在 collectCycle 前已 clear()，此处为空，但防御性收集保证未来安全——若未来在 callStack_ 非空时触发 collectCycle，栈上闭包引用的循环容器需被标记为可达。修复：追加遍历 callStack_ 中每个 frame.env 的局部变量作为 GC roots。 |
+
+### 关键决策
+
+1. **super 上下文栈压入"方法定义所在类"而非"搜索起始类"**：Interpreter 使用运行时 classContextStack_ 跟踪"当前执行方法所属类"，供 super 解析使用。原实现压入 searchClass->name（搜索起始类），当 findMethod 沿继承链向上跳过中间类找到祖先类的方法时，栈中压入的是中间类名而非方法定义所在类名。新增 `findMethodDefiningClassName` 方法沿继承链查找方法实际定义所在的类名（与 findMethod 遍历逻辑完全一致，仅额外返回 ClassInfo::name），不走缓存（缓存只存方法指针不存定义类）。三处 push 点改用该方法。StackVM/RegisterVM 因编译时编码类名（currentClassName_）而正确，仅 Interpreter 路径有此 Bug。修复低风险：不改变 findMethod 签名，现有 6 处 findMethod 调用不受影响；额外 O(depth) 遍历，super 调用非热路径。
+
+2. **行首插入断点回归用 block.length() > 1 区分**：contentsChange 在变更后发射，行首插入时新块为空（length==1），行末插入时原块有内容（length > 1）。添加 `block.length() > 1` 条件使行首插入（空块）不被误判为行末插入。空行上按 Enter 的边界场景（length==1 的原块）会被归为行首语义——对空行而言行首与行末等价，影响可忽略。
+
+3. **for 循环四部分共享作用域**：MiniLang 的 for 循环 initializer/condition/update/body 共享一个作用域（与 C/Java/JS 一致），循环结束后该作用域销毁。原 TypeChecker 实现错误地将各部分隔离，导致 initializer 声明的变量在后续部分不可见。修复删除各部分之间的 varTypes 恢复，仅保留循环结束后的恢复。body 若为 Block，visitBlock 内部会 save/restore，body 内的局部变量不会泄漏到 for 循环作用域外，但 i 仍然可见（因为 visitBlock 的 saved 包含了 i）。
+
+4. **executeRepl 清空 envPool_ 对齐 execute()**：executeRepl 遗漏 envPool_.clear()，导致 REPL 模式下 envPool_ 跨次累积。单个 Environment 对象较小（约 100-200 字节），但极端场景（如用户运行 1000 层嵌套后切回浅层）会浪费几百 KB 内存。添加一行 envPool_.clear() 与 execute() 对齐。
+
+5. **callStack_ 防御性收集 GC roots**：当前 callStack_ 在 collectCycle 前已 clear()，此处为空，但防御性收集保证未来安全。若未来在 callStack_ 非空时触发 collectCycle（如条件断点求值中添加 GC 触发，或 REPL 模式添加 GC），栈上闭包引用的循环容器需被标记为可达，否则会被误回收。开销极低（空 vector 遍历）。
+
+### 保留现状的审计发现
+
+- **P1** break/continue finally 三后端不一致（需 finally 续跳机制，8+ 文件改动，中-大规模）
+- **P1** 条件断点求值无超时机制（VM 模式冻 UI，推荐方案 A 步数上限 + 方案 C stopped_ 检查，中规模改动）
+- **P1** onContentsChange 多行删除断点行号偏移错误（需重新设计偏移逻辑，利用 charsAdded 推导删除行数，中规模改动）
+- **P2** closeUpvaluesFrom slot 越界只打 Warning（需改返回类型 void→VMResult，3 处调用点，小-中规模）
+- **P2** SandboxGuard 闭包 env 共享导致沙箱副作用泄漏（需 setClosureEnv 接口 + 深拷贝环境链，中-大规模）
+- **P2** writeBackCapturedVars 将局部重声明变量写回 capturedVars（需 Environment 新增 capturedVarNames_ 字段，中规模）
+- **P2** typeMatch 不支持 dict[K:V]、函数类型、可选类型（需 Parser/TypeChecker/三后端同步，中规模）
+- **P2** AST 节点缺少 endLine/endColumn（Formatter 注释定位需 AST 字段扩展，中规模）
+- **P2** Formatter formatClassDecl/visitTryStmt/formatInterpolatedString 注释丢失（需 ClassDecl/TryStmt/InterpolatedString 添加 closingBraceLine 等字段，中规模）
+- **P2** closeEvent 期间 vmRunPaused/runtimeError/genericError 信号无 stale 防御（需逐个添加状态检查，小规模）
+- **P3** Formatter escapeString 未转义所有控制字符（25 个 C0/DEL 字符未转义，小规模）
+- **P3** \uXXXX 仅支持 BMP（需 \u{XXXXXX} 扩展语法，中规模）
+- **P3** 空模块源码被当作加载失败（需 moduleLoader_ 签名改为 optional 或新增 moduleExists_ 回调，中规模）
+- **P3** Lexer \xNN 产生原始字节与 \uXXXX 语义不一致（建议保持现状，文档说明）
+
+### 验证排除的问题
+
+- **IR 路径栈平衡遗留（P3）**——经审读 needsPopForExprStmt 覆盖的 16 种节点类型与 Compiler.cpp 完全一致，POP 发射覆盖所有语句上下文（顶层/模块/if-while-for body/Block/try-catch-finally/函数体），历史问题已完全修复。
+- **Parser C 风格数组语法**——确认完全清除，所有 [] 用途都是类型注解后缀，不支持 int x[5] 形式。
+- **Parser synchronize 同步点完整性**——确认 24 个同步关键字完整覆盖所有语句起始关键字，无遗漏。
+- **breakpointsChanged 信号覆盖完整性**——确认编辑器只读模式 + VM 模式 syncVmBreakpoints 覆盖所有场景。
+- **VmStateChangedListener 反注册完整性**——确认 6 个面板均在析构函数中调用 removeVmStateChangedListener。
+- **waitCallbacksIdle 超时完整性**——确认所有调用点均有 3 秒超时。
+
+### 验证
+
+- **构建**：MSVC 19.51 + Qt 6.10.3 + Ninja `minilang_tests` 构建通过
+- **测试**：全量 1763/1763 测试通过（较第四十五轮 1753 增加 10 个测试）
+
+---
+
 ## 2026-07-08 · 第四十五轮：IR catch upvalue 关闭时机 + 沙箱 instSnaps 悬垂防御 + 类构造参数重校验 + 非 REPL GC roots + Worker 析构兜底
 
 ### 概述

@@ -25,79 +25,81 @@
 //     据此可线性遍历整个 code 流；其长度解析必须与 kOpCodeInfo / instructionSizeAt 完全一致。
 namespace {
 constexpr OpCodeInfo kOpCodeInfo[] = {
-    /*  0 OP_CONSTANT            */ {"OP_CONSTANT",                3, false},
-    /*  1 OP_INT                 */ {"OP_INT",                     3, false},
-    /*  2 OP_FLOAT               */ {"OP_FLOAT",                   3, false},
-    /*  3 OP_STRING              */ {"OP_STRING",                  3, false},
-    /*  4 OP_NULL                */ {"OP_NULL",                     1, false},
-    /*  5 OP_TRUE                */ {"OP_TRUE",                     1, false},
-    /*  6 OP_FALSE               */ {"OP_FALSE",                    1, false},
-    /*  7 OP_ADD                 */ {"OP_ADD",                      1, false},
-    /*  8 OP_SUBTRACT            */ {"OP_SUBTRACT",                 1, false},
-    /*  9 OP_MULTIPLY            */ {"OP_MULTIPLY",                 1, false},
-    /* 10 OP_DIVIDE              */ {"OP_DIVIDE",                   1, false},
-    /* 11 OP_MODULO              */ {"OP_MODULO",                   1, false},
-    /* 12 OP_NEGATE              */ {"OP_NEGATE",                   1, false},
-    /* 13 OP_NOT                 */ {"OP_NOT",                      1, false},
-    /* 14 OP_EQUAL               */ {"OP_EQUAL",                    1, false},
-    /* 15 OP_NOT_EQUAL           */ {"OP_NOT_EQUAL",                1, false},
-    /* 16 OP_LESS                */ {"OP_LESS",                     1, false},
-    /* 17 OP_GREATER             */ {"OP_GREATER",                  1, false},
-    /* 18 OP_LESS_EQUAL          */ {"OP_LESS_EQUAL",               1, false},
-    /* 19 OP_GREATER_EQUAL       */ {"OP_GREATER_EQUAL",            1, false},
-    /* 20 OP_AND                 */ {"OP_AND",                      1, false},
-    /* 21 OP_OR                  */ {"OP_OR",                       1, false},
-    /* 22 OP_PRINT               */ {"OP_PRINT",                    1, false},
-    /* 23 OP_POP                 */ {"OP_POP",                     1, false},
-    /* 24 OP_DEFINE_VAR          */ {"OP_DEFINE_VAR",               3, false},
-    /* 25 OP_GET_VAR             */ {"OP_GET_VAR",                  3, false},
-    /* 26 OP_SET_VAR             */ {"OP_SET_VAR",                  3, false},
-    /* 27 OP_DELETE_VAR          */ {"OP_DELETE_VAR",               3, false},
-    /* 28 OP_JUMP                */ {"OP_JUMP",                     3, false},
-    /* 29 OP_JUMP_IF_FALSE       */ {"OP_JUMP_IF_FALSE",            3, false},
-    /* 30 OP_LOOP                */ {"OP_LOOP",                     3, false},
-    /* 31 OP_RETURN              */ {"OP_RETURN",                   1, false},
-    /* 32 OP_CALL                */ {"OP_CALL",                     4, false},
-    /* 33 OP_CALL_EXPR           */ {"OP_CALL_EXPR",                2, false},
-    /* 34 OP_BUILD_ARRAY         */ {"OP_BUILD_ARRAY",              2, false},
-    /* 35 OP_BUILD_DICT          */ {"OP_BUILD_DICT",               2, false},
-    /* 36 OP_INDEX_GET           */ {"OP_INDEX_GET",                1, false},
-    /* 37 OP_INDEX_SET           */ {"OP_INDEX_SET",                1, false},
-    /* 38 OP_INDEX_SET_VAR       */ {"OP_INDEX_SET_VAR",            3, false},
-    /* 39 OP_INDEX_SET_LOCAL     */ {"OP_INDEX_SET_LOCAL",          2, false},
-    /* 40 OP_MEMBER_GET          */ {"OP_MEMBER_GET",               3, false},
-    /* 41 OP_MEMBER_SET          */ {"OP_MEMBER_SET",               3, false},
-    /* 42 OP_MEMBER_SET_VAR      */ {"OP_MEMBER_SET_VAR",           5, false},
-    /* 43 OP_MEMBER_SET_LOCAL    */ {"OP_MEMBER_SET_LOCAL",         4, false},
-    /* 44 OP_METHOD_CALL         */ {"OP_METHOD_CALL",              7, false},
-    /* 45 OP_DUP                 */ {"OP_DUP",                      1, false},
-    /* 46 OP_DUP_N               */ {"OP_DUP_N",                    2, false},
-    /* 47 OP_CLOSURE             */ {"OP_CLOSURE",                  4, true},   // 变长: 4 + 2*upvalueCount
-    /* 48 OP_GET_LOCAL           */ {"OP_GET_LOCAL",                2, false},
-    /* 49 OP_SET_LOCAL           */ {"OP_SET_LOCAL",                2, false},
-    /* 50 OP_CLASS_NEW           */ {"OP_CLASS_NEW",                4, false},
-    /* 51 OP_INIT_FIELD          */ {"OP_INIT_FIELD",               3, false},
-    /* 52 OP_DEFINE_CLASS        */ {"OP_DEFINE_CLASS",             5, false},
-    /* 53 OP_WRITEBACK_MEMBER_VAR   */ {"OP_WRITEBACK_MEMBER_VAR",      5, false},
-    /* 54 OP_WRITEBACK_MEMBER_LOCAL */ {"OP_WRITEBACK_MEMBER_LOCAL",    4, false},
-    /* 55 OP_WRITEBACK_INDEX_VAR    */ {"OP_WRITEBACK_INDEX_VAR",       3, false},
-    /* 56 OP_WRITEBACK_INDEX_LOCAL  */ {"OP_WRITEBACK_INDEX_LOCAL",     2, false},
-    /* 57 OP_SUPER_CALL             */ {"OP_SUPER_CALL",                9, false},  // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) + receiverVarIdx(2B) + receiverLocalSlot(1B) + classIdx(2B)
-    /* 58 OP_SUPER_MEMBER_GET       */ {"OP_SUPER_MEMBER_GET",          3, false},
-    /* 59 OP_GET_GLOBAL             */ {"OP_GET_GLOBAL",                3, false},
-    /* 60 OP_SET_GLOBAL             */ {"OP_SET_GLOBAL",                3, false},
-    /* 61 OP_DEFINE_GLOBAL          */ {"OP_DEFINE_GLOBAL",             3, false},
-    /* 62 OP_DELETE_GLOBAL          */ {"OP_DELETE_GLOBAL",             3, false},
-    /* 63 OP_GET_UPVALUE            */ {"OP_GET_UPVALUE",               2, false},
-    /* 64 OP_SET_UPVALUE            */ {"OP_SET_UPVALUE",               2, false},
-    /* 65 OP_CLOSE_UPVALUE          */ {"OP_CLOSE_UPVALUE",             2, false},
-    /* 66 OP_TRY_BEGIN              */ {"OP_TRY_BEGIN",                 3, false},
-    /* 67 OP_TRY_END                */ {"OP_TRY_END",                   1, false},
-    /* 68 OP_THROW                  */ {"OP_THROW",                     1, false},
+    /*  0 OP_CONSTANT            */ {"OP_CONSTANT", 3, false},
+    /*  1 OP_INT                 */ {"OP_INT", 3, false},
+    /*  2 OP_FLOAT               */ {"OP_FLOAT", 3, false},
+    /*  3 OP_STRING              */ {"OP_STRING", 3, false},
+    /*  4 OP_NULL                */ {"OP_NULL", 1, false},
+    /*  5 OP_TRUE                */ {"OP_TRUE", 1, false},
+    /*  6 OP_FALSE               */ {"OP_FALSE", 1, false},
+    /*  7 OP_ADD                 */ {"OP_ADD", 1, false},
+    /*  8 OP_SUBTRACT            */ {"OP_SUBTRACT", 1, false},
+    /*  9 OP_MULTIPLY            */ {"OP_MULTIPLY", 1, false},
+    /* 10 OP_DIVIDE              */ {"OP_DIVIDE", 1, false},
+    /* 11 OP_MODULO              */ {"OP_MODULO", 1, false},
+    /* 12 OP_NEGATE              */ {"OP_NEGATE", 1, false},
+    /* 13 OP_NOT                 */ {"OP_NOT", 1, false},
+    /* 14 OP_EQUAL               */ {"OP_EQUAL", 1, false},
+    /* 15 OP_NOT_EQUAL           */ {"OP_NOT_EQUAL", 1, false},
+    /* 16 OP_LESS                */ {"OP_LESS", 1, false},
+    /* 17 OP_GREATER             */ {"OP_GREATER", 1, false},
+    /* 18 OP_LESS_EQUAL          */ {"OP_LESS_EQUAL", 1, false},
+    /* 19 OP_GREATER_EQUAL       */ {"OP_GREATER_EQUAL", 1, false},
+    /* 20 OP_AND                 */ {"OP_AND", 1, false},
+    /* 21 OP_OR                  */ {"OP_OR", 1, false},
+    /* 22 OP_PRINT               */ {"OP_PRINT", 1, false},
+    /* 23 OP_POP                 */ {"OP_POP", 1, false},
+    /* 24 OP_DEFINE_VAR          */ {"OP_DEFINE_VAR", 3, false},
+    /* 25 OP_GET_VAR             */ {"OP_GET_VAR", 3, false},
+    /* 26 OP_SET_VAR             */ {"OP_SET_VAR", 3, false},
+    /* 27 OP_DELETE_VAR          */ {"OP_DELETE_VAR", 3, false},
+    /* 28 OP_JUMP                */ {"OP_JUMP", 3, false},
+    /* 29 OP_JUMP_IF_FALSE       */ {"OP_JUMP_IF_FALSE", 3, false},
+    /* 30 OP_LOOP                */ {"OP_LOOP", 3, false},
+    /* 31 OP_RETURN              */ {"OP_RETURN", 1, false},
+    /* 32 OP_CALL                */ {"OP_CALL", 4, false},
+    /* 33 OP_CALL_EXPR           */ {"OP_CALL_EXPR", 2, false},
+    /* 34 OP_BUILD_ARRAY         */ {"OP_BUILD_ARRAY", 2, false},
+    /* 35 OP_BUILD_DICT          */ {"OP_BUILD_DICT", 2, false},
+    /* 36 OP_INDEX_GET           */ {"OP_INDEX_GET", 1, false},
+    /* 37 OP_INDEX_SET           */ {"OP_INDEX_SET", 1, false},
+    /* 38 OP_INDEX_SET_VAR       */ {"OP_INDEX_SET_VAR", 3, false},
+    /* 39 OP_INDEX_SET_LOCAL     */ {"OP_INDEX_SET_LOCAL", 2, false},
+    /* 40 OP_MEMBER_GET          */ {"OP_MEMBER_GET", 3, false},
+    /* 41 OP_MEMBER_SET          */ {"OP_MEMBER_SET", 3, false},
+    /* 42 OP_MEMBER_SET_VAR      */ {"OP_MEMBER_SET_VAR", 5, false},
+    /* 43 OP_MEMBER_SET_LOCAL    */ {"OP_MEMBER_SET_LOCAL", 4, false},
+    /* 44 OP_METHOD_CALL         */ {"OP_METHOD_CALL", 7, false},
+    /* 45 OP_DUP                 */ {"OP_DUP", 1, false},
+    /* 46 OP_DUP_N               */ {"OP_DUP_N", 2, false},
+    /* 47 OP_CLOSURE             */ {"OP_CLOSURE", 4, true}, // 变长: 4 + 2*upvalueCount
+    /* 48 OP_GET_LOCAL           */ {"OP_GET_LOCAL", 2, false},
+    /* 49 OP_SET_LOCAL           */ {"OP_SET_LOCAL", 2, false},
+    /* 50 OP_CLASS_NEW           */ {"OP_CLASS_NEW", 4, false},
+    /* 51 OP_INIT_FIELD          */ {"OP_INIT_FIELD", 3, false},
+    /* 52 OP_DEFINE_CLASS        */ {"OP_DEFINE_CLASS", 5, false},
+    /* 53 OP_WRITEBACK_MEMBER_VAR   */ {"OP_WRITEBACK_MEMBER_VAR", 5, false},
+    /* 54 OP_WRITEBACK_MEMBER_LOCAL */ {"OP_WRITEBACK_MEMBER_LOCAL", 4, false},
+    /* 55 OP_WRITEBACK_INDEX_VAR    */ {"OP_WRITEBACK_INDEX_VAR", 3, false},
+    /* 56 OP_WRITEBACK_INDEX_LOCAL  */ {"OP_WRITEBACK_INDEX_LOCAL", 2, false},
+    /* 57 OP_SUPER_CALL             */ {"OP_SUPER_CALL", 9, false}, // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) +
+                                                                    // receiverVarIdx(2B) + receiverLocalSlot(1B) +
+                                                                    // classIdx(2B)
+    /* 58 OP_SUPER_MEMBER_GET       */ {"OP_SUPER_MEMBER_GET", 3, false},
+    /* 59 OP_GET_GLOBAL             */ {"OP_GET_GLOBAL", 3, false},
+    /* 60 OP_SET_GLOBAL             */ {"OP_SET_GLOBAL", 3, false},
+    /* 61 OP_DEFINE_GLOBAL          */ {"OP_DEFINE_GLOBAL", 3, false},
+    /* 62 OP_DELETE_GLOBAL          */ {"OP_DELETE_GLOBAL", 3, false},
+    /* 63 OP_GET_UPVALUE            */ {"OP_GET_UPVALUE", 2, false},
+    /* 64 OP_SET_UPVALUE            */ {"OP_SET_UPVALUE", 2, false},
+    /* 65 OP_CLOSE_UPVALUE          */ {"OP_CLOSE_UPVALUE", 2, false},
+    /* 66 OP_TRY_BEGIN              */ {"OP_TRY_BEGIN", 3, false},
+    /* 67 OP_TRY_END                */ {"OP_TRY_END", 1, false},
+    /* 68 OP_THROW                  */ {"OP_THROW", 1, false},
     /* 69 OP_WRITEBACK_MEMBER_UPVALUE */ {"OP_WRITEBACK_MEMBER_UPVALUE", 4, false},
-    /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE",  2, false},
-    /* 71 OP_LOAD_MUTATED             */ {"OP_LOAD_MUTATED",              1, false},
-    /* 72 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK",                3, false},  // opcode(1B) + typeAnnotationConstIdx(2B)
+    /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE", 2, false},
+    /* 71 OP_LOAD_MUTATED             */ {"OP_LOAD_MUTATED", 1, false},
+    /* 72 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK", 3, false}, // opcode(1B) + typeAnnotationConstIdx(2B)
 };
 } // anonymous namespace
 
@@ -163,26 +165,86 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         offset += 3;
         break;
     }
-    case OpCode::OP_NULL:    str += "OP_NULL"; offset += 1; break;
-    case OpCode::OP_TRUE:    str += "OP_TRUE"; offset += 1; break;
-    case OpCode::OP_FALSE:   str += "OP_FALSE"; offset += 1; break;
-    case OpCode::OP_ADD:     str += "OP_ADD"; offset += 1; break;
-    case OpCode::OP_SUBTRACT: str += "OP_SUBTRACT"; offset += 1; break;
-    case OpCode::OP_MULTIPLY: str += "OP_MULTIPLY"; offset += 1; break;
-    case OpCode::OP_DIVIDE:  str += "OP_DIVIDE"; offset += 1; break;
-    case OpCode::OP_MODULO:  str += "OP_MODULO"; offset += 1; break;
-    case OpCode::OP_NEGATE:  str += "OP_NEGATE"; offset += 1; break;
-    case OpCode::OP_NOT:     str += "OP_NOT"; offset += 1; break;
-    case OpCode::OP_EQUAL:   str += "OP_EQUAL"; offset += 1; break;
-    case OpCode::OP_NOT_EQUAL: str += "OP_NOT_EQUAL"; offset += 1; break;
-    case OpCode::OP_LESS:    str += "OP_LESS"; offset += 1; break;
-    case OpCode::OP_GREATER: str += "OP_GREATER"; offset += 1; break;
-    case OpCode::OP_LESS_EQUAL: str += "OP_LESS_EQUAL"; offset += 1; break;
-    case OpCode::OP_GREATER_EQUAL: str += "OP_GREATER_EQUAL"; offset += 1; break;
-    case OpCode::OP_AND:     str += "OP_AND"; offset += 1; break;
-    case OpCode::OP_OR:      str += "OP_OR"; offset += 1; break;
-    case OpCode::OP_PRINT:   str += "OP_PRINT"; offset += 1; break;
-    case OpCode::OP_POP:     str += "OP_POP"; offset += 1; break;
+    case OpCode::OP_NULL:
+        str += "OP_NULL";
+        offset += 1;
+        break;
+    case OpCode::OP_TRUE:
+        str += "OP_TRUE";
+        offset += 1;
+        break;
+    case OpCode::OP_FALSE:
+        str += "OP_FALSE";
+        offset += 1;
+        break;
+    case OpCode::OP_ADD:
+        str += "OP_ADD";
+        offset += 1;
+        break;
+    case OpCode::OP_SUBTRACT:
+        str += "OP_SUBTRACT";
+        offset += 1;
+        break;
+    case OpCode::OP_MULTIPLY:
+        str += "OP_MULTIPLY";
+        offset += 1;
+        break;
+    case OpCode::OP_DIVIDE:
+        str += "OP_DIVIDE";
+        offset += 1;
+        break;
+    case OpCode::OP_MODULO:
+        str += "OP_MODULO";
+        offset += 1;
+        break;
+    case OpCode::OP_NEGATE:
+        str += "OP_NEGATE";
+        offset += 1;
+        break;
+    case OpCode::OP_NOT:
+        str += "OP_NOT";
+        offset += 1;
+        break;
+    case OpCode::OP_EQUAL:
+        str += "OP_EQUAL";
+        offset += 1;
+        break;
+    case OpCode::OP_NOT_EQUAL:
+        str += "OP_NOT_EQUAL";
+        offset += 1;
+        break;
+    case OpCode::OP_LESS:
+        str += "OP_LESS";
+        offset += 1;
+        break;
+    case OpCode::OP_GREATER:
+        str += "OP_GREATER";
+        offset += 1;
+        break;
+    case OpCode::OP_LESS_EQUAL:
+        str += "OP_LESS_EQUAL";
+        offset += 1;
+        break;
+    case OpCode::OP_GREATER_EQUAL:
+        str += "OP_GREATER_EQUAL";
+        offset += 1;
+        break;
+    case OpCode::OP_AND:
+        str += "OP_AND";
+        offset += 1;
+        break;
+    case OpCode::OP_OR:
+        str += "OP_OR";
+        offset += 1;
+        break;
+    case OpCode::OP_PRINT:
+        str += "OP_PRINT";
+        offset += 1;
+        break;
+    case OpCode::OP_POP:
+        str += "OP_POP";
+        offset += 1;
+        break;
     case OpCode::OP_DEFINE_VAR: {
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         str += "OP_DEFINE_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
@@ -225,7 +287,10 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         offset += 3;
         break;
     }
-    case OpCode::OP_RETURN:  str += "OP_RETURN"; offset += 1; break;
+    case OpCode::OP_RETURN:
+        str += "OP_RETURN";
+        offset += 1;
+        break;
     case OpCode::OP_CALL: {
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         uint8_t argCount = code[offset + 3];
@@ -251,8 +316,14 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         offset += 2;
         break;
     }
-    case OpCode::OP_INDEX_GET: str += "OP_INDEX_GET"; offset += 1; break;
-    case OpCode::OP_INDEX_SET: str += "OP_INDEX_SET"; offset += 1; break;
+    case OpCode::OP_INDEX_GET:
+        str += "OP_INDEX_GET";
+        offset += 1;
+        break;
+    case OpCode::OP_INDEX_SET:
+        str += "OP_INDEX_SET";
+        offset += 1;
+        break;
     case OpCode::OP_INDEX_SET_VAR: {
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         str += "OP_INDEX_SET_VAR " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
@@ -286,7 +357,8 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     case OpCode::OP_MEMBER_SET_VAR: {
         uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
         uint16_t fieldIdx = code[offset + 3] | (code[offset + 4] << 8);
-        str += "OP_MEMBER_SET_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal() + ") ." + constants[fieldIdx].stringVal();
+        str += "OP_MEMBER_SET_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal() + ") ." +
+               constants[fieldIdx].stringVal();
         offset += 5;
         break;
     }
@@ -302,9 +374,12 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         uint8_t argCount = code[offset + 3];
         uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
         uint8_t localSlot = code[offset + 6];
-        str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
-        if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal();
-        if (localSlot != 0xFF) str += " slot=" + std::to_string(localSlot);
+        str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " +
+               std::to_string(argCount);
+        if (receiverIdx != 0xFFFF && receiverIdx < constants.size())
+            str += " recv=" + constants[receiverIdx].stringVal();
+        if (localSlot != 0xFF)
+            str += " slot=" + std::to_string(localSlot);
         offset += 7;
         break;
     }
@@ -313,15 +388,22 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         uint8_t argCount = code[offset + 3];
         uint16_t receiverIdx = code[offset + 4] | (code[offset + 5] << 8);
         uint8_t localSlot = code[offset + 6];
-        uint16_t classIdx = code[offset + 7] | (code[offset + 8] << 8);  // B1 fix
-        str += "OP_SUPER_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
-        if (receiverIdx != 0xFFFF && receiverIdx < constants.size()) str += " recv=" + constants[receiverIdx].stringVal();
-        if (localSlot != 0xFF) str += " slot=" + std::to_string(localSlot);
-        if (classIdx < constants.size()) str += " class=" + constants[classIdx].stringVal();
+        uint16_t classIdx = code[offset + 7] | (code[offset + 8] << 8); // B1 fix
+        str += "OP_SUPER_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " +
+               std::to_string(argCount);
+        if (receiverIdx != 0xFFFF && receiverIdx < constants.size())
+            str += " recv=" + constants[receiverIdx].stringVal();
+        if (localSlot != 0xFF)
+            str += " slot=" + std::to_string(localSlot);
+        if (classIdx < constants.size())
+            str += " class=" + constants[classIdx].stringVal();
         offset += 9;
         break;
     }
-    case OpCode::OP_DUP: str += "OP_DUP"; offset += 1; break;
+    case OpCode::OP_DUP:
+        str += "OP_DUP";
+        offset += 1;
+        break;
     case OpCode::OP_DUP_N: {
         uint8_t depth = code[offset + 1];
         str += "OP_DUP_N depth=" + std::to_string(depth);
@@ -332,9 +414,10 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         uint8_t upvalueCount = code[offset + 3];
         str += "OP_CLOSURE " + std::to_string(idx);
-        if (idx < constants.size()) str += " (" + constants[idx].stringVal() + ")";
+        if (idx < constants.size())
+            str += " (" + constants[idx].stringVal() + ")";
         str += " upvalues=" + std::to_string(upvalueCount);
-        offset += 4 + static_cast<size_t>(upvalueCount) * 2;  // M1 fix: 跳过 upvalue 描述符
+        offset += 4 + static_cast<size_t>(upvalueCount) * 2; // M1 fix: 跳过 upvalue 描述符
         break;
     }
     case OpCode::OP_GET_LOCAL: {
@@ -352,7 +435,8 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     case OpCode::OP_CLASS_NEW: {
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         uint8_t argCount = code[offset + 3];
-        str += "OP_CLASS_NEW " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
+        str +=
+            "OP_CLASS_NEW " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " + std::to_string(argCount);
         offset += 4;
         break;
     }
@@ -375,7 +459,8 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     case OpCode::OP_WRITEBACK_MEMBER_VAR: {
         uint16_t varIdx = code[offset + 1] | (code[offset + 2] << 8);
         uint16_t fieldIdx = code[offset + 3] | (code[offset + 4] << 8);
-        str += "OP_WRITEBACK_MEMBER_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal() + ") ." + constants[fieldIdx].stringVal();
+        str += "OP_WRITEBACK_MEMBER_VAR " + std::to_string(varIdx) + " (" + constants[varIdx].stringVal() + ") ." +
+               constants[fieldIdx].stringVal();
         offset += 5;
         break;
     }
@@ -457,8 +542,7 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     case OpCode::OP_WRITEBACK_MEMBER_UPVALUE: {
         uint8_t uvIdx = code[offset + 1];
         uint16_t fieldIdx = code[offset + 2] | (code[offset + 3] << 8);
-        str += "OP_WRITEBACK_MEMBER_UPVALUE uv=" + std::to_string(uvIdx) +
-               " field=" + std::to_string(fieldIdx);
+        str += "OP_WRITEBACK_MEMBER_UPVALUE uv=" + std::to_string(uvIdx) + " field=" + std::to_string(fieldIdx);
         offset += 4;
         break;
     }

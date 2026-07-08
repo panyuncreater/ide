@@ -1,17 +1,17 @@
 #include "gui/AstViewer.h"
 #include "ast/ASTNode.h"
-#include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
+#include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
+#include <QGraphicsLineItem>
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>
-#include <QGraphicsLineItem>
-#include <QPainterPath>
-#include <QWheelEvent>
 #include <QMouseEvent>
-#include <QScrollBar>  // G-P2-20 fix: horizontalScrollBar() 需要 QScrollBar 完整定义
+#include <QPainterPath>
+#include <QScrollBar> // G-P2-20 fix: horizontalScrollBar() 需要 QScrollBar 完整定义
 #include <QToolTip>
+#include <QWheelEvent>
 #include <algorithm>
-#include <limits>
 #include <cmath>
+#include <limits>
 
 // ============================================================
 // AstViewer AST 树形可视化实现
@@ -26,8 +26,7 @@
 //   - 深色 / 浅色主题适配（setDarkTheme）
 // ============================================================
 
-AstViewer::AstViewer(QWidget* parent)
-    : QGraphicsView(parent) {
+AstViewer::AstViewer(QWidget* parent) : QGraphicsView(parent) {
     scene_ = new QGraphicsScene(this);
     scene_->setBackgroundBrush(sceneBackgroundColor());
     setScene(scene_);
@@ -46,20 +45,21 @@ void AstViewer::setAst(ASTNode* root) {
     oldMap.swap(itemToNode_);
     scene_->clear();
     rtPool_.clear();
-    oldMap.clear();  // 场景已清空，oldMap 中的键已失效，仅清理表本身
+    oldMap.clear(); // 场景已清空，oldMap 中的键已失效，仅清理表本身
     root_ = root;
 
-    if (!root) return;
+    if (!root)
+        return;
 
     // PERF-24 fix: 大 AST 节点数上限保护，避免创建 O(3N) 个 QGraphicsItem 导致 UI 卡顿。
     const int MAX_AST_NODES = 5000;
     int nodeCount = 0;
     countNodes(root, nodeCount);
     if (nodeCount > MAX_AST_NODES) {
-        QGraphicsTextItem* warning = scene_->addText(
-            QString("AST 节点数 %1 超过上限 %2，已跳过渲染以避免 UI 卡顿。\n"
-                    "请考虑简化代码或使用字节码视图查看。")
-                .arg(nodeCount).arg(MAX_AST_NODES));
+        QGraphicsTextItem* warning = scene_->addText(QString("AST 节点数 %1 超过上限 %2，已跳过渲染以避免 UI 卡顿。\n"
+                                                             "请考虑简化代码或使用字节码视图查看。")
+                                                         .arg(nodeCount)
+                                                         .arg(MAX_AST_NODES));
         warning->setDefaultTextColor(isDarkTheme_ ? QColor(0xf4, 0x87, 0x71) : QColor(0xdc, 0x32, 0x2f));
         auto font = warning->font();
         font.setPointSize(12);
@@ -74,7 +74,8 @@ void AstViewer::setAst(ASTNode* root) {
     // ---- P1 fix: Reingold-Tilford 布局 ----
     // Pass 1: 构建 RtNode 树结构
     RtNode* rtRoot = buildRtTree(root);
-    if (!rtRoot) return;
+    if (!rtRoot)
+        return;
 
     // 同步折叠状态（基于 line+col+name 键，跨 AST 重建保留）
     syncCollapsedState(rtRoot);
@@ -85,15 +86,16 @@ void AstViewer::setAst(ASTNode* root) {
     buildParentContour(rtRoot);
 
     // Pass 3: 累加相对坐标为绝对坐标，并记录 x/y 边界用于居中
-    std::vector<std::pair<double, double>> bounds;  // 每层的 (minX, maxX)
+    std::vector<std::pair<double, double>> bounds; // 每层的 (minX, maxX)
     computeAbsoluteCoords(rtRoot, 0.0, 0, bounds);
 
     // 计算整体边界，平移使 min(x)=0（最左节点中心位于 NODE_WIDTH/2）
     double globalMinX = std::numeric_limits<double>::max();
     for (const auto& b : bounds) {
-        if (b.first < globalMinX) globalMinX = b.first;
+        if (b.first < globalMinX)
+            globalMinX = b.first;
     }
-    double shiftX = -globalMinX;  // 让最左节点边缘位于 x=0
+    double shiftX = -globalMinX; // 让最左节点边缘位于 x=0
 
     // Pass 4: 绘制（带全局偏移 shiftX）
     drawRtNode(rtRoot, shiftX);
@@ -105,11 +107,13 @@ void AstViewer::setAst(ASTNode* root) {
 }
 
 void AstViewer::countNodes(ASTNode* node, int& count, int depth) {
-    if (!node) return;
+    if (!node)
+        return;
     // BUG-AV-1 fix: 超深度时仍计数当前节点（让其计入 MAX_AST_NODES 上限触发跳过渲染），
     // 但不再递归子节点，避免病态深度 AST 触发栈溢出。
     ++count;
-    if (depth > MAX_AST_DEPTH) return;
+    if (depth > MAX_AST_DEPTH)
+        return;
     auto children = node->children();
     for (ASTNode* child : children) {
         countNodes(child, count, depth + 1);
@@ -242,13 +246,13 @@ void AstViewer::mouseReleaseEvent(QMouseEvent* event) {
     QGraphicsView::mouseReleaseEvent(event);
 }
 
-void AstViewer::rebuildSceneKeepingView(const QTransform& savedTransform,
-                                         const QPointF& savedCenter) {
+void AstViewer::rebuildSceneKeepingView(const QTransform& savedTransform, const QPointF& savedCenter) {
     // 清空场景但保留 rtPool_ 与 collapsed 状态
     scene_->clear();
     itemToNode_.clear();
 
-    if (rtPool_.empty() || !rtPool_[0]) return;
+    if (rtPool_.empty() || !rtPool_[0])
+        return;
     RtNode* rtRoot = rtPool_[0].get();
 
     // 重新布局（折叠后子树不参与布局，整体更紧凑）
@@ -262,7 +266,8 @@ void AstViewer::rebuildSceneKeepingView(const QTransform& savedTransform,
 
     double globalMinX = std::numeric_limits<double>::max();
     for (const auto& b : bounds) {
-        if (b.first < globalMinX) globalMinX = b.first;
+        if (b.first < globalMinX)
+            globalMinX = b.first;
     }
     double shiftX = -globalMinX;
 
@@ -277,13 +282,15 @@ void AstViewer::rebuildSceneKeepingView(const QTransform& savedTransform,
 }
 
 void AstViewer::resetLayoutState(RtNode* node, int depth) {
-    if (!node) return;
+    if (!node)
+        return;
     node->finalX = 0;
     node->finalY = 0;
     node->leftContour.clear();
     node->rightContour.clear();
     // BUG-AV-1 fix: 超深度时不再递归子节点
-    if (depth > MAX_AST_DEPTH) return;
+    if (depth > MAX_AST_DEPTH)
+        return;
     // 折叠节点的子树不重置（不参与布局）
     if (!node->collapsed) {
         for (RtNode* child : node->children) {
@@ -293,20 +300,25 @@ void AstViewer::resetLayoutState(RtNode* node, int depth) {
 }
 
 AstViewer::CollapseKey AstViewer::makeCollapseKey(ASTNode* node) const {
-    if (!node) return CollapseKey{0, 0, std::string(), 0};
+    if (!node)
+        return CollapseKey{0, 0, std::string(), 0};
     // BUG-AV-4 fix: 折叠键增加子节点数维度，避免同位置同类型不同子节点数节点碰撞
     int childCount = 0;
     auto children = node->children();
-    for (ASTNode* c : children) if (c) ++childCount;
+    for (ASTNode* c : children)
+        if (c)
+            ++childCount;
     return CollapseKey{node->line, node->column, node->nodeName(), childCount};
 }
 
 void AstViewer::syncCollapsedState(RtNode* node, int depth) {
-    if (!node) return;
+    if (!node)
+        return;
     CollapseKey key = makeCollapseKey(node->astNode);
     node->collapsed = (collapsedKeys_.find(key) != collapsedKeys_.end());
     // BUG-AV-1 fix: 超深度时不再递归子节点
-    if (depth > MAX_AST_DEPTH) return;
+    if (depth > MAX_AST_DEPTH)
+        return;
     for (RtNode* child : node->children) {
         syncCollapsedState(child, depth + 1);
     }
@@ -361,22 +373,27 @@ AstViewer::RtNode* AstViewer::allocRtNode() {
 }
 
 AstViewer::RtNode* AstViewer::buildRtTree(ASTNode* node, int depth) {
-    if (!node) return nullptr;
+    if (!node)
+        return nullptr;
     RtNode* rt = allocRtNode();
     rt->astNode = node;
     // BUG-AV-1 fix: 超深度时不再递归子节点，仅保留当前节点
-    if (depth > MAX_AST_DEPTH) return rt;
+    if (depth > MAX_AST_DEPTH)
+        return rt;
     auto children = node->children();
     for (ASTNode* child : children) {
-        if (!child) continue;  // G-P2-2 fix: 跳过空子节点
+        if (!child)
+            continue; // G-P2-2 fix: 跳过空子节点
         RtNode* rtChild = buildRtTree(child, depth + 1);
-        if (rtChild) rt->children.push_back(rtChild);
+        if (rtChild)
+            rt->children.push_back(rtChild);
     }
     return rt;
 }
 
 void AstViewer::layoutSubtree(RtNode* node, int depth) {
-    if (!node) return;
+    if (!node)
+        return;
 
     // 折叠节点：不布局子树，轮廓仅含自身
     if (node->collapsed) {
@@ -393,7 +410,7 @@ void AstViewer::layoutSubtree(RtNode* node, int depth) {
     // 先递归布局每个子树（后序）
     for (RtNode* child : node->children) {
         layoutSubtree(child, depth + 1);
-        buildParentContour(child);  // 子树布局完成后构建其轮廓
+        buildParentContour(child); // 子树布局完成后构建其轮廓
     }
 
     // 无子节点：finalX=0（自身即子树中心），轮廓由 buildParentContour 填充
@@ -404,9 +421,9 @@ void AstViewer::layoutSubtree(RtNode* node, int depth) {
 
     // 第一个子节点放在 x=0（相对父中心）
     // 后续子节点依次根据前一个子树的右轮廓与自身的左轮廓计算平移量
-    double currentRightEdge = 0;  // 已布局部分的右边界（相对父中心）
-    double firstChildFinalX = 0;  // 记录第一个子节点的 finalX
-    double lastChildFinalX = 0;    // 记录最后一个子节点的 finalX
+    double currentRightEdge = 0; // 已布局部分的右边界（相对父中心）
+    double firstChildFinalX = 0; // 记录第一个子节点的 finalX
+    double lastChildFinalX = 0;  // 记录最后一个子节点的 finalX
     for (size_t i = 0; i < node->children.size(); ++i) {
         RtNode* child = node->children[i];
         if (i == 0) {
@@ -416,8 +433,7 @@ void AstViewer::layoutSubtree(RtNode* node, int depth) {
             firstChildFinalX = child->finalX;
             // 更新 currentRightEdge 为该子树右轮廓的最大值
             if (!child->rightContour.empty()) {
-                currentRightEdge = *std::max_element(child->rightContour.begin(),
-                                                     child->rightContour.end());
+                currentRightEdge = *std::max_element(child->rightContour.begin(), child->rightContour.end());
             }
         } else {
             // 计算与上一个子树的平移量
@@ -435,8 +451,7 @@ void AstViewer::layoutSubtree(RtNode* node, int depth) {
             // 更新 currentRightEdge
             double childRightMax = 0;
             if (!child->rightContour.empty()) {
-                childRightMax = *std::max_element(child->rightContour.begin(),
-                                                  child->rightContour.end());
+                childRightMax = *std::max_element(child->rightContour.begin(), child->rightContour.end());
             }
             // child 右轮廓相对 child 中心，需加上 child.finalX 转换到父坐标系
             double childAbsoluteRight = child->finalX + childRightMax;
@@ -464,7 +479,7 @@ void AstViewer::layoutSubtree(RtNode* node, int depth) {
         }
     }
 
-    (void)currentRightEdge;  // 父轮廓由 buildParentContour 统一构建
+    (void)currentRightEdge; // 父轮廓由 buildParentContour 统一构建
 }
 
 double AstViewer::computeShift(const RtNode* leftNode, const RtNode* rightNode) const {
@@ -490,8 +505,10 @@ double AstViewer::computeShift(const RtNode* leftNode, const RtNode* rightNode) 
     // 浅侧轮廓用最后一个已知值延伸——等价于浅子树在深层仍占自身最后一层的宽度。
     // 这是保守做法（可能比必要间距略大），但保证不重合。
     auto getOrExtend = [](const std::vector<double>& contour, size_t i) -> double {
-        if (i < contour.size()) return contour[i];
-        if (contour.empty()) return 0.0;
+        if (i < contour.size())
+            return contour[i];
+        if (contour.empty())
+            return 0.0;
         return contour.back();
     };
 
@@ -542,8 +559,10 @@ void AstViewer::buildParentContour(RtNode* node) {
             if (layer < child->leftContour.size()) {
                 double left = child->finalX + child->leftContour[layer];
                 double right = child->finalX + child->rightContour[layer];
-                if (left < layerMin) layerMin = left;
-                if (right > layerMax) layerMax = right;
+                if (left < layerMin)
+                    layerMin = left;
+                if (right > layerMax)
+                    layerMax = right;
                 hasValue = true;
             }
         }
@@ -559,8 +578,9 @@ void AstViewer::buildParentContour(RtNode* node) {
 }
 
 void AstViewer::computeAbsoluteCoords(RtNode* node, double parentAbsX, int depth,
-                                       std::vector<std::pair<double, double>>& bounds) {
-    if (!node) return;
+                                      std::vector<std::pair<double, double>>& bounds) {
+    if (!node)
+        return;
     // 绝对 x = 父绝对 x + 本节点相对父的 finalX
     double absX = parentAbsX + node->finalX;
     node->finalX = absX;
@@ -570,17 +590,20 @@ void AstViewer::computeAbsoluteCoords(RtNode* node, double parentAbsX, int depth
     double left = absX - NODE_WIDTH / 2.0;
     double right = absX + NODE_WIDTH / 2.0;
     if (static_cast<size_t>(depth) >= bounds.size()) {
-        bounds.resize(depth + 1, {std::numeric_limits<double>::max(),
-                                  std::numeric_limits<double>::lowest()});
+        bounds.resize(depth + 1, {std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest()});
     }
-    if (left < bounds[depth].first) bounds[depth].first = left;
-    if (right > bounds[depth].second) bounds[depth].second = right;
+    if (left < bounds[depth].first)
+        bounds[depth].first = left;
+    if (right > bounds[depth].second)
+        bounds[depth].second = right;
 
     // 折叠节点：不递归子节点
-    if (node->collapsed) return;
+    if (node->collapsed)
+        return;
 
     // BUG-AV-1 fix: 超深度时不再递归子节点，避免栈溢出
-    if (depth > MAX_AST_DEPTH) return;
+    if (depth > MAX_AST_DEPTH)
+        return;
 
     for (RtNode* child : node->children) {
         computeAbsoluteCoords(child, absX, depth + 1, bounds);
@@ -588,7 +611,8 @@ void AstViewer::computeAbsoluteCoords(RtNode* node, double parentAbsX, int depth
 }
 
 void AstViewer::drawRtNode(RtNode* node, double offsetX, int depth) {
-    if (!node || !node->astNode) return;
+    if (!node || !node->astNode)
+        return;
 
     // G-P2-1 fix: 缓存 nodeName，避免重复调用
     const std::string nodeNameStr = node->astNode->nodeName();
@@ -606,17 +630,16 @@ void AstViewer::drawRtNode(RtNode* node, double offsetX, int depth) {
     QColor txtColor = textColor();
 
     QRectF rect(nodeX, nodeY, NODE_WIDTH, NODE_HEIGHT);
-    QGraphicsRectItem* rectItem = scene_->addRect(rect,
-        QPen(borderColor, 1.5), QBrush(bgColor));
+    QGraphicsRectItem* rectItem = scene_->addRect(rect, QPen(borderColor, 1.5), QBrush(bgColor));
     rectItem->setZValue(1);
     // 注册到 itemToNode_ 以支持点击命中检测
     itemToNode_[rectItem] = node;
     // 设置 tooltip：完整节点名 + 行:列 + 子节点数
     QString tooltip = QString::fromUtf8("节点: %1\n位置: %2:%3\n子节点: %4")
-        .arg(name)
-        .arg(node->astNode->line)
-        .arg(node->astNode->column)
-        .arg(static_cast<int>(node->children.size()));
+                          .arg(name)
+                          .arg(node->astNode->line)
+                          .arg(node->astNode->column)
+                          .arg(static_cast<int>(node->children.size()));
     rectItem->setToolTip(tooltip);
 
     // 绘制文本（折叠节点附加 [+N] 指示）
@@ -642,10 +665,12 @@ void AstViewer::drawRtNode(RtNode* node, double offsetX, int depth) {
     textItem->setAcceptedMouseButtons(Qt::NoButton);
 
     // 折叠节点：不绘制子树连线与子节点
-    if (node->collapsed) return;
+    if (node->collapsed)
+        return;
 
     // BUG-AV-1 fix: 超深度时不再递归绘制子节点
-    if (depth > MAX_AST_DEPTH) return;
+    if (depth > MAX_AST_DEPTH)
+        return;
 
     // 父节点底部中心
     double parentCenterX = centerX;
@@ -653,7 +678,8 @@ void AstViewer::drawRtNode(RtNode* node, double offsetX, int depth) {
 
     // 递归绘制子节点 + 平滑连线（第八轮：三次贝塞尔曲线替代直线）
     for (RtNode* child : node->children) {
-        if (!child || !child->astNode) continue;
+        if (!child || !child->astNode)
+            continue;
         double childCenterX = child->finalX + offsetX;
         double childTopY = child->finalY;
 

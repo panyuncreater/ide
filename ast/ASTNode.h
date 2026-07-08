@@ -1,10 +1,10 @@
 #pragma once
 
 #include <memory>
-#include <string>
-#include <vector>
 #include <optional>
+#include <string>
 #include <unordered_set>
+#include <vector>
 
 // ============================================================
 // ASTNode.h — 抽象语法树（AST）节点定义
@@ -57,7 +57,7 @@ enum class NodeType {
     NODE_THROW_STMT,
     NODE_IMPORT_STMT,
     NODE_EXPORT_STMT,
-    NODE_INTERPOLATED_STRING,  // C5 fix: 保留插值字符串 AST 结构
+    NODE_INTERPOLATED_STRING, // C5 fix: 保留插值字符串 AST 结构
 };
 
 // ============================================================
@@ -74,9 +74,9 @@ class Visitor;
 // 用于 funRegistry_/ClassInfo.methods/ClosureData.body 安全持有 FunDecl 所有权。
 class ASTNode : public std::enable_shared_from_this<ASTNode> {
 public:
-    int line = 0;       // 行号
-    int column = 0;     // 列号
-    NodeType nodeType = NodeType::NODE_NULL_LITERAL;  // 节点类型（用于快速分发）
+    int line = 0;                                    // 行号
+    int column = 0;                                  // 列号
+    NodeType nodeType = NodeType::NODE_NULL_LITERAL; // 节点类型（用于快速分发）
 
     ASTNode() = default;
     ASTNode(int ln, int col) : line(ln), column(col) {}
@@ -94,47 +94,69 @@ public:
 
 /// 二元运算符类型枚举（缓存字符串→枚举映射，避免运行时字符串比较）
 enum class BinOpType {
-    BIN_AND, BIN_OR,
-    BIN_EQ, BIN_NEQ, BIN_LT, BIN_GT, BIN_LTE, BIN_GTE,
-    BIN_ADD, BIN_SUB, BIN_MUL, BIN_DIV, BIN_MOD,
+    BIN_AND,
+    BIN_OR,
+    BIN_EQ,
+    BIN_NEQ,
+    BIN_LT,
+    BIN_GT,
+    BIN_LTE,
+    BIN_GTE,
+    BIN_ADD,
+    BIN_SUB,
+    BIN_MUL,
+    BIN_DIV,
+    BIN_MOD,
     BIN_UNKNOWN
 };
 
 /// 二元运算节点
 class BinaryOp : public ASTNode {
 public:
-    BinOpType opType;                       // 运算符枚举
-    std::shared_ptr<ASTNode> left;          // 左操作数
-    std::shared_ptr<ASTNode> right;         // 右操作数
+    BinOpType opType;               // 运算符枚举
+    std::shared_ptr<ASTNode> left;  // 左操作数
+    std::shared_ptr<ASTNode> right; // 右操作数
 
-    BinaryOp(BinOpType opType, std::shared_ptr<ASTNode> l,
-             std::shared_ptr<ASTNode> r, int ln = 0, int col = 0)
-        : ASTNode(ln, col), opType(opType),
-          left(std::move(l)), right(std::move(r)) { nodeType = NodeType::NODE_BINARY_OP; }
+    BinaryOp(BinOpType opType, std::shared_ptr<ASTNode> l, std::shared_ptr<ASTNode> r, int ln = 0, int col = 0)
+        : ASTNode(ln, col), opType(opType), left(std::move(l)), right(std::move(r)) {
+        nodeType = NodeType::NODE_BINARY_OP;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return std::string("BinaryOp(") + opTypeStr(opType) + ")"; }
-    std::vector<ASTNode*> children() const override {
-        return { left.get(), right.get() };
-    }
+    std::vector<ASTNode*> children() const override { return {left.get(), right.get()}; }
 
     /// 枚举 → 字符串（用于显示/格式化/错误信息）
     static const char* opTypeStr(BinOpType t) {
         switch (t) {
-        case BinOpType::BIN_AND: return "and";
-        case BinOpType::BIN_OR:  return "or";
-        case BinOpType::BIN_EQ:  return "==";
-        case BinOpType::BIN_NEQ: return "!=";
-        case BinOpType::BIN_LT:  return "<";
-        case BinOpType::BIN_GT:  return ">";
-        case BinOpType::BIN_LTE: return "<=";
-        case BinOpType::BIN_GTE: return ">=";
-        case BinOpType::BIN_ADD: return "+";
-        case BinOpType::BIN_SUB: return "-";
-        case BinOpType::BIN_MUL: return "*";
-        case BinOpType::BIN_DIV: return "/";
-        case BinOpType::BIN_MOD: return "%";
-        default: return "?";
+        case BinOpType::BIN_AND:
+            return "and";
+        case BinOpType::BIN_OR:
+            return "or";
+        case BinOpType::BIN_EQ:
+            return "==";
+        case BinOpType::BIN_NEQ:
+            return "!=";
+        case BinOpType::BIN_LT:
+            return "<";
+        case BinOpType::BIN_GT:
+            return ">";
+        case BinOpType::BIN_LTE:
+            return "<=";
+        case BinOpType::BIN_GTE:
+            return ">=";
+        case BinOpType::BIN_ADD:
+            return "+";
+        case BinOpType::BIN_SUB:
+            return "-";
+        case BinOpType::BIN_MUL:
+            return "*";
+        case BinOpType::BIN_DIV:
+            return "/";
+        case BinOpType::BIN_MOD:
+            return "%";
+        default:
+            return "?";
         }
     }
 
@@ -143,27 +165,32 @@ public:
     // 值越大优先级越高（1=最低, 6=最高）。
     static int precedence(BinOpType t) {
         switch (t) {
-        case BinOpType::BIN_OR:  return 1;
-        case BinOpType::BIN_AND: return 2;
+        case BinOpType::BIN_OR:
+            return 1;
+        case BinOpType::BIN_AND:
+            return 2;
         case BinOpType::BIN_EQ:
-        case BinOpType::BIN_NEQ: return 3;
+        case BinOpType::BIN_NEQ:
+            return 3;
         case BinOpType::BIN_LT:
         case BinOpType::BIN_GT:
         case BinOpType::BIN_LTE:
-        case BinOpType::BIN_GTE: return 4;
+        case BinOpType::BIN_GTE:
+            return 4;
         case BinOpType::BIN_ADD:
-        case BinOpType::BIN_SUB: return 5;
+        case BinOpType::BIN_SUB:
+            return 5;
         case BinOpType::BIN_MUL:
         case BinOpType::BIN_DIV:
-        case BinOpType::BIN_MOD: return 6;
-        default: return 0;
+        case BinOpType::BIN_MOD:
+            return 6;
+        default:
+            return 0;
         }
     }
 
     /// 是否右结合（目前无右结合二元运算符，赋值不是 BinaryOp）
-    static bool isRightAssociative(BinOpType /*t*/) {
-        return false;
-    }
+    static bool isRightAssociative(BinOpType /*t*/) { return false; }
 };
 
 /// 一元运算节点
@@ -171,26 +198,29 @@ class UnaryOp : public ASTNode {
 public:
     enum class UnaryOpType { UOP_NEGATE, UOP_NOT, UOP_PLUS, UOP_UNKNOWN };
 
-    UnaryOpType opType;                     // 运算符类型枚举
-    std::shared_ptr<ASTNode> operand;        // 操作数
+    UnaryOpType opType;               // 运算符类型枚举
+    std::shared_ptr<ASTNode> operand; // 操作数
 
-    UnaryOp(UnaryOpType opType, std::shared_ptr<ASTNode> o,
-            int ln = 0, int col = 0)
-        : ASTNode(ln, col), opType(opType), operand(std::move(o)) { nodeType = NodeType::NODE_UNARY_OP; }
+    UnaryOp(UnaryOpType opType, std::shared_ptr<ASTNode> o, int ln = 0, int col = 0)
+        : ASTNode(ln, col), opType(opType), operand(std::move(o)) {
+        nodeType = NodeType::NODE_UNARY_OP;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return std::string("UnaryOp(") + opTypeStr(opType) + ")"; }
-    std::vector<ASTNode*> children() const override {
-        return { operand.get() };
-    }
+    std::vector<ASTNode*> children() const override { return {operand.get()}; }
 
     /// 枚举 → 字符串
     static const char* opTypeStr(UnaryOpType t) {
         switch (t) {
-        case UnaryOpType::UOP_NEGATE: return "-";
-        case UnaryOpType::UOP_NOT:    return "not";
-        case UnaryOpType::UOP_PLUS:   return "+";
-        default: return "?";
+        case UnaryOpType::UOP_NEGATE:
+            return "-";
+        case UnaryOpType::UOP_NOT:
+            return "not";
+        case UnaryOpType::UOP_PLUS:
+            return "+";
+        default:
+            return "?";
         }
     }
 };
@@ -200,14 +230,17 @@ public:
 // getValue() 按需构造 Value，供 Interpreter/Compiler 访问时使用。
 class NumberLiteral : public ASTNode {
 public:
-    bool isFloat_;        // true=浮点，false=整数
-    int64_t intValue_;    // 整数值（isFloat_==false 时有效）
-    double floatValue_;   // 浮点值（isFloat_==true 时有效）
+    bool isFloat_;      // true=浮点，false=整数
+    int64_t intValue_;  // 整数值（isFloat_==false 时有效）
+    double floatValue_; // 浮点值（isFloat_==true 时有效）
 
     NumberLiteral(int64_t v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), isFloat_(false), intValue_(v), floatValue_(0.0) { nodeType = NodeType::NODE_NUMBER_LITERAL; }
-    NumberLiteral(double v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), isFloat_(true), intValue_(0), floatValue_(v) { nodeType = NodeType::NODE_NUMBER_LITERAL; }
+        : ASTNode(ln, col), isFloat_(false), intValue_(v), floatValue_(0.0) {
+        nodeType = NodeType::NODE_NUMBER_LITERAL;
+    }
+    NumberLiteral(double v, int ln = 0, int col = 0) : ASTNode(ln, col), isFloat_(true), intValue_(0), floatValue_(v) {
+        nodeType = NodeType::NODE_NUMBER_LITERAL;
+    }
 
     /// 按需构造 Value（A1 fix: 替代原 Value value 成员）
     // A1 fix: 实现移至 ASTNode.cpp（构造 Value 需其完整定义）
@@ -231,8 +264,9 @@ class StringLiteral : public ASTNode {
 public:
     std::string value;
 
-    StringLiteral(const std::string& v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(v) { nodeType = NodeType::NODE_STRING_LITERAL; }
+    StringLiteral(const std::string& v, int ln = 0, int col = 0) : ASTNode(ln, col), value(v) {
+        nodeType = NodeType::NODE_STRING_LITERAL;
+    }
 
     /// 获取 Value（A1 fix: 按需构造，非破坏性，可安全多次遍历同一 AST）
     // A1 fix: 实现移至 ASTNode.cpp（构造 Value 需其完整定义）
@@ -242,9 +276,12 @@ public:
     std::string nodeName() const override {
         std::string escaped;
         for (char ch : value) {
-            if (ch == '\\') escaped += "\\\\";
-            else if (ch == '"') escaped += "\\\"";
-            else escaped += ch;
+            if (ch == '\\')
+                escaped += "\\\\";
+            else if (ch == '"')
+                escaped += "\\\"";
+            else
+                escaped += ch;
         }
         return "String(\"" + escaped + "\")";
     }
@@ -259,16 +296,17 @@ class InterpolatedString : public ASTNode {
 public:
     // literals.size() == expressions.size() + 1
     // 表示: literals[0] + expressions[0] + literals[1] + ... + expressions[n-1] + literals[n]
-    std::vector<std::string> literals;                    // 字符串字面量片段
-    std::vector<std::shared_ptr<ASTNode>> expressions;    // 插值表达式
+    std::vector<std::string> literals;                 // 字符串字面量片段
+    std::vector<std::shared_ptr<ASTNode>> expressions; // 插值表达式
 
     // PERF-11 fix: literals 总字符数，由 Parser 构造时预计算。
     // visitInterpolatedString 用此值 + expressions.size() * 8 估算 reserve，避免 realloc。
     size_t literalsTotalLen = 0;
+    // AUDIT-P2.9 fix: 闭合 '"' 所在行号（最后一个 TK_STRING_PART 的行号），
+    // 供 Formatter 在表达式行号范围内注入独立注释。
+    int endLine = 0;
 
-    InterpolatedString(int ln = 0, int col = 0) : ASTNode(ln, col) {
-        nodeType = NodeType::NODE_INTERPOLATED_STRING;
-    }
+    InterpolatedString(int ln = 0, int col = 0) : ASTNode(ln, col) { nodeType = NodeType::NODE_INTERPOLATED_STRING; }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "InterpolatedString"; }
@@ -288,17 +326,16 @@ class BoolLiteral : public ASTNode {
 public:
     bool value;
 
-    BoolLiteral(bool v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(v) { nodeType = NodeType::NODE_BOOL_LITERAL; }
+    BoolLiteral(bool v, int ln = 0, int col = 0) : ASTNode(ln, col), value(v) {
+        nodeType = NodeType::NODE_BOOL_LITERAL;
+    }
 
     /// 按需构造 Value（A1 fix）
     // A1 fix: 实现移至 ASTNode.cpp（构造 Value 需其完整定义）
     Value getValue() const;
 
     void accept(Visitor& visitor) override;
-    std::string nodeName() const override {
-        return "Bool(" + std::string(value ? "true" : "false") + ")";
-    }
+    std::string nodeName() const override { return "Bool(" + std::string(value ? "true" : "false") + ")"; }
     std::vector<ASTNode*> children() const override { return {}; }
 };
 
@@ -306,20 +343,23 @@ public:
 class VarDecl : public ASTNode {
 public:
     std::string name;
-    std::string typeAnnotation;             // 类型注解（如 "int", "float", "int[]", "dict" 等）
-    std::shared_ptr<ASTNode> initializer;   // 可为 nullptr
+    std::string typeAnnotation;           // 类型注解（如 "int", "float", "int[]", "dict" 等）
+    std::shared_ptr<ASTNode> initializer; // 可为 nullptr
 
-    VarDecl(const std::string& n, const std::string& typeAnn,
-            std::shared_ptr<ASTNode> init, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), typeAnnotation(typeAnn), initializer(std::move(init)) { nodeType = NodeType::NODE_VAR_DECL; }
+    VarDecl(const std::string& n, const std::string& typeAnn, std::shared_ptr<ASTNode> init, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(n), typeAnnotation(typeAnn), initializer(std::move(init)) {
+        nodeType = NodeType::NODE_VAR_DECL;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override {
-        if (typeAnnotation.empty()) return "VarDecl(" + name + ")";
+        if (typeAnnotation.empty())
+            return "VarDecl(" + name + ")";
         return "VarDecl(" + name + ":" + typeAnnotation + ")";
     }
     std::vector<ASTNode*> children() const override {
-        if (initializer) return { initializer.get() };
+        if (initializer)
+            return {initializer.get()};
         return {};
     }
 };
@@ -330,15 +370,14 @@ public:
     std::string name;
     std::shared_ptr<ASTNode> value;
 
-    Assignment(const std::string& n, std::shared_ptr<ASTNode> v,
-               int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), value(std::move(v)) { nodeType = NodeType::NODE_ASSIGNMENT; }
+    Assignment(const std::string& n, std::shared_ptr<ASTNode> v, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(n), value(std::move(v)) {
+        nodeType = NodeType::NODE_ASSIGNMENT;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "Assign(" + name + ")"; }
-    std::vector<ASTNode*> children() const override {
-        return { value.get() };
-    }
+    std::vector<ASTNode*> children() const override { return {value.get()}; }
 };
 
 /// 变量引用节点
@@ -346,8 +385,9 @@ class VarRef : public ASTNode {
 public:
     std::string name;
 
-    VarRef(const std::string& n, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n) { nodeType = NodeType::NODE_VAR_REF; }
+    VarRef(const std::string& n, int ln = 0, int col = 0) : ASTNode(ln, col), name(n) {
+        nodeType = NodeType::NODE_VAR_REF;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "VarRef(" + name + ")"; }
@@ -359,12 +399,13 @@ class IfStmt : public ASTNode {
 public:
     std::shared_ptr<ASTNode> condition;
     std::shared_ptr<ASTNode> thenBranch;
-    std::shared_ptr<ASTNode> elseBranch;    // 可为 nullptr
+    std::shared_ptr<ASTNode> elseBranch; // 可为 nullptr
 
-    IfStmt(std::shared_ptr<ASTNode> cond, std::shared_ptr<ASTNode> thenB,
-           std::shared_ptr<ASTNode> elseB, int ln = 0, int col = 0)
-        : ASTNode(ln, col), condition(std::move(cond)),
-          thenBranch(std::move(thenB)), elseBranch(std::move(elseB)) { nodeType = NodeType::NODE_IF_STMT; }
+    IfStmt(std::shared_ptr<ASTNode> cond, std::shared_ptr<ASTNode> thenB, std::shared_ptr<ASTNode> elseB, int ln = 0,
+           int col = 0)
+        : ASTNode(ln, col), condition(std::move(cond)), thenBranch(std::move(thenB)), elseBranch(std::move(elseB)) {
+        nodeType = NodeType::NODE_IF_STMT;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "IfStmt"; }
@@ -372,7 +413,8 @@ public:
         std::vector<ASTNode*> ch;
         ch.push_back(condition.get());
         ch.push_back(thenBranch.get());
-        if (elseBranch) ch.push_back(elseBranch.get());
+        if (elseBranch)
+            ch.push_back(elseBranch.get());
         return ch;
     }
 };
@@ -383,39 +425,41 @@ public:
     std::shared_ptr<ASTNode> condition;
     std::shared_ptr<ASTNode> body;
 
-    WhileStmt(std::shared_ptr<ASTNode> cond, std::shared_ptr<ASTNode> b,
-              int ln = 0, int col = 0)
-        : ASTNode(ln, col), condition(std::move(cond)), body(std::move(b)) { nodeType = NodeType::NODE_WHILE_STMT; }
+    WhileStmt(std::shared_ptr<ASTNode> cond, std::shared_ptr<ASTNode> b, int ln = 0, int col = 0)
+        : ASTNode(ln, col), condition(std::move(cond)), body(std::move(b)) {
+        nodeType = NodeType::NODE_WHILE_STMT;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "WhileStmt"; }
-    std::vector<ASTNode*> children() const override {
-        return { condition.get(), body.get() };
-    }
+    std::vector<ASTNode*> children() const override { return {condition.get(), body.get()}; }
 };
 
 /// for 语句节点
 class ForStmt : public ASTNode {
 public:
-    std::shared_ptr<ASTNode> initializer;  // 可为 nullptr
-    std::shared_ptr<ASTNode> condition;     // 可为 nullptr
-    std::shared_ptr<ASTNode> update;        // 可为 nullptr
+    std::shared_ptr<ASTNode> initializer; // 可为 nullptr
+    std::shared_ptr<ASTNode> condition;   // 可为 nullptr
+    std::shared_ptr<ASTNode> update;      // 可为 nullptr
     std::shared_ptr<ASTNode> body;
 
-    ForStmt(std::shared_ptr<ASTNode> init, std::shared_ptr<ASTNode> cond,
-            std::shared_ptr<ASTNode> upd, std::shared_ptr<ASTNode> b,
-            int ln = 0, int col = 0)
-        : ASTNode(ln, col), initializer(std::move(init)),
-          condition(std::move(cond)), update(std::move(upd)),
-          body(std::move(b)) { nodeType = NodeType::NODE_FOR_STMT; }
+    ForStmt(std::shared_ptr<ASTNode> init, std::shared_ptr<ASTNode> cond, std::shared_ptr<ASTNode> upd,
+            std::shared_ptr<ASTNode> b, int ln = 0, int col = 0)
+        : ASTNode(ln, col), initializer(std::move(init)), condition(std::move(cond)), update(std::move(upd)),
+          body(std::move(b)) {
+        nodeType = NodeType::NODE_FOR_STMT;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ForStmt"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
-        if (initializer) ch.push_back(initializer.get());
-        if (condition) ch.push_back(condition.get());
-        if (update) ch.push_back(update.get());
+        if (initializer)
+            ch.push_back(initializer.get());
+        if (condition)
+            ch.push_back(condition.get());
+        if (update)
+            ch.push_back(update.get());
         ch.push_back(body.get());
         return ch;
     }
@@ -426,13 +470,13 @@ class FunDecl : public ASTNode {
 public:
     std::string name;
     std::vector<std::string> params;
-    std::vector<std::string> paramTypes;    // 参数类型注解
-    std::string returnType;                 // 返回值类型注解
+    std::vector<std::string> paramTypes; // 参数类型注解
+    std::string returnType;              // 返回值类型注解
     std::shared_ptr<ASTNode> body;
     // F10: 默认参数值。与 params 一一对应，无默认值时为 nullptr。
     // 约束：一旦某参数有默认值，其后所有参数都必须有默认值。
     std::vector<std::shared_ptr<ASTNode>> defaultValues;
-    int requiredParamCount = 0;  // F10: 必需参数个数（无默认值的前缀参数数量）
+    int requiredParamCount = 0; // F10: 必需参数个数（无默认值的前缀参数数量）
 
     // PERF-08 fix: 自由变量分析结果缓存。
     // computeFreeVariables 是纯函数（仅依赖函数体 AST 结构，不依赖运行时环境），
@@ -440,20 +484,22 @@ public:
     // mutable 允许 const FunDecl& 修改缓存；AST 重建后 FunDecl 是新对象，缓存自动失效。
     mutable std::optional<std::unordered_set<std::string>> cachedFreeVars_;
 
-    FunDecl(const std::string& n, std::vector<std::string> p,
-            std::vector<std::string> pt, const std::string& rt,
+    FunDecl(const std::string& n, std::vector<std::string> p, std::vector<std::string> pt, const std::string& rt,
             std::shared_ptr<ASTNode> b, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), params(std::move(p)),
-          paramTypes(std::move(pt)), returnType(rt), body(std::move(b)),
-          requiredParamCount(static_cast<int>(this->params.size())) { nodeType = NodeType::NODE_FUN_DECL; }
+        : ASTNode(ln, col), name(n), params(std::move(p)), paramTypes(std::move(pt)), returnType(rt),
+          body(std::move(b)), requiredParamCount(static_cast<int>(this->params.size())) {
+        nodeType = NodeType::NODE_FUN_DECL;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "FunDecl(" + name + ")"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
-        if (body) ch.push_back(body.get());
+        if (body)
+            ch.push_back(body.get());
         for (const auto& dv : defaultValues) {
-            if (dv) ch.push_back(dv.get());
+            if (dv)
+                ch.push_back(dv.get());
         }
         return ch;
     }
@@ -473,23 +519,25 @@ public:
     /// A3 fix: 改为 shared_ptr 持有所有权，避免 AST 重建后缓存的裸指针悬垂。
     std::shared_ptr<FunDecl> resolvedDecl;
     bool isResolved = false;
-    int resolvedGen_ = -1;  // M7: 缓存时的 funRegistry 代数，不匹配则失效
+    int resolvedGen_ = -1; // M7: 缓存时的 funRegistry 代数，不匹配则失效
 
-    FunCall(const std::string& n, std::vector<std::shared_ptr<ASTNode>> args,
-            int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), arguments(std::move(args)) { nodeType = NodeType::NODE_FUN_CALL; }
+    FunCall(const std::string& n, std::vector<std::shared_ptr<ASTNode>> args, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(n), arguments(std::move(args)) {
+        nodeType = NodeType::NODE_FUN_CALL;
+    }
 
     /// 链式调用构造：callee 为任意表达式
-    FunCall(std::shared_ptr<ASTNode> calleeExpr, std::vector<std::shared_ptr<ASTNode>> args,
-            int ln = 0, int col = 0)
-        : ASTNode(ln, col), arguments(std::move(args)), callee(std::move(calleeExpr))
-        { nodeType = NodeType::NODE_FUN_CALL; }
+    FunCall(std::shared_ptr<ASTNode> calleeExpr, std::vector<std::shared_ptr<ASTNode>> args, int ln = 0, int col = 0)
+        : ASTNode(ln, col), arguments(std::move(args)), callee(std::move(calleeExpr)) {
+        nodeType = NodeType::NODE_FUN_CALL;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "FunCall(" + (callee ? "expr" : name) + ")"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
-        if (callee) ch.push_back(callee.get());
+        if (callee)
+            ch.push_back(callee.get());
         for (auto& arg : arguments) {
             ch.push_back(arg.get());
         }
@@ -500,15 +548,17 @@ public:
 /// return 语句节点
 class ReturnStmt : public ASTNode {
 public:
-    std::shared_ptr<ASTNode> value;     // 可为 nullptr
+    std::shared_ptr<ASTNode> value; // 可为 nullptr
 
-    ReturnStmt(std::shared_ptr<ASTNode> v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), value(std::move(v)) { nodeType = NodeType::NODE_RETURN_STMT; }
+    ReturnStmt(std::shared_ptr<ASTNode> v, int ln = 0, int col = 0) : ASTNode(ln, col), value(std::move(v)) {
+        nodeType = NodeType::NODE_RETURN_STMT;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ReturnStmt"; }
     std::vector<ASTNode*> children() const override {
-        if (value) return { value.get() };
+        if (value)
+            return {value.get()};
         return {};
     }
 };
@@ -519,13 +569,16 @@ public:
     std::vector<std::shared_ptr<ASTNode>> values;
 
     PrintStmt(std::vector<std::shared_ptr<ASTNode>> v, int ln = 0, int col = 0)
-        : ASTNode(ln, col), values(std::move(v)) { nodeType = NodeType::NODE_PRINT_STMT; }
+        : ASTNode(ln, col), values(std::move(v)) {
+        nodeType = NodeType::NODE_PRINT_STMT;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "PrintStmt"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
-        for (auto& v : values) ch.push_back(v.get());
+        for (auto& v : values)
+            ch.push_back(v.get());
         return ch;
     }
 };
@@ -534,10 +587,12 @@ public:
 class Block : public ASTNode {
 public:
     std::vector<std::shared_ptr<ASTNode>> statements;
-    int closingBraceLine = 0;  // L18 fix: '}' 所在行号，用于格式化器刷新块尾部注释
+    int closingBraceLine = 0; // L18 fix: '}' 所在行号，用于格式化器刷新块尾部注释
 
     Block(std::vector<std::shared_ptr<ASTNode>> stmts, int ln = 0, int col = 0)
-        : ASTNode(ln, col), statements(std::move(stmts)) { nodeType = NodeType::NODE_BLOCK; }
+        : ASTNode(ln, col), statements(std::move(stmts)) {
+        nodeType = NodeType::NODE_BLOCK;
+    }
 
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "Block"; }
@@ -559,12 +614,15 @@ class ArrayLiteral : public ASTNode {
 public:
     std::vector<std::shared_ptr<ASTNode>> elements;
     ArrayLiteral(std::vector<std::shared_ptr<ASTNode>> elems, int ln = 0, int col = 0)
-        : ASTNode(ln, col), elements(std::move(elems)) { nodeType = NodeType::NODE_ARRAY_LITERAL; }
+        : ASTNode(ln, col), elements(std::move(elems)) {
+        nodeType = NodeType::NODE_ARRAY_LITERAL;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ArrayLiteral"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
-        for (auto& e : elements) ch.push_back(e.get());
+        for (auto& e : elements)
+            ch.push_back(e.get());
         return ch;
     }
 };
@@ -574,12 +632,17 @@ class DictLiteral : public ASTNode {
 public:
     std::vector<std::pair<std::shared_ptr<ASTNode>, std::shared_ptr<ASTNode>>> pairs;
     DictLiteral(std::vector<std::pair<std::shared_ptr<ASTNode>, std::shared_ptr<ASTNode>>> p, int ln = 0, int col = 0)
-        : ASTNode(ln, col), pairs(std::move(p)) { nodeType = NodeType::NODE_DICT_LITERAL; }
+        : ASTNode(ln, col), pairs(std::move(p)) {
+        nodeType = NodeType::NODE_DICT_LITERAL;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "DictLiteral"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
-        for (auto& p : pairs) { ch.push_back(p.first.get()); ch.push_back(p.second.get()); }
+        for (auto& p : pairs) {
+            ch.push_back(p.first.get());
+            ch.push_back(p.second.get());
+        }
         return ch;
     }
 };
@@ -590,7 +653,9 @@ public:
     std::shared_ptr<ASTNode> object;
     std::shared_ptr<ASTNode> index;
     IndexAccess(std::shared_ptr<ASTNode> obj, std::shared_ptr<ASTNode> idx, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)) { nodeType = NodeType::NODE_INDEX_ACCESS; }
+        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)) {
+        nodeType = NodeType::NODE_INDEX_ACCESS;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "IndexAccess"; }
     std::vector<ASTNode*> children() const override { return {object.get(), index.get()}; }
@@ -602,8 +667,11 @@ public:
     std::shared_ptr<ASTNode> object;
     std::shared_ptr<ASTNode> index;
     std::shared_ptr<ASTNode> value;
-    IndexAssign(std::shared_ptr<ASTNode> obj, std::shared_ptr<ASTNode> idx, std::shared_ptr<ASTNode> val, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)), value(std::move(val)) { nodeType = NodeType::NODE_INDEX_ASSIGN; }
+    IndexAssign(std::shared_ptr<ASTNode> obj, std::shared_ptr<ASTNode> idx, std::shared_ptr<ASTNode> val, int ln = 0,
+                int col = 0)
+        : ASTNode(ln, col), object(std::move(obj)), index(std::move(idx)), value(std::move(val)) {
+        nodeType = NodeType::NODE_INDEX_ASSIGN;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "IndexAssign"; }
     std::vector<ASTNode*> children() const override { return {object.get(), index.get(), value.get()}; }
@@ -615,14 +683,20 @@ public:
     std::string name;
     std::string superClassName;
     std::vector<std::shared_ptr<ASTNode>> members;
-    ClassDecl(const std::string& n, const std::string& super,
-              std::vector<std::shared_ptr<ASTNode>> mems, int ln = 0, int col = 0)
-        : ASTNode(ln, col), name(n), superClassName(super), members(std::move(mems)) { nodeType = NodeType::NODE_CLASS_DECL; }
+    // AUDIT-P2.8 fix: 闭合 '}' 所在行号，供 Formatter 在类体末尾注入
+    // closingBraceLine 之前的独立注释（对齐 formatBlock 的注释注入模式）。
+    int closingBraceLine = 0;
+    ClassDecl(const std::string& n, const std::string& super, std::vector<std::shared_ptr<ASTNode>> mems, int ln = 0,
+              int col = 0)
+        : ASTNode(ln, col), name(n), superClassName(super), members(std::move(mems)) {
+        nodeType = NodeType::NODE_CLASS_DECL;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ClassDecl(" + name + ")"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
-        for (auto& m : members) ch.push_back(m.get());
+        for (auto& m : members)
+            ch.push_back(m.get());
         return ch;
     }
 };
@@ -633,7 +707,9 @@ public:
     std::shared_ptr<ASTNode> object;
     std::string fieldName;
     MemberAccess(std::shared_ptr<ASTNode> obj, const std::string& field, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), fieldName(field) { nodeType = NodeType::NODE_MEMBER_ACCESS; }
+        : ASTNode(ln, col), object(std::move(obj)), fieldName(field) {
+        nodeType = NodeType::NODE_MEMBER_ACCESS;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "MemberAccess(." + fieldName + ")"; }
     std::vector<ASTNode*> children() const override { return {object.get()}; }
@@ -645,8 +721,11 @@ public:
     std::shared_ptr<ASTNode> object;
     std::string fieldName;
     std::shared_ptr<ASTNode> value;
-    MemberAssign(std::shared_ptr<ASTNode> obj, const std::string& field, std::shared_ptr<ASTNode> val, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), fieldName(field), value(std::move(val)) { nodeType = NodeType::NODE_MEMBER_ASSIGN; }
+    MemberAssign(std::shared_ptr<ASTNode> obj, const std::string& field, std::shared_ptr<ASTNode> val, int ln = 0,
+                 int col = 0)
+        : ASTNode(ln, col), object(std::move(obj)), fieldName(field), value(std::move(val)) {
+        nodeType = NodeType::NODE_MEMBER_ASSIGN;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "MemberAssign(." + fieldName + ")"; }
     std::vector<ASTNode*> children() const override { return {object.get(), value.get()}; }
@@ -658,15 +737,18 @@ public:
     std::shared_ptr<ASTNode> object;
     std::string methodName;
     std::vector<std::shared_ptr<ASTNode>> arguments;
-    MethodCall(std::shared_ptr<ASTNode> obj, const std::string& method,
-               std::vector<std::shared_ptr<ASTNode>> args, int ln = 0, int col = 0)
-        : ASTNode(ln, col), object(std::move(obj)), methodName(method), arguments(std::move(args)) { nodeType = NodeType::NODE_METHOD_CALL; }
+    MethodCall(std::shared_ptr<ASTNode> obj, const std::string& method, std::vector<std::shared_ptr<ASTNode>> args,
+               int ln = 0, int col = 0)
+        : ASTNode(ln, col), object(std::move(obj)), methodName(method), arguments(std::move(args)) {
+        nodeType = NodeType::NODE_METHOD_CALL;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "MethodCall(." + methodName + ")"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> ch;
         ch.push_back(object.get());
-        for (auto& a : arguments) ch.push_back(a.get());
+        for (auto& a : arguments)
+            ch.push_back(a.get());
         return ch;
     }
 };
@@ -711,23 +793,30 @@ public:
 class TryStmt : public ASTNode {
 public:
     std::shared_ptr<ASTNode> tryBlock;     // try 块
-    std::string catchVarName;               // catch 绑定的变量名
-    std::shared_ptr<ASTNode> catchBlock;    // catch 块
-    std::shared_ptr<ASTNode> finallyBlock;  // BUG-AUDIT-FINALLY-1: finally 块（可选）
+    std::string catchVarName;              // catch 绑定的变量名
+    std::shared_ptr<ASTNode> catchBlock;   // catch 块
+    std::shared_ptr<ASTNode> finallyBlock; // BUG-AUDIT-FINALLY-1: finally 块（可选）
+    // AUDIT-P2.9 fix: catch/finally 关键字所在行号，供 Formatter 在
+    // tryBlock 与 catch 之间、catch 与 finally 之间注入独立注释。
+    int catchKeywordLine = 0;
+    int finallyKeywordLine = 0;
 
-    TryStmt(std::shared_ptr<ASTNode> tryB, const std::string& varName,
-            std::shared_ptr<ASTNode> catchB,
-            std::shared_ptr<ASTNode> finallyB = nullptr,
-            int ln = 0, int col = 0)
-        : ASTNode(ln, col), tryBlock(std::move(tryB)), catchVarName(varName),
-          catchBlock(std::move(catchB)), finallyBlock(std::move(finallyB)) { nodeType = NodeType::NODE_TRY_STMT; }
+    TryStmt(std::shared_ptr<ASTNode> tryB, const std::string& varName, std::shared_ptr<ASTNode> catchB,
+            std::shared_ptr<ASTNode> finallyB = nullptr, int ln = 0, int col = 0)
+        : ASTNode(ln, col), tryBlock(std::move(tryB)), catchVarName(varName), catchBlock(std::move(catchB)),
+          finallyBlock(std::move(finallyB)) {
+        nodeType = NodeType::NODE_TRY_STMT;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "TryStmt"; }
     std::vector<ASTNode*> children() const override {
         std::vector<ASTNode*> c;
-        if (tryBlock) c.push_back(tryBlock.get());
-        if (catchBlock) c.push_back(catchBlock.get());
-        if (finallyBlock) c.push_back(finallyBlock.get());
+        if (tryBlock)
+            c.push_back(tryBlock.get());
+        if (catchBlock)
+            c.push_back(catchBlock.get());
+        if (finallyBlock)
+            c.push_back(finallyBlock.get());
         return c;
     }
 };
@@ -735,10 +824,11 @@ public:
 /// throw 语句节点
 class ThrowStmt : public ASTNode {
 public:
-    std::shared_ptr<ASTNode> expression;   // 抛出的值
+    std::shared_ptr<ASTNode> expression; // 抛出的值
 
-    ThrowStmt(std::shared_ptr<ASTNode> expr, int ln = 0, int col = 0)
-        : ASTNode(ln, col), expression(std::move(expr)) { nodeType = NodeType::NODE_THROW_STMT; }
+    ThrowStmt(std::shared_ptr<ASTNode> expr, int ln = 0, int col = 0) : ASTNode(ln, col), expression(std::move(expr)) {
+        nodeType = NodeType::NODE_THROW_STMT;
+    }
     void accept(Visitor& visitor) override;
     std::string nodeName() const override { return "ThrowStmt"; }
     std::vector<ASTNode*> children() const override {
@@ -750,12 +840,11 @@ public:
 /// 语法: import "path"; 或 import { a, b } from "path";
 class ImportStmt : public ASTNode {
 public:
-    std::string modulePath;             // 模块路径（字符串字面量）
-    std::vector<std::string> names;     // 导入的名称（空表示导入全部）
-    bool importAll;                     // true = import * (导入全部), false = 指定名称
+    std::string modulePath;         // 模块路径（字符串字面量）
+    std::vector<std::string> names; // 导入的名称（空表示导入全部）
+    bool importAll;                 // true = import * (导入全部), false = 指定名称
 
-    ImportStmt(const std::string& path, std::vector<std::string> n, bool all,
-               int ln = 0, int col = 0)
+    ImportStmt(const std::string& path, std::vector<std::string> n, bool all, int ln = 0, int col = 0)
         : ASTNode(ln, col), modulePath(path), names(std::move(n)), importAll(all) {
         nodeType = NodeType::NODE_IMPORT_STMT;
     }
@@ -768,7 +857,7 @@ public:
 /// 语法: export var x = 1; export fun foo() {} export class Foo {}
 class ExportStmt : public ASTNode {
 public:
-    std::shared_ptr<ASTNode> declaration;   // 被导出的声明节点
+    std::shared_ptr<ASTNode> declaration; // 被导出的声明节点
 
     ExportStmt(std::shared_ptr<ASTNode> decl, int ln = 0, int col = 0)
         : ASTNode(ln, col), declaration(std::move(decl)) {

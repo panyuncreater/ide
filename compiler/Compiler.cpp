@@ -1,14 +1,14 @@
 #include "compiler/Compiler.h"
-#include "compiler/RegisterBytecodeBackend.h"  // PERF-14: 寄存器式后端
-#include "interpreter/NumericUtils.h"  // 共享溢出检查（B6 fix）
-#include "lexer/Lexer.h"      // VM-IMPORT: 模块源码词法分析
-#include "parser/Parser.h"    // VM-IMPORT: 模块源码语法分析
-#include "common/RuntimeLimits.h"  // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
-#include "ast/ModuleIsolation.h"  // BUG-AUDIT-MOD-2: VM 模块隔离（非导出顶层名前缀化）
 #include "Logger.h"
-#include <sstream>
+#include "ast/ModuleIsolation.h"              // BUG-AUDIT-MOD-2: VM 模块隔离（非导出顶层名前缀化）
+#include "common/RuntimeLimits.h"             // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
+#include "compiler/RegisterBytecodeBackend.h" // PERF-14: 寄存器式后端
+#include "interpreter/NumericUtils.h"         // 共享溢出检查（B6 fix）
+#include "lexer/Lexer.h"                      // VM-IMPORT: 模块源码词法分析
+#include "parser/Parser.h"                    // VM-IMPORT: 模块源码语法分析
 #include <algorithm>
 #include <cstdint>
+#include <sstream>
 
 // ============================================================
 // Compiler 字节码编译器实现
@@ -97,9 +97,9 @@ CompileResult Compiler::compile(Block& program) {
     chunk_ = BytecodeChunk();
     chunk_.name = "main";
     chunk_.arity = 0;
-    chunk_.reserveCode(1024);  // C21: 预分配字节码空间
+    chunk_.reserveCode(1024); // C21: 预分配字节码空间
     varIndex_.clear();
-    stringConstIndex_.clear();  // PERF-29 fix: 清空字符串常量去重 map
+    stringConstIndex_.clear(); // PERF-29 fix: 清空字符串常量去重 map
     diagnostics_.clear();
     // 合并类型检查诊断（在 clear 之后，确保不被清空）
     for (const auto& d : typeDiag.all()) {
@@ -110,19 +110,19 @@ CompileResult Compiler::compile(Block& program) {
     inFunction_ = false;
     classFieldNames_.clear();
     outerLocals_.clear();
-    writebackCounter_ = 0;  // #24: reset for clean variable names across compilations
+    writebackCounter_ = 0; // #24: reset for clean variable names across compilations
     peakLocals_ = 0;
     blockDepth_ = 0;
-    blockSaveCounter_ = 0;  // L11 fix: 编译间重置块保存计数器
-    compileDepth_ = 0;  // P1 fix: 编译间重置递归深度计数器
-    globalSlotAllocator_.clear();  // B4: 重置全局槽位分配器
-    innerFunctions_.clear();        // H5 fix: 重置内嵌函数追踪
-    innerFunctionSlots_.clear();    // H5 fix
+    blockSaveCounter_ = 0;        // L11 fix: 编译间重置块保存计数器
+    compileDepth_ = 0;            // P1 fix: 编译间重置递归深度计数器
+    globalSlotAllocator_.clear(); // B4: 重置全局槽位分配器
+    innerFunctions_.clear();      // H5 fix: 重置内嵌函数追踪
+    innerFunctionSlots_.clear();  // H5 fix
     // VM-IMPORT: 清理模块系统状态（每次编译重置，避免跨编译复用旧缓存）
     linkedModuleSet_.clear();
     moduleLoadingSet_.clear();
-    moduleLoadingStack_.clear();  // BUG-AUDIT-MOD-3: 深度保护栈
-    moduleExports_.clear();       // BUG-AUDIT-MOD-1: export 名称集合
+    moduleLoadingStack_.clear(); // BUG-AUDIT-MOD-3: 深度保护栈
+    moduleExports_.clear();      // BUG-AUDIT-MOD-1: export 名称集合
     moduleAsts_.clear();
 
     // A2: pre-scan top-level declarations to assign global slots (eliminates forward-reference issues)
@@ -132,7 +132,8 @@ CompileResult Compiler::compile(Block& program) {
     // 注意：不预扫描 FunDecl/ExportStmt(FunDecl)——visitFunDecl 顶层路径不写入 globalSlots_[slot]，
     // 预扫描会导致 `var f = funName` 从"报错"变为"静默 null"。函数引用作为值传递是独立的待解决问题。
     for (auto& stmt : program.statements) {
-        if (!stmt) continue;
+        if (!stmt)
+            continue;
         switch (stmt->nodeType) {
         case NodeType::NODE_VAR_DECL:
             allocateGlobalSlot(static_cast<VarDecl*>(stmt.get())->name);
@@ -152,12 +153,14 @@ CompileResult Compiler::compile(Block& program) {
                 case NodeType::NODE_CLASS_DECL:
                     allocateGlobalSlot(static_cast<ClassDecl*>(decl)->name);
                     break;
-                default: break;  // FunDecl 不预扫描（见上方注释）
+                default:
+                    break; // FunDecl 不预扫描（见上方注释）
                 }
             }
             break;
         }
-        default: break;
+        default:
+            break;
         }
     }
 
@@ -174,7 +177,7 @@ CompileResult Compiler::compile(Block& program) {
     result.mainChunk = std::move(chunk_);
     result.functionChunks = std::move(functionChunks_);
     result.globalSlotCount = globalSlotAllocator_.count();
-    result.globalSlotNames = std::move(globalSlotAllocator_.mutableNames());  // B4: move 避免深拷贝
+    result.globalSlotNames = std::move(globalSlotAllocator_.mutableNames()); // B4: move 避免深拷贝
 
     // 预计算 ip→指令索引映射（用于调试高亮 O(1) 查找）
     result.mainChunk.buildIpMap();
@@ -184,7 +187,8 @@ CompileResult Compiler::compile(Block& program) {
 
     // Perf-LazyLog: 改用 LOG_INFO 宏，级别过滤后不构造消息字符串（避免 std::to_string 的 locale 查询 + 堆分配）
     LOG_INFO("字节码编译完成: " + std::to_string(result.globalSlotCount) + " 全局槽, " +
-        std::to_string(result.functionChunks.size()) + " 函数chunk", "Compiler");
+                 std::to_string(result.functionChunks.size()) + " 函数chunk",
+             "Compiler");
     return result;
 }
 
@@ -210,8 +214,7 @@ CompileResult Compiler::compileViaIR(Block& program) {
     // build() 在 hasError_ 时返回 nullptr，原顺序下 !lastIR_ 先触发 "IR 构建失败"，
     // 吞掉具体错误消息（如 super 编译错误）。改为先检查 hasError() 传播具体消息。
     if (irBuilder.hasError()) {
-        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(),
-              irBuilder.errorLine(), 0);
+        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(), irBuilder.errorLine(), 0);
         CompileResult emptyResult;
         return emptyResult;
     }
@@ -242,7 +245,8 @@ CompileResult Compiler::compileViaIR(Block& program) {
     if (irOptimize_) {
         optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/false);
         for (auto& fn : module->functions) {
-            if (fn) optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/false);
+            if (fn)
+                optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/false);
         }
     }
 
@@ -284,11 +288,10 @@ CompileResult Compiler::compileViaIR(Block& program) {
 
     // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
     LOG_INFO("IR 编译完成: " + std::to_string(lastIR_->blocks.size()) + " 基本块, " +
-        std::to_string(lastIR_->constants.size()) + " 常量, " +
-        std::to_string(lastIR_->nextVReg) + " vreg, " +
-        std::to_string(result.functionChunks.size()) + " 函数chunk, " +
-        std::to_string(result.globalSlotCount) + " 全局槽" +
-        (irOptimize_ ? " (已优化)" : ""), "Compiler-IR");
+                 std::to_string(lastIR_->constants.size()) + " 常量, " + std::to_string(lastIR_->nextVReg) + " vreg, " +
+                 std::to_string(result.functionChunks.size()) + " 函数chunk, " +
+                 std::to_string(result.globalSlotCount) + " 全局槽" + (irOptimize_ ? " (已优化)" : ""),
+             "Compiler-IR");
     return result;
 }
 
@@ -312,8 +315,7 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     lastIR_ = irBuilder.build(program);
     // BUG-INH-AUDIT-1 fix: 先检查 hasError() 再检查 !lastIR_（同 compile IR 路径）。
     if (irBuilder.hasError()) {
-        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(),
-              irBuilder.errorLine(), 0);
+        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(), irBuilder.errorLine(), 0);
         RegisterCompileResult emptyResult;
         return emptyResult;
     }
@@ -344,7 +346,8 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     if (irOptimize_) {
         optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
         for (auto& fn : module->functions) {
-            if (fn) optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+            if (fn)
+                optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
         }
     }
 
@@ -372,12 +375,11 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     lastIR_ = std::move(module->mainFunction);
 
     // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
-    LOG_INFO("Register IR 编译完成: " +
-        std::to_string(result.mainChunk.code.size()) + " 字节, " +
-        std::to_string(result.mainChunk.registerCount) + " 寄存器, " +
-        std::to_string(result.functionChunks.size()) + " 函数chunk, " +
-        std::to_string(result.globalSlotCount) + " 全局槽" +
-        (irOptimize_ ? " (已优化)" : ""), "Compiler-RegIR");
+    LOG_INFO("Register IR 编译完成: " + std::to_string(result.mainChunk.code.size()) + " 字节, " +
+                 std::to_string(result.mainChunk.registerCount) + " 寄存器, " +
+                 std::to_string(result.functionChunks.size()) + " 函数chunk, " +
+                 std::to_string(result.globalSlotCount) + " 全局槽" + (irOptimize_ ? " (已优化)" : ""),
+             "Compiler-RegIR");
     return result;
 }
 
@@ -396,7 +398,8 @@ std::string Compiler::getLastError() const {
 
 uint16_t Compiler::identifierIndex(const std::string& name) {
     auto it = varIndex_.find(name);
-    if (it != varIndex_.end()) return it->second;
+    if (it != varIndex_.end())
+        return it->second;
     uint16_t idx = chunk_.addConstant(Value(name));
     varIndex_[name] = idx;
     return idx;
@@ -405,7 +408,8 @@ uint16_t Compiler::identifierIndex(const std::string& name) {
 // 2026-06-29: 发射 OP_TYPE_CHECK — 将类型注解字符串加入常量池，发射检查指令
 // 语义：peek 栈顶值，检查是否兼容类型注解，不弹栈。在 SET 操作前调用。
 void Compiler::emitTypeCheck(const std::string& typeAnnotation, int line) {
-    if (typeAnnotation.empty()) return;
+    if (typeAnnotation.empty())
+        return;
     uint16_t typeIdx = chunk_.addConstant(Value(typeAnnotation));
     chunk_.writeOp(OpCode::OP_TYPE_CHECK, line);
     chunk_.writeShort(typeIdx, line);
@@ -424,7 +428,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.chunk = std::move(chunk_);
     ctx.varIndex = std::move(varIndex_);
     ctx.currentLocals = std::move(currentLocals_);
-    ctx.varTypes = std::move(varTypes_);  // 2026-06-29: 类型注解快照
+    ctx.varTypes = std::move(varTypes_); // 2026-06-29: 类型注解快照
     ctx.inFunction = inFunction_;
     ctx.outerLocals = std::move(outerLocals_);
     ctx.peakLocals = peakLocals_;
@@ -437,7 +441,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.currentUpvalueNames = std::move(currentUpvalueNames_);
     ctx.loopStack = std::move(loopStack_);
     ctx.tryDepth = tryDepth_;
-    ctx.currentFunctionReturnType = currentFunctionReturnType_;  // BUG-TYPE-1 fix
+    ctx.currentFunctionReturnType = currentFunctionReturnType_; // BUG-TYPE-1 fix
     return ctx;
 }
 
@@ -445,7 +449,7 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     chunk_ = std::move(ctx.chunk);
     varIndex_ = std::move(ctx.varIndex);
     currentLocals_ = std::move(ctx.currentLocals);
-    varTypes_ = std::move(ctx.varTypes);  // 2026-06-29: 类型注解恢复
+    varTypes_ = std::move(ctx.varTypes); // 2026-06-29: 类型注解恢复
     inFunction_ = ctx.inFunction;
     outerLocals_ = std::move(ctx.outerLocals);
     peakLocals_ = ctx.peakLocals;
@@ -458,11 +462,12 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     currentUpvalueNames_ = std::move(ctx.currentUpvalueNames);
     loopStack_ = std::move(ctx.loopStack);
     tryDepth_ = ctx.tryDepth;
-    currentFunctionReturnType_ = std::move(ctx.currentFunctionReturnType);  // BUG-TYPE-1 fix
+    currentFunctionReturnType_ = std::move(ctx.currentFunctionReturnType); // BUG-TYPE-1 fix
 }
 
 void Compiler::compileNode(ASTNode* node) {
-    if (!node) return;
+    if (!node)
+        return;
 
     // P1 fix: 递归深度保护，防止深度嵌套 AST 导致 C++ 栈溢出
     if (compileDepth_ >= MAX_COMPILE_DEPTH) {
@@ -470,14 +475,18 @@ void Compiler::compileNode(ASTNode* node) {
         return;
     }
     compileDepth_++;
-    struct CompileDepthGuard { int& d; ~CompileDepthGuard() { d--; } } guard{compileDepth_};
+    struct CompileDepthGuard {
+        int& d;
+        ~CompileDepthGuard() { d--; }
+    } guard{compileDepth_};
 
     // 通过 Visitor 模式分派：accept 会回调对应的 visit* 方法
     node->accept(*this);
 }
 
 void Compiler::compileStatement(ASTNode* node) {
-    if (!node) return;
+    if (!node)
+        return;
 
     compileNode(node);
 
@@ -501,7 +510,7 @@ void Compiler::compileStatement(ASTNode* node) {
     case NodeType::NODE_SUPER_EXPR:
     case NodeType::NODE_ARRAY_LITERAL:
     case NodeType::NODE_DICT_LITERAL:
-    case NodeType::NODE_INTERPOLATED_STRING:  // C5 fix: 插值字符串产生栈值
+    case NodeType::NODE_INTERPOLATED_STRING: // C5 fix: 插值字符串产生栈值
         chunk_.writeOp(OpCode::OP_POP, node->line);
         break;
     default:
@@ -523,8 +532,8 @@ void Compiler::visitBinaryOp(BinaryOp& node) {
         // 如果左操作数为假，跳过右操作数
         size_t jumpPatch = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
-        chunk_.writeShort(0, node.line);  // 占位
-        chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出左操作数
+        chunk_.writeShort(0, node.line);           // 占位
+        chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出左操作数
         compileNode(node.right.get());
         // 修补跳转地址
         uint16_t jumpTarget = safeCodeOffset();
@@ -539,11 +548,11 @@ void Compiler::visitBinaryOp(BinaryOp& node) {
         // 如果左操作数为真，跳过右操作数，保留左值
         size_t jumpPatch = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
-        chunk_.writeShort(0, node.line);  // 占位（先跳到 or 右侧）
+        chunk_.writeShort(0, node.line); // 占位（先跳到 or 右侧）
         // 如果到这里，左操作数为真 — 保留左值，跳到末尾
         size_t jumpEnd = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP, node.line);
-        chunk_.writeShort(0, node.line);  // 占位
+        chunk_.writeShort(0, node.line); // 占位
         // 修补第一个跳转：左操作数为假，求值右操作数
         uint16_t rightStart = safeCodeOffset();
         chunk_.code[jumpPatch + 1] = static_cast<uint8_t>(rightStart & 0xFF);
@@ -565,17 +574,39 @@ void Compiler::visitBinaryOp(BinaryOp& node) {
 
     OpCode op = OpCode::OP_ADD;
     switch (node.opType) {
-    case BinOpType::BIN_ADD:  op = OpCode::OP_ADD; break;
-    case BinOpType::BIN_SUB:  op = OpCode::OP_SUBTRACT; break;
-    case BinOpType::BIN_MUL:  op = OpCode::OP_MULTIPLY; break;
-    case BinOpType::BIN_DIV:  op = OpCode::OP_DIVIDE; break;
-    case BinOpType::BIN_MOD:  op = OpCode::OP_MODULO; break;
-    case BinOpType::BIN_EQ:   op = OpCode::OP_EQUAL; break;
-    case BinOpType::BIN_NEQ:  op = OpCode::OP_NOT_EQUAL; break;
-    case BinOpType::BIN_LT:   op = OpCode::OP_LESS; break;
-    case BinOpType::BIN_GT:   op = OpCode::OP_GREATER; break;
-    case BinOpType::BIN_LTE:  op = OpCode::OP_LESS_EQUAL; break;
-    case BinOpType::BIN_GTE:  op = OpCode::OP_GREATER_EQUAL; break;
+    case BinOpType::BIN_ADD:
+        op = OpCode::OP_ADD;
+        break;
+    case BinOpType::BIN_SUB:
+        op = OpCode::OP_SUBTRACT;
+        break;
+    case BinOpType::BIN_MUL:
+        op = OpCode::OP_MULTIPLY;
+        break;
+    case BinOpType::BIN_DIV:
+        op = OpCode::OP_DIVIDE;
+        break;
+    case BinOpType::BIN_MOD:
+        op = OpCode::OP_MODULO;
+        break;
+    case BinOpType::BIN_EQ:
+        op = OpCode::OP_EQUAL;
+        break;
+    case BinOpType::BIN_NEQ:
+        op = OpCode::OP_NOT_EQUAL;
+        break;
+    case BinOpType::BIN_LT:
+        op = OpCode::OP_LESS;
+        break;
+    case BinOpType::BIN_GT:
+        op = OpCode::OP_GREATER;
+        break;
+    case BinOpType::BIN_LTE:
+        op = OpCode::OP_LESS_EQUAL;
+        break;
+    case BinOpType::BIN_GTE:
+        op = OpCode::OP_GREATER_EQUAL;
+        break;
     default:
         error("不支持的运算符: " + std::string(BinaryOp::opTypeStr(node.opType)), node.line, node.column);
         return;
@@ -602,7 +633,7 @@ void Compiler::visitUnaryOp(UnaryOp& node) {
         chunk_.writeOp(OpCode::OP_NOT, node.line);
         break;
     case UnaryOp::UnaryOpType::UOP_PLUS:
-        break;  // 一元 + 恒等操作，操作数已在栈上
+        break; // 一元 + 恒等操作，操作数已在栈上
     default:
         break;
     }
@@ -628,9 +659,9 @@ void Compiler::visitStringLiteral(StringLiteral& node) {
     auto it = stringConstIndex_.find(node.value);
     uint16_t idx;
     if (it != stringConstIndex_.end()) {
-        idx = it->second;  // 复用已有常量池索引
+        idx = it->second; // 复用已有常量池索引
     } else {
-        idx = chunk_.addConstant(node.getValue());  // A1 fix: getValue()
+        idx = chunk_.addConstant(node.getValue()); // A1 fix: getValue()
         stringConstIndex_[node.value] = idx;
     }
     chunk_.writeOp(OpCode::OP_STRING, node.line);
@@ -673,13 +704,12 @@ void Compiler::visitVarDecl(VarDecl& node) {
     // 编译初始化表达式
     if (node.initializer) {
         compileNode(node.initializer.get());
-    } else if (!node.typeAnnotation.empty() &&
-               classFieldNames_.find(node.typeAnnotation) != classFieldNames_.end()) {
+    } else if (!node.typeAnnotation.empty() && classFieldNames_.find(node.typeAnnotation) != classFieldNames_.end()) {
         // S2 fix: 类名类型注解无初始化器 → 自动构造实例（与解释器 visitVarDecl 一致）
         uint16_t classNameIdx = identifierIndex(node.typeAnnotation);
         chunk_.writeOp(OpCode::OP_CLASS_NEW, node.line);
         chunk_.writeShort(classNameIdx, node.line);
-        chunk_.write(static_cast<uint8_t>(0), node.line);  // argCount = 0
+        chunk_.write(static_cast<uint8_t>(0), node.line); // argCount = 0
     } else {
         chunk_.writeOp(OpCode::OP_NULL, node.line);
     }
@@ -835,127 +865,143 @@ int Compiler::resolveUpvalue(const std::string& name, int line) {
 // 在编译子函数体前预建 upvalue，使中间函数捕获内层引用的变量供透传。
 // 解决 3+ 层嵌套闭包问题：fun outer(){var x=1; fun mid(){ fun inner(){return x;} ... }}
 // mid 不直接引用 x，但 inner 需要，mid 必须捕获 x 供 inner 透传。
-bool Compiler::isDefinedInScopes(
-    const std::vector<std::unordered_set<std::string>>& scopes,
-    const std::string& name) const {
+bool Compiler::isDefinedInScopes(const std::vector<std::unordered_set<std::string>>& scopes,
+                                 const std::string& name) const {
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it) {
-        if (it->count(name)) return true;
+        if (it->count(name))
+            return true;
     }
     return false;
 }
 
-void Compiler::collectFreeVars(const ASTNode& node,
-                                std::vector<std::unordered_set<std::string>>& scopes,
-                                std::unordered_set<std::string>& freeVars) {
+void Compiler::collectFreeVars(const ASTNode& node, std::vector<std::unordered_set<std::string>>& scopes,
+                               std::unordered_set<std::string>& freeVars) {
     switch (node.nodeType) {
-        case NodeType::NODE_VAR_REF: {
-            const auto& ref = static_cast<const VarRef&>(node);
-            if (!isDefinedInScopes(scopes, ref.name)) {
-                freeVars.insert(ref.name);
-            }
-            break;
+    case NodeType::NODE_VAR_REF: {
+        const auto& ref = static_cast<const VarRef&>(node);
+        if (!isDefinedInScopes(scopes, ref.name)) {
+            freeVars.insert(ref.name);
         }
-        case NodeType::NODE_ASSIGNMENT: {
-            const auto& assign = static_cast<const Assignment&>(node);
-            if (!isDefinedInScopes(scopes, assign.name)) {
-                freeVars.insert(assign.name);
-            }
-            if (assign.value) collectFreeVars(*assign.value, scopes, freeVars);
-            break;
+        break;
+    }
+    case NodeType::NODE_ASSIGNMENT: {
+        const auto& assign = static_cast<const Assignment&>(node);
+        if (!isDefinedInScopes(scopes, assign.name)) {
+            freeVars.insert(assign.name);
         }
-        case NodeType::NODE_VAR_DECL: {
-            const auto& decl = static_cast<const VarDecl&>(node);
-            if (decl.initializer) collectFreeVars(*decl.initializer, scopes, freeVars);
-            scopes.back().insert(decl.name);
-            break;
+        if (assign.value)
+            collectFreeVars(*assign.value, scopes, freeVars);
+        break;
+    }
+    case NodeType::NODE_VAR_DECL: {
+        const auto& decl = static_cast<const VarDecl&>(node);
+        if (decl.initializer)
+            collectFreeVars(*decl.initializer, scopes, freeVars);
+        scopes.back().insert(decl.name);
+        break;
+    }
+    case NodeType::NODE_FUN_DECL: {
+        const auto& nestedFn = static_cast<const FunDecl&>(node);
+        for (const auto& dv : nestedFn.defaultValues) {
+            if (dv)
+                collectFreeVars(*dv, scopes, freeVars);
         }
-        case NodeType::NODE_FUN_DECL: {
-            const auto& nestedFn = static_cast<const FunDecl&>(node);
-            for (const auto& dv : nestedFn.defaultValues) {
-                if (dv) collectFreeVars(*dv, scopes, freeVars);
+        std::vector<std::unordered_set<std::string>> nestedScopes;
+        nestedScopes.emplace_back();
+        for (const auto& p : nestedFn.params)
+            nestedScopes.back().insert(p);
+        nestedScopes.back().insert(nestedFn.name);
+        std::unordered_set<std::string> nestedFree;
+        if (nestedFn.body)
+            collectFreeVars(*nestedFn.body, nestedScopes, nestedFree);
+        for (const auto& name : nestedFree) {
+            if (!isDefinedInScopes(scopes, name)) {
+                freeVars.insert(name);
             }
-            std::vector<std::unordered_set<std::string>> nestedScopes;
-            nestedScopes.emplace_back();
-            for (const auto& p : nestedFn.params) nestedScopes.back().insert(p);
-            nestedScopes.back().insert(nestedFn.name);
-            std::unordered_set<std::string> nestedFree;
-            if (nestedFn.body) collectFreeVars(*nestedFn.body, nestedScopes, nestedFree);
-            for (const auto& name : nestedFree) {
-                if (!isDefinedInScopes(scopes, name)) {
-                    freeVars.insert(name);
-                }
-            }
-            scopes.back().insert(nestedFn.name);
-            break;
         }
-        case NodeType::NODE_FUN_CALL: {
-            const auto& call = static_cast<const FunCall&>(node);
-            if (call.callee) {
-                collectFreeVars(*call.callee, scopes, freeVars);
-            } else if (!call.name.empty()) {
-                if (!isDefinedInScopes(scopes, call.name)) {
-                    freeVars.insert(call.name);
-                }
+        scopes.back().insert(nestedFn.name);
+        break;
+    }
+    case NodeType::NODE_FUN_CALL: {
+        const auto& call = static_cast<const FunCall&>(node);
+        if (call.callee) {
+            collectFreeVars(*call.callee, scopes, freeVars);
+        } else if (!call.name.empty()) {
+            if (!isDefinedInScopes(scopes, call.name)) {
+                freeVars.insert(call.name);
             }
-            for (const auto& arg : call.arguments) {
-                if (arg) collectFreeVars(*arg, scopes, freeVars);
-            }
-            break;
         }
-        case NodeType::NODE_BLOCK: {
-            const auto& block = static_cast<const Block&>(node);
+        for (const auto& arg : call.arguments) {
+            if (arg)
+                collectFreeVars(*arg, scopes, freeVars);
+        }
+        break;
+    }
+    case NodeType::NODE_BLOCK: {
+        const auto& block = static_cast<const Block&>(node);
+        scopes.emplace_back();
+        for (const auto& stmt : block.statements) {
+            if (stmt)
+                collectFreeVars(*stmt, scopes, freeVars);
+        }
+        scopes.pop_back();
+        break;
+    }
+    case NodeType::NODE_FOR_STMT: {
+        const auto& forStmt = static_cast<const ForStmt&>(node);
+        scopes.emplace_back();
+        if (forStmt.initializer)
+            collectFreeVars(*forStmt.initializer, scopes, freeVars);
+        if (forStmt.condition)
+            collectFreeVars(*forStmt.condition, scopes, freeVars);
+        if (forStmt.update)
+            collectFreeVars(*forStmt.update, scopes, freeVars);
+        if (forStmt.body)
+            collectFreeVars(*forStmt.body, scopes, freeVars);
+        scopes.pop_back();
+        break;
+    }
+    case NodeType::NODE_TRY_STMT: {
+        const auto& tryStmt = static_cast<const TryStmt&>(node);
+        if (tryStmt.tryBlock)
+            collectFreeVars(*tryStmt.tryBlock, scopes, freeVars);
+        if (tryStmt.catchBlock) {
             scopes.emplace_back();
-            for (const auto& stmt : block.statements) {
-                if (stmt) collectFreeVars(*stmt, scopes, freeVars);
-            }
+            if (!tryStmt.catchVarName.empty())
+                scopes.back().insert(tryStmt.catchVarName);
+            collectFreeVars(*tryStmt.catchBlock, scopes, freeVars);
             scopes.pop_back();
-            break;
         }
-        case NodeType::NODE_FOR_STMT: {
-            const auto& forStmt = static_cast<const ForStmt&>(node);
-            scopes.emplace_back();
-            if (forStmt.initializer) collectFreeVars(*forStmt.initializer, scopes, freeVars);
-            if (forStmt.condition) collectFreeVars(*forStmt.condition, scopes, freeVars);
-            if (forStmt.update) collectFreeVars(*forStmt.update, scopes, freeVars);
-            if (forStmt.body) collectFreeVars(*forStmt.body, scopes, freeVars);
-            scopes.pop_back();
-            break;
+        break;
+    }
+    case NodeType::NODE_CLASS_DECL: {
+        const auto& cls = static_cast<const ClassDecl&>(node);
+        scopes.back().insert(cls.name);
+        break;
+    }
+    default:
+        for (auto* child : node.children()) {
+            if (child)
+                collectFreeVars(*child, scopes, freeVars);
         }
-        case NodeType::NODE_TRY_STMT: {
-            const auto& tryStmt = static_cast<const TryStmt&>(node);
-            if (tryStmt.tryBlock) collectFreeVars(*tryStmt.tryBlock, scopes, freeVars);
-            if (tryStmt.catchBlock) {
-                scopes.emplace_back();
-                if (!tryStmt.catchVarName.empty()) scopes.back().insert(tryStmt.catchVarName);
-                collectFreeVars(*tryStmt.catchBlock, scopes, freeVars);
-                scopes.pop_back();
-            }
-            break;
-        }
-        case NodeType::NODE_CLASS_DECL: {
-            const auto& cls = static_cast<const ClassDecl&>(node);
-            scopes.back().insert(cls.name);
-            break;
-        }
-        default:
-            for (auto* child : node.children()) {
-                if (child) collectFreeVars(*child, scopes, freeVars);
-            }
-            break;
+        break;
     }
 }
 
 std::unordered_set<std::string> Compiler::computeFreeVars(const FunDecl& fn) {
     std::vector<std::unordered_set<std::string>> scopes;
     scopes.emplace_back();
-    for (const auto& param : fn.params) scopes.back().insert(param);
+    for (const auto& param : fn.params)
+        scopes.back().insert(param);
     scopes.back().insert(fn.name);
 
     std::unordered_set<std::string> freeVars;
     for (const auto& dv : fn.defaultValues) {
-        if (dv) collectFreeVars(*dv, scopes, freeVars);
+        if (dv)
+            collectFreeVars(*dv, scopes, freeVars);
     }
-    if (fn.body) collectFreeVars(*fn.body, scopes, freeVars);
+    if (fn.body)
+        collectFreeVars(*fn.body, scopes, freeVars);
     return freeVars;
 }
 
@@ -1023,7 +1069,7 @@ void Compiler::visitIfStmt(IfStmt& node) {
     bool needCloseUpvalue = inFunction_;
 
     // 编译 then 分支
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
+    chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出条件值
     compileStatement(node.thenBranch.get());
     // BUG-AUDIT-CLOSE-1 fix: then 分支退出时关闭指向本分支 slot 的 open upvalues
     if (needCloseUpvalue && currentLocals_.size() > branchSlotBase && branchSlotBase <= 255) {
@@ -1044,7 +1090,7 @@ void Compiler::visitIfStmt(IfStmt& node) {
     chunk_.code[elseJumpPatch + 1] = static_cast<uint8_t>(elseStart & 0xFF);
     chunk_.code[elseJumpPatch + 2] = static_cast<uint8_t>((elseStart >> 8) & 0xFF);
 
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值
+    chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出条件值
 
     // 编译 else 分支（使用同样的 savedLocals，then 分支变量不可见）
     if (node.elseBranch) {
@@ -1080,7 +1126,7 @@ void Compiler::visitWhileStmt(WhileStmt& node) {
     chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
     chunk_.writeShort(0, node.line);
 
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（true 路径）
+    chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出条件值（true 路径）
 
     // break/continue 循环上下文：while 的 continue 跳回 loopStart（条件检查）
     // break 跳转目标在循环编译完成后回填（跳过出口 OP_POP，因 break 时条件值已弹出）
@@ -1125,7 +1171,7 @@ void Compiler::visitWhileStmt(WhileStmt& node) {
     chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
     chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
 
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（false 路径）
+    chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出条件值（false 路径）
 
     // 回填 continue 跳转：跳到 continueTarget（OP_CLOSE_UPVALUE 之前，执行关闭后再 OP_LOOP）
     uint16_t contTarget = safeCodeOffset(continueTarget);
@@ -1196,7 +1242,7 @@ void Compiler::visitForStmt(ForStmt& node) {
     size_t exitJumpPatch = chunk_.code.size();
     chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, node.line);
     chunk_.writeShort(0, node.line);
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（true 路径）
+    chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出条件值（true 路径）
 
     // break/continue 循环上下文
     // continue 目标：有 update 时跳到 updateStart，否则跳到 loopStart
@@ -1244,7 +1290,7 @@ void Compiler::visitForStmt(ForStmt& node) {
     uint16_t exitTarget = safeCodeOffset();
     chunk_.code[exitJumpPatch + 1] = static_cast<uint8_t>(exitTarget & 0xFF);
     chunk_.code[exitJumpPatch + 2] = static_cast<uint8_t>((exitTarget >> 8) & 0xFF);
-    chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（false 路径）
+    chunk_.writeOp(OpCode::OP_POP, node.line); // 弹出条件值（false 路径）
 
     // 回填 continue 跳转：有 update 跳到 updateStart，否则跳到 loopStart
     uint16_t contTarget = ctx.hasUpdate ? safeCodeOffset(updateStart) : safeCodeOffset(ctx.loopStart);
@@ -1329,9 +1375,9 @@ void Compiler::visitFunDecl(FunDecl& node) {
         chunk_.requiredArity = node.requiredParamCount;
         varIndex_.clear();
         currentLocals_.clear();
-        currentUpvalues_.clear();  // VM-05/06: 新的 upvalue 列表
+        currentUpvalues_.clear();     // VM-05/06: 新的 upvalue 列表
         currentUpvalueNames_.clear(); // VM-05/06: 新的 upvalue 名称映射
-        localSlotNames_.clear();  // BUG-IDE-12 fix: 清空槽位名映射
+        localSlotNames_.clear();      // BUG-IDE-12 fix: 清空槽位名映射
         inFunction_ = true;
         // C-P0-1/C-P0-3 fix: 函数体的循环栈和 try 深度从 0 开始
         loopStack_.clear();
@@ -1344,7 +1390,7 @@ void Compiler::visitFunDecl(FunDecl& node) {
         // C-P1-2 fix: 参数数量上限 255（uint8_t 编码限制）
         if (node.params.size() > 255) {
             error("函数参数数量超过限制（最大 255 个）: " + node.name, node.line, 0);
-            return;  // guard 自动恢复上下文
+            return; // guard 自动恢复上下文
         }
         for (int i = 0; i < static_cast<int>(node.params.size()); ++i) {
             currentLocals_[node.params[i]] = i;
@@ -1393,13 +1439,13 @@ void Compiler::visitFunDecl(FunDecl& node) {
                 bool isConst = false;
 
                 if (dv->nodeType == NodeType::NODE_NUMBER_LITERAL) {
-                    constVal = static_cast<const NumberLiteral*>(dv)->getValue();  // A1 fix: getValue()
+                    constVal = static_cast<const NumberLiteral*>(dv)->getValue(); // A1 fix: getValue()
                     isConst = true;
                 } else if (dv->nodeType == NodeType::NODE_STRING_LITERAL) {
-                    constVal = static_cast<const StringLiteral*>(dv)->getValue();  // A1 fix: getValue()
+                    constVal = static_cast<const StringLiteral*>(dv)->getValue(); // A1 fix: getValue()
                     isConst = true;
                 } else if (dv->nodeType == NodeType::NODE_BOOL_LITERAL) {
-                    constVal = static_cast<const BoolLiteral*>(dv)->getValue();  // A1 fix: getValue()
+                    constVal = static_cast<const BoolLiteral*>(dv)->getValue(); // A1 fix: getValue()
                     isConst = true;
                 } else if (dv->nodeType == NodeType::NODE_NULL_LITERAL) {
                     constVal = Value::nullValue();
@@ -1411,7 +1457,8 @@ void Compiler::visitFunDecl(FunDecl& node) {
                     int negateCount = 0;
                     while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
                         const auto* unary = static_cast<const UnaryOp*>(cur);
-                        if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) break;
+                        if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
+                            break;
                         ++negateCount;
                         cur = unary->operand.get();
                     }
@@ -1423,7 +1470,7 @@ void Compiler::visitFunDecl(FunDecl& node) {
                             // 奇数次取反为负，偶数次为正
                             constVal = Value((negateCount % 2 == 1) ? -v : v);
                         } else {
-                            double v = numNode->floatVal();  // A1 fix: numNode 标量访问
+                            double v = numNode->floatVal(); // A1 fix: numNode 标量访问
                             constVal = Value((negateCount % 2 == 1) ? -v : v);
                         }
                         isConst = true;
@@ -1709,8 +1756,8 @@ void Compiler::visitImportStmt(ImportStmt& node) {
     auto moduleAst = loadAndParseModule(modulePath, node.line);
     if (!moduleAst) {
         moduleLoadingSet_.erase(modulePath);
-        moduleLoadingStack_.pop_back();  // BUG-AUDIT-MOD-3
-        return;  // loadAndParseModule 已调用 error()
+        moduleLoadingStack_.pop_back(); // BUG-AUDIT-MOD-3
+        return;                         // loadAndParseModule 已调用 error()
     }
 
     // 6.5 BUG-AUDIT-MOD-2 fix: 模块隔离——重命名非导出顶层名为 `__mod_<hash>__<name>`
@@ -1725,18 +1772,24 @@ void Compiler::visitImportStmt(ImportStmt& node) {
     {
         std::unordered_set<std::string> exports;
         for (auto& stmt : moduleAst->statements) {
-            if (!stmt || stmt->nodeType != NodeType::NODE_EXPORT_STMT) continue;
+            if (!stmt || stmt->nodeType != NodeType::NODE_EXPORT_STMT)
+                continue;
             auto* exp = static_cast<ExportStmt*>(stmt.get());
-            if (!exp->declaration) continue;
+            if (!exp->declaration)
+                continue;
             ASTNode* decl = exp->declaration.get();
             switch (decl->nodeType) {
             case NodeType::NODE_VAR_DECL:
-                exports.insert(static_cast<VarDecl*>(decl)->name); break;
+                exports.insert(static_cast<VarDecl*>(decl)->name);
+                break;
             case NodeType::NODE_CLASS_DECL:
-                exports.insert(static_cast<ClassDecl*>(decl)->name); break;
+                exports.insert(static_cast<ClassDecl*>(decl)->name);
+                break;
             case NodeType::NODE_FUN_DECL:
-                exports.insert(static_cast<FunDecl*>(decl)->name); break;
-            default: break;
+                exports.insert(static_cast<FunDecl*>(decl)->name);
+                break;
+            default:
+                break;
             }
         }
         moduleExports_[modulePath] = std::move(exports);
@@ -1744,7 +1797,8 @@ void Compiler::visitImportStmt(ImportStmt& node) {
 
     // 8. 内联编译模块语句（递归处理模块自身的 import）
     for (auto& stmt : moduleAst->statements) {
-        if (stmt) compileStatement(stmt.get());
+        if (stmt)
+            compileStatement(stmt.get());
     }
 
     // 9. 保留模块 AST（函数/类定义指针在字节码中以常量池索引引用，AST 必须存活）
@@ -1752,7 +1806,7 @@ void Compiler::visitImportStmt(ImportStmt& node) {
 
     // 10. 从加载集移除，标记为已链接
     moduleLoadingSet_.erase(modulePath);
-    moduleLoadingStack_.pop_back();  // BUG-AUDIT-MOD-3
+    moduleLoadingStack_.pop_back(); // BUG-AUDIT-MOD-3
     linkedModuleSet_.insert(modulePath);
 
     // 11. BUG-AUDIT-MOD-1 fix: 具名导入验证改为检查 export 集合（对齐 Interpreter）
@@ -1790,18 +1844,20 @@ std::string Compiler::normalizeModulePath(const std::string& rawPath) const {
     std::string path = rawPath;
     // 统一路径分隔符为 '/'
     for (char& c : path) {
-        if (c == '\\') c = '/';
+        if (c == '\\')
+            c = '/';
     }
     // 去除 "./" 前缀
     if (path.size() >= 2 && path[0] == '.' && path[1] == '/') {
         path.erase(0, 2);
     }
     // 空路径
-    if (path.empty()) return "";
+    if (path.empty())
+        return "";
     // 绝对路径检测（Unix '/' 或 Windows 驱动器路径 'X:...'）
     // BUG-MOD-1 fix: 原实现仅检测 'C:/' 形式，未拒绝 'C:foo'（Windows 驱动器相对路径），
     // 可能被 moduleLoader_ 解析到模块目录外的文件。修复：拒绝所有 'X:' 开头形式
-    //（X 为任意字符），覆盖 'C:/'、'C:foo'、'D:path' 等。
+    // （X 为任意字符），覆盖 'C:/'、'C:foo'、'D:path' 等。
     // 注：反斜杠已在上方统一转为正斜杠，无需再检测 '\\'。
     if (path[0] == '/' || (path.size() >= 2 && path[1] == ':')) {
         return "";
@@ -1810,10 +1866,11 @@ std::string Compiler::normalizeModulePath(const std::string& rawPath) const {
     size_t pos = 0;
     while (pos < path.size()) {
         size_t next = path.find('/', pos);
-        std::string segment = (next == std::string::npos)
-            ? path.substr(pos) : path.substr(pos, next - pos);
-        if (segment == "..") return "";
-        if (next == std::string::npos) break;
+        std::string segment = (next == std::string::npos) ? path.substr(pos) : path.substr(pos, next - pos);
+        if (segment == "..")
+            return "";
+        if (next == std::string::npos)
+            break;
         pos = next + 1;
     }
     return path;
@@ -1822,9 +1879,13 @@ std::string Compiler::normalizeModulePath(const std::string& rawPath) const {
 std::unique_ptr<Block> Compiler::loadAndParseModule(const std::string& modulePath, int line) {
     // 调用模块加载器获取源码
     std::string source = moduleLoader_(modulePath);
+    // AUDIT-P3.13 fix: 空模块源码（0 字节文件）是合法的空模块，不应报错。
+    // moduleLoader_ 回调应在文件不存在时抛异常而非返回空字符串。
+    // 对空源码返回空 AST，调用方（visitImportStmt）对空 statements 的预扫描/
+    // 导出收集/内联编译均为无副作用，moduleExports_ 自然得到空集合；
+    // 具名导入会因「未导出名称」报错（三后端一致）。
     if (source.empty()) {
-        error("无法加载模块: " + modulePath + "（文件不存在或为空）", line, 0);
-        return nullptr;
+        return std::make_unique<Block>(std::vector<std::shared_ptr<ASTNode>>{});
     }
     // 词法分析
     Lexer lexer;
@@ -1873,7 +1934,8 @@ void Compiler::preScanModuleGlobals(Block& moduleAst) {
     //   使用 lookupGlobalSlot(name) 检查导出名是否存在。不预扫描 FunDecl 会导致
     //   `import { greet } from "m"` 误报"模块未导出名称: greet"。
     for (auto& stmt : moduleAst.statements) {
-        if (!stmt) continue;
+        if (!stmt)
+            continue;
         switch (stmt->nodeType) {
         case NodeType::NODE_VAR_DECL:
             allocateGlobalSlot(static_cast<VarDecl*>(stmt.get())->name);
@@ -1899,12 +1961,14 @@ void Compiler::preScanModuleGlobals(Block& moduleAst) {
                 case NodeType::NODE_FUN_DECL:
                     allocateGlobalSlot(static_cast<FunDecl*>(decl)->name);
                     break;
-                default: break;
+                default:
+                    break;
                 }
             }
             break;
         }
-        default: break;
+        default:
+            break;
         }
     }
 }
@@ -1946,8 +2010,8 @@ void Compiler::visitTryStmt(TryStmt& node) {
         outerTryBeginIp = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
         finallyCatchOffsetPatch = chunk_.code.size();
-        chunk_.writeShort(0, node.line);  // 占位
-        ++tryDepth_;  // 外层 try 计入深度，使 break/continue 发射对应 OP_TRY_END
+        chunk_.writeShort(0, node.line); // 占位
+        ++tryDepth_;                     // 外层 try 计入深度，使 break/continue 发射对应 OP_TRY_END
     }
 
     // BUG-AUDIT-FINALLY-1: try-finally（无 catch）路径。
@@ -1955,212 +2019,212 @@ void Compiler::visitTryStmt(TryStmt& node) {
     // 外层 OP_TRY_BEGIN（finallyCatchOffset）会捕获异常 → 执行 finally → rethrow。
     // 跳过内层 try-catch 的全部字节码（OP_TRY_BEGIN/catchOffset/catch 变量绑定/cleanup）。
     if (!node.catchVarName.empty()) {
-    // 1. 发射 OP_TRY_BEGIN（catchOffset 占位，稍后回填）
-    size_t tryBeginIp = chunk_.code.size();
-    chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
-    size_t catchOffsetPatch = chunk_.code.size();
-    chunk_.writeShort(0, node.line);  // 占位
-
-    // 2. 编译 try 块
-    // P0-4 fix: 增加 tryDepth_，使 break/continue 能发射 OP_TRY_END
-    ++tryDepth_;
-    if (node.tryBlock) {
-        compileNode(node.tryBlock.get());
-    }
-    --tryDepth_;
-
-    // 3. try 块正常结束：弹出 try 处理器，跳过 catch 块
-    chunk_.writeOp(OpCode::OP_TRY_END, node.line);
-    size_t skipCatchJumpPatch = chunk_.code.size();
-    chunk_.writeOp(OpCode::OP_JUMP, node.line);
-    chunk_.writeShort(0, node.line);  // 占位
-
-    // 4. 回填 catchOffset
-    size_t catchIp = chunk_.code.size();
-    size_t catchOffset = catchIp - (tryBeginIp + 3);
-    // P1-3 fix: 检查 catchOffset 是否溢出 uint16_t
-    if (catchOffset > 65535) {
-        error("try 块过大，catch 偏移溢出 65535", node.line, 0);
-        return;
-    }
-    chunk_.code[catchOffsetPatch] = static_cast<uint8_t>(catchOffset & 0xFF);
-    chunk_.code[catchOffsetPatch + 1] = static_cast<uint8_t>((catchOffset >> 8) & 0xFF);
-
-    // 5. 在 catchIp 处：异常值已在栈顶，绑定到 catch 变量
-    // BUG 7a/7b/7c fix: catch 变量应 shadow 外层同名变量，不覆盖其值；
-    // 顶层 catch 变量在 catch 块结束后清理，不泄漏到外层作用域
-    auto savedCatchLocals = currentLocals_;
-    bool needCatchVarCleanup = false;
-    bool hasShadowedGlobal = false;
-    int shadowedGlobalSlot = -1;
-    std::string shadowedSaveName;
-    // BUG-AUDIT-EXC-CATCH-CLOSE fix: 记录 catch 变量 slot，catch 块退出时
-    // 发射 OP_CLOSE_UPVALUE 关闭指向该 slot 的 open upvalue，防止 slot 复用后
-    // 闭包读取错误值（对齐 IR 路径 leaveBlockScope 和 Interpreter closeCapturedVariables）。
-    int catchVarSlot = -1;
-
-    if (inFunction_) {
-        // 函数内：始终分配新局部变量槽位（shadow 外层同名变量，不覆盖其值）
-        int slot = static_cast<int>(currentLocals_.size());
-        if (slot > 255) {
-            error("函数局部变量数量超过限制", node.line, 0);
-            return;
-        }
-        currentLocals_[node.catchVarName] = slot;
-        peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
-        catchVarSlot = slot;
-        // BUG-IDE-12 fix: 记录 catch 变量 slot→name
-        if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
-            localSlotNames_.resize(slot + 1);
-        }
-        localSlotNames_[slot] = node.catchVarName;
-        chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
-        chunk_.write(static_cast<uint8_t>(slot), node.line);
-        chunk_.writeOp(OpCode::OP_POP, node.line);
-    } else {
-        // 顶层：使用块作用域变量（OP_DEFINE_VAR），不覆盖已有全局变量
-        shadowedGlobalSlot = (blockDepth_ > 0) ? -1 : lookupGlobalSlot(node.catchVarName);
-        if (shadowedGlobalSlot >= 0) {
-            // 保存被遮蔽的全局值到临时变量
-            hasShadowedGlobal = true;
-            shadowedSaveName = "__catch_save_" + std::to_string(blockSaveCounter_++) + "_" + node.catchVarName;
-            uint16_t saveIdx = identifierIndex(shadowedSaveName);
-            chunk_.writeOp(OpCode::OP_GET_GLOBAL, node.line);
-            chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
-            chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
-            chunk_.writeShort(saveIdx, node.line);
-            globalSlotAllocator_.removeMapping(node.catchVarName);  // B4: 临时遮蔽
-        }
-        // 定义 catch 变量
-        uint16_t nameIdx = identifierIndex(node.catchVarName);
-        chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
-        chunk_.writeShort(nameIdx, node.line);
-        needCatchVarCleanup = true;
-    }
-
-    // 6. 编译 catch 块
-    // BUG-TRY-1 fix: 若 catch 块内 throw，原实现跳过清理代码，导致 catch 变量泄漏、
-    // 被遮蔽的全局值未恢复。修复：用 OP_TRY_BEGIN 包装 catch 块，捕获内层 throw，
-    // 跳到 cleanupThrowIp 执行清理代码后 OP_THROW rethrow。
-    // 字节码布局：
-    //   catchIp: <bind exception>
-    //     OP_TRY_BEGIN <cleanupThrowOffset>
-    //     <catch block>
-    //     OP_TRY_END
-    //     <cleanup code>           ← 正常路径
-    //     OP_JUMP <afterCatch>
-    //   cleanupThrowIp:
-    //     <cleanup code>           ← 异常路径（复制）
-    //     OP_THROW                 ← rethrow（异常值已在栈顶）
-    //   afterCatch:
-    //
-    // cleanup 字节码栈平衡为 0（OP_DELETE_VAR 不影响栈；OP_GET_VAR+OP_SET_GLOBAL+OP_DELETE_VAR = 0），
-    // 异常值保持在栈顶，OP_THROW 可正确 rethrow。
-    bool needsCleanupWrap = needCatchVarCleanup || hasShadowedGlobal;
-    size_t innerTryBeginIp = 0;
-    size_t innerCatchOffsetPatch = std::string::npos;
-    if (needsCleanupWrap) {
-        innerTryBeginIp = chunk_.code.size();
+        // 1. 发射 OP_TRY_BEGIN（catchOffset 占位，稍后回填）
+        size_t tryBeginIp = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
-        innerCatchOffsetPatch = chunk_.code.size();
-        chunk_.writeShort(0, node.line);  // 占位，稍后回填为 cleanupThrowOffset
-        // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: cleanup wrap 的内层 OP_TRY_BEGIN
-        // 必须计入 tryDepth_，使 catch 块内的 break/continue 能发射对应的 OP_TRY_END，
-        // 避免 tryStack_ handler 残留导致后续异常被错误捕获到已失效的 cleanupThrowIp。
+        size_t catchOffsetPatch = chunk_.code.size();
+        chunk_.writeShort(0, node.line); // 占位
+
+        // 2. 编译 try 块
+        // P0-4 fix: 增加 tryDepth_，使 break/continue 能发射 OP_TRY_END
         ++tryDepth_;
-    }
-    if (node.catchBlock) {
-        compileNode(node.catchBlock.get());
-    }
-    if (needsCleanupWrap) {
-        // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: 对应的 --tryDepth_
+        if (node.tryBlock) {
+            compileNode(node.tryBlock.get());
+        }
         --tryDepth_;
+
+        // 3. try 块正常结束：弹出 try 处理器，跳过 catch 块
         chunk_.writeOp(OpCode::OP_TRY_END, node.line);
-    }
-
-    // 7. 清理顶层 catch 变量并恢复被遮蔽的全局值（正常路径）
-    // cleanup 字节码发射逻辑提取为 lambda，正常路径和异常路径各调用一次
-    auto emitCleanupBytecode = [&]() {
-        if (needCatchVarCleanup) {
-            uint16_t nameIdx = identifierIndex(node.catchVarName);
-            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-            chunk_.writeShort(nameIdx, node.line);
-        }
-        if (hasShadowedGlobal) {
-            uint16_t saveIdx = identifierIndex(shadowedSaveName);
-            chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
-            chunk_.writeShort(saveIdx, node.line);
-            chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
-            chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
-            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-            chunk_.writeShort(saveIdx, node.line);
-        }
-    };
-    emitCleanupBytecode();
-
-    size_t skipCleanupThrowJumpPatch = std::string::npos;
-    if (needsCleanupWrap) {
-        // 正常路径：跳过 cleanupThrow 块
-        skipCleanupThrowJumpPatch = chunk_.code.size();
+        size_t skipCatchJumpPatch = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP, node.line);
-        chunk_.writeShort(0, node.line);  // 占位，稍后回填为 afterCatch
+        chunk_.writeShort(0, node.line); // 占位
 
-        // 异常路径：cleanupThrowIp
-        size_t cleanupThrowIp = chunk_.code.size();
-        size_t cleanupThrowOffset = cleanupThrowIp - (innerTryBeginIp + 3);
-        if (cleanupThrowOffset > 65535) {
-            error("catch 块过大，cleanupThrow 偏移溢出 65535", node.line, 0);
-            // BUG-TRY-LEAK-1 fix: early return 前必须恢复编译期状态，否则
-            // globalSlotAllocator_ 状态不一致 + currentLocals_ 泄漏 catch 变量。
-            // 对齐 L1840-L1845 的正常路径恢复逻辑。
-            if (hasShadowedGlobal) {
-                globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);
-            }
-            currentLocals_ = std::move(savedCatchLocals);
+        // 4. 回填 catchOffset
+        size_t catchIp = chunk_.code.size();
+        size_t catchOffset = catchIp - (tryBeginIp + 3);
+        // P1-3 fix: 检查 catchOffset 是否溢出 uint16_t
+        if (catchOffset > 65535) {
+            error("try 块过大，catch 偏移溢出 65535", node.line, 0);
             return;
         }
-        chunk_.code[innerCatchOffsetPatch] = static_cast<uint8_t>(cleanupThrowOffset & 0xFF);
-        chunk_.code[innerCatchOffsetPatch + 1] = static_cast<uint8_t>((cleanupThrowOffset >> 8) & 0xFF);
+        chunk_.code[catchOffsetPatch] = static_cast<uint8_t>(catchOffset & 0xFF);
+        chunk_.code[catchOffsetPatch + 1] = static_cast<uint8_t>((catchOffset >> 8) & 0xFF);
 
-        // 异常路径：发射 cleanup 字节码 + OP_THROW rethrow
-        // 此时异常值在栈顶，cleanup 字节码栈平衡为 0，异常值保持栈顶
+        // 5. 在 catchIp 处：异常值已在栈顶，绑定到 catch 变量
+        // BUG 7a/7b/7c fix: catch 变量应 shadow 外层同名变量，不覆盖其值；
+        // 顶层 catch 变量在 catch 块结束后清理，不泄漏到外层作用域
+        auto savedCatchLocals = currentLocals_;
+        bool needCatchVarCleanup = false;
+        bool hasShadowedGlobal = false;
+        int shadowedGlobalSlot = -1;
+        std::string shadowedSaveName;
+        // BUG-AUDIT-EXC-CATCH-CLOSE fix: 记录 catch 变量 slot，catch 块退出时
+        // 发射 OP_CLOSE_UPVALUE 关闭指向该 slot 的 open upvalue，防止 slot 复用后
+        // 闭包读取错误值（对齐 IR 路径 leaveBlockScope 和 Interpreter closeCapturedVariables）。
+        int catchVarSlot = -1;
+
+        if (inFunction_) {
+            // 函数内：始终分配新局部变量槽位（shadow 外层同名变量，不覆盖其值）
+            int slot = static_cast<int>(currentLocals_.size());
+            if (slot > 255) {
+                error("函数局部变量数量超过限制", node.line, 0);
+                return;
+            }
+            currentLocals_[node.catchVarName] = slot;
+            peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
+            catchVarSlot = slot;
+            // BUG-IDE-12 fix: 记录 catch 变量 slot→name
+            if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
+                localSlotNames_.resize(slot + 1);
+            }
+            localSlotNames_[slot] = node.catchVarName;
+            chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
+            chunk_.write(static_cast<uint8_t>(slot), node.line);
+            chunk_.writeOp(OpCode::OP_POP, node.line);
+        } else {
+            // 顶层：使用块作用域变量（OP_DEFINE_VAR），不覆盖已有全局变量
+            shadowedGlobalSlot = (blockDepth_ > 0) ? -1 : lookupGlobalSlot(node.catchVarName);
+            if (shadowedGlobalSlot >= 0) {
+                // 保存被遮蔽的全局值到临时变量
+                hasShadowedGlobal = true;
+                shadowedSaveName = "__catch_save_" + std::to_string(blockSaveCounter_++) + "_" + node.catchVarName;
+                uint16_t saveIdx = identifierIndex(shadowedSaveName);
+                chunk_.writeOp(OpCode::OP_GET_GLOBAL, node.line);
+                chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
+                chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+                chunk_.writeShort(saveIdx, node.line);
+                globalSlotAllocator_.removeMapping(node.catchVarName); // B4: 临时遮蔽
+            }
+            // 定义 catch 变量
+            uint16_t nameIdx = identifierIndex(node.catchVarName);
+            chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
+            chunk_.writeShort(nameIdx, node.line);
+            needCatchVarCleanup = true;
+        }
+
+        // 6. 编译 catch 块
+        // BUG-TRY-1 fix: 若 catch 块内 throw，原实现跳过清理代码，导致 catch 变量泄漏、
+        // 被遮蔽的全局值未恢复。修复：用 OP_TRY_BEGIN 包装 catch 块，捕获内层 throw，
+        // 跳到 cleanupThrowIp 执行清理代码后 OP_THROW rethrow。
+        // 字节码布局：
+        //   catchIp: <bind exception>
+        //     OP_TRY_BEGIN <cleanupThrowOffset>
+        //     <catch block>
+        //     OP_TRY_END
+        //     <cleanup code>           ← 正常路径
+        //     OP_JUMP <afterCatch>
+        //   cleanupThrowIp:
+        //     <cleanup code>           ← 异常路径（复制）
+        //     OP_THROW                 ← rethrow（异常值已在栈顶）
+        //   afterCatch:
+        //
+        // cleanup 字节码栈平衡为 0（OP_DELETE_VAR 不影响栈；OP_GET_VAR+OP_SET_GLOBAL+OP_DELETE_VAR = 0），
+        // 异常值保持在栈顶，OP_THROW 可正确 rethrow。
+        bool needsCleanupWrap = needCatchVarCleanup || hasShadowedGlobal;
+        size_t innerTryBeginIp = 0;
+        size_t innerCatchOffsetPatch = std::string::npos;
+        if (needsCleanupWrap) {
+            innerTryBeginIp = chunk_.code.size();
+            chunk_.writeOp(OpCode::OP_TRY_BEGIN, node.line);
+            innerCatchOffsetPatch = chunk_.code.size();
+            chunk_.writeShort(0, node.line); // 占位，稍后回填为 cleanupThrowOffset
+            // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: cleanup wrap 的内层 OP_TRY_BEGIN
+            // 必须计入 tryDepth_，使 catch 块内的 break/continue 能发射对应的 OP_TRY_END，
+            // 避免 tryStack_ handler 残留导致后续异常被错误捕获到已失效的 cleanupThrowIp。
+            ++tryDepth_;
+        }
+        if (node.catchBlock) {
+            compileNode(node.catchBlock.get());
+        }
+        if (needsCleanupWrap) {
+            // BUG-AUDIT-EXC-CLEANUP-TRYDEPTH fix: 对应的 --tryDepth_
+            --tryDepth_;
+            chunk_.writeOp(OpCode::OP_TRY_END, node.line);
+        }
+
+        // 7. 清理顶层 catch 变量并恢复被遮蔽的全局值（正常路径）
+        // cleanup 字节码发射逻辑提取为 lambda，正常路径和异常路径各调用一次
+        auto emitCleanupBytecode = [&]() {
+            if (needCatchVarCleanup) {
+                uint16_t nameIdx = identifierIndex(node.catchVarName);
+                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                chunk_.writeShort(nameIdx, node.line);
+            }
+            if (hasShadowedGlobal) {
+                uint16_t saveIdx = identifierIndex(shadowedSaveName);
+                chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
+                chunk_.writeShort(saveIdx, node.line);
+                chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
+                chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
+                chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
+                chunk_.writeShort(saveIdx, node.line);
+            }
+        };
         emitCleanupBytecode();
-        chunk_.writeOp(OpCode::OP_THROW, node.line);
-    }
 
-    // restoreMapping 是编译期操作（修改 slots_ map），不影响运行时字节码，只调用一次
-    if (hasShadowedGlobal) {
-        globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);  // B4: 恢复遮蔽
-    }
+        size_t skipCleanupThrowJumpPatch = std::string::npos;
+        if (needsCleanupWrap) {
+            // 正常路径：跳过 cleanupThrow 块
+            skipCleanupThrowJumpPatch = chunk_.code.size();
+            chunk_.writeOp(OpCode::OP_JUMP, node.line);
+            chunk_.writeShort(0, node.line); // 占位，稍后回填为 afterCatch
 
-    // BUG-AUDIT-EXC-CATCH-CLOSE fix: 函数内 catch 变量 slot 在恢复 currentLocals_ 前
-    // 必须发射 OP_CLOSE_UPVALUE 关闭指向该 slot 的 open upvalue。否则后续代码声明新
-    // 局部变量会复用该 slot 覆盖原值，逃逸的闭包通过 upvalue 读取到错误值（等价悬垂引用）。
-    // 对齐 IR 路径 leaveBlockScope（IR.cpp:439-441）和 Interpreter CatchEnvGuard 析构
-    // 调用 closeCapturedVariables 的语义。顶层 catch 变量用 OP_DELETE_VAR 清理，无需此处理。
-    if (inFunction_ && catchVarSlot >= 0 && catchVarSlot <= 255) {
-        chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
-        chunk_.write(static_cast<uint8_t>(catchVarSlot), node.line);
-    }
+            // 异常路径：cleanupThrowIp
+            size_t cleanupThrowIp = chunk_.code.size();
+            size_t cleanupThrowOffset = cleanupThrowIp - (innerTryBeginIp + 3);
+            if (cleanupThrowOffset > 65535) {
+                error("catch 块过大，cleanupThrow 偏移溢出 65535", node.line, 0);
+                // BUG-TRY-LEAK-1 fix: early return 前必须恢复编译期状态，否则
+                // globalSlotAllocator_ 状态不一致 + currentLocals_ 泄漏 catch 变量。
+                // 对齐 L1840-L1845 的正常路径恢复逻辑。
+                if (hasShadowedGlobal) {
+                    globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);
+                }
+                currentLocals_ = std::move(savedCatchLocals);
+                return;
+            }
+            chunk_.code[innerCatchOffsetPatch] = static_cast<uint8_t>(cleanupThrowOffset & 0xFF);
+            chunk_.code[innerCatchOffsetPatch + 1] = static_cast<uint8_t>((cleanupThrowOffset >> 8) & 0xFF);
 
-    // 恢复 currentLocals_，使 catch 变量不泄漏到外层作用域
-    currentLocals_ = std::move(savedCatchLocals);
+            // 异常路径：发射 cleanup 字节码 + OP_THROW rethrow
+            // 此时异常值在栈顶，cleanup 字节码栈平衡为 0，异常值保持栈顶
+            emitCleanupBytecode();
+            chunk_.writeOp(OpCode::OP_THROW, node.line);
+        }
 
-    // 8. 回填跳过 catch 块的跳转目标（OP_JUMP 使用绝对地址）
-    size_t afterCatch = chunk_.code.size();
-    // P1-3 fix: 检查 afterCatch 是否溢出 uint16_t
-    if (afterCatch > 65535) {
-        error("代码量过大，跳转目标溢出 65535", node.line, 0);
-        return;
-    }
-    uint16_t afterCatchTarget = static_cast<uint16_t>(afterCatch);
-    chunk_.code[skipCatchJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
-    chunk_.code[skipCatchJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
-    if (skipCleanupThrowJumpPatch != std::string::npos) {
-        chunk_.code[skipCleanupThrowJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
-        chunk_.code[skipCleanupThrowJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
-    }
-    }  // end if (!node.catchVarName.empty())
+        // restoreMapping 是编译期操作（修改 slots_ map），不影响运行时字节码，只调用一次
+        if (hasShadowedGlobal) {
+            globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot); // B4: 恢复遮蔽
+        }
+
+        // BUG-AUDIT-EXC-CATCH-CLOSE fix: 函数内 catch 变量 slot 在恢复 currentLocals_ 前
+        // 必须发射 OP_CLOSE_UPVALUE 关闭指向该 slot 的 open upvalue。否则后续代码声明新
+        // 局部变量会复用该 slot 覆盖原值，逃逸的闭包通过 upvalue 读取到错误值（等价悬垂引用）。
+        // 对齐 IR 路径 leaveBlockScope（IR.cpp:439-441）和 Interpreter CatchEnvGuard 析构
+        // 调用 closeCapturedVariables 的语义。顶层 catch 变量用 OP_DELETE_VAR 清理，无需此处理。
+        if (inFunction_ && catchVarSlot >= 0 && catchVarSlot <= 255) {
+            chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+            chunk_.write(static_cast<uint8_t>(catchVarSlot), node.line);
+        }
+
+        // 恢复 currentLocals_，使 catch 变量不泄漏到外层作用域
+        currentLocals_ = std::move(savedCatchLocals);
+
+        // 8. 回填跳过 catch 块的跳转目标（OP_JUMP 使用绝对地址）
+        size_t afterCatch = chunk_.code.size();
+        // P1-3 fix: 检查 afterCatch 是否溢出 uint16_t
+        if (afterCatch > 65535) {
+            error("代码量过大，跳转目标溢出 65535", node.line, 0);
+            return;
+        }
+        uint16_t afterCatchTarget = static_cast<uint16_t>(afterCatch);
+        chunk_.code[skipCatchJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
+        chunk_.code[skipCatchJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
+        if (skipCleanupThrowJumpPatch != std::string::npos) {
+            chunk_.code[skipCleanupThrowJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
+            chunk_.code[skipCleanupThrowJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
+        }
+    } // end if (!node.catchVarName.empty())
     else {
         // try-finally（无 catch）：只编译 try 块，不发射内层 try-catch。
         // 外层 OP_TRY_BEGIN（finallyCatchOffset）会捕获异常 → 执行 finally → rethrow。
@@ -2172,7 +2236,7 @@ void Compiler::visitTryStmt(TryStmt& node) {
     // 9. BUG-AUDIT-FINALLY-1: finally 块字节码
     if (node.finallyBlock) {
         --tryDepth_;
-        chunk_.writeOp(OpCode::OP_TRY_END, node.line);  // 弹出外层 try 处理器
+        chunk_.writeOp(OpCode::OP_TRY_END, node.line); // 弹出外层 try 处理器
 
         // 正常路径：执行 finally
         compileNode(node.finallyBlock.get());
@@ -2180,7 +2244,7 @@ void Compiler::visitTryStmt(TryStmt& node) {
         // 跳过异常路径
         size_t skipFinallyExceptionJumpPatch = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP, node.line);
-        chunk_.writeShort(0, node.line);  // 占位
+        chunk_.writeShort(0, node.line); // 占位
 
         // 异常路径：finallyCatchIp
         size_t finallyCatchIp = chunk_.code.size();
@@ -2252,14 +2316,14 @@ void Compiler::visitBlock(Block& node) {
 
         // 收集块作用域中将要声明的变量名，以便在编译前保存被遮蔽的全局变量
         std::vector<std::pair<std::string, std::string>> shadowedSaves; // (blockVarName, tempSaveName)
-        std::vector<std::pair<std::string, int>> removedSlots; // H1: (name, slot) 用于恢复
+        std::vector<std::pair<std::string, int>> removedSlots;          // H1: (name, slot) 用于恢复
         for (auto& stmt : node.statements) {
             if (stmt && stmt->nodeType == NodeType::NODE_VAR_DECL) {
                 VarDecl* vd = static_cast<VarDecl*>(stmt.get());
                 int gsSlot = lookupGlobalSlot(vd->name);
                 if (gsSlot >= 0) {
-                    std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_"
-                        + std::to_string(blockSaveCounter_++) + "_" + vd->name;
+                    std::string saveName = "__blk_save_" + std::to_string(blockDepth_) + "_" +
+                                           std::to_string(blockSaveCounter_++) + "_" + vd->name;
                     shadowedSaves.push_back({vd->name, saveName});
                     // A2: 使用槽位操作码保存全局变量值
                     uint16_t saveIdx = identifierIndex(saveName);
@@ -2275,7 +2339,7 @@ void Compiler::visitBlock(Block& node) {
         // 使块内 compileVarDecl/compileVarRef/compileAssignment 不命中全局槽位，
         // 改用 OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR → globals_ 路径
         for (auto& [varName, saveName] : shadowedSaves) {
-            int slot = globalSlotAllocator_.removeMapping(varName);  // B4: 临时遮蔽
+            int slot = globalSlotAllocator_.removeMapping(varName); // B4: 临时遮蔽
             if (slot >= 0) {
                 removedSlots.push_back({varName, slot});
             }
@@ -2300,7 +2364,7 @@ void Compiler::visitBlock(Block& node) {
 
         // H1 fix: 恢复被移除的全局槽位条目（必须在恢复字节码之前，使 lookupGlobalSlot 正确）
         for (auto& [name, slot] : removedSlots) {
-            globalSlotAllocator_.restoreMapping(name, slot);  // B4: 恢复遮蔽
+            globalSlotAllocator_.restoreMapping(name, slot); // B4: 恢复遮蔽
         }
 
         // 清理块作用域变量并恢复被遮蔽的全局变量
@@ -2336,7 +2400,7 @@ void Compiler::visitBlock(Block& node) {
         // leaveBlockScope（IR.cpp:439-441）和 Interpreter 的 closeCapturedVariables。
         // 原实现注释"VM 帧退出时自动释放"是误解——closeUpvaluesFrom 在 OP_RETURN 时
         // 关闭 upvalue 产生的是函数返回时刻的快照（by-reference），与块退出快照语义不一致。
-        size_t slotBase = currentLocals_.size();  // 块内第一个新 slot 的编号
+        size_t slotBase = currentLocals_.size(); // 块内第一个新 slot 的编号
         for (auto& stmt : node.statements) {
             compileStatement(stmt.get());
         }
@@ -2345,7 +2409,7 @@ void Compiler::visitBlock(Block& node) {
             chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
             chunk_.write(static_cast<uint8_t>(slotBase), node.line);
         }
-        currentLocals_.swap(savedLocals);  // P28: swap
+        currentLocals_.swap(savedLocals); // P28: swap
     }
     return;
 }
@@ -2395,7 +2459,8 @@ void Compiler::visitIndexAccess(IndexAccess& node) {
 void Compiler::visitIndexAssign(IndexAssign& node) {
     // 根据左值对象类型选择赋值策略
     VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
-                     ? static_cast<VarRef*>(node.object.get()) : nullptr;
+                         ? static_cast<VarRef*>(node.object.get())
+                         : nullptr;
 
     if (objVar) {
         // 简单路径：arr[i] = val（基是 VarRef）
@@ -2419,9 +2484,11 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
     // M1 fix: 嵌套索引赋值（2 层）
     // 检测 node.object 是否是 IndexAccess(VarRef) 或 MemberAccess(VarRef)
     IndexAccess* outerIdx = (node.object && node.object->nodeType == NodeType::NODE_INDEX_ACCESS)
-                            ? static_cast<IndexAccess*>(node.object.get()) : nullptr;
+                                ? static_cast<IndexAccess*>(node.object.get())
+                                : nullptr;
     MemberAccess* outerMem = (node.object && node.object->nodeType == NodeType::NODE_MEMBER_ACCESS)
-                             ? static_cast<MemberAccess*>(node.object.get()) : nullptr;
+                                 ? static_cast<MemberAccess*>(node.object.get())
+                                 : nullptr;
     VarRef* baseVar = nullptr;
     if (outerIdx && outerIdx->object && outerIdx->object->nodeType == NodeType::NODE_VAR_REF)
         baseVar = static_cast<VarRef*>(outerIdx->object.get());
@@ -2519,16 +2586,17 @@ void Compiler::visitClassDecl(ClassDecl& node) {
     if (!node.superClassName.empty()) {
         auto it = classFieldNames_.find(node.superClassName);
         if (it != classFieldNames_.end()) {
-            allFieldNames = it->second;  // 父类字段在前
+            allFieldNames = it->second; // 父类字段在前
         } else {
             // C-P2-9 fix: 父类未找到时报错，而非静默丢失继承字段（导致 slot 布局错误）
             error("类 '" + node.name + "' 的父类 '" + node.superClassName +
-                  "' 未定义（不支持前向引用，请确保父类在子类之前声明）", node.line, node.column);
+                      "' 未定义（不支持前向引用，请确保父类在子类之前声明）",
+                  node.line, node.column);
         }
     }
     for (const auto& fn : ownFieldNames) {
         if (std::find(allFieldNames.begin(), allFieldNames.end(), fn) == allFieldNames.end()) {
-            allFieldNames.push_back(fn);  // 子类字段在后（跳过覆盖的同名字段）
+            allFieldNames.push_back(fn); // 子类字段在后（跳过覆盖的同名字段）
         }
     }
 
@@ -2537,7 +2605,8 @@ void Compiler::visitClassDecl(ClassDecl& node) {
 
     // 先编译所有方法为独立 chunk
     for (auto& member : node.members) {
-        if (member->nodeType != NodeType::NODE_FUN_DECL) continue;
+        if (member->nodeType != NodeType::NODE_FUN_DECL)
+            continue;
         FunDecl* funDecl = static_cast<FunDecl*>(member.get());
         std::string methodKey = node.name + "." + funDecl->name;
         BytecodeChunk savedChunk = std::move(chunk_);
@@ -2546,7 +2615,7 @@ void Compiler::visitClassDecl(ClassDecl& node) {
         std::unordered_map<std::string, int> savedOuterLocals = std::move(outerLocals_);
         bool savedInFunction = inFunction_;
         int savedPeakLocals = peakLocals_;
-        std::string savedClassName = currentClassName_;  // B1 fix
+        std::string savedClassName = currentClassName_; // B1 fix
         // C-P2-10 fix: 保存当前函数的 upvalue 列表和名称映射，方法编译不应污染外层
         std::vector<UpvalueDesc> savedCurrentUpvalues = std::move(currentUpvalues_);
         std::unordered_map<std::string, int> savedCurrentUpvalueNames = std::move(currentUpvalueNames_);
@@ -2557,19 +2626,19 @@ void Compiler::visitClassDecl(ClassDecl& node) {
         int savedTryDepth = tryDepth_;
 
         chunk_ = BytecodeChunk(methodKey, static_cast<int>(funDecl->params.size()));
-        chunk_.reserveCode(256);  // C21: 预分配方法字节码空间
+        chunk_.reserveCode(256); // C21: 预分配方法字节码空间
         // F10: 设置必需参数个数
         chunk_.requiredArity = funDecl->requiredParamCount;
         varIndex_.clear();
         currentLocals_.clear();
-        currentUpvalues_.clear();  // C-P2-10 fix: 方法编译使用独立的 upvalue 列表
+        currentUpvalues_.clear(); // C-P2-10 fix: 方法编译使用独立的 upvalue 列表
         currentUpvalueNames_.clear();
-        localSlotNames_.clear();  // BUG-IDE-12 fix: 清空槽位名映射
-        currentClassName_ = node.name;  // B1 fix: 记录当前类名供 super 使用
+        localSlotNames_.clear();       // BUG-IDE-12 fix: 清空槽位名映射
+        currentClassName_ = node.name; // B1 fix: 记录当前类名供 super 使用
         // O5: 如果类定义在函数内，设置 outerLocals_ 以检测不支持的闭包捕获
         if (savedInFunction) {
             outerLocals_ = savedLocals;
-            outerUpvalues_ = savedCurrentUpvalues;  // C-P2-10 fix: 与 visitFunDecl 一致
+            outerUpvalues_ = savedCurrentUpvalues; // C-P2-10 fix: 与 visitFunDecl 一致
             outerUpvalueNames_ = savedCurrentUpvalueNames;
         } else {
             outerLocals_.clear();
@@ -2583,23 +2652,23 @@ void Compiler::visitClassDecl(ClassDecl& node) {
 
         // 局部变量映射：slot 0 = this，slot 1..N = 字段（含继承字段），slot N+1.. = 参数
         int slot = 0;
-        currentLocals_["this"] = slot++;  // slot 0: this
-        localSlotNames_.push_back("this");  // BUG-IDE-12 fix
+        currentLocals_["this"] = slot++;   // slot 0: this
+        localSlotNames_.push_back("this"); // BUG-IDE-12 fix
         for (const auto& fieldName : allFieldNames) {
-            currentLocals_[fieldName] = slot++;  // slot 1..N: 实例字段（含继承）
-            localSlotNames_.push_back(fieldName);  // BUG-IDE-12 fix
+            currentLocals_[fieldName] = slot++;   // slot 1..N: 实例字段（含继承）
+            localSlotNames_.push_back(fieldName); // BUG-IDE-12 fix
         }
         for (int i = 0; i < static_cast<int>(funDecl->params.size()); ++i) {
-            currentLocals_[funDecl->params[i]] = slot++;  // slot N+1..: 参数
-            localSlotNames_.push_back(funDecl->params[i]);  // BUG-IDE-12 fix
+            currentLocals_[funDecl->params[i]] = slot++;   // slot N+1..: 参数
+            localSlotNames_.push_back(funDecl->params[i]); // BUG-IDE-12 fix
         }
         peakLocals_ = slot;
         // C-P1-2 fix: 方法局部变量槽位上限 255（uint8_t 编码限制，含 this/字段/参数）
         // C-P2-3/4 fix: >256 改为 >255（slot==256 截断为 0 与 this 碰撞），并提前 continue 避免用截断 slot 继续编译
         if (slot > 255) {
-            error("类 '" + node.name + "' 方法 '" + funDecl->name +
-                  "' 局部变量槽位超过限制（最大 256，当前 " + std::to_string(slot) +
-                  "，含 this/字段/参数）", funDecl->line, 0);
+            error("类 '" + node.name + "' 方法 '" + funDecl->name + "' 局部变量槽位超过限制（最大 256，当前 " +
+                      std::to_string(slot) + "，含 this/字段/参数）",
+                  funDecl->line, 0);
             // 恢复上下文并跳过此方法
             chunk_ = std::move(savedChunk);
             varIndex_ = std::move(savedVarIndex);
@@ -2642,13 +2711,13 @@ void Compiler::visitClassDecl(ClassDecl& node) {
                 bool isConst = false;
 
                 if (dv->nodeType == NodeType::NODE_NUMBER_LITERAL) {
-                    constVal = static_cast<const NumberLiteral*>(dv)->getValue();  // A1 fix: getValue()
+                    constVal = static_cast<const NumberLiteral*>(dv)->getValue(); // A1 fix: getValue()
                     isConst = true;
                 } else if (dv->nodeType == NodeType::NODE_STRING_LITERAL) {
-                    constVal = static_cast<const StringLiteral*>(dv)->getValue();  // A1 fix: getValue()
+                    constVal = static_cast<const StringLiteral*>(dv)->getValue(); // A1 fix: getValue()
                     isConst = true;
                 } else if (dv->nodeType == NodeType::NODE_BOOL_LITERAL) {
-                    constVal = static_cast<const BoolLiteral*>(dv)->getValue();  // A1 fix: getValue()
+                    constVal = static_cast<const BoolLiteral*>(dv)->getValue(); // A1 fix: getValue()
                     isConst = true;
                 } else if (dv->nodeType == NodeType::NODE_NULL_LITERAL) {
                     constVal = Value::nullValue();
@@ -2659,7 +2728,8 @@ void Compiler::visitClassDecl(ClassDecl& node) {
                     int negateCount = 0;
                     while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
                         const auto* unary = static_cast<const UnaryOp*>(cur);
-                        if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) break;
+                        if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
+                            break;
                         ++negateCount;
                         cur = unary->operand.get();
                     }
@@ -2693,7 +2763,7 @@ void Compiler::visitClassDecl(ClassDecl& node) {
         outerLocals_ = std::move(savedOuterLocals);
         inFunction_ = savedInFunction;
         peakLocals_ = savedPeakLocals;
-        currentClassName_ = savedClassName;  // B1 fix
+        currentClassName_ = savedClassName; // B1 fix
         // C-P2-10 fix: 恢复外层 upvalue 状态
         currentUpvalues_ = std::move(savedCurrentUpvalues);
         currentUpvalueNames_ = std::move(savedCurrentUpvalueNames);
@@ -2707,11 +2777,12 @@ void Compiler::visitClassDecl(ClassDecl& node) {
     // 主 chunk 中：发射 OP_CLASS_NEW（0 参数构造，字段由 OP_INIT_FIELD 设置）
     chunk_.writeOp(OpCode::OP_CLASS_NEW, node.line);
     chunk_.writeShort(nameIdx, node.line);
-    chunk_.write(static_cast<uint8_t>(0), node.line);  // argCount = 0（字段由 OP_INIT_FIELD 初始化）
+    chunk_.write(static_cast<uint8_t>(0), node.line); // argCount = 0（字段由 OP_INIT_FIELD 初始化）
 
     // 此时栈顶是刚创建的空实例，发射 OP_INIT_FIELD 设置每个字段的默认值
     for (auto& member : node.members) {
-        if (member->nodeType != NodeType::NODE_VAR_DECL) continue;
+        if (member->nodeType != NodeType::NODE_VAR_DECL)
+            continue;
         VarDecl* varDecl = static_cast<VarDecl*>(member.get());
         // 编译字段默认值表达式
         if (varDecl->initializer) {
@@ -2731,7 +2802,7 @@ void Compiler::visitClassDecl(ClassDecl& node) {
     chunk_.writeOp(OpCode::OP_DEFINE_CLASS, node.line);
     chunk_.writeShort(nameIdx, node.line);
     if (node.superClassName.empty()) {
-        chunk_.writeShort(0xFFFF, node.line);  // 无父类标记
+        chunk_.writeShort(0xFFFF, node.line); // 无父类标记
     } else {
         uint16_t superIdx = identifierIndex(node.superClassName);
         chunk_.writeShort(superIdx, node.line);
@@ -2755,7 +2826,8 @@ void Compiler::visitMemberAccess(MemberAccess& node) {
 void Compiler::visitMemberAssign(MemberAssign& node) {
     // 根据左值对象类型选择赋值策略
     VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
-                     ? static_cast<VarRef*>(node.object.get()) : nullptr;
+                         ? static_cast<VarRef*>(node.object.get())
+                         : nullptr;
 
     if (objVar) {
         // 简单路径：obj.field = val（基是 VarRef）
@@ -2781,9 +2853,11 @@ void Compiler::visitMemberAssign(MemberAssign& node) {
     // M1 fix: 嵌套成员赋值（2 层）
     // 检测 node.object 是否是 IndexAccess(VarRef) 或 MemberAccess(VarRef)
     IndexAccess* outerIdx = (node.object && node.object->nodeType == NodeType::NODE_INDEX_ACCESS)
-                            ? static_cast<IndexAccess*>(node.object.get()) : nullptr;
+                                ? static_cast<IndexAccess*>(node.object.get())
+                                : nullptr;
     MemberAccess* outerMem = (node.object && node.object->nodeType == NodeType::NODE_MEMBER_ACCESS)
-                             ? static_cast<MemberAccess*>(node.object.get()) : nullptr;
+                                 ? static_cast<MemberAccess*>(node.object.get())
+                                 : nullptr;
     VarRef* baseVar = nullptr;
     if (outerIdx && outerIdx->object && outerIdx->object->nodeType == NodeType::NODE_VAR_REF)
         baseVar = static_cast<VarRef*>(outerIdx->object.get());
@@ -2850,10 +2924,11 @@ void Compiler::visitMethodCall(MethodCall& node) {
         return;
     }
     // 检查接收者是否为简单变量（VarRef），用于 writeBack
-    uint16_t receiverVarIdx = 0xFFFF;  // 0xFFFF = 无全局变量 writeBack
-    uint8_t receiverLocalSlot = 0xFF;  // 0xFF = 无局部变量 writeBack
+    uint16_t receiverVarIdx = 0xFFFF; // 0xFFFF = 无全局变量 writeBack
+    uint8_t receiverLocalSlot = 0xFF; // 0xFF = 无局部变量 writeBack
     VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
-                     ? static_cast<VarRef*>(node.object.get()) : nullptr;
+                         ? static_cast<VarRef*>(node.object.get())
+                         : nullptr;
     if (objVar) {
         auto localIt = currentLocals_.find(objVar->name);
         if (localIt == currentLocals_.end()) {
@@ -2866,9 +2941,8 @@ void Compiler::visitMethodCall(MethodCall& node) {
     }
 
     // H4 fix: super.method() 的接收者是 this（始终在 slot 0），设置写回目标
-    if (!objVar && node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR
-        && inFunction_) {
-        receiverLocalSlot = 0;  // slot 0 = this
+    if (!objVar && node.object && node.object->nodeType == NodeType::NODE_SUPER_EXPR && inFunction_) {
+        receiverLocalSlot = 0; // slot 0 = this
     }
 
     // B6 fix: 如果接收者是 IndexAccess，预缓存索引值避免写回时重复求值
@@ -2880,7 +2954,7 @@ void Compiler::visitMethodCall(MethodCall& node) {
             cachedIndexVar = "__wb_idx_" + std::to_string(writebackCounter_++);
             compileNode(ia->index.get());
             uint16_t cacheIdx = identifierIndex(cachedIndexVar);
-            chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);  // #9 fix: DEFINE 而非 SET（首次创建变量）
+            chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line); // #9 fix: DEFINE 而非 SET（首次创建变量）
             chunk_.writeShort(cacheIdx, node.line);
         }
     }
@@ -2888,11 +2962,11 @@ void Compiler::visitMethodCall(MethodCall& node) {
     // B6 fix: 如果索引已缓存，手动内联 IndexAccess 编译（用缓存值代替重新求值）
     if (!cachedIndexVar.empty()) {
         auto* ia = static_cast<IndexAccess*>(node.object.get());
-        compileNode(ia->object.get());  // push base (e.g., arr)
+        compileNode(ia->object.get()); // push base (e.g., arr)
         uint16_t cacheIdx = identifierIndex(cachedIndexVar);
         chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
-        chunk_.writeShort(cacheIdx, node.line);  // push cached index
-        chunk_.writeOp(OpCode::OP_INDEX_GET, node.line);  // base[cachedIndex]
+        chunk_.writeShort(cacheIdx, node.line);          // push cached index
+        chunk_.writeOp(OpCode::OP_INDEX_GET, node.line); // base[cachedIndex]
     } else {
         compileNode(node.object.get());
     }
@@ -2906,8 +2980,8 @@ void Compiler::visitMethodCall(MethodCall& node) {
     chunk_.writeOp(isSuperCall ? OpCode::OP_SUPER_CALL : OpCode::OP_METHOD_CALL, node.line);
     chunk_.writeShort(nameIdx, node.line);
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
-    chunk_.writeShort(receiverVarIdx, node.line);  // 接收者全局变量名索引（0xFFFF = 无全局 writeBack）
-    chunk_.write(receiverLocalSlot, node.line);    // 接收者局部变量 slot（0xFF = 无局部 writeBack）
+    chunk_.writeShort(receiverVarIdx, node.line); // 接收者全局变量名索引（0xFFFF = 无全局 writeBack）
+    chunk_.write(receiverLocalSlot, node.line);   // 接收者局部变量 slot（0xFF = 无局部 writeBack）
     if (isSuperCall) {
         // B1 fix: 编码当前类名索引，VM 用它查找父类（而非运行时实例类名）
         uint16_t classIdx = identifierIndex(currentClassName_);
@@ -3001,7 +3075,7 @@ void Compiler::visitSuperExpr(SuperExpr& node) {
     } else {
         // 方法上下文：emit OP_GET_LOCAL 0（this 槽）
         chunk_.writeOp(OpCode::OP_GET_LOCAL, node.line);
-        chunk_.write(0, node.line);  // slot 0 = this
+        chunk_.write(0, node.line); // slot 0 = this
     }
     return;
 }
@@ -3032,8 +3106,7 @@ void Compiler::emitConstant(const Value& val, int line) {
     }
 }
 
-bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
-                              Value& result, int line) {
+bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right, Value& result, int line) {
     // D8 fix: 使用 extractConstant 递归提取常量值，支持嵌套常量表达式（如 (1+2)*3）
     Value lv, rv;
     if (!extractConstant(left, lv, line) || !extractConstant(right, rv, line)) {
@@ -3080,26 +3153,44 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
             return true;
         case BinOpType::BIN_DIV: {
             double divisor = useFloat ? rd : static_cast<double>(ri);
-            if (divisor == 0) return false;  // 除零不折叠，保留运行时错误
+            if (divisor == 0)
+                return false; // 除零不折叠，保留运行时错误
             // B3 fix: INT64_MIN / -1 = 溢出 UB，不折叠
-            if (!useFloat && OverflowCheck::divOverflow(li, ri)) return false;
+            if (!useFloat && OverflowCheck::divOverflow(li, ri))
+                return false;
             result = useFloat ? Value(ld / rd) : Value(li / ri);
             return true;
         }
         case BinOpType::BIN_MOD:
-            if (!useFloat && ri == 0) return false;
+            if (!useFloat && ri == 0)
+                return false;
             // B3 fix: INT64_MIN % -1 = 溢出 UB，不折叠
-            if (!useFloat && OverflowCheck::modOverflow(li, ri)) return false;
-            if (useFloat) return false;
+            if (!useFloat && OverflowCheck::modOverflow(li, ri))
+                return false;
+            if (useFloat)
+                return false;
             result = Value(li % ri);
             return true;
-        case BinOpType::BIN_EQ:  result = Value(useFloat ? (ld == rd) : (li == ri)); return true;
-        case BinOpType::BIN_NEQ: result = Value(useFloat ? (ld != rd) : (li != ri)); return true;
-        case BinOpType::BIN_LT:  result = Value(useFloat ? (ld < rd)  : (li < ri));  return true;
-        case BinOpType::BIN_GT:  result = Value(useFloat ? (ld > rd)  : (li > ri));  return true;
-        case BinOpType::BIN_LTE: result = Value(useFloat ? (ld <= rd) : (li <= ri)); return true;
-        case BinOpType::BIN_GTE: result = Value(useFloat ? (ld >= rd) : (li >= ri)); return true;
-        default: break;
+        case BinOpType::BIN_EQ:
+            result = Value(useFloat ? (ld == rd) : (li == ri));
+            return true;
+        case BinOpType::BIN_NEQ:
+            result = Value(useFloat ? (ld != rd) : (li != ri));
+            return true;
+        case BinOpType::BIN_LT:
+            result = Value(useFloat ? (ld < rd) : (li < ri));
+            return true;
+        case BinOpType::BIN_GT:
+            result = Value(useFloat ? (ld > rd) : (li > ri));
+            return true;
+        case BinOpType::BIN_LTE:
+            result = Value(useFloat ? (ld <= rd) : (li <= ri));
+            return true;
+        case BinOpType::BIN_GTE:
+            result = Value(useFloat ? (ld >= rd) : (li >= ri));
+            return true;
+        default:
+            break;
         }
     }
 
@@ -3116,39 +3207,66 @@ bool Compiler::tryFoldBinary(BinOpType opType, ASTNode* left, ASTNode* right,
         const std::string& ls = lv.stringVal();
         const std::string& rs = rv.stringVal();
         switch (opType) {
-        case BinOpType::BIN_EQ:  result = Value(ls == rs); return true;
-        case BinOpType::BIN_NEQ: result = Value(ls != rs); return true;
-        case BinOpType::BIN_LT:  result = Value(ls <  rs); return true;
-        case BinOpType::BIN_GT:  result = Value(ls >  rs); return true;
-        case BinOpType::BIN_LTE: result = Value(ls <= rs); return true;
-        case BinOpType::BIN_GTE: result = Value(ls >= rs); return true;
-        default: break;
+        case BinOpType::BIN_EQ:
+            result = Value(ls == rs);
+            return true;
+        case BinOpType::BIN_NEQ:
+            result = Value(ls != rs);
+            return true;
+        case BinOpType::BIN_LT:
+            result = Value(ls < rs);
+            return true;
+        case BinOpType::BIN_GT:
+            result = Value(ls > rs);
+            return true;
+        case BinOpType::BIN_LTE:
+            result = Value(ls <= rs);
+            return true;
+        case BinOpType::BIN_GTE:
+            result = Value(ls >= rs);
+            return true;
+        default:
+            break;
         }
     }
 
     // 布尔逻辑（M1 fix: 短路语义，返回操作数原始值而非 bool）
     if (lv.isBool() && rv.isBool()) {
-        if (opType == BinOpType::BIN_AND) { result = lv.isTruthy() ? rv : lv; return true; }
-        if (opType == BinOpType::BIN_OR)  { result = lv.isTruthy() ? lv : rv; return true; }
-        if (opType == BinOpType::BIN_EQ)  { result = Value(lv.boolVal() == rv.boolVal()); return true; }
-        if (opType == BinOpType::BIN_NEQ) { result = Value(lv.boolVal() != rv.boolVal()); return true; }
+        if (opType == BinOpType::BIN_AND) {
+            result = lv.isTruthy() ? rv : lv;
+            return true;
+        }
+        if (opType == BinOpType::BIN_OR) {
+            result = lv.isTruthy() ? lv : rv;
+            return true;
+        }
+        if (opType == BinOpType::BIN_EQ) {
+            result = Value(lv.boolVal() == rv.boolVal());
+            return true;
+        }
+        if (opType == BinOpType::BIN_NEQ) {
+            result = Value(lv.boolVal() != rv.boolVal());
+            return true;
+        }
     }
 
     return false;
 }
 
-bool Compiler::tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
-                             Value& result, int line) {
-    if (!operand) return false;
+bool Compiler::tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand, Value& result, int line) {
+    if (!operand)
+        return false;
 
     // D8 fix: 使用 extractConstant 递归提取常量值，支持嵌套表达式（如 -(3+2)）
     Value val;
-    if (!extractConstant(operand, val, line)) return false;
+    if (!extractConstant(operand, val, line))
+        return false;
 
     if (opType == UnaryOp::UnaryOpType::UOP_NEGATE) {
         if (val.isInt()) {
             // B3 fix: -INT64_MIN = 溢出 UB，不折叠
-            if (OverflowCheck::negateOverflow(val.intVal())) return false;
+            if (OverflowCheck::negateOverflow(val.intVal()))
+                return false;
             result = Value(-val.intVal());
             return true;
         }
@@ -3168,17 +3286,18 @@ bool Compiler::tryFoldUnary(UnaryOp::UnaryOpType opType, ASTNode* operand,
 // D8 fix: 递归提取常量值。支持字面量 + 嵌套 BinaryOp/UnaryOp 常量表达式，
 // 使 tryFoldBinary/tryFoldUnary 能折叠 (1+2)*3、-(-(5)) 等嵌套表达式。
 bool Compiler::extractConstant(ASTNode* node, Value& result, int line) {
-    if (!node) return false;
+    if (!node)
+        return false;
 
     switch (node->nodeType) {
     case NodeType::NODE_NUMBER_LITERAL:
-        result = static_cast<NumberLiteral*>(node)->getValue();  // A1 fix: getValue()
+        result = static_cast<NumberLiteral*>(node)->getValue(); // A1 fix: getValue()
         return true;
     case NodeType::NODE_STRING_LITERAL:
-        result = static_cast<StringLiteral*>(node)->getValue();  // A1 fix: getValue()
+        result = static_cast<StringLiteral*>(node)->getValue(); // A1 fix: getValue()
         return true;
     case NodeType::NODE_BOOL_LITERAL:
-        result = static_cast<BoolLiteral*>(node)->getValue();  // A1 fix: getValue()
+        result = static_cast<BoolLiteral*>(node)->getValue(); // A1 fix: getValue()
         return true;
     case NodeType::NODE_NULL_LITERAL:
         result = Value::nullValue();

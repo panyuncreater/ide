@@ -1,9 +1,9 @@
 #include "gui/DebugPanel.h"
+#include "Theme.h"             // QFluentKit（onThemeModeChanged 信号）
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
-#include "gui/TeachingTheme.h"  // 主题色板（替代硬编码颜色）
-#include "Theme.h"              // QFluentKit（onThemeModeChanged 信号）
+#include "gui/TeachingTheme.h" // 主题色板（替代硬编码颜色）
 #include <QHeaderView>
-#include <QListWidgetItem>  // BUG-DBG-G3 fix: 超长调用栈提示项
+#include <QListWidgetItem> // BUG-DBG-G3 fix: 超长调用栈提示项
 #include <QSplitter>
 #include <QTreeWidgetItem>
 #include <tuple>
@@ -26,7 +26,8 @@ static void styleScopeGroupHeader(QTreeWidgetItem* item) {
     // 实际像素值），直接 -1 会得到 0 甚至负数导致字体渲染异常。增加 >1 守卫，
     // 仅当 pixelSize 有效（>1）时才缩减 1 像素，否则保持原字号。
     int ps = f.pixelSize();
-    if (ps > 1) f.setPixelSize(ps - 1);  // 小字号
+    if (ps > 1)
+        f.setPixelSize(ps - 1); // 小字号
     item->setFont(0, f);
     item->setFont(1, f);
     // 次要文本色（原硬编码 #616161，跟随主题亮/暗自适应）
@@ -46,8 +47,7 @@ QTreeWidgetItem* DebugPanel::createScopeGroup(const QString& title, int count) {
 }
 
 /// 将变量快照按作用域（全局/局部/闭包）分组填入变量树。
-void DebugPanel::populateVariableTree(
-    const std::vector<std::tuple<QString, QString, QString>>& rows) {
+void DebugPanel::populateVariableTree(const std::vector<std::tuple<QString, QString, QString>>& rows) {
     variableTree_->clear();
 
     // Round 7: 按作用域分三组
@@ -68,8 +68,7 @@ void DebugPanel::populateVariableTree(
     }
 
     // 固定顺序：全局 → 局部 → 闭包
-    auto* globalGroup = createScopeGroup(QStringLiteral("全局作用域"),
-                                         static_cast<int>(globalVars.size()));
+    auto* globalGroup = createScopeGroup(QStringLiteral("全局作用域"), static_cast<int>(globalVars.size()));
     for (const auto& [name, value] : globalVars) {
         auto* item = new QTreeWidgetItem(globalGroup);
         item->setText(0, name);
@@ -77,8 +76,7 @@ void DebugPanel::populateVariableTree(
         item->setToolTip(1, value);
     }
 
-    auto* localGroup = createScopeGroup(QStringLiteral("当前函数局部作用域"),
-                                        static_cast<int>(localVars.size()));
+    auto* localGroup = createScopeGroup(QStringLiteral("当前函数局部作用域"), static_cast<int>(localVars.size()));
     for (const auto& [name, value] : localVars) {
         auto* item = new QTreeWidgetItem(localGroup);
         item->setText(0, name);
@@ -86,8 +84,7 @@ void DebugPanel::populateVariableTree(
         item->setToolTip(1, value);
     }
 
-    auto* closureGroup = createScopeGroup(QStringLiteral("闭包作用域"),
-                                          static_cast<int>(closureVars.size()));
+    auto* closureGroup = createScopeGroup(QStringLiteral("闭包作用域"), static_cast<int>(closureVars.size()));
     for (const auto& [name, value] : closureVars) {
         auto* item = new QTreeWidgetItem(closureGroup);
         item->setText(0, name);
@@ -100,8 +97,7 @@ void DebugPanel::populateVariableTree(
 }
 
 /// 构造调试面板：搭建变量树/调用栈布局并连接主题切换。
-DebugPanel::DebugPanel(QWidget* parent)
-    : QWidget(parent) {
+DebugPanel::DebugPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
@@ -151,8 +147,7 @@ DebugPanel::DebugPanel(QWidget* parent)
     stackLayout->addWidget(callStackList_);
 
     // 选中栈帧时显示该帧的局部变量
-    connect(callStackList_, &QListWidget::currentRowChanged,
-            this, &DebugPanel::onStackFrameSelected);
+    connect(callStackList_, &QListWidget::currentRowChanged, this, &DebugPanel::onStackFrameSelected);
 
     splitter->addWidget(stackWidget);
 
@@ -166,43 +161,38 @@ DebugPanel::DebugPanel(QWidget* parent)
     applyThemeStyles();
 
     // 主题切换时重新应用样式（receiver=this 保证生命周期安全，析构自动断开）
-    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        applyThemeStyles();
-    });
+    Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) { applyThemeStyles(); });
 }
 
 /// 集中应用主题色板到标题、变量树与调用栈列表样式。
 void DebugPanel::applyThemeStyles() {
     // 标题标签：次要文本色 + 12px + 中等字重
     // 原硬编码 #616161 → TeachingTheme::textSecondary()
-    const QString labelQss = QString(
-        "color: %1; font-size: 12px; font-weight: 500; padding: 2px;"
-    ).arg(TeachingTheme::textSecondary().name());
-    if (varLabel_)   varLabel_->setStyleSheet(labelQss);
-    if (stackLabel_) stackLabel_->setStyleSheet(labelQss);
+    const QString labelQss = QString("color: %1; font-size: 12px; font-weight: 500; padding: 2px;")
+                                 .arg(TeachingTheme::textSecondary().name());
+    if (varLabel_)
+        varLabel_->setStyleSheet(labelQss);
+    if (stackLabel_)
+        stackLabel_->setStyleSheet(labelQss);
 
     // 变量树：surface 背景 + border 边框 + primary 选中态
     // 原硬编码 #ffffff / #e5e5e5 / #cfe4f5 → TeachingTheme 主题色板
-    const QString treeQss = QString(
-        "QTreeWidget { background: %1; border: 1px solid %2; }"
-        "QTreeWidget::item { padding: 2px 0px; }"
-        "QTreeWidget::item:selected { background: %3; color: %4; }"
-    ).arg(TeachingTheme::surface().name(),
-          TeachingTheme::border().name(),
-          TeachingTheme::primary().lighter(160).name(),
-          TeachingTheme::textPrimary().name());
-    if (variableTree_) variableTree_->setStyleSheet(treeQss);
+    const QString treeQss = QString("QTreeWidget { background: %1; border: 1px solid %2; }"
+                                    "QTreeWidget::item { padding: 2px 0px; }"
+                                    "QTreeWidget::item:selected { background: %3; color: %4; }")
+                                .arg(TeachingTheme::surface().name(), TeachingTheme::border().name(),
+                                     TeachingTheme::primary().lighter(160).name(), TeachingTheme::textPrimary().name());
+    if (variableTree_)
+        variableTree_->setStyleSheet(treeQss);
 
     // 调用栈列表：同变量树配色
-    const QString listQss = QString(
-        "QListWidget { background: %1; border: 1px solid %2; }"
-        "QListWidget::item { padding: 2px 4px; }"
-        "QListWidget::item:selected { background: %3; color: %4; }"
-    ).arg(TeachingTheme::surface().name(),
-          TeachingTheme::border().name(),
-          TeachingTheme::primary().lighter(160).name(),
-          TeachingTheme::textPrimary().name());
-    if (callStackList_) callStackList_->setStyleSheet(listQss);
+    const QString listQss = QString("QListWidget { background: %1; border: 1px solid %2; }"
+                                    "QListWidget::item { padding: 2px 4px; }"
+                                    "QListWidget::item:selected { background: %3; color: %4; }")
+                                .arg(TeachingTheme::surface().name(), TeachingTheme::border().name(),
+                                     TeachingTheme::primary().lighter(160).name(), TeachingTheme::textPrimary().name());
+    if (callStackList_)
+        callStackList_->setStyleSheet(listQss);
 }
 
 /// 更新变量监视区：转换快照并触发树刷新（含异常保护）。
@@ -214,9 +204,12 @@ void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
     // DebugCoordinator variableCallback 触发（RCU 优雅期），异常传播会破坏回调链。
     for (const auto& v : vars) {
         std::string valStr;
-        try { valStr = v.value.toString(); } catch (...) { valStr = "<error>"; }
-        rows.emplace_back(QString::fromStdString(v.name),
-                          QString::fromStdString(valStr),
+        try {
+            valStr = v.value.toString();
+        } catch (...) {
+            valStr = "<error>";
+        }
+        rows.emplace_back(QString::fromStdString(v.name), QString::fromStdString(valStr),
                           QString::fromStdString(v.scope));
     }
     populateVariableTree(rows);
@@ -259,8 +252,7 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
     if (static_cast<int>(stack.size()) > MAX_CALL_STACK_DISPLAY) {
         // 添加提示项标注未显示的帧数
         auto* item = new QListWidgetItem(
-            QString::fromUtf8("... (还有 %1 帧未显示)")
-                .arg(static_cast<int>(stack.size()) - MAX_CALL_STACK_DISPLAY));
+            QString::fromUtf8("... (还有 %1 帧未显示)").arg(static_cast<int>(stack.size()) - MAX_CALL_STACK_DISPLAY));
         // 提示项设为不可选中，避免与真实栈帧混淆
         item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
         callStackList_->addItem(item);
@@ -282,19 +274,17 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
 
 /// 选中栈帧时按作用域展示其局部变量并请求跳转源码行。
 void DebugPanel::onStackFrameSelected(int index) {
-    if (index < 0 || index >= static_cast<int>(currentStack_.size())) return;
+    if (index < 0 || index >= static_cast<int>(currentStack_.size()))
+        return;
 
     const auto& frame = currentStack_[index];
     // Round 7: 选中栈帧时按作用域分组展示
     // depth==0 的帧标记为"局部"，其他帧标记为"外层"（闭包）
-    const QString scopeLabel = (frame.depth == 0) ? QStringLiteral("局部")
-                                                  : QStringLiteral("外层");
+    const QString scopeLabel = (frame.depth == 0) ? QStringLiteral("局部") : QStringLiteral("外层");
     std::vector<std::tuple<QString, QString, QString>> rows;
     rows.reserve(frame.locals.size());
     for (const auto& kv : frame.locals) {
-        rows.emplace_back(QString::fromStdString(kv.first),
-                          QString::fromStdString(kv.second.toString()),
-                          scopeLabel);
+        rows.emplace_back(QString::fromStdString(kv.first), QString::fromStdString(kv.second.toString()), scopeLabel);
     }
     populateVariableTree(rows);
 

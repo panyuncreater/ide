@@ -1,16 +1,16 @@
 #include "IdeController.h"
 #include "Logger.h"
-#include "lexer/Lexer.h"      // #4 fix: VM 条件断点求值
-#include "parser/Parser.h"     // #4 fix: VM 条件断点求值
-#include "interpreter/Environment.h"  // #4 fix: VM 条件断点求值
-#include "interpreter/Interpreter.h"  // P0-3 fix: currentEnvironment() 访问
+#include "interpreter/Environment.h" // #4 fix: VM 条件断点求值
+#include "interpreter/Interpreter.h" // P0-3 fix: currentEnvironment() 访问
+#include "lexer/Lexer.h"             // #4 fix: VM 条件断点求值
+#include "parser/Parser.h"           // #4 fix: VM 条件断点求值
 // VM-IMPORT: Compiler 模块加载器所需的 Qt 头文件
-#include <QFileInfo>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QStringList>
-#include <unordered_set>  // P0-3 fix: getReplScopeVariableNames 去重
-#include <list>            // AUDIT-P2 fix: condAstCache LRU 实现
+#include <list>          // AUDIT-P2 fix: condAstCache LRU 实现
+#include <unordered_set> // P0-3 fix: getReplScopeVariableNames 去重
 
 // ============================================================
 // IdeController — 业务逻辑层 Facade 实现（ARCH-11 重构）
@@ -29,15 +29,16 @@
 
 IdeController::IdeController(QObject* parent)
     : QObject(parent)
-    // MEM-01 fix: shared_ptr 共享所有权，worker 线程持有 Interpreter 期间 IdeController 析构不会悬垂
-    , interpreter_(std::make_shared<Interpreter>())
-    // MEM-01 fix: 无 Qt parent（shared_ptr 独占管理），避免 Qt parent 自动 delete + shared_ptr 析构的双重所有权
-    , debugger_(std::make_shared<DebugController>(nullptr))
-    // 4 个协作类（成员 QObjects 不设 parent，避免双重释放）
-    , pipeline_()
-    , workerMgr_(interpreter_, debugger_, nullptr)
-    , debugCoord_(interpreter_, debugger_, nullptr)
-    , vmStepper_(nullptr) {
+      // MEM-01 fix: shared_ptr 共享所有权，worker 线程持有 Interpreter 期间 IdeController 析构不会悬垂
+      ,
+      interpreter_(std::make_shared<Interpreter>())
+      // MEM-01 fix: 无 Qt parent（shared_ptr 独占管理），避免 Qt parent 自动 delete + shared_ptr 析构的双重所有权
+      ,
+      debugger_(std::make_shared<DebugController>(nullptr))
+      // 4 个协作类（成员 QObjects 不设 parent，避免双重释放）
+      ,
+      pipeline_(), workerMgr_(interpreter_, debugger_, nullptr), debugCoord_(interpreter_, debugger_, nullptr),
+      vmStepper_(nullptr) {
 
     // 绑定 Interpreter 的调试器
     interpreter_->setDebugger(debugger_);
@@ -46,9 +47,7 @@ IdeController::IdeController(QObject* parent)
     workerMgr_.setupMainCallbacks();
 
     // VmStepper 设置 VM 输出/输入回调（转发到 IdeController 信号 / WorkerManager 的 input 回调）
-    vmStepper_.setOutputCallback([this](const std::string& text) {
-        emit outputReady(QString::fromStdString(text));
-    });
+    vmStepper_.setOutputCallback([this](const std::string& text) { emit outputReady(QString::fromStdString(text)); });
     vmStepper_.setInputCallback(workerMgr_.buildInputCallback());
 
     // #4 fix: VM 条件断点求值器 — 使用临时 Interpreter + VM 全局变量 + 局部变量求值
@@ -118,8 +117,7 @@ IdeController::IdeController(QObject* parent)
         } catch (const std::exception& e) {
             std::string msg = e.what();
             // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
-            LOG_WARNING("VM 条件断点求值异常: " + msg +
-                        "（条件: " + condition + "），视为条件不满足", "VmStepper");
+            LOG_WARNING("VM 条件断点求值异常: " + msg + "（条件: " + condition + "），视为条件不满足", "VmStepper");
             return false;
         } catch (...) {
             return false;
@@ -212,8 +210,10 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
     if (pipelineResult.status != PipelineRunner::PipelineStatus::OK) {
         if (!pipelineResult.errorMessage.empty()) {
             emit genericError(QString("%1: %2")
-                .arg(pipelineResult.status == PipelineRunner::PipelineStatus::LexerFailed ? "词法分析异常" : "解析异常")
-                .arg(QString::fromStdString(pipelineResult.errorMessage)));
+                                  .arg(pipelineResult.status == PipelineRunner::PipelineStatus::LexerFailed
+                                           ? "词法分析异常"
+                                           : "解析异常")
+                                  .arg(QString::fromStdString(pipelineResult.errorMessage)));
         }
         return false;
     }
@@ -320,8 +320,9 @@ Value IdeController::executeRepl(Block& program) {
 std::vector<std::string> IdeController::getReplScopeVariableNames() const {
     std::vector<std::string> names;
     Environment* env = interpreter_->currentEnvironment();
-    if (!env) return names;
-    auto vars = env->allVariables();  // 父作用域在前，子作用域追加末尾
+    if (!env)
+        return names;
+    auto vars = env->allVariables(); // 父作用域在前，子作用域追加末尾
     names.reserve(vars.size());
     // 去重（保留首次出现，即更外层作用域的同名变量；拼写建议无强顺序要求）
     std::unordered_set<std::string> seen;
@@ -349,9 +350,7 @@ std::string IdeController::runStringCaptureOutput(const std::string& source) {
         }
         Interpreter interp;
         std::string captured;
-        interp.setOutputCallback([&captured](const std::string& text) {
-            captured += text;
-        });
+        interp.setOutputCallback([&captured](const std::string& text) { captured += text; });
         interp.execute(*ast);
         return captured;
     } catch (const std::exception& e) {
@@ -399,7 +398,8 @@ void IdeController::setupReplModuleCallbacks() {
     };
     interpreter_->setModuleLoader([resolveModulePath](const std::string& modulePath) -> std::string {
         QString resolved = resolveModulePath(modulePath);
-        if (resolved.isEmpty()) return "";
+        if (resolved.isEmpty())
+            return "";
         QFile file(resolved);
         if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
             return QString::fromUtf8(file.readAll()).toStdString();
@@ -408,9 +408,11 @@ void IdeController::setupReplModuleCallbacks() {
     });
     interpreter_->setModuleMtimeChecker([resolveModulePath](const std::string& modulePath) -> int64_t {
         QString resolved = resolveModulePath(modulePath);
-        if (resolved.isEmpty()) return 0;
+        if (resolved.isEmpty())
+            return 0;
         QFileInfo fi(resolved);
-        if (!fi.exists()) return 0;
+        if (!fi.exists())
+            return 0;
         return fi.lastModified().toMSecsSinceEpoch();
     });
 }

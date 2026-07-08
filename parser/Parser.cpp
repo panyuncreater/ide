@@ -8,7 +8,8 @@
 // BUG-P1 fix: 递归收集表达式中的所有变量引用名
 // 用于校验默认参数值不引用后续参数
 static void collectVarRefs(ASTNode* node, std::unordered_set<std::string>& names) {
-    if (!node) return;
+    if (!node)
+        return;
     switch (node->nodeType) {
     case NodeType::NODE_VAR_REF:
         names.insert(static_cast<VarRef*>(node)->name);
@@ -79,10 +80,10 @@ static void collectVarRefs(ASTNode* node, std::unordered_set<std::string>& names
 Parser::Parser() {}
 
 std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
-    tokens_ = &tokens;  // 存储指针，避免深拷贝整个 token 流
+    tokens_ = &tokens; // 存储指针，避免深拷贝整个 token 流
     current_ = 0;
-    parseDepth_ = 0;  // P15 fix: 重置递归深度
-    blockDepth_ = 0;  // P0-1 fix: 重置块嵌套深度
+    parseDepth_ = 0; // P15 fix: 重置递归深度
+    blockDepth_ = 0; // P0-1 fix: 重置块嵌套深度
     diagnostics_.clear();
 
     // PERF-21 fix: 预分配 statements 向量容量，避免每个 declaration push_back 触发 realloc。
@@ -94,13 +95,13 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
         // FIX: '}' 不是顶层语句的合法起始 token。若 synchronize() 在 '}' 处停下，
         // 主循环必须也停下来，否则 declaration() → primary() 不识别 '}' → 抛异常 →
         // synchronize() 又看到 '}' → 死循环。
-        if (check(TokenType::TK_RBRACE)) break;
+        if (check(TokenType::TK_RBRACE))
+            break;
         // BUG-PARSER-AUDIT-5 fix: 错误数量上限，防止恶意输入触发 O(N) 诊断内存膨胀。
         // 原实现无上限，100 万个 ';' 可累积 ~100 万条 Diagnostic（~200MB）。
         if (diagnostics_.errorCount() >= MAX_PARSE_ERRORS) {
-            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) +
-                                  " 条），停止解析",
-                                  peek().line, peek().column, DiagSource::Parser);
+            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) + " 条），停止解析", peek().line,
+                                  peek().column, DiagSource::Parser);
             break;
         }
         try {
@@ -136,7 +137,7 @@ const Token& Parser::peek() const {
 const Token& Parser::previous() const {
     // P0-14 fix: 边界检查，current_==0 时返回 EOF 哨兵避免负索引 UB
     if (current_ <= 0) {
-        static const Token eofSentinel(TokenType::TK_EOF, "", std::monostate{}, 0, 0);  // A1 fix: variant monostate
+        static const Token eofSentinel(TokenType::TK_EOF, "", std::monostate{}, 0, 0); // A1 fix: variant monostate
         return eofSentinel;
     }
     return (*tokens_)[current_ - 1];
@@ -149,14 +150,16 @@ bool Parser::isAtEnd() const {
 }
 
 const Token& Parser::advance() {
-    if (!isAtEnd()) current_++;
+    if (!isAtEnd())
+        current_++;
     // 不在 advance() 中跳过注释——peek()/check() 已负责跳注释
     // advance() 后 previous() 必须返回实际被消耗的 token（修复 block() 等位置追踪）
     return previous();
 }
 
 bool Parser::check(TokenType type) const {
-    if (isAtEnd()) return false;
+    if (isAtEnd())
+        return false;
     return peek().type == type;
 }
 
@@ -165,13 +168,14 @@ bool Parser::checkNext(TokenType type) const {
     // 还是独立标识符（变量名）等需要多 token 上下文的语法判断。
     // 越界（已是最后一个 token）时视为不匹配，避免访问越界。
     int idx = current_ + 1;
-    if (idx >= (int)tokens_->size()) return false;
+    if (idx >= (int)tokens_->size())
+        return false;
     return (*tokens_)[idx].type == type;
 }
 
-
 const Token& Parser::consume(TokenType type, const std::string& message) {
-    if (check(type)) return advance();
+    if (check(type))
+        return advance();
     const Token& tok = peek();
     // BUG-PARSER-MSG-1 fix (P2): 错误消息拼接实际得到的 token，与 primary() 风格一致。
     // 原实现仅输出调用方传入的 message（如"期望 ';'"），用户不知道下一个 token 是什么，
@@ -181,7 +185,8 @@ const Token& Parser::consume(TokenType type, const std::string& message) {
 
 const Token& Parser::consumeIdentifierOrType(const std::string& message) {
     // 允许普通标识符
-    if (check(TokenType::TK_IDENTIFIER)) return advance();
+    if (check(TokenType::TK_IDENTIFIER))
+        return advance();
     // 允许类型关键字作为名称（如 dict, array, int, float, string, bool）
     if (isTypeKeyword()) {
         return advance();
@@ -192,60 +197,109 @@ const Token& Parser::consumeIdentifierOrType(const std::string& message) {
 }
 
 bool Parser::isIdentifierOrType() const {
-    if (isAtEnd()) return false;
+    if (isAtEnd())
+        return false;
     TokenType t = peek().type;
-    return t == TokenType::TK_IDENTIFIER ||
-           t == TokenType::TK_INT || t == TokenType::TK_FLOAT ||
-           t == TokenType::TK_BOOL || t == TokenType::TK_STRING_TYPE ||
-           t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
+    return t == TokenType::TK_IDENTIFIER || t == TokenType::TK_INT || t == TokenType::TK_FLOAT ||
+           t == TokenType::TK_BOOL || t == TokenType::TK_STRING_TYPE || t == TokenType::TK_DICT ||
+           t == TokenType::TK_ARRAY;
 }
 
 bool Parser::isTypeKeyword() const {
-    if (isAtEnd()) return false;
+    if (isAtEnd())
+        return false;
     TokenType t = peek().type;
-    return t == TokenType::TK_INT || t == TokenType::TK_FLOAT ||
-           t == TokenType::TK_BOOL || t == TokenType::TK_STRING_TYPE ||
-           t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
+    return t == TokenType::TK_INT || t == TokenType::TK_FLOAT || t == TokenType::TK_BOOL ||
+           t == TokenType::TK_STRING_TYPE || t == TokenType::TK_DICT || t == TokenType::TK_ARRAY;
 }
 
 bool Parser::isClassTypeDeclStart() const {
     // 识别类类型声明起始：ClassName paramName 或 ClassName[] paramName
     // 原 checkNext(TK_IDENTIFIER) 只覆盖 ClassName paramName，漏掉 ClassName[] paramName
-    if (!check(TokenType::TK_IDENTIFIER)) return false;
+    if (!check(TokenType::TK_IDENTIFIER))
+        return false;
     int idx = current_ + 1;
     int size = static_cast<int>(tokens_->size());
-    if (idx >= size) return false;
+    if (idx >= size)
+        return false;
     // ClassName paramName
-    if ((*tokens_)[idx].type == TokenType::TK_IDENTIFIER) return true;
+    if ((*tokens_)[idx].type == TokenType::TK_IDENTIFIER)
+        return true;
     // ClassName[][] paramName（ROUND44 fix: 支持多维数组类型注解。
     // 第四十三轮已修复 parseTypeAnnotation 的多维支持，但此门控函数仍用单次 []
     // 检查，导致 ClassName[][] paramName 在函数参数处不会被识别为类类型声明，
     // 落入"名字在前"分支引发解析错误。改为 while 循环消费连续 [] 后缀。）
-    if ((*tokens_)[idx].type != TokenType::TK_LBRACKET) return false;
+    if ((*tokens_)[idx].type != TokenType::TK_LBRACKET)
+        return false;
     while (idx < size && (*tokens_)[idx].type == TokenType::TK_LBRACKET) {
         idx++;
-        if (idx >= size || (*tokens_)[idx].type != TokenType::TK_RBRACKET) return false;
+        if (idx >= size || (*tokens_)[idx].type != TokenType::TK_RBRACKET)
+            return false;
         idx++;
     }
     return idx < size && (*tokens_)[idx].type == TokenType::TK_IDENTIFIER;
 }
 
 std::string Parser::parseTypeAnnotation() {
-    const Token& typeTok = advance();  // 消耗类型关键字或标识符
+    // AUDIT-P2.7 fix: 支持 T? 可选类型、dict[K:V] 泛型字典、fun(params):ret 函数类型。
+    //   Interpreter.typeMatch 已支持这三种格式的运行时类型检查，此处仅需生成对应字符串。
+    const Token& typeTok = advance(); // 消耗类型关键字或标识符
     std::string typeAnn = typeTok.lexeme;
-    // AUDIT-P2-CORRECT fix: 支持多维数组类型注解（int[][], int[][][]）。
-    // 原实现用单次 if 仅消费一对 []，遇到第二个 [ 即返回，导致 int[][]
-    // 中第二个 [] 留在 token 流引发后续解析错误。
-    // 改为 while 循环消费连续的 [] 后缀，直到不再是 [] 模式。
-    // 安全回溯：仅在 [ 后紧跟 ] 时才消费，否则回退 [
-    while (check(TokenType::TK_LBRACKET)) {
-        int bracketSave = current_;
+
+    // AUDIT-P2.7 fix: dict[K:V] 泛型字典类型 — 当基础类型为 dict 且紧跟 '[' 时，
+    //   解析键类型 ':' 值类型 ']'，生成 "dict[keyType:valType]" 格式字符串。
+    //   递归调用 parseTypeAnnotation 解析键/值类型，天然支持嵌套（如 dict[string:int?]）。
+    //   消歧：仅当 '[' 后不是 ']' 时才进入泛型分支；dict[] 仍按数组后缀处理。
+    if (typeTok.type == TokenType::TK_DICT && check(TokenType::TK_LBRACKET) && !checkNext(TokenType::TK_RBRACKET)) {
         advance(); // 消耗 '['
-        if (check(TokenType::TK_RBRACKET)) {
-            advance(); // 消耗 ']'
-            typeAnn += "[]";
+        std::string keyType = parseTypeAnnotation();
+        consume(TokenType::TK_COLON, "期望 ':' 分隔字典的键类型与值类型");
+        std::string valType = parseTypeAnnotation();
+        consume(TokenType::TK_RBRACKET, "期望 ']' 结束字典类型注解");
+        typeAnn = "dict[" + keyType + ":" + valType + "]";
+    }
+    // AUDIT-P2.7 fix: fun(params):ret 函数类型 — 当基础类型为 fun 且紧跟 '(' 时，
+    //   解析参数类型列表 ')' ':' 返回类型，生成 "fun(paramTypes):retType" 格式字符串。
+    //   递归调用 parseTypeAnnotation 解析每个参数类型和返回类型。
+    else if (typeTok.type == TokenType::TK_FUN && check(TokenType::TK_LPAREN)) {
+        advance(); // 消耗 '('
+        std::string paramList;
+        if (!check(TokenType::TK_RPAREN)) {
+            do {
+                std::string pType = parseTypeAnnotation();
+                if (!paramList.empty())
+                    paramList += ",";
+                paramList += pType;
+            } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
+        }
+        consume(TokenType::TK_RPAREN, "期望 ')' 结束函数类型参数列表");
+        consume(TokenType::TK_COLON, "期望 ':' 分隔函数参数列表与返回类型");
+        std::string retType = parseTypeAnnotation();
+        typeAnn = "fun(" + paramList + "):" + retType;
+    }
+
+    // AUDIT-P2-CORRECT fix: 支持多维数组类型注解（int[][], int[][][]）。
+    // AUDIT-P2.7 fix: 支持 [] 和 ? 后缀的任意顺序堆叠（如 int[]?, int?[], dict[string:int][]?）。
+    //   循环消费连续的 [] 或 ? 后缀，直到两者都不再出现。
+    //   [] 后缀：仅在 [ 后紧跟 ] 时才消费，否则回退 [（保留原安全回溯语义）。
+    //   ? 后缀：Lexer 将 '?' 映射到已废弃的 TK_FUNC 槽位（见 Lexer.cpp scanToken）。
+    while (true) {
+        if (check(TokenType::TK_LBRACKET)) {
+            int bracketSave = current_;
+            advance(); // 消耗 '['
+            if (check(TokenType::TK_RBRACKET)) {
+                advance(); // 消耗 ']'
+                typeAnn += "[]";
+            } else {
+                current_ = bracketSave; // 不是 [] 类型注解，回退 '['
+                break;
+            }
+        } else if (check(TokenType::TK_FUNC)) {
+            // AUDIT-P2.7 fix: T? 可选类型后缀。Interpreter.typeMatch 通过
+            //   annotation.back()=='?' 识别可选类型，剥离后递归匹配。
+            advance(); // 消耗 '?'
+            typeAnn += "?";
         } else {
-            current_ = bracketSave; // 不是 [] 类型注解，回退 '['
             break;
         }
     }
@@ -256,17 +310,22 @@ std::string Parser::parseTypeAnnotation() {
 
 std::unique_ptr<ASTNode> Parser::declaration() {
     // var 声明
-    if (check(TokenType::TK_VAR)) return varDecl();
+    if (check(TokenType::TK_VAR))
+        return varDecl();
 
     // fun / function / func 声明（Lexer 已统一为 TK_FUN）
-    if (check(TokenType::TK_FUN)) return funDecl();
+    if (check(TokenType::TK_FUN))
+        return funDecl();
 
     // class 声明
-    if (check(TokenType::TK_CLASS)) return classDecl();
+    if (check(TokenType::TK_CLASS))
+        return classDecl();
 
     // F12: import / export 声明
-    if (check(TokenType::TK_IMPORT)) return importStmt();
-    if (check(TokenType::TK_EXPORT)) return exportStmt();
+    if (check(TokenType::TK_IMPORT))
+        return importStmt();
+    if (check(TokenType::TK_EXPORT))
+        return exportStmt();
 
     // 类型注解声明: int/float/bool/string/dict/array
     if (isTypeKeyword()) {
@@ -296,11 +355,11 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     if (check(TokenType::TK_IDENTIFIER)) {
         // 预读两个 token: 第一个是类名，第二个是变量名/函数名
         int savePos = current_;
-        std::string typeAnn = parseTypeAnnotation();  // 消耗类名 + 可选 []
+        std::string typeAnn = parseTypeAnnotation(); // 消耗类名 + 可选 []
 
         if (check(TokenType::TK_IDENTIFIER)) {
             // M7 fix: 前瞻验证 — 检查第二个标识符后是否为合法声明后续 token
-            int afterSecondPos = current_ + 1;  // 跳过第二个标识符
+            int afterSecondPos = current_ + 1; // 跳过第二个标识符
             // 跳过可能的 [] 数组类型后缀
             if (afterSecondPos < static_cast<int>(tokens_->size()) &&
                 (*tokens_)[afterSecondPos].type == TokenType::TK_LBRACKET &&
@@ -312,10 +371,8 @@ std::unique_ptr<ASTNode> Parser::declaration() {
             if (afterSecondPos < static_cast<int>(tokens_->size())) {
                 TokenType follow = (*tokens_)[afterSecondPos].type;
                 // 合法后续: '=' 初始化, ';' 结束, '(' 函数参数, '{' 函数体
-                validDeclFollow = (follow == TokenType::TK_ASSIGN ||
-                                   follow == TokenType::TK_SEMICOLON ||
-                                   follow == TokenType::TK_LPAREN ||
-                                   follow == TokenType::TK_LBRACE);
+                validDeclFollow = (follow == TokenType::TK_ASSIGN || follow == TokenType::TK_SEMICOLON ||
+                                   follow == TokenType::TK_LPAREN || follow == TokenType::TK_LBRACE);
             }
 
             if (validDeclFollow) {
@@ -345,8 +402,7 @@ std::unique_ptr<VarDecl> Parser::varDecl() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(name.lexeme, "", std::move(init),
-                                     varTok.line, varTok.column);
+    return std::make_unique<VarDecl>(name.lexeme, "", std::move(init), varTok.line, varTok.column);
 }
 
 std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
@@ -358,8 +414,7 @@ std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init),
-                                     name.line, name.column);
+    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), name.line, name.column);
 }
 
 std::unique_ptr<FunDecl> Parser::funDecl() {
@@ -372,7 +427,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    std::vector<std::shared_ptr<ASTNode>> defaultValues;  // F10
+    std::vector<std::shared_ptr<ASTNode>> defaultValues; // F10
     parseParamList(params, paramTypes, defaultValues);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
@@ -388,9 +443,9 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
         }
         returnType = parseTypeAnnotation();
     } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
-        advance(); // 消耗 '-'
-        advance(); // 消耗 '>'
-        if (!isIdentifierOrType()) {  // BUG-PARSER-AUDIT-1
+        advance();                   // 消耗 '-'
+        advance();                   // 消耗 '>'
+        if (!isIdentifierOrType()) { // BUG-PARSER-AUDIT-1
             const Token& tok = peek();
             throw ParseError("期望返回类型名", tok.line, tok.column);
         }
@@ -400,8 +455,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params),
-                                          std::move(paramTypes), returnType,
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
                                           std::move(body), funTok.line, funTok.column);
     // F10: 计算必需参数个数（前缀无默认值的参数数量）
     int reqCount = 0;
@@ -409,7 +463,7 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
         if (defaultValues[i] == nullptr) {
             ++reqCount;
         } else {
-            break;  // 一旦遇到默认值，后续都有默认值
+            break; // 一旦遇到默认值，后续都有默认值
         }
     }
     decl->requiredParamCount = reqCount;
@@ -425,7 +479,7 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
 
     std::vector<std::string> params;
     std::vector<std::string> paramTypes;
-    std::vector<std::shared_ptr<ASTNode>> defaultValues;  // F10
+    std::vector<std::shared_ptr<ASTNode>> defaultValues; // F10
     parseParamList(params, paramTypes, defaultValues);
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
@@ -434,8 +488,7 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
-    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params),
-                                          std::move(paramTypes), returnType,
+    auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
                                           std::move(body), name.line, name.column);
     // F10: 计算必需参数个数
     int reqCount = 0;
@@ -463,7 +516,8 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
     //   VM 路径记录 0xFFFF 哨兵，运行时调用使用默认值会报错，但 Parser 层接受以保持
     //   BUG-LPA-03 回归测试语义——该测试验证 collectVarRefs 覆盖 InterpolatedString）。
     auto isLiteralDefaultExpr = [](const ASTNode* node) -> bool {
-        if (!node) return false;
+        if (!node)
+            return false;
         switch (node->nodeType) {
         case NodeType::NODE_NUMBER_LITERAL:
         case NodeType::NODE_STRING_LITERAL:
@@ -474,12 +528,14 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
         case NodeType::NODE_UNARY_OP: {
             // 支持负数字面量: -42, -3.14, --5（双重否定）
             const auto* unary = static_cast<const UnaryOp*>(node);
-            if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE) return false;
+            if (unary->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
+                return false;
             const ASTNode* cur = unary->operand.get();
             int negateCount = 1;
             while (cur && cur->nodeType == NodeType::NODE_UNARY_OP) {
                 const auto* inner = static_cast<const UnaryOp*>(cur);
-                if (inner->opType != UnaryOp::UnaryOpType::UOP_NEGATE) return false;
+                if (inner->opType != UnaryOp::UnaryOpType::UOP_NEGATE)
+                    return false;
                 ++negateCount;
                 cur = inner->operand.get();
             }
@@ -489,8 +545,9 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             return false;
         }
     };
-    if (check(TokenType::TK_RPAREN)) return;
-    bool seenDefault = false;  // F10: 一旦出现默认参数，后续都必须有默认值
+    if (check(TokenType::TK_RPAREN))
+        return;
+    bool seenDefault = false; // F10: 一旦出现默认参数，后续都必须有默认值
     // Perf-Finding4 + Bug-5: 用 unordered_set 替代每参数 O(n) 线性扫描去重，
     // 将 parseParamList 总复杂度从 O(n²) 降为 O(n)。初始化自 params 以兼容
     // 调用方预填充场景（虽然当前 3 个调用点均传入空 vector）。
@@ -547,14 +604,13 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             // 参数间引用等），Interpreter 虽支持但会造成三后端行为不一致。
             // 在 Parser 层统一拒绝，给出清晰的编译期错误而非 VM 运行时错误。
             if (!isLiteralDefaultExpr(defaultExpr.get())) {
-                throw ParseError("默认参数值必须是字面量（数字/字符串/布尔/null/负数字面量）",
-                                 defaultExpr->line, defaultExpr->column);
+                throw ParseError("默认参数值必须是字面量（数字/字符串/布尔/null/负数字面量）", defaultExpr->line,
+                                 defaultExpr->column);
             }
             defaultValues.push_back(std::move(defaultExpr));
         } else {
             if (seenDefault) {
-                throw ParseError("默认参数后的参数都必须有默认值: '" + paramName + "'",
-                                 peek().line, peek().column);
+                throw ParseError("默认参数后的参数都必须有默认值: '" + paramName + "'", peek().line, peek().column);
             }
             defaultValues.push_back(nullptr);
         }
@@ -562,14 +618,15 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
 
     // BUG-P1 fix: 默认参数值不能引用后续参数（如 fun f(a = b, b = 1) 应报错）
     for (size_t i = 0; i < defaultValues.size(); ++i) {
-        if (!defaultValues[i]) continue;
+        if (!defaultValues[i])
+            continue;
         std::unordered_set<std::string> refNames;
         collectVarRefs(defaultValues[i].get(), refNames);
         for (const auto& ref : refNames) {
             for (size_t j = i + 1; j < params.size(); ++j) {
                 if (params[j] == ref) {
-                    throw ParseError("默认参数值不能引用后续参数: '" + ref + "'",
-                                     defaultValues[i]->line, defaultValues[i]->column);
+                    throw ParseError("默认参数值不能引用后续参数: '" + ref + "'", defaultValues[i]->line,
+                                     defaultValues[i]->column);
                 }
             }
         }
@@ -599,134 +656,133 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
         // synchronize 在 class 的 '}' 处返回，外层 block 消费 class 的 '}' 作为
         // 自己的闭合，导致整个类丢失 + 外层块结构错乱。
         try {
-        // 类成员可以是：
-        // - var 声明（字段）
-        // - fun/function 声明（方法）
-        // - 带类型注解的声明
-        // - 裸方法名定义: methodName() {} （不带 fun 关键字）
-        if (check(TokenType::TK_VAR)) {
-            members.push_back(varDecl());
-        } else if (check(TokenType::TK_FUN)) {  // Lexer 已统一 function/func → TK_FUN
-            members.push_back(funDecl());
-        } else if (isTypeKeyword()) {
-            // 带类型注解的字段声明（如 int count = 0;）或带返回类型的方法声明（如 int getValue() {}）
-            int savePos = current_;
-            std::string typeAnn = parseTypeAnnotation();
+            // 类成员可以是：
+            // - var 声明（字段）
+            // - fun/function 声明（方法）
+            // - 带类型注解的声明
+            // - 裸方法名定义: methodName() {} （不带 fun 关键字）
+            if (check(TokenType::TK_VAR)) {
+                members.push_back(varDecl());
+            } else if (check(TokenType::TK_FUN)) { // Lexer 已统一 function/func → TK_FUN
+                members.push_back(funDecl());
+            } else if (isTypeKeyword()) {
+                // 带类型注解的字段声明（如 int count = 0;）或带返回类型的方法声明（如 int getValue() {}）
+                int savePos = current_;
+                std::string typeAnn = parseTypeAnnotation();
 
-            if (isIdentifierOrType()) {
-                // 检查是否是带返回类型的方法声明: int getValue(
-                if (checkNext(TokenType::TK_LPAREN)) {
-                    members.push_back(typedFunDecl(typeAnn));
-                } else if (check(TokenType::TK_IDENTIFIER)) {
-                    members.push_back(typedVarDecl(typeAnn));
+                if (isIdentifierOrType()) {
+                    // 检查是否是带返回类型的方法声明: int getValue(
+                    if (checkNext(TokenType::TK_LPAREN)) {
+                        members.push_back(typedFunDecl(typeAnn));
+                    } else if (check(TokenType::TK_IDENTIFIER)) {
+                        members.push_back(typedVarDecl(typeAnn));
+                    } else {
+                        current_ = savePos;
+                        break;
+                    }
                 } else {
+                    // 回溯
                     current_ = savePos;
                     break;
                 }
-            } else {
-                // 回溯
-                current_ = savePos;
-                break;
-            }
-        } else if (check(TokenType::TK_IDENTIFIER)) {
-            // 裸方法定义: methodName(params) { body }
-            // 或类类型字段: ClassName fieldName; / ClassName[] fieldName;
-            // 或类类型方法: ClassName methodName() { body }
-            int savePos = current_;
-            const Token& firstTok = advance();  // 方法名或类名
+            } else if (check(TokenType::TK_IDENTIFIER)) {
+                // 裸方法定义: methodName(params) { body }
+                // 或类类型字段: ClassName fieldName; / ClassName[] fieldName;
+                // 或类类型方法: ClassName methodName() { body }
+                int savePos = current_;
+                const Token& firstTok = advance(); // 方法名或类名
 
-            // 检查是否是方法定义: name(
-            if (check(TokenType::TK_LPAREN)) {
-                // 这是一个裸方法定义
-                consume(TokenType::TK_LPAREN, "期望 '('");
+                // 检查是否是方法定义: name(
+                if (check(TokenType::TK_LPAREN)) {
+                    // 这是一个裸方法定义
+                    consume(TokenType::TK_LPAREN, "期望 '('");
 
-                std::vector<std::string> params;
-                std::vector<std::string> paramTypes;
-                std::vector<std::shared_ptr<ASTNode>> defaultValues;  // F10
-                parseParamList(params, paramTypes, defaultValues);
-                consume(TokenType::TK_RPAREN, "期望 ')'");
+                    std::vector<std::string> params;
+                    std::vector<std::string> paramTypes;
+                    std::vector<std::shared_ptr<ASTNode>> defaultValues; // F10
+                    parseParamList(params, paramTypes, defaultValues);
+                    consume(TokenType::TK_RPAREN, "期望 ')'");
 
-                // PARSE-06 fix: 可选的返回类型注解（支持 : type 和 -> type）
-                std::string returnType;
-                if (match(TokenType::TK_COLON)) {
-                    // BUG-PARSER-AUDIT-1 fix: 裸方法 `:` 后预检类型 token
-                    if (!isIdentifierOrType()) {
-                        const Token& tok = peek();
-                        throw ParseError("期望返回类型名", tok.line, tok.column);
+                    // PARSE-06 fix: 可选的返回类型注解（支持 : type 和 -> type）
+                    std::string returnType;
+                    if (match(TokenType::TK_COLON)) {
+                        // BUG-PARSER-AUDIT-1 fix: 裸方法 `:` 后预检类型 token
+                        if (!isIdentifierOrType()) {
+                            const Token& tok = peek();
+                            throw ParseError("期望返回类型名", tok.line, tok.column);
+                        }
+                        returnType = parseTypeAnnotation();
+                    } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
+                        advance();                   // 消耗 '-'
+                        advance();                   // 消耗 '>'
+                        if (!isIdentifierOrType()) { // BUG-PARSER-AUDIT-1
+                            const Token& tok = peek();
+                            throw ParseError("期望返回类型名", tok.line, tok.column);
+                        }
+                        returnType = parseTypeAnnotation();
                     }
-                    returnType = parseTypeAnnotation();
-                } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
-                    advance(); // 消耗 '-'
-                    advance(); // 消耗 '>'
-                    if (!isIdentifierOrType()) {  // BUG-PARSER-AUDIT-1
-                        const Token& tok = peek();
-                        throw ParseError("期望返回类型名", tok.line, tok.column);
+
+                    consume(TokenType::TK_LBRACE, "期望 '{'");
+                    auto body = block();
+
+                    auto decl = std::make_unique<FunDecl>(firstTok.lexeme, std::move(params), std::move(paramTypes),
+                                                          returnType, std::move(body), firstTok.line, firstTok.column);
+                    // F10: 计算必需参数个数
+                    int reqCount = 0;
+                    for (size_t i = 0; i < defaultValues.size(); ++i) {
+                        if (defaultValues[i] == nullptr) {
+                            ++reqCount;
+                        } else {
+                            break;
+                        }
                     }
-                    returnType = parseTypeAnnotation();
-                }
-
-                consume(TokenType::TK_LBRACE, "期望 '{'");
-                auto body = block();
-
-                auto decl = std::make_unique<FunDecl>(firstTok.lexeme, std::move(params),
-                                                       std::move(paramTypes), returnType,
-                                                       std::move(body), firstTok.line, firstTok.column);
-                // F10: 计算必需参数个数
-                int reqCount = 0;
-                for (size_t i = 0; i < defaultValues.size(); ++i) {
-                    if (defaultValues[i] == nullptr) {
-                        ++reqCount;
+                    decl->requiredParamCount = reqCount;
+                    decl->defaultValues = std::move(defaultValues);
+                    members.push_back(std::move(decl));
+                } else if (check(TokenType::TK_LBRACKET)) {
+                    // BUG-LPA-04 fix: ClassName[] fieldName; 数组类型字段
+                    //   原实现消耗 ClassName 后遇 [ 直接回溯，不支持类类型数组字段。
+                    //   与参数列表/for循环/顶层声明行为对齐：消费 [] 后缀构造类型注解。
+                    // AUDIT-P2 fix: 支持多维数组字段（ClassName[][] field），
+                    //   对齐 parseTypeAnnotation 的 while 循环模式。原实现仅消费单对 []。
+                    int bracketSave = current_;
+                    std::string typeAnn = firstTok.lexeme;
+                    while (check(TokenType::TK_LBRACKET)) {
+                        advance(); // 消耗 '['
+                        if (!check(TokenType::TK_RBRACKET)) {
+                            current_ = bracketSave;
+                            break;
+                        }
+                        advance(); // 消耗 ']'
+                        typeAnn += "[]";
+                    }
+                    if (check(TokenType::TK_IDENTIFIER)) {
+                        // ClassName[] fieldName — 类类型数组字段
+                        // （ClassName[] methodName() 不合法，不支持类数组返回类型方法）
+                        members.push_back(typedVarDecl(typeAnn));
                     } else {
+                        // 无法识别，回溯
+                        current_ = savePos;
                         break;
                     }
-                }
-                decl->requiredParamCount = reqCount;
-                decl->defaultValues = std::move(defaultValues);
-                members.push_back(std::move(decl));
-            } else if (check(TokenType::TK_LBRACKET)) {
-                // BUG-LPA-04 fix: ClassName[] fieldName; 数组类型字段
-                //   原实现消耗 ClassName 后遇 [ 直接回溯，不支持类类型数组字段。
-                //   与参数列表/for循环/顶层声明行为对齐：消费 [] 后缀构造类型注解。
-                // AUDIT-P2 fix: 支持多维数组字段（ClassName[][] field），
-                //   对齐 parseTypeAnnotation 的 while 循环模式。原实现仅消费单对 []。
-                int bracketSave = current_;
-                std::string typeAnn = firstTok.lexeme;
-                while (check(TokenType::TK_LBRACKET)) {
-                    advance(); // 消耗 '['
-                    if (!check(TokenType::TK_RBRACKET)) {
-                        current_ = bracketSave;
-                        break;
+                } else if (check(TokenType::TK_IDENTIFIER)) {
+                    // 可能是类类型字段: ClassName fieldName; 或类类型方法: ClassName methodName()
+                    if (checkNext(TokenType::TK_LPAREN)) {
+                        // ClassName methodName() — 带类类型的方法声明
+                        members.push_back(typedFunDecl(firstTok.lexeme));
+                    } else {
+                        // ClassName fieldName — 类类型字段声明
+                        // current_ 已在 advance() 后指向 fieldName，无需回溯
+                        members.push_back(typedVarDecl(firstTok.lexeme));
                     }
-                    advance(); // 消耗 ']'
-                    typeAnn += "[]";
-                }
-                if (check(TokenType::TK_IDENTIFIER)) {
-                    // ClassName[] fieldName — 类类型数组字段
-                    // （ClassName[] methodName() 不合法，不支持类数组返回类型方法）
-                    members.push_back(typedVarDecl(typeAnn));
                 } else {
                     // 无法识别，回溯
                     current_ = savePos;
                     break;
                 }
-            } else if (check(TokenType::TK_IDENTIFIER)) {
-                // 可能是类类型字段: ClassName fieldName; 或类类型方法: ClassName methodName()
-                if (checkNext(TokenType::TK_LPAREN)) {
-                    // ClassName methodName() — 带类类型的方法声明
-                    members.push_back(typedFunDecl(firstTok.lexeme));
-                } else {
-                    // ClassName fieldName — 类类型字段声明
-                    // current_ 已在 advance() 后指向 fieldName，无需回溯
-                    members.push_back(typedVarDecl(firstTok.lexeme));
-                }
             } else {
-                // 无法识别，回溯
-                current_ = savePos;
                 break;
             }
-        } else {
-            break;
-        }
         } catch (const ParseError& e) {
             // BUG-PARSER-AUDIT-2 fix: 成员解析错误恢复
             diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
@@ -738,19 +794,21 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
 
     consume(TokenType::TK_RBRACE, "期望 '}'");
 
-    return std::make_unique<ClassDecl>(name.lexeme, superClassName,
-                                        std::move(members),
-                                        classTok.line, classTok.column);
+    // AUDIT-P2.8 fix: 记录闭合 '}' 所在行号，供 Formatter 注入类体末尾注释。
+    int closingBraceLine = previous().line;
+    auto decl =
+        std::make_unique<ClassDecl>(name.lexeme, superClassName, std::move(members), classTok.line, classTok.column);
+    decl->closingBraceLine = closingBraceLine;
+    return decl;
 }
 
 std::unique_ptr<ASTNode> Parser::statement() {
     // P1-1 fix: 无花括号的 if/while/for 嵌套语句也需深度保护，防止栈溢出 DoS
     // 覆盖 "if (a) if (b) if (c) ..." 这类无花括号嵌套场景
     if (parseDepth_ >= MAX_PARSE_DEPTH) {
-        throw ParseError("语句嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
-                         peek().line, peek().column);
+        throw ParseError("语句嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line, peek().column);
     }
-    DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
+    DepthGuard guard{parseDepth_}; // C4 fix: 自动 ++/-- parseDepth_
 
     // BUG-LPA-05 fix: import/export 在无花括号单语句体中显式拒绝。
     //   原实现 statement() 不识别 TK_IMPORT/TK_EXPORT，落入 expressionStatement()
@@ -766,15 +824,24 @@ std::unique_ptr<ASTNode> Parser::statement() {
         throw ParseError("export 语句只能在顶层使用", tok.line, tok.column);
     }
 
-    if (check(TokenType::TK_IF))       return ifStmt();
-    if (check(TokenType::TK_WHILE))    return whileStmt();
-    if (check(TokenType::TK_FOR))      return forStmt();
-    if (check(TokenType::TK_RETURN))   return returnStmt();
-    if (check(TokenType::TK_BREAK))    return breakStmt();
-    if (check(TokenType::TK_CONTINUE)) return continueStmt();
-    if (check(TokenType::TK_TRY))      return tryStmt();
-    if (check(TokenType::TK_THROW))    return throwStmt();
-    if (check(TokenType::TK_PRINT))    return printStmt();
+    if (check(TokenType::TK_IF))
+        return ifStmt();
+    if (check(TokenType::TK_WHILE))
+        return whileStmt();
+    if (check(TokenType::TK_FOR))
+        return forStmt();
+    if (check(TokenType::TK_RETURN))
+        return returnStmt();
+    if (check(TokenType::TK_BREAK))
+        return breakStmt();
+    if (check(TokenType::TK_CONTINUE))
+        return continueStmt();
+    if (check(TokenType::TK_TRY))
+        return tryStmt();
+    if (check(TokenType::TK_THROW))
+        return throwStmt();
+    if (check(TokenType::TK_PRINT))
+        return printStmt();
     if (check(TokenType::TK_LBRACE)) {
         advance();
         return block();
@@ -803,10 +870,10 @@ std::unique_ptr<IfStmt> Parser::ifStmt() {
             // else if — else 分支是另一个 if 语句
             // P1 fix: else-if 链递归也需深度保护（if..else if..else if.. 可深度嵌套）
             if (parseDepth_ >= MAX_PARSE_DEPTH) {
-                throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
-                                 peek().line, peek().column);
+                throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line,
+                                 peek().column);
             }
-            DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
+            DepthGuard guard{parseDepth_}; // C4 fix: 自动 ++/-- parseDepth_
             elseB = ifStmt();
         } else if (check(TokenType::TK_LBRACE)) {
             advance();
@@ -816,8 +883,7 @@ std::unique_ptr<IfStmt> Parser::ifStmt() {
         }
     }
 
-    return std::make_unique<IfStmt>(std::move(cond), std::move(thenB),
-                                     std::move(elseB), ifTok.line, ifTok.column);
+    return std::make_unique<IfStmt>(std::move(cond), std::move(thenB), std::move(elseB), ifTok.line, ifTok.column);
 }
 
 std::unique_ptr<WhileStmt> Parser::whileStmt() {
@@ -835,8 +901,7 @@ std::unique_ptr<WhileStmt> Parser::whileStmt() {
         body = statement();
     }
 
-    return std::make_unique<WhileStmt>(std::move(cond), std::move(body),
-                                        whileTok.line, whileTok.column);
+    return std::make_unique<WhileStmt>(std::move(cond), std::move(body), whileTok.line, whileTok.column);
 }
 
 std::unique_ptr<ForStmt> Parser::forStmt() {
@@ -865,7 +930,7 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
     } else if (isClassTypeDeclStart()) {
         // H2 fix: 类名类型注解声明，如 Point p = create(); 或 Point[] arr = build();
         int savePos = current_;
-        std::string typeAnn = parseTypeAnnotation();  // 消耗类名 + 可选 []
+        std::string typeAnn = parseTypeAnnotation(); // 消耗类名 + 可选 []
         if (check(TokenType::TK_IDENTIFIER) && checkNext(TokenType::TK_LPAREN)) {
             // ClassName funcName( — 函数声明不应出现在 for 初始化中，回溯当表达式处理
             current_ = savePos;
@@ -910,9 +975,8 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
         body = statement();
     }
 
-    return std::make_unique<ForStmt>(std::move(init), std::move(cond),
-                                      std::move(update), std::move(body),
-                                      forTok.line, forTok.column);
+    return std::make_unique<ForStmt>(std::move(init), std::move(cond), std::move(update), std::move(body), forTok.line,
+                                     forTok.column);
 }
 
 std::unique_ptr<ReturnStmt> Parser::returnStmt() {
@@ -956,8 +1020,13 @@ std::unique_ptr<TryStmt> Parser::tryStmt() {
         throw ParseError("try 语句后必须跟 catch 或 finally", tryTok.line, tryTok.column);
     }
 
+    // AUDIT-P2.9 fix: 记录 catch/finally 关键字行号，供 Formatter 注入块间注释。
+    int catchKeywordLine = 0;
+    int finallyKeywordLine = 0;
+
     if (hasCatch) {
-        advance();  // 消耗 'catch'
+        advance(); // 消耗 'catch'
+        catchKeywordLine = previous().line;
         consume(TokenType::TK_LPAREN, "catch 后期望 '('");
         const Token& varTok = consume(TokenType::TK_IDENTIFIER, "期望 catch 变量名");
         consume(TokenType::TK_RPAREN, "期望 ')'");
@@ -971,14 +1040,17 @@ std::unique_ptr<TryStmt> Parser::tryStmt() {
     }
 
     if (hasFinally) {
-        advance();  // 消耗 'finally'
+        advance(); // 消耗 'finally'
+        finallyKeywordLine = previous().line;
         consume(TokenType::TK_LBRACE, "finally 后期望 '{'");
         finallyBlock = block();
     }
 
-    return std::make_unique<TryStmt>(std::move(tryBlock), catchVarName,
-                                      std::move(catchBlock), std::move(finallyBlock),
-                                      tryTok.line, tryTok.column);
+    auto stmt = std::make_unique<TryStmt>(std::move(tryBlock), catchVarName, std::move(catchBlock),
+                                          std::move(finallyBlock), tryTok.line, tryTok.column);
+    stmt->catchKeywordLine = catchKeywordLine;
+    stmt->finallyKeywordLine = finallyKeywordLine;
+    return stmt;
 }
 
 std::unique_ptr<ThrowStmt> Parser::throwStmt() {
@@ -1006,7 +1078,7 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
     // 1. import "path";           — 导入全部
     // 2. import { a, b } from "path"; — 导入指定名称
     if (check(TokenType::TK_LBRACE)) {
-        advance();  // 消耗 '{'
+        advance(); // 消耗 '{'
         do {
             const Token& name = consume(TokenType::TK_IDENTIFIER, "期望导入名称");
             names.push_back(name.lexeme);
@@ -1025,8 +1097,8 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 import 语句");
 
-    return std::make_unique<ImportStmt>(pathTok.literalString(), std::move(names),
-                                         importAll, importTok.line, importTok.column);
+    return std::make_unique<ImportStmt>(pathTok.literalString(), std::move(names), importAll, importTok.line,
+                                        importTok.column);
 }
 
 std::unique_ptr<ExportStmt> Parser::exportStmt() {
@@ -1088,14 +1160,13 @@ std::unique_ptr<PrintStmt> Parser::printStmt() {
 }
 
 std::unique_ptr<Block> Parser::block() {
-    const Token& lbrace = previous();  // '{' 已被消耗
+    const Token& lbrace = previous(); // '{' 已被消耗
 
     // P0-1 fix: 块嵌套深度保护，防止 {{...}} 深度嵌套导致 C++ 栈溢出
     if (blockDepth_ >= MAX_BLOCK_DEPTH) {
-        throw ParseError("块嵌套过深（超过 " + std::to_string(MAX_BLOCK_DEPTH) + " 层）",
-                         lbrace.line, lbrace.column);
+        throw ParseError("块嵌套过深（超过 " + std::to_string(MAX_BLOCK_DEPTH) + " 层）", lbrace.line, lbrace.column);
     }
-    DepthGuard blockGuard{blockDepth_};  // C4 fix: 复用 DepthGuard，自动 ++/-- blockDepth_
+    DepthGuard blockGuard{blockDepth_}; // C4 fix: 复用 DepthGuard，自动 ++/-- blockDepth_
 
     // PERF-21 fix: 预分配小量容量，减少小 block 的 realloc（典型 block 含 3-10 条语句）
     std::vector<std::shared_ptr<ASTNode>> stmts;
@@ -1103,21 +1174,23 @@ std::unique_ptr<Block> Parser::block() {
 
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
         // FIX: catch 也是块边界（try 块的 tryBlock 以 catch 结束）
-        if (check(TokenType::TK_CATCH)) break;
+        if (check(TokenType::TK_CATCH))
+            break;
         // BUG-PARSER-SYNC-2 fix (P1): finally 也是 try 块边界，与 catch 同等处理。
         // 原实现仅识别 catch，try { x = 1 finally { ... } } 在 x 缺分号时，
         // finally 被 synchronize() 吞掉，整个 finally 块丢失。
-        if (check(TokenType::TK_FINALLY)) break;
+        if (check(TokenType::TK_FINALLY))
+            break;
         // BUG-PARSER-SYNC-4 fix (P2): else 是 if 块边界。
         // if (x) { y = 1 else { ... } } 在 y 缺分号时，else 需作为块边界让 ifStmt 处理。
         // 必须与 SYNC-1 一组修复，否则 synchronize() 不再吞 else 但 block() 不中断会无限循环。
-        if (check(TokenType::TK_ELSE)) break;
+        if (check(TokenType::TK_ELSE))
+            break;
         // BUG-PARSER-AUDIT-5 fix: block() 主循环也需错误上限检查，
         // 防止恶意嵌套块内含大量错误触发 O(N) 诊断内存膨胀。
         if (diagnostics_.errorCount() >= MAX_PARSE_ERRORS) {
-            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) +
-                                  " 条），停止解析",
-                                  peek().line, peek().column, DiagSource::Parser);
+            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) + " 条），停止解析", peek().line,
+                                  peek().column, DiagSource::Parser);
             break;
         }
         try {
@@ -1137,9 +1210,9 @@ std::unique_ptr<Block> Parser::block() {
     // peek() 不是 '}'（用户缺 '}'），不应强制 consume 抛错导致整个语句丢失。
     // 这些关键字是结构性块边界，由调用方（tryStmt/ifStmt）处理。
     if (check(TokenType::TK_RBRACE)) {
-        advance();  // 正常消耗 '}'
-    } else if (check(TokenType::TK_CATCH) || check(TokenType::TK_FINALLY) ||
-               check(TokenType::TK_ELSE) || check(TokenType::TK_EOF)) {
+        advance(); // 正常消耗 '}'
+    } else if (check(TokenType::TK_CATCH) || check(TokenType::TK_FINALLY) || check(TokenType::TK_ELSE) ||
+               check(TokenType::TK_EOF)) {
         // 结构性块边界或 EOF：不消耗，让调用方处理 catch/finally/else
     } else {
         // 其他情况（如错误上限 break 后 peek 非 '}'）：记录诊断但不抛错
@@ -1147,9 +1220,7 @@ std::unique_ptr<Block> Parser::block() {
     }
 
     auto blk = std::make_unique<Block>(std::move(stmts), lbrace.line, lbrace.column);
-    blk->closingBraceLine = (previous().type == TokenType::TK_RBRACE)
-                                ? previous().line
-                                : peek().line;
+    blk->closingBraceLine = (previous().type == TokenType::TK_RBRACE) ? previous().line : peek().line;
     return blk;
 }
 
@@ -1177,20 +1248,20 @@ std::unique_ptr<ASTNode> Parser::expressionStatement() {
 std::unique_ptr<ASTNode> Parser::expression() {
     // P15 fix: 递归深度保护，防止极端嵌套表达式导致栈溢出
     if (parseDepth_ >= MAX_PARSE_DEPTH) {
-        throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
-                         peek().line, peek().column);
+        throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line,
+                         peek().column);
     }
-    DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
+    DepthGuard guard{parseDepth_}; // C4 fix: 自动 ++/-- parseDepth_
     return assignment();
 }
 
 std::unique_ptr<ASTNode> Parser::assignment() {
     // P1 fix: 赋值右结合递归也需深度保护（a = b = c = ... 可深度嵌套）
     if (parseDepth_ >= MAX_PARSE_DEPTH) {
-        throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
-                         peek().line, peek().column);
+        throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line,
+                         peek().column);
     }
-    DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
+    DepthGuard guard{parseDepth_}; // C4 fix: 自动 ++/-- parseDepth_
 
     auto expr = or_();
 
@@ -1201,32 +1272,27 @@ std::unique_ptr<ASTNode> Parser::assignment() {
         // 变量赋值: identifier = expr
         if (expr->nodeType == NodeType::NODE_VAR_REF) {
             auto* varRef = static_cast<VarRef*>(expr.get());
-            auto val = assignment();  // 右结合
-            return std::make_unique<Assignment>(varRef->name, std::move(val),
-                                                eq.line, eq.column);
+            auto val = assignment(); // 右结合
+            return std::make_unique<Assignment>(varRef->name, std::move(val), eq.line, eq.column);
         }
 
         // 索引赋值: arr[index] = expr 或 dict[key] = expr
         if (expr->nodeType == NodeType::NODE_INDEX_ACCESS) {
             auto* idxAccess = static_cast<IndexAccess*>(expr.get());
-            auto val = assignment();  // 右结合
+            auto val = assignment(); // 右结合
             // 从 IndexAccess 中提取 object 和 index
             auto obj = std::move(idxAccess->object);
             auto idx = std::move(idxAccess->index);
-            return std::make_unique<IndexAssign>(std::move(obj), std::move(idx),
-                                                  std::move(val),
-                                                  eq.line, eq.column);
+            return std::make_unique<IndexAssign>(std::move(obj), std::move(idx), std::move(val), eq.line, eq.column);
         }
 
         // 成员赋值: obj.field = expr
         if (expr->nodeType == NodeType::NODE_MEMBER_ACCESS) {
             auto* memAccess = static_cast<MemberAccess*>(expr.get());
-            auto val = assignment();  // 右结合
+            auto val = assignment(); // 右结合
             auto obj = std::move(memAccess->object);
             std::string field = memAccess->fieldName;
-            return std::make_unique<MemberAssign>(std::move(obj), field,
-                                                   std::move(val),
-                                                   eq.line, eq.column);
+            return std::make_unique<MemberAssign>(std::move(obj), field, std::move(val), eq.line, eq.column);
         }
 
         throw ParseError("无效的赋值目标", eq.line, eq.column);
@@ -1241,8 +1307,7 @@ std::unique_ptr<ASTNode> Parser::or_() {
     while (match(TokenType::TK_OR)) {
         const Token& op = previous();
         auto right = and_();
-        left = std::make_unique<BinaryOp>(BinOpType::BIN_OR, std::move(left), std::move(right),
-                                           op.line, op.column);
+        left = std::make_unique<BinaryOp>(BinOpType::BIN_OR, std::move(left), std::move(right), op.line, op.column);
     }
 
     return left;
@@ -1254,8 +1319,7 @@ std::unique_ptr<ASTNode> Parser::and_() {
     while (match(TokenType::TK_AND)) {
         const Token& op = previous();
         auto right = equality();
-        left = std::make_unique<BinaryOp>(BinOpType::BIN_AND, std::move(left), std::move(right),
-                                           op.line, op.column);
+        left = std::make_unique<BinaryOp>(BinOpType::BIN_AND, std::move(left), std::move(right), op.line, op.column);
     }
 
     return left;
@@ -1268,8 +1332,7 @@ std::unique_ptr<ASTNode> Parser::equality() {
         const Token& op = previous();
         auto right = comparison();
         BinOpType binOp = (op.type == TokenType::TK_EQ) ? BinOpType::BIN_EQ : BinOpType::BIN_NEQ;
-        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
-                                           op.line, op.column);
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right), op.line, op.column);
     }
 
     return left;
@@ -1283,14 +1346,23 @@ std::unique_ptr<ASTNode> Parser::comparison() {
         auto right = term();
         BinOpType binOp;
         switch (op.type) {
-        case TokenType::TK_LT:  binOp = BinOpType::BIN_LT;  break;
-        case TokenType::TK_GT:  binOp = BinOpType::BIN_GT;  break;
-        case TokenType::TK_LEQ: binOp = BinOpType::BIN_LTE; break;
-        case TokenType::TK_GEQ: binOp = BinOpType::BIN_GTE; break;
-        default: binOp = BinOpType::BIN_UNKNOWN; break;
+        case TokenType::TK_LT:
+            binOp = BinOpType::BIN_LT;
+            break;
+        case TokenType::TK_GT:
+            binOp = BinOpType::BIN_GT;
+            break;
+        case TokenType::TK_LEQ:
+            binOp = BinOpType::BIN_LTE;
+            break;
+        case TokenType::TK_GEQ:
+            binOp = BinOpType::BIN_GTE;
+            break;
+        default:
+            binOp = BinOpType::BIN_UNKNOWN;
+            break;
         }
-        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
-                                           op.line, op.column);
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right), op.line, op.column);
     }
 
     return left;
@@ -1303,8 +1375,7 @@ std::unique_ptr<ASTNode> Parser::term() {
         const Token& op = previous();
         auto right = factor();
         BinOpType binOp = (op.type == TokenType::TK_PLUS) ? BinOpType::BIN_ADD : BinOpType::BIN_SUB;
-        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
-                                           op.line, op.column);
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right), op.line, op.column);
     }
 
     return left;
@@ -1318,13 +1389,20 @@ std::unique_ptr<ASTNode> Parser::factor() {
         auto right = unary();
         BinOpType binOp;
         switch (op.type) {
-        case TokenType::TK_STAR:    binOp = BinOpType::BIN_MUL; break;
-        case TokenType::TK_SLASH:   binOp = BinOpType::BIN_DIV; break;
-        case TokenType::TK_PERCENT: binOp = BinOpType::BIN_MOD; break;
-        default: binOp = BinOpType::BIN_UNKNOWN; break;
+        case TokenType::TK_STAR:
+            binOp = BinOpType::BIN_MUL;
+            break;
+        case TokenType::TK_SLASH:
+            binOp = BinOpType::BIN_DIV;
+            break;
+        case TokenType::TK_PERCENT:
+            binOp = BinOpType::BIN_MOD;
+            break;
+        default:
+            binOp = BinOpType::BIN_UNKNOWN;
+            break;
         }
-        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right),
-                                           op.line, op.column);
+        left = std::make_unique<BinaryOp>(binOp, std::move(left), std::move(right), op.line, op.column);
     }
 
     return left;
@@ -1336,24 +1414,25 @@ std::unique_ptr<ASTNode> Parser::unary() {
     // 抛出错误导致 synchronize() 多丢失一个 token。
     if (check(TokenType::TK_NOT) || check(TokenType::TK_MINUS)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
-            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
-                             peek().line, peek().column);
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line,
+                             peek().column);
         }
-        DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
-        advance();  // 消耗一元运算符
+        DepthGuard guard{parseDepth_}; // C4 fix: 自动 ++/-- parseDepth_
+        advance();                     // 消耗一元运算符
         const Token& op = previous();
         auto operand = unary();
-        auto uopType = (op.type == TokenType::TK_NOT) ? UnaryOp::UnaryOpType::UOP_NOT : UnaryOp::UnaryOpType::UOP_NEGATE;
+        auto uopType =
+            (op.type == TokenType::TK_NOT) ? UnaryOp::UnaryOpType::UOP_NOT : UnaryOp::UnaryOpType::UOP_NEGATE;
         return std::make_unique<UnaryOp>(uopType, std::move(operand), op.line, op.column);
     }
     // PARSE-07 fix: 一元 + 创建 UnaryOp 节点保留 AST 保真度
     if (check(TokenType::TK_PLUS)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
-            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
-                             peek().line, peek().column);
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", peek().line,
+                             peek().column);
         }
-        DepthGuard guard{parseDepth_};  // C4 fix: 自动 ++/-- parseDepth_
-        advance();  // 消耗 +
+        DepthGuard guard{parseDepth_}; // C4 fix: 自动 ++/-- parseDepth_
+        advance();                     // 消耗 +
 
         const Token& op = previous();
         auto operand = unary();
@@ -1372,7 +1451,7 @@ std::unique_ptr<ASTNode> Parser::call() {
             const Token& paren = previous();
             // 解析参数列表
             std::vector<std::shared_ptr<ASTNode>> args;
-            args.reserve(4);  // Perf-Finding4: 避免常见 1-3 参函数调用的 1-2 次 realloc
+            args.reserve(4); // Perf-Finding4: 避免常见 1-3 参函数调用的 1-2 次 realloc
             if (!check(TokenType::TK_RPAREN)) {
                 do {
                     args.push_back(expression());
@@ -1383,12 +1462,10 @@ std::unique_ptr<ASTNode> Parser::call() {
             if (expr->nodeType == NodeType::NODE_VAR_REF) {
                 // 命名函数调用（原有路径）
                 auto* varRef = static_cast<VarRef*>(expr.get());
-                expr = std::make_unique<FunCall>(varRef->name, std::move(args),
-                                                  varRef->line, varRef->column);
+                expr = std::make_unique<FunCall>(varRef->name, std::move(args), varRef->line, varRef->column);
             } else {
                 // 链式调用 / 表达式调用: f(x)(y), closures, 高阶函数
-                expr = std::make_unique<FunCall>(std::move(expr), std::move(args),
-                                                  paren.line, paren.column);
+                expr = std::make_unique<FunCall>(std::move(expr), std::move(args), paren.line, paren.column);
             }
             continue;
         }
@@ -1398,8 +1475,7 @@ std::unique_ptr<ASTNode> Parser::call() {
             const Token& bracket = previous();
             auto index = expression();
             consume(TokenType::TK_RBRACKET, "期望 ']' 结束索引访问");
-            expr = std::make_unique<IndexAccess>(std::move(expr), std::move(index),
-                                                  bracket.line, bracket.column);
+            expr = std::make_unique<IndexAccess>(std::move(expr), std::move(index), bracket.line, bracket.column);
             continue;
         }
 
@@ -1407,12 +1483,12 @@ std::unique_ptr<ASTNode> Parser::call() {
         if (match(TokenType::TK_DOT)) {
             const Token& dot = previous();
             // PARSE-10 fix: 成员名支持类型关键字（与声明端一致）
-        const Token& fieldName = consumeIdentifierOrType("期望成员名");
+            const Token& fieldName = consumeIdentifierOrType("期望成员名");
 
             // 检查是否是方法调用: obj.method(args)
             if (match(TokenType::TK_LPAREN)) {
                 std::vector<std::shared_ptr<ASTNode>> args;
-                args.reserve(4);  // Perf-Finding4: 避免常见 1-3 参方法调用的 1-2 次 realloc
+                args.reserve(4); // Perf-Finding4: 避免常见 1-3 参方法调用的 1-2 次 realloc
                 if (!check(TokenType::TK_RPAREN)) {
                     do {
                         args.push_back(expression());
@@ -1420,13 +1496,11 @@ std::unique_ptr<ASTNode> Parser::call() {
                 }
                 consume(TokenType::TK_RPAREN, "期望 ')' 结束方法参数列表");
 
-                expr = std::make_unique<MethodCall>(std::move(expr), fieldName.lexeme,
-                                                      std::move(args),
-                                                      dot.line, dot.column);
+                expr = std::make_unique<MethodCall>(std::move(expr), fieldName.lexeme, std::move(args), dot.line,
+                                                    dot.column);
             } else {
                 // 普通成员访问: obj.field
-                expr = std::make_unique<MemberAccess>(std::move(expr), fieldName.lexeme,
-                                                        dot.line, dot.column);
+                expr = std::make_unique<MemberAccess>(std::move(expr), fieldName.lexeme, dot.line, dot.column);
             }
             continue;
         }
@@ -1500,9 +1574,8 @@ std::unique_ptr<ASTNode> Parser::primary() {
     }
 
     // 类型关键字作为标识符使用（如 dict(), array(), int(), string() 等函数调用）
-    if (match(TokenType::TK_DICT) || match(TokenType::TK_ARRAY) ||
-        match(TokenType::TK_INT) || match(TokenType::TK_FLOAT) ||
-        match(TokenType::TK_BOOL) || match(TokenType::TK_STRING_TYPE)) {
+    if (match(TokenType::TK_DICT) || match(TokenType::TK_ARRAY) || match(TokenType::TK_INT) ||
+        match(TokenType::TK_FLOAT) || match(TokenType::TK_BOOL) || match(TokenType::TK_STRING_TYPE)) {
         const Token& tok = previous();
         return std::make_unique<VarRef>(tok.lexeme, tok.line, tok.column);
     }
@@ -1519,8 +1592,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
         }
         consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组字面量");
 
-        return std::make_unique<ArrayLiteral>(std::move(elements),
-                                               bracket.line, bracket.column);
+        return std::make_unique<ArrayLiteral>(std::move(elements), bracket.line, bracket.column);
     }
 
     // 字典字面量 {"key": value, ...}
@@ -1539,8 +1611,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
         }
         consume(TokenType::TK_RBRACE, "期望 '}' 结束字典字面量");
 
-        return std::make_unique<DictLiteral>(std::move(pairs),
-                                               brace.line, brace.column);
+        return std::make_unique<DictLiteral>(std::move(pairs), brace.line, brace.column);
     }
 
     // 分组表达式
@@ -1551,10 +1622,9 @@ std::unique_ptr<ASTNode> Parser::primary() {
     if (check(TokenType::TK_LPAREN)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
             const Token& lp = peek();
-            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）",
-                             lp.line, lp.column);
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", lp.line, lp.column);
         }
-        advance();  // 消耗 '('
+        advance(); // 消耗 '('
         auto expr = expression();
         consume(TokenType::TK_RPAREN, "期望 ')' 结束分组表达式");
         return expr;
@@ -1579,26 +1649,25 @@ void Parser::synchronize() {
     // 若不消耗而直接 return，primary() 不识别这些 token → 抛异常 → synchronize() 又
     // 看到同样 token → 死循环。必须消耗所有插值相关 token 以跳过断裂的字符串上下文。
     // '}' 是结构边界，不能消耗；EOF 无需消耗（isAtEnd 会终止循环）。
-    if (peek().type == TokenType::TK_RBRACE ||
-        peek().type == TokenType::TK_EOF) {
+    if (peek().type == TokenType::TK_RBRACE || peek().type == TokenType::TK_EOF) {
         return;
     }
     if (peek().type == TokenType::TK_SEMICOLON) {
-        advance();  // 消耗分号以确保向前推进
+        advance(); // 消耗分号以确保向前推进
         return;
     }
     // 消耗所有插值字符串相关 token，跳过断裂的字符串上下文
-    while (peek().type == TokenType::TK_INTERP_END ||
-           peek().type == TokenType::TK_STRING_PART ||
+    while (peek().type == TokenType::TK_INTERP_END || peek().type == TokenType::TK_STRING_PART ||
            peek().type == TokenType::TK_INTERP_START) {
         advance();
     }
-    if (isAtEnd()) return;
+    if (isAtEnd())
+        return;
     // 如果消耗插值 token 后到达了同步点，停止
-    if (peek().type == TokenType::TK_RBRACE ||
-        peek().type == TokenType::TK_EOF ||
+    if (peek().type == TokenType::TK_RBRACE || peek().type == TokenType::TK_EOF ||
         peek().type == TokenType::TK_SEMICOLON) {
-        if (peek().type == TokenType::TK_SEMICOLON) advance();
+        if (peek().type == TokenType::TK_SEMICOLON)
+            advance();
         return;
     }
     // BUG-PARSER-SYNC-1 fix (P1): 在 advance() 前检查当前 token 是否已是同步关键字。
@@ -1621,7 +1690,7 @@ void Parser::synchronize() {
     case TokenType::TK_ELSE:
     case TokenType::TK_TRY:
     case TokenType::TK_CATCH:
-    case TokenType::TK_FINALLY:  // BUG-PARSER-SYNC-3 fix (P2): 补充 finally 作为同步点
+    case TokenType::TK_FINALLY: // BUG-PARSER-SYNC-3 fix (P2): 补充 finally 作为同步点
     case TokenType::TK_THROW:
     case TokenType::TK_IMPORT:
     case TokenType::TK_EXPORT:
@@ -1631,7 +1700,7 @@ void Parser::synchronize() {
     case TokenType::TK_STRING_TYPE:
     case TokenType::TK_DICT:
     case TokenType::TK_ARRAY:
-    case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点，避免 import 错误恢复时吞掉 from
+    case TokenType::TK_FROM: // AUDIT-P1-CORRECT fix: from 作为同步点，避免 import 错误恢复时吞掉 from
         return;
     default:
         break;
@@ -1640,15 +1709,16 @@ void Parser::synchronize() {
 
     while (!isAtEnd()) {
         // 分号标记语句结束
-        if (previous().type == TokenType::TK_SEMICOLON) return;
+        if (previous().type == TokenType::TK_SEMICOLON)
+            return;
 
         // P1-2 fix: '}' 标记块结束，作为同步点避免跳过块边界
-        if (peek().type == TokenType::TK_RBRACE) return;
+        if (peek().type == TokenType::TK_RBRACE)
+            return;
 
         // FIX: 插值字符串 token 不是同步点——它们是断裂字符串上下文的残留，
         // 必须消耗（跳过）才能到达真正的语句边界。
-        if (peek().type == TokenType::TK_INTERP_END ||
-            peek().type == TokenType::TK_STRING_PART ||
+        if (peek().type == TokenType::TK_INTERP_END || peek().type == TokenType::TK_STRING_PART ||
             peek().type == TokenType::TK_INTERP_START) {
             advance();
             continue;
@@ -1664,15 +1734,15 @@ void Parser::synchronize() {
         case TokenType::TK_FOR:
         case TokenType::TK_RETURN:
         case TokenType::TK_PRINT:
-        case TokenType::TK_BREAK:      // break 作为同步点
-        case TokenType::TK_CONTINUE:   // continue 作为同步点
-        case TokenType::TK_ELSE:  // PARSE-11 fix: else 作为同步点
+        case TokenType::TK_BREAK:    // break 作为同步点
+        case TokenType::TK_CONTINUE: // continue 作为同步点
+        case TokenType::TK_ELSE:     // PARSE-11 fix: else 作为同步点
         // AUDIT-BUG-P2/P3/P4 fix: 补充 try/catch/throw/import/export 作为同步点。
         // 原实现缺少这些关键字，导致错误恢复时 panic mode 跳过 catch 子句、
         // try 块、import/export 声明，产生误导性错误链。
         case TokenType::TK_TRY:
         case TokenType::TK_CATCH:
-        case TokenType::TK_FINALLY:  // BUG-PARSER-SYNC-3 fix: while 循环内同步补充 finally
+        case TokenType::TK_FINALLY: // BUG-PARSER-SYNC-3 fix: while 循环内同步补充 finally
         case TokenType::TK_THROW:
         case TokenType::TK_IMPORT:
         case TokenType::TK_EXPORT:
@@ -1682,7 +1752,7 @@ void Parser::synchronize() {
         case TokenType::TK_STRING_TYPE:
         case TokenType::TK_DICT:
         case TokenType::TK_ARRAY:
-        case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点
+        case TokenType::TK_FROM: // AUDIT-P1-CORRECT fix: from 作为同步点
             return;
         default:
             break;
@@ -1694,9 +1764,9 @@ void Parser::synchronize() {
 
 // F7: 解析插值字符串
 // 语法: "text {expr} more text {expr2} end"
-// Lexer 已将其拆分为: TK_STRING_LIT TK_INTERP_START <expr tokens> TK_INTERP_END TK_STRING_PART TK_INTERP_START ... TK_STRING_PART
-// C5 fix: 保留插值结构为 InterpolatedString AST 节点（原实现抹平为 BinaryOp(BIN_ADD) 链，
-// Formatter 无法重建插值语法，AstViewer 只能看到一堆 BinaryOp）
+// Lexer 已将其拆分为: TK_STRING_LIT TK_INTERP_START <expr tokens> TK_INTERP_END TK_STRING_PART TK_INTERP_START ...
+// TK_STRING_PART C5 fix: 保留插值结构为 InterpolatedString AST 节点（原实现抹平为 BinaryOp(BIN_ADD) 链， Formatter
+// 无法重建插值语法，AstViewer 只能看到一堆 BinaryOp）
 std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode> first) {
     int startLine = first ? first->line : 0;
     int startCol = first ? first->column : 0;
@@ -1743,7 +1813,7 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
         }
 
         const Token& partTok = previous();
-        interp->literals.push_back(partTok.literalString());  // A1 fix: variant 访问
+        interp->literals.push_back(partTok.literalString()); // A1 fix: variant 访问
 
         // 检查是否还有更多插值
         if (!check(TokenType::TK_INTERP_START)) {
@@ -1755,6 +1825,10 @@ std::unique_ptr<ASTNode> Parser::parseInterpolatedString(std::unique_ptr<ASTNode
     for (const auto& lit : interp->literals) {
         interp->literalsTotalLen += lit.size();
     }
+
+    // AUDIT-P2.9 fix: 记录闭合 '"' 所在行号（最后一个 TK_STRING_PART 的行号），
+    // 供 Formatter 在表达式行号范围内注入独立注释。
+    interp->endLine = previous().line;
 
     return interp;
 }

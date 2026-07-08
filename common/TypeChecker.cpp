@@ -13,7 +13,7 @@
 #include "common/TypeChecker.h"
 #include "ast/ASTNode.h"
 #include "common/Diagnostic.h"
-#include "interpreter/Visitor.h"  // DefaultVisitor
+#include "interpreter/Visitor.h" // DefaultVisitor
 
 #include <unordered_map>
 #include <utility>
@@ -29,7 +29,7 @@ namespace minilang {
 class LiteralTypeWalker : public DefaultVisitor {
 public:
     DiagnosticBag diagnostics;
-    std::unordered_map<std::string, std::string> varTypes;  // 变量名→类型注解
+    std::unordered_map<std::string, std::string> varTypes; // 变量名→类型注解
 
     /// 检查单个变量声明的字面量类型匹配。
     /// 无注解或无初始化器时仅登记注解供后续 Assignment 复用；
@@ -53,15 +53,14 @@ public:
         } else if (dynamic_cast<BoolLiteral*>(init)) {
             actualType = TypeName::BOOL;
         } else if (dynamic_cast<NullLiteral*>(init)) {
-            actualType = TypeName::NULL_T;  // null 兼容所有类型，不报
+            actualType = TypeName::NULL_T; // null 兼容所有类型，不报
         }
         // 非字面量（变量引用、表达式等）→ 跳过，运行时检查
         if (!actualType.empty() && actualType != TypeName::NULL_T) {
             if (!typeMatchLiteral(actualType, node.typeAnnotation)) {
-                diagnostics.addWarning(
-                    "变量 " + node.name + " 类型注解为 " + node.typeAnnotation +
-                    "，但初始化值为 " + actualType,
-                    node.line, node.column, DiagSource::TypeChecker);
+                diagnostics.addWarning("变量 " + node.name + " 类型注解为 " + node.typeAnnotation + "，但初始化值为 " +
+                                           actualType,
+                                       node.line, node.column, DiagSource::TypeChecker);
             }
         }
         if (!node.typeAnnotation.empty()) {
@@ -74,7 +73,8 @@ public:
     void visitVarDecl(VarDecl& node) override {
         checkVarDecl(node);
         // 递归检查初始化表达式（可能含嵌套声明）
-        if (node.initializer) node.initializer->accept(*this);
+        if (node.initializer)
+            node.initializer->accept(*this);
     }
 
     /// 访问赋值语句：若左值变量有已知注解，检查右侧字面量是否兼容。
@@ -98,14 +98,14 @@ public:
             }
             if (!actualType.empty()) {
                 if (!typeMatchLiteral(actualType, it->second)) {
-                    diagnostics.addWarning(
-                        "赋值给 " + node.name + " 类型注解为 " + it->second +
-                        "，但赋值值为 " + actualType,
-                        node.line, node.column, DiagSource::TypeChecker);
+                    diagnostics.addWarning("赋值给 " + node.name + " 类型注解为 " + it->second + "，但赋值值为 " +
+                                               actualType,
+                                           node.line, node.column, DiagSource::TypeChecker);
                 }
             }
         }
-        if (node.value) node.value->accept(*this);
+        if (node.value)
+            node.value->accept(*this);
     }
 
     void visitBlock(Block& node) override {
@@ -114,52 +114,66 @@ public:
         // visitFunDecl 已有此模式，此处对齐。
         auto saved = varTypes;
         for (auto& stmt : node.statements) {
-            if (stmt) stmt->accept(*this);
+            if (stmt)
+                stmt->accept(*this);
         }
         varTypes = std::move(saved);
     }
 
     void visitIfStmt(IfStmt& node) override {
-        if (node.condition) node.condition->accept(*this);
+        if (node.condition)
+            node.condition->accept(*this);
         // AUDIT-BUG-E1 fix: then/else 分支是独立作用域
         auto saved = varTypes;
-        if (node.thenBranch) node.thenBranch->accept(*this);
+        if (node.thenBranch)
+            node.thenBranch->accept(*this);
         varTypes = saved;
-        if (node.elseBranch) node.elseBranch->accept(*this);
+        if (node.elseBranch)
+            node.elseBranch->accept(*this);
         varTypes = std::move(saved);
     }
 
     void visitWhileStmt(WhileStmt& node) override {
-        if (node.condition) node.condition->accept(*this);
+        if (node.condition)
+            node.condition->accept(*this);
         // AUDIT-BUG-E1 fix: 循环体是独立作用域
         auto saved = varTypes;
-        if (node.body) node.body->accept(*this);
+        if (node.body)
+            node.body->accept(*this);
         varTypes = std::move(saved);
     }
 
     void visitForStmt(ForStmt& node) override {
-        // AUDIT-BUG-E1 fix: for 的 initializer/condition/update/body 各为独立作用域
+        // AUDIT-P3-CORRECT fix: for 循环 initializer/condition/update/body 共享一个作用域。
+        // 原实现（AUDIT-BUG-E1 fix）错误地将各部分隔离，导致 initializer 声明的变量
+        // （如 `var i: int = 0`）在 condition/update/body 中不可见，类型检查被跳过。
+        // MiniLang（与 C/Java/JS 一致）中 for 循环四部分共享同一作用域，
+        // 循环结束后该作用域销毁（i 不在外层可见）。
         auto saved = varTypes;
-        if (node.initializer) node.initializer->accept(*this);
-        varTypes = saved;
-        if (node.condition) node.condition->accept(*this);
-        varTypes = saved;
-        if (node.update) node.update->accept(*this);
-        varTypes = saved;
-        if (node.body) node.body->accept(*this);
-        varTypes = std::move(saved);
+        if (node.initializer)
+            node.initializer->accept(*this);
+        // 不恢复 varTypes — initializer 声明的变量在 condition/update/body 中可见
+        if (node.condition)
+            node.condition->accept(*this);
+        if (node.update)
+            node.update->accept(*this);
+        if (node.body)
+            node.body->accept(*this);
+        varTypes = std::move(saved); // 循环结束后恢复，i 不在外层可见
     }
 
     void visitFunDecl(FunDecl& node) override {
         // 保存外层 varTypes，函数体内独立作用域
         auto saved = varTypes;
-        if (node.body) node.body->accept(*this);
+        if (node.body)
+            node.body->accept(*this);
         varTypes = std::move(saved);
     }
 
     void visitClassDecl(ClassDecl& node) override {
         for (auto& m : node.members) {
-            if (m) m->accept(*this);
+            if (m)
+                m->accept(*this);
         }
     }
 
@@ -168,23 +182,28 @@ public:
     // no-op，导致 try 块成为类型检查"黑洞"。
     void visitTryStmt(TryStmt& node) override {
         auto saved = varTypes;
-        if (node.tryBlock) node.tryBlock->accept(*this);
+        if (node.tryBlock)
+            node.tryBlock->accept(*this);
         varTypes = saved;
         // catch 块引入新作用域，catchVarName 是局部变量（无类型注解，不需登记）
-        if (node.catchBlock) node.catchBlock->accept(*this);
+        if (node.catchBlock)
+            node.catchBlock->accept(*this);
         varTypes = saved;
-        if (node.finallyBlock) node.finallyBlock->accept(*this);
+        if (node.finallyBlock)
+            node.finallyBlock->accept(*this);
         varTypes = std::move(saved);
     }
 
     // BUG-FE-AUDIT-4 fix: export 包装的声明需递归检查，否则 export var x: int = "str"
     // 这类明显的类型注解冲突不会在编译期被捕获。
     void visitExportStmt(ExportStmt& node) override {
-        if (node.declaration) node.declaration->accept(*this);
+        if (node.declaration)
+            node.declaration->accept(*this);
     }
 
     void visitThrowStmt(ThrowStmt& node) override {
-        if (node.expression) node.expression->accept(*this);
+        if (node.expression)
+            node.expression->accept(*this);
     }
 
 private:
@@ -194,12 +213,17 @@ private:
     /// bool/string 严格匹配；array/dict/类名等无法在字面量层面判定→保守返回兼容
     /// （避免误报，交由运行时检查）。返回 false 时调用方发警告。
     static bool typeMatchLiteral(const std::string& actual, const std::string& annotation) {
-        if (annotation.empty()) return true;
-        if (annotation == TypeName::INT) return actual == TypeName::INT;
-        if (annotation == TypeName::FLOAT) return actual == TypeName::FLOAT || actual == TypeName::INT;
-        if (annotation == TypeName::BOOL) return actual == TypeName::BOOL;
-        if (annotation == TypeName::STRING) return actual == TypeName::STRING;
-        return true;  // array/dict/类名等无法在字面量层面检查
+        if (annotation.empty())
+            return true;
+        if (annotation == TypeName::INT)
+            return actual == TypeName::INT;
+        if (annotation == TypeName::FLOAT)
+            return actual == TypeName::FLOAT || actual == TypeName::INT;
+        if (annotation == TypeName::BOOL)
+            return actual == TypeName::BOOL;
+        if (annotation == TypeName::STRING)
+            return actual == TypeName::STRING;
+        return true; // array/dict/类名等无法在字面量层面检查
     }
 };
 

@@ -21,24 +21,24 @@
 //       REG_RETURN src(1B) = 2B
 // ============================================================
 
-#include <cstdint>
-#include <vector>
-#include <string>
+#include "compiler/Bytecode.h" // 复用 UpvalueDesc
 #include "interpreter/Value.h"
-#include "compiler/Bytecode.h"  // 复用 UpvalueDesc
+#include <cstdint>
+#include <string>
+#include <vector>
 
 // ============================================================
 // 寄存器式操作码
 // ============================================================
 enum class RegOp : uint8_t {
     // ---- 常量加载 ----
-    REG_LOAD_CONST,    // dst, constIdx(2B)         加载常量池[idx]到 dst
-    REG_LOAD_NULL,     // dst                        加载 null
-    REG_LOAD_TRUE,     // dst                        加载 true
-    REG_LOAD_FALSE,    // dst                        加载 false
+    REG_LOAD_CONST, // dst, constIdx(2B)         加载常量池[idx]到 dst
+    REG_LOAD_NULL,  // dst                        加载 null
+    REG_LOAD_TRUE,  // dst                        加载 true
+    REG_LOAD_FALSE, // dst                        加载 false
 
     // ---- 寄存器间移动 ----
-    REG_MOVE,          // dst, src                   dst = src
+    REG_MOVE, // dst, src                   dst = src
 
     // ---- 全局变量 ----
     REG_LOAD_GLOBAL,   // dst, slot(2B)              dst = globalSlots[slot]
@@ -52,21 +52,21 @@ enum class RegOp : uint8_t {
     REG_CLOSE_UPVALUE, // uvIdx(1B)                  关闭 upvalue
 
     // ---- 算术 ----
-    REG_ADD,           // dst, src1, src2            dst = src1 + src2
-    REG_SUB,           // dst, src1, src2
-    REG_MUL,           // dst, src1, src2
-    REG_DIV,           // dst, src1, src2
-    REG_MOD,           // dst, src1, src2
-    REG_NEGATE,        // dst, src                   dst = -src
+    REG_ADD,    // dst, src1, src2            dst = src1 + src2
+    REG_SUB,    // dst, src1, src2
+    REG_MUL,    // dst, src1, src2
+    REG_DIV,    // dst, src1, src2
+    REG_MOD,    // dst, src1, src2
+    REG_NEGATE, // dst, src                   dst = -src
 
     // ---- 比较 ----
-    REG_EQ,            // dst, src1, src2
-    REG_NEQ,           // dst, src1, src2
-    REG_LT,            // dst, src1, src2
-    REG_GT,            // dst, src1, src2
-    REG_LTE,           // dst, src1, src2
-    REG_GTE,           // dst, src1, src2
-    REG_NOT,           // dst, src                   dst = !src
+    REG_EQ,  // dst, src1, src2
+    REG_NEQ, // dst, src1, src2
+    REG_LT,  // dst, src1, src2
+    REG_GT,  // dst, src1, src2
+    REG_LTE, // dst, src1, src2
+    REG_GTE, // dst, src1, src2
+    REG_NOT, // dst, src                   dst = !src
 
     // ---- 控制流 ----
     REG_JUMP,          // offset(2B)                 无条件跳转
@@ -75,40 +75,40 @@ enum class RegOp : uint8_t {
     REG_RETURN_NULL,   // (无操作数)                  返回 null
 
     // ---- 调用 ----
-    REG_CALL,          // dst, nameIdx(2B), argCount(1B), arg1, arg2, ...  命名函数调用
-    REG_CALL_EXPR,     // dst, callee, argCount(1B), arg1, ...             表达式调用
-    REG_METHOD_CALL,   // dst, obj, methodIdx(2B), argCount(1B), args...  方法调用
+    REG_CALL,        // dst, nameIdx(2B), argCount(1B), arg1, arg2, ...  命名函数调用
+    REG_CALL_EXPR,   // dst, callee, argCount(1B), arg1, ...             表达式调用
+    REG_METHOD_CALL, // dst, obj, methodIdx(2B), argCount(1B), args...  方法调用
 
     // ---- 闭包 ----
-    REG_MAKE_CLOSURE,  // dst, nameIdx(2B), uvCount(1B), [isLocal(1B), idx(1B)]×uvCount
+    REG_MAKE_CLOSURE, // dst, nameIdx(2B), uvCount(1B), [isLocal(1B), idx(1B)]×uvCount
 
     // ---- 容器 ----
-    REG_BUILD_ARRAY,   // dst, count(1B), elem1, elem2, ...
-    REG_BUILD_DICT,    // dst, pairCount(1B), k1, v1, k2, v2, ...
-    REG_INDEX_GET,     // dst, obj, idx
-    REG_INDEX_SET,     // obj, idx, val
+    REG_BUILD_ARRAY, // dst, count(1B), elem1, elem2, ...
+    REG_BUILD_DICT,  // dst, pairCount(1B), k1, v1, k2, v2, ...
+    REG_INDEX_GET,   // dst, obj, idx
+    REG_INDEX_SET,   // obj, idx, val
 
     // ---- 成员访问 ----
-    REG_MEMBER_GET,    // dst, obj, fieldIdx(2B)
-    REG_MEMBER_SET,    // obj, fieldIdx(2B), val
+    REG_MEMBER_GET, // dst, obj, fieldIdx(2B)
+    REG_MEMBER_SET, // obj, fieldIdx(2B), val
 
     // ---- 类 ----
-    REG_CLASS_NEW,     // dst, nameIdx(2B), argCount(1B), args...
-    REG_DEFINE_CLASS,  // nameIdx(2B)
-    REG_INIT_FIELD,    // fieldIdx(2B)               记录字段顺序
+    REG_CLASS_NEW,    // dst, nameIdx(2B), argCount(1B), args...
+    REG_DEFINE_CLASS, // nameIdx(2B)
+    REG_INIT_FIELD,   // fieldIdx(2B)               记录字段顺序
 
     // ---- super ----
-    REG_SUPER_CALL,    // dst, nameIdx(2B), argCount(1B), recvReg, classIdx(2B), args...
+    REG_SUPER_CALL,       // dst, nameIdx(2B), argCount(1B), recvReg, classIdx(2B), args...
     REG_SUPER_MEMBER_GET, // dst, obj, fieldIdx(2B)
 
     // ---- 异常 ----
-    REG_TRY_BEGIN,     // catchOffset(2B)
-    REG_TRY_END,       // (无操作数)
-    REG_THROW,         // src
+    REG_TRY_BEGIN,      // catchOffset(2B)
+    REG_TRY_END,        // (无操作数)
+    REG_THROW,          // src
     REG_LOAD_EXCEPTION, // dst                        P1-4 fix: 从 pendingException_ 加载异常值到寄存器
 
     // ---- I/O ----
-    REG_PRINT,         // src                         输出 src
+    REG_PRINT, // src                         输出 src
 
     // ---- 写回（嵌套左值变异）----
     REG_WRITEBACK_MEMBER_VAR,   // varIdx(2B), fieldIdx(2B)
@@ -119,12 +119,12 @@ enum class RegOp : uint8_t {
     REG_WRITEBACK_MEMBER_UPVALUE, // uvIdx(1B), fieldIdx(2B)
     REG_WRITEBACK_INDEX_UPVALUE,  // uvIdx(1B)
     // MEDIUM-1/2 fix: 读取 lastMutatedReceiverReg_ 到目标寄存器（不清除）
-    REG_LOAD_MUTATED,  // dst(1B)
+    REG_LOAD_MUTATED, // dst(1B)
 
     // 2026-06-29: 运行时类型注解检查（三后端统一强制）
     // 操作数: src(1B) + typeAnnotationConstIdx(2B)
     // 语义: 检查 reg[src] 是否兼容类型注解，不匹配则 runtimeError
-    REG_TYPE_CHECK,    // src(1B), typeAnnotationConstIdx(2B)
+    REG_TYPE_CHECK, // src(1B), typeAnnotationConstIdx(2B)
 };
 
 // ============================================================
@@ -134,9 +134,9 @@ enum class RegOp : uint8_t {
 // 无需同步修改 regOpName / instructionSize / instructionSizeAt 三处 switch。
 // ============================================================
 struct RegOpInfo {
-    const char* name;            // 操作码名称（调试用）
-    uint8_t baseSize;            // 固定长度指令字节数；变长指令为最小长度
-    bool isVariableLength;        // 是否变长（需 instructionSizeAt 按操作数计算实际长度）
+    const char* name;      // 操作码名称（调试用）
+    uint8_t baseSize;      // 固定长度指令字节数；变长指令为最小长度
+    bool isVariableLength; // 是否变长（需 instructionSizeAt 按操作数计算实际长度）
 };
 
 /// 获取 RegOp 元数据
@@ -144,27 +144,31 @@ const RegOpInfo& getRegOpInfo(RegOp op);
 
 /// 寄存器式操作码名称（调试用）
 // A3 fix: 改用元数据表查表（基于 getRegOpInfo）
-inline const char* regOpName(RegOp op) { return getRegOpInfo(op).name; }
+inline const char* regOpName(RegOp op) {
+    return getRegOpInfo(op).name;
+}
 
 /// 寄存器式操作码 → 是否变长指令
-inline bool isRegOpVariableLength(RegOp op) { return getRegOpInfo(op).isVariableLength; }
+inline bool isRegOpVariableLength(RegOp op) {
+    return getRegOpInfo(op).isVariableLength;
+}
 
 // ============================================================
 // 寄存器式字节码块
 // ============================================================
 struct RegBytecodeChunk {
-    std::vector<uint8_t> code;       // 指令字节流
-    std::vector<Value> constants;    // 常量池
-    std::vector<int> lines;          // 每条指令对应的行号（按字节偏移索引）
-    std::vector<int> columns;        // BUG-IBACKEND-2: 每条指令对应的列号（与 lines 平行，默认 0）
-    std::string name;                // chunk 名称
-    int arity = 0;                   // 参数个数
-    int requiredArity = 0;           // 必需参数个数
+    std::vector<uint8_t> code;    // 指令字节流
+    std::vector<Value> constants; // 常量池
+    std::vector<int> lines;       // 每条指令对应的行号（按字节偏移索引）
+    std::vector<int> columns;     // BUG-IBACKEND-2: 每条指令对应的列号（与 lines 平行，默认 0）
+    std::string name;             // chunk 名称
+    int arity = 0;                // 参数个数
+    int requiredArity = 0;        // 必需参数个数
     std::vector<uint16_t> defaultConstIndices;
     std::vector<int> ipToInstrIndex;
     std::vector<std::string> fieldOrder;
-    int localCount = 0;              // 局部变量寄存器数量（不含临时寄存器）
-    int registerCount = 0;           // 总寄存器数量（localCount + 临时寄存器），上限 32
+    int localCount = 0;    // 局部变量寄存器数量（不含临时寄存器）
+    int registerCount = 0; // 总寄存器数量（localCount + 临时寄存器），上限 32
     std::vector<UpvalueDesc> upvalues;
     // BUG-IDE-12 fix: 局部变量寄存器→名称映射（索引即寄存器号）。
     // 用于 RegisterVM 条件断点求值：从当前帧的寄存器反查变量名，注入临时 Interpreter 环境。

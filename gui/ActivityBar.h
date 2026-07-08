@@ -1,9 +1,9 @@
 #pragma once
 
+#include "FluentGlobal.h"
 #include <QFrame>
 #include <QList>
 #include <QString>
-#include "FluentGlobal.h"
 
 /// @file ActivityBar.h
 /// 活动栏（VS Code 风格左侧图标条）：以注册制管理图标项的添加与选中切换。

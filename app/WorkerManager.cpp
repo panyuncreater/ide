@@ -1,15 +1,15 @@
 #include "WorkerManager.h"
 #include "Logger.h"
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QPointer>
-#include <QFile>
-#include <QFileInfo>
-#include <QDir>
 #include <QSettings>
-#include <future>
 #include <chrono>
-#include <cstdlib>  // std::_Exit — terminate worker 后跳过析构退出进程
+#include <cstdlib> // std::_Exit — terminate worker 后跳过析构退出进程
+#include <future>
 
 // ============================================================
 // WorkerManager — Worker 线程管理实现（ARCH-11 拆分自 IdeController）
@@ -22,7 +22,8 @@ void WorkerManager::QThreadDeleter::operator()(QThread* thread) const {
         if (thread->isRunning()) {
             thread->quit();
             if (!thread->wait(5000)) {
-                LOG_ERROR("QThreadDeleter: Worker 未在 5 秒内退出，回退 terminate()（避免 delete running QThread UB）", "IDE");
+                LOG_ERROR("QThreadDeleter: Worker 未在 5 秒内退出，回退 terminate()（避免 delete running QThread UB）",
+                          "IDE");
                 thread->terminate();
                 thread->wait();
             }
@@ -43,18 +44,20 @@ std::function<std::string(const std::string&)> WorkerManager::buildInputCallback
     QPointer<WorkerManager> self = this;
     return [self](const std::string& prompt) -> std::string {
         // MEM-02 fix: controller 已析构时直接返回，不访问悬垂指针
-        if (!self) return std::string();
+        if (!self)
+            return std::string();
         if (QThread::currentThread() == self->thread()) {
             bool ok = false;
-            QString text = QInputDialog::getText(nullptr, "input",
-                QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+            QString text =
+                QInputDialog::getText(nullptr, "input", QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
             return ok ? text.toStdString() : "";
         }
         // 跨线程：投递到主线程并限时等待。promise 用 shared_ptr 持有，
         // worker 超时返回后 lambda 仍可安全调用 set_value（满足一个无人等待的 shared state）。
         auto promisePtr = std::make_shared<std::promise<QString>>();
         std::shared_future<QString> future = promisePtr->get_future().share();
-        QMetaObject::invokeMethod(self.data(),
+        QMetaObject::invokeMethod(
+            self.data(),
             [self, prompt, promisePtr]() {
                 // MEM-02 fix: 主线程执行时 controller 可能已析构，检测后解锁 worker
                 if (!self) {
@@ -62,11 +65,13 @@ std::function<std::string(const std::string&)> WorkerManager::buildInputCallback
                     return;
                 }
                 bool ok = false;
-                QString result = QInputDialog::getText(nullptr, "input",
-                    QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
-                if (!ok) result = "";
+                QString result =
+                    QInputDialog::getText(nullptr, "input", QString::fromStdString(prompt), QLineEdit::Normal, "", &ok);
+                if (!ok)
+                    result = "";
                 promisePtr->set_value(result);
-            }, Qt::QueuedConnection);
+            },
+            Qt::QueuedConnection);
         if (future.wait_for(std::chrono::seconds(30)) == std::future_status::ready) {
             return future.get().toStdString();
         }
@@ -78,13 +83,9 @@ std::function<std::string(const std::string&)> WorkerManager::buildInputCallback
     };
 }
 
-WorkerManager::WorkerManager(std::shared_ptr<Interpreter> interpreter,
-                             std::shared_ptr<DebugController> debugger,
+WorkerManager::WorkerManager(std::shared_ptr<Interpreter> interpreter, std::shared_ptr<DebugController> debugger,
                              QObject* parent)
-    : QObject(parent)
-    , interpreter_(std::move(interpreter))
-    , debugger_(std::move(debugger)) {
-}
+    : QObject(parent), interpreter_(std::move(interpreter)), debugger_(std::move(debugger)) {}
 
 WorkerManager::~WorkerManager() {
     // #10 fix: 确保工作线程已停止再删除，避免 delete running QThread 的 UB
@@ -104,7 +105,8 @@ WorkerManager::~WorkerManager() {
     // 成功后 finished 信号已发射并投递 QueuedConnection lambda 到主线程队列，
     // workerThread_.reset() 销毁 QThread 对象但已投递的 lambda 仍持 this 指针。
     // 后续 Ide::closeEvent 的 processEvents 可能触发悬垂 lambda → UAF。disconnect 确保安全。
-    if (workerThread_) workerThread_->disconnect(this);
+    if (workerThread_)
+        workerThread_->disconnect(this);
     worker_.reset();
     workerThread_.reset();
 }
@@ -112,9 +114,8 @@ WorkerManager::~WorkerManager() {
 /// 恢复主线程输出/输入回调（worker 退出后调用），重建实时交互。
 void WorkerManager::setupMainCallbacks() {
     // 恢复主线程输出回调
-    interpreter_->setOutputCallback([this](const std::string& text) {
-        emit outputReady(QString::fromStdString(text));
-    });
+    interpreter_->setOutputCallback(
+        [this](const std::string& text) { emit outputReady(QString::fromStdString(text)); });
     // D20 fix: 恢复输入回调统一通过 buildInputCallback 构建（带超时保护）
     interpreter_->setInputCallback(buildInputCallback());
 }
@@ -125,7 +126,8 @@ void WorkerManager::setupMainCallbacks() {
 
 /// 准备运行：设置模块加载器、构建 InterpreterWorker 并启动线程（调试时接入调试器）。
 bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, const std::string& filePath) {
-    if (isRunning_) return false;
+    if (isRunning_)
+        return false;
 
     LOG_INFO(isDebug ? "启动调试运行" : "启动程序运行", "IDE");
 
@@ -158,7 +160,8 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
     };
     interpreter_->setModuleLoader([resolveModulePath](const std::string& modulePath) -> std::string {
         QString resolved = resolveModulePath(modulePath);
-        if (resolved.isEmpty()) return "";
+        if (resolved.isEmpty())
+            return "";
         QFile file(resolved);
         if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
             return QString::fromUtf8(file.readAll()).toStdString();
@@ -168,14 +171,17 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
     // BUG-REPL-AUDIT-1 fix: 设置模块 mtime 检查器，REPL 模式下文件修改后自动失效缓存
     interpreter_->setModuleMtimeChecker([resolveModulePath](const std::string& modulePath) -> int64_t {
         QString resolved = resolveModulePath(modulePath);
-        if (resolved.isEmpty()) return 0;
+        if (resolved.isEmpty())
+            return 0;
         QFileInfo fi(resolved);
-        if (!fi.exists()) return 0;
+        if (!fi.exists())
+            return 0;
         // 返回文件最后修改时间的毫秒时间戳
         return fi.lastModified().toMSecsSinceEpoch();
     });
 
-    if (!astRoot) return false;
+    if (!astRoot)
+        return false;
 
     // BUG-DBG-11 fix: 状态设置移入 try 块内，确保任何抛出都能被 catch 回滚。
     // 原实现将 setDebugMode/isDebugRun_/isRunning_ 设在 try 块外，若 try 块内
@@ -184,71 +190,82 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
     // A-P1-1 fix: isRunning_=true 之后的代码若抛出异常，需回滚 isRunning_ 状态，
     // 否则 UI 永久卡在"运行中"
     try {
-    // GUI-01 fix: 启用 debugMode 使 checkBreak 生效
-    interpreter_->setDebugMode(true);
-    isDebugRun_ = isDebug;
-    isRunning_ = true;
+        // GUI-01 fix: 启用 debugMode 使 checkBreak 生效
+        interpreter_->setDebugMode(true);
+        isDebugRun_ = isDebug;
+        isRunning_ = true;
 
-    // A-P1-1 fix: 非调试运行时清除残留断点，避免普通运行在调试会话后意外暂停
-    // （DebugController::reset() 保留断点供下次调试复用，普通运行需显式清除）
-    if (!isDebug) {
-        debugger_->setBreakpoints(QSet<int>());
-    }
-
-    // R2/D1 fix: 保存 REPL 状态
-    interpreter_->saveReplState();
-
-    // 7.1 fix: 使用 unique_ptr 管理生命周期，清理上次运行的 worker
-    worker_.reset();
-    workerThread_.reset();
-    // MEM-01/QT-R-03 fix: 向 worker 传递 shared_ptr，共享 Interpreter/AST 所有权，
-    // 避免主线程重新 parse 后 worker 持有悬垂引用
-    worker_ = std::make_unique<InterpreterWorker>(interpreter_, astRoot);
-    // A-P2-5 fix: 不设 parent，由 unique_ptr 独占管理生命周期，避免双重所有权
-    workerThread_.reset(new QThread());
-    // C16 fix: 增大 worker 线程栈至 4MB。每次 MiniLang 调用展开 6-10 个 C++ 栈帧，
-    // MAX_RECURSION_DEPTH=256 对应约 1500-2500 个 C++ 栈帧，接近 Windows 默认 1MB 栈边界。
-    workerThread_->setStackSize(4 * 1024 * 1024);
-    worker_->moveToThread(workerThread_.get());
-
-    // 转发 worker 信号到 WorkerManager 信号
-    // QT-R-07 fix: worker_.get() 生活于 workerThread_，this 生活于主线程，
-    // 跨线程信号槽必须显式指定 Qt::QueuedConnection，避免依赖 AutoConnection 推断。
-    // 显式 QueuedConnection 确保：信号被投递到接收方线程事件循环，槽函数在接收方线程执行，
-    // 消除数据竞争（worker 线程发射信号 vs 主线程访问 WorkerManager 成员）。
-    connect(worker_.get(), &InterpreterWorker::outputReady, this, &WorkerManager::outputReady, Qt::QueuedConnection);
-    connect(worker_.get(), &InterpreterWorker::finishedOk, this, &WorkerManager::runOk, Qt::QueuedConnection);
-    connect(worker_.get(), &InterpreterWorker::stoppedByUser, this, &WorkerManager::stoppedByUser, Qt::QueuedConnection);
-    connect(worker_.get(), &InterpreterWorker::runtimeError, this, &WorkerManager::runtimeError, Qt::QueuedConnection);
-    connect(worker_.get(), &InterpreterWorker::genericError, this, &WorkerManager::genericError, Qt::QueuedConnection);
-
-    // 任一终止信号 → 退出线程事件循环
-    connect(worker_.get(), &InterpreterWorker::finishedOk, workerThread_.get(), &QThread::quit, Qt::QueuedConnection);
-    connect(worker_.get(), &InterpreterWorker::stoppedByUser, workerThread_.get(), &QThread::quit, Qt::QueuedConnection);
-    connect(worker_.get(), &InterpreterWorker::runtimeError, workerThread_.get(), &QThread::quit, Qt::QueuedConnection);
-    connect(worker_.get(), &InterpreterWorker::genericError, workerThread_.get(), &QThread::quit, Qt::QueuedConnection);
-
-    // 线程结束 → 清理 → 通知 UI
-    // QT-R-07 fix: workerThread_.finished 在 workerThread_ 线程发射，this 在主线程，需 QueuedConnection
-    connect(workerThread_.get(), &QThread::finished, this, [this]() {
-        // P2 fix: 在 cleanupWorker 重置 isDebugRun_ 之前保存其值
-        bool wasDebug = isDebugRun_;
-        // BUG-REPL-AUDIT-8 fix: cleanupWorker 内部 restoreReplState()/debugger_->reset()
-        // 理论上可能抛异常（如 forceStop 终止后状态损坏），未捕获会导致 workerFinished
-        // 信号永不发射，UI 永久卡死（按钮禁用、编辑器只读、REPL 输入框禁用）。
-        // 此处 try/catch 包裹确保 workerFinished 总会发射，UI 状态总能恢复。
-        try {
-            cleanupWorker();
-        } catch (const std::exception& e) {
-            LOG_ERROR(std::string("cleanupWorker threw: ") + e.what(), "IDE");
-            isRunning_ = false;
-            isDebugRun_ = false;
-        } catch (...) {
-            isRunning_ = false;
-            isDebugRun_ = false;
+        // A-P1-1 fix: 非调试运行时清除残留断点，避免普通运行在调试会话后意外暂停
+        // （DebugController::reset() 保留断点供下次调试复用，普通运行需显式清除）
+        if (!isDebug) {
+            debugger_->setBreakpoints(QSet<int>());
         }
-        emit workerFinished(wasDebug);
-    }, Qt::QueuedConnection);
+
+        // R2/D1 fix: 保存 REPL 状态
+        interpreter_->saveReplState();
+
+        // 7.1 fix: 使用 unique_ptr 管理生命周期，清理上次运行的 worker
+        worker_.reset();
+        workerThread_.reset();
+        // MEM-01/QT-R-03 fix: 向 worker 传递 shared_ptr，共享 Interpreter/AST 所有权，
+        // 避免主线程重新 parse 后 worker 持有悬垂引用
+        worker_ = std::make_unique<InterpreterWorker>(interpreter_, astRoot);
+        // A-P2-5 fix: 不设 parent，由 unique_ptr 独占管理生命周期，避免双重所有权
+        workerThread_.reset(new QThread());
+        // C16 fix: 增大 worker 线程栈至 4MB。每次 MiniLang 调用展开 6-10 个 C++ 栈帧，
+        // MAX_RECURSION_DEPTH=256 对应约 1500-2500 个 C++ 栈帧，接近 Windows 默认 1MB 栈边界。
+        workerThread_->setStackSize(4 * 1024 * 1024);
+        worker_->moveToThread(workerThread_.get());
+
+        // 转发 worker 信号到 WorkerManager 信号
+        // QT-R-07 fix: worker_.get() 生活于 workerThread_，this 生活于主线程，
+        // 跨线程信号槽必须显式指定 Qt::QueuedConnection，避免依赖 AutoConnection 推断。
+        // 显式 QueuedConnection 确保：信号被投递到接收方线程事件循环，槽函数在接收方线程执行，
+        // 消除数据竞争（worker 线程发射信号 vs 主线程访问 WorkerManager 成员）。
+        connect(worker_.get(), &InterpreterWorker::outputReady, this, &WorkerManager::outputReady,
+                Qt::QueuedConnection);
+        connect(worker_.get(), &InterpreterWorker::finishedOk, this, &WorkerManager::runOk, Qt::QueuedConnection);
+        connect(worker_.get(), &InterpreterWorker::stoppedByUser, this, &WorkerManager::stoppedByUser,
+                Qt::QueuedConnection);
+        connect(worker_.get(), &InterpreterWorker::runtimeError, this, &WorkerManager::runtimeError,
+                Qt::QueuedConnection);
+        connect(worker_.get(), &InterpreterWorker::genericError, this, &WorkerManager::genericError,
+                Qt::QueuedConnection);
+
+        // 任一终止信号 → 退出线程事件循环
+        connect(worker_.get(), &InterpreterWorker::finishedOk, workerThread_.get(), &QThread::quit,
+                Qt::QueuedConnection);
+        connect(worker_.get(), &InterpreterWorker::stoppedByUser, workerThread_.get(), &QThread::quit,
+                Qt::QueuedConnection);
+        connect(worker_.get(), &InterpreterWorker::runtimeError, workerThread_.get(), &QThread::quit,
+                Qt::QueuedConnection);
+        connect(worker_.get(), &InterpreterWorker::genericError, workerThread_.get(), &QThread::quit,
+                Qt::QueuedConnection);
+
+        // 线程结束 → 清理 → 通知 UI
+        // QT-R-07 fix: workerThread_.finished 在 workerThread_ 线程发射，this 在主线程，需 QueuedConnection
+        connect(
+            workerThread_.get(), &QThread::finished, this,
+            [this]() {
+                // P2 fix: 在 cleanupWorker 重置 isDebugRun_ 之前保存其值
+                bool wasDebug = isDebugRun_;
+                // BUG-REPL-AUDIT-8 fix: cleanupWorker 内部 restoreReplState()/debugger_->reset()
+                // 理论上可能抛异常（如 forceStop 终止后状态损坏），未捕获会导致 workerFinished
+                // 信号永不发射，UI 永久卡死（按钮禁用、编辑器只读、REPL 输入框禁用）。
+                // 此处 try/catch 包裹确保 workerFinished 总会发射，UI 状态总能恢复。
+                try {
+                    cleanupWorker();
+                } catch (const std::exception& e) {
+                    LOG_ERROR(std::string("cleanupWorker threw: ") + e.what(), "IDE");
+                    isRunning_ = false;
+                    isDebugRun_ = false;
+                } catch (...) {
+                    isRunning_ = false;
+                    isDebugRun_ = false;
+                }
+                emit workerFinished(wasDebug);
+            },
+            Qt::QueuedConnection);
     } catch (...) {
         // BUG-DBG-10 fix: 重置顺序与 cleanupWorker() 对齐。
         // 原顺序 worker_.reset() 在 workerThread_.reset() 之前，且 workerThread_
@@ -286,7 +303,7 @@ bool WorkerManager::stopForClose(int timeoutMs) {
     if (workerThread_) {
         workerThread_->quit();
         if (!workerThread_->wait(timeoutMs)) {
-            return false;  // 超时，需强制终止
+            return false; // 超时，需强制终止
         }
         // BUG-IDE-15 fix: stopForClose 成功路径需断开 QThread::finished 信号到
         // cleanupWorker lambda 的连接，否则 workerThread_.reset() 后已投递到主线程
