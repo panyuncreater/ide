@@ -18,11 +18,11 @@
 // 真正使用 CallFrame 的模块（Interpreter.h）请 include "interpreter/CallFrame.h"。
 // ============================================================
 
-#include <string>
-#include <stdexcept>
-#include <memory>
+#include "common/Result.h" // A1 fix: to_runtime_error 自由函数模板需要 Result<T>
 #include "interpreter/Value.h"
-#include "common/Result.h"  // A1 fix: to_runtime_error 自由函数模板需要 Result<T>
+#include <memory>
+#include <stdexcept>
+#include <string>
 
 // ============================================================
 // 运行时异常
@@ -34,8 +34,7 @@ public:
     int line;
     int column;
 
-    RuntimeError(const std::string& msg, int ln = 0, int col = 0)
-        : std::runtime_error(msg), line(ln), column(col) {}
+    RuntimeError(const std::string& msg, int ln = 0, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
 };
 
 /// return 语句专用异常（用于跳出函数体）
@@ -43,8 +42,7 @@ class ReturnException : public std::runtime_error {
 public:
     Value returnValue;
 
-    ReturnException(Value val)
-        : std::runtime_error("return"), returnValue(std::move(val)) {}
+    ReturnException(Value val) : std::runtime_error("return"), returnValue(std::move(val)) {}
 };
 
 /// break 语句专用异常（用于跳出循环体）
@@ -64,8 +62,7 @@ class ThrowException : public std::runtime_error {
 public:
     Value thrownValue;
 
-    ThrowException(Value val)
-        : std::runtime_error("throw"), thrownValue(std::move(val)) {}
+    ThrowException(Value val) : std::runtime_error("throw"), thrownValue(std::move(val)) {}
 };
 
 /// 调试终止异常（用户点击停止按钮时抛出）
@@ -82,8 +79,7 @@ public:
 // 现迁移为自由函数模板，定义在 interpreter 层，由调用方包含此头文件使用。
 // 调用方需确保 result.is_err()。
 
-template<typename T>
-RuntimeError to_runtime_error(const Result<T>& result) {
+template <typename T> RuntimeError to_runtime_error(const Result<T>& result) {
     const auto& e = result.error();
     return RuntimeError(e.message, e.line, e.column);
 }

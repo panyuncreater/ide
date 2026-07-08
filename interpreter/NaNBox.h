@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstdint>
-#include <cstring>
 #include <cassert>
-#include <cstdlib>  // std::abort — Release 构建中 assert 兜底，避免 UB
+#include <cstdint>
+#include <cstdlib> // std::abort — Release 构建中 assert 兜底，避免 UB
+#include <cstring>
 #include <string>
 
 // ============================================================
@@ -34,11 +34,11 @@ class NaNBox {
 public:
     /// 类型标签
     enum class Tag : uint8_t {
-        FLOAT   = 0,  // 直接存储 double 原始位
-        INT     = 1,  // int48 内联
-        BOOL    = 2,  // bool 内联
-        NUL     = 3,  // null
-        POINTER = 4,  // 48 位指针
+        FLOAT = 0,   // 直接存储 double 原始位
+        INT = 1,     // int48 内联
+        BOOL = 2,    // bool 内联
+        NUL = 3,     // null
+        POINTER = 4, // 48 位指针
     };
 
     /// 构造 null
@@ -51,7 +51,7 @@ public:
         std::memcpy(&box.bits_, &d, sizeof(double));
         // 如果 double 恰好落入 NaN-boxed tag 范围，需要规范化
         // 罕见情况：double 是一个 quiet NaN 且高 16 位与我们的 tag 冲突
-        //（INT_TAG_BASE=0x7FF8, BOOL_TAG_BASE=0x7FF9, NULL_BITS=0x7FFA, PTR_TAG_BASE=0x7FFB）
+        // （INT_TAG_BASE=0x7FF8, BOOL_TAG_BASE=0x7FF9, NULL_BITS=0x7FFA, PTR_TAG_BASE=0x7FFB）
         // 必须将整个 64 位替换为 NAN_BOXED_FLOAT_MARKER（0x7FFC...），
         // 丢弃原始 NaN payload——否则低 48 位可能形成合法 int/bool/null/ptr 位模式，
         // 导致 tag() 误判。NaN != NaN（IEEE 754），payload 丢弃不影响语义正确性。
@@ -64,7 +64,9 @@ public:
     static NaNBox fromInt(int64_t i) {
         // P0 fix: assert 在 Release 构建被剥离，超范围值静默截断导致数据损坏。
         // 改为运行时 abort，与 VMStack 风格一致——显式失败优于静默继续。
-        if (!canEncodeInt(i)) { std::abort(); }
+        if (!canEncodeInt(i)) {
+            std::abort();
+        }
         NaNBox box;
         // 将 int64 截断为 int48（保留符号位扩展）
         uint64_t payload = static_cast<uint64_t>(i) & INT48_MASK;
@@ -89,7 +91,9 @@ public:
         uint64_t ptrBits = reinterpret_cast<uint64_t>(ptr);
         // P0 fix: assert 在 Release 被剥离，内核指针（高 16 位非 0）静默截断
         // 产生错误指针编码，后续 asPtr 解码出无效地址触发访问冲突。
-        if ((ptrBits & ~PTR_MASK) != 0) { std::abort(); }
+        if ((ptrBits & ~PTR_MASK) != 0) {
+            std::abort();
+        }
         box.bits_ = PTR_TAG_BASE | (ptrBits & PTR_MASK);
         return box;
     }
@@ -97,20 +101,25 @@ public:
     // ---- 类型查询 ----
 
     Tag tag() const {
-        if (!isBoxedNaN(bits_)) return Tag::FLOAT;
+        if (!isBoxedNaN(bits_))
+            return Tag::FLOAT;
         uint64_t tagField = bits_ & TAG_FIELD_MASK;
-        if (tagField == INT_TAG_BASE)  return Tag::INT;
-        if (tagField == BOOL_TAG_BASE) return Tag::BOOL;
-        if (bits_ == NULL_BITS)        return Tag::NUL;
-        if (tagField == PTR_TAG_BASE)  return Tag::POINTER;
+        if (tagField == INT_TAG_BASE)
+            return Tag::INT;
+        if (tagField == BOOL_TAG_BASE)
+            return Tag::BOOL;
+        if (bits_ == NULL_BITS)
+            return Tag::NUL;
+        if (tagField == PTR_TAG_BASE)
+            return Tag::POINTER;
         // 不认识的 tag（规范化后的 float NaN），当作 float
         return Tag::FLOAT;
     }
 
-    bool isFloat() const   { return tag() == Tag::FLOAT; }
-    bool isInt() const     { return tag() == Tag::INT; }
-    bool isBool() const    { return tag() == Tag::BOOL; }
-    bool isNull() const    { return tag() == Tag::NUL; }
+    bool isFloat() const { return tag() == Tag::FLOAT; }
+    bool isInt() const { return tag() == Tag::INT; }
+    bool isBool() const { return tag() == Tag::BOOL; }
+    bool isNull() const { return tag() == Tag::NUL; }
     bool isPointer() const { return tag() == Tag::POINTER; }
 
     bool isScalar() const {
@@ -124,30 +133,37 @@ public:
     // 调用方应先调用 isXxx() 检查类型后再调用 asXxx()。
 
     double asFloat() const {
-        if (!isFloat()) { std::abort(); }
+        if (!isFloat()) {
+            std::abort();
+        }
         double d;
         std::memcpy(&d, &bits_, sizeof(double));
         return d;
     }
 
     int64_t asInt() const {
-        if (!isInt()) { std::abort(); }
+        if (!isInt()) {
+            std::abort();
+        }
         // int48 符号扩展：将 bit 47 扩展到高位
         uint64_t payload = bits_ & INT48_MASK;
         if (payload & INT47_SIGN_BIT) {
-            payload |= ~INT48_MASK;  // 高位填 1
+            payload |= ~INT48_MASK; // 高位填 1
         }
         return static_cast<int64_t>(payload);
     }
 
     bool asBool() const {
-        if (!isBool()) { std::abort(); }
+        if (!isBool()) {
+            std::abort();
+        }
         return (bits_ & 1ULL) != 0;
     }
 
-    template<typename T>
-    T* asPtr() const {
-        if (!isPointer()) { std::abort(); }
+    template <typename T> T* asPtr() const {
+        if (!isPointer()) {
+            std::abort();
+        }
         // 零扩展：x86-64 用户空间指针高 16 位始终为 0，直接取低 48 位即可。
         // 不能使用符号扩展——Windows x64 用户空间地址（如 0x00007FFD...）的
         // bit 47 = 1，符号扩展会错误地将高 16 位填为 0xFFFF，产生无效内核地址。
@@ -155,9 +171,7 @@ public:
         return reinterpret_cast<T*>(ptrBits);
     }
 
-    void* asVoidPtr() const {
-        return asPtr<void>();
-    }
+    void* asVoidPtr() const { return asPtr<void>(); }
 
     // ---- 容量查询 ----
 
@@ -172,12 +186,8 @@ public:
 
     // ---- 比较 ----
 
-    bool operator==(const NaNBox& other) const {
-        return bits_ == other.bits_;
-    }
-    bool operator!=(const NaNBox& other) const {
-        return bits_ != other.bits_;
-    }
+    bool operator==(const NaNBox& other) const { return bits_ == other.bits_; }
+    bool operator!=(const NaNBox& other) const { return bits_ != other.bits_; }
 
 private:
     uint64_t bits_;
@@ -193,16 +203,16 @@ private:
     //   0x7FFA = NULL    (无 payload)
     //   0x7FFB = POINTER (payload = 48 位指针)
 
-    static constexpr uint64_t TAG_FIELD_MASK = 0xFFFF000000000000ULL;  // 高 16 位
-    static constexpr uint64_t INT48_MASK     = 0x0000FFFFFFFFFFFFULL;  // 低 48 位
-    static constexpr uint64_t INT47_SIGN_BIT = 0x0000800000000000ULL;  // bit 47（int48 符号位）
-    static constexpr uint64_t PTR_MASK       = 0x0000FFFFFFFFFFFFULL;  // 低 48 位
+    static constexpr uint64_t TAG_FIELD_MASK = 0xFFFF000000000000ULL; // 高 16 位
+    static constexpr uint64_t INT48_MASK = 0x0000FFFFFFFFFFFFULL;     // 低 48 位
+    static constexpr uint64_t INT47_SIGN_BIT = 0x0000800000000000ULL; // bit 47（int48 符号位）
+    static constexpr uint64_t PTR_MASK = 0x0000FFFFFFFFFFFFULL;       // 低 48 位
 
     // Tag 基址（高 16 位，均含 quiet NaN bit 51）
-    static constexpr uint64_t INT_TAG_BASE  = 0x7FF8000000000000ULL;  // int48
-    static constexpr uint64_t BOOL_TAG_BASE = 0x7FF9000000000000ULL;  // bool
-    static constexpr uint64_t NULL_BITS     = 0x7FFA000000000000ULL;  // null
-    static constexpr uint64_t PTR_TAG_BASE  = 0x7FFB000000000000ULL;  // 指针
+    static constexpr uint64_t INT_TAG_BASE = 0x7FF8000000000000ULL;  // int48
+    static constexpr uint64_t BOOL_TAG_BASE = 0x7FF9000000000000ULL; // bool
+    static constexpr uint64_t NULL_BITS = 0x7FFA000000000000ULL;     // null
+    static constexpr uint64_t PTR_TAG_BASE = 0x7FFB000000000000ULL;  // 指针
 
     // 规范化的 float NaN 标记：当 double 的位模式落入 NaN-boxed 范围时，
     // 用此值替代（仍是一个 quiet NaN，读取时按 double 解码）

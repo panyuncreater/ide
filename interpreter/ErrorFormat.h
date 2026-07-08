@@ -19,18 +19,17 @@
 // 其余直接拼接为字符串的字面量。
 // ============================================================
 
+#include <array>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <type_traits>
-#include <charconv>
-#include <array>
 
 namespace ErrorFormat {
 
 /// 将整数写入栈缓冲并返回字符串视图（无堆分配）
-template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
-inline std::string intToString(T value) {
+template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>> inline std::string intToString(T value) {
     char buf[32];
     auto res = std::to_chars(buf, buf + sizeof(buf), value);
     return std::string(buf, res.ptr);
@@ -39,13 +38,13 @@ inline std::string intToString(T value) {
 /// P3 fix: 格式化错误消息（栈缓冲，无 std::to_string 调用）。
 /// 支持的占位符：%d（整型）、%s（const char* / std::string）。
 /// 其余字符原样输出。返回 std::string 供 runtimeError/throw 使用。
-template <typename... Args>
-inline std::string format(const char* fmt, Args&&... args) {
+template <typename... Args> inline std::string format(const char* fmt, Args&&... args) {
     // 简单实现：用 snprintf 到栈缓冲，避免 std::to_string 的 locale 开销。
     // 缓冲区 512 字节足以容纳绝大多数运行时错误消息。
     char buf[512];
     int n = std::snprintf(buf, sizeof(buf), fmt, std::forward<Args>(args)...);
-    if (n < 0) return std::string(fmt);  // 格式化失败，回退原始字符串
+    if (n < 0)
+        return std::string(fmt); // 格式化失败，回退原始字符串
     if (static_cast<size_t>(n) < sizeof(buf)) {
         return std::string(buf, static_cast<size_t>(n));
     }
@@ -53,4 +52,4 @@ inline std::string format(const char* fmt, Args&&... args) {
     return std::string(buf, sizeof(buf) - 1);
 }
 
-}  // namespace ErrorFormat
+} // namespace ErrorFormat

@@ -53,8 +53,8 @@
 //     弱引用列表，VM 主循环每 N 条指令触发一次扫描。
 // ============================================================
 
+#include "interpreter/ValueTypes.h" // ValueType 枚举
 #include <atomic>
-#include "interpreter/ValueTypes.h"  // ValueType 枚举
 
 // Bug2 fix: 前向声明 GcManager（析构钩子需要调用其静态方法）
 class GcManager;
@@ -84,9 +84,7 @@ struct RefCounted {
     virtual ~RefCounted();
 
     /// 增加引用计数（relaxed 内存序， sufficient for refcounting）
-    void addRef() const {
-        refCount.fetch_add(1, std::memory_order_relaxed);
-    }
+    void addRef() const { refCount.fetch_add(1, std::memory_order_relaxed); }
 
     /// 内存序说明：fetch_sub 使用 acq_rel——release 半序保证本线程对该对象内容的所有
     /// 写操作在引用计数递减"发布"前完成；acquire 半序保证当最后一个引用被释放、即将
@@ -101,12 +99,8 @@ struct RefCounted {
     }
 
     /// 检查是否独占引用（用于 COW detach 判断）
-    bool isUnique() const {
-        return refCount.load(std::memory_order_relaxed) == 1;
-    }
+    bool isUnique() const { return refCount.load(std::memory_order_relaxed) == 1; }
 
     /// 获取当前引用计数（调试/诊断用）
-    int useCount() const {
-        return refCount.load(std::memory_order_relaxed);
-    }
+    int useCount() const { return refCount.load(std::memory_order_relaxed); }
 };

@@ -64,28 +64,28 @@
 //     静态打破；用户层容器循环依赖 OS 退出回收，视为可接受。
 // ============================================================
 
-#include "interpreter/ValueTypes.h"
-#include "interpreter/RefCounted.h"   // PERF-12: 侵入式引用计数基类
+#include "common/RuntimeLimits.h"
+#include "interpreter/GcManager.h"    // Bug2 fix: 循环引用 GC
 #include "interpreter/NaNBox.h"       // PERF-12: 8字节 NaN-boxing 编码
 #include "interpreter/NumericUtils.h" // 共享溢出检查（B6 fix）
-#include "interpreter/GcManager.h"    // Bug2 fix: 循环引用 GC
-#include "common/RuntimeLimits.h"
+#include "interpreter/RefCounted.h"   // PERF-12: 侵入式引用计数基类
+#include "interpreter/ValueTypes.h"
 
+#include "common/Utf8Utils.h" // perf1 fix: Value::codepointCount() 委托 Utf8::codepointCount
+#include <array>
+#include <cassert>
+#include <charconv> // Perf-Finding2: VAL_INT toString 用 to_chars 替代 std::to_string（避免 locale 查询）
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib> // AUDIT-NANBOX fix: std::abort — Release 构建中 assert 被剥离，类型不匹配时静默返回垃圾值（如指针间类型混淆 reinterpret_cast 错误类型），改为运行时 abort 与 NaNBox::asXxx 风格一致
+#include <memory>
+#include <optional> // perf1 fix: StringData 缓存 codepointCount
+#include <sstream>
 #include <string>
 #include <unordered_map>
-#include <sstream>
-#include <cstdio>
-#include <charconv>   // Perf-Finding2: VAL_INT toString 用 to_chars 替代 std::to_string（避免 locale 查询）
-#include <array>
-#include <vector>
-#include <memory>
-#include <cstdint>
-#include <cmath>
-#include <cassert>
-#include <cstdlib>     // AUDIT-NANBOX fix: std::abort — Release 构建中 assert 被剥离，类型不匹配时静默返回垃圾值（如指针间类型混淆 reinterpret_cast 错误类型），改为运行时 abort 与 NaNBox::asXxx 风格一致
 #include <unordered_set>
-#include <optional>  // perf1 fix: StringData 缓存 codepointCount
-#include "common/Utf8Utils.h"  // perf1 fix: Value::codepointCount() 委托 Utf8::codepointCount
+#include <vector>
 
 // ============================================================
 // Value 运行时值结构体
@@ -94,6 +94,7 @@
 struct Value {
     // Bug2 fix: GcManager mark-sweep 需要访问 private 嵌套类型和 box_ 进行容器图遍历
     friend class GcManager;
+
 private:
     // ---- 堆类型数据载体（继承 RefCounted， intrusive 引用计数）----
     struct StringData : RefCounted {
@@ -119,17 +120,13 @@ private:
 
     struct DictData : RefCounted {
         std::unordered_map<std::string, Value> entries;
-        DictData() : RefCounted(ValueType::VAL_DICT) {
-            GcManager::instance().registerTracked(this);
-        }
+        DictData() : RefCounted(ValueType::VAL_DICT) { GcManager::instance().registerTracked(this); }
     };
 
     struct InstanceData : RefCounted {
         std::string className;
         std::unordered_map<std::string, Value> fields;
-        InstanceData() : RefCounted(ValueType::VAL_INSTANCE) {
-            GcManager::instance().registerTracked(this);
-        }
+        InstanceData() : RefCounted(ValueType::VAL_INSTANCE) { GcManager::instance().registerTracked(this); }
         explicit InstanceData(const std::string& cn) : RefCounted(ValueType::VAL_INSTANCE), className(cn) {
             GcManager::instance().registerTracked(this);
         }
@@ -137,7 +134,7 @@ private:
 
     struct ClosureData : RefCounted {
         std::string name;
-        std::weak_ptr<Environment> env;  // V4 fix: weak_ptr 打破闭包→环境→闭包的循环引用
+        std::weak_ptr<Environment> env; // V4 fix: weak_ptr 打破闭包→环境→闭包的循环引用
         std::vector<std::string> params;
         std::unordered_map<std::string, Value> capturedVars;
         // A3 fix: shared_ptr 所有权，避免 AST 重建后 funRegistry_/methods 持有的裸指针悬垂。
@@ -145,8 +142,8 @@ private:
         std::shared_ptr<VMClosureData> vmClosure; // VM-05/06: VM 闭包数据
 
         ClosureData() : RefCounted(ValueType::VAL_CLOSURE) {}
-        ClosureData(const std::string& n, std::shared_ptr<Environment> e,
-                    const std::vector<std::string>& p, std::shared_ptr<FunDecl> b)
+        ClosureData(const std::string& n, std::shared_ptr<Environment> e, const std::vector<std::string>& p,
+                    std::shared_ptr<FunDecl> b)
             : RefCounted(ValueType::VAL_CLOSURE), name(n), env(e), params(p), body(std::move(b)) {}
     };
 
@@ -160,15 +157,14 @@ private:
     NaNBox box_;
 
     // ---- COW detach — 写入前确保独占所有权 ----
-    template<typename T>
-    T* ensureUnique() {
+    template <typename T> T* ensureUnique() {
         T* ptr = box_.asPtr<T>();
         if (!ptr->isUnique()) {
             // 引用计数 > 1：深拷贝一份新数据
             // P0 fix: 用 unique_ptr 包裹 cloned，防止 new T(*ptr) 抛 bad_alloc 时
             // 部分已克隆的子树泄漏（如 ArrayData/DictData/InstanceData 的 cloneImpl
             // 递归克隆嵌套 Value，中途抛异常会泄漏已分配的子对象）。
-            auto cloned = std::make_unique<T>(*ptr);  // 拷贝构造（RefCounted 拷贝 ctor 重置 refCount=1）
+            auto cloned = std::make_unique<T>(*ptr); // 拷贝构造（RefCounted 拷贝 ctor 重置 refCount=1）
             // AUDIT-BUG-C1 fix: 拷贝构造不会调用 GcManager::registerTracked（仅显式构造函数调用）。
             // COW 克隆的容器必须注册到 GcManager，否则循环引用（如 b.push(b) 后 COW detach）
             // 不会被 collectCycle 回收，导致永久内存泄漏。
@@ -177,10 +173,11 @@ private:
             // 旧引用计数不变（ptr->release() 未执行），仍由调用方持有，无双重释放风险。
             // 原实现先 release/transfer 所有权再 registerTracked，若 registerTracked 抛异常，
             // raw 泄漏（已脱离 unique_ptr）且 box_ 仍指向旧 ptr（release 已执行→双重释放）。
-            if constexpr (std::is_same_v<T, ArrayData> || std::is_same_v<T, DictData> || std::is_same_v<T, InstanceData>) {
+            if constexpr (std::is_same_v<T, ArrayData> || std::is_same_v<T, DictData> ||
+                          std::is_same_v<T, InstanceData>) {
                 GcManager::instance().registerTracked(cloned.get());
             }
-            ptr->release();                          // 释放旧引用
+            ptr->release(); // 释放旧引用
             T* raw = cloned.release();
             box_ = NaNBox::fromPtr(static_cast<const void*>(raw));
             return raw;
@@ -218,18 +215,14 @@ public:
     explicit Value(bool v) : box_(NaNBox::fromBool(v)) {}
 
     // 字符串构造
-    explicit Value(const std::string& v)
-        : box_(NaNBox::fromPtr(static_cast<const void*>(new StringData(v)))) {}
-    explicit Value(std::string&& v)
-        : box_(NaNBox::fromPtr(static_cast<const void*>(new StringData(std::move(v))))) {}
+    explicit Value(const std::string& v) : box_(NaNBox::fromPtr(static_cast<const void*>(new StringData(v)))) {}
+    explicit Value(std::string&& v) : box_(NaNBox::fromPtr(static_cast<const void*>(new StringData(std::move(v))))) {}
     explicit Value(const char* v)
         // AUDIT-BUG-I5 fix: nullptr 防御——std::string(nullptr) 是 UB
-        : box_(NaNBox::fromPtr(static_cast<const void*>(
-              new StringData(v ? std::string(v) : std::string())))) {}
+        : box_(NaNBox::fromPtr(static_cast<const void*>(new StringData(v ? std::string(v) : std::string())))) {}
 
     // 数组构造
-    explicit Value(const std::vector<Value>& v)
-        : box_(NaNBox::fromPtr(static_cast<const void*>(new ArrayData(v)))) {}
+    explicit Value(const std::vector<Value>& v) : box_(NaNBox::fromPtr(static_cast<const void*>(new ArrayData(v)))) {}
     explicit Value(std::vector<Value>&& v)
         : box_(NaNBox::fromPtr(static_cast<const void*>(new ArrayData(std::move(v))))) {}
 
@@ -268,9 +261,7 @@ public:
         return *this;
     }
 
-    Value(Value&& other) noexcept : box_(other.box_) {
-        other.box_ = NaNBox::null();
-    }
+    Value(Value&& other) noexcept : box_(other.box_) { other.box_ = NaNBox::null(); }
 
     Value& operator=(Value&& other) noexcept {
         if (this != &other) {
@@ -324,12 +315,12 @@ private:
         auto* rc = box_.asPtr<RefCounted>();
         // 深度保护：超限时返回浅拷贝（保留原引用），避免栈溢出
         if (depth >= MAX_CLONE_DEPTH) {
-            return *this;  // 拷贝构造 + addRef
+            return *this; // 拷贝构造 + addRef
         }
         // 环检测：遇到已克隆节点直接复用（addRef 后返回）
         auto it = cloned.find(rc);
         if (it != cloned.end()) {
-            return it->second;  // 拷贝构造 + addRef
+            return it->second; // 拷贝构造 + addRef
         }
 
         switch (rc->type) {
@@ -378,7 +369,7 @@ private:
         }
         case ValueType::VAL_CLOSURE: {
             auto* p = static_cast<ClosureData*>(rc);
-            auto* newPtr = new ClosureData(*p);  // 浅拷贝 env/params/body/vmClosure
+            auto* newPtr = new ClosureData(*p); // 浅拷贝 env/params/body/vmClosure
             Value result = fromHeapPtr(newPtr);
             cloned.emplace(rc, result);
             newPtr->capturedVars.clear();
@@ -388,12 +379,11 @@ private:
             return result;
         }
         default:
-            return Value();  // null
+            return Value(); // null
         }
     }
 
 public:
-
     // ---- 静态工厂方法 ----
 
     /// 返回 null 值（等价于默认构造的 Value，NaNBox 编码为 NULL_BITS）。
@@ -401,17 +391,13 @@ public:
 
     /// 构造一个空实例值，className 标识其所属类。字段表初始为空，
     /// 由解释器/VM 在构造后填充。用于 class 实例化表达式的结果。
-    static Value makeInstance(const std::string& clsName) {
-        return fromHeapPtr(new InstanceData(clsName));
-    }
+    static Value makeInstance(const std::string& clsName) { return fromHeapPtr(new InstanceData(clsName)); }
 
     /// 构造闭包值，捕获 name/env/params/body。
     /// 注意 env 以 shared_ptr 传入，但 ClosureData 内部存为 weak_ptr<Environment>
     /// （V4 fix），用于打破 闭包→环境→闭包 的循环引用，避免引用计数泄漏。
-    static Value makeClosure(const std::string& name,
-                             std::shared_ptr<Environment> env,
-                             const std::vector<std::string>& params,
-                             std::shared_ptr<FunDecl> body = nullptr) {
+    static Value makeClosure(const std::string& name, std::shared_ptr<Environment> env,
+                             const std::vector<std::string>& params, std::shared_ptr<FunDecl> body = nullptr) {
         return fromHeapPtr(new ClosureData(name, env, params, std::move(body)));
     }
 
@@ -419,11 +405,16 @@ public:
 
     ValueType getType() const {
         switch (box_.tag()) {
-        case NaNBox::Tag::FLOAT:   return ValueType::VAL_FLOAT;
-        case NaNBox::Tag::INT:     return ValueType::VAL_INT;
-        case NaNBox::Tag::BOOL:    return ValueType::VAL_BOOL;
-        case NaNBox::Tag::NUL:     return ValueType::VAL_NULL;
-        case NaNBox::Tag::POINTER: return box_.asPtr<RefCounted>()->type;
+        case NaNBox::Tag::FLOAT:
+            return ValueType::VAL_FLOAT;
+        case NaNBox::Tag::INT:
+            return ValueType::VAL_INT;
+        case NaNBox::Tag::BOOL:
+            return ValueType::VAL_BOOL;
+        case NaNBox::Tag::NUL:
+            return ValueType::VAL_NULL;
+        case NaNBox::Tag::POINTER:
+            return box_.asPtr<RefCounted>()->type;
         }
         return ValueType::VAL_NULL;
     }
@@ -431,32 +422,23 @@ public:
     // 向后兼容：允许读取 .type
     ValueType type() const { return getType(); }
 
-    bool isInt()      const {
-        if (box_.isInt()) return true;  // 内联 int48
+    bool isInt() const {
+        if (box_.isInt())
+            return true; // 内联 int48
         if (box_.isPointer()) {
-            return box_.asPtr<RefCounted>()->type == ValueType::VAL_INT;  // 装箱 int64
+            return box_.asPtr<RefCounted>()->type == ValueType::VAL_INT; // 装箱 int64
         }
         return false;
     }
-    bool isFloat()    const { return box_.isFloat(); }
-    bool isBool()     const { return box_.isBool(); }
-    bool isNull()     const { return box_.isNull(); }
-    bool isString()   const {
-        return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_STRING;
-    }
-    bool isArray()    const {
-        return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_ARRAY;
-    }
-    bool isDict()     const {
-        return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_DICT;
-    }
-    bool isInstance() const {
-        return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_INSTANCE;
-    }
-    bool isClosure()  const {
-        return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_CLOSURE;
-    }
-    bool isNumber()   const { return isInt() || isFloat(); }
+    bool isFloat() const { return box_.isFloat(); }
+    bool isBool() const { return box_.isBool(); }
+    bool isNull() const { return box_.isNull(); }
+    bool isString() const { return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_STRING; }
+    bool isArray() const { return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_ARRAY; }
+    bool isDict() const { return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_DICT; }
+    bool isInstance() const { return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_INSTANCE; }
+    bool isClosure() const { return box_.isPointer() && box_.asPtr<RefCounted>()->type == ValueType::VAL_CLOSURE; }
+    bool isNumber() const { return isInt() || isFloat(); }
 
     // ---- 堆指针访问（诊断/可视化用，P4-4: MemoryModelPanel 第 4 子页"实时动画"消费）----
     // 返回 true 当且仅当 NaN-box tag 为 POINTER（即承载堆对象）。
@@ -467,9 +449,7 @@ public:
     // 返回底层 RefCounted* 指针（仅当 isPointer() 为 true 时有效，否则 nullptr）。
     // 调用方可通过 p->type 区分具体堆类型，p->useCount() 读取引用计数。
     // 不增加引用计数：调用方仅用于只读诊断展示，不持有指针所有权。
-    RefCounted* asPointer() const {
-        return box_.isPointer() ? box_.asPtr<RefCounted>() : nullptr;
-    }
+    RefCounted* asPointer() const { return box_.isPointer() ? box_.asPtr<RefCounted>() : nullptr; }
 
     // ---- 访问器 ----
     // 标量访问器返回 by value（NaNBox 内联存储，非地址able lvalue）
@@ -479,38 +459,51 @@ public:
     // -- intVal --
     int64_t intVal() const {
         // AUDIT-NANBOX fix: assert 在 Release 被剥离，改为运行时 abort（与 NaNBox::asXxx 一致）
-        if (!isInt()) { std::abort(); }
-        if (box_.isInt()) return box_.asInt();  // 内联 int48
-        return box_.asPtr<BoxedIntData>()->value;  // 装箱 int64
+        if (!isInt()) {
+            std::abort();
+        }
+        if (box_.isInt())
+            return box_.asInt();                  // 内联 int48
+        return box_.asPtr<BoxedIntData>()->value; // 装箱 int64
     }
 
     // -- floatVal --
     double floatVal() const {
-        if (!isFloat()) { std::abort(); }
+        if (!isFloat()) {
+            std::abort();
+        }
         return box_.asFloat();
     }
 
     // -- boolVal --
     bool boolVal() const {
-        if (!isBool()) { std::abort(); }
+        if (!isBool()) {
+            std::abort();
+        }
         return box_.asBool();
     }
 
     // -- stringVal --
     std::string& stringVal() {
-        if (!isString()) { std::abort(); }
+        if (!isString()) {
+            std::abort();
+        }
         auto* sd = ensureUnique<StringData>();
-        sd->cachedCodepointCount.reset();  // perf1 fix: 字符串可能被修改，使码位缓存失效
+        sd->cachedCodepointCount.reset(); // perf1 fix: 字符串可能被修改，使码位缓存失效
         return sd->value;
     }
     const std::string& stringVal() const {
-        if (!isString()) { std::abort(); }
+        if (!isString()) {
+            std::abort();
+        }
         return box_.asPtr<StringData>()->value;
     }
     // perf1 fix: 返回字符串 UTF-8 码位数（带缓存，const 路径首次计算后复用）
     // O(n) 首次 → O(1) 后续，消除 len()/substr() 循环中的 O(n²) 重复扫描。
     int64_t codepointCount() const {
-        if (!isString()) { std::abort(); }
+        if (!isString()) {
+            std::abort();
+        }
         StringData* sd = box_.asPtr<StringData>();
         if (!sd->cachedCodepointCount.has_value()) {
             sd->cachedCodepointCount = Utf8::codepointCount(sd->value);
@@ -520,93 +513,140 @@ public:
 
     // -- arrayVal --
     std::vector<Value>& arrayVal() {
-        if (!isArray()) { std::abort(); }
+        if (!isArray()) {
+            std::abort();
+        }
         return ensureUnique<ArrayData>()->elements;
     }
     const std::vector<Value>& arrayVal() const {
-        if (!isArray()) { std::abort(); }
+        if (!isArray()) {
+            std::abort();
+        }
         return box_.asPtr<ArrayData>()->elements;
     }
 
     // -- dictVal --
     std::unordered_map<std::string, Value>& dictVal() {
-        if (!isDict()) { std::abort(); }
+        if (!isDict()) {
+            std::abort();
+        }
         return ensureUnique<DictData>()->entries;
     }
     const std::unordered_map<std::string, Value>& dictVal() const {
-        if (!isDict()) { std::abort(); }
+        if (!isDict()) {
+            std::abort();
+        }
         return box_.asPtr<DictData>()->entries;
     }
 
     // -- className（实例专用）--
     std::string& className() {
-        if (!isInstance()) { std::abort(); }
+        if (!isInstance()) {
+            std::abort();
+        }
         return ensureUnique<InstanceData>()->className;
     }
     const std::string& className() const {
-        if (!isInstance()) { std::abort(); }
+        if (!isInstance()) {
+            std::abort();
+        }
         return box_.asPtr<InstanceData>()->className;
     }
 
     // -- fields（实例字段）--
     std::unordered_map<std::string, Value>& fields() {
-        if (!isInstance()) { std::abort(); }
+        if (!isInstance()) {
+            std::abort();
+        }
         return ensureUnique<InstanceData>()->fields;
     }
     const std::unordered_map<std::string, Value>& fields() const {
-        if (!isInstance()) { std::abort(); }
+        if (!isInstance()) {
+            std::abort();
+        }
         return box_.asPtr<InstanceData>()->fields;
     }
 
     // -- 闭包字段 --
     std::string& closureName() {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return ensureUnique<ClosureData>()->name;
     }
     const std::string& closureName() const {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return box_.asPtr<ClosureData>()->name;
     }
 
     std::shared_ptr<Environment> closureEnv() const {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return box_.asPtr<ClosureData>()->env.lock();
     }
 
+    // AUDIT-P2-CORRECT fix: 设置闭包的环境 weak_ptr（用于沙箱深拷贝后断开与外层环境的共享）。
+    // 通过 ensureUnique<ClosureData> 获取独占引用后修改 env 字段，COW 语义保证不影响其他引用。
+    void setClosureEnv(std::shared_ptr<Environment> newEnv) {
+        if (!isClosure()) {
+            std::abort();
+        }
+        ensureUnique<ClosureData>()->env = newEnv;
+    }
+
     std::vector<std::string>& closureParams() {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return ensureUnique<ClosureData>()->params;
     }
     const std::vector<std::string>& closureParams() const {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return box_.asPtr<ClosureData>()->params;
     }
 
     FunDecl* closureBody() const {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return box_.asPtr<ClosureData>()->body.get();
     }
     std::shared_ptr<FunDecl> closureBodyShared() const {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return box_.asPtr<ClosureData>()->body;
     }
 
     std::unordered_map<std::string, Value>& capturedVars() {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return ensureUnique<ClosureData>()->capturedVars;
     }
     const std::unordered_map<std::string, Value>& capturedVars() const {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return box_.asPtr<ClosureData>()->capturedVars;
     }
 
     // VM-05/06: VM 闭包数据访问器
     std::shared_ptr<VMClosureData>& vmClosure() {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return ensureUnique<ClosureData>()->vmClosure;
     }
     const std::shared_ptr<VMClosureData>& vmClosure() const {
-        if (!isClosure()) { std::abort(); }
+        if (!isClosure()) {
+            std::abort();
+        }
         return box_.asPtr<ClosureData>()->vmClosure;
     }
 
@@ -615,45 +655,54 @@ public:
     // ============================================================
 
     std::string* tryGetMutableString() {
-        if (!isString()) return nullptr;
+        if (!isString())
+            return nullptr;
         auto* ptr = box_.asPtr<StringData>();
         return ptr->isUnique() ? &ptr->value : nullptr;
     }
 
     std::vector<Value>* tryGetMutableArray() {
-        if (!isArray()) return nullptr;
+        if (!isArray())
+            return nullptr;
         auto* ptr = box_.asPtr<ArrayData>();
         return ptr->isUnique() ? &ptr->elements : nullptr;
     }
 
     std::unordered_map<std::string, Value>* tryGetMutableDict() {
-        if (!isDict()) return nullptr;
+        if (!isDict())
+            return nullptr;
         auto* ptr = box_.asPtr<DictData>();
         return ptr->isUnique() ? &ptr->entries : nullptr;
     }
 
     std::unordered_map<std::string, Value>* tryGetMutableFields() {
-        if (!isInstance()) return nullptr;
+        if (!isInstance())
+            return nullptr;
         auto* ptr = box_.asPtr<InstanceData>();
         return ptr->isUnique() ? &ptr->fields : nullptr;
     }
 
     bool isUniquelyOwned() const {
-        if (!box_.isPointer()) return true;  // 标量始终独占
+        if (!box_.isPointer())
+            return true; // 标量始终独占
         return box_.asPtr<RefCounted>()->isUnique();
     }
 
     const void* gcRootPtr() const {
-        if (isArray()) return static_cast<const void*>(box_.asPtr<ArrayData>());
-        if (isDict()) return static_cast<const void*>(box_.asPtr<DictData>());
-        if (isInstance()) return static_cast<const void*>(box_.asPtr<InstanceData>());
+        if (isArray())
+            return static_cast<const void*>(box_.asPtr<ArrayData>());
+        if (isDict())
+            return static_cast<const void*>(box_.asPtr<DictData>());
+        if (isInstance())
+            return static_cast<const void*>(box_.asPtr<InstanceData>());
         // BUG-REPL-AUDIT-7 fix: 闭包也需作为 GC 根——capturedVars 可能持有循环容器
         // （如 a.append(a) 后被闭包捕获）。原实现仅遍历 savedGlobalEnv 顶层变量，
         // 但 gcRootPtr() 对闭包返回 nullptr，导致闭包内部的 capturedVars 不会被 mark，
         // GcManager 误判为不可达循环孤岛并清空其 elements，破坏 REPL 状态。
         // ClosureData 本身不在 tracked_（GcManager.h 注释），不会被 sweep，
         // 但作为根可让 collectCycle 的 markPhase 进入 capturedVars 标记可达容器。
-        if (isClosure()) return static_cast<const void*>(box_.asPtr<ClosureData>());
+        if (isClosure())
+            return static_cast<const void*>(box_.asPtr<ClosureData>());
         return nullptr;
     }
 
@@ -662,8 +711,10 @@ public:
     // ============================================================
 
     double toDouble() const {
-        if (isInt()) return static_cast<double>(intVal());
-        if (isFloat()) return box_.asFloat();
+        if (isInt())
+            return static_cast<double>(intVal());
+        if (isFloat())
+            return box_.asFloat();
         return 0.0;
     }
 
@@ -671,18 +722,26 @@ public:
     /// 用于错误诊断与 type() 内建函数；实例若类名为空则回落到 "instance"。
     std::string typeName() const {
         switch (getType()) {
-        case ValueType::VAL_INT:      return TypeName::INT;
-        case ValueType::VAL_FLOAT:    return TypeName::FLOAT;
-        case ValueType::VAL_BOOL:     return TypeName::BOOL;
-        case ValueType::VAL_STRING:   return TypeName::STRING;
-        case ValueType::VAL_NULL:     return TypeName::NULL_T;
-        case ValueType::VAL_ARRAY:    return TypeName::ARRAY;
-        case ValueType::VAL_DICT:     return TypeName::DICT;
+        case ValueType::VAL_INT:
+            return TypeName::INT;
+        case ValueType::VAL_FLOAT:
+            return TypeName::FLOAT;
+        case ValueType::VAL_BOOL:
+            return TypeName::BOOL;
+        case ValueType::VAL_STRING:
+            return TypeName::STRING;
+        case ValueType::VAL_NULL:
+            return TypeName::NULL_T;
+        case ValueType::VAL_ARRAY:
+            return TypeName::ARRAY;
+        case ValueType::VAL_DICT:
+            return TypeName::DICT;
         case ValueType::VAL_INSTANCE: {
             const auto& cn = className();
             return cn.empty() ? TypeName::INSTANCE : cn;
         }
-        case ValueType::VAL_CLOSURE:  return TypeName::CLOSURE;
+        case ValueType::VAL_CLOSURE:
+            return TypeName::CLOSURE;
         }
         return "unknown";
     }
@@ -705,9 +764,7 @@ public:
     }
 
 private:
-    bool equalsImpl(const Value& other,
-                    std::unordered_set<const void*>* visited,
-                    int depth) const;
+    bool equalsImpl(const Value& other, std::unordered_set<const void*>* visited, int depth) const;
 
 public:
     /// 将值序列化为字符串表示。
@@ -728,9 +785,9 @@ public:
             // 避免非 "C" locale 下十进制分隔符变为 ',' 导致解析失败。
             // 与 VAL_INT 路径风格一致，使用 general 格式 + 17 位精度（round-trip 保证）。
             char buf[64];
-            auto res = std::to_chars(buf, buf + sizeof(buf), box_.asFloat(),
-                                     std::chars_format::general, 17);
-            if (res.ec != std::errc{}) return "nan";
+            auto res = std::to_chars(buf, buf + sizeof(buf), box_.asFloat(), std::chars_format::general, 17);
+            if (res.ec != std::errc{})
+                return "nan";
             return std::string(buf, res.ptr);
         }
         case ValueType::VAL_BOOL:
@@ -753,19 +810,27 @@ private:
     std::string toStringImpl(std::unordered_set<const void*>& visited, int depth) const;
 
 public:
-
     /// 判断真值
     bool isTruthy() const {
         switch (getType()) {
-        case ValueType::VAL_INT:      return intVal() != 0;
-        case ValueType::VAL_FLOAT:    return box_.asFloat() != 0.0;
-        case ValueType::VAL_BOOL:     return box_.asBool();
-        case ValueType::VAL_STRING:   return !stringVal().empty();
-        case ValueType::VAL_NULL:     return false;
-        case ValueType::VAL_ARRAY:    return true;
-        case ValueType::VAL_DICT:     return true;
-        case ValueType::VAL_INSTANCE: return true;
-        case ValueType::VAL_CLOSURE:  return true;
+        case ValueType::VAL_INT:
+            return intVal() != 0;
+        case ValueType::VAL_FLOAT:
+            return box_.asFloat() != 0.0;
+        case ValueType::VAL_BOOL:
+            return box_.asBool();
+        case ValueType::VAL_STRING:
+            return !stringVal().empty();
+        case ValueType::VAL_NULL:
+            return false;
+        case ValueType::VAL_ARRAY:
+            return true;
+        case ValueType::VAL_DICT:
+            return true;
+        case ValueType::VAL_INSTANCE:
+            return true;
+        case ValueType::VAL_CLOSURE:
+            return true;
         }
         return false;
     }

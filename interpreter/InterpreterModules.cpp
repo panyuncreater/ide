@@ -11,7 +11,6 @@
 // 依赖说明：import 语句需要 Lexer::scan + Parser::parse 加载模块源码；
 // 其余类型（ImportStmt/ExportStmt/VarDecl/Environment 等）由 Interpreter.h 传递包含。
 
-
 void Interpreter::visitImportStmt(ImportStmt& node) {
     checkBreak(&node);
 
@@ -21,7 +20,8 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     // P2-3 fix: 路径规范化 — 统一路径分隔符为 '/'，去除多余的 "./" 前缀
     // 避免相同模块因路径表示不同（如 "foo\bar.mini" vs "foo/bar.mini"）被重复加载
     for (char& c : modulePath) {
-        if (c == '\\') c = '/';
+        if (c == '\\')
+            c = '/';
     }
     if (modulePath.size() >= 2 && modulePath[0] == '.' && modulePath[1] == '/') {
         modulePath.erase(0, 2);
@@ -34,7 +34,7 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     // 绝对路径检测（Unix 以 '/' 开头，Windows 以 'X:...' 驱动器路径形式）
     // BUG-MOD-1 fix: 原实现仅检测 'C:/' 形式，未拒绝 'C:foo'（Windows 驱动器相对路径），
     // 可能被 loader 解析到模块目录外的文件。修复：拒绝所有 'X:' 开头形式
-    //（X 为任意字符），覆盖 'C:/'、'C:foo'、'D:path' 等。
+    // （X 为任意字符），覆盖 'C:/'、'C:foo'、'D:path' 等。
     // 注：反斜杠已在上方统一转为正斜杠，无需再检测 '\\'。
     if (modulePath[0] == '/' || (modulePath.size() >= 2 && modulePath[1] == ':')) {
         runtimeError("模块路径不能为绝对路径: " + modulePath, node.line, node.column);
@@ -45,12 +45,13 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         size_t pos = 0;
         while (pos < normalized.size()) {
             size_t next = normalized.find('/', pos);
-            std::string segment = (next == std::string::npos)
-                ? normalized.substr(pos) : normalized.substr(pos, next - pos);
+            std::string segment =
+                (next == std::string::npos) ? normalized.substr(pos) : normalized.substr(pos, next - pos);
             if (segment == "..") {
                 runtimeError("模块路径不能包含父目录引用 '..': " + modulePath, node.line, node.column);
             }
-            if (next == std::string::npos) break;
+            if (next == std::string::npos)
+                break;
             pos = next + 1;
         }
     }
@@ -64,7 +65,7 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     {
         std::lock_guard<std::mutex> lock(callbackMutex_);
         loader = moduleLoader_;
-        mtimeChecker = moduleMtimeChecker_;  // BUG-REPL-AUDIT-1 fix
+        mtimeChecker = moduleMtimeChecker_; // BUG-REPL-AUDIT-1 fix
     }
     if (!loader) {
         runtimeError("未设置模块加载器，无法执行 import", node.line, node.column);
@@ -92,7 +93,7 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
                 moduleCache_.erase(cacheIt);
                 moduleExports_.erase(modulePath);
                 moduleMtimes_.erase(modulePath);
-                cacheIt = moduleCache_.end();  // 标记为未命中
+                cacheIt = moduleCache_.end(); // 标记为未命中
             }
         }
     }
@@ -101,17 +102,21 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     } else {
         // 加载模块源码（A6 fix: 使用已拷贝的 loader，避免跨线程数据竞争）
         std::string source = loader(modulePath);
-        if (source.empty()) {
-            runtimeError("无法加载模块: " + modulePath, node.line, node.column);
-        }
-
-        // 词法分析 + 语法分析
-        Lexer lexer;
-        auto tokens = lexer.scan(source);
-        Parser parser;
-        auto ast = parser.parse(tokens);
-        if (!ast) {
-            runtimeError("模块 " + modulePath + " 语法错误", node.line, node.column);
+        // AUDIT-P3.13 fix: 空模块源码（0 字节文件）是合法的空模块，不应报错。
+        // moduleLoader_ 回调应在文件不存在时抛异常而非返回空字符串。
+        // 对空源码构造空 AST 跳过词法/语法分析，后续 evaluate 遍历空语句列表无副作用，
+        // 缓存阶段自然得到空 Environment 与空导出集合；具名导入会因「未导出名称」报错（三后端一致）。
+        std::unique_ptr<Block> ast = std::make_unique<Block>(std::vector<std::shared_ptr<ASTNode>>{});
+        if (!source.empty()) {
+            // 词法分析 + 语法分析
+            Lexer lexer;
+            auto tokens = lexer.scan(source);
+            Parser parser;
+            auto parsed = parser.parse(tokens);
+            if (!parsed) {
+                runtimeError("模块 " + modulePath + " 语法错误", node.line, node.column);
+            }
+            ast = std::move(parsed);
         }
 
         // P1-2 fix: 使用独立的空父环境，避免模块访问导入方的全局变量
@@ -123,7 +128,7 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         exportedNames_.clear();
         currentEnv_ = moduleEnv;
         moduleLoadingStack_.push_back(modulePath);
-        moduleLoadingSet_.insert(modulePath);  // D19 fix: 与 stack 同步维护 set
+        moduleLoadingSet_.insert(modulePath); // D19 fix: 与 stack 同步维护 set
 
         // RA-A fix: RAII 守卫统一管理异常路径下的状态恢复（moduleEnv close、env、exported、loadingStack/Set），
         // 消除原 catch(...) + throw; 的 rethrow。正常路径通过 dismiss 跳过守卫清理。
@@ -146,11 +151,11 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
                     interp.currentEnv_ = saved;
                     exported = std::move(savedExported);
                     loadingStack.pop_back();
-                    loadingSet.erase(modulePath);  // D19 fix: 同步移除
+                    loadingSet.erase(modulePath); // D19 fix: 同步移除
                 }
             }
-        } envGuard{ *this, moduleEnv, savedEnv, exportedNames_, savedExported,
-                    moduleLoadingStack_, moduleLoadingSet_, modulePath };
+        } envGuard{*this,         moduleEnv,           savedEnv,          exportedNames_,
+                   savedExported, moduleLoadingStack_, moduleLoadingSet_, modulePath};
 
         for (auto& stmt : ast->statements) {
             evaluate(stmt.get());
@@ -160,7 +165,7 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         // RA-A fix: 正常路径，dismiss 守卫后手动执行完整清理
         envGuard.dismissed = true;
         moduleLoadingStack_.pop_back();
-        moduleLoadingSet_.erase(modulePath);  // D19 fix: 同步移除
+        moduleLoadingSet_.erase(modulePath); // D19 fix: 同步移除
         currentEnv_ = savedEnv;
 
         // 缓存模块环境和导出名称（必须在恢复 savedExported 之前捕获当前模块的 exports）
@@ -191,13 +196,11 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         // 避免部分名称已导入后遇到错误名称导致环境不一致
         for (const auto& name : node.names) {
             if (exports.find(name) == exports.end()) {
-                runtimeError("模块 " + modulePath + " 中未导出名称: " + name,
-                            node.line, node.column);
+                runtimeError("模块 " + modulePath + " 中未导出名称: " + name, node.line, node.column);
             }
             const Value* valPtr = moduleEnv->get(name);
             if (!valPtr) {
-                runtimeError("模块 " + modulePath + " 中未找到导出名称: " + name,
-                            node.line, node.column);
+                runtimeError("模块 " + modulePath + " 中未找到导出名称: " + name, node.line, node.column);
             }
         }
         // 全部验证通过后，统一导入
@@ -207,13 +210,17 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         }
     }
 
-    lastValue_ = Value::nullValue(); return;
+    lastValue_ = Value::nullValue();
+    return;
 }
 
 void Interpreter::visitExportStmt(ExportStmt& node) {
     checkBreak(&node);
     // F12: export 语句执行内部声明，并记录导出名称
-    if (!node.declaration) { lastValue_ = Value::nullValue(); return; }
+    if (!node.declaration) {
+        lastValue_ = Value::nullValue();
+        return;
+    }
 
     // 提取声明名称并标记为导出
     std::string declName;
@@ -238,5 +245,6 @@ void Interpreter::visitExportStmt(ExportStmt& node) {
     if (!declName.empty()) {
         exportedNames_.insert(declName);
     }
-    lastValue_ = Value::nullValue(); return;
+    lastValue_ = Value::nullValue();
+    return;
 }

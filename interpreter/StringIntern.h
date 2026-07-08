@@ -13,9 +13,9 @@
 // 线程安全：mutex 保护 unordered_set。
 // ============================================================
 
+#include <mutex>
 #include <string>
 #include <unordered_set>
-#include <mutex>
 
 class StringIntern {
 public:

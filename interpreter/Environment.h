@@ -1,13 +1,14 @@
 #pragma once
 
-#include <unordered_map>
-#include <map>
-#include <string>
-#include <vector>
-#include <functional>
-#include <memory>
-#include <cassert>
 #include "interpreter/Value.h"
+#include <cassert>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 // ============================================================
 // Environment 作用域链
@@ -21,8 +22,7 @@ public:
     std::shared_ptr<Environment> parent;
 
     /// 构造函数
-    explicit Environment(std::shared_ptr<Environment> parentEnv = nullptr)
-        : parent(parentEnv) {
+    explicit Environment(std::shared_ptr<Environment> parentEnv = nullptr) : parent(parentEnv) {
         // 注意：不在这里递增 generation_
         // 创建子作用域不改变已有变量的深度位置，缓存仍有效
         // 修复：继承父作用域的 boundInstance_，使方法体内的块作用域也能访问实例字段
@@ -35,7 +35,7 @@ public:
     void define(const std::string& name, const Value& val) {
         auto [it, inserted] = variables.try_emplace(name, val);
         if (!inserted) {
-            it->second = val;   // 覆盖已有变量
+            it->second = val; // 覆盖已有变量
         }
     }
 
@@ -43,7 +43,7 @@ public:
     void define(const std::string& name, Value&& val) {
         auto [it, inserted] = variables.try_emplace(name, std::move(val));
         if (!inserted) {
-            it->second = std::move(val);   // 覆盖已有变量
+            it->second = std::move(val); // 覆盖已有变量
         }
     }
 
@@ -73,18 +73,20 @@ public:
         constexpr int MAX_SCOPE_DEPTH = 1024;
         const Value* lastCheckedInstance = nullptr;
         while (cur) {
-            if (depth++ >= MAX_SCOPE_DEPTH) break;
+            if (depth++ >= MAX_SCOPE_DEPTH)
+                break;
             auto it = cur->variables.find(name);
             if (it != cur->variables.end()) {
                 return &it->second;
             }
             // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
-                && cur->boundInstance_ != lastCheckedInstance) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance() &&
+                cur->boundInstance_ != lastCheckedInstance) {
                 lastCheckedInstance = cur->boundInstance_;
                 const auto& flds = static_cast<const Value*>(cur->boundInstance_)->fields();
                 auto fit = flds.find(name);
-                if (fit != flds.end()) return &fit->second;
+                if (fit != flds.end())
+                    return &fit->second;
             }
             cur = cur->parent.get();
         }
@@ -100,9 +102,11 @@ public:
         int depth = 0;
         constexpr int MAX_SCOPE_DEPTH = 1024;
         while (cur) {
-            if (depth++ >= MAX_SCOPE_DEPTH) break;
+            if (depth++ >= MAX_SCOPE_DEPTH)
+                break;
             auto it = cur->variables.find(name);
-            if (it != cur->variables.end()) return &it->second;
+            if (it != cur->variables.end())
+                return &it->second;
             cur = cur->parent.get();
         }
         return nullptr;
@@ -117,7 +121,8 @@ public:
         constexpr int MAX_SCOPE_DEPTH = 1024;
         const Value* lastCheckedInstance = nullptr;
         while (cur) {
-            if (depth++ >= MAX_SCOPE_DEPTH) break;
+            if (depth++ >= MAX_SCOPE_DEPTH)
+                break;
             auto it = cur->variables.find(name);
             if (it != cur->variables.end()) {
                 it->second = val;
@@ -125,8 +130,8 @@ public:
             }
             // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
             // P1-5 fix: 先用 const 访问器检查字段是否存在，避免不必要 COW 深拷贝
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
-                && cur->boundInstance_ != lastCheckedInstance) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance() &&
+                cur->boundInstance_ != lastCheckedInstance) {
                 lastCheckedInstance = cur->boundInstance_;
                 const auto& constFlds = static_cast<const Value*>(cur->boundInstance_)->fields();
                 auto fit = constFlds.find(name);
@@ -137,7 +142,7 @@ public:
             }
             cur = cur->parent.get();
         }
-        return false;   // 变量不存在
+        return false; // 变量不存在
     }
 
     /// P1 fix: move 重载 — 避免 writeBack 中 std::move 静默退化为深拷贝
@@ -157,7 +162,8 @@ public:
         constexpr int MAX_SCOPE_DEPTH = 1024;
         const Value* lastCheckedInstance = nullptr;
         while (cur) {
-            if (depth++ >= MAX_SCOPE_DEPTH) break;
+            if (depth++ >= MAX_SCOPE_DEPTH)
+                break;
             auto it = cur->variables.find(name);
             if (it != cur->variables.end()) {
                 it->second = std::move(val);
@@ -165,8 +171,8 @@ public:
             }
             // INTERP-01 fix: 回退到绑定实例的字段（在检查父作用域之前）
             // P1-5 fix: 先用 const 访问器检查字段是否存在，避免不必要 COW 深拷贝
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
-                && cur->boundInstance_ != lastCheckedInstance) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance() &&
+                cur->boundInstance_ != lastCheckedInstance) {
                 lastCheckedInstance = cur->boundInstance_;
                 const auto& constFlds = static_cast<const Value*>(cur->boundInstance_)->fields();
                 auto fit = constFlds.find(name);
@@ -190,14 +196,17 @@ public:
         constexpr int MAX_SCOPE_DEPTH = 1024;
         const Value* lastCheckedInstance = nullptr;
         while (cur) {
-            if (depth++ >= MAX_SCOPE_DEPTH) break;
-            if (cur->variables.find(name) != cur->variables.end()) return true;
+            if (depth++ >= MAX_SCOPE_DEPTH)
+                break;
+            if (cur->variables.find(name) != cur->variables.end())
+                return true;
             // 与 get() 一致：回退到绑定实例的字段检查
-            if (cur->boundInstance_ && cur->boundInstance_->isInstance()
-                && cur->boundInstance_ != lastCheckedInstance) {
+            if (cur->boundInstance_ && cur->boundInstance_->isInstance() &&
+                cur->boundInstance_ != lastCheckedInstance) {
                 lastCheckedInstance = cur->boundInstance_;
                 const auto& flds = static_cast<const Value*>(cur->boundInstance_)->fields();
-                if (flds.find(name) != flds.end()) return true;
+                if (flds.find(name) != flds.end())
+                    return true;
             }
             cur = cur->parent.get();
         }
@@ -240,17 +249,13 @@ public:
     // 不失效（C++ 标准保证：node-based 容器仅迭代器失效）。boundInstance_ 指向
     // variables 中 "this" 条目的 Value*，在 unordered_map 中同样稳定。
     // 变量查找从 O(log n) 降为 O(1) 平均，解释器整体提速 20-40%。
-    const std::unordered_map<std::string, Value>& localVariables() const {
-        return variables;
-    }
+    const std::unordered_map<std::string, Value>& localVariables() const { return variables; }
 
     // ---- 条件断点沙箱化 (#1 fix) ----
     // 条件断点求值前快照变量绑定，求值后恢复，防止条件中的赋值/声明
     // 修改程序状态。注意：Value 是 ref-counted，容器变异（arr.push）仍
     // 影响共享对象——这是残余限制，文档化在 project_memory 中。
-    std::unordered_map<std::string, Value> snapshotLocalVariables() const {
-        return variables;
-    }
+    std::unordered_map<std::string, Value> snapshotLocalVariables() const { return variables; }
     void restoreLocalVariables(const std::unordered_map<std::string, Value>& snap) {
         variables = snap;
         // H2 fix: variables = snap 整表替换会使旧 map 中所有 Value* 失效，
@@ -344,14 +349,23 @@ public:
         closureCaptures_.clear();
         // AUDIT-BUG-I1 fix: 重置闭包 env 引用标记
         hasClosureEnvRef_ = false;
+        // AUDIT-P2-CORRECT fix: 重置捕获变量名集合
+        capturedVarNames_.clear();
     }
+
+    // ---- AUDIT-P2-CORRECT fix: 捕获变量名追踪 ----
+    // 记录从 capturedVars 重建时导入的变量名集合，用于区分"捕获变量被赋值修改"
+    // 与"捕获变量被 var 重声明"。visitVarDecl 中若 var 声明的名字在此集合中，
+    // 则从集合移除（标记为已重声明）。writeBackCapturedVars 仅写回仍在集合中的变量，
+    // 防止重声明的局部变量被写回 capturedVars 污染下次调用。
+    void markAsCaptured(const std::string& name) { capturedVarNames_.insert(name); }
+    bool isCapturedVar(const std::string& name) const { return capturedVarNames_.count(name) > 0; }
+    void unmarkCaptured(const std::string& name) { capturedVarNames_.erase(name); }
 
     // ---- B2 fix: 作用域感知的类型注解 ----
 
     /// 在当前作用域定义类型注解
-    void defineTypeAnnotation(const std::string& name, const std::string& type) {
-        typeAnnotations_[name] = type;
-    }
+    void defineTypeAnnotation(const std::string& name, const std::string& type) { typeAnnotations_[name] = type; }
 
     /// 沿作用域链查找类型注解（返回指针，nullptr=无注解）
     const std::string* getTypeAnnotation(const std::string& name) const {
@@ -360,18 +374,18 @@ public:
         int depth = 0;
         constexpr int MAX_SCOPE_DEPTH = 1024;
         while (cur) {
-            if (depth++ >= MAX_SCOPE_DEPTH) break;
+            if (depth++ >= MAX_SCOPE_DEPTH)
+                break;
             auto it = cur->typeAnnotations_.find(name);
-            if (it != cur->typeAnnotations_.end()) return &it->second;
+            if (it != cur->typeAnnotations_.end())
+                return &it->second;
             cur = cur->parent.get();
         }
         return nullptr;
     }
 
     /// 获取当前作用域的类型注解（用于 REPL 状态保存）
-    const std::unordered_map<std::string, std::string>& localTypeAnnotations() const {
-        return typeAnnotations_;
-    }
+    const std::unordered_map<std::string, std::string>& localTypeAnnotations() const { return typeAnnotations_; }
 
 private:
     // PERF-01 fix: 改回 unordered_map。C++ 标准保证 unordered_map 的引用/指针在 rehash
@@ -379,7 +393,7 @@ private:
     // 变量查找从 O(log n) 降为 O(1) 平均。
     std::unordered_map<std::string, Value> variables;
     std::unordered_map<std::string, std::string> typeAnnotations_; // B2: 作用域感知类型注解
-    Value* boundInstance_ = nullptr;  // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
+    Value* boundInstance_ = nullptr; // P5: 绑定的 this 实例（非拥有指针，方法调用期间有效）
 
     // B1 fix: 闭包捕获追踪。记录哪些闭包捕获了本 env 中的变量。
     // 作用域退出时 closeCapturedVariables() 将最终值写回闭包 capturedVars。
@@ -394,6 +408,12 @@ private:
     // AUDIT-BUG-I1 fix: 标记是否有闭包以本 env 作为 env weak_ptr 目标。
     // 用于防止 envPool_ 回收破坏闭包 env weak_ptr。
     bool hasClosureEnvRef_ = false;
+
+    // AUDIT-P2-CORRECT fix: 记录从 capturedVars 重建时导入的变量名集合，
+    // 用于区分"捕获变量被赋值修改"与"捕获变量被 var 重声明"。
+    // visitVarDecl 中若 var 声明的名字在此集合中，则从集合移除（标记为已重声明）。
+    // writeBackCapturedVars 仅写回仍在集合中的变量，防止重声明的局部变量污染 capturedVars。
+    std::unordered_set<std::string> capturedVarNames_;
 
     // P0-5 fix: 已移除有缺陷的深度缓存（DepthEntry/depthCache_/generation_/
     //   findTargetEnv/getAtDepth/setAtDepth/getWithDepth），改用简单作用域链遍历。

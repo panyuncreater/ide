@@ -7,39 +7,44 @@
 // ============================================================
 
 #include "interpreter/Value.h"
-#include "interpreter/NumericUtils.h"
 #include "common/RuntimeLimits.h"
-#include <unordered_set>
-#include <cstdio>
+#include "interpreter/NumericUtils.h"
 #include <cmath>
+#include <cstdio>
+#include <unordered_set>
 
 // ============================================================
 // equalsImpl — 相等比较实现（含环检测和深度保护）
 // ============================================================
 
-bool Value::equalsImpl(const Value& other,
-                       std::unordered_set<const void*>* visited,
-                       int depth) const {
+bool Value::equalsImpl(const Value& other, std::unordered_set<const void*>* visited, int depth) const {
     // P1-7 fix: 深度保护，防止 [[[[...]]]] 线性嵌套导致栈溢出
-    if (depth >= MAX_EQUALS_DEPTH) return false;
+    if (depth >= MAX_EQUALS_DEPTH)
+        return false;
 
     // int 和 float 之间可以比较（M3 fix: 避免大整数精度丢失）
     if (isNumber() && other.isNumber() && getType() != other.getType()) {
         if (isInt() && other.isFloat()) {
             double d = other.floatVal();
             // double 不是整数值、或超出 int64_t 范围、或 NaN → 不可能相等
-            if (std::isnan(d) || std::isinf(d)) return false;
+            if (std::isnan(d) || std::isinf(d))
+                return false;
             double intPart;
-            if (std::modf(d, &intPart) != 0.0) return false;  // 有小数部分
-            if (OverflowCheck::doubleToIntOverflow(d)) return false;
+            if (std::modf(d, &intPart) != 0.0)
+                return false; // 有小数部分
+            if (OverflowCheck::doubleToIntOverflow(d))
+                return false;
             return intVal() == static_cast<int64_t>(d);
         }
         if (isFloat() && other.isInt()) {
             double d = floatVal();
-            if (std::isnan(d) || std::isinf(d)) return false;
+            if (std::isnan(d) || std::isinf(d))
+                return false;
             double intPart;
-            if (std::modf(d, &intPart) != 0.0) return false;
-            if (OverflowCheck::doubleToIntOverflow(d)) return false;
+            if (std::modf(d, &intPart) != 0.0)
+                return false;
+            if (OverflowCheck::doubleToIntOverflow(d))
+                return false;
             return static_cast<int64_t>(d) == other.intVal();
         }
         // P3 fix: 此行原为不可达死代码，保留以防御未来新增数值类型
@@ -49,22 +54,30 @@ bool Value::equalsImpl(const Value& other,
         return false;
     }
     switch (getType()) {
-    case ValueType::VAL_INT:      return intVal() == other.intVal();
-    case ValueType::VAL_FLOAT:    return floatVal() == other.floatVal();
-    case ValueType::VAL_BOOL:     return boolVal() == other.boolVal();
-    case ValueType::VAL_STRING:   return stringVal() == other.stringVal();
-    case ValueType::VAL_NULL:     return true;
+    case ValueType::VAL_INT:
+        return intVal() == other.intVal();
+    case ValueType::VAL_FLOAT:
+        return floatVal() == other.floatVal();
+    case ValueType::VAL_BOOL:
+        return boolVal() == other.boolVal();
+    case ValueType::VAL_STRING:
+        return stringVal() == other.stringVal();
+    case ValueType::VAL_NULL:
+        return true;
     case ValueType::VAL_ARRAY: {
         // PERF-12: 直接通过 NaNBox 指针访问 ArrayData
         auto* aPtr = box_.asPtr<ArrayData>();
         auto* bPtr = other.box_.asPtr<ArrayData>();
         const auto& a = aPtr->elements;
         const auto& b = bPtr->elements;
-        if (a.size() != b.size()) return false;
+        if (a.size() != b.size())
+            return false;
         // P1-6 fix: 环检测（使用 ArrayData* 指针作为身份标识）
         if (visited) {
-            if (!visited->insert(aPtr).second) return true;
-            if (!visited->insert(bPtr).second) return true;
+            if (!visited->insert(aPtr).second)
+                return true;
+            if (!visited->insert(bPtr).second)
+                return true;
         }
         for (size_t i = 0; i < a.size(); ++i) {
             if (!a[i].equalsImpl(b[i], visited, depth + 1)) {
@@ -86,10 +99,13 @@ bool Value::equalsImpl(const Value& other,
         auto* bPtr = other.box_.asPtr<DictData>();
         const auto& a = aPtr->entries;
         const auto& b = bPtr->entries;
-        if (a.size() != b.size()) return false;
+        if (a.size() != b.size())
+            return false;
         if (visited) {
-            if (!visited->insert(aPtr).second) return true;
-            if (!visited->insert(bPtr).second) return true;
+            if (!visited->insert(aPtr).second)
+                return true;
+            if (!visited->insert(bPtr).second)
+                return true;
         }
         for (const auto& kv : a) {
             auto it = b.find(kv.first);
@@ -115,15 +131,19 @@ bool Value::equalsImpl(const Value& other,
         return true;
     }
     case ValueType::VAL_INSTANCE: {
-        if (className() != other.className()) return false;
+        if (className() != other.className())
+            return false;
         auto* aPtr = box_.asPtr<InstanceData>();
         auto* bPtr = other.box_.asPtr<InstanceData>();
         const auto& a = aPtr->fields;
         const auto& b = bPtr->fields;
-        if (a.size() != b.size()) return false;
+        if (a.size() != b.size())
+            return false;
         if (visited) {
-            if (!visited->insert(aPtr).second) return true;
-            if (!visited->insert(bPtr).second) return true;
+            if (!visited->insert(aPtr).second)
+                return true;
+            if (!visited->insert(bPtr).second)
+                return true;
         }
         for (const auto& kv : a) {
             auto it = b.find(kv.first);
@@ -164,8 +184,7 @@ bool Value::equalsImpl(const Value& other,
                 // 双方 env 均失效，按 ClosureData 指针身份比较
                 return cd1 == cd2;
             }
-            return closureName() == other.closureName()
-                && closureEnv() == other.closureEnv();
+            return closureName() == other.closureName() && closureEnv() == other.closureEnv();
         }
     }
     return false;
@@ -177,7 +196,8 @@ bool Value::equalsImpl(const Value& other,
 
 std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int depth) const {
     // B5 fix: 深度保护
-    if (depth >= MAX_TOSTRING_DEPTH) return "[...too deep]";
+    if (depth >= MAX_TOSTRING_DEPTH)
+        return "[...too deep]";
     switch (getType()) {
     case ValueType::VAL_INT: {
         // Perf-Finding2: 用 std::to_chars 替代 std::to_string（避免 locale 查询）
@@ -189,9 +209,9 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
         // AUDIT-BUG-C2 fix: 用 std::to_chars 替代 snprintf——locale-independent，
         // 与 Value.h toString() 路径保持一致。此函数用于容器 toString 时嵌套 float 输出。
         char buf[64];
-        auto res = std::to_chars(buf, buf + sizeof(buf), box_.asFloat(),
-                                 std::chars_format::general, 17);
-        if (res.ec != std::errc{}) return "nan";
+        auto res = std::to_chars(buf, buf + sizeof(buf), box_.asFloat(), std::chars_format::general, 17);
+        if (res.ec != std::errc{})
+            return "nan";
         return std::string(buf, res.ptr);
     }
     case ValueType::VAL_BOOL:
@@ -203,13 +223,15 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
     case ValueType::VAL_ARRAY: {
         // PERF-12: 直接通过 NaNBox 指针访问 ArrayData
         auto* ptr = box_.asPtr<ArrayData>();
-        if (!visited.insert(ptr).second) return "[cycle]";
+        if (!visited.insert(ptr).second)
+            return "[cycle]";
         const auto& arr = ptr->elements;
         std::string result;
         result.reserve(arr.size() * 8 + 2);
         result += "[";
         for (size_t i = 0; i < arr.size(); ++i) {
-            if (i > 0) result += ", ";
+            if (i > 0)
+                result += ", ";
             if (arr[i].isString()) {
                 result += "\"";
                 result += arr[i].stringVal();
@@ -224,14 +246,16 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
     }
     case ValueType::VAL_DICT: {
         auto* ptr = box_.asPtr<DictData>();
-        if (!visited.insert(ptr).second) return "[cycle]";
+        if (!visited.insert(ptr).second)
+            return "[cycle]";
         const auto& dict = ptr->entries;
         std::string result;
         result.reserve(dict.size() * 16 + 2);
         result += "{";
         bool first = true;
         for (const auto& kv : dict) {
-            if (!first) result += ", ";
+            if (!first)
+                result += ", ";
             first = false;
             result += "\"";
             result += kv.first;
@@ -250,7 +274,8 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
     }
     case ValueType::VAL_INSTANCE: {
         auto* ptr = box_.asPtr<InstanceData>();
-        if (!visited.insert(ptr).second) return "[cycle]";
+        if (!visited.insert(ptr).second)
+            return "[cycle]";
         const auto& cn = ptr->className;
         const auto& flds = ptr->fields;
         std::string result;
@@ -259,7 +284,8 @@ std::string Value::toStringImpl(std::unordered_set<const void*>& visited, int de
         result += "{";
         bool first = true;
         for (const auto& kv : flds) {
-            if (!first) result += ", ";
+            if (!first)
+                result += ", ";
             first = false;
             result += kv.first;
             result += ": ";

@@ -4,9 +4,9 @@
 // S6 fix: 从 Interpreter.cpp 拆分，降低单文件复杂度。
 // ============================================================
 
-#include "interpreter/Interpreter.h"
 #include "interpreter/BuiltinMethods.h"
-#include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
+#include "interpreter/ErrorFormat.h" // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
+#include "interpreter/Interpreter.h"
 #include <unordered_set>
 
 // 依赖说明：
@@ -26,11 +26,16 @@ void rebuildEnvFromSnapshot(Value& closureVal, std::shared_ptr<Environment>& fun
     funEnv = std::make_shared<Environment>(nullptr);
     for (const auto& kv : closureVal.capturedVars()) {
         funEnv->define(kv.first, kv.second);
+        // AUDIT-P2-CORRECT fix: 标记为捕获变量，用于 writeBackCapturedVars 区分
+        // "捕获变量被赋值修改"与"捕获变量被 var 重声明"
+        funEnv->markAsCaptured(kv.first);
     }
 }
 
 /// 将变异后的捕获变量写回 capturedVars（C1/P0-6 fix）
 /// 仅写回原始 capturedVars 中已存在的键，跳过参数和局部变量，避免污染下次调用
+/// AUDIT-P2-CORRECT fix: 仅写回仍在 capturedVarNames_ 中的变量（未被 var 重声明的捕获变量），
+/// 防止闭包内 var 重声明捕获变量后，重声明的局部变量被写回 capturedVars 污染下次调用。
 void writeBackCapturedVars(Value& closureVal, std::shared_ptr<Environment>& funEnv) {
     // AUDIT-P1 fix: 应用 closeCapturedVariables 的 const_cast 模式绕过 COW。
     // capturedVars() 的非 const 重载会 ensureUnique → refCount>1 时创建副本，
@@ -39,7 +44,8 @@ void writeBackCapturedVars(Value& closureVal, std::shared_ptr<Environment>& funE
     const auto& constCaptured = const_cast<const Value&>(closureVal).capturedVars();
     auto& captured = const_cast<std::unordered_map<std::string, Value>&>(constCaptured);
     for (const auto& kv : funEnv->localVariables()) {
-        if (captured.find(kv.first) != captured.end()) {
+        // AUDIT-P2-CORRECT fix: 仅写回未被 var 重声明的捕获变量
+        if (funEnv->isCapturedVar(kv.first) && captured.find(kv.first) != captured.end()) {
             captured[kv.first] = kv.second;
         }
     }
@@ -47,14 +53,22 @@ void writeBackCapturedVars(Value& closureVal, std::shared_ptr<Environment>& funE
 
 } // anonymous namespace
 
-
 void Interpreter::visitFunCall(FunCall& node) {
     checkBreak(&node);
 
     // P1 重构：按调用类型分派到辅助方法
-    if (node.callee) { lastValue_ = callClosureValue(node); return; }
-    if (node.name == "dict" || node.name == "array") { lastValue_ = callBuiltinConstructor(node); return; }
-    if (classRegistry_.find(node.name) != classRegistry_.end()) { lastValue_ = constructClassInstance(node); return; }
+    if (node.callee) {
+        lastValue_ = callClosureValue(node);
+        return;
+    }
+    if (node.name == "dict" || node.name == "array") {
+        lastValue_ = callBuiltinConstructor(node);
+        return;
+    }
+    if (classRegistry_.find(node.name) != classRegistry_.end()) {
+        lastValue_ = constructClassInstance(node);
+        return;
+    }
     // input() 函数（需要回调，单独处理）
     // E3 fix: 改用共享层 executeSharedInput，统一与 VM 的 input() 语义。
     // WorkerManager 的超时回调会抛 std::runtime_error，被 executeSharedInput
@@ -77,10 +91,9 @@ void Interpreter::visitFunCall(FunCall& node) {
             std::lock_guard<std::mutex> lock(callbackMutex_);
             cb = inputCallback_;
         }
-        auto r = executeSharedInput(cb, argValues.data(), argValues.size(),
-                                     node.line, node.column);
+        auto r = executeSharedInput(cb, argValues.data(), argValues.size(), node.line, node.column);
         if (r.is_err()) {
-            throw to_runtime_error(r);  // A1 fix: 自由函数模板
+            throw to_runtime_error(r); // A1 fix: 自由函数模板
         }
         lastValue_ = std::move(r.value());
         return;
@@ -89,10 +102,12 @@ void Interpreter::visitFunCall(FunCall& node) {
     if (isBuiltinFunction(node.name)) {
         const Value* calleePtr = currentEnv_->get(node.name);
         if (!calleePtr || !calleePtr->isClosure()) {
-            lastValue_ = callBuiltinFunction(node); return;
+            lastValue_ = callBuiltinFunction(node);
+            return;
         }
     }
-    lastValue_ = callNamedFunction(node); return;
+    lastValue_ = callNamedFunction(node);
+    return;
 }
 
 // ---- P1 重构：链式调用 / 表达式调用 callee(args) ----
@@ -112,19 +127,17 @@ Value Interpreter::callClosureValue(FunCall& node) {
     // 在下方 funDecl->requiredParamCount 处解引用空指针崩溃（segfault，无法被 try/catch 捕获）。
     // 此处给出明确的运行时错误而非崩溃。
     if (!funDecl) {
-        runtimeError(ErrorFormat::format(
-            "无法在条件断点沙箱中调用 VM 闭包 %s（缺少 AST body，仅 VM 后端可调用）",
-            effectiveName.c_str()), node.line, node.column);
+        runtimeError(ErrorFormat::format("无法在条件断点沙箱中调用 VM 闭包 %s（缺少 AST body，仅 VM 后端可调用）",
+                                         effectiveName.c_str()),
+                     node.line, node.column);
     }
 
     // F10: 支持默认参数
     size_t argCount = node.arguments.size();
-    if (argCount < static_cast<size_t>(funDecl->requiredParamCount) ||
-        argCount > funDecl->params.size()) {
-        runtimeError(ErrorFormat::format("函数 %s 期望 %d-%zu 个参数，但传入了 %zu 个",
-            effectiveName.c_str(), funDecl->requiredParamCount,
-            funDecl->params.size(), argCount),
-            node.line, node.column);
+    if (argCount < static_cast<size_t>(funDecl->requiredParamCount) || argCount > funDecl->params.size()) {
+        runtimeError(ErrorFormat::format("函数 %s 期望 %d-%zu 个参数，但传入了 %zu 个", effectiveName.c_str(),
+                                         funDecl->requiredParamCount, funDecl->params.size(), argCount),
+                     node.line, node.column);
     }
 
     std::vector<Value> argValues;
@@ -143,9 +156,10 @@ Value Interpreter::callClosureValue(FunCall& node) {
     if (argCount < funDecl->params.size()) {
         auto savedEnv = currentEnv_;
         struct EnvGuard {
-            Interpreter& interp; std::shared_ptr<Environment> prev;
+            Interpreter& interp;
+            std::shared_ptr<Environment> prev;
             ~EnvGuard() { interp.currentEnv_ = prev; }
-        } guard{ *this, currentEnv_ };
+        } guard{*this, currentEnv_};
         if (closureEnv) {
             currentEnv_ = closureEnv;
         }
@@ -159,14 +173,14 @@ Value Interpreter::callClosureValue(FunCall& node) {
     }
 
     // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复
-    CallFrameGuard frameGuard{ *this, funDecl->returnType };
+    CallFrameGuard frameGuard{*this, funDecl->returnType};
     auto prevEnv = currentEnv_;
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
         runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
     }
-    RecursionGuard recursionGuard{ recursionDepth_ };
+    RecursionGuard recursionGuard{recursionDepth_};
 
     std::shared_ptr<Environment> funEnv;
     bool envFromSnapshot = false;
@@ -182,15 +196,15 @@ Value Interpreter::callClosureValue(FunCall& node) {
         bool dismissed = false;
         ~FunEnvGuard() {
             if (!dismissed) {
-                if (env) env->closeCapturedVariables();
+                if (env)
+                    env->closeCapturedVariables();
                 interp.currentEnv_ = prev;
             }
         }
-    } envGuard{ *this, funEnv, prevEnv };
+    } envGuard{*this, funEnv, prevEnv};
 
     try {
-        funEnv = std::make_shared<Environment>(
-            closureEnv ? closureEnv : currentEnv_);
+        funEnv = std::make_shared<Environment>(closureEnv ? closureEnv : currentEnv_);
 
         // C1 fix: 若闭包环境已过期（weak_ptr 失效），从 capturedVars 快照重建
         if (!closureEnv) {
@@ -201,9 +215,9 @@ Value Interpreter::callClosureValue(FunCall& node) {
         for (size_t i = 0; i < funDecl->params.size(); ++i) {
             // P1-4 fix: 补充参数类型检查（与 callNamedFunction 一致）
             if (i < funDecl->paramTypes.size() && !funDecl->paramTypes[i].empty()) {
-                checkType(argValues[i], funDecl->paramTypes[i],
-                    [&] { return "函数 " + effectiveName + " 的参数 " + funDecl->params[i]; },
-                    node.line, node.column);
+                checkType(
+                    argValues[i], funDecl->paramTypes[i],
+                    [&] { return "函数 " + effectiveName + " 的参数 " + funDecl->params[i]; }, node.line, node.column);
             }
             funEnv->define(funDecl->params[i], std::move(argValues[i]));
         }
@@ -211,8 +225,7 @@ Value Interpreter::callClosureValue(FunCall& node) {
         callStack_.emplace_back(effectiveName, funEnv, node.line, recursionDepth_);
         currentEnv_ = funEnv;
         executeFunctionBody(static_cast<Block&>(*funDecl->body));
-    }
-    catch (ReturnException& e) {
+    } catch (ReturnException& e) {
         result = std::move(e.returnValue);
     }
     // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构会恢复 env + closeCaptured，
@@ -230,7 +243,8 @@ Value Interpreter::callClosureValue(FunCall& node) {
     // 需在 funEnv 销毁前将最终值快照到 capturedVars，否则 weak_ptr 失效后无法访问。
     // RA-A fix: 由 envGuard 析构统一执行，此处 dismiss 避免重复
     envGuard.dismissed = true;
-    if (funEnv) funEnv->closeCapturedVariables();
+    if (funEnv)
+        funEnv->closeCapturedVariables();
     currentEnv_ = prevEnv;
 
     return result;
@@ -283,11 +297,10 @@ Value Interpreter::callBuiltinFunction(FunCall& node) {
     }
 
     // 调用共享纯函数层
-    auto r = executeSharedBuiltinFunction(
-        node.name, argValues.data(), argValues.size(), node.line, node.column);
+    auto r = executeSharedBuiltinFunction(node.name, argValues.data(), argValues.size(), node.line, node.column);
 
     if (r.is_err()) {
-        throw to_runtime_error(r);  // A1 fix: 自由函数模板
+        throw to_runtime_error(r); // A1 fix: 自由函数模板
     }
     return std::move(r.value());
 }
@@ -297,7 +310,7 @@ Value Interpreter::constructClassInstance(FunCall& node) {
     // 检查是否是类构造调用
     auto classIt = classRegistry_.find(node.name);
     if (classIt != classRegistry_.end()) {
-        ClassInfo* cls = &classIt->second;  // #2 fix: 用指针代替引用，便evaluate后重绑定
+        ClassInfo* cls = &classIt->second; // #2 fix: 用指针代替引用，便evaluate后重绑定
 
         // 检查参数数量（构造函数为 init 方法）
         FunDecl* initMethod = findMethod(*cls, "init");
@@ -306,20 +319,20 @@ Value Interpreter::constructClassInstance(FunCall& node) {
         if (initMethod && (node.arguments.size() < initMethod->requiredParamCount ||
                            node.arguments.size() > initMethod->params.size())) {
             runtimeError(ErrorFormat::format("构造函数 init 期望 %d-%zu 个参数，但传入了 %zu 个",
-                initMethod->requiredParamCount, initMethod->params.size(),
-                node.arguments.size()),
-                node.line, node.column);
+                                             initMethod->requiredParamCount, initMethod->params.size(),
+                                             node.arguments.size()),
+                         node.line, node.column);
         }
         if (!initMethod && !node.arguments.empty()) {
-            runtimeError(ErrorFormat::format("类 %s 没有 init 方法，但传入了 %zu 个参数",
-                cls->name.c_str(), node.arguments.size()),
-                node.line, node.column);
+            runtimeError(ErrorFormat::format("类 %s 没有 init 方法，但传入了 %zu 个参数", cls->name.c_str(),
+                                             node.arguments.size()),
+                         node.line, node.column);
         }
 
         // 求值参数
         std::vector<Value> argValues;
         argValues.reserve(node.arguments.size());
-        std::string className = cls->name;  // #2 fix: 缓存类名
+        std::string className = cls->name; // #2 fix: 缓存类名
         // P2-3 fix: bad_alloc 转化为带行号的 RuntimeError
         try {
             for (auto& arg : node.arguments) {
@@ -331,7 +344,7 @@ Value Interpreter::constructClassInstance(FunCall& node) {
 
         // #2 fix: evaluate后重新查找
         classIt = classRegistry_.find(className);
-        cls = &classIt->second;  // 重绑定指针到新位置
+        cls = &classIt->second; // 重绑定指针到新位置
         initMethod = findMethod(*cls, "init");
 
         // AUDIT-P2-CORRECT fix: 类重定义后参数签名可能变化，需重新校验 argValues 数量。
@@ -339,9 +352,10 @@ Value Interpreter::constructClassInstance(FunCall& node) {
         // 导致新 init 参数更少时多余参数被静默忽略，参数更多时缺失参数走 null 路径。
         if (initMethod && (argValues.size() < static_cast<size_t>(initMethod->requiredParamCount) ||
                            argValues.size() > initMethod->params.size())) {
-            runtimeError(ErrorFormat::format("类 %s 在构造期间被重定义，参数数量不匹配（init 期望 %d-%zu 个，但传入了 %zu 个）",
-                cls->name.c_str(), initMethod->requiredParamCount, initMethod->params.size(),
-                argValues.size()),
+            runtimeError(
+                ErrorFormat::format("类 %s 在构造期间被重定义，参数数量不匹配（init 期望 %d-%zu 个，但传入了 %zu 个）",
+                                    cls->name.c_str(), initMethod->requiredParamCount, initMethod->params.size(),
+                                    argValues.size()),
                 node.line, node.column);
         }
 
@@ -349,16 +363,17 @@ Value Interpreter::constructClassInstance(FunCall& node) {
         if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
             runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
         }
-        RecursionGuard recursionGuard{ recursionDepth_ };
+        RecursionGuard recursionGuard{recursionDepth_};
 
         // 创建实例
         Value instance = Value::makeInstance(cls->name);
 
         // 复制类默认字段值（含继承链）— B8 fix: 加入循环检测
-        ClassInfo* curCls = cls;  // cls is already a pointer
+        ClassInfo* curCls = cls; // cls is already a pointer
         std::unordered_set<std::string> visitedClasses;
         while (curCls) {
-            if (!visitedClasses.insert(curCls->name).second) break; // 检测到循环继承
+            if (!visitedClasses.insert(curCls->name).second)
+                break; // 检测到循环继承
             for (const auto& kv : curCls->fields) {
                 // 子类字段覆盖父类
                 // Perf-Finding: 缓存 find 迭代器，避免 operator[] 二次 hash 查找同键
@@ -371,8 +386,7 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             if (!curCls->superClassName.empty()) {
                 auto superIt = classRegistry_.find(curCls->superClassName);
                 curCls = (superIt != classRegistry_.end()) ? &superIt->second : nullptr;
-            }
-            else {
+            } else {
                 curCls = nullptr;
             }
         }
@@ -394,9 +408,10 @@ Value Interpreter::constructClassInstance(FunCall& node) {
                     // callInstanceMethod 的 P1-4 fix 一致）。原实现仅 define 不检查类型注解，
                     // 导致类型注解在类构造路径被静默跳过，三后端语义不一致。
                     if (i < initMethod->paramTypes.size() && !initMethod->paramTypes[i].empty()) {
-                        checkType(argValues[i], initMethod->paramTypes[i],
-                            [&] { return "类 " + node.name + " 的 init 参数 " + initMethod->params[i]; },
-                            node.line, node.column);
+                        checkType(
+                            argValues[i], initMethod->paramTypes[i],
+                            [&] { return "类 " + node.name + " 的 init 参数 " + initMethod->params[i]; }, node.line,
+                            node.column);
                     }
                     initEnv->define(initMethod->params[i], std::move(argValues[i]));
                 } else {
@@ -408,18 +423,20 @@ Value Interpreter::constructClassInstance(FunCall& node) {
                         // BUGFIX-P2 fix: RAII guard 防止 evaluate() 抛异常时 currentEnv_ 不恢复
                         auto savedEnv = currentEnv_;
                         struct EnvGuard {
-                            Interpreter& interp; std::shared_ptr<Environment> prev;
+                            Interpreter& interp;
+                            std::shared_ptr<Environment> prev;
                             ~EnvGuard() { interp.currentEnv_ = prev; }
-                        } guard{ *this, currentEnv_ };
+                        } guard{*this, currentEnv_};
                         if (cls->closureEnv) {
                             currentEnv_ = cls->closureEnv;
                         }
                         Value defaultVal = evaluate(initMethod->defaultValues[i].get());
                         // AUDIT-P1 fix: 默认值同样需类型检查
                         if (i < initMethod->paramTypes.size() && !initMethod->paramTypes[i].empty()) {
-                            checkType(defaultVal, initMethod->paramTypes[i],
-                                [&] { return "类 " + node.name + " 的 init 参数 " + initMethod->params[i]; },
-                                node.line, node.column);
+                            checkType(
+                                defaultVal, initMethod->paramTypes[i],
+                                [&] { return "类 " + node.name + " 的 init 参数 " + initMethod->params[i]; }, node.line,
+                                node.column);
                         }
                         initEnv->define(initMethod->params[i], std::move(defaultVal));
                     } else {
@@ -430,13 +447,14 @@ Value Interpreter::constructClassInstance(FunCall& node) {
 
             // H-新2 fix: bindInstance 必须在所有 define 之后
             Value* thisInEnv = const_cast<Value*>(initEnv->get("this"));
-            if (thisInEnv) initEnv->bindInstance(thisInEnv);
+            if (thisInEnv)
+                initEnv->bindInstance(thisInEnv);
 
             // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
             // AUDIT-BUG-F1 fix: CallFrameGuard 必须在 emplace_back 之前构造，使其保存的
             // savedStackDepth = N（不含新条目），析构时才能正确弹回到 N。若顺序颠倒，
             // savedStackDepth = N+1，析构时不弹出 init 帧，循环构造实例导致 callStack_ 泄漏。
-            CallFrameGuard frameGuard{ *this, initMethod->returnType, /*manageCtx=*/true };
+            CallFrameGuard frameGuard{*this, initMethod->returnType, /*manageCtx=*/true};
 
             // 压入调用帧
             callStack_.emplace_back(node.name + ".init", initEnv, node.line, recursionDepth_);
@@ -446,7 +464,10 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             currentEnv_ = initEnv;
 
             // 压入类上下文（super 解析用）
-            classContextStack_.push_back(cls->name);
+            // AUDIT-P1-CORRECT fix: 压入"init 方法定义所在类"而非"实例类"。
+            // 当实例类未定义 init 而继承父类的 init 时，压入实例类名会导致
+            // init 体内的 super 调用从错误的类开始搜索（应为定义 init 的类的父类）。
+            classContextStack_.push_back(findMethodDefiningClassName(*cls, "init"));
 
             // RA-A fix: RAII 守卫统一管理 initEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
             // 消除原 catch(...) + throw; 的 rethrow。
@@ -461,12 +482,11 @@ Value Interpreter::constructClassInstance(FunCall& node) {
                         interp.currentEnv_ = prev;
                     }
                 }
-            } envGuard{ *this, initEnv, prevEnv };
+            } envGuard{*this, initEnv, prevEnv};
 
             try {
                 executeFunctionBody(static_cast<Block&>(*initMethod->body));
-            }
-            catch (const ReturnException&) {
+            } catch (const ReturnException&) {
                 // init 方法的返回值忽略，但更新实例字段
             }
             // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
@@ -496,11 +516,11 @@ Value Interpreter::constructClassInstance(FunCall& node) {
 Value Interpreter::callNamedFunction(FunCall& node) {
     // 检查环境中是否有闭包值
     std::shared_ptr<Environment> closureEnv;
-    Value* closureValPtr = nullptr;  // C1 fix: 保存闭包值指针用于 capturedVars 回退
+    Value* closureValPtr = nullptr; // C1 fix: 保存闭包值指针用于 capturedVars 回退
     // A3 fix: 使用 shared_ptr 持有 FunDecl，源（resolvedDecl/funRegistry_/closureBodyShared）
     // 均返回 shared_ptr，确保缓存写入时共享所有权
     std::shared_ptr<FunDecl> funDecl;
-    std::string effectiveName = node.name;  // 实际函数名（闭包时可能不同于调用变量名）
+    std::string effectiveName = node.name; // 实际函数名（闭包时可能不同于调用变量名）
 
     // 快速路径：使用缓存的函数体（跳过环境查找和 funRegistry_ 查找）
     // M7 fix: 检查代数是否匹配，函数重定义后缓存失效
@@ -511,9 +531,8 @@ Value Interpreter::callNamedFunction(FunCall& node) {
             funDecl = node.resolvedDecl;
             closureEnv = calleePtr->closureEnv();
             effectiveName = calleePtr->closureName();
-            closureValPtr = const_cast<Value*>(calleePtr);  // C1 fix
-        }
-        else {
+            closureValPtr = const_cast<Value*>(calleePtr); // C1 fix
+        } else {
             // 变量已被重赋值为非闭包（或未定义），缓存陈旧，失效并回退慢路径
             node.isResolved = false;
         }
@@ -525,7 +544,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         if (calleePtr && calleePtr->isClosure()) {
             closureEnv = calleePtr->closureEnv();
             effectiveName = calleePtr->closureName();
-            closureValPtr = const_cast<Value*>(calleePtr);  // C1 fix
+            closureValPtr = const_cast<Value*>(calleePtr); // C1 fix
             // 优先从闭包值中获取函数体（自包含，不依赖 funRegistry_）
             // A3 fix: 使用 closureBodyShared() 获取 shared_ptr 副本
             funDecl = calleePtr->closureBodyShared();
@@ -555,18 +574,16 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         // 缓存解析结果供后续调用使用
         node.resolvedDecl = funDecl;
         node.isResolved = true;
-        node.resolvedGen_ = funRegistryGen_;  // M7: 记录当前代数
+        node.resolvedGen_ = funRegistryGen_; // M7: 记录当前代数
     }
 
     // 检查参数数量
     // F10: 支持默认参数，参数数量可在 [requiredParamCount, params.size()] 范围内
     size_t argCount = node.arguments.size();
-    if (argCount < static_cast<size_t>(funDecl->requiredParamCount) ||
-        argCount > funDecl->params.size()) {
-        runtimeError(ErrorFormat::format("函数 %s 期望 %d-%zu 个参数，但传入了 %zu 个",
-            node.name.c_str(), funDecl->requiredParamCount,
-            funDecl->params.size(), argCount),
-            node.line, node.column);
+    if (argCount < static_cast<size_t>(funDecl->requiredParamCount) || argCount > funDecl->params.size()) {
+        runtimeError(ErrorFormat::format("函数 %s 期望 %d-%zu 个参数，但传入了 %zu 个", node.name.c_str(),
+                                         funDecl->requiredParamCount, funDecl->params.size(), argCount),
+                     node.line, node.column);
     }
 
     // 求值参数
@@ -587,9 +604,10 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     if (argCount < funDecl->params.size()) {
         auto savedEnv = currentEnv_;
         struct EnvGuard {
-            Interpreter& interp; std::shared_ptr<Environment> prev;
+            Interpreter& interp;
+            std::shared_ptr<Environment> prev;
             ~EnvGuard() { interp.currentEnv_ = prev; }
-        } guard{ *this, currentEnv_ };
+        } guard{*this, currentEnv_};
         // 切换到闭包环境（函数定义时的环境），使默认值表达式能访问外层变量
         if (closureEnv) {
             currentEnv_ = closureEnv;
@@ -605,17 +623,17 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     }
 
     // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ 的保存/恢复
-    CallFrameGuard frameGuard{ *this, funDecl->returnType };
+    CallFrameGuard frameGuard{*this, funDecl->returnType};
     auto prevEnv = currentEnv_;
 
     // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
     if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
         runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);
     }
-    RecursionGuard recursionGuard{ recursionDepth_ };
+    RecursionGuard recursionGuard{recursionDepth_};
 
     Value result = Value::nullValue();
-    std::shared_ptr<Environment> funEnv;  // C1 fix: 声明在 try 外以便写回
+    std::shared_ptr<Environment> funEnv; // C1 fix: 声明在 try 外以便写回
     bool envFromSnapshot = false;
 
     // RA-A fix: RAII 守卫统一管理 funEnv 的 closeCapturedVariables 与 currentEnv_ 恢复，
@@ -627,27 +645,27 @@ Value Interpreter::callNamedFunction(FunCall& node) {
         bool dismissed = false;
         ~FunEnvGuard() {
             if (!dismissed) {
-                if (env) env->closeCapturedVariables();
+                if (env)
+                    env->closeCapturedVariables();
                 interp.currentEnv_ = prev;
             }
         }
-    } envGuard{ *this, funEnv, prevEnv };
+    } envGuard{*this, funEnv, prevEnv};
 
     try {
         // 参数类型检查
         for (size_t i = 0; i < funDecl->params.size() && i < funDecl->paramTypes.size(); ++i) {
             if (!funDecl->paramTypes[i].empty()) {
-                checkType(argValues[i], funDecl->paramTypes[i],
-                    [&] { return "函数 " + node.name + " 的参数 " + funDecl->params[i]; },
-                    node.line, node.column);
+                checkType(
+                    argValues[i], funDecl->paramTypes[i],
+                    [&] { return "函数 " + node.name + " 的参数 " + funDecl->params[i]; }, node.line, node.column);
             }
         }
 
         // 创建新环境：使用闭包捕获的环境作为父级（如果有的话）
         if (closureEnv) {
             funEnv = std::make_shared<Environment>(closureEnv);
-        }
-        else {
+        } else {
             funEnv = std::make_shared<Environment>(currentEnv_);
         }
 
@@ -672,8 +690,7 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
         // 执行函数体（不求值返回值：无 return 语句时函数应返回 null）
         executeFunctionBody(static_cast<Block&>(*funDecl->body));
-    }
-    catch (ReturnException& e) {
+    } catch (ReturnException& e) {
         result = std::move(e.returnValue);
     }
     // RA-A fix: 不再需要 catch(...) + throw; — envGuard 析构统一恢复
@@ -688,7 +705,8 @@ Value Interpreter::callNamedFunction(FunCall& node) {
     // B1 fix: 关闭捕获 — 函数返回时将函数局部变量的最终值写回闭包 capturedVars
     // RA-A fix: 由 envGuard 析构统一执行，此处 dismiss 避免重复
     envGuard.dismissed = true;
-    if (funEnv) funEnv->closeCapturedVariables();
+    if (funEnv)
+        funEnv->closeCapturedVariables();
     currentEnv_ = prevEnv;
 
     return result;

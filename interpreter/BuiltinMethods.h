@@ -1,12 +1,12 @@
 #pragma once
 
+#include "common/Result.h"                 // S6 fix: 统一错误处理 Result<Value>
+#include "interpreter/RuntimeExceptions.h" // S6 fix: RuntimeError 完整定义
+#include "interpreter/Value.h"
+#include <cstdint>
+#include <functional> // E3 fix: executeSharedInput 接收 std::function 回调
 #include <string>
 #include <vector>
-#include <cstdint>
-#include <functional>  // E3 fix: executeSharedInput 接收 std::function 回调
-#include "interpreter/Value.h"
-#include "interpreter/RuntimeExceptions.h"  // S6 fix: RuntimeError 完整定义
-#include "common/Result.h"                   // S6 fix: 统一错误处理 Result<Value>
 
 // ============================================================
 // BuiltinMethods - 内置方法分发辅助类
@@ -17,12 +17,11 @@
 
 /// 内置方法调用结果（Interpreter 侧专用，含 objectModified 标志）
 struct BuiltinMethodResult {
-    Value result;              // 方法返回值
-    bool objectModified;       // 对象是否被修改（需要 writeBack）
+    Value result;        // 方法返回值
+    bool objectModified; // 对象是否被修改（需要 writeBack）
 
     BuiltinMethodResult() : result(Value::nullValue()), objectModified(false) {}
-    BuiltinMethodResult(Value r, bool modified = false)
-        : result(std::move(r)), objectModified(modified) {}
+    BuiltinMethodResult(Value r, bool modified = false) : result(std::move(r)), objectModified(modified) {}
 };
 
 // ============================================================
@@ -36,13 +35,32 @@ struct BuiltinMethodResult {
 /// 内建方法名枚举（消除运行时字符串比较）
 enum class BuiltinMethod {
     // 数组方法
-    ARR_PUSH, ARR_POP, ARR_LEN, ARR_REMOVE, ARR_CONTAINS, ARR_JOIN,
+    ARR_PUSH,
+    ARR_POP,
+    ARR_LEN,
+    ARR_REMOVE,
+    ARR_CONTAINS,
+    ARR_JOIN,
     // 字典方法
-    DICT_LEN, DICT_KEYS, DICT_VALUES, DICT_HAS, DICT_REMOVE, DICT_GET, DICT_SET,
+    DICT_LEN,
+    DICT_KEYS,
+    DICT_VALUES,
+    DICT_HAS,
+    DICT_REMOVE,
+    DICT_GET,
+    DICT_SET,
     // 字符串方法
-    STR_LEN, STR_UPPER, STR_LOWER, STR_CONTAINS, STR_STARTS_WITH,
-    STR_ENDS_WITH, STR_REPLACE, STR_SUBSTR, STR_INDEX_OF,
-    STR_SPLIT, STR_TRIM,
+    STR_LEN,
+    STR_UPPER,
+    STR_LOWER,
+    STR_CONTAINS,
+    STR_STARTS_WITH,
+    STR_ENDS_WITH,
+    STR_REPLACE,
+    STR_SUBSTR,
+    STR_INDEX_OF,
+    STR_SPLIT,
+    STR_TRIM,
     // 未知
     UNKNOWN
 };
@@ -73,9 +91,7 @@ BuiltinMethod classifyBuiltinMethod(const std::string& name);
 /// @param argCount   参数数量（len 期望 0）
 /// @param line       调用行号（用于错误报告）
 /// @param column     调用列号（用于错误报告）
-Result<Value> executeSharedLen(const Value& obj,
-                                     const Value* args, size_t argCount,
-                                     int line = 0, int column = 0);
+Result<Value> executeSharedLen(const Value& obj, const Value* args, size_t argCount, int line = 0, int column = 0);
 
 /// 共享纯函数：执行数组 contains 方法
 /// 线性扫描数组，使用 Value::equals 判断相等（与 Interpreter/VM 原实现一致）
@@ -84,9 +100,8 @@ Result<Value> executeSharedLen(const Value& obj,
 /// @param argCount   参数数量（contains 期望 1）
 /// @param line       调用行号
 /// @param column     调用列号
-Result<Value> executeSharedArrayContains(const Value& arr,
-                                               const Value* args, size_t argCount,
-                                               int line = 0, int column = 0);
+Result<Value> executeSharedArrayContains(const Value& arr, const Value* args, size_t argCount, int line = 0,
+                                         int column = 0);
 
 /// 共享纯函数：执行字典 has / contains 方法
 /// 检查字典中是否存在指定键（键通过 Value::toString 转换为字符串）
@@ -96,10 +111,8 @@ Result<Value> executeSharedArrayContains(const Value& arr,
 /// @param argCount   参数数量（has/contains 期望 1）
 /// @param line       调用行号
 /// @param column     调用列号
-Result<Value> executeSharedDictHas(const Value& dict,
-                                         const std::string& method,
-                                         const Value* args, size_t argCount,
-                                         int line = 0, int column = 0);
+Result<Value> executeSharedDictHas(const Value& dict, const std::string& method, const Value* args, size_t argCount,
+                                   int line = 0, int column = 0);
 
 // ============================================================
 // 字符串方法共享层（供 Interpreter 和 VM 共用，不抛异常）
@@ -108,26 +121,22 @@ Result<Value> executeSharedDictHas(const Value& dict,
 // startsWith / endsWith / substr / indexOf
 
 /// 共享纯函数：执行字符串 startsWith 方法
-Result<Value> executeSharedStrStartsWith(const Value& str,
-                                                const Value* args, size_t argCount,
-                                                int line = 0, int column = 0);
+Result<Value> executeSharedStrStartsWith(const Value& str, const Value* args, size_t argCount, int line = 0,
+                                         int column = 0);
 
 /// 共享纯函数：执行字符串 endsWith 方法
-Result<Value> executeSharedStrEndsWith(const Value& str,
-                                              const Value* args, size_t argCount,
-                                              int line = 0, int column = 0);
+Result<Value> executeSharedStrEndsWith(const Value& str, const Value* args, size_t argCount, int line = 0,
+                                       int column = 0);
 
 /// 共享纯函数：执行字符串 substr 方法
 /// substr(start) 或 substr(start, length)
-Result<Value> executeSharedStrSubstr(const Value& str,
-                                            const Value* args, size_t argCount,
-                                            int line = 0, int column = 0);
+Result<Value> executeSharedStrSubstr(const Value& str, const Value* args, size_t argCount, int line = 0,
+                                     int column = 0);
 
 /// 共享纯函数：执行字符串 indexOf 方法
 /// 返回 UTF-8 字符位置（非字节位置），未找到返回 -1
-Result<Value> executeSharedStrIndexOf(const Value& str,
-                                             const Value* args, size_t argCount,
-                                             int line = 0, int column = 0);
+Result<Value> executeSharedStrIndexOf(const Value& str, const Value* args, size_t argCount, int line = 0,
+                                      int column = 0);
 
 /// 共享纯函数：执行字符串 replace 方法
 /// 将所有 from 子串替换为 to（单遍构建，O(N) 复杂度）
@@ -136,30 +145,21 @@ Result<Value> executeSharedStrIndexOf(const Value& str,
 /// @param argCount   参数数量
 /// @param line       调用行号
 /// @param column     调用列号
-Result<Value> executeSharedStrReplace(const Value& str,
-                                            const Value* args, size_t argCount,
-                                            int line = 0, int column = 0);
+Result<Value> executeSharedStrReplace(const Value& str, const Value* args, size_t argCount, int line = 0,
+                                      int column = 0);
 
 /// 共享纯函数：执行字符串 upper 方法（转大写）
-Result<Value> executeSharedStrUpper(const Value& str,
-                                          const Value* args, size_t argCount,
-                                          int line = 0, int column = 0);
+Result<Value> executeSharedStrUpper(const Value& str, const Value* args, size_t argCount, int line = 0, int column = 0);
 
 /// 共享纯函数：执行字符串 lower 方法（转小写）
-Result<Value> executeSharedStrLower(const Value& str,
-                                          const Value* args, size_t argCount,
-                                          int line = 0, int column = 0);
+Result<Value> executeSharedStrLower(const Value& str, const Value* args, size_t argCount, int line = 0, int column = 0);
 
 /// 共享纯函数：执行字符串 split 方法（按分隔符分割）
 /// split(sep) 或 split()（默认分隔符为空格）
-Result<Value> executeSharedStrSplit(const Value& str,
-                                          const Value* args, size_t argCount,
-                                          int line = 0, int column = 0);
+Result<Value> executeSharedStrSplit(const Value& str, const Value* args, size_t argCount, int line = 0, int column = 0);
 
 /// 共享纯函数：执行字符串 trim 方法（去除首尾空白）
-Result<Value> executeSharedStrTrim(const Value& str,
-                                         const Value* args, size_t argCount,
-                                         int line = 0, int column = 0);
+Result<Value> executeSharedStrTrim(const Value& str, const Value* args, size_t argCount, int line = 0, int column = 0);
 
 /// 共享纯函数：执行字符串 contains 方法
 /// ARCH-15 fix: 补齐 contains 家族（arr/dict/str）的共享层覆盖，
@@ -171,31 +171,25 @@ Result<Value> executeSharedStrTrim(const Value& str,
 /// @param argCount   参数数量
 /// @param line       调用行号
 /// @param column     调用列号
-Result<Value> executeSharedStrContains(const Value& str,
-                                                const Value* args, size_t argCount,
-                                                int line = 0, int column = 0);
+Result<Value> executeSharedStrContains(const Value& str, const Value* args, size_t argCount, int line = 0,
+                                       int column = 0);
 
 /// 共享纯函数：执行字典 keys 方法（返回所有键组成的数组）
-Result<Value> executeSharedDictKeys(const Value& dict,
-                                          const Value* args, size_t argCount,
-                                          int line = 0, int column = 0);
+Result<Value> executeSharedDictKeys(const Value& dict, const Value* args, size_t argCount, int line = 0,
+                                    int column = 0);
 
 /// 共享纯函数：执行字典 values 方法（返回所有值组成的数组）
-Result<Value> executeSharedDictValues(const Value& dict,
-                                            const Value* args, size_t argCount,
-                                            int line = 0, int column = 0);
+Result<Value> executeSharedDictValues(const Value& dict, const Value* args, size_t argCount, int line = 0,
+                                      int column = 0);
 
 /// 共享纯函数：执行字典 get 方法（按键查找，支持默认值）
 /// get(key) 或 get(key, default)
-Result<Value> executeSharedDictGet(const Value& dict,
-                                         const Value* args, size_t argCount,
-                                         int line = 0, int column = 0);
+Result<Value> executeSharedDictGet(const Value& dict, const Value* args, size_t argCount, int line = 0, int column = 0);
 
 /// 共享纯函数：执行数组 join 方法（用分隔符连接所有元素）
 /// join() 或 join(sep)
-Result<Value> executeSharedArrayJoin(const Value& arr,
-                                           const Value* args, size_t argCount,
-                                           int line = 0, int column = 0);
+Result<Value> executeSharedArrayJoin(const Value& arr, const Value* args, size_t argCount, int line = 0,
+                                     int column = 0);
 
 // ============================================================
 // 顶层内置函数共享层（供 Interpreter 和 VM 共用，不抛异常）
@@ -212,10 +206,8 @@ bool isBuiltinFunction(const std::string& name);
 /// @param argCount   参数数量
 /// @param line       调用行号（用于错误报告）
 /// @param column     调用列号（用于错误报告）
-Result<Value> executeSharedBuiltinFunction(
-    const std::string& funcName,
-    const Value* args, size_t argCount,
-    int line = 0, int column = 0);
+Result<Value> executeSharedBuiltinFunction(const std::string& funcName, const Value* args, size_t argCount,
+                                           int line = 0, int column = 0);
 
 /// E3 fix: 执行 input() 函数（共享层，供 Interpreter 和 VM 共用）
 /// input() 不走 executeSharedBuiltinFunction 注册表（依赖 inputCallback 跨线程交互），
@@ -228,10 +220,8 @@ Result<Value> executeSharedBuiltinFunction(
 /// @param argCount   参数数量（input 期望 0 或 1）
 /// @param line       调用行号
 /// @param column     调用列号
-Result<Value> executeSharedInput(
-    const std::function<std::string(const std::string&)>& inputCallback,
-    const Value* args, size_t argCount,
-    int line = 0, int column = 0);
+Result<Value> executeSharedInput(const std::function<std::string(const std::string&)>& inputCallback, const Value* args,
+                                 size_t argCount, int line = 0, int column = 0);
 
 /// 内置方法辅助类（全静态方法，无状态）
 class BuiltinMethods {
@@ -244,18 +234,15 @@ public:
     /// @param col     调用列号（用于错误报告）
     /// @return        方法结果 + 是否修改了对象
     /// @throws RuntimeError 参数错误或方法不存在时
-    static BuiltinMethodResult handleArrayMethod(
-        const std::string& method, Value& obj,
-        const std::vector<Value>& args, int line, int col);
+    static BuiltinMethodResult handleArrayMethod(const std::string& method, Value& obj, const std::vector<Value>& args,
+                                                 int line, int col);
 
     /// 处理字典内置方法（len, keys, values, has/contains, get, remove）
-    static BuiltinMethodResult handleDictMethod(
-        const std::string& method, Value& obj,
-        const std::vector<Value>& args, int line, int col);
+    static BuiltinMethodResult handleDictMethod(const std::string& method, Value& obj, const std::vector<Value>& args,
+                                                int line, int col);
 
     /// 处理字符串内置方法（len, upper, lower, split, replace, trim）
     /// 字符串是不可变的，所以 obj 为 const 引用
-    static BuiltinMethodResult handleStringMethod(
-        const std::string& method, const Value& obj,
-        const std::vector<Value>& args, int line, int col);
+    static BuiltinMethodResult handleStringMethod(const std::string& method, const Value& obj,
+                                                  const std::vector<Value>& args, int line, int col);
 };

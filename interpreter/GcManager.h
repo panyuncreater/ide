@@ -28,9 +28,9 @@
 //   - tracked_ 用 vector，aliveSet_ 用 unordered_set，注册/注销均 O(1)
 // ============================================================
 
-#include <vector>
+#include "interpreter/ValueTypes.h" // ValueType
 #include <unordered_set>
-#include "interpreter/ValueTypes.h"  // ValueType
+#include <vector>
 
 struct RefCounted;
 struct Value;

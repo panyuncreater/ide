@@ -8,14 +8,14 @@
 // 降低编译耦合度。
 // ============================================================
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
 // 前向声明（避免循环依赖）
 class Environment;
 class FunDecl;
-struct BytecodeChunk;  // M3 fix: 闭包值持有函数 chunk 指针（D-1: 与 Bytecode.h 定义一致）
+struct BytecodeChunk; // M3 fix: 闭包值持有函数 chunk 指针（D-1: 与 Bytecode.h 定义一致）
 
 // ============================================================
 // Value 运行时值类型 — NaN-boxing + 侵入式引用计数（PERF-12）
@@ -28,15 +28,15 @@ struct BytecodeChunk;  // M3 fix: 闭包值持有函数 chunk 指针（D-1: 与 
 
 /// 值类型枚举（PERF-12: 不再依赖 variant 索引，由 NaNBox::tag() + RefCounted::type 分发）
 enum class ValueType {
-    VAL_NULL,      // NaNBox NULL_BITS
-    VAL_INT,       // NaNBox int48 内联 或 BoxedIntData* 装箱
-    VAL_FLOAT,     // NaNBox double 原始位
-    VAL_BOOL,      // NaNBox bool
-    VAL_STRING,    // StringData* (RefCounted)
-    VAL_ARRAY,     // ArrayData* (RefCounted)
-    VAL_DICT,      // DictData* (RefCounted)
-    VAL_INSTANCE,  // InstanceData* (RefCounted)
-    VAL_CLOSURE    // ClosureData* (RefCounted)
+    VAL_NULL,     // NaNBox NULL_BITS
+    VAL_INT,      // NaNBox int48 内联 或 BoxedIntData* 装箱
+    VAL_FLOAT,    // NaNBox double 原始位
+    VAL_BOOL,     // NaNBox bool
+    VAL_STRING,   // StringData* (RefCounted)
+    VAL_ARRAY,    // ArrayData* (RefCounted)
+    VAL_DICT,     // DictData* (RefCounted)
+    VAL_INSTANCE, // InstanceData* (RefCounted)
+    VAL_CLOSURE   // ClosureData* (RefCounted)
 };
 
 // ============================================================
@@ -44,16 +44,16 @@ enum class ValueType {
 // ============================================================
 // 用于 Value::typeName() 和 Interpreter::checkType() 的类型注解匹配。
 namespace TypeName {
-    constexpr const char* INT      = "int";
-    constexpr const char* FLOAT    = "float";
-    constexpr const char* BOOL     = "bool";
-    constexpr const char* STRING   = "string";
-    constexpr const char* NULL_T   = "null";
-    constexpr const char* ARRAY    = "array";
-    constexpr const char* DICT     = "dict";
-    constexpr const char* INSTANCE = "instance";
-    constexpr const char* CLOSURE  = "closure";
-}
+constexpr const char* INT = "int";
+constexpr const char* FLOAT = "float";
+constexpr const char* BOOL = "bool";
+constexpr const char* STRING = "string";
+constexpr const char* NULL_T = "null";
+constexpr const char* ARRAY = "array";
+constexpr const char* DICT = "dict";
+constexpr const char* INSTANCE = "instance";
+constexpr const char* CLOSURE = "closure";
+} // namespace TypeName
 
 // ============================================================
 // VM 闭包数据结构（定义在 Value 之前，因 ClosureData 持有其 shared_ptr）
@@ -65,5 +65,5 @@ namespace TypeName {
 struct VMClosureData {
     std::string functionName;
     std::vector<std::shared_ptr<struct VMUpvalue>> upvalues;
-    const BytecodeChunk* chunkPtr = nullptr;  // M3 fix: 直接持有函数 chunk 指针
+    const BytecodeChunk* chunkPtr = nullptr; // M3 fix: 直接持有函数 chunk 指针
 };

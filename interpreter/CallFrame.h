@@ -13,16 +13,16 @@
 // 仅 Interpreter.h 等真正使用 CallFrame 的模块 include 本头文件。
 // ============================================================
 
+#include "interpreter/Environment.h" // CallFrame 需要 shared_ptr<Environment>
 #include <memory>
 #include <string>
-#include "interpreter/Environment.h"  // CallFrame 需要 shared_ptr<Environment>
 
 /// 函数调用帧
 struct CallFrame {
-    std::string functionName;                      // 函数名
-    std::shared_ptr<Environment> env = nullptr;     // 该帧对应的环境
-    int line = 0;                                   // 调用行号
-    int depth = 0;                                  // 调用深度
+    std::string functionName;                   // 函数名
+    std::shared_ptr<Environment> env = nullptr; // 该帧对应的环境
+    int line = 0;                               // 调用行号
+    int depth = 0;                              // 调用深度
 
     CallFrame() = default;
     CallFrame(const std::string& name, std::shared_ptr<Environment> e, int ln, int d)

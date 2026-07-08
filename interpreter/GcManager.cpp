@@ -3,9 +3,9 @@
 // ============================================================
 
 #include "interpreter/GcManager.h"
+#include "Logger.h"
 #include "interpreter/RefCounted.h"
 #include "interpreter/Value.h"
-#include "Logger.h"
 
 // Bug2 fix: RefCounted 析构函数定义在此处（GcManager 完整定义可见）
 // 仅当 gcTracked_ 为 true 时通知 GcManager，非跟踪对象零开销。
@@ -16,7 +16,8 @@ RefCounted::~RefCounted() {
 }
 
 void GcManager::registerTracked(RefCounted* obj) {
-    if (!obj) return;
+    if (!obj)
+        return;
     tracked_.push_back(obj);
     // AUDIT-P2-CORRECT fix: aliveSet_.insert 可能抛 bad_alloc（rehash），
     // 此时 tracked_ 已含 obj 但 aliveSet_ 不含，破坏不变量
@@ -41,9 +42,11 @@ void GcManager::onDestroyed(RefCounted* obj) {
 
 void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marked) {
     // 仅指针类型的 Value 需 mark（int/float/bool/null 直接返回）
-    if (!v.box_.isPointer()) return;
+    if (!v.box_.isPointer())
+        return;
     const void* ptr = v.box_.asPtr<void>();
-    if (!marked.insert(ptr).second) return;  // 已标记，跳过避免循环
+    if (!marked.insert(ptr).second)
+        return; // 已标记，跳过避免循环
 
     // 递归 mark 子元素
     switch (v.box_.asPtr<RefCounted>()->type) {
@@ -100,7 +103,8 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
 }
 
 void GcManager::collectCycle(const std::vector<const void*>& roots) {
-    if (tracked_.empty()) return;
+    if (tracked_.empty())
+        return;
 
     // Phase 1: Mark - 从 roots 出发标记所有可达的容器节点
     std::unordered_set<const void*> marked;
@@ -155,11 +159,14 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     //     aliveSet_.find 返回 not found → 安全跳过。
     size_t collectedCount = 0;
     for (RefCounted* obj : tracked_) {
-        if (!obj) continue;
+        if (!obj)
+            continue;
         // 跳过已释放的悬垂指针（不在 aliveSet_ 中）
-        if (aliveSet_.find(obj) == aliveSet_.end()) continue;
+        if (aliveSet_.find(obj) == aliveSet_.end())
+            continue;
         // 跳过从根集可达的对象
-        if (marked.find(obj) != marked.end()) continue;
+        if (marked.find(obj) != marked.end())
+            continue;
 
         // 不可达的循环孤岛：清空子元素打破循环，让 refCount 降至 0 自然释放。
         // AUDIT-BUG-I3 fix: 先 move 出子元素到局部变量再清空，防止自引用容器
@@ -168,7 +175,7 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
         switch (obj->type) {
         case ValueType::VAL_ARRAY: {
             auto tmp = std::move(static_cast<Value::ArrayData*>(obj)->elements);
-            (void)tmp;  // tmp 析构时若级联释放 obj，obj->elements 已空
+            (void)tmp; // tmp 析构时若级联释放 obj，obj->elements 已空
             break;
         }
         case ValueType::VAL_DICT: {
@@ -197,10 +204,10 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     std::vector<RefCounted*> survivors;
     survivors.reserve(tracked_.size());
     for (RefCounted* obj : tracked_) {
-        if (!obj) continue;
+        if (!obj)
+            continue;
         // 仅保留仍存活且本轮被标记为可达的容器（下一轮可能变为不可达，需要再次检查）
-        if (aliveSet_.find(obj) != aliveSet_.end() &&
-            marked.find(obj) != marked.end()) {
+        if (aliveSet_.find(obj) != aliveSet_.end() && marked.find(obj) != marked.end()) {
             survivors.push_back(obj);
         }
     }

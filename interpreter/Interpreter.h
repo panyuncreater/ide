@@ -25,25 +25,25 @@
  */
 #pragma once
 
-#include <string>
-#include <vector>
+#include <atomic>
 #include <functional>
-#include <stdexcept>
 #include <memory>
 #include <mutex>
-#include <atomic>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
-#include "interpreter/Value.h"
-#include "interpreter/Environment.h"
-#include "interpreter/Visitor.h"
-#include "interpreter/RuntimeExceptions.h"  // S6 fix: 异常类提取到独立头文件
-#include "interpreter/CallFrame.h"  // ARCH-02 fix: CallFrame 拆出，避免传递依赖
-#include "ast/ASTNode.h"
 #include "Diagnostic.h"
+#include "ast/ASTNode.h"
+#include "common/IBackend.h" // ARCH-09 fix: 后端抽象接口
 #include "common/RuntimeLimits.h"
-#include "common/IBackend.h"  // ARCH-09 fix: 后端抽象接口
+#include "interpreter/CallFrame.h" // ARCH-02 fix: CallFrame 拆出，避免传递依赖
+#include "interpreter/Environment.h"
+#include "interpreter/RuntimeExceptions.h" // S6 fix: 异常类提取到独立头文件
+#include "interpreter/Value.h"
+#include "interpreter/Visitor.h"
 
 // ============================================================
 // Interpreter 解释器
@@ -60,12 +60,12 @@ class DebugController;
 
 /// 类定义信息结构
 struct ClassInfo {
-    std::string name;                                  // 类名
-    std::string superClassName;                         // 父类名（空表示无父类）
+    std::string name;           // 类名
+    std::string superClassName; // 父类名（空表示无父类）
     // A3 fix: shared_ptr 持有方法 AST 所有权，避免 AST 重建后裸指针悬垂
     std::unordered_map<std::string, std::shared_ptr<FunDecl>> methods; // 方法表
-    std::unordered_map<std::string, Value> fields;     // 默认字段值
-    std::shared_ptr<Environment> closureEnv;           // O5: 类定义时的环境（闭包捕获）
+    std::unordered_map<std::string, Value> fields;                     // 默认字段值
+    std::shared_ptr<Environment> closureEnv;                           // O5: 类定义时的环境（闭包捕获）
     // C6 fix: 方法分派缓存。沿继承链查找是 O(depth)，热路径上每次方法调用重复查找。
     // 缓存 methodName → (shared_ptr<FunDecl>, cacheGen_)。cacheGen_ 与 Interpreter::classRegistryGen_
     // 比较，不匹配则视为未命中（任何类重定义都会递增 gen，使全部缓存条目失效，
@@ -186,20 +186,21 @@ public:
     void clearModuleCache(const std::string& path) {
         std::string normalized = path;
         for (char& c : normalized) {
-            if (c == '\\') c = '/';
+            if (c == '\\')
+                c = '/';
         }
         if (normalized.size() >= 2 && normalized[0] == '.' && normalized[1] == '/') {
             normalized.erase(0, 2);
         }
         moduleCache_.erase(normalized);
         moduleExports_.erase(normalized);
-        moduleMtimes_.erase(normalized);  // BUG-REPL-AUDIT-1 fix
+        moduleMtimes_.erase(normalized); // BUG-REPL-AUDIT-1 fix
     }
     /// 清除所有模块缓存
     void clearAllModuleCache() {
         moduleCache_.clear();
         moduleExports_.clear();
-        moduleMtimes_.clear();  // BUG-REPL-AUDIT-1 fix
+        moduleMtimes_.clear(); // BUG-REPL-AUDIT-1 fix
     }
 
     /// 请求中止当前执行（REPL 超时/关闭时调用）
@@ -243,7 +244,7 @@ public:
     void visitThrowStmt(ThrowStmt& node) override;
     void visitImportStmt(ImportStmt& node) override;
     void visitExportStmt(ExportStmt& node) override;
-    void visitInterpolatedString(InterpolatedString& node) override;  // C5 fix
+    void visitInterpolatedString(InterpolatedString& node) override; // C5 fix
 
 private:
     // 运行时限制常量 — 统一引用 common/RuntimeLimits.h
@@ -252,31 +253,36 @@ private:
     static constexpr int MAX_INHERITANCE_DEPTH = RuntimeLimits::MAX_INHERITANCE_DEPTH;
     static constexpr int64_t MAX_LOOP_ITERATIONS = RuntimeLimits::MAX_LOOP_ITERATIONS;
 
-    std::shared_ptr<Environment> globalEnv_;        // 全局环境
-    std::shared_ptr<Environment> currentEnv_;       // 当前环境
-    std::vector<CallFrame> callStack_;              // 调用栈
+    std::shared_ptr<Environment> globalEnv_;  // 全局环境
+    std::shared_ptr<Environment> currentEnv_; // 当前环境
+    std::vector<CallFrame> callStack_;        // 调用栈
     // PERF-07 fix: Environment 对象池。visitBlock 退出时若块作用域未被闭包捕获
     // （use_count==1），回收并 reset 后供下次 visitBlock 复用，避免重复堆分配。
     // execute() 开头清空（旧环境链已销毁，池中 Environment 可能被新链引用作 parent）。
     std::vector<std::shared_ptr<Environment>> envPool_;
     // MEM-01 fix: shared_ptr 共享所有权，worker 线程持有的 Interpreter 保持 debugger 存活
-    std::shared_ptr<DebugController> debugger_;              // 调试控制器（可为 nullptr）
+    std::shared_ptr<DebugController> debugger_; // 调试控制器（可为 nullptr）
     // QT-R-02 fix: debugMode_ 改为 atomic，消除主线程 setDebugMode() 与 worker 线程
     // checkBreak() 读操作之间的数据竞争。A6 fix 已确保主线程不在 worker 运行时
     // 调用 setDebugMode，但 atomic 提供额外的内存可见性保证和防御性保护。
-    std::atomic<bool> debugMode_{false};            // 是否处于调试模式（快速跳过 checkBreak）
+    std::atomic<bool> debugMode_{false}; // 是否处于调试模式（快速跳过 checkBreak）
     // REPL 协作中止标志：closeEvent 超时路径设置，checkBreak 检查并抛异常
     std::atomic<bool> stopRequested_{false};
-    std::function<void(const std::string&)> outputCallback_; // 输出回调
+    // AUDIT-P1-CORRECT fix: 条件断点求值步数上限，防止无限循环（如 while(true){}）冻结 UI。
+    // 0 表示非条件求值（不计数）；>0 表示正在条件求值（evaluate 中递增并检查上限）。
+    // evaluateCondition 开头设为 1（开始计数），execute/executeRepl 开头重置为 0。
+    size_t evaluationStepCount_ = 0;
+    static constexpr size_t MAX_CONDITION_STEPS = 100000;
+    std::function<void(const std::string&)> outputCallback_;       // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
-    std::function<std::string(const std::string&)> moduleLoader_; // F12: 模块加载回调
+    std::function<std::string(const std::string&)> moduleLoader_;  // F12: 模块加载回调
     // BUG-REPL-AUDIT-1 fix: 模块文件 mtime 检查回调
     std::function<int64_t(const std::string&)> moduleMtimeChecker_;
     // A6 fix: callback 跨线程 mutex 保护。同一 Interpreter 实例被 worker 线程（execute）
     // 和主线程（REPL/条件断点求值/callback 设置）同时访问，std::function 成员无 mutex
     // 保护会导致数据竞争。setter 加锁写入，invocation 加锁拷贝后解锁调用（避免持锁回调）。
     mutable std::mutex callbackMutex_;
-    std::string currentFilePath_;                             // F12: 当前文件路径
+    std::string currentFilePath_; // F12: 当前文件路径
     // #13 fix: 字符串索引 ASCII 快速路径缓存（镜像 VM 的 P7 fix）。
     // 循环 s[i] 访问时，首次判定字符串是否纯 ASCII 并缓存（按 StringData 指针），
     // 后续访问 O(1) 按字节索引，避免每次 O(i) 码位扫描导致的 O(n²) 退化。
@@ -287,19 +293,20 @@ private:
     // BUG-REPL-AUDIT-1 fix: 模块文件 mtime 缓存，用于检测文件修改后缓存失效
     std::unordered_map<std::string, int64_t> moduleMtimes_;
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_; // F12: 模块导出名称缓存
-    std::vector<std::string> moduleLoadingStack_;             // F12: 模块加载栈（顺序管理 + 深度保护）
-    std::unordered_set<std::string> moduleLoadingSet_;        // D19 fix: 模块加载集合（O(1) 循环依赖检测，与 moduleLoadingStack_ 同步维护）
-    std::unordered_set<std::string> exportedNames_;           // F12: 当前模块的导出名称集合
-    DiagnosticBag diagnostics_;                        // 诊断收集器
+    std::vector<std::string> moduleLoadingStack_; // F12: 模块加载栈（顺序管理 + 深度保护）
+    std::unordered_set<std::string>
+        moduleLoadingSet_; // D19 fix: 模块加载集合（O(1) 循环依赖检测，与 moduleLoadingStack_ 同步维护）
+    std::unordered_set<std::string> exportedNames_; // F12: 当前模块的导出名称集合
+    DiagnosticBag diagnostics_;                     // 诊断收集器
     int recursionDepth_ = 0;                        // 递归深度
     // A3 fix: shared_ptr 持有函数 AST 所有权，避免 AST 重建后裸指针悬垂
     std::unordered_map<std::string, std::shared_ptr<FunDecl>> funRegistry_; // 函数注册表
-    int funRegistryGen_ = 0;  // M7: 注册表代数，函数重定义时递增使 FunCall 缓存失效
+    int funRegistryGen_ = 0;                                   // M7: 注册表代数，函数重定义时递增使 FunCall 缓存失效
     std::unordered_map<std::string, ClassInfo> classRegistry_; // 类注册表
-    int classRegistryGen_ = 0;  // C6 fix: 类注册表代数，任何类定义/重定义时递增，使方法分派缓存失效
-    std::vector<std::string> classContextStack_; // super 解析用：当前执行的方法所属类名栈
-    std::string currentFunctionReturnType_;         // 当前函数的返回类型
-    std::vector<std::unique_ptr<Block>> replAsts_;  // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
+    int classRegistryGen_ = 0;                     // C6 fix: 类注册表代数，任何类定义/重定义时递增，使方法分派缓存失效
+    std::vector<std::string> classContextStack_;   // super 解析用：当前执行的方法所属类名栈
+    std::string currentFunctionReturnType_;        // 当前函数的返回类型
+    std::vector<std::unique_ptr<Block>> replAsts_; // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
 
     // RA-C fix: break/continue 改用状态标志而非 C++ 异常。
     // 仅在循环结构（visitWhileStmt/visitForStmt）内有效，传播路径短。
@@ -328,11 +335,11 @@ private:
         std::unordered_map<std::string, std::unordered_set<std::string>> savedModuleExports;
         std::unordered_set<std::string> savedExportedNames;
         std::vector<std::string> savedModuleLoadingStack;
-        std::unordered_set<std::string> savedModuleLoadingSet;  // D19 fix: 与 savedModuleLoadingStack 配对
+        std::unordered_set<std::string> savedModuleLoadingSet; // D19 fix: 与 savedModuleLoadingStack 配对
         // P2-A fix: 与 moduleCache_ 同步保存/恢复 mtime，避免 Run→REPL 切换后
         // 缓存失效检测错位（mtime 与 cache 内容不一致导致使用陈旧缓存）
         std::unordered_map<std::string, int64_t> savedModuleMtimes;
-        bool active = false;  // 是否有暂存的状态（避免未 save 就 restore）
+        bool active = false; // 是否有暂存的状态（避免未 save 就 restore）
     } replState_;
 
     // S2 fix: RAII 递归深度守卫 — 统一 constructClassInstance/callNamedFunction/callInstanceMethod
@@ -341,7 +348,10 @@ private:
         int& depth;
         bool dismissed = false;
         explicit RecursionGuard(int& d) : depth(d) { ++depth; }
-        ~RecursionGuard() { if (!dismissed) --depth; }
+        ~RecursionGuard() {
+            if (!dismissed)
+                --depth;
+        }
         void dismiss() { dismissed = true; }
     };
 
@@ -357,10 +367,8 @@ private:
         size_t savedClassContextDepth;
         bool manageClassContext;
         CallFrameGuard(Interpreter& i, const std::string& newReturnType, bool manageCtx = false)
-            : interp(i), savedReturnType(i.currentFunctionReturnType_),
-              savedStackDepth(i.callStack_.size()),
-              savedClassContextDepth(i.classContextStack_.size()),
-              manageClassContext(manageCtx) {
+            : interp(i), savedReturnType(i.currentFunctionReturnType_), savedStackDepth(i.callStack_.size()),
+              savedClassContextDepth(i.classContextStack_.size()), manageClassContext(manageCtx) {
             interp.currentFunctionReturnType_ = newReturnType;
         }
         ~CallFrameGuard() {
@@ -382,7 +390,7 @@ private:
     // A1 fix: Visitor::accept 返回 void，evaluate() 通过 lastValue_ 获取结果。
     // evaluate() 保持返回 Value 的签名，所有调用方无需修改。
     Value evaluate(ASTNode* node);
-    Value lastValue_;  // A1 fix: visit 方法的结果载体（替代 accept 返回值）
+    Value lastValue_; // A1 fix: visit 方法的结果载体（替代 accept 返回值）
 
     /// 检查调试断点
     void checkBreak(ASTNode* node);
@@ -393,12 +401,10 @@ private:
     /// 数值二元运算（含类型提升）
     // PERF-06 fix: 改为按值接收，使调用方 move 临时 Value 进入，
     // 函数内可检测独占所有权（tryGetMutableString）做原地 append。
-    Value numericBinaryOp(BinOpType opType, Value left, Value right,
-                          int line, int col);
+    Value numericBinaryOp(BinOpType opType, Value left, Value right, int line, int col);
 
     /// P1-2 fix: 比较运算（LT/GT/LTE/GTE）共用模板，消除 4 处重复样板
-    template<typename Cmp>
-    Value compareNumericOrString(BinaryOp& node, Cmp cmp);
+    template <typename Cmp> Value compareNumericOrString(BinaryOp& node, Cmp cmp);
 
     /// 报告运行时错误
     [[noreturn]] void runtimeError(const std::string& msg, int line, int col);
@@ -406,14 +412,20 @@ private:
     /// 查找类的方法（含继承链）
     FunDecl* findMethod(const ClassInfo& cls, const std::string& methodName);
 
+    /// 查找方法实际定义所在的类名（含继承链）。
+    /// 用于 classContextStack_ 压入"方法定义所在类"而非"搜索起始类"，
+    /// 确保 super 调用从方法定义类的父类开始搜索（而非搜索起始类的父类）。
+    /// 若未找到方法，返回 startCls.name（fallback，不应到达）。
+    std::string findMethodDefiningClassName(const ClassInfo& startCls, const std::string& methodName);
+
     /// 查找类的字段默认值（含继承链）
     Value findFieldDefault(const ClassInfo& cls, const std::string& fieldName);
 
     /// 写回左值（链式求值，避免重复求值副作用）
     /// isIndexAssign=true 时为索引赋值，indexNode 为索引表达式节点；否则为成员赋值，fieldName 为字段名
     /// valueNode 为赋值右值表达式节点，在 writeBack 内部按 object→index→value 顺序求值
-    Value writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* indexNode,
-                    const std::string& fieldName, ASTNode* valueNode, int line, int col);
+    Value writeBack(ASTNode* objectNode, bool isIndexAssign, ASTNode* indexNode, const std::string& fieldName,
+                    ASTNode* valueNode, int line, int col);
     /// 写回已修改的值（用于方法调用等已自行修改对象的场景，链式求值避免重复求值）
     void writeBack(ASTNode* objectNode, const Value& modifiedValue, int line, int col);
 
@@ -422,7 +434,7 @@ private:
         std::vector<ASTNode*> chain;
         std::vector<Value> vals;
         std::vector<Value> idxs;
-        VarRef* varRef;  // nullptr if root is not a VarRef
+        VarRef* varRef; // nullptr if root is not a VarRef
     };
 
     /// 收集从 objectNode 到 VarRef 的节点链，并从外到内逐级求值
@@ -438,9 +450,9 @@ private:
 
     /// 类型检查，不匹配则报运行时错误
     /// P20 fix: 模板化 contextBuilder 消除 std::function 堆分配
-    template<typename ContextBuilder>
-    void checkType(const Value& val, const std::string& annotation,
-                   ContextBuilder&& contextBuilder, int line, int col) {
+    template <typename ContextBuilder>
+    void checkType(const Value& val, const std::string& annotation, ContextBuilder&& contextBuilder, int line,
+                   int col) {
         if (!typeMatch(val, annotation)) {
             runtimeError(contextBuilder() + " 期望类型 " + annotation + "，实际为 " + val.typeName(), line, col);
         }
@@ -483,8 +495,7 @@ private:
     std::unordered_set<std::string> computeFreeVariables(const FunDecl& fn);
 
     /// collectFreeVars 的递归辅助函数（作用于作用域栈）。
-    void collectFreeVars(const ASTNode& node,
-                         std::vector<std::unordered_set<std::string>>& scopes,
+    void collectFreeVars(const ASTNode& node, std::vector<std::unordered_set<std::string>>& scopes,
                          std::unordered_set<std::string>& freeVars);
 
     /// B1 fix: 在当前环境中直接执行函数体语句（不创建嵌套块作用域）。

@@ -9,8 +9,8 @@
 // 全部声明为 constexpr，可供编译期常量折叠复用。
 // ============================================================
 
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <type_traits>
 
@@ -28,13 +28,14 @@ constexpr bool subOverflow(int64_t a, int64_t b) {
 
 /// 乘法 a * b 是否溢出 int64_t（内部已处理 -1 * INT64_MIN）
 constexpr bool mulOverflow(int64_t a, int64_t b) {
-    if (a == 0 || b == 0) return false;
-    if (a == -1 && b == INT64_MIN) return true;
-    if (b == -1 && a == INT64_MIN) return true;
-    return (a > 0 && b > 0 && a > INT64_MAX / b) ||
-           (a > 0 && b < 0 && b < INT64_MIN / a) ||
-           (a < 0 && b > 0 && a < INT64_MIN / b) ||
-           (a < 0 && b < 0 && a < INT64_MAX / b);
+    if (a == 0 || b == 0)
+        return false;
+    if (a == -1 && b == INT64_MIN)
+        return true;
+    if (b == -1 && a == INT64_MIN)
+        return true;
+    return (a > 0 && b > 0 && a > INT64_MAX / b) || (a > 0 && b < 0 && b < INT64_MIN / a) ||
+           (a < 0 && b > 0 && a < INT64_MIN / b) || (a < 0 && b < 0 && a < INT64_MAX / b);
 }
 
 /// 除法 a / b 是否为 UB（仅 INT64_MIN / -1；b == 0 由调用方单独处理）
@@ -75,17 +76,17 @@ enum class ArithOp { Add, Sub, Mul, Div, Mod };
 
 /// 算术运算结果状态
 enum class ArithStatus {
-    OK,           ///< 运算成功
-    DivByZero,    ///< 除零
-    IntOverflow,  ///< 整数溢出
-    NotNumeric    ///< 操作数非数值（字符串拼接由调用方预先处理）
+    OK,          ///< 运算成功
+    DivByZero,   ///< 除零
+    IntOverflow, ///< 整数溢出
+    NotNumeric   ///< 操作数非数值（字符串拼接由调用方预先处理）
 };
 
 /// 算术运算结果
 struct ArithResult {
     ArithStatus status = ArithStatus::OK;
-    int64_t intVal = 0;     ///< 当两操作数均为 int 时有效
-    double floatVal = 0.0;  ///< 当任一操作数为 float 时有效
+    int64_t intVal = 0;      ///< 当两操作数均为 int 时有效
+    double floatVal = 0.0;   ///< 当任一操作数为 float 时有效
     bool isIntResult = true; ///< true=使用 intVal，false=使用 floatVal
 
     bool ok() const { return status == ArithStatus::OK; }
@@ -93,16 +94,18 @@ struct ArithResult {
 
 /// 执行整数/浮点算术运算（不含字符串拼接，调用方预先处理）
 /// 输入：两操作数已确认为数值类型（isNumber()=true）
-inline ArithResult computeArith(ArithOp op, bool leftIsInt, int64_t leftInt,
-                                double leftFloat, bool rightIsInt, int64_t rightInt,
-                                double rightFloat) {
+inline ArithResult computeArith(ArithOp op, bool leftIsInt, int64_t leftInt, double leftFloat, bool rightIsInt,
+                                int64_t rightInt, double rightFloat) {
     ArithResult r;
     r.isIntResult = leftIsInt && rightIsInt;
 
     switch (op) {
     case ArithOp::Add:
         if (r.isIntResult) {
-            if (OverflowCheck::addOverflow(leftInt, rightInt)) { r.status = ArithStatus::IntOverflow; return r; }
+            if (OverflowCheck::addOverflow(leftInt, rightInt)) {
+                r.status = ArithStatus::IntOverflow;
+                return r;
+            }
             r.intVal = leftInt + rightInt;
         } else {
             r.floatVal = leftFloat + rightFloat;
@@ -110,7 +113,10 @@ inline ArithResult computeArith(ArithOp op, bool leftIsInt, int64_t leftInt,
         return r;
     case ArithOp::Sub:
         if (r.isIntResult) {
-            if (OverflowCheck::subOverflow(leftInt, rightInt)) { r.status = ArithStatus::IntOverflow; return r; }
+            if (OverflowCheck::subOverflow(leftInt, rightInt)) {
+                r.status = ArithStatus::IntOverflow;
+                return r;
+            }
             r.intVal = leftInt - rightInt;
         } else {
             r.floatVal = leftFloat - rightFloat;
@@ -118,7 +124,10 @@ inline ArithResult computeArith(ArithOp op, bool leftIsInt, int64_t leftInt,
         return r;
     case ArithOp::Mul:
         if (r.isIntResult) {
-            if (OverflowCheck::mulOverflow(leftInt, rightInt)) { r.status = ArithStatus::IntOverflow; return r; }
+            if (OverflowCheck::mulOverflow(leftInt, rightInt)) {
+                r.status = ArithStatus::IntOverflow;
+                return r;
+            }
             r.intVal = leftInt * rightInt;
         } else {
             r.floatVal = leftFloat * rightFloat;
@@ -126,21 +135,39 @@ inline ArithResult computeArith(ArithOp op, bool leftIsInt, int64_t leftInt,
         return r;
     case ArithOp::Div:
         if (r.isIntResult) {
-            if (rightInt == 0) { r.status = ArithStatus::DivByZero; return r; }
-            if (OverflowCheck::divOverflow(leftInt, rightInt)) { r.status = ArithStatus::IntOverflow; return r; }
-            r.intVal = leftInt / rightInt;  // int/int → int (截断除法)
+            if (rightInt == 0) {
+                r.status = ArithStatus::DivByZero;
+                return r;
+            }
+            if (OverflowCheck::divOverflow(leftInt, rightInt)) {
+                r.status = ArithStatus::IntOverflow;
+                return r;
+            }
+            r.intVal = leftInt / rightInt; // int/int → int (截断除法)
         } else {
-            if (rightFloat == 0.0) { r.status = ArithStatus::DivByZero; return r; }
+            if (rightFloat == 0.0) {
+                r.status = ArithStatus::DivByZero;
+                return r;
+            }
             r.floatVal = leftFloat / rightFloat;
         }
         return r;
     case ArithOp::Mod:
         if (r.isIntResult) {
-            if (rightInt == 0) { r.status = ArithStatus::DivByZero; return r; }
-            if (OverflowCheck::modOverflow(leftInt, rightInt)) { r.status = ArithStatus::IntOverflow; return r; }
+            if (rightInt == 0) {
+                r.status = ArithStatus::DivByZero;
+                return r;
+            }
+            if (OverflowCheck::modOverflow(leftInt, rightInt)) {
+                r.status = ArithStatus::IntOverflow;
+                return r;
+            }
             r.intVal = leftInt % rightInt;
         } else {
-            if (rightFloat == 0.0) { r.status = ArithStatus::DivByZero; return r; }
+            if (rightFloat == 0.0) {
+                r.status = ArithStatus::DivByZero;
+                return r;
+            }
             r.floatVal = std::fmod(leftFloat, rightFloat);
         }
         return r;
@@ -168,29 +195,43 @@ struct CompareResult {
 
 /// 执行有序比较（字符串字典序或数值比较）
 /// 输入：leftIsString/rightIsString 标识类型，leftNum/rightNum 为数值（当非字符串时）
-inline CompareResult computeCompare(CompareOp op, bool leftIsString, const std::string& leftStr,
-                                    bool rightIsString, const std::string& rightStr,
-                                    double leftNum, double rightNum) {
+inline CompareResult computeCompare(CompareOp op, bool leftIsString, const std::string& leftStr, bool rightIsString,
+                                    const std::string& rightStr, double leftNum, double rightNum) {
     CompareResult r;
     // 字符串字典序比较（两侧均为字符串）
     if (leftIsString && rightIsString) {
         switch (op) {
-        case CompareOp::Less:        r.value = leftStr <  rightStr; break;
-        case CompareOp::Greater:     r.value = leftStr >  rightStr; break;
-        case CompareOp::LessEqual:   r.value = leftStr <= rightStr; break;
-        case CompareOp::GreaterEqual:r.value = leftStr >= rightStr; break;
+        case CompareOp::Less:
+            r.value = leftStr < rightStr;
+            break;
+        case CompareOp::Greater:
+            r.value = leftStr > rightStr;
+            break;
+        case CompareOp::LessEqual:
+            r.value = leftStr <= rightStr;
+            break;
+        case CompareOp::GreaterEqual:
+            r.value = leftStr >= rightStr;
+            break;
         }
         return r;
     }
     // 数值比较（调用方已确认两侧均为数值）
     switch (op) {
-    case CompareOp::Less:        r.value = leftNum <  rightNum; break;
-    case CompareOp::Greater:     r.value = leftNum >  rightNum; break;
-    case CompareOp::LessEqual:   r.value = leftNum <= rightNum; break;
-    case CompareOp::GreaterEqual:r.value = leftNum >= rightNum; break;
+    case CompareOp::Less:
+        r.value = leftNum < rightNum;
+        break;
+    case CompareOp::Greater:
+        r.value = leftNum > rightNum;
+        break;
+    case CompareOp::LessEqual:
+        r.value = leftNum <= rightNum;
+        break;
+    case CompareOp::GreaterEqual:
+        r.value = leftNum >= rightNum;
+        break;
     }
     return r;
 }
 
 } // namespace NumericOps
-

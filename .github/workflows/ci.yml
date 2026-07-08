@@ -32,16 +32,17 @@ on:
 
 env:
   CMAKE_BUILD_TYPE: Release
-  # Qt 6.10.x 在 Linux 上的包结构已变更，aqtinstall 无法识别；
-  # aqtinstall 3.2.0+ 在 Linux 上解析 Qt 6.8.x 元数据也有回归 bug
-  # （"qt_base not found"）。故固定 aqtinstall==3.1.21 + Qt 6.8.3 LTS。
+  # Qt 6.8.3 LTS（稳定且兼容）。
+  # 注：Qt 6.7+ 在 Linux 上将架构名从 gcc_64 改为 linux_gcc_64，
+  #     aqtinstall ≤3.2.1 仍使用旧名导致 "qt_base not found"（issue #908）。
+  #     该 bug 在 aqtinstall 3.3.0 的 PR #909 中修复，故使用 3.3.0。
+  #     但为稳妥起见，Linux 矩阵仍显式使用 linux_gcc_64 架构名。
+  #     qttools 模块在 Qt 6.8.3 的 aqtinstall 元数据中不可用（所有平台均报
+  #     "packages ['qttools'] were not found"），故不安装；CMake 对
+  #     LinguistTools 缺失有优雅降级（QUIET + WARNING + 跳过 .qm 编译）。
   # 可通过 Actions → Run workflow → qt_version 手动覆盖 Qt 版本。
   QT_VERSION: ${{ inputs.qt_version != '' && inputs.qt_version || '6.8.3' }}
-  # 固定 aqtinstall 版本：3.2.0+ 在 Linux 上解析 Qt 6.8.x 包元数据存在回归
-  # （"The packages ['qt_base'] were not found while parsing XML"）。
-  # 3.1.21 已验证可正确安装 Qt 6.8.3 Linux/gcc_64。
-  # 参见 https://github.com/miurahr/aqtinstall/issues/908
-  AQT_VERSION: '==3.1.21'
+  AQT_VERSION: '==3.3.0'
   # 消除 macOS Homebrew 的 aws/tap 不受信任警告（ccache-action 内部 brew install 触发）
   HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
 
@@ -63,7 +64,7 @@ jobs:
             c_compiler: cl
             cpp_compiler: cl
           - os: ubuntu-latest
-            arch: gcc_64
+            arch: linux_gcc_64   # Qt 6.7+ 在 Linux 上将 gcc_64 改名为 linux_gcc_64
             generator: Ninja
             c_compiler: gcc
             cpp_compiler: g++
@@ -94,7 +95,6 @@ jobs:
           host: windows
           target: desktop
           arch: ${{ matrix.arch }}
-          modules: qttools
           aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
@@ -107,7 +107,6 @@ jobs:
           host: ${{ runner.os == 'Linux' && 'linux' || 'mac' }}
           target: desktop
           arch: ${{ matrix.arch }}
-          modules: qttools
           aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
@@ -272,7 +271,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qttools
           aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
@@ -349,8 +347,7 @@ jobs:
           version: ${{ env.QT_VERSION }}
           host: linux
           target: desktop
-          arch: gcc_64
-          modules: qttools
+          arch: linux_gcc_64
           aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
@@ -437,7 +434,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qttools
           aqtversion: ${{ env.AQT_VERSION }}
           cache: true
 
@@ -522,11 +518,11 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v5
 
-      - name: 安装 clang-format (18+)
+      - name: 安装 clang-format
+        # 通过 pip 安装固定版本，确保 CI 与本地开发环境格式化输出一致。
+        # apt.llvm.org 的 snapshot 版本会随时间漂移，导致格式违规假阳性。
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          sudo add-apt-repository "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs) main"
-          sudo apt-get update && sudo apt-get install -y clang-format
+          pip install clang-format==22.1.5
           clang-format --version
 
       - name: clang-format 风格检查
