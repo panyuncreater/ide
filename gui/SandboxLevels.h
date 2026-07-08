@@ -61,6 +61,7 @@ struct SandboxLevel {
 /// 实现位于 gui/SandboxLevels.cpp（独立编译单元，仅依赖 Qt6::Core）。
 class SandboxLibrary {
 public:
+/// 返回栈沙盒关卡数据（静态数据）。
     static const std::vector<SandboxLevel>& levels();
 };
 

@@ -1,3 +1,7 @@
+// fmt_super.cpp — Formatter 对多级 super 继承链的一致性测试
+// 用三层继承（A→B→C，每层 init 调用 super.init()）作为样例，
+// 验证：原始源码可执行、格式化后幂等、格式化结果仍可执行且输出一致。
+
 #include <iostream>
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -9,6 +13,12 @@
 #include "Diagnostic.h"
 
 int main() {
+    // main 流水线总览：依次执行四步并打印中间结果，便于人工核对——
+    //   ① 运行原始源码；② 对原始源码做 Formatter 格式化；
+    //   ③ 对格式化结果再格式化以检验幂等性；④ 运行格式化后的代码。
+    // 构造三层继承样例 A→B→C：验证三件事——
+    // (1) 原始源码可正常执行并输出 c.a/c.b/c.c；(2) 格式化结果幂等（再格式化不变）；
+    // (3) 格式化后的代码仍可执行且输出与原始一致，证明 Formatter 对 super 链是保形变换。
     std::string source =
         "class A { init() { this.a = 1; } }\n"
         "class B : A { init() { super.init(); this.b = 2; } }\n"
@@ -35,7 +45,7 @@ int main() {
         }
     }
 
-    // Format
+    // Format：对原始源码重新词法扫描与语法解析，再交给 Formatter 生成规范化后的代码文本。
     Lexer lexer;
     auto tokens = lexer.scan(source);
     Parser parser;
@@ -61,6 +71,8 @@ int main() {
     }
 
     // Run formatted
+    // 关键断言：格式化后代码执行输出应与原始一致（预期 "[1\n2\n3\n]"），
+    // 否则说明 Formatter 在 super 继承链场景下改变了语义。
     std::cout << "\n=== Run formatted ===" << std::endl;
     {
         Lexer lex3;

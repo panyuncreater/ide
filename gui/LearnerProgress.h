@@ -74,6 +74,7 @@ struct WeakPoint {
 // ============================================================
 class LearnerProgressStore {
 public:
+/// 返回全局单例实例。
     static LearnerProgressStore& instance();
 
     /// 从 JSON 文件加载进度（找不到文件或格式不匹配时清空，不崩溃）

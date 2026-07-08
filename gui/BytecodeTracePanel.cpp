@@ -23,6 +23,9 @@
 // BytecodeTraceLibrary — 静态 OpCode 教学库
 // ============================================================
 
+/// 返回 OpCode 教学库（静态单例）：约 16 条核心字节码（常量/算术/变量/控制/
+/// 调用/容器/闭包/类），每条含分类、操作数格式、栈效果、语义与样例代码，
+/// 供「OpCode 教学库」子页展示并支持加载样例到主编辑器。
 const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
     static const std::vector<OpCodeDocEntry> kDocs = {
         OpCodeDocEntry{
@@ -125,7 +128,7 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
             "OP_CLASS_NEW", "class",
             "nameIdx(2B) + argCount(1B)", "pop N+1 / push 1",
             "📦 类构造：弹出 N 个参数 + 类模板，创建 InstanceData 并调用 init 方法。",
-            "var p = Point.new(3, 4);"
+            "var p = Point(3, 4);"
         },
         OpCodeDocEntry{
             "OP_METHOD_CALL", "class",
@@ -141,6 +144,9 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
 // BytecodeTracePanel 实现
 // ============================================================
 
+/// 构造面板：组装顶部子页切换（执行轨迹 / OpCode 教学库）与 QStackedWidget，
+/// 构建两个子页，配置 2s 自动捕获定时器（安全网，即时刷新由监听器触发），
+/// 并填充教学库列表。
 BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(4, 4, 4, 4);
@@ -178,14 +184,31 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     populateDocs();
 }
 
+/// 绑定/换绑 IdeController：注册 vmStateChanged 监听器（owner=this），
+/// 换绑前先反注册旧监听器，避免 controller 持有悬垂回调。
 void BytecodeTracePanel::setController(IdeController* controller) {
     if (controller_ == controller) return;
+    // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
     controller_ = controller;
     if (controller_) {
-        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+        // AUDIT-P0 fix: owner=this 供析构/换绑时反注册，避免悬垂 lambda UAF。
+        controller_->addVmStateChangedListener(this, [this] { onVmStateChanged(); });
     }
 }
 
+// AUDIT-P0 fix: 析构时反注册监听器，避免 controller_ 持有悬垂 this 回调。
+/// 析构时反注册 vmStateChanged 监听器，避免 controller 持有悬垂 this 回调。
+BytecodeTracePanel::~BytecodeTracePanel() {
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
+}
+
+/// 构建「执行轨迹」子页：顶部状态/立即捕获/自动捕获/清空按钮 + 垂直 splitter
+/// （上方轨迹表 + 下方栈快照浏览器）。轨迹表列：步/IP/OpCode/帧数/栈大小。
 void BytecodeTracePanel::buildTracePage(QWidget* host) {
     auto* v = new QVBoxLayout(host);
     v->setContentsMargins(0, 0, 0, 0);
@@ -231,6 +254,8 @@ void BytecodeTracePanel::buildTracePage(QWidget* host) {
         [this](int, int, int, int) { onTraceRowSelected(); });
 }
 
+/// 构建「OpCode 教学库」子页：左侧 OpCode 列表 + 右侧说明浏览器 + 加载样例按钮，
+/// 选中项变化时通过 onDocSelected 渲染指令语义详情。
 void BytecodeTracePanel::buildLibraryPage(QWidget* host) {
     auto* v = new QVBoxLayout(host);
     v->setContentsMargins(0, 0, 0, 0);
@@ -256,15 +281,18 @@ void BytecodeTracePanel::buildLibraryPage(QWidget* host) {
     connect(loadCodeBtn_, &QPushButton::clicked, this, &BytecodeTracePanel::onLoadDocCode);
 }
 
+/// 立即捕获按钮回调：委托 captureCurrentState() 抓取当前 VM 单步状态。
 void BytecodeTracePanel::onCaptureNow() {
     captureCurrentState();
 }
 
+/// 自动捕获复选框切换：勾选启动 2s 定时器，取消则停止（即时刷新仍由 vmStateChanged 触发）。
 void BytecodeTracePanel::onAutoCaptureToggled(bool checked) {
     if (checked) autoTimer_->start();
     else         autoTimer_->stop();
 }
 
+/// 面板重新可见时：若已勾选自动捕获则恢复 2s 定时器。
 void BytecodeTracePanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     if (autoCaptureCheck_ && autoCaptureCheck_->isChecked() &&
@@ -273,6 +301,7 @@ void BytecodeTracePanel::showEvent(QShowEvent* event) {
     }
 }
 
+/// 面板隐藏时停止自动捕获定时器，避免后台空转。
 void BytecodeTracePanel::hideEvent(QHideEvent* event) {
     QWidget::hideEvent(event);
     if (autoTimer_ && autoTimer_->isActive()) {
@@ -280,6 +309,7 @@ void BytecodeTracePanel::hideEvent(QHideEvent* event) {
     }
 }
 
+/// 清空轨迹：重置步计数器、清空历史向量与轨迹表/栈快照浏览器，状态回未运行。
 void BytecodeTracePanel::onClearTrace() {
     traceHistory_.clear();
     stepCounter_ = 0;
@@ -288,6 +318,12 @@ void BytecodeTracePanel::onClearTrace() {
     liveStatusLabel_->setText(tr("状态：未运行（轨迹已清空）"));
 }
 
+/// 抓取一次 VM 单步快照（轨迹单步/断点的数据来源）：
+/// 从未初始化的 VM 直接返回占位；否则从 controller 取当前 IP、OpCode 名、
+/// 栈帧数、源码行号，并通过 getVmStack() 取得操作数栈快照（每个 Value 经
+/// toString 序列化，堆类型用 try/catch 包裹防异常）。快照追加到 traceHistory_
+/// （超 kMaxTraceEntries 则丢弃最旧），刷新表格并自动选中最新行。
+/// 该轨迹即字节码单步/断点的可视化数据源，每行对应一条指令执行后的完整状态。
 void BytecodeTracePanel::captureCurrentState() {
     if (!controller_) {
         liveStatusLabel_->setText(tr("状态：未绑定 controller"));
@@ -295,6 +331,13 @@ void BytecodeTracePanel::captureCurrentState() {
     }
     if (!controller_->isVmInitialized()) {
         liveStatusLabel_->setText(tr("状态：VM 未初始化（启动 VM 单步以捕获轨迹）"));
+        return;
+    }
+    // AUDIT-P2 fix: 对齐 CallStackPanel/VariableInspectorPanel/BreakpointConditionPanel/
+    // MemoryModelPanel 的 isVmRunning() 守卫。VM RUN 批之间捕获轨迹会混入用户
+    // 未主动请求的中间状态数据，且未来若 VmStepper 改为多线程会升级为数据竞争。
+    if (controller_->isVmRunning()) {
+        liveStatusLabel_->setText(tr("状态：VM 运行中（暂停后可捕获）"));
         return;
     }
 
@@ -307,8 +350,13 @@ void BytecodeTracePanel::captureCurrentState() {
 
     auto stack = controller_->getVmStack();
     e.stackSnapshot.reserve(stack.size());
+    // AUDIT-P2 fix: Value::toString 对堆类型（数组/字典/实例）走 toStringImpl，
+    // 极端情况（循环引用、深度嵌套、bad_alloc）可能抛异常。对齐 CallStackPanel/
+    // VariableInspectorPanel 的 try/catch 防护，避免异常传播到 QTimer 槽。
     for (const auto& v : stack) {
-        e.stackSnapshot.push_back(v.toString());
+        std::string s;
+        try { s = v.toString(); } catch (...) { s = "<error>"; }
+        e.stackSnapshot.push_back(std::move(s));
     }
 
     liveStatusLabel_->setText(tr("状态：已捕获 step=%1 | IP=%2 | OpCode=%3 | 帧数=%4")
@@ -330,6 +378,8 @@ void BytecodeTracePanel::captureCurrentState() {
     }
 }
 
+/// 将 traceHistory_ 全部快照渲染为轨迹表：每行一个 TraceEntry（步/IP/OpCode/
+/// 帧数/栈大小），居中对齐并滚动到底部。
 void BytecodeTracePanel::refreshTraceTable() {
     traceTable_->setRowCount(0);
     traceTable_->setRowCount(static_cast<int>(traceHistory_.size()));
@@ -353,6 +403,8 @@ void BytecodeTracePanel::refreshTraceTable() {
     traceTable_->scrollToBottom();
 }
 
+/// 选中某条轨迹行时渲染其详情：倒序展示操作数栈（栈顶在前），并显示
+/// IP/行号/帧数；同时 emit sourceLineRequested 高亮编辑器对应源码行。
 void BytecodeTracePanel::onTraceRowSelected() {
     int row = traceTable_->currentRow();
     if (row < 0 || row >= static_cast<int>(traceHistory_.size())) {
@@ -392,6 +444,7 @@ void BytecodeTracePanel::onTraceRowSelected() {
     }
 }
 
+/// 用 OpCode 教学库名称填充左侧列表并默认选中首项。
 void BytecodeTracePanel::populateDocs() {
     docList_->clear();
     for (const auto& d : BytecodeTraceLibrary::opCodeDocs()) {
@@ -402,10 +455,13 @@ void BytecodeTracePanel::populateDocs() {
     }
 }
 
+/// 教学库列表选中项变化时委托 showDoc 渲染该 OpCode 的指令详情。
 void BytecodeTracePanel::onDocSelected(int index) {
     showDoc(index);
 }
 
+/// 根据索引渲染 OpCode 文档：标题、分类、操作数格式、栈效果、Markdown 语义
+/// 与样例代码（HTML 转义），写入右侧说明浏览器。
 void BytecodeTracePanel::showDoc(int index) {
     currentDocIdx_ = index;
     if (index < 0 || index >= static_cast<int>(BytecodeTraceLibrary::opCodeDocs().size())) {
@@ -433,6 +489,7 @@ void BytecodeTracePanel::showDoc(int index) {
     docDetail_->setHtml(html);
 }
 
+/// 将当前选中 OpCode 的样例代码 emit loadSampleRequested，加载到主编辑器运行观察。
 void BytecodeTracePanel::onLoadDocCode() {
     if (currentDocIdx_ < 0 || currentDocIdx_ >= static_cast<int>(BytecodeTraceLibrary::opCodeDocs().size())) {
         return;
@@ -445,6 +502,7 @@ void BytecodeTracePanel::onLoadDocCode() {
 // createGuidedTour — 新手引导（5 步）
 // ============================================================
 
+/// 构建 5 步新手引导：高亮执行轨迹页、自动捕获、轨迹表、OpCode 教学库与加载样例按钮。
 GuidedTour* BytecodeTracePanel::createGuidedTour(QWidget* host) {
     auto* tour = new GuidedTour(host, host);
     tour->addStep(pageTraceBtn_,

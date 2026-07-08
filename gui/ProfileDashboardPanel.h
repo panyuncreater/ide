@@ -1,3 +1,10 @@
+/**
+ * @file ProfileDashboardPanel.h
+ * @brief 性能基准面板的类声明（功能：多后端性能对比）
+ *
+ * 提供场景选择、测速运行、结果渲染与逐 opcode 性能分析能力。
+ * 信号 loadSampleRequested 用于向编辑器请求载入示例代码。
+ */
 #pragma once
 
 // ============================================================
@@ -59,6 +66,7 @@ struct ProfileScenario {
 /// ProfileLibrary — 性能场景库
 class ProfileLibrary {
 public:
+/// 返回预设测速场景（静态数据）。
     static const std::vector<ProfileScenario>& scenarios();
 };
 
@@ -75,6 +83,7 @@ struct OpCodePerfDoc {
 /// OpCodeProfileLibrary — OpCode 性能文档静态库
 class OpCodeProfileLibrary {
 public:
+/// 返回 opcode 性能文档（静态数据）。
     static const std::vector<OpCodePerfDoc>& docs();
 };
 
@@ -92,11 +101,13 @@ struct OpCodeProfileEntry {
 class ProfileDashboardPanel : public QWidget {
     Q_OBJECT
 public:
+/// 构造性能基准面板；parent 为父控件。
     explicit ProfileDashboardPanel(QWidget* parent = nullptr);
 
     void setController(IdeController* controller) { controller_ = controller; }
 
 signals:
+/// 信号：请求主窗口载入指定示例代码。
     void loadSampleRequested(const QString& code);
 
 private:
@@ -170,7 +181,9 @@ private:
     QTimer* statusAnimTimer_ = nullptr;
     int statusAnimDots_ = 0;
     QString statusRunningBase_;  // "运行中" 基础文本（含进度）
+/// 启动测速状态动画。
     void startStatusAnimation(const QString& base);
+/// 停止测速状态动画。
     void stopStatusAnimation();
 
     /// 跑场景
@@ -186,5 +199,6 @@ private:
 
     /// 工具：标准化均值
     static double mean(const std::vector<double>& xs);
+/// 计算样本标准差（统计辅助）。
     static double stddev(const std::vector<double>& xs);
 };

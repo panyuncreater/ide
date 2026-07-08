@@ -34,12 +34,14 @@
 
 namespace {
 
+/// 将 64 位 NaN-box 原始位模式格式化为 0x 前缀的 16 位十六进制字符串。
 std::string bitsToHex(uint64_t bits) {
     std::ostringstream os;
     os << "0x" << std::hex << std::setfill('0') << std::setw(16) << bits;
     return os.str();
 }
 
+/// 将 64 位位模式逐位展开为长度 64 的 "0/1" 字符串（最高位在索引 0）。
 std::string bitsToBinary(uint64_t bits) {
     std::string s(64, '0');
     for (int i = 0; i < 64; ++i) {
@@ -50,6 +52,9 @@ std::string bitsToBinary(uint64_t bits) {
 
 }  // namespace
 
+/// 返回 NaN-boxing 编码教学示例（静态单例）：int48 内联（正/负/边界）、
+/// float64、bool、null、指针（堆对象）六类。每个示例在构造时调用 NaNBox
+/// 真实编码，记录 rawBits 与解码值，供位图表格与说明区展示「8 字节 Value 编码」。
 const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
     static const std::vector<NaNBoundingBox> kExamples = {
         // int48 内联（正值）
@@ -154,8 +159,10 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
         }(),
         // 指针类型（堆对象，演示 PTR_TAG_BASE，指针值仅用于演示）
         []() {
-            // 用一个安全的栈上对象作为指针示例（演示 PTR_TAG_BASE 编码）
-            int dummy = 0;
+            // AUDIT-P2 fix: 原实现用栈上 int dummy 作为指针示例，IIFE 返回后 dummy
+            // 出作用域，b.bits 持有悬垂栈地址（虽不 deref 无崩溃，但教学展示无效地址）。
+            // 改用 static 变量保证生命周期，演示 PTR_TAG_BASE 编码的真实指针值。
+            static int dummy = 0;
             NaNBox box = NaNBox::fromPtr(&dummy);
             NaNBoundingBox b;
             b.id = "ptr-string";
@@ -175,6 +182,9 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
     return kExamples;
 }
 
+/// 返回引用计数 & COW 教学场景（静态单例）：数组基础生命周期、COW detach、
+/// 字符串共享、实例字段引用。每个场景含按执行顺序的 refCount 变化步骤表
+/// （动作 / refCount 值 / 备注），直观展示侵入式引用计数与写时复制语义。
 const std::vector<RefCountScenario>& MemoryModelLibrary::refCountScenarios() {
     static const std::vector<RefCountScenario> kScenarios = {
         {
@@ -230,10 +240,10 @@ const std::vector<RefCountScenario>& MemoryModelLibrary::refCountScenarios() {
             "实例的 refCount 与字段值 refCount 相互独立。"
             " **类比：** 实例像一栋「带家具的房子」，家具（字段值）可能本身也是被合租的物件，"
             "房子和家具各有各的租赁计数，互不影响。"
-            " **输入输出：** 输入 `var p=Point.new(); p.x=[1,2,3]; var q=p`，输出 p、q 共享实例（refCount 2），其字段数组独立计数为 1。",
+            " **输入输出：** 输入 `var p=Point(); p.x=[1,2,3]; var q=p`，输出 p、q 共享实例（refCount 2），其字段数组独立计数为 1。",
             {
                 {"class Point { ... }",         0, "类定义不创建实例，仅注册到 classRegistry_"},
-                {"var p = Point.new()",         1, "构造新 InstanceData，refCount=1"},
+                {"var p = Point()",             1, "构造新 InstanceData，refCount=1"},
                 {"p.x = [1,2,3]",                1, "p.x 字段持有 ArrayData（refCount=1）"},
                 {"var q = p",                    2, "InstanceData addRef → refCount=2"},
                 {"（q 离开作用域）",            1, "InstanceData release → refCount=1（ArrayData 仍 refCount=1）"},
@@ -243,6 +253,9 @@ const std::vector<RefCountScenario>& MemoryModelLibrary::refCountScenarios() {
     return kScenarios;
 }
 
+/// 返回 GcManager mark-sweep 阶段说明（静态单例）：注册 / 触发时机 / Mark /
+/// Sweep / UAF 防护 / 已知限制。每阶段含 Markdown 说明，解释循环引用如何被
+/// 标记-清除回收，作为第 3 子页的静态教学内容。
 const std::vector<GcPhaseInfo>& MemoryModelLibrary::gcPhases() {
     static const std::vector<GcPhaseInfo> kPhases = {
         {
@@ -297,6 +310,8 @@ const std::vector<GcPhaseInfo>& MemoryModelLibrary::gcPhases() {
 // MemoryAnimLibrary — 第 4 子页"实时动画"场景静态库（P4-4）
 // ============================================================
 
+/// 返回第 4 子页「实时动画」的 GC 阶段说明（静态单例）：mark / sweep /
+/// reset / idle 四阶段，各含描述与配色（蓝/红/绿/灰），用于动画状态展示。
 const std::vector<MemoryAnimPhase>& MemoryAnimLibrary::gcAnimPhases() {
     static const std::vector<MemoryAnimPhase> kPhases = {
         {
@@ -330,6 +345,9 @@ const std::vector<MemoryAnimPhase>& MemoryAnimLibrary::gcAnimPhases() {
     return kPhases;
 }
 
+/// 返回堆对象类型说明（静态单例）：ArrayData / DictData / InstanceData /
+/// StringData / ClosureData / BoundMethodData 六种，各含中文结构描述，
+/// 作为第 4 子页「堆对象类型说明」列表的静态内容。
 const std::vector<std::pair<std::string, std::string>>& MemoryAnimLibrary::heapObjectTypes() {
     static const std::vector<std::pair<std::string, std::string>> kTypes = {
         {"ArrayData",       "🏗️ 数组容器（持有 std::vector<Value> elements）"},
@@ -410,6 +428,9 @@ std::string ptrToHex(const void* p) {
 // MemoryModelPanel 实现
 // ============================================================
 
+/// 构造面板：组装顶部 4 个子页按钮（NaN-boxing / 引用计数&COW /
+/// GcManager / 实时动画）与 QStackedWidget，构建各子页、配置动画刷新定时器
+/// （2s 安全网），并默认显示第一个子页。
 MemoryModelPanel::MemoryModelPanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -500,16 +521,20 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
     populateGcPhases();
 }
 
+/// 面板重新可见时：若用户已开启实时动画自动刷新，则立即刷新一次并重启 2s 定时器。
 void MemoryModelPanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     // 面板可见时，若用户已开启第 4 子页自动刷新则恢复 QTimer
     if (animAutoRefreshBtn_ && animAutoRefreshBtn_->isChecked() &&
         animTimer_ && !animTimer_->isActive()) {
         refreshAnimState();
-        animTimer_->start(500);
+        // AUDIT-P1 fix: 原 start(500) 会覆盖 setInterval(2000) 的降频优化。
+        // 改为无参 start() 沿用已设的 2000ms interval，与 OPT-1 降频意图一致。
+        animTimer_->start();
     }
 }
 
+/// 面板隐藏时停止实时动画定时器，避免后台空转。
 void MemoryModelPanel::hideEvent(QHideEvent* event) {
     QWidget::hideEvent(event);
     // 面板隐藏时停止动画 QTimer，避免后台空转
@@ -518,14 +543,30 @@ void MemoryModelPanel::hideEvent(QHideEvent* event) {
     }
 }
 
+/// 绑定/换绑 IdeController：注册 vmStateChanged 监听器（owner=this），
+/// 换绑前先反注册旧监听器，避免 controller 持有悬垂回调。
 void MemoryModelPanel::setController(IdeController* controller) {
     if (controller_ == controller) return;
+    // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
     controller_ = controller;
     if (controller_) {
-        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+        controller_->addVmStateChangedListener(this, [this] { onVmStateChanged(); });
     }
 }
 
+// AUDIT-P0 fix: 析构时反注册监听器，避免 controller_ 持有悬垂 this 回调。
+/// 析构时反注册 vmStateChanged 监听器，避免 controller 持有悬垂 this 回调。
+MemoryModelPanel::~MemoryModelPanel() {
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
+}
+
+/// 构建「NaN-boxing 编码」子页：左侧示例列表 + 右侧 8×8 位图表格（高 16 位
+/// tag 用红底区分）+ 说明浏览器，选中项变化时通过 populateNanBoxDetail 渲染。
 void MemoryModelPanel::buildNanBoxPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -570,6 +611,8 @@ void MemoryModelPanel::buildNanBoxPage(QWidget* host) {
             this, &MemoryModelPanel::populateNanBoxDetail);
 }
 
+/// 构建「引用计数 & COW」子页：左侧场景列表 + 右侧场景说明 + 引用计数变化
+/// 步骤表（动作 / refCount / 备注），选中项变化时通过 populateRefCountDetail 填充。
 void MemoryModelPanel::buildRefCountPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -609,6 +652,8 @@ void MemoryModelPanel::buildRefCountPage(QWidget* host) {
             this, &MemoryModelPanel::populateRefCountDetail);
 }
 
+/// 构建「GcManager mark-sweep」子页：顶部 tracked 节点数状态标签 + 刷新按钮 +
+/// 阶段说明浏览器（内容由 populateGcPhases 静态填充）。
 void MemoryModelPanel::buildGcPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -631,6 +676,7 @@ void MemoryModelPanel::buildGcPage(QWidget* host) {
     });
 }
 
+/// 用 NaN-box 示例标题填充左侧列表并默认选中首项。
 void MemoryModelPanel::populateNanBoxList() {
     nanBoxList_->clear();
     const auto& items = MemoryModelLibrary::nanBoxExamples();
@@ -642,6 +688,8 @@ void MemoryModelPanel::populateNanBoxList() {
     }
 }
 
+/// 根据选中索引渲染 NaN-box 详情：将 rawBits 逐位填入 8×8 表格（高 16 位 tag
+/// 红底区分），并显示表达式、hex/binary 位模式、Markdown 说明与解码值。
 void MemoryModelPanel::populateNanBoxDetail(int index) {
     const auto& items = MemoryModelLibrary::nanBoxExamples();
     if (index < 0 || index >= (int)items.size()) return;
@@ -680,6 +728,7 @@ void MemoryModelPanel::populateNanBoxDetail(int index) {
     nanBoxDesc_->setHtml(QString::fromUtf8(os.str().c_str()));
 }
 
+/// 用引用计数场景标题填充左侧列表并默认选中首项。
 void MemoryModelPanel::populateRefCountScenarios() {
     refCountScenarioList_->clear();
     const auto& items = MemoryModelLibrary::refCountScenarios();
@@ -691,6 +740,8 @@ void MemoryModelPanel::populateRefCountScenarios() {
     }
 }
 
+/// 根据选中索引渲染引用计数详情：场景说明 + 逐步 refCount 变化表
+/// （动作 / refCount 值 / 备注），直观展示 addRef/release 与 COW detach 时机。
 void MemoryModelPanel::populateRefCountDetail(int index) {
     const auto& items = MemoryModelLibrary::refCountScenarios();
     if (index < 0 || index >= (int)items.size()) return;
@@ -709,6 +760,8 @@ void MemoryModelPanel::populateRefCountDetail(int index) {
     }
 }
 
+/// 静态渲染 GcManager 阶段说明（注册/触发/Mark/Sweep/UAF 防护/已知限制）到
+/// 浏览器；内容来自 MemoryModelLibrary::gcPhases()，仅初始化时填充一次。
 void MemoryModelPanel::populateGcPhases() {
     std::ostringstream os;
     os << "<h2>GcManager — 循环引用垃圾收集器</h2>";
@@ -724,6 +777,7 @@ void MemoryModelPanel::populateGcPhases() {
     gcBrowser_->setHtml(QString::fromUtf8(os.str().c_str()));
 }
 
+/// 刷新「tracked 节点数」状态标签：读取 GcManager 单例当前 tracked 容器数量。
 void MemoryModelPanel::refreshGcStats() {
     if (!gcTrackedCountLabel_) return;
     size_t tracked = GcManager::instance().trackedCount();
@@ -734,6 +788,9 @@ void MemoryModelPanel::refreshGcStats() {
 // 第 4 子页：实时动画（与 VM 单步执行联动）
 // ============================================================
 
+/// 构建「实时动画」子页：顶部 5 个状态标签（VM 状态/OpCode/栈深度/栈帧数/
+/// GC tracked）+ 中间堆对象表（地址/类型/refCount/字段数）+ 底部 GC 阶段说明
+/// 浏览器与自动刷新按钮。堆对象表与状态由 refreshAnimState 实时填充。
 void MemoryModelPanel::buildAnimPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -832,6 +889,17 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
     });
 }
 
+/// 实时刷新第 4 子页，与 VM 单步执行联动，分三步：
+/// 1. 未绑定 controller 或 VM 未初始化时显示占位；
+/// 2. 已初始化则从 controller 取 VM 状态（运行状态、当前 OpCode 名、操作数栈
+///    getVmStack、栈帧数 getVmFrameCount）与 GcManager::trackedCount，
+///    更新顶部 5 个状态标签；
+/// 3. 收集堆对象：遍历操作数栈与全局变量中的指针型 Value，用裸 Value* 指向
+///    原对象（避免拷贝使 refCount 虚高），按指针地址去重并升序排序，
+///    填充堆对象表——地址列用 ptrToHex、类型列用 heapStructName、refCount
+///    列用 useCount()、字段/元素数列用 heapFieldCount。
+/// 该表展示的正是运行时「值/引用/GC 状态」：每个堆对象的类型、引用计数与大小，
+/// 随 VM 单步推进实时变化。
 void MemoryModelPanel::refreshAnimState() {
     if (!animStatusLabel_) return;
 

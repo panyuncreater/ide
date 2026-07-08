@@ -11,6 +11,8 @@
 // ============================================================
 
 #include "gui/LearnerProgress.h"
+// AUDIT-P1 fix: 需要 LearningPathData::stageCount() 用于 currentStage 校验上限。
+#include "gui/LearningPathData.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -35,6 +37,7 @@ LearnerProgressStore& LearnerProgressStore::instance() {
 // ============================================================
 // 文件路径
 // ============================================================
+/// 返回当前进度数据文件路径。
 QString LearnerProgressStore::filePath() const {
     if (!filePathOverride_.isEmpty()) {
         return filePathOverride_;
@@ -50,6 +53,7 @@ QString LearnerProgressStore::filePath() const {
     return base + QDir::separator() + QString::fromUtf8("minilang_progress.json");
 }
 
+/// 供测试注入自定义数据文件路径，避免污染真实数据。
 void LearnerProgressStore::setFilePathForTesting(const QString& path) {
     filePathOverride_ = path;
 }
@@ -57,6 +61,7 @@ void LearnerProgressStore::setFilePathForTesting(const QString& path) {
 // ============================================================
 // 加载进度
 // ============================================================
+/// 从文件加载进度数据；失败返回 false 并保留内存状态。
 bool LearnerProgressStore::load() {
     QString path = filePath();
     QFile file(path);
@@ -90,7 +95,12 @@ bool LearnerProgressStore::load() {
     QJsonObject attemptObj = root.value(QString::fromUtf8("attemptCount")).toObject();
     for (auto it = attemptObj.begin(); it != attemptObj.end(); ++it) {
         if (it.value().isDouble()) {
-            loaded.attemptCount[it.key().toStdString()] = it.value().toInt();
+            // AUDIT-P2 fix: 防御性校验——手动篡改的 JSON 可能含负数，
+            // 负数 attemptCount 会破坏 nextRecommended 排序语义。
+            int v = it.value().toInt();
+            if (v >= 0) {
+                loaded.attemptCount[it.key().toStdString()] = v;
+            }
         }
     }
 
@@ -104,11 +114,14 @@ bool LearnerProgressStore::load() {
     }
 
     // currentStage: int
+    // AUDIT-P1 fix: 校验上限改为 stageCount()（5），允许"全部 100% 完成"的合法状态。
+    // 原校验 s <= 4 拒绝 recomputeStage 在全通关时设置的 currentStage=5，
+    // 导致通关用户跨会话恢复时进度被重置为 0，"🎉 通关"提示丢失。
     if (root.contains(QString::fromUtf8("currentStage"))) {
         QJsonValue v = root.value(QString::fromUtf8("currentStage"));
         if (v.isDouble()) {
             int s = v.toInt();
-            if (s >= 0 && s <= 4) {
+            if (s >= 0 && s <= LearningPathData::stageCount()) {
                 loaded.currentStage = s;
             }
         }
@@ -118,7 +131,11 @@ bool LearnerProgressStore::load() {
     QJsonObject starsObj = root.value(QString::fromUtf8("levelStars")).toObject();
     for (auto it = starsObj.begin(); it != starsObj.end(); ++it) {
         if (it.value().isDouble()) {
-            loaded.levelStars[it.key().toStdString()] = it.value().toInt();
+            // AUDIT-P2 fix: levelStars 合法范围 [-1, 3]（-1=未完成,0=跳过,1-3=星级）
+            int v = it.value().toInt();
+            if (v >= -1 && v <= 3) {
+                loaded.levelStars[it.key().toStdString()] = v;
+            }
         }
     }
 
@@ -127,28 +144,44 @@ bool LearnerProgressStore::load() {
     QJsonObject scoreObj = root.value(QString::fromUtf8("score")).toObject();
     for (auto it = scoreObj.begin(); it != scoreObj.end(); ++it) {
         if (it.value().isDouble()) {
-            loaded.score[it.key().toStdString()] = it.value().toInt();
+            // AUDIT-P2 fix: score 合法范围 [0, 100]，与 recordScore 截断逻辑一致
+            int v = it.value().toInt();
+            if (v >= 0 && v <= 100) {
+                loaded.score[it.key().toStdString()] = v;
+            }
         }
     }
     // bestStars: { "lab-01": 3, ... }
     QJsonObject bestStarsObj = root.value(QString::fromUtf8("bestStars")).toObject();
     for (auto it = bestStarsObj.begin(); it != bestStarsObj.end(); ++it) {
         if (it.value().isDouble()) {
-            loaded.bestStars[it.key().toStdString()] = it.value().toInt();
+            // AUDIT-P2 fix: bestStars 合法范围 [0, 3]
+            int v = it.value().toInt();
+            if (v >= 0 && v <= 3) {
+                loaded.bestStars[it.key().toStdString()] = v;
+            }
         }
     }
     // spentMinutes: { "lab-01": 12, ... }
     QJsonObject spentObj = root.value(QString::fromUtf8("spentMinutes")).toObject();
     for (auto it = spentObj.begin(); it != spentObj.end(); ++it) {
         if (it.value().isDouble()) {
-            loaded.spentMinutes[it.key().toStdString()] = it.value().toInt();
+            // AUDIT-P2 fix: spentMinutes 不能为负，与 addSpentMinutes 拒绝负数一致
+            int v = it.value().toInt();
+            if (v >= 0) {
+                loaded.spentMinutes[it.key().toStdString()] = v;
+            }
         }
     }
     // failCount: { "lab-02": 2, ... }
     QJsonObject failObj = root.value(QString::fromUtf8("failCount")).toObject();
     for (auto it = failObj.begin(); it != failObj.end(); ++it) {
         if (it.value().isDouble()) {
-            loaded.failCount[it.key().toStdString()] = it.value().toInt();
+            // AUDIT-P2 fix: failCount 不能为负，负数会破坏 getWeakPoints 排序
+            int v = it.value().toInt();
+            if (v >= 0) {
+                loaded.failCount[it.key().toStdString()] = v;
+            }
         }
     }
 
@@ -159,6 +192,7 @@ bool LearnerProgressStore::load() {
 // ============================================================
 // 保存进度
 // ============================================================
+/// 将内存中的进度数据写回文件。
 bool LearnerProgressStore::save() const {
     QString path = filePath();
     QFileInfo fi(path);
@@ -234,6 +268,7 @@ bool LearnerProgressStore::save() const {
 // ============================================================
 // 修改接口
 // ============================================================
+/// 标记某活动已完成并记录时间戳。
 void LearnerProgressStore::markCompleted(const std::string& activityId) {
     if (activityId.empty()) return;
     data_.completed[activityId] = true;
@@ -255,6 +290,7 @@ void LearnerProgressStore::markCompleted(const std::string& activityId) {
 //   - 若所有阶段都 < 50%，currentStage = 0（仍是新手阶段）
 // 注：阈值 50% 的取值平衡"完成感"与"鼓励性"——过半即解锁下一阶段提示。
 // ============================================================
+/// 依据全部活动重算各阶段完成状态。
 void LearnerProgressStore::recomputeStage(const std::vector<LearningActivity>& all) {
     if (all.empty()) {
         data_.currentStage = 0;
@@ -281,6 +317,7 @@ void LearnerProgressStore::recomputeStage(const std::vector<LearningActivity>& a
     }
 }
 
+/// 记录一次尝试（即使未完成也计数）。
 void LearnerProgressStore::recordAttempt(const std::string& activityId) {
     if (activityId.empty()) return;
     data_.attemptCount[activityId] += 1;
@@ -290,6 +327,7 @@ void LearnerProgressStore::recordAttempt(const std::string& activityId) {
     data_.lastAccessTime[activityId] = now;
 }
 
+/// 清空全部进度数据。
 void LearnerProgressStore::reset() {
     data_.completed.clear();
     data_.attemptCount.clear();
@@ -307,6 +345,7 @@ void LearnerProgressStore::reset() {
 // ============================================================
 // P0-2 fix (F7): 关卡星级接口实现
 // ============================================================
+/// 为某关卡记录星级（0-3）。
 void LearnerProgressStore::markLevelStars(const std::string& levelId, int stars) {
     if (levelId.empty()) return;
     // 仅当新星级 >= 已记录星级时才覆盖（保留历史最佳成绩）
@@ -323,12 +362,14 @@ void LearnerProgressStore::markLevelStars(const std::string& levelId, int stars)
     }
 }
 
+/// 读取某关卡的星级。
 int LearnerProgressStore::getLevelStars(const std::string& levelId) const {
     auto it = data_.levelStars.find(levelId);
     if (it == data_.levelStars.end()) return -1;  // 未记录 = 未完成
     return it->second;
 }
 
+/// 判断给定关卡是否全部完成。
 bool LearnerProgressStore::areAllLevelsCompleted(
     const std::vector<std::string>& levelIds) const {
     if (levelIds.empty()) return false;
@@ -344,6 +385,7 @@ bool LearnerProgressStore::areAllLevelsCompleted(
 // ============================================================
 // P2-3 fix (F9): 学情画像接口实现
 // ============================================================
+/// 记录某活动得分与星级。
 void LearnerProgressStore::recordScore(const std::string& activityId, int score, int stars) {
     if (activityId.empty()) return;
     // score 截断到 [0, 100]
@@ -368,16 +410,19 @@ void LearnerProgressStore::recordScore(const std::string& activityId, int score,
     data_.lastAccessTime[activityId] = now;
 }
 
+/// 读取某活动得分。
 int LearnerProgressStore::getScore(const std::string& activityId) const {
     auto it = data_.score.find(activityId);
     return it != data_.score.end() ? it->second : 0;
 }
 
+/// 读取某活动历史最佳星级。
 int LearnerProgressStore::getBestStars(const std::string& activityId) const {
     auto it = data_.bestStars.find(activityId);
     return it != data_.bestStars.end() ? it->second : 0;
 }
 
+/// 累加某活动投入分钟数。
 void LearnerProgressStore::addSpentMinutes(const std::string& activityId, int minutes) {
     if (activityId.empty()) return;
     if (minutes <= 0) return;  // 负数或零视为无操作
@@ -385,11 +430,13 @@ void LearnerProgressStore::addSpentMinutes(const std::string& activityId, int mi
     // 不更新 lastAccessTime——时间累加是异步操作，不应刷新访问时间戳
 }
 
+/// 读取某活动累计分钟数。
 int LearnerProgressStore::getSpentMinutes(const std::string& activityId) const {
     auto it = data_.spentMinutes.find(activityId);
     return it != data_.spentMinutes.end() ? it->second : 0;
 }
 
+/// 记录一次失败（失败计数 +1）。
 void LearnerProgressStore::recordFailure(const std::string& activityId) {
     if (activityId.empty()) return;
     data_.failCount[activityId] += 1;
@@ -399,6 +446,7 @@ void LearnerProgressStore::recordFailure(const std::string& activityId) {
     data_.lastAccessTime[activityId] = now;
 }
 
+/// 读取某活动失败次数。
 int LearnerProgressStore::getFailCount(const std::string& activityId) const {
     auto it = data_.failCount.find(activityId);
     return it != data_.failCount.end() ? it->second : 0;
@@ -411,6 +459,7 @@ int LearnerProgressStore::getFailCount(const std::string& activityId) const {
 //   2. 按 failCount 降序 → attemptCount 降序 → id 字典序排序
 //   3. 截取前 maxCount 个返回（maxCount=0 表示不限制）
 // ============================================================
+/// 基于失败/低星识别薄弱点列表。
 std::vector<WeakPoint> LearnerProgressStore::getWeakPoints(
     const std::vector<LearningActivity>& all,
     int minAttempts,
@@ -460,6 +509,7 @@ std::vector<WeakPoint> LearnerProgressStore::getWeakPoints(
 // 算法：sum(未完成且已解锁活动的 estimatedMinutes)
 // 注：未解锁活动不计入——因为它们当前无法开始，不应计入"剩余"。
 // ============================================================
+/// 估算完成剩余活动所需分钟数。
 int LearnerProgressStore::estimatedRemainingMinutes(
     const std::vector<LearningActivity>& all) const {
     int total = 0;
@@ -476,6 +526,7 @@ int LearnerProgressStore::estimatedRemainingMinutes(
     return total;
 }
 
+/// 返回总投入分钟数。
 int LearnerProgressStore::totalSpentMinutes() const {
     int total = 0;
     for (const auto& [id, mins] : data_.spentMinutes) {
@@ -487,6 +538,7 @@ int LearnerProgressStore::totalSpentMinutes() const {
 // ============================================================
 // 查询接口
 // ============================================================
+/// 判断某活动是否已解锁（前置依赖满足）。
 bool LearnerProgressStore::isUnlocked(const std::string& activityId,
                                        const std::vector<LearningActivity>& all) const {
     // 找到该活动
@@ -506,6 +558,7 @@ bool LearnerProgressStore::isUnlocked(const std::string& activityId,
     return true;
 }
 
+/// 返回某阶段的完成进度百分比。
 int LearnerProgressStore::stageProgress(int stage,
                                          const std::vector<LearningActivity>& all) const {
     int total = 0;
@@ -520,6 +573,7 @@ int LearnerProgressStore::stageProgress(int stage,
     return static_cast<int>((static_cast<int64_t>(done) * 100) / total);
 }
 
+/// 返回总体完成进度百分比。
 int LearnerProgressStore::overallProgress(const std::vector<LearningActivity>& all) const {
     if (all.empty()) return 0;
     int total = static_cast<int>(all.size());
@@ -531,6 +585,7 @@ int LearnerProgressStore::overallProgress(const std::vector<LearningActivity>& a
     return static_cast<int>((static_cast<int64_t>(done) * 100) / total);
 }
 
+/// 返回下一个推荐学习活动的 id/描述。
 std::string LearnerProgressStore::nextRecommended(
     const std::vector<LearningActivity>& all) const {
 

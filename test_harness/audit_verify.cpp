@@ -1,3 +1,7 @@
+// audit_verify.cpp — PLF（Parser/Lexer/Formatter）历史缺陷的审计验证测试
+// 覆盖模块: 仅依赖 Lexer/Parser/Formatter，不引入解释器，用于锁定并回归一系列语法/格式化特殊缺陷。
+// 验证目标: 对插值内嵌套字符串、调用尾逗号、裸复合语句幂等性与缩进、类类型参数、词法转义、
+//           解析器错误同步（synchronize）等若干缺陷场景逐一断言已修复且不回归。
 // Audit verification test for PLF (Parser/Lexer/Formatter) bugs
 // Standalone, no Qt, no Interpreter dependency (only Lexer/Parser/Formatter)
 
@@ -15,6 +19,7 @@
 
 static int g_pass = 0, g_fail = 0;
 
+// 断言辅助：打印 PASS/FAIL 并累计全局通过/失败计数，id 用于唯一定位用例、desc 给出可读说明。
 static void check(bool cond, const std::string& id, const std::string& desc) {
     std::cout << (cond ? " PASS " : " FAIL ") << id << "  " << desc << "\n";
     if (cond) g_pass++; else g_fail++;
@@ -318,6 +323,7 @@ static void test_synchronize_coverage() {
 }
 
 int main() {
+    // 主流程：依次运行 7 个审计验证组，最后汇总通过/失败计数。
     std::cout << "PLF Audit Verification Test Suite\n";
     std::cout << "================================\n";
 

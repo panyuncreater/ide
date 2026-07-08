@@ -168,17 +168,20 @@ private:
             // P0 fix: 用 unique_ptr 包裹 cloned，防止 new T(*ptr) 抛 bad_alloc 时
             // 部分已克隆的子树泄漏（如 ArrayData/DictData/InstanceData 的 cloneImpl
             // 递归克隆嵌套 Value，中途抛异常会泄漏已分配的子对象）。
-            // 异常安全：unique_ptr 析构时 delete cloned（释放已分配对象）；
-            //           ptr->release() 未执行，旧引用计数不变，仍由调用方持有。
             auto cloned = std::make_unique<T>(*ptr);  // 拷贝构造（RefCounted 拷贝 ctor 重置 refCount=1）
-            ptr->release();                          // 释放旧引用
-            T* raw = cloned.release();
             // AUDIT-BUG-C1 fix: 拷贝构造不会调用 GcManager::registerTracked（仅显式构造函数调用）。
             // COW 克隆的容器必须注册到 GcManager，否则循环引用（如 b.push(b) 后 COW detach）
             // 不会被 collectCycle 回收，导致永久内存泄漏。
+            // AUDIT-P2-CORRECT fix: 在 release 旧引用前注册到 GcManager，
+            // 若 registerTracked 抛 bad_alloc，unique_ptr 自动 delete cloned，
+            // 旧引用计数不变（ptr->release() 未执行），仍由调用方持有，无双重释放风险。
+            // 原实现先 release/transfer 所有权再 registerTracked，若 registerTracked 抛异常，
+            // raw 泄漏（已脱离 unique_ptr）且 box_ 仍指向旧 ptr（release 已执行→双重释放）。
             if constexpr (std::is_same_v<T, ArrayData> || std::is_same_v<T, DictData> || std::is_same_v<T, InstanceData>) {
-                GcManager::instance().registerTracked(raw);
+                GcManager::instance().registerTracked(cloned.get());
             }
+            ptr->release();                          // 释放旧引用
+            T* raw = cloned.release();
             box_ = NaNBox::fromPtr(static_cast<const void*>(raw));
             return raw;
         }
@@ -393,12 +396,18 @@ public:
 
     // ---- 静态工厂方法 ----
 
+    /// 返回 null 值（等价于默认构造的 Value，NaNBox 编码为 NULL_BITS）。
     static Value nullValue() { return Value(); }
 
+    /// 构造一个空实例值，className 标识其所属类。字段表初始为空，
+    /// 由解释器/VM 在构造后填充。用于 class 实例化表达式的结果。
     static Value makeInstance(const std::string& clsName) {
         return fromHeapPtr(new InstanceData(clsName));
     }
 
+    /// 构造闭包值，捕获 name/env/params/body。
+    /// 注意 env 以 shared_ptr 传入，但 ClosureData 内部存为 weak_ptr<Environment>
+    /// （V4 fix），用于打破 闭包→环境→闭包 的循环引用，避免引用计数泄漏。
     static Value makeClosure(const std::string& name,
                              std::shared_ptr<Environment> env,
                              const std::vector<std::string>& params,
@@ -658,6 +667,8 @@ public:
         return 0.0;
     }
 
+    /// 返回类型的可读字符串名（如 "int"/"float"/"array"/"dict"，实例返回类名）。
+    /// 用于错误诊断与 type() 内建函数；实例若类名为空则回落到 "instance"。
     std::string typeName() const {
         switch (getType()) {
         case ValueType::VAL_INT:      return TypeName::INT;
@@ -699,6 +710,10 @@ private:
                     int depth) const;
 
 public:
+    /// 将值序列化为字符串表示。
+    /// 标量（int/float/bool/string/null）与闭包走快速路径（直接格式化）；
+    /// 数组/字典/实例走 toStringImpl，带环检测（visited 集合）与深度保护，
+    /// 避免自引用容器（如 a.append(a)）无限递归。字符串元素在容器中加引号以区分。
     std::string toString() const {
         switch (getType()) {
         case ValueType::VAL_INT: {

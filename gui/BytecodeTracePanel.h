@@ -54,6 +54,8 @@ class BytecodeTracePanel : public QWidget {
     Q_OBJECT
 public:
     explicit BytecodeTracePanel(QWidget* parent = nullptr);
+    // AUDIT-P0 fix: 析构时反注册 IdeController 的 vmStateChanged 监听器。
+    ~BytecodeTracePanel() override;
 
     // OPT-1: setController 注册 vmStateChanged 监听器，替代 500ms QTimer 轮询。
     // 实现移至 .cpp（调用 addVmStateChangedListener 需 IdeController 完整类型定义）

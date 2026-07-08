@@ -46,7 +46,10 @@ class IdeController;
 class VmStackSandboxPanel : public QWidget {
     Q_OBJECT
 public:
+/// 构造 VM 栈沙盒面板；parent 为父控件。
     explicit VmStackSandboxPanel(QWidget* parent = nullptr);
+    // AUDIT-P0 fix: 析构时反注册 IdeController 监听器。
+    ~VmStackSandboxPanel() override;
 
     /// 绑定 IdeController，启用「真实字节码追踪」页的真实 VM 单步功能。
     /// 不绑定 controller 时面板仍可使用（栈沙盒页完整可用，追踪页提示未绑定）。
@@ -57,17 +60,25 @@ signals:
     void activityCompleted(const QString& levelId);
 
 private slots:
+/// 关卡变更回调。
     void onLevelChanged(int index);
+/// 撤销一步操作。
     void onUndo();
+/// 重置当前关卡。
     void onReset();
+/// 校验当前答案。
     void onCheck();
     /// P1-3 fix (F14): 用真实 Lexer+Parser+Compiler+StackVM 执行当前关卡对应的 MiniLang 源码
     void onVerifyWithRealStackVM();
 
     // ---- 真实字节码追踪页 slots ----
+/// 编译并加载到跟踪页。
     void onCompileAndLoad();
+/// 跟踪页单步执行。
     void onTraceStep();
+/// 跟踪页全速执行。
     void onTraceRunAll();
+/// 跟踪页重置。
     void onTraceReset();
 
 private:
@@ -119,16 +130,29 @@ private:
     std::vector<std::vector<std::string>> outputSnapshots_;  // 每步前的输出快照
     int  currentLevelIndex_ = 0;
     bool halted_ = false;  // HALT 指令后停止接收新指令，需重置
+    // AUDIT-P2 fix: onTraceRunAll 长循环期间 processEvents 会让渡控制权，
+    // 用户可点击 stepBtn_/resetTraceBtn_ 触发重入，与正在跑的循环共享 vm_
+    // 状态导致崩溃。traceRunning_ 守卫阻止重入。
+    bool traceRunning_ = false;
 
     // ---- 内部方法 ----
+/// 加载指定关卡。
     void loadLevel(int index);
+/// 重建操作按钮。
     void rebuildOpButtons();
+/// 执行一条沙盒指令。
     void executeOp(const SandboxOp& op);
+/// 刷新栈视图。
     void refreshStackView();
+/// 刷新历史视图。
     void refreshHistoryView();
+/// 刷新输出视图。
     void refreshOutputView();
+/// 设置反馈信息文本。
     void setFeedback(const QString& text, bool isError = false);
+/// 指令的历史展示文本。
     QString opDisplayText(const SandboxOp& op) const;
+/// 指令的按钮展示文本。
     QString opButtonText(const SandboxOp& op) const;
 
     /// 检查答案：比对 history_ 与 expectedSequence
@@ -138,6 +162,7 @@ private:
     void refreshLevelChips();
 
     // ---- 追踪页内部方法 ----
+/// 构建字节码跟踪子页。
     void buildTracePage(QWidget* host);
     /// 编译当前关卡源码并填充 bytecodeList_，重置 VM
     void loadBytecodeFromCurrentLevel();

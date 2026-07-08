@@ -1,3 +1,11 @@
+/**
+ * @file PipelineViewer.cpp
+ * @brief 编译流水线可视化面板（功能：编译过程分步展示）
+ *
+ * 职责：将一段 MiniLang 源码依次经过「源码 → 词法 → 语法(AST) → IR → 字节码」
+ * 五个阶段，用分步页面逐项展示中间产物，帮助学员建立「代码如何被翻译」的整体认知。
+ * 通过左侧步骤条切换阶段，并支持编辑器光标联动高亮对应源码行。
+ */
 #include "gui/PipelineViewer.h"
 #include "app/IdeController.h"
 #include "lexer/Lexer.h"
@@ -110,6 +118,7 @@ QColor PipelineViewer::stageColor(int step) {
     return kColors[step];
 }
 
+/// 返回指定编译阶段在步骤条上显示的图标字符。
 QString PipelineViewer::stageIcon(int step) {
     static const QString kIcons[] = {
         QString::fromUtf8("\xF0\x9F\x93\x84"),  // 📄 源码
@@ -122,6 +131,7 @@ QString PipelineViewer::stageIcon(int step) {
     return kIcons[step];
 }
 
+/// 返回指定编译阶段的标题文案（如「词法分析」）。
 QString PipelineViewer::stageTitle(int step) {
     static const QString kTitles[] = {
         QString::fromUtf8("源码 Source"),
@@ -134,6 +144,7 @@ QString PipelineViewer::stageTitle(int step) {
     return kTitles[step];
 }
 
+/// 返回指定编译阶段的功能说明文字，用于页面副标题。
 QString PipelineViewer::stageDesc(int step) {
     static const QString kDescs[] = {
         QString::fromUtf8("用户输入的 MiniLang 源代码文本"),
@@ -146,6 +157,7 @@ QString PipelineViewer::stageDesc(int step) {
     return kDescs[step];
 }
 
+/// 构造编译流水线面板：初始化 UI 骨架并默认进入第一阶段。
 PipelineViewer::PipelineViewer(QWidget* parent)
     : QWidget(parent) {
     // 整面板背景：Solarized base3（与 IDE 主背景一致）
@@ -452,8 +464,15 @@ PipelineViewer::PipelineViewer(QWidget* parent)
     switchToStep(0);
 }
 
+/// 切换到指定阶段索引并刷新对应的分步页面内容。
 void PipelineViewer::switchToStep(int step) {
     if (step < 0 || step >= 5) return;
+    // AUDIT-P2 fix: 同一步骤重复点击不重新触发动画（原实现 page->pos() 依赖
+    // 前一个动画的中间值，导致 finalPos 错误，页面卡在偏移位置）。
+    if (step == currentStep_) {
+        reloadCurrentStep();
+        return;
+    }
     const int oldStep = currentStep_;
     currentStep_ = step;
     stack_->setCurrentIndex(step);
@@ -473,6 +492,15 @@ void PipelineViewer::switchToStep(int step) {
     // QStackedLayout 在 setCurrentIndex 后已固定子控件 geometry，
     // 之后调用 move() 不会被布局覆盖直到下一次几何变化
     QWidget* page = stack_->currentWidget();
+    // AUDIT-P2 fix: 停止 page 上正在运行的 pos 动画，避免多个 QPropertyAnimation
+    // 叠加修改 pos 属性导致页面最终位置错误。
+    const auto oldAnims = page->findChildren<QPropertyAnimation*>();
+    for (auto* a : oldAnims) {
+        if (a->targetObject() == page && a->propertyName() == "pos") {
+            a->stop();
+            a->deleteLater();
+        }
+    }
     const int offset = 24;
     const int dx = (step >= oldStep) ? offset : -offset;
     const QPoint finalPos = page->pos();
@@ -485,6 +513,7 @@ void PipelineViewer::switchToStep(int step) {
     slideAnim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
+/// 在不切换阶段的前提下，重新加载当前阶段页面（数据变更后调用）。
 void PipelineViewer::reloadCurrentStep() {
     switch (currentStep_) {
         case 0: populateSource(); break;
@@ -496,6 +525,7 @@ void PipelineViewer::reloadCurrentStep() {
     updateStatusBar();
 }
 
+/// 编辑器光标移动回调：记录行列号并刷新状态栏显示。
 void PipelineViewer::onCursorPositionChanged(int line, int column) {
     cursorLine_ = line;
     cursorColumn_ = column;
@@ -506,6 +536,7 @@ void PipelineViewer::onCursorPositionChanged(int line, int column) {
 
 // 刷新底部状态条：emoji 图标 + 当前阶段主题色左竖线
 // 每次切换阶段或光标移动时调用，颜色跟随当前阶段
+/// 刷新底部状态栏：展示当前阶段、光标行列等概览信息。
 void PipelineViewer::updateStatusBar() {
     if (!statusLabel_) return;
     static const QStringList kStepNames = {
@@ -529,6 +560,7 @@ void PipelineViewer::updateStatusBar() {
         .arg(cursorLine_).arg(cursorColumn_));
 }
 
+/// 填充「源码」页：原样展示当前编辑区源代码。
 void PipelineViewer::populateSource() {
     if (!controller_) {
         sourceBrowser_->setPlainText(QString::fromUtf8("（未绑定控制器）"));
@@ -543,19 +575,27 @@ void PipelineViewer::populateSource() {
     }
     std::ostringstream os;
     int lastLine = 1;
+    // AUDIT-P2 fix: 原实现每次循环调用 os.str().back() 获取最后字符，os.str()
+    // 返回 std::string 值拷贝（O(n)），n 个 Token 总复杂度 O(n²)。改用 lastChar
+    // 变量跟踪最后写入字符，降为 O(n)。
+    char lastChar = '\0';
     for (const auto& tk : tokens) {
         while (lastLine < tk.line) {
             os << "\n";
+            lastChar = '\n';
             lastLine++;
         }
-        if (tk.column > 1 && (os.tellp() == 0 || os.str().back() != '\n')) {
+        if (tk.column > 1 && lastChar != '\0' && lastChar != '\n') {
             os << " ";
+            lastChar = ' ';
         }
         os << tk.lexeme;
+        if (!tk.lexeme.empty()) lastChar = tk.lexeme.back();
     }
     sourceBrowser_->setPlainText(QString::fromUtf8(os.str().c_str()));
 }
 
+/// 填充「词法」页：展示词法分析得到的 token 序列。
 void PipelineViewer::populateTokens() {
     if (!controller_) {
         tokenTable_->setRowCount(0);
@@ -573,6 +613,7 @@ void PipelineViewer::populateTokens() {
     }
 }
 
+/// 递归将 AST 节点序列化为带缩进的文本，供 AST 摘要页使用。
 void PipelineViewer::dumpAst(std::ostringstream& os, ASTNode* node, int depth, int maxDepth) {
     if (!node || depth > maxDepth) return;
     for (int i = 0; i < depth; ++i) os << "  ";
@@ -585,6 +626,7 @@ void PipelineViewer::dumpAst(std::ostringstream& os, ASTNode* node, int depth, i
     }
 }
 
+/// 填充「语法树」页：展示从源码解析出的 AST 结构摘要。
 void PipelineViewer::populateAstSummary() {
     if (!controller_) {
         astSummary_->setPlainText(QString::fromUtf8("（未绑定控制器）"));
@@ -604,6 +646,7 @@ void PipelineViewer::populateAstSummary() {
     astSummary_->setPlainText(QString::fromUtf8(os.str().c_str()));
 }
 
+/// 填充「中间表示」页：展示编译器生成的中间表示(IR)。
 void PipelineViewer::populateIR() {
     if (!controller_) {
         irBrowser_->setPlainText(QString::fromUtf8("（未绑定控制器）"));
@@ -620,6 +663,7 @@ void PipelineViewer::populateIR() {
     irBrowser_->setHtml(irTextToClickableHtml(QString::fromUtf8(s.c_str())));
 }
 
+/// 填充「字节码」页：展示最终生成的字节码指令序列。
 void PipelineViewer::populateBytecode() {
     if (!controller_) {
         bytecodeBrowser_->setPlainText(QString::fromUtf8("（未绑定控制器）"));

@@ -1,3 +1,10 @@
+/**
+ * @file SyntaxHighlighter.cpp
+ * @brief MiniLang 语法高亮器实现（QSyntaxHighlighter 子类）
+ *
+ * 职责：按 MiniLang 语法规则（关键字、字符串、注释、数字、操作符等）
+ * 为代码编辑器中的每一文本块着色，并支持亮/暗主题切换。
+ */
 #include "gui/SyntaxHighlighter.h"
 #include "lexer/Lexer.h"
 
@@ -5,17 +12,20 @@
 // SyntaxHighlighter 语法高亮器实现
 // ============================================================
 
+/// 构造语法高亮器：按当前主题初始化高亮规则。
 SyntaxHighlighter::SyntaxHighlighter(QTextDocument* parent)
     : QSyntaxHighlighter(parent) {
     initRules();
 }
 
+/// 切换亮/暗主题，更新各语法元素的配色规则。
 void SyntaxHighlighter::setDarkTheme(bool dark) {
     isDarkTheme_ = dark;
     initRules();  // 重新初始化颜色规则
     rehighlight();  // 重新高亮整个文档
 }
 
+/// 依据当前主题初始化关键字/字符串/注释等正则高亮规则。
 void SyntaxHighlighter::initRules() {
     // P1 fix: 清空已有规则，避免 setDarkTheme 多次调用导致规则累积
     rules_.clear();
@@ -55,6 +65,7 @@ void SyntaxHighlighter::initRules() {
     // O(n × regex回溯) 降为 O(n) 单遍字符扫描。
 }
 
+/// 重写：对单个文本块应用语法高亮格式。
 void SyntaxHighlighter::highlightBlock(const QString& text) {
     // 状态编码:
     //   0: 正常

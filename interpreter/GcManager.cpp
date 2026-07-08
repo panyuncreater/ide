@@ -18,7 +18,17 @@ RefCounted::~RefCounted() {
 void GcManager::registerTracked(RefCounted* obj) {
     if (!obj) return;
     tracked_.push_back(obj);
-    aliveSet_.insert(obj);
+    // AUDIT-P2-CORRECT fix: aliveSet_.insert 可能抛 bad_alloc（rehash），
+    // 此时 tracked_ 已含 obj 但 aliveSet_ 不含，破坏不变量
+    // （aliveSet_ = tracked_ 中仍存活的对象集合）。
+    // 后果：collectCycle Phase 2 将 obj 误判为"已销毁"跳过 sweep，
+    // 循环引用容器永久泄漏。用 try/catch 回滚 push_back 维持原子性。
+    try {
+        aliveSet_.insert(obj);
+    } catch (...) {
+        tracked_.pop_back();
+        throw;
+    }
     obj->gcTracked_ = true;
 }
 
@@ -60,9 +70,22 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
     }
     case ValueType::VAL_CLOSURE: {
         // 闭包的 capturedVars 可能持有容器引用
-        const auto& captured = v.box_.asPtr<Value::ClosureData>()->capturedVars;
+        const auto* closure = v.box_.asPtr<Value::ClosureData>();
+        const auto& captured = closure->capturedVars;
         for (const auto& kv : captured) {
             markValue(kv.second, marked);
+        }
+        // AUDIT-P2-CORRECT fix: 遍历 VM 闭包的 upvalues，标记已关闭 upvalue 的 value。
+        // VMUpvalue::value 在 isClosed=true 时持有值（可能为容器引用），形成循环引用。
+        // open 状态时值在栈上（GC roots），value 字段不持有有效值，markValue 安全跳过。
+        // 原实现仅 mark capturedVars，遗漏 vmClosure->upvalues，可能导致仅通过
+        // VM 闭包 upvalues 可达的循环容器被误判为不可达孤岛而误回收。
+        if (closure->vmClosure) {
+            for (const auto& upval : closure->vmClosure->upvalues) {
+                if (upval && upval->isClosed) {
+                    markValue(upval->value, marked);
+                }
+            }
         }
         // env 是 weak_ptr，不 mark（避免重新引入循环）
         break;
@@ -182,7 +205,14 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
         }
     }
     tracked_ = std::move(survivors);
+    // AUDIT-P1-CORRECT fix: 用 survivors 重建 aliveSet_，维持不变量
+    // （aliveSet_ = tracked_ 中仍存活的对象集合）。原实现仅 clear 未重建，
+    // 导致下一轮 collectCycle 的 Phase 2 将 survivors 误判为"已销毁"而跳过 sweep，
+    // survivors 变为不可达循环孤岛时无法被回收 → 永久内存泄漏。
     aliveSet_.clear();
+    for (RefCounted* obj : tracked_) {
+        aliveSet_.insert(obj);
+    }
 
     if (collectedCount > 0) {
         LOG_INFO("GcManager: 回收 " + std::to_string(collectedCount) + " 个循环引用孤岛", "GC");

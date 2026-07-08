@@ -12,7 +12,22 @@
 #include <stdexcept>  // B3 fix: currentFrame 抛 std::runtime_error
 
 // ============================================================
-// VM 虚拟机实现
+// VM 虚拟机实现（栈式后端）
+// ------------------------------------------------------------
+// 本文件实现 MiniLang 的"栈式"执行后端（与 RegisterVM 语义等价）。
+// 核心数据模型：
+//   · 操作数栈 stack_：所有值运算的结果都压入此栈，指令从栈顶取/放操作数。
+//   · 调用帧栈 frames_：每次函数调用压入一帧，帧记录返回地址(returnIp)、
+//     本帧在 stack_ 中的基准(basePointer)、当前指令指针(ip)、所属字节码块(chunk)。
+//   · basePointer 机制：被调用者的局部变量存放在 stack_[basePointer+slot]，
+//     调用返回时只需 stack_.resize(basePointer) 即可一次性回收全部临时/局部槽。
+//   · 指令分发：executeOneInstruction 先按"指令类别"两级 switch 转发到
+//     execute*Ops，再由具体 opcode 处理（两级拆分仅为可维护性，不改变语义）。
+//   · OpCode 编码：定长操作数多为 16 位小端索引（idx = code[ip+1] | code[ip+2]<<8），
+//     指向常量池 constants_；局部变量槽为 8 位；全局变量既有名称寻址(globals_)
+//     也有整数槽位寻址(globalSlots_)两条快速路径。
+// 本文件不含函数调用/容器/杂项指令的具体实现——它们分别在 VMCalls.cpp、
+// VMContainers.cpp（按 execute*Ops 方法归属拆分，便于并行维护）。
 // ============================================================
 
 VM::VM() {
@@ -846,6 +861,9 @@ void VM::initExecution(const CompileResult& result) {
 }
 
 bool VM::isFinished() const {
+    // 注意：栈式 VM 的 isFinished 仅以帧栈空为判定。全速 execute() 已在循环外通过
+    // hasError_ 短路返回 VM_RUNTIME_ERROR；单步 stepOnce() 的调用方（VmStepper）也
+    // 会在调用前检查 hasError_。故此处不重复纳入 hasError_，避免与调用方语义重复。
     return frames_.empty();
 }
 
@@ -892,6 +910,9 @@ VMResult VM::stepOnce() {
     if (hasError_) return VMResult::VM_RUNTIME_ERROR;
 
     // P1 fix: stepOnce 累计指令预算检查，防止通过循环调用 stepOnce 绕过 DoS 防护
+    // 注意：execute() 使用每次调用重新开始的局部计数器，而 stepOnce 使用成员
+    // stepInstructionCount_ 跨调用累计——因为单步模式下程序由 IDE 多次调用推进，
+    // 若每次 stepOnce 都从 0 计数，无限循环单步将绕过指令数上限。
     if (++stepInstructionCount_ > MAX_INSTRUCTIONS) {
         lastError_ = ErrorFormat::format("指令执行数超过上限 %lld，疑似无限循环",
                                           static_cast<long long>(MAX_INSTRUCTIONS));
@@ -1017,6 +1038,11 @@ VMResult VM::execute(const CompileResult& result) {
 // ============================================================
 
 VMResult VM::executeOneInstruction() {
+    // 单条指令执行的核心分派点，execute() 与 stepOnce() 共用此函数。
+    // 执行流程：① 判空帧/hasError_ 短路；② 取 opcode；③ 计算完整指令长度并做
+    // 字节码截断边界检查（OP_CLOSURE 为变长，需单独按 upvalue 计数展开）；
+    // ④ 两级转发——先按指令类别 switch 到 executeXxxOps，再由各方法按具体 opcode 处理。
+    // 两级拆分仅为可维护性（每类方法 < 200 行），不改变执行语义。
     if (hasError_) return VMResult::VM_RUNTIME_ERROR;
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
@@ -1149,14 +1175,19 @@ VMResult VM::executeOneInstruction() {
 VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
+    // 此类指令语义统一为：从常量池取出一个字面量并压入操作数栈。
+    // OP_CONSTANT/INT/FLOAT/STRING 三者共用 16 位小端常量索引（占 ip+1、ip+2 两字节），
+    // 故指令长度均为 3 字节；其余 OP_NULL/TRUE/FALSE 无操作数，长度 1 字节。
 
     switch (op) {
     case OpCode::OP_CONSTANT:
     case OpCode::OP_INT:
     case OpCode::OP_FLOAT:
     case OpCode::OP_STRING: {
+        // 16 位小端索引：低位在前、高位在后，可寻址 65536 个常量。
         uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (idx >= chunk.constants.size()) return runtimeError("常量池索引越界");
+        // 栈效果：push(常量) —— 操作数栈高度 +1。
         // PERF-12 fix: 直接 emplace const Value& 到栈槽，避免临时 Value 的额外原子操作
         // push(const Value&) 内部 push_back 是拷贝（shared_ptr 原子递增），
         // emplace(const Value&) 同样是拷贝但显式语义，便于未来替换为更激进的优化。
@@ -1167,6 +1198,7 @@ VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
     }
 
     case OpCode::OP_NULL:
+        // 栈效果：压入一个 null 字面量（高度 +1）。无操作数，ip 前进 1。
         // PERF-12 fix: 直接 emplace 构造 null Value，避免临时对象
         emplace<>();
         notifyStep(ip, op);
@@ -1174,6 +1206,7 @@ VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
         break;
 
     case OpCode::OP_TRUE:
+        // 栈效果：压入布尔字面量 true（高度 +1）。
         // PERF-12 fix: 直接 emplace 构造 bool Value
         emplace<bool>(true);
         notifyStep(ip, op);
@@ -1181,6 +1214,7 @@ VMResult VM::executeConstantOps(OpCode op, size_t& ip) {
         break;
 
     case OpCode::OP_FALSE:
+        // 栈效果：压入布尔字面量 false（高度 +1）。
         // PERF-12 fix: 直接 emplace 构造 bool Value
         emplace<bool>(false);
         notifyStep(ip, op);
@@ -1203,6 +1237,9 @@ VMResult VM::executeArithOps(OpCode op, size_t& ip) {
     const BytecodeChunk& chunk = *frame.chunk;
     (void)frame;
     (void)chunk;
+    // 二元运算统一约定：栈顶两个操作数(right 在上、left 在下)被消费，
+    // 运算结果写回 left 原位并弹出 right（详见 numericOp），最终栈高度 -1。
+    // 此处每个 case 仅做"分派 + 推进 ip + 通知单步"，真正的运算委托 numericOp。
 
     switch (op) {
     case OpCode::OP_ADD: {

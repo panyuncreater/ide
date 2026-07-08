@@ -540,6 +540,14 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
     std::ostringstream os;
     os << "🛠 " << mlTr("真实 Parser 生成的 AST：").toStdString() << "\n";
     os << "源码: " << source << "\n";
+    // AUDIT-P2 fix: 纯表达式被包装为 var __toy_tmp = <expr>; 才能被语句级 Parser
+    // 接受。此时真实 AST 根节点是 Block → VarDecl，而学员搭建的是裸表达式树。
+    // 明确标注包装行为，避免学员误以为自己搭建的树错误。
+    if (!isStatement) {
+        os << "💡 " << mlTr("注：纯表达式已包装为 var __toy_tmp = <expr>; 才能解析。"
+                           "下方 AST 根节点 Block/VarDecl 是包装语句，"
+                           "VarDecl 的子树才是目标表达式").toStdString() << "\n";
+    }
     os << "--- AST 树形结构 ---\n";
     // 递归 dump
     std::function<void(ASTNode*, int)> dumpRec = [&](ASTNode* node, int depth) {

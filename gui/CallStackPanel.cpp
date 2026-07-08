@@ -23,6 +23,9 @@
 // CallStackLibrary — 静态教学场景库
 // ============================================================
 
+/// 返回调用栈教学场景库（静态单例）：简单调用 / 递归(fib) / 闭包捕获 /
+/// 类方法分派 / try-catch / 相互递归六类。每个场景含题目说明、源码、期望栈帧
+/// 序列与教学注解，供「教学场景库」子页并排展示。
 const std::vector<CallStackScenario>& CallStackLibrary::scenarios() {
     static const std::vector<CallStackScenario> kScenarios = {
         CallStackScenario{
@@ -52,8 +55,8 @@ const std::vector<CallStackScenario>& CallStackLibrary::scenarios() {
         CallStackScenario{
             "method-dispatch",
             "🎯 类方法分派",
-            "📞 Point.new() 构造 + p.distance() 方法调用。",
-            "class Point {\n  var x; var y;\n  init(x, y) { this.x = x; this.y = y; }\n  fun distance() { return (x*x + y*y) ^ 0.5; }\n}\nvar p = Point.new(3, 4);\nprint(p.distance());\n",
+            "📞 Point() 构造 + p.distance() 方法调用。",
+            "class Point {\n  var x; var y;\n  fun init(x, y) { this.x = x; this.y = y; }\n  fun distance() { return x*x + y*y; }\n}\nvar p = Point(3, 4);\nprint(p.distance());\n",
             {"<main>", "Point.init", "Point.distance"},
             "💡 方法调用栈：distance 帧的 this 隐式绑定到 p 实例，可通过 this 访问字段 x/y。方法查找经过 ClassInfo::methodCache_ 缓存加速。"
         },
@@ -81,6 +84,8 @@ const std::vector<CallStackScenario>& CallStackLibrary::scenarios() {
 // CallStackPanel 实现
 // ============================================================
 
+/// 构造面板：组装顶部子页切换（实时调用栈 / 教学场景库）与 QStackedWidget，
+/// 构建两个子页，配置 2s 自动刷新定时器（安全网），并填充场景库列表。
 CallStackPanel::CallStackPanel(QWidget* parent) : QWidget(parent) {
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(4, 4, 4, 4);
@@ -131,14 +136,30 @@ CallStackPanel::CallStackPanel(QWidget* parent) : QWidget(parent) {
     populateScenarios();
 }
 
+/// 绑定/换绑 IdeController：注册 vmStateChanged 监听器（owner=this），
+/// 换绑前先反注册旧监听器，避免 controller 持有悬垂回调。
 void CallStackPanel::setController(IdeController* controller) {
     if (controller_ == controller) return;
+    // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
     controller_ = controller;
     if (controller_) {
-        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+        controller_->addVmStateChangedListener(this, [this] { onVmStateChanged(); });
     }
 }
 
+// AUDIT-P0 fix: 析构时反注册监听器，避免 controller_ 持有悬垂 this 回调。
+/// 析构时反注册 vmStateChanged 监听器，避免 controller 持有悬垂 this 回调。
+CallStackPanel::~CallStackPanel() {
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
+}
+
+/// 构建「实时调用栈」子页：顶部状态/刷新/自动刷新按钮 + 垂直 splitter
+/// （上方栈帧树 + 下方帧/变量详情浏览器）。树列：栈帧/行号/深度。
 void CallStackPanel::buildLivePage(QWidget* host) {
     auto* v = new QVBoxLayout(host);
     v->setContentsMargins(0, 0, 0, 0);
@@ -175,6 +196,8 @@ void CallStackPanel::buildLivePage(QWidget* host) {
     connect(stackTree_, &QTreeWidget::currentItemChanged, [this](QTreeWidgetItem*, QTreeWidgetItem*) { onFrameSelected(); });
 }
 
+/// 构建「教学场景库」子页：左侧场景列表 + 右侧详情浏览器 + 加载样例按钮，
+/// 选中项变化时通过 onScenarioSelected 渲染期望栈帧序列与注解。
 void CallStackPanel::buildLibraryPage(QWidget* host) {
     auto* v = new QVBoxLayout(host);
     v->setContentsMargins(0, 0, 0, 0);
@@ -200,15 +223,18 @@ void CallStackPanel::buildLibraryPage(QWidget* host) {
     connect(loadCodeBtn_, &QPushButton::clicked, this, &CallStackPanel::onLoadScenarioCode);
 }
 
+/// 刷新按钮回调：委托 refreshLive() 重新抓取并渲染实时调用栈。
 void CallStackPanel::onRefresh() {
     refreshLive();
 }
 
+/// 自动刷新复选框切换：勾选启动 2s 定时器，取消则停止。
 void CallStackPanel::onAutoRefreshToggled(bool checked) {
     if (checked) autoTimer_->start();
     else         autoTimer_->stop();
 }
 
+/// 面板重新可见时：若已勾选自动刷新则立即刷新并恢复 2s 定时器。
 void CallStackPanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     // 面板重新可见时，若用户已勾选自动刷新则恢复 QTimer
@@ -219,6 +245,7 @@ void CallStackPanel::showEvent(QShowEvent* event) {
     }
 }
 
+/// 面板隐藏时停止自动刷新定时器，避免后台空转。
 void CallStackPanel::hideEvent(QHideEvent* event) {
     QWidget::hideEvent(event);
     // 面板隐藏时停止轮询，避免后台空转
@@ -227,6 +254,14 @@ void CallStackPanel::hideEvent(QHideEvent* event) {
     }
 }
 
+/// 抓取并渲染实时调用栈（栈帧数据来源与展示逻辑）：
+/// 1. 优先判断活跃引擎——Interpreter 调试（isRunning && isDebugRun）走
+///    getDebugCallStack，VM 单步走 getVmCallStack（标记当前后端为 StackVM/RegisterVM）；
+/// 2. 并发防护：调试 resume 或 VM 运行中（worker 可能并发改 frames_）时跳过
+///    快照获取，避免数据竞争 UB，仅提示「暂停后刷新」；
+/// 3. 将帧序列倒序（栈顶在上）填入 QTreeWidget，每个帧节点再展开其本地变量
+///    子节点（值/类型经 try/catch 包裹 toString/typeName 防异常）。
+/// 该树形结构即运行时调用栈帧来源：函数名/调用深度/当前行号/局部变量。
 void CallStackPanel::refreshLive() {
     stackTree_->clear();
     if (!controller_) {
@@ -236,12 +271,30 @@ void CallStackPanel::refreshLive() {
 
     std::vector<CallStackEntry> entries;
     QString modeLabel;
-    if (controller_->isVmInitialized()) {
-        entries    = controller_->getVmCallStack();
-        modeLabel  = controller_->getUseRegisterVM() ? tr("RegisterVM") : tr("StackVM");
-    } else if (controller_->isRunning() && controller_->isDebugRun()) {
+    // AUDIT-P1 fix: 优先判断当前活跃引擎（Interpreter 调试 > VM 单步），
+    // 避免 isVmInitialized 一次性永久 true 后 Interpreter 调试仍走 VM 分支显示陈旧数据。
+    // 同时增加 isDebugPaused() 检查，避免调试 resume 期间 worker 活跃时并发访问解释器
+    // 内部 unordered_map/vector 导致 UB（数据竞争）。
+    if (controller_->isRunning() && controller_->isDebugRun()) {
+        if (!controller_->isDebugPaused()) {
+            // 调试运行中（resume 后 worker 活跃），跳过快照获取避免数据竞争
+            liveStatusLabel_->setText(tr("状态：调试运行中（暂停后刷新）"));
+            frameDetail_->clear();
+            return;
+        }
         entries    = controller_->getDebugCallStack();
         modeLabel  = tr("Interpreter (debug)");
+    } else if (controller_->isVmInitialized()) {
+        // AUDIT-P1-CORRECT fix: VM RUN 模式期间 worker 可能 push_back/pop_back frames_，
+        // 并发遍历触发 UB（迭代器失效）。添加 isVmRunning() 守卫，
+        // 对齐 Interpreter 调试路径的 isDebugPaused() 守卫。
+        if (controller_->isVmRunning()) {
+            liveStatusLabel_->setText(tr("状态：VM 运行中（暂停后刷新）"));
+            frameDetail_->clear();
+            return;
+        }
+        entries    = controller_->getVmCallStack();
+        modeLabel  = controller_->getUseRegisterVM() ? tr("RegisterVM") : tr("StackVM");
     } else {
         liveStatusLabel_->setText(tr("状态：未运行（启动调试或 VM 单步以查看调用栈）"));
         frameDetail_->clear();
@@ -266,14 +319,21 @@ void CallStackPanel::refreshLive() {
         for (const auto& [name, val] : e.locals) {
             auto* localItem = new QTreeWidgetItem(frame);
             localItem->setText(0, QString::fromUtf8(name.c_str()));
-            localItem->setText(1, QString::fromUtf8(val.toString().c_str()));
-            localItem->setText(2, QString::fromUtf8(val.typeName().c_str()));
+            // AUDIT-P1 fix: toString() 可能抛异常（NaN-boxing 解码失败或数据竞争残留），
+            // 与 VmStackPanel 保持一致用 try/catch 包裹避免崩溃。
+            std::string valStr, typeStr;
+            try { valStr = val.toString(); } catch (...) { valStr = "<error>"; }
+            try { typeStr = val.typeName(); } catch (...) { typeStr = "<error>"; }
+            localItem->setText(1, QString::fromUtf8(valStr.c_str()));
+            localItem->setText(2, QString::fromUtf8(typeStr.c_str()));
         }
         stackTree_->addTopLevelItem(frame);
     }
     stackTree_->resizeColumnToContents(0);
 }
 
+/// 选中栈树节点时渲染详情：顶层帧节点显示函数名/深度/当前行/局部变量数；
+/// 子节点（变量）显示类型与值，写入详情浏览器。
 void CallStackPanel::onFrameSelected() {
     auto* cur = stackTree_->currentItem();
     if (!cur) { frameDetail_->clear(); return; }
@@ -304,6 +364,7 @@ void CallStackPanel::onFrameSelected() {
     }
 }
 
+/// 用教学场景库标题填充左侧列表并默认选中首项。
 void CallStackPanel::populateScenarios() {
     scenarioList_->clear();
     for (const auto& s : CallStackLibrary::scenarios()) {
@@ -314,10 +375,13 @@ void CallStackPanel::populateScenarios() {
     }
 }
 
+/// 场景列表选中项变化时委托 showScenario 渲染该场景的栈帧序列与注解。
 void CallStackPanel::onScenarioSelected(int index) {
     showScenario(index);
 }
 
+/// 根据索引渲染教学场景：标题、ID、Markdown 说明、期望栈帧序列表、源码与
+/// 教学注解，写入右侧详情浏览器。
 void CallStackPanel::showScenario(int index) {
     currentScenarioIdx_ = index;
     if (index < 0 || index >= static_cast<int>(CallStackLibrary::scenarios().size())) {
@@ -352,6 +416,7 @@ void CallStackPanel::showScenario(int index) {
     scenarioDetail_->setHtml(html);
 }
 
+/// 将当前选中场景的源码 emit loadSampleRequested，加载到主编辑器调试观察对应栈形态。
 void CallStackPanel::onLoadScenarioCode() {
     if (currentScenarioIdx_ < 0 || currentScenarioIdx_ >= static_cast<int>(CallStackLibrary::scenarios().size())) {
         return;
@@ -364,6 +429,7 @@ void CallStackPanel::onLoadScenarioCode() {
 // createGuidedTour — 新手引导（5 步）
 // ============================================================
 
+/// 构建 5 步新手引导：高亮实时调用栈页、递归示例、教学场景库与开始实验步骤。
 GuidedTour* CallStackPanel::createGuidedTour(QWidget* host) {
     auto* tour = new GuidedTour(host, host);
     // 注：只高亮「始终可见」的页切换按钮，概念性步骤用 nullptr（居中气泡）+ 示例代码。

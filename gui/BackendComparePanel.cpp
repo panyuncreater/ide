@@ -22,6 +22,15 @@
 #include "PushButton.h"   // QFluentKit（PrimaryPushButton）
 #include "Label.h"        // QFluentKit（CaptionLabel）
 
+// ============================================================
+// BackendComparePanel 实现
+// 顺序运行 Interpreter / StackVM / RegisterVM 三个后端，捕获各自输出、
+// 耗时与状态，并对比三后端的输出一致性。
+// ============================================================
+
+/// 构造面板：组装顶部「运行三后端对比」按钮与差异标签，水平三列
+/// （Interpreter / StackVM / RegisterVM）只读输出区与状态标签，
+/// 并绑定运行按钮信号。
 BackendComparePanel::BackendComparePanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -64,6 +73,9 @@ BackendComparePanel::BackendComparePanel(QWidget* parent)
             this, &BackendComparePanel::runComparison);
 }
 
+/// 顺序运行三后端并对比：直接从 controller 取已编译的 AST，分别执行
+/// Interpreter / StackVM / RegisterVM，每段执行前后插入 processEvents 让 UI
+/// 重绘（避免长耗时场景冻结），最后渲染对比结果与一致性摘要。
 void BackendComparePanel::runComparison() {
     if (!controller_) {
         diffLabel_->setText(QString::fromUtf8("未绑定控制器"));
@@ -84,14 +96,25 @@ void BackendComparePanel::runComparison() {
 
     // 直接从 astRoot 调用三后端
     // 注：ast 是 controller 持有的，三后端只读取，安全
+    // AUDIT-P2 fix: 三后端串行执行期间插入 processEvents 让 UI 重绘，
+    // 避免长耗时场景（如 fib(20)）UI 完全冻结（Windows 标题栏"未响应"）。
+    // 与 ProfileDashboardPanel 设计模式一致。
+    diffLabel_->setText(QString::fromUtf8("运行 Interpreter 中..."));
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     BackendResult interp = runInterpreter("");
+    diffLabel_->setText(QString::fromUtf8("运行 StackVM 中..."));
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     BackendResult stackVm = runStackVM("");
+    diffLabel_->setText(QString::fromUtf8("运行 RegisterVM 中..."));
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     BackendResult regVm = runRegisterVM("");
 
     renderComparison(interp, stackVm, regVm);
     runButton_->setEnabled(true);
 }
 
+/// 运行 Interpreter 后端：用 controller 持有的 AST 执行，捕获输出与耗时，
+/// 按行切分输出并返回 BackendResult（含状态 / 错误消息 / 耗时微秒）。
 BackendComparePanel::BackendResult BackendComparePanel::runInterpreter(const std::string& /*source*/) {
     BackendResult r;
     if (!controller_ || !controller_->astRoot()) {
@@ -121,6 +144,8 @@ BackendComparePanel::BackendResult BackendComparePanel::runInterpreter(const std
     return r;
 }
 
+/// 运行 StackVM 后端：先由 Compiler 编译 AST 为 BytecodeChunk，再由 VM 执行，
+/// 捕获输出 / 编译错误 / 运行时错误并返回 BackendResult。
 BackendComparePanel::BackendResult BackendComparePanel::runStackVM(const std::string& /*source*/) {
     BackendResult r;
     if (!controller_ || !controller_->astRoot()) {
@@ -162,6 +187,8 @@ BackendComparePanel::BackendResult BackendComparePanel::runStackVM(const std::st
     return r;
 }
 
+/// 运行 RegisterVM 后端：启用寄存器式 IR 路径（compileViaRegisterIR）编译，
+/// 再由 RegisterVM 执行，捕获输出与错误并返回 BackendResult。
 BackendComparePanel::BackendResult BackendComparePanel::runRegisterVM(const std::string& /*source*/) {
     BackendResult r;
     if (!controller_ || !controller_->astRoot()) {
@@ -204,6 +231,8 @@ BackendComparePanel::BackendResult BackendComparePanel::runRegisterVM(const std:
     return r;
 }
 
+/// 将三后端结果渲染到对应列：填充输出文本与状态标签（状态 + 耗时），
+/// 并调用 buildDiffSummary 生成一致性汇总写入差异标签。
 void BackendComparePanel::renderComparison(const BackendResult& interp,
                                             const BackendResult& stackVm,
                                             const BackendResult& regVm) {
@@ -231,6 +260,8 @@ void BackendComparePanel::renderComparison(const BackendResult& interp,
     diffLabel_->setText(buildDiffSummary(interp, stackVm, regVm));
 }
 
+/// 逐行比对三后端输出（按最大行数对齐，缺失行视为空），统计差异行数，
+/// 生成「三后端输出一致 / 差异 N 行」的汇总文本，供差异标签显示。
 QString BackendComparePanel::buildDiffSummary(const BackendResult& a,
                                                  const BackendResult& b,
                                                  const BackendResult& c) {

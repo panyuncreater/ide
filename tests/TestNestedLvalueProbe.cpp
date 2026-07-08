@@ -1,4 +1,12 @@
-// 临时探针：验证嵌套左值 a.b.c = x 在三后端的行为
+// ============================================================
+// TestNestedLvalueProbe.cpp — 嵌套左值赋值探针（三后端）
+// ------------------------------------------------------------
+// 验证嵌套左值表达式（a.b.c / a[i].f / a.b[i] / a[i][j] 等）
+// 在 Interpreter / StackVM(IR) / RegisterVM(IR) 三后端上的赋值
+// 行为是否一致。含两层基线对照（单层成员 / 单层下标赋值）。
+// 每个用例对三种后端分别执行并断言输出完全相同。
+// ============================================================
+
 #include <gtest/gtest.h>
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -8,6 +16,7 @@
 #include "interpreter/Interpreter.h"
 #include <string>
 
+// 后端运行辅助1：解释器执行，捕获 RuntimeError 等异常，错误时附 <runtime:...> 标记。
 static std::string runInterp(const std::string& src) {
     Lexer lx; auto tk = lx.scan(src);
     Parser p; auto ast = p.parse(tk);
@@ -25,6 +34,7 @@ static std::string runInterp(const std::string& src) {
     }
     return out;
 }
+// 后端运行辅助2：栈式 VM（IR 模式）编译并执行，编译/运行错误分别附 <compile:...>/<runtime:...>。
 static std::string runStackVM_IR(const std::string& src) {
     Lexer lx; auto tk = lx.scan(src);
     Parser p; auto ast = p.parse(tk);
@@ -39,6 +49,7 @@ static std::string runStackVM_IR(const std::string& src) {
     if (vm.hasError()) return "<runtime:" + vm.getLastError() + ">";
     return out;
 }
+// 后端运行辅助3：寄存器 VM（IR 模式）编译并执行，用于与另两后端交叉验证嵌套左值写回一致性。
 static std::string runRegVM_IR(const std::string& src) {
     Lexer lx; auto tk = lx.scan(src);
     Parser p; auto ast = p.parse(tk);

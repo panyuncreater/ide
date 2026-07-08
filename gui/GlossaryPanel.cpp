@@ -99,6 +99,11 @@ GlossaryPanel::GlossaryPanel(QWidget* parent) : QWidget(parent) {
                 // 选中目标行（触发 currentRowChanged → onTermSelected）
                 if (listWidget_->currentRow() != i) {
                     listWidget_->setCurrentRow(i);
+                    // AUDIT-P2 fix: 链接点击是明确跳转意图，应发射 termActivated
+                    // 触发跨面板跳转。原实现仅 setCurrentRow 依赖 onTermSelected 间接触发，
+                    // 但 onTermSelected 在第三十六轮修复后已移除 termActivated 发射（避免
+                    // 单击切换术语就跳面板），导致链接跳转到新术语时不再触发跨面板跳转。
+                    emit termActivated(entries_[i].id);
                 } else {
                     // 同一行已选中，手动刷新详情 + 发射激活信号
                     showDetail(i);

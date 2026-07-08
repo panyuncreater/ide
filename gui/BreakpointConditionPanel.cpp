@@ -102,7 +102,7 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
             "条件求值时通过 boundInstance_ 缓存访问实例字段，与正常运行时语义一致。"
             "MiniLang 类构造使用 ClassName(args) 语法（非 .new()）。",
             "当方法被调用且 this.value > 100 时暂停",
-            "class Counter {\n    var value;\n    fun new() { value = 0; }\n    fun inc() { value = value + 1; }\n}\nvar c = Counter();\nvar i = 0;\nwhile (i < 200) {\n    c.inc();\n    i = i + 1;\n}\nprint(c.value);"
+            "class Counter {\n    var value;\n    fun init() { value = 0; }\n    fun inc() { value = value + 1; }\n}\nvar c = Counter();\nvar i = 0;\nwhile (i < 200) {\n    c.inc();\n    i = i + 1;\n}\nprint(c.value);"
         },
         {
             "exception-condition",
@@ -211,9 +211,20 @@ void BreakpointConditionPanel::hideEvent(QHideEvent* event) {
 
 void BreakpointConditionPanel::setController(IdeController* controller) {
     if (controller_ == controller) return;
+    // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
     controller_ = controller;
     if (controller_) {
-        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+        controller_->addVmStateChangedListener(this, [this] { onVmStateChanged(); });
+    }
+}
+
+// AUDIT-P0 fix: 析构时反注册监听器，避免 controller_ 持有悬垂 this 回调。
+BreakpointConditionPanel::~BreakpointConditionPanel() {
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
     }
 }
 

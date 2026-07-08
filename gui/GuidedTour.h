@@ -44,6 +44,7 @@ class QPushButton;
 class GuidedTour : public QObject {
     Q_OBJECT
 public:
+/// 构造引导漫游；host 为被引导的宿主窗口。
     explicit GuidedTour(QWidget* host, QObject* parent = nullptr);
     ~GuidedTour() override;
 
@@ -64,6 +65,7 @@ public:
     void skip();    // 跳过引导
 
 signals:
+/// 信号：当前步骤索引变化。
     void stepChanged(int index);
     void finished(bool completed);  // completed=true 表示走完所有步骤，false 表示跳过
 
@@ -75,7 +77,10 @@ private:
     // 遮罩层 widget，覆盖整个 host_，用 WS_Transparent 风格
     QWidget* overlay_ = nullptr;
     // 气泡 widget
-    QWidget* bubble_ = nullptr;
+    // AUDIT-P0 fix: 改为 QPointer 避免 IDE 析构期 UAF。
+    // 原实现：bubble_ 是裸指针且为 host_ 子对象，Qt 子对象逆序析构时
+    // bubble_ 先被销毁，~GuidedTour 后调用 hideOverlay 仍访问悬垂 bubble_。
+    QPointer<QWidget> bubble_;
     class QLabel* bubbleTitle_ = nullptr;
     class QLabel* bubbleDesc_ = nullptr;
     class QPushButton* primaryBtn_ = nullptr;
@@ -87,7 +92,10 @@ private:
     QPointer<QWidget> highlightedTarget_;
     QString savedStyleSheet_;
 
+/// 显示指定步骤。
     void showStep(int index);
+/// 隐藏遮罩结束引导。
     void hideOverlay();
+/// 定位气泡到目标矩形。
     void positionBubble(const QRect& targetRect);
 };

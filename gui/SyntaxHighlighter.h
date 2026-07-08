@@ -1,3 +1,9 @@
+/**
+ * @file SyntaxHighlighter.h
+ * @brief MiniLang 语法高亮器的类声明（QSyntaxHighlighter 子类）
+ *
+ * 供代码编辑器复用，统一 MiniLang 源码的语法着色表现。
+ */
 #pragma once
 
 #include <QSyntaxHighlighter>
@@ -22,12 +28,14 @@ class SyntaxHighlighter : public QSyntaxHighlighter {
     Q_OBJECT
 
 public:
+/// 构造高亮器；parent 为关联文本文档。
     explicit SyntaxHighlighter(QTextDocument* parent = nullptr);
 
     /// F9: 切换深色/浅色主题
     void setDarkTheme(bool dark);
 
 protected:
+/// 对文本块应用高亮。
     void highlightBlock(const QString& text) override;
 
 private:

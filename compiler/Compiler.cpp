@@ -14,6 +14,50 @@
 // Compiler 字节码编译器实现
 // ============================================================
 
+/**
+ * Compiler —— MiniLang 前端字节码编译器总入口
+ *
+ * 职责：将解析后的 AST（Block 语句列表）翻译为可在 VM 上执行的字节码。
+ * 它是纯单遍（single-pass）递归下降式代码生成器：边遍历 AST 边 emit 指令，
+ * 不构建独立的中间 AST 再遍历（栈式 VM 直接路径）。三条后端路径共享同一套
+ * visit* 访问者，因此语义天然一致。
+ *
+ * ── 三条后端路径（由编译开关选择，见 compile()）─────────────────────────
+ *  1) 栈式 VM 直接路径（默认）：visit* 直接 emit 栈式 OpCode，常量池写入主 chunk。
+ *  2) IR 路径（useIR_）：AST → IR（AstIRBuilder）→ [可选优化 pass] → 栈式字节码
+ *     （BytecodeIRBackend）。指令以操作数栈为模型，与路径 1 等价。
+ *  3) 寄存器式 VM 路径（useRegisterVM_）：AST → IR → 寄存器式字节码
+ *     （RegisterBytecodeBackend）。指令以固定寄存器窗口为模型，无操作数栈。
+ *  路径 1 与 2/3 的关键差异在于 IR 路径经过统一的 AstIRBuilder / *IRBackend
+ *  中间层，便于做常量折叠、复制传播、DCE 等优化 pass。
+ *
+ * ── 派发机制 ──────────────────────────────────────────────────────────
+ *  compileNode(node) 通过 Visitor 模式调用 node->accept(*this)，回调对应
+ *  visit* 方法。compileStatement() 在表达式语句之后补发 OP_POP 以平衡栈
+ *  （见下“栈平衡纪律”）。
+ *
+ * ── 栈平衡纪律（仅栈式路径相关）──────────────────────────────────────
+ *  每个 visit* 必须保证“离开时栈高度与进入时一致”，除非该节点作为表达式被调用，
+ *  此时约定“产生恰好一个栈顶值，由调用方消费”。compileStatement 对产生栈值
+ *  的表达式节点（赋值/调用/二元运算/字面量等）补发 OP_POP，避免顶层或循环体内
+ *  栈无限累积导致运行时栈溢出。声明与控制流节点已自行平衡，不在其列。
+ *
+ * ── 闭包与自由变量 ────────────────────────────────────────────────────
+ *  嵌套函数通过 collectFreeVars/computeFreeVars 前向分析出捕获的自由变量，
+ *  再由 resolveUpvalue 在编译函数体时登记 UpvalueDesc（区分 isLocal 直接捕获
+ *  与 isLocal=false 透传捕获），支撑 3+ 层嵌套闭包沿外层函数透传 upvalue。
+ *
+ * ── 常量折叠 ──────────────────────────────────────────────────────────
+ *  tryFoldBinary/tryFoldUnary 在 visit* 中优先尝试编译期求值；仅当操作数
+ *  均为编译期常量（extractConstant 递归提取）时折叠，并统一经 emitConstant
+ *  写入常量池，避免对带副作用表达式误折叠。
+ *
+ * ── 模块系统 ──────────────────────────────────────────────────────────
+ *  import/export 通过模块加载器与 ModuleIsolation 实现跨文件编译；每次编译
+ *  都会重置 linkedModuleSet_/moduleLoadingSet_/moduleExports_ 等状态，
+ *  防止跨次编译复用旧缓存（见 compile() 与 compileVia* 的清理段）。
+ */
+
 Compiler::Compiler() {}
 
 CompileResult Compiler::compile(Block& program) {
@@ -1048,9 +1092,19 @@ void Compiler::visitWhileStmt(WhileStmt& node) {
     // 否则所有闭包指向同一 slot，最终都返回最后一次迭代的值（by-reference）。
     size_t bodySlotBase = currentLocals_.size();
     bool needCloseUpvalue = inFunction_;
+    // AUDIT-P2-CORRECT fix: 记录到 LoopContext 供 visitBreakStmt 发射 OP_CLOSE_UPVALUE
+    loopStack_.back().bodySlotBase = bodySlotBase;
+    loopStack_.back().needCloseUpvalue = needCloseUpvalue;
 
     // 编译循环体
     compileStatement(node.body.get());
+
+    // AUDIT-P1-CORRECT fix: continueTarget 必须在 OP_CLOSE_UPVALUE 之前，
+    // 使 continue 跳到 OP_CLOSE_UPVALUE 执行后再 OP_LOOP。
+    // 第三十八轮将 continueTarget 放在 OP_CLOSE_UPVALUE 之后是方向性错误——
+    // continue 跳过 OP_CLOSE_UPVALUE 导致 upvalue 不关闭，闭包捕获变 by-reference。
+    size_t continueTarget = chunk_.code.size();
+
     // BUG-AUDIT-CLOSE-1 fix: 循环体每次迭代退出时关闭 upvalue
     if (needCloseUpvalue && currentLocals_.size() > bodySlotBase && bodySlotBase <= 255) {
         chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
@@ -1073,8 +1127,8 @@ void Compiler::visitWhileStmt(WhileStmt& node) {
 
     chunk_.writeOp(OpCode::OP_POP, node.line);  // 弹出条件值（false 路径）
 
-    // 回填 continue 跳转：跳到 loopStart（条件检查）
-    uint16_t contTarget = safeCodeOffset(ctx.loopStart);
+    // 回填 continue 跳转：跳到 continueTarget（OP_CLOSE_UPVALUE 之前，执行关闭后再 OP_LOOP）
+    uint16_t contTarget = safeCodeOffset(continueTarget);
     for (size_t patch : ctx.continueJumps) {
         chunk_.code[patch + 1] = static_cast<uint8_t>(contTarget & 0xFF);
         chunk_.code[patch + 2] = static_cast<uint8_t>((contTarget >> 8) & 0xFF);
@@ -1107,6 +1161,21 @@ void Compiler::visitWhileStmt(WhileStmt& node) {
 }
 
 void Compiler::visitForStmt(ForStmt& node) {
+    // ── for 循环编译形状 ───────────────────────────────────────────────
+    //   <initializer>                (statement，自带栈平衡)
+    // loopStart:
+    //   <condition> | OP_TRUE        (无条件循环用永真)
+    //   OP_JUMP_IF_FALSE <exit>      (假则跳出)
+    //   OP_POP                        (弹条件值，true 路径)
+    //   <body>
+    //   <update>                      ← continue 跳转目标（先执行更新再判条件）
+    //   OP_JUMP <loopStart>
+    // exit:
+    //   OP_POP                        (弹条件值，false 路径)
+    // 通过 loopStack_ 登记 loopStart/exitJumpPatch，使循环体内的 break 回填到 exit、
+    // continue 回填到 update 之后；tryDepth_ 一并记录，保证 try 内 break/continue
+    // 先发射 OP_TRY_END 弹出异常处理器（见 visitTryStmt）。
+
     // V3 fix: 保存局部变量映射，for 循环内声明的变量不泄漏到外层作用域
     auto savedLocals = currentLocals_;
 
@@ -1139,9 +1208,19 @@ void Compiler::visitForStmt(ForStmt& node) {
     // 对齐 IR 路径 leaveBlockScope 的 CLOSE_UPVALUE 发射语义。
     size_t bodySlotBase = currentLocals_.size();
     bool needCloseUpvalue = inFunction_;
+    // AUDIT-P2-CORRECT fix: 记录到 LoopContext 供 visitBreakStmt 发射 OP_CLOSE_UPVALUE
+    loopStack_.back().bodySlotBase = bodySlotBase;
+    loopStack_.back().needCloseUpvalue = needCloseUpvalue;
 
     // 编译循环体
     compileStatement(node.body.get());
+
+    // AUDIT-P1-CORRECT fix: updateStart（continue 目标）必须在 OP_CLOSE_UPVALUE 之前，
+    // 使 continue 跳到 OP_CLOSE_UPVALUE 执行后再执行 update。
+    // 第三十八轮将 updateStart 放在 OP_CLOSE_UPVALUE 之后是方向性错误——
+    // continue 跳过 OP_CLOSE_UPVALUE 导致 upvalue 不关闭。
+    size_t updateStart = chunk_.code.size();
+
     // BUG-AUDIT-CLOSE-1 fix: 循环体每次迭代退出时关闭 upvalue（在 update 之前）
     if (needCloseUpvalue && currentLocals_.size() > bodySlotBase && bodySlotBase <= 255) {
         chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
@@ -1151,9 +1230,6 @@ void Compiler::visitForStmt(ForStmt& node) {
     // 取出本层循环的 break/continue 跳转列表
     auto ctx = std::move(loopStack_.back());
     loopStack_.pop_back();
-
-    // 记录 update 起始偏移（continue 跳转目标）
-    size_t updateStart = chunk_.code.size();
 
     // 编译更新表达式（compileStatement 会自动 POP 赋值留下的栈值）
     if (node.update) {
@@ -1208,6 +1284,18 @@ void Compiler::visitForStmt(ForStmt& node) {
 }
 
 void Compiler::visitFunDecl(FunDecl& node) {
+    // ── 函数编译总策略 ─────────────────────────────────────────────────
+    // 每个 FunDecl 编译为一个独立的 BytecodeChunk（函数体），并被闭包化：
+    //   emit OP_CLOSURE <arity> <upvalueCount> <upvalue表> 把函数 chunk 包成运行时闭包值。
+    // 函数体帧布局遵循调用约定 [this][fields][args][locals]（见 VMCalls.cpp）：
+    //   形参按声明顺序从局部槽 0 起分配；必需参数个数写入 chunk_.requiredArity，
+    //   默认参数在调用侧（visitFunCall）按需补发，这里只登记其常量索引。
+    // 嵌套函数（isInner）会先把外层 currentLocals_ 降级为 outerLocals_，供
+    //   内层 collectFreeVars/resolveUpvalue 检测并透传闭包捕获（见上文文件头）。
+    // 关键不变量：函数编译是完全可重入的——所有编译上下文（chunk_/currentLocals_/
+    // currentUpvalues_/loopStack_/tryDepth_ 等）必须在进入/离开本函数时正确保存与
+    // 恢复，否则嵌套定义会污染外层上下文。
+
     // H5 fix: 记录是否为内嵌函数（在函数体内定义的函数）
     bool isInner = inFunction_;
 
@@ -1507,6 +1595,16 @@ void Compiler::visitBreakStmt(BreakStmt& node) {
     int tryDepthInLoop = tryDepth_ - loopStack_.back().tryDepthAtStart;
     for (int i = 0; i < tryDepthInLoop; ++i) {
         chunk_.writeOp(OpCode::OP_TRY_END, node.line);
+    }
+    // AUDIT-P2-CORRECT fix: break 跳出循环时需关闭循环体内声明的闭包捕获变量的
+    // upvalue，对齐正常迭代退出时的 OP_CLOSE_UPVALUE 发射。OP_CLOSE_UPVALUE
+    // bodySlotBase 关闭 slot >= bodySlotBase 的全部 open upvalues（含嵌套块变量）。
+    // 原 visitBreakStmt 直接发 OP_JUMP 跳到 breakTarget（在 OP_CLOSE_UPVALUE 之后），
+    // 跳过 upvalue 关闭，导致闭包捕获变 by-reference（三后端不一致）。
+    const LoopContext& loopCtx = loopStack_.back();
+    if (loopCtx.needCloseUpvalue && loopCtx.bodySlotBase <= 255) {
+        chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
+        chunk_.write(static_cast<uint8_t>(loopCtx.bodySlotBase), node.line);
     }
     // 发射 OP_JUMP，目标在循环编译完成后回填
     size_t patch = chunk_.code.size();
@@ -1833,7 +1931,10 @@ void Compiler::visitTryStmt(TryStmt& node) {
     //   OP_THROW                              ← re-throw（异常值在栈顶）
     // afterFinally:
     //
-    // 已知限制：break/continue/return 不会执行 finally（三后端一致）。
+    // 已知限制：break/continue 时 finally 块三后端不一致——Interpreter 会执行
+    // finally（break/continue 走 loopFlow_ 状态标志，try 块正常完成后继续执行
+    // finally），StackVM/RegisterVM 跳过 finally（break/continue 发射 OP_TRY_END
+    // 弹出 handler 后直接跳转到循环目标）。return 三后端均跳过 finally（一致）。
     // 异常值在异常路径的 finally 执行期间保留在栈顶（Block 是栈平衡的），
     // OP_THROW pop 并 re-throw。若 finally 自身 throw，throwException 会截断
     // 栈到外层 handler 的 stackBase（丢弃原异常值），新异常正常传播。
@@ -2390,6 +2491,18 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
 }
 
 void Compiler::visitClassDecl(ClassDecl& node) {
+    // ── 类编译总策略 ───────────────────────────────────────────────────
+    // 类在运行时是一个闭包值（携带方法表）。编译分三步：
+    //   1) 字段布局：先收集父类字段（classFieldNames_ 中查 superClassName），再追加
+    //      子类自有字段，得到 [父类字段..., 子类字段...] 完整顺序——这是运行时的实例
+    //      槽布局，决定 OP_GET_FIELD/OP_SET_FIELD 的索引含义（见 VMContainers.cpp）。
+    //   2) 发射 OP_CLASS_NEW <fieldCount> 创建空实例，随后对每个实例字段补发
+    //      OP_INIT_FIELD <fieldIdx> 写入由字段初始化表达式求值得到的默认值。
+    //   3) 方法编译：每个方法作为嵌套 FunDecl 编译为独立 chunk，并以闭包形式挂到实例
+    //      方法表（供 OP_METHOD_CALL 通过 this 派发），同时记录到 classFieldNames_
+    //      供其子类继承字段顺序。
+    // 类声明本身 emit 一个“类对象值”到栈顶，由调用方（声明语句）消费或 POP。
+
     // 类声明：发射 OP_CLASS_NEW + OP_INIT_FIELD 初始化字段 + 编译方法
     uint16_t nameIdx = identifierIndex(node.name);
 

@@ -334,6 +334,17 @@ Value Interpreter::constructClassInstance(FunCall& node) {
         cls = &classIt->second;  // 重绑定指针到新位置
         initMethod = findMethod(*cls, "init");
 
+        // AUDIT-P2-CORRECT fix: 类重定义后参数签名可能变化，需重新校验 argValues 数量。
+        // 原实现仅在求值前用旧 initMethod 校验，求值后重新查找 initMethod 但未重新校验，
+        // 导致新 init 参数更少时多余参数被静默忽略，参数更多时缺失参数走 null 路径。
+        if (initMethod && (argValues.size() < static_cast<size_t>(initMethod->requiredParamCount) ||
+                           argValues.size() > initMethod->params.size())) {
+            runtimeError(ErrorFormat::format("类 %s 在构造期间被重定义，参数数量不匹配（init 期望 %d-%zu 个，但传入了 %zu 个）",
+                cls->name.c_str(), initMethod->requiredParamCount, initMethod->params.size(),
+                argValues.size()),
+                node.line, node.column);
+        }
+
         // S2 fix: 统一使用 RecursionGuard RAII 管理递归深度
         if (recursionDepth_ + 1 >= MAX_RECURSION_DEPTH) {
             runtimeError(ErrorFormat::format("递归深度超过限制 (%d)", MAX_RECURSION_DEPTH), node.line, node.column);

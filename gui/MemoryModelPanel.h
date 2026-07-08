@@ -99,6 +99,8 @@ class MemoryModelPanel : public QWidget {
     Q_OBJECT
 public:
     explicit MemoryModelPanel(QWidget* parent = nullptr);
+    // AUDIT-P0 fix: 析构时反注册 IdeController 监听器。
+    ~MemoryModelPanel() override;
 
     /// 绑定到 IdeController（OPT-1: 同时注册 vmStateChanged 监听器，替代 500ms 轮询）
     /// 实现移至 .cpp（调用 addVmStateChangedListener 需 IdeController 完整类型定义）

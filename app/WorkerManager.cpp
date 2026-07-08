@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QSettings>
 #include <future>
 #include <chrono>
 #include <cstdlib>  // std::_Exit — terminate worker 后跳过析构退出进程
@@ -108,6 +109,7 @@ WorkerManager::~WorkerManager() {
     workerThread_.reset();
 }
 
+/// 恢复主线程输出/输入回调（worker 退出后调用），重建实时交互。
 void WorkerManager::setupMainCallbacks() {
     // 恢复主线程输出回调
     interpreter_->setOutputCallback([this](const std::string& text) {
@@ -121,6 +123,7 @@ void WorkerManager::setupMainCallbacks() {
 // Worker 线程管理
 // ============================================================
 
+/// 准备运行：设置模块加载器、构建 InterpreterWorker 并启动线程（调试时接入调试器）。
 bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, const std::string& filePath) {
     if (isRunning_) return false;
 
@@ -271,11 +274,13 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
     return true;
 }
 
+/// 启动 worker 线程执行（moveToThread 后 start），置 isRunning_ 状态。
 void WorkerManager::startWorker() {
     workerThread_->start();
     QMetaObject::invokeMethod(worker_.get(), "run", Qt::QueuedConnection);
 }
 
+/// 关闭前安全停止：超时内等待 worker 结束并清理，超时返回 false 交由 forceStop。
 bool WorkerManager::stopForClose(int timeoutMs) {
     debugger_->stop();
     if (workerThread_) {
@@ -306,6 +311,7 @@ bool WorkerManager::stopForClose(int timeoutMs) {
     return true;
 }
 
+/// 强制终止 worker 线程（quit+wait），用于 stopForClose 超时后的兜底清理。
 void WorkerManager::forceStop() {
     if (workerThread_) {
         // A5 fix: 协作式取消 — 通过 debugger_->stop() 设置 stopped_ 标志，
@@ -337,6 +343,9 @@ void WorkerManager::forceStop() {
             if (!workerThread_->wait(2000)) {
                 LOG_ERROR("Worker terminate 后 2 秒仍未退出，强制 _Exit", "IDE");
                 Logger::instance().flush();
+                // AUDIT-P2-CORRECT fix: _Exit 跳过析构，QSettings 未刷盘的写入会丢失
+                // （最近工作区、窗口布局、引导标记等）。显式 sync 确保持久化。
+                QSettings("MiniLang", "MiniLang IDE").sync();
                 std::_Exit(0);
             }
             worker_.reset();
@@ -355,6 +364,9 @@ void WorkerManager::forceStop() {
             // 跳过析构是安全的——比尝试析构损坏状态导致崩溃要好得多。
             // 先 flush Logger 确保诊断信息写入文件/控制台。
             Logger::instance().flush();
+            // AUDIT-P2-CORRECT fix: _Exit 跳过析构，QSettings 未刷盘的写入会丢失
+            // （最近工作区、窗口布局、引导标记等）。显式 sync 确保持久化。
+            QSettings("MiniLang", "MiniLang IDE").sync();
             std::_Exit(0);
         }
     }
@@ -367,6 +379,7 @@ void WorkerManager::forceStop() {
     setupMainCallbacks();
 }
 
+/// worker 线程结束后的清理：删除 worker/thread、恢复回调与 REPL 状态。
 void WorkerManager::cleanupWorker() {
     isRunning_ = false;
     isDebugRun_ = false;

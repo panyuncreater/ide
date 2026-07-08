@@ -23,11 +23,18 @@ on:
     branches: [ main, master ]
   schedule:
     - cron: '0 4 * * 0'   # 每周日自动运行覆盖率
-  workflow_dispatch: {}     # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      qt_version:
+        description: 'Qt version (override default, e.g. 6.10.2, 6.9.3)'
+        required: false
+        default: ''
 
 env:
   CMAKE_BUILD_TYPE: Release
-  QT_VERSION: '6.10.3'
+  # Qt 6.10.3 在线仓库暂缺 qt_base 包，回退到 6.10.2。
+  # 可通过 Actions → Run workflow → qt_version 手动覆盖。
+  QT_VERSION: ${{ inputs.qt_version != '' && inputs.qt_version || '6.10.2' }}
 
 jobs:
   # ============================================================
@@ -59,13 +66,13 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
       # 修复问题 17：ccache + GHA cache 加速构建
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1
+        uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ matrix.os }}-${{ env.CMAKE_BUILD_TYPE }}-${{ matrix.arch }}
 
@@ -161,7 +168,7 @@ jobs:
 
       - name: 上传测试结果（失败时）
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-results-${{ matrix.os }}
           path: |
@@ -193,7 +200,7 @@ jobs:
 
       - name: 上传安装包
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: minilang-ide-${{ matrix.os }}
           path: |
@@ -212,7 +219,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -241,7 +248,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -264,7 +271,7 @@ jobs:
         run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1
+        uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-Debug
 
@@ -288,7 +295,7 @@ jobs:
 
       - name: 上传覆盖率报告
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: code-coverage-windows
           path: |
@@ -317,7 +324,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -335,7 +342,7 @@ jobs:
         run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1
+        uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-Debug-coverage
 
@@ -370,7 +377,7 @@ jobs:
 
       - name: 上传覆盖率报告
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: code-coverage-linux
           path: |
@@ -397,12 +404,12 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1
+        uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-harness
 
@@ -439,7 +446,7 @@ jobs:
 
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -474,7 +481,7 @@ jobs:
 
       - name: 上传 cppcheck 报告
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cppcheck-report
           path: |
@@ -494,10 +501,14 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout 代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: 安装 clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: 安装 clang-format (18+)
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          sudo add-apt-repository "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs) main"
+          sudo apt-get update && sudo apt-get install -y clang-format
+          clang-format --version
 
       - name: clang-format 风格检查
         run: |

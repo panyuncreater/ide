@@ -22,6 +22,7 @@
 #include <QSplitter>
 #include <QGroupBox>
 #include <QMessageBox>
+#include <QApplication>  // QApplication::processEvents()（onTraceRunAll 长循环让出 UI 线程）
 #include <QFrame>
 #include <QStyle>  // style()->polish() / unpolish() 用于 QSS 动态属性刷新
 #include <QHeaderView>
@@ -38,6 +39,7 @@
 // 构造
 // ============================================================
 
+/// 构造 VM 栈沙盒面板：初始化双页结构、关卡数据与栈模型。
 VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(4, 4, 4, 4);
@@ -285,11 +287,16 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
 // setController
 // ============================================================
 
+/// 绑定 IDE 控制器，用于调用编译器/VM 等后端能力。
 void VmStackSandboxPanel::setController(IdeController* controller) {
+    // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
     controller_ = controller;
     if (controller_) {
         // 注册 VM 状态变更监听，VM 单步执行后自动刷新追踪视图
-        controller_->addVmStateChangedListener([this]() {
+        controller_->addVmStateChangedListener(this, [this]() {
             if (pageStack_ && pageStack_->currentIndex() == 1) {
                 refreshTraceViews();
             }
@@ -301,10 +308,18 @@ void VmStackSandboxPanel::setController(IdeController* controller) {
     }
 }
 
+// AUDIT-P0 fix: 析构时反注册监听器，避免 controller_ 持有悬垂 this 回调。
+VmStackSandboxPanel::~VmStackSandboxPanel() {
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
+}
+
 // ============================================================
 // 追踪页 UI 构建
 // ============================================================
 
+/// 构建「字节码跟踪」子页的 UI 与控件连接。
 void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     auto* v = new QVBoxLayout(host);
     v->setContentsMargins(0, 0, 0, 0);
@@ -416,10 +431,12 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
 // 关卡加载与按钮重建
 // ============================================================
 
+/// 关卡下拉切换回调：加载新关卡。
 void VmStackSandboxPanel::onLevelChanged(int index) {
     loadLevel(index);
 }
 
+/// 加载指定索引的关卡：重置栈/历史并刷新视图。
 void VmStackSandboxPanel::loadLevel(int index) {
     const auto& levels = SandboxLibrary::levels();
     if (index < 0 || index >= static_cast<int>(levels.size())) return;
@@ -449,6 +466,7 @@ void VmStackSandboxPanel::loadLevel(int index) {
     refreshLevelChips();
 }
 
+/// 依据当前关卡可用指令重建操作按钮。
 void VmStackSandboxPanel::rebuildOpButtons() {
     auto* host = qobject_cast<QGroupBox*>(opButtonsHost_);
     if (!host) return;
@@ -519,6 +537,7 @@ bool parseInt(const std::string& s, long long& out) {
 
 } // namespace
 
+/// 执行一条沙盒指令：更新栈与历史，并刷新相关视图。
 void VmStackSandboxPanel::executeOp(const SandboxOp& op) {
     if (halted_) {
         setFeedback(mlTr("已 HALT。请点击 [🔄 重置] 重新开始本关。"), true);
@@ -644,6 +663,7 @@ void VmStackSandboxPanel::executeOp(const SandboxOp& op) {
     }
 }
 
+/// 撤销上一步操作，回滚栈状态。
 void VmStackSandboxPanel::onUndo() {
     if (history_.empty() || snapshots_.empty()) {
         setFeedback(mlTr("没有可撤销的指令。"), true);
@@ -661,6 +681,7 @@ void VmStackSandboxPanel::onUndo() {
     setFeedback(mlTr("已撤销最后一条指令。"));
 }
 
+/// 重置当前关卡到初始状态。
 void VmStackSandboxPanel::onReset() {
     stack_.clear();
     history_.clear();
@@ -675,6 +696,7 @@ void VmStackSandboxPanel::onReset() {
     sandboxOpHintLabel_->setText(mlTr("💡 点击左侧指令按钮执行，下方会显示对应的真实 OpCode。"));
 }
 
+/// 校验当前栈状态是否匹配关卡目标答案。
 void VmStackSandboxPanel::onCheck() {
     QString diag;
     if (checkAnswer(&diag)) {
@@ -709,6 +731,7 @@ std::string levelToMiniLangSource(int levelIdx) {
 }
 } // namespace
 
+/// 用真实 StackVM 编译运行关卡代码，与学员操作结果对照验证。
 void VmStackSandboxPanel::onVerifyWithRealStackVM() {
     const auto& levels = SandboxLibrary::levels();
     if (currentLevelIndex_ < 0 || currentLevelIndex_ >= static_cast<int>(levels.size())) {
@@ -801,6 +824,7 @@ void VmStackSandboxPanel::onVerifyWithRealStackVM() {
 // 答案检查
 // ============================================================
 
+/// 比较当前栈与标准答案；diag 返回差异诊断信息。
 bool VmStackSandboxPanel::checkAnswer(QString* diag) const {
     const auto& levels = SandboxLibrary::levels();
     if (currentLevelIndex_ < 0 || currentLevelIndex_ >= static_cast<int>(levels.size())) {
@@ -863,6 +887,7 @@ bool VmStackSandboxPanel::checkAnswer(QString* diag) const {
 // UI 刷新（沙盒页）
 // ============================================================
 
+/// 刷新栈内容的可视化展示。
 void VmStackSandboxPanel::refreshStackView() {
     stackList_->clear();
     for (auto it = stack_.rbegin(); it != stack_.rend(); ++it) {
@@ -881,6 +906,7 @@ void VmStackSandboxPanel::refreshStackView() {
     // QGraphicsOpacityEffect 在频繁单步执行时会导致 opacity 卡 0 内容空白。
 }
 
+/// 刷新操作历史记录列表。
 void VmStackSandboxPanel::refreshHistoryView() {
     historyList_->clear();
     for (size_t i = 0; i < history_.size(); ++i) {
@@ -894,6 +920,7 @@ void VmStackSandboxPanel::refreshHistoryView() {
     }
 }
 
+/// 刷新指令执行输出/日志区。
 void VmStackSandboxPanel::refreshOutputView() {
     std::string joined;
     for (size_t i = 0; i < outputs_.size(); ++i) {
@@ -903,6 +930,7 @@ void VmStackSandboxPanel::refreshOutputView() {
     outputEdit_->setPlainText(QString::fromStdString(joined));
 }
 
+/// 设置反馈文本；isError 控制以错误样式（红）还是成功样式展示。
 void VmStackSandboxPanel::setFeedback(const QString& text, bool isError) {
     feedbackLabel_->setText(text);
     if (isError) {
@@ -914,6 +942,7 @@ void VmStackSandboxPanel::setFeedback(const QString& text, bool isError) {
     }
 }
 
+/// 返回某指令在操作历史中的可读展示文本。
 QString VmStackSandboxPanel::opDisplayText(const SandboxOp& op) const {
     QString name = QString::fromUtf8(sandboxOpTypeName(op.type));
     if (op.type == SandboxOpType::PUSH_INT || op.type == SandboxOpType::PUSH_STRING) {
@@ -922,6 +951,7 @@ QString VmStackSandboxPanel::opDisplayText(const SandboxOp& op) const {
     return name;
 }
 
+/// 返回某指令在按钮上的展示文本。
 QString VmStackSandboxPanel::opButtonText(const SandboxOp& op) const {
     QString name = QString::fromUtf8(sandboxOpTypeName(op.type));
     if (op.type == SandboxOpType::PUSH_INT) {
@@ -937,6 +967,7 @@ QString VmStackSandboxPanel::opButtonText(const SandboxOp& op) const {
 // 关卡芯片栏状态刷新
 // ============================================================
 
+/// 刷新关卡选择芯片（含完成/锁定状态标记）。
 void VmStackSandboxPanel::refreshLevelChips() {
     const auto& levels = SandboxLibrary::levels();
     auto& store = LearnerProgressStore::instance();
@@ -987,12 +1018,14 @@ void VmStackSandboxPanel::refreshLevelChips() {
 // 真实字节码追踪页：编译并加载
 // ============================================================
 
+/// 切换到字节码跟踪子页。
 void VmStackSandboxPanel::switchToTracePage() {
     pageStack_->setCurrentIndex(1);
     pageSandboxBtn_->setChecked(false);
     pageTraceBtn_->setChecked(true);
 }
 
+/// 从当前关卡提取/编译出字节码，供跟踪页单步执行。
 void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
     bytecodeList_->clear();
     bytecodeOffsets_.clear();
@@ -1092,6 +1125,7 @@ void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
     refreshTraceViews();
 }
 
+/// 「编译并加载」按钮：编译关卡代码并载入跟踪视图。
 void VmStackSandboxPanel::onCompileAndLoad() {
     loadBytecodeFromCurrentLevel();
 }
@@ -1100,11 +1134,14 @@ void VmStackSandboxPanel::onCompileAndLoad() {
 // 真实字节码追踪页：单步执行
 // ============================================================
 
+/// 跟踪页「单步」：执行下一条字节码并刷新寄存器/栈视图。
 void VmStackSandboxPanel::onTraceStep() {
     if (!controller_) {
         traceStatusLabel_->setText(mlTr("状态：未绑定 controller"));
         return;
     }
+    // AUDIT-P2 fix: onTraceRunAll 运行期间禁止单步（processEvents 重入守卫）
+    if (traceRunning_) return;
     if (!controller_->isVmInitialized()) {
         traceStatusLabel_->setText(mlTr("状态：VM 未初始化，请先「编译并加载」"));
         return;
@@ -1132,25 +1169,45 @@ void VmStackSandboxPanel::onTraceStep() {
     refreshTraceViews();
 }
 
+/// 跟踪页「全速运行」：连续执行到结束。
 void VmStackSandboxPanel::onTraceRunAll() {
     if (!controller_) {
         traceStatusLabel_->setText(mlTr("状态：未绑定 controller"));
         return;
     }
+    // AUDIT-P2 fix: 重入守卫——processEvents 期间用户可再次点击"运行到底"，
+    // 导致两个循环并发修改 VM 状态。同时禁用相关按钮防止 step/reset 重入。
+    if (traceRunning_) return;
     if (!controller_->isVmInitialized()) {
         traceStatusLabel_->setText(mlTr("状态：VM 未初始化，请先「编译并加载」"));
         return;
     }
 
+    traceRunning_ = true;
+    if (stepBtn_) stepBtn_->setEnabled(false);
+    if (resetTraceBtn_) resetTraceBtn_->setEnabled(false);
+    if (runAllBtn_) runAllBtn_->setEnabled(false);
+
     // 循环单步直到结束/错误，设上限防止死循环
     constexpr int kMaxSteps = 100000;
+    // AUDIT-P2 fix: 每 1000 步调用 processEvents 让 UI 重绘，避免长循环
+    // （如 for 10000 次 print）UI 完全冻结显示"未响应"。
+    constexpr int kYieldInterval = 1000;
     int stepCount = 0;
     auto result = IdeController::VmStepResult::OK;
     while (stepCount < kMaxSteps) {
         result = controller_->vmStep();
         if (result != IdeController::VmStepResult::OK) break;
         ++stepCount;
+        if ((stepCount % kYieldInterval) == 0) {
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        }
     }
+
+    traceRunning_ = false;
+    if (stepBtn_) stepBtn_->setEnabled(true);
+    if (resetTraceBtn_) resetTraceBtn_->setEnabled(true);
+    if (runAllBtn_) runAllBtn_->setEnabled(true);
 
     switch (result) {
         case IdeController::VmStepResult::FINISHED:
@@ -1171,11 +1228,14 @@ void VmStackSandboxPanel::onTraceRunAll() {
     refreshTraceViews();
 }
 
+/// 跟踪页「重置」：清空执行状态回到指令开头。
 void VmStackSandboxPanel::onTraceReset() {
     if (!controller_) {
         traceStatusLabel_->setText(mlTr("状态：未绑定 controller"));
         return;
     }
+    // AUDIT-P2 fix: onTraceRunAll 运行期间禁止重置（processEvents 重入守卫）
+    if (traceRunning_) return;
     controller_->vmReset();
     currentIp_ = 0;
     traceOutputEdit_->clear();
@@ -1187,6 +1247,7 @@ void VmStackSandboxPanel::onTraceReset() {
 // 真实字节码追踪页：视图刷新
 // ============================================================
 
+/// 刷新跟踪页的字节码、栈与寄存器全部视图。
 void VmStackSandboxPanel::refreshTraceViews() {
     if (!controller_) return;
 
@@ -1254,6 +1315,12 @@ void VmStackSandboxPanel::refreshTraceViews() {
     if (controller_->isVmInitialized()) {
         auto stack = controller_->getVmStack();
         bool isReg = controller_->isVmRegisterMode();
+        // AUDIT-P2 fix: 根据 isReg 动态设置 GroupBox 标题，避免 RegisterVM 模式下
+        // 标题"操作数栈"与内容"R0=..."不符导致教学误导。
+        if (auto* gb = qobject_cast<QGroupBox*>(traceStackView_->parentWidget())) {
+            gb->setTitle(isReg ? mlTr("寄存器窗口（R0-R31）")
+                               : mlTr("操作数栈（执行前）"));
+        }
         for (auto it = stack.rbegin(); it != stack.rend(); ++it) {
             QString text;
             if (isReg) {
@@ -1272,7 +1339,10 @@ void VmStackSandboxPanel::refreshTraceViews() {
             traceStackView_->addItem(text);
         }
         if (stack.empty()) {
-            traceStackView_->addItem(mlTr("（栈为空）"));
+            // AUDIT-P2 fix: RegisterVM 模式下显示"无寄存器值"而非"栈为空"，
+            // 与当前模式语义一致。
+            traceStackView_->addItem(isReg ? mlTr("（无寄存器值）")
+                                           : mlTr("（栈为空）"));
         }
     } else {
         traceStackView_->addItem(mlTr("（VM 未初始化）"));
@@ -1287,6 +1357,7 @@ void VmStackSandboxPanel::refreshTraceViews() {
     //    此处仅显示追踪页自身的状态信息。
 }
 
+/// 刷新寄存器表（如跟踪的是寄存器机模型时）。
 void VmStackSandboxPanel::refreshRegisterTable() {
     if (!controller_) {
         registerTable_->setRowCount(0);

@@ -37,5 +37,9 @@
     <file alias="minilang_icon_32.png">res/icons/minilang_icon_32.png</file>
     <file alias="minilang_icon_16.png">res/icons/minilang_icon_16.png</file>
     <file alias="minilang_gem.png">res/icons/minilang_gem.png</file>
+
+    <!-- MiniLang Warm Gem Icon (cream-bg, for welcome screen on #FDF6E3) -->
+    <file alias="minilang_icon_warm_96.png">res/icons/minilang_icon_warm_96.png</file>
+    <file alias="minilang_icon_warm_256.png">res/icons/minilang_icon_warm_256.png</file>
     </qresource>
 </RCC>

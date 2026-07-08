@@ -1,3 +1,10 @@
+/**
+ * @file PipelineViewer.h
+ * @brief 编译流水线可视化面板的类声明（功能：编译过程分步展示）
+ *
+ * 提供阶段切换、各阶段数据填充与源码行联动能力。
+ * 公开信号 sourceLineRequested 用于请求主窗口跳转到指定源码行。
+ */
 #pragma once
 
 #include <QWidget>
@@ -30,6 +37,7 @@ class IdeController;
 class PipelineViewer : public QWidget {
     Q_OBJECT
 public:
+/// 构造编译流水线面板；parent 为父控件。
     explicit PipelineViewer(QWidget* parent = nullptr);
 
     /// 绑定到 IdeController，所有数据从该 facade 获取
@@ -45,6 +53,7 @@ public:
     void onCursorPositionChanged(int line, int column);
 
 signals:
+/// 信号：请求主窗口跳转到指定源码行。
     void sourceLineRequested(int line);
 
 private:
@@ -82,17 +91,25 @@ private:
     int cursorColumn_ = 1;
 
     // 构造辅助
+/// 构建左侧/顶部阶段步骤条 UI。
     void buildStepBar(QWidget* host);
+/// 构建各编译阶段的堆叠页面容器。
     void buildStepPages();
 
     // 数据填充方法
+/// 填充源码页内容。
     void populateSource();
+/// 填充词法分析页内容。
     void populateTokens();
+/// 填充语法树摘要页内容。
     void populateAstSummary();
+/// 填充中间表示页内容。
     void populateIR();
+/// 填充字节码页内容。
     void populateBytecode();
 
     // 递归生成 AST 文本摘要
+/// 递归转储 AST 节点为缩进文本。
     void dumpAst(std::ostringstream& os, ASTNode* node, int depth, int maxDepth);
 
     // === UI 美化（第二十五轮） ===

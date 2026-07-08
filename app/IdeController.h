@@ -109,6 +109,11 @@ public:
     std::vector<CallStackEntry> getDebugCallStack() const {
         return debugCoord_.getDebugCallStack();
     }
+    /// AUDIT-P1 fix: 暴露调试暂停状态，供面板 autoTimer 在 resume 期间停止并发访问。
+    /// 调试运行中（resume 后 worker 活跃）时调用 getDebugCallStack/getDebugVariableSnapshot
+    /// 会与 worker 线程并发访问解释器内部数据结构（unordered_map/vector），导致 UB。
+    /// 面板应在 autoTimer 触发前检查 isDebugPaused() == true 才安全调用快照接口。
+    bool isDebugPaused() const { return debugCoord_.isPaused(); }
 
     // ---- 关键字接口（转发到 PipelineRunner.lexer）----
     const std::unordered_map<std::string, TokenType>& getKeywords() const { return pipeline_.lexer().keywords(); }
@@ -239,8 +244,23 @@ public:
     //   - debugCoord_::pausedAt 信号（Interpreter 调试暂停）
     //   - workerMgr_::workerFinished 信号（运行结束）
     using VmStateChangedCallback = std::function<void()>;
-    void addVmStateChangedListener(VmStateChangedCallback cb) {
-        vmStateChangedListeners_.push_back(std::move(cb));
+    /// AUDIT-P0 fix: 增加 owner 参数用于反注册。
+    /// owner 通常是注册面板的 this 指针，面板析构时调用 removeVmStateChangedListener(owner) 注销。
+    void addVmStateChangedListener(void* owner, VmStateChangedCallback cb) {
+        vmStateChangedListeners_.push_back({owner, std::move(cb)});
+    }
+    /// AUDIT-P0 fix: 反注册 VM 状态变更监听器。
+    /// 6 个面板（BytecodeTrace/CallStack/VariableInspector/BreakpointCondition/
+    /// MemoryModel/VmStackSandbox）在 setController 中注册捕获裸 this 的 lambda，
+    /// 面板析构后 controller 仍存活期间任何 notifyVmStateChanged 调用都会 UAF。
+    /// owner 为注册时传入的 this 指针，用于匹配注销。
+    /// 实现采用延迟清除：标记为空 std::function，notifyVmStateChanged 跳过空 cb。
+    void removeVmStateChangedListener(void* owner) {
+        for (auto& cb : vmStateChangedListeners_) {
+            if (cb.owner == owner) {
+                cb.fn = nullptr;
+            }
+        }
     }
 
     // A1 fix: 启用/禁用 RegisterVM 后端（同步 Compiler 与 VmStepper）
@@ -305,15 +325,19 @@ private:
     std::string currentFilePath_;
 
     // ---- OPT-1: VM 状态变更观察者订阅者列表 ----
-    // 5 个面板（CallStack/VariableInspector/BytecodeTrace/MemoryModel/BreakpointCondition）
-    // 在 setController 时注册回调，替代 500ms QTimer 轮询。notifyVmStateChanged 在
-    // 状态变更点迭代副本调用（副本避免回调中修改列表的迭代器失效）。
-    std::vector<VmStateChangedCallback> vmStateChangedListeners_;
+    // 6 个面板（CallStack/VariableInspector/BytecodeTrace/MemoryModel/BreakpointCondition/
+    // VmStackSandbox）在 setController 时注册回调，替代 500ms QTimer 轮询。
+    // AUDIT-P0 fix: 增加 owner 字段支持反注册，避免面板析构后 UAF。
+    struct VmStateChangedListener {
+        void* owner = nullptr;
+        VmStateChangedCallback fn;
+    };
+    std::vector<VmStateChangedListener> vmStateChangedListeners_;
     void notifyVmStateChanged() {
         // 迭代副本：回调可能触发面板刷新，间接修改订阅者列表（理论上不会，但防御性）。
         auto snapshot = vmStateChangedListeners_;
-        for (auto& cb : snapshot) {
-            if (cb) cb();
+        for (auto& lst : snapshot) {
+            if (lst.fn) lst.fn();
         }
     }
 

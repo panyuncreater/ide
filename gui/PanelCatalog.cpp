@@ -13,6 +13,7 @@
 // ============================================================
 // 4 大分类 + 全部叶子节点（与原 TeachingTreePanel::buildTree 一致）
 // ============================================================
+/// 返回全部面板分类树（含叶子面板元数据，静态数据）。
 const std::vector<PanelCategory>& PanelCatalog::categories() {
     static const std::vector<PanelCategory> kCategories = {
         {"入门导览", "🌱", {
@@ -51,6 +52,7 @@ const std::vector<PanelCategory>& PanelCatalog::categories() {
 // ============================================================
 // 按 id 查找 PanelEntry
 // ============================================================
+/// 按面板 id 在分类树中查找对应条目；未找到返回 nullptr。
 const PanelEntry* PanelCatalog::findById(const std::string& id) {
     for (const auto& cat : categories()) {
         for (const auto& leaf : cat.leaves) {
@@ -77,6 +79,7 @@ static bool startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
+/// 将学习活动 id 规范化为其对应的面板 id。
 std::string PanelCatalog::canonicalPanelId(const std::string& activityId) {
     // 别名：lab-01 ~ lab-99 → lab-manual
     if (startsWith(activityId, "lab-") && activityId != "lab-manual") {
@@ -109,6 +112,7 @@ std::string PanelCatalog::canonicalPanelId(const std::string& activityId) {
 // ============================================================
 // 所有叶子 id 列表（用于校验/枚举）
 // ============================================================
+/// 返回分类树中所有叶子面板的 id 列表。
 std::vector<std::string> PanelCatalog::allPanelIds() {
     std::vector<std::string> ids;
     for (const auto& cat : categories()) {

@@ -15,6 +15,10 @@
 //                   BUG-DBG-1 / BUG-CP-2 / BUG-MOD-1）
 // ============================================================
 
+/// 返回 Bug 狩猎题库的全部条目（静态单例），按难度分组：
+/// BEGINNER（5 道）/ INTERMEDIATE（4 道）/ EXPERT（6 道）。
+/// 每道题对应一个已修复的真实历史 Bug，含预测/验证用源码、提示与解析，
+/// 供 BugHuntPanel 渲染与交互。
 const std::vector<BugHuntItem>& BugHuntLibrary::items() {
     static const std::vector<BugHuntItem> kItems = {
         // ====================================================

@@ -34,7 +34,7 @@ public:
     DebugController() = default;
     ~DebugController() = default;
 
-    // Step mode control
+    // 步进模式控制：stepIn/stepOver/stepOut/resume/stop 设置各调试模式，setCurrentDepth 由解释器同步当前栈深度。
     void stepIn();
     void stepOver();
     void stepOut();
@@ -42,10 +42,10 @@ public:
     void stop();
     void setCurrentDepth(int depth);
 
-    // checkBreak: called by Interpreter before every AST node
+    // checkBreak：解释器在执行每个 AST 节点前调用，本桩据此判定是否记录一次暂停事件。
     void checkBreak(ASTNode* node);
 
-    // Breakpoint management
+    // 断点管理：增删查断点、批量设置、为断点附加条件表达式及条件求值器。
     void setBreakpoint(int line);
     void removeBreakpoint(int line);
     bool hasBreakpoint(int line) const;
@@ -53,18 +53,18 @@ public:
     void setBreakpointCondition(int line, const std::string& cond);
     void setConditionEvaluator(std::function<bool(const std::string&)> eval);
 
-    // Callbacks
+    // 回调注册：变量快照与调用栈采集回调，供暂停时记录上下文。
     void setVariableCallback(std::function<std::vector<VariableSnapshot>()> cb);
     void setCallStackCallback(std::function<std::vector<CallStackEntry>()> cb);
     std::vector<VariableSnapshot> getVariableSnapshot() const;
     std::vector<CallStackEntry> getCallStack() const;
 
-    // State queries
+    // 状态查询：运行态/暂停态以及整体复位。
     bool isRunning() const;
     bool isPaused() const;
     void reset();
 
-    // Test access: recorded data
+    // 测试访问接口：暴露累计的暂停次数、行号、深度与完整事件快照，供测试断言。
     int pauseCount() const;
     const std::vector<int>& pauseLines() const;
     const std::vector<int>& pauseDepths() const;
@@ -72,6 +72,7 @@ public:
     int maxDepthSeen() const;
 
 private:
+    // 每实例调试状态：当前模式、断点集合、条件、栈深度跟踪与各帧/行号去重标志。
     StepMode mode_ = StepMode::MODE_RUN;
     std::set<int> breakpoints_;
     std::map<int, std::string> breakpointConditions_;

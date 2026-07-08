@@ -1,3 +1,9 @@
+/**
+ * @file ExceptionFlowPanel.h
+ * @brief 异常流转面板的类声明（功能：异常传播可视化）
+ *
+ * 提供场景与阶段两个视角的异常流程讲解。
+ */
 #pragma once
 
 // ============================================================
@@ -41,6 +47,7 @@ struct ExceptionScenario {
 /// ExceptionFlowLibrary — 静态教学场景库
 class ExceptionFlowLibrary {
 public:
+/// 返回异常场景数据（静态数据）。
     static const std::vector<ExceptionScenario>& scenarios();
 };
 
@@ -57,6 +64,7 @@ struct ExceptionPhaseDoc {
 /// ExceptionPhaseLibrary — 静态传播阶段图解库
 class ExceptionPhaseLibrary {
 public:
+/// 返回异常阶段文档（静态数据）。
     static const std::vector<ExceptionPhaseDoc>& phases();
 };
 
@@ -65,9 +73,11 @@ public:
 class ExceptionFlowPanel : public QWidget {
     Q_OBJECT
 public:
+/// 构造异常流转面板；parent 为父控件。
     explicit ExceptionFlowPanel(QWidget* parent = nullptr);
 
 signals:
+/// 信号：请求载入示例代码。
     void loadSampleRequested(const QString& code);
 
 private:
@@ -86,9 +96,11 @@ private:
 
     /// 构造辅助
     void buildScenarioPage(QWidget* host);
+/// 构建异常阶段子页。
     void buildPhasePage(QWidget* host);
 
     /// 填充详情
     void populateScenarioDetail(int index);
+/// 填充阶段详情。
     void populatePhaseDetail(int index);
 };

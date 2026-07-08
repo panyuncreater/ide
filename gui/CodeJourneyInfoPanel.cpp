@@ -1,3 +1,10 @@
+/**
+ * @file CodeJourneyInfoPanel.cpp
+ * @brief 代码之旅信息面板实现（功能：学习历程概览）
+ *
+ * 职责：以可视化方式展示学习者的整体进度、里程碑与下一步建议，
+ * 作为学习路径的情感化概览入口。
+ */
 #include "gui/CodeJourneyInfoPanel.h"
 #include "gui/I18n.h"
 #include "gui/TeachingTheme.h"
@@ -11,6 +18,12 @@
 #include <QShowEvent>
 
 #include "Label.h"   // QFluentKit（TitleLabel）
+
+// ============================================================
+// CodeJourneyInfoPanel 实现
+// 用一张静态 HTML 信息图展示「代码的生命旅程」编译管线（源码→Token→
+// AST→IR→字节码→输出），并提供 6 个阶段跳转按钮与完成状态跟踪。
+// ============================================================
 
 CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
     : QWidget(parent) {
@@ -76,6 +89,7 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
 // 完成判断标准 — 点进面板观看即算完成
 // ============================================================
 
+/// 面板显示时刷新历程数据。
 void CodeJourneyInfoPanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     // 首次显示即标记完成（用户点进来观看就算完成）
@@ -84,6 +98,7 @@ void CodeJourneyInfoPanel::showEvent(QShowEvent* event) {
     }
 }
 
+/// 标记当前里程碑/活动已完成并刷新。
 void CodeJourneyInfoPanel::markCompleted() {
     if (journeyCompleted_) return;
     journeyCompleted_ = true;
@@ -91,6 +106,7 @@ void CodeJourneyInfoPanel::markCompleted() {
     emit journeyCompleted();
 }
 
+/// 重新计算并刷新进度展示。
 void CodeJourneyInfoPanel::refreshProgress() {
     if (!progressLabel_) return;
     QString html;
@@ -112,6 +128,7 @@ void CodeJourneyInfoPanel::refreshProgress() {
     progressLabel_->setText(html);
 }
 
+/// 生成学习历程概览的 HTML 展示内容。
 QString CodeJourneyInfoPanel::buildJourneyHtml() const {
     // P2 视觉一致性：
     // - 5 阶段色（绿/蓝/紫/红）走 TeachingTheme::learningStageColor()，与

@@ -151,6 +151,11 @@ public:
     /// 获取调用栈（用于调试面板）
     const std::vector<CallFrame>& getCallStack() const;
 
+    /// AUDIT-P1 fix: 获取调用栈的值拷贝快照（用于跨线程调试回调）。
+    /// getCallStack() 返回 const 引用，跨线程遍历期间 worker 可能 push_back/pop_back
+    /// 导致迭代器失效。此方法返回值拷贝，调用方可在锁外安全遍历。
+    std::vector<CallFrame> getCallStackSnapshot() const;
+
     /// 在当前环境中求值单个表达式（用于条件断点，不触发调试检查）
     Value evaluateExpr(ASTNode* node);
 

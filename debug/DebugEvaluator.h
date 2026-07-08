@@ -21,6 +21,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <chrono>
 #include "common/Logger.h"
 
 class DebugEvaluator {
@@ -28,7 +29,9 @@ public:
     using ConditionCallback = std::function<bool(const std::string&)>;
 
     DebugEvaluator() = default;
-    ~DebugEvaluator() = default;
+    // AUDIT-P2-CORRECT fix: 析构等待所有锁外 callback 完成，避免析构期间
+    // worker 线程仍在执行 evaluate 的锁外 callback_ 导致 UAF。
+    ~DebugEvaluator() { waitCallbackIdle(); }
 
     /// 设置条件求值回调（由 IDE 注入，回调内部可达 VM/Interpreter 状态）
     /// 线程安全：mutex 保护，可与 evaluate() 并发调用
@@ -76,8 +79,18 @@ public:
     }
 
     /// 等待正在执行的 callback 完成（用于析构前安全等待）
+    // AUDIT-P2-CORRECT fix: 添加超时上限（3 秒），对齐 DebugController::waitCallbacksIdle。
+    // 原实现无限 spin-wait，若 callback 进入死循环，析构永久阻塞。
     void waitCallbackIdle() const {
+        constexpr int MAX_WAIT_MS = 3000;
+        auto start = std::chrono::steady_clock::now();
         while (activeCallbackCount_.load(std::memory_order_acquire) > 0) {
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - start).count() > MAX_WAIT_MS) {
+                Logger::Warning("DebugEvaluator::waitCallbackIdle 超时（callback 可能挂死），"
+                                "继续析构（风险：worker 线程可能仍在执行 callback）", "Debugger");
+                break;
+            }
             std::this_thread::yield();
         }
     }

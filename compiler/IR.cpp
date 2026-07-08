@@ -1127,8 +1127,11 @@ void AstIRBuilder::visitWhileStmt(WhileStmt* node) {
     uint32_t startLabel = ir_->allocLabel();
     uint32_t exitLabel = ir_->allocLabel();  // L1 fix: JUMP_IF_FALSE 目标（条件值在栈上）
     uint32_t endLabel = ir_->allocLabel();   // break 目标（栈已空，无需 POP）
-    // while 的 continue 目标 = 条件检查点（startLabel）
-    loopStack_.push_back({ startLabel, endLabel, startLabel, tryDepth_ });
+    // AUDIT-P1 fix: continue 目标必须在 leaveBlockScope（CLOSE_UPVALUE）之后，
+    // 否则 continue 跳过 upvalue 关闭，闭包捕获的循环局部变量变为 by-reference。
+    // 对齐 for 循环的 continueLabel（在 leaveBlockScope 之后）。
+    uint32_t continueLabel = ir_->allocLabel();
+    loopStack_.push_back({ startLabel, endLabel, continueLabel, tryDepth_ });
     emitIR(IROp::LABEL, { IROperand::label(startLabel) }, node->line);
     IROperand cond = visitNode(node->condition.get());
     // L1 fix: JUMP_IF_FALSE peek 不 pop，条件值残留在栈上。
@@ -1139,9 +1142,20 @@ void AstIRBuilder::visitWhileStmt(WhileStmt* node) {
     emitIR(IROp::POP, {}, node->line);  // 循环体路径：POP 消费条件值
     // 循环体（限制5：块作用域包裹）
     if (inFunction_) enterBlockScope();
+    // AUDIT-P2-CORRECT fix: 记录 body block scope 的 slotBase 供 visitBreakStmt
+    // 发射 CLOSE_UPVALUE（对齐 Compiler.cpp 的 bodySlotBase 记录）
+    if (inFunction_ && !blockScopes_.empty()) {
+        loopStack_.back().bodySlotBase = blockScopes_.back().slotBase;
+        loopStack_.back().needCloseUpvalue = true;
+    }
     // BUG-IR-POP-2 fix: 使用 visitStatement 统一处理表达式语句 POP，
     // 避免无花括号单语句体（如 `while (c) foo();`）循环内栈泄漏导致栈溢出。
     visitStatement(node->body.get());
+    // AUDIT-P1-CORRECT fix: continueLabel 必须在 leaveBlockScope 之前，
+    // 使 continue 跳到 leaveBlockScope（CLOSE_UPVALUE）执行后再 JUMP。
+    // 第三十八轮将 continueLabel 放在 leaveBlockScope 之后是方向性错误——
+    // continue 跳过 leaveBlockScope 导致 upvalue 不关闭。
+    emitIR(IROp::LABEL, { IROperand::label(continueLabel) }, node->line);
     if (inFunction_) leaveBlockScope();
     emitIR(IROp::JUMP, { IROperand::label(startLabel) }, node->line);
     // 条件假路径：条件值在栈上（JUMP_IF_FALSE peek），POP 消费
@@ -1189,12 +1203,21 @@ void AstIRBuilder::visitForStmt(ForStmt* node) {
     }
     // 编译循环体（限制5：块作用域包裹）
     if (inFunction_) enterBlockScope();
+    // AUDIT-P2-CORRECT fix: 记录 body block scope 的 slotBase 供 visitBreakStmt
+    // 发射 CLOSE_UPVALUE（对齐 Compiler.cpp 的 bodySlotBase 记录）
+    if (inFunction_ && !blockScopes_.empty()) {
+        loopStack_.back().bodySlotBase = blockScopes_.back().slotBase;
+        loopStack_.back().needCloseUpvalue = true;
+    }
     // BUG-IR-POP-2 fix: 使用 visitStatement 统一处理表达式语句 POP，
     // 避免无花括号单语句体（如 `for (...) foo();`）循环内栈泄漏导致栈溢出。
     visitStatement(node->body.get());
-    if (inFunction_) leaveBlockScope();
-    // continue 目标：update 块入口
+    // AUDIT-P1-CORRECT fix: continueLabel 必须在 leaveBlockScope 之前，
+    // 使 continue 跳到 leaveBlockScope（CLOSE_UPVALUE）执行后再执行 update。
+    // 第三十八轮将 continueLabel 放在 leaveBlockScope 之后是方向性错误——
+    // continue 跳过 leaveBlockScope 导致 upvalue 不关闭。
     emitIR(IROp::LABEL, { IROperand::label(continueLabel) }, node->line);
+    if (inFunction_) leaveBlockScope();
     // 编译 update 表达式
     if (node->update) {
         visitNode(node->update.get());
@@ -2256,6 +2279,14 @@ void AstIRBuilder::visitBreakStmt(BreakStmt* node) {
     for (int i = 0; i < tryDepthInLoop; ++i) {
         emitIR(IROp::TRY_END, {}, node->line);
     }
+    // AUDIT-P2-CORRECT fix: break 跳出循环时需关闭循环体内声明的闭包捕获变量的
+    // upvalue，对齐正常迭代退出时的 leaveBlockScope（CLOSE_UPVALUE）发射。
+    // 原 visitBreakStmt 直接发 JUMP 到 endLabel（在 leaveBlockScope 之后），
+    // 跳过 upvalue 关闭，导致闭包捕获变 by-reference（三后端不一致）。
+    const auto& loopCtx = loopStack_.back();
+    if (loopCtx.needCloseUpvalue) {
+        emitIR(IROp::CLOSE_UPVALUE, { IROperand::imm(loopCtx.bodySlotBase) }, node->line);
+    }
     emitIR(IROp::JUMP, { IROperand::label(loopStack_.back().endLabel) }, node->line);
 }
 
@@ -2353,6 +2384,14 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
             }
             // AUDIT-BUG-F7 fix: catch 块在此编译（而非延后到统一位置），编译后立即恢复 varMap_。
             if (node->catchBlock) visitNode(node->catchBlock.get());
+            // AUDIT-P2-CORRECT fix: catch 块退出后立即关闭 catch 变量的 upvalue，
+            // 对齐 Compiler.cpp visitTryStmt（行 2141-2144）在 catch 块后立即发射 OP_CLOSE_UPVALUE。
+            // 原实现将 catch 变量 slot 记录到外层 BlockScope.localSlots，依赖外层块退出时
+            // leaveBlockScope 统一关闭，导致闭包捕获 catch 变量时 upvalue 快照时机晚于直接路径，
+            // 三后端语义不一致（StackVM 直接路径立即关闭，IR 路径延迟到外层块退出）。
+            // CLOSE_UPVALUE(slot) 关闭所有 slot >= catchVarSlot 的 open upvalue，
+            // 此时 catch 块内部 slot 已由 catch 块的 leaveBlockScope 关闭，仅 catch 变量本身未关闭。
+            emitIR(IROp::CLOSE_UPVALUE, { IROperand::imm(slot) }, node->line);
             if (hadSaved_f7) {
                 varMap_[node->catchVarName] = std::move(savedInfo_f7);
             } else {
@@ -2643,6 +2682,33 @@ void BytecodeIRBackend::resetState() {
 }
 
 bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFunction& ir) {
+    // ============================================================
+    // 单条 IR 指令 → 栈式 VM 字节码 的 lowering 核心。
+    // ------------------------------------------------------------
+    // 设计要点（关键算法，逐步说明）：
+    //   1. 栈式 VM 是「操作数栈机」：每条 IROp 对应固定次数的压栈/弹栈。
+    //      例如 ADD 弹 2 压 1，LOAD_CONST 压 1，POP 弹 1，JUMP 不碰栈。
+    //      因为 IR 是 SSA 风格（每个 vreg 只被定义一次、按定义顺序被使用），
+    //      操作数在运行时的入栈顺序与 IR 指令顺序天然一致，lowering 无需
+    //      显式维护「vreg→栈偏移」映射也能保证栈平衡——这正是栈式后端比
+    //      寄存器式后端简单的原因（寄存器式需在 vregToReg 阶段物化每个 vreg）。
+    //   2. 发射布局：每个 case 直接 push_back opcode，再按该指令的定长格式
+    //      push 操作数（2 字节小端 short 或 1 字节 slot）。变长指令（仅
+    //      OP_CLOSURE）在编译期已展开为「nameIdx + upvalueCount + 2*描述符」。
+    //   3. vregStackDepth_ 辅助表：对每条产生 dest vreg 的 load 指令，记录其
+    //      发射位置 (code offset)。它实际不用于正确性判定（见要点 1），而是作为
+    //      调试/潜在栈深度分析的辅助信息维护；绝不可据其反向推算栈偏移。
+    //   4. 控制流两遍法：LABEL 不产生字节码，仅写入 labelToOffset_；跳转类
+    //      （JUMP / JUMP_IF_FALSE）先 push opcode 并占位 2 字节操作数，把待回填
+    //      项加入 pendingJumps_。本函数（第一遍）结束后由 patchJumps()（第二遍）
+    //      查 labelToOffset_ 回填绝对/相对偏移（见 BUG-EXC-1：OP_TRY_BEGIN 用
+    //      相对偏移，其余用绝对偏移）。
+    //   5. 防御性边界检查：槽位/索引 >=256 或常量池索引越界时 Logger::Error
+    //      并返回 false，让 lower() 中止并向上传播错误，避免静态截断生成坏字节码。
+    //   6. WRITEBACK_*_VAR 的特殊处理：其 GLOBAL_SLOT 以 IMM_UINT 编码槽位号，
+    //      但栈式 VM 的 OP_WRITEBACK_*_VAR 把操作数当作「常量池中的变量名索引」，
+    //      故需经 slotToNameConstant() 转换为变量名常量索引（否则误读为未定义变量）。
+    // ============================================================
     // 辅助：从 globalNames 取名（索引越界时返回空串）
     auto globalName = [&](uint32_t idx) -> std::string {
         return idx < ir.globalNames.size() ? ir.globalNames[idx] : std::string{};
@@ -3526,6 +3592,18 @@ std::string IRToString(const IRFunction& ir) {
 // ============================================================
 // IR 优化 Pass 实现（方向二）
 // ============================================================
+// 各优化 pass 共同依赖的 IR 表示约定（理解下方算法的前提）：
+//   · IR 以基本块（IRBlock::instructions）为单位，函数 IRFunction 持有若干基本块；
+//     当前 pass 多为"块内"局部分析（不跨块传播），仅保守地在块边界重置摘要信息。
+//   · 指令 IRInstruction 形如 op + 操作数列表 operands。操作数约定：
+//       - 操作数[0]（首操作数）通常是"目标"dest vreg（纯计算/加载类指令）；
+//         STORE_*/JUMP 等指令首操作数可能是 slot/label 而非 vreg。
+//       - 其余操作数是源：VIRTUAL=SSA 风格虚拟寄存器(vreg，allocVReg 单调递增不复用)，
+//         CONSTANT=常量池索引，LOCAL_SLOT=局部槽，LABEL=跳转标签，GLOBAL_NAME/GLOBAL_SLOT=全局。
+//   · vreg 的 SSA 不变量：每个 vreg 应只被"定义"一次（见 loopUnrollingPass 的 vreg 重命名修复）。
+//     多数 pass 通过"建立 vreg→定义/值"映射并替换引用"来化简，而非修改指令语义。
+//   · 折叠/化简必须保守：带运行时副作用的指令（除零、溢出、LOAD_GLOBAL 未定义、字符串拼接、
+//     ADD 的 COW detach）不可被 DCE 随意删除，否则会抑制本应抛出的运行时错误（见 isPureCompute）。
 
 namespace {
 

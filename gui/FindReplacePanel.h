@@ -1,3 +1,9 @@
+/**
+ * @file FindReplacePanel.h
+ * @brief 查找/替换面板的类声明（编辑器内联查找替换）
+ *
+ * 依赖 CodeEditor 提供查找/替换能力；以非模态浮层形式呈现。
+ */
 #pragma once
 
 #include <QWidget>
@@ -22,6 +28,7 @@ class PrimaryPushButton;
 class FindReplacePanel : public QWidget {
     Q_OBJECT
 public:
+/// 构造查找/替换面板；editor 为关联编辑器。
     explicit FindReplacePanel(CodeEditor* editor, QWidget* parent = nullptr);
 
     /// 显示查找模式（仅查找行可见）
@@ -31,15 +38,21 @@ public:
     /// 关闭面板并清除高亮
     void closePanel();
     // AUDIT-BUG-E5 fix: 公开 onFindNext/onFindPrev 供 Ide 快捷键直接调用
+/// 查找下一个。
     void onFindNext();
+/// 查找上一个。
     void onFindPrev();
 
 protected:
+/// 键盘事件处理（Esc/回车）。
     void keyPressEvent(QKeyEvent* event) override;
 
 private slots:
+/// 执行替换。
     void onReplace();
+/// 全部替换。
     void onReplaceAll();
+/// 查找文本变化回调。
     void onFindTextChanged(const QString& text);
 
 private:

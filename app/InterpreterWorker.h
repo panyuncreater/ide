@@ -23,6 +23,15 @@ public:
     InterpreterWorker(std::shared_ptr<Interpreter> interp, std::shared_ptr<Block> ast)
         : interp_(std::move(interp)), ast_(std::move(ast)) {}
 
+    // AUDIT-P2-CORRECT fix: 析构兜底清空 interp_ 回调，防止未来回归——
+    // 若 worker 异常终止未走 run() 末尾的清空路径，interp_ 仍持有捕获 this 的悬垂 lambda。
+    ~InterpreterWorker() {
+        if (interp_) {
+            interp_->setOutputCallback([](const std::string&) {});
+            interp_->setInputCallback([](const std::string&) { return std::string(); });
+        }
+    }
+
 public slots:
     void run();
 

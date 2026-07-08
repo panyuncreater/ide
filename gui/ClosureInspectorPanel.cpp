@@ -276,6 +276,7 @@ ClosureInspectorPanel::ClosureInspectorPanel(QWidget* parent) : QWidget(parent) 
     }
 }
 
+/// 构建「闭包场景」子页 UI。
 void ClosureInspectorPanel::buildScenarioPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -303,6 +304,7 @@ void ClosureInspectorPanel::buildScenarioPage(QWidget* host) {
     });
 }
 
+/// 构建「捕获阶段」子页 UI。
 void ClosureInspectorPanel::buildPhasePage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -330,6 +332,7 @@ void ClosureInspectorPanel::buildPhasePage(QWidget* host) {
     });
 }
 
+/// 填充指定闭包场景的详细说明与示例代码。
 void ClosureInspectorPanel::populateScenarioDetail(int index) {
     const auto& scenarios = ClosureInspectorLibrary::scenarios();
     if (index < 0 || index >= static_cast<int>(scenarios.size())) {
@@ -369,6 +372,7 @@ void ClosureInspectorPanel::populateScenarioDetail(int index) {
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
+/// 填充指定捕获阶段的说明与图示。
 void ClosureInspectorPanel::populatePhaseDetail(int index) {
     const auto& phases = UpvaluePhaseLibrary::phases();
     if (index < 0 || index >= static_cast<int>(phases.size())) {

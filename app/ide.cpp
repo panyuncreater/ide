@@ -119,9 +119,25 @@
 #include "gui/GuidedTour.h"
 
 // ============================================================
+// ide.cpp — MiniLang IDE 主窗口实现
+// ------------------------------------------------------------
+// 实现 Ide 类（QMainWindow 子类），是整个 IDE 的 GUI 视图层：
+//   - 菜单 / 工具栏 / 统一标题栏 / 状态栏的构建与主题应用
+//   - 编辑器标签页、文件树、欢迎页的创建、切换与持久化
+//   - 运行/调试/VM 单步等按钮槽：转发到 IdeController（Facade）协调
+//     PipelineRunner / WorkerManager / DebugCoordinator / VmStepper 完成
+//     编译-运行-调试流水线
+//   - 输出面板、错误列表、字节码/IR/Token 可视化的刷新
+//   - 19 个教学增强面板的懒加载与 centerStack_ 路由
+// 本文件只负责界面与交互编排，所有业务逻辑委托给 IdeController 及其协作类，
+// 不持有解释器/编译器核心状态。
+// ============================================================
+
+// ============================================================
 // Static helpers
 // ============================================================
 
+/// 递归填充文件树子节点：仅列出 .mini/.ml 文件与子目录，设置 Fluent 图标与完整路径 tooltip。
 static void populateDirChildren(QTreeWidget* tree, QTreeWidgetItem* parentItem,
                                 const QString& dirPath, int depth) {
     if (depth > 8) return;
@@ -158,6 +174,7 @@ static void populateDirChildren(QTreeWidget* tree, QTreeWidgetItem* parentItem,
     }
 }
 
+/// 解析文件树右键菜单的目标目录：目录自身取其路径，文件则取其父目录路径。
 static QString resolveTreeContextMenuTargetDir(QTreeWidget* tree, QTreeWidgetItem* item) {
     if (!item) return QString();
     bool isDir = item->data(0, Qt::UserRole + 1).toBool();
@@ -359,6 +376,8 @@ static QString formatBytecodeHtml(const std::string& text) {
 // Constructor / Destructor
 // ============================================================
 
+/// 构造函数：构建标题栏/主界面/信号连接/文件树/状态栏，初始化主题、拖放与文件监视，
+/// 首次启动弹出欢迎向导；最后恢复布局并刷新标题与状态栏。
 Ide::Ide(QWidget* parent)
     : QMainWindow(parent) {
 
@@ -417,11 +436,11 @@ Ide::Ide(QWidget* parent)
     QSettings welcomeSettings;
     if (!welcomeSettings.value(kWelcomeCompletedKey, false).toBool()) {
         auto* wizard = new WelcomeWizard(this);
-        // Step 4 完成后自动展开 LearningPathPanel
-        // 注：showTeachingPanel 内部已对 "learning-path" 调用 refresh()，无需重复
-        connect(wizard, &WelcomeWizard::learningPathRequested, this, [this]() {
-            showTeachingPanel(QStringLiteral("learning-path"));
-        });
+        // AUDIT-P2 fix: 移除 learningPathRequested → showTeachingPanel 连接。
+        // Step4 按钮点击 emit learningPathRequested() 会同步触发 showTeachingPanel（第一次），
+        // 之后 accept() 返回 exec()，下方又无条件调用 showTeachingPanel（第二次），
+        // 导致 LearningPathPanel 被重建两次（refresh 22 个活动行 + 二次滑入动画）。
+        // 统一在 exec() 返回后展开，无论完成还是跳过都只调用一次。
         wizard->exec();
         welcomeSettings.setValue(kWelcomeCompletedKey, true);
         wizard->deleteLater();
@@ -431,6 +450,7 @@ Ide::Ide(QWidget* parent)
     }
 }
 
+/// 析构：保存当前窗口布局后释放资源（worker/解释器由协作类通过智能指针管理）。
 Ide::~Ide() {
     saveLayout();
 }
@@ -439,6 +459,7 @@ Ide::~Ide() {
 // Close event
 // ============================================================
 
+/// 关闭事件：存在未保存修改时弹出保存确认，用户取消则忽略关闭。
 void Ide::closeEvent(QCloseEvent* event) {
     if (!maybeSave()) {
         event->ignore();
@@ -511,6 +532,7 @@ void Ide::closeEvent(QCloseEvent* event) {
 // 第九轮：无边框窗口保留边缘拖拽调整大小能力
 // ============================================================
 
+/// Windows 原生事件：捕获 WM_NCHITTEST 实现无边框窗口的边缘拖拽与缩放。
 bool Ide::nativeEvent(const QByteArray& eventType, void* message, qintptr* result) {
 #ifdef Q_OS_WIN
     if (eventType == "windows_generic_MSG" || eventType == "windows_dispatcher_MSG") {
@@ -548,6 +570,7 @@ bool Ide::nativeEvent(const QByteArray& eventType, void* message, qintptr* resul
 // VM breakpoint sync
 // ============================================================
 
+/// 将编辑器中的断点集合同步到 VmStepper（VM 调试模式下使用）。
 void Ide::syncVmBreakpoints() {
     if (!codeEditor_) return;
     QSet<int> bps = codeEditor_->getBreakpoints();
@@ -564,6 +587,7 @@ void Ide::syncVmBreakpoints() {
 // Event filter: editor tab middle-click close + hover close button
 // ============================================================
 
+/// 事件过滤器：处理编辑器区文件拖放、标题栏双击最大化等全局交互。
 bool Ide::eventFilter(QObject* watched, QEvent* event) {
     // 第十二轮：统一标题栏拖拽（仅在非交互控件区域触发窗口拖动）
     if (watched == titleBar_) {
@@ -662,6 +686,7 @@ bool Ide::eventFilter(QObject* watched, QEvent* event) {
     return QMainWindow::eventFilter(watched, event);
 }
 
+/// 更新标签页关闭按钮显隐（仅悬停或激活标签显示）。
 void Ide::updateTabCloseButtons(int hoveredIndex) {
     int current = editorTabWidget_->currentIndex();
     for (int i = 0; i < editorTabWidget_->count(); ++i) {
@@ -675,6 +700,7 @@ void Ide::updateTabCloseButtons(int hoveredIndex) {
 // Multi-tab editor management
 // ============================================================
 
+/// 新建编辑器标签页：构建 CodeEditor/语法高亮/查找面板并连接信号，返回标签索引。
 int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
     EditorTabData data;
     // IDE-LIFE-01 fix: container 传入 editorTabWidget_ 作为 parent，防止 insertTab
@@ -757,6 +783,16 @@ int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
         controller_->setBreakpointCondition(line, condition.toStdString());
     });
 
+    // AUDIT-P2-CORRECT fix: 行号区点击切换断点时，若处于 Interpreter 调试暂停状态，
+    // 同步断点到 DebugController，避免新断点不生效/已删除断点仍触发。
+    // VM 模式无需处理（每次步进前 syncVmBreakpoints 会同步）。
+    connect(data.editor, &CodeEditor::breakpointsChanged,
+            this, [this]() {
+        if (controller_->isDebugPaused()) {
+            controller_->setBreakpoints(codeEditor_->getBreakpoints());
+        }
+    });
+
     data.editor->setCompletionWords(staticCompletionWords_);
 
     // Wire textChanged for debounce timers
@@ -813,6 +849,7 @@ int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
     return idx;
 }
 
+/// 切换到指定标签：同步活动编辑器、高亮器、文件路径与窗口标题。
 void Ide::switchToTab(int index) {
     if (index < 0 || index >= static_cast<int>(editorTabs_.size())) return;
     auto& data = editorTabs_[index];
@@ -828,6 +865,7 @@ void Ide::switchToTab(int index) {
     updateStatusBar();
 }
 
+/// 按绝对路径查找已打开的对应标签索引，未找到返回 -1。
 int Ide::findTabForFile(const QString& path) {
     QFileInfo targetFi(path);
     for (int i = 0; i < static_cast<int>(editorTabs_.size()); ++i) {
@@ -838,6 +876,7 @@ int Ide::findTabForFile(const QString& path) {
     return -1;
 }
 
+/// 将磁盘文件读入指定标签页：校验大小上限、去除 BOM、设置内容并启动文件监视。
 void Ide::loadFileIntoTab(int tabIndex, const QString& path) {
     if (tabIndex < 0 || tabIndex >= static_cast<int>(editorTabs_.size())) return;
     auto& data = editorTabs_[tabIndex];
@@ -885,6 +924,7 @@ void Ide::loadFileIntoTab(int tabIndex, const QString& path) {
     }
 }
 
+/// 当前标签切换响应：切换编辑器焦点、刷新关闭按钮与文件监视。
 void Ide::onCurrentTabChanged(int index) {
     if (index < 0 || index >= static_cast<int>(editorTabs_.size())) return;
     switchToTab(index);
@@ -894,6 +934,7 @@ void Ide::onCurrentTabChanged(int index) {
     setupFileWatcher(currentFilePath_);
 }
 
+/// 标签页关闭请求：提示保存后移除标签并清理关联状态。
 void Ide::onEditorTabCloseRequested(int index) {
     if (index < 0 || index >= static_cast<int>(editorTabs_.size())) return;
     auto& data = editorTabs_[index];
@@ -966,6 +1007,7 @@ void Ide::onEditorTabCloseRequested(int index) {
     switchToTab(newCurrent);
 }
 
+/// 中心分栏尺寸动画：在 startSizes 与 endSizes 间用 QVariantAnimation 平滑过渡（教学面板滑入/滑出用）。
 void Ide::animateCenterSplitter(const QList<int>& startSizes,
                                   const QList<int>& targetSizes,
                                   int durationMs) {
@@ -998,6 +1040,7 @@ void Ide::animateCenterSplitter(const QList<int>& startSizes,
 }
 
 
+/// 确保主编辑器区域可见（切回编辑器视图，隐藏其他中心面板）。
 void Ide::ensureEditorVisible() {
     // 任务2：三栏布局 — editorTabWidget_ 在 centerSplitter_ 中独立显示
     // 记录切换前的状态，用于判断是否需要重新分配 splitter 空间
@@ -1055,6 +1098,7 @@ void Ide::ensureEditorVisible() {
 // 教学面板树形导航：centerStack_ 切换（第十四轮重构）
 // ============================================================
 
+/// 懒加载指定教学面板（首次访问时构建并缓存）。
 void Ide::ensureTeachingPanelCreated(const QString& panelId) {
     // 懒加载：若面板已构造（在 panelToStackIndex_ 中）则直接返回
     if (panelToStackIndex_.contains(panelId)) return;
@@ -1064,6 +1108,7 @@ void Ide::ensureTeachingPanelCreated(const QString& panelId) {
     }
 }
 
+/// 显示指定教学面板：经 centerStack_ 路由并以滑入动画呈现。
 void Ide::showTeachingPanel(const QString& panelId) {
     // 懒加载：首次访问时构造面板
     ensureTeachingPanelCreated(panelId);
@@ -1179,6 +1224,13 @@ void Ide::showTeachingPanel(const QString& panelId) {
             {QStringLiteral("bytecode-trace"),      QStringLiteral("visited-bytecode-trace")},
             {QStringLiteral("exception-flow"),      QStringLiteral("visited-exception-flow")},
             {QStringLiteral("closure-inspector"),   QStringLiteral("visited-closure-inspector")},
+            // AUDIT-P1 fix: 以下 4 个面板无"通关"概念（工具/参考资料型），
+            // 进入浏览即视为"已查阅"，标记对应活动完成。否则这些活动永远不可完成，
+            // 导致阶段 1/2/3 的 stageProgress 无法达到 100%，通关状态不可达。
+            {QStringLiteral("syntax-explorer"),     QStringLiteral("syntax-explorer")},
+            {QStringLiteral("backend-compare"),     QStringLiteral("backend-compare")},
+            {QStringLiteral("ir-transform"),        QStringLiteral("ir-transform")},
+            {QStringLiteral("profile-dashboard"),   QStringLiteral("profile-dashboard")},
         };
         auto actIt = kBrowsePanelToActivity.constFind(panelId);
         if (actIt != kBrowsePanelToActivity.constEnd()) {
@@ -1210,6 +1262,7 @@ void Ide::showTeachingPanel(const QString& panelId) {
     syncViewMenuChecks();
 }
 
+/// 将中心区域切回主编辑器（隐藏欢迎页/教学面板）。
 void Ide::showEditorArea() {
     if (!centerStack_) return;
 
@@ -1263,6 +1316,7 @@ void Ide::showEditorArea() {
     syncViewMenuChecks();
 }
 
+/// 教学面板请求信号：按需创建并显示对应面板。
 void Ide::onTeachingPanelRequested(const QString& panelId) {
     // 教学树点击 → panelId 路由
     if (panelId == QStringLiteral("editor")) {
@@ -1275,6 +1329,7 @@ void Ide::onTeachingPanelRequested(const QString& panelId) {
     }
 }
 
+/// 将全局代码字号应用到所有已打开的编辑器。
 void Ide::applyCodeFontSizeToAllEditors() {
     // 遍历所有已打开的编辑器标签页，应用全局 codeFontSize_
     for (auto& tab : editorTabs_) {
@@ -1292,6 +1347,7 @@ void Ide::applyCodeFontSizeToAllEditors() {
     updateStatusBar();
 }
 
+/// 应用教学面板字号（代码字号 +2）到所有教学面板。
 void Ide::applyTeachingFontSize() {
     if (!centerStack_) return;
     // 教学阅读字号 = codeFontSize_ + 2（范围限制 [9, 34]）
@@ -1339,6 +1395,7 @@ void Ide::applyTeachingFontSize() {
     }
 }
 
+/// 编辑器标签页右键菜单：关闭/关闭其他/关闭全部等动作。
 void Ide::onEditorTabContextMenu(const QPoint& pos) {
     int idx = editorTabWidget_->tabBar()->tabAt(editorTabWidget_->tabBar()->mapFromGlobal(pos));
     if (idx < 0) return;
@@ -1369,6 +1426,7 @@ void Ide::onEditorTabContextMenu(const QPoint& pos) {
     }
 }
 
+/// 关闭除当前标签外的所有标签页。
 void Ide::onCloseOtherTabs() {
     int current = editorTabWidget_->currentIndex();
     for (int i = static_cast<int>(editorTabs_.size()) - 1; i >= 0; --i) {
@@ -1378,6 +1436,7 @@ void Ide::onCloseOtherTabs() {
     }
 }
 
+/// 关闭所有标签页。
 void Ide::onCloseAllTabs() {
     while (!editorTabs_.empty()) {
         onEditorTabCloseRequested(static_cast<int>(editorTabs_.size()) - 1);
@@ -1388,6 +1447,7 @@ void Ide::onCloseAllTabs() {
 // Welcome page
 // ============================================================
 
+/// 初始化欢迎页：构建最近工作区列表与快速开始入口。
 void Ide::initWelcomePage() {
     welcomePage_ = new QWidget;
     welcomePage_->setObjectName("welcomePage");
@@ -1443,7 +1503,7 @@ void Ide::initWelcomePage() {
     iconLabel->setAlignment(Qt::AlignCenter);
     {
         // 2026-07：新 Logo（宝石图标）替代旧 SVG
-        QIcon logoIcon(":/icons/minilang_logo.svg");
+        QIcon logoIcon(":/icons/minilang_icon_warm_256.png");
         QPixmap logoPixmap;
         if (!logoIcon.isNull()) {
             logoPixmap = logoIcon.pixmap(QSize(96, 96));
@@ -1606,12 +1666,14 @@ void Ide::initWelcomePage() {
     loadRecentWorkspaces();
 }
 
+/// 从持久化设置加载最近工作区列表。
 void Ide::loadRecentWorkspaces() {
     QSettings settings("MiniLang", "MiniLang IDE");
     recentWorkspaces_ = settings.value("recent/workspaces").toStringList();
     refreshRecentList();
 }
 
+/// 将目录加入最近工作区（去重并置顶）并持久化。
 void Ide::addRecentWorkspace(const QString& dir) {
     if (dir.isEmpty()) return;
     QString normalized = QDir(dir).absolutePath();
@@ -1623,6 +1685,7 @@ void Ide::addRecentWorkspace(const QString& dir) {
     refreshRecentList();
 }
 
+/// 刷新欢迎页/菜单中的最近工作区列表显示。
 void Ide::refreshRecentList() {
     if (!recentListWidget_) return;
     recentListWidget_->clear();
@@ -1651,6 +1714,7 @@ void Ide::refreshRecentList() {
 // 32px 高，白色背景，左侧图标+标题+路径，右侧最小化/最大化/关闭
 // ============================================================
 
+/// 构建统一标题栏：菜单、工具栏按钮与窗口控制（最小/最大/关闭）。
 void Ide::initTitleBar() {
     // ============================================================
     // 第十二轮：统一 36px 标题栏（融合菜单 + 工具栏 + 窗口控制）
@@ -2137,6 +2201,7 @@ void Ide::initTitleBar() {
 // UI initialization (ADS-based + ActivityBar + Pivot panels)
 // ============================================================
 
+/// 构建主界面骨架：菜单栏、活动栏、编辑器/底部/右侧面板与 dock 布局。
 void Ide::initUI() {
     setMinimumSize(800, 600);
     resize(1280, 800);
@@ -2690,6 +2755,9 @@ void Ide::initUI() {
                     {"ast-toy-level-1", "ast-toy-level-2", "ast-toy-level-3",
                      "ast-toy-level-4", "ast-toy-level-5", "ast-toy-level-6"})) {
                 learningPathPanel_->markActivityCompleted(QStringLiteral("ast-toy"));
+                // AUDIT-P1 fix: op-priority-challenge 路由到 ast-toy 面板，
+                // ast-toy 全部完成时同时标记 op-priority-challenge 完成。
+                learningPathPanel_->markActivityCompleted(QStringLiteral("op-priority-challenge"));
             }
         });
         return astBuilderToyPanel_;
@@ -2810,6 +2878,7 @@ void Ide::initUI() {
 // syncViewMenuChecks — 第九轮：视图菜单勾选状态与 dock 显隐双向同步
 // ============================================================
 
+/// 同步“视图”菜单中各面板的勾选状态与当前可见性。
 void Ide::syncViewMenuChecks() {
     if (syncingViewAction_) return;
     syncingViewAction_ = true;
@@ -2862,6 +2931,7 @@ void Ide::syncViewMenuChecks() {
 // loadCodeIntoMainEditor — 教学增强面板：将面板内代码加载到主编辑器
 // ============================================================
 
+/// 将给定源码文本载入主编辑器（教学示例/外部注入用）。
 void Ide::loadCodeIntoMainEditor(const QString& code) {
     if (code.isEmpty()) return;
     // 修复（issue 4）：教学面板（BugHunt/LabManual/SyntaxExplorer 等）请求加载代码时，
@@ -2918,6 +2988,7 @@ void Ide::loadCodeIntoMainEditor(const QString& code) {
 // Status bar initialization
 // ============================================================
 
+/// 初始化状态栏：行号/列号、运行状态、错误计数等指示控件。
 void Ide::initStatusBar() {
     auto* sb = statusBar();
     sb->setFixedHeight(24);
@@ -2951,6 +3022,7 @@ void Ide::initStatusBar() {
 // Fluent styling
 // ============================================================
 
+/// 应用 QFluentKit 主题 QSS 与调色板，统一整体视觉风格。
 void Ide::applyFluentStyle() {
     // ---- Register native widgets with QFluentKit style sheet manager ----
     if (fileTree_)         StyleSheet::registerWidget(fileTree_, Fluent::ThemeStyle::LIST_VIEW);
@@ -3497,6 +3569,7 @@ void Ide::applyFluentStyle() {
 // Status bar update (cursor position + save/run state)
 // ============================================================
 
+/// 根据当前光标位置与运行状态刷新状态栏文本。
 void Ide::updateStatusBar() {
     if (statusLineLabel_ && codeEditor_) {
         QTextCursor cur = codeEditor_->textCursor();
@@ -3540,6 +3613,7 @@ void Ide::updateStatusBar() {
 // Connections
 // ============================================================
 
+/// 连接主界面信号槽：菜单/工具栏/编辑器交互路由到对应槽函数。
 void Ide::initConnections() {
     connect(stepInAction_, &QAction::triggered, this, &Ide::onStepIn);
     connect(stepOverAction_, &QAction::triggered, this, &Ide::onStepOver);
@@ -3687,6 +3761,7 @@ void Ide::initConnections() {
 // File tree
 // ============================================================
 
+/// 初始化文件树控件（根工作区与展开/折叠策略）。
 void Ide::initFileTree() {
     connect(fileTree_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
         bool isDir = item->data(0, Qt::UserRole + 1).toBool();
@@ -3697,6 +3772,7 @@ void Ide::initFileTree() {
     });
 }
 
+/// 递归填充文件树：仅列出 .mini/.ml 文件与子目录。
 void Ide::populateFileTree() {
     fileTree_->clear();
     if (workspaceDir_.isEmpty()) return;
@@ -3715,6 +3791,7 @@ void Ide::populateFileTree() {
     rootItem->setExpanded(true);
 }
 
+/// 文件树项双击：打开对应文件到编辑器标签。
 void Ide::onFileTreeItemActivated(QTreeWidgetItem* item, int column) {
     Q_UNUSED(column);
     QString path = item->data(0, Qt::UserRole).toString();
@@ -3736,6 +3813,7 @@ void Ide::onFileTreeItemActivated(QTreeWidgetItem* item, int column) {
     }
 }
 
+/// 文件树右键菜单：新建文件/文件夹、重命名、删除。
 void Ide::onFileTreeContextMenu(const QPoint& pos) {
     QTreeWidgetItem* item = fileTree_->itemAt(pos);
     QMenu menu(this);
@@ -3787,6 +3865,7 @@ void Ide::onFileTreeContextMenu(const QPoint& pos) {
     else if (chosen == deleteAct) onDeleteInTree();
 }
 
+/// 在文件树目标目录新建 MiniLang 源文件。
 void Ide::onNewFileInTree() {
     QTreeWidgetItem* cur = fileTree_->currentItem();
     QString targetDir = resolveTreeContextMenuTargetDir(fileTree_, cur);
@@ -3823,6 +3902,7 @@ void Ide::onNewFileInTree() {
     populateFileTree();
 }
 
+/// 在文件树目标目录新建文件夹。
 void Ide::onNewFolderInTree() {
     QTreeWidgetItem* cur = fileTree_->currentItem();
     QString targetDir = resolveTreeContextMenuTargetDir(fileTree_, cur);
@@ -3849,6 +3929,7 @@ void Ide::onNewFolderInTree() {
     populateFileTree();
 }
 
+/// 重命名文件树中的文件或目录。
 void Ide::onRenameInTree() {
     QTreeWidgetItem* cur = fileTree_->currentItem();
     if (!cur || !cur->parent()) return;
@@ -3875,6 +3956,7 @@ void Ide::onRenameInTree() {
     populateFileTree();
 }
 
+/// 删除文件树选中的文件或目录（带确认）。
 void Ide::onDeleteInTree() {
     QTreeWidgetItem* cur = fileTree_->currentItem();
     if (!cur || !cur->parent()) return;
@@ -3896,6 +3978,7 @@ void Ide::onDeleteInTree() {
     populateFileTree();
 }
 
+/// 打开工作区目录：设置根路径、刷新文件树并持久化。
 void Ide::openWorkspace(const QString& dirPath) {
     QDir dir(dirPath);
     if (!dir.exists()) return;
@@ -3926,6 +4009,7 @@ void Ide::openWorkspace(const QString& dirPath) {
 // Layout save/restore (ADS)
 // ============================================================
 
+/// 保存当前窗口布局（dock/分栏尺寸）到 QSettings（防抖）。
 void Ide::saveLayout() {
     QSettings settings("MiniLang", "MiniLang IDE");
     if (dockManager_) {
@@ -3943,6 +4027,7 @@ void Ide::saveLayout() {
     }
 }
 
+/// 从 QSettings 恢复上次保存的窗口布局。
 void Ide::restoreLayout() {
     QSettings settings("MiniLang", "MiniLang IDE");
     if (dockManager_) {
@@ -3985,6 +4070,7 @@ void Ide::restoreLayout() {
 // Panel control (consolidated docks + Pivot switching)
 // ============================================================
 
+/// 显示底部面板并切到指定标签页（输出/错误/字节码等）。
 void Ide::showBottomPanel(int tabIndex) {
     if (!bottomContainer_) return;
     const bool wasHidden = !bottomVisible_;
@@ -4014,6 +4100,7 @@ void Ide::showBottomPanel(int tabIndex) {
     }
 }
 
+/// 隐藏底部面板。
 void Ide::hideBottomPanel() {
     if (!bottomContainer_) return;
     if (bottomVisible_) {
@@ -4039,6 +4126,7 @@ void Ide::hideBottomPanel() {
     syncViewMenuChecks();
 }
 
+/// 显示右侧面板并切到指定标签页（调试/IR/Token 等）。
 void Ide::showRightPanel(int tabIndex) {
     if (!rightDock_) return;
     const bool wasClosed = rightDock_->isClosed();
@@ -4064,20 +4152,24 @@ void Ide::showRightPanel(int tabIndex) {
     }
 }
 
+/// 隐藏右侧面板。
 void Ide::hideRightPanel() {
     if (rightDock_) rightDock_->toggleView(false);
     syncViewMenuChecks();
 }
 
+/// 切换底部面板显隐。
 void Ide::toggleBottomPanel() {
     if (bottomVisible_) hideBottomPanel(); else showBottomPanel();
 }
 
+/// 切换右侧面板显隐。
 void Ide::toggleRightPanel() {
     if (!rightDock_) return;
     rightDock_->toggleView(!rightDock_->isClosed() ? false : true);
 }
 
+/// 左侧区域切到文件树。
 void Ide::switchLeftToFileTree() {
     if (fileTreeDock_ && fileTreeDock_->isClosed())
         fileTreeDock_->toggleView(true);
@@ -4086,6 +4178,7 @@ void Ide::switchLeftToFileTree() {
     syncViewMenuChecks();
 }
 
+/// 左侧区域切到调试面板。
 void Ide::switchLeftToDebugPanel() {
     if (debugPanelDock_ && debugPanelDock_->isClosed())
         debugPanelDock_->toggleView(true);
@@ -4094,6 +4187,7 @@ void Ide::switchLeftToDebugPanel() {
     syncViewMenuChecks();
 }
 
+/// 打开独立的 AST 查看窗口。
 void Ide::showAstWindow() {
     if (!astWindow_) return;
     restoreAstWindowGeometry();
@@ -4105,12 +4199,14 @@ void Ide::showAstWindow() {
     }
 }
 
+/// 持久化 AST 窗口的几何位置与尺寸。
 void Ide::saveAstWindowGeometry() {
     if (!astWindow_) return;
     QSettings settings("MiniLang", "MiniLang IDE");
     settings.setValue("astWindow/geometry", astWindow_->saveGeometry());
 }
 
+/// 恢复 AST 窗口的几何位置与尺寸。
 void Ide::restoreAstWindowGeometry() {
     if (!astWindow_) return;
     QSettings settings("MiniLang", "MiniLang IDE");
@@ -4118,6 +4214,7 @@ void Ide::restoreAstWindowGeometry() {
     if (!geo.isEmpty()) astWindow_->restoreGeometry(geo);
 }
 
+/// 显示/隐藏调试控制按钮（运行/单步/停止）。
 void Ide::showDebugButtons(bool show) {
     if (debugButtonsVisible_ == show) return;
     debugButtonsVisible_ = show;
@@ -4132,6 +4229,7 @@ void Ide::showDebugButtons(bool show) {
     }
 }
 
+/// 显示/隐藏 VM 单步控制按钮。
 void Ide::showVmButtons(bool show) {
     if (vmButtonContainer_) vmButtonContainer_->setVisible(show);
     if (vmSepAction_) vmSepAction_->setVisible(show);
@@ -4149,6 +4247,7 @@ void Ide::showVmButtons(bool show) {
 // Output helpers
 // ============================================================
 
+/// 向输出面板追加文本（按级别着色并处理自动滚动）。
 void Ide::appendOutput(const QString& text, OutputLevel level) {
     // R15-3: VSCode 风格输出——文本级别前缀替代 Unicode 图标，更简洁的终端式排版。
     //   Plain（用户程序输出）：无前缀无时间戳，纯净正文
@@ -4198,6 +4297,7 @@ void Ide::appendOutput(const QString& text, OutputLevel level) {
     outputTextEdit_->append(html);
 }
 
+/// 向错误列表追加诊断项（带行/列与严重级别）。
 void Ide::appendError(const QString& text, int line, int column, DiagLevel level) {
     if (!errorPanelHasErrors_) {
         errorListWidget_->clear();
@@ -4243,6 +4343,7 @@ void Ide::appendError(const QString& text, int line, int column, DiagLevel level
     applyErrorFilter();   // 新增项需遵循当前过滤状态
 }
 
+/// 清空输出面板与错误列表。
 void Ide::clearOutput() {
     outputTextEdit_->clear();
     errorListWidget_->clear();
@@ -4250,6 +4351,7 @@ void Ide::clearOutput() {
     updateErrorBadge();
 }
 
+/// 更新错误计数徽标（仅在有错误时显示）。
 void Ide::updateErrorBadge() {
     int errors = 0, warnings = 0;
     for (int i = 0; i < errorListWidget_->count(); ++i) {
@@ -4266,6 +4368,7 @@ void Ide::updateErrorBadge() {
     bottomPivot_->setItemText("errors", label);
 }
 
+/// 按当前过滤器（错误/警告）刷新错误列表显示。
 void Ide::applyErrorFilter() {
     if (!errorListWidget_) return;
     bool showErr   = errFilterErrorBtn_   && errFilterErrorBtn_->isChecked();
@@ -4287,6 +4390,7 @@ void Ide::applyErrorFilter() {
     }
 }
 
+/// “清空输出”按钮槽：清空输出与错误面板。
 void Ide::onClearOutput() {
     clearOutput();
 }
@@ -4297,6 +4401,7 @@ void Ide::onClearOutput() {
 // Run / Debug
 // ============================================================
 
+/// 运行/调试前拦截：执行前端管线并检查是否含编译错误，有错误则展示诊断并返回 true。
 bool Ide::blockIfHasErrors() {
     // 第八轮：运行/调试前拦截编译错误，0 错误才允许执行
     if (!codeEditor_) return false;
@@ -4312,6 +4417,7 @@ bool Ide::blockIfHasErrors() {
     return false;
 }
 
+/// 实时语法检查（300ms 防抖触发）：重跑前端管线，清空旧错误并刷新错误列表与波浪下划线。
 void Ide::runRealTimeSyntaxCheck() {
     // 第八轮：实时语法检查（300ms 防抖触发）
     // 清空旧错误 → 全量扫描 → 按行号排序展示 → 更新波浪下划线（常驻不消失）
@@ -4393,6 +4499,8 @@ void Ide::runRealTimeSyntaxCheck() {
     }
 }
 
+/// 运行按钮槽：校验 REPL 状态、清空旧输出/错误标记、拦截编译错误后，
+/// 通过 controller_->prepareRun 启动 WorkerManager 执行当前源码。
 void Ide::onRun() {
     if (!codeEditor_) return;
     std::string source = codeEditor_->toPlainText().toStdString();
@@ -4441,6 +4549,8 @@ void Ide::onRun() {
     }
 }
 
+/// 调试按钮槽：与 onRun 类似，但以调试模式启动；收集编辑器断点及条件表达式，
+/// 通过 controller_->setupDebug 配置调试器后启动 worker。
 void Ide::onDebug() {
     if (!codeEditor_) return;
     std::string source = codeEditor_->toPlainText().toStdString();
@@ -4499,6 +4609,7 @@ void Ide::onDebug() {
     }
 }
 
+/// 调试单步进入：请求 DebugController 步入下一行。
 void Ide::onStepIn() {
     if (!codeEditor_) return;
     // BUG-DBG-AUDIT-8 fix: Interpreter 单步与 REPL 异步执行并发会竞争 Interpreter 的
@@ -4518,6 +4629,7 @@ void Ide::onStepIn() {
     }
 }
 
+/// 调试单步跳过：请求 DebugController 步过当前行。
 void Ide::onStepOver() {
     if (!codeEditor_) return;
     // BUG-DBG-AUDIT-8 fix: 同 onStepIn，REPL 执行期间拒绝 Interpreter 单步
@@ -4536,6 +4648,7 @@ void Ide::onStepOver() {
     }
 }
 
+/// 调试单步跳出：请求 DebugController 步出当前函数。
 void Ide::onStepOut() {
     if (!codeEditor_) return;
     // BUG-DBG-AUDIT-8 fix: 同 onStepIn，REPL 执行期间拒绝 Interpreter 单步
@@ -4554,6 +4667,7 @@ void Ide::onStepOut() {
     }
 }
 
+/// 调试继续：请求 DebugController 恢复运行直到下一断点。
 void Ide::onResume() {
     if (!codeEditor_) return;
     // BUG-DBG-AUDIT-8 fix: 同 onStepIn，REPL 执行期间拒绝 Interpreter 继续
@@ -4572,11 +4686,19 @@ void Ide::onResume() {
     }
 }
 
+/// 停止运行/调试：请求 WorkerManager 停止 worker 线程。
 void Ide::onStop() {
     controller_->stop();
 }
 
+/// 调试暂停信号槽：解释器在断点暂停时触发，高亮当前行、刷新调试信息与面板。
 void Ide::onPausedAt(int line) {
+    // AUDIT-P1-CORRECT fix: stale 信号防御。
+    // closeEvent 期间 stopForClose 唤醒 worker 退出，但 doPause 中已投递的 pausedAt
+    // QueuedConnection 仍在主线程队列。Ide 析构时处理 pending 事件会访问已析构的成员
+    // （codeEditor_/debugPanel_ 等），try/catch 无法捕获 UAF。
+    // 检查 controller_ 运行/暂停状态：worker 已停止且非调试暂停时说明是 stale 信号，丢弃。
+    if (!controller_->isRunning() && !controller_->isDebugPaused()) return;
     try {
         if (codeEditor_) codeEditor_->setCurrentLine(line);
         updateDebugInfo();
@@ -4590,6 +4712,7 @@ void Ide::onPausedAt(int line) {
     }
 }
 
+/// Worker 结束信号槽：恢复运行态 UI、清理调试面板残留数据（避免陈旧调用栈/变量）。
 void Ide::onWorkerFinished(bool wasDebug) {
     setRunningState(false);
     if (codeEditor_) {
@@ -4618,6 +4741,7 @@ void Ide::onWorkerFinished(bool wasDebug) {
 // Formatting
 // ============================================================
 
+/// “格式化”按钮槽：运行前端管线后调用 Formatter 重写当前编辑器内容。
 void Ide::onFormat() {
     if (!codeEditor_) return;
     std::string source = codeEditor_->toPlainText().toStdString();
@@ -4681,6 +4805,7 @@ void Ide::onFormat() {
 // Visualization (Token / IR / Bytecode) + AST
 // ============================================================
 
+/// “编译分析”按钮槽：执行编译并呈现字节码/IR/诊断。
 void Ide::onCompileAnalysis() {
     if (!codeEditor_) {
         InfoBar::warning(mlTr("编译分析"),
@@ -4721,17 +4846,20 @@ void Ide::onCompileAnalysis() {
     loadVisualizationForTab(0);
 }
 
+/// 右侧面板标签页切换：按需刷新对应可视化内容。
 void Ide::onRightTabChanged(int index) {
     // Legacy slot retained for header compatibility.
     // Right-panel switching is now driven by onRightPivotChanged.
     Q_UNUSED(index);
 }
 
+/// 活动栏项切换（按索引路由到对应面板/动作）。
 void Ide::onActivityChanged(int index) {
     // P0.5 注册制：保留为兼容存根；实际分发由 onActivityChangedById 处理
     Q_UNUSED(index);
 }
 
+/// 活动栏项切换（按面板 id 路由）。
 void Ide::onActivityChangedById(const QString& id) {
     // P0.5 注册制：新增面板只需在此追加 else-if 分支
     // 三面板完全互斥：每个分支显式隐藏另外两个 dock，显示自己的 dock
@@ -4786,6 +4914,7 @@ void Ide::onActivityChangedById(const QString& id) {
 // 第四档教学面板：跨面板跳转路由
 // ============================================================
 
+/// 跳转到指定教学面板并聚焦。
 void Ide::onJumpToPanel(const QString& panelId) {
     // P1-4 fix (F16): 统一跳转目标——既支持编辑器底层视图 id
     // (editor/tokens/ast/ir/bytecode/output)，也支持教学面板 id
@@ -4819,6 +4948,7 @@ void Ide::onJumpToPanel(const QString& panelId) {
     }
 }
 
+/// 活动栏请求信号：按请求的动作切换视图。
 void Ide::onActivityRequested(const QString& activityId) {
     // P2-1 fix: 通过 PanelCatalog 统一路由，消除原 22 项 if-else 链
     // 特殊活动（welcome / freeform-project）单独处理，其他走 canonicalPanelId 映射
@@ -4855,6 +4985,7 @@ void Ide::onActivityRequested(const QString& activityId) {
     // 其他未知 id 静默忽略（原行为一致）
 }
 
+/// 将教学面板包裹到统一的标题/容器外壳中，供 centerStack_ 路由显示。
 QWidget* Ide::wrapTeachingPanel(const QString& panelId,
                                  const QString& title,
                                  QWidget* panel) {
@@ -4916,6 +5047,7 @@ QWidget* Ide::wrapTeachingPanel(const QString& panelId,
 // onPanelGuidedTourRequested — 启动对应教学面板的新手引导
 // ============================================================
 
+/// 教学面板引导游请求：启动对应引导。
 void Ide::onPanelGuidedTourRequested(const QString& panelId) {
     // 面板可能尚未构造（懒加载），先确保创建
     ensureTeachingPanelCreated(panelId);
@@ -4933,10 +5065,17 @@ void Ide::onPanelGuidedTourRequested(const QString& panelId) {
         tour = bugHuntPanel_->createGuidedTour(this);
     }
     if (tour) {
+        // AUDIT-P0 fix: 连接 finished → deleteLater，避免 tour 对象永不释放。
+        // 原 onPanelGuidedTourRequested 中 tour 为局部变量不存储，完成/跳过后
+        // 仅 hideOverlay 隐藏 bubble_，tour 对象作为 Ide 子对象一直存活至 IDE 析构。
+        // 多次触发面板引导会累积多个 tour + bubble_ 对象，加剧 UAF 风险。
+        // finished 信号在 GuidedTour::skip 或走完所有步骤时发射（参见 GuidedTour.cpp）。
+        connect(tour, &GuidedTour::finished, tour, &QObject::deleteLater);
         tour->start();
     }
 }
 
+/// 右侧 Pivot 导航切换响应。
 void Ide::onRightPivotChanged(const QString& routeKey) {
     if (!rightStack_ || !rightPivot_) return;
     // Only auto-load when the right panel is actually visible
@@ -4950,6 +5089,7 @@ void Ide::onRightPivotChanged(const QString& routeKey) {
     loadVisualizationForTab(idx);
 }
 
+/// 底部 Pivot 导航切换响应。
 void Ide::onBottomPivotChanged(const QString& routeKey) {
     if (!bottomStack_) return;
     if (routeKey == "output") bottomStack_->setCurrentIndex(0);
@@ -4957,6 +5097,7 @@ void Ide::onBottomPivotChanged(const QString& routeKey) {
     else if (routeKey == "repl") bottomStack_->setCurrentIndex(2);
 }
 
+/// 根据当前标签类型加载对应可视化（AST/字节码/IR/Token）。
 void Ide::loadVisualizationForTab(int tabIndex) {
     if (!controller_->astRoot()) return;
 
@@ -5009,6 +5150,7 @@ void Ide::loadVisualizationForTab(int tabIndex) {
     }
 }
 
+/// 显示当前 AST 的树状视图。
 void Ide::onShowAstTree() {
     if (!codeEditor_) return;
     std::string source = codeEditor_->toPlainText().toStdString();
@@ -5021,6 +5163,7 @@ void Ide::onShowAstTree() {
 // VM debugging
 // ============================================================
 
+/// VM 单步按钮槽：先校验 VM 是否在运行 / REPL 是否占用，再按 STEP_IN 模式驱动 VmStepper。
 void Ide::onVmStep() {
     if (controller_->isVmRunning()) return;
     // BUG-ORCH-8 fix: REPL 异步执行期间 VM 步进会与 REPL 输出交错，且 Interpreter 被
@@ -5055,6 +5198,7 @@ void Ide::onVmStep() {
     handleVmStepResult(result);
 }
 
+/// VM 跨过按钮槽：按 STEP_OVER 模式驱动 VmStepper（同 onVmStep 的前置校验）。
 void Ide::onVmStepOver() {
     if (controller_->isVmRunning()) return;
     // BUG-ORCH-8 fix: 同 onVmStep，REPL 执行期间拒绝 VM 跨过操作
@@ -5087,6 +5231,7 @@ void Ide::onVmStepOver() {
     handleVmStepResult(result);
 }
 
+/// VM 跨出按钮槽：按 STEP_OUT 模式驱动 VmStepper（同 onVmStep 的前置校验）。
 void Ide::onVmStepOut() {
     if (controller_->isVmRunning()) return;
     // BUG-ORCH-8 fix: 同 onVmStep，REPL 执行期间拒绝 VM 跨出操作
@@ -5119,6 +5264,7 @@ void Ide::onVmStepOut() {
     handleVmStepResult(result);
 }
 
+/// VM 运行按钮槽：按 RUN 模式异步驱动 VmStepper（QTimer 分批执行），立即进入 RUNNING 态。
 void Ide::onVmRun() {
     if (controller_->isVmRunning()) return;
     // BUG-ORCH-8 fix: 同 onVmStep，REPL 执行期间拒绝 VM RUN 操作
@@ -5156,12 +5302,16 @@ void Ide::onVmRun() {
         vmStopAction_->setEnabled(true);
         runAction_->setEnabled(false);
         debugAction_->setEnabled(false);
+        formatAction_->setEnabled(false);
+        if (replPanel_) replPanel_->setInputEnabled(false);
         if (codeEditor_) codeEditor_->setReadOnly(true);
         return;
     }
     handleVmStepResult(result);
 }
 
+/// 统一处理 VmStepper 的步进结果：根据 OK/FINISHED/ERROR/PAUSED 等状态刷新
+/// 栈面板、全局变量、字节码高亮、源码行高亮并切换按钮可用性。
 void Ide::handleVmStepResult(IdeController::VmStepResult result) {
     switch (result) {
     case IdeController::VmStepResult::NOT_READY:
@@ -5176,6 +5326,9 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
         vmStepOutAction_->setEnabled(false);
         vmRunAction_->setEnabled(false);
         vmStopAction_->setEnabled(true);
+        formatAction_->setEnabled(false);
+        if (replPanel_) replPanel_->setInputEnabled(false);
+        if (codeEditor_) codeEditor_->setReadOnly(true);
         return;
     case IdeController::VmStepResult::ERROR: {
         // P0-3 fix (F10): 接入 ErrorHintEngine，VM 错误也附加教学性提示
@@ -5244,6 +5397,7 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
     }
 }
 
+/// 统一设置 VM 步进/运行/停止按钮的可用状态（running=true 时仅保留停止按钮可用）。
 void Ide::setVmStepActionsEnabled(bool enabled, bool running) {
     vmStepAction_->setEnabled(enabled);
     vmStepOverAction_->setEnabled(enabled);
@@ -5251,8 +5405,14 @@ void Ide::setVmStepActionsEnabled(bool enabled, bool running) {
     vmRunAction_->setEnabled(enabled);
     vmStopAction_->setEnabled(enabled && running);
     compileAnalysisAction_->setEnabled(enabled && !running);
+    // AUDIT-P2-CORRECT fix: VM 执行/调试期间禁用格式化和 REPL 输入，
+    // 对齐 setRunningState 的禁用策略。格式化会修改 codeEditor 内容导致
+    // VM 字节码陈旧；REPL 输入会并发访问 Interpreter/VM 状态。
+    formatAction_->setEnabled(enabled && !running);
+    if (replPanel_) replPanel_->setInputEnabled(enabled && !running);
 }
 
+/// VM 停止按钮槽：调用 controller_->vmStop() 中止 RUN 模式并复位 VM 状态。
 void Ide::onVmStop() {
     controller_->vmStop();
     vmStackPanel_->clearAll();
@@ -5274,9 +5434,12 @@ void Ide::onVmStop() {
 // Find / Replace
 // ============================================================
 
+/// 打开查找面板。
 void Ide::onFind() { if (findReplacePanel_) findReplacePanel_->showFind(); }
+/// 打开替换面板。
 void Ide::onReplace() { if (findReplacePanel_) findReplacePanel_->showReplace(); }
 
+/// 查找下一个匹配项。
 void Ide::onFindNext() {
     if (findReplacePanel_ && findReplacePanel_->isVisible()) {
         findReplacePanel_->onFindNext();
@@ -5285,6 +5448,7 @@ void Ide::onFindNext() {
     if (findReplacePanel_) findReplacePanel_->showFind();
 }
 
+/// 查找上一个匹配项。
 void Ide::onFindPrev() {
     if (findReplacePanel_ && findReplacePanel_->isVisible()) {
         findReplacePanel_->onFindPrev();
@@ -5297,6 +5461,7 @@ void Ide::onFindPrev() {
 // Help dialog (Fluent-style, two-column shortcut layout)
 // ============================================================
 
+/// 显示帮助/关于对话框。
 void Ide::showHelpDialog() {
     auto* dlg = new QDialog(this);
     dlg->setWindowTitle(mlTr("帮助"));
@@ -5463,6 +5628,7 @@ void Ide::showHelpDialog() {
 // 3 分钟 Hello World 引导（GuidedTour 接入）
 // ============================================================
 
+/// 启动新手指引游（GuidedTour）。
 void Ide::startGuidedTour() {
     // 若已有引导在进行，先清理
     if (guidedTour_) {
@@ -5550,6 +5716,7 @@ void Ide::startGuidedTour() {
 // Completion + Spell check candidates
 // ============================================================
 
+/// 初始化代码补全：构建关键字/API 候选词并配置编辑器补全。
 void Ide::setupCompletion() {
     staticCompletionWords_.clear();
     spellCandidates_.clear();
@@ -5601,6 +5768,7 @@ void Ide::setupCompletion() {
     updateCompletionWords();
 }
 
+/// 更新补全候选词（如导入模块带来的新符号）。
 void Ide::updateCompletionWords() {
     if (!codeEditor_) return;
     QString text = codeEditor_->toPlainText();
@@ -5635,6 +5803,7 @@ void Ide::updateCompletionWords() {
 // Diagnostics display (with smart spell correction)
 // ============================================================
 
+/// 将诊断包渲染到错误列表与编辑器行内标记。
 void Ide::displayDiagnostics(const DiagnosticBag& bag) {
     const auto& allDiags = bag.all();
     for (const auto& diag : allDiags) {
@@ -5705,6 +5874,7 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
 // Bytecode / IR / Token / AST helpers
 // ============================================================
 
+/// 在字节码列表中高亮当前执行到的指令行。
 void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
     const CompileResult& compileResult = controller_->lastCompileResult();
     const BytecodeChunk* targetChunk = nullptr;
@@ -5741,6 +5911,7 @@ void Ide::highlightBytecodeLine(const std::string& chunkName, size_t ip) {
     }
 }
 
+/// 字节码行点击：定位/选中对应源码行。
 void Ide::onBytecodeRowClicked(int row) {
     if (row < 0 || !codeEditor_ || !controller_) return;
     // Find which chunk this row belongs to and get the source line
@@ -5770,6 +5941,7 @@ void Ide::onBytecodeRowClicked(int row) {
     }
 }
 
+/// 用编译结果填充字节码列表（带语法高亮 HTML）。
 void Ide::populateBytecodeList() {
     const CompileResult& compileResult = controller_->lastCompileResult();
     QString currentSource = codeEditor_ ? codeEditor_->toPlainText() : QString();
@@ -5843,17 +6015,20 @@ void Ide::populateBytecodeList() {
     bytecodeList_->setUpdatesEnabled(true);
 }
 
+/// 用 IR 中间表示填充 IR 查看器。
 void Ide::populateIRViewer() {
     const IRFunction* ir = controller_->lastIR();
     irViewer_->setIR(ir);
     irToBytecodeOffset_ = controller_->lastIRToBytecodeOffset();
 }
 
+/// 在 IR 查看器中高亮当前行。
 void Ide::highlightIRLine(size_t bytecodeOffset) {
     if (irToBytecodeOffset_.empty()) return;
     irViewer_->highlightByBytecodeOffset(irToBytecodeOffset_, bytecodeOffset);
 }
 
+/// 刷新 Token 表格（词法分析产物可视化）。
 void Ide::updateTokenTable() {
     const std::vector<Token>& tokens = controller_->lastTokens();
     static constexpr int MAX_DISPLAY = 10000;
@@ -5947,6 +6122,7 @@ void Ide::updateTokenTable() {
     }
 }
 
+/// 刷新 AST 查看器（树/文本）。
 void Ide::updateAstViewer() {
     if (controller_->astRoot()) {
         astViewer_->setAst(controller_->astRoot());
@@ -5955,6 +6131,7 @@ void Ide::updateAstViewer() {
     }
 }
 
+/// 刷新调试信息面板（变量快照/调用栈）。
 void Ide::updateDebugInfo() {
     auto vars = controller_->getDebugVariableSnapshot();
     debugPanel_->updateVariables(vars);
@@ -5971,6 +6148,7 @@ void Ide::updateDebugInfo() {
     debugPanel_->updateCallStack(stack);
 }
 
+/// 统一切换运行态：启用/禁用运行/调试/停止按钮与界面锁。
 void Ide::setRunningState(bool running) {
     bool isDebug = controller_->isDebugRun() && running;
     runAction_->setEnabled(!running);
@@ -6012,6 +6190,7 @@ void Ide::setRunningState(bool running) {
 // File operations
 // ============================================================
 
+/// “新建”动作：创建空白标签页。
 void Ide::onNew() {
     if (controller_->isRunning() || controller_->isVmRunning()) return;
     int idx = createNewEditorTab();
@@ -6020,6 +6199,7 @@ void Ide::onNew() {
     if (codeEditor_) codeEditor_->setFocus();
 }
 
+/// “打开”动作：弹出文件对话框打开源文件。
 void Ide::onOpen() {
     if (controller_->isRunning() || controller_->isVmRunning()) return;
     QString startDir = workspaceDir_.isEmpty() ? QDir::homePath() : workspaceDir_;
@@ -6042,6 +6222,7 @@ void Ide::onOpen() {
     if (codeEditor_) codeEditor_->setFocus();
 }
 
+/// “打开文件夹”动作：打开工作区目录。
 void Ide::onOpenFolder() {
     QString startDir = workspaceDir_.isEmpty() ? QDir::homePath() : workspaceDir_;
     QString dir = QFileDialog::getExistingDirectory(this,
@@ -6051,6 +6232,7 @@ void Ide::onOpenFolder() {
     openWorkspace(dir);
 }
 
+/// “保存”动作：将当前编辑器内容写回文件。
 void Ide::onSave() {
     if (!codeEditor_) return;
     if (currentFilePath_.isEmpty()) { onSaveAs(); return; }
@@ -6082,6 +6264,7 @@ void Ide::onSave() {
     setupFileWatcher(currentFilePath_);
 }
 
+/// “另存为”动作：以新路径保存当前文件。
 void Ide::onSaveAs() {
     QString startDir = workspaceDir_.isEmpty() ? QDir::homePath() : workspaceDir_;
     QString path = QFileDialog::getSaveFileName(this,
@@ -6102,6 +6285,7 @@ void Ide::onSaveAs() {
     populateFileTree();
 }
 
+/// 保存前确认：存在修改时弹出保存对话框，返回是否可继续。
 bool Ide::maybeSave() {
     if (!codeEditor_) return true;
     if (!codeEditor_->document()->isModified()) return true;
@@ -6115,6 +6299,7 @@ bool Ide::maybeSave() {
     return true;
 }
 
+/// 根据当前文件路径与脏标记刷新窗口标题。
 void Ide::updateWindowTitle() {
     QString title = "MiniLang IDE";
     if (!workspaceDir_.isEmpty()) {
@@ -6142,6 +6327,7 @@ void Ide::updateWindowTitle() {
     }
 }
 
+/// 加载文件到编辑器（含编码检测与 BOM 去除）。
 void Ide::loadFile(const QString& path) {
     int existingIdx = findTabForFile(path);
     if (existingIdx >= 0) {
@@ -6161,6 +6347,7 @@ void Ide::loadFile(const QString& path) {
 // 已自行 setAcceptDrops，事件优先派发给子控件，未接受时回退到主窗口。
 // ============================================================
 
+/// 拖拽进入事件：仅接受含 .mini/.ml 文件的拖放。
 void Ide::dragEnterEvent(QDragEnterEvent* event) {
     if (event->mimeData()->hasUrls()) {
         const auto urls = event->mimeData()->urls();
@@ -6176,6 +6363,7 @@ void Ide::dragEnterEvent(QDragEnterEvent* event) {
     event->ignore();
 }
 
+/// 拖拽放下事件：打开被拖入的源文件。
 void Ide::dropEvent(QDropEvent* event) {
     if (!event->mimeData()->hasUrls()) {
         event->ignore();
@@ -6209,6 +6397,7 @@ void Ide::dropEvent(QDropEvent* event) {
 //   - 文件被替换：旧 watch 失效，需重新 addPath
 // ============================================================
 
+/// 为当前文件设置 QFileSystemWatcher 监视外部修改。
 void Ide::setupFileWatcher(const QString& filePath) {
     if (!fileWatcher_) return;
     // 移除旧文件监视
@@ -6224,6 +6413,7 @@ void Ide::setupFileWatcher(const QString& filePath) {
     }
 }
 
+/// 文件被外部修改响应：提示用户重新加载。
 void Ide::onFileChangedExternally(const QString& filePath) {
     if (filePath != watchedFilePath_) return;
 

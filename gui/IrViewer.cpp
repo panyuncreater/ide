@@ -15,6 +15,7 @@
 // IrViewer 实现（第八轮：QTextBrowser + HTML 语法高亮）
 // ============================================================
 
+/// 构造 IR 查看器：初始化只读浏览器并应用主题背景。
 IrViewer::IrViewer(QWidget* parent)
     : QWidget(parent) {
 
@@ -36,6 +37,7 @@ IrViewer::IrViewer(QWidget* parent)
     mainLayout->addWidget(browser_, 1);
 }
 
+/// 对字符串做 HTML 转义，避免 IR 文本破坏标签。
 QString IrViewer::htmlEscape(const std::string& s) {
     QString q = QString::fromStdString(s);
     return q.toHtmlEscaped();
@@ -81,6 +83,7 @@ static bool isStringLiteral(const std::string& tok) {
     return !tok.empty() && tok.front() == '"' && tok.back() == '"';
 }
 
+/// 将单行 IR 指令按 token 类型着色为 HTML 片段。
 QString IrViewer::formatIRLineHtml(const std::string& text) const {
     // 分离注释（; 开头到行尾）
     std::string code = text;
@@ -141,6 +144,7 @@ QString IrViewer::formatIRLineHtml(const std::string& text) const {
     return html;
 }
 
+/// 设置并渲染 IR 内容到浏览器（含异常保护与超长截断）。
 void IrViewer::setIR(const IRFunction* ir) {
     // BUG-IRV-1 fix: 用 try/catch 包裹整个函数体，避免 formatIRInstruction / HTML 构造
     // 抛出异常时导致面板进入未定义状态。捕获后显示错误占位文本。
@@ -235,6 +239,7 @@ void IrViewer::setIR(const IRFunction* ir) {
     }
 }
 
+/// 清空 IR 显示与行映射缓存。
 void IrViewer::clearIR() {
     browser_->clear();
     rowToSourceLine_.clear();
@@ -242,6 +247,7 @@ void IrViewer::clearIR() {
     highlightedRow_ = -1;
 }
 
+/// 按源码行号高亮对应 IR 指令行。
 void IrViewer::highlightBySourceLine(int line) {
     // BUG-IRV-3 fix: 改用 QTextBlockFormat 设置整行背景，避免 setCharFormat 覆盖
     // HTML span 标签产生的字符级语法高亮（颜色/粗体等）。
@@ -277,6 +283,7 @@ void IrViewer::highlightBySourceLine(int line) {
     }
 }
 
+/// 按字节码偏移量高亮对应的 IR 指令行。
 void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, size_t>>& irToBytecodeOffset,
                                           size_t currentBytecodeOffset) {
     // BUG-IRV-3 fix: 改用 QTextBlockFormat 设置整行背景
@@ -324,6 +331,7 @@ void IrViewer::highlightByBytecodeOffset(const std::vector<std::pair<size_t, siz
     }
 }
 
+/// 清除当前 IR 行高亮。
 void IrViewer::clearHighlight() {
     // BUG-IRV-3 fix: 改用 QTextBlockFormat 清除背景
     if (highlightedRow_ >= 0 && highlightedRow_ < static_cast<int>(rowToSourceLine_.size())) {

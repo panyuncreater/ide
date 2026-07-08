@@ -1,3 +1,7 @@
+// TestIRShadowFix.cpp — IR 层「块遮蔽 / 闭包 upvalue」修复回归测试
+// 覆盖模块: 解释器、栈式 VM(IR)、寄存器 VM(IR) 三后端在块遮蔽与闭包捕获场景下的行为一致性。
+// 验证目标: 针对 CRITICAL-1/2/3 几类历史缺陷（函数内块遮蔽、嵌套顶层块遮蔽、三层闭包 upvalue 透传与修改），
+//           同一源码在三后端均须得到相同的打印输出，确保 IR 编译未破坏作用域语义。
 // 快速验证 CRITICAL-2/3 块遮蔽修复
 #include <gtest/gtest.h>
 #include "lexer/Lexer.h"
@@ -9,6 +13,7 @@
 #include "interpreter/RuntimeExceptions.h"  // AUDIT-HELPER fix
 #include <string>
 
+// 后端运行辅助1：解释器执行——捕获 RuntimeError/其他异常，返回累积输出（错误时附 <runtime:...> 标记）。
 static std::string runInterp(const std::string& src) {
     Lexer lx; auto tk = lx.scan(src);
     Parser p; auto ast = p.parse(tk);
@@ -26,6 +31,7 @@ static std::string runInterp(const std::string& src) {
     }
     return out;
 }
+// 后端运行辅助2：栈式 VM（IR 模式）编译并执行，编译/运行错误分别附 <compile:...>/<runtime:...>。
 static std::string runStackVM_IR(const std::string& src) {
     Lexer lx; auto tk = lx.scan(src);
     Parser p; auto ast = p.parse(tk);
@@ -40,6 +46,7 @@ static std::string runStackVM_IR(const std::string& src) {
     if (vm.hasError()) return "<runtime:" + vm.getLastError() + ">";
     return out;
 }
+// 后端运行辅助3：寄存器 VM（IR 模式）编译并执行，口径与栈式 VM 一致，用于三方交叉验证。
 static std::string runRegVM_IR(const std::string& src) {
     Lexer lx; auto tk = lx.scan(src);
     Parser p; auto ast = p.parse(tk);

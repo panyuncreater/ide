@@ -30,14 +30,17 @@ VmStepper::~VmStepper() {
 // A1 fix: 后端分派辅助实现
 // ============================================================
 
+/// 在“活动执行”模式下执行单条 VM 指令，返回是否已抵达终止条件（断点/结束）。
 VMResult VmStepper::stepOnceActive() {
     return useRegister_ ? regVm_.stepOnce() : vm_.stepOnce();
 }
 
+/// 返回 VM 活动执行模式是否已运行至结束或断点。
 bool VmStepper::isActiveFinished() const {
     return useRegister_ ? regVm_.isFinished() : vm_.isFinished();
 }
 
+/// 初始化活动执行状态：设定起始帧与终止条件（步过/步出/断点）。
 bool VmStepper::initActiveExecution() {
     if (useRegister_) {
         // A1 fix: RegisterVM 路径必须有 lastRegCompileResult_
@@ -61,6 +64,7 @@ bool VmStepper::initActiveExecution() {
     return true;
 }
 
+/// 复位 VM 单步的活动执行状态机，准备下一次调试会话。
 void VmStepper::resetActiveState() {
     if (useRegister_) {
         regVm_.resetState();
@@ -83,11 +87,13 @@ void VmStepper::resetActiveState() {
 // A1 fix: 通过 stepOnceActive() 等分派 helper 复用同一状态机逻辑。
 // ============================================================
 
+/// 执行一次 VM 单步（命令式）：按当前模式推进指令指针并采集快照。
 VmStepper::VmStepResult VmStepper::step() {
     // 保持向后兼容：等价于 stepIn 模式
     return stepByMode(VmStepMode::STEP_IN);
 }
 
+/// 按当前单步模式（stepIn/Over/Out/Run）分派到对应推进策略。
 VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
     if (isVmRunning_) return VmStepResult::NOT_READY;
 
@@ -217,6 +223,8 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             }
             if (checkBreakpointHit(currentLine) &&
                 (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                // AUDIT-P2-CORRECT fix: hitCount 递增移到过滤条件通过后，避免过度递增
+                vmBreakpointHitCounts_[currentLine]++;
                 vmLastPausedLine_ = currentLine;
                 vmCrossedLine_ = false;  // 命中后重置，同行后续指令不再触发
                 isVmRunning_ = false;
@@ -365,6 +373,8 @@ void VmStepper::runBatch() {
             }
             if (checkBreakpointHit(currentLine) &&
                 (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                // AUDIT-P2-CORRECT fix: hitCount 递增移到过滤条件通过后，避免过度递增
+                vmBreakpointHitCounts_[currentLine]++;
                 vmRunTimer_->stop();
                 vmLastPausedLine_ = currentLine;
                 vmCrossedLine_ = false;  // 命中后重置，同行后续指令不再触发
@@ -383,6 +393,7 @@ void VmStepper::runBatch() {
     }
 }
 
+/// 停止 VM 执行：中断运行循环并复位执行状态。
 void VmStepper::stop() {
     // QT-R-01 fix: 停止 RUN 模式定时器
     if (vmRunTimer_) vmRunTimer_->stop();
@@ -399,12 +410,12 @@ void VmStepper::stop() {
 }
 
 // #4 fix: 检查断点命中（含条件求值）
-// 返回 true 表示应在此行暂停。无条件断点直接返回 true；
-// 条件断点调用 vmConditionEvaluator_ 求值，求值为真才暂停。
-// BUG-DBG-AUDIT-2 fix: 命中时（无条件直接返回 true 前 / 条件求值为 true 后）
-// 递增 vmBreakpointHitCounts_[line]，对齐 DebugController::shouldPauseAtBreakpoint
-// 中 breakpointInfos_[line].hitCount++ 语义，使 BreakpointConditionPanel 在 VM 模式
-// 下能显示真实命中次数。
+// 返回 true 表示断点匹配且条件满足（应在此行暂停）。
+// AUDIT-P2-CORRECT fix: 此函数改为纯查询，不递增 hitCount。
+// 原 BUG-DBG-AUDIT-2 fix 在此处递增 hitCount，但由于调用方使用 C++ 短路求值
+// `checkBreakpointHit(line) && (过滤条件)`，当过滤条件为 false 时 hitCount
+// 已被递增但断点未实际暂停，导致 hitCount 远超实际命中次数（每批次递增一次）。
+// 现改为纯查询，hitCount 递增移到调用方过滤条件通过之后。
 bool VmStepper::checkBreakpointHit(int line) {
     if (vmBreakpoints_.isEmpty() || line <= 0 || !vmBreakpoints_.contains(line)) {
         return false;
@@ -412,18 +423,11 @@ bool VmStepper::checkBreakpointHit(int line) {
     // #4 fix: 检查是否有条件表达式
     auto condIt = vmBreakpointConditions_.find(line);
     if (condIt == vmBreakpointConditions_.end() || condIt->empty()) {
-        // BUG-DBG-AUDIT-2 fix: 无条件断点命中 → 递增 hitCount
-        vmBreakpointHitCounts_[line]++;
         return true;  // 无条件断点：直接命中
     }
     // #4 fix: 条件断点：调用求值器（由 IdeController 注入，使用临时 Interpreter + VM 全局变量）
     if (vmConditionEvaluator_) {
-        if (vmConditionEvaluator_(condIt.value())) {
-            // BUG-DBG-AUDIT-2 fix: 条件断点求值为真 → 递增 hitCount
-            vmBreakpointHitCounts_[line]++;
-            return true;
-        }
-        return false;
+        return vmConditionEvaluator_(condIt.value());
     }
     // 无求值器时视为条件不满足（不暂停）——与 DebugEvaluator::evaluate 语义一致。
     // AUDIT-BUG-D1 fix: 原返回 true 会导致条件断点被当作无条件断点，

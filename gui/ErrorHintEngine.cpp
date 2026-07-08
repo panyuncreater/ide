@@ -11,6 +11,7 @@
 // ============================================================
 // Levenshtein 编辑距离（动态规划）
 // ============================================================
+/// 计算两字符串的 Levenshtein 编辑距离（字节级、大小写敏感）。
 int ErrorHintEngine::levenshteinDistance(const std::string& a, const std::string& b) {
     const size_t m = a.size();
     const size_t n = b.size();
@@ -40,6 +41,7 @@ int ErrorHintEngine::levenshteinDistance(const std::string& a, const std::string
 // ============================================================
 // 拼写建议
 // ============================================================
+/// 在候选集中给出编辑距离≤2 的拼写建议；无则返空。
 std::string ErrorHintEngine::suggestSpelling(const std::string& target,
                                               const std::vector<std::string>& candidates) {
     if (target.empty()) return "";
@@ -67,6 +69,7 @@ std::string ErrorHintEngine::suggestSpelling(const std::string& target,
 // ============================================================
 // 错误消息增强
 // ============================================================
+/// 为错误消息附加教学性提示（按类别/模式/诊断码匹配）。
 std::string ErrorHintEngine::enrichErrorMessage(const std::string& msg,
                                                  const std::string& category,
                                                  const std::vector<std::string>& scopeVars) {

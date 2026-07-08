@@ -57,6 +57,8 @@ class BreakpointConditionPanel : public QWidget {
     Q_OBJECT
 public:
     explicit BreakpointConditionPanel(QWidget* parent = nullptr);
+    // AUDIT-P0 fix: 析构时反注册 IdeController 监听器。
+    ~BreakpointConditionPanel() override;
 
     // OPT-1: setController 注册 vmStateChanged 监听器，替代 500ms QTimer 轮询。
     // 监听器在断点变化/步进/暂停时即时触发 refreshLive，让命中次数显示零延迟。

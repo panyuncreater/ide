@@ -45,6 +45,7 @@ QTreeWidgetItem* DebugPanel::createScopeGroup(const QString& title, int count) {
     return group;
 }
 
+/// 将变量快照按作用域（全局/局部/闭包）分组填入变量树。
 void DebugPanel::populateVariableTree(
     const std::vector<std::tuple<QString, QString, QString>>& rows) {
     variableTree_->clear();
@@ -98,6 +99,7 @@ void DebugPanel::populateVariableTree(
     variableTree_->expandAll();
 }
 
+/// 构造调试面板：搭建变量树/调用栈布局并连接主题切换。
 DebugPanel::DebugPanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -169,6 +171,7 @@ DebugPanel::DebugPanel(QWidget* parent)
     });
 }
 
+/// 集中应用主题色板到标题、变量树与调用栈列表样式。
 void DebugPanel::applyThemeStyles() {
     // 标题标签：次要文本色 + 12px + 中等字重
     // 原硬编码 #616161 → TeachingTheme::textSecondary()
@@ -202,19 +205,35 @@ void DebugPanel::applyThemeStyles() {
     if (callStackList_) callStackList_->setStyleSheet(listQss);
 }
 
+/// 更新变量监视区：转换快照并触发树刷新（含异常保护）。
 void DebugPanel::updateVariables(const std::vector<VariableSnapshot>& vars) {
     std::vector<std::tuple<QString, QString, QString>> rows;
     rows.reserve(vars.size());
+    // AUDIT-P2 fix: Value::toString 对堆类型可能抛异常（bad_alloc/循环引用），
+    // 对齐 VariableInspectorPanel::refreshLive 的 try/catch 防护。DebugPanel 由
+    // DebugCoordinator variableCallback 触发（RCU 优雅期），异常传播会破坏回调链。
     for (const auto& v : vars) {
+        std::string valStr;
+        try { valStr = v.value.toString(); } catch (...) { valStr = "<error>"; }
         rows.emplace_back(QString::fromStdString(v.name),
-                          QString::fromStdString(v.value.toString()),
+                          QString::fromStdString(valStr),
                           QString::fromStdString(v.scope));
     }
     populateVariableTree(rows);
 }
 
+/// 更新调用栈列表，截断超长栈并恢复选中行状态。
 void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
-    currentStack_ = stack;
+    // AUDIT-P2 fix: 截断 currentStack_ 到显示上限，避免存储完整调用栈的全部 Value 拷贝。
+    // 列表仅显示前 200 帧（见下方 MAX_CALL_STACK_DISPLAY），但原实现 currentStack_ = stack
+    // 拷贝完整 stack（深度递归如 fib(200) 接近 MAX_RECURSION_DEPTH=256 时为 256 帧 × 10 变量），
+    // 200+ 帧的 Value 拷贝永不访问却持有 RefCounted 引用计数阻止 GC 回收堆对象。
+    constexpr int MAX_CALL_STACK_STORE = 200;
+    if (stack.size() > MAX_CALL_STACK_STORE) {
+        currentStack_.assign(stack.begin(), stack.begin() + MAX_CALL_STACK_STORE);
+    } else {
+        currentStack_ = stack;
+    }
 
     // 保存当前选中行，刷新后恢复
     int savedRow = callStackList_->currentRow();
@@ -261,6 +280,7 @@ void DebugPanel::updateCallStack(const std::vector<CallStackEntry>& stack) {
     }
 }
 
+/// 选中栈帧时按作用域展示其局部变量并请求跳转源码行。
 void DebugPanel::onStackFrameSelected(int index) {
     if (index < 0 || index >= static_cast<int>(currentStack_.size())) return;
 
@@ -285,6 +305,7 @@ void DebugPanel::onStackFrameSelected(int index) {
     }
 }
 
+/// 清空变量树、调用栈与缓存的栈帧数据。
 void DebugPanel::clearAll() {
     variableTree_->clear();
     callStackList_->clear();

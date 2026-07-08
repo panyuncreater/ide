@@ -1,3 +1,7 @@
+// test_main.cpp — MiniLang 解释器语义测试主程序（无 Qt 依赖，使用 stub DebugController）
+// 覆盖模块: 解释器的类型系统、作用域链、函数机制、控制流与错误语义五大类行为。
+// 验证目标: 通过 checkOutput/checkOutputContains/checkError 等辅助函数，对一批用例逐一比对
+//           实际输出（或预期错误子串），统计通过/失败并打印 TAP 式明细。
 // MiniLang Interpreter Semantic Test Harness
 // Compiles standalone without Qt by using stub DebugController.h
 
@@ -151,6 +155,8 @@ static void checkMultiOutput(const std::string& id, const std::string& name,
 
 // ─── Test Cases ─────────────────────────────────────────────────────────
 
+// 用例组 1：类型系统——验证整数/浮点算术、字符串拼接与强制、类型不匹配错误、
+// 取模/除零、比较类型约束、布尔/逻辑运算返回值、以及 int64 溢出检测。
 void test_type_system() {
     std::cout << "\n===== 1. Type System =====\n";
 
@@ -225,6 +231,8 @@ void test_type_system() {
         "\xe6\xba\xa2\xe5\x87\xba");
 }
 
+// 用例组 2：作用域链——验证块级遮蔽、嵌套作用域查找、块外不可见、局部覆盖全局、
+// 同作用域重复定义报错、for 循环独立作用域、以及函数无法访问调用方局部变量（隔离）。
 void test_scope_chain() {
     std::cout << "\n===== 2. Scope Chain =====\n";
 
@@ -272,6 +280,8 @@ void test_scope_chain() {
     // expects: "未定义的变量" — foo should NOT see bar's local var callerLocal
 }
 
+// 用例组 3：函数机制——验证参数与返回、无参函数、递归阶乘、参数个数不匹配、未定义函数、
+// 无显式返回返回 null、闭包捕获、返回类型注解等函数的核心语义。
 void test_function_mechanism() {
     std::cout << "\n===== 3. Function Mechanism =====\n";
 
@@ -336,6 +346,8 @@ void test_function_mechanism() {
         "30");
 }
 
+// 用例组 4：控制流——验证 if/else、悬空 else 绑定最近 if、while/for 循环（含无限循环提前返回）、
+// if-else 链、各布尔真值（0/空串/空数组/null）判定等控制流行为。
 void test_control_flow() {
     std::cout << "\n===== 4. Control Flow =====\n";
 
@@ -401,6 +413,8 @@ void test_control_flow() {
         "null-false");
 }
 
+// 用例组 5：错误语义——验证未定义变量/赋值、重复声明、参数个数不符、数组越界/非整数下标、
+// 非对象成员访问、类成员缺失、未定义父类、构造函数参数不匹配、类型注解不匹配等错误的正确报错。
 void test_error_semantics() {
     std::cout << "\n===== 5. Error Semantics =====\n";
 
@@ -480,6 +494,7 @@ void test_error_semantics() {
 // ─── Main ───────────────────────────────────────────────────────────────
 
 int main() {
+    // 主流程：依次运行五大用例组，收集全局通过/失败计数，最后汇总并打印失败明细与完整 TAP 式结果。
     std::cout << "MiniLang Interpreter Semantic Test Suite\n";
     std::cout << "=========================================\n";
 

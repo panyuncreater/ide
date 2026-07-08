@@ -8,6 +8,30 @@
 // Formatter 代码格式化器实现
 // ============================================================
 
+// AUDIT-P2 fix: 提取公共字符串转义函数，供 formatStringLiteral 和
+// formatInterpolatedString 共用，消除转义规则重复（原两处独立 switch
+// 存在同步风险——Lexer 新增转义序列时需同时修改三处）。
+static std::string escapeStringContent(const std::string& s) {
+    std::string escaped;
+    escaped.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+        case '\\': escaped += "\\\\"; break;
+        case '"':  escaped += "\\\""; break;
+        case '\n': escaped += "\\n";  break;
+        case '\t': escaped += "\\t";  break;
+        case '\r': escaped += "\\r";  break;
+        case '\0': escaped += "\\0";  break;
+        case '\b': escaped += "\\b";  break;
+        case '\f': escaped += "\\f";  break;
+        case '\a': escaped += "\\a";  break;
+        case '\v': escaped += "\\v";  break;
+        default:   escaped += c;      break;
+        }
+    }
+    return escaped;
+}
+
 Formatter::Formatter() {}
 
 void Formatter::setComments(const std::vector<Token>& tokens) {
@@ -49,6 +73,7 @@ const FormatOptions& Formatter::getOptions() const {
     return options_;
 }
 
+/// 生成当前缩进字符串：带缓存，仅当缩进级别变化时才重建（useTabs 时生成 tab，否则空格）。
 std::string Formatter::indent() const {
     // P3 fix: 缓存缩进字符串，仅在级别变化时重建
     if (cachedIndentLevel_ != currentIndent_) {
@@ -65,6 +90,7 @@ std::string Formatter::indent() const {
     return indentCache_;
 }
 
+/// 生成二元运算符文本：按 spaceAroundOperators 选项决定是否两侧加空格，带 MRU 缓存。
 std::string Formatter::binOp(const std::string& op) const {
     if (options_.spaceAroundOperators) {
         // P30 fix: MRU 缓存 — 同一运算符连续调用时直接返回缓存
@@ -76,6 +102,7 @@ std::string Formatter::binOp(const std::string& op) const {
     return op;
 }
 
+/// 生成逗号分隔符：按 spaceAfterComma 选项决定逗号后是否加空格，结果带缓存。
 std::string Formatter::comma() {
     // P3 fix: 缓存逗号分隔符
     if (!commaCacheValid_) {
@@ -85,6 +112,7 @@ std::string Formatter::comma() {
     return commaCache_;
 }
 
+/// 生成开括号：按 BraceStyle 选项返回同行 " {" 或换行后缩进的 "{"（Allman 风格）。
 std::string Formatter::openBrace() const {
     if (options_.braceStyle == BraceStyle::NEXT_LINE) {
         return "\n" + indent() + "{";
@@ -92,6 +120,7 @@ std::string Formatter::openBrace() const {
     return " {";
 }
 
+/// 格式化入口：重置缩进/递归深度/注释游标，格式化顶层语句块并返回标准代码文本。
 std::string Formatter::format(Block& program) {
     currentIndent_ = 0;
     formatDepth_ = 0;  // D5 fix: 重置递归深度计数器
@@ -134,6 +163,7 @@ static bool isSelfTerminating(ASTNode* node) {
 // BUG-F-01 fix: 多行块注释的 lexeme 内含 '\n'，后续行继承源码原始缩进，
 // 与格式化后的缩进不一致。此辅助函数在每个 '\n' 后插入当前 indent()，
 // 使多行块注释的后续行对齐到格式化后的缩进级别。
+/// 重新缩进多行块注释：在每个换行后插入当前缩进，使块注释后续行与格式化后的缩进对齐（避免 BUG-F-01）。
 static std::string reindentBlockComment(const std::string& lexeme, const std::string& indent) {
     std::string result;
     result.reserve(lexeme.size() + 16);
@@ -148,6 +178,7 @@ static std::string reindentBlockComment(const std::string& lexeme, const std::st
     return result;
 }
 
+/// 格式化任意 AST 节点：经 Visitor 模式分派到 visit*，带递归深度保护（超深返回占位），结果存入 lastFormatResult_。
 std::string Formatter::formatNode(ASTNode* node) {
     if (!node) return "null";
 
@@ -381,11 +412,13 @@ void Formatter::visitInterpolatedString(InterpolatedString& node) {
 }
 
 // 运算符优先级表（数值越大优先级越高）
+/// 运算符优先级查询：委托 BinaryOp::precedence 单一来源，避免与 Parser 重复优先级表。
 int Formatter::opPrecedence(BinOpType opType) {
     // C14 fix: 委托给 BinaryOp::precedence 单一来源，消除 Formatter 与 Parser 的重复优先级表
     return BinaryOp::precedence(opType);
 }
 
+/// 右结合性查询：委托 BinaryOp::isRightAssociative 单一来源。
 bool Formatter::isRightAssoc(BinOpType opType) {
     // C14 fix: 委托给 BinaryOp::isRightAssociative 单一来源
     return BinaryOp::isRightAssociative(opType);
@@ -426,6 +459,8 @@ static bool needsParens(ASTNode* child, BinOpType parentOpType, bool isRight) {
     return false;
 }
 
+/// 格式化二元运算：递归格式化左右操作数，依据 needsParens 在子表达式优先级不足时补加括号，
+/// 保证重新解析后 AST 结构与原树等价（往返不变量）。
 std::string Formatter::formatBinaryOp(BinaryOp& node) {
     std::string left = formatNode(node.left.get());
     if (needsParens(node.left.get(), node.opType, false)) {
@@ -438,6 +473,8 @@ std::string Formatter::formatBinaryOp(BinaryOp& node) {
     return left + binOp(BinaryOp::opTypeStr(node.opType)) + right;
 }
 
+/// 格式化一元运算（- / + / not）：当操作数本身是二元或一元表达式时加括号，
+/// 避免 -(a + b) 被错误输出为 -a + b 这类优先级错乱。
 std::string Formatter::formatUnaryOp(UnaryOp& node) {
     std::string operand = formatNode(node.operand.get());
     // BinaryOp 优先级低于一元运算符，必须加括号保持语义正确
@@ -461,6 +498,8 @@ std::string Formatter::formatUnaryOp(UnaryOp& node) {
     return "-" + operand;
 }
 
+/// 格式化数值字面量：整数直出；浮点若经 toString 丢失小数点（如 1.0 → "1"）
+/// 则补 ".0"，否则重新解析会被识别为整型，破坏 AST 往返不变量。
 std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
     // AUDIT-BUG-P2 fix: float 值为整数时 toString 输出无小数点（如 1.0 → "1"），
     // 重新解析时被识别为 int，破坏 AST 往返不变量。检测并附加 ".0"。
@@ -485,33 +524,19 @@ std::string Formatter::formatNumberLiteral(NumberLiteral& node) {
     return v.toString();  // A1 fix: getValue() 按需构造
 }
 
+/// 格式化字符串字面量：对源码字符串按 JSON 风格转义（\\、"、\n、\t、\r、\0 等），
+/// 两端补双引号，确保输出可重新被 Lexer 正确切分为单个字符串 Token。
 std::string Formatter::formatStringLiteral(StringLiteral& node) {
-    std::string escaped;
-    escaped.reserve(node.value.size() + 2);
-    escaped += '"';
-    for (char c : node.value) {
-        switch (c) {
-        case '\\': escaped += "\\\\"; break;
-        case '"':  escaped += "\\\""; break;
-        case '\n': escaped += "\\n";  break;
-        case '\t': escaped += "\\t";  break;
-        case '\r': escaped += "\\r";  break;
-        case '\0': escaped += "\\0";  break;  // FMT-02 fix
-        case '\b': escaped += "\\b";  break;  // FMT-02 fix
-        case '\f': escaped += "\\f";  break;  // FMT-02 fix
-        case '\a': escaped += "\\a";  break;  // FMT-02 fix
-        case '\v': escaped += "\\v";  break;  // FMT-02 fix
-        default:   escaped += c;      break;
-        }
-    }
-    escaped += '"';
-    return escaped;
+    // AUDIT-P2 fix: 复用 escapeStringContent 公共函数，消除转义规则重复
+    return "\"" + escapeStringContent(node.value) + "\"";
 }
 
 std::string Formatter::formatBoolLiteral(BoolLiteral& node) {
     return node.value ? "true" : "false";
 }
 
+/// 格式化变量声明：有类型标注时输出 "Type name"，否则 "var name"；
+/// 含初始化表达式时用 binOp("=") 生成带空格的赋值符。
 std::string Formatter::formatVarDecl(VarDecl& node) {
     std::string result;
     if (!node.typeAnnotation.empty()) {
@@ -525,16 +550,21 @@ std::string Formatter::formatVarDecl(VarDecl& node) {
     return result;
 }
 
+/// 格式化赋值语句：name = value；value 为空（外部构造的 AST）时降级输出 "name = /* null */"
+/// 而非崩溃，保持输出可解析。
 std::string Formatter::formatAssignment(Assignment& node) {
     // F-P2-10 fix: 检查 value 空指针，避免输出 "x = null" 语义错误
     if (!node.value) return node.name + binOp("=") + "/* null */";
     return node.name + binOp("=") + formatNode(node.value.get());
 }
 
+/// 格式化变量引用：直接输出标识符名称（裸叶子节点，无需括号或空格）。
 std::string Formatter::formatVarRef(VarRef& node) {
     return node.name;
 }
 
+/// 格式化 if 语句：保留单语句体原貌（无花括号）以保往返；复合体或 else 链才包裹花括号。
+/// 依据 isSelfTerminating 决定是否在单语句体后补 ';'。
 std::string Formatter::formatIfStmt(IfStmt& node) {
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构从 Stmt 变为 Block{Stmt}
     // 原 Bug：无条件 openBrace() 包裹，导致 if (cond) print(1); → if (cond) { print(1); }
@@ -615,6 +645,7 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
     return result;
 }
 
+/// 格式化 while 语句：与 if 一致的单语句体/复合体策略，保持 AST 往返等价。
 std::string Formatter::formatWhileStmt(WhileStmt& node) {
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
@@ -640,6 +671,8 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
     return result;
 }
 
+/// 格式化 for 语句：输出 "for (init; cond; update) body"，空 update/cond 时省略空格，
+/// 单语句体与原貌一致、复合体包裹花括号。
 std::string Formatter::formatForStmt(ForStmt& node) {
     // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
     if (node.body->nodeType != NodeType::NODE_BLOCK) {
@@ -678,6 +711,8 @@ std::string Formatter::formatForStmt(ForStmt& node) {
     return result;
 }
 
+/// 格式化函数声明：输出 "fun name(params): retType { body }"，参数支持类型标注与默认值，
+/// 函数体以 } 自终止，外部由 formatBlock 决定是否补前导空行。
 std::string Formatter::formatFunDecl(FunDecl& node) {
     // PERF-27 fix: 预估输出大小（fun + name + params + body），避免反复 realloc
     std::string result;
@@ -715,6 +750,8 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     return result;
 }
 
+/// 格式化函数调用：优先输出 "name(args)"；存在表达式型 callee（链式/成员调用）时
+/// 对低优先级 callee 加括号，保证重新解析得到与原 AST 一致的调用结构。
 std::string Formatter::formatFunCall(FunCall& node) {
     // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result;
@@ -743,6 +780,7 @@ std::string Formatter::formatFunCall(FunCall& node) {
     return result;
 }
 
+/// 格式化 return 语句：无返回值输出 "return"，否则 "return <expr>"。
 std::string Formatter::formatReturnStmt(ReturnStmt& node) {
     if (node.value) {
         return "return " + formatNode(node.value.get());
@@ -750,6 +788,7 @@ std::string Formatter::formatReturnStmt(ReturnStmt& node) {
     return "return";
 }
 
+/// 格式化 print 语句：输出 "print(arg1, arg2, ...)"，参数用逗号分隔符连接。
 std::string Formatter::formatPrintStmt(PrintStmt& node) {
     // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result = "print(";
@@ -762,6 +801,8 @@ std::string Formatter::formatPrintStmt(PrintStmt& node) {
     return result;
 }
 
+/// 格式化语句块：逐条格式化语句，按行号注入独立注释与行内尾注，函数/类声明间补空行，
+/// 块末尾刷新尾部注释。是往返不变量中"注释保留"的核心协调逻辑。
 std::string Formatter::formatBlock(Block& node) {
     std::string result;
     // P3 fix: 预估输出大小，避免反复 realloc（每条语句平均约 40 字符）
@@ -857,6 +898,7 @@ std::string Formatter::formatBlock(Block& node) {
 
 // ---- 新增节点格式化 ----
 
+/// 格式化数组字面量：输出 "[e1, e2, ...]"，元素递归格式化并用逗号分隔符连接。
 std::string Formatter::formatArrayLiteral(ArrayLiteral& node) {
     // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result = "[";
@@ -869,6 +911,7 @@ std::string Formatter::formatArrayLiteral(ArrayLiteral& node) {
     return result;
 }
 
+/// 格式化字典字面量：输出 "{k1: v1, k2: v2, ...}"，键值对递归格式化、冒号加空格。
 std::string Formatter::formatDictLiteral(DictLiteral& node) {
     // F-P2-4 fix: 预估大小避免循环内 realloc
     std::string result = "{";
@@ -881,6 +924,7 @@ std::string Formatter::formatDictLiteral(DictLiteral& node) {
     return result;
 }
 
+/// 格式化下标访问：obj[index]；当 obj 为低优先级的二元/一元表达式时加括号避免歧义。
 std::string Formatter::formatIndexAccess(IndexAccess& node) {
     std::string obj = formatNode(node.object.get());
     if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
@@ -889,6 +933,7 @@ std::string Formatter::formatIndexAccess(IndexAccess& node) {
     return obj + "[" + formatNode(node.index.get()) + "]";
 }
 
+/// 格式化下标赋值：obj[index] = value；obj 为低优先级表达式时加括号。
 std::string Formatter::formatIndexAssign(IndexAssign& node) {
     std::string obj = formatNode(node.object.get());
     if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
@@ -897,6 +942,8 @@ std::string Formatter::formatIndexAssign(IndexAssign& node) {
     return obj + "[" + formatNode(node.index.get()) + "]" + binOp("=") + formatNode(node.value.get());
 }
 
+/// 格式化类声明：输出 "class Name extends Super { members }"，相邻方法成员间按
+/// blankLineBetweenFunctions 选项补空行，成员自终止时无需额外 ';'。
 std::string Formatter::formatClassDecl(ClassDecl& node) {
     // PERF-27 fix: 预估输出大小（class + name + members），避免反复 realloc
     std::string result;
@@ -932,6 +979,7 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     return result;
 }
 
+/// 格式化成员访问：obj.field；obj 为低优先级表达式时加括号，避免被错误解析为方法调用。
 std::string Formatter::formatMemberAccess(MemberAccess& node) {
     std::string obj = formatNode(node.object.get());
     if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
@@ -940,6 +988,7 @@ std::string Formatter::formatMemberAccess(MemberAccess& node) {
     return obj + "." + node.fieldName;
 }
 
+/// 格式化成员赋值：obj.field = value；obj 为低优先级表达式时加括号。
 std::string Formatter::formatMemberAssign(MemberAssign& node) {
     std::string obj = formatNode(node.object.get());
     if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
@@ -948,6 +997,8 @@ std::string Formatter::formatMemberAssign(MemberAssign& node) {
     return obj + "." + node.fieldName + binOp("=") + formatNode(node.value.get());
 }
 
+/// 格式化方法调用：obj.method(args...)；obj 为低优先级表达式时加括号，
+/// 否则形如 (a+b).foo() 会被错误重新解析为独立 FunCall。
 std::string Formatter::formatMethodCall(MethodCall& node) {
     std::string obj = formatNode(node.object.get());
     if (node.object && (node.object->nodeType == NodeType::NODE_BINARY_OP ||
@@ -962,6 +1013,7 @@ std::string Formatter::formatMethodCall(MethodCall& node) {
     return result;
 }
 
+/// 格式化 null 字面量：裸输出 "null" 关键字。
 std::string Formatter::formatNullLiteral(NullLiteral& node) {
     return "null";
 }
@@ -978,31 +1030,11 @@ std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
     result.reserve(estimatedSize);
     result += '"';  // 开头引号
 
-    // 字符串字面量片段需要转义（与 formatStringLiteral 一致的转义规则）
-    auto escapeString = [](const std::string& s) {
-        std::string escaped;
-        escaped.reserve(s.size());
-        for (char c : s) {
-            switch (c) {
-            case '\\': escaped += "\\\\"; break;
-            case '"':  escaped += "\\\""; break;
-            case '\n': escaped += "\\n";  break;
-            case '\t': escaped += "\\t";  break;
-            case '\r': escaped += "\\r";  break;
-            case '\0': escaped += "\\0";  break;
-            case '\b': escaped += "\\b";  break;
-            case '\f': escaped += "\\f";  break;
-            case '\a': escaped += "\\a";  break;
-            case '\v': escaped += "\\v";  break;
-            default:   escaped += c;      break;
-            }
-        }
-        return escaped;
-    };
+    // AUDIT-P2 fix: 复用 escapeStringContent 公共函数，消除转义规则重复
 
     // 首个字面量片段
     if (!node.literals.empty()) {
-        result += escapeString(node.literals[0]);
+        result += escapeStringContent(node.literals[0]);
     }
 
     // 交替输出: {expr} literal
@@ -1025,7 +1057,7 @@ std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
         }
         result += '}';
         if (i + 1 < node.literals.size()) {
-            result += escapeString(node.literals[i + 1]);
+            result += escapeStringContent(node.literals[i + 1]);
         }
     }
 

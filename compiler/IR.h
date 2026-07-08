@@ -501,6 +501,12 @@ private:
         uint32_t endLabel;
         uint32_t continueLabel;  // continue 目标（for 的 update 块）
         int tryDepthAtStart = 0;
+        // AUDIT-P2-CORRECT fix: break 需发射 CLOSE_UPVALUE 关闭循环体内声明的
+        // 闭包捕获变量的 upvalue（对齐正常迭代退出时的 leaveBlockScope 发射）。
+        // CLOSE_UPVALUE bodySlotBase 关闭 slot >= bodySlotBase 的全部 open upvalues，
+        // 含循环体内嵌套块声明的变量（嵌套块 slot >= bodySlotBase）。
+        uint32_t bodySlotBase = 0;       // 循环体 block scope slot 基址
+        bool needCloseUpvalue = false;   // 是否需要关闭 upvalue（inFunction_）
     };
     std::vector<LoopContext> loopStack_;
     int tryDepth_ = 0;  // 当前 try 嵌套深度（BUG-EXC-2 fix）

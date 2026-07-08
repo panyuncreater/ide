@@ -119,8 +119,11 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
     debugger_->setCallStackCallback([interpreter = interpreter_]() -> std::vector<CallStackEntry> {
         std::vector<CallStackEntry> result;
         // AUDIT-BUG-C5 fix: 调试回调必须用 try/catch 包裹防止崩溃（硬约束 #16）。
+        // AUDIT-P1 fix: 用 getCallStackSnapshot() 返回值拷贝，避免 const 引用跨线程
+        // 遍历期间 worker 线程 push_back/pop_back 导致迭代器失效。
+        // 对齐 variableCallback 的 currentEnvironmentShared() 修复模式。
         try {
-            const auto& stack = interpreter->getCallStack();
+            auto stack = interpreter->getCallStackSnapshot();
             for (const auto& frame : stack) {
                 CallStackEntry entry;
                 entry.functionName = frame.functionName;

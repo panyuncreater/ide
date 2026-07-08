@@ -54,6 +54,8 @@ class CallStackPanel : public QWidget {
     Q_OBJECT
 public:
     explicit CallStackPanel(QWidget* parent = nullptr);
+    // AUDIT-P0 fix: 析构时反注册 IdeController 监听器。
+    ~CallStackPanel() override;
 
     // OPT-1: setController 注册 vmStateChanged 监听器，替代 500ms QTimer 轮询。
     // 同一 controller 重复设置时跳过重复注册（防御性）。

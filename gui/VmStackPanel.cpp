@@ -1,3 +1,10 @@
+/**
+ * @file VmStackPanel.cpp
+ * @brief VM 栈/寄存器/全局区实时面板实现（功能：运行时状态可视化）
+ *
+ * 职责：实时展示栈式/寄存器式 VM 的执行状态——操作数栈、寄存器与全局变量，
+ * 并高亮当前正在执行的指令，帮助学员把「代码」与「机器状态」对应起来。
+ */
 #include "gui/VmStackPanel.h"
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
 #include <QVBoxLayout>
@@ -73,6 +80,7 @@ VmStackPanel::VmStackPanel(QWidget* parent)
     mainLayout->addWidget(splitter);
 }
 
+/// 用最新操作数栈内容刷新栈视图。
 void VmStackPanel::updateStack(std::vector<Value> stack) {
     // BUG-VSP-6 fix: 模式切换时标题适配——栈式 VM 模式
     if (stackTitle_) {
@@ -118,6 +126,7 @@ void VmStackPanel::updateStack(std::vector<Value> stack) {
 
 // A1 fix: RegisterVM 寄存器列表显示。寄存器按 R0..Rn 顺序展示，
 // 与栈式 VM 的「栈顶在上」不同——寄存器无栈语义，按编号升序更直观。
+/// 刷新寄存器视图（寄存器机模型时）。
 void VmStackPanel::updateRegisters(std::vector<Value> registers) {
     // BUG-VSP-6 fix: 模式切换时标题适配——寄存器 VM 模式
     if (stackTitle_) {
@@ -149,6 +158,7 @@ void VmStackPanel::updateRegisters(std::vector<Value> registers) {
     }
 }
 
+/// 刷新全局变量区视图。
 void VmStackPanel::updateGlobals(std::unordered_map<std::string, Value> globals) {
     // BUG-VSP-4 fix: 原实现用 unordered_map 元素裸指针排序，若 globals 在排序后
     // 被修改/销毁，指针即悬垂。改为按值接收参数（BUG-VSP-2），并 move 到本地 vector，
@@ -193,6 +203,7 @@ void VmStackPanel::updateGlobals(std::unordered_map<std::string, Value> globals)
 }
 
 // A1 fix: 统一接受 opName 字符串，兼容栈式 VM (opCodeName) 和 RegisterVM (regOpName)
+/// 高亮当前指令指针 ip 对应的操作（opName/源码行）。
 void VmStackPanel::updateCurrentOp(size_t ip, const std::string& opName, int line) {
     // BUG-VSP-5 fix: 对空 opName 与无效行号（<=0）显示兜底占位文本，避免显示空白
     QString opDisplay = opName.empty()
@@ -207,6 +218,7 @@ void VmStackPanel::updateCurrentOp(size_t ip, const std::string& opName, int lin
                         .arg(lineDisplay));
 }
 
+/// 清空栈、寄存器与全局区视图。
 void VmStackPanel::clearAll() {
     stackList_->clear();
     globalsTable_->setRowCount(0);

@@ -320,8 +320,13 @@ void TokenPuzzlePanel::onAnswerItemClicked(int row) {
 // ============================================================
 
 void TokenPuzzlePanel::onCheckAnswer() {
+    // AUDIT-P2 fix: 防重复守卫
+    if (busy_) return;
     const auto& levels = TokenPuzzleLibrary::levels();
     if (currentLevelIndex_ < 0 || currentLevelIndex_ >= (int)levels.size()) return;
+    // AUDIT-P2 fix: 通过 early return 后才禁用按钮+设标志，函数末尾恢复
+    busy_ = true;
+    checkBtn_->setEnabled(false);
     const auto& tokens = levels[currentLevelIndex_].tokens;
 
     // 收集玩家答案
@@ -377,6 +382,9 @@ void TokenPuzzlePanel::onCheckAnswer() {
     unlockNextLevel();
     updateScoreDisplay();
     emit activityCompleted(levelId(currentLevelIndex_));
+    // AUDIT-P2 fix: 恢复按钮+标志
+    busy_ = false;
+    checkBtn_->setEnabled(true);
 }
 
 // ============================================================
@@ -398,6 +406,10 @@ void TokenPuzzlePanel::onShowHint() {
 // ============================================================
 
 void TokenPuzzlePanel::onSkipLevel() {
+    // AUDIT-P2 fix: 防重复守卫——快速双击会触发两次关卡切换（第二次跳两关）
+    if (busy_) return;
+    busy_ = true;
+    skipBtn_->setEnabled(false);
     // 跳过不计星（0 星），仅在未完成时标记
     if (levelStars_[currentLevelIndex_] < 0) {
         levelStars_[currentLevelIndex_] = 0;
@@ -409,13 +421,18 @@ void TokenPuzzlePanel::onSkipLevel() {
     setFeedback(mlTr("已跳过本关（不计星），下一关已解锁"));
     unlockNextLevel();
     updateScoreDisplay();
-    emit activityCompleted(levelId(currentLevelIndex_));
+    // AUDIT-P2 fix: 跳过≠完成，不应发射 activityCompleted（否则 LearningPathPanel
+    // 误标记该活动为已完成）。unlockNextLevel 已基于 levelStars_ 解锁下一关，
+    // 不依赖此信号。0 星持久化由上方 markLevelStars(0) 完成。
 
     // 自动切换到下一关
     int next = currentLevelIndex_ + 1;
     if (next < TokenPuzzleLibrary::levelCount()) {
         levelCombo_->setCurrentIndex(next);
     }
+    // AUDIT-P2 fix: 恢复按钮+标志
+    busy_ = false;
+    skipBtn_->setEnabled(true);
 }
 
 // ============================================================

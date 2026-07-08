@@ -15,6 +15,7 @@
 #include <QPalette>
 #include <QLabel>
 #include <QLineEdit>
+#include <QSignalBlocker>  // AUDIT-P2 fix: setCurrentPanel 重置搜索时阻塞信号
 
 TeachingTreePanel::TeachingTreePanel(QWidget* parent)
     : QWidget(parent) {
@@ -152,8 +153,8 @@ void TeachingTreePanel::buildTree() {
         catItem->setData(0, Qt::UserRole, QStringLiteral("category"));
         // 分类文字颜色稍浅
         QColor catColor = palette().color(QPalette::Text);
-        // 取 70% 不透明度让分类标题略灰
-        catColor.setAlphaF(0.85);
+        // 取 85% 不透明度让分类标题略灰
+        catColor.setAlphaF(0.85f);
         catItem->setForeground(0, catColor);
 
         for (const auto& leaf : cat.leaves) {
@@ -200,6 +201,15 @@ void TeachingTreePanel::setCurrentPanel(const QString& panelId) {
     auto it = idToItem_.find(panelId);
     if (it == idToItem_.end()) return;
     QTreeWidgetItem* item = it.value();
+    // AUDIT-P2 fix: 跳转前重置搜索过滤，确保目标项可见。
+    // 原实现在搜索过滤激活时直接 setCurrentItem(hidden item)，选中态被设置
+    // 但用户不可见——高亮"失效"，且树仍只显示过滤结果，与实际面板不一致。
+    // 跳转即重置过滤符合用户心智模型（跨面板导航应跳出搜索上下文）。
+    if (searchEdit_ && !searchEdit_->text().isEmpty()) {
+        QSignalBlocker blocker(searchEdit_);  // 避免 clear() 重入 onSearchChanged
+        searchEdit_->clear();
+        onSearchChanged(QString());  // 显式恢复全部项可见
+    }
     // 展开父分类（如果是叶子节点）
     if (auto* parent = item->parent()) {
         tree_->expandItem(parent);
@@ -230,6 +240,9 @@ void TeachingTreePanel::onSearchChanged(const QString& text) {
                 if (auto* child = top->child(j)) child->setHidden(false);
             }
             anyVisible = top->childCount() > 0;
+            // AUDIT-P2 fix: 搜索期间被 collapseItem 折叠的分类在清空搜索后保持折叠，
+            // 与搜索前展开状态不一致。清空搜索时展开所有分类（与构造默认状态一致）。
+            if (anyVisible) tree_->expandItem(top);
         } else {
             // 非空搜索：按文本包含匹配（不区分大小写）过滤叶子
             for (int j = 0; j < top->childCount(); ++j) {

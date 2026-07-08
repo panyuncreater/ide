@@ -31,6 +31,7 @@
 //   - finally 块无论是否捕获都会执行
 //   - 未捕获异常导致程序终止
 
+/// 返回异常场景示例数据（静态数据）。
 const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
     static const std::vector<ExceptionScenario> kScenarios = {
         {
@@ -147,6 +148,7 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
 //   - 栈展开（局部变量销毁）
 //   - 恢复（catch 后继续正常流程）
 
+/// 返回异常传播各阶段说明数据（静态数据）。
 const std::vector<ExceptionPhaseDoc>& ExceptionPhaseLibrary::phases() {
     static const std::vector<ExceptionPhaseDoc> kPhases = {
         {
@@ -206,6 +208,7 @@ const std::vector<ExceptionPhaseDoc>& ExceptionPhaseLibrary::phases() {
 // ExceptionFlowPanel 实现
 // ============================================================
 
+/// 构造异常流转面板：初始化场景页与阶段页。
 ExceptionFlowPanel::ExceptionFlowPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -260,6 +263,7 @@ ExceptionFlowPanel::ExceptionFlowPanel(QWidget* parent) : QWidget(parent) {
     }
 }
 
+/// 构建「异常场景」子页 UI。
 void ExceptionFlowPanel::buildScenarioPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -287,6 +291,7 @@ void ExceptionFlowPanel::buildScenarioPage(QWidget* host) {
     });
 }
 
+/// 构建「异常阶段」子页 UI。
 void ExceptionFlowPanel::buildPhasePage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -314,6 +319,7 @@ void ExceptionFlowPanel::buildPhasePage(QWidget* host) {
     });
 }
 
+/// 填充指定异常场景的详细说明与示例代码。
 void ExceptionFlowPanel::populateScenarioDetail(int index) {
     const auto& scenarios = ExceptionFlowLibrary::scenarios();
     if (index < 0 || index >= static_cast<int>(scenarios.size())) {
@@ -351,6 +357,7 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
+/// 填充指定异常传播阶段的说明与图示。
 void ExceptionFlowPanel::populatePhaseDetail(int index) {
     const auto& phases = ExceptionPhaseLibrary::phases();
     if (index < 0 || index >= static_cast<int>(phases.size())) {

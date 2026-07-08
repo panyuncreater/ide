@@ -15,6 +15,9 @@
 #include "formatter/Formatter.h"
 #include "Diagnostic.h"
 
+// 共享的格式化辅助函数：对源码做 词法 → 语法 → 格式化 三步；
+// 词法/语法失败时在第一个参数回传 hasError=true 并返回错误描述，否则返回格式化后的文本。
+// 除第 5 组外均使用默认 FormatOptions。
 static std::string formatCode(const std::string& source, bool& hasError,
                               const FormatOptions& opts = FormatOptions()) {
     Lexer lexer;
@@ -53,6 +56,8 @@ static bool astEqual(ASTNode* a, ASTNode* b) {
     if (!a || !b) return false;
     if (a->nodeType != b->nodeType) return false;
 
+    // 按节点类型分派，逐字段递归比较两棵 AST 是否语义等价（忽略行号等位置信息）；
+    // 任何自身字段差异或子节点不匹配都判定为不等价，用于在格式化往返中捕获结构重组。
     switch (a->nodeType) {
     case NodeType::NODE_BINARY_OP: {
         auto* ba = static_cast<BinaryOp*>(a);
@@ -234,31 +239,52 @@ static std::shared_ptr<Block> parseSource(const std::string& src, bool& hasError
 
 // ─── 1. 运算符优先级：幂等性 + AST 往返等价性 ────────────────────────
 
+// 审计组1：运算符优先级——验证右嵌套同优先级括号在格式化后必须保留（往返 AST 不变），
+// 左嵌套冗余括号可丢弃，同时检查格式化幂等性。
 static int test_precedence() {
     std::cout << "\n===== 1. 运算符优先级：幂等性 + AST 往返等价性 =====\n";
     std::vector<AuditCase> cases = {
         // AUDIT-FMT-P0 验证：EQ/NEQ/LT/GT/LTE/GTE/AND/OR 同优先级右嵌套必须保留括号
+        // 验证: EQ 右嵌套必须保留括号，否则重新解析分组改变（AST 不等价）
         {"P1", "EQ 右嵌套 EQ（右嵌套必须加括号）",  "print(1 == (2 == 3));"},
+        // 验证: EQ 左嵌套括号冗余，可安全丢弃（左结合 AST 不变）
         {"P2", "EQ 左嵌套 EQ（左嵌套括号冗余）",    "print((1 == 2) == 3);"},
+        // 验证: NEQ 右嵌套必须保留括号
         {"P3", "NEQ 右嵌套 NEQ（右嵌套必须加括号）", "print(1 != (2 != 3));"},
+        // 验证: LT 左嵌套括号冗余
         {"P4", "LT 左嵌套 LT（左嵌套括号冗余）",     "print((1 < 2) < 3);"},
+        // 验证: LT 右嵌套必须保留括号
         {"P5", "LT 右嵌套 LT（右嵌套必须加括号）",   "print(1 < (2 < 3));"},
+        // 验证: AND 右嵌套必须保留括号
         {"P6", "AND 右嵌套 AND（右嵌套必须加括号）", "print(true and (false and true));"},
+        // 验证: OR 右嵌套必须保留括号
         {"P7", "OR 右嵌套 OR（右嵌套必须加括号）",   "print(false or (true or false));"},
         // 已正确处理（#15 fix 已覆盖 ADD/SUB/MUL/DIV/MOD）
+        // 验证: ADD 右嵌套括号（#15 已修复）保持幂等
         {"P8",  "ADD 右嵌套 ADD（#15 已修复）",   "print(1 + (2 + 3));"},
+        // 验证: SUB 右嵌套括号（#15 已修复）保持幂等
         {"P9",  "SUB 右嵌套 SUB（#15 已修复）",   "print(1 - (2 - 3));"},
+        // 验证: MUL 右嵌套括号（#15 已修复）保持幂等
         {"P10", "MUL 右嵌套 MUL（#15 已修复）",   "print(1 * (2 * 3));"},
+        // 验证: DIV 右嵌套括号（#15 已修复）保持幂等
         {"P11", "DIV 右嵌套 DIV（#15 已修复）",   "print(1 / (2 / 3));"},
+        // 验证: MOD 右嵌套括号（#15 已修复）保持幂等
         {"P12", "MOD 右嵌套 MOD（#15 已修复）",   "print(7 % (5 % 3));"},
         // 跨优先级
+        // 验证: 乘优先于加，格式化后保留语义等价
         {"P13", "a + b * c（应加括号 #15）",      "print(1 + 2 * 3);"},
+        // 验证: 比较链左结合，格式化后 AST 不变
         {"P14", "a < b == c（左结合）",            "print(1 < 2 == 3);"},
+        // 验证: not 与 and 组合保持语义
         {"P15", "not a and b",                    "print(not true and false);"},
         // 一元负号
+        // 验证: 一元负号作用于括号表达式
         {"P16", "一元负号作用于 BinaryOp",         "print(-(1 + 2));"},
+        // 验证: 连续一元负号嵌套
         {"P17", "一元负号嵌套",                    "print(--5);"},
+        // 验证: 负号与二元减号区分（前置 -5 为负字面量）
         {"P18", "负号与减号区分",                  "print(-5 - 3);"},
+        // 验证: 二元减号后跟负字面量
         {"P19", "负号与减号区分 2",                "print(5 - -3);"},
     };
 
@@ -309,18 +335,29 @@ static int test_precedence() {
 
 // ─── 2. 字符串字面量 ─────────────────────────────────────────────────
 
+// 审计组2：字符串字面量——验证含分号/花括号/换行/反斜杠/引号/转义/注释字符的字符串在格式化后保持幂等。
 static int test_strings() {
     std::cout << "\n===== 2. 字符串字面量 =====\n";
     std::vector<AuditCase> cases = {
+        // 验证: 字符串内分号不应被误解析为语句分隔
         {"S1", "字符串内含分号",       "print(\"a;b;c\");"},
+        // 验证: 字符串内花括号不应破坏代码块结构
         {"S2", "字符串内含花括号",     "print(\"a{b}c\");"},
+        // 验证: 字符串内转义换行保持幂等
         {"S3", "字符串内含换行",       "print(\"line1\\nline2\");"},
+        // 验证: 字符串内反斜杠转义保持幂等
         {"S4", "字符串内含反斜杠",     "print(\"path\\\\dir\");"},
+        // 验证: 字符串内引号转义保持幂等
         {"S5", "字符串内含引号",       "print(\"say \\\"hi\\\"\");"},
+        // 验证: 字符串内制表符转义保持幂等
         {"S6", "字符串内含制表符",    "print(\"col1\\tcol2\");"},
+        // 验证: 空字符串格式化后保持为空
         {"S7", "空字符串",            "print(\"\");"},
+        // 验证: 字符串内 # 不被当注释
         {"S8", "字符串含 # 注释字符", "print(\"# not comment\");"},
+        // 验证: 字符串内 // 不被当注释
         {"S9", "字符串含 // 注释",    "print(\"// not comment\");"},
+        // 验证: 字符串内 /* */ 不被当块注释
         {"S10","字符串含 /* 块注释",  "print(\"/* not comment */\");"},
     };
 
@@ -343,16 +380,25 @@ static int test_strings() {
 
 // ─── 3. 注释 ──────────────────────────────────────────────────────────
 
+// 审计组3：注释——验证行内/独立行/块注释（含多行、跨语句）在格式化后不丢失且关联正确，保持幂等。
 static int test_comments() {
     std::cout << "\n===== 3. 注释 =====\n";
     std::vector<AuditCase> cases = {
+        // 验证: 行内注释随语句保留且不丢失
         {"C1",  "行内注释",                "var x = 1; // comment\nprint(x);"},
+        // 验证: 独立行注释保留在语句上方
         {"C2",  "独立行注释",              "// standalone\nvar x = 1;\nprint(x);"},
+        // 验证: 独立块注释保留且不破坏后续语句
         {"C3",  "块注释独立",              "/* block */\nvar x = 1;\nprint(x);"},
+        // 验证: 多行块注释整体保留
         {"C4",  "多行块注释",              "/* multi\nline\ncomment */\nvar x = 1;\nprint(x);"},
+        // 验证: 块注释行内保留在语句尾部
         {"C5",  "块注释行内",              "var x = 1; /* inline */\nprint(x);"},
+        // 验证: 语句间注释正确关联到后一语句
         {"C6",  "语句间注释关联到后一个",  "var x = 1;\n// between\nprint(x);"},
+        // 验证: 多个连续注释全部保留
         {"C7",  "多个连续注释",            "// c1\n// c2\n// c3\nprint(42);"},
+        // 验证: 块注释跨语句保持结构
         {"C8",  "块注释跨语句",            "var x = 1;\n/* block\nspanning */\nprint(x);"},
     };
 
@@ -375,16 +421,25 @@ static int test_comments() {
 
 // ─── 4. 空语句与 for 循环空字段 ──────────────────────────────────────
 
+// 审计组4：空语句与 for 空字段——验证 for 三段的各空组合、空 if/while/函数体在格式化后正确保留，幂等。
 static int test_empty_fields() {
     std::cout << "\n===== 4. for 循环空字段 =====\n";
     std::vector<AuditCase> cases = {
+        // 验证: for 缺条件段时仍正确保留并幂等
         {"E1", "for 无 cond",             "for (var i = 0; ; i = i + 1) { if (i == 3) { break; } print(i); }"},
+        // 验证: for 缺 init 段（外部已声明）保持幂等
         {"E2", "for 无 init",             "var i = 0; for (; i < 3; i = i + 1) { print(i); }"},
+        // 验证: for 缺 update 段（循环体内自增）保持幂等
         {"E3", "for 无 update",           "for (var i = 0; i < 3;) { print(i); i = i + 1; }"},
+        // 验证: for 缺 init 与 update 两段保持幂等
         {"E4", "for 无 init 无 update",   "var i = 0; for (; i < 3;) { print(i); i = i + 1; }"},
+        // 验证: for 三段全空（内部 break）保持幂等
         {"E5", "for 全空",                "var i = 0; for (;;) { if (i >= 3) { break; } print(i); i = i + 1; }"},
+        // 验证: 空 if 块保留且不吞并后续语句
         {"E6", "空 if 块",                "if (true) { } print(42);"},
+        // 验证: 空 while 块保留且幂等
         {"E7", "空 while 块",             "while (false) { } print(42);"},
+        // 验证: 空函数体保留且打印 null 返回值
         {"E8", "空函数体",                 "fun f() { } print(f());"},
     };
 
@@ -407,11 +462,13 @@ static int test_empty_fields() {
 
 // ─── 5. 配置项 ──────────────────────────────────────────────────────
 
+// 审计组5：配置项——验证 FormatOptions 各开关（分号移除、运算符空格、花括号风格、Tab、逗号空格、函数间空行、缩进宽度）确实生效。
 static int test_config() {
     std::cout << "\n===== 5. 配置项 =====\n";
     int fail = 0;
 
     // 5.1 semicolons 配置项已移除（AUDIT-FMT-P1 fix）
+    // 验证: 默认配置下格式化输出应保留分号（semicolons 字段已移除，非死代码残留）
     // 原为死代码，现字段已删除；此处验证默认格式化输出含分号（语句合法）
     {
         FormatOptions opts;  // 默认配置
@@ -428,6 +485,7 @@ static int test_config() {
     }
 
     // 5.2 spaceAroundOperators=false 与一元负号
+    // 验证: 关闭运算符空格后，-5 的一元负号不应出现 "- 5" 空格
     {
         FormatOptions opts;
         opts.spaceAroundOperators = false;
@@ -445,6 +503,7 @@ static int test_config() {
     }
 
     // 5.3 braceStyle=NEXT_LINE
+    // 验证: 花括号风格设为 NEXT_LINE 后输出为 "if (true)\n{" 形式
     {
         FormatOptions opts;
         opts.braceStyle = BraceStyle::NEXT_LINE;
@@ -460,6 +519,7 @@ static int test_config() {
     }
 
     // 5.4 useTabs=true
+    // 验证: 启用 useTabs 后格式化输出应包含制表符缩进
     {
         FormatOptions opts;
         opts.useTabs = true;
@@ -476,6 +536,7 @@ static int test_config() {
     }
 
     // 5.5 spaceAfterComma=false
+    // 验证: 关闭逗号后空格后输出不应包含 ", " 形式
     {
         FormatOptions opts;
         opts.spaceAfterComma = false;
@@ -491,6 +552,7 @@ static int test_config() {
     }
 
     // 5.6 blankLineBetweenFunctions=false
+    // 验证: 关闭函数间空行后两个函数不应以空行分隔
     {
         FormatOptions opts;
         opts.blankLineBetweenFunctions = false;
@@ -507,6 +569,7 @@ static int test_config() {
     }
 
     // 5.7 indentSize=2
+    // 验证: 缩进宽度设为 2 后应使用两空格缩进而非四空格
     {
         FormatOptions opts;
         opts.indentSize = 2;
@@ -529,16 +592,25 @@ static int test_config() {
 
 // ─── 6. 容器字面量 ──────────────────────────────────────────────────
 
+// 审计组6：容器字面量——验证数组/字典（含嵌套、空容器、表达式元素）的格式化幂等性。
 static int test_containers() {
     std::cout << "\n===== 6. 容器字面量 =====\n";
     std::vector<AuditCase> cases = {
+        // 验证: 小数组字面量格式化保持幂等
         {"L1", "小数组",            "var a = [1, 2, 3]; print(a[0]);"},
+        // 验证: 大数组字面量格式化保持幂等
         {"L2", "大数组",            "var a = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; print(a.len());"},
+        // 验证: 嵌套数组格式化保持幂等
         {"L3", "嵌套数组",          "var a = [[1, 2], [3, 4]]; print(a[0][1]);"},
+        // 验证: 小字典字面量格式化保持幂等
         {"L4", "小字典",            "var d = {\"a\": 1, \"b\": 2}; print(d[\"a\"]);"},
+        // 验证: 空数组格式化保持幂等
         {"L5", "空数组",            "var a = []; print(a.len());"},
+        // 验证: 空字典格式化保持幂等
         {"L6", "空字典",            "var d = {}; print(d.len());"},
+        // 验证: 数组元素为表达式时格式化保持幂等
         {"L7", "数组含表达式",      "var a = [1 + 1, 2 * 2, 3 - 1]; print(a[0]);"},
+        // 验证: 字典值为复杂结构时格式化保持幂等
         {"L8", "字典含复杂值",      "var d = {\"k\": [1, 2, 3]}; print(d[\"k\"][1]);"},
     };
 
@@ -561,15 +633,23 @@ static int test_containers() {
 
 // ─── 7. 插值字符串 ──────────────────────────────────────────────────
 
+// 审计组7：插值字符串——验证 {expr} 插值（含多表达式、方法调用、比较、变量）在格式化后保持幂等。
 static int test_interp() {
     std::cout << "\n===== 7. 插值字符串 =====\n";
     std::vector<AuditCase> cases = {
+        // 验证: 简单变量插值格式化保持幂等
         {"I1", "简单插值",         "var x = 42; print(\"val={x}\");"},
+        // 验证: 多表达式插值格式化保持幂等
         {"I2", "多表达式插值",     "var a = 1; var b = 2; print(\"{a}+{b}={a + b}\");"},
+        // 验证: 插值含算术表达式格式化保持幂等
         {"I3", "插值含表达式",     "print(\"{1 + 2 * 3}\");"},
+        // 验证: 插值含方法调用格式化保持幂等
         {"I4", "插值含方法调用",   "var a = [1, 2, 3]; print(\"len={a.len()}\");"},
+        // 验证: 无插值纯文本字符串格式化保持幂等
         {"I5", "插值字符串无表达式", "print(\"plain text\");"},
+        // 验证: 插值含比较表达式格式化保持幂等
         {"I6", "插值含比较",       "print(\"{1 < 2}\");"},
+        // 验证: 插值含变量引用格式化保持幂等
         {"I7", "插值含变量",       "var name = \"world\"; print(\"hello {name}\");"},
     };
 
@@ -596,31 +676,49 @@ static int test_interp() {
 // 在格式化这些结构时丢失或重组子节点，幂等性测试无法发现（format=format 恒成立）。
 // 本测试对语句级结构做 Parse(src) vs Parse(format(src)) 的 AST 结构等价比较。
 
+// 审计组8：语句级 AST 往返等价性——对 if/循环/函数/类/try/复合序列做 Parse(src) vs Parse(format(src)) 结构比较，
+// 弥补仅测幂等性无法发现「结构被重组但 format=format 恒成立」的盲区。
 static int test_statements() {
     std::cout << "\n===== 8. 语句级 AST 往返等价性 =====\n";
     std::vector<AuditCase> cases = {
         // if/else 分支结构——验证 then/else 分支不被合并或丢失
+        // 验证: if-else 完整结构的 AST 往返等价（分支不丢）
         {"S1", "if-else 完整结构",       "if (x > 0) { print(1); } else { print(2); }"},
+        // 验证: 仅 if 无 else 结构的 AST 往返等价
         {"S2", "if 无 else",             "if (x > 0) { print(1); }"},
+        // 验证: 嵌套 if-else 结构 AST 往返等价
         {"S3", "嵌套 if-else",           "if (a) { if (b) { print(1); } else { print(2); } } else { print(3); }"},
         // 循环结构——验证 init/cond/update/body 不被重组
+        // 验证: for 循环三段结构 AST 往返等价
         {"S4", "for 循环",               "for (var i = 0; i < 10; i = i + 1) { print(i); }"},
+        // 验证: while 循环结构 AST 往返等价
         {"S5", "while 循环",             "while (x < 100) { x = x * 2; }"},
+        // 验证: 嵌套循环结构 AST 往返等价
         {"S6", "嵌套循环",               "for (var i = 0; i < 3; i = i + 1) { for (var j = 0; j < 3; j = j + 1) { print(i + j); } }"},
         // 函数声明——验证参数列表和函数体不被修改
+        // 验证: 函数声明（含参数）结构 AST 往返等价
         {"S7", "函数声明带默认参数",     "fun add(a, b) { return a + b; }"},
+        // 验证: 嵌套函数声明结构 AST 往返等价
         {"S8", "嵌套函数声明",           "fun outer() { fun inner() { return 1; } return inner(); }"},
         // 类声明——验证字段和方法列表不被重排或丢失
+        // 验证: 类声明（含继承、方法）结构 AST 往返等价
         {"S9", "类声明带继承",           "class Dog extends Animal { var name; fun bark() { print(\"woof\"); } }"},
+        // 验证: 多方法类声明结构 AST 往返等价
         {"S10", "类声明多方法",          "class Point { var x; var y; fun init(a, b) { x = a; y = b; } fun dist() { return x + y; } }"},
         // try/catch——验证 try 块和 catch 块结构不被重组
+        // 验证: try-catch 完整结构 AST 往返等价
         {"S11", "try-catch 完整",        "try { print(risky()); } catch (e) { print(e); }"},
+        // 验证: 嵌套 try-catch 结构 AST 往返等价
         {"S12", "嵌套 try-catch",        "try { try { throw 1; } catch (e) { throw 2; } } catch (e) { print(e); }"},
         // 复合语句序列——验证语句顺序不被重排
+        // 验证: 多语句顺序序列 AST 往返等价（顺序不重排）
         {"S13", "多语句序列",            "var a = 1; var b = 2; var c = a + b; print(c);"},
+        // 验证: 语句内嵌表达式 AST 往返等价
         {"S14", "语句内嵌表达式",        "var x = 1 + 2 * 3; if (x > 5) { print(x - (2 - 1)); }"},
         // break/continue/return 在循环和函数中
+        // 验证: 循环中 break/continue 结构 AST 往返等价
         {"S15", "break/continue in 循环", "var i = 0; while (true) { if (i >= 10) { break; } if (i % 2 == 0) { i = i + 1; continue; } print(i); i = i + 1; }"},
+        // 验证: 函数内条件 return 结构 AST 往返等价
         {"S16", "return 在函数中",       "fun f(x) { if (x > 0) { return x * 2; } return 0; }"},
     };
 
@@ -676,6 +774,7 @@ int main() {
     std::cout << "目标：验证格式化是语义保持的保形变换\n";
     std::cout << "（仅依赖 Lexer+Parser+Formatter，无 Interpreter）\n";
 
+    // 顺序执行 8 个审计分组，累计失败数；任何分组非零即整体返回失败。
     int totalFail = 0;
     totalFail += test_precedence();
     totalFail += test_strings();

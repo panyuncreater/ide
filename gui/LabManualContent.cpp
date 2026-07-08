@@ -32,6 +32,10 @@
 // 但知识点与结构（含本注释上方的章节约束）一律原样保留。
 // ============================================================
 
+/// 返回实验手册的全部章节数据（静态单例，仅构造一次）。
+/// 8 个 LabChapter 对应从词法到 Bug 狩猎的教学主线，每章字段包含标题、
+/// Markdown 正文（目标 / 关键概念 / 实验步骤 / 验证断言等）与章节练习题。
+/// 由 LabManualPanel 通过 QTextBrowser 渲染，章节数量与结构约束见本文件头注释。
 const std::vector<LabChapter>& LabManualContent::chapters() {
     static const std::vector<LabChapter> kChapters = {
         LabChapter{

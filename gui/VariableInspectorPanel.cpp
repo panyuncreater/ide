@@ -25,6 +25,7 @@
 // VariableInspectorLibrary — 静态教学场景库
 // ============================================================
 
+/// 返回变量类型示例库数据（静态数据）。
 const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
     static const std::vector<VariableTypeExample> kExamples = {
         VariableTypeExample{
@@ -80,7 +81,7 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
         },
         VariableTypeExample{
             "type-instance", "instance", "📦 instance 类型",
-            "var p = Point.new(3, 4);", "<instance of Point>",
+            "var p = Point(3, 4);", "<instance of Point>",
             "（堆指针，tag bits=0x7FFB）",
             "InstanceData* (RefCounted) { refCount: 1; className: 'Point'; fields: {x:3, y:4}; }",
             "📦 堆分配：实例字段表通过 ClassInfo::flattenedFieldOrder 描述。方法查找经 methodCache_ 加速。"
@@ -106,7 +107,17 @@ std::string valueToBitsHex(const Value& v) {
     std::ostringstream os;
     os << "0x" << std::hex << std::setfill('0') << std::setw(16);
     switch (v.getType()) {
-        case ValueType::VAL_INT:    os << NaNBox::fromInt(v.intVal()).rawBits(); break;
+        case ValueType::VAL_INT:
+            // AUDIT-P1 fix: BoxedIntData（超大整数装箱为堆对象）的 type==VAL_INT
+            // 但 isPointer()==true，此时 intVal() 返回原始 int64（可能超出 int48 范围），
+            // 调用 NaNBox::fromInt 会触发 canEncodeInt 失败 → std::abort() 崩溃。
+            // 对 BoxedIntData 显示堆指针占位符，与堆类型 default 分支一致。
+            if (v.isPointer()) {
+                os << "7ffb????????????";
+            } else {
+                os << NaNBox::fromInt(v.intVal()).rawBits();
+            }
+            break;
         case ValueType::VAL_FLOAT:  os << NaNBox::fromFloat(v.floatVal()).rawBits(); break;
         case ValueType::VAL_BOOL:   os << NaNBox::fromBool(v.boolVal()).rawBits(); break;
         case ValueType::VAL_NULL:  os << NaNBox::null().rawBits(); break;
@@ -131,6 +142,7 @@ std::string bitsToBinary(uint64_t bits) {
 // VariableInspectorPanel 实现
 // ============================================================
 
+/// 构造变量检视面板：初始化实时页与示例库页。
 VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent) {
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(4, 4, 4, 4);
@@ -179,14 +191,27 @@ VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent
     populateExamples();
 }
 
+/// 绑定 IDE 控制器以订阅 VM 状态变化。
 void VariableInspectorPanel::setController(IdeController* controller) {
     if (controller_ == controller) return;
+    // AUDIT-P0 fix: 注册前若已有 controller，先反注册旧监听器避免悬垂。
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
     controller_ = controller;
     if (controller_) {
-        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+        controller_->addVmStateChangedListener(this, [this] { onVmStateChanged(); });
     }
 }
 
+// AUDIT-P0 fix: 析构时反注册监听器，避免 controller_ 持有悬垂 this 回调。
+VariableInspectorPanel::~VariableInspectorPanel() {
+    if (controller_) {
+        controller_->removeVmStateChangedListener(this);
+    }
+}
+
+/// 构建「实时变量」子页 UI。
 void VariableInspectorPanel::buildLivePage(QWidget* host) {
     auto* v = new QVBoxLayout(host);
     v->setContentsMargins(0, 0, 0, 0);
@@ -223,6 +248,7 @@ void VariableInspectorPanel::buildLivePage(QWidget* host) {
     connect(varTree_, &QTreeWidget::currentItemChanged, [this](QTreeWidgetItem*, QTreeWidgetItem*) { onVariableSelected(); });
 }
 
+/// 构建「类型示例库」子页 UI。
 void VariableInspectorPanel::buildLibraryPage(QWidget* host) {
     auto* v = new QVBoxLayout(host);
     v->setContentsMargins(0, 0, 0, 0);
@@ -248,15 +274,18 @@ void VariableInspectorPanel::buildLibraryPage(QWidget* host) {
     connect(loadCodeBtn_, &QPushButton::clicked, this, &VariableInspectorPanel::onLoadExampleCode);
 }
 
+/// 手动刷新实时变量视图。
 void VariableInspectorPanel::onRefresh() {
     refreshLive();
 }
 
+/// 自动刷新开关：开启后随 VM 状态变化自动刷新。
 void VariableInspectorPanel::onAutoRefreshToggled(bool checked) {
     if (checked) autoTimer_->start();
     else         autoTimer_->stop();
 }
 
+/// 面板显示时触发一次刷新（按需加载数据）。
 void VariableInspectorPanel::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     if (autoRefreshCheck_ && autoRefreshCheck_->isChecked() &&
@@ -266,6 +295,7 @@ void VariableInspectorPanel::showEvent(QShowEvent* event) {
     }
 }
 
+/// 面板隐藏时停止自动刷新以节省资源。
 void VariableInspectorPanel::hideEvent(QHideEvent* event) {
     QWidget::hideEvent(event);
     if (autoTimer_ && autoTimer_->isActive()) {
@@ -273,6 +303,7 @@ void VariableInspectorPanel::hideEvent(QHideEvent* event) {
     }
 }
 
+/// 读取 VM 当前变量状态并刷新实时展示（含异常保护）。
 void VariableInspectorPanel::refreshLive() {
     varTree_->clear();
     if (!controller_) {
@@ -285,12 +316,29 @@ void VariableInspectorPanel::refreshLive() {
     std::unordered_map<std::string, Value> globals;
     QString modeLabel;
 
-    if (controller_->isVmInitialized()) {
-        modeLabel = controller_->getUseRegisterVM() ? tr("RegisterVM") : tr("StackVM");
-        globals   = controller_->getVmGlobals();
-    } else if (controller_->isRunning() && controller_->isDebugRun()) {
+    // AUDIT-P1 fix: 优先判断当前活跃引擎（Interpreter 调试 > VM 单步），
+    // 避免 isVmInitialized 一次性永久 true 后 Interpreter 调试仍走 VM 分支显示陈旧数据。
+    // 同时增加 isDebugPaused() 检查，避免调试 resume 期间 worker 活跃时并发访问解释器
+    // 内部 unordered_map/vector 导致 UB（数据竞争）。
+    if (controller_->isRunning() && controller_->isDebugRun()) {
+        if (!controller_->isDebugPaused()) {
+            liveStatusLabel_->setText(tr("状态：调试运行中（暂停后刷新）"));
+            varDetail_->clear();
+            return;
+        }
         modeLabel = tr("Interpreter (debug)");
         locals    = controller_->getDebugVariableSnapshot();
+    } else if (controller_->isVmInitialized()) {
+        // AUDIT-P1-CORRECT fix: VM RUN 模式（异步 QTimer 批量执行）期间 worker 可能
+        // 修改 globalSlots_/globalNameToSlot_，并发读取触发 UB。添加 isVmRunning() 守卫，
+        // 对齐 Interpreter 调试路径的 isDebugPaused() 守卫。
+        if (controller_->isVmRunning()) {
+            liveStatusLabel_->setText(tr("状态：VM 运行中（暂停后刷新）"));
+            varDetail_->clear();
+            return;
+        }
+        modeLabel = controller_->getUseRegisterVM() ? tr("RegisterVM") : tr("StackVM");
+        globals   = controller_->getVmGlobals();
     } else {
         liveStatusLabel_->setText(tr("状态：未运行（启动调试或 VM 单步以查看变量）"));
         varDetail_->clear();
@@ -309,8 +357,12 @@ void VariableInspectorPanel::refreshLive() {
     for (const auto& [name, val] : globals) {
         auto* item = new QTreeWidgetItem(globalGroup);
         item->setText(0, QString::fromUtf8(name.c_str()));
-        item->setText(1, QString::fromUtf8(val.typeName().c_str()));
-        item->setText(2, QString::fromUtf8(val.toString().c_str()));
+        // AUDIT-P1 fix: toString()/typeName() 异常防护，与 VmStackPanel 一致。
+        std::string valStr, typeStr;
+        try { typeStr = val.typeName(); } catch (...) { typeStr = "<error>"; }
+        try { valStr = val.toString(); } catch (...) { valStr = "<error>"; }
+        item->setText(1, QString::fromUtf8(typeStr.c_str()));
+        item->setText(2, QString::fromUtf8(valStr.c_str()));
         item->setData(0, Qt::UserRole, QString::fromUtf8(name.c_str()));
     }
     globalGroup->setExpanded(true);
@@ -328,14 +380,19 @@ void VariableInspectorPanel::refreshLive() {
         for (const auto* s : vec) {
             auto* item = new QTreeWidgetItem(group);
             item->setText(0, QString::fromUtf8(s->name.c_str()));
-            item->setText(1, QString::fromUtf8(s->value.typeName().c_str()));
-            item->setText(2, QString::fromUtf8(s->value.toString().c_str()));
+            // AUDIT-P1 fix: toString()/typeName() 异常防护。
+            std::string valStr, typeStr;
+            try { typeStr = s->value.typeName(); } catch (...) { typeStr = "<error>"; }
+            try { valStr = s->value.toString(); } catch (...) { valStr = "<error>"; }
+            item->setText(1, QString::fromUtf8(typeStr.c_str()));
+            item->setText(2, QString::fromUtf8(valStr.c_str()));
             item->setData(0, Qt::UserRole, QString::fromUtf8(s->name.c_str()));
         }
         group->setExpanded(true);
     }
 }
 
+/// 变量列表选中项变化时的详情刷新。
 void VariableInspectorPanel::onVariableSelected() {
     auto* cur = varTree_->currentItem();
     if (!cur || !cur->parent()) {
@@ -351,18 +408,27 @@ void VariableInspectorPanel::onVariableSelected() {
     QString bitsHex = tr("（未知）");
     if (controller_) {
         Value v;
-        // 优先从全局查
-        if (controller_->isVmInitialized()) {
+        bool found = false;
+        // AUDIT-P1 fix: 优先判断当前活跃引擎（与 refreshLive 一致），
+        // 避免 isVmInitialized 一次性 true 后 Interpreter 调试仍走 VM 分支找不到局部变量。
+        // 同时增加 isDebugPaused() 检查避免调试 resume 期间数据竞争。
+        if (controller_->isRunning() && controller_->isDebugRun()) {
+            if (controller_->isDebugPaused()) {
+                auto locals = controller_->getDebugVariableSnapshot();
+                for (const auto& s : locals) {
+                    if (s.name == name.toStdString()) { v = s.value; found = true; break; }
+                }
+            }
+        } else if (controller_->isVmInitialized() && !controller_->isVmRunning()) {
+            // AUDIT-P1-CORRECT fix: VM RUN 期间并发读取 globals 触发 UB，添加 isVmRunning() 守卫
             auto globals = controller_->getVmGlobals();
             auto it = globals.find(name.toStdString());
-            if (it != globals.end()) v = it->second;
-        } else if (controller_->isRunning() && controller_->isDebugRun()) {
-            auto locals = controller_->getDebugVariableSnapshot();
-            for (const auto& s : locals) {
-                if (s.name == name.toStdString()) { v = s.value; break; }
-            }
+            if (it != globals.end()) { v = it->second; found = true; }
         }
-        if (!v.isNull() || v.getType() == ValueType::VAL_NULL) {
+        // AUDIT-P1 fix: 原 `!v.isNull() || v.getType()==VAL_NULL` 是恒真表达式
+        // （false||true=true 或 true||...=true），导致未找到变量时也显示 null 位模式。
+        // 改为 found 标志判断，仅找到时显示位模式。
+        if (found) {
             bitsHex = QString::fromUtf8(valueToBitsHex(v).c_str());
         }
     }
@@ -376,6 +442,7 @@ void VariableInspectorPanel::onVariableSelected() {
     varDetail_->setHtml(html);
 }
 
+/// 填充类型示例库列表。
 void VariableInspectorPanel::populateExamples() {
     exampleList_->clear();
     for (const auto& e : VariableInspectorLibrary::examples()) {
@@ -386,10 +453,12 @@ void VariableInspectorPanel::populateExamples() {
     }
 }
 
+/// 示例库选中项变化回调。
 void VariableInspectorPanel::onExampleSelected(int index) {
     showExample(index);
 }
 
+/// 展示指定索引的类型示例说明与代码。
 void VariableInspectorPanel::showExample(int index) {
     currentExampleIdx_ = index;
     if (index < 0 || index >= static_cast<int>(VariableInspectorLibrary::examples().size())) {
@@ -422,6 +491,7 @@ void VariableInspectorPanel::showExample(int index) {
     exampleDetail_->setHtml(html);
 }
 
+/// 将选中示例的代码载入编辑器供运行。
 void VariableInspectorPanel::onLoadExampleCode() {
     if (currentExampleIdx_ < 0 || currentExampleIdx_ >= static_cast<int>(VariableInspectorLibrary::examples().size())) {
         return;

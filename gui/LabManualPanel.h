@@ -123,6 +123,9 @@ private:
     int currentChapterIndex_ = -1;
     bool firstShowDone_ = false;  ///< 是否已完成首次显示渲染
     bool foldMinorSections_ = false;  ///< P2 fix: 是否折叠次要章节（进阶/思考题/常见错误等）
+    // AUDIT-P2 fix: 防重复提交守卫——同步执行链期间快速重复点击会触发多次
+    // runStringCaptureOutput + 多次 save() 磁盘 I/O + recordFailure 计数虚高。
+    bool submitting_ = false;
 
     void populateChapterChips();   ///< issue 6: 构建章节芯片栏
     void refreshChapterChips();    ///< issue 6: 刷新芯片状态（当前高亮）

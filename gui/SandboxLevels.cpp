@@ -3,6 +3,7 @@
 // ------------------------------------------------------------
 // 从 VmStackSandboxPanel.cpp 拆分而来，避免测试目标链接
 // VmStackSandboxPanel.cpp 时引入 Qt6::Widgets 依赖。
+/// 返回全部栈沙盒关卡定义（静态数据）。
 // 本文件仅包含 SandboxLibrary::levels() 静态数据，依赖 STL
 // + Qt6::Core（仅因 PCH 拉入 QString）。无任何引擎层或
 // GUI 层依赖。
@@ -15,6 +16,7 @@
 
 #include "gui/SandboxLevels.h"
 
+/// 返回全部栈沙盒关卡定义（静态数据）。
 const std::vector<SandboxLevel>& SandboxLibrary::levels() {
     static const std::vector<SandboxLevel> kLevels = {
         // ---- 关卡 1：1 + 2 = 3 ----

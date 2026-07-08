@@ -30,6 +30,10 @@
 // 依赖（IdeController 依赖 app/ 下多个文件）。
 // ============================================================
 
+// 本文件实现 BugHuntPanel：编译器 Bug 狩猎教学模式的主面板，整合题库
+// 选择（芯片栏 + 难度筛选）、内嵌代码编辑、运行验证（含三后端对比）、
+// 递进提示/答案与变体挑战模式。
+
 BugHuntPanel::BugHuntPanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -345,7 +349,9 @@ void BugHuntPanel::onItemSelected(int itemIndex) {
         return;
     }
     // 幂等保护：相同索引不重复刷新，避免 refreshBugChips 递归调用栈溢出
-    if (currentItemIndex_ == itemIndex && hintLevel_ == 0) {
+    // AUDIT-P2 fix: 移除 hintLevel_==0 约束——用户已查看提示后再次点击同一题目，
+    // 原保护失效导致 hintLevel_ 被重置为 0，"下一提示"又从提示 1 开始，状态混乱。
+    if (currentItemIndex_ == itemIndex) {
         return;
     }
     currentItemIndex_ = itemIndex;
@@ -417,6 +423,8 @@ void BugHuntPanel::onDifficultyChanged(int id) {
 }
 
 void BugHuntPanel::onRunVerify() {
+    // AUDIT-P2 fix: 防重复守卫——快速双击会触发两次完整 Lexer→Parser→VM 链
+    if (verifying_) return;
     if (currentItemIndex_ < 0) {
         statusLabel_->setText(QString::fromUtf8("请先选择题目"));
         return;
@@ -427,8 +435,11 @@ void BugHuntPanel::onRunVerify() {
         return;
     }
 
+    // AUDIT-P2 fix: 通过 early return 后才禁用按钮+设标志，函数末尾恢复
+    verifying_ = true;
+    runBtn_->setEnabled(false);
+
     std::ostringstream out;
-    // 运行 Interpreter 路径（最宽容，便于教学观察行为）
     try {
         Lexer lex;
         auto tokens = lex.scan(source);
@@ -478,6 +489,9 @@ void BugHuntPanel::onRunVerify() {
         stepObserved_ = true;
         refreshDebugSteps();
     }
+    // AUDIT-P2 fix: 恢复按钮+标志
+    verifying_ = false;
+    runBtn_->setEnabled(true);
 }
 
 void BugHuntPanel::onShowHint() {
@@ -678,6 +692,8 @@ BackendRunResult runRegisterVM(const std::string& source) {
 } // namespace
 
 void BugHuntPanel::onTripleVerify() {
+    // AUDIT-P2 fix: 防重复守卫——三后端验证执行 3 条串行链，快速双击触发 6 次执行
+    if (tripleVerifying_) return;
     // 变体模式下验证当前变体；标准模式下验证当前题目
     if (variantMode_) {
         if (currentVariantIndex_ < 0) {
@@ -696,6 +712,10 @@ void BugHuntPanel::onTripleVerify() {
         outputEdit_->setPlainText(QString::fromUtf8("（空代码）"));
         return;
     }
+
+    // AUDIT-P2 fix: 通过 early return 后才禁用按钮+设标志，函数末尾恢复
+    tripleVerifying_ = true;
+    tripleVerifyBtn_->setEnabled(false);
 
     // 三条路径独立执行
     auto ir = runInterpreter(source);
@@ -770,15 +790,41 @@ void BugHuntPanel::onTripleVerify() {
             bool allClean = ir.exceptionName.empty() &&
                             sv.exceptionName.empty() &&
                             rv.exceptionName.empty();
-            if (outputConsistent && allClean) {
+            // AUDIT-P2 fix: 排除"三后端均无输出"的退化解——学员删除所有 print
+            // 即可让 outputConsistent 平凡为 true，从而作弊通关。要求至少一个
+            // 后端有非空输出，确保学员确实修复了 Bug 并产生预期输出。
+            bool hasOutput = !ir.output.empty() || !sv.output.empty() || !rv.output.empty();
+            if (outputConsistent && allClean && hasOutput) {
                 int diffInt = static_cast<int>(items[currentItemIndex_].difficulty);
-                emit challengeSolved(diffInt);
-                out << "\n✅ 狩猎成功！本档 Bug 狩猎活动已标记完成。\n";
+                // AUDIT-P1 fix: 跟踪已解决题目，仅当当前难度所有题目全部解决时
+                // 才发射 challengeSolved。原实现单题通过即发射，与游戏面板
+                // "全部子关卡完成"语义不一致（TokenPuzzle 要求 5 关全通、
+                // AstToy 要求 6 关全通）。BEGINNER 5 道、INTERMEDIATE 4 道、EXPERT 6 道。
+                solvedItemIndices_.insert(currentItemIndex_);
+                int totalInDiff = 0;
+                int solvedInDiff = 0;
+                for (int i = 0; i < (int)items.size(); ++i) {
+                    if (static_cast<int>(items[i].difficulty) == diffInt) {
+                        ++totalInDiff;
+                        if (solvedItemIndices_.contains(i)) ++solvedInDiff;
+                    }
+                }
+                if (solvedInDiff == totalInDiff) {
+                    emit challengeSolved(diffInt);
+                    out << "\n✅ 狩猎成功！本档全部 " << totalInDiff
+                        << " 道题已解决，活动标记完成。\n";
+                } else {
+                    out << "\n✅ 本题狩猎成功！本档已解决 "
+                        << solvedInDiff << "/" << totalInDiff << " 道。\n";
+                }
                 // 重新刷新输出（追加了成功提示）
                 outputEdit_->setPlainText(QString::fromUtf8(out.str().c_str()));
             }
         }
     }
+    // AUDIT-P2 fix: 恢复按钮+标志
+    tripleVerifying_ = false;
+    tripleVerifyBtn_->setEnabled(true);
 }
 
 void BugHuntPanel::onToggleVariantMode() {

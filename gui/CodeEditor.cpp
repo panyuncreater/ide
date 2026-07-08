@@ -23,6 +23,13 @@
 #include "gui/I18n.h"           // 功能 13：mlTr() 国际化
 
 // ============================================================
+// CodeEditor 代码编辑器实现
+// 负责行号区、断点（含条件）标记、错误下划线与精确范围、当前执行行高亮、
+// 代码折叠、自动补全、括号匹配、注释切换/块注释，以及代码模板（snippet）
+// 占位符导航等编辑器增强功能。
+// ============================================================
+
+// ============================================================
 // LineNumberArea 行号区域
 // ============================================================
 
@@ -204,6 +211,10 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
 
     // 更新断点显示
     codeEditor->viewport()->update();
+
+    // AUDIT-P2-CORRECT fix: 发射 breakpointsChanged 信号，通知上层（Ide）
+    // 在调试暂停期间同步断点到 DebugController，避免新断点不生效/已删除断点仍触发。
+    emit codeEditor->breakpointsChanged();
 }
 
 void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {

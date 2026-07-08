@@ -71,6 +71,9 @@ public:
     std::vector<CallStackEntry> getDebugCallStack() const {
         return debugger_->getCallStack();
     }
+    /// AUDIT-P1 fix: 转发 DebugController::isPaused()，供 IdeController::isDebugPaused() 使用。
+    /// 面板 autoTimer 在调试 resume 期间调用快照接口会与 worker 线程并发访问解释器内部数据。
+    bool isPaused() const { return debugger_->isPaused(); }
 
 signals:
     /// 转发调试器暂停信号

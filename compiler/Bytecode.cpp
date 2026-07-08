@@ -12,6 +12,17 @@
 // A3 fix: 统一 opcode 元数据表（名称/基础长度/是否变长）。
 // 索引与 OpCode enum 严格对齐（OP_CONSTANT=0, ..., OP_WRITEBACK_INDEX_UPVALUE=70）。
 // 新增 opcode 时只需在此表追加一行，无需修改 opCodeName/instructionSize/instructionSizeAt。
+//
+// ---- MiniLang 字节码格式约定（编解码通用）----
+//   · code：连续的 uint8_t 指令流。首字节为 opcode，后续字节为操作数（小端）。
+//   · 常量池 constants：所有字面量（数字/字符串/变量名/类型注解）集中存放，
+//     指令中以 16 位小端索引（code[ip+1] | code[ip+2]<<8）引用，0xFFFF 常作"无"哨兵。
+//   · 局部变量槽为 8 位；全局变量槽为 16 位；跳转/循环目标为绝对字节偏移（同样 16 位小端），
+//     OP_JUMP_IF_FALSE 不消费条件值（由编译器额外生成 OP_POP）。
+//   · 唯一变长指令是 OP_CLOSURE：基础 4 字节 +
+//     upvalueCount * 2 字节描述符（每对 = isLocal(1B) + uvIndex(1B)）。
+//   · 反汇编器 disassembleInstruction 把 offset 作为输入输出参数按实际字节数前进，
+//     据此可线性遍历整个 code 流；其长度解析必须与 kOpCodeInfo / instructionSizeAt 完全一致。
 namespace {
 constexpr OpCodeInfo kOpCodeInfo[] = {
     /*  0 OP_CONSTANT            */ {"OP_CONSTANT",                3, false},
@@ -116,6 +127,10 @@ std::string BytecodeChunk::disassemble() const {
 }
 
 /// 反汇编单条指令
+/// 约定：参数 offset 为「输入/输出」参数——调用方传入本条指令起始偏移，
+/// 函数内部按本指令实际字节数（含变长 OP_CLOSURE 的 upvalueCount*2）原地前进 offset，
+/// 因此连续调用 disassembleInstruction 即可线性遍历整个 code 流而无需调用方自行累加长度。
+/// 字节数与常量池索引的解析严格对齐 Bytecode.h 的 kOpCodeInfo 元数据表与 instructionSizeAt。
 std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     OpCode op = static_cast<OpCode>(code[offset]);
     int line = getLine(offset);

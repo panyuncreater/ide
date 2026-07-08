@@ -28,6 +28,8 @@
 // Converts plain text where lines may end with "; line N" into HTML
 // with those lines wrapped in <a href="#LINE_N"> anchors.
 namespace {
+/// 将纯文本 IR 转换为可点击 HTML：识别行尾 "; line N" 注释，把该行
+/// 包裹为 <a href="#LINE_N"> 锚点，便于在浏览器中点击跳转到源码对应行。
 static QString irTextToClickableHtml(const QString& plainText) {
     QStringList lines = plainText.split("\n");
     QString html;
@@ -60,6 +62,9 @@ static QString irTextToClickableHtml(const QString& plainText) {
 // 让学习者直观看到 AST 节点如何 lowering 为三地址码 IR 指令。
 // 文本为教学示意，不依赖运行时 AstIRBuilder 实际产物。
 
+/// 返回 AST → IR lowering 教学场景库（静态单例）。
+/// 每个场景演示一种 AST 节点（字面量 / 二元运算 / 变量声明 / 分支 / 循环 /
+/// 函数调用 / 闭包 / 类方法）如何 lowering 为三地址码 IR 指令，供 lowering 页展示。
 const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
     static const std::vector<IRLoweringExample> kExamples = {
         {
@@ -208,14 +213,14 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         },
         {
             "class-method",
-            "🏛️ 类方法 Point.new()",
-            "🏛️ ClassDecl lowering：类的每个方法（如 new、distance）都作为独立的 IRFunction 单独编译，互不干扰。<br>"
+            "🏛️ 类方法 Point() 构造",
+            "🏛️ ClassDecl lowering：类的每个方法（如 init、distance）都作为独立的 IRFunction 单独编译，互不干扰。<br>"
             "<b>隐式 this：</b>方法被调用时，对象自身会作为第 0 号槽位（slot 0）传入，名字叫 this。方法体内访问「x」「y」其实都是在操作 this 指向的实例字段。<br>"
             "<b>字段访问：</b>MethodCall 通过 SET_FIELD / GET_FIELD 读写实例字段，指令里标注「this=slot0」和字段名索引（如 #0 代表 x）。<br>"
-            "<b>输入输出：</b>「Point.new(px, py)」执行后，会把传入的 px、py 写进 this 的 x、y 字段；后续通过「点对象.x」即可取回这两个值。",
-            "ClassDecl(Point) → methods=[new, distance]",
-            "class Point {\n  var x;\n  var y;\n  fun new(px, py) { x = px; y = py; }\n}",
-            "function Point::new {\n"
+            "<b>输入输出：</b>「Point(px, py)」执行后，会把传入的 px、py 写进 this 的 x、y 字段；后续通过「点对象.x」即可取回这两个值。",
+            "ClassDecl(Point) → methods=[init, distance]",
+            "class Point {\n  var x;\n  var y;\n  fun init(px, py) { x = px; y = py; }\n}",
+            "function Point::init {\n"
             "  # slot 0 = this (隐式)\n"
             "  block L0:\n"
             "    v0 = LOAD_LOCAL slot=1   # px\n"
@@ -229,6 +234,8 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
     return kExamples;
 }
 
+/// 返回优化 pass 教学场景库（静态单例）：常量折叠 / 死代码消除 / 复制传播。
+/// 每个场景含优化前 IR、优化后 IR 与指令数变化，供优化对比页并排展示。
 const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExamples() {
     static const std::vector<IROptimizationExample> kExamples = {
         {
@@ -314,6 +321,8 @@ const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExampl
 // IRTransformPanel 实现
 // ============================================================
 
+/// 构造面板：组装顶部 4 个子页切换按钮（lowering / 优化对比 / 当前源码 IR /
+/// 逐步回放）与 QStackedWidget，构建各子页并连接切换信号、主题刷新与列表填充。
 IRTransformPanel::IRTransformPanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -418,6 +427,8 @@ IRTransformPanel::IRTransformPanel(QWidget* parent)
     });
 }
 
+/// 构建「AST → IR lowering」子页：左侧产生式/节点列表 + 右侧说明浏览器，
+/// 选中项变化时通过 populateLoweringDetail 渲染 HTML。
 void IRTransformPanel::buildLoweringPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -435,6 +446,8 @@ void IRTransformPanel::buildLoweringPage(QWidget* host) {
             this, &IRTransformPanel::populateLoweringDetail);
 }
 
+/// 构建「优化 pass 对比」子页：左侧优化 pass 列表 + 右侧优化前/后 IR 浏览器
+/// 及摘要标签，选中项变化时通过 populateOptDetail 显示指令数变化。
 void IRTransformPanel::buildOptimizePage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -472,6 +485,8 @@ void IRTransformPanel::buildOptimizePage(QWidget* host) {
             this, &IRTransformPanel::populateOptDetail);
 }
 
+/// 构建「当前源码 IR」子页：刷新按钮 + 状态标签 + 可点击 IR 浏览器。
+/// 浏览器将 "; line N" 渲染为锚点，点击 emit sourceLineRequested 高亮对应源码行。
 void IRTransformPanel::buildCurrentPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -507,12 +522,14 @@ void IRTransformPanel::buildCurrentPage(QWidget* host) {
     });
 }
 
+/// 当面板当前停在「当前源码 IR」子页（index==2）时，重新生成并刷新 IR 显示。
 void IRTransformPanel::reloadCurrentIR() {
     if (stack_->currentIndex() == 2) {
         populateCurrentIR();
     }
 }
 
+/// 用 lowering 场景库标题填充左侧列表并默认选中首项。
 void IRTransformPanel::populateLoweringList() {
     loweringList_->clear();
     const auto& items = IRTransformLibrary::loweringExamples();
@@ -522,6 +539,8 @@ void IRTransformPanel::populateLoweringList() {
     if (!items.empty()) loweringList_->setCurrentRow(0);
 }
 
+/// 根据选中索引渲染 lowering 详情：标题 / AST 节点 / 源码 / 说明 +
+/// 原始 IR（<pre> 背景用 TeachingTheme::surface() 以跟随主题）。
 void IRTransformPanel::populateLoweringDetail(int index) {
     const auto& items = IRTransformLibrary::loweringExamples();
     if (index < 0 || index >= (int)items.size()) return;
@@ -540,6 +559,7 @@ void IRTransformPanel::populateLoweringDetail(int index) {
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
+/// 用优化场景库的「pass 名 + 标题」填充左侧列表并默认选中首项。
 void IRTransformPanel::populateOptList() {
     optList_->clear();
     const auto& items = IRTransformLibrary::optimizationExamples();
@@ -552,6 +572,7 @@ void IRTransformPanel::populateOptList() {
     if (!items.empty()) optList_->setCurrentRow(0);
 }
 
+/// 根据选中索引渲染优化对比：摘要标签（标题 + 指令数变化）+ 优化前/后 IR 文本。
 void IRTransformPanel::populateOptDetail(int index) {
     const auto& items = IRTransformLibrary::optimizationExamples();
     if (index < 0 || index >= (int)items.size()) return;
@@ -568,6 +589,8 @@ void IRTransformPanel::populateOptDetail(int index) {
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
+/// 从 controller 取 AST，用 AstIRBuilder 生成 IRModule，经 IRToString 转文本后
+/// 渲染为可点击 HTML，并显示基本块/指令数。异常时在状态栏报告。
 void IRTransformPanel::populateCurrentIR() {
     if (!controller_) {
         currentStatusLabel_->setText(QString::fromUtf8("未绑定控制器"));
@@ -612,6 +635,9 @@ void IRTransformPanel::populateCurrentIR() {
 // irSnapshot 采用与 IRToString 一致的人类可读格式（含 "function" 关键字），
 // decisions 字段含具体指令级别的修改/删除原因，便于学习者理解 pass 内部行为。
 
+/// 返回逐步优化回放场景库（静态单例）：每个场景含 3 个 IROptStepRecord，
+/// 逐步回放一个优化 pass（常量折叠 / DCE / 复制传播 / CSE / 循环展开）的执行轨迹，
+/// 含每轮 IR 快照与指令级修改/删除决策，供回放页展示。
 const std::vector<std::pair<std::string, std::vector<IROptStepRecord>>>&
 IROptReplayLibrary::replayScenarios() {
     static const std::vector<std::pair<std::string, std::vector<IROptStepRecord>>> kScenarios = {
@@ -982,6 +1008,9 @@ IROptReplayLibrary::replayScenarios() {
 // 布局：左侧场景列表 + 中间步骤列表 + 右上 IR 快照 + 右下决策列表
 // 使用 QSplitter 嵌套布局：水平 splitter（场景 | 步骤 | 右侧垂直 splitter）
 
+/// 构建「逐步优化回放」子页：左侧场景列表 + 中间 pass 步骤列表 +
+/// 右上 IR 快照浏览器 + 右下决策解释列表（嵌套水平/垂直 splitter）。
+/// 连接场景/步骤切换与锚点点击（跳转源码行）。
 void IRTransformPanel::buildReplayPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -1092,6 +1121,7 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
     });
 }
 
+/// 用回放场景库的场景名填充左侧列表并默认选中首项。
 void IRTransformPanel::populateReplayList() {
     if (!replayList_) return;
     replayList_->clear();
@@ -1104,6 +1134,8 @@ void IRTransformPanel::populateReplayList() {
     }
 }
 
+/// 根据场景与步骤索引渲染回放详情：IR 快照（可点击）+ 决策解释列表 +
+/// 状态标签（场景 / pass 名 / 轮次 / 指令数 / 修改数）。
 void IRTransformPanel::populateReplayStep(int scenarioIdx, int stepIdx) {
     const auto& scenarios = IROptReplayLibrary::replayScenarios();
     if (scenarioIdx < 0 || scenarioIdx >= (int)scenarios.size()) return;

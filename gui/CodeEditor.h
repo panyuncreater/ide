@@ -114,6 +114,12 @@ signals:
     /// runToCursor 等），由上层（Ide）连接后路由到对应处理逻辑
     void contextActionRequested(const QString& action);
 
+    /// 用户通过行号区点击切换断点时发射（AUDIT-P2-CORRECT fix）
+    /// 用于调试暂停期间同步断点到 DebugController，原实现仅 mousePressEvent
+    /// 修改 breakpoints_ 不发射信号，导致 Interpreter 调试会话期间新增/删除断点
+    /// 不同步到 DebugController.breakpoints_，新断点不生效，已删除断点仍触发。
+    void breakpointsChanged();
+
 protected:
     /// 行号区域重绘时触发
     void resizeEvent(QResizeEvent* event) override;

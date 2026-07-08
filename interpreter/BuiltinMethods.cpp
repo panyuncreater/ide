@@ -22,6 +22,11 @@
 // ============================================================
 // #20 fix: 内建方法名枚举分发（从 VM::classifyBuiltinMethod 提取为共享自由函数）
 // ============================================================
+/// 将方法名分类为 BuiltinMethod 枚举（供 VM/Interpreter 预先分派）。
+/// 优化：先按名字长度 switch 过滤，再在固定长度组内做少量字符串比较，
+/// 避免对长名字链表式逐个比较。未知/不支持的名字返回 UNKNOWN。
+/// 注意：此分类不区分接收者类型（数组/字典/字符串同名方法），
+/// 类型归属在 handle*Method 的注册表中最终决定。
 BuiltinMethod classifyBuiltinMethod(const std::string& name) {
     // 按长度快速筛选，减少不必要的字符串比较
     switch (name.size()) {
@@ -426,6 +431,9 @@ Result<Value> executeSharedArrayJoin(const Value& arr,
 // 顶层内置函数共享层实现
 // ============================================================
 
+/// 判断 name 是否为顶层内置函数（len/type/str/int/abs/min/max/range/sum）。
+/// 用静态 unordered_set 做 O(1) 查找，供调用方在调用 executeSharedBuiltinFunction
+/// 前快速识别，避免将用户自定义函数误判为内置。
 bool isBuiltinFunction(const std::string& name) {
     // C7 fix: 用 unordered_set 实现 O(1) 查找，替代每次调用 9 次字符串比较
     static const std::unordered_set<std::string> builtinNames = {
@@ -447,24 +455,34 @@ namespace {
 using SharedBuiltinFn = Result<Value>(*)(const Value*, size_t, int, int);
 
 // ---- len(x): 长度（委托 executeSharedLen）----
+/// len(x): 返回 x 的长度。x 可为数组/字典/字符串（字符串按 UTF-8 码位数计）。
+/// 恰好 1 个参数，多/少均返回 err；实际计算委托 executeSharedLen。
 Result<Value> executeBuiltinLen(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("len", argCount, 1, line, column); r.is_err()) return r;
     return executeSharedLen(args[0], nullptr, 0, line, column);
 }
 
 // ---- type(x): 类型名 ----
+/// type(x): 返回 x 的运行时类型名字符串（如 "int"/"array"/"closure"）。
+/// 恰好 1 个参数；结果来自 Value::typeName()。
 Result<Value> executeBuiltinType(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("type", argCount, 1, line, column); r.is_err()) return r;
     return Result<Value>::ok(Value(args[0].typeName()));
 }
 
 // ---- str(x): 转字符串 ----
+/// str(x): 将 x 转换为字符串表示（与 Value::toString() 一致）。
+/// 恰好 1 个参数；用于数值/布尔/容器等转字符串场景。
 Result<Value> executeBuiltinStr(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("str", argCount, 1, line, column); r.is_err()) return r;
     return Result<Value>::ok(Value(args[0].toString()));
 }
 
 // ---- int(x): 转整数 ----
+/// int(x): 将 x 转换为整数（int64）。
+///   - int 原样返回；float 向零截断（溢出检查）；bool 转 0/1；
+///   - 字符串先用 from_chars 解析（避免 locale 依赖），要求整串可解析（前后空白允许、中间不允许），否则 err；
+///   - 其他类型不支持，返回 err。溢出与格式错误均以 err 返回而非 UB。
 Result<Value> executeBuiltinInt(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("int", argCount, 1, line, column); r.is_err()) return r;
     const Value& v = args[0];
@@ -505,6 +523,9 @@ Result<Value> executeBuiltinInt(const Value* args, size_t argCount, int line, in
 }
 
 // ---- abs(x): 绝对值 ----
+/// abs(x): 返回数值 x 的绝对值。
+///   - int: 注意 INT64_MIN 取负会溢出（C++ UB），用 negateOverflow 预检，溢出返回 err；
+///   - float: 直接取负；其他类型返回 err。
 Result<Value> executeBuiltinAbs(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("abs", argCount, 1, line, column); r.is_err()) return r;
     const Value& v = args[0];
@@ -524,6 +545,8 @@ Result<Value> executeBuiltinAbs(const Value* args, size_t argCount, int line, in
 }
 
 // ---- min(a, b): 最小值 ----
+/// min(a, b): 返回两个数值中的较小者。a、b 必须同为数值类型，否则 err。
+/// 同为 int 时做整数比较（无精度损失）；否则都转 double 后比较，返回 double。
 Result<Value> executeBuiltinMin(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("min", argCount, 2, line, column); r.is_err()) return r;
     const Value& a = args[0];
@@ -540,6 +563,8 @@ Result<Value> executeBuiltinMin(const Value* args, size_t argCount, int line, in
 }
 
 // ---- max(a, b): 最大值 ----
+/// max(a, b): 返回两个数值中的较大者。a、b 必须同为数值类型，否则 err。
+/// 同为 int 时做整数比较；否则转 double 后比较，返回 double。
 Result<Value> executeBuiltinMax(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("max", argCount, 2, line, column); r.is_err()) return r;
     const Value& a = args[0];
@@ -556,6 +581,9 @@ Result<Value> executeBuiltinMax(const Value* args, size_t argCount, int line, in
 }
 
 // ---- range(n): 生成 [0, 1, ..., n-1] 数组 ----
+/// range(n): 生成包含 [0, 1, ..., n-1] 的数组。
+/// 参数 n 必须为非负整数（负数 err），且不超过 RuntimeLimits::MAX_RANGE 上限（防 OOM），
+/// 否则返回 err。结果预分配容量后逐元素填充。
 Result<Value> executeBuiltinRange(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("range", argCount, 1, line, column); r.is_err()) return r;
     const Value& v = args[0];
@@ -578,6 +606,9 @@ Result<Value> executeBuiltinRange(const Value* args, size_t argCount, int line, 
 }
 
 // ---- sum(arr): 数组元素求和 ----
+/// sum(arr): 对数组元素求和。
+/// 先判断数组是否全为 int：全 int 时做整数累加（addOverflow 溢出检查，溢出 err）；
+/// 否则转 double 累加，遇到非数值元素返回 err。返回 int 或 double。
 Result<Value> executeBuiltinSum(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("sum", argCount, 1, line, column); r.is_err()) return r;
     const Value& v = args[0];
@@ -629,6 +660,10 @@ const std::unordered_map<std::string, SharedBuiltinFn>& builtinFunctionRegistry(
 
 } // anonymous namespace
 
+/// 顶层内置函数统一入口（供 Interpreter 和 VM 共用）。
+/// 通过 builtinFunctionRegistry() 的 O(1) 查找将 funcName 分派到对应处理函数；
+/// 未找到时返回 err（未知函数）。每个处理函数内部已完成参数个数校验与类型检查，
+/// 失败以 Result<Value>::err 表示，由调用方决定是否转为异常。
 Result<Value> executeSharedBuiltinFunction(
     const std::string& funcName,
     const Value* args, size_t argCount,
@@ -741,6 +776,12 @@ BuiltinMethodResult dispatchShared(SharedMethodFn fn, const Value& obj,
 // 数组内置方法
 // ============================================================
 
+/// 分发数组内置方法。
+/// 设计：变异方法（push/pop/remove）直接就地修改 obj，返回 objectModified=true
+/// 以便调用方（Interpreter/VM）知道原对象已变更、无需再取返回值；非变异方法
+/// （len/contains/join）通过 arraySharedMethods() 注册表委托共享纯函数实现，
+/// 统一经 dispatchShared 将 Result<Value> 转为 BuiltinMethodResult 或抛 RuntimeError。
+/// 未知方法名抛出 RuntimeError。方法名由 classifyBuiltinMethod 预先分类。
 BuiltinMethodResult BuiltinMethods::handleArrayMethod(
     const std::string& method, Value& obj,
     const std::vector<Value>& args, int line, int col)
@@ -793,6 +834,10 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(
 // 字典内置方法
 // ============================================================
 
+/// 分发字典内置方法。
+/// 变异方法（remove/set）直接就地修改 obj 的 entries；has/contains 因共享层
+/// executeSharedDictHas 需要 method 名用于错误消息而单独特判；其余（len/keys/values/get）
+/// 委托 dictSharedMethods() 共享实现。未知方法名抛出 RuntimeError。
 BuiltinMethodResult BuiltinMethods::handleDictMethod(
     const std::string& method, Value& obj,
     const std::vector<Value>& args, int line, int col)
@@ -832,6 +877,10 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(
 // 字符串内置方法
 // ============================================================
 
+/// 分发字符串内置方法。
+/// 字符串方法均为非变异（返回新字符串，不改原串），因此 obj 以 const 引用传入。
+/// 全部通过 stringSharedMethods() 注册表委托共享纯函数实现；contains 已在注册表中，
+/// 无需内联特例。未知方法名抛出 RuntimeError。
 BuiltinMethodResult BuiltinMethods::handleStringMethod(
     const std::string& method, const Value& obj,
     const std::vector<Value>& args, int line, int col)

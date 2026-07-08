@@ -156,6 +156,7 @@ IdeController::~IdeController() {
 // 管线操作
 // ============================================================
 
+/// 执行字节码编译：调用 PipelineRunner 编译 AST，刷新诊断与字节码/IR 视图。
 bool IdeController::runCompiler() {
     // B1 fix: VM RUN 模式活跃时拒绝 runCompiler，避免替换 CompileResult 致 frame.chunk 悬垂 UAF。
     // 调用方（onShowBytecode/onShowIR）在 VM 运行时应先 vmStop()。
@@ -186,6 +187,7 @@ bool IdeController::runCompiler() {
 // Worker 线程管理（协调 PipelineRunner + WorkerManager + VmStepper）
 // ============================================================
 
+/// 准备运行：失效管线缓存、运行前端管线产出 AST，供 WorkerManager 启动解释器。
 bool IdeController::prepareRun(bool isDebug, const std::string& source, const std::string& filePath) {
     // E2 fix: 各静默 return false 路径补 emit genericError，避免 UI 已 clearAll 后
     // 用户看不到任何反馈（onRun/onDebug 调用 prepareRun 前已 clearAll 输出面板）。
@@ -359,6 +361,7 @@ std::string IdeController::runStringCaptureOutput(const std::string& source) {
     }
 }
 
+/// 设置 REPL 模块加载回调：将相对 import 路径解析到当前活动文件所在目录。
 void IdeController::setupReplModuleCallbacks() {
     // 若 Interpreter 已有 moduleLoader_（先 Run 过），不覆盖，保持 Run 时建立的
     // baseDir 与模块缓存基准一致（避免 Run 后 REPL 用不同的 baseDir）。

@@ -1,3 +1,10 @@
+/**
+ * @file FindReplacePanel.cpp
+ * @brief 查找/替换面板实现（编辑器内联查找替换）
+ *
+ * 职责：在代码编辑器上提供查找、向上/向下查找、替换、全部替换与匹配高亮，
+ * 并支持 Esc 关闭、回车查找等键盘交互。
+ */
 #include "gui/FindReplacePanel.h"
 #include "gui/CodeEditor.h"
 #include "gui/TeachingTheme.h"
@@ -92,6 +99,7 @@ FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent)
     setVisible(false);
 }
 
+/// 显示面板；showReplace 控制是否展开替换区域。
 void FindReplacePanel::showPanel(bool showReplace) {
     // P1-13 fix: showFind/showReplace 共用逻辑提取
     replaceVisible_ = showReplace;
@@ -115,14 +123,17 @@ void FindReplacePanel::showPanel(bool showReplace) {
     }
 }
 
+/// 仅显示查找区域。
 void FindReplacePanel::showFind() {
     showPanel(false);
 }
 
+/// 展开替换区域。
 void FindReplacePanel::showReplace() {
     showPanel(true);
 }
 
+/// 关闭面板并清除高亮。
 void FindReplacePanel::closePanel() {
     setVisible(false);
     clearHighlights();
@@ -130,6 +141,7 @@ void FindReplacePanel::closePanel() {
     editor_->setFocus();
 }
 
+/// 键盘事件：Esc 关闭、回车触发查找。
 void FindReplacePanel::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         closePanel();
@@ -149,6 +161,7 @@ void FindReplacePanel::keyPressEvent(QKeyEvent* event) {
     QWidget::keyPressEvent(event);
 }
 
+/// 查找文本变化回调：实时刷新匹配高亮。
 void FindReplacePanel::onFindTextChanged(const QString& text) {
     if (text.isEmpty()) {
         clearHighlights();
@@ -162,6 +175,7 @@ void FindReplacePanel::onFindTextChanged(const QString& text) {
     highlightMatches(text);
 }
 
+/// 执行一次查找（forward 指定方向），返回是否找到。
 bool FindReplacePanel::findText(bool forward) {
     QString text = findEdit_->text();
     if (text.isEmpty()) return false;
@@ -195,14 +209,17 @@ bool FindReplacePanel::findText(bool forward) {
     }
 }
 
+/// 「查找下一个」按钮回调。
 void FindReplacePanel::onFindNext() {
     findText(true);
 }
 
+/// 「查找上一个」按钮回调。
 void FindReplacePanel::onFindPrev() {
     findText(false);
 }
 
+/// 执行单次替换当前匹配项。
 void FindReplacePanel::onReplace() {
     QString findTextStr = findEdit_->text();
     QString replaceTextStr = replaceEdit_->text();
@@ -251,6 +268,7 @@ void FindReplacePanel::onReplace() {
     findText(true);
 }
 
+/// 替换全部匹配项并刷新。
 void FindReplacePanel::onReplaceAll() {
     QString findTextStr = findEdit_->text();
     QString replaceTextStr = replaceEdit_->text();
@@ -295,6 +313,7 @@ void FindReplacePanel::onReplaceAll() {
     clearHighlights();
 }
 
+/// 高亮所有匹配项以便视觉定位。
 void FindReplacePanel::highlightMatches(const QString& text) {
     QList<QTextEdit::ExtraSelection> selections;
 
@@ -335,6 +354,7 @@ void FindReplacePanel::highlightMatches(const QString& text) {
     }
 }
 
+/// 清除查找匹配高亮。
 void FindReplacePanel::clearHighlights() {
     // P1 fix: 仅清除查找高亮，不要清除错误下划线和当前行高亮
     editor_->clearFindSelections();

@@ -31,8 +31,9 @@ GuidedTour::GuidedTour(QWidget* host, QObject* parent)
 }
 
 GuidedTour::~GuidedTour() {
-    // 析构时恢复高亮目标样式并隐藏气泡，避免遗留蓝色边框。
-    // bubble_ 作为 host_ 的子 widget 由 host_ 接管销毁，此处不 delete。
+    // 析构时恢复高亮目标样式并销毁气泡，避免遗留蓝色边框与资源泄漏。
+    // AUDIT-P0 fix: bubble_ 现为 QPointer，hideOverlay 中 deleteLater bubble_，
+    // 同时支持 bubble_ 已被父对象析构销毁的情况（QPointer 自动置 null）。
     hideOverlay();
 }
 
@@ -40,6 +41,7 @@ GuidedTour::~GuidedTour() {
 // addStep — 追加一步引导
 // ============================================================
 
+/// 新增一个引导步骤（目标控件、标题、正文与按钮文案）。
 void GuidedTour::addStep(QWidget* target, const QString& title,
                           const QString& description,
                           const QString& primaryBtnText,
@@ -51,6 +53,7 @@ void GuidedTour::addStep(QWidget* target, const QString& title,
 // start — 创建气泡（懒加载）并从第 0 步开始
 // ============================================================
 
+/// 启动引导：显示第一个步骤并启用遮罩。
 void GuidedTour::start() {
     if (steps_.isEmpty()) return;
 
@@ -147,6 +150,7 @@ void GuidedTour::start() {
 // showStep — 显示第 index 步
 // ============================================================
 
+/// 显示指定索引的步骤，定位气泡到目标控件。
 void GuidedTour::showStep(int index) {
     if (index < 0 || index >= steps_.size()) return;
     if (!bubble_) return;
@@ -203,6 +207,7 @@ void GuidedTour::showStep(int index) {
 // targetRect 为 host_ 坐标系；最终钳制到 host_ 边界内。
 // ============================================================
 
+/// 依据目标控件矩形计算并定位引导气泡位置。
 void GuidedTour::positionBubble(const QRect& targetRect) {
     if (!bubble_ || !host_) return;
 
@@ -266,6 +271,7 @@ void GuidedTour::positionBubble(const QRect& targetRect) {
 // next — 下一步；超出末步则完成引导
 // ============================================================
 
+/// 进入下一步；末步则结束引导。
 void GuidedTour::next() {
     const int nextIndex = currentIndex_ + 1;
     if (nextIndex >= steps_.size()) {
@@ -280,6 +286,7 @@ void GuidedTour::next() {
 // skip — 跳过引导
 // ============================================================
 
+/// 跳过剩余引导并隐藏遮罩。
 void GuidedTour::skip() {
     hideOverlay();
     emit finished(false);
@@ -289,14 +296,20 @@ void GuidedTour::skip() {
 // hideOverlay — 隐藏气泡并恢复目标 widget 原样式
 // ============================================================
 
+/// 隐藏遮罩与气泡，结束引导态。
 void GuidedTour::hideOverlay() {
     if (highlightedTarget_) {
         highlightedTarget_->setStyleSheet(savedStyleSheet_);
         highlightedTarget_.clear();
         savedStyleSheet_.clear();
     }
+    // AUDIT-P0 fix: bubble_ 改为 deleteLater 释放，避免反复 start/hideOverlay 累积泄漏。
+    // 原 hideOverlay 仅 hide() 不 delete，多次触发主引导或面板引导会泄漏 bubble_。
+    // QPointer 保证若 bubble_ 已被 host_ 析构链销毁则此处不再访问。
     if (bubble_) {
         bubble_->hide();
+        bubble_->deleteLater();
+        bubble_ = nullptr;
     }
     currentIndex_ = -1;
 }

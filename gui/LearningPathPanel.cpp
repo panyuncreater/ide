@@ -39,10 +39,12 @@
 // 阶段色统一走 TeachingTheme::learningStageColor()，保证
 // LearningPathPanel / WelcomeWizard Step 4 / CodeJourneyInfoPanel 三处一致
 // ============================================================
+/// 返回指定阶段的主题配色（用于阶段标签）。
 QString LearningPathPanel::stageColor(int stage) {
     return TeachingTheme::learningStageColor(stage).name();
 }
 
+/// 返回指定阶段的标题文案。
 QString LearningPathPanel::stageTitle(int stage) {
     switch (stage) {
         case 0: return mlTr("阶段零：首次接触");
@@ -57,6 +59,7 @@ QString LearningPathPanel::stageTitle(int stage) {
 // ============================================================
 // 构造函数
 // ============================================================
+/// 构造学习路径面板：初始化阶段列表容器与导航状态。
 LearningPathPanel::LearningPathPanel(QWidget* parent)
     : QWidget(parent) {
 
@@ -161,6 +164,7 @@ LearningPathPanel::LearningPathPanel(QWidget* parent)
 // ============================================================
 // 刷新整个面板
 // ============================================================
+/// 重新读取进度并刷新整个学习路径视图。
 void LearningPathPanel::refresh() {
     // M9: 清空键盘导航状态（旧 row 即将被销毁，引用不再有效）
     activityRows_.clear();
@@ -350,6 +354,7 @@ QFrame* LearningPathPanel::buildStageCard(int stage) {
 // ============================================================
 // 构造单个活动项行（使用 QPushButton 实现可点击）
 // ============================================================
+/// 构建单个活动的可点击行控件。
 QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
                                               bool unlocked, bool completed,
                                               bool recommended) {
@@ -454,10 +459,13 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
         layout->addWidget(recLabel, 0);
 
         // 高亮整行背景
+        // AUDIT-P2 fix: 原 rgba(%1, 0.18) 传 hex 字符串 (#859900) 给 QSS rgba() 函数
+        // 不合法，QSS rgba 只接受数字参数 rgba(r, g, b, a)。改为展开为数字格式。
+        QColor sc = stageColor(activity.stage);
         row->setStyleSheet(QString::fromUtf8(
             "QPushButton { background-color: rgba(0,0,0,0); border-radius: 4px; }"
-            "QPushButton:hover { background-color: rgba(%1, 0.18); }"
-        ).arg(stageColor(activity.stage)));
+            "QPushButton:hover { background-color: rgba(%1, %2, %3, 46); }"
+        ).arg(sc.red()).arg(sc.green()).arg(sc.blue()));
     } else if (unlocked) {
         row->setStyleSheet(QString::fromUtf8(
             "QPushButton { background-color: rgba(0,0,0,0); border: none; }"
@@ -515,6 +523,7 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity,
 // ============================================================
 // M9: 键盘导航 — 高亮指定索引的活动行
 // ============================================================
+/// 高亮指定索引的活动行（键盘导航用）。
 void LearningPathPanel::highlightActivityRow(int idx) {
     // 还原上一行样式
     if (currentNavIndex_ >= 0 && currentNavIndex_ < activityRows_.size()) {
@@ -538,6 +547,7 @@ void LearningPathPanel::highlightActivityRow(int idx) {
 // ============================================================
 // M9: 键盘导航 — Up/Down 切换行，Enter 触发点击
 // ============================================================
+/// 键盘事件：上下键导航、回车进入活动。
 void LearningPathPanel::keyPressEvent(QKeyEvent* event) {
     if (!activityRows_.isEmpty()) {
         if (event->key() == Qt::Key_Down) {
@@ -565,6 +575,7 @@ void LearningPathPanel::keyPressEvent(QKeyEvent* event) {
 // ============================================================
 // 刷新按钮槽
 // ============================================================
+/// 「刷新」按钮：重新加载进度数据。
 void LearningPathPanel::onRefresh() {
     LearnerProgressStore::instance().load();
     refresh();
@@ -573,6 +584,7 @@ void LearningPathPanel::onRefresh() {
 // ============================================================
 // 重置进度按钮槽
 // ============================================================
+/// 「重置进度」按钮：清空学习者进度。
 void LearningPathPanel::onResetProgress() {
     // 带确认对话框
     QMessageBox::StandardButton reply = QMessageBox::question(
@@ -592,6 +604,7 @@ void LearningPathPanel::onResetProgress() {
 // ============================================================
 // 活动点击槽
 // ============================================================
+/// 活动行点击回调：请求打开对应面板。
 void LearningPathPanel::onActivityClicked(const QString& activityId) {
     if (activityId.isEmpty()) return;
     auto& store = LearnerProgressStore::instance();
@@ -603,9 +616,17 @@ void LearningPathPanel::onActivityClicked(const QString& activityId) {
 // ============================================================
 // 外部调用：标记活动完成
 // ============================================================
+/// 将某活动标记为已完成并刷新视图。
 void LearningPathPanel::markActivityCompleted(const QString& activityId) {
     if (activityId.isEmpty()) return;
     auto& store = LearnerProgressStore::instance();
+    // AUDIT-P2 fix: 活动已完成则跳过 save + refresh，避免重复磁盘 I/O 与 UI 重建。
+    // 浏览型面板（visited-*）每次访问都触发 markActivityCompleted，原实现不检查
+    // 已完成状态直接 save + refresh，对已通关活动产生大量冗余操作。
+    if (store.data().completed.count(activityId.toStdString()) &&
+        store.data().completed.at(activityId.toStdString())) {
+        return;
+    }
     store.markCompleted(activityId.toStdString());
     store.save();
     refresh();

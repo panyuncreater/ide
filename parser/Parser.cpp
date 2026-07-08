@@ -143,6 +143,8 @@ const Token& Parser::previous() const {
 }
 
 bool Parser::isAtEnd() const {
+    // 仅需检查 peek() 是否为 EOF：所有扫描都保证 token 流以 TK_EOF 收尾，
+    // 因此到达流末尾等价于"看到了哨兵 EOF token"。
     return peek().type == TokenType::TK_EOF;
 }
 
@@ -159,6 +161,9 @@ bool Parser::check(TokenType type) const {
 }
 
 bool Parser::checkNext(TokenType type) const {
+    // 前瞻一个 token（不消耗）：用于区分"标识符后是 '(' "（函数声明）
+    // 还是独立标识符（变量名）等需要多 token 上下文的语法判断。
+    // 越界（已是最后一个 token）时视为不匹配，避免访问越界。
     int idx = current_ + 1;
     if (idx >= (int)tokens_->size()) return false;
     return (*tokens_)[idx].type == type;
@@ -212,19 +217,28 @@ bool Parser::isClassTypeDeclStart() const {
     if (idx >= size) return false;
     // ClassName paramName
     if ((*tokens_)[idx].type == TokenType::TK_IDENTIFIER) return true;
-    // ClassName[] paramName
+    // ClassName[][] paramName（ROUND44 fix: 支持多维数组类型注解。
+    // 第四十三轮已修复 parseTypeAnnotation 的多维支持，但此门控函数仍用单次 []
+    // 检查，导致 ClassName[][] paramName 在函数参数处不会被识别为类类型声明，
+    // 落入"名字在前"分支引发解析错误。改为 while 循环消费连续 [] 后缀。）
     if ((*tokens_)[idx].type != TokenType::TK_LBRACKET) return false;
-    idx++;
-    if (idx >= size || (*tokens_)[idx].type != TokenType::TK_RBRACKET) return false;
-    idx++;
+    while (idx < size && (*tokens_)[idx].type == TokenType::TK_LBRACKET) {
+        idx++;
+        if (idx >= size || (*tokens_)[idx].type != TokenType::TK_RBRACKET) return false;
+        idx++;
+    }
     return idx < size && (*tokens_)[idx].type == TokenType::TK_IDENTIFIER;
 }
 
 std::string Parser::parseTypeAnnotation() {
     const Token& typeTok = advance();  // 消耗类型关键字或标识符
     std::string typeAnn = typeTok.lexeme;
+    // AUDIT-P2-CORRECT fix: 支持多维数组类型注解（int[][], int[][][]）。
+    // 原实现用单次 if 仅消费一对 []，遇到第二个 [ 即返回，导致 int[][]
+    // 中第二个 [] 留在 token 流引发后续解析错误。
+    // 改为 while 循环消费连续的 [] 后缀，直到不再是 [] 模式。
     // 安全回溯：仅在 [ 后紧跟 ] 时才消费，否则回退 [
-    if (check(TokenType::TK_LBRACKET)) {
+    while (check(TokenType::TK_LBRACKET)) {
         int bracketSave = current_;
         advance(); // 消耗 '['
         if (check(TokenType::TK_RBRACKET)) {
@@ -232,6 +246,7 @@ std::string Parser::parseTypeAnnotation() {
             typeAnn += "[]";
         } else {
             current_ = bracketSave; // 不是 [] 类型注解，回退 '['
+            break;
         }
     }
     return typeAnn;
@@ -668,13 +683,23 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
                 decl->requiredParamCount = reqCount;
                 decl->defaultValues = std::move(defaultValues);
                 members.push_back(std::move(decl));
-            } else if (check(TokenType::TK_LBRACKET) && checkNext(TokenType::TK_RBRACKET)) {
+            } else if (check(TokenType::TK_LBRACKET)) {
                 // BUG-LPA-04 fix: ClassName[] fieldName; 数组类型字段
                 //   原实现消耗 ClassName 后遇 [ 直接回溯，不支持类类型数组字段。
                 //   与参数列表/for循环/顶层声明行为对齐：消费 [] 后缀构造类型注解。
-                advance(); // 消耗 '['
-                advance(); // 消耗 ']'
-                std::string typeAnn = firstTok.lexeme + "[]";
+                // AUDIT-P2 fix: 支持多维数组字段（ClassName[][] field），
+                //   对齐 parseTypeAnnotation 的 while 循环模式。原实现仅消费单对 []。
+                int bracketSave = current_;
+                std::string typeAnn = firstTok.lexeme;
+                while (check(TokenType::TK_LBRACKET)) {
+                    advance(); // 消耗 '['
+                    if (!check(TokenType::TK_RBRACKET)) {
+                        current_ = bracketSave;
+                        break;
+                    }
+                    advance(); // 消耗 ']'
+                    typeAnn += "[]";
+                }
                 if (check(TokenType::TK_IDENTIFIER)) {
                     // ClassName[] fieldName — 类类型数组字段
                     // （ClassName[] methodName() 不合法，不支持类数组返回类型方法）
@@ -1135,6 +1160,19 @@ std::unique_ptr<ASTNode> Parser::expressionStatement() {
 }
 
 // ---- 表达式 ----
+// 运算符优先级"攀登"（precedence climbing）采用递归下降实现：
+// 每一层函数只处理"本级及更低优先级"的运算符，遇到更高优先级就下沉到下一层函数。
+// 层级从松到紧依次为：
+//   assignment(右结合) → or_ → and_ → equality → comparison → term → factor
+//   → unary → call → primary
+// 其中 or_(1) < and_(2) < equality(3) < comparison(4) < term(+|-,5)
+//   < factor(*|/|%,6)，数值与 BinaryOp::precedence 完全一致（单一来源）。
+// 左结合性由每层的 while(match(...)) 循环天然保证：a - b - c 被解析为
+// ((a-b)-c)——循环不断把"右侧同级子表达式"挂到已构建的左树上。
+// 右结合（赋值）则在 assignment() 中通过"递归调用 assignment() 而非循环"实现：
+// a = b = c 解析为 a = (b = c)。
+// 每层入口均做 parseDepth_ 深度保护（配合 DepthGuard 自动回退），
+// 防止极端嵌套表达式触发 C++ 递归栈溢出导致 DoS。
 
 std::unique_ptr<ASTNode> Parser::expression() {
     // P15 fix: 递归深度保护，防止极端嵌套表达式导致栈溢出
@@ -1593,6 +1631,7 @@ void Parser::synchronize() {
     case TokenType::TK_STRING_TYPE:
     case TokenType::TK_DICT:
     case TokenType::TK_ARRAY:
+    case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点，避免 import 错误恢复时吞掉 from
         return;
     default:
         break;
@@ -1643,6 +1682,7 @@ void Parser::synchronize() {
         case TokenType::TK_STRING_TYPE:
         case TokenType::TK_DICT:
         case TokenType::TK_ARRAY:
+        case TokenType::TK_FROM:  // AUDIT-P1-CORRECT fix: from 作为同步点
             return;
         default:
             break;

@@ -3,6 +3,23 @@
 // ------------------------------------------------------------
 // 执行 RegBytecodeChunk。核心指令：常量加载、算术比较、控制流、
 // 全局/局部变量、函数调用、返回、容器、成员访问、闭包、类。
+//
+// 与栈式 VM(VM.cpp) 的关键差异（理解本文件的前提）：
+//   · 无操作数栈。所有中间结果存于每个调用帧的固定寄存器窗口
+//     RegCallFrame::registers（std::array<Value, MAX_REGISTERS=32>），
+//     用 reg(slot) 访问。因此 POP/DUP 退化为 REG_MOVE 或 no-op；
+//     函数局部变量 = 寄存器号（localCount 个寄存器从 0 开始）。
+//   · 调用帧帧布局：新帧 registers[0..argCount-1] 填实参（方法调用时
+//     registers[0] 是 this），其余寄存器由被调用者自由使用；
+//     returnReg/returnIp 记录调用者的目标寄存器与返回地址。
+//   · upvalue 全局地址编码：stackSlot = frameIdx * MAX_REGISTERS + slot，
+//     使每一帧的每个寄存器槽有全局唯一地址（C-3 fix）。closeUpvaluesFrom/
+//     resolveOpenUpvalueSlot 据此跨帧定位，解决了多层嵌套闭包透传错位。
+//   · 嵌套左值变异：MEMBER_SET/INDEX_SET 把接收者寄存器号记入
+//     lastMutatedReceiverReg_，后续 WRITEBACK_* 整体替换回原处
+//     （全局槽/局部寄存器/upvalue），与栈式 VM 的 lastMutatedReceiver_ 对应。
+//   · 注册式 VM 把 hasError_ 纳入 isFinished 判定，且 execute()/stepOnce()
+//     共用成员 instructionCount_ 作为 DoS 防护预算（与栈式 VM 的局部计数不同）。
 // ============================================================
 
 #include "compiler/RegisterVM.h"
@@ -89,7 +106,9 @@ VMResult RegisterVM::execute(const RegisterCompileResult& result) {
     while (!frames_.empty() && !hasError_) {
         VMResult r = executeOneInstruction();
         if (r != VMResult::VM_OK) return r;
-        // DoS 防护
+        // DoS 防护：instructionCount_ 为成员字段，execute() 与 stepOnce() 共享同一预算。
+        // 与栈式 VM 不同（其 execute 用局部计数器、stepOnce 用独立成员），RegisterVM
+        // 让全速执行与单步执行共用累计计数，保证两种模式下的指令上限语义一致。
         if (++instructionCount_ >= MAX_INSTRUCTIONS) {
             return runtimeError("指令数超出上限（可能存在死循环）");
         }
@@ -110,6 +129,8 @@ VMResult RegisterVM::stepOnce() {
 }
 
 bool RegisterVM::isFinished() const {
+    // 与栈式 VM 不同，RegisterVM 将 hasError_ 纳入"完成"判定：单步模式下一旦出错
+    // 立即视为执行结束，使 IDE 能在错误指令处停住而非继续空转已损坏的状态。
     return frames_.empty() || hasError_;
 }
 
@@ -148,6 +169,12 @@ VMResult RegisterVM::runtimeError(const std::string& msg) {
 // ============================================================
 
 VMResult RegisterVM::executeOneInstruction() {
+    // 单条寄存器指令执行的核心分派点，execute() 与 stepOnce() 共用。
+    // 流程：① 判空帧/hasError_ 短路；② 取 RegOp；③ 用 instructionSizeAt 计算
+    // 完整指令长度（变长指令据操作数展开）并做字节码截断边界检查；
+    // ④ 按类别 switch 到 executeXxx 方法，再由各方法按具体 RegOp 处理。
+    // 注意 REG_TYPE_CHECK / REG_SUPER_CALL 归入 executeMisc（杂项）——它们与
+    // 异常、I/O 共用同一分发桶，仅因历史归类，不影响语义。
     if (hasError_) return VMResult::VM_RUNTIME_ERROR;
     if (frames_.empty()) return VMResult::VM_OK;
 

@@ -16,7 +16,31 @@
 #include "common/BoundsCheck.h"        // Dedup-7A: inBounds 替代重复的索引检查
 
 // ============================================================
-// Interpreter 解释器实现
+// Interpreter.cpp — 树遍历解释器（Visitor 模式）主实现
+// ------------------------------------------------------------
+// MiniLang 三套执行引擎之一：直接遍历 AST 执行，不生成中间字节码。
+// 实现 Visitor 接口的 33 个 visit* 方法，对每种 AST 节点执行"语义动作"
+// （先 checkBreak 支持断点/中止，再求值并将结果写入 lastValue_，由 evaluate() 取出）。
+//
+// 本文件按职责分段（见各段注释头）：
+//   - 顶层执行入口：execute / executeRepl / runStatementsWithExceptionHandling
+//     （状态重置、REPL 状态保存/恢复、Run 起点触发 GC 回收残留循环引用、
+//     压入顶层 main 调用帧）。
+//   - 安全求值：evaluateExpr / evaluateCondition（条件断点沙箱，深拷贝容器以隔离副作用）。
+//   - 数值/比较/类型：numericBinaryOp / compareNumericOrString / typeMatch / checkType。
+//   - 左值写回：writeBack / collectAndEvaluateChain / writeBackChain
+//     （链式求值从外到内、从内到外，避免对含副作用的子表达式重复求值）。
+//   - 闭包与自由变量：visitFunDecl / computeFreeVariables
+//     （静态分析 AST，仅捕获函数体实际引用的外层变量，并在定义处注册 open upvalue）。
+//   - 函数调用分派：visitFunCall → callClosureValue / callNamedFunction /
+//     callBuiltinFunction / callBuiltinConstructor / constructClassInstance
+//     （默认参数、闭包环境过期时从 capturedVars 快照重建并回写、递归深度保护、RAII 守卫）。
+//   - 类/对象/方法：visitMethodCall / callInstanceMethod（继承链方法查找、super 解析、
+//     this 实例绑定、init 构造），类声明/成员/继承见 InterpreterClasses.cpp。
+//   - 模块系统：import/export 见 InterpreterModules.cpp（路径安全、循环依赖检测、mtime 缓存失效）。
+//
+// 值表示、作用域链、引用计数与循环引用 GC 分别见 Value.h/NaNBox.h、Environment.h、
+// RefCounted.h、GcManager.cpp：本文件在这些运行时基础设施之上组合出语言语义。
 // ============================================================
 
 Interpreter::Interpreter()
@@ -73,6 +97,21 @@ Value Interpreter::execute(Block& program) {
     // 可能持有堆对象引用，若不作为根集传入，GC 会误判为循环引用孤岛并清空 elements，
     // 导致 restoreReplState 后类字段默认值丢失、模块变量变成空容器。
     std::vector<const void*> gcRoots;
+    // AUDIT-P2-CORRECT fix: 无论 REPL 是否激活，都应将 globalEnv_ 顶层变量纳入 GC roots。
+    // 原实现仅 REPL 模式收集 roots，非 REPL 模式传入空根集。若 Interpreter 被复用
+    //（如测试场景），上一轮残留的循环引用容器在 tracked_ 中，空根集会导致 Phase 2
+    // 误判所有 tracked 容器为不可达孤岛并清空子元素。即使 IdeController 每次 Run
+    // 创建新 Interpreter（tracked_ 为空，collectCycle 提前返回），此处防御性收集
+    // 可保证复用场景的正确性。
+    if (!replState_.active) {
+        if (globalEnv_) {
+            auto vars = globalEnv_->snapshotLocalVariables();
+            for (const auto& var : vars) {
+                const void* ptr = var.second.gcRootPtr();
+                if (ptr) gcRoots.push_back(ptr);
+            }
+        }
+    }
     if (replState_.active) {
         // (1) savedGlobalEnv 顶层变量
         if (replState_.savedGlobalEnv) {
@@ -200,6 +239,10 @@ void Interpreter::saveReplState() {
     replState_.savedExportedNames = exportedNames_;
     replState_.savedModuleLoadingStack = moduleLoadingStack_;
     replState_.savedModuleLoadingSet = moduleLoadingSet_;  // D19 fix: 同步保存 set
+    // AUDIT-P1 fix: 保存 moduleMtimes_，与 moduleCache_ 保持对称。
+    // 原实现遗漏此字段，restoreReplState 用空 map 覆盖 moduleMtimes_，
+    // 导致后续 import 命中缓存时跳过 mtime 变更检查，磁盘修改被忽略。
+    replState_.savedModuleMtimes = moduleMtimes_;
     replState_.active = true;
 }
 
@@ -289,6 +332,10 @@ const std::vector<CallFrame>& Interpreter::getCallStack() const {
     return callStack_;
 }
 
+std::vector<CallFrame> Interpreter::getCallStackSnapshot() const {
+    return callStack_;
+}
+
 Value Interpreter::evaluateExpr(ASTNode* node) {
     if (!node) return Value::nullValue();
     // RAII 守卫：确保异常时也能恢复 debugMode_
@@ -352,10 +399,22 @@ Value deepCloneForSandbox(const Value& v) {
         }
         return newInst;
     }
-    // 非容器类型（int/float/bool/null/string/closure）：
+    // AUDIT-P2-CORRECT fix: 闭包的 capturedVars 需要 COW detach + 递归深拷贝，
+    // 隔离沙箱内 writeBackCapturedVars 的副作用（writeBack 通过 const_cast 绕过 COW
+    // 直接修改原始 capturedVars map）。body/closureEnv 可共享（body 只读、env 在沙箱内
+    // 若失效会从 capturedVars 快照重建）。
+    if (v.isClosure()) {
+        Value newClosure = v;  // 浅拷贝（共享 body/closureEnv，refCount=2）
+        // 非 const capturedVars() 触发 ensureUnique<ClosureData>，refCount>1 时创建独立副本
+        auto& captured = newClosure.capturedVars();
+        for (auto& [k, val] : captured) {
+            val = deepCloneForSandbox(val);  // 递归深拷贝容器值
+        }
+        return newClosure;
+    }
+    // 非容器类型（int/float/bool/null/string）：
     // - 标量：值语义，拷贝即独立
     // - string：不可变（BuiltinMethods 的 replace/substr 返回新串而非原地修改）
-    // - closure：条件断点不应修改闭包代码，浅拷贝足够
     return v;
 }
 } // anonymous namespace
@@ -374,7 +433,14 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     // BUG-INTP-2 fix: 同时记录原始 InstanceData 指针，析构时比较。
     // 若条件中 this 被重赋值为另一实例（仍 isInstance==true），inst 指向的
     // Value 内容已变（InstanceData 指针不同），不应把旧字段快照写入新实例。
-    std::map<Value*, std::pair<const void*, std::unordered_map<std::string, Value>>> instSnaps;
+    // AUDIT-P2-CORRECT fix: 存储 Environment* 以便析构时重新获取 inst 指针，
+    // 避免条件求值期间 variables map rehash 导致 inst 悬垂。
+    struct InstSnapEntry {
+        Environment* env;
+        const void* gcRoot;
+        std::unordered_map<std::string, Value> fields;
+    };
+    std::map<Value*, InstSnapEntry> instSnaps;
     Environment* snapEnv = currentEnv_.get();
     while (snapEnv) {
         auto locals = snapEnv->snapshotLocalVariables();
@@ -393,7 +459,7 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
             for (auto& [k, v] : fields) {
                 v = deepCloneForSandbox(v);
             }
-            instSnaps[inst] = {inst->gcRootPtr(), std::move(fields)};
+            instSnaps[inst] = {snapEnv, inst->gcRootPtr(), std::move(fields)};
         }
         snapEnv = snapEnv->parent.get();
     }
@@ -419,12 +485,20 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
     // 沙箱内 node->accept 会覆盖 lastValue_，主程序表达式求值中间状态丢失
     //（若条件断点在表达式子节点求值过程中触发，主程序的 lastValue_ 会被污染）。
     Value savedLastValue = lastValue_;
+    // AUDIT-P2 fix: 沙箱未保存/恢复 loopFlow_ 和模块相关状态。
+    // 条件中调用含 import/export 的函数会污染 moduleCache_/moduleExports_/
+    // moduleMtimes_/exportedNames_，使主程序后续 import 命中沙箱注入的缓存。
+    auto savedLoopFlow = loopFlow_;
+    auto savedModuleCache = moduleCache_;
+    auto savedModuleExports = moduleExports_;
+    auto savedModuleMtimes = moduleMtimes_;
+    auto savedExportedNames = exportedNames_;
 
     // RA-A fix: RAII 守卫统一管理沙箱状态恢复（实例字段 + 局部变量 + 调用栈/环境/深度/调试模式），
     // 消除原 catch(...) + throw; 的 rethrow。正常路径和异常路径恢复逻辑完全一致。
     struct SandboxGuard {
         Interpreter& interp;
-        std::map<Value*, std::pair<const void*, std::unordered_map<std::string, Value>>>& instSnaps;
+        std::map<Value*, InstSnapEntry>& instSnaps;
         std::vector<EnvSnapshot>& envSnaps;
         std::vector<CallFrame> savedCallStack;
         std::vector<std::string> savedClassCtx;
@@ -436,6 +510,11 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         std::unordered_map<std::string, ClassInfo> savedClassRegistry;
         int savedClassRegistryGen;
         Value savedLastValue;
+        LoopFlow savedLoopFlow;
+        std::unordered_map<std::string, std::shared_ptr<Environment>> savedModuleCache;
+        std::unordered_map<std::string, std::unordered_set<std::string>> savedModuleExports;
+        std::unordered_map<std::string, int64_t> savedModuleMtimes;
+        std::unordered_set<std::string> savedExportedNames;
         ~SandboxGuard() {
             // H2 fix: 必须先恢复实例字段，再恢复局部变量。
             // inst 指针指向旧 variables["this"] 条目，restoreLocalVariables
@@ -447,9 +526,12 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
             // BUG-INTP-2 fix: 即使 inst 仍是实例，也可能 this 被重赋值为另一实例
             //（InstanceData 指针不同）。比较 gcRootPtr()，不匹配则跳过字段恢复，
             // 避免把旧 A 字段快照写入新 B 实例污染新对象。
-            for (auto& [inst, snap] : instSnaps) {
-                if (inst->isInstance() && inst->gcRootPtr() == snap.first) {
-                    inst->fields() = snap.second;
+            // AUDIT-P2-CORRECT fix: 不使用快照时的 inst 指针（可能因 variables rehash 悬垂），
+            // 改为从 snap.env 重新获取 boundInstance_，确保指针有效。
+            for (auto& [oldInst, snap] : instSnaps) {
+                Value* inst = snap.env->getBoundInstance();
+                if (inst && inst->isInstance() && inst->gcRootPtr() == snap.gcRoot) {
+                    inst->fields() = snap.fields;
                 }
             }
             // #1 fix: 恢复变量绑定（撤销条件中的赋值/声明副作用）
@@ -468,13 +550,22 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
             interp.classRegistryGen_ = savedClassRegistryGen;
             // BUG-REPL-2 fix: 恢复 lastValue_
             interp.lastValue_ = std::move(savedLastValue);
+            // AUDIT-P2 fix: 恢复 loopFlow_ 和模块相关状态
+            interp.loopFlow_ = savedLoopFlow;
+            interp.moduleCache_ = std::move(savedModuleCache);
+            interp.moduleExports_ = std::move(savedModuleExports);
+            interp.moduleMtimes_ = std::move(savedModuleMtimes);
+            interp.exportedNames_ = std::move(savedExportedNames);
         }
     } sandboxGuard{ *this, instSnaps, envSnaps,
                     std::move(savedCallStack), std::move(savedClassCtx),
                     savedEnv, savedDepth, savedDebugMode,
                     std::move(savedFunRegistry), savedFunRegistryGen,
                     std::move(savedClassRegistry), savedClassRegistryGen,
-                    std::move(savedLastValue) };
+                    std::move(savedLastValue),
+                    savedLoopFlow,
+                    std::move(savedModuleCache), std::move(savedModuleExports),
+                    std::move(savedModuleMtimes), std::move(savedExportedNames) };
 
     lastValue_ = Value::nullValue();
     node->accept(*this);
@@ -651,8 +742,12 @@ bool Interpreter::typeMatch(const Value& val, const std::string& annotation) con
     if (annotation == TypeName::STRING) return val.isString();
     if (annotation == TypeName::ARRAY) return val.isArray();
     if (annotation == TypeName::DICT) return val.isDict();
-    // 数组元素类型注解，如 "int[]"
-    if (annotation.size() >= 2 && annotation.back() == ']' && annotation[annotation.size() - 2] == '[') {
+    // 数组元素类型注解，如 "int[]", "int[][]", "int[][][]"
+    // AUDIT-P2-CORRECT fix: 支持多维数组类型注解。原实现用 annotation[size-2]=='['
+    // 仅匹配单维 "int[]"，对 "int[][]"（末尾两字符 "]]"）不匹配导致报错。
+    // 改用 substr 后缀比较 "[]"，剥离末尾 "[]" 后递归 typeMatch 每个元素，
+    // 天然支持多维（int[][] → 剥离得 int[] → 递归剥离得 int）。
+    if (annotation.size() >= 2 && annotation.substr(annotation.size() - 2) == "[]") {
         if (!val.isArray()) return false;
         std::string elemType = annotation.substr(0, annotation.size() - 2);
         for (const auto& elem : val.arrayVal()) {
@@ -981,11 +1076,13 @@ void Interpreter::visitUnaryOp(UnaryOp& node) {
 
 void Interpreter::visitNumberLiteral(NumberLiteral& node) {
     checkBreak(&node);
+    // 数值字面量：将 AST 节点中保存的数值原样作为求值结果返回（getValue() 按需构造 Value）。
     lastValue_ = node.getValue(); return;  // A1 fix: getValue() 按需构造
 }
 
 void Interpreter::visitStringLiteral(StringLiteral& node) {
     checkBreak(&node);
+    // 字符串字面量：返回 AST 中保存的字符串值。
     lastValue_ = node.getValue(); return;
 }
 
@@ -1009,6 +1106,7 @@ void Interpreter::visitInterpolatedString(InterpolatedString& node) {
 
 void Interpreter::visitBoolLiteral(BoolLiteral& node) {
     checkBreak(&node);
+    // 布尔字面量：返回 AST 中保存的布尔值。
     lastValue_ = Value(node.value); return;
 }
 
@@ -1056,6 +1154,31 @@ void Interpreter::visitVarDecl(VarDecl& node) {
                 auto parentEnv = cls.closureEnv ? cls.closureEnv : currentEnv_;
                 auto initEnv = std::make_shared<Environment>(parentEnv);
                 initEnv->define("this", instance);
+
+                // AUDIT-P1 fix: 绑定 init 的默认参数到 initEnv（对齐 constructClassInstance）。
+                // 原实现直接 executeFunctionBody，未绑定参数，init 体引用参数时穿透到父环境。
+                for (size_t i = 0; i < initMethod->params.size(); ++i) {
+                    if (i < initMethod->defaultValues.size() && initMethod->defaultValues[i]) {
+                        // 默认值在类定义的闭包环境中求值（与 constructClassInstance 一致）
+                        struct EnvGuard {
+                            Interpreter& interp; std::shared_ptr<Environment> prev;
+                            ~EnvGuard() { interp.currentEnv_ = prev; }
+                        } guard{ *this, currentEnv_ };
+                        if (cls.closureEnv) {
+                            currentEnv_ = cls.closureEnv;
+                        }
+                        Value defaultVal = evaluate(initMethod->defaultValues[i].get());
+                        if (i < initMethod->paramTypes.size() && !initMethod->paramTypes[i].empty()) {
+                            checkType(defaultVal, initMethod->paramTypes[i],
+                                [&] { return "类 " + cls.name + " 的 init 参数 " + initMethod->params[i]; },
+                                node.line, node.column);
+                        }
+                        initEnv->define(initMethod->params[i], std::move(defaultVal));
+                    } else {
+                        initEnv->define(initMethod->params[i], Value::nullValue());
+                    }
+                }
+
                 auto prevEnv = currentEnv_;
                 currentEnv_ = initEnv;
 
@@ -1076,13 +1199,21 @@ void Interpreter::visitVarDecl(VarDecl& node) {
                 }
                 RecursionGuard guard{ recursionDepth_ };
 
-                // RA-A fix: RAII 守卫统一恢复 currentEnv_，消除原 catch(...) + throw; 的 rethrow。
-                struct PrevEnvGuard {
+                // AUDIT-P1 fix: 析构时调用 closeCapturedVariables（对齐 constructClassInstance 的 InitEnvGuard）。
+                // 原 PrevEnvGuard 只恢复 currentEnv_，未关闭 upvalue，init 体内创建的闭包
+                // 捕获的局部变量在 initEnv 析构后丢失（weak_ptr 过期，capturedVars 未写入）。
+                struct InitEnvGuard {
                     Interpreter& interp;
+                    std::shared_ptr<Environment>& env;
                     std::shared_ptr<Environment>& prev;
                     bool dismissed = false;
-                    ~PrevEnvGuard() { if (!dismissed) interp.currentEnv_ = prev; }
-                } envGuard{ *this, prevEnv };
+                    ~InitEnvGuard() {
+                        if (!dismissed) {
+                            env->closeCapturedVariables();
+                            interp.currentEnv_ = prev;
+                        }
+                    }
+                } envGuard{ *this, initEnv, prevEnv };
 
                 try {
                     executeFunctionBody(static_cast<Block&>(*initMethod->body));
@@ -1094,6 +1225,7 @@ void Interpreter::visitVarDecl(VarDecl& node) {
                 // B3 fix: callStack_/returnType/classContext 由 CallFrameGuard 自动恢复
                 // RA-A fix: 由 envGuard 析构统一恢复 currentEnv_，此处 dismiss 避免重复
                 envGuard.dismissed = true;
+                initEnv->closeCapturedVariables();
                 currentEnv_ = prevEnv;
 
                 auto* thisPtr = initEnv->get("this");
@@ -1554,7 +1686,9 @@ void Interpreter::visitTryStmt(TryStmt& node) {
     // BUG-AUDIT-FINALLY-1: finally 块语义
     // - 正常退出（try/catch 正常完成）：执行 finally
     // - 异常退出（try/catch 抛出未捕获异常）：执行 finally 后 re-throw
-    // - return/break/continue：不执行 finally（与 VM 路径一致，已知限制）
+    // - return：不执行 finally（与 VM 路径一致，三后端一致）
+    // - break/continue：Interpreter 执行 finally（loopFlow_ 状态标志路径，try 块正常完成后继续执行 finally），
+    //   VM 跳过 finally（OP_TRY_END 弹出 handler 后直接跳转），三后端不一致为已知限制
     // - try-finally（无 catch）：异常不被捕获，finally 执行后 re-throw
     bool finallyRun = false;
     try {
@@ -1616,7 +1750,24 @@ void Interpreter::visitTryStmt(TryStmt& node) {
             finallyRun = true;
         }
     } catch (const ThrowException&) {
-        // 异常路径：执行 finally 后 re-throw
+        // throw 语句异常：执行 finally 后 re-throw
+        if (!finallyRun && node.finallyBlock) {
+            evaluate(node.finallyBlock.get());
+        }
+        throw;
+    } catch (const ReturnException&) {
+        // return 不执行 finally（与 VM 一致，三后端一致）
+        throw;
+    } catch (const DebugStopException&) {
+        // 调试中止信号不执行 finally
+        throw;
+    } catch (...) {
+        // AUDIT-P1-CORRECT fix: 其他异常（RuntimeError 如数组越界/类型不匹配/除零等）
+        // 执行 finally 后 re-throw，对齐 VM 路径（OP_TRY_BEGIN 捕获所有运行时错误会执行 finally）。
+        // 原实现仅 catch (const ThrowException&)，RuntimeError 不被捕获直接传播跳过 finally，
+        // 导致三后端不一致（Interpreter 跳过 finally，VM 执行 finally）。
+        // 注：BreakException/ContinueException 在 Interpreter 中用 loopFlow_ 状态标志实现，
+        // 不会以异常形式传播，故 catch(...) 不会捕获它们。
         if (!finallyRun && node.finallyBlock) {
             evaluate(node.finallyBlock.get());
         }
@@ -1713,6 +1864,7 @@ void Interpreter::visitBlock(Block& node) {
 
 void Interpreter::visitArrayLiteral(ArrayLiteral& node) {
     checkBreak(&node);
+    // 数组字面量：从左到右依次求值各元素（副作用按书写顺序发生），构造 Value 数组返回。
 
     std::vector<Value> elements;
     elements.reserve(node.elements.size());
@@ -1724,6 +1876,7 @@ void Interpreter::visitArrayLiteral(ArrayLiteral& node) {
 
 void Interpreter::visitDictLiteral(DictLiteral& node) {
     checkBreak(&node);
+    // 字典字面量：依次求值每个键值对（键必须为字符串，否则报错），构造 Value 字典返回。
 
     std::unordered_map<std::string, Value> dict;
     dict.reserve(node.pairs.size());
@@ -1977,19 +2130,34 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             }
 
             // F10: 为缺失的参数填充默认值（在类定义的闭包环境中求值）
+            // AUDIT-P2 fix: 用 RAII guard 恢复 currentEnv_，对齐 constructClassInstance/
+            // callNamedFunction/callClosureValue 的 EnvGuard 模式。原实现手动 save/restore，
+            // evaluate(defaultValues[i]) 抛异常时 currentEnv_ 残留为 cachedParentEnv。
             if (argCount < method->params.size()) {
-                auto savedEnv = currentEnv_;
+                struct EnvGuard {
+                    Interpreter& interp; std::shared_ptr<Environment> prev;
+                    ~EnvGuard() { interp.currentEnv_ = prev; }
+                } guard{ *this, currentEnv_ };
                 if (cachedParentEnv) {
                     currentEnv_ = cachedParentEnv;
                 }
                 for (size_t i = argCount; i < method->params.size(); ++i) {
                     if (method->defaultValues[i]) {
-                        argValues.push_back(evaluate(method->defaultValues[i].get()));
+                        Value defaultVal = evaluate(method->defaultValues[i].get());
+                        // AUDIT-P2 fix: 默认值即时类型检查，对齐 constructClassInstance。
+                        // 原实现延迟到统一参数绑定循环检查，导致第一个默认值类型错误时
+                        // 后续默认值仍被评估（可能有副作用）。改为即时检查，在第一个
+                        // 类型错误处停止，与 constructClassInstance 行为一致。
+                        if (i < method->paramTypes.size() && !method->paramTypes[i].empty()) {
+                            checkType(defaultVal, method->paramTypes[i],
+                                [&] { return "方法 " + node.methodName + " 的参数 " + method->params[i]; },
+                                node.line, node.column);
+                        }
+                        argValues.push_back(std::move(defaultVal));
                     } else {
                         argValues.push_back(Value::nullValue());
                     }
                 }
-                currentEnv_ = savedEnv;
             }
 
             // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_
@@ -2102,5 +2270,6 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
 
 void Interpreter::visitNullLiteral(NullLiteral& node) {
     checkBreak(&node);
+    // null 字面量：返回 null 值（MiniLang 中用于表示"无值"，可赋给任意类型注解）。
     lastValue_ = Value::nullValue(); return;
 }

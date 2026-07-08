@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include <stdexcept>
 #include <thread>  // AUDIT-P1 fix: std::this_thread::yield for waitCallbacksIdle
+#include <chrono>  // AUDIT-P2-CORRECT fix: waitCallbacksIdle 超时
 
 // ============================================================
 // DebugController 调试控制器实现
@@ -21,6 +22,10 @@ DebugController::~DebugController() {
         mode_.store(static_cast<int>(StepMode::MODE_RUN));
     }
     pauseCV_.notify_all();
+    // AUDIT-P2-CORRECT fix: 防御性等待所有锁外 callback 完成，避免析构期间
+    // worker 线程仍在执行 getVariableSnapshot/getCallStack 的锁外 callback 导致 UAF。
+    // 对齐 DebugEvaluator 析构调用 waitCallbackIdle 的模式。
+    waitCallbacksIdle();
 }
 
 void DebugController::checkBreak(ASTNode* node) {
@@ -74,6 +79,12 @@ void DebugController::checkBreak(ASTNode* node) {
         snapCrossedDeeper = true;
     }
 
+    // AUDIT-P1 fix: updateLineTracking 必须在 shouldPause 之前执行，否则
+    // shouldPauseAtBreakpoint 命中时设 crossedLine_=false 会被随后的
+    // updateLineTracking 覆盖为 true（line != lastSeenLine_），导致 resume 后
+    // 同行下一个 AST 子表达式断点重复触发。
+    updateLineTracking(node->line, snapCurrentDepth, snapStepOverDepth, snapMode);
+
     // C11 fix: 委托给助手方法判断是否应暂停
     bool shouldPause = false;
     if (snapMode == StepMode::MODE_RUN) {
@@ -85,9 +96,6 @@ void DebugController::checkBreak(ASTNode* node) {
                                              snapLastPausedLine, snapLastPausedDepth,
                                              snapCrossedDeeper);
     }
-
-    // C3 fix + DBG-03: 始终记录最后看到的行号
-    updateLineTracking(node->line, snapCurrentDepth, snapStepOverDepth, snapMode);
 
     // M10 + DBG-04 fix: 步进模式下经过断点行时递增 hitCount
     if (snapMode != StepMode::MODE_RUN && node->line > 0) {
@@ -347,9 +355,13 @@ void DebugController::stepIn() {
     // 极端时序下可能丢唤醒。改为统一加锁路径，notify 对无 waiter 是 no-op。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
+        // AUDIT-P2 fix: 不清除 stopped_。若 stop() 已设置 stopped_=true，step 应无效
+        // （worker 将在 checkBreak 抛 DebugStopException 终止）。原实现清除 stopped_=false
+        // 可在 worker 响应 stop 的窗口内取消正在进行的 stop，导致状态机不一致。
+        // stopped_ 的清除应由 reset()（新调试会话）负责。
+        if (stopped_) return;
         mode_.store(static_cast<int>(StepMode::MODE_STEP_IN));
         running_ = true;
-        stopped_ = false;
         paused_ = false;
     }
     pauseCV_.notify_one();
@@ -360,11 +372,11 @@ void DebugController::stepOver() {
     // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
+        if (stopped_) return;  // AUDIT-P2 fix: 同 stepIn
         mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
         stepOverDepth_ = currentDepth_.load();  // P0-9 fix: atomic load
         crossedDeeper_.store(false);            // P0-9 fix: atomic store (DBG-B fix)
         running_ = true;
-        stopped_ = false;
         paused_ = false;
     }
     pauseCV_.notify_one();
@@ -376,10 +388,10 @@ void DebugController::stepOut() {
     // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
+        if (stopped_) return;  // AUDIT-P2 fix: 同 stepIn
         mode_.store(static_cast<int>((depth > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
         stepOutDepth_ = depth;
         running_ = true;
-        stopped_ = false;
         paused_ = false;
     }
     pauseCV_.notify_one();
@@ -390,9 +402,9 @@ void DebugController::resume() {
     // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
+        if (stopped_) return;  // AUDIT-P2 fix: 同 stepIn
         mode_.store(static_cast<int>(StepMode::MODE_RUN));
         running_ = true;
-        stopped_ = false;
         paused_ = false;
     }
     pauseCV_.notify_one();
@@ -470,7 +482,19 @@ std::vector<CallStackEntry> DebugController::getCallStack() const {
 void DebugController::waitCallbacksIdle() const {
     // AUDIT-P1 fix: spin-wait 直到所有正在执行的 variableCallback_/callStackCallback_ 完成。
     // 用于 DebugCoordinator 析构前安全等待，避免清空 callback 后 worker 线程仍在锁外调用 cb() → UAF。
+    // AUDIT-P2-CORRECT fix: 添加超时上限（3 秒）。原实现无限 spin-wait，若 callback 进入
+    // 死循环（如条件断点求值包含无限循环），activeCallbackCount_ 永不归零，析构永久阻塞，
+    // 进程挂死。超时后记录警告并继续析构（接受可能的 UAF 风险，但优于永久阻塞）。
+    // 与 P1-1（条件断点求值超时）配合：若条件求值有步数上限，callback 不会无限循环。
+    constexpr int MAX_WAIT_MS = 3000;
+    auto start = std::chrono::steady_clock::now();
     while (activeCallbackCount_.load(std::memory_order_acquire) > 0) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count() > MAX_WAIT_MS) {
+            Logger::Warning("waitCallbacksIdle 超时（callback 可能挂死），"
+                            "继续析构（风险：worker 线程可能仍在执行 callback）", "Debugger");
+            break;
+        }
         std::this_thread::yield();
     }
     // 同步等待条件求值回调完成

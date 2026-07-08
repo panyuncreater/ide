@@ -1,6 +1,472 @@
 # Changelog
 
-本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试（1763/1763）+ formatter_audit 审计用例验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+
+## 2026-07-08 · 第四十五轮：IR catch upvalue 关闭时机 + 沙箱 instSnaps 悬垂防御 + 类构造参数重校验 + 非 REPL GC roots + Worker 析构兜底
+
+### 概述
+
+继续对 MiniLang IDE 项目进行深度 Bug 排查，采用四模块并行 agent 审计策略（VM/IR 后端、Interpreter/GC、Parser/Lexer/Formatter/Module、Debugger/GUI 线程安全），共发现约 43 个问题。本轮修复 5 项明确低风险的真实可触发问题（P2 × 4，P3 × 1），涉及 IR 路径 catch 变量 upvalue 关闭时机不一致、条件断点沙箱 instSnaps Value* 悬垂风险、类构造期间重定义后参数签名未重新校验、非 REPL 模式 GC roots 为空集、InterpreterWorker 析构回调兜底。全量 1753/1753 测试通过。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复 |
+|---|------|--------|------|------|
+| 1 | IR | P2 | IR 路径函数内 catch 变量 upvalue 关闭时机不一致——`visitTryStmt` 将 catch 变量 slot 记录到外层 BlockScope.localSlots，依赖外层块退出时 leaveBlockScope 统一关闭，而 Compiler.cpp 直接路径在 catch 块后立即发射 OP_CLOSE_UPVALUE。闭包捕获 catch 变量时 upvalue 快照时机晚于直接路径，三后端语义不一致 | catch 块编译后立即发射 `CLOSE_UPVALUE(slot)`，对齐 Compiler.cpp 行 2141-2144。catch 块内部 slot 已由其自身 leaveBlockScope 关闭，仅 catch 变量本身未关闭 |
+| 2 | Interpreter | P2 | `evaluateCondition` 中 `instSnaps` 使用 `Value*` 裸指针作为 key——`inst` 来自 `getBoundInstance()` 指向 `variables["this"]` map 条目，条件求值期间 variables map rehash 会导致 `inst` 悬垂，SandboxGuard 析构时 UAF | 改用 `InstSnapEntry` 结构体存储 `Environment*`，析构时从 `env->getBoundInstance()` 重新获取 `inst` 指针，避免使用可能悬垂的快照指针 |
+| 3 | Interpreter | P2 | `constructClassInstance` 类重定义后参数签名未重新校验——参数求值前用旧 initMethod 校验参数数量，求值后重新查找 initMethod 但未重新校验。类重定义后新 init 参数更少时多余参数被静默忽略，参数更多时缺失参数走 null 路径 | 重新查找 initMethod 后补充参数数量校验，与新 initMethod 的 `requiredParamCount`/`params.size()` 比较，不匹配时报错 |
+| 4 | Interpreter | P2 | 非 REPL 模式 GC roots 为空集——`execute()` 中仅 REPL 模式收集 gcRoots，非 REPL 模式传入空根集。若 Interpreter 被复用（如测试场景），上一轮残留的循环引用容器在 tracked_ 中，空根集导致 Phase 2 误判所有 tracked 容器为不可达孤岛并清空子元素 | 非 REPL 模式下也收集 `globalEnv_` 顶层变量作为 GC roots，防御性保证复用场景的正确性 |
+| 5 | InterpreterWorker | P3 | `~InterpreterWorker` 未兜底清空回调——run() 末尾清空 interp_ 回调，但若 worker 异常终止未走 run() 末尾路径，interp_ 仍持有捕获 this 的悬垂 lambda | 析构函数兜底清空 `setOutputCallback` 和 `setInputCallback`，防御未来回归 |
+
+### 关键决策
+
+1. **IR catch upvalue 用显式 CLOSE_UPVALUE 而非调整 BlockScope 归属**：catch 变量 slot 保留在 outer scope 的 localSlots 中（供 slot 回收和 varMap_ 清理），但在 catch 块编译后立即发射 CLOSE_UPVALUE(slot)。双重关闭是 no-op（isClosed 检查 + openUpvalues_.erase），安全且对齐直接路径
+2. **instSnaps 改用 Environment* 而非 Value* 作为信息载体**：Environment 对象地址稳定（shared_ptr 管理），而 Value* 指向 unordered_map 条目可能因 rehash 悬垂。析构时从 env 重新获取 boundInstance_ 确保指针有效
+3. **类重定义参数校验用 argValues.size() 而非重新求值**：参数已求值完毕（argValues 已收集），只需与新 initMethod 的参数范围比较即可。重新求值会导致副作用重复执行
+4. **非 REPL GC roots 用 globalEnv_ 而非完整状态收集**：非 REPL 模式下 Interpreter 通常为新建（tracked_ 为空），防御性收集 globalEnv_ 变量即可覆盖复用场景。完整收集 callStack_/funRegistry_ 等不必要（GC 在 execute 入口触发，此时 callStack_ 为空）
+5. **AUDIT-PLM-01（ModuleIsolation 默认参数作用域）经核实不是 Bug**：MiniLang 默认参数在闭包环境求值（非函数作用域），当前代码在 popScope 后处理 defaultValues 的行为正确
+
+### 保留现状的审计发现
+
+- **P1** break/continue finally 三后端不一致（需 finally 续跳机制）
+- **P1** 条件断点求值无超时机制（VM 模式冻 UI）
+- **P1** onContentsChange 多行插入/删除断点行号偏移错误
+- **P1** super 上下文栈压入搜索起始类而非定义类
+- **P1** 非 REPL 模式 GC roots 不完整（本轮仅收集 globalEnv_，未收集 callStack_/funRegistry_ 等，但因 GC 时机在 execute 入口，影响有限）
+- **P2** writeBackCapturedVars 将局部重声明变量写回 capturedVars
+- **P2** SandboxGuard 闭包 env 共享导致沙箱副作用泄漏
+- **P2** typeMatch 不支持 dict[K:V]、函数类型、可选类型
+- **P2** AST 节点缺少 endLine/endColumn（Formatter 插值注释错位）
+- **P2** RegisterVM closeUpvaluesFrom slot 越界只打 Warning（对齐 StackVM 诊断口径）
+- **P3** collectCycle 期间 callStack_ 不在 roots 中
+- **P3** Formatter escapeString 未转义所有控制字符
+- **P3** envPool_ 无界增长（REPL 模式）
+- **P3** 空模块源码被当作加载失败
+- **P3** \uXXXX 仅支持 BMP（设计限制）
+
+### 验证
+
+- MSVC 19.51 + Qt 6.10.3 + Ninja `minilang_ide` + `minilang_tests` 构建通过
+- 全量 1753/1753 测试通过（1 个 minilang_perf_test_NOT_BUILT 占位符未运行）
+
+## 2026-07-08 · 第四十四轮：REPL 状态对称性 + 条件断点沙箱完整性 + 多维数组门控 + 默认参数类型检查 + Formatter 转义去重
+
+### 概述
+
+补档此前一轮审计中已落地但未及时记录到 CHANGELOG 的 8 项修复（P1 × 1，P2 × 7，含 1 项预存在编译错误）。本轮审计聚焦 REPL 状态保存/恢复字段对称性、条件断点沙箱副作用隔离完整性、多维数组类型注解门控一致性、默认参数即时类型检查对齐、Formatter 字符串转义规则单一来源。修复均已在代码中落地并通过全量测试，本轮完成文档补录并重新应用一项被回退的真实残留 Bug（isClassTypeDeclStart 多维门控）。全量 1753/1753 测试通过（minilang_ide + minilang_tests 构建通过，1 个 minilang_perf_test_NOT_BUILT 占位符未运行）。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复 |
+|---|------|--------|------|------|
+| 1 | Interpreter | P1 | `saveReplState` 缺失 `moduleMtimes_` 保存——`restoreReplState` 读取 `savedModuleMtimes` 但 `saveReplState` 未写入，用空默认值覆盖 `moduleMtimes_`，导致后续 import 命中缓存时跳过 mtime 变更检查，磁盘修改被忽略（与 `savedModuleCache`/`savedModuleExports`/`savedModuleLoadingSet` 字段不对称） | `saveReplState` 添加 `replState_.savedModuleMtimes = moduleMtimes_;`，维持 save/restore 字段对称性 |
+| 2 | BytecodeTracePanel | P2 | `captureCurrentState` 缺少 `isVmRunning()` 守卫——与 CallStackPanel/VariableInspectorPanel/BreakpointConditionPanel/MemoryModelPanel 4 个面板不一致，VM RUN 批之间捕获轨迹会混入用户未主动请求的中间状态数据，未来若 VmStepper 改为多线程会升级为数据竞争 | 添加 `isVmRunning()` 守卫，VM 运行中显示"暂停后可捕获"并早返回 |
+| 3 | Parser | P2 | `isClassTypeDeclStart` 不支持多维数组类型注解 `ClassName[][]`——第四十三轮已修复 `parseTypeAnnotation` 的多维支持（while 循环），但此门控函数仍用单次 `[]` 检查，导致 `ClassName[][] paramName` 在函数参数处不被识别为类类型声明，落入"名字在前"分支引发解析错误。**注：此修复在第四十三轮后曾被回退，本轮重新应用** | 将单次 `if` 改为 `while` 循环消费连续 `[]` 后缀，与 `parseTypeAnnotation` 和 `classDecl` 保持一致 |
+| 4 | Parser | P2 | `classDecl` 不支持多维数组字段 `ClassName[][] field`——单次 `[]` 检查遇到第二个 `[` 即回退，导致多维数组字段无法声明 | `classDecl` 字段解析将单次 `[]` 检查改为 `while` 循环消费连续 `[]` 后缀，安全回溯（仅在 `[` 后紧跟 `]` 时才消费） |
+| 5 | TypeChecker | P2 | `visitAssignment` 缺少 `NullLiteral` 分支——与 `checkVarDecl` 不一致，`checkVarDecl` 有 `NullLiteral` 分支（null 兼容所有类型，actualType 设为 NULL_T），但 `visitAssignment` 遗漏，导致 `var x: string = null` 后续 `x = null` 赋值的类型推断行为不一致 | 添加 `NullLiteral` 分支，对齐 `checkVarDecl` 行为（actualType 设为 NULL_T，typeMatchLiteral 对 null 永远返回 true） |
+| 6 | Interpreter | P2 | `evaluateCondition` 沙箱不完整——`SandboxGuard` 未保存/恢复 `loopFlow_` 和模块相关状态（`moduleCache_`/`moduleExports_`/`moduleMtimes_`/`exportedNames_`），条件断点求值包含 `import` 或循环语句时副作用泄漏到外层执行状态，破坏断点隔离语义 | `SandboxGuard` 新增 `savedLoopFlow` + `savedModuleCache` + `savedModuleExports` + `savedModuleMtimes` + `savedExportedNames` 成员，构造时保存、析构时恢复 |
+| 7 | Interpreter | P2 | `callInstanceMethod` 默认参数类型检查时机——原实现评估默认值后立即 push 到 argValues 不做类型检查，与 `constructClassInstance` 不一致（constructClassInstance 在评估后立即 checkType），导致方法默认参数类型不匹配时不报错（如 `fun init(x: int = "abc")` 调用时不报错） | 默认参数评估后立即 `checkType`，对齐 `constructClassInstance` 行为 |
+| 8 | Formatter | P2 | `escapeString` lambda 与 `formatStringLiteral` 转义规则重复——`formatInterpolatedString` 内部定义 `escapeString` lambda，与 `formatStringLiteral` 的转义 switch 独立维护，Lexer 新增转义序列时需同时修改两处，存在同步风险 | 提取公共函数 `escapeStringContent`，`formatStringLiteral` 和 `formatInterpolatedString` 共用，消除转义规则重复 |
+
+### 关键决策
+
+1. **saveReplState 字段对称性而非功能修复**：`saveReplState`/`restoreReplState` 的契约是"restore 读取的每个字段必须在 save 中写入"。`savedModuleMtimes` 在 restore 中被读取但 save 中未写入，违反契约导致空 map 覆盖。修复是一行添加，维持字段对称性是最小且正确的方案
+2. **evaluateCondition 沙箱保存模块状态而非禁止 import**：条件断点求值中 import 的副作用（缓存写入、导出名注册）若不隔离会污染外层。深拷贝模块状态（map of shared_ptr）开销可接受（条件断点不频繁），且与 loopFlow_ 保存一并完成，沙箱完整性优于性能
+3. **isClassTypeDeclStart 多维门控重新应用**：第四十三轮修复了 parseTypeAnnotation 的多维支持但遗漏了 isClassTypeDeclStart 门控函数。isClassTypeDeclStart 是类类型参数解析的入口谓词，返回 false 则 parseTypeAnnotation 永远不会被调用。三个函数（isClassTypeDeclStart/parseTypeAnnotation/classDecl）必须一致支持 while 循环消费连续 `[]`
+4. **默认参数即时类型检查对齐 constructClassInstance**：callInstanceMethod 与 constructClassInstance 都处理默认参数，类型检查时机必须一致。即时 checkType（评估后立即检查）比延迟检查（全部评估后批量检查）更早暴露错误，且与 constructClassInstance 行为对齐
+5. **Formatter escapeStringContent 提取为文件级 static 函数**：而非成员函数，因为转义规则是无状态的纯函数，不需要访问 Formatter 状态。文件级 static 限制作用域，避免污染头文件
+
+### 保留现状的审计发现
+
+- **P1** try-finally break/continue 三后端不一致（需 finally 续跳机制，中等规模改动）
+- **P2** ClosureData 未注册 GcManager（纯闭包循环引用泄漏，需完整 GC 重构）
+- **P2** formatClassDecl/visitTryStmt 注释丢失（需 ClassDecl 节点记录 closingBraceLine）
+- **P2** formatInterpolatedString 多行插值注释错位（需 InterpolatedString 添加 endLine 字段）
+- **P2** formatBlock closingBraceLine 错误恢复越界（仅在错误恢复路径触发）
+- **P2** CodeEditor 断点行号替换偏移（边缘场景）
+- **P2** REPL try/catch 顺序检查宽松（Parser 是最终防线）
+- **P2** visitVarDecl 自动构造守卫顺序（无实际 bug 触发）
+
+### 验证
+
+- MSVC 19.51 + Qt 6.10.3 + Ninja `minilang_ide` + `minilang_tests` 构建通过
+- 全量 1753/1753 测试通过（1 个 minilang_perf_test_NOT_BUILT 占位符未运行）
+
+## 2026-07-08 · 第四十三轮：RuntimeError finally 语义修复 + 多维数组类型注解 + GC vmClosure upvalues + 前导零检测 + 断点同步 + stale 信号防御
+
+### 概述
+
+继续对 MiniLang IDE 项目进行深度 Bug 排查，采用四模块并行 agent 审计策略（VM/IR 后端、Interpreter/Value、Parser/Lexer/Formatter、Debugger/GUI 线程安全），共发现约 46 个问题（P1 × 6 含 3 项已知保留，P2 × 19，P3 × 16+）。本轮修复 10 项明确低风险的真实可触发问题（P1 × 2，P2 × 8，含 1 项预先存在的编译错误）。全量 1753/1753 测试通过（minilang_ide + minilang_tests 构建通过）。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复 |
+|---|------|--------|------|------|
+| 1 | Interpreter | P1 | RuntimeError 绕过 finally 块——`visitTryStmt` 外层 `catch (const ThrowException&)` 仅捕获 throw 语句异常，RuntimeError（数组越界/类型不匹配/除零等）不被捕获直接传播跳过 finally，三后端不一致（VM 路径 OP_TRY_BEGIN 捕获所有运行时错误会执行 finally） | 新增 `catch (const ReturnException&)` + `catch (const DebugStopException&)` + `catch (...)` 三层捕获；ReturnException/DebugStopException 直接 re-throw（return 三后端一致跳过 finally，中止信号不执行 finally），catch(...) 执行 finally 后 re-throw（RuntimeError 等对齐 VM 路径）。注：BreakException/ContinueException 在 Interpreter 中用 loopFlow_ 状态标志实现，不会以异常形式传播 |
+| 2 | Debugger/GUI | P1 | closeEvent 期间 pending pausedAt 信号导致 stale UI 更新——`doPause` 中 `emit pausedAt(line)` 通过 QueuedConnection 投递到主线程，`stopForClose` 唤醒 worker 退出后 Ide 析构时处理 pending 事件访问已析构成员（codeEditor_/debugPanel_），try/catch 无法捕获 UAF | `onPausedAt` 入口检查 `!controller_->isRunning() && !controller_->isDebugPaused()` 直接返回，丢弃 stale 信号 |
+| 3 | Interpreter | P2 | `visitTryStmt` L1634 注释错误——注释"return/break/continue：不执行 finally（与 VM 路径一致，已知限制）"是错误的，break/continue 在 Interpreter 中会执行 finally（loopFlow_ 状态标志路径） | 修正注释：return 不执行 finally（三后端一致）；break/continue Interpreter 执行 finally，VM 跳过 finally，三后端不一致为已知限制 |
+| 4 | Lexer | P2 | 前导零 `007` 静默接受——`number()` 对 `0` 后跟数字直接消费并用 from_chars 解析，前导零在 C 中被误解为八进制、Python3 中报错，教学型语言静默接受误导学习者 | 在 0x/0b/0o 检测后添加前导零检测：`source_[start_]=='0' && isAsciiDigit(peek())` 报错并消费整个数字序列，提供等价合法值建议 |
+| 5 | Parser | P2 | 二维数组类型注解 `int[][]` 不支持——`parseTypeAnnotation` 用单次 `if` 仅消费一对 `[]`，遇到第二个 `[` 即返回，导致 `int[][]` 中第二个 `[]` 留在 token 流引发后续解析错误 | 将单次 `if` 改为 `while` 循环消费连续 `[]` 后缀，直到不再是 `[]` 模式 |
+| 6 | Interpreter | P2 | `typeMatch` 多维数组类型注解未识别——`annotation[size-2]=='['` 仅匹配单维 `int[]`，对 `int[][]`（末尾两字符 `]]`）不匹配导致报错 | 改用 `annotation.substr(size-2)=="[]"` 后缀比较，剥离末尾 `[]` 后递归 typeMatch 每个元素，天然支持多维（int[][] → int[] → int） |
+| 7 | GcManager | P2 | GC roots 未覆盖 vmClosure upvalues——`markValue` 的 VAL_CLOSURE 分支仅标记 capturedVars，遗漏 vmClosure->upvalues，仅通过 VM 闭包 upvalues 可达的循环容器被误判为不可达孤岛而误回收 | 在 VAL_CLOSURE 分支增加 vmClosure->upvalues 遍历，对每个 isClosed=true 的 upvalue 的 value 字段调用 markValue（open 状态值在栈上是 GC roots，value 字段不持有有效值，markValue 安全跳过） |
+| 8 | Debugger | P2 | `waitCallbacksIdle` 无超时 spin-wait——`DebugController::waitCallbacksIdle` + `DebugEvaluator::waitCallbackIdle` 无限 spin-wait，若 callback 进入死循环（如条件断点求值包含无限循环），activeCallbackCount_ 永不归零，析构永久阻塞，进程挂死 | 两处均添加 3 秒超时上限，超时后记录警告并继续析构（接受可能的 UAF 风险，但优于永久阻塞）；与 P1-1（条件断点求值超时）配合 |
+| 9 | CodeEditor/Debugger | P2 | 断点切换在 Interpreter 调试会话期间不同步——`LineNumberArea::mousePressEvent` 修改 breakpoints_ 后不发射信号，Interpreter 调试暂停期间新增/删除断点不同步到 DebugController.breakpoints_，新断点不生效，已删除断点仍触发 | CodeEditor 新增 `breakpointsChanged()` 信号，mousePressEvent 断点切换后发射；Ide 连接此信号，在 `isDebugPaused()` 状态下同步到 DebugController（VM 模式每次步进前 syncVmBreakpoints 会同步，无需处理） |
+| 10 | BuiltinMethods | P2 | `executeBuiltinType` 参数名 `col` 与函数体 `column` 不一致——预先存在的编译错误，参数名是 `col` 但函数体用 `column`（未声明的标识符），因 .obj 缓存未暴露，头文件变更触发重编译暴露 | 统一参数名为 `column`，与其他 executeBuiltinXxx 函数一致 |
+
+### 关键决策
+
+1. **RuntimeError finally 修复用 catch(...) 而非逐个捕获**：RuntimeError 类型多（数组越界/类型不匹配/除零等），逐个捕获易遗漏。catch(...) 捕获所有异常，但在之前用 catch (const ReturnException&) 和 catch (const DebugStopException&) 排除不应执行 finally 的异常（return 三后端一致跳过 finally，中止信号不执行 finally）。BreakException/ContinueException 在 Interpreter 中用 loopFlow_ 状态标志实现，不会以异常形式传播，故 catch(...) 不会捕获它们
+2. **多维数组类型注解用递归剥离而非扁平检查**：typeMatch 用 `substr(size-2)=="[]"` 后缀比较剥离末尾 `[]` 后递归调用，天然支持任意维数（int[][]、int[][][]等），比扁平检查所有维数更简洁且可扩展
+3. **GC vmClosure upvalues 仅标记 isClosed=true 的 upvalue**：open 状态的 upvalue 值在栈上（栈是 GC roots），value 字段不持有有效值，markValue 安全跳过（null/非指针类型直接返回）。仅 isClosed=true 的 upvalue 的 value 字段持有值（可能为容器引用），需标记
+4. **断点同步用 isDebugPaused 守卫而非无条件同步**：Interpreter 调试暂停期间才需同步到 DebugController（会话启动时已同步快照）。VM 模式每次步进前 syncVmBreakpoints 会同步，无需在 breakpointsChanged 中处理。无条件同步会增加非调试状态下的开销
+5. **waitCallbacksIdle 超时 3 秒而非更长**：callback 正常执行通常 <100ms，3 秒超时足够覆盖慢路径。超时后继续析构的风险是 worker 线程可能仍在执行 callback 访问已析构的 interpreter_ shared_ptr（但 shared_ptr 安全，真正危险的是非线程安全的 Environment/Value）。若 callback 真的挂死，forceStop 的 terminate() 是唯一出路
+6. **stale 信号防御用状态检查而非 removePostedEvents**：`QCoreApplication::removePostedEvents` 需要事件类型参数且 API 复杂。状态检查 `!isRunning() && !isDebugPaused()` 简单直接，worker 已停止且非暂停时说明是 stale 信号。try/catch 无法捕获 UAF，状态检查是更可靠的防御
+
+### 保留现状的审计发现
+
+- **P1** break/continue finally 三后端不一致（需 finally 续跳机制，中等规模改动）
+- **P1** 条件断点求值无超时机制（VM 模式冻 UI，推荐方案 A 步数上限 + 方案 C stopped_ 检查）
+- **P1** onContentsChange 多行插入/删除断点行号偏移错误（含详细修复方案，待实施）
+- **P1** super 上下文栈压入搜索起始类而非定义类（多层继承 super 解析错误，需 findMethod 返回定义类，中等规模改动）
+- **P2** SandboxGuard 闭包 env 共享导致沙箱副作用泄漏（需深拷贝 closureEnv）
+- **P2** writeBackCapturedVars 将局部重声明变量写回 capturedVars（需 computeFreeVariables 记录遮蔽）
+- **P2** Formatter 插值字符串内部注释错位（需 AST endLine 字段）
+- **P2** constructClassInstance 类重定义期间参数签名不一致
+- **P2** formatBlock closingBraceLine `<=` 比较导致 `} // comment` 注释位置变化（已知妥协）
+- **P2** needsParens 对 UnaryOp 嵌套的括号保留过度（不影响等价性，仅影响美观）
+- **P3** collectCycle 期间 callStack_ 不在 roots 中（潜在，当前不触发）
+- **P3** Formatter escapeString 未转义所有控制字符
+- **P3** envPool_ 无界增长（REPL 模式）
+- **P3** SandboxGuard 未保存/恢复模块相关状态
+- **P3** 空模块源码被当作加载失败
+
+### 验证
+
+- MSVC 19.51 + Qt 6.10.3 + Ninja `minilang_ide` + `minilang_tests` 构建通过
+- 全量 1753/1753 测试通过（1 个 minilang_perf_test_NOT_BUILT 非真实测试）
+
+## 2026-07-08 · 第四十二轮：GC 不变量修复 + break upvalue 关闭 + COW 异常安全 + UI 禁用遗漏 + QSettings 持久化
+
+### 概述
+
+继续对 MiniLang IDE 项目进行深度 Bug 排查，聚焦三后端语义一致性、GC 不变量、COW 异常安全、UI 线程安全与进程退出持久化。共修复 9 项问题（P1 × 2，P2 × 6，P3 × 1）。全量 1753/1753 测试通过（minilang_ide + minilang_tests 构建通过）。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | interpreter/GcManager.cpp | P1 | `collectCycle` Phase 3 用 survivors 重建 `tracked_` 后，`aliveSet_` 未同步重建。下一轮 Phase 2 将 survivors 误判为"已销毁"跳过 sweep，survivors 变为不可达循环孤岛时永久泄漏 | Phase 3 后用 `tracked_`（= survivors）重建 `aliveSet_`，维持 `aliveSet_ = tracked_ 中仍存活的对象集合` 不变量 |
+| 2 | parser/Parser.cpp | P1 | `synchronize` 错误恢复缺少 `TK_FROM` 同步点，import 语句 `TK_FROM` 缺失时解析器跳过 from 关键字继续解析后续语句，导致结构信息丢失 | 两处 switch 各添加 `case TK_FROM: return;` |
+| 3 | compiler/Compiler.cpp + IR.cpp | P2 | `visitBreakStmt` 直接发 OP_JUMP 跳到 breakTarget（在 OP_CLOSE_UPVALUE 之后），跳过 upvalue 关闭，导致 break 跳出循环时闭包捕获变 by-reference（三后端不一致） | LoopContext 增加 `bodySlotBase` + `needCloseUpvalue` 字段；visitBreakStmt 在 OP_JUMP 前发射 OP_CLOSE_UPVALUE（Compiler.cpp 直接路径 + IR.cpp IR 路径同步修复） |
+| 4 | interpreter/Value.h | P2 | `ensureUnique` 先 `ptr->release()` + `cloned.release()` 再 `registerTracked(raw)`，若 registerTracked 抛 bad_alloc 则 raw 泄漏（已脱离 unique_ptr）且 box_ 仍指向旧 ptr（release 已执行→双重释放） | 将 `registerTracked` 移到 `ptr->release()` 之前，若抛异常 unique_ptr 自动 delete cloned，旧引用计数不变 |
+| 5 | interpreter/GcManager.cpp | P2 | `registerTracked` 中 `aliveSet_.insert` 在 `tracked_.push_back` 成功后抛 bad_alloc 时，tracked_ 含 obj 但 aliveSet_ 不含，破坏不变量，collectCycle 将 obj 误判为"已销毁"跳过 sweep → 永久泄漏 | `aliveSet_.insert` 用 try/catch 包裹，失败时 `tracked_.pop_back()` 回滚 |
+| 6 | app/ide.cpp | P2 | VM 执行路径（onVmRun/handleVmStepResult RUNNING 分支）未禁用 `formatAction_`，用户在 VM 运行期间格式化代码导致字节码陈旧 | RUNNING 分支 + `setVmStepActionsEnabled` 添加 `formatAction_->setEnabled(false)` |
+| 7 | app/ide.cpp | P2 | VM 执行路径未禁用 `replPanel_` 输入，用户在 VM 运行期间提交 REPL 输入并发访问 Interpreter/VM 状态 | RUNNING 分支 + `setVmStepActionsEnabled` 添加 `replPanel_->setInputEnabled(false)` |
+| 8 | app/WorkerManager.cpp | P2 | `forceStop` 两处 `std::_Exit(0)` 前只 flush Logger，未调用 `QSettings::sync()`，_Exit 跳过析构导致最近工作区/窗口布局/引导标记等未刷盘丢失 | 两处 `_Exit(0)` 前添加 `QSettings("MiniLang", "MiniLang IDE").sync()` |
+| 9 | compiler/Compiler.cpp | P3 | visitTryStmt 注释声称"break/continue/return 不会执行 finally（三后端一致）"，实际 break/continue 时 Interpreter 执行 finally 而 StackVM/RegisterVM 跳过，三后端不一致 | 注释修正为准确描述：break/continue 时 Interpreter 执行 finally、VM 跳过（不一致），return 三后端均跳过（一致） |
+
+### 关键决策
+
+1. **break upvalue 关闭用 bodySlotBase 单次发射**：OP_CLOSE_UPVALUE bodySlotBase 关闭 slot >= bodySlotBase 的全部 open upvalues，含循环体内嵌套块声明的变量（嵌套块 slot >= bodySlotBase），无需逐层块关闭
+2. **COW ensureUnique 将 registerTracked 前移而非回滚**：在 release 旧引用前注册，若失败 unique_ptr 自动清理 cloned，旧引用计数不变，是最简洁的事务性保护
+3. **registerTracked 用 try/catch 回滚而非更换容器**：push_back + insert 顺序保持，仅添加异常回滚，最小改动
+4. **UI 禁用统一到 setVmStepActionsEnabled**：formatAction_ 和 replPanel_ 与 compileAnalysisAction_ 一起管理，避免散布在各分支
+
+### 保留现状
+
+- break/continue 时 finally 块三后端不一致（P1，需 finally 续跳机制，中等规模改动）
+- 条件断点求值无超时机制（P1，VM 模式冻 UI）
+- onContentsChange 多行插入/删除断点行号偏移错误（P1）
+- Formatter 插值字符串内部注释错位（P2，需 AST endLine 字段）
+- waitCallbacksIdle 无超时 spin-wait（P2）
+
+## 2026-07-08 · 第四十一轮：教学模块第三轮深度审计与修复（教学内容一致性 + 防重复守卫 + 错误友好化 + 搜索高亮 + Markdown 占位符）
+
+### 概述
+
+对全部教学模块面板进行第三轮深度 Bug 审计，采用四模块并行 agent 策略，共发现约 38 个问题（P1 × 9，P2 × 17，P3 × 12）。本轮修复 P1 全部 + P2 主要项 + P3 关键项共 16 项。核心修复包括：7 处教学内容错误（Point.new()→Point()、fun new→fun init、0 or "default" 注释错误）、4 面板浏览即完成映射缺失、op-priority-challenge 同步缺失、BugHunt 全题完成才发射 challengeSolved、3 面板防重复提交守卫（BugHunt/TokenPuzzle/LabManual）、LabManualPanel controller 为空友好提示、TeachingTreePanel 搜索过滤高亮失效、MarkdownRenderer 行内代码 `**` 误处理、LearnerProgress 负数字段校验。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | CallStackPanel/IRTransformPanel/MemoryModelPanel/BytecodeTracePanel/VariableInspectorPanel/SyntaxProductionLibrary/BreakpointConditionPanel | P1 | 7 处教学内容使用 `Point.new()`、`fun new`、`0 or "default"` 注释错误等不符合 MiniLang 构造方法语义（必须命名为 `init`，`Point(...)` 直接调用类名触发构造）与短路语义（左操作数为假时返回右值）的示例代码 | 修正为 `Point()`、`fun init`、修正 `or`/`and` 短路语义注释 |
+| 2 | ide.cpp | P1 | 4 个面板（BytecodeTracePanel/CallStackPanel/VariableInspectorPanel/BreakpointConditionPanel）首次浏览未映射到 LearningPath 完成活动 | 在 ensureTeachingPanelCreated 中补 4 面板浏览即完成映射 |
+| 3 | op-priority-challenge | P1 | op-priority-challenge 关卡未与 LearningPath 同步 | 补 markActivityCompleted 同步调用 |
+| 4 | BugHuntPanel | P1 | onTripleVerify 在未全部完成时即发射 challengeSolved | 改为全部题目完成才发射 challengeSolved |
+| 5 | BugHuntPanel | P2 | onRunVerify/onTripleVerify 无防重复守卫，processEvents 让渡控制权期间快速重复点击触发多次 runStringCaptureOutput + 多次 save() 磁盘 I/O + recordFailure 计数虚高 | 添加 busy_ 守卫 + 按钮禁用/恢复 |
+| 6 | TokenPuzzlePanel | P2 | onCheckAnswer/onSkipLevel 无防重复守卫 | 添加 busy_ 守卫 + 按钮禁用/恢复 |
+| 7 | LabManualPanel | P2 | onSubmitChoiceExercise/onSubmitExpectedOutputExercise 无防重复守卫 | 添加 submitting_ 守卫 + 答对后禁用提交按钮 + setText("已通过") |
+| 8 | LabManualPanel | P2 | controller 为空时暴露 `!ERROR: No controller` 给学员 | 友好提示"运行环境未就绪，请先在主界面运行一次程序"，且仅在 controller 可用时才记录失败 |
+| 9 | TeachingTreePanel | P2 | setCurrentPanel 在搜索过滤激活时直接 setCurrentItem(hidden item)，选中态被设置但用户不可见——高亮"失效" | 跳转前重置搜索过滤（QSignalBlocker 避免 clear() 重入 onSearchChanged） |
+| 10 | MarkdownRenderer | P3 | renderInline 中行内代码 `code` 先替换为 `<code>...</code>`，但随后的粗体正则 `\*\*([^*]+)\*\*` 仍会匹配 `<code>` 标签内的 `**`，导致 `` `a **b** c` `` 被错误渲染 | 占位符法：先用控制字符占位替代直接 replace，让粗体/斜体/链接正则在纯净文本上执行，最后统一替换占位符为 `<code>` |
+| 11 | LearnerProgress | P3 | load() 中从 JSON 读取的数值字段无范围校验，手动篡改的 JSON 可能含负数，破坏排序语义 | 为所有数值字段（attemptCount/levelStars/score/bestStars/spentMinutes/failCount）添加范围校验 |
+
+### 关键决策
+
+1. **构造方法必须命名为 init**：MiniLang 三后端（Interpreter/StackVM/RegisterVM）均查找名为 `init` 的方法作为类构造函数，`Point.new()` 不被识别为构造调用，`fun new` 会被识别为普通方法。教学示例必须使用 `Point()` 直接调用类名触发构造 + `fun init` 命名构造方法
+2. **防重复守卫用早返回 + busy_ 标志而非 Qt::BlockQueuedConnection**：processEvents 让渡控制权期间用户可点击其他按钮触发槽函数重入。Qt::BlockQueuedConnection 会冻结 UI 事件循环，违背 processEvents 的设计意图。`if (busy_) return;` + `busy_ = true; btn->setEnabled(false);` 在 early return 之后设置，函数末尾恢复，是最轻量的重入防护
+3. **答对后禁用提交按钮而非依赖守卫**：LabManualPanel 答对后即使有 submitting_ 守卫，用户仍可重复点击触发 recordScore 多次写入。禁用按钮 + setText("已通过") 提供视觉反馈，且从根因消除重复提交
+4. **controller 为空友好提示且不记录失败**：教学场景下学员不应看到 `!ERROR: No controller` 等内部错误。改为"运行环境未就绪，请先在主界面运行一次程序以初始化引擎，再回来验证此题"的友好提示，且仅在 controller 可用时才记录失败（避免误判污染学情）
+5. **跳转即重置搜索过滤**：TeachingTreePanel setCurrentPanel 在搜索过滤激活时直接 setCurrentItem(hidden item) 导致高亮失效。跳转即重置过滤符合用户心智模型（跨面板导航应跳出搜索上下文），且避免树仍只显示过滤结果与实际面板不一致
+6. **占位符法解决行内代码 `**` 误处理**：MarkdownRenderer renderInline 中行内代码先替换为占位符，让后续粗体/斜体/链接正则在无 `<code>` 标签的纯净文本上执行，最后统一替换占位符为 `<code>`。与第三十七轮关键字腐蚀修复同一思路
+7. **负数字段校验与 recordXxx 截断逻辑一致**：LearnerProgress load() 中所有数值字段添加范围校验，与 recordScore（截断到 [0,100]）、addSpentMinutes（拒绝负数）等写入路径的校验逻辑保持一致
+
+### 修改文件清单
+
+- 修改：`gui/CallStackPanel.cpp`、`gui/IRTransformPanel.cpp`、`gui/MemoryModelPanel.cpp`、`gui/BytecodeTracePanel.cpp`、`gui/VariableInspectorPanel.cpp`、`gui/SyntaxProductionLibrary.cpp`、`gui/BreakpointConditionPanel.cpp`（P1 教学内容错误：Point.new()→Point()、fun new→fun init、0 or "default" 注释）
+- 修改：`app/ide.cpp`（P1 4 面板浏览即完成映射 + op-priority-challenge 同步 + BugHunt 全题完成才发射 challengeSolved）
+- 修改：`gui/BugHuntPanel.{h,cpp}`（P2 onRunVerify/onTripleVerify 防重复守卫）
+- 修改：`gui/TokenPuzzlePanel.{h,cpp}`（P2 onCheckAnswer/onSkipLevel 防重复守卫）
+- 修改：`gui/LabManualPanel.{h,cpp}`（P2 onSubmitChoiceExercise/onSubmitExpectedOutputExercise 防重复守卫 + controller 为空友好提示 + 答对后禁用提交按钮）
+- 修改：`gui/TeachingTreePanel.cpp`（P2 setCurrentPanel 跳转前重置搜索过滤 + QSignalBlocker）
+- 修改：`gui/MarkdownRenderer.cpp`（P3 renderInline 占位符法解决行内代码 `**` 误处理）
+- 修改：`gui/LearnerProgress.cpp`（P3 load() 负数字段校验）
+
+### 保留现状的审计发现
+
+- BugHuntPanel e.what() 用于教学调试场景（合理保留）
+- ProfileDashboardPanel errorMessage 用于诊断后端兼容性（设计意图保留）
+- BytecodeTracePanel/CallStackPanel/VariableInspectorPanel connect 缺 context（连接自身子控件，面板销毁时子控件同步销毁，风险极低）
+- GlossaryPanel relatedPanelFor 映射表完整（30 术语→面板映射）
+- BackendComparePanel source 参数未使用（设计意图，使用 controller AST）
+- BreakpointConditionPanel modeText 逻辑正确
+- VmStackSandboxPanel 步数上限已有多层保护（STEP_IN 语义/MAX_STEP_LOOP 100 万/kMaxSteps 10 万/processEvents 让出/traceRunning_ 守卫）
+- VmStackSandboxPanel 页切换无 QTimer 且 VM 监听器已检查页索引
+
+## 2026-07-08 · 第四十轮：教学模块第二轮深度审计与修复（BoxedIntData 崩溃 + 教学作弊防护 + 状态机 + 异常防护 + 性能）
+
+### 概述
+
+对全部教学模块面板进行第二轮深度 Bug 审计，采用四模块并行 agent 策略，共发现约 40 个问题（P1 × 1，P2 × 15，P3 × ~15）。本轮修复 P1 全部 + P2 主要项共 15 项。核心修复包括：VariableInspectorPanel valueToBitsHex 对 BoxedIntData 触发 std::abort 崩溃、BugHuntPanel 三后端空输出作弊路径、BugHuntPanel 提示状态机幂等失效、TokenPuzzlePanel 跳过关卡误标记完成、AstBuilderToyPanel 纯表达式包装教学误导、LabManualPanel exercisePassed_ 索引错位 + applyFolding 状态泄漏、PipelineViewer 动画冲突 + O(n²) 性能、BytecodeTrace/DebugPanel toString 异常防护、MemoryModelPanel 悬垂指针、WelcomeWizard 重复 UI 重建、ProfileDashboard 硬编码坐标、VmStackSandboxPanel 重入风险。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | VariableInspectorPanel | P1 | `valueToBitsHex` 对 BoxedIntData（超大整数装箱）调用 `NaNBox::fromInt` 触发 `canEncodeInt` 失败 → `std::abort()` 崩溃 | `case VAL_INT` 分支前判断 `v.isPointer()`（BoxedIntData 标志），走堆指针占位符路径而非 fromInt 重编码 |
+| 2 | TokenPuzzlePanel | P2 | `onSkipLevel` 跳过关卡仍发射 `activityCompleted`，LearningPathPanel 误标记为已完成 | 移除 `emit activityCompleted`（跳过≠完成，unlockNextLevel 基于星数解锁不依赖此信号） |
+| 3 | BugHuntPanel | P2 | `onTripleVerify` 三后端均无输出时 `outputConsistent` 平凡为 true，删除所有 print 即可作弊通关 | 增加 `hasOutput` 检查（至少一个后端有非空输出），`outputConsistent && allClean && hasOutput` 才发射 challengeSolved |
+| 4 | BugHuntPanel | P2 | `onItemSelected` 幂等保护条件含 `hintLevel_==0`，查看提示后再次点击同一题目导致 hintLevel_ 重置、提示状态混乱 | 移除 `hintLevel_==0` 约束，同一题目无论提示状态都直接 return |
+| 5 | AstBuilderToyPanel | P2 | `onVerifyWithRealParser` 纯表达式包装为 `var __toy_tmp = <expr>;`，真实 AST 根节点是 VarDecl 而学员搭的是表达式树，造成教学误导 | 输出中明确标注包装行为："纯表达式已包装为 var __toy_tmp = <expr>; 才能解析，VarDecl 的子树才是目标表达式" |
+| 6 | LabManualPanel | P2 | `onSubmitChoiceExercise` 用 `choiceIndex`（CHOICE 内序号）索引 `exercisePassed_`（全局练习索引），CHOICE/EXPECTED_OUTPUT 混排时标记错题 | 遍历 exercises 找到第 choiceIndex 个 CHOICE 时记录 `globalIdx`，用 `exercisePassed_[globalIdx]` 替代 `exercisePassed_[choiceIndex]` |
+| 7 | LabManualPanel | P2 | `applyFolding` 折叠区内切换 `inCodeBlock`，未闭合代码块导致 `inCodeBlock` 恒为 true，后续所有行（含标题）被当作代码块跳过，文档剩余部分消失 | 折叠区内不切换 `inCodeBlock`（内容已跳过，状态不应泄漏到折叠区外） |
+| 8 | BytecodeTracePanel | P2 | `captureCurrentState` 中 `v.toString()` 无 try/catch，与 CallStack/VariableInspector 不一致，异常传播到 QTimer 槽 | 对齐 try/catch 防护：`try { s = v.toString(); } catch (...) { s = "<error>"; }` |
+| 9 | DebugPanel | P2 | `updateVariables` 中 `v.value.toString()` 无 try/catch，异常传播到 DebugCoordinator RCU 回调链 | 同上 try/catch 防护 |
+| 10 | PipelineViewer | P2 | `populateSource` 每次循环调用 `os.str().back()` 返回值拷贝 O(n)，n 个 Token 总 O(n²) | 改用 `lastChar` 变量跟踪最后写入字符，降为 O(n) |
+| 11 | PipelineViewer | P2 | `switchToStep` 未停止前一个 QPropertyAnimation，快速连续切换导致 `finalPos` 依赖动画中间值，页面卡在偏移位置 | 同一步骤重复点击 early return + findChildren 停止已有 pos 动画 |
+| 12 | MemoryModelPanel | P2 | `nanBoxExamples` 用栈上 `int dummy` 作为指针示例，IIFE 返回后 dummy 出作用域，`b.bits` 持有悬垂栈地址 | `int dummy` → `static int dummy`，保证生命周期，展示真实有效指针值 |
+| 13 | WelcomeWizard | P2 | Step4 按钮 `emit learningPathRequested()` 同步触发 `showTeachingPanel`（第一次），`accept()` 后又无条件调用（第二次），LearningPathPanel 被重建两次 | 移除 `learningPathRequested → showTeachingPanel` 连接，统一在 `exec()` 返回后调用一次 |
+| 14 | ProfileDashboard | P2 | `paintEvent` 硬编码 `QRect(220, 200, width()-240, 200)`，splitter 拖动/窗口缩放时柱状图位置错位 | 改为基于 `resultTable_->geometry().bottom()` + widget 边界动态计算 chartRect |
+| 15 | VmStackSandboxPanel | P2 | `onTraceRunAll` 长循环期间 `processEvents` 让渡控制权，用户可点击 step/reset 触发重入，与正在跑的循环共享 VM 状态导致崩溃 | 新增 `traceRunning_` 成员守卫 + 运行期间禁用 stepBtn_/resetTraceBtn_/runAllBtn_；onTraceStep/onTraceReset 检查守卫 |
+
+### 关键决策
+
+1. **BoxedIntData 用 isPointer() 判断而非 getType()**：BoxedIntData 的 `getType()` 返回 `VAL_INT`（与内联 int 相同），但 `box_.isPointer()` 为 true（堆对象标志）。在 `case VAL_INT` 分支内检查 `v.isPointer()` 区分两种编码，对 BoxedIntData 走堆指针占位符路径避免 fromInt abort
+2. **跳过不发射 activityCompleted 而非发射 0 星**：activityCompleted 信号语义是"活动已完成"，LearningPathPanel 据此标记完成。跳过≠完成，0 星持久化由 markLevelStars(0) 单独处理，不应触发完成通知
+3. **空输出作弊用 hasOutput 而非 expectedOutput 匹配**：BugHuntItem 结构中 expectedOutput 未结构化为可比较字段（仅文字描述），hasOutput（至少一个后端有非空输出）是最低成本修复，排除退化解
+4. **exercisePassed_ 用 globalIdx 而非重构为 choiceIdx 索引**：exercisePassed_ 对所有练习类型追加（全局索引），choiceGroups_ 仅对 CHOICE 追加（CHOICE 内序号）。在 onSubmitChoiceExercise 中遍历找到 CHOICE 的全局索引，保持 exercisePassed_ 语义不变
+5. **applyFolding 折叠区内不切换 inCodeBlock**：折叠区内容已被跳过，切换 inCodeBlock 会让状态泄漏到折叠区外。折叠区外的代码块仍正常跟踪 inCodeBlock，互不影响
+6. **switchToStep 同步骤 early return 而非重新动画**：同一步骤重复点击时 page->pos() 依赖前一个动画的中间值，finalPos 错误。early return 避免此问题，仅刷新内容
+7. **traceRunning_ 守卫 + 禁用按钮而非停止定时器**：onTraceRunAll 是同步循环，processEvents 期间用户可点击其他按钮。守卫标志 + 禁用按钮双重防护，确保 VM 状态不被并发修改
+
+### 修改文件清单
+
+- 修改：`gui/VariableInspectorPanel.cpp`（valueToBitsHex BoxedIntData 崩溃修复）
+- 修改：`gui/TokenPuzzlePanel.cpp`（onSkipLevel 移除 activityCompleted 发射）
+- 修改：`gui/BugHuntPanel.cpp`（onTripleVerify hasOutput + onItemSelected 幂等）
+- 修改：`gui/AstBuilderToyPanel.cpp`（onVerifyWithRealParser 标注包装行为）
+- 修改：`gui/LabManualPanel.cpp`（exercisePassed_ globalIdx + applyFolding inCodeBlock 隔离）
+- 修改：`gui/BytecodeTracePanel.cpp`（captureCurrentState toString try/catch）
+- 修改：`gui/DebugPanel.cpp`（updateVariables toString try/catch）
+- 修改：`gui/PipelineViewer.cpp`（populateSource lastChar O(n) + switchToStep 动画守卫）
+- 修改：`gui/MemoryModelPanel.cpp`（nanBoxExamples static dummy）
+- 修改：`gui/ProfileDashboardPanel.cpp`（paintEvent 动态 chartRect）
+- 修改：`gui/VmStackSandboxPanel.{h,cpp}`（traceRunning_ 重入守卫）
+- 修改：`app/ide.cpp`（WelcomeWizard 移除重复 showTeachingPanel 连接）
+- 文档同步：`CHANGELOG.md` + `docs/development.md` + `project_memory.md`
+
+### 保留现状的审计发现
+
+以下 P2/P3 审计发现因需架构改动或风险较高保留现状：
+- SyntaxExplorerPanel onRunSample 同步阻塞（P1，需 QtConcurrent 架构改动）
+- LabManualPanel onSubmitExpectedOutputExercise 同步阻塞（P2，同上）
+- VmStackSandboxPanel onTraceRunAll 步数上限（P2，提高上限意义不大）
+- VmStackSandboxPanel 页切换按钮非互斥（P2，改用 QButtonGroup 需重构）
+- BugHuntPanel onTripleVerify 空输出与 expectedOutput 匹配（P2，需结构化字段）
+- TeachingTreePanel setCurrentPanel 搜索过滤下高亮失效（P2）
+- GlossaryPanel relatedPanelFor 映射不完整（P3）
+- MarkdownRenderer 行内代码内 `**` 误处理为粗体（P3）
+- MarkdownRenderer 表格中间分隔行被当作数据行（P3）
+- LearnerProgress load 不校验负数字段值（P3）
+- BackendComparePanel runXxx source 参数未使用（P3）
+- IRTransformPanel reloadCurrentIR 死代码（P3）
+- BreakpointConditionPanel modeText VM STEP 间歇期显示"未运行"（P3）
+
+## 2026-07-08 · 第三十九轮：continue 方向性错误修正 + VM 面板数据竞争 + 闭包沙箱隔离 + Lexer 代理码点 + VmStepper hitCount
+
+### 概述
+
+继续对 MiniLang IDE 项目进行深度 Bug 排查，采用四模块并行 agent 审计策略。**最关键的发现**：第三十八轮的 continue 修复存在方向性错误——`continueTarget` 应在 `OP_CLOSE_UPVALUE` **之前**而非之后，导致 continue 仍然跳过 upvalue 关闭。本轮修正此错误并修复另外 8 项问题。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 问题 | 修复 |
+|---|--------|------|------|
+| 1 | P1 | 第三十八轮 continue 方向性错误（while+for×Compiler+IR=4 处） | continueTarget/continueLabel 移到 OP_CLOSE_UPVALUE/leaveBlockScope **之前** |
+| 2 | P1 | VariableInspectorPanel VM 模式数据竞争 | 添加 isVmRunning() 守卫 |
+| 3 | P1 | CallStackPanel VM 模式数据竞争 | 添加 isVmRunning() 守卫 |
+| 4 | P2 | deepCloneForSandbox 闭包浅拷贝导致 capturedVars 变异泄漏 | capturedVars COW detach + 递归深拷贝 |
+| 5 | P2 | Lexer `\uXXXX` 接受 Unicode 代理码点产生 WTF-8 | 拒绝 0xD800-0xDFFF 代理码点 |
+| 6 | P2 | VmStepper hitCount 在 RUN/STEP 模式下过度递增 | checkBreakpointHit 改为纯查询，hitCount 递增移到过滤条件通过后 |
+| 7 | P2 | ~DebugController 未调用 waitCallbacksIdle | 析构函数补 waitCallbacksIdle() |
+| 8 | P2 | ~DebugEvaluator 未调用 waitCallbackIdle | 析构函数补 waitCallbackIdle() |
+| 9 | P2 | VariableInspectorPanel onVariableSelected VM 模式数据竞争 | 添加 isVmRunning() 守卫 |
+
+### 关键决策
+
+1. **continue 跳转目标必须在 upvalue 关闭之前**：字节码执行是顺序的——continue 跳到 continueTarget 后，从该点继续执行后续指令。如果 continueTarget 在 OP_CLOSE_UPVALUE 之后，continue 会跳过 OP_CLOSE_UPVALUE；如果在之前，continue 落到 OP_CLOSE_UPVALUE 上，执行关闭后再走 OP_LOOP。第三十八轮的逻辑"放在之后确保关闭"是颠倒的——栈式 VM 中跳转目标是"落地后从该点继续执行"，不是"执行该点之前的代码"
+2. **VM 面板数据竞争用 isVmRunning() 守卫而非加锁**：VM 的 globalSlots_/frames_ 是 hot path（每条指令都可能修改），加锁会拖慢 VM 执行。isVmRunning() 守卫复用已有的运行状态标志，仅在 VM 暂停时才读取快照，对齐 Interpreter 调试路径的 isDebugPaused() 守卫模式
+3. **deepCloneForSandbox 闭包用 COW detach 而非深拷贝整个 ClosureData**：closure 的 body（AST 指针）和 closureEnv（weak_ptr）是只读/弱引用，共享安全。仅 capturedVars 需要 COW detach（非 const capturedVars() 触发 ensureUnique）+ 递归深拷贝容器值，隔离 writeBackCapturedVars 的副作用
+4. **VmStepper hitCount 拆分查询与计数职责**：原 checkBreakpointHit 将"查询断点匹配"与"递增命中计数"耦合，C++ 短路求值导致过滤条件失败时 hitCount 已被递增。改为纯查询（isBreakpointHit 语义），hitCount 递增移到调用方过滤条件通过后，对齐 DebugController::shouldPauseAtBreakpoint 的"先过滤后计数"模式
+5. **Lexer 代理码点拒绝而非合并**：`\uD83D\uDE00` 代理对合并为 U+1F600 需要跨转义序列状态，风险较高。本轮采用保守方案——拒绝代理码点（0xD800-0xDFFF）并报错，避免产生非标准 WTF-8。astral plane 支持留作后续增强
+
+### 修改文件清单
+
+- 修改：`compiler/Compiler.cpp`（visitWhileStmt + visitForStmt：continueTarget/updateStart 移到 OP_CLOSE_UPVALUE 之前）
+- 修改：`compiler/IR.cpp`（visitWhileStmt + visitForStmt：continueLabel 移到 leaveBlockScope 之前）
+- 修改：`gui/VariableInspectorPanel.cpp`（refreshLive + onVariableSelected：VM 模式添加 isVmRunning() 守卫）
+- 修改：`gui/CallStackPanel.cpp`（refreshLive：VM 模式添加 isVmRunning() 守卫）
+- 修改：`interpreter/Interpreter.cpp`（deepCloneForSandbox：闭包 capturedVars COW detach + 递归深拷贝）
+- 修改：`lexer/Lexer.cpp`（case 'u'：拒绝 0xD800-0xDFFF 代理码点）
+- 修改：`app/VmStepper.cpp`（checkBreakpointHit 改为纯查询；runBatch + stepByMode hitCount 递增移到过滤条件通过后）
+- 修改：`debug/DebugController.cpp`（析构函数补 waitCallbacksIdle()）
+- 修改：`debug/DebugEvaluator.h`（析构函数补 waitCallbackIdle()）
+
+### 审计发现但保留现状的问题
+
+- **break/continue 时 finally 块三后端不一致**（P1）：Interpreter 执行 finally，VM/RegisterVM 跳过。修复需 finally 续跳机制（中等规模改动），保留现状
+- **try-finally return 语义**（P2）：三后端一致跳过 finally，设计决策，保留现状
+- **Formatter 插值注释错位**（P2）：正确修复需 AST 注释附着（架构改动），保留现状
+- **break 跳过 upvalue 关闭**（P2）：breakTarget 涉及多处回填，风险较高，保留现状
+
+### 验证"保留现状"项实际不需要架构改动的结论
+
+- **Parser C 风格数组 `[]` 后缀**：已完整修复（isClassTypeDeclStart + parseTypeAnnotation + 前瞻验证 + 测试覆盖），不需要架构改动
+- **Formatter Assignment 不加括号**：实际上不是 Bug——Parser 右结合 assignment 是最低优先级，`a = b = c` 往返等价
+- **UOP_UNKNOWN 处理**：已修复（输出 "+" 保持 AST 可重新解析）
+- **nan/inf 处理**：已修复（输出 "0.0/* nan */" 占位注释）
+
+## 2026-07-08 · 第三十八轮：三后端语义一致性深度审计（while continue + upvalue 关闭 + 自动构造 + 调试器断点重复触发 + 跨线程数据竞争）
+
+### 概述
+
+继续对 MiniLang IDE 项目进行深度 Bug 排查，采用四模块并行 agent 审计策略，重点排查三后端语义一致性、闭包/upvalue 生命周期、调试器状态机、跨线程数据竞争等方面。共发现约 35 个问题，本轮修复 7 项明确、低风险、真实可触发的问题（P1 × 5，P2 × 2）。核心修复包括：while 循环 continue 跳过 OP_CLOSE_UPVALUE 导致闭包捕获变 by-reference（三后端不一致）、Interpreter visitVarDecl 自动构造路径缺失默认参数绑定和 closeCapturedVariables、DebugController checkBreak 中 updateLineTracking 顺序错误导致同行断点重复触发、DebugCoordinator callStackCallback 跨线程 const 引用数据竞争。全量 1753/1753 测试通过。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | Compiler + IR | P1 | while 循环 `continue` 跳转目标在 `OP_CLOSE_UPVALUE` 之前，跳过 upvalue 关闭，闭包捕获的循环局部变量变为 by-reference 而非 by-value 快照，三后端语义不一致（Interpreter 在 continue 时仍调用 closeCapturedVariables） | `compiler/Compiler.cpp` 新增 `continueTarget` 标记放在 OP_CLOSE_UPVALUE 之后，continue 跳转回填改为跳到 continueTarget；`compiler/IR.cpp` 新增 `continueLabel` 放在 `leaveBlockScope` 之后，对齐 for 循环的 continue 跳转目标（updateStart，在 OP_CLOSE_UPVALUE 之后） |
+| 2 | Interpreter | P1 | `visitVarDecl` 自动构造路径（`var f: Foo` 无初始化表达式但类型注解为类名）缺失 init 默认参数绑定，init 体引用参数时穿透到父环境 | `interpreter/Interpreter.cpp` 补充 init 默认参数绑定循环（对齐 `constructClassInstance`），包含 EnvGuard 临时切换到 closureEnv 求值默认值 + checkType 类型注解校验 |
+| 3 | Interpreter | P1 | 同上自动构造路径缺失 `closeCapturedVariables` 调用，闭包捕获变量丢失 | `interpreter/Interpreter.cpp` `PrevEnvGuard` 改为 `InitEnvGuard`（析构时调用 `closeCapturedVariables`，对齐 `constructClassInstance` 的 InitEnvGuard） |
+| 4 | DebugController | P1 | `checkBreak` 中 `updateLineTracking` 在 `shouldPause` 之后执行，`shouldPauseAtBreakpoint` 命中时设 `crossedLine_=false` 被随后的 `updateLineTracking` 覆盖为 true（line != lastSeenLine_），导致 resume 后同行下一个 AST 子表达式断点重复触发 | `debug/DebugController.cpp` 将 `updateLineTracking` 移到 `shouldPause` 之前执行 |
+| 5 | DebugCoordinator | P1 | `callStackCallback` 使用 `getCallStack()` 返回 const 引用，跨线程遍历期间 worker 线程 push_back/pop_back 导致迭代器失效 | `interpreter/Interpreter.{h,cpp}` 新增 `getCallStackSnapshot()` 返回值拷贝；`app/DebugCoordinator.cpp` 改用 `getCallStackSnapshot()` |
+| 6 | Interpreter | P2 | `callInstanceMethod` 默认参数路径手动 save/restore `currentEnv_`，evaluate 抛异常时残留为 cachedParentEnv | `interpreter/Interpreter.cpp` 改用 RAII guard（对齐 `constructClassInstance`/`callNamedFunction`/`callClosureValue` 的 EnvGuard 模式） |
+| 7 | DebugController | P2 | `resume`/`stepIn`/`stepOver`/`stepOut` 清除 `stopped_` 可在 worker 响应 stop 的窗口内取消正在进行的 stop，导致状态机不一致 | `debug/DebugController.cpp` 4 方法添加 `if (stopped_) return;` 守卫，移除 `stopped_ = false;`（stopped_ 的清除应由 `reset()` 新调试会话负责） |
+
+### 关键决策
+
+1. **continue 跳转目标对齐 for 循环**：while 循环的 continue 跳到 loopStart（条件检查点）在 OP_CLOSE_UPVALUE 之前，而 for 循环的 continue 跳到 updateStart 在 OP_CLOSE_UPVALUE 之后。修复将 while 的 continue 跳转目标移到 OP_CLOSE_UPVALUE 之后，与 for 循环行为一致
+2. **自动构造路径对齐 constructClassInstance**：visitVarDecl 的自动构造路径（`var f: Foo`）应与 constructClassInstance 保持完全一致的初始化流程，包括默认参数绑定、类型检查、closeCapturedVariables
+3. **updateLineTracking 顺序修复而非标志位重置**：原实现 shouldPauseAtBreakpoint 命中时设 crossedLine_=false，但 updateLineTracking 随后覆盖为 true。修复方式是将 updateLineTracking 移到 shouldPause 之前，而非在 shouldPause 之后再次重置 crossedLine_
+4. **getCallStackSnapshot 值拷贝而非加锁**：跨线程访问调用栈时，值拷贝比在 worker 线程加锁更轻量，避免 worker 线程在 push_back/pop_back 时阻塞等待 UI 线程遍历完成
+5. **stopped_ 粘性标志**：stopped_ 一旦由 stop() 设置，应保持到 reset() 清除。resume/step 清除 stopped_ 可在 worker 响应 stop 的窗口内取消正在进行的 stop
+
+### 修改文件清单
+
+- 修改：`compiler/Compiler.cpp`（while continue 跳转目标移到 OP_CLOSE_UPVALUE 之后）
+- 修改：`compiler/IR.cpp`（while continueLabel 移到 leaveBlockScope 之后）
+- 修改：`interpreter/Interpreter.{h,cpp}`（visitVarDecl 自动构造默认参数绑定 + InitEnvGuard + callInstanceMethod RAII + getCallStackSnapshot）
+- 修改：`debug/DebugController.cpp`（checkBreak updateLineTracking 顺序 + resume/step stopped_ 守卫）
+- 修改：`app/DebugCoordinator.cpp`（callStackCallback 改用 getCallStackSnapshot）
+- 文档同步：`CHANGELOG.md` + `docs/development.md` + `project_memory.md`
+
+### 保留现状的审计发现
+
+- P2 try-finally 在 return 时不执行 finally 块（Interpreter.cpp visitTryStmt）
+- P2 deepCloneForSandbox 闭包浅拷贝导致 capturedVars 变异泄漏
+- P2 Formatter 不对 Assignment 节点加括号（往返不等价）
+- P2 Parser declaration() 的 `[]` 后缀检查导致 C 风格数组声明解析失败
+- P2 Formatter formatInterpolatedString 静默丢弃插值表达式内部注释
+- P2 VmStepper checkBreakpointHit hitCount 递增时机错误
+- P2 VariableInspectorPanel worker 执行期间读取 Environment map 内容数据竞争
+
+## 2026-07-08 · 第三十七轮：教学模块系统审计与修复（GuidedTour UAF + listener 反注册 + Markdown 腐蚀 + autoTimer 数据竞争 + P2 视觉/性能）
+
+### 概述
+
+对全部教学模块面板（40+ 面板文件）进行系统性 Bug 审计，采用四模块并行 agent 策略，共发现约 45 个问题（P0 × 2，P1 × 10，P2 × ~30，P3 × 1）。本轮修复 P0 全部 + P1 关键项 + P2 主要项共 17 项。核心修复包括：GuidedTour bubble_ UAF（QPointer）、IdeController VM 状态监听器无反注册导致 6 面板析构后 UAF、MarkdownRenderer 关键字 "class" 腐蚀已生成 span 属性、LabManualPanel 选择题索引越界、调试 resume 期间 autoTimer 与 worker 线程数据竞争、多处 P2 视觉/性能/状态机问题。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | GuidedTour | P0 | `bubble_` 裸指针，IDE 析构期 / 多次 start-hideOverlay 累积泄漏 UAF | `QWidget*` → `QPointer<QWidget>`；hideOverlay 中 `deleteLater()` + 置 null 替代 `hide()`；onPanelGuidedTourRequested 连接 `finished → deleteLater` |
+| 2 | IdeController | P0 | `vmStateChangedListeners_` 无反注册机制，6 面板 setController 注册捕获裸 this 的 lambda，析构后 notifyVmStateChanged 调用 UAF | `addVmStateChangedListener` 增加 `void* owner` 参数 + `removeVmStateChangedListener(owner)` 延迟清除；6 面板（BytecodeTrace/CallStack/VariableInspector/BreakpointCondition/MemoryModel/VmStackSandbox）析构函数反注册 |
+| 3 | MarkdownRenderer | P1 | 关键字 "class" 腐蚀已生成 `<span class="...">` 的属性；关键字正则每次循环重新编译 | 占位符法重写 highlightMiniLang：先收集 span 片段用 `\x01{idx}\x02` 占位，最后统一替换；预编译关键字正则数组 |
+| 4 | LabManualPanel | P1 | `onSubmitChoiceExercise` 全局 exerciseIdx vs 选择题内序号混用导致越界 | `choiceGroups_` 按 CHOICE 出现顺序追加，choiceIdx 为选择题内序号；feedbackLabel objectName 改为 `feedback_choice_{idx}` |
+| 5 | MemoryModelPanel | P1 | showEvent 中 `start(500)` 覆盖 `setInterval(2000)` 的降频优化 | `start(500)` → `start()`（使用已设的 2000ms 间隔） |
+| 6 | LearnerProgress | P1 | load() 校验 `s <= 4` 拒绝合法的 currentStage=5（全通关状态） | `s <= 4` → `s <= LearningPathData::stageCount()` |
+| 7 | CallStackPanel | P1 | isVmInitialized 优先级导致 Interpreter 调试显示陈旧 VM 状态；autoTimer resume 期间数据竞争；toString 无 try/catch | 交换 if 优先级；增加 `isDebugPaused()` 检查；toString/typeName 包裹 try/catch |
+| 8 | VariableInspectorPanel | P1 | 同 CallStackPanel + onVariableSelected 恒真条件 `!v.isNull() \|\| v.getType()==VAL_NULL` | 同上修复模式 + 改用 `found` 标志 |
+| 9 | DebugCoordinator | P1 | 缺少 isPaused() 转发，面板无法判断调试是否处于暂停状态 | 新增 `bool isPaused() const { return debugger_->isPaused(); }` + IdeController::isDebugPaused() |
+| 10 | LearningPathPanel | P2 | rgba 格式错误（hex 字符串作首参）+ markActivityCompleted 不幂等 | `rgba(%1, 0.18)` → `rgba(r, g, b, 46)` 数字参数；markActivityCompleted 开头检查已完成则 return |
+| 11 | GlossaryPanel | P2 | 链接跳转到新术语时不发射 termActivated（第三十六轮移除 onTermSelected 发射后遗留） | `setCurrentRow(i)` 后添加 `emit termActivated(entries_[i].id)` |
+| 12 | TeachingTreePanel | P2 | 搜索清空后被折叠的分类保持折叠状态 | 清空搜索分支添加 `if (anyVisible) tree_->expandItem(top)` |
+| 13 | BackendComparePanel | P2 | 三后端串行执行无 processEvents 导致 UI 冻结 | 三个 runXxx 调用之间插入 processEvents + 状态文字更新 |
+| 14 | DebugPanel | P2 | currentStack_ 存储完整调用栈含全部 Value 拷贝（仅显示 200 帧） | `currentStack_ = stack` → 截断到 `MAX_CALL_STACK_STORE = 200` |
+| 15 | VmStackSandboxPanel | P2 | RegisterVM 模式标题/空状态文本不符；onTraceRunAll 100000 步同步阻塞 UI | 动态设置 GroupBox 标题 + 空状态文本；每 1000 步 processEvents |
+| fix | VmStackSandboxPanel | build | onTraceRunAll 使用 QApplication::processEvents 缺 `#include <QApplication>` | 补充 include |
+
+### 关键决策
+
+1. **QPointer 替代裸指针而非 shared_ptr**：GuidedTour 的 bubble_ 是 QWidget 子对象，由 Qt 对象树管理生命周期。QPointer 是 Qt 原生弱引用，对象销毁时自动置 null，比 shared_ptr 更适合 Qt 对象生命周期模型。hideOverlay 用 deleteLater + 置 null 确保 Qt 事件循环安全删除
+2. **listener 延迟清除而非 erase**：`removeVmStateChangedListener` 标记 `cb.fn = nullptr` 而非 vector erase，避免在 notifyVmStateChanged 遍历期间修改 vector 导致迭代器失效。notifyVmStateChanged 跳过空 cb。owner 参数用 `void*` 避免 C 风格转换
+3. **占位符法解决关键字腐蚀**：MarkdownRenderer 先用控制字符 `\x01{idx}\x02` 占位替代直接 replace，让所有正则匹配在"无 span 标签"的纯净文本上执行，最后统一替换占位符为 span。避免关键字 "class" 匹配到已生成 `<span class="...">` 中的 class 属性
+4. **isDebugPaused 转发而非面板直接访问 DebugController**：面板只持有 IdeController 指针，通过 `IdeController::isDebugPaused() → DebugCoordinator::isPaused() → DebugController::isPaused()` 链式转发，保持 Facade 模式封装
+5. **autoTimer 数据竞争用 isDebugPaused 守卫而非停止定时器**：调试 resume 期间 autoTimer 仍需为下一步暂停刷新视图，不能停止。改为 autoTimer 触发时检查 isDebugPaused()，仅在暂停状态才调用快照接口，避免与 worker 线程并发访问
+
+### 修改文件清单
+
+- 修改：`gui/GuidedTour.{h,cpp}`（QPointer + deleteLater + finished→deleteLater）
+- 修改：`app/IdeController.h`（VmStateChangedListener 结构 + removeVmStateChangedListener + isDebugPaused）
+- 修改：`app/DebugCoordinator.h`（isPaused 转发）
+- 修改：`gui/{BytecodeTrace,CallStack,VariableInspector,BreakpointCondition,MemoryModel,VmStackSandbox}Panel.{h,cpp}`（析构反注册 + autoTimer isDebugPaused 守卫 + 优先级修复）
+- 修改：`gui/MarkdownRenderer.cpp`（占位符法重写 highlightMiniLang）
+- 修改：`gui/LabManualPanel.cpp`（choiceIdx 索引修复）
+- 修改：`gui/MemoryModelPanel.cpp`（showEvent start() 修复）
+- 修改：`gui/LearnerProgress.cpp`（load 校验 stageCount）
+- 修改：`gui/{CallStack,VariableInspector}Panel.cpp`（autoTimer 数据竞争 + toString try/catch + 优先级）
+- 修改：`gui/LearningPathPanel.cpp`（rgba 数字参数 + markActivityCompleted 幂等）
+- 修改：`gui/GlossaryPanel.cpp`（anchorClicked 发射 termActivated）
+- 修改：`gui/TeachingTreePanel.cpp`（搜索清空恢复展开）
+- 修改：`gui/BackendComparePanel.cpp`（三后端 processEvents）
+- 修改：`gui/DebugPanel.cpp`（currentStack_ 截断 200）
+- 修改：`gui/VmStackSandboxPanel.cpp`（RegisterVM 标题/空状态 + onTraceRunAll processEvents + #include QApplication）
+- 修改：`app/ide.cpp`（onPanelGuidedTourRequested 连接 finished→deleteLater）
+- 文档同步：`CHANGELOG.md` + `docs/development.md` + `project_memory.md`
+
+### 保留现状的审计发现
+
+以下 P2/P3 审计发现因需架构改动或风险较高保留现状：
+- BugHuntPanel onTripleVerify 空输出一致性误判（P2 语义歧义）
+- AstBuilderToyPanel onVerifyWithRealParser 纯表达式包装为 VarDecl（P2 教学误导）
+- SyntaxExplorerPanel onRunSample 同步阻塞（P1，需架构改动）
+- ProfileDashboard paintEvent 硬编码坐标（P2 视觉）
+- MemoryModelPanel nanBoxExamples 悬垂指针值（P2 潜在 UAF）
+- LabManualPanel applyFolding inCodeBlock 状态不一致（P2 Markdown）
+- VariableInspectorPanel valueToBitsHex 堆类型占位符（P3 教学不完整）
 
 ## 2026-07-08 · 第三十六轮：IDE UI/UX 七项优化（折叠按钮 + 输出面板 + 背景色 + 运行修复 + 切换动画）
 

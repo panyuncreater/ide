@@ -24,22 +24,29 @@ inline int editDistance(std::string_view a, std::string_view b) {
     if (m == 0) return n;
     if (n == 0) return m;
 
-    // 确保 a 是较短的串，节省空间
+    // 确保 a 是较短的串，节省空间（滚动数组只需长度+1 的一维向量）
     if (m > n) return editDistance(b, a);
 
     std::vector<int> prev(n + 1);
     std::vector<int> curr(n + 1);
 
+    // 边界初始化：prev[j] 表示将空串 a 变为 b[0..j] 需 j 次插入
     for (int j = 0; j <= n; ++j) prev[j] = j;
 
     for (int i = 1; i <= m; ++i) {
+        // curr[0] 表示将 a[0..i] 变为空串需 i 次删除
         curr[0] = i;
         for (int j = 1; j <= n; ++j) {
+            // cost：本字符相同则无需替换（0），否则计一次替换（1）
             int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            // 经典递推：取 删除(prev[j]+1) / 插入(curr[j-1]+1) / 替换(prev[j-1]+cost)
+            // 三者最小值。prev 为上一行结果，curr[j-1] 为当前行已算的左邻。
             curr[j] = std::min({prev[j] + 1,          // 删除
                                 curr[j - 1] + 1,      // 插入
                                 prev[j - 1] + cost}); // 替换
         }
+        // 滚动窗口：交换后 curr 成为下一轮的 prev，旧 prev 复用为下一轮 curr，
+        // 仅需两行向量即可完成整张 DP 表，空间 O(n)。
         std::swap(prev, curr);
     }
     return prev[n];
@@ -64,10 +71,15 @@ inline std::string findClosest(std::string_view misspelled,
         // 但为简单起见，直接比较（MiniLang 关键字全小写）
         int dist = editDistance(misspelled, cand);
 
-        // 额外规则：候选词长度差异过大时施加惩罚
+        // 额外规则：候选词长度差异过大时施加惩罚。
+        // 原因：纯编辑距离对"长度悬殊但少数字符不同"的词不敏感
+        // （如 it→function 只有 1 次替换+6 次插入=7，但实际显然不是拼写纠错目标）。
+        // 当 |长度差|>2 时按超出部分累加惩罚，压低长候选的优先级，
+        // 使建议更贴近用户的真实意图（短词纠短词）。
         int lenDiff = static_cast<int>(cand.size()) - static_cast<int>(misspelled.size());
         if (std::abs(lenDiff) > 2) dist += std::abs(lenDiff) - 2;
 
+        // 距离更优直接采纳；距离相等时偏向长度相同的候选（更可能是同一词的不同写法）
         if (dist < bestDist || (dist == bestDist && cand.size() == misspelled.size())) {
             bestDist = dist;
             best = cand;

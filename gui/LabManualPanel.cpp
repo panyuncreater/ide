@@ -348,15 +348,24 @@ void LabManualPanel::rebuildExercises() {
             // 提交按钮
             auto* submitBtn = new QPushButton(
                 QString::fromUtf8("✓ ") + mlTr("提交答案"), frame);
-            int capturedIdx = exerciseIdx;
-            connect(submitBtn, &QPushButton::clicked, this, [this, capturedIdx]() {
-                onSubmitChoiceExercise(capturedIdx);
+            // AUDIT-P1 fix: 捕获选择题内序号而非全局练习索引。
+            // choiceGroups_ 按 CHOICE 出现顺序追加，onSubmitChoiceExercise 期望
+            // 接收选择题内序号（0..choiceCount-1）才能与 choiceGroups_ 下标对齐。
+            // 原实现捕获全局 exerciseIdx 会导致混排时下标越界/匹配错题。
+            int capturedChoiceIdx = static_cast<int>(choiceGroups_.size()) - 1;
+            // AUDIT-P2 fix: 设置 objectName，便于答对后查找按钮并禁用防重复提交
+            submitBtn->setObjectName(
+                QString::fromUtf8("submit_choice_%1").arg(capturedChoiceIdx));
+            connect(submitBtn, &QPushButton::clicked, this, [this, capturedChoiceIdx]() {
+                onSubmitChoiceExercise(capturedChoiceIdx);
             });
             exLayout->addWidget(submitBtn);
 
             // 反馈区（初始隐藏）
+            // AUDIT-P1 fix: feedbackLabel objectName 也用 choiceIdx 而非 exerciseIdx，
+            // 与 onSubmitChoiceExercise 中的查找保持一致。
             auto* feedbackLabel = new QLabel(QString(), frame);
-            feedbackLabel->setObjectName(QString::fromUtf8("feedback_%1").arg(exerciseIdx));
+            feedbackLabel->setObjectName(QString::fromUtf8("feedback_choice_%1").arg(capturedChoiceIdx));
             feedbackLabel->setWordWrap(true);
             feedbackLabel->setVisible(false);
             exLayout->addWidget(feedbackLabel);
@@ -384,6 +393,9 @@ void LabManualPanel::rebuildExercises() {
             auto* submitBtn = new QPushButton(
                 QString::fromUtf8("✓ ") + mlTr("运行并验证"), frame);
             int capturedIdx = exerciseIdx;
+            // AUDIT-P2 fix: 设置 objectName，便于答对后查找按钮并禁用防重复提交
+            submitBtn->setObjectName(
+                QString::fromUtf8("submit_output_%1").arg(capturedIdx));
             connect(submitBtn, &QPushButton::clicked, this, [this, capturedIdx]() {
                 onSubmitExpectedOutputExercise(capturedIdx);
             });
@@ -408,23 +420,25 @@ void LabManualPanel::rebuildExercises() {
 // ============================================================
 // P1-1 fix (F6): 提交选择题答案，即时判分
 // ============================================================
-void LabManualPanel::onSubmitChoiceExercise(int exerciseIndex) {
-    if (exerciseIndex < 0 || exerciseIndex >= (int)choiceGroups_.size()) return;
+void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
+    // AUDIT-P2 fix: 防重复提交守卫——快速双击会触发重复 save() 磁盘 I/O
+    // 与 recordFailure 计数虚高（答错时每次点击 failCount++）
+    if (submitting_) return;
+    if (choiceIndex < 0 || choiceIndex >= (int)choiceGroups_.size()) return;
     const auto& chs = LabManualContent::chapters();
     if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size()) return;
     const auto& exercises = chs[currentChapterIndex_].exercises;
 
-    // 找到对应的 exercise（跳过 EXPECTED_OUTPUT 类型的索引偏移）
-    // choiceGroups_ 仅包含 CHOICE 类型，所以 exerciseIndex 对应 choiceGroups_ 索引
-    // 但 exercises 数组中 CHOICE 与 EXPECTED_OUTPUT 混排，需要换算
+    // AUDIT-P1 fix: choiceIndex 已是选择题内序号（与 choiceGroups_ 下标对齐），
+    // 直接遍历 exercises 跳过 EXPECTED_OUTPUT 类型找到第 choiceIndex 个 CHOICE。
     int choiceCount = 0;
+    int globalIdx = -1;  // AUDIT-P2 fix: 记录全局练习索引用于 exercisePassed_
     const LabExercise* target = nullptr;
-    int targetIdx = -1;
     for (int i = 0; i < (int)exercises.size(); ++i) {
         if (exercises[i].type == LabExerciseType::CHOICE) {
-            if (choiceCount == exerciseIndex) {
+            if (choiceCount == choiceIndex) {
                 target = &exercises[i];
-                targetIdx = i;
+                globalIdx = i;
                 break;
             }
             ++choiceCount;
@@ -432,13 +446,17 @@ void LabManualPanel::onSubmitChoiceExercise(int exerciseIndex) {
     }
     if (!target) return;
 
-    QButtonGroup* grp = choiceGroups_[exerciseIndex];
+    // AUDIT-P2 fix: 通过 early return 后才设标志，函数末尾恢复
+    submitting_ = true;
+
+    QButtonGroup* grp = choiceGroups_[choiceIndex];
     int selectedId = grp->checkedId();
     bool correct = (selectedId == target->correctIndex);
 
     // 找到对应的 feedback label
+    // AUDIT-P1 fix: objectName 改为 feedback_choice_{choiceIdx} 与 rebuildExercises 一致。
     QLabel* feedbackLabel = exercisesContainer_->findChild<QLabel*>(
-        QString::fromUtf8("feedback_%1").arg(exerciseIndex));
+        QString::fromUtf8("feedback_choice_%1").arg(choiceIndex));
     if (feedbackLabel) {
         QString color = correct ? QString::fromUtf8("#4CAF50") : QString::fromUtf8("#F44336");
         QString icon = correct ? QString::fromUtf8("✅ ") : QString::fromUtf8("❌ ");
@@ -451,23 +469,39 @@ void LabManualPanel::onSubmitChoiceExercise(int exerciseIndex) {
     }
 
     if (correct) {
-        exercisePassed_[exerciseIndex] = true;
+        // AUDIT-P2 fix: exercisePassed_ 是全局练习索引（CHOICE + EXPECTED_OUTPUT
+        // 均追加），用 globalIdx 而非 choiceIndex 索引。CHOICE/EXPECTED_OUTPUT
+        // 混排时 choiceIndex 与全局索引不对齐，原代码会错误标记邻近的 EXPECTED_OUTPUT 题。
+        exercisePassed_[globalIdx] = true;
         // P2-3 fix (F9): 记录得分到学情画像——单题正确记 100 分（按章节累计，
         // 通过 recordScore 取最大值语义保留历史最佳）。星级暂记 1，全章通过后再升 3。
         LearnerProgressStore::instance().recordScore(chs[currentChapterIndex_].id, 100, 1);
         LearnerProgressStore::instance().save();
+        // AUDIT-P2 fix: 答对后禁用提交按钮，防止重复提交并视觉提示已通过
+        QPushButton* submitBtn = exercisesContainer_->findChild<QPushButton*>(
+            QString::fromUtf8("submit_choice_%1").arg(choiceIndex));
+        if (submitBtn) {
+            submitBtn->setEnabled(false);
+            submitBtn->setText(QString::fromUtf8("✅ ") + mlTr("已通过"));
+        }
         checkAllExercisesPassed();
     } else {
         // P2-3 fix (F9): 答错记录失败次数，用于薄弱点分析
         LearnerProgressStore::instance().recordFailure(chs[currentChapterIndex_].id);
         LearnerProgressStore::instance().save();
     }
+
+    // AUDIT-P2 fix: 恢复守卫（答对时按钮已禁用，但守卫仍需复位以便其他题提交）
+    submitting_ = false;
 }
 
 // ============================================================
 // N1 fix: 提交预期输出题答案——同步运行样例代码并自动比对
 // ============================================================
 void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
+    // AUDIT-P2 fix: 防重复提交守卫——同步运行样例代码期间快速双击会触发
+    // 重复 runStringCaptureOutput + 重复 save() 磁盘 I/O
+    if (submitting_) return;
     const auto& chs = LabManualContent::chapters();
     if (currentChapterIndex_ < 0 || currentChapterIndex_ >= (int)chs.size()) return;
     const auto& exercises = chs[currentChapterIndex_].exercises;
@@ -475,12 +509,19 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
     const auto& ex = exercises[exerciseIndex];
     if (ex.type != LabExerciseType::EXPECTED_OUTPUT) return;
 
+    // AUDIT-P2 fix: 通过 early return 后才设标志，函数末尾恢复
+    submitting_ = true;
+
     // 运行样例代码并捕获输出
     std::string actualOutput;
-    if (controller_) {
+    bool controllerAvailable = (controller_ != nullptr);
+    if (controllerAvailable) {
         actualOutput = controller_->runStringCaptureOutput(ex.sampleCode);
     } else {
-        actualOutput = "!ERROR: No controller";
+        // AUDIT-P2 fix: controller 未就绪时给出友好提示而非暴露内部错误
+        // 原实现 actualOutput = "!ERROR: No controller" 会显示给学员，让学员
+        // 误以为是程序输出，且会与预期输出比对失败，反馈"输出不匹配"造成困惑。
+        actualOutput = "";
     }
 
     // Trim 两端空白后比对
@@ -495,7 +536,7 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
 
     std::string trimmedActual = trim(actualOutput);
     std::string trimmedExpected = trim(ex.expectedOutput);
-    bool correct = (trimmedActual == trimmedExpected);
+    bool correct = controllerAvailable && (trimmedActual == trimmedExpected);
 
     // 更新反馈
     QLabel* feedbackLabel = exercisesContainer_->findChild<QLabel*>(
@@ -504,7 +545,13 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
         QString color = correct ? QString::fromUtf8("#4CAF50") : QString::fromUtf8("#F44336");
         QString icon = correct ? QString::fromUtf8("✅ ") : QString::fromUtf8("❌ ");
         QString msg;
-        if (correct) {
+        if (!controllerAvailable) {
+            // AUDIT-P2 fix: controller 未就绪的友好提示
+            msg = QString::fromUtf8(
+                "<span style='color:%1;'><b>%2</b></span><br>%3").arg(
+                color, icon + mlTr("运行环境未就绪"),
+                mlTr("请先在主界面运行一次程序以初始化引擎，再回来验证此题。"));
+        } else if (correct) {
             msg = QString::fromUtf8("<span style='color:%1;'><b>%2</b></span><br>%3").arg(
                 color, icon + mlTr("输出匹配！"),
                 QString::fromUtf8(ex.explanation.c_str()).toHtmlEscaped());
@@ -529,11 +576,22 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
         exercisePassed_[exerciseIndex] = true;
         LearnerProgressStore::instance().recordScore(chs[currentChapterIndex_].id, 100, 1);
         LearnerProgressStore::instance().save();
+        // AUDIT-P2 fix: 答对后禁用提交按钮，防止重复提交并视觉提示已通过
+        QPushButton* submitBtn = exercisesContainer_->findChild<QPushButton*>(
+            QString::fromUtf8("submit_output_%1").arg(exerciseIndex));
+        if (submitBtn) {
+            submitBtn->setEnabled(false);
+            submitBtn->setText(QString::fromUtf8("✅ ") + mlTr("已通过"));
+        }
         checkAllExercisesPassed();
-    } else {
+    } else if (controllerAvailable) {
+        // AUDIT-P2 fix: 仅在 controller 可用时才记录失败，避免误判污染学情
         LearnerProgressStore::instance().recordFailure(chs[currentChapterIndex_].id);
         LearnerProgressStore::instance().save();
     }
+
+    // AUDIT-P2 fix: 恢复守卫
+    submitting_ = false;
 }
 
 // ============================================================
@@ -703,12 +761,14 @@ QString LabManualPanel::applyFolding(const std::string& markdown) const {
         // 跟踪围栏代码块状态（``` 或 ~~~）
         if (trimmed.startsWith(QStringLiteral("```")) ||
             trimmed.startsWith(QStringLiteral("~~~"))) {
-            inCodeBlock = !inCodeBlock;
+            // AUDIT-P2 fix: 折叠区内不切换 inCodeBlock。折叠区内容已被跳过，
+            // 若切换 inCodeBlock 会导致状态泄漏到折叠区外——未闭合的代码块
+            // 会让 inCodeBlock 恒为 true，后续所有行（含真正标题）被当作
+            // 代码块内容跳过，文档剩余部分全部消失。
             if (inFoldableSection) {
-                // 折叠区内出现的代码块围栏也要保留配对，但内容会被替换为提示
-                // 简化：直接跳过代码块行
                 continue;
             }
+            inCodeBlock = !inCodeBlock;
             result += line + '\n';
             continue;
         }

@@ -43,6 +43,7 @@ QT_CHARTS_USE_NAMESPACE
 // ProfileLibrary — 性能场景库
 // ============================================================
 
+/// 返回预设的性能测试场景列表（静态数据）。
 const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
     static const std::vector<ProfileScenario> kScenarios = {
         {
@@ -105,6 +106,7 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
 // - OpCodeProfileLibrary 聚焦"性能特征与热点分析"
 // 帮助学习者理解为何某些指令是热点、不同后端的指令密度差异
 
+/// 返回各 opcode 的性能说明文档列表（静态数据）。
 const std::vector<OpCodePerfDoc>& OpCodeProfileLibrary::docs() {
     static const std::vector<OpCodePerfDoc> kDocs = {
         {
@@ -185,6 +187,7 @@ const std::vector<OpCodePerfDoc>& OpCodeProfileLibrary::docs() {
 // ProfileDashboardPanel 实现
 // ============================================================
 
+/// 构造性能基准面板：初始化场景选择器、图表区与状态动画。
 ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent)
     : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -353,6 +356,7 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent)
 
 // ---- 后端测量 ----
 
+/// 单次用解释器执行被测代码并返回耗时（秒）。
 double ProfileDashboardPanel::measureInterpreterOnce(Block& ast) {
     Interpreter interp;
     interp.setOutputCallback([](const std::string&) {});
@@ -362,6 +366,7 @@ double ProfileDashboardPanel::measureInterpreterOnce(Block& ast) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
 }
 
+/// 单次用栈式 VM 编译并执行并返回耗时（秒）。
 double ProfileDashboardPanel::measureStackVMOnce(Block& ast) {
     Compiler compiler;
     auto result = compiler.compile(ast);
@@ -379,6 +384,7 @@ double ProfileDashboardPanel::measureStackVMOnce(Block& ast) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
 }
 
+/// 单次用寄存器 VM 编译并执行并返回耗时（秒）。
 double ProfileDashboardPanel::measureRegisterVMOnce(Block& ast) {
     Compiler compiler;
     compiler.setUseRegisterVM(true);
@@ -482,6 +488,7 @@ ProfileDashboardPanel::BackendTiming ProfileDashboardPanel::measureBackend(
 // 问题 6: "运行中"状态动画 — 橙色背景 + 循环圆点，避免误认为卡死
 // ============================================================
 
+/// 启动状态区「运行中」动画（点号循环）以提示正在测速。
 void ProfileDashboardPanel::startStatusAnimation(const QString& base) {
     statusRunningBase_ = base;
     statusAnimDots_ = 0;
@@ -497,12 +504,14 @@ void ProfileDashboardPanel::startStatusAnimation(const QString& base) {
     statusLabel_->setText(base + ".");
 }
 
+/// 停止状态动画并恢复静态文案。
 void ProfileDashboardPanel::stopStatusAnimation() {
     if (statusAnimTimer_) {
         statusAnimTimer_->stop();
     }
 }
 
+/// 对指定场景在三后端上分别测速并收集计时结果。
 void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     const auto& items = ProfileLibrary::scenarios();
     if (scenarioIndex < 0 || scenarioIndex >= (int)items.size()) return;
@@ -635,6 +644,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     statusLabel_->setText(QString::fromUtf8("剖析完成"));
 }
 
+/// 将测速结果渲染为后端对比柱状图与概览文本。
 void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& results,
                                             const ProfileScenario& scenario) {
     resultTable_->setRowCount((int)results.size());
@@ -669,6 +679,7 @@ void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& resu
 }
 
 // P1-1: 渲染指令计数表格（StackVM / RegisterVM Top 10 热点 opcode）
+/// 渲染逐 opcode 的性能明细表（各后端耗时）。
 void ProfileDashboardPanel::renderOpCodeProfile(
     const std::vector<OpCodeProfileEntry>& stackVmProfile,
     const std::vector<OpCodeProfileEntry>& registerVmProfile) {
@@ -690,6 +701,7 @@ void ProfileDashboardPanel::renderOpCodeProfile(
     }
 }
 
+/// 根据测速结果生成中文性能分析结论文本。
 QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& results,
                                                 const ProfileScenario& scenario) {
     std::ostringstream os;
@@ -737,6 +749,7 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
     return QString::fromUtf8(os.str().c_str());
 }
 
+/// 重写绘制事件，绘制自定义图表背景/网格。
 void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
 #ifdef MINILANG_HAVE_QTCHARTS
     // C2: QtCharts 模式下柱状图由 QChartView 渲染，paintEvent 仅转发基类
@@ -748,7 +761,19 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
     p.setRenderHint(QPainter::Antialiasing);
 
     // 柱状图绘制区域（resultTable_ 下方）
-    QRect chartRect(220, 200, width() - 240, 200);
+    // AUDIT-P2 fix: 原实现硬编码 QRect(220, 200, width()-240, 200)，x=220 假设
+    // scenarioList_ 宽度固定，y=200 假设布局高度固定，height=200 不随窗口缩放。
+    // splitter 拖动或窗口缩放时柱状图位置错位。改为基于 resultTable_ 实际几何
+    // + widget 边界动态计算，确保柱状图始终在 resultTable_ 下方且不超出 widget。
+    const int margin = 20;
+    const int tableBottom = resultTable_ ? resultTable_->geometry().bottom() : 0;
+    const int chartTop = tableBottom + margin;
+    const int chartHeight = height() - chartTop - margin;
+    QRect chartRect(margin, chartTop, width() - 2 * margin, chartHeight);
+    if (chartRect.height() < 50) {
+        // 空间不足时不绘制柱状图（避免负高度/重叠）
+        return;
+    }
     p.setPen(QColor(200, 200, 200));
     p.drawRect(chartRect);
 
@@ -788,6 +813,7 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
 #ifdef MINILANG_HAVE_QTCHARTS
 // C2: QtCharts 模式柱状图渲染 — 用 QBarSeries + QBarSet 替代 QPainter 自绘
 // 视觉优势：自带 hover tooltip / legend / 入场动画 / 抗锯齿
+/// 在面板内绘制后端计时对比柱状图。
 void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& results) {
     if (!chart_) return;
     // 清空旧数据
@@ -842,6 +868,7 @@ void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& result
 
 // ---- 统计工具 ----
 
+/// 计算多次测速样本的算术平均值。
 double ProfileDashboardPanel::mean(const std::vector<double>& xs) {
     if (xs.empty()) return 0.0;
     double s = 0;
@@ -849,6 +876,7 @@ double ProfileDashboardPanel::mean(const std::vector<double>& xs) {
     return s / xs.size();
 }
 
+/// 计算样本标准差，衡量后端耗时稳定性。
 double ProfileDashboardPanel::stddev(const std::vector<double>& xs) {
     if (xs.size() < 2) return 0.0;
     double m = mean(xs);

@@ -42,6 +42,7 @@
 class LearningPathPanel : public QWidget {
     Q_OBJECT
 public:
+/// 构造学习路径面板；parent 为父控件。
     explicit LearningPathPanel(QWidget* parent = nullptr);
 
 public slots:
@@ -56,12 +57,16 @@ signals:
     void activityRequested(const QString& activityId);
 
 private slots:
+/// 刷新按钮回调。
     void onRefresh();
+/// 重置进度按钮回调。
     void onResetProgress();
+/// 活动点击回调。
     void onActivityClicked(const QString& activityId);
 
 protected:
     // M9: 键盘导航 — Up/Down 在已解锁活动行间循环，Enter 触发当前行点击
+/// 键盘导航事件。
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
@@ -86,13 +91,16 @@ private:
     QList<QPushButton*> activityRows_;
     int                 currentNavIndex_ = -1;
     QString             highlightedSavedStyle_;
+/// 高亮指定活动行。
     void highlightActivityRow(int idx);
 
     // 搜索框防抖定时器——避免逐字符触发 refresh() 导致重建风暴
     QTimer* searchDebounceTimer_ = nullptr;
 
     // 阶段颜色（绿/黄/蓝/紫/红）
+/// 阶段主题配色。
     static QString stageColor(int stage);
+/// 阶段标题文案。
     static QString stageTitle(int stage);
 
     /// 构造单个阶段卡片

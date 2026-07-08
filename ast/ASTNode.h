@@ -6,6 +6,15 @@
 #include <optional>
 #include <unordered_set>
 
+// ============================================================
+// ASTNode.h — 抽象语法树（AST）节点定义
+// ------------------------------------------------------------
+// 本文件定义 MiniLang 编译前端的核心数据结构：AST 节点基类与全部
+// 子类（表达式 / 语句 / 声明），以及用于快速分发的 NodeType 枚举。
+// 所有节点通过 Visitor 模式（accept/visit*）被解释器、编译器、格式化器
+// 遍历，从而与具体遍历逻辑解耦。
+// ============================================================
+
 // A1 fix: ASTNode.h 不再 include interpreter/Value.h。
 // Value 仅作前向声明，getValue() 实现移至 ASTNode.cpp。
 // 调用 getValue() 的模块（Interpreter/Compiler）需自行 include Value.h。

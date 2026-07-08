@@ -156,6 +156,12 @@ private:
         bool hasUpdate;                // for 循环有 update 表达式，continue 应跳到 update 而非 loopStart
         size_t updateStart;            // for 循环 update 表达式起始偏移（hasUpdate=true 时有效）
         int tryDepthAtStart;           // BUG1 fix: 循环开始时的 tryDepth_，break/continue 只弹循环内 try handler
+        // AUDIT-P2-CORRECT fix: break 需发射 OP_CLOSE_UPVALUE 关闭循环体内声明的
+        // 闭包捕获变量的 upvalue（对齐正常迭代退出时的 OP_CLOSE_UPVALUE 发射）。
+        // OP_CLOSE_UPVALUE bodySlotBase 关闭 slot >= bodySlotBase 的全部 open upvalues，
+        // 含循环体内嵌套块声明的变量（嵌套块 slot >= bodySlotBase）。
+        size_t bodySlotBase = 0;       // 循环体 slot 基址
+        bool needCloseUpvalue = false; // 是否需要关闭 upvalue（inFunction_）
     };
     std::vector<LoopContext> loopStack_;
 

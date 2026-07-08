@@ -94,26 +94,69 @@ static QString slugify(const QString& text) {
 /// P2-2 fix (F4): 对 MiniLang 代码做简单语法高亮
 /// 输入应已 escapeHtml 转义过。基于正则顺序替换：注释 > 字符串 > 关键字 > 数字
 /// 用 <span class="..."> 包裹，CSS 类定义在 buildStylesheet 中
+///
+/// AUDIT-P1 fix: 原实现顺序 replace 会导致关键字 "class" 腐蚀已生成的 span 属性
+/// （<span class="ml-comment"> 中的 class 被替换为 <span class="ml-keyword">class</span>），
+/// 同时注释/字符串内部的关键字和数字仍会被误高亮。
+/// 改为占位符法：先用唯一占位符替换注释/字符串/关键字/数字，最后统一替换为 span。
+/// 占位符格式 \x01{TYP}{IDX}\x02 选择控制字符 \x01/\x02 避免与代码内容冲突。
 static QString highlightMiniLang(const QString& escapedCode) {
     QString result = escapedCode;
 
+    // 收集已高亮片段，按类型 + 索引用占位符替换，避免后续正则误命中已包裹内容。
+    struct Span { QString cls; QString text; };
+    std::vector<Span> spans;
+
+    auto replaceWithPlaceholder = [&](const QRegularExpression& re, const QString& cls) {
+        int from = 0;
+        QRegularExpressionMatch m;
+        while ((m = re.match(result, from)).hasMatch()) {
+            QString captured = m.captured(0);
+            int idx = static_cast<int>(spans.size());
+            spans.push_back({cls, captured});
+            QString placeholder = QString::fromUtf8("\x01%1\x02").arg(idx, 6, 10, QChar('0'));
+            result.replace(m.capturedStart(), m.capturedLength(), placeholder);
+            // 占位符长度（8 字节）通常与原片段不同，from 推进到占位符之后
+            from = m.capturedStart() + placeholder.length();
+        }
+    };
+
     // 1. 注释（先处理，避免注释内的关键字/字符串被误高亮）
-    // 块注释 /* */
-    result.replace(kReMlBlockComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
-    // 行注释 //...
-    result.replace(kReMlLineComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
+    replaceWithPlaceholder(kReMlBlockComment, QStringLiteral("ml-comment"));
+    replaceWithPlaceholder(kReMlLineComment, QStringLiteral("ml-comment"));
 
     // 2. 字符串
-    result.replace(kReMlString, QStringLiteral("<span class=\"ml-string\">\\0</span>"));
+    replaceWithPlaceholder(kReMlString, QStringLiteral("ml-string"));
 
     // 3. 关键字（用 \b 边界避免误命中标识符子串）
-    for (const QString& kw : kMiniLangKeywords) {
-        QRegularExpression re(QStringLiteral("\\b%1\\b").arg(kw));
-        result.replace(re, QStringLiteral("<span class=\"ml-keyword\">%1</span>").arg(kw));
+    // AUDIT-P1 fix: 预编译正则数组，避免每次调用循环内 pcre2_compile。
+    static std::vector<QRegularExpression> kKeywordRegexes = []() {
+        std::vector<QRegularExpression> v;
+        v.reserve(kMiniLangKeywords.size());
+        for (const QString& kw : kMiniLangKeywords) {
+            v.push_back(QRegularExpression(QStringLiteral("\\b%1\\b").arg(kw)));
+        }
+        return v;
+    }();
+    for (const auto& re : kKeywordRegexes) {
+        replaceWithPlaceholder(re, QStringLiteral("ml-keyword"));
     }
 
     // 4. 数字
-    result.replace(kReMlNumber, QStringLiteral("<span class=\"ml-number\">\\0</span>"));
+    replaceWithPlaceholder(kReMlNumber, QStringLiteral("ml-number"));
+
+    // 5. 最后统一把占位符替换为 span。此时 result 中已无关键字/字符串文本，
+    // 仅占位符 \x01{idx}\x02 与代码其他部分（标识符、运算符、空白等）。
+    for (size_t i = 0; i < spans.size(); ++i) {
+        QString placeholder = QString::fromUtf8("\x01%1\x02")
+            .arg(static_cast<int>(i), 6, 10, QChar('0'));
+        const auto& s = spans[i];
+        // AUDIT-P1 fix: spans[i].text 已经过 escapeHtml，直接嵌入 span 安全。
+        // 但占位符替换为 span 后 span.text 中若含 \x01/\x02 不会被再次匹配
+        // （从大到小迭代或 i 单调递增均安全，因为新 span 不含占位符）。
+        QString span = QStringLiteral("<span class=\"%1\">%2</span>").arg(s.cls, s.text);
+        result.replace(placeholder, span);
+    }
 
     return result;
 }
@@ -147,8 +190,23 @@ static QString escapeHtml(const QString& s) {
 /// 输入应已 escapeHtml 转义过。
 static QString renderInline(const QString& s) {
     QString out = s;
-    // 行内代码 `code`（先处理，避免 code 内的 ** 被后续规则误处理）
-    out.replace(kReInlineCode, QStringLiteral("<code>\\1</code>"));
+    // AUDIT-P2 fix: 行内代码 `code` 先替换为占位符，避免 code 内的 ** / * / []
+    // 被后续粗体/斜体/链接规则误处理。原实现直接替换为 <code>...</code>，
+    // 但随后的粗体正则 \*\*([^*]+)\*\* 仍会匹配 <code> 标签内的 **，
+    // 例如 `a **b** c` 会被错误渲染为 <code>a <b>b</b> c</code>。
+    // 占位符使用控制字符 \x03/\x04 避免与正文冲突。
+    QStringList codeSpans;
+    {
+        int from = 0;
+        QRegularExpressionMatch m;
+        while ((m = kReInlineCode.match(out, from)).hasMatch()) {
+            QString placeholder = QString::fromUtf8("\x03%1\x04")
+                .arg(codeSpans.size(), 6, 10, QChar('0'));
+            codeSpans.append(m.captured(1));
+            out.replace(m.capturedStart(), m.capturedLength(), placeholder);
+            from = m.capturedStart() + placeholder.length();
+        }
+    }
     // 粗体 **text**
     out.replace(kReBold, QStringLiteral("<b>\\1</b>"));
     // 斜体 *text*（避免与粗体冲突，要求 * 两侧非 *）
@@ -169,6 +227,14 @@ static QString renderInline(const QString& s) {
         pos = it.capturedEnd();
     }
     result += out.mid(pos);
+    // AUDIT-P2 fix: 最后把占位符替换回 <code>...</code>，此时粗体/斜体/链接
+    // 已处理完毕，code 内容不会受其影响。
+    for (int i = 0; i < codeSpans.size(); ++i) {
+        QString placeholder = QString::fromUtf8("\x03%1\x04")
+            .arg(i, 6, 10, QChar('0'));
+        result.replace(placeholder,
+                       QStringLiteral("<code>%1</code>").arg(codeSpans[i]));
+    }
     return result;
 }
 
@@ -220,6 +286,7 @@ static QString buildStylesheet(const QString& codeBlockBg) {
 
 // ---- 公共 API ----
 
+/// 将 Markdown 文本渲染为完整 HTML 文档（含样式表）。
 QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     if (markdown.isEmpty()) {
         return QStringLiteral("<html><head></head><body></body></html>");
@@ -505,10 +572,12 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     return html.join(QString());
 }
 
+/// 字符串版重载：渲染为完整 HTML 文档。
 QString markdownToHtml(const std::string& markdown, const QString& codeBlockBg) {
     return markdownToHtml(QString::fromUtf8(markdown.c_str()), codeBlockBg);
 }
 
+/// 将 Markdown 渲染为 HTML 片段（不含 <html> 外壳）。
 QString markdownToHtmlFragment(const QString& markdown, const QString& codeBlockBg) {
     QString full = markdownToHtml(markdown, codeBlockBg);
     // 剥离 <html><head>...</head><body>...</body></html> 包裹，返回 body 内部片段
@@ -532,6 +601,7 @@ QString markdownToHtmlFragment(const QString& markdown, const QString& codeBlock
     return full;
 }
 
+/// 字符串版重载：渲染为 HTML 片段。
 QString markdownToHtmlFragment(const std::string& markdown, const QString& codeBlockBg) {
     return markdownToHtmlFragment(QString::fromUtf8(markdown.c_str()), codeBlockBg);
 }
@@ -540,6 +610,7 @@ QString markdownToHtmlFragment(const std::string& markdown, const QString& codeB
 // P2-2 fix (F3): 章节锚点目录（TOC）
 // ============================================================
 
+/// 提取 Markdown 标题列表，供目录/锚点跳转使用。
 std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
     std::vector<HeadingEntry> headings;
     if (markdown.isEmpty()) return headings;
@@ -568,6 +639,7 @@ std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
     return headings;
 }
 
+/// 依据标题构建目录（TOC）HTML。
 QString buildTableOfContents(const QString& markdown,
                               const QString& tocTitle,
                               int maxLevel) {

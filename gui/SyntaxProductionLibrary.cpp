@@ -9,6 +9,10 @@
 // 示例对比（正确/错误写法）和注意事项，降低 EBNF 门槛。
 // ============================================================
 
+/// 返回语法产生式参考库的全部条目（静态单例）。
+/// 数据源自 parser/Parser.cpp 的实际产生式实现，每条含名称、EBNF、
+/// 人话说明、可运行样例代码与自然语言描述（naturalLanguage）字段，
+/// 供 SyntaxExplorerPanel 展示并支持一键加载到主编辑器。
 const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
     static const std::vector<SyntaxProduction> kItems = {
         SyntaxProduction{
@@ -158,7 +162,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 字段按继承链展平存储\n"
             "    • super.method() 调用父类方法（三后端语义一致）\n"
             "    • super 只能在类方法中使用（非方法上下文为运行时错误）\n"
-            "    • init 是构造方法，实例化时自动调用: Dog(\"Rex\") 等价于 new Dog(\"Rex\")"
+            "    • init 是构造方法，实例化时自动调用: Dog(\"Rex\") 会调用 Dog 的 init 方法"
         },
         SyntaxProduction{
             "try-stmt", "🛡️ try/catch 异常处理",
@@ -278,7 +282,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "🔢 一串运算符排排坐，`*` 比 `+` 优先那种老规矩。顺带一句：整数除法截断向零，三个后端都这么算，谁也不许特立独行。"
             "and/or 短路求值——左操作数决定结果时跳过右操作数求值，返回操作数原值（非布尔）。"
             "+ 支持字符串拼接（任一操作数为字符串即触发）。",
-            "var x = 5;\nprint(x > 0 and \"positive\" or \"non-positive\");\nprint(7 / 2);    // 3\nprint(7.0 / 2);  // 3.5\nprint(0 or \"default\");  // 0（保留原值）",
+            "var x = 5;\nprint(x > 0 and \"positive\" or \"non-positive\");\nprint(7 / 2);    // 3\nprint(7.0 / 2);  // 3.5\nprint(0 or \"default\");  // \"default\"（0 为假，返回右值）",
             "🔢 运算符的写法（按优先级从低到高）：\n\n"
             "  or          （最低优先级）\n"
             "  and\n"
@@ -298,7 +302,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "  注意事项:\n"
             "    • 整数除法截断向零：-7 / 2 = -3（不是 -4）\n"
             "    • and/or 短路返回操作数原值（非布尔）：\n"
-            "        - 0 or \"default\" → 0（保留原值，不返回 true/false）\n"
+            "        - 0 or \"default\" → \"default\"（左为假，返回右值）\n"
             "        - \"hi\" and 0 → 0\n"
             "    • not 返回布尔值\n"
             "    • + 任一操作数为字符串即触发拼接：\"a\" + 1 → \"a1\""

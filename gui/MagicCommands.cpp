@@ -31,6 +31,7 @@
 // 命令元数据（静态数据，不依赖 IdeController）
 // ============================================================
 
+/// 返回全部已注册 magic 命令的元数据列表（静态数据）。
 const std::vector<MagicCommand>& MagicCommands::commands() {
     static const std::vector<MagicCommand> kCommands = {
         {"help",       "%help",       "列出所有 magic 命令及简短描述"},
@@ -384,6 +385,7 @@ std::string handleReset(IdeController* controller) {
 // 主分发入口
 // ============================================================
 
+/// 处理一行 %magic 输入：解析命令并调用对应能力，返回输出文本。
 std::string MagicCommands::handle(const std::string& input, IdeController* controller) {
     // 空/非 % 开头输入：不处理
     if (input.empty()) return "";

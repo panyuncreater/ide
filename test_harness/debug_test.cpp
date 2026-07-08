@@ -1,3 +1,7 @@
+// debug_test.cpp — MiniLang 调试一致性测试（完整执行 vs 单步执行）
+// 覆盖模块: 调试控制器（step over/in/out）与解释器协同下，单步执行的结果是否与一次性完整执行逐字节一致。
+// 验证目标: 每个用例分别跑「完整执行」与「Step-Over 单步」，比较错误状态、打印输出、全局变量终值；
+//           同时校验调试记录（暂停次数、暂停行号越界、最大栈深度 ≤256）；并对 Step-In/Step-Out/调用栈做专项验证。
 // MiniLang Debug Consistency Test: Full Run vs Step-by-Step
 // Verifies that debugging (step over/in/out) produces identical results to full execution
 
@@ -213,92 +217,137 @@ static std::vector<TestCase> buildTests() {
     };
 
     // ═══════ Branches (BR1-BR8) ═══════
+    // 分支组：验证 if/else、嵌套 if、else-if 链、悬空 else、真值判定、循环内 if、条件赋值在完整执行与单步下输出一致。
+    // 验证: if-true 分支在单步下输出与完整执行一致
     T("BR1", "if-true",
       "var x = 10;\nif (x > 5) { print(\"big\"); } else { print(\"small\"); }");
+    // 验证: if-false 走 else 分支在单步下一致
     T("BR2", "if-false",
       "var x = 3;\nif (x > 5) { print(\"big\"); } else { print(\"small\"); }");
+    // 验证: 嵌套 if 在单步下一致
     T("BR3", "nested if",
       "var a = 1; var b = 2;\nif (a == 1) { if (b == 2) { print(\"yes\"); } else { print(\"no\"); } }");
+    // 验证: else-if 分级在单步下一致
     T("BR4", "else-if chain",
       "var g = 85;\nif (g >= 90) { print(\"A\"); } else if (g >= 80) { print(\"B\"); } else if (g >= 70) { print(\"C\"); } else { print(\"F\"); }");
+    // 验证: 悬空 else 绑定在单步下一致
     T("BR5", "dangling else",
       "if (false) { if (true) { print(1); } } else { print(2); }");
+    // 验证: 0/空串/null 真值判定在单步下一致
     T("BR6", "truthy values",
       "if (0) { print(\"zero-t\"); } else { print(\"zero-f\"); }\nif (\"\") { print(\"empty-t\"); } else { print(\"empty-f\"); }\nif (null) { print(\"null-t\"); } else { print(\"null-f\"); }");
+    // 验证: 循环内 if 在单步下一致
     T("BR7", "if in loop",
       "var s = 0;\nfor (var i = 0; i < 10; i = i + 1) { if (i % 2 == 0) { s = s + i; } }\nprint(s);");
+    // 验证: 条件赋值在单步下一致
     T("BR8", "conditional assignment",
       "var x = 5;\nvar y = 0;\nif (x > 3) { y = x * 2; } else { y = x + 1; }\nprint(y);");
 
     // ═══════ Loops (LP1-LP8) ═══════
+    // 循环组：验证 while/for（含求和、嵌套、倒计时、提前返回、字符串累积）在完整执行与单步下结果一致。
+    // 验证: while 基础循环在单步下一致
     T("LP1", "while basic",
       "var i = 0;\nwhile (i < 5) { print(i); i = i + 1; }");
+    // 验证: while 求和在单步下一致（55）
     T("LP2", "while sum",
       "var s = 0; var i = 1;\nwhile (i <= 10) { s = s + i; i = i + 1; }\nprint(s);");
+    // 验证: for 基础循环在单步下一致
     T("LP3", "for basic",
       "for (var i = 0; i < 5; i = i + 1) { print(i); }");
+    // 验证: for 求和在单步下一致（5050）
     T("LP4", "for sum",
       "var s = 0;\nfor (var i = 1; i <= 100; i = i + 1) { s = s + i; }\nprint(s);");
+    // 验证: 嵌套 for 在单步下一致
     T("LP5", "nested for",
       "for (var i = 0; i < 3; i = i + 1) { for (var j = 0; j < 3; j = j + 1) { print(i * 10 + j); } }");
+    // 验证: while 倒计时在单步下一致
     T("LP6", "while countdown",
       "var n = 5;\nwhile (n > 0) { print(n); n = n - 1; }\nprint(\"done\");");
+    // 验证: for 内提前 return 在单步下一致
     T("LP7", "for with break-like return",
       "fun findFirst(lim) { for (var i = 0; i < lim; i = i + 1) { if (i * i > 20) { return i; } } return -1; }\nprint(findFirst(10));");
+    // 验证: 循环字符串累积在单步下一致
     T("LP8", "loop with string build",
       "var s = \"\";\nfor (var i = 0; i < 5; i = i + 1) { s = s + \"x\"; }\nprint(s);");
 
     // ═══════ Function Calls (FC1-FC8) ═══════
+    // 函数调用组：验证基本函数、无返回、嵌套调用、多参数、函数作表达式、void 副作用、类型参数、互递归在单步下一致。
+    // 验证: 基本函数调用在单步下一致
     T("FC1", "basic function",
       "fun add(a, b) { return a + b; }\nprint(add(3, 4));");
+    // 验证: 无返回值函数（null）在单步下一致
     T("FC2", "no return",
       "fun f() { var x = 1; }\nprint(f());");
+    // 验证: 嵌套函数调用在单步下一致
     T("FC3", "nested call",
       "fun a(x) { return x + 1; }\nfun b(x) { return a(x) * 2; }\nprint(b(5));");
+    // 验证: 多参数函数在单步下一致
     T("FC4", "multi-param",
       "fun f(a, b, c) { return a + b + c; }\nprint(f(1, 2, 3));");
+    // 验证: 函数作表达式组合在单步下一致
     T("FC5", "function as expression",
       "fun sq(x) { return x * x; }\nprint(sq(3) + sq(4));");
+    // 验证: void 函数副作用在单步下一致（60）
     T("FC6", "void function side effect",
       "var s = 0;\nfun add(v) { s = s + v; }\nadd(10); add(20); add(30);\nprint(s);");
+    // 验证: 带类型参数函数在单步下一致
     T("FC7", "typed params",
       "fun add(int a, int b) { return a + b; }\nprint(add(7, 8));");
+    // 验证: 互递归在单步下一致
     T("FC8", "mutual recursion",
       "fun isEven(n) { if (n == 0) { return true; } return isOdd(n - 1); }\nfun isOdd(n) { if (n == 0) { return false; } return isEven(n - 1); }\nprint(isEven(6)); print(isOdd(5));");
 
     // ═══════ Recursion (RC1-RC8) ═══════
+    // 递归组：验证阶乘/斐波那契/求和/幂/GCD/树递归等递归场景在完整执行与单步下结果一致（并间接验证栈深度跟踪）。
+    // 验证: 递归阶乘在单步下一致（fact(8)=40320）
     T("RC1", "factorial",
       "fun fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }\nprint(fact(8));");
+    // 验证: 递归斐波那契在单步下一致（fib(10)=55）
     T("RC2", "fibonacci",
       "fun fib(n) { if (n <= 1) { return n; } return fib(n - 1) + fib(n - 2); }\nprint(fib(10));");
+    // 验证: 递归求和在单步下一致（sum(20)=210）
     T("RC3", "sum recursive",
       "fun sum(n) { if (n <= 0) { return 0; } return n + sum(n - 1); }\nprint(sum(20));");
+    // 验证: 递归幂在单步下一致（pow(2,10)=1024）
     T("RC4", "power recursive",
       "fun pow(b, e) { if (e == 0) { return 1; } return b * pow(b, e - 1); }\nprint(pow(2, 10));");
+    // 验证: 递归 GCD 在单步下一致（gcd(48,18)=6）
     T("RC5", "gcd recursive",
       "fun gcd(a, b) { if (b == 0) { return a; } return gcd(b, a % b); }\nprint(gcd(48, 18));");
+    // 验证: 深度 10 递归在单步下一致
     T("RC6", "depth 10",
       "fun f(n) { if (n == 0) { return 0; } return 1 + f(n - 1); }\nprint(f(10));");
+    // 验证: 树形递归在单步下一致（tree(8)=67）
     T("RC7", "tree recursion",
       "fun tree(n) { if (n <= 0) { return 1; } return tree(n - 1) + tree(n - 2); }\nprint(tree(8));");
+    // 验证: 递归字符串累积在单步下一致
     T("RC8", "recursive string",
       "fun repeat(s, n) { if (n <= 0) { return \"\"; } return s + repeat(s, n - 1); }\nprint(repeat(\"ab\", 4));");
 
     // ═══════ Nested Scopes (NS1-NS8) ═══════
+    // 嵌套作用域组：验证块遮蔽、嵌套遮蔽、函数局部作用域、循环变量作用域、嵌套函数、深层嵌套等场景在单步下一致。
+    // 验证: 块遮蔽在单步下一致
     T("NS1", "block shadow",
       "var x = 1;\n{ var x = 99; print(x); }\nprint(x);");
+    // 验证: 双层嵌套遮蔽在单步下一致
     T("NS2", "nested shadow",
       "var x = 1;\n{ var x = 2; { var x = 3; print(x); } print(x); }\nprint(x);");
+    // 验证: 函数局部作用域在单步下一致
     T("NS3", "function local scope",
       "var x = 1;\nfun f() { var x = 100; return x; }\nprint(f()); print(x);");
+    // 验证: 循环变量作用域在单步下一致（10）
     T("NS4", "loop var scope",
       "var s = 0;\nfor (var i = 0; i < 5; i = i + 1) { s = s + i; }\nprint(s);");
+    // 验证: 嵌套函数捕获外层变量在单步下一致（15）
     T("NS5", "nested function calls",
       "fun outer(x) { fun inner(y) { return x + y; } return inner(10); }\nprint(outer(5));");
+    // 验证: 多函数同名局部变量在单步下一致（3）
     T("NS6", "multiple functions same name var",
       "fun f() { var x = 1; return x; }\nfun g() { var x = 2; return x; }\nprint(f() + g());");
+    // 验证: 四层嵌套作用域在单步下一致（10）
     T("NS7", "deep nesting",
       "var a = 1;\n{ var b = 2; { var c = 3; { var d = 4; print(a + b + c + d); } } }");
+    // 验证: 函数修改闭包外变量在单步下一致（20）
     T("NS8", "scope with assignment",
       "var x = 10;\nfun modify() { x = x + 5; }\nmodify(); modify();\nprint(x);");
 
@@ -403,6 +452,7 @@ int main() {
     std::cout << "\n── Step-In Verification ──\n";
     {
         // Step-In should enter functions (more pauses than Step-Over)
+        // 验证: Step-In 应进入函数体，暂停次数多于 Step-Over 且能进入函数
         std::string src = "fun f(x) { return x + 1; }\nprint(f(5));";
         auto stepOverRes = runDebug(src, StepMode::MODE_STEP_OVER);
         auto stepInRes = runDebug(src, StepMode::MODE_STEP_IN);
@@ -427,6 +477,7 @@ int main() {
     }
     {
         // Step-In depth tracking in nested calls
+        // 验证: Step-In 嵌套调用应正确跟踪调用栈深度（main→b→a 至少 2 层）
         std::string src = "fun a(x) { return x + 1; }\nfun b(x) { return a(x) * 2; }\nprint(b(5));";
         auto stepInRes = runDebug(src, StepMode::MODE_STEP_IN);
         bool nestedOk = (stepInRes.maxDepth >= 2);  // main→b→a
@@ -445,6 +496,7 @@ int main() {
     std::cout << "\n── Step-Out Verification ──\n";
     {
         // Step-Out from depth 0 should run to completion (no pauses after init)
+        // 验证: 从深度 0 发起 Step-Out 应直接运行到结束，输出 20
         std::string src = "fun f(x) { var y = x * 2; return y; }\nprint(f(10));";
         // Start at depth 0, step out means "pause when depth < 0" → never → run to end
         auto stepOutRes = runDebug(src, StepMode::MODE_STEP_OUT);
@@ -461,6 +513,7 @@ int main() {
     }
     {
         // Step-Out call stack consistency
+        // 验证: Step-Over 调用链输出应与完整执行一致
         std::string src = "fun inner() { return 42; }\nfun outer() { return inner(); }\nprint(outer());";
         auto fullRes = runFull(src);
         auto stepOverRes = runDebug(src, StepMode::MODE_STEP_OVER);
@@ -480,6 +533,7 @@ int main() {
     std::cout << "\n── Call Stack Depth Verification ──\n";
     {
         // Recursive function should show increasing then decreasing depth
+        // 验证: 递归调用栈深度应至少达到 4（fact(5)→fact(1)）
         std::string src = "fun fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); }\nprint(fact(5));";
         auto stepInRes = runDebug(src, StepMode::MODE_STEP_IN);
         // maxDepth should be at least 4 (fact(5)→fact(4)→fact(3)→fact(2)→fact(1))
@@ -496,6 +550,7 @@ int main() {
     }
     {
         // Variable snapshot at pause should contain current scope vars
+        // 验证: 暂停时的变量快照应捕获当前作用域局部变量 x / y
         std::string src = "var g = 100;\nfun f(x) { var y = x + 1; return y; }\nprint(f(g));";
         DebugController cs2Dbg;
         auto stepInRes = runDebug(src, StepMode::MODE_STEP_IN, &cs2Dbg);

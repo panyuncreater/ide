@@ -179,6 +179,17 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
 }
 
 bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const IRFunction& ir) {
+    // lowerInstruction 是整个后端的"翻译核心"：把一条 SSA-like IR 指令映射为若干条
+    // 寄存器式字节码。统一的写码约定（理解下方所有 case 的关键）：
+    //   · writeOp(RegOp)        写 1 字节操作码。
+    //   · writeReg(reg)         写 1 字节"寄存器号"(0..31)，内部 assert(reg<32)——只用于真正的寄存器。
+    //   · writeShort(uint16)    写 2 字节小端常量池索引 / 跳转目标 / 名称索引。
+    //   · writeByte(uint8)      写 1 字节"数量或描述符"(argCount/uvCount/fieldCount/isLocal/idx 等)，
+    //                           无 assert。正因如此，凡"数量操作数"必须用 writeByte 而非 writeReg，
+    //                           否则数量 >= 32 时 Debug 构建的 assert 会崩溃（见各处 AUDIT-BUG-C1）。
+    // 寄存器式与栈式的本质差异：所有中间结果存在固定寄存器而非操作数栈，故 POP/DUP 退化为
+    // REG_MOVE 或 no-op；嵌套左值变异时 obj 寄存器记录在 lastMutatedReceiverReg_，由 WRITEBACK_*
+    // 读取——这正是 collectVRegLastUse 需把 obj vreg 寿命延到 WRITEBACK 之后的原因。
     // AUDIT-P2 fix: vregToReg 溢出后设置 hasError_ 并返回占位 reg=0，但此前各 case 不检查
     // hasError_ 仍继续写入损坏字节码。在 lowerInstruction 入口快速失败，避免溢出后后续
     // 指令继续写入。当前指令的损坏字节码由 lower() 行 164 的 hasError_ 检查兜底（return false），

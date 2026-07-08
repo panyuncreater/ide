@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QSplitter>
+#include <QSet>
 #include <vector>
 #include <string>
 
@@ -157,6 +158,14 @@ private:
     int hintLevel_ = 0;        // 0=未提示, 1..N=已显示前 N 条提示
     bool variantMode_ = false;           // 是否变体模式
     int currentVariantIndex_ = -1;        // 当前选中的变体索引
+    // AUDIT-P1 fix: 跟踪已解决题目索引，仅当当前难度所有题目全部解决时
+    // 才发射 challengeSolved。原实现单题通过即发射，与游戏面板"全部子关卡完成"
+    // 语义不一致（TokenPuzzle 要求 5 关全通、AstToy 要求 6 关全通）。
+    QSet<int> solvedItemIndices_;
+    // AUDIT-P2 fix: 防重复守卫——同步执行链期间快速重复点击会触发多次
+    // Lexer→Parser→VM 执行，导致输出闪烁、重复 save() 磁盘 I/O、重复信号发射。
+    bool verifying_ = false;
+    bool tripleVerifying_ = false;
 
     void populateBugChips();        // issue 5: 构建 Bug 芯片栏
     void refreshBugChips();         // issue 5: 刷新芯片状态（当前/隐藏）

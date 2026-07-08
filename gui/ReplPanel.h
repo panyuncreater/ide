@@ -1,3 +1,9 @@
+/**
+ * @file ReplPanel.h
+ * @brief REPL 交互面板的类声明（功能：Read-Eval-Print Loop）
+ *
+ * 通过后台 future 异步执行代码，避免界面卡顿；支持多行输入与历史。
+ */
 #pragma once
 
 #include <QWidget>
@@ -29,6 +35,7 @@ class ReplPanel : public QWidget {
     Q_OBJECT
 
 public:
+/// 构造 REPL 面板；parent 为父控件。
     explicit ReplPanel(QWidget* parent = nullptr);
     ~ReplPanel();
 

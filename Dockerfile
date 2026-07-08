@@ -27,14 +27,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 \
     python3 \
     python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装指定版本 Qt 6.10.3（通过 aqtinstall，与 CI 同步）
-RUN pip3 install --no-cache-dir aqtinstall \
-    && python3 -m aqt install-qt linux desktop 6.10.3 gcc_64 -m qtsvg qttools -O /opt/qt6
+# 使用 venv 安装 aqtinstall，绕过 Ubuntu 24.04 PEP 668 限制
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir aqtinstall \
+    && /opt/venv/bin/python -m aqt install-qt linux desktop 6.10.3 gcc_64 -m qtsvg qttools -O /opt/qt6
+ENV PATH="/opt/venv/bin:${PATH}"
 ENV QTDIR=/opt/qt6/6.10.3/gcc_64
 ENV PATH=${QTDIR}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${QTDIR}/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH="${QTDIR}/lib:${LD_LIBRARY_PATH:-}"
 ENV QT_QPA_PLATFORM_PLUGIN_PATH=${QTDIR}/plugins
 
 # ---- 构建阶段 ----

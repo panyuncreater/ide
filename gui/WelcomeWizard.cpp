@@ -417,6 +417,7 @@ void WelcomeWizard::buildStep4() {
 // 导航逻辑
 // ============================================================
 
+/// 切换到指定向导步骤并刷新页面。
 void WelcomeWizard::goToStep(int index) {
     if (index < 0 || index >= pages_->count()) return;
     pages_->setCurrentIndex(index);
@@ -430,12 +431,14 @@ void WelcomeWizard::goToStep(int index) {
     }
 }
 
+/// 刷新步骤指示器（当前/总数与进度点）。
 void WelcomeWizard::updateStepIndicator() {
     int idx = pages_->currentIndex();
     stepIndicator_->setText(
         mlTr("步骤 %1 / %2").arg(idx + 1).arg(pages_->count()));
 }
 
+/// 更新上一步/下一步/跳过按钮的可用与可见态。
 void WelcomeWizard::updateNavButtons() {
     int idx = pages_->currentIndex();
     // Step 1 和 Step 4：自带按钮，隐藏通用导航按钮
@@ -458,6 +461,7 @@ void WelcomeWizard::updateNavButtons() {
     }
 }
 
+/// 「开始探索」按钮：结束向导并进入主界面。
 void WelcomeWizard::onStartExplore() {
     // 选"我学过编译原理" → 直接跳过导览，关闭对话框
     if (roleExpert_->isChecked()) {
@@ -469,11 +473,13 @@ void WelcomeWizard::onStartExplore() {
     goToStep(1);
 }
 
+/// 「跳过」按钮：放弃向导直接进入主界面。
 void WelcomeWizard::onSkip() {
     completed_ = true;
     reject();  // 跳过也视为完成（已看过提示），用 reject 区分"主动跳过"
 }
 
+/// 进入下一步；末步则完成。
 void WelcomeWizard::onNextStep() {
     int idx = pages_->currentIndex();
     if (idx == 1) {
@@ -484,6 +490,7 @@ void WelcomeWizard::onNextStep() {
     }
 }
 
+/// 返回上一步。
 void WelcomeWizard::onPrevStep() {
     int idx = pages_->currentIndex();
     if (idx > 0) goToStep(idx - 1);
@@ -494,11 +501,13 @@ void WelcomeWizard::onPrevStep() {
 // Step 2：Token 行点击 → 高亮源码
 // ============================================================
 
+/// 示例 token 行点击：高亮对应代码区间。
 void WelcomeWizard::onTokenRowClicked(int row) {
     if (row < 0 || row >= tokenSpans_.size()) return;
     highlightCodeRange(tokenSpans_[row].start, tokenSpans_[row].end);
 }
 
+/// 在示例编辑器中高亮 [start,end) 区间代码。
 void WelcomeWizard::highlightCodeRange(int start, int end) {
     if (!codeEdit_) return;
     QTextCursor cursor(codeEdit_->document());
@@ -519,6 +528,7 @@ void WelcomeWizard::highlightCodeRange(int start, int end) {
 // Step 3：运行按钮 → 模拟执行
 // ============================================================
 
+/// 「运行示例」按钮：执行向导内嵌的 MiniLang 示例。
 void WelcomeWizard::onRunClicked() {
     if (runExecuted_) {
         // 重复点击：清空后重新演示

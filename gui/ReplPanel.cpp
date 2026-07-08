@@ -1,3 +1,10 @@
+/**
+ * @file ReplPanel.cpp
+ * @brief REPL 交互面板实现（功能：Read-Eval-Print Loop）
+ *
+ * 职责：提供交互式单行/多行输入、异步执行（后台 future 轮询）、
+ * 输出与错误分区展示，并支持多行输入完整性判断与历史清空。
+ */
 #include "gui/ReplPanel.h"
 #include "gui/GuiTextUtils.h"  // P1-12 fix: 共享文本追加逻辑
 #include "gui/ErrorHintEngine.h"  // 功能 12：错误信息友好化增强
@@ -20,6 +27,7 @@
 // ReplPanel REPL 交互面板实现
 // ============================================================
 
+/// 构造 REPL 面板：初始化输出区、输入框与后台执行状态。
 ReplPanel::ReplPanel(QWidget* parent)
     : QWidget(parent) {
 
@@ -82,6 +90,7 @@ ReplPanel::~ReplPanel() {
     }
 }
 
+/// 阻塞等待当前 REPL 异步任务结束，避免重复执行。
 void ReplPanel::waitReplFuture() {
     if (!replFuture_.valid()) return;
     // REPL-TIMEOUT fix: 协作中止 + 超时等待，避免 closeEvent 永久阻塞。
@@ -103,15 +112,18 @@ void ReplPanel::waitReplFuture() {
     std::_Exit(1);
 }
 
+/// 绑定 IDE 控制器以获取执行后端。
 void ReplPanel::setController(IdeController* controller) {
     controller_ = controller;
 }
 
+/// 向输出区追加普通文本。
 void ReplPanel::appendOutput(const QString& text) {
     // P1-12 fix: 委托给 GuiTextUtils::appendLine
     GuiTextUtils::appendLine(outputArea_, text);
 }
 
+/// 向输出区追加错误文本（错误样式）。
 void ReplPanel::appendError(const QString& text) {
     // P1-12 fix: 委托给 GuiTextUtils::appendLine，使用红色格式
     QTextCharFormat fmt;
@@ -119,6 +131,7 @@ void ReplPanel::appendError(const QString& text) {
     GuiTextUtils::appendLine(outputArea_, text, &fmt);
 }
 
+/// 清空 REPL 历史与输出。
 void ReplPanel::clearHistory() {
     outputArea_->clear();
     history_.clear();
@@ -128,6 +141,7 @@ void ReplPanel::clearHistory() {
     inContinuation_ = false;
 }
 
+/// 启用/禁用输入框（执行中禁用）。
 void ReplPanel::setInputEnabled(bool enabled) {
     inputLine_->setEnabled(enabled);
     if (enabled) {
@@ -137,6 +151,7 @@ void ReplPanel::setInputEnabled(bool enabled) {
     }
 }
 
+/// 回车回调：按输入完整性决定立即执行或继续多行输入。
 void ReplPanel::onReturnPressed() {
     // AUDIT-REPL-7 fix: 在任何状态变更前检查异步执行状态。
     // 原实现 executeLine 内部检查后仍清空 pendingInput_，导致续行累积输入丢失。
@@ -294,6 +309,7 @@ void ReplPanel::onReturnPressed() {
     inputLine_->clear();
 }
 
+/// 提交一行/一段 MiniLang 代码到后端异步执行。
 void ReplPanel::executeLine(const QString& line) {
     // 功能 11：REPL %magic 命令检测——在所有状态检查之前拦截
     // 检测 % 前缀（允许前导空白），路由到 MagicCommands::handle
@@ -473,6 +489,7 @@ void ReplPanel::executeLine(const QString& line) {
     pollTimer_->start();
 }
 
+/// 轮询异步执行结果，完成后回写输出并恢复输入。
 void ReplPanel::pollReplFuture() {
     // QT-R-06 fix: 轮询 std::future 状态，完成则显示结果并恢复输入
     if (!replFuture_.valid()) return;
@@ -514,6 +531,7 @@ void ReplPanel::pollReplFuture() {
     inputLine_->setFocus();
 }
 
+/// 判断当前输入是否为完整可执行的程序（括号/引号配平等）。
 bool ReplPanel::isInputComplete(const QString& input) {
     int braceDepth = 0;   // {}
     int parenDepth = 0;   // ()
@@ -671,6 +689,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
     return true;
 }
 
+/// 事件过滤器：拦截输入框特殊按键（如上下历史）。
 bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {
     if (obj == inputLine_ && event->type() == QEvent::KeyPress) {
         QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
