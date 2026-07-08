@@ -2303,6 +2303,13 @@ void RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
                 auto& targetFrame = frames_[frameIdx];
                 if (slot < targetFrame.registerCount) {
                     uv->value = targetFrame.registers[slot];
+                } else {
+                    // AUDIT-P2 fix: slot 越界补 Warning，对齐 StackVM 的诊断口径。
+                    // 原 StackVM 实现（VM.cpp 165-186）在 stackSlot >= stack_.size() 时打 Warning，
+                    // RegisterVM 此处静默不拷贝值且无日志，导致闭包读取 null 难以排查。
+                    Logger::Warning("closeUpvaluesFrom: slot " + std::to_string(slot) +
+                                    " >= registerCount " + std::to_string(targetFrame.registerCount) +
+                                    " (frameIdx=" + std::to_string(frameIdx) + ")", "RegisterVM");
                 }
             } else {
                 // BUG-REGVM-4 fix: 防御性日志。当前调用契约保证 frameIdx < frames_.size()

@@ -1,6 +1,156 @@
 # Changelog
 
-本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试（1762/1762）+ formatter_audit 审计用例验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试（1763/1763）+ formatter_audit 审计用例验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+
+## 2026-07-08 · 第三十六轮：IDE UI/UX 七项优化（折叠按钮 + 输出面板 + 背景色 + 运行修复 + 切换动画）
+
+### 概述
+
+本轮完成 7 项 IDE 界面与交互优化，覆盖代码折叠按钮视觉、错误下划线配色、示例代码兼容性、输出面板 VSCode 风格改造、术语表跳转修复、教学模块切换动画流畅度、三面板布局运行修复、背景色完整覆盖。修复了一个阻断构建的 `DebugController::waitCallbacksIdle` 访问权限问题（private→public）。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 模块 | 问题 | 修复方案 |
+|---|------|------|----------|
+| 1 | CodeEditor | 折叠按钮为方框+/-样式，错误下划线用 Qt::red 过于刺眼 | 折叠标记改为 VSCode 风格雪佛龙箭头（▷/▽）+ 抗锯齿 + 主题感知配色；错误下划线改为 Solarized 红 #DC322F + 淡红背景 |
+| 2 | samples | closure_patterns.mini / higher_order.mini 使用匿名函数表达式 `fun(){...}` 不被 MiniLang 语法支持 | 改为命名内部函数声明 + 引用返回 |
+| 3 | Ide/Output | 输出面板用 Unicode 图标（▶ℹ✓⚠✗）+ 时间戳，不够 VSCode 风格 | 改为文本级别前缀 `[Info]/[Done]/[Warn]/[Error]` + Plain 级无前缀无时间戳 + Solarized 配色 |
+| 4 | GlossaryPanel | 单击切换术语条时 `onTermSelected` 发射 `termActivated` 导致跳转关联面板 | 移除 `onTermSelected` 中的 `emit termActivated`，仅保留双击/链接点击触发 |
+| 5 | Ide/Teaching | 教学模块切换卡顿——dock 显隐在动画进行中触发 layout 重绘、refresh 阻塞、slideInWidget 220ms 偏长 | dock 显隐移到 setCurrentIndex 之前、refresh 移到之后、slideInWidget 时长降为 150ms |
+| 6 | Ide/Editor | `loadCodeIntoMainEditor` 创建新标签后未 `switchToTab`，导致 `codeEditor_` 为 nullptr，`onRun` 直接返回；`bottomPanelHeight_` 默认 600px 导致输出面板"全屏覆盖" | 补充 `switchToTab(newIdx)`；默认高度从 600 改为 220 + 历史>500 迁移 |
+| 7 | Ide/Style | 背景色覆盖不完全——centerStack/centerSplitter/welcomePage/replPanel 等缺失背景色；CodeEditor 浅色模式 Base=#ffffff 与行号区 #EEE8D5 割裂 | applyFluentStyle 补全覆盖 7 个 widget；CodeEditor 浅色 Base 改为 #FDF6E3 |
+| fix | DebugController | `waitCallbacksIdle()` 声明为 private 但 `DebugCoordinator` 析构需调用 → LNK2019 | 提升为 public（MSVC 将 access specifier 编入 mangled name） |
+
+### 关键决策
+
+1. **折叠标记用雪佛龙箭头而非方框+/-**：VSCode 风格雪佛龙（▷ 折叠/▽ 展开）视觉更轻盈，无方框背景干扰。抗锯齿绘制 + 主题感知配色（折叠态用主题蓝 #268BD2 强调，展开态用次要灰 #586E75）
+2. **输出面板 Plain 级无时间戳**：用户程序输出（print 结果）是纯净数据，添加时间戳和级别前缀会干扰阅读。仅系统消息（编译进度/错误/警告）才显示 `[HH:mm:ss] [Level]` 前缀，对齐 VSCode 终端行为
+3. **`loadCodeIntoMainEditor` 补 `switchToTab`**：`createNewEditorTab` 返回新标签索引但不设置 `codeEditor_` 成员，导致后续 `onRun()` 的 `if (!codeEditor_) return;` 直接返回。这是"加载代码后点击运行无反应"和"LabManual 触发示例无法运行"的根因
+4. **`bottomPanelHeight_` 默认 600→220**：600px 在 800px 高度窗口下占 75% 垂直空间，编辑器区被挤压到 140px，表现为"输出面板全屏覆盖"。220px 对齐 VSCode 默认输出面板高度。对历史已保存的>500px 值做一次性迁移
+5. **背景色用 objectName 匹配而非 setPalette**：`applyFluentStyle` 已有 `findChildren<QWidget*>()` + objectName 匹配的框架，为 centerStack_/centerSplitter_/replPanel_ 补设 objectName 后复用此框架，比逐个 setPalette 更一致
+6. **CodeEditor 浅色 Base 从 #ffffff 改为 #FDF6E3**：Solarized 主题下行号区是 base2 (#EEE8D5)，编辑区应为 base3 (#FDF6E3)，原 #ffffff 是 VSCode 默认色而非 Solarized，导致"编辑区白色 vs 行号区米黄"割裂
+7. **`waitCallbacksIdle` 提升为 public**：MSVC 将成员访问说明符编入 mangled name（A=private, Q=public），从 private 改为 public 后符号名变化，必须重编译 `DebugController.cpp` 才能链接成功
+
+### 修改文件清单
+
+- 修改：`gui/CodeEditor.cpp`（折叠标记雪佛龙箭头 + 错误下划线 Solarized 红 + 浅色 Base #FDF6E3）
+- 修改：`samples/mini/closure_patterns.mini`（匿名函数→命名函数）
+- 修改：`samples/mini/higher_order.mini`（匿名函数→命名函数）
+- 修改：`gui/GlossaryPanel.cpp`（移除 onTermSelected 的 termActivated 发射）
+- 修改：`app/ide.cpp`（loadCodeIntoMainEditor 补 switchToTab + restoreLayout 默认 220 + showTeachingPanel 重构 + appendOutput VSCode 风格 + applyFluentStyle 背景覆盖 + outputTextEdit_ 调色板 + centerStack/centerSplitter/replPanel objectName）
+- 修改：`debug/DebugController.h`（waitCallbacksIdle private→public）
+- 文档同步：`CHANGELOG.md` + `docs/development.md` + `project_memory.md`
+
+## 2026-07-08 · 第三十五轮：后续 28 项待处理问题修复（跨线程 UAF + GC roots + 一致性 + Lexer Unicode 转义 + LRU 缓存）
+
+### 概述
+
+继续处理第三十二轮系统审计标记的 28 项后续待处理问题。本轮修复其中 9 项明确、可独立修复的问题（P1 × 4，P2 × 5），覆盖跨线程 UAF（3 处）、GC roots 不完整、三后端一致性（3 处）、Lexer Unicode 转义缺失、condAstCache 伪 LRU 等。其余 19 项（boundInstance_ COW 矛盾、Formatter 往返等价性、性能优化 ×3、DebugPanel 调用栈拷贝等）因需架构改动或风险较高保留现状。新增 1 个回归测试（String_HexAndUnicodeEscapes）。全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 模块 | 严重性 | 问题 | 修复方案 |
+|---|------|--------|------|----------|
+| 1 | GUI | P1 | ReplPanel 异步 lambda 裸 `self`，invokeMethod(QueuedConnection) 投递的 lambda 在析构后 dispatch → UAF | `QPointer<ReplPanel>` 替代裸指针 + `qApp` 作为 invokeMethod context + lambda 内 null 检查 |
+| 2 | Interpreter | P1 | `currentEnvironment()` 返回裸指针，GUI 线程遍历期间 worker 修改 currentEnv_ → UAF | 新增 `currentEnvironmentShared()` 返回 shared_ptr 副本，variableCallback 改用此方法并链式持有 parent shared_ptr |
+| 3 | Debug | P1 | `~DebugCoordinator` 清空 callback 后 worker 线程可能仍在锁外调用 cb() → UAF | DebugController/DebugEvaluator 新增 `activeCallbackCount_` 原子计数 + `waitCallbacksIdle()` spin-wait（RCU 优雅期模式） |
+| 4 | Interpreter | P1 | GC roots 遗漏 `savedClassRegistry.fields` + `savedModuleCache`，循环引用类字段/模块变量被误回收 | execute() GC roots 追加遍历 savedClassRegistry.fields + closureEnv + savedModuleCache |
+| 5 | RegVM | P2 | `closeUpvaluesFrom` slot 越界静默不拷贝值无 Warning（StackVM 有 Warning） | 补 Warning 日志对齐 StackVM 诊断口径 |
+| 6 | ModuleIsolation | P2 | `pathHash` 不 normalize 分隔符，依赖调用者自行 normalize（三处重复） | normalize 逻辑下沉到 pathHash 内部（`\`→`/` + 去 `./` 前缀） |
+| 7 | Parser | P2 | 尾逗号两种模式（模式 A `if(check)break` + 模式 B `&& !check`），维护风险不同 | 数组/字典/导入名称列表 3 处统一为模式 B |
+| 8 | Lexer | P2 | 不支持 `\uXXXX`/`\xNN` Unicode 转义 | 转义 switch 新增 `case 'u'`（4位十六进制→UTF-8）和 `case 'x'`（2位十六进制→字节） |
+| 9 | IdeController | P2 | `condAstCache` 用 `unordered_map::erase(begin())` 淘汰，非 LRU 非 FIFO（伪随机） | 改为 `list + unordered_map<key, list::iterator>` 经典 LRU，命中 move_to_front，超上限 pop_back |
+
+### 关键决策
+
+1. **ReplPanel 用 QPointer + qApp 而非 QSharedPointer**：ReplPanel 是 QWidget 不能用 std::shared_ptr 管理；QPointer 是 Qt 原生的弱引用 QObject 指针，对象销毁时自动置 null。qApp 作为 invokeMethod context 确保 lambda 在主线程执行且 qApp 永远存活，lambda 内检查 QPointer 是否为 null 避免悬垂访问
+2. **currentEnvironmentShared() 而非修改 currentEnvironment() 返回类型**：保留原 `Environment* currentEnvironment()` 向后兼容（同线程调用方不受影响），新增 `shared_ptr` 版本供跨线程调用方使用。variableCallback 持有 shared_ptr 副本遍历 parent 链，每个节点通过 shared_ptr 赋值延长生命周期
+3. **RCU 优雅期模式解决析构竞态**：DebugController/DebugEvaluator 的 callback 采用 copy-then-call-outside-lock 模式（锁内拷贝 std::function，锁外调用），清空 callback 无法等待锁外 cb() 完成。引入 `activeCallbackCount_` 原子计数，cb() 期间 fetch_add，完成后 fetch_sub（RAII guard），析构清空 callback 后 spin-wait 直到计数归零。比 BlockingQueuedConnection 更轻量（不需要事件循环），比 mutex 更安全（不会死锁）
+4. **GC roots 追加 closureEnv**：savedClassRegistry 中每个 ClassInfo 除了 fields（字段默认值）外，还有 closureEnv（类定义时捕获的环境），两者都可能持有堆对象引用。仅遍历 fields 不够，还需遍历 closureEnv 的 snapshotLocalVariables
+5. **pathHash normalize 下沉而非提取公共函数**：将 normalize 逻辑放在 pathHash 内部比提取 `ast::normalizeModulePath` 公共函数更彻底——即使未来新增调用者忘记 normalize，pathHash 也能保证 hash 一致性。三后端现有的 normalize 代码保留（幂等操作，不影响正确性）
+6. **Parser 尾逗号统一为模式 B**：模式 A（`if(check(CLOSE)) break` 在 do 体内开头）比模式 B（`while(match(COMMA) && !check(CLOSE))`）更脆弱——do 体内的 break 容易被误删。模式 B 的继续条件集中在一处，更内聚
+7. **condAstCache 用 list + map 而非 LinkedHashMap**：C++ 标准库没有 LinkedHashMap，`std::list` + `std::unordered_map<key, list::iterator>` 是经典 LRU 实现。list 的 splice 操作 O(1) 实现 move_to_front，unordered_map 提供 O(1) 查找。32 条上限对调试场景足够
+
+### 关键教训
+
+1. **Qt::QueuedConnection 的生命周期陷阱**：`QMetaObject::invokeMethod(self, lambda, Qt::QueuedConnection)` 投递的 lambda 在接收对象的事件队列中，`~ReplPanel` 的 `wait()` 只等待 future 完成，不处理事件队列。析构后回到事件循环才 dispatch → UAF。所有跨线程投递的 lambda 必须用 QPointer 或 shared_ptr guard，context 用 qApp（永远存活）而非可能被销毁的对象
+2. **shared_ptr 链式持有保证 parent 链安全**：遍历 Environment parent 链时，仅持有当前节点的 shared_ptr 不够——parent 可能在遍历期间被析构。通过 `currentShared = currentShared->parent` 赋值，每个节点都持有 shared_ptr 副本，确保整条链不被析构
+3. **copy-then-call-outside-lock 模式的析构竞态**：锁内拷贝 callback、锁外调用的模式无法被析构时的清空操作等待。任何采用此模式的 callback 系统都需要 activeCallbackCount_ + spin-wait 或类似 RCU 优雅期机制，否则析构期间 worker 线程仍在锁外调用 cb() → UAF
+4. **GC roots 收集必须覆盖所有 REPL 暂存状态**：saveReplState 暂存的不只是 savedGlobalEnv，还有 savedClassRegistry（含 fields + closureEnv）和 savedModuleCache。每类暂存状态都可能持有堆对象引用，必须全部作为 GC roots 传入，否则 GC 误判循环引用孤岛并清空 elements
+5. **unordered_map erase(begin()) 不是 LRU**：unordered_map 的迭代顺序由哈希函数决定，与插入/访问顺序无关。需要 LRU 时必须用 `list + unordered_map<key, list::iterator>`，命中时 splice move_to_front，淘汰时 pop_back
+
+### 修改文件清单
+
+- 修改：`gui/ReplPanel.h`（+QPointer/QCoreApplication include）
+- 修改：`gui/ReplPanel.cpp`（QPointer 替代裸 self + invokeMethod context 改 qApp + null 检查）
+- 修改：`interpreter/Interpreter.h`（+currentEnvironmentShared 声明）
+- 修改：`interpreter/Interpreter.cpp`（+currentEnvironmentShared 实现；GC roots 追加 savedClassRegistry/savedModuleCache 遍历）
+- 修改：`app/DebugCoordinator.cpp`（variableCallback 改用 currentEnvironmentShared；析构补 waitCallbacksIdle）
+- 修改：`debug/DebugController.h`（+activeCallbackCount_ 成员 + waitCallbacksIdle 声明）
+- 修改：`debug/DebugController.cpp`（getVariableSnapshot/getCallStack 增减计数 + waitCallbacksIdle 实现 + `<thread>` include）
+- 修改：`debug/DebugEvaluator.h`（+activeCallbackCount_ + waitCallbackIdle + evaluate 增减计数 + `<atomic>/<thread>` include）
+- 修改：`compiler/RegisterVM.cpp`（closeUpvaluesFrom slot 越界补 Warning）
+- 修改：`ast/ModuleIsolation.cpp`（pathHash normalize 下沉）
+- 修改：`parser/Parser.cpp`（3 处尾逗号统一为模式 B）
+- 修改：`lexer/Lexer.cpp`（转义 switch 新增 case 'x' / case 'u'）
+- 修改：`app/IdeController.cpp`（condAstCache 改 list + unordered_map LRU + `<list>` include）
+- 修改：`tests/TestLexer.cpp`（String_UnknownEscapeRejected 改用 \q；+String_HexAndUnicodeEscapes 回归测试）
+- 文档同步：`CHANGELOG.md` + `docs/development.md` + `project_memory.md`
+
+### 保留现状（19 项）
+
+- **boundInstance_ COW 矛盾**：最终一致性已通过 writeBack 补偿，改用 const_cast 绕过 COW 风险高
+- **Formatter 往返等价性（3 项）**：UOP_UNKNOWN/nan/inf 需 Lexer 扩展 nan/inf 字面量，涉及多模块改动
+- **性能优化（3 项）**：BIN_AND/OR tempSlot 累积、OP_MEMBER_GET internConcat、DebugPanel 调用栈全量拷贝——纯性能优化无正确性问题，改动复杂度高
+
+## 2026-07-08 · 第三十四轮：7 项教学面板与 IDE 体验问题修复（AST 构建器 + BugHunt 崩溃 + 性能仪表盘 + 代码旅程 + 学习中心返回）
+
+### 概述
+
+针对用户反馈的 7 项教学面板与 IDE 体验问题做集中修复，覆盖 AST 构建器节点关系、BugHunt 模式崩溃、性能仪表盘三后端失败与数据量过大、布局留白、代码生命旅程完成条件、学习中心返回编辑器等。核心收益：(1) 修复 BugHuntPanel 构造期间 refreshBugChips 无限递归栈溢出（P0 崩溃）；(2) 修复性能仪表盘类实例化场景三后端全部失败（构造方法名错误）；(3) 降低性能仪表盘重场景数据量避免卡死；(4) 修复 AST 构建器叶子节点错误嵌套；(5) 学习中心新增「← 返回编辑器」按钮解决迷路问题。全量 1762/1762 测试通过。
+
+### 问题与修复对应表
+
+| # | 问题 | 修复方案 | 修改文件 |
+|---|------|---------|---------|
+| 1 | AST 构建器添加 Number 等叶子节点后焦点切换到新节点，导致后续添加形成错误嵌套而非兄弟节点 | `addNodeWithLabel` 根据 label 前缀判断是否为叶子节点（Number:/Identifier:），叶子节点添加后保持父节点选中（`tree_->setCurrentItem(current)`），非叶子节点保持原行为（切换到新子节点） | `gui/AstBuilderToyPanel.cpp` |
+| 2 | 点击 Bug 狩猎模式时程序崩溃（P0 栈溢出） | `refreshBugChips` 中将 `isVisible()` 判定改为难度筛选条件判定（与 firstVisible 口径一致），避免构造期间父 widget 未 show() 时 isVisible() 恒返回 false 导致 refreshBugChips → onItemSelected → refreshBugChips 无限递归；同时 `onItemSelected` 添加幂等保护（相同索引且 hintLevel_==0 时直接 return） | `gui/BugHuntPanel.cpp` |
+| 3 | 性能仪表盘类实例化循环三个后端都失败 | 源码 `fun new(px, py)` 改为 `fun init(px, py)`——MiniLang 三后端均查找名为 "init" 的构造方法，"new" 会被识别为普通方法导致实例化后字段未初始化 | `gui/ProfileDashboardPanel.cpp` |
+| 4 | 性能仪表盘斐波那契递归和字典访问循环数据量过大运算太慢 | fib-recursion 从 fib(20) 降为 fib(15)；dict-access 从 10000 次降为 2000 次；对应 title 和 description 同步更新 | `gui/ProfileDashboardPanel.cpp` |
+| 5 | 性能仪表盘每个循环的解释占满左下角空间，留下一小截空白 | 移除 `scenarioDesc_->setMaximumWidth(220)`；左栏布局改为 `addWidget(scenarioList_, 0)` + `addWidget(scenarioDesc_, 1)`，scenarioDesc_ 拉伸填满左下角剩余空间 | `gui/ProfileDashboardPanel.cpp` |
+| 6 | 代码生命旅程描述与实际不符（原称"30s 小动画"实际为静态信息图），完成条件需改为点进去观看即完成 | `CodeJourneyInfoPanel` 移除 6 阶段访问跟踪（visitedStages_/kTotalStages/markStageVisited），新增 `journeyCompleted_` bool 成员 + `markCompleted()` 方法 + `showEvent` override，首次显示即标记完成并 emit journeyCompleted；`LearningPathData.cpp` 标题从"🚀 代码生命旅程动画"改为"🚀 代码生命旅程"，描述从"一段 30 秒小动画..."改为"一张静态信息图...点进去看即算完成"；`app/ide.cpp` 连接 journeyCompleted → markActivityCompleted("code-journey") | `gui/CodeJourneyInfoPanel.{h,cpp}`、`gui/LearningPathData.cpp`、`app/ide.cpp` |
+| 7 | 学习中心打开后回不到代码编辑区（唯一返回入口是 TeachingTreePanel 顶部树节点，隐蔽） | `TeachingPanelHeader` 新增「← 返回编辑器」按钮（backBtn_，objectName="teachingBackBtn"）+ `returnToEditorRequested` 信号；`app/ide.cpp` `wrapTeachingPanel` 中连接 returnToEditorRequested → showEditorArea；QSS 浅色背景（#FDF6E3）+ Solarized 风格 hover（#EEE8D5 + #268BD2 边框） | `gui/TeachingPanelHeader.{h,cpp}`、`app/ide.cpp` |
+
+### 关键决策
+
+1. **AST 构建器叶子节点焦点保持而非切换**：原实现无论添加什么节点都 `setCurrentItem(child)`，导致连续添加叶子节点时焦点累积下沉形成错误嵌套。叶子节点（Number:/Identifier:）无子节点，添加后应保持父节点选中以便继续添加兄弟节点；非叶子节点保持原行为（切换到新节点便于为其添加子节点）
+2. **BugHuntPanel isVisible() 在构造期间不可用**：`QWidget::isVisible()` 在父 widget 未 show() 时恒返回 false，构造期间调用 refreshBugChips 用 isVisible() 判定芯片是否被难度筛选隐藏会得到错误结果，触发 onItemSelected → refreshBugChips 无限递归。改用难度筛选条件判定（与 firstVisible 计算口径一致）从根因消除递归；同时给 onItemSelected 添加幂等保护作为防御
+3. **MiniLang 构造方法必须命名为 "init"**：三后端（Interpreter/StackVM/RegisterVM）均查找名为 "init" 的方法作为类构造函数，"new" 会被识别为普通方法。性能仪表盘 class-instantiation 场景用 `fun new(px, py)` 导致实例化后字段未初始化，三后端全部失败。改为 `fun init(px, py)` 对齐三后端语义
+4. **性能仪表盘数据量平衡**：fib(20) 在三后端串行执行时耗时过长导致 UI "未响应"；fib(15) 耗时约 fib(20) 的 1/15，仍能体现递归性能差异但不会卡死。dict-access 10000 次 → 2000 次同理
+5. **代码生命旅程完成条件简化**：原 6 阶段访问跟踪要求用户点击 6 个跳转按钮才算完成，过于繁琐且与"点进去观看"的用户预期不符。改为 showEvent 首次显示即标记完成——用户点进面板观看信息图即算完成，跳转按钮仅作为深入探索的入口
+6. **学习中心返回入口显式化**：原唯一返回入口是 TeachingTreePanel 顶部树节点（"📝 代码编辑器"），隐蔽且需先切回树导航。在每个教学面板的 TeachingPanelHeader 添加显式「← 返回编辑器」按钮，统一连接到 showEditorArea()，用户在任何教学面板都能一键返回
+
+### 关键教训
+
+1. **QWidget::isVisible() 在构造期间不可用**：`isVisible()` 依赖 widget 已被 show() 的运行时状态，构造期间（父 widget 未 show()）恒返回 false。任何在构造期间调用的刷新逻辑都不能用 isVisible() 判定子 widget 的显隐状态，应改用业务条件（如筛选条件）直接计算
+2. **递归刷新函数必须有终止条件**：refreshBugChips 调用 onItemSelected，onItemSelected 又调用 refreshBugChips，若无幂等保护或终止条件会无限递归栈溢出。递归刷新函数应添加状态比较（如"当前索引未变则不刷新"）作为终止条件
+3. **MiniLang 构造方法命名是三后端共同约定**：三后端均硬编码查找 "init" 作为构造方法名，任何其他名称（如 "new"/"constructor"）都会被识别为普通方法。教学场景的示例代码必须遵守此约定
+4. **完成条件应匹配用户预期**：教学活动的完成条件应反映用户的实际学习行为，而非强制要求遍历所有交互元素。"点进去观看即完成"比"点击 6 个跳转按钮才算完成"更符合用户对"浏览型活动"的预期
+5. **返回入口应在用户视线焦点处**：教学面板的返回入口应在 TeachingPanelHeader（用户视线焦点）而非依赖切回树导航。每个面板的 header 都应有统一的返回按钮，避免用户在面板间迷路
+6. **性能基准场景的数据量需平衡教学价值与响应性**：数据量过大导致 UI 卡死违背教学目的（用户无法观察三后端差异），数据量过小无法体现性能差异。fib(15) 和 dict 2000 次是兼顾两者的平衡点
+
+### 修改文件清单
+
+- 修改：`gui/AstBuilderToyPanel.cpp`（issue 1：叶子节点焦点保持）
+- 修改：`gui/BugHuntPanel.cpp`（issue 2：refreshBugChips 递归栈溢出修复 + onItemSelected 幂等保护）
+- 修改：`gui/ProfileDashboardPanel.cpp`（issue 3/4/5：fun new → fun init；fib(20)→fib(15)；dict 10000→2000；布局 stretch 修复）
+- 修改：`gui/CodeJourneyInfoPanel.h`（issue 6：移除 6 阶段访问跟踪，新增 journeyCompleted_/markCompleted/showEvent）
+- 修改：`gui/CodeJourneyInfoPanel.cpp`（issue 6：showEvent 首次显示即完成；refreshProgress 基于 journeyCompleted_；onJumpTo* 移除 markStageVisited）
+- 修改：`gui/LearningPathData.cpp`（issue 6：code-journey 活动标题/描述更新）
+- 修改：`gui/TeachingPanelHeader.h`（issue 7：新增 backBtn_ 成员 + returnToEditorRequested 信号）
+- 修改：`gui/TeachingPanelHeader.cpp`（issue 7：新增「← 返回编辑器」按钮 + QSS 样式）
+- 修改：`app/ide.cpp`（issue 6/7：连接 journeyCompleted → markActivityCompleted；连接 returnToEditorRequested → showEditorArea）
+- 文档同步：`CHANGELOG.md` + `docs/development.md` + `project_memory.md`
 
 ## 2026-07-08 · 第三十二轮：全项目性能与 Bug 系统审计（四模块并行审计 + 14 项修复）
 

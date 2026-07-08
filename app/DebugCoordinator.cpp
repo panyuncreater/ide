@@ -26,10 +26,14 @@ DebugCoordinator::DebugCoordinator(std::shared_ptr<Interpreter> interpreter,
 DebugCoordinator::~DebugCoordinator() {
     // #10 fix: 反注册 setupDebug 注册的回调，避免 worker 线程调用悬垂 this。
     // 传空 std::function 使后续调用变为 no-op（DebugController 在锁内拷贝再调用）。
+    // AUDIT-P1 fix: 清空 callback 后必须 spin-wait 等待正在执行的 callback 完成，
+    // 否则 worker 线程可能在锁外 cb() 调用中持已失效的 interpreter_ shared_ptr → UAF。
+    // 采用 RCU 优雅期模式：activeCallbackCount_ 原子计数，cb() 期间 >0，归零后安全析构。
     if (debugger_) {
         debugger_->setConditionEvaluator({});
         debugger_->setVariableCallback({});
         debugger_->setCallStackCallback({});
+        debugger_->waitCallbacksIdle();  // 等待所有 callback 完成后再析构
     }
 }
 
@@ -83,22 +87,24 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints,
         // 同文件 conditionEvaluator 已有 try/catch，原 variableCallback 遗漏。
         // Interpreter 异常态下遍历 Environment 链/拷贝容器可能抛 bad_alloc，
         // 未捕获会传播到 UI 线程导致 IDE 崩溃。
+        // AUDIT-P1 fix: 用 currentEnvironmentShared() 获取 shared_ptr 副本，
+        // 遍历 parent 链时通过 shared_ptr 赋值延长每个节点的生命周期，
+        // 防止 GUI 线程遍历期间 worker 线程修改 currentEnv_ 或析构 Environment → UAF。
         try {
-            Environment* env = interpreter->currentEnvironment();
-            if (env) {
+            auto currentShared = interpreter->currentEnvironmentShared();
+            if (currentShared) {
                 int depth = 0;
-                Environment* current = env;
-                while (current) {
-                    const auto& locals = current->localVariables();
+                while (currentShared) {
+                    const auto& locals = currentShared->localVariables();
                     for (const auto& kv : locals) {
                         VariableSnapshot snap;
                         snap.name = kv.first;
                         snap.value = kv.second;
-                        snap.scope = (current->parent == nullptr) ? "全局"
+                        snap.scope = (currentShared->parent == nullptr) ? "全局"
                                    : (depth == 0) ? "局部" : "外层";
                         result.push_back(snap);
                     }
-                    current = current->parent.get();
+                    currentShared = currentShared->parent;  // shared_ptr 赋值，延长 parent 生命周期
                     depth++;
                 }
             }

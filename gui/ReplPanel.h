@@ -6,6 +6,8 @@
 #include <QVBoxLayout>
 #include <QStringList>
 #include <QTimer>
+#include <QPointer>
+#include <QCoreApplication>
 #include <future>
 #include <memory>
 #include <atomic>

@@ -401,9 +401,13 @@ void ReplPanel::executeLine(const QString& line) {
     std::atomic<bool>* errFlag = &hadReplError_;
     // BUG-REPL-G6 fix (P2): 捕获 this 以便将错误同时投递到 REPL 输出区。
     // 原实现仅 emit ctrl->runtimeError/genericError 信号（由 Ide 连接到主错误面板），
-    // REPL 用户看不到错误反馈。生命周期安全：~ReplPanel 的 wait() 保证异步任务
-    // 完成前 ReplPanel 不会析构，invokeMethod 投递的 lambda 不会访问已析构对象。
-    ReplPanel* self = this;
+    // REPL 用户看不到错误反馈。
+    // AUDIT-P1 fix: 原用裸 ReplPanel* self，~ReplPanel 的 wait() 只保证 future 完成，
+    // 但 invokeMethod(QueuedConnection) 投递的 lambda 在主线程事件队列中，析构期间
+    // 主线程阻塞在 wait() 不会 dispatch，析构后回到事件循环才 dispatch → UAF。
+    // 改用 QPointer + qApp 作为 invokeMethod context：qApp 永远存活，lambda 在主线程
+    // 执行时检查 self 是否为 null，避免悬垂访问。
+    QPointer<ReplPanel> self(this);
     std::future<Value> newFuture;
     try {
         newFuture = std::async(std::launch::async, [ctrl, rawAst, errFlag, self]() -> Value {
@@ -423,9 +427,9 @@ void ReplPanel::executeLine(const QString& line) {
                 std::string enriched = ErrorHintEngine::enrichErrorMessage(
                     e.what(), "runtime", scopeVars);
                 std::string msg = enriched;
-                QMetaObject::invokeMethod(self,
+                QMetaObject::invokeMethod(qApp,
                     [self, msg]() {
-                        self->appendError(QString::fromStdString(msg));
+                        if (self) self->appendError(QString::fromStdString(msg));
                     }, Qt::QueuedConnection);
                 QMetaObject::invokeMethod(ctrl,
                     [ctrl, msg = std::string(e.what()), line = e.line, col = e.column]() {
@@ -446,9 +450,9 @@ void ReplPanel::executeLine(const QString& line) {
                 std::string enriched = ErrorHintEngine::enrichErrorMessage(
                     e.what(), "runtime", scopeVars);
                 std::string msg = enriched;
-                QMetaObject::invokeMethod(self,
+                QMetaObject::invokeMethod(qApp,
                     [self, msg]() {
-                        self->appendError(QString::fromStdString(msg));
+                        if (self) self->appendError(QString::fromStdString(msg));
                     }, Qt::QueuedConnection);
                 QMetaObject::invokeMethod(ctrl,
                     [ctrl, msg = std::string(e.what())]() {

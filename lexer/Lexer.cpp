@@ -635,6 +635,73 @@ void Lexer::string(bool isInterp) {
             case 'f':  value += '\f'; break;
             case 'a':  value += '\a'; break;
             case 'v':  value += '\v'; break;
+            case 'x': {
+                // AUDIT-P2 fix: \xNN — 2 位十六进制字节转义
+                if (isAtEnd()) { errorToken("未终止的字符串", startLine, startCol); return; }
+                char h1 = advance();
+                if (isAtEnd()) { errorToken("未终止的字符串", startLine, startCol); return; }
+                char h2 = advance();
+                auto hexVal = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return -1;
+                };
+                int v1 = hexVal(h1), v2 = hexVal(h2);
+                if (v1 < 0 || v2 < 0) {
+                    errorToken(std::string("无效的十六进制转义 '\\x") + h1 + h2 + "'", startLine, startCol);
+                    while (!isAtEnd() && peek() != '"') {
+                        if (peek() == '\\') { advance(); if (!isAtEnd()) advance(); }
+                        else advance();
+                    }
+                    if (!isAtEnd()) advance();
+                    return;
+                }
+                value += static_cast<char>((v1 << 4) | v2);
+                break;
+            }
+            case 'u': {
+                // AUDIT-P2 fix: \uXXXX — 4 位十六进制 Unicode 码点，编码为 UTF-8
+                char d[4];
+                for (int i = 0; i < 4; ++i) {
+                    if (isAtEnd()) { errorToken("未终止的字符串", startLine, startCol); return; }
+                    d[i] = advance();
+                }
+                auto hexVal = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return -1;
+                };
+                int cp = 0;
+                bool valid = true;
+                for (int i = 0; i < 4; ++i) {
+                    int v = hexVal(d[i]);
+                    if (v < 0) { valid = false; break; }
+                    cp = (cp << 4) | v;
+                }
+                if (!valid) {
+                    errorToken(std::string("无效的 Unicode 转义 '\\u") + d[0] + d[1] + d[2] + d[3] + "'", startLine, startCol);
+                    while (!isAtEnd() && peek() != '"') {
+                        if (peek() == '\\') { advance(); if (!isAtEnd()) advance(); }
+                        else advance();
+                    }
+                    if (!isAtEnd()) advance();
+                    return;
+                }
+                // 编码为 UTF-8
+                if (cp <= 0x7F) {
+                    value += static_cast<char>(cp);
+                } else if (cp <= 0x7FF) {
+                    value += static_cast<char>(0xC0 | (cp >> 6));
+                    value += static_cast<char>(0x80 | (cp & 0x3F));
+                } else {
+                    value += static_cast<char>(0xE0 | (cp >> 12));
+                    value += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    value += static_cast<char>(0x80 | (cp & 0x3F));
+                }
+                break;
+            }
             default:
                 // AUDIT-BUG-L1 fix: 未知转义序列应报错，而非静默接受为字面字符。
                 // 原实现将 \q 等存储为 "\\q" 两字符，违反"非法输入应被拒绝"原则。

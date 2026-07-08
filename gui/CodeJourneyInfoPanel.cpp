@@ -8,6 +8,7 @@
 #include <QTextBrowser>
 #include <QPushButton>
 #include <QLabel>
+#include <QShowEvent>
 
 #include "Label.h"   // QFluentKit（TitleLabel）
 
@@ -21,7 +22,7 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
     auto* titleLabel = new TitleLabel(mlTr("🚀 代码的生命旅程"), this);
     mainLayout->addWidget(titleLabel);
 
-    // 问题 11: 进度提示标签 — 显示完成判断标准与当前进度
+    // 进度提示标签
     progressLabel_ = new QLabel(this);
     progressLabel_->setStyleSheet(
         "QLabel { background: #EEE8D5; border: 1px solid #93A1A1;"
@@ -72,50 +73,38 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
 }
 
 // ============================================================
-// 问题 11: 完成判断标准 — 6 阶段全部访问即为完成
+// 完成判断标准 — 点进面板观看即算完成
 // ============================================================
 
-void CodeJourneyInfoPanel::markStageVisited(const QString& stageId) {
-    if (visitedStages_.value(stageId, false)) return;  // 已访问
-    visitedStages_[stageId] = true;
-    refreshProgress();
-    if (visitedStages_.size() >= kTotalStages) {
-        emit journeyCompleted();
+void CodeJourneyInfoPanel::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    // 首次显示即标记完成（用户点进来观看就算完成）
+    if (!journeyCompleted_) {
+        markCompleted();
     }
+}
+
+void CodeJourneyInfoPanel::markCompleted() {
+    if (journeyCompleted_) return;
+    journeyCompleted_ = true;
+    refreshProgress();
+    emit journeyCompleted();
 }
 
 void CodeJourneyInfoPanel::refreshProgress() {
     if (!progressLabel_) return;
-    int visited = visitedStages_.size();
-    // 构建进度圆点：✅ 已访问 / ⬜ 未访问
-    static const char* kStageIcons[] = {
-        "\xe2\x9c\x85",  // ✅
-        "\xe2\xac\x9c",  // ⬜
-    };
-    static const QStringList kStageNames = {
-        "编辑器", "Token", "AST", "IR", "字节码", "输出"
-    };
-    static const QStringList kStageIds = {
-        "editor", "tokens", "ast", "ir", "bytecode", "output"
-    };
-    QString dots;
-    for (int i = 0; i < kTotalStages; ++i) {
-        bool vis = visitedStages_.value(kStageIds[i], false);
-        dots += QString::fromUtf8(kStageIcons[vis ? 0 : 1]) + " " + kStageNames[i];
-        if (i < kTotalStages - 1) dots += "  ";
-    }
     QString html;
-    if (visited >= kTotalStages) {
+    if (journeyCompleted_) {
         html = QString::fromUtf8(
-            "<b>🎉 旅程完成！</b> 你已探索全部 6 个阶段。<br>"
-            "%1").arg(dots);
+            "<b>🎉 旅程完成！</b> 你已观看代码的生命旅程信息图。<br>"
+            "可点击下方按钮深入探索每个阶段。");
         progressLabel_->setStyleSheet(
             "QLabel { background: #859900; color: white; border: none;"
             "  border-radius: 4px; padding: 6px 8px; font-size: 12px; font-weight: bold; }");
     } else {
         html = QString::fromUtf8(
-            "<b>探索进度：%1 / %2</b> — 依次点击下方 6 个阶段按钮，全部访问后完成旅程。<br>"
-            "%3").arg(visited).arg(kTotalStages).arg(dots);
+            "<b>📖 代码的生命旅程</b> — 一张静态信息图展示编译管线。<br>"
+            "点进来看即算完成，也可点击下方按钮深入探索。");
         progressLabel_->setStyleSheet(
             "QLabel { background: #EEE8D5; border: 1px solid #93A1A1;"
             "  border-radius: 4px; padding: 6px 8px; font-size: 12px; }");
@@ -235,9 +224,9 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
     ).arg(surfaceHex, stage0Hex, stage2Hex, stage3Hex, stage4Hex);
 }
 
-void CodeJourneyInfoPanel::onJumpToEditor()   { markStageVisited("editor");   emit jumpToPanelRequested("editor"); }
-void CodeJourneyInfoPanel::onJumpToTokens()   { markStageVisited("tokens");   emit jumpToPanelRequested("tokens"); }
-void CodeJourneyInfoPanel::onJumpToAst()      { markStageVisited("ast");      emit jumpToPanelRequested("ast"); }
-void CodeJourneyInfoPanel::onJumpToIr()       { markStageVisited("ir");       emit jumpToPanelRequested("ir"); }
-void CodeJourneyInfoPanel::onJumpToBytecode() { markStageVisited("bytecode"); emit jumpToPanelRequested("bytecode"); }
-void CodeJourneyInfoPanel::onJumpToOutput()   { markStageVisited("output");   emit jumpToPanelRequested("output"); }
+void CodeJourneyInfoPanel::onJumpToEditor()   { emit jumpToPanelRequested("editor"); }
+void CodeJourneyInfoPanel::onJumpToTokens()   { emit jumpToPanelRequested("tokens"); }
+void CodeJourneyInfoPanel::onJumpToAst()      { emit jumpToPanelRequested("ast"); }
+void CodeJourneyInfoPanel::onJumpToIr()       { emit jumpToPanelRequested("ir"); }
+void CodeJourneyInfoPanel::onJumpToBytecode() { emit jumpToPanelRequested("bytecode"); }
+void CodeJourneyInfoPanel::onJumpToOutput()   { emit jumpToPanelRequested("output"); }

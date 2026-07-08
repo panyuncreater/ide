@@ -3,6 +3,7 @@
 #include "interpreter/RuntimeExceptions.h"  // S6 fix: DebugStopException 定义
 #include "Logger.h"
 #include <stdexcept>
+#include <thread>  // AUDIT-P1 fix: std::this_thread::yield for waitCallbacksIdle
 
 // ============================================================
 // DebugController 调试控制器实现
@@ -435,7 +436,15 @@ std::vector<VariableSnapshot> DebugController::getVariableSnapshot() const {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         cb = variableCallback_;
     }
-    if (cb) return cb();
+    if (cb) {
+        // AUDIT-P1 fix: cb() 调用期间增减活跃计数，供 DebugCoordinator 析构时 spin-wait
+        activeCallbackCount_.fetch_add(1, std::memory_order_acq_rel);
+        struct CountGuard {
+            std::atomic<int>& cnt;
+            ~CountGuard() { cnt.fetch_sub(1, std::memory_order_acq_rel); }
+        } guard{activeCallbackCount_};
+        return cb();
+    }
     return {};
 }
 
@@ -446,8 +455,26 @@ std::vector<CallStackEntry> DebugController::getCallStack() const {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         cb = callStackCallback_;
     }
-    if (cb) return cb();
+    if (cb) {
+        // AUDIT-P1 fix: cb() 调用期间增减活跃计数，供 DebugCoordinator 析构时 spin-wait
+        activeCallbackCount_.fetch_add(1, std::memory_order_acq_rel);
+        struct CountGuard {
+            std::atomic<int>& cnt;
+            ~CountGuard() { cnt.fetch_sub(1, std::memory_order_acq_rel); }
+        } guard{activeCallbackCount_};
+        return cb();
+    }
     return {};
+}
+
+void DebugController::waitCallbacksIdle() const {
+    // AUDIT-P1 fix: spin-wait 直到所有正在执行的 variableCallback_/callStackCallback_ 完成。
+    // 用于 DebugCoordinator 析构前安全等待，避免清空 callback 后 worker 线程仍在锁外调用 cb() → UAF。
+    while (activeCallbackCount_.load(std::memory_order_acquire) > 0) {
+        std::this_thread::yield();
+    }
+    // 同步等待条件求值回调完成
+    if (evaluator_) evaluator_->waitCallbackIdle();
 }
 
 bool DebugController::isRunning() const {

@@ -138,7 +138,15 @@ public:
     void setDebugMode(bool enabled);
 
     /// 获取当前环境（用于调试面板）
+    /// 注意：返回裸指针，仅在同线程或确保 Environment 不被销毁时使用。
+    /// 跨线程场景应使用 currentEnvironmentShared()。
     Environment* currentEnvironment() const;
+
+    /// 获取当前环境的 shared_ptr 副本（延长生命周期，用于跨线程安全访问）。
+    /// AUDIT-P1 fix: 原 currentEnvironment() 返回裸指针，GUI 线程通过 variableCallback
+    /// 调用时 worker 线程可能已修改 currentEnv_ 或析构 Environment → UAF。
+    /// 此方法返回 shared_ptr 副本，确保调用方持引用期间 Environment 不被析构。
+    std::shared_ptr<Environment> currentEnvironmentShared() const;
 
     /// 获取调用栈（用于调试面板）
     const std::vector<CallFrame>& getCallStack() const;

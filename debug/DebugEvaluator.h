@@ -19,6 +19,8 @@
 #include <string>
 #include <functional>
 #include <mutex>
+#include <atomic>
+#include <thread>
 #include "common/Logger.h"
 
 class DebugEvaluator {
@@ -52,6 +54,12 @@ public:
             snap = callback_;
         }
         if (!snap) return false;
+        // AUDIT-P1 fix: snap() 调用期间增减活跃计数，供析构时 spin-wait
+        activeCallbackCount_.fetch_add(1, std::memory_order_acq_rel);
+        struct CountGuard {
+            std::atomic<int>& cnt;
+            ~CountGuard() { cnt.fetch_sub(1, std::memory_order_acq_rel); }
+        } guard{activeCallbackCount_};
         try {
             return snap(condition);
         } catch (const std::exception& e) {
@@ -67,7 +75,16 @@ public:
         return false;
     }
 
+    /// 等待正在执行的 callback 完成（用于析构前安全等待）
+    void waitCallbackIdle() const {
+        while (activeCallbackCount_.load(std::memory_order_acquire) > 0) {
+            std::this_thread::yield();
+        }
+    }
+
 private:
     mutable std::mutex mutex_;
     ConditionCallback callback_;
+    // AUDIT-P1 fix: 活跃 callback 计数，用于析构时等待正在执行的 callback 完成
+    mutable std::atomic<int> activeCallbackCount_{0};
 };

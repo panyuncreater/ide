@@ -111,28 +111,32 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                              Qt::AlignRight | Qt::AlignVCenter,
                              QString::number(lineNumber));
 
-            // F8: 绘制折叠标记（右侧）
+            // F8: 绘制折叠标记（右侧）—— VS Code 风格雪佛龙箭头
+            // 展开态：向下箭头 ▽（提示可折叠）；折叠态：向右箭头 ▷（提示可展开）
+            // 采用抗锯齿绘制 + 主题感知配色，无方框背景，视觉更轻盈
             if (codeEditor->isFoldable(block)) {
                 bool folded = codeEditor->isFolded(blockNumber);
-                int boxSize = 9;
-                int bx = width() - 14;
-                int by = (top + bottom) / 2 - boxSize / 2;
-                // F9: 主题感知折叠标记颜色
-                QColor foldBg = folded
-                    ? (codeEditor->isDarkTheme_ ? QColor(100, 100, 220) : QColor(0x26, 0x8b, 0xd2))
-                    : (codeEditor->isDarkTheme_ ? QColor(80, 80, 80) : QColor(0x93, 0xa1, 0xa1));
-                QColor foldBorder = codeEditor->isDarkTheme_ ? QColor(140, 140, 140) : QColor(100, 100, 100);
-                painter.setBrush(foldBg);
-                painter.setPen(QPen(foldBorder, 1));
-                painter.drawRect(bx, by, boxSize, boxSize);
-                // 绘制 +/- 符号
-                painter.setPen(folded ? Qt::white : (codeEditor->isDarkTheme_ ? Qt::white : Qt::black));
-                int cx2 = bx + boxSize / 2;
-                int cy2 = by + boxSize / 2;
-                painter.drawLine(cx2 - 2, cy2, cx2 + 2, cy2);  // 横线
-                if (!folded) {
-                    painter.drawLine(cx2, cy2 - 2, cx2, cy2 + 2);  // 竖线（仅展开时）
+                const int cx = width() - 9;
+                const int cy = (top + bottom) / 2;
+                // F9: 主题感知折叠标记颜色——折叠态用主题蓝强调，展开态用次要灰
+                QColor arrowColor = folded
+                    ? (codeEditor->isDarkTheme_ ? QColor(0x6c, 0x71, 0xc4) : QColor(0x26, 0x8b, 0xd2))
+                    : (codeEditor->isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x58, 0x6e, 0x75));
+                painter.save();
+                painter.setRenderHint(QPainter::Antialiasing, true);
+                painter.setPen(QPen(arrowColor, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+                painter.setBrush(Qt::NoBrush);
+                const int s = 4;  // 雪佛龙半臂长度
+                if (folded) {
+                    // 向右箭头 ▷：从左上到右尖再到左下
+                    painter.drawLine(cx - s, cy - s, cx + s, cy);
+                    painter.drawLine(cx + s, cy, cx - s, cy + s);
+                } else {
+                    // 向下箭头 ▽：从左上到下尖再到右上
+                    painter.drawLine(cx - s, cy - s, cx, cy + s);
+                    painter.drawLine(cx, cy + s, cx + s, cy - s);
                 }
+                painter.restore();
             }
         }
 
@@ -149,9 +153,8 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
 
     // F8: 检查是否点击了折叠区域（右侧 14px）
     int clickX = static_cast<int>(event->position().x());
-    // BUG-CE-6 fix: 与 paintEvent 绘制区域一致。绘制位置 bx = width()-14，boxSize=9，
-    // 覆盖 [width()-14, width()-5)。原判定 >= width()-16 比绘制区域宽，导致点击
-    // 行号右侧空白也触发折叠。统一为 [width()-14, width()-4)。
+    // 与 paintEvent 绘制区域一致：雪佛龙箭头中心 cx = width()-9，臂长 4，
+    // 覆盖 [width()-13, width()-5)。命中区统一为 [width()-14, width()-4)。
     if (clickX >= width() - 14 && clickX < width() - 4) {
         // 映射 Y 坐标到块号
         QTextCursor cursor = codeEditor->cursorForPosition(QPoint(0, static_cast<int>(event->position().y())));
@@ -465,7 +468,11 @@ void CodeEditor::setErrorLines(const QSet<int>& lines) {
     errorLines_ = lines;
 
     // 构建并缓存错误行选择（仅在 errorLines_ 变化时重建）
+    // 视觉优化：波浪线改用 Solarized 红 #DC322F（比 Qt::red 更柔和、与主题一致），
+    // 并叠加极淡红色背景（alpha=18）增强错误行可见性，对齐 VS Code 错误行高亮风格。
     cachedErrorSelections_.clear();
+    const QColor squiggleColor(0xDC, 0x32, 0x2F);
+    const QColor errLineBg(0xDC, 0x32, 0x2F, 18);
     for (int line : errorLines_) {
         QTextBlock block = document()->findBlockByNumber(line - 1);
         if (block.isValid()) {
@@ -473,7 +480,8 @@ void CodeEditor::setErrorLines(const QSet<int>& lines) {
             sel.cursor = QTextCursor(block);
             sel.cursor.select(QTextCursor::LineUnderCursor);
             sel.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
-            sel.format.setUnderlineColor(Qt::red);
+            sel.format.setUnderlineColor(squiggleColor);
+            sel.format.setBackground(errLineBg);
             cachedErrorSelections_.append(sel);
         }
     }
@@ -483,6 +491,8 @@ void CodeEditor::setErrorLines(const QSet<int>& lines) {
 void CodeEditor::setErrorRanges(const std::vector<ErrorRange>& ranges) {
     errorLines_.clear();
     cachedErrorSelections_.clear();
+    // 精确 token 标记：仅波浪线（无背景），避免短 token 背景闪烁。
+    const QColor squiggleColor(0xDC, 0x32, 0x2F);
     for (const auto& r : ranges) {
         errorLines_.insert(r.line);
         QTextBlock block = document()->findBlockByNumber(r.line - 1);
@@ -503,7 +513,7 @@ void CodeEditor::setErrorRanges(const std::vector<ErrorRange>& ranges) {
             sel.cursor.setPosition(startPos + col);
             sel.cursor.setPosition(startPos + col + len, QTextCursor::KeepAnchor);
             sel.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
-            sel.format.setUnderlineColor(Qt::red);
+            sel.format.setUnderlineColor(squiggleColor);
             cachedErrorSelections_.append(sel);
         }
     }
@@ -938,7 +948,10 @@ void CodeEditor::setDarkTheme(bool dark) {
         pal.setColor(QPalette::HighlightedText, QColor(0xfd, 0xf6, 0xe3));
         pal.setColor(QPalette::PlaceholderText, QColor(0x80, 0x80, 0x80));
     } else {
-        pal.setColor(QPalette::Base, QColor(0xff, 0xff, 0xff));
+        // R15-7: 浅色模式 Base 从 #ffffff 改为 Solarized base3 (#FDF6E3)，
+        // 与行号区背景 (#EEE8D5 base2) 和 IDE 整体米黄主题统一，
+        // 消除「编辑区白色 vs 行号区米黄」的割裂感。
+        pal.setColor(QPalette::Base, QColor(0xFD, 0xF6, 0xE3));
         pal.setColor(QPalette::AlternateBase, QColor(0xee, 0xe8, 0xd5));
         pal.setColor(QPalette::Text, QColor(0x00, 0x2b, 0x36));
         pal.setColor(QPalette::Highlight, QColor(0x58, 0x6e, 0x75, 0x60));

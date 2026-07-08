@@ -282,9 +282,16 @@ void BugHuntPanel::refreshBugChips() {
     if (currentItemIndex_ < 0 && firstVisible >= 0) {
         onItemSelected(firstVisible);
     } else if (currentItemIndex_ >= 0) {
-        bool curVisible = (currentItemIndex_ < bugChips_.size()) && bugChips_[currentItemIndex_]
-                          && bugChips_[currentItemIndex_]->isVisible();
-        if (!curVisible && firstVisible >= 0) {
+        // 注意：不能用 QWidget::isVisible() 判定难度筛选可见性——
+        // 构造期间父 widget 未 show()，isVisible() 恒返回 false，会导致
+        // refreshBugChips → onItemSelected → refreshBugChips 无限递归栈溢出。
+        // 这里用难度筛选条件判定，与上面 firstVisible 口径一致。
+        bool curVisible = false;
+        if (currentItemIndex_ < (int)items.size()) {
+            int curDiffId = static_cast<int>(items[currentItemIndex_].difficulty);
+            curVisible = (currentDifficultyFilter_ == -1 || curDiffId == currentDifficultyFilter_);
+        }
+        if (!curVisible && firstVisible >= 0 && firstVisible != currentItemIndex_) {
             onItemSelected(firstVisible);
         }
     }
@@ -335,6 +342,10 @@ void BugHuntPanel::onItemSelected(int itemIndex) {
     // issue 5: 芯片点击 → 直接传入 items() 索引
     if (itemIndex < 0) {
         currentItemIndex_ = -1;
+        return;
+    }
+    // 幂等保护：相同索引不重复刷新，避免 refreshBugChips 递归调用栈溢出
+    if (currentItemIndex_ == itemIndex && hintLevel_ == 0) {
         return;
     }
     currentItemIndex_ = itemIndex;

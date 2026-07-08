@@ -84,6 +84,11 @@ public:
     /// 重置状态
     void reset();
 
+    /// 等待所有正在执行的 variableCallback_/callStackCallback_ 完成（用于析构前安全等待）
+    // AUDIT-P1 fix: 由 private 提升为 public，DebugCoordinator 析构需调用此方法
+    // 等待 RCU 优雅期结束，避免 callback 持已失效 interpreter_ shared_ptr → UAF。
+    void waitCallbacksIdle() const;
+
 signals:
     /// 调试暂停在某行
     void pausedAt(int line);
@@ -121,6 +126,11 @@ private:
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;
     std::function<std::vector<CallStackEntry>()> callStackCallback_;
+
+    // AUDIT-P1 fix: 活跃 callback 计数，用于析构时等待正在执行的 callback 完成（RCU 优雅期模式）。
+    // getVariableSnapshot/getCallStack 在锁外调用 cb() 期间增减此计数，
+    // DebugCoordinator 析构清空 callback 后 spin-wait 直到计数归零，避免 UAF。
+    mutable std::atomic<int> activeCallbackCount_{0};
 
     /// 暂停当前线程，等待用户操作
     void pauseExecution();

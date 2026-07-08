@@ -336,8 +336,18 @@ void AstBuilderToyPanel::addNodeWithLabel(const QString& label) {
     auto* child = new QTreeWidgetItem(current);
     child->setText(0, label);
     current->addChild(child);
-    tree_->setCurrentItem(child);
     tree_->expandItem(current);
+    // 叶子节点（Number:* / Identifier:*）添加后保持父节点选中，
+    // 避免连续添加叶子时形成错误嵌套（下一个叶子变成上一个叶子的子节点）。
+    // 非叶子节点（BinaryOp:* / Print / VarDecl:*）添加后切换到新节点，
+    // 方便为其继续添加子节点。
+    bool isLeaf = label.startsWith(QString::fromUtf8("Number:")) ||
+                  label.startsWith(QString::fromUtf8("Identifier:"));
+    if (isLeaf) {
+        tree_->setCurrentItem(current);
+    } else {
+        tree_->setCurrentItem(child);
+    }
     feedback_->setText(QString::fromUtf8("✓ 已添加子节点：%1（父节点：%2）")
                            .arg(label).arg(current->text(0)));
 }

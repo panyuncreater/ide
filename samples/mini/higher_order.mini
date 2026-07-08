@@ -42,7 +42,7 @@ print("applyTwice(addOne, 10) = {applyTwice(addOne, 10)}");
 // ---- 函数赋值给变量 ----
 print("");
 print("=== 函数赋值给变量 ===");
-var greet = fun(name) { return "Hi, " + name + "!"; };
+fun greet(name) { return "Hi, " + name + "!"; }
 print(greet("Alice"));
 print(greet("Bob"));
 

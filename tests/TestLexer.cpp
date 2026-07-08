@@ -446,9 +446,56 @@ TEST(LexerTest, String_AdditionalEscapeSequences) {
     }
 }
 
+// AUDIT-P2 fix: \xNN 十六进制字节转义 + \uXXXX Unicode 码点转义
+TEST(LexerTest, String_HexAndUnicodeEscapes) {
+    // \x41 = 'A'
+    {
+        auto tokens = scanTokens("\"\\x41\"");
+        ASSERT_EQ(tokens.size(), 1u);
+        EXPECT_EQ(tokens[0].literalString(), "A");
+    }
+    // \x4A = 'J'
+    {
+        auto tokens = scanTokens("\"\\x4A\"");
+        ASSERT_EQ(tokens.size(), 1u);
+        EXPECT_EQ(tokens[0].literalString(), "J");
+    }
+    // \u0041 = 'A' (U+0041)
+    {
+        auto tokens = scanTokens("\"\\u0041\"");
+        ASSERT_EQ(tokens.size(), 1u);
+        EXPECT_EQ(tokens[0].literalString(), "A");
+    }
+    // \u4E2D = '中' (U+4E2D, UTF-8: E4 B8 AD)
+    {
+        auto tokens = scanTokens("\"\\u4E2D\"");
+        ASSERT_EQ(tokens.size(), 1u);
+        EXPECT_EQ(tokens[0].literalString(), "\xE4\xB8\xAD");
+    }
+    // \u00E9 = 'é' (U+00E9, UTF-8: C3 A9)
+    {
+        auto tokens = scanTokens("\"\\u00E9\"");
+        ASSERT_EQ(tokens.size(), 1u);
+        EXPECT_EQ(tokens[0].literalString(), "\xC3\xA9");
+    }
+    // 无效的 \x：第二位非十六进制
+    {
+        auto tokens = scanTokens("\"\\xG\"");
+        ASSERT_EQ(tokens.size(), 1u);
+        EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
+    }
+    // 无效的 \u：第三位非十六进制
+    {
+        auto tokens = scanTokens("\"\\u00G1\"");
+        ASSERT_EQ(tokens.size(), 1u);
+        EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
+    }
+}
+
 // AUDIT-BUG-L1 fix: 未知转义字符应报错（原实现静默保留为 \x）
+// AUDIT-P2 fix: \x 和 \u 现已支持为合法转义，改用 \q 作为未知转义测试用例
 TEST(LexerTest, String_UnknownEscapeRejected) {
-    auto tokens = scanTokens("\"a\\xb\"");
+    auto tokens = scanTokens("\"a\\qb\"");
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
     EXPECT_NE(tokens[0].lexeme.find("未知转义"), std::string::npos);

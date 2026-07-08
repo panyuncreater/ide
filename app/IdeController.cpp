@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QStringList>
 #include <unordered_set>  // P0-3 fix: getReplScopeVariableNames 去重
+#include <list>            // AUDIT-P2 fix: condAstCache LRU 实现
 
 // ============================================================
 // IdeController — 业务逻辑层 Facade 实现（ARCH-11 重构）
@@ -59,14 +60,22 @@ IdeController::IdeController(QObject* parent)
     // 局部变量遮蔽同名的全局变量（后注入覆盖先注入）。
     // AUDIT fix: 缓存条件 AST，避免每次断点命中都重新 Lexer+Parser（循环内条件断点性能）。
     // BUG-IDE-04 fix: 缓存添加上限（32 条），防止用户反复切换条件表达式无限增长。
+    // AUDIT-P2 fix: 原 unordered_map erase(begin()) 是哈希桶首元素，非 LRU 非 FIFO，
+    // 可能误淘汰刚插入的条目。改为 list + unordered_map 经典 LRU：
+    // 命中时 move_to_front，超上限时 pop_back（最久未使用）。
     constexpr size_t COND_AST_CACHE_MAX = 32;
-    auto condAstCache = std::make_shared<std::unordered_map<std::string, std::shared_ptr<Block>>>();
-    vmStepper_.setConditionEvaluator([this, condAstCache](const std::string& condition) -> bool {
+    using CacheList = std::list<std::pair<std::string, std::shared_ptr<Block>>>;
+    using CacheLookup = std::unordered_map<std::string, CacheList::iterator>;
+    auto cacheList = std::make_shared<CacheList>();
+    auto cacheLookup = std::make_shared<CacheLookup>();
+    vmStepper_.setConditionEvaluator([this, cacheList, cacheLookup](const std::string& condition) -> bool {
         try {
             std::shared_ptr<Block> ast;
-            auto cacheIt = condAstCache->find(condition);
-            if (cacheIt != condAstCache->end()) {
-                ast = cacheIt->second;
+            auto lookupIt = cacheLookup->find(condition);
+            if (lookupIt != cacheLookup->end()) {
+                // 命中：move_to_front（最近使用）
+                cacheList->splice(cacheList->begin(), *cacheList, lookupIt->second);
+                ast = lookupIt->second->second;
             } else {
                 Lexer condLexer;
                 auto tokens = condLexer.scan(condition);
@@ -76,12 +85,13 @@ IdeController::IdeController(QObject* parent)
                     return false;
                 }
                 ast = std::shared_ptr<Block>(std::move(parsed));
-                // BUG-IDE-04 fix: 缓存上限保护，超出时移除最旧条目（unordered_map 迭代顺序
-                // 非严格 LRU，但能限制总量；32 条对用户调试场景足够）。
-                if (condAstCache->size() >= COND_AST_CACHE_MAX) {
-                    condAstCache->erase(condAstCache->begin());
+                // LRU 淘汰：超上限时移除最久未使用（链表尾部）
+                if (cacheList->size() >= COND_AST_CACHE_MAX) {
+                    cacheLookup->erase(cacheList->back().first);
+                    cacheList->pop_back();
                 }
-                condAstCache->emplace(condition, ast);
+                cacheList->emplace_front(condition, ast);
+                (*cacheLookup)[condition] = cacheList->begin();
             }
             Interpreter tempInterp;
             auto env = std::make_shared<Environment>();

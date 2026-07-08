@@ -48,9 +48,18 @@ ModuleTopLevelRenamer::ModuleTopLevelRenamer(const std::string& modulePath)
 }
 
 std::string ModuleTopLevelRenamer::pathHash(const std::string& modulePath) {
+    // AUDIT-P2 fix: 在哈希前先 normalize 路径（\ → /、去除 ./ 前缀），
+    // 保证跨平台和不同调用路径的 hash 一致性。原实现直接对传入字符串做哈希，
+    // 依赖所有调用者自行 normalize（Compiler/IR/Interpreter 三处重复实现），
+    // 未来新增调用者若忘记 normalize 会导致模块隔离前缀不一致。
+    std::string normalized = modulePath;
+    for (char& c : normalized) { if (c == '\\') c = '/'; }
+    if (normalized.size() >= 2 && normalized[0] == '.' && normalized[1] == '/') {
+        normalized.erase(0, 2);
+    }
     // FNV-1a 32-bit hash，取低 32 位，输出 8 字符 hex
     uint32_t h = 2166136261u;
-    for (char c : modulePath) {
+    for (char c : normalized) {
         h ^= static_cast<uint8_t>(c);
         h *= 16777619u;
     }

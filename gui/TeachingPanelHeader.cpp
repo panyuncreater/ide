@@ -254,6 +254,15 @@ TeachingPanelHeader::TeachingPanelHeader(const QString& panelId,
     });
     layout->addWidget(learningPathBtn_);
 
+    // 「返回编辑器」按钮：让用户从教学面板快速切回代码编辑区
+    backBtn_ = new PushButton(mlTr("← 返回编辑器"), this);
+    backBtn_->setFixedHeight(28);
+    backBtn_->setObjectName("teachingBackBtn");
+    connect(backBtn_, &PushButton::clicked, this, [this]() {
+        emit returnToEditorRequested();
+    });
+    layout->addWidget(backBtn_);
+
     // header 样式：浅蓝→白色渐变背景 + 底部分隔线 + 标题加粗 + 按钮 hover 圆角淡蓝
     setStyleSheet(QStringLiteral(
         "#teachingPanelHeader {"
@@ -284,6 +293,23 @@ TeachingPanelHeader::TeachingPanelHeader(const QString& panelId,
         "}"
         "#teachingTourBtn:pressed {"
         "  background: #1A6090;"
+        "}"
+        // 「返回编辑器」按钮用浅色边框强调，方便用户从教学面板切回编辑器
+        "#teachingBackBtn {"
+        "  background: #FDF6E3;"
+        "  color: #073642;"
+        "  border: 1px solid #93A1A1;"
+        "  border-radius: 4px;"
+        "  padding: 2px 10px;"
+        "  font-weight: 600;"
+        "}"
+        "#teachingBackBtn:hover {"
+        "  background: #EEE8D5;"
+        "  border-color: #268BD2;"
+        "  color: #268BD2;"
+        "}"
+        "#teachingBackBtn:pressed {"
+        "  background: #EEE8D5;"
         "}"
     ));
 }

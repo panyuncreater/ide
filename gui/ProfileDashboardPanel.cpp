@@ -47,10 +47,10 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
     static const std::vector<ProfileScenario> kScenarios = {
         {
             "fib-recursion",
-            "斐波那契递归（fib(20)）",
-            "递归型 fib(20)。栈式 VM 与 RegisterVM 在密集函数调用场景下都显著快于 Interpreter（解释器每个 AST 节点都需要虚函数分发）。"
+            "斐波那契递归（fib(15)）",
+            "递归型 fib(15)。栈式 VM 与 RegisterVM 在密集函数调用场景下都显著快于 Interpreter（解释器每个 AST 节点都需要虚函数分发）。"
             "RegisterVM 通常略快于 StackVM（寄存器消除 push/pop 内存往返），但差距小于 Interpreter vs VM。",
-            "fun fib(n) { if (n < 2) return n; return fib(n-1) + fib(n-2); }\nprint(fib(20));",
+            "fun fib(n) { if (n < 2) return n; return fib(n-1) + fib(n-2); }\nprint(fib(15));",
             "arithmetic", 3
         },
         {
@@ -74,7 +74,7 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
             "类实例化循环（10000 次）",
             "Point 类构造 + 字段赋值循环。InstanceData 分配 + GcManager::registerTracked 是主要开销，"
             "三后端差距较小（解释器仍稍慢，因为 MethodCall 的 Visitor 分发）。",
-            "class Point { var x; var y; fun new(px, py) { x = px; y = py; } }\nvar i = 0;\nwhile (i < 10000) { var p = Point(i, i); i = i + 1; }\nprint(\"done\");",
+            "class Point { var x; var y; fun init(px, py) { x = px; y = py; } }\nvar i = 0;\nwhile (i < 10000) { var p = Point(i, i); i = i + 1; }\nprint(\"done\");",
             "class", 3
         },
         {
@@ -87,10 +87,10 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
         },
         {
             "dict-access",
-            "字典访问循环（10000 次）",
+            "字典访问循环（2000 次）",
             "字典键值读写循环。DictData 使用 unordered_map，每次访问涉及哈希计算，"
             "三后端性能相近（瓶颈在 hash 而非指令分发），Interpreter 略慢。",
-            "var d = {};\nvar i = 0;\nwhile (i < 10000) { d[\"k\" + i] = i * 2; i = i + 1; }\nprint(d.len());",
+            "var d = {};\nvar i = 0;\nwhile (i < 2000) { d[\"k\" + i] = i * 2; i = i + 1; }\nprint(d.len());",
             "loop", 3
         },
     };
@@ -204,13 +204,15 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent)
     auto* splitter = new QSplitter(Qt::Horizontal, this);
     scenarioList_ = new QListWidget(this);
     scenarioDesc_ = new QTextBrowser(this);
-    scenarioDesc_->setMaximumWidth(220);
 
     auto* leftWrap = new QWidget(this);
     auto* leftLayout = new QVBoxLayout(leftWrap);
     leftLayout->setContentsMargins(0, 0, 0, 0);
-    leftLayout->addWidget(scenarioList_);
-    leftLayout->addWidget(scenarioDesc_);
+    leftLayout->setSpacing(2);
+    // scenarioList_ 自然高度（6 项），scenarioDesc_ 拉伸填满左下角剩余空间，
+    // 避免描述区下方留出一小截空白。
+    leftLayout->addWidget(scenarioList_, 0);
+    leftLayout->addWidget(scenarioDesc_, 1);
     splitter->addWidget(leftWrap);
 
     auto* rightWrap = new QWidget(this);

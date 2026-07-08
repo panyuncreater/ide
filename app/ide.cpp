@@ -1076,62 +1076,28 @@ void Ide::showTeachingPanel(const QString& panelId) {
     }
     int idx = it.value();
 
-    // 教学面板需要刷新的特例
-    if (panelId == QStringLiteral("pipeline") && pipelineViewer_) {
-        pipelineViewer_->reloadCurrentStep();
-    } else if (panelId == QStringLiteral("learning-path") && learningPathPanel_) {
-        learningPathPanel_->refresh();
-    }
-
     // 任务2：三栏布局 — 先保存 splitter 尺寸（布局引擎还未重算）
     const bool editorHasTabs = editorTabWidget_ && editorTabWidget_->count() > 0;
     const bool editorWasVisible = editorTabWidget_ && editorTabWidget_->isVisible();
     QList<int> savedSplitterSizes;
     if (centerSplitter_) savedSplitterSizes = centerSplitter_->sizes();
 
-    centerStack_->setCurrentIndex(idx);
-    centerStack_->show();  // 确保教学面板栏可见（可能被 showEditorArea 隐藏）
-
-    // 轻量过渡动画：新面板从右侧 24px 滑入，替代原 LearningPathPanel 内
-    // fadeInWidget 的 QGraphicsOpacityEffect 方案（后者对 100+ 子 widget 做
-    // 离屏合成，是章节切换卡顿与偶发崩溃的根因）。slideInWidget 仅驱动 pos
-    // 属性，O(1) 复杂度，无 pixmap 合成，适合任意复杂度的教学面板。
-    if (QWidget* newPanel = centerStack_->widget(idx)) {
-        PanelAnimator::slideInWidget(newPanel);
-    }
-
-    // 编辑器栏：若有标签则保持可见（形成三栏），无标签则隐藏
-    if (editorTabWidget_ && editorTabWidget_->count() == 0) {
-        editorTabWidget_->hide();
-    } else if (editorTabWidget_) {
-        editorTabWidget_->show();
-    }
-
-    // 动画：编辑器从右侧滑入，教学区压缩
-    if (editorHasTabs && !editorWasVisible && savedSplitterSizes.size() == 2) {
-        int total = savedSplitterSizes[0] + savedSplitterSizes[1];
-        if (total > 200) {
-            int teachingW = static_cast<int>(total * 0.6);
-            int editorW = total - teachingW;
-            animateCenterSplitter(savedSplitterSizes, {teachingW, editorW});
-        }
-    }
-
     // BUG-R14-2 fix: 从编辑器模式进入教学面板时，记录 bottomContainer_/rightDock_ 的可见状态，
-    // 供 showEditorArea 恢复。教学面板间切换时不记录（已隐藏，避免覆盖记录）。
+    // 供 showEditorArea 恢复。必须在 dock 显隐调整之前记录，否则会捕获到隐藏后的错误状态。
+    // 教学面板间切换时不记录（已隐藏，避免覆盖记录）。
     if (centerInEditorMode_) {
         bottomDockWasVisibleBeforeTeaching_ = bottomVisible_;
         rightDockWasVisibleBeforeTeaching_ = (rightDock_ && !rightDock_->isClosed());
     }
     centerInEditorMode_ = false;
 
+    // 动画流畅度优化：dock 显隐在 setCurrentIndex 之前完成，让布局重算
+    // 在动画启动前结束，避免动画进行中 dock 隐藏触发 layout 重绘导致卡顿。
     // P0-1 fix (F5/F13): 教学面板模式下对 bottomDock_（输出/错误/REPL）采用白名单策略。
     // 需要运行反馈的面板（实验手册/Bug狩猎/语法浏览器/后端对比）保留 bottomDock_，
     // 让学员能在面板旁看到运行输出与报错，打通"看教学 + 写代码 + 看运行结果"同屏闭环。
-    // 纯可视化面板仍隐藏 dock（与编辑器配套面板无关）。
-    // P1-E fix: rightDock_（编译分析）改为白名单——对需要对照真实编译产物/字节码/内存
-    // 动画的面板（pipeline/ir-transform/bytecode-trace/memory-model/backend-compare）
-    // 保留，让学员能同屏看到教学面板演示与 IDE 主分析区内容。其余教学面板仍隐藏。
+    // P1-E fix: rightDock_（编译分析）白名单——对需要对照真实编译产物/字节码/内存
+    // 动画的面板（pipeline/ir-transform/bytecode-trace/memory-model/backend-compare）保留。
     static const QSet<QString> kKeepBottomDockPanels = {
         QStringLiteral("lab-manual"), QStringLiteral("bug-hunt"),
         QStringLiteral("syntax-explorer"), QStringLiteral("backend-compare"),
@@ -1151,6 +1117,45 @@ void Ide::showTeachingPanel(const QString& panelId) {
     const bool keepRight = kKeepRightDockPanels.contains(panelId);
     if (!keepRight && rightDock_ && !rightDock_->isClosed()) {
         rightDock_->toggleView(false);
+    }
+
+    centerStack_->setCurrentIndex(idx);
+    centerStack_->show();  // 确保教学面板栏可见（可能被 showEditorArea 隐藏）
+
+    // 教学面板刷新移到 setCurrentIndex 之后：先切换页面让用户看到响应，
+    // 再执行可能耗时的 refresh（learning-path 重建 28 活动 × 多标签）。
+    // pipeline 的 reloadCurrentStep 也同理延后。
+    if (panelId == QStringLiteral("pipeline") && pipelineViewer_) {
+        pipelineViewer_->reloadCurrentStep();
+    } else if (panelId == QStringLiteral("learning-path") && learningPathPanel_) {
+        learningPathPanel_->refresh();
+    }
+
+    // 轻量过渡动画：新面板从右侧 24px 滑入，替代原 LearningPathPanel 内
+    // fadeInWidget 的 QGraphicsOpacityEffect 方案（后者对 100+ 子 widget 做
+    // 离屏合成，是章节切换卡顿与偶发崩溃的根因）。slideInWidget 仅驱动 pos
+    // 属性，O(1) 复杂度，无 pixmap 合成，适合任意复杂度的教学面板。
+    // 动画时长优化：从 220ms (FADE_DURATION_MS) 降到 150ms (DURATION_MS)，
+    // 对齐 VS Code 面板切换节奏，减少视觉等待。
+    if (QWidget* newPanel = centerStack_->widget(idx)) {
+        PanelAnimator::slideInWidget(newPanel, PanelAnimator::DURATION_MS);
+    }
+
+    // 编辑器栏：若有标签则保持可见（形成三栏），无标签则隐藏
+    if (editorTabWidget_ && editorTabWidget_->count() == 0) {
+        editorTabWidget_->hide();
+    } else if (editorTabWidget_) {
+        editorTabWidget_->show();
+    }
+
+    // 动画：编辑器从右侧滑入，教学区压缩
+    if (editorHasTabs && !editorWasVisible && savedSplitterSizes.size() == 2) {
+        int total = savedSplitterSizes[0] + savedSplitterSizes[1];
+        if (total > 200) {
+            int teachingW = static_cast<int>(total * 0.6);
+            int editorW = total - teachingW;
+            animateCenterSplitter(savedSplitterSizes, {teachingW, editorW});
+        }
     }
 
     // 同步教学树高亮（跨面板跳转时让树节点选中对应项）
@@ -2161,13 +2166,18 @@ void Ide::initUI() {
     });
 
     // Output text edit
+    // R15-3: VSCode 风格输出面板——等宽字体 + Solarized base3 背景
     outputTextEdit_ = new QTextEdit;
     outputTextEdit_->setReadOnly(true);
-    QFont outputFont("Consolas", 10);
-    outputFont.setStyleHint(QFont::Monospace);
-    outputTextEdit_->setFont(outputFont);
+    outputTextEdit_->setFont(GuiTextUtils::monospaceFont(10));
     outputTextEdit_->document()->setMaximumBlockCount(10000);
     outputTextEdit_->setObjectName("outputEdit");
+    // R15-7: 统一背景色为 Solarized base3，避免与周边面板色差割裂
+    QPalette outPal = outputTextEdit_->palette();
+    outPal.setColor(QPalette::Base, QColor(0xFD, 0xF6, 0xE3));  // base3
+    outPal.setColor(QPalette::Text, QColor(0x00, 0x2B, 0x36));  // base03
+    outputTextEdit_->setPalette(outPal);
+    outputTextEdit_->setAutoFillBackground(true);
 
     // Error list
     errorListWidget_ = new QListWidget;
@@ -2201,6 +2211,7 @@ void Ide::initUI() {
 
     // REPL panel
     replPanel_ = new ReplPanel;
+    replPanel_->setObjectName("replPanel");
 
     // Token table (第八轮：列顺序 行号、列号、类型、词素、字面量)
     tokenTable_ = new QTableWidget;
@@ -2254,11 +2265,13 @@ void Ide::initUI() {
 
     // Central stack: welcome page + teaching panels（editorTabWidget_ 移至 centerSplitter_ 独立显示）
     centerStack_ = new QStackedWidget;
+    centerStack_->setObjectName("centerStack");
     centerStack_->addWidget(welcomePage_);  // index 0: 欢迎页
 
     // 任务2：三栏布局 splitter — [centerStack_ (教学/欢迎) | editorTabWidget_ (编辑器)]
     // 教学面板打开时与编辑器并排显示，形成「学习树 | 教学面板 | 代码编辑区」三栏
     centerSplitter_ = new QSplitter(Qt::Horizontal);
+    centerSplitter_->setObjectName("centerSplitter");
     centerSplitter_->addWidget(centerStack_);
     centerSplitter_->addWidget(editorTabWidget_);
     centerSplitter_->setStretchFactor(0, 1);  // 教学面板/欢迎页占比
@@ -2699,6 +2712,12 @@ void Ide::initUI() {
         codeJourneyPanel_ = new CodeJourneyInfoPanel(this);
         connect(codeJourneyPanel_, &CodeJourneyInfoPanel::jumpToPanelRequested,
                 this, &Ide::onJumpToPanel);
+        // 点进面板观看即标记 code-journey 活动完成
+        connect(codeJourneyPanel_, &CodeJourneyInfoPanel::journeyCompleted, this, [this]() {
+            if (learningPathPanel_) {
+                learningPathPanel_->markActivityCompleted(QStringLiteral("code-journey"));
+            }
+        });
         return codeJourneyPanel_;
     });
     registerLazyPanel(QStringLiteral("glossary"), mlTr("术语表"), [this]() {
@@ -2860,7 +2879,12 @@ void Ide::loadCodeIntoMainEditor(const QString& code) {
 
     if (!codeEditor_) {
         // 创建新标签
-        createNewEditorTab(QString(), code);
+        // BUG-R15-6 fix: createNewEditorTab 返回新标签索引但不设置 codeEditor_ 成员，
+        // 导致后续 onRun() 第 4371 行 `if (!codeEditor_) return;` 直接返回，
+        // 表现为「加载代码后点击运行无反应」和「LabManual 触发示例无法运行」。
+        // 必须调用 switchToTab 同步 codeEditor_/highlighter_/currentFilePath_。
+        int newIdx = createNewEditorTab(QString(), code);
+        switchToTab(newIdx);
     } else {
         codeEditor_->setPlainText(code);
         // 标记为未保存
@@ -3345,10 +3369,18 @@ void Ide::applyFluentStyle() {
     }
 
     // ============================================================
-    // Main container / middle area
+    // Main container / middle area / central stack / splitter
+    // R15-7: 补全覆盖 centerStack_、centerSplitter_、welcomePage_、replPanel_、
+    // errorPageContainer、fileTreeContainer 等通用 widget 背景色，消除「部分区域
+    // 未变米黄色」的割裂感。统一使用 Solarized base3 (#FDF6E3) 作为主背景。
     // ============================================================
     for (auto* w : findChildren<QWidget*>()) {
-        if (w->objectName() == "mainContainer" || w->objectName() == "middleArea") {
+        QString name = w->objectName();
+        if (name == "mainContainer" || name == "middleArea" ||
+            name == "centerStack" || name == "centerSplitter" ||
+            name == "welcomePage" || name == "welcomeRecentPanel" ||
+            name == "replPanel" || name == "errorPageContainer" ||
+            name == "fileTreeContainer") {
             w->setStyleSheet(QString("background: %1; border: none;").arg(bgMain));
         }
     }
@@ -3919,8 +3951,16 @@ void Ide::restoreLayout() {
             dockManager_->restoreState(dockState);
         }
     }
-    // 第十一轮：恢复输出面板记忆高度（默认 600px，最小 200px）
-    int savedH = settings.value("layout/bottomPanelHeight", 600).toInt();
+    // 第十一轮：恢复输出面板记忆高度
+    // BUG-R15-6 fix: 默认值从 600 改为 220，与 ide.h 声明一致。
+    // 600px 在常见 800px 高度窗口下会占据 75% 垂直空间，导致编辑器区被挤压，
+    // 表现为「输出面板全屏覆盖」。220px 是 VSCode 默认输出面板高度，合理且不遮挡编辑器。
+    // 对历史已保存的过大值（>500）做一次性迁移，避免老用户继承 600px 配置。
+    int savedH = settings.value("layout/bottomPanelHeight", 220).toInt();
+    if (savedH > 500) {
+        savedH = 220;
+        settings.setValue("layout/bottomPanelHeight", 220);
+    }
     if (savedH >= 200 && savedH <= 1200) bottomPanelHeight_ = savedH;
     QByteArray geometry = settings.value("window/geometry").toByteArray();
     if (!geometry.isEmpty()) restoreGeometry(geometry);
@@ -4110,52 +4150,49 @@ void Ide::showVmButtons(bool show) {
 // ============================================================
 
 void Ide::appendOutput(const QString& text, OutputLevel level) {
-    QString timestamp = QDateTime::currentDateTime().toString("[HH:mm:ss]");
+    // R15-3: VSCode 风格输出——文本级别前缀替代 Unicode 图标，更简洁的终端式排版。
+    //   Plain（用户程序输出）：无前缀无时间戳，纯净正文
+    //   Info/Success/Warning/Error：[HH:mm:ss] [Level] 正文，级别前缀着色
+    // 颜色沿用 Solarized 亮色语义色，与 TeachingTheme 保持一致。
     QString escaped = text.toHtmlEscaped();
 
-    // Inline style constants (QTextEdit HTML does not support <style> blocks)
-    // 注意：这些是亮色主题下的固定语义色，不随主题切换。
-    // 应与 TeachingTheme::info()/success()/warning()/error()/textPrimary()/textSecondary() 保持语义一致；
-    // 未来需要主题感知时，改为运行时拼接 QColor::name() 并替换此处 const char*。
-    static const char* kTs      = "color:#657B83;";  // ≈ TeachingTheme::textSecondary() 亮色值
-    static const char* kInfo    = "color:#268BD2;font-weight:600;";  // = TeachingTheme::info()
-    static const char* kSuccess = "color:#859900;font-weight:600;";  // ≈ TeachingTheme::success()
-    static const char* kWarn    = "color:#B58900;font-weight:600;";  // ≈ TeachingTheme::warning()
-    static const char* kError   = "color:#DC322F;font-weight:600;";  // ≈ TeachingTheme::error()
-    static const char* kBody    = "color:#002B36;";  // ≈ TeachingTheme::textPrimary() 亮色值
-
-    const char* iconChar = "&#x25B6;";  // default ▶
-    const char* iconStyle = kBody;
-    const char* bodyStyle = kBody;
-
-    switch (level) {
-    case OutputLevel::Info:
-        iconChar = "&#x2139;"; iconStyle = kInfo; break;
-    case OutputLevel::Success:
-        iconChar = "&#x2713;"; iconStyle = kSuccess; break;
-    case OutputLevel::Warning:
-        iconChar = "&#x26A0;"; iconStyle = kWarn; bodyStyle = kWarn; break;
-    case OutputLevel::ErrorMsg:
-        iconChar = "&#x2717;"; iconStyle = kError; bodyStyle = kError; break;
-    default:
-        break;
-    }
+    // 亮色主题固定语义色（与 TeachingTheme::xxx() 亮色值一致）
+    static const char* kTs      = "color:#93A1A1;";  // base1 — 次要时间戳
+    static const char* kInfo    = "color:#268BD2;";  // blue
+    static const char* kSuccess = "color:#859900;";  // green
+    static const char* kWarn    = "color:#B58900;";  // yellow
+    static const char* kError   = "color:#DC322F;";  // red
+    static const char* kBody    = "color:#002B36;";  // base03 — 主文本
 
     QString html;
     if (level == OutputLevel::Plain) {
-        html = QString("<p style='margin:2px 0;'>"
-                       "<span style='%1'>%2</span> "
-                       "<span style='%3'>%4</span>"
-                       "</p>")
-                       .arg(kTs, timestamp, kBody, escaped);
+        // 用户程序输出：纯净正文，无前缀无时间戳（对齐 VSCode 终端行为）
+        html = QString("<p style='margin:1px 0;'><span style='%1'>%2</span></p>")
+                       .arg(kBody, escaped);
     } else {
-        html = QString("<p style='margin:2px 0;'>"
+        // 系统消息：时间戳 + 级别前缀 + 正文
+        QString timestamp = QDateTime::currentDateTime().toString("[HH:mm:ss]");
+        QString prefix;
+        const char* prefixStyle = kBody;
+        const char* bodyStyle = kBody;
+        switch (level) {
+        case OutputLevel::Info:
+            prefix = QStringLiteral("[Info]"); prefixStyle = kInfo; break;
+        case OutputLevel::Success:
+            prefix = QStringLiteral("[Done]"); prefixStyle = kSuccess; break;
+        case OutputLevel::Warning:
+            prefix = QStringLiteral("[Warn]"); prefixStyle = kWarn; bodyStyle = kWarn; break;
+        case OutputLevel::ErrorMsg:
+            prefix = QStringLiteral("[Error]"); prefixStyle = kError; bodyStyle = kError; break;
+        default:
+            break;
+        }
+        html = QString("<p style='margin:1px 0;'>"
                        "<span style='%1'>%2</span> "
                        "<span style='%3'>%4</span> "
                        "<span style='%5'>%6</span>"
                        "</p>")
-                       .arg(kTs, timestamp, iconStyle, iconChar,
-                            bodyStyle, escaped);
+                       .arg(kTs, timestamp, prefixStyle, prefix, bodyStyle, escaped);
     }
 
     outputTextEdit_->append(html);
@@ -4841,6 +4878,9 @@ QWidget* Ide::wrapTeachingPanel(const QString& panelId,
     // 「新手引导」按钮 → 启动该面板的 GuidedTour
     connect(header, &TeachingPanelHeader::guidedTourRequested,
             this, &Ide::onPanelGuidedTourRequested);
+    // 「返回编辑器」按钮 → 切回代码编辑区
+    connect(header, &TeachingPanelHeader::returnToEditorRequested,
+            this, &Ide::showEditorArea);
 
     layout->addWidget(panel, 1);
 

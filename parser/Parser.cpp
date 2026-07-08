@@ -983,11 +983,9 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
     if (check(TokenType::TK_LBRACE)) {
         advance();  // 消耗 '{'
         do {
-            // AUDIT-BUG-P5 fix: 允许尾逗号 — 逗号后紧跟 } 则结束
-            if (check(TokenType::TK_RBRACE)) break;
             const Token& name = consume(TokenType::TK_IDENTIFIER, "期望导入名称");
             names.push_back(name.lexeme);
-        } while (match(TokenType::TK_COMMA));
+        } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RBRACE));
         consume(TokenType::TK_RBRACE, "期望 '}'");
         consume(TokenType::TK_FROM, "期望 'from'");
     } else {
@@ -1478,10 +1476,8 @@ std::unique_ptr<ASTNode> Parser::primary() {
         std::vector<std::shared_ptr<ASTNode>> elements;
         if (!check(TokenType::TK_RBRACKET)) {
             do {
-                // L4 fix: 允许尾逗号 — 逗号后紧跟 ] 则结束
-                if (check(TokenType::TK_RBRACKET)) break;
                 elements.push_back(expression());
-            } while (match(TokenType::TK_COMMA));
+            } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RBRACKET));
         }
         consume(TokenType::TK_RBRACKET, "期望 ']' 结束数组字面量");
 
@@ -1497,13 +1493,11 @@ std::unique_ptr<ASTNode> Parser::primary() {
 
         if (!check(TokenType::TK_RBRACE)) {
             do {
-                // L4 fix: 允许尾逗号 — 逗号后紧跟 } 则结束
-                if (check(TokenType::TK_RBRACE)) break;
                 auto key = expression();
                 consume(TokenType::TK_COLON, "期望 ':' 分隔键值对");
                 auto val = expression();
                 pairs.emplace_back(std::move(key), std::move(val));
-            } while (match(TokenType::TK_COMMA));
+            } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RBRACE));
         }
         consume(TokenType::TK_RBRACE, "期望 '}' 结束字典字面量");
 

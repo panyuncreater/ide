@@ -28,8 +28,8 @@ const std::vector<LearningActivity>& LearningPathData::activities() {
             0, {}, 5, ActivityType::TOY, "wave"
         },
         LearningActivity{
-            "code-journey", "🚀 代码生命旅程动画",
-            "📍 一段 30 秒小动画，把 print(1+2*3) 从敲下源码到冒出结果的全过程摊给你看：词法→语法→字节码→执行。",
+            "code-journey", "🚀 代码生命旅程",
+            "📍 一张静态信息图，把 print(1+2*3) 从敲下源码到冒出结果的全过程摊给你看：词法→语法→字节码→执行。点进去看即算完成。",
             0, {}, 5, ActivityType::TOY, "rocket"
         },
         LearningActivity{

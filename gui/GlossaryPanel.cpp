@@ -949,17 +949,18 @@ void GlossaryPanel::onSearchChanged(const QString& text) {
 }
 
 // ============================================================
-// onTermSelected — 列表选中行变化时显示详情并发射 termActivated
+// onTermSelected — 列表选中行变化时仅显示详情
 // ============================================================
-// 注意：termActivated 在选中变化时发射（含列表点击与 term: 链接跳转
-// 触发的 setCurrentRow）。父组件可据此跳转相关面板/ADR。
+// 注意：单击切换术语条目只刷新详情，不发射 termActivated。
+// termActivated 仅在用户明确表达跳转意图时发射（双击列表项 / 点击
+// 详情中的 term: 链接），避免每次切换术语就跳转到关联面板。
+// 修复用户反馈：切换术语条时错误跳转到其他面板。
 
 void GlossaryPanel::onTermSelected(int row) {
     if (row < 0 || row >= entries_.size()) {
         return;
     }
     showDetail(row);
-    emit termActivated(entries_[row].id);
 }
 
 // ============================================================

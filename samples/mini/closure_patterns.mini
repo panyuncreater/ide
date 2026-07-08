@@ -1,12 +1,15 @@
 // 闭包模式集锦：配合「闭包检查器面板」学习
+// 语法约束：MiniLang 不支持匿名函数表达式 fun(){...}，须用命名函数 fun name(){...}
+// 后以函数名作为一等公民返回/传递。
 
 // 1. 计数器模式（私有状态）
 fun makeCounter() {
     var count = 0;
-    return fun() {
+    fun increment() {
         count = count + 1;
         return count;
-    };
+    }
+    return increment;
 }
 var counter = makeCounter();
 print(counter());      // 1
@@ -15,7 +18,8 @@ print(counter());      // 3
 
 // 2. 函数工厂
 fun multiplier(factor) {
-    return fun(x) { return x * factor; };
+    fun closure(x) { return x * factor; }
+    return closure;
 }
 var triple = multiplier(3);
 print(triple(7));      // 21
@@ -23,7 +27,8 @@ print(triple(7));      // 21
 // 3. 循环中的闭包陷阱
 var fns = [];
 for (var i = 0; i < 3; i = i + 1) {
-    fns.push(fun() { return i; });
+    fun getter() { return i; }
+    fns.push(getter);
 }
 // 所有闭包共享同一个 i，输出都是 3
 print(fns[0]());       // 3

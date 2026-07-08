@@ -5,7 +5,7 @@
 // ------------------------------------------------------------
 // 解决问题：教学面板无说明、无引导，新手点进来不知道是什么。
 // 每个教学面板顶部使用此组件：
-//   [标题]  [这是什么？]  [跳转学习路径]
+//   [标题]  [这是什么？]  [新手引导]  [学习路径]  [返回编辑器]
 //
 // 「这是什么？」按钮弹出对话框，包含：
 //   - 面板用途（1-2 句话）
@@ -13,6 +13,7 @@
 //   - 关联概念
 //
 // 「跳转学习路径」按钮发 learningPathRequested 信号，由 Ide slot 路由
+// 「返回编辑器」按钮发 returnToEditorRequested 信号，切回代码编辑区
 // ============================================================
 
 #include <QWidget>
@@ -44,6 +45,9 @@ signals:
     /// 用户点击「新手引导」按钮，panelId 标识发起的面板
     void guidedTourRequested(const QString& panelId);
 
+    /// 用户点击「返回编辑器」按钮，切回代码编辑区
+    void returnToEditorRequested();
+
 private:
     QString panelId_;
     QString title_;
@@ -51,6 +55,7 @@ private:
     QPushButton* helpBtn_ = nullptr;
     QPushButton* tourBtn_ = nullptr;          // 「新手引导」按钮
     QPushButton* learningPathBtn_ = nullptr;
+    QPushButton* backBtn_ = nullptr;          // 「返回编辑器」按钮
 
     void showHelpDialog();
 

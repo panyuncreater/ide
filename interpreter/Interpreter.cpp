@@ -68,12 +68,43 @@ Value Interpreter::execute(Block& program) {
     // BUG-INT-1 fix: 若 REPL 状态已保存（saveReplState），其 savedGlobalEnv 中的
     // 循环引用容器仍在 aliveSet_ 中存活。传入空根集会误清空这些容器的子元素，
     // 导致 restoreReplState 后 REPL 变量损坏。必须将 savedGlobalEnv 中的容器作为根集传入。
+    // AUDIT-P1 fix: 原 GC roots 仅遍历 savedGlobalEnv，遗漏 savedClassRegistry.fields
+    // 和 savedModuleCache。类字段默认值（如 var data = [1,2,3]）和模块顶层变量
+    // 可能持有堆对象引用，若不作为根集传入，GC 会误判为循环引用孤岛并清空 elements，
+    // 导致 restoreReplState 后类字段默认值丢失、模块变量变成空容器。
     std::vector<const void*> gcRoots;
-    if (replState_.active && replState_.savedGlobalEnv) {
-        auto vars = replState_.savedGlobalEnv->snapshotLocalVariables();
-        for (const auto& var : vars) {
-            const void* ptr = var.second.gcRootPtr();
-            if (ptr) gcRoots.push_back(ptr);
+    if (replState_.active) {
+        // (1) savedGlobalEnv 顶层变量
+        if (replState_.savedGlobalEnv) {
+            auto vars = replState_.savedGlobalEnv->snapshotLocalVariables();
+            for (const auto& var : vars) {
+                const void* ptr = var.second.gcRootPtr();
+                if (ptr) gcRoots.push_back(ptr);
+            }
+        }
+        // (2) savedClassRegistry 中每个 ClassInfo.fields 的默认值 + closureEnv
+        for (const auto& clsPair : replState_.savedClassRegistry) {
+            for (const auto& fldPair : clsPair.second.fields) {
+                const void* ptr = fldPair.second.gcRootPtr();
+                if (ptr) gcRoots.push_back(ptr);
+            }
+            if (clsPair.second.closureEnv) {
+                auto clsVars = clsPair.second.closureEnv->snapshotLocalVariables();
+                for (const auto& var : clsVars) {
+                    const void* ptr = var.second.gcRootPtr();
+                    if (ptr) gcRoots.push_back(ptr);
+                }
+            }
+        }
+        // (3) savedModuleCache 中每个 Environment 的顶层变量
+        for (const auto& modPair : replState_.savedModuleCache) {
+            if (modPair.second) {
+                auto modVars = modPair.second->snapshotLocalVariables();
+                for (const auto& var : modVars) {
+                    const void* ptr = var.second.gcRootPtr();
+                    if (ptr) gcRoots.push_back(ptr);
+                }
+            }
         }
     }
     GcManager::instance().collectCycle(gcRoots);
@@ -246,6 +277,12 @@ void Interpreter::setDebugMode(bool enabled) {
 
 Environment* Interpreter::currentEnvironment() const {
     return currentEnv_.get();
+}
+
+std::shared_ptr<Environment> Interpreter::currentEnvironmentShared() const {
+    // AUDIT-P1 fix: 返回 shared_ptr 副本，延长 Environment 生命周期，
+    // 供跨线程调用方（如 DebugCoordinator 的 variableCallback）安全持有。
+    return currentEnv_;
 }
 
 const std::vector<CallFrame>& Interpreter::getCallStack() const {
