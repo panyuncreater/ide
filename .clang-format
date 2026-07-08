@@ -25,8 +25,3 @@ FixNamespaceComments: true
 IncludeBlocks: Preserve
 SortIncludes: CaseSensitive
 ReflowComments: true
----
-Language: CMake
-IndentWidth: 2
-TabWidth: 2
-ColumnLimit: 100

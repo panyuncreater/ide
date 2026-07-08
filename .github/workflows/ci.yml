@@ -26,15 +26,18 @@ on:
   workflow_dispatch:
     inputs:
       qt_version:
-        description: 'Qt version (override default, e.g. 6.10.2, 6.9.3)'
+        description: 'Qt version (override default, e.g. 6.8.3, 6.9.3)'
         required: false
         default: ''
 
 env:
   CMAKE_BUILD_TYPE: Release
-  # Qt 6.10.3 在线仓库暂缺 qt_base 包，回退到 6.10.2。
+  # Qt 6.10.x 在 Linux 上的包结构已变更，aqtinstall 3.3.0（最新版）无法识别，
+  # 报 "qt_base not found" 错误。回退到 6.8.3 LTS（稳定且完全兼容）。
   # 可通过 Actions → Run workflow → qt_version 手动覆盖。
-  QT_VERSION: ${{ inputs.qt_version != '' && inputs.qt_version || '6.10.2' }}
+  QT_VERSION: ${{ inputs.qt_version != '' && inputs.qt_version || '6.8.3' }}
+  # 消除 macOS Homebrew 的 aws/tap 不受信任警告（ccache-action 内部 brew install 触发）
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
 
 jobs:
   # ============================================================
@@ -72,7 +75,7 @@ jobs:
 
       # 修复问题 17：ccache + GHA cache 加速构建
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: ${{ matrix.os }}-${{ env.CMAKE_BUILD_TYPE }}-${{ matrix.arch }}
 
@@ -224,17 +227,17 @@ jobs:
           submodules: recursive
 
       - name: 构建 Docker 镜像（builder 阶段）
-        run: docker build --target builder -t minilang-builder .
+        run: docker build --build-arg QT_VERSION=${{ env.QT_VERSION }} --target builder -t minilang-builder .
 
       - name: 验证构建产物
         run: |
           docker run --rm minilang-builder ls -la /app/out/build/linux-release/minilang_ide
 
       - name: 构建 Docker 镜像（dev 阶段）
-        run: docker build --target dev -t minilang-dev .
+        run: docker build --build-arg QT_VERSION=${{ env.QT_VERSION }} --target dev -t minilang-dev .
 
       - name: Docker Compose 构建验证
-        run: docker compose build build
+        run: QT_VERSION=${{ env.QT_VERSION }} docker compose build build
 
   # ============================================================
   # 作业 2：代码覆盖率 — Windows（Debug + OpenCppCoverage）
@@ -271,7 +274,7 @@ jobs:
         run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: ${{ runner.os }}-Debug
 
@@ -305,7 +308,7 @@ jobs:
 
       - name: 上传覆盖率到 Codecov（趋势追踪）
         if: always()
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: out/build/debug/coverage.xml
           fail_ci_if_error: false
@@ -342,7 +345,7 @@ jobs:
         run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: ${{ runner.os }}-Debug-coverage
 
@@ -387,7 +390,7 @@ jobs:
 
       - name: 上传覆盖率到 Codecov
         if: always()
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
           fail_ci_if_error: false
@@ -409,7 +412,7 @@ jobs:
           submodules: recursive
 
       - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: ${{ runner.os }}-harness
 
