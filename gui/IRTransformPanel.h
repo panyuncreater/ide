@@ -97,6 +97,7 @@ public:
 
 signals:
     void loadSampleRequested(const QString& code);
+    void sourceLineRequested(int line);
 
 private:
     IdeController* controller_ = nullptr;

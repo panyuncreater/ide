@@ -400,7 +400,11 @@ void DebugController::resume() {
 void DebugController::stop() {
     LOG_DEBUG("Stop", "Debugger");
     stopped_ = true;
-    running_ = false;  // DBG-02 fix: 重置 running_ 以便下次启动时能正确初始化步进模式
+    // AUDIT-P1 fix: 不再在此重置 running_。原 DBG-02 fix 设 running_=false 以便下次启动，
+    // 但 checkBreak() 行 33 `if (!running_) return;` 在 stopped_=false 而 running_=false 时
+    // 会静默 return 而非 throw DebugStopException，导致 worker 不抛中止异常继续执行下一条语句，
+    // UI 状态机不一致。running_ 的重置已由 reset() 行 472 和 prepareRun 系列（行 350/365/380/393）
+    // 负责，无需在 stop() 中重复设置。stop() 后 checkBreak 行 29-30 优先检查 stopped_ 抛异常。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         paused_ = false;

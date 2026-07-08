@@ -26,23 +26,34 @@
 #include <gtest/gtest.h>
 #include "gui/MarkdownRenderer.h"
 #include <QString>
+#include <QRegularExpression>
 #include <string>
+
+// P2-2 fix (F3): 标题渲染现在带 id="anchor" 属性用于章节锚点跳转。
+// 辅助函数：匹配 <hN ...>text</hN>，其中开标签可含 id 属性。
+static bool headingMatches(const QString& html, int level, const QString& text) {
+    QRegularExpression re(
+        QStringLiteral("<h%1(?:\\s+[^>]*)?>%2</h%1>")
+            .arg(level)
+            .arg(QRegularExpression::escape(text)));
+    return re.match(html).hasMatch();
+}
 
 // ---- 1. 标题 ----
 
 TEST(MarkdownRendererAudit, Heading1) {
     QString html = MarkdownRenderer::markdownToHtml(QString("# 标题一"));
-    EXPECT_TRUE(html.contains("<h1>标题一</h1>")) << html.toStdString();
+    EXPECT_TRUE(headingMatches(html, 1, QStringLiteral("标题一"))) << html.toStdString();
 }
 
 TEST(MarkdownRendererAudit, Heading2) {
     QString html = MarkdownRenderer::markdownToHtml(QString("## 标题二"));
-    EXPECT_TRUE(html.contains("<h2>标题二</h2>")) << html.toStdString();
+    EXPECT_TRUE(headingMatches(html, 2, QStringLiteral("标题二"))) << html.toStdString();
 }
 
 TEST(MarkdownRendererAudit, Heading3) {
     QString html = MarkdownRenderer::markdownToHtml(QString("### 标题三"));
-    EXPECT_TRUE(html.contains("<h3>标题三</h3>")) << html.toStdString();
+    EXPECT_TRUE(headingMatches(html, 3, QStringLiteral("标题三"))) << html.toStdString();
 }
 
 // ---- 2. 粗体 ----
@@ -182,7 +193,7 @@ TEST(MarkdownRendererAudit, EmptyInput) {
 TEST(MarkdownRendererAudit, StdStringOverload) {
     std::string md = "## 标题";
     QString html = MarkdownRenderer::markdownToHtml(md);
-    EXPECT_TRUE(html.contains("<h2>标题</h2>")) << html.toStdString();
+    EXPECT_TRUE(headingMatches(html, 2, QStringLiteral("标题"))) << html.toStdString();
 }
 
 // ---- 15. 复合：标题 + 列表 + 代码块（LabManual 真实片段） ----
@@ -198,8 +209,8 @@ TEST(MarkdownRendererAudit, CompositeLabManualSnippet) {
         "---\n\n"
         "✅ 完成");
     QString html = MarkdownRenderer::markdownToHtml(md);
-    EXPECT_TRUE(html.contains("<h1>实验 1")) << html.toStdString();
-    EXPECT_TRUE(html.contains("<h2>关键概念</h2>")) << html.toStdString();
+    EXPECT_TRUE(html.contains(QRegularExpression(QStringLiteral("<h1[^>]*>实验 1")))) << html.toStdString();
+    EXPECT_TRUE(headingMatches(html, 2, QStringLiteral("关键概念"))) << html.toStdString();
     EXPECT_TRUE(html.contains("<b>Token 类型</b>")) << html.toStdString();
     EXPECT_TRUE(html.contains("<ul>")) << html.toStdString();
     EXPECT_TRUE(html.contains("<pre")) << html.toStdString();
@@ -248,7 +259,7 @@ TEST(MarkdownRendererAudit, FragmentStripsWrapper) {
     QString md = QString("# 标题\n\n段落");
     QString fragment = MarkdownRenderer::markdownToHtmlFragment(md);
     EXPECT_FALSE(fragment.startsWith("<html>")) << fragment.toStdString();
-    EXPECT_TRUE(fragment.contains("<h1>标题</h1>")) << fragment.toStdString();
+    EXPECT_TRUE(headingMatches(fragment, 1, QStringLiteral("标题"))) << fragment.toStdString();
     EXPECT_TRUE(fragment.contains("<p>段落</p>")) << fragment.toStdString();
 }
 

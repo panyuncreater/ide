@@ -127,6 +127,7 @@ private:
     std::vector<std::string> localSlotNames_;
     std::unordered_map<std::string, std::string> varTypes_;  // 2026-06-29: 变量名→类型注解（local+global）
     bool inFunction_ = false;                       // 是否在函数体内
+    std::string currentFunctionReturnType_;          // BUG-TYPE-1 fix: 当前函数返回类型注解（empty 表示无注解）
     std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;  // 类名 → 字段名列表（含继承字段）
     std::unordered_map<std::string, int> outerLocals_;  // 外层函数的局部变量（用于检测闭包捕获）
     // VM-05/06: 闭包 upvalue 编译期追踪
@@ -208,6 +209,7 @@ private:
         std::unordered_map<std::string, int> currentUpvalueNames;
         std::vector<LoopContext> loopStack;
         int tryDepth = 0;
+        std::string currentFunctionReturnType;  // BUG-TYPE-1 fix: 当前函数返回类型注解
     };
 
     /// 保存当前编译上下文（move 语义，调用后成员变量处于 moved-from 状态）

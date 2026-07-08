@@ -1,7 +1,7 @@
 // ============================================================
 // WelcomeWizard.cpp — 首次启动欢迎向导实现（功能 1）
 // ------------------------------------------------------------
-// 3 步交互式导览，纯前端模拟（不调用 IdeController / 引擎层）。
+// 4 步交互式导览，纯前端模拟（不调用 IdeController / 引擎层）。
 // 所有用户可见文本用 mlTr() 包裹。
 // ============================================================
 
@@ -40,7 +40,9 @@ WelcomeWizard::WelcomeWizard(QWidget* parent)
     // 索引： p(0)r(1)i(2)n(3)t(4) ((5) "(6)H(7)e(8)l(9)l(10)o(11)!(12)"(13) )(14) ;(15)
     tokenSpans_ = {
         {0, 5},     // print
+        {5, 6},     // (  （左括号：函数调用起始）
         {6, 14},    // "Hello!"  （含引号，8 字符）
+        {14, 15},   // )  （右括号：函数调用结束）
         {15, 16},   // ;
     };
 
@@ -164,7 +166,7 @@ void WelcomeWizard::buildStep2() {
     layout->setSpacing(8);
 
     auto* hintLabel = new QLabel(
-        mlTr("① 你写的代码被切成了 3 个 Token —— 这就是「词法分析」\n"
+        mlTr("① 你写的代码被切成了 5 个 Token —— 这就是「词法分析」\n"
              "点击右侧任意一行 Token，左侧代码对应字符会高亮。"), page);
     hintLabel->setWordWrap(true);
     hintLabel->setStyleSheet(QString(
@@ -197,7 +199,7 @@ void WelcomeWizard::buildStep2() {
     auto* tokenBox = new QGroupBox(mlTr("Token 表（词法分析结果）"), splitter);
     auto* tokenLayout = new QVBoxLayout(tokenBox);
     tokenLayout->setContentsMargins(6, 6, 6, 6);
-    tokenTable_ = new QTableWidget(3, 3, tokenBox);
+    tokenTable_ = new QTableWidget(5, 3, tokenBox);
     tokenTable_->setHorizontalHeaderLabels(
         QStringList() << mlTr("Token") << mlTr("类型") << mlTr("说明"));
     tokenTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
@@ -208,14 +210,16 @@ void WelcomeWizard::buildStep2() {
     tokenTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     tokenTable_->setSelectionMode(QAbstractItemView::SingleSelection);
 
-    // 3 行 Token 数据
+    // 5 行 Token 数据
     struct TokenRow { const char* lexeme; const char* type; const char* desc; };
     const TokenRow rows[] = {
         { "print",      "IDENTIFIER", "标识符：函数名" },
+        { "(",          "LPAREN",     "左括号：函数调用起始" },
         { "\"Hello!\"", "STRING",     "字符串字面量（含引号整体）" },
+        { ")",          "RPAREN",     "右括号：函数调用结束" },
         { ";",          "SEMICOLON",  "分号：语句结束符" },
     };
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 5; ++i) {
         tokenTable_->setItem(i, 0, new QTableWidgetItem(QString::fromLatin1(rows[i].lexeme)));
         tokenTable_->setItem(i, 1, new QTableWidgetItem(QString::fromLatin1(rows[i].type)));
         tokenTable_->setItem(i, 2, new QTableWidgetItem(mlTr(rows[i].desc)));
@@ -429,7 +433,7 @@ void WelcomeWizard::goToStep(int index) {
 void WelcomeWizard::updateStepIndicator() {
     int idx = pages_->currentIndex();
     stepIndicator_->setText(
-        mlTr("步骤 %1 / %3").arg(idx + 1).arg(pages_->count()));
+        mlTr("步骤 %1 / %2").arg(idx + 1).arg(pages_->count()));
 }
 
 void WelcomeWizard::updateNavButtons() {
@@ -485,10 +489,6 @@ void WelcomeWizard::onPrevStep() {
     if (idx > 0) goToStep(idx - 1);
 }
 
-void WelcomeWizard::onFinish() {
-    completed_ = true;
-    accept();
-}
 
 // ============================================================
 // Step 2：Token 行点击 → 高亮源码

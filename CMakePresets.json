@@ -153,6 +153,22 @@
         "lhs": "${hostSystemName}",
         "rhs": "Darwin"
       }
+    },
+    {
+      "name": "linux-gcc-coverage",
+      "displayName": "Linux GCC Debug + Coverage",
+      "description": "GCC + Ninja Debug 构建，启用 --coverage 插桩（CI 覆盖率，修复审计问题 2）",
+      "inherits": "linux-gcc-debug",
+      "binaryDir": "${sourceDir}/out/build/linux-coverage",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS": "--coverage",
+        "CMAKE_EXE_LINKER_FLAGS": "--coverage"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
     }
   ],
   "testPresets": [
@@ -219,6 +235,18 @@
     {
       "name": "macos-clang-release",
       "configurePreset": "macos-clang-release",
+      "output": {
+        "outputOnFailure": true,
+        "verbosity": "default"
+      },
+      "execution": {
+        "jobs": 4,
+        "timeout": 300
+      }
+    },
+    {
+      "name": "linux-gcc-coverage",
+      "configurePreset": "linux-gcc-coverage",
       "output": {
         "outputOnFailure": true,
         "verbosity": "default"

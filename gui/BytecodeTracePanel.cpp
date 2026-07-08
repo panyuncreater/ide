@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "gui/BytecodeTracePanel.h"
+#include "gui/GuidedTour.h"
 #include "gui/PanelAnimator.h"
 #include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
@@ -112,7 +113,7 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
             "OP_CLOSURE", "closure",
             "nameIdx(2B) + upvalueCount(1B)", "pop N / push 1",
             "📦 创建闭包值：从栈顶弹出 N 个 upvalue（每个为 isLocal+index 编码）+ 函数名，构造 ClosureData。",
-            "fun outer() { var x = 1; return fun() { return x; }; }"
+            "fun outer() { var x = 1; fun inner() { return x; } return inner; }"
         },
         OpCodeDocEntry{
             "OP_GET_UPVALUE", "closure",
@@ -165,15 +166,24 @@ BytecodeTracePanel::BytecodeTracePanel(QWidget* parent) : QWidget(parent) {
     stack_->addWidget(libraryPage);
     outer->addWidget(stack_, 1);
 
-    connect(pageTraceBtn_,   &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
-    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageTraceBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
+    connect(pageTraceBtn_,   &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::slideInWidget(stack_->currentWidget()); });
+    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageTraceBtn_->setChecked(false); PanelAnimator::slideInWidget(stack_->currentWidget()); });
 
-    // 自动捕获通过轮询定时器实现（500ms 间隔，VM 暂停时由用户手动按"立即捕获"按钮或开启自动）
+    // OPT-1: 自动捕获改为 vmStateChanged 监听器即时触发（见 setController）。
+    // QTimer 降级为 2000ms 安全网，覆盖监听器未触达的边角场景。
     autoTimer_ = new QTimer(this);
-    autoTimer_->setInterval(500);
+    autoTimer_->setInterval(2000);
     connect(autoTimer_, &QTimer::timeout, this, &BytecodeTracePanel::onCaptureNow);
 
     populateDocs();
+}
+
+void BytecodeTracePanel::setController(IdeController* controller) {
+    if (controller_ == controller) return;
+    controller_ = controller;
+    if (controller_) {
+        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+    }
 }
 
 void BytecodeTracePanel::buildTracePage(QWidget* host) {
@@ -375,6 +385,11 @@ void BytecodeTracePanel::onTraceRowSelected() {
      .arg(e.frameCount)
      .arg(stackHtml);
     stackDetail_->setHtml(html);
+
+    // Emit source line for editor highlighting
+    if (e.line > 0) {
+        emit sourceLineRequested(e.line);
+    }
 }
 
 void BytecodeTracePanel::populateDocs() {
@@ -424,4 +439,28 @@ void BytecodeTracePanel::onLoadDocCode() {
     }
     const auto& d = BytecodeTraceLibrary::opCodeDocs()[currentDocIdx_];
     emit loadSampleRequested(QString::fromUtf8(d.exampleCode.c_str()));
+}
+
+// ============================================================
+// createGuidedTour — 新手引导（5 步）
+// ============================================================
+
+GuidedTour* BytecodeTracePanel::createGuidedTour(QWidget* host) {
+    auto* tour = new GuidedTour(host, host);
+    tour->addStep(pageTraceBtn_,
+                  QString::fromUtf8("执行轨迹"),
+                  QString::fromUtf8("这里显示每条字节码指令执行后的栈状态快照。"));
+    tour->addStep(autoCaptureCheck_,
+                  QString::fromUtf8("自动捕获"),
+                  QString::fromUtf8("勾选后，VM 暂停时会自动捕获一条轨迹，无需手动点击。"));
+    tour->addStep(traceTable_,
+                  QString::fromUtf8("轨迹表"),
+                  QString::fromUtf8("每行一条指令记录，包含 IP / OpCode / 栈快照。点击某行可定位到对应源码行。"));
+    tour->addStep(pageLibraryBtn_,
+                  QString::fromUtf8("OpCode 教学库"),
+                  QString::fromUtf8("切换到 OpCode 参考库，查看每条指令的语义说明与样例代码。"));
+    tour->addStep(loadCodeBtn_,
+                  QString::fromUtf8("加载样例"),
+                  QString::fromUtf8("点击可将当前 OpCode 的示例代码加载到主编辑器，方便直接运行观察。"));
+    return tour;
 }

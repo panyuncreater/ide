@@ -16,6 +16,11 @@
 //   - 水平分割线：--- / ***（单独成行）
 //   - 段落：空行分隔
 //
+// P2-2 fix (F3/F4) 增强：
+//   - 标题生成 anchor id（slug），支持章节锚点目录跳转
+//   - 围栏代码块 ```minilang / ```ml / ```mlang 触发 MiniLang 语法高亮
+//     （关键字/字符串/注释/数字着色，基于简单正则，不调用真实 Lexer）
+//
 // CSS 样式注入：输出 HTML 包含 <style> 块，让标题/列表/代码块/表格/引用块
 // 有美观的视觉效果（颜色、间距、圆角、边框等），无需调用方额外加样式。
 // ============================================================
@@ -36,6 +41,8 @@ namespace MarkdownRenderer {
 static const QRegularExpression kReInlineCode(QStringLiteral("`([^`]+)`"));
 static const QRegularExpression kReBold(QStringLiteral("\\*\\*([^*]+)\\*\\*"));
 static const QRegularExpression kReItalic(QStringLiteral("(?<!\\*)\\*([^*]+)\\*(?!\\*)"));
+// P1-4 fix (F16): 行内链接 [text](url) — 支持 panel: 协议跳转教学面板
+static const QRegularExpression kReLink(QStringLiteral("\\[([^\\]]+)\\]\\(([^)]+)\\)"));
 static const QRegularExpression kReHeading(QStringLiteral("^(#{1,6})\\s+(.+)$"));
 static const QRegularExpression kReUnorderedList(QStringLiteral("^[-*]\\s+(.+)$"));
 static const QRegularExpression kReOrderedList(QStringLiteral("^\\d+\\.\\s+(.+)$"));
@@ -45,6 +52,71 @@ static const QRegularExpression kReTaskList(QStringLiteral("^[-*]\\s+\\[([ xX])\
 static const QRegularExpression kReBlockquote(QStringLiteral("^>\\s?(.*)$"));
 // 表格行：| cell | cell |
 static const QRegularExpression kReTableRow(QStringLiteral("^\\|(.+)\\|$"));
+
+// P2-2 fix (F4): MiniLang 语法高亮正则
+// 关键字列表（与 lexer/Keywords.cpp 保持一致，按字母序，便于审阅）
+static const QStringList kMiniLangKeywords = {
+    QStringLiteral("var"), QStringLiteral("const"), QStringLiteral("fun"), QStringLiteral("return"),
+    QStringLiteral("if"), QStringLiteral("else"), QStringLiteral("while"), QStringLiteral("for"),
+    QStringLiteral("break"), QStringLiteral("continue"), QStringLiteral("true"), QStringLiteral("false"),
+    QStringLiteral("null"), QStringLiteral("and"), QStringLiteral("or"), QStringLiteral("not"),
+    QStringLiteral("print"), QStringLiteral("input"), QStringLiteral("class"), QStringLiteral("super"),
+    QStringLiteral("this"), QStringLiteral("init"), QStringLiteral("try"), QStringLiteral("catch"),
+    QStringLiteral("finally"), QStringLiteral("throw"), QStringLiteral("import"), QStringLiteral("export"),
+    QStringLiteral("as"), QStringLiteral("in"), QStringLiteral("is")
+};
+// 字符串字面量："..." 或 '...'
+static const QRegularExpression kReMlString(QStringLiteral("\"([^\"\\\\]|\\\\.)*\"|'([^'\\\\]|\\\\.)*'"));
+// 行注释 // ...（保留到行尾）
+static const QRegularExpression kReMlLineComment(QStringLiteral("//[^\\n]*"));
+// 块注释 /* ... */（含换行，非贪婪）
+static const QRegularExpression kReMlBlockComment(QStringLiteral("/\\*[\\s\\S]*?\\*/"));
+// 数字字面量（整数 / 浮点 / 0x 十六进制）
+static const QRegularExpression kReMlNumber(QStringLiteral("\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?\\b|0x[0-9a-fA-F]+"));
+
+/// P2-2 fix (F3): 把标题文本转为 HTML anchor id（slug）
+/// 规则：非字母数字字符 → 连字符；保留中文；小写；去首尾连字符
+static QString slugify(const QString& text) {
+    QString slug;
+    for (const QChar& c : text) {
+        if (c.isLetterOrNumber()) {
+            slug += c.toLower();
+        } else if (c == '_' || c == '-' || c.isSpace()) {
+            if (!slug.isEmpty() && !slug.endsWith('-')) slug += '-';
+        }
+        // 其他字符忽略
+    }
+    while (slug.startsWith('-')) slug.remove(0, 1);
+    while (slug.endsWith('-')) slug.chop(1);
+    return slug;
+}
+
+/// P2-2 fix (F4): 对 MiniLang 代码做简单语法高亮
+/// 输入应已 escapeHtml 转义过。基于正则顺序替换：注释 > 字符串 > 关键字 > 数字
+/// 用 <span class="..."> 包裹，CSS 类定义在 buildStylesheet 中
+static QString highlightMiniLang(const QString& escapedCode) {
+    QString result = escapedCode;
+
+    // 1. 注释（先处理，避免注释内的关键字/字符串被误高亮）
+    // 块注释 /* */
+    result.replace(kReMlBlockComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
+    // 行注释 //...
+    result.replace(kReMlLineComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
+
+    // 2. 字符串
+    result.replace(kReMlString, QStringLiteral("<span class=\"ml-string\">\\0</span>"));
+
+    // 3. 关键字（用 \b 边界避免误命中标识符子串）
+    for (const QString& kw : kMiniLangKeywords) {
+        QRegularExpression re(QStringLiteral("\\b%1\\b").arg(kw));
+        result.replace(re, QStringLiteral("<span class=\"ml-keyword\">%1</span>").arg(kw));
+    }
+
+    // 4. 数字
+    result.replace(kReMlNumber, QStringLiteral("<span class=\"ml-number\">\\0</span>"));
+
+    return result;
+}
 
 /// 检测表格分隔行：行只包含 | - : 空白，且至少有一个 -
 /// 避免使用字符类正则（[\s:-|] 中的 - 会被解释为范围）
@@ -81,7 +153,23 @@ static QString renderInline(const QString& s) {
     out.replace(kReBold, QStringLiteral("<b>\\1</b>"));
     // 斜体 *text*（避免与粗体冲突，要求 * 两侧非 *）
     out.replace(kReItalic, QStringLiteral("<i>\\1</i>"));
-    return out;
+    // P1-4 fix (F16): 行内链接 [text](url) — 最后处理，避免 code/bold/italic
+    // 内的方括号被误匹配。url 中的 & 已被 escapeHtml 转成 &amp;，
+    // 需在嵌入 href 时反转回来（HTML 属性值中 &amp; 合法但 QTextBrowser
+    // 解析 href 时会再次 unescape，导致 &amp;amp; 双重转义）。
+    QRegularExpressionMatch it;
+    int pos = 0;
+    QString result;
+    while ((it = kReLink.match(out, pos)).hasMatch()) {
+        result += out.mid(pos, it.capturedStart() - pos);
+        QString text = it.captured(1);
+        QString url = it.captured(2);
+        url.replace(QStringLiteral("&amp;"), QStringLiteral("&"));
+        result += QStringLiteral("<a href=\"%1\">%2</a>").arg(url, text);
+        pos = it.capturedEnd();
+    }
+    result += out.mid(pos);
+    return result;
 }
 
 /// 生成嵌入 HTML 的 <style> 块，让 Markdown 输出有美观的视觉效果。
@@ -89,33 +177,45 @@ static QString renderInline(const QString& s) {
 static QString buildStylesheet(const QString& codeBlockBg) {
     static const QString kStylesheet = QStringLiteral(R"(
         <style>
-        body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 14px; color: #1e1e1e; line-height: 1.6; }
-        h1 { font-size: 22px; color: #0078d4; border-bottom: 2px solid #e5e5e5; padding-bottom: 6px; margin: 16px 0 10px; font-weight: 600; }
-        h2 { font-size: 18px; color: #0078d4; border-bottom: 1px solid #e5e5e5; padding-bottom: 4px; margin: 14px 0 8px; font-weight: 600; }
+        body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 14px; color: #002B36; line-height: 1.6; }
+        h1 { font-size: 22px; color: #268BD2; border-bottom: 2px solid #93A1A1; padding-bottom: 6px; margin: 16px 0 10px; font-weight: 600; }
+        h2 { font-size: 18px; color: #0078d4; border-bottom: 1px solid #93A1A1; padding-bottom: 4px; margin: 14px 0 8px; font-weight: 600; }
         h3 { font-size: 16px; color: #0078d4; margin: 12px 0 6px; font-weight: 600; }
-        h4 { font-size: 14px; color: #1e1e1e; margin: 10px 0 4px; font-weight: 600; }
-        h5, h6 { font-size: 13px; color: #5a5a5a; margin: 8px 0 4px; font-weight: 600; }
+        h4 { font-size: 14px; color: #073642; margin: 10px 0 4px; font-weight: 600; }
+        h5, h6 { font-size: 13px; color: #586E75; margin: 8px 0 4px; font-weight: 600; }
         p { margin: 6px 0; }
         ul, ol { margin: 6px 0; padding-left: 24px; }
         li { margin: 3px 0; }
-        code { background: #f3f3f3; color: #c7254e; padding: 2px 5px; border-radius: 3px; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
-        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid #e5e5e5; font-family: Consolas, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
-        pre code { background: transparent; color: #1e1e1e; padding: 0; border-radius: 0; font-size: 13px; }
-        blockquote { border-left: 4px solid #0078d4; background: #f8f9fa; padding: 8px 12px; margin: 8px 0; color: #5a5a5a; border-radius: 0 4px 4px 0; }
+        code { background: #EEE8D5; color: #DC322F; padding: 2px 5px; border-radius: 3px; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
+        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid #93A1A1; font-family: Consolas, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
+        pre code { background: transparent; color: #002B36; padding: 0; border-radius: 0; font-size: 13px; }
+        blockquote { border-left: 4px solid #268BD2; background: #EEE8D5; padding: 8px 12px; margin: 8px 0; color: #586E75; border-radius: 0 4px 4px 0; }
         blockquote p { margin: 4px 0; }
-        hr { border: none; border-top: 1px solid #e5e5e5; margin: 12px 0; }
+        hr { border: none; border-top: 1px solid #93A1A1; margin: 12px 0; }
         table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
-        th { background: #f3f3f3; border: 1px solid #e5e5e5; padding: 6px 10px; text-align: left; font-weight: 600; color: #1e1e1e; }
-        td { border: 1px solid #e5e5e5; padding: 6px 10px; vertical-align: top; }
-        tr:nth-child(even) td { background: #fafafa; }
+        th { background: #EEE8D5; border: 1px solid #93A1A1; padding: 6px 10px; text-align: left; font-weight: 600; color: #002B36; }
+        td { border: 1px solid #93A1A1; padding: 6px 10px; vertical-align: top; }
+        tr:nth-child(even) td { background: #FDF6E3; }
         .task-list-item { list-style: none; margin-left: -18px; }
-        .task-checkbox { display: inline-block; width: 14px; height: 14px; border: 1.5px solid #999; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
-        .task-checkbox.checked { background: #107d58; border-color: #107d58; color: white; text-align: center; font-size: 10px; line-height: 14px; }
-        b, strong { color: #1e1e1e; font-weight: 600; }
-        i, em { color: #5a5a5a; }
+        .task-checkbox { display: inline-block; width: 14px; height: 14px; border: 1.5px solid #657B83; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+        .task-checkbox.checked { background: #859900; border-color: #859900; color: white; text-align: center; font-size: 10px; line-height: 14px; }
+        b, strong { color: #002B36; font-weight: 600; }
+        i, em { color: #586E75; }
+        /* P2-2 fix (F4): MiniLang 语法高亮配色（Solarized 风格） */
+        .ml-keyword { color: #859900; font-weight: 600; }
+        .ml-string { color: #2AA198; }
+        .ml-comment { color: #93A1A1; font-style: italic; }
+        .ml-number { color: #D33682; }
+        /* P2-2 fix (F3): 章节锚点目录样式 */
+        .toc-box { background: #EEE8D5; border-left: 3px solid #268BD2; padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+        .toc-title { font-weight: 600; color: #073642; margin-bottom: 4px; font-size: 13px; }
+        .toc-list { margin: 0; padding-left: 16px; font-size: 13px; }
+        .toc-list li { margin: 2px 0; }
+        .toc-list a { color: #268BD2; text-decoration: none; }
+        .toc-list a:hover { text-decoration: underline; }
         </style>
     )");
-    return kStylesheet.arg(codeBlockBg.isEmpty() ? QStringLiteral("#f5f5f5") : codeBlockBg);
+    return kStylesheet.arg(codeBlockBg.isEmpty() ? QStringLiteral("#EEE8D5") : codeBlockBg);
 }
 
 // ---- 公共 API ----
@@ -125,10 +225,10 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
         return QStringLiteral("<html><head></head><body></body></html>");
     }
 
-    const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#f5f5f5") : codeBlockBg;
+    const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#EEE8D5") : codeBlockBg;
     const QString codeBlockStyle =
         QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
-                       "border:1px solid #e5e5e5; "
+                       "border:1px solid #93A1A1; "
                        "font-family:Consolas, 'Courier New', monospace; "
                        "font-size:13px; "
                        "white-space:pre-wrap;").arg(bg);
@@ -221,6 +321,16 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 QString escaped = escapeHtml(codeBlockContent);
                 // 去掉尾部多余换行
                 while (escaped.endsWith('\n')) escaped.chop(1);
+                // P2-2 fix (F4): MiniLang 语法高亮
+                // 触发条件：codeBlockLang 为 minilang / ml / mlang / mini（不区分大小写）
+                QString lowerLang = codeBlockLang.toLower();
+                bool isMiniLang = (lowerLang == QStringLiteral("minilang") ||
+                                   lowerLang == QStringLiteral("ml") ||
+                                   lowerLang == QStringLiteral("mlang") ||
+                                   lowerLang == QStringLiteral("mini"));
+                if (isMiniLang) {
+                    escaped = highlightMiniLang(escaped);
+                }
                 // 代码块语言标签（仅作为注释显示在代码上方，不渲染为单独元素）
                 if (!codeBlockLang.isEmpty()) {
                     html << QStringLiteral("<div style=\"font-size:11px;color:#999;margin-bottom:2px;\">")
@@ -270,8 +380,15 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             flushBlockquote();
             flushTable();
             int level = hm.captured(1).length();
-            QString text = renderInline(escapeHtml(hm.captured(2)));
-            html << QStringLiteral("<h%1>%2</h%1>").arg(level).arg(text);
+            QString rawText = hm.captured(2);
+            // P2-2 fix (F3): 标题生成 anchor id（slug），用于章节锚点目录跳转
+            QString anchor = slugify(rawText);
+            QString text = renderInline(escapeHtml(rawText));
+            if (!anchor.isEmpty()) {
+                html << QStringLiteral("<h%1 id=\"%2\">%3</h%1>").arg(level).arg(anchor, text);
+            } else {
+                html << QStringLiteral("<h%1>%2</h%1>").arg(level).arg(text);
+            }
             continue;
         }
 
@@ -417,6 +534,68 @@ QString markdownToHtmlFragment(const QString& markdown, const QString& codeBlock
 
 QString markdownToHtmlFragment(const std::string& markdown, const QString& codeBlockBg) {
     return markdownToHtmlFragment(QString::fromUtf8(markdown.c_str()), codeBlockBg);
+}
+
+// ============================================================
+// P2-2 fix (F3): 章节锚点目录（TOC）
+// ============================================================
+
+std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
+    std::vector<HeadingEntry> headings;
+    if (markdown.isEmpty()) return headings;
+
+    const QStringList lines = markdown.split('\n');
+    bool inCodeBlock = false;
+    for (const QString& line : lines) {
+        // 跟踪围栏代码块状态，代码块内的 # 不算标题
+        if (line.trimmed().startsWith(QStringLiteral("```"))) {
+            inCodeBlock = !inCodeBlock;
+            continue;
+        }
+        if (inCodeBlock) continue;
+
+        QRegularExpressionMatch hm = kReHeading.match(line);
+        if (hm.hasMatch()) {
+            HeadingEntry e;
+            e.level = hm.captured(1).length();
+            e.text = hm.captured(2);
+            e.anchor = slugify(e.text);
+            if (!e.anchor.isEmpty()) {
+                headings.push_back(std::move(e));
+            }
+        }
+    }
+    return headings;
+}
+
+QString buildTableOfContents(const QString& markdown,
+                              const QString& tocTitle,
+                              int maxLevel) {
+    auto headings = extractHeadings(markdown);
+    if (headings.empty()) return QString();
+
+    QStringList html;
+    html << QStringLiteral("<div class=\"toc-box\">");
+    if (!tocTitle.isEmpty()) {
+        html << QStringLiteral("<div class=\"toc-title\">") << escapeHtml(tocTitle)
+             << QStringLiteral("</div>");
+    }
+    html << QStringLiteral("<ul class=\"toc-list\">");
+    for (const auto& h : headings) {
+        if (h.level > maxLevel) continue;
+        // 根据级别缩进（h1 不缩进，h2 缩进 1 级，h3 缩进 2 级）
+        int indent = h.level - 1;
+        if (indent < 0) indent = 0;
+        QString style = (indent > 0)
+            ? QStringLiteral(" style=\"margin-left:%1px;\"").arg(indent * 12)
+            : QString();
+        // 内部锚点链接使用 #anchor 格式（QTextBrowser 支持）
+        html << QStringLiteral("<li%1><a href=\"#%2\">%3</a></li>")
+                    .arg(style, h.anchor, renderInline(escapeHtml(h.text)));
+    }
+    html << QStringLiteral("</ul>");
+    html << QStringLiteral("</div>");
+    return html.join(QString());
 }
 
 } // namespace MarkdownRenderer

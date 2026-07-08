@@ -28,6 +28,7 @@
 #include <QTextEdit>
 #include <QPushButton>
 #include <QLabel>
+#include "gui/I18n.h"  // mlTr() 国际化（头文件内联使用）
 
 // QFluentKit 前向声明（PushButton / PrimaryPushButton 为全局类，不在 Fluent 命名空间）
 class PushButton;
@@ -52,7 +53,6 @@ private slots:
     void onSkip();           // Step 1 [跳过]
     void onNextStep();       // 通用 [下一步 →]
     void onPrevStep();       // 通用 [← 上一步]
-    void onFinish();         // Step 4 [开始学习 ✓]
 
     /// Step 2：点击 Token 表行 → 高亮编辑器中对应字符
     void onTokenRowClicked(int row);

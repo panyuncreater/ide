@@ -100,8 +100,9 @@ class MemoryModelPanel : public QWidget {
 public:
     explicit MemoryModelPanel(QWidget* parent = nullptr);
 
-    /// 绑定到 IdeController（保留接口以与其它面板一致，本面板主要消费静态库）
-    void setController(IdeController* controller) { controller_ = controller; }
+    /// 绑定到 IdeController（OPT-1: 同时注册 vmStateChanged 监听器，替代 500ms 轮询）
+    /// 实现移至 .cpp（调用 addVmStateChangedListener 需 IdeController 完整类型定义）
+    void setController(IdeController* controller);
 
 signals:
     /// 请求加载样例代码到主编辑器（与第一波教学面板信号一致）
@@ -113,6 +114,15 @@ protected:
     void hideEvent(QHideEvent* event) override;
 
 private:
+    /// OPT-1: vmStateChanged 监听回调——仅当面板可见时刷新第 4 子页实时状态。
+    /// 不检查 autoRefresh 按钮是因为 MemoryModelPanel 第 4 子页的"自动刷新"
+    /// 由 animAutoRefreshBtn_ 的 checked 状态控制 animTimer_，监听器作为补充通道。
+    void onVmStateChanged() {
+        if (isVisible()) {
+            refreshAnimState();
+        }
+    }
+
     IdeController* controller_ = nullptr;
 
     // 子页切换按钮（4 个子页）

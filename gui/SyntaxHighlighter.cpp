@@ -32,13 +32,13 @@ void SyntaxHighlighter::initRules() {
         operatorFormat_.setForeground(QColor(0xd4, 0xd4, 0xd4));  // 浅灰色运算符
     } else {
         // 浅色主题（VS Code Light+ 2024 风格 — 更鲜艳、层次更清晰）
-        keywordFormat_.setForeground(QColor(0x00, 0x00, 0xc8));   // 深蓝色关键字
+        keywordFormat_.setForeground(QColor(0x26, 0x8b, 0xd2));   // 深蓝色关键字
         keywordFormat_.setFontWeight(QFont::Bold);
-        stringFormat_.setForeground(QColor(0x01, 0x65, 0x2e));    // 深绿色字符串
-        numberFormat_.setForeground(QColor(0x09, 0x86, 0x48));     // 绿色数字
-        commentFormat_.setForeground(QColor(0x00, 0x80, 0x00));     // 绿色注释
+        stringFormat_.setForeground(QColor(0x2a, 0xa1, 0x98));    // 深绿色字符串
+        numberFormat_.setForeground(QColor(0xb5, 0x89, 0x00));     // 绿色数字
+        commentFormat_.setForeground(QColor(0x58, 0x6e, 0x75));     // 绿色注释
         commentFormat_.setFontItalic(true);
-        operatorFormat_.setForeground(QColor(0x38, 0x3a, 0x42));   // 深灰色运算符
+        operatorFormat_.setForeground(QColor(0x65, 0x7b, 0x83));   // 深灰色运算符
     }
 
     // ---- 添加高亮规则 ----
@@ -326,7 +326,7 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
             pos += 2;
             while (pos < len && (text[pos].isLetterOrNumber() || text[pos] == '_')) ++pos;
             QTextCharFormat errFmt;
-            errFmt.setForeground(QColor(0xff, 0x00, 0x00));
+            errFmt.setForeground(QColor(0xdc, 0x32, 0x2f));
             setFormat(start, pos - start, errFmt);
             continue;
         }

@@ -56,8 +56,10 @@ protected:
 
 TEST(LearningPathDataAudit, HasAtLeast18Activities) {
     const auto& acts = LearningPathData::activities();
-    EXPECT_GE(acts.size(), 18u)
-        << "学习路径活动数应 >= 18（5+4+4+4+4=20）";
+    // P1-F2/F fix: 22 原始活动 + 6 个浏览型面板轻量 visited-* 活动（glossary/pipeline/
+    // memory-model/bytecode-trace/exception-flow/closure-inspector）= 28
+    EXPECT_EQ(acts.size(), 28u)
+        << "学习路径活动数应为 28（22 原始 + 6 visited-*）";
 }
 
 TEST(LearningPathDataAudit, ActivityIdsAreUnique) {
@@ -148,10 +150,10 @@ TEST_F(LearningPathTestBase, StageProgressCalculation) {
     auto& store = LearnerProgressStore::instance();
     const auto& all = LearningPathData::activities();
 
-    // 阶段零 5 个活动，初始 0%
+    // 阶段零 11 个活动（5 原始 + 6 visited-*），初始 0%
     EXPECT_EQ(store.stageProgress(0, all), 0);
 
-    // 完成 welcome 后应 > 0%（5 个活动完成 1 个 = 20%）
+    // 完成 welcome 后应 > 0%（11 个活动完成 1 个）
     store.markCompleted("welcome");
     int sp = store.stageProgress(0, all);
     EXPECT_GT(sp, 0);
@@ -162,6 +164,13 @@ TEST_F(LearningPathTestBase, StageProgressCalculation) {
     store.markCompleted("token-puzzle");
     store.markCompleted("ast-toy");
     store.markCompleted("vm-sandbox");
+    // P1-F2/F fix: 阶段零新增 6 个浏览型面板轻量活动，也需标记完成才能 100%
+    store.markCompleted("visited-glossary");
+    store.markCompleted("visited-pipeline");
+    store.markCompleted("visited-memory-model");
+    store.markCompleted("visited-bytecode-trace");
+    store.markCompleted("visited-exception-flow");
+    store.markCompleted("visited-closure-inspector");
     EXPECT_EQ(store.stageProgress(0, all), 100);
 }
 
@@ -296,4 +305,188 @@ TEST(LearningPathPrereqAudit, BugHuntExpertPrereqContainsIntermediate) {
     }
     EXPECT_TRUE(hasIntermediate)
         << "bug-hunt-expert 的前置必须包含 bug-hunt-intermediate（必须按顺序通关）";
+}
+
+// ============================================================
+// 套件 4：LearningPathRichProgressAudit — 富维度进度数据（P2-3 fix F9）
+// ------------------------------------------------------------
+// 测试覆盖：
+//   - recordScore / getScore / getBestStars
+//   - addSpentMinutes / getSpentMinutes / totalSpentMinutes
+//   - recordFailure / getFailCount
+//   - getWeakPoints 薄弱点筛选与排序
+//   - estimatedRemainingMinutes 剩余时间汇总
+//   - load/save 往返持久化（含新字段）
+// ============================================================
+
+TEST_F(LearningPathTestBase, RecordScoreKeepsBest) {
+    auto& store = LearnerProgressStore::instance();
+
+    // 首次记录得分 80
+    store.recordScore("lab-01", 80, 2);
+    EXPECT_EQ(store.getScore("lab-01"), 80);
+    EXPECT_EQ(store.getBestStars("lab-01"), 2);
+
+    // 第二次得分 60（更低）——不应覆盖历史最佳
+    store.recordScore("lab-01", 60, 1);
+    EXPECT_EQ(store.getScore("lab-01"), 80)
+        << "recordScore 必须保留历史最佳得分，60 不应覆盖 80";
+    EXPECT_EQ(store.getBestStars("lab-01"), 2)
+        << "recordScore 必须保留历史最佳星级，1 星不应覆盖 2 星";
+
+    // 第三次得分 95（更高）——应覆盖
+    store.recordScore("lab-01", 95, 3);
+    EXPECT_EQ(store.getScore("lab-01"), 95);
+    EXPECT_EQ(store.getBestStars("lab-01"), 3);
+}
+
+TEST_F(LearningPathTestBase, RecordScoreClampsOutOfRange) {
+    auto& store = LearnerProgressStore::instance();
+    // 负数截断到 0
+    store.recordScore("lab-01", -50);
+    EXPECT_EQ(store.getScore("lab-01"), 0);
+    // 超过 100 截断到 100
+    store.recordScore("lab-01", 200);
+    EXPECT_EQ(store.getScore("lab-01"), 100);
+}
+
+TEST_F(LearningPathTestBase, SpentMinutesAccumulates) {
+    auto& store = LearnerProgressStore::instance();
+
+    EXPECT_EQ(store.getSpentMinutes("lab-01"), 0);
+
+    store.addSpentMinutes("lab-01", 10);
+    EXPECT_EQ(store.getSpentMinutes("lab-01"), 10);
+
+    store.addSpentMinutes("lab-01", 5);
+    EXPECT_EQ(store.getSpentMinutes("lab-01"), 15);
+
+    // 负数或零应被忽略
+    store.addSpentMinutes("lab-01", -3);
+    store.addSpentMinutes("lab-01", 0);
+    EXPECT_EQ(store.getSpentMinutes("lab-01"), 15)
+        << "负数或零分钟不应改变累计时间";
+
+    // totalSpentMinutes 应汇总所有活动
+    store.addSpentMinutes("lab-02", 8);
+    EXPECT_EQ(store.totalSpentMinutes(), 23);  // 15 + 8
+}
+
+TEST_F(LearningPathTestBase, RecordFailureIncrementsCount) {
+    auto& store = LearnerProgressStore::instance();
+
+    EXPECT_EQ(store.getFailCount("lab-02"), 0);
+
+    store.recordFailure("lab-02");
+    store.recordFailure("lab-02");
+    store.recordFailure("lab-02");
+    EXPECT_EQ(store.getFailCount("lab-02"), 3);
+}
+
+TEST_F(LearningPathTestBase, WeakPointsDetection) {
+    auto& store = LearnerProgressStore::instance();
+    const auto& all = LearningPathData::activities();
+
+    // 初始无薄弱点（无尝试无失败）
+    EXPECT_TRUE(store.getWeakPoints(all).empty());
+
+    // 对 welcome 尝试 4 次（>= 默认阈值 3）——应识别为薄弱点
+    for (int i = 0; i < 4; ++i) store.recordAttempt("welcome");
+    auto wp = store.getWeakPoints(all);
+    ASSERT_EQ(wp.size(), 1u);
+    EXPECT_EQ(wp[0].activityId, "welcome");
+    EXPECT_EQ(wp[0].attempts, 4);
+
+    // 对 lab-01 失败 2 次（>= 1）——也应识别，且失败次数更高的排前
+    store.recordFailure("lab-01");
+    store.recordFailure("lab-01");
+    wp = store.getWeakPoints(all);
+    ASSERT_EQ(wp.size(), 2u);
+    EXPECT_EQ(wp[0].activityId, "lab-01");  // fails=2 排前
+    EXPECT_EQ(wp[0].fails, 2);
+    EXPECT_EQ(wp[1].activityId, "welcome");
+    EXPECT_EQ(wp[1].fails, 0);
+
+    // maxCount 限制
+    wp = store.getWeakPoints(all, 3, 1);
+    ASSERT_EQ(wp.size(), 1u);
+
+    // 已完成的活动不应出现在薄弱点中
+    store.markCompleted("welcome");
+    wp = store.getWeakPoints(all);
+    ASSERT_EQ(wp.size(), 1u);
+    EXPECT_EQ(wp[0].activityId, "lab-01");
+}
+
+TEST_F(LearningPathTestBase, EstimatedRemainingMinutesExcludesCompletedAndLocked) {
+    auto& store = LearnerProgressStore::instance();
+    const auto& all = LearningPathData::activities();
+
+    // 初始：所有阶段零活动都无前置，应解锁——剩余时间 = 阶段零 5 个活动之和
+    int initial = store.estimatedRemainingMinutes(all);
+    EXPECT_GT(initial, 0);
+
+    // 完成 welcome 后，剩余时间应减少（welcome.estimatedMinutes）
+    store.markCompleted("welcome");
+    int after = store.estimatedRemainingMinutes(all);
+    EXPECT_LT(after, initial)
+        << "完成一个活动后剩余时间应减少";
+
+    // lab-02 有前置（lab-01 + ast-toy），未完成 lab-01 时 lab-02 应被排除
+    const auto* lab02 = LearningPathData::findById("lab-02");
+    ASSERT_NE(lab02, nullptr);
+    int lab02Estimate = lab02->estimatedMinutes;
+    // 间接验证：完成 lab-01 + ast-toy 后 lab-02 解锁，剩余时间增加 lab02Estimate
+    store.markCompleted("lab-01");
+    store.markCompleted("ast-toy");
+    int afterUnlock = store.estimatedRemainingMinutes(all);
+    EXPECT_GE(afterUnlock, after + lab02Estimate - 1)
+        << "lab-02 解锁后剩余时间应至少增加其 estimatedMinutes（允许 ±1 误差）";
+}
+
+TEST_F(LearningPathTestBase, LoadSaveRoundTripPreservesRichFields) {
+    auto& store = LearnerProgressStore::instance();
+
+    // 写入富维度数据
+    store.recordScore("lab-01", 85, 2);
+    store.addSpentMinutes("lab-01", 12);
+    store.recordFailure("lab-02");
+    store.recordAttempt("lab-03");
+    store.markCompleted("lab-04");
+
+    ASSERT_TRUE(store.save());
+
+    // 重置后重新加载
+    LearnerProgressStore::instance().resetForTesting();
+    EXPECT_EQ(store.getScore("lab-01"), 0);
+    EXPECT_EQ(store.getSpentMinutes("lab-01"), 0);
+    EXPECT_EQ(store.getFailCount("lab-02"), 0);
+
+    ASSERT_TRUE(store.load());
+
+    // 验证往返持久化正确
+    EXPECT_EQ(store.getScore("lab-01"), 85);
+    EXPECT_EQ(store.getBestStars("lab-01"), 2);
+    EXPECT_EQ(store.getSpentMinutes("lab-01"), 12);
+    EXPECT_EQ(store.getFailCount("lab-02"), 1);
+
+    // 完成状态也应保留
+    auto cit = store.data().completed.find("lab-04");
+    ASSERT_NE(cit, store.data().completed.end());
+    EXPECT_TRUE(cit->second);
+}
+
+TEST_F(LearningPathTestBase, ResetClearsRichFields) {
+    auto& store = LearnerProgressStore::instance();
+
+    store.recordScore("lab-01", 90, 3);
+    store.addSpentMinutes("lab-01", 20);
+    store.recordFailure("lab-02");
+
+    store.reset();
+    EXPECT_TRUE(store.data().score.empty());
+    EXPECT_TRUE(store.data().bestStars.empty());
+    EXPECT_TRUE(store.data().spentMinutes.empty());
+    EXPECT_TRUE(store.data().failCount.empty());
+    EXPECT_EQ(store.totalSpentMinutes(), 0);
 }

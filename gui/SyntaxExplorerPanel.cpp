@@ -86,8 +86,9 @@ SyntaxExplorerPanel::SyntaxExplorerPanel(QWidget* parent)
     splitter->setSizes({160, 300, 400});
     mainLayout->addWidget(splitter, 1);
 
-    populateItemList();
-
+    // 先连接信号再填充列表 —— populateItemList() 末尾会 setCurrentRow(0)，
+    // 若 connect 在其后则首次选中不会触发 onItemSelected，导致首次进入面板
+    // 时右侧详情/代码区为空（需手动切换章节才加载）。
     connect(itemList_, &QListWidget::currentRowChanged,
             this, &SyntaxExplorerPanel::onItemSelected);
     connect(runBtn_, &QPushButton::clicked,
@@ -98,6 +99,16 @@ SyntaxExplorerPanel::SyntaxExplorerPanel(QWidget* parent)
         emit loadSampleRequested(QString::fromUtf8(items[currentItemIndex_].sampleCode.c_str()));
         statusLabel_->setText(QString::fromUtf8("已请求加载到主编辑器"));
     });
+
+    populateItemList();
+    // 兜底：即使 setCurrentRow(0) 未触发 currentRowChanged（如列表为空后首项），
+    // 也显式加载第一项内容，确保首次进入即显示。
+    if (currentItemIndex_ < 0 && itemList_->count() > 0) {
+        itemList_->setCurrentRow(0);
+    }
+    if (currentItemIndex_ >= 0) {
+        showCurrentItem();
+    }
 }
 
 void SyntaxExplorerPanel::populateItemList() {

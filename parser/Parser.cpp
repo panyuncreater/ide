@@ -122,6 +122,14 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
 // ---- 辅助方法 ----
 
 const Token& Parser::peek() const {
+    // AUDIT-P2 fix: 与 previous() 的 P0-14 fix 边界检查保持对称。
+    // 原实现直接索引 tokens_[current_]，依赖"tokens_ 末尾必有 TK_EOF"的隐式不变量。
+    // 正常路径下 Lexer::scan 总是追加 TK_EOF，但外部构造的 tokens_（测试夹具/API）
+    // 或内部 bug 可能导致 current_ 越界。添加边界检查返回 EOF 哨兵，防御性编程。
+    if (current_ < 0 || current_ >= static_cast<int>(tokens_->size())) {
+        static const Token eofSentinel(TokenType::TK_EOF, "", std::monostate{}, 0, 0);
+        return eofSentinel;
+    }
     return (*tokens_)[current_];
 }
 
@@ -160,7 +168,10 @@ bool Parser::checkNext(TokenType type) const {
 const Token& Parser::consume(TokenType type, const std::string& message) {
     if (check(type)) return advance();
     const Token& tok = peek();
-    throw ParseError(message, tok.line, tok.column);
+    // BUG-PARSER-MSG-1 fix (P2): 错误消息拼接实际得到的 token，与 primary() 风格一致。
+    // 原实现仅输出调用方传入的 message（如"期望 ';'"），用户不知道下一个 token 是什么，
+    // 难以判断问题位置。改为"期望 ';' 但得到 'var'"，提升诊断价值。
+    throw ParseError(message + " 但得到 '" + tok.lexeme + "'", tok.line, tok.column);
 }
 
 const Token& Parser::consumeIdentifierOrType(const std::string& message) {
@@ -171,7 +182,8 @@ const Token& Parser::consumeIdentifierOrType(const std::string& message) {
         return advance();
     }
     const Token& tok = peek();
-    throw ParseError(message, tok.line, tok.column);
+    // BUG-PARSER-MSG-1 fix: 同 consume，拼接实际 token
+    throw ParseError(message + " 但得到 '" + tok.lexeme + "'", tok.line, tok.column);
 }
 
 bool Parser::isIdentifierOrType() const {
@@ -1069,6 +1081,14 @@ std::unique_ptr<Block> Parser::block() {
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
         // FIX: catch 也是块边界（try 块的 tryBlock 以 catch 结束）
         if (check(TokenType::TK_CATCH)) break;
+        // BUG-PARSER-SYNC-2 fix (P1): finally 也是 try 块边界，与 catch 同等处理。
+        // 原实现仅识别 catch，try { x = 1 finally { ... } } 在 x 缺分号时，
+        // finally 被 synchronize() 吞掉，整个 finally 块丢失。
+        if (check(TokenType::TK_FINALLY)) break;
+        // BUG-PARSER-SYNC-4 fix (P2): else 是 if 块边界。
+        // if (x) { y = 1 else { ... } } 在 y 缺分号时，else 需作为块边界让 ifStmt 处理。
+        // 必须与 SYNC-1 一组修复，否则 synchronize() 不再吞 else 但 block() 不中断会无限循环。
+        if (check(TokenType::TK_ELSE)) break;
         // BUG-PARSER-AUDIT-5 fix: block() 主循环也需错误上限检查，
         // 防止恶意嵌套块内含大量错误触发 O(N) 诊断内存膨胀。
         if (diagnostics_.errorCount() >= MAX_PARSE_ERRORS) {
@@ -1090,10 +1110,23 @@ std::unique_ptr<Block> Parser::block() {
         }
     }
 
-    consume(TokenType::TK_RBRACE, "期望 '}'");
+    // BUG-PARSER-SYNC-2/4 fix: 当 block() 因 catch/finally/else 中断时，
+    // peek() 不是 '}'（用户缺 '}'），不应强制 consume 抛错导致整个语句丢失。
+    // 这些关键字是结构性块边界，由调用方（tryStmt/ifStmt）处理。
+    if (check(TokenType::TK_RBRACE)) {
+        advance();  // 正常消耗 '}'
+    } else if (check(TokenType::TK_CATCH) || check(TokenType::TK_FINALLY) ||
+               check(TokenType::TK_ELSE) || check(TokenType::TK_EOF)) {
+        // 结构性块边界或 EOF：不消耗，让调用方处理 catch/finally/else
+    } else {
+        // 其他情况（如错误上限 break 后 peek 非 '}'）：记录诊断但不抛错
+        diagnostics_.addError("期望 '}'", peek().line, peek().column, DiagSource::Parser);
+    }
 
     auto blk = std::make_unique<Block>(std::move(stmts), lbrace.line, lbrace.column);
-    blk->closingBraceLine = previous().line;  // L18 fix: 记录 '}' 行号
+    blk->closingBraceLine = (previous().type == TokenType::TK_RBRACE)
+                                ? previous().line
+                                : peek().line;
     return blk;
 }
 
@@ -1536,6 +1569,40 @@ void Parser::synchronize() {
         if (peek().type == TokenType::TK_SEMICOLON) advance();
         return;
     }
+    // BUG-PARSER-SYNC-1 fix (P1): 在 advance() 前检查当前 token 是否已是同步关键字。
+    // 原实现无条件 advance()，当错误恰好发生在同步关键字位置（如前一条语句缺分号，
+    // 下一个 token 是新声明起始关键字 var/fun/class/...）时，该关键字被当作"错误 token"
+    // 吞掉，导致下一条声明整体从 AST 中丢失（用户只看到"期望 ';'"，但下一条声明消失）。
+    // 修复：同步关键字作为同步点直接 return，不消耗，让主循环正常解析下一条声明。
+    // 注意：必须与 SYNC-2/SYNC-3/SYNC-4 一组修复，否则 block() 在 finally/else 处会无限循环。
+    switch (peek().type) {
+    case TokenType::TK_VAR:
+    case TokenType::TK_FUN:
+    case TokenType::TK_CLASS:
+    case TokenType::TK_IF:
+    case TokenType::TK_WHILE:
+    case TokenType::TK_FOR:
+    case TokenType::TK_RETURN:
+    case TokenType::TK_PRINT:
+    case TokenType::TK_BREAK:
+    case TokenType::TK_CONTINUE:
+    case TokenType::TK_ELSE:
+    case TokenType::TK_TRY:
+    case TokenType::TK_CATCH:
+    case TokenType::TK_FINALLY:  // BUG-PARSER-SYNC-3 fix (P2): 补充 finally 作为同步点
+    case TokenType::TK_THROW:
+    case TokenType::TK_IMPORT:
+    case TokenType::TK_EXPORT:
+    case TokenType::TK_INT:
+    case TokenType::TK_FLOAT:
+    case TokenType::TK_BOOL:
+    case TokenType::TK_STRING_TYPE:
+    case TokenType::TK_DICT:
+    case TokenType::TK_ARRAY:
+        return;
+    default:
+        break;
+    }
     advance();
 
     while (!isAtEnd()) {
@@ -1572,6 +1639,7 @@ void Parser::synchronize() {
         // try 块、import/export 声明，产生误导性错误链。
         case TokenType::TK_TRY:
         case TokenType::TK_CATCH:
+        case TokenType::TK_FINALLY:  // BUG-PARSER-SYNC-3 fix: while 循环内同步补充 finally
         case TokenType::TK_THROW:
         case TokenType::TK_IMPORT:
         case TokenType::TK_EXPORT:

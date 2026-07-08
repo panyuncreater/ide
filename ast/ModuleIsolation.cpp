@@ -316,10 +316,16 @@ void ModuleTopLevelRenamer::renameInNode(ASTNode* node) {
         if (!n->catchVarName.empty()) defineInCurrentScope(n->catchVarName);
         if (n->catchBlock) renameInNode(n->catchBlock.get());
         popScope();
-        // BUG-FE-AUDIT-2 fix: finally 块不引入新作用域（无 catch 变量），
-        // 但其内部对模块非导出顶层变量的引用必须重命名，否则 VM/IR 路径
-        // 模块隔离在 finally 块上失效，运行时报"未定义变量"。
-        if (n->finallyBlock) renameInNode(n->finallyBlock.get());
+        // AUDIT-P1 fix: finally 块必须引入新作用域（与 catch 块一致）。
+        // 原注释"finally 块不引入新作用域（无 catch 变量）"是误解：finally 块内可包含
+        // VarDecl，这些局部变量应限制在 finally 块作用域内。若不 pushScope，finally 块内
+        // 声明的局部变量会污染外层作用域，导致 resolveToModuleTopLevel 误判，finally 块内
+        // 对模块非导出顶层名的引用不被重命名，VM/IR 路径运行时报"未定义变量"。
+        if (n->finallyBlock) {
+            pushScope();
+            renameInNode(n->finallyBlock.get());
+            popScope();
+        }
         break;
     }
     case NodeType::NODE_THROW_STMT: {

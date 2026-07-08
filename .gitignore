@@ -41,6 +41,7 @@ CTestTestfile.cmake
 moc_*.cpp
 ui_*.h
 qrc_*.cpp
+*.qm            # lrelease 生成的翻译二进制（由 .ts 编译，运行时部署到 exe 旁）
 
 # --- 用户本地配置 ---
 CMakeUserPresets.json

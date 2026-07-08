@@ -605,7 +605,10 @@ void Lexer::string(bool isInterp) {
             // 继续扫描字符串剩余部分（标记为插值片段）
             start_ = current_;
             startLine = line_;
-            startCol = static_cast<int>(start_ - lineStart_) + 1;
+            // AUDIT-P2 fix: 与同文件其他路径（addToken/columnAt）保持一致，使用 UTF-8 码位列号。
+            // 原实现用字节偏移 (start_ - lineStart_) + 1，若本行之前含多字节 UTF-8 字符
+            // （如中文），字节偏移 > 码位列号，导致插值片段诊断列号偏移、编辑器高亮位置错位。
+            startCol = columnAt(start_);
             value.clear();
             isInterp = true;
             continue;

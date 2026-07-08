@@ -3,11 +3,13 @@
 #include "lexer/Lexer.h"      // #4 fix: VM 条件断点求值
 #include "parser/Parser.h"     // #4 fix: VM 条件断点求值
 #include "interpreter/Environment.h"  // #4 fix: VM 条件断点求值
+#include "interpreter/Interpreter.h"  // P0-3 fix: currentEnvironment() 访问
 // VM-IMPORT: Compiler 模块加载器所需的 Qt 头文件
 #include <QFileInfo>
 #include <QDir>
 #include <QFile>
 #include <QStringList>
+#include <unordered_set>  // P0-3 fix: getReplScopeVariableNames 去重
 
 // ============================================================
 // IdeController — 业务逻辑层 Facade 实现（ARCH-11 重构）
@@ -90,6 +92,16 @@ IdeController::IdeController(QObject* parent)
             for (const auto& kv : vmStepper_.getCurrentFrameLocals()) {
                 env->define(kv.first, kv.second);
             }
+            // P2-E fix: 若存在 "this" 变量且为实例，绑定 boundInstance_ 使裸字段名
+            // 可回退解析实例字段（与方法体执行语义一致）。
+            // 原 Bug：仅注入 localSlotNames 中的变量，动态添加的字段（不在 fieldOrder 中）
+            // 无法通过 boundInstance_ 回退解析，条件断点永不触发。
+            auto& vars = env->localVariables();
+            auto thisIt = vars.find("this");
+            if (thisIt != vars.end() && thisIt->second.isInstance()) {
+                // unordered_map 是 node-based，rehash 不失效指针，env 生命周期内有效
+                env->bindInstance(const_cast<Value*>(&thisIt->second));
+            }
             tempInterp.setGlobalEnvironment(env);
             Value result = tempInterp.evaluateCondition(ast->statements[0].get());
             return result.isTruthy();
@@ -114,6 +126,14 @@ IdeController::IdeController(QObject* parent)
     connect(&workerMgr_, &WorkerManager::workerFinished, this, &IdeController::workerFinished);
     connect(&debugCoord_, &DebugCoordinator::pausedAt, this, &IdeController::pausedAt);
     connect(&vmStepper_, &VmStepper::vmRunPaused, this, &IdeController::vmRunPaused);
+
+    // OPT-1: 将异步状态变更信号桥接到观察者通知，让订阅面板即时刷新而非 500ms 轮询。
+    // - vmRunPaused：VM RUN 模式异步暂停（命中断点/结束/错误）
+    // - pausedAt：Interpreter 调试模式暂停
+    // - workerFinished：运行结束（正常/停止/错误），状态归零
+    connect(&vmStepper_, &VmStepper::vmRunPaused, this, [this](VmStepResult) { notifyVmStateChanged(); });
+    connect(&debugCoord_, &DebugCoordinator::pausedAt, this, [this](int) { notifyVmStateChanged(); });
+    connect(&workerMgr_, &WorkerManager::workerFinished, this, [this](bool) { notifyVmStateChanged(); });
 }
 
 IdeController::~IdeController() {
@@ -146,6 +166,8 @@ bool IdeController::runCompiler() {
         } else {
             vmStepper_.setCompileResult(pipeline_.lastCompileResult());
         }
+        // OPT-1: 编译结果就绪，VM 步进可用，通知订阅面板刷新（如 BytecodeTracePanel）。
+        notifyVmStateChanged();
     }
     return ok;
 }
@@ -214,6 +236,8 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
         vmStepper_.setCompileResult(pipeline_.lastCompileResult());
     }
 
+    // OPT-1: 新运行已就绪，通知订阅面板刷新（CallStack/VariableInspector 等显示运行状态）。
+    notifyVmStateChanged();
     return true;
 }
 
@@ -280,6 +304,51 @@ Value IdeController::executeRepl(Block& program) {
     return interpreter_->executeRepl(program);
 }
 
+// P0-3 fix (F11): 实现 getReplScopeVariableNames，供 GUI ErrorHintEngine 拼写建议使用
+std::vector<std::string> IdeController::getReplScopeVariableNames() const {
+    std::vector<std::string> names;
+    Environment* env = interpreter_->currentEnvironment();
+    if (!env) return names;
+    auto vars = env->allVariables();  // 父作用域在前，子作用域追加末尾
+    names.reserve(vars.size());
+    // 去重（保留首次出现，即更外层作用域的同名变量；拼写建议无强顺序要求）
+    std::unordered_set<std::string> seen;
+    seen.reserve(vars.size() * 2);
+    for (const auto& kv : vars) {
+        if (seen.insert(kv.first).second) {
+            names.push_back(kv.first);
+        }
+    }
+    return names;
+}
+
+// N1 fix: 同步运行 MiniLang 源码并捕获 print 输出（用于 EXPECTED_OUTPUT 自动判分）
+std::string IdeController::runStringCaptureOutput(const std::string& source) {
+    try {
+        Lexer lexer;
+        auto tokens = lexer.scan(source);
+        if (lexer.getDiagnostics().hasErrors()) {
+            return std::string("!ERROR: Lexer error");
+        }
+        Parser parser;
+        auto ast = parser.parse(tokens);
+        if (!ast || parser.hasErrors()) {
+            return std::string("!ERROR: Parse error");
+        }
+        Interpreter interp;
+        std::string captured;
+        interp.setOutputCallback([&captured](const std::string& text) {
+            captured += text;
+        });
+        interp.execute(*ast);
+        return captured;
+    } catch (const std::exception& e) {
+        return std::string("!ERROR: ") + e.what();
+    } catch (...) {
+        return std::string("!ERROR: Unknown exception");
+    }
+}
+
 void IdeController::setupReplModuleCallbacks() {
     // 若 Interpreter 已有 moduleLoader_（先 Run 过），不覆盖，保持 Run 时建立的
     // baseDir 与模块缓存基准一致（避免 Run 后 REPL 用不同的 baseDir）。
@@ -332,3 +401,16 @@ void IdeController::setupReplModuleCallbacks() {
         return fi.lastModified().toMSecsSinceEpoch();
     });
 }
+
+// ============================================================
+// OPT-1: VM 操作实现说明
+// ------------------------------------------------------------
+// vmStep / vmStepByMode / vmStop / vmReset / setBreakpoints /
+// setVmBreakpoints / setBreakpointCondition 均保持 inline（定义在头文件），
+// 在调用底层后追加 notifyVmStateChanged() 通知订阅面板。
+//
+// 保持 inline 的理由：MagicCommands.cpp（minilang_core）依赖这些方法的内联符号，
+// 测试目标 minilang_tests 仅链接 minilang_core，不链接 app/IdeController.cpp。
+// notifyVmStateChanged() 也是 inline（纯 std::vector<std::function> 迭代），
+// 无 moc 依赖，面板 .cpp 可安全编译进测试目标。
+// ============================================================

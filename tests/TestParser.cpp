@@ -961,6 +961,121 @@ TEST(ParserTest, Error_RecoveryAcrossDeclarations) {
     EXPECT_TRUE(foundVarZ);
 }
 
+// ---- BUG-PARSER-SYNC-1 回归测试（P1）----
+// 缺分号 + 下一个 token 是同步关键字时，synchronize() 不应吞掉该关键字，
+// 下一条声明必须保留在 AST 中。
+// 原实现无条件 advance() 吞掉同步关键字，导致下一条声明整体丢失。
+
+TEST(ParserTest, Error_RecoverySyncKeywordNotSwallowed_Var) {
+    // var x = 1 var y = 2;  —— var x = 1 缺分号，var y = 2; 应保留
+    Parser parser;
+    auto block = parseSourceWithParser("var x = 1 var y = 2;", parser);
+    EXPECT_NE(block, nullptr);
+    EXPECT_TRUE(parser.hasErrors());
+    bool foundVarY = false;
+    for (const auto& stmt : block->statements) {
+        if (stmt->nodeType == NodeType::NODE_VAR_DECL) {
+            auto* decl = static_cast<VarDecl*>(stmt.get());
+            if (decl->name == "y") { foundVarY = true; break; }
+        }
+    }
+    EXPECT_TRUE(foundVarY) << "BUG-PARSER-SYNC-1: var y = 2; 应被保留在 AST 中";
+}
+
+TEST(ParserTest, Error_RecoverySyncKeywordNotSwallowed_Fun) {
+    // print(x) fun foo() { return 1; }  —— print(x) 缺分号，fun foo 应保留
+    Parser parser;
+    auto block = parseSourceWithParser("print(1) fun foo() { return 1; }", parser);
+    EXPECT_NE(block, nullptr);
+    EXPECT_TRUE(parser.hasErrors());
+    bool foundFun = false;
+    for (const auto& stmt : block->statements) {
+        if (stmt->nodeType == NodeType::NODE_FUN_DECL) {
+            auto* fun = static_cast<FunDecl*>(stmt.get());
+            if (fun->name == "foo") { foundFun = true; break; }
+        }
+    }
+    EXPECT_TRUE(foundFun) << "BUG-PARSER-SYNC-1: fun foo 应被保留在 AST 中";
+}
+
+TEST(ParserTest, Error_RecoverySyncKeywordNotSwallowed_Class) {
+    // var x = 1 class A {}  —— var x = 1 缺分号，class A 应保留
+    Parser parser;
+    auto block = parseSourceWithParser("var x = 1 class A {}", parser);
+    EXPECT_NE(block, nullptr);
+    EXPECT_TRUE(parser.hasErrors());
+    bool foundClass = false;
+    for (const auto& stmt : block->statements) {
+        if (stmt->nodeType == NodeType::NODE_CLASS_DECL) {
+            foundClass = true; break;
+        }
+    }
+    EXPECT_TRUE(foundClass) << "BUG-PARSER-SYNC-1: class A 应被保留在 AST 中";
+}
+
+// ---- BUG-PARSER-SYNC-2/3 回归测试（P1/P2）----
+// try { x = 1 finally { bar(); } }  —— try 块内 x = 1 缺分号，
+// finally 块必须保留，不应被 synchronize() 吞掉。
+
+TEST(ParserTest, Error_RecoveryFinallyBlockPreserved) {
+    Parser parser;
+    auto block = parseSourceWithParser(
+        "try { x = 1 finally { print(42); } }", parser);
+    EXPECT_NE(block, nullptr);
+    EXPECT_TRUE(parser.hasErrors());
+    // 验证 try 语句存在且含 finally 块
+    bool foundTryFinally = false;
+    for (const auto& stmt : block->statements) {
+        if (stmt->nodeType == NodeType::NODE_TRY_STMT) {
+            auto* tryStmt = static_cast<TryStmt*>(stmt.get());
+            if (tryStmt->finallyBlock) { foundTryFinally = true; break; }
+        }
+    }
+    EXPECT_TRUE(foundTryFinally) << "BUG-PARSER-SYNC-2: finally 块应被保留";
+}
+
+// ---- BUG-PARSER-SYNC-4 回归测试（P2）----
+// if (x) { y = 1 else { z = 2; } }  —— if 块内 y = 1 缺分号，
+// else 块必须保留。
+
+TEST(ParserTest, Error_RecoveryElseBlockPreserved) {
+    Parser parser;
+    auto block = parseSourceWithParser(
+        "if (true) { y = 1 else { z = 2; } }", parser);
+    EXPECT_NE(block, nullptr);
+    EXPECT_TRUE(parser.hasErrors());
+    // 验证 if 语句存在且含 else 分支
+    bool foundIfElse = false;
+    for (const auto& stmt : block->statements) {
+        if (stmt->nodeType == NodeType::NODE_IF_STMT) {
+            auto* ifStmt = static_cast<IfStmt*>(stmt.get());
+            if (ifStmt->elseBranch) { foundIfElse = true; break; }
+        }
+    }
+    EXPECT_TRUE(foundIfElse) << "BUG-PARSER-SYNC-4: else 块应被保留";
+}
+
+// ---- BUG-PARSER-MSG-1 回归测试（P2）----
+// consume() 错误消息应包含实际得到的 token，提升诊断价值。
+
+TEST(ParserTest, Error_ConsumeMessageIncludesActualToken) {
+    Parser parser;
+    auto block = parseSourceWithParser("var x = 1\nvar y = 2;", parser);
+    EXPECT_TRUE(parser.hasErrors());
+    const auto& diags = parser.getDiagnostics();
+    ASSERT_GT(diags.all().size(), 0u);
+    // 错误消息应包含"但得到"（BUG-PARSER-MSG-1 fix）
+    bool foundContextualMessage = false;
+    for (const auto& d : diags.all()) {
+        if (d.message.find("但得到") != std::string::npos) {
+            foundContextualMessage = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundContextualMessage)
+        << "BUG-PARSER-MSG-1: consume 错误消息应包含'但得到'";
+}
+
 // ---- 3.3 诊断信息 ----
 
 // 测试：getDiagnostics 返回正确的错误信息

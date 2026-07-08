@@ -10,6 +10,7 @@
 #include "gui/TokenPuzzlePanel.h"
 #include "gui/TokenPuzzleData.h"
 #include "gui/I18n.h"
+#include "gui/LearnerProgress.h"  // P0-2 fix (F7): 关卡星级持久化
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -24,6 +25,7 @@
 #include <QSizePolicy>
 #include <QFont>
 #include <QSignalBlocker>
+#include <QStyle>  // style()->polish() / unpolish() 用于 QSS 动态属性刷新
 
 #include "PushButton.h"   // QFluentKit（PrimaryPushButton）
 #include "Label.h"        // QFluentKit（StrongBodyLabel）
@@ -38,7 +40,26 @@ TokenPuzzlePanel::TokenPuzzlePanel(QWidget* parent)
     levelStars_.resize(TokenPuzzleLibrary::levelCount());
     for (int& s : levelStars_) s = -1;
 
+    // P0-2 fix (F7): 从持久化存储加载已记录的关卡星级
+    auto& store = LearnerProgressStore::instance();
+    for (int i = 0; i < TokenPuzzleLibrary::levelCount(); ++i) {
+        int s = store.getLevelStars(levelId(i).toStdString());
+        if (s >= 0) levelStars_[i] = s;
+    }
+
     buildUi();
+
+    // P0-2 fix (F7): 已完成的关卡需在 UI 上解锁下一关
+    // 第 1 关默认解锁，后续关卡仅当前一关已完成（stars >= 0）时解锁
+    auto* model = qobject_cast<QStandardItemModel*>(levelCombo_->model());
+    if (model) {
+        for (int i = 1; i < TokenPuzzleLibrary::levelCount(); ++i) {
+            if (levelStars_[i - 1] >= 0 && model->item(i)) {
+                model->item(i)->setEnabled(true);
+            }
+        }
+    }
+
     loadLevel(0);
     updateScoreDisplay();
 }
@@ -52,10 +73,34 @@ void TokenPuzzlePanel::buildUi() {
     mainLayout->setContentsMargins(8, 8, 8, 8);
     mainLayout->setSpacing(6);
 
+    // ---- 关卡芯片栏（独立一行，放在 QComboBox 上方）----
+    // 提升关卡切换控件的视觉识别度和可操作性，与下方 levelCombo_ 双向同步
+    auto* chipRow = new QHBoxLayout;
+    chipRow->setContentsMargins(0, 0, 0, 0);
+    chipRow->setSpacing(6);
+    const auto& chipLevels = TokenPuzzleLibrary::levels();
+    for (int i = 0; i < (int)chipLevels.size(); ++i) {
+        auto* chip = new QPushButton(this);
+        chip->setObjectName("levelChip");
+        chip->setFixedSize(48, 32);
+        // 芯片点击 → 同步到 QComboBox（触发 onLevelChanged → loadLevel → refreshLevelChips）
+        const int chipIndex = i;
+        connect(chip, &QPushButton::clicked, this, [this, chipIndex]() {
+            if (chipIndex >= 0 && chipIndex < levelCombo_->count()) {
+                levelCombo_->setCurrentIndex(chipIndex);
+            }
+        });
+        levelChips_.append(chip);
+        chipRow->addWidget(chip);
+    }
+    chipRow->addStretch();
+    mainLayout->addLayout(chipRow);
+
     // ---- 顶部栏：关卡选择 + 得分 + 进度 ----
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(new QLabel(mlTr("关卡:")));
     levelCombo_ = new QComboBox(this);
+    levelCombo_->setObjectName("levelCombo");  // QSS 选择器匹配
 
     // 使用 QStandardItemModel 支持逐项 enable/disable（解锁机制）
     auto* model = new QStandardItemModel(this);
@@ -153,6 +198,22 @@ void TokenPuzzlePanel::buildUi() {
         int row = answerList_->row(item);
         onAnswerItemClicked(row);
     });
+
+    // ---- Solarized 风格 QSS（QComboBox + 关卡芯片按钮）----
+    // 动态属性 [current='true'] / [locked='true'] 在 refreshLevelChips() 中
+    // 通过 setProperty + style()->polish() 触发重新评估
+    setStyleSheet(QString::fromUtf8(
+        "QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
+        "border-radius: 4px; padding: 4px 8px; }"
+        "QComboBox#levelCombo:hover { border-color: #268BD2; }"
+        "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+        "border-radius: 4px; font-size: 11px; }"
+        "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
+        "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
+        "border-color: #1E6FA3; font-weight: bold; }"
+        "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+        "border-color: #CCC; }"
+    ));
 }
 
 // ============================================================
@@ -171,6 +232,7 @@ void TokenPuzzlePanel::loadLevel(int index) {
     clearAnswer();
     hintUsedCount_ = 0;
     setFeedback(mlTr("第 %1 关已加载，点击下方打乱的 token 按正确顺序排列").arg(index + 1));
+    refreshLevelChips();  // 同步芯片栏状态（current 高亮等）
 }
 
 // ============================================================
@@ -307,6 +369,10 @@ void TokenPuzzlePanel::onCheckAnswer() {
     if (stars > levelStars_[currentLevelIndex_]) {
         levelStars_[currentLevelIndex_] = stars;
     }
+    // P0-2 fix (F7): 持久化关卡星级到 LearnerProgressStore
+    LearnerProgressStore::instance().markLevelStars(
+        levelId(currentLevelIndex_).toStdString(), stars);
+    LearnerProgressStore::instance().save();
     setFeedback(mlTr("✅ 完全正确！获得 %1").arg(starsToText(stars)));
     unlockNextLevel();
     updateScoreDisplay();
@@ -336,6 +402,10 @@ void TokenPuzzlePanel::onSkipLevel() {
     if (levelStars_[currentLevelIndex_] < 0) {
         levelStars_[currentLevelIndex_] = 0;
     }
+    // P0-2 fix (F7): 持久化跳过状态（0 星）
+    LearnerProgressStore::instance().markLevelStars(
+        levelId(currentLevelIndex_).toStdString(), 0);
+    LearnerProgressStore::instance().save();
     setFeedback(mlTr("已跳过本关（不计星），下一关已解锁"));
     unlockNextLevel();
     updateScoreDisplay();
@@ -395,6 +465,7 @@ void TokenPuzzlePanel::unlockNextLevel() {
             it->setEnabled(true);
         }
     }
+    refreshLevelChips();  // 解锁后刷新芯片栏（locked → unlocked）
 }
 
 // ============================================================
@@ -444,5 +515,65 @@ void TokenPuzzlePanel::setFeedback(const QString& text, bool isError) {
         feedbackLabel_->setStyleSheet("color: #c0392b; font-weight: bold; padding: 4px;");
     } else {
         feedbackLabel_->setStyleSheet("color: #2c3e50; padding: 4px;");
+    }
+}
+
+// ============================================================
+// 关卡芯片栏状态刷新
+// ------------------------------------------------------------
+// 三种状态：
+//   locked   — 未解锁：灰色背景 + 🔒，不可点击
+//   unlocked — 已解锁未选中：浅色背景 + 边框，显示关卡号
+//   current  — 当前选中：主题色填充 + 白字，显示关卡号 + ⭐星数
+// dynamic property 改变后必须 style()->polish() 才能让 QSS 重新评估
+// ============================================================
+
+void TokenPuzzlePanel::refreshLevelChips() {
+    auto* model = qobject_cast<QStandardItemModel*>(levelCombo_->model());
+    if (!model) return;
+    const auto& levels = TokenPuzzleLibrary::levels();
+    for (int i = 0; i < levelChips_.size(); ++i) {
+        QPushButton* chip = levelChips_[i];
+        if (!chip) continue;
+
+        bool isLocked = false;
+        if (i < model->rowCount()) {
+            QStandardItem* it = model->item(i);
+            if (it) isLocked = !it->isEnabled();
+        }
+        bool isCurrent = (i == currentLevelIndex_);
+
+        chip->setProperty("locked", isLocked);
+        chip->setProperty("current", isCurrent);
+        chip->setEnabled(!isLocked);
+
+        // 文本：locked 显示锁图标；current 且已获星显示关卡号+⭐；其余显示关卡号
+        QString text;
+        if (isLocked) {
+            // 🔒 = U+1F512 = UTF-8: F0 9F 94 92
+            text = QString::fromUtf8("\xF0\x9F\x94\x92");
+        } else if (isCurrent && i < levelStars_.size() && levelStars_[i] > 0) {
+            // ⭐ = U+2B50 = UTF-8: E2 AD 90
+            text = QString::fromUtf8("%1 \xE2\xAD\x90").arg(i + 1);
+        } else {
+            text = QString::number(i + 1);
+        }
+        chip->setText(text);
+
+        // 工具提示：显示关卡标题和教学点（目标）
+        if (i < (int)levels.size()) {
+            QString tip = mlTr("第 %1 关").arg(i + 1);
+            if (!levels[i].teachingPoint.empty()) {
+                tip += "\n" + QString::fromUtf8(levels[i].teachingPoint.c_str());
+            }
+            if (i < levelStars_.size() && levelStars_[i] > 0) {
+                tip += "\n" + mlTr("已获星：%1").arg(levelStars_[i]);
+            }
+            chip->setToolTip(tip);
+        }
+
+        // 强制 QSS 重新评估 dynamic property 选择器
+        chip->style()->unpolish(chip);
+        chip->style()->polish(chip);
     }
 }

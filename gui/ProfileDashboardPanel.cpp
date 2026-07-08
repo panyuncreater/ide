@@ -50,23 +50,23 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
             "斐波那契递归（fib(20)）",
             "递归型 fib(20)。栈式 VM 与 RegisterVM 在密集函数调用场景下都显著快于 Interpreter（解释器每个 AST 节点都需要虚函数分发）。"
             "RegisterVM 通常略快于 StackVM（寄存器消除 push/pop 内存往返），但差距小于 Interpreter vs VM。",
-            "fun fib(n) { if (n < 2) return n; return fib(n-1) + fib(n-2); }\nprint fib(20);",
-            "arithmetic", 5
+            "fun fib(n) { if (n < 2) return n; return fib(n-1) + fib(n-2); }\nprint(fib(20));",
+            "arithmetic", 3
         },
         {
             "loop-sum",
             "循环求和（1 到 100000）",
             "纯算术循环。栈式 VM 与 RegisterVM 在热路径上优势最明显——单条 OP_ADD 比访问者模式 dispatch 快 5-10 倍。"
             "RegisterVM 通过虚拟寄存器避免每次运算 push/pop，进一步降低内存带宽占用。",
-            "var sum = 0;\nvar i = 1;\nwhile (i <= 100000) { sum = sum + i; i = i + 1; }\nprint sum;",
-            "loop", 5
+            "var sum = 0;\nvar i = 1;\nwhile (i <= 100000) { sum = sum + i; i = i + 1; }\nprint(sum);",
+            "loop", 3
         },
         {
             "string-concat",
             "字符串拼接循环（1000 次）",
             "字符串 + 拼接。每次拼接会构造新 StringData（不可变语义），三后端性能相近（瓶颈在堆分配而非指令分发）。"
             "GC 在此场景频繁触发，sweep 开销可能拉低三后端共同基线。",
-            "var s = \"\";\nvar i = 0;\nwhile (i < 1000) { s = s + \"x\"; i = i + 1; }\nprint s.length();",
+            "var s = \"\";\nvar i = 0;\nwhile (i < 1000) { s = s + \"x\"; i = i + 1; }\nprint(s.len());",
             "string", 3
         },
         {
@@ -74,7 +74,7 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
             "类实例化循环（10000 次）",
             "Point 类构造 + 字段赋值循环。InstanceData 分配 + GcManager::registerTracked 是主要开销，"
             "三后端差距较小（解释器仍稍慢，因为 MethodCall 的 Visitor 分发）。",
-            "class Point { var x; var y; fun new(px, py) { x = px; y = py; } }\nvar i = 0;\nwhile (i < 10000) { var p = Point.new(i, i); i = i + 1; }\nprint \"done\";",
+            "class Point { var x; var y; fun new(px, py) { x = px; y = py; } }\nvar i = 0;\nwhile (i < 10000) { var p = Point(i, i); i = i + 1; }\nprint(\"done\");",
             "class", 3
         },
         {
@@ -82,7 +82,7 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
             "闭包捕获循环（10000 次）",
             "makeCounter 闭包捕获循环。ClosureData 通过 weak_ptr<Environment> 打破循环，"
             "三后端在闭包捕获上开销相近，RegisterVM 因寄存器分配稍占优势。",
-            "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; }\nvar c = makeCounter();\nvar i = 0;\nwhile (i < 10000) { c(); i = i + 1; }\nprint \"done\";",
+            "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; }\nvar c = makeCounter();\nvar i = 0;\nwhile (i < 10000) { c(); i = i + 1; }\nprint(\"done\");",
             "closure", 3
         },
         {
@@ -90,7 +90,7 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
             "字典访问循环（10000 次）",
             "字典键值读写循环。DictData 使用 unordered_map，每次访问涉及哈希计算，"
             "三后端性能相近（瓶颈在 hash 而非指令分发），Interpreter 略慢。",
-            "var d = {};\nvar i = 0;\nwhile (i < 10000) { d[\"k\" + i] = i * 2; i = i + 1; }\nprint d.size();",
+            "var d = {};\nvar i = 0;\nwhile (i < 10000) { d[\"k\" + i] = i * 2; i = i + 1; }\nprint(d.len());",
             "loop", 3
         },
     };
@@ -175,7 +175,7 @@ const std::vector<OpCodePerfDoc>& OpCodeProfileLibrary::docs() {
             "OP_METHOD_CALL", "call",
             "方法调用。比 OP_CALL 更昂贵——涉及方法查找（method resolution）。"
             "在类实例方法密集调用场景下是热点。",
-            "class P { fun m() { return 1; } } var p = P.new(); p.m();"
+            "class P { fun m() { return 1; } } var p = P(); p.m();"
         },
     };
     return kDocs;
@@ -476,13 +476,42 @@ ProfileDashboardPanel::BackendTiming ProfileDashboardPanel::measureBackend(
     return t;
 }
 
+// ============================================================
+// 问题 6: "运行中"状态动画 — 橙色背景 + 循环圆点，避免误认为卡死
+// ============================================================
+
+void ProfileDashboardPanel::startStatusAnimation(const QString& base) {
+    statusRunningBase_ = base;
+    statusAnimDots_ = 0;
+    if (!statusAnimTimer_) {
+        statusAnimTimer_ = new QTimer(this);
+        connect(statusAnimTimer_, &QTimer::timeout, this, [this]() {
+            statusAnimDots_ = (statusAnimDots_ + 1) % 4;
+            QString dots(statusAnimDots_, '.');
+            statusLabel_->setText(statusRunningBase_ + dots);
+        });
+    }
+    statusAnimTimer_->start(400);  // 400ms 切换一次
+    statusLabel_->setText(base + ".");
+}
+
+void ProfileDashboardPanel::stopStatusAnimation() {
+    if (statusAnimTimer_) {
+        statusAnimTimer_->stop();
+    }
+}
+
 void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     const auto& items = ProfileLibrary::scenarios();
     if (scenarioIndex < 0 || scenarioIndex >= (int)items.size()) return;
     const auto& scenario = items[scenarioIndex];
 
     runProfileBtn_->setEnabled(false);
-    statusLabel_->setText(QString::fromUtf8("运行中..."));
+    // 问题 6: 醒目的"运行中"状态 — 橙色背景 + 动画圆点 + 进度
+    startStatusAnimation(QString::fromUtf8("运行中 [1/3] Interpreter"));
+    statusLabel_->setStyleSheet(
+        "QLabel { background: #CB4B16; color: white; border-radius: 4px;"
+        "  padding: 4px 12px; font-weight: bold; }");
     // BUG-GUI-AUDIT-1 fix attempt: Qt 6 已移除通用 ExcludeTimers flag，保持 ExcludeUserInputEvents。
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
@@ -492,6 +521,8 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     Parser parser;
     auto ast = parser.parse(tokens);
     if (parser.getDiagnostics().hasErrors()) {
+        stopStatusAnimation();
+        statusLabel_->setStyleSheet("");
         statusLabel_->setText(QString::fromUtf8("解析失败：%1").arg(
             QString::fromUtf8(parser.getDiagnostics().summary().c_str())));
         runProfileBtn_->setEnabled(true);
@@ -503,6 +534,10 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     results.push_back(measureBackend("Interpreter",
         [this](Block& a) { return measureInterpreterOnce(a); },
         *ast, scenario.iterations));
+
+    // 问题 7: 在后端之间处理事件，避免长时间阻塞 UI
+    statusRunningBase_ = QString::fromUtf8("运行中 [2/3] StackVM");
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // P1-1: StackVM / RegisterVM 走 measureXxxWithProfile，同时累加 opcode 计数
     // 自己实现多次测量循环（替代 measureBackend），累加每次的 opcode 计数
@@ -528,6 +563,10 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
         }
         results.push_back(t);
     }
+
+    statusRunningBase_ = QString::fromUtf8("运行中 [3/3] RegisterVM");
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
     {
         BackendTiming t;
         t.name = "RegisterVM";
@@ -589,6 +628,8 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     update();  // QPainter 模式触发 paintEvent 重绘柱状图
 #endif
     runProfileBtn_->setEnabled(true);
+    stopStatusAnimation();
+    statusLabel_->setStyleSheet("");
     statusLabel_->setText(QString::fromUtf8("剖析完成"));
 }
 
@@ -611,7 +652,13 @@ void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& resu
                 : QString::fromUtf8("最快");
             resultTable_->setItem(i, 3, new QTableWidgetItem(ratioText));
         } else {
-            resultTable_->setItem(i, 1, new QTableWidgetItem(QString::fromUtf8("失败")));
+            // 问题 7: 显示失败原因而非仅"失败"，帮助诊断后端兼容性问题
+            QString errText = QString::fromUtf8("失败: ") +
+                QString::fromUtf8(r.errorMessage.c_str()).left(60);
+            auto* errItem = new QTableWidgetItem(errText);
+            errItem->setToolTip(QString::fromUtf8(r.errorMessage.c_str()));
+            errItem->setForeground(QColor("#CC0000"));
+            resultTable_->setItem(i, 1, errItem);
             resultTable_->setItem(i, 2, new QTableWidgetItem(QString::fromUtf8("—")));
             resultTable_->setItem(i, 3, new QTableWidgetItem(QString::fromUtf8("—")));
         }
@@ -673,6 +720,13 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
             os << "<p><b>最慢后端：</b>" << slowest->name
                << " (" << slowest->avgMicros << " μs)</p>";
             os << "<p><b>加速比：</b>" << speedup << "x</p>";
+        }
+    }
+    // 问题 7: 列出失败后端及其错误原因
+    for (const auto& r : results) {
+        if (!r.success) {
+            os << "<p style='color:#cc0000;'><b>" << r.name << " 失败：</b>"
+               << r.errorMessage << "</p>";
         }
     }
     os << "<hr>";

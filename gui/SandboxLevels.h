@@ -19,6 +19,7 @@
 
 #include <string>
 #include <vector>
+#include "gui/I18n.h"  // mlTr() 国际化（头文件内联使用）
 
 // ---- 操作类型 ----
 

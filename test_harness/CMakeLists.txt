@@ -14,9 +14,28 @@
 # 项目根目录（test_harness 是子目录，根是上一级）
 set(MINILANG_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-# ---- 辅助：链接 gtest（需要 test_harness 的调试器桩文件） ----
-# 超类排查测试使用 gtest，需链接 minilang_tests 相同的 gtest 库
-# 注意：gtest 目标由父项目 tests/CMakeLists.txt 的 add_subdirectory 创建
+# ---- 自主获取 gtest（修复审计问题 3：解耦对父项目 tests/ 的隐式依赖）----
+# 若父项目 tests/ 已创建 gtest 目标（MINILANG_BUILD_TESTS=ON），直接复用；
+# 若仅启用 test_harness 而禁用 tests，则自行从本地 submodule 或 gitee 镜像构建，
+# 使 test_harness 不再因 add_subdirectory 顺序或 tests 禁用而构建失败。
+if(NOT TARGET gtest)
+    set(GOOGLETEST_LOCAL_DIR ${MINILANG_ROOT_DIR}/third_party/googletest)
+    if(EXISTS "${GOOGLETEST_LOCAL_DIR}/CMakeLists.txt")
+        message(STATUS "[test_harness] 使用本地 GoogleTest 源码: ${GOOGLETEST_LOCAL_DIR}")
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        add_subdirectory(${GOOGLETEST_LOCAL_DIR}
+            ${CMAKE_BINARY_DIR}/_deps/googletest-build EXCLUDE_FROM_ALL)
+    else()
+        message(STATUS "[test_harness] 本地 GoogleTest 不存在，从 gitee 镜像下载（浅克隆）")
+        include(FetchContent)
+        FetchContent_Declare(googletest
+            GIT_REPOSITORY https://gitee.com/mirrors/googletest.git
+            GIT_TAG v1.14.0
+            GIT_SHALLOW TRUE)
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
+    endif()
+endif()
 
 # ================================================================
 # formatter_audit：格式化器深度审计（100+ 用例）
@@ -73,7 +92,8 @@ target_link_libraries(debug_test PRIVATE
 
 # ================================================================
 # super_notfound_test：超类方法未找到测试（gtest）
-# 修复：链接 gtest 库
+# gtest 目标由上方“自主获取 gtest”逻辑保证存在（复用 tests/ 或自建），
+# 不再隐式依赖父项目的 add_subdirectory 顺序。
 # ================================================================
 add_executable(super_notfound_test
     super_notfound_test.cpp

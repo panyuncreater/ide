@@ -114,6 +114,44 @@ bool LearnerProgressStore::load() {
         }
     }
 
+    // P0-2 fix (F7): levelStars: { "token-puzzle-1": 3, ... }
+    QJsonObject starsObj = root.value(QString::fromUtf8("levelStars")).toObject();
+    for (auto it = starsObj.begin(); it != starsObj.end(); ++it) {
+        if (it.value().isDouble()) {
+            loaded.levelStars[it.key().toStdString()] = it.value().toInt();
+        }
+    }
+
+    // P2-3 fix (F9): 学情画像多维进度数据（向后兼容——缺失字段按空 map 处理）
+    // score: { "lab-01": 85, ... }
+    QJsonObject scoreObj = root.value(QString::fromUtf8("score")).toObject();
+    for (auto it = scoreObj.begin(); it != scoreObj.end(); ++it) {
+        if (it.value().isDouble()) {
+            loaded.score[it.key().toStdString()] = it.value().toInt();
+        }
+    }
+    // bestStars: { "lab-01": 3, ... }
+    QJsonObject bestStarsObj = root.value(QString::fromUtf8("bestStars")).toObject();
+    for (auto it = bestStarsObj.begin(); it != bestStarsObj.end(); ++it) {
+        if (it.value().isDouble()) {
+            loaded.bestStars[it.key().toStdString()] = it.value().toInt();
+        }
+    }
+    // spentMinutes: { "lab-01": 12, ... }
+    QJsonObject spentObj = root.value(QString::fromUtf8("spentMinutes")).toObject();
+    for (auto it = spentObj.begin(); it != spentObj.end(); ++it) {
+        if (it.value().isDouble()) {
+            loaded.spentMinutes[it.key().toStdString()] = it.value().toInt();
+        }
+    }
+    // failCount: { "lab-02": 2, ... }
+    QJsonObject failObj = root.value(QString::fromUtf8("failCount")).toObject();
+    for (auto it = failObj.begin(); it != failObj.end(); ++it) {
+        if (it.value().isDouble()) {
+            loaded.failCount[it.key().toStdString()] = it.value().toInt();
+        }
+    }
+
     data_ = std::move(loaded);
     return true;
 }
@@ -150,6 +188,38 @@ bool LearnerProgressStore::save() const {
 
     root.insert(QString::fromUtf8("currentStage"), data_.currentStage);
 
+    // P0-2 fix (F7): 持久化细粒度关卡星级
+    QJsonObject starsObj;
+    for (const auto& [id, stars] : data_.levelStars) {
+        starsObj.insert(QString::fromStdString(id), stars);
+    }
+    root.insert(QString::fromUtf8("levelStars"), starsObj);
+
+    // P2-3 fix (F9): 持久化学情画像多维进度数据
+    QJsonObject scoreObj;
+    for (const auto& [id, sc] : data_.score) {
+        scoreObj.insert(QString::fromStdString(id), sc);
+    }
+    root.insert(QString::fromUtf8("score"), scoreObj);
+
+    QJsonObject bestStarsObj;
+    for (const auto& [id, stars] : data_.bestStars) {
+        bestStarsObj.insert(QString::fromStdString(id), stars);
+    }
+    root.insert(QString::fromUtf8("bestStars"), bestStarsObj);
+
+    QJsonObject spentObj;
+    for (const auto& [id, mins] : data_.spentMinutes) {
+        spentObj.insert(QString::fromStdString(id), mins);
+    }
+    root.insert(QString::fromUtf8("spentMinutes"), spentObj);
+
+    QJsonObject failObj;
+    for (const auto& [id, fails] : data_.failCount) {
+        failObj.insert(QString::fromStdString(id), fails);
+    }
+    root.insert(QString::fromUtf8("failCount"), failObj);
+
     QJsonDocument doc(root);
 
     QFile file(path);
@@ -171,6 +241,44 @@ void LearnerProgressStore::markCompleted(const std::string& activityId) {
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
     data_.lastAccessTime[activityId] = now;
+    // P1-2 fix (F8): 完成状态变化后立即重算阶段，避免 currentStage 永远为 0。
+    // 此处调用 recomputeStage 是幂等的——多次调用只覆盖 currentStage，无副作用。
+    recomputeStage(LearningPathData::activities());
+}
+
+// ============================================================
+// P1-2 fix (F8): 重算 currentStage
+// 规则：
+//   - 遍历 stage 0..N，找出"完成比例 >= 50%"的最高阶段 highestCompletedStage
+//   - 若所有阶段都 >= 50%，currentStage = stageCount（已通关所有阶段）
+//   - 否则 currentStage = highestCompletedStage + 1（下一未完成阶段）
+//   - 若所有阶段都 < 50%，currentStage = 0（仍是新手阶段）
+// 注：阈值 50% 的取值平衡"完成感"与"鼓励性"——过半即解锁下一阶段提示。
+// ============================================================
+void LearnerProgressStore::recomputeStage(const std::vector<LearningActivity>& all) {
+    if (all.empty()) {
+        data_.currentStage = 0;
+        return;
+    }
+    int highestQualified = -1;  // 完成比例 >= 50% 的最高阶段
+    for (int stage = 0; stage < LearningPathData::stageCount(); ++stage) {
+        int sp = stageProgress(stage, all);
+        if (sp >= 50) {
+            highestQualified = stage;
+        }
+    }
+    if (highestQualified < 0) {
+        // 没有任何阶段过半，仍在阶段 0
+        data_.currentStage = 0;
+    } else if (highestQualified == LearningPathData::stageCount() - 1) {
+        // 最后一阶段也过半——若已 100% 则标记为 stageCount（通关），否则停留在最后阶段
+        int lastStageProgress = stageProgress(highestQualified, all);
+        data_.currentStage = (lastStageProgress >= 100) ? LearningPathData::stageCount()
+                                                        : highestQualified;
+    } else {
+        // 下一未完成阶段
+        data_.currentStage = highestQualified + 1;
+    }
 }
 
 void LearnerProgressStore::recordAttempt(const std::string& activityId) {
@@ -187,6 +295,193 @@ void LearnerProgressStore::reset() {
     data_.attemptCount.clear();
     data_.lastAccessTime.clear();
     data_.currentStage = 0;
+    // P0-2 fix (F7): 同步清空细粒度关卡星级
+    data_.levelStars.clear();
+    // P2-3 fix (F9): 同步清空学情画像多维数据
+    data_.score.clear();
+    data_.bestStars.clear();
+    data_.spentMinutes.clear();
+    data_.failCount.clear();
+}
+
+// ============================================================
+// P0-2 fix (F7): 关卡星级接口实现
+// ============================================================
+void LearnerProgressStore::markLevelStars(const std::string& levelId, int stars) {
+    if (levelId.empty()) return;
+    // 仅当新星级 >= 已记录星级时才覆盖（保留历史最佳成绩）
+    auto it = data_.levelStars.find(levelId);
+    if (it == data_.levelStars.end() || stars > it->second) {
+        data_.levelStars[levelId] = stars;
+    }
+    // stars >= 0 表示关卡至少被完成或跳过，同步记录访问时间
+    if (stars >= 0) {
+        auto now = static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        data_.lastAccessTime[levelId] = now;
+    }
+}
+
+int LearnerProgressStore::getLevelStars(const std::string& levelId) const {
+    auto it = data_.levelStars.find(levelId);
+    if (it == data_.levelStars.end()) return -1;  // 未记录 = 未完成
+    return it->second;
+}
+
+bool LearnerProgressStore::areAllLevelsCompleted(
+    const std::vector<std::string>& levelIds) const {
+    if (levelIds.empty()) return false;
+    for (const auto& id : levelIds) {
+        auto it = data_.levelStars.find(id);
+        if (it == data_.levelStars.end() || it->second < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ============================================================
+// P2-3 fix (F9): 学情画像接口实现
+// ============================================================
+void LearnerProgressStore::recordScore(const std::string& activityId, int score, int stars) {
+    if (activityId.empty()) return;
+    // score 截断到 [0, 100]
+    if (score < 0) score = 0;
+    if (score > 100) score = 100;
+    // 保留历史最佳得分（仅当新分 >= 旧分时覆盖）
+    auto it = data_.score.find(activityId);
+    if (it == data_.score.end() || score > it->second) {
+        data_.score[activityId] = score;
+    }
+    // 保留历史最佳星级（仅当新星级 >= 旧星级时覆盖）
+    if (stars > 0) {
+        auto sit = data_.bestStars.find(activityId);
+        if (sit == data_.bestStars.end() || stars > sit->second) {
+            data_.bestStars[activityId] = stars;
+        }
+    }
+    // 同步更新访问时间
+    auto now = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    data_.lastAccessTime[activityId] = now;
+}
+
+int LearnerProgressStore::getScore(const std::string& activityId) const {
+    auto it = data_.score.find(activityId);
+    return it != data_.score.end() ? it->second : 0;
+}
+
+int LearnerProgressStore::getBestStars(const std::string& activityId) const {
+    auto it = data_.bestStars.find(activityId);
+    return it != data_.bestStars.end() ? it->second : 0;
+}
+
+void LearnerProgressStore::addSpentMinutes(const std::string& activityId, int minutes) {
+    if (activityId.empty()) return;
+    if (minutes <= 0) return;  // 负数或零视为无操作
+    data_.spentMinutes[activityId] += minutes;
+    // 不更新 lastAccessTime——时间累加是异步操作，不应刷新访问时间戳
+}
+
+int LearnerProgressStore::getSpentMinutes(const std::string& activityId) const {
+    auto it = data_.spentMinutes.find(activityId);
+    return it != data_.spentMinutes.end() ? it->second : 0;
+}
+
+void LearnerProgressStore::recordFailure(const std::string& activityId) {
+    if (activityId.empty()) return;
+    data_.failCount[activityId] += 1;
+    auto now = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    data_.lastAccessTime[activityId] = now;
+}
+
+int LearnerProgressStore::getFailCount(const std::string& activityId) const {
+    auto it = data_.failCount.find(activityId);
+    return it != data_.failCount.end() ? it->second : 0;
+}
+
+// ============================================================
+// P2-3 fix (F9): 薄弱点分析
+// 算法：
+//   1. 遍历所有活动，筛选"未完成 + (attemptCount >= minAttempts 或 failCount >= 1)"
+//   2. 按 failCount 降序 → attemptCount 降序 → id 字典序排序
+//   3. 截取前 maxCount 个返回（maxCount=0 表示不限制）
+// ============================================================
+std::vector<WeakPoint> LearnerProgressStore::getWeakPoints(
+    const std::vector<LearningActivity>& all,
+    int minAttempts,
+    std::size_t maxCount) const {
+
+    std::vector<WeakPoint> candidates;
+    for (const auto& a : all) {
+        // 已完成则跳过——薄弱点仅针对未通过活动
+        auto cit = data_.completed.find(a.id);
+        if (cit != data_.completed.end() && cit->second) continue;
+
+        int attempts = 0;
+        auto ait = data_.attemptCount.find(a.id);
+        if (ait != data_.attemptCount.end()) attempts = ait->second;
+
+        int fails = 0;
+        auto fit = data_.failCount.find(a.id);
+        if (fit != data_.failCount.end()) fails = fit->second;
+
+        int sc = 0;
+        auto sit = data_.score.find(a.id);
+        if (sit != data_.score.end()) sc = sit->second;
+
+        // 筛选条件：尝试次数 >= 阈值 或 至少失败过一次
+        if (attempts >= minAttempts || fails >= 1) {
+            candidates.push_back(WeakPoint{a.id, attempts, fails, sc});
+        }
+    }
+
+    // 排序：失败次数降序 → 尝试次数降序 → id 字典序
+    std::sort(candidates.begin(), candidates.end(),
+        [](const WeakPoint& a, const WeakPoint& b) {
+            if (a.fails != b.fails) return a.fails > b.fails;
+            if (a.attempts != b.attempts) return a.attempts > b.attempts;
+            return a.activityId < b.activityId;
+        });
+
+    // 截取前 maxCount 个（maxCount=0 表示不限制）
+    if (maxCount > 0 && candidates.size() > maxCount) {
+        candidates.resize(maxCount);
+    }
+    return candidates;
+}
+
+// ============================================================
+// P2-3 fix (F9): 预计剩余时间
+// 算法：sum(未完成且已解锁活动的 estimatedMinutes)
+// 注：未解锁活动不计入——因为它们当前无法开始，不应计入"剩余"。
+// ============================================================
+int LearnerProgressStore::estimatedRemainingMinutes(
+    const std::vector<LearningActivity>& all) const {
+    int total = 0;
+    for (const auto& a : all) {
+        // 已完成则跳过
+        auto cit = data_.completed.find(a.id);
+        if (cit != data_.completed.end() && cit->second) continue;
+
+        // 未解锁则跳过（不计入剩余时间）
+        if (!isUnlocked(a.id, all)) continue;
+
+        total += a.estimatedMinutes;
+    }
+    return total;
+}
+
+int LearnerProgressStore::totalSpentMinutes() const {
+    int total = 0;
+    for (const auto& [id, mins] : data_.spentMinutes) {
+        total += mins;
+    }
+    return total;
 }
 
 // ============================================================

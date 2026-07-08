@@ -20,6 +20,8 @@
 
 class QPushButton;
 class StrongBodyLabel;   // QFluentKit（titleLabel_ 实际类型）
+class QDialog;           // showHelpDialog / adjustHelpDialogSize 用到
+class QTextBrowser;      // adjustHelpDialogSize 形参类型
 
 class TeachingPanelHeader : public QWidget {
     Q_OBJECT
@@ -39,12 +41,20 @@ signals:
     /// 用户点击「跳转学习路径」按钮
     void learningPathRequested();
 
+    /// 用户点击「新手引导」按钮，panelId 标识发起的面板
+    void guidedTourRequested(const QString& panelId);
+
 private:
     QString panelId_;
     QString title_;
     StrongBodyLabel* titleLabel_ = nullptr;
     QPushButton* helpBtn_ = nullptr;
+    QPushButton* tourBtn_ = nullptr;          // 「新手引导」按钮
     QPushButton* learningPathBtn_ = nullptr;
 
     void showHelpDialog();
+
+    /// 根据 QTextBrowser 文档实际高度调整对话框高度，
+    /// 钳制在 [minimum, maximum] 区间内，宽度保持当前值不变。
+    void adjustHelpDialogSize(QDialog* dlg, QTextBrowser* browser);
 };

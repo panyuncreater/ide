@@ -52,7 +52,7 @@ void AstViewer::setAst(ASTNode* root) {
     if (!root) return;
 
     // PERF-24 fix: 大 AST 节点数上限保护，避免创建 O(3N) 个 QGraphicsItem 导致 UI 卡顿。
-    const int MAX_AST_NODES = 2000;
+    const int MAX_AST_NODES = 5000;
     int nodeCount = 0;
     countNodes(root, nodeCount);
     if (nodeCount > MAX_AST_NODES) {
@@ -60,7 +60,7 @@ void AstViewer::setAst(ASTNode* root) {
             QString("AST 节点数 %1 超过上限 %2，已跳过渲染以避免 UI 卡顿。\n"
                     "请考虑简化代码或使用字节码视图查看。")
                 .arg(nodeCount).arg(MAX_AST_NODES));
-        warning->setDefaultTextColor(isDarkTheme_ ? QColor(0xf4, 0x87, 0x71) : QColor(200, 0, 0));
+        warning->setDefaultTextColor(isDarkTheme_ ? QColor(0xf4, 0x87, 0x71) : QColor(0xdc, 0x32, 0x2f));
         auto font = warning->font();
         font.setPointSize(12);
         font.setBold(true);
@@ -317,38 +317,38 @@ void AstViewer::syncCollapsedState(RtNode* node, int depth) {
 // ============================================================
 
 QColor AstViewer::sceneBackgroundColor() const {
-    return isDarkTheme_ ? QColor(0x1e, 0x1e, 0x1e) : QColor(0xff, 0xff, 0xff);
+    return isDarkTheme_ ? QColor(0x1e, 0x1e, 0x1e) : QColor(0xfd, 0xf6, 0xe3);
 }
 
 QColor AstViewer::nodeBorderColor() const {
-    return isDarkTheme_ ? QColor(0x55, 0x55, 0x55) : QColor(0x64, 0x64, 0x64);
+    return isDarkTheme_ ? QColor(0x55, 0x55, 0x55) : QColor(0x93, 0xa1, 0xa1);
 }
 
 QColor AstViewer::lineColor() const {
-    return isDarkTheme_ ? QColor(0x5a, 0x5a, 0x5a) : QColor(0x96, 0x96, 0x96);
+    return isDarkTheme_ ? QColor(0x5a, 0x5a, 0x5a) : QColor(0x93, 0xa1, 0xa1);
 }
 
 QColor AstViewer::textColor() const {
-    return isDarkTheme_ ? QColor(0xd4, 0xd4, 0xd4) : QColor(0x1f, 0x1f, 0x1f);
+    return isDarkTheme_ ? QColor(0xd4, 0xd4, 0xd4) : QColor(0x00, 0x2b, 0x36);
 }
 
 QColor AstViewer::nodeBgColor(const QString& name) const {
     // 深色主题使用低饱和度深色，浅色主题使用低饱和度浅色
     // 保证文字与背景对比度 >= 4.5:1 (WCAG)
     if (name.startsWith("BinaryOp") || name.startsWith("UnaryOp")) {
-        return isDarkTheme_ ? QColor(0x6b, 0x4a, 0x2a) : QColor(0xff, 0xe6, 0xcc);
+        return isDarkTheme_ ? QColor(0x6b, 0x4a, 0x2a) : QColor(0xfd, 0xf0, 0xd5);
     } else if (name.startsWith("Number") || name.startsWith("String") || name.startsWith("Bool")) {
-        return isDarkTheme_ ? QColor(0x2a, 0x4a, 0x6b) : QColor(0xcc, 0xe8, 0xff);
+        return isDarkTheme_ ? QColor(0x2a, 0x4a, 0x6b) : QColor(0xd5, 0xec, 0xf5);
     } else if (name.startsWith("VarDecl") || name.startsWith("Assign") || name.startsWith("VarRef")) {
-        return isDarkTheme_ ? QColor(0x2a, 0x55, 0x2a) : QColor(0xcc, 0xff, 0xcc);
+        return isDarkTheme_ ? QColor(0x2a, 0x55, 0x2a) : QColor(0xe8, 0xf0, 0xd0);
     } else if (name.startsWith("If") || name.startsWith("While") || name.startsWith("For")) {
-        return isDarkTheme_ ? QColor(0x55, 0x2a, 0x55) : QColor(0xff, 0xcc, 0xff);
+        return isDarkTheme_ ? QColor(0x55, 0x2a, 0x55) : QColor(0xec, 0xdf, 0xf0);
     } else if (name.startsWith("FunDecl") || name.startsWith("FunCall")) {
-        return isDarkTheme_ ? QColor(0x55, 0x55, 0x2a) : QColor(0xff, 0xff, 0xcc);
+        return isDarkTheme_ ? QColor(0x55, 0x55, 0x2a) : QColor(0xf5, 0xf0, 0xd0);
     } else if (name.startsWith("Return") || name.startsWith("Print")) {
-        return isDarkTheme_ ? QColor(0x2a, 0x55, 0x55) : QColor(0xcc, 0xff, 0xff);
+        return isDarkTheme_ ? QColor(0x2a, 0x55, 0x55) : QColor(0xd5, 0xf0, 0xec);
     }
-    return isDarkTheme_ ? QColor(0x38, 0x38, 0x38) : QColor(0xf0, 0xf0, 0xf0);
+    return isDarkTheme_ ? QColor(0x38, 0x38, 0x38) : QColor(0xee, 0xe8, 0xd5);
 }
 
 // ============================================================

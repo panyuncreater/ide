@@ -30,8 +30,8 @@ CheckOptions:
     value: _
   - key: readability-identifier-naming.EnumCase
     value: CamelCase
-  - key: modernize-use-nullptr.NullPointerLiteral
-    value: '0'
+    - key: modernize-use-nullptr.NullPointerLiteral
+      value: 'nullptr'
 
 WarningsAsErrors: ''
 HeaderFilterRegex: '^(?!(Qt|clang|llvm|gtest|gmock)).*\.h$'

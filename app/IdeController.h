@@ -21,8 +21,10 @@
 #include <QString>
 #include <QSet>
 #include <QMap>
+#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "interpreter/Interpreter.h"
 #include "interpreter/Value.h"
@@ -78,8 +80,11 @@ public:
     std::vector<CallStackEntry> getVmCallStack() const { return vmStepper_.getCallStack(); }
 
     // ---- 调试接口（转发到 DebugCoordinator）----
+    // OPT-1: setBreakpointCondition / setBreakpoints 变更后通知订阅面板。
+    // 保持 inline：MagicCommands.cpp（minilang_core）依赖内联符号。
     void setBreakpointCondition(int line, const std::string& condition) {
         debugCoord_.setBreakpointCondition(line, condition);
+        notifyVmStateChanged();
     }
     bool hasBreakpoints() const { return debugCoord_.hasBreakpoints(); }
     // P1-2: 断点查询接口（供 BreakpointConditionPanel 消费）
@@ -124,6 +129,18 @@ public:
     /// 请求中止当前 REPL 异步执行（closeEvent 超时路径使用）
     void requestReplStop() { interpreter_->requestStop(); }
 
+    // P0-3 fix (F11): 暴露 Interpreter 当前作用域变量名列表，
+    // 供 GUI 错误增强（ErrorHintEngine 拼写建议）使用。
+    /// 返回当前 Interpreter 作用域链上所有可见变量名（去重，子作用域优先）。
+    /// 若 Interpreter 未运行或环境为空，返回空向量。
+    std::vector<std::string> getReplScopeVariableNames() const;
+
+    /// N1 fix: 同步运行 MiniLang 源码并捕获所有 print 输出。
+    /// 用于 LabManualPanel EXPECTED_OUTPUT 练习自动判分。
+    /// 创建独立的 Lexer/Parser/Interpreter 管线，不影响 IDE 当前状态。
+    /// @return 捕获的输出文本；若词法/语法/运行时错误，返回 "!ERROR: <描述>"
+    std::string runStringCaptureOutput(const std::string& source);
+
     // ---- 管线操作（转发到 PipelineRunner）----
     bool runLexer(const std::string& source) { return pipeline_.runLexer(source); }
     bool runParser() { return pipeline_.runParser(); }
@@ -154,8 +171,12 @@ public:
     void setupDebug(const QSet<int>& breakpoints,
                     const QMap<int, std::string>& conditions) {
         debugCoord_.setupDebug(breakpoints, conditions);
+        notifyVmStateChanged();
     }
-    void setBreakpoints(const QSet<int>& breakpoints) { debugCoord_.setBreakpoints(breakpoints); }
+    void setBreakpoints(const QSet<int>& breakpoints) {
+        debugCoord_.setBreakpoints(breakpoints);
+        notifyVmStateChanged();
+    }
     void stepIn()  { debugCoord_.stepIn(); }
     void stepOver() { debugCoord_.stepOver(); }
     void stepOut() { debugCoord_.stepOut(); }
@@ -163,17 +184,64 @@ public:
     void stop()    { debugCoord_.stop(); }
 
     // ---- VM 操作（转发到 VmStepper）----
-    VmStepResult vmStep() { return vmStepper_.step(); }
-    VmStepResult vmStepByMode(VmStepMode mode) { return vmStepper_.stepByMode(mode); }
-    void setVmBreakpoints(const QSet<int>& breakpoints) { vmStepper_.setBreakpoints(breakpoints); }
+    // OPT-1: 在状态变更后调用 notifyVmStateChanged() 通知订阅面板，
+    // 替代面板的 500ms QTimer 轮询（降低 CPU 开销 + 提升响应即时性）。
+    // 保持 inline：MagicCommands.cpp（minilang_core）依赖内联符号，测试目标不链接 IdeController.cpp。
+    VmStepResult vmStep() {
+        auto result = vmStepper_.step();
+        notifyVmStateChanged();
+        return result;
+    }
+    VmStepResult vmStepByMode(VmStepMode mode) {
+        auto result = vmStepper_.stepByMode(mode);
+        // RUN 模式返回 RUNNING 后状态变更由 vmRunPaused 信号桥接通知；
+        // 同步步进模式（STEP_IN/OVER/OUT）在此立即通知。
+        if (result != VmStepResult::RUNNING) {
+            notifyVmStateChanged();
+        }
+        return result;
+    }
+    void setVmBreakpoints(const QSet<int>& breakpoints) {
+        vmStepper_.setBreakpoints(breakpoints);
+        notifyVmStateChanged();
+    }
     /// #4 fix: 设置 VM 模式条件断点
     void setVmBreakpointConditions(const QMap<int, std::string>& conditions) {
         vmStepper_.setBreakpointConditions(conditions);
+        notifyVmStateChanged();
     }
-    void vmStop() { vmStepper_.stop(); }
-    void vmReset() { vmStepper_.reset(); }
+    void vmStop() {
+        vmStepper_.stop();
+        notifyVmStateChanged();
+    }
+    void vmReset() {
+        vmStepper_.reset();
+        notifyVmStateChanged();
+    }
     bool isVmRunning() const { return vmStepper_.isRunning(); }
     bool isVmInitialized() const { return vmStepper_.isInitialized(); }
+
+    // ---- OPT-1: VM 状态变更观察者 API ----
+    // 纯 C++ 观察者模式（非 Qt 信号），用于替代 5 个面板的 500ms QTimer 轮询。
+    // 设计理由：Qt 信号需要 IdeController 的 moc 产物（staticMetaObject），
+    // 而测试目标 minilang_tests 不链接 app/IdeController.cpp（仅链接 minilang_core），
+    // 会导致链接失败。std::function 监听器为纯头文件内联，无 moc 依赖，面板 .cpp
+    // 可安全编译进测试目标（setController 在测试中传 nullptr，不会注册监听器）。
+    //
+    // 状态变更点（notifyVmStateChanged 调用位置）：
+    //   - vmStep / vmStepByMode 返回后（步进/暂停/结束/错误）
+    //   - vmStop / vmReset 后（状态清空）
+    //   - setBreakpoints / setVmBreakpoints / setVmBreakpointConditions 后（断点变化）
+    //   - setBreakpointCondition 后（条件变化）
+    //   - prepareRun 成功后（新运行启动）
+    //   - runCompiler 成功后（VM 步进就绪）
+    //   - vmStepper_::vmRunPaused 信号（RUN 模式异步暂停）
+    //   - debugCoord_::pausedAt 信号（Interpreter 调试暂停）
+    //   - workerMgr_::workerFinished 信号（运行结束）
+    using VmStateChangedCallback = std::function<void()>;
+    void addVmStateChangedListener(VmStateChangedCallback cb) {
+        vmStateChangedListeners_.push_back(std::move(cb));
+    }
 
     // A1 fix: 启用/禁用 RegisterVM 后端（同步 Compiler 与 VmStepper）
     // 启用后 compile() 走 AST → IR → RegisterBytecode 路径，VmStepper 转发到 regVm_。
@@ -235,6 +303,19 @@ private:
 
     // VM-IMPORT: 当前文件路径（供 runCompiler 设置 Compiler 模块加载器的相对路径基准）
     std::string currentFilePath_;
+
+    // ---- OPT-1: VM 状态变更观察者订阅者列表 ----
+    // 5 个面板（CallStack/VariableInspector/BytecodeTrace/MemoryModel/BreakpointCondition）
+    // 在 setController 时注册回调，替代 500ms QTimer 轮询。notifyVmStateChanged 在
+    // 状态变更点迭代副本调用（副本避免回调中修改列表的迭代器失效）。
+    std::vector<VmStateChangedCallback> vmStateChangedListeners_;
+    void notifyVmStateChanged() {
+        // 迭代副本：回调可能触发面板刷新，间接修改订阅者列表（理论上不会，但防御性）。
+        auto snapshot = vmStateChangedListeners_;
+        for (auto& cb : snapshot) {
+            if (cb) cb();
+        }
+    }
 
     /// VM-IMPORT: 为 Compiler 设置模块加载器（对齐 WorkerManager 为 Interpreter 设置的 loader）
     /// 基于 filePath 的目录解析相对模块路径，自动添加 .mini 后缀

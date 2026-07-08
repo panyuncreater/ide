@@ -28,6 +28,7 @@
 #include <vector>
 
 class IdeController;
+class GuidedTour;
 
 // ---- 教学场景库数据结构 ----
 
@@ -56,7 +57,12 @@ class VariableInspectorPanel : public QWidget {
 public:
     explicit VariableInspectorPanel(QWidget* parent = nullptr);
 
-    void setController(IdeController* controller) { controller_ = controller; }
+    // OPT-1: setController 注册 vmStateChanged 监听器，替代 500ms QTimer 轮询。
+    // 实现移至 .cpp（调用 addVmStateChangedListener 需 IdeController 完整类型定义）
+    void setController(IdeController* controller);
+
+    /// 创建该面板的新手引导（5 步），调用方负责持有并调用 start()
+    GuidedTour* createGuidedTour(QWidget* host);
 
 signals:
     void loadSampleRequested(const QString& code);
@@ -74,6 +80,13 @@ private slots:
     void onLoadExampleCode();
 
 private:
+    /// OPT-1: vmStateChanged 监听回调——仅当面板可见且开启自动刷新时即时刷新。
+    void onVmStateChanged() {
+        if (isVisible() && autoRefreshCheck_ && autoRefreshCheck_->isChecked()) {
+            refreshLive();
+        }
+    }
+
     IdeController* controller_ = nullptr;
 
     // 子页切换

@@ -2399,7 +2399,9 @@ TEST(ConsistencyDiff, AuditRegFrame_ControlFlowManyRegisters) {
 }
 
 // #8 安全性验证：寄存器超 32 上限时编译期硬失败（非运行时静默越界）
-// Interpreter/StackVM 无寄存器限制，正常返回；RegVM 须编译期报错
+// P0-REGALLOC fix: 寄存器复用后，原测试（20 局部变量 + 左结合加法）不再溢出，
+// 因为左结合求值 `a+b+c+...` 的中间结果 vreg 可被复用（每次 ADD 后操作数释放）。
+// 改为三后端一致返回 "210"。
 TEST(ConsistencyDiff, AuditRegFrame_Exceeds32RegistersSafetyCheck) {
     std::string src =
         "fun f() {\n"
@@ -2413,9 +2415,27 @@ TEST(ConsistencyDiff, AuditRegFrame_Exceeds32RegistersSafetyCheck) {
     auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
     EXPECT_EQ(ri, "210");
     EXPECT_EQ(ri, rs) << "StackVM 无寄存器限制";
-    // RegVM 寄存器式后端硬上限 32，编译期硬失败（非运行时静默越界）
+    // P0-REGALLOC fix: 寄存器复用后 RegVM 也能正常编译，三后端一致
+    EXPECT_EQ(ri, rr) << "RegVM 寄存器复用后应正常返回: " << rr;
+}
+
+// #8b 真正触发寄存器溢出：33 元素数组字面量，BUILD_ARRAY 时 33 个 arg vreg 同时活跃，
+// 加 dest 共 34 个寄存器 > 32，RegVM 须编译期硬失败。
+TEST(ConsistencyDiff, AuditRegFrame_RealOverflowWith33ElementArray) {
+    // 生成 33 元素数组字面量：[1,2,3,...,33]
+    std::string arr = "[";
+    for (int i = 1; i <= 33; ++i) {
+        if (i > 1) arr += ",";
+        arr += std::to_string(i);
+    }
+    arr += "]";
+    std::string src = "var a = " + arr + ";\nprint(a.len());\n";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "33");
+    EXPECT_EQ(ri, rs) << "StackVM 无寄存器限制";
+    // RegVM 寄存器式后端硬上限 32，33 个元素 vreg 同时活跃 + dest = 34 > 32，编译期硬失败
     EXPECT_TRUE(rr.find("<compile:") != std::string::npos)
-        << "RegVM 须编译期报错（非静默越界）: " << rr;
+        << "RegVM 须编译期报错（33 元素数组溢出 32 寄存器）: " << rr;
 }
 
 // 异常路径寄存器：try/catch 内寄存器使用正确
@@ -2804,4 +2824,80 @@ TEST(ConsistencyDiff, AuditH5_CallExprInLoop) {
     EXPECT_EQ(ri, rs) << "StackVM closure call in loop: " << rs;
     EXPECT_EQ(ri, rsir) << "StackVM IR closure call in loop: " << rsir;
     EXPECT_EQ(ri, rr) << "RegVM IR closure call in loop: " << rr;
+}
+
+// ============================================================
+// BUG-TYPE-1 回归测试（P1）：函数返回类型注解检查三后端一致
+// ------------------------------------------------------------
+// 原实现仅 Interpreter 在 visitReturnStmt 中检查返回类型注解，
+// StackVM/RegisterVM 静默通过，导致类型安全绕过。
+// 修复后三后端都应在 return 值类型不匹配时报运行时错误。
+// 注：三后端错误消息文本可能不同（Bug #3 已知 gap），仅验证"都报错"。
+// ============================================================
+
+TEST(ConsistencyDiff, ReturnTypeAnnotationViolation_AllBackendsReject) {
+    // fun foo(): int { return "str"; } —— 返回 string 但注解为 int
+    std::string src =
+        "fun foo(): int {\n"
+        "  return \"str\";\n"
+        "}\n"
+        "print(foo());\n";
+    auto ri = runInterp(src);
+    auto rs = runStackVM_IR(src);
+    auto rr = runRegVM_IR(src);
+    // 三后端都应报运行时错误（消息文本可能不同，仅验证都拒绝）
+    EXPECT_NE(ri.find("<runtime:"), std::string::npos)
+        << "Interpreter 应拒绝 string 返回给 int 注解";
+    EXPECT_NE(rs.find("<runtime:"), std::string::npos)
+        << "StackVM 应拒绝 string 返回给 int 注解（BUG-TYPE-1 fix）";
+    EXPECT_NE(rr.find("<runtime:"), std::string::npos)
+        << "RegisterVM 应拒绝 string 返回给 int 注解（BUG-TYPE-1 fix）";
+}
+
+TEST(ConsistencyDiff, ReturnTypeAnnotationPass_AllBackendsAgree) {
+    // fun foo(): int { return 42; } —— 返回 int 符合注解，三后端应一致输出 42
+    std::string src =
+        "fun foo(): int {\n"
+        "  return 42;\n"
+        "}\n"
+        "print(foo());\n";
+    auto ri = runInterp(src);
+    auto rs = runStackVM_IR(src);
+    auto rr = runRegVM_IR(src);
+    EXPECT_EQ(ri, "42");
+    EXPECT_EQ(rs, "42");
+    EXPECT_EQ(rr, "42");
+}
+
+TEST(ConsistencyDiff, ReturnTypeAnnotationFloatToInt_AllBackendsReject) {
+    // fun foo(): int { return 3.14; } —— 返回 float 给 int 注解应拒绝
+    std::string src =
+        "fun foo(): int {\n"
+        "  return 3.14;\n"
+        "}\n"
+        "print(foo());\n";
+    auto ri = runInterp(src);
+    auto rs = runStackVM_IR(src);
+    auto rr = runRegVM_IR(src);
+    EXPECT_NE(ri.find("<runtime:"), std::string::npos)
+        << "Interpreter 应拒绝 float 返回给 int 注解";
+    EXPECT_NE(rs.find("<runtime:"), std::string::npos)
+        << "StackVM 应拒绝 float 返回给 int 注解";
+    EXPECT_NE(rr.find("<runtime:"), std::string::npos)
+        << "RegisterVM 应拒绝 float 返回给 int 注解";
+}
+
+TEST(ConsistencyDiff, ReturnTypeAnnotationNullCompatible) {
+    // fun foo(): int { return null; } —— null 兼容任何类型注解
+    std::string src =
+        "fun foo(): int {\n"
+        "  return null;\n"
+        "}\n"
+        "print(foo());\n";
+    auto ri = runInterp(src);
+    auto rs = runStackVM_IR(src);
+    auto rr = runRegVM_IR(src);
+    // null 兼容所有类型注解，三后端应一致输出 null
+    EXPECT_EQ(ri, rs) << "null 返回类型注解：Interpreter vs StackVM";
+    EXPECT_EQ(ri, rr) << "null 返回类型注解：Interpreter vs RegisterVM";
 }

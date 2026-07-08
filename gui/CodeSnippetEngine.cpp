@@ -53,6 +53,36 @@ const std::vector<CodeSnippet>& CodeSnippetEngine::snippets() {
             "print(${1:表达式});",
             "print 输出语句模板"
         },
+        CodeSnippet{
+            "var",
+            "var ${1:name}: ${2:int} = ${3:0};",
+            "变量声明（可选类型注解）"
+        },
+        CodeSnippet{
+            "import",
+            "import { ${1:name} } from \"${2:module}\";",
+            "模块导入"
+        },
+        CodeSnippet{
+            "export",
+            "export ${1:fun} ${2:name}(${3:参数}) {\n    ${4:// 导出内容}\n}",
+            "模块导出"
+        },
+        CodeSnippet{
+            "return",
+            "return ${1:value};",
+            "返回语句"
+        },
+        CodeSnippet{
+            "array",
+            "var ${1:arr} = [${2:1, 2, 3}];\n${1:arr}.push(${3:4});\nprint(${1:arr}.len());",
+            "数组操作"
+        },
+        CodeSnippet{
+            "throw",
+            "throw \"${1:错误信息}\";",
+            "抛出异常"
+        },
     };
     return kSnippets;
 }

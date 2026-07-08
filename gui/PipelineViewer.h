@@ -6,6 +6,8 @@
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTextBrowser>
+#include <QColor>
+#include <QString>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -41,6 +43,9 @@ public:
 
     /// 由编辑器光标移动时联动调用，刷新当前面板的对应高亮
     void onCursorPositionChanged(int line, int column);
+
+signals:
+    void sourceLineRequested(int line);
 
 private:
     IdeController* controller_ = nullptr;
@@ -89,4 +94,16 @@ private:
 
     // 递归生成 AST 文本摘要
     void dumpAst(std::ostringstream& os, ASTNode* node, int depth, int maxDepth);
+
+    // === UI 美化（第二十五轮） ===
+    /// 5 阶段主题色（Solarized 色板：石墨灰 / 海蓝 / 森林绿 / 紫 / 橙）
+    static QColor stageColor(int step);
+    /// 5 阶段 emoji 图标（📄 / 🔢 / 🌳 / ⚙ / 📦）
+    static QString stageIcon(int step);
+    /// 5 阶段中文标题
+    static QString stageTitle(int step);
+    /// 5 阶段简短描述（header 条说明文字）
+    static QString stageDesc(int step);
+    /// 刷新底部状态条（带当前阶段主题色 + emoji 图标）
+    void updateStatusBar();
 };

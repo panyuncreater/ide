@@ -56,9 +56,19 @@ struct Diagnostic {
     int line;
     int column;
     DiagSource source;
+    /// P2 fix (错误码优先匹配): 稳定诊断码，如 "missing-semicolon" / "undefined-variable"。
+    /// 与 ErrorHintEngine::errorPatterns() 表中的 tag 对应。空字符串表示未设置——
+    /// ErrorHintEngine 会回退到现有的中/英子串匹配兜底逻辑。
+    /// 引擎模块逐步迁移到带 code 的 Diagnostic 构造，未迁移时行为不变（兼容性保证）。
+    std::string code;
 
     Diagnostic(DiagLevel lv, const std::string& msg, int ln, int col, DiagSource src)
         : level(lv), message(msg), line(ln), column(col), source(src) {}
+
+    /// P2 fix: 带 code 的构造重载（未来引擎迁移时使用）
+    Diagnostic(DiagLevel lv, const std::string& msg, int ln, int col, DiagSource src,
+               const std::string& diagCode)
+        : level(lv), message(msg), line(ln), column(col), source(src), code(diagCode) {}
 
     /// 是否为错误级别
     bool isError() const { return level == DiagLevel::Error; }
@@ -126,15 +136,35 @@ public:
         ++errorCount_;  // P2 fix: O(1) 计数
     }
 
+    /// P2 fix: 添加带 code 的错误
+    void addError(const std::string& msg, int line, int col, DiagSource src,
+                  const std::string& diagCode) {
+        diagnostics_.emplace_back(DiagLevel::Error, msg, line, col, src, diagCode);
+        ++errorCount_;
+    }
+
     /// 便捷方法：添加警告
     void addWarning(const std::string& msg, int line, int col, DiagSource src) {
         diagnostics_.emplace_back(DiagLevel::Warning, msg, line, col, src);
         ++warningCount_;  // P2 fix: O(1) 计数
     }
 
+    /// P2 fix: 添加带 code 的警告
+    void addWarning(const std::string& msg, int line, int col, DiagSource src,
+                    const std::string& diagCode) {
+        diagnostics_.emplace_back(DiagLevel::Warning, msg, line, col, src, diagCode);
+        ++warningCount_;
+    }
+
     /// 便捷方法：添加信息
     void addInfo(const std::string& msg, int line, int col, DiagSource src) {
         diagnostics_.emplace_back(DiagLevel::Info, msg, line, col, src);
+    }
+
+    /// P2 fix: 添加带 code 的信息
+    void addInfo(const std::string& msg, int line, int col, DiagSource src,
+                 const std::string& diagCode) {
+        diagnostics_.emplace_back(DiagLevel::Info, msg, line, col, src, diagCode);
     }
 
     /// 是否有错误

@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "gui/VariableInspectorPanel.h"
+#include "gui/GuidedTour.h"
 #include "gui/PanelAnimator.h"
 #include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
@@ -86,7 +87,7 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
         },
         VariableTypeExample{
             "type-closure", "closure", "🔗 closure 类型",
-            "var f = fun(x) { return x+1; };", "<closure>",
+            "fun inc(x) { return x+1; }\nvar f = inc;", "<closure>",
             "（堆指针，tag bits=0x7FFB）",
             "ClosureData* (RefCounted) { refCount: 1; params: ['x']; env: Environment*; body: FunDecl*; }",
             "📦 堆分配：闭包捕获外层 Environment（弱引用链 parent）。env 链打破循环依赖。"
@@ -155,14 +156,35 @@ VariableInspectorPanel::VariableInspectorPanel(QWidget* parent) : QWidget(parent
     stack_->addWidget(libraryPage);
     outer->addWidget(stack_, 1);
 
-    connect(pageLiveBtn_,    &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
-    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageLiveBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
+    connect(pageLiveBtn_,    &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::slideInWidget(stack_->currentWidget()); });
+    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() {
+        stack_->setCurrentIndex(1);
+        pageLiveBtn_->setChecked(false);
+        // 切到类型教学库时确保有选中项 —— 首次进入若 exampleList_ 无选中，
+        // 显式调用 showExample(0) 让详情区立即有内容（而非空白等用户点击）。
+        if (exampleList_->count() > 0 && exampleList_->currentRow() < 0) {
+            exampleList_->setCurrentRow(0);
+        }
+        if (currentExampleIdx_ < 0 && exampleList_->count() > 0) {
+            showExample(0);
+        }
+        PanelAnimator::slideInWidget(stack_->currentWidget());
+    });
 
     autoTimer_ = new QTimer(this);
-    autoTimer_->setInterval(500);
+    // OPT-1: 500ms→2000ms 安全网，状态变更由 vmStateChanged 监听器即时触发。
+    autoTimer_->setInterval(2000);
     connect(autoTimer_, &QTimer::timeout, this, &VariableInspectorPanel::onRefresh);
 
     populateExamples();
+}
+
+void VariableInspectorPanel::setController(IdeController* controller) {
+    if (controller_ == controller) return;
+    controller_ = controller;
+    if (controller_) {
+        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+    }
 }
 
 void VariableInspectorPanel::buildLivePage(QWidget* host) {
@@ -173,7 +195,7 @@ void VariableInspectorPanel::buildLivePage(QWidget* host) {
     auto* bar = new QHBoxLayout;
     liveStatusLabel_ = new CaptionLabel(tr("状态：未初始化"));
     refreshBtn_       = new QPushButton(tr("刷新"));
-    autoRefreshCheck_ = new QCheckBox(tr("自动刷新 (500ms)"));
+    autoRefreshCheck_ = new QCheckBox(tr("自动刷新 (2s)"));
     bar->addWidget(liveStatusLabel_);
     bar->addStretch();
     bar->addWidget(autoRefreshCheck_);
@@ -406,4 +428,45 @@ void VariableInspectorPanel::onLoadExampleCode() {
     }
     const auto& e = VariableInspectorLibrary::examples()[currentExampleIdx_];
     emit loadSampleRequested(QString::fromUtf8(e.sourceExpr.c_str()));
+}
+
+// ============================================================
+// createGuidedTour — 新手引导（5 步）
+// ============================================================
+
+GuidedTour* VariableInspectorPanel::createGuidedTour(QWidget* host) {
+    auto* tour = new GuidedTour(host, host);
+    // 注：只高亮「始终可见」的页切换按钮（pageLiveBtn_/pageLibraryBtn_），
+    // 不高亮 autoRefreshCheck_/varTree_/loadCodeBtn_ 等位于 QStackedWidget
+    // 某一页的控件——当目标页未显示时 mapTo 返回错误坐标导致气泡定位混乱。
+    // 概念性步骤用 nullptr（居中气泡）+ 内嵌完整示例代码。
+    tour->addStep(pageLiveBtn_,
+                  QString::fromUtf8("实时变量树"),
+                  QString::fromUtf8("「实时变量」页在调试 / VM 运行时按作用域分组显示变量（global / local / upvalue）。"
+                                    "勾选「自动刷新」每 2 秒刷新快照，点击变量可在右侧查看 NaN-boxing 位布局。"));
+    tour->addStep(nullptr,
+                  QString::fromUtf8("示例代码：观察变量类型"),
+                  QString::fromUtf8(
+                      "<p>将以下代码粘贴到编辑器，按 F5 调试，在变量树中观察各类型：</p>"
+                      "<pre style='background:#EEE8D5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
+                      "var x = 42;           // int\n"
+                      "var pi = 3.14;        // float\n"
+                      "var s = \"hello\";      // string\n"
+                      "var arr = [1, 2, 3];  // array\n"
+                      "fun add(a, b) {\n"
+                      "    return a + b;\n"
+                      "}\n"
+                      "var f = add;          // closure\n"
+                      "print x, pi, s, arr, f;\n"
+                      "</pre>"
+                      "<p>调试时展开变量树节点，可看到 int/float 标量内联、string/array 堆指针的差异。</p>"));
+    tour->addStep(pageLibraryBtn_,
+                  QString::fromUtf8("类型教学库"),
+                  QString::fromUtf8("点击「类型教学库」切换到静态教学页，查看 int / string / array / closure "
+                                    "等类型的 NaN-boxing 位布局与堆对象结构详解。"));
+    tour->addStep(nullptr,
+                  QString::fromUtf8("开始实验"),
+                  QString::fromUtf8("切换到类型教学库后，选中任一类型条目，点击「加载样例代码到主编辑器」，"
+                                    "再按 F5 运行即可在实时变量树中对照观察。"));
+    return tour;
 }

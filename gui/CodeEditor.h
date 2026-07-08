@@ -67,6 +67,13 @@ public:
     /// 跳转到指定行并居中显示
     void gotoLine(int line);
 
+    /// 高亮指定源码行（蓝色背景，区别于调试黄色）。
+    /// 用于 IR/字节码面板点击时标记对应源码位置。
+    void highlightSourceLine(int line);
+
+    /// 清除源码行高亮
+    void clearSourceHighlight();
+
     /// 获取断点集合
     QSet<int> getBreakpoints() const;
 
@@ -102,6 +109,11 @@ signals:
     /// 用户通过右键菜单设置断点条件时发射
     void breakpointConditionRequested(int line, const QString& condition);
 
+    /// 右键上下文菜单触发项目特化操作时发射（如 toggleComment / format /
+    /// gotoLine / find / replace / toggleBreakpoint / editBreakpointCondition /
+    /// runToCursor 等），由上层（Ide）连接后路由到对应处理逻辑
+    void contextActionRequested(const QString& action);
+
 protected:
     /// 行号区域重绘时触发
     void resizeEvent(QResizeEvent* event) override;
@@ -111,6 +123,10 @@ protected:
     void focusInEvent(QFocusEvent* event) override;
     /// F13: 失去焦点时隐藏补全弹窗
     void focusOutEvent(QFocusEvent* event) override;
+    /// 右键上下文菜单：在 QPlainTextEdit 默认菜单（Undo/Redo/Cut/Copy/Paste/
+    /// Select All）基础上追加项目特化操作（注释切换 / 格式化 / 跳行 / 查找替换 /
+    /// 断点 / 运行到光标），通过 contextActionRequested 信号交由上层执行
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private slots:
     void updateLineNumberAreaWidth(int newBlockCount);
@@ -129,6 +145,7 @@ private:
     QSet<int> breakpoints_;     // 断点行号
     QMap<int, std::string> breakpointConditions_;  // 断点条件表达式
     int currentLine_ = -1;      // 当前执行行号
+    int sourceHighlightLine_ = -1;  // IR/字节码面板点击高亮的源码行号
     QList<QTextEdit::ExtraSelection> cachedErrorSelections_;  // 缓存的错误行选择（仅 errorLines_ 变化时重建）
     QList<QTextEdit::ExtraSelection> findSelections_;  // BUG 4.2 fix: 查找高亮（独立存储，不覆盖编辑器自身 selections）
     QList<QTextEdit::ExtraSelection> bracketSelections_;  // H2: 括号匹配高亮（由 highlightCurrentLine 合并）

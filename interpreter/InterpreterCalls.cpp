@@ -32,7 +32,12 @@ void rebuildEnvFromSnapshot(Value& closureVal, std::shared_ptr<Environment>& fun
 /// 将变异后的捕获变量写回 capturedVars（C1/P0-6 fix）
 /// 仅写回原始 capturedVars 中已存在的键，跳过参数和局部变量，避免污染下次调用
 void writeBackCapturedVars(Value& closureVal, std::shared_ptr<Environment>& funEnv) {
-    auto& captured = closureVal.capturedVars();
+    // AUDIT-P1 fix: 应用 closeCapturedVariables 的 const_cast 模式绕过 COW。
+    // capturedVars() 的非 const 重载会 ensureUnique → refCount>1 时创建副本，
+    // 导致修改写到副本而非原件，closures 数组中的原始闭包 capturedVars 保持陈旧
+    // （与 Environment.h 行 306-319 的 B1 fix 同一不变量）。
+    const auto& constCaptured = const_cast<const Value&>(closureVal).capturedVars();
+    auto& captured = const_cast<std::unordered_map<std::string, Value>&>(constCaptured);
     for (const auto& kv : funEnv->localVariables()) {
         if (captured.find(kv.first) != captured.end()) {
             captured[kv.first] = kv.second;
@@ -374,6 +379,14 @@ Value Interpreter::constructClassInstance(FunCall& node) {
             // 绑定参数
             for (size_t i = 0; i < initMethod->params.size(); ++i) {
                 if (i < argValues.size()) {
+                    // AUDIT-P1 fix: 补充参数类型检查（与 callClosureValue/callNamedFunction/
+                    // callInstanceMethod 的 P1-4 fix 一致）。原实现仅 define 不检查类型注解，
+                    // 导致类型注解在类构造路径被静默跳过，三后端语义不一致。
+                    if (i < initMethod->paramTypes.size() && !initMethod->paramTypes[i].empty()) {
+                        checkType(argValues[i], initMethod->paramTypes[i],
+                            [&] { return "类 " + node.name + " 的 init 参数 " + initMethod->params[i]; },
+                            node.line, node.column);
+                    }
                     initEnv->define(initMethod->params[i], std::move(argValues[i]));
                 } else {
                     // P0-2 fix: 填充缺失的默认参数值
@@ -391,6 +404,12 @@ Value Interpreter::constructClassInstance(FunCall& node) {
                             currentEnv_ = cls->closureEnv;
                         }
                         Value defaultVal = evaluate(initMethod->defaultValues[i].get());
+                        // AUDIT-P1 fix: 默认值同样需类型检查
+                        if (i < initMethod->paramTypes.size() && !initMethod->paramTypes[i].empty()) {
+                            checkType(defaultVal, initMethod->paramTypes[i],
+                                [&] { return "类 " + node.name + " 的 init 参数 " + initMethod->params[i]; },
+                                node.line, node.column);
+                        }
                         initEnv->define(initMethod->params[i], std::move(defaultVal));
                     } else {
                         initEnv->define(initMethod->params[i], Value::nullValue());

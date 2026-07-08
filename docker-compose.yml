@@ -19,3 +19,4 @@ services:
     build:
       context: .
       target: builder
+    command: ["echo", "Build complete. Use 'docker compose run dev' for development."]

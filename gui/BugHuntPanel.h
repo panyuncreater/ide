@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QSplitter>
 #include <vector>
 #include <string>
 
@@ -20,6 +21,7 @@
 // ============================================================
 
 class IdeController;
+class GuidedTour;
 
 // 难度分级（功能 9：Bug 狩猎分级题库重构）
 //   BEGINNER      — 入门级（阅读理解型，培养 Debug 直觉，无需定位代码）
@@ -82,24 +84,40 @@ public:
 
     void setController(IdeController* controller) { controller_ = controller; }
 
+    /// 创建该面板的新手引导（5 步），调用方负责持有并调用 start()
+    GuidedTour* createGuidedTour(QWidget* host);
+
 signals:
     /// 请求将源码加载到主编辑器（便于进一步调试）
     void loadSampleRequested(const QString& code);
 
+    /// P0-B fix: 学员"狩猎"成功时发射——三后端对比验证通过（输出一致且无异常）
+    /// 即视为修复成功。difficulty 取当前题目的 BugHuntDifficulty int 值：
+    ///   0=BEGINNER / 1=INTERMEDIATE / 2=EXPERT
+    /// 主窗口连接后调用 markActivityCompleted("bug-hunt-<level>") 回写学习路径。
+    /// 此前 BugHuntPanel 仅 emit loadSampleRequested 加载代码到编辑器，从不
+    /// emit activityCompleted——Bug-Hunt 在学习路径地图里永远显示"未完成"。
+    void challengeSolved(int difficulty);
+
 private slots:
-    void onItemSelected(int row);
+    void onItemSelected(int itemIndex);   // issue 5: 芯片点击 → items() 索引
     void onRunVerify();
     void onShowHint();
     void onShowAnswer();
     void onTripleVerify();
     void onToggleVariantMode();
-    void onVariantSelected(int row);
+    void onVariantSelected(int variantIndex);  // issue 5: 芯片点击 → variants() 索引
     void onDifficultyChanged(int id);
+    void onSubmitPrediction();
+    void onCodeModified();
 
 private:
     IdeController* controller_ = nullptr;
-    QListWidget* itemList_      = nullptr;
-    QLineEdit*   searchEdit_   = nullptr;  // M11: 题目搜索框
+    // issue 5: 用芯片栏替代大目录列表（参考 TokenPuzzlePanel 关卡芯片）
+    QWidget* chipBar_          = nullptr;     // 芯片栏容器（含 bug 芯片 + 搜索框）
+    QList<QPushButton*> bugChips_;            // 标准 Bug 芯片按钮列表
+    QList<QPushButton*> variantChips_;        // 变体芯片按钮列表
+    QLineEdit*   searchEdit_   = nullptr;     // 题目搜索框（芯片栏右侧）
     QTextBrowser* descBrowser_ = nullptr;
     QTextEdit* codeEditor_      = nullptr;
     QTextEdit* outputEdit_      = nullptr;
@@ -110,8 +128,22 @@ private:
     QPushButton* loadBtn_       = nullptr;
     QPushButton* tripleVerifyBtn_ = nullptr;  // 三后端对比验证按钮
     QPushButton* variantBtn_    = nullptr;     // 切换到变体模式按钮
-    QListWidget* variantList_   = nullptr;     // 变体题目列表（变体模式下显示）
     QLabel* variantStatusLabel_ = nullptr;    // 变体状态标签
+
+    // 调试流程指引（问题 4）：4 步检查清单 + 预测输入
+    QLabel* debugStepsLabel_       = nullptr;  // 调试步骤检查清单
+    QLineEdit* predictionEdit_     = nullptr;  // 用户预测输入框
+    QPushButton* submitPredictionBtn_ = nullptr;  // 提交预测按钮
+    // 调试进度状态
+    bool stepPredicted_   = false;  // 用户已提交预测
+    bool stepObserved_    = false;  // 用户已运行验证
+    bool stepAttemptedFix_ = false; // 用户已修改代码尝试修复
+    bool stepVerified_    = false;  // 用户已三后端对比验证
+    QString originalCode_;          // 原始题目代码（用于检测用户是否修改）
+    void refreshDebugSteps();       // 刷新检查清单显示
+
+    // 可折叠目录侧栏（已移除：芯片栏替代大目录）
+    QSplitter* mainSplitter_ = nullptr;      // 主体 splitter 引用（2 栏：描述 | 代码+输出）
 
     // 难度筛选 UI（功能 9）：4 个互斥按钮 — 全部 / 入门 / 进阶 / 专家
     QPushButton* diffAllBtn_         = nullptr;
@@ -126,7 +158,10 @@ private:
     bool variantMode_ = false;           // 是否变体模式
     int currentVariantIndex_ = -1;        // 当前选中的变体索引
 
-    void populateItemList();
+    void populateBugChips();        // issue 5: 构建 Bug 芯片栏
+    void refreshBugChips();         // issue 5: 刷新芯片状态（当前/隐藏）
+    void populateVariantChips();    // issue 5: 构建变体芯片栏
+    void refreshVariantChips();     // issue 5: 刷新变体芯片状态
     void showCurrentItem();
     void showCurrentVariant();
 };

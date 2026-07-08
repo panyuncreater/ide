@@ -31,6 +31,7 @@
 #include <QScrollArea>
 #include <QProgressBar>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QFrame>
@@ -67,6 +68,10 @@ private:
     // 顶部
     QProgressBar* overallProgress_ = nullptr;
     QLabel*       overallLabel_    = nullptr;
+    QLabel*       stageLabel_      = nullptr;  ///< P1-2 fix: 当前阶段提示
+    QLabel*       weakPointsLabel_ = nullptr;  ///< P2-3 fix (F9): 薄弱点提示
+    QLabel*       remainingLabel_  = nullptr;  ///< P2-3 fix (F9): 预计剩余时间
+    QLineEdit*    searchEdit_      = nullptr;  // 活动搜索过滤框
 
     // 主体
     QScrollArea* scrollArea_   = nullptr;
@@ -82,6 +87,9 @@ private:
     int                 currentNavIndex_ = -1;
     QString             highlightedSavedStyle_;
     void highlightActivityRow(int idx);
+
+    // 搜索框防抖定时器——避免逐字符触发 refresh() 导致重建风暴
+    QTimer* searchDebounceTimer_ = nullptr;
 
     // 阶段颜色（绿/黄/蓝/紫/红）
     static QString stageColor(int stage);

@@ -259,8 +259,11 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     AstIRBuilder irBuilder;
     // VM-IMPORT: 转发模块加载器给 AstIRBuilder，使寄存器式路径也支持 import
     irBuilder.setModuleLoader(moduleLoader_);
+    // P2-B fix: 对齐 compile() 直接路径，补齐 moduleLoadingStack_ 和 moduleExports_ 的清理
     linkedModuleSet_.clear();
     moduleLoadingSet_.clear();
+    moduleLoadingStack_.clear();
+    moduleExports_.clear();
     moduleAsts_.clear();
     lastIR_ = irBuilder.build(program);
     // BUG-INH-AUDIT-1 fix: 先检查 hasError() 再检查 !lastIR_（同 compile IR 路径）。
@@ -390,6 +393,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.currentUpvalueNames = std::move(currentUpvalueNames_);
     ctx.loopStack = std::move(loopStack_);
     ctx.tryDepth = tryDepth_;
+    ctx.currentFunctionReturnType = currentFunctionReturnType_;  // BUG-TYPE-1 fix
     return ctx;
 }
 
@@ -410,6 +414,7 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     currentUpvalueNames_ = std::move(ctx.currentUpvalueNames);
     loopStack_ = std::move(ctx.loopStack);
     tryDepth_ = ctx.tryDepth;
+    currentFunctionReturnType_ = std::move(ctx.currentFunctionReturnType);  // BUG-TYPE-1 fix
 }
 
 void Compiler::compileNode(ASTNode* node) {
@@ -1243,6 +1248,9 @@ void Compiler::visitFunDecl(FunDecl& node) {
         // C-P0-1/C-P0-3 fix: 函数体的循环栈和 try 深度从 0 开始
         loopStack_.clear();
         tryDepth_ = 0;
+        // BUG-TYPE-1 fix (P1): 保存当前函数返回类型注解，供 visitReturnStmt 发射 OP_TYPE_CHECK。
+        // 对齐 Interpreter 的 currentFunctionReturnType_ + CallFrameGuard 机制。
+        currentFunctionReturnType_ = node.returnType;
 
         // 编译参数到局部变量槽位
         // C-P1-2 fix: 参数数量上限 255（uint8_t 编码限制）
@@ -1478,6 +1486,12 @@ void Compiler::visitReturnStmt(ReturnStmt& node) {
         compileNode(node.value.get());
     } else {
         chunk_.writeOp(OpCode::OP_NULL, node.line);
+    }
+    // BUG-TYPE-1 fix (P1): 函数有返回类型注解时，在 OP_RETURN 前发射 OP_TYPE_CHECK
+    // 检查返回值类型兼容性。对齐 Interpreter::visitReturnStmt 的 checkType 逻辑。
+    // 原实现仅 Interpreter 检查返回类型，StackVM/RegisterVM 静默通过，导致类型安全绕过。
+    if (!currentFunctionReturnType_.empty()) {
+        emitTypeCheck(currentFunctionReturnType_, node.line);
     }
     chunk_.writeOp(OpCode::OP_RETURN, node.line);
     return;

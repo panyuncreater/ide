@@ -37,4 +37,33 @@ public:
     static std::string enrichErrorMessage(const std::string& msg,
                                           const std::string& category,
                                           const std::vector<std::string>& scopeVars);
+
+    /// P2 fix (错误码优先匹配): 带 stable diagnostic code 的增强重载。
+    /// 当 code 非空时优先按 code 查 errorPatterns 表附加对应教学提示，
+    /// 避免「诊断消息文案变化（如英文/本地化）时子串匹配失效」的可维护性风险。
+    /// code 为空或表里查不到时，回退到现有的中/英子串匹配兜底逻辑（向后兼容）。
+    /// @param msg 原始错误消息
+    /// @param code 稳定诊断码（如 "missing-semicolon"），与 errorPatterns() 表 tag 对应
+    /// @param category 错误类别（"parse" / "runtime" / "type" 等）
+    /// @param scopeVars 作用域变量名列表（用于未定义变量拼写建议）
+    static std::string enrichErrorMessage(const std::string& msg,
+                                          const std::string& code,
+                                          const std::string& category,
+                                          const std::vector<std::string>& scopeVars);
+
+    // ---- P1-F12 fix: 错误模式表（带 tag），供手册「常见错误」表引用 ----
+
+    /// 错误模式描述：tag / 标题 / 触发该错误的示例代码 / 所属类别
+    struct ErrorPattern {
+        std::string tag;          // 稳定标识，如 "missing-semicolon"
+        std::string title;        // 中文标题，如 "缺少分号"
+        std::string buggyCode;    // 触发该错误的最小 MiniLang 代码
+        std::string category;     // 所属类别：parser / runtime / type
+    };
+
+    /// 返回所有错误模式（带 tag）。手册「常见错误」表按 tag 引用此表，
+    /// 配合 LabManualPanel 的 `buggy:tag` 链接实现「触发示例」按钮——
+    /// 点击后自动加载 buggyCode 到编辑器并运行，让学员看到真实报错 +
+    /// ErrorHintEngine 增强提示。引擎扩模式时手册自动同步，消除双份真相。
+    static const std::vector<ErrorPattern>& errorPatterns();
 };

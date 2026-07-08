@@ -31,5 +31,11 @@
 
     <!-- MiniLang Brand Logo (第十三轮：ML 几何 Logo 替代原 { } 文字) -->
     <file alias="minilang_logo.svg">res/icons/minilang_logo.svg</file>
+
+    <!-- MiniLang Gem Icon (PNG multi-resolution, 2026-07 新 Logo) -->
+    <file alias="minilang_icon.png">res/icons/minilang_icon.png</file>
+    <file alias="minilang_icon_32.png">res/icons/minilang_icon_32.png</file>
+    <file alias="minilang_icon_16.png">res/icons/minilang_icon_16.png</file>
+    <file alias="minilang_gem.png">res/icons/minilang_gem.png</file>
     </qresource>
 </RCC>

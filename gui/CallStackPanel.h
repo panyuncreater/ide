@@ -28,6 +28,7 @@
 #include <vector>
 
 class IdeController;
+class GuidedTour;
 
 // ---- 教学场景库数据结构 ----
 
@@ -54,7 +55,13 @@ class CallStackPanel : public QWidget {
 public:
     explicit CallStackPanel(QWidget* parent = nullptr);
 
-    void setController(IdeController* controller) { controller_ = controller; }
+    // OPT-1: setController 注册 vmStateChanged 监听器，替代 500ms QTimer 轮询。
+    // 同一 controller 重复设置时跳过重复注册（防御性）。
+    // 实现移至 .cpp（调用 addVmStateChangedListener 需 IdeController 完整类型定义）
+    void setController(IdeController* controller);
+
+    /// 创建该面板的新手引导（5 步），调用方负责持有并调用 start()
+    GuidedTour* createGuidedTour(QWidget* host);
 
 signals:
     /// 请求加载样例代码到主编辑器
@@ -74,6 +81,14 @@ private slots:
     void onLoadScenarioCode();
 
 private:
+    /// OPT-1: vmStateChanged 监听回调——仅当面板可见且开启自动刷新时即时刷新，
+    /// 替代 500ms 轮询的延迟。隐藏时由 showEvent 在重新可见时主动刷新。
+    void onVmStateChanged() {
+        if (isVisible() && autoRefreshCheck_ && autoRefreshCheck_->isChecked()) {
+            refreshLive();
+        }
+    }
+
     IdeController* controller_ = nullptr;
 
     // 子页切换

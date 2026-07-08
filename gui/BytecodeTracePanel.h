@@ -28,6 +28,7 @@
 #include <cstddef>
 
 class IdeController;
+class GuidedTour;
 
 // ---- 教学场景库数据结构 ----
 
@@ -54,10 +55,16 @@ class BytecodeTracePanel : public QWidget {
 public:
     explicit BytecodeTracePanel(QWidget* parent = nullptr);
 
-    void setController(IdeController* controller) { controller_ = controller; }
+    // OPT-1: setController 注册 vmStateChanged 监听器，替代 500ms QTimer 轮询。
+    // 实现移至 .cpp（调用 addVmStateChangedListener 需 IdeController 完整类型定义）
+    void setController(IdeController* controller);
+
+    /// 创建该面板的新手引导（5 步），调用方负责持有并调用 start()
+    GuidedTour* createGuidedTour(QWidget* host);
 
 signals:
     void loadSampleRequested(const QString& code);
+    void sourceLineRequested(int line);
 
 protected:
     /// 面板显示时恢复自动捕获（若用户已勾选），隐藏时停止 QTimer
@@ -73,6 +80,13 @@ private slots:
     void onLoadDocCode();
 
 private:
+    /// OPT-1: vmStateChanged 监听回调——仅当面板可见且开启自动捕获时即时捕获。
+    void onVmStateChanged() {
+        if (isVisible() && autoCaptureCheck_ && autoCaptureCheck_->isChecked()) {
+            captureCurrentState();
+        }
+    }
+
     IdeController* controller_ = nullptr;
 
     // 子页切换

@@ -24,6 +24,7 @@
 #include <QSet>
 #include <QMap>
 #include <QTimer>
+#include <atomic>
 #include <functional>
 #include <optional>
 #include <string>
@@ -246,7 +247,10 @@ private:
     std::optional<RegisterCompileResult> lastRegCompileResult_;  // A1 fix
 
     // ---- VM 步进状态 ----
-    bool isVmRunning_ = false;
+    // IDE-ATOMIC-01 fix: isVmRunning_ 可能被 IdeController::isVmRunning() 跨线程查询
+    // （REPL 异步任务 / Worker 回调），改为 atomic<bool> 消除数据竞争 UB。
+    // isVmInitialized_ / useRegister_ 仅在主线程访问（QTimer + UI 槽），保持普通 bool。
+    std::atomic<bool> isVmRunning_{false};
     bool isVmInitialized_ = false;
     // A1 fix: 后端选择标志。false=栈式 VM（默认），true=RegisterVM
     bool useRegister_ = false;

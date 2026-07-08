@@ -73,13 +73,14 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
             "finally-semantics",
             "✨ finally 语义（始终执行）",
             "✨ finally 块无论是否发生异常都会执行。常用于资源清理"
-            "（如关闭文件、释放锁）。MiniLang 的 try/catch 不支持 finally 关键字，"
-            "但可通过 catch + 显式清理模拟类似语义。",
-            "try {\n    var resource = \"opened\";\n    throw \"error during processing\";\n} catch (e) {\n    print \"cleanup: closing resource\";\n    print \"error: \" + e;\n}",
-            {"main()", "try-block", "throw", "catch-block (cleanup)", "main()"},
-            "💡 MiniLang 无 finally 关键字，但 catch 块可用于资源清理。"
-            "若 try 块中抛出异常，catch 块执行清理逻辑。"
-            "若无异常，catch 块不执行（需在 try 块末尾也放清理代码）。"
+            "（如关闭文件、释放锁）。MiniLang 支持 try/catch/finally 三段式，"
+            "finally 块在 catch 处理后或无异常时都会执行。",
+            "var resource = \"opened\";\ntry {\n    throw \"error during processing\";\n} catch (e) {\n    print \"error: \" + e;\n} finally {\n    print \"cleanup: closing \" + resource;\n}",
+            {"main()", "try-block", "throw", "catch-block", "finally-block", "main()"},
+            "💡 MiniLang 的 finally 块在以下三种情况都会执行："
+            "(1) try 块正常结束；(2) try 块抛出异常被 catch 捕获后；"
+            "(3) try 块抛出异常但无匹配 catch（finally 仍执行，然后异常继续传播）。"
+            "资源清理代码放在 finally 中可确保一定执行。"
         },
         {
             "cross-function-propagation",
@@ -175,10 +176,10 @@ const std::vector<ExceptionPhaseDoc>& ExceptionPhaseLibrary::phases() {
         {
             "finally",
             "finally",
-            "✨ finally 块无论是否发生异常都会执行。MiniLang 不支持 finally 关键字，"
-            "但可通过 catch 块中的显式清理代码模拟。"
-            "资源清理（如关闭文件、释放锁）应放在 catch 块中确保执行。",
-            "栈：finally/catch 块执行完毕后，栈状态恢复到 try 之前"
+            "✨ finally 块无论是否发生异常都会执行。MiniLang 支持 try/catch/finally "
+            "三段式语法，资源清理（如关闭文件、释放锁）应放在 finally 中确保执行。"
+            "finally 在 catch 之后、栈完全展开之前执行。",
+            "栈：finally 块执行完毕后，栈状态恢复到 try 之前或继续传播异常"
         },
         {
             "unwind",
@@ -241,13 +242,13 @@ ExceptionFlowPanel::ExceptionFlowPanel(QWidget* parent) : QWidget(parent) {
         stack_->setCurrentWidget(stack_->widget(0));
         pageScenarioBtn_->setChecked(true);
         pagePhaseBtn_->setChecked(false);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pagePhaseBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentWidget(stack_->widget(1));
         pageScenarioBtn_->setChecked(false);
         pagePhaseBtn_->setChecked(true);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
 
     // 默认选中第一个
@@ -347,8 +348,7 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
     connect(scenarioDetail_, &QTextBrowser::anchorClicked, this, [this, s](const QUrl&) {
         emit loadSampleRequested(QString::fromStdString(s.sampleCode));
     });
-
-    PanelAnimator::fadeInWidget(scenarioDetail_);
+    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
 void ExceptionFlowPanel::populatePhaseDetail(int index) {
@@ -367,6 +367,5 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     oss << "<p><b>栈效应:</b> " << p.stackEffect << "</p>";
 
     phaseDetail_->setHtml(QString::fromStdString(oss.str()));
-
-    PanelAnimator::fadeInWidget(phaseDetail_);
+    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }

@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "gui/CallStackPanel.h"
+#include "gui/GuidedTour.h"
 #include "gui/PanelAnimator.h"
 #include "gui/MarkdownRenderer.h"
 #include "app/IdeController.h"
@@ -44,7 +45,7 @@ const std::vector<CallStackScenario>& CallStackLibrary::scenarios() {
             "closure-capture",
             "📦 闭包 upvalue 捕获",
             "📦 makeCounter 返回闭包，闭包帧捕获外层 count 变量。",
-            "fun makeCounter() {\n  var count = 0;\n  return fun() { count = count + 1; return count; };\n}\nvar c = makeCounter();\nprint(c());\nprint(c());\n",
+            "fun makeCounter() {\n  var count = 0;\n  fun inc() { count = count + 1; return count; }\n  return inc;\n}\nvar c = makeCounter();\nprint(c());\nprint(c());\n",
             {"<main>", "makeCounter", "<closure>"},
             "💡 闭包调用栈：闭包帧不持有 count 的本地副本，而是通过 upvalue 引用外层 makeCounter 帧的 count。makeCounter 返回后帧已弹出，闭包通过 Upvalue 对象保持对 count 的引用（堆分配）。"
         },
@@ -106,14 +107,36 @@ CallStackPanel::CallStackPanel(QWidget* parent) : QWidget(parent) {
     stack_->addWidget(libraryPage);
     outer->addWidget(stack_, 1);
 
-    connect(pageLiveBtn_,    &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
-    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() { stack_->setCurrentIndex(1); pageLiveBtn_->setChecked(false); PanelAnimator::fadeInWidget(stack_->currentWidget()); });
+    connect(pageLiveBtn_,    &QPushButton::clicked, [this]() { stack_->setCurrentIndex(0); pageLibraryBtn_->setChecked(false); PanelAnimator::slideInWidget(stack_->currentWidget()); });
+    connect(pageLibraryBtn_, &QPushButton::clicked, [this]() {
+        stack_->setCurrentIndex(1);
+        pageLiveBtn_->setChecked(false);
+        // 切到教学场景库时确保有选中项 —— 首次进入若 scenarioList_ 无选中，
+        // 显式调用 showScenario(0) 让详情区立即有内容。
+        if (scenarioList_->count() > 0 && scenarioList_->currentRow() < 0) {
+            scenarioList_->setCurrentRow(0);
+        }
+        if (currentScenarioIdx_ < 0 && scenarioList_->count() > 0) {
+            showScenario(0);
+        }
+        PanelAnimator::slideInWidget(stack_->currentWidget());
+    });
 
     autoTimer_ = new QTimer(this);
-    autoTimer_->setInterval(500);
+    // OPT-1: 500ms→2000ms。状态变更由 vmStateChanged 监听器即时触发刷新，
+    // QTimer 降级为安全网（覆盖监听器未触达的边角场景），2s 间隔足以兜底且省 CPU。
+    autoTimer_->setInterval(2000);
     connect(autoTimer_, &QTimer::timeout, this, &CallStackPanel::onRefresh);
 
     populateScenarios();
+}
+
+void CallStackPanel::setController(IdeController* controller) {
+    if (controller_ == controller) return;
+    controller_ = controller;
+    if (controller_) {
+        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+    }
 }
 
 void CallStackPanel::buildLivePage(QWidget* host) {
@@ -124,7 +147,7 @@ void CallStackPanel::buildLivePage(QWidget* host) {
     auto* bar = new QHBoxLayout;
     liveStatusLabel_ = new CaptionLabel(tr("状态：未初始化"));
     refreshBtn_       = new QPushButton(tr("刷新"));
-    autoRefreshCheck_ = new QCheckBox(tr("自动刷新 (500ms)"));
+    autoRefreshCheck_ = new QCheckBox(tr("自动刷新 (2s)"));
     bar->addWidget(liveStatusLabel_);
     bar->addStretch();
     bar->addWidget(autoRefreshCheck_);
@@ -335,4 +358,41 @@ void CallStackPanel::onLoadScenarioCode() {
     }
     const auto& s = CallStackLibrary::scenarios()[currentScenarioIdx_];
     emit loadSampleRequested(QString::fromUtf8(s.sourceCode.c_str()));
+}
+
+// ============================================================
+// createGuidedTour — 新手引导（5 步）
+// ============================================================
+
+GuidedTour* CallStackPanel::createGuidedTour(QWidget* host) {
+    auto* tour = new GuidedTour(host, host);
+    // 注：只高亮「始终可见」的页切换按钮，概念性步骤用 nullptr（居中气泡）+ 示例代码。
+    // 不高亮 stackTree_/loadCodeBtn_ 等位于 QStackedWidget 某一页的控件，
+    // 避免目标页未显示时 mapTo 返回错误坐标导致气泡定位混乱。
+    tour->addStep(pageLiveBtn_,
+                  QString::fromUtf8("实时调用栈"),
+                  QString::fromUtf8("「实时调用栈」页在调试时显示函数调用的层次结构，每层是一个栈帧。"
+                                    "勾选「自动刷新」每 2 秒刷新栈帧，展开节点可查看函数名 / 行号 / 局部变量。"));
+    tour->addStep(nullptr,
+                  QString::fromUtf8("示例代码：递归调用栈"),
+                  QString::fromUtf8(
+                      "<p>将以下代码粘贴到编辑器，按 F5 调试，在调用栈中观察递归层次：</p>"
+                      "<pre style='background:#EEE8D5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
+                      "fun fib(n) {\n"
+                      "    if (n < 2) {\n"
+                      "        return n;\n"
+                      "    }\n"
+                      "    return fib(n - 1) + fib(n - 2);\n"
+                      "}\n"
+                      "print fib(5);\n"
+                      "</pre>"
+                      "<p>在 fib 函数内设断点，每次命中可看到调用栈深度变化：fib(5) → fib(4) → fib(3) → ...</p>"));
+    tour->addStep(pageLibraryBtn_,
+                  QString::fromUtf8("教学场景库"),
+                  QString::fromUtf8("点击「教学场景库」切换到静态教学页，查看递归 / 闭包 / 方法分派等典型调用栈形态。"));
+    tour->addStep(nullptr,
+                  QString::fromUtf8("开始实验"),
+                  QString::fromUtf8("切换到教学场景库后，选中任一场景，点击「加载场景代码」载入编辑器，"
+                                    "按 F5 调试即可观察对应的调用栈形态。"));
+    return tour;
 }

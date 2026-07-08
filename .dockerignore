@@ -47,3 +47,13 @@ docs/api/
 
 # --- 用户本地配置 ---
 CMakeUserPresets.json
+
+# --- 散落编译产物（目录外可能存在的二进制）---
+*.pdb
+*.ilk
+*.obj
+*.o
+*.lib
+*.a
+*.exe
+*.dll

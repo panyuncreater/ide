@@ -99,6 +99,11 @@ WorkerManager::~WorkerManager() {
         }
     }
     // worker_ 先于 workerThread_ 释放（成员声明顺序保证）
+    // AUDIT-P1 fix: 与 stopForClose 行 287 的 BUG-IDE-15 fix 对齐。析构路径 wait(5000)
+    // 成功后 finished 信号已发射并投递 QueuedConnection lambda 到主线程队列，
+    // workerThread_.reset() 销毁 QThread 对象但已投递的 lambda 仍持 this 指针。
+    // 后续 Ide::closeEvent 的 processEvents 可能触发悬垂 lambda → UAF。disconnect 确保安全。
+    if (workerThread_) workerThread_->disconnect(this);
     worker_.reset();
     workerThread_.reset();
 }
@@ -309,6 +314,9 @@ void WorkerManager::forceStop() {
         debugger_->stop();
         if (workerThread_->wait(5000)) {
             // Worker 已正常停止，安全释放
+            // AUDIT-P1 fix: 与 stopForClose/析构路径对齐，reset 前断开 finished 信号，
+            // 避免已投递的 QueuedConnection lambda 在 forceStop 返回后触发悬垂 this。
+            workerThread_->disconnect(this);
             worker_.reset();
             workerThread_.reset();
         } else {

@@ -99,12 +99,29 @@ set(MINILANG_GUI_SOURCES
     # 功能 2（降级）：代码生命旅程静态信息图——依赖 Qt6::Widgets（QTextBrowser），
     # 不依赖 IdeController / 引擎层，不加入测试目标。
     gui/CodeJourneyInfoPanel.cpp
-    # 学习中心对话框——教学面板统一入口，依赖 QFluentKit（PushButton/CardWidget/Label），
-    # 不依赖 IdeController / 引擎层，不加入测试目标。
-    gui/LearningHubDialog.cpp
+    # P2-1 fix: 抽取统一面板导航目录（替代原 LearningHubDialog 卡片设计，
+    # 并作为 TeachingTreePanel 与 onActivityRequested 的单一数据源）。
+    # 依赖 Qt6::Core（仅因 PCH 拉入 QString，无 Widgets/QFluentKit 依赖），
+    # 不依赖 IdeController / 引擎层。不加入测试目标（纯静态数据，可被测试目标链接）。
+    gui/PanelCatalog.cpp
     # 教学面板统一标题栏组件——含帮助按钮与学习路径跳转，依赖 QFluentKit，
     # 不依赖 IdeController / 引擎层，不加入测试目标。
     gui/TeachingPanelHeader.cpp
+    # 新手引导组件（GuidedTour）——4 步高亮关键控件的"3 分钟 Hello World"闭环。
+    # 依赖 Qt6::Widgets（QFrame/QLabel/QPushButton），使用 TeachingTheme 语义色，
+    # 不依赖 QFluentKit / IdeController / 引擎层，不加入测试目标（GUI 组件难以单元测试）。
+    gui/GuidedTour.cpp
+    # 术语表面板——集中展示核心术语（NaN-boxing/COW/upvalue/SSA 等 30 条），
+    # 左侧字母序列表 + 顶部搜索框 + 右侧 Markdown 详情，支持 term: 链接跳转。
+    # 依赖 Qt6::Widgets（QLineEdit/QListWidget/QTextBrowser）+ MarkdownRenderer +
+    # TeachingTheme + PanelAnimator，不依赖 IdeController / 引擎层，纯静态数据，不加入测试目标。
+    gui/GlossaryPanel.cpp
+    # 教学面板树形导航——替代 LearningHubDialog 弹窗，左侧停靠区的可折叠树形导航，
+    # 4 大分类 + 顶部「代码编辑器」入口，点击叶子节点切换中央 centerStack_。
+    # P2-1 fix: 4 大分类数据迁移到 PanelCatalog，本文件仅负责树构建与交互。
+    # 依赖 Qt6::Widgets（QTreeWidget/QTreeWidgetItem），不依赖 IdeController / 引擎层，
+    # 不加入测试目标（GUI 组件难以单元测试）。
+    gui/TeachingTreePanel.cpp
 )
 
 # ============================================================

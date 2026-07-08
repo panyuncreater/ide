@@ -1,0 +1,18 @@
+// IR 变换演示：观察 AST → IR → 优化过程
+// 在「IR 变换过程面板」中逐步回放
+
+// 常量折叠：1+2 在编译期算成 3
+var a = 1 + 2;
+var b = a * 10;
+print(b);              // 30
+
+// 死代码消除：unused 变量被优化器删除
+var unused = 999;
+var used = 42;
+print(used);           // 42
+
+// 复制传播：中间变量被消除
+var x = 5;
+var y = x;
+var z = y + 1;
+print(z);              // 6

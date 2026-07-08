@@ -428,6 +428,7 @@ private:
     std::unordered_map<std::string, VarInfo> varMap_;
     std::unordered_map<std::string, std::string> varTypes_;  // 2026-06-29: 变量名→类型注解
     bool inFunction_ = false;
+    std::string currentFunctionReturnType_;  // BUG-TYPE-1 fix: 当前函数返回类型注解
     uint32_t nextLocalSlot_ = 0;
     // BUG-IDE-12 fix: 局部变量 slot→name 映射（索引即 slot），跨作用域累积（不随块退出清除）。
     // 函数最终化时复制到 ir_->localSlotNames，供 RegisterVM 条件断点求值反查变量名。

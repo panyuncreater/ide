@@ -301,6 +301,10 @@ VMResult VM::executeCall(size_t& ip, bool isExpr) {
                     int extraSlots = initChunk.localCount - preAllocated;
                     // V-P2-1 fix: extraSlots 为负表示帧布局损坏（fieldCount 与编译期不一致）
                     if (extraSlots < 0) {
+                        // AUDIT-P1 fix: 错误返回前清理栈上已推入的 this+fields+args，
+                        // 与 executeCall OP_CALL 普通路径（BUG-VM-02 fix）保持栈平衡。
+                        // args 已含默认值追加，用 args.size() 反映栈上实际参数数。
+                        popN(1 + fieldCount + static_cast<int>(args.size()));
                         return runtimeError(ErrorFormat::format(
                             "类 %s 的 init 方法帧布局损坏: localCount=%d < preAllocated=%d",
                             funName.c_str(), initChunk.localCount, preAllocated));
@@ -723,14 +727,20 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
                     int defaultStartIdx = static_cast<int>(targetChunk.defaultConstIndices.size()) - missingCount;
                     if (defaultStartIdx < 0 ||
                         static_cast<size_t>(defaultStartIdx + missingCount) > targetChunk.defaultConstIndices.size()) {
+                        // AUDIT-P1 fix: 错误返回前清理栈上已推入的 this+fields+args，
+                        // 与 executeCall OP_CALL 普通路径（BUG-VM-02 fix）保持栈平衡。
+                        // 此处 argCount 是原始传入参数数（尚未被默认值追加），fieldCount 已在上方计算。
+                        popN(1 + fieldCount + argCount);
                         return runtimeError("方法 " + methodName + " 默认参数索引越界");
                     }
                     for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
                         uint16_t constIdx = targetChunk.defaultConstIndices[i];
                         if (constIdx == 0xFFFF) {
+                            popN(1 + fieldCount + argCount);  // AUDIT-P1 fix: 同上栈平衡
                             return runtimeError("方法 " + methodName + " 的默认参数包含非字面量表达式，VM 不支持");
                         }
                         if (constIdx >= targetChunk.constants.size()) {
+                            popN(1 + fieldCount + argCount);  // AUDIT-P1 fix: 同上栈平衡
                             return runtimeError("方法 " + methodName + " 默认参数常量索引越界");
                         }
                         push(targetChunk.constants[constIdx]);

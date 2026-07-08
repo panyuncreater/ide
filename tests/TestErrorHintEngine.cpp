@@ -13,6 +13,7 @@
 
 #include "gui/ErrorHintEngine.h"
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -232,4 +233,133 @@ TEST(ErrorHintEnginePatterns, IndexOutOfBounds) {
         "Type error: expected int, got float", "compile", {});
     EXPECT_NE(enriched4.find("float"), std::string::npos)
         << "int 拒绝 float 错误应提及 float 注解";
+}
+
+// ============================================================
+// 测试套件 3：ErrorHintEnginePatternsTable — 错误模式表（P1-F12 fix）
+// ------------------------------------------------------------
+// 验证 errorPatterns() 返回的模式表完整性，供手册「常见错误速查」段引用。
+// 每条模式需有非空 tag/title/buggyCode/category，且 tag 唯一。
+// ============================================================
+
+TEST(ErrorHintEnginePatternsTable, PatternsAreNonEmpty) {
+    const auto& patterns = ErrorHintEngine::errorPatterns();
+    EXPECT_FALSE(patterns.empty()) << "错误模式表不应为空";
+    for (const auto& p : patterns) {
+        EXPECT_FALSE(p.tag.empty()) << "tag 不能为空";
+        EXPECT_FALSE(p.title.empty()) << "title 不能为空";
+        EXPECT_FALSE(p.buggyCode.empty()) << "buggyCode 不能为空";
+        EXPECT_FALSE(p.category.empty()) << "category 不能为空";
+    }
+}
+
+TEST(ErrorHintEnginePatternsTable, TagsAreUnique) {
+    const auto& patterns = ErrorHintEngine::errorPatterns();
+    std::set<std::string> tags;
+    for (const auto& p : patterns) {
+        auto [_, inserted] = tags.insert(p.tag);
+        EXPECT_TRUE(inserted) << "tag 重复: " << p.tag;
+    }
+    EXPECT_EQ(tags.size(), patterns.size());
+}
+
+TEST(ErrorHintEnginePatternsTable, KnownTagsPresent) {
+    const auto& patterns = ErrorHintEngine::errorPatterns();
+    std::set<std::string> tags;
+    for (const auto& p : patterns) tags.insert(p.tag);
+
+    // 验证关键 tag 存在（与 enrichErrorMessage 中的模式对应）
+    EXPECT_NE(tags.find("missing-semicolon"), tags.end());
+    EXPECT_NE(tags.find("undefined-variable"), tags.end());
+    EXPECT_NE(tags.find("division-by-zero"), tags.end());
+    EXPECT_NE(tags.find("index-out-of-bounds"), tags.end());
+}
+
+TEST(ErrorHintEnginePatternsTable, CategoriesAreValid) {
+    const auto& patterns = ErrorHintEngine::errorPatterns();
+    const std::set<std::string> kValidCategories = {"parser", "runtime", "type"};
+    for (const auto& p : patterns) {
+        EXPECT_NE(kValidCategories.find(p.category), kValidCategories.end())
+            << "未知 category: " << p.category << " (tag=" << p.tag << ")";
+    }
+}
+
+// ============================================================
+// 测试套件 4：ErrorHintEngineCodeMatching — P2 错误码优先匹配
+// ------------------------------------------------------------
+// P2 fix: Diagnostic 携带稳定 code 后，enrichErrorMessage 4 参重载优先按
+// code 查 errorPatterns 表附加教学提示，避免消息文案变化时子串匹配失效。
+// 验证：code 为空回退子串 / 已知 code 精确匹配 / 未知 code 回退子串 /
+// 英文/本地化消息仍能通过 code 精确匹配（核心价值）。
+// ============================================================
+
+TEST(ErrorHintEngineCodeMatching, EmptyCodeFallsBackToSubstring) {
+    // code 为空 → 走 3 参子串匹配（向后兼容）
+    std::string msg = "期望 ';' (行 5, 列 20)";
+    std::string enriched3 = ErrorHintEngine::enrichErrorMessage(msg, "parse", {});
+    std::string enriched4 = ErrorHintEngine::enrichErrorMessage(msg, "", "parse", {});
+    EXPECT_EQ(enriched3, enriched4)
+        << "code 为空时 4 参版本应与 3 参版本行为一致";
+    EXPECT_NE(enriched4.find("分号"), std::string::npos);
+}
+
+TEST(ErrorHintEngineCodeMatching, KnownCodeMissingSemicolon) {
+    // code="missing-semicolon" 应附加分号提示，即使 msg 是英文/未知文案
+    std::string msg = "syntax error near line 5";  // 子串匹配匹配不到
+    std::string enriched = ErrorHintEngine::enrichErrorMessage(
+        msg, "missing-semicolon", "parse", {});
+    EXPECT_NE(enriched.find("分号"), std::string::npos)
+        << "code=missing-semicolon 应附加分号提示";
+    EXPECT_NE(enriched.find(msg), std::string::npos)
+        << "应保留原始消息";
+}
+
+TEST(ErrorHintEngineCodeMatching, KnownCodeUnbalancedParen) {
+    std::string msg = "parse failure";
+    std::string enriched = ErrorHintEngine::enrichErrorMessage(
+        msg, "unbalanced-paren", "parse", {});
+    EXPECT_NE(enriched.find("括号"), std::string::npos);
+}
+
+TEST(ErrorHintEngineCodeMatching, KnownCodeDivisionByZero) {
+    std::string msg = "arithmetic error";  // 子串匹配不到
+    std::string enriched = ErrorHintEngine::enrichErrorMessage(
+        msg, "division-by-zero", "runtime", {});
+    EXPECT_NE(enriched.find("除数"), std::string::npos);
+}
+
+TEST(ErrorHintEngineCodeMatching, KnownCodeRecursionDepth) {
+    std::string msg = "stack overflow";  // 子串能匹配，验证 code 优先仍工作
+    std::string enriched = ErrorHintEngine::enrichErrorMessage(
+        msg, "recursion-depth", "runtime", {});
+    EXPECT_NE(enriched.find("无限递归"), std::string::npos);
+}
+
+TEST(ErrorHintEngineCodeMatching, UnknownCodeFallsBackToSubstring) {
+    // 未知 code 应回退到子串匹配
+    std::string msg = "期望 ';' (行 5, 列 20)";
+    std::string enriched = ErrorHintEngine::enrichErrorMessage(
+        msg, "some-unknown-code", "parse", {});
+    EXPECT_NE(enriched.find("分号"), std::string::npos)
+        << "未知 code 应回退子串匹配";
+}
+
+TEST(ErrorHintEngineCodeMatching, UndefinedVariableCodeFallsBackForSpelling) {
+    // undefined-variable 需要从 msg 提取变量名做拼写建议，回退到 3 参版本
+    std::vector<std::string> scopeVars = {"count", "counter"};
+    std::string msg = "未定义的变量: coount";
+    std::string enriched = ErrorHintEngine::enrichErrorMessage(
+        msg, "undefined-variable", "runtime", scopeVars);
+    EXPECT_NE(enriched.find("count"), std::string::npos)
+        << "undefined-variable code 应回退子串匹配并返回拼写建议";
+}
+
+TEST(ErrorHintEngineCodeMatching, LocalizedMsgStillMatchesViaCode) {
+    // 核心价值验证：即使 msg 是英文/未来本地化的文案（子串匹配失效），
+    // code 仍能精确匹配并附加中文教学提示
+    std::string msg = "Expected semicolon but found 'var'";  // 子串匹配可能失效
+    std::string enriched = ErrorHintEngine::enrichErrorMessage(
+        msg, "missing-semicolon", "parse", {});
+    EXPECT_NE(enriched.find("分号"), std::string::npos)
+        << "英文消息通过 code 仍应附加中文教学提示";
 }

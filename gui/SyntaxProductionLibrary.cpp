@@ -15,7 +15,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "var-decl", "📝 var 声明",
             "varDecl := \"var\" IDENTIFIER (\":\" typeAnnotation)? \"=\" expression \";\"\n"
             "         | typeAnnotation IDENTIFIER \"=\" expression \";\"",
-            "📝 动态声明变量，或使用类型注解强制类型。三后端统一强制类型注解，"
+            "📝 声明变量有两种写法：直说 `var x = 10`，或者干脆把类型写在前面（`int count = 0`）。一旦写了类型注解，三个后端都会盯着你——int 不收 float，float 倒能宽化收下 int，而 null 跟谁都合得来。"
             "null 兼容所有类型，float 注解接受 int 值（宽化），int 注解拒绝 float 值。",
             "var x = 10;\nint count = 0;\nfloat pi = 3.14;\nstring name = \"MiniLang\";\nprint(x);",
             // F8 自然语言描述
@@ -40,7 +40,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "if-stmt", "🔀 if 语句",
             "ifStmt := \"if\" \"(\" expression \")\" block (\"else\" block)?\n"
             "        | \"if\" \"(\" expression \")\" statement (\"else\" statement)?",
-            "🔀 条件分支。then/else 分支可以是 block（{}包裹）或单语句（无花括号）。"
+            "🔀 最常见的分叉路口。`if` 后面跟条件，命中就走 then，否则走 else。分支体可以裹在 `{ }` 里，也可以只写一句光溜溜的语句——只是 import/export 这种重活，不许塞进没花括号的单句体里。"
             "Parser 层限制 import/export 不能在无花括号单语句体中使用。",
             "var x = 10;\nif (x > 5) {\n    print(\"big\");\n} else {\n    print(\"small\");\n}",
             "🔀 if 语句的写法：\n\n"
@@ -62,7 +62,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
         SyntaxProduction{
             "while-stmt", "🔄 while 循环",
             "whileStmt := \"while\" \"(\" expression \")\" (block | statement)",
-            "🔄 条件循环。支持 break/continue。break 退出循环，continue 跳过当前迭代。"
+            "🔄 只要条件还为真，就一遍遍跑循环体。`break` 直接掀桌子退出，`continue` 跳过这轮剩下的、乖乖进入下一轮判断；条件一旦变假，整个循环拍拍屁股走人。"
             "条件为假时跳过循环体。",
             "var i = 0;\nwhile (i < 5) {\n    print(i);\n    i = i + 1;\n}",
             "🔄 while 循环的写法：\n\n"
@@ -84,7 +84,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "for-stmt", "🔁 for 循环",
             "forStmt := \"for\" \"(\" (varDecl | assignment | \";\") expression \";\" assignment \")\" \n"
             "          (block | statement)",
-            "🔁 C 风格 for 循环。init/condition/update 三段式，每段可空。"
+            "🔁 老熟人 C 风格 for：初值、判断、步进三段排好，哪段空着都行。里头照样能用 break/continue。要是循环变量声明在最外层，循环一退，它就被清掉了（DELETE_VAR）。"
             "支持 break/continue。循环变量在顶层时退出后清理（DELETE_VAR）。",
             "var sum = 0;\nfor (var i = 0; i < 10; i = i + 1) {\n    sum = sum + i;\n}\nprint(sum);  // 45",
             "🔁 for 循环的写法：\n\n"
@@ -107,7 +107,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "funDecl := \"fun\" IDENTIFIER \"(\" params \")\" (\":\" typeAnnotation)? block\n"
             "params := (param (\",\" param)*)?\n"
             "param  := IDENTIFIER (\":\" typeAnnotation)? (\"=\" literal)?",
-            "⚙️ 函数声明。支持默认参数（仅字面量 + 负数字面量，复杂表达式被 Parser 拒绝）。"
+            "⚙️ 用 `fun` 起头就是声明函数。默认参数也支持，不过只认字面量（含负数）——你要是甩个复杂表达式过去，Parser 会直接摇头拒绝。"
             "函数无提升——f(); fun f() {} 会报\"未定义的函数\"。"
             "支持闭包与 upvalue 捕获（3+ 层）。",
             "fun add(a, b = 1) {\n    return a + b;\n}\nprint(add(5));     // 6\nprint(add(5, 2));  // 7",
@@ -136,7 +136,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "class-decl", "🏛️ 类与继承",
             "classDecl := \"class\" IDENTIFIER (\"extends\" IDENTIFIER)? classBody\n"
             "classBody := \"{\" (varDecl | funDecl)* \"}\"",
-            "🏛️ 类声明。extends 后父类名为字符串运行时查找。"
+            "🏛️ 面向对象就靠它。`class` 里能装变量和方法，`extends` 后面跟父类名——这个名字是运行时才去字符串里翻找的，不是编译期绑死。"
             "类方法自动预留 slot 0 给 this，字段按继承链展平存储。"
             "支持 super.method() 调用，三后端 super 调用语义一致。",
             "class Animal {\n    fun init(name) { this.name = name; }\n    fun speak() { print(this.name); }\n}\nclass Dog extends Animal {\n    fun speak() {\n        super.speak();\n        print(\"(woof)\");\n    }\n}\nDog(\"Rex\").speak();",
@@ -164,7 +164,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "try-stmt", "🛡️ try/catch 异常处理",
             "tryStmt := \"try\" block \"catch\" \"(\" IDENTIFIER \")\" block\n"
             "throwStmt := \"throw\" expression? \";\"",
-            "🛡️ 异常处理。throw 可抛任意值。catch 参数独占 slot（防止覆盖外层变量）。"
+            "🛡️ 兜底用的。`throw` 什么都能抛；`catch` 接住的值自己独占一个变量槽，免得把外层同名变量不小心盖掉。"
             "catch 块内 throw 会跳过清理代码——为正确处理，catch 块用 OP_TRY_BEGIN 包装，"
             "异常路径复制 cleanup 字节码后 OP_THROW rethrow。",
             "fun divide(a, b) {\n    if (b == 0) throw \"Division by zero\";\n    return a / b;\n}\ntry {\n    print(divide(10, 0));\n} catch (e) {\n    print(\"Error: \" + e);\n}",
@@ -189,7 +189,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "import-stmt", "📦 模块导入",
             "importStmt := \"import\" (\"{\" IDENTIFIER (\",\" IDENTIFIER)* \"}\" | \"*\") \"from\" STRING \";\"\n"
             "exportStmt := \"export\" (varDecl | funDecl | classDecl)",
-            "📦 模块系统。import/export 限制在顶层作用域（Parser 在 statement() 入口显式拒绝）。"
+            "📦 拆代码、拼代码就靠它。但 `import`/`export` 只能在最顶层用——你想在别处写，Parser 在 statement() 刚进门就把你拦下了。"
             "模块路径非空校验，路径遍历防护（拒绝 .. 父目录引用和绝对路径）。"
             "VM 路径通过编译期模块内联支持 import。",
             "// 假设 utils.mini 中有 export fun greet(name) { ... }\nimport { greet } from \"utils.mini\";\nprint(greet(\"MiniLang\"));",
@@ -217,7 +217,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
         SyntaxProduction{
             "string-interp", "🔤 字符串插值",
             "interpolatedString := '\"' (stringPart | \"{\" expression \"}\")* '\"'",
-            "🔤 字符串插值。支持表达式嵌入。空插值 {} 报语法错误。"
+            "🔤 字符串里想算点东西？把表达式塞进 `${ }` 就行。不过空着 `{}` 可不行，Parser 会当你写错了报语法错误。"
             "插值支持嵌套字符串、字典、数组，嵌套深度限制 64 层防栈溢出。"
             "Lexer 通过 INTERP_START/INTERP_END/STRING_PART 三种 token 类型识别。",
             "var name = \"World\";\nvar items = [1, 2, 3];\nprint(\"Hello, {name}! You have {items.len()} items.\");",
@@ -242,7 +242,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "data-structures", "📚 数组与字典",
             "arrayLiteral := \"[\" (expression (\",\" expression)*)? \"]\"\n"
             "dictLiteral   := \"{\" (STRING \":\" expression (\",\" STRING \":\" expression)*)? \"}\"",
-            "📚 数组与字典字面量。字典键强制为 string，键不存在时返回 null。"
+            "📚 装数据的两个篮子。`[ ]` 是数组，`{ }` 是字典——字典的键必须是字符串（加引号），查一个不存在的键，它淡定地返回 null。"
             "数组/字典使用 Copy-On-Write（COW），写前检查独占所有权。"
             "支持索引读写（a[0] / d[\"key\"]）和嵌套索引赋值（a[0][1]=x）。",
             "var arr = [1, 2, 3];\narr.push(4);\nprint(arr.len());  // 4\n\nvar cfg = {\"key\": \"value\", \"count\": 42};\nprint(cfg[\"key\"]);  // value",
@@ -275,7 +275,7 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "term := factor ((\"+\" | \"-\") factor)*\n"
             "factor := unary ((\"*\" | \"/\" | \"%\") unary)*\n"
             "unary := (\"not\" | \"-\") unary | call",
-            "🔢 运算符优先级链。整数除法截断向零（三后端统一）。"
+            "🔢 一串运算符排排坐，`*` 比 `+` 优先那种老规矩。顺带一句：整数除法截断向零，三个后端都这么算，谁也不许特立独行。"
             "and/or 短路求值——左操作数决定结果时跳过右操作数求值，返回操作数原值（非布尔）。"
             "+ 支持字符串拼接（任一操作数为字符串即触发）。",
             "var x = 5;\nprint(x > 0 and \"positive\" or \"non-positive\");\nprint(7 / 2);    // 3\nprint(7.0 / 2);  // 3.5\nprint(0 or \"default\");  // 0（保留原值）",

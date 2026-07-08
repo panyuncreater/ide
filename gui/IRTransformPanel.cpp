@@ -11,6 +11,7 @@
 #include "gui/PanelAnimator.h"
 
 #include <QVBoxLayout>
+#include <QRegularExpression>
 #include <QHBoxLayout>
 #include <QSplitter>
 #include <QApplication>
@@ -21,6 +22,35 @@
 #include "Label.h"        // QFluentKit（CaptionLabel）
 #include "gui/TeachingTheme.h"
 #include "Theme.h"        // QFluentKit（onThemeModeChanged 信号）
+
+
+// --- Clickable IR/bytecode HTML helper ---
+// Converts plain text where lines may end with "; line N" into HTML
+// with those lines wrapped in <a href="#LINE_N"> anchors.
+namespace {
+static QString irTextToClickableHtml(const QString& plainText) {
+    QStringList lines = plainText.split("\n");
+    QString html;
+    html += "<pre style=\"font-family:Consolas,monospace;\">";
+    static const QRegularExpression lineCommentRe(";\\s*line\\s+(\\d+)\\s*$");
+    for (int i = 0; i < lines.size(); ++i) {
+        QString line = lines[i];
+        auto m = lineCommentRe.match(line);
+        if (m.hasMatch()) {
+            QString lineNum = m.captured(1);
+            QString escaped = line.toHtmlEscaped();
+            html += "<a href=\"#LINE_" + lineNum + "\" style=\"color:inherit;text-decoration:none;\">"
+                 + escaped + "</a>";
+        } else {
+            html += line.toHtmlEscaped();
+        }
+        if (i < lines.size() - 1) html += "\n";
+    }
+    html += "</pre>";
+    return html;
+}
+} // anonymous namespace
+// --- End clickable IR HTML helper ---
 
 // ============================================================
 // IRTransformLibrary — 静态教学场景库
@@ -35,8 +65,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "lit-int",
             "🔢 整数字面量 42",
-            "🔢 整数字面量直接 LOAD_CONST 加载到虚拟寄存器。"
-            "常量 42 加入 IRFunction.constants 常量池（重复时复用索引）。",
+            "🔢 整数字面量直接 LOAD_CONST 加载到虚拟寄存器。<br>"
+            "<b>类比：</b>虚拟寄存器（v0、v1…）就像一排带编号的储物柜，编译器把值暂存进去，后面随时按编号取用。<br>"
+            "<b>常量池：</b>常量 42 会被登记进 IRFunction.constants 这张「常量清单」。如果后面又出现 42，不会重复登记，而是复用同一个索引 #0——就像图书馆里同一本书只编一个索书号。<br>"
+            "<b>输入输出：</b>源码「var x = 42;」会生成「v0 = LOAD_CONST #0 (42)」，再「STORE_LOCAL」写回变量 x。运行后 x 的值就是 42。",
             "NumberLiteral(42)",
             "var x = 42;",
             "function main {\n"
@@ -50,8 +82,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "binop-add",
             "⚙️ 二元加法 a + b",
-            "⚙️ BinaryOp(ADD) lowering：左侧操作数 → vreg0，右侧 → vreg1，"
-            "ADD 指令 → vreg2。三地址码形式 dest = OP src1, src2。",
+            "⚙️ BinaryOp(ADD) lowering：左侧操作数先算到 vreg0，右侧算到 vreg1，再用一条 ADD 指令把结果写入 vreg2。<br>"
+            "<b>三地址码：</b>形式固定为「dest = OP src1, src2」——每条指令最多涉及三个「地址」（一个结果加两个来源），这正是「三地址码」名字的由来。<br>"
+            "<b>类比：</b>就像厨房做菜，先把食材 a、b 分别备好放在两个碗里（v0、v1），最后倒进炒锅（v2）翻炒出成品。<br>"
+            "<b>输入输出：</b>源码「var c = a + b;」生成「v2 = ADD v0, v1」再存回 c。若 a=3、b=4，则 c=7。",
             "BinaryOp(ADD, VarRef(a), VarRef(b))",
             "var c = a + b;",
             "function main {\n"
@@ -66,8 +100,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "var-decl",
             "📝 变量声明 var x = expr",
-            "📝 VarDecl lowering：先求值初始化表达式到 vreg，再 STORE_LOCAL 写入局部槽位。"
-            "未初始化的 VarDecl 用 LOAD_NULL 占位。",
+            "📝 VarDecl lowering：先求初始化表达式的值到 vreg，再用 STORE_LOCAL 写进该变量的「局部槽位」（slot）。<br>"
+            "<b>槽位：</b>每个局部变量在函数里占一个编号格子（slot 0、slot 1…），好比一排带名字的信箱。变量名在编译期就绑定到固定槽位，运行期不再查表。<br>"
+            "<b>未初始化：</b>如果写成「var x;」没有初值，编译器会用 LOAD_NULL 给这个格子先放一个「空值」占位，保证任何读取都有定义。<br>"
+            "<b>输入输出：</b>「var x = 1;」生成「v0 = LOAD_CONST #0 (1)」再「v1 = STORE_LOCAL slot=0, v0」。运行后 x 的值为 1。",
             "VarDecl(x, init=NumberLiteral(1))",
             "var x = 1;",
             "function main {\n"
@@ -80,9 +116,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "if-stmt",
             "🔀 条件分支 if (cond) {...} else {...}",
-            "🔀 IfStmt lowering：求值 cond → BRANCH_FALSE 跳到 L_else，"
-            "执行 then 块后 JUMP L_end，else 块从 L_else 开始。"
-            "patchJumps 解析跳转目标。",
+            "🔀 IfStmt lowering：先求条件 cond 到 vreg，再生成 BRANCH_FALSE——若条件为假就跳到 else 块（L1），为真则顺序往下执行 then 块。<br>"
+            "<b>基本块与跳转：</b>代码被切成多个「基本块」（L0/L1/L2），每块末尾要么是跳转、要么是条件分支。then 块执行完用 JUMP 跳过 else，直接到 L2 收尾。<br>"
+            "<b>回填跳转：</b>编译器先把跳转目标写成占位符，等所有基本块编号确定后再回填正确地址，这一步叫「patchJumps（回填跳转）」。<br>"
+            "<b>输入输出：</b>「if (x) { print 1; } else { print 2; }」当 x 为真时打印 1，为假时打印 2；两条分支不会同时执行。",
             "IfStmt(cond=VarRef(x), then=Block, else=Block)",
             "if (x) { print 1; } else { print 2; }",
             "function main {\n"
@@ -103,8 +140,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "while-stmt",
             "🔄 循环 while (cond) {...}",
-            "🔄 WhileStmt lowering：L_start 处求值 cond → BRANCH_FALSE 跳到 L_end，"
-            "执行循环体后 JUMP L_start。每个基本块终结于 BRANCH/JUMP/RETURN。",
+            "🔄 WhileStmt lowering：在循环头 L0 求值条件，为假就用 BRANCH_FALSE 跳出到 L2；为真则进入循环体 L1，执行完末尾 JUMP 回到 L0 重新判断。<br>"
+            "<b>闭环结构：</b>循环的本质就是「判断→执行→跳回判断」的闭环。每绕一圈，条件都会被重新求值，一旦不满足就退出，因此永远不会在条件为假时卡死。<br>"
+            "<b>基本块终结规则：</b>每个基本块必须以 BRANCH / JUMP / RETURN 之一收尾，这样控制流才清晰、可被优化器分析。<br>"
+            "<b>输入输出：</b>「while (i 小于 10) { i = i + 1; }」从 i 的初值开始，每轮 i 加 1，直到 i 不再小于 10 时停止（若初值已 ≥10 则一次都不执行）。",
             "WhileStmt(cond=BinaryOp(LT, VarRef(i), NumberLiteral(10)))",
             "while (i < 10) { i = i + 1; }",
             "function main {\n"
@@ -126,8 +165,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "fun-call",
             "⚙️ 函数调用 f(a, b)",
-            "⚙️ FunCall lowering：每个实参求值到独立 vreg，CALL 指令携带函数索引 + 参数数量。"
-            "返回值若被使用则存入 vreg，否则由 CALL_POP 弃用。",
+            "⚙️ FunCall lowering：先把每个实参从左到右求值到独立 vreg，再生成 CALL 指令，携带「函数索引 func=#0」和「参数个数 argc」。<br>"
+            "<b>类比：</b>就像打电话——先按号码找到对方（函数索引），把要说的话依次准备好（参数），拨通后对方返回的结果（返回值）若你需要就记在 vreg 里，不需要就挂掉丢弃。<br>"
+            "<b>返回值处理：</b>若调用结果被赋值（如「var r = f(a,b);」），返回值存入 vreg 再写回 r；若只是「f(a,b);」作为语句调用，则由 CALL_POP 把返回值弹出栈，避免堆积。<br>"
+            "<b>输入输出：</b>「var r = f(a, b);」最终 r 得到 f 的返回值。",
             "FunCall(f, args=[VarRef(a), VarRef(b)])",
             "var r = f(a, b);",
             "function main {\n"
@@ -142,8 +183,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "closure",
             "📦 闭包捕获 makeCounter",
-            "📦 闭包 lowering：捕获的局部变量提升为 upvalue，MAKE_CLOSURE 指令携带捕获列表。"
-            "ClosureData 通过 weak_ptr<Environment> 打破循环引用。",
+            "📦 闭包 lowering：函数「记住」了定义时所在环境的局部变量，这些被捕获的变量提升为 upvalue（上层值），MAKE_CLOSURE 指令会带上捕获列表。<br>"
+            "<b>类比：</b>闭包像一封「带着老家钥匙的信」——即使离开了定义时的环境，它仍握着访问那些局部变量的钥匙（upvalue），随时能回去读写。<br>"
+            "<b>防内存泄漏：</b>闭包引用外层环境、外层环境又可能引用闭包，容易形成循环引用。ClosureData 用 weak_ptr<Environment> 弱引用打破这个环，让垃圾回收能正确回收。<br>"
+            "<b>输入输出：</b>「makeCounter」返回的 counter 函数每次调用都让内部计数 c 加 1 并返回，多次调用得到 1、2、3… 这样递增的序列。",
             "FunDecl(makeCounter) → body returns FunDecl(counter)",
             "fun makeCounter() {\n  var c = 0;\n  fun counter() { c = c + 1; return c; }\n  return counter;\n}",
             "function main {\n"
@@ -166,8 +209,10 @@ const std::vector<IRLoweringExample>& IRTransformLibrary::loweringExamples() {
         {
             "class-method",
             "🏛️ 类方法 Point.new()",
-            "🏛️ ClassDecl lowering：方法体作为独立 IRFunction 编译，"
-            "slot 0 预留给隐式 this 参数。MethodCall 通过 GET_FIELD/SET_FIELD 访问实例字段。",
+            "🏛️ ClassDecl lowering：类的每个方法（如 new、distance）都作为独立的 IRFunction 单独编译，互不干扰。<br>"
+            "<b>隐式 this：</b>方法被调用时，对象自身会作为第 0 号槽位（slot 0）传入，名字叫 this。方法体内访问「x」「y」其实都是在操作 this 指向的实例字段。<br>"
+            "<b>字段访问：</b>MethodCall 通过 SET_FIELD / GET_FIELD 读写实例字段，指令里标注「this=slot0」和字段名索引（如 #0 代表 x）。<br>"
+            "<b>输入输出：</b>「Point.new(px, py)」执行后，会把传入的 px、py 写进 this 的 x、y 字段；后续通过「点对象.x」即可取回这两个值。",
             "ClassDecl(Point) → methods=[new, distance]",
             "class Point {\n  var x;\n  var y;\n  fun new(px, py) { x = px; y = py; }\n}",
             "function Point::new {\n"
@@ -189,9 +234,10 @@ const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExampl
         {
             "const-fold",
             "✨ 常量折叠 1 + 2 → 3",
-            "✨ 常量折叠 pass 识别 LOAD_CONST 操作数全为常量的算术指令，"
-            "在编译期求值替换为单一 LOAD_CONST。"
-            "适用于 int/float 加减乘除、布尔逻辑、字符串拼接等。",
+            "✨ 常量折叠（Constant Folding）pass：扫描 IR，凡是操作数全部是常量的算术指令，就在「编译期」直接算出结果，替换成一条 LOAD_CONST。<br>"
+            "<b>类比：</b>就像你在草稿纸上先把「1+2」算成 3 再抄到正式试卷上——机器运行时就省去了这次加法，直接拿到答案 3。<br>"
+            "<b>适用范围：</b>int / float 的加减乘除、布尔逻辑（如 true 与 false 的与运算）、字符串拼接（「a」+「b」）等都能折叠。<br>"
+            "<b>效果：</b>本例「x = 1 + 2」从 4 条指令压缩到 2 条（ADD 被折叠消失），运行更快、体积更小。",
             "Constant Folding",
             "function main {\n"
             "  block L0:\n"
@@ -212,8 +258,10 @@ const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExampl
         {
             "dead-code",
             "🧹 死代码消除（未使用的赋值）",
-            "🧹 DCE pass 识别结果未被使用的指令（无副作用），直接消除。"
-            "本例 x = 1 后从未读取 x，整条赋值链可消除。",
+            "🧹 死代码消除（Dead Code Elimination, DCE）：找出「结果再也没有被使用、且本身没有副作用」的指令，直接删除。<br>"
+            "<b>副作用：</b>像打印、写入文件这种会改变外部状态的操作叫「有副作用」，不能随便删；而单纯的「x = 1」若后面从没读 x，就是无用的死代码。<br>"
+            "<b>类比：</b>如同写了一行笔记却从没翻看过，这行笔记对结果毫无贡献，删掉它不影响最终答案，还能让页面更干净。<br>"
+            "<b>效果：</b>本例「x = 1」从未被读取，整条赋值链被消除，指令数从 4 降到 2，只保留真正会打印的「hello」。",
             "Dead Code Elimination",
             "function main {\n"
             "  block L0:\n"
@@ -234,8 +282,10 @@ const std::vector<IROptimizationExample>& IRTransformLibrary::optimizationExampl
         {
             "copy-prop",
             "📋 复制传播 + 跳转优化",
-            "📋 复制传播 pass 识别 v_b = MOVE v_a 模式，将后续 v_b 的引用替换为 v_a。"
-            "消除 MOVE 后常触发 DCE 二次优化，进一步减少指令。",
+            "📋 复制传播（Copy Propagation）+ DCE：先识别「v_b = MOVE v_a」这类「把 a 原样抄给 b」的指令，把后面所有用到 v_b 的地方都改成直接用 v_a，于是 MOVE 本身成了多余。<br>"
+            "<b>连锁反应：</b>消掉 MOVE 后，原本只为 MOVE 准备的中间值常常变成死代码，于是 DCE 会「二次出手」再删一轮，指令进一步减少。<br>"
+            "<b>类比：</b>好比同事把文件从 A 夹复制到 B 夹，但之后大家都直接看 A 夹的原件——那 B 夹那份拷贝就是多余的，删掉它反而清爽。<br>"
+            "<b>效果：</b>本例「b = a」被消除后，后续「b + 1」直接变成「a + 1」，指令数从 5 降到 4，且变量关系更直观。",
             "Copy Propagation + DCE",
             "function main {\n"
             "  block L0:\n"
@@ -311,7 +361,7 @@ IRTransformPanel::IRTransformPanel(QWidget* parent)
         pageOptimizeBtn_->setChecked(false);
         pageCurrentBtn_->setChecked(false);
         pageReplayBtn_->setChecked(false);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pageOptimizeBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(1);
@@ -319,7 +369,7 @@ IRTransformPanel::IRTransformPanel(QWidget* parent)
         pageOptimizeBtn_->setChecked(true);
         pageCurrentBtn_->setChecked(false);
         pageReplayBtn_->setChecked(false);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pageCurrentBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(2);
@@ -328,7 +378,7 @@ IRTransformPanel::IRTransformPanel(QWidget* parent)
         pageCurrentBtn_->setChecked(true);
         pageReplayBtn_->setChecked(false);
         populateCurrentIR();
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pageReplayBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(3);
@@ -336,7 +386,7 @@ IRTransformPanel::IRTransformPanel(QWidget* parent)
         pageOptimizeBtn_->setChecked(false);
         pageCurrentBtn_->setChecked(false);
         pageReplayBtn_->setChecked(true);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
 
     populateLoweringList();
@@ -436,10 +486,24 @@ void IRTransformPanel::buildCurrentPage(QWidget* host) {
 
     currentIrBrowser_ = new QTextBrowser(host);
     currentIrBrowser_->setFont(QFont("Consolas"));
+    currentIrBrowser_->setOpenLinks(false);
+    currentIrBrowser_->setOpenExternalLinks(false);
     layout->addWidget(currentIrBrowser_, 1);
 
     connect(refreshBtn_, &QPushButton::clicked, this, [this]() {
         populateCurrentIR();
+    });
+
+    // Click-to-highlight: extract source line from anchor and emit signal
+    connect(currentIrBrowser_, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
+        QString fragment = url.fragment();
+        if (fragment.startsWith("LINE_")) {
+            bool ok = false;
+            int line = fragment.mid(5).toInt(&ok);
+            if (ok && line > 0) {
+                emit sourceLineRequested(line);
+            }
+        }
     });
 }
 
@@ -473,7 +537,7 @@ void IRTransformPanel::populateLoweringDetail(int index) {
     os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()
        << "; padding:8px; font-family:Consolas;'>" << e.irBefore << "</pre>";
     loweringDetail_->setHtml(QString::fromUtf8(os.str().c_str()));
-    PanelAnimator::fadeInWidget(loweringDetail_);
+    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
 void IRTransformPanel::populateOptList() {
@@ -501,8 +565,7 @@ void IRTransformPanel::populateOptDetail(int index) {
 
     optBefore_->setPlainText(QString::fromUtf8(e.irBefore.c_str()));
     optAfter_->setPlainText(QString::fromUtf8(e.irAfter.c_str()));
-    PanelAnimator::fadeInWidget(optBefore_);
-    PanelAnimator::fadeInWidget(optAfter_);
+    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
 void IRTransformPanel::populateCurrentIR() {
@@ -527,7 +590,7 @@ void IRTransformPanel::populateCurrentIR() {
             return;
         }
         std::string irText = IRToString(*mod->mainFunction);
-        currentIrBrowser_->setPlainText(QString::fromUtf8(irText.c_str()));
+        currentIrBrowser_->setHtml(irTextToClickableHtml(QString::fromUtf8(irText.c_str())));
         int instrCount = 0;
         for (const auto& blk : mod->mainFunction->blocks) {
             instrCount += (int)blk.instructions.size();
@@ -948,6 +1011,8 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
     irLayout->addWidget(new QLabel(QString::fromUtf8("IR 快照："), irWrap));
     replayIrBrowser_ = new QTextBrowser(irWrap);
     replayIrBrowser_->setFont(QFont("Consolas"));
+    replayIrBrowser_->setOpenLinks(false);
+    replayIrBrowser_->setOpenExternalLinks(false);
     irLayout->addWidget(replayIrBrowser_, 1);
 
     // 右下：决策列表
@@ -999,7 +1064,20 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
         replayStatusLabel_->setText(QString::fromUtf8("场景：%1 — %2 个步骤")
             .arg(QString::fromUtf8(scenarios[row].first.c_str()))
             .arg(steps.size()));
-        PanelAnimator::fadeInWidget(replayStepsList_);
+        // 注：移除 fadeInWidget —— QListWidget 刷新无需动画，
+        // QGraphicsOpacityEffect 会导致连续切换时 opacity 卡 0 内容空白。
+    });
+
+    // Click-to-highlight from replay IR browser
+    connect(replayIrBrowser_, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
+        QString fragment = url.fragment();
+        if (fragment.startsWith("LINE_")) {
+            bool ok = false;
+            int line = fragment.mid(5).toInt(&ok);
+            if (ok && line > 0) {
+                emit sourceLineRequested(line);
+            }
+        }
     });
 
     // 步骤列表切换 → 刷新 IR 快照 + 决策列表
@@ -1034,7 +1112,7 @@ void IRTransformPanel::populateReplayStep(int scenarioIdx, int stepIdx) {
     const auto& s = steps[stepIdx];
 
     // IR 快照
-    replayIrBrowser_->setPlainText(QString::fromUtf8(s.irSnapshot.c_str()));
+    replayIrBrowser_->setHtml(irTextToClickableHtml(QString::fromUtf8(s.irSnapshot.c_str())));
 
     // 决策列表
     replayDecisionsList_->clear();
@@ -1050,6 +1128,6 @@ void IRTransformPanel::populateReplayStep(int scenarioIdx, int stepIdx) {
         .arg(s.instrCount)
         .arg(s.modifiedCount));
 
-    PanelAnimator::fadeInWidget(replayIrBrowser_);
-    PanelAnimator::fadeInWidget(replayDecisionsList_);
+    // 注：移除 fadeInWidget —— QTextBrowser/QListWidget 内容刷新无需动画，
+    // QGraphicsOpacityEffect 会导致连续切换步骤时 opacity 卡 0 内容空白。
 }

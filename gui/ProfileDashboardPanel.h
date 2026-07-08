@@ -24,6 +24,7 @@
 #include <QListWidget>
 #include <QTextBrowser>
 #include <QTableWidget>
+#include <QTimer>
 #include <chrono>
 #include <functional>
 #include <string>
@@ -164,6 +165,13 @@ private:
 
     /// 当前的测量结果（用于 paintEvent 绘制）
     std::vector<BackendTiming> lastResults_;
+
+    /// 问题 6: "运行中"状态动画 — 循环显示 "运行中." → "运行中.." → "运行中..."
+    QTimer* statusAnimTimer_ = nullptr;
+    int statusAnimDots_ = 0;
+    QString statusRunningBase_;  // "运行中" 基础文本（含进度）
+    void startStatusAnimation(const QString& base);
+    void stopStatusAnimation();
 
     /// 跑场景
     void runProfile(int scenarioIndex);

@@ -12,6 +12,7 @@
 #include <QTextCharFormat>
 #include <QColor>
 #include <future>  // QT-R-06 fix: std::async 异步执行
+#include <cstdlib>  // IDE-CLOSE-01 fix: std::_Exit 强制进程退出
 #include <sstream>
 #include <vector>  // AUDIT-REPL-1 fix: isInputComplete 插值栈
 
@@ -38,7 +39,7 @@ ReplPanel::ReplPanel(QWidget* parent)
 
     // 输入行
     inputLine_ = new QLineEdit(this);
-    inputLine_->setPlaceholderText(">>> 输入 MiniLang 代码...");
+    inputLine_->setPlaceholderText(">>> 输入代码，%help 查看 magic 命令");
     layout->addWidget(inputLine_);
 
     connect(inputLine_, &QLineEdit::returnPressed, this, &ReplPanel::onReturnPressed);
@@ -50,6 +51,7 @@ ReplPanel::ReplPanel(QWidget* parent)
     outputArea_->append("MiniLang REPL v1.0");
     outputArea_->append("输入 MiniLang 表达式或语句，按回车执行。");
     outputArea_->append("输入 'help' 查看帮助，输入 'clear' 清空输出。");
+    outputArea_->append("💡 输入 %help 查看 10 个 magic 命令（%ast / %ir / %disassemble / %compare / %profile ...）");
     outputArea_->append("");
 
     // QT-R-06 fix: 用 QTimer 轮询 std::future 状态
@@ -86,15 +88,19 @@ void ReplPanel::waitReplFuture() {
     // 原 wait() 无超时，死循环场景下 closeEvent 卡死。现改为：
     // 1. 设置 stopRequested_ 标志（checkBreak 在每个语句节点检查并抛异常）
     // 2. wait_for(5s) 等待协作中止生效
-    // 3. 超时则回退阻塞 wait()（进程即将退出，由 OS 兜底）
+    // 3. 超时则强制进程退出（IDE-CLOSE-01 fix: 原 replFuture_.wait() 无超时阻塞
+    //    会导致 closeEvent 永远不返回，IDE 无法正常关闭。改为 std::_Exit(1)
+    //    强制进程退出，与 forceStop 的 std::_Exit(0) 语义一致）
     if (controller_) {
         controller_->requestReplStop();
         auto status = replFuture_.wait_for(std::chrono::seconds(5));
         if (status == std::future_status::ready) return;
         // AUDIT-BUG-C8 fix: 改用 LOG_* 宏，先检查级别再构造消息（懒求值）。
-        LOG_WARNING("REPL 异步任务未在 5 秒内响应中止请求，等待强制完成", "REPL");
+        LOG_WARNING("REPL 异步任务未在 5 秒内响应中止请求，强制退出进程", "REPL");
     }
-    replFuture_.wait();
+    // IDE-CLOSE-01 fix: 超时后强制进程退出，避免 closeEvent 卡死。
+    // replFuture_ 析构时若 future 未 ready 会阻塞 wait()，无法安全返回。
+    std::_Exit(1);
 }
 
 void ReplPanel::setController(IdeController* controller) {
@@ -177,7 +183,7 @@ void ReplPanel::onReturnPressed() {
         cursor.movePosition(QTextCursor::End);
         cursor.insertText("\n");
         QTextCharFormat fmt;
-        fmt.setForeground(QColor("#006600"));
+        fmt.setForeground(QColor("#859900"));
         cursor.setCharFormat(fmt);
         QString prompt = inContinuation_ ? "... " : ">>> ";
         cursor.insertText(prompt + (inContinuation_ ? line : trimmedLine));
@@ -219,6 +225,19 @@ void ReplPanel::onReturnPressed() {
                 "  - 'reload \"mod\"' 清除模块缓存,下次 import 重新加载源码\n"
                 "  - 'reload all' 清除所有模块缓存\n"
                 "  - 重置全部状态需重启 IDE\n"
+                "─── Magic 命令 ─────────────────────────────\n"
+                "输入 %help 查看完整 magic 命令列表与详细说明。\n"
+                "常用 magic 命令速查:\n"
+                "  %ast <expr>       查看 AST\n"
+                "  %ir <expr>        查看 IR\n"
+                "  %disassemble      反汇编当前字节码\n"
+                "  %compare <expr>   三后端对比\n"
+                "  %profile <expr>   性能剖析\n"
+                "  %memory           内存模型\n"
+                "  %tokens <expr>    词法分析结果\n"
+                "  %reset            重置 REPL 环境\n"
+                "  %version          查看 MiniLang 版本\n"
+                "────────────────────────────────────────────\n"
             );
             pendingInput_.clear();
             inputLine_->clear();
@@ -395,7 +414,15 @@ void ReplPanel::executeLine(const QString& line) {
                 // BUG-REPL-G6 fix (P2): 同时投递到 REPL 输出区，让用户在 REPL 中
                 // 直接看到错误反馈（原有 emit ctrl->runtimeError 仍保留，由 Ide
                 // 连接到主错误面板）
-                std::string msg = e.what();
+                // P0-3 fix (F11): 在 worker 线程中收集 scopeVars（此时 Interpreter
+                // 状态仍可访问，主线程在 pollReplFuture 阻塞等待），用于拼写建议
+                std::vector<std::string> scopeVars;
+                if (ctrl) {
+                    scopeVars = ctrl->getReplScopeVariableNames();
+                }
+                std::string enriched = ErrorHintEngine::enrichErrorMessage(
+                    e.what(), "runtime", scopeVars);
+                std::string msg = enriched;
                 QMetaObject::invokeMethod(self,
                     [self, msg]() {
                         self->appendError(QString::fromStdString(msg));
@@ -411,7 +438,14 @@ void ReplPanel::executeLine(const QString& line) {
             } catch (const std::exception& e) {
                 errFlag->store(true);
                 // BUG-REPL-G6 fix (P2): 同理投递到 REPL 输出区
-                std::string msg = e.what();
+                // P0-3 fix (F11): 通用异常也通过 ErrorHintEngine 增强
+                std::vector<std::string> scopeVars;
+                if (ctrl) {
+                    scopeVars = ctrl->getReplScopeVariableNames();
+                }
+                std::string enriched = ErrorHintEngine::enrichErrorMessage(
+                    e.what(), "runtime", scopeVars);
+                std::string msg = enriched;
                 QMetaObject::invokeMethod(self,
                     [self, msg]() {
                         self->appendError(QString::fromStdString(msg));
@@ -485,6 +519,7 @@ bool ReplPanel::isInputComplete(const QString& input) {
     bool inLineComment = false;
     int tryCount = 0;     // BUG-R1 fix: 跟踪 try/catch 配对
     int catchCount = 0;
+    int finallyCount = 0;  // P2-C fix: 跟踪 finally 块
 
     // AUDIT-REPL-1 fix: 字符串插值栈。MiniLang 字符串支持 "...{expr}..." 插值，
     // { 在字符串内开启表达式上下文（可能含嵌套字符串/字典/数组），} 闭合插值回到字符串模式。
@@ -563,12 +598,16 @@ bool ReplPanel::isInputComplete(const QString& input) {
                 ++i;
             }
             int len = i - start;
-            // 仅匹配完整单词 "try" / "catch"，避免匹配 "trying" / "catcher"
+            // 仅匹配完整单词 "try" / "catch" / "finally"，避免匹配 "trying" / "catcher"
             if (len == 3 && input[start] == 't' && input[start + 1] == 'r' && input[start + 2] == 'y') {
                 ++tryCount;
             } else if (len == 5 && input[start] == 'c' && input[start + 1] == 'a' &&
                        input[start + 2] == 't' && input[start + 3] == 'c' && input[start + 4] == 'h') {
                 ++catchCount;
+            } else if (len == 7 && input[start] == 'f' && input[start + 1] == 'i' &&
+                       input[start + 2] == 'n' && input[start + 3] == 'a' &&
+                       input[start + 4] == 'l' && input[start + 5] == 'l' && input[start + 6] == 'y') {
+                ++finallyCount;
             }
             --i; // 补偿 for 循环的 ++i
             continue;
@@ -621,8 +660,9 @@ bool ReplPanel::isInputComplete(const QString& input) {
     if (inString) return false;
     // 括号不匹配
     if (braceDepth != 0 || parenDepth != 0 || bracketDepth != 0) return false;
-    // BUG-R1 fix: try 缺少 catch 视为输入不完整
-    if (tryCount > catchCount) return false;
+    // BUG-R1 fix: try 缺少 catch 或 finally 视为输入不完整
+    // P2-C fix: try-finally（无 catch）也是合法结构，catch 或 finally 至少其一即可配对
+    if (tryCount > catchCount + finallyCount) return false;
 
     return true;
 }

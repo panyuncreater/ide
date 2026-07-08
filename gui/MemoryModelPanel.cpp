@@ -58,9 +58,12 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
             NaNBoundingBox b;
             b.id = "int-inline-pos";
             b.title = "🔢 int 42 内联（int48 范围内）";
-            b.description = "🔢 整数 42 在 int48 范围（|v| < 2^47）内，直接内联到 NaN-box 的低 48 位。"
+            b.description = "🔢 整数 42 在 int48 范围（|v| 小于 2^47）内，直接内联到 NaN-box 的低 48 位。"
                             "高 16 位为 INT_TAG_BASE = 0x7FF8，标记类型为 VAL_INT。"
-                            "无需堆分配，Value 拷贝仅 8 字节赋值。";
+                            "无需堆分配，Value 拷贝仅 8 字节赋值。"
+                            " **类比：** NaN-box 如同固定 8 字节的「万能收纳盒」，高 16 位是「类型标签」，低 48 位是「货物」。"
+                            "小整数 42 这种小件能直接装进盒子，不必去堆上单独开仓库，所以拷贝整型只复制这 8 字节。"
+                            " **输入输出：** 输入 `42`，输出 0x7FF8 开头的位模式（低 48 位存 42）。";
             b.sourceExpr = "42";
             b.bits = box.rawBits();
             b.intVal = 42;
@@ -74,7 +77,9 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
             b.id = "int-inline-neg";
             b.title = "🔢 int -1 内联（int48 负值）";
             b.description = "🔢 整数 -1 以补码形式存储到低 48 位（全 1），"
-                            "解码时通过符号位扩展恢复 int64 值。";
+                            "解码时通过符号位扩展恢复 int64 值。"
+                            " **类比：** 负数就像把盒子里的货物按「补码规则」倒着装（全 1 表示 -1），取货时再按规则还原成 -1。"
+                            " **输入输出：** 输入 `-1`，输出低 48 位全 1，解码得 -1。";
             b.sourceExpr = "-1";
             b.bits = box.rawBits();
             b.intVal = -1;
@@ -88,9 +93,11 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
             NaNBoundingBox b;
             b.id = "int-inline-boundary";
             b.title = "🔢 int48 最大正值（2^46 - 1）";
-            b.description = "🔢 int48 范围上限：|v| < 2^47。"
+            b.description = "🔢 int48 范围上限：|v| 小于 2^47。"
                             "本例 v = 2^46 - 1 仍在范围内，仍内联存储。"
-                            "若 v 超出范围（|v| ≥ 2^47）则触发装箱为 BoxedIntData* 堆对象。";
+                            "若 v 超出范围（|v| ≥ 2^47）则触发装箱为 BoxedIntData* 堆对象。"
+                            " **类比：** 盒子能装下的「小件」有大小上限，超过就要改寄大件、单独建仓库存放（BoxedIntData）。"
+                            " **输入输出：** 输入 `2^46 - 1` 仍内联；输入 `2^47` 则改为堆上装箱。";
             b.sourceExpr = "(1<<46) - 1";
             b.bits = box.rawBits();
             b.intVal = boundary;
@@ -105,7 +112,9 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
             b.title = "🔢 float 3.14 直接存储（IEEE 754 double）";
             b.description = "🔢 浮点数直接以 IEEE 754 double 的 64 位原始位存储，"
                             "高 16 位是 exponent 字段。若 float 的位模式恰好落入 NaN-boxed tag 范围，"
-                            "会被规范化为 NAN_BOXED_FLOAT_MARKER（罕见）。";
+                            "会被规范化为 NAN_BOXED_FLOAT_MARKER（罕见）。"
+                            " **类比：** 浮点不像整数那样塞类型标签，而是原封不动把「双精度实数」整箱搬进去（高 16 位是它自己的指数位）。"
+                            " **输入输出：** 输入 `3.14`，输出即 IEEE 754 的 64 位位模式。";
             b.sourceExpr = "3.14";
             b.bits = box.rawBits();
             b.floatVal = 3.14;
@@ -119,7 +128,9 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
             b.id = "bool-true";
             b.title = "🎭 bool true（BOOL_TAG_BASE）";
             b.description = "🎭 bool 类型用 BOOL_TAG_BASE = 0x7FF9 编码，低 48 位存储 0/1。"
-                            "true 编码为 0x7FF9...0001，false 为 0x7FF9...0000。";
+                            "true 编码为 0x7FF9...0001，false 为 0x7FF9...0000。"
+                            " **类比：** 布尔值像盒子里只放「0」或「1」两张小卡片，标签统一是 BOOL_TAG_BASE。"
+                            " **输入输出：** 输入 `true`，输出 0x7FF9 开头、低 48 位为 1。";
             b.sourceExpr = "true";
             b.bits = box.rawBits();
             b.intVal = 1;  // true
@@ -133,7 +144,9 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
             b.id = "null-value";
             b.title = "🎭 null（NULL_BITS）";
             b.description = "🎭 null 值编码为固定常量 NULL_BITS = 0x7FFA000000000000，"
-                            "payload 全为 0。";
+                            "payload 全为 0。"
+                            " **类比：** null 是「空盒子」专用款，标签和货物都固定为零，代表什么都没装。"
+                            " **输入输出：** 输入 `null`，输出 0x7FFA000000000000。";
             b.sourceExpr = "null";
             b.bits = box.rawBits();
             b.isNull = true;
@@ -147,10 +160,12 @@ const std::vector<NaNBoundingBox>& MemoryModelLibrary::nanBoxExamples() {
             NaNBoundingBox b;
             b.id = "ptr-string";
             b.title = "📦 string \"hello\" 装箱（PTR_TAG_BASE + 48 位指针）";
-            b.description = "📦 字符串 \"hello\" 长度超过 ASCII 内联阈值，装箱为 StringData* 堆对象。"
+            b.description = "📦 字符串 「hello」 长度超过 ASCII 内联阈值，装箱为 StringData* 堆对象。"
                             "高 16 位为 PTR_TAG_BASE = 0x7FFB，低 48 位为 StringData 对象的虚拟地址。"
                             "x86-64 用户态虚拟地址空间为 48 位，可直接编码。"
-                            "本图示演示 PTR_TAG_BASE + 指针位模式，实际指针值会随运行而变化。";
+                            "本图示演示 PTR_TAG_BASE + 指针位模式，实际指针值会随运行而变化。"
+                            " **类比：** 大件货物放不进盒子，就改成在盒子里写一张「仓库提货单」（48 位指针），真正的东西存在堆仓库里。"
+                            " **输入输出：** 输入 `「hello」`（字符串字面量），输出 PTR_TAG_BASE 加上 StringData 的 48 位地址。";
             b.sourceExpr = "\"hello\"";
             b.bits = box.rawBits();
             b.isPointer = true;
@@ -168,7 +183,10 @@ const std::vector<RefCountScenario>& MemoryModelLibrary::refCountScenarios() {
             "📦 演示 var a = [1,2,3] 的构造、拷贝与释放。"
             "ArrayData 继承 RefCounted，构造时 refCount=1。"
             "var b = a 共享所有权（refCount=2），不进行深拷贝（COW 语义）。"
-            "b 离开作用域时 release，refCount 降为 1；a 离开时 release，refCount=0 触发析构。",
+            "b 离开作用域时 release，refCount 降为 1；a 离开时 release，refCount=0 触发析构。"
+            " **类比：** 就像几个人合租一套房，每多一个人住进来（addRef）计数加一，搬走一人（release）计数减一；"
+            "最后一个人搬走，房子才退租拆除（析构）。"
+            " **输入输出：** 输入 `var a=[1,2,3]; var b=a`，输出 a、b 共享同一 ArrayData，refCount 从 1 升到 2 再回到 0。",
             {
                 {"var a = [1,2,3]", 1, "构造新 ArrayData，refCount=1"},
                 {"var b = a",       2, "Value 拷贝：addRef → refCount=2（共享所有权，未深拷贝）"},
@@ -182,7 +200,9 @@ const std::vector<RefCountScenario>& MemoryModelLibrary::refCountScenarios() {
             "📦 演示 b = a 之后修改 b 触发 COW detach。"
             "COW detach 在写前检查 refCount==1，否则深拷贝自身。"
             "本例 refCount=2 时调用 b.push(4)，触发 detach：先 release 原 refCount（→1），"
-            "再深拷贝出新的 ArrayData（refCount=1），最后写入新对象。",
+            "再深拷贝出新的 ArrayData（refCount=1），最后写入新对象。"
+            " **类比：** 合租时想改造房间，得先「复印一份原稿」再改复印件，原住户 a 的房间保持原样（COW 写时复制）。"
+            " **输入输出：** 输入 `b.push(4)`，输出 b 指向新数组 [1,2,3,4]，a 仍为 [1,2,3]。",
             {
                 {"var a = [1,2,3]", 1, "构造新 ArrayData，refCount=1"},
                 {"var b = a",       2, "共享所有权，refCount=2"},
@@ -194,7 +214,9 @@ const std::vector<RefCountScenario>& MemoryModelLibrary::refCountScenarios() {
             "string-shared",
             "📦 字符串共享（无 COW）",
             "📦 字符串 StringData 同样使用 RefCounted，但字符串不可变，无需 COW detach。"
-            "var s2 = s1 共享所有权，s2 += 'x' 实际是构造新 StringData 赋值给 s2。",
+            "var s2 = s1 共享所有权，s2 += 'x' 实际是构造新 StringData 赋值给 s2。"
+            " **类比：** 字符串像「只读的合租房」，谁都不能改原屋，要改就只能另租新房（构造新 StringData）并搬过去。"
+            " **输入输出：** 输入 `s2 = s2 + 「!」`，输出 s2 指向新字符串 'hello!'，s1 仍是 'hello'。",
             {
                 {"var s1 = \"hello\"", 1, "构造新 StringData，refCount=1"},
                 {"var s2 = s1",        2, "共享所有权，refCount=2"},
@@ -205,7 +227,10 @@ const std::vector<RefCountScenario>& MemoryModelLibrary::refCountScenarios() {
             "instance-fields",
             "📦 实例字段引用",
             "📦 实例 InstanceData 持有字段表，字段值是 Value（可能引用其它堆对象）。"
-            "实例的 refCount 与字段值 refCount 相互独立。",
+            "实例的 refCount 与字段值 refCount 相互独立。"
+            " **类比：** 实例像一栋「带家具的房子」，家具（字段值）可能本身也是被合租的物件，"
+            "房子和家具各有各的租赁计数，互不影响。"
+            " **输入输出：** 输入 `var p=Point.new(); p.x=[1,2,3]; var q=p`，输出 p、q 共享实例（refCount 2），其字段数组独立计数为 1。",
             {
                 {"class Point { ... }",         0, "类定义不创建实例，仅注册到 classRegistry_"},
                 {"var p = Point.new()",         1, "构造新 InstanceData，refCount=1"},
@@ -225,36 +250,44 @@ const std::vector<GcPhaseInfo>& MemoryModelLibrary::gcPhases() {
             "📝 所有新建的 ArrayData / DictData / InstanceData 在构造函数中调用 GcManager::instance().registerTracked(this)，"
             "加入 tracked_ 列表与 aliveSet_。StringData/ClosureData 不注册（无循环引用风险）。"
             "注册为 O(1) 操作（vector::push_back + unordered_set::insert）。"
+            " **类比：** 就像去派出所「上户口」，新建的容器都要登记在册；只读的字符串和闭包没有互相牵绊的风险，不必登记。"
         },
         {
             "⏰ 2. 触发时机",
             "⏰ Interpreter::execute() 在 resetState 之后、runStatements 之前调用 collectCycle(空根集)。"
-            "此时上一轮残留的循环容器 refCount>0 仍 aliveSet_，本轮新建容器尚未注册，安全。"
+            "此时上一轮残留的循环容器 refCount 大于 0 仍 aliveSet_，本轮新建容器尚未注册，安全。"
             "执行期间不再触发（性能权衡：mark-sweep 开销 O(节点数+边数)，仅起点触发）。"
+            " **类比：** 就像每天开门营业前先扫一次地，营业中不再反复打扫，避免影响运行效率。"
         },
         {
             "🟢 3. Mark 阶段",
             "🟢 从 roots（globals / VM 栈 / 调用帧中的 Value）出发，递归 mark 所有可达容器节点。"
             "markValue 检查 Value 类型：ArrayData → 遍历 elements；DictData → 遍历 entries；"
             "InstanceData → 遍历 fields。递归标记直到所有可达节点 marked=true。"
+            " **类比：** 像警察挨家挨户「查户口」，从已知活人（根集）出发，顺着人际关系找到的所有人都标记「在世」；"
+            "找不到的空房子就是无人认领的孤岛。"
         },
         {
             "🧹 4. Sweep 阶段",
             "🧹 迭代 tracked_ 列表，对 aliveSet_ 仍在但 marked 未标记的节点（即不可达的循环孤岛）执行："
             "清空其子元素打破循环 → refCount 自然降为 0 → 节点析构 → onDestroyed 从 aliveSet_ 移除。"
             "存活节点重置 marked=false，为下一轮收集做准备。"
+            " **类比：** 查完户口后，凡是没有被标记「在世」的空房子，直接拆除并断开水电（清空子元素），让其自然退租销毁。"
         },
         {
             "🛡️ 5. UAF 防护",
             "🛡️ tracked_ 列表中的 RefCounted* 可能在 collectCycle 期间被析构（如 sweep 清空子元素后 refCount→0）。"
             "通过 aliveSet_ 区分存活对象与已释放的悬垂指针，避免迭代时访问已释放内存。"
             "析构钩子 onDestroyed 同步从 aliveSet_ 移除本指针，保证 aliveSet_ 与实际存活状态一致。"
+            " **类比：** 拆除时要先核对「还在册名单」，避免误闯已经拆掉的危房（悬垂指针），保证施工安全。"
         },
         {
             "⚠️ 6. 已知限制",
             "⚠️ 环形容器泄漏：a.append(a) 形成自环，refCount ≥ 2 永不归零。"
             "GC 通过 mark-sweep 可回收（mark 时 a 已 marked，sweep 不会误清），"
             "但仅当 a 的根引用被丢弃时才会被回收。若 a 仍在 globals 中，GC 不会触碰。"
+            " **类比：** 就像两个人互相抓住对方、谁也不肯先松手（循环引用），光靠「最后一人搬走才退租」的引用计数永远解不开；"
+            "mark-sweep 则像外部警察逐户核查，发现整圈人都与外界失联，就把这一圈一起回收。"
         },
     };
     return kPhases;
@@ -416,9 +449,10 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
     stack_->addWidget(pageGc);
     stack_->addWidget(pageAnim);
 
-    // 第 4 子页自动刷新定时器（500ms，默认关闭）
+    // OPT-1: 第 4 子页自动刷新定时器降频 500ms→2000ms，状态变更由 vmStateChanged
+    // 监听器即时触发 refreshAnimState（见 setController）。QTimer 作为安全网。
     animTimer_ = new QTimer(this);
-    animTimer_->setInterval(500);
+    animTimer_->setInterval(2000);
     animTimer_->setSingleShot(false);
     connect(animTimer_, &QTimer::timeout, this, [this]() { refreshAnimState(); });
 
@@ -432,7 +466,7 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
         pageRefCountBtn_->setChecked(false);
         pageGcBtn_->setChecked(false);
         pageAnimBtn_->setChecked(false);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pageRefCountBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(1);
@@ -440,7 +474,7 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
         pageRefCountBtn_->setChecked(true);
         pageGcBtn_->setChecked(false);
         pageAnimBtn_->setChecked(false);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pageGcBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(2);
@@ -449,7 +483,7 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
         pageGcBtn_->setChecked(true);
         pageAnimBtn_->setChecked(false);
         refreshGcStats();
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pageAnimBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(3);
@@ -458,7 +492,7 @@ MemoryModelPanel::MemoryModelPanel(QWidget* parent)
         pageGcBtn_->setChecked(false);
         pageAnimBtn_->setChecked(true);
         refreshAnimState();
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
 
     populateNanBoxList();
@@ -481,6 +515,14 @@ void MemoryModelPanel::hideEvent(QHideEvent* event) {
     // 面板隐藏时停止动画 QTimer，避免后台空转
     if (animTimer_ && animTimer_->isActive()) {
         animTimer_->stop();
+    }
+}
+
+void MemoryModelPanel::setController(IdeController* controller) {
+    if (controller_ == controller) return;
+    controller_ = controller;
+    if (controller_) {
+        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
     }
 }
 
@@ -670,9 +712,10 @@ void MemoryModelPanel::populateRefCountDetail(int index) {
 void MemoryModelPanel::populateGcPhases() {
     std::ostringstream os;
     os << "<h2>GcManager — 循环引用垃圾收集器</h2>";
-    os << "<p>侵入式引用计数无法回收循环引用（如 <code>a=[]; a.append(a)</code>）。"
-       << "GcManager 实现轻量级 mark-sweep，周期性扫描所有容器节点，"
-       << "标记从根集可达的对象，释放不可达的循环孤岛。</p>";
+    os << "<p>侵入式引用计数无法回收循环引用（如 <code>a=[]; a.append(a)</code>），"
+       << "因为它像「几个人合租，最后一人搬走才退租」——可若两人互相抓住对方、谁也不肯松手，"
+       << "计数永远大于零、永远退不了租。GcManager 实现轻量级 mark-sweep，周期性扫描所有容器节点，"
+       << "像警察挨家挨户查户口，标记从根集可达的对象，释放不可达的循环孤岛。</p>";
     os << "<hr>";
     for (const auto& p : MemoryModelLibrary::gcPhases()) {
         os << "<h3>" << p.title << "</h3>";
@@ -765,7 +808,7 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
     // ---- 底部按钮：刷新 + 自动刷新切换 ----
     auto* btnbar = new QHBoxLayout;
     animRefreshBtn_     = new QPushButton(QString::fromUtf8("刷新"), host);
-    animAutoRefreshBtn_ = new QPushButton(QString::fromUtf8("自动刷新（500ms）"), host);
+    animAutoRefreshBtn_ = new QPushButton(QString::fromUtf8("自动刷新（2s）"), host);
     animAutoRefreshBtn_->setCheckable(true);
     btnbar->addWidget(animRefreshBtn_);
     btnbar->addWidget(animAutoRefreshBtn_);
@@ -778,12 +821,13 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
     });
     connect(animAutoRefreshBtn_, &QPushButton::clicked, this, [this]() {
         if (animAutoRefreshBtn_->isChecked()) {
-            animTimer_->start(500);
+            // OPT-1: 500ms→2000ms，状态变更由 vmStateChanged 监听器即时触发。
+            animTimer_->start(2000);
             animAutoRefreshBtn_->setText(QString::fromUtf8("停止自动刷新"));
             refreshAnimState();
         } else {
             animTimer_->stop();
-            animAutoRefreshBtn_->setText(QString::fromUtf8("自动刷新（500ms）"));
+            animAutoRefreshBtn_->setText(QString::fromUtf8("自动刷新（2s）"));
         }
     });
 }

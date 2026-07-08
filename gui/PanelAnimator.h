@@ -129,6 +129,8 @@ inline void animateHideHorizontal(QWidget* panel, std::function<void()> onFinish
 /// 子页面切换淡入动画：通过 QGraphicsOpacityEffect 驱动 opacity 0→1
 /// 适用于 QStackedWidget 子页切换、列表选中详情刷新等场景
 /// 注：QGraphicsOpacityEffect 由 widget parent 自动释放，无需手动管理
+/// 安全改进：先停止 widget 上正在运行的 opacity 动画，避免多动画堆积
+/// 导致 opacity 属性被多个 QPropertyAnimation 同时写入（引发抖动/崩溃）
 inline void fadeInWidget(QWidget* widget, int duration = FADE_DURATION_MS) {
     if (!widget) return;
     auto* effect = qobject_cast<QGraphicsOpacityEffect*>(widget->graphicsEffect());
@@ -136,12 +138,52 @@ inline void fadeInWidget(QWidget* widget, int duration = FADE_DURATION_MS) {
         effect = new QGraphicsOpacityEffect(widget);
         widget->setGraphicsEffect(effect);
     }
+    // 停止该 widget 子树中正在运行的 opacity 动画，防止动画堆积
+    const auto anims = widget->findChildren<QPropertyAnimation*>();
+    for (auto* a : anims) {
+        if (a->propertyName() == "opacity" && a->targetObject() == effect) {
+            a->stop();
+            a->deleteLater();
+        }
+    }
     effect->setOpacity(0.0);
     auto* anim = new QPropertyAnimation(effect, "opacity", widget);
     anim->setDuration(duration);
     anim->setStartValue(0.0);
     anim->setEndValue(1.0);
     anim->setEasingCurve(QEasingCurve::OutCubic);
+    anim->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+/// 轻量子页面滑入动画：通过 QPropertyAnimation 驱动 widget 的 pos 属性
+/// 从右侧偏移 24px 滑入到目标位置。相比 fadeInWidget：
+///   - 不使用 QGraphicsOpacityEffect，无离屏 pixmap 合成（O(1) vs O(n)）
+///   - 不受子 widget 数量影响，适合复杂面板（含滚动区域/列表/表格）的过渡
+/// 适用于 QStackedWidget 切页时的内容过渡，与 VS Code 编辑器切换节奏一致。
+/// 注：调用方需确保 widget 已被 QStackedWidget 设为 currentWidget，
+/// 其 geometry 已由 stacked layout 就位后再调用本函数。
+inline void slideInWidget(QWidget* widget, int duration = FADE_DURATION_MS) {
+    if (!widget) return;
+    // 停止该 widget 上正在运行的 pos 动画，防止动画堆积
+    const auto anims = widget->findChildren<QPropertyAnimation*>();
+    for (auto* a : anims) {
+        if (a->propertyName() == "pos" && a->targetObject() == widget) {
+            a->stop();
+            a->deleteLater();
+        }
+    }
+    const QPoint finalPos = widget->pos();
+    const int offset = 24;
+    widget->move(finalPos.x() + offset, finalPos.y());
+    auto* anim = new QPropertyAnimation(widget, "pos", widget);
+    anim->setDuration(duration);
+    anim->setStartValue(QPoint(finalPos.x() + offset, finalPos.y()));
+    anim->setEndValue(finalPos);
+    anim->setEasingCurve(QEasingCurve::OutCubic);
+    // 动画结束后确保位置精确归位（防止动画中途被 resize 打断）
+    QObject::connect(anim, &QPropertyAnimation::finished, widget, [widget, finalPos]() {
+        widget->move(finalPos);
+    });
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 

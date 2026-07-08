@@ -48,7 +48,7 @@ Value 类型使用 8 字节 NaN-boxing 编码，将 `sizeof(Value)` 从 24 字�
 - NaN 完全规范化：所有 NaN 统一为 `NAN_BOXED_FLOAT_MARKER`，不保留 payload
 - 类型访问前必须用 `isXxx()` 校验
 
-详见 [ADR-001: NaN-boxing](design-decisions/ADR-001-nan-boxing.md)
+详见 [ADR-001: NaN-boxing](adr/ADR-001-nan-boxing.md)
 
 ---
 
@@ -64,8 +64,8 @@ MiniLang 维护三个执行后端并存策略：
 
 三后端必须保持语义一致性。IR 层作为可选中间表示，启用后在 lowering 前执行优化 pass。
 
-详见 [ADR-002: 三后端策略](design-decisions/ADR-002-triple-backend.md)
-详见 [ADR-003: IR 中间层](design-decisions/ADR-003-ir-layer.md)
+详见 [ADR-002: 三后端策略](adr/ADR-002-triple-backend.md)
+详见 [ADR-003: IR 中间层](adr/ADR-003-ir-layer.md)
 
 ---
 
@@ -85,7 +85,7 @@ Value 类型使用 Copy-On-Write 策略：堆类型修改前检查独占所有�
 
 `GcManager` 管理循环引用检测，支持 mark/sweep 阶段。
 
-详见 [ADR-004: COW 内存模型](design-decisions/ADR-004-cow-memory.md)
+详见 [ADR-004: COW 内存模型](adr/ADR-004-cow-memory.md)
 
 ---
 
@@ -131,7 +131,7 @@ Parser/Compiler/Formatter/equals() 均有深度限制（512/256）。
 
 条件断点求值沙箱隔离程序状态（Environment 快照/恢复）；首行断点 pre-execution 检查；双后端暂停语义文档化；VmStepper 双后端分发使用 helper 统一状态机逻辑。
 
-详见 [ADR-005: 调试一致性](design-decisions/ADR-005-debug-consistency.md)
+详见 [ADR-005: 调试一致性](adr/ADR-005-debug-consistency.md)
 
 ---
 

@@ -948,8 +948,12 @@ IROperand AstIRBuilder::visitBinaryOp(BinaryOp* node) {
         // R7 fix: 落空会导致 dest vreg 已分配但无指令 emit，后续 lowering 栈深度映射缺失，
         // 静默产生坏代码。用 assert 兜底，Release 构建中 assert 被剥离时 dest 仍返回（至少不崩溃）。
         // P1-2 fix: assert 在 Release 构建中被剥离，改为同时 Logger::Error 留痕。
+        // AUDIT-P1 fix: 仅 Logger::Error + assert 在 Release 下不阻断控制流，dest 悬空 vreg
+        // 仍返回，污染整个 IRModule。新增 hasError_ = true 确保调用方（visitNode 行 133）
+        // 检测到错误并中止 IR 构建。
         Logger::Error("AstIRBuilder::visitBinaryOp: 未处理的 BinOpType " +
                       std::to_string(static_cast<int>(node->opType)), "IR");
+        hasError_ = true;
         assert(false && "未处理的 BinOpType");
         break;
     }
@@ -1263,6 +1267,8 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     // arity/requiredArity += 1，调用时实参数量错位且 this 槽为垃圾值。
     bool savedCompilingMethod = compilingMethod_;
     std::string savedCompilingClassName = compilingClassName_;
+    // BUG-TYPE-1 fix (P1): 保存当前函数返回类型注解，供 visitReturnStmt 发射 TYPE_CHECK IR
+    std::string savedCurrentFunctionReturnType = std::move(currentFunctionReturnType_);
 
     // 保存外层变量/upvalue/内嵌函数信息（用于子函数捕获）
     auto savedOuterLocalSlots = std::move(outerLocalSlots_);
@@ -1381,6 +1387,8 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         std::vector<IROperand>{ IROperand::label(entryLabel) }, node->line);
 
     // 7. 编译函数体
+    // BUG-TYPE-1 fix (P1): 设置当前函数返回类型注解，供 visitReturnStmt 发射 TYPE_CHECK
+    currentFunctionReturnType_ = node->returnType;
     if (node->body) visitNode(node->body.get());
 
     // 8. 末尾隐式 RETURN_NULL
@@ -1423,6 +1431,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         // R7 fix: 恢复 compilingMethod_/compilingClassName_
         compilingMethod_ = savedCompilingMethod;
         compilingClassName_ = std::move(savedCompilingClassName);
+        currentFunctionReturnType_ = std::move(savedCurrentFunctionReturnType);  // BUG-TYPE-1 fix
         outerLocalSlots_ = std::move(savedOuterLocalSlots);
         outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
         outerFunctions_ = std::move(savedOuterFunctions);
@@ -1448,6 +1457,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
     // R7 fix: 恢复 compilingMethod_/compilingClassName_
     compilingMethod_ = savedCompilingMethod;
     compilingClassName_ = std::move(savedCompilingClassName);
+    currentFunctionReturnType_ = std::move(savedCurrentFunctionReturnType);  // BUG-TYPE-1 fix
     outerLocalSlots_ = std::move(savedOuterLocalSlots);
     outerUpvalueNames_ = std::move(savedOuterUpvalueNames);
     outerFunctions_ = std::move(savedOuterFunctions);
@@ -1562,6 +1572,11 @@ IROperand AstIRBuilder::visitFunCall(FunCall* node) {
 void AstIRBuilder::visitReturnStmt(ReturnStmt* node) {
     if (node->value) {
         IROperand val = visitNode(node->value.get());
+        // BUG-TYPE-1 fix (P1): 函数有返回类型注解时，在 RETURN 前发射 TYPE_CHECK IR。
+        // 对齐 Interpreter::visitReturnStmt 的 checkType + Compiler::visitReturnStmt 的 OP_TYPE_CHECK。
+        if (!currentFunctionReturnType_.empty()) {
+            emitTypeCheckIR(val, currentFunctionReturnType_, node->line);
+        }
         emitIR(IROp::RETURN, { val }, node->line);
     } else {
         emitIR(IROp::RETURN_NULL, {}, node->line);
@@ -1569,10 +1584,39 @@ void AstIRBuilder::visitReturnStmt(ReturnStmt* node) {
 }
 
 void AstIRBuilder::visitPrintStmt(PrintStmt* node) {
-    for (auto& v : node->values) {
-        IROperand val = visitNode(v.get());
-        emitIR(IROp::PRINT, { val }, node->line);
+    // BUG-AUDIT-PRINT-MULTI fix: 多值 print 必须用 ADD 拼接为单字符串后发射单个 PRINT，
+    // 与 Compiler.cpp 直接路径和 Interpreter 路径对齐（空格分隔，单次 output 带换行）。
+    // 原实现逐个值 emit PRINT 导致 IR 路径输出多行（每个值后跟换行），
+    // 与 Interpreter/StackVM 直接路径的 "v1 v2 v3\n" 单行输出不一致。
+    if (node->values.empty()) {
+        // print() → 输出空行（与解释器 output("") 一致）
+        IROperand emptyStr = emitConst(Value(std::string("")), node->line);
+        emitIR(IROp::PRINT, { emptyStr }, node->line);
+        return;
     }
+    if (node->values.size() == 1) {
+        IROperand val = visitNode(node->values[0].get());
+        emitIR(IROp::PRINT, { val }, node->line);
+        return;
+    }
+    // 多值：acc = values[0]; for each subsequent: acc = acc + " " + values[i]
+    // ADD 已支持 string+non-string 拼接（与 Compiler.cpp OP_ADD 链一致）
+    // 栈平衡说明：IR lowering 中 ADD 依赖操作数在栈顶（仅 emit OP_ADD 不重排栈），
+    // 故每次迭代需重新 emitConst(" ") 把空格压栈，不能复用上一次的 space vreg
+    // （上一次 ADD 已消费栈上的 space 值）。
+    IROperand acc = visitNode(node->values[0].get());
+    for (size_t i = 1; i < node->values.size(); ++i) {
+        // acc = acc + " "（每次迭代重新加载空格常量到栈顶）
+        IROperand space = emitConst(Value(std::string(" ")), node->line);
+        IROperand sum1 = ir_->allocVReg();
+        emitIR(IROp::ADD, { sum1, acc, space }, node->line);
+        // acc = sum1 + next
+        IROperand next = visitNode(node->values[i].get());
+        IROperand sum2 = ir_->allocVReg();
+        emitIR(IROp::ADD, { sum2, sum1, next }, node->line);
+        acc = sum2;
+    }
+    emitIR(IROp::PRINT, { acc }, node->line);
 }
 
 void AstIRBuilder::visitBlock(Block* node) {
@@ -3272,6 +3316,10 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         }
         // type_const_idx 已在常量池复制阶段（lower() 的 for 循环）同步到 BytecodeChunk
         uint16_t typeIdx = static_cast<uint16_t>(instr.operands[1].index);
+        // AUDIT-P2 fix: 与 DUP/LOAD_MUTATED 保持一致，更新 src_vreg 的栈深度映射。
+        // 虽然 OP_TYPE_CHECK 是 peek 不 push，但记录 src_vreg 在此处"仍然有效"的栈深度，
+        // 避免后续指令通过 vregStackDepth_ 查询时拿到过期记录点。
+        vregStackDepth_[instr.operands[0].index] = static_cast<uint32_t>(chunk_->code.size());
         chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_TYPE_CHECK));
         chunk_->code.push_back(static_cast<uint8_t>(typeIdx & 0xFF));
         chunk_->code.push_back(static_cast<uint8_t>((typeIdx >> 8) & 0xFF));

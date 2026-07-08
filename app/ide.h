@@ -12,9 +12,13 @@
 #include <QTreeWidget>
 #include <QStackedWidget>
 #include <QToolButton>
+#include <QSplitter>
+#include <QVariantAnimation>
 #include <QGridLayout>
+#include <QMap>
 #include <memory>
 #include <vector>
+#include <functional>
 
 #include <QSettings>
 
@@ -56,13 +60,17 @@
 #include "gui/AstBuilderToyPanel.h"
 #include "gui/VmStackSandboxPanel.h"
 #include "gui/CodeJourneyInfoPanel.h"
-#include "gui/LearningHubDialog.h"
+#include "gui/PanelCatalog.h"  // P2-1 fix: 替代废弃的 LearningHubDialog
+#include "gui/GlossaryPanel.h"
 #include "gui/TeachingPanelHeader.h"
+#include "gui/TeachingTreePanel.h"
 
 class Pivot;
 class QLabel;
 class QLineEdit;
 class ComboBox;   // QFluentKit ComboBox
+class GuidedTour;  // 新手引导组件
+class QFileSystemWatcher;  // 文件外部修改监听
 
 // ============================================================
 // Ide — MiniLang IDE 主窗口
@@ -141,10 +149,15 @@ private slots:
     void onCloseOtherTabs();
     void onCloseAllTabs();
 
+    /// 教学面板标题栏「新手引导」按钮 → 启动对应面板的 GuidedTour
+    void onPanelGuidedTourRequested(const QString& panelId);
+
 private:
     void closeEvent(QCloseEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
     void syncVmBreakpoints();
     void updateTabCloseButtons(int hoveredIndex);
@@ -169,8 +182,10 @@ private:
 
     // ---- 中央区域：欢迎页 ↔ 编辑器标签页 ----
     QWidget* welcomePage_ = nullptr;
-    QStackedWidget* centerStack_ = nullptr;
+    QStackedWidget* centerStack_ = nullptr;  // 教学面板/欢迎页栈
     QTabWidget* editorTabWidget_ = nullptr;
+    QSplitter* centerSplitter_ = nullptr;    // 三栏布局：[centerStack_ | editorTabWidget_]
+    QVariantAnimation* splitterAnim_ = nullptr;  // centerSplitter_ 尺寸动画
     int untitledCount_ = 0;
 
     // ---- ADS 停靠管理器 ----
@@ -201,8 +216,9 @@ private:
     QTimer* fileTreeFilterTimer_ = nullptr;  // 文件树过滤防抖（200ms）  // 文件树搜索过滤框
     DebugPanel* debugPanel_ = nullptr;
 
-    // 底部面板（单一 dock + Pivot 标签切换）
-    ads::CDockWidget* bottomDock_ = nullptr;
+    // 底部面板（主布局底部，非 ADS dock，覆盖全宽不挤压教学内容）
+    QWidget* bottomContainer_ = nullptr;
+    bool bottomVisible_ = false;
     Pivot* bottomPivot_ = nullptr;
     QStackedWidget* bottomStack_ = nullptr;
     QTextEdit* outputTextEdit_ = nullptr;
@@ -229,69 +245,71 @@ private:
     AstViewer* astViewer_ = nullptr;
 
     // ---- 教学增强面板（第一波 + 第三波）----
+    // 第十四轮重构：19 个教学面板从独立 dock 迁移到 centerStack_ 子页，
+    // xxxDock_ 成员已删除（grep 确认 ide.cpp 零引用）。xxxPanel_ 成员保留供 registerTeachingPanel 使用。
     // 第一波 P0-1：编译管线可视化（源码→Token→AST→IR→字节码）
-    ads::CDockWidget* pipelineDock_ = nullptr;
     PipelineViewer* pipelineViewer_ = nullptr;
     // 第一波 P0-3：三后端并行对比
-    ads::CDockWidget* backendCompareDock_ = nullptr;
     BackendComparePanel* backendComparePanel_ = nullptr;
     // 第一波 P1-3：Bug 狩猎模式
-    ads::CDockWidget* bugHuntDock_ = nullptr;
     BugHuntPanel* bugHuntPanel_ = nullptr;
     // 第三波 P2-1：交互式语法探索器
-    ads::CDockWidget* syntaxExplorerDock_ = nullptr;
     SyntaxExplorerPanel* syntaxExplorerPanel_ = nullptr;
     // 第三波 P2-2：内置实验手册
-    ads::CDockWidget* labManualDock_ = nullptr;
     LabManualPanel* labManualPanel_ = nullptr;
 
     // ---- 教学增强面板（第二波）----
     // P0-2：内存模型可视化（NaN-boxing / RefCounted / COW / GC）
-    ads::CDockWidget* memoryModelDock_ = nullptr;
     MemoryModelPanel* memoryModelPanel_ = nullptr;
     // P1-1：IR 变换过程动画（AST → IR lowering + 优化 pass 前后对比）
-    ads::CDockWidget* irTransformDock_ = nullptr;
     IRTransformPanel* irTransformPanel_ = nullptr;
     // P1-2：性能剖析仪表盘（三后端时间对比 + 热点 + 内存/GC 统计）
-    ads::CDockWidget* profileDashboardDock_ = nullptr;
     ProfileDashboardPanel* profileDashboardPanel_ = nullptr;
 
     // ---- 教学增强面板（第三波）----
     // P0-1：调用栈可视化（运行期函数调用层次 + 本地变量）
-    ads::CDockWidget* callStackDock_ = nullptr;
     CallStackPanel* callStackPanel_ = nullptr;
     // P0-2：变量检查器（按作用域分组 + NaN-boxing 位详情）
-    ads::CDockWidget* variableInspectorDock_ = nullptr;
     VariableInspectorPanel* variableInspectorPanel_ = nullptr;
     // P0-3：字节码执行轨迹（IP/OpCode/栈快照时间轴）
-    ads::CDockWidget* bytecodeTraceDock_ = nullptr;
     BytecodeTracePanel* bytecodeTracePanel_ = nullptr;
     // 第二档 P1-2：条件断点可视化（断点列表 + 条件表达式 + 命中次数）
-    ads::CDockWidget* breakpointConditionDock_ = nullptr;
     BreakpointConditionPanel* breakpointConditionPanel_ = nullptr;
     // 第三档 P2-3a：异常流可视化（教学场景库 + 传播图解）
-    ads::CDockWidget* exceptionFlowDock_ = nullptr;
     ExceptionFlowPanel* exceptionFlowPanel_ = nullptr;
     // 第三档 P2-3b：闭包检查器（教学场景库 + upvalue 生命周期）
-    ads::CDockWidget* closureInspectorDock_ = nullptr;
     ClosureInspectorPanel* closureInspectorPanel_ = nullptr;
 
     // ---- 教学增强面板（第四档：MINILANG_IDE_IMPROVEMENT_PLAN 功能 1-6）----
     // 功能 6：学习路径地图（中央导航枢纽，5 阶段 21 活动 + JSON 进度持久化）
-    ads::CDockWidget* learningPathDock_ = nullptr;
     LearningPathPanel* learningPathPanel_ = nullptr;
     // 功能 3：交互式 Token 拼图游戏（5 关卡，星级评分）
-    ads::CDockWidget* tokenPuzzleDock_ = nullptr;
     TokenPuzzlePanel* tokenPuzzlePanel_ = nullptr;
     // 功能 4：AST 节点搭建玩具（6 题，QTreeWidget + 工具箱）
-    ads::CDockWidget* astBuilderToyDock_ = nullptr;
     AstBuilderToyPanel* astBuilderToyPanel_ = nullptr;
     // 功能 5：VM 栈沙盒（5 关卡，push/pop 模拟栈状态机）
-    ads::CDockWidget* vmStackSandboxDock_ = nullptr;
     VmStackSandboxPanel* vmStackSandboxPanel_ = nullptr;
     // 功能 2 降级：代码生命旅程静态信息图（HTML 信息图 + 6 个跳转按钮）
-    ads::CDockWidget* codeJourneyDock_ = nullptr;
     CodeJourneyInfoPanel* codeJourneyPanel_ = nullptr;
+    // P2-8：术语表（Glossary）— 集中展示 MiniLang IDE 全部核心术语
+    GlossaryPanel* glossaryPanel_ = nullptr;
+
+    // ---- 教学面板树形导航（左侧停靠区，ActivityBar 「学习」入口）----
+    // 替代原 LearningHubDialog 弹窗：4 大分类可折叠树 + 顶部「代码编辑器」入口
+    ads::CDockWidget* teachingTreeDock_ = nullptr;
+    TeachingTreePanel* teachingTreePanel_ = nullptr;
+    /// panelId → centerStack_ 索引映射（教学面板从 dock 迁移到 centerStack_ 后建立）
+    QMap<QString, int> panelToStackIndex_;
+    /// 教学面板懒加载工厂：panelId → 构造函数（首次访问时调用，避免启动时全量构造 20 个面板）
+    QMap<QString, std::function<void()>> teachingPanelFactories_;
+    /// 确保教学面板已构造（若未构造则调用工厂），返回是否为首次构造
+    void ensureTeachingPanelCreated(const QString& panelId);
+    /// 当前 centerStack_ 是否处于「代码编辑器」模式（用于切换时显隐 bottomDock_/rightDock_）
+    bool centerInEditorMode_ = true;
+    // BUG-R14-2 fix: 进入教学面板模式前记录 bottomDock_/rightDock_ 的可见状态，
+    // showEditorArea 切回编辑器时恢复，避免用户布局丢失。
+    bool bottomDockWasVisibleBeforeTeaching_ = true;
+    bool rightDockWasVisibleBeforeTeaching_ = true;
 
     // ---- 工具栏 ----
     QAction* runAction_ = nullptr;
@@ -357,6 +375,8 @@ private:
     QAction* viewCodeJourneyAction_       = nullptr;
     // 学习中心入口（ActivityBar + 视图菜单）
     QAction* viewLearningHubAction_       = nullptr;
+    // P2-8：术语表视图入口
+    QAction* viewGlossaryAction_           = nullptr;
 
     // 状态栏
     QLabel* statusLineLabel_ = nullptr;
@@ -373,6 +393,12 @@ private:
     bool isDirty_ = false;
     bool hasWorkspace_ = false;
     int bottomPanelHeight_ = 220;  // 第十二轮：输出面板默认高度，用户调整后记忆
+    int codeFontSize_ = 11;        // 代码编辑器全局字号（默认 11pt），应用于所有编辑器标签页
+
+    // ---- 文件外部修改监听 ----
+    QFileSystemWatcher* fileWatcher_ = nullptr;
+    QString watchedFilePath_;        // 当前被监视的文件路径
+    bool selfSaving_ = false;        // 标识 IDE 自身保存触发 fileChanged，跳过外部修改弹框
 
     // ---- 防抖定时器 ----
     QTimer* completionTimer_ = nullptr;     // 补全词刷新（500ms）
@@ -426,6 +452,7 @@ private:
 
     // ---- 可视化 ----
     void highlightBytecodeLine(const std::string& chunkName, size_t ip);
+    void onBytecodeRowClicked(int row);
     void populateBytecodeList();
     void populateIRViewer();
     void highlightIRLine(size_t bytecodeOffset);
@@ -459,6 +486,24 @@ private:
     void onRightPivotChanged(const QString& routeKey);
     void onBottomPivotChanged(const QString& routeKey);
 
+    // ---- 教学面板树形导航：centerStack_ 切换 ----
+    /// 切换 centerStack_ 到指定教学面板（按 panelId 查 panelToStackIndex_）
+    /// 若 panelId 不在映射中，回退到编辑器模式
+    void showTeachingPanel(const QString& panelId);
+    /// 切换 centerStack_ 到代码编辑器模式（editorTabWidget_ 或 welcomePage_）
+    /// 同时显示 bottomDock_/rightDock_，隐藏教学面板
+    void showEditorArea();
+    /// 平滑动画 centerSplitter_ 尺寸变化（教学面板展开/折叠过渡）
+    void animateCenterSplitter(const QList<int>& startSizes, const QList<int>& targetSizes, int durationMs = 300);
+    /// 教学树点击 → panelId 路由（"editor" → showEditorArea，其余 → showTeachingPanel）
+    void onTeachingPanelRequested(const QString& panelId);
+    /// 应用全局 codeFontSize_ 到所有已打开的编辑器标签页
+    void applyCodeFontSizeToAllEditors();
+    /// 应用教学字号到所有教学面板的 QTextBrowser/QListWidget/QTextEdit
+    /// 教学阅读字号 = codeFontSize_ + 2（比代码字号大 2pt，提升阅读舒适度）
+    /// 遍历 centerStack_ 所有子 widget 中的文本控件
+    void applyTeachingFontSize();
+
     // ---- 第四档教学面板：跨面板跳转路由 ----
     /// CodeJourneyInfoPanel 跳转按钮 → 显示对应面板 dock
     /// panelId 取值 "editor"/"tokens"/"ast"/"ir"/"bytecode"/"output"
@@ -467,11 +512,11 @@ private:
     /// activityId 取值参见 LearningPathData::activities()
     void onActivityRequested(const QString& activityId);
 
-    // ---- 学习中心对话框（ActivityBar 「学习」入口）----
-    /// 弹出 LearningHubDialog；panelId 见 LearningHubDialog 实现
-    void showLearningHub();
-    /// LearningHubDialog 卡片点击 → 路由到对应教学面板 dock
-    void onLearningHubPanelRequested(const QString& panelId);
+    // ---- 学习中心（已废弃）----
+    // 第十四轮重构：TeachingTreePanel 树形导航替代 LearningHubDialog 弹窗。
+    // P2-1 fix：彻底删除 gui/LearningHubDialog.h/.cpp 与 cmake 注册，
+    // 卡片设计如未来需要复用，从 git 历史恢复。
+    // showLearningHub / onLearningHubPanelRequested 已删除（grep 确认零调用者）。
 
     /// 教学面板包装器：在教学面板顶部插入 TeachingPanelHeader
     /// panelId 用于查找帮助文案，title 为标题文本，panel 为原始面板
@@ -484,6 +529,10 @@ private:
 
     // ---- 帮助弹窗 ----
     void showHelpDialog();
+
+    // ---- 新手引导：3 分钟 Hello World guided tour ----
+    void startGuidedTour();
+    GuidedTour* guidedTour_ = nullptr;
 
     // ---- AST 窗口 ----
     void saveAstWindowGeometry();
@@ -501,6 +550,9 @@ private:
     bool maybeSave();
     void updateWindowTitle();
     void loadFile(const QString& path);
+    // 文件外部修改监听：切换/保存后更新被监视路径；外部修改时弹框询问是否重载
+    void setupFileWatcher(const QString& filePath);
+    void onFileChangedExternally(const QString& filePath);
     void openWorkspace(const QString& dirPath);
     void saveLayout();
     void restoreLayout();

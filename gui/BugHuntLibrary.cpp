@@ -33,7 +33,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2: MiniLang 整数除法截断向零",
                 "💡 提示3: 三后端统一为 3"
             },
-            "📖 教学题：理解 MiniLang 整数除法语义（截断向零）和三后端一致性。\n"
+            "📖 这道题要你记住的：MiniLang 的整数除法是「截断向零」的，而且三条执行路径都得这么算。"
             "7/2 = 3.5 截断向零 = 3，Interpreter / StackVM / RegisterVM 三条路径均输出 3。\n"
             "注意：7.0/2 才会得到 float 3.5（类型由操作数决定）。",
             BugHuntDifficulty::BEGINNER
@@ -50,7 +50,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2: 块作用域退出后变量生命周期结束",
                 "💡 提示3: MiniLang 块作用域规则"
             },
-            "📖 块作用域规则：var 在 if 块内声明，块外不可访问。\n"
+            "📖 记住这条铁律：var 写在 if 块里，就只在那块里活着；块一关，外面谁也找不着它。"
             "MiniLang 中 var 声明的变量生命周期限于其所在的块作用域（{ } 包裹区域）。\n"
             "if 块退出后 b 即被销毁，print(b) 在外层作用域找不到 b，故报未定义。",
             BugHuntDifficulty::BEGINNER
@@ -68,7 +68,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2: 字典键必须用双引号",
                 "💡 提示3: 每个键值对一行"
             },
-            "📖 教学题：Formatter 默认展开字典字面量为多行格式。\n"
+            "📖 这道题点出一个习惯：Formatter 默认把压成一行这种写法，展开成多行。"
             "压缩写法 {a:1,b:2} 会被展开为多行，键加双引号，每对一行，缩进 4 空格。\n"
             "答案选 B（多行展开）。",
             BugHuntDifficulty::BEGINNER
@@ -85,7 +85,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2: 循环内 var vs 循环外 var",
                 "💡 提示3: 考虑变量分配的开销"
             },
-            "📖 教学题：循环内 var 声明会重复分配 slot，循环外 var 复用 slot 更高效。\n"
+            "📖 这道题比的是性能直觉：var 写在循环里，每轮都重新分配 slot；挪到外面只分配一次，更快。"
             "代码 A 每次迭代都执行 var x 声明（分配新 slot），代码 B 复用外层 slot 仅做赋值。\n"
             "在 StackVM/RegisterVM 路径下，代码 B 的指令数更少，执行更快。",
             BugHuntDifficulty::BEGINNER
@@ -102,7 +102,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2: b.push 触发 COW detach",
                 "💡 提示3: COW 后 refCount 各为 1"
             },
-            "📖 教学题：COW（写时复制）——b.push 触发 detach，b 拷贝出新 ArrayData。\n"
+            "📖 这道题讲 COW：对 b 调 push，触发 detach，b 会拷贝出一份新的 ArrayData，原来的那份不动。"
             "var b = a 时共享同一 ArrayData（refCount=2）；b.push 写操作触发 COW，\n"
             "b 拷贝出新 ArrayData，原 ArrayData refCount 降为 1，新 ArrayData refCount=1。\n"
             "此时 a 仍指向原数组 [1,2,3]，b 指向新数组 [1,2,3,4]，互不影响。",
@@ -124,7 +124,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：BinaryOp/FunCall 等表达式不应作为默认值。",
                 "💡 提示3：UnaryOp(NEGATE) 套 NumberLiteral 应该被允许（负数字面量）。"
             },
-            "📖 根因：三后端必须对默认参数求值能力一致。修复：Parser 层拒绝复杂表达式，仅允许字面量 + 负数字面量。"
+            "📖 根因其实很朴素：三个后端对「默认参数能算多复杂」必须步调一致。修法是 Parser 把关——复杂表达式直接拒，只放字面量（含负数）。"
             "修复点：parser/Parser.cpp isLiteralDefaultExpr + 三后端同步。",
             BugHuntDifficulty::INTERMEDIATE
         },
@@ -141,7 +141,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：StackVM 通过 notifyStep(ip, op) 在所有指令后统一调用，RegisterVM 是否对齐？",
                 "💡 提示3：修复：捕获结果，若 VM_OK 则调用 stepCallback_。"
             },
-            "📖 根因：RegisterVM stepCallback_ 在'直接 return'路径被跳过，调试器单步模式丢失步进事件。"
+            "📖 根因：RegisterVM 的 stepCallback_ 在「直接 return」那条捷径上被跳过了，于是调试器单步模式丢了步进事件。"
             "修复点：compiler/RegisterVM.cpp executeCalls() + executeMisc()。",
             BugHuntDifficulty::INTERMEDIATE
         },
@@ -157,7 +157,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：visitImportStmt 是否做了路径规范化（\\→/、strip ./）？",
                 "💡 提示3：clearModuleCache 需同步做相同规范化。"
             },
-            "📖 根因：路径规范化必须在所有访问 moduleCache_ 的入口一致。"
+            "📖 根因：路径规范化这件事，必须在每一个碰 moduleCache_ 的入口都做一致，否则就串味了。"
             "修复点：interpreter/Interpreter.h clearModuleCache()。",
             BugHuntDifficulty::INTERMEDIATE
         },
@@ -174,7 +174,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：导出形式应与未导出形式格式化结果一致。",
                 "💡 提示3：修复：isFunOrClass 解包 NODE_EXPORT_STMT 检查内部 declaration 节点类型。"
             },
-            "📖 根因：Formatter 的空行决策必须考虑 ExportStmt 包装的内部声明节点类型。"
+            "📖 根因：Formatter 决定空行时，得把 ExportStmt 里包着的那层声明节点类型也算进去。"
             "修复点：formatter/Formatter.cpp isFunOrClass lambda。",
             BugHuntDifficulty::INTERMEDIATE
         },
@@ -196,7 +196,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：int(0) 与 float(0.0) 的 getType() 不同，但 equals() 返回 true。",
                 "💡 提示3：修复需要先比较 getType()，再比较 equals()。"
             },
-            "📖 根因：Value::equals() 是数值相等性而非类型严格相等。常量池去重需要类型区分的场景必须"
+            "📖 根因：Value::equals() 只比数值、不管类型。可常量池去重该按类型区分时，它就没辙了。"
             "先比较 getType() 再调用 equals()，否则 int(0) 与 float(0.0) 会被误判为同一常量。"
             "修复点：compiler/Bytecode.h addConstant() + compiler/RegisterBytecode.cpp RegBytecodeChunk::addConstant()。",
             BugHuntDifficulty::EXPERT
@@ -214,7 +214,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：对比 visitMethodCall 的同步修复——它已经不推索引，visitIndexAssign 是否漏改？",
                 "💡 提示3：在 IR 路径不触发是因为 BytecodeIRBackend 用 vreg 物化栈值，不依赖物理栈平衡。"
             },
-            "📖 根因：修改整体替换语义指令时必须同步审计 visitIndexAssign、visitMemberAssign、visitMethodCall 三个 emit 点，"
+            "📖 根因：你一动「整体替换」语义的指令，就得同时去查 visitIndexAssign、visitMemberAssign、visitMethodCall 这三个 emit 点，一个都不能漏。"
             "避免遗漏推/不推索引导致栈泄漏。修复：删除 L1953-1960 推索引代码对齐 visitMethodCall。",
             BugHuntDifficulty::EXPERT
         },
@@ -231,7 +231,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：IR 路径有 computeFreeVars 前向分析修复了此问题，Compiler 路径没有。",
                 "💡 提示3：修复方案：在 visitFunDecl 加入类似 IR 的 computeFreeVars 前向分析。"
             },
-            "📖 根因：resolveUpvalue 惰性策略对 3+ 层嵌套闭包失效，中间函数需要预先声明捕获哪些外层变量。"
+            "📖 根因：resolveUpvalue 的惰性策略，遇到 3 层以上嵌套闭包就失灵；中间那层函数得先声明自己要抓哪些外层变量。"
             "修复点：compiler/Compiler.cpp resolveUpvalue() + visitFunDecl()。",
             BugHuntDifficulty::EXPERT
         },
@@ -248,7 +248,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：visitStatement 是统一包装器，会对表达式语句 emit POP。",
                 "💡 提示3：同样的 Bug 也存在于 visitWhileStmt 和 visitForStmt 的单语句体路径。"
             },
-            "📖 根因：IR 路径语句上下文必须用 visitStatement 统一包装器处理 POP，不能直接调用 visitNode。"
+            "📖 根因：IR 路径里，语句上下文得用 visitStatement 这个统一包装器来发 POP，不能图省事直接调 visitNode。"
             "修复点：compiler/IR.cpp visitIfStmt() + visitWhileStmt() + visitForStmt()。",
             BugHuntDifficulty::EXPERT
         },
@@ -265,7 +265,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：反斜杠在何处被转为正斜杠？若已转，原反斜杠分支是死代码。",
                 "💡 提示3：修复需拒绝所有 path.size() >= 2 && path[1] == ':' 形式。"
             },
-            "📖 根因：路径安全校验需拒绝所有 'X:' 开头形式，不能仅检测 'X:/'。"
+            "📖 根因：路径安全校验不能只盯着 'X:/'，凡是以 'X:' 开头的形式都得挡回去。"
             "修复点：compiler/Compiler.cpp normalizeModulePath() + InterpreterModules.cpp + IR.cpp 三处同步。",
             BugHuntDifficulty::EXPERT
         },
@@ -282,7 +282,7 @@ const std::vector<BugHuntItem>& BugHuntLibrary::items() {
                 "💡 提示2：checkBreak 是否在某处更新 line？",
                 "💡 提示3：修复需在每次暂停时更新 callStack_.back().line 为当前节点行号。"
             },
-            "📖 根因：调用栈帧的 line 字段需要随执行进度更新，不能只在调用时初始化。"
+            "📖 根因：调用栈帧的 line 字段得跟着执行进度走，不能只在调用那一刻设一次就完事。"
             "修复点：interpreter/Interpreter.cpp checkBreak()。",
             BugHuntDifficulty::EXPERT
         }

@@ -6,7 +6,6 @@
 #include <QScrollBar>
 #include <QTextCharFormat>
 #include <QMenu>
-#include <QInputDialog>
 #include <QLineEdit>
 #include <QCompleter>
 #include <QStringListModel>
@@ -16,6 +15,8 @@
 #include <QDialog>
 #include <QListWidget>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
 #include <QDialogButtonBox>
 #include <QLabel>
 #include "gui/GuiTextUtils.h"  // Dedup-4A: monospaceFont()
@@ -40,7 +41,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
     QPainter painter(this);
     // F9: 主题感知背景色
-    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(37, 37, 37) : QColor(245, 245, 245);
+    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(37, 37, 37) : QColor(0xee, 0xe8, 0xd5);
     painter.fillRect(event->rect(), bgColor);
 
     // 字体只需设置一次（移出循环避免每行重建）
@@ -60,20 +61,51 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
 
             // 绘制断点标记
             if (codeEditor->breakpoints_.contains(lineNumber)) {
-                // 条件断点用橙色，无条件断点用红色
+                // P-IDE-5 fix: 重新设计断点圆点样式——抗锯齿 + 径向渐变 + 外环描边，
+                // 条件断点附加金色外环以增强视觉区分度。原实现在 paintEvent 全局
+                // 无抗锯齿且用纯色 drawEllipse，圆点边缘锯齿明显，视觉粗糙。
                 bool hasCondition = codeEditor->breakpointConditions_.contains(lineNumber)
                                     && !codeEditor->breakpointConditions_[lineNumber].empty();
-                painter.setBrush(hasCondition ? QColor(255, 165, 0) : Qt::red);
-                painter.setPen(Qt::NoPen);
-                int radius = 6;
+                // 抗锯齿：仅在此圆点绘制阶段开启，避免影响行号文字渲染
+                painter.save();
+                painter.setRenderHint(QPainter::Antialiasing, true);
+
+                int radius = 7;
                 int cx = 14;
                 int cy = (top + bottom) / 2;
-                painter.drawEllipse(cx - radius, cy - radius, radius * 2, radius * 2);
+
+                // 主题感知核心色：无条件=红色，条件=橙色（与原语义一致，但采用更柔和的色值）
+                QColor coreColor = hasCondition ? QColor(0xF5, 0xA6, 0x23) : QColor(0xE4, 0x3B, 0x44);
+                QColor ringColor = hasCondition ? QColor(0xC2, 0x7A, 0x0E) : QColor(0xA8, 0x24, 0x2C);
+                QColor glowColor = hasCondition ? QColor(0xF5, 0xA6, 0x23, 60) : QColor(0xE4, 0x3B, 0x44, 60);
+
+                // 1) 外发光（半透明大圆，营造柔和光晕）
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(glowColor);
+                painter.drawEllipse(QPointF(cx, cy), radius + 3.0, radius + 3.0);
+
+                // 2) 主圆点——径向渐变（中心高光 → 边缘深色），产生立体感
+                QRadialGradient gradient(QPointF(cx - radius * 0.3, cy - radius * 0.3),
+                                         radius * 1.4);
+                QColor highlight = coreColor.lighter(140);
+                gradient.setColorAt(0.0, highlight);
+                gradient.setColorAt(1.0, coreColor);
+                painter.setBrush(QBrush(gradient));
+                painter.setPen(QPen(ringColor, 1.2));
+                painter.drawEllipse(QPointF(cx, cy), radius, radius);
+
+                // 3) 条件断点：外环金色装饰（带间隙的双层圆环）
+                if (hasCondition) {
+                    painter.setBrush(Qt::NoBrush);
+                    painter.setPen(QPen(QColor(0xC2, 0x7A, 0x0E, 180), 1.0));
+                    painter.drawEllipse(QPointF(cx, cy), radius + 2.0, radius + 2.0);
+                }
+                painter.restore();
             }
 
             // 绘制行号
             // F9: 主题感知文字颜色
-    QColor numColor = codeEditor->isDarkTheme_ ? QColor(115, 115, 115) : QColor(100, 100, 100);
+    QColor numColor = codeEditor->isDarkTheme_ ? QColor(115, 115, 115) : QColor(0x65, 0x7b, 0x83);
             painter.setPen(numColor);
             painter.drawText(0, top, width() - 20, bottom - top,
                              Qt::AlignRight | Qt::AlignVCenter,
@@ -87,8 +119,8 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                 int by = (top + bottom) / 2 - boxSize / 2;
                 // F9: 主题感知折叠标记颜色
                 QColor foldBg = folded
-                    ? (codeEditor->isDarkTheme_ ? QColor(100, 100, 220) : QColor(80, 80, 200))
-                    : (codeEditor->isDarkTheme_ ? QColor(80, 80, 80) : QColor(200, 200, 200));
+                    ? (codeEditor->isDarkTheme_ ? QColor(100, 100, 220) : QColor(0x26, 0x8b, 0xd2))
+                    : (codeEditor->isDarkTheme_ ? QColor(80, 80, 80) : QColor(0x93, 0xa1, 0xa1));
                 QColor foldBorder = codeEditor->isDarkTheme_ ? QColor(140, 140, 140) : QColor(100, 100, 100);
                 painter.setBrush(foldBg);
                 painter.setPen(QPen(foldBorder, 1));
@@ -207,12 +239,91 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
 
     QAction* chosen = menu.exec(event->globalPos());
     if (chosen == setCondAction) {
-        bool ok = false;
-        QString cond = QInputDialog::getText(
-            this, "设置断点条件",
-            QString("行 %1 的条件表达式（为空则变为无条件断点）:").arg(lineNumber),
-            QLineEdit::Normal, currentCond, &ok);
-        if (ok) {
+        // P-IDE-5 fix: 用自定义 Fluent 风格对话框替代默认 QInputDialog，
+        // 统一 IDE 视觉语言（圆角/主色按钮/提示文案色板）。原 QInputDialog 在
+        // Windows 原生主题下显得突兀，与 Fluent Design 风格不一致。
+        QDialog dlg(this);
+        dlg.setWindowTitle(QString("设置断点条件"));
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+        dlg.setFixedSize(420, 180);
+
+        // Fluent 色板（亮色主题，与 IDE 整体风格一致）
+        const QString bgSurf = "#FDF6E3";
+        const QString fgPrim = "#002B36";
+        const QString fgSec  = "#657B83";
+        const QString accent = "#268BD2";
+        const QString border = "#93A1A1";
+        const QString warnFg = "#B58900";
+        const QString btnBg  = "#268BD2";
+        const QString btnHov = "#1E6FA3";
+
+        dlg.setStyleSheet(QString(
+            "QDialog { background: %1; border-radius: 8px; }"
+            "QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }"
+            "QLabel#condHint  { font-size: 11px; color: %3; }"
+            "QLabel#condWarn  { font-size: 11px; color: %4; }"
+            "QLineEdit#condEdit { "
+            "  background: #FFFFFF; color: %2; "
+            "  border: 1px solid %5; border-radius: 4px; "
+            "  padding: 6px 8px; font-family: 'Consolas','Cascadia Mono','Courier New',monospace; "
+            "  font-size: 13px; "
+            "} "
+            "QLineEdit#condEdit:focus { border: 1px solid %6; }"
+            "QPushButton#condOk { "
+            "  background: %7; color: #FFFFFF; border: none; border-radius: 4px; "
+            "  padding: 6px 18px; font-size: 13px; font-weight: 500; "
+            "} "
+            "QPushButton#condOk:hover { background: %8; }"
+            "QPushButton#condCancel { "
+            "  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; "
+            "  padding: 6px 14px; font-size: 13px; "
+            "} "
+            "QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }"
+        ).arg(bgSurf, fgPrim, fgSec, warnFg, border, accent, btnBg, btnHov));
+
+        auto* layout = new QVBoxLayout(&dlg);
+        layout->setContentsMargins(20, 16, 20, 16);
+        layout->setSpacing(8);
+
+        auto* titleLabel = new QLabel(QString("断点条件 · 行 %1").arg(lineNumber), &dlg);
+        titleLabel->setObjectName("condTitle");
+        layout->addWidget(titleLabel);
+
+        auto* hintLabel = new QLabel(
+            QString("输入条件表达式（例如 i == 5 或 x > 10）"), &dlg);
+        hintLabel->setObjectName("condHint");
+        hintLabel->setWordWrap(true);
+        layout->addWidget(hintLabel);
+
+        auto* edit = new QLineEdit(currentCond, &dlg);
+        edit->setObjectName("condEdit");
+        edit->setPlaceholderText("留空则变为无条件断点");
+        layout->addWidget(edit);
+
+        auto* warnLabel = new QLabel(
+            QString("提示：条件为假时断点不会暂停；语法错误会导致断点失效。"), &dlg);
+        warnLabel->setObjectName("condWarn");
+        warnLabel->setWordWrap(true);
+        layout->addWidget(warnLabel);
+
+        auto* btnRow = new QHBoxLayout();
+        btnRow->addStretch();
+        auto* cancelBtn = new QPushButton("取消", &dlg);
+        cancelBtn->setObjectName("condCancel");
+        auto* okBtn = new QPushButton("确定", &dlg);
+        okBtn->setObjectName("condOk");
+        btnRow->addWidget(cancelBtn);
+        btnRow->addSpacing(8);
+        btnRow->addWidget(okBtn);
+        layout->addLayout(btnRow);
+
+        connect(okBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+        connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
+        edit->setFocus();
+        edit->selectAll();
+
+        if (dlg.exec() == QDialog::Accepted) {
+            QString cond = edit->text();
             QString condTrimmed = cond.trimmed();
             std::string condStr = condTrimmed.toStdString();
             if (condStr.empty()) {
@@ -298,6 +409,44 @@ CodeEditor::CodeEditor(QWidget* parent)
     completer_->setFilterMode(Qt::MatchStartsWith);
     connect(completer_, QOverload<const QString&>::of(&QCompleter::activated),
             this, &CodeEditor::insertCompletion);
+
+    // P-IDE-5 fix: 为补全弹窗应用 Fluent 风格 QSS，与 IDE 整体视觉语言统一。
+    // 默认 QListView popup 在 Windows 原生主题下边框生硬、选中色为蓝色块状，
+    // 与 IDE 的 Solarized 亮色 + Fluent 圆角风格不协调。
+    if (completer_->popup()) {
+        completer_->popup()->setStyleSheet(
+            "QListView { "
+            "  background: #FDF6E3; "
+            "  color: #002B36; "
+            "  border: 1px solid #93A1A1; "
+            "  border-radius: 6px; "
+            "  padding: 4px; "
+            "  font-family: 'Consolas','Cascadia Mono','Courier New',monospace; "
+            "  font-size: 12px; "
+            "  outline: none; "
+            "} "
+            "QListView::item { "
+            "  padding: 4px 10px; "
+            "  border-radius: 4px; "
+            "} "
+            "QListView::item:selected { "
+            "  background: #268BD2; "
+            "  color: #FFFFFF; "
+            "} "
+            "QListView::item:hover:!selected { "
+            "  background: rgba(38, 139, 210, 0.12); "
+            "  color: #002B36; "
+            "} "
+            "QScrollBar:vertical { "
+            "  background: transparent; width: 8px; margin: 2px; "
+            "} "
+            "QScrollBar::handle:vertical { "
+            "  background: #93A1A1; border-radius: 4px; min-height: 20px; "
+            "} "
+            "QScrollBar::handle:vertical:hover { background: #657B83; } "
+            "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }"
+        );
+    }
 }
 
 int CodeEditor::lineNumberAreaWidth() {
@@ -385,6 +534,25 @@ void CodeEditor::gotoLine(int line) {
     setTextCursor(cursor);
     centerCursor();
     setFocus();
+}
+
+void CodeEditor::highlightSourceLine(int line) {
+    sourceHighlightLine_ = line;
+    // 同时跳转到该行并居中显示
+    if (line > 0) {
+        QTextBlock block = document()->findBlockByNumber(line - 1);
+        if (block.isValid()) {
+            QTextCursor cursor(block);
+            setTextCursor(cursor);
+            centerCursor();
+        }
+    }
+    highlightCurrentLine();
+}
+
+void CodeEditor::clearSourceHighlight() {
+    sourceHighlightLine_ = -1;
+    highlightCurrentLine();
 }
 
 QSet<int> CodeEditor::getBreakpoints() const {
@@ -533,8 +701,8 @@ void CodeEditor::highlightCurrentLine() {
     // GUI-12 fix: 光标行先添加（蓝色），执行行后添加（黄色）
     // Qt ExtraSelection 后添加的覆盖先添加的，黄色要在蓝色之上
     // F9: 主题感知高亮颜色
-    QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : QColor(232, 244, 255);
-    QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : QColor(255, 255, 195);
+    QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : QColor(0xee, 0xe8, 0xd5);
+    QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : QColor(0xee, 0xe8, 0xd5);
 
     // BUG-CE-8 fix: 查找高亮先添加（底层），错误下划线次之（不冲突），
     // 光标行再次（蓝色覆盖查找高亮），执行行最后（黄色覆盖光标行和查找高亮）。
@@ -563,6 +731,20 @@ void CodeEditor::highlightCurrentLine() {
             sel.cursor = QTextCursor(block);
             sel.cursor.select(QTextCursor::LineUnderCursor);
             sel.format.setBackground(execLineColor);
+            sel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
+            selections.append(sel);
+        }
+    }
+
+    // IR/字节码面板点击高亮（蓝色背景，最后添加以覆盖所有其他高亮）
+    if (sourceHighlightLine_ > 0) {
+        QColor srcHighlightColor = isDarkTheme_ ? QColor(30, 58, 95) : QColor(0xbf, 0xdb, 0xfe);
+        QTextBlock block = document()->findBlockByNumber(sourceHighlightLine_ - 1);
+        if (block.isValid()) {
+            QTextEdit::ExtraSelection sel;
+            sel.cursor = QTextCursor(block);
+            sel.cursor.select(QTextCursor::LineUnderCursor);
+            sel.format.setBackground(srcHighlightColor);
             sel.format.setProperty(QTextCharFormat::FullWidthSelection, true);
             selections.append(sel);
         }
@@ -753,15 +935,15 @@ void CodeEditor::setDarkTheme(bool dark) {
         pal.setColor(QPalette::AlternateBase, QColor(0x25, 0x25, 0x26));
         pal.setColor(QPalette::Text, QColor(0xd4, 0xd4, 0xd4));
         pal.setColor(QPalette::Highlight, QColor(0x26, 0x4f, 0x78));
-        pal.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
+        pal.setColor(QPalette::HighlightedText, QColor(0xfd, 0xf6, 0xe3));
         pal.setColor(QPalette::PlaceholderText, QColor(0x80, 0x80, 0x80));
     } else {
         pal.setColor(QPalette::Base, QColor(0xff, 0xff, 0xff));
-        pal.setColor(QPalette::AlternateBase, QColor(0xf8, 0xf8, 0xf8));
-        pal.setColor(QPalette::Text, QColor(0x1f, 0x1f, 0x1f));
-        pal.setColor(QPalette::Highlight, QColor(0xad, 0xd6, 0xff));
-        pal.setColor(QPalette::HighlightedText, QColor(0x1f, 0x1f, 0x1f));
-        pal.setColor(QPalette::PlaceholderText, QColor(0x9a, 0x9a, 0x9a));
+        pal.setColor(QPalette::AlternateBase, QColor(0xee, 0xe8, 0xd5));
+        pal.setColor(QPalette::Text, QColor(0x00, 0x2b, 0x36));
+        pal.setColor(QPalette::Highlight, QColor(0x58, 0x6e, 0x75, 0x60));
+        pal.setColor(QPalette::HighlightedText, QColor(0xfd, 0xf6, 0xe3));
+        pal.setColor(QPalette::PlaceholderText, QColor(0x93, 0xa1, 0xa1));
     }
     setPalette(pal);
     // viewport 也需应用 palette（QPlainTextEdit 的实际绘制发生在 viewport）
@@ -1060,6 +1242,73 @@ void CodeEditor::focusOutEvent(QFocusEvent* event) {
         completer_->popup()->hide();
     }
     QPlainTextEdit::focusOutEvent(event);
+}
+
+void CodeEditor::contextMenuEvent(QContextMenuEvent* event) {
+    // 获取 QPlainTextEdit 默认上下文菜单（含 Undo/Redo/Cut/Copy/Paste/Select All）
+    // 返回的 QMenu* 由本函数负责释放（Qt 文档要求调用者 delete）
+    QMenu* stdMenu = createStandardContextMenu();
+    if (!stdMenu) {
+        QPlainTextEdit::contextMenuEvent(event);
+        return;
+    }
+
+    // —— 项目特化操作 ——
+    stdMenu->addSeparator();
+
+    QAction* toggleCommentAct = stdMenu->addAction(
+        QString::fromUtf8("注释切换 (Ctrl+/)"));
+    QAction* toggleBlockCommentAct = stdMenu->addAction(
+        QString::fromUtf8("块注释 (Ctrl+Shift+/)"));
+    QAction* formatAct = stdMenu->addAction(
+        QString::fromUtf8("格式化代码"));
+    QAction* gotoLineAct = stdMenu->addAction(
+        QString::fromUtf8("跳转到行... (Ctrl+G)"));
+    QAction* findAct = stdMenu->addAction(
+        QString::fromUtf8("查找... (Ctrl+F)"));
+    QAction* replaceAct = stdMenu->addAction(
+        QString::fromUtf8("替换... (Ctrl+H)"));
+
+    // —— 调试相关操作 ——
+    // CodeEditor 始终持有 breakpoints_ 集合并暴露 setBreakpoints/getBreakpoints
+    // 公共 API，断点切换能力始终可用，因此调试菜单无条件显示
+    stdMenu->addSeparator();
+
+    QAction* toggleBreakpointAct = stdMenu->addAction(
+        QString::fromUtf8("添加/移除断点 (F9)"));
+    QAction* editBreakpointCondAct = stdMenu->addAction(
+        QString::fromUtf8("编辑断点条件..."));
+    QAction* runToCursorAct = stdMenu->addAction(
+        QString::fromUtf8("运行到当前行"));
+
+    // 在事件位置弹出菜单（exec 模态阻塞，返回被点击的 QAction 或 nullptr）
+    QAction* chosen = stdMenu->exec(event->globalPos());
+
+    // 根据选中项发射信号交由上层（Ide）执行对应操作
+    if (chosen) {
+        if (chosen == toggleCommentAct) {
+            emit contextActionRequested("toggleComment");
+        } else if (chosen == toggleBlockCommentAct) {
+            emit contextActionRequested("toggleBlockComment");
+        } else if (chosen == formatAct) {
+            emit contextActionRequested("format");
+        } else if (chosen == gotoLineAct) {
+            emit contextActionRequested("gotoLine");
+        } else if (chosen == findAct) {
+            emit contextActionRequested("find");
+        } else if (chosen == replaceAct) {
+            emit contextActionRequested("replace");
+        } else if (chosen == toggleBreakpointAct) {
+            emit contextActionRequested("toggleBreakpoint");
+        } else if (chosen == editBreakpointCondAct) {
+            emit contextActionRequested("editBreakpointCondition");
+        } else if (chosen == runToCursorAct) {
+            emit contextActionRequested("runToCursor");
+        }
+    }
+
+    event->accept();
+    delete stdMenu;
 }
 
 // ============================================================
@@ -1562,7 +1811,7 @@ void CodeEditor::highlightBracketMatch() {
     }
 
     // 构建 bracket selections（半透明黄色背景）
-    QColor matchColor(255, 220, 0, 120);
+    QColor matchColor(0xb5, 0x89, 0x00, 120);  // Solarized yellow
 
     QTextEdit::ExtraSelection curSel;
     curSel.cursor.setPosition(curBracketPos);

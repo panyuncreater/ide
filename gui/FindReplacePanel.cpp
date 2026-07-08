@@ -1,6 +1,9 @@
 #include "gui/FindReplacePanel.h"
 #include "gui/CodeEditor.h"
+#include "gui/TeachingTheme.h"
 #include "common/RuntimeLimits.h"
+#include "PushButton.h"   // QFluentKit（PushButton / PrimaryPushButton，全局类）
+#include "Label.h"         // QFluentKit（CaptionLabel，全局类）
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -29,12 +32,12 @@ FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent)
     findEdit_->setClearButtonEnabled(true);
     findLayout->addWidget(findEdit_, 1);
 
-    findNextBtn_ = new QPushButton("下一个", this);
-    findPrevBtn_ = new QPushButton("上一个", this);
+    findNextBtn_ = new PushButton("下一个", this);
+    findPrevBtn_ = new PushButton("上一个", this);
     findLayout->addWidget(findNextBtn_);
     findLayout->addWidget(findPrevBtn_);
 
-    closeBtn_ = new QPushButton("✕", this);
+    closeBtn_ = new PushButton("✕", this);
     closeBtn_->setFixedWidth(24);
     closeBtn_->setToolTip("关闭 (Esc)");
     findLayout->addWidget(closeBtn_);
@@ -49,8 +52,8 @@ FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent)
     replaceEdit_->setClearButtonEnabled(true);
     replaceLayout->addWidget(replaceEdit_, 1);
 
-    replaceBtn_ = new QPushButton("替换", this);
-    replaceAllBtn_ = new QPushButton("全部替换", this);
+    replaceBtn_ = new PrimaryPushButton("替换", this);
+    replaceAllBtn_ = new PrimaryPushButton("全部替换", this);
     replaceLayout->addWidget(replaceBtn_);
     replaceLayout->addWidget(replaceAllBtn_);
 
@@ -62,7 +65,7 @@ FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent)
     caseSensitiveCheck_ = new QCheckBox("区分大小写", this);
     wholeWordCheck_ = new QCheckBox("全字匹配", this);
     statusLabel_ = new QLabel("", this);
-    statusLabel_->setStyleSheet("color: gray;");
+    statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::textSecondary().name()));
 
     optLayout->addWidget(caseSensitiveCheck_);
     optLayout->addWidget(wholeWordCheck_);
@@ -187,7 +190,7 @@ bool FindReplacePanel::findText(bool forward) {
         return true;
     } else {
         statusLabel_->setText("未找到");
-        statusLabel_->setStyleSheet("color: red;");
+        statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::error().name()));
         return false;
     }
 }
@@ -284,10 +287,10 @@ void FindReplacePanel::onReplaceAll() {
     if (!found.isNull()) {
         statusLabel_->setText(
             QString("已替换 %1+ 处（达到上限，仍有剩余匹配）").arg(replaceCount));
-        statusLabel_->setStyleSheet("color: orange;");
+        statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::warning().name()));
     } else {
         statusLabel_->setText(QString("已替换 %1 处").arg(replaceCount));
-        statusLabel_->setStyleSheet("color: green;");
+        statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::success().name()));
     }
     clearHighlights();
 }
@@ -322,13 +325,13 @@ void FindReplacePanel::highlightMatches(const QString& text) {
 
     if (count >= RuntimeLimits::MAX_FIND_HIGHLIGHTS) {
         statusLabel_->setText(QString("匹配 %1+ 处").arg(count));
-        statusLabel_->setStyleSheet("color: gray;");
+        statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::textSecondary().name()));
     } else if (count > 0) {
         statusLabel_->setText(QString("匹配 %1 处").arg(count));
-        statusLabel_->setStyleSheet("color: gray;");
+        statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::textSecondary().name()));
     } else {
         statusLabel_->setText("未找到");
-        statusLabel_->setStyleSheet("color: red;");
+        statusLabel_->setStyleSheet(QString("color: %1;").arg(TeachingTheme::error().name()));
     }
 }
 

@@ -20,8 +20,13 @@ void Formatter::setComments(const std::vector<Token>& tokens) {
         }
     }
     // F-P2-5 fix: 按行号排序，确保 formatBlock 中的 commentIndex_ 单调递增游标正确工作
-    std::sort(comments_.begin(), comments_.end(),
-              [](const Token& a, const Token& b) { return a.line < b.line; });
+    // AUDIT-P2 fix: std::sort 非稳定排序，同行多注释的相对顺序未定义。改用 stable_sort
+    // 并增加列号作为次要排序键，保证同行注释按源码出现顺序排列，避免格式化后注释顺序颠倒。
+    std::stable_sort(comments_.begin(), comments_.end(),
+              [](const Token& a, const Token& b) {
+                  if (a.line != b.line) return a.line < b.line;
+                  return a.column < b.column;
+              });
     commentIndex_ = 0;
 }
 
@@ -531,6 +536,34 @@ std::string Formatter::formatVarRef(VarRef& node) {
 }
 
 std::string Formatter::formatIfStmt(IfStmt& node) {
+    // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构从 Stmt 变为 Block{Stmt}
+    // 原 Bug：无条件 openBrace() 包裹，导致 if (cond) print(1); → if (cond) { print(1); }
+    // 重新解析后 thenBranch 节点类型从 NODE_PRINT_STMT 变为 NODE_BLOCK，违反往返等价性
+    const bool thenIsBlock = node.thenBranch && node.thenBranch->nodeType == NodeType::NODE_BLOCK;
+    if (!thenIsBlock && node.thenBranch) {
+        // 单语句体路径：无花括号，与 Parser 的无花括号语法对应
+        std::string result = "if (" + formatNode(node.condition.get()) + ") ";
+        result += formatNode(node.thenBranch.get());
+        if (!isSelfTerminating(node.thenBranch.get())) result += ";";
+        if (node.elseBranch) {
+            if (node.elseBranch->nodeType == NodeType::NODE_IF_STMT) {
+                result += " else " + formatNode(node.elseBranch.get());
+            } else if (node.elseBranch->nodeType == NodeType::NODE_BLOCK) {
+                auto* block = static_cast<Block*>(node.elseBranch.get());
+                result += " else" + openBrace() + "\n";
+                currentIndent_++;
+                result += formatBlock(*block);
+                currentIndent_--;
+                result += indent() + "}";
+            } else {
+                // else 单语句体：同样无花括号
+                result += " else " + formatNode(node.elseBranch.get());
+                if (!isSelfTerminating(node.elseBranch.get())) result += ";";
+            }
+        }
+        return result;
+    }
+    // Block 体路径：原有花括号逻辑
     std::string result = "if (" + formatNode(node.condition.get()) + ")" + openBrace() + "\n";
     currentIndent_++;
     // F-P2-3 fix: 检查 thenBranch 空指针，避免 formatNode 返回 "null" 语义错误
@@ -583,6 +616,13 @@ std::string Formatter::formatIfStmt(IfStmt& node) {
 }
 
 std::string Formatter::formatWhileStmt(WhileStmt& node) {
+    // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
+    if (node.body->nodeType != NodeType::NODE_BLOCK) {
+        std::string result = "while (" + formatNode(node.condition.get()) + ") ";
+        result += formatNode(node.body.get());
+        if (!isSelfTerminating(node.body.get())) result += ";";
+        return result;
+    }
     std::string result = "while (" + formatNode(node.condition.get()) + ")" + openBrace() + "\n";
     currentIndent_++;
     if (node.body->nodeType == NodeType::NODE_BLOCK) {
@@ -601,6 +641,19 @@ std::string Formatter::formatWhileStmt(WhileStmt& node) {
 }
 
 std::string Formatter::formatForStmt(ForStmt& node) {
+    // P1-D fix: 保留单语句体原貌（无花括号），避免往返后 AST 结构改变
+    if (node.body->nodeType != NodeType::NODE_BLOCK) {
+        std::string result = "for (";
+        if (node.initializer) result += formatNode(node.initializer.get());
+        result += ";";
+        if (node.condition) result += " " + formatNode(node.condition.get());
+        result += ";";
+        if (node.update) result += " " + formatNode(node.update.get());
+        result += ") ";
+        result += formatNode(node.body.get());
+        if (!isSelfTerminating(node.body.get())) result += ";";
+        return result;
+    }
     // F-P2-9 fix: 条件化添加分号和空格，避免 update 为空时产生 "for (init; cond; ) {" 多余空格
     std::string result = "for (";
     if (node.initializer) result += formatNode(node.initializer.get());

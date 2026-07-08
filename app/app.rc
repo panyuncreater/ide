@@ -1,0 +1,3 @@
+// MiniLang IDE Windows Resource File
+// Embeds the application icon into the .exe for Windows Explorer display.
+IDI_ICON1 ICON DISCARDABLE "res/icons/minilang.ico"

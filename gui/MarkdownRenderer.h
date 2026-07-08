@@ -27,8 +27,16 @@
 // ============================================================
 
 #include <QString>
+#include <vector>
 
 namespace MarkdownRenderer {
+
+/// P2-2 fix (F3): Markdown 标题信息（用于生成章节锚点目录）
+struct HeadingEntry {
+    int level;          // 1-6
+    QString text;       // 原始标题文本（未转义）
+    QString anchor;    // slug 化的 anchor id
+};
 
 /// 将 Markdown 文本渲染为 HTML。
 /// @param markdown 原始 Markdown 文本
@@ -45,5 +53,19 @@ QString markdownToHtmlFragment(const QString& markdown, const QString& codeBlock
 
 /// std::string 重载的片段版本。
 QString markdownToHtmlFragment(const std::string& markdown, const QString& codeBlockBg = QString());
+
+/// P2-2 fix (F3): 提取 Markdown 中所有标题（# ~ ######），返回 (level, text, anchor) 列表
+/// 用于生成章节锚点目录（TOC）。anchor 与 markdownToHtml 输出的 <h id="..."> 一致。
+/// 调用方据此构建 TOC 链接列表，点击后通过 QTextBrowser::scrollToAnchor(anchor) 跳转。
+std::vector<HeadingEntry> extractHeadings(const QString& markdown);
+
+/// P2-2 fix (F3): 生成章节锚点目录 HTML 片段（含标题 + 链接列表）
+/// @param markdown 用于提取标题的 Markdown 文本
+/// @param tocTitle 目录标题（如 "目录"），为空则不显示标题行
+/// @param maxLevel 最大显示级别（1-6），默认 3（仅显示 h1/h2/h3）
+/// @return HTML 片段，可直接拼接到 markdownToHtml 输出之前
+QString buildTableOfContents(const QString& markdown,
+                              const QString& tocTitle = QStringLiteral("📑 目录"),
+                              int maxLevel = 3);
 
 } // namespace MarkdownRenderer

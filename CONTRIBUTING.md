@@ -23,9 +23,9 @@ Thank you for your interest in contributing to MiniLang IDE! This document cover
 
 | 依赖项 | 最低版本 | 说明 |
 |--------|---------|------|
-| C++ 编译器 | C++20 | MSVC 2022+, GCC 11+, Clang 14+ |
-| Qt | 6.0+ | Qt 6.0 或更高版本（推荐 6.5+） |
-| CMake | 3.20+ | 构建系统生成器 |
+| C++ 编译器 | C++20 | MSVC 2022+（19.51+）/ GCC 13+, Clang 16+ |
+| Qt | 6.0+ | Qt 6.0 或更高版本（经 CI 验证 6.10.3） |
+| CMake | 3.25+ | 构建系统生成器 |
 | Ninja | 1.10+ | 推荐的构建后端（替代 Make） |
 
 可选依赖：
@@ -61,7 +61,7 @@ scripts\run_tests.bat
 sudo apt install cmake ninja-build qt6-base-dev g++
 
 # 配置与构建
-cmake -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake -B out/build/debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu
 cmake --build out/build/debug --target minilang_ide
 
 # 运行测试

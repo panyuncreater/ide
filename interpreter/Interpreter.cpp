@@ -188,6 +188,8 @@ void Interpreter::restoreReplState() {
     exportedNames_ = std::move(replState_.savedExportedNames);
     moduleLoadingStack_ = std::move(replState_.savedModuleLoadingStack);
     moduleLoadingSet_ = std::move(replState_.savedModuleLoadingSet);  // D19 fix: 同步恢复 set
+    // P2-A fix: 恢复 moduleMtimes_，与 moduleCache_ 保持一致的时间戳基准
+    moduleMtimes_ = std::move(replState_.savedModuleMtimes);
     replState_.savedGlobalEnv.reset();
     replState_.active = false;
     // R7 fix: 清理执行栈状态，防止 Run 被 terminate() 终止后残留——
@@ -1567,9 +1569,15 @@ void Interpreter::visitTryStmt(TryStmt& node) {
         }
         // 正常退出：执行 finally
         if (node.finallyBlock) {
+            // BUG-AUDIT-FINALLY-DOUBLE fix: finallyRun 必须在 evaluate(finallyBlock) 之前设置，
+            // 否则 finally 块自身抛 ThrowException 时 finallyRun 仍为 false，
+            // 外层 catch 会误判为"finally 未执行"并再次执行 finally，导致双重执行。
+            // 三后端一致性：VM/RegisterVM 路径中 finally 块抛 throw 时只执行一次（新异常覆盖原异常）。
+            finallyRun = true;
             evaluate(node.finallyBlock.get());
+        } else {
+            finallyRun = true;
         }
-        finallyRun = true;
     } catch (const ThrowException&) {
         // 异常路径：执行 finally 后 re-throw
         if (!finallyRun && node.finallyBlock) {
@@ -2035,8 +2043,16 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             // super.method() 调用后，需将更新后的 this 写回调用者的环境
             // （writeBackChain 无法处理 SuperExpr，因为它不是 VarRef）
             // P2-6 fix: obj 此后不再使用，使用 std::move 避免不必要的拷贝
+            // AUDIT-P2 fix: Environment::set(name, Value&&) 契约要求调用方检查返回值：
+            //   - true:  val 已 move 入目标
+            //   - false: val 未 move（caller 仍持有所有权）
+            // 原实现未检查，若 "this" 在 currentEnv_ 链中找不到（如 super 在顶层调用，
+            // 理论不该发生但防御性处理），obj 被"悬空" move 语义不一致。改为检查并报错。
             if (isSuperCall) {
-                currentEnv_->set("this", std::move(obj));
+                if (!currentEnv_->set("this", std::move(obj))) {
+                    runtimeError("super 调用无法写回 this：当前作用域链中未找到 this 变量",
+                        node.line, node.column);
+                }
             }
 
             return result;

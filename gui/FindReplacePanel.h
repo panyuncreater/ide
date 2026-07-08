@@ -8,6 +8,10 @@
 
 class CodeEditor;
 
+// QFluentKit 前向声明（PushButton / PrimaryPushButton 为全局类，不在 Fluent 命名空间）
+class PushButton;
+class PrimaryPushButton;
+
 // ============================================================
 // FindReplacePanel 查找替换面板
 // ============================================================
@@ -45,11 +49,11 @@ private:
     CodeEditor* editor_ = nullptr;
     QLineEdit* findEdit_ = nullptr;
     QLineEdit* replaceEdit_ = nullptr;
-    QPushButton* findNextBtn_ = nullptr;
-    QPushButton* findPrevBtn_ = nullptr;
-    QPushButton* replaceBtn_ = nullptr;
-    QPushButton* replaceAllBtn_ = nullptr;
-    QPushButton* closeBtn_ = nullptr;
+    PushButton* findNextBtn_ = nullptr;
+    PushButton* findPrevBtn_ = nullptr;
+    PrimaryPushButton* replaceBtn_ = nullptr;
+    PrimaryPushButton* replaceAllBtn_ = nullptr;
+    PushButton* closeBtn_ = nullptr;
     QCheckBox* caseSensitiveCheck_ = nullptr;
     QCheckBox* wholeWordCheck_ = nullptr;
     QLabel* statusLabel_ = nullptr;

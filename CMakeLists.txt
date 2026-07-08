@@ -4,7 +4,7 @@
 # 唯一构建系统。旧 .vcxproj 已移除。
 # ============================================================
 
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
 project(MiniLangIDE VERSION 1.0 LANGUAGES CXX)
 
 # ============================================================
@@ -67,28 +67,31 @@ if(MINILANG_BUILD_DOCS)
     endif()
 endif()
 
-# D2: 国际化 i18n（Qt Linguist）—— 提取用户可见字符串到 .ts 翻译文件
-option(MINILANG_ENABLE_I18N "Enable Qt Linguist i18n infrastructure (tr() wrapping + .ts catalog)" OFF)
+# D2: 国际化 i18n（Qt Linguist）—— 将已提交的 .ts 翻译目录编译为运行时 .qm
+# 默认 ON：运行时加载 zh_CN 目录，整条 i18n 管线默认可用、可验证。
+# 仅用 qt_add_translation（lrelease）编译已填充的 .ts，不自动运行 lupdate，
+# 以免每次构建都改写受版本控制的 .ts 源文件；翻译条目更新请手动执行 lupdate。
+option(MINILANG_ENABLE_I18N "Enable Qt Linguist i18n infrastructure (.ts -> .qm + runtime loading)" ON)
 if(MINILANG_ENABLE_I18N)
     add_compile_definitions(MINILANG_ENABLE_I18N)
     find_package(Qt6 COMPONENTS LinguistTools QUIET)
     if(Qt6LinguistTools_FOUND)
         message(STATUS "i18n enabled: Qt Linguist tools available")
-        # 翻译源文件目录（占位，后续 lupdate 自动维护条目）
         set(MINILANG_TRANSLATION_SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/app/translations/minilang_zh_CN.ts
         )
-        # qt_create_translation 会在构建时运行 lupdate 同步 .ts 条目，
-        # 并 lrelease 编译为 .qm（仅源码中 tr() 包裹的字符串会被提取）
-        qt_create_translation(MINILANG_QM_FILES
-            ${CMAKE_CURRENT_SOURCE_DIR}/app
-            ${CMAKE_CURRENT_SOURCE_DIR}/gui
+        # 仅 lrelease：把已填充的 .ts 编译为 .qm（不重写 .ts 源文件）
+        qt_add_translation(MINILANG_QM_FILES
             ${MINILANG_TRANSLATION_SOURCES}
         )
-        # 注册 .qm 文件到 IDE 目标的输出目录
+        # 注册 .qm 生成目标（默认构建）
         add_custom_target(minilang_translations ALL DEPENDS ${MINILANG_QM_FILES})
+        # 安装时随 exe 部署 .qm 到 bin/translations/，使安装包也能加载翻译
+        install(FILES ${MINILANG_QM_FILES}
+            DESTINATION bin/translations
+        )
     else()
-        message(WARNING "MINILANG_ENABLE_I18N=ON but Qt6::LinguistTools not found; i18n infrastructure disabled")
+        message(WARNING "MINILANG_ENABLE_I18N=ON but Qt6::LinguistTools not found; .qm not built (runtime falls back to source strings)")
     endif()
 endif()
 
@@ -136,9 +139,12 @@ set(CMAKE_AUTORC ON)
 # 第三方依赖：Qt Advanced Docking System (ADS)
 # ------------------------------------------------------------
 # ADS 以静态库方式编入项目，不构建其示例程序。
-# ADS_VERSION 必须手动设置（作为子目录时 git describe 不可用）。
+# ADS_VERSION 必须手动固定：作为 git submodule 引入时，third_party/ads 目录内
+# 没有独立 .git（仅有 gitlink），其 CMakeLists 的 git_describe 自动检测会失败；
+# 当前 pin 为 5.0.0（与 ads 子模块 checkout commit 对应，见 .gitmodules 记录）。
+# 移除 FORCE 以便需要时可用 -DADS_VERSION=x.y.z 覆盖；更新 ads 子模块需同步此值。
 # ============================================================
-set(ADS_VERSION "5.0.0" CACHE STRING "ADS version (override git describe)" FORCE)
+set(ADS_VERSION "5.0.0" CACHE STRING "Pinned ADS version (submodule: git describe unavailable)")
 set(BUILD_STATIC ON CACHE BOOL "Build ADS as static library" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "Build ADS examples" FORCE)
 add_subdirectory(third_party/ads)
@@ -192,6 +198,7 @@ add_executable(minilang_ide WIN32
     app/DebugCoordinator.cpp
     app/VmStepper.cpp
     app/ide.qrc
+    app/app.rc
     ${MINILANG_GUI_SOURCES}
 )
 
@@ -226,12 +233,23 @@ if(WIN32)
 endif()
 
 # 部署 QFluent 动态库到 exe 同目录（QFluent 为 SHARED 库，运行时需 DLL）
-add_custom_command(TARGET minilang_ide POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:QFluent>"
-            "$<TARGET_FILE_DIR:minilang_ide>"
-    COMMENT "Deploying QFluent runtime for minilang_ide..."
-)
+# 复用共享模块 cmake/deploy_qfluent.cmake，消除与 tests/ 的重复（修复审计问题 7）。
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy_qfluent.cmake)
+minilang_deploy_qfluent_runtime(minilang_ide)
+
+# D2: 部署翻译 .qm 到 exe 旁的 translations/，使 loadMiniLangTranslations() 运行时能加载
+# （仅当 i18n 启用且 LinguistTools 可用；否则 .qm 未生成，运行时回退到源字符串）
+if(MINILANG_ENABLE_I18N AND Qt6LinguistTools_FOUND)
+    add_custom_command(TARGET minilang_ide POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:minilang_ide>/translations"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${MINILANG_QM_FILES}
+                "$<TARGET_FILE_DIR:minilang_ide>/translations/"
+        DEPENDS ${MINILANG_QM_FILES}
+        COMMENT "Deploying MiniLang translations (.qm) next to executable..."
+    )
+endif()
 
 # Debug 配置生成调试信息
 target_compile_definitions(minilang_ide PRIVATE $<$<CONFIG:Debug>:QT_DEBUG>)

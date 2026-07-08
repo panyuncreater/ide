@@ -15,7 +15,6 @@
 CMakeLists.txt       text eol=lf
 *.cmake              text eol=lf
 CMakePresets.json    text eol=lf
-CMakeUserPresets.json text eol=lf
 
 # Markdown / 文档
 *.md     text eol=lf diff=markdown

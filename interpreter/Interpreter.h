@@ -316,6 +316,9 @@ private:
         std::unordered_set<std::string> savedExportedNames;
         std::vector<std::string> savedModuleLoadingStack;
         std::unordered_set<std::string> savedModuleLoadingSet;  // D19 fix: 与 savedModuleLoadingStack 配对
+        // P2-A fix: 与 moduleCache_ 同步保存/恢复 mtime，避免 Run→REPL 切换后
+        // 缓存失效检测错位（mtime 与 cache 内容不一致导致使用陈旧缓存）
+        std::unordered_map<std::string, int64_t> savedModuleMtimes;
         bool active = false;  // 是否有暂存的状态（避免未 save 就 restore）
     } replState_;
 

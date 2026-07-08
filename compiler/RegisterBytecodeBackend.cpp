@@ -18,6 +18,9 @@ void RegisterBytecodeBackend::resetState() {
     functionChunks_.clear();
     irToBytecodeOffset_.clear();
     vregToReg_.clear();
+    vregLastUse_.clear();
+    lastUseToVregs_.clear();
+    freeRegs_.clear();
     labelToOffset_.clear();
     pendingJumps_.clear();
     hasError_ = false;
@@ -34,23 +37,92 @@ uint16_t RegisterBytecodeBackend::addStringConstant(const std::string& s, const 
 uint8_t RegisterBytecodeBackend::vregToReg(uint32_t vreg) {
     auto it = vregToReg_.find(vreg);
     if (it != vregToReg_.end()) return it->second;
-    // vreg N → 寄存器 localCount + N
-    int reg = chunk_->localCount + static_cast<int>(vreg);
-    if (reg >= 32) {
-        // 溢出：设置错误标志，返回 R0 作为占位（lower 末尾会因 hasError_ 失败，
-        // 已 emit 的指令不会被执行）。不静默生成损坏的字节码。
-        Logger::Error("RegisterBytecodeBackend: vreg " + std::to_string(vreg) +
-                      " 映射到寄存器 " + std::to_string(reg) +
-                      " 超出 32 上限（需减少局部变量/简化表达式或实现寄存器溢出）", "RegIR");
-        hasError_ = true;
-        return 0;  // 占位值，lower 会失败
+    // P0-REGALLOC fix: 优先复用已释放的空闲寄存器，避免 vreg 单调递增导致溢出 32 上限。
+    uint8_t reg;
+    if (!freeRegs_.empty()) {
+        reg = freeRegs_.back();
+        freeRegs_.pop_back();
+    } else {
+        int newReg = chunk_->registerCount;
+        if (newReg >= 32) {
+            Logger::Error("RegisterBytecodeBackend: 寄存器分配溢出（vreg=" +
+                          std::to_string(vreg) + "，已用 " + std::to_string(newReg) +
+                          "/32 寄存器，需减少局部变量/简化表达式或实现寄存器溢出）", "RegIR");
+            hasError_ = true;
+            return 0;  // 占位值，lower 会失败
+        }
+        chunk_->registerCount = newReg + 1;
+        reg = static_cast<uint8_t>(newReg);
     }
-    uint8_t regByte = static_cast<uint8_t>(reg);
-    vregToReg_[vreg] = regByte;
-    if (reg + 1 > chunk_->registerCount) {
-        chunk_->registerCount = reg + 1;
+    vregToReg_[vreg] = reg;
+    return reg;
+}
+
+// P0-REGALLOC fix: 预扫描所有指令，记录每个 vreg 的最后使用 instrIndex。
+// IR 的 vreg 是 SSA-like 的（allocVReg 单调递增不复用），因此生命周期从首次定义到
+// 最后使用。在最后使用点释放寄存器是安全的——后续不会有指令再读取该 vreg。
+//
+// 关键例外：MEMBER_SET/INDEX_SET 的 obj vreg（操作数[0]）在后续 WRITEBACK_* 指令中
+// 被"隐式使用"——RegisterVM 的 MEMBER_SET/INDEX_SET 将 objReg 记录到
+// lastMutatedReceiverReg_，后续 WRITEBACK_* 通过 reg(lastMutatedReceiverReg_) 读取
+// 变异后的容器。如果 obj vreg 在 MEMBER_SET 后被释放并复用，WRITEBACK 会读到错误值。
+// 因此 obj vreg 的最后使用点必须延长到下一个 WRITEBACK_* 指令之后。
+void RegisterBytecodeBackend::collectVRegLastUse(const IRFunction& ir) {
+    vregLastUse_.clear();
+    lastUseToVregs_.clear();
+    size_t globalIdx = 0;
+    // 待延长的 obj vreg（来自 MEMBER_SET/INDEX_SET，等待下一个 WRITEBACK 确定最后使用点）
+    std::vector<uint32_t> pendingMutatedObjs;
+    for (const auto& block : ir.blocks) {
+        for (const auto& instr : block.instructions) {
+            bool isMutatingSet = (instr.op == IROp::MEMBER_SET || instr.op == IROp::INDEX_SET);
+            bool isWriteback = (instr.op == IROp::WRITEBACK_MEMBER_VAR ||
+                                instr.op == IROp::WRITEBACK_MEMBER_LOCAL ||
+                                instr.op == IROp::WRITEBACK_INDEX_VAR ||
+                                instr.op == IROp::WRITEBACK_INDEX_LOCAL ||
+                                instr.op == IROp::WRITEBACK_MEMBER_UPVALUE ||
+                                instr.op == IROp::WRITEBACK_INDEX_UPVALUE);
+            for (size_t opi = 0; opi < instr.operands.size(); ++opi) {
+                const auto& op = instr.operands[opi];
+                if (op.kind != IROperandKind::VIRTUAL) continue;
+                // MEMBER_SET/INDEX_SET 的 obj vreg（操作数[0]）跳过——
+                // 其最后使用点延长到下一个 WRITEBACK_* 指令
+                if (isMutatingSet && opi == 0) {
+                    pendingMutatedObjs.push_back(op.index);
+                    continue;
+                }
+                vregLastUse_[op.index] = globalIdx;
+            }
+            // 遇到 WRITEBACK_* 时，延长 pending obj vreg 的最后使用点到此处
+            if (isWriteback && !pendingMutatedObjs.empty()) {
+                for (uint32_t v : pendingMutatedObjs) {
+                    vregLastUse_[v] = globalIdx;
+                }
+                pendingMutatedObjs.clear();
+            }
+            ++globalIdx;
+        }
     }
-    return regByte;
+    // 未匹配到 WRITEBACK 的 obj vreg 不释放（保守安全，避免寄存器被复用覆盖）
+    // 构建反向映射：instrIndex → 在此处最后使用的 vreg 列表
+    for (const auto& kv : vregLastUse_) {
+        lastUseToVregs_[kv.second].push_back(kv.first);
+    }
+}
+
+// P0-REGALLOC fix: 释放最后使用点 == instrIndex 的 vreg 的寄存器到 freeRegs_。
+// 在每条指令 lower 完成后调用，确保该指令已读取完所有操作数。
+void RegisterBytecodeBackend::releaseDeadVRegs(size_t instrIndex) {
+    auto it = lastUseToVregs_.find(instrIndex);
+    if (it == lastUseToVregs_.end()) return;
+    for (uint32_t vreg : it->second) {
+        auto regIt = vregToReg_.find(vreg);
+        if (regIt != vregToReg_.end()) {
+            freeRegs_.push_back(regIt->second);
+            vregToReg_.erase(regIt);
+        }
+    }
+    lastUseToVregs_.erase(it);
 }
 
 bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
@@ -80,6 +152,10 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
         chunk_->constants.push_back(c);
     }
 
+    // P0-REGALLOC fix: 预扫描所有指令，构建 vreg → 最后使用 instrIndex 映射，
+    // 供 releaseDeadVRegs 在 lowering 过程中及时释放死寄存器复用。
+    collectVRegLastUse(ir);
+
     // 遍历所有基本块的所有指令，逐条 lowering
     size_t instrIndex = 0;
     for (const auto& block : ir.blocks) {
@@ -94,6 +170,8 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
                 chunk_->lines.push_back(instr.line);
                 chunk_->columns.push_back(0);
             }
+            // P0-REGALLOC fix: 释放最后使用点 == instrIndex 的 vreg 的寄存器
+            releaseDeadVRegs(instrIndex);
             ++instrIndex;
         }
     }
@@ -101,6 +179,11 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
 }
 
 bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const IRFunction& ir) {
+    // AUDIT-P2 fix: vregToReg 溢出后设置 hasError_ 并返回占位 reg=0，但此前各 case 不检查
+    // hasError_ 仍继续写入损坏字节码。在 lowerInstruction 入口快速失败，避免溢出后后续
+    // 指令继续写入。当前指令的损坏字节码由 lower() 行 164 的 hasError_ 检查兜底（return false），
+    // chunk_ 不会被 VM 加载使用。
+    if (hasError_) return false;
     auto globalName = [&](uint32_t idx) -> std::string {
         return idx < ir.globalNames.size() ? ir.globalNames[idx] : std::string{};
     };

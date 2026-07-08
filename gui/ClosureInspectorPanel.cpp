@@ -96,7 +96,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
             "↩️ 闭包作为函数返回值是函数式编程的核心模式。"
             "返回的闭包携带捕获的 upvalue，即使定义作用域已销毁。"
             "这是闭包\"逃逸\"的最常见形式——闭包超出定义作用域存活。",
-            "fun makeMultiplier(factor) {\n    return fun(x) {\n        return x * factor;\n    };\n}\n\nvar double = makeMultiplier(2);\nvar triple = makeMultiplier(3);\nprint double(5);   // 10\nprint triple(5);   // 15",
+            "fun makeMultiplier(factor) {\n    fun closure(x) {\n        return x * factor;\n    }\n    return closure;\n}\n\nvar double = makeMultiplier(2);\nvar triple = makeMultiplier(3);\nprint double(5);   // 10\nprint triple(5);   // 15",
             {"factor"},
             "🔗 by-reference (upvalue, escaped)",
             "💡 makeMultiplier 返回一个匿名闭包，捕获 factor。"
@@ -111,7 +111,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
             "在循环中创建闭包时，所有闭包共享同一个循环变量"
             "（MiniLang 中 var 声明的变量在同一作用域内共享），"
             "因此所有闭包引用的 upvalue 指向同一地址。",
-            "var fns = [];\nvar i = 0;\nwhile (i < 3) {\n    fns.push(fun() {\n        return i;\n    });\n    i = i + 1;\n}\nprint fns[0]();  // 3（不是 0！）\nprint fns[1]();  // 3\nprint fns[2]();  // 3",
+            "var fns = [];\nvar i = 0;\nwhile (i < 3) {\n    fun getter() { return i; }\n    fns.push(getter);\n    i = i + 1;\n}\nprint fns[0]();  // 3（不是 0！）\nprint fns[1]();  // 3\nprint fns[2]();  // 3",
             {"i"},
             "🔗 by-reference (shared upvalue)",
             "⚠️ 所有闭包共享同一个 i 变量。循环结束后 i = 3，"
@@ -126,7 +126,7 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
             "⚡ IIFE 用于创建新作用域，避免变量泄漏或闭包共享问题。"
             "在循环中使用 IIFE 可为每次迭代创建独立作用域，"
             "使闭包捕获不同的变量值。",
-            "var fns = [];\nvar i = 0;\nwhile (i < 3) {\n    (fun(captured) {\n        fns.push(fun() {\n            return captured;\n        });\n    })(i);\n    i = i + 1;\n}\nprint fns[0]();  // 0\nprint fns[1]();  // 1\nprint fns[2]();  // 2",
+            "var fns = [];\nvar i = 0;\nwhile (i < 3) {\n    fun makeCaptured(captured) {\n        fun getter() { return captured; }\n        return getter;\n    }\n    fns.push(makeCaptured(i));\n    i = i + 1;\n}\nprint fns[0]();  // 0\nprint fns[1]();  // 1\nprint fns[2]();  // 2",
             {"captured"},
             "🔗 by-reference (upvalue, per-iteration)",
             "💡 IIFE 每次调用创建新栈帧，参数 captured 绑定当前 i 的值。"
@@ -258,13 +258,13 @@ ClosureInspectorPanel::ClosureInspectorPanel(QWidget* parent) : QWidget(parent) 
         stack_->setCurrentWidget(stack_->widget(0));
         pageScenarioBtn_->setChecked(true);
         pagePhaseBtn_->setChecked(false);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
     connect(pagePhaseBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentWidget(stack_->widget(1));
         pageScenarioBtn_->setChecked(false);
         pagePhaseBtn_->setChecked(true);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
 
     // 默认选中第一个
@@ -366,8 +366,7 @@ void ClosureInspectorPanel::populateScenarioDetail(int index) {
     connect(scenarioDetail_, &QTextBrowser::anchorClicked, this, [this, s](const QUrl&) {
         emit loadSampleRequested(QString::fromStdString(s.sampleCode));
     });
-
-    PanelAnimator::fadeInWidget(scenarioDetail_);
+    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
 
 void ClosureInspectorPanel::populatePhaseDetail(int index) {
@@ -386,6 +385,5 @@ void ClosureInspectorPanel::populatePhaseDetail(int index) {
     oss << "<p><b>栈/堆效应:</b> " << p.stackEffect << "</p>";
 
     phaseDetail_->setHtml(QString::fromStdString(oss.str()));
-
-    PanelAnimator::fadeInWidget(phaseDetail_);
+    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }

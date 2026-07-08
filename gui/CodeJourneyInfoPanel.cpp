@@ -21,13 +21,21 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
     auto* titleLabel = new TitleLabel(mlTr("🚀 代码的生命旅程"), this);
     mainLayout->addWidget(titleLabel);
 
+    // 问题 11: 进度提示标签 — 显示完成判断标准与当前进度
+    progressLabel_ = new QLabel(this);
+    progressLabel_->setStyleSheet(
+        "QLabel { background: #EEE8D5; border: 1px solid #93A1A1;"
+        "  border-radius: 4px; padding: 6px 8px; font-size: 12px; }");
+    progressLabel_->setWordWrap(true);
+    mainLayout->addWidget(progressLabel_);
+
     // 主体：静态信息图（HTML 渲染）
     infoBrowser_ = new QTextBrowser(this);
     infoBrowser_->setHtml(buildJourneyHtml());
     infoBrowser_->setOpenExternalLinks(false);
     mainLayout->addWidget(infoBrowser_, 1);
 
-    // 底部：跳转按钮（对应管线 5 个阶段）
+    // 底部：跳转按钮（对应管线 6 个阶段）
     auto* btnBar = new QHBoxLayout;
     auto* btnEditor   = new QPushButton(mlTr("① 编辑器"), this);
     auto* btnTokens   = new QPushButton(mlTr("② Token 表"), this);
@@ -51,6 +59,9 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
     connect(btnBytecode, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToBytecode);
     connect(btnOutput,   &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToOutput);
 
+    // 初始化进度提示
+    refreshProgress();
+
     // 主题切换时重建 HTML（buildJourneyHtml 内部使用 TeachingTheme::surface()
     // 作为 <pre> 背景，需重新渲染以跟随新主题）。receiver=this 保证生命周期安全。
     Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
@@ -58,6 +69,58 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent)
             infoBrowser_->setHtml(buildJourneyHtml());
         }
     });
+}
+
+// ============================================================
+// 问题 11: 完成判断标准 — 6 阶段全部访问即为完成
+// ============================================================
+
+void CodeJourneyInfoPanel::markStageVisited(const QString& stageId) {
+    if (visitedStages_.value(stageId, false)) return;  // 已访问
+    visitedStages_[stageId] = true;
+    refreshProgress();
+    if (visitedStages_.size() >= kTotalStages) {
+        emit journeyCompleted();
+    }
+}
+
+void CodeJourneyInfoPanel::refreshProgress() {
+    if (!progressLabel_) return;
+    int visited = visitedStages_.size();
+    // 构建进度圆点：✅ 已访问 / ⬜ 未访问
+    static const char* kStageIcons[] = {
+        "\xe2\x9c\x85",  // ✅
+        "\xe2\xac\x9c",  // ⬜
+    };
+    static const QStringList kStageNames = {
+        "编辑器", "Token", "AST", "IR", "字节码", "输出"
+    };
+    static const QStringList kStageIds = {
+        "editor", "tokens", "ast", "ir", "bytecode", "output"
+    };
+    QString dots;
+    for (int i = 0; i < kTotalStages; ++i) {
+        bool vis = visitedStages_.value(kStageIds[i], false);
+        dots += QString::fromUtf8(kStageIcons[vis ? 0 : 1]) + " " + kStageNames[i];
+        if (i < kTotalStages - 1) dots += "  ";
+    }
+    QString html;
+    if (visited >= kTotalStages) {
+        html = QString::fromUtf8(
+            "<b>🎉 旅程完成！</b> 你已探索全部 6 个阶段。<br>"
+            "%1").arg(dots);
+        progressLabel_->setStyleSheet(
+            "QLabel { background: #859900; color: white; border: none;"
+            "  border-radius: 4px; padding: 6px 8px; font-size: 12px; font-weight: bold; }");
+    } else {
+        html = QString::fromUtf8(
+            "<b>探索进度：%1 / %2</b> — 依次点击下方 6 个阶段按钮，全部访问后完成旅程。<br>"
+            "%3").arg(visited).arg(kTotalStages).arg(dots);
+        progressLabel_->setStyleSheet(
+            "QLabel { background: #EEE8D5; border: 1px solid #93A1A1;"
+            "  border-radius: 4px; padding: 6px 8px; font-size: 12px; }");
+    }
+    progressLabel_->setText(html);
 }
 
 QString CodeJourneyInfoPanel::buildJourneyHtml() const {
@@ -82,10 +145,10 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "<p>👆 这行代码最终输出 <b>7</b>。它是怎么变成 7 的？</p>"
         "<hr>"
 
-        "<h3 style='color: #FF9800;'>① 你写的代码（源码）</h3>"
+        "<h3 style='color: #CB4B16;'>① 你写的代码（源码）</h3>"
         "<p>编辑器中的纯文本。计算机还不理解这些字符的含义。</p>"
         "<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>"
-        "<p style='color: #888;'>👇 词法分析</p>"
+        "<p style='color: #657B83;'>👇 词法分析</p>"
         "<hr>"
 
         "<h3 style='color: %4;'>② Token 表（词法分析）</h3>"
@@ -104,7 +167,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "  9   | SEMICOLON | ;"
         "</pre>"
         "<p>💡 注释被分离出主流（不计入 Token 表）</p>"
-        "<p style='color: #888;'>👇 语法分析</p>"
+        "<p style='color: #657B83;'>👇 语法分析</p>"
         "<hr>"
 
         "<h3 style='color: %5;'>③ AST（语法分析）</h3>"
@@ -119,10 +182,10 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "</pre>"
         "<p>💡 注意 <b>*</b> 节点在 <b>+</b> 节点的下面——乘法优先级更高！</p>"
         "<p>括号改变结构：<code>(1+2)*3</code> 会变成 * 在根、+ 在左子树</p>"
-        "<p style='color: #888;'>👇 编译</p>"
+        "<p style='color: #657B83;'>👇 编译</p>"
         "<hr>"
 
-        "<h3 style='color: #00BCD4;'>④ IR（中间表示）</h3>"
+        "<h3 style='color: #2AA198;'>④ IR（中间表示）</h3>"
         "<p>AST 被转换为 IR（三地址码），便于优化：</p>"
         "<pre style='background: %1; padding: 8px; border-radius: 4px;'>"
         "function main:<br>"
@@ -135,10 +198,10 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "  RETURN"
         "</pre>"
         "<p>💡 IR 优化 pass 可在此阶段进行：常量折叠、DCE、复制传播等</p>"
-        "<p style='color: #888;'>👇 后端 lowering</p>"
+        "<p style='color: #657B83;'>👇 后端 lowering</p>"
         "<hr>"
 
-        "<h3 style='color: #795548;'>⑤ 字节码（虚拟机指令）</h3>"
+        "<h3 style='color: #657B83;'>⑤ 字节码（虚拟机指令）</h3>"
         "<p>IR 被翻译为栈式 VM 字节码：</p>"
         "<pre style='background: %1; padding: 8px; border-radius: 4px;'>"
         "StackVM 字节码:<br>"
@@ -150,7 +213,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "  OP_PRINT        ; pop 7 → 输出"
         "</pre>"
         "<p>💡 三后端一致性：Interpreter / StackVM / RegisterVM 三条路径都输出 7</p>"
-        "<p style='color: #888;'>👇 执行</p>"
+        "<p style='color: #657B83;'>👇 执行</p>"
         "<hr>"
 
         "<h3 style='color: %2;'>⑥ 输出结果</h3>"
@@ -167,14 +230,14 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
         "<li><b>后端 lowering</b>：IR → 字节码（VM 可执行）</li>"
         "<li><b>VM 执行</b>：字节码 → 结果（push/pop 或寄存器运算）</li>"
         "</ul>"
-        "<p style='color: #888; font-size: 11px;'>提示：点击底部按钮跳转到对应面板，亲手探索每个阶段！</p>"
+        "<p style='color: #657B83; font-size: 11px;'>提示：点击底部按钮跳转到对应面板，亲手探索每个阶段！</p>"
         "</body></html>"
     ).arg(surfaceHex, stage0Hex, stage2Hex, stage3Hex, stage4Hex);
 }
 
-void CodeJourneyInfoPanel::onJumpToEditor()   { emit jumpToPanelRequested("editor"); }
-void CodeJourneyInfoPanel::onJumpToTokens()   { emit jumpToPanelRequested("tokens"); }
-void CodeJourneyInfoPanel::onJumpToAst()      { emit jumpToPanelRequested("ast"); }
-void CodeJourneyInfoPanel::onJumpToIr()       { emit jumpToPanelRequested("ir"); }
-void CodeJourneyInfoPanel::onJumpToBytecode() { emit jumpToPanelRequested("bytecode"); }
-void CodeJourneyInfoPanel::onJumpToOutput()   { emit jumpToPanelRequested("output"); }
+void CodeJourneyInfoPanel::onJumpToEditor()   { markStageVisited("editor");   emit jumpToPanelRequested("editor"); }
+void CodeJourneyInfoPanel::onJumpToTokens()   { markStageVisited("tokens");   emit jumpToPanelRequested("tokens"); }
+void CodeJourneyInfoPanel::onJumpToAst()      { markStageVisited("ast");      emit jumpToPanelRequested("ast"); }
+void CodeJourneyInfoPanel::onJumpToIr()       { markStageVisited("ir");       emit jumpToPanelRequested("ir"); }
+void CodeJourneyInfoPanel::onJumpToBytecode() { markStageVisited("bytecode"); emit jumpToPanelRequested("bytecode"); }
+void CodeJourneyInfoPanel::onJumpToOutput()   { markStageVisited("output");   emit jumpToPanelRequested("output"); }

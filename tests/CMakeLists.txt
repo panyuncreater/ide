@@ -14,7 +14,7 @@ endif()
 
 # 支持独立构建（不通过父项目 add_subdirectory 时）
 if(NOT TARGET minilang_core)
-    cmake_minimum_required(VERSION 3.20)
+    cmake_minimum_required(VERSION 3.25)
     project(MiniLangTests CXX)
 
     set(CMAKE_CXX_STANDARD 20)
@@ -90,6 +90,8 @@ add_executable(minilang_tests
     TestNestedLvalueProbe.cpp
     TestMethodCallProbe.cpp
     TestThreeEnginesConsistency.cpp
+    # OPT-2: 三后端随机程序差分回归测试（模板化生成 + 固定种子可复现）
+    TestThreeEnginesFuzz.cpp
     TestLexerParserAudit.cpp
     TestCompilerAudit.cpp
     TestCompilerIRIsolationAudit.cpp
@@ -102,6 +104,8 @@ add_executable(minilang_tests
     TestTeachingPanelsAudit3.cpp
     TestTeachingPanelsAudit4.cpp
     TestTeachingPanelsAudit5.cpp
+    # N5 fix: PanelCatalog + TeachingTreePanel navigation audit
+    TestTeachingTreePanel.cpp
     TestAuditBatch1.cpp
     TestAuditBatch2.cpp
     TestAuditBatch3.cpp
@@ -123,6 +127,10 @@ add_executable(minilang_tests
     ${MINILANG_ROOT_DIR}/gui/BytecodeTracePanel.cpp
     # 第二档 P1-2：BreakpointConditionLibrary
     ${MINILANG_ROOT_DIR}/gui/BreakpointConditionPanel.cpp
+    # 新手引导组件——5 个面板的 createGuidedTour 方法调用 GuidedTour::addStep /
+    # GuidedTour 构造函数，需加入测试目标以解析符号。依赖 Qt6::Widgets（QFrame/
+    # QLabel/QPushButton），不依赖 IdeController / 引擎层。
+    ${MINILANG_ROOT_DIR}/gui/GuidedTour.cpp
     # 第三档 P2-3：ExceptionFlowLibrary/ClosureInspectorLibrary
     ${MINILANG_ROOT_DIR}/gui/ExceptionFlowPanel.cpp
     ${MINILANG_ROOT_DIR}/gui/ClosureInspectorPanel.cpp
@@ -145,6 +153,8 @@ add_executable(minilang_tests
     # 仅依赖标准库（std::string / std::vector），不依赖 Qt Widgets / IdeController，
     # 可安全加入测试目标。TokenPuzzlePanel.cpp 依赖 Qt6::Widgets，不加入。
     ${MINILANG_ROOT_DIR}/gui/TokenPuzzleData.cpp
+    # N5 fix: PanelCatalog.cpp for TeachingTreePanel audit tests
+    ${MINILANG_ROOT_DIR}/gui/PanelCatalog.cpp
     # 功能 4：AST 节点搭建玩具——AstToyLevels.cpp 为独立编译单元（仅依赖
     # Qt6::Core / 标准库），不依赖 IdeController / Qt6::Widgets，可安全加入测试目标。
     # AstBuilderToyPanel.cpp 依赖 Qt6::Widgets（QTreeWidget / QComboBox / QInputDialog 等），不加入。
@@ -199,12 +209,11 @@ target_include_directories(minilang_tests PRIVATE
 target_link_libraries(minilang_tests PRIVATE QFluent)
 
 # 部署 QFluent 动态库到测试 exe 同目录（QFluent 为 SHARED 库，运行时需 DLL）
-add_custom_command(TARGET minilang_tests POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:QFluent>"
-            "$<TARGET_FILE_DIR:minilang_tests>"
-    COMMENT "Deploying QFluent runtime for minilang_tests..."
-)
+# 复用共享模块 cmake/deploy_qfluent.cmake（与根 CMakeLists 一致，修复审计问题 7）。
+if(NOT COMMAND minilang_deploy_qfluent_runtime)
+    include(${MINILANG_ROOT_DIR}/cmake/deploy_qfluent.cmake)
+endif()
+minilang_deploy_qfluent_runtime(minilang_tests)
 
 if(MSVC)
     # AUDIT-P0 fix: 测试二进制栈扩至 8MB。Debug 模式下递归下降解析器的

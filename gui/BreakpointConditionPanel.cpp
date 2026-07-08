@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "gui/BreakpointConditionPanel.h"
+#include "gui/GuidedTour.h"
 #include "app/IdeController.h"
 #include "gui/PanelAnimator.h"
 
@@ -46,7 +47,7 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
             "🔴 最基础的条件断点形式。当循环变量 i 等于 50 时暂停。"
             "条件在断点行命中时求值一次，结果为 truthy（非 0 / 非 null / 非 false）时暂停。",
             "循环执行到第 50 次迭代时暂停，其余迭代继续执行（不暂停）",
-            "var i = 0;\nwhile (i < 100) {\n    i = i + 1;\n}\nprint i;"
+            "var i = 0;\nwhile (i < 100) {\n    i = i + 1;\n}\nprint(i);"
         },
         {
             "modular-trigger",
@@ -55,7 +56,7 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
             "🎯 每隔 100 次迭代暂停一次。常用于在大循环中观察周期性状态，"
             "避免每次迭代都暂停导致调试效率低下。",
             "i = 0, 100, 200, 300... 时暂停，共触发 10 次（假设循环 1000 次）",
-            "var i = 0;\nwhile (i < 1000) {\n    i = i + 1;\n}\nprint i;"
+            "var i = 0;\nwhile (i < 1000) {\n    i = i + 1;\n}\nprint(i);"
         },
         {
             "string-equality",
@@ -64,7 +65,7 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
             "🎯 字符串相等比较。MiniLang 字符串相等基于值比较（非引用），"
             "条件断点在沙箱中求值时使用 Interpreter 的 EQ 实现。",
             "当变量 s 等于 \"target\" 时暂停",
-            "var s = \"\";\nvar i = 0;\nwhile (i < 100) {\n    if (i == 50) s = \"target\";\n    i = i + 1;\n}\nprint s;"
+            "var s = \"\";\nvar i = 0;\nwhile (i < 100) {\n    if (i == 50) s = \"target\";\n    i = i + 1;\n}\nprint(s);"
         },
         {
             "null-check",
@@ -73,7 +74,7 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
             "🔴 null 检查条件断点。常用于排查变量未初始化导致的运行时错误。"
             "MiniLang 中 null 是一等值，可与任何变量比较。",
             "当 x 为 null 时暂停（如未初始化或显式赋值为 null）",
-            "var x = null;\nvar i = 0;\nwhile (i < 10) {\n    if (i == 5) x = 42;\n    i = i + 1;\n}\nprint x;"
+            "var x = null;\nvar i = 0;\nwhile (i < 10) {\n    if (i == 5) x = 42;\n    i = i + 1;\n}\nprint(x);"
         },
         {
             "compound-condition",
@@ -82,7 +83,7 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
             "⚙️ 复合布尔表达式条件断点。MiniLang 的 and/or 短路求值（返回操作数原值而非布尔），"
             "条件断点求值时遵循相同语义：a > 0 为 falsy 时不会求值 b < 100。",
             "当 a > 0 且 b < 100 同时成立时暂停",
-            "var a = 5;\nvar b = 50;\nvar i = 0;\nwhile (i < 100) {\n    b = b + 1;\n    i = i + 1;\n}\nprint a + b;"
+            "var a = 5;\nvar b = 50;\nvar i = 0;\nwhile (i < 100) {\n    b = b + 1;\n    i = i + 1;\n}\nprint(a + b);"
         },
         {
             "boolean-shortcut",
@@ -91,26 +92,27 @@ const std::vector<BreakpointScenario>& BreakpointConditionLibrary::scenarios() {
             "⚙️ 利用 and 短路特性。当 x 为 truthy 时才会求值 y > 0。"
             "条件断点求值时若 x 为 falsy，整个表达式直接返回 x（短路），不计算 y。",
             "当 x truthy 且 y > 0 时暂停",
-            "var x = 1;\nvar y = 10;\nvar i = 0;\nwhile (i < 100) {\n    if (i == 50) x = 0;\n    i = i + 1;\n}\nprint x && y;"
+            "var x = 1;\nvar y = 10;\nvar i = 0;\nwhile (i < 100) {\n    if (i == 50) x = 0;\n    i = i + 1;\n}\nprint(x && y);"
         },
         {
             "method-call-condition",
             "🎯 方法调用条件（this.value > 100）",
             "this.value > 100",
             "🎯 在方法内部设置条件断点，访问 this 的字段。"
-            "条件求值时通过 boundInstance_ 缓存访问实例字段，与正常运行时语义一致。",
+            "条件求值时通过 boundInstance_ 缓存访问实例字段，与正常运行时语义一致。"
+            "MiniLang 类构造使用 ClassName(args) 语法（非 .new()）。",
             "当方法被调用且 this.value > 100 时暂停",
-            "class Counter {\n    var value;\n    fun new() { value = 0; }\n    fun inc() { value = value + 1; }\n}\nvar c = Counter.new();\nvar i = 0;\nwhile (i < 200) {\n    c.inc();\n    i = i + 1;\n}\nprint c.value;"
+            "class Counter {\n    var value;\n    fun new() { value = 0; }\n    fun inc() { value = value + 1; }\n}\nvar c = Counter();\nvar i = 0;\nwhile (i < 200) {\n    c.inc();\n    i = i + 1;\n}\nprint(c.value);"
         },
         {
             "exception-condition",
-            "🛑 异常对象检查（e.message == \"expected\")",
-            "e.message == \"expected\"",
-            "🛑 在 catch 块中设置条件断点，检查异常对象字段。"
-            "MiniLang 异常通过 InstanceData 表示，字段访问通过 OP_GET_FIELD 完成，"
-            "条件断点求值时与正常运行时路径一致。",
-            "当 catch 块捕获异常且异常 message 字段等于 \"expected\" 时暂停",
-            "fun risky(n) {\n    if (n < 0) throw \"invalid\";\n    if (n > 100) throw \"expected\";\n    return n;\n}\nvar i = 0;\nwhile (i < 200) {\n    try {\n        risky(i);\n    } catch (e) {\n        print e;\n    }\n    i = i + 1;\n}\nprint \"done\";"
+            "🛑 异常值检查（e == \"expected\")",
+            "e == \"expected\"",
+            "🛑 在 catch 块中设置条件断点，检查捕获的异常值。"
+            "MiniLang 的 throw 可抛出任意值（字符串/数字/对象），catch 变量绑定该值，"
+            "条件断点求值时直接比较该值，与正常运行时路径一致。",
+            "当 catch 块捕获异常且异常值等于 \"expected\" 时暂停",
+            "fun risky(n) {\n    if (n < 0) throw \"invalid\";\n    if (n > 100) throw \"expected\";\n    return n;\n}\nvar i = 0;\nwhile (i < 200) {\n    try {\n        risky(i);\n    } catch (e) {\n        print(e);\n    }\n    i = i + 1;\n}\nprint(\"done\");"
         },
     };
     return kScenarios;
@@ -154,14 +156,14 @@ BreakpointConditionPanel::BreakpointConditionPanel(QWidget* parent)
         stack_->setCurrentIndex(0);
         pageLiveBtn_->setChecked(true);
         pageLibraryBtn_->setChecked(false);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
         refreshLive();
     });
     connect(pageLibraryBtn_, &QPushButton::clicked, this, [this]() {
         stack_->setCurrentIndex(1);
         pageLiveBtn_->setChecked(false);
         pageLibraryBtn_->setChecked(true);
-        PanelAnimator::fadeInWidget(stack_->currentWidget());
+        PanelAnimator::slideInWidget(stack_->currentWidget());
     });
 
     // 填充教学场景列表
@@ -171,11 +173,12 @@ BreakpointConditionPanel::BreakpointConditionPanel(QWidget* parent)
     }
     if (!items.empty()) scenarioList_->setCurrentRow(0);
 
-    // 创建实时断点列表轮询定时器（500ms）
+    // OPT-1: 实时断点列表轮询定时器降频 500ms→2000ms。断点变化/步进/暂停由
+    // vmStateChanged 监听器（见 setController）即时触发 refreshLive，QTimer 仅作安全网。
     // 注：不在构造时自动启动，改为在 showEvent 中启动 / hideEvent 中停止
     // 避免 dock 隐藏时 QTimer 永久空转浪费 CPU（修复卡顿问题）
     refreshTimer_ = new QTimer(this);
-    refreshTimer_->setInterval(500);
+    refreshTimer_->setInterval(2000);
     connect(refreshTimer_, &QTimer::timeout, this, &BreakpointConditionPanel::refreshLive);
     // refreshTimer_->start() 移至 showEvent
 
@@ -206,6 +209,14 @@ void BreakpointConditionPanel::hideEvent(QHideEvent* event) {
     }
 }
 
+void BreakpointConditionPanel::setController(IdeController* controller) {
+    if (controller_ == controller) return;
+    controller_ = controller;
+    if (controller_) {
+        controller_->addVmStateChangedListener([this] { onVmStateChanged(); });
+    }
+}
+
 void BreakpointConditionPanel::buildLivePage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -232,6 +243,7 @@ void BreakpointConditionPanel::buildLivePage(QWidget* host) {
 void BreakpointConditionPanel::buildLibraryPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(4);
     auto* splitter = new QSplitter(Qt::Horizontal, host);
     scenarioList_ = new QListWidget(host);
     scenarioDetail_ = new QTextBrowser(host);
@@ -240,7 +252,17 @@ void BreakpointConditionPanel::buildLibraryPage(QWidget* host) {
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 2);
     splitter->setSizes({200, 400});
-    layout->addWidget(splitter);
+    layout->addWidget(splitter, 1);
+
+    // 加载示例代码按钮：将当前场景的 sampleCode 加载到编辑器
+    loadSampleBtn_ = new QPushButton(QString::fromUtf8("加载示例代码到编辑器"), host);
+    loadSampleBtn_->setFixedHeight(28);
+    layout->addWidget(loadSampleBtn_);
+    connect(loadSampleBtn_, &QPushButton::clicked, this, [this]() {
+        if (!currentSampleCode_.empty()) {
+            emit loadSampleRequested(QString::fromUtf8(currentSampleCode_.c_str()));
+        }
+    });
 
     connect(scenarioList_, &QListWidget::currentRowChanged,
             this, &BreakpointConditionPanel::populateScenarioDetail);
@@ -297,8 +319,12 @@ void BreakpointConditionPanel::refreshLive() {
 
 void BreakpointConditionPanel::populateScenarioDetail(int index) {
     const auto& items = BreakpointConditionLibrary::scenarios();
-    if (index < 0 || index >= (int)items.size()) return;
+    if (index < 0 || index >= (int)items.size()) {
+        currentSampleCode_.clear();
+        return;
+    }
     const auto& s = items[index];
+    currentSampleCode_ = s.sampleCode;  // 保存当前示例代码供加载按钮使用
 
     // 散文式字段（description）走 Markdown 渲染，支持 **粗体** / `code` / 列表
     QString descFragment = MarkdownRenderer::markdownToHtmlFragment(s.description);
@@ -313,5 +339,41 @@ void BreakpointConditionPanel::populateScenarioDetail(int index) {
     os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()
        << "; padding:8px; font-family:Consolas;'>" << s.sampleCode << "</pre>";
     scenarioDetail_->setHtml(QString::fromUtf8(os.str().c_str()));
-    PanelAnimator::fadeInWidget(scenarioDetail_);
+    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
+}
+
+// ============================================================
+// createGuidedTour — 新手引导（5 步）
+// ============================================================
+
+GuidedTour* BreakpointConditionPanel::createGuidedTour(QWidget* host) {
+    auto* tour = new GuidedTour(host, host);
+    // 注：只高亮「始终可见」的页切换按钮，概念性步骤用 nullptr（居中气泡）+ 示例代码。
+    // 不高亮 breakpointTable_/loadSampleBtn_ 等位于 QStackedWidget 某一页的控件，
+    // 避免目标页未显示时 mapTo 返回错误坐标导致气泡定位混乱。
+    tour->addStep(pageLiveBtn_,
+                  QString::fromUtf8("实时断点"),
+                  QString::fromUtf8("「实时断点」页在调试时显示所有断点的条件 / 命中次数 / 状态。"
+                                    "每行一个断点，可查看行号 / 条件表达式 / 启用状态。"));
+    tour->addStep(nullptr,
+                  QString::fromUtf8("示例代码：条件断点"),
+                  QString::fromUtf8(
+                      "<p>将以下代码粘贴到编辑器，在 print 行设条件断点观察命中：</p>"
+                      "<pre style='background:#EEE8D5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
+                      "for (var i = 0; i < 100; i = i + 1) {\n"
+                      "    if (i % 10 == 0) {\n"
+                      "        print i;\n"
+                      "    }\n"
+                      "}\n"
+                      "</pre>"
+                      "<p>在编辑器行号区点击设置断点，右键可编辑条件（如 i==50 或 i%100==0），"
+                      "按 F5 调试观察条件命中行为。</p>"));
+    tour->addStep(pageLibraryBtn_,
+                  QString::fromUtf8("教学场景库"),
+                  QString::fromUtf8("点击「教学场景库」切换到静态教学页，查看 i==50 / i%100==0 等条件断点示例。"));
+    tour->addStep(nullptr,
+                  QString::fromUtf8("开始实验"),
+                  QString::fromUtf8("切换到教学场景库后，选中场景，点击「加载示例」载入编辑器，"
+                                    "按 F5 调试，在编辑器行号区点击设置断点，观察命中行为。"));
+    return tour;
 }

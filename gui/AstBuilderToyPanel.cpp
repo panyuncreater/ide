@@ -16,6 +16,11 @@
 
 #include "gui/AstBuilderToyPanel.h"
 #include "gui/I18n.h"
+#include "gui/LearnerProgress.h"  // P0-2 fix (F7): 关卡完成状态持久化
+// P1-3 fix (F14): 引入真实 Lexer + Parser 用于对照验证
+#include "lexer/Lexer.h"
+#include "parser/Parser.h"
+#include "ast/ASTNode.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -29,6 +34,9 @@
 #include <QKeySequence>
 #include <QMessageBox>
 #include <QHeaderView>
+#include <QStyle>  // style()->polish() / unpolish() 用于 QSS 动态属性刷新
+#include <sstream>
+#include <functional>
 #include <algorithm>
 
 #include "PushButton.h"   // QFluentKit（PrimaryPushButton）
@@ -44,10 +52,36 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     mainLayout->setContentsMargins(4, 4, 4, 4);
     mainLayout->setSpacing(4);
 
+    // ---- 关卡芯片栏（独立一行，放在 QComboBox 上方）----
+    // 提升关卡切换控件的视觉识别度和可操作性，与下方 levelCombo_ 双向同步
+    auto* chipRow = new QHBoxLayout;
+    chipRow->setContentsMargins(0, 0, 0, 0);
+    chipRow->setSpacing(6);
+    {
+        const auto& chipLevels = AstToyLibrary::levels();
+        for (int i = 0; i < (int)chipLevels.size(); ++i) {
+            auto* chip = new QPushButton(this);
+            chip->setObjectName("levelChip");
+            chip->setFixedSize(48, 32);
+            // 芯片点击 → 同步到 QComboBox（触发 onLevelChanged → loadLevel → refreshLevelChips）
+            const int chipIndex = i;
+            connect(chip, &QPushButton::clicked, this, [this, chipIndex]() {
+                if (chipIndex >= 0 && chipIndex < levelCombo_->count()) {
+                    levelCombo_->setCurrentIndex(chipIndex);
+                }
+            });
+            levelChips_.append(chip);
+            chipRow->addWidget(chip);
+        }
+        chipRow->addStretch();
+    }
+    mainLayout->addLayout(chipRow);
+
     // ---- 顶部：题目选择 + 进度 ----
     auto* topBar = new QHBoxLayout;
     topBar->addWidget(new QLabel(mlTr("题目：")), 0);
     levelCombo_ = new QComboBox(this);
+    levelCombo_->setObjectName("levelCombo");  // QSS 选择器匹配
     const auto& ls = AstToyLibrary::levels();
     for (const auto& lv : ls) {
         QString text = QString::fromUtf8("L%1 (%2) — %3")
@@ -62,6 +96,22 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     topBar->addWidget(levelCombo_, 1);
     topBar->addWidget(progressLabel_);
     mainLayout->addLayout(topBar);
+
+    // ---- Solarized 风格 QSS（QComboBox + 关卡芯片按钮）----
+    // 所有题目均解锁（无解锁机制），芯片仅区分 current / unlocked
+    // 动态属性 [current='true'] 在 refreshLevelChips() 中通过 setProperty + polish() 触发
+    setStyleSheet(QString::fromUtf8(
+        "QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
+        "border-radius: 4px; padding: 4px 8px; }"
+        "QComboBox#levelCombo:hover { border-color: #268BD2; }"
+        "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+        "border-radius: 4px; font-size: 11px; }"
+        "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
+        "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
+        "border-color: #1E6FA3; font-weight: bold; }"
+        "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+        "border-color: #CCC; }"
+    ));
 
     // ---- 主体：左工具箱 + 右画布 ----
     auto* splitter = new QSplitter(Qt::Horizontal, this);
@@ -117,11 +167,15 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     nextBtn_   = new QPushButton(mlTr("➡ 下一题"), this);
     clearBtn_  = new QPushButton(mlTr("🔄 清空"), this);
     deleteBtn_ = new QPushButton(mlTr("🗑 删除选中节点"), this);
+    verifyBtn_ = new QPushButton(mlTr("🛠 用真实 Parser 验证"), this);  // P1-3 fix
+    verifyBtn_->setToolTip(mlTr("调用真实 Lexer + Parser 解析目标表达式，"
+                                 "把生成的 AST 树显示在反馈区供对照"));
     bottomBar->addWidget(checkBtn_);
     bottomBar->addWidget(answerBtn_);
     bottomBar->addWidget(nextBtn_);
     bottomBar->addWidget(deleteBtn_);
     bottomBar->addWidget(clearBtn_);
+    bottomBar->addWidget(verifyBtn_);
     bottomBar->addStretch(1);
     mainLayout->addLayout(bottomBar);
 
@@ -146,6 +200,7 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     connect(nextBtn_,    &QPushButton::clicked, this, &AstBuilderToyPanel::onNext);
     connect(clearBtn_,   &QPushButton::clicked, this, &AstBuilderToyPanel::onClear);
     connect(deleteBtn_,  &QPushButton::clicked, this, &AstBuilderToyPanel::onDeleteSelected);
+    connect(verifyBtn_,  &QPushButton::clicked, this, &AstBuilderToyPanel::onVerifyWithRealParser);
     connect(tree_,       &QTreeWidget::currentItemChanged,
             this, &AstBuilderToyPanel::onTreeItemChanged);
 
@@ -162,6 +217,19 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent)
     if (!ls.empty()) {
         loadLevel(0);
     }
+
+    // P0-2 fix (F7): 从持久化存储加载已完成的关卡列表
+    // 关卡 ID 格式为 "ast-toy-level-N"（N=1..6），stars >= 0 表示已完成
+    {
+        auto& store = LearnerProgressStore::instance();
+        for (const auto& lv : ls) {
+            std::string id = "ast-toy-level-" + std::to_string(lv.level);
+            if (store.getLevelStars(id) >= 0) {
+                completedLevels_.push_back(lv.level);
+            }
+        }
+    }
+
     refreshProgress();
 }
 
@@ -193,6 +261,7 @@ void AstBuilderToyPanel::loadLevel(int index) {
         .arg(QString::fromUtf8(lv.hint.c_str()));
     descLabel_->setText(desc);
     refreshProgress();
+    refreshLevelChips();  // 同步芯片栏状态（current 高亮）
 }
 
 void AstBuilderToyPanel::refreshProgress() {
@@ -331,8 +400,152 @@ void AstBuilderToyPanel::markCurrentCompleted() {
         completedLevels_.push_back(lvl);
         refreshProgress();
     }
+    // P0-2 fix (F7): 持久化关卡完成状态（AST 玩具无星级评分，统一记 3 星）
+    std::string id = "ast-toy-level-" + std::to_string(lvl);
+    LearnerProgressStore::instance().markLevelStars(id, 3);
+    LearnerProgressStore::instance().save();
     QString levelId = QString::fromUtf8("ast-toy-level-%1").arg(lvl);
     emit activityCompleted(levelId);
+    refreshLevelChips();  // 完成后刷新芯片（显示已完成标记）
+}
+
+// ============================================================
+// 关卡芯片栏状态刷新
+// ------------------------------------------------------------
+// 所有题目均解锁（无解锁机制），芯片仅区分 current / unlocked
+// 已完成的题目在芯片上显示 ⭐ 标记
+// dynamic property 改变后必须 style()->polish() 才能让 QSS 重新评估
+// ============================================================
+
+void AstBuilderToyPanel::refreshLevelChips() {
+    const auto& levels = AstToyLibrary::levels();
+    for (int i = 0; i < levelChips_.size(); ++i) {
+        QPushButton* chip = levelChips_[i];
+        if (!chip) continue;
+
+        bool isCurrent = (i == currentIndex_);
+        bool isCompleted = false;
+        if (i < (int)levels.size()) {
+            int lvl = levels[i].level;
+            isCompleted = std::find(completedLevels_.begin(),
+                                    completedLevels_.end(), lvl) != completedLevels_.end();
+        }
+
+        // 本面板所有题目均解锁，locked 恒为 false
+        chip->setProperty("locked", false);
+        chip->setProperty("current", isCurrent);
+        chip->setEnabled(true);
+
+        // 文本：当前选中且已完成显示关卡号+⭐；其余显示关卡号
+        QString text;
+        if (isCurrent && isCompleted) {
+            // ⭐ = U+2B50 = UTF-8: E2 AD 90
+            text = QString::fromUtf8("%1 \xE2\xAD\x90").arg(i + 1);
+        } else {
+            text = QString::number(i + 1);
+        }
+        chip->setText(text);
+
+        // 工具提示：显示题目编号、目标表达式和教学点
+        if (i < (int)levels.size()) {
+            const auto& lv = levels[i];
+            QString tip = mlTr("题目 %1").arg(lv.level);
+            tip += "\n" + mlTr("目标：") + QString::fromUtf8(lv.targetExpression.c_str());
+            if (!lv.teachingPoint.empty()) {
+                tip += "\n" + mlTr("教学点：") + QString::fromUtf8(lv.teachingPoint.c_str());
+            }
+            if (isCompleted) {
+                tip += "\n" + mlTr("已完成");
+            }
+            chip->setToolTip(tip);
+        }
+
+        // 强制 QSS 重新评估 dynamic property 选择器
+        chip->style()->unpolish(chip);
+        chip->style()->polish(chip);
+    }
+}
+
+// ============================================================
+// P1-3 fix (F14): 用真实 Lexer + Parser 验证
+// 解析 targetExpression，把真实 AST 树 dump 到 feedback 区
+// 供学员对比"自己搭建的树"与"真实编译器生成的树"
+// ============================================================
+void AstBuilderToyPanel::onVerifyWithRealParser() {
+    const auto& ls = AstToyLibrary::levels();
+    if (currentIndex_ < 0 || currentIndex_ >= (int)ls.size()) {
+        feedback_->setText(mlTr("❌ 无有效题目"));
+        return;
+    }
+    const auto& lvl = ls[currentIndex_];
+    // 包装成完整语句：纯表达式加 var __toy_tmp = 前缀，已是语句的保持原样
+    std::string expr = lvl.targetExpression;
+    std::string source;
+    if (expr.empty()) {
+        feedback_->setText(mlTr("❌ 目标表达式为空"));
+        return;
+    }
+    // 检测是否已是完整语句（含 ; 或 var/print 关键字开头）
+    bool isStatement = (expr.back() == ';') ||
+                       expr.find("var ") == 0 ||
+                       expr.find("print(") == 0;
+    if (isStatement) {
+        source = expr;
+        if (source.back() != ';') source += ";";
+    } else {
+        // 包装成 var __toy_tmp = <expr>; 让 Parser 接受
+        source = "var __toy_tmp = " + expr + ";";
+    }
+
+    // 调用真实 Lexer + Parser
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    if (lexer.getDiagnostics().hasErrors()) {
+        std::string errs;
+        for (const auto& d : lexer.getDiagnostics().all()) {
+            if (d.isError()) errs += d.format() + "\n";
+        }
+        feedback_->setText(QString::fromUtf8("❌ ") + mlTr("词法错误：\n") +
+            QString::fromUtf8(errs.c_str()));
+        return;
+    }
+
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    if (parser.hasErrors()) {
+        std::string errs;
+        for (const auto& d : parser.getDiagnostics().all()) {
+            if (d.isError()) errs += d.format() + "\n";
+        }
+        feedback_->setText(QString::fromUtf8("❌ ") + mlTr("解析错误：\n") +
+            QString::fromUtf8(errs.c_str()));
+        return;
+    }
+    if (!ast) {
+        feedback_->setText(mlTr("❌ Parser 返回空 AST"));
+        return;
+    }
+
+    // dump AST 树形结构（复用 PipelineViewer 的 dumpAst 思路）
+    std::ostringstream os;
+    os << "🛠 " << mlTr("真实 Parser 生成的 AST：").toStdString() << "\n";
+    os << "源码: " << source << "\n";
+    os << "--- AST 树形结构 ---\n";
+    // 递归 dump
+    std::function<void(ASTNode*, int)> dumpRec = [&](ASTNode* node, int depth) {
+        if (!node) return;
+        for (int i = 0; i < depth; ++i) os << "  ";
+        os << node->nodeName();
+        if (node->line > 0) os << "  [line " << node->line << "]";
+        os << "\n";
+        for (auto* child : node->children()) {
+            dumpRec(child, depth + 1);
+        }
+    };
+    dumpRec(ast.get(), 0);
+    os << "\n💡 " << mlTr("对比你搭建的树与上方真实 AST，理解优先级与括号如何"
+                          "影响树形结构").toStdString();
+    feedback_->setText(QString::fromUtf8(os.str().c_str()));
 }
 
 // ============================================================

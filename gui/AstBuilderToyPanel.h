@@ -44,6 +44,7 @@
 #pragma once
 
 #include "gui/AstToyLevels.h"
+#include "gui/I18n.h"  // mlTr() 国际化（头文件内联使用）
 
 #include <QWidget>
 #include <QTreeWidget>
@@ -51,12 +52,19 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QList>
 #include <vector>
+
+class IdeController;  // P1-3 fix (F14): 前向声明，setController 占位接口
 
 class AstBuilderToyPanel : public QWidget {
     Q_OBJECT
 public:
     explicit AstBuilderToyPanel(QWidget* parent = nullptr);
+
+    /// P1-3 fix (F14): 绑定 IdeController（当前保留扩展点，未来可调用真实引擎）
+    /// 当前 onVerifyWithRealParser 直接调用 Lexer + Parser，不依赖 controller_
+    void setController(IdeController* /*controller*/) {}
 
 signals:
     /// 完成某题（检查通过）时发射，levelId 格式 "ast-toy-level-N"
@@ -77,11 +85,16 @@ private slots:
     void onClear();
     void onDeleteSelected();
     void onTreeItemChanged(QTreeWidgetItem* current);
+    /// P1-3 fix (F14): 用真实 Lexer + Parser 解析 targetExpression，
+    /// 把生成的 AST 树 dump 到 feedback 区，供学员对比"自己搭建的树"
+    /// 与"真实编译器生成的树"。
+    void onVerifyWithRealParser();
 
 private:
     // 顶部
     QComboBox* levelCombo_    = nullptr;
     QLabel*    progressLabel_ = nullptr;
+    QList<QPushButton*> levelChips_;  // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
 
     // 主体
     QTreeWidget* tree_ = nullptr;
@@ -101,6 +114,7 @@ private:
     QPushButton* nextBtn_    = nullptr;
     QPushButton* clearBtn_   = nullptr;
     QPushButton* deleteBtn_  = nullptr;
+    QPushButton* verifyBtn_  = nullptr;  ///< P1-3 fix: 用真实 Parser 验证
     QLabel*      feedback_   = nullptr;
     QLabel*      descLabel_  = nullptr;
 
@@ -139,4 +153,7 @@ private:
 
     /// 标记当前题目完成（加入 completedLevels_ + 发射信号）
     void markCurrentCompleted();
+
+    /// 刷新关卡芯片按钮栏的状态（current 高亮等，所有题目均解锁）
+    void refreshLevelChips();
 };

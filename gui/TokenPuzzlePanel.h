@@ -53,6 +53,7 @@ private:
     QComboBox* levelCombo_   = nullptr;
     QLabel*    scoreLabel_   = nullptr;
     QLabel*    progressLabel_ = nullptr;
+    QList<QPushButton*> levelChips_;  // 关卡芯片按钮栏（与 levelCombo_ 双向同步）
 
     // 中部
     QLabel*    targetCodeLabel_   = nullptr;
@@ -86,4 +87,7 @@ private:
     void unlockNextLevel();
     void updateScoreDisplay();
     void setFeedback(const QString& text, bool isError = false);
+
+    /// 刷新关卡芯片按钮栏的状态（locked / current / unlocked）
+    void refreshLevelChips();
 };
