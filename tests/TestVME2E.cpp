@@ -41,6 +41,7 @@
 #include <vector>
 #include <unordered_map>
 #include <set>
+#include <stdexcept>
 
 // ============================================================
 // 辅助：执行源码并捕获 VM 的 print 输出
@@ -2434,10 +2435,15 @@ static std::string runVMWithModules(
     Compiler compiler;
     compiler.setModuleLoader([&](const std::string& path) -> std::string {
         auto it = modules.find(path);
-        if (it == modules.end()) return "";
+        if (it == modules.end()) throw std::runtime_error("module not found: " + path);
         return it->second;
     });
-    CompileResult result = compiler.compile(*ast);
+    CompileResult result;
+    try {
+        result = compiler.compile(*ast);
+    } catch (const std::exception& e) {
+        return "<compile:" + std::string(e.what()) + ">";
+    }
     if (compiler.getDiagnostics().hasErrors()) {
         return "<compile:" + compiler.getLastError() + ">";
     }
@@ -2465,10 +2471,14 @@ static bool runVMWithModulesCompileError(
     Compiler compiler;
     compiler.setModuleLoader([&](const std::string& path) -> std::string {
         auto it = modules.find(path);
-        if (it == modules.end()) return "";
+        if (it == modules.end()) throw std::runtime_error("module not found: " + path);
         return it->second;
     });
-    compiler.compile(*ast);
+    try {
+        compiler.compile(*ast);
+    } catch (const std::exception&) {
+        return true;  // loader 抛异常视为编译失败
+    }
     return compiler.getDiagnostics().hasErrors();
 }
 
@@ -2716,10 +2726,15 @@ static std::string runVMWithModulesIR(
     compiler.setUseIR(true);
     compiler.setModuleLoader([&](const std::string& path) -> std::string {
         auto it = modules.find(path);
-        if (it == modules.end()) return "";
+        if (it == modules.end()) throw std::runtime_error("module not found: " + path);
         return it->second;
     });
-    CompileResult result = compiler.compile(*ast);
+    CompileResult result;
+    try {
+        result = compiler.compile(*ast);
+    } catch (const std::exception& e) {
+        return "<compile:" + std::string(e.what()) + ">";
+    }
     if (compiler.getDiagnostics().hasErrors()) {
         return "<compile:" + compiler.getLastError() + ">";
     }
@@ -2749,10 +2764,14 @@ static std::string runVMWithModulesReg(
     compiler.setUseRegisterVM(true);
     compiler.setModuleLoader([&](const std::string& path) -> std::string {
         auto it = modules.find(path);
-        if (it == modules.end()) return "";
+        if (it == modules.end()) throw std::runtime_error("module not found: " + path);
         return it->second;
     });
-    compiler.compile(*ast);
+    try {
+        compiler.compile(*ast);
+    } catch (const std::exception& e) {
+        return "<compile:" + std::string(e.what()) + ">";
+    }
     if (compiler.getDiagnostics().hasErrors()) {
         return "<compile:" + compiler.getLastError() + ">";
     }

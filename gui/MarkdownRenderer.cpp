@@ -27,9 +27,9 @@
 
 #include "gui/MarkdownRenderer.h"
 
+#include <QStringList>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
-#include <QStringList>
 
 namespace MarkdownRenderer {
 
@@ -56,14 +56,15 @@ static const QRegularExpression kReTableRow(QStringLiteral("^\\|(.+)\\|$"));
 // P2-2 fix (F4): MiniLang 语法高亮正则
 // 关键字列表（与 lexer/Keywords.cpp 保持一致，按字母序，便于审阅）
 static const QStringList kMiniLangKeywords = {
-    QStringLiteral("var"),     QStringLiteral("const"),    QStringLiteral("fun"),    QStringLiteral("return"),
-    QStringLiteral("if"),      QStringLiteral("else"),     QStringLiteral("while"),  QStringLiteral("for"),
-    QStringLiteral("break"),   QStringLiteral("continue"), QStringLiteral("true"),   QStringLiteral("false"),
-    QStringLiteral("null"),    QStringLiteral("and"),      QStringLiteral("or"),     QStringLiteral("not"),
-    QStringLiteral("print"),   QStringLiteral("input"),    QStringLiteral("class"),  QStringLiteral("super"),
-    QStringLiteral("this"),    QStringLiteral("init"),     QStringLiteral("try"),    QStringLiteral("catch"),
-    QStringLiteral("finally"), QStringLiteral("throw"),    QStringLiteral("import"), QStringLiteral("export"),
-    QStringLiteral("as"),      QStringLiteral("in"),       QStringLiteral("is")};
+    QStringLiteral("var"), QStringLiteral("const"), QStringLiteral("fun"), QStringLiteral("return"),
+    QStringLiteral("if"), QStringLiteral("else"), QStringLiteral("while"), QStringLiteral("for"),
+    QStringLiteral("break"), QStringLiteral("continue"), QStringLiteral("true"), QStringLiteral("false"),
+    QStringLiteral("null"), QStringLiteral("and"), QStringLiteral("or"), QStringLiteral("not"),
+    QStringLiteral("print"), QStringLiteral("input"), QStringLiteral("class"), QStringLiteral("super"),
+    QStringLiteral("this"), QStringLiteral("init"), QStringLiteral("try"), QStringLiteral("catch"),
+    QStringLiteral("finally"), QStringLiteral("throw"), QStringLiteral("import"), QStringLiteral("export"),
+    QStringLiteral("as"), QStringLiteral("in"), QStringLiteral("is")
+};
 // 字符串字面量："..." 或 '...'
 static const QRegularExpression kReMlString(QStringLiteral("\"([^\"\\\\]|\\\\.)*\"|'([^'\\\\]|\\\\.)*'"));
 // 行注释 // ...（保留到行尾）
@@ -81,86 +82,38 @@ static QString slugify(const QString& text) {
         if (c.isLetterOrNumber()) {
             slug += c.toLower();
         } else if (c == '_' || c == '-' || c.isSpace()) {
-            if (!slug.isEmpty() && !slug.endsWith('-'))
-                slug += '-';
+            if (!slug.isEmpty() && !slug.endsWith('-')) slug += '-';
         }
         // 其他字符忽略
     }
-    while (slug.startsWith('-'))
-        slug.remove(0, 1);
-    while (slug.endsWith('-'))
-        slug.chop(1);
+    while (slug.startsWith('-')) slug.remove(0, 1);
+    while (slug.endsWith('-')) slug.chop(1);
     return slug;
 }
 
 /// P2-2 fix (F4): 对 MiniLang 代码做简单语法高亮
 /// 输入应已 escapeHtml 转义过。基于正则顺序替换：注释 > 字符串 > 关键字 > 数字
 /// 用 <span class="..."> 包裹，CSS 类定义在 buildStylesheet 中
-///
-/// AUDIT-P1 fix: 原实现顺序 replace 会导致关键字 "class" 腐蚀已生成的 span 属性
-/// （<span class="ml-comment"> 中的 class 被替换为 <span class="ml-keyword">class</span>），
-/// 同时注释/字符串内部的关键字和数字仍会被误高亮。
-/// 改为占位符法：先用唯一占位符替换注释/字符串/关键字/数字，最后统一替换为 span。
-/// 占位符格式 \x01{TYP}{IDX}\x02 选择控制字符 \x01/\x02 避免与代码内容冲突。
 static QString highlightMiniLang(const QString& escapedCode) {
     QString result = escapedCode;
 
-    // 收集已高亮片段，按类型 + 索引用占位符替换，避免后续正则误命中已包裹内容。
-    struct Span {
-        QString cls;
-        QString text;
-    };
-    std::vector<Span> spans;
-
-    auto replaceWithPlaceholder = [&](const QRegularExpression& re, const QString& cls) {
-        int from = 0;
-        QRegularExpressionMatch m;
-        while ((m = re.match(result, from)).hasMatch()) {
-            QString captured = m.captured(0);
-            int idx = static_cast<int>(spans.size());
-            spans.push_back({cls, captured});
-            QString placeholder = QString::fromUtf8("\x01%1\x02").arg(idx, 6, 10, QChar('0'));
-            result.replace(m.capturedStart(), m.capturedLength(), placeholder);
-            // 占位符长度（8 字节）通常与原片段不同，from 推进到占位符之后
-            from = m.capturedStart() + placeholder.length();
-        }
-    };
-
     // 1. 注释（先处理，避免注释内的关键字/字符串被误高亮）
-    replaceWithPlaceholder(kReMlBlockComment, QStringLiteral("ml-comment"));
-    replaceWithPlaceholder(kReMlLineComment, QStringLiteral("ml-comment"));
+    // 块注释 /* */
+    result.replace(kReMlBlockComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
+    // 行注释 //...
+    result.replace(kReMlLineComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
 
     // 2. 字符串
-    replaceWithPlaceholder(kReMlString, QStringLiteral("ml-string"));
+    result.replace(kReMlString, QStringLiteral("<span class=\"ml-string\">\\0</span>"));
 
     // 3. 关键字（用 \b 边界避免误命中标识符子串）
-    // AUDIT-P1 fix: 预编译正则数组，避免每次调用循环内 pcre2_compile。
-    static std::vector<QRegularExpression> kKeywordRegexes = []() {
-        std::vector<QRegularExpression> v;
-        v.reserve(kMiniLangKeywords.size());
-        for (const QString& kw : kMiniLangKeywords) {
-            v.push_back(QRegularExpression(QStringLiteral("\\b%1\\b").arg(kw)));
-        }
-        return v;
-    }();
-    for (const auto& re : kKeywordRegexes) {
-        replaceWithPlaceholder(re, QStringLiteral("ml-keyword"));
+    for (const QString& kw : kMiniLangKeywords) {
+        QRegularExpression re(QStringLiteral("\\b%1\\b").arg(kw));
+        result.replace(re, QStringLiteral("<span class=\"ml-keyword\">%1</span>").arg(kw));
     }
 
     // 4. 数字
-    replaceWithPlaceholder(kReMlNumber, QStringLiteral("ml-number"));
-
-    // 5. 最后统一把占位符替换为 span。此时 result 中已无关键字/字符串文本，
-    // 仅占位符 \x01{idx}\x02 与代码其他部分（标识符、运算符、空白等）。
-    for (size_t i = 0; i < spans.size(); ++i) {
-        QString placeholder = QString::fromUtf8("\x01%1\x02").arg(static_cast<int>(i), 6, 10, QChar('0'));
-        const auto& s = spans[i];
-        // AUDIT-P1 fix: spans[i].text 已经过 escapeHtml，直接嵌入 span 安全。
-        // 但占位符替换为 span 后 span.text 中若含 \x01/\x02 不会被再次匹配
-        // （从大到小迭代或 i 单调递增均安全，因为新 span 不含占位符）。
-        QString span = QStringLiteral("<span class=\"%1\">%2</span>").arg(s.cls, s.text);
-        result.replace(placeholder, span);
-    }
+    result.replace(kReMlNumber, QStringLiteral("<span class=\"ml-number\">\\0</span>"));
 
     return result;
 }
@@ -169,19 +122,13 @@ static QString highlightMiniLang(const QString& escapedCode) {
 /// 避免使用字符类正则（[\s:-|] 中的 - 会被解释为范围）
 static bool isTableSeparatorLine(const QString& line) {
     QString t = line.trimmed();
-    if (t.isEmpty())
-        return false;
+    if (t.isEmpty()) return false;
     bool hasDash = false;
     for (const QChar& c : t) {
-        if (c == '|' || c == ':')
-            continue;
-        if (c == '-') {
-            hasDash = true;
-            continue;
-        }
-        if (c.isSpace())
-            continue;
-        return false; // 包含其他字符，不是分隔行
+        if (c == '|' || c == ':') continue;
+        if (c == '-') { hasDash = true; continue; }
+        if (c.isSpace()) continue;
+        return false;  // 包含其他字符，不是分隔行
     }
     return hasDash;
 }
@@ -200,22 +147,8 @@ static QString escapeHtml(const QString& s) {
 /// 输入应已 escapeHtml 转义过。
 static QString renderInline(const QString& s) {
     QString out = s;
-    // AUDIT-P2 fix: 行内代码 `code` 先替换为占位符，避免 code 内的 ** / * / []
-    // 被后续粗体/斜体/链接规则误处理。原实现直接替换为 <code>...</code>，
-    // 但随后的粗体正则 \*\*([^*]+)\*\* 仍会匹配 <code> 标签内的 **，
-    // 例如 `a **b** c` 会被错误渲染为 <code>a <b>b</b> c</code>。
-    // 占位符使用控制字符 \x03/\x04 避免与正文冲突。
-    QStringList codeSpans;
-    {
-        int from = 0;
-        QRegularExpressionMatch m;
-        while ((m = kReInlineCode.match(out, from)).hasMatch()) {
-            QString placeholder = QString::fromUtf8("\x03%1\x04").arg(codeSpans.size(), 6, 10, QChar('0'));
-            codeSpans.append(m.captured(1));
-            out.replace(m.capturedStart(), m.capturedLength(), placeholder);
-            from = m.capturedStart() + placeholder.length();
-        }
-    }
+    // 行内代码 `code`（先处理，避免 code 内的 ** 被后续规则误处理）
+    out.replace(kReInlineCode, QStringLiteral("<code>\\1</code>"));
     // 粗体 **text**
     out.replace(kReBold, QStringLiteral("<b>\\1</b>"));
     // 斜体 *text*（避免与粗体冲突，要求 * 两侧非 *）
@@ -236,12 +169,6 @@ static QString renderInline(const QString& s) {
         pos = it.capturedEnd();
     }
     result += out.mid(pos);
-    // AUDIT-P2 fix: 最后把占位符替换回 <code>...</code>，此时粗体/斜体/链接
-    // 已处理完毕，code 内容不会受其影响。
-    for (int i = 0; i < codeSpans.size(); ++i) {
-        QString placeholder = QString::fromUtf8("\x03%1\x04").arg(i, 6, 10, QChar('0'));
-        result.replace(placeholder, QStringLiteral("<code>%1</code>").arg(codeSpans[i]));
-    }
     return result;
 }
 
@@ -293,19 +220,18 @@ static QString buildStylesheet(const QString& codeBlockBg) {
 
 // ---- 公共 API ----
 
-/// 将 Markdown 文本渲染为完整 HTML 文档（含样式表）。
 QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     if (markdown.isEmpty()) {
         return QStringLiteral("<html><head></head><body></body></html>");
     }
 
     const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#EEE8D5") : codeBlockBg;
-    const QString codeBlockStyle = QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
-                                                  "border:1px solid #93A1A1; "
-                                                  "font-family:Consolas, 'Courier New', monospace; "
-                                                  "font-size:13px; "
-                                                  "white-space:pre-wrap;")
-                                       .arg(bg);
+    const QString codeBlockStyle =
+        QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
+                       "border:1px solid #93A1A1; "
+                       "font-family:Consolas, 'Courier New', monospace; "
+                       "font-size:13px; "
+                       "white-space:pre-wrap;").arg(bg);
 
     // 按行扫描，识别块级结构
     const QStringList lines = markdown.split('\n');
@@ -317,38 +243,34 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     bool inCodeBlock = false;
     QString codeBlockContent;
     QString codeBlockLang;
-    bool inUl = false;           // 无序列表
-    bool inOl = false;           // 有序列表
-    bool inBlockquote = false;   // 引用块
-    QStringList blockquoteLines; // 引用块累积行
-    QStringList paragraph;       // 当前段落累积的行
+    bool inUl = false;  // 无序列表
+    bool inOl = false;  // 有序列表
+    bool inBlockquote = false;  // 引用块
+    QStringList blockquoteLines;  // 引用块累积行
+    QStringList paragraph;  // 当前段落累积的行
 
     // 表格状态
     bool inTable = false;
-    QStringList tableHeader; // 表头单元格
-    QStringList tableRows;   // 数据行（每行一个字符串列表）
+    QStringList tableHeader;  // 表头单元格
+    QStringList tableRows;    // 数据行（每行一个字符串列表）
 
     auto closeLists = [&]() {
-        if (inUl) {
-            html << QStringLiteral("</ul>");
-            inUl = false;
-        }
-        if (inOl) {
-            html << QStringLiteral("</ol>");
-            inOl = false;
-        }
+        if (inUl) { html << QStringLiteral("</ul>"); inUl = false; }
+        if (inOl) { html << QStringLiteral("</ol>"); inOl = false; }
     };
     auto flushParagraph = [&]() {
         if (!paragraph.isEmpty()) {
             QString joined = paragraph.join(QStringLiteral("\n"));
-            html << QStringLiteral("<p>") << renderInline(joined) << QStringLiteral("</p>");
+            html << QStringLiteral("<p>") << renderInline(joined)
+                 << QStringLiteral("</p>");
             paragraph.clear();
         }
     };
     auto flushBlockquote = [&]() {
         if (!blockquoteLines.isEmpty()) {
             QString joined = blockquoteLines.join(QStringLiteral("<br>"));
-            html << QStringLiteral("<blockquote>") << renderInline(joined) << QStringLiteral("</blockquote>");
+            html << QStringLiteral("<blockquote>") << renderInline(joined)
+                 << QStringLiteral("</blockquote>");
             blockquoteLines.clear();
             inBlockquote = false;
         }
@@ -359,7 +281,8 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             // 表头
             html << QStringLiteral("<tr>");
             for (const auto& h : tableHeader) {
-                html << QStringLiteral("<th>") << renderInline(h.trimmed()) << QStringLiteral("</th>");
+                html << QStringLiteral("<th>") << renderInline(h.trimmed())
+                     << QStringLiteral("</th>");
             }
             html << QStringLiteral("</tr>");
             // 数据行
@@ -367,7 +290,8 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 QStringList cells = row.split(QStringLiteral("|"));
                 html << QStringLiteral("<tr>");
                 for (const auto& c : cells) {
-                    html << QStringLiteral("<td>") << renderInline(c.trimmed()) << QStringLiteral("</td>");
+                    html << QStringLiteral("<td>") << renderInline(c.trimmed())
+                         << QStringLiteral("</td>");
                 }
                 html << QStringLiteral("</tr>");
             }
@@ -396,22 +320,26 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 // 退出代码块
                 QString escaped = escapeHtml(codeBlockContent);
                 // 去掉尾部多余换行
-                while (escaped.endsWith('\n'))
-                    escaped.chop(1);
+                while (escaped.endsWith('\n')) escaped.chop(1);
                 // P2-2 fix (F4): MiniLang 语法高亮
                 // 触发条件：codeBlockLang 为 minilang / ml / mlang / mini（不区分大小写）
                 QString lowerLang = codeBlockLang.toLower();
-                bool isMiniLang = (lowerLang == QStringLiteral("minilang") || lowerLang == QStringLiteral("ml") ||
-                                   lowerLang == QStringLiteral("mlang") || lowerLang == QStringLiteral("mini"));
+                bool isMiniLang = (lowerLang == QStringLiteral("minilang") ||
+                                   lowerLang == QStringLiteral("ml") ||
+                                   lowerLang == QStringLiteral("mlang") ||
+                                   lowerLang == QStringLiteral("mini"));
                 if (isMiniLang) {
                     escaped = highlightMiniLang(escaped);
                 }
                 // 代码块语言标签（仅作为注释显示在代码上方，不渲染为单独元素）
                 if (!codeBlockLang.isEmpty()) {
                     html << QStringLiteral("<div style=\"font-size:11px;color:#999;margin-bottom:2px;\">")
-                         << escapeHtml(codeBlockLang) << QStringLiteral("</div>");
+                         << escapeHtml(codeBlockLang)
+                         << QStringLiteral("</div>");
                 }
-                html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle) << escaped << QStringLiteral("</pre>");
+                html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle)
+                     << escaped
+                     << QStringLiteral("</pre>");
                 inCodeBlock = false;
                 codeBlockContent.clear();
                 codeBlockLang.clear();
@@ -468,22 +396,20 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
         QRegularExpressionMatch tm = kReTaskList.match(line);
         if (tm.hasMatch()) {
             flushParagraph();
-            if (inOl) {
-                html << QStringLiteral("</ol>");
-                inOl = false;
-            }
-            if (!inUl) {
-                html << QStringLiteral("<ul>");
-                inUl = true;
-            }
+            if (inOl) { html << QStringLiteral("</ol>"); inOl = false; }
+            if (!inUl) { html << QStringLiteral("<ul>"); inUl = true; }
             QString checked = tm.captured(1).toLower();
             QString text = renderInline(escapeHtml(tm.captured(2)));
-            QString checkboxClass = (checked == QStringLiteral("x")) ? QStringLiteral("task-checkbox checked")
-                                                                     : QStringLiteral("task-checkbox");
-            QString checkboxSymbol = (checked == QStringLiteral("x")) ? QStringLiteral("✓") : QString();
+            QString checkboxClass = (checked == QStringLiteral("x"))
+                ? QStringLiteral("task-checkbox checked")
+                : QStringLiteral("task-checkbox");
+            QString checkboxSymbol = (checked == QStringLiteral("x"))
+                ? QStringLiteral("✓")
+                : QString();
             html << QStringLiteral("<li class=\"task-list-item\">")
                  << QStringLiteral("<span class=\"%1\">%2</span>").arg(checkboxClass, checkboxSymbol)
-                 << renderInline(escapeHtml(tm.captured(2))) << QStringLiteral("</li>");
+                 << renderInline(escapeHtml(tm.captured(2)))
+                 << QStringLiteral("</li>");
             continue;
         }
 
@@ -493,15 +419,10 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             flushParagraph();
             flushBlockquote();
             flushTable();
-            if (inOl) {
-                html << QStringLiteral("</ol>");
-                inOl = false;
-            }
-            if (!inUl) {
-                html << QStringLiteral("<ul>");
-                inUl = true;
-            }
-            html << QStringLiteral("<li>") << renderInline(escapeHtml(ulm.captured(1))) << QStringLiteral("</li>");
+            if (inOl) { html << QStringLiteral("</ol>"); inOl = false; }
+            if (!inUl) { html << QStringLiteral("<ul>"); inUl = true; }
+            html << QStringLiteral("<li>") << renderInline(escapeHtml(ulm.captured(1)))
+                 << QStringLiteral("</li>");
             continue;
         }
 
@@ -511,15 +432,10 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             flushParagraph();
             flushBlockquote();
             flushTable();
-            if (inUl) {
-                html << QStringLiteral("</ul>");
-                inUl = false;
-            }
-            if (!inOl) {
-                html << QStringLiteral("<ol>");
-                inOl = true;
-            }
-            html << QStringLiteral("<li>") << renderInline(escapeHtml(olm.captured(1))) << QStringLiteral("</li>");
+            if (inUl) { html << QStringLiteral("</ul>"); inUl = false; }
+            if (!inOl) { html << QStringLiteral("<ol>"); inOl = true; }
+            html << QStringLiteral("<li>") << renderInline(escapeHtml(olm.captured(1)))
+                 << QStringLiteral("</li>");
             continue;
         }
 
@@ -542,7 +458,8 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
         QRegularExpressionMatch trm = kReTableRow.match(line);
         if (trm.hasMatch()) {
             // 检查下一行是否是分隔行（如果是，说明这是表头）
-            bool isNextSeparator = (i + 1 < lines.size()) && isTableSeparatorLine(lines[i + 1]);
+            bool isNextSeparator = (i + 1 < lines.size())
+                && isTableSeparatorLine(lines[i + 1]);
             if (isNextSeparator && !inTable) {
                 // 这是表头行
                 flushParagraph();
@@ -574,9 +491,10 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     if (inCodeBlock) {
         // 代码块未闭合（用户输入不完整），按代码块输出
         QString escaped = escapeHtml(codeBlockContent);
-        while (escaped.endsWith('\n'))
-            escaped.chop(1);
-        html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle) << escaped << QStringLiteral("</pre>");
+        while (escaped.endsWith('\n')) escaped.chop(1);
+        html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle)
+             << escaped
+             << QStringLiteral("</pre>");
     }
     flushParagraph();
     closeLists();
@@ -587,12 +505,10 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     return html.join(QString());
 }
 
-/// 字符串版重载：渲染为完整 HTML 文档。
 QString markdownToHtml(const std::string& markdown, const QString& codeBlockBg) {
     return markdownToHtml(QString::fromUtf8(markdown.c_str()), codeBlockBg);
 }
 
-/// 将 Markdown 渲染为 HTML 片段（不含 <html> 外壳）。
 QString markdownToHtmlFragment(const QString& markdown, const QString& codeBlockBg) {
     QString full = markdownToHtml(markdown, codeBlockBg);
     // 剥离 <html><head>...</head><body>...</body></html> 包裹，返回 body 内部片段
@@ -616,7 +532,6 @@ QString markdownToHtmlFragment(const QString& markdown, const QString& codeBlock
     return full;
 }
 
-/// 字符串版重载：渲染为 HTML 片段。
 QString markdownToHtmlFragment(const std::string& markdown, const QString& codeBlockBg) {
     return markdownToHtmlFragment(QString::fromUtf8(markdown.c_str()), codeBlockBg);
 }
@@ -625,11 +540,9 @@ QString markdownToHtmlFragment(const std::string& markdown, const QString& codeB
 // P2-2 fix (F3): 章节锚点目录（TOC）
 // ============================================================
 
-/// 提取 Markdown 标题列表，供目录/锚点跳转使用。
 std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
     std::vector<HeadingEntry> headings;
-    if (markdown.isEmpty())
-        return headings;
+    if (markdown.isEmpty()) return headings;
 
     const QStringList lines = markdown.split('\n');
     bool inCodeBlock = false;
@@ -639,8 +552,7 @@ std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
             inCodeBlock = !inCodeBlock;
             continue;
         }
-        if (inCodeBlock)
-            continue;
+        if (inCodeBlock) continue;
 
         QRegularExpressionMatch hm = kReHeading.match(line);
         if (hm.hasMatch()) {
@@ -656,26 +568,27 @@ std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
     return headings;
 }
 
-/// 依据标题构建目录（TOC）HTML。
-QString buildTableOfContents(const QString& markdown, const QString& tocTitle, int maxLevel) {
+QString buildTableOfContents(const QString& markdown,
+                              const QString& tocTitle,
+                              int maxLevel) {
     auto headings = extractHeadings(markdown);
-    if (headings.empty())
-        return QString();
+    if (headings.empty()) return QString();
 
     QStringList html;
     html << QStringLiteral("<div class=\"toc-box\">");
     if (!tocTitle.isEmpty()) {
-        html << QStringLiteral("<div class=\"toc-title\">") << escapeHtml(tocTitle) << QStringLiteral("</div>");
+        html << QStringLiteral("<div class=\"toc-title\">") << escapeHtml(tocTitle)
+             << QStringLiteral("</div>");
     }
     html << QStringLiteral("<ul class=\"toc-list\">");
     for (const auto& h : headings) {
-        if (h.level > maxLevel)
-            continue;
+        if (h.level > maxLevel) continue;
         // 根据级别缩进（h1 不缩进，h2 缩进 1 级，h3 缩进 2 级）
         int indent = h.level - 1;
-        if (indent < 0)
-            indent = 0;
-        QString style = (indent > 0) ? QStringLiteral(" style=\"margin-left:%1px;\"").arg(indent * 12) : QString();
+        if (indent < 0) indent = 0;
+        QString style = (indent > 0)
+            ? QStringLiteral(" style=\"margin-left:%1px;\"").arg(indent * 12)
+            : QString();
         // 内部锚点链接使用 #anchor 格式（QTextBrowser 支持）
         html << QStringLiteral("<li%1><a href=\"#%2\">%3</a></li>")
                     .arg(style, h.anchor, renderInline(escapeHtml(h.text)));

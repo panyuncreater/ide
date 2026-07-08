@@ -143,6 +143,16 @@ jobs:
         shell: bash
         run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
 
+      # macOS 26 (Tahoe) / Xcode 26 移除了 AGL 框架（OpenGL 旧 Carbon 接口），
+      # 但 Qt 6.8.x 的 FindWrapOpenGL.cmake 仍引用 AGL 导致链接失败。
+      # 修补：从 FindWrapOpenGL.cmake 中移除 AGL framework 引用。
+      # 参见 https://bugreports.qt.io/browse/QTBUG-137687
+      - name: 修补 Qt AGL 链接问题 (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          find "${Qt6_DIR}" -name "FindWrapOpenGL.cmake" -exec sed -i '' 's/-framework AGL//g' {} +
+
       - name: 配置 CMake (macOS Preset)
         if: runner.os == 'macOS'
         run: cmake --preset macos-clang-release -DMINILANG_USE_CCACHE=ON

@@ -41,6 +41,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 // ============================================================
@@ -724,7 +725,7 @@ static std::string runInterpreterWithModules(
     interp.setOutputCallback([&](const std::string& s) { captured += s; });
     interp.setModuleLoader([&](const std::string& path) -> std::string {
         auto it = modules.find(path);
-        if (it == modules.end()) return "";
+        if (it == modules.end()) throw std::runtime_error("module not found: " + path);
         return it->second;
     });
     interp.execute(*ast);
@@ -745,13 +746,13 @@ static bool runInterpreterWithModulesThrows(
     interp.setOutputCallback([](const std::string&) {});
     interp.setModuleLoader([&](const std::string& path) -> std::string {
         auto it = modules.find(path);
-        if (it == modules.end()) return "";
+        if (it == modules.end()) throw std::runtime_error("module not found: " + path);
         return it->second;
     });
     try {
         interp.execute(*ast);
         return false;
-    } catch (const RuntimeError&) {
+    } catch (const std::exception&) {
         return true;
     }
 }
