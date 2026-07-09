@@ -16,10 +16,13 @@
 #   2. QTDIR 直接指向 Qt 安装前缀 /opt/qt6/<version>/gcc_64（内含
 #      lib/cmake/Qt6），供 CMakePresets 的 linux-gcc-release 预设通过
 #      $env{QTDIR} 正确定位 Qt6（原 /usr/lib/x86_64-linux-gnu/qt6 前缀错误）。
-#   3. Qt6Gui 的 CMake 配置依赖 OpenGL（find_package(OpenGL)），需安装
-#      libgl-dev / libgles-dev / libegl-dev 开发头文件；仅 libgl1 运行时库
-#      会导致 "Could NOT find OpenGL" 配置失败。同时安装 libfontconfig1-dev
-#      与 libfreetype6-dev 以满足 Qt6Gui 的字体子系统依赖。
+#   3. Qt6Gui 的 CMake 配置依赖 OpenGL（find_package(OpenGL)）和 XKB
+#      （find_package(XKB)，Qt6::GuiPrivate 的链接接口包含 XKB::XKB），
+#      需安装 libgl-dev / libgles-dev / libegl-dev / libxkbcommon-dev 开发头文件；
+#      仅 libgl1 / libxkbcommon0 运行时库会导致 "Could NOT find OpenGL" /
+#      "The link interface of target Qt6::GuiPrivate contains XKB::XKB but the
+#      target was not found" 配置失败。同时安装 libfontconfig1-dev 与
+#      libfreetype6-dev 以满足 Qt6Gui 的字体子系统依赖。
 #   4. patch 用于应用 QFluentKit 本地补丁（patches/qfluentkit-local-fixes.patch），
 #      补丁在 cmake configure 之前通过 `patch -p1` 应用到 third_party/QFluentKit
 #      子模块。Docker 中 COPY third_party/ 仅复制工作树，不含 .git/modules/ 目录，
@@ -46,6 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libglib2.0-dev \
     libxkbcommon0 \
+    libxkbcommon-dev \
     libdbus-1-3 \
     libfontconfig1 \
     libfontconfig1-dev \
@@ -90,13 +94,12 @@ RUN cd third_party/QFluentKit && patch -p1 < /app/patches/qfluentkit-local-fixes
 COPY CMakeLists.txt CMakePresets.json ./
 COPY cmake/ ./cmake/
 
-# 仅配置 IDE：关闭测试与 i18n，避免 configure 阶段依赖源码目录，
-# 从而让源码层的变化不会使本层缓存失效（修复审计问题 5）。
-RUN cmake --preset linux-gcc-release \
-    -DMINILANG_BUILD_TESTS=OFF \
-    -DMINILANG_ENABLE_I18N=OFF
-
-# 第三层：源代码（变化频率高）
+# 第三层：源代码
+# 注：源码必须在 cmake configure 之前 COPY，因为 CMake Generate 阶段（cmake --preset
+# 会同时执行 configure + generate）会检查 add_library/add_executable 中引用的源文件
+# 是否存在（如 common/TypeChecker.cpp、app/main.cpp）。此前曾尝试"仅 configure 不
+# COPY 源码"以缓存，但 Generate 阶段报 "Cannot find source file" 失败。源码变化频率
+# 高，会使本层缓存失效，但这是 CMake 的工作机制所必需的。
 COPY app/ app/
 COPY common/ common/
 COPY lexer/ lexer/
@@ -109,7 +112,10 @@ COPY formatter/ formatter/
 COPY gui/ gui/
 COPY tests/ tests/
 
-# 再构建（仅受源码层变化影响，复用上方 configure 缓存）
+# 配置并构建 IDE（关闭测试与 i18n 以加速）
+RUN cmake --preset linux-gcc-release \
+    -DMINILANG_BUILD_TESTS=OFF \
+    -DMINILANG_ENABLE_I18N=OFF
 RUN cmake --build out/build/linux-release --parallel
 
 # ---- 开发/运行阶段 ----

@@ -195,11 +195,11 @@
 - 全部 5 项保留修复均无回归。全量 1753/1753 测试通过。
 - 2 项回退修复各自导致 1 个测试失败（`MethodCallProbe.NestedIndexAccessPush` 和 `ConsistencyDiff.AuditF8_ModuleExceptionNoCrash`），回退后恢复通过。
 
-## 2026-07-08 · CI 跨平台流水线全面修复（18 项根因 + 1 项后端 bug，共 19 项）
+## 2026-07-08 · CI 跨平台流水线全面修复（20 项根因 + 1 项后端 bug，共 21 项）
 
 ### 概述
 
-GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 18 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 20 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
 
 ### 问题与修复对应表
 
@@ -223,6 +223,8 @@ GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format）�
 | 16 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Docker 容器缺少 git 导致 `git apply` 失败**——Dockerfile base 阶段 apt-get install 列表遗漏 git，builder 阶段执行 `cd third_party/QFluentKit && git apply /app/patches/qfluentkit-local-fixes.patch` 报 exit code 127（command not found）。修复：添加 `git` 到 apt-get install 列表。 |
 | 17 | Docker/git 仓库缺失 | `Dockerfile` builder 阶段 patch 应用步骤 | **Docker 中 `git apply` 报 "fatal: not a git repository"**——Docker 的 `COPY third_party/ third_party/` 仅复制工作树，不含 `.git/modules/` 目录。`third_party/QFluentKit/.git` 是一个 gitfile，内容为 `gitdir: ../../.git/modules/third_party/QFluentKit`，指向不存在的路径。`git apply` 在 gitfile 中查找 git 仓库失败，报 `fatal: not a git repository: /app/third_party/QFluentKit/../../.git/modules/third_party/QFluentKit`（exit code 128）。修复：(1) 添加 `patch` 包到 apt-get install 列表；(2) 将 `git apply` 改为 `patch -p1 < /app/patches/qfluentkit-local-fixes.patch`（`patch` 不依赖 git 仓库，直接对工作树应用补丁）。 |
 | 18 | CI/macOS 打包 | `.github/workflows/ci.yml` macOS 打包步骤 | **CPack DragNDrop 生成器在 macOS 26 (Tahoe) 上创建 `/Applications` 符号链接失败**——`cpack -G DragNDrop` 在创建 ALL_IN_ONE 目录下的 `/Applications` 符号链接时报 `CMake Error: failed to create symbolic link '.../ALL_IN_ONE/Applications': No such file or directory`，随后 `hdiutil create` 因源目录不存在失败。根因是 CPack 的 DragNDrop 生成器在 macOS 26 runner 上未正确创建 ALL_IN_ONE 临时目录。修复：将 `cpack -G DragNDrop` 改为 `cpack -G ZIP`，同时上传安装包路径从 `MiniLangIDE*.dmg` 改为 `MiniLangIDE*.zip`。ZIP 生成器更简单可靠，`.dmg` 可在本地 release 时手动生成。 |
+| 19 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Docker 容器缺少 libxkbcommon-dev 导致 Qt6GuiPrivate 链接失败**——Qt6::GuiPrivate 的链接接口包含 `XKB::XKB` target，Dockerfile 仅安装 `libxkbcommon0`（运行时库），缺少开发头文件，CMake Generate 阶段报 `The link interface of target "Qt6::GuiPrivate" contains XKB::XKB but the target was not found`。此前该错误被 git apply 失败（#16/#17）掩盖，从未到达 cmake configure 步骤。修复：添加 `libxkbcommon-dev` 到 apt-get install 列表。 |
+| 20 | Docker/COPY 顺序 | `Dockerfile` builder 阶段 COPY + cmake configure 顺序 | **CMake Generate 阶段检查源文件存在性，但源码尚未 COPY 进容器**——Dockerfile 此前设计为"先 cmake configure 再 COPY 源码"以利用层缓存（源码变化不使 configure 缓存失效），但 `cmake --preset` 会同时执行 configure + generate，Generate 阶段会检查 `add_library(minilang_core ${MINILANG_CORE_SOURCES})` 和 `add_executable(minilang_ide app/main.cpp ...)` 中引用的源文件是否存在，报 `Cannot find source file: common/TypeChecker.cpp` / `app/main.cpp`。此前该错误同样被 git apply 失败（#16/#17）掩盖。修复：将源码 COPY 移到 cmake configure 之前，并合并 configure + build 为连续步骤（删除"仅 configure 不 build"的缓存优化设计，因为 CMake 工作机制不允许）。 |
 
 ## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
 
