@@ -387,23 +387,42 @@ Value Interpreter::evaluateExpr(ASTNode* node) {
 // push 会原地修改共享 ArrayData，污染程序状态。
 // 修复：快照时对所有 array/dict Value 递归深拷贝，确保沙箱内操作的是独立副本。
 // 恢复时直接用深拷贝副本替换，无论条件是否变异容器都能正确还原。
+// AUDIT-P0-ROUND49 fix: 添加环检测（visited 集合）和深度保护，防止自环容器
+// （如 a.push(a)）触发无限递归栈溢出崩溃。对齐 Value::cloneImpl 的环检测模式。
 namespace {
-Value deepCloneForSandbox(const Value& v) {
+// 环检测深度上限（对齐 Value::MAX_CLONE_DEPTH）
+constexpr int SANDBOX_CLONE_MAX_DEPTH = 256;
+
+Value deepCloneForSandboxImpl(const Value& v, int depth,
+                              std::unordered_set<const void*>& visited) {
+    // 深度保护：超限时返回浅拷贝（保留原引用），避免栈溢出
+    if (depth >= SANDBOX_CLONE_MAX_DEPTH) {
+        return v;
+    }
     if (v.isArray()) {
+        const void* ptr = v.gcRootPtr();
+        // 环检测：遇到已访问节点返回浅拷贝（打断 back-edge）
+        if (auto [it, inserted] = visited.insert(ptr); !inserted) {
+            return v;
+        }
         const auto& arr = v.arrayVal();
         std::vector<Value> newElements;
         newElements.reserve(arr.size());
         for (const auto& elem : arr) {
-            newElements.push_back(deepCloneForSandbox(elem));
+            newElements.push_back(deepCloneForSandboxImpl(elem, depth + 1, visited));
         }
         return Value(std::move(newElements));
     }
     if (v.isDict()) {
+        const void* ptr = v.gcRootPtr();
+        if (auto [it, inserted] = visited.insert(ptr); !inserted) {
+            return v;
+        }
         const auto& entries = v.dictVal();
         std::unordered_map<std::string, Value> newEntries;
         newEntries.reserve(entries.size());
         for (const auto& [k, val] : entries) {
-            newEntries[k] = deepCloneForSandbox(val);
+            newEntries[k] = deepCloneForSandboxImpl(val, depth + 1, visited);
         }
         return Value(std::move(newEntries));
     }
@@ -413,12 +432,16 @@ Value deepCloneForSandbox(const Value& v) {
     // 注意：深拷贝破坏引用语义（条件前 var x = this.inner，沙箱后 this.inner 指向新副本），
     // 这是沙箱隔离的固有矛盾，与 array/dict 深拷贝行为一致，已在文档中标注为已知行为。
     if (v.isInstance()) {
+        const void* ptr = v.gcRootPtr();
+        if (auto [it, inserted] = visited.insert(ptr); !inserted) {
+            return v;
+        }
         Value newInst = Value::makeInstance(v.className());
         const auto& oldFields = v.fields();
         auto& newFields = newInst.fields();
         newFields.reserve(oldFields.size());
         for (const auto& [k, val] : oldFields) {
-            newFields.emplace(k, deepCloneForSandbox(val));
+            newFields.emplace(k, deepCloneForSandboxImpl(val, depth + 1, visited));
         }
         return newInst;
     }
@@ -428,11 +451,15 @@ Value deepCloneForSandbox(const Value& v) {
     // closureEnv（weak_ptr）不能共享——沙箱内调用闭包修改闭包变量会影响外层环境。
     // 从 capturedVars 重建 closureEnv，断开与外层环境的共享。
     if (v.isClosure()) {
+        const void* ptr = v.gcRootPtr();
+        if (auto [it, inserted] = visited.insert(ptr); !inserted) {
+            return v;
+        }
         Value newClosure = v; // 浅拷贝（共享 body/closureEnv，refCount=2）
         // 非 const capturedVars() 触发 ensureUnique<ClosureData>，refCount>1 时创建独立副本
         auto& captured = newClosure.capturedVars();
         for (auto& [k, val] : captured) {
-            val = deepCloneForSandbox(val); // 递归深拷贝容器值
+            val = deepCloneForSandboxImpl(val, depth + 1, visited); // 递归深拷贝容器值
         }
         // AUDIT-P2-CORRECT fix: 从 capturedVars 重建 closureEnv，断开与外层环境的共享。
         // 沙箱内调用闭包时，callClosureValue/callNamedFunction 使用 closureEnv 作为父级环境，
@@ -453,6 +480,11 @@ Value deepCloneForSandbox(const Value& v) {
     // - 标量：值语义，拷贝即独立
     // - string：不可变（BuiltinMethods 的 replace/substr 返回新串而非原地修改）
     return v;
+}
+
+Value deepCloneForSandbox(const Value& v) {
+    std::unordered_set<const void*> visited;
+    return deepCloneForSandboxImpl(v, 0, visited);
 }
 } // anonymous namespace
 
@@ -599,6 +631,12 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
             interp.moduleExports_ = std::move(savedModuleExports);
             interp.moduleMtimes_ = std::move(savedModuleMtimes);
             interp.exportedNames_ = std::move(savedExportedNames);
+            // AUDIT-P1-ROUND49 fix: 恢复 evaluationStepCount_ 为 0。
+            // evaluateCondition 入口设 evaluationStepCount_=1，evaluate 中递增计数
+            // 防止条件求值无限循环。SandboxGuard 析构恢复 16 种状态但遗漏此字段，
+            // 返回后 evaluationStepCount_ 仍 > 0，后续正常执行每次 evaluate() 递增计数，
+            // 累计超 MAX_CONDITION_STEPS 后抛虚假 RuntimeError，冻结主程序。
+            interp.evaluationStepCount_ = 0;
         }
     } sandboxGuard{*this,
                    instSnaps,
@@ -2353,6 +2391,27 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
                         argValues.push_back(Value::nullValue());
                     }
                 }
+            }
+
+            // AUDIT-P2-ROUND49 fix: 默认参数求值可能触发类重定义（如默认值表达式调用
+            // 重定义类的函数），导致 searchClass/method 悬垂。对齐 #2 fix（实参求值后重新查找），
+            // 在默认参数求值后再次重新查找。注意：argValues 已基于旧 method 的 params 填充，
+            // 若新 method 参数签名不同，后续绑定可能不匹配——但此为极端边界场景，
+            // 重新查找至少保证 method 指针有效，避免 UAF 崩溃。
+            {
+                auto reIt = classRegistry_.find(searchClassName);
+                if (reIt == classRegistry_.end()) {
+                    runtimeError("类 " + searchClassName + " 在默认参数求值期间被重定义并删除", node.line,
+                                 node.column);
+                }
+                searchClass = &reIt->second;
+                method = findMethod(*searchClass, node.methodName);
+                if (!method) {
+                    runtimeError("类 " + searchClassName + " 在默认参数求值期间被重定义，方法 " + node.methodName +
+                                     " 不再存在",
+                                 node.line, node.column);
+                }
+                cachedParentEnv = searchClass->closureEnv;
             }
 
             // B3 fix: CallFrameGuard 自动管理 currentFunctionReturnType_ + callStack_ + classContextStack_

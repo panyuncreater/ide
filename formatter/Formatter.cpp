@@ -481,7 +481,10 @@ void Formatter::visitTryStmt(TryStmt& node) {
         if (tryEndLine > 0 && catchStartLine > 0) {
             while (commentIndex_ < comments_.size() && comments_[commentIndex_].line > tryEndLine &&
                    comments_[commentIndex_].line < catchStartLine) {
-                result += "\n" + indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
+                // AUDIT-P1-ROUND49 fix: 补尾部 "\n"，对齐 formatBlock/formatClassDecl 的注释注入模式。
+                // reindentBlockComment 不添加尾部换行，原实现缺少 "\n" 导致 catch 关键字
+                // 被并入注释行（"/* comment */ catch ("）。
+                result += "\n" + indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
                 commentIndex_++;
             }
         }
@@ -498,7 +501,9 @@ void Formatter::visitTryStmt(TryStmt& node) {
         if (prevEndLine > 0 && finallyStartLine > 0) {
             while (commentIndex_ < comments_.size() && comments_[commentIndex_].line > prevEndLine &&
                    comments_[commentIndex_].line < finallyStartLine) {
-                result += "\n" + indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
+                // AUDIT-P1-ROUND49 fix: 补尾部 "\n"，对齐 formatBlock/formatClassDecl 的注释注入模式。
+                // 原实现缺少 "\n" 导致 finally 关键字被并入注释行。
+                result += "\n" + indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
                 commentIndex_++;
             }
         }

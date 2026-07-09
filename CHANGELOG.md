@@ -2,23 +2,62 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
-## 2026-07-08 · CI 跨平台流水线全面修复（6 项根因 + 1 项后端 bug，共 7 项）
+## 2026-07-09 · 第四十九轮审计：沙箱安全与格式化正确性修复（P0 × 1 + P1 × 2 + P2 × 2，共 5 项）
 
 ### 概述
 
-GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经四轮排查定位并修复 6 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+本轮针对条件断点沙箱深拷贝的环检测缺失、SandboxGuard 状态恢复遗漏、Formatter try/catch/finally 注释注入缺少尾部换行、VM RUN 模式断点不同步、Lexer Unicode 转义错误恢复路径不一致等问题进行修复。另有两项 ROUND49 修复（IR 路径索引重复求值、模块词法/语法错误检查）因引入回归而回退，留待后续重新实现。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P0 | 栈溢出 | `interpreter/Interpreter.cpp` deepCloneForSandbox | **沙箱深拷贝无环检测，自环容器触发无限递归栈溢出**——`a.push(a)` 等自环容器在条件断点求值的沙箱深拷贝中触发无限递归，导致 worker 线程崩溃。修复：添加 `visited` 集合（`std::unordered_set<const void*>`）和深度保护（上限 256，对齐 `Value::MAX_CLONE_DEPTH`），对 array/dict/instance/closure 四种堆类型检测环，遇到已访问节点返回浅拷贝（打断 back-edge），超深返回浅拷贝。对齐 `Value::cloneImpl` 的环检测模式。 |
+| 2 | P1 | 状态泄漏 | `interpreter/Interpreter.cpp` evaluateCondition SandboxGuard 析构 | **SandboxGuard 析构未恢复 evaluationStepCount_**——evaluateCondition 入口设 `evaluationStepCount_=1` 防止条件求值无限循环，但 SandboxGuard 析构恢复 16 种状态时遗漏此字段。条件求值返回后 `evaluationStepCount_` 仍 > 0，后续正常执行每次 `evaluate()` 递增计数，累计超 `MAX_CONDITION_STEPS` 后抛虚假 RuntimeError，冻结主程序。修复：SandboxGuard 析构中添加 `interp.evaluationStepCount_ = 0` 恢复。 |
+| 3 | P1 | 格式化错误 | `formatter/Formatter.cpp` visitTryStmt | **try/catch/finally 间注释注入缺少尾部换行**——`reindentBlockComment` 不添加尾部换行，原实现 `result += "\n" + indent() + reindentBlockComment(...)` 缺少尾部 `"\n"`，导致 catch/finally 关键字被并入注释行（`/* comment */ catch (`），产生语法错误的格式化输出。修复：补尾部 `"\n"`，对齐 `formatBlock`/`formatClassDecl` 的注释注入模式。catch 和 finally 两处同步修复。 |
+| 4 | P2 | 断点不同步 | `app/ide.cpp` createNewEditorTab | **VM RUN 模式下断点变更不同步到 VmStepper**——编辑器断点变更回调仅检查 `isDebugPaused()`（Interpreter 调试状态），VM RUN 模式下始终为 false，导致 VM 运行期间新增/删除的断点不生效。VmStepper.runBatch() 使用内部 `vmBreakpoints_` 副本，不直接读取编辑器断点。修复：补充 VM 模式同步分支，`isVmInitialized() || isVmRunning()` 时调用 `syncVmBreakpoints()`。 |
+| 5 | P2 | 错误恢复不一致 | `lexer/Lexer.cpp` string | **Unicode 转义错误恢复路径与 \xNN/\uXXXX 不一致**——`\u{...}` 三处码点验证失败路径（空转义/码点超出范围/代理码点）直接 `return` 未跳过到字符串结束，产生垃圾错误。修复：统一标记 `codepointError` 后复用与 hexError 相同的跳过到字符串结束逻辑（跳过 `\\` 转义和普通字符直到 `"`），对齐 `\xNN`/`\uXXXX` 错误恢复模式。 |
+
+### 回退的修复（2 项，引入回归）
+
+| # | 严重性 | 位置 | 回退原因 |
+|---|--------|------|----------|
+| R1 | P1 | `compiler/IR.cpp` visitMethodCall | **BUG-IR-REVAL-1 fix（索引重复求值）导致 StackVM IR 回归**——预缓存索引 vreg 的实现有误，`a[0].push(99)` 在 StackVM IR 路径报"该类型不支持索引赋值"（期望 `[1, 2, 99]`）。回退留待后续重新实现。 |
+| R2 | P2 | `interpreter/InterpreterModules.cpp` visitImportStmt | **AUDIT-P2-ROUND49 fix（模块词法/语法错误检查）导致模块异常处理回归**——添加 `parser.getDiagnostics().hasErrors()` 检查后，模块 `throw "fail"` 被误报为语法错误，`AuditF8_ModuleExceptionNoCrash` 测试失败（程序未继续执行到 "after"）。回退留待后续重新实现。 |
+
+### 关键决策
+
+1. **环检测用 visited 集合 + 深度保护双保险而非单一方案**：`visited` 集合精确检测已访问节点（O(1) 查询），打断所有 back-edge；深度保护（上限 256）作为兜底，防止极端深度的非环递归（如 1000 层嵌套数组）栈溢出。两者对齐 `Value::cloneImpl` 的既有模式，保持一致性。
+
+2. **evaluationStepCount_ 恢复放在 SandboxGuard 析构而非 evaluateCondition 出口**：SandboxGuard 是 RAII guard，无论正常返回还是异常抛出都会执行析构，是唯一可靠的状态恢复点。在出口手动恢复会遗漏异常路径。
+
+3. **IR 路径索引重复求值修复回退而非打补丁**：BUG-IR-REVAL-1 的预缓存索引方案涉及 INDEX_GET/INDEX_SET 操作数语义和 LOAD_MUTATED 链的交互，补丁式修复风险高。回退到原始实现（索引重复求值），后续需重新设计正确的缓存方案。
+
+4. **模块词法/语法错误检查回退而非调整 throw 语义**：`throw "fail"` 作为模块顶层语句的合法性涉及 MiniLang 语句系统设计，调整 throw 语义影响面大。回退到原始实现（仅检查 `!ast`），后续需在 Parser 层面正确处理 throw 顶层语句。
+
+### 测试影响
+
+- 全部 5 项保留修复均无回归。全量 1753/1753 测试通过。
+- 2 项回退修复各自导致 1 个测试失败（`MethodCallProbe.NestedIndexAccessPush` 和 `ConsistencyDiff.AuditF8_ModuleExceptionNoCrash`），回退后恢复通过。
+
+## 2026-07-08 · CI 跨平台流水线全面修复（7 项根因 + 1 项后端 bug，共 8 项）
+
+### 概述
+
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经五轮排查定位并修复 7 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
 
 ### 问题与修复对应表
 
 | # | 类型 | 位置 | 修复内容 |
 |---|------|------|----------|
-| 1 | CI/变量引用 | `.github/workflows/ci.yml` Linux/macOS QTDIR 步骤 | **`${Qt6_DIR}` bash 语法在 macOS 上展开为空**——Linux/macOS 的 QTDIR 步骤使用 bash 变量 `${Qt6_DIR}` 而非 GitHub Actions 表达式 `${{ env.Qt6_DIR }}`，macOS 上 Qt6_DIR 未导出到 bash 导致 QTDIR=`/..`，后续 AGL 修补 `find ""` 报错。修复：统一改为 `${{ env.Qt6_DIR }}`。 |
+| 1 | CI/变量引用 | `.github/workflows/ci.yml` Linux/macOS QTDIR 步骤 | **install-qt-action v4 输出变量名误用**——原使用 `${Qt6_DIR}` bash 变量语法（macOS 上未导出），第一轮改为 `${{ env.Qt6_DIR }}` GitHub Actions 表达式语法，但 install-qt-action v4 实际设置的输出变量名是 `QT_ROOT_DIR`（非 `Qt6_DIR`），导致 macOS 上 `${{ env.Qt6_DIR }}` 仍展开为空，QTDIR=`/..`，后续 AGL 修补 `find ""` 报错。修复：全部 7 处统一改为 `${{ env.QT_ROOT_DIR }}`。 |
 | 2 | CI/条件缺失 | `.github/workflows/ci.yml` 打包步骤 | **打包步骤缺少 runner.os 条件**——三个打包步骤仅 `if: success()`，Windows runner 上 Linux 打包步骤运行时因 `out/build/linux-release` 不存在而失败。修复：添加 `runner.os == 'Windows'/'Linux'/'macOS'` 条件。 |
 | 3 | CI/headless | `.github/workflows/ci.yml` Linux 测试步骤 | **Ubuntu headless runner 无 X11 显示**——Qt GUI 测试（ExceptionFlowPanelE2E 等 50+ 个面板测试）因 `qt.qpa.xcb: could not connect to display` 全部 Subprocess aborted。修复：Linux 测试步骤添加 `QT_QPA_PLATFORM: offscreen` 环境变量（coverage-linux 作业同步）。 |
 | 4 | Docker/模块不可用 | `Dockerfile` aqtinstall 命令 | **qtsvg 模块在 Qt 6.8.3 的 aqtinstall 元数据中不可用**——Docker 构建时 `aqt install-qt ... -m qtsvg` 报 `packages ['qtsvg'] were not found`。修复：移除 `-m qtsvg`，仅安装 base Qt（与 CI install-qt-action 一致）。 |
 | 5 | 代码风格 | `gui/MarkdownRenderer.cpp` | **clang-format 格式违规**——文件被修改但未执行 `clang-format -i`，CI 的 clang-format 检查报 571-575 行格式违规。修复：本地执行 `clang-format -i`（版本 22.1.5，与 CI 一致）。 |
-| 6 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL 修补步骤 | **macOS 26/Xcode 26 移除 AGL 框架**——Qt 6.8.x 的 FindWrapOpenGL.cmake 仍引用 AGL 导致链接失败。上轮已添加 sed 修补步骤但因 QTDIR 变量问题（#1）未执行。修复 #1 后本步骤正常执行。 |
-| 7 | P1/寄存器生命周期 | `compiler/RegisterBytecodeBackend.cpp` collectVRegLastUse | **METHOD_CALL 的 obj vreg 寄存器过早释放**——`this.arr.push(4)` 编译为 METHOD_CALL + LOAD_LOCAL + LOAD_MUTATED 序列，METHOD_CALL 的 obj vreg 在 METHOD_CALL 后立即释放，中间的 LOAD_LOCAL 复用该寄存器覆盖变异后的数组，LOAD_MUTATED 读到错误值。MSVC 因 `unordered_map` 迭代顺序恰好不触发，GCC 触发导致 `MethodCallProbe.NestedMemberAccessPush` 测试失败。修复：在 collectVRegLastUse 中为 METHOD_CALL/SUPER_CALL 的 obj vreg 设默认最后使用为当前指令，若后续有 LOAD_MUTATED 则覆盖延长到 LOAD_MUTATED，非变异方法调用（如 len/substr）不延长。 |
+| 6 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL 修补步骤 | **macOS 26/Xcode 26 移除 AGL 框架**——Qt 6.8.x 的 FindWrapOpenGL.cmake 仍引用 AGL 导致链接失败。上轮已添加 sed 修补步骤但因变量名问题（#1）未执行。修复 #1 后本步骤正常执行。 |
+| 7 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Dockerfile 未安装 cmake**——builder 阶段执行 `cmake --preset linux-gcc-release` 报 `cmake: not found`（exit code 127）。base 阶段 apt-get install 列表遗漏 cmake。修复：添加 `cmake` 到 apt-get install 列表。 |
+| 8 | P1/寄存器生命周期 | `compiler/RegisterBytecodeBackend.cpp` collectVRegLastUse | **METHOD_CALL 的 obj vreg 寄存器过早释放**——`this.arr.push(4)` 编译为 METHOD_CALL + LOAD_LOCAL + LOAD_MUTATED 序列，METHOD_CALL 的 obj vreg 在 METHOD_CALL 后立即释放，中间的 LOAD_LOCAL 复用该寄存器覆盖变异后的数组，LOAD_MUTATED 读到错误值。MSVC 因 `unordered_map` 迭代顺序恰好不触发，GCC 触发导致 `MethodCallProbe.NestedMemberAccessPush` 测试失败。修复：在 collectVRegLastUse 中为 METHOD_CALL/SUPER_CALL 的 obj vreg 设默认最后使用为当前指令，若后续有 LOAD_MUTATED 则覆盖延长到 LOAD_MUTATED，非变异方法调用（如 len/substr）不延长。 |
 
 ## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
 

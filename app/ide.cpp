@@ -819,6 +819,13 @@ int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
         if (controller_->isDebugPaused()) {
             controller_->setBreakpoints(codeEditor_->getBreakpoints());
         }
+        // AUDIT-P2-ROUND49 fix: VM RUN 模式下断点变更不同步到 VmStepper 的 vmBreakpoints_。
+        // VmStepper.runBatch() 使用内部 vmBreakpoints_ 副本，不直接读取编辑器断点，
+        // 导致 VM 运行期间新增/删除的断点不生效。isDebugPaused() 仅检查 Interpreter 调试
+        // 状态，VM RUN 模式下始终为 false。补充 VM 模式同步分支。
+        if (controller_->isVmInitialized() || controller_->isVmRunning()) {
+            syncVmBreakpoints();
+        }
     });
 
     data.editor->setCompletionWords(staticCompletionWords_);
