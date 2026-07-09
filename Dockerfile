@@ -9,9 +9,11 @@
 #      API，apt 版本会导致编译失败，因此改用 aqtinstall 安装精确版本。
 #      Qt 6.7+ 在 Linux 上将架构名从 gcc_64 改为 linux_gcc_64，aqtinstall
 #      ≤3.2.1 仍用旧名导致 "qt_base not found"（issue #908），3.3.0 修复。
+#      注：aqtinstall 3.3.0 接受 linux_gcc_64 作为输入参数（用于正确的包查找），
+#      但实际安装目录仍为 gcc_64（Qt 包内部使用旧目录名），故 QTDIR 用 gcc_64。
 #      qttools 模块在 Qt 6.8.3 元数据中不可用，故不安装。
 #      可通过 docker build --build-arg QT_VERSION=6.x.y 覆盖。
-#   2. QTDIR 直接指向 Qt 安装前缀 /opt/qt6/<version>/linux_gcc_64（内含
+#   2. QTDIR 直接指向 Qt 安装前缀 /opt/qt6/<version>/gcc_64（内含
 #      lib/cmake/Qt6），供 CMakePresets 的 linux-gcc-release 预设通过
 #      $env{QTDIR} 正确定位 Qt6（原 /usr/lib/x86_64-linux-gnu/qt6 前缀错误）。
 # ============================================================
@@ -39,12 +41,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 安装指定版本 Qt（通过 aqtinstall，与 CI 同步）
 # 使用 venv 安装 aqtinstall，绕过 Ubuntu 24.04 PEP 668 限制
 # aqtinstall 3.3.0：修复 Qt 6.7+ Linux 架构名推导（gcc_64 → linux_gcc_64，issue #908）
+# 注：aqtinstall 接受 linux_gcc_64 作为输入参数用于包查找，但安装目录仍为 gcc_64
 # qttools/qtsvg 模块在 Qt 6.8.3 的 aqtinstall 元数据中不可用，故仅安装 base
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir aqtinstall==3.3.0 \
     && /opt/venv/bin/python -m aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 -O /opt/qt6
 ENV PATH="/opt/venv/bin:${PATH}"
-ENV QTDIR=/opt/qt6/${QT_VERSION}/linux_gcc_64
+ENV QTDIR=/opt/qt6/${QT_VERSION}/gcc_64
 ENV PATH=${QTDIR}/bin:${PATH}
 ENV LD_LIBRARY_PATH=
 ENV LD_LIBRARY_PATH="${QTDIR}/lib:${LD_LIBRARY_PATH}"

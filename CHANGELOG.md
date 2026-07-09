@@ -40,11 +40,11 @@
 - 全部 5 项保留修复均无回归。全量 1753/1753 测试通过。
 - 2 项回退修复各自导致 1 个测试失败（`MethodCallProbe.NestedIndexAccessPush` 和 `ConsistencyDiff.AuditF8_ModuleExceptionNoCrash`），回退后恢复通过。
 
-## 2026-07-08 · CI 跨平台流水线全面修复（7 项根因 + 1 项后端 bug，共 8 项）
+## 2026-07-08 · CI 跨平台流水线全面修复（10 项根因 + 1 项后端 bug，共 11 项）
 
 ### 概述
 
-GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经五轮排查定位并修复 7 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 10 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
 
 ### 问题与修复对应表
 
@@ -58,6 +58,9 @@ GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format）�
 | 6 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL 修补步骤 | **macOS 26/Xcode 26 移除 AGL 框架**——Qt 6.8.x 的 FindWrapOpenGL.cmake 仍引用 AGL 导致链接失败。上轮已添加 sed 修补步骤但因变量名问题（#1）未执行。修复 #1 后本步骤正常执行。 |
 | 7 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Dockerfile 未安装 cmake**——builder 阶段执行 `cmake --preset linux-gcc-release` 报 `cmake: not found`（exit code 127）。base 阶段 apt-get install 列表遗漏 cmake。修复：添加 `cmake` 到 apt-get install 列表。 |
 | 8 | P1/寄存器生命周期 | `compiler/RegisterBytecodeBackend.cpp` collectVRegLastUse | **METHOD_CALL 的 obj vreg 寄存器过早释放**——`this.arr.push(4)` 编译为 METHOD_CALL + LOAD_LOCAL + LOAD_MUTATED 序列，METHOD_CALL 的 obj vreg 在 METHOD_CALL 后立即释放，中间的 LOAD_LOCAL 复用该寄存器覆盖变异后的数组，LOAD_MUTATED 读到错误值。MSVC 因 `unordered_map` 迭代顺序恰好不触发，GCC 触发导致 `MethodCallProbe.NestedMemberAccessPush` 测试失败。修复：在 collectVRegLastUse 中为 METHOD_CALL/SUPER_CALL 的 obj vreg 设默认最后使用为当前指令，若后续有 LOAD_MUTATED 则覆盖延长到 LOAD_MUTATED，非变异方法调用（如 len/substr）不延长。 |
+| 9 | Docker/路径错误 | `Dockerfile` QTDIR 环境变量 | **aqtinstall 安装目录名与输入架构名不一致**——aqtinstall 3.3.0 接受 `linux_gcc_64` 作为输入参数（用于 Qt 6.7+ 包查找），但实际安装目录仍为 `gcc_64`（Qt 包内部使用旧目录名）。Dockerfile 的 QTDIR 指向 `/opt/qt6/6.8.3/linux_gcc_64`（不存在），导致 `find_package(Qt6)` 找不到 Qt6Config.cmake。修复：QTDIR 改为 `/opt/qt6/6.8.3/gcc_64`。 |
+| 10 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL 修补步骤 | **AGL framework 引用不仅存在于 FindWrapOpenGL.cmake**——上轮 sed 仅修补 FindWrapOpenGL.cmake，但 Qt 的其他 .cmake 和 .prl 配置文件中也引用 `-framework AGL`，链接阶段仍报 `ld: framework 'AGL' not found`。修复：将 sed 修补范围扩展到所有 .cmake 和 .prl 文件。 |
+| 11 | 代码风格 | `interpreter/Interpreter.cpp` | **clang-format 格式违规**——ROUND49 修复引入的代码未执行 clang-format，CI 报 396 行和 2404 行格式违规。修复：本地执行 `clang-format -i`（版本 22.1.5，与 CI 一致）。 |
 
 ## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
 

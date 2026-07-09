@@ -393,8 +393,7 @@ namespace {
 // 环检测深度上限（对齐 Value::MAX_CLONE_DEPTH）
 constexpr int SANDBOX_CLONE_MAX_DEPTH = 256;
 
-Value deepCloneForSandboxImpl(const Value& v, int depth,
-                              std::unordered_set<const void*>& visited) {
+Value deepCloneForSandboxImpl(const Value& v, int depth, std::unordered_set<const void*>& visited) {
     // 深度保护：超限时返回浅拷贝（保留原引用），避免栈溢出
     if (depth >= SANDBOX_CLONE_MAX_DEPTH) {
         return v;
@@ -2401,8 +2400,7 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
             {
                 auto reIt = classRegistry_.find(searchClassName);
                 if (reIt == classRegistry_.end()) {
-                    runtimeError("类 " + searchClassName + " 在默认参数求值期间被重定义并删除", node.line,
-                                 node.column);
+                    runtimeError("类 " + searchClassName + " 在默认参数求值期间被重定义并删除", node.line, node.column);
                 }
                 searchClass = &reIt->second;
                 method = findMethod(*searchClass, node.methodName);
