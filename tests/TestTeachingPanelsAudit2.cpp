@@ -217,9 +217,9 @@ TEST(TeachingPanelsIRTransform, OptimizationCriticalFieldsNonEmpty) {
 
 TEST(TeachingPanelsProfile, ScenariosCount) {
     const auto& items = ProfileLibrary::scenarios();
-    // 设计为 6 个：fib-recursion / loop-sum / string-concat / class-instantiation /
-    // closure-capture / dict-access
-    EXPECT_GE(items.size(), 6u);
+    // ROUND-60 fix: closure-capture 已删除（闭包捕获循环），现 5 个场景：
+    // fib-recursion / loop-sum / string-concat / class-instantiation / dict-access
+    EXPECT_GE(items.size(), 5u);
 }
 
 TEST(TeachingPanelsProfile, ScenarioIdsUnique) {

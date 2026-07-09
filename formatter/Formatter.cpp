@@ -987,6 +987,9 @@ std::string Formatter::formatBlock(Block& node) {
 
         // 格式化语句
         std::string stmtText;
+        // AUDIT-P2.4 fix: 重置 lastNodeEndLine_ 为语句起始行。formatNode 内部的
+        // formatInterpolatedString 会覆盖为 endLine（若含多行插值字符串）。
+        lastNodeEndLine_ = stmt->line;
         if (isSelfTerminating(stmt)) {
             std::string nodeText = formatNode(stmt);
             // BUG-F-03 fix: 独立块（NODE_BLOCK 作为语句）经 visitBlock 输出 " {..."，
@@ -1002,8 +1005,12 @@ std::string Formatter::formatBlock(Block& node) {
 
         // F1+ fix: 同行行内注释追加到语句末尾
         // BUG-F-01 fix: 多行块注释经 reindentBlockComment 重新缩进
+        // AUDIT-P2.4 fix: 用 <= lastNodeEndLine_ 替代 == stmt->line，
+        // 消费多行语句结束行上的注释（如多行插值字符串闭合引号后的尾注）。
+        // formatInterpolatedString 的 L1234 循环已跳过 endLine 之前的内部注释，
+        // 此处 commentIndex_ 指向 >= lastNodeEndLine_ 的注释，<= 仅消费结束行上的注释。
         std::string trailing;
-        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line == stmt->line) {
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line <= lastNodeEndLine_) {
             trailing += " " + reindentBlockComment(comments_[commentIndex_].lexeme, indent());
             commentIndex_++;
         }
@@ -1234,5 +1241,11 @@ std::string Formatter::formatInterpolatedString(InterpolatedString& node) {
     while (commentIndex_ < comments_.size() && comments_[commentIndex_].line < node.endLine) {
         ++commentIndex_;
     }
+    // AUDIT-P2.4 fix: 记录结束行号，供外层 formatBlock 的同行注释循环使用。
+    //   多行插值字符串（endLine > line）的闭合引号后注释（如 `"...${x\n+y}"; // cmt`）
+    //   行号 == endLine > stmt->line，原 formatBlock 用 == stmt->line 不匹配导致注释
+    //   被下一条语句的独立注释分支消费（位置错误）。设置 lastNodeEndLine_ = endLine
+    //   后，formatBlock 用 <= lastNodeEndLine_ 正确消费为同行尾注。
+    lastNodeEndLine_ = node.endLine;
     return result;
 }

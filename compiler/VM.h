@@ -457,6 +457,11 @@ private:
         size_t frameIndex; // 所属调用帧索引
     };
     std::vector<TryHandler> tryStack_; // try 处理器栈
+    // AUDIT-P1.1 fix: break/continue finally 续跳机制。
+    // break/continue 在 try-finally 内时，先 push 真实跳转目标到此栈，
+    // 再 jump 到 finally 入口；finally 末尾的 OP_FINALLY_END 从此栈 pop 目标并跳转。
+    // 异常传播时（throwException）清空此栈，因为异常中断了 break/continue 续跳链。
+    std::vector<size_t> pendingJumpStack_;
     // S1 fix: 统一引用 common/RuntimeLimits.h，消除重复定义
     static constexpr size_t MAX_STACK_SIZE = RuntimeLimits::MAX_STACK_SIZE;
     static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
@@ -516,7 +521,8 @@ private:
 
     /// F11-fix: 关闭指向 [fromSlot, stack_.size()) 范围内栈槽的 open upvalues
     /// 用于异常展开和帧弹出时防止悬垂指针
-    void closeUpvaluesFrom(size_t fromSlot);
+    /// 返回 VM_RUNTIME_ERROR 表示检测到 slot 越界（hasError_ 已设置，调用方应立即 return 传播错误）
+    VMResult closeUpvaluesFrom(size_t fromSlot);
 
     /// F10-fix: 为 init 方法填充缺失的默认参数，返回 true 表示成功
     /// argCount 会被更新为填充后的参数数量，默认值追加到 defaults 向量

@@ -203,6 +203,12 @@ public:
         moduleMtimes_.clear(); // BUG-REPL-AUDIT-1 fix
     }
 
+    /// REPL %reset: 完全重置 REPL 环境（清空变量/函数/类/模块缓存/AST）
+    /// 语义：回到 IDE 启动时的 REPL 初始状态，所有用户定义丢失。
+    /// 安全前置条件：调用方必须确保没有正在执行的 REPL 任务（replRunning_==false），
+    /// 且解释器不在 worker 线程中运行（isRunning()==false）。
+    void resetReplEnvironment();
+
     /// 请求中止当前执行（REPL 超时/关闭时调用）
     /// checkBreak 会在每个语句节点检查此标志并抛异常，实现协作式中止
     void requestStop() { stopRequested_.store(true, std::memory_order_relaxed); }
@@ -271,8 +277,9 @@ private:
     // AUDIT-P1-CORRECT fix: 条件断点求值步数上限，防止无限循环（如 while(true){}）冻结 UI。
     // 0 表示非条件求值（不计数）；>0 表示正在条件求值（evaluate 中递增并检查上限）。
     // evaluateCondition 开头设为 1（开始计数），execute/executeRepl 开头重置为 0。
+    // AUDIT-P1.2 fix: MAX_CONDITION_STEPS 迁移到 RuntimeLimits.h 统一管理。
     size_t evaluationStepCount_ = 0;
-    static constexpr size_t MAX_CONDITION_STEPS = 100000;
+    static constexpr size_t MAX_CONDITION_STEPS = RuntimeLimits::MAX_CONDITION_STEPS;
     std::function<void(const std::string&)> outputCallback_;       // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     std::function<std::string(const std::string&)> moduleLoader_;  // F12: 模块加载回调

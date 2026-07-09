@@ -260,7 +260,13 @@ void AstBuilderToyPanel::loadLevel(int index) {
 }
 
 void AstBuilderToyPanel::refreshProgress() {
-    feedback_->setText(QString());
+    // ROUND56 fix: 不再清除 feedback_。
+    //   原实现 feedback_->setText(QString()) 会被 markCurrentCompleted() 在
+    //   首次完成时调用，立即覆盖 onCheck 刚设置的 "🎉 完全正确！" 消息，
+    //   导致用户看不到反馈、以为检查未生效，需点第二次检查（此时 alreadyDone=true
+    //   不再走 refreshProgress 分支，消息才得以保留）。
+    //   feedback_ 的清空职责已由 loadLevel() 中的 feedback_->clear() 承担，
+    //   此处仅刷新进度标签即可。
     progressLabel_->setText(QString::fromUtf8("进度: %1/6").arg(completedLevels_.size()));
 }
 
@@ -497,8 +503,11 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
         if (source.back() != ';')
             source += ";";
     } else {
-        // 包装成 var __toy_tmp = <expr>; 让 Parser 接受
-        source = "var __toy_tmp = " + expr + ";";
+        // 包装成 var _toy_tmp = <expr>; 让 Parser 接受
+        // ROUND56 fix: 原使用 __toy_tmp 触发 Lexer 的保留前缀 '__' 拒绝
+        // （#10 fix: __ 前缀保留给编译器内部使用，如 __blk_save_*、__wb_idx_*）。
+        // 改用单下划线前缀 _toy_tmp，既不与用户变量冲突也不触发保留检查。
+        source = "var _toy_tmp = " + expr + ";";
     }
 
     // 调用真实 Lexer + Parser
@@ -534,12 +543,12 @@ void AstBuilderToyPanel::onVerifyWithRealParser() {
     std::ostringstream os;
     os << "🛠 " << mlTr("真实 Parser 生成的 AST：").toStdString() << "\n";
     os << "源码: " << source << "\n";
-    // AUDIT-P2 fix: 纯表达式被包装为 var __toy_tmp = <expr>; 才能被语句级 Parser
+    // AUDIT-P2 fix: 纯表达式被包装为 var _toy_tmp = <expr>; 才能被语句级 Parser
     // 接受。此时真实 AST 根节点是 Block → VarDecl，而学员搭建的是裸表达式树。
     // 明确标注包装行为，避免学员误以为自己搭建的树错误。
     if (!isStatement) {
         os << "💡 "
-           << mlTr("注：纯表达式已包装为 var __toy_tmp = <expr>; 才能解析。"
+           << mlTr("注：纯表达式已包装为 var _toy_tmp = <expr>; 才能解析。"
                    "下方 AST 根节点 Block/VarDecl 是包装语句，"
                    "VarDecl 的子树才是目标表达式")
                   .toStdString()

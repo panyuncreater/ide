@@ -65,12 +65,6 @@ const std::vector<ProfileScenario>& ProfileLibrary::scenarios() {
          "class Point { var x; var y; fun init(px, py) { x = px; y = py; } }\nvar i = 0;\nwhile (i < 10000) { var p = "
          "Point(i, i); i = i + 1; }\nprint(\"done\");",
          "class", 3},
-        {"closure-capture", "闭包捕获循环（10000 次）",
-         "makeCounter 闭包捕获循环。ClosureData 通过 weak_ptr<Environment> 打破循环，"
-         "三后端在闭包捕获上开销相近，RegisterVM 因寄存器分配稍占优势。",
-         "fun makeCounter() { var c = 0; fun counter() { c = c + 1; return c; } return counter; }\nvar c = "
-         "makeCounter();\nvar i = 0;\nwhile (i < 10000) { c(); i = i + 1; }\nprint(\"done\");",
-         "closure", 3},
         {"dict-access", "字典访问循环（2000 次）",
          "字典键值读写循环。DictData 使用 unordered_map，每次访问涉及哈希计算，"
          "三后端性能相近（瓶颈在 hash 而非指令分发），Interpreter 略慢。",

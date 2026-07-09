@@ -1,6 +1,6 @@
 // oop_shapes.mini - 面向对象图形系统
 // 覆盖特性：class 类定义、extends 继承、super 调用父类方法、
-//           this 引用、方法重写（多态）、构造函数 init
+//           this 引用、方法重写（多态）、构造函数 init、成员赋值
 // ============================================================
 
 // 基类：图形
@@ -70,15 +70,48 @@ var shapes = [
 
 print("=== OOP Shapes ===");
 for (var i = 0; i < shapes.len(); i = i + 1) {
-    print(shapes[i].describe());
-    print("  " + shapes[i].greet());
+    var s = shapes[i];
+    print(s.describe());
+    print("  " + s.greet());
 }
+
+// ---- 字段与成员赋值 ----
+print("");
+print("=== 字段与成员赋值 ===");
+class Counter {
+    fun init(start) {
+        this.count = start;
+    }
+    fun tick() {
+        this.count = this.count + 1;
+        return this.count;
+    }
+}
+var c = Counter(10);
+print("initial count = {c.count}");
+print("after tick = {c.tick()}");
+c.count = 99;
+print("after member assign = {c.count}");
+
+class Box {
+    fun init() {
+        this.inner = Counter(0);
+    }
+}
+var box = Box();
+print("box.inner.count = {box.inner.count}");
 
 // 预期输出：
 // === OOP Shapes ===
-// red Circle: area = 78.5398
+// red Circle: area = 78.539749999999998
 //   I am a Circle
 // blue Rectangle: area = 24
 //   I am a Rectangle
 // green Triangle: area = 12
 //   I am a Triangle
+//
+// === 字段与成员赋值 ===
+// initial count = 10
+// after tick = 11
+// after member assign = 99
+// box.inner.count = 0

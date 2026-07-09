@@ -256,6 +256,12 @@ void IrViewer::clearIR() {
     rowToSourceLine_.clear();
     rowToInstrIndex_.clear();
     highlightedRow_ = -1;
+    // R53-UX1 fix: 空状态提示。原 clearIR 后 browser 完全空白，
+    // 用户无法区分"尚未编译"与"编译产物为空"。提供占位提示提升可发现性。
+    browser_->setText(QString::fromUtf8(
+        "<div style='color:#888; padding:8px;'>"
+        "尚无 IR 输出。请先点击「编译分析」或运行程序，再切换到 IR 视图查看。"
+        "</div>"));
 }
 
 /// 按源码行号高亮对应 IR 指令行。

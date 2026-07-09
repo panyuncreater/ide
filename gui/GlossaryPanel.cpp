@@ -77,7 +77,12 @@ GlossaryPanel::GlossaryPanel(QWidget* parent) : QWidget(parent) {
         }
     });
 
-    // 详情中 term: 链接 → 跳转到关联术语
+    // 详情中 term: 链接 → 在术语表内跳转到关联术语（不跨面板）
+    // ROUND-60 fix (Issue 7): 原实现在链接点击时 emit termActivated，触发 ide.cpp
+    // 的 showTeachingPanel(pid) 跨面板跳转，把用户从术语表带到另一个教学面板，
+    // 导致"点击关联术语不能正常跳转"——用户期望在术语表内阅读关联术语定义，
+    // 却被跳到了无关面板。修复：链接点击仅做面板内导航（setCurrentRow/showDetail），
+    // 跨面板跳转保留给 itemDoubleClicked（双击列表项是明确的"跳到关联面板"意图）。
     connect(detailView_, &QTextBrowser::anchorClicked, this, [this](const QUrl& url) {
         QString full = url.toString();
         const QString prefix = "term:";
@@ -93,18 +98,12 @@ GlossaryPanel::GlossaryPanel(QWidget* parent) : QWidget(parent) {
                     searchEdit_->blockSignals(false);
                     populateList();
                 }
-                // 选中目标行（触发 currentRowChanged → onTermSelected）
+                // 选中目标行（触发 currentRowChanged → onTermSelected → showDetail）
                 if (listWidget_->currentRow() != i) {
                     listWidget_->setCurrentRow(i);
-                    // AUDIT-P2 fix: 链接点击是明确跳转意图，应发射 termActivated
-                    // 触发跨面板跳转。原实现仅 setCurrentRow 依赖 onTermSelected 间接触发，
-                    // 但 onTermSelected 在第三十六轮修复后已移除 termActivated 发射（避免
-                    // 单击切换术语就跳面板），导致链接跳转到新术语时不再触发跨面板跳转。
-                    emit termActivated(entries_[i].id);
                 } else {
-                    // 同一行已选中，手动刷新详情 + 发射激活信号
+                    // 同一行已选中，手动刷新详情
                     showDetail(i);
-                    emit termActivated(entries_[i].id);
                 }
                 return;
             }

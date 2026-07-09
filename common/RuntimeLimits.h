@@ -63,6 +63,10 @@ constexpr int64_t MAX_LOOP_ITERATIONS = 10000000;
 constexpr int64_t MAX_INSTRUCTIONS = 40000000;
 // range() 函数参数上限（与 MAX_LOOP_ITERATIONS 对齐）
 constexpr int64_t MAX_RANGE = 10000000;
+// AUDIT-P1.2 fix: 条件断点求值步数上限。条件断点求值同步阻塞主线程，
+// 需比 MAX_LOOP_ITERATIONS 严格 100 倍。100000 步在简单条件表达式下为毫秒级，
+// 足以覆盖合理条件（如 i > 10 && arr.len() > 5），同时截断 while(true){} 等无限循环。
+constexpr size_t MAX_CONDITION_STEPS = 100000;
 
 // ---- 编译期深度保护 ----
 // Parser 最大递归深度

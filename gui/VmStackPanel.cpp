@@ -217,4 +217,9 @@ void VmStackPanel::clearAll() {
     stackList_->clear();
     globalsTable_->setRowCount(0);
     opLabel_->setText("等待执行...");
+    // R54-13 fix: 空状态占位项，对齐 DebugPanel R53-6 模式
+    auto* hint = new QListWidgetItem(QString::fromUtf8("（已清空：运行/调试启动后将显示操作数栈）"));
+    hint->setFlags(hint->flags() & ~Qt::ItemIsEnabled & ~Qt::ItemIsSelectable);
+    hint->setForeground(QColor(0x88, 0x88, 0x88));
+    stackList_->addItem(hint);
 }

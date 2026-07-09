@@ -113,9 +113,19 @@ WorkerManager::~WorkerManager() {
 
 /// 恢复主线程输出/输入回调（worker 退出后调用），重建实时交互。
 void WorkerManager::setupMainCallbacks() {
-    // 恢复主线程输出回调
+    // ROUND-66 P1 fix: 输出回调改用 QPointer 捕获 this（与 buildInputCallback 对齐）。
+    // 原实现裸捕获 this：WorkerManager 析构后 interpreter_（shared_ptr）仍存活
+    // （IdeController 持有共享所有权，析构顺序晚于 workerMgr_），若任何代码路径
+    // 在此期间调用 interpreter 的 output（如 GC 日志、模块加载诊断），会通过
+    // 悬垂 this 触发 emit outputReady → UAF。QPointer 在 QObject 析构后自动置 null，
+    // lambda 检测后安全 no-op。
+    QPointer<WorkerManager> self = this;
     interpreter_->setOutputCallback(
-        [this](const std::string& text) { emit outputReady(QString::fromStdString(text)); });
+        [self](const std::string& text) {
+            if (!self)
+                return;
+            emit self->outputReady(QString::fromStdString(text));
+        });
     // D20 fix: 恢复输入回调统一通过 buildInputCallback 构建（带超时保护）
     interpreter_->setInputCallback(buildInputCallback());
 }
@@ -164,7 +174,9 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
             return "";
         QFile file(resolved);
         if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            return QString::fromUtf8(file.readAll()).toStdString();
+            // P3.4 fix: 区分"文件不存在"与"空文件"——空文件返回 "\n"（合法空模块）
+            std::string content = QString::fromUtf8(file.readAll()).toStdString();
+            return content.empty() ? "\n" : content;
         }
         return "";
     });
@@ -259,31 +271,36 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
                     LOG_ERROR(std::string("cleanupWorker threw: ") + e.what(), "IDE");
                     isRunning_ = false;
                     isDebugRun_ = false;
+                    // R54-3 fix: cleanupWorker 抛异常时 setupMainCallbacks() 可能未执行，
+                    // interpreter 的 output/input 回调保持为 worker 的 no-op，导致
+                    // REPL 输出静默丢失、input() 返回空串。此处强制恢复主线程回调。
+                    try { setupMainCallbacks(); } catch (...) {}
                 } catch (...) {
                     isRunning_ = false;
                     isDebugRun_ = false;
+                    try { setupMainCallbacks(); } catch (...) {}
                 }
                 emit workerFinished(wasDebug);
             },
             Qt::QueuedConnection);
     } catch (...) {
         // BUG-DBG-10 fix: 重置顺序与 cleanupWorker() 对齐。
-        // 原顺序 worker_.reset() 在 workerThread_.reset() 之前，且 workerThread_
-        // 未 quit/wait 就直接 reset。worker 生活于 workerThread_（moveToThread），
-        // 线程亲和性规则要求先 quit+wait 再删除 worker。虽然 catch 路径下线程
-        // 尚未 start，但与 cleanupWorker 保持一致避免未来回归。
+        // R54-4 fix: 统一三处销毁顺序为"先 worker 后 thread"，与 ~WorkerManager 对齐。
         isRunning_ = false;
         isDebugRun_ = false;
         interpreter_->setDebugMode(false);
         interpreter_->restoreReplState();
         debugger_->reset();
-        // A-P2-1 fix: 先确保线程完全退出，再删除 worker（符合 Qt 线程亲和性规则）
+        // R54-4/R54-5 fix: quit+wait（带超时）→ reset worker_ → reset workerThread_
         if (workerThread_) {
             workerThread_->quit();
-            workerThread_->wait();
-            workerThread_.reset();
+            if (!workerThread_->wait(5000)) {
+                LOG_ERROR("prepareRun catch: worker 线程未在 5 秒内退出", "IDE");
+            }
         }
         worker_.reset();
+        if (workerThread_)
+            workerThread_.reset();
         setupMainCallbacks();
         throw;
     }
@@ -404,13 +421,22 @@ void WorkerManager::cleanupWorker() {
     interpreter_->restoreReplState();
     debugger_->reset();
 
-    // A-P2-1 fix: 先确保线程完全退出，再删除 worker（符合 Qt 线程亲和性规则）
+    // R54-4 fix: 统一三处销毁顺序为"先 worker 后 thread"，与 ~WorkerManager 对齐。
+    // 原顺序先 reset workerThread_ 再 reset worker_，worker 析构时 Qt 内部可能访问
+    // worker->thread()，此时 QThread 对象已被销毁，指针悬垂 → 潜在 UAF。
+    // 正确顺序：quit+wait（停止线程执行）→ reset worker_（QThread 对象仍存活，
+    // thread() 有效）→ reset workerThread_（销毁 QThread 对象）。
+    // R54-5 fix: wait() 增加超时，与 ~WorkerManager/stopForClose/forceStop 一致，
+    // 避免线程终止异常时永久阻塞主线程导致 UI 冻结。
     if (workerThread_) {
         workerThread_->quit();
-        workerThread_->wait();
-        workerThread_.reset();
+        if (!workerThread_->wait(5000)) {
+            LOG_ERROR("cleanupWorker: worker 线程未在 5 秒内退出", "IDE");
+        }
     }
     worker_.reset();
+    if (workerThread_)
+        workerThread_.reset();
 
     // 恢复主线程输出+输入回调（worker 的回调 lambda 捕获了已删除的 worker this 指针）
     setupMainCallbacks();

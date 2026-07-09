@@ -1,0 +1,244 @@
+// data_structures.mini - 数组、字典与字符串
+// 覆盖特性：数组 [] 字面量、字典 {} 字面量、push/pop/len/has/get/set/remove/contains/keys/values/join、
+//           数组/字典索引读写、嵌套结构、字符串插值、转义序列、
+//           字符串方法 upper/lower/substr/indexOf/contains/trim/replace/split/startsWith/endsWith、
+//           字符索引
+// ============================================================
+
+// ---- 数组操作 ----
+print("=== 数组操作 ===");
+var fruits = ["apple", "banana", "cherry"];
+print("fruits: {fruits}");
+print("len: {fruits.len()}");
+
+// 追加元素
+fruits.push("durian");
+print("after push: {fruits}");
+
+// 弹出末尾元素
+var last = fruits.pop();
+print("popped: {last}");
+print("after pop: {fruits}");
+
+// 索引访问
+print("fruits[0] = {fruits[0]}");
+print("fruits[2] = {fruits[2]}");
+
+// ---- 字典操作 ----
+print("");
+print("=== 字典操作 ===");
+var person = {"name": "Alice", "age": 30, "city": "Beijing"};
+print("person: {person}");
+print("name = {person["name"]}");
+print("has 'age': {person.has("age")}");
+print("has 'email': {person.has("email")}");
+
+// 新增键值
+person["email"] = "alice@example.com";
+print("after add email: {person}");
+
+// ---- 嵌套结构 ----
+print("");
+print("=== 嵌套结构 ===");
+var matrix = [[1, 2], [3, 4], [5, 6]];
+for (var i = 0; i < matrix.len(); i = i + 1) {
+    print("row {i}: {matrix[i]}");
+}
+
+// ---- 字典方法 ----
+print("");
+print("=== 字典方法 ===");
+var user = {"name": "Alice", "age": 30};
+print("keys: {user.keys()}");
+print("values: {user.values()}");
+print("has('age'): {user.has("age")}");
+print("contains('age'): {user.contains("age")}");
+print("get('name'): {user.get("name")}");
+print("get('email', 'N/A'): {user.get("email", "N/A")}");
+user.set("city", "Beijing");
+print("after set: {user}");
+user.remove("age");
+print("after remove('age'): {user}");
+
+// ---- 数组方法 ----
+print("");
+print("=== 数组方法 ===");
+var nums = [3, 1, 2];
+print("contains(1): {nums.contains(1)}");
+print("join('-'): {nums.join("-")}");
+nums.remove(1);
+print("after remove(1): {nums}");
+var letters = ["a", "b", "c"];
+letters[0] = "A";
+print("after letters[0] = 'A': {letters}");
+
+print("");
+print("=== 嵌套结构访问 ===");
+var table = {"rows": [[1, 2], [3, 4]]};
+print("rows: {table["rows"]}");
+
+// ---- 字符串插值 ----
+print("");
+print("=== 字符串插值 ===");
+var langName = "MiniLang";
+var year = 2026;
+print("Language: {langName}");
+print("Next year: {year + 1}");
+
+// 类型自动转换：int/float/bool/null 自动转为字符串
+print("");
+print("=== 类型转换 ===");
+var intVal = 42;
+var floatVal = 2.718;
+var boolVal = false;
+var nullVal = null;
+print("int: {intVal}");
+print("float: {floatVal}");
+print("bool: {boolVal}");
+print("null: {nullVal}");
+
+// 数组和字典的插值
+var arr = [1, 2, 3];
+var mydict = {"key": "value"};
+print("array: {arr}");
+print("dict: {mydict}");
+
+// 字符串拼接 vs 插值对比
+print("");
+print("=== 拼接 vs 插值 ===");
+print("Concat: " + langName + " has " + langName.len() + " chars");
+print("Interp: {langName} has {langName.len()} chars");
+
+// ---- 转义序列 ----
+print("");
+print("=== 转义序列 ===");
+print("line1\nline2");
+print("col1\tcol2");
+print("quote: \"hi\"");
+print("backslash: \\");
+
+// ---- 字符串方法 ----
+var s = "Hello, MiniLang";
+print("");
+print("=== 大小写 ===");
+print("upper: {s.upper()}");
+print("lower: {s.lower()}");
+
+print("");
+print("=== 子串与查找 ===");
+print("substr(0,5): {s.substr(0, 5)}");
+print("substr(7): {s.substr(7)}");
+print("indexOf('Mini'): {s.indexOf("Mini")}");
+print("contains('Lang'): {s.contains("Lang")}");
+
+print("");
+print("=== 前缀/后缀判断 ===");
+print("startsWith('Hello'): {s.startsWith("Hello")}");
+print("startsWith('World'): {s.startsWith("World")}");
+print("endsWith('MiniLang'): {s.endsWith("MiniLang")}");
+print("endsWith('World'): {s.endsWith("World")}");
+
+print("");
+print("=== 替换 / 分割 / 裁剪 ===");
+var messy = "  hello world  ";
+print("trim: '{messy.trim()}'");
+print("replace: {messy.replace("world", "MiniLang")}");
+var csv = "a,b,c";
+print("split(','): {csv.split(",")}");
+
+// ---- 字符索引 ----
+print("");
+print("=== 字符索引 ===");
+var word = "abcde";
+print("word[0] = {word[0]}");
+print("word[2] = {word[2]}");
+
+// 预期输出：
+// === 数组操作 ===
+// fruits: ["apple", "banana", "cherry"]
+// len: 3
+// after push: ["apple", "banana", "cherry", "durian"]
+// popped: durian
+// after pop: ["apple", "banana", "cherry"]
+// fruits[0] = apple
+// fruits[2] = cherry
+//
+// === 字典操作 ===
+// person: {"age": 30, "name": "Alice", "city": "Beijing"}
+// name = Alice
+// has 'age': true
+// has 'email': false
+// after add email: {"email": "alice@example.com", "city": "Beijing", "name": "Alice", "age": 30}
+//
+// === 嵌套结构 ===
+// row 0: [1, 2]
+// row 1: [3, 4]
+// row 2: [5, 6]
+//
+// === 字典方法 ===
+// keys: ["name", "age"]
+// values: ["Alice", 30]
+// has('age'): true
+// contains('age'): true
+// get('name'): Alice
+// get('email', 'N/A'): N/A
+// after set: {"city": "Beijing", "age": 30, "name": "Alice"}
+// after remove('age'): {"city": "Beijing", "name": "Alice"}
+//
+// === 数组方法 ===
+// contains(1): true
+// join('-'): 3-1-2
+// after remove(1): [3, 2]
+// after letters[0] = 'A': ["A", "b", "c"]
+//
+// === 嵌套结构访问 ===
+// rows: [[1, 2], [3, 4]]
+//
+// === 字符串插值 ===
+// Language: MiniLang
+// Next year: 2027
+//
+// === 类型转换 ===
+// int: 42
+// float: 2.718
+// bool: false
+// null: null
+//
+// array: [1, 2, 3]
+// dict: {"key": "value"}
+//
+// === 拼接 vs 插值 ===
+// Concat: MiniLang has 8 chars
+// Interp: MiniLang has 8 chars
+//
+// === 转义序列 ===
+// line1
+// line2
+// col1	col2
+// quote: "hi"
+// backslash: \
+//
+// === 大小写 ===
+// upper: HELLO, MINILANG
+// lower: hello, minilang
+//
+// === 子串与查找 ===
+// substr(0,5): Hello
+// substr(7): MiniLang
+// indexOf('Mini'): 7
+// contains('Lang'): true
+//
+// === 前缀/后缀判断 ===
+// startsWith('Hello'): true
+// startsWith('World'): false
+// endsWith('MiniLang'): true
+// endsWith('World'): false
+//
+// === 替换 / 分割 / 裁剪 ===
+// trim: 'hello world'
+// replace:   hello MiniLang
+// split(','): ["a", "b", "c"]
+//
+// === 字符索引 ===
+// word[0] = a
+// word[2] = c

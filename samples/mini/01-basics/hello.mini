@@ -1,16 +1,53 @@
-// hello.mini - 你好世界
-// 覆盖特性：print 输出、字符串插值、var 变量声明
+// hello.mini - 基础入门：print 输出、var 变量、字符串插值、注释
+// 覆盖特性：print 输出、var 变量声明、字符串插值 {expr}、
+//           行注释 //、块注释 /* */（支持嵌套）、嵌套字符串插值
 // ============================================================
 
-var name = "MiniLang";
+// ---- 行注释 ----
+// 这是一行行注释
+var name = "MiniLang";   // 行尾也可以写注释
 var version = 1.0;
 
-// 字符串插值：在双引号字符串中用 {表达式} 嵌入变量值
+// ---- 块注释（支持嵌套）----
+/* 这是一段块注释
+   可以跨越多行
+   var hidden = 2;   // 块注释内的代码不会被执行
+*/
+
+/* 嵌套块注释：/* 内层 */ 也被整体忽略 */
+var greeting = "Hello";
+
+// ---- print 输出与字符串插值 ----
+// 在双引号字符串中用 {表达式} 嵌入变量值
+print("=== 基础输出 ===");
 print("Hello, {name}!");
 print("Version: {version}");
 print("Welcome to MiniLang IDE!");
 
+// 表达式插值：{ } 内可以是任意表达式
+print("");
+print("=== 表达式插值 ===");
+print("1 + 2 = {1 + 2}");
+print("name has {name.len()} chars");
+
+// ---- 嵌套字符串插值 ----
+// 插值 { } 内可以再包含带插值的字符串，嵌套深度限制 64 层
+print("");
+print("=== 嵌套字符串插值 ===");
+var inner = "World";
+print("outer: {"inner: {inner}"}");
+print("calc: {"result: {3 * 7}"}");
+
 // 预期输出：
+// === 基础输出 ===
 // Hello, MiniLang!
 // Version: 1.0
 // Welcome to MiniLang IDE!
+//
+// === 表达式插值 ===
+// 1 + 2 = 3
+// name has 8 chars
+//
+// === 嵌套字符串插值 ===
+// outer: inner: World
+// calc: result: 21

@@ -25,7 +25,13 @@ DebugCoordinator::~DebugCoordinator() {
     // AUDIT-P1 fix: 清空 callback 后必须 spin-wait 等待正在执行的 callback 完成，
     // 否则 worker 线程可能在锁外 cb() 调用中持已失效的 interpreter_ shared_ptr → UAF。
     // 采用 RCU 优雅期模式：activeCallbackCount_ 原子计数，cb() 期间 >0，归零后安全析构。
+    // R54-9 fix: 先调用 stop() 唤醒可能阻塞在 pauseExecution 的 worker 线程。
+    // 原实现仅清空回调 + waitCallbacksIdle，但 worker 若阻塞在 pauseCV_.wait()，
+    // 不在 callback 中（activeCallbackCount_==0），waitCallbacksIdle 立即返回。
+    // 随后 interpreter_ 被释放，worker 醒来后访问已释放 interpreter → UAF。
+    // stop() 设 stopped_=true 并 notify_one，worker 醒来后抛 DebugStopException 终止。
     if (debugger_) {
+        debugger_->stop();
         debugger_->setConditionEvaluator({});
         debugger_->setVariableCallback({});
         debugger_->setCallStackCallback({});
@@ -89,7 +95,10 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints, const QMap<int, 
             if (currentShared) {
                 int depth = 0;
                 while (currentShared) {
-                    const auto& locals = currentShared->localVariables();
+                    // R54-11 fix: 用 snapshotLocalVariables() 返回拷贝，避免遍历
+                    // 期间 worker 线程修改 variables map 导致迭代器失效。
+                    // shared_ptr 防止 Environment 析构，但不防止 map 内容被修改。
+                    auto locals = currentShared->snapshotLocalVariables();
                     for (const auto& kv : locals) {
                         VariableSnapshot snap;
                         snap.name = kv.first;

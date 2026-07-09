@@ -74,10 +74,16 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     // 循环依赖检测（D19 fix: 用 unordered_set 实现 O(1) 查找，替代线性扫描）
     if (moduleLoadingSet_.count(modulePath) > 0) {
         runtimeError("检测到循环依赖: " + modulePath, node.line, node.column);
+        // R53-4 fix: 防御性 return。当前 runtimeError 是 throw 语义，此行不可达；
+        // 但若未来 runtimeError 改为非抛出式错误处理（错误码/返回值），
+        // 缺少 return 会继续执行后续加载流程，违反"循环依赖即停止"语义。
+        return;
     }
     // P1-1 fix: 深度导入链递归保护（防止 C++ 栈溢出）
     if (moduleLoadingStack_.size() >= MAX_RECURSION_DEPTH) {
         runtimeError("模块导入深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
+        // R53-4 fix: 同上，防御性 return
+        return;
     }
 
     // 检查缓存

@@ -1003,6 +1003,22 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(dst, line);
         break;
     }
+    // AUDIT-P1.1 fix: break/continue finally 续跳 lowering
+    case IROp::PUSH_JUMP_TARGET: {
+        // operands: [label_idx]
+        // → REG_PUSH_JUMP_TARGET target(2B 绝对偏移，第二遍回填)
+        if (instr.operands.empty())
+            return false;
+        chunk_->writeOp(RegOp::REG_PUSH_JUMP_TARGET, line);
+        pendingJumps_.push_back({chunk_->code.size(), instr.operands[0].index});
+        chunk_->writeShort(0, line); // 占位符，第二遍回填
+        break;
+    }
+    case IROp::FINALLY_END: {
+        // 无操作数 → REG_FINALLY_END
+        chunk_->writeOp(RegOp::REG_FINALLY_END, line);
+        break;
+    }
 
     // ---- 写回 ----
     case IROp::WRITEBACK_MEMBER_VAR: {

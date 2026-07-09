@@ -17,6 +17,7 @@
 //   - 转发协作类信号到 GUI 层
 // ============================================================
 
+#include <QCoreApplication>
 #include <QMap>
 #include <QObject>
 #include <QSet>
@@ -126,6 +127,13 @@ public:
     /// 请求中止当前 REPL 异步执行（closeEvent 超时路径使用）
     void requestReplStop() { interpreter_->requestStop(); }
 
+    /// ROUND-69 fix: REPL %reset 完整重置 REPL 环境（清空变量/函数/类/模块/AST）
+    /// 前置条件：调用方已确保无正在执行的任务（isRunning()==false && !replRunning）
+    void resetReplEnvironment() {
+        interpreter_->resetReplEnvironment();
+        vmStepper_.reset();
+    }
+
     // P0-3 fix (F11): 暴露 Interpreter 当前作用域变量名列表，
     // 供 GUI 错误增强（ErrorHintEngine 拼写建议）使用。
     /// 返回当前 Interpreter 作用域链上所有可见变量名（去重，子作用域优先）。
@@ -161,6 +169,19 @@ public:
     void forceStop() { workerMgr_.forceStop(); }
     bool isRunning() const { return workerMgr_.isRunning(); }
     bool isDebugRun() const { return workerMgr_.isDebugRun(); }
+
+    /// ROUND-66 P0 fix: 清空 IdeController 及其 4 个协作成员（pipeline_/workerMgr_/
+    /// debugCoord_/vmStepper_）的所有待处理 Qt 事件。
+    /// Qt6 的 disconnect() 不移除已投递的 QMetaCallEvent（queued slot lambda），
+    /// 若这些残留事件在析构链中被 dispatch（如 ADS QSS 重算触发 repaint），
+    /// 会访问已析构的成员 → UAF（读取访问权限冲突）。closeEvent 和 ~Ide 中调用。
+    void clearPendingEvents() {
+        QCoreApplication::removePostedEvents(this);
+        QCoreApplication::removePostedEvents(&pipeline_);
+        QCoreApplication::removePostedEvents(&workerMgr_);
+        QCoreApplication::removePostedEvents(&debugCoord_);
+        QCoreApplication::removePostedEvents(&vmStepper_);
+    }
 
     // ---- 调试操作（转发到 DebugCoordinator）----
     void setupDebug(const QSet<int>& breakpoints, const QMap<int, std::string>& conditions) {
@@ -236,6 +257,10 @@ public:
     /// AUDIT-P0 fix: 增加 owner 参数用于反注册。
     /// owner 通常是注册面板的 this 指针，面板析构时调用 removeVmStateChangedListener(owner) 注销。
     void addVmStateChangedListener(void* owner, VmStateChangedCallback cb) {
+        // PERF-ROUND53 fix: 预留容量避免 push_back 触发 realloc，使 notifyVmStateChanged
+        // 的索引迭代在回调期间不会因 push_back 导致 vector 重新分配。
+        if (vmStateChangedListeners_.capacity() == vmStateChangedListeners_.size())
+            vmStateChangedListeners_.reserve(vmStateChangedListeners_.size() * 2 + 16);
         vmStateChangedListeners_.push_back({owner, std::move(cb)});
     }
     /// AUDIT-P0 fix: 反注册 VM 状态变更监听器。
@@ -323,11 +348,14 @@ private:
     };
     std::vector<VmStateChangedListener> vmStateChangedListeners_;
     void notifyVmStateChanged() {
-        // 迭代副本：回调可能触发面板刷新，间接修改订阅者列表（理论上不会，但防御性）。
-        auto snapshot = vmStateChangedListeners_;
-        for (auto& lst : snapshot) {
-            if (lst.fn)
-                lst.fn();
+        // PERF-ROUND53 fix: 原实现每次拷贝整个 vector（含 std::function，可能触发堆分配）。
+        // removeVmStateChangedListener 仅将 fn 置 null（延迟清除，不 erase），
+        // addVmStateChangedListener 已 reserve 防止 realloc，迭代期间 vector 大小不变。
+        // 改用索引迭代避免拷贝。防御性检查 i < size() 应对理论上的回调期间 push_back。
+        const size_t n = vmStateChangedListeners_.size();
+        for (size_t i = 0; i < n; ++i) {
+            if (i < vmStateChangedListeners_.size() && vmStateChangedListeners_[i].fn)
+                vmStateChangedListeners_[i].fn();
         }
     }
 

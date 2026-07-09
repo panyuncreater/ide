@@ -15,7 +15,7 @@
 // ============================================================
 // ClosureInspectorLibrary — 静态教学场景库
 // ============================================================
-// 8 个典型闭包场景，覆盖：
+// 12 个典型闭包场景，覆盖：
 //   - 简单闭包（捕获单个外层变量）
 //   - 计数器闭包（通过闭包修改外层变量）
 //   - 多变量捕获
@@ -24,6 +24,10 @@
 //   - 闭包数组
 //   - 立即调用函数表达式（IIFE）
 //   - 闭包逃逸（闭包超出定义作用域）
+//   - 闭包作为参数（回调模式）[ROUND-60 新增]
+//   - 递归闭包（自引用）[ROUND-60 新增]
+//   - 块作用域 upvalue 关闭 [ROUND-60 新增]
+//   - 互递归闭包 [ROUND-60 新增]
 //
 // 帮助学习者理解闭包机制：
 //   - 闭包捕获外层作用域的变量引用（upvalue）
@@ -147,6 +151,68 @@ const std::vector<ClosureScenario>& ClosureInspectorLibrary::scenarios() {
          "每次调用 acc(x) 时，闭包通过 upvalue 修改堆上的 total。"
          "total 在 acc 不可达时才会被 GC 回收。"
          "这展示了闭包逃逸后 upvalue 的堆化与 GC 机制。"},
+        {"closure-as-param",
+         "📞 闭包作为参数（回调模式）",
+         "📞 高阶函数接受闭包作为参数。"
+         "map/filter/reduce 等函数式模式都基于此。"
+         "闭包作为一等公民（first-class value）可在函数间传递，"
+         "调用时通过 OP_CALL 指令执行参数位置的闭包。"
+         "本例中 add5 闭包捕获了外层变量 n 作为 upvalue，再作为参数传递给 apply。",
+         "fun apply(fn, x) {\n    return fn(x);\n}\n\nfun makeAdder(n) {\n    fun add(x) {\n        "
+         "return x + n;\n    }\n    return add;\n}\n\nvar add5 = makeAdder(5);\nprint apply(add5, "
+         "3);  // 8",
+         {"n"},
+         "🔗 by-reference (upvalue，闭包作为参数传递)",
+         "💡 闭包是一等值，可作为参数传递。"
+         "add5 闭包捕获 makeAdder 的局部变量 n 作为 upvalue，"
+         "然后作为参数传递给 apply。apply 内部调用 fn(x) 时 VM 执行 OP_CALL。"
+         "fn 在 apply 栈帧中作为参数存在，调用时被推入新栈帧作为 callee，"
+         "同时携带 add5 的 upvalue 链。"
+         "这展示了闭包作为一等公民的核心特征——既捕获状态又能被传递。"},
+        {"closure-recursive",
+         "🔄 递归闭包（自引用）",
+         "🔄 闭包通过名字在自身函数体内引用自身。"
+         "MiniLang 中函数名在 fun 声明完成后即绑定到当前作用域，"
+         "因此闭包体内的自引用会在调用时通过作用域链查找。",
+         "fun makeFactorial() {\n    fun fact(n) {\n        if (n <= 1) return 1;\n        return n * "
+         "fact(n - 1);\n    }\n    return fact;\n}\n\nvar f = makeFactorial();\nprint f(5);  // 120",
+         {"fact"},
+         "🔗 by-reference (upvalue self-ref)",
+         "💡 递归闭包通过环境链自引用。"
+         "fact 声明完成后，名字 fact 绑定到 makeFactorial 的环境。"
+         "fact 体内调用 fact(n-1) 时，VM 通过作用域链查找 fact（找到自身）。"
+         "fact 作为 upvalue 被 fact 闭包自身捕获，形成自引用循环。"
+         "makeFactorial 返回后，fact 仍可通过 upvalue 访问自身。"},
+        {"closure-close-upvalue",
+         "🔒 块作用域 upvalue 关闭",
+         "🔒 循环体内每次迭代创建新作用域，"
+         "块结束时 OP_CLOSE_UPVALUE 显式关闭 upvalue，"
+         "将栈变量迁移到堆。这使每个闭包捕获独立的变量副本。",
+         "fun makeCallbacks() {\n    var callbacks = [];\n    for (var i = 0; i < 3; i = i + 1) {\n        "
+         "var x = i * 10;\n        callbacks.push(fun() { return x; });\n    }\n    return callbacks;\n}\n\nvar "
+         "cbs = makeCallbacks();\nprint cbs[0]();  // 0\nprint cbs[1]();  // 10\nprint cbs[2]();  // 20",
+         {"x"},
+         "🔗 by-reference (upvalue, per-iteration)",
+         "💡 每次循环迭代创建新的块作用域，var x 是该作用域的局部变量。"
+         "迭代结束时 OP_CLOSE_UPVALUE 触发，x 从栈迁移到堆。"
+         "每个闭包捕获的 x 指向不同的堆地址，因此返回 0/10/20。"
+         "这与 closure-array 形成对比：closure-array 中所有闭包共享同一个 i。"
+         "这展示了块作用域 upvalue 关闭机制的关键作用。"},
+        {"closure-mutual-recursion",
+         "🔀 互递归闭包",
+         "🔀 两个闭包互相引用对方。"
+         "isEven 调用 isOdd，isOdd 调用 isEven。"
+         "前向引用（isOdd 在 isEven 之后定义）通过作用域链在调用时解析。",
+         "fun makeMutual() {\n    fun isEven(n) {\n        if (n == 0) return true;\n        return isOdd(n "
+         "- 1);\n    }\n    fun isOdd(n) {\n        if (n == 0) return false;\n        return isEven(n - "
+         "1);\n    }\n    return isEven;\n}\n\nvar check = makeMutual();\nprint check(4);  // true",
+         {"isEven", "isOdd"},
+         "🔗 by-reference (upvalue mutual)",
+         "💡 互递归闭包通过共享环境互相引用。"
+         "isEven 声明时 isOdd 尚未定义，但 isEven 体内的 isOdd 引用在调用时解析。"
+         "VM 在 isEven 调用 isOdd 时通过作用域链查找（此时 isOdd 已绑定）。"
+         "两个闭包都捕获对方作为 upvalue，形成双向引用。"
+         "这展示了闭包前向引用与作用域链延迟解析的机制。"},
     };
     return kScenarios;
 }

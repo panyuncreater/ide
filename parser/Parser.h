@@ -124,6 +124,11 @@ private:
     /// 用于 parseParamList / forStmt 初始化中识别 Point p / Point[] arr 模式
     bool isClassTypeDeclStart() const;
 
+    /// 检查当前位置是否是函数类型声明起始：fun(params):ret paramName
+    /// 用于 parseParamList 识别高阶函数参数类型注解（如 fun(int):string cb）
+    /// ROUND56 fix: samples/02-types-and-operators/types_and_operators.mini 使用此语法
+    bool isFunTypeDeclStart() const;
+
     /// 解析类型注解（内置类型或类名，可选 [] 数组后缀）
     /// 当前 token 必须是类型关键字或标识符，消耗类型 token 并可选地消耗 []
     /// 使用安全回溯：仅在 [ 后紧跟 ] 时才消费，否则回退 [

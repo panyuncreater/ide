@@ -39,7 +39,7 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "🛡️ 最基础的异常处理形式。try 块中 throw 抛出异常对象，"
          "catch 块捕获并处理。异常对象通过 catch 变量名（如 e）访问。"
          "MiniLang 的异常对象是字符串值，catch 匹配不区分类型。",
-         "try {\n    throw \"something went wrong\";\n} catch (e) {\n    print \"caught: \" + e;\n}",
+         "try {\n    throw \"something went wrong\";\n} catch (e) {\n    print(\"caught: \" + e);\n}",
          {"main()", "try-block", "throw", "catch-block", "main()"},
          "💡 异常从 try 块抛出后，立即跳转到对应 catch 块。"
          "catch 变量 e 绑定异常对象（字符串值），执行完 catch 块后继续正常流程。"
@@ -49,7 +49,7 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "🚨 异常沿调用栈向上传播，若没有找到任何匹配的 catch 块，"
          "最终传播到顶层导致程序终止。MiniLang 中未捕获异常会打印"
          "错误信息并设置 VM/Interpreter 的错误标志。",
-         "fun risky() {\n    throw \"fatal error\";\n}\n\nrisky();\nprint \"this line is never reached\";",
+         "fun risky() {\n    throw \"fatal error\";\n}\n\nrisky();\nprint(\"this line is never reached\");",
          {"main()", "risky()", "throw", "risky() (unwinding)", "main() (unwinding)", "PROGRAM TERMINATED"},
          "⚠️ 异常从 risky() 抛出，沿调用栈向上搜索。risky() 没有 try/catch，"
          "帧被弹出（栈展开）。main() 也没有 try/catch，继续弹出。"
@@ -59,8 +59,8 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "🛡️ 嵌套的 try/catch 结构。内层 catch 优先匹配异常。"
          "若内层不匹配（或再次抛出），异常继续传播到外层 catch。"
          "MiniLang 的 catch 不区分异常类型，因此内层 catch 总是捕获异常。",
-         "try {\n    try {\n        throw \"inner error\";\n    } catch (e) {\n        print \"inner caught: \" + e;\n "
-         "   }\n} catch (e2) {\n    print \"outer caught: \" + e2;\n}",
+         "try {\n    try {\n        throw \"inner error\";\n    } catch (e) {\n        print(\"inner caught: \" + e);\n"
+         "    }\n} catch (e2) {\n    print(\"outer caught: \" + e2);\n}",
          {"main()", "outer-try", "inner-try", "throw", "inner-catch", "inner-try-end", "outer-try-end", "main()"},
          "💡 异常从内层 try 块抛出，首先匹配内层 catch。内层 catch 捕获后执行，"
          "内层 try/catch 结束。控制流回到外层 try 块继续执行。"
@@ -70,8 +70,8 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "✨ finally 块无论是否发生异常都会执行。常用于资源清理"
          "（如关闭文件、释放锁）。MiniLang 支持 try/catch/finally 三段式，"
          "finally 块在 catch 处理后或无异常时都会执行。",
-         "var resource = \"opened\";\ntry {\n    throw \"error during processing\";\n} catch (e) {\n    print \"error: "
-         "\" + e;\n} finally {\n    print \"cleanup: closing \" + resource;\n}",
+         "var resource = \"opened\";\ntry {\n    throw \"error during processing\";\n} catch (e) {\n    print(\"error: "
+         "\" + e);\n} finally {\n    print(\"cleanup: closing \" + resource);\n}",
          {"main()", "try-block", "throw", "catch-block", "finally-block", "main()"},
          "💡 MiniLang 的 finally 块在以下三种情况都会执行："
          "(1) try 块正常结束；(2) try 块抛出异常被 catch 捕获后；"
@@ -83,8 +83,8 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "每个帧在栈展开时被弹出，局部变量被销毁。"
          "这是异常处理最常见的实际使用模式。",
          "fun validate(x) {\n    if (x < 0) {\n        throw \"negative value not allowed\";\n    }\n    return x * "
-         "2;\n}\n\ntry {\n    var result = validate(-5);\n    print result;\n} catch (e) {\n    print \"validation "
-         "failed: \" + e;\n}",
+         "2;\n}\n\ntry {\n    var result = validate(-5);\n    print(result);\n} catch (e) {\n    print(\"validation "
+         "failed: \" + e);\n}",
          {"main()", "validate(-5)", "throw", "validate() (unwinding)", "main() catch-block", "main()"},
          "💡 异常从 validate() 抛出，validate() 没有 try/catch，帧被弹出（栈展开）。"
          "控制流回到 main() 的 try 块，异常被 catch 块捕获。"
@@ -95,7 +95,7 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "每一层递归帧都会被检查是否有 catch 块。"
          "若所有层都没有 catch，异常传播到顶层。",
          "fun countdown(n) {\n    if (n == 0) {\n        throw \"reached zero\";\n    }\n    countdown(n - "
-         "1);\n}\n\ntry {\n    countdown(3);\n} catch (e) {\n    print \"caught: \" + e;\n}",
+         "1);\n}\n\ntry {\n    countdown(3);\n} catch (e) {\n    print(\"caught: \" + e);\n}",
          {"main()", "countdown(3)", "countdown(2)", "countdown(1)", "countdown(0)", "throw", "countdown(0) (unwinding)",
           "countdown(1) (unwinding)", "countdown(2) (unwinding)", "countdown(3) (unwinding)", "main() catch-block",
           "main()"},
@@ -109,7 +109,7 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "catch 变量绑定异常对象后，可通过字段访问或方法调用获取详情。"
          "常用字典或实例作为异常对象，携带结构化错误信息。",
          "try {\n    var error = {\"code\": 404, \"message\": \"not found\"};\n    throw error;\n} catch (e) {\n    "
-         "print \"error code: \" + e.code;\n    print \"error message: \" + e.message;\n}",
+         "print(\"error code: \" + e.code);\n    print(\"error message: \" + e.message);\n}",
          {"main()", "try-block", "throw (dict)", "catch-block", "main()"},
          "💡 异常对象是字典值，包含 code 和 message 字段。"
          "catch 变量 e 绑定字典后，可通过 e.code / e.message 访问字段。"
@@ -119,8 +119,8 @@ const std::vector<ExceptionScenario>& ExceptionFlowLibrary::scenarios() {
          "↩️ catch 块中可以再次 throw，将异常（或新异常）传播到外层。"
          "常用于：内层 catch 记录日志后重新抛出，或转换异常类型。"
          "重新抛出后，当前 catch 块剩余代码不执行，异常沿调用栈继续传播。",
-         "try {\n    try {\n        throw \"original error\";\n    } catch (e) {\n        print \"logging: \" + e;\n   "
-         "     throw \"rethrown: \" + e;\n    }\n} catch (e2) {\n    print \"outer caught: \" + e2;\n}",
+         "try {\n    try {\n        throw \"original error\";\n    } catch (e) {\n        print(\"logging: \" + e);\n"
+         "        throw \"rethrown: \" + e;\n    }\n} catch (e2) {\n    print(\"outer caught: \" + e2);\n}",
          {"main()", "outer-try", "inner-try", "throw", "inner-catch (logging)", "throw (rethrow)",
           "inner-catch (unwinding)", "outer-catch", "main()"},
          "💡 内层 catch 捕获异常后打印日志，然后重新 throw。"
@@ -193,6 +193,7 @@ ExceptionFlowPanel::ExceptionFlowPanel(QWidget* parent) : QWidget(parent) {
     // 顶部页面切换按钮
     auto* topBar = new QHBoxLayout();
     topBar->setContentsMargins(4, 4, 4, 4);
+    topBar->setSpacing(8);
     pageScenarioBtn_ = new QPushButton("教学场景库", this);
     pagePhaseBtn_ = new QPushButton("传播图解", this);
     pageScenarioBtn_->setCheckable(true);
@@ -266,6 +267,7 @@ void ExceptionFlowPanel::buildScenarioPage(QWidget* host) {
 }
 
 /// 构建「异常阶段」子页 UI。
+/// ROUND56 fix (issue 4): 增大列表宽度 + 添加阶段图标 + 彩色背景条，提升可读性。
 void ExceptionFlowPanel::buildPhasePage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -276,15 +278,29 @@ void ExceptionFlowPanel::buildPhasePage(QWidget* host) {
     phaseDetail_ = new QTextBrowser(splitter);
     phaseDetail_->setOpenExternalLinks(false);
 
-    for (const auto& p : ExceptionPhaseLibrary::phases()) {
-        phaseList_->addItem(QString::fromStdString(p.phase));
+    // ROUND56 fix: 列表项添加图标 + 彩色标签，提升视觉引导
+    static const char* kPhaseIcons[] = {"⚡ throw", "🔍 search", "🛡️ catch", "✨ finally", "🌊 unwind", "✅ recovery"};
+    static const char* kPhaseDesc[] = {
+        "异常创建与抛出",
+        "沿栈搜索处理器",
+        "捕获并绑定变量",
+        "资源清理始终执行",
+        "栈帧弹出与销毁",
+        "恢复正常控制流",
+    };
+    const auto& phases = ExceptionPhaseLibrary::phases();
+    for (int i = 0; i < (int)phases.size(); ++i) {
+        auto* item = new QListWidgetItem(QString::fromUtf8(kPhaseIcons[i]) + "\n" +
+                                         QString::fromUtf8(kPhaseDesc[i]));
+        item->setSizeHint(QSize(160, 48));
+        phaseList_->addItem(item);
     }
 
     splitter->addWidget(phaseList_);
     splitter->addWidget(phaseDetail_);
     splitter->setStretchFactor(0, 1);
-    splitter->setStretchFactor(1, 3);
-    splitter->setSizes({200, 600});
+    splitter->setStretchFactor(1, 4);
+    splitter->setSizes({220, 780});
 
     layout->addWidget(splitter);
 
@@ -292,6 +308,8 @@ void ExceptionFlowPanel::buildPhasePage(QWidget* host) {
 }
 
 /// 填充指定异常场景的详细说明与示例代码。
+/// ROUND56 fix (issue 4): 传播路径从纯 <ol> 列表升级为彩色流程图，
+/// 每个步骤根据内容自动着色（throw 红 / catch 绿 / unwind 橙 / 终止 紫 / 正常 蓝）。
 void ExceptionFlowPanel::populateScenarioDetail(int index) {
     const auto& scenarios = ExceptionFlowLibrary::scenarios();
     if (index < 0 || index >= static_cast<int>(scenarios.size())) {
@@ -306,18 +324,60 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
     oss << "<p><b>说明:</b></p>";
     oss << MarkdownRenderer::markdownToHtmlFragment(s.description).toStdString();
 
-    oss << "<h3>示例代码</h3><pre>" << s.sampleCode << "</pre>";
-
-    oss << "<h3>传播路径</h3><ol>";
-    for (const auto& step : s.propagationPath) {
-        oss << "<li>" << step << "</li>";
+    // 示例代码（HTML 转义）
+    oss << "<h3>💻 示例代码</h3>";
+    oss << "<pre style='background:#F8F9FA;border-left:4px solid #3498DB;padding:8px 12px;"
+           "font-size:12px;white-space:pre-wrap;'>";
+    {
+        std::string code = s.sampleCode;
+        for (size_t i = 0; (i = code.find('<', i)) != std::string::npos;)
+            code.replace(i, 1, "&lt;");
+        for (size_t i = 0; (i = code.find('>', i)) != std::string::npos;)
+            code.replace(i, 1, "&gt;");
+        oss << code;
     }
-    oss << "</ol>";
+    oss << "</pre>";
 
-    oss << "<h3>教学注释</h3>";
+    // 传播路径：彩色流程图（替代原 <ol> 纯文字列表）
+    oss << "<h3>🌊 传播路径</h3>";
+    oss << "<table cellspacing='0' cellpadding='0' style='width:100%;margin:8px 0;'>";
+    for (size_t i = 0; i < s.propagationPath.size(); ++i) {
+        const std::string& step = s.propagationPath[i];
+        // 根据步骤内容自动着色
+        const char* bg = "#ECF0F1";
+        const char* border = "#BDC3C7";
+        const char* icon = "▶";
+        if (step.find("throw") != std::string::npos || step.find("异常创建") != std::string::npos) {
+            bg = "#FADBD8"; border = "#E74C3C"; icon = "⚡";
+        } else if (step.find("catch") != std::string::npos) {
+            bg = "#D5F5E3"; border = "#27AE60"; icon = "🛡️";
+        } else if (step.find("unwinding") != std::string::npos || step.find("展开") != std::string::npos) {
+            bg = "#FDEBD0"; border = "#F39C12"; icon = "🌊";
+        } else if (step.find("TERMINATED") != std::string::npos || step.find("终止") != std::string::npos) {
+            bg = "#E8DAEF"; border = "#9B59B6"; icon = "🚨";
+        } else if (step.find("finally") != std::string::npos) {
+            bg = "#D6EAF8"; border = "#3498DB"; icon = "✨";
+        }
+        // 步骤号
+        oss << "<tr>";
+        oss << "<td style='background:" << bg << ";border:1px solid " << border
+            << ";border-right:none;padding:6px 8px;width:30px;text-align:center;color:" << border
+            << ";font-weight:bold;font-size:14px;'>" << (i + 1) << "</td>";
+        oss << "<td style='background:" << bg << ";border:1px solid " << border
+            << ";border-left:none;padding:6px 10px;color:#2C3E50;font-family:monospace;font-size:12px;'>"
+            << icon << " " << step << "</td>";
+        oss << "</tr>";
+        if (i < s.propagationPath.size() - 1) {
+            oss << "<tr><td colspan='2' style='text-align:center;color:#7F8C8D;padding:1px 0;font-size:12px;'>↓</td></tr>";
+        }
+    }
+    oss << "</table>";
+
+    oss << "<h3>📖 教学注释</h3>";
     oss << MarkdownRenderer::markdownToHtmlFragment(s.teachingNote).toStdString();
 
-    oss << "<hr><p><a href=\"#load\">载入到编辑器</a></p>";
+    oss << "<hr><p><a href=\"#load\" style='background:#27AE60;color:white;padding:6px 16px;border-radius:4px;"
+           "text-decoration:none;font-weight:bold;'>📥 载入到编辑器</a></p>";
 
     scenarioDetail_->setHtml(QString::fromStdString(oss.str()));
 
@@ -329,6 +389,14 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
 }
 
 /// 填充指定异常传播阶段的说明与图示。
+/// ROUND56 fix (issue 4): 原实现仅显示纯文字（phase/category/description/stackEffect），
+/// 用户反馈"传播图解太简陋了，根本没有达到效果"。
+/// 新实现生成富 HTML 可视化：
+///   1. 顶部流程条：6 个阶段彩色节点 + 箭头，当前阶段高亮
+///   2. 调用栈状态图：用 HTML 表格模拟栈帧，标注异常对象位置与帧状态
+///   3. 示例代码片段：MiniLang 代码高亮显示当前阶段对应的代码行
+///   4. 关键操作列表：阶段内执行的关键步骤
+///   5. 原有说明文字与栈效应保留
 void ExceptionFlowPanel::populatePhaseDetail(int index) {
     const auto& phases = ExceptionPhaseLibrary::phases();
     if (index < 0 || index >= static_cast<int>(phases.size())) {
@@ -337,13 +405,238 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     }
     const auto& p = phases[index];
 
+    // ---- 阶段元数据（代码片段 + 关键操作 + 栈帧状态）----
+    // 每个阶段的栈帧可视化数据：frameLabel + state（active/unwinding/caught/cleanup/destroyed/normal）
+    struct StackFrame {
+        const char* label;
+        const char* annotation; // 右侧标注（如"← 异常创建于此"）
+        const char* state;      // active / unwinding / caught / cleanup / destroyed / normal / throw-point
+    };
+    struct PhaseMeta {
+        const char* codeSnippet;
+        const char* codeHighlight; // 高亮行关键词
+        std::vector<StackFrame> frames;
+        std::vector<std::string> keyOps;
+    };
+    // 示例代码统一使用跨函数异常传播场景，6 个阶段展示同一场景的不同时刻
+    static const char* kCommonCode =
+        "fun validate(x) {\n"
+        "    if (x < 0) {\n"
+        "        throw \"negative value\";\n"
+        "    }\n"
+        "    return x * 2;\n"
+        "}\n"
+        "try {\n"
+        "    var result = validate(-5);\n"
+        "    print(result);\n"
+        "} catch (e) {\n"
+        "    print(\"caught: \" + e);\n"
+        "} finally {\n"
+        "    print(\"cleanup\");\n"
+        "}";
+
+    static const std::vector<PhaseMeta> kPhaseMeta = {
+        {"throw", "\"negative value\"",
+         {{"main()", "try { validate(-5); }", "active"},
+          {"validate(-5)", "throw \"negative value\" ← 异常创建", "throw-point"}},
+         {"创建异常对象（字符串 \"negative value\"）",
+          "立即中断 validate() 函数的当前控制流",
+          "异常对象保存到 VM 异常槽位",
+          "return 语句不会执行（已被 throw 抢占）"}},
+        {"search", "validate(-5)",
+         {{"main()", "try { ... } ← 搜索 catch", "searching"},
+          {"validate(-5)", "无 try/catch，帧待展开", "unwinding"},
+          {"⚡ 异常对象", "沿调用栈向上搜索 ↑", "exception"}},
+         {"异常传播器沿调用栈向上搜索匹配的 catch 块",
+          "检查 validate() 帧：无 try/catch → 标记为待展开",
+          "检查 main() 帧：发现 try/catch → 准备跳转到 catch",
+          "MiniLang 中 catch 不区分类型，第一个 catch 总是匹配"}},
+        {"catch", "catch (e)",
+         {{"main()", "catch (e) { ... } ← 捕获成功", "caught"},
+          {"validate(-5)", "已弹出（栈展开完成）", "destroyed"},
+          {"⚡ 异常对象 → e", "绑定到 catch 变量", "bound"}},
+         {"catch 块捕获异常，控制流跳转到 catch 块",
+          "catch 变量 e 绑定异常对象（字符串 \"negative value\"）",
+          "validate() 帧已完全展开，局部变量 x 已销毁",
+          "执行 catch 块：print(\"caught: \" + e)"}},
+        {"finally", "finally {",
+         {{"main()", "finally { print(\"cleanup\"); }", "cleanup"},
+          {"catch 块", "已执行完毕", "done"},
+          {"⚡ 异常已处理", "finally 无论是否异常都执行", "resolved"}},
+         {"finally 块在 catch 之后执行（无论是否发生异常）",
+          "资源清理代码放在 finally 中确保执行",
+          "执行：print(\"cleanup\")",
+          "若 catch 中再次 throw，finally 执行后异常继续传播"}},
+        {"unwind", "validate(-5)",
+         {{"main()", "等待异常到达", "active"},
+          {"validate(-5) ✗", "帧弹出 → 局部变量销毁", "destroyed"},
+          {"⚡ 异常", "逐帧向上传播", "exception"}},
+         {"栈展开从 throw 点开始，逐帧向上",
+          "validate() 帧被弹出：局部变量 x 被销毁",
+          "帧弹出顺序：throw 帧 → 调用帧 → ... → catch 帧",
+          "栈展开期间不可中断（除非再次抛出异常）"}},
+        {"recovery", "print(result);",
+         {{"main()", "try/catch 之后的代码 ← 正常继续", "normal"},
+          {"catch 块", "已执行完毕", "done"},
+          {"✅ 异常已恢复", "程序正常控制流", "resolved"}},
+         {"catch 块执行完毕，程序恢复正常控制流",
+          "try/catch/finally 之后的代码继续执行",
+          "异常标志已清除，VM 恢复正常运行状态",
+          "若异常未被捕获，传播到顶层导致程序终止"}},
+    };
+
+    // ---- 生成流程条 HTML ----
+    // 6 个阶段彩色节点 + 箭头，当前阶段高亮（加粗 + 边框 + 放大）
+    static const char* kPhaseColors[] = {
+        "#E74C3C", // throw - 红
+        "#F39C12", // search - 橙
+        "#27AE60", // catch - 绿
+        "#3498DB", // finally - 蓝
+        "#9B59B6", // unwind - 紫
+        "#1ABC9C", // recovery - 青
+    };
+    static const char* kPhaseIcons[] = {"⚡", "🔍", "🛡️", "✨", "🌊", "✅"};
+
     std::ostringstream oss;
-    oss << "<h2>" << p.phase << "</h2>";
-    oss << "<p><b>分类:</b> " << p.category << "</p>";
-    oss << "<p><b>说明:</b></p>";
+    oss << "<div style='margin-bottom:8px;'>";
+
+    // 流程条表格
+    oss << "<table cellspacing='0' cellpadding='0' style='width:100%;margin-bottom:12px;'><tr>";
+    for (int i = 0; i < 6; ++i) {
+        bool isCurrent = (i == index);
+        bool isPast = (i < index);
+        const char* opacity = isCurrent ? "1.0" : (isPast ? "0.5" : "0.3");
+        const char* border = isCurrent ? "3px solid #2C3E50" : "1px solid #BDC3C7";
+        const char* fontWeight = isCurrent ? "bold" : "normal";
+        const char* padding = isCurrent ? "10px 6px" : "6px 4px";
+        const char* fontSize = isCurrent ? "13px" : "11px";
+        oss << "<td style='background:" << kPhaseColors[i] << ";color:white;padding:" << padding
+            << ";text-align:center;border:" << border << ";border-radius:4px;opacity:" << opacity
+            << ";font-weight:" << fontWeight << ";font-size:" << fontSize << ";'>"
+            << kPhaseIcons[i] << "<br>" << phases[i].phase << "</td>";
+        if (i < 5) {
+            oss << "<td style='color:#7F8C8D;padding:0 2px;text-align:center;font-size:14px;'>→</td>";
+        }
+    }
+    oss << "</tr></table>";
+
+    // 阶段标题
+    oss << "<h2 style='color:" << kPhaseColors[index] << ";'>" << kPhaseIcons[index] << " "
+        << p.phase << " 阶段</h2>";
+    oss << "<p><b>分类:</b> <span style='background:" << kPhaseColors[index]
+        << ";color:white;padding:2px 8px;border-radius:3px;font-size:11px;'>" << p.category
+        << "</span></p>";
+
+    // ---- 调用栈状态图 ----
+    oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
+        << "📊 调用栈状态</h3>";
+    const auto& meta = kPhaseMeta[index];
+    oss << "<table cellspacing='0' cellpadding='0' style='width:100%;margin:8px 0;border:1px solid #DDD;'>";
+    // 栈从顶到底（高地址 → 低地址）
+    for (auto it = meta.frames.rbegin(); it != meta.frames.rend(); ++it) {
+        const char* bg = "#ECF0F1";
+        const char* border = "#BDC3C7";
+        const char* textColor = "#2C3E50";
+        if (std::string(it->state) == "throw-point") {
+            bg = "#FADBD8"; border = "#E74C3C";
+        } else if (std::string(it->state) == "unwinding") {
+            bg = "#FDEBD0"; border = "#F39C12";
+        } else if (std::string(it->state) == "caught") {
+            bg = "#D5F5E3"; border = "#27AE60";
+        } else if (std::string(it->state) == "cleanup") {
+            bg = "#D6EAF8"; border = "#3498DB";
+        } else if (std::string(it->state) == "destroyed") {
+            bg = "#F2F3F4"; border = "#BDC3C7"; textColor = "#95A5A6";
+        } else if (std::string(it->state) == "exception") {
+            bg = "#FDF2E9"; border = "#E67E22"; textColor = "#D35400";
+        } else if (std::string(it->state) == "searching") {
+            bg = "#FEF9E7"; border = "#F1C40F";
+        } else if (std::string(it->state) == "normal" || std::string(it->state) == "resolved") {
+            bg = "#E8F8F5"; border = "#1ABC9C";
+        }
+        oss << "<tr>";
+        // 栈帧标签
+        oss << "<td style='background:" << bg << ";border:1px solid " << border
+            << ";padding:6px 8px;width:40%;color:" << textColor << ";font-family:monospace;font-weight:bold;'>"
+            << it->label << "</td>";
+        // 栈帧标注
+        oss << "<td style='background:" << bg << ";border:1px solid " << border
+            << ";border-left:none;padding:6px 8px;color:" << textColor << ";font-size:12px;'>"
+            << it->annotation << "</td>";
+        oss << "</tr>";
+    }
+    oss << "</table>";
+    oss << "<p style='color:#7F8C8D;font-size:11px;margin:2px 0 8px 0;'>"
+           "↑ 栈顶（高地址） | ↓ 栈底（低地址）</p>";
+
+    // ---- 关键操作列表 ----
+    oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
+        << "🔑 关键操作</h3>";
+    oss << "<ul style='margin:4px 0 8px 0;'>";
+    for (const auto& op : meta.keyOps) {
+        oss << "<li style='margin:2px 0;font-size:12px;'>" << op << "</li>";
+    }
+    oss << "</ul>";
+
+    // ---- 示例代码 ----
+    oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
+        << "💻 示例代码（当前阶段: " << p.phase << "）</h3>";
+    oss << "<pre style='background:#F8F9FA;border-left:4px solid " << kPhaseColors[index]
+        << ";padding:8px 12px;font-size:12px;overflow-x:auto;white-space:pre-wrap;'>";
+    // 高亮当前阶段对应代码行
+    {
+        std::string code = kCommonCode;
+        std::string highlight = meta.codeHighlight;
+        if (!highlight.empty()) {
+            size_t pos = code.find(highlight);
+            if (pos != std::string::npos) {
+                std::string before = code.substr(0, pos);
+                std::string matched = code.substr(pos, highlight.size());
+                std::string after = code.substr(pos + highlight.size());
+                // HTML 转义
+                auto escapeHtml = [](std::string& s) {
+                    for (size_t i = 0; (i = s.find('<', i)) != std::string::npos;)
+                        s.replace(i, 1, "&lt;");
+                    for (size_t i = 0; (i = s.find('>', i)) != std::string::npos;)
+                        s.replace(i, 1, "&gt;");
+                };
+                escapeHtml(before);
+                escapeHtml(matched);
+                escapeHtml(after);
+                oss << before << "<span style='background:" << kPhaseColors[index]
+                    << ";color:white;padding:1px 2px;border-radius:2px;font-weight:bold;'>" << matched
+                    << "</span>" << after;
+            } else {
+                auto escapeHtml = [](std::string& s) {
+                    for (size_t i = 0; (i = s.find('<', i)) != std::string::npos;)
+                        s.replace(i, 1, "&lt;");
+                    for (size_t i = 0; (i = s.find('>', i)) != std::string::npos;)
+                        s.replace(i, 1, "&gt;");
+                };
+                escapeHtml(code);
+                oss << code;
+            }
+        } else {
+            auto escapeHtml = [](std::string& s) {
+                for (size_t i = 0; (i = s.find('<', i)) != std::string::npos;)
+                    s.replace(i, 1, "&lt;");
+                for (size_t i = 0; (i = s.find('>', i)) != std::string::npos;)
+                    s.replace(i, 1, "&gt;");
+            };
+            escapeHtml(code);
+            oss << code;
+        }
+    }
+    oss << "</pre>";
+
+    // ---- 原有说明文字 ----
+    oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
+        << "📖 详细说明</h3>";
     oss << MarkdownRenderer::markdownToHtmlFragment(p.description).toStdString();
-    oss << "<p><b>栈效应:</b> " << p.stackEffect << "</p>";
+    oss << "<p style='background:#F8F9FA;padding:6px 10px;border-radius:4px;margin:8px 0;'><b>⚡ 栈效应:</b> "
+        << p.stackEffect << "</p>";
+
+    oss << "</div>";
 
     phaseDetail_->setHtml(QString::fromStdString(oss.str()));
-    // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }

@@ -2393,6 +2393,40 @@ void AstIRBuilder::visitClassDecl(ClassDecl* node) {
     }
 }
 
+// AUDIT-P1.1 fix: break/continue finally 续跳 IR 发射。
+// 若 break/continue 在 try-finally 内，发射 PUSH_JUMP_TARGET + JUMP 续跳 IR。
+// IR 路径用 label 而非 ip，label 在 visitTryStmt 进入时就分配，无需 deferred patch。
+bool AstIRBuilder::emitFinallyJumpIR(int line, uint32_t realTargetLabel) {
+    // 收集所有 enclosing try-finally 块（从内到外）
+    std::vector<size_t> finallyIndices;
+    for (size_t i = tryFinallyStack_.size(); i > 0; --i) {
+        if (tryFinallyStack_[i - 1].hasFinally) {
+            finallyIndices.push_back(i - 1);
+        }
+    }
+    if (finallyIndices.empty())
+        return false;
+
+    // 从最外层到最内层，依次发射 PUSH_JUMP_TARGET
+    for (size_t i = finallyIndices.size(); i > 0; --i) {
+        size_t ctxIdx = finallyIndices[i - 1];
+        uint32_t targetLabel;
+        if (i == 1) {
+            // 最内层：push 真实跳转目标（breakTarget/continueTarget）
+            targetLabel = realTargetLabel;
+        } else {
+            // 外层：push 下一个（更内层）finally 入口 label
+            size_t nextCtxIdx = finallyIndices[i - 2];
+            targetLabel = tryFinallyStack_[nextCtxIdx].finallyEntryLabel;
+        }
+        emitIR(IROp::PUSH_JUMP_TARGET, {IROperand::label(targetLabel)}, line);
+    }
+
+    // 发射 JUMP 到最内层 finally 入口
+    emitIR(IROp::JUMP, {IROperand::label(tryFinallyStack_[finallyIndices[0]].finallyEntryLabel)}, line);
+    return true;
+}
+
 void AstIRBuilder::visitBreakStmt(BreakStmt* node) {
     if (loopStack_.empty()) {
         // R7 fix: 循环外 break 静默无操作会导致语义错误未报告。
@@ -2414,7 +2448,10 @@ void AstIRBuilder::visitBreakStmt(BreakStmt* node) {
     if (loopCtx.needCloseUpvalue) {
         emitIR(IROp::CLOSE_UPVALUE, {IROperand::imm(loopCtx.bodySlotBase)}, node->line);
     }
-    emitIR(IROp::JUMP, {IROperand::label(loopStack_.back().endLabel)}, node->line);
+    // AUDIT-P1.1 fix: 若 break 在 try-finally 内，发射续跳 IR；否则走常规 JUMP。
+    if (!emitFinallyJumpIR(node->line, loopStack_.back().endLabel)) {
+        emitIR(IROp::JUMP, {IROperand::label(loopStack_.back().endLabel)}, node->line);
+    }
 }
 
 void AstIRBuilder::visitContinueStmt(ContinueStmt* node) {
@@ -2429,7 +2466,10 @@ void AstIRBuilder::visitContinueStmt(ContinueStmt* node) {
     for (int i = 0; i < tryDepthInLoop; ++i) {
         emitIR(IROp::TRY_END, {}, node->line);
     }
-    emitIR(IROp::JUMP, {IROperand::label(loopStack_.back().continueLabel)}, node->line);
+    // AUDIT-P1.1 fix: 若 continue 在 try-finally 内，发射续跳 IR；否则走常规 JUMP。
+    if (!emitFinallyJumpIR(node->line, loopStack_.back().continueLabel)) {
+        emitIR(IROp::JUMP, {IROperand::label(loopStack_.back().continueLabel)}, node->line);
+    }
 }
 
 void AstIRBuilder::visitTryStmt(TryStmt* node) {
@@ -2437,13 +2477,17 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
     // 捕获异常路径执行 finally 后 rethrow。对齐 Compiler.cpp visitTryStmt 的外层包装模式。
     uint32_t finallyCatchLabel = 0;
     uint32_t finallyEndLabel = 0;
+    uint32_t finallyEntryLabel = 0; // AUDIT-P1.1 fix: finally 正常路径入口 label
     bool hasFinally = (node->finallyBlock != nullptr);
     if (hasFinally) {
         finallyCatchLabel = ir_->allocLabel();
         finallyEndLabel = ir_->allocLabel();
+        finallyEntryLabel = ir_->allocLabel(); // AUDIT-P1.1 fix
         emitIR(IROp::TRY_BEGIN, {IROperand::label(finallyCatchLabel)}, node->line);
         ++tryDepth_; // 外层 try 计入深度（break/continue 多发一个 TRY_END）
     }
+    // AUDIT-P1.1 fix: push try-finally 编译期上下文（label 在此分配，break/continue 可直接引用）
+    tryFinallyStack_.push_back({hasFinally, finallyEntryLabel, {}, {}});
     // BUG-AUDIT-FINALLY-1: try-finally（无 catch）路径。
     // catchVarName 为空时跳过内层 TRY_BEGIN/TRY_END/catchLabel，
     // 外层 TRY_BEGIN(finallyCatchLabel) 捕获异常 → 执行 finally → rethrow。
@@ -2533,7 +2577,11 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
             if (hasFinally) {
                 --tryDepth_;
                 emitIR(IROp::TRY_END, {}, node->line);
+                // AUDIT-P1.1 fix: 标记 finally 正常路径入口，供 break/continue 续跳
+                emitIR(IROp::LABEL, {IROperand::label(finallyEntryLabel)}, node->line);
                 visitNode(node->finallyBlock.get());
+                // AUDIT-P1.1 fix: finally 末尾追加 FINALLY_END（break/continue 续跳或正常完成）
+                emitIR(IROp::FINALLY_END, {}, node->line);
                 emitIR(IROp::JUMP, {IROperand::label(finallyEndLabel)}, node->line);
                 emitIR(IROp::LABEL, {IROperand::label(finallyCatchLabel)}, node->line);
                 IROperand excVregF = ir_->allocVReg();
@@ -2542,6 +2590,7 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 emitIR(IROp::THROW, {excVregF}, node->line);
                 emitIR(IROp::LABEL, {IROperand::label(finallyEndLabel)}, node->line);
             }
+            tryFinallyStack_.pop_back(); // AUDIT-P1.1 fix
             return; // AUDIT-BUG-F7: catch 块已编译，提前返回
         } else {
             // 顶层：检查 catchVarName 是否与全局槽位变量同名（对齐 Compiler.cpp:1272-1311）
@@ -2605,7 +2654,10 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 if (hasFinally) {
                     --tryDepth_;
                     emitIR(IROp::TRY_END, {}, node->line);
+                    // AUDIT-P1.1 fix: 标记 finally 正常路径入口
+                    emitIR(IROp::LABEL, {IROperand::label(finallyEntryLabel)}, node->line);
                     visitNode(node->finallyBlock.get());
+                    emitIR(IROp::FINALLY_END, {}, node->line); // AUDIT-P1.1 fix
                     emitIR(IROp::JUMP, {IROperand::label(finallyEndLabel)}, node->line);
                     emitIR(IROp::LABEL, {IROperand::label(finallyCatchLabel)}, node->line);
                     IROperand excVregF = ir_->allocVReg();
@@ -2614,6 +2666,7 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                     emitIR(IROp::THROW, {excVregF}, node->line);
                     emitIR(IROp::LABEL, {IROperand::label(finallyEndLabel)}, node->line);
                 }
+                tryFinallyStack_.pop_back(); // AUDIT-P1.1 fix
                 return; // catch 块已编译，提前返回
             } else {
                 // 无遮蔽：直接定义为全局变量
@@ -2650,7 +2703,10 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 if (hasFinally) {
                     --tryDepth_;
                     emitIR(IROp::TRY_END, {}, node->line);
+                    // AUDIT-P1.1 fix: 标记 finally 正常路径入口
+                    emitIR(IROp::LABEL, {IROperand::label(finallyEntryLabel)}, node->line);
                     visitNode(node->finallyBlock.get());
+                    emitIR(IROp::FINALLY_END, {}, node->line); // AUDIT-P1.1 fix
                     emitIR(IROp::JUMP, {IROperand::label(finallyEndLabel)}, node->line);
                     emitIR(IROp::LABEL, {IROperand::label(finallyCatchLabel)}, node->line);
                     IROperand excVregF = ir_->allocVReg();
@@ -2659,6 +2715,7 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                     emitIR(IROp::THROW, {excVregF}, node->line);
                     emitIR(IROp::LABEL, {IROperand::label(finallyEndLabel)}, node->line);
                 }
+                tryFinallyStack_.pop_back(); // AUDIT-P1.1 fix
                 return; // AUDIT-BUG-F7: catch 块已编译，提前返回
             }
         }
@@ -2674,7 +2731,10 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
     if (hasFinally) {
         --tryDepth_;
         emitIR(IROp::TRY_END, {}, node->line);
+        // AUDIT-P1.1 fix: 标记 finally 正常路径入口
+        emitIR(IROp::LABEL, {IROperand::label(finallyEntryLabel)}, node->line);
         visitNode(node->finallyBlock.get());
+        emitIR(IROp::FINALLY_END, {}, node->line); // AUDIT-P1.1 fix
         emitIR(IROp::JUMP, {IROperand::label(finallyEndLabel)}, node->line);
         emitIR(IROp::LABEL, {IROperand::label(finallyCatchLabel)}, node->line);
         IROperand excVregF = ir_->allocVReg();
@@ -2683,6 +2743,7 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
         emitIR(IROp::THROW, {excVregF}, node->line);
         emitIR(IROp::LABEL, {IROperand::label(finallyEndLabel)}, node->line);
     }
+    tryFinallyStack_.pop_back(); // AUDIT-P1.1 fix
 }
 
 void AstIRBuilder::visitThrowStmt(ThrowStmt* node) {
@@ -3464,6 +3525,23 @@ bool BytecodeIRBackend::lowerInstruction(const IRInstruction& instr, const IRFun
         // 此处为 no-op（不发射字节码）。后续 STORE_LOCAL/DEFINE_GLOBAL 从栈顶 pop。
         break;
     }
+    // AUDIT-P1.1 fix: break/continue finally 续跳 lowering
+    case IROp::PUSH_JUMP_TARGET: {
+        // operands: [label_idx]
+        // → OP_PUSH_JUMP_TARGET target(2B 绝对偏移，第二遍回填)
+        if (instr.operands.empty())
+            return false;
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_PUSH_JUMP_TARGET));
+        // 与 OP_JUMP 一致：绝对偏移（isTryBegin=false），patchJumps 回填 label→绝对 IP
+        pendingJumps_.push_back({chunk_->code.size(), instr.operands[0].index, false});
+        emitUint16(chunk_->code, 0); // 占位符，第二遍回填
+        break;
+    }
+    case IROp::FINALLY_END: {
+        // 无操作数 → OP_FINALLY_END（1 字节）
+        chunk_->code.push_back(static_cast<uint8_t>(OpCode::OP_FINALLY_END));
+        break;
+    }
 
     // ---- 写回指令（限制2）----
     case IROp::WRITEBACK_MEMBER_VAR: {
@@ -3803,6 +3881,11 @@ const char* irOpName(IROp op) {
         return "THROW";
     case IROp::LOAD_EXCEPTION:
         return "LOAD_EXCEPTION";
+    // AUDIT-P1.1 fix: finally 续跳
+    case IROp::PUSH_JUMP_TARGET:
+        return "PUSH_JUMP_TARGET";
+    case IROp::FINALLY_END:
+        return "FINALLY_END";
     // 写回指令（限制2）
     case IROp::WRITEBACK_MEMBER_VAR:
         return "WRITEBACK_MEMBER_VAR";

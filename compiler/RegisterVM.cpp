@@ -52,6 +52,7 @@ void RegisterVM::resetState() {
     openUpvalues_.clear();
     tryStack_.clear();
     pendingException_ = Value::nullValue(); // P1-4 fix: 清理异常值
+    pendingJumpStack_.clear();               // AUDIT-P1.1 fix: 清理续跳栈
     hasError_ = false;
     lastError_.clear();
     lastErrorLine_ = 0;
@@ -278,6 +279,8 @@ VMResult RegisterVM::executeOneInstruction() {
     case RegOp::REG_LOAD_MUTATED:
     case RegOp::REG_SUPER_CALL:
     case RegOp::REG_TYPE_CHECK:
+    case RegOp::REG_PUSH_JUMP_TARGET:
+    case RegOp::REG_FINALLY_END:
         return executeMisc(op, ip);
 
     default:
@@ -663,7 +666,9 @@ VMResult RegisterVM::executeVars(RegOp op, size_t& ip) {
         // 使块作用域退出时闭包捕获退出时刻的值快照（对齐 Interpreter per-block env）。
         uint8_t slotBase = chunk.code[ip + 1];
         size_t currentFrameIdx = frames_.size() - 1;
-        closeUpvaluesFrom(currentFrameIdx * RegCallFrame::MAX_REGISTERS + slotBase);
+        // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止，避免在损坏状态上继续
+        if (closeUpvaluesFrom(currentFrameIdx * RegCallFrame::MAX_REGISTERS + slotBase) != VMResult::VM_OK)
+            return VMResult::VM_RUNTIME_ERROR;
         ip += 2;
         break;
     }
@@ -1540,6 +1545,28 @@ VMResult RegisterVM::executeMisc(RegOp op, size_t& ip) {
         ip = newIp;
         break;
     }
+    case RegOp::REG_PUSH_JUMP_TARGET: {
+        // AUDIT-P1.1 fix: push 跳转目标到 pendingJumpStack_（与 StackVM 对齐）。
+        uint16_t target = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (target >= chunk.code.size())
+            return runtimeError("REG_PUSH_JUMP_TARGET: 跳转目标越界");
+        pendingJumpStack_.push_back(target);
+        ip += 3;
+        break;
+    }
+    case RegOp::REG_FINALLY_END: {
+        // AUDIT-P1.1 fix: finally 块正常路径末尾（与 StackVM 对齐）。
+        if (!pendingJumpStack_.empty()) {
+            size_t target = pendingJumpStack_.back();
+            pendingJumpStack_.pop_back();
+            if (target >= chunk.code.size())
+                return runtimeError("REG_FINALLY_END: 跳转目标越界");
+            ip = target;
+        } else {
+            ip += 1;
+        }
+        break;
+    }
     default:
         return runtimeError("executeMisc: 未知操作码");
     }
@@ -1759,7 +1786,9 @@ VMResult RegisterVM::executeReturnImpl(size_t& ip, Value result) {
     size_t returningFrameIdx = frames_.size() - 1;
     // C-3 fix: 弹帧前关闭指向该帧寄存器的 open upvalues，捕获当前值到 uv->value，
     // 防止帧销毁后闭包持有悬垂引用。编码范围 [idx*32, (idx+1)*32) 覆盖该帧全部寄存器槽。
-    closeUpvaluesFrom(returningFrameIdx * RegCallFrame::MAX_REGISTERS);
+    // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止返回，避免在损坏状态上继续
+    if (closeUpvaluesFrom(returningFrameIdx * RegCallFrame::MAX_REGISTERS) != VMResult::VM_OK)
+        return VMResult::VM_RUNTIME_ERROR;
     frames_.pop_back();
 
     // 清理属于返回帧的 tryStack_ handler
@@ -2405,6 +2434,8 @@ bool RegisterVM::callBuiltinMethod(Value& obj, const std::string& methodName, Sm
 // ============================================================
 
 VMResult RegisterVM::throwException(Value thrownValue) {
+    // AUDIT-P1.1 fix: 异常传播中断 break/continue 续跳链，清空 pendingJumpStack_（与 StackVM 对齐）。
+    pendingJumpStack_.clear();
     while (!tryStack_.empty()) {
         RegTryHandler handler = tryStack_.back();
         if (handler.frameIndex >= frames_.size()) {
@@ -2415,7 +2446,9 @@ VMResult RegisterVM::throwException(Value thrownValue) {
         while (frames_.size() > handler.frameIndex + 1) {
             // C-3 fix: 弹帧前关闭指向该帧的 open upvalues，防止异常展开导致悬垂引用
             size_t unwindFrameIdx = frames_.size() - 1;
-            closeUpvaluesFrom(unwindFrameIdx * RegCallFrame::MAX_REGISTERS);
+            // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止异常展开，避免在损坏状态上继续
+            if (closeUpvaluesFrom(unwindFrameIdx * RegCallFrame::MAX_REGISTERS) != VMResult::VM_OK)
+                return VMResult::VM_RUNTIME_ERROR;
             frames_.pop_back();
         }
         if (!frames_.empty()) {
@@ -2432,7 +2465,9 @@ VMResult RegisterVM::throwException(Value thrownValue) {
             // 关闭 upvalue（拷贝值到 heap）。不重置 registerCount——catch 块的 vreg 映射
             // 可能引用 try 块之后分配的寄存器，重置会导致 reg() 边界检查失败。
             size_t fromSlot = handler.frameIndex * RegCallFrame::MAX_REGISTERS + handler.registerBase;
-            closeUpvaluesFrom(fromSlot);
+            // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止异常处理，不跳转 catchIp
+            if (closeUpvaluesFrom(fromSlot) != VMResult::VM_OK)
+                return VMResult::VM_RUNTIME_ERROR;
             curFrame.ip = handler.catchIp;
             // P1-4 fix: 异常值存入 pendingException_，由 REG_LOAD_EXCEPTION 读取到指定寄存器。
             // 原方案固定写 R0 会覆盖用户变量/this（方法中 R0 是 this）。
@@ -2450,9 +2485,11 @@ VMResult RegisterVM::throwException(Value thrownValue) {
     return runtimeError("未捕获的异常: " + str);
 }
 
-void RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
+VMResult RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
     // C-3 fix: stackSlot 编码为 frameIdx*32+slot，按全局地址范围 [fromSlot, ∞) 关闭。
     // 从对应帧（由 frameIdx 解码）读取当前值并标记为已关闭，防止帧弹出后悬垂引用。
+    // AUDIT-P2.5 fix: 返回类型 void→VMResult，调用方可 fail-fast 传播错误。
+    bool hadError = false;
     auto it = openUpvalues_.lower_bound(fromSlot);
     while (it != openUpvalues_.end()) {
         auto uv = it->second.lock();
@@ -2468,9 +2505,11 @@ void RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
                     // 原实现仅打 Warning 继续执行，闭包静默捕获 null 难以排查根因。
                     // runtimeError 设置 hasError_=true，VM 在后续指令分发终止执行；
                     // 仍执行 isClosed=true + erase 以关闭 upvalue（保留默认 null 值），防止悬垂引用。
-                    runtimeError("closeUpvaluesFrom: slot " + std::to_string(slot) + " >= registerCount " +
+                    // AUDIT-P2.5 fix: 记录错误标志，函数末尾返回 VM_RUNTIME_ERROR，调用方立即 return。
+                    (void)runtimeError("closeUpvaluesFrom: slot " + std::to_string(slot) + " >= registerCount " +
                                  std::to_string(targetFrame.registerCount) + " (frameIdx=" + std::to_string(frameIdx) +
                                  ")");
+                    hadError = true;
                 }
             } else {
                 // AUDIT-P2.4 fix: upvalue 指向已弹出的帧改为 runtimeError 以 fail-fast 暴露问题。
@@ -2478,14 +2517,17 @@ void RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
                 // 此分支不可达。若触达说明调用契约被破坏，原实现仅打 Warning 会继续执行，
                 // upvalue 保留默认 null 值导致闭包读取错误值且难以排查。
                 // runtimeError 设置 hasError_=true，VM 在后续指令分发终止执行。
-                runtimeError("closeUpvaluesFrom: upvalue 指向已弹出的帧 (frameIdx=" + std::to_string(frameIdx) +
+                // AUDIT-P2.5 fix: 记录错误标志，函数末尾返回 VM_RUNTIME_ERROR，调用方立即 return。
+                (void)runtimeError("closeUpvaluesFrom: upvalue 指向已弹出的帧 (frameIdx=" + std::to_string(frameIdx) +
                              ", frames_.size()=" + std::to_string(frames_.size()) + ")");
+                hadError = true;
             }
             uv->isClosed = true;
         }
         ++it;
     }
     openUpvalues_.erase(openUpvalues_.lower_bound(fromSlot), openUpvalues_.end());
+    return hadError ? VMResult::VM_RUNTIME_ERROR : VMResult::VM_OK;
 }
 
 Value* RegisterVM::resolveOpenUpvalueSlot(VMUpvalue& uv) {

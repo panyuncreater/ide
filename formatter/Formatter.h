@@ -188,6 +188,11 @@ private:
     std::vector<Token> comments_;  // F1 fix: 注释 token 列表
     size_t commentIndex_ = 0;      // 当前注释游标
     std::string lastFormatResult_; // 存储 visit* 方法的格式化结果
+    // AUDIT-P2.4 fix: 多行节点（如插值字符串）的结束行号。
+    // formatInterpolatedString 设置为 node.endLine；formatBlock 在 formatNode 调用前
+    // 重置为 stmt->line。同行注释循环用 <= lastNodeEndLine_ 替代 == stmt->line，
+    // 消费多行语句结束行上的注释（如多行插值字符串闭合引号后的尾注）。
+    int lastNodeEndLine_ = 0;
 
     // P3 fix: 缓存频繁生成的小字符串，避免重复分配（mutable 因为 indent() 是 const）
     mutable std::string indentCache_;    // 当前缩进字符串缓存

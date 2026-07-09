@@ -41,64 +41,80 @@ void GcManager::onDestroyed(RefCounted* obj) {
 }
 
 void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marked) {
-    // 仅指针类型的 Value 需 mark（int/float/bool/null 直接返回）
-    if (!v.box_.isPointer())
-        return;
-    const void* ptr = v.box_.asPtr<void>();
-    if (!marked.insert(ptr).second)
-        return; // 已标记，跳过避免循环
+    // AUDIT-P1-ROUND53 fix: 原 markValue 对 ARRAY/DICT/INSTANCE/CLOSURE 四种堆类型
+    // 纯递归遍历子元素。MiniLang 的 MAX_LOOP_ITERATIONS=10000000 允许 while 循环
+    // 构建极深嵌套的线性容器链（如 100000 层 [[[[...]]]]）。这条链不是循环引用
+    // （每层 refCount=1，全部从根可达），但 collectCycle Phase 1 mark 阶段仍需
+    // 从 roots 遍历全部可达对象。markValue 递归深度等于嵌套深度，100000 层远超
+    // Windows 默认 1MB 栈容量（每帧约 100-200 字节，~5000-10000 层即溢出）。
+    // 改为显式 worklist 迭代式：栈深度恒定，消除栈溢出风险，且 worklist 连续
+    // 内存访问对 cache 友好（同时解决 PERF-53-4 递归调用开销）。
+    std::vector<const Value*> worklist;
+    worklist.push_back(&v);
 
-    // 递归 mark 子元素
-    switch (v.box_.asPtr<RefCounted>()->type) {
-    case ValueType::VAL_ARRAY: {
-        const auto& elements = v.box_.asPtr<Value::ArrayData>()->elements;
-        for (const auto& elem : elements) {
-            markValue(elem, marked);
+    while (!worklist.empty()) {
+        const Value* cur = worklist.back();
+        worklist.pop_back();
+
+        // 仅指针类型的 Value 需 mark（int/float/bool/null 直接跳过）
+        if (!cur->box_.isPointer())
+            continue;
+        const void* ptr = cur->box_.asPtr<void>();
+        if (!marked.insert(ptr).second)
+            continue; // 已标记，跳过避免循环
+
+        // 将子元素压入 worklist 而非递归
+        switch (cur->box_.asPtr<RefCounted>()->type) {
+        case ValueType::VAL_ARRAY: {
+            const auto& elements = cur->box_.asPtr<Value::ArrayData>()->elements;
+            for (const auto& elem : elements) {
+                worklist.push_back(&elem);
+            }
+            break;
         }
-        break;
-    }
-    case ValueType::VAL_DICT: {
-        const auto& entries = v.box_.asPtr<Value::DictData>()->entries;
-        for (const auto& kv : entries) {
-            markValue(kv.second, marked);
+        case ValueType::VAL_DICT: {
+            const auto& entries = cur->box_.asPtr<Value::DictData>()->entries;
+            for (const auto& kv : entries) {
+                worklist.push_back(&kv.second);
+            }
+            break;
         }
-        break;
-    }
-    case ValueType::VAL_INSTANCE: {
-        const auto& fields = v.box_.asPtr<Value::InstanceData>()->fields;
-        for (const auto& kv : fields) {
-            markValue(kv.second, marked);
+        case ValueType::VAL_INSTANCE: {
+            const auto& fields = cur->box_.asPtr<Value::InstanceData>()->fields;
+            for (const auto& kv : fields) {
+                worklist.push_back(&kv.second);
+            }
+            break;
         }
-        break;
-    }
-    case ValueType::VAL_CLOSURE: {
-        // 闭包的 capturedVars 可能持有容器引用
-        const auto* closure = v.box_.asPtr<Value::ClosureData>();
-        const auto& captured = closure->capturedVars;
-        for (const auto& kv : captured) {
-            markValue(kv.second, marked);
-        }
-        // AUDIT-P2-CORRECT fix: 遍历 VM 闭包的 upvalues，标记已关闭 upvalue 的 value。
-        // VMUpvalue::value 在 isClosed=true 时持有值（可能为容器引用），形成循环引用。
-        // open 状态时值在栈上（GC roots），value 字段不持有有效值，markValue 安全跳过。
-        // 原实现仅 mark capturedVars，遗漏 vmClosure->upvalues，可能导致仅通过
-        // VM 闭包 upvalues 可达的循环容器被误判为不可达孤岛而误回收。
-        if (closure->vmClosure) {
-            for (const auto& upval : closure->vmClosure->upvalues) {
-                if (upval && upval->isClosed) {
-                    markValue(upval->value, marked);
+        case ValueType::VAL_CLOSURE: {
+            // 闭包的 capturedVars 可能持有容器引用
+            const auto* closure = cur->box_.asPtr<Value::ClosureData>();
+            const auto& captured = closure->capturedVars;
+            for (const auto& kv : captured) {
+                worklist.push_back(&kv.second);
+            }
+            // AUDIT-P2-CORRECT fix: 遍历 VM 闭包的 upvalues，标记已关闭 upvalue 的 value。
+            // VMUpvalue::value 在 isClosed=true 时持有值（可能为容器引用），形成循环引用。
+            // open 状态时值在栈上（GC roots），value 字段不持有有效值，markValue 安全跳过。
+            // 原实现仅 mark capturedVars，遗漏 vmClosure->upvalues，可能导致仅通过
+            // VM 闭包 upvalues 可达的循环容器被误判为不可达孤岛而误回收。
+            if (closure->vmClosure) {
+                for (const auto& upval : closure->vmClosure->upvalues) {
+                    if (upval && upval->isClosed) {
+                        worklist.push_back(&upval->value);
+                    }
                 }
             }
+            // env 是 weak_ptr，不 mark（避免重新引入循环）
+            break;
         }
-        // env 是 weak_ptr，不 mark（避免重新引入循环）
-        break;
-    }
-    case ValueType::VAL_STRING:
-    case ValueType::VAL_INT:
-        // 叶子节点，无子引用
-        break;
-    default:
-        break;
+        case ValueType::VAL_STRING:
+        case ValueType::VAL_INT:
+            // 叶子节点，无子引用
+            break;
+        default:
+            break;
+        }
     }
 }
 

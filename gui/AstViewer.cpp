@@ -129,6 +129,9 @@ void AstViewer::clearAst() {
     rtPool_.clear();
     itemToNode_.clear();
     root_ = nullptr;
+    // R54-12 fix: 对齐 setAst(nullptr) 的空状态提示（R52-6），让用户区分"已清空"与"未加载"
+    auto* placeholder = scene_->addText(QString::fromUtf8("（尚未解析 AST，请先在主编辑器输入代码并触发编译）"));
+    placeholder->setDefaultTextColor(isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x65, 0x7B, 0x83));
 }
 
 void AstViewer::setDarkTheme(bool dark) {

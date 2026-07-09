@@ -808,6 +808,33 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
         return throwException(std::move(thrownValue));
     }
 
+    case OpCode::OP_PUSH_JUMP_TARGET: {
+        // AUDIT-P1.1 fix: push 跳转目标到 pendingJumpStack_，供 finally 末尾的 OP_FINALLY_END 取出。
+        uint16_t target = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
+        if (target >= chunk.code.size())
+            return runtimeError("OP_PUSH_JUMP_TARGET: 跳转目标越界");
+        pendingJumpStack_.push_back(target);
+        notifyStep(ip, op);
+        ip += 3;
+        break;
+    }
+
+    case OpCode::OP_FINALLY_END: {
+        // AUDIT-P1.1 fix: finally 块正常路径末尾。若 pendingJumpStack_ 非空，
+        // 说明是 break/continue 触发的 finally，pop 目标并跳转；否则继续执行（正常完成）。
+        notifyStep(ip, op);
+        if (!pendingJumpStack_.empty()) {
+            size_t target = pendingJumpStack_.back();
+            pendingJumpStack_.pop_back();
+            if (target >= chunk.code.size())
+                return runtimeError("OP_FINALLY_END: 跳转目标越界");
+            ip = target;
+        } else {
+            ip += 1;
+        }
+        break;
+    }
+
     default:
         return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
     }

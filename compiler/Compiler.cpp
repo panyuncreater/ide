@@ -415,6 +415,53 @@ void Compiler::emitTypeCheck(const std::string& typeAnnotation, int line) {
     chunk_.writeShort(typeIdx, line);
 }
 
+// AUDIT-P1.1 fix: break/continue finally 续跳机制。
+// 若 break/continue 在 try-finally 内，发射 OP_PUSH_JUMP_TARGET + OP_JUMP 续跳字节码。
+// 编译期布局（两层 try-finally 示例，A 内层、B 外层）：
+//   OP_PUSH_JUMP_TARGET <breakTarget>       ← 最外层 finally 执行完后跳转
+//   OP_PUSH_JUMP_TARGET <B.finallyEntry>    ← 内层 finally 执行完后跳转
+//   OP_JUMP <A.finallyEntry>                ← 跳到最内层 finally
+// 执行顺序：A.finally → OP_FINALLY_END(pop B.finallyEntry, jump) → B.finally →
+//           OP_FINALLY_END(pop breakTarget, jump) → breakTarget
+// 多层嵌套同理：从外到内依次 push，从内到外依次执行 finally 后续跳。
+bool Compiler::emitFinallyJump(int line, std::vector<size_t>& realTargetPatches) {
+    // 收集所有 enclosing try-finally 块（从内到外）
+    std::vector<size_t> finallyIndices;
+    for (size_t i = tryFinallyStack_.size(); i > 0; --i) {
+        if (tryFinallyStack_[i - 1].hasFinally) {
+            finallyIndices.push_back(i - 1);
+        }
+    }
+    if (finallyIndices.empty())
+        return false;
+
+    // 从最外层到最内层，依次发射 OP_PUSH_JUMP_TARGET
+    // finallyIndices 是从内到外，所以逆序遍历（从外到内）
+    for (size_t i = finallyIndices.size(); i > 0; --i) {
+        size_t ctxIdx = finallyIndices[i - 1];
+        chunk_.writeOp(OpCode::OP_PUSH_JUMP_TARGET, line);
+        size_t patch = chunk_.code.size();
+        chunk_.writeShort(0, line); // 占位，待回填
+
+        if (i == 1) {
+            // 最内层：push 真实跳转目标（breakTarget/continueTarget），由循环编译完成后回填
+            realTargetPatches.push_back(patch);
+        } else {
+            // 外层：push 下一个（更内层）finally 入口
+            size_t nextCtxIdx = finallyIndices[i - 2];
+            tryFinallyStack_[nextCtxIdx].pendingTargetPatches.push_back(patch);
+        }
+    }
+
+    // 发射 OP_JUMP 到最内层 finally 入口（待回填）
+    chunk_.writeOp(OpCode::OP_JUMP, line);
+    size_t jumpPatch = chunk_.code.size();
+    chunk_.writeShort(0, line); // 占位
+    tryFinallyStack_[finallyIndices[0]].pendingJumpPatches.push_back(jumpPatch);
+
+    return true;
+}
+
 // ============================================================
 // C3 fix: 编译上下文 RAII 守卫实现
 // ============================================================
@@ -441,6 +488,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.currentUpvalueNames = std::move(currentUpvalueNames_);
     ctx.loopStack = std::move(loopStack_);
     ctx.tryDepth = tryDepth_;
+    ctx.tryFinallyStack = std::move(tryFinallyStack_); // AUDIT-P1.1 fix
     ctx.currentFunctionReturnType = currentFunctionReturnType_; // BUG-TYPE-1 fix
     return ctx;
 }
@@ -462,6 +510,7 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     currentUpvalueNames_ = std::move(ctx.currentUpvalueNames);
     loopStack_ = std::move(ctx.loopStack);
     tryDepth_ = ctx.tryDepth;
+    tryFinallyStack_ = std::move(ctx.tryFinallyStack); // AUDIT-P1.1 fix
     currentFunctionReturnType_ = std::move(ctx.currentFunctionReturnType); // BUG-TYPE-1 fix
 }
 
@@ -1653,11 +1702,22 @@ void Compiler::visitBreakStmt(BreakStmt& node) {
         chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
         chunk_.write(static_cast<uint8_t>(loopCtx.bodySlotBase), node.line);
     }
-    // 发射 OP_JUMP，目标在循环编译完成后回填
-    size_t patch = chunk_.code.size();
-    chunk_.writeOp(OpCode::OP_JUMP, node.line);
-    chunk_.writeShort(0, node.line);
-    loopStack_.back().breakJumps.push_back(patch);
+    // AUDIT-P1.1 fix: 若 break 在 try-finally 内，发射续跳字节码（先 push 真实目标，再 jump 到 finally 入口）。
+    // finally 末尾的 OP_FINALLY_END 从 pendingJumpStack_ 取出真实目标续跳。
+    // 若不在 try-finally 内，走常规路径（直接 OP_JUMP 到 breakTarget）。
+    std::vector<size_t> realTargetPatches;
+    if (emitFinallyJump(node.line, realTargetPatches)) {
+        // 续跳路径：realTargetPatches 中的 patch 待回填到 breakTarget
+        for (size_t patch : realTargetPatches) {
+            loopStack_.back().breakJumps.push_back(patch);
+        }
+    } else {
+        // 常规路径：发射 OP_JUMP，目标在循环编译完成后回填
+        size_t patch = chunk_.code.size();
+        chunk_.writeOp(OpCode::OP_JUMP, node.line);
+        chunk_.writeShort(0, node.line);
+        loopStack_.back().breakJumps.push_back(patch);
+    }
     return;
 }
 
@@ -1671,11 +1731,19 @@ void Compiler::visitContinueStmt(ContinueStmt& node) {
     for (int i = 0; i < tryDepthInLoop; ++i) {
         chunk_.writeOp(OpCode::OP_TRY_END, node.line);
     }
-    // 发射 OP_JUMP，目标在循环编译完成后回填
-    size_t patch = chunk_.code.size();
-    chunk_.writeOp(OpCode::OP_JUMP, node.line);
-    chunk_.writeShort(0, node.line);
-    loopStack_.back().continueJumps.push_back(patch);
+    // AUDIT-P1.1 fix: 若 continue 在 try-finally 内，发射续跳字节码（同 visitBreakStmt）。
+    std::vector<size_t> realTargetPatches;
+    if (emitFinallyJump(node.line, realTargetPatches)) {
+        for (size_t patch : realTargetPatches) {
+            loopStack_.back().continueJumps.push_back(patch);
+        }
+    } else {
+        // 常规路径：发射 OP_JUMP，目标在循环编译完成后回填
+        size_t patch = chunk_.code.size();
+        chunk_.writeOp(OpCode::OP_JUMP, node.line);
+        chunk_.writeShort(0, node.line);
+        loopStack_.back().continueJumps.push_back(patch);
+    }
     return;
 }
 
@@ -1998,6 +2066,13 @@ void Compiler::visitTryStmt(TryStmt& node) {
     // 异常值在异常路径的 finally 执行期间保留在栈顶（Block 是栈平衡的），
     // OP_THROW pop 并 re-throw。若 finally 自身 throw，throwException 会截断
     // 栈到外层 handler 的 stackBase（丢弃原异常值），新异常正常传播。
+    //
+    // AUDIT-P1.1 fix: 上述"已知限制"已修复。break/continue 在 try-finally 内时，
+    // 先 push 真实跳转目标到 pendingJumpStack_，再 jump 到 finally 入口。
+    // finally 末尾的 OP_FINALLY_END 从栈取出目标续跳，实现三后端一致性。
+
+    // AUDIT-P1.1 fix: push try-finally 编译期上下文
+    tryFinallyStack_.push_back({node.finallyBlock != nullptr, 0, {}, {}});
 
     // 0. 如果有 finally，发射外层 OP_TRY_BEGIN
     size_t outerTryBeginIp = 0;
@@ -2234,8 +2309,39 @@ void Compiler::visitTryStmt(TryStmt& node) {
         --tryDepth_;
         chunk_.writeOp(OpCode::OP_TRY_END, node.line); // 弹出外层 try 处理器
 
+        // AUDIT-P1.1 fix: 记录 finally 入口地址，回填 break/continue 的续跳 patches。
+        // finallyEntryIp 是正常路径 finally 块的入口（OP_TRY_END 之后的第一条指令）。
+        size_t finallyEntryIp = chunk_.code.size();
+        tryFinallyStack_.back().finallyEntryIp = finallyEntryIp;
+        // 回填所有 pendingJumpPatches（break/continue 的 OP_JUMP 目标 = finallyEntryIp）
+        for (size_t patch : tryFinallyStack_.back().pendingJumpPatches) {
+            if (finallyEntryIp > 65535) {
+                error("finally 块入口偏移溢出 65535", node.line, 0);
+                tryFinallyStack_.pop_back();
+                return;
+            }
+            uint16_t target = static_cast<uint16_t>(finallyEntryIp);
+            chunk_.code[patch] = static_cast<uint8_t>(target & 0xFF);
+            chunk_.code[patch + 1] = static_cast<uint8_t>((target >> 8) & 0xFF);
+        }
+        // 回填所有 pendingTargetPatches（内层 break/continue 的 OP_PUSH_JUMP_TARGET 目标 = finallyEntryIp）
+        for (size_t patch : tryFinallyStack_.back().pendingTargetPatches) {
+            if (finallyEntryIp > 65535) {
+                error("finally 块入口偏移溢出 65535", node.line, 0);
+                tryFinallyStack_.pop_back();
+                return;
+            }
+            uint16_t target = static_cast<uint16_t>(finallyEntryIp);
+            chunk_.code[patch] = static_cast<uint8_t>(target & 0xFF);
+            chunk_.code[patch + 1] = static_cast<uint8_t>((target >> 8) & 0xFF);
+        }
+
         // 正常路径：执行 finally
         compileNode(node.finallyBlock.get());
+        // AUDIT-P1.1 fix: finally 块末尾追加 OP_FINALLY_END。
+        // 若 pendingJumpStack_ 非空（break/continue 触发），pop 目标并跳转；
+        // 否则继续执行（正常完成）。异常路径的 finally 末尾保持 OP_THROW（re-throw）。
+        chunk_.writeOp(OpCode::OP_FINALLY_END, node.line);
 
         // 跳过异常路径
         size_t skipFinallyExceptionJumpPatch = chunk_.code.size();
@@ -2247,6 +2353,7 @@ void Compiler::visitTryStmt(TryStmt& node) {
         size_t finallyCatchOffset = finallyCatchIp - (outerTryBeginIp + 3);
         if (finallyCatchOffset > 65535) {
             error("try-finally 块过大，finallyCatch 偏移溢出 65535", node.line, 0);
+            tryFinallyStack_.pop_back();
             return;
         }
         chunk_.code[finallyCatchOffsetPatch] = static_cast<uint8_t>(finallyCatchOffset & 0xFF);
@@ -2255,6 +2362,8 @@ void Compiler::visitTryStmt(TryStmt& node) {
         // 执行 finally（异常路径，重复一次）
         // 异常值已在栈顶（throwException push），finally 块作为 Block 是栈平衡的，
         // 执行后异常值仍在栈顶，OP_THROW 会 pop 并 re-throw。
+        // 异常路径末尾不追加 OP_FINALLY_END——异常路径的 finally 是 throwException 触发的，
+        // 执行完毕后应 re-throw（OP_THROW），而非续跳（break/continue 已被异常中断）。
         compileNode(node.finallyBlock.get());
         chunk_.writeOp(OpCode::OP_THROW, node.line);
 
@@ -2262,12 +2371,16 @@ void Compiler::visitTryStmt(TryStmt& node) {
         size_t afterFinally = chunk_.code.size();
         if (afterFinally > 65535) {
             error("代码量过大，跳转目标溢出 65535", node.line, 0);
+            tryFinallyStack_.pop_back();
             return;
         }
         uint16_t afterFinallyTarget = static_cast<uint16_t>(afterFinally);
         chunk_.code[skipFinallyExceptionJumpPatch + 1] = static_cast<uint8_t>(afterFinallyTarget & 0xFF);
         chunk_.code[skipFinallyExceptionJumpPatch + 2] = static_cast<uint8_t>((afterFinallyTarget >> 8) & 0xFF);
     }
+
+    // AUDIT-P1.1 fix: pop try-finally 编译期上下文
+    tryFinallyStack_.pop_back();
 
     return;
 }

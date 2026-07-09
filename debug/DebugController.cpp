@@ -40,8 +40,13 @@ void DebugController::checkBreak(ASTNode* node) {
 
     // D-P1-1 fix: 原子快速路径——RUN 模式且无断点时，无锁返回
     if (static_cast<StepMode>(mode_.load()) == StepMode::MODE_RUN && !hasBreakpoints_.load()) {
-        // D-P2-11 fix: 快速路径也更新行号追踪
-        updateLineTracking(node->line, 0, 0, StepMode::MODE_RUN);
+        // PERF-ROUND53 fix: 移除快速路径的 updateLineTracking 调用。
+        // 原实现每节点执行 2 次原子 load + 1-2 次原子 store（crossedLine_/lastSeenLine_），
+        // 在紧密循环百万级节点中累积可观开销。快速路径前提是无断点，此时
+        // crossedLine_/lastSeenLine_ 不被任何暂停逻辑读取。用户添加断点后
+        // hasBreakpoints_ 变 true 进入慢速路径，updateLineTracking（L85）会重新计算
+        // crossedLine_（line != lastSeenLine_，lastSeenLine_ 为旧值时为 true），
+        // 不影响正确性。回退 D-P2-11 fix。
         return;
     }
 
@@ -95,14 +100,16 @@ void DebugController::checkBreak(ASTNode* node) {
                                    snapLastPausedLine, snapLastPausedDepth, snapCrossedDeeper);
     }
 
-    // M10 + DBG-04 fix: 步进模式下经过断点行时递增 hitCount
-    if (snapMode != StepMode::MODE_RUN && node->line > 0) {
-        if (node->line != snapLastPausedLine || snapCurrentDepth != snapLastPausedDepth) {
-            std::lock_guard<std::mutex> lock(pauseMutex_);
-            auto realIt = breakpointInfos_.find(node->line);
-            if (realIt != breakpointInfos_.end()) {
-                realIt->hitCount++;
-            }
+    // R54-8 fix: 步进模式下仅在真正暂停时递增 hitCount，与 VmStepper（L226-228
+    // 仅在断点命中路径递增）和 RUN 模式（shouldPauseAtBreakpoint L140/153 仅在
+    // 命中时递增）对齐。原实现（M10 + DBG-04 fix）在经过断点行时即递增，不区分
+    // 是否暂停，导致 STEP_OVER 进入更深帧期间经过断点行时 hitCount 被反复刷高，
+    // BreakpointConditionPanel 显示的命中次数远超实际暂停次数。
+    if (snapMode != StepMode::MODE_RUN && shouldPause && node->line > 0) {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        auto realIt = breakpointInfos_.find(node->line);
+        if (realIt != breakpointInfos_.end()) {
+            realIt->hitCount++;
         }
     }
 
@@ -515,7 +522,21 @@ bool DebugController::isRunning() const {
 
 bool DebugController::isPaused() const {
     // D-P2-14 fix: 结合 stopped_ 判断，避免停止过程中 isPaused 仍返回 true
-    return paused_ && !stopped_;
+    // P3.7 fix: 原实现两次独立原子读 (paused_ && !stopped_) 非原子组合，TOCTOU 窗口
+    // 内可能返回不一致状态（如 stop() 刚设 stopped_=true 但还未设 paused_=false 时，
+    // isPaused 读到 paused_=true + stopped_=true → 返回 false 正确；但若先读到
+    // paused_=true 后 stopped_ 才被设为 true，则短暂返回 true → 一帧视觉抖动）。
+    // 改用 try_lock 获取一致快照：
+    // - 锁获取成功：pauseExecution 未持有 mutex，可一致读取 paused_ 和 stopped_
+    // - 锁获取失败：pauseExecution 正在 wait（worker 持有 mutex），说明调试器已暂停
+    //   （paused_ 在调用 pauseExecution 前已设为 true），仅检查 stopped_ 即可。
+    // try_lock 不会阻塞 UI 线程——pauseExecution 持锁期间正是调试器暂停期间。
+    std::unique_lock<std::mutex> lock(pauseMutex_, std::try_to_lock);
+    if (lock.owns_lock()) {
+        return paused_ && !stopped_;
+    }
+    // pauseExecution 持有锁 = 调试器暂停中（除非 stop() 已设 stopped_=true 正在唤醒）
+    return !stopped_.load(std::memory_order_relaxed);
 }
 
 void DebugController::reset() {

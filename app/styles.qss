@@ -643,8 +643,9 @@ QTextEdit, QPlainTextEdit {
 QTextEdit#outputEdit {
     background-color: #ffffff;
     color: #1e1e1e;
-    border: none;
-    border-top: 1px solid #e8e8e8;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    margin: 4px;
     padding: 8px 14px;
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
     font-size: 13px;
@@ -654,8 +655,9 @@ QTextEdit#outputEdit {
 QListWidget#errorList {
     background-color: #ffffff;
     color: #d13438;
-    border: none;
-    border-top: 1px solid #e8e8e8;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    margin: 4px;
     outline: none;
     padding: 4px 8px;
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;

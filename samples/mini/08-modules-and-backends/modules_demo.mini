@@ -1,6 +1,7 @@
-// modules_demo.mini - 模块系统演示
+// modules_demo.mini - 模块系统演示（另一个入口，导入 math_helpers）
 // 覆盖特性：import 导入、export 导出、模块隔离（非导出名不可见）、
-//           选择性导入 import { name } from "..."
+//           组合使用多个模块函数
+// 与 main.mini 不同，本文件导入 math_helpers.mini 演示模块隔离与私有函数
 // ============================================================
 
 // 导入 math_helpers 模块的全部导出名

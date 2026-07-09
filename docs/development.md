@@ -42,4 +42,11 @@
 | 生命周期 | 无裸指针、shared_ptr 共享所有权、QThread unique_ptr 管理 |
 
 
+## 最近变更摘要
+
+- **第七十轮（2026-07-09）**：UI 修复方案修正——DisableStylesheet 副作用（P1 × 2）。第六十八轮的 DisableStylesheet 虽阻止了 loadStylesheet 覆盖，但导致 ADS 按钮图标丢失（qproperty-icon 规则未执行）和 QToolTip 黑框（回退 Windows 11 原生黑色样式）。改用 `setColorSchemeMode(Light)`：保留构造时 default.css 初始加载（提供图标+基础样式），仅阻止后续 palette-change 重载。adsQss 补全 qproperty-icon 规则，QPalette 设置 ToolTipBase/ToolTipText，qApp 级别追加 QToolTip QSS。全量 1763/1763 测试通过。
+- **第六十九轮（2026-07-09）**：REPL %magic 命令系统 5 项 Bug 修复（P1 × 3 + P2 × 2）。P1：(1) magic 命令在 isInputComplete 之前拦截，解决 `%ast fun f() {` 因未闭合括号被误判续行的问题；(2) 分析类命令（%ast/%tokens/%disassemble/%ir）支持参数代码，使用 ScopedAnalysis 临时 Lexer/Parser/Compiler 分析参数，不依赖 IdeController；(3) %reset 真正重置 REPL 环境（新增 Interpreter::resetReplEnvironment() 重建 globalEnv_、清空所有缓存）。P2：handleTokens idx 列对齐 off-by-one 修复；help 提示过时文本更新。全量 1763/1763 测试通过。
+- **第六十八轮（2026-07-09）**：UI 三大顽疾真正根因修复——ADS loadStylesheet 覆盖（P1 × 3）。**注：本轮的 DisableStylesheet 方案在第七十轮被 setColorSchemeMode(Light) 替代**，因 DisableStylesheet 过于激进导致按钮图标丢失和 QToolTip 黑框回归。根因分析（setPalette→ApplicationPaletteChange→loadStylesheet 覆盖）正确，但修复方案 DisableStylesheet 有副作用，已修正。全量 1758/1758 测试通过。
+- **第六十七轮（2026-07-09）**：UI 三大顽疾修复尝试（P1 × 2 + P2 × 1）——**本轮修复实际无效，根因分析错误**。归咎于 QFluentKit registerWidget 覆盖 itemViewQss，但真正根因是 ADS loadStylesheet（见第六十八轮）。移除了 5 个控件的 registerWidget 调用 + 添加 ADS tab QLabel 子选择器规则 + QTimer::singleShot(0) restoreState。全量 1758/1758 测试通过。
+
 完整开发日志请参阅 [CHANGELOG.md](../CHANGELOG.md) 及 [归档目录](changelog/archive/)。

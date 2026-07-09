@@ -215,6 +215,8 @@ private:
     // P1-4 fix: 待捕获的异常值。throwException 设置，REG_LOAD_EXCEPTION 读取。
     // 替代原方案（固定写 R0 覆盖用户变量），避免破坏调用者寄存器。
     Value pendingException_;
+    // AUDIT-P1.1 fix: break/continue finally 续跳机制（与 StackVM 对齐）。
+    std::vector<size_t> pendingJumpStack_;
 
     // 常量
     static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
@@ -270,7 +272,8 @@ private:
     VMResult throwException(Value thrownValue);
     /// C-3 fix: 关闭指向 [fromSlot, ∞) 范围（全局编码 stackSlot）的 open upvalues，
     /// 从对应帧读取当前值并标记为已关闭。用于帧弹出/异常展开时防止悬垂引用。
-    void closeUpvaluesFrom(size_t fromSlot);
+    /// 返回 VM_RUNTIME_ERROR 表示检测到 slot 越界（hasError_ 已设置，调用方应立即 return 传播错误）
+    VMResult closeUpvaluesFrom(size_t fromSlot);
     /// C-3 fix: 解码 uv->stackSlot（编码为 frameIdx*32+slot）返回指向目标寄存器的指针。
     /// 失败时调用 runtimeError 并返回 nullptr。仅用于 open upvalue（isClosed=false）。
     Value* resolveOpenUpvalueSlot(struct VMUpvalue& uv);

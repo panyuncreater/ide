@@ -116,6 +116,12 @@ enum class OpCode : uint8_t {
     // 操作数: typeAnnotationConstIdx(2B) — 常量池中类型注解字符串的索引
     // 语义: peek 栈顶值，检查是否兼容类型注解，不匹配则 runtimeError。不弹栈。
     OP_TYPE_CHECK, // peek(stack_top) vs constants[typeIdx]
+
+    // AUDIT-P1.1 fix: break/continue finally 续跳机制（三后端一致性）
+    // break/continue 在 try-finally 内时，先 push 真实跳转目标，再 jump 到 finally 入口；
+    // finally 块末尾的 OP_FINALLY_END 从栈取出目标并跳转，实现"先执行 finally 再跳转"。
+    OP_PUSH_JUMP_TARGET, // push 跳转目标到 pendingJumpStack_（操作数: target(2B)）
+    OP_FINALLY_END,      // 从 pendingJumpStack_ pop 目标并跳转；栈空则继续执行（无操作数）
 };
 
 // ============================================================

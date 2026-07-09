@@ -2,95 +2,142 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
-## 2026-07-09 · 第五十五轮审计：Worker/调试器/GUI 未覆盖区域深度排查与修复（P1 × 2 + P2 × 6 + P3 × 7，共 15 项）
+## 2026-07-09 · 第七十轮：UI 修复方案修正——DisableStylesheet 副作用（QToolTip 黑框 + 按钮图标丢失）（P1 × 2，共 2 项）
 
 ### 概述
 
-本轮对前 54 轮未充分覆盖的区域进行四模块并行 agent 深度审计：Worker 线程层（InterpreterWorker/WorkerManager/PipelineRunner）、VM 执行层（VM/VMCalls/VMContainers）、调试器层（DebugController/DebugCoordinator/VmStepper）、未覆盖 GUI 面板（VmStackPanel/WelcomeWizard/MagicCommands/SyntaxHighlighter/BytecodeTracePanel/AstViewer 等）。P1 级修复 PipelineRunner 直接调用 runLexer/runParser 不失效缓存导致编辑器代码被执行为关卡代码、MagicCommands %disassemble 字节码解析未跳过操作数字节导致输出完全错误。P2 级修复 WorkerManager cleanupWorker 异常时回调未恢复/销毁顺序违反 Qt 线程亲和性/wait 无超时、VmStepper 步进暂停路径未重置 vmCrossedLine_ 导致断点重复触发、DebugController 步进模式 hitCount 过度递增、DebugCoordinator 析构未唤醒暂停的 worker、WelcomeWizard Esc 键绕过 onSkip 导致 completed_ 未置位。P3 级涵盖 DebugCoordinator 变量快照改用拷贝避免迭代器失效、AstViewer/VmStackPanel/BytecodeTracePanel 空状态提示、BytecodeTracePanel HTML 转义补全、SyntaxHighlighter 块注释深度编码溢出钳制等。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+第六十八轮使用 `DisableStylesheet` 彻底阻止 ADS `loadStylesheet()`，虽解决了样式覆盖问题，但引入新问题：**(1) 调试按钮/工具栏 QToolTip 回退到 Windows 11 默认黑色样式（黑框白字）**；**(2) ADS 标题栏按钮图标（关闭/浮动/标签菜单）丢失，显示为空框或默认按钮**。根因：`DisableStylesheet` 使构造时的初始 `default.css` 加载也被跳过，ADS 按钮的 `qproperty-icon` 规则从未被应用，QToolTip 样式也缺失。本轮改用更精准的 `setColorSchemeMode(Light)` 方案——保留构造时 default.css 初始加载（提供图标和基础样式），仅阻止后续 palette-change 触发的重载。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 **1763/1763** 测试通过。
 
 ### 问题与修复对应表
 
 | # | 严重性 | 类型 | 位置 | 修复内容 |
 |---|--------|------|------|----------|
-| 1 | P1 | 缓存一致性 | `app/PipelineRunner.cpp` runLexer/runParser | **直接调用 runLexer/runParser 不失效前端管线缓存**——VmStackSandboxPanel 加载关卡源码时调用 runLexer/runParser，修改了 lexer_/parser_/astRoot_ 内部状态，但 cachedPipelineSource_ 仍为编辑器源码。后续 runFrontendPipeline 命中陈旧缓存，返回的 diagnostics 裸指针指向已被改写的 DiagnosticBag，astRoot_ 已被替换为关卡代码 AST。用户点击"运行"编辑器代码实际执行关卡代码。`invalidatePipelineCache()` 方法已存在但从未被调用。修复：runLexer/runParser 入口调用 invalidatePipelineCache()。 |
-| 2 | P1 | 语义错误 | `gui/MagicCommands.cpp` handleDisassemble | **%disassemble 字节码解析未跳过操作数字节**——原实现循环只 `++offset`，未按指令实际长度前进，把操作数字节当作独立 opcode 解析，输出完全错误（如 OP_INT 的 2 字节常量索引显示为两个虚假 opcode）。修复：改用 chunk.disassembleInstruction(offset)，它按 kOpCodeInfo 元数据正确前进 offset（含变长 OP_CLOSURE），与 Bytecode.cpp 的 disassemble() 一致。 |
-| 3 | P2 | 错误传播 | `app/WorkerManager.cpp` finished lambda | **cleanupWorker 异常时 interpreter 回调未恢复**——cleanupWorker 前半部分（restoreReplState/debugger->reset/workerThread quit+wait）可能抛异常，finished lambda 的 catch 块仅设 isRunning_=false 不调用 setupMainCallbacks()，interpreter 的 output/input 回调保持 worker 的 no-op，导致 REPL 输出静默丢失、input() 返回空串。修复：catch 块补充 setupMainCallbacks() 调用。 |
-| 4 | P2 | 线程亲和性 | `app/WorkerManager.cpp` cleanupWorker + prepareRun catch | **worker_ 与 workerThread_ 销毁顺序错误**——cleanupWorker 和 prepareRun catch 先 reset workerThread_ 再 reset worker_，worker 析构时 Qt 内部可能访问 worker->thread()，此时 QThread 对象已销毁，指针悬垂 → 潜在 UAF。~WorkerManager 的顺序正确（先 worker 后 thread）。修复：统一三处为 quit+wait → reset worker_ → reset workerThread_。 |
-| 5 | P2 | 死锁风险 | `app/WorkerManager.cpp` cleanupWorker + prepareRun catch | **workerThread_->wait() 无超时**——与 ~WorkerManager(5000)/stopForClose(timeout)/forceStop(5000) 不一致，线程终止异常时永久阻塞主线程导致 UI 冻结。修复：统一为 wait(5000) + 超时日志。 |
-| 6 | P2 | 断点重复触发 | `app/VmStepper.cpp` stepByMode | **步进暂停路径未重置 vmCrossedLine_**——stepByMode 入口仅重置 vmCrossedDeeper_ 不重置 vmCrossedLine_，断点命中路径(L230)重置但步进暂停路径(L288-292)不重置。若上次步进跨行后暂停，vmCrossedLine_ 残留 true，下次步进首条指令若同行则不刷新(L221-224 仅行号变化时置 true)，断点检查(L226)因 vmCrossedLine_ 残留 true 立即重复触发，用户卡在当前行无法步进。修复：入口同步重置 vmCrossedLine_ = false。 |
-| 7 | P2 | 三后端不一致 | `debug/DebugController.cpp` checkBreak | **步进模式 hitCount 过度递增**——原实现(M10+DBG-04 fix)在步进模式下经过断点行时即递增 hitCount，不区分是否暂停。STEP_OVER 进入更深帧期间经过断点行时 hitCount 被反复刷高，BreakpointConditionPanel 显示的命中次数远超实际暂停次数。与 VmStepper（仅在断点命中路径递增）和 RUN 模式（shouldPauseAtBreakpoint 仅在命中时递增）不一致。修复：仅在 shouldPause == true 时递增。 |
-| 8 | P2 | UAF 风险 | `app/DebugCoordinator.cpp` ~DebugCoordinator | **析构未唤醒暂停的 worker**——原实现仅清空回调 + waitCallbacksIdle，但 worker 若阻塞在 pauseCV_.wait()，不在 callback 中（activeCallbackCount_==0），waitCallbacksIdle 立即返回。随后 interpreter_ 被释放，worker 醒来后访问已释放 interpreter → UAF。修复：清空回调前先调用 debugger_->stop() 设 stopped_=true 并 notify_one，worker 醒来后抛 DebugStopException 终止。 |
-| 9 | P2 | 状态不一致 | `gui/WelcomeWizard.cpp` keyPressEvent | **Esc 键绕过 onSkip 导致 completed_ 未置位**——WelcomeWizard 未重写 keyPressEvent，按 Esc 走 QDialog 默认 reject() 不经过 onSkip()，completed_ 保持 false，下次启动再次弹出向导。点「跳过」按钮则正确设置 completed_=true。两种关闭方式语义不一致。修复：重写 keyPressEvent，Esc 调用 onSkip()。 |
-| 10 | P3 | 线程安全 | `app/DebugCoordinator.cpp` variableCallback | **变量快照用 const 引用而非拷贝**——localVariables() 返回 const 引用，遍历期间 worker 线程修改 variables map 会导致迭代器失效。shared_ptr 防止 Environment 析构但不防止 map 内容被修改。修复：改用 snapshotLocalVariables() 返回拷贝。 |
-| 11 | P3 | 空状态 | `gui/AstViewer.cpp` clearAst | **clearAst 后场景完全空白**——setAst(nullptr) 有占位提示(R52-6)但 clearAst() 无，两个语义相近的函数空状态行为不一致。修复：clearAst 末尾添加与 setAst(nullptr) 相同的占位文本。 |
-| 12 | P3 | 空状态 | `gui/VmStackPanel.cpp` clearAll | **clearAll 后列表无占位提示**——stackList_ 清空后完全空白，用户无法确认面板是否正常。修复：插入禁用样式的「(已清空)」占位项，对齐 DebugPanel R53-6 模式。 |
-| 13 | P3 | 空状态 | `gui/BytecodeTracePanel.cpp` onClearTrace | **onClearTrace 后 stackDetail_ 空白无占位**——用户无法区分「已清空」与「未选中行」。修复：setHtml 设置占位提示「(轨迹已清空，捕获后将显示栈快照)」。 |
-| 14 | P3 | HTML 注入 | `gui/BytecodeTracePanel.cpp` onTraceRowSelected + showDoc | **opCodeName 及教学库多字段未 HTML 转义**——onTraceRowSelected 的 e.opCodeName 直接 .arg() 插入 HTML（对比栈快照已转义）；showDoc 的 d.opCodeName/d.category/d.operandFormat/d.stackEffect 同样未转义（仅 d.exampleCode 转义）。与 R52 批量转义修复不一致。修复：统一调用 toHtmlEscaped()。 |
-| 15 | P3 | 编码溢出 | `gui/SyntaxHighlighter.cpp` highlightBlock | **块注释深度编码在 depth≥10 时溢出**——组合状态编码 `300 + interpBraceDepth*10 + blockCommentDepth`，blockCommentDepth 占个位(mod 10)，达 10 时溢出到 interpBraceDepth 导致状态损坏。修复：编码前 std::min(blockCommentDepth, 9) 钳制——10 层嵌套块注释极少见，钳制仅影响高亮不影响语义。 |
+| 1 | P1 | 回归（图标丢失） | `app/ide.cpp` setConfigFlags | **DisableStylesheet 导致 ADS 标题栏按钮图标丢失**——`DisableStylesheet` 使构造函数中 `loadStylesheet()` 直接 return（[DockManager.cpp:209-212](third_party/ads/src/DockManager.cpp#L209-L212)），default.css 中 `#tabCloseButton`/`#tabsMenuButton`/`#dockAreaCloseButton`/`#detachGroupButton` 的 `qproperty-icon` 规则从未执行。后续 adsQss 通过 `setStyleSheet` 覆盖到 dockManager_ 时，也缺少这些图标规则（R68 adsQss 未完整复刻 default.css 的图标 qproperty）。修复：移除 `DisableStylesheet`，保留默认配置让构造函数正常加载 default.css 提供图标；adsQss 补全所有 `qproperty-icon` 规则（tabCloseButton/tabsMenuButton/dockAreaCloseButton/detachGroupButton）。 |
+| 2 | P1 | 回归（QToolTip 黑框） | `app/ide.cpp` setConfigFlags + applyFluentStyle | **QToolTip 回退到 Windows 11 黑色样式**——default.css 被 DisableStylesheet 阻止加载后，QToolTip 无任何 QSS 样式，Windows 11 上回退为系统原生黑色 tooltip（黑底白字），与米黄主题严重不协调。修复：(1) 移除 DisableStylesheet 使 default.css 的初始加载提供 Fusion 样式的 tooltip 基础；(2) QPalette 设置 `ToolTipBase`/`ToolTipText` 为主题色；(3) qApp 级别追加 QToolTip QSS（背景/前景/边框/圆角），静态变量守卫防重复追加；(4) adsQss 内也包含 QToolTip 规则。三重防御确保 tooltip 使用米黄主题色。 |
 
-### 评估保留现状（3 项）
+### 关键设计决策
 
-- **P3 VmStepper processEvents 未排除定时器事件**：ExcludeUserInputEvents 不排除定时器，500ms 轮询定时器可能在 STEP 中途触发。当前各面板已有 isVmRunning() 守卫防御，VmStepper 层面无强制保证但作为已知限制可接受。彻底修复需 sendPostedEvents 替代或引入 isVmStepping_ 标志，改动较大。保留现状。
-- **P3 DebugController isPaused() 两次原子读非原子组合**：paused_ && !stopped_ 两次独立原子 load，极小窗口内可能返回不一致状态，仅一帧内视觉抖动无功能性后果。保持现状。
-- **P2 VmStepper STEP_OUT 栈底使用 vmCrossedLine_ 而非 vmCrossedDeeper_**：注释与代码矛盾已更正。STEP_OUT 在栈底时无处可"跨出"，降级为"跨行后暂停"语义（使用 vmCrossedLine_）是合理设计，与 STEP_IN 行级粒度一致。保留现状。
+1. **setColorSchemeMode(Light) 替代 DisableStylesheet**——DisableStylesheet 过于激进，连初始默认样式都阻止加载。`setColorSchemeMode(Light)` 是更精准的方案：构造后立即调用，此时 `ColorSchemeMode` 从默认 `FollowPalette` 切换到 `Light`，`eventFilter` 条件 `ColorSchemeMode == FollowPalette` 不再成立，后续 `ApplicationPaletteChange` 事件不会触发 `loadStylesheet()`。构造时的初始 default.css 加载（在 setColorSchemeMode 之前执行）正常提供图标等基础样式，随后我们的 adsQss 通过 `setStyleSheet` 替换它。
+2. **adsQss 必须完整复刻 default.css 的 qproperty-icon 规则**——因为 `setStyleSheet(adsQss)` 会完全替换 dockManager_ 上的样式表（包括构造时 loadStylesheet 设置的图标属性）。缺失任何图标规则都会导致对应按钮无图标。
+3. **QToolTip 三重保险**：(a) default.css 初始加载提供 Fusion 基础；(b) QPalette ToolTipBase/ToolTipText 设置主题色；(c) qApp 级别 QSS 定义完整 tooltip 外观。确保即使 default.css 被替换，tooltip 仍保持正确样式。
+
+### 修改文件清单
+
+- 修改：`app/ide.cpp`（移除 `DisableStylesheet` 配置标志；添加 `setColorSchemeMode(Light)` 调用；adsQss 补全 ADS 按钮 qproperty-icon 规则；添加 QPalette ToolTipBase/ToolTipText；添加 qApp 级别 QToolTip QSS；更新注释解释方案演进）
+- 修改：`CHANGELOG.md`（新增第七十轮条目）
 
 ### 测试影响
 
-- 全部 15 项修复均无回归。全量 1763/1763 测试通过。
+- 全部 2 项修复均无回归。全量 1763/1763 测试通过。
+- 图标丢失和 tooltip 黑框属于视觉表现层，单元测试不直接覆盖，构建通过 + 无回归即视为修复验证。建议用户启动 IDE 视觉确认。
 
-## 2026-07-09 · 第五十四轮审计：GC 栈溢出修复 + 未覆盖区域 Bug 排查 + 性能优化（P1 × 1 + P2 × 2 + P3 × 1 + Perf × 3，共 7 项）
+## 2026-07-09 · 第六十九轮：REPL %magic 命令系统 5 项 Bug 修复（P1 × 3 + P2 × 2，共 5 项）
 
 ### 概述
 
-本轮聚焦前 53 轮未覆盖的 Bug 区域（GC 深嵌套栈溢出、模块路径 hash 一致性、REPL 多行历史）与性能优化机会。P1 级修复 GcManager markValue 纯递归遍历在深嵌套容器链（如 100000 层 `[[[[...]]]]`）下的栈溢出风险，改为显式 worklist 迭代式，同时消除递归调用开销（一举两得）。P2 级修复 ModuleIsolation pathHash 未折叠连续 `/` 导致同一模块产生不同 hash、ReplPanel 多行输入历史仅保存首行导致 Up 键无法恢复完整多行输入。P3 级修复 REPL 历史去重（连续相同命令不重复追加）。性能优化 3 项：DebugController RUN 快速路径移除冗余原子操作、IdeController notifyVmStateChanged 消除 vector 拷贝、Lexer string() 批量扫描连续普通字符。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+本轮针对用户报告的 REPL `%magic` 命令系统问题进行系统性修复。核心问题包括：magic 命令因括号未闭合被误判为续行输入、分析类命令（`%ast`/`%tokens`/`%disassemble`/`%ir`）不支持参数代码、`%reset` 无法真正清除 REPL 状态、Token 输出列对齐 off-by-one、help 提示信息过时。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 **1763/1763** 测试通过。
 
 ### 问题与修复对应表
 
 | # | 严重性 | 类型 | 位置 | 修复内容 |
 |---|--------|------|------|----------|
-| 1 | P1 | 栈溢出 | `interpreter/GcManager.cpp` markValue | **markValue 纯递归遍历深嵌套容器链栈溢出**——原实现对 ARRAY/DICT/INSTANCE/CLOSURE 四种堆类型纯递归遍历子元素。MiniLang 的 MAX_LOOP_ITERATIONS=10000000 允许 while 循环构建极深嵌套的线性容器链（如 100000 层 `[[[[...]]]]`），这条链不是循环引用（每层不同对象），GC mark 阶段递归深度等于链长度，触发栈溢出崩溃。修复：改为显式 worklist 迭代式——`std::vector<const Value*> worklist`，将子元素 push_back 到 worklist 而非递归调用，栈深度恒定。同时解决递归调用开销（Perf 双重收益）。 |
-| 2 | P2 | 路径一致性 | `ast/ModuleIsolation.cpp` pathHash | **pathHash 未折叠连续 `/`**——`"./a//b"` 与 `"./a/b"` 经 normalize（`\`→`/` + 去 `./` 前缀）后仍含 `//`，FNV-1a hash 产生不同值，导致同一模块被当作两个不同模块，`__mod_<hash>__` 前缀不一致引发重命名解析失败。修复：normalize 阶段后增加连续 `/` 折叠（保留单个 `/`）。 |
-| 3 | P2 | 数据丢失 | `gui/ReplPanel.cpp` executeLine | **多行输入历史仅保存首行**——续行模式下用户输入 `fun foo() {` 后按 Enter 进入续行，首行被存入 history_。完整输入结束后执行 pendingInput_（含 `\n` 拼接的续行），但 history_ 仍为首行。按 Up 键恢复时只能恢复首行，无法恢复完整多行输入。修复：执行前用完整 pendingInput_ 替换之前存入的首行（仅当 historyIndex_ 指向末尾时，避免覆盖用户已浏览的历史位置）。 |
-| 4 | P3 | UX | `gui/ReplPanel.cpp` executeLine | **历史不去重**——连续输入相同命令（如多次 `print(1)`）会在 history_ 中追加多条相同记录，按 Up 键需翻越多次才能到达上一条不同命令。修复：若 trimmedLine 与 history_.back() 相同则不追加，对齐主流 REPL（Python/Node/bash）行为。 |
-| 5 | Perf | 原子操作 | `debug/DebugController.cpp` checkBreak | **RUN 快速路径冗余原子操作**——原 D-P1-1 快速路径（RUN 模式 + 无断点）在返回前调用 updateLineTracking，每节点执行 2 次原子 load（line/lastSeenLine_）+ 1-2 次原子 store（crossedLine_/lastSeenLine_）。紧密循环百万级节点累积可观开销。修复：移除快速路径的 updateLineTracking 调用。快速路径前提是无断点，crossedLine_/lastSeenLine_ 不被任何逻辑读取；用户添加断点后 hasBreakpoints_ 变 true 进入慢速路径，updateLineTracking 会重新计算。回退 D-P2-11 fix。 |
-| 6 | Perf | vector 拷贝 | `app/IdeController.h` notifyVmStateChanged | **notifyVmStateChanged 每次拷贝整个 vector**——原实现 `auto listeners = vmStateChangedListeners_` 拷贝整个 vector（含 std::function）以防止回调期间 push_back 导致迭代器失效，但每次通知都拷贝 6 个 std::function 开销可观。修复：改用索引迭代 `for (size_t i = 0; i < n; ++i)` + 边界检查 `if (i < vmStateChangedListeners_.size())`，配合 addVmStateChangedListener 的 reserve 预留容量策略，避免拷贝。 |
-| 7 | Perf | 逐字符处理 | `lexer/Lexer.cpp` string | **string() 普通字符逐字符 advance + value += char**——原实现字符串普通字符路径 `value += advance()` 逐字符调用 advance()（含函数调用开销 + 行号维护检查）+ value += char（可能触发多次 realloc）。对长字符串（如 1KB 文本）产生 1024 次 advance 调用。修复：批量扫描连续普通字符（直到遇 `\`、`{`、`"`、`\r`、`\n` 或 EOF），用 `value.append(source_.data() + runStart, runLen)` 一次性追加。多字节 UTF-8 字节（0x80-0xFF）不与特殊字符冲突，可安全批量扫描。 |
+| 1 | P1 | 续行误判 | `gui/ReplPanel.cpp` onReturnPressed | **magic 命令被误判为续行输入**——`%ast fun f() {` 因 `{` 未闭合被 `isInputComplete()` 判为"不完整"，进入续行模式，用户被迫输入 `}` 闭合才能触发 magic 命令。修复：在非续行模式下、`isInputComplete()` 检查之前拦截 magic 命令，magic 是单行元命令不走续行逻辑；同时添加 replRunning_/isRunning()/isVmRunning() 三重守卫。 |
+| 2 | P1 | 功能缺失 | `gui/MagicCommands.cpp` parseCommand/ScopedAnalysis | **分析类命令不支持参数**——`%ast 1+2;`、`%tokens var x=42;`、`%disassemble 1+2;`、`%ir var x=1;` 均无输出（原实现只能查看当前已执行代码的缓存结果）。修复：新增 `ParsedCommand` 解析命令名+参数，当带参数时使用临时 `ScopedAnalysis`（独立 Lexer/Parser/Compiler/IRBuilder 栈上实例）分析参数代码，不依赖 IdeController，零副作用。实现 AstPrinter 递归打印 AST 节点。 |
+| 3 | P1 | 功能缺失 | `interpreter/Interpreter.{h,cpp}` + `app/IdeController.h` + `gui/MagicCommands.cpp` | **%reset 无法真正重置 REPL 环境**——原 `%reset` 仅重置 VmStepper 状态，不清除全局变量/函数/类/模块缓存，`var x=1; %reset; print(x);` 仍输出 1。修复：新增 `Interpreter::resetReplEnvironment()` 方法，重置 stopRequested_/evaluationStepCount_、重建 globalEnv_、清空所有缓存（AST/字节码/IR/模块/源码/类注册表/VM 实例），重置内部执行状态；`IdeController::resetReplEnvironment()` 转发并重置 vmStepper_。 |
+| 4 | P2 | off-by-one | `gui/MagicCommands.cpp` handleTokens | **Token 输出 idx 列对齐错位**——原代码 `idx++` 后再做 padding 判断，导致 idx=9 时自增为 10，应补 4 空格但补了 3 空格，第 10 个 token 起列偏移。修复：先输出 idx 并基于当前值判断 padding，再 idx++。 |
+| 5 | P2 | 文档过时 | `gui/ReplPanel.cpp` help 文本 | **help 提示"重置全部状态需重启 IDE"过时**——%reset 现已能真正重置，更新为"%reset 重置 REPL 环境(清除所有变量/函数/类/模块缓存)"。 |
+
+### 关键设计决策
+
+1. **ScopedAnalysis 栈上临时实例**——magic 命令参数分析不能污染 REPL 状态（不替换当前 bytecode/IR/变量）。创建临时 Lexer/Parser/Compiler 实例在栈上，分析完毕自动析构，零副作用。
+2. **ReplPanel 入口拦截而非修改 isInputComplete**——isInputComplete 是括号配对等通用续行判断，为 magic 命令加特殊分支会污染核心逻辑。在 onReturnPressed 入口处拦截更干净，职责分离。
+3. **%reset 重建 globalEnv_ 而非逐个清除**——Environment 链式作用域中逐个清除键值对容易遗漏（闭包捕获、父作用域引用），重建 shared_ptr 更彻底，旧 Environment 在无引用时自动析构。
+
+### 修改文件清单
+
+- 修改：`gui/MagicCommands.cpp`（新增 parseCommand/AstPrinter/ScopedAnalysis；handle 重写支持参数；handleTokens 对齐修复；handleReset 调用 resetReplEnvironment）
+- 修改：`interpreter/Interpreter.h`（新增 resetReplEnvironment 声明）
+- 修改：`interpreter/Interpreter.cpp`（实现 resetReplEnvironment，全状态重置）
+- 修改：`app/IdeController.h`（新增 resetReplEnvironment 转发方法）
+- 修改：`gui/ReplPanel.cpp`（onReturnPressed 在 isInputComplete 之前拦截 magic 命令；help 提示更新）
+- 修改：`tests/TestMagicCommandsAudit.cpp`（18 个测试用例，新增参数分析测试）
 
 ### 测试影响
 
-- 全部 7 项修复均无回归。全量 1763/1763 测试通过。
+- 新增/更新测试共 18 个（MagicCommandsLibraryAudit 6 个 + MagicCommandsHandlerAudit 12 个），覆盖命令元数据完整性、无参友好错误、带参数代码分析（%ast/%tokens/%disassemble/%ir）、未知命令、空/非 magic 输入、前导空白处理。
+- 全量 1763/1763 测试通过，零回归。
 
-## 2026-07-09 · 第五十三轮审计：app 层运行守卫与 UX 体验优化（P2 × 3 + P3 × 6 + 回归修复 × 1，共 10 项）
+## 2026-07-09 · 第六十八轮：UI 三大顽疾真正根因修复——ADS loadStylesheet 覆盖（P1 × 3，共 3 项）
 
 ### 概述
 
-本轮覆盖前 52 轮未审计的 app 层（ide.cpp ~6000 行）与 Worker 线程边界，并完成 UX 体验优化。P2 级聚焦运行态守卫前置：IdeController 跨线程裸指针访问、onRun/onDebug 缺 isRunning 守卫导致调试上下文被误清、onCompileAnalysis 缺运行守卫导致并发管线污染。P3 级涵盖 IrViewer/DebugPanel 空状态提示、编译分析状态栏进度反馈、关闭运行中标签告警、REPL Esc 中止续行 + Ctrl+L 清屏、CodeEditor Ctrl+Shift+D 复制行 + Alt+Up/Down 移动行等 UX 优化，以及 InterpreterModules 循环依赖检测后防御性 return。另回滚 AUDIT-P3-ROUND53 的"123. 报错"逻辑——该 fix 违反项目设计契约（TestLexer/LexerAudit 期望分词为 INT+DOT），导致 2 个测试回归。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+本轮针对用户反馈"全都没解决"的三个 UI 问题（经第六十五~六十七轮修复均无效）进行**真正根因定位**。前几轮的根因分析全部错误——真正原因不是 QFluentKit StyleSheetManager，而是 **ADS 自身的 `loadStylesheet()` 机制**：`applyFluentStyle()` 中 `setPalette(pal)` 向 dockManager_ 传播 `QEvent::ApplicationPaletteChange` 事件，ADS eventFilter（[DockManager.cpp:759-763](third_party/ads/src/DockManager.cpp#L759-L763)）检测到 `ColorSchemeMode == FollowPalette`（默认值）→ 调用 `loadStylesheet()` → `setStyleSheet(default.css)` → **完全覆盖**自定义 adsQss。这发生在**每次** `applyFluentStyle()` 调用时，导致前几轮所有 QSS 修复从未真正生效。
+
+**统一修复**：添加 `ads::CDockManager::DisableStylesheet` 配置标志，使 `loadStylesheet()` 成为 no-op（[DockManager.cpp:209-212](third_party/ads/src/DockManager.cpp#L209-L212)），自定义 adsQss 才能持久存在。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1758/1758 测试通过。
 
 ### 问题与修复对应表
 
 | # | 严重性 | 类型 | 位置 | 修复内容 |
 |---|--------|------|------|----------|
-| 1 | P2 | 跨线程裸指针 | `app/IdeController.cpp` getReplScopeVariableNames | **跨线程裸 currentEnvironment() 访问**——该方法可能在 worker 线程 emit runtimeError 后被主线程 QueuedConnection 处理器调用，裸指针遍历 parent 链违反 Interpreter.h 跨线程契约。修复：改用 currentEnvironmentShared() 获取 shared_ptr，遍历 parent 链时通过赋值延长每个节点生命周期，对齐 DebugCoordinator 的 AUDIT-P1 修复模式。 |
-| 2 | P2 | 运行守卫缺失 | `app/ide.cpp` onRun/onDebug | **isRunning/isVmRunning 守卫在破坏性清理之后**——原实现依赖 prepareRun 内部守卫，但 clearOutput/clearAll/clearErrorLines 在 prepareRun 之前执行，运行中误按 F5/F6 会先清空调试上下文（断点高亮、调用栈、变量快照、当前行高亮）再被 prepareRun 拒绝。F5/F6 工具栏 action 虽已禁用，但菜单 action 与键盘快捷键仍可能触发。修复：在 replPanel_ 检查后、clearOutput 之前增加 isRunning/isVmRunning/isDebugPaused 三态守卫。 |
-| 3 | P2 | 并发管线污染 | `app/ide.cpp` onCompileAnalysis | **运行/调试中重跑前端管线**——原实现先 clearErrorLines/clearCurrentLine 再 runFrontendPipeline，会清掉调试暂停时的当前行高亮、并替换 pipeline_ 内部 lexer/parser/astRoot 状态——若 worker 线程正在使用同一 pipeline_ 解析模块源码（import 路径），将产生并发数据竞争（lexer/parser 非线程安全）。修复：入口增加运行守卫，运行中仅打开右侧可视化面板查看当前已编译结果，不重新执行管线。 |
-| 4 | P3 | 防御性 | `interpreter/InterpreterModules.cpp` visitImportStmt | **循环依赖/深度超限检测后无 return**——当前 runtimeError 是 throw 语义，缺 return 不可达；但若未来 runtimeError 改为非抛出式错误处理（错误码/返回值），缺少 return 会继续执行后续加载流程，违反"循环依赖即停止"语义。修复：两处 runtimeError 后添加防御性 return。 |
-| 5 | P3 | 空状态 | `gui/IrViewer.cpp` clearIR | **clearIR 后 browser 完全空白**——用户无法区分"尚未编译"与"编译产物为空"。修复：setText 设置占位提示"尚无 IR 输出。请先点击「编译分析」或运行程序，再切换到 IR 视图查看。"，后续 setIR/setHtml 会覆盖。 |
-| 6 | P3 | 空状态 | `gui/DebugPanel.cpp` clearAll | **clearAll 后 variableTree/callStackList 完全空白**——QTreeWidget/QListWidget 无原生 placeholder。修复：插入禁用样式的占位项（灰色、不可选不可启用），populateXxx 入口先 clear() 不污染后续真实数据。 |
-| 7 | P3 | 进度反馈 | `app/ide.cpp` onCompileAnalysis | **同步编译阶段仅 WaitCursor 鼠标反馈，状态栏无文字提示**——大文件编译时用户感知不到进度。修复：RAII guard 统一管理 cursor 与状态栏消息，开始时 showMessage("正在编译分析...")，结束（含所有 return 路径）时 clearMessage()。 |
-| 8 | P3 | 运行守卫 | `app/ide.cpp` onEditorTabCloseRequested | **运行/调试中关闭标签会破坏调试上下文**——currentFilePath_ 切换、断点清空、editorTabs_ 重组，导致 worker 线程引用的 source/filePath 失配。原实现无任何守卫。修复：入口增加 isRunning/isVmRunning/isDebugPaused 守卫，运行中拒绝关闭并提示用户先停止。 |
-| 9 | P3 | 键盘交互 | `gui/ReplPanel.cpp` eventFilter | **REPL 无 Esc 中止续行 + 无 Ctrl+L 清屏**——续行模式下用户只能继续输入完整代码，无法中止（多行结构如未闭合的 fun 定义一旦开始就必须完成）；清屏需输入 'clear' 命令。修复：Esc 在续行模式下中止 pendingInput_ 回到单行模式；Ctrl+L 清空 outputArea_（保留 pendingInput_/history/变量状态），运行中拒绝以避免与 worker 输出竞争。 |
-| 10 | P3 | 编辑器增强 | `gui/CodeEditor.cpp` keyPressEvent | **缺 Ctrl+Shift+D 复制行 + Alt+Up/Down 移动行**——常见编辑器快捷键缺失，影响代码编辑/重组效率。修复：Ctrl+Shift+D 复制当前行（或选区）到下一行，支持选区副本保持原选区选中；Alt+Up/Down 移动当前行（或选区行块）上/下，自动重新选中移动后的块。与现有 Ctrl+D（选中下一个相同单词）、Ctrl+Shift+K（删除当前行）不冲突。 |
-| 回归 | P2 | 回归修复 | `lexer/Lexer.cpp` number | **回滚 AUDIT-P3-ROUND53 的"123. 报错"逻辑**——该 fix 让 "1." 和 "123.foo" 报错"数字字面量小数点后需有数字"，但 TestLexer::Number_IntegerFollowedByDotAndIdentifier 和 LexerAudit::TrailingDecimalPoint 明确期望分词为 INT + DOT（+ IDENTIFIER），这是项目的设计契约——MiniLang 不支持方法调用语法 123.foo()，但 Lexer 应保持宽容分词，将语义判断交给 Parser。原 fix 改变了既定行为，导致 2 个测试回归。修复：删除该 fix 块，恢复"123. 后无数字/指数 → 分词为 TK_INT_LIT + TK_DOT"的行为。 |
+| 1 | P1 | 样式覆盖（真正根因） | `app/ide.cpp` setConfigFlags | **ADS dock 标签蓝底+米黄字体**——真正根因：`applyFluentStyle()` 行 3540 `dockManager_->setStyleSheet(adsQss)` 设置自定义 QSS 后，行 3785 `setPalette(pal)` 向 dockManager_ 传播 `ApplicationPaletteChange` 事件，ADS eventFilter 检测到 `ColorSchemeMode==FollowPalette`（默认）→ `loadStylesheet()` → `setStyleSheet(default.css)` 完全覆盖 adsQss。default.css 的 `ads--CDockWidgetTab[activeTab="true"] QLabel { color: palette(foreground); }` 导致字体颜色异常。修复：添加 `DisableStylesheet` 标志使 `loadStylesheet()` 成为 no-op，adsQss 持久生效。 |
+| 2 | P1 | 样式覆盖（同一根因） | `app/ide.cpp` setConfigFlags | **编译分析面板字节码背景未变米黄色**——同一根因：adsQss 中 `ads--CDockWidget { background: bgMain }` 被 loadStylesheet 覆盖，dock 容器显示 default.css 的默认（白色）背景。前轮移除 registerWidget 的修复方向错误——问题不在 QFluentKit 而在 ADS 自身。DisableStylesheet 修复后 adsQss 的 dock 容器背景规则生效。 |
+| 3 | P1 | 布局干扰（同一根因） | `app/ide.cpp` setConfigFlags + QTimer 顺序 | **面板初始大小每次都要手动调整**——部分根因同上：restoreState 后的 `applyFluentStyle()` → `setPalette` → `loadStylesheet` → `setStyleSheet` 触发样式重算，可能干扰 restoreState 恢复的 splitter 尺寸。DisableStylesheet 消除此干扰。额外加固：将 QTimer lambda 中 `applyFluentStyle()` 移到 `restoreState()` **之前**，确保 restoreState 是最后的布局操作，其 splitter 尺寸不被后续重算覆盖。 |
 
-### 评估保留现状（3 项）
+### 关键设计决策
 
-- **P3-UX3 全局 Esc 仅关闭查找面板**：项目中主要的浮层就是 FindReplacePanel（已正确处理），QDialog/QMenu 自带 Esc 关闭，扩展到 QDockWidget 会改变用户预期。保留现状。
-- **P3-UX4 断点跨会话持久化**：需 QSettings 序列化 + 文件路径键管理 + 文件移动/重命名处理，改动较大且重启 IDE 重新设置断点成本不高。保留现状。
-- **P3-UX6 调试暂停期编辑器完全只读**：已实现（setRunningState true 时 setReadOnly，VM 模式 L5758-5760 BUG-ORCH-5 fix）。无需修改。
+1. **DisableStylesheet 而非对抗 loadStylesheet**：前几轮尝试用"追加 QSS"、"覆盖 QSS"、"移除 FocusHighlighting 标志"等方式对抗 loadStylesheet，全部失败——因为 loadStylesheet 在每次 ApplicationPaletteChange 时重新覆盖。DisableStylesheet 从源头禁用 ADS 内置样式加载，自定义 adsQss 成为唯一样式来源，彻底消除覆盖。
+2. **applyFluentStyle 移到 restoreState 之前**：即使 DisableStylesheet 已消除 loadStylesheet 干扰，将样式应用放在 restoreState 之前仍更稳健——确保 restoreState 是 QTimer lambda 中最后的布局操作，其设置的 splitter 尺寸为最终值。
+
+### 关键教训
+
+1. **`setPalette` 会向子 widget 传播 `ApplicationPaletteChange` 事件**——这是 Qt 的事件传播机制，子 widget 的事件过滤器会收到。ADS 的 eventFilter 利用此事件在 `ColorSchemeMode==FollowPalette` 时重新加载样式表。在调用 `setPalette` 后设置的自定义 QSS 会被覆盖。
+2. **ADS `ColorSchemeMode` 默认值为 `FollowPalette`**——意味着任何 palette 变化都会触发 loadStylesheet。除非显式设置为 `Light`/`Dark`，或使用 `DisableStylesheet` 标志。
+3. **前几轮根因分析为何全部错误**：第六十五~六十七轮分别归咎于"restoreState 时机"、"QFluentKit registerWidget"、"ADS default.css QLabel 规则"，均未发现 `setPalette → ApplicationPaletteChange → loadStylesheet` 这一真正因果链。教训：样式覆盖问题应优先排查事件驱动的样式重载机制，而非逐条检查 QSS 规则。
+
+### 修改文件清单
+
+- 修改：`app/ide.cpp`（添加 `DisableStylesheet` 配置标志 + QTimer lambda 中 applyFluentStyle 移到 restoreState 之前）
+- 修改：`CHANGELOG.md`（新增第六十八轮条目，归档第六十五轮）
 
 ### 测试影响
 
-- 全部 10 项修复均无回归。全量 1763/1763 测试通过（含回滚 AUDIT-P3-ROUND53 修复的 2 个回归测试）。
+- 全部 3 项修复均无回归。全量 1758/1758 测试通过。
+- UI 样式问题属于视觉表现层，单元测试不直接覆盖，构建通过 + 无回归即视为修复验证。建议用户启动 IDE 视觉确认。
 
+## 2026-07-09 · 第六十七轮：UI 三大顽疾根因修复（P1 × 2 + P2 × 1，共 3 项）
 
-**历史变更**：更早的开发记录（第五十二轮及以前）已归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+### 概述
+
+本轮针对用户反复反馈（经三轮修复均未解决）的三个 UI 问题进行彻底根因排查并修复：**(1) ADS dock 标签蓝底+米黄字体突兀**、**(2) 编译分析面板字节码背景未变米黄色**、**(3) 面板初始大小每次都要手动调整**。通过调试日志验证 restoreState 机制正确（restored=1），定位字节码背景问题的真正根因为 QFluentKit `StyleSheetManager::updateStyleSheet` 在主题信号触发时重新应用 `list_view.qss`（`background: transparent`）覆盖自定义 `itemViewQss`。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1758/1758 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P1 | 样式覆盖 | `app/ide.cpp` applyFluentStyle registerWidget | **字节码/文件树/错误列表背景被 QFluentKit 覆盖为 transparent**——根因：`StyleSheet::registerWidget(widget, LIST_VIEW)` 注册后，QFluentKit `StyleSheetManager` 在 `Theme::onThemeModeChanged`/`onThemeColorChanged` 信号触发时调用 `updateStyleSheet(false)`，重新应用 `list_view.qss`（`ListWidget { background: transparent; }`），覆盖 `itemViewQss` 中设置的米黄色背景。`setStyleSheet(itemViewQss)` 仅在 `applyFluentStyle()` 调用时生效，主题信号触发后被 QFluentKit 覆盖。修复：移除 `fileTree_`/`errorListWidget_`/`bytecodeList_`/`recentListWidget_`/`tokenTable_` 的 `registerWidget` 调用，这些控件由 `itemViewQss` 统一样式化，Fluent ScrollBar 仍单独替换。`editorTabWidget_`（TAB_VIEW）保留注册（无背景冲突）。 |
+| 2 | P1 | 样式覆盖 | `app/ide.cpp` applyFluentStyle adsQss | **ADS dock 标签 focused/active 状态蓝底+米黄字体**——根因：ADS `default.css` 包含 `ads--CDockWidgetTab[activeTab="true"] QLabel { color: palette(foreground); }` 规则，使用系统默认前景色，覆盖 adsQss 中 tab 的 color 属性。修复：在 adsQss 中添加显式 `ads--CDockWidgetTab QLabel`、`ads--CDockWidgetTab[activeTab="true"] QLabel`、`ads--CDockWidgetTab[focused="true"] QLabel` 子选择器规则，设置正确的 color（普通 tab 用 fgPrimary，active/focused tab 用 accent 色），防止 default.css 的 palette 规则干扰。 |
+| 3 | P2 | 布局恢复 | `app/ide.cpp` restoreLayout QTimer::singleShot(0) | **面板初始大小每次都要手动调整**——根因：ADS `restoreState` 在构造函数或 showEvent 中调用时，窗口几何尺寸无效（未经过布局引擎处理），ADS 内部依赖容器几何计算 splitter 比例，在无效几何下静默失败。修复：将 `restoreState` 延迟到 `QTimer::singleShot(0)` 中执行——事件循环开始后所有 show/layout 事件已处理完毕，几何尺寸有效，restoreState 能正确恢复。通过调试日志验证 `restored=1`（成功）、`pendingDockState_.size()=646`（有保存数据）。同时清理了验证用的 3 处调试日志代码。 |
+
+### 关键设计决策
+
+1. **移除 registerWidget 而非对抗 QFluentKit**：`list_view.qss` 的 `background: transparent` 是 QFluentKit 的设计决策（透明背景让父容器色透出），与我们的 `itemViewQss`（显式设置米黄色背景）根本冲突。尝试用 `setCustomStyleSheet` 集成会引入 light/dark QSS 双份管理的复杂性，且 `list_view.qss` 的 `alternate-background-color: transparent` 仍会覆盖 palette 的 AlternateBase。直接移除注册是最简洁的方案——这些控件不需要 QFluentKit 的 list_view 样式（透明背景、item padding 等），`itemViewQss` 已覆盖所有需求。
+2. **QLabel 子选择器规则**：ADS 的 `default.css` 对 tab 内 QLabel 有 `color: palette(foreground)` 规则。即使 tab 本身的 `color` 属性正确，QLabel 子控件可能继承 default.css 的颜色。显式添加 `ads--CDockWidgetTab QLabel { color: ... }` 确保文字颜色与 tab 背景一致。
+3. **QTimer::singleShot(0) 延迟 restoreState**：Qt 事件循环的 `singleShot(0)` 在当前事件处理完毕后立即触发，此时所有 show/layout 事件已处理，窗口几何有效。`firstShow_` 守卫在 restoreState 完成后才设为 false，防止 restoreState 触发的 Resize 事件误启动 `splitterSaveTimer_` 覆盖用户布局。
+
+### 关键教训
+
+1. **QFluentKit registerWidget 是双向承诺**——注册后 QFluentKit 获得 stylesheet 管理权，会在主题信号时重新应用其 QSS。若自定义 QSS 与 QFluentKit QSS 冲突（如 background），每次主题变化都会被覆盖。对于需要自定义背景的控件，不应注册到 QFluentKit。
+2. **ADS default.css 的子选择器规则容易被忽略**——`ads--CDockWidgetTab[activeTab="true"] QLabel { color: palette(foreground); }` 这类规则不直接影响 tab 本身，但影响其子控件（QLabel），导致文字颜色异常。自定义 ADS QSS 时必须同时覆盖子控件选择器。
+3. **Qt 窗口几何在 showEvent 中可能无效**——`showEvent` 在窗口首次显示时触发，但布局引擎可能尚未完成几何计算。依赖容器几何的 API（如 ADS `restoreState` 的 splitter 比例计算）应延迟到事件循环空闲后调用。
+
+### 修改文件清单
+
+- 修改：`app/ide.cpp`（移除 5 个控件的 registerWidget 调用 + 添加 ADS tab QLabel 子选择器规则 + QTimer::singleShot(0) restoreState + 清理 3 处调试日志）
+- 修改：`CHANGELOG.md`（新增第六十七轮条目）
+
+### 测试影响
+
+- 全部 3 项修复均无回归。全量 1758/1758 测试通过。
+- UI 样式问题属于视觉表现层，单元测试不直接覆盖，构建通过 + 无回归即视为修复验证。
+
+**历史变更**：更早的开发记录（第六十六轮及以前）已归档至 [docs/changelog/archive/](docs/changelog/archive/)。

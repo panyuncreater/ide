@@ -309,4 +309,15 @@ void DebugPanel::clearAll() {
     variableTree_->clear();
     callStackList_->clear();
     currentStack_.clear();
+    // R53-UX2 fix: 空状态提示。QTreeWidget/QListWidget 无原生 placeholder，
+    // 使用禁用样式的占位项提升可发现性——用户能区分"无调试会话"与"调试会话无数据"。
+    // populateXxx 入口会先 clear()，故不会污染后续真实数据。
+    auto* varHint = new QTreeWidgetItem({"（暂无调试会话：运行/调试启动后将显示变量快照）"});
+    varHint->setFlags(varHint->flags() & ~Qt::ItemIsEnabled & ~Qt::ItemIsSelectable);
+    varHint->setForeground(0, QColor(0x88, 0x88, 0x88));
+    variableTree_->addTopLevelItem(varHint);
+    auto* stackHint = new QListWidgetItem("（暂无调试会话：运行/调试启动后将显示调用栈）");
+    stackHint->setFlags(stackHint->flags() & ~Qt::ItemIsEnabled & ~Qt::ItemIsSelectable);
+    stackHint->setForeground(QColor(0x88, 0x88, 0x88));
+    callStackList_->addItem(stackHint);
 }

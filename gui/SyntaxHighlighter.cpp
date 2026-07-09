@@ -7,6 +7,7 @@
  */
 #include "gui/SyntaxHighlighter.h"
 #include "lexer/Lexer.h"
+#include <algorithm> // R54-17 fix: std::min
 
 // ============================================================
 // SyntaxHighlighter 语法高亮器实现
@@ -423,9 +424,12 @@ void SyntaxHighlighter::highlightBlock(const QString& text) {
     int newState = 0;
     if (inNestedString)
         newState = 400 + interpBraceDepth;
-    else if (blockCommentDepth > 0 && interpBraceDepth > 0)
-        newState = 300 + interpBraceDepth * 10 + blockCommentDepth;
-    else if (blockCommentDepth > 0)
+    else if (blockCommentDepth > 0 && interpBraceDepth > 0) {
+        // R54-17 fix: blockCommentDepth 占个位（mod 10），达 10 时溢出到 interpBraceDepth
+        // 导致状态损坏。钳制到 9——10 层嵌套块注释极少见，钳制仅影响高亮不影响语义。
+        int clampedDepth = std::min(blockCommentDepth, 9);
+        newState = 300 + interpBraceDepth * 10 + clampedDepth;
+    } else if (blockCommentDepth > 0)
         newState = 100 + blockCommentDepth;
     else if (interpBraceDepth > 0)
         newState = 200 + interpBraceDepth;

@@ -16,6 +16,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QSpacerItem>
 #include <QSplitter>
 #include <QTextCharFormat>
@@ -455,6 +456,15 @@ void WelcomeWizard::onStartExplore() {
 void WelcomeWizard::onSkip() {
     completed_ = true;
     reject(); // 跳过也视为完成（已看过提示），用 reject 区分"主动跳过"
+}
+
+/// R54-10 fix: Esc 键统一走 onSkip()，确保 completed_=true。
+void WelcomeWizard::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape) {
+        onSkip();
+        return;
+    }
+    QDialog::keyPressEvent(event);
 }
 
 /// 进入下一步；末步则完成。

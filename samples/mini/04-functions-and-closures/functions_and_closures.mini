@@ -1,0 +1,167 @@
+// functions_and_closures.mini - 函数、递归与闭包
+// 覆盖特性：函数定义（fun）、递归调用、int 类型注解、默认参数、
+//           链式调用 f(x)(y)、闭包捕获、闭包工厂、计数器闭包、
+//           函数作为一等公民（赋值给变量 / 存入数组 / 作为返回值）
+// 说明：本语言解释器支持「函数作为值返回、存入变量或数组后调用」，
+//       但「将函数作为参数传入后再调用」（如 applyTwice(f,x)）存在
+//       函数身份串扰的已知 bug，故本示例不演示该模式。
+// ============================================================
+
+// ---- 递归方式计算斐波那契数 ----
+fun fibRecursive(n) {
+    if (n <= 0) { return 0; }
+    if (n == 1) { return 1; }
+    return fibRecursive(n - 1) + fibRecursive(n - 2);
+}
+
+// ---- 迭代方式计算斐波那契数，使用 int 类型注解 ----
+int fibIterative(int n) {
+    if (n <= 0) { return 0; }
+    if (n == 1) { return 1; }
+    var a = 0;
+    var b = 1;
+    for (var i = 2; i <= n; i = i + 1) {
+        var temp = a + b;
+        a = b;
+        b = temp;
+    }
+    return b;
+}
+
+// 打印前 10 个斐波那契数
+print("=== 递归方式 ===");
+for (var i = 0; i < 10; i = i + 1) {
+    print("fib({i}) = {fibRecursive(i)}");
+}
+
+print("");
+print("=== 迭代方式 ===");
+for (var i = 0; i < 10; i = i + 1) {
+    print("fib({i}) = {fibIterative(i)}");
+}
+
+// ---- 默认参数与链式调用 ----
+print("");
+print("=== 默认参数 ===");
+fun greet(name = "World", punct = "!") {
+    return "Hello, " + name + punct;
+}
+print(greet());
+print(greet("Alice"));
+print(greet("Bob", "?"));
+
+fun power(base, exp = 2) {
+    var r = 1;
+    for (var i = 0; i < exp; i = i + 1) {
+        r = r * base;
+    }
+    return r;
+}
+print("power(3) = {power(3)}");
+print("power(3, 3) = {power(3, 3)}");
+
+// 链式调用 f(x)(y)：adderFactory 返回一个函数，立即调用
+fun adderFactory(amount) {
+    fun adder(x) {
+        return x + amount;
+    }
+    return adder;
+}
+print("adderFactory(10)(5) = {adderFactory(10)(5)}");
+
+// ---- 闭包与高阶函数 ----
+print("");
+print("=== 闭包与高阶函数 ===");
+
+// 函数赋值给变量后调用
+fun sayHi(name) { return "Hi, " + name + "!"; }
+var g = sayHi;
+print(g("Alice"));
+print(g("Bob"));
+
+// 闭包工厂：内部函数捕获工厂参数
+fun makeAdder(amount) {
+    fun adder(x) { return x + amount; }
+    return adder;
+}
+var add5 = makeAdder(5);
+var add10 = makeAdder(10);
+print("add5(20) = {add5(20)}");
+print("add10(20) = {add10(20)}");
+
+// 计数器闭包：内部函数捕获并修改外部状态
+fun makeCounter() {
+    var count = 0;
+    fun increment() { count = count + 1; return count; }
+    return increment;
+}
+var counter = makeCounter();
+print("call 1: {counter()}");
+print("call 2: {counter()}");
+print("call 3: {counter()}");
+
+// 函数工厂：捕获 factor
+fun multiplier(factor) {
+    fun closure(x) { return x * factor; }
+    return closure;
+}
+var triple = multiplier(3);
+print("triple(7) = {triple(7)}");
+
+// 函数存入数组后调用（循环变量 i 被所有闭包共享，故都返回 3）
+print("=== 函数存入数组（闭包陷阱）===");
+var fns = [];
+for (var i = 0; i < 3; i = i + 1) {
+    fun getter() { return i; }
+    fns.push(getter);
+}
+print("fns[0]() = {fns[0]()}");
+print("fns[1]() = {fns[1]()}");
+print("fns[2]() = {fns[2]()}");
+
+// 预期输出：
+// === 递归方式 ===
+// fib(0) = 0
+// fib(1) = 1
+// fib(2) = 1
+// fib(3) = 2
+// fib(4) = 3
+// fib(5) = 5
+// fib(6) = 8
+// fib(7) = 13
+// fib(8) = 21
+// fib(9) = 34
+//
+// === 迭代方式 ===
+// fib(0) = 0
+// fib(1) = 1
+// fib(2) = 1
+// fib(3) = 2
+// fib(4) = 3
+// fib(5) = 5
+// fib(6) = 8
+// fib(7) = 13
+// fib(8) = 21
+// fib(9) = 34
+//
+// === 默认参数 ===
+// Hello, World!
+// Hello, Alice!
+// Hello, Bob?
+// power(3) = 9
+// power(3, 3) = 27
+// adderFactory(10)(5) = 15
+//
+// === 闭包与高阶函数 ===
+// Hi, Alice!
+// Hi, Bob!
+// add5(20) = 25
+// add10(20) = 30
+// call 1: 1
+// call 2: 2
+// call 3: 3
+// triple(7) = 21
+// === 函数存入数组（闭包陷阱）===
+// fns[0]() = 3
+// fns[1]() = 3
+// fns[2]() = 3

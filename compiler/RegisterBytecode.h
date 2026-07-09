@@ -125,6 +125,10 @@ enum class RegOp : uint8_t {
     // 操作数: src(1B) + typeAnnotationConstIdx(2B)
     // 语义: 检查 reg[src] 是否兼容类型注解，不匹配则 runtimeError
     REG_TYPE_CHECK, // src(1B), typeAnnotationConstIdx(2B)
+
+    // AUDIT-P1.1 fix: break/continue finally 续跳机制（三后端一致性）
+    REG_PUSH_JUMP_TARGET, // push 跳转目标到 pendingJumpStack_（操作数: target(2B)）
+    REG_FINALLY_END,      // 从 pendingJumpStack_ pop 目标并跳转；栈空则继续执行（无操作数）
 };
 
 // ============================================================

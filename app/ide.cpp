@@ -422,6 +422,10 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     centerStack_->setCurrentWidget(welcomePage_);
 
     restoreLayout();
+    // applyFluentStyle 样式化初始 UI（首次显示前）。
+    // showEvent 中 restoreState 后会再次调用 applyFluentStyle，确保 restoreState
+    // 创建的新 dock 容器也被样式化。
+    applyFluentStyle();
     updateWindowTitle();
     updateStatusBar();
 
@@ -431,22 +435,33 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     QSettings welcomeSettings;
     if (!welcomeSettings.value(kWelcomeCompletedKey, false).toBool()) {
         auto* wizard = new WelcomeWizard(this);
-        // AUDIT-P2 fix: 移除 learningPathRequested → showTeachingPanel 连接。
-        // Step4 按钮点击 emit learningPathRequested() 会同步触发 showTeachingPanel（第一次），
-        // 之后 accept() 返回 exec()，下方又无条件调用 showTeachingPanel（第二次），
-        // 导致 LearningPathPanel 被重建两次（refresh 22 个活动行 + 二次滑入动画）。
-        // 统一在 exec() 返回后展开，无论完成还是跳过都只调用一次。
+        // Step4「开始学习 ✓」按钮 emit learningPathRequested() → 打开学习路径地图面板。
+        // 与「再次显示欢迎向导」(ide.cpp onReshowWelcome) 和 onActivityRequested("welcome")
+        // 两处 WelcomeWizard 创建点保持信号连接一致。
+        // 历史：第五十七轮 P3 修复误删此连接（同时删除 exec() 后的无条件调用），
+        // 导致首次启动点 Step4 按钮无响应——用户感知「学习中心面板打不开」。
+        // 本次恢复连接：点 Step4 才打开面板，点跳过/Esc 则停留在欢迎页（符合 P3 初衷）。
+        connect(wizard, &WelcomeWizard::learningPathRequested, this,
+                [this]() { showTeachingPanel(QStringLiteral("learning-path")); });
         wizard->exec();
         welcomeSettings.setValue(kWelcomeCompletedKey, true);
         wizard->deleteLater();
-        // A3：首次用户无论跳过还是完成，都默认展开 LearningPathPanel 作为起点。
-        // 老用户（welcome_completed 已为 true）保持其上次的布局（dock 隐藏）。
-        showTeachingPanel(QStringLiteral("learning-path"));
     }
 }
 
 /// 析构：保存当前窗口布局后释放资源（worker/解释器由协作类通过智能指针管理）。
 Ide::~Ide() {
+    // ROUND-60 fix: 安全网。若 closeEvent 被绕过（如 QCoreApplication::quit()），
+    // 此处确保 controller_ → Ide 的信号连接在成员析构前被切断，避免析构链中
+    // 残留信号访问已析构的 UI 成员。
+    if (controller_) disconnect(controller_, nullptr, this, nullptr);
+    // ROUND-66 P0 fix: 清空所有待处理事件，防止子对象析构期间 Qt 派发残留的
+    // QMetaCallEvent（queued slot lambda）。Qt6 disconnect 不移除已投递的
+    // QMetaCallEvent，若析构链中任何子对象析构触发了事件派发（如 ADS 内部
+    // QSS 重算触发 repaint → processEvents），残留 lambda 会访问已析构的
+    // WorkerManager/VmStepper/面板 → UAF（读取访问权限冲突）。
+    QCoreApplication::removePostedEvents(this);
+    if (controller_) controller_->clearPendingEvents();
     saveLayout();
 }
 
@@ -454,9 +469,56 @@ Ide::~Ide() {
 // Close event
 // ============================================================
 
+/// 显示事件：首次显示时应用样式。
+/// R65-3 fix: restoreState 已移到 restoreLayout 的 QTimer::singleShot(0) 中，
+/// 在事件循环开始后执行（此时窗口已完全布局，几何尺寸有效）。
+/// showEvent 中仅保留 applyFluentStyle 确保初始 dock 容器被样式化。
+/// 注意：firstShow_ 不在此处重置，而是在 QTimer restoreState 完成后重置，
+/// 以防止 restoreState 触发的 Resize 事件导致误保存（覆盖用户保存的布局）。
+void Ide::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    if (firstShow_) {
+        applyFluentStyle();
+    }
+}
+
 /// 关闭事件：存在未保存修改时弹出保存确认，用户取消则忽略关闭。
 void Ide::closeEvent(QCloseEvent* event) {
+    // ISSUE-7 fix + ROUND-60: 关闭流程开始，置 closing_ 标志。后续所有信号处理回调
+    // （handleVmStepResult/onWorkerFinished/onPausedAt/displayDiagnostics 以及
+    // outputReady/runOk/stoppedByUser/runtimeError/genericError 五个 lambda）
+    // 入口检查此标志直接 return，避免 processEvents 或析构期间残留的
+    // QueuedConnection 信号访问已部分析构的成员导致 UAF（读取访问权限冲突）。
+    closing_ = true;
+
+    // ROUND-66 fix: 立即停止所有内部定时器，避免 maybeSave 模态对话框的事件循环
+    // 期间定时器触发（completionTimer_/syntaxCheckTimer_/fileTreeFilterTimer_ 的
+    // 回调未受 closing_ 守卫保护，可能访问正在清理的状态）。splitterSaveTimer_ 也停止。
+    if (splitterSaveTimer_) splitterSaveTimer_->stop();
+    if (completionTimer_) completionTimer_->stop();
+    if (syntaxCheckTimer_) syntaxCheckTimer_->stop();
+    if (fileTreeFilterTimer_) fileTreeFilterTimer_->stop();
+
+    // ROUND-60 fix: 尽早切断 controller_ → Ide 的所有信号-槽连接。
+    // 原实现将 disconnect 放在 closeEvent 末尾（maybeSave/processEvents 之后），
+    // 但 maybeSave() 的模态对话框与 processEvents(521) 会派发主线程事件队列中
+    // 挂起的 QueuedConnection 事件（outputReady 等），此时 5 个 lambda 无 closing_
+    // 守卫会访问已部分析构的 UI 成员导致 UAF。尽早 disconnect + removePostedEvents
+    // 双重保险：disconnect 阻止未来投递，removePostedEvents 清空已投递未派发的事件。
+    disconnect(controller_, nullptr, this, nullptr);
+    // ROUND-66 P0 fix: removePostedEvents 第二参数 0 表示 QEvent::None（几乎不存在
+    // 的事件类型），不是"所有事件"。原代码注释声称"清空已投递未派发的事件"但实际
+    // 只移除了 type==0 的事件，QMetaCallEvent（queued slot, type=43）和 QEvent::Timer
+    // （type=1）均未被移除。改为无参版本（默认 -1 = 所有类型），真正清空 Ide 的
+    // 待处理事件队列。同时通过 controller_->clearPendingEvents() 清空 IdeController
+    // 及其 4 个协作成员（WorkerManager/VmStepper/DebugCoordinator/PipelineRunner）
+    // 的事件队列，防止内部 lambda（如 cleanupWorker、notifyVmStateChanged）在
+    // 析构链中被 dispatch 访问已析构成员 → UAF。
+    QCoreApplication::removePostedEvents(this);
+    if (controller_) controller_->clearPendingEvents();
+
     if (!maybeSave()) {
+        closing_ = false;
         event->ignore();
         return;
     }
@@ -520,6 +582,20 @@ void Ide::closeEvent(QCloseEvent* event) {
     // Save AST independent window geometry before closing
     if (astWindow_ && !astWindow_->isHidden())
         saveAstWindowGeometry();
+    // ISSUE-7 fix: 清理 GuidedTour。若引导气泡仍活跃，bubble_ 是 host_(Ide) 的子 widget，
+    // 析构链会销毁它，但 showStep 中排队的 QTimer::singleShot(0, this, ...) 可能持有
+    // GuidedTour 裸 this。先调用 hideOverlay 取消气泡并 deleteLater，再 delete guidedTour_
+    // 确保所有延迟 lambda 的 this 在析构前失效（GuidedTour 析构会 hideOverlay）。
+    if (guidedTour_) {
+        delete guidedTour_;
+        guidedTour_ = nullptr;
+    }
+    // ISSUE-7 fix: disconnect 已在 closeEvent 入口执行（ROUND-60 提前到 maybeSave 之前），
+    // 此处保留 removePostedEvents 兜底，清空 stopForClose/processEvents 期间可能重新投递的事件。
+    // ROUND-66 P0 fix: 原参数 0 只移除 QEvent::None，改为无参（-1=所有类型）。
+    // 同时清空 controller_ 及其协作成员的队列。
+    QCoreApplication::removePostedEvents(this);
+    if (controller_) controller_->clearPendingEvents();
     saveLayout();
     event->accept();
 }
@@ -612,6 +688,13 @@ void Ide::syncVmBreakpoints() {
 
 /// 事件过滤器：处理编辑器区文件拖放、标题栏双击最大化等全局交互。
 bool Ide::eventFilter(QObject* watched, QEvent* event) {
+    // R61-3 fix: dockManager_ 的 Resize 事件 → 防抖保存布局
+    // 用户拖拽 ADS splitter 调整面板大小时，dockManager_ 收到 Resize 事件
+    if (watched == dockManager_ && event->type() == QEvent::Resize) {
+        if (splitterSaveTimer_ && !firstShow_) {
+            splitterSaveTimer_->start();
+        }
+    }
     // 第十二轮：统一标题栏拖拽（仅在非交互控件区域触发窗口拖动）
     if (watched == titleBar_) {
         if (event->type() == QEvent::MouseButtonPress) {
@@ -983,6 +1066,17 @@ void Ide::onCurrentTabChanged(int index) {
 void Ide::onEditorTabCloseRequested(int index) {
     if (index < 0 || index >= static_cast<int>(editorTabs_.size()))
         return;
+
+    // R53-UX7 fix: 运行/调试中关闭标签会破坏调试上下文（currentFilePath_ 切换、
+    // 断点清空、editorTabs_ 重组），导致 worker 线程引用的 source/filePath 失配。
+    // 原实现无任何守卫。修复：运行中拒绝关闭并提示用户先停止。
+    if (controller_->isRunning() || controller_->isVmRunning() || controller_->isDebugPaused()) {
+        InfoBar::warning(mlTr("关闭标签"),
+                         mlTr("当前有运行或调试在进行，请先停止运行再关闭标签。"),
+                         Qt::Horizontal, true, 4000, InfoBar::Position::TOP_RIGHT, this);
+        return;
+    }
+
     auto& data = editorTabs_[index];
     if (data.editor->document()->isModified()) {
         codeEditor_ = data.editor;
@@ -1016,17 +1110,35 @@ void Ide::onEditorTabCloseRequested(int index) {
         // 关闭最后一个标签时清空文件监视
         setupFileWatcher(QString());
 
-        // issue 4：教学模式下关闭编辑器，教学区平滑延展恢复（不回欢迎页）。
+        // issue 3：教学模式下关闭编辑器，教学区平滑延展恢复（不回欢迎页）。
         // 编辑器模式下回欢迎页（原逻辑）。
         if (!centerInEditorMode_ && centerSplitter_ && centerStack_) {
-            // 教学模式：隐藏编辑器栏，动画延展教学区到全宽
+            // 教学模式：动画延展教学区到全宽
+            // ROUND56 fix: 原实现先 editorTabWidget_->hide() 再 animateCenterSplitter，
+            // QSplitter 在子控件 hide 时会自动重分配空间（centerStack_ 立即获得全宽），
+            // 导致 animateCenterSplitter 的 startSizes 与实际不符，动画无视觉效果，
+            // 用户感知"全部被关闭"（教学区瞬时跳到全宽而非平滑延展）。
+            // 修复：先动画到 [total, 0]，动画结束后再 hide editorTabWidget_。
             QList<int> savedSizes = centerSplitter_->sizes();
-            editorTabWidget_->hide();
             centerStack_->show();
-            if (savedSizes.size() == 2) {
+            if (savedSizes.size() == 2 && savedSizes[1] > 5) {
                 int total = savedSizes[0] + savedSizes[1];
                 if (total > 100) {
                     animateCenterSplitter(savedSizes, {total, 0});
+                    // 动画结束后再隐藏编辑器栏（避免动画期间 QSplitter 自动重分配）
+                    QTimer::singleShot(360, this, [this]() {
+                        if (editorTabWidget_ && editorTabWidget_->count() == 0)
+                            editorTabWidget_->hide();
+                    });
+                } else {
+                    editorTabWidget_->hide();
+                }
+            } else {
+                // 编辑器宽度已为 0 或极小，直接隐藏
+                editorTabWidget_->hide();
+                if (savedSizes.size() == 2) {
+                    int total = savedSizes[0] + savedSizes[1];
+                    centerSplitter_->setSizes({total, 0});
                 }
             }
         } else {
@@ -1103,23 +1215,34 @@ void Ide::ensureEditorVisible() {
         editorTabWidget_->show();
     }
 
-    // 若当前是教学面板模式，切回编辑器模式（隐藏教学面板栏）
-    // 注意：此处不立即 hide centerStack_，留到动画末尾再 hide，保证过渡平滑
+    // ROUND-60 fix (Issue 3+4): 当教学面板可见时，保留教学模式（三栏共存），
+    // 不切换到编辑器独占模式。原实现无条件将 centerInEditorMode_ 置 true 并
+    // 隐藏 centerStack_，导致：(1) 关闭编辑器时教学区丢失（Issue 3——关闭后
+    // centerInEditorMode_ 已为 true，onEditorTabCloseRequested 走欢迎页分支）；
+    // (2) 之后无法打开学习模块面板（Issue 4——centerStack_ 被 hide 后
+    // showTeachingPanel 的动画条件 !editorWasVisible 不满足，splitter 不重分配，
+    // 面板 0 宽不可见）。修复：教学模式下仅确保编辑器栏可见并设置三栏布局。
     if (centerInEditorMode_ == false) {
-        centerInEditorMode_ = true;
-        if (teachingTreePanel_) {
-            teachingTreePanel_->setCurrentPanel(QStringLiteral("editor"));
+        // 教学模式：保留 centerInEditorMode_ = false，仅设置三栏布局
+        if (wasHidden && centerSplitter_ && centerStack_) {
+            QList<int> savedSizes = centerSplitter_->sizes();
+            if (savedSizes.size() == 2) {
+                int total = savedSizes[0] + savedSizes[1];
+                if (total > 200) {
+                    // 教学区 45%，编辑器 55%（与 loadCodeIntoMainEditor 一致）
+                    int editorW = static_cast<int>(total * 0.55);
+                    int teachingW = total - editorW;
+                    animateCenterSplitter(savedSizes, {teachingW, editorW});
+                }
+            }
         }
-        // BUG-R14-2 fix: 恢复 bottomContainer_/rightDock_ 可见状态（与 showEditorArea 对齐）
-        if (!bottomVisible_ && bottomDockWasVisibleBeforeTeaching_) {
-            showBottomPanel();
-        }
-        if (rightDock_ && rightDock_->isClosed() && rightDockWasVisibleBeforeTeaching_) {
-            rightDock_->toggleView(true);
-        }
+        return; // 不执行后续的编辑器独占模式逻辑
     }
 
-    // 修复（issue 3 + issue 4）：从欢迎页或教学面板打开文件时，编辑器需完全展开。
+    // 编辑器模式：切回编辑器视图（隐藏教学面板栏）
+    // 注意：此处不立即 hide centerStack_，留到动画末尾再 hide，保证过渡平滑
+
+    // 修复（issue 3）：从欢迎页或教学面板打开文件时，编辑器需完全展开。
     // 原逻辑仅在 centerStack_->isHidden() 时触发动画，但欢迎页场景下 centerStack_
     // 仍可见（显示欢迎页），导致动画被跳过、编辑器未占满空间。
     // 新逻辑：只要 editorTabWidget_ 之前是隐藏状态（wasHidden），就动画折叠
@@ -1248,12 +1371,26 @@ void Ide::showTeachingPanel(const QString& panelId) {
     }
 
     // 动画：编辑器从右侧滑入，教学区压缩
-    if (editorHasTabs && !editorWasVisible && savedSplitterSizes.size() == 2) {
+    // ROUND-60 fix (Issue 4): 原条件仅 !editorWasVisible 时触发动画，
+    // 但编辑器已可见（编辑器独占模式 centerStack_ 被 hide 且宽度 0）时，
+    // 需要重分配 splitter 让教学区获得可见宽度。检测 centerStack_ 是否被
+    // 隐藏或宽度为 0，若是则触发重分配动画。
+    const bool centerStackWasHiddenOrZero = !centerStack_->isVisible() ||
+        (savedSplitterSizes.size() == 2 && savedSplitterSizes[0] <= 10);
+    if (editorHasTabs && savedSplitterSizes.size() == 2 &&
+        (!editorWasVisible || centerStackWasHiddenOrZero)) {
         int total = savedSplitterSizes[0] + savedSplitterSizes[1];
         if (total > 200) {
             int teachingW = static_cast<int>(total * 0.6);
             int editorW = total - teachingW;
             animateCenterSplitter(savedSplitterSizes, {teachingW, editorW});
+        }
+    } else if (!editorHasTabs && centerStackWasHiddenOrZero && savedSplitterSizes.size() == 2) {
+        // ROUND-60 fix (Issue 4): 无编辑器标签但 centerStack_ 被 hide（编辑器独占
+        // 模式残留），教学区需获得全宽
+        int total = savedSplitterSizes[0] + savedSplitterSizes[1];
+        if (total > 200) {
+            animateCenterSplitter(savedSplitterSizes, {total, 0});
         }
     }
 
@@ -1518,6 +1655,8 @@ void Ide::initWelcomePage() {
     welcomePage_->setObjectName("welcomePage");
     // 第十一轮：支持拖拽文件夹到欢迎页打开
     welcomePage_->setAcceptDrops(true);
+    // ISSUE-3 fix: 确保 QSS background 在普通 QWidget 上生效
+    welcomePage_->setAttribute(Qt::WA_StyledBackground, true);
     auto* outerLayout = new QHBoxLayout(welcomePage_);
     outerLayout->setContentsMargins(0, 0, 0, 0);
     outerLayout->setSpacing(0);
@@ -1526,6 +1665,8 @@ void Ide::initWelcomePage() {
     auto* recentPanel = new QWidget;
     recentPanel->setObjectName("welcomeRecentPanel");
     recentPanel->setFixedWidth(220);
+    // ISSUE-3 fix: 确保 QSS background 在普通 QWidget 上生效
+    recentPanel->setAttribute(Qt::WA_StyledBackground, true);
     auto* recentLayout = new QVBoxLayout(recentPanel);
     recentLayout->setContentsMargins(0, 16, 0, 0);
     recentLayout->setSpacing(0);
@@ -1560,6 +1701,8 @@ void Ide::initWelcomePage() {
     auto* centerArea = new QWidget;
     centerArea->setObjectName("welcomeCenter");
     centerArea->setAcceptDrops(true);
+    // ISSUE-3 fix: 确保 QSS background 在普通 QWidget 上生效（applyFluentStyle 设置背景色）
+    centerArea->setAttribute(Qt::WA_StyledBackground, true);
     auto* centerLayout = new QVBoxLayout(centerArea);
     centerLayout->setAlignment(Qt::AlignCenter);
     centerLayout->setSpacing(12);
@@ -1572,17 +1715,19 @@ void Ide::initWelcomePage() {
     iconLabel->setAlignment(Qt::AlignCenter);
     {
         // 2026-07：新 Logo（宝石图标）替代旧 SVG
+        // ISSUE-2 fix: 替换为新生成的宝石 Logo PNG，消除旧 {} 设计残留。
+        // 尺寸提升至 128x128 增强首屏视觉冲击力。
         QIcon logoIcon(":/icons/minilang_icon_warm_256.png");
         QPixmap logoPixmap;
         if (!logoIcon.isNull()) {
-            logoPixmap = logoIcon.pixmap(QSize(96, 96));
+            logoPixmap = logoIcon.pixmap(QSize(128, 128));
         }
         if (logoPixmap.isNull()) {
             // 回退到 QFluentKit 内置 CODE 图标
-            logoPixmap = Fluent::icon(Fluent::IconType::CODE).pixmap(96, 96);
+            logoPixmap = Fluent::icon(Fluent::IconType::CODE).pixmap(128, 128);
         }
-        iconLabel->setPixmap(logoPixmap.scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        iconLabel->setFixedSize(96, 96);
+        iconLabel->setPixmap(logoPixmap.scaled(128, 128, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        iconLabel->setFixedSize(128, 128);
     }
 
     // 第十一轮：标题 24px Medium，副标题 14px 灰色
@@ -1610,16 +1755,18 @@ void Ide::initWelcomePage() {
     subtitleLabel->setStyleSheet(QStringLiteral("QLabel#welcomeSubtitle { qproperty-alignment: 'AlignCenter'; }"));
 
     centerLayout->addStretch(3);
-    centerLayout->addWidget(iconLabel);
+    centerLayout->addWidget(iconLabel, 0, Qt::AlignCenter);
     centerLayout->addSpacing(8);
-    centerLayout->addWidget(titleLabel);
+    centerLayout->addWidget(titleLabel, 0, Qt::AlignCenter);
     centerLayout->addSpacing(2);
-    centerLayout->addWidget(subtitleLabel);
+    centerLayout->addWidget(subtitleLabel, 0, Qt::AlignCenter);
     centerLayout->addSpacing(24);
 
     // 第十一轮：按钮区域，最大宽度 400px，8px 圆角
     auto* btnContainer = new QWidget;
     btnContainer->setObjectName("welcomeBtnContainer");
+    // ISSUE-3 fix: 确保 QSS background 在普通 QWidget 上生效
+    btnContainer->setAttribute(Qt::WA_StyledBackground, true);
     auto* btnLayout = new QVBoxLayout(btnContainer);
     btnLayout->setContentsMargins(0, 0, 0, 0);
     btnLayout->setSpacing(10);
@@ -1974,6 +2121,11 @@ void Ide::initTitleBar() {
             // 同时切换 ActivityBar 到「学习」项
             if (activityBar_)
                 activityBar_->setCurrentId("learn");
+            // 若中央区当前在欢迎页或编辑器（非教学面板），同时打开「学习路径地图」面板，
+            // 与 ActivityBar「学习」入口行为一致，避免用户只看到左侧树而误以为面板打不开。
+            if (centerStack_ && (centerInEditorMode_ || centerStack_->currentWidget() == welcomePage_)) {
+                showTeachingPanel(QStringLiteral("learning-path"));
+            }
         } else {
             if (teachingTreeDock_ && !teachingTreeDock_->isClosed())
                 teachingTreeDock_->toggleView(false);
@@ -2021,30 +2173,45 @@ void Ide::initTitleBar() {
     registerTeachingShortcut(QStringLiteral("glossary"), Qt::CTRL | Qt::SHIFT | Qt::Key_G);
 
     // ---- 字号调节（代码编辑器，全局应用于所有编辑器标签页） ----
+    // 注意：viewMenu 是 QFluentKit RoundMenu（非 QMenu），QAction 的 setShortcut
+    // 不会注册为窗口级全局快捷键。改用 QShortcut（与 registerTeachingShortcut 一致）
+    // 确保快捷键在任何焦点上下文下生效，QAction 仅作菜单显示项。
     viewMenu->addSeparator();
     auto* fontIncreaseAction = new QAction(mlTr("放大字号"), this);
-    fontIncreaseAction->setShortcut(Qt::CTRL | Qt::Key_Equal); // Ctrl+= (与 Ctrl++ 同键)
     connect(fontIncreaseAction, &QAction::triggered, this, [this]() {
         codeFontSize_ = qBound(8, codeFontSize_ + 1, 32);
         applyCodeFontSizeToAllEditors();
     });
     viewMenu->addAction(fontIncreaseAction);
+    auto* fontIncSc = new QShortcut(Qt::CTRL | Qt::Key_Equal, this);
+    QObject::connect(fontIncSc, &QShortcut::activated, this, [this]() {
+        codeFontSize_ = qBound(8, codeFontSize_ + 1, 32);
+        applyCodeFontSizeToAllEditors();
+    });
 
     auto* fontDecreaseAction = new QAction(mlTr("缩小字号"), this);
-    fontDecreaseAction->setShortcut(Qt::CTRL | Qt::Key_Minus);
     connect(fontDecreaseAction, &QAction::triggered, this, [this]() {
         codeFontSize_ = qBound(8, codeFontSize_ - 1, 32);
         applyCodeFontSizeToAllEditors();
     });
     viewMenu->addAction(fontDecreaseAction);
+    auto* fontDecSc = new QShortcut(Qt::CTRL | Qt::Key_Minus, this);
+    QObject::connect(fontDecSc, &QShortcut::activated, this, [this]() {
+        codeFontSize_ = qBound(8, codeFontSize_ - 1, 32);
+        applyCodeFontSizeToAllEditors();
+    });
 
     auto* fontResetAction = new QAction(mlTr("重置字号"), this);
-    fontResetAction->setShortcut(Qt::CTRL | Qt::Key_0);
     connect(fontResetAction, &QAction::triggered, this, [this]() {
         codeFontSize_ = 11; // 重置到默认 11pt
         applyCodeFontSizeToAllEditors();
     });
     viewMenu->addAction(fontResetAction);
+    auto* fontResetSc = new QShortcut(Qt::CTRL | Qt::Key_0, this);
+    QObject::connect(fontResetSc, &QShortcut::activated, this, [this]() {
+        codeFontSize_ = 11; // 重置到默认 11pt
+        applyCodeFontSizeToAllEditors();
+    });
 
     mainMenu->addMenu(viewMenu);
 
@@ -2442,27 +2609,12 @@ void Ide::initUI() {
     centerStack_->setObjectName("centerStack");
     centerStack_->addWidget(welcomePage_); // index 0: 欢迎页
 
-    // 任务2：三栏布局 splitter — [centerStack_ (教学/欢迎) | editorTabWidget_ (编辑器)]
+    // 任务2：三栏布局 splitter — [centerStack_ (教学/欢迎) | editorSplitter_ (编辑器+底部面板)]
     // 教学面板打开时与编辑器并排显示，形成「学习树 | 教学面板 | 代码编辑区」三栏
+    // 底部面板（输出/问题/REPL）位于 editorSplitter_ 内部，仅覆盖代码编辑区（类似 VS Code 集成终端）
     centerSplitter_ = new QSplitter(Qt::Horizontal);
     centerSplitter_->setObjectName("centerSplitter");
     centerSplitter_->addWidget(centerStack_);
-    centerSplitter_->addWidget(editorTabWidget_);
-    centerSplitter_->setStretchFactor(0, 1); // 教学面板/欢迎页占比
-    centerSplitter_->setStretchFactor(1, 2); // 编辑器占比（更大）
-    centerSplitter_->setSizes({420, 780});
-    // 启动时无编辑器标签，隐藏编辑器栏（仅显示欢迎页）
-    editorTabWidget_->hide();
-
-    // ---- Activity bar (left-most 48px) ----
-    // P0.5 注册制重构：每个活动项有唯一字符串 ID，新增面板只需追加一行
-    activityBar_ = new ActivityBar;
-    activityBar_->addItem("explorer", mlTr("资源管理器"), Fluent::IconType::FOLDER);
-    activityBar_->addItem("debug", mlTr("调试"), Fluent::IconType::DEVELOPER_TOOLS);
-    // 学习中心入口：点击展开左侧教学树面板（P2-1 fix: 替代原 LearningHubDialog 弹窗）
-    activityBar_->addItem("learn", mlTr("学习"), Fluent::IconType::EDUCATION);
-    // 仅连接 id-based 信号，避免 index+id 双重分发
-    connect(activityBar_, &ActivityBar::currentChangedById, this, &Ide::onActivityChangedById);
 
     // ---- Bottom panel container: Pivot + QStackedWidget ----
     // 第十一轮：默认高度 600px，最小 200px；标签栏压缩到 28px，紧凑左对齐
@@ -2536,6 +2688,31 @@ void Ide::initUI() {
     bottomLayout->addWidget(bottomStack_, 1);
     connect(bottomPivot_, &Pivot::currentItemChanged, this, &Ide::onBottomPivotChanged);
 
+    // editorSplitter_：纵向分割 [editorTabWidget_ | bottomContainer_]
+    editorSplitter_ = new QSplitter(Qt::Vertical);
+    editorSplitter_->setObjectName("editorSplitter");
+    editorSplitter_->addWidget(editorTabWidget_);
+    editorSplitter_->addWidget(bottomContainer_);
+    editorSplitter_->setStretchFactor(0, 3); // 编辑器占更多空间
+    editorSplitter_->setStretchFactor(1, 1); // 底部面板默认高度
+
+    centerSplitter_->addWidget(editorSplitter_);
+    centerSplitter_->setStretchFactor(0, 1); // 教学面板/欢迎页占比
+    centerSplitter_->setStretchFactor(1, 2); // 编辑器区域占比（更大）
+    centerSplitter_->setSizes({420, 780});
+    // 启动时无编辑器标签，隐藏编辑器栏（仅显示欢迎页）
+    editorTabWidget_->hide();
+
+    // ---- Activity bar (left-most 48px) ----
+    // P0.5 注册制重构：每个活动项有唯一字符串 ID，新增面板只需追加一行
+    activityBar_ = new ActivityBar;
+    activityBar_->addItem("explorer", mlTr("资源管理器"), Fluent::IconType::FOLDER);
+    activityBar_->addItem("debug", mlTr("调试"), Fluent::IconType::DEVELOPER_TOOLS);
+    // 学习中心入口：点击展开左侧教学树面板（P2-1 fix: 替代原 LearningHubDialog 弹窗）
+    activityBar_->addItem("learn", mlTr("学习"), Fluent::IconType::EDUCATION);
+    // 仅连接 id-based 信号，避免 index+id 双重分发
+    connect(activityBar_, &ActivityBar::currentChangedById, this, &Ide::onActivityChangedById);
+
     // ---- Right panel container: Pivot + close button + QStackedWidget ----
     // 第十一轮：默认宽度 800px，最小 500px；标签栏 28px 紧凑
     auto* rightContainer = new QWidget;
@@ -2583,16 +2760,19 @@ void Ide::initUI() {
     rightLayout->addWidget(rightPivotRowWidget);
 
     rightStack_ = new QStackedWidget(rightContainer);
+    rightStack_->setObjectName("rightStack");
     rightStack_->addWidget(tokenTable_); // index 0 → token
     rightStack_->addWidget(irViewer_);   // index 1 → IR
 
     // Bytecode page: bytecode list + VM stack panel in a splitter
     // 第八轮：普通查看模式仅展示纯字节码，VM 调试状态才追加操作数栈/全局变量
     auto* bytecodePage = new QWidget;
+    bytecodePage->setObjectName("bytecodePage");
     auto* bcLayout = new QHBoxLayout(bytecodePage);
     bcLayout->setContentsMargins(0, 0, 0, 0);
     bcLayout->setSpacing(2);
     auto* bcSplitter = new QSplitter(Qt::Horizontal, bytecodePage);
+    bcSplitter->setObjectName("bytecodeSplitter");
     bcSplitter->addWidget(bytecodeList_);
     bcSplitter->addWidget(vmStackPanel_);
     bcSplitter->setStretchFactor(0, 3);
@@ -2642,19 +2822,48 @@ void Ide::initUI() {
 
     // ---- ADS Dock Manager setup ----
     // Config flags must be set BEFORE creating the manager
+    // R68 根因修复（修正版）：移除 DisableStylesheet，改用 setColorSchemeMode(Light)。
+    //
+    // 真正根因：applyFluentStyle() 中 setPalette(pal) 向 dockManager_ 传播
+    // QEvent::ApplicationPaletteChange 事件，ADS eventFilter 检测到
+    // ColorSchemeMode==FollowPalette（默认值）→ 调用 loadStylesheet() →
+    // setStyleSheet(default.css) 完全覆盖自定义 adsQss。
+    //
+    // 初版修复用 DisableStylesheet 太激进——它连构造时的初始默认样式都不加载，
+    // 导致 ADS 标题栏按钮图标（关闭/浮动/标签菜单）丢失、QToolTip 回退到 Windows 11
+    // 黑色样式。正确方案：保留默认配置（初始 default.css 正常加载提供基础图标/按钮
+    // 样式），创建后立即调用 setColorSchemeMode(Light) 将 ColorSchemeMode 从默认的
+    // FollowPalette 改为 Light。这样 eventFilter 检测到 ColorSchemeMode!=FollowPalette
+    // 时跳过 loadStylesheet，自定义 adsQss 通过 setStyleSheet 覆盖后不会被重载。
     ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig |
-                                      ads::CDockManager::MiddleMouseButtonClosesTab |
-                                      ads::CDockManager::FocusHighlighting);
+                                      ads::CDockManager::MiddleMouseButtonClosesTab);
     ads::CDockManager::setAutoHideConfigFlags(ads::CDockManager::DefaultAutoHideConfig);
 
     dockManager_ = new ads::CDockManager(middleArea);
-    dockManager_->setColorSchemeMode(ads::CDockManager::ColorSchemeMode::FollowPalette);
     middleLayout->addWidget(dockManager_, 1);
 
+    // R68 关键修复：锁定 ColorSchemeMode 为 Light，阻止 palette 变化触发 loadStylesheet。
+    // 默认 FollowPalette 模式下，setPalette 触发 ApplicationPaletteChange 事件 →
+    // eventFilter 调用 loadStylesheet() 覆盖自定义 QSS。设为 Light 后，eventFilter
+    // 条件 (ColorSchemeMode == FollowPalette) 不满足，不会重载样式。
+    dockManager_->setColorSchemeMode(ads::CDockManager::ColorSchemeMode::Light);
+
+    // === DIAGNOSTIC LOG ===
+    {
+        QFile f("minilang_style_debug.log");
+        if (f.open(QIODevice::Append | QIODevice::Text)) {
+            f.resize(0); // Clear log at startup
+            QTextStream s(&f);
+            s << "=== Ide::initUI: dockManager_ created ===\n";
+            s << "  setColorSchemeMode(Light) called\n";
+            s << "  dockManager_ styleSheet length (after construct): " << dockManager_->styleSheet().length() << "\n";
+            s << "  dockManager_ styleSheet first 200 chars:\n" << dockManager_->styleSheet().left(200) << "\n\n";
+        }
+    }
+
     mainLayout->addWidget(middleArea, 1);
-    // 底部面板：放在主布局内（非 ADS dock），覆盖全宽且不挤压教学内容面板
-    mainLayout->addWidget(bottomContainer_);
-    bottomContainer_->hide(); // 启动时隐藏，按需显示
+    // 底部面板已移至 editorSplitter_ 内部（仅覆盖代码编辑区，类似 VS Code 集成终端）
+    // 不再放在 mainLayout 中，避免横跨全宽覆盖教学面板
     setCentralWidget(mainContainer);
 
     // Central dock widget (editor area) — must be set FIRST
@@ -2681,8 +2890,7 @@ void Ide::initUI() {
     debugPanelDock_->setWidget(debugPanel_, ads::CDockWidget::ForceNoScrollArea);
     dockManager_->addDockWidgetTabToArea(debugPanelDock_, fileTreeDock_->dockAreaWidget());
 
-    // Bottom panel: 已移至主布局 mainLayout（非 ADS dock），见上方 mainLayout->addWidget(bottomContainer_)
-    // 不再创建 bottomDock_，避免 ADS splitter 树将底部面板限制在中央区域宽度内
+    // Bottom panel: 已移至 editorSplitter_ 内部（仅覆盖代码编辑区），不再需要 ADS dock
 
     // Right panel: single dock containing Pivot + stack (token/IR/bytecode)
     rightDock_ = dockManager_->createDockWidget(mlTr("编译分析"));
@@ -2878,7 +3086,7 @@ void Ide::initUI() {
     });
     registerLazyPanel(QStringLiteral("code-journey"), mlTr("代码生命旅程"), [this]() {
         codeJourneyPanel_ = new CodeJourneyInfoPanel(this);
-        connect(codeJourneyPanel_, &CodeJourneyInfoPanel::jumpToPanelRequested, this, &Ide::onJumpToPanel);
+        // ROUND-60 fix (Issue 1): 移除 jumpToPanelRequested 连接（底部按钮已删除）
         // 点进面板观看即标记 code-journey 活动完成
         connect(codeJourneyPanel_, &CodeJourneyInfoPanel::journeyCompleted, this, [this]() {
             if (learningPathPanel_) {
@@ -2910,24 +3118,17 @@ void Ide::initUI() {
 
     // 第十二轮：面板尺寸对齐规范（左260px、底220px、右320px）
     // 所有面板支持拖拽重组、浮动、标签分组（布局持久化由 saveLayout/restoreLayout 处理）
-    fileTree_->setMinimumWidth(200);
-    debugPanel_->setMinimumWidth(200);
-    bottomContainer_->setMinimumHeight(160);
-    rightContainer->setMinimumWidth(280);
+    // ISSUE-4 fix: 编译分析（右侧）与调试面板打开时尺寸过小，提升最小尺寸与初始尺寸，
+    // 确保字节码追踪/AST/IR 可视化等内容有足够展示空间。
+    fileTree_->setMinimumWidth(240);
+    debugPanel_->setMinimumWidth(260);
+    bottomContainer_->setMinimumHeight(220);
+    rightContainer->setMinimumWidth(420);
     rightContainer->setMaximumWidth(1200);
 
-    // 延迟调整 dock 区域尺寸 + 隐藏单 widget 标题栏
+    // 延迟隐藏单 widget 标题栏（R60-2 fix: 移除无条件 resize，改由 restoreLayout
+    // 在无保存状态时才应用默认尺寸，避免覆盖用户上次保存的面板大小）
     QTimer::singleShot(0, this, [this]() {
-        if (fileTreeDock_ && !fileTreeDock_->isClosed()) {
-            if (auto* area = fileTreeDock_->dockAreaWidget()) {
-                area->resize(260, area->height());
-            }
-        }
-        if (rightDock_ && !rightDock_->isClosed()) {
-            if (auto* area = rightDock_->dockAreaWidget()) {
-                area->resize(320, area->height());
-            }
-        }
         // 隐藏右侧 dock 的 ADS 标题栏（Pivot 作为标签栏）
         if (rightDock_ && rightDock_->dockAreaWidget()) {
             rightDock_->dockAreaWidget()->setDockAreaFlag(ads::CDockAreaWidget::HideSingleWidgetTitleBar, true);
@@ -2937,8 +3138,16 @@ void Ide::initUI() {
     // 第九轮：启动时隐藏所有停靠面板（仅保留活动栏 + 顶部 + 欢迎页）
     fileTreeDock_->toggleView(false);
     debugPanelDock_->toggleView(false);
-    // bottomContainer_ 已在 mainLayout 中 hide()，无需 ADS toggleView
     rightDock_->toggleView(false);
+    // R58-1 fix: 显式隐藏 bottomContainer_，保持与 bottomVisible_ (默认 false) 状态一致。
+    // 此前未显式 hide，QWidget 创建后默认 visible，启动时 bottomContainer_ 占据
+    // editorSplitter_ 全部空间（editorTabWidget_ 已 hide），表现为「欢迎页下方出现输出面板」。
+    // 更严重的是：bottomVisible_ 为 false 时 hideBottomPanel() 的 `if (bottomVisible_)`
+    // 守卫直接 return，导致关闭按钮失效——面板关不掉。
+    if (bottomContainer_) {
+        bottomContainer_->hide();
+        bottomVisible_ = false;
+    }
     // 第十四轮：教学面板已迁移到 centerStack_，默认显示欢迎页（index 0），
     // 教学面板按需通过教学树切换显示，无需 toggleView(false)
     // teachingTreeDock_ 已在创建时 toggleView(false)
@@ -2966,6 +3175,11 @@ void Ide::initUI() {
         if (splitterSaveTimer_)
             splitterSaveTimer_->start();
     });
+    // R61-3 fix: 安装事件过滤器捕获 dock 区域 resize 事件，用户拖拽 ADS splitter
+    // 调整面板大小时触发防抖保存。ADS 无 splitterMoved 信号，用 Resize 事件替代。
+    if (dockManager_) {
+        dockManager_->installEventFilter(this);
+    }
 }
 
 // ============================================================
@@ -3030,7 +3244,7 @@ void Ide::syncViewMenuChecks() {
 void Ide::loadCodeIntoMainEditor(const QString& code) {
     if (code.isEmpty())
         return;
-    // 修复（issue 4）：教学面板（BugHunt/LabManual/SyntaxExplorer 等）请求加载代码时，
+    // 修复（issue 3）：教学面板（BugHunt/LabManual/SyntaxExplorer 等）请求加载代码时，
     // 不切换到独占编辑器模式（ensureEditorVisible 会 hide 教学面板），而是让编辑器
     // 从右侧展开，配合流畅动画压缩教学区内容，形成「教学树 | 教学面板(压缩) | 编辑器」
     // 三栏并排布局。关闭编辑器标签时教学区再平滑延展恢复（见 onEditorTabCloseRequested）。
@@ -3066,7 +3280,7 @@ void Ide::loadCodeIntoMainEditor(const QString& code) {
         updateWindowTitle();
     }
 
-    // issue 4：教学模式下编辑器从右侧展开，动画压缩教学区（教学 45% / 编辑器 55%）
+    // issue 3：教学模式下编辑器从右侧展开，动画压缩教学区（教学 45% / 编辑器 55%）
     if (inTeachingMode && centerSplitter_ && centerStack_ && editorTabWidget_) {
         QList<int> savedSizes = centerSplitter_->sizes();
         if (savedSizes.size() == 2) {
@@ -3122,18 +3336,14 @@ void Ide::initStatusBar() {
 /// 应用 QFluentKit 主题 QSS 与调色板，统一整体视觉风格。
 void Ide::applyFluentStyle() {
     // ---- Register native widgets with QFluentKit style sheet manager ----
-    if (fileTree_)
-        StyleSheet::registerWidget(fileTree_, Fluent::ThemeStyle::LIST_VIEW);
+    // R66-2 fix: fileTree_/errorListWidget_/bytecodeList_/recentListWidget_/tokenTable_
+    // 不再注册到 QFluentKit。原因：QFluentKit 的 list_view.qss/table_view.qss 设置
+    // background: transparent，StyleSheetManager 在主题信号触发时调用 updateStyleSheet
+    // 重新应用这些 QSS，覆盖下方 itemViewQss 中设置的米黄色背景。
+    // 这些控件由 itemViewQss 统一样式化，滚动条仍替换为 Fluent ScrollBar。
+    // editorTabWidget_ 保留注册（TAB_VIEW 样式无背景冲突）。
     if (editorTabWidget_)
         StyleSheet::registerWidget(editorTabWidget_, Fluent::ThemeStyle::TAB_VIEW);
-    if (errorListWidget_)
-        StyleSheet::registerWidget(errorListWidget_, Fluent::ThemeStyle::LIST_VIEW);
-    if (bytecodeList_)
-        StyleSheet::registerWidget(bytecodeList_, Fluent::ThemeStyle::LIST_VIEW);
-    if (recentListWidget_)
-        StyleSheet::registerWidget(recentListWidget_, Fluent::ThemeStyle::LIST_VIEW);
-    if (tokenTable_)
-        StyleSheet::registerWidget(tokenTable_, Fluent::ThemeStyle::TABLE_VIEW);
 
     // ---- Replace native scrollbars with Fluent scrollbars ----
     // PERF: 仅首次替换，避免每次主题切换重复分配（旧 ScrollBar 由 parent 管理）
@@ -3172,7 +3382,12 @@ void Ide::applyFluentStyle() {
 
     // ============================================================
     // ADS (Qt Advanced Docking System) comprehensive QSS override
-    // 完全覆盖 ADS 默认样式，对齐 Fluent Design 规范
+    // 完全覆盖 ADS 默认样式，对齐 Solarized 主题
+    // R68 fix: adsQss 必须包含 default.css 中的关键 qproperty-icon 规则，
+    // 因为 setStyleSheet() 会完全替换 dockManager_ 上的样式表（包括构造时
+    // loadStylesheet 设置的图标属性）。缺失图标规则会导致关闭/浮动/菜单按钮无图标。
+    // 同样补充 QToolTip 样式，防止回退到 Windows 11 默认黑色 tooltip。
+    // ColorSchemeMode 已在构造后设为 Light，setPalette 不会触发 loadStylesheet 覆盖。
     // ============================================================
     QString adsQss =
         QString(R"(
@@ -3206,20 +3421,40 @@ void Ide::applyFluentStyle() {
         ads--CDockWidgetTab:hover:!activeTab {
             background: %5;
         }
-
-        /* Tab close button: only show on hover */
-        ads--CDockWidgetTab QPushButton#tabCloseButton {
+        ads--CDockWidgetTab QLabel {
+            color: %2;
             background: transparent;
+        }
+        ads--CDockWidgetTab[activeTab="true"] QLabel {
+            color: %4;
+            background: transparent;
+        }
+        ads--CDockWidgetTab[focused="true"] QLabel {
+            color: %4;
+            background: transparent;
+        }
+
+        /* Tab close button: 图标 + hover 效果 */
+        #tabCloseButton {
+            margin-top: 2px;
+            background: none;
             border: none;
-            padding: 2px;
+            padding: 0px -2px;
             min-width: 16px;
             min-height: 16px;
             max-width: 16px;
             max-height: 16px;
+            qproperty-icon: url(:/ads/images/close-button.svg),
+                    url(:/ads/images/close-button-disabled.svg) disabled;
+            qproperty-iconSize: 16px;
         }
-        ads--CDockWidgetTab QPushButton#tabCloseButton:hover {
-            background: %6;
+        #tabCloseButton:hover {
+            border: 1px solid rgba(0, 0, 0, 32);
+            background: rgba(0, 0, 0, 16);
             border-radius: 3px;
+        }
+        #tabCloseButton:pressed {
+            background: rgba(0, 0, 0, 32);
         }
 
         /* ---- ADS Title Bar (dock area header) ---- */
@@ -3248,7 +3483,38 @@ void Ide::applyFluentStyle() {
             border-radius: 3px;
         }
 
+        /* Title bar button icons (from default.css) */
+        #tabsMenuButton::menu-indicator {
+            image: none;
+        }
+        #tabsMenuButton {
+            qproperty-icon: url(:/ads/images/tabs-menu-button.svg);
+            qproperty-iconSize: 16px;
+        }
+        #dockAreaCloseButton {
+            qproperty-icon: url(:/ads/images/close-button.svg),
+                    url(:/ads/images/close-button-disabled.svg) disabled;
+            qproperty-iconSize: 16px;
+        }
+        #detachGroupButton {
+            qproperty-icon: url(:/ads/images/detach-button.svg),
+                    url(:/ads/images/detach-button-disabled.svg) disabled;
+            qproperty-iconSize: 16px;
+        }
+        ads--CTitleBarButton {
+            padding: 0px 0px;
+        }
+
+        /* Scroll area inside dock widgets */
+        QScrollArea#dockWidgetScrollArea {
+            padding: 0px;
+            border: none;
+        }
+
         /* ---- ADS Splitter (1px thin line, hover → 2px accent) ---- */
+        ads--CDockContainerWidget > QSplitter {
+            padding: 1 0 1 0;
+        }
         ads--CDockSplitter {
             background: %1;
         }
@@ -3276,6 +3542,16 @@ void Ide::applyFluentStyle() {
             background: %1;
         }
 
+        /* ---- ADS Dock Container / Manager (顶层容器兜底) ---- */
+        ads--CDockContainerWidget {
+            background: %1;
+            border: none;
+        }
+        ads--CDockManager {
+            background: %1;
+            border: none;
+        }
+
         /* ---- ADS Dock Widget ---- */
         ads--CDockWidget {
             background: %1;
@@ -3298,9 +3574,11 @@ void Ide::applyFluentStyle() {
             color: %2;
             padding: 4px 8px;
             min-height: 24px;
+            qproperty-iconSize: 16px 16px;
         }
         ads--CAutoHideTab:hover {
             background: %5;
+            color: %3;
         }
         ads--CAutoHideTab[activeTab="true"] {
             background: %1;
@@ -3309,28 +3587,58 @@ void Ide::applyFluentStyle() {
         ads--CAutoHideSideBar {
             background: %8;
             border: none;
+            qproperty-spacing: 12;
+        }
+        #sideTabsContainerWidget {
+            background: transparent;
+        }
+
+        /* ---- QToolTip (防止回退到 Windows 11 黑色 tooltip) ---- */
+        QToolTip {
+            background: %1;
+            color: %4;
+            border: 1px solid %7;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
         }
     )")
             .arg(bgMain, fgPrimary, accentColor, fgPrimary, hoverBg, dark ? "#505050" : "#d0d0d0", /* close btn hover */
                  borderColor, bgSidebar);
 
-    // ---- Apply ADS QSS globally ----
-    // PERF fix: 原实现 qApp->setStyleSheet(qApp->styleSheet() + "\n" + adsQss)
-    // 每次主题切换都追加 ~5KB，导致全局样式表无限增长 + Qt 重复解析整个 sheet。
-    // 改为：先移除上一次的 ADS 片段，再拼接新片段，保持全局 sheet 大小稳定。
+    // ---- Apply ADS QSS ----
+    // R68 修复方案：构造时已将 ColorSchemeMode 设为 Light（非 FollowPalette），
+    // ADS eventFilter 检测到 ColorSchemeMode!=FollowPalette 时跳过 loadStylesheet，
+    // 因此此处 setStyleSheet(adsQss) 设置的自定义样式不会被后续 setPalette 触发的
+    // loadStylesheet 覆盖。adsQss 包含了 default.css 中的关键图标 qproperty 规则
+    // 和 QToolTip 样式，确保完全替换后 ADS 按钮图标和 tooltip 仍正常显示。
     if (dockManager_) {
-        QString currentSheet = qApp->styleSheet();
-        if (!lastAdsQss_.isEmpty() && currentSheet.contains(lastAdsQss_)) {
-            currentSheet.remove(lastAdsQss_);
+        dockManager_->setStyleSheet(adsQss);
+
+        // === DIAGNOSTIC LOG ===
+        {
+            QFile f("minilang_style_debug.log");
+            if (f.open(QIODevice::Append | QIODevice::Text)) {
+                QTextStream s(&f);
+                s << "=== applyFluentStyle: ADS QSS set ===\n";
+                s << "  adsQss length: " << adsQss.length() << "\n";
+                s << "  adsQss starts with: " << adsQss.left(120) << "...\n";
+                s << "  dockManager_ styleSheet length: " << dockManager_->styleSheet().length() << "\n";
+                s << "  dockManager_ styleSheet starts with: " << dockManager_->styleSheet().left(120) << "...\n";
+                QPalette dpal = dockManager_->palette();
+                s << "  dockManager_ palette Window: " << dpal.color(QPalette::Window).name() << "\n";
+                s << "  dockManager_ palette Base: " << dpal.color(QPalette::Base).name() << "\n";
+                s << "  dockManager_ palette Highlight: " << dpal.color(QPalette::Highlight).name() << "\n";
+                s << "  dockManager_ palette HighlightedText: " << dpal.color(QPalette::HighlightedText).name() << "\n";
+                s << "  dockManager_ palette ToolTipBase: " << dpal.color(QPalette::ToolTipBase).name() << "\n";
+                s << "  dockManager_ palette ToolTipText: " << dpal.color(QPalette::ToolTipText).name() << "\n";
+                QString appQss = qApp->styleSheet();
+                s << "  qApp styleSheet length: " << appQss.length() << "\n";
+                s << "  qApp styleSheet contains QToolTip: " << (appQss.contains("QToolTip", Qt::CaseInsensitive) ? "YES" : "NO") << "\n";
+                s << "  qApp styleSheet contains ads--: " << (appQss.contains("ads--", Qt::CaseInsensitive) ? "YES" : "NO") << "\n";
+                s << "\n";
+            }
         }
-        currentSheet = currentSheet.trimmed();
-        if (!currentSheet.isEmpty()) {
-            currentSheet += "\n";
-        }
-        currentSheet += adsQss;
-        qApp->setStyleSheet(currentSheet);
-        lastAdsQss_ = adsQss;
-        dockManager_->setColorSchemeMode(ads::CDockManager::ColorSchemeMode::FollowPalette);
     }
 
     // ============================================================
@@ -3416,6 +3724,9 @@ void Ide::applyFluentStyle() {
         #bottomPanelContainer, #rightPanelContainer {
             background: %1;
             border: none;
+        }
+        #bottomPanelContainer {
+            border-top: 1px solid %2;
         }
         #bottomPivotRow, #rightPivotRow {
             background: %1;
@@ -3552,17 +3863,91 @@ void Ide::applyFluentStyle() {
     }
 
     // ============================================================
+    // 全局兜底背景（R60-1 fix）
+    // 历史问题：白名单枚举式 setStyleSheet 遗漏新容器即出现色块割裂。
+    // 根因修复：在 QMainWindow 级别设置 palette + autoFillBackground，
+    // 所有未显式设置背景的子 widget 自动继承此背景色，无需逐一枚举。
+    // 下方白名单仅用于需要 border:none 等额外样式的容器。
+    // ============================================================
+    {
+        QColor bg = TeachingTheme::ideBgMain();
+        QColor bgPanel = TeachingTheme::ideBgPanel();
+        QColor fg = TeachingTheme::ideFgPrimary();
+        QPalette pal = palette();
+        pal.setColor(QPalette::Window, bg);
+        pal.setColor(QPalette::Base, bg);
+        // R65-2 fix: 设置 AlternateBase 为面板色（比主背景稍深），
+        // 使 alternatingRowColors 的列表（如字节码列表）交替行也保持米黄色调。
+        pal.setColor(QPalette::AlternateBase, bgPanel);
+        // R68 fix: 设置 ToolTip 颜色，防止 QToolTip 回退到 Windows 11 默认黑色样式
+        pal.setColor(QPalette::ToolTipBase, bg);
+        pal.setColor(QPalette::ToolTipText, fg);
+        // R65-1 fix: 不再设置 QPalette::Highlight 为 accent 色。
+        // 此前设置 Highlight=#268BD2 + HighlightedText=#FDF6E3 导致所有使用
+        // palette(highlight) 的控件（ADS focused tab、QTabBar 选中 tab 等）
+        // 显示蓝底+米黄字体，非常突兀。移除后使用系统默认 selection 色，
+        // 由各控件的显式 QSS 负责主题化（activeTab border-bottom accent 线）。
+        setPalette(pal);
+        setAutoFillBackground(true);
+        // R68 fix: 全局设置 QToolTip 样式（qApp 级别），确保所有 widget 的 tooltip
+        // 都使用主题色而非 Windows 11 默认黑色。用静态变量确保只设置一次（避免
+        // applyFluentStyle 多次调用导致 QSS 重复累积）。
+        static bool s_toolTipStyled = false;
+        if (!s_toolTipStyled) {
+            qApp->setStyleSheet(qApp->styleSheet() + QString(R"(
+                QToolTip {
+                    background: %1;
+                    color: %2;
+                    border: 1px solid %3;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 12px;
+                }
+            )").arg(bg.name(), fg.name(), TeachingTheme::ideBorder().name()));
+            s_toolTipStyled = true;
+        }
+        // mainContainer / middleArea 也设置 palette 兜底
+        for (auto* w : findChildren<QWidget*>()) {
+            QString name = w->objectName();
+            if (name == "mainContainer" || name == "middleArea") {
+                QPalette p = w->palette();
+                p.setColor(QPalette::Window, bg);
+                w->setPalette(p);
+                w->setAutoFillBackground(true);
+            }
+        }
+    }
+
+    // ============================================================
     // Main container / middle area / central stack / splitter
     // R15-7: 补全覆盖 centerStack_、centerSplitter_、welcomePage_、replPanel_、
     // errorPageContainer、fileTreeContainer 等通用 widget 背景色，消除「部分区域
     // 未变米黄色」的割裂感。统一使用 Solarized base3 (#FDF6E3) 作为主背景。
+    // ISSUE-3 fix: 补充 welcomeCenter / welcomeBtnContainer，确保欢迎页中央区域
+    // 与按钮容器也覆盖米黄色背景，消除白色残留。
+    // R58-3 fix: 补充 editorSplitter / bottomPanelContainer / bottomPivotRow，
+    // 覆盖启动时 editorTabWidget_+bottomContainer_ 双隐藏后 editorSplitter_ 的
+    // 空白区域，以及底部面板容器的背景，消除白色残留。
+    // R60-1 fix: 补充 rightPanelContainer / rightPivotRow / bytecodePage，
+    // 覆盖右侧面板容器及字节码页面的背景。
+    // R61-2 fix: 补充 bytecodePage / bytecodeSplitter / tokenPage / irPage，
+    // 确保右侧编译分析面板所有子页面背景统一为米黄色。
+    // R65-2 fix: 补充 rightStack（QStackedWidget），此前无 objectName 不在白名单中，
+    // 导致切换到字节码页面时 rightStack_ 的默认背景（白色）透过子 widget 显示。
+    // 注意：editorTabWidget_ 在下方有专门的 QTabWidget 样式（行 3542），不在此处覆盖。
     // ============================================================
     for (auto* w : findChildren<QWidget*>()) {
         QString name = w->objectName();
         if (name == "mainContainer" || name == "middleArea" || name == "centerStack" || name == "centerSplitter" ||
-            name == "welcomePage" || name == "welcomeRecentPanel" || name == "replPanel" ||
-            name == "errorPageContainer" || name == "fileTreeContainer") {
+            name == "editorSplitter" || name == "bottomPanelContainer" || name == "bottomPivotRow" ||
+            name == "welcomePage" || name == "welcomeRecentPanel" || name == "welcomeCenter" ||
+            name == "welcomeBtnContainer" || name == "replPanel" ||
+            name == "errorPageContainer" || name == "fileTreeContainer" ||
+            name == "rightPanelContainer" || name == "rightPivotRow" || name == "rightStack" ||
+            name == "bytecodePage" || name == "bytecodeSplitter") {
             w->setStyleSheet(QString("background: %1; border: none;").arg(bgMain));
+            // WA_StyledBackground 确保 QSS background 在普通 QWidget 上生效
+            w->setAttribute(Qt::WA_StyledBackground, true);
         }
     }
 
@@ -3846,18 +4231,24 @@ void Ide::initConnections() {
 
     // Controller signals
     connect(controller_, &IdeController::outputReady, this, [this](const QString& msg) {
+        if (closing_) return;
         appendOutput(msg);
         showBottomPanel(0);
     });
     connect(controller_, &IdeController::runOk, this, [this]() {
+        if (closing_) return;
         appendOutput(mlTr("--- 程序执行结束 ---"));
         showBottomPanel(0);
     });
     connect(controller_, &IdeController::stoppedByUser, this, [this]() {
+        if (closing_) return;
         appendOutput(mlTr("--- 调试终止 ---"));
         showBottomPanel(0);
     });
     connect(controller_, &IdeController::runtimeError, this, [this](const QString& msg, int line, int column) {
+        // ISSUE-7 fix + ROUND-60: closing_ 标志防御 closeEvent 期间残留 QueuedConnection。
+        // maybeSave() 的模态对话框与 processEvents 会派发挂起事件，此时成员可能已部分析构。
+        if (closing_) return;
         // AUDIT-P2-CORRECT fix: stale 信号防御。
         // closeEvent 期间 stopForClose 唤醒 worker 退出，但 worker 内部已投递的
         // runtimeError QueuedConnection 仍在主线程队列。Ide 析构时处理 pending 事件
@@ -3882,6 +4273,8 @@ void Ide::initConnections() {
         }
     });
     connect(controller_, &IdeController::genericError, this, [this](const QString& msg) {
+        // ISSUE-7 fix + ROUND-60: closing_ 标志防御 closeEvent 期间残留 QueuedConnection。
+        if (closing_) return;
         // AUDIT-P2-CORRECT fix: stale 信号防御。
         // closeEvent 期间 stopForClose 唤醒 worker 退出，但 worker 内部已投递的
         // genericError QueuedConnection 仍在主线程队列。Ide 析构时处理 pending 事件
@@ -4184,17 +4577,41 @@ void Ide::saveLayout() {
             settings.setValue("layout/bottomPanelHeight", h);
         }
     }
+    // R60-2 fix: 持久化内部 splitter 尺寸（centerSplitter_ / editorSplitter_）
+    // ADS saveState 只保存 dock 布局，不保存 dock 内部 widget 的 splitter 尺寸。
+    // 不持久化则每次启动 centerSplitter_ 重置为 {420, 780}，用户调整丢失。
+    if (centerSplitter_) {
+        QList<int> sizes = centerSplitter_->sizes();
+        if (sizes.size() >= 2) {
+            settings.setValue("layout/centerSplitterSizes", QVariant::fromValue(sizes));
+        }
+    }
+    if (editorSplitter_) {
+        QList<int> sizes = editorSplitter_->sizes();
+        if (sizes.size() >= 2) {
+            settings.setValue("layout/editorSplitterSizes", QVariant::fromValue(sizes));
+        }
+    }
 }
 
 /// 从 QSettings 恢复上次保存的窗口布局。
 void Ide::restoreLayout() {
     QSettings settings("MiniLang", "MiniLang IDE");
+    // R60-2 fix: 跟踪是否有已保存的 dock 状态。无保存状态（首次启动）时
+    // 才应用默认面板尺寸；有保存状态时由 restoreState 恢复用户上次布局，
+    // 不再用硬编码尺寸覆盖——修复「每次都要自己调整面板大小」问题。
+    // R65-3 fix: restoreState 延迟到 QTimer::singleShot(0) 中执行（事件循环
+    // 开始后，窗口已完全布局，几何尺寸有效）。此前在 showEvent 中执行仍然
+    // 太早（布局未完成），在构造函数中执行更早（窗口未 show）。
+    // 保存到 pendingDockState_ 供 QTimer lambda 读取。
+    bool hasSavedDockState = false;
     if (dockManager_) {
-        QByteArray dockState = settings.value("layout/dockState").toByteArray();
-        if (!dockState.isEmpty()) {
-            dockManager_->restoreState(dockState);
+        pendingDockState_ = settings.value("layout/dockState").toByteArray();
+        if (!pendingDockState_.isEmpty()) {
+            hasSavedDockState = true;
         }
     }
+    hasSavedLayout_ = hasSavedDockState;
     // 第十一轮：恢复输出面板记忆高度
     // BUG-R15-6 fix: 默认值从 600 改为 220，与 ide.h 声明一致。
     // 600px 在常见 800px 高度窗口下会占据 75% 垂直空间，导致编辑器区被挤压，
@@ -4213,13 +4630,71 @@ void Ide::restoreLayout() {
     QByteArray winState = settings.value("window/state").toByteArray();
     if (!winState.isEmpty())
         QMainWindow::restoreState(winState);
+    // R60-2 fix: 恢复内部 splitter 尺寸（centerSplitter_ / editorSplitter_）
+    // ADS restoreState 只恢复 dock 布局，不恢复 dock 内部 widget 的 splitter 尺寸。
+    if (centerSplitter_) {
+        QVariant saved = settings.value("layout/centerSplitterSizes");
+        if (saved.isValid() && saved.canConvert<QList<int>>()) {
+            QList<int> sizes = saved.value<QList<int>>();
+            if (sizes.size() >= 2 && sizes[0] >= 0 && sizes[1] >= 0)
+                centerSplitter_->setSizes(sizes);
+        }
+    }
+    if (editorSplitter_) {
+        QVariant saved = settings.value("layout/editorSplitterSizes");
+        if (saved.isValid() && saved.canConvert<QList<int>>()) {
+            QList<int> sizes = saved.value<QList<int>>();
+            if (sizes.size() >= 2 && sizes[0] >= 0 && sizes[1] >= 0)
+                editorSplitter_->setSizes(sizes);
+        }
+    }
     // 第十一轮：恢复后重新隐藏右侧 dock 标题栏
-    QTimer::singleShot(0, this, [this]() {
+    // R60-2 fix: 仅在无保存状态（首次启动）时应用默认面板尺寸。
+    // 有保存状态时 restoreState 已恢复用户上次的布局，此处不得覆盖。
+    // R65-3 fix: 将 restoreState 从 showEvent 移到此处（QTimer::singleShot(0)）。
+    // showEvent 在窗口首次显示时触发，但此时布局尚未完成（几何尺寸虽已设置但
+    // 未经过布局引擎处理），ADS restoreState 内部依赖容器几何尺寸计算 splitter
+    // 比例，在无效几何下静默失败。QTimer::singleShot(0) 在事件循环开始后触发，
+    // 所有 show/layout 事件已处理完毕，几何尺寸有效，restoreState 能正确恢复。
+    QTimer::singleShot(0, this, [this, hasSavedDockState]() {
+        // R68 fix: 先应用样式，再 restoreState。确保 restoreState 是最后的布局操作，
+        // 其设置的 splitter 尺寸不会被后续样式重算覆盖。
+        // （DisableStylesheet 已使 loadStylesheet 成为 no-op，此处 applyFluentStyle
+        // 的 setPalette 不会再触发 ADS 样式重载，但保持此顺序仍更稳健。）
+        applyFluentStyle();
+        // R65-3 fix: 在事件循环中执行 restoreState，此时窗口已完全布局
+        bool restored = false;
+        if (dockManager_ && !pendingDockState_.isEmpty()) {
+            restored = dockManager_->restoreState(pendingDockState_);
+        }
         if (rightDock_ && rightDock_->dockAreaWidget()) {
             rightDock_->dockAreaWidget()->setDockAreaFlag(ads::CDockAreaWidget::HideSingleWidgetTitleBar, true);
         }
-        // 恢复底部面板记忆高度
-        if (bottomContainer_) {
+        // R60-2/R65-3 fix: 首次启动或 restoreState 失败时应用默认面板尺寸
+        if (!hasSavedDockState || !restored) {
+            if (fileTreeDock_ && !fileTreeDock_->isClosed()) {
+                if (auto* area = fileTreeDock_->dockAreaWidget()) {
+                    area->resize(280, area->height());
+                }
+            }
+            if (rightDock_ && !rightDock_->isClosed()) {
+                if (auto* area = rightDock_->dockAreaWidget()) {
+                    // 右侧编译分析面板默认宽度 560px
+                    area->resize(560, area->height());
+                }
+            }
+        }
+        // R65-3 fix: restoreState 完成后再允许保存布局
+        // 此前 firstShow_ 在 showEvent 中就设为 false，导致 restoreState 触发的
+        // Resize 事件会启动 splitterSaveTimer_ 误保存，可能覆盖用户布局
+        firstShow_ = false;
+
+        // R58-1 fix: 仅在 bottomVisible_ 为 true 时恢复记忆高度。
+        // 此前无条件 setFixedHeight 不会改变 visibility（QWidget::setFixedHeight
+        // 不影响 visible 状态），但与 initUI 末尾的 hide() 配合时，必须保留
+        // hide 状态。启动时 bottomVisible_ 为 false，无需操作；运行时若用户
+        // 已展开底部面板（bottomVisible_ == true），才恢复其记忆高度。
+        if (bottomContainer_ && bottomVisible_) {
             bottomContainer_->setFixedHeight(bottomPanelHeight_);
         }
     });
@@ -4237,21 +4712,46 @@ void Ide::showBottomPanel(int tabIndex) {
         return;
     const bool wasHidden = !bottomVisible_;
     if (wasHidden) {
-        // issue 2: 平滑高度展开动画，避免底部面板瞬时弹出挤压教学内容
+        // 在 editorSplitter_ 内部：通过动画 splitter 尺寸实现平滑展开
         const int targetH = bottomPanelHeight_;
-        bottomContainer_->setFixedHeight(0);
+        bottomContainer_->setFixedHeight(0); // 先设0高度，确保splitter有两项
         bottomContainer_->show();
         bottomVisible_ = true;
-        auto* hAnim = new QPropertyAnimation(bottomContainer_, "maximumHeight", this);
-        hAnim->setDuration(PanelAnimator::DURATION_MS);
-        hAnim->setStartValue(0);
-        hAnim->setEndValue(targetH);
-        hAnim->setEasingCurve(QEasingCurve::OutCubic);
-        QObject::connect(hAnim, &QPropertyAnimation::finished, bottomContainer_, [this]() {
-            if (bottomContainer_)
-                bottomContainer_->setFixedHeight(bottomPanelHeight_);
-        });
-        hAnim->start(QAbstractAnimation::DeleteWhenStopped);
+
+        if (editorSplitter_) {
+            // 强制布局更新以获取正确的当前尺寸
+            editorSplitter_->updateGeometry();
+            QApplication::processEvents();
+
+            QList<int> currentSizes = editorSplitter_->sizes();
+            int editorH = currentSizes.size() > 0 ? currentSizes[0] : 600;
+            QList<int> targetSizes = {editorH - targetH, targetH};
+            if (targetSizes[0] < 100) targetSizes[0] = 100; // 保证编辑器最小高度
+
+            // 动画插值：从全编辑器 → 编辑器+底部面板
+            auto* anim = new QVariantAnimation(this);
+            anim->setDuration(PanelAnimator::DURATION_MS);
+            anim->setStartValue(0.0);
+            anim->setEndValue(1.0);
+            anim->setEasingCurve(QEasingCurve::OutCubic);
+            QObject::connect(anim, &QVariantAnimation::valueChanged, this, [this, currentSizes, targetSizes](const QVariant& value) {
+                if (!editorSplitter_)
+                    return;
+                double t = value.toDouble();
+                QList<int> interpolated;
+                for (int i = 0; i < currentSizes.size() && i < targetSizes.size(); ++i) {
+                    interpolated.append(static_cast<int>(currentSizes[i] * (1 - t) + targetSizes[i] * t));
+                }
+                editorSplitter_->setSizes(interpolated);
+            });
+            QObject::connect(anim, &QVariantAnimation::finished, this, [this, targetH]() {
+                if (bottomContainer_)
+                    bottomContainer_->setFixedHeight(targetH);
+            });
+            anim->start(QAbstractAnimation::DeleteWhenStopped);
+        } else {
+            bottomContainer_->setFixedHeight(targetH);
+        }
     }
     static const char* keys[] = {"output", "errors", "repl"};
     if (tabIndex < 0 || tabIndex >= 3)
@@ -4259,7 +4759,6 @@ void Ide::showBottomPanel(int tabIndex) {
     if (bottomPivot_)
         bottomPivot_->setCurrentItem(keys[tabIndex]);
     syncViewMenuChecks();
-    // issue 2: 用 slideInWidget 替代 fadeInWidget（O(1) pos 动画，避免 QGraphicsOpacityEffect 开销）
     if (wasHidden && bottomStack_ && bottomStack_->currentWidget()) {
         PanelAnimator::slideInWidget(bottomStack_->currentWidget(), PanelAnimator::DURATION_MS);
     }
@@ -4269,26 +4768,51 @@ void Ide::showBottomPanel(int tabIndex) {
 void Ide::hideBottomPanel() {
     if (!bottomContainer_)
         return;
-    if (bottomVisible_) {
-        int h = bottomContainer_->height();
-        if (h >= 200 && h <= 1200)
-            bottomPanelHeight_ = h;
-        // issue 2: 平滑高度收起动画
-        const int startH = h;
-        auto* hAnim = new QPropertyAnimation(bottomContainer_, "maximumHeight", this);
-        hAnim->setDuration(PanelAnimator::DURATION_MS);
-        hAnim->setStartValue(startH);
-        hAnim->setEndValue(0);
-        hAnim->setEasingCurve(QEasingCurve::InCubic);
-        QObject::connect(hAnim, &QPropertyAnimation::finished, bottomContainer_, [this]() {
-            if (bottomContainer_) {
-                bottomContainer_->hide();
-                bottomContainer_->setFixedHeight(bottomPanelHeight_);
-                bottomContainer_->setMaximumHeight(16777215);
-            }
-        });
+    // R58-1 fix: 增加实际可见性兜底。若 bottomVisible_ 状态与 bottomContainer_
+    // 实际可见性不一致（如历史 bug 残留），只要 bottomContainer_ 仍可见就强制隐藏，
+    // 避免关闭按钮失效（用户点击无反应）。
+    if (!bottomVisible_ && !bottomContainer_->isVisible()) {
+        syncViewMenuChecks();
+        return;
+    }
+    if (bottomVisible_ || bottomContainer_->isVisible()) {
+        // 记忆当前高度
+        QList<int> currentSizes = editorSplitter_ ? editorSplitter_->sizes() : QList<int>();
+        int bottomH = currentSizes.size() > 1 ? currentSizes[1] : bottomContainer_->height();
+        if (bottomH >= 100 && bottomH <= 1200)
+            bottomPanelHeight_ = bottomH;
+
         bottomVisible_ = false;
-        hAnim->start(QAbstractAnimation::DeleteWhenStopped);
+
+        if (editorSplitter_ && currentSizes.size() >= 2) {
+            // 动画插值：从当前分配 → 全编辑器（底部面板高度归零）
+            int editorH = currentSizes[0];
+            QList<int> targetSizes = {editorH + bottomH, 0};
+
+            auto* anim = new QVariantAnimation(this);
+            anim->setDuration(PanelAnimator::DURATION_MS);
+            anim->setStartValue(0.0);
+            anim->setEndValue(1.0);
+            anim->setEasingCurve(QEasingCurve::InCubic);
+            QObject::connect(anim, &QVariantAnimation::valueChanged, this, [this, currentSizes, targetSizes](const QVariant& value) {
+                if (!editorSplitter_)
+                    return;
+                double t = value.toDouble();
+                QList<int> interpolated;
+                for (int i = 0; i < currentSizes.size() && i < targetSizes.size(); ++i) {
+                    interpolated.append(static_cast<int>(currentSizes[i] * (1 - t) + targetSizes[i] * t));
+                }
+                editorSplitter_->setSizes(interpolated);
+            });
+            QObject::connect(anim, &QVariantAnimation::finished, this, [this]() {
+                if (bottomContainer_)
+                    bottomContainer_->hide();
+            });
+            anim->start(QAbstractAnimation::DeleteWhenStopped);
+        } else {
+            // 兜底：无 editorSplitter_ 时直接隐藏
+            bottomContainer_->hide();
+        }
     }
     syncViewMenuChecks();
 }
@@ -4352,6 +4876,8 @@ void Ide::switchLeftToFileTree() {
         fileTreeDock_->setAsCurrentTab();
     if (activityBar_)
         activityBar_->setCurrentIndex(0);
+    // R60-2 fix: 首次启动（无保存布局）时，左侧 dock 首次打开应用默认宽度 280px
+    ensureLeftDockDefaultSize();
     syncViewMenuChecks();
 }
 
@@ -4363,7 +4889,26 @@ void Ide::switchLeftToDebugPanel() {
         debugPanelDock_->setAsCurrentTab();
     if (activityBar_)
         activityBar_->setCurrentIndex(1);
+    // R60-2 fix: 首次启动（无保存布局）时，左侧 dock 首次打开应用默认宽度 280px
+    ensureLeftDockDefaultSize();
     syncViewMenuChecks();
+}
+
+/// R60-2 fix: 首次启动（无保存布局）时，左侧 dock 首次打开应用默认宽度。
+/// fileTreeDock_ 与 debugPanelDock_ 共享同一 dock area，只需对任一 resize 即可。
+/// 仅在 hasSavedLayout_ == false 且 leftDockDefaultSized_ == false 时执行一次。
+void Ide::ensureLeftDockDefaultSize() {
+    if (hasSavedLayout_ || leftDockDefaultSized_)
+        return;
+    leftDockDefaultSized_ = true; // 标记已应用，避免每次切换 tab 都 resize
+    QTimer::singleShot(0, this, [this]() {
+        // fileTreeDock_ 与 debugPanelDock_ 在同一 dock area，取任一即可
+        if (fileTreeDock_ && !fileTreeDock_->isClosed()) {
+            if (auto* area = fileTreeDock_->dockAreaWidget()) {
+                area->resize(280, area->height());
+            }
+        }
+    });
 }
 
 /// 打开独立的 AST 查看窗口。
@@ -4742,6 +5287,17 @@ void Ide::onRun() {
         return;
     }
 
+    // R53-2 fix: 运行守卫必须在破坏性清理（clearOutput/clearAll/clearErrorLines）之前。
+    // 原实现依赖 prepareRun 内部的 isRunning 守卫，但该守卫在 clearOutput/clearAll
+    // 之后才执行——若用户在运行/调试中误按 F5，会先清空调试上下文（断点高亮、
+    // 调用栈、变量快照、当前行高亮），再被 prepareRun 拒绝，导致调试会话状态丢失。
+    // F5/F6 工具栏 action 虽已禁用，但菜单 action 与键盘快捷键仍可能触发本槽。
+    if (controller_->isRunning() || controller_->isVmRunning() || controller_->isDebugPaused()) {
+        appendError(mlTr("已有运行或调试在进行，请先停止当前运行再启动新运行"));
+        showBottomPanel(1);
+        return;
+    }
+
     clearOutput();
     debugPanel_->clearAll();
     codeEditor_->clearErrorLines();
@@ -4797,6 +5353,13 @@ void Ide::onDebug() {
 
     if (replPanel_->isReplRunning()) {
         appendError(mlTr("REPL 正在执行，请等待其完成后再调试"));
+        showBottomPanel(1);
+        return;
+    }
+
+    // R53-2 fix: 运行守卫必须在破坏性清理之前（同 onRun）。
+    if (controller_->isRunning() || controller_->isVmRunning() || controller_->isDebugPaused()) {
+        appendError(mlTr("已有运行或调试在进行，请先停止当前运行再启动新调试"));
         showBottomPanel(1);
         return;
     }
@@ -4946,6 +5509,9 @@ void Ide::onStop() {
 
 /// 调试暂停信号槽：解释器在断点暂停时触发，高亮当前行、刷新调试信息与面板。
 void Ide::onPausedAt(int line) {
+    // ISSUE-7 fix: 关闭流程中丢弃调试暂停信号，避免访问已部分析构的成员。
+    if (closing_)
+        return;
     // AUDIT-P1-CORRECT fix: stale 信号防御。
     // closeEvent 期间 stopForClose 唤醒 worker 退出，但 doPause 中已投递的 pausedAt
     // QueuedConnection 仍在主线程队列。Ide 析构时处理 pending 事件会访问已析构的成员
@@ -4969,6 +5535,9 @@ void Ide::onPausedAt(int line) {
 
 /// Worker 结束信号槽：恢复运行态 UI、清理调试面板残留数据（避免陈旧调用栈/变量）。
 void Ide::onWorkerFinished(bool wasDebug) {
+    // ISSUE-7 fix: 关闭流程中丢弃 worker 完成信号，避免访问已部分析构的成员。
+    if (closing_)
+        return;
     setRunningState(false);
     if (codeEditor_) {
         codeEditor_->clearCurrentLine();
@@ -5073,12 +5642,36 @@ void Ide::onCompileAnalysis() {
                          InfoBar::Position::TOP_RIGHT, this);
         return;
     }
+
+    // R53-3 fix: 运行/调试中拒绝重跑前端管线。原实现先 clearErrorLines/clearCurrentLine
+    // 再 runFrontendPipeline，会清掉调试暂停时的当前行高亮、并替换 pipeline_ 内部
+    // lexer/parser/astRoot 状态——若 worker 线程正在使用同一 pipeline_ 解析模块
+    // 源码（import 路径），将产生并发数据竞争（lexer/parser 非线程安全）。
+    // 仅打开右侧可视化面板查看当前已编译结果，不重新执行管线。
+    if (controller_->isRunning() || controller_->isVmRunning() || controller_->isDebugPaused()) {
+        InfoBar::warning(mlTr("编译分析"),
+                         mlTr("已有运行或调试在进行，编译分析已跳过——请先停止当前运行再重试。"),
+                         Qt::Horizontal, true, 3000, InfoBar::Position::TOP_RIGHT, this);
+        showRightPanel(0);
+        return;
+    }
+
     std::string source = codeEditor_->toPlainText().toStdString();
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    struct CursorGuard {
-        ~CursorGuard() { QApplication::restoreOverrideCursor(); }
-    } guard;
+    // R53-UX5 fix: 同步编译阶段状态栏进度反馈。原实现仅 WaitCursor 鼠标反馈，
+    // 状态栏无文字提示——大文件编译时用户感知不到进度。RAII guard 统一管理
+    // cursor 与状态栏消息，覆盖所有 return 路径。
+    struct CursorStatusGuard {
+        Ide* self;
+        ~CursorStatusGuard() {
+            QApplication::restoreOverrideCursor();
+            if (auto* sb = self->statusBar())
+                sb->clearMessage();
+        }
+    } guard{this};
+    if (auto* sb = statusBar())
+        sb->showMessage(mlTr("正在编译分析..."), 0);
 
     codeEditor_->clearErrorLines();
     codeEditor_->clearCurrentLine();
@@ -5158,6 +5751,12 @@ void Ide::onActivityChangedById(const QString& id) {
             teachingTreeDock_->toggleView(true);
         if (teachingTreeDock_)
             teachingTreeDock_->setAsCurrentTab();
+        // 若中央区当前在欢迎页或编辑器（非教学面板），同时打开「学习路径地图」面板，
+        // 避免用户只看到左侧树而误以为「学习中心面板打不开」。
+        // 已在某个教学面板时则不抢占，保留树导航语义。
+        if (centerStack_ && (centerInEditorMode_ || centerStack_->currentWidget() == welcomePage_)) {
+            showTeachingPanel(QStringLiteral("learning-path"));
+        }
     }
 
     // 平滑滑入：对新显示的左侧面板内容应用 150ms pos 滑入动画
@@ -5603,13 +6202,22 @@ void Ide::onVmRun() {
 /// 统一处理 VmStepper 的步进结果：根据 OK/FINISHED/ERROR/PAUSED 等状态刷新
 /// 栈面板、全局变量、字节码高亮、源码行高亮并切换按钮可用性。
 void Ide::handleVmStepResult(IdeController::VmStepResult result) {
-    // AUDIT-P2-CORRECT fix: stale 信号防御。
-    // closeEvent 期间 vmStop() 后，已投递的 vmRunPaused QueuedConnection 仍在主线程
-    // 队列。Ide 析构时处理 pending 事件会访问已析构成员（vmStackPanel_/codeEditor_ 等），
-    // try/catch 无法捕获 UAF。检查 VM 初始化/运行状态：VM 已停止且未初始化时说明是
-    // stale 信号，丢弃。
-    if (!controller_->isVmInitialized() && !controller_->isVmRunning())
+    // ISSUE-7 fix: 关闭流程中丢弃所有 VM 步进信号。closeEvent 已 disconnect 信号，
+    // 但 DirectConnection（同线程）的同步调用或在 disconnect 前已入队的信号仍可能进入。
+    if (closing_)
         return;
+    // AUDIT-P2-CORRECT fix: stale 信号防御。
+    // closeEvent 期间 vmStop() 后，已投递的 vmRunPaused 信号仍在主线程队列。
+    // Ide 析构时处理 pending 事件会访问已析构成员（vmStackPanel_/codeEditor_ 等），
+    // try/catch 无法捕获 UAF。
+    //
+    // AUDIT-P1-ROUND50 fix: 原守卫 `!isVmInitialized() && !isVmRunning()` 会误杀
+    // FINISHED/ERROR/NOT_READY 信号。VmStepper::runBatch/stepByMode 在发射这些信号
+    // 前已合法地将 isVmInitialized_ 和 isVmRunning_ 都置为 false（正常结束/错误终态），
+    // 导致守卫命中 return，FINISHED/ERROR 的 UI 更新分支被整体跳过——Step 模式下
+    // 所有 VM 按钮禁用且无法通过 Stop 恢复。vmRunPaused 连接是同线程 DirectConnection，
+    // closeEvent 的残留信号只可能是 PAUSED_AT_BREAKPOINT（断点暂停），FINISHED/ERROR
+    // 是合法终态不应被丢弃。将守卫收窄到仅 PAUSED_AT_BREAKPOINT 路径。
     switch (result) {
     case IdeController::VmStepResult::NOT_READY:
         setVmStepActionsEnabled(true, false);
@@ -5662,6 +6270,12 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
         return;
     case IdeController::VmStepResult::OK:
     case IdeController::VmStepResult::PAUSED_AT_BREAKPOINT:
+        // AUDIT-P1-ROUND50 fix: 守卫收窄到此路径——仅 PAUSED 信号需要 stale 防御。
+        // OK 信号是单步成功的合法中间态，不应被丢弃。PAUSED 信号在 closeEvent 后
+        // 可能成为 stale 信号（VM 已停止但排队中的断点暂停信号尚未处理）。
+        if (result == IdeController::VmStepResult::PAUSED_AT_BREAKPOINT &&
+            !controller_->isVmInitialized() && !controller_->isVmRunning())
+            return;
         if (controller_->isVmRegisterMode()) {
             vmStackPanel_->updateRegisters(controller_->getVmStack());
         } else {
@@ -5879,8 +6493,8 @@ void Ide::showHelpDialog() {
          8},
         {"🎓 教学 / VM 面板",
          {
-             {"Ctrl+Shift+L", "学习中心"},
-             {"Ctrl+Shift+P", "学习路径地图"},
+             {"Ctrl+Shift+L", "学习中心（含学习路径地图）"},
+             {"Ctrl+Shift+P", "编译管线可视化"},
              {"Ctrl+Shift+J", "代码生命旅程"},
              {"Ctrl+Shift+G", "术语表"},
              {"Ctrl+Shift+1", "语法浏览器"},
@@ -6119,6 +6733,9 @@ void Ide::updateCompletionWords() {
 
 /// 将诊断包渲染到错误列表与编辑器行内标记。
 void Ide::displayDiagnostics(const DiagnosticBag& bag) {
+    // ISSUE-7 fix: 关闭流程中丢弃诊断信号，避免访问已部分析构的成员。
+    if (closing_)
+        return;
     const auto& allDiags = bag.all();
     for (const auto& diag : allDiags) {
         std::string msg = diag.message;
@@ -6596,7 +7213,7 @@ void Ide::onSave() {
     // 标识 IDE 自身保存触发 fileChanged，避免弹出"外部修改"对话框。
     // 500ms 后自动复位，防止 fileChanged 未触发时标志残留误吞后续外部修改。
     selfSaving_ = true;
-    QTimer::singleShot(500, this, [this]() { selfSaving_ = false; });
+    QTimer::singleShot(500, this, [this]() { if (!closing_) selfSaving_ = false; });
     QFile file(currentFilePath_);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         InfoBar::warning(mlTr("错误"), mlTr("无法保存文件: ") + file.errorString(), Qt::Horizontal, true, 2500,
@@ -6776,6 +7393,9 @@ void Ide::setupFileWatcher(const QString& filePath) {
 
 /// 文件被外部修改响应：提示用户重新加载。
 void Ide::onFileChangedExternally(const QString& filePath) {
+    // ROUND-60 fix: 关闭流程中忽略文件变更通知，避免 QTimer/singleShot 捕获 this
+    // 在析构期间触发 UAF。
+    if (closing_) return;
     if (filePath != watchedFilePath_)
         return;
 

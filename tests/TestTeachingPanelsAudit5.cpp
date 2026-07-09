@@ -153,8 +153,8 @@ TEST(TeachingPanelsExceptionFlow, PhaseFieldsNonEmpty) {
 
 TEST(TeachingPanelsClosureInspector, ScenariosCount) {
     const auto& scenarios = ClosureInspectorLibrary::scenarios();
-    // 至少 6 个场景
-    EXPECT_GE(scenarios.size(), 6u);
+    // ROUND-60: 扩充至 12 个场景（原 8 + 新增 4：as-param/recursive/close-upvalue/mutual-recursion）
+    EXPECT_GE(scenarios.size(), 8u);
 }
 
 TEST(TeachingPanelsClosureInspector, ScenarioIdsUnique) {

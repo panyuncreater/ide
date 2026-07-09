@@ -190,7 +190,12 @@ void ReplPanel::onReturnPressed() {
 
     // 保存到历史（仅首次行）
     if (!inContinuation_) {
-        history_.push_back(trimmedLine);
+        // AUDIT-P3-ROUND53 fix: 历史去重——若与最后一条相同则不追加，
+        // 对齐主流 REPL（Python/Node/bash）行为。避免重复命令多次出现，
+        // 按 Up 键需翻越多次才能到达上一条不同命令。
+        if (history_.empty() || history_.back() != trimmedLine) {
+            history_.push_back(trimmedLine);
+        }
         historyIndex_ = history_.size();
     }
 
@@ -240,7 +245,7 @@ void ReplPanel::onReturnPressed() {
                                 "  - 'clear' 仅清空输出区与续行缓冲,不重置已定义变量/函数/类\n"
                                 "  - 'reload \"mod\"' 清除模块缓存,下次 import 重新加载源码\n"
                                 "  - 'reload all' 清除所有模块缓存\n"
-                                "  - 重置全部状态需重启 IDE\n"
+                                "  - '%reset' 重置 REPL 环境(清除所有变量/函数/类/模块缓存)\n"
                                 "─── Magic 命令 ─────────────────────────────\n"
                                 "输入 %help 查看完整 magic 命令列表与详细说明。\n"
                                 "常用 magic 命令速查:\n"
@@ -291,6 +296,37 @@ void ReplPanel::onReturnPressed() {
             inputLine_->clear();
             return;
         }
+        // ROUND-69 P1-1 fix: magic 命令在 isInputComplete 之前拦截。
+        // 原代码在 executeLine 中检测 % 前缀，但 isInputComplete() 先被调用，
+        // "%ast fun f() {" 因 { 未闭合被误判为"不完整"进入续行模式，用户被迫
+        // 输入 } 闭合后才能触发 magic 命令。magic 命令是单行命令，不应走续行逻辑。
+        if (trimmedLine.startsWith('%')) {
+            if (replRunning_) {
+                appendError("上一次执行尚未完成，请稍候...");
+                pendingInput_.clear();
+                inputLine_->clear();
+                return;
+            }
+            if (controller_ && controller_->isRunning()) {
+                appendError("程序正在运行，请先停止后再使用 REPL magic 命令");
+                pendingInput_.clear();
+                inputLine_->clear();
+                return;
+            }
+            if (controller_ && controller_->isVmRunning()) {
+                appendError("VM RUN 模式正在执行，请先停止 VM 再使用 REPL magic 命令");
+                pendingInput_.clear();
+                inputLine_->clear();
+                return;
+            }
+            std::string result = MagicCommands::handle(trimmedLine.toStdString(), controller_);
+            if (!result.empty()) {
+                appendOutput(QString::fromStdString(result));
+            }
+            pendingInput_.clear();
+            inputLine_->clear();
+            return;
+        }
     }
 
     // R4: 检查输入是否完整
@@ -302,6 +338,11 @@ void ReplPanel::onReturnPressed() {
 
     // 输入完整 — 执行并重置续行状态
     inContinuation_ = false;
+    // AUDIT-P2-ROUND53 fix: 多行输入历史仅保存首行，Up 键无法恢复完整多行输入。
+    // 执行前用完整 pendingInput_（含 \n 拼接的续行）替换之前存入的首行。
+    if (!history_.empty() && historyIndex_ == static_cast<int>(history_.size())) {
+        history_.back() = pendingInput_;
+    }
     executeLine(pendingInput_);
     pendingInput_.clear();
 
@@ -724,6 +765,27 @@ bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {
                 historyIndex_ = history_.size();
                 inputLine_->clear();
             }
+            return true;
+        }
+        // R53-UX8 fix: Esc 中止续行。原续行模式下用户只能继续输入完整代码，
+        // 无法中止——多行结构（如未闭合的 fun 定义）一旦开始就必须完成。
+        // Esc 在续行模式下中止当前 pendingInput_，回到单行模式。
+        // 非续行模式下不拦截 Esc（保持 QLineEdit 默认行为，允许清空输入框）。
+        if (keyEvent->key() == Qt::Key_Escape && inContinuation_) {
+            inContinuation_ = false;
+            pendingInput_.clear();
+            inputLine_->clear();
+            appendOutput(QString::fromUtf8("[续行已中止]"));
+            return true;
+        }
+        // R53-UX8 fix: Ctrl+L 清屏（清空输出区，保留 pendingInput_/history/变量状态）。
+        // 与 'clear' 命令行为一致，但快捷键更便捷。运行中拒绝以避免与 worker 输出竞争。
+        if ((keyEvent->key() == Qt::Key_L) && (keyEvent->modifiers() & Qt::ControlModifier)) {
+            if (controller_ && controller_->isRunning()) {
+                appendError("程序正在运行，无法清屏");
+                return true;
+            }
+            outputArea_->clear();
             return true;
         }
     }

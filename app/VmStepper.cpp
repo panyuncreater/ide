@@ -1,6 +1,8 @@
 #include "VmStepper.h"
 #include "Logger.h"
-#include <QCoreApplication> // BUG-IDE-18 fix: processEvents 让出事件循环
+#include <QApplication>     // P3.6 fix: activeWindow + repaint 替代 processEvents
+#include <QCoreApplication>
+#include <QWidget>          // P3.6 fix: QWidget::repaint
 
 // ============================================================
 // VmStepper — VM 单步执行状态机实现（ARCH-11 拆分自 IdeController）
@@ -123,6 +125,12 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         // AUDIT-BUG-F3 fix: 每次步进调用前重置 vmCrossedDeeper_。原实现仅在 stop() 中重置，
         // 导致首次 STEP_OVER 跨帧后标志残留 true，后续每条指令立即暂停（STEP_OVER 退化为 STEP_IN）。
         vmCrossedDeeper_ = false;
+        // R54-6 fix: 同步重置 vmCrossedLine_。原实现仅在 stop()（L409）和断点命中路径
+        // （L230）重置，步进暂停路径（L288-292）不重置。若上次步进跨行后暂停，
+        // vmCrossedLine_ 残留 true，下次步进首条指令若同行则不刷新（L221-224 仅在行号
+        // 变化时置 true），导致断点检查 L226 的 (currentLine != vmLastPausedLine_ || vmCrossedLine_)
+        // 中 vmCrossedLine_ 为残留 true，断点立即重复触发，用户卡在当前行无法步进。
+        vmCrossedLine_ = false;
 
         // #3 fix: pre-execution 断点检查 — 首次初始化后检查首行是否为断点行。
         // 原实现直接进入 stepOnce 循环，导致首行断点被先执行再检测（post-execution），
@@ -131,6 +139,9 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         if (!vmBreakpoints_.isEmpty()) {
             int initLine = getCurrentLine();
             if (checkBreakpointHit(initLine) && initLine != vmLastPausedLine_) {
+                // AUDIT-P3-ROUND50 fix: 预执行命中分支未递增 hitCount，与循环内断点
+                // 命中路径（L223-229）不一致。对齐循环内路径递增 hitCount。
+                vmBreakpointHitCounts_[initLine]++;
                 vmLastPausedLine_ = initLine;
                 isVmRunning_ = false;
                 return VmStepResult::PAUSED_AT_BREAKPOINT;
@@ -169,17 +180,23 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             // 排除用户输入事件以避免重入触发 stop/step 等槽函数）。若期间 VM 被异步
             // 停止（isVmRunning_ 被置 false），立即返回 OK 让 UI 更新。
             //
-            // BUG-GUI-AUDIT-1 fix attempt: 原审计建议增加 ExcludeTimers 排除定时器事件，
-            // 避免 CallStackPanel/VariableInspectorPanel 等 500ms 轮询定时器在
-            // STEP 中途触发重入。但 Qt 6 的 QEventLoop 已移除通用 ExcludeTimers flag
-            // （仅保留 X11 平台特定的 X11ExcludeTimers，Windows 上无效）。
-            // 替代方案: 1) 临时停止特定定时器（需访问 timer 对象，VmStepper 不持有）；
-            //          2) 改用 sendPostedEvents()（仅处理 posted events，不刷新绘制）。
-            // 当前折中: 保持 ExcludeUserInputEvents，定时器重入风险作为已知限制保留。
-            // CallStackPanel/VariableInspectorPanel 的轮询代码已通过 isVmRunning_ 检查
-            // 防御 STEP 中途读取（参见 VariableInspectorPanel 的 refreshLocals 实现）。
+            // P3.6 fix: 原实现调用 processEvents(ExcludeUserInputEvents) 会派发 QTimer
+            // 事件，虽然各面板已有 isVmRunning() 守卫，但定时器重入仍是潜在风险。
+            // 改用 sendPostedEvents(DeferredDelete) 处理对象生命周期 + 遍历所有可见
+            // 顶层窗口调用 repaint() 强制重绘，彻底避免定时器事件派发。
+            // repaint() 同步处理 paint event 不进入事件循环，无重入风险。
+            // 注：sendPostedEvents(nullptr, QEvent::DeferredDelete) 仅处理 DeferredDelete
+            // 类型的 posted events（QObject 删除），不处理 QTimer/Socket 等事件。
             if (stepCount % 2000 == 0) {
-                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+                // 强制重绘所有可见顶层窗口（主窗口 + 浮动 dock 容器）
+                if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
+                    for (QWidget* w : app->topLevelWidgets()) {
+                        if (w->isVisible()) {
+                            w->repaint();
+                        }
+                    }
+                }
                 if (!isVmRunning_) {
                     return VmStepResult::OK;
                 }
@@ -270,7 +287,10 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 // STEP_OVER 用 crossedDeeper_ 允许同行暂停，STEP_OUT 顶层仅用行号变化判断，
                 // 单行循环（如 for (...; ...; ...) foo();）STEP_OUT 后永不暂停（行号不变），
                 // 直到循环结束才停止。修复：与 STEP_OVER 顶层对齐，使用 crossedLine_ 机制
-                // 允许跨行后同行暂停。同时引入 vmCrossedDeeper_ 判断，与 STEP_OVER 一致。
+                // 允许跨行后同行暂停。
+                // R54-7 fix: 注释原提及"vmCrossedDeeper_"但代码实际使用 vmCrossedLine_，
+                // 已更正注释。STEP_OUT 在栈底时无处可"跨出"，降级为"跨行后暂停"语义
+                //（与 STEP_IN 行级粒度一致），使用 vmCrossedLine_ 是正确设计。
                 else if (currentFrameCount <= 1 && currentLine > 0 &&
                          (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                     shouldPause = true;

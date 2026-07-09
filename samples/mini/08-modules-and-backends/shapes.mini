@@ -1,4 +1,5 @@
 // shapes.mini - 图形类模块
+// 演示选择性导入：import { PI } from "math_utils.mini"
 import { PI } from "math_utils.mini";
 
 export class Shape {

@@ -202,8 +202,10 @@ VMResult VM::executeReturn(size_t& ip) {
 
     // VM-05/06: 关闭当前帧关联的 open upvalues（在 stack resize 之前）
     // P1-5 fix: 使用统一辅助函数，避免代码重复
+    // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止返回，避免在损坏状态上继续
     if (retChunk || !frames_.empty()) {
-        closeUpvaluesFrom(savedBp);
+        if (closeUpvaluesFrom(savedBp) != VMResult::VM_OK)
+            return VMResult::VM_RUNTIME_ERROR;
     }
 
     if (frames_.empty()) {
@@ -779,6 +781,9 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
             int extraSlots = targetChunk.localCount - preAllocated;
             // V-P2-1 fix: extraSlots 为负表示帧布局损坏
             if (extraSlots < 0) {
+                // AUDIT-P3-ROUND50 fix: 错误路径未清理栈上已推入的 this + fields + args，
+                // 与同函数其他错误路径（L705/L714/L759/L765/L769 的 popN）不一致。
+                popN(1 + fieldCount + argCount);
                 return runtimeError(ErrorFormat::format("方法 %s 帧布局损坏: localCount=%d < preAllocated=%d",
                                                         methodName.c_str(), targetChunk.localCount, preAllocated));
             }

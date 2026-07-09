@@ -219,6 +219,11 @@ Value Interpreter::callClosureValue(FunCall& node) {
                     argValues[i], funDecl->paramTypes[i],
                     [&] { return "函数 " + effectiveName + " 的参数 " + funDecl->params[i]; }, node.line, node.column);
             }
+            // AUDIT-P2.1 fix: 参数遮蔽捕获变量时，从 capturedVarNames_ 移除标记。
+            // rebuildEnvFromSnapshot 会将所有 capturedVars 键 markAsCaptured，若参数与
+            // 某个捕获变量同名（如 func f(x){...} 中 x 是捕获变量），writeBackCapturedVars
+            // 会因 isCapturedVar("x") 仍为 true 而把参数值写回 capturedVars 污染下次调用。
+            funEnv->unmarkCaptured(funDecl->params[i]);
             funEnv->define(funDecl->params[i], std::move(argValues[i]));
         }
 
@@ -677,6 +682,9 @@ Value Interpreter::callNamedFunction(FunCall& node) {
 
         // 绑定参数（move 避免深拷贝）
         for (size_t i = 0; i < funDecl->params.size(); ++i) {
+            // AUDIT-P2.1 fix: 与 callClosureValue 一致，参数遮蔽捕获变量时移除标记，
+            // 防止 writeBackCapturedVars 将参数值写回 capturedVars 污染下次调用
+            funEnv->unmarkCaptured(funDecl->params[i]);
             funEnv->define(funDecl->params[i], std::move(argValues[i]));
         }
 

@@ -11,12 +11,20 @@ PipelineRunner::PipelineRunner(QObject* parent) : QObject(parent) {}
 // ============================================================
 
 bool PipelineRunner::runLexer(const std::string& source) {
+    // R54-1 fix: 直接调用 runLexer/runParser 会修改 lexer_/parser_ 内部状态（诊断、
+    // lastTokens_、astRoot_），若不失效缓存，后续 runFrontendPipeline 命中陈旧缓存
+    // 时返回的 diagnostics 裸指针指向已被改写的 DiagnosticBag，且 astRoot_ 已被替换
+    // 为其他源码（如 VmStackSandbox 关卡代码）的 AST，导致编辑器代码执行错误。
+    // invalidatePipelineCache() 已存在但从未被调用——此处补全。
+    invalidatePipelineCache();
     lastTokens_ = lexer_.scan(source);
     emit diagnosticsReady(lexer_.getDiagnostics());
     return !lexer_.getDiagnostics().hasErrors();
 }
 
 bool PipelineRunner::runParser() {
+    // R54-1 fix: 同 runLexer，直接调用会改变管线状态，必须失效缓存。
+    invalidatePipelineCache();
     astRoot_ = parser_.parse(lastTokens_);
     emit diagnosticsReady(parser_.getDiagnostics());
     return astRoot_ != nullptr && !parser_.hasErrors();

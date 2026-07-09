@@ -65,6 +65,22 @@ std::string ModuleTopLevelRenamer::pathHash(const std::string& modulePath) {
     if (normalized.size() >= 2 && normalized[0] == '.' && normalized[1] == '/') {
         normalized.erase(0, 2);
     }
+    // AUDIT-P2-ROUND53 fix: 折叠连续 '/'，避免 "./a//b" 与 "./a/b" 产生不同 hash
+    // 导致同一模块被当作两个不同模块，__mod_<hash>__ 前缀不一致引发重命名解析失败。
+    std::string folded;
+    folded.reserve(normalized.size());
+    bool prevSlash = false;
+    for (char c : normalized) {
+        if (c == '/') {
+            if (!prevSlash)
+                folded.push_back(c);
+            prevSlash = true;
+        } else {
+            folded.push_back(c);
+            prevSlash = false;
+        }
+    }
+    normalized = std::move(folded);
     // FNV-1a 32-bit hash，取低 32 位，输出 8 字符 hex
     uint32_t h = 2166136261u;
     for (char c : normalized) {

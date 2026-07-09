@@ -240,6 +240,15 @@ bool Parser::isClassTypeDeclStart() const {
     return idx < size && (*tokens_)[idx].type == TokenType::TK_IDENTIFIER;
 }
 
+bool Parser::isFunTypeDeclStart() const {
+    // ROUND56 fix: 识别函数类型参数注解起始 fun(params):ret paramName
+    //   仅匹配 TK_FUN 后紧跟 TK_LPAREN 的模式（函数类型注解），避免误识别
+    //   普通函数声明 fun name(...) — 后者 TK_FUN 后是 TK_IDENTIFIER。
+    if (!check(TokenType::TK_FUN))
+        return false;
+    return checkNext(TokenType::TK_LPAREN);
+}
+
 std::string Parser::parseTypeAnnotation() {
     // AUDIT-P2.7 fix: 支持 T? 可选类型、dict[K:V] 泛型字典、fun(params):ret 函数类型。
     //   Interpreter.typeMatch 已支持这三种格式的运行时类型检查，此处仅需生成对应字符串。
@@ -568,6 +577,16 @@ void Parser::parseParamList(std::vector<std::string>& params, std::vector<std::s
             paramName = param.lexeme;
         } else if (isClassTypeDeclStart()) {
             // PARSE-02 fix: C 风格类类型参数: ClassName paramName 或 ClassName[] paramName
+            pType = parseTypeAnnotation();
+            const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
+            paramName = param.lexeme;
+        } else if (isFunTypeDeclStart()) {
+            // ROUND56 fix: 函数类型参数注解 fun(params):ret paramName
+            //   samples/02-types-and-operators/types_and_operators.mini 使用 fun(int):string cb 作为
+            //   高阶函数参数类型注解。原 parseParamList 仅识别 isTypeKeyword /
+            //   isClassTypeDeclStart，遇到 TK_FUN 走入"参数名在前"分支抛
+            //   "期望参数名 但得到 'fun'"。此处复用 parseTypeAnnotation 生成
+            //   "fun(...):ret" 字符串，与 declaration() 的 dict/fun 分支语义一致。
             pType = parseTypeAnnotation();
             const Token& param = consume(TokenType::TK_IDENTIFIER, "期望参数名");
             paramName = param.lexeme;

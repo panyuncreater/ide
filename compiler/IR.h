@@ -214,6 +214,10 @@ enum class IROp : uint8_t {
     // operands: [src_vreg, type_const_idx]  type_const_idx 为 CONSTANT 类型（字符串注解）
     // lower 到 OP_TYPE_CHECK（栈式）/ REG_TYPE_CHECK（寄存器式）
     TYPE_CHECK,
+
+    // AUDIT-P1.1 fix: break/continue finally 续跳机制
+    PUSH_JUMP_TARGET, // push 跳转目标到 pendingJumpStack_  operands: [label_idx]
+    FINALLY_END,      // 从 pendingJumpStack_ pop 目标并跳转；栈空则继续执行
 };
 
 /// IR 指令
@@ -529,6 +533,14 @@ private:
     };
     std::vector<LoopContext> loopStack_;
     int tryDepth_ = 0; // 当前 try 嵌套深度（BUG-EXC-2 fix）
+    // AUDIT-P1.1 fix: try-finally 编译期上下文栈（IR 路径，用 label 而非 ip）
+    struct TryFinallyContext {
+        bool hasFinally = false;
+        uint32_t finallyEntryLabel = 0; // finally 块入口标签
+        std::vector<size_t> pendingJumpPatches;   // JUMP 的 label 待回填
+        std::vector<size_t> pendingTargetPatches; // PUSH_JUMP_TARGET 的 label 待回填
+    };
+    std::vector<TryFinallyContext> tryFinallyStack_;
     // BUG-IR-SHADOW-SAVE fix: catch 变量遮蔽全局时，原值保存到临时 name-based 全局变量。
     // 不能用 vreg 保存——StackVM 后端的 LOAD_EXCEPTION 是 no-op（异常值已在栈上），
     // LOAD_GLOBAL 再 push 会使 DEFINE_GLOBAL pop 错误值（saved 而非 exception）。
@@ -602,6 +614,11 @@ private:
     void visitContinueStmt(class ContinueStmt* node);
     void visitTryStmt(class TryStmt* node);
     void visitThrowStmt(class ThrowStmt* node);
+
+    /// AUDIT-P1.1 fix: 发射 break/continue 的 finally 续跳 IR。
+    /// realTargetLabel 是 break/continue 的真实目标 label（endLabel/continueLabel）。
+    /// 返回 true 表示已发射续跳 IR（调用方不应再发射常规 JUMP），false 表示无 finally。
+    bool emitFinallyJumpIR(int line, uint32_t realTargetLabel);
 };
 
 // ============================================================

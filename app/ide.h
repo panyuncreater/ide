@@ -154,6 +154,7 @@ private slots:
 
 private:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -184,14 +185,13 @@ private:
     QWidget* welcomePage_ = nullptr;
     QStackedWidget* centerStack_ = nullptr; // 教学面板/欢迎页栈
     QTabWidget* editorTabWidget_ = nullptr;
-    QSplitter* centerSplitter_ = nullptr;       // 三栏布局：[centerStack_ | editorTabWidget_]
+    QSplitter* centerSplitter_ = nullptr;       // 三栏布局：[centerStack_ | editorSplitter_]
+    QSplitter* editorSplitter_ = nullptr;       // 编辑器区纵向分割：[editorTabWidget_ | bottomContainer_]
     QVariantAnimation* splitterAnim_ = nullptr; // centerSplitter_ 尺寸动画
     int untitledCount_ = 0;
 
     // ---- ADS 停靠管理器 ----
     ads::CDockManager* dockManager_ = nullptr;
-    /// 缓存上一次应用到 qApp 的 ADS QSS 片段，避免 setStyleSheet 追加导致全局样式表无限增长
-    QString lastAdsQss_;
 
     // 活动栏
     ActivityBar* activityBar_ = nullptr;
@@ -216,7 +216,7 @@ private:
     QTimer* fileTreeFilterTimer_ = nullptr; // 文件树过滤防抖（200ms）  // 文件树搜索过滤框
     DebugPanel* debugPanel_ = nullptr;
 
-    // 底部面板（主布局底部，非 ADS dock，覆盖全宽不挤压教学内容）
+    // 底部面板（editorSplitter_ 内部，仅覆盖代码编辑区，类似 VS Code 集成终端）
     QWidget* bottomContainer_ = nullptr;
     bool bottomVisible_ = false;
     Pivot* bottomPivot_ = nullptr;
@@ -392,8 +392,21 @@ private:
     QString currentFilePath_;
     bool isDirty_ = false;
     bool hasWorkspace_ = false;
+    // ISSUE-7 fix: 关闭流程进行中标志。closeEvent 入口置 true，
+    // 所有信号处理回调（handleVmStepResult/onWorkerFinished/onPausedAt/
+    // displayDiagnostics 等）入口检查此标志，避免 processEvents 或析构期间
+    // 残留的 QueuedConnection 信号访问已部分析构的成员导致 UAF。
+    bool closing_ = false;
     int bottomPanelHeight_ = 220; // 第十二轮：输出面板默认高度，用户调整后记忆
     int codeFontSize_ = 11;       // 代码编辑器全局字号（默认 11pt），应用于所有编辑器标签页
+    // R60-2 fix: 标记是否有已保存的 dock 布局。首次启动时为 false，
+    // 面板首次打开时应用默认尺寸；有保存布局时由 restoreState 恢复，不覆盖。
+    bool hasSavedLayout_ = false;
+    // R60-2 fix: 标记左侧 dock 是否已应用过默认尺寸（避免每次 toggleView 都 resize）
+    bool leftDockDefaultSized_ = false;
+    // R61-3 fix: 延迟到 showEvent 中恢复 dock 布局，确保窗口有有效几何尺寸
+    bool firstShow_ = true;
+    QByteArray pendingDockState_;
 
     // ---- 文件外部修改监听 ----
     QFileSystemWatcher* fileWatcher_ = nullptr;
@@ -479,6 +492,8 @@ private:
     void toggleRightPanel();
     void switchLeftToFileTree();
     void switchLeftToDebugPanel();
+    /// R60-2 fix: 首次启动时左侧 dock 首次打开应用默认宽度
+    void ensureLeftDockDefaultSize();
     void showAstWindow();
     void onActivityChanged(int index);
     void onActivityChangedById(const QString& id);

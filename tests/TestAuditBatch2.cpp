@@ -183,6 +183,69 @@ TEST(AuditBatch2Inherit, ThreeLevelSuperChain) {
 }
 
 // ============================================================
+// AUDIT-P1.4 fix: 中间类不定义方法时 super 查找正确性。
+// A→B→C 继承链，B 不定义 greet()，C 定义 greet() 并调用 super.greet()。
+// findMethod(B, "greet") 沿继承链找到 A.greet，classContextStack_ 应压入 "A"
+// （方法实际定义类），而非 "B"（搜索起始类）。验证三后端一致。
+// ============================================================
+TEST(AuditBatch2Inherit, SuperThroughEmptyMiddleClass) {
+    std::string src =
+        "class A { fun greet() { return \"A\"; } }"
+        "class B : A { }"
+        "class C : B { fun greet() { return super.greet() + \"C\"; } }"
+        "var c = C();"
+        "print(c.greet());";
+    std::string expected = "AC";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+// ============================================================
+// AUDIT-P1.4 fix: 4 层继承链，中间两层不定义方法。
+// A→B→C→D，B 和 C 均为空类，D 定义 greet() 调用 super.greet()。
+// findMethod(C, "greet") 沿链找到 B（空）→A.greet，classContextStack_ 压入 "A"。
+// 验证多层空中间类场景下 super 上下文栈正确。
+// ============================================================
+TEST(AuditBatch2Inherit, SuperThroughMultipleEmptyMiddleClasses) {
+    std::string src =
+        "class A { fun greet() { return \"A\"; } }"
+        "class B : A { }"
+        "class C : B { }"
+        "class D : C { fun greet() { return super.greet() + \"D\"; } }"
+        "var d = D();"
+        "print(d.greet());";
+    std::string expected = "AD";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+// ============================================================
+// AUDIT-P1.4 fix: 混合场景——中间类部分定义方法。
+// A→B→C→D，B 定义 greet()，C 为空类，D 定义 greet() 调用 super.greet()。
+// findMethod(C, "greet") 沿链找到 B.greet（C 为空跳过），classContextStack_ 压入 "B"。
+// B.greet 内 super.greet() 应从 A 开始查找（B 的父类），而非从 C 重新搜索。
+// 若原 bug 压入 "C"，B.greet 内 super 会从 C 的父类 B 开始查找，找到 B.greet 自身→无限递归。
+// ============================================================
+TEST(AuditBatch2Inherit, SuperMixedEmptyAndDefinedMiddleClasses) {
+    std::string src =
+        "class A { fun greet() { return \"A\"; } }"
+        "class B : A { fun greet() { return super.greet() + \"B\"; } }"
+        "class C : B { }"
+        "class D : C { fun greet() { return super.greet() + \"D\"; } }"
+        "var d = D();"
+        "print(d.greet());";
+    std::string expected = "ABD";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+// ============================================================
 // 5. 方法内修改 this.field 后值正确返回（fieldsModified 路径）
 // ============================================================
 TEST(AuditBatch2Inherit, MethodModifiesField) {

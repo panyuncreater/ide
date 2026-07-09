@@ -168,6 +168,18 @@ private:
     // P0-4 fix: 跟踪当前 try 块嵌套深度，break/continue 跳出 try 块时需发射 OP_TRY_END
     int tryDepth_ = 0;
 
+    // AUDIT-P1.1 fix: try-finally 编译期上下文栈。
+    // break/continue 在 try-finally 内时，不直接跳到循环目标，而是先 push 真实跳转目标
+    // 到 pendingJumpStack_，再 jump 到 finally 入口。finally 末尾的 OP_FINALLY_END 从栈
+    // 取出真实目标并跳转，实现"先执行 finally 再跳转"的三后端一致性。
+    struct TryFinallyContext {
+        bool hasFinally = false;
+        size_t finallyEntryIp = 0; // finally 块入口地址（编译期确定后回填 pendingJumpPatches）
+        std::vector<size_t> pendingJumpPatches;   // OP_JUMP 目标待回填到 finallyEntryIp
+        std::vector<size_t> pendingTargetPatches; // OP_PUSH_JUMP_TARGET 目标待回填到 finallyEntryIp（来自内层 break/continue）
+    };
+    std::vector<TryFinallyContext> tryFinallyStack_;
+
     // VM-IMPORT: 模块系统状态（对齐 Interpreter 的 moduleCache_/moduleLoadingSet_ 设计）
     // 直接路径与 IR 路径共用此状态，确保模块只编译一次（run-once 语义）。
     std::function<std::string(const std::string&)> moduleLoader_; // 模块源码加载回调
@@ -216,6 +228,7 @@ private:
         std::unordered_map<std::string, int> currentUpvalueNames;
         std::vector<LoopContext> loopStack;
         int tryDepth = 0;
+        std::vector<TryFinallyContext> tryFinallyStack; // AUDIT-P1.1 fix
         std::string currentFunctionReturnType; // BUG-TYPE-1 fix: 当前函数返回类型注解
     };
 
@@ -263,6 +276,13 @@ private:
 
     /// 2026-06-29: 发射 OP_TYPE_CHECK 指令（检查栈顶值是否兼容类型注解）
     void emitTypeCheck(const std::string& typeAnnotation, int line);
+
+    /// AUDIT-P1.1 fix: 发射 break/continue 的 finally 续跳字节码。
+    /// 若 break/continue 在 try-finally 内，先 push 真实跳转目标到 pendingJumpStack_，
+    /// 再 jump 到最内层 finally 入口；finally 末尾的 OP_FINALLY_END 从栈取出目标续跳。
+    /// realTargetPatch 输出参数：OP_PUSH_JUMP_TARGET 的目标 patch（待回填到 breakTarget/continueTarget）。
+    /// 返回 true 表示已发射续跳字节码（调用方不应再发射常规 OP_JUMP），false 表示无 finally（常规路径）。
+    bool emitFinallyJump(int line, std::vector<size_t>& realTargetPatches);
 
     /// 编译 AST 节点（通过 Visitor 模式的 accept 分派）
     void compileNode(ASTNode* node);

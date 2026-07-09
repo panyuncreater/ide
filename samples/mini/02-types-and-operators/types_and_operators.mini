@@ -1,0 +1,246 @@
+// types_and_operators.mini - 类型系统、运算符与内置函数
+// 覆盖特性：类型注解（int/float/string/bool）、int 边界值、float 精度、
+//           null 类型、动态类型推断、可选类型 T?（仅 null）、多维数组 int[][]、
+//           算术/比较/逻辑/一元运算符、and/or 短路返回原值、字符串拼接、
+//           内置函数 len/type/str/int/range/sum/abs/min/max
+// 注意：不支持 && / ||（请用 and / or）；不支持按位运算符与三元运算符 ?:。
+// ============================================================
+
+// ---- 类型注解变量声明 ----
+print("=== 类型注解 ===");
+int x = 42;
+float y = 3.14;
+string langName = "MiniLang";
+bool flag = true;
+
+print("int x = {x}");
+print("float y = {y}");
+print("string langName = {langName}");
+print("bool flag = {flag}");
+
+// ---- int 边界值 ----
+print("");
+print("=== int 边界值 ===");
+int maxInt = 281474976710655;   // 2^48 - 1（NaN-boxing int48 上限）
+int minInt = -281474976710656;  // -2^48（NaN-boxing int48 下限）
+print("max int48 = {maxInt}");
+print("min int48 = {minInt}");
+
+// 超出 int48 范围时自动提升为 float
+int bigVal = 281474976710655;
+print("bigVal = {bigVal}");
+print("bigVal + 1 = {bigVal + 1}");
+
+// ---- float 精度 ----
+print("");
+print("=== float 精度 ===");
+float pi = 3.14159265358979;
+float euler = 2.71828182845905;
+print("pi = {pi}");
+print("euler = {euler}");
+print("pi + euler = {pi + euler}");
+
+// ---- null 类型 ----
+print("");
+print("=== null 类型 ===");
+var nothing = null;
+print("nothing = {nothing}");
+print("nothing == null: {nothing == null}");
+
+// null 赋给已有变量
+var nullableVar = 42;
+print("before: {nullableVar}");
+nullableVar = null;
+print("after: {nullableVar}");
+
+// ---- 动态类型（var 自动推断）----
+print("");
+print("=== 动态类型 ===");
+var dynamic = 10;
+print("dynamic = {dynamic} (int)");
+dynamic = "hello";
+print("dynamic = {dynamic} (string)");
+dynamic = [1, 2, 3];
+print("dynamic = {dynamic} (array)");
+
+// ---- 进阶类型注解：可选类型（仅 null）/ 多维数组 ----
+print("");
+print("=== 进阶类型注解 ===");
+int? maybe = null;
+print("maybe = {maybe}");
+// 注意：当前实现中可选类型 T? 仅接受 null，赋非 null 值会被类型检查拒绝
+
+int[][] matrix = [[1, 2], [3, 4]];
+print("matrix = {matrix}");
+// 说明：函数类型注解 fun(...):ret 与泛型字典注解 dict[K:V] 在当前实现中
+//       运行时未支持（会触发类型检查错误），故此处不演示。
+
+// ---- 算术运算符 ----
+print("");
+print("=== 算术 ===");
+print("7 + 3 = {7 + 3}");
+print("10 - 4 = {10 - 4}");
+print("6 * 7 = {6 * 7}");
+print("20 / 4 = {20 / 4}");
+print("20 % 6 = {20 % 6}");
+
+// 整数除法截断向零（C 风格，三后端一致）
+print("");
+print("=== 整数除法（截断向零）===");
+print("7 / 2 = {7 / 2}");
+print("-7 / 2 = {-7 / 2}");
+print("10.0 / 4 = {10.0 / 4}");
+
+// ---- 一元运算符 ----
+print("");
+print("=== 一元运算符 ===");
+print("-5 = {-5}");
+print("+5 = {+5}");
+print("!true = {!true}");
+print("!false = {!false}");
+print("not true = {not true}");
+print("not (1 == 2) = {not (1 == 2)}");
+
+// ---- 比较与相等 ----
+print("");
+print("=== 比较与相等 ===");
+print("3 < 5 = {3 < 5}");
+print("3 > 5 = {3 > 5}");
+print("3 <= 3 = {3 <= 3}");
+print("3 >= 5 = {3 >= 5}");
+print("3 == 3 = {3 == 3}");
+print("3 != 4 = {3 != 4}");
+
+// ---- 逻辑 and / or（短路返回操作数原值，非布尔）----
+print("");
+print("=== 逻辑 and / or ===");
+print("true and false = {true and false}");
+print("true or false = {true or false}");
+var t = true;
+var f = false;
+print("not t = {not t}");
+// and / or 返回操作数原值（短路）
+print("0 or 'default' = {0 or "default"}");
+print("5 and 0 = {5 and 0}");
+
+// ---- 字符串拼接 ----
+print("");
+print("=== 字符串拼接 ===");
+print("'Hello' + ' ' + 'World' = {"Hello" + " " + "World"}");
+print("count: " + 3 + " items");
+
+// ---- 内置函数 ----
+print("");
+print("=== 内置函数：类型与转换 ===");
+print("type(42) = {type(42)}");
+print("type('hi') = {type("hi")}");
+print("type([1, 2]) = {type([1, 2])}");
+print("str(42) = {str(42)}");
+print("int('123') = {int("123")}");
+print("int(3.9) = {int(3.9)}");
+
+print("");
+print("=== 内置函数：数值 ===");
+print("abs(-7) = {abs(-7)}");
+print("min(3, 8) = {min(3, 8)}");
+print("max(3, 8) = {max(3, 8)}");
+
+print("");
+print("=== 内置函数：序列 ===");
+var nums = [10, 20, 30];
+print("len(nums) = {len(nums)}");
+print("sum(nums) = {sum(nums)}");
+var r = range(5);
+print("range(5) = {r}");
+print("sum(range(5)) = {sum(range(5))}");
+
+// 预期输出：
+// === 类型注解 ===
+// int x = 42
+// float y = 3.1400000000000001
+// string langName = MiniLang
+// bool flag = true
+//
+// === int 边界值 ===
+// max int48 = 281474976710655
+// min int48 = -281474976710656
+// bigVal = 281474976710655
+// bigVal + 1 = 281474976710656
+//
+// === float 精度 ===
+// pi = 3.14159265358979
+// euler = 2.71828182845905
+// pi + euler = 5.8598744820488395
+//
+// === null 类型 ===
+// nothing = null
+// nothing == null: true
+// before: 42
+// after: null
+//
+// === 动态类型 ===
+// dynamic = 10 (int)
+// dynamic = hello (string)
+// dynamic = [1, 2, 3] (array)
+//
+// === 进阶类型注解 ===
+// maybe = null
+// matrix = [[1, 2], [3, 4]]
+//
+// === 算术 ===
+// 7 + 3 = 10
+// 10 - 4 = 6
+// 6 * 7 = 42
+// 20 / 4 = 5
+// 20 % 6 = 2
+//
+// === 整数除法（截断向零）===
+// 7 / 2 = 3
+// -7 / 2 = -3
+// 10.0 / 4 = 2.5
+//
+// === 一元运算符 ===
+// -5 = -5
+// +5 = 5
+// !true = false
+// !false = true
+// not true = false
+// not (1 == 2) = true
+//
+// === 比较与相等 ===
+// 3 < 5 = true
+// 3 > 5 = false
+// 3 <= 3 = true
+// 3 >= 5 = false
+// 3 == 3 = true
+// 3 != 4 = true
+//
+// === 逻辑 and / or ===
+// true and false = false
+// true or false = true
+// not t = false
+// 0 or 'default' = default
+// 5 and 0 = 0
+//
+// === 字符串拼接 ===
+// 'Hello' + ' ' + 'World' = Hello World
+// count: 3 items
+//
+// === 内置函数：类型与转换 ===
+// type(42) = int
+// type('hi') = string
+// type([1, 2]) = array
+// str(42) = 42
+// int('123') = 123
+// int(3.9) = 3
+//
+// === 内置函数：数值 ===
+// abs(-7) = 7
+// min(3, 8) = 3
+// max(3, 8) = 8
+//
+// === 内置函数：序列 ===
+// len(nums) = 3
+// sum(nums) = 60
+// range(5) = [0, 1, 2, 3, 4]
+// sum(range(5)) = 10

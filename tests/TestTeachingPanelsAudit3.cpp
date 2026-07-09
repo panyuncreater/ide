@@ -75,8 +75,8 @@ TEST(TeachingPanelsCallStack, ExpectedFramesNonEmpty) {
 
 TEST(TeachingPanelsVariableInspector, ExamplesCount) {
     const auto& items = VariableInspectorLibrary::examples();
-    // 设计为 9 种类型：int / int-boundary / float / bool / null / string / array / dict / instance / closure
-    EXPECT_GE(items.size(), 9u);
+    // ROUND-60: 扩充至 17 种类型示例（原 10 + 新增 7：float-inf/nan/empty-string/array/dict/nested/type-annotation）
+    EXPECT_GE(items.size(), 10u);
 }
 
 TEST(TeachingPanelsVariableInspector, ExampleIdsUnique) {
@@ -131,8 +131,8 @@ TEST(TeachingPanelsVariableInspector, NanboxBitsPresentForScalar) {
 
 TEST(TeachingPanelsBytecodeTrace, DocsCount) {
     const auto& items = BytecodeTraceLibrary::opCodeDocs();
-    // 设计为 18 个 OpCode 教学条目
-    EXPECT_GE(items.size(), 15u);
+    // ROUND-60: 扩充至 46 个 OpCode 教学条目（原 18 + 新增 28）
+    EXPECT_GE(items.size(), 18u);
 }
 
 TEST(TeachingPanelsBytecodeTrace, OpCodeNamesUnique) {

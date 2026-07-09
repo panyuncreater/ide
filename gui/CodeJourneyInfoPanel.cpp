@@ -11,9 +11,7 @@
 #include "gui/LearnerProgress.h" // AUDIT-P1 fix: markCompleted 直接持久化
 #include "gui/TeachingTheme.h"
 
-#include <QHBoxLayout>
 #include <QLabel>
-#include <QPushButton>
 #include <QShowEvent>
 #include <QTextBrowser>
 #include <QVBoxLayout>
@@ -48,29 +46,8 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent) : QWidget(parent) {
     infoBrowser_->setOpenExternalLinks(false);
     mainLayout->addWidget(infoBrowser_, 1);
 
-    // 底部：跳转按钮（对应管线 6 个阶段）
-    auto* btnBar = new QHBoxLayout;
-    auto* btnEditor = new QPushButton(mlTr("① 编辑器"), this);
-    auto* btnTokens = new QPushButton(mlTr("② Token 表"), this);
-    auto* btnAst = new QPushButton(mlTr("③ AST"), this);
-    auto* btnIr = new QPushButton(mlTr("④ IR"), this);
-    auto* btnBytecode = new QPushButton(mlTr("⑤ 字节码"), this);
-    auto* btnOutput = new QPushButton(mlTr("⑥ 输出"), this);
-    btnBar->addWidget(btnEditor);
-    btnBar->addWidget(btnTokens);
-    btnBar->addWidget(btnAst);
-    btnBar->addWidget(btnIr);
-    btnBar->addWidget(btnBytecode);
-    btnBar->addWidget(btnOutput);
-    btnBar->addStretch();
-    mainLayout->addLayout(btnBar);
-
-    connect(btnEditor, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToEditor);
-    connect(btnTokens, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToTokens);
-    connect(btnAst, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToAst);
-    connect(btnIr, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToIr);
-    connect(btnBytecode, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToBytecode);
-    connect(btnOutput, &QPushButton::clicked, this, &CodeJourneyInfoPanel::onJumpToOutput);
+    // ROUND-60 fix (Issue 1): 移除底部 6 个跳转按钮——用户反馈"感觉没用"。
+    // 信息图本身已包含完整管线说明，跳转功能可通过左侧教学树或快捷键实现。
 
     // 初始化进度提示
     refreshProgress();
@@ -241,26 +218,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
                "<li><b>后端 lowering</b>：IR → 字节码（VM 可执行）</li>"
                "<li><b>VM 执行</b>：字节码 → 结果（push/pop 或寄存器运算）</li>"
                "</ul>"
-               "<p style='color: #657B83; font-size: 11px;'>提示：点击底部按钮跳转到对应面板，亲手探索每个阶段！</p>"
+               "<p style='color: #657B83; font-size: 11px;'>提示：通过左侧教学树导航到对应面板，亲手探索每个阶段！</p>"
                "</body></html>")
         .arg(surfaceHex, stage0Hex, stage2Hex, stage3Hex, stage4Hex);
-}
-
-void CodeJourneyInfoPanel::onJumpToEditor() {
-    emit jumpToPanelRequested("editor");
-}
-void CodeJourneyInfoPanel::onJumpToTokens() {
-    emit jumpToPanelRequested("tokens");
-}
-void CodeJourneyInfoPanel::onJumpToAst() {
-    emit jumpToPanelRequested("ast");
-}
-void CodeJourneyInfoPanel::onJumpToIr() {
-    emit jumpToPanelRequested("ir");
-}
-void CodeJourneyInfoPanel::onJumpToBytecode() {
-    emit jumpToPanelRequested("bytecode");
-}
-void CodeJourneyInfoPanel::onJumpToOutput() {
-    emit jumpToPanelRequested("output");
 }

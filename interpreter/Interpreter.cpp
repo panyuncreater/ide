@@ -297,6 +297,46 @@ void Interpreter::restoreReplState() {
     recursionDepth_ = 0;
 }
 
+void Interpreter::resetReplEnvironment() {
+    stopRequested_.store(false, std::memory_order_relaxed);
+    evaluationStepCount_ = 0;
+    if (globalEnv_) {
+        globalEnv_->closeCapturedVariables();
+    }
+    globalEnv_ = std::make_shared<Environment>();
+    currentEnv_ = globalEnv_;
+    callStack_.clear();
+    envPool_.clear();
+    funRegistry_.clear();
+    funRegistryGen_ = 0;
+    classRegistry_.clear();
+    classRegistryGen_ = 0;
+    currentFunctionReturnType_.clear();
+    recursionDepth_ = 0;
+    replAsts_.clear();
+    diagnostics_.clear();
+    classContextStack_.clear();
+    moduleCache_.clear();
+    moduleExports_.clear();
+    moduleMtimes_.clear();
+    moduleLoadingStack_.clear();
+    moduleLoadingSet_.clear();
+    exportedNames_.clear();
+    loopFlow_ = LoopFlow::None;
+    replState_.savedGlobalEnv.reset();
+    replState_.savedClassRegistry.clear();
+    replState_.savedReplAsts.clear();
+    replState_.savedFunRegistry.clear();
+    replState_.savedFunRegistryGen = 0;
+    replState_.savedModuleCache.clear();
+    replState_.savedModuleExports.clear();
+    replState_.savedExportedNames.clear();
+    replState_.savedModuleLoadingStack.clear();
+    replState_.savedModuleLoadingSet.clear();
+    replState_.savedModuleMtimes.clear();
+    replState_.active = false;
+}
+
 void Interpreter::setOutputCallback(std::function<void(const std::string&)> callback) {
     std::lock_guard<std::mutex> lock(callbackMutex_);
     outputCallback_ = callback;
@@ -675,6 +715,14 @@ Value Interpreter::evaluate(ASTNode* node) {
     // 返回 false（条件不满足），避免 while(true){} 等无限循环永久冻结主线程。
     if (evaluationStepCount_ > 0 && ++evaluationStepCount_ > MAX_CONDITION_STEPS) {
         runtimeError("条件断点求值步数超过限制 (" + std::to_string(MAX_CONDITION_STEPS) + ")，可能存在无限循环", 0, 0);
+    }
+    // AUDIT-P1.2 fix: 条件求值期间检查 stopRequested_，提供比步数上限更快的响应。
+    // checkBreak 中的 stopRequested_ 检查仅在语句节点入口触发，而 evaluate 是所有
+    // 表达式求值的入口（包括循环条件、二元运算子表达式等），在此检查可实现
+    // 表达式级别的细粒度中止。用户点击停止后，requestStop() 设置 stopRequested_=true，
+    // 条件求值中下一次 evaluate 调用即抛 DebugStopException，无需等待步数上限。
+    if (evaluationStepCount_ > 0 && stopRequested_.load(std::memory_order_relaxed)) {
+        throw DebugStopException();
     }
     // A1 fix: accept 返回 void，结果通过 lastValue_ 传递。
     // A1 bug fix: 预先清空 lastValue_，避免未覆盖的节点类型返回陈旧值
@@ -2068,7 +2116,13 @@ void Interpreter::visitBlock(Block& node) {
     // AUDIT-BUG-I1 fix: 也检查 hasClosureEnvRef — 闭包 env weak_ptr 指向本 env 时
     // 不能回收（即使 hasClosureCaptures=false，闭包可能仅捕获父级变量）。
     if (blockEnv.use_count() == 1 && !hadCaptures && !blockEnv->hasClosureEnvRef()) {
-        envPool_.push_back(std::move(blockEnv));
+        // P3.3 fix: 限制 envPool_ 大小，防止异常场景下无界增长。
+        // 正常场景下 pool 大小受源码嵌套深度限制（Parser 深度上限 512），
+        // execute()/executeRepl() 入口已 clear()。cap=64 作为防御性上限——
+        // 超过时直接析构（shared_ptr 引用计数归零），不回收至池。
+        if (envPool_.size() < 64) {
+            envPool_.push_back(std::move(blockEnv));
+        }
     }
 
     lastValue_ = std::move(result);
@@ -2451,14 +2505,19 @@ Value Interpreter::callInstanceMethod(MethodCall& node, Value& obj) {
 
                 // 绑定参数（参数覆盖同名字段）
                 for (size_t i = 0; i < method->params.size(); ++i) {
+                    // AUDIT-P1-ROUND50 fix: 绑定循环 argValues 越界保护。
+                    // ROUND49 第二次重新查找（默认参数求值后）可能找到参数更多的新 method，
+                    // 此时 argValues.size() < method->params.size()，越界访问 argValues[i] 是 UB。
+                    // 对齐 constructClassInstance（InterpreterCalls.cpp L405-406）的越界保护。
+                    Value argVal = (i < argValues.size()) ? std::move(argValues[i]) : Value::nullValue();
                     // P1-4 fix: 补充参数类型检查（与 callNamedFunction 一致）
                     if (i < method->paramTypes.size() && !method->paramTypes[i].empty()) {
                         checkType(
-                            argValues[i], method->paramTypes[i],
+                            argVal, method->paramTypes[i],
                             [&] { return "方法 " + node.methodName + " 的参数 " + method->params[i]; }, node.line,
                             node.column);
                     }
-                    methodEnv->define(method->params[i], std::move(argValues[i]));
+                    methodEnv->define(method->params[i], std::move(argVal));
                 }
 
                 // H-新2 fix: bindInstance 必须在所有 define 之后，避免 map rehash 使指针悬空

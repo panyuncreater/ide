@@ -2,7 +2,7 @@
 REM ============================================================
 REM MiniLang 构建脚本 — 公共头部（VS 检测 + MSVC 初始化 + Qt 检测）
 REM ------------------------------------------------------------
-REM 由 configure.bat / build_ide.bat / run_tests.bat 通过
+REM 由 configure.bat / build.bat / run_tests.bat 通过
 REM call scripts\_common.bat 引入，消除三段重复的环境检测代码。
 REM 执行后 %VSINSTALL%、%QTDIR% 已设置，MSVC 环境已初始化，
 REM 当前目录已切换到项目根目录。

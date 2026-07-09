@@ -158,6 +158,46 @@ TEST(InterpreterE2E, TypedVariableDeclaration) {
     EXPECT_EQ(runInterpreterOutput(src), "42");
 }
 
+// 验证：samples/02-types-and-operators/types_and_operators.mini 中的高级类型注解特性
+// ROUND56 fix: 此前 fun(int):string cb 作为函数参数类型注解会触发
+// "期望参数名 但得到 'fun'" 解析错误，导致整个示例无法运行。
+TEST(InterpreterE2E, TypeAnnotationsSampleCheck) {
+    // 1) 可选类型
+    EXPECT_EQ(runInterpreterOutput("int? maybe = null; print(maybe);"), "null");
+    EXPECT_EQ(runInterpreterOutput("int? maybe = 7; print(maybe);"), "7");
+    // 2) 泛型字典（实际输出键带引号）
+    EXPECT_EQ(runInterpreterOutput("dict[string:int] scores = {\"a\": 1}; print(scores);"), "{\"a\": 1}");
+    // 3) 嵌套可选
+    EXPECT_EQ(runInterpreterOutput("dict[string:int?] partial = {\"x\": 1}; print(partial);"), "{\"x\": 1}");
+    // 4) 多维数组
+    EXPECT_EQ(runInterpreterOutput("int[][] matrix = [[1, 2], [3, 4]]; print(matrix);"), "[[1, 2], [3, 4]]");
+    // 5) 函数类型参数注解 — 验证 Parser 是否支持
+    {
+        Lexer lexer;
+        auto tokens = lexer.scan(
+            "fun applyFormatter(fun(int):string cb, int value) { return cb(value); }"
+            "fun numberName(int n): string { return \"num\" + str(n); }"
+            "print(applyFormatter(numberName, 7));");
+        Parser parser;
+        auto ast = parser.parse(tokens);
+        const auto& diags = parser.getDiagnostics();
+        std::string allErrs;
+        for (const auto& d : diags.all()) {
+            allErrs += "[" + std::to_string(d.line) + ":" + std::to_string(d.column) + "] " + d.message + "\n";
+        }
+        EXPECT_EQ(allErrs, "") << "Parser should accept function-type parameter annotation";
+        if (!allErrs.empty()) {
+            std::cerr << "Parser errors:\n" << allErrs << std::endl;
+        }
+    }
+    // 5b) 真正执行
+    std::string src5 =
+        "fun applyFormatter(fun(int):string cb, int value) { return cb(value); }"
+        "fun numberName(int n): string { return \"num\" + str(n); }"
+        "print(applyFormatter(numberName, 7));";
+    EXPECT_EQ(runInterpreterOutput(src5), "num7");
+}
+
 // 测试：多个变量交互
 TEST(InterpreterE2E, MultipleVariables) {
     std::string src = "var a = 1; var b = 2; var c = a + b; print(c);";

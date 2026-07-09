@@ -100,6 +100,8 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE", 2, false},
     /* 71 OP_LOAD_MUTATED             */ {"OP_LOAD_MUTATED", 1, false},
     /* 72 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK", 3, false}, // opcode(1B) + typeAnnotationConstIdx(2B)
+    /* 73 OP_PUSH_JUMP_TARGET         */ {"OP_PUSH_JUMP_TARGET", 3, false}, // opcode(1B) + target(2B)
+    /* 74 OP_FINALLY_END              */ {"OP_FINALLY_END", 1, false},
 };
 } // anonymous namespace
 
@@ -565,6 +567,16 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         offset += 3;
         break;
     }
+    case OpCode::OP_PUSH_JUMP_TARGET: {
+        uint16_t target = code[offset + 1] | (code[offset + 2] << 8);
+        str += "OP_PUSH_JUMP_TARGET target=" + std::to_string(target);
+        offset += 3;
+        break;
+    }
+    case OpCode::OP_FINALLY_END:
+        str += "OP_FINALLY_END";
+        offset += 1;
+        break;
     default:
         str += "OP_UNKNOWN(" + std::to_string(static_cast<int>(op)) + ")";
         offset += 1;

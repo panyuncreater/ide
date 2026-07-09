@@ -70,6 +70,7 @@
       "description": "Visual Studio 2022 多配置生成器，用于 IDE 打开",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
+      "toolset": "v145",
       "binaryDir": "${sourceDir}/out/build/vs",
       "inherits": "Qt",
       "condition": {

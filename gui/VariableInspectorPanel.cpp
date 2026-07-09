@@ -67,6 +67,44 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
             "（堆指针，tag bits=0x7FFB）",
             "ClosureData* (RefCounted) { refCount: 1; params: ['x']; env: Environment*; body: FunDecl*; }",
             "📦 堆分配：闭包捕获外层 Environment（弱引用链 parent）。env 链打破循环依赖。"},
+        VariableTypeExample{"type-float-inf", "float", "⚠️ float 无穷大", "var inf = 1.0 / 0.0;", "inf",
+                            "0x7FF0000000000000", "—",
+                            "⚠️ IEEE 754 infinity：指数位全 1（0x7FF）、尾数全 0。+inf 与 -inf 仅符号位不同。"
+                            "标量内联存入 NaN-box，注意与 NaN 的尾数区别（NaN 尾数非零）。"
+                            "三后端除零行为需统一：1.0/0.0 产生 inf 而非抛异常。"},
+        VariableTypeExample{"type-float-nan", "float", "⚠️ float NaN", "var nan = 0.0 / 0.0;", "nan",
+                            "0x7FF8000000000000", "—",
+                            "⚠️ IEEE 754 quiet NaN：指数位全 1（0x7FF）、尾数最高位为 1（0x8000000000000）。"
+                            "关键性质：NaN != NaN，因此相等比较需用 isNaN() 而非 == 。"
+                            "尾数非零使其与 infinity 区分；NaN-box 的 tag 模式需避开此位模式。"},
+        VariableTypeExample{"type-empty-string", "string", "📝 空字符串", "var s = \"\";", "",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "StringData* (RefCounted) { refCount: 1; bytes: ''; length: 0; }",
+                            "📦 堆分配：即使 length==0，StringData 仍分配在堆上（RefCounted 头 + 0 字节 payload）。"
+                            "Value 存指针而非内联，空字符串与非空字符串走同一类型路径，COW 检查 refCount==1 同样适用。"},
+        VariableTypeExample{"type-empty-array", "array", "📊 空数组", "var arr = [];", "[]",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "ArrayData* (RefCounted) { refCount: 1; elements: Value[0]; capacity: 0; }",
+                            "📦 堆分配：空数组仍持有 ArrayData* 指针，elements 容量为 0。"
+                            "COW 语义不变：`var b = a` 后两者共享同一空 ArrayData，refCount=2，"
+                            "push 时才触发 detach 深拷贝。"},
+        VariableTypeExample{"type-empty-dict", "dict", "📊 空字典", "var d = {};", "{}",
+                            "（堆指针，tag bits=0x7FFB）",
+                            "DictData* (RefCounted) { refCount: 1; entries: HashMap<String,Value> (empty); }",
+                            "📦 堆分配：空字典仍分配 DictData*，HashMap 桶数为 0 或初始容量。"
+                            "键需为 string，空字典同样支持 COW 共享，put 时检查 refCount 决定是否深拷贝。"},
+        VariableTypeExample{"type-nested-array", "array", "📊 嵌套数组", "var matrix = [[1, 2], [3, 4]];",
+                            "[[1, 2], [3, 4]]", "（堆指针，tag bits=0x7FFB）",
+                            "ArrayData* (RefCounted) { refCount: 1; elements: Value[2] -> ArrayData*; }",
+                            "📦 嵌套引用语义：外层数组持有两个内层 ArrayData* 指针。"
+                            "COW 仅复制最外层：`var m2 = m` 后 m2[0] 与 m[0] 共享同一内层数组（refCount=2），"
+                            "修改 m2[0][0] 会影响 m[0][0]，除非对内层显式深拷贝。"
+                            "三后端需统一此浅拷贝语义。"},
+        VariableTypeExample{"type-type-annotation", "int", "⚠️ 类型注解错误", "var x: int = \"hi\";",
+                            "(类型错误)", "—", "—",
+                            "⚠️ 类型注解强制：`var x: int = \"hi\"` 中注解 int 与字面量 string 不匹配。"
+                            "编译期生成 OP_TYPE_CHECK 指令，运行时若实际类型与注解不符则抛出 TypeError。"
+                            "三后端（Interpreter / StackVM / RegisterVM）需统一此检查行为与错误消息文本。"},
     };
     return kExamples;
 }

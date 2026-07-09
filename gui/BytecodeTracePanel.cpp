@@ -23,7 +23,7 @@
 // BytecodeTraceLibrary — 静态 OpCode 教学库
 // ============================================================
 
-/// 返回 OpCode 教学库（静态单例）：约 16 条核心字节码（常量/算术/变量/控制/
+/// 返回 OpCode 教学库（静态单例）：46 条核心字节码（常量/算术/变量/控制/
 /// 调用/容器/闭包/类），每条含分类、操作数格式、栈效果、语义与样例代码，
 /// 供「OpCode 教学库」子页展示并支持加载样例到主编辑器。
 const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
@@ -66,6 +66,69 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
                        "var p = Point(3, 4);"},
         OpCodeDocEntry{"OP_METHOD_CALL", "class", "nameIdx(2B) + argCount(1B) + recvVarIdx(2B)", "pop N+1 / push 1",
                        "📞 方法调用：通过 methodCache_ 查找方法，避免重复 ClassInfo 遍历。", "p.distance();"},
+        // ---- Arithmetic ----
+        OpCodeDocEntry{"OP_SUBTRACT", "arith", "无", "pop 2 / push 1",
+                       "🔢 弹出栈顶两个值（右、左），相减后压入结果（左 - 右）。", "var z = x - y;"},
+        OpCodeDocEntry{"OP_MULTIPLY", "arith", "无", "pop 2 / push 1", "🔢 弹出栈顶两个值相乘后压入结果。",
+                       "var z = x * y;"},
+        OpCodeDocEntry{"OP_DIVIDE", "arith", "无", "pop 2 / push 1",
+                       "🔢 弹出栈顶两个值相除后压入结果（整数除法截断向零，三后端统一）。", "var z = x / y;"},
+        OpCodeDocEntry{"OP_MODULO", "arith", "无", "pop 2 / push 1", "🔢 弹出栈顶两个值取模后压入结果。",
+                       "var z = x % y;"},
+        OpCodeDocEntry{"OP_NEGATE", "arith", "无", "pop 1 / push 1", "🔢 弹出栈顶值取负后压入。", "var z = -x;"},
+        // ---- Boolean ----
+        OpCodeDocEntry{"OP_TRUE", "const", "无", "push 1", "🟢 压入布尔常量 true。", "var b = true;"},
+        OpCodeDocEntry{"OP_FALSE", "const", "无", "push 1", "🔴 压入布尔常量 false。", "var b = false;"},
+        OpCodeDocEntry{"OP_NOT", "arith", "无", "pop 1 / push 1", "🔵 弹出栈顶值取逻辑非后压入布尔结果。", "var b = !x;"},
+        // ---- Comparison ----
+        OpCodeDocEntry{"OP_EQUAL", "arith", "无", "pop 2 / push 1",
+                       "⚖️ 弹出栈顶两个值进行相等比较后压入布尔结果。", "var b = x == y;"},
+        OpCodeDocEntry{"OP_NOT_EQUAL", "arith", "无", "pop 2 / push 1",
+                       "⚖️ 弹出栈顶两个值进行不等比较后压入布尔结果。", "var b = x != y;"},
+        OpCodeDocEntry{"OP_LESS", "arith", "无", "pop 2 / push 1",
+                       "⚖️ 弹出栈顶两个值（右、左），若左 < 右则压入 true。", "var b = x < y;"},
+        OpCodeDocEntry{"OP_GREATER", "arith", "无", "pop 2 / push 1",
+                       "⚖️ 弹出栈顶两个值（右、左），若左 > 右则压入 true。", "var b = x > y;"},
+        OpCodeDocEntry{"OP_LESS_EQUAL", "arith", "无", "pop 2 / push 1",
+                       "⚖️ 弹出栈顶两个值（右、左），若左 <= 右则压入 true。", "var b = x <= y;"},
+        OpCodeDocEntry{"OP_GREATER_EQUAL", "arith", "无", "pop 2 / push 1",
+                       "⚖️ 弹出栈顶两个值（右、左），若左 >= 右则压入 true。", "var b = x >= y;"},
+        // ---- Stack / IO ----
+        OpCodeDocEntry{"OP_POP", "control", "无", "pop 1",
+                       "📤 弹出栈顶值并丢弃（表达式语句副作用求值后丢弃返回值，防止栈泄漏）。", "foo();"},
+        OpCodeDocEntry{"OP_PRINT", "call", "无", "pop 1", "🖨️ 弹出栈顶值并输出到标准输出（带换行）。", "print(x);"},
+        // ---- Local / var ----
+        OpCodeDocEntry{"OP_GET_LOCAL", "var", "slot(1B)", "push 1",
+                       "📍 读取当前栈帧中局部变量槽位并压栈（编译期分配的栈相对位置）。", "// 函数内访问局部变量"},
+        OpCodeDocEntry{"OP_SET_LOCAL", "var", "slot(1B)", "pop 1", "📍 弹出栈顶值写入当前栈帧的局部变量槽位。",
+                       "x = 10;"},
+        OpCodeDocEntry{"OP_DEFINE_GLOBAL", "var", "nameIdx(2B)", "pop 1",
+                       "📍 弹出栈顶值，以 name 为键首次写入全局表（与 OP_SET_GLOBAL 的已存在赋值语义区分）。",
+                       "var x = 10;"},
+        // ---- Index / member ----
+        OpCodeDocEntry{"OP_INDEX_GET", "container", "无", "pop 2 / push 1",
+                       "🔑 弹出索引与容器，读取 container[index] 并压栈（支持数组/字典/字符串）。", "var v = arr[0];"},
+        OpCodeDocEntry{"OP_INDEX_SET", "container", "无", "pop 3",
+                       "🔑 弹出值、索引、容器，执行 container[index] = value（COW 写时拷贝）。", "arr[0] = 99;"},
+        OpCodeDocEntry{"OP_MEMBER_GET", "container", "nameIdx(2B)", "pop 1 / push 1",
+                       "🔑 弹出实例，读取字段 name 的值并压栈（通过 fieldSlotIndex 查表）。", "var v = p.x;"},
+        OpCodeDocEntry{"OP_MEMBER_SET", "container", "nameIdx(2B)", "pop 2",
+                       "🔑 弹出值与实例，写入字段 name（实例字段槽位赋值）。", "p.x = 10;"},
+        // ---- Closure ----
+        OpCodeDocEntry{"OP_SET_UPVALUE", "closure", "upvalueIndex(1B)", "pop 1",
+                       "🔗 弹出栈顶值写入指定 upvalue（开放则写栈帧，已关闭则写堆）。", "// 闭包内赋值外层变量"},
+        OpCodeDocEntry{"OP_CLOSE_UPVALUE", "closure", "无", "pop 1",
+                       "🔗 弹出栈顶值，将仍开放的 upvalue 迁移到堆（变量逃逸出作用域时触发）。",
+                       "// 闭包捕获的变量逃逸"},
+        // ---- Exception ----
+        OpCodeDocEntry{"OP_THROW", "control", "无", "pop 1",
+                       "⚠️ 弹出栈顶值作为异常对象并抛出，沿调用栈寻找匹配的 catch。", "throw \"error\";"},
+        OpCodeDocEntry{"OP_TRY_BEGIN", "control", "catchOffset(2B)", "no effect",
+                       "🛡️ 注册 try 块的 catch 处理偏移，异常抛出时跳转到该处执行。", "try { ... } catch (e) { ... }"},
+        // ---- Class ----
+        OpCodeDocEntry{"OP_SUPER_CALL", "class", "nameIdx(2B) + argCount(1B)", "pop N+1 / push 1",
+                       "📞 调用父类方法：从当前实例的父类链查找方法并调用（super 语义三后端统一）。",
+                       "super.foo();"},
     };
     return kDocs;
 }
@@ -258,6 +321,9 @@ void BytecodeTracePanel::onClearTrace() {
     dequeShifted_ = false;
     traceTable_->setRowCount(0);
     stackDetail_->clear();
+    // R54-14 fix: 空状态占位提示
+    stackDetail_->setHtml(QString::fromUtf8(
+        "<div style='color:#888; padding:8px;'><i>（轨迹已清空，捕获后将显示栈快照）</i></div>"));
     liveStatusLabel_->setText(tr("状态：未运行（轨迹已清空）"));
 }
 
@@ -419,7 +485,7 @@ void BytecodeTracePanel::onTraceRowSelected() {
                            "<p><b>IP:</b> %3 | <b>行:</b> %4 | <b>帧数:</b> %5</p>"
                            "%6")
                        .arg(e.step)
-                       .arg(QString::fromUtf8(e.opCodeName.c_str()))
+                       .arg(QString::fromUtf8(e.opCodeName.c_str()).toHtmlEscaped()) // R54-15 fix: HTML 转义
                        .arg(e.ip)
                        .arg(e.line)
                        .arg(e.frameCount)
@@ -457,6 +523,7 @@ void BytecodeTracePanel::showDoc(int index) {
         return;
     }
     const auto& d = BytecodeTraceLibrary::opCodeDocs()[index];
+    // R54-16 fix: 统一 HTML 转义所有字段，对齐 R52 批量转义修复
     QString html = QString("<h2>%1</h2>"
                            "<p><b>分类:</b> %2</p>"
                            "<h3>操作数格式</h3>"
@@ -467,10 +534,10 @@ void BytecodeTracePanel::showDoc(int index) {
                            "%5"
                            "<h3>样例代码</h3>"
                            "<pre>%6</pre>")
-                       .arg(QString::fromUtf8(d.opCodeName.c_str()))
-                       .arg(QString::fromUtf8(d.category.c_str()))
-                       .arg(QString::fromUtf8(d.operandFormat.c_str()))
-                       .arg(QString::fromUtf8(d.stackEffect.c_str()))
+                       .arg(QString::fromUtf8(d.opCodeName.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(d.category.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(d.operandFormat.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(d.stackEffect.c_str()).toHtmlEscaped())
                        .arg(MarkdownRenderer::markdownToHtmlFragment(d.semantics))
                        .arg(QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped());
     docDetail_->setHtml(html);

@@ -73,6 +73,10 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
     // null 兼容所有类型注解（2026-06-29 用户决策）
     if (val.isNull())
         return true;
+    // 可选类型 T?：剥离末尾 '?' 后递归匹配（对齐 Interpreter::typeMatch AUDIT-P2.7）
+    if (annotation.size() >= 2 && annotation.back() == '?') {
+        return typeMatchValue(val, annotation.substr(0, annotation.size() - 1));
+    }
     if (annotation == TypeName::INT)
         return val.isInt();
     if (annotation == TypeName::FLOAT)
@@ -87,8 +91,30 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
         return val.isDict();
     if (annotation == TypeName::NULL_T)
         return val.isNull();
-    // 数组元素类型注解，如 "int[]"
-    if (annotation.size() >= 2 && annotation.back() == ']' && annotation[annotation.size() - 2] == '[') {
+    // dict[K:V] 泛型字典类型注解：key 总是 string，递归检查每个 value（对齐 Interpreter::typeMatch AUDIT-P2.7）
+    if (annotation.size() >= 7 && annotation.substr(0, 5) == "dict[" && annotation.back() == ']') {
+        if (!val.isDict())
+            return false;
+        std::string inner = annotation.substr(5, annotation.size() - 6);
+        size_t colonPos = inner.find(':');
+        if (colonPos == std::string::npos)
+            return false;
+        std::string keyType = inner.substr(0, colonPos);
+        std::string valType = inner.substr(colonPos + 1);
+        for (const auto& kv : val.dictVal()) {
+            if (keyType != "string")
+                return false;
+            if (!typeMatchValue(kv.second, valType))
+                return false;
+        }
+        return true;
+    }
+    // 函数类型 fun(...):ret：仅检查是闭包即可（对齐 Interpreter::typeMatch AUDIT-P2.7，参数/返回类型不做验证）
+    if (annotation.size() >= 5 && annotation.substr(0, 4) == "fun(") {
+        return val.isClosure();
+    }
+    // 数组元素类型注解，如 "int[]"、多维 "int[][]"（后缀 [] 剥离递归，对齐 Interpreter::typeMatch AUDIT-P2-CORRECT）
+    if (annotation.size() >= 2 && annotation.substr(annotation.size() - 2) == "[]") {
         if (!val.isArray())
             return false;
         std::string elemType = annotation.substr(0, annotation.size() - 2);

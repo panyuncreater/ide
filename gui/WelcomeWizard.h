@@ -101,6 +101,13 @@ private:
     void updateNavButtons();
     void updateStepIndicator();
 
+protected:
+    /// R54-10 fix: Esc 键调用 onSkip()（而非基类 reject()），确保 completed_=true
+    /// 被设置，下次启动不再弹出向导。原实现未重写 keyPressEvent，Esc 走 QDialog
+    /// 默认 reject() 不经过 onSkip()，导致按 Esc 关闭后 completed_ 仍为 false。
+    void keyPressEvent(QKeyEvent* event) override;
+
+private:
     /// 用 setExtraSelections 高亮 codeEdit_ 中 [start, end) 字符区间
     void highlightCodeRange(int start, int end);
 

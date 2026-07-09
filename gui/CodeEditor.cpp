@@ -642,18 +642,17 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     //     断点应保持原行号（不应 +1）。原实现错误地对原行断点也 +1。
     //   - 删除整行（含换行符）：原行内容消失，下移内容上移。VS Code 语义是断点保持
     //     原行号（指向新移入的内容），原实现错误地 -1。
-    // 通过检查 position 是否位于块末尾换行符位置来区分插入场景。
-    // block.length() 含换行符，position == block.position() + block.length() - 1
-    // 表示光标在块末尾换行符之前（即行末）。
+    // AUDIT-P1.3 fix: 用 startsAtBoundary = (position == block.position()) 统一检测
+    //   行首边界，替代原 block.length() > 1 检测。原检测在空行（length==1）场景
+    //   无法区分"行首"与"行末"（空行 position 恒等于 block.position()），且对
+    //   文档末尾无换行符的块（length==text.length()）计算偏差。startsAtBoundary
+    //   直接语义化"删除/插入是否从行首开始"，更精确。
+    bool startsAtBoundary = (position == block.position());
     if (delta > 0) {
-        // 插入场景：若插入发生在块末尾换行符位置，原行内容不变，断点不应偏移。
+        // 插入场景：若插入发生在块末尾换行符位置（非行首），原行内容不变，断点不应偏移。
         // 将 startLine +1 使原行 line < startLine，不参与偏移。
-        // AUDIT-P1-CORRECT fix: 添加 block.length() > 1 条件区分"行末插入"与"行首插入"。
-        //   - 行末插入：原块有内容（length > 1），position 在块末尾换行符位置 → 行末语义
-        //   - 行首插入：新块为空（length == 1），position 在块开头 → 行首语义（原行内容下移，断点应 +1）
-        // 原实现遗漏 length > 1 条件，导致行首插入被误判为行末插入，startLine 错误 +1，
-        // 原行断点未随内容下移（停留在新空行而非跟随原内容）。
-        if (block.length() > 1 && position >= block.position() + block.length() - 1) {
+        // 行首插入（startsAtBoundary）：原行内容下移，断点应 +1（不 ++startLine）。
+        if (!startsAtBoundary && position >= block.position() + block.length() - 1) {
             ++startLine;
         }
     } else if (delta < 0) {
@@ -675,8 +674,19 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
 
         if (linesRemoved > 0) {
             // 多行删除：需要删除被删除行区间内的断点
-            int firstDeletedLine = startLine;                   // 删除起始行
-            int lastDeletedLine = startLine + linesRemoved - 1; // 最后被删除行
+            // AUDIT-P1.3 fix: lastDeletedLine 需按 startsAtBoundary 区分计算。
+            //   - 行首删除（startsAtBoundary）：原行内容被删除，新内容上移。被删除的
+            //     行区间是 [startLine+1, startLine+linesRemoved-1]（原行断点保持，
+            //     指向新移入的内容）。lastDeletedLine = startLine + linesRemoved - 1。
+            //   - 非行首删除（行末/行中间删除）：原行保留，下一行合并进来。被删除的
+            //     行区间是 [startLine+1, startLine+linesRemoved]（下一行到下N行被删除）。
+            //     lastDeletedLine = startLine + linesRemoved。
+            //   原实现统一用 startLine + linesRemoved - 1，非行首删除时少算一行，
+            //   导致最后一个被删除行的断点被 shift（+delta）而非删除，错误地创建到原行。
+            int firstDeletedLine = startLine; // keep 边界：line <= firstDeletedLine 保持
+            int lastDeletedLine = startsAtBoundary
+                                      ? (startLine + linesRemoved - 1)
+                                      : (startLine + linesRemoved);
             // 断点 line <= firstDeletedLine：保持（VS Code 语义，指向合并后内容）
             // 断点 firstDeletedLine < line <= lastDeletedLine：删除（不插入）
             // 断点 line > lastDeletedLine：平移 delta
@@ -717,7 +727,7 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
         }
         // linesRemoved == 0：单行内删除（不改变行数，但 delta < 0 不应到达此处）
         // 回退到原有单行删除逻辑
-        if (position == block.position()) {
+        if (startsAtBoundary) {
             ++startLine;
         }
     }
@@ -764,6 +774,11 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
         }
     }
     foldedBlocks_ = newFolded;
+
+    // AUDIT-P3-ROUND50 fix: 单行插入/删除偏移路径未发射 breakpointsChanged，
+    // 与多行删除路径（L715）不一致。当前因调试期只读而未被触发，但若未来放开
+    // 某模式下编辑，断点行号偏移后调试器将持有陈旧行号。
+    emit breakpointsChanged();
 
     update();
 }
@@ -1267,6 +1282,112 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
             }
         }
         tc.endEditBlock();
+        return;
+    }
+
+    // R53-UX9 fix: Ctrl+Shift+D 复制当前行（或选区）到下一行。
+    // 对齐 VSCode/Sublime 常用编辑器快捷键，提升代码编辑效率。
+    // 与 Ctrl+D（选中下一个相同单词）不冲突——后者无 Shift。
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_D) {
+        QTextCursor tc = textCursor();
+        tc.beginEditBlock();
+        if (tc.hasSelection()) {
+            // 选区复制：在选区末尾插入选区文本副本
+            int selStart = tc.selectionStart();
+            int selEnd = tc.selectionEnd();
+            QString selText = tc.selectedText();
+            // QTextCursor.selectedText 用 U+2029 替换换行符，需还原
+            selText.replace(QChar(0x2029), QChar('\n'));
+            tc.setPosition(selEnd);
+            tc.insertText('\n' + selText);
+            // 保持原选区选中，光标移到副本
+            QTextCursor newTc = tc;
+            newTc.setPosition(selEnd + 1);
+            newTc.setPosition(selEnd + 1 + selText.length(), QTextCursor::KeepAnchor);
+            setTextCursor(newTc);
+        } else {
+            // 当前行复制：在当前行下方插入当前行副本
+            tc.select(QTextCursor::LineUnderCursor);
+            QString lineText = tc.selectedText();
+            lineText.replace(QChar(0x2029), QChar('\n'));
+            tc.movePosition(QTextCursor::EndOfLine);
+            tc.insertText('\n' + lineText);
+        }
+        tc.endEditBlock();
+        return;
+    }
+
+    // R53-UX9 fix: Alt+Up / Alt+Down 移动当前行（或选区）上/下。
+    // 对齐 VSCode 常用编辑器快捷键，提升代码重组效率。
+    // 不与现有快捷键冲突（Alt+Up/Down 此前未绑定）。
+    if (event->modifiers() == Qt::AltModifier &&
+        (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+        bool moveUp = (event->key() == Qt::Key_Up);
+        QTextCursor tc = textCursor();
+        QTextDocument* doc = document();
+
+        // 确定要移动的行范围 [startLine, endLine]
+        int selStart = tc.selectionStart();
+        int selEnd = tc.selectionEnd();
+        int startLine = doc->findBlock(selStart).blockNumber();
+        int endLine = doc->findBlock(selEnd).blockNumber();
+        // 若选区末尾恰在行首（非整行选中末尾），endLine 应回退一行
+        if (selStart != selEnd && doc->findBlock(selEnd).position() == selEnd && endLine > startLine) {
+            --endLine;
+        }
+        int totalBlocks = doc->blockCount();
+
+        if (moveUp) {
+            if (startLine <= 0)
+                return; // 已是第一行，无法上移
+            QTextBlock prevBlock = doc->findBlockByNumber(startLine - 1);
+            QString prevText = prevBlock.text();
+            tc.beginEditBlock();
+            // 删除上一行
+            QTextCursor del = tc;
+            del.setPosition(prevBlock.position());
+            del.movePosition(QTextCursor::StartOfLine);
+            del.movePosition(QTextCursor::Down, QTextCursor::KeepAnchor);
+            del.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+            del.removeSelectedText();
+            // 在移动块末尾插入被删的行
+            QTextBlock endBlock = doc->findBlockByNumber(endLine); // 删除后行号已变
+            tc.setPosition(endBlock.position() + endBlock.text().length());
+            tc.insertText('\n' + prevText);
+            tc.endEditBlock();
+            // 重新选中移动后的块
+            QTextBlock newStart = doc->findBlockByNumber(startLine - 1);
+            QTextBlock newEnd = doc->findBlockByNumber(endLine - 1);
+            QTextCursor sel = tc;
+            sel.setPosition(newStart.position());
+            sel.setPosition(newEnd.position() + newEnd.text().length(), QTextCursor::KeepAnchor);
+            setTextCursor(sel);
+        } else {
+            if (endLine >= totalBlocks - 1)
+                return; // 已是最后一行，无法下移
+            QTextBlock nextBlock = doc->findBlockByNumber(endLine + 1);
+            QString nextText = nextBlock.text();
+            tc.beginEditBlock();
+            // 删除下一行
+            QTextCursor del = tc;
+            del.setPosition(nextBlock.position());
+            del.movePosition(QTextCursor::StartOfLine);
+            del.movePosition(QTextCursor::Down, QTextCursor::KeepAnchor);
+            del.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+            del.removeSelectedText();
+            // 在移动块开头插入被删的行
+            QTextBlock startBlock = doc->findBlockByNumber(startLine);
+            tc.setPosition(startBlock.position());
+            tc.insertText(nextText + '\n');
+            tc.endEditBlock();
+            // 重新选中移动后的块
+            QTextBlock newStart = doc->findBlockByNumber(startLine + 1);
+            QTextBlock newEnd = doc->findBlockByNumber(endLine + 1);
+            QTextCursor sel = tc;
+            sel.setPosition(newStart.position());
+            sel.setPosition(newEnd.position() + newEnd.text().length(), QTextCursor::KeepAnchor);
+            setTextCursor(sel);
+        }
         return;
     }
 

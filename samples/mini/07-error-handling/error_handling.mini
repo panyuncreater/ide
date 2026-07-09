@@ -1,6 +1,7 @@
 // error_handling.mini - 异常处理演示
 // 覆盖特性：try/catch 语句、throw 抛出异常、异常传播、
-//           catch 变量绑定、嵌套 try/catch
+//           catch 变量绑定、嵌套 try/catch、try/finally（无 catch）、
+//           try/catch/finally（正常与异常路径）
 // ============================================================
 
 // 安全除法：除数为零时抛出异常
@@ -63,9 +64,47 @@ try {
 print("");
 print("Done - all exceptions handled.");
 
+// ---- try / finally ----
+print("");
+print("=== try / catch / finally（正常路径）===");
+fun riskyDivide(a, b) {
+    if (b == 0) {
+        throw "DivisionByZero";
+    }
+    return a / b;
+}
+try {
+    print("result = {riskyDivide(10, 2)}");
+} catch (e) {
+    print("caught: {e}");
+} finally {
+    print("finally ran (normal path)");
+}
+
+print("");
+print("=== try / catch / finally（异常路径）===");
+try {
+    print("result = {riskyDivide(10, 0)}");
+} catch (e) {
+    print("caught: {e}");
+} finally {
+    print("finally ran (exception path)");
+}
+
+print("");
+print("=== 仅 try / finally（无 catch）===");
+try {
+    print("doing work...");
+} finally {
+    print("cleanup always runs");
+}
+
+print("");
+print("done.");
+
 // 预期输出：
 // === 基本 try/catch ===
-// 10 / 3 = 3.33333
+// 10 / 3 = 3
 //
 // === 捕获除零异常 ===
 // Caught: DivisionByZero: cannot divide 5 by zero
@@ -78,3 +117,17 @@ print("Done - all exceptions handled.");
 // Outer catch: outer error: caused by inner error
 //
 // Done - all exceptions handled.
+//
+// === try / catch / finally（正常路径）===
+// result = 5
+// finally ran (normal path)
+//
+// === try / catch / finally（异常路径）===
+// caught: DivisionByZero
+// finally ran (exception path)
+//
+// === 仅 try / finally（无 catch）===
+// doing work...
+// cleanup always runs
+//
+// done.

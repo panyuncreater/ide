@@ -1,0 +1,39 @@
+// backends_showcase.mini - 执行后端与编译器内部演示
+// 覆盖：三后端一致性、IR 优化变换、栈式 VM 字节码
+// 在 IDE 的「三后端对比 / IR 变换 / 字节码轨迹」面板中分别观察
+// ============================================================
+
+// ---- 1. 三后端一致性 ----
+// 同一段代码在三个后端（栈式 VM / 寄存器 VM / 解释器）输出完全相同
+print(7 / 2);          // 3（整数除法截断向零）
+print(-7 / 2);         // -3
+print(0 or "default"); // "default"（or 返回操作数原值）
+print(5 and 0);        // 0（and 返回操作数原值）
+print(10 / 3);         // 3
+print(10.0 / 3);       // 3.333...
+
+// ---- 2. IR 变换（常量折叠 / 死代码消除 / 复制传播）----
+var itA = 1 + 2;       // 常量折叠：1+2 在编译期算成 3
+var itB = itA * 10;
+print(itB);            // 30
+var itUnused = 999;    // 死代码消除：未使用变量被优化器删除
+var itUsed = 42;
+print(itUsed);         // 42
+var itX = 5;
+var itY = itX;         // 复制传播：itY 被消去，直接用 itX
+var itZ = itY + 1;
+print(itZ);            // 6
+
+// ---- 3. 栈式 VM 字节码 ----
+// 在「字节码轨迹面板」单步执行，观察栈变化
+var x = 1 + 2;        // OP_INT 0 (3), OP_DEFINE_GLOBAL slot=7 —— 常量折叠：1+2 编译期算成 3
+var y = x * 3;        // OP_GET_GLOBAL slot=7, OP_INT 0 (3), OP_MULTIPLY, OP_DEFINE_GLOBAL slot=8
+print(y);              // OP_GET_GLOBAL slot=8, OP_PRINT → 输出 9
+
+var z = (1 + 2) * (3 + 4);   // OP_INT 10 (21), OP_DEFINE_GLOBAL slot=9 —— 整表达式被常量折叠为 21
+print(z);              // OP_GET_GLOBAL slot=9, OP_PRINT → 输出 21
+
+fun double(n) {       // OP_CLOSURE 11 (double) upvalues=0, OP_POP —— 全局函数：闭包建好后弹出栈
+    return n * 2;      // OP_GET_LOCAL 0, OP_INT 0 (2), OP_MULTIPLY, OP_RETURN
+}
+print(double(5));      // OP_INT 4 (5), OP_CALL 11 (double) 1, OP_PRINT → 输出 10

@@ -288,7 +288,12 @@ void IdeController::setupCompilerModuleLoader(const std::string& filePath) {
         for (const QString& candidate : candidates) {
             QFile file(candidate);
             if (file.exists() && file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                return QString::fromUtf8(file.readAll()).toStdString();
+                // P3.4 fix: 区分"文件不存在"与"空文件"。文件存在但内容为空时
+                // 返回 "\n"（合法空白源码，Lexer 产出 [TK_EOF]，Parser 产出空 Block），
+                // 而非 ""（被三后端视为加载失败）。这样 import 一个 0 字节 .mini 文件
+                // 会得到一个合法的空模块（无导出），而非 ModuleNotFound 错误。
+                std::string content = QString::fromUtf8(file.readAll()).toStdString();
+                return content.empty() ? "\n" : content;
             }
         }
         return "";
@@ -317,20 +322,27 @@ Value IdeController::executeRepl(Block& program) {
 }
 
 // P0-3 fix (F11): 实现 getReplScopeVariableNames，供 GUI ErrorHintEngine 拼写建议使用
+// R53-1 fix: 对齐 DebugCoordinator 的 AUDIT-P1 修复模式，使用 currentEnvironmentShared()
+// 替代裸 currentEnvironment()。该方法可能在 worker 线程 emit runtimeError 后被主线程
+// QueuedConnection 处理器调用，裸指针遍历 parent 链违反 Interpreter.h 跨线程契约。
+// shared_ptr 副本通过赋值延长 parent 链每个节点生命周期，防止 worker 线程修改或析构
+// Environment 时主线程解引用悬挂指针。
 std::vector<std::string> IdeController::getReplScopeVariableNames() const {
     std::vector<std::string> names;
-    Environment* env = interpreter_->currentEnvironment();
+    auto env = interpreter_->currentEnvironmentShared();
     if (!env)
         return names;
-    auto vars = env->allVariables(); // 父作用域在前，子作用域追加末尾
-    names.reserve(vars.size());
-    // 去重（保留首次出现，即更外层作用域的同名变量；拼写建议无强顺序要求）
+    // 手动遍历 parent 链（用 shared_ptr 赋值延长每个节点生命周期），
+    // 顺序与 allVariables() 一致：父作用域在前，子作用域追加末尾。
     std::unordered_set<std::string> seen;
-    seen.reserve(vars.size() * 2);
-    for (const auto& kv : vars) {
-        if (seen.insert(kv.first).second) {
-            names.push_back(kv.first);
+    while (env) {
+        const auto& locals = env->localVariables();
+        for (const auto& kv : locals) {
+            if (seen.insert(kv.first).second) {
+                names.push_back(kv.first);
+            }
         }
+        env = env->parent; // shared_ptr 赋值，延长 parent 生命周期
     }
     return names;
 }
@@ -350,7 +362,14 @@ std::string IdeController::runStringCaptureOutput(const std::string& source) {
         }
         Interpreter interp;
         std::string captured;
-        interp.setOutputCallback([&captured](const std::string& text) { captured += text; });
+        // R62-4 fix: 每个 print 语句的输出后追加换行，对齐 IDE 主输出面板
+        // (QTextEdit::append) 的行为。此前回调仅拼接 raw text，多条 print
+        // 输出会被粘在一起（如 print(1);print(2); → "12" 而非 "1\n2"），
+        // 导致 lab-07/lab-08 等多 print 预期输出题永远判分失败。
+        interp.setOutputCallback([&captured](const std::string& text) {
+            captured += text;
+            captured += "\n";
+        });
         interp.execute(*ast);
         return captured;
     } catch (const std::exception& e) {
@@ -402,7 +421,9 @@ void IdeController::setupReplModuleCallbacks() {
             return "";
         QFile file(resolved);
         if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            return QString::fromUtf8(file.readAll()).toStdString();
+            // P3.4 fix: 区分"文件不存在"与"空文件"——空文件返回 "\n"（合法空模块）
+            std::string content = QString::fromUtf8(file.readAll()).toStdString();
+            return content.empty() ? "\n" : content;
         }
         return "";
     });

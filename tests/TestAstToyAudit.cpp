@@ -30,6 +30,8 @@
 #include <gtest/gtest.h>
 
 #include "gui/AstToyLevels.h"
+#include "lexer/Lexer.h"
+#include "parser/Parser.h"
 
 #include <algorithm>
 #include <set>
@@ -283,4 +285,42 @@ TEST(AstToyLibraryAudit, FindByLevelReturnsCorrectInstance) {
 
 TEST(AstToyLibraryAudit, LevelCountConstantIsSix) {
     EXPECT_EQ(AstToyLibrary::levelCount(), 6);
+}
+
+// ============================================================
+// ROUND56 fix: 验证「用真实 Parser 验证」按钮对所有题目都能成功解析
+// 复刻 AstBuilderToyPanel::onVerifyWithRealParser 的包装逻辑
+// 用户报告：点「用真实 Parser 验证」会报错，按钮失效
+// ============================================================
+TEST(AstToyLibraryAudit, VerifyWithRealParserAllLevelsParse) {
+    const auto& ls = AstToyLibrary::levels();
+    ASSERT_FALSE(ls.empty());
+    for (const auto& lv : ls) {
+        const std::string& expr = lv.targetExpression;
+        ASSERT_FALSE(expr.empty());
+        // 复刻 onVerifyWithRealParser 的 isStatement 判定
+        bool isStatement = (expr.back() == ';') || expr.find("var ") == 0 || expr.find("print(") == 0;
+        std::string source;
+        if (isStatement) {
+            source = expr;
+            if (source.back() != ';')
+                source += ";";
+        } else {
+            source = "var _toy_tmp = " + expr + ";";
+        }
+        Lexer lexer;
+        auto tokens = lexer.scan(source);
+        ASSERT_FALSE(lexer.getDiagnostics().hasErrors())
+            << "level " << lv.level << " lexing failed for source: " << source;
+        Parser parser;
+        auto ast = parser.parse(tokens);
+        // 收集诊断
+        std::string errs;
+        for (const auto& d : parser.getDiagnostics().all()) {
+            if (d.isError())
+                errs += d.format() + "\n";
+        }
+        EXPECT_EQ(errs, "") << "level " << lv.level << " parsing failed for source: " << source;
+        EXPECT_NE(ast, nullptr) << "level " << lv.level << " parser returned null AST for source: " << source;
+    }
 }

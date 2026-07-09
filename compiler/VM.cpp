@@ -118,6 +118,10 @@ VMResult VM::runtimeError(const std::string& msg) {
 
 VMResult VM::throwException(Value thrownValue) {
     // F11: 异常处理 — 搜索 try 处理器或跨帧传播
+    // AUDIT-P1.1 fix: 异常传播中断 break/continue 续跳链，清空 pendingJumpStack_。
+    // 否则 finally 内部 throw 异常后，外层 finally 的 OP_FINALLY_END 会错误跳转到
+    // 已被中断的 break/continue 目标（异常优先于控制流转移）。
+    pendingJumpStack_.clear();
     while (true) {
         size_t currentFrameIdx = frames_.size() - 1;
 
@@ -129,7 +133,9 @@ VMResult VM::throwException(Value thrownValue) {
                 // 找到 catch 处理器：截断栈、推入异常值、跳转到 catch
                 // P0-5 fix: 截断栈前关闭指向被截断栈槽的 open upvalues，防止悬垂指针
                 if (handler.stackBase <= stack_.size()) {
-                    closeUpvaluesFrom(handler.stackBase);
+                    // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止异常处理，避免在损坏状态上继续
+                    if (closeUpvaluesFrom(handler.stackBase) != VMResult::VM_OK)
+                        return VMResult::VM_RUNTIME_ERROR;
                     stack_.resize(handler.stackBase);
                 }
                 push(std::move(thrownValue));
@@ -159,7 +165,9 @@ VMResult VM::throwException(Value thrownValue) {
         size_t savedBp = frames_.back().basePointer;
         size_t poppedFrameIdx = frames_.size() - 1;
         // P0-5 fix: 弹帧前关闭该帧关联的 open upvalues
-        closeUpvaluesFrom(savedBp);
+        // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止异常展开，避免在损坏状态上继续
+        if (closeUpvaluesFrom(savedBp) != VMResult::VM_OK)
+            return VMResult::VM_RUNTIME_ERROR;
         frames_.pop_back();
         // Bug3 fix: 清理属于被弹出帧的 tryStack_ handler（与 OP_RETURN 保持一致）
         while (!tryStack_.empty() && tryStack_.back().frameIndex >= poppedFrameIdx) {
@@ -177,10 +185,12 @@ VMResult VM::throwException(Value thrownValue) {
     }
 }
 
-void VM::closeUpvaluesFrom(size_t fromSlot) {
+VMResult VM::closeUpvaluesFrom(size_t fromSlot) {
     // F11-fix: 关闭指向 [fromSlot, stack_.size()) 范围内栈槽的 open upvalues
     // B5 fix: openUpvalues_ 现为按 stackSlot 排序的 multimap，lower_bound(fromSlot) 定位起始点，
     // 一次性关闭并擦除 [fromSlot, ∞) 全部条目，复杂度从 O(n) 降为 O(log n + k)。
+    // AUDIT-P2.5 fix: 返回类型 void→VMResult，调用方可 fail-fast 传播错误。
+    bool hadError = false;
     auto it = openUpvalues_.lower_bound(fromSlot);
     while (it != openUpvalues_.end()) {
         if (auto uv = it->second.lock()) { // closure 仍持有强引用则有效
@@ -192,14 +202,17 @@ void VM::closeUpvaluesFrom(size_t fromSlot) {
                     // 原实现仅打 Warning 继续执行，闭包静默捕获 null 难以排查根因。
                     // runtimeError 设置 hasError_=true，VM 在后续指令分发终止执行；
                     // 仍执行 isClosed=true + erase 以关闭 upvalue（保留默认 null 值），防止悬垂引用。
-                    runtimeError("closeUpvaluesFrom: slot " + std::to_string(uv->stackSlot) + " >= stack size " +
+                    // AUDIT-P2.5 fix: 记录错误标志，函数末尾返回 VM_RUNTIME_ERROR，调用方立即 return。
+                    (void)runtimeError("closeUpvaluesFrom: slot " + std::to_string(uv->stackSlot) + " >= stack size " +
                                  std::to_string(stack_.size()));
+                    hadError = true;
                 }
                 uv->isClosed = true;
             }
         }
         it = openUpvalues_.erase(it);
     }
+    return hadError ? VMResult::VM_RUNTIME_ERROR : VMResult::VM_OK;
 }
 
 bool VM::fillDefaultArgs(const BytecodeChunk& chunk, uint8_t& argCount, const std::string& funName,
@@ -620,6 +633,13 @@ VMResult VM::writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlo
 VMResult VM::finishSharedBuiltin(Result<Value>&& sr, size_t& ip, OpCode op, int instrLen) {
     if (sr.is_err())
         return runtimeError(sr.error().message);
+    // AUDIT-P1-ROUND50 fix: 非变异内置方法（len/contains/join/keys/values/has/get）
+    // 必须设置 lastMutatedReceiver_ 为接收者原值，对齐 RegisterVM 的
+    // lastMutatedReceiverReg_ = objReg（RegisterVM.cpp L1736-1737 对所有 method call 设置）。
+    // IR 路径（IR.cpp visitMethodCall L2164-2168）对所有 isVarRef 方法调用无条件
+    // 发射 LOAD_MUTATED + STORE。若不设置，LOAD_MUTATED 会读到上一次变异方法遗留的
+    // 旧值（或初始 null），STORE 将错误值写回接收者变量，导致变量被覆盖。
+    lastMutatedReceiver_ = peek(0);
     pop(); // 弹出接收者
     push(std::move(sr.value()));
     notifyStep(ip, op);
@@ -806,6 +826,10 @@ VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method, const
         return runtimeError("字符串没有方法 " + methodName);
     }
 
+    // AUDIT-P1-ROUND50 fix: 字符串方法全部非变异，但 IR 路径对所有 isVarRef 方法调用
+    // 无条件发射 LOAD_MUTATED + STORE。必须设置 lastMutatedReceiver_ 为接收者原值，
+    // 否则 LOAD_MUTATED 读到旧值导致字符串变量被覆盖。对齐 finishSharedBuiltin 修复。
+    lastMutatedReceiver_ = peek(0);
     pop(); // 移除接收者（在计算完成后）
     // V-P2-20 fix: result 后续不再使用，std::move 入栈
     push(std::move(result));
@@ -856,6 +880,7 @@ void VM::initExecution(const CompileResult& result) {
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
     tryStack_.clear(); // F11: 清理异常处理栈
+    pendingJumpStack_.clear(); // AUDIT-P1.1 fix: 清理续跳栈
     // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
     stepInstructionCount_ = 0;
     lastAsciiStrPtr_ = nullptr;
@@ -920,6 +945,7 @@ void VM::resetState() {
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
     tryStack_.clear();         // F11: 清理异常处理栈
+    pendingJumpStack_.clear(); // AUDIT-P1.1 fix: 清理续跳栈
     openUpvalues_.clear();     // VM-05/06
     functionClosures_.clear(); // VM-05/06
     // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
@@ -965,7 +991,9 @@ VMResult VM::stepOnce() {
         bool wasInit = frame.isInitCall;
         // P1-5 fix: 记录帧索引并清理 tryStack_ handler
         size_t returningFrameIdx = frames_.size() - 1;
-        closeUpvaluesFrom(savedBp); // P1-5 fix: 关闭 open upvalues
+        // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止返回，避免在损坏状态上继续
+        if (closeUpvaluesFrom(savedBp) != VMResult::VM_OK) // P1-5 fix: 关闭 open upvalues
+            return VMResult::VM_RUNTIME_ERROR;
         frames_.pop_back();
         while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
             tryStack_.pop_back(); // P1-5 fix: 清理残留 handler
@@ -1016,7 +1044,9 @@ VMResult VM::execute(const CompileResult& result) {
             bool wasInit = frame.isInitCall;
             // P1-5 fix: 记录帧索引并清理 tryStack_ handler
             size_t returningFrameIdx = frames_.size() - 1;
-            closeUpvaluesFrom(savedBp); // P1-5 fix: 关闭 open upvalues
+            // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止返回，避免在损坏状态上继续
+            if (closeUpvaluesFrom(savedBp) != VMResult::VM_OK) // P1-5 fix: 关闭 open upvalues
+                return VMResult::VM_RUNTIME_ERROR;
             frames_.pop_back();
             while (!tryStack_.empty() && tryStack_.back().frameIndex >= returningFrameIdx) {
                 tryStack_.pop_back(); // P1-5 fix: 清理残留 handler
@@ -1195,6 +1225,8 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_THROW:
     case OpCode::OP_LOAD_MUTATED:
     case OpCode::OP_TYPE_CHECK:
+    case OpCode::OP_PUSH_JUMP_TARGET:
+    case OpCode::OP_FINALLY_END:
         return executeMiscOps(op, ip);
 
     default:
@@ -1702,7 +1734,9 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         // B1 fix: 关闭所有指向 slot >= basePointer+slotBase 的 open upvalues，
         // 使块作用域退出时闭包捕获退出时刻的值快照（对齐 Interpreter per-block env）。
         uint8_t slotBase = chunk.code[ip + 1];
-        closeUpvaluesFrom(frame.basePointer + slotBase);
+        // AUDIT-P2.5 fix: closeUpvaluesFrom 返回错误时立即终止，避免在损坏状态上继续
+        if (closeUpvaluesFrom(frame.basePointer + slotBase) != VMResult::VM_OK)
+            return VMResult::VM_RUNTIME_ERROR;
         notifyStep(ip, op);
         ip += 2;
         break;
