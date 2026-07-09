@@ -263,7 +263,8 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent) : QWidget(parent) 
         std::ostringstream os;
         os << "<b>" << d.opCode << "</b> <i>[" << d.category << "]</i><hr>";
         os << "<p>" << d.perfNote << "</p>";
-        os << "<p><b>示例：</b> <code>" << QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped().toStdString() << "</code></p>";
+        os << "<p><b>示例：</b> <code>" << QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped().toStdString()
+           << "</code></p>";
         opCodeDocView_->setHtml(QString::fromUtf8(os.str().c_str()));
     }
     rightTab->addTab(opCodeTab, QString::fromUtf8("指令计数"));

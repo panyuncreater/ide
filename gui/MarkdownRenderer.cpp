@@ -107,9 +107,7 @@ static QString highlightMiniLang(const QString& escapedCode) {
     QStringList spans;
 
     // 占位符：\uE000 + 序号 + \uE001，私用区字符不会出现在源码或关键字中
-    auto makePlaceholder = [&](int idx) {
-        return QChar(0xE000) + QString::number(idx) + QChar(0xE001);
-    };
+    auto makePlaceholder = [&](int idx) { return QChar(0xE000) + QString::number(idx) + QChar(0xE001); };
     auto replaceWithPlaceholder = [&](const QRegularExpression& re, const QString& cls) {
         int from = 0;
         QRegularExpressionMatch m;

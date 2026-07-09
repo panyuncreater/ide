@@ -20,6 +20,9 @@
 #      libgl-dev / libgles-dev / libegl-dev 开发头文件；仅 libgl1 运行时库
 #      会导致 "Could NOT find OpenGL" 配置失败。同时安装 libfontconfig1-dev
 #      与 libfreetype6-dev 以满足 Qt6Gui 的字体子系统依赖。
+#   4. git 用于应用 QFluentKit 本地补丁（patches/qfluentkit-local-fixes.patch），
+#      补丁在 cmake configure 之前通过 `git apply` 应用到 third_party/QFluentKit
+#      子模块。无 git 会导致 `git apply` 报 exit code 127（command not found）。
 # ============================================================
 
 # ---- 基础镜像（构建/运行共用）----
@@ -32,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     ccache \
     pkg-config \
+    git \
     libgl1 \
     libgl-dev \
     libgles-dev \

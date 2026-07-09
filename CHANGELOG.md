@@ -76,6 +76,33 @@
 
 - 全部 17 项修复均无回归。全量 1753/1753 测试通过。
 
+## 2026-07-09 · 第五十轮审计：VM 非变异方法写回与 GUI 信号守卫修复（P1 × 3 + P3 × 3，共 6 项）
+
+### 概述
+
+本轮对 VM/IR 后端、Interpreter/Value/GC、Debugger/GUI 线程安全三个模块进行并行 agent 深度审计，发现并修复 6 项问题。P1 级包括 StackVM 非变异内置方法（len/contains/join/keys/values/has/get + 全部字符串方法）未设置 lastMutatedReceiver_ 导致 IR 路径变量被覆盖、handleVmStepResult 过时信号守卫误杀 FINISHED/ERROR/NOT_READY 导致 VM 模式正常结束后 UI 卡死、callInstanceMethod 绑定循环 argValues 越界访问 UB；P3 级涵盖 VmStepper 预执行断点 hitCount 未递增、CodeEditor 单行偏移路径未发射 breakpointsChanged、VMCalls 帧布局损坏错误路径栈未清理。另有两项 P2（visitVarDecl 自动实例化缺少 #2 fix、callInstanceMethod 第一次重查找后未重校验 argCount）因涉及极端边界场景（默认参数求值期间类重定义）保留现状。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+
+### 问题与修复对应
+
+| # | 严重性 | 问题 | 文件 | 修复 |
+|---|--------|------|------|------|
+| 1 | P1 | StackVM finishSharedBuiltin/dispatchStringBuiltin 未设置 lastMutatedReceiver_，IR 路径非变异方法调用后 LOAD_MUTATED 读到旧值，STORE 覆盖接收者变量 | `compiler/VM.cpp` | 在 pop() 前添加 `lastMutatedReceiver_ = peek(0)`，对齐 RegisterVM L1736-1737 对所有 method call 设置 lastMutatedReceiverReg_ |
+| 2 | P1 | handleVmStepResult 守卫 `!isVmInitialized() && !isVmRunning()` 误杀 FINISHED/ERROR/NOT_READY 信号——VmStepper 在 emit 前已合法置两个标志为 false | `app/ide.cpp` | 将守卫收窄到仅 PAUSED_AT_BREAKPOINT 路径，FINISHED/ERROR/NOT_READY/OK 不受守卫影响 |
+| 3 | P1 | callInstanceMethod 绑定循环 `argValues[i]` 越界访问 UB——ROUND49 第二次重查找后 method 参数可能增多但无 bounds check | `interpreter/Interpreter.cpp` | 添加 `if (i < argValues.size())` 越界保护，对齐 constructClassInstance L405-406 |
+| 4 | P3 | VmStepper stepByMode 预执行断点命中分支未递增 hitCount，与循环内路径不一致 | `app/VmStepper.cpp` | 预执行命中分支补充 `vmBreakpointHitCounts_[initLine]++` |
+| 5 | P3 | CodeEditor onContentsChange 单行插入/删除偏移路径未发射 breakpointsChanged，与多行删除路径不一致 | `gui/CodeEditor.cpp` | 单行偏移路径末尾补充 `emit breakpointsChanged()` |
+| 6 | P3 | VMCalls executeMethodCall 帧布局损坏错误路径未 popN 清理栈，与同函数其他错误路径不一致 | `compiler/VMCalls.cpp` | return 前添加 `popN(1 + fieldCount + argCount)` |
+
+### 关键决策
+
+1. **handleVmStepResult 守卫收窄而非移除**：vmRunPaused 连接是同线程 DirectConnection，closeEvent 的残留信号只可能是 PAUSED_AT_BREAKPOINT（断点暂停），FINISHED/ERROR 是合法终态不应被丢弃。保留 PAUSED 路径的守卫以防御未预见的 stale 信号场景。
+2. **finishSharedBuiltin 设置 lastMutatedReceiver_ 为接收者原值而非跳过 LOAD_MUTATED**：IR 路径对所有 isVarRef 方法调用无条件发射 LOAD_MUTATED + STORE，在 StackVM 侧设置原值使 STORE 写回原值等于无操作，与 RegisterVM 行为一致。修改 IR 路径条件判断风险更高。
+3. **P2 保留现状**：visitVarDecl 自动实例化 #2 fix 和 callInstanceMethod argCount 重校验涉及极端边界场景（默认参数求值期间类重定义），修复风险较高，保留现状记录为已知限制。
+
+### 测试影响
+
+- 全部 6 项修复均无回归。全量 1753/1753 测试通过。
+
 ## 2026-07-09 · 第四十九轮审计：沙箱安全与格式化正确性修复（P0 × 1 + P1 × 2 + P2 × 2，共 5 项）
 
 ### 概述
@@ -114,11 +141,11 @@
 - 全部 5 项保留修复均无回归。全量 1753/1753 测试通过。
 - 2 项回退修复各自导致 1 个测试失败（`MethodCallProbe.NestedIndexAccessPush` 和 `ConsistencyDiff.AuditF8_ModuleExceptionNoCrash`），回退后恢复通过。
 
-## 2026-07-08 · CI 跨平台流水线全面修复（14 项根因 + 1 项后端 bug，共 15 项）
+## 2026-07-08 · CI 跨平台流水线全面修复（16 项根因 + 1 项后端 bug，共 17 项）
 
 ### 概述
 
-GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 14 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 16 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
 
 ### 问题与修复对应表
 
@@ -138,6 +165,8 @@ GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format）�
 | 12 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Docker 容器缺少 OpenGL 开发头文件**——Qt6Gui 的 CMake 配置依赖 `find_package(OpenGL)`，但 Dockerfile 仅安装 `libgl1`（运行时库），缺少开发头文件，报 `Could NOT find OpenGL (missing: OPENGL_opengl_LIBRARY OPENGL_glx_LIBRARY OPENGL_INCLUDE_DIR)`，进而 `Qt6Gui could not be found because dependency WrapOpenGL could not be found`。修复：添加 `libgl-dev` / `libgles-dev` / `libegl-dev` 开发头文件，同时添加 `libglib2.0-dev` / `libfontconfig1-dev` / `libfreetype6-dev` 满足 Qt6Gui 字体子系统依赖。 |
 | 13 | Docker/COPY 扁平化 | `Dockerfile` builder 阶段 COPY 指令 | **`COPY CMakeLists.txt CMakePresets.json cmake/ ./` 混合 COPY 文件与目录导致目录扁平化**——Docker COPY 指令将多个源路径混合 COPY 到目标目录 `./` 时，目录源 `cmake/` 的内容会被扁平化到 `./` 而非保持 `./cmake/` 子目录结构，导致 `CMakeLists.txt` 的 `include(cmake/minilang_core.cmake)` 找不到文件（报 `include could not find requested file: /app/cmake/minilang_core.cmake`）。修复：拆分为两个 COPY 指令——`COPY CMakeLists.txt CMakePresets.json ./`（仅文件）和 `COPY cmake/ ./cmake/`（仅目录，保持子目录结构）。 |
 | 14 | CI/macOS 链接 + patch 机制 | `.github/workflows/ci.yml` + `Dockerfile` + `patches/qfluentkit-local-fixes.patch` + `third_party/QFluentKit/QFluent/src/QFluent/SpinBox.h` | **macOS arm64 上 `using Base::Base` 继承构造函数不生成符号**——QFluentKit 的 SpinBox.h 中 5 个子类（SpinBox/DoubleSpinBox/TimeEdit/DateTimeEdit/DateEdit）使用 `using Base::Base` 继承构造函数，MOC 生成的元类型代码引用该构造函数，但 macOS arm64 Clang 不为 `using Base::Base` 生成符号，导致 `Undefined symbols for architecture arm64: InlineSpinBoxBase<QDateTimeEdit>::InlineSpinBoxBase(QWidget*)` 链接失败。修复：将 5 个子类的 `using Base::Base` 替换为显式构造函数 `explicit SpinBox(QWidget *parent = nullptr) : Base(parent) {}`，同时将 InlineSpinBoxBase 的方法从 .cpp 声明改为 .h 内联实现（匹配显式构造函数）。因 QFluentKit 是第三方 submodule（无法直接推送修改），采用 patch 文件机制：`git -C third_party/QFluentKit diff` 导出为 `patches/qfluentkit-local-fixes.patch`，在 ci.yml 的 build-test/coverage/coverage-linux/test-harness 作业和 Dockerfile 中添加 `git apply --directory=third_party/QFluentKit patches/qfluentkit-local-fixes.patch` 步骤，在 CMake 配置之前应用。 |
+| 15 | CI/macOS 运行时 | `.github/workflows/ci.yml` macOS AGL stub framework 步骤 | **AGL stub dylib 缺少 -install_name 导致运行时 dyld 找不到库**——前一轮创建 AGL stub framework 时先在 `/tmp/AGL.framework/` 创建 dylib 再 `mv` 到 `/Library/Frameworks/`，但 `clang -dynamiclib` 默认 install_name 是输出路径（`/tmp/AGL.framework/Versions/A/AGL`），链接器把这个临时路径写入 minilang_tests 可执行文件的 LC_LOAD_DYLIB。运行时 dyld 按该路径查找，但 `/tmp/AGL.framework` 已被 mv 走，报 `dyld: Library not loaded: /tmp/AGL.framework/Versions/A/AGL`，GoogleTestAddTests.cmake 报 `Subprocess aborted`。修复：(1) 直接在 `/Library/Frameworks/AGL.framework/` 创建 dylib（用 sudo）；(2) 用 `-install_name /Library/Frameworks/AGL.framework/Versions/A/AGL` 设置最终路径，链接器写入正确路径，运行时 dyld 能找到。 |
+| 16 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Docker 容器缺少 git 导致 `git apply` 失败**——Dockerfile base 阶段 apt-get install 列表遗漏 git，builder 阶段执行 `cd third_party/QFluentKit && git apply /app/patches/qfluentkit-local-fixes.patch` 报 exit code 127（command not found）。修复：添加 `git` 到 apt-get install 列表。 |
 
 ## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
 

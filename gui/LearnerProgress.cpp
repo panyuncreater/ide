@@ -109,15 +109,13 @@ bool LearnerProgressStore::load() {
             return false;
         return true;
     };
-    if (!requireObjectType("completed") || !requireObjectType("attemptCount") ||
-        !requireObjectType("lastAccessTime") || !requireObjectType("levelStars") ||
-        !requireObjectType("score") || !requireObjectType("bestStars") ||
+    if (!requireObjectType("completed") || !requireObjectType("attemptCount") || !requireObjectType("lastAccessTime") ||
+        !requireObjectType("levelStars") || !requireObjectType("score") || !requireObjectType("bestStars") ||
         !requireObjectType("spentMinutes") || !requireObjectType("failCount")) {
         return false;
     }
     // currentStage 若存在必须是数字
-    if (root.contains(QString::fromUtf8("currentStage")) &&
-        !root.value(QString::fromUtf8("currentStage")).isDouble()) {
+    if (root.contains(QString::fromUtf8("currentStage")) && !root.value(QString::fromUtf8("currentStage")).isDouble()) {
         return false;
     }
 

@@ -161,16 +161,21 @@ jobs:
       # 修复：创建空的 AGL stub framework。链接器能找到 AGL（虽然为空），
       # 运行时不需要 AGL（Qt 6.8 不再调用 AGL API）。
       # 注：sed 修补 .cmake/.prl 文件无效，因为引用来自二进制文件的链接依赖。
+      # 关键：必须用 -install_name 设置最终路径（/Library/Frameworks/...），
+      # 否则 dylib 默认 install_name 是创建时的临时路径（/tmp/...），链接器
+      # 会把临时路径写入可执行文件的 LC_LOAD_DYLIB，运行时 dyld 按该路径查找
+      # 但 /tmp/AGL.framework 已被 mv 走，报 "Library not loaded"。
       # 参见 https://bugreports.qt.io/browse/QTBUG-137687
       - name: 创建 AGL stub framework (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          mkdir -p /tmp/AGL.framework/Versions/A
-          echo 'void __agl_stub(void) {}' | clang -dynamiclib -o /tmp/AGL.framework/Versions/A/AGL -x c -
-          ln -s Versions/A/AGL /tmp/AGL.framework/AGL
-          ln -s Versions/A /tmp/AGL.framework/Versions/Current
-          sudo mv /tmp/AGL.framework /Library/Frameworks/AGL.framework
+          sudo mkdir -p /Library/Frameworks/AGL.framework/Versions/A
+          echo 'void __agl_stub(void) {}' | sudo clang -dynamiclib \
+            -install_name /Library/Frameworks/AGL.framework/Versions/A/AGL \
+            -o /Library/Frameworks/AGL.framework/Versions/A/AGL -x c -
+          sudo ln -sf Versions/A/AGL /Library/Frameworks/AGL.framework/AGL
+          sudo ln -sf Versions/A /Library/Frameworks/AGL.framework/Versions/Current
 
       - name: 配置 CMake (macOS Preset)
         if: runner.os == 'macOS'

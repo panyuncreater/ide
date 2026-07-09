@@ -864,8 +864,8 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
         const auto& types = MemoryAnimLibrary::heapObjectTypes();
         for (const auto& kv : types) {
             // R52-5 fix: kv.second 含 std::vector<Value> 等 C++ 模板语法 < > 需转义
-            os << "<li><code>" << QString::fromUtf8(kv.first.c_str()).toHtmlEscaped().toStdString()
-               << "</code> — " << QString::fromUtf8(kv.second.c_str()).toHtmlEscaped().toStdString() << "</li>";
+            os << "<li><code>" << QString::fromUtf8(kv.first.c_str()).toHtmlEscaped().toStdString() << "</code> — "
+               << QString::fromUtf8(kv.second.c_str()).toHtmlEscaped().toStdString() << "</li>";
         }
         os << "</ul>";
         gcPhaseBrowser_->setHtml(QString::fromUtf8(os.str().c_str()));
