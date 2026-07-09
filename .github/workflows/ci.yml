@@ -246,7 +246,10 @@ jobs:
         if: success() && runner.os == 'macOS'
         run: |
           cmake --install out/build/macos-release --prefix install
-          cd out/build/macos-release && cpack -G DragNDrop
+          cd out/build/macos-release && cpack -G ZIP
+        # 注：使用 ZIP 而非 DragNDrop。DragNDrop 生成器在 macOS 26 (Tahoe) runner 上
+        # 创建 /Applications 符号链接时报 "No such file or directory"（CPack 的
+        # ALL_IN_ONE 目录未正确创建）。ZIP 更简单可靠，.dmg 可在本地 release 时生成。
 
       - name: 上传安装包
         if: always()
@@ -256,7 +259,7 @@ jobs:
           path: |
             out/build/release/MiniLangIDE*.zip
             out/build/linux-release/MiniLangIDE*.tar.gz
-            out/build/macos-release/MiniLangIDE*.dmg
+            out/build/macos-release/MiniLangIDE*.zip
           if-no-files-found: ignore
           retention-days: 7
 

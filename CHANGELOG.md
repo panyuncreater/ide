@@ -2,6 +2,60 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-09 · 第五十四轮审计：GC 栈溢出修复 + 未覆盖区域 Bug 排查 + 性能优化（P1 × 1 + P2 × 2 + P3 × 1 + Perf × 3，共 7 项）
+
+### 概述
+
+本轮聚焦前 53 轮未覆盖的 Bug 区域（GC 深嵌套栈溢出、模块路径 hash 一致性、REPL 多行历史）与性能优化机会。P1 级修复 GcManager markValue 纯递归遍历在深嵌套容器链（如 100000 层 `[[[[...]]]]`）下的栈溢出风险，改为显式 worklist 迭代式，同时消除递归调用开销（一举两得）。P2 级修复 ModuleIsolation pathHash 未折叠连续 `/` 导致同一模块产生不同 hash、ReplPanel 多行输入历史仅保存首行导致 Up 键无法恢复完整多行输入。P3 级修复 REPL 历史去重（连续相同命令不重复追加）。性能优化 3 项：DebugController RUN 快速路径移除冗余原子操作、IdeController notifyVmStateChanged 消除 vector 拷贝、Lexer string() 批量扫描连续普通字符。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P1 | 栈溢出 | `interpreter/GcManager.cpp` markValue | **markValue 纯递归遍历深嵌套容器链栈溢出**——原实现对 ARRAY/DICT/INSTANCE/CLOSURE 四种堆类型纯递归遍历子元素。MiniLang 的 MAX_LOOP_ITERATIONS=10000000 允许 while 循环构建极深嵌套的线性容器链（如 100000 层 `[[[[...]]]]`），这条链不是循环引用（每层不同对象），GC mark 阶段递归深度等于链长度，触发栈溢出崩溃。修复：改为显式 worklist 迭代式——`std::vector<const Value*> worklist`，将子元素 push_back 到 worklist 而非递归调用，栈深度恒定。同时解决递归调用开销（Perf 双重收益）。 |
+| 2 | P2 | 路径一致性 | `ast/ModuleIsolation.cpp` pathHash | **pathHash 未折叠连续 `/`**——`"./a//b"` 与 `"./a/b"` 经 normalize（`\`→`/` + 去 `./` 前缀）后仍含 `//`，FNV-1a hash 产生不同值，导致同一模块被当作两个不同模块，`__mod_<hash>__` 前缀不一致引发重命名解析失败。修复：normalize 阶段后增加连续 `/` 折叠（保留单个 `/`）。 |
+| 3 | P2 | 数据丢失 | `gui/ReplPanel.cpp` executeLine | **多行输入历史仅保存首行**——续行模式下用户输入 `fun foo() {` 后按 Enter 进入续行，首行被存入 history_。完整输入结束后执行 pendingInput_（含 `\n` 拼接的续行），但 history_ 仍为首行。按 Up 键恢复时只能恢复首行，无法恢复完整多行输入。修复：执行前用完整 pendingInput_ 替换之前存入的首行（仅当 historyIndex_ 指向末尾时，避免覆盖用户已浏览的历史位置）。 |
+| 4 | P3 | UX | `gui/ReplPanel.cpp` executeLine | **历史不去重**——连续输入相同命令（如多次 `print(1)`）会在 history_ 中追加多条相同记录，按 Up 键需翻越多次才能到达上一条不同命令。修复：若 trimmedLine 与 history_.back() 相同则不追加，对齐主流 REPL（Python/Node/bash）行为。 |
+| 5 | Perf | 原子操作 | `debug/DebugController.cpp` checkBreak | **RUN 快速路径冗余原子操作**——原 D-P1-1 快速路径（RUN 模式 + 无断点）在返回前调用 updateLineTracking，每节点执行 2 次原子 load（line/lastSeenLine_）+ 1-2 次原子 store（crossedLine_/lastSeenLine_）。紧密循环百万级节点累积可观开销。修复：移除快速路径的 updateLineTracking 调用。快速路径前提是无断点，crossedLine_/lastSeenLine_ 不被任何逻辑读取；用户添加断点后 hasBreakpoints_ 变 true 进入慢速路径，updateLineTracking 会重新计算。回退 D-P2-11 fix。 |
+| 6 | Perf | vector 拷贝 | `app/IdeController.h` notifyVmStateChanged | **notifyVmStateChanged 每次拷贝整个 vector**——原实现 `auto listeners = vmStateChangedListeners_` 拷贝整个 vector（含 std::function）以防止回调期间 push_back 导致迭代器失效，但每次通知都拷贝 6 个 std::function 开销可观。修复：改用索引迭代 `for (size_t i = 0; i < n; ++i)` + 边界检查 `if (i < vmStateChangedListeners_.size())`，配合 addVmStateChangedListener 的 reserve 预留容量策略，避免拷贝。 |
+| 7 | Perf | 逐字符处理 | `lexer/Lexer.cpp` string | **string() 普通字符逐字符 advance + value += char**——原实现字符串普通字符路径 `value += advance()` 逐字符调用 advance()（含函数调用开销 + 行号维护检查）+ value += char（可能触发多次 realloc）。对长字符串（如 1KB 文本）产生 1024 次 advance 调用。修复：批量扫描连续普通字符（直到遇 `\`、`{`、`"`、`\r`、`\n` 或 EOF），用 `value.append(source_.data() + runStart, runLen)` 一次性追加。多字节 UTF-8 字节（0x80-0xFF）不与特殊字符冲突，可安全批量扫描。 |
+
+### 测试影响
+
+- 全部 7 项修复均无回归。全量 1763/1763 测试通过。
+
+## 2026-07-09 · 第五十三轮审计：app 层运行守卫与 UX 体验优化（P2 × 3 + P3 × 6 + 回归修复 × 1，共 10 项）
+
+### 概述
+
+本轮覆盖前 52 轮未审计的 app 层（ide.cpp ~6000 行）与 Worker 线程边界，并完成 UX 体验优化。P2 级聚焦运行态守卫前置：IdeController 跨线程裸指针访问、onRun/onDebug 缺 isRunning 守卫导致调试上下文被误清、onCompileAnalysis 缺运行守卫导致并发管线污染。P3 级涵盖 IrViewer/DebugPanel 空状态提示、编译分析状态栏进度反馈、关闭运行中标签告警、REPL Esc 中止续行 + Ctrl+L 清屏、CodeEditor Ctrl+Shift+D 复制行 + Alt+Up/Down 移动行等 UX 优化，以及 InterpreterModules 循环依赖检测后防御性 return。另回滚 AUDIT-P3-ROUND53 的"123. 报错"逻辑——该 fix 违反项目设计契约（TestLexer/LexerAudit 期望分词为 INT+DOT），导致 2 个测试回归。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P2 | 跨线程裸指针 | `app/IdeController.cpp` getReplScopeVariableNames | **跨线程裸 currentEnvironment() 访问**——该方法可能在 worker 线程 emit runtimeError 后被主线程 QueuedConnection 处理器调用，裸指针遍历 parent 链违反 Interpreter.h 跨线程契约。修复：改用 currentEnvironmentShared() 获取 shared_ptr，遍历 parent 链时通过赋值延长每个节点生命周期，对齐 DebugCoordinator 的 AUDIT-P1 修复模式。 |
+| 2 | P2 | 运行守卫缺失 | `app/ide.cpp` onRun/onDebug | **isRunning/isVmRunning 守卫在破坏性清理之后**——原实现依赖 prepareRun 内部守卫，但 clearOutput/clearAll/clearErrorLines 在 prepareRun 之前执行，运行中误按 F5/F6 会先清空调试上下文（断点高亮、调用栈、变量快照、当前行高亮）再被 prepareRun 拒绝。F5/F6 工具栏 action 虽已禁用，但菜单 action 与键盘快捷键仍可能触发。修复：在 replPanel_ 检查后、clearOutput 之前增加 isRunning/isVmRunning/isDebugPaused 三态守卫。 |
+| 3 | P2 | 并发管线污染 | `app/ide.cpp` onCompileAnalysis | **运行/调试中重跑前端管线**——原实现先 clearErrorLines/clearCurrentLine 再 runFrontendPipeline，会清掉调试暂停时的当前行高亮、并替换 pipeline_ 内部 lexer/parser/astRoot 状态——若 worker 线程正在使用同一 pipeline_ 解析模块源码（import 路径），将产生并发数据竞争（lexer/parser 非线程安全）。修复：入口增加运行守卫，运行中仅打开右侧可视化面板查看当前已编译结果，不重新执行管线。 |
+| 4 | P3 | 防御性 | `interpreter/InterpreterModules.cpp` visitImportStmt | **循环依赖/深度超限检测后无 return**——当前 runtimeError 是 throw 语义，缺 return 不可达；但若未来 runtimeError 改为非抛出式错误处理（错误码/返回值），缺少 return 会继续执行后续加载流程，违反"循环依赖即停止"语义。修复：两处 runtimeError 后添加防御性 return。 |
+| 5 | P3 | 空状态 | `gui/IrViewer.cpp` clearIR | **clearIR 后 browser 完全空白**——用户无法区分"尚未编译"与"编译产物为空"。修复：setText 设置占位提示"尚无 IR 输出。请先点击「编译分析」或运行程序，再切换到 IR 视图查看。"，后续 setIR/setHtml 会覆盖。 |
+| 6 | P3 | 空状态 | `gui/DebugPanel.cpp` clearAll | **clearAll 后 variableTree/callStackList 完全空白**——QTreeWidget/QListWidget 无原生 placeholder。修复：插入禁用样式的占位项（灰色、不可选不可启用），populateXxx 入口先 clear() 不污染后续真实数据。 |
+| 7 | P3 | 进度反馈 | `app/ide.cpp` onCompileAnalysis | **同步编译阶段仅 WaitCursor 鼠标反馈，状态栏无文字提示**——大文件编译时用户感知不到进度。修复：RAII guard 统一管理 cursor 与状态栏消息，开始时 showMessage("正在编译分析...")，结束（含所有 return 路径）时 clearMessage()。 |
+| 8 | P3 | 运行守卫 | `app/ide.cpp` onEditorTabCloseRequested | **运行/调试中关闭标签会破坏调试上下文**——currentFilePath_ 切换、断点清空、editorTabs_ 重组，导致 worker 线程引用的 source/filePath 失配。原实现无任何守卫。修复：入口增加 isRunning/isVmRunning/isDebugPaused 守卫，运行中拒绝关闭并提示用户先停止。 |
+| 9 | P3 | 键盘交互 | `gui/ReplPanel.cpp` eventFilter | **REPL 无 Esc 中止续行 + 无 Ctrl+L 清屏**——续行模式下用户只能继续输入完整代码，无法中止（多行结构如未闭合的 fun 定义一旦开始就必须完成）；清屏需输入 'clear' 命令。修复：Esc 在续行模式下中止 pendingInput_ 回到单行模式；Ctrl+L 清空 outputArea_（保留 pendingInput_/history/变量状态），运行中拒绝以避免与 worker 输出竞争。 |
+| 10 | P3 | 编辑器增强 | `gui/CodeEditor.cpp` keyPressEvent | **缺 Ctrl+Shift+D 复制行 + Alt+Up/Down 移动行**——常见编辑器快捷键缺失，影响代码编辑/重组效率。修复：Ctrl+Shift+D 复制当前行（或选区）到下一行，支持选区副本保持原选区选中；Alt+Up/Down 移动当前行（或选区行块）上/下，自动重新选中移动后的块。与现有 Ctrl+D（选中下一个相同单词）、Ctrl+Shift+K（删除当前行）不冲突。 |
+| 回归 | P2 | 回归修复 | `lexer/Lexer.cpp` number | **回滚 AUDIT-P3-ROUND53 的"123. 报错"逻辑**——该 fix 让 "1." 和 "123.foo" 报错"数字字面量小数点后需有数字"，但 TestLexer::Number_IntegerFollowedByDotAndIdentifier 和 LexerAudit::TrailingDecimalPoint 明确期望分词为 INT + DOT（+ IDENTIFIER），这是项目的设计契约——MiniLang 不支持方法调用语法 123.foo()，但 Lexer 应保持宽容分词，将语义判断交给 Parser。原 fix 改变了既定行为，导致 2 个测试回归。修复：删除该 fix 块，恢复"123. 后无数字/指数 → 分词为 TK_INT_LIT + TK_DOT"的行为。 |
+
+### 评估保留现状（3 项）
+
+- **P3-UX3 全局 Esc 仅关闭查找面板**：项目中主要的浮层就是 FindReplacePanel（已正确处理），QDialog/QMenu 自带 Esc 关闭，扩展到 QDockWidget 会改变用户预期。保留现状。
+- **P3-UX4 断点跨会话持久化**：需 QSettings 序列化 + 文件路径键管理 + 文件移动/重命名处理，改动较大且重启 IDE 重新设置断点成本不高。保留现状。
+- **P3-UX6 调试暂停期编辑器完全只读**：已实现（setRunningState true 时 setReadOnly，VM 模式 L5758-5760 BUG-ORCH-5 fix）。无需修改。
+
+### 测试影响
+
+- 全部 10 项修复均无回归。全量 1763/1763 测试通过（含回滚 AUDIT-P3-ROUND53 修复的 2 个回归测试）。
+
 ## 2026-07-09 · 第五十二轮审计：教学模块深度审计与修复（P2 × 7 + P3 × 10，共 17 项）
 
 ### 概述
@@ -141,11 +195,11 @@
 - 全部 5 项保留修复均无回归。全量 1753/1753 测试通过。
 - 2 项回退修复各自导致 1 个测试失败（`MethodCallProbe.NestedIndexAccessPush` 和 `ConsistencyDiff.AuditF8_ModuleExceptionNoCrash`），回退后恢复通过。
 
-## 2026-07-08 · CI 跨平台流水线全面修复（16 项根因 + 1 项后端 bug，共 17 项）
+## 2026-07-08 · CI 跨平台流水线全面修复（18 项根因 + 1 项后端 bug，共 19 项）
 
 ### 概述
 
-GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 16 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 18 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
 
 ### 问题与修复对应表
 
@@ -167,6 +221,8 @@ GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format）�
 | 14 | CI/macOS 链接 + patch 机制 | `.github/workflows/ci.yml` + `Dockerfile` + `patches/qfluentkit-local-fixes.patch` + `third_party/QFluentKit/QFluent/src/QFluent/SpinBox.h` | **macOS arm64 上 `using Base::Base` 继承构造函数不生成符号**——QFluentKit 的 SpinBox.h 中 5 个子类（SpinBox/DoubleSpinBox/TimeEdit/DateTimeEdit/DateEdit）使用 `using Base::Base` 继承构造函数，MOC 生成的元类型代码引用该构造函数，但 macOS arm64 Clang 不为 `using Base::Base` 生成符号，导致 `Undefined symbols for architecture arm64: InlineSpinBoxBase<QDateTimeEdit>::InlineSpinBoxBase(QWidget*)` 链接失败。修复：将 5 个子类的 `using Base::Base` 替换为显式构造函数 `explicit SpinBox(QWidget *parent = nullptr) : Base(parent) {}`，同时将 InlineSpinBoxBase 的方法从 .cpp 声明改为 .h 内联实现（匹配显式构造函数）。因 QFluentKit 是第三方 submodule（无法直接推送修改），采用 patch 文件机制：`git -C third_party/QFluentKit diff` 导出为 `patches/qfluentkit-local-fixes.patch`，在 ci.yml 的 build-test/coverage/coverage-linux/test-harness 作业和 Dockerfile 中添加 `git apply --directory=third_party/QFluentKit patches/qfluentkit-local-fixes.patch` 步骤，在 CMake 配置之前应用。 |
 | 15 | CI/macOS 运行时 | `.github/workflows/ci.yml` macOS AGL stub framework 步骤 | **AGL stub dylib 缺少 -install_name 导致运行时 dyld 找不到库**——前一轮创建 AGL stub framework 时先在 `/tmp/AGL.framework/` 创建 dylib 再 `mv` 到 `/Library/Frameworks/`，但 `clang -dynamiclib` 默认 install_name 是输出路径（`/tmp/AGL.framework/Versions/A/AGL`），链接器把这个临时路径写入 minilang_tests 可执行文件的 LC_LOAD_DYLIB。运行时 dyld 按该路径查找，但 `/tmp/AGL.framework` 已被 mv 走，报 `dyld: Library not loaded: /tmp/AGL.framework/Versions/A/AGL`，GoogleTestAddTests.cmake 报 `Subprocess aborted`。修复：(1) 直接在 `/Library/Frameworks/AGL.framework/` 创建 dylib（用 sudo）；(2) 用 `-install_name /Library/Frameworks/AGL.framework/Versions/A/AGL` 设置最终路径，链接器写入正确路径，运行时 dyld 能找到。 |
 | 16 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Docker 容器缺少 git 导致 `git apply` 失败**——Dockerfile base 阶段 apt-get install 列表遗漏 git，builder 阶段执行 `cd third_party/QFluentKit && git apply /app/patches/qfluentkit-local-fixes.patch` 报 exit code 127（command not found）。修复：添加 `git` 到 apt-get install 列表。 |
+| 17 | Docker/git 仓库缺失 | `Dockerfile` builder 阶段 patch 应用步骤 | **Docker 中 `git apply` 报 "fatal: not a git repository"**——Docker 的 `COPY third_party/ third_party/` 仅复制工作树，不含 `.git/modules/` 目录。`third_party/QFluentKit/.git` 是一个 gitfile，内容为 `gitdir: ../../.git/modules/third_party/QFluentKit`，指向不存在的路径。`git apply` 在 gitfile 中查找 git 仓库失败，报 `fatal: not a git repository: /app/third_party/QFluentKit/../../.git/modules/third_party/QFluentKit`（exit code 128）。修复：(1) 添加 `patch` 包到 apt-get install 列表；(2) 将 `git apply` 改为 `patch -p1 < /app/patches/qfluentkit-local-fixes.patch`（`patch` 不依赖 git 仓库，直接对工作树应用补丁）。 |
+| 18 | CI/macOS 打包 | `.github/workflows/ci.yml` macOS 打包步骤 | **CPack DragNDrop 生成器在 macOS 26 (Tahoe) 上创建 `/Applications` 符号链接失败**——`cpack -G DragNDrop` 在创建 ALL_IN_ONE 目录下的 `/Applications` 符号链接时报 `CMake Error: failed to create symbolic link '.../ALL_IN_ONE/Applications': No such file or directory`，随后 `hdiutil create` 因源目录不存在失败。根因是 CPack 的 DragNDrop 生成器在 macOS 26 runner 上未正确创建 ALL_IN_ONE 临时目录。修复：将 `cpack -G DragNDrop` 改为 `cpack -G ZIP`，同时上传安装包路径从 `MiniLangIDE*.dmg` 改为 `MiniLangIDE*.zip`。ZIP 生成器更简单可靠，`.dmg` 可在本地 release 时手动生成。 |
 
 ## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
 

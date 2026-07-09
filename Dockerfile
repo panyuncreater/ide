@@ -20,9 +20,11 @@
 #      libgl-dev / libgles-dev / libegl-dev 开发头文件；仅 libgl1 运行时库
 #      会导致 "Could NOT find OpenGL" 配置失败。同时安装 libfontconfig1-dev
 #      与 libfreetype6-dev 以满足 Qt6Gui 的字体子系统依赖。
-#   4. git 用于应用 QFluentKit 本地补丁（patches/qfluentkit-local-fixes.patch），
-#      补丁在 cmake configure 之前通过 `git apply` 应用到 third_party/QFluentKit
-#      子模块。无 git 会导致 `git apply` 报 exit code 127（command not found）。
+#   4. patch 用于应用 QFluentKit 本地补丁（patches/qfluentkit-local-fixes.patch），
+#      补丁在 cmake configure 之前通过 `patch -p1` 应用到 third_party/QFluentKit
+#      子模块。Docker 中 COPY third_party/ 仅复制工作树，不含 .git/modules/ 目录，
+#      QFluentKit/.git gitfile 指向不存在的路径导致 `git apply` 报
+#      "fatal: not a git repository"。改用 `patch -p1` 不依赖 git 仓库。
 # ============================================================
 
 # ---- 基础镜像（构建/运行共用）----
@@ -36,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ccache \
     pkg-config \
     git \
+    patch \
     libgl1 \
     libgl-dev \
     libgles-dev \
@@ -79,7 +82,7 @@ COPY third_party/ third_party/
 # arm64/某些 GCC 版本上会触发链接错误。补丁文件本身变化频率极低，与 third_party/
 # 同层 COPY 以最大化缓存命中率。
 COPY patches/ ./patches/
-RUN cd third_party/QFluentKit && git apply /app/patches/qfluentkit-local-fixes.patch
+RUN cd third_party/QFluentKit && patch -p1 < /app/patches/qfluentkit-local-fixes.patch
 
 # 第二层：CMake 配置脚本（变化频率低）
 # 注：cmake/ 必须单独 COPY 到 ./cmake/，不能与文件混合 COPY 到 ./
