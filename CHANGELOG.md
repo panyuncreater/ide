@@ -2,6 +2,44 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-09 · 第五十一轮审计：教学模块深度审计与修复（P1 × 4 + P2 × 10 + P3 × 3，共 17 项）
+
+### 概述
+
+本轮对教学板块 40+ 面板文件进行四模块并行 agent 深度审计（数据/内容完整性、交互逻辑、进度追踪/导航、渲染/引擎），发现并修复 17 项问题。P1 级包括 MarkdownRenderer 关键字腐蚀 span 标签、BytecodeTracePanel 容量满后表格永久陈旧、LearnerProgressStore 原子写入缺失与字段类型覆盖数据丢失；P2 级涵盖 BackendComparePanel 重入守卫失效、BugHuntPanel 搜索与难度筛选不联动、GuidedTour singleShot 旧位置捕获、ActivityBar checkable toggle 副作用、SyntaxProductionLibrary EBNF 语法错误、LabManualContent 教材错误、IRTransformPanel HTML 转义缺失、setOpenExternalLinks 与 anchorClicked 冲突等。另含第五十轮回退 AUDIT-P3.13（空模块源码合法化）修复 3 个 ModuleNotFound 测试失败。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P1 | HTML 注入 | `gui/MarkdownRenderer.cpp` highlightMiniLang | **关键字 "class" 腐蚀 span 标签 class="..." 属性**——`\bclass\b` 正则匹配 span 标签中的 `class="ml-keyword"` 属性，破坏 HTML 结构。修复：改用"提取-替换-还原"法，注释/字符串先提取为 `\uE000/\uE001` 私用区字符占位符，关键字/数字替换仅作用于剩余纯文本，最后还原占位符。 |
+| 2 | P1 | 数据陈旧 | `gui/BytecodeTracePanel.cpp` refreshTraceTable | **deque 容量满后 pop_front+push_back 保持 size 不变但索引偏移，增量更新失效**——`refreshTraceTable` 增量更新逻辑基于行数差判断，容量满时 histSize==tableRows==1000 两个循环均不执行，但 deque 内部索引已整体偏移 1 位，表格全部显示陈旧数据。修复：添加 `dequeShifted_` 标志，pop_front 时置 true，refreshTraceTable 检测后执行全量重建并清除标志。 |
+| 3 | P1 | 数据丢失 | `gui/LearnerProgress.cpp` save | **原子写入 remove→rename 两步序列在崩溃时丢失数据**——原实现先 `QFile::remove(path)` 删旧文件再 `QFile::rename(tmpPath, path)`，两步之间崩溃会导致目标文件丢失（旧文件已删、新文件未就位）。修复：改用 `QSaveFile` 实现真正原子写入，`commit()` 时原子替换目标文件（Windows 用 MOVEFILE_REPLACE_EXISTING，Linux 用 rename(2)），消除数据丢失窗口。 |
+| 4 | P1 | 数据覆盖 | `gui/LearnerProgress.cpp` load | **字段类型不匹配时整体覆盖丢失内存原数据**——原实现构建全新 `loaded` 对象，遇到类型不匹配的字段静默跳过（该字段在 loaded 中保持默认空值），最后 `data_ = std::move(loaded)` 整体覆盖，导致内存中该字段的有效数据被默认空值覆盖。修复：添加顶层字段类型校验，若某字段存在但类型与预期不符（如 completed 是数组而非对象），视为文件损坏整体拒绝加载（返回 false），保留内存中原数据。 |
+| 5 | P2 | 重入守卫 | `gui/BackendComparePanel.cpp` runComparison | **comparing_ 标志从未置 true，重入守卫失效**——`comparing_` 在函数末尾设为 false 但从未在入口置 true，且入口缺少 `if (comparing_) return` 守卫。processEvents 期间若有其他代码路径触发 runComparison，三后端会被并发执行。修复：添加三段式守卫（入口检查 + 置 true + 出口恢复 false）。 |
+| 6 | P2 | 筛选不联动 | `gui/BugHuntPanel.cpp` refreshBugChips/applySearchFilter | **搜索与难度筛选取覆盖而非交集**——`refreshBugChips` 仅按难度筛选设置可见性，`applySearchFilter` 仅按搜索关键字设置可见性，两者互相覆盖。修复：两个方法均同时检查难度筛选和搜索关键字，取交集。 |
+| 7 | P2 | 定位错误 | `gui/GuidedTour.cpp` showStep | **singleShot lambda 捕获旧 targetRect**——`QTimer::singleShot(0, [this, targetRect]() {...})` 按值捕获 targetRect，但 show() 后布局可能导致 target 控件移动/调整大小，捕获旧值定位到错误位置。修复：改为捕获 `targetWidget` 指针，在 lambda 内重新计算 targetRect。 |
+| 8 | P2 | 视觉态错误 | `gui/ActivityBar.cpp` setCurrentIndex | **checkable QToolButton 点击 toggle 后 early return 跳过 updateSelection**——点击当前已选中按钮时 toggle 为 unchecked，`setCurrentIndex` 因 `currentIndex_ == index` 早返回不调用 `updateSelection`，按钮停留在 unchecked 视觉态。修复：early return 前仍调用 `updateSelection()` 恢复正确选中态。 |
+| 9 | P2 | EBNF 错误 | `gui/SyntaxProductionLibrary.cpp` string-interp | **字符串插值 EBNF 使用 `${}` 而非 `{}`**——MiniLang 字符串插值语法为 `{expression}`（如 `"Hello, {name}!"`），但 EBNF 和说明文本中误写为 `${expression}`。修复：将 `${` 改为 `{`，对齐实际 Lexer 语法。 |
+| 10 | P2 | 教材错误 | `gui/LabManualContent.cpp` lab-03 思考题 | **MAX_INTERP_DEPTH 误用为函数递归深度**——lab-03 思考题 1 将 `MAX_INTERP_DEPTH` 描述为 fib(10) 调用栈深度防护，但 `MAX_INTERP_DEPTH` 实际是 Lexer 字符串插值嵌套深度限制（64 层），函数递归深度由 `MAX_RECURSION_DEPTH`（256）防护。修复：改为 `MAX_RECURSION_DEPTH`。 |
+| 11 | P2 | HTML 注入 | `gui/MarkdownRenderer.cpp` flushTable | **表格单元格未 escapeHtml**——表格表头/数据行直接 `renderInline(h.trimmed())` 而未先 `escapeHtml`，含 `< > &` 的单元格内容破坏 HTML 结构。修复：先 `escapeHtml` 再 `renderInline`。 |
+| 12 | P2 | HTML 注入 | `gui/IRTransformPanel.cpp` populateLoweringDetail | **多字段未转义**——`e.title`/`e.astSummary`/`e.sourceCode`/`e.description`/`e.irBefore` 直接拼入 HTML，库文本中的 `< > &` 字符破坏结构。修复：添加 `esc` lambda 对所有字段调用 `QString::toHtmlEscaped()`。 |
+| 13 | P2 | 信号冲突 | `gui/ClosureInspectorPanel.cpp` + `gui/ExceptionFlowPanel.cpp` | **setOpenExternalLinks(true) 与 anchorClicked 信号冲突**——两个面板的 scenarioDetail_/phaseDetail_ 设 `setOpenExternalLinks(true)` 同时又连接 `anchorClicked` 信号处理内部 `panel:` 导航链接。点击 panel: 链接时 QTextBrowser 既触发 anchorClicked 又尝试外部打开（对 panel: 协议失败）。修复：改为 `setOpenExternalLinks(false)`，所有链接由 anchorClicked 处理。 |
+| 14 | P2 | 引用不存在 | `gui/LabManualContent.cpp` lab-07 进阶 | **引用不存在的 BUG-INTP-3**——lab-07 进阶部分引用 `BUG-INTP-3`（字符串索引 UTF-8 多字节字符），但 BugHuntLibrary 中无任何 BUG-INTP 系列条目。修复：移除不存在的引用，改为一般性建议描述。 |
+| 15 | P3 | URL 注入 | `gui/MarkdownRenderer.cpp` renderInline | **链接 URL 未转义双引号**——`[text](url)` 中的 URL 若含双引号会破坏 `href="..."` 属性边界。修复：URL 中的 `"` 转义为 `&quot;`。 |
+| 16 | P3 | 死代码 | `gui/MarkdownRenderer.cpp` 任务列表 | **任务列表 dead code + 重复 renderInline**——未使用的 `text` 变量。修复：移除。 |
+| 17 | P3 | 路径转义 | `gui/MarkdownRenderer.cpp` renderInline | 见 #15，同一修复点。 |
+
+### 第五十轮回退（AUDIT-P3.13）
+
+| # | 位置 | 回退原因 |
+|---|------|----------|
+| R1 | `interpreter/InterpreterModules.cpp` + `compiler/Compiler.cpp` + `compiler/IR.cpp` | **AUDIT-P3.13 fix（空模块源码合法化）导致 3 个 ModuleNotFound 测试失败**——原 fix 将空源码从"加载失败"改为"合法空模块"，但 production loader（IdeController/WorkerManager）在文件不存在时返回空字符串，导致 `import "nonexistent"` 静默成功。回退三后端空源码处理为原始语义（报错），修复 InterpreterE2E/VME2EImport/VME2EImportIR 三个测试。 |
+
+### 测试影响
+
+- 全部 17 项修复均无回归。全量 1753/1753 测试通过。
+
 ## 2026-07-09 · 第四十九轮审计：沙箱安全与格式化正确性修复（P0 × 1 + P1 × 2 + P2 × 2，共 5 项）
 
 ### 概述
@@ -40,11 +78,11 @@
 - 全部 5 项保留修复均无回归。全量 1753/1753 测试通过。
 - 2 项回退修复各自导致 1 个测试失败（`MethodCallProbe.NestedIndexAccessPush` 和 `ConsistencyDiff.AuditF8_ModuleExceptionNoCrash`），回退后恢复通过。
 
-## 2026-07-08 · CI 跨平台流水线全面修复（10 项根因 + 1 项后端 bug，共 11 项）
+## 2026-07-08 · CI 跨平台流水线全面修复（12 项根因 + 1 项后端 bug，共 13 项）
 
 ### 概述
 
-GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 10 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 12 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
 
 ### 问题与修复对应表
 
@@ -59,8 +97,9 @@ GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format）�
 | 7 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Dockerfile 未安装 cmake**——builder 阶段执行 `cmake --preset linux-gcc-release` 报 `cmake: not found`（exit code 127）。base 阶段 apt-get install 列表遗漏 cmake。修复：添加 `cmake` 到 apt-get install 列表。 |
 | 8 | P1/寄存器生命周期 | `compiler/RegisterBytecodeBackend.cpp` collectVRegLastUse | **METHOD_CALL 的 obj vreg 寄存器过早释放**——`this.arr.push(4)` 编译为 METHOD_CALL + LOAD_LOCAL + LOAD_MUTATED 序列，METHOD_CALL 的 obj vreg 在 METHOD_CALL 后立即释放，中间的 LOAD_LOCAL 复用该寄存器覆盖变异后的数组，LOAD_MUTATED 读到错误值。MSVC 因 `unordered_map` 迭代顺序恰好不触发，GCC 触发导致 `MethodCallProbe.NestedMemberAccessPush` 测试失败。修复：在 collectVRegLastUse 中为 METHOD_CALL/SUPER_CALL 的 obj vreg 设默认最后使用为当前指令，若后续有 LOAD_MUTATED 则覆盖延长到 LOAD_MUTATED，非变异方法调用（如 len/substr）不延长。 |
 | 9 | Docker/路径错误 | `Dockerfile` QTDIR 环境变量 | **aqtinstall 安装目录名与输入架构名不一致**——aqtinstall 3.3.0 接受 `linux_gcc_64` 作为输入参数（用于 Qt 6.7+ 包查找），但实际安装目录仍为 `gcc_64`（Qt 包内部使用旧目录名）。Dockerfile 的 QTDIR 指向 `/opt/qt6/6.8.3/linux_gcc_64`（不存在），导致 `find_package(Qt6)` 找不到 Qt6Config.cmake。修复：QTDIR 改为 `/opt/qt6/6.8.3/gcc_64`。 |
-| 10 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL 修补步骤 | **AGL framework 引用不仅存在于 FindWrapOpenGL.cmake**——上轮 sed 仅修补 FindWrapOpenGL.cmake，但 Qt 的其他 .cmake 和 .prl 配置文件中也引用 `-framework AGL`，链接阶段仍报 `ld: framework 'AGL' not found`。修复：将 sed 修补范围扩展到所有 .cmake 和 .prl 文件。 |
+| 10 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL stub framework 步骤 | **AGL framework 引用来自 Qt 二进制 framework 文件的 LC_LOAD_DYLIB**——前两轮尝试用 sed 修补 .cmake/.prl 配置文件中的 `-framework AGL` 字符串，但实际 AGL 引用来自 QtGui.framework/QtGui 等二进制文件的链接依赖（LC_LOAD_DYLIB），sed 无法修改二进制文件。链接器传递依赖时仍报 `ld: framework 'AGL' not found`。修复：在 `/Library/Frameworks/` 创建空的 AGL stub framework（用 clang 编译空 dylib 作为 AGL 二进制），链接器能找到 AGL（虽然为空），运行时不需要 AGL（Qt 6.8 不再调用 AGL API）。 |
 | 11 | 代码风格 | `interpreter/Interpreter.cpp` | **clang-format 格式违规**——ROUND49 修复引入的代码未执行 clang-format，CI 报 396 行和 2404 行格式违规。修复：本地执行 `clang-format -i`（版本 22.1.5，与 CI 一致）。 |
+| 12 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Docker 容器缺少 OpenGL 开发头文件**——Qt6Gui 的 CMake 配置依赖 `find_package(OpenGL)`，但 Dockerfile 仅安装 `libgl1`（运行时库），缺少开发头文件，报 `Could NOT find OpenGL (missing: OPENGL_opengl_LIBRARY OPENGL_glx_LIBRARY OPENGL_INCLUDE_DIR)`，进而 `Qt6Gui could not be found because dependency WrapOpenGL could not be found`。修复：添加 `libgl-dev` / `libgles-dev` / `libegl-dev` 开发头文件，同时添加 `libglib2.0-dev` / `libfontconfig1-dev` / `libfreetype6-dev` 满足 Qt6Gui 字体子系统依赖。 |
 
 ## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
 

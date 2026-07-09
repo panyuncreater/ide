@@ -16,6 +16,10 @@
 #   2. QTDIR 直接指向 Qt 安装前缀 /opt/qt6/<version>/gcc_64（内含
 #      lib/cmake/Qt6），供 CMakePresets 的 linux-gcc-release 预设通过
 #      $env{QTDIR} 正确定位 Qt6（原 /usr/lib/x86_64-linux-gnu/qt6 前缀错误）。
+#   3. Qt6Gui 的 CMake 配置依赖 OpenGL（find_package(OpenGL)），需安装
+#      libgl-dev / libgles-dev / libegl-dev 开发头文件；仅 libgl1 运行时库
+#      会导致 "Could NOT find OpenGL" 配置失败。同时安装 libfontconfig1-dev
+#      与 libfreetype6-dev 以满足 Qt6Gui 的字体子系统依赖。
 # ============================================================
 
 # ---- 基础镜像（构建/运行共用）----
@@ -29,10 +33,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ccache \
     pkg-config \
     libgl1 \
+    libgl-dev \
+    libgles-dev \
+    libegl-dev \
     libglib2.0-0 \
+    libglib2.0-dev \
     libxkbcommon0 \
     libdbus-1-3 \
     libfontconfig1 \
+    libfontconfig1-dev \
+    libfreetype6-dev \
     python3 \
     python3-pip \
     python3-venv \
