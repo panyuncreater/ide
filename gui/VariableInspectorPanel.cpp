@@ -457,11 +457,11 @@ void VariableInspectorPanel::onVariableSelected() {
                            "<p><b>类型:</b> %3</p>"
                            "<p><b>值 (toString):</b> %4</p>"
                            "<p><b>NaN-boxing 位:</b> <code>%5</code></p>")
-                       .arg(name)
-                       .arg(type)
-                       .arg(type)
+                       .arg(name.toHtmlEscaped())
+                       .arg(type.toHtmlEscaped())
+                       .arg(type.toHtmlEscaped())
                        .arg(value.toHtmlEscaped())
-                       .arg(bitsHex);
+                       .arg(bitsHex.toHtmlEscaped());
     varDetail_->setHtml(html);
 }
 
@@ -502,12 +502,12 @@ void VariableInspectorPanel::showExample(int index) {
                            "%7"
                            "<h3>教学注解</h3>"
                            "%8")
-                       .arg(QString::fromUtf8(e.displayName.c_str()))
-                       .arg(QString::fromUtf8(e.id.c_str()))
-                       .arg(QString::fromUtf8(e.typeName.c_str()))
+                       .arg(QString::fromUtf8(e.displayName.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(e.id.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(e.typeName.c_str()).toHtmlEscaped())
                        .arg(QString::fromUtf8(e.sourceExpr.c_str()).toHtmlEscaped())
                        .arg(QString::fromUtf8(e.valueRepr.c_str()).toHtmlEscaped())
-                       .arg(QString::fromUtf8(e.nanboxBits.c_str()))
+                       .arg(QString::fromUtf8(e.nanboxBits.c_str()).toHtmlEscaped())
                        .arg(MarkdownRenderer::markdownToHtmlFragment(e.heapLayout))
                        .arg(MarkdownRenderer::markdownToHtmlFragment(e.teachingNote));
     exampleDetail_->setHtml(html);

@@ -625,10 +625,13 @@ void LearningPathPanel::markActivityCompleted(const QString& activityId) {
     if (activityId.isEmpty())
         return;
     auto& store = LearnerProgressStore::instance();
-    // AUDIT-P2 fix: 活动已完成则跳过 save + refresh，避免重复磁盘 I/O 与 UI 重建。
-    // 浏览型面板（visited-*）每次访问都触发 markActivityCompleted，原实现不检查
-    // 已完成状态直接 save + refresh，对已通关活动产生大量冗余操作。
-    if (store.data().completed.count(activityId.toStdString()) && store.data().completed.at(activityId.toStdString())) {
+    // AUDIT-P2 fix: 活动已完成则跳过 save，避免重复磁盘 I/O。
+    // R52-8 fix: 幂等检查仅跳过 save，不跳过 refresh——跨面板首次完成场景下
+    // store 已被发起面板（如 CodeJourneyInfoPanel）直接写入，但本面板 UI 尚未
+    // 刷新，仍需 refresh() 更新进度条/活动状态显示。
+    auto it = store.data().completed.find(activityId.toStdString());
+    if (it != store.data().completed.end() && it->second) {
+        refresh();
         return;
     }
     store.markCompleted(activityId.toStdString());

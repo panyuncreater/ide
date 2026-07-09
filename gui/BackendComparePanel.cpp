@@ -79,12 +79,18 @@ void BackendComparePanel::runComparison() {
         diffLabel_->setText(QString::fromUtf8("未绑定控制器"));
         return;
     }
+    // R51-1 fix: 重入守卫——processEvents 期间可能有其他代码路径触发 runComparison，
+    // comparing_ 三段式（入口检查 + 置位 + 出口恢复）防止三后端被并发执行。
+    if (comparing_) {
+        return;
+    }
     // 直接从 controller 获取 AST（已在主编辑器编译完成）
     Block* ast = controller_->astRoot();
     if (!ast) {
         diffLabel_->setText(QString::fromUtf8("请先在主编辑器中输入并编译代码"));
         return;
     }
+    comparing_ = true;
     runButton_->setEnabled(false);
     diffLabel_->setText(QString::fromUtf8("运行中..."));
     // BUG-GUI-AUDIT-1 fix attempt: 原审计建议排除定时器事件，但 Qt 6 已移除通用

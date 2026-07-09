@@ -31,7 +31,7 @@ const std::vector<CodeSnippet>& CodeSnippetEngine::snippets() {
         CodeSnippet{"try", "try {\n    ${1:// 可能出错}\n} catch (${2:e}) {\n    ${3:// 错误处理}\n}",
                     "try-catch 异常处理模板"},
         CodeSnippet{"print", "print(${1:表达式});", "print 输出语句模板"},
-        CodeSnippet{"var", "var ${1:name}: ${2:int} = ${3:0};", "变量声明（可选类型注解）"},
+        CodeSnippet{"var", "var ${1:name} = ${2:0};", "变量声明（无类型注解）"},
         CodeSnippet{"import", "import { ${1:name} } from \"${2:module}\";", "模块导入"},
         CodeSnippet{"export", "export ${1:fun} ${2:name}(${3:参数}) {\n    ${4:// 导出内容}\n}", "模块导出"},
         CodeSnippet{"return", "return ${1:value};", "返回语句"},

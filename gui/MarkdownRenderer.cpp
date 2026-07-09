@@ -96,19 +96,42 @@ static QString slugify(const QString& text) {
 /// P2-2 fix (F4): 对 MiniLang 代码做简单语法高亮
 /// 输入应已 escapeHtml 转义过。基于正则顺序替换：注释 > 字符串 > 关键字 > 数字
 /// 用 <span class="..."> 包裹，CSS 类定义在 buildStylesheet 中
+///
+/// R51-1 fix: 关键字 "class" 会腐蚀已生成的 span 标签的 class="..." 属性
+/// （\bclass\b 匹配属性中的 class）。改用"提取-替换-还原"法：注释/字符串
+/// 标记后先提取到 spans 列表并用唯一占位符替换，关键字/数字替换仅作用于
+/// 剩余纯文本，最后还原占位符。占位符使用 \uE000-\uE0FF 私用区字符（不会
+/// 出现在 MiniLang 源码中，避免与关键字冲突）。
 static QString highlightMiniLang(const QString& escapedCode) {
     QString result = escapedCode;
+    QStringList spans;
+
+    // 占位符：\uE000 + 序号 + \uE001，私用区字符不会出现在源码或关键字中
+    auto makePlaceholder = [&](int idx) {
+        return QChar(0xE000) + QString::number(idx) + QChar(0xE001);
+    };
+    auto replaceWithPlaceholder = [&](const QRegularExpression& re, const QString& cls) {
+        int from = 0;
+        QRegularExpressionMatch m;
+        while ((m = re.match(result, from)).hasMatch()) {
+            QString captured = m.captured(0);
+            int idx = static_cast<int>(spans.size());
+            spans.push_back(QStringLiteral("<span class=\"%1\">%2</span>").arg(cls, captured));
+            QString placeholder = makePlaceholder(idx);
+            result.replace(m.capturedStart(), m.capturedLength(), placeholder);
+            from = m.capturedStart() + placeholder.length();
+        }
+    };
 
     // 1. 注释（先处理，避免注释内的关键字/字符串被误高亮）
-    // 块注释 /* */
-    result.replace(kReMlBlockComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
-    // 行注释 //...
-    result.replace(kReMlLineComment, QStringLiteral("<span class=\"ml-comment\">\\0</span>"));
+    replaceWithPlaceholder(kReMlBlockComment, QStringLiteral("ml-comment"));
+    replaceWithPlaceholder(kReMlLineComment, QStringLiteral("ml-comment"));
 
     // 2. 字符串
-    result.replace(kReMlString, QStringLiteral("<span class=\"ml-string\">\\0</span>"));
+    replaceWithPlaceholder(kReMlString, QStringLiteral("ml-string"));
 
     // 3. 关键字（用 \b 边界避免误命中标识符子串）
+    // 此时注释/字符串已被替换为占位符，关键字正则不会匹配到它们的内容
     for (const QString& kw : kMiniLangKeywords) {
         QRegularExpression re(QStringLiteral("\\b%1\\b").arg(kw));
         result.replace(re, QStringLiteral("<span class=\"ml-keyword\">%1</span>").arg(kw));
@@ -116,6 +139,11 @@ static QString highlightMiniLang(const QString& escapedCode) {
 
     // 4. 数字
     result.replace(kReMlNumber, QStringLiteral("<span class=\"ml-number\">\\0</span>"));
+
+    // 5. 还原占位符
+    for (int i = static_cast<int>(spans.size()) - 1; i >= 0; --i) {
+        result.replace(makePlaceholder(i), spans[i]);
+    }
 
     return result;
 }
@@ -173,6 +201,8 @@ static QString renderInline(const QString& s) {
         QString text = it.captured(1);
         QString url = it.captured(2);
         url.replace(QStringLiteral("&amp;"), QStringLiteral("&"));
+        // R51-6 fix: URL 中的双引号会破坏 href 属性边界，需转义为 &quot;
+        url.replace(QChar('"'), QStringLiteral("&quot;"));
         result += QStringLiteral("<a href=\"%1\">%2</a>").arg(url, text);
         pos = it.capturedEnd();
     }
@@ -293,7 +323,8 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             // 表头
             html << QStringLiteral("<tr>");
             for (const auto& h : tableHeader) {
-                html << QStringLiteral("<th>") << renderInline(h.trimmed()) << QStringLiteral("</th>");
+                // R51-3 fix: 表格单元格需先 escapeHtml 再 renderInline（对齐列表/标题/引用块）
+                html << QStringLiteral("<th>") << renderInline(escapeHtml(h.trimmed())) << QStringLiteral("</th>");
             }
             html << QStringLiteral("</tr>");
             // 数据行
@@ -301,7 +332,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 QStringList cells = row.split(QStringLiteral("|"));
                 html << QStringLiteral("<tr>");
                 for (const auto& c : cells) {
-                    html << QStringLiteral("<td>") << renderInline(c.trimmed()) << QStringLiteral("</td>");
+                    html << QStringLiteral("<td>") << renderInline(escapeHtml(c.trimmed())) << QStringLiteral("</td>");
                 }
                 html << QStringLiteral("</tr>");
             }
@@ -411,7 +442,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 inUl = true;
             }
             QString checked = tm.captured(1).toLower();
-            QString text = renderInline(escapeHtml(tm.captured(2)));
+            // R51-7 fix: 移除未使用的 text 变量，直接在输出处调用 renderInline
             QString checkboxClass = (checked == QStringLiteral("x")) ? QStringLiteral("task-checkbox checked")
                                                                      : QStringLiteral("task-checkbox");
             QString checkboxSymbol = (checked == QStringLiteral("x")) ? QStringLiteral("✓") : QString();

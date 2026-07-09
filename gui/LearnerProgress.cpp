@@ -21,6 +21,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -62,6 +63,12 @@ void LearnerProgressStore::setFilePathForTesting(const QString& path) {
 // 加载进度
 // ============================================================
 /// 从文件加载进度数据；失败返回 false 并保留内存状态。
+// R51-4 fix: 字段类型不匹配时拒绝加载（返回 false），保留内存中原数据。
+// 原实现构建全新 loaded 对象，遇到类型不匹配的字段静默跳过（该字段在 loaded
+// 中保持默认空值），最后 data_ = std::move(loaded) 整体覆盖——导致内存中
+// 该字段的有效数据被默认空值覆盖丢失。修复：若某顶层字段存在但类型与预期
+// 不符（如 completed 是数组而非对象），视为文件损坏，整体拒绝加载。
+// 缺失字段（向后兼容旧文件）仍按默认值处理，不影响加载。
 bool LearnerProgressStore::load() {
     QString path = filePath();
     QFile file(path);
@@ -85,9 +92,34 @@ bool LearnerProgressStore::load() {
 
     // AUDIT-P2 fix: 校验 schemaVersion。缺失字段默认为 1（向后兼容旧文件），
     // 高于当前支持版本(1)则拒绝加载，避免未来 schema 变更后误读旧结构。
+    // R51-4 fix: schemaVersion 若存在但非数字也视为损坏，拒绝加载。
+    if (root.contains(QString::fromUtf8("schemaVersion"))) {
+        QJsonValue svVal = root.value(QString::fromUtf8("schemaVersion"));
+        if (!svVal.isDouble())
+            return false;
+    }
     int sv = root.value(QString::fromUtf8("schemaVersion")).toInt(1);
     if (sv > 1)
         return false;
+
+    // R51-4 fix: 顶层字段类型校验辅助——字段存在但类型不符则拒绝加载
+    auto requireObjectType = [&](const char* key) -> bool {
+        QString qk = QString::fromUtf8(key);
+        if (root.contains(qk) && !root.value(qk).isObject())
+            return false;
+        return true;
+    };
+    if (!requireObjectType("completed") || !requireObjectType("attemptCount") ||
+        !requireObjectType("lastAccessTime") || !requireObjectType("levelStars") ||
+        !requireObjectType("score") || !requireObjectType("bestStars") ||
+        !requireObjectType("spentMinutes") || !requireObjectType("failCount")) {
+        return false;
+    }
+    // currentStage 若存在必须是数字
+    if (root.contains(QString::fromUtf8("currentStage")) &&
+        !root.value(QString::fromUtf8("currentStage")).isDouble()) {
+        return false;
+    }
 
     // completed: { "id": true, ... }
     QJsonObject completedObj = root.value(QString::fromUtf8("completed")).toObject();
@@ -206,6 +238,10 @@ bool LearnerProgressStore::load() {
 // AUDIT-P1 fix: 原子写入——写临时文件 → flush → close → remove 旧 → rename，
 // 避免崩溃/断电/磁盘满导致目标文件被截断为部分内容或空文件，全部进度丢失。
 // AUDIT-P2 fix: 写入 schemaVersion 字段，支持未来 schema 迁移。
+// R51-3 fix: 改用 QSaveFile 替代手写 remove→rename 序列。原实现先 remove 旧文件
+// 再 rename，在两步之间崩溃会导致目标文件丢失（旧文件已删、新文件未就位）。
+// QSaveFile::commit() 在 Windows 上使用 MOVEFILE_REPLACE_EXISTING 原子替换，
+// 在 Linux 上用 rename(2) 原子覆盖，消除数据丢失窗口。
 bool LearnerProgressStore::save() const {
     QString path = filePath();
     QFileInfo fi(path);
@@ -271,31 +307,23 @@ bool LearnerProgressStore::save() const {
 
     QJsonDocument doc(root);
 
-    // AUDIT-P1 fix: 原子写入模式——写 .tmp → flush → close → remove 旧 → rename
-    QString tmpPath = path + QStringLiteral(".tmp");
-    QFile tmpFile(tmpPath);
-    if (!tmpFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    // R51-3 fix: 使用 QSaveFile 实现真正的原子写入。
+    // QSaveFile 在 commit() 前写入临时文件，commit() 时原子替换目标文件。
+    // 若 commit 前崩溃/断电，目标文件保持原样不受影响。
+    // directWriteFallback=false：禁止 QSaveFile 在无法原子替换时直接写目标文件
+    // （直接写会在崩溃时留下截断文件）。
+    QSaveFile sf(path);
+    sf.setDirectWriteFallback(false);
+    if (!sf.open(QIODevice::WriteOnly)) {
         return false;
     }
-    qint64 written = tmpFile.write(doc.toJson(QJsonDocument::Indented));
-    if (written < 0) {
-        tmpFile.close();
-        QFile::remove(tmpPath);
+    QByteArray payload = doc.toJson(QJsonDocument::Indented);
+    qint64 written = sf.write(payload);
+    if (written != static_cast<qint64>(payload.size())) {
+        sf.cancelWriting();
         return false;
     }
-    tmpFile.flush();
-    tmpFile.close();
-
-    // Windows 上 rename 不能覆盖已存在文件，需先 remove 旧文件
-    if (QFile::exists(path)) {
-        if (!QFile::remove(path)) {
-            QFile::remove(tmpPath);
-            return false;
-        }
-    }
-    if (!QFile::rename(tmpPath, path)) {
-        // rename 失败时 tmp 文件已被移走或保留，尝试清理
-        QFile::remove(tmpPath);
+    if (!sf.commit()) {
         return false;
     }
     return true;

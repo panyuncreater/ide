@@ -220,8 +220,8 @@ const std::vector<SyntaxProduction>& SyntaxProductionLibrary::items() {
             "    • 路径遍历防护：拒绝 .. 和绝对路径\n"
             "    • 非导出顶层名称在导入方不可见（模块隔离）"},
         SyntaxProduction{
-            "string-interp", "🔤 字符串插值", "interpolatedString := '\"' (stringPart | \"${\" expression \"}\")* '\"'",
-            "🔤 字符串里想算点东西？把表达式塞进 `${ }` 就行。不过空着 `{}` 可不行，Parser 会当你写错了报语法错误。"
+            "string-interp", "🔤 字符串插值", "interpolatedString := '\"' (stringPart | \"{\" expression \"}\")* '\"'",
+            "🔤 字符串里想算点东西？把表达式塞进 `{ }` 就行。不过空着 `{}` 可不行，Parser 会当你写错了报语法错误。"
             "插值支持嵌套字符串、字典、数组，嵌套深度限制 64 层防栈溢出。"
             "Lexer 通过 INTERP_START/INTERP_END/STRING_PART 三种 token 类型识别。",
             "var name = \"World\";\nvar items = [1, 2, 3];\nprint(\"Hello, {name}! You have {items.len()} items.\");",

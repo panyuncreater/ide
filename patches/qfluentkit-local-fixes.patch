@@ -1,0 +1,182 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5af24e9..6653130 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
+ 
+ add_subdirectory(QFluent)
+-add_subdirectory(QFluentExample)
++# add_subdirectory(QFluentExample)  # 不需要示例程序
+ 
+ # find_package(QFluent QUIET)
+ # if(QFluent_FOUND)
+diff --git a/QFluent/CMakeLists.txt b/QFluent/CMakeLists.txt
+index 0297f8b..c17d2a6 100644
+--- a/QFluent/CMakeLists.txt
++++ b/QFluent/CMakeLists.txt
+@@ -80,7 +80,7 @@ include(GNUInstallDirs)
+ # ==================== 安装配置 ====================
+ option(QFLUENT_INSTALL_TO_QT "Install QFluent to Qt installation directory" ON)
+ 
+-if(QFLUENT_INSTALL_TO_QT)
++if(QFLUENT_INSTALL_TO_QT AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+     if(${QT_VERSION_MAJOR} EQUAL 6 AND DEFINED QT6_INSTALL_PREFIX)
+         set(QT_INSTALL_DIR "${QT6_INSTALL_PREFIX}")
+     elseif(${QT_VERSION_MAJOR} EQUAL 5 AND DEFINED _qt5Core_install_prefix)
+diff --git a/QFluent/src/QFluent/SpinBox.cpp b/QFluent/src/QFluent/SpinBox.cpp
+index ef6463e..73b7fff 100644
+--- a/QFluent/src/QFluent/SpinBox.cpp
++++ b/QFluent/src/QFluent/SpinBox.cpp
+@@ -14,12 +14,6 @@
+ #include "FluentIcon.h"
+ #include "StyleSheet.h"
+ 
+-template class InlineSpinBoxBase<QSpinBox>;
+-template class InlineSpinBoxBase<QDoubleSpinBox>;
+-template class InlineSpinBoxBase<QTimeEdit>;
+-template class InlineSpinBoxBase<QDateTimeEdit>;
+-template class InlineSpinBoxBase<QDateEdit>;
+-
+ // --- SpinButton ---
+ 
+ SpinButton::SpinButton(const QIcon &icon, QWidget *parent)
+@@ -182,42 +176,3 @@ void SpinBoxBase::drawFocusBorder(QPainter *painter, const QRect &rect)
+ 
+     painter->fillPath(path, Theme::themeColor(Fluent::ThemeColor::PRIMARY));
+ }
+-
+-// --- InlineSpinBoxBase ---
+-
+-template <typename T>
+-InlineSpinBoxBase<T>::InlineSpinBoxBase(QWidget *parent)
+-    : T(parent)
+-    , m_helper(new SpinBoxBase(this))
+-{
+-    m_helper->addUpDownButtons();
+-    m_helper->setup();
+-}
+-
+-template <typename T>
+-void InlineSpinBoxBase<T>::setError(bool isError)
+-{
+-    m_helper->setError(isError);
+-}
+-
+-template <typename T>
+-bool InlineSpinBoxBase<T>::isError() const
+-{
+-    return m_helper->isError();
+-}
+-
+-template <typename T>
+-void InlineSpinBoxBase<T>::setSymbolVisible(bool visible)
+-{
+-    m_helper->setSymbolVisible(visible);
+-}
+-
+-template <typename T>
+-void InlineSpinBoxBase<T>::paintEvent(QPaintEvent *event)
+-{
+-    T::paintEvent(event);
+-    if (this->hasFocus() && !isError()) {
+-        QPainter painter(this);
+-        m_helper->drawFocusBorder(&painter, this->rect());
+-    }
+-}
+diff --git a/QFluent/src/QFluent/SpinBox.h b/QFluent/src/QFluent/SpinBox.h
+index e5c118d..2d0808f 100644
+--- a/QFluent/src/QFluent/SpinBox.h
++++ b/QFluent/src/QFluent/SpinBox.h
+@@ -8,12 +8,13 @@
+ #include <QToolButton>
+ #include <QPointer>
+ #include <QScopedPointer>
++#include <QPaintEvent>
++#include <QPainter>
+ 
+ #include "FluentGlobal.h"
+ #include "FluentIcon.h"
+ 
+ class QHBoxLayout;
+-class QPainter;
+ class QRect;
+ 
+ class SpinButton : public QToolButton
+@@ -69,14 +70,27 @@ class QFLUENT_EXPORT InlineSpinBoxBase : public T
+                   "T must derive from QAbstractSpinBox");
+ 
+ public:
+-    explicit InlineSpinBoxBase(QWidget *parent = nullptr);
+-
+-    void setError(bool isError);
+-    bool isError() const;
+-    void setSymbolVisible(bool visible);
++    explicit InlineSpinBoxBase(QWidget *parent = nullptr)
++        : T(parent)
++        , m_helper(new SpinBoxBase(this))
++    {
++        m_helper->addUpDownButtons();
++        m_helper->setup();
++    }
++
++    void setError(bool isError) { m_helper->setError(isError); }
++    bool isError() const { return m_helper->isError(); }
++    void setSymbolVisible(bool visible) { m_helper->setSymbolVisible(visible); }
+ 
+ protected:
+-    void paintEvent(QPaintEvent *event) override;
++    void paintEvent(QPaintEvent *event) override
++    {
++        T::paintEvent(event);
++        if (this->hasFocus() && !isError()) {
++            QPainter painter(this);
++            m_helper->drawFocusBorder(&painter, this->rect());
++        }
++    }
+ 
+ private:
+     QScopedPointer<SpinBoxBase> m_helper;
+@@ -88,7 +102,7 @@ class QFLUENT_EXPORT SpinBox : public InlineSpinBoxBase<QSpinBox>
+ 
+ public:
+     using Base = InlineSpinBoxBase<QSpinBox>;
+-    using Base::Base;
++    explicit SpinBox(QWidget *parent = nullptr) : Base(parent) {}
+ };
+ 
+ class QFLUENT_EXPORT DoubleSpinBox : public InlineSpinBoxBase<QDoubleSpinBox>
+@@ -97,7 +111,7 @@ class QFLUENT_EXPORT DoubleSpinBox : public InlineSpinBoxBase<QDoubleSpinBox>
+ 
+ public:
+     using Base = InlineSpinBoxBase<QDoubleSpinBox>;
+-    using Base::Base;
++    explicit DoubleSpinBox(QWidget *parent = nullptr) : Base(parent) {}
+ };
+ 
+ class QFLUENT_EXPORT TimeEdit : public InlineSpinBoxBase<QTimeEdit>
+@@ -106,7 +120,7 @@ class QFLUENT_EXPORT TimeEdit : public InlineSpinBoxBase<QTimeEdit>
+ 
+ public:
+     using Base = InlineSpinBoxBase<QTimeEdit>;
+-    using Base::Base;
++    explicit TimeEdit(QWidget *parent = nullptr) : Base(parent) {}
+ };
+ 
+ class QFLUENT_EXPORT DateTimeEdit : public InlineSpinBoxBase<QDateTimeEdit>
+@@ -115,7 +129,7 @@ class QFLUENT_EXPORT DateTimeEdit : public InlineSpinBoxBase<QDateTimeEdit>
+ 
+ public:
+     using Base = InlineSpinBoxBase<QDateTimeEdit>;
+-    using Base::Base;
++    explicit DateTimeEdit(QWidget *parent = nullptr) : Base(parent) {}
+ };
+ 
+ class QFLUENT_EXPORT DateEdit : public InlineSpinBoxBase<QDateEdit>
+@@ -124,5 +138,5 @@ class QFLUENT_EXPORT DateEdit : public InlineSpinBoxBase<QDateEdit>
+ 
+ public:
+     using Base = InlineSpinBoxBase<QDateEdit>;
+-    using Base::Base;
++    explicit DateEdit(QWidget *parent = nullptr) : Base(parent) {}
+ };

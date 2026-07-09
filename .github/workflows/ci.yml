@@ -80,6 +80,17 @@ jobs:
         with:
           submodules: recursive
 
+      # 应用 QFluentKit 本地补丁（submodule 修改无法直接推送至上游第三方仓库，
+      # 故以 patch 文件方式在 CI 中应用）。补丁内容：macOS arm64 继承构造函数
+      # `using Base::Base` 不生成符号导致链接失败，改用显式构造函数；同时将
+      # InlineSpinBoxBase 方法内联化以匹配显式构造；注释掉 QFluentExample 子目录；
+      # 安装条件增加顶层源码目录判断（避免被 add_subdirectory 时误安装到 Qt 目录）。
+      # 必须在 CMake 配置之前应用，否则 SpinBox.h 的 `using Base::Base` 会导致
+      # macOS arm64 链接失败（Undefined symbols for architecture arm64）。
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
       # 修复问题 17：ccache + GHA cache 加速构建
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
@@ -286,6 +297,11 @@ jobs:
         with:
           submodules: recursive
 
+      # 应用 QFluentKit 本地补丁（详见 build-test 作业同名步骤说明）
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
         with:
@@ -362,6 +378,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      # 应用 QFluentKit 本地补丁（详见 build-test 作业同名步骤说明）
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
 
       - name: 安装 Qt6
         uses: jurplel/install-qt-action@v4
@@ -445,6 +466,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           submodules: recursive
+
+      # 应用 QFluentKit 本地补丁（详见 build-test 作业同名步骤说明）
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2.23

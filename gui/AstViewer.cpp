@@ -48,8 +48,12 @@ void AstViewer::setAst(ASTNode* root) {
     oldMap.clear(); // 场景已清空，oldMap 中的键已失效，仅清理表本身
     root_ = root;
 
-    if (!root)
+    if (!root) {
+        // R52-6 fix: 空状态提示，对齐 IrViewer/PipelineViewer 模式
+        auto* placeholder = scene_->addText(QString::fromUtf8("（尚未解析 AST，请先在主编辑器输入代码并触发编译）"));
+        placeholder->setDefaultTextColor(isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x65, 0x7B, 0x83));
         return;
+    }
 
     // PERF-24 fix: 大 AST 节点数上限保护，避免创建 O(3N) 个 QGraphicsItem 导致 UI 卡顿。
     const int MAX_AST_NODES = 5000;

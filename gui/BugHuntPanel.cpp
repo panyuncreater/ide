@@ -288,7 +288,9 @@ void BugHuntPanel::populateBugChips() {
 
 void BugHuntPanel::refreshBugChips() {
     // issue 5: 刷新芯片状态（current 高亮 + 难度筛选可见性）
+    // R51-2 fix: 可见性同时考虑难度筛选与搜索关键字，避免两者互相覆盖
     const auto& items = BugHuntLibrary::items();
+    QString loweredSearch = lastSearchText_.toLower();
     int firstVisible = -1;
     for (int i = 0; i < bugChips_.size() && i < (int)items.size(); ++i) {
         QPushButton* chip = bugChips_[i];
@@ -296,11 +298,20 @@ void BugHuntPanel::refreshBugChips() {
             continue;
         int diffId = static_cast<int>(items[i].difficulty);
         bool visibleByDiff = (currentDifficultyFilter_ == -1 || diffId == currentDifficultyFilter_);
-        chip->setVisible(visibleByDiff);
+        // R51-2 fix: 同时检查搜索关键字
+        bool visibleBySearch = true;
+        if (!loweredSearch.isEmpty()) {
+            QString haystack = QString::fromUtf8(items[i].title.c_str()).toLower() + " " +
+                               QString::fromUtf8(items[i].id.c_str()).toLower() + " " +
+                               QString::fromUtf8(items[i].category.c_str()).toLower();
+            visibleBySearch = haystack.contains(loweredSearch);
+        }
+        bool visible = visibleByDiff && visibleBySearch;
+        chip->setVisible(visible);
         chip->setProperty("current", (i == currentItemIndex_));
         chip->style()->unpolish(chip);
         chip->style()->polish(chip);
-        if (visibleByDiff && firstVisible < 0)
+        if (visible && firstVisible < 0)
             firstVisible = i;
     }
     // 若当前题目被筛选隐藏，自动选中第一个可见芯片
@@ -310,11 +321,17 @@ void BugHuntPanel::refreshBugChips() {
         // 注意：不能用 QWidget::isVisible() 判定难度筛选可见性——
         // 构造期间父 widget 未 show()，isVisible() 恒返回 false，会导致
         // refreshBugChips → onItemSelected → refreshBugChips 无限递归栈溢出。
-        // 这里用难度筛选条件判定，与上面 firstVisible 口径一致。
+        // 这里用难度筛选+搜索条件判定，与上面 firstVisible 口径一致。
         bool curVisible = false;
         if (currentItemIndex_ < (int)items.size()) {
             int curDiffId = static_cast<int>(items[currentItemIndex_].difficulty);
             curVisible = (currentDifficultyFilter_ == -1 || curDiffId == currentDifficultyFilter_);
+            if (curVisible && !loweredSearch.isEmpty()) {
+                QString haystack = QString::fromUtf8(items[currentItemIndex_].title.c_str()).toLower() + " " +
+                                   QString::fromUtf8(items[currentItemIndex_].id.c_str()).toLower() + " " +
+                                   QString::fromUtf8(items[currentItemIndex_].category.c_str()).toLower();
+                curVisible = haystack.contains(loweredSearch);
+            }
         }
         if (!curVisible && firstVisible >= 0 && firstVisible != currentItemIndex_) {
             onItemSelected(firstVisible);
@@ -324,7 +341,8 @@ void BugHuntPanel::refreshBugChips() {
 
 // OPT-2 fix: 从原 textChanged lambda 提取的搜索过滤逻辑，供防抖定时器调用。
 // 按 title/id/category 小写包含匹配，控制 bugChips_ 可见性。
-// 注意：此方法仅按搜索关键字过滤，不与难度筛选联动（保留原 textChanged 行为）。
+// R51-2 fix: 同时考虑难度筛选条件，与 refreshBugChips 联动——
+// 搜索与难度筛选取交集，避免互相覆盖。
 void BugHuntPanel::applySearchFilter(const QString& filter) {
     QString lowered = filter.toLower();
     const auto& items = BugHuntLibrary::items();
@@ -334,8 +352,11 @@ void BugHuntPanel::applySearchFilter(const QString& filter) {
         QString haystack = QString::fromUtf8(items[i].title.c_str()).toLower() + " " +
                            QString::fromUtf8(items[i].id.c_str()).toLower() + " " +
                            QString::fromUtf8(items[i].category.c_str()).toLower();
-        bool match = lowered.isEmpty() || haystack.contains(lowered);
-        bugChips_[i]->setVisible(match);
+        bool matchSearch = lowered.isEmpty() || haystack.contains(lowered);
+        // R51-2 fix: 同时检查难度筛选
+        int diffId = static_cast<int>(items[i].difficulty);
+        bool matchDiff = (currentDifficultyFilter_ == -1 || diffId == currentDifficultyFilter_);
+        bugChips_[i]->setVisible(matchSearch && matchDiff);
     }
 }
 

@@ -541,21 +541,27 @@ void IRTransformPanel::populateLoweringList() {
 
 /// 根据选中索引渲染 lowering 详情：标题 / AST 节点 / 源码 / 说明 +
 /// 原始 IR（<pre> 背景用 TeachingTheme::surface() 以跟随主题）。
+// R51-8 fix: 所有库文本字段经 toHtmlEscaped 转义，防止 < > & 等字符破坏 HTML 结构
 void IRTransformPanel::populateLoweringDetail(int index) {
     const auto& items = IRTransformLibrary::loweringExamples();
     if (index < 0 || index >= (int)items.size())
         return;
     const auto& e = items[index];
 
+    // R51-8 fix: 转义库文本中的 HTML 特殊字符
+    auto esc = [](const std::string& s) -> std::string {
+        return QString::fromUtf8(s.c_str()).toHtmlEscaped().toStdString();
+    };
+
     std::ostringstream os;
-    os << "<h3>" << e.title << "</h3>";
-    os << "<p><b>AST 节点：</b> <code>" << e.astSummary << "</code></p>";
-    os << "<p><b>源码：</b> <code>" << e.sourceCode << "</code></p>";
+    os << "<h3>" << esc(e.title) << "</h3>";
+    os << "<p><b>AST 节点：</b> <code>" << esc(e.astSummary) << "</code></p>";
+    os << "<p><b>源码：</b> <code>" << esc(e.sourceCode) << "</code></p>";
     os << "<hr>";
-    os << "<p>" << e.description << "</p>";
+    os << "<p>" << esc(e.description) << "</p>";
     os << "<h4>Lowering 后的 IR：</h4>";
     os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()
-       << "; padding:8px; font-family:Consolas;'>" << e.irBefore << "</pre>";
+       << "; padding:8px; font-family:Consolas;'>" << esc(e.irBefore) << "</pre>";
     loweringDetail_->setHtml(QString::fromUtf8(os.str().c_str()));
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }

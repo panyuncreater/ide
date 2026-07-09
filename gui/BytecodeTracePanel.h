@@ -128,6 +128,11 @@ private:
     // OPT-2 fix: autoTimer 安全网指纹——避免 VM 状态未变时盲目累积重复轨迹。
     // 仅在 captureCurrentState 内 push_back 之前计算并比对。
     std::string lastCaptureFingerprint_;
+    // R51-2 fix: deque 容量满后 pop_front+push_back 保持 size 不变，但内部索引
+    // 整体偏移 1 位，refreshTraceTable 增量更新逻辑（基于行数差）无法感知此偏移，
+    // 导致表格全部显示陈旧数据。该标志在 pop_front 时置 true，refreshTraceTable
+    // 检测到后执行全量重建并清除标志。
+    bool dequeShifted_ = false;
 
     // 构造辅助
     void buildTracePage(QWidget* host);

@@ -63,8 +63,13 @@ int ActivityBar::addItem(const QString& text, Fluent::IconType icon) {
 void ActivityBar::setCurrentIndex(int index) {
     if (index < 0 || index >= items_.size())
         return;
-    if (currentIndex_ == index)
+    if (currentIndex_ == index) {
+        // R51-4 fix: checkable QToolButton 点击会 toggle checked 状态。
+        // 若点击的是当前已选中项，early return 跳过 updateSelection 会导致
+        // 按钮停留在 unchecked 视觉态。此处仍需刷新以恢复正确的选中态。
+        updateSelection();
         return;
+    }
     currentIndex_ = index;
     updateSelection();
     emit currentChanged(index);

@@ -232,6 +232,8 @@ void BreakpointConditionPanel::buildLibraryPage(QWidget* host) {
     auto* splitter = new QSplitter(Qt::Horizontal, host);
     scenarioList_ = new QListWidget(host);
     scenarioDetail_ = new QTextBrowser(host);
+    // R52-7 fix: 显式设置 setOpenExternalLinks(false)，对齐其他面板模式
+    scenarioDetail_->setOpenExternalLinks(false);
     splitter->addWidget(scenarioList_);
     splitter->addWidget(scenarioDetail_);
     splitter->setStretchFactor(0, 1);
@@ -255,6 +257,14 @@ void BreakpointConditionPanel::buildLibraryPage(QWidget* host) {
 void BreakpointConditionPanel::refreshLive() {
     if (!controller_) {
         liveStatusLabel_->setText(QString::fromUtf8("未绑定控制器"));
+        return;
+    }
+    // R52-3 fix: 补充 Interpreter 调试 resume 期间的状态守卫。原仅检查 VM 路径，
+    // 缺 Interpreter 调试路径——resume 期间 worker 线程活跃，可能并发更新
+    // debugCoord_ 内部的 breakpointHitCounts_，refreshLive 读取会触发 UB。
+    // 对齐 CallStackPanel / VariableInspectorPanel 的双路径守卫模式。
+    if (controller_->isRunning() && controller_->isDebugRun() && !controller_->isDebugPaused()) {
+        liveStatusLabel_->setText(QString::fromUtf8("状态：调试运行中（暂停后刷新）"));
         return;
     }
     // AUDIT-P2 fix: VM 运行期间读断点元数据（getBreakpointCondition/getBreakpointHitCount）

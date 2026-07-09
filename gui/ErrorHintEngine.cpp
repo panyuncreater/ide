@@ -135,8 +135,8 @@ std::string ErrorHintEngine::enrichErrorMessage(const std::string& msg, const st
     }
 
     // 模式 4：未定义函数 + 函数无提升提示
-    if (msg.find("未定义的函数") != std::string::npos || msg.find("Undefined function") != std::string::npos ||
-        msg.find("Undefined variable") != std::string::npos) {
+    // R52-4 fix: 移除死代码 "Undefined variable"——含该子串的消息已在模式 3 返回
+    if (msg.find("未定义的函数") != std::string::npos || msg.find("Undefined function") != std::string::npos) {
         // 函数无提升提示
         if (msg.find("未定义的函数") != std::string::npos || msg.find("Undefined function") != std::string::npos) {
             enriched += " 提示：函数无提升——必须先声明后使用。";

@@ -265,7 +265,7 @@ void ClosureInspectorPanel::buildScenarioPage(QWidget* host) {
     auto* splitter = new QSplitter(Qt::Horizontal, host);
     scenarioList_ = new QListWidget(splitter);
     scenarioDetail_ = new QTextBrowser(splitter);
-    scenarioDetail_->setOpenExternalLinks(true);
+    scenarioDetail_->setOpenExternalLinks(false);
 
     for (const auto& s : ClosureInspectorLibrary::scenarios()) {
         scenarioList_->addItem(QString::fromStdString(s.title));
@@ -291,7 +291,7 @@ void ClosureInspectorPanel::buildPhasePage(QWidget* host) {
     auto* splitter = new QSplitter(Qt::Horizontal, host);
     phaseList_ = new QListWidget(splitter);
     phaseDetail_ = new QTextBrowser(splitter);
-    phaseDetail_->setOpenExternalLinks(true);
+    phaseDetail_->setOpenExternalLinks(false);
 
     for (const auto& p : UpvaluePhaseLibrary::phases()) {
         phaseList_->addItem(QString::fromStdString(p.phase));

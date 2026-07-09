@@ -2,6 +2,42 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-09 · 第五十二轮审计：教学模块深度审计与修复（P2 × 7 + P3 × 10，共 17 项）
+
+### 概述
+
+本轮对教学板块进行四模块并行 agent 深度审计（场景库内容正确性、编辑器/REPL/调试面板、核心可视化面板、教学导航/辅助面板），覆盖 30+ GUI 文件，发现并修复 17 项问题。P2 级包括 CodeSnippetEngine `var` 模板语法错误、DebugPanel 缺 toString 异常防护、BreakpointConditionPanel 缺 Interpreter 调试状态守卫、MemoryModelPanel 两处 HTML 注入（C++ 模板语法 `<Value>` 未转义）、ProfileDashboardPanel errorMessage 未转义、LearningPathPanel 幂等检查阻止 UI 刷新；P3 级涵盖多面板 HTML 转义一致性补全、AstViewer 空状态提示、ErrorHintEngine 死代码清理、BugHuntVariantLibrary 内容错误修正、LabManualPanel codeBlockBg 主题对齐、BreakpointConditionPanel setOpenExternalLinks 一致性等。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P2 | 语法错误 | `gui/CodeSnippetEngine.cpp` snippets | **`var` 模板生成 `var name: int = 0;` 不符合实际语法**——Parser::varDecl() 不支持 `:type` 注解（仅接受 `=` 或 `;`），导致展开后解析失败。三方不一致：SyntaxProductionLibrary EBNF 文档记录 `:type` 可选，Parser 实现不支持，CodeSnippetEngine 遵循文档但违反实现。修复：改为 `var ${1:name} = ${2:0};`（无类型注解，与 README 示例一致）。 |
+| 2 | P2 | 异常防护 | `gui/DebugPanel.cpp` onStackFrameSelected | **缺 toString 异常防护**——循环中直接调用 `kv.second.toString()` 未用 try/catch，循环引用/深嵌套/bad_alloc 会中断整帧渲染导致 gotoLineRequested 也被跳过。修复：对齐 updateVariables/VariableInspectorPanel 模式，单个变量 try/catch 失败显示 `<toString failed>`。 |
+| 3 | P2 | 状态守卫 | `gui/BreakpointConditionPanel.cpp` refreshLive | **缺 Interpreter 调试 resume 期间状态守卫**——原仅检查 VM 路径 `isVmRunning()`，缺 Interpreter 调试路径 `isRunning() && isDebugRun() && !isDebugPaused()`。resume 期间 worker 线程活跃并发更新 breakpointHitCounts_，refreshLive 读取触发 UB。修复：补充 Interpreter 调试守卫，对齐 CallStackPanel/VariableInspectorPanel 双路径模式。 |
+| 4 | P2 | HTML 注入 | `gui/MemoryModelPanel.cpp` populateNanBoxDetail | **sourceExpr 含 `<` 未转义**——`b.sourceExpr = "(1<<46) - 1"` 中的 `<<` 被浏览器解析为 HTML 标签起始，破坏结构。修复：添加 escMmp lambda 对 title/sourceExpr 调用 toHtmlEscaped()。 |
+| 5 | P2 | HTML 注入 | `gui/MemoryModelPanel.cpp` buildAnimPage | **heapObjectTypes 描述含 `<Value>` 未转义**——`"持有 std::vector<Value> elements"` 中的 `<Value>` 被解析为 HTML 标签，导致 `Value> elements）` 部分被隐藏。修复：kv.first/kv.second 均调用 toHtmlEscaped()。 |
+| 6 | P2 | HTML 注入 | `gui/ProfileDashboardPanel.cpp` buildAnalysis | **errorMessage 未转义**——`r.errorMessage` 来自 `e.what()`，可能含 `< > &` 字符（如 `"expected <expression>"`），QTextBrowser 将 `<expression>` 解释为 HTML 标签。修复：调用 toHtmlEscaped()。 |
+| 7 | P2 | UI 不一致 | `gui/LearningPathPanel.cpp` markActivityCompleted | **幂等检查阻止 UI 刷新**——跨面板首次完成场景下 store 已被发起面板（CodeJourneyInfoPanel）直接写入，但幂等检查 `return` 跳过 refresh()，导致 LearningPathPanel UI 显示陈旧（活动仍显示 ☐、进度条不更新）。修复：幂等检查仅跳过 save 不跳过 refresh()，同时改用 find() 避免 count()+at() 双查找。 |
+| 8 | P3 | HTML 转义 | `gui/VariableInspectorPanel.cpp` onVariableSelected | name/type/bitsHex 未转义（仅 value 转义）。修复：全部补 toHtmlEscaped()。 |
+| 9 | P3 | HTML 转义 | `gui/CallStackPanel.cpp` showScenario | s.title/s.id 未转义。修复：补 toHtmlEscaped()。 |
+| 10 | P3 | HTML 转义 | `gui/VariableInspectorPanel.cpp` showExample | displayName/id/typeName/nanboxBits 未转义。修复：全部补 toHtmlEscaped()。 |
+| 11 | P3 | HTML 转义 | `gui/ProfileDashboardPanel.cpp` opCodeDocView | exampleCode 含 `<=`/`>` 未转义。修复：补 toHtmlEscaped()。 |
+| 12 | P3 | HTML 转义 | `gui/GlossaryPanel.cpp` showDetail | term/category/shortDef 未转义。修复：补 toHtmlEscaped()。 |
+| 13 | P3 | 空状态 | `gui/AstViewer.cpp` setAst | root 为 nullptr 时场景空白无提示。修复：添加占位文本，对齐 IrViewer/PipelineViewer 模式。 |
+| 14 | P3 | 死代码 | `gui/ErrorHintEngine.cpp` enrichErrorMessage | 模式 4 外层 if 含死代码 `"Undefined variable"`——含该子串的消息已在模式 3 返回。修复：移除。 |
+| 15 | P3 | 一致性 | `gui/BreakpointConditionPanel.cpp` buildLibraryPage | scenarioDetail_ 未显式 setOpenExternalLinks(false)。修复：补一行对齐其他面板。 |
+| 16 | P3 | 内容错误 | `gui/BugHuntVariantLibrary.cpp` | variant-uv-1-closure 标题"4 层"与描述/源码"5 层"不一致；variant-regvm-2-vreg 描述"原题 8 个局部变量"有误（原题 0 个）。修复：统一为"5 层"和"0 局部变量"。 |
+| 17 | P3 | 视觉一致性 | `gui/LabManualPanel.cpp` showCurrentChapter | markdownToHtml 未传 codeBlockBg，代码块用默认浅灰与面板 Solarized 主题不协调。修复：传入 `#EEE8D5`。 |
+
+### 已知限制（不修复）
+
+- **AstViewer::setDarkTheme 悬垂 root_**（P2，已知文档限制）：root_ 是非拥有裸指针，setDarkTheme 重新渲染时解引用。所有 AST 失效路径均通过 `Ide::updateAstViewer()` → `clearAst()` 维持契约，setDarkTheme 为同步 GUI 线程操作不与 AST 重建并发。完整修复需将 AST 改用 shared_ptr 管理，改动面过大，暂不处理。
+
+### 测试影响
+
+- 全部 17 项修复均无回归。全量 1753/1753 测试通过。
+
 ## 2026-07-09 · 第五十一轮审计：教学模块深度审计与修复（P1 × 4 + P2 × 10 + P3 × 3，共 17 项）
 
 ### 概述
@@ -78,11 +114,11 @@
 - 全部 5 项保留修复均无回归。全量 1753/1753 测试通过。
 - 2 项回退修复各自导致 1 个测试失败（`MethodCallProbe.NestedIndexAccessPush` 和 `ConsistencyDiff.AuditF8_ModuleExceptionNoCrash`），回退后恢复通过。
 
-## 2026-07-08 · CI 跨平台流水线全面修复（12 项根因 + 1 项后端 bug，共 13 项）
+## 2026-07-08 · CI 跨平台流水线全面修复（14 项根因 + 1 项后端 bug，共 15 项）
 
 ### 概述
 
-GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 12 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经多轮排查定位并修复 14 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
 
 ### 问题与修复对应表
 
@@ -100,6 +136,8 @@ GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format）�
 | 10 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL stub framework 步骤 | **AGL framework 引用来自 Qt 二进制 framework 文件的 LC_LOAD_DYLIB**——前两轮尝试用 sed 修补 .cmake/.prl 配置文件中的 `-framework AGL` 字符串，但实际 AGL 引用来自 QtGui.framework/QtGui 等二进制文件的链接依赖（LC_LOAD_DYLIB），sed 无法修改二进制文件。链接器传递依赖时仍报 `ld: framework 'AGL' not found`。修复：在 `/Library/Frameworks/` 创建空的 AGL stub framework（用 clang 编译空 dylib 作为 AGL 二进制），链接器能找到 AGL（虽然为空），运行时不需要 AGL（Qt 6.8 不再调用 AGL API）。 |
 | 11 | 代码风格 | `interpreter/Interpreter.cpp` | **clang-format 格式违规**——ROUND49 修复引入的代码未执行 clang-format，CI 报 396 行和 2404 行格式违规。修复：本地执行 `clang-format -i`（版本 22.1.5，与 CI 一致）。 |
 | 12 | Docker/依赖缺失 | `Dockerfile` base 阶段 apt-get install | **Docker 容器缺少 OpenGL 开发头文件**——Qt6Gui 的 CMake 配置依赖 `find_package(OpenGL)`，但 Dockerfile 仅安装 `libgl1`（运行时库），缺少开发头文件，报 `Could NOT find OpenGL (missing: OPENGL_opengl_LIBRARY OPENGL_glx_LIBRARY OPENGL_INCLUDE_DIR)`，进而 `Qt6Gui could not be found because dependency WrapOpenGL could not be found`。修复：添加 `libgl-dev` / `libgles-dev` / `libegl-dev` 开发头文件，同时添加 `libglib2.0-dev` / `libfontconfig1-dev` / `libfreetype6-dev` 满足 Qt6Gui 字体子系统依赖。 |
+| 13 | Docker/COPY 扁平化 | `Dockerfile` builder 阶段 COPY 指令 | **`COPY CMakeLists.txt CMakePresets.json cmake/ ./` 混合 COPY 文件与目录导致目录扁平化**——Docker COPY 指令将多个源路径混合 COPY 到目标目录 `./` 时，目录源 `cmake/` 的内容会被扁平化到 `./` 而非保持 `./cmake/` 子目录结构，导致 `CMakeLists.txt` 的 `include(cmake/minilang_core.cmake)` 找不到文件（报 `include could not find requested file: /app/cmake/minilang_core.cmake`）。修复：拆分为两个 COPY 指令——`COPY CMakeLists.txt CMakePresets.json ./`（仅文件）和 `COPY cmake/ ./cmake/`（仅目录，保持子目录结构）。 |
+| 14 | CI/macOS 链接 + patch 机制 | `.github/workflows/ci.yml` + `Dockerfile` + `patches/qfluentkit-local-fixes.patch` + `third_party/QFluentKit/QFluent/src/QFluent/SpinBox.h` | **macOS arm64 上 `using Base::Base` 继承构造函数不生成符号**——QFluentKit 的 SpinBox.h 中 5 个子类（SpinBox/DoubleSpinBox/TimeEdit/DateTimeEdit/DateEdit）使用 `using Base::Base` 继承构造函数，MOC 生成的元类型代码引用该构造函数，但 macOS arm64 Clang 不为 `using Base::Base` 生成符号，导致 `Undefined symbols for architecture arm64: InlineSpinBoxBase<QDateTimeEdit>::InlineSpinBoxBase(QWidget*)` 链接失败。修复：将 5 个子类的 `using Base::Base` 替换为显式构造函数 `explicit SpinBox(QWidget *parent = nullptr) : Base(parent) {}`，同时将 InlineSpinBoxBase 的方法从 .cpp 声明改为 .h 内联实现（匹配显式构造函数）。因 QFluentKit 是第三方 submodule（无法直接推送修改），采用 patch 文件机制：`git -C third_party/QFluentKit diff` 导出为 `patches/qfluentkit-local-fixes.patch`，在 ci.yml 的 build-test/coverage/coverage-linux/test-harness 作业和 Dockerfile 中添加 `git apply --directory=third_party/QFluentKit patches/qfluentkit-local-fixes.patch` 步骤，在 CMake 配置之前应用。 |
 
 ## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
 

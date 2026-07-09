@@ -70,8 +70,18 @@ WORKDIR /app
 # 第一层：第三方依赖（体积大、变化频率低，单独缓存，命中率最高）
 COPY third_party/ third_party/
 
+# QFluentKit 本地补丁（submodule 修改无法推送至上游第三方仓库，以 patch 方式应用）。
+# 补丁必须在 cmake configure 之前应用，否则 SpinBox.h 的 `using Base::Base` 在
+# arm64/某些 GCC 版本上会触发链接错误。补丁文件本身变化频率极低，与 third_party/
+# 同层 COPY 以最大化缓存命中率。
+COPY patches/ ./patches/
+RUN cd third_party/QFluentKit && git apply /app/patches/qfluentkit-local-fixes.patch
+
 # 第二层：CMake 配置脚本（变化频率低）
-COPY CMakeLists.txt CMakePresets.json cmake/ ./
+# 注：cmake/ 必须单独 COPY 到 ./cmake/，不能与文件混合 COPY 到 ./
+# （混合 COPY 会扁平化目录，导致 CMakeLists.txt 的 include(cmake/xxx.cmake) 失败）
+COPY CMakeLists.txt CMakePresets.json ./
+COPY cmake/ ./cmake/
 
 # 仅配置 IDE：关闭测试与 i18n，避免 configure 阶段依赖源码目录，
 # 从而让源码层的变化不会使本层缓存失效（修复审计问题 5）。

@@ -263,7 +263,7 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent) : QWidget(parent) 
         std::ostringstream os;
         os << "<b>" << d.opCode << "</b> <i>[" << d.category << "]</i><hr>";
         os << "<p>" << d.perfNote << "</p>";
-        os << "<p><b>示例：</b> <code>" << d.exampleCode << "</code></p>";
+        os << "<p><b>示例：</b> <code>" << QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped().toStdString() << "</code></p>";
         opCodeDocView_->setHtml(QString::fromUtf8(os.str().c_str()));
     }
     rightTab->addTab(opCodeTab, QString::fromUtf8("指令计数"));
@@ -692,7 +692,9 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
     // 问题 7: 列出失败后端及其错误原因
     for (const auto& r : results) {
         if (!r.success) {
-            os << "<p style='color:#cc0000;'><b>" << r.name << " 失败：</b>" << r.errorMessage << "</p>";
+            // R52-7 fix: errorMessage 来自 e.what()，可能含 < > & 字符（如 "expected <expression>"）需转义
+            os << "<p style='color:#cc0000;'><b>" << r.name << " 失败：</b>"
+               << QString::fromUtf8(r.errorMessage.c_str()).toHtmlEscaped().toStdString() << "</p>";
         }
     }
     os << "<hr>";

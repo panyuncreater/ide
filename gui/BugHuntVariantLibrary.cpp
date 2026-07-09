@@ -28,9 +28,9 @@ const std::vector<BugHuntVariant>& BugHuntVariantLibrary::variants() {
                        "🎯 预测三条路径下 a/b/c 的输出值是否一致",
                        "✅ a=0.75（float 除法），b=0（int 截断向零），c=0.6（float 精确）",
                        "💡 检查 addConstant 是否先比较 getType() 再调用 equals()——浮点常量池去重同样需要类型区分。"},
-        // 2. variant-uv-1-closure：闭包嵌套层级提升到 4 层
+        // 2. variant-uv-1-closure：闭包嵌套层级提升到 5 层
         BugHuntVariant{
-            "variant-uv-1-closure", "BUG-UV-1", "🔗 闭包变体：4 层嵌套自由变量捕获",
+            "variant-uv-1-closure", "BUG-UV-1", "🔗 闭包变体：5 层嵌套自由变量捕获",
             "🔍 差异：原题为 3 层嵌套（outer→mid→inner），本变体提升到 5 层（f1→f2→f3→f4→f5），"
             "中间 f2/f3/f4 均不直接引用 x，仅 f5 返回 x。"
             "新挑战点：4 层惰性 upvalue 透传是否仍能在 resolveUpvalue 逐级回溯中正确创建中间槽位？",

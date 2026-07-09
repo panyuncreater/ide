@@ -173,10 +173,14 @@ void GuidedTour::showStep(int index) {
     // sizeHint 可能不精确，导致 positionBubble 用的 bubble_->size() 偏差。
     // 先用当前 size 初步定位，show() 之后再通过 QTimer::singleShot(0, ...) 在
     // 事件循环空闲时 adjustSize() 并重新定位，确保首次气泡几何已就绪。
+    // R51-3 fix: singleShot lambda 不再捕获 targetRect 值——show() 后布局可能
+    // 导致 target 控件移动/调整大小，捕获旧值会定位到错误位置。改为在 lambda
+    // 内重新从 step.target 计算 targetRect。
+    QWidget* targetWidget = step.target;
     QRect targetRect;
-    if (step.target) {
+    if (targetWidget) {
         // 目标在 host_ 坐标系中的矩形
-        targetRect = QRect(step.target->mapTo(host_, QPoint(0, 0)), step.target->size());
+        targetRect = QRect(targetWidget->mapTo(host_, QPoint(0, 0)), targetWidget->size());
     } else {
         // 无目标：在 host_ 中央显示（零尺寸矩形触发居中逻辑）
         targetRect = QRect(host_->rect().center(), QSize(0, 0));
@@ -188,11 +192,18 @@ void GuidedTour::showStep(int index) {
 
     // 延迟到事件循环空闲：此时布局已计算完成，adjustSize 得到精确 sizeHint，
     // 再用新尺寸重新定位气泡，修正首次显示定位偏差。
-    QTimer::singleShot(0, this, [this, targetRect]() {
+    QTimer::singleShot(0, this, [this, targetWidget]() {
         if (!bubble_)
             return;
         bubble_->adjustSize();
-        positionBubble(targetRect);
+        // R51-3 fix: 重新计算 targetRect，反映 show() 后布局变化
+        QRect rect;
+        if (targetWidget) {
+            rect = QRect(targetWidget->mapTo(host_, QPoint(0, 0)), targetWidget->size());
+        } else {
+            rect = QRect(host_->rect().center(), QSize(0, 0));
+        }
+        positionBubble(rect);
     });
 
     emit stepChanged(index);

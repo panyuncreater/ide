@@ -367,7 +367,7 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
                    "- 在 REPL 中输入多行代码观察续行判断\n"
                    "- 故意写 `print(未定义变量);` 看语义分析如何拦截\n\n"
                    "## 🤔 思考题\n"
-                   "1. 解释器执行 `fib(10)` 时调用栈最深处有多少层？为什么会触发 `MAX_INTERP_DEPTH` 防护？\n"
+                   "1. 解释器执行 `fib(10)` 时调用栈最深处有多少层？为什么会触发 `MAX_RECURSION_DEPTH` 防护？\n"
                    "2. Environment 的 `boundInstance_` 缓存为什么能加速方法调用？不缓存会怎样？\n"
                    "3. REPL 是怎么判断「用户还没输入完，需要继续读下一行」的？列举至少 3 种续行场景。\n"
                    "4. `print(y)` 中 `y` 未定义，为什么语法分析通过了，却在执行时报错？这说明了语义分析的什么特点？",
@@ -848,7 +848,7 @@ const std::vector<LabChapter>& LabManualContent::chapters() {
             "| int48 溢出 | 大整数超范围 | 自动装箱为堆对象 |\n\n"
             "## 进阶\n"
             "- 尝试嵌套数组 `[[1,2],[3,4]]` 观察深拷贝 vs 浅拷贝\n"
-            "- 测试字符串索引 UTF-8 多字节字符（参见 BUG-INTP-3）\n\n"
+            "- 测试字符串索引 UTF-8 多字节字符（多字节字符索引可能返回非预期结果）\n\n"
             "## 🤔 思考题\n"
             "1. NaN-boxing 为什么用 NaN 的 payload 而不是普通 union？想想 double 与指针的区分。\n"
             "2. COW 在 `var b = a; b[0] = 99;` 时复制了整个数组，如果数组很大性能如何？\n"

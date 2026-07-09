@@ -254,6 +254,8 @@ void BytecodeTracePanel::onClearTrace() {
     stepCounter_ = 0;
     // OPT-2 fix: 清空时同步重置指纹，使下一次捕获不会被误判为"状态未变"而跳过。
     lastCaptureFingerprint_.clear();
+    // R51-2 fix: 同步重置滑动标志，避免下次 capture 误触发全量重建
+    dequeShifted_ = false;
     traceTable_->setRowCount(0);
     stackDetail_->clear();
     liveStatusLabel_->setText(tr("状态：未运行（轨迹已清空）"));
@@ -330,6 +332,8 @@ void BytecodeTracePanel::captureCurrentState() {
     if (static_cast<int>(traceHistory_.size()) >= kMaxTraceEntries) {
         // AUDIT-P1 fix: deque pop_front O(1)（原 vector erase(begin()) O(n) 移位）
         traceHistory_.pop_front();
+        // R51-2 fix: 标记 deque 已滑动，refreshTraceTable 需全量重建
+        dequeShifted_ = true;
     }
     traceHistory_.push_back(std::move(e));
     refreshTraceTable();
@@ -344,8 +348,17 @@ void BytecodeTracePanel::captureCurrentState() {
 
 /// 将 traceHistory_ 渲染为轨迹表。AUDIT-P1 fix: 改为增量更新——
 /// 仅追加新行 + 移除溢出行，避免每次 capture 都 setRowCount(0) 全量重建 N×5 个 item。
+/// R51-2 fix: deque 容量满后 pop_front+push_back 保持 size 不变但索引偏移，
+/// 增量更新无法感知，需检测 dequeShifted_ 标志后全量重建。
 void BytecodeTracePanel::refreshTraceTable() {
     int histSize = static_cast<int>(traceHistory_.size());
+
+    // R51-2 fix: deque 滑动后索引整体偏移，必须全量重建
+    if (dequeShifted_) {
+        traceTable_->setRowCount(0);
+        dequeShifted_ = false;
+    }
+
     int tableRows = traceTable_->rowCount();
 
     // 表行多于历史（清空场景或溢出移除）→ 移除多余行

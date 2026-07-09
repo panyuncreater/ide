@@ -284,7 +284,16 @@ void DebugPanel::onStackFrameSelected(int index) {
     std::vector<std::tuple<QString, QString, QString>> rows;
     rows.reserve(frame.locals.size());
     for (const auto& kv : frame.locals) {
-        rows.emplace_back(QString::fromStdString(kv.first), QString::fromStdString(kv.second.toString()), scopeLabel);
+        // R52-1 fix: 对齐 updateVariables / VariableInspectorPanel 的 try/catch 防护。
+        // Value::toString 对堆类型（循环引用/深嵌套/bad_alloc）可能抛异常，单个变量
+        // 异常不应中断整帧渲染导致 gotoLineRequested 也被跳过。
+        QString valStr;
+        try {
+            valStr = QString::fromStdString(kv.second.toString());
+        } catch (...) {
+            valStr = QStringLiteral("<toString failed>");
+        }
+        rows.emplace_back(QString::fromStdString(kv.first), valStr, scopeLabel);
     }
     populateVariableTree(rows);
 

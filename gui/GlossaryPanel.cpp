@@ -891,9 +891,10 @@ void GlossaryPanel::showDetail(int index) {
     const TermEntry& e = entries_[index];
 
     std::ostringstream oss;
-    oss << "<h2>" << e.term.toStdString() << "</h2>";
-    oss << "<p><b>" << mlTr("分类:").toStdString() << "</b> " << e.category.toStdString() << "</p>";
-    oss << "<p><b>" << mlTr("定义:").toStdString() << "</b> " << e.shortDef.toStdString() << "</p>";
+    // R52-9 fix: 静态数据字段 HTML 转义，防御未来数据扩展引入 < > & 字符
+    oss << "<h2>" << e.term.toHtmlEscaped().toStdString() << "</h2>";
+    oss << "<p><b>" << mlTr("分类:").toStdString() << "</b> " << e.category.toHtmlEscaped().toStdString() << "</p>";
+    oss << "<p><b>" << mlTr("定义:").toStdString() << "</b> " << e.shortDef.toHtmlEscaped().toStdString() << "</p>";
 
     oss << "<h3>" << mlTr("详细说明").toStdString() << "</h3>";
     oss << MarkdownRenderer::markdownToHtmlFragment(e.fullDef).toStdString();

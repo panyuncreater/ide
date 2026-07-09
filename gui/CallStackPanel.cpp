@@ -428,8 +428,8 @@ void CallStackPanel::showScenario(int index) {
                            "<pre>%5</pre>"
                            "<h3>教学注解</h3>"
                            "%6")
-                       .arg(QString::fromUtf8(s.title.c_str()))
-                       .arg(QString::fromUtf8(s.id.c_str()))
+                       .arg(QString::fromUtf8(s.title.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(s.id.c_str()).toHtmlEscaped())
                        .arg(MarkdownRenderer::markdownToHtmlFragment(s.description))
                        .arg(framesHtml)
                        .arg(QString::fromUtf8(s.sourceCode.c_str()).toHtmlEscaped())

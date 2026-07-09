@@ -712,8 +712,12 @@ void MemoryModelPanel::populateNanBoxDetail(int index) {
 
     // 描述
     std::ostringstream os;
-    os << "<h3>" << b.title << "</h3>";
-    os << "<p><b>表达式：</b> <code>" << b.sourceExpr << "</code></p>";
+    // R52-4 fix: title/sourceExpr 含 C++ 模板语法 < > 需 HTML 转义
+    auto escMmp = [](const std::string& s) -> std::string {
+        return QString::fromUtf8(s.c_str()).toHtmlEscaped().toStdString();
+    };
+    os << "<h3>" << escMmp(b.title) << "</h3>";
+    os << "<p><b>表达式：</b> <code>" << escMmp(b.sourceExpr) << "</code></p>";
     os << "<p><b>原始位（hex）：</b> <code>" << bitsToHex(b.bits) << "</code></p>";
     os << "<p><b>原始位（binary）：</b> <code style='font-size:10pt;'>" << bitsToBinary(b.bits) << "</code></p>";
     os << "<hr>";
@@ -859,7 +863,9 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
         os << "<hr><p><b>堆对象类型说明（6 种）：</b></p><ul>";
         const auto& types = MemoryAnimLibrary::heapObjectTypes();
         for (const auto& kv : types) {
-            os << "<li><code>" << kv.first << "</code> — " << kv.second << "</li>";
+            // R52-5 fix: kv.second 含 std::vector<Value> 等 C++ 模板语法 < > 需转义
+            os << "<li><code>" << QString::fromUtf8(kv.first.c_str()).toHtmlEscaped().toStdString()
+               << "</code> — " << QString::fromUtf8(kv.second.c_str()).toHtmlEscaped().toStdString() << "</li>";
         }
         os << "</ul>";
         gcPhaseBrowser_->setHtml(QString::fromUtf8(os.str().c_str()));
