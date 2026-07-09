@@ -39,7 +39,7 @@ cmake --build out/build/debug
 ### 快捷脚本
 
 ```powershell
-./scripts/build_ide.bat   # 构建 IDE
+./scripts/build.bat       # 构建 IDE
 ./scripts/run_tests.bat   # 构建并运行测试
 ```
 

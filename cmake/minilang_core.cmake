@@ -13,7 +13,6 @@ set(MINILANG_CORE_SOURCES
     ast/ASTNode.cpp
     ast/ModuleIsolation.cpp
     parser/Parser.cpp
-    interpreter/Environment.cpp
     interpreter/Interpreter.cpp
     interpreter/InterpreterCalls.cpp
     interpreter/InterpreterClasses.cpp

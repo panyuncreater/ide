@@ -43,16 +43,16 @@ Thank you for your interest in contributing to MiniLang IDE! This document cover
 REM 1. 确保已安装 Visual Studio 2022（含 C++ 桌面开发工作负载）
 REM 2. 确保 Qt 6.x 已安装（如 C:\Qt\6.10.3\msvc2022_64）
 REM 3. 运行构建脚本：
-scripts\build_ide.bat
+scripts\build.bat
 
 REM Release 构建：
-scripts\build_ide.bat release
+scripts\build.bat release
 
 REM 运行测试：
 scripts\run_tests.bat
 ```
 
-构建脚本 `scripts/build_ide.bat` 会自动检测 Visual Studio 和 Qt 安装路径，配置 CMake 并调用 Ninja 构建。
+构建脚本 `scripts/build.bat` 会自动检测 Visual Studio 和 Qt 安装路径，配置 CMake 并调用 Ninja 构建。
 
 ### Linux
 

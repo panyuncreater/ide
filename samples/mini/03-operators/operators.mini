@@ -1,0 +1,54 @@
+// operators.mini - 运算符演示
+// 覆盖特性：算术 + - * / %、一元 - / + / ! / not、
+//           比较 < > <= >=、相等 == !=、逻辑 and / or、
+//           字符串拼接 +
+// 注意：不支持 && / ||（请使用 and / or）；
+//       不支持按位运算符与三元运算符 ?:。
+// ============================================================
+
+print("=== 算术 ===");
+print("7 + 3 = {7 + 3}");
+print("10 - 4 = {10 - 4}");
+print("6 * 7 = {6 * 7}");
+print("20 / 4 = {20 / 4}");
+print("20 % 6 = {20 % 6}");   // 取模
+
+print("");
+print("=== 整数除法（截断向零）===");
+print("7 / 2 = {7 / 2}");
+print("-7 / 2 = {-7 / 2}");
+print("10.0 / 4 = {10.0 / 4}");
+
+print("");
+print("=== 一元运算符 ===");
+print("-5 = {-5}");
+print("+5 = {+5}");
+print("!true = {!true}");
+print("!false = {!false}");
+print("not true = {not true}");
+print("not (1 == 2) = {not (1 == 2)}");
+
+print("");
+print("=== 比较与相等 ===");
+print("3 < 5 = {3 < 5}");
+print("3 > 5 = {3 > 5}");
+print("3 <= 3 = {3 <= 3}");
+print("3 >= 5 = {3 >= 5}");
+print("3 == 3 = {3 == 3}");
+print("3 != 4 = {3 != 4}");
+
+print("");
+print("=== 逻辑 and / or ===");
+print("true and false = {true and false}");
+print("true or false = {true or false}");
+var t = true;
+var f = false;
+print("not t = {not t}");
+// and / or 返回操作数原值（短路）
+print("0 or 'default' = {0 or "default"}");
+print("5 and 0 = {5 and 0}");
+
+print("");
+print("=== 字符串拼接 ===");
+print("'Hello' + ' ' + 'World' = {"Hello" + " " + "World"}");
+print("count: " + 3 + " items");

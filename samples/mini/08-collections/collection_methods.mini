@@ -1,0 +1,35 @@
+// collection_methods.mini - 集合内置方法演示
+// 覆盖特性：字典 keys/values/has/contains/get/set/remove、
+//           数组 remove/contains/join、数组索引赋值 arr[i] = v
+// ============================================================
+
+print("=== 字典方法 ===");
+var user = {"name": "Alice", "age": 30};
+print("keys: {user.keys()}");
+print("values: {user.values()}");
+print("has('age'): {user.has("age")}");
+print("contains('age'): {user.contains("age")}");
+print("get('name'): {user.get("name")}");
+print("get('email', 'N/A'): {user.get("email", "N/A")}");
+user.set("city", "Beijing");
+print("after set: {user}");
+user.remove("age");
+print("after remove('age'): {user}");
+
+print("");
+print("=== 数组方法 ===");
+var nums = [3, 1, 2];
+print("contains(1): {nums.contains(1)}");
+print("join('-'): {nums.join("-")}");
+nums.remove(1);          // 删除值为 1 的元素
+print("after remove(1): {nums}");
+
+// 数组索引赋值
+var letters = ["a", "b", "c"];
+letters[0] = "A";
+print("after letters[0] = 'A': {letters}");
+
+print("");
+print("=== 嵌套结构访问 ===");
+var table = {"rows": [[1, 2], [3, 4]]};
+print("rows: {table["rows"]}");

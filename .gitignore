@@ -57,7 +57,10 @@ CMakeUserPresets.json
 # --- 日志/临时输出 ---
 *.log
 build_log*.txt
-# 注：不再使用 *.txt 通配忽略，避免误伤测试数据等文本文件。
+build_output.txt
+test*_err.txt
+test*_out.txt
+Testing/
 
 # --- 文档生成 ---
 docs/api/

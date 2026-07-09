@@ -1,5 +1,5 @@
 @echo off
 REM ============================================================
-REM Thin wrapper -- delegates to scripts\build_ide.bat
+REM Thin wrapper -- delegates to scriptsuild.bat
 REM ============================================================
-@call "%~dp0scripts\build_ide.bat" %*
+@call "%~dp0scriptsuild.bat" %*

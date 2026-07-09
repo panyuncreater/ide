@@ -1,5 +1,0 @@
-Note: Google Test filter = BreakpointConditionPanelE2E.Construct_HasTwoSubpages
-[==========] Running 1 test from 1 test suite.
-[----------] Global test environment set-up.
-[----------] 1 test from BreakpointConditionPanelE2E
-[ RUN      ] BreakpointConditionPanelE2E.Construct_HasTwoSubpages

@@ -147,9 +147,3 @@ target_link_libraries(test_harness_runner PRIVATE
     minilang_core
     minilang_compile_options
 )
-
-# ================================================================
-# 以下源文件未编译（缺少 main / API 不匹配）：
-#   - fmt_minimal.cpp / fmt_super.cpp / formatter_test.cpp：
-#     格式化器单元测试片段，无 main()，需合并入口
-# ================================================================

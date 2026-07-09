@@ -1,0 +1,33 @@
+// type_annotations.mini - 高级类型注解演示
+// 覆盖特性：可选类型 T?、泛型字典类型 dict[K:V]、
+//           函数类型注解 fun(params):ret、多维数组类型 int[][]
+// 说明：类型注解用于静态检查与文档，运行期做宽松匹配。
+// ============================================================
+
+// 1) 可选类型：变量可持有该类型，或持有 null
+int? maybe = null;
+print("maybe = {maybe}");
+maybe = 7;
+print("maybe after assign = {maybe}");
+
+// 2) 泛型字典类型注解（键:值 类型）
+dict[string:int] scores = {"alice": 90, "bob": 85};
+print("scores = {scores}");
+
+// 3) 嵌套泛型：值为可选类型
+dict[string:int?] partial = {"x": 1, "y": null};
+print("partial = {partial}");
+
+// 4) 多维数组类型注解
+int[][] matrix = [[1, 2], [3, 4]];
+print("matrix = {matrix}");
+
+// 5) 函数类型注解（参数位置）与返回类型注解 : ret
+fun applyFormatter(fun(int):string cb, int value) {
+    return cb(value);
+}
+fun numberName(int n): string {
+    if (n == 1) { return "one"; }
+    return "number " + str(n);
+}
+print("applyFormatter(numberName, 7) = {applyFormatter(numberName, 7)}");
