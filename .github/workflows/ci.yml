@@ -131,7 +131,7 @@ jobs:
       - name: 设置 QTDIR (Linux)
         if: runner.os == 'Linux'
         shell: bash
-        run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
+        run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
       - name: 配置 CMake (Linux Preset)
         if: runner.os == 'Linux'
@@ -141,7 +141,7 @@ jobs:
       - name: 设置 QTDIR (macOS)
         if: runner.os == 'macOS'
         shell: bash
-        run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
+        run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
       # macOS 26 (Tahoe) / Xcode 26 移除了 AGL 框架（OpenGL 旧 Carbon 接口），
       # 但 Qt 6.8.x 的 FindWrapOpenGL.cmake 仍引用 AGL 导致链接失败。
@@ -151,7 +151,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          find "${Qt6_DIR}" -name "FindWrapOpenGL.cmake" -exec sed -i '' 's/-framework AGL//g' {} +
+          find "${{ env.Qt6_DIR }}" -name "FindWrapOpenGL.cmake" -exec sed -i '' 's/-framework AGL//g' {} +
 
       - name: 配置 CMake (macOS Preset)
         if: runner.os == 'macOS'
@@ -181,6 +181,9 @@ jobs:
       - name: 运行单元测试（并行, Linux）
         if: runner.os == 'Linux'
         working-directory: out/build/linux-release
+        env:
+          # Headless Linux runner 无 X11 显示服务器，Qt GUI 测试需要 offscreen 平台插件。
+          QT_QPA_PLATFORM: offscreen
         run: ctest -j 4 --output-on-failure --verbose
 
       - name: 运行单元测试（并行, macOS）
@@ -202,20 +205,21 @@ jobs:
 
       # ---- 打包安装包（P2 建议 5：每次 Release 提交自动产出安装包）----
       # 仅在构建与测试均成功后执行；各平台使用对应 Preset 的 binaryDir。
+      # 注：每个打包步骤必须限制 runner.os，否则会在错误平台上运行导致失败。
       - name: 安装并打包 (Windows)
-        if: success()
+        if: success() && runner.os == 'Windows'
         run: |
           cmake --install out/build/release --prefix install
           cd out/build/release && cpack -G ZIP
 
       - name: 安装并打包 (Linux)
-        if: success()
+        if: success() && runner.os == 'Linux'
         run: |
           cmake --install out/build/linux-release --prefix install
           cd out/build/linux-release && cpack -G TGZ
 
       - name: 安装并打包 (macOS)
-        if: success()
+        if: success() && runner.os == 'macOS'
         run: |
           cmake --install out/build/macos-release --prefix install
           cd out/build/macos-release && cpack -G DragNDrop
@@ -363,7 +367,7 @@ jobs:
 
       - name: 设置 QTDIR 环境变量
         shell: bash
-        run: echo "QTDIR=${Qt6_DIR}/.." >> $GITHUB_ENV
+        run: echo "QTDIR=${{ env.Qt6_DIR }}/.." >> $GITHUB_ENV
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
@@ -381,6 +385,8 @@ jobs:
 
       - name: 运行测试
         working-directory: out/build/linux-coverage
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: ctest --preset linux-gcc-coverage -j 4 --output-on-failure --verbose
 
       - name: 生成覆盖率报告 (gcovr)

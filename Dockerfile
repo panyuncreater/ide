@@ -38,10 +38,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 安装指定版本 Qt（通过 aqtinstall，与 CI 同步）
 # 使用 venv 安装 aqtinstall，绕过 Ubuntu 24.04 PEP 668 限制
 # aqtinstall 3.3.0：修复 Qt 6.7+ Linux 架构名推导（gcc_64 → linux_gcc_64，issue #908）
-# qttools 模块在 Qt 6.8.3 元数据中不可用，故仅安装 qtsvg
+# qttools/qtsvg 模块在 Qt 6.8.3 的 aqtinstall 元数据中不可用，故仅安装 base
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir aqtinstall==3.3.0 \
-    && /opt/venv/bin/python -m aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 -m qtsvg -O /opt/qt6
+    && /opt/venv/bin/python -m aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 -O /opt/qt6
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV QTDIR=/opt/qt6/${QT_VERSION}/linux_gcc_64
 ENV PATH=${QTDIR}/bin:${PATH}

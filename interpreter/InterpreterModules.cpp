@@ -102,21 +102,21 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
     } else {
         // 加载模块源码（A6 fix: 使用已拷贝的 loader，避免跨线程数据竞争）
         std::string source = loader(modulePath);
-        // AUDIT-P3.13 fix: 空模块源码（0 字节文件）是合法的空模块，不应报错。
-        // moduleLoader_ 回调应在文件不存在时抛异常而非返回空字符串。
-        // 对空源码构造空 AST 跳过词法/语法分析，后续 evaluate 遍历空语句列表无副作用，
-        // 缓存阶段自然得到空 Environment 与空导出集合；具名导入会因「未导出名称」报错（三后端一致）。
-        std::unique_ptr<Block> ast = std::make_unique<Block>(std::vector<std::shared_ptr<ASTNode>>{});
-        if (!source.empty()) {
-            // 词法分析 + 语法分析
-            Lexer lexer;
-            auto tokens = lexer.scan(source);
-            Parser parser;
-            auto parsed = parser.parse(tokens);
-            if (!parsed) {
-                runtimeError("模块 " + modulePath + " 语法错误", node.line, node.column);
-            }
-            ast = std::move(parsed);
+        // 空源码视为加载失败（模块不存在或 0 字节文件）。production loader
+        // （IdeController/WorkerManager）在文件不存在/无法打开时均返回 ""，
+        // 无法与真正的 0 字节文件区分；对空模块报错可捕获 import 笔误，
+        // 与 Compiler/IR 路径行为一致（三后端统一）。
+        if (source.empty()) {
+            runtimeError("无法加载模块: " + modulePath, node.line, node.column);
+        }
+
+        // 词法分析 + 语法分析
+        Lexer lexer;
+        auto tokens = lexer.scan(source);
+        Parser parser;
+        auto ast = parser.parse(tokens);
+        if (!ast) {
+            runtimeError("模块 " + modulePath + " 语法错误", node.line, node.column);
         }
 
         // P1-2 fix: 使用独立的空父环境，避免模块访问导入方的全局变量

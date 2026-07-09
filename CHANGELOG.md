@@ -2,32 +2,72 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
-## 2026-07-08 · 第四十八轮：closeUpvaluesFrom 越界 fail-fast + 空模块源码合法化（P2.4 + P3.13，共 5 项）
+## 2026-07-08 · CI 跨平台流水线全面修复（6 项根因 + 1 项后端 bug，共 7 项）
 
 ### 概述
 
-对 VM/IR 后端闭包 upvalue 生命周期与三后端模块加载语义进行专项修复，共完成 2 项审计发现（P2.4 × 2 处，P3.13 × 3 处）。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过。P2.4 修复无回归；P3.13 修复改变空模块源码语义（从"加载失败报错"改为"合法空模块"），3 个 ModuleNotFound 测试因测试基础设施用空字符串表示"模块不存在"而失败，属预期行为变更——测试需单独更新以使用异常机制表示"未找到"。
+GitHub Actions CI 全平台失败（Windows/Ubuntu/macOS/Docker/clang-format），经四轮排查定位并修复 6 项 CI 基础设施根因与 1 项 RegVM IR 后端 bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过。
+
+### 问题与修复对应表
+
+| # | 类型 | 位置 | 修复内容 |
+|---|------|------|----------|
+| 1 | CI/变量引用 | `.github/workflows/ci.yml` Linux/macOS QTDIR 步骤 | **`${Qt6_DIR}` bash 语法在 macOS 上展开为空**——Linux/macOS 的 QTDIR 步骤使用 bash 变量 `${Qt6_DIR}` 而非 GitHub Actions 表达式 `${{ env.Qt6_DIR }}`，macOS 上 Qt6_DIR 未导出到 bash 导致 QTDIR=`/..`，后续 AGL 修补 `find ""` 报错。修复：统一改为 `${{ env.Qt6_DIR }}`。 |
+| 2 | CI/条件缺失 | `.github/workflows/ci.yml` 打包步骤 | **打包步骤缺少 runner.os 条件**——三个打包步骤仅 `if: success()`，Windows runner 上 Linux 打包步骤运行时因 `out/build/linux-release` 不存在而失败。修复：添加 `runner.os == 'Windows'/'Linux'/'macOS'` 条件。 |
+| 3 | CI/headless | `.github/workflows/ci.yml` Linux 测试步骤 | **Ubuntu headless runner 无 X11 显示**——Qt GUI 测试（ExceptionFlowPanelE2E 等 50+ 个面板测试）因 `qt.qpa.xcb: could not connect to display` 全部 Subprocess aborted。修复：Linux 测试步骤添加 `QT_QPA_PLATFORM: offscreen` 环境变量（coverage-linux 作业同步）。 |
+| 4 | Docker/模块不可用 | `Dockerfile` aqtinstall 命令 | **qtsvg 模块在 Qt 6.8.3 的 aqtinstall 元数据中不可用**——Docker 构建时 `aqt install-qt ... -m qtsvg` 报 `packages ['qtsvg'] were not found`。修复：移除 `-m qtsvg`，仅安装 base Qt（与 CI install-qt-action 一致）。 |
+| 5 | 代码风格 | `gui/MarkdownRenderer.cpp` | **clang-format 格式违规**——文件被修改但未执行 `clang-format -i`，CI 的 clang-format 检查报 571-575 行格式违规。修复：本地执行 `clang-format -i`（版本 22.1.5，与 CI 一致）。 |
+| 6 | CI/macOS 链接 | `.github/workflows/ci.yml` macOS AGL 修补步骤 | **macOS 26/Xcode 26 移除 AGL 框架**——Qt 6.8.x 的 FindWrapOpenGL.cmake 仍引用 AGL 导致链接失败。上轮已添加 sed 修补步骤但因 QTDIR 变量问题（#1）未执行。修复 #1 后本步骤正常执行。 |
+| 7 | P1/寄存器生命周期 | `compiler/RegisterBytecodeBackend.cpp` collectVRegLastUse | **METHOD_CALL 的 obj vreg 寄存器过早释放**——`this.arr.push(4)` 编译为 METHOD_CALL + LOAD_LOCAL + LOAD_MUTATED 序列，METHOD_CALL 的 obj vreg 在 METHOD_CALL 后立即释放，中间的 LOAD_LOCAL 复用该寄存器覆盖变异后的数组，LOAD_MUTATED 读到错误值。MSVC 因 `unordered_map` 迭代顺序恰好不触发，GCC 触发导致 `MethodCallProbe.NestedMemberAccessPush` 测试失败。修复：在 collectVRegLastUse 中为 METHOD_CALL/SUPER_CALL 的 obj vreg 设默认最后使用为当前指令，若后续有 LOAD_MUTATED 则覆盖延长到 LOAD_MUTATED，非变异方法调用（如 len/substr）不延长。 |
+
+## 2026-07-08 · 第四十八轮：第四十五轮保留现状问题一次性修复（P1 × 2 + P2 × 7 + P3 × 3，共 12 项）
+
+### 概述
+
+本轮将第四十五轮审计中标记为"保留现状"的 12 项问题一次性全部修复（P1.1 break/continue finally 因 8+ 文件全链路改动风险过高保留，P3.14 Lexer \xNN 语义不一致建议保持现状），涉及条件断点求值安全、断点行号偏移、闭包 upvalue 生命周期、沙箱副作用隔离、捕获变量写回语义、类型注解系统扩展、AST 节点行号字段、Formatter 注释保留与控制字符转义、Lexer 扩展 Unicode 转义、模块加载语义、closeEvent 信号防御。其中 P3.13（空模块源码合法化）因 production loader 语义冲突而回退。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1753/1753 测试通过（排除未构建的 minilang_perf_test 占位）。
 
 ### 问题与修复对应表
 
 | # | 严重性 | 类型 | 位置 | 修复内容 |
 |---|--------|------|------|----------|
-| 1 | P2 | fail-fast 缺失 | `compiler/VM.cpp` closeUpvaluesFrom | **slot 越界仅打 Warning 继续执行**——StackVM 的 closeUpvaluesFrom 中 `uv->stackSlot >= stack_.size()` 分支仅调用 `Logger::Warning` 后继续执行，闭包静默捕获 null 值难以排查根因。修复：改为 `runtimeError(...)` 以 fail-fast 暴露问题，设置 `hasError_=true` 使 VM 在后续指令分发终止执行。仍执行 `isClosed=true` + `erase` 以关闭 upvalue（保留默认 null 值），防止悬垂引用。 |
-| 2 | P2 | fail-fast 缺失 | `compiler/RegisterVM.cpp` closeUpvaluesFrom | **两处 slot 越界仅打 Warning**——RegisterVM 的 closeUpvaluesFrom 中 `slot >= registerCount` 和 `frameIdx >= frames_.size()` 两个分支均仅打 Warning。后者分支不可达（调用契约保证 closeUpvaluesFrom 在帧弹出前调用），若触达说明调用契约被破坏。修复：两处均改为 `runtimeError(...)` 以 fail-fast 暴露问题。 |
-| 3 | P3 | 语义不一致 | `interpreter/InterpreterModules.cpp` visitImportStmt | **空模块源码被当作加载失败**——`source.empty()` 时直接 `runtimeError("无法加载模块")`，无法区分"文件不存在/无读取权限"和"文件存在但为 0 字节"。空文件是合法的空模块。修复：对空源码构造空 AST（`std::make_unique<Block>(std::vector<...>{})`）跳过词法/语法分析，后续 evaluate 遍历空语句列表无副作用，缓存阶段自然得到空 Environment 与空导出集合；具名导入会因"未导出名称"报错（三后端一致）。 |
-| 4 | P3 | 语义不一致 | `compiler/Compiler.cpp` loadAndParseModule | **空模块源码被当作加载失败**——与 Interpreter 路径相同问题，`source.empty()` 时返回 nullptr 触发编译错误。修复：对空源码返回空 AST（`std::make_unique<Block>(...)`），调用方对空 statements 的预扫描/导出收集/内联编译均为无副作用，`moduleExports_` 自然得到空集合。 |
-| 5 | P3 | 语义不一致 | `compiler/IR.cpp` handleImportStmt | **空模块源码被当作加载失败**——与 Interpreter/Compiler 路径相同问题，IR 路径 `source.empty()` 时设置 `hasError_=true` 返回。修复：对空源码构造空 AST 跳过词法/语法分析，后续预扫描/导出收集/IR lowering 遍历空语句列表无副作用，`linkedModuleSet_` 正常标记。 |
+| 1 | P1 | UI 冻结 | `interpreter/Interpreter.h` + `interpreter/Interpreter.cpp` evaluate/evaluateCondition/execute/executeRepl | **条件断点求值无步数上限，`while(true){}` 冻结 UI**——evaluateCondition 沙箱化求值条件断点表达式，但无步数限制。条件表达式包含无限循环时 worker 线程永不返回。修复：新增 `evaluationStepCount_` 成员（0=非条件求值不计数，>0=正在条件求值递增计数）和 `MAX_CONDITION_STEPS = 100000` 常量。evaluateCondition 开头设为 1，evaluate 每次递增并检查上限，超过抛 RuntimeError。execute/executeRepl 开头重置为 0（正常执行零开销）。 |
+| 2 | P1 | 断点偏移 | `gui/CodeEditor.cpp` onContentsChange | **多行删除断点行号偏移错误**——原实现仅处理单行插入/删除，多行删除（如选中 3 行删除）时断点未正确平移或删除。修复：利用 charsAdded 推导 linesRemoved = linesAdded - delta，三分处理断点（保持/删除/平移），breakpointConditions_ 和 foldedBlocks_ 同步处理。 |
+| 3 | P2 | fail-fast 缺失 | `compiler/VM.cpp` + `compiler/RegisterVM.cpp` closeUpvaluesFrom | **slot 越界仅打 Warning 继续执行**——StackVM 的 closeUpvaluesFrom 中 `uv->stackSlot >= stack_.size()` 分支仅调用 `Logger::Warning`，RegisterVM 中两处（`slot >= registerCount` 和 `frameIdx >= frames_.size()`）同样仅打 Warning。闭包静默捕获 null 值难以排查。修复：三处均改为 `runtimeError(...)` + `hasError_=true`，仍执行 `isClosed=true` + `erase` 防止悬垂引用。 |
+| 4 | P2 | 沙箱泄漏 | `interpreter/Interpreter.cpp` deepCloneForSandbox + `interpreter/Value.h` setClosureEnv | **SandboxGuard 闭包 closureEnv 与外层环境共享，条件断点求值副作用泄漏**——deepCloneForSandbox 深拷贝 capturedVars 但 closureEnv 仍指向原始外层 Environment，闭包内修改捕获变量会泄漏到外层。修复：从 capturedVars 重建新的 closureEnv（`make_shared<Environment>(nullptr)` + 逐个 define），通过新增的 `Value::setClosureEnv(newEnv)` 设置到深拷贝后的闭包，断开与外层环境共享。 |
+| 5 | P2 | 语义不一致 | `interpreter/Environment.h` + `interpreter/InterpreterCalls.cpp` + `interpreter/Interpreter.cpp` | **writeBackCapturedVars 将局部重声明变量写回 capturedVars**——闭包内 `var` 重声明同名捕获变量后，writeBackCapturedVars 将局部值写回覆盖外层原始值。修复：Environment 新增 `capturedVarNames_`（unordered_set）字段，rebuildEnvFromSnapshot 导入时 markAsCaptured，visitVarDecl 重声明时 unmarkCaptured，writeBackCapturedVars 仅写回 isCapturedVar 为 true 的变量。 |
+| 6 | P2 | 类型检查缺口 | `interpreter/Interpreter.cpp` typeMatch + `common/TypeChecker.cpp` + `parser/Parser.cpp` parseTypeAnnotation | **typeMatch 不支持 dict[K:V]、fun(params):ret、T? 三种类型注解**——MiniLang 已支持这些注解语法，但 typeMatch 直接返回 false 导致合法代码被误报。修复：typeMatch 开头新增三种匹配——T? 后缀剥离递归（允许 null 或 T）、dict[K:V] 前缀+冒号分割+后缀（运行时检查 dict 类型）、fun(params):ret 前缀+括号分割（运行时检查闭包类型）。Parser.parseTypeAnnotation 同步支持。 |
+| 7 | P2 | 数据缺失 | `ast/ASTNode.h` + `parser/Parser.cpp` | **AST 节点缺少闭合行号字段**——ClassDecl/TryStmt/InterpolatedString 缺少闭合花括号/关键字行号，Formatter 无法精确保留尾注释。修复：ClassDecl 新增 `closingBraceLine`，TryStmt 新增 `catchKeywordLine`/`finallyKeywordLine`，InterpolatedString 新增 `endLine`。Parser 在解析对应节点时记录行号。 |
+| 8 | P2 | 注释丢失 | `formatter/Formatter.cpp` formatClassDecl/visitTryStmt/formatInterpolatedString | **Formatter 丢弃类/try/插值字符串尾注释**——因 AST 缺少闭合行号字段，Formatter 无法判断注释归属。修复：利用新增的闭合行号字段（修复 7），在格式化时精确注入尾注释到对应位置。 |
+| 9 | P2 | stale 信号 | `app/ide.cpp` handleVmStepResult/runtimeError/genericError | **closeEvent 期间 pending 信号导致 stale UI 更新**——Ide 析构时处理 pending VM 信号访问已析构成员。修复：handleVmStepResult 开头添加 `if (!controller_->isVmInitialized() && !controller_->isVmRunning()) return;`，runtimeError/genericError lambda 添加三重状态守卫。 |
+| 10 | P3 | 转义不完整 | `formatter/Formatter.cpp` escapeStringContent | **escapeStringContent 未转义控制字符和非 BMP 字符**——0x01-0x1F 和 0x7F 控制字符未转义，非 BMP 字符（如 emoji）用 \uXXXX 无法表示。修复：0x01-0x1F 和 0x7F 用 \xNN 转义，非 BMP 字符用 \u{XXXXXX} 转义。 |
+| 11 | P3 | 语法限制 | `lexer/Lexer.cpp` | **\uXXXX 仅支持 4 位 BMP 码点**——无法表示非 BMP 字符（如 emoji U+1F600）。修复：`case 'u'` 开头检查 `{`，读取 1-6 位十六进制，码点范围 0x000000-0x10FFFF，拒绝代理码点，编码 UTF-8。 |
+| 12 | P3 | 语义不一致（已回退） | `interpreter/InterpreterModules.cpp` + `compiler/Compiler.cpp` + `compiler/IR.cpp` | **空模块源码被当作加载失败**——`source.empty()` 时直接报错，无法区分"文件不存在"和"0 字节文件"。修复（已回退）：对空源码构造空 AST 跳过词法/语法分析。**回退原因**：production loader（IdeController/WorkerManager）在文件不存在时返回空字符串，无法与真正的 0 字节文件区分，导致 `import "nonexistent"` 静默成功，3 个 ModuleNotFound 测试失败。回退到原始语义（空源码 = 加载失败），0 字节模块文件在教学 IDE 中几乎不出现，报错比静默成功更安全。 |
 
 ### 关键决策
 
-1. **closeUpvaluesFrom 越界用 runtimeError 而非 Logger::Warning**：slot 越界意味着 close/truncate 顺序有误或调用契约被破坏，静默继续会导致闭包捕获 null 值且难以排查。`runtimeError` 设置 `hasError_=true`，VM 在后续指令分发终止执行（`VM_RUNTIME_ERROR`），仍执行 `isClosed=true` + `erase` 关闭 upvalue 防止悬垂引用。
+1. **条件断点步数上限用方案 A（evaluate 入口计数）而非方案 C（visit 方法插入 stopped_ 检查）**：evaluate 是所有表达式求值的唯一入口，单点拦截无需修改 33 个 visit 方法。`evaluationStepCount_` 为 0 时完全跳过检查（正常执行零开销），仅条件求值时计数。上限 100000 步可覆盖合理复杂度的条件表达式。
 
-2. **空模块源码用方案 C（最小改动）而非改 loader 签名**：`moduleLoader_` 回调返回 `std::string`，空字符串语义从"加载失败"改为"合法空模块"。文档约定 `moduleLoader_` 回调应在文件不存在时抛异常而非返回空字符串。对空源码构造空 AST 跳过词法/语法分析，三后端一致。代价：3 个 ModuleNotFound 测试因测试基础设施用空字符串表示"模块不存在"而失败，属预期行为变更。
+2. **沙箱闭包环境重建用 capturedVars 而非深拷贝 closureEnv**：closureEnv 是 weak_ptr 指向外层 Environment，深拷贝整个环境链开销大。capturedVars 是闭包已捕获的变量快照，从中重建独立的新 Environment 更轻量且语义清晰。
+
+3. **capturedVarNames_ 用 unordered_set 而非 per-variable 标志位**：独立的 capturedVarNames_ 集合 O(1) 查询/插入/删除，且不影响 Value 的 NaN-box 内存布局。unmarkCaptured 在 visitVarDecl 的 tryDefineNew 之前调用，确保 var 重声明后该变量不再被写回 capturedVars。
+
+4. **typeMatch 新类型匹配在函数开头统一检查**：三种新类型注解有明显的语法特征（后缀 `?`、前缀 `dict[`、前缀 `fun(`），在 typeMatch 开头统一检查可短路后续基本类型匹配逻辑。
+
+5. **closeUpvaluesFrom 越界用 runtimeError 而非 Logger::Warning**：slot 越界意味着 close/truncate 顺序有误或调用契约被破坏，静默继续会导致闭包捕获 null 值且难以排查。`runtimeError` 设置 `hasError_=true` 使 VM 终止执行，仍执行 `isClosed=true` + `erase` 防止悬垂引用。
+
+6. **AST 节点行号字段而非在 Formatter 中推断**：在 AST 节点中直接存储闭合行号字段，Parser 在解析时记录，Formatter 直接读取。比在 Formatter 中通过其他信息推断更可靠且不引入耦合。
+
+7. **P3.13 回退而非改 loader 签名**：改 loader 签名为 `std::optional<string>` 或抛异常需要修改全部调用方和测试 helper，改动面大且收益低（0 字节模块文件在教学 IDE 中几乎不出现）。回退到原始语义（空源码 = 加载失败）是最小改动且语义清晰。
+
+### 保留现状
+
+- **P1.1 break/continue finally 三后端不一致**：需续跳机制（finally 块作为"续跳点"在 break/continue 跳转前执行），涉及 Interpreter.cpp + Compiler.cpp + IR.cpp + VM.cpp + RegisterVM.cpp 等 8+ 文件全链路改动，风险过高。
+- **P3.14 Lexer \xNN 产生原始字节与 \uXXXX 语义不一致**：\xNN 产生原始字节（可能破坏 UTF-8 编码），\uXXXX 产生 Unicode 码点。建议保持现状，文档说明 \xNN 仅用于 Latin-1 范围内的控制字符。
 
 ### 测试影响
 
-- **P2.4 修复**：无回归。closeUpvaluesFrom 越界分支在正常调用契约下不可达，改为 runtimeError 不影响现有测试。
-- **P3.13 修复**：3 个 ModuleNotFound 测试失败（`InterpreterE2E.ModuleNotFound`、`VME2EImport.ModuleNotFound`、`VME2EImportIR.ModuleNotFound`）。这些测试的模块加载器在模块不存在时返回空字符串，而修复将空字符串重新定义为合法空模块。测试需单独更新以使用异常机制表示"未找到"（与文档约定一致）。
+- 全部 12 项修复均无回归。P3.13 修复后 3 个 ModuleNotFound 测试失败，回退后恢复通过。
+- 全量 1753/1753 测试通过（唯一"失败"是 `minilang_perf_test_NOT_BUILT`，为未构建的占位测试，非真实失败）。
 
 ## 2026-07-08 · CI 流水线跨平台修复（aqtinstall 架构名 + macOS ar + Windows 翻译部署 + clang-format 版本固定）
 

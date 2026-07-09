@@ -74,13 +74,23 @@ void RegisterBytecodeBackend::collectVRegLastUse(const IRFunction& ir) {
     size_t globalIdx = 0;
     // 待延长的 obj vreg（来自 MEMBER_SET/INDEX_SET，等待下一个 WRITEBACK 确定最后使用点）
     std::vector<uint32_t> pendingMutatedObjs;
+    // METHOD_CALL/SUPER_CALL 的 obj vreg，默认最后使用点为 METHOD_CALL 本身，
+    // 但如果后续有 LOAD_MUTATED（变异方法写回），则延长到 LOAD_MUTATED。
+    // RegisterVM 的 METHOD_CALL 将 objReg 记录到 lastMutatedReceiverReg_，
+    // 后续 LOAD_MUTATED 通过 reg(lastMutatedReceiverReg_) 读取变异后的容器。
+    // 如果 obj vreg 在 METHOD_CALL 后被释放并复用，LOAD_MUTATED 会读到错误值。
+    // 但非变异方法调用（如 len/substr）没有 LOAD_MUTATED，无需延长。
+    std::vector<uint32_t> pendingMethodCallObjs;
     for (const auto& block : ir.blocks) {
+        pendingMethodCallObjs.clear();
         for (const auto& instr : block.instructions) {
             bool isMutatingSet = (instr.op == IROp::MEMBER_SET || instr.op == IROp::INDEX_SET);
             bool isWriteback =
                 (instr.op == IROp::WRITEBACK_MEMBER_VAR || instr.op == IROp::WRITEBACK_MEMBER_LOCAL ||
                  instr.op == IROp::WRITEBACK_INDEX_VAR || instr.op == IROp::WRITEBACK_INDEX_LOCAL ||
                  instr.op == IROp::WRITEBACK_MEMBER_UPVALUE || instr.op == IROp::WRITEBACK_INDEX_UPVALUE);
+            bool isMethodOrSuperCall = (instr.op == IROp::METHOD_CALL || instr.op == IROp::SUPER_CALL);
+            bool isLoadMutated = (instr.op == IROp::LOAD_MUTATED);
             for (size_t opi = 0; opi < instr.operands.size(); ++opi) {
                 const auto& op = instr.operands[opi];
                 if (op.kind != IROperandKind::VIRTUAL)
@@ -91,6 +101,13 @@ void RegisterBytecodeBackend::collectVRegLastUse(const IRFunction& ir) {
                     pendingMutatedObjs.push_back(op.index);
                     continue;
                 }
+                // METHOD_CALL/SUPER_CALL 的 obj vreg（操作数[1]）：默认最后使用为当前指令，
+                // 但加入 pending 列表，如果后续有 LOAD_MUTATED 则覆盖延长。
+                if (isMethodOrSuperCall && opi == 1) {
+                    vregLastUse_[op.index] = globalIdx;
+                    pendingMethodCallObjs.push_back(op.index);
+                    continue;
+                }
                 vregLastUse_[op.index] = globalIdx;
             }
             // 遇到 WRITEBACK_* 时，延长 pending obj vreg 的最后使用点到此处
@@ -99,6 +116,14 @@ void RegisterBytecodeBackend::collectVRegLastUse(const IRFunction& ir) {
                     vregLastUse_[v] = globalIdx;
                 }
                 pendingMutatedObjs.clear();
+            }
+            // 遇到 LOAD_MUTATED 时，延长 METHOD_CALL/SUPER_CALL 的 obj vreg 生命周期到此处。
+            // 这会覆盖之前设的默认值（METHOD_CALL 指令索引），使寄存器在 LOAD_MUTATED 后才释放。
+            if (isLoadMutated && !pendingMethodCallObjs.empty()) {
+                for (uint32_t v : pendingMethodCallObjs) {
+                    vregLastUse_[v] = globalIdx;
+                }
+                pendingMethodCallObjs.clear();
             }
             ++globalIdx;
         }

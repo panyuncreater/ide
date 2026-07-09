@@ -317,50 +317,49 @@ void AstIRBuilder::handleImportStmt(ImportStmt& node) {
 
     // 5. 加载源码
     std::string source = moduleLoader_(path);
-    // AUDIT-P3.13 fix: 空模块源码（0 字节文件）是合法的空模块，不应报错。
-    // moduleLoader_ 回调应在文件不存在时抛异常而非返回空字符串。
-    // 对空源码构造空 AST 跳过词法/语法分析，后续预扫描/导出收集/IR lowering
-    // 遍历空语句列表无副作用，moduleExports_ 自然得到空集合，linkedModuleSet_
-    // 正常标记，具名导入会因「未导出名称」报错（三后端一致）。
-    std::unique_ptr<Block> moduleAst = std::make_unique<Block>(std::vector<std::shared_ptr<ASTNode>>{});
-    if (!source.empty()) {
-        // 6. 解析模块 AST
-        Lexer lexer;
-        auto tokens = lexer.scan(source);
-        // BUG-FIX: 检查词法错误（原实现吞掉 Lexer 错误）
-        if (lexer.getDiagnostics().hasErrors()) {
-            const auto& diags = lexer.getDiagnostics().all();
-            std::string msg = "模块 '" + path + "' 词法错误";
-            if (!diags.empty()) {
-                msg += ": " + diags.front().message;
-            }
-            hasError_ = true;
-            errorMessage_ = msg;
-            errorLine_ = node.line;
-            return;
-        }
-        Parser parser;
-        auto parsed = parser.parse(tokens);
-        // BUG-FIX: 检查语法错误（原实现仅检查 AST 是否为空）
-        if (parser.hasErrors()) {
-            const auto& diags = parser.getDiagnostics().all();
-            std::string msg = "模块 '" + path + "' 语法错误";
-            if (!diags.empty()) {
-                msg += ": " + diags.front().message;
-            }
-            hasError_ = true;
-            errorMessage_ = msg;
-            errorLine_ = node.line;
-            return;
-        }
-        if (!parsed) {
-            hasError_ = true;
-            errorMessage_ = "模块解析失败: " + path;
-            errorLine_ = node.line;
-            return;
-        }
-        moduleAst = std::move(parsed);
+    if (source.empty()) {
+        hasError_ = true;
+        errorMessage_ = "无法加载模块: " + path + "（文件不存在或为空）";
+        errorLine_ = node.line;
+        return;
     }
+
+    // 6. 解析模块 AST
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    // BUG-FIX: 检查词法错误（原实现吞掉 Lexer 错误）
+    if (lexer.getDiagnostics().hasErrors()) {
+        const auto& diags = lexer.getDiagnostics().all();
+        std::string msg = "模块 '" + path + "' 词法错误";
+        if (!diags.empty()) {
+            msg += ": " + diags.front().message;
+        }
+        hasError_ = true;
+        errorMessage_ = msg;
+        errorLine_ = node.line;
+        return;
+    }
+    Parser parser;
+    auto parsed = parser.parse(tokens);
+    // BUG-FIX: 检查语法错误（原实现仅检查 AST 是否为空）
+    if (parser.hasErrors()) {
+        const auto& diags = parser.getDiagnostics().all();
+        std::string msg = "模块 '" + path + "' 语法错误";
+        if (!diags.empty()) {
+            msg += ": " + diags.front().message;
+        }
+        hasError_ = true;
+        errorMessage_ = msg;
+        errorLine_ = node.line;
+        return;
+    }
+    if (!parsed) {
+        hasError_ = true;
+        errorMessage_ = "模块解析失败: " + path;
+        errorLine_ = node.line;
+        return;
+    }
+    std::unique_ptr<Block> moduleAst = std::move(parsed);
 
     // 6.5 BUG-AUDIT-MOD-2 fix: 模块隔离——重命名非导出顶层名为 `__mod_<hash>__<name>`
     // 在预扫描前重写 AST，确保重命名后的名字进入全局槽位分配与 export 集合

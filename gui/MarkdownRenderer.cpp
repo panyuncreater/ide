@@ -27,9 +27,9 @@
 
 #include "gui/MarkdownRenderer.h"
 
-#include <QStringList>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
+#include <QStringList>
 
 namespace MarkdownRenderer {
 
@@ -56,15 +56,14 @@ static const QRegularExpression kReTableRow(QStringLiteral("^\\|(.+)\\|$"));
 // P2-2 fix (F4): MiniLang 语法高亮正则
 // 关键字列表（与 lexer/Keywords.cpp 保持一致，按字母序，便于审阅）
 static const QStringList kMiniLangKeywords = {
-    QStringLiteral("var"), QStringLiteral("const"), QStringLiteral("fun"), QStringLiteral("return"),
-    QStringLiteral("if"), QStringLiteral("else"), QStringLiteral("while"), QStringLiteral("for"),
-    QStringLiteral("break"), QStringLiteral("continue"), QStringLiteral("true"), QStringLiteral("false"),
-    QStringLiteral("null"), QStringLiteral("and"), QStringLiteral("or"), QStringLiteral("not"),
-    QStringLiteral("print"), QStringLiteral("input"), QStringLiteral("class"), QStringLiteral("super"),
-    QStringLiteral("this"), QStringLiteral("init"), QStringLiteral("try"), QStringLiteral("catch"),
-    QStringLiteral("finally"), QStringLiteral("throw"), QStringLiteral("import"), QStringLiteral("export"),
-    QStringLiteral("as"), QStringLiteral("in"), QStringLiteral("is")
-};
+    QStringLiteral("var"),     QStringLiteral("const"),    QStringLiteral("fun"),    QStringLiteral("return"),
+    QStringLiteral("if"),      QStringLiteral("else"),     QStringLiteral("while"),  QStringLiteral("for"),
+    QStringLiteral("break"),   QStringLiteral("continue"), QStringLiteral("true"),   QStringLiteral("false"),
+    QStringLiteral("null"),    QStringLiteral("and"),      QStringLiteral("or"),     QStringLiteral("not"),
+    QStringLiteral("print"),   QStringLiteral("input"),    QStringLiteral("class"),  QStringLiteral("super"),
+    QStringLiteral("this"),    QStringLiteral("init"),     QStringLiteral("try"),    QStringLiteral("catch"),
+    QStringLiteral("finally"), QStringLiteral("throw"),    QStringLiteral("import"), QStringLiteral("export"),
+    QStringLiteral("as"),      QStringLiteral("in"),       QStringLiteral("is")};
 // 字符串字面量："..." 或 '...'
 static const QRegularExpression kReMlString(QStringLiteral("\"([^\"\\\\]|\\\\.)*\"|'([^'\\\\]|\\\\.)*'"));
 // 行注释 // ...（保留到行尾）
@@ -82,12 +81,15 @@ static QString slugify(const QString& text) {
         if (c.isLetterOrNumber()) {
             slug += c.toLower();
         } else if (c == '_' || c == '-' || c.isSpace()) {
-            if (!slug.isEmpty() && !slug.endsWith('-')) slug += '-';
+            if (!slug.isEmpty() && !slug.endsWith('-'))
+                slug += '-';
         }
         // 其他字符忽略
     }
-    while (slug.startsWith('-')) slug.remove(0, 1);
-    while (slug.endsWith('-')) slug.chop(1);
+    while (slug.startsWith('-'))
+        slug.remove(0, 1);
+    while (slug.endsWith('-'))
+        slug.chop(1);
     return slug;
 }
 
@@ -122,13 +124,19 @@ static QString highlightMiniLang(const QString& escapedCode) {
 /// 避免使用字符类正则（[\s:-|] 中的 - 会被解释为范围）
 static bool isTableSeparatorLine(const QString& line) {
     QString t = line.trimmed();
-    if (t.isEmpty()) return false;
+    if (t.isEmpty())
+        return false;
     bool hasDash = false;
     for (const QChar& c : t) {
-        if (c == '|' || c == ':') continue;
-        if (c == '-') { hasDash = true; continue; }
-        if (c.isSpace()) continue;
-        return false;  // 包含其他字符，不是分隔行
+        if (c == '|' || c == ':')
+            continue;
+        if (c == '-') {
+            hasDash = true;
+            continue;
+        }
+        if (c.isSpace())
+            continue;
+        return false; // 包含其他字符，不是分隔行
     }
     return hasDash;
 }
@@ -226,12 +234,12 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     }
 
     const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#EEE8D5") : codeBlockBg;
-    const QString codeBlockStyle =
-        QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
-                       "border:1px solid #93A1A1; "
-                       "font-family:Consolas, 'Courier New', monospace; "
-                       "font-size:13px; "
-                       "white-space:pre-wrap;").arg(bg);
+    const QString codeBlockStyle = QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
+                                                  "border:1px solid #93A1A1; "
+                                                  "font-family:Consolas, 'Courier New', monospace; "
+                                                  "font-size:13px; "
+                                                  "white-space:pre-wrap;")
+                                       .arg(bg);
 
     // 按行扫描，识别块级结构
     const QStringList lines = markdown.split('\n');
@@ -243,34 +251,38 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     bool inCodeBlock = false;
     QString codeBlockContent;
     QString codeBlockLang;
-    bool inUl = false;  // 无序列表
-    bool inOl = false;  // 有序列表
-    bool inBlockquote = false;  // 引用块
-    QStringList blockquoteLines;  // 引用块累积行
-    QStringList paragraph;  // 当前段落累积的行
+    bool inUl = false;           // 无序列表
+    bool inOl = false;           // 有序列表
+    bool inBlockquote = false;   // 引用块
+    QStringList blockquoteLines; // 引用块累积行
+    QStringList paragraph;       // 当前段落累积的行
 
     // 表格状态
     bool inTable = false;
-    QStringList tableHeader;  // 表头单元格
-    QStringList tableRows;    // 数据行（每行一个字符串列表）
+    QStringList tableHeader; // 表头单元格
+    QStringList tableRows;   // 数据行（每行一个字符串列表）
 
     auto closeLists = [&]() {
-        if (inUl) { html << QStringLiteral("</ul>"); inUl = false; }
-        if (inOl) { html << QStringLiteral("</ol>"); inOl = false; }
+        if (inUl) {
+            html << QStringLiteral("</ul>");
+            inUl = false;
+        }
+        if (inOl) {
+            html << QStringLiteral("</ol>");
+            inOl = false;
+        }
     };
     auto flushParagraph = [&]() {
         if (!paragraph.isEmpty()) {
             QString joined = paragraph.join(QStringLiteral("\n"));
-            html << QStringLiteral("<p>") << renderInline(joined)
-                 << QStringLiteral("</p>");
+            html << QStringLiteral("<p>") << renderInline(joined) << QStringLiteral("</p>");
             paragraph.clear();
         }
     };
     auto flushBlockquote = [&]() {
         if (!blockquoteLines.isEmpty()) {
             QString joined = blockquoteLines.join(QStringLiteral("<br>"));
-            html << QStringLiteral("<blockquote>") << renderInline(joined)
-                 << QStringLiteral("</blockquote>");
+            html << QStringLiteral("<blockquote>") << renderInline(joined) << QStringLiteral("</blockquote>");
             blockquoteLines.clear();
             inBlockquote = false;
         }
@@ -281,8 +293,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             // 表头
             html << QStringLiteral("<tr>");
             for (const auto& h : tableHeader) {
-                html << QStringLiteral("<th>") << renderInline(h.trimmed())
-                     << QStringLiteral("</th>");
+                html << QStringLiteral("<th>") << renderInline(h.trimmed()) << QStringLiteral("</th>");
             }
             html << QStringLiteral("</tr>");
             // 数据行
@@ -290,8 +301,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 QStringList cells = row.split(QStringLiteral("|"));
                 html << QStringLiteral("<tr>");
                 for (const auto& c : cells) {
-                    html << QStringLiteral("<td>") << renderInline(c.trimmed())
-                         << QStringLiteral("</td>");
+                    html << QStringLiteral("<td>") << renderInline(c.trimmed()) << QStringLiteral("</td>");
                 }
                 html << QStringLiteral("</tr>");
             }
@@ -320,26 +330,22 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 // 退出代码块
                 QString escaped = escapeHtml(codeBlockContent);
                 // 去掉尾部多余换行
-                while (escaped.endsWith('\n')) escaped.chop(1);
+                while (escaped.endsWith('\n'))
+                    escaped.chop(1);
                 // P2-2 fix (F4): MiniLang 语法高亮
                 // 触发条件：codeBlockLang 为 minilang / ml / mlang / mini（不区分大小写）
                 QString lowerLang = codeBlockLang.toLower();
-                bool isMiniLang = (lowerLang == QStringLiteral("minilang") ||
-                                   lowerLang == QStringLiteral("ml") ||
-                                   lowerLang == QStringLiteral("mlang") ||
-                                   lowerLang == QStringLiteral("mini"));
+                bool isMiniLang = (lowerLang == QStringLiteral("minilang") || lowerLang == QStringLiteral("ml") ||
+                                   lowerLang == QStringLiteral("mlang") || lowerLang == QStringLiteral("mini"));
                 if (isMiniLang) {
                     escaped = highlightMiniLang(escaped);
                 }
                 // 代码块语言标签（仅作为注释显示在代码上方，不渲染为单独元素）
                 if (!codeBlockLang.isEmpty()) {
                     html << QStringLiteral("<div style=\"font-size:11px;color:#999;margin-bottom:2px;\">")
-                         << escapeHtml(codeBlockLang)
-                         << QStringLiteral("</div>");
+                         << escapeHtml(codeBlockLang) << QStringLiteral("</div>");
                 }
-                html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle)
-                     << escaped
-                     << QStringLiteral("</pre>");
+                html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle) << escaped << QStringLiteral("</pre>");
                 inCodeBlock = false;
                 codeBlockContent.clear();
                 codeBlockLang.clear();
@@ -396,20 +402,22 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
         QRegularExpressionMatch tm = kReTaskList.match(line);
         if (tm.hasMatch()) {
             flushParagraph();
-            if (inOl) { html << QStringLiteral("</ol>"); inOl = false; }
-            if (!inUl) { html << QStringLiteral("<ul>"); inUl = true; }
+            if (inOl) {
+                html << QStringLiteral("</ol>");
+                inOl = false;
+            }
+            if (!inUl) {
+                html << QStringLiteral("<ul>");
+                inUl = true;
+            }
             QString checked = tm.captured(1).toLower();
             QString text = renderInline(escapeHtml(tm.captured(2)));
-            QString checkboxClass = (checked == QStringLiteral("x"))
-                ? QStringLiteral("task-checkbox checked")
-                : QStringLiteral("task-checkbox");
-            QString checkboxSymbol = (checked == QStringLiteral("x"))
-                ? QStringLiteral("✓")
-                : QString();
+            QString checkboxClass = (checked == QStringLiteral("x")) ? QStringLiteral("task-checkbox checked")
+                                                                     : QStringLiteral("task-checkbox");
+            QString checkboxSymbol = (checked == QStringLiteral("x")) ? QStringLiteral("✓") : QString();
             html << QStringLiteral("<li class=\"task-list-item\">")
                  << QStringLiteral("<span class=\"%1\">%2</span>").arg(checkboxClass, checkboxSymbol)
-                 << renderInline(escapeHtml(tm.captured(2)))
-                 << QStringLiteral("</li>");
+                 << renderInline(escapeHtml(tm.captured(2))) << QStringLiteral("</li>");
             continue;
         }
 
@@ -419,10 +427,15 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             flushParagraph();
             flushBlockquote();
             flushTable();
-            if (inOl) { html << QStringLiteral("</ol>"); inOl = false; }
-            if (!inUl) { html << QStringLiteral("<ul>"); inUl = true; }
-            html << QStringLiteral("<li>") << renderInline(escapeHtml(ulm.captured(1)))
-                 << QStringLiteral("</li>");
+            if (inOl) {
+                html << QStringLiteral("</ol>");
+                inOl = false;
+            }
+            if (!inUl) {
+                html << QStringLiteral("<ul>");
+                inUl = true;
+            }
+            html << QStringLiteral("<li>") << renderInline(escapeHtml(ulm.captured(1))) << QStringLiteral("</li>");
             continue;
         }
 
@@ -432,10 +445,15 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
             flushParagraph();
             flushBlockquote();
             flushTable();
-            if (inUl) { html << QStringLiteral("</ul>"); inUl = false; }
-            if (!inOl) { html << QStringLiteral("<ol>"); inOl = true; }
-            html << QStringLiteral("<li>") << renderInline(escapeHtml(olm.captured(1)))
-                 << QStringLiteral("</li>");
+            if (inUl) {
+                html << QStringLiteral("</ul>");
+                inUl = false;
+            }
+            if (!inOl) {
+                html << QStringLiteral("<ol>");
+                inOl = true;
+            }
+            html << QStringLiteral("<li>") << renderInline(escapeHtml(olm.captured(1))) << QStringLiteral("</li>");
             continue;
         }
 
@@ -458,8 +476,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
         QRegularExpressionMatch trm = kReTableRow.match(line);
         if (trm.hasMatch()) {
             // 检查下一行是否是分隔行（如果是，说明这是表头）
-            bool isNextSeparator = (i + 1 < lines.size())
-                && isTableSeparatorLine(lines[i + 1]);
+            bool isNextSeparator = (i + 1 < lines.size()) && isTableSeparatorLine(lines[i + 1]);
             if (isNextSeparator && !inTable) {
                 // 这是表头行
                 flushParagraph();
@@ -491,10 +508,9 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     if (inCodeBlock) {
         // 代码块未闭合（用户输入不完整），按代码块输出
         QString escaped = escapeHtml(codeBlockContent);
-        while (escaped.endsWith('\n')) escaped.chop(1);
-        html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle)
-             << escaped
-             << QStringLiteral("</pre>");
+        while (escaped.endsWith('\n'))
+            escaped.chop(1);
+        html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle) << escaped << QStringLiteral("</pre>");
     }
     flushParagraph();
     closeLists();
@@ -542,7 +558,8 @@ QString markdownToHtmlFragment(const std::string& markdown, const QString& codeB
 
 std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
     std::vector<HeadingEntry> headings;
-    if (markdown.isEmpty()) return headings;
+    if (markdown.isEmpty())
+        return headings;
 
     const QStringList lines = markdown.split('\n');
     bool inCodeBlock = false;
@@ -552,7 +569,8 @@ std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
             inCodeBlock = !inCodeBlock;
             continue;
         }
-        if (inCodeBlock) continue;
+        if (inCodeBlock)
+            continue;
 
         QRegularExpressionMatch hm = kReHeading.match(line);
         if (hm.hasMatch()) {
@@ -568,27 +586,25 @@ std::vector<HeadingEntry> extractHeadings(const QString& markdown) {
     return headings;
 }
 
-QString buildTableOfContents(const QString& markdown,
-                              const QString& tocTitle,
-                              int maxLevel) {
+QString buildTableOfContents(const QString& markdown, const QString& tocTitle, int maxLevel) {
     auto headings = extractHeadings(markdown);
-    if (headings.empty()) return QString();
+    if (headings.empty())
+        return QString();
 
     QStringList html;
     html << QStringLiteral("<div class=\"toc-box\">");
     if (!tocTitle.isEmpty()) {
-        html << QStringLiteral("<div class=\"toc-title\">") << escapeHtml(tocTitle)
-             << QStringLiteral("</div>");
+        html << QStringLiteral("<div class=\"toc-title\">") << escapeHtml(tocTitle) << QStringLiteral("</div>");
     }
     html << QStringLiteral("<ul class=\"toc-list\">");
     for (const auto& h : headings) {
-        if (h.level > maxLevel) continue;
+        if (h.level > maxLevel)
+            continue;
         // 根据级别缩进（h1 不缩进，h2 缩进 1 级，h3 缩进 2 级）
         int indent = h.level - 1;
-        if (indent < 0) indent = 0;
-        QString style = (indent > 0)
-            ? QStringLiteral(" style=\"margin-left:%1px;\"").arg(indent * 12)
-            : QString();
+        if (indent < 0)
+            indent = 0;
+        QString style = (indent > 0) ? QStringLiteral(" style=\"margin-left:%1px;\"").arg(indent * 12) : QString();
         // 内部锚点链接使用 #anchor 格式（QTextBrowser 支持）
         html << QStringLiteral("<li%1><a href=\"#%2\">%3</a></li>")
                     .arg(style, h.anchor, renderInline(escapeHtml(h.text)));

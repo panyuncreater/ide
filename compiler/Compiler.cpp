@@ -1879,13 +1879,9 @@ std::string Compiler::normalizeModulePath(const std::string& rawPath) const {
 std::unique_ptr<Block> Compiler::loadAndParseModule(const std::string& modulePath, int line) {
     // 调用模块加载器获取源码
     std::string source = moduleLoader_(modulePath);
-    // AUDIT-P3.13 fix: 空模块源码（0 字节文件）是合法的空模块，不应报错。
-    // moduleLoader_ 回调应在文件不存在时抛异常而非返回空字符串。
-    // 对空源码返回空 AST，调用方（visitImportStmt）对空 statements 的预扫描/
-    // 导出收集/内联编译均为无副作用，moduleExports_ 自然得到空集合；
-    // 具名导入会因「未导出名称」报错（三后端一致）。
     if (source.empty()) {
-        return std::make_unique<Block>(std::vector<std::shared_ptr<ASTNode>>{});
+        error("无法加载模块: " + modulePath + "（文件不存在或为空）", line, 0);
+        return nullptr;
     }
     // 词法分析
     Lexer lexer;
