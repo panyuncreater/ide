@@ -79,14 +79,21 @@ IdeController::IdeController(QObject* parent)
             if (stepptr->isCondStopRequested())
                 return false;
             std::shared_ptr<Block> ast;
-            auto lookupIt = cacheLookup->find(condition);
+            // 条件断点修复(R86): 自动补充分号——用户输入的条件表达式（如 i%2==1）
+            // 通常不带分号，但 Parser::parse() 的 expressionStatement() 要求分号，
+            // 缺失分号导致解析失败 → 条件求值返回 false → 断点永不触发。
+            std::string condExpr = condition;
+            if (!condExpr.empty() && condExpr.back() != ';') {
+                condExpr += ';';
+            }
+            auto lookupIt = cacheLookup->find(condExpr);
             if (lookupIt != cacheLookup->end()) {
                 // 命中：move_to_front（最近使用）
                 cacheList->splice(cacheList->begin(), *cacheList, lookupIt->second);
                 ast = lookupIt->second->second;
             } else {
                 Lexer condLexer;
-                auto tokens = condLexer.scan(condition);
+                auto tokens = condLexer.scan(condExpr);
                 Parser condParser;
                 auto parsed = condParser.parse(tokens);
                 if (!parsed || parsed->statements.empty() || condParser.getDiagnostics().hasErrors()) {
@@ -98,8 +105,8 @@ IdeController::IdeController(QObject* parent)
                     cacheLookup->erase(cacheList->back().first);
                     cacheList->pop_back();
                 }
-                cacheList->emplace_front(condition, ast);
-                (*cacheLookup)[condition] = cacheList->begin();
+                cacheList->emplace_front(condExpr, ast);
+                (*cacheLookup)[condExpr] = cacheList->begin();
             }
             Interpreter tempInterp;
             auto env = std::make_shared<Environment>();

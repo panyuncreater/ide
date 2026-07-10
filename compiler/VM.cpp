@@ -343,6 +343,23 @@ std::unordered_map<std::string, Value> VM::getCurrentFrameLocals() const {
     const auto& frame = frames_.back();
     if (!frame.chunk)
         return result;
+    // 条件断点修复(R75): 先注入upvalue（外层闭包变量），局部变量同名时遮蔽upvalue
+    const auto& uvDescs = frame.chunk->upvalues;
+    for (size_t i = 0; i < uvDescs.size() && i < frame.upvalues.size(); ++i) {
+        const auto& desc = uvDescs[i];
+        if (desc.name.empty())
+            continue;
+        const auto& uv = frame.upvalues[i];
+        if (!uv)
+            continue;
+        if (uv->isClosed) {
+            result[desc.name] = uv->value;
+        } else {
+            if (uv->stackSlot < stack_.size()) {
+                result[desc.name] = stack_[uv->stackSlot];
+            }
+        }
+    }
     // 遍历 chunk 的 localSlotNames，从栈槽反查值
     const auto& names = frame.chunk->localSlotNames;
     size_t bp = frame.basePointer;
@@ -365,6 +382,23 @@ std::unordered_map<std::string, Value> VM::getFrameLocalsAt(size_t frameIndex) c
     const auto& frame = frames_[frameIndex];
     if (!frame.chunk)
         return result;
+    // 条件断点修复(R75): 先注入upvalue（外层闭包变量）
+    const auto& uvDescs = frame.chunk->upvalues;
+    for (size_t i = 0; i < uvDescs.size() && i < frame.upvalues.size(); ++i) {
+        const auto& desc = uvDescs[i];
+        if (desc.name.empty())
+            continue;
+        const auto& uv = frame.upvalues[i];
+        if (!uv)
+            continue;
+        if (uv->isClosed) {
+            result[desc.name] = uv->value;
+        } else {
+            if (uv->stackSlot < stack_.size()) {
+                result[desc.name] = stack_[uv->stackSlot];
+            }
+        }
+    }
     const auto& names = frame.chunk->localSlotNames;
     size_t bp = frame.basePointer;
     for (size_t slot = 0; slot < names.size() && slot < static_cast<size_t>(frame.chunk->localCount); ++slot) {

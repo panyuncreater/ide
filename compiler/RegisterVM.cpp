@@ -2629,6 +2629,25 @@ std::unordered_map<std::string, Value> RegisterVM::getCurrentFrameLocals() const
     const auto& frame = frames_.back();
     if (!frame.chunk)
         return result;
+    // 条件断点修复(R75): 先注入upvalue（外层闭包变量），局部变量同名时遮蔽upvalue
+    const auto& uvDescs = frame.chunk->upvalues;
+    for (size_t i = 0; i < uvDescs.size() && i < frame.upvalues.size(); ++i) {
+        const auto& desc = uvDescs[i];
+        if (desc.name.empty())
+            continue;
+        const auto& uv = frame.upvalues[i];
+        if (!uv)
+            continue;
+        if (uv->isClosed) {
+            result[desc.name] = uv->value;
+        } else {
+            size_t frameIdx = uv->stackSlot / RegCallFrame::MAX_REGISTERS;
+            size_t slot = uv->stackSlot % RegCallFrame::MAX_REGISTERS;
+            if (frameIdx < frames_.size() && slot < frames_[frameIdx].registerCount) {
+                result[desc.name] = frames_[frameIdx].registers[slot];
+            }
+        }
+    }
     // 遍历 chunk 的 localRegNames，从寄存器窗口反查值
     const auto& names = frame.chunk->localRegNames;
     for (size_t reg = 0; reg < names.size() && reg < frame.registers.size(); ++reg) {
@@ -2647,6 +2666,25 @@ std::unordered_map<std::string, Value> RegisterVM::getFrameLocalsAt(size_t frame
     const auto& frame = frames_[frameIndex];
     if (!frame.chunk)
         return result;
+    // 条件断点修复(R75): 先注入upvalue（外层闭包变量）
+    const auto& uvDescs = frame.chunk->upvalues;
+    for (size_t i = 0; i < uvDescs.size() && i < frame.upvalues.size(); ++i) {
+        const auto& desc = uvDescs[i];
+        if (desc.name.empty())
+            continue;
+        const auto& uv = frame.upvalues[i];
+        if (!uv)
+            continue;
+        if (uv->isClosed) {
+            result[desc.name] = uv->value;
+        } else {
+            size_t fi = uv->stackSlot / RegCallFrame::MAX_REGISTERS;
+            size_t slot = uv->stackSlot % RegCallFrame::MAX_REGISTERS;
+            if (fi < frames_.size() && slot < frames_[fi].registerCount) {
+                result[desc.name] = frames_[fi].registers[slot];
+            }
+        }
+    }
     const auto& names = frame.chunk->localRegNames;
     for (size_t reg = 0; reg < names.size() && reg < frame.registers.size(); ++reg) {
         if (names[reg].empty())

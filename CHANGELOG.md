@@ -2,6 +2,61 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-10 · 第八十六轮：条件断点表达式自动补充分号（P0 × 1，共 1 项）
+
+### 概述
+
+修复条件断点完全不触发的问题。用户在断点条件对话框中输入 `i%2==1`（不带分号），但 `Parser::parse()` 内部的 `expressionStatement()` 调用 `consume(TK_SEMICOLON)` 强制要求分号，导致解析失败（`getDiagnostics().hasErrors()` 为 true），条件求值器返回 false，断点**永远不触发**。此 Bug 影响 Interpreter 和 VM/RegisterVM 全部三条路径。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| P0.1 | P0 | 语义错误（功能完全失效） | `app/DebugCoordinator.cpp` `setConditionEvaluator` lambda / `app/IdeController.cpp` `setConditionEvaluator` lambda | **条件断点永不触发**。根因：`Parser::expressionStatement()` (L1246-1250) 调用 `consume(TK_SEMICOLON)`，用户输入的条件表达式如 `i%2==1` 不含分号 → 解析失败 → `getDiagnostics().hasErrors()` 为 true → 条件求值器返回 false → 断点永远不暂停。修复：在两处条件求值器 lambda 中，解析前检查条件字符串末尾是否为 `;`，不是则自动追加。VM 路径同时修复 LRU 缓存 key 使用补充分号后的 `condExpr`，避免 `i%2==1` 和 `i%2==1;` 产生不同缓存条目。 |
+
+### 修改文件清单
+
+- `app/DebugCoordinator.cpp`：Interpreter 路径条件求值器 lambda 中自动补充分号
+- `app/IdeController.cpp`：VM 路径条件求值器 lambda 中自动补充分号，LRU 缓存 key 同步使用 `condExpr`
+- `CHANGELOG.md`、`docs/development.md`
+
+## 2026-07-10 · 第八十五轮：条件断点支持闭包 Upvalue 变量（P1 × 1，共 1 项）
+
+### 概述
+
+修复 VM（栈式）与 RegisterVM（寄存器式）后端下条件断点无法访问闭包外层变量（upvalue）的问题。原因为 BytecodeChunk/RegBytecodeChunk 中 upvalue 描述符仅记录索引信息而**不记录变量名**，调试器反查当前帧 locals 时只能获取局部变量和全局变量，闭包捕获的外层变量无名字映射，导致 `i == 5` 中 `i` 为外层闭包变量时条件表达式报"未定义变量"，条件断点永远无法命中。Interpreter 路径因直接在当前环境链上沙箱求值，天然支持闭包变量访问，无需修改。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| P1.1 | P1 | 语义错误（功能缺失） | `compiler/Bytecode.h` `UpvalueDesc` / `compiler/IR.h` `UpvalueInfo` / `compiler/Compiler.cpp` `resolveUpvalue` / `compiler/IR.cpp` `addUpvalue`+`visitFunDecl` upvalue 拷贝 / `compiler/VM.cpp` `getCurrentFrameLocals`+`getFrameLocalsAt` / `compiler/RegisterVM.cpp` `getCurrentFrameLocals`+`getFrameLocalsAt` | **条件断点无法访问闭包 upvalue**。根因：`UpvalueDesc` 结构体缺少 `name` 字段，编译期不记录 upvalue 的变量名，运行时 VM 帧无法按名反查 upvalue 值。修复：(1) 给 `UpvalueDesc` 添加 `std::string name` 字段；(2) 给 IR 层 `UpvalueInfo` 同步添加 `name` 字段；(3) Compiler 和 AstIRBuilder 在 resolveUpvalue/addUpvalue 时记录名字；(4) IR lower 时把 name 传递到 BytecodeChunk/RegBytecodeChunk；(5) VM/RegisterVM 的 getCurrentFrameLocals/getFrameLocalsAt 遍历 `frame.upvalues`，按 isClosed/open 两种状态读取当前值注入变量映射；(6) 注入顺序遵循静态作用域：upvalues（外层）先注入，locals（当前帧）后注入覆盖同名 upvalue。 |
+
+### Upvalue 读取逻辑
+
+| 后端 | closed upvalue | open upvalue |
+|------|----------------|--------------|
+| Stack VM | `uv->value` | `stack_[uv->stackSlot]`（stackSlot 为绝对栈偏移） |
+| Register VM | `uv->value` | `frames_[stackSlot/32].registers[stackSlot%32]`（stackSlot = frameIdx*32+reg） |
+
+### 三后端一致性
+
+| 后端 | 闭包变量条件断点 | 说明 |
+|------|------------------|------|
+| Interpreter | ✅ 原本已支持 | `evaluateCondition` 直接在现有 Environment 父链上沙箱求值，天然访问所有外层变量 |
+| Stack VM | ✅ 本次修复 | getCurrentFrameLocals 现遍历 frame.upvalues 注入值 |
+| Register VM | ✅ 本次修复 | getCurrentFrameLocals 现遍历 frame.upvalues，并正确解码 stackSlot 的 frameIdx+reg |
+
+### 修改文件清单
+
+- `compiler/Bytecode.h`：UpvalueDesc 新增 `name` 字段
+- `compiler/IR.h`：UpvalueInfo 新增 `name` 字段
+- `compiler/Compiler.cpp`：`resolveUpvalue` 两个分支（isLocal=true/false）均设置 `desc.name = name`
+- `compiler/IR.cpp`：`addUpvalue` 三个分支（outerLocal/outerUpvalue/outerFunction）均在 aggregate 初始化中传入 name；`visitFunDecl` 函数最终化拷贝 upvalues 到 `ir_->upvalues` 时传递 name
+- `compiler/VM.cpp`：`getCurrentFrameLocals`+`getFrameLocalsAt` 添加 upvalue 遍历，按 closed/open 读取值，先于 locals 注入
+- `compiler/RegisterVM.cpp`：`getCurrentFrameLocals`+`getFrameLocalsAt` 添加 upvalue 遍历，open 状态解码 stackSlot 为 frameIdx+reg
+- `CHANGELOG.md`、`docs/development.md`
+
 ## 2026-07-10 · 第八十四轮：课程设计交付物核查与冗余文件清理（工程 × 1）
 
 ### 概述

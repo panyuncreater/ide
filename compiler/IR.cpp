@@ -647,7 +647,7 @@ uint32_t AstIRBuilder::addUpvalue(const std::string& name) {
     auto localIt = outerLocalSlots_.find(name);
     if (localIt != outerLocalSlots_.end()) {
         uint32_t idx = static_cast<uint32_t>(currentUpvalues_.size());
-        currentUpvalues_.push_back({idx, true, localIt->second});
+        currentUpvalues_.push_back({idx, true, localIt->second, name}); // 条件断点修复(R75): 记录name
         currentUpvalueNames_[name] = static_cast<int>(idx);
         return idx;
     }
@@ -656,7 +656,7 @@ uint32_t AstIRBuilder::addUpvalue(const std::string& name) {
     auto uvIt = outerUpvalueNames_.find(name);
     if (uvIt != outerUpvalueNames_.end()) {
         uint32_t idx = static_cast<uint32_t>(currentUpvalues_.size());
-        currentUpvalues_.push_back({idx, false, uvIt->second});
+        currentUpvalues_.push_back({idx, false, uvIt->second, name}); // 条件断点修复(R75): 记录name
         currentUpvalueNames_[name] = static_cast<int>(idx);
         return idx;
     }
@@ -665,7 +665,7 @@ uint32_t AstIRBuilder::addUpvalue(const std::string& name) {
     auto fnIt = outerFunctions_.find(name);
     if (fnIt != outerFunctions_.end()) {
         uint32_t idx = static_cast<uint32_t>(currentUpvalues_.size());
-        currentUpvalues_.push_back({idx, true, fnIt->second});
+        currentUpvalues_.push_back({idx, true, fnIt->second, name}); // 条件断点修复(R75): 记录name
         currentUpvalueNames_[name] = static_cast<int>(idx);
         return idx;
     }
@@ -1561,7 +1561,7 @@ void AstIRBuilder::visitFunDecl(FunDecl* node) {
         }
         ir_->upvalues.clear();
         for (const auto& uv : currentUpvalues_) {
-            ir_->upvalues.push_back({uv.outerIdx, uv.isLocal});
+            ir_->upvalues.push_back({uv.outerIdx, uv.isLocal, uv.name}); // 条件断点修复(R75): 传递name
         }
         // BUG-IDE-12 fix: 保存 slot→name 映射到 IRFunction，供 RegisterBytecodeBackend 复制到 chunk
         ir_->localSlotNames = localSlotNames_;

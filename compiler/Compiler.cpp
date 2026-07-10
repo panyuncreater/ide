@@ -889,6 +889,7 @@ int Compiler::resolveUpvalue(const std::string& name, int line) {
         UpvalueDesc desc;
         desc.isLocal = true;
         desc.index = outerIt->second;
+        desc.name = name; // 条件断点修复(R75): 记录upvalue变量名
         int idx = static_cast<int>(currentUpvalues_.size());
         currentUpvalues_.push_back(desc);
         currentUpvalueNames_[name] = idx;
@@ -902,6 +903,7 @@ int Compiler::resolveUpvalue(const std::string& name, int line) {
         UpvalueDesc desc;
         desc.isLocal = false;
         desc.index = outerUvIt->second; // 外层 upvalue 索引
+        desc.name = name; // 条件断点修复(R75): 记录upvalue变量名
         int idx = static_cast<int>(currentUpvalues_.size());
         currentUpvalues_.push_back(desc);
         currentUpvalueNames_[name] = idx;

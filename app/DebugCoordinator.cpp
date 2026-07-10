@@ -60,8 +60,15 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints, const QMap<int, 
     // 捕获 shared_ptr 避免 worker 线程调用悬垂 this 的 UAF。
     debugger_->setConditionEvaluator([interpreter = interpreter_](const std::string& condition) -> bool {
         try {
+            // 条件断点修复(R86): 自动补充分号——用户输入的条件表达式（如 i%2==1）
+            // 通常不带分号，但 Parser::parse() 的 expressionStatement() 要求分号，
+            // 缺失分号导致解析失败 → 条件求值返回 false → 断点永不触发。
+            std::string condExpr = condition;
+            if (!condExpr.empty() && condExpr.back() != ';') {
+                condExpr += ';';
+            }
             Lexer condLexer;
-            auto tokens = condLexer.scan(condition);
+            auto tokens = condLexer.scan(condExpr);
             Parser condParser;
             auto block = condParser.parse(tokens);
             if (!condParser.getDiagnostics().hasErrors() && block && !block->statements.empty()) {

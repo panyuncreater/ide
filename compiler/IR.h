@@ -506,6 +506,7 @@ private:
         uint32_t index;
         bool isLocal;
         int outerIdx;
+        std::string name; // 条件断点修复(R75): upvalue变量名
     };
     std::vector<UpvalueInfo> currentUpvalues_;
     std::unordered_map<std::string, int> currentUpvalueNames_;
