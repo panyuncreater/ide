@@ -318,43 +318,6 @@ double ProfileDashboardPanel::measureInterpreterOnce(Block& ast) {
     return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
 }
 
-/// 单次用栈式 VM 编译并执行并返回耗时（秒）。
-double ProfileDashboardPanel::measureStackVMOnce(Block& ast) {
-    Compiler compiler;
-    auto result = compiler.compile(ast);
-    if (compiler.getDiagnostics().hasErrors()) {
-        throw std::runtime_error("Compile error: " + compiler.getDiagnostics().summary());
-    }
-    VM vm;
-    vm.setOutputCallback([](const std::string&) {});
-    auto t0 = std::chrono::high_resolution_clock::now();
-    auto vmres = vm.execute(result);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    if (vmres != VMResult::VM_OK) {
-        throw std::runtime_error("VM runtime error");
-    }
-    return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-}
-
-/// 单次用寄存器 VM 编译并执行并返回耗时（秒）。
-double ProfileDashboardPanel::measureRegisterVMOnce(Block& ast) {
-    Compiler compiler;
-    compiler.setUseRegisterVM(true);
-    auto regResult = compiler.compileViaRegisterIR(ast);
-    if (compiler.getDiagnostics().hasErrors()) {
-        throw std::runtime_error("Compile error: " + compiler.getDiagnostics().summary());
-    }
-    RegisterVM vm;
-    vm.setOutputCallback([](const std::string&) {});
-    auto t0 = std::chrono::high_resolution_clock::now();
-    auto vmres = vm.execute(regResult);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    if (vmres != VMResult::VM_OK) {
-        throw std::runtime_error("RegisterVM runtime error");
-    }
-    return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-}
-
 // ============================================================
 // P1-1: 真实 instrumentation — 通过 stepCallback 累加 opcode 计数
 // ============================================================
@@ -475,6 +438,14 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
                                 "  padding: 4px 12px; font-weight: bold; }");
     // BUG-GUI-AUDIT-1 fix attempt: Qt 6 已移除通用 ExcludeTimers flag，保持 ExcludeUserInputEvents。
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    // ROUND-76 fix: ExcludeUserInputEvents 不排除 QCloseEvent！
+    // 若用户在 processEvents 期间关闭窗口，closeEvent 已在此同步执行并 setClosing(true)。
+    // 必须立即退出，避免后续访问正在关闭的 widget。
+    if (closing_) {
+        stopStatusAnimation();
+        profiling_ = false;
+        return;
+    }
 
     // 先 lex + parse 源码
     Lexer lexer;
@@ -499,10 +470,18 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     // 问题 7: 在后端之间处理事件，避免长时间阻塞 UI
     statusRunningBase_ = QString::fromUtf8("运行中 [2/3] StackVM");
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    // ROUND-76 fix: 检查 closing_ 避免在窗口关闭后继续执行
+    if (closing_) {
+        stopStatusAnimation();
+        profiling_ = false;
+        return;
+    }
 
     // P1-1: StackVM / RegisterVM 走 measureXxxWithProfile，同时累加 opcode 计数
-    // 自己实现多次测量循环（替代 measureBackend），累加每次的 opcode 计数
-    std::array<uint64_t, 256> stackVmCounts{}; // 累加 N 次的总计数
+    // R77 fix: 指令计数取 N 次平均（与时间统计 mean(samples) 一致），否则显示值为
+    // 单次实际值的 N 倍（iterations=3 时 OP_CALL 等热点被放大 3 倍），与 OpCode
+    // 性能文档库的参考量级（如"fib(20) OP_CALL ~21891 次"）矛盾。
+    std::array<uint64_t, 256> stackVmCounts{};
     std::array<uint64_t, 256> registerVmCounts{};
     {
         BackendTiming t;
@@ -516,6 +495,11 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
                 for (size_t j = 0; j < 256; ++j)
                     stackVmCounts[j] += counts[j];
             }
+            // 取平均：指令计数是确定值，取平均消除潜在非确定性，与 avgMicros 口径一致
+            if (scenario.iterations > 0) {
+                for (size_t j = 0; j < 256; ++j)
+                    stackVmCounts[j] /= static_cast<uint64_t>(scenario.iterations);
+            }
             t.avgMicros = mean(samples);
             t.stddevMicros = stddev(samples);
             t.success = true;
@@ -528,6 +512,12 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
 
     statusRunningBase_ = QString::fromUtf8("运行中 [3/3] RegisterVM");
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    // ROUND-76 fix: 检查 closing_ 避免在窗口关闭后继续执行
+    if (closing_) {
+        stopStatusAnimation();
+        profiling_ = false;
+        return;
+    }
 
     {
         BackendTiming t;
@@ -540,6 +530,11 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
                 samples.push_back(us);
                 for (size_t j = 0; j < 256; ++j)
                     registerVmCounts[j] += counts[j];
+            }
+            // R77 fix: 取平均，与 StackVM 口径一致
+            if (scenario.iterations > 0) {
+                for (size_t j = 0; j < 256; ++j)
+                    registerVmCounts[j] /= static_cast<uint64_t>(scenario.iterations);
             }
             t.avgMicros = mean(samples);
             t.stddevMicros = stddev(samples);

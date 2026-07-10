@@ -106,6 +106,12 @@ public:
 
     void setController(IdeController* controller) { controller_ = controller; }
 
+    /// ROUND-76 fix: 通知面板 IDE 正在关闭。
+    /// runProfile 中的 processEvents(ExcludeUserInputEvents) 不排除 QCloseEvent，
+    /// closeEvent 会在 runProfile 调用栈内同步执行。设置 closing_ 后，runProfile
+    /// 在每次 processEvents 返回后检查此标志并立即退出，避免继续访问正在关闭的 UI。
+    void setClosing(bool c) { closing_ = c; }
+
 signals:
     /// 信号：请求主窗口载入指定示例代码。
     void loadSampleRequested(const QString& code);
@@ -147,10 +153,8 @@ private:
     QTableWidget* registerVmOpTable_ = nullptr; // RegisterVM Top N 热点 opcode
     QTextBrowser* opCodeDocView_ = nullptr;     // OpCode 性能文档说明
 
-    /// 测量单后端单次执行时间（微秒）
+    /// 测量 Interpreter 单次执行时间（微秒）。StackVM/RegisterVM 走 measureXxxWithProfile。
     double measureInterpreterOnce(Block& ast);
-    double measureStackVMOnce(Block& ast);
-    double measureRegisterVMOnce(Block& ast);
 
     /// P1-1: 在 StackVM/RegisterVM 测量期间累加 opcode 计数到本地数组
     /// 返回 (微秒, opcodeCounts[256])；测量期间 stepCallback 启用
@@ -180,6 +184,10 @@ private:
     // 定时器/信号槽/DeferredDelete，定时器触发的信号链路可能间接调用 runProfile
     // 导致重入。runProfileBtn_->setEnabled(false) 只防直接点击。
     bool profiling_ = false;
+
+    // ROUND-76 fix: 关闭标志。closeEvent 通过 setClosing(true) 设置，
+    // runProfile 在每次 processEvents 后检查并提前退出。
+    bool closing_ = false;
 
     /// 问题 6: "运行中"状态动画 — 循环显示 "运行中." → "运行中.." → "运行中..."
     QTimer* statusAnimTimer_ = nullptr;

@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 510" width="900" height="510" font-family="'Segoe UI','Microsoft YaHei',system-ui,sans-serif">
+  <rect width="900" height="510" fill="#FAFBFC" rx="10"/>
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 9 3, 0 6" fill="#7F8C8D"/>
+    </marker>
+    <filter id="ds" x="-3%" y="-3%" width="106%" height="112%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2.5" flood-color="#000" flood-opacity="0.07"/>
+    </filter>
+  </defs>
+
+  <!-- ══════════ 引擎区域底色 ══════════ -->
+  <rect x="108" y="222" width="184" height="52" rx="8" fill="#E74C3C" fill-opacity="0.05" stroke="#E74C3C" stroke-opacity="0.20" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <rect x="313" y="222" width="222" height="240" rx="8" fill="#E67E22" fill-opacity="0.05" stroke="#E67E22" stroke-opacity="0.20" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <rect x="553" y="222" width="240" height="240" rx="8" fill="#8E44AD" fill-opacity="0.05" stroke="#8E44AD" stroke-opacity="0.20" stroke-width="1.2" stroke-dasharray="5 3"/>
+
+  <text x="115" y="235" font-size="9" fill="#E74C3C" font-weight="600" opacity="0.6">引擎 1</text>
+  <text x="320" y="235" font-size="9" fill="#E67E22" font-weight="600" opacity="0.6">引擎 2</text>
+  <text x="560" y="235" font-size="9" fill="#8E44AD" font-weight="600" opacity="0.6">引擎 3</text>
+
+  <!-- ══════════ 箭头 ══════════ -->
+  <!-- 前端管线 -->
+  <line x1="175" y1="36" x2="175" y2="56" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+  <line x1="175" y1="88" x2="175" y2="110" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+  <line x1="175" y1="142" x2="175" y2="164" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- AST → Formatter (左) -->
+  <line x1="115" y1="180" x2="98" y2="180" stroke="#7F8C8D" stroke-width="1.4" marker-end="url(#ah)"/>
+
+  <!-- AST → Interpreter (下) -->
+  <line x1="175" y1="196" x2="175" y2="240" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- AST → Compiler (右下) -->
+  <line x1="235" y1="190" x2="348" y2="240" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- AST → AstIRBuilder (右) -->
+  <line x1="235" y1="180" x2="568" y2="240" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- Compiler → BytecodeChunk -->
+  <line x1="380" y1="272" x2="380" y2="310" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- BytecodeChunk → VM -->
+  <line x1="380" y1="342" x2="395" y2="418" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- AstIRBuilder → IRModule -->
+  <line x1="620" y1="272" x2="620" y2="310" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- IRModule → BytecodeIRBackend (左下) -->
+  <line x1="565" y1="342" x2="500" y2="358" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- BytecodeIRBackend → VM (左下) -->
+  <line x1="430" y1="390" x2="415" y2="418" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- IRModule → RegisterBytecodeBackend (下) -->
+  <line x1="650" y1="342" x2="650" y2="370" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- RegisterBytecodeBackend → RegisterVM (下) -->
+  <line x1="650" y1="402" x2="650" y2="430" stroke="#7F8C8D" stroke-width="1.6" marker-end="url(#ah)"/>
+
+  <!-- ══════════ 节点 ══════════ -->
+  <!-- Source Code -->
+  <rect x="105" y="8" width="140" height="28" rx="5" fill="#95A5A6" filter="url(#ds)"/>
+  <text x="175" y="26" text-anchor="middle" font-size="12" fill="white" font-weight="500">Source Code</text>
+
+  <!-- Lexer -->
+  <rect x="105" y="56" width="140" height="32" rx="6" fill="#5B8DBE" filter="url(#ds)"/>
+  <text x="175" y="76" text-anchor="middle" font-size="13" fill="white" font-weight="600">Lexer</text>
+
+  <!-- Parser -->
+  <rect x="105" y="110" width="140" height="32" rx="6" fill="#5B8DBE" filter="url(#ds)"/>
+  <text x="175" y="130" text-anchor="middle" font-size="13" fill="white" font-weight="600">Parser</text>
+
+  <!-- AST -->
+  <rect x="110" y="164" width="130" height="32" rx="6" fill="#4CAF50" filter="url(#ds)"/>
+  <text x="175" y="184" text-anchor="middle" font-size="13" fill="white" font-weight="700">AST</text>
+
+  <!-- Formatter -->
+  <rect x="15" y="167" width="83" height="26" rx="5" fill="#26A69A" filter="url(#ds)"/>
+  <text x="57" y="184" text-anchor="middle" font-size="11" fill="white" font-weight="500">Formatter</text>
+  <text x="57" y="204" text-anchor="middle" font-size="9" fill="#90A4AE">代码格式化</text>
+
+  <!-- Interpreter -->
+  <rect x="118" y="240" width="114" height="34" rx="6" fill="#E74C3C" filter="url(#ds)"/>
+  <text x="175" y="261" text-anchor="middle" font-size="12" fill="white" font-weight="600">Interpreter</text>
+  <text x="175" y="286" text-anchor="middle" font-size="9" fill="#EF9A9A">树遍历解释器</text>
+
+  <!-- Compiler -->
+  <rect x="320" y="240" width="120" height="32" rx="6" fill="#5B8DBE" filter="url(#ds)"/>
+  <text x="380" y="260" text-anchor="middle" font-size="12" fill="white" font-weight="600">Compiler</text>
+
+  <!-- BytecodeChunk -->
+  <rect x="315" y="310" width="130" height="32" rx="6" fill="#E67E22" filter="url(#ds)"/>
+  <text x="380" y="330" text-anchor="middle" font-size="12" fill="white" font-weight="600">BytecodeChunk</text>
+
+  <!-- VM -->
+  <rect x="348" y="418" width="110" height="40" rx="6" fill="#E67E22" filter="url(#ds)"/>
+  <text x="403" y="434" text-anchor="middle" font-size="14" fill="white" font-weight="700">VM</text>
+  <text x="403" y="450" text-anchor="middle" font-size="9" fill="#FFE0B2">栈式虚拟机</text>
+
+  <!-- AstIRBuilder -->
+  <rect x="560" y="240" width="120" height="32" rx="6" fill="#5B8DBE" filter="url(#ds)"/>
+  <text x="620" y="260" text-anchor="middle" font-size="12" fill="white" font-weight="600">AstIRBuilder</text>
+
+  <!-- IRModule -->
+  <rect x="555" y="310" width="130" height="32" rx="6" fill="#FF9800" filter="url(#ds)"/>
+  <text x="620" y="330" text-anchor="middle" font-size="12" fill="white" font-weight="600">IRModule</text>
+  <text x="620" y="352" text-anchor="middle" font-size="9" fill="#BDBDBD">SSA-IR + 优化 Pass</text>
+
+  <!-- BytecodeIRBackend -->
+  <rect x="395" y="358" width="140" height="32" rx="6" fill="#F9A825" filter="url(#ds)"/>
+  <text x="465" y="378" text-anchor="middle" font-size="11" fill="white" font-weight="500">BytecodeIRBackend</text>
+
+  <!-- RegisterBytecodeBackend -->
+  <rect x="575" y="370" width="155" height="32" rx="6" fill="#F9A825" filter="url(#ds)"/>
+  <text x="653" y="390" text-anchor="middle" font-size="11" fill="white" font-weight="500">RegisterBytecodeBackend</text>
+
+  <!-- RegisterVM -->
+  <rect x="588" y="430" width="125" height="40" rx="6" fill="#8E44AD" filter="url(#ds)"/>
+  <text x="651" y="446" text-anchor="middle" font-size="13" fill="white" font-weight="700">RegisterVM</text>
+  <text x="651" y="462" text-anchor="middle" font-size="9" fill="#CE93D8">寄存器虚拟机</text>
+
+  <!-- ══════════ 图例 ══════════ -->
+  <g transform="translate(20, 488)">
+    <rect x="0" y="0" width="12" height="12" rx="3" fill="#5B8DBE"/>
+    <text x="16" y="10" font-size="9.5" fill="#607D8B">前端/编译</text>
+    <rect x="80" y="0" width="12" height="12" rx="3" fill="#4CAF50"/>
+    <text x="96" y="10" font-size="9.5" fill="#607D8B">AST</text>
+    <rect x="120" y="0" width="12" height="12" rx="3" fill="#E74C3C"/>
+    <text x="136" y="10" font-size="9.5" fill="#607D8B">引擎1 树遍历</text>
+    <rect x="230" y="0" width="12" height="12" rx="3" fill="#E67E22"/>
+    <text x="246" y="10" font-size="9.5" fill="#607D8B">引擎2 栈式VM</text>
+    <rect x="345" y="0" width="12" height="12" rx="3" fill="#8E44AD"/>
+    <text x="361" y="10" font-size="9.5" fill="#607D8B">引擎3 寄存器VM</text>
+    <rect x="465" y="0" width="12" height="12" rx="3" fill="#FF9800"/>
+    <text x="481" y="10" font-size="9.5" fill="#607D8B">IR 中间层</text>
+    <rect x="545" y="0" width="12" height="12" rx="3" fill="#F9A825"/>
+    <text x="561" y="10" font-size="9.5" fill="#607D8B">后端 Backend</text>
+    <rect x="650" y="0" width="20" height="12" rx="3" fill="none" stroke="#78909C" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="675" y="10" font-size="9.5" fill="#607D8B">引擎边界</text>
+  </g>
+</svg>

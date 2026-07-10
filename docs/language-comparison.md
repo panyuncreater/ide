@@ -69,7 +69,7 @@ MiniLang **只支持嵌套命名函数**作为闭包载体：`fun outer() { fun 
 堆类型通过侵入式 `RefCounted` 引用计数管理，`GcManager` mark-sweep 处理循环引用。开发者无需手动 `free`，但需注意循环引用对 GC 的依赖（与 Python 模型接近）。
 
 ### REPL
-内置 REPL 支持 `%magic` 命令（`%help` / `%ast` / `%ir` / `%disassemble` / `%compare` 等 10 个），可快速调用各教学面板的数据获取逻辑。支持多行续行（未闭合 `{ ( [` / 字符串 / `try` 缺 `catch`）。
+内置 REPL 支持 `%magic` 命令（`%help` / `%ast` / `%ir` / `%tokens` / `%disassemble` / `%compare` / `%profile` / `%memory` / `%version` / `%reset`），可快速调用各教学面板的数据获取逻辑。支持多行续行（未闭合 `{ ( [` / 字符串 / `try` 缺 `catch`）。
 
 ### 编译目标
 MiniLang 同时实现**三套执行引擎**（树遍历解释器 / 栈式字节码 VM / 寄存器式 VM）并共享一套 IR 中间表示层。同一源码在三后端必须语义等价，这是项目的核心约束，也是教学价值所在。

@@ -34,7 +34,7 @@ Accepted. 自项目初始采用 Interpreter 基准后端，后续迭代新增 St
 ### RegisterVM（寄存器式虚拟机）
 
 - IR → 寄存器式字节码 → 寄存器 VM 执行
-- 32 虚拟寄存器 R0-R31，50+ RegOp 指令集
+- 32 虚拟寄存器 R0-R31，59 条 RegOp 指令集
 - IR 三地址码直接 lowering，减少栈操作开销
 - 通过 `setVM(true)` + `setUseRegisterVM(true)` 启用
 

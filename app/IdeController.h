@@ -276,6 +276,14 @@ public:
             }
         }
     }
+    /// ROUND-67 P2 fix: 清空所有 vmStateChangedListener 回调。
+    /// closeEvent 中调用，防止 closeEvent 后续操作（vmStop/stopForClose 等）触发
+    /// notifyVmStateChanged 时，7 个教学面板的 onVmStateChanged 回调访问正在清理的 UI。
+    void clearVmStateChangedListeners() {
+        for (auto& cb : vmStateChangedListeners_) {
+            cb.fn = nullptr;
+        }
+    }
 
     // A1 fix: 启用/禁用 RegisterVM 后端（同步 Compiler 与 VmStepper）
     // 启用后 compile() 走 AST → IR → RegisterBytecode 路径，VmStepper 转发到 regVm_。

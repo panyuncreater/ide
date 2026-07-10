@@ -65,6 +65,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVariantAnimation>
+#include <QPropertyAnimation>
+#include <QAbstractAnimation>
 #include <algorithm>
 #include <functional>
 #include <sstream>
@@ -88,7 +90,9 @@
 // ADS headers
 #include "DockAreaWidget.h"
 #include "DockManager.h"
+#include "DockSplitter.h"
 #include "DockWidget.h"
+#include "DockWidgetTab.h"
 
 // QFluentKit Theme
 #include "Theme.h"
@@ -254,12 +258,14 @@ public:
         painter->save();
 
         // 背景：选中 / 交替行
+        // R73 fix: 使用 TeachingTheme 的 Solarized 颜色，不再硬编码。
+        // 此前硬编码 #ffffff/#f8f8f8 导致字节码列表背景不是米黄色。
         if (option.state & QStyle::State_Selected) {
-            painter->fillRect(option.rect, QColor("#cfe4f5"));
+            painter->fillRect(option.rect, TeachingTheme::ideSelectedBg());
         } else if (option.features & QStyleOptionViewItem::Alternate) {
-            painter->fillRect(option.rect, QColor("#ffffff"));
+            painter->fillRect(option.rect, TeachingTheme::ideBgPanel());
         } else {
-            painter->fillRect(option.rect, QColor("#f8f8f8"));
+            painter->fillRect(option.rect, TeachingTheme::ideBgMain());
         }
 
         QString html = index.data(kHtmlRole).toString();
@@ -455,6 +461,19 @@ Ide::~Ide() {
     // 此处确保 controller_ → Ide 的信号连接在成员析构前被切断，避免析构链中
     // 残留信号访问已析构的 UI 成员。
     if (controller_) disconnect(controller_, nullptr, this, nullptr);
+    // ROUND-67 P0/P1 fix: 停止所有活跃动画 + 清理 GuidedTour（安全网）。
+    // QVariantAnimation 不受 removePostedEvents 控制，必须显式 stop()。
+    if (splitterAnim_) { splitterAnim_->stop(); splitterAnim_ = nullptr; }
+    if (bottomPanelAnim_) { bottomPanelAnim_->stop(); bottomPanelAnim_ = nullptr; }
+    if (!activePanelTours_.isEmpty()) {
+        for (GuidedTour* tour : activePanelTours_) {
+            if (tour) {
+                QCoreApplication::removePostedEvents(tour);
+                delete tour;
+            }
+        }
+        activePanelTours_.clear();
+    }
     // ROUND-66 P0 fix: 清空所有待处理事件，防止子对象析构期间 Qt 派发残留的
     // QMetaCallEvent（queued slot lambda）。Qt6 disconnect 不移除已投递的
     // QMetaCallEvent，若析构链中任何子对象析构触发了事件派发（如 ADS 内部
@@ -491,6 +510,13 @@ void Ide::closeEvent(QCloseEvent* event) {
     // QueuedConnection 信号访问已部分析构的成员导致 UAF（读取访问权限冲突）。
     closing_ = true;
 
+    // ROUND-76 fix: 通知 ProfileDashboardPanel 正在关闭。
+    // runProfile 中的 processEvents(ExcludeUserInputEvents) 不排除 QCloseEvent，
+    // closeEvent 会在 runProfile 调用栈内同步执行。设置 closing_ 后，
+    // runProfile 在每次 processEvents 返回后检查并立即退出，
+    // 避免继续访问正在关闭的 widget（renderResults/update 等）。
+    if (profileDashboardPanel_) profileDashboardPanel_->setClosing(true);
+
     // ROUND-66 fix: 立即停止所有内部定时器，避免 maybeSave 模态对话框的事件循环
     // 期间定时器触发（completionTimer_/syntaxCheckTimer_/fileTreeFilterTimer_ 的
     // 回调未受 closing_ 守卫保护，可能访问正在清理的状态）。splitterSaveTimer_ 也停止。
@@ -499,6 +525,84 @@ void Ide::closeEvent(QCloseEvent* event) {
     if (syntaxCheckTimer_) syntaxCheckTimer_->stop();
     if (fileTreeFilterTimer_) fileTreeFilterTimer_->stop();
 
+    // ROUND-67 P0/P1 fix: 立即停止所有活跃的 QVariantAnimation。
+    // 关键认知：QVariantAnimation 由 QUnifiedTimer（全局动画定时器）驱动，
+    // 不经过 Qt 对象事件队列，removePostedEvents 完全无法清理它！
+    // 只有显式 stop() 才能停止。closeEvent 入口必须停止所有活跃动画，
+    // 否则 maybeSave 模态对话框期间动画继续运行，valueChanged lambda 访问
+    // 正在清理的 centerSplitter_/editorSplitter_ → UAF（读取访问权限冲突）。
+    // 这是学习中心面板关闭崩溃的核心根因：animateCenterSplitter 在打开/切换
+    // 教学面板时频繁触发（7 处调用点），动画持续约 300ms。
+    if (splitterAnim_) {
+        splitterAnim_->stop();
+        splitterAnim_ = nullptr;
+    }
+    if (bottomPanelAnim_) {
+        bottomPanelAnim_->stop();
+        bottomPanelAnim_ = nullptr;
+    }
+    // ROUND-75 fix (根因 B1): 停止 slideInWidget 创建的 QPropertyAnimation。
+    // 这些动画以各 panel widget 为 parent（非 Ide 成员变量），但 QPropertyAnimation
+    // 是 QAbstractAnimation 子类，由 QUnifiedTimer 驱动，不经过 Qt 事件队列，
+    // removePostedEvents 完全无法清理它。maybeSave 模态对话框期间动画继续运行，
+    // valueChanged 访问正在 reparent/析构的 widget → UAF（读取访问权限冲突）。
+    // slideInWidget 在 showTeachingPanel/showBottomPanel/showRightPanel/
+    // onActivityChangedById 中频繁调用，是打开/切换面板时必然触发的动画。
+    // 遍历 centerStack_ 各页 + 底部/右侧栈的子动画并 stop() + deleteLater()。
+    const auto stopChildAnimations = [](QWidget* w) {
+        if (!w) return;
+        // 停止 QPropertyAnimation（QUnifiedTimer 驱动，removePostedEvents 无法清理）
+        const auto anims = w->findChildren<QPropertyAnimation*>();
+        for (auto* a : anims) {
+            if (a->state() == QAbstractAnimation::Running) {
+                a->stop();
+                a->deleteLater();
+            }
+        }
+        // ROUND-76 fix: 同时停止 QTimer（Qt 定时器事件驱动）。
+        // ProfileDashboardPanel 的 statusAnimTimer_（400ms）就是 QTimer，
+        // maybeSave 模态对话框期间其 timeout 信号会被派发，lambda 访问
+        // 正在清理的 statusLabel_ → UAF。findChildren 递归覆盖所有子 QTimer。
+        const auto timers = w->findChildren<QTimer*>();
+        for (auto* t : timers) {
+            if (t->isActive())
+                t->stop();
+        }
+    };
+    stopChildAnimations(centerStack_);
+    if (centerStack_) {
+        for (int i = 0; i < centerStack_->count(); ++i)
+            stopChildAnimations(qobject_cast<QWidget*>(centerStack_->widget(i)));
+    }
+    stopChildAnimations(bottomStack_);
+    stopChildAnimations(rightStack_);
+    // 侧栏 dock 内容（fileTreeDock_/debugPanelDock_/teachingTreeDock_ 的 widget）
+    // 也会被 slideInWidget（onActivityChangedById）。findChildren 递归遍历，
+    // 覆盖 dockManager_ 下所有 dock 的子动画。
+    stopChildAnimations(dockManager_);
+    // ROUND-75 fix (根因 B2): 停止 pendingHide 定时器，避免 maybeSave 模态对话框
+    // 期间 timeout 触发访问正在清理的 centerStack_/editorTabWidget_。
+    if (pendingHideCenterTimer_) pendingHideCenterTimer_->stop();
+    if (pendingHideEditorTimer_) pendingHideEditorTimer_->stop();
+
+    // ROUND-67 P1 fix: 清理所有活跃的面板特定 GuidedTour。
+    // 5 个教学面板首次访问自动触发 GuidedTour，tour 的 showStep 中排队
+    // QTimer::singleShot(0, tour, ...) 持有裸 targetWidget 指针。
+    // removePostedEvents(this) 只清空 Ide 队列，不清空 tour 队列。
+    // maybeSave 模态对话框期间 tour 的 singleShot 被派发，访问可能已被
+    // reparent/清理的 targetWidget → UAF。显式 disconnect + removePostedEvents(tour) + delete。
+    // （hideOverlay 是 private，~GuidedTour 析构会调用它清理气泡）
+    if (!activePanelTours_.isEmpty()) {
+        for (GuidedTour* tour : activePanelTours_) {
+            if (tour) {
+                disconnect(tour, nullptr, this, nullptr);
+                QCoreApplication::removePostedEvents(tour);
+                delete tour;
+            }
+        }
+        activePanelTours_.clear();
+    }
+
     // ROUND-60 fix: 尽早切断 controller_ → Ide 的所有信号-槽连接。
     // 原实现将 disconnect 放在 closeEvent 末尾（maybeSave/processEvents 之后），
     // 但 maybeSave() 的模态对话框与 processEvents(521) 会派发主线程事件队列中
@@ -506,6 +610,10 @@ void Ide::closeEvent(QCloseEvent* event) {
     // 守卫会访问已部分析构的 UI 成员导致 UAF。尽早 disconnect + removePostedEvents
     // 双重保险：disconnect 阻止未来投递，removePostedEvents 清空已投递未派发的事件。
     disconnect(controller_, nullptr, this, nullptr);
+    // ROUND-67 P2 fix: 清空所有 vmStateChangedListener 回调，防止 closeEvent 后续
+    // 操作（vmStop/stopForClose 等）触发 notifyVmStateChanged 时，7 个教学面板的
+    // onVmStateChanged 回调访问正在清理的 UI。
+    if (controller_) controller_->clearVmStateChangedListeners();
     // ROUND-66 P0 fix: removePostedEvents 第二参数 0 表示 QEvent::None（几乎不存在
     // 的事件类型），不是"所有事件"。原代码注释声称"清空已投递未派发的事件"但实际
     // 只移除了 type==0 的事件，QMetaCallEvent（queued slot, type=43）和 QEvent::Timer
@@ -1126,10 +1234,17 @@ void Ide::onEditorTabCloseRequested(int index) {
                 if (total > 100) {
                     animateCenterSplitter(savedSizes, {total, 0});
                     // 动画结束后再隐藏编辑器栏（避免动画期间 QSplitter 自动重分配）
-                    QTimer::singleShot(360, this, [this]() {
-                        if (editorTabWidget_ && editorTabWidget_->count() == 0)
-                            editorTabWidget_->hide();
-                    });
+                    // ROUND-75 fix: 成员 QTimer + closing_ 守卫，closeEvent 可取消
+                    if (!pendingHideEditorTimer_) {
+                        pendingHideEditorTimer_ = new QTimer(this);
+                        pendingHideEditorTimer_->setSingleShot(true);
+                        connect(pendingHideEditorTimer_, &QTimer::timeout, this, [this]() {
+                            if (closing_) return;
+                            if (editorTabWidget_ && editorTabWidget_->count() == 0)
+                                editorTabWidget_->hide();
+                        });
+                    }
+                    pendingHideEditorTimer_->start(360);
                 } else {
                     editorTabWidget_->hide();
                 }
@@ -1253,14 +1368,26 @@ void Ide::ensureEditorVisible() {
             int total = savedSizes[0] + savedSizes[1];
             if (total > 100) {
                 animateCenterSplitter(savedSizes, {0, total});
-                QTimer::singleShot(350, this, [this]() {
-                    if (centerStack_ && editorTabWidget_ && editorTabWidget_->isVisible()) {
-                        centerStack_->hide();
-                        int tw = centerSplitter_->width();
-                        if (tw > 100)
-                            centerSplitter_->setSizes({0, tw});
-                    }
-                });
+                // ROUND-75 fix: 用成员 QTimer 替代 QTimer::singleShot。
+                // 原因：singleShot 创建的临时 QTimer 事件队列独立，
+                // showTeachingPanel 无法取消挂起的 hide 意图，导致用户在 350ms 内
+                // 切换到教学面板后，回调仍执行 centerStack_->hide() 覆盖 show()。
+                // 改为成员 QTimer 后，showTeachingPanel 入口 stop() 即可撤销折叠意图。
+                // 同时加 closing_ 守卫，避免 closeEvent 期间回调触发 UAF。
+                if (!pendingHideCenterTimer_) {
+                    pendingHideCenterTimer_ = new QTimer(this);
+                    pendingHideCenterTimer_->setSingleShot(true);
+                    connect(pendingHideCenterTimer_, &QTimer::timeout, this, [this]() {
+                        if (closing_) return;
+                        if (centerStack_ && editorTabWidget_ && editorTabWidget_->isVisible()) {
+                            centerStack_->hide();
+                            int tw = centerSplitter_->width();
+                            if (tw > 100)
+                                centerSplitter_->setSizes({0, tw});
+                        }
+                    });
+                }
+                pendingHideCenterTimer_->start(350);
             }
         } else if (savedSizes.size() == 2) {
             // centerStack_ 已折叠（savedSizes[0] <= 10）：直接收尾
@@ -1292,6 +1419,21 @@ void Ide::ensureTeachingPanelCreated(const QString& panelId) {
 void Ide::showTeachingPanel(const QString& panelId) {
     // 懒加载：首次访问时构造面板
     ensureTeachingPanelCreated(panelId);
+
+    // ROUND-75 fix (根因 A1+A2): 取消"折叠教学区"的挂起意图。
+    // ensureEditorVisible/showEditorArea 在动画启动后排队了 350ms 延迟回调，
+    // 回调会执行 centerStack_->hide() + setSizes({0, total})。
+    // 若用户在 350ms 内切换到教学面板，该回调仍会执行，覆盖 showTeachingPanel
+    // 的 centerStack_->show()，并锁死教学区宽度为 0——表现为"教学面板打不开"。
+    // 停止成员 QTimer 即可撤销挂起的 hide 意图。
+    if (pendingHideCenterTimer_) pendingHideCenterTimer_->stop();
+    // 同时停止正在运行的折叠教学区动画（splitterAnim_ 目标 {0, total}）。
+    // 否则旧动画继续把教学区宽度压缩到 0，且 showTeachingPanel 的动画分支
+    // 条件在"教学区尚可见但正被压缩"时不满足，splitter 不重分配。
+    if (splitterAnim_) {
+        splitterAnim_->stop();
+        splitterAnim_ = nullptr;
+    }
 
     auto it = panelToStackIndex_.constFind(panelId);
     if (it == panelToStackIndex_.end() || !centerStack_) {
@@ -1474,15 +1616,22 @@ void Ide::showEditorArea() {
         if (savedSizes.size() == 2 && savedSizes[0] > 10) {
             int total = savedSizes[0] + savedSizes[1];
             animateCenterSplitter(savedSizes, {0, total});
-            QTimer::singleShot(350, this, [this]() {
-                if (centerStack_)
-                    centerStack_->hide();
-                if (centerSplitter_) {
-                    int tw = centerSplitter_->width();
-                    if (tw > 100)
-                        centerSplitter_->setSizes({0, tw});
-                }
-            });
+            // ROUND-75 fix: 成员 QTimer（同 ensureEditorVisible），可被 showTeachingPanel 取消
+            if (!pendingHideCenterTimer_) {
+                pendingHideCenterTimer_ = new QTimer(this);
+                pendingHideCenterTimer_->setSingleShot(true);
+                connect(pendingHideCenterTimer_, &QTimer::timeout, this, [this]() {
+                    if (closing_) return;
+                    if (centerStack_)
+                        centerStack_->hide();
+                    if (centerSplitter_) {
+                        int tw = centerSplitter_->width();
+                        if (tw > 100)
+                            centerSplitter_->setSizes({0, tw});
+                    }
+                });
+            }
+            pendingHideCenterTimer_->start(350);
         } else {
             if (centerStack_)
                 centerStack_->hide();
@@ -2842,24 +2991,20 @@ void Ide::initUI() {
     dockManager_ = new ads::CDockManager(middleArea);
     middleLayout->addWidget(dockManager_, 1);
 
+    // R73 fix: 连接 dockWidgetAdded 信号，对运行时（含 restoreState）创建的
+    // 新 dock widget 自动应用样式。restoreState 创建的新 tab 不会被此前的
+    // applyFluentStyle 样式化，导致蓝底问题。通过此信号在 applyFluentStyle
+    // 中对 findChildren<CDockWidgetTab*>() 设置 palette。
+    connect(dockManager_, &ads::CDockManager::dockWidgetAdded, this, [this](ads::CDockWidget*) {
+        // 延迟到事件循环，确保 tab 已完全构造
+        QTimer::singleShot(0, this, [this]() { applyFluentStyle(); });
+    });
+
     // R68 关键修复：锁定 ColorSchemeMode 为 Light，阻止 palette 变化触发 loadStylesheet。
     // 默认 FollowPalette 模式下，setPalette 触发 ApplicationPaletteChange 事件 →
     // eventFilter 调用 loadStylesheet() 覆盖自定义 QSS。设为 Light 后，eventFilter
     // 条件 (ColorSchemeMode == FollowPalette) 不满足，不会重载样式。
     dockManager_->setColorSchemeMode(ads::CDockManager::ColorSchemeMode::Light);
-
-    // === DIAGNOSTIC LOG ===
-    {
-        QFile f("minilang_style_debug.log");
-        if (f.open(QIODevice::Append | QIODevice::Text)) {
-            f.resize(0); // Clear log at startup
-            QTextStream s(&f);
-            s << "=== Ide::initUI: dockManager_ created ===\n";
-            s << "  setColorSchemeMode(Light) called\n";
-            s << "  dockManager_ styleSheet length (after construct): " << dockManager_->styleSheet().length() << "\n";
-            s << "  dockManager_ styleSheet first 200 chars:\n" << dockManager_->styleSheet().left(200) << "\n\n";
-        }
-    }
 
     mainLayout->addWidget(middleArea, 1);
     // 底部面板已移至 editorSplitter_ 内部（仅覆盖代码编辑区，类似 VS Code 集成终端）
@@ -2873,7 +3018,14 @@ void Ide::initUI() {
     dockManager_->setCentralWidget(centralDock);
 
     // Left panel: file tree (包裹过滤框 + 树)
-    fileTreeDock_ = dockManager_->createDockWidget(mlTr("资源管理器"));
+    // R73 fix: createDockWidget 的 title 同时用作 objectName 和 windowTitle。
+    // objectName 必须固定（ADS restoreState 通过 objectName 匹配），所以传固定ID。
+    // 然后 setWindowTitle 改回 i18n 标题用于显示（CDockWidget 的 WindowTitleChange
+    // 事件会自动更新 tab 文本）。此前用 mlTr() 作为 title 导致 locale 变化时
+    // restoreState 静默失败；而创建后 setObjectName 会导致 DockWidgetsMap 的
+    // key 与 restoreState 保存的旧名称不匹配，dock 变成浮动窗口。
+    fileTreeDock_ = dockManager_->createDockWidget("fileTreeDock");
+    fileTreeDock_->setWindowTitle(mlTr("资源管理器"));
     auto* fileTreeContainer = new QWidget;
     fileTreeContainer->setObjectName("fileTreeContainer");
     auto* fileTreeLayout = new QVBoxLayout(fileTreeContainer);
@@ -2886,14 +3038,16 @@ void Ide::initUI() {
     dockManager_->addDockWidget(ads::LeftDockWidgetArea, fileTreeDock_);
 
     // Left panel: debug (tabbed with file tree)
-    debugPanelDock_ = dockManager_->createDockWidget(mlTr("调试"));
+    debugPanelDock_ = dockManager_->createDockWidget("debugPanelDock");
+    debugPanelDock_->setWindowTitle(mlTr("调试"));
     debugPanelDock_->setWidget(debugPanel_, ads::CDockWidget::ForceNoScrollArea);
     dockManager_->addDockWidgetTabToArea(debugPanelDock_, fileTreeDock_->dockAreaWidget());
 
     // Bottom panel: 已移至 editorSplitter_ 内部（仅覆盖代码编辑区），不再需要 ADS dock
 
     // Right panel: single dock containing Pivot + stack (token/IR/bytecode)
-    rightDock_ = dockManager_->createDockWidget(mlTr("编译分析"));
+    rightDock_ = dockManager_->createDockWidget("rightDock");
+    rightDock_->setWindowTitle(mlTr("编译分析"));
     rightDock_->setWidget(rightContainer, ads::CDockWidget::ForceNoScrollArea);
     dockManager_->addDockWidget(ads::RightDockWidgetArea, rightDock_);
     // 第十二轮：所有面板支持完整拖拽重组、浮动、标签分组（移除旧的浮动/移动锁定）
@@ -3108,7 +3262,8 @@ void Ide::initUI() {
 
     // ---- 左侧教学树导航 dock（与文件树/调试面板同区域 tab）----
     teachingTreePanel_ = new TeachingTreePanel(this);
-    teachingTreeDock_ = dockManager_->createDockWidget(mlTr("学习"));
+    teachingTreeDock_ = dockManager_->createDockWidget("teachingTreeDock");
+    teachingTreeDock_->setWindowTitle(mlTr("学习"));
     teachingTreeDock_->setWidget(teachingTreePanel_, ads::CDockWidget::ForceNoScrollArea);
     dockManager_->addDockWidgetTabToArea(teachingTreeDock_, fileTreeDock_->dockAreaWidget());
     // 教学树默认隐藏（点击 ActivityBar 「学习」时显示）
@@ -3614,29 +3769,45 @@ void Ide::applyFluentStyle() {
     // 和 QToolTip 样式，确保完全替换后 ADS 按钮图标和 tooltip 仍正常显示。
     if (dockManager_) {
         dockManager_->setStyleSheet(adsQss);
-
-        // === DIAGNOSTIC LOG ===
-        {
-            QFile f("minilang_style_debug.log");
-            if (f.open(QIODevice::Append | QIODevice::Text)) {
-                QTextStream s(&f);
-                s << "=== applyFluentStyle: ADS QSS set ===\n";
-                s << "  adsQss length: " << adsQss.length() << "\n";
-                s << "  adsQss starts with: " << adsQss.left(120) << "...\n";
-                s << "  dockManager_ styleSheet length: " << dockManager_->styleSheet().length() << "\n";
-                s << "  dockManager_ styleSheet starts with: " << dockManager_->styleSheet().left(120) << "...\n";
-                QPalette dpal = dockManager_->palette();
-                s << "  dockManager_ palette Window: " << dpal.color(QPalette::Window).name() << "\n";
-                s << "  dockManager_ palette Base: " << dpal.color(QPalette::Base).name() << "\n";
-                s << "  dockManager_ palette Highlight: " << dpal.color(QPalette::Highlight).name() << "\n";
-                s << "  dockManager_ palette HighlightedText: " << dpal.color(QPalette::HighlightedText).name() << "\n";
-                s << "  dockManager_ palette ToolTipBase: " << dpal.color(QPalette::ToolTipBase).name() << "\n";
-                s << "  dockManager_ palette ToolTipText: " << dpal.color(QPalette::ToolTipText).name() << "\n";
-                QString appQss = qApp->styleSheet();
-                s << "  qApp styleSheet length: " << appQss.length() << "\n";
-                s << "  qApp styleSheet contains QToolTip: " << (appQss.contains("QToolTip", Qt::CaseInsensitive) ? "YES" : "NO") << "\n";
-                s << "  qApp styleSheet contains ads--: " << (appQss.contains("ads--", Qt::CaseInsensitive) ? "YES" : "NO") << "\n";
-                s << "\n";
+        // R72 fix: 直接在代码层面设置 dockManager_ 及所有 CDockWidgetTab 的 palette，
+        // 不依赖 QSS 类型选择器（ads--CDockWidgetTab）是否匹配。
+        // 根因：QSS 类型选择器基于 metaObject()->className()，命名空间中的类返回
+        // "ads::CDockWidgetTab"。虽然 Qt 文档说 :: 应替换为 --，但实际匹配可能
+        // 因 Qt 版本/平台而异。直接 setPalette 确保背景色正确。
+        QPalette dPal = dockManager_->palette();
+        dPal.setColor(QPalette::Window, TeachingTheme::ideBgMain());
+        dPal.setColor(QPalette::Base, TeachingTheme::ideBgMain());
+        dPal.setColor(QPalette::AlternateBase, TeachingTheme::ideBgPanel());
+        dPal.setColor(QPalette::Highlight, TeachingTheme::ideBgPanel());
+        dPal.setColor(QPalette::HighlightedText, TeachingTheme::ideFgPrimary());
+        dPal.setColor(QPalette::WindowText, TeachingTheme::ideFgPrimary());
+        dPal.setColor(QPalette::Text, TeachingTheme::ideFgPrimary());
+        dockManager_->setPalette(dPal);
+        dockManager_->setAutoFillBackground(true);
+        // 对每个 tab 直接设置 palette（不依赖 QSS 级联）
+        // R73 fix: 补充 Light/Midlight 设置（default.css active tab 用 palette(light)），
+        // 并对 tab 内的子控件（QLabel/CElidingLabel）也设置 palette。
+        for (auto* tab : dockManager_->findChildren<ads::CDockWidgetTab*>()) {
+            QPalette tPal = tab->palette();
+            tPal.setColor(QPalette::Window, TeachingTheme::ideBgMain());
+            tPal.setColor(QPalette::WindowText, TeachingTheme::ideFgPrimary());
+            tPal.setColor(QPalette::Highlight, TeachingTheme::ideBgPanel());
+            tPal.setColor(QPalette::HighlightedText, TeachingTheme::ideFgPrimary());
+            // default.css activeTab 渐变使用 palette(window)→palette(light)
+            tPal.setColor(QPalette::Light, TeachingTheme::ideBgPanel());
+            tPal.setColor(QPalette::Midlight, TeachingTheme::ideBgMain());
+            tPal.setColor(QPalette::Base, TeachingTheme::ideBgMain());
+            tPal.setColor(QPalette::AlternateBase, TeachingTheme::ideBgPanel());
+            tPal.setColor(QPalette::Text, TeachingTheme::ideFgPrimary());
+            tab->setPalette(tPal);
+            tab->setAutoFillBackground(true);
+            // 对 tab 内的子控件（标题标签等）也设置 palette
+            for (auto* child : tab->findChildren<QWidget*>()) {
+                QPalette cPal = child->palette();
+                cPal.setColor(QPalette::Window, TeachingTheme::ideBgMain());
+                cPal.setColor(QPalette::WindowText, TeachingTheme::ideFgPrimary());
+                cPal.setColor(QPalette::Text, TeachingTheme::ideFgPrimary());
+                child->setPalette(cPal);
             }
         }
     }
@@ -3882,11 +4053,17 @@ void Ide::applyFluentStyle() {
         // R68 fix: 设置 ToolTip 颜色，防止 QToolTip 回退到 Windows 11 默认黑色样式
         pal.setColor(QPalette::ToolTipBase, bg);
         pal.setColor(QPalette::ToolTipText, fg);
-        // R65-1 fix: 不再设置 QPalette::Highlight 为 accent 色。
-        // 此前设置 Highlight=#268BD2 + HighlightedText=#FDF6E3 导致所有使用
-        // palette(highlight) 的控件（ADS focused tab、QTabBar 选中 tab 等）
-        // 显示蓝底+米黄字体，非常突兀。移除后使用系统默认 selection 色，
-        // 由各控件的显式 QSS 负责主题化（activeTab border-bottom accent 线）。
+        // R71 fix: 设置 QPalette::Highlight 为面板色 (#EEE8D5)，HighlightedText 为深色字。
+        // 根因：ads--CDockWidgetTab 等 QSS 选择器不匹配 ads::CDockWidgetTab 类
+        // (QSS 类型选择器基于 metaObject()->className()，命名空间中的类返回
+        // "ads::CDockWidgetTab"，与 "ads--CDockWidgetTab" 不等)，QSS 规则不生效，
+        // ADS tab 背景由 palette(Highlight) 控制。R65-1 移除 Highlight 设置后，
+        // tab 使用系统默认 Highlight 色 (#258292 蓝绿色)，显示"蓝底"。
+        // 设置 Highlight=#EEE8D5 (面板色) 后，tab 背景为浅米黄色，与主背景 #FDF6E3
+        // 有微妙区别，视觉上区分 active/inactive tab。列表选中项也使用此色，
+        // 浅米黄底+深色字，符合 Solarized 主题。
+        pal.setColor(QPalette::Highlight, bgPanel);
+        pal.setColor(QPalette::HighlightedText, fg);
         setPalette(pal);
         setAutoFillBackground(true);
         // R68 fix: 全局设置 QToolTip 样式（qApp 级别），确保所有 widget 的 tooltip
@@ -4566,6 +4743,8 @@ void Ide::saveLayout() {
     QSettings settings("MiniLang", "MiniLang IDE");
     if (dockManager_) {
         settings.setValue("layout/dockState", dockManager_->saveState());
+        // R73 fix: 保存布局版本号，用于 objectName 变化时清除旧布局
+        settings.setValue("layout/version", 2);
     }
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/state", QMainWindow::saveState());
@@ -4606,7 +4785,18 @@ void Ide::restoreLayout() {
     // 保存到 pendingDockState_ 供 QTimer lambda 读取。
     bool hasSavedDockState = false;
     if (dockManager_) {
-        pendingDockState_ = settings.value("layout/dockState").toByteArray();
+        // R73 fix: 布局版本号。dock widget objectName 从 i18n 改为固定ID时，
+        // 旧版本保存的 dockState 无法匹配新 objectName，restoreState 会失败，
+        // dock 变成浮动窗口。版本号变化时清除旧 dockState，应用默认布局。
+        constexpr int kLayoutVersion = 2;  // v1: i18n objectName; v2: 固定ID
+        int savedVersion = settings.value("layout/version", 1).toInt();
+        if (savedVersion < kLayoutVersion) {
+            settings.remove("layout/dockState");
+            settings.setValue("layout/version", kLayoutVersion);
+            pendingDockState_.clear();
+        } else {
+            pendingDockState_ = settings.value("layout/dockState").toByteArray();
+        }
         if (!pendingDockState_.isEmpty()) {
             hasSavedDockState = true;
         }
@@ -4659,8 +4849,8 @@ void Ide::restoreLayout() {
     QTimer::singleShot(0, this, [this, hasSavedDockState]() {
         // R68 fix: 先应用样式，再 restoreState。确保 restoreState 是最后的布局操作，
         // 其设置的 splitter 尺寸不会被后续样式重算覆盖。
-        // （DisableStylesheet 已使 loadStylesheet 成为 no-op，此处 applyFluentStyle
-        // 的 setPalette 不会再触发 ADS 样式重载，但保持此顺序仍更稳健。）
+        // （ColorSchemeMode 已锁定为 Light，setPalette 不会触发 loadStylesheet 覆盖，
+        // 但保持此顺序仍更稳健。）
         applyFluentStyle();
         // R65-3 fix: 在事件循环中执行 restoreState，此时窗口已完全布局
         bool restored = false;
@@ -4671,19 +4861,48 @@ void Ide::restoreLayout() {
             rightDock_->dockAreaWidget()->setDockAreaFlag(ads::CDockAreaWidget::HideSingleWidgetTitleBar, true);
         }
         // R60-2/R65-3 fix: 首次启动或 restoreState 失败时应用默认面板尺寸
+        // R72 fix: area->resize() 对 QSplitter 子控件无效——splitter 控制子控件
+        // 尺寸，直接 resize 会被 splitter 在下次布局时覆盖。改用
+        // parentSplitter()->setSizes() 设置比例尺寸。
+        // R73 fix: 增大默认尺寸（左 280→320，右 560→600），避免用户觉得太小。
         if (!hasSavedDockState || !restored) {
-            if (fileTreeDock_ && !fileTreeDock_->isClosed()) {
-                if (auto* area = fileTreeDock_->dockAreaWidget()) {
-                    area->resize(280, area->height());
+            ads::CDockAreaWidget* leftArea = (fileTreeDock_ && !fileTreeDock_->isClosed())
+                ? fileTreeDock_->dockAreaWidget() : nullptr;
+            ads::CDockAreaWidget* rightArea = (rightDock_ && !rightDock_->isClosed())
+                ? rightDock_->dockAreaWidget() : nullptr;
+            // 若左右面板共享同一 splitter，需一次性设置所有尺寸
+            if (leftArea && rightArea && leftArea->parentSplitter() == rightArea->parentSplitter()) {
+                auto* sp = leftArea->parentSplitter();
+                QList<int> sizes;
+                for (int i = 0; i < sp->count(); ++i) {
+                    if (sp->widget(i) == leftArea) sizes.append(320);
+                    else if (sp->widget(i) == rightArea) sizes.append(600);
+                    else sizes.append(700);
                 }
-            }
-            if (rightDock_ && !rightDock_->isClosed()) {
-                if (auto* area = rightDock_->dockAreaWidget()) {
-                    // 右侧编译分析面板默认宽度 560px
-                    area->resize(560, area->height());
+                sp->setSizes(sizes);
+            } else {
+                if (leftArea) {
+                    if (auto* sp = leftArea->parentSplitter()) {
+                        QList<int> sizes;
+                        for (int i = 0; i < sp->count(); ++i)
+                            sizes.append(sp->widget(i) == leftArea ? 320 : 700);
+                        sp->setSizes(sizes);
+                    }
+                }
+                if (rightArea) {
+                    if (auto* sp = rightArea->parentSplitter()) {
+                        QList<int> sizes;
+                        for (int i = 0; i < sp->count(); ++i)
+                            sizes.append(sp->widget(i) == rightArea ? 600 : 700);
+                        sp->setSizes(sizes);
+                    }
                 }
             }
         }
+        // R73 fix: restoreState 可能创建新的 dock area 和 tab，这些新 tab 未被
+        // 此前的 applyFluentStyle 样式化。在 restoreState 和默认尺寸设置完成后，
+        // 再次调用 applyFluentStyle 对所有 tab（含新建的）应用 palette。
+        applyFluentStyle();
         // R65-3 fix: restoreState 完成后再允许保存布局
         // 此前 firstShow_ 在 showEvent 中就设为 false，导致 restoreState 触发的
         // Resize 事件会启动 splitterSaveTimer_ 误保存，可能覆盖用户布局
@@ -4729,6 +4948,13 @@ void Ide::showBottomPanel(int tabIndex) {
             if (targetSizes[0] < 100) targetSizes[0] = 100; // 保证编辑器最小高度
 
             // 动画插值：从全编辑器 → 编辑器+底部面板
+            // ROUND-67 P1 fix: 改用成员变量 bottomPanelAnim_ 存储，closeEvent 中停止。
+            // QVariantAnimation 不经过 Qt 事件队列（由 QUnifiedTimer 驱动），
+            // removePostedEvents 无法清理，必须显式 stop() 才能停止。
+            if (bottomPanelAnim_) {
+                bottomPanelAnim_->stop();
+                bottomPanelAnim_ = nullptr;
+            }
             auto* anim = new QVariantAnimation(this);
             anim->setDuration(PanelAnimator::DURATION_MS);
             anim->setStartValue(0.0);
@@ -4747,7 +4973,9 @@ void Ide::showBottomPanel(int tabIndex) {
             QObject::connect(anim, &QVariantAnimation::finished, this, [this, targetH]() {
                 if (bottomContainer_)
                     bottomContainer_->setFixedHeight(targetH);
+                bottomPanelAnim_ = nullptr;
             });
+            bottomPanelAnim_ = anim;
             anim->start(QAbstractAnimation::DeleteWhenStopped);
         } else {
             bottomContainer_->setFixedHeight(targetH);
@@ -4789,6 +5017,11 @@ void Ide::hideBottomPanel() {
             int editorH = currentSizes[0];
             QList<int> targetSizes = {editorH + bottomH, 0};
 
+            // ROUND-67 P1 fix: 改用成员变量 bottomPanelAnim_ 存储，closeEvent 中停止。
+            if (bottomPanelAnim_) {
+                bottomPanelAnim_->stop();
+                bottomPanelAnim_ = nullptr;
+            }
             auto* anim = new QVariantAnimation(this);
             anim->setDuration(PanelAnimator::DURATION_MS);
             anim->setStartValue(0.0);
@@ -4807,7 +5040,9 @@ void Ide::hideBottomPanel() {
             QObject::connect(anim, &QVariantAnimation::finished, this, [this]() {
                 if (bottomContainer_)
                     bottomContainer_->hide();
+                bottomPanelAnim_ = nullptr;
             });
+            bottomPanelAnim_ = anim;
             anim->start(QAbstractAnimation::DeleteWhenStopped);
         } else {
             // 兜底：无 editorSplitter_ 时直接隐藏
@@ -5936,7 +6171,14 @@ void Ide::onPanelGuidedTourRequested(const QString& panelId) {
         // 仅 hideOverlay 隐藏 bubble_，tour 对象作为 Ide 子对象一直存活至 IDE 析构。
         // 多次触发面板引导会累积多个 tour + bubble_ 对象，加剧 UAF 风险。
         // finished 信号在 GuidedTour::skip 或走完所有步骤时发射（参见 GuidedTour.cpp）。
-        connect(tour, &GuidedTour::finished, tour, &QObject::deleteLater);
+        // ROUND-67 P1 fix: 记录到 activePanelTours_，closeEvent 中显式停止并清理，
+        // 防止 tour 的 QTimer::singleShot(0, tour, ...) 在 maybeSave 模态对话框
+        // 期间派发访问已被清理的 targetWidget → UAF。
+        activePanelTours_.insert(tour);
+        connect(tour, &GuidedTour::finished, this, [this, tour]() {
+            activePanelTours_.remove(tour);
+            tour->deleteLater();
+        });
         tour->start();
     }
 }

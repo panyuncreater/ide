@@ -610,26 +610,16 @@ int LearnerProgressStore::totalSpentMinutes() const {
 // 查询接口
 // ============================================================
 /// 判断某活动是否已解锁（前置依赖满足）。
+// 学习限制已全部移除：所有章节和关卡无前置条件，学员可自由访问任意活动。
+// 原实现检查 prerequisites 字段，未完成前置则锁定（row->setEnabled(false) 不可点击）。
+// 现统一返回 true，解锁全部内容。prerequisites 数据保留以供后续按需恢复。
 bool LearnerProgressStore::isUnlocked(const std::string& activityId, const std::vector<LearningActivity>& all) const {
-    // 找到该活动
-    const LearningActivity* act = nullptr;
+    // 找不到活动 id 仍返回 false（无效 id 不应解锁）
     for (const auto& a : all) {
-        if (a.id == activityId) {
-            act = &a;
-            break;
-        }
+        if (a.id == activityId)
+            return true;
     }
-    if (!act)
-        return false;
-
-    // 检查所有前置是否完成
-    for (const auto& preId : act->prerequisites) {
-        auto it = data_.completed.find(preId);
-        if (it == data_.completed.end() || !it->second) {
-            return false;
-        }
-    }
-    return true;
+    return false;
 }
 
 /// 返回某阶段的完成进度百分比。
@@ -667,6 +657,7 @@ int LearnerProgressStore::overallProgress(const std::vector<LearningActivity>& a
 std::string LearnerProgressStore::nextRecommended(const std::vector<LearningActivity>& all) const {
 
     // 1. 筛选候选：未完成 + 已解锁
+    // 学习限制已移除：isUnlocked 统一返回 true（除无效 id），所有未完成活动均为候选。
     std::vector<const LearningActivity*> candidates;
     for (const auto& a : all) {
         // 已完成则跳过
@@ -674,16 +665,7 @@ std::string LearnerProgressStore::nextRecommended(const std::vector<LearningActi
         if (cit != data_.completed.end() && cit->second)
             continue;
 
-        // 检查所有前置完成
-        bool unlocked = true;
-        for (const auto& preId : a.prerequisites) {
-            auto pit = data_.completed.find(preId);
-            if (pit == data_.completed.end() || !pit->second) {
-                unlocked = false;
-                break;
-            }
-        }
-        if (unlocked)
+        if (isUnlocked(a.id, all))
             candidates.push_back(&a);
     }
 

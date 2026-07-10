@@ -6,6 +6,7 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMap>
+#include <QSet>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTabWidget>
@@ -187,7 +188,8 @@ private:
     QTabWidget* editorTabWidget_ = nullptr;
     QSplitter* centerSplitter_ = nullptr;       // 三栏布局：[centerStack_ | editorSplitter_]
     QSplitter* editorSplitter_ = nullptr;       // 编辑器区纵向分割：[editorTabWidget_ | bottomContainer_]
-    QVariantAnimation* splitterAnim_ = nullptr; // centerSplitter_ 尺寸动画
+    QVariantAnimation* splitterAnim_ = nullptr;     // centerSplitter_ 尺寸动画
+    QVariantAnimation* bottomPanelAnim_ = nullptr;  // editorSplitter_ 底部面板展开/收起动画
     int untitledCount_ = 0;
 
     // ---- ADS 停靠管理器 ----
@@ -417,6 +419,13 @@ private:
     QTimer* completionTimer_ = nullptr;   // 补全词刷新（500ms）
     QTimer* syntaxCheckTimer_ = nullptr;  // 语法检查（300ms）
     QTimer* splitterSaveTimer_ = nullptr; // 布局保存防抖（500ms）
+    // ROUND-75 fix: 跟踪折叠教学区/隐藏编辑器栏的延迟回调。
+    // 原 QTimer::singleShot 创建临时 QTimer，事件队列独立，
+    // closeEvent 无法取消，showTeachingPanel 也无法在用户切换意图后撤销折叠。
+    // 改为成员 QTimer：showTeachingPanel 入口 stop 取消挂起的 hide 意图；
+    // closeEvent 中 stop 避免回调在 maybeSave 模态对话框期间触发 UAF。
+    QTimer* pendingHideCenterTimer_ = nullptr; // 折叠教学区（350ms，ensureEditorVisible/showEditorArea）
+    QTimer* pendingHideEditorTimer_ = nullptr; // 隐藏编辑器栏（360ms，onEditorTabCloseRequested）
     QStringList staticCompletionWords_;
 
     // ---- 欢迎页：最近打开列表 ----
@@ -545,6 +554,11 @@ private:
     // ---- 新手引导：3 分钟 Hello World guided tour ----
     void startGuidedTour();
     GuidedTour* guidedTour_ = nullptr;
+    // ROUND-67 P1 fix: 跟踪面板特定 GuidedTour（5 个教学面板首次访问自动触发）。
+    // 这些 tour 是 Ide 子对象但不存储在 guidedTour_ 中，closeEvent 需显式停止并清理，
+    // 否则 tour 的 QTimer::singleShot(0, tour, ...) 在 maybeSave 模态对话框期间派发，
+    // 访问可能已被 reparent/清理的 targetWidget → UAF。
+    QSet<GuidedTour*> activePanelTours_;
 
     // ---- AST 窗口 ----
     void saveAstWindowGeometry();

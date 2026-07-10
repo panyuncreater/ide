@@ -57,7 +57,21 @@ TEST(VME2EBasic, Arithmetic) {
 | `VME2E*` | `TestVME2E.cpp` | 三后端端到端语义一致性 |
 | `VMConditionalBreakpoint` | `TestVME2E.cpp` | 条件断点 slot→name 映射 |
 | `VME2EImportIsolation` | `TestVME2E.cpp` | 模块隔离三路径一致性 |
-| `TeachingPanels*` | `TestTeachingPanelsAudit*.cpp` | 教学面板数据完整性 |
+| `ThreeEngines*` | `TestThreeEnginesConsistency.cpp` | 三后端差分一致性（6 组合矩阵） |
+| `ThreeEnginesFuzz*` | `TestThreeEnginesFuzz.cpp` | 三后端随机程序差分回归 |
+| `TeachingPanels*` | `TestTeachingPanelsAudit*.cpp` | 教学面板数据完整性（5 个审计文件） |
+| `TeachingPanelsE2E*` | `TestTeachingPanelsE2E.cpp` | 教学面板端到端交互测试 |
+| `TeachingTreePanel*` | `TestTeachingTreePanel.cpp` | PanelCatalog + 导航审计 |
+| `AuditBatch*` | `TestAuditBatch1-5.cpp` | 综合审计（编译器/IR/调试/三后端/内置方法） |
+| `BugHunt*` | `TestBugHuntDifficultyAudit.cpp` / `TestBugHuntVariantAudit.cpp` | BugHunt 难度分级 + 变体挑战 |
+| `LearningPath*` | `TestLearningPathAudit.cpp` | 学习路径数据完整性 |
+| `MagicCommands*` | `TestMagicCommandsAudit.cpp` | REPL %magic 命令 |
+| `Sandbox*` / `TokenPuzzle*` / `AstToy*` | `TestSandboxAudit.cpp` / `TestTokenPuzzleAudit.cpp` / `TestAstToyAudit.cpp` | 交互式教学组件 |
+| `IROptReplay*` | `TestIROptReplayAudit.cpp` | IR 优化回放 |
+| `MemoryAnim*` | `TestMemoryAnimAudit.cpp` | 内存模型动画数据 |
+| `MarkdownRenderer*` | `TestMarkdownRendererAudit.cpp` | Markdown 渲染器 |
+| `ErrorHintEngine*` | `TestErrorHintEngine.cpp` | 错误提示引擎 |
+| `CodeSnippet*` | `TestCodeSnippetAudit.cpp` | 代码模板系统 |
 
 #### 3. IR 优化安全性
 
@@ -90,12 +104,15 @@ cmake --build out/build/debug --target minilang_tests
 
 | 组件 | 测试文件 | 关注点 |
 |------|---------|--------|
-| Lexer | `TestLexer.cpp` | Token 识别、插值字符串拆分、错误恢复 |
+| Lexer | `TestLexer.cpp` / `TestLexerParserAudit.cpp` | Token 识别、插值字符串拆分、错误恢复 |
 | Parser | `TestParser.cpp` | AST 构建、错误消息、嵌套深度限制 |
 | Compiler | `TestCompiler.cpp` | 字节码生成、常量池去重、作用域分析 |
-| IR | `TestIR.cpp` | IR 生成、优化 pass、lowering 正确性 |
+| IR | `TestIR.cpp` / `TestIRAudit.cpp` / `TestIROptReplayAudit.cpp` | IR 生成、优化 pass、lowering 正确性 |
+| Value | `TestValue.cpp` | NaN-boxing 编解码、值类型转换、边界值 |
 | NaNBox | `TestNaNBox.cpp` | 编码/解码、边界值、NaN 规范化 |
 | Formatter | `TestFormatterAudit.cpp` | 代码格式化、插值字符串重建 |
+| 三后端一致性 | `TestThreeEnginesConsistency.cpp` / `TestThreeEnginesFuzz.cpp` | 6 组合矩阵差分 + 随机程序回归 |
+| 解释器探针 | `TestIRShadowFix.cpp` / `TestNestedLvalueProbe.cpp` / `TestMethodCallProbe.cpp` | 特定语义边界条件 |
 
 ### 集成层
 
@@ -104,6 +121,9 @@ cmake --build out/build/debug --target minilang_tests
 | Interpreter E2E | `TestInterpreterE2E.cpp` | 解释器端到端语义 |
 | VM E2E | `TestVME2E.cpp` | 三后端一致性 |
 | 内置方法 | `TestBuiltinMethods.cpp` | 数组/字典/字符串方法 |
+| 错误提示 | `TestErrorHintEngine.cpp` | Levenshtein 拼写建议 |
+| Magic 命令 | `TestMagicCommandsAudit.cpp` | REPL %magic 命令系统 |
+| Markdown 渲染 | `TestMarkdownRendererAudit.cpp` | 教学面板 Markdown 渲染 |
 
 ### 审计层
 
@@ -111,8 +131,50 @@ cmake --build out/build/debug --target minilang_tests
 |---------|--------|
 | `TestCompilerAudit.cpp` | 编译器边界条件审计 |
 | `TestCompilerIRIsolationAudit.cpp` | IR 模块隔离审计 |
+| `TestThreeEnginesAudit.cpp` | 三后端综合审计 |
 | `TestDebugAudit.cpp` | 调试器一致性审计 |
-| `TestTeachingPanelsAudit*.cpp` | 教学面板数据完整性 |
+| `TestAuditBatch1-5.cpp` | 批量综合审计（编译器/IR/调试/三后端/内置方法） |
+| `TestTeachingPanelsAudit*.cpp` | 教学面板数据完整性（5 个审计文件） |
+| `TestTeachingPanelsE2E.cpp` | 教学面板端到端交互测试 |
+| `TestTeachingTreePanel.cpp` | PanelCatalog + 教学树导航审计 |
+| `TestBugHuntDifficultyAudit.cpp` / `TestBugHuntVariantAudit.cpp` | BugHunt 难度分级 + 变体挑战 |
+| `TestLearningPathAudit.cpp` | 学习路径数据完整性 |
+| `TestIROptReplayAudit.cpp` | IR 优化回放验证 |
+| `TestMemoryAnimAudit.cpp` | 内存模型动画数据审计 |
+| `TestSandboxAudit.cpp` / `TestTokenPuzzleAudit.cpp` / `TestAstToyAudit.cpp` | 交互式教学组件数据 |
+| `TestCodeSnippetAudit.cpp` | 代码模板系统审计 |
+
+---
+
+## 独立测试工具
+
+### test_harness/（独立可执行测试）
+
+项目包含 9 个独立于 GoogleTest 的可执行程序（`test_harness/` 目录，约 4100 行），用于特定场景的端到端验证：
+
+| 工具 | 用途 |
+|------|------|
+| `formatter_audit` | Formatter round-trip 审计 |
+| `stress_test` | 压力测试（大文件/深嵌套） |
+| `diff_test` | 三后端差分测试 |
+| `ast_test` | AST 结构验证 |
+| `debug_test` | 调试器端到端测试 |
+| `audit_verify` | 审计结果验证 |
+| `super_init_test` | super.init() 调用语义 |
+| `super_notfound_test` | super 方法未找到错误处理 |
+| `test_main` | 通用测试入口 |
+
+test_harness 使用独立的 DebugController stub，不依赖 Qt Widgets，通过 `MINILANG_BUILD_TEST_HARNESS=ON` 启用构建。
+
+### 性能基准测试
+
+`minilang_perf_test` 是独立的性能基准可执行目标（`TestPerformanceRegression.cpp`），与 `minilang_tests` 分离以避免拖慢常规测试。输出 JSON 到 stdout，不依赖 pass/fail 断言。
+
+---
+
+## 测试统计
+
+项目当前包含 **47 个测试 .cpp 文件**（约 27,000 行），总计 **1773 个测试用例**（截至最近一轮）。测试覆盖三后端语义一致性、教学面板数据完整性、前端组件、IR 优化、调试器等全部核心模块。
 
 ---
 

@@ -2,6 +2,265 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-10 · 第七十七轮：性能仪表盘指令计数口径修复（P1 × 1 + P3 × 1，共 2 项）
+
+### 概述
+
+用户反馈"性能仪表盘中指令计数有问题"。经排查发现根因：`ProfileDashboardPanel::runProfile` 中时间统计取 N 次平均（`mean(samples)`），但指令计数却取 N 次累加（`stackVmCounts[j] += counts[j]`），两者口径不一致。由于 `scenario.iterations = 3`，指令计数表格显示的"执行次数"是单次实际值的 3 倍，与 OpCode 性能文档库的参考量级（如"fib(20) OP_CALL ~21891 次"）矛盾，造成用户困惑。修复后 StackVM / RegisterVM 指令计数均取 N 次平均，与时间统计口径一致。同时清理了 R73（P1-1 instrumentation 引入时）遗留的死代码 `measureStackVMOnce` / `measureRegisterVMOnce`（runProfile 实际走 `measureXxxWithProfile`，这两个函数从未被调用）。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 类型 | 位置 | 修复内容 |
+|---|------|------|----------|
+| 1 | 语义不一致（P1） | `gui/ProfileDashboardPanel.cpp` runProfile(L517-584) | **指令计数累加 N 次而非取平均**——根因：StackVM / RegisterVM 测量循环中 `stackVmCounts[j] += counts[j]` 累加 N 次执行计数，但 `t.avgMicros = mean(samples)` 时间取平均。iterations=3 时显示值为单次实际值的 3 倍（如 fib(15) 单次 OP_CALL ≈ 1974，界面显示 ≈ 5922）。修复：累加完成后 `stackVmCounts[j] /= iterations` 取平均，与 avgMicros 口径一致。指令计数是确定值，取平均消除潜在非确定性。 |
+| 2 | 死代码（P3） | `gui/ProfileDashboardPanel.{h,cpp}` | **measureStackVMOnce / measureRegisterVMOnce 从未被调用**——R73 P1-1 instrumentation 改用 `measureXxxWithProfile`（同时计时 + 累加 opcode 计数），但原 `measureXxxOnce`（仅计时）未删除，成为死代码。修复：删除 .h 声明与 .cpp 定义，避免维护混淆。 |
+
+### 关键设计决策
+
+1. **指令计数取平均而非取单次**——指令计数虽是确定值（同一字节码每次执行的指令数相同），但取平均与时间统计口径一致，且能消除潜在非确定性（如全局变量累积副作用影响控制流）。取单次（i==0）虽更简洁但无统计鲁棒性。
+2. **保留 Interpreter 无指令计数**——Interpreter 是树遍历解释器，无指令概念（每个 AST 节点是 Visitor 分发，非 OpCode），指令计数表仅显示 StackVM / RegisterVM，设计意图保留。
+3. **占比不受影响**——`aggregateTop10` 中 `ratio = count / total`，total 与 count 同比缩放，占比比例不变。仅绝对次数从 3 倍修正为单次值。
+
+### 修改文件清单
+
+- 修改：`gui/ProfileDashboardPanel.cpp`（runProfile StackVM/RegisterVM 累加后除以 iterations；删除 measureStackVMOnce / measureRegisterVMOnce 定义）
+- 修改：`gui/ProfileDashboardPanel.h`（删除 measureStackVMOnce / measureRegisterVMOnce 声明）
+- 修改：`CHANGELOG.md`（新增第七十七轮条目）
+
+### 测试影响
+
+- 全量 1763/1763 测试通过，零回归
+- 指令计数属于 GUI 运行时行为，单元测试仅覆盖 OpCodeProfileLibrary 数据完整性（TestTeachingPanelsAudit4.cpp），计数口径修复建议手动验证：
+  1. 打开性能仪表盘 → 选择"斐波那契递归 fib(15)" → 运行剖析 → 切换到"指令计数" tab
+  2. StackVM 热点表 OP_CALL 执行次数应 ≈ 1974（单次），而非 ≈ 5922（3 倍）
+  3. RegisterVM 热点表 REG_CALL 执行次数应与单次执行一致
+
+---
+
+## 2026-07-10 · 第七十六轮：性能仪表盘退出崩溃根因修复（P0 × 1 + P1 × 1，共 2 项）
+
+### 概述
+
+用户反馈"在学习中心使用性能仪表盘时退出又崩溃了"。经排查发现两个正交根因：(A) `ProfileDashboardPanel::runProfile` 中的 `QApplication::processEvents(ExcludeUserInputEvents)` **不排除 QCloseEvent**（close 事件不是用户输入事件），closeEvent 在 runProfile 调用栈内同步执行后返回，runProfile 继续访问正在关闭的 widget；(B) `closeEvent` 未停止 `ProfileDashboardPanel::statusAnimTimer_`（QTimer，400ms），R75 的 `stopChildAnimations` 只扫描 `QPropertyAnimation*` 不覆盖 `QTimer*`，maybeSave 模态对话框期间 timeout 信号被派发访问正在清理的 statusLabel_。R72 认知"QVariantAnimation 由 QUnifiedTimer 驱动必须 stop()"和 R75 认知"QPropertyAnimation 同理"均未覆盖第三类载体 QTimer。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 类型 | 位置 | 修复内容 |
+|---|------|------|----------|
+| 1 | 重入/UAF（P0） | `gui/ProfileDashboardPanel.cpp` runProfile(L460-600) + `app/ide.cpp` closeEvent(L518) | **性能仪表盘退出崩溃**——根因：`runProfile` 中 3 次 `processEvents(ExcludeUserInputEvents)` 会派发 QCloseEvent（非用户输入事件）。用户在 profiling 期间关闭窗口，closeEvent 在 runProfile 调用栈内同步执行并 accept()，返回后 runProfile 继续执行 `renderResults`/`renderOpCodeProfile`/`update()` 访问正在关闭的 widget → UAF。修复：ProfileDashboardPanel 新增 `closing_` 标志 + `setClosing()` 方法，closeEvent 入口调用 `setClosing(true)`，runProfile 在每次 processEvents 后检查 `if (closing_) { stopStatusAnimation(); profiling_ = false; return; }` 立即退出。 |
+| 2 | 定时器泄漏/UAF（P1） | `app/ide.cpp` closeEvent stopChildAnimations(L552-571) | **statusAnimTimer_ 未停止**——根因：`statusAnimTimer_` 是 QTimer（400ms，父对象是 panel），R75 的 `stopChildAnimations` 只 `findChildren<QPropertyAnimation*>()` 不覆盖 QTimer。`removePostedEvents(this)` 只清空 Ide 队列，不清空 statusAnimTimer_ 的队列。maybeSave 模态对话框期间 timeout 信号被派发，lambda 访问正在清理的 statusLabel_ → UAF。修复：`stopChildAnimations` 扩展 `findChildren<QTimer*>()` 并 `stop()` 所有 active QTimer，递归覆盖 centerStack_ 各页 + bottomStack_/rightStack_/dockManager_ 的子 QTimer。 |
+
+### 关键设计决策
+
+1. **`ExcludeUserInputEvents` 不排除 QCloseEvent**——Qt6 文档定义此 flag 只排除鼠标/键盘/滚轮事件，close 事件（type=19）不在排除列表。用户点击 X 按钮的鼠标事件被排除，但窗口系统生成的 QCloseEvent 会被 processEvents 派发。Alt+F4 更是直接生成 close 请求不经过键盘事件。因此 profiling 期间任何关闭操作都会在 processEvents 中触发 closeEvent。
+2. **closing_ 标志单向下行**——closeEvent 设置 `Ide::closing_` 和 `ProfileDashboardPanel::closing_`，runProfile 只读不写。两个标志独立，closeEvent 不依赖 runProfile 的返回值。
+3. **stopChildAnimations 扩展 QTimer**——防御性兜底，覆盖未来新增面板的 QTimer。与 R75 的 QPropertyAnimation 扫描并行，一行 `findChildren<QTimer*>()` 即可覆盖所有子 QTimer。
+4. **三次 processEvents 后均检查 closing_**——第一次（Interpreter 前）、第二次（StackVM 前）、第三次（RegisterVM 前）各检查一次。若 closeEvent 在某次 processEvents 中被派发，下一次检查即会捕获并退出。
+
+### 修改文件清单
+
+- 修改：`gui/ProfileDashboardPanel.h`（新增 `closing_` 成员 + `setClosing()` 方法）
+- 修改：`gui/ProfileDashboardPanel.cpp`（runProfile 三处 processEvents 后加 `if (closing_)` 检查并退出）
+- 修改：`app/ide.cpp`（closeEvent 入口 `setClosing(true)` + stopChildAnimations 扩展 QTimer 扫描）
+- 修改：`CHANGELOG.md`（新增第七十六轮条目）
+
+### 测试影响
+
+- 全量 1763/1763 测试通过，零回归
+- 竞态/UAF 属于时序相关，单元测试难以直接覆盖，建议手动验证：
+  1. 打开性能仪表盘 → 点击"运行剖析" → profiling 期间按 Alt+F4 → 无崩溃
+  2. 打开性能仪表盘 → 点击"运行剖析" → profiling 完成后正常关闭 → 无崩溃
+  3. 反复切换面板 + profiling + 关闭 → 无崩溃
+
+---
+
+## 2026-07-10 · 第七十五轮：学习中心教学面板打不开 + 关闭崩溃根因修复（P0 × 2，共 2 项）
+
+### 概述
+
+本轮根因修复两个用户反馈：用户报告"学习中心教学面板还是打不开"（R74 修复 `isUnlocked` 未解决）且"关闭时诱发异常"（R72 修复 `splitterAnim_` 未解决）。经系统性排查发现两个正交根因：(A) 教学面板打不开——`ensureEditorVisible`/`showEditorArea` 启动的折叠动画后排队 350ms 延迟回调（`QTimer::singleShot`），在用户切换到教学面板后仍执行 `centerStack_->hide()` 覆盖 `show()`，锁死教学区宽度为 0；(B) 关闭崩溃——`slideInWidget` 创建的 `QPropertyAnimation` 以 panel widget 为 parent（非 Ide 成员），`QPropertyAnimation` 是 `QAbstractAnimation` 子类由 `QUnifiedTimer` 驱动不经过事件队列，`removePostedEvents` 完全无法清理，`maybeSave` 模态对话框期间动画继续运行访问正在析构的 widget → UAF。R72 已认知此原理但只应用到 `splitterAnim_`/`bottomPanelAnim_` 成员，未应用到 `slideInWidget` 的匿名动画。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 类型 | 位置 | 修复内容 |
+|---|------|------|----------|
+| 1 | 竞态/状态覆盖（P0） | `app/ide.cpp` ensureEditorVisible(L1312)/showEditorArea(L1545)/showTeachingPanel(L1377) | **教学面板打不开**——根因：`ensureEditorVisible`/`showEditorArea` 启动折叠教学区动画后用 `QTimer::singleShot(350,...)` 排队延迟回调执行 `centerStack_->hide()` + `setSizes({0,total})`。用户在 350ms 内切换到教学面板，`showTeachingPanel` 执行 `centerStack_->show()`，但挂起的 350ms 回调仍执行 `hide()` 覆盖。`singleShot` 创建的临时 QTimer 事件队列独立，无法取消。修复：改为成员 QTimer `pendingHideCenterTimer_`，`showTeachingPanel` 入口 `stop()` 取消挂起的 hide 意图；同时停止正在运行的折叠动画 `splitterAnim_`，避免旧动画继续压缩教学区宽度。 |
+| 2 | UAF/P0 | `app/ide.cpp` closeEvent(L535-570) + `gui/PanelAnimator.h` slideInWidget(L213) | **关闭时崩溃**——根因：`PanelAnimator::slideInWidget` 创建 `QPropertyAnimation` 以 widget 为 parent，是 `QAbstractAnimation` 子类由全局 `QUnifiedTimer` 驱动不经过 Qt 事件队列，`removePostedEvents` 完全无法清理。closeEvent 的 `maybeSave` 模态对话框运行嵌套事件循环期间动画继续运行，访问正在 reparent/析构的 widget → 读取访问权限冲突。R72 已认知此原理但只应用到 `splitterAnim_`/`bottomPanelAnim_` 成员，遗漏 `slideInWidget` 的匿名动画。修复：closeEvent 中遍历 centerStack_/bottomStack_/rightStack_/dockManager_ 的子 `QPropertyAnimation`，运行中的 `stop()` + `deleteLater()`。 |
+
+### 关键设计决策
+
+1. **成员 QTimer 替代 singleShot**：3 处 `QTimer::singleShot`（350ms×2 + 360ms×1）改为成员 QTimer `pendingHideCenterTimer_`/`pendingHideEditorTimer_`。`start()` 重复调用自动重置计时取消旧的；`showTeachingPanel` 入口 `stop()` 撤销挂起的 hide 意图；closeEvent 中 `stop()` 避免回调在 maybeSave 期间触发。所有 lambda 加 `if (closing_) return;` 守卫。
+2. **showTeachingPanel 入口停止折叠动画**：除了取消 hide 定时器，还 `stop()` 正在运行的 `splitterAnim_`。否则旧折叠动画继续把教学区宽度压缩到 0，且 `showTeachingPanel` 的动画分支条件在"教学区尚可见但正被压缩"时不满足，splitter 不重分配。
+3. **closeEvent 遍历子动画**：`findChildren<QPropertyAnimation*>()` 递归遍历 centerStack_ 各页 + bottomStack_/rightStack_/dockManager_ 的子动画。运行中的 `stop()` + `deleteLater()`，彻底切断 QUnifiedTimer → valueChanged → widget 访问链。
+4. **无效 dockManager_ 安全**：`stopChildAnimations` 入口检查 `!w` 提前返回，`dockManager_` 为 nullptr 时不崩溃。
+
+### 修改文件清单
+
+- 修改：`app/ide.h`（新增 `pendingHideCenterTimer_`/`pendingHideEditorTimer_` 成员变量）
+- 修改：`app/ide.cpp`：
+  - `ensureEditorVisible`/`showEditorArea`：350ms `singleShot` → 成员 QTimer + closing_ 守卫
+  - `onEditorTabCloseRequested`：360ms `singleShot` → 成员 QTimer + closing_ 守卫
+  - `showTeachingPanel`：入口 `stop()` pendingHideCenterTimer_ + `stop()` splitterAnim_
+  - `closeEvent`：新增遍历子 QPropertyAnimation 并 stop() + 停止 pendingHide 定时器
+  - 新增 `#include <QPropertyAnimation>` / `<QAbstractAnimation>`
+- 修改：`CHANGELOG.md`（新增第七十五轮条目）
+
+### 测试影响
+
+- 全量 1763/1763 测试通过，零回归
+- 本次修改仅涉及 UI 动画时序与 closeEvent 清理，不涉及语言核心逻辑
+- 竞态/UAF 属于时序相关，单元测试难以直接覆盖，建议手动验证：
+  1. 打开文件 → 350ms 内点击学习中心 → 面板应可见（不再被 hide 覆盖）
+  2. 打开学习中心面板 → 150ms 内关闭窗口 → 无访问冲突
+  3. 反复切换面板后关闭 → 无崩溃
+
+---
+
+## 2026-07-10 · 第七十四轮：学习中心解除全部学习限制（功能调整 × 1，共 1 项）
+
+### 概述
+
+本轮根据用户反馈"学习中心打不开了"，排查根因后发现：学习路径中的活动项被前置依赖（prerequisites）锁定，`LearnerProgressStore::isUnlocked` 检查前置活动是否完成，未完成则 `row->setEnabled(false)` 禁用点击，表现为 🔒 图标且不可进入。用户要求去掉所有学习限制，解锁全部章节与关卡。修改 `isUnlocked` 统一返回 true（仅对无效活动 id 返回 false），并同步 `nextRecommended` 改用 `isUnlocked` 而非独立的 prerequisites 检查，保证解锁逻辑单点维护。prerequisites 数据结构保留在 `LearningPathData` 中以便后续按需恢复。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1763/1763 测试通过。
+
+### 问题与修复对应表
+
+| # | 类型 | 位置 | 修复内容 |
+|---|------|------|----------|
+| 1 | 学习限制/活动锁定 | `gui/LearnerProgress.cpp` isUnlocked (L612-623) + nextRecommended (L657-670) | **学习中心活动被前置条件锁定无法点击**——根因：`isUnlocked` 遍历活动的 prerequisites 字段，前置未完成则返回 false，`LearningPathPanel::buildActivityRow` 据此 `row->setEnabled(unlocked)` 禁用点击并显示 🔒 图标。用户反馈"打不开"即指这些被锁定的活动无法进入。修复：`isUnlocked` 改为对有效活动 id 统一返回 true，仅对无效 id 返回 false；`nextRecommended` 同步改用 `isUnlocked` 替代独立 prerequisites 检查，消除解锁逻辑重复。 |
+
+### 关键设计决策
+
+1. **单点修改 `isUnlocked`**：所有解锁判断（LearningPathPanel 行可点击性、nextRecommended 候选筛选、estimatedRemainingMinutes 计入范围）均经此函数，改一处即全局生效。
+2. **保留 prerequisites 数据**：`LearningPathData` 中的 prerequisites 字段不删除，仅 `isUnlocked` 不再检查它。便于后续按需恢复学习限制（如增加"教学模式/自由模式"开关）。
+3. **`nextRecommended` 统一走 `isUnlocked`**：原实现有独立的 prerequisites 检查循环，与 `isUnlocked` 逻辑重复。改为调用 `isUnlocked` 后，解锁策略变更只需改一处。
+4. **无效 id 仍返回 false**：`isUnlocked` 对不在 activities 列表中的 id 返回 false，保留防御性校验，避免无效 id 误解锁。
+
+### 修改文件清单
+
+- 修改：`gui/LearnerProgress.cpp`（`isUnlocked` 统一返回 true；`nextRecommended` 改用 `isUnlocked`）
+- 修改：`tests/TestLearningPathAudit.cpp`（更新 `MarkCompletedAffectsUnlock`、`EstimatedRemainingMinutesExcludesCompletedAndLocked` 测试以反映新解锁策略）
+- 修改：`CHANGELOG.md`（新增第七十四轮条目）
+
+### 测试影响
+
+- 全量 1763/1763 测试通过，零回归
+- 本次修改仅影响学习路径解锁策略，不涉及语言核心逻辑
+
+---
+
+## 2026-07-10 · 第七十三轮：三个 UI 问题真正根因修复（P1 × 3，共 3 项）
+
+### 概述
+
+本轮针对用户反复反馈"没解决"的三个 UI 问题进行系统性根因排查。此前 R65-R72 共 8 轮修复均基于代码分析推测根因，均未实际运行验证。本轮通过子 agent 系统性审查 ADS 源码、QFluentKit 主题系统、RichTextItemDelegate 等，找到了三个问题的**真正根因**：(1) 字节码背景问题源于 RichTextItemDelegate::paint 硬编码颜色（#ffffff/#f8f8f8），完全绕过 QSS/palette；(2) 标签蓝底源于 restoreState 创建的新 tab 未被 applyFluentStyle 样式化（时序错误）；(3) 面板大小问题源于 dock widget 的 objectName 使用 i18n 标题，locale 变化导致 restoreState 静默失败。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1773/1773 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| P1.1 | P1 | 视觉/字节码背景 | `app/ide.cpp` RichTextItemDelegate::paint (L255-267) | **字节码背景未变米黄色**——真正根因：RichTextItemDelegate::paint() 中 `painter->fillRect()` 硬编码 `#ffffff`（白色）和 `#f8f8f8`（浅灰），完全绕过 itemViewQss 和所有 palette/QSS 机制。8 轮修复均未检查 item delegate。修复：替换为 `TeachingTheme::ideSelectedBg()`/`ideBgPanel()`/`ideBgMain()`。 |
+| P1.2 | P1 | 视觉/标签蓝底 | `app/ide.cpp` applyFluentStyle (L3691-3716) + restoreLayout (L4771) + dockWidgetAdded 信号 (L2905) | **ADS dock 标签蓝底**——真正根因：applyFluentStyle 在 restoreState **之前**执行，restoreState 创建的新 tab 未被样式化。此外未连接 dockWidgetAdded 信号，运行时新建 tab 也不被样式化。修复：(a) restoreState 后追加 applyFluentStyle 调用；(b) 连接 dockWidgetAdded 信号延迟应用样式；(c) 增强 tab palette（补充 Light/Midlight + 子控件 palette）。 |
+| P1.3 | P1 | 布局/面板初始尺寸 | `app/ide.cpp` initUI (L2920,2937,2945,3161) + restoreLayout (L4733-4766) | **面板初始大小每次启动都太小**——真正根因：dock widget 的 objectName 使用 `mlTr("资源管理器")` 等 i18n 标题（`CDockWidget` 构造函数 `setObjectName(title)`）。ADS restoreState 通过 objectName 匹配，locale 变化导致 objectName 变化 → restoreState 静默失败 → 每次应用默认尺寸。修复：(a) 为每个 dock widget 显式 `setObjectName` 固定ID（fileTreeDock/debugPanelDock/rightDock/teachingTreeDock）；(b) 增大默认尺寸（左 280→320，右 560→600）。 |
+
+### 关键设计决策
+
+1. **RichTextItemDelegate 绕过所有样式机制**：delegate 的 `paint()` 中 `fillRect()` 直接绘制，QSS/palette 完全无效。这是 8 轮修复的盲区——没有任何一轮检查 item delegate。教训：列表背景异常时优先检查 item delegate 的 paint 方法。
+2. **applyFluentStyle 与 restoreState 的时序**：applyFluentStyle 必须在 restoreState **之后**执行，否则 restoreState 创建的新 tab 不被样式化。R68 的注释"先样式后 restoreState"是正确的布局顺序，但遗漏了 restoreState 后需要再次样式化新 tab。
+3. **dockWidgetAdded 信号处理运行时新建 tab**：连接此信号确保拖拽/restoreState 创建的新 tab 自动应用样式，使用 `QTimer::singleShot(0)` 延迟确保 tab 完全构造。
+4. **objectName 必须用固定ID**：`CDockWidget::CDockWidget()` 中 `setObjectName(title)` 将标题作为 objectName。ADS restoreState 通过 objectName 匹配 dock widget。i18n 标题随 locale 变化，导致 restoreState 失败。显式 `setObjectName("固定ID")` 覆盖标题，确保跨 locale 一致。
+
+### 关键教训
+
+1. **Item delegate 是样式盲区**——delegate 的 paint() 直接绘制，绕过所有 QSS/palette。列表背景异常时优先检查 delegate。
+2. **restoreState 创建新 widget 需要后续样式化**——restoreState 不继承已设置的样式，必须在之后重新应用。
+3. **objectName 不能依赖 i18n**——用于持久化标识的 objectName 必须是固定字符串，不能随 locale 变化。
+4. **UI 问题需要系统性排查而非推测**——8 轮失败均因基于推测修复。本轮通过子 agent 系统审查 ADS 源码、delegate、QFluentKit 才找到真正根因。
+
+### 修改文件清单
+
+- 修改：`app/ide.cpp`（RichTextItemDelegate::paint 替换硬编码颜色；4 个 dock widget 显式 setObjectName 固定ID；连接 dockWidgetAdded 信号；restoreState 后追加 applyFluentStyle；增强 tab palette 设置；增大默认面板尺寸）
+- 修改：`CHANGELOG.md`（更新第七十三轮条目）
+
+### 测试影响
+
+- 全量 1773/1773 测试通过，零回归
+- 本次修改仅影响 UI 渲染和布局，不涉及语言核心逻辑
+
+---
+
+## 2026-07-09 · 第七十二轮：学习中心面板关闭 UAF 根因修复（P0 × 1 + P1 × 2 + P2 × 1，共 4 项）
+
+### 概述
+
+本轮针对用户反馈"使用学习中心面板后退出程序仍崩溃（同一读取访问权限冲突 UAF）"进行深入排查。第六十六轮已修复 `removePostedEvents` API 误用和定时器未停止，但**遗漏了 `QVariantAnimation` 这类不经过 Qt 事件队列的动画对象**——`QVariantAnimation` 由 `QUnifiedTimer`（全局动画定时器）驱动，`removePostedEvents` 完全无法清理它，只有显式 `stop()` 才能停止。学习中心面板的 `animateCenterSplitter`（7 处调用点）是用户打开/切换教学面板时必然触发的动画，持续约 300ms，成为 UAF 的核心来源。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1773/1773 测试通过。
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| P0.1 | P0 | QVariantAnimation UAF | `app/ide.cpp` closeEvent + ~Ide + `app/ide.h` | **`splitterAnim_` 未在 closeEvent 中停止**——`QVariantAnimation` 由 `QUnifiedTimer` 驱动，不经过 Qt 对象事件队列，`removePostedEvents` 完全无法清理它。`animateCenterSplitter` 在打开/切换教学面板时频繁触发（7 处调用点），动画持续约 300ms。closeEvent 中 `maybeSave` 模态对话框创建嵌套事件循环期间，动画继续运行，`valueChanged` lambda 访问正在清理的 `centerSplitter_` → UAF。修复：closeEvent 入口和 ~Ide 中显式 `stop()` `splitterAnim_`。 |
+| P1.1 | P1 | 匿名动画 UAF | `app/ide.cpp` showBottomPanel + hideBottomPanel + `app/ide.h` | **底部面板展开/收起动画未停止**——`showBottomPanel`/`hideBottomPanel` 中的匿名 `QVariantAnimation`（`valueChanged` lambda 访问 `editorSplitter_`）未存储在成员变量中，closeEvent 无法停止。学习中心面板切换路径间接触发底部面板动画。修复：新增 `bottomPanelAnim_` 成员变量存储，closeEvent 和 ~Ide 中停止。 |
+| P1.2 | P1 | GuidedTour UAF | `app/ide.cpp` onPanelGuidedTourRequested + closeEvent + ~Ide + `app/ide.h` | **面板特定 GuidedTour 未清理**——5 个教学面板首次访问自动触发 GuidedTour，tour 的 `showStep` 排队 `QTimer::singleShot(0, tour, ...)` 持有裸 `targetWidget` 指针。`removePostedEvents(this)` 只清空 Ide 队列，不清空 tour 队列。maybeSave 模态对话框期间 tour 的 singleShot 被派发，访问可能已被 reparent/清理的 `targetWidget` → UAF。修复：新增 `activePanelTours_` 成员跟踪所有活跃 tour，closeEvent 中 `disconnect` + `removePostedEvents(tour)` + `delete`。 |
+| P2.1 | P2 | vmStateChangedListener 残留 | `app/IdeController.h` clearVmStateChangedListeners + `app/ide.cpp` closeEvent | **closeEvent 后续操作触发回调**——closeEvent 中 `vmStop`/`stopForClose` 等操作触发 `notifyVmStateChanged`，7 个教学面板的 `onVmStateChanged` 回调访问正在清理的 UI。修复：新增 `clearVmStateChangedListeners()` 方法，closeEvent 中 `disconnect` 后立即清空所有回调。 |
+
+### 关键设计决策
+
+1. **`QVariantAnimation` 不受 `removePostedEvents` 控制**：这是第六十六轮遗漏的关键认知。`QVariantAnimation` 通过 `QUnifiedTimer`（全局动画定时器单例）驱动，不经过 Qt 对象事件队列。`removePostedEvents(obj)` 只清理投递到对象事件队列的事件（如 `QMetaCallEvent`/`QEvent::Timer`），对 `QUnifiedTimer` 驱动的动画无效。只有显式 `stop()` 才能停止。
+2. **`activePanelTours_` 跟踪面板特定 tour**：原实现 tour 为局部变量不存储，依赖 `finished → deleteLater` 自动清理。但 closeEvent 期间 `deleteLater` 不会立即执行，tour 的 `singleShot` 仍可能被派发。显式 `disconnect` + `removePostedEvents(tour)` + `delete` 是唯一安全方式。
+3. **`clearVmStateChangedListeners` 在 disconnect 之后立即调用**：closeEvent 中 `disconnect(controller_)` 仅断开 Qt 信号-槽，不断开纯 C++ 观察者回调。`vmStop`/`stopForClose` 会触发 `notifyVmStateChanged`，此时回调仍活跃。必须在 disconnect 之后、后续操作之前清空回调。
+
+### 关键教训
+
+1. **`QVariantAnimation` 是 closeEvent UAF 的隐蔽来源**——不经过事件队列，`removePostedEvents` 无效。所有活跃动画必须在 closeEvent 入口显式 `stop()`。
+2. **局部变量创建的 QObject 必须有成员变量跟踪**——`onPanelGuidedTourRequested` 中 tour 为局部变量，closeEvent 无法停止。任何在 closeEvent 期间可能仍有挂起回调的对象都必须被跟踪。
+3. **纯 C++ 观察者回调不受 Qt disconnect 影响**——`vmStateChangedListeners_` 是 `std::vector<std::function>`，`disconnect()` 不影响它。需要单独的 `clearVmStateChangedListeners()` 方法。
+
+### 修改文件清单
+
+- 修改：`app/ide.h`（新增 `#include <QSet>`、`bottomPanelAnim_` 成员、`activePanelTours_` 成员）
+- 修改：`app/ide.cpp`（closeEvent + ~Ide 停止动画/清理 tour/clearVmStateChangedListeners；showBottomPanel/hideBottomPanel 改用 `bottomPanelAnim_`；onPanelGuidedTourRequested 记录到 `activePanelTours_`）
+- 修改：`app/IdeController.h`（新增 `clearVmStateChangedListeners()` 方法）
+- 修改：`CHANGELOG.md`（新增第七十二轮条目）
+
+### 测试影响
+
+- 全部 4 项修复均无回归。全量 1773/1773 测试通过。
+
+## 2026-07-10 · 第七十一轮：REPL 功能全面审查与 3 项 Bug 修复（P2 × 3，共 3 项）
+
+### 概述
+
+本轮对 REPL 功能进行系统性审查，覆盖 ReplPanel 交互逻辑、MagicCommands 命令系统、Interpreter REPL 执行路径、异步执行/超时/错误处理、状态管理与边界条件。审查了 5 大模块共 ~1500 行代码，发现并修复 3 项 P2 级 Bug。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 **1763/1763** 测试通过。
+
+### 审查范围与结论
+
+| 模块 | 审查内容 | 结论 |
+|------|----------|------|
+| isInputComplete | 括号配对、字符串插值栈、块注释嵌套、try/catch/finally 配对 | 逻辑正确，字符串插值栈处理完善 |
+| executeLine | magic 拦截、互斥检查、AST 生命周期、异步执行 | 互斥检查完善，retainReplAst 所有权管理正确 |
+| 异步执行/超时 | std::async + QTimer 轮询、closeEvent 超时、QPointer 防 UAF | 超时处理健壮，QPointer 模式正确 |
+| MagicCommands | 10 个命令、参数解析、ScopedAnalysis 临时管线 | disassembleInstruction offset 前进正确 |
+| 状态管理 | executeRepl/resetReplEnvironment/save/restoreReplState | 所有成员变量均被正确重置 |
+
+### 问题与修复对应表
+
+| # | 严重性 | 类型 | 位置 | 修复内容 |
+|---|--------|------|------|----------|
+| 1 | P2 | UX/输出冗余 | `gui/ReplPanel.cpp` pollReplFuture | **REPL 对非表达式语句打印多余 "null"**——原行为（PANEL-03 fix）打印所有结果包括 null，导致 `print(1);` 输出 `1\nnull`、`var x=1;` 输出 `null`。修复：添加 `!result.isNull()` 条件，仅打印非 null 结果，与 Python/Node REPL 行为一致。表达式语句（如 `1+2;`）的结果正常显示。 |
+| 2 | P2 | 死代码 | `gui/ReplPanel.cpp` executeLine | **executeLine 中的 magic 命令检测为死代码**——onReturnPressed 已在 isInputComplete 之前拦截 magic 命令，executeLine 永远不会收到以 `%` 开头的输入。移除死代码避免维护负担和读者困惑。 |
+| 3 | P2 | 硬编码 | `gui/ReplPanel.cpp` 构造函数 | **欢迎信息中 magic 命令数量硬编码**——"10 个 magic 命令"写死，未来新增命令会不同步。改为不写死数量。 |
+
+### 修改文件清单
+
+- 修改：`gui/ReplPanel.cpp`（pollReplFuture null 输出修复 + executeLine 死代码移除 + 欢迎信息去硬编码）
+
+### 测试影响
+
+- 全量 1763/1763 测试通过，零回归。
+- REPL 输出行为变更（null 不再打印）属于 UX 改进，不影响引擎语义。
+
+**历史变更**：更早的开发记录（第六十八轮及以前）已归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+
 ## 2026-07-09 · 第七十轮：UI 修复方案修正——DisableStylesheet 副作用（QToolTip 黑框 + 按钮图标丢失）（P1 × 2，共 2 项）
 
 ### 概述
@@ -67,77 +326,4 @@
 - 新增/更新测试共 18 个（MagicCommandsLibraryAudit 6 个 + MagicCommandsHandlerAudit 12 个），覆盖命令元数据完整性、无参友好错误、带参数代码分析（%ast/%tokens/%disassemble/%ir）、未知命令、空/非 magic 输入、前导空白处理。
 - 全量 1763/1763 测试通过，零回归。
 
-## 2026-07-09 · 第六十八轮：UI 三大顽疾真正根因修复——ADS loadStylesheet 覆盖（P1 × 3，共 3 项）
-
-### 概述
-
-本轮针对用户反馈"全都没解决"的三个 UI 问题（经第六十五~六十七轮修复均无效）进行**真正根因定位**。前几轮的根因分析全部错误——真正原因不是 QFluentKit StyleSheetManager，而是 **ADS 自身的 `loadStylesheet()` 机制**：`applyFluentStyle()` 中 `setPalette(pal)` 向 dockManager_ 传播 `QEvent::ApplicationPaletteChange` 事件，ADS eventFilter（[DockManager.cpp:759-763](third_party/ads/src/DockManager.cpp#L759-L763)）检测到 `ColorSchemeMode == FollowPalette`（默认值）→ 调用 `loadStylesheet()` → `setStyleSheet(default.css)` → **完全覆盖**自定义 adsQss。这发生在**每次** `applyFluentStyle()` 调用时，导致前几轮所有 QSS 修复从未真正生效。
-
-**统一修复**：添加 `ads::CDockManager::DisableStylesheet` 配置标志，使 `loadStylesheet()` 成为 no-op（[DockManager.cpp:209-212](third_party/ads/src/DockManager.cpp#L209-L212)），自定义 adsQss 才能持久存在。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1758/1758 测试通过。
-
-### 问题与修复对应表
-
-| # | 严重性 | 类型 | 位置 | 修复内容 |
-|---|--------|------|------|----------|
-| 1 | P1 | 样式覆盖（真正根因） | `app/ide.cpp` setConfigFlags | **ADS dock 标签蓝底+米黄字体**——真正根因：`applyFluentStyle()` 行 3540 `dockManager_->setStyleSheet(adsQss)` 设置自定义 QSS 后，行 3785 `setPalette(pal)` 向 dockManager_ 传播 `ApplicationPaletteChange` 事件，ADS eventFilter 检测到 `ColorSchemeMode==FollowPalette`（默认）→ `loadStylesheet()` → `setStyleSheet(default.css)` 完全覆盖 adsQss。default.css 的 `ads--CDockWidgetTab[activeTab="true"] QLabel { color: palette(foreground); }` 导致字体颜色异常。修复：添加 `DisableStylesheet` 标志使 `loadStylesheet()` 成为 no-op，adsQss 持久生效。 |
-| 2 | P1 | 样式覆盖（同一根因） | `app/ide.cpp` setConfigFlags | **编译分析面板字节码背景未变米黄色**——同一根因：adsQss 中 `ads--CDockWidget { background: bgMain }` 被 loadStylesheet 覆盖，dock 容器显示 default.css 的默认（白色）背景。前轮移除 registerWidget 的修复方向错误——问题不在 QFluentKit 而在 ADS 自身。DisableStylesheet 修复后 adsQss 的 dock 容器背景规则生效。 |
-| 3 | P1 | 布局干扰（同一根因） | `app/ide.cpp` setConfigFlags + QTimer 顺序 | **面板初始大小每次都要手动调整**——部分根因同上：restoreState 后的 `applyFluentStyle()` → `setPalette` → `loadStylesheet` → `setStyleSheet` 触发样式重算，可能干扰 restoreState 恢复的 splitter 尺寸。DisableStylesheet 消除此干扰。额外加固：将 QTimer lambda 中 `applyFluentStyle()` 移到 `restoreState()` **之前**，确保 restoreState 是最后的布局操作，其 splitter 尺寸不被后续重算覆盖。 |
-
-### 关键设计决策
-
-1. **DisableStylesheet 而非对抗 loadStylesheet**：前几轮尝试用"追加 QSS"、"覆盖 QSS"、"移除 FocusHighlighting 标志"等方式对抗 loadStylesheet，全部失败——因为 loadStylesheet 在每次 ApplicationPaletteChange 时重新覆盖。DisableStylesheet 从源头禁用 ADS 内置样式加载，自定义 adsQss 成为唯一样式来源，彻底消除覆盖。
-2. **applyFluentStyle 移到 restoreState 之前**：即使 DisableStylesheet 已消除 loadStylesheet 干扰，将样式应用放在 restoreState 之前仍更稳健——确保 restoreState 是 QTimer lambda 中最后的布局操作，其设置的 splitter 尺寸为最终值。
-
-### 关键教训
-
-1. **`setPalette` 会向子 widget 传播 `ApplicationPaletteChange` 事件**——这是 Qt 的事件传播机制，子 widget 的事件过滤器会收到。ADS 的 eventFilter 利用此事件在 `ColorSchemeMode==FollowPalette` 时重新加载样式表。在调用 `setPalette` 后设置的自定义 QSS 会被覆盖。
-2. **ADS `ColorSchemeMode` 默认值为 `FollowPalette`**——意味着任何 palette 变化都会触发 loadStylesheet。除非显式设置为 `Light`/`Dark`，或使用 `DisableStylesheet` 标志。
-3. **前几轮根因分析为何全部错误**：第六十五~六十七轮分别归咎于"restoreState 时机"、"QFluentKit registerWidget"、"ADS default.css QLabel 规则"，均未发现 `setPalette → ApplicationPaletteChange → loadStylesheet` 这一真正因果链。教训：样式覆盖问题应优先排查事件驱动的样式重载机制，而非逐条检查 QSS 规则。
-
-### 修改文件清单
-
-- 修改：`app/ide.cpp`（添加 `DisableStylesheet` 配置标志 + QTimer lambda 中 applyFluentStyle 移到 restoreState 之前）
-- 修改：`CHANGELOG.md`（新增第六十八轮条目，归档第六十五轮）
-
-### 测试影响
-
-- 全部 3 项修复均无回归。全量 1758/1758 测试通过。
-- UI 样式问题属于视觉表现层，单元测试不直接覆盖，构建通过 + 无回归即视为修复验证。建议用户启动 IDE 视觉确认。
-
-## 2026-07-09 · 第六十七轮：UI 三大顽疾根因修复（P1 × 2 + P2 × 1，共 3 项）
-
-### 概述
-
-本轮针对用户反复反馈（经三轮修复均未解决）的三个 UI 问题进行彻底根因排查并修复：**(1) ADS dock 标签蓝底+米黄字体突兀**、**(2) 编译分析面板字节码背景未变米黄色**、**(3) 面板初始大小每次都要手动调整**。通过调试日志验证 restoreState 机制正确（restored=1），定位字节码背景问题的真正根因为 QFluentKit `StyleSheetManager::updateStyleSheet` 在主题信号触发时重新应用 `list_view.qss`（`background: transparent`）覆盖自定义 `itemViewQss`。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过，全量 1758/1758 测试通过。
-
-### 问题与修复对应表
-
-| # | 严重性 | 类型 | 位置 | 修复内容 |
-|---|--------|------|------|----------|
-| 1 | P1 | 样式覆盖 | `app/ide.cpp` applyFluentStyle registerWidget | **字节码/文件树/错误列表背景被 QFluentKit 覆盖为 transparent**——根因：`StyleSheet::registerWidget(widget, LIST_VIEW)` 注册后，QFluentKit `StyleSheetManager` 在 `Theme::onThemeModeChanged`/`onThemeColorChanged` 信号触发时调用 `updateStyleSheet(false)`，重新应用 `list_view.qss`（`ListWidget { background: transparent; }`），覆盖 `itemViewQss` 中设置的米黄色背景。`setStyleSheet(itemViewQss)` 仅在 `applyFluentStyle()` 调用时生效，主题信号触发后被 QFluentKit 覆盖。修复：移除 `fileTree_`/`errorListWidget_`/`bytecodeList_`/`recentListWidget_`/`tokenTable_` 的 `registerWidget` 调用，这些控件由 `itemViewQss` 统一样式化，Fluent ScrollBar 仍单独替换。`editorTabWidget_`（TAB_VIEW）保留注册（无背景冲突）。 |
-| 2 | P1 | 样式覆盖 | `app/ide.cpp` applyFluentStyle adsQss | **ADS dock 标签 focused/active 状态蓝底+米黄字体**——根因：ADS `default.css` 包含 `ads--CDockWidgetTab[activeTab="true"] QLabel { color: palette(foreground); }` 规则，使用系统默认前景色，覆盖 adsQss 中 tab 的 color 属性。修复：在 adsQss 中添加显式 `ads--CDockWidgetTab QLabel`、`ads--CDockWidgetTab[activeTab="true"] QLabel`、`ads--CDockWidgetTab[focused="true"] QLabel` 子选择器规则，设置正确的 color（普通 tab 用 fgPrimary，active/focused tab 用 accent 色），防止 default.css 的 palette 规则干扰。 |
-| 3 | P2 | 布局恢复 | `app/ide.cpp` restoreLayout QTimer::singleShot(0) | **面板初始大小每次都要手动调整**——根因：ADS `restoreState` 在构造函数或 showEvent 中调用时，窗口几何尺寸无效（未经过布局引擎处理），ADS 内部依赖容器几何计算 splitter 比例，在无效几何下静默失败。修复：将 `restoreState` 延迟到 `QTimer::singleShot(0)` 中执行——事件循环开始后所有 show/layout 事件已处理完毕，几何尺寸有效，restoreState 能正确恢复。通过调试日志验证 `restored=1`（成功）、`pendingDockState_.size()=646`（有保存数据）。同时清理了验证用的 3 处调试日志代码。 |
-
-### 关键设计决策
-
-1. **移除 registerWidget 而非对抗 QFluentKit**：`list_view.qss` 的 `background: transparent` 是 QFluentKit 的设计决策（透明背景让父容器色透出），与我们的 `itemViewQss`（显式设置米黄色背景）根本冲突。尝试用 `setCustomStyleSheet` 集成会引入 light/dark QSS 双份管理的复杂性，且 `list_view.qss` 的 `alternate-background-color: transparent` 仍会覆盖 palette 的 AlternateBase。直接移除注册是最简洁的方案——这些控件不需要 QFluentKit 的 list_view 样式（透明背景、item padding 等），`itemViewQss` 已覆盖所有需求。
-2. **QLabel 子选择器规则**：ADS 的 `default.css` 对 tab 内 QLabel 有 `color: palette(foreground)` 规则。即使 tab 本身的 `color` 属性正确，QLabel 子控件可能继承 default.css 的颜色。显式添加 `ads--CDockWidgetTab QLabel { color: ... }` 确保文字颜色与 tab 背景一致。
-3. **QTimer::singleShot(0) 延迟 restoreState**：Qt 事件循环的 `singleShot(0)` 在当前事件处理完毕后立即触发，此时所有 show/layout 事件已处理，窗口几何有效。`firstShow_` 守卫在 restoreState 完成后才设为 false，防止 restoreState 触发的 Resize 事件误启动 `splitterSaveTimer_` 覆盖用户布局。
-
-### 关键教训
-
-1. **QFluentKit registerWidget 是双向承诺**——注册后 QFluentKit 获得 stylesheet 管理权，会在主题信号时重新应用其 QSS。若自定义 QSS 与 QFluentKit QSS 冲突（如 background），每次主题变化都会被覆盖。对于需要自定义背景的控件，不应注册到 QFluentKit。
-2. **ADS default.css 的子选择器规则容易被忽略**——`ads--CDockWidgetTab[activeTab="true"] QLabel { color: palette(foreground); }` 这类规则不直接影响 tab 本身，但影响其子控件（QLabel），导致文字颜色异常。自定义 ADS QSS 时必须同时覆盖子控件选择器。
-3. **Qt 窗口几何在 showEvent 中可能无效**——`showEvent` 在窗口首次显示时触发，但布局引擎可能尚未完成几何计算。依赖容器几何的 API（如 ADS `restoreState` 的 splitter 比例计算）应延迟到事件循环空闲后调用。
-
-### 修改文件清单
-
-- 修改：`app/ide.cpp`（移除 5 个控件的 registerWidget 调用 + 添加 ADS tab QLabel 子选择器规则 + QTimer::singleShot(0) restoreState + 清理 3 处调试日志）
-- 修改：`CHANGELOG.md`（新增第六十七轮条目）
-
-### 测试影响
-
-- 全部 3 项修复均无回归。全量 1758/1758 测试通过。
-- UI 样式问题属于视觉表现层，单元测试不直接覆盖，构建通过 + 无回归即视为修复验证。
-
-**历史变更**：更早的开发记录（第六十六轮及以前）已归档至 [docs/changelog/archive/](docs/changelog/archive/)。
+**历史变更**：更早的开发记录（第六十八轮及以前）已归档至 [docs/changelog/archive/](docs/changelog/archive/)。

@@ -8,7 +8,7 @@
 |------|---------|------|
 | CMake | 3.25 | 构建系统 |
 | C++20 编译器 | MSVC 19.51+ / GCC 13+ / Clang 16+ | 需完整 C++20 支持 |
-| Qt6 | 6.0+ | CI 验证版本 6.10.3；需 Core/Gui/Widgets/Svg/Xml |
+| Qt6 | 6.0+ | CI 验证版本 6.8.3；需 Core/Gui/Widgets/Svg/Xml |
 | Ninja | 任意 | CMake 默认生成器（CMakePresets 指定） |
 | GoogleTest | — | 随 `third_party/` 提供，CMake 自动拉取 |
 
@@ -30,7 +30,7 @@ cmake --build out/build/debug
 ./out/build/debug/minilang_ide.exe
 
 # 4. 运行单元测试
-./out/build/debug/tests/minilang_tests.exe
+./out/build/debug/minilang_tests.exe
 ```
 
 > **Qt 路径**：`configure.bat` 默认查找 `D:\qt\6.*\msvc2022_64` 与 `C:\qt\6.*\msvc2022_64`。如安装在别处，先设置环境变量：
@@ -81,8 +81,8 @@ cmake --build out/build/debug
 
 ```bash
 # 设置 Qt6 路径（如 QTDIR 未设置）
-export QTDIR=/opt/qt6/6.10.3/gcc_64    # Linux
-export QTDIR=~/Qt/6.10.3/macos          # macOS
+export QTDIR=/opt/qt6/6.8.3/gcc_64    # Linux
+export QTDIR=~/Qt/6.8.3/macos          # macOS
 
 # 使用 CMake Preset
 cmake --preset linux-gcc-release         # Linux
@@ -106,8 +106,8 @@ sudo apt install qt6-base-dev libqt6svg6-dev
 
 # 方式 2：aqtinstall（推荐，可指定精确版本）
 pip3 install aqtinstall
-python3 -m aqt install-qt linux desktop 6.10.3 gcc_64 -m qtsvg -O /opt/qt6
-export QTDIR=/opt/qt6/6.10.3/gcc_64
+python3 -m aqt install-qt linux desktop 6.8.3 gcc_64 -m qtsvg -O /opt/qt6
+export QTDIR=/opt/qt6/6.8.3/gcc_64
 ```
 
 **macOS (Homebrew)**：
@@ -118,7 +118,7 @@ export QTDIR=$(brew --prefix qt@6)
 
 ## Docker 构建
 
-项目提供多阶段 Dockerfile（Ubuntu 24.04 + Qt 6.10.3），与 CI 版本保持一致。
+项目提供多阶段 Dockerfile（Ubuntu 24.04 + Qt 6.8.3），与 CI 版本保持一致。
 
 ```bash
 # 构建并运行（无 GUI）
@@ -193,6 +193,7 @@ for (var i = 0; i < 10; i = i + 1) {
 | `MINILANG_WERROR` | OFF | 将编译器警告视为错误 |
 | `MINILANG_BUILD_TESTS` | ON | 构建 GoogleTest 单元测试 |
 | `MINILANG_BUILD_TEST_HARNESS` | OFF | 构建审计/压测工具 |
+| `MINILANG_USE_QTCHARTS` | OFF | 使用 QtCharts 绘制柱状图（性能仪表盘等） |
 | `MINILANG_SANITIZE` | `""` | Sanitizer：`address` / `undefined` / `both` |
 
 ```bash
@@ -205,7 +206,7 @@ cmake --build out/build/debug --target minilang_tests docs
 
 ```powershell
 # 方式 1：直接运行测试二进制
-./out/build/debug/tests/minilang_tests.exe
+./out/build/debug/minilang_tests.exe
 
 # 方式 2：通过 CTest（可筛选）
 cd out/build/debug

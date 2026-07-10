@@ -3,7 +3,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Qt6](https://img.shields.io/badge/Qt-6-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-1759-brightgreen)
+![Tests](https://img.shields.io/badge/tests-1773-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境。通过从零实现一门完整编程语言（词法分析 → 解析 → 解释/编译 → 虚拟机）来教授编译原理与运行时设计的核心概念。
@@ -26,42 +26,7 @@
 
 ## 架构
 
-```
-┌──────────────────────────────────────────────────────────┐
-│  GUI 层 (app/ide.cpp, gui/*)                             │
-│  QMainWindow + 各面板，仅处理事件与 UI 更新               │
-├──────────────────────────────────────────────────────────┤
-│  业务层 (app/IdeController)                              │
-│  编译管线编排、Worker 线程管理、调试状态、VM 单步          │
-├──────────────────────────────────────────────────────────┤
-│  Worker 层 (app/InterpreterWorker)                       │
-│  独立 QThread 执行解释器，信号回传结果                    │
-├──────────────────────────────────────────────────────────┤
-│  引擎层 (minilang_core 静态库)                           │
-│                                                          │
-│  Lexer -> Parser -> AST                                  │
-│       |            |                                     │
-│       |            +-> Formatter (代码格式化)             │
-│       |            |                                     │
-│       |            +-> Interpreter (引擎1: 树遍历)        │
-│       |            |                                     │
-│       |            +-> Compiler -> BytecodeChunk          │
-│       |            |       |                             │
-│       |            |       +-> VM (引擎2: 栈式)           │
-│       |            |                                     │
-│       |            +-> AstIRBuilder -> IRModule           │
-│       |                    |         |                   │
-│       |                    |         +-> BytecodeIRBackend│
-│       |                    |         |    -> VM (引擎2)   │
-│       |                    |                             │
-│       |                    +-> RegisterBytecodeBackend    │
-│       |                             |                   │
-│       |                             +-> RegisterVM       │
-│       |                                (引擎3: 寄存器式)  │
-│       |                                                  │
-│       +-> DebugController (断点/单步/条件求值)            │
-└──────────────────────────────────────────────────────────┘
-```
+![MiniLang 架构图](minilang_architecture.svg)
 
 ## 快速构建
 
@@ -135,9 +100,9 @@ try {
 | `debug/` | DebugController（断点/单步/条件求值/变量快照） |
 | `formatter/` | 代码格式化器（Visitor 模式） |
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/教学面板等） |
-| `app/` | IdeController、InterpreterWorker、Ide 主窗口 |
+| `app/` | IdeController（Facade）、WorkerManager、VmStepper、DebugCoordinator、PipelineRunner、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
-| `tests/` | GoogleTest 单元测试（1759 个） |
+| `tests/` | GoogleTest 单元测试（1773 个） |
 | `docs/` | 架构文档、开发指南、设计决策记录 |
 
 ## 测试
@@ -153,7 +118,7 @@ try {
 cd out/build/debug && ctest -R LexerTest.* --verbose
 ```
 
-项目包含 **1759 个 GoogleTest 单元测试**（195 个测试套件），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层、三后端一致性、格式化器、教学面板数据完整性等。
+项目包含 **1773 个 GoogleTest 单元测试**（212 个测试套件），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层、三后端一致性、格式化器、教学面板数据完整性等。
 
 ## 文档
 

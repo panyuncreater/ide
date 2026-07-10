@@ -134,16 +134,21 @@ TEST_F(LearningPathTestBase, MarkCompletedAffectsUnlock) {
     auto& store = LearnerProgressStore::instance();
     const auto& all = LearningPathData::activities();
 
-    // 初始：lab-02 前置为 lab-01 + ast-toy，应锁定
-    EXPECT_FALSE(store.isUnlocked("lab-02", all));
+    // 学习限制已全部移除：所有活动无条件解锁，学员可自由访问任意章节/关卡。
+    // 原 prerequisites 字段保留在数据中，但 isUnlocked 不再检查它。
+    // 初始：lab-02 即可直接访问（曾需 lab-01 + ast-toy 前置）
+    EXPECT_TRUE(store.isUnlocked("lab-02", all));
 
-    // 完成 lab-01 后仍锁定（ast-toy 未完成）
+    // 完成 lab-01 后仍解锁（解锁状态不依赖完成进度）
     store.markCompleted("lab-01");
-    EXPECT_FALSE(store.isUnlocked("lab-02", all));
+    EXPECT_TRUE(store.isUnlocked("lab-02", all));
 
-    // 完成 ast-toy 后解锁
+    // 完成 ast-toy 后仍解锁
     store.markCompleted("ast-toy");
     EXPECT_TRUE(store.isUnlocked("lab-02", all));
+
+    // 无效活动 id 仍返回 false
+    EXPECT_FALSE(store.isUnlocked("nonexistent-activity", all));
 }
 
 TEST_F(LearningPathTestBase, StageProgressCalculation) {
@@ -422,7 +427,8 @@ TEST_F(LearningPathTestBase, EstimatedRemainingMinutesExcludesCompletedAndLocked
     auto& store = LearnerProgressStore::instance();
     const auto& all = LearningPathData::activities();
 
-    // 初始：所有阶段零活动都无前置，应解锁——剩余时间 = 阶段零 5 个活动之和
+    // 学习限制已移除：所有活动无条件解锁，剩余时间 = 所有未完成活动之和。
+    // 初始：剩余时间 > 0（含所有未完成活动，包括曾需前置的 lab-02 等）
     int initial = store.estimatedRemainingMinutes(all);
     EXPECT_GT(initial, 0);
 
@@ -432,16 +438,14 @@ TEST_F(LearningPathTestBase, EstimatedRemainingMinutesExcludesCompletedAndLocked
     EXPECT_LT(after, initial)
         << "完成一个活动后剩余时间应减少";
 
-    // lab-02 有前置（lab-01 + ast-toy），未完成 lab-01 时 lab-02 应被排除
-    const auto* lab02 = LearningPathData::findById("lab-02");
-    ASSERT_NE(lab02, nullptr);
-    int lab02Estimate = lab02->estimatedMinutes;
-    // 间接验证：完成 lab-01 + ast-toy 后 lab-02 解锁，剩余时间增加 lab02Estimate
+    // lab-02 曾需前置（lab-01 + ast-toy），但现在无条件解锁——
+    // 完成其前置不会增加剩余时间（lab-02 从一开始就被计入）。
+    // 完成前置活动反而会减少剩余时间（lab-01 / ast-toy 自身时间被扣除）。
     store.markCompleted("lab-01");
     store.markCompleted("ast-toy");
-    int afterUnlock = store.estimatedRemainingMinutes(all);
-    EXPECT_GE(afterUnlock, after + lab02Estimate - 1)
-        << "lab-02 解锁后剩余时间应至少增加其 estimatedMinutes（允许 ±1 误差）";
+    int afterPrereq = store.estimatedRemainingMinutes(all);
+    EXPECT_LT(afterPrereq, after)
+        << "完成 lab-01 + ast-toy 后剩余时间应减少（它们自身时间被扣除）";
 }
 
 TEST_F(LearningPathTestBase, LoadSaveRoundTripPreservesRichFields) {

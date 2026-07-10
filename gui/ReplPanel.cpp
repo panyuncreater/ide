@@ -58,7 +58,7 @@ ReplPanel::ReplPanel(QWidget* parent) : QWidget(parent) {
     outputArea_->append("MiniLang REPL v1.0");
     outputArea_->append("输入 MiniLang 表达式或语句，按回车执行。");
     outputArea_->append("输入 'help' 查看帮助，输入 'clear' 清空输出。");
-    outputArea_->append("💡 输入 %help 查看 10 个 magic 命令（%ast / %ir / %disassemble / %compare / %profile ...）");
+    outputArea_->append("💡 输入 %help 查看 magic 命令（%ast / %ir / %disassemble / %compare / %profile ...）");
     outputArea_->append("");
 
     // QT-R-06 fix: 用 QTimer 轮询 std::future 状态
@@ -351,19 +351,10 @@ void ReplPanel::onReturnPressed() {
 
 /// 提交一行/一段 MiniLang 代码到后端异步执行。
 void ReplPanel::executeLine(const QString& line) {
-    // 功能 11：REPL %magic 命令检测——在所有状态检查之前拦截
-    // 检测 % 前缀（允许前导空白），路由到 MagicCommands::handle
-    {
-        std::string src = line.toStdString();
-        size_t firstNonSpace = src.find_first_not_of(" \t\r\n");
-        if (firstNonSpace != std::string::npos && src[firstNonSpace] == '%') {
-            std::string result = MagicCommands::handle(src, controller_);
-            if (!result.empty()) {
-                appendOutput(QString::fromStdString(result));
-            }
-            return;
-        }
-    }
+    // ROUND-70 fix: 移除 executeLine 中的 magic 命令检测（死代码）。
+    // onReturnPressed 已在 isInputComplete 之前拦截 magic 命令（行 303-329），
+    // executeLine 永远不会收到以 % 开头的输入。保留检测会让读者误以为
+    // executeLine 可能被其他路径直接调用并收到 magic 命令，增加维护负担。
 
     if (!controller_) {
         appendError("解释器未初始化");
@@ -567,9 +558,13 @@ void ReplPanel::pollReplFuture() {
         return;
     }
 
-    // PANEL-03 fix: null 结果也打印
-    // AUDIT fix: 若异步执行已通过信号显示错误，跳过结果输出避免 "null" 重复显示
-    if (!hadReplError_.load()) {
+    // ROUND-70 fix: 跳过 null 结果的打印。
+    // 原行为（PANEL-03 fix）：null 结果也打印，导致 print/var/fun/class 等语句
+    // 执行后多输出一行 "null"，与 Python/Node REPL 行为不一致。
+    // 改为仅打印非 null 结果——表达式语句（如 1+2;）的结果正常显示，
+    // 声明语句（var/fun/class）和 print 语句返回 null 不再产生多余输出。
+    // AUDIT fix: 若异步执行已通过信号显示错误，跳过结果输出避免重复显示
+    if (!hadReplError_.load() && !result.isNull()) {
         appendOutput(QString::fromStdString(result.toString()));
     }
 

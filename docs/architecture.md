@@ -59,8 +59,8 @@ MiniLang 维护三个执行后端并存策略：
 | 后端 | 类 | 特点 |
 |------|------|------|
 | Interpreter | `Interpreter` | 树遍历，基准实现，最易调试 |
-| StackVM | `VM` | 栈式字节码，1024×8B 定长操作数栈 + 栈顶指针 |
-| RegisterVM | `RegisterVM` | 寄存器式字节码，32 虚拟寄存器 R0-R31 |
+| StackVM | `VM` | 栈式字节码，75 条 OpCode，1024×8B 定长操作数栈 + 栈顶指针 |
+| RegisterVM | `RegisterVM` | 寄存器式字节码，59 条 RegOp，32 虚拟寄存器 R0-R31 |
 
 三后端必须保持语义一致性。IR 层作为可选中间表示，启用后在 lowering 前执行优化 pass。
 
