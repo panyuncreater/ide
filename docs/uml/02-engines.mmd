@@ -1,0 +1,71 @@
+classDiagram
+    class IBackend {
+        <<interface>>
+        +run() VMResult*
+        +loadChunk(chunk)*
+    }
+
+    class Interpreter {
+        -shared_ptr~Environment~ globalEnv_
+        -vector~CallFrame~ callStack_
+        -DiagnosticBag diagnostics_
+        +run() VMResult
+        +executeRepl(Block) Value
+        +resetReplEnvironment()
+        -visitBinaryOp(BinaryOp) Value
+        -visitFunDecl(FunDecl) Value
+    }
+
+    class Compiler {
+        -BytecodeChunk* currentChunk_
+        -GlobalSlotAllocator slotAllocator_
+        +compile(source) BytecodeChunk
+        +setVM(bool)
+        +setIR(bool)
+        +setUseRegisterVM(bool)
+        +setIROptimize(bool)
+    }
+
+    class VM {
+        -VMStack~Value,1024~ stack_
+        -vector~VMCallFrame~ frames_
+        -vector~Value~ globalSlots_
+        -unordered_map callCache_
+        +run() VMResult
+        +loadChunk(BytecodeChunk)
+        +initExecution()
+        +stepOnce()
+    }
+
+    class RegisterVM {
+        -array~Value,32~ registers_
+        -vector~RegCallFrame~ frames_
+        +run() VMResult
+        +loadChunk(RegBytecodeChunk)
+    }
+
+    class IRModule {
+        +vector~IRFunction~ functions
+        +vector~string~ globalNames
+    }
+
+    class AstIRBuilder {
+        +build(Block) IRModule
+    }
+
+    class BytecodeIRBackend {
+        +lower(IRModule) BytecodeChunk
+    }
+
+    class RegisterBytecodeBackend {
+        +lower(IRModule) RegBytecodeChunk
+    }
+
+    IBackend <|.. VM
+    IBackend <|.. RegisterVM
+    Compiler --> VM : 字节码
+    AstIRBuilder --> IRModule
+    IRModule --> BytecodeIRBackend
+    IRModule --> RegisterBytecodeBackend
+    BytecodeIRBackend --> VM : 栈式字节码
+    RegisterBytecodeBackend --> RegisterVM : 寄存器字节码

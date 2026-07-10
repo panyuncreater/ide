@@ -2638,3 +2638,20 @@ std::unordered_map<std::string, Value> RegisterVM::getCurrentFrameLocals() const
     }
     return result;
 }
+
+// P2-3 fix: 获取指定帧的局部变量（用于调用栈面板显示各帧 locals）
+std::unordered_map<std::string, Value> RegisterVM::getFrameLocalsAt(size_t frameIndex) const {
+    std::unordered_map<std::string, Value> result;
+    if (frameIndex >= frames_.size())
+        return result;
+    const auto& frame = frames_[frameIndex];
+    if (!frame.chunk)
+        return result;
+    const auto& names = frame.chunk->localRegNames;
+    for (size_t reg = 0; reg < names.size() && reg < frame.registers.size(); ++reg) {
+        if (names[reg].empty())
+            continue;
+        result[names[reg]] = frame.registers[reg];
+    }
+    return result;
+}

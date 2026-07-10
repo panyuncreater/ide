@@ -578,6 +578,24 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
         snapEnv = snapEnv->parent.get();
     }
 
+    // P1-1 fix: 在执行条件表达式之前，将每个 Environment 的 variables 替换为
+    // 深拷贝版本。原实现仅用快照在析构时恢复变量绑定，但条件中的容器变异
+    //（arr.push/dict.set/实例字段修改）作用在原始堆对象上，restoreLocalVariables
+    // 只替换绑定不恢复容器内容。通过在求值前替换为深拷贝副本，条件求值完全在
+    // 副本上操作，原始容器不受影响。SandboxGuard 析构时再次 restoreLocalVariables
+    // 恢复原始值。
+    // 注：envSnaps 中的深拷贝 locals 同时用于恢复，此处将其写入环境作为求值副本。
+    for (auto& snap : envSnaps) {
+        snap.env->restoreLocalVariables(snap.variables);
+    }
+    // 实例字段也需在求值前替换为深拷贝
+    for (auto& [oldInst, snap] : instSnaps) {
+        Value* inst = snap.env->getBoundInstance();
+        if (inst && inst->isInstance() && inst->gcRootPtr() == snap.gcRoot) {
+            inst->fields() = snap.fields;
+        }
+    }
+
     auto savedCallStack = callStack_;
     auto savedClassCtx = classContextStack_;
     auto savedEnv = currentEnv_;

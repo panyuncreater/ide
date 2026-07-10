@@ -428,6 +428,12 @@ void ReplPanel::executeLine(const QString& line) {
     if (!ast)
         return;
 
+    // REPL-MAGIC fix: 成功解析后更新管线状态（tokens/AST），使无参 magic 命令
+    // （%ast/%tokens）能显示最近 REPL 输入的结果，而非上次 Run(F5) 的陈旧数据。
+    // setReplPipelineState 内部静默执行 Lex+Parse（不发 diagnostics 信号），
+    // 编译结果清空（REPL 不走字节码编译）。
+    controller_->setReplPipelineState(source);
+
     // QT-R-06 fix: 异步执行解释器，避免主线程阻塞。
     // 词法/语法分析在主线程（轻量，<1ms），解释器执行可能耗时（如 while 循环）放后台。
     // 用 std::async + QTimer 轮询替代 QtConcurrent（Qt6::Concurrent 未安装）。

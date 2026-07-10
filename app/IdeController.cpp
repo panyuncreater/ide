@@ -67,8 +67,17 @@ IdeController::IdeController(QObject* parent)
     using CacheLookup = std::unordered_map<std::string, CacheList::iterator>;
     auto cacheList = std::make_shared<CacheList>();
     auto cacheLookup = std::make_shared<CacheLookup>();
-    vmStepper_.setConditionEvaluator([this, cacheList, cacheLookup](const std::string& condition) -> bool {
+    // P2-2 fix: 捕获 vmStepper_ 裸指针而非 this。lambda 存储在 vmStepper_ 的成员
+    // vmConditionEvaluator_ 中，其生命周期不超过 vmStepper_，而 vmStepper_ 是
+    // IdeController 的成员（同生命周期），因此 stepptr 在 lambda 存活期间始终有效。
+    // 改为捕获 stepptr 而非 this 避免隐式依赖整个 IdeController 析构顺序。
+    VmStepper* stepptr = &vmStepper_;
+    vmStepper_.setConditionEvaluator([stepptr, cacheList, cacheLookup](const std::string& condition) -> bool {
         try {
+            // P2-1 fix: 检查 VM 停止请求，快速中止条件求值（对齐 Interpreter 路径
+            // evaluateCondition 中检查 stopRequested_ 的机制）。
+            if (stepptr->isCondStopRequested())
+                return false;
             std::shared_ptr<Block> ast;
             auto lookupIt = cacheLookup->find(condition);
             if (lookupIt != cacheLookup->end()) {
@@ -95,10 +104,10 @@ IdeController::IdeController(QObject* parent)
             Interpreter tempInterp;
             auto env = std::make_shared<Environment>();
             // BUG-IDE-12 fix: 先注入全局变量，再注入当前帧局部变量（局部变量遮蔽同名全局）
-            for (const auto& kv : vmStepper_.getGlobals()) {
+            for (const auto& kv : stepptr->getGlobals()) {
                 env->define(kv.first, kv.second);
             }
-            for (const auto& kv : vmStepper_.getCurrentFrameLocals()) {
+            for (const auto& kv : stepptr->getCurrentFrameLocals()) {
                 env->define(kv.first, kv.second);
             }
             // P2-E fix: 若存在 "this" 变量且为实例，绑定 boundInstance_ 使裸字段名

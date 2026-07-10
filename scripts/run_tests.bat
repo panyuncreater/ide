@@ -18,7 +18,7 @@ call "%~dp0_common.bat"
 if errorlevel 1 exit /b 1
 
 REM --- Configure (if not already configured) ---
-if not exist "outuild\%BUILD_TYPE%uild.ninja" (
+if not exist "out\build\%BUILD_TYPE%\build.ninja" (
     echo [INFO] Configuring with configure.bat %BUILD_TYPE%...
     call "%~dp0..\configure.bat" %BUILD_TYPE%
     if errorlevel 1 exit /b 1
@@ -32,7 +32,7 @@ if errorlevel 1 (
 )
 
 echo [INFO] Running tests via CTest...
-cd /d "%PROJECT_ROOT%\outuild\%BUILD_TYPE%"
+cd /d "%PROJECT_ROOT%\out\build\%BUILD_TYPE%"
 ctest --output-on-failure --no-compress-output
 set "TESTS_EXIT_CODE=!errorlevel!"
 echo TESTS_EXIT_CODE=!TESTS_EXIT_CODE!

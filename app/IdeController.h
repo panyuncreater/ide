@@ -67,6 +67,15 @@ public:
     // A1 fix: 栈式 VM 返回操作数栈；RegisterVM 返回寄存器窗口（同形 vector<Value>）
     std::vector<Value> getVmStack() const { return vmStepper_.getStack(); }
     std::unordered_map<std::string, Value> getVmGlobals() const { return vmStepper_.getGlobals(); }
+    std::unordered_map<std::string, Value> getReplGlobals() const {
+        if (interpreter_) {
+            auto genv = interpreter_->getGlobalEnvironment();
+            if (genv) {
+                return genv->snapshotLocalVariables();
+            }
+        }
+        return {};
+    }
     size_t getVmCurrentIP() const { return vmStepper_.getCurrentIP(); }
     // A1 fix: 操作码统一返回名称字符串，兼容 OpCode (栈式) / RegOp (寄存器式)
     std::string getVmCurrentOpCodeName() const { return vmStepper_.getCurrentOpCodeName(); }
@@ -113,6 +122,11 @@ public:
     // ---- 关键字接口（转发到 PipelineRunner.lexer）----
     const std::unordered_map<std::string, TokenType>& getKeywords() const { return pipeline_.lexer().keywords(); }
 
+    // ---- REPL 管线状态更新（供 ReplPanel 在 REPL 执行后调用）----
+    void setReplPipelineState(const std::string& source) {
+        pipeline_.setReplPipelineState(source);
+    }
+
     // ---- REPL 接口（转发到 Interpreter）----
     /// 保留 REPL AST 引用（防止类/闭包 body 指针悬空）
     void retainReplAst(std::unique_ptr<Block> ast) { interpreter_->retainReplAst(std::move(ast)); }
@@ -132,6 +146,7 @@ public:
     void resetReplEnvironment() {
         interpreter_->resetReplEnvironment();
         vmStepper_.reset();
+        pipeline_.resetPipelineState();
     }
 
     // P0-3 fix (F11): 暴露 Interpreter 当前作用域变量名列表，

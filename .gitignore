@@ -48,6 +48,7 @@ CMakeUserPresets.json
 
 # --- IDE/编辑器 ---
 .trae/
+.trae-html-share-packages/
 .idea/
 .vscode/
 *.swp
@@ -64,6 +65,7 @@ Testing/
 
 # --- 文档生成 ---
 docs/api/
+minilang_architecture.png
 
 # --- 杂项 ---
 nul

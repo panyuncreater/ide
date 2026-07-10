@@ -1,0 +1,84 @@
+classDiagram
+    class Lexer {
+        -string_view source_
+        -int current_
+        -int line_
+        -vector~Token~ tokens_
+        -DiagnosticBag diagnostics_
+        +scan(source) vector~Token~
+        +keywords() unordered_map
+        -scanToken()
+        -identifier()
+        -number()
+        -string(bool isInterp)
+        -addToken(type, literal)
+        -columnAt(byteOffset) int
+    }
+
+    class Token {
+        +TokenType type
+        +string lexeme
+        +TokenLiteral literal
+        +int line
+        +int column
+        +typeToString(t) string
+    }
+
+    class Parser {
+        -vector~Token~* tokens_
+        -int current_
+        -DiagnosticBag diagnostics_
+        -int parseDepth_
+        +parse(tokens) unique_ptr~Block~
+        -declaration() ASTNode
+        -statement() ASTNode
+        -expression() ASTNode
+        -assignment() ASTNode
+        -synchronize()
+    }
+
+    class ASTNode {
+        <<abstract>>
+        +int line
+        +int column
+        +NodeType nodeType
+        +accept(Visitor) *
+        +nodeName() string*
+        +children() vector*
+    }
+
+    class BinaryOp {
+        +BinOpType opType
+        +shared_ptr~ASTNode~ left
+        +shared_ptr~ASTNode~ right
+        +precedence(t) int
+    }
+
+    class FunDecl {
+        +string name
+        +vector~string~ params
+        +vector~string~ paramTypes
+        +shared_ptr~ASTNode~ body
+        +vector~ASTNode~ defaultValues
+    }
+
+    class ClassDecl {
+        +string name
+        +string superClassName
+        +vector~ASTNode~ members
+    }
+
+    class Visitor {
+        <<interface>>
+        +visitBinaryOp(BinaryOp)*
+        +visitFunDecl(FunDecl)*
+        +visitClassDecl(ClassDecl)*
+    }
+
+    Lexer --> Token : 生成
+    Parser --> Token : 消费
+    Parser --> ASTNode : 构建
+    ASTNode <|-- BinaryOp
+    ASTNode <|-- FunDecl
+    ASTNode <|-- ClassDecl
+    ASTNode <.. Visitor : accept

@@ -426,6 +426,9 @@ private:
     // closeEvent 中 stop 避免回调在 maybeSave 模态对话框期间触发 UAF。
     QTimer* pendingHideCenterTimer_ = nullptr; // 折叠教学区（350ms，ensureEditorVisible/showEditorArea）
     QTimer* pendingHideEditorTimer_ = nullptr; // 隐藏编辑器栏（360ms，onEditorTabCloseRequested）
+    // PERF: 启动性能优化 - 合并重复的 applyFluentStyle 调用
+    QTimer* applyStyleTimer_ = nullptr;        // 样式应用防抖（多次请求合并为一次）
+    bool applyingStyle_ = false;               // 防止 applyFluentStyle 重入
     QStringList staticCompletionWords_;
 
     // ---- 欢迎页：最近打开列表 ----
@@ -457,6 +460,7 @@ private:
     void initStatusBar();
     void initTitleBar(); // 十二轮：统一标题栏（融合菜单+工具栏+窗口控制，36px）
     void applyFluentStyle();
+    void scheduleApplyStyle(); // PERF: 延迟合并多次样式请求，避免启动时重复调用
     void setupCompletion();
     void updateCompletionWords();
     void updateStatusBar();

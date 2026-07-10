@@ -30,7 +30,7 @@ cmake --build out/build/debug
 ./out/build/debug/minilang_ide.exe
 
 # 4. 运行单元测试
-./out/build/debug/minilang_tests.exe
+./out/build/debug/tests/minilang_tests.exe
 ```
 
 > **Qt 路径**：`configure.bat` 默认查找 `D:\qt\6.*\msvc2022_64` 与 `C:\qt\6.*\msvc2022_64`。如安装在别处，先设置环境变量：
@@ -206,7 +206,7 @@ cmake --build out/build/debug --target minilang_tests docs
 
 ```powershell
 # 方式 1：直接运行测试二进制
-./out/build/debug/minilang_tests.exe
+./out/build/debug/tests/minilang_tests.exe
 
 # 方式 2：通过 CTest（可筛选）
 cd out/build/debug

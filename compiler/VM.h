@@ -382,6 +382,10 @@ public:
     /// 空帧/主程序帧（无 localSlotNames）返回空映射。
     std::unordered_map<std::string, Value> getCurrentFrameLocals() const;
 
+    /// P2-3 fix: 获取指定帧的局部变量名→值映射（用于 VM 调用栈面板显示各帧 locals）。
+    /// frameIndex 从 0 开始（0=栈底 main 帧）。越界或无 localSlotNames 返回空映射。
+    std::unordered_map<std::string, Value> getFrameLocalsAt(size_t frameIndex) const;
+
 private:
     VMStack stack_;                                  // PERF-13: 定长数组操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表（runtime-defined fallback）

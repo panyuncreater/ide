@@ -289,11 +289,13 @@ std::string handleVersion() {
 
 std::string formatChunk(const BytecodeChunk& chunk, const std::string& title) {
     std::ostringstream os;
-    os << title << "\n";
-    os << "Chunk: " << chunk.name << "  ";
+    if (!title.empty()) {
+        os << title << "\n";
+    }
+    os << "=== Chunk: " << chunk.name << "  ";
     os << "code.size=" << chunk.code.size() << "  ";
-    os << "constants=" << chunk.constants.size() << "\n";
-    os << std::string(40, '-') << "\n";
+    os << "constants=" << chunk.constants.size() << " ===" << "\n";
+    os << std::string(60, '-') << "\n";
     size_t offset = 0;
     int shown = 0;
     const int maxShow = 200;
@@ -332,6 +334,9 @@ std::string handleDisassemble(IdeController* controller, const std::string& arg)
     std::ostringstream os;
     os << mlTr("=== 字节码反汇编（最近编译结果） ===").toStdString() << "\n";
     os << formatChunk(chunk, "");
+    for (const auto& [name, ch] : result.functionChunks) {
+        os << "\n" << formatChunk(ch, "");
+    }
     return os.str();
 }
 
@@ -459,6 +464,13 @@ std::string handleTokens(IdeController* controller, const std::string& arg) {
         } catch (const std::exception& e) {
             return std::string("词法错误: ") + e.what();
         }
+        for (const auto& tok : sa.tokens) {
+            if (tok.type == TokenType::TK_ERROR) {
+                std::ostringstream eos;
+                eos << "词法错误 (行 " << tok.line << ", 列 " << tok.column << "): " << tok.lexeme;
+                return eos.str();
+            }
+        }
         std::ostringstream os;
         os << mlTr("=== Token 表（参数代码） ===").toStdString() << "\n";
         os << formatTokens(sa.tokens, "");
@@ -471,6 +483,13 @@ std::string handleTokens(IdeController* controller, const std::string& arg) {
     if (tokens.empty()) {
         return mlTr("[Info] 暂无数据。用法: %tokens <expr> 或先执行一段代码再运行 %tokens").toStdString();
     }
+    for (const auto& tok : tokens) {
+        if (tok.type == TokenType::TK_ERROR) {
+            std::ostringstream eos;
+            eos << "词法错误 (行 " << tok.line << ", 列 " << tok.column << "): " << tok.lexeme;
+            return eos.str();
+        }
+    }
     std::ostringstream os;
     os << mlTr("=== Token 表（最近词法分析结果） ===").toStdString() << "\n";
     os << formatTokens(tokens, "");
@@ -481,29 +500,41 @@ std::string handleMemory(IdeController* controller) {
     if (!controller) {
         return mlTr("[Error] IdeController 未设置，无法获取数据").toStdString();
     }
-    auto globals = controller->getVmGlobals();
+    auto vmGlobals = controller->getVmGlobals();
     auto stack = controller->getVmStack();
-    if (globals.empty() && stack.empty()) {
+    auto replGlobals = controller->getReplGlobals();
+    if (vmGlobals.empty() && stack.empty() && replGlobals.empty()) {
         return mlTr("[Info] 暂无数据，请先运行一段代码").toStdString();
     }
     std::unordered_map<std::string, int> counts;
     auto countValue = [&counts](const Value& v) { counts[valueTypeName(v.getType())]++; };
-    for (const auto& [key, val] : globals) {
+    for (const auto& [key, val] : vmGlobals) {
         (void)key;
         countValue(val);
     }
     for (const auto& v : stack) {
         countValue(v);
     }
+    for (const auto& [key, val] : replGlobals) {
+        (void)key;
+        countValue(val);
+    }
     std::ostringstream os;
     os << mlTr("=== 堆对象统计 ===").toStdString() << "\n";
-    os << "Globals: " << globals.size() << "  Stack: " << stack.size() << "\n";
+    os << "VM Globals: " << vmGlobals.size() << "  Stack: " << stack.size()
+       << "  REPL Globals: " << replGlobals.size() << "\n";
     os << std::string(40, '-') << "\n";
     os << "Type         Count\n";
     for (const auto& [name, cnt] : counts) {
         os << name;
         int pad = (name.size() < 12) ? static_cast<int>(12 - name.size()) : 1;
         os << std::string(pad, ' ') << cnt << "\n";
+    }
+    if (!replGlobals.empty()) {
+        os << "\n" << mlTr("--- REPL 全局变量 ---").toStdString() << "\n";
+        for (const auto& [key, val] : replGlobals) {
+            os << "  " << key << " = " << val.toString() << "\n";
+        }
     }
     return os.str();
 }

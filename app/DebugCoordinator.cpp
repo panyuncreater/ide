@@ -132,7 +132,13 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints, const QMap<int, 
                 entry.line = frame.line;
                 entry.depth = frame.depth;
                 if (frame.env) {
-                    for (const auto& kv : frame.env->localVariables()) {
+                    // P0-2 fix: 用 snapshotLocalVariables() 获取值拷贝，避免直接遍历
+                    // Environment::variables 的 const 引用。UI 线程遍历引用的 map 期间，
+                    // worker 线程可能并发修改变量赋值/声明/作用域清理，导致迭代器失效或
+                    // 读取撕裂值（unordered_map 并发读写是 UB）。对齐 variableCallback
+                    // 的 snapshotLocalVariables() 修复模式。
+                    auto locals = frame.env->snapshotLocalVariables();
+                    for (const auto& kv : locals) {
                         entry.locals.emplace_back(kv.first, kv.second);
                     }
                 }

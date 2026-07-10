@@ -1,0 +1,62 @@
+classDiagram
+    class Ide {
+        -IdeController* controller_
+        -CodeEditor* editor_
+        -AstViewer* astViewer_
+        -DockManager* dockManager_
+        +closeEvent(QCloseEvent)
+        -setupUI()
+        -applyFluentStyle()
+    }
+
+    class IdeController {
+        +PipelineRunner pipeline_
+        +WorkerManager workerMgr_
+        +DebugCoordinator debugCoord_
+        +VmStepper vmStepper_
+        +shared_ptr~Interpreter~ interpreter_
+        +prepareRun() bool
+        +clearPendingEvents()
+        +resetReplEnvironment()
+    }
+
+    class PipelineRunner {
+        +Lexer lexer_
+        +Parser parser_
+        +Compiler compiler_
+        +Formatter formatter_
+        +runFrontendPipeline(source) Result
+    }
+
+    class WorkerManager {
+        -InterpreterWorker* worker_
+        -QThread* workerThread_
+        +startWorker()
+        +stopForClose(timeout) bool
+    }
+
+    class VmStepper {
+        -VM* vm_
+        -RegisterVM* regVm_
+        +stepOnce(mode) VmStepResult
+        +getStack() vector~Value~
+        +getCallStack() vector~CallStackEntry~
+    }
+
+    class CodeEditor {
+        -SyntaxHighlighter* highlighter_
+        +setBreakpoint(line)
+        +goToLine(line)
+    }
+
+    class AstViewer {
+        -QTreeWidget* tree_
+        +display(ASTNode)
+    }
+
+    Ide --> IdeController
+    IdeController --> PipelineRunner
+    IdeController --> WorkerManager
+    IdeController --> VmStepper
+    Ide --> CodeEditor
+    Ide --> AstViewer

@@ -357,6 +357,27 @@ std::unordered_map<std::string, Value> VM::getCurrentFrameLocals() const {
     return result;
 }
 
+// P2-3 fix: 获取指定帧的局部变量（用于调用栈面板显示各帧 locals）
+std::unordered_map<std::string, Value> VM::getFrameLocalsAt(size_t frameIndex) const {
+    std::unordered_map<std::string, Value> result;
+    if (frameIndex >= frames_.size())
+        return result;
+    const auto& frame = frames_[frameIndex];
+    if (!frame.chunk)
+        return result;
+    const auto& names = frame.chunk->localSlotNames;
+    size_t bp = frame.basePointer;
+    for (size_t slot = 0; slot < names.size() && slot < static_cast<size_t>(frame.chunk->localCount); ++slot) {
+        if (names[slot].empty())
+            continue;
+        size_t stackIdx = bp + slot;
+        if (stackIdx >= stack_.size())
+            break;
+        result[names[slot]] = stack_[stackIdx];
+    }
+    return result;
+}
+
 void VM::setOutputCallback(std::function<void(const std::string&)> callback) {
     outputCallback_ = callback;
 }

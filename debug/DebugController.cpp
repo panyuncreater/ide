@@ -378,14 +378,16 @@ void DebugController::stepIn() {
 }
 
 void DebugController::stepOver() {
-    LOG_DEBUG("Step Over (depth=" + std::to_string(currentDepth_.load()) + ")", "Debugger");
-    // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
+    // P2-5 fix: 在锁内统一读取 currentDepth_ 用于日志和 stepOverDepth_，避免
+    // 锁外/锁内两次独立 atomic load 之间 worker 线程更新导致日志与实际不一致。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         if (stopped_)
             return; // AUDIT-P2 fix: 同 stepIn
+        int depth = currentDepth_.load();
+        LOG_DEBUG("Step Over (depth=" + std::to_string(depth) + ")", "Debugger");
         mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
-        stepOverDepth_ = currentDepth_.load(); // P0-9 fix: atomic load
+        stepOverDepth_ = depth;
         crossedDeeper_.store(false);           // P0-9 fix: atomic store (DBG-B fix)
         running_ = true;
         paused_ = false;
@@ -394,13 +396,13 @@ void DebugController::stepOver() {
 }
 
 void DebugController::stepOut() {
-    LOG_DEBUG("Step Out (depth=" + std::to_string(currentDepth_.load()) + ")", "Debugger");
-    int depth = currentDepth_.load(); // P0-9 fix: atomic load
-    // P1-8 fix: 同 stepIn，统一加锁路径消除 TOCTOU。
+    // P2-5 fix: 同 stepOver，在锁内统一读取 currentDepth_。
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         if (stopped_)
             return; // AUDIT-P2 fix: 同 stepIn
+        int depth = currentDepth_.load();
+        LOG_DEBUG("Step Out (depth=" + std::to_string(depth) + ")", "Debugger");
         mode_.store(static_cast<int>((depth > 0) ? StepMode::MODE_STEP_OUT : StepMode::MODE_RUN));
         stepOutDepth_ = depth;
         running_ = true;

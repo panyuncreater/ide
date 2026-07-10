@@ -168,6 +168,9 @@ public:
         currentEnv_ = env;
     }
 
+    /// 获取全局环境（供 REPL %memory 等命令访问）
+    std::shared_ptr<Environment> getGlobalEnvironment() const { return globalEnv_; }
+
     /// 获取诊断信息（ARCH-09 fix: IBackend override）
     const DiagnosticBag& getDiagnostics() const override { return diagnostics_; }
 

@@ -33,7 +33,7 @@
 ### 环境要求
 
 - CMake >= 3.25、C++20 编译器（MSVC 19.51+ / GCC 13+ / Clang 16+）
-- Qt6 >= 6.0（CI 验证版本 6.10.3；需 Core/Gui/Widgets/Svg/Xml）
+- Qt6 >= 6.0（CI 验证版本 6.8.3；需 Core/Gui/Widgets/Svg/Xml）
 
 ### Windows
 

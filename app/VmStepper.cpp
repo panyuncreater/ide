@@ -162,15 +162,39 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         }
 
         // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
-        // #5 注：VM 断点检查在 stepOnce 之后（post-execution），即执行完一条指令后
-        // 检查 IP 指向的下一条指令是否在断点行。变量快照反映的是上一条指令执行后
-        // 的状态（= 断点行的前置状态）。这与 Interpreter 的 pre-execution 暂停
-        // （节点副作用未应用）在语义上等价——用户看到的是"即将执行这行前的状态"。
-        // 唯一差异：多语句行（a=1; b=2;）VM 可能在执行完 a=1 后才检测到 b=2 所在行。
+        // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
+        // 与 Interpreter 的 pre-execution 语义对齐。原实现在 stepOnce 之后检查
+        //（post-execution），多语句行（print(1); print(2);）VM 可能在执行完
+        // print(1) 后才检测到断点行，用户看到 print(1) 已输出。
+        // 现在在每条指令执行前先检查当前 IP 是否命中断点。
         constexpr int64_t MAX_STEP_LOOP = 1000000;
         int64_t stepCount = 0;
+        // P1-2 fix: 记录步进起始时的行号和帧深度，用于 STEP_IN 行级粒度判断。
+        // 对齐 Interpreter DebugController::shouldPauseForStepping 的 STEP_IN 逻辑：
+        // 行号变化或调用深度变化时暂停（而非每条指令暂停）。
+        int stepStartLine = getCurrentLine();
+        size_t stepStartFrame = getFrameCount();
 
         while (true) {
+            // P1-3 fix: pre-execution 断点检查——执行前检查当前 IP 是否命中断点
+            {
+                int preLine = getCurrentLine();
+                if (preLine > 0) {
+                    if (preLine != vmLastSeenLine_) {
+                        vmCrossedLine_ = true;
+                    }
+                    // 注：pre-execution 检查时不更新 vmLastSeenLine_，
+                    // 留到 post-execution 统一更新，避免漏检
+                    if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                        vmBreakpointHitCounts_[preLine]++;
+                        vmLastPausedLine_ = preLine;
+                        vmCrossedLine_ = false;
+                        isVmRunning_ = false;
+                        return VmStepResult::PAUSED_AT_BREAKPOINT;
+                    }
+                }
+            }
+
             VMResult result = stepOnceActive();
             ++stepCount;
 
@@ -224,11 +248,9 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             int currentLine = getCurrentLine();
             size_t currentFrameCount = getFrameCount();
 
-            // 断点命中检查（所有模式都检查，使 RUN 能停在断点）
-            // #4 fix: 改用 checkBreakpointHit 支持条件断点求值
+            // P1-3 fix: 行号追踪更新（post-execution）。
+            // 断点命中检查已移到 pre-execution（循环开头），此处仅更新行号追踪状态。
             // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制。
-            // 原实现仅用 currentLine != vmLastPausedLine_ 去重，单行循环断点
-            // （如 for (...; ...; ...) print(i);）首次命中后永不再触发。
             // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
             // 仅在断点真正命中（含条件满足）时清 false，与 DebugController F4 修复一致。
             if (currentLine > 0) {
@@ -237,21 +259,18 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 }
                 vmLastSeenLine_ = currentLine;
             }
-            if (checkBreakpointHit(currentLine) && (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                // AUDIT-P2-CORRECT fix: hitCount 递增移到过滤条件通过后，避免过度递增
-                vmBreakpointHitCounts_[currentLine]++;
-                vmLastPausedLine_ = currentLine;
-                vmCrossedLine_ = false; // 命中后重置，同行后续指令不再触发
-                isVmRunning_ = false;
-                return VmStepResult::PAUSED_AT_BREAKPOINT;
-            }
 
             // 根据步进模式判断是否暂停
             bool shouldPause = false;
             switch (mode) {
             case VmStepMode::STEP_IN:
-                // 单步：执行一条即暂停
-                shouldPause = true;
+                // P1-2 fix: 对齐 Interpreter 的 STEP_IN 语义——行号变化或调用深度
+                // 变化时暂停，而非每条指令暂停。原实现 shouldPause=true 导致 VM 模式
+                // 下一个简单赋值需点击 5-10 次才能走完（一个表达式编译为多条指令）。
+                // 现在仅在行号或帧深度发生变化时暂停，与 Interpreter AST 节点级粒度对齐。
+                if (currentLine != vmLastPausedLine_ || currentFrameCount != stepStartFrame) {
+                    shouldPause = true;
+                }
                 break;
             case VmStepMode::STEP_OVER:
                 // AUDIT-BUG-D2 fix: 跟踪是否进入过更深的帧（crossedDeeper）。
@@ -303,6 +322,15 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
             }
 
             if (shouldPause) {
+                // P1-4 fix: 步进模式下若当前行有断点，递增 hitCount（对齐
+                // DebugController L108-114 的行为）。虽然 pre-execution 断点检查
+                // 已在循环开头处理了断点命中，但步进暂停可能发生在断点行上
+                //（pre-execution 因 vmCrossedLine_ 等去重条件未触发，步进模式
+                // 无去重条件直接暂停）。此处在步进暂停时补充递增 hitCount，
+                // 使 VM 与 Interpreter 的断点命中次数统计一致。
+                if (currentLine > 0 && vmBreakpoints_.contains(currentLine)) {
+                    vmBreakpointHitCounts_[currentLine]++;
+                }
                 vmLastPausedLine_ = currentLine;
                 isVmRunning_ = false;
                 return VmStepResult::OK;
@@ -340,6 +368,27 @@ void VmStepper::runBatch() {
 
     try {
         for (int i = 0; i < BATCH_SIZE; ++i) {
+            // P1-3 fix: pre-execution 断点检查——执行前检查当前 IP 是否命中断点。
+            // 与 stepByMode 同步路径对齐，与 Interpreter pre-execution 语义一致。
+            {
+                int preLine = getCurrentLine();
+                if (preLine > 0) {
+                    if (preLine != vmLastSeenLine_) {
+                        vmCrossedLine_ = true;
+                    }
+                    if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                        vmBreakpointHitCounts_[preLine]++;
+                        vmRunTimer_->stop();
+                        vmLastPausedLine_ = preLine;
+                        vmCrossedLine_ = false;
+                        isVmRunning_ = false;
+                        emit vmRunPaused(VmStepResult::PAUSED_AT_BREAKPOINT);
+                        return;
+                    }
+                    vmLastSeenLine_ = preLine;
+                }
+            }
+
             VMResult result = stepOnceActive();
             ++vmRunStepCount_;
 
@@ -366,38 +415,6 @@ void VmStepper::runBatch() {
                 emit vmRunPaused(VmStepResult::OK); // 返回 OK 让 UI 更新，用户可继续
                 return;
             }
-
-            // 断点命中检查
-            // #4 fix: 改用 checkBreakpointHit 支持条件断点求值
-            // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制（与 stepByMode 对齐）。
-            // 原实现仅用 currentLine != vmLastPausedLine_ 去重，单行循环断点
-            // （如 for (...; ...; ...) print(i);）首次命中后永不再触发。
-            // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
-            // 仅在断点真正命中（含条件满足）时清 false。
-            //
-            // BUG-IDE-19（已知限制）：条件断点求值（checkBreakpointHit →
-            // vmConditionEvaluator_）在主线程同步执行，每次命中都会创建临时
-            // Interpreter + Lexer + Parser + Environment 拷贝全局变量。当条件表达式
-            // 复杂或全局变量规模大时，单次求值可达毫秒级，循环内频繁命中条件断点会
-            // 拖慢 RUN 模式。这是用户主动设置的功能，性能可接受；彻底修复需要将求值
-            // 移到独立线程或缓存求值环境，工程量大，暂列为已知限制。
-            int currentLine = getCurrentLine();
-            if (currentLine > 0) {
-                if (currentLine != vmLastSeenLine_) {
-                    vmCrossedLine_ = true;
-                }
-                vmLastSeenLine_ = currentLine;
-            }
-            if (checkBreakpointHit(currentLine) && (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                // AUDIT-P2-CORRECT fix: hitCount 递增移到过滤条件通过后，避免过度递增
-                vmBreakpointHitCounts_[currentLine]++;
-                vmRunTimer_->stop();
-                vmLastPausedLine_ = currentLine;
-                vmCrossedLine_ = false; // 命中后重置，同行后续指令不再触发
-                isVmRunning_ = false;
-                emit vmRunPaused(VmStepResult::PAUSED_AT_BREAKPOINT);
-                return;
-            }
             // RUN 模式：仅断点命中才暂停，否则继续执行下一批
         }
     } catch (...) {
@@ -414,6 +431,8 @@ void VmStepper::stop() {
     // QT-R-01 fix: 停止 RUN 模式定时器
     if (vmRunTimer_)
         vmRunTimer_->stop();
+    // P2-1 fix: 设置条件求值停止标志，使正在执行的 VM 条件断点求值能快速中止
+    vmCondStopRequested_.store(true, std::memory_order_relaxed);
     // A1 fix: 重置当前活跃后端（非活跃后端已在 reset() 中重置，此处仅清理活跃方）
     resetActiveState();
     isVmInitialized_ = false;

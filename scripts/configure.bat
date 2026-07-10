@@ -44,7 +44,7 @@ if errorlevel 1 exit /b 1
 REM --- Prefer VS-bundled cmake (recognizes the installed MSVC version;
 REM     pip/pipx cmake may not know new MSVC like 19.51) ---
 set "CMAKE_CMD=cmake"
-set "VS_CMAKE=%VSINSTALL%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMakein\cmake.exe"
+set "VS_CMAKE=%VSINSTALL%\Common7\IDE\CommonExtensions\Microsoft\CMake\bin\cmake.exe"
 if exist "%VS_CMAKE%" (
     set "CMAKE_CMD=%VS_CMAKE%"
     echo [INFO] Using VS-bundled cmake

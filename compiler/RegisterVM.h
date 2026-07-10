@@ -132,6 +132,10 @@ public:
     /// 空帧/主程序帧（无 localRegNames）返回空映射。
     std::unordered_map<std::string, Value> getCurrentFrameLocals() const;
 
+    /// P2-3 fix: 获取指定帧的局部变量名→值映射（用于调用栈面板显示各帧 locals）。
+    /// frameIndex 从 0 开始（0=栈底 main 帧）。越界或无 localRegNames 返回空映射。
+    std::unordered_map<std::string, Value> getFrameLocalsAt(size_t frameIndex) const;
+
     /// 步进回调
     void setStepCallback(std::function<void(const RegVMStepInfo&)> cb) { stepCallback_ = cb; }
     void setStepCallbackEnabled(bool enabled) { stepCallbackEnabled_ = enabled; }

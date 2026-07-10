@@ -91,6 +91,11 @@ public:
         return it != vmBreakpointHitCounts_.end() ? it.value() : 0;
     }
 
+    /// P2-1 fix: 检查 VM 条件断点求值是否被请求停止。
+    /// 供 IdeController 条件求值 lambda 在每次 evaluate 前检查，
+    /// 实现快速中止（对齐 Interpreter 路径 evaluateCondition 中的 stopRequested_ 检查）。
+    bool isCondStopRequested() const { return vmCondStopRequested_.load(std::memory_order_relaxed); }
+
     /// #4 fix: 设置条件求值器回调（由 IdeController 注入，使用临时 Interpreter + VM 全局变量求值）
     void setConditionEvaluator(std::function<bool(const std::string&)> evaluator) {
         vmConditionEvaluator_ = std::move(evaluator);
@@ -145,6 +150,14 @@ public:
         vmLastSeenLine_ = -1;
         vmCrossedLine_ = false;
         vmCrossedDeeper_ = false;
+        // P0-1 fix: reset() 遗漏 vmLastPausedLine_/vmStepStartFrameCount_ 重置。
+        // stop() 正确重置了这两个字段，但 reset() 没有。新调试会话通过 prepareRun()
+        // 调用 reset() 而非 stop()，残留的 vmLastPausedLine_ 会污染断点去重逻辑
+        //（currentLine != vmLastPausedLine_ 判断失效），首行断点可能被错误过滤。
+        vmLastPausedLine_ = 0;
+        vmStepStartFrameCount_ = 0;
+        // P2-1 fix: 清除条件求值停止标志（新会话开始）
+        vmCondStopRequested_.store(false, std::memory_order_relaxed);
         // BUG-DBG-AUDIT-2 fix: 清空断点命中计数（对齐 DebugController::reset 行 485，
         // 重置所有断点 hitCount，保留断点和条件本身）。
         vmBreakpointHitCounts_.clear();
@@ -187,7 +200,7 @@ public:
     //   functionName → functionName
     //   line → line
     //   depth → 帧索引（0=栈底 main，递增到栈顶）
-    //   locals → 空（VM 帧无 Environment*，局部变量需从槽位反查，暂不支持）
+    //   locals → P2-3 fix: 通过 getFrameLocalsAt() 反查各帧局部变量
     std::vector<CallStackEntry> getCallStack() const {
         std::vector<CallStackEntry> result;
         if (useRegister_) {
@@ -198,8 +211,13 @@ public:
                 CallStackEntry entry;
                 entry.functionName = f.functionName;
                 entry.line = f.line;
-                entry.depth = depth++;
-                // locals 留空：VM 帧无 Environment，局部变量需从槽位反查
+                entry.depth = depth;
+                // P2-3 fix: 通过 getFrameLocalsAt 反查帧局部变量
+                auto locals = regVm_.getFrameLocalsAt(static_cast<size_t>(depth));
+                for (const auto& kv : locals) {
+                    entry.locals.emplace_back(kv.first, kv.second);
+                }
+                ++depth;
                 result.push_back(std::move(entry));
             }
         } else {
@@ -210,7 +228,13 @@ public:
                 CallStackEntry entry;
                 entry.functionName = f.functionName;
                 entry.line = f.line;
-                entry.depth = depth++;
+                entry.depth = depth;
+                // P2-3 fix: 通过 getFrameLocalsAt 反查帧局部变量
+                auto locals = vm_.getFrameLocalsAt(static_cast<size_t>(depth));
+                for (const auto& kv : locals) {
+                    entry.locals.emplace_back(kv.first, kv.second);
+                }
+                ++depth;
                 result.push_back(std::move(entry));
             }
         }
@@ -262,6 +286,10 @@ private:
     // reset() 清空，setBreakpointConditions 重置对应行。
     QMap<int, int> vmBreakpointHitCounts_;
     std::function<bool(const std::string&)> vmConditionEvaluator_; // #4 fix: 条件求值回调
+    // P2-1 fix: VM 条件断点求值期间的停止标志。用户点击停止时 stop() 设置此标志，
+    // 条件求值 lambda 在每次 evaluate 前检查，实现快速中止（无需等待步数上限）。
+    // 对齐 Interpreter 路径 evaluateCondition 中检查 stopRequested_ 的机制。
+    std::atomic<bool> vmCondStopRequested_{false};
     // QT-R-01 fix: RUN 模式异步分批执行的定时器
     QTimer* vmRunTimer_ = nullptr;
     int64_t vmRunStepCount_ = 0; // RUN 模式累计执行步数（用于总量上限保护）

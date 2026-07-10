@@ -1,0 +1,64 @@
+classDiagram
+    class NaNBox {
+        -uint64_t bits_
+        +fromFloat(double) NaNBox
+        +fromInt(int64_t) NaNBox
+        +fromBool(bool) NaNBox
+        +fromPtr(void*) NaNBox
+        +null() NaNBox
+        +tag() Tag
+        +isInt() bool
+        +asInt() int64_t
+    }
+
+    class Value {
+        +NaNBox box_
+        +type() ValueType
+        +isInt() bool
+        +isString() bool
+        +asArray() ArrayValue*
+    }
+
+    class RefCounted {
+        <<abstract>>
+        #int refCount_
+        +addRef()
+        +release()
+    }
+
+    class ArrayValue {
+        +vector~Value~ elements
+        +copyOnWrite()
+    }
+
+    class DictValue {
+        +vector~pair~ pairs
+        +copyOnWrite()
+    }
+
+    class ClosureValue {
+        +shared_ptr~FunDecl~ body
+        +vector~Upvalue~ upvalues
+    }
+
+    class ClassValue {
+        +string name
+        +unordered_map methods
+        +weak_ptr~ClassValue~ superClass
+    }
+
+    class Environment {
+        -unordered_map~string,Value~ vars_
+        -shared_ptr~Environment~ parent_
+        +get(name) Value
+        +define(name, value)
+        +assign(name, value) bool
+    }
+
+    RefCounted <|-- ArrayValue
+    RefCounted <|-- DictValue
+    RefCounted <|-- ClosureValue
+    RefCounted <|-- ClassValue
+    Value --> NaNBox : 内联
+    Value ..> RefCounted : 指针引用
+    Environment --> Value : 存储

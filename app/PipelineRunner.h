@@ -88,6 +88,39 @@ public:
     /// BUG-ORCH-7 fix: 失效前端管线缓存（Compiler 设置变更或外部强制刷新时调用）
     void invalidatePipelineCache() { cachedPipelineSource_.clear(); }
 
+    /// REPL 专用：直接设置词法/语法分析结果（供 magic 命令无参查询）
+    /// REPL 传入源码，内部静默执行 Lex+Parse（不发 diagnosticsReady 信号），
+    /// 更新 lastTokens_/astRoot_。注意：不清空 lastCompileResult_，
+    /// 因为用户可能仍想查看最近一次 Run(F5) 的字节码。
+    void setReplPipelineState(const std::string& source) {
+        invalidatePipelineCache();
+        lastTokens_ = lexer_.scan(source);
+        bool hasError = false;
+        for (const auto& tok : lastTokens_) {
+            if (tok.type == TokenType::TK_ERROR) {
+                hasError = true;
+                break;
+            }
+        }
+        if (!hasError) {
+            try {
+                astRoot_ = parser_.parse(lastTokens_);
+            } catch (...) {
+                astRoot_.reset();
+            }
+        } else {
+            astRoot_.reset();
+        }
+    }
+
+    /// 清空管线状态（%reset 时调用）
+    void resetPipelineState() {
+        invalidatePipelineCache();
+        lastTokens_.clear();
+        astRoot_.reset();
+        lastCompileResult_ = CompileResult{};
+    }
+
 private:
     /// BUG-ORCH-7 fix: 缓存前端管线结果
     void cachePipelineResult(const std::string& source, const PipelineResult& result);

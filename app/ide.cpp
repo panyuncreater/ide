@@ -379,6 +379,18 @@ static QString formatBytecodeHtml(const std::string& text) {
 // Constructor / Destructor
 // ============================================================
 
+/// PERF: 延迟合并样式应用请求
+/// 启动期间多个路径（Theme::setThemeMode、dockWidgetAdded、showEvent、restoreLayout）
+/// 都会请求应用样式，直接调用会导致 applyFluentStyle 被执行 5-6 次。
+/// 通过 0ms 定时器防抖，同一事件循环内的多次请求合并为一次实际执行。
+void Ide::scheduleApplyStyle() {
+    if (closing_ || !applyStyleTimer_)
+        return;
+    if (!applyStyleTimer_->isActive()) {
+        applyStyleTimer_->start();
+    }
+}
+
 /// 构造函数：构建标题栏/主界面/信号连接/文件树/状态栏，初始化主题、拖放与文件监视，
 /// 首次启动弹出欢迎向导；最后恢复布局并刷新标题与状态栏。
 Ide::Ide(QWidget* parent) : QMainWindow(parent) {
@@ -400,10 +412,11 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     // ---- 主题系统：仅使用亮色主题（深色主题已移除） ----
     // 强制 LIGHT 模式，不再读取 QSettings 持久化（删除深色主题后无切换需求）。
     // onThemeModeChanged 回调保留用于响应 ThemeColor（主题色）变更，但不再切换亮/暗。
+    // PERF: 使用 scheduleApplyStyle 合并多个样式请求，避免启动时重复调用
     Theme::onThemeModeChanged(this, [this](Fluent::ThemeMode) {
-        applyFluentStyle(); // 主题色变更时重算 QSS
+        scheduleApplyStyle(); // 主题色变更时重算 QSS（合并防抖）
     });
-    // setThemeMode 触发 onThemeModeChanged 回调 → applyFluentStyle()，无需重复调用
+    // setThemeMode 触发 onThemeModeChanged → scheduleApplyStyle（通过0ms定时器延迟执行）
     Theme::setThemeMode(Fluent::ThemeMode::LIGHT);
     applyTeachingFontSize(); // 首次应用教学面板字号（codeFontSize_ + 2）
 
@@ -420,6 +433,12 @@ Ide::Ide(QWidget* parent) : QMainWindow(parent) {
     splitterSaveTimer_->setSingleShot(true);
     splitterSaveTimer_->setInterval(500);
     connect(splitterSaveTimer_, &QTimer::timeout, this, &Ide::saveLayout);
+
+    // PERF: 样式应用防抖定时器 - 合并多次 applyFluentStyle 请求为一次
+    applyStyleTimer_ = new QTimer(this);
+    applyStyleTimer_->setSingleShot(true);
+    applyStyleTimer_->setInterval(0);
+    connect(applyStyleTimer_, &QTimer::timeout, this, [this]() { applyFluentStyle(); });
 
     // Restore AST window geometry (independent top-level window)
     restoreAstWindowGeometry();
@@ -474,6 +493,27 @@ Ide::~Ide() {
         }
         activePanelTours_.clear();
     }
+    // ROUND-73 P0 fix: 停止所有子对象的 QTimer 和 QAbstractAnimation（安全网）。
+    // 对齐 closeEvent 中的 stopChildAnimations，但用 findChildren(this) 递归覆盖全部子对象。
+    // 关键认知：closeEvent 被绕过时（如 QCoreApplication::quit()、系统强制关闭），
+    // 教学面板的 autoTimer（2s 间隔）和 QPropertyAnimation 仍然活跃。
+    // ~QObject 删除子 QTimer 时 QTimer 析构会 stop，但析构链中若有事件派发
+    // （如 ADS QSS 重算 → repaint），活跃的定时器会触发回调访问正在析构的成员 → UAF。
+    // QVariantAnimation/QPropertyAnimation 由 QUnifiedTimer 驱动，不受 removePostedEvents 控制。
+    {
+        const auto timers = findChildren<QTimer*>();
+        for (auto* t : timers) {
+            if (t && t->isActive())
+                t->stop();
+        }
+        const auto anims = findChildren<QAbstractAnimation*>();
+        for (auto* a : anims) {
+            if (a && a->state() == QAbstractAnimation::Running)
+                a->stop();
+        }
+    }
+    // ROUND-67 P2 fix: 清空 vmStateChangedListener（安全网）。
+    if (controller_) controller_->clearVmStateChangedListeners();
     // ROUND-66 P0 fix: 清空所有待处理事件，防止子对象析构期间 Qt 派发残留的
     // QMetaCallEvent（queued slot lambda）。Qt6 disconnect 不移除已投递的
     // QMetaCallEvent，若析构链中任何子对象析构触发了事件派发（如 ADS 内部
@@ -497,7 +537,8 @@ Ide::~Ide() {
 void Ide::showEvent(QShowEvent* event) {
     QMainWindow::showEvent(event);
     if (firstShow_) {
-        applyFluentStyle();
+        // PERF: 使用 scheduleApplyStyle 合并，避免与构造函数/restoreLayout 中的重复调用
+        scheduleApplyStyle();
     }
 }
 
@@ -568,6 +609,10 @@ void Ide::closeEvent(QCloseEvent* event) {
             if (t->isActive())
                 t->stop();
         }
+        // ROUND-73 P1 fix: 清除面板已排队的 QMetaCallEvent（QueuedConnection 槽调用）。
+        // stop() 停止 QTimer 但不取消已投递的 timeout 事件和 queued slot 调用。
+        // closeEvent 后续的 processEvents(L700) 会派发这些残留事件，访问正在清理的 UI → UAF。
+        QCoreApplication::removePostedEvents(w);
     };
     stopChildAnimations(centerStack_);
     if (centerStack_) {
@@ -1257,13 +1302,30 @@ void Ide::onEditorTabCloseRequested(int index) {
                 }
             }
         } else {
-            // 编辑器模式：回欢迎页
-            centerStack_->setCurrentWidget(welcomePage_);
-            centerStack_->show();
-            editorTabWidget_->hide();
+        // 编辑器模式：回欢迎页
+        centerStack_->setCurrentWidget(welcomePage_);
+        centerStack_->show();
+        editorTabWidget_->hide();
+        // ROUND-76 fix: 关闭最后一个标签后必须重分配 centerSplitter_ 让 centerStack_
+        // 占满，否则 splitter 保持编辑器独占态 [0, total]（centerStack_ 宽 0）或
+        // 三栏态 [420, 780]（editorSplitter_ 内已空却仍占大半宽度），表现为
+        // 「欢迎页空白」+「之后切学习面板加载不出来」。
+        // 此处与 showTeachingPanel 的无标签分支互为兜底：这里治本（欢迎页可见），
+        // showTeachingPanel 兜底保证教学面板占满。
+        if (centerSplitter_) {
+            QList<int> curSizes = centerSplitter_->sizes();
+            if (curSizes.size() == 2) {
+                int total = curSizes[0] + curSizes[1];
+                if (total > 200 && curSizes[0] < total - 5) {
+                    // editorSplitter_ 内已无标签 + 底部面板已 hide，
+                    // 直接收为 {total, 0}，无需动画（关闭动画已由 hideBottomPanel 完成）
+                    centerSplitter_->setSizes({total, 0});
+                }
+            }
         }
-        return;
     }
+    return;
+}
 
     int currIdx = editorTabWidget_->currentIndex();
     int newCurrent = currIdx;
@@ -1527,11 +1589,18 @@ void Ide::showTeachingPanel(const QString& panelId) {
             int editorW = total - teachingW;
             animateCenterSplitter(savedSplitterSizes, {teachingW, editorW});
         }
-    } else if (!editorHasTabs && centerStackWasHiddenOrZero && savedSplitterSizes.size() == 2) {
-        // ROUND-60 fix (Issue 4): 无编辑器标签但 centerStack_ 被 hide（编辑器独占
-        // 模式残留），教学区需获得全宽
+    } else if (!editorHasTabs && savedSplitterSizes.size() == 2) {
+        // ROUND-76 fix: 无编辑器标签时教学区必须占满 splitter。
+        // 原 ROUND-60 fix 仅在 centerStackWasHiddenOrZero 时动画，漏掉
+        // 「centerStack_ 可见但 editorSplitter_ 仍占据大半宽度」的场景：
+        //   - 关闭所有标签后 splitter 保持 [420, 780]（centerStack_ 有宽度但
+        //     editorSplitter_ 内已空），教学面板被挤在 420px 窄区域、右侧大片空白，
+        //     用户感知「学习面板加载不出来」；
+        //   - onEditorTabCloseRequested 已治本性收为 {total, 0}，此处为兜底：
+        //     只要 editorSplitter_ 还占空间（savedSplitterSizes[1] > 5）就动画压缩到 0，
+        //     保证教学面板在任何 splitter 残留状态下都能占满。
         int total = savedSplitterSizes[0] + savedSplitterSizes[1];
-        if (total > 200) {
+        if (total > 200 && savedSplitterSizes[1] > 5) {
             animateCenterSplitter(savedSplitterSizes, {total, 0});
         }
     }
@@ -2995,9 +3064,10 @@ void Ide::initUI() {
     // 新 dock widget 自动应用样式。restoreState 创建的新 tab 不会被此前的
     // applyFluentStyle 样式化，导致蓝底问题。通过此信号在 applyFluentStyle
     // 中对 findChildren<CDockWidgetTab*>() 设置 palette。
+    // PERF: 使用 scheduleApplyStyle 防抖合并，避免 restoreState 期间每个 dock
+    // 添加都触发一次全量样式重算。
     connect(dockManager_, &ads::CDockManager::dockWidgetAdded, this, [this](ads::CDockWidget*) {
-        // 延迟到事件循环，确保 tab 已完全构造
-        QTimer::singleShot(0, this, [this]() { applyFluentStyle(); });
+        scheduleApplyStyle();
     });
 
     // R68 关键修复：锁定 ColorSchemeMode 为 Light，阻止 palette 变化触发 loadStylesheet。
@@ -3490,6 +3560,11 @@ void Ide::initStatusBar() {
 
 /// 应用 QFluentKit 主题 QSS 与调色板，统一整体视觉风格。
 void Ide::applyFluentStyle() {
+    // PERF: 重入守卫 - 防止 setPalette/setStyleSheet 触发的事件递归调用
+    if (applyingStyle_)
+        return;
+    applyingStyle_ = true;
+
     // ---- Register native widgets with QFluentKit style sheet manager ----
     // R66-2 fix: fileTree_/errorListWidget_/bytecodeList_/recentListWidget_/tokenTable_
     // 不再注册到 QFluentKit。原因：QFluentKit 的 list_view.qss/table_view.qss 设置
@@ -3922,14 +3997,9 @@ void Ide::applyFluentStyle() {
     )")
                            .arg(bgPanel, borderColor, fgSecondary, hoverBg, bgMain);
 
-    // Apply panel styling via findChildren
-    for (auto* obj : findChildren<QWidget*>()) {
-        QString name = obj->objectName();
-        if (name == "bottomPanelContainer" || name == "rightPanelContainer" || name == "bottomPivotRow" ||
-            name == "rightPivotRow" || name == "panelCloseBtn" || name == "teachingPanelCard") {
-            obj->setStyleSheet(panelQss);
-        }
-    }
+    // PERF: 不再用 findChildren 全树遍历逐个 setStyleSheet。
+    // panelQss 中的 #id 选择器会通过 Qt 样式表继承机制自动应用到匹配 objectName 的子控件。
+    // panelQss 将和 QGroupBox 等样式一起合并设置到主窗口（见函数末尾）。
 
     // ============================================================
     // Editor tab widget styling
@@ -4083,16 +4153,6 @@ void Ide::applyFluentStyle() {
             )").arg(bg.name(), fg.name(), TeachingTheme::ideBorder().name()));
             s_toolTipStyled = true;
         }
-        // mainContainer / middleArea 也设置 palette 兜底
-        for (auto* w : findChildren<QWidget*>()) {
-            QString name = w->objectName();
-            if (name == "mainContainer" || name == "middleArea") {
-                QPalette p = w->palette();
-                p.setColor(QPalette::Window, bg);
-                w->setPalette(p);
-                w->setAutoFillBackground(true);
-            }
-        }
     }
 
     // ============================================================
@@ -4100,40 +4160,48 @@ void Ide::applyFluentStyle() {
     // R15-7: 补全覆盖 centerStack_、centerSplitter_、welcomePage_、replPanel_、
     // errorPageContainer、fileTreeContainer 等通用 widget 背景色，消除「部分区域
     // 未变米黄色」的割裂感。统一使用 Solarized base3 (#FDF6E3) 作为主背景。
-    // ISSUE-3 fix: 补充 welcomeCenter / welcomeBtnContainer，确保欢迎页中央区域
-    // 与按钮容器也覆盖米黄色背景，消除白色残留。
-    // R58-3 fix: 补充 editorSplitter / bottomPanelContainer / bottomPivotRow，
-    // 覆盖启动时 editorTabWidget_+bottomContainer_ 双隐藏后 editorSplitter_ 的
-    // 空白区域，以及底部面板容器的背景，消除白色残留。
-    // R60-1 fix: 补充 rightPanelContainer / rightPivotRow / bytecodePage，
-    // 覆盖右侧面板容器及字节码页面的背景。
-    // R61-2 fix: 补充 bytecodePage / bytecodeSplitter / tokenPage / irPage，
-    // 确保右侧编译分析面板所有子页面背景统一为米黄色。
-    // R65-2 fix: 补充 rightStack（QStackedWidget），此前无 objectName 不在白名单中，
-    // 导致切换到字节码页面时 rightStack_ 的默认背景（白色）透过子 widget 显示。
-    // 注意：editorTabWidget_ 在下方有专门的 QTabWidget 样式（行 3542），不在此处覆盖。
+    // PERF: 合并原来的 3 次 findChildren 全树遍历为 1 次，直接用成员指针处理已知控件
     // ============================================================
+    const QString bgStyle = QString("background: %1; border: none;").arg(bgMain);
+
+    // 直接通过成员指针设置已知控件（无需遍历）
+    auto applyBgStyle = [&bgStyle](QWidget* w) {
+        if (!w) return;
+        w->setStyleSheet(bgStyle);
+        w->setAttribute(Qt::WA_StyledBackground, true);
+    };
+    applyBgStyle(centerStack_);
+    applyBgStyle(centerSplitter_);
+    applyBgStyle(editorSplitter_);
+    applyBgStyle(bottomContainer_);
+    applyBgStyle(replPanel_);
+    applyBgStyle(rightStack_);
+    applyBgStyle(welcomePage_);
+
+    // 一次性 findChildren 处理其余非成员容器（替代原来的 3 次全树遍历）
+    // 注意：bottomContainer_/centerStack_/centerSplitter_/editorSplitter_/replPanel_/rightStack_/welcomePage_
+    // 已通过 applyBgStyle 直接设置，不在此重复处理
     for (auto* w : findChildren<QWidget*>()) {
         QString name = w->objectName();
-        if (name == "mainContainer" || name == "middleArea" || name == "centerStack" || name == "centerSplitter" ||
-            name == "editorSplitter" || name == "bottomPanelContainer" || name == "bottomPivotRow" ||
-            name == "welcomePage" || name == "welcomeRecentPanel" || name == "welcomeCenter" ||
-            name == "welcomeBtnContainer" || name == "replPanel" ||
+        if (name == "mainContainer" || name == "middleArea" ||
+            name == "welcomeRecentPanel" || name == "welcomeCenter" ||
+            name == "welcomeBtnContainer" ||
             name == "errorPageContainer" || name == "fileTreeContainer" ||
-            name == "rightPanelContainer" || name == "rightPivotRow" || name == "rightStack" ||
-            name == "bytecodePage" || name == "bytecodeSplitter") {
-            w->setStyleSheet(QString("background: %1; border: none;").arg(bgMain));
-            // WA_StyledBackground 确保 QSS background 在普通 QWidget 上生效
+            name == "rightPanelContainer" || name == "bottomPivotRow" || name == "rightPivotRow" ||
+            name == "bytecodePage" || name == "bytecodeSplitter" ||
+            name == "debugButtonContainer" || name == "vmButtonContainer") {
+            if (name == "mainContainer" || name == "middleArea") {
+                QPalette p = w->palette();
+                p.setColor(QPalette::Window, TeachingTheme::ideBgMain());
+                w->setPalette(p);
+                w->setAutoFillBackground(true);
+            }
+            if (name == "debugButtonContainer" || name == "vmButtonContainer") {
+                w->setStyleSheet("background: transparent; border: none;");
+            } else {
+                w->setStyleSheet(bgStyle);
+            }
             w->setAttribute(Qt::WA_StyledBackground, true);
-        }
-    }
-
-    // ============================================================
-    // Debug/VM button containers
-    // ============================================================
-    for (auto* w : findChildren<QWidget*>()) {
-        if (w->objectName() == "debugButtonContainer" || w->objectName() == "vmButtonContainer") {
-            w->setStyleSheet("background: transparent; border: none;");
         }
     }
 
@@ -4209,25 +4277,29 @@ void Ide::applyFluentStyle() {
         vmStackPanel_->setStyleSheet(vmQss);
 
     // ============================================================
-    // P2-3/4: QGroupBox 统一 Fluent 外观
+    // P2-3/4: QGroupBox 统一 Fluent 外观 + 面板容器样式
     // WelcomeWizard / VmStackSandboxPanel 等面板使用 QGroupBox 作为分组容器，
     // 此处通过全局样式表统一着色（边框/背景/标题色跟随 TeachingTheme 主题色板），
     // 避免逐个 QGroupBox 替换为 SimpleCardWidget 的高风险改动。
+    // PERF: 将 panelQss 合并到主窗口样式表，利用 Qt 样式表继承机制自动应用到
+    // 匹配 objectName 的子控件，无需 findChildren 逐个 setStyleSheet。
     // 注意：setStyleSheet 会覆盖主窗口之前的样式，但主窗口无其他样式，故安全。
     // ============================================================
-    setStyleSheet(QString("QGroupBox { "
-                          "  border: 1px solid %1; border-radius: 6px; "
-                          "  margin-top: 12px; padding-top: 8px; "
-                          "  background: %2; "
-                          "} "
-                          "QGroupBox::title { "
-                          "  subcontrol-origin: margin; "
-                          "  left: 8px; padding: 0 4px; "
-                          "  color: %3; "
-                          "}")
-                      .arg(TeachingTheme::border().name())
-                      .arg(TeachingTheme::surface().name())
-                      .arg(TeachingTheme::textPrimary().name()));
+    QString mainQss = panelQss;
+    mainQss += QString("QGroupBox { "
+                        "  border: 1px solid %1; border-radius: 6px; "
+                        "  margin-top: 12px; padding-top: 8px; "
+                        "  background: %2; "
+                        "} "
+                        "QGroupBox::title { "
+                        "  subcontrol-origin: margin; "
+                        "  left: 8px; padding: 0 4px; "
+                        "  color: %3; "
+                        "}")
+                    .arg(TeachingTheme::border().name())
+                    .arg(TeachingTheme::surface().name())
+                    .arg(TeachingTheme::textPrimary().name());
+    setStyleSheet(mainQss);
 
     // ---- Sync editor theme（深色主题已移除，强制 light 配色）----
     if (codeEditor_)
@@ -4236,6 +4308,8 @@ void Ide::applyFluentStyle() {
         if (tab.editor && tab.editor != codeEditor_)
             tab.editor->setDarkTheme(false);
     }
+
+    applyingStyle_ = false;
 }
 
 // ============================================================
@@ -4847,11 +4921,6 @@ void Ide::restoreLayout() {
     // 比例，在无效几何下静默失败。QTimer::singleShot(0) 在事件循环开始后触发，
     // 所有 show/layout 事件已处理完毕，几何尺寸有效，restoreState 能正确恢复。
     QTimer::singleShot(0, this, [this, hasSavedDockState]() {
-        // R68 fix: 先应用样式，再 restoreState。确保 restoreState 是最后的布局操作，
-        // 其设置的 splitter 尺寸不会被后续样式重算覆盖。
-        // （ColorSchemeMode 已锁定为 Light，setPalette 不会触发 loadStylesheet 覆盖，
-        // 但保持此顺序仍更稳健。）
-        applyFluentStyle();
         // R65-3 fix: 在事件循环中执行 restoreState，此时窗口已完全布局
         bool restored = false;
         if (dockManager_ && !pendingDockState_.isEmpty()) {
@@ -4899,9 +4968,9 @@ void Ide::restoreLayout() {
                 }
             }
         }
-        // R73 fix: restoreState 可能创建新的 dock area 和 tab，这些新 tab 未被
-        // 此前的 applyFluentStyle 样式化。在 restoreState 和默认尺寸设置完成后，
-        // 再次调用 applyFluentStyle 对所有 tab（含新建的）应用 palette。
+        // PERF: 合并两次 applyFluentStyle 为一次，在 restoreState + 默认尺寸设置完成后调用。
+        // 此前先调用一次再 restoreState 再调用一次，导致重复样式计算和全树遍历。
+        // restoreState 可能创建新的 dock area 和 tab，在之后调用一次即可覆盖所有内容。
         applyFluentStyle();
         // R65-3 fix: restoreState 完成后再允许保存布局
         // 此前 firstShow_ 在 showEvent 中就设为 false，导致 restoreState 触发的
