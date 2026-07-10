@@ -2,6 +2,38 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-10 · 第八十七轮：背景色回退中性白（UI × 1，共 1 项）
+
+### 概述
+
+将 IDE 全部背景色从 Solarized 米黄配色（`#FDF6E3` base3 / `#EEE8D5` base2）回退为中性白/浅灰（`#FFFFFF` / `#F5F5F5`），解决跨机器渲染不一致问题。Solarized 米黄色在不同显示器/ICC 配置下色差明显，交付前统一回退为通用白底，保证演示与答辩环境视觉一致。语义强调色（blue `#268BD2` / green `#859900` / yellow `#B58900` / red `#DC322F`）保留原 Solarized 配色，确保在白底下可读性与语义辨识度。
+
+### 改动范围
+
+| 层 | 文件 | 变更 |
+|----|------|------|
+| 主题色板 | `gui/TeachingTheme.h` | 14 色 IDE 变量 + 文本色 + surface/border 全部从 Solarized 回退中性：`ideBgMain` `#FDF6E3→#FFFFFF`、`ideBgPanel/Sidebar` `#EEE8D5→#F5F5F5`、`ideBorder` `#93A1A1→#E0E0E0`、`ideFgPrimary` `#002B36→#1E1E1E`、`ideFgSecondary` `#657B83→#8C8C8C`、`ideSelectedBg` `#EEE8D5→#CCE4F7`（浅蓝选中）、`ideEditorBg→#FFFFFF`、`ideLineNumBg→#F5F5F5` |
+| 主窗口 | `app/ide.cpp` | 输出面板 Base 色 → 白、标题栏渐变 `#FDF6E3→#EEE8D5` 改为 `#FFFFFF→#F5F5F5`、VM 面板浅色路径全部回退中性、字节码/Token 高亮文本色（默认标识符/注释/符号）对齐中性灰、ADS QSS Highlight=面板色注释更新 |
+| 编辑器 | `gui/CodeEditor.cpp` | 浅色模式 Base → 纯白、行号区 → 浅灰、光标行高亮 → 浅灰、执行行保留柔黄 `#FFF4D4`、补全弹窗/断点条件对话框色板回退中性 |
+| 教学面板 | `gui/PipelineViewer.cpp` `IrViewer.cpp` `AstViewer.cpp` `TeachingTreePanel.cpp` `AstBuilderToyPanel.cpp` `BugHuntPanel.cpp` `CodeJourneyInfoPanel.cpp` `LabManualPanel.cpp` `BreakpointConditionPanel.cpp` `CallStackPanel.cpp` `TeachingPanelHeader.cpp` `TokenPuzzlePanel.cpp` `VariableInspectorPanel.cpp` `VmStackSandboxPanel.cpp` `MarkdownRenderer.cpp` | 全部硬编码 Solarized 背景米黄/边框/文本色替换为中性白/浅灰/深灰；阶段配色与语义强调色保留 |
+| 样式参考 | `app/styles.qss` | 头部注释更新为中性白主题（本文件为设计参考，运行时不加载） |
+
+### 保留未改
+
+- `gui/SyntaxHighlighter.cpp` 语法 token 前景色（keyword/string/number 等 Solarized 配色）：属于语法高亮方案，在白底下可读性良好，保持不变
+- `CodeEditor.cpp` 深色主题分支的 `0xfd,0xf6,0xe3` HighlightedText：深色主题已禁用（强制 LIGHT），不影响运行
+- 语义强调色（blue/green/yellow/red/purple/cyan）：保留 Solarized 配色
+
+### 验证
+
+MSVC 19.51 + Qt 6.10.3 + Ninja release 增量构建通过，全量 1763/1763 测试通过，零回归。
+
+### 修改文件清单
+
+- `gui/TeachingTheme.h`、`app/ide.cpp`、`gui/CodeEditor.cpp`、`app/styles.qss`
+- `gui/` 下 15 个面板文件（见上表）
+- `CHANGELOG.md`、`docs/development.md`
+
 ## 2026-07-10 · 第八十六轮：条件断点表达式自动补充分号（P0 × 1，共 1 项）
 
 ### 概述

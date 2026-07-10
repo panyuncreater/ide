@@ -51,7 +51,7 @@ void AstViewer::setAst(ASTNode* root) {
     if (!root) {
         // R52-6 fix: 空状态提示，对齐 IrViewer/PipelineViewer 模式
         auto* placeholder = scene_->addText(QString::fromUtf8("（尚未解析 AST，请先在主编辑器输入代码并触发编译）"));
-        placeholder->setDefaultTextColor(isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x65, 0x7B, 0x83));
+        placeholder->setDefaultTextColor(isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x8C, 0x8C, 0x8C));
         return;
     }
 
@@ -131,7 +131,7 @@ void AstViewer::clearAst() {
     root_ = nullptr;
     // R54-12 fix: 对齐 setAst(nullptr) 的空状态提示（R52-6），让用户区分"已清空"与"未加载"
     auto* placeholder = scene_->addText(QString::fromUtf8("（尚未解析 AST，请先在主编辑器输入代码并触发编译）"));
-    placeholder->setDefaultTextColor(isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x65, 0x7B, 0x83));
+    placeholder->setDefaultTextColor(isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x8C, 0x8C, 0x8C));
 }
 
 void AstViewer::setDarkTheme(bool dark) {
@@ -336,19 +336,19 @@ void AstViewer::syncCollapsedState(RtNode* node, int depth) {
 // ============================================================
 
 QColor AstViewer::sceneBackgroundColor() const {
-    return isDarkTheme_ ? QColor(0x1e, 0x1e, 0x1e) : QColor(0xfd, 0xf6, 0xe3);
+    return isDarkTheme_ ? QColor(0x1e, 0x1e, 0x1e) : QColor(0xFF, 0xFF, 0xFF);
 }
 
 QColor AstViewer::nodeBorderColor() const {
-    return isDarkTheme_ ? QColor(0x55, 0x55, 0x55) : QColor(0x93, 0xa1, 0xa1);
+    return isDarkTheme_ ? QColor(0x55, 0x55, 0x55) : QColor(0xE0, 0xE0, 0xE0);
 }
 
 QColor AstViewer::lineColor() const {
-    return isDarkTheme_ ? QColor(0x5a, 0x5a, 0x5a) : QColor(0x93, 0xa1, 0xa1);
+    return isDarkTheme_ ? QColor(0x5a, 0x5a, 0x5a) : QColor(0xE0, 0xE0, 0xE0);
 }
 
 QColor AstViewer::textColor() const {
-    return isDarkTheme_ ? QColor(0xd4, 0xd4, 0xd4) : QColor(0x00, 0x2b, 0x36);
+    return isDarkTheme_ ? QColor(0xd4, 0xd4, 0xd4) : QColor(0x1E, 0x1E, 0x1E);
 }
 
 QColor AstViewer::nodeBgColor(const QString& name) const {
@@ -367,7 +367,7 @@ QColor AstViewer::nodeBgColor(const QString& name) const {
     } else if (name.startsWith("Return") || name.startsWith("Print")) {
         return isDarkTheme_ ? QColor(0x2a, 0x55, 0x55) : QColor(0xd5, 0xf0, 0xec);
     }
-    return isDarkTheme_ ? QColor(0x38, 0x38, 0x38) : QColor(0xee, 0xe8, 0xd5);
+    return isDarkTheme_ ? QColor(0x38, 0x38, 0x38) : QColor(0xF5, 0xF5, 0xF5);
 }
 
 // ============================================================

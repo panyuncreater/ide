@@ -213,37 +213,37 @@ static QString renderInline(const QString& s) {
 static QString buildStylesheet(const QString& codeBlockBg) {
     static const QString kStylesheet = QStringLiteral(R"(
         <style>
-        body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 14px; color: #002B36; line-height: 1.6; }
-        h1 { font-size: 22px; color: #268BD2; border-bottom: 2px solid #93A1A1; padding-bottom: 6px; margin: 16px 0 10px; font-weight: 600; }
-        h2 { font-size: 18px; color: #0078d4; border-bottom: 1px solid #93A1A1; padding-bottom: 4px; margin: 14px 0 8px; font-weight: 600; }
+        body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 14px; color: #1E1E1E; line-height: 1.6; }
+        h1 { font-size: 22px; color: #268BD2; border-bottom: 2px solid #E0E0E0; padding-bottom: 6px; margin: 16px 0 10px; font-weight: 600; }
+        h2 { font-size: 18px; color: #0078d4; border-bottom: 1px solid #E0E0E0; padding-bottom: 4px; margin: 14px 0 8px; font-weight: 600; }
         h3 { font-size: 16px; color: #0078d4; margin: 12px 0 6px; font-weight: 600; }
         h4 { font-size: 14px; color: #073642; margin: 10px 0 4px; font-weight: 600; }
-        h5, h6 { font-size: 13px; color: #586E75; margin: 8px 0 4px; font-weight: 600; }
+        h5, h6 { font-size: 13px; color: #5A5A5A; margin: 8px 0 4px; font-weight: 600; }
         p { margin: 6px 0; }
         ul, ol { margin: 6px 0; padding-left: 24px; }
         li { margin: 3px 0; }
-        code { background: #EEE8D5; color: #DC322F; padding: 2px 5px; border-radius: 3px; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
-        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid #93A1A1; font-family: Consolas, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
-        pre code { background: transparent; color: #002B36; padding: 0; border-radius: 0; font-size: 13px; }
-        blockquote { border-left: 4px solid #268BD2; background: #EEE8D5; padding: 8px 12px; margin: 8px 0; color: #586E75; border-radius: 0 4px 4px 0; }
+        code { background: #F5F5F5; color: #DC322F; padding: 2px 5px; border-radius: 3px; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
+        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid #E0E0E0; font-family: Consolas, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
+        pre code { background: transparent; color: #1E1E1E; padding: 0; border-radius: 0; font-size: 13px; }
+        blockquote { border-left: 4px solid #268BD2; background: #F5F5F5; padding: 8px 12px; margin: 8px 0; color: #5A5A5A; border-radius: 0 4px 4px 0; }
         blockquote p { margin: 4px 0; }
-        hr { border: none; border-top: 1px solid #93A1A1; margin: 12px 0; }
+        hr { border: none; border-top: 1px solid #E0E0E0; margin: 12px 0; }
         table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
-        th { background: #EEE8D5; border: 1px solid #93A1A1; padding: 6px 10px; text-align: left; font-weight: 600; color: #002B36; }
-        td { border: 1px solid #93A1A1; padding: 6px 10px; vertical-align: top; }
-        tr:nth-child(even) td { background: #FDF6E3; }
+        th { background: #F5F5F5; border: 1px solid #E0E0E0; padding: 6px 10px; text-align: left; font-weight: 600; color: #1E1E1E; }
+        td { border: 1px solid #E0E0E0; padding: 6px 10px; vertical-align: top; }
+        tr:nth-child(even) td { background: #FFFFFF; }
         .task-list-item { list-style: none; margin-left: -18px; }
-        .task-checkbox { display: inline-block; width: 14px; height: 14px; border: 1.5px solid #657B83; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+        .task-checkbox { display: inline-block; width: 14px; height: 14px; border: 1.5px solid #8C8C8C; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
         .task-checkbox.checked { background: #859900; border-color: #859900; color: white; text-align: center; font-size: 10px; line-height: 14px; }
-        b, strong { color: #002B36; font-weight: 600; }
-        i, em { color: #586E75; }
-        /* P2-2 fix (F4): MiniLang 语法高亮配色（Solarized 风格） */
+        b, strong { color: #1E1E1E; font-weight: 600; }
+        i, em { color: #5A5A5A; }
+        /* P2-2 fix (F4): MiniLang 语法高亮配色（中性风格） */
         .ml-keyword { color: #859900; font-weight: 600; }
         .ml-string { color: #2AA198; }
-        .ml-comment { color: #93A1A1; font-style: italic; }
+        .ml-comment { color: #E0E0E0; font-style: italic; }
         .ml-number { color: #D33682; }
         /* P2-2 fix (F3): 章节锚点目录样式 */
-        .toc-box { background: #EEE8D5; border-left: 3px solid #268BD2; padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+        .toc-box { background: #F5F5F5; border-left: 3px solid #268BD2; padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
         .toc-title { font-weight: 600; color: #073642; margin-bottom: 4px; font-size: 13px; }
         .toc-list { margin: 0; padding-left: 16px; font-size: 13px; }
         .toc-list li { margin: 2px 0; }
@@ -251,7 +251,7 @@ static QString buildStylesheet(const QString& codeBlockBg) {
         .toc-list a:hover { text-decoration: underline; }
         </style>
     )");
-    return kStylesheet.arg(codeBlockBg.isEmpty() ? QStringLiteral("#EEE8D5") : codeBlockBg);
+    return kStylesheet.arg(codeBlockBg.isEmpty() ? QStringLiteral("#F5F5F5") : codeBlockBg);
 }
 
 // ---- 公共 API ----
@@ -261,9 +261,9 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
         return QStringLiteral("<html><head></head><body></body></html>");
     }
 
-    const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#EEE8D5") : codeBlockBg;
+    const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#F5F5F5") : codeBlockBg;
     const QString codeBlockStyle = QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
-                                                  "border:1px solid #93A1A1; "
+                                                  "border:1px solid #E0E0E0; "
                                                   "font-family:Consolas, 'Courier New', monospace; "
                                                   "font-size:13px; "
                                                   "white-space:pre-wrap;")

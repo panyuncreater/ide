@@ -23,6 +23,10 @@
 // 注：深色主题已移除（2026-07-06），所有颜色固定为亮色配色。
 //     保留 Theme::isDark() 调用以保持 API 兼容，但因 setThemeMode 强制 LIGHT，
 //     isDark() 永远返回 false，三元分支永远走 light 路径。
+//
+// R74 fix (2026-07-10)：背景色从 Solarized 米黄（#FDF6E3/#EEE8D5）回退为
+// 中性白/浅灰（#FFFFFF/#F5F5F5），解决跨机器渲染不一致问题。语义强调色
+// （success/warning/error/info）保留原 Solarized 配色以保证可读性。
 // ============================================================
 
 #pragma once
@@ -52,32 +56,32 @@ inline QColor primaryPressed() {
 
 /// 主文本色：深灰（亮色固定）
 inline QColor textPrimary() {
-    return QColor(0x00, 0x2b, 0x36); // Solarized base03
+    return QColor(0x1e, 0x1e, 0x1e); // 中性深灰（替代 Solarized base03）
 }
 
 /// 次要文本色：中灰
 inline QColor textSecondary() {
-    return QColor(0x58, 0x6e, 0x75); // Solarized base01
+    return QColor(0x5a, 0x5a, 0x5a); // 中性中灰（替代 Solarized base01）
 }
 
 /// 提示文本色：比次要更弱
 inline QColor textHint() {
-    return QColor(0x65, 0x7b, 0x83); // Solarized base00
+    return QColor(0x8c, 0x8c, 0x8c); // 中性浅灰（替代 Solarized base00）
 }
 
 /// 卡片/面板背景色：白色
 inline QColor surface() {
-    return QColor(0xfd, 0xf6, 0xe3); // Solarized base3
+    return QColor(0xff, 0xff, 0xff); // 纯白（替代 Solarized base3）
 }
 
 /// 卡片悬浮态背景色
 inline QColor surfaceHover() {
-    return QColor(0xee, 0xe8, 0xd5); // Solarized base2
+    return QColor(0xf5, 0xf5, 0xf5); // 浅灰（替代 Solarized base2）
 }
 
 /// 边框色
 inline QColor border() {
-    return QColor(0x93, 0xa1, 0xa1); // Solarized base1
+    return QColor(0xe0, 0xe0, 0xe0); // 浅灰边框（替代 Solarized base1）
 }
 
 /// 强调色（用于标题、链接）
@@ -107,7 +111,7 @@ inline QColor info() {
 
 /// 提示色（Fluent 语义灰）
 inline QColor hint() {
-    return QColor("#657B83");
+    return QColor("#8C8C8C"); // R74: 中性浅灰（原 Solarized base00 #657B83）
 }
 
 /// 学习路径 5 阶段配色（阶段 0-4，失败/未开始用 5）
@@ -133,48 +137,49 @@ inline QColor learningStageColor(int stage) {
 // IDE 主窗口 14 色变量（applyFluentStyle 集中管理）
 // 用于 app/ide.cpp::applyFluentStyle() 的 ADS QSS / 文件树 / 状态栏等
 // 亮色固定配色（深色主题已移除）
+// R74: 背景回退为中性白/浅灰，解决跨机器渲染问题
 // ============================================================
 inline QColor ideBgMain() {
-    return QColor("#FDF6E3");
+    return QColor("#FFFFFF"); // 主背景：纯白（原 Solarized base3 #FDF6E3）
 }
 inline QColor ideBgPanel() {
-    return QColor("#EEE8D5");
+    return QColor("#F5F5F5"); // 面板背景：浅灰（原 Solarized base2 #EEE8D5）
 }
 inline QColor ideBgSidebar() {
-    return QColor("#EEE8D5");
+    return QColor("#F5F5F5"); // 侧栏背景：浅灰（原 Solarized base2 #EEE8D5）
 }
 inline QColor ideFgPrimary() {
-    return QColor("#002B36");
+    return QColor("#1E1E1E"); // 主文本：中性深灰（原 Solarized base03 #002B36）
 }
 inline QColor ideFgSecondary() {
-    return QColor("#657B83");
+    return QColor("#8C8C8C"); // 次要文本：中性浅灰（原 Solarized base00 #657B83）
 }
 inline QColor ideBorder() {
-    return QColor("#93A1A1");
+    return QColor("#E0E0E0"); // 边框：浅灰（原 Solarized base1 #93A1A1）
 }
 inline QColor ideAccent() {
-    return QColor("#268BD2");
+    return QColor("#268BD2"); // 强调色：保留 Solarized blue
 }
 inline QColor ideHoverBg() {
-    return QColor("#EEE8D5");
+    return QColor("#ECECEC"); // hover：浅灰（原 Solarized base2 #EEE8D5）
 }
 inline QColor ideSelectedBg() {
-    return QColor("#EEE8D5");
+    return QColor("#CCE4F7"); // 选中：浅蓝（原 Solarized base2 #EEE8D5）
 }
 inline QColor ideTitleBg() {
-    return QColor("#FDF6E3");
+    return QColor("#FFFFFF"); // 标题栏：纯白（原 Solarized base3 #FDF6E3）
 }
 inline QColor ideStatusBg() {
-    return QColor("#f3f3f3");
+    return QColor("#F5F5F5"); // 状态栏：浅灰
 }
 inline QColor ideEditorBg() {
-    return QColor("#FDF6E3");
+    return QColor("#FFFFFF"); // 编辑器：纯白（原 Solarized base3 #FDF6E3）
 }
 inline QColor ideLineNumBg() {
-    return QColor("#EEE8D5");
+    return QColor("#F5F5F5"); // 行号区：浅灰（原 Solarized base2 #EEE8D5）
 }
 inline QColor ideLineNumFg() {
-    return QColor("#657B83");
+    return QColor("#8C8C8C"); // 行号字：浅灰（原 Solarized base00 #657B83）
 }
 
 /// 主按钮样式表（用于 QPushButton 模拟 PrimaryPushButton 视觉）

@@ -258,8 +258,8 @@ public:
         painter->save();
 
         // 背景：选中 / 交替行
-        // R73 fix: 使用 TeachingTheme 的 Solarized 颜色，不再硬编码。
-        // 此前硬编码 #ffffff/#f8f8f8 导致字节码列表背景不是米黄色。
+        // R74: 使用 TeachingTheme 的中性色板，不再硬编码。
+        // 选中态浅蓝、交替行浅灰、常态纯白，跨机器渲染一致。
         if (option.state & QStyle::State_Selected) {
             painter->fillRect(option.rect, TeachingTheme::ideSelectedBg());
         } else if (option.features & QStyleOptionViewItem::Alternate) {
@@ -355,11 +355,11 @@ static QString formatBytecodeHtml(const std::string& text) {
         }
         // = / -> / | 等符号
         else if (core == "=" || core == "->" || core == "|" || core == "&" || core == ":") {
-            html += "<span style='color:#657B83;'>" + esc + "</span>";
+            html += "<span style='color:#8C8C8C;'>" + esc + "</span>";
         }
         // 标识符默认色
         else {
-            html += "<span style='color:#002B36;'>" + esc + "</span>";
+            html += "<span style='color:#1E1E1E;'>" + esc + "</span>";
         }
         if (!suffix.isEmpty()) {
             html += "<span style='color:#6e6e6e;'>" + suffix.toHtmlEscaped() + "</span>";
@@ -2725,16 +2725,16 @@ void Ide::initUI() {
     });
 
     // Output text edit
-    // R15-3: VSCode 风格输出面板——等宽字体 + Solarized base3 背景
+    // R15-3: VSCode 风格输出面板——等宽字体 + 白色背景（R74: 回退中性白）
     outputTextEdit_ = new QTextEdit;
     outputTextEdit_->setReadOnly(true);
     outputTextEdit_->setFont(GuiTextUtils::monospaceFont(10));
     outputTextEdit_->document()->setMaximumBlockCount(10000);
     outputTextEdit_->setObjectName("outputEdit");
-    // R15-7: 统一背景色为 Solarized base3，避免与周边面板色差割裂
+    // R15-7: 统一背景色为白色，避免与周边面板色差割裂（R74: 回退中性白）
     QPalette outPal = outputTextEdit_->palette();
-    outPal.setColor(QPalette::Base, QColor(0xFD, 0xF6, 0xE3)); // base3
-    outPal.setColor(QPalette::Text, QColor(0x00, 0x2B, 0x36)); // base03
+    outPal.setColor(QPalette::Base, QColor(0xFF, 0xFF, 0xFF)); // 白色背景
+    outPal.setColor(QPalette::Text, QColor(0x1E, 0x1E, 0x1E)); // 深灰文本
     outputTextEdit_->setPalette(outPal);
     outputTextEdit_->setAutoFillBackground(true);
 
@@ -3612,7 +3612,7 @@ void Ide::applyFluentStyle() {
 
     // ============================================================
     // ADS (Qt Advanced Docking System) comprehensive QSS override
-    // 完全覆盖 ADS 默认样式，对齐 Solarized 主题
+    // 完全覆盖 ADS 默认样式，对齐中性白主题（R74: 回退 Solarized 米黄）
     // R68 fix: adsQss 必须包含 default.css 中的关键 qproperty-icon 规则，
     // 因为 setStyleSheet() 会完全替换 dockManager_ 上的样式表（包括构造时
     // loadStylesheet 设置的图标属性）。缺失图标规则会导致关闭/浮动/菜单按钮无图标。
@@ -3891,11 +3891,11 @@ void Ide::applyFluentStyle() {
     // Title bar styling (统一标题栏)
     // ============================================================
     if (titleBar_) {
-        // 标题栏渐变背景：#fafafa → #f0f0f0（自上而下）
+        // 标题栏渐变背景：白色 → 浅灰（自上而下）（R74: 回退中性白）
         // 移除原 titleBg(%1) 占位，剩余参数重编号：%1=borderColor %2=fgPrimary %3=fgSecondary %4=hoverBg
         titleBar_->setStyleSheet(QString(R"(
             #titleBar {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FDF6E3, stop:1 #EEE8D5);
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #F5F5F5);
                 border-bottom: 1px solid %1;
             }
             #titleText {
@@ -4118,20 +4118,20 @@ void Ide::applyFluentStyle() {
         pal.setColor(QPalette::Window, bg);
         pal.setColor(QPalette::Base, bg);
         // R65-2 fix: 设置 AlternateBase 为面板色（比主背景稍深），
-        // 使 alternatingRowColors 的列表（如字节码列表）交替行也保持米黄色调。
+        // 使 alternatingRowColors 的列表（如字节码列表）交替行也保持浅灰色调。
         pal.setColor(QPalette::AlternateBase, bgPanel);
         // R68 fix: 设置 ToolTip 颜色，防止 QToolTip 回退到 Windows 11 默认黑色样式
         pal.setColor(QPalette::ToolTipBase, bg);
         pal.setColor(QPalette::ToolTipText, fg);
-        // R71 fix: 设置 QPalette::Highlight 为面板色 (#EEE8D5)，HighlightedText 为深色字。
+        // R71/R74 fix: 设置 QPalette::Highlight 为面板色 (#F5F5F5)，HighlightedText 为深色字。
         // 根因：ads--CDockWidgetTab 等 QSS 选择器不匹配 ads::CDockWidgetTab 类
         // (QSS 类型选择器基于 metaObject()->className()，命名空间中的类返回
         // "ads::CDockWidgetTab"，与 "ads--CDockWidgetTab" 不等)，QSS 规则不生效，
         // ADS tab 背景由 palette(Highlight) 控制。R65-1 移除 Highlight 设置后，
         // tab 使用系统默认 Highlight 色 (#258292 蓝绿色)，显示"蓝底"。
-        // 设置 Highlight=#EEE8D5 (面板色) 后，tab 背景为浅米黄色，与主背景 #FDF6E3
+        // 设置 Highlight=#F5F5F5 (面板色) 后，tab 背景为浅灰色，与主背景 #FFFFFF
         // 有微妙区别，视觉上区分 active/inactive tab。列表选中项也使用此色，
-        // 浅米黄底+深色字，符合 Solarized 主题。
+        // 浅灰底+深色字，中性主题跨机器渲染一致。
         pal.setColor(QPalette::Highlight, bgPanel);
         pal.setColor(QPalette::HighlightedText, fg);
         setPalette(pal);
@@ -4157,9 +4157,9 @@ void Ide::applyFluentStyle() {
 
     // ============================================================
     // Main container / middle area / central stack / splitter
-    // R15-7: 补全覆盖 centerStack_、centerSplitter_、welcomePage_、replPanel_、
+    // R15-7/R74: 补全覆盖 centerStack_、centerSplitter_、welcomePage_、replPanel_、
     // errorPageContainer、fileTreeContainer 等通用 widget 背景色，消除「部分区域
-    // 未变米黄色」的割裂感。统一使用 Solarized base3 (#FDF6E3) 作为主背景。
+    // 未变白色」的割裂感。统一使用纯白 (#FFFFFF) 作为主背景，跨机器渲染一致。
     // PERF: 合并原来的 3 次 findChildren 全树遍历为 1 次，直接用成员指针处理已知控件
     // ============================================================
     const QString bgStyle = QString("background: %1; border: none;").arg(bgMain);
@@ -4207,14 +4207,15 @@ void Ide::applyFluentStyle() {
 
     // ============================================================
     // VM Stack Panel 主题化样式（原由 styles.qss 集中管理，现迁移到 applyFluentStyle）
+    // R74: 浅色路径回退为中性白/浅灰（原 Solarized base3/base2）
     // ============================================================
-    QString vmOpBg = dark ? "#1e2a1e" : "#fdf6e3";
+    QString vmOpBg = dark ? "#1e2a1e" : "#ffffff";
     QString vmOpFg = dark ? "#b5cea8" : "#859900";
-    QString vmOpBorder = dark ? "#2d3a2d" : "#93a1a1";
-    QString vmItemBorder = dark ? "#2d2d30" : "#eee8d5";
-    QString vmSelectedBg = dark ? "#264f78" : "#eee8d5";
+    QString vmOpBorder = dark ? "#2d3a2d" : "#e0e0e0";
+    QString vmItemBorder = dark ? "#2d2d30" : "#f0f0f0";
+    QString vmSelectedBg = dark ? "#264f78" : "#cce4f7";
     QString vmSelectedFg = dark ? "#ffffff" : "#268BD2";
-    QString vmHeaderBg = dark ? "#252526" : "#eee8d5";
+    QString vmHeaderBg = dark ? "#252526" : "#f5f5f5";
 
     QString vmQss = QString(R"(
         QLabel#vmOpLabel {
@@ -5294,16 +5295,16 @@ void Ide::appendOutput(const QString& text, OutputLevel level) {
     // R15-3: VSCode 风格输出——文本级别前缀替代 Unicode 图标，更简洁的终端式排版。
     //   Plain（用户程序输出）：无前缀无时间戳，纯净正文
     //   Info/Success/Warning/Error：[HH:mm:ss] [Level] 正文，级别前缀着色
-    // 颜色沿用 Solarized 亮色语义色，与 TeachingTheme 保持一致。
+    // 颜色沿用中性白主题语义色（R74: 文本色对齐中性灰，语义强调色保留 Solarized）。
     QString escaped = text.toHtmlEscaped();
 
     // 亮色主题固定语义色（与 TeachingTheme::xxx() 亮色值一致）
-    static const char* kTs = "color:#93A1A1;";      // base1 — 次要时间戳
+    static const char* kTs = "color:#8C8C8C;";      // 次要时间戳（中性浅灰）
     static const char* kInfo = "color:#268BD2;";    // blue
     static const char* kSuccess = "color:#859900;"; // green
     static const char* kWarn = "color:#B58900;";    // yellow
     static const char* kError = "color:#DC322F;";   // red
-    static const char* kBody = "color:#002B36;";    // base03 — 主文本
+    static const char* kBody = "color:#1E1E1E;";    // 主文本（中性深灰）
 
     QString html;
     if (level == OutputLevel::Plain) {
@@ -5377,15 +5378,15 @@ void Ide::appendError(const QString& text, int line, int column, DiagLevel level
         break; // ○  = TeachingTheme::info()
     case DiagLevel::Hint:
         iconChar = "\u25C7";
-        iconColor = "#657B83";
-        break; // ◇  = TeachingTheme::hint()
+        iconColor = "#8C8C8C";
+        break; // ◇  = TeachingTheme::hint()（中性浅灰）
     }
 
     const char* textColor = (level == DiagLevel::Error) ? "#DC322F" : // = TeachingTheme::error()
                                 (level == DiagLevel::Warning) ? "#B58900"
                                                               : // ≈ TeachingTheme::warning()
-                                (level == DiagLevel::Hint) ? "#657B83"
-                                                           : // = TeachingTheme::hint()
+                                (level == DiagLevel::Hint) ? "#8C8C8C"
+                                                           : // = TeachingTheme::hint()（中性浅灰）
                                 "#268BD2";                   // Solarized blue
 
     // Build rich-text HTML (all inline styles, no class selectors)
@@ -7342,10 +7343,10 @@ void Ide::updateTokenTable() {
             case TokenType::TK_INTERP_END:
                 typeColor = QColor("#2AA198");
                 break;
-            // Comments: green italic
+            // Comments: neutral gray italic
             case TokenType::TK_LINE_COMMENT:
             case TokenType::TK_BLOCK_COMMENT:
-                typeColor = QColor("#586E75");
+                typeColor = QColor("#5A5A5A");
                 break;
             // Operators: red
             case TokenType::TK_PLUS:
@@ -7366,9 +7367,9 @@ void Ide::updateTokenTable() {
             case TokenType::TK_ERROR:
                 typeColor = QColor("#DC322F");
                 break;
-            // Identifier / default: normal black
+            // Identifier / default: normal dark gray
             default:
-                typeColor = QColor("#002B36");
+                typeColor = QColor("#1E1E1E");
                 break;
             }
 

@@ -46,8 +46,8 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
         return;
 
     QPainter painter(this);
-    // F9: 主题感知背景色
-    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(37, 37, 37) : QColor(0xee, 0xe8, 0xd5);
+    // F9: 主题感知背景色（R74: 浅色回退浅灰 #F5F5F5）
+    QColor bgColor = codeEditor->isDarkTheme_ ? QColor(37, 37, 37) : QColor(0xF5, 0xF5, 0xF5);
     painter.fillRect(event->rect(), bgColor);
 
     // 字体只需设置一次（移出循环避免每行重建）
@@ -124,7 +124,7 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                 // F9: 主题感知折叠标记颜色——折叠态用主题蓝强调，展开态用次要灰
                 QColor arrowColor =
                     folded ? (codeEditor->isDarkTheme_ ? QColor(0x6c, 0x71, 0xc4) : QColor(0x26, 0x8b, 0xd2))
-                           : (codeEditor->isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x58, 0x6e, 0x75));
+                           : (codeEditor->isDarkTheme_ ? QColor(0x93, 0xa1, 0xa1) : QColor(0x5a, 0x5a, 0x5a));
                 painter.save();
                 painter.setRenderHint(QPainter::Antialiasing, true);
                 painter.setPen(QPen(arrowColor, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
@@ -256,12 +256,12 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
         dlg.setFixedSize(420, 180);
 
-        // Fluent 色板（亮色主题，与 IDE 整体风格一致）
-        const QString bgSurf = "#FDF6E3";
-        const QString fgPrim = "#002B36";
-        const QString fgSec = "#657B83";
+        // Fluent 色板（亮色主题，与 IDE 整体风格一致）（R74: 中性白）
+        const QString bgSurf = "#FFFFFF";
+        const QString fgPrim = "#1E1E1E";
+        const QString fgSec = "#8C8C8C";
         const QString accent = "#268BD2";
-        const QString border = "#93A1A1";
+        const QString border = "#E0E0E0";
         const QString warnFg = "#B58900";
         const QString btnBg = "#268BD2";
         const QString btnHov = "#1E6FA3";
@@ -415,12 +415,12 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
 
     // P-IDE-5 fix: 为补全弹窗应用 Fluent 风格 QSS，与 IDE 整体视觉语言统一。
     // 默认 QListView popup 在 Windows 原生主题下边框生硬、选中色为蓝色块状，
-    // 与 IDE 的 Solarized 亮色 + Fluent 圆角风格不协调。
+    // 与 IDE 的中性白 + Fluent 圆角风格不协调。（R74: 回退中性白）
     if (completer_->popup()) {
         completer_->popup()->setStyleSheet("QListView { "
-                                           "  background: #FDF6E3; "
-                                           "  color: #002B36; "
-                                           "  border: 1px solid #93A1A1; "
+                                           "  background: #FFFFFF; "
+                                           "  color: #1E1E1E; "
+                                           "  border: 1px solid #E0E0E0; "
                                            "  border-radius: 6px; "
                                            "  padding: 4px; "
                                            "  font-family: 'Consolas','Cascadia Mono','Courier New',monospace; "
@@ -437,15 +437,15 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
                                            "} "
                                            "QListView::item:hover:!selected { "
                                            "  background: rgba(38, 139, 210, 0.12); "
-                                           "  color: #002B36; "
+                                           "  color: #1E1E1E; "
                                            "} "
                                            "QScrollBar:vertical { "
                                            "  background: transparent; width: 8px; margin: 2px; "
                                            "} "
                                            "QScrollBar::handle:vertical { "
-                                           "  background: #93A1A1; border-radius: 4px; min-height: 20px; "
+                                           "  background: #C8C8C8; border-radius: 4px; min-height: 20px; "
                                            "} "
-                                           "QScrollBar::handle:vertical:hover { background: #657B83; } "
+                                           "QScrollBar::handle:vertical:hover { background: #8C8C8C; } "
                                            "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }");
     }
 }
@@ -797,11 +797,11 @@ void CodeEditor::updateLineNumberAreaWidth(int newBlockCount) {
 void CodeEditor::highlightCurrentLine() {
     QList<QTextEdit::ExtraSelection> selections;
 
-    // GUI-12 fix: 光标行先添加（蓝色），执行行后添加（黄色）
-    // Qt ExtraSelection 后添加的覆盖先添加的，黄色要在蓝色之上
-    // F9: 主题感知高亮颜色
-    QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : QColor(0xee, 0xe8, 0xd5);
-    QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : QColor(0xee, 0xe8, 0xd5);
+    // GUI-12 fix: 光标行先添加（浅灰），执行行后添加（柔黄）覆盖
+    // Qt ExtraSelection 后添加的覆盖先添加的，黄色要在浅灰之上
+    // F9: 主题感知高亮颜色（R74: 浅色光标行浅灰，执行行保留柔黄以标识当前执行）
+    QColor cursorLineColor = isDarkTheme_ ? QColor(40, 44, 48) : QColor(0xF0, 0xF0, 0xF0);
+    QColor execLineColor = isDarkTheme_ ? QColor(86, 90, 46) : QColor(0xFF, 0xF4, 0xD4);
 
     // BUG-CE-8 fix: 查找高亮先添加（底层），错误下划线次之（不冲突），
     // 光标行再次（蓝色覆盖查找高亮），执行行最后（黄色覆盖光标行和查找高亮）。
@@ -1049,15 +1049,14 @@ void CodeEditor::setDarkTheme(bool dark) {
         pal.setColor(QPalette::HighlightedText, QColor(0xfd, 0xf6, 0xe3));
         pal.setColor(QPalette::PlaceholderText, QColor(0x80, 0x80, 0x80));
     } else {
-        // R15-7: 浅色模式 Base 从 #ffffff 改为 Solarized base3 (#FDF6E3)，
-        // 与行号区背景 (#EEE8D5 base2) 和 IDE 整体米黄主题统一，
-        // 消除「编辑区白色 vs 行号区米黄」的割裂感。
-        pal.setColor(QPalette::Base, QColor(0xFD, 0xF6, 0xE3));
-        pal.setColor(QPalette::AlternateBase, QColor(0xee, 0xe8, 0xd5));
-        pal.setColor(QPalette::Text, QColor(0x00, 0x2b, 0x36));
-        pal.setColor(QPalette::Highlight, QColor(0x58, 0x6e, 0x75, 0x60));
-        pal.setColor(QPalette::HighlightedText, QColor(0xfd, 0xf6, 0xe3));
-        pal.setColor(QPalette::PlaceholderText, QColor(0x93, 0xa1, 0xa1));
+        // R74: 浅色模式 Base 回退为纯白 (#FFFFFF)，与行号区浅灰 (#F5F5F5) 配合，
+        // 解决 Solarized 米黄跨机器渲染不一致问题。文本中性深灰、选中浅蓝。
+        pal.setColor(QPalette::Base, QColor(0xFF, 0xFF, 0xFF));
+        pal.setColor(QPalette::AlternateBase, QColor(0xF5, 0xF5, 0xF5));
+        pal.setColor(QPalette::Text, QColor(0x1E, 0x1E, 0x1E));
+        pal.setColor(QPalette::Highlight, QColor(0x26, 0x8B, 0xD2, 0x60));
+        pal.setColor(QPalette::HighlightedText, QColor(0xFF, 0xFF, 0xFF));
+        pal.setColor(QPalette::PlaceholderText, QColor(0x8C, 0x8C, 0x8C));
     }
     setPalette(pal);
     // viewport 也需应用 palette（QPlainTextEdit 的实际绘制发生在 viewport）

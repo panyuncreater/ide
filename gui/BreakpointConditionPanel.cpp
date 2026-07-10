@@ -386,7 +386,7 @@ GuidedTour* BreakpointConditionPanel::createGuidedTour(QWidget* host) {
     tour->addStep(nullptr, QString::fromUtf8("示例代码：条件断点"),
                   QString::fromUtf8(
                       "<p>将以下代码粘贴到编辑器，在 print 行设条件断点观察命中：</p>"
-                      "<pre style='background:#EEE8D5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
+                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
                       "for (var i = 0; i < 100; i = i + 1) {\n"
                       "    if (i % 10 == 0) {\n"
                       "        print i;\n"

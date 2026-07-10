@@ -241,20 +241,20 @@ TeachingPanelHeader::TeachingPanelHeader(const QString& panelId, const QString& 
                                  "}"
                                  // 「返回编辑器」按钮用浅色边框强调，方便用户从教学面板切回编辑器
                                  "#teachingBackBtn {"
-                                 "  background: #FDF6E3;"
-                                 "  color: #073642;"
-                                 "  border: 1px solid #93A1A1;"
+                                 "  background: #FFFFFF;"
+                                 "  color: #1E1E1E;"
+                                 "  border: 1px solid #E0E0E0;"
                                  "  border-radius: 4px;"
                                  "  padding: 2px 10px;"
                                  "  font-weight: 600;"
                                  "}"
                                  "#teachingBackBtn:hover {"
-                                 "  background: #EEE8D5;"
+                                 "  background: #F5F5F5;"
                                  "  border-color: #268BD2;"
                                  "  color: #268BD2;"
                                  "}"
                                  "#teachingBackBtn:pressed {"
-                                 "  background: #EEE8D5;"
+                                 "  background: #F5F5F5;"
                                  "}"));
 }
 
@@ -276,20 +276,20 @@ void TeachingPanelHeader::showHelpDialog() {
 
     // HTML 末尾的提示行：Esc 关闭 + 拖拽角落调整大小
     const QString kTipLine =
-        QStringLiteral("<hr style='border: none; border-top: 1px dashed #93A1A1; margin: 14px 0 8px 0;'/>"
-                       "<p style='margin: 0; font-size: 12px; color: #839496;'>%1 提示：按 Esc 关闭，"
+        QStringLiteral("<hr style='border: none; border-top: 1px dashed #E0E0E0; margin: 14px 0 8px 0;'/>"
+                       "<p style='margin: 0; font-size: 12px; color: #8C8C8C;'>%1 提示：按 Esc 关闭，"
                        "拖拽角落可调整窗口大小</p>")
             .arg(kTipEmoji);
 
-    // Solarized 亮色 QSS：背景 #FDF6E3，文字 #002B36，padding 12px
+    // 中性白 QSS：背景 #FFFFFF，文字 #1E1E1E，padding 12px（R74: 回退 Solarized 米黄）
     // 「知道了」按钮保持 PrimaryButton 自带 Fluent 主色 #268BD2 样式，不覆盖
     const QString kDialogQss = QStringLiteral("QDialog#helpDialog {"
-                                              "  background: #FDF6E3;"
+                                              "  background: #FFFFFF;"
                                               "}"
                                               "QTextBrowser#helpBrowser {"
-                                              "  background: #FDF6E3;"
-                                              "  color: #002B36;"
-                                              "  border: 1px solid #93A1A1;"
+                                              "  background: #FFFFFF;"
+                                              "  color: #1E1E1E;"
+                                              "  border: 1px solid #E0E0E0;"
                                               "  border-radius: 6px;"
                                               "  padding: 12px;"
                                               "}");
@@ -372,7 +372,7 @@ void TeachingPanelHeader::showHelpDialog() {
             "<h3 style='color: #268BD2; margin-bottom: 4px;'>🔢 推荐使用顺序</h3>"
             "<p style='margin: 0 0 12px 0; white-space: pre-wrap;'>%2</p>"
             "<h3 style='color: #268BD2; margin-bottom: 4px;'>💡 关联概念</h3>"
-            "<p style='margin: 0; color: #586E75;'>%3</p>"
+            "<p style='margin: 0; color: #5A5A5A;'>%3</p>"
             "%4"
             "</body></html>")
             .arg(doc.purpose.toHtmlEscaped())

@@ -96,13 +96,13 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent) : QWidget(parent) {
     topBar->addWidget(progressLabel_);
     mainLayout->addLayout(topBar);
 
-    // ---- Solarized 风格 QSS（QComboBox + 关卡芯片按钮）----
+    // ---- 中性浅色风格 QSS（QComboBox + 关卡芯片按钮）----
     // 所有题目均解锁（无解锁机制），芯片仅区分 current / unlocked
     // 动态属性 [current='true'] 在 refreshLevelChips() 中通过 setProperty + polish() 触发
-    setStyleSheet(QString::fromUtf8("QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
+    setStyleSheet(QString::fromUtf8("QComboBox#levelCombo { background: #FFFFFF; border: 1px solid #E0E0E0; "
                                     "border-radius: 4px; padding: 4px 8px; }"
                                     "QComboBox#levelCombo:hover { border-color: #268BD2; }"
-                                    "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+                                    "QPushButton#levelChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
                                     "border-radius: 4px; font-size: 11px; }"
                                     "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
                                     "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "

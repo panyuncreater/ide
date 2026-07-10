@@ -35,7 +35,7 @@ CodeJourneyInfoPanel::CodeJourneyInfoPanel(QWidget* parent) : QWidget(parent) {
 
     // 进度提示标签
     progressLabel_ = new QLabel(this);
-    progressLabel_->setStyleSheet("QLabel { background: #EEE8D5; border: 1px solid #93A1A1;"
+    progressLabel_->setStyleSheet("QLabel { background: #F5F5F5; border: 1px solid #E0E0E0;"
                                   "  border-radius: 4px; padding: 6px 8px; font-size: 12px; }");
     progressLabel_->setWordWrap(true);
     mainLayout->addWidget(progressLabel_);
@@ -103,7 +103,7 @@ void CodeJourneyInfoPanel::refreshProgress() {
     } else {
         html = QString::fromUtf8("<b>📖 代码的生命旅程</b> — 一张静态信息图展示编译管线。<br>"
                                  "点进来看即算完成，也可点击下方按钮深入探索。");
-        progressLabel_->setStyleSheet("QLabel { background: #EEE8D5; border: 1px solid #93A1A1;"
+        progressLabel_->setStyleSheet("QLabel { background: #F5F5F5; border: 1px solid #E0E0E0;"
                                       "  border-radius: 4px; padding: 6px 8px; font-size: 12px; }");
     }
     progressLabel_->setText(html);
@@ -135,7 +135,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
                "<h3 style='color: #CB4B16;'>① 你写的代码（源码）</h3>"
                "<p>编辑器中的纯文本。计算机还不理解这些字符的含义。</p>"
                "<pre style='background: %1; padding: 8px; border-radius: 4px;'>print(1 + 2 * 3);</pre>"
-               "<p style='color: #657B83;'>👇 词法分析</p>"
+               "<p style='color: #8C8C8C;'>👇 词法分析</p>"
                "<hr>"
 
                "<h3 style='color: %4;'>② Token 表（词法分析）</h3>"
@@ -154,7 +154,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
                "  9   | SEMICOLON | ;"
                "</pre>"
                "<p>💡 注释被分离出主流（不计入 Token 表）</p>"
-               "<p style='color: #657B83;'>👇 语法分析</p>"
+               "<p style='color: #8C8C8C;'>👇 语法分析</p>"
                "<hr>"
 
                "<h3 style='color: %5;'>③ AST（语法分析）</h3>"
@@ -169,7 +169,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
                "</pre>"
                "<p>💡 注意 <b>*</b> 节点在 <b>+</b> 节点的下面——乘法优先级更高！</p>"
                "<p>括号改变结构：<code>(1+2)*3</code> 会变成 * 在根、+ 在左子树</p>"
-               "<p style='color: #657B83;'>👇 编译</p>"
+               "<p style='color: #8C8C8C;'>👇 编译</p>"
                "<hr>"
 
                "<h3 style='color: #2AA198;'>④ IR（中间表示）</h3>"
@@ -185,10 +185,10 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
                "  RETURN"
                "</pre>"
                "<p>💡 IR 优化 pass 可在此阶段进行：常量折叠、DCE、复制传播等</p>"
-               "<p style='color: #657B83;'>👇 后端 lowering</p>"
+               "<p style='color: #8C8C8C;'>👇 后端 lowering</p>"
                "<hr>"
 
-               "<h3 style='color: #657B83;'>⑤ 字节码（虚拟机指令）</h3>"
+               "<h3 style='color: #8C8C8C;'>⑤ 字节码（虚拟机指令）</h3>"
                "<p>IR 被翻译为栈式 VM 字节码：</p>"
                "<pre style='background: %1; padding: 8px; border-radius: 4px;'>"
                "StackVM 字节码:<br>"
@@ -200,7 +200,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
                "  OP_PRINT        ; pop 7 → 输出"
                "</pre>"
                "<p>💡 三后端一致性：Interpreter / StackVM / RegisterVM 三条路径都输出 7</p>"
-               "<p style='color: #657B83;'>👇 执行</p>"
+               "<p style='color: #8C8C8C;'>👇 执行</p>"
                "<hr>"
 
                "<h3 style='color: %2;'>⑥ 输出结果</h3>"
@@ -218,7 +218,7 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
                "<li><b>后端 lowering</b>：IR → 字节码（VM 可执行）</li>"
                "<li><b>VM 执行</b>：字节码 → 结果（push/pop 或寄存器运算）</li>"
                "</ul>"
-               "<p style='color: #657B83; font-size: 11px;'>提示：通过左侧教学树导航到对应面板，亲手探索每个阶段！</p>"
+               "<p style='color: #8C8C8C; font-size: 11px;'>提示：通过左侧教学树导航到对应面板，亲手探索每个阶段！</p>"
                "</body></html>")
         .arg(surfaceHex, stage0Hex, stage2Hex, stage3Hex, stage4Hex);
 }

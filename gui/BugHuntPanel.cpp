@@ -130,7 +130,7 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
     // 教学目标：引导用户走「预测 → 观察 → 修复 → 验证」四步调试闭环，
     // 而非仅展示问题代码和错误原因。每步完成后打勾，增强可操作性。
     debugStepsLabel_ = new QLabel(this);
-    debugStepsLabel_->setStyleSheet("QLabel { background: #EEE8D5; border: 1px solid #93A1A1;"
+    debugStepsLabel_->setStyleSheet("QLabel { background: #F5F5F5; border: 1px solid #E0E0E0;"
                                     "  border-radius: 4px; padding: 6px 8px; font-size: 12px; }");
     debugStepsLabel_->setWordWrap(true);
     debugStepsLabel_->setTextFormat(Qt::RichText);
@@ -165,9 +165,9 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
     splitter->setSizes({420, 580});
     mainLayout->addWidget(splitter, 1);
 
-    // issue 5: Solarized 风格 QSS（Bug 芯片按钮，三态：默认/当前/隐藏）
+    // issue 5: 中性浅色风格 QSS（Bug 芯片按钮，三态：默认/当前/隐藏）
     // 动态属性 [current='true'] 在 refreshBugChips() 中通过 setProperty + polish() 触发
-    setStyleSheet(QString::fromUtf8("QPushButton#bugChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+    setStyleSheet(QString::fromUtf8("QPushButton#bugChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
                                     "border-radius: 4px; font-size: 11px; padding: 2px 8px; }"
                                     "QPushButton#bugChip:hover { border-color: #268BD2; background: #E5F3FB; }"
                                     "QPushButton#bugChip[current='true'] { background: #268BD2; color: white; "
@@ -599,7 +599,7 @@ void BugHuntPanel::refreshDebugSteps() {
         return done ? QString::fromUtf8("\xe2\x9c\x85") : QString::fromUtf8("\xe2\xac\x9c");
     };
     QString html = QString::fromUtf8("<b>调试流程：</b> %1 预测 → %2 观察 → %3 修复 → %4 验证"
-                                     "<br><span style='color:#586E75;font-size:11px;'>"
+                                     "<br><span style='color:#5A5A5A;font-size:11px;'>"
                                      "教学目标：通过「预测-观察-修复-验证」四步闭环培养系统化调试能力。"
                                      "先在下方输入框写下你对代码行为的预测，运行后对比差异，"
                                      "修改代码尝试修复，最后用「三后端对比」验证修复效果。"

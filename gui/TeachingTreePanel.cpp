@@ -49,12 +49,12 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
     searchEdit_->setPlaceholderText(QString::fromUtf8("搜索面板..."));
     searchEdit_->setClearButtonEnabled(true);
     searchEdit_->setStyleSheet(QStringLiteral("#teachingSearchEdit {"
-                                              "  background: #FDF6E3;"
+                                              "  background: #FFFFFF;"
                                               "  border: none;"
-                                              "  border-bottom: 1px solid #93A1A1;"
+                                              "  border-bottom: 1px solid #E0E0E0;"
                                               "  padding: 6px 10px;"
                                               "  font-size: 12px;"
-                                              "  color: #002B36;"
+                                              "  color: #1E1E1E;"
                                               "}"
                                               "#teachingSearchEdit:focus {"
                                               "  border-bottom: 2px solid #268BD2;"
@@ -76,9 +76,9 @@ TeachingTreePanel::TeachingTreePanel(QWidget* parent) : QWidget(parent) {
     tree_->setColumnCount(1);
     tree_->header()->setStretchLastSection(true);
 
-    // B2: 树样式美化 —— Solarized 亮色背景 + hover/选中态主题色
+    // B2: 树样式美化 —— 中性浅色背景 + hover/选中态主题色
     tree_->setStyleSheet(QStringLiteral("QTreeWidget#teachingTree {"
-                                        "  background: #FDF6E3;"
+                                        "  background: #FFFFFF;"
                                         "  border: none;"
                                         "  outline: none;"
                                         "}"

@@ -1,7 +1,10 @@
 /* ============================================================
- * Solarized Light Theme (Ethan Schoonover)
- * Base3: #FDF6E3  Base2: #EEE8D5  Base01: #586E75
- * Accent: blue #268BD2  green #859900  yellow #B58900
+ * MiniLang IDE — Light Theme (Neutral White)
+ * ------------------------------------------------------------
+ * R74 (2026-07-10): 背景色从 Solarized 米黄回退为中性白/浅灰，
+ * 解决跨机器渲染不一致问题。语义强调色（blue/green/yellow/red）
+ * 保留 Solarized 配色以保证可读性。
+ *
  * This file is a DESIGN REFERENCE only — not loaded at runtime.
  * Active styling is in ide.cpp::applyFluentStyle() + TeachingTheme.h.
  * ============================================================ */
@@ -9,9 +12,9 @@
 /* ============================================================
    MiniLang IDE — Light Theme (Modernized)
    Palette: Soft neutral grays + refined blue accent
-   Canvas: #fafafa / Sidebar: #f3f3f3 / Hairline: #e8e8e8
+   Canvas: #ffffff / Sidebar: #f5f5f5 / Hairline: #e0e0e0
    Text: #1e1e1e / #5a5a5a / #8c8c8c
-   Accent: #0078d4 (primary) / #106ebe (active) / #005a9e (run)
+   Accent: #268bd2 (primary) / #106ebe (active) / #005a9e (run)
    ============================================================ */
 
 /* ---- Global ---- */

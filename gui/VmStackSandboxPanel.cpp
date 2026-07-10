@@ -61,17 +61,17 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     pageBar->addStretch();
     mainLayout->addLayout(pageBar);
 
-    // ---- 子页 QSS ----
+    // ---- 子页 QSS（R74: 回退中性白/浅灰）----
     setStyleSheet(
-        QString::fromUtf8("QPushButton#pageBtn { padding: 6px 14px; border: 1px solid #93A1A1; "
-                          "border-radius: 4px; background: #EEE8D5; }"
+        QString::fromUtf8("QPushButton#pageBtn { padding: 6px 14px; border: 1px solid #E0E0E0; "
+                          "border-radius: 4px; background: #F5F5F5; }"
                           "QPushButton#pageBtn:hover { border-color: #268BD2; background: #E5F3FB; }"
                           "QPushButton#pageBtn:checked { background: #268BD2; color: white; "
                           "border-color: #1E6FA3; font-weight: bold; }"
-                          "QComboBox#levelCombo { background: #FDF6E3; border: 1px solid #93A1A1; "
+                          "QComboBox#levelCombo { background: #FFFFFF; border: 1px solid #E0E0E0; "
                           "border-radius: 4px; padding: 4px 8px; }"
                           "QComboBox#levelCombo:hover { border-color: #268BD2; }"
-                          "QPushButton#levelChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+                          "QPushButton#levelChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
                           "border-radius: 4px; font-size: 11px; }"
                           "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
                           "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
@@ -80,13 +80,13 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
                           "border-color: #CCC; }"
                           // 追踪页 QSS
                           "QListWidget#bytecodeList { font-family: Consolas, monospace; "
-                          "border: 1px solid #93A1A1; }"
-                          "QListWidget#bytecodeList::item { padding: 2px 4px; border-bottom: 1px solid #EEE8D5; }"
+                          "border: 1px solid #E0E0E0; }"
+                          "QListWidget#bytecodeList::item { padding: 2px 4px; border-bottom: 1px solid #F5F5F5; }"
                           "QListWidget#bytecodeList::item:selected { background: #268BD2; color: white; }"
-                          "QTableWidget#registerTable { gridline-color: #93A1A1; "
+                          "QTableWidget#registerTable { gridline-color: #E0E0E0; "
                           "font-family: Consolas, monospace; }"
-                          "QTableWidget#registerTable QHeaderView::section { background: #EEE8D5; "
-                          "padding: 4px; border: 1px solid #93A1A1; }"));
+                          "QTableWidget#registerTable QHeaderView::section { background: #F5F5F5; "
+                          "padding: 4px; border: 1px solid #E0E0E0; }"));
 
     // ---- QStackedWidget ----
     pageStack_ = new QStackedWidget(this);

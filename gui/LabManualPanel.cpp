@@ -128,8 +128,8 @@ LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     splitter->setSizes({560, 440});
     mainLayout->addWidget(splitter, 1);
 
-    // issue 6: Solarized 风格 QSS（章节芯片按钮，二态：默认/当前）
-    setStyleSheet(QString::fromUtf8("QPushButton#labChapterChip { background: #EEE8D5; border: 1px solid #93A1A1; "
+    // issue 6: 中性浅色风格 QSS（章节芯片按钮，二态：默认/当前）
+    setStyleSheet(QString::fromUtf8("QPushButton#labChapterChip { background: #F5F5F5; border: 1px solid #E0E0E0; "
                                     "border-radius: 4px; font-size: 11px; padding: 2px 10px; }"
                                     "QPushButton#labChapterChip:hover { border-color: #268BD2; background: #E5F3FB; }"
                                     "QPushButton#labChapterChip[current='true'] { background: #268BD2; color: white; "
@@ -235,8 +235,8 @@ void LabManualPanel::showCurrentChapter() {
 
     // 使用统一 Markdown 渲染器：支持标题/粗体/列表/代码块/分割线等
     // 替代早期 5 行 html.replace 的最小转换（无法处理 **bold**、列表、代码块）
-    // R52-5 fix: 传入 codeBlockBg 对齐面板 Solarized 主题，避免代码块用默认浅灰
-    QString html = MarkdownRenderer::markdownToHtml(markdownForRender, QStringLiteral("#EEE8D5"));
+    // R52-5 fix: 传入 codeBlockBg 对齐面板中性浅色主题，避免代码块用默认浅灰
+    QString html = MarkdownRenderer::markdownToHtml(markdownForRender, QStringLiteral("#F5F5F5"));
 
     // P2-2 fix (F3): 在 Markdown 渲染结果前插入章节锚点目录（TOC）
     // 让学习者一目了然看到本章所有节标题，点击即可跳转。

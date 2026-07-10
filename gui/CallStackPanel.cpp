@@ -462,7 +462,7 @@ GuidedTour* CallStackPanel::createGuidedTour(QWidget* host) {
     tour->addStep(nullptr, QString::fromUtf8("示例代码：递归调用栈"),
                   QString::fromUtf8(
                       "<p>将以下代码粘贴到编辑器，按 F5 调试，在调用栈中观察递归层次：</p>"
-                      "<pre style='background:#EEE8D5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
+                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
                       "fun fib(n) {\n"
                       "    if (n < 2) {\n"
                       "        return n;\n"

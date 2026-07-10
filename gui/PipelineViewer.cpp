@@ -99,7 +99,7 @@ static QString bytecodeTextToClickableHtml(const QString& plainText) {
 // 5 阶段主题色 / 图标 / 标题 / 描述
 // ------------------------------------------------------------
 // 配色取自 Solarized 亮色色板：
-//   源码  → 石墨灰 #586E75（base01，中性厚重）
+//   源码  → 石墨灰 #5A5A5A（中性灰）
 //   Token → 海蓝   #268BD2（blue，清澈）
 //   AST   → 森林绿 #859900（green，生机）
 //   IR    → 紫色   #6C71C4（violet，抽象）
@@ -109,14 +109,14 @@ static QString bytecodeTextToClickableHtml(const QString& plainText) {
 // ============================================================
 QColor PipelineViewer::stageColor(int step) {
     static const QColor kColors[] = {
-        QColor("#586E75"), // 源码：石墨灰
+        QColor("#5A5A5A"), // 源码：石墨灰
         QColor("#268BD2"), // Token：海蓝
         QColor("#859900"), // AST：森林绿
         QColor("#6C71C4"), // IR：紫色
         QColor("#CB4B16"), // 字节码：橙色
     };
     if (step < 0 || step >= 5)
-        return QColor("#93A1A1");
+        return QColor("#E0E0E0");
     return kColors[step];
 }
 
@@ -159,9 +159,9 @@ QString PipelineViewer::stageDesc(int step) {
 
 /// 构造编译流水线面板：初始化 UI 骨架并默认进入第一阶段。
 PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
-    // 整面板背景：Solarized base3（与 IDE 主背景一致）
+    // 整面板背景：白色（与 IDE 主背景一致）
     setObjectName("pipelineRoot");
-    setStyleSheet("QWidget#pipelineRoot { background: #FDF6E3; }");
+    setStyleSheet("QWidget#pipelineRoot { background: #FFFFFF; }");
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(8, 8, 8, 8);
@@ -171,8 +171,8 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     auto* stepBar = new QFrame(this);
     stepBar->setObjectName("pipelineStepBar");
     stepBar->setStyleSheet(QString("QFrame#pipelineStepBar {"
-                                   "  background: #EEE8D5;"       // Solarized base2
-                                   "  border: 1px solid #93A1A1;" // Solarized base1
+                                   "  background: #F5F5F5;"       // 浅灰
+                                   "  border: 1px solid #E0E0E0;" // 浅灰边框
                                    "  border-radius: 8px;"
                                    "}"));
     auto* stepLayout = new QHBoxLayout(stepBar);
@@ -190,7 +190,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
         btn->setCursor(Qt::PointingHandCursor);
         const QString colorHex = stageColor(step).name();
         btn->setStyleSheet(QString("QPushButton {"
-                                   "  background: #FDF6E3;" // base3 未选中背景
+                                   "  background: #FFFFFF;" // 白色未选中背景
                                    "  color: %1;"
                                    "  border: 1.5px solid %1;"
                                    "  border-radius: 4px;"
@@ -203,7 +203,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
                                    "  color: white;"
                                    "}"
                                    "QPushButton:hover:!checked {"
-                                   "  background: #EEE8D5;" // base2 hover
+                                   "  background: #F5F5F5;" // 浅灰 hover
                                    "}"
                                    "QPushButton:pressed {"
                                    "  background: %1; color: white;"
@@ -252,8 +252,8 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     stack_ = new QStackedWidget(this);
     stack_->setObjectName("pipelineStack");
     stack_->setStyleSheet(QString("QStackedWidget#pipelineStack {"
-                                  "  background: #FDF6E3;"
-                                  "  border: 1px solid #93A1A1;"
+                                  "  background: #FFFFFF;"
+                                  "  border: 1px solid #E0E0E0;"
                                   "  border-radius: 6px;"
                                   "}"));
 
@@ -261,8 +261,8 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     sourceBrowser_ = new QTextBrowser(this);
     sourceBrowser_->setFont(QFont("Consolas"));
     sourceBrowser_->setStyleSheet(QString("QTextBrowser {"
-                                          "  background: #FDF6E3;"
-                                          "  border: 1px solid #93A1A1;"
+                                          "  background: #FFFFFF;"
+                                          "  border: 1px solid #E0E0E0;"
                                           "  border-radius: 4px;"
                                           "  padding: 4px;"
                                           "}"));
@@ -278,19 +278,19 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     tokenTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     tokenTable_->setAlternatingRowColors(true);
     tokenTable_->setStyleSheet(QString("QTableWidget {"
-                                       "  background: #FDF6E3;"
-                                       "  alternate-background-color: #EEE8D5;"
-                                       "  border: 1px solid #93A1A1;"
+                                       "  background: #FFFFFF;"
+                                       "  alternate-background-color: #F5F5F5;"
+                                       "  border: 1px solid #E0E0E0;"
                                        "  border-radius: 4px;"
-                                       "  gridline-color: #93A1A1;"
+                                       "  gridline-color: #E0E0E0;"
                                        "  selection-background-color: #268BD2;"
                                        "  selection-color: white;"
                                        "}"
                                        "QHeaderView::section {"
-                                       "  background: #EEE8D5;"
-                                       "  color: #002B36;"
+                                       "  background: #F5F5F5;"
+                                       "  color: #1E1E1E;"
                                        "  border: none;"
-                                       "  border-bottom: 1px solid #93A1A1;"
+                                       "  border-bottom: 1px solid #E0E0E0;"
                                        "  padding: 4px 8px;"
                                        "  font-weight: bold;"
                                        "}"));
@@ -330,8 +330,8 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     astSummary_ = new QTextBrowser(this);
     astSummary_->setFont(QFont("Consolas"));
     astSummary_->setStyleSheet(QString("QTextBrowser {"
-                                       "  background: #FDF6E3;"
-                                       "  border: 1px solid #93A1A1;"
+                                       "  background: #FFFFFF;"
+                                       "  border: 1px solid #E0E0E0;"
                                        "  border-radius: 4px;"
                                        "  padding: 4px;"
                                        "}"));
@@ -341,8 +341,8 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     irBrowser_->setOpenLinks(false);
     irBrowser_->setOpenExternalLinks(false);
     irBrowser_->setStyleSheet(QString("QTextBrowser {"
-                                      "  background: #FDF6E3;"
-                                      "  border: 1px solid #93A1A1;"
+                                      "  background: #FFFFFF;"
+                                      "  border: 1px solid #E0E0E0;"
                                       "  border-radius: 4px;"
                                       "  padding: 4px;"
                                       "}"));
@@ -352,8 +352,8 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     bytecodeBrowser_->setOpenLinks(false);
     bytecodeBrowser_->setOpenExternalLinks(false);
     bytecodeBrowser_->setStyleSheet(QString("QTextBrowser {"
-                                            "  background: #FDF6E3;"
-                                            "  border: 1px solid #93A1A1;"
+                                            "  background: #FFFFFF;"
+                                            "  border: 1px solid #E0E0E0;"
                                             "  border-radius: 4px;"
                                             "  padding: 4px;"
                                             "}"));
@@ -376,7 +376,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
         const QString html = QString("<div style='font-family: \"Segoe UI\", \"Microsoft YaHei\", sans-serif;'>"
                                      "<span style='font-size: 14px; font-weight: 600; color: %1;'>%2 %3</span>"
                                      "&nbsp;&nbsp;&nbsp;"
-                                     "<span style='font-size: 11px; color: #657B83;'>%4</span>"
+                                     "<span style='font-size: 11px; color: #8C8C8C;'>%4</span>"
                                      "</div>")
                                  .arg(color.name())
                                  .arg(stageIcon(step))
@@ -385,11 +385,11 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
         header->setText(html);
         // header QSS：左 4px 主题色竖线 + 浅色背景 + 上下竖直 padding
         header->setStyleSheet(QString("QLabel {"
-                                      "  background: #EEE8D5;"       // base2 背景
+                                      "  background: #F5F5F5;"       // 浅灰背景
                                       "  border-left: 4px solid %1;" // 主题色左竖线
-                                      "  border-top: 1px solid #93A1A1;"
-                                      "  border-right: 1px solid #93A1A1;"
-                                      "  border-bottom: 1px solid #93A1A1;"
+                                      "  border-top: 1px solid #E0E0E0;"
+                                      "  border-right: 1px solid #E0E0E0;"
+                                      "  border-bottom: 1px solid #E0E0E0;"
                                       "  border-top-left-radius: 4px;"
                                       "  border-bottom-left-radius: 4px;"
                                       "  padding: 8px 12px;"
@@ -559,12 +559,12 @@ void PipelineViewer::updateStatusBar() {
                                            QString::fromUtf8("字节码")};
     const QColor color = stageColor(currentStep_);
     statusLabel_->setStyleSheet(QString("QLabel {"
-                                        "  background: #EEE8D5;" // base2 背景
-                                        "  border: 1px solid #93A1A1;"
+                                        "  background: #F5F5F5;" // 浅灰背景
+                                        "  border: 1px solid #E0E0E0;"
                                         "  border-left: 4px solid %1;" // 当前阶段主题色左竖线
                                         "  border-radius: 4px;"
                                         "  padding: 4px 10px;"
-                                        "  color: #002B36;"
+                                        "  color: #1E1E1E;"
                                         "}")
                                     .arg(color.name()));
     statusLabel_->setText(QString::fromUtf8("\xF0\x9F\x93\x8C 步骤: %1 | 光标: 行 %2, 列 %3") // 📌
