@@ -20,14 +20,12 @@
 static void styleScopeGroupHeader(QTreeWidgetItem* item) {
     QFont f = item->font(0);
     f.setBold(true);
-    // RA-C fix: 全局字体用 setPixelSize(14) 设置（main.cpp），pointSize() 返回 -1，
-    // pointSize()-1 = -2 触发 QFont::setPointSize 警告。改用 pixelSize 对齐项目策略。
-    // BUG-DBG-G4 fix (P2): pixelSize() 在字体未显式设置 pixelSize 时返回 1（而非
-    // 实际像素值），直接 -1 会得到 0 甚至负数导致字体渲染异常。增加 >1 守卫，
-    // 仅当 pixelSize 有效（>1）时才缩减 1 像素，否则保持原字号。
-    int ps = f.pixelSize();
+    // R75 fix: 全局字体改用 setPointSize（main.cpp 的 uiFont(10)），pointSize() 返回
+    // 有效正值。原 pixelSize 路径在 pointSize 全局字体下返回 -1，小字号逻辑失效。
+    // 改用 pointSize 缩减 1pt，使分组标题字号略小于内容项。
+    int ps = f.pointSize();
     if (ps > 1)
-        f.setPixelSize(ps - 1); // 小字号
+        f.setPointSize(ps - 1); // 小字号
     item->setFont(0, f);
     item->setFont(1, f);
     // 次要文本色（原硬编码 #616161，跟随主题亮/暗自适应）

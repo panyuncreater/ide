@@ -12,6 +12,7 @@
 #include "compiler/Bytecode.h"
 #include "compiler/Compiler.h"
 #include "compiler/IR.h"
+#include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"
 #include "gui/PanelAnimator.h"
 #include "lexer/Lexer.h"
@@ -259,7 +260,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
 
     // === 内容控件创建（保持原有逻辑） ===
     sourceBrowser_ = new QTextBrowser(this);
-    sourceBrowser_->setFont(QFont("Consolas"));
+    sourceBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     sourceBrowser_->setStyleSheet(QString("QTextBrowser {"
                                           "  background: #FFFFFF;"
                                           "  border: 1px solid #E0E0E0;"
@@ -328,7 +329,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
     });
 
     astSummary_ = new QTextBrowser(this);
-    astSummary_->setFont(QFont("Consolas"));
+    astSummary_->setFont(GuiTextUtils::monospaceFont(10));
     astSummary_->setStyleSheet(QString("QTextBrowser {"
                                        "  background: #FFFFFF;"
                                        "  border: 1px solid #E0E0E0;"
@@ -337,7 +338,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
                                        "}"));
 
     irBrowser_ = new QTextBrowser(this);
-    irBrowser_->setFont(QFont("Consolas"));
+    irBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     irBrowser_->setOpenLinks(false);
     irBrowser_->setOpenExternalLinks(false);
     irBrowser_->setStyleSheet(QString("QTextBrowser {"
@@ -348,7 +349,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
                                       "}"));
 
     bytecodeBrowser_ = new QTextBrowser(this);
-    bytecodeBrowser_->setFont(QFont("Consolas"));
+    bytecodeBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     bytecodeBrowser_->setOpenLinks(false);
     bytecodeBrowser_->setOpenExternalLinks(false);
     bytecodeBrowser_->setStyleSheet(QString("QTextBrowser {"

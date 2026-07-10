@@ -9,7 +9,8 @@
 
 #include "FluentGlobal.h"
 #include "Theme.h"
-#include "gui/I18n.h" // D2: i18n 翻译辅助层
+#include "gui/GuiTextUtils.h" // R75: uiFont() 跨机器字体回退链
+#include "gui/I18n.h"         // D2: i18n 翻译辅助层
 
 // ============================================================
 // MiniLang IDE 程序入口
@@ -42,11 +43,11 @@ int main(int argc, char* argv[]) {
     // 使用 Fusion 作为基础样式（QFluentKit QSS 覆盖其调色板驱动的背景）
     a.setStyle(QStyleFactory::create("Fusion"));
 
-    // 全局字体（与 QFluentKit Theme 内部字体族对齐）
-    QFont font;
-    font.setFamilies({"Microsoft YaHei", "PingFang SC", "Segoe UI"});
-    font.setPixelSize(14);
-    a.setFont(font);
+    // 全局字体（R75: 跨机器字体一致性）
+    // 原 setPixelSize(14) + 短回退链在缺中文字体的机器上中文 UI 显示不清。
+    // 改用 GuiTextUtils::uiFont()：完整中英文回退链 + pointSize 物理单位，
+    // 随屏幕 DPI 自适应，保证不同机器物理大小一致。
+    a.setFont(GuiTextUtils::uiFont(10)); // 10pt ≈ 13.3px @ 96dpi
 
     // 主题模式：由 Ide 构造函数从 QSettings 读取并应用（默认 light，用户可切换并持久化）。
     // 此处不再硬编码 LIGHT，避免覆盖用户上次选择的主题。

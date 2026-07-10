@@ -6,6 +6,7 @@
 #include "app/IdeController.h"
 #include "compiler/Compiler.h"
 #include "compiler/IR.h"
+#include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/PanelAnimator.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -501,7 +502,7 @@ void IRTransformPanel::buildCurrentPage(QWidget* host) {
     layout->addLayout(toolbar);
 
     currentIrBrowser_ = new QTextBrowser(host);
-    currentIrBrowser_->setFont(QFont("Consolas"));
+    currentIrBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     currentIrBrowser_->setOpenLinks(false);
     currentIrBrowser_->setOpenExternalLinks(false);
     layout->addWidget(currentIrBrowser_, 1);
@@ -998,7 +999,7 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
     irLayout->setContentsMargins(0, 0, 0, 0);
     irLayout->addWidget(new QLabel(QString::fromUtf8("IR 快照："), irWrap));
     replayIrBrowser_ = new QTextBrowser(irWrap);
-    replayIrBrowser_->setFont(QFont("Consolas"));
+    replayIrBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     replayIrBrowser_->setOpenLinks(false);
     replayIrBrowser_->setOpenExternalLinks(false);
     irLayout->addWidget(replayIrBrowser_, 1);

@@ -4,6 +4,7 @@
 #include "compiler/IR.h"
 #include "compiler/RegisterVM.h"
 #include "compiler/VM.h"
+#include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "interpreter/Interpreter.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -56,7 +57,7 @@ BackendComparePanel::BackendComparePanel(QWidget* parent) : QWidget(parent) {
         status = new QLabel(title + QString::fromUtf8(" [待运行]"), container);
         output = new QTextEdit(container);
         output->setReadOnly(true);
-        output->setFont(QFont("Consolas"));
+        output->setFont(GuiTextUtils::monospaceFont(10));
         layout->addWidget(status);
         layout->addWidget(output, 1);
         return container;
