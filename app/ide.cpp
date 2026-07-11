@@ -4221,7 +4221,7 @@ void Ide::applyFluentStyle() {
         QLabel#vmOpLabel {
             background-color: %1;
             color: %2;
-            font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+            font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
             font-size: 12px;
             padding: 8px;
             border-radius: 5px;
@@ -4240,7 +4240,7 @@ void Ide::applyFluentStyle() {
             color: %6;
             border: 1px solid %7;
             border-radius: 5px;
-            font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+            font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
             font-size: 12px;
         }
         QListWidget#vmStackList::item {
@@ -4256,7 +4256,7 @@ void Ide::applyFluentStyle() {
             color: %6;
             border: 1px solid %7;
             border-radius: 5px;
-            font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+            font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
             font-size: 12px;
         }
         QTableWidget#vmGlobalsTable QHeaderView::section {
@@ -6723,7 +6723,7 @@ void Ide::showHelpDialog() {
     QString btnPressed = TeachingTheme::primaryPressed().name();
     dlg->setStyleSheet(QString("QDialog { background: %1; border-radius: 8px; }"
                                "QLabel#helpTitle { font-size: 16px; font-weight: 600; color: %2; }"
-                               "QLabel#helpKey { font-family: 'Consolas','Cascadia Mono','Courier New',monospace;"
+                               "QLabel#helpKey { font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace;"
                                "  font-size: 12px; color: %4; }"
                                "QLabel#helpDesc { font-size: 12px; color: %2; }"
                                "QLabel#helpTip { color: %3; font-size: 11px; }"

@@ -213,7 +213,7 @@ static QString renderInline(const QString& s) {
 static QString buildStylesheet(const QString& codeBlockBg) {
     static const QString kStylesheet = QStringLiteral(R"(
         <style>
-        body { font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; font-size: 14px; color: #1E1E1E; line-height: 1.6; }
+        body { font-family: 'Microsoft YaHei','PingFang SC','Noto Sans CJK SC','Source Han Sans SC','Segoe UI','SF Pro Text','Arial Unicode MS','Arial',sans-serif; font-size: 14px; color: #1E1E1E; line-height: 1.6; }
         h1 { font-size: 22px; color: #268BD2; border-bottom: 2px solid #E0E0E0; padding-bottom: 6px; margin: 16px 0 10px; font-weight: 600; }
         h2 { font-size: 18px; color: #0078d4; border-bottom: 1px solid #E0E0E0; padding-bottom: 4px; margin: 14px 0 8px; font-weight: 600; }
         h3 { font-size: 16px; color: #0078d4; margin: 12px 0 6px; font-weight: 600; }
@@ -222,8 +222,8 @@ static QString buildStylesheet(const QString& codeBlockBg) {
         p { margin: 6px 0; }
         ul, ol { margin: 6px 0; padding-left: 24px; }
         li { margin: 3px 0; }
-        code { background: #F5F5F5; color: #DC322F; padding: 2px 5px; border-radius: 3px; font-family: Consolas, 'Courier New', monospace; font-size: 13px; }
-        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid #E0E0E0; font-family: Consolas, 'Courier New', monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
+        code { background: #F5F5F5; color: #DC322F; padding: 2px 5px; border-radius: 3px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; font-size: 13px; }
+        pre { background: %1; padding: 10px 12px; border-radius: 6px; border: 1px solid #E0E0E0; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; font-size: 13px; white-space: pre-wrap; margin: 8px 0; }
         pre code { background: transparent; color: #1E1E1E; padding: 0; border-radius: 0; font-size: 13px; }
         blockquote { border-left: 4px solid #268BD2; background: #F5F5F5; padding: 8px 12px; margin: 8px 0; color: #5A5A5A; border-radius: 0 4px 4px 0; }
         blockquote p { margin: 4px 0; }
@@ -240,7 +240,7 @@ static QString buildStylesheet(const QString& codeBlockBg) {
         /* P2-2 fix (F4): MiniLang 语法高亮配色（中性风格） */
         .ml-keyword { color: #859900; font-weight: 600; }
         .ml-string { color: #2AA198; }
-        .ml-comment { color: #E0E0E0; font-style: italic; }
+        .ml-comment { color: #6A9955; font-style: italic; }
         .ml-number { color: #D33682; }
         /* P2-2 fix (F3): 章节锚点目录样式 */
         .toc-box { background: #F5F5F5; border-left: 3px solid #268BD2; padding: 8px 12px; margin: 8px 0; border-radius: 0 4px 4px 0; }
@@ -264,7 +264,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#F5F5F5") : codeBlockBg;
     const QString codeBlockStyle = QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
                                                   "border:1px solid #E0E0E0; "
-                                                  "font-family:Consolas, 'Courier New', monospace; "
+                                                  "font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
                                                   "font-size:13px; "
                                                   "white-space:pre-wrap;")
                                        .arg(bg);
@@ -371,7 +371,7 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
                 }
                 // 代码块语言标签（仅作为注释显示在代码上方，不渲染为单独元素）
                 if (!codeBlockLang.isEmpty()) {
-                    html << QStringLiteral("<div style=\"font-size:11px;color:#999;margin-bottom:2px;\">")
+                    html << QStringLiteral("<div style=\"font-size:11px;color:#6E6E6E;margin-bottom:2px;\">")
                          << escapeHtml(codeBlockLang) << QStringLiteral("</div>");
                 }
                 html << QStringLiteral("<pre style=\"%1\">").arg(codeBlockStyle) << escaped << QStringLiteral("</pre>");

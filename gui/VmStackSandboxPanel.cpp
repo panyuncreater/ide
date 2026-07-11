@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "gui/VmStackSandboxPanel.h"
+#include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡完成状态持久化
 #include "gui/PanelAnimator.h"
@@ -76,15 +77,15 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
                           "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
                           "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
                           "border-color: #1E6FA3; font-weight: bold; }"
-                          "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+                          "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #6E6E6E; "
                           "border-color: #CCC; }"
                           // 追踪页 QSS
-                          "QListWidget#bytecodeList { font-family: Consolas, monospace; "
+                          "QListWidget#bytecodeList { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; "
                           "border: 1px solid #E0E0E0; }"
                           "QListWidget#bytecodeList::item { padding: 2px 4px; border-bottom: 1px solid #F5F5F5; }"
                           "QListWidget#bytecodeList::item:selected { background: #268BD2; color: white; }"
                           "QTableWidget#registerTable { gridline-color: #E0E0E0; "
-                          "font-family: Consolas, monospace; }"
+                          "font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }"
                           "QTableWidget#registerTable QHeaderView::section { background: #F5F5F5; "
                           "padding: 4px; border: 1px solid #E0E0E0; }"));
 
@@ -162,7 +163,7 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     stackLayout->setContentsMargins(4, 4, 4, 4);
     stackList_ = new QListWidget(stackBox);
     stackList_->setStyleSheet(
-        QString::fromUtf8("QListWidget { background: %1; color: %2; font-family: Consolas, monospace; }"
+        QString::fromUtf8("QListWidget { background: %1; color: %2; font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }"
                           "QListWidget::item { padding: 4px; border-bottom: 1px solid %3; }")
             .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(), TeachingTheme::border().name()));
     stackLayout->addWidget(stackList_);
@@ -172,7 +173,7 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     auto* historyLayout = new QVBoxLayout(historyBox);
     historyLayout->setContentsMargins(4, 4, 4, 4);
     historyList_ = new QListWidget(historyBox);
-    historyList_->setStyleSheet("QListWidget { font-family: Consolas, monospace; }");
+    historyList_->setStyleSheet("QListWidget { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }");
     historyLayout->addWidget(historyList_);
     splitter->addWidget(historyBox);
 
@@ -190,7 +191,7 @@ VmStackSandboxPanel::VmStackSandboxPanel(QWidget* parent) : QWidget(parent) {
     outputEdit_->setReadOnly(true);
     outputEdit_->setMaximumHeight(80);
     outputEdit_->setStyleSheet(
-        QString::fromUtf8("QTextEdit { background: %1; color: %2; font-family: Consolas, monospace; }")
+        QString::fromUtf8("QTextEdit { background: %1; color: %2; font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }")
             .arg(TeachingTheme::surfaceHover().name(), TeachingTheme::textPrimary().name()));
     bottomLayout->addWidget(outputEdit_);
     sandboxLayout->addWidget(bottomBox);
@@ -323,7 +324,7 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     ipIndicator_ = new QLabel(mlTr("IP: -"), host);
     ipIndicator_->setStyleSheet(
         QString::fromUtf8("padding: 2px 8px; background: %1; border: 1px solid %2; border-radius: 3px; "
-                          "font-family: Consolas, monospace; font-weight: bold;")
+                          "font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-weight: bold;")
             .arg(TeachingTheme::surface().name(), TeachingTheme::border().name()));
     traceStatusLabel_ = new QLabel(mlTr("状态：未加载"), host);
     traceStatusLabel_->setStyleSheet(
@@ -353,7 +354,7 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     stackLayout->setContentsMargins(4, 4, 4, 4);
     traceStackView_ = new QListWidget(stackBox);
     traceStackView_->setStyleSheet(
-        QString::fromUtf8("QListWidget { background: %1; color: %2; font-family: Consolas, monospace; }"
+        QString::fromUtf8("QListWidget { background: %1; color: %2; font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }"
                           "QListWidget::item { padding: 3px; border-bottom: 1px solid %3; }")
             .arg(TeachingTheme::surface().name(), TeachingTheme::textPrimary().name(), TeachingTheme::border().name()));
     stackLayout->addWidget(traceStackView_);
@@ -379,7 +380,7 @@ void VmStackSandboxPanel::buildTracePage(QWidget* host) {
     traceOutputEdit_->setReadOnly(true);
     traceOutputEdit_->setMaximumHeight(80);
     traceOutputEdit_->setStyleSheet(
-        QString::fromUtf8("QTextEdit { background: %1; color: %2; font-family: Consolas, monospace; }")
+        QString::fromUtf8("QTextEdit { background: %1; color: %2; font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }")
             .arg(TeachingTheme::surfaceHover().name(), TeachingTheme::textPrimary().name()));
     outLayout->addWidget(traceOutputEdit_);
     rightSplitter->addWidget(outBox);
@@ -473,7 +474,7 @@ void VmStackSandboxPanel::rebuildOpButtons() {
 
     for (const auto& op : ops) {
         auto* btn = new QPushButton(opButtonText(op), host);
-        btn->setStyleSheet("QPushButton { padding: 6px; text-align: left; font-family: Consolas, monospace; }"
+        btn->setStyleSheet("QPushButton { padding: 6px; text-align: left; font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; }"
                            "QPushButton:hover { background: #d0e0ff; }");
         connect(btn, &QPushButton::clicked, this, [this, op]() { executeOp(op); });
         layout->addWidget(btn);
@@ -1071,7 +1072,7 @@ void VmStackSandboxPanel::loadBytecodeFromCurrentLevel() {
     controller_->vmReset();
 
     // 填充字节码列表
-    const QFont monoFont(QStringLiteral("Consolas"), 10);
+    const QFont monoFont = GuiTextUtils::monospaceFont(10);
     const bool useReg = controller_->isVmRegisterMode();
 
     if (useReg) {

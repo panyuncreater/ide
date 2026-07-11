@@ -366,7 +366,7 @@ void BreakpointConditionPanel::populateScenarioDetail(int index) {
     os << "<p><b>触发行为：</b> " << escapeHtml(s.expectedBehavior) << "</p>";
     os << "<h4>示例代码：</h4>";
     os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()
-       << "; padding:8px; font-family:Consolas;'>" << escapeHtml(s.sampleCode) << "</pre>";
+       << "; padding:8px; font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>" << escapeHtml(s.sampleCode) << "</pre>";
     scenarioDetail_->setHtml(QString::fromUtf8(os.str().c_str()));
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
@@ -386,7 +386,7 @@ GuidedTour* BreakpointConditionPanel::createGuidedTour(QWidget* host) {
     tour->addStep(nullptr, QString::fromUtf8("示例代码：条件断点"),
                   QString::fromUtf8(
                       "<p>将以下代码粘贴到编辑器，在 print 行设条件断点观察命中：</p>"
-                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
+                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
                       "for (var i = 0; i < 100; i = i + 1) {\n"
                       "    if (i % 10 == 0) {\n"
                       "        print i;\n"

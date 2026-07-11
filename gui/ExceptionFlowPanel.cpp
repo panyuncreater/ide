@@ -368,7 +368,7 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
             << icon << " " << step << "</td>";
         oss << "</tr>";
         if (i < s.propagationPath.size() - 1) {
-            oss << "<tr><td colspan='2' style='text-align:center;color:#7F8C8D;padding:1px 0;font-size:12px;'>↓</td></tr>";
+            oss << "<tr><td colspan='2' style='text-align:center;color:#6E6E6E;padding:1px 0;font-size:12px;'>↓</td></tr>";
         }
     }
     oss << "</table>";
@@ -515,7 +515,7 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
             << ";font-weight:" << fontWeight << ";font-size:" << fontSize << ";'>"
             << kPhaseIcons[i] << "<br>" << phases[i].phase << "</td>";
         if (i < 5) {
-            oss << "<td style='color:#7F8C8D;padding:0 2px;text-align:center;font-size:14px;'>→</td>";
+            oss << "<td style='color:#6E6E6E;padding:0 2px;text-align:center;font-size:14px;'>→</td>";
         }
     }
     oss << "</tr></table>";
@@ -566,7 +566,7 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         oss << "</tr>";
     }
     oss << "</table>";
-    oss << "<p style='color:#7F8C8D;font-size:11px;margin:2px 0 8px 0;'>"
+    oss << "<p style='color:#6E6E6E;font-size:11px;margin:2px 0 8px 0;'>"
            "↑ 栈顶（高地址） | ↓ 栈底（低地址）</p>";
 
     // ---- 关键操作列表 ----

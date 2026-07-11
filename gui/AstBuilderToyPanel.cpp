@@ -107,7 +107,7 @@ AstBuilderToyPanel::AstBuilderToyPanel(QWidget* parent) : QWidget(parent) {
                                     "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
                                     "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
                                     "border-color: #1E6FA3; font-weight: bold; }"
-                                    "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+                                    "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #6E6E6E; "
                                     "border-color: #CCC; }"));
 
     // ---- 主体：左工具箱 + 右画布 ----

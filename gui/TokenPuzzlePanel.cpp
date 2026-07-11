@@ -8,6 +8,7 @@
 // ============================================================
 
 #include "gui/TokenPuzzlePanel.h"
+#include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡星级持久化
 #include "gui/TokenPuzzleData.h"
@@ -141,10 +142,7 @@ void TokenPuzzlePanel::buildUi() {
     // ---- 中部上：目标语句 ----
     mainLayout->addWidget(new QLabel(mlTr("目标语句:")));
     targetCodeLabel_ = new QLabel(this);
-    QFont monoFont(QString::fromUtf8("Consolas"));
-    monoFont.setStyleHint(QFont::Monospace);
-    monoFont.setPointSize(12);
-    targetCodeLabel_->setFont(monoFont);
+    targetCodeLabel_->setFont(GuiTextUtils::monospaceFont(12));
     targetCodeLabel_->setStyleSheet("background-color: #f5f5f5; padding: 8px; border: 1px solid #ddd;"
                                     "border-radius: 4px;");
     targetCodeLabel_->setTextFormat(Qt::PlainText);
@@ -165,7 +163,7 @@ void TokenPuzzlePanel::buildUi() {
     // ---- 中部下：玩家答案区 ----
     mainLayout->addWidget(new QLabel(mlTr("你的答案（点击 token 可移除）:")));
     answerList_ = new QListWidget(this);
-    answerList_->setFont(monoFont);
+    answerList_->setFont(GuiTextUtils::monospaceFont(12));
     answerList_->setFlow(QListView::LeftToRight); // 横向排列
     answerList_->setWrapping(true);
     answerList_->setSpacing(4);
@@ -217,7 +215,7 @@ void TokenPuzzlePanel::buildUi() {
                                     "QPushButton#levelChip:hover { border-color: #268BD2; background: #E5F3FB; }"
                                     "QPushButton#levelChip[current='true'] { background: #268BD2; color: white; "
                                     "border-color: #1E6FA3; font-weight: bold; }"
-                                    "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #AAA; "
+                                    "QPushButton#levelChip[locked='true'] { background: #EDEDED; color: #6E6E6E; "
                                     "border-color: #CCC; }"));
 }
 

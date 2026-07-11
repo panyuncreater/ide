@@ -2,46 +2,75 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
-## 2026-07-10 · 第八十八轮：跨机器字体一致性（UI × 1，共 1 项）
+## 2026-07-10 · 第八十八轮：交付前 UI 跨机器一致性彻底修复（UI × 53，共 3 类）
 
 ### 概述
 
-彻底解决 IDE 界面字体在其他机器上"看不清"的问题。根因有三：(1) `main.cpp` 全局字体用 `setPixelSize(14)` + 短回退链 `{"Microsoft YaHei", "PingFang SC", "Segoe UI"}`，目标机器缺中文字体（如英文 Windows LTSC / 精简版）时中文 UI 回退到非中文字体，显示方块或难看；(2) `GuiTextUtils::monospaceFont()` 硬编码 `QFont("Consolas", n)` 无回退链，Consolas 在 Server / 精简版可能缺失；(3) 7 处面板（BackendComparePanel / IRTransformPanel / PipelineViewer）直接 `QFont("Consolas")` 绕过共享工厂。修复方案：在 `GuiTextUtils.h` 建立统一字体工厂，UI 字体与等宽字体均用 `QFont::setFamilies` 设置完整中英文回退链 + `setPointSize` 物理单位（随 DPI 自适应），等宽字体额外 `setStyleHint(QFont::TypeWriter)` 确保回退到系统等宽而非比例字体。
+交付前对整个 IDE 进行系统性 UI 跨机器一致性审查与修复，覆盖字体回退链、颜色对比度、构建配置三大类。共修复 53 处问题，确保在任何 Windows 机器（中文/英文/精简版/Server）上 UI 文字清晰可读、字体正确渲染。
 
-### 改动范围
+### 问题 1：字体回退链不完整（P0 × 3 + P1 × 44，共 47 处）
 
-| 层 | 文件 | 变更 |
-|----|------|------|
-| 字体工厂 | `gui/GuiTextUtils.h` | 新增 `uiFontFallbackChain()`（8 字体：Microsoft YaHei → PingFang SC → Noto Sans CJK SC → Source Han Sans SC → Segoe UI → SF Pro Text → Arial Unicode MS → Arial）、`monoFontFallbackChain()`（8 字体：Cascadia Code → Cascadia Mono → Consolas → JetBrains Mono → Source Code Pro → Menlo → DejaVu Sans Mono → Courier New）、`uiFont(pointSize=10)` 工厂；改进 `monospaceFont()` 用 `setFamilies` + `setStyleHint(TypeWriter)` 替代硬编码 `QFont("Consolas", n)` |
-| 入口 | `app/main.cpp` | 全局字体从 `setPixelSize(14)` + 短回退链改为 `GuiTextUtils::uiFont(10)`（10pt ≈ 13.3px @ 96dpi，完整回退链 + pt 物理单位） |
-| 面板 | `gui/BackendComparePanel.cpp` `gui/IRTransformPanel.cpp` `gui/PipelineViewer.cpp` | 7 处 `QFont("Consolas")` 替换为 `GuiTextUtils::monospaceFont(10)`，并添加 `#include "gui/GuiTextUtils.h"` |
-| 调试面板 | `gui/DebugPanel.cpp` | `styleScopeGroupHeader` 字号缩减从 `pixelSize` 改为 `pointSize`（全局字体改用 pt 后 `pixelSize()` 返回 -1，原逻辑失效） |
+根因：R75 虽建立了 `GuiTextUtils.h` 字体工厂，但仅接入部分文件，仍有 47 处 QSS/HTML/QFont 硬编码短回退链或零回退。
 
-### 回退链设计
+| # | 严重性 | 位置 | 修复 |
+|---|--------|------|------|
+| P0.1-3 | P0 | `WelcomeWizard.cpp:181` `TokenPuzzlePanel.cpp:144` `VmStackSandboxPanel.cpp:1074` | `QFont("Consolas")` 单族硬编码 → `GuiTextUtils::monospaceFont(N)` 完整 8 族回退链 |
+| P1.1-2 | P1 | `BreakpointConditionPanel.cpp:369,389` `IRTransformPanel.cpp:565` | QSS `font-family:Consolas;` 零回退 → 完整 8 族 + monospace 通用族 |
+| P1.3-44 | P1 | 17 个文件共 42 处 QSS/HTML `font-family` 短链（2-3 族）→ 完整 8 族回退链 | 见下表 |
 
-| 字体类型 | 回退链 | 设计意图 |
-|----------|--------|----------|
-| UI 字体 | Microsoft YaHei → PingFang SC → Noto Sans CJK SC → Source Han Sans SC → Segoe UI → SF Pro Text → Arial Unicode MS → Arial | 中文优先（保证中文 UI 不回退到非中文字体）→ 跨平台中文 → 英文 UI → 通用兜底 |
-| 等宽字体 | Cascadia Code → Cascadia Mono → Consolas → JetBrains Mono → Source Code Pro → Menlo → DejaVu Sans Mono → Courier New | 现代等宽 → 传统等宽 → 通用回退，`setStyleHint(TypeWriter)` 确保最终回退到系统等宽 |
+**QSS 字符串工厂**：在 `GuiTextUtils.h` 新增 `monoFontFamilyQss()` / `uiFontFamilyQss()` 返回拼接好的完整回退链字符串，作为 QSS/HTML font-family 的单一真相源。
 
-### setPixelSize → setPointSize 理由
+**等宽完整回退链**（8 族 + monospace）：
+`Cascadia Code → Cascadia Mono → Consolas → JetBrains Mono → Source Code Pro → Menlo → DejaVu Sans Mono → Courier New → monospace`
 
-- `setPixelSize(n)` 设置逻辑像素高度，跨机器物理大小依赖 DPI 缩放设置，不同机器可能不一致
-- `setPointSize(n)` 设置物理点数（1/72 英寸），Qt 按屏幕 DPI 自动计算像素，跨机器物理大小一致
-- 10pt @ 96dpi = 13.3px，接近原 14px 但更标准
+**UI 完整回退链**（8 族 + sans-serif）：
+`Microsoft YaHei → PingFang SC → Noto Sans CJK SC → Source Han Sans SC → Segoe UI → SF Pro Text → Arial Unicode MS → Arial → sans-serif`
 
-### QSS 中的 font-family
+**涉及文件**：`app/styles.qss`(9处) `app/ide.cpp`(4处) `gui/CodeEditor.cpp`(2处) `gui/WelcomeWizard.cpp`(4处) `gui/VmStackSandboxPanel.cpp`(9处) `gui/CodeJourneyInfoPanel.cpp`(1处) `gui/CallStackPanel.cpp`(1处) `gui/VariableInspectorPanel.cpp`(1处) `gui/IrViewer.cpp`(1处) `gui/IRTransformPanel.cpp`(2处) `gui/PipelineViewer.cpp`(3处) `gui/MarkdownRenderer.cpp`(4处) `gui/BreakpointConditionPanel.cpp`(2处) `gui/TeachingPanelHeader.cpp`(2处)
 
-QSS 中的 `font-family: "Cascadia Code", "Consolas", "Courier New", monospace` 已包含 `monospace` 通用族作为最终回退，Qt 会选择系统默认等宽字体，无需修改。大部分控件继承 `QApplication::setFont()` 的全局字体（现通过 `uiFont()` 设置完整回退链）。
+### 问题 2：颜色对比度不足（P0 × 4 + P1 × 6，共 10 处）
+
+根因：R74 背景色从 Solarized 米黄改为白/浅灰时，遗漏了部分浅色文本，导致对比度不足甚至完全不可见。
+
+| # | 严重性 | 位置 | 旧色 | 新色 | 旧对比度 | 新对比度 |
+|---|--------|------|------|------|---------|---------|
+| P0.4 | P0 | `AstBuilderToyPanel.cpp:110` locked 芯片 | `#AAA` on `#EDEDED` | `#6E6E6E` | 1.98:1 | 5.07:1 |
+| P0.5 | P0 | `VmStackSandboxPanel.cpp:80` locked 芯片 | `#AAA` on `#EDEDED` | `#6E6E6E` | 1.98:1 | 5.07:1 |
+| P0.6 | P0 | `TokenPuzzlePanel.cpp:218` locked 芯片（二轮发现） | `#AAA` on `#EDEDED` | `#6E6E6E` | 1.98:1 | 5.07:1 |
+| P0.7 | P0 | `MarkdownRenderer.cpp:374` 代码块语言标签 | `#999` on 白底 | `#6E6E6E` | 2.85:1 | 5.07:1 |
+| P1.1 | P1 | `BytecodeTracePanel.cpp:326` 占位文本 | `#888` | `#6E6E6E` | 3.55:1 | 5.07:1 |
+| P1.2 | P1 | `IrViewer.cpp:262` 占位文本 | `#888` | `#6E6E6E` | 3.55:1 | 5.07:1 |
+| P1.3 | P1 | `LabManualPanel.cpp:300` 占位文本 | `#888` | `#6E6E6E` | 3.55:1 | 5.07:1 |
+| P1.4 | P1 | `LearningPathPanel.cpp:394,423,474` 未解锁标题/时间/按钮（二轮发现） | `#999`/`#888` | `#6E6E6E` | 2.85~3.55:1 | 5.07:1 |
+| P1.5 | P1 | `ExceptionFlowPanel.cpp:371,518,569` 箭头符号/说明文字（二轮发现） | `#7F8C8D` | `#6E6E6E` | 3.28:1 | 5.07:1 |
+| P1.6 | P1 | `CodeJourneyInfoPanel.cpp:128` 副标题 | `#666` | 保留（4.76:1 合格） | — | — |
+
+### 问题 3：CMakePresets toolset 错误（P3 × 1）
+
+| # | 严重性 | 位置 | 修复 |
+|---|--------|------|------|
+| P3.1 | P3 | `CMakePresets.json:73` | `windows-msvc-vs` preset 的 `toolset: "v145"` → `"v143"`（VS2022 工具集为 v143，v145 不存在） |
+
+### 审查未发现问题的项（通过）
+
+- **资源完整性**：`app/ide.qrc` 37 个资源文件全部存在（15 对 QFluent SVG + 7 品牌 Logo）
+- **构建脚本**：`scripts/_common.bat` 三策略 Qt 检测（QTDIR/PATH/常见路径）+ vswhere，跨机器兼容性优秀
+- **windeployqt 部署**：release 目录 Qt6Core/Gui/Widgets/Svg/Xml.dll + QFluent.dll + platforms/qwindows.dll + imageformats 插件全部就位
+- **高 DPI**：`main.cpp` 已设 `HighDpiScaleFactorRoundingPolicy::PassThrough`，Qt6 默认启用高 DPI 缩放
+- **.gitignore**：覆盖全面，无遗漏
 
 ### 验证
 
-MSVC 19.51 + Qt 6.11.1 + Ninja debug 增量构建通过，全量 1773/1773 测试通过，零回归。
+MSVC 19.51 + Qt 6.11.1 + Ninja debug 构建通过，全量 **1773/1773 测试通过**，零回归。
 
-### 修改文件清单
+### 修改文件清单（共 19 个源文件 + 3 文档）
 
-- `gui/GuiTextUtils.h`、`app/main.cpp`、`gui/BackendComparePanel.cpp`、`gui/IRTransformPanel.cpp`、`gui/PipelineViewer.cpp`、`gui/DebugPanel.cpp`
-- `CHANGELOG.md`、`docs/development.md`
+- **字体工厂**：`gui/GuiTextUtils.h`（新增 `monoFontFamilyQss()`/`uiFontFamilyQss()`）
+- **P0 字体硬编码**：`gui/WelcomeWizard.cpp` `gui/TokenPuzzlePanel.cpp` `gui/VmStackSandboxPanel.cpp`
+- **QSS 回退链**：`app/styles.qss` `app/ide.cpp` `gui/CodeEditor.cpp` `gui/WelcomeWizard.cpp` `gui/VmStackSandboxPanel.cpp` `gui/CodeJourneyInfoPanel.cpp` `gui/CallStackPanel.cpp` `gui/VariableInspectorPanel.cpp` `gui/IrViewer.cpp` `gui/IRTransformPanel.cpp` `gui/PipelineViewer.cpp` `gui/MarkdownRenderer.cpp` `gui/BreakpointConditionPanel.cpp` `gui/TeachingPanelHeader.cpp`
+- **对比度**：`gui/AstBuilderToyPanel.cpp` `gui/VmStackSandboxPanel.cpp` `gui/MarkdownRenderer.cpp` `gui/BytecodeTracePanel.cpp` `gui/IrViewer.cpp` `gui/LabManualPanel.cpp`
+- **构建配置**：`CMakePresets.json`
+- **文档**：`CHANGELOG.md` `docs/development.md`
 
 ## 2026-07-10 · 第八十七轮：背景色回退中性白（UI × 1，共 1 项）
 

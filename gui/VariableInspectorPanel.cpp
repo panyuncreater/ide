@@ -576,7 +576,7 @@ GuidedTour* VariableInspectorPanel::createGuidedTour(QWidget* host) {
     tour->addStep(nullptr, QString::fromUtf8("示例代码：观察变量类型"),
                   QString::fromUtf8(
                       "<p>将以下代码粘贴到编辑器，按 F5 调试，在变量树中观察各类型：</p>"
-                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:Consolas,monospace;'>"
+                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
                       "var x = 42;           // int\n"
                       "var pi = 3.14;        // float\n"
                       "var s = \"hello\";      // string\n"

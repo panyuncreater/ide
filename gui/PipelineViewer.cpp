@@ -48,7 +48,7 @@ namespace {
 static QString irTextToClickableHtml(const QString& plainText) {
     QStringList lines = plainText.split("\n");
     QString html;
-    html += "<pre style=\"font-family:Consolas,monospace;\">";
+    html += "<pre style=\"font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace;\">";
     static const QRegularExpression lineCommentRe(";\\s*line\\s+(\\d+)\\s*$");
     for (int i = 0; i < lines.size(); ++i) {
         QString line = lines[i];
@@ -72,7 +72,7 @@ static QString irTextToClickableHtml(const QString& plainText) {
 static QString bytecodeTextToClickableHtml(const QString& plainText) {
     QStringList lines = plainText.split("\n");
     QString html;
-    html += "<pre style=\"font-family:Consolas,monospace;\">";
+    html += "<pre style=\"font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace;\">";
     // Match lines starting with digits, space, L followed by digits
     static const QRegularExpression bcLineRe("^(\\d+)\\s+L(\\d+)\\s");
     for (int i = 0; i < lines.size(); ++i) {
@@ -374,7 +374,7 @@ PipelineViewer::PipelineViewer(QWidget* parent) : QWidget(parent) {
         auto* header = new QLabel(page);
         header->setTextFormat(Qt::RichText);
         const QColor color = stageColor(step);
-        const QString html = QString("<div style='font-family: \"Segoe UI\", \"Microsoft YaHei\", sans-serif;'>"
+        const QString html = QString("<div style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode MS\",\"Arial\",sans-serif;'>"
                                      "<span style='font-size: 14px; font-weight: 600; color: %1;'>%2 %3</span>"
                                      "&nbsp;&nbsp;&nbsp;"
                                      "<span style='font-size: 11px; color: #8C8C8C;'>%4</span>"

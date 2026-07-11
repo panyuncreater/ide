@@ -297,7 +297,7 @@ void LabManualPanel::rebuildExercises() {
     if (exercises.empty()) {
         // 无练习：显示提示
         auto* noExLabel = new QLabel(QString::fromUtf8("💡 ") + mlTr("本章暂无可机检练习"), exercisesContainer_);
-        noExLabel->setStyleSheet(QString::fromUtf8("color:#888; padding:8px;"));
+        noExLabel->setStyleSheet(QString::fromUtf8("color:#6E6E6E; padding:8px;"));
         exercisesLayout_->insertWidget(exercisesLayout_->count() - 1, noExLabel);
         return;
     }

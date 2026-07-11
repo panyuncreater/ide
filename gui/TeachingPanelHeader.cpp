@@ -317,7 +317,7 @@ void TeachingPanelHeader::showHelpDialog() {
         browser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         browser->setHtml(
             QStringLiteral(
-                "<html><body style='font-family: Microsoft YaHei, sans-serif; font-size: 13px; line-height: 1.7;'>"
+                "<html><body style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode MS\",\"Arial\",sans-serif; font-size: 13px; line-height: 1.7;'>"
                 "<p style='margin: 0;'>%1</p>"
                 "%2"
                 "</body></html>")
@@ -366,7 +366,7 @@ void TeachingPanelHeader::showHelpDialog() {
     browser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     browser->setHtml(
         QStringLiteral(
-            "<html><body style='font-family: Microsoft YaHei, sans-serif; font-size: 13px; line-height: 1.7;'>"
+            "<html><body style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode MS\",\"Arial\",sans-serif; font-size: 13px; line-height: 1.7;'>"
             "<h3 style='color: #268BD2; margin-bottom: 4px;'>📋 面板用途</h3>"
             "<p style='margin: 0 0 12px 0;'>%1</p>"
             "<h3 style='color: #268BD2; margin-bottom: 4px;'>🔢 推荐使用顺序</h3>"

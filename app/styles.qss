@@ -22,7 +22,7 @@ QMainWindow {
     background-color: #fafafa;
 }
 QWidget {
-    font-family: "Segoe UI", "Microsoft YaHei", "SF Pro Text", -apple-system, sans-serif;
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", "Segoe UI", "SF Pro Text", "Arial Unicode MS", "Arial", sans-serif;
     font-size: 13px;
     color: #1e1e1e;
 }
@@ -435,7 +435,7 @@ QWidget#welcomeBtnContainer {
 QLabel#welcomeShortcutHint {
     color: #8C8C8C;
     font-size: 11px;
-    font-family: "Cascadia Code", "Consolas", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     background: rgba(0, 0, 0, 4);
     border: 1px solid #E8E8E8;
     border-radius: 4px;
@@ -650,7 +650,7 @@ QTextEdit#outputEdit {
     border-radius: 4px;
     margin: 4px;
     padding: 8px 14px;
-    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 13px;
 }
 
@@ -663,7 +663,7 @@ QListWidget#errorList {
     margin: 4px;
     outline: none;
     padding: 4px 8px;
-    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 13px;
 }
 QListWidget#errorList::item {
@@ -753,7 +753,7 @@ QTableWidget {
 QTableWidget::item {
     padding: 5px 8px;
     border: none;
-    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 12px;
 }
 QHeaderView::section {
@@ -777,7 +777,7 @@ QListWidget#bytecodeList {
     background-color: #fafafa;
     color: #1e1e1e;
     border: none;
-    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 12px;
     padding: 6px;
 }
@@ -798,7 +798,7 @@ QListWidget#bytecodeList::item:hover:!selected {
 QLabel#vmOpLabel {
     background-color: #f0faf4;
     color: #1a7f37;
-    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 12px;
     padding: 8px;
     border-radius: 5px;
@@ -817,7 +817,7 @@ QListWidget#vmStackList {
     color: #1e1e1e;
     border: 1px solid #e8e8e8;
     border-radius: 5px;
-    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 12px;
 }
 QListWidget#vmStackList::item {
@@ -833,7 +833,7 @@ QTableWidget#vmGlobalsTable {
     color: #1e1e1e;
     border: 1px solid #e8e8e8;
     border-radius: 5px;
-    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-family: "Cascadia Code", "Cascadia Mono", "Consolas", "JetBrains Mono", "Source Code Pro", "Menlo", "DejaVu Sans Mono", "Courier New", monospace;
     font-size: 12px;
 }
 QTableWidget#vmGlobalsTable QHeaderView::section {

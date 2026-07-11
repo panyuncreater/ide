@@ -185,7 +185,7 @@ void IrViewer::setIR(const IRFunction* ir) {
 
         QString html;
         html.reserve(64 * 1024);
-        html += "<div style='font-family:Consolas,monospace;font-size:13px;line-height:1.6;'>";
+        html += "<div style='font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;font-size:13px;line-height:1.6;'>";
 
         // ---- 函数元信息头 ----
         {
@@ -259,7 +259,7 @@ void IrViewer::clearIR() {
     // R53-UX1 fix: 空状态提示。原 clearIR 后 browser 完全空白，
     // 用户无法区分"尚未编译"与"编译产物为空"。提供占位提示提升可发现性。
     browser_->setText(QString::fromUtf8(
-        "<div style='color:#888; padding:8px;'>"
+        "<div style='color:#6E6E6E; padding:8px;'>"
         "尚无 IR 输出。请先点击「编译分析」或运行程序，再切换到 IR 视图查看。"
         "</div>"));
 }

@@ -391,7 +391,7 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity, b
 
     QString title = QString::fromStdString(activity.title);
     if (!unlocked) {
-        title = QString::fromUtf8("<span style='color:#999;'>%1</span>").arg(title);
+        title = QString::fromUtf8("<span style='color:#6E6E6E;'>%1</span>").arg(title);
     } else if (completed) {
         title = QString::fromUtf8("<span style='color:#4CAF50;'><b>%1</b> ✓</span>").arg(title);
     } else {
@@ -420,7 +420,7 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity, b
         timeStr = mlTr("~%1 分钟 / 已用 %2").arg(activity.estimatedMinutes).arg(spent);
     }
     auto* timeLabel = new QLabel(timeStr, row);
-    timeLabel->setStyleSheet(QString::fromUtf8("color:#888;"));
+    timeLabel->setStyleSheet(QString::fromUtf8("color:#6E6E6E;"));
     layout->addWidget(timeLabel, 0);
 
     // P2-3 fix (F9): 学情画像——显示得分/星级徽章（仅有记录时显示）
@@ -471,7 +471,7 @@ QWidget* LearningPathPanel::buildActivityRow(const LearningActivity& activity, b
                                              "QPushButton:hover { background-color: rgba(0,0,0,0.06); }"));
     } else {
         row->setStyleSheet(
-            QString::fromUtf8("QPushButton { background-color: rgba(0,0,0,0); border: none; color: #999; }"));
+            QString::fromUtf8("QPushButton { background-color: rgba(0,0,0,0); border: none; color: #6E6E6E; }"));
         // 未解锁：tooltip 提示需要先完成的前置活动
         QStringList prereqTitles;
         for (const auto& prereqId : activity.prerequisites) {

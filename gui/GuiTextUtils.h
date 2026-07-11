@@ -80,6 +80,33 @@ inline QFont uiFont(int pointSize = 10) {
     return f;
 }
 
+// ============================================================
+// QSS / HTML font-family 字符串工厂（R75 fix）
+// ------------------------------------------------------------
+// QFont::setFamilies 仅对 QFont 对象生效，QSS 与 HTML 内联样式中的
+// font-family 声明需要字符串形式。这里提供与 monoFontFallbackChain() /
+// uiFontFallbackChain() 完全对应的 QSS 字符串，作为单一真相源，避免
+// 散落各处的 font-family 硬编码与回退链不一致。
+// ============================================================
+
+/// 等宽字体的 QSS/HTML font-family 字符串（含完整回退链 + monospace 通用族）。
+/// 用于 QSS 的 font-family 与 HTML style 的 font-family 声明。
+/// 示例：QString qss = QStringLiteral("QPlainTextEdit { font-family: %1; }")
+///                       .arg(GuiTextUtils::monoFontFamilyQss());
+inline QString monoFontFamilyQss() {
+    return QStringLiteral("\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\","
+                          "\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\","
+                          "\"DejaVu Sans Mono\",\"Courier New\",monospace");
+}
+
+/// UI 字体的 QSS/HTML font-family 字符串（含完整中英文回退链 + sans-serif 通用族）。
+/// 用于 QSS 的 font-family 与 HTML style 的 font-family 声明。
+inline QString uiFontFamilyQss() {
+    return QStringLiteral("\"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\","
+                          "\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\","
+                          "\"Arial Unicode MS\",\"Arial\",sans-serif");
+}
+
 /// 向 QTextEdit 追加一行文本（自动处理首行换行与尾部换行去除）。
 /// @param edit 目标 QTextEdit
 /// @param text 待追加文本
