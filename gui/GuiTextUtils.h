@@ -43,14 +43,14 @@ namespace GuiTextUtils {
 /// 均能找到支持中文的可用字体，避免中文 UI 显示方块/乱码。
 inline QStringList uiFontFallbackChain() {
     return {
-        "Microsoft YaHei",   // Windows 中文（首选，渲染清晰）
-        "PingFang SC",       // macOS 中文
-        "Noto Sans CJK SC",  // Linux 中文（常见发行版预装）
-        "Source Han Sans SC",// 思源黑体（跨平台）
-        "Segoe UI",          // Windows UI 英文
-        "SF Pro Text",       // macOS UI 英文
-        "Arial Unicode MS",  // 跨平台 Unicode 兜底
-        "Arial"              // 最终通用回退
+        "Microsoft YaHei",    // Windows 中文（首选，渲染清晰）
+        "PingFang SC",        // macOS 中文
+        "Noto Sans CJK SC",   // Linux 中文（常见发行版预装）
+        "Source Han Sans SC", // 思源黑体（跨平台）
+        "Segoe UI",           // Windows UI 英文
+        "SF Pro Text",        // macOS UI 英文
+        "Arial Unicode MS",   // 跨平台 Unicode 兜底
+        "Arial"               // 最终通用回退
     };
 }
 
@@ -58,14 +58,14 @@ inline QStringList uiFontFallbackChain() {
 /// 保证代码编辑器/AST/字节码等面板在任何机器上都能用合适的等宽字体。
 inline QStringList monoFontFallbackChain() {
     return {
-        "Cascadia Code",      // Windows 11 / VS 现代等宽
-        "Cascadia Mono",      // Cascadia 无连字变体
-        "Consolas",           // Windows 默认等宽
-        "JetBrains Mono",     // 常见 IDE 字体
-        "Source Code Pro",    // Adobe 开源等宽
-        "Menlo",              // macOS 等宽
-        "DejaVu Sans Mono",   // Linux 等宽
-        "Courier New"         // 最终通用回退（几乎所有系统都有）
+        "Cascadia Code",    // Windows 11 / VS 现代等宽
+        "Cascadia Mono",    // Cascadia 无连字变体
+        "Consolas",         // Windows 默认等宽
+        "JetBrains Mono",   // 常见 IDE 字体
+        "Source Code Pro",  // Adobe 开源等宽
+        "Menlo",            // macOS 等宽
+        "DejaVu Sans Mono", // Linux 等宽
+        "Courier New"       // 最终通用回退（几乎所有系统都有）
     };
 }
 

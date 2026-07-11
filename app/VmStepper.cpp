@@ -1,8 +1,8 @@
 #include "VmStepper.h"
 #include "Logger.h"
-#include <QApplication>     // P3.6 fix: activeWindow + repaint 替代 processEvents
+#include <QApplication> // P3.6 fix: activeWindow + repaint 替代 processEvents
 #include <QCoreApplication>
-#include <QWidget>          // P3.6 fix: QWidget::repaint
+#include <QWidget> // P3.6 fix: QWidget::repaint
 
 // ============================================================
 // VmStepper — VM 单步执行状态机实现（ARCH-11 拆分自 IdeController）
@@ -164,7 +164,7 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
         // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
         // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
         // 与 Interpreter 的 pre-execution 语义对齐。原实现在 stepOnce 之后检查
-        //（post-execution），多语句行（print(1); print(2);）VM 可能在执行完
+        // （post-execution），多语句行（print(1); print(2);）VM 可能在执行完
         // print(1) 后才检测到断点行，用户看到 print(1) 已输出。
         // 现在在每条指令执行前先检查当前 IP 是否命中断点。
         constexpr int64_t MAX_STEP_LOOP = 1000000;
@@ -309,7 +309,7 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 // 允许跨行后同行暂停。
                 // R54-7 fix: 注释原提及"vmCrossedDeeper_"但代码实际使用 vmCrossedLine_，
                 // 已更正注释。STEP_OUT 在栈底时无处可"跨出"，降级为"跨行后暂停"语义
-                //（与 STEP_IN 行级粒度一致），使用 vmCrossedLine_ 是正确设计。
+                // （与 STEP_IN 行级粒度一致），使用 vmCrossedLine_ 是正确设计。
                 else if (currentFrameCount <= 1 && currentLine > 0 &&
                          (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
                     shouldPause = true;
@@ -325,7 +325,7 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 // P1-4 fix: 步进模式下若当前行有断点，递增 hitCount（对齐
                 // DebugController L108-114 的行为）。虽然 pre-execution 断点检查
                 // 已在循环开头处理了断点命中，但步进暂停可能发生在断点行上
-                //（pre-execution 因 vmCrossedLine_ 等去重条件未触发，步进模式
+                // （pre-execution 因 vmCrossedLine_ 等去重条件未触发，步进模式
                 // 无去重条件直接暂停）。此处在步进暂停时补充递增 hitCount，
                 // 使 VM 与 Interpreter 的断点命中次数统计一致。
                 if (currentLine > 0 && vmBreakpoints_.contains(currentLine)) {

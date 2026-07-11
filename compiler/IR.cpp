@@ -2591,7 +2591,7 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                 emitIR(IROp::LABEL, {IROperand::label(finallyEndLabel)}, node->line);
             }
             tryFinallyStack_.pop_back(); // AUDIT-P1.1 fix
-            return; // AUDIT-BUG-F7: catch 块已编译，提前返回
+            return;                      // AUDIT-BUG-F7: catch 块已编译，提前返回
         } else {
             // 顶层：检查 catchVarName 是否与全局槽位变量同名（对齐 Compiler.cpp:1272-1311）
             int existingSlot = lookupGlobalSlot(node->catchVarName);
@@ -2667,7 +2667,7 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                     emitIR(IROp::LABEL, {IROperand::label(finallyEndLabel)}, node->line);
                 }
                 tryFinallyStack_.pop_back(); // AUDIT-P1.1 fix
-                return; // catch 块已编译，提前返回
+                return;                      // catch 块已编译，提前返回
             } else {
                 // 无遮蔽：直接定义为全局变量
                 // BUG-IR-TRY-1 fix: 使用 GLOBAL_NAME kind（→ OP_DEFINE_VAR）而非 IMM_UINT
@@ -2716,7 +2716,7 @@ void AstIRBuilder::visitTryStmt(TryStmt* node) {
                     emitIR(IROp::LABEL, {IROperand::label(finallyEndLabel)}, node->line);
                 }
                 tryFinallyStack_.pop_back(); // AUDIT-P1.1 fix
-                return; // AUDIT-BUG-F7: catch 块已编译，提前返回
+                return;                      // AUDIT-BUG-F7: catch 块已编译，提前返回
             }
         }
     }

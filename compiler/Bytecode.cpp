@@ -99,7 +99,7 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 69 OP_WRITEBACK_MEMBER_UPVALUE */ {"OP_WRITEBACK_MEMBER_UPVALUE", 4, false},
     /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE", 2, false},
     /* 71 OP_LOAD_MUTATED             */ {"OP_LOAD_MUTATED", 1, false},
-    /* 72 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK", 3, false}, // opcode(1B) + typeAnnotationConstIdx(2B)
+    /* 72 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK", 3, false},       // opcode(1B) + typeAnnotationConstIdx(2B)
     /* 73 OP_PUSH_JUMP_TARGET         */ {"OP_PUSH_JUMP_TARGET", 3, false}, // opcode(1B) + target(2B)
     /* 74 OP_FINALLY_END              */ {"OP_FINALLY_END", 1, false},
 };

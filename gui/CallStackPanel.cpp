@@ -459,19 +459,21 @@ GuidedTour* CallStackPanel::createGuidedTour(QWidget* host) {
     tour->addStep(pageLiveBtn_, QString::fromUtf8("实时调用栈"),
                   QString::fromUtf8("「实时调用栈」页在调试时显示函数调用的层次结构，每层是一个栈帧。"
                                     "勾选「自动刷新」每 2 秒刷新栈帧，展开节点可查看函数名 / 行号 / 局部变量。"));
-    tour->addStep(nullptr, QString::fromUtf8("示例代码：递归调用栈"),
-                  QString::fromUtf8(
-                      "<p>将以下代码粘贴到编辑器，按 F5 调试，在调用栈中观察递归层次：</p>"
-                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
-                      "fun fib(n) {\n"
-                      "    if (n < 2) {\n"
-                      "        return n;\n"
-                      "    }\n"
-                      "    return fib(n - 1) + fib(n - 2);\n"
-                      "}\n"
-                      "print fib(5);\n"
-                      "</pre>"
-                      "<p>在 fib 函数内设断点，每次命中可看到调用栈深度变化：fib(5) → fib(4) → fib(3) → ...</p>"));
+    tour->addStep(
+        nullptr, QString::fromUtf8("示例代码：递归调用栈"),
+        QString::fromUtf8("<p>将以下代码粘贴到编辑器，按 F5 调试，在调用栈中观察递归层次：</p>"
+                          "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:\"Cascadia "
+                          "Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
+                          "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
+                          "fun fib(n) {\n"
+                          "    if (n < 2) {\n"
+                          "        return n;\n"
+                          "    }\n"
+                          "    return fib(n - 1) + fib(n - 2);\n"
+                          "}\n"
+                          "print fib(5);\n"
+                          "</pre>"
+                          "<p>在 fib 函数内设断点，每次命中可看到调用栈深度变化：fib(5) → fib(4) → fib(3) → ...</p>"));
     tour->addStep(
         pageLibraryBtn_, QString::fromUtf8("教学场景库"),
         QString::fromUtf8("点击「教学场景库」切换到静态教学页，查看递归 / 闭包 / 方法分派等典型调用栈形态。"));

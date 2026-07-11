@@ -274,7 +274,8 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
                     "QLineEdit#condEdit { "
                     "  background: #FFFFFF; color: %2; "
                     "  border: 1px solid %5; border-radius: 4px; "
-                    "  padding: 6px 8px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
+                    "  padding: 6px 8px; font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains "
+                    "Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
                     "  font-size: 13px; "
                     "} "
                     "QLineEdit#condEdit:focus { border: 1px solid %6; }"
@@ -417,36 +418,38 @@ CodeEditor::CodeEditor(QWidget* parent) : QPlainTextEdit(parent) {
     // 默认 QListView popup 在 Windows 原生主题下边框生硬、选中色为蓝色块状，
     // 与 IDE 的中性白 + Fluent 圆角风格不协调。（R74: 回退中性白）
     if (completer_->popup()) {
-        completer_->popup()->setStyleSheet("QListView { "
-                                           "  background: #FFFFFF; "
-                                           "  color: #1E1E1E; "
-                                           "  border: 1px solid #E0E0E0; "
-                                           "  border-radius: 6px; "
-                                           "  padding: 4px; "
-                                           "  font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
-                                           "  font-size: 12px; "
-                                           "  outline: none; "
-                                           "} "
-                                           "QListView::item { "
-                                           "  padding: 4px 10px; "
-                                           "  border-radius: 4px; "
-                                           "} "
-                                           "QListView::item:selected { "
-                                           "  background: #268BD2; "
-                                           "  color: #FFFFFF; "
-                                           "} "
-                                           "QListView::item:hover:!selected { "
-                                           "  background: rgba(38, 139, 210, 0.12); "
-                                           "  color: #1E1E1E; "
-                                           "} "
-                                           "QScrollBar:vertical { "
-                                           "  background: transparent; width: 8px; margin: 2px; "
-                                           "} "
-                                           "QScrollBar::handle:vertical { "
-                                           "  background: #C8C8C8; border-radius: 4px; min-height: 20px; "
-                                           "} "
-                                           "QScrollBar::handle:vertical:hover { background: #8C8C8C; } "
-                                           "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }");
+        completer_->popup()->setStyleSheet(
+            "QListView { "
+            "  background: #FFFFFF; "
+            "  color: #1E1E1E; "
+            "  border: 1px solid #E0E0E0; "
+            "  border-radius: 6px; "
+            "  padding: 4px; "
+            "  font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code "
+            "Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
+            "  font-size: 12px; "
+            "  outline: none; "
+            "} "
+            "QListView::item { "
+            "  padding: 4px 10px; "
+            "  border-radius: 4px; "
+            "} "
+            "QListView::item:selected { "
+            "  background: #268BD2; "
+            "  color: #FFFFFF; "
+            "} "
+            "QListView::item:hover:!selected { "
+            "  background: rgba(38, 139, 210, 0.12); "
+            "  color: #1E1E1E; "
+            "} "
+            "QScrollBar:vertical { "
+            "  background: transparent; width: 8px; margin: 2px; "
+            "} "
+            "QScrollBar::handle:vertical { "
+            "  background: #C8C8C8; border-radius: 4px; min-height: 20px; "
+            "} "
+            "QScrollBar::handle:vertical:hover { background: #8C8C8C; } "
+            "QScrollBar::add-line, QScrollBar::sub-line { height: 0; }");
     }
 }
 
@@ -684,9 +687,7 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
             //   原实现统一用 startLine + linesRemoved - 1，非行首删除时少算一行，
             //   导致最后一个被删除行的断点被 shift（+delta）而非删除，错误地创建到原行。
             int firstDeletedLine = startLine; // keep 边界：line <= firstDeletedLine 保持
-            int lastDeletedLine = startsAtBoundary
-                                      ? (startLine + linesRemoved - 1)
-                                      : (startLine + linesRemoved);
+            int lastDeletedLine = startsAtBoundary ? (startLine + linesRemoved - 1) : (startLine + linesRemoved);
             // 断点 line <= firstDeletedLine：保持（VS Code 语义，指向合并后内容）
             // 断点 firstDeletedLine < line <= lastDeletedLine：删除（不插入）
             // 断点 line > lastDeletedLine：平移 delta
@@ -1319,8 +1320,7 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
     // R53-UX9 fix: Alt+Up / Alt+Down 移动当前行（或选区）上/下。
     // 对齐 VSCode 常用编辑器快捷键，提升代码重组效率。
     // 不与现有快捷键冲突（Alt+Up/Down 此前未绑定）。
-    if (event->modifiers() == Qt::AltModifier &&
-        (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+    if (event->modifiers() == Qt::AltModifier && (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
         bool moveUp = (event->key() == Qt::Key_Up);
         QTextCursor tc = textCursor();
         QTextDocument* doc = document();

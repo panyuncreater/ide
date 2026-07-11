@@ -123,9 +123,7 @@ public:
     const std::unordered_map<std::string, TokenType>& getKeywords() const { return pipeline_.lexer().keywords(); }
 
     // ---- REPL 管线状态更新（供 ReplPanel 在 REPL 执行后调用）----
-    void setReplPipelineState(const std::string& source) {
-        pipeline_.setReplPipelineState(source);
-    }
+    void setReplPipelineState(const std::string& source) { pipeline_.setReplPipelineState(source); }
 
     // ---- REPL 接口（转发到 Interpreter）----
     /// 保留 REPL AST 引用（防止类/闭包 body 指针悬空）

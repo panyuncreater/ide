@@ -77,19 +77,18 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
                             "⚠️ IEEE 754 quiet NaN：指数位全 1（0x7FF）、尾数最高位为 1（0x8000000000000）。"
                             "关键性质：NaN != NaN，因此相等比较需用 isNaN() 而非 == 。"
                             "尾数非零使其与 infinity 区分；NaN-box 的 tag 模式需避开此位模式。"},
-        VariableTypeExample{"type-empty-string", "string", "📝 空字符串", "var s = \"\";", "",
-                            "（堆指针，tag bits=0x7FFB）",
-                            "StringData* (RefCounted) { refCount: 1; bytes: ''; length: 0; }",
-                            "📦 堆分配：即使 length==0，StringData 仍分配在堆上（RefCounted 头 + 0 字节 payload）。"
-                            "Value 存指针而非内联，空字符串与非空字符串走同一类型路径，COW 检查 refCount==1 同样适用。"},
+        VariableTypeExample{
+            "type-empty-string", "string", "📝 空字符串", "var s = \"\";", "", "（堆指针，tag bits=0x7FFB）",
+            "StringData* (RefCounted) { refCount: 1; bytes: ''; length: 0; }",
+            "📦 堆分配：即使 length==0，StringData 仍分配在堆上（RefCounted 头 + 0 字节 payload）。"
+            "Value 存指针而非内联，空字符串与非空字符串走同一类型路径，COW 检查 refCount==1 同样适用。"},
         VariableTypeExample{"type-empty-array", "array", "📊 空数组", "var arr = [];", "[]",
                             "（堆指针，tag bits=0x7FFB）",
                             "ArrayData* (RefCounted) { refCount: 1; elements: Value[0]; capacity: 0; }",
                             "📦 堆分配：空数组仍持有 ArrayData* 指针，elements 容量为 0。"
                             "COW 语义不变：`var b = a` 后两者共享同一空 ArrayData，refCount=2，"
                             "push 时才触发 detach 深拷贝。"},
-        VariableTypeExample{"type-empty-dict", "dict", "📊 空字典", "var d = {};", "{}",
-                            "（堆指针，tag bits=0x7FFB）",
+        VariableTypeExample{"type-empty-dict", "dict", "📊 空字典", "var d = {};", "{}", "（堆指针，tag bits=0x7FFB）",
                             "DictData* (RefCounted) { refCount: 1; entries: HashMap<String,Value> (empty); }",
                             "📦 堆分配：空字典仍分配 DictData*，HashMap 桶数为 0 或初始容量。"
                             "键需为 string，空字典同样支持 COW 共享，put 时检查 refCount 决定是否深拷贝。"},
@@ -100,8 +99,8 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
                             "COW 仅复制最外层：`var m2 = m` 后 m2[0] 与 m[0] 共享同一内层数组（refCount=2），"
                             "修改 m2[0][0] 会影响 m[0][0]，除非对内层显式深拷贝。"
                             "三后端需统一此浅拷贝语义。"},
-        VariableTypeExample{"type-type-annotation", "int", "⚠️ 类型注解错误", "var x: int = \"hi\";",
-                            "(类型错误)", "—", "—",
+        VariableTypeExample{"type-type-annotation", "int", "⚠️ 类型注解错误", "var x: int = \"hi\";", "(类型错误)", "—",
+                            "—",
                             "⚠️ 类型注解强制：`var x: int = \"hi\"` 中注解 int 与字面量 string 不匹配。"
                             "编译期生成 OP_TYPE_CHECK 指令，运行时若实际类型与注解不符则抛出 TypeError。"
                             "三后端（Interpreter / StackVM / RegisterVM）需统一此检查行为与错误消息文本。"},
@@ -573,21 +572,23 @@ GuidedTour* VariableInspectorPanel::createGuidedTour(QWidget* host) {
     tour->addStep(pageLiveBtn_, QString::fromUtf8("实时变量树"),
                   QString::fromUtf8("「实时变量」页在调试 / VM 运行时按作用域分组显示变量（global / local / upvalue）。"
                                     "勾选「自动刷新」每 2 秒刷新快照，点击变量可在右侧查看 NaN-boxing 位布局。"));
-    tour->addStep(nullptr, QString::fromUtf8("示例代码：观察变量类型"),
-                  QString::fromUtf8(
-                      "<p>将以下代码粘贴到编辑器，按 F5 调试，在变量树中观察各类型：</p>"
-                      "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
-                      "var x = 42;           // int\n"
-                      "var pi = 3.14;        // float\n"
-                      "var s = \"hello\";      // string\n"
-                      "var arr = [1, 2, 3];  // array\n"
-                      "fun add(a, b) {\n"
-                      "    return a + b;\n"
-                      "}\n"
-                      "var f = add;          // closure\n"
-                      "print x, pi, s, arr, f;\n"
-                      "</pre>"
-                      "<p>调试时展开变量树节点，可看到 int/float 标量内联、string/array 堆指针的差异。</p>"));
+    tour->addStep(
+        nullptr, QString::fromUtf8("示例代码：观察变量类型"),
+        QString::fromUtf8("<p>将以下代码粘贴到编辑器，按 F5 调试，在变量树中观察各类型：</p>"
+                          "<pre style='background:#F5F5F5;padding:8px;border-radius:4px;font-family:\"Cascadia "
+                          "Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
+                          "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
+                          "var x = 42;           // int\n"
+                          "var pi = 3.14;        // float\n"
+                          "var s = \"hello\";      // string\n"
+                          "var arr = [1, 2, 3];  // array\n"
+                          "fun add(a, b) {\n"
+                          "    return a + b;\n"
+                          "}\n"
+                          "var f = add;          // closure\n"
+                          "print x, pi, s, arr, f;\n"
+                          "</pre>"
+                          "<p>调试时展开变量树节点，可看到 int/float 标量内联、string/array 堆指针的差异。</p>"));
     tour->addStep(pageLibraryBtn_, QString::fromUtf8("类型教学库"),
                   QString::fromUtf8("点击「类型教学库」切换到静态教学页，查看 int / string / array / closure "
                                     "等类型的 NaN-boxing 位布局与堆对象结构详解。"));

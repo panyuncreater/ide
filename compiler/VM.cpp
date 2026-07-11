@@ -204,7 +204,7 @@ VMResult VM::closeUpvaluesFrom(size_t fromSlot) {
                     // 仍执行 isClosed=true + erase 以关闭 upvalue（保留默认 null 值），防止悬垂引用。
                     // AUDIT-P2.5 fix: 记录错误标志，函数末尾返回 VM_RUNTIME_ERROR，调用方立即 return。
                     (void)runtimeError("closeUpvaluesFrom: slot " + std::to_string(uv->stackSlot) + " >= stack size " +
-                                 std::to_string(stack_.size()));
+                                       std::to_string(stack_.size()));
                     hadError = true;
                 }
                 uv->isClosed = true;
@@ -934,7 +934,7 @@ void VM::initExecution(const CompileResult& result) {
     functionClosures_.clear();
     lastMutatedReceiver_ = Value::nullValue();
     pendingFieldOrder_.clear();
-    tryStack_.clear(); // F11: 清理异常处理栈
+    tryStack_.clear();         // F11: 清理异常处理栈
     pendingJumpStack_.clear(); // AUDIT-P1.1 fix: 清理续跳栈
     // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
     stepInstructionCount_ = 0;

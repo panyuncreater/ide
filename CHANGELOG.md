@@ -2,6 +2,30 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-11 · 第九十轮：CI clang-format 风格检查修复（工程基础设施 × 1）
+
+### 概述
+
+GitHub Actions CI 的 `Code Style (clang-format)` Job 失败（退出码 123），原因是 `lexer`/`parser`/`ast`/`interpreter`/`compiler`/`debug`/`formatter`/`gui`/`common`/`app` 共 10 个目录下 32 个 C/C++ 源文件不符合项目 `.clang-format`（LLVM 基础，4 空格缩进，120 列上限）规范。本轮使用与 CI 完全一致的 `clang-format==22.1.5` 对全部 174 个源文件执行 `clang-format -i` 就地格式化，使 `clang-format --dry-run --Werror` 零违规通过。
+
+### 主要格式化差异
+
+- **switch case 标签展开**：`case X: return "Y";` 单行 → `case X:` 换行 + `return "Y";`（LLVM 默认 `AllowShortCaseLabelsOnASingleLine: false`），涉及 `MagicCommands.cpp` 等大 switch 的 token 类型名映射
+- **长布尔表达式折行对齐**：`while`/`if` 中多条件 `||`/`&&` 按运算符优先级重新折行对齐
+- **指针/引用对齐**：`Type *p` → `Type* p`（`PointerAlignment: Left`）
+- **include 排序**：`SortIncludes: CaseSensitive` 重新排序
+- **命名空间注释**：`FixNamespaceComments: true` 自动补全 `// namespace xxx`
+
+### 验证
+
+- 本地 `clang-format --dry-run --Werror` 对 174 个文件零违规（退出码 0）
+- MSVC 19.51 + Qt 6.10.3 + Ninja 全量构建通过（78/78 目标）
+- 全量 1773/1773 测试通过，零回归
+
+### 涉及文件
+
+共 32 个源文件被格式化（app ×5、compiler ×8、debug ×1、gui ×16、interpreter ×1、其余目录无违规）。CI 配置无需修改。
+
 ## 2026-07-11 · 第八十九轮：Bug 狩猎面板关闭崩溃根因修复（P0 × 1 + P1 × 1）
 
 ### 概述

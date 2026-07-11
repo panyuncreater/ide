@@ -152,8 +152,8 @@ inline bool isOpCodeVariableLength(OpCode op) {
 
 /// VM-05/06: Upvalue 描述符（编译期生成，描述闭包捕获的外层变量）
 struct UpvalueDesc {
-    int index;    // 捕获变量在调用者帧中的局部变量槽号（isLocal=true）或外层upvalue索引（isLocal=false）
-    bool isLocal; // true=直接捕获外层局部变量, false=透传外层函数的upvalue
+    int index;        // 捕获变量在调用者帧中的局部变量槽号（isLocal=true）或外层upvalue索引（isLocal=false）
+    bool isLocal;     // true=直接捕获外层局部变量, false=透传外层函数的upvalue
     std::string name; // 条件断点修复(R75): upvalue对应的变量名，用于调试器从VM帧反查闭包变量
 };
 

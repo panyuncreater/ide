@@ -186,10 +186,10 @@ private:
     QWidget* welcomePage_ = nullptr;
     QStackedWidget* centerStack_ = nullptr; // 教学面板/欢迎页栈
     QTabWidget* editorTabWidget_ = nullptr;
-    QSplitter* centerSplitter_ = nullptr;       // 三栏布局：[centerStack_ | editorSplitter_]
-    QSplitter* editorSplitter_ = nullptr;       // 编辑器区纵向分割：[editorTabWidget_ | bottomContainer_]
-    QVariantAnimation* splitterAnim_ = nullptr;     // centerSplitter_ 尺寸动画
-    QVariantAnimation* bottomPanelAnim_ = nullptr;  // editorSplitter_ 底部面板展开/收起动画
+    QSplitter* centerSplitter_ = nullptr;          // 三栏布局：[centerStack_ | editorSplitter_]
+    QSplitter* editorSplitter_ = nullptr;          // 编辑器区纵向分割：[editorTabWidget_ | bottomContainer_]
+    QVariantAnimation* splitterAnim_ = nullptr;    // centerSplitter_ 尺寸动画
+    QVariantAnimation* bottomPanelAnim_ = nullptr; // editorSplitter_ 底部面板展开/收起动画
     int untitledCount_ = 0;
 
     // ---- ADS 停靠管理器 ----
@@ -427,8 +427,8 @@ private:
     QTimer* pendingHideCenterTimer_ = nullptr; // 折叠教学区（350ms，ensureEditorVisible/showEditorArea）
     QTimer* pendingHideEditorTimer_ = nullptr; // 隐藏编辑器栏（360ms，onEditorTabCloseRequested）
     // PERF: 启动性能优化 - 合并重复的 applyFluentStyle 调用
-    QTimer* applyStyleTimer_ = nullptr;        // 样式应用防抖（多次请求合并为一次）
-    bool applyingStyle_ = false;               // 防止 applyFluentStyle 重入
+    QTimer* applyStyleTimer_ = nullptr; // 样式应用防抖（多次请求合并为一次）
+    bool applyingStyle_ = false;        // 防止 applyFluentStyle 重入
     QStringList staticCompletionWords_;
 
     // ---- 欢迎页：最近打开列表 ----

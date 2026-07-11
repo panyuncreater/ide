@@ -153,7 +153,7 @@ public:
         // P0-1 fix: reset() 遗漏 vmLastPausedLine_/vmStepStartFrameCount_ 重置。
         // stop() 正确重置了这两个字段，但 reset() 没有。新调试会话通过 prepareRun()
         // 调用 reset() 而非 stop()，残留的 vmLastPausedLine_ 会污染断点去重逻辑
-        //（currentLine != vmLastPausedLine_ 判断失效），首行断点可能被错误过滤。
+        // （currentLine != vmLastPausedLine_ 判断失效），首行断点可能被错误过滤。
         vmLastPausedLine_ = 0;
         vmStepStartFrameCount_ = 0;
         // P2-1 fix: 清除条件求值停止标志（新会话开始）

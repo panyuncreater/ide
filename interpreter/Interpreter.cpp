@@ -580,7 +580,7 @@ Value Interpreter::evaluateCondition(ASTNode* node) {
 
     // P1-1 fix: 在执行条件表达式之前，将每个 Environment 的 variables 替换为
     // 深拷贝版本。原实现仅用快照在析构时恢复变量绑定，但条件中的容器变异
-    //（arr.push/dict.set/实例字段修改）作用在原始堆对象上，restoreLocalVariables
+    // （arr.push/dict.set/实例字段修改）作用在原始堆对象上，restoreLocalVariables
     // 只替换绑定不恢复容器内容。通过在求值前替换为深拷贝副本，条件求值完全在
     // 副本上操作，原始容器不受影响。SandboxGuard 析构时再次 restoreLocalVariables
     // 恢复原始值。

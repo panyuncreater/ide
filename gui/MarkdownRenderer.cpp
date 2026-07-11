@@ -262,12 +262,14 @@ QString markdownToHtml(const QString& markdown, const QString& codeBlockBg) {
     }
 
     const QString bg = codeBlockBg.isEmpty() ? QStringLiteral("#F5F5F5") : codeBlockBg;
-    const QString codeBlockStyle = QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
-                                                  "border:1px solid #E0E0E0; "
-                                                  "font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
-                                                  "font-size:13px; "
-                                                  "white-space:pre-wrap;")
-                                       .arg(bg);
+    const QString codeBlockStyle =
+        QStringLiteral("background:%1; padding:10px 12px; border-radius:6px; "
+                       "border:1px solid #E0E0E0; "
+                       "font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code "
+                       "Pro','Menlo','DejaVu Sans Mono','Courier New',monospace; "
+                       "font-size:13px; "
+                       "white-space:pre-wrap;")
+            .arg(bg);
 
     // 按行扫描，识别块级结构
     const QStringList lines = markdown.split('\n');

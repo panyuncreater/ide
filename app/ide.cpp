@@ -8,6 +8,7 @@
 #include "gui/PanelAnimator.h"
 #include "gui/TeachingTheme.h" // P2 视觉一致性：info/success/warning/error/hint 语义色集中管理
 
+#include <QAbstractAnimation>
 #include <QAbstractItemView>
 #include <QAbstractScrollArea>
 #include <QAction>
@@ -40,6 +41,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QProcess>
+#include <QPropertyAnimation>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollBar>
@@ -65,8 +67,6 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVariantAnimation>
-#include <QPropertyAnimation>
-#include <QAbstractAnimation>
 #include <algorithm>
 #include <functional>
 #include <sstream>
@@ -479,11 +479,18 @@ Ide::~Ide() {
     // ROUND-60 fix: 安全网。若 closeEvent 被绕过（如 QCoreApplication::quit()），
     // 此处确保 controller_ → Ide 的信号连接在成员析构前被切断，避免析构链中
     // 残留信号访问已析构的 UI 成员。
-    if (controller_) disconnect(controller_, nullptr, this, nullptr);
+    if (controller_)
+        disconnect(controller_, nullptr, this, nullptr);
     // ROUND-67 P0/P1 fix: 停止所有活跃动画 + 清理 GuidedTour（安全网）。
     // QVariantAnimation 不受 removePostedEvents 控制，必须显式 stop()。
-    if (splitterAnim_) { splitterAnim_->stop(); splitterAnim_ = nullptr; }
-    if (bottomPanelAnim_) { bottomPanelAnim_->stop(); bottomPanelAnim_ = nullptr; }
+    if (splitterAnim_) {
+        splitterAnim_->stop();
+        splitterAnim_ = nullptr;
+    }
+    if (bottomPanelAnim_) {
+        bottomPanelAnim_->stop();
+        bottomPanelAnim_ = nullptr;
+    }
     if (!activePanelTours_.isEmpty()) {
         for (GuidedTour* tour : activePanelTours_) {
             if (tour) {
@@ -513,14 +520,16 @@ Ide::~Ide() {
         }
     }
     // ROUND-67 P2 fix: 清空 vmStateChangedListener（安全网）。
-    if (controller_) controller_->clearVmStateChangedListeners();
+    if (controller_)
+        controller_->clearVmStateChangedListeners();
     // ROUND-66 P0 fix: 清空所有待处理事件，防止子对象析构期间 Qt 派发残留的
     // QMetaCallEvent（queued slot lambda）。Qt6 disconnect 不移除已投递的
     // QMetaCallEvent，若析构链中任何子对象析构触发了事件派发（如 ADS 内部
     // QSS 重算触发 repaint → processEvents），残留 lambda 会访问已析构的
     // WorkerManager/VmStepper/面板 → UAF（读取访问权限冲突）。
     QCoreApplication::removePostedEvents(this);
-    if (controller_) controller_->clearPendingEvents();
+    if (controller_)
+        controller_->clearPendingEvents();
     saveLayout();
 }
 
@@ -556,15 +565,20 @@ void Ide::closeEvent(QCloseEvent* event) {
     // closeEvent 会在 runProfile 调用栈内同步执行。设置 closing_ 后，
     // runProfile 在每次 processEvents 返回后检查并立即退出，
     // 避免继续访问正在关闭的 widget（renderResults/update 等）。
-    if (profileDashboardPanel_) profileDashboardPanel_->setClosing(true);
+    if (profileDashboardPanel_)
+        profileDashboardPanel_->setClosing(true);
 
     // ROUND-66 fix: 立即停止所有内部定时器，避免 maybeSave 模态对话框的事件循环
     // 期间定时器触发（completionTimer_/syntaxCheckTimer_/fileTreeFilterTimer_ 的
     // 回调未受 closing_ 守卫保护，可能访问正在清理的状态）。splitterSaveTimer_ 也停止。
-    if (splitterSaveTimer_) splitterSaveTimer_->stop();
-    if (completionTimer_) completionTimer_->stop();
-    if (syntaxCheckTimer_) syntaxCheckTimer_->stop();
-    if (fileTreeFilterTimer_) fileTreeFilterTimer_->stop();
+    if (splitterSaveTimer_)
+        splitterSaveTimer_->stop();
+    if (completionTimer_)
+        completionTimer_->stop();
+    if (syntaxCheckTimer_)
+        syntaxCheckTimer_->stop();
+    if (fileTreeFilterTimer_)
+        fileTreeFilterTimer_->stop();
 
     // ROUND-67 P0/P1 fix: 立即停止所有活跃的 QVariantAnimation。
     // 关键认知：QVariantAnimation 由 QUnifiedTimer（全局动画定时器）驱动，
@@ -591,7 +605,8 @@ void Ide::closeEvent(QCloseEvent* event) {
     // onActivityChangedById 中频繁调用，是打开/切换面板时必然触发的动画。
     // 遍历 centerStack_ 各页 + 底部/右侧栈的子动画并 stop() + deleteLater()。
     const auto stopChildAnimations = [](QWidget* w) {
-        if (!w) return;
+        if (!w)
+            return;
         // 停止 QPropertyAnimation（QUnifiedTimer 驱动，removePostedEvents 无法清理）
         const auto anims = w->findChildren<QPropertyAnimation*>();
         for (auto* a : anims) {
@@ -627,8 +642,10 @@ void Ide::closeEvent(QCloseEvent* event) {
     stopChildAnimations(dockManager_);
     // ROUND-75 fix (根因 B2): 停止 pendingHide 定时器，避免 maybeSave 模态对话框
     // 期间 timeout 触发访问正在清理的 centerStack_/editorTabWidget_。
-    if (pendingHideCenterTimer_) pendingHideCenterTimer_->stop();
-    if (pendingHideEditorTimer_) pendingHideEditorTimer_->stop();
+    if (pendingHideCenterTimer_)
+        pendingHideCenterTimer_->stop();
+    if (pendingHideEditorTimer_)
+        pendingHideEditorTimer_->stop();
 
     // ROUND-89 P0 fix: 捕获所有 Ide 直接子 QTimer/QPropertyAnimation。
     // stopChildAnimations 只扫描 centerStack_/bottomStack_/rightStack_/dockManager_
@@ -681,7 +698,8 @@ void Ide::closeEvent(QCloseEvent* event) {
     // ROUND-67 P2 fix: 清空所有 vmStateChangedListener 回调，防止 closeEvent 后续
     // 操作（vmStop/stopForClose 等）触发 notifyVmStateChanged 时，7 个教学面板的
     // onVmStateChanged 回调访问正在清理的 UI。
-    if (controller_) controller_->clearVmStateChangedListeners();
+    if (controller_)
+        controller_->clearVmStateChangedListeners();
     // ROUND-66 P0 fix: removePostedEvents 第二参数 0 表示 QEvent::None（几乎不存在
     // 的事件类型），不是"所有事件"。原代码注释声称"清空已投递未派发的事件"但实际
     // 只移除了 type==0 的事件，QMetaCallEvent（queued slot, type=43）和 QEvent::Timer
@@ -691,7 +709,8 @@ void Ide::closeEvent(QCloseEvent* event) {
     // 的事件队列，防止内部 lambda（如 cleanupWorker、notifyVmStateChanged）在
     // 析构链中被 dispatch 访问已析构成员 → UAF。
     QCoreApplication::removePostedEvents(this);
-    if (controller_) controller_->clearPendingEvents();
+    if (controller_)
+        controller_->clearPendingEvents();
 
     if (!maybeSave()) {
         closing_ = false;
@@ -771,7 +790,8 @@ void Ide::closeEvent(QCloseEvent* event) {
     // ROUND-66 P0 fix: 原参数 0 只移除 QEvent::None，改为无参（-1=所有类型）。
     // 同时清空 controller_ 及其协作成员的队列。
     QCoreApplication::removePostedEvents(this);
-    if (controller_) controller_->clearPendingEvents();
+    if (controller_)
+        controller_->clearPendingEvents();
     saveLayout();
     event->accept();
 }
@@ -1247,9 +1267,8 @@ void Ide::onEditorTabCloseRequested(int index) {
     // 断点清空、editorTabs_ 重组），导致 worker 线程引用的 source/filePath 失配。
     // 原实现无任何守卫。修复：运行中拒绝关闭并提示用户先停止。
     if (controller_->isRunning() || controller_->isVmRunning() || controller_->isDebugPaused()) {
-        InfoBar::warning(mlTr("关闭标签"),
-                         mlTr("当前有运行或调试在进行，请先停止运行再关闭标签。"),
-                         Qt::Horizontal, true, 4000, InfoBar::Position::TOP_RIGHT, this);
+        InfoBar::warning(mlTr("关闭标签"), mlTr("当前有运行或调试在进行，请先停止运行再关闭标签。"), Qt::Horizontal,
+                         true, 4000, InfoBar::Position::TOP_RIGHT, this);
         return;
     }
 
@@ -1307,7 +1326,8 @@ void Ide::onEditorTabCloseRequested(int index) {
                         pendingHideEditorTimer_ = new QTimer(this);
                         pendingHideEditorTimer_->setSingleShot(true);
                         connect(pendingHideEditorTimer_, &QTimer::timeout, this, [this]() {
-                            if (closing_) return;
+                            if (closing_)
+                                return;
                             if (editorTabWidget_ && editorTabWidget_->count() == 0)
                                 editorTabWidget_->hide();
                         });
@@ -1325,30 +1345,30 @@ void Ide::onEditorTabCloseRequested(int index) {
                 }
             }
         } else {
-        // 编辑器模式：回欢迎页
-        centerStack_->setCurrentWidget(welcomePage_);
-        centerStack_->show();
-        editorTabWidget_->hide();
-        // ROUND-76 fix: 关闭最后一个标签后必须重分配 centerSplitter_ 让 centerStack_
-        // 占满，否则 splitter 保持编辑器独占态 [0, total]（centerStack_ 宽 0）或
-        // 三栏态 [420, 780]（editorSplitter_ 内已空却仍占大半宽度），表现为
-        // 「欢迎页空白」+「之后切学习面板加载不出来」。
-        // 此处与 showTeachingPanel 的无标签分支互为兜底：这里治本（欢迎页可见），
-        // showTeachingPanel 兜底保证教学面板占满。
-        if (centerSplitter_) {
-            QList<int> curSizes = centerSplitter_->sizes();
-            if (curSizes.size() == 2) {
-                int total = curSizes[0] + curSizes[1];
-                if (total > 200 && curSizes[0] < total - 5) {
-                    // editorSplitter_ 内已无标签 + 底部面板已 hide，
-                    // 直接收为 {total, 0}，无需动画（关闭动画已由 hideBottomPanel 完成）
-                    centerSplitter_->setSizes({total, 0});
+            // 编辑器模式：回欢迎页
+            centerStack_->setCurrentWidget(welcomePage_);
+            centerStack_->show();
+            editorTabWidget_->hide();
+            // ROUND-76 fix: 关闭最后一个标签后必须重分配 centerSplitter_ 让 centerStack_
+            // 占满，否则 splitter 保持编辑器独占态 [0, total]（centerStack_ 宽 0）或
+            // 三栏态 [420, 780]（editorSplitter_ 内已空却仍占大半宽度），表现为
+            // 「欢迎页空白」+「之后切学习面板加载不出来」。
+            // 此处与 showTeachingPanel 的无标签分支互为兜底：这里治本（欢迎页可见），
+            // showTeachingPanel 兜底保证教学面板占满。
+            if (centerSplitter_) {
+                QList<int> curSizes = centerSplitter_->sizes();
+                if (curSizes.size() == 2) {
+                    int total = curSizes[0] + curSizes[1];
+                    if (total > 200 && curSizes[0] < total - 5) {
+                        // editorSplitter_ 内已无标签 + 底部面板已 hide，
+                        // 直接收为 {total, 0}，无需动画（关闭动画已由 hideBottomPanel 完成）
+                        centerSplitter_->setSizes({total, 0});
+                    }
                 }
             }
         }
+        return;
     }
-    return;
-}
 
     int currIdx = editorTabWidget_->currentIndex();
     int newCurrent = currIdx;
@@ -1463,7 +1483,8 @@ void Ide::ensureEditorVisible() {
                     pendingHideCenterTimer_ = new QTimer(this);
                     pendingHideCenterTimer_->setSingleShot(true);
                     connect(pendingHideCenterTimer_, &QTimer::timeout, this, [this]() {
-                        if (closing_) return;
+                        if (closing_)
+                            return;
                         if (centerStack_ && editorTabWidget_ && editorTabWidget_->isVisible()) {
                             centerStack_->hide();
                             int tw = centerSplitter_->width();
@@ -1511,7 +1532,8 @@ void Ide::showTeachingPanel(const QString& panelId) {
     // 若用户在 350ms 内切换到教学面板，该回调仍会执行，覆盖 showTeachingPanel
     // 的 centerStack_->show()，并锁死教学区宽度为 0——表现为"教学面板打不开"。
     // 停止成员 QTimer 即可撤销挂起的 hide 意图。
-    if (pendingHideCenterTimer_) pendingHideCenterTimer_->stop();
+    if (pendingHideCenterTimer_)
+        pendingHideCenterTimer_->stop();
     // 同时停止正在运行的折叠教学区动画（splitterAnim_ 目标 {0, total}）。
     // 否则旧动画继续把教学区宽度压缩到 0，且 showTeachingPanel 的动画分支
     // 条件在"教学区尚可见但正被压缩"时不满足，splitter 不重分配。
@@ -1602,10 +1624,9 @@ void Ide::showTeachingPanel(const QString& panelId) {
     // 但编辑器已可见（编辑器独占模式 centerStack_ 被 hide 且宽度 0）时，
     // 需要重分配 splitter 让教学区获得可见宽度。检测 centerStack_ 是否被
     // 隐藏或宽度为 0，若是则触发重分配动画。
-    const bool centerStackWasHiddenOrZero = !centerStack_->isVisible() ||
-        (savedSplitterSizes.size() == 2 && savedSplitterSizes[0] <= 10);
-    if (editorHasTabs && savedSplitterSizes.size() == 2 &&
-        (!editorWasVisible || centerStackWasHiddenOrZero)) {
+    const bool centerStackWasHiddenOrZero =
+        !centerStack_->isVisible() || (savedSplitterSizes.size() == 2 && savedSplitterSizes[0] <= 10);
+    if (editorHasTabs && savedSplitterSizes.size() == 2 && (!editorWasVisible || centerStackWasHiddenOrZero)) {
         int total = savedSplitterSizes[0] + savedSplitterSizes[1];
         if (total > 200) {
             int teachingW = static_cast<int>(total * 0.6);
@@ -1713,7 +1734,8 @@ void Ide::showEditorArea() {
                 pendingHideCenterTimer_ = new QTimer(this);
                 pendingHideCenterTimer_->setSingleShot(true);
                 connect(pendingHideCenterTimer_, &QTimer::timeout, this, [this]() {
-                    if (closing_) return;
+                    if (closing_)
+                        return;
                     if (centerStack_)
                         centerStack_->hide();
                     if (centerSplitter_) {
@@ -3089,9 +3111,8 @@ void Ide::initUI() {
     // 中对 findChildren<CDockWidgetTab*>() 设置 palette。
     // PERF: 使用 scheduleApplyStyle 防抖合并，避免 restoreState 期间每个 dock
     // 添加都触发一次全量样式重算。
-    connect(dockManager_, &ads::CDockManager::dockWidgetAdded, this, [this](ads::CDockWidget*) {
-        scheduleApplyStyle();
-    });
+    connect(dockManager_, &ads::CDockManager::dockWidgetAdded, this,
+            [this](ads::CDockWidget*) { scheduleApplyStyle(); });
 
     // R68 关键修复：锁定 ColorSchemeMode 为 Light，阻止 palette 变化触发 loadStylesheet。
     // 默认 FollowPalette 模式下，setPalette 触发 ApplicationPaletteChange 事件 →
@@ -4180,7 +4201,8 @@ void Ide::applyFluentStyle() {
                     padding: 4px 8px;
                     font-size: 12px;
                 }
-            )").arg(bg.name(), fg.name(), TeachingTheme::ideBorder().name()));
+            )")
+                                                         .arg(bg.name(), fg.name(), TeachingTheme::ideBorder().name()));
             s_toolTipStyled = true;
         }
     }
@@ -4196,7 +4218,8 @@ void Ide::applyFluentStyle() {
 
     // 直接通过成员指针设置已知控件（无需遍历）
     auto applyBgStyle = [&bgStyle](QWidget* w) {
-        if (!w) return;
+        if (!w)
+            return;
         w->setStyleSheet(bgStyle);
         w->setAttribute(Qt::WA_StyledBackground, true);
     };
@@ -4213,12 +4236,10 @@ void Ide::applyFluentStyle() {
     // 已通过 applyBgStyle 直接设置，不在此重复处理
     for (auto* w : findChildren<QWidget*>()) {
         QString name = w->objectName();
-        if (name == "mainContainer" || name == "middleArea" ||
-            name == "welcomeRecentPanel" || name == "welcomeCenter" ||
-            name == "welcomeBtnContainer" ||
-            name == "errorPageContainer" || name == "fileTreeContainer" ||
-            name == "rightPanelContainer" || name == "bottomPivotRow" || name == "rightPivotRow" ||
-            name == "bytecodePage" || name == "bytecodeSplitter" ||
+        if (name == "mainContainer" || name == "middleArea" || name == "welcomeRecentPanel" ||
+            name == "welcomeCenter" || name == "welcomeBtnContainer" || name == "errorPageContainer" ||
+            name == "fileTreeContainer" || name == "rightPanelContainer" || name == "bottomPivotRow" ||
+            name == "rightPivotRow" || name == "bytecodePage" || name == "bytecodeSplitter" ||
             name == "debugButtonContainer" || name == "vmButtonContainer") {
             if (name == "mainContainer" || name == "middleArea") {
                 QPalette p = w->palette();
@@ -4318,18 +4339,18 @@ void Ide::applyFluentStyle() {
     // ============================================================
     QString mainQss = panelQss;
     mainQss += QString("QGroupBox { "
-                        "  border: 1px solid %1; border-radius: 6px; "
-                        "  margin-top: 12px; padding-top: 8px; "
-                        "  background: %2; "
-                        "} "
-                        "QGroupBox::title { "
-                        "  subcontrol-origin: margin; "
-                        "  left: 8px; padding: 0 4px; "
-                        "  color: %3; "
-                        "}")
-                    .arg(TeachingTheme::border().name())
-                    .arg(TeachingTheme::surface().name())
-                    .arg(TeachingTheme::textPrimary().name());
+                       "  border: 1px solid %1; border-radius: 6px; "
+                       "  margin-top: 12px; padding-top: 8px; "
+                       "  background: %2; "
+                       "} "
+                       "QGroupBox::title { "
+                       "  subcontrol-origin: margin; "
+                       "  left: 8px; padding: 0 4px; "
+                       "  color: %3; "
+                       "}")
+                   .arg(TeachingTheme::border().name())
+                   .arg(TeachingTheme::surface().name())
+                   .arg(TeachingTheme::textPrimary().name());
     setStyleSheet(mainQss);
 
     // ---- Sync editor theme（深色主题已移除，强制 light 配色）----
@@ -4513,24 +4534,28 @@ void Ide::initConnections() {
 
     // Controller signals
     connect(controller_, &IdeController::outputReady, this, [this](const QString& msg) {
-        if (closing_) return;
+        if (closing_)
+            return;
         appendOutput(msg);
         showBottomPanel(0);
     });
     connect(controller_, &IdeController::runOk, this, [this]() {
-        if (closing_) return;
+        if (closing_)
+            return;
         appendOutput(mlTr("--- 程序执行结束 ---"));
         showBottomPanel(0);
     });
     connect(controller_, &IdeController::stoppedByUser, this, [this]() {
-        if (closing_) return;
+        if (closing_)
+            return;
         appendOutput(mlTr("--- 调试终止 ---"));
         showBottomPanel(0);
     });
     connect(controller_, &IdeController::runtimeError, this, [this](const QString& msg, int line, int column) {
         // ISSUE-7 fix + ROUND-60: closing_ 标志防御 closeEvent 期间残留 QueuedConnection。
         // maybeSave() 的模态对话框与 processEvents 会派发挂起事件，此时成员可能已部分析构。
-        if (closing_) return;
+        if (closing_)
+            return;
         // AUDIT-P2-CORRECT fix: stale 信号防御。
         // closeEvent 期间 stopForClose 唤醒 worker 退出，但 worker 内部已投递的
         // runtimeError QueuedConnection 仍在主线程队列。Ide 析构时处理 pending 事件
@@ -4556,7 +4581,8 @@ void Ide::initConnections() {
     });
     connect(controller_, &IdeController::genericError, this, [this](const QString& msg) {
         // ISSUE-7 fix + ROUND-60: closing_ 标志防御 closeEvent 期间残留 QueuedConnection。
-        if (closing_) return;
+        if (closing_)
+            return;
         // AUDIT-P2-CORRECT fix: stale 信号防御。
         // closeEvent 期间 stopForClose 唤醒 worker 退出，但 worker 内部已投递的
         // genericError QueuedConnection 仍在主线程队列。Ide 析构时处理 pending 事件
@@ -4893,7 +4919,7 @@ void Ide::restoreLayout() {
         // R73 fix: 布局版本号。dock widget objectName 从 i18n 改为固定ID时，
         // 旧版本保存的 dockState 无法匹配新 objectName，restoreState 会失败，
         // dock 变成浮动窗口。版本号变化时清除旧 dockState，应用默认布局。
-        constexpr int kLayoutVersion = 2;  // v1: i18n objectName; v2: 固定ID
+        constexpr int kLayoutVersion = 2; // v1: i18n objectName; v2: 固定ID
         int savedVersion = settings.value("layout/version", 1).toInt();
         if (savedVersion < kLayoutVersion) {
             settings.remove("layout/dockState");
@@ -4966,18 +4992,21 @@ void Ide::restoreLayout() {
         // parentSplitter()->setSizes() 设置比例尺寸。
         // R73 fix: 增大默认尺寸（左 280→320，右 560→600），避免用户觉得太小。
         if (!hasSavedDockState || !restored) {
-            ads::CDockAreaWidget* leftArea = (fileTreeDock_ && !fileTreeDock_->isClosed())
-                ? fileTreeDock_->dockAreaWidget() : nullptr;
-            ads::CDockAreaWidget* rightArea = (rightDock_ && !rightDock_->isClosed())
-                ? rightDock_->dockAreaWidget() : nullptr;
+            ads::CDockAreaWidget* leftArea =
+                (fileTreeDock_ && !fileTreeDock_->isClosed()) ? fileTreeDock_->dockAreaWidget() : nullptr;
+            ads::CDockAreaWidget* rightArea =
+                (rightDock_ && !rightDock_->isClosed()) ? rightDock_->dockAreaWidget() : nullptr;
             // 若左右面板共享同一 splitter，需一次性设置所有尺寸
             if (leftArea && rightArea && leftArea->parentSplitter() == rightArea->parentSplitter()) {
                 auto* sp = leftArea->parentSplitter();
                 QList<int> sizes;
                 for (int i = 0; i < sp->count(); ++i) {
-                    if (sp->widget(i) == leftArea) sizes.append(320);
-                    else if (sp->widget(i) == rightArea) sizes.append(600);
-                    else sizes.append(700);
+                    if (sp->widget(i) == leftArea)
+                        sizes.append(320);
+                    else if (sp->widget(i) == rightArea)
+                        sizes.append(600);
+                    else
+                        sizes.append(700);
                 }
                 sp->setSizes(sizes);
             } else {
@@ -5045,7 +5074,8 @@ void Ide::showBottomPanel(int tabIndex) {
             QList<int> currentSizes = editorSplitter_->sizes();
             int editorH = currentSizes.size() > 0 ? currentSizes[0] : 600;
             QList<int> targetSizes = {editorH - targetH, targetH};
-            if (targetSizes[0] < 100) targetSizes[0] = 100; // 保证编辑器最小高度
+            if (targetSizes[0] < 100)
+                targetSizes[0] = 100; // 保证编辑器最小高度
 
             // 动画插值：从全编辑器 → 编辑器+底部面板
             // ROUND-67 P1 fix: 改用成员变量 bottomPanelAnim_ 存储，closeEvent 中停止。
@@ -5060,16 +5090,17 @@ void Ide::showBottomPanel(int tabIndex) {
             anim->setStartValue(0.0);
             anim->setEndValue(1.0);
             anim->setEasingCurve(QEasingCurve::OutCubic);
-            QObject::connect(anim, &QVariantAnimation::valueChanged, this, [this, currentSizes, targetSizes](const QVariant& value) {
-                if (!editorSplitter_)
-                    return;
-                double t = value.toDouble();
-                QList<int> interpolated;
-                for (int i = 0; i < currentSizes.size() && i < targetSizes.size(); ++i) {
-                    interpolated.append(static_cast<int>(currentSizes[i] * (1 - t) + targetSizes[i] * t));
-                }
-                editorSplitter_->setSizes(interpolated);
-            });
+            QObject::connect(
+                anim, &QVariantAnimation::valueChanged, this, [this, currentSizes, targetSizes](const QVariant& value) {
+                    if (!editorSplitter_)
+                        return;
+                    double t = value.toDouble();
+                    QList<int> interpolated;
+                    for (int i = 0; i < currentSizes.size() && i < targetSizes.size(); ++i) {
+                        interpolated.append(static_cast<int>(currentSizes[i] * (1 - t) + targetSizes[i] * t));
+                    }
+                    editorSplitter_->setSizes(interpolated);
+                });
             QObject::connect(anim, &QVariantAnimation::finished, this, [this, targetH]() {
                 if (bottomContainer_)
                     bottomContainer_->setFixedHeight(targetH);
@@ -5127,16 +5158,17 @@ void Ide::hideBottomPanel() {
             anim->setStartValue(0.0);
             anim->setEndValue(1.0);
             anim->setEasingCurve(QEasingCurve::InCubic);
-            QObject::connect(anim, &QVariantAnimation::valueChanged, this, [this, currentSizes, targetSizes](const QVariant& value) {
-                if (!editorSplitter_)
-                    return;
-                double t = value.toDouble();
-                QList<int> interpolated;
-                for (int i = 0; i < currentSizes.size() && i < targetSizes.size(); ++i) {
-                    interpolated.append(static_cast<int>(currentSizes[i] * (1 - t) + targetSizes[i] * t));
-                }
-                editorSplitter_->setSizes(interpolated);
-            });
+            QObject::connect(
+                anim, &QVariantAnimation::valueChanged, this, [this, currentSizes, targetSizes](const QVariant& value) {
+                    if (!editorSplitter_)
+                        return;
+                    double t = value.toDouble();
+                    QList<int> interpolated;
+                    for (int i = 0; i < currentSizes.size() && i < targetSizes.size(); ++i) {
+                        interpolated.append(static_cast<int>(currentSizes[i] * (1 - t) + targetSizes[i] * t));
+                    }
+                    editorSplitter_->setSizes(interpolated);
+                });
             QObject::connect(anim, &QVariantAnimation::finished, this, [this]() {
                 if (bottomContainer_)
                     bottomContainer_->hide();
@@ -5984,8 +6016,7 @@ void Ide::onCompileAnalysis() {
     // 源码（import 路径），将产生并发数据竞争（lexer/parser 非线程安全）。
     // 仅打开右侧可视化面板查看当前已编译结果，不重新执行管线。
     if (controller_->isRunning() || controller_->isVmRunning() || controller_->isDebugPaused()) {
-        InfoBar::warning(mlTr("编译分析"),
-                         mlTr("已有运行或调试在进行，编译分析已跳过——请先停止当前运行再重试。"),
+        InfoBar::warning(mlTr("编译分析"), mlTr("已有运行或调试在进行，编译分析已跳过——请先停止当前运行再重试。"),
                          Qt::Horizontal, true, 3000, InfoBar::Position::TOP_RIGHT, this);
         showRightPanel(0);
         return;
@@ -6625,8 +6656,8 @@ void Ide::handleVmStepResult(IdeController::VmStepResult result) {
         // AUDIT-P1-ROUND50 fix: 守卫收窄到此路径——仅 PAUSED 信号需要 stale 防御。
         // OK 信号是单步成功的合法中间态，不应被丢弃。PAUSED 信号在 closeEvent 后
         // 可能成为 stale 信号（VM 已停止但排队中的断点暂停信号尚未处理）。
-        if (result == IdeController::VmStepResult::PAUSED_AT_BREAKPOINT &&
-            !controller_->isVmInitialized() && !controller_->isVmRunning())
+        if (result == IdeController::VmStepResult::PAUSED_AT_BREAKPOINT && !controller_->isVmInitialized() &&
+            !controller_->isVmRunning())
             return;
         if (controller_->isVmRegisterMode()) {
             vmStackPanel_->updateRegisters(controller_->getVmStack());
@@ -6763,7 +6794,8 @@ void Ide::showHelpDialog() {
     QString btnPressed = TeachingTheme::primaryPressed().name();
     dlg->setStyleSheet(QString("QDialog { background: %1; border-radius: 8px; }"
                                "QLabel#helpTitle { font-size: 16px; font-weight: 600; color: %2; }"
-                               "QLabel#helpKey { font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace;"
+                               "QLabel#helpKey { font-family: 'Cascadia Code','Cascadia Mono','Consolas','JetBrains "
+                               "Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace;"
                                "  font-size: 12px; color: %4; }"
                                "QLabel#helpDesc { font-size: 12px; color: %2; }"
                                "QLabel#helpTip { color: %3; font-size: 11px; }"
@@ -7565,7 +7597,10 @@ void Ide::onSave() {
     // 标识 IDE 自身保存触发 fileChanged，避免弹出"外部修改"对话框。
     // 500ms 后自动复位，防止 fileChanged 未触发时标志残留误吞后续外部修改。
     selfSaving_ = true;
-    QTimer::singleShot(500, this, [this]() { if (!closing_) selfSaving_ = false; });
+    QTimer::singleShot(500, this, [this]() {
+        if (!closing_)
+            selfSaving_ = false;
+    });
     QFile file(currentFilePath_);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         InfoBar::warning(mlTr("错误"), mlTr("无法保存文件: ") + file.errorString(), Qt::Horizontal, true, 2500,
@@ -7747,7 +7782,8 @@ void Ide::setupFileWatcher(const QString& filePath) {
 void Ide::onFileChangedExternally(const QString& filePath) {
     // ROUND-60 fix: 关闭流程中忽略文件变更通知，避免 QTimer/singleShot 捕获 this
     // 在析构期间触发 UAF。
-    if (closing_) return;
+    if (closing_)
+        return;
     if (filePath != watchedFilePath_)
         return;
 

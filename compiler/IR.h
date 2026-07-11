@@ -537,7 +537,7 @@ private:
     // AUDIT-P1.1 fix: try-finally 编译期上下文栈（IR 路径，用 label 而非 ip）
     struct TryFinallyContext {
         bool hasFinally = false;
-        uint32_t finallyEntryLabel = 0; // finally 块入口标签
+        uint32_t finallyEntryLabel = 0;           // finally 块入口标签
         std::vector<size_t> pendingJumpPatches;   // JUMP 的 label 待回填
         std::vector<size_t> pendingTargetPatches; // PUSH_JUMP_TARGET 的 label 待回填
     };

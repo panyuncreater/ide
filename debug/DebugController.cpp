@@ -388,7 +388,7 @@ void DebugController::stepOver() {
         LOG_DEBUG("Step Over (depth=" + std::to_string(depth) + ")", "Debugger");
         mode_.store(static_cast<int>(StepMode::MODE_STEP_OVER));
         stepOverDepth_ = depth;
-        crossedDeeper_.store(false);           // P0-9 fix: atomic store (DBG-B fix)
+        crossedDeeper_.store(false); // P0-9 fix: atomic store (DBG-B fix)
         running_ = true;
         paused_ = false;
     }

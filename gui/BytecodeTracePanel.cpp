@@ -79,14 +79,15 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
         // ---- Boolean ----
         OpCodeDocEntry{"OP_TRUE", "const", "无", "push 1", "🟢 压入布尔常量 true。", "var b = true;"},
         OpCodeDocEntry{"OP_FALSE", "const", "无", "push 1", "🔴 压入布尔常量 false。", "var b = false;"},
-        OpCodeDocEntry{"OP_NOT", "arith", "无", "pop 1 / push 1", "🔵 弹出栈顶值取逻辑非后压入布尔结果。", "var b = !x;"},
+        OpCodeDocEntry{"OP_NOT", "arith", "无", "pop 1 / push 1", "🔵 弹出栈顶值取逻辑非后压入布尔结果。",
+                       "var b = !x;"},
         // ---- Comparison ----
-        OpCodeDocEntry{"OP_EQUAL", "arith", "无", "pop 2 / push 1",
-                       "⚖️ 弹出栈顶两个值进行相等比较后压入布尔结果。", "var b = x == y;"},
-        OpCodeDocEntry{"OP_NOT_EQUAL", "arith", "无", "pop 2 / push 1",
-                       "⚖️ 弹出栈顶两个值进行不等比较后压入布尔结果。", "var b = x != y;"},
-        OpCodeDocEntry{"OP_LESS", "arith", "无", "pop 2 / push 1",
-                       "⚖️ 弹出栈顶两个值（右、左），若左 < 右则压入 true。", "var b = x < y;"},
+        OpCodeDocEntry{"OP_EQUAL", "arith", "无", "pop 2 / push 1", "⚖️ 弹出栈顶两个值进行相等比较后压入布尔结果。",
+                       "var b = x == y;"},
+        OpCodeDocEntry{"OP_NOT_EQUAL", "arith", "无", "pop 2 / push 1", "⚖️ 弹出栈顶两个值进行不等比较后压入布尔结果。",
+                       "var b = x != y;"},
+        OpCodeDocEntry{"OP_LESS", "arith", "无", "pop 2 / push 1", "⚖️ 弹出栈顶两个值（右、左），若左 < 右则压入 true。",
+                       "var b = x < y;"},
         OpCodeDocEntry{"OP_GREATER", "arith", "无", "pop 2 / push 1",
                        "⚖️ 弹出栈顶两个值（右、左），若左 > 右则压入 true。", "var b = x > y;"},
         OpCodeDocEntry{"OP_LESS_EQUAL", "arith", "无", "pop 2 / push 1",
@@ -127,8 +128,7 @@ const std::vector<OpCodeDocEntry>& BytecodeTraceLibrary::opCodeDocs() {
                        "🛡️ 注册 try 块的 catch 处理偏移，异常抛出时跳转到该处执行。", "try { ... } catch (e) { ... }"},
         // ---- Class ----
         OpCodeDocEntry{"OP_SUPER_CALL", "class", "nameIdx(2B) + argCount(1B)", "pop N+1 / push 1",
-                       "📞 调用父类方法：从当前实例的父类链查找方法并调用（super 语义三后端统一）。",
-                       "super.foo();"},
+                       "📞 调用父类方法：从当前实例的父类链查找方法并调用（super 语义三后端统一）。", "super.foo();"},
     };
     return kDocs;
 }
@@ -322,8 +322,8 @@ void BytecodeTracePanel::onClearTrace() {
     traceTable_->setRowCount(0);
     stackDetail_->clear();
     // R54-14 fix: 空状态占位提示
-    stackDetail_->setHtml(QString::fromUtf8(
-        "<div style='color:#6E6E6E; padding:8px;'><i>（轨迹已清空，捕获后将显示栈快照）</i></div>"));
+    stackDetail_->setHtml(
+        QString::fromUtf8("<div style='color:#6E6E6E; padding:8px;'><i>（轨迹已清空，捕获后将显示栈快照）</i></div>"));
     liveStatusLabel_->setText(tr("状态：未运行（轨迹已清空）"));
 }
 

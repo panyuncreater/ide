@@ -52,7 +52,7 @@ void RegisterVM::resetState() {
     openUpvalues_.clear();
     tryStack_.clear();
     pendingException_ = Value::nullValue(); // P1-4 fix: 清理异常值
-    pendingJumpStack_.clear();               // AUDIT-P1.1 fix: 清理续跳栈
+    pendingJumpStack_.clear();              // AUDIT-P1.1 fix: 清理续跳栈
     hasError_ = false;
     lastError_.clear();
     lastErrorLine_ = 0;
@@ -2507,8 +2507,8 @@ VMResult RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
                     // 仍执行 isClosed=true + erase 以关闭 upvalue（保留默认 null 值），防止悬垂引用。
                     // AUDIT-P2.5 fix: 记录错误标志，函数末尾返回 VM_RUNTIME_ERROR，调用方立即 return。
                     (void)runtimeError("closeUpvaluesFrom: slot " + std::to_string(slot) + " >= registerCount " +
-                                 std::to_string(targetFrame.registerCount) + " (frameIdx=" + std::to_string(frameIdx) +
-                                 ")");
+                                       std::to_string(targetFrame.registerCount) +
+                                       " (frameIdx=" + std::to_string(frameIdx) + ")");
                     hadError = true;
                 }
             } else {
@@ -2519,7 +2519,7 @@ VMResult RegisterVM::closeUpvaluesFrom(size_t fromSlot) {
                 // runtimeError 设置 hasError_=true，VM 在后续指令分发终止执行。
                 // AUDIT-P2.5 fix: 记录错误标志，函数末尾返回 VM_RUNTIME_ERROR，调用方立即 return。
                 (void)runtimeError("closeUpvaluesFrom: upvalue 指向已弹出的帧 (frameIdx=" + std::to_string(frameIdx) +
-                             ", frames_.size()=" + std::to_string(frames_.size()) + ")");
+                                   ", frames_.size()=" + std::to_string(frames_.size()) + ")");
                 hadError = true;
             }
             uv->isClosed = true;

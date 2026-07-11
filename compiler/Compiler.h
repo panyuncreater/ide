@@ -174,9 +174,10 @@ private:
     // 取出真实目标并跳转，实现"先执行 finally 再跳转"的三后端一致性。
     struct TryFinallyContext {
         bool hasFinally = false;
-        size_t finallyEntryIp = 0; // finally 块入口地址（编译期确定后回填 pendingJumpPatches）
-        std::vector<size_t> pendingJumpPatches;   // OP_JUMP 目标待回填到 finallyEntryIp
-        std::vector<size_t> pendingTargetPatches; // OP_PUSH_JUMP_TARGET 目标待回填到 finallyEntryIp（来自内层 break/continue）
+        size_t finallyEntryIp = 0;              // finally 块入口地址（编译期确定后回填 pendingJumpPatches）
+        std::vector<size_t> pendingJumpPatches; // OP_JUMP 目标待回填到 finallyEntryIp
+        std::vector<size_t>
+            pendingTargetPatches; // OP_PUSH_JUMP_TARGET 目标待回填到 finallyEntryIp（来自内层 break/continue）
     };
     std::vector<TryFinallyContext> tryFinallyStack_;
 
@@ -229,7 +230,7 @@ private:
         std::vector<LoopContext> loopStack;
         int tryDepth = 0;
         std::vector<TryFinallyContext> tryFinallyStack; // AUDIT-P1.1 fix
-        std::string currentFunctionReturnType; // BUG-TYPE-1 fix: 当前函数返回类型注解
+        std::string currentFunctionReturnType;          // BUG-TYPE-1 fix: 当前函数返回类型注解
     };
 
     /// 保存当前编译上下文（move 语义，调用后成员变量处于 moved-from 状态）

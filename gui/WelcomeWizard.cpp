@@ -262,7 +262,9 @@ void WelcomeWizard::buildStep3() {
     (void)strNode; // 已挂载到 printNode
     astTree_->addTopLevelItem(printNode);
     astTree_->expandAll();
-    astTree_->setStyleSheet("QTreeWidget { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 12px; }");
+    astTree_->setStyleSheet(
+        "QTreeWidget { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
+        "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 12px; }");
     astLayout->addWidget(astTree_);
     splitter->addWidget(astBox);
 
@@ -273,7 +275,9 @@ void WelcomeWizard::buildStep3() {
     bytecodeList_ = new QListWidget(bcBox);
     bytecodeList_->addItem(QStringLiteral("OP_STRING  \"Hello!\""));
     bytecodeList_->addItem(QStringLiteral("OP_PRINT"));
-    bytecodeList_->setStyleSheet("QListWidget { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 12px; }");
+    bytecodeList_->setStyleSheet(
+        "QListWidget { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
+        "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 12px; }");
     bcLayout->addWidget(bytecodeList_);
     splitter->addWidget(bcBox);
 
@@ -303,8 +307,10 @@ void WelcomeWizard::buildStep3() {
     runOutput_ = new QTextEdit(page);
     runOutput_->setReadOnly(true);
     runOutput_->setMaximumHeight(70);
-    runOutput_->setStyleSheet("QTextEdit { background: #101820; color: #90ffd0;"
-                              "  font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 13px; }");
+    runOutput_->setStyleSheet(
+        "QTextEdit { background: #101820; color: #90ffd0;"
+        "  font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code "
+        "Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 13px; }");
     runRow->addWidget(runOutput_, 1);
     layout->addLayout(runRow);
 
@@ -532,9 +538,12 @@ void WelcomeWizard::onRunClicked() {
     // 高亮第一条指令
     if (bytecodeList_->count() > 0) {
         bytecodeList_->setCurrentRow(0);
-        bytecodeList_->setStyleSheet(QString("QListWidget { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 12px; }"
-                                             "QListWidget::item:selected { background: %1; color: white; }")
-                                         .arg(TeachingTheme::primary().name()));
+        bytecodeList_->setStyleSheet(
+            QString("QListWidget { font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains "
+                    "Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: "
+                    "12px; }"
+                    "QListWidget::item:selected { background: %1; color: white; }")
+                .arg(TeachingTheme::primary().name()));
     }
 
     // 600ms 后切换到第二条指令 + 输出

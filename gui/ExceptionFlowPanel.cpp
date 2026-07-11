@@ -281,17 +281,11 @@ void ExceptionFlowPanel::buildPhasePage(QWidget* host) {
     // ROUND56 fix: 列表项添加图标 + 彩色标签，提升视觉引导
     static const char* kPhaseIcons[] = {"⚡ throw", "🔍 search", "🛡️ catch", "✨ finally", "🌊 unwind", "✅ recovery"};
     static const char* kPhaseDesc[] = {
-        "异常创建与抛出",
-        "沿栈搜索处理器",
-        "捕获并绑定变量",
-        "资源清理始终执行",
-        "栈帧弹出与销毁",
-        "恢复正常控制流",
+        "异常创建与抛出", "沿栈搜索处理器", "捕获并绑定变量", "资源清理始终执行", "栈帧弹出与销毁", "恢复正常控制流",
     };
     const auto& phases = ExceptionPhaseLibrary::phases();
     for (int i = 0; i < (int)phases.size(); ++i) {
-        auto* item = new QListWidgetItem(QString::fromUtf8(kPhaseIcons[i]) + "\n" +
-                                         QString::fromUtf8(kPhaseDesc[i]));
+        auto* item = new QListWidgetItem(QString::fromUtf8(kPhaseIcons[i]) + "\n" + QString::fromUtf8(kPhaseDesc[i]));
         item->setSizeHint(QSize(160, 48));
         phaseList_->addItem(item);
     }
@@ -348,15 +342,25 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
         const char* border = "#BDC3C7";
         const char* icon = "▶";
         if (step.find("throw") != std::string::npos || step.find("异常创建") != std::string::npos) {
-            bg = "#FADBD8"; border = "#E74C3C"; icon = "⚡";
+            bg = "#FADBD8";
+            border = "#E74C3C";
+            icon = "⚡";
         } else if (step.find("catch") != std::string::npos) {
-            bg = "#D5F5E3"; border = "#27AE60"; icon = "🛡️";
+            bg = "#D5F5E3";
+            border = "#27AE60";
+            icon = "🛡️";
         } else if (step.find("unwinding") != std::string::npos || step.find("展开") != std::string::npos) {
-            bg = "#FDEBD0"; border = "#F39C12"; icon = "🌊";
+            bg = "#FDEBD0";
+            border = "#F39C12";
+            icon = "🌊";
         } else if (step.find("TERMINATED") != std::string::npos || step.find("终止") != std::string::npos) {
-            bg = "#E8DAEF"; border = "#9B59B6"; icon = "🚨";
+            bg = "#E8DAEF";
+            border = "#9B59B6";
+            icon = "🚨";
         } else if (step.find("finally") != std::string::npos) {
-            bg = "#D6EAF8"; border = "#3498DB"; icon = "✨";
+            bg = "#D6EAF8";
+            border = "#3498DB";
+            icon = "✨";
         }
         // 步骤号
         oss << "<tr>";
@@ -364,11 +368,12 @@ void ExceptionFlowPanel::populateScenarioDetail(int index) {
             << ";border-right:none;padding:6px 8px;width:30px;text-align:center;color:" << border
             << ";font-weight:bold;font-size:14px;'>" << (i + 1) << "</td>";
         oss << "<td style='background:" << bg << ";border:1px solid " << border
-            << ";border-left:none;padding:6px 10px;color:#2C3E50;font-family:monospace;font-size:12px;'>"
-            << icon << " " << step << "</td>";
+            << ";border-left:none;padding:6px 10px;color:#2C3E50;font-family:monospace;font-size:12px;'>" << icon << " "
+            << step << "</td>";
         oss << "</tr>";
         if (i < s.propagationPath.size() - 1) {
-            oss << "<tr><td colspan='2' style='text-align:center;color:#6E6E6E;padding:1px 0;font-size:12px;'>↓</td></tr>";
+            oss << "<tr><td colspan='2' style='text-align:center;color:#6E6E6E;padding:1px "
+                   "0;font-size:12px;'>↓</td></tr>";
         }
     }
     oss << "</table>";
@@ -419,70 +424,63 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         std::vector<std::string> keyOps;
     };
     // 示例代码统一使用跨函数异常传播场景，6 个阶段展示同一场景的不同时刻
-    static const char* kCommonCode =
-        "fun validate(x) {\n"
-        "    if (x < 0) {\n"
-        "        throw \"negative value\";\n"
-        "    }\n"
-        "    return x * 2;\n"
-        "}\n"
-        "try {\n"
-        "    var result = validate(-5);\n"
-        "    print(result);\n"
-        "} catch (e) {\n"
-        "    print(\"caught: \" + e);\n"
-        "} finally {\n"
-        "    print(\"cleanup\");\n"
-        "}";
+    static const char* kCommonCode = "fun validate(x) {\n"
+                                     "    if (x < 0) {\n"
+                                     "        throw \"negative value\";\n"
+                                     "    }\n"
+                                     "    return x * 2;\n"
+                                     "}\n"
+                                     "try {\n"
+                                     "    var result = validate(-5);\n"
+                                     "    print(result);\n"
+                                     "} catch (e) {\n"
+                                     "    print(\"caught: \" + e);\n"
+                                     "} finally {\n"
+                                     "    print(\"cleanup\");\n"
+                                     "}";
 
     static const std::vector<PhaseMeta> kPhaseMeta = {
-        {"throw", "\"negative value\"",
+        {"throw",
+         "\"negative value\"",
          {{"main()", "try { validate(-5); }", "active"},
           {"validate(-5)", "throw \"negative value\" ← 异常创建", "throw-point"}},
-         {"创建异常对象（字符串 \"negative value\"）",
-          "立即中断 validate() 函数的当前控制流",
-          "异常对象保存到 VM 异常槽位",
-          "return 语句不会执行（已被 throw 抢占）"}},
-        {"search", "validate(-5)",
+         {"创建异常对象（字符串 \"negative value\"）", "立即中断 validate() 函数的当前控制流",
+          "异常对象保存到 VM 异常槽位", "return 语句不会执行（已被 throw 抢占）"}},
+        {"search",
+         "validate(-5)",
          {{"main()", "try { ... } ← 搜索 catch", "searching"},
           {"validate(-5)", "无 try/catch，帧待展开", "unwinding"},
           {"⚡ 异常对象", "沿调用栈向上搜索 ↑", "exception"}},
-         {"异常传播器沿调用栈向上搜索匹配的 catch 块",
-          "检查 validate() 帧：无 try/catch → 标记为待展开",
-          "检查 main() 帧：发现 try/catch → 准备跳转到 catch",
-          "MiniLang 中 catch 不区分类型，第一个 catch 总是匹配"}},
-        {"catch", "catch (e)",
+         {"异常传播器沿调用栈向上搜索匹配的 catch 块", "检查 validate() 帧：无 try/catch → 标记为待展开",
+          "检查 main() 帧：发现 try/catch → 准备跳转到 catch", "MiniLang 中 catch 不区分类型，第一个 catch 总是匹配"}},
+        {"catch",
+         "catch (e)",
          {{"main()", "catch (e) { ... } ← 捕获成功", "caught"},
           {"validate(-5)", "已弹出（栈展开完成）", "destroyed"},
           {"⚡ 异常对象 → e", "绑定到 catch 变量", "bound"}},
-         {"catch 块捕获异常，控制流跳转到 catch 块",
-          "catch 变量 e 绑定异常对象（字符串 \"negative value\"）",
-          "validate() 帧已完全展开，局部变量 x 已销毁",
-          "执行 catch 块：print(\"caught: \" + e)"}},
-        {"finally", "finally {",
+         {"catch 块捕获异常，控制流跳转到 catch 块", "catch 变量 e 绑定异常对象（字符串 \"negative value\"）",
+          "validate() 帧已完全展开，局部变量 x 已销毁", "执行 catch 块：print(\"caught: \" + e)"}},
+        {"finally",
+         "finally {",
          {{"main()", "finally { print(\"cleanup\"); }", "cleanup"},
           {"catch 块", "已执行完毕", "done"},
           {"⚡ 异常已处理", "finally 无论是否异常都执行", "resolved"}},
-         {"finally 块在 catch 之后执行（无论是否发生异常）",
-          "资源清理代码放在 finally 中确保执行",
-          "执行：print(\"cleanup\")",
-          "若 catch 中再次 throw，finally 执行后异常继续传播"}},
-        {"unwind", "validate(-5)",
+         {"finally 块在 catch 之后执行（无论是否发生异常）", "资源清理代码放在 finally 中确保执行",
+          "执行：print(\"cleanup\")", "若 catch 中再次 throw，finally 执行后异常继续传播"}},
+        {"unwind",
+         "validate(-5)",
          {{"main()", "等待异常到达", "active"},
           {"validate(-5) ✗", "帧弹出 → 局部变量销毁", "destroyed"},
           {"⚡ 异常", "逐帧向上传播", "exception"}},
-         {"栈展开从 throw 点开始，逐帧向上",
-          "validate() 帧被弹出：局部变量 x 被销毁",
-          "帧弹出顺序：throw 帧 → 调用帧 → ... → catch 帧",
-          "栈展开期间不可中断（除非再次抛出异常）"}},
-        {"recovery", "print(result);",
+         {"栈展开从 throw 点开始，逐帧向上", "validate() 帧被弹出：局部变量 x 被销毁",
+          "帧弹出顺序：throw 帧 → 调用帧 → ... → catch 帧", "栈展开期间不可中断（除非再次抛出异常）"}},
+        {"recovery",
+         "print(result);",
          {{"main()", "try/catch 之后的代码 ← 正常继续", "normal"},
           {"catch 块", "已执行完毕", "done"},
           {"✅ 异常已恢复", "程序正常控制流", "resolved"}},
-         {"catch 块执行完毕，程序恢复正常控制流",
-          "try/catch/finally 之后的代码继续执行",
-          "异常标志已清除，VM 恢复正常运行状态",
-          "若异常未被捕获，传播到顶层导致程序终止"}},
+         {"catch 块执行完毕，程序恢复正常控制流", "try/catch/finally 之后的代码继续执行",
+          "异常标志已清除，VM 恢复正常运行状态", "若异常未被捕获，传播到顶层导致程序终止"}},
     };
 
     // ---- 生成流程条 HTML ----
@@ -512,8 +510,8 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         const char* fontSize = isCurrent ? "13px" : "11px";
         oss << "<td style='background:" << kPhaseColors[i] << ";color:white;padding:" << padding
             << ";text-align:center;border:" << border << ";border-radius:4px;opacity:" << opacity
-            << ";font-weight:" << fontWeight << ";font-size:" << fontSize << ";'>"
-            << kPhaseIcons[i] << "<br>" << phases[i].phase << "</td>";
+            << ";font-weight:" << fontWeight << ";font-size:" << fontSize << ";'>" << kPhaseIcons[i] << "<br>"
+            << phases[i].phase << "</td>";
         if (i < 5) {
             oss << "<td style='color:#6E6E6E;padding:0 2px;text-align:center;font-size:14px;'>→</td>";
         }
@@ -521,11 +519,9 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
     oss << "</tr></table>";
 
     // 阶段标题
-    oss << "<h2 style='color:" << kPhaseColors[index] << ";'>" << kPhaseIcons[index] << " "
-        << p.phase << " 阶段</h2>";
+    oss << "<h2 style='color:" << kPhaseColors[index] << ";'>" << kPhaseIcons[index] << " " << p.phase << " 阶段</h2>";
     oss << "<p><b>分类:</b> <span style='background:" << kPhaseColors[index]
-        << ";color:white;padding:2px 8px;border-radius:3px;font-size:11px;'>" << p.category
-        << "</span></p>";
+        << ";color:white;padding:2px 8px;border-radius:3px;font-size:11px;'>" << p.category << "</span></p>";
 
     // ---- 调用栈状态图 ----
     oss << "<h3 style='border-bottom:2px solid " << kPhaseColors[index] << ";padding-bottom:4px;'>"
@@ -538,21 +534,31 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
         const char* border = "#BDC3C7";
         const char* textColor = "#2C3E50";
         if (std::string(it->state) == "throw-point") {
-            bg = "#FADBD8"; border = "#E74C3C";
+            bg = "#FADBD8";
+            border = "#E74C3C";
         } else if (std::string(it->state) == "unwinding") {
-            bg = "#FDEBD0"; border = "#F39C12";
+            bg = "#FDEBD0";
+            border = "#F39C12";
         } else if (std::string(it->state) == "caught") {
-            bg = "#D5F5E3"; border = "#27AE60";
+            bg = "#D5F5E3";
+            border = "#27AE60";
         } else if (std::string(it->state) == "cleanup") {
-            bg = "#D6EAF8"; border = "#3498DB";
+            bg = "#D6EAF8";
+            border = "#3498DB";
         } else if (std::string(it->state) == "destroyed") {
-            bg = "#F2F3F4"; border = "#BDC3C7"; textColor = "#95A5A6";
+            bg = "#F2F3F4";
+            border = "#BDC3C7";
+            textColor = "#95A5A6";
         } else if (std::string(it->state) == "exception") {
-            bg = "#FDF2E9"; border = "#E67E22"; textColor = "#D35400";
+            bg = "#FDF2E9";
+            border = "#E67E22";
+            textColor = "#D35400";
         } else if (std::string(it->state) == "searching") {
-            bg = "#FEF9E7"; border = "#F1C40F";
+            bg = "#FEF9E7";
+            border = "#F1C40F";
         } else if (std::string(it->state) == "normal" || std::string(it->state) == "resolved") {
-            bg = "#E8F8F5"; border = "#1ABC9C";
+            bg = "#E8F8F5";
+            border = "#1ABC9C";
         }
         oss << "<tr>";
         // 栈帧标签
@@ -561,8 +567,8 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
             << it->label << "</td>";
         // 栈帧标注
         oss << "<td style='background:" << bg << ";border:1px solid " << border
-            << ";border-left:none;padding:6px 8px;color:" << textColor << ";font-size:12px;'>"
-            << it->annotation << "</td>";
+            << ";border-left:none;padding:6px 8px;color:" << textColor << ";font-size:12px;'>" << it->annotation
+            << "</td>";
         oss << "</tr>";
     }
     oss << "</table>";
@@ -604,8 +610,8 @@ void ExceptionFlowPanel::populatePhaseDetail(int index) {
                 escapeHtml(matched);
                 escapeHtml(after);
                 oss << before << "<span style='background:" << kPhaseColors[index]
-                    << ";color:white;padding:1px 2px;border-radius:2px;font-weight:bold;'>" << matched
-                    << "</span>" << after;
+                    << ";color:white;padding:1px 2px;border-radius:2px;font-weight:bold;'>" << matched << "</span>"
+                    << after;
             } else {
                 auto escapeHtml = [](std::string& s) {
                     for (size_t i = 0; (i = s.find('<', i)) != std::string::npos;)

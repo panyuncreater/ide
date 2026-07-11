@@ -33,7 +33,8 @@ namespace {
 static QString irTextToClickableHtml(const QString& plainText) {
     QStringList lines = plainText.split("\n");
     QString html;
-    html += "<pre style=\"font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans Mono','Courier New',monospace;\">";
+    html += "<pre style=\"font-family:'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code "
+            "Pro','Menlo','DejaVu Sans Mono','Courier New',monospace;\">";
     static const QRegularExpression lineCommentRe(";\\s*line\\s+(\\d+)\\s*$");
     for (int i = 0; i < lines.size(); ++i) {
         QString line = lines[i];
@@ -562,7 +563,9 @@ void IRTransformPanel::populateLoweringDetail(int index) {
     os << "<p>" << esc(e.description) << "</p>";
     os << "<h4>Lowering 后的 IR：</h4>";
     os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()
-       << "; padding:8px; font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>" << esc(e.irBefore) << "</pre>";
+       << "; padding:8px; font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source "
+          "Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
+       << esc(e.irBefore) << "</pre>";
     loweringDetail_->setHtml(QString::fromUtf8(os.str().c_str()));
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }

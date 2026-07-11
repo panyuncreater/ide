@@ -84,9 +84,8 @@ ParsedCommand parseCommand(const std::string& input) {
     }
     if (i < input.size()) {
         result.arg = input.substr(i);
-        while (!result.arg.empty() &&
-               (result.arg.back() == ' ' || result.arg.back() == '\t' ||
-                result.arg.back() == '\r' || result.arg.back() == '\n')) {
+        while (!result.arg.empty() && (result.arg.back() == ' ' || result.arg.back() == '\t' ||
+                                       result.arg.back() == '\r' || result.arg.back() == '\n')) {
             result.arg.pop_back();
         }
     }
@@ -162,85 +161,159 @@ ScopedAnalysis analyzeArgWithCompile(const std::string& source, bool withIR) {
 
 const char* tokenTypeName(TokenType type) {
     switch (type) {
-    case TokenType::TK_VAR: return "VAR";
-    case TokenType::TK_FUN: return "FUN";
-    case TokenType::TK_IF: return "IF";
-    case TokenType::TK_ELSE: return "ELSE";
-    case TokenType::TK_WHILE: return "WHILE";
-    case TokenType::TK_FOR: return "FOR";
-    case TokenType::TK_RETURN: return "RETURN";
-    case TokenType::TK_TRUE: return "TRUE";
-    case TokenType::TK_FALSE: return "FALSE";
-    case TokenType::TK_AND: return "AND";
-    case TokenType::TK_OR: return "OR";
-    case TokenType::TK_NOT: return "NOT";
-    case TokenType::TK_PRINT: return "PRINT";
-    case TokenType::TK_BREAK: return "BREAK";
-    case TokenType::TK_CONTINUE: return "CONTINUE";
-    case TokenType::TK_TRY: return "TRY";
-    case TokenType::TK_CATCH: return "CATCH";
-    case TokenType::TK_THROW: return "THROW";
-    case TokenType::TK_FINALLY: return "FINALLY";
-    case TokenType::TK_IMPORT: return "IMPORT";
-    case TokenType::TK_FROM: return "FROM";
-    case TokenType::TK_EXPORT: return "EXPORT";
-    case TokenType::TK_INT: return "INT";
-    case TokenType::TK_FLOAT: return "FLOAT";
-    case TokenType::TK_BOOL: return "BOOL";
-    case TokenType::TK_STRING_TYPE: return "STRING_TYPE";
-    case TokenType::TK_CLASS: return "CLASS";
-    case TokenType::TK_EXTENDS: return "EXTENDS";
-    case TokenType::TK_SUPER: return "SUPER";
-    case TokenType::TK_NULL: return "NULL";
-    case TokenType::TK_IDENTIFIER: return "IDENTIFIER";
-    case TokenType::TK_INT_LIT: return "INT_LIT";
-    case TokenType::TK_FLOAT_LIT: return "FLOAT_LIT";
-    case TokenType::TK_STRING_LIT: return "STRING_LIT";
-    case TokenType::TK_PLUS: return "PLUS";
-    case TokenType::TK_MINUS: return "MINUS";
-    case TokenType::TK_STAR: return "STAR";
-    case TokenType::TK_SLASH: return "SLASH";
-    case TokenType::TK_PERCENT: return "PERCENT";
-    case TokenType::TK_EQ: return "EQ";
-    case TokenType::TK_NEQ: return "NEQ";
-    case TokenType::TK_LT: return "LT";
-    case TokenType::TK_GT: return "GT";
-    case TokenType::TK_LEQ: return "LEQ";
-    case TokenType::TK_GEQ: return "GEQ";
-    case TokenType::TK_ASSIGN: return "ASSIGN";
-    case TokenType::TK_LPAREN: return "LPAREN";
-    case TokenType::TK_RPAREN: return "RPAREN";
-    case TokenType::TK_LBRACE: return "LBRACE";
-    case TokenType::TK_RBRACE: return "RBRACE";
-    case TokenType::TK_SEMICOLON: return "SEMICOLON";
-    case TokenType::TK_COMMA: return "COMMA";
-    case TokenType::TK_LBRACKET: return "LBRACKET";
-    case TokenType::TK_RBRACKET: return "RBRACKET";
-    case TokenType::TK_COLON: return "COLON";
-    case TokenType::TK_DOT: return "DOT";
-    case TokenType::TK_EOF: return "EOF";
-    case TokenType::TK_ERROR: return "ERROR";
-    case TokenType::TK_LINE_COMMENT: return "LINE_COMMENT";
-    case TokenType::TK_BLOCK_COMMENT: return "BLOCK_COMMENT";
-    case TokenType::TK_INTERP_START: return "INTERP_START";
-    case TokenType::TK_INTERP_END: return "INTERP_END";
-    case TokenType::TK_STRING_PART: return "STRING_PART";
-    default: return "UNKNOWN";
+    case TokenType::TK_VAR:
+        return "VAR";
+    case TokenType::TK_FUN:
+        return "FUN";
+    case TokenType::TK_IF:
+        return "IF";
+    case TokenType::TK_ELSE:
+        return "ELSE";
+    case TokenType::TK_WHILE:
+        return "WHILE";
+    case TokenType::TK_FOR:
+        return "FOR";
+    case TokenType::TK_RETURN:
+        return "RETURN";
+    case TokenType::TK_TRUE:
+        return "TRUE";
+    case TokenType::TK_FALSE:
+        return "FALSE";
+    case TokenType::TK_AND:
+        return "AND";
+    case TokenType::TK_OR:
+        return "OR";
+    case TokenType::TK_NOT:
+        return "NOT";
+    case TokenType::TK_PRINT:
+        return "PRINT";
+    case TokenType::TK_BREAK:
+        return "BREAK";
+    case TokenType::TK_CONTINUE:
+        return "CONTINUE";
+    case TokenType::TK_TRY:
+        return "TRY";
+    case TokenType::TK_CATCH:
+        return "CATCH";
+    case TokenType::TK_THROW:
+        return "THROW";
+    case TokenType::TK_FINALLY:
+        return "FINALLY";
+    case TokenType::TK_IMPORT:
+        return "IMPORT";
+    case TokenType::TK_FROM:
+        return "FROM";
+    case TokenType::TK_EXPORT:
+        return "EXPORT";
+    case TokenType::TK_INT:
+        return "INT";
+    case TokenType::TK_FLOAT:
+        return "FLOAT";
+    case TokenType::TK_BOOL:
+        return "BOOL";
+    case TokenType::TK_STRING_TYPE:
+        return "STRING_TYPE";
+    case TokenType::TK_CLASS:
+        return "CLASS";
+    case TokenType::TK_EXTENDS:
+        return "EXTENDS";
+    case TokenType::TK_SUPER:
+        return "SUPER";
+    case TokenType::TK_NULL:
+        return "NULL";
+    case TokenType::TK_IDENTIFIER:
+        return "IDENTIFIER";
+    case TokenType::TK_INT_LIT:
+        return "INT_LIT";
+    case TokenType::TK_FLOAT_LIT:
+        return "FLOAT_LIT";
+    case TokenType::TK_STRING_LIT:
+        return "STRING_LIT";
+    case TokenType::TK_PLUS:
+        return "PLUS";
+    case TokenType::TK_MINUS:
+        return "MINUS";
+    case TokenType::TK_STAR:
+        return "STAR";
+    case TokenType::TK_SLASH:
+        return "SLASH";
+    case TokenType::TK_PERCENT:
+        return "PERCENT";
+    case TokenType::TK_EQ:
+        return "EQ";
+    case TokenType::TK_NEQ:
+        return "NEQ";
+    case TokenType::TK_LT:
+        return "LT";
+    case TokenType::TK_GT:
+        return "GT";
+    case TokenType::TK_LEQ:
+        return "LEQ";
+    case TokenType::TK_GEQ:
+        return "GEQ";
+    case TokenType::TK_ASSIGN:
+        return "ASSIGN";
+    case TokenType::TK_LPAREN:
+        return "LPAREN";
+    case TokenType::TK_RPAREN:
+        return "RPAREN";
+    case TokenType::TK_LBRACE:
+        return "LBRACE";
+    case TokenType::TK_RBRACE:
+        return "RBRACE";
+    case TokenType::TK_SEMICOLON:
+        return "SEMICOLON";
+    case TokenType::TK_COMMA:
+        return "COMMA";
+    case TokenType::TK_LBRACKET:
+        return "LBRACKET";
+    case TokenType::TK_RBRACKET:
+        return "RBRACKET";
+    case TokenType::TK_COLON:
+        return "COLON";
+    case TokenType::TK_DOT:
+        return "DOT";
+    case TokenType::TK_EOF:
+        return "EOF";
+    case TokenType::TK_ERROR:
+        return "ERROR";
+    case TokenType::TK_LINE_COMMENT:
+        return "LINE_COMMENT";
+    case TokenType::TK_BLOCK_COMMENT:
+        return "BLOCK_COMMENT";
+    case TokenType::TK_INTERP_START:
+        return "INTERP_START";
+    case TokenType::TK_INTERP_END:
+        return "INTERP_END";
+    case TokenType::TK_STRING_PART:
+        return "STRING_PART";
+    default:
+        return "UNKNOWN";
     }
 }
 
 const char* valueTypeName(ValueType type) {
     switch (type) {
-    case ValueType::VAL_NULL: return "null";
-    case ValueType::VAL_INT: return "int";
-    case ValueType::VAL_FLOAT: return "float";
-    case ValueType::VAL_BOOL: return "bool";
-    case ValueType::VAL_STRING: return "string";
-    case ValueType::VAL_ARRAY: return "array";
-    case ValueType::VAL_DICT: return "dict";
-    case ValueType::VAL_INSTANCE: return "instance";
-    case ValueType::VAL_CLOSURE: return "closure";
-    default: return "unknown";
+    case ValueType::VAL_NULL:
+        return "null";
+    case ValueType::VAL_INT:
+        return "int";
+    case ValueType::VAL_FLOAT:
+        return "float";
+    case ValueType::VAL_BOOL:
+        return "bool";
+    case ValueType::VAL_STRING:
+        return "string";
+    case ValueType::VAL_ARRAY:
+        return "array";
+    case ValueType::VAL_DICT:
+        return "dict";
+    case ValueType::VAL_INSTANCE:
+        return "instance";
+    case ValueType::VAL_CLOSURE:
+        return "closure";
+    default:
+        return "unknown";
     }
 }
 
@@ -521,8 +594,8 @@ std::string handleMemory(IdeController* controller) {
     }
     std::ostringstream os;
     os << mlTr("=== 堆对象统计 ===").toStdString() << "\n";
-    os << "VM Globals: " << vmGlobals.size() << "  Stack: " << stack.size()
-       << "  REPL Globals: " << replGlobals.size() << "\n";
+    os << "VM Globals: " << vmGlobals.size() << "  Stack: " << stack.size() << "  REPL Globals: " << replGlobals.size()
+       << "\n";
     os << std::string(40, '-') << "\n";
     os << "Type         Count\n";
     for (const auto& [name, cnt] : counts) {

@@ -488,7 +488,7 @@ Compiler::CompileContext Compiler::saveCompileContext() {
     ctx.currentUpvalueNames = std::move(currentUpvalueNames_);
     ctx.loopStack = std::move(loopStack_);
     ctx.tryDepth = tryDepth_;
-    ctx.tryFinallyStack = std::move(tryFinallyStack_); // AUDIT-P1.1 fix
+    ctx.tryFinallyStack = std::move(tryFinallyStack_);          // AUDIT-P1.1 fix
     ctx.currentFunctionReturnType = currentFunctionReturnType_; // BUG-TYPE-1 fix
     return ctx;
 }
@@ -510,7 +510,7 @@ void Compiler::restoreCompileContext(CompileContext&& ctx) {
     currentUpvalueNames_ = std::move(ctx.currentUpvalueNames);
     loopStack_ = std::move(ctx.loopStack);
     tryDepth_ = ctx.tryDepth;
-    tryFinallyStack_ = std::move(ctx.tryFinallyStack); // AUDIT-P1.1 fix
+    tryFinallyStack_ = std::move(ctx.tryFinallyStack);                     // AUDIT-P1.1 fix
     currentFunctionReturnType_ = std::move(ctx.currentFunctionReturnType); // BUG-TYPE-1 fix
 }
 
@@ -903,7 +903,7 @@ int Compiler::resolveUpvalue(const std::string& name, int line) {
         UpvalueDesc desc;
         desc.isLocal = false;
         desc.index = outerUvIt->second; // 外层 upvalue 索引
-        desc.name = name; // 条件断点修复(R75): 记录upvalue变量名
+        desc.name = name;               // 条件断点修复(R75): 记录upvalue变量名
         int idx = static_cast<int>(currentUpvalues_.size());
         currentUpvalues_.push_back(desc);
         currentUpvalueNames_[name] = idx;

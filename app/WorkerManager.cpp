@@ -120,12 +120,11 @@ void WorkerManager::setupMainCallbacks() {
     // 悬垂 this 触发 emit outputReady → UAF。QPointer 在 QObject 析构后自动置 null，
     // lambda 检测后安全 no-op。
     QPointer<WorkerManager> self = this;
-    interpreter_->setOutputCallback(
-        [self](const std::string& text) {
-            if (!self)
-                return;
-            emit self->outputReady(QString::fromStdString(text));
-        });
+    interpreter_->setOutputCallback([self](const std::string& text) {
+        if (!self)
+            return;
+        emit self->outputReady(QString::fromStdString(text));
+    });
     // D20 fix: 恢复输入回调统一通过 buildInputCallback 构建（带超时保护）
     interpreter_->setInputCallback(buildInputCallback());
 }
@@ -274,11 +273,17 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
                     // R54-3 fix: cleanupWorker 抛异常时 setupMainCallbacks() 可能未执行，
                     // interpreter 的 output/input 回调保持为 worker 的 no-op，导致
                     // REPL 输出静默丢失、input() 返回空串。此处强制恢复主线程回调。
-                    try { setupMainCallbacks(); } catch (...) {}
+                    try {
+                        setupMainCallbacks();
+                    } catch (...) {
+                    }
                 } catch (...) {
                     isRunning_ = false;
                     isDebugRun_ = false;
-                    try { setupMainCallbacks(); } catch (...) {}
+                    try {
+                        setupMainCallbacks();
+                    } catch (...) {
+                    }
                 }
                 emit workerFinished(wasDebug);
             },

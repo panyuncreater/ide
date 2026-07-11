@@ -315,14 +315,14 @@ void TeachingPanelHeader::showHelpDialog() {
         browser->setObjectName("helpBrowser");
         browser->setOpenExternalLinks(false);
         browser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        browser->setHtml(
-            QStringLiteral(
-                "<html><body style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode MS\",\"Arial\",sans-serif; font-size: 13px; line-height: 1.7;'>"
-                "<p style='margin: 0;'>%1</p>"
-                "%2"
-                "</body></html>")
-                .arg(mlTr("暂无此面板的帮助文档。").toHtmlEscaped())
-                .arg(kTipLine));
+        browser->setHtml(QStringLiteral("<html><body style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto "
+                                        "Sans CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial "
+                                        "Unicode MS\",\"Arial\",sans-serif; font-size: 13px; line-height: 1.7;'>"
+                                        "<p style='margin: 0;'>%1</p>"
+                                        "%2"
+                                        "</body></html>")
+                             .arg(mlTr("暂无此面板的帮助文档。").toHtmlEscaped())
+                             .arg(kTipLine));
         layout->addWidget(browser, 1);
 
         auto* closeBtn = new PrimaryPushButton(mlTr("知道了"), dlg);
@@ -364,21 +364,21 @@ void TeachingPanelHeader::showHelpDialog() {
     browser->setObjectName("helpBrowser");
     browser->setOpenExternalLinks(false);
     browser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    browser->setHtml(
-        QStringLiteral(
-            "<html><body style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode MS\",\"Arial\",sans-serif; font-size: 13px; line-height: 1.7;'>"
-            "<h3 style='color: #268BD2; margin-bottom: 4px;'>📋 面板用途</h3>"
-            "<p style='margin: 0 0 12px 0;'>%1</p>"
-            "<h3 style='color: #268BD2; margin-bottom: 4px;'>🔢 推荐使用顺序</h3>"
-            "<p style='margin: 0 0 12px 0; white-space: pre-wrap;'>%2</p>"
-            "<h3 style='color: #268BD2; margin-bottom: 4px;'>💡 关联概念</h3>"
-            "<p style='margin: 0; color: #5A5A5A;'>%3</p>"
-            "%4"
-            "</body></html>")
-            .arg(doc.purpose.toHtmlEscaped())
-            .arg(doc.recommendedOrder.toHtmlEscaped())
-            .arg(doc.relatedConcepts.toHtmlEscaped())
-            .arg(kTipLine));
+    browser->setHtml(QStringLiteral("<html><body style='font-family: \"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans "
+                                    "CJK SC\",\"Source Han Sans SC\",\"Segoe UI\",\"SF Pro Text\",\"Arial Unicode "
+                                    "MS\",\"Arial\",sans-serif; font-size: 13px; line-height: 1.7;'>"
+                                    "<h3 style='color: #268BD2; margin-bottom: 4px;'>📋 面板用途</h3>"
+                                    "<p style='margin: 0 0 12px 0;'>%1</p>"
+                                    "<h3 style='color: #268BD2; margin-bottom: 4px;'>🔢 推荐使用顺序</h3>"
+                                    "<p style='margin: 0 0 12px 0; white-space: pre-wrap;'>%2</p>"
+                                    "<h3 style='color: #268BD2; margin-bottom: 4px;'>💡 关联概念</h3>"
+                                    "<p style='margin: 0; color: #5A5A5A;'>%3</p>"
+                                    "%4"
+                                    "</body></html>")
+                         .arg(doc.purpose.toHtmlEscaped())
+                         .arg(doc.recommendedOrder.toHtmlEscaped())
+                         .arg(doc.relatedConcepts.toHtmlEscaped())
+                         .arg(kTipLine));
     layout->addWidget(browser, 1);
 
     auto* closeBtn = new PrimaryPushButton(mlTr("知道了"), dlg);

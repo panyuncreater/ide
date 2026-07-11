@@ -123,7 +123,9 @@ QString CodeJourneyInfoPanel::buildJourneyHtml() const {
     const QString stage3Hex = TeachingTheme::learningStageColor(3).name(); // 紫
     const QString stage4Hex = TeachingTheme::learningStageColor(4).name(); // 红
     return QString(
-               "<html><body style='font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 13px; line-height: 1.6;'>"
+               "<html><body style='font-family: \"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains "
+               "Mono\",\"Source Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace; font-size: 13px; "
+               "line-height: 1.6;'>"
                "<h2 style='color: %3;'>🚀 代码的生命旅程</h2>"
                "<p style='color: #666;'>从你写下代码到看到结果，中间发生了什么？</p>"
                "<hr>"
