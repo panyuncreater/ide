@@ -4157,6 +4157,13 @@ void Ide::applyFluentStyle() {
         // 浅灰底+深色字，中性主题跨机器渲染一致。
         pal.setColor(QPalette::Highlight, bgPanel);
         pal.setColor(QPalette::HighlightedText, fg);
+        // R76 fix: 补全文本角色，防止系统深色模式下 Text/WindowText 回退为浅色
+        // 导致文字与白色背景不可见。
+        pal.setColor(QPalette::WindowText, fg);
+        pal.setColor(QPalette::Text, fg);
+        pal.setColor(QPalette::ButtonText, fg);
+        pal.setColor(QPalette::Button, bg);
+        pal.setColor(QPalette::PlaceholderText, TeachingTheme::ideFgSecondary());
         setPalette(pal);
         setAutoFillBackground(true);
         // R68 fix: 全局设置 QToolTip 样式（qApp 级别），确保所有 widget 的 tooltip

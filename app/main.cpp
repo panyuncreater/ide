@@ -5,6 +5,7 @@
 #include <QIcon>
 #include <QMessageBox>
 #include <QStyleFactory>
+#include <QStyleHints>
 #include <QTextStream>
 
 #include "FluentGlobal.h"
@@ -41,7 +42,35 @@ int main(int argc, char* argv[]) {
     loadMiniLangTranslations();
 
     // 使用 Fusion 作为基础样式（QFluentKit QSS 覆盖其调色板驱动的背景）
-    a.setStyle(QStyleFactory::create("Fusion"));
+    // R76 fix: Fusion 插件可能未部署，检查返回值防止空指针回退到 windowsvista
+    if (auto* fusion = QStyleFactory::create("Fusion")) {
+        a.setStyle(fusion);
+    } else {
+        qWarning("Fusion style plugin not found, falling back to default style");
+    }
+
+    // R76 fix: 强制浅色方案，防止目标机器系统深色模式污染调色板
+    // 根因：Qt6.5+ 在系统深色模式下会将默认调色板 Text/WindowText 设为浅色，
+    // 配合本项目的白色背景导致文字不可见。此处锁定浅色方案 + 显式设置
+    // 全局调色板文本角色，确保跨机器渲染一致。
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    a.styleHints()->setColorScheme(Qt::ColorScheme::Light);
+#endif
+    {
+        QPalette lightPal = a.palette();
+        lightPal.setColor(QPalette::Window, QColor(0xFF, 0xFF, 0xFF));
+        lightPal.setColor(QPalette::WindowText, QColor(0x1E, 0x1E, 0x1E));
+        lightPal.setColor(QPalette::Base, QColor(0xFF, 0xFF, 0xFF));
+        lightPal.setColor(QPalette::AlternateBase, QColor(0xF5, 0xF5, 0xF5));
+        lightPal.setColor(QPalette::Text, QColor(0x1E, 0x1E, 0x1E));
+        lightPal.setColor(QPalette::Button, QColor(0xFF, 0xFF, 0xFF));
+        lightPal.setColor(QPalette::ButtonText, QColor(0x1E, 0x1E, 0x1E));
+        lightPal.setColor(QPalette::Highlight, QColor(0xF5, 0xF5, 0xF5));
+        lightPal.setColor(QPalette::HighlightedText, QColor(0x1E, 0x1E, 0x1E));
+        lightPal.setColor(QPalette::ToolTipBase, QColor(0xFF, 0xFF, 0xFF));
+        lightPal.setColor(QPalette::ToolTipText, QColor(0x1E, 0x1E, 0x1E));
+        a.setPalette(lightPal);
+    }
 
     // 全局字体（R75: 跨机器字体一致性）
     // 原 setPixelSize(14) + 短回退链在缺中文字体的机器上中文 UI 显示不清。

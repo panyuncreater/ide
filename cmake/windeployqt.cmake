@@ -21,6 +21,9 @@ if(NOT COMMAND minilang_deploy_qt_runtime)
                 set(MINILANG_WINDEPLOYQT_EXE "${MINILANG_WINDEPLOYQT_EXE}"
                     CACHE FILEPATH "Path to windeployqt")
 
+                # R76 fix: Fusion 样式在 Qt6 中内置在 Qt6Widgets.dll 中，
+                # 不需要额外部署 qfusion.dll 插件。跨机器颜色问题的根因是
+                # 调色板文本角色未设置，已在 main.cpp 和 ide.cpp 中修复。
                 add_custom_command(TARGET ${target_name} POST_BUILD
                     COMMAND "${MINILANG_WINDEPLOYQT_EXE}"
                             --no-translations
