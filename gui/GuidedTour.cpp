@@ -176,7 +176,9 @@ void GuidedTour::showStep(int index) {
     // R51-3 fix: singleShot lambda 不再捕获 targetRect 值——show() 后布局可能
     // 导致 target 控件移动/调整大小，捕获旧值会定位到错误位置。改为在 lambda
     // 内重新从 step.target 计算 targetRect。
-    QWidget* targetWidget = step.target;
+    // ROUND-89 P1 fix: 改用 QPointer 捕获目标 widget，防止 closeEvent 期间
+    // 目标 widget 被析构后 singleShot lambda 访问悬垂指针 → UAF。
+    QPointer<QWidget> targetWidget = step.target;
     QRect targetRect;
     if (targetWidget) {
         // 目标在 host_ 坐标系中的矩形

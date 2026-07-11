@@ -630,6 +630,29 @@ void Ide::closeEvent(QCloseEvent* event) {
     if (pendingHideCenterTimer_) pendingHideCenterTimer_->stop();
     if (pendingHideEditorTimer_) pendingHideEditorTimer_->stop();
 
+    // ROUND-89 P0 fix: 捕获所有 Ide 直接子 QTimer/QPropertyAnimation。
+    // stopChildAnimations 只扫描 centerStack_/bottomStack_/rightStack_/dockManager_
+    // 的子对象，但 QTimer::singleShot(0, this, ...) 创建的临时 QTimer 是 Ide 的
+    // 直接子对象（如 showTeachingPanel 的自动引导延迟启动、restoreLayout 的
+    // restoreState 延迟、dock resize 延迟）。这些定时器注册在事件调度器中，
+    // removePostedEvents(this) 无法取消。maybeSave/processEvents 的事件循环
+    // 会派发它们，访问正在清理的成员 → UAF。此处对 this 递归 findChildren
+    // 停止所有活跃定时器和动画，作为 closeEvent 入口的安全网。
+    {
+        const auto allTimers = findChildren<QTimer*>();
+        for (auto* t : allTimers) {
+            if (t && t->isActive())
+                t->stop();
+        }
+        const auto allAnims = findChildren<QPropertyAnimation*>();
+        for (auto* a : allAnims) {
+            if (a && a->state() == QAbstractAnimation::Running) {
+                a->stop();
+                a->deleteLater();
+            }
+        }
+    }
+
     // ROUND-67 P1 fix: 清理所有活跃的面板特定 GuidedTour。
     // 5 个教学面板首次访问自动触发 GuidedTour，tour 的 showStep 中排队
     // QTimer::singleShot(0, tour, ...) 持有裸 targetWidget 指针。
@@ -6220,6 +6243,16 @@ QWidget* Ide::wrapTeachingPanel(const QString& panelId, const QString& title, QW
 
 /// 教学面板引导游请求：启动对应引导。
 void Ide::onPanelGuidedTourRequested(const QString& panelId) {
+    // ROUND-89 P0 fix: 关闭流程中禁止创建新 GuidedTour。showTeachingPanel 在
+    // 首次访问 5 个自动引导面板时通过 QTimer::singleShot(0, this, ...) 延迟启动
+    // 引导。该 singleShot 创建的临时 QTimer 是 Ide 的直接子对象，closeEvent 的
+    // stopChildAnimations 只扫描 centerStack_/bottomStack_/rightStack_/dockManager_
+    // 的子对象，不覆盖 Ide 直接子 QTimer；removePostedEvents(this) 不取消定时器
+    // 事件。当 maybeSave 模态对话框或 processEvents 的事件循环派发该定时器时，
+    // 会在关闭过程中创建"孤儿" GuidedTour，其 showStep 修改 widget 样式表、
+    // 创建 bubble_ 子 widget、访问正在清理的目标 widget → UAF。
+    if (closing_)
+        return;
     // 面板可能尚未构造（懒加载），先确保创建
     ensureTeachingPanelCreated(panelId);
 

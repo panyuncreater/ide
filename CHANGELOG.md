@@ -2,6 +2,41 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-11 · 第八十九轮：Bug 狩猎面板关闭崩溃根因修复（P0 × 1 + P1 × 1）
+
+### 概述
+
+用户反馈在使用 Bug 狩猎模式时关闭程序抛出异常（读取访问权限冲突）。经深入排查发现根因是 `showTeachingPanel` 中自动触发 GuidedTour 的 `QTimer::singleShot(0, this, ...)` 在 closeEvent 中未被取消，导致关闭过程中创建"孤儿" GuidedTour 访问正在析构的 widget → UAF。此问题影响全部 5 个带自动引导的面板（bytecode-trace / call-stack / variable-inspector / breakpoint-condition / bug-hunt），BugHuntPanel 因其复杂 widget 树最易复现。
+
+### 问题 1：closeEvent 未停止 Ide 直接子 QTimer（P0 × 1）
+
+**位置**：`app/ide.cpp` closeEvent + `showTeachingPanel` line 1655
+
+**根因**：`showTeachingPanel` 在首次访问 5 个自动引导面板时通过 `QTimer::singleShot(0, this, lambda)` 延迟启动引导。该 singleShot 创建的临时 QTimer 是 Ide 的直接子对象。closeEvent 的 `stopChildAnimations` 只扫描 `centerStack_`/`bottomStack_`/`rightStack_`/`dockManager_` 的子对象，**不覆盖 Ide 直接子 QTimer**；`QCoreApplication::removePostedEvents(this)` 只清除 posted events 队列，**不取消定时器事件**。当 `maybeSave()` 模态对话框或 `processEvents` 的事件循环派发该定时器时，`onPanelGuidedTourRequested` 被调用（无 `closing_` 守卫），在关闭过程中创建 GuidedTour，其 `showStep` 修改 widget 样式表、创建 `bubble_` 子 widget、访问正在清理的目标 widget → UAF。
+
+**崩溃路径**：
+1. 用户打开 Bug 狩猎面板 → `showTeachingPanel("bug-hunt")` 投递 `singleShot(0, this, ...)`
+2. 用户立即关闭窗口 → closeEvent 开始，`closing_ = true`
+3. `stopChildAnimations` 不扫描 Ide 直接子 QTimer → 定时器存活
+4. `activePanelTours_` 清理（此时集合为空，tour 尚未创建）
+5. `removePostedEvents(this)` → 不取消定时器事件
+6. `maybeSave()` 模态对话框事件循环 → **定时器触发** → `onPanelGuidedTourRequested` 创建孤儿 tour
+7. tour 的 `showStep` 访问正在清理的 BugHuntPanel 子 widget → UAF
+
+**修复**（三层防御）：
+1. `onPanelGuidedTourRequested` 入口添加 `if (closing_) return;` 守卫（P0 根因修复）
+2. closeEvent 中新增 `findChildren<QTimer*>()` + `findChildren<QPropertyAnimation*>()` 对 `this` 递归停止所有活跃定时器/动画（P0 纵深防御，覆盖 Ide 全部直接子 singleShot 定时器，包括 restoreState/dock resize 延迟调用）
+3. `GuidedTour::showStep` 中将裸 `QWidget*` 改为 `QPointer<QWidget>` 捕获（P1 纵深防御，防止目标 widget 析构后 singleShot lambda 访问悬垂指针）
+
+### 测试
+
+全量 1773/1773 测试通过，零回归。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过。
+
+### 涉及文件
+
+- `app/ide.cpp`：closeEvent 新增 Ide 直接子 QTimer/QPropertyAnimation 捕获逻辑；`onPanelGuidedTourRequested` 添加 `closing_` 守卫
+- `gui/GuidedTour.cpp`：`showStep` 中 `QWidget* targetWidget` → `QPointer<QWidget> targetWidget`
+
 ## 2026-07-10 · 第八十八轮：交付前 UI 跨机器一致性彻底修复（UI × 53，共 3 类）
 
 ### 概述
