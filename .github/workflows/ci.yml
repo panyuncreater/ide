@@ -335,7 +335,22 @@ jobs:
           key: ${{ runner.os }}-Debug
 
       - name: 安装 OpenCppCoverage
-        run: choco install opencppcoverage -y --no-progress
+        shell: powershell
+        run: |
+          choco install opencppcoverage -y --no-progress
+          # choco 修改的是 Machine PATH，当前 PowerShell 会话未刷新，
+          # 后续步骤会报 "OpenCppCoverage.exe is not recognized"。
+          # 通过 GITHUB_PATH 把安装目录写入后续步骤的环境（官方推荐机制）。
+          $exe = Get-ChildItem -Path 'C:\Program Files\OpenCppCoverage','C:\Program Files (x86)\OpenCppCoverage' `
+                  -Filter OpenCppCoverage.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($exe) {
+            $bin = Split-Path $exe.FullName
+            Add-Content -Path $env:GITHUB_PATH -Value $bin
+            Write-Host "OpenCppCoverage found at: $bin"
+          } else {
+            Write-Error "OpenCppCoverage.exe not found after choco install"
+            exit 1
+          }
 
       - name: 配置 CMake（Debug）
         run: cmake --preset windows-msvc-debug
@@ -424,7 +439,7 @@ jobs:
         working-directory: out/build/linux-coverage
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ctest --preset linux-gcc-coverage -j 4 --output-on-failure --verbose
+        run: ctest -j 4 --output-on-failure --verbose
 
       - name: 生成覆盖率报告 (gcovr)
         run: |

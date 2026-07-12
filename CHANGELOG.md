@@ -2,6 +2,36 @@
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
+## 2026-07-12 · 第九十一轮：CI 覆盖率 Job 修复（工程基础设施 × 2）
+
+### 概述
+
+CI #36 中两个覆盖率 Job 失败。根因均为环境/命令配置问题，非代码缺陷。
+
+### 问题 1：Windows Coverage — OpenCppCoverage.exe 未识别（CI × 1）
+
+**位置**：`.github/workflows/ci.yml` coverage job 步骤「安装 OpenCppCoverage」
+
+**根因**：`choco install opencppcoverage` 修改的是 Machine PATH，但当前 PowerShell 会话的 PATH 不会自动刷新。后续「运行覆盖率分析」步骤在新的 shell 中执行时仍报 `The term 'OpenCppCoverage.exe' is not recognized`。这是 GitHub Actions Windows runner 上 choco 安装工具的常见陷阱。
+
+**修复**：安装步骤后通过 `Add-Content $env:GITHUB_PATH` 把 `OpenCppCoverage.exe` 所在目录写入 `$GITHUB_PATH`（GitHub Actions 官方推荐的跨步骤 PATH 注入机制）。用 `Get-ChildItem` 在 `C:\Program Files\OpenCppCoverage` / `C:\Program Files (x86)\OpenCppCoverage` 下递归搜索 exe，避免硬编码具体子路径；找不到则 `exit 1` 显式失败而非静默继续。
+
+### 问题 2：Linux Coverage — ctest --preset 找不到 CMakePresets.json（CI × 1）
+
+**位置**：`.github/workflows/ci.yml` coverage-linux job 步骤「运行测试」
+
+**根因**：步骤设置了 `working-directory: out/build/linux-coverage`（构建目录），但命令为 `ctest --preset linux-gcc-coverage`。`--preset` 要求 `CMakePresets.json` 在当前工作目录，而该文件只存在于仓库根目录 → `Could not read presets ... File not found`。对比 build-test job 的 Linux 测试步骤用的是 `ctest -j 4`（无 `--preset`，在构建目录直接运行），coverage job 此处写法不一致。
+
+**修复**：去掉 `--preset linux-gcc-coverage`，改为 `ctest -j 4 --output-on-failure --verbose`，与 build-test job 保持一致。`working-directory` 已是构建目录，ctest 直接读取其中已生成的 `CTestTestfile.cmake`。
+
+### 验证
+
+仅 CI 配置变更，不涉及 C++ 源码；本地构建与测试不受影响。需在 CI 上观察两个覆盖率 Job 转为绿色。
+
+### 涉及文件
+
+- `.github/workflows/ci.yml`：coverage job 安装 OpenCppCoverage 步骤改用 `GITHUB_PATH` 注入；coverage-linux job 测试步骤去掉 `--preset`
+
 ## 2026-07-11 · 第九十轮：CI clang-format 风格检查修复（工程基础设施 × 1）
 
 ### 概述
