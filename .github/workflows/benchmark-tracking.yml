@@ -1,0 +1,208 @@
+# ============================================================
+# MiniLang 性能趋势持续追踪（R128）
+# ------------------------------------------------------------
+# 使用 benchmark-action/github-action-benchmark 把 minilang_perf_test
+# 的测量结果持久化到 gh-pages 分支的 dev/bench/data.js，自动生成
+# 趋势图页面 https://<owner>.github.io/<repo>/dev/bench/
+#
+# 触发条件：
+#   - push 到 main/master（追踪每次合入的性能变化）
+#   - pull_request（仅测量，不更新数据，作为信息性检查）
+#   - 每周定时（cron: 周日 04:00 UTC，追踪长期趋势）
+#
+# 与 ci.yml perf-benchmark job 的区别：
+#   - ci.yml: 与基线对比，回归超阈值则失败（阻断式）
+#   - 本工作流: 持久化每次测量值，可视化长期趋势（追踪式）
+#
+# 数据存储：gh-pages 分支 dev/bench/ 目录
+#   - data.js:  累积的所有测量数据（benchmark-action 自动维护）
+#   - index.html: 自动生成的趋势图页面
+# ============================================================
+
+name: Performance Tracking
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 4 * * 0'   # 每周日 04:00 UTC（追踪长期趋势）
+  workflow_dispatch:       # 手动触发
+
+env:
+  CMAKE_BUILD_TYPE: Release
+  QT_VERSION: '6.8.3'
+  AQT_VERSION: '==3.3.0'
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
+
+permissions:
+  contents: write      # 推送到 gh-pages 分支需要
+  deployments: write   # benchmark-action 创建 deployment 需要
+
+jobs:
+  benchmark:
+    name: Run & Track Benchmarks
+    runs-on: ubuntu-latest
+    # PR 仅测量不更新数据（避免外部贡献者触发数据污染）
+    # push/schedule/manual 才更新持久化数据
+    if: ${{ github.event_name != 'pull_request' || true }}  # 始终运行测量
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-perf-tracking
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 配置 CMake（Release + Perf Tests）
+        run: cmake --preset linux-gcc-release -DMINILANG_USE_CCACHE=ON -DMINILANG_BUILD_PERF_TESTS=ON
+
+      - name: 构建 minilang_perf_test
+        run: cmake --build out/build/linux-release --target minilang_perf_test --parallel
+
+      - name: 运行性能基准
+        id: run_perf
+        run: |
+          # 运行 perf_test，stdout 同时包含 gtest 输出与 JSON 块
+          out/build/linux-release/tests/minilang_perf_test \
+            --gtest_brief=1 \
+            --gtest_filter=PerfBenchmark.* > perf-raw-output.txt 2>&1 || true
+          echo "=== Raw output (last 50 lines) ==="
+          tail -n 50 perf-raw-output.txt || true
+
+      - name: 转换为 benchmark-action 格式
+        run: |
+          python scripts/perf_to_benchmark_action.py \
+            --input perf-raw-output.txt \
+            --output perf-benchmark-action.json
+          echo "=== Converted benchmark-action entries ==="
+          head -n 5 perf-benchmark-action.json
+          echo "Total entries: $(wc -l < perf-benchmark-action.json)"
+
+      - name: 上传测量结果 artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: perf-tracking-result
+          path: |
+            perf-raw-output.txt
+            perf-benchmark-action.json
+          retention-days: 30
+
+      # ============================================================
+      # 持久化到 gh-pages 分支（仅 push/schedule/manual 触发，PR 不更新）
+      # ============================================================
+      - name: 检出 gh-pages 分支
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/checkout@v5
+        with:
+          ref: gh-pages
+          path: gh-pages
+        continue-on-error: true   # gh-pages 可能不存在（首次运行）
+
+      - name: 初始化 gh-pages 目录（首次运行）
+        if: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        run: |
+          mkdir -p gh-pages/dev/bench
+          # 若 gh-pages 不存在（checkout 失败），创建空目录
+          [ -f gh-pages/index.html ] || echo "<html><body>MiniLang gh-pages</body></html>" > gh-pages/index.html
+
+      - name: 更新 benchmark 数据
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: MiniLang Performance Benchmark
+          tool: customBiggerIsBetter
+          output-file-path: perf-benchmark-action.json
+          external-data-json-path: gh-pages/dev/bench/data.js
+          # 失败阈值：与最近一次比较，超 3x 才 fail（信息性，主要为了通知）
+          alert-threshold: '3.0'
+          fail-threshold: '5.0'
+          # PR 不评论（避免噪音），仅 push/schedule 触发时评论
+          comment-on-alert: ${{ github.event_name == 'push' || github.event_name == 'schedule' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # 自动创建 deployment（GitHub Pages 部署追踪）
+          auto-push: false   # 我们在下一步手动 push，便于追加 index.html
+          # 警告/失败都继续（追踪式而非阻断式）
+          fail-on-alert: false
+
+      - name: 生成 benchmark index.html（若不存在）
+        if: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        run: |
+          # benchmark-action 会自动生成 index.html，但首次运行可能没有
+          [ -f gh-pages/dev/bench/index.html ] || \
+          cat > gh-pages/dev/bench/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <title>MiniLang Performance Benchmarks</title>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+          </head>
+          <body>
+            <h1>MiniLang Performance Benchmarks</h1>
+            <p>This page is auto-generated by benchmark-action. The actual charts
+               are rendered by the benchmark-action runtime. If you see this
+               static text, the dynamic content failed to load. View
+               <a href="data.js">data.js</a> for raw data.</p>
+            <div id="benchmark-results"></div>
+            <script src="data.js"></script>
+          </body>
+          </html>
+          EOF
+
+      - name: 推送更新到 gh-pages
+        if: ${{ github.event_name != 'pull_request' }}
+        shell: bash
+        run: |
+          cd gh-pages
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add dev/bench/ || true
+          if git diff --staged --quiet; then
+            echo "No benchmark data changes to commit"
+          else
+            git commit -m "Update performance benchmark data (${{ github.sha }})"
+            git push origin gh-pages
+            echo "=== Pushed benchmark data to gh-pages/dev/bench/ ==="
+          fi
+
+      - name: 总结
+        shell: bash
+        run: |
+          echo "=== Performance Tracking Summary ==="
+          echo "Event: ${{ github.event_name }}"
+          echo "Commit: ${{ github.sha }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Mode: measure-only (PR 不更新持久化数据)"
+          else
+            echo "Mode: track (更新 gh-pages/dev/bench/data.js)"
+            echo "View trend: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/dev/bench/"
+          fi
+          echo ""
+          echo "=== Latest Measurements ==="
+          cat perf-benchmark-action.json

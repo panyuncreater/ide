@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "tolerance": 2.0,
+  "description": "MiniLang CI 性能基线（占位值，需在首次 CI 成功运行后用 scripts/perf_baseline.py update 刷新）",
+  "note": "elapsed_ms=null 表示基线尚未建立，check 模式将跳过判定。R117 升级至 v2：新增 category 字段 + 4 个新基准（tak/ackermann/bubble_sort/closure_counter）。",
+  "benchmarks": [
+    {"backend": "Interpreter", "benchmark": "fibonacci",       "category": "recursion", "elapsed_ms": null, "output": "46368"},
+    {"backend": "StackVM",     "benchmark": "fibonacci",       "category": "recursion", "elapsed_ms": null, "output": "46368"},
+    {"backend": "RegisterVM",  "benchmark": "fibonacci",       "category": "recursion", "elapsed_ms": null, "output": "46368"},
+
+    {"backend": "Interpreter", "benchmark": "large_loop",      "category": "compute",   "elapsed_ms": null, "output": "4999950000"},
+    {"backend": "StackVM",     "benchmark": "large_loop",      "category": "compute",   "elapsed_ms": null, "output": "4999950000"},
+    {"backend": "RegisterVM",  "benchmark": "large_loop",      "category": "compute",   "elapsed_ms": null, "output": "4999950000"},
+
+    {"backend": "Interpreter", "benchmark": "string_concat",   "category": "memory",    "elapsed_ms": null, "output": "5000"},
+    {"backend": "StackVM",     "benchmark": "string_concat",   "category": "memory",    "elapsed_ms": null, "output": "5000"},
+    {"backend": "RegisterVM",  "benchmark": "string_concat",   "category": "memory",    "elapsed_ms": null, "output": "5000"},
+
+    {"backend": "Interpreter", "benchmark": "tak",             "category": "recursion", "elapsed_ms": null, "output": "12"},
+    {"backend": "StackVM",     "benchmark": "tak",             "category": "recursion", "elapsed_ms": null, "output": "12"},
+    {"backend": "RegisterVM",  "benchmark": "tak",             "category": "recursion", "elapsed_ms": null, "output": "12"},
+
+    {"backend": "Interpreter", "benchmark": "ackermann",       "category": "recursion", "elapsed_ms": null, "output": "13"},
+    {"backend": "StackVM",     "benchmark": "ackermann",       "category": "recursion", "elapsed_ms": null, "output": "13"},
+    {"backend": "RegisterVM",  "benchmark": "ackermann",       "category": "recursion", "elapsed_ms": null, "output": "13"},
+
+    {"backend": "Interpreter", "benchmark": "bubble_sort",     "category": "container", "elapsed_ms": null, "output": "0"},
+    {"backend": "StackVM",     "benchmark": "bubble_sort",     "category": "container", "elapsed_ms": null, "output": "0"},
+    {"backend": "RegisterVM",  "benchmark": "bubble_sort",     "category": "container", "elapsed_ms": null, "output": "0"},
+
+    {"backend": "Interpreter", "benchmark": "closure_counter", "category": "closure",   "elapsed_ms": null, "output": "50005000"},
+    {"backend": "StackVM",     "benchmark": "closure_counter", "category": "closure",   "elapsed_ms": null, "output": "50005000"},
+    {"backend": "RegisterVM",  "benchmark": "closure_counter", "category": "closure",   "elapsed_ms": null, "output": "50005000"}
+  ]
+}

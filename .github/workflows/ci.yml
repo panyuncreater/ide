@@ -5,13 +5,17 @@
 # 作业：
 #   build-test         — 跨平台构建并运行全部测试
 #                        (Windows MSVC / Ubuntu GCC / macOS Clang)
-#   coverage           — Windows 代码覆盖率（OpenCppCoverage）
-#   coverage-linux     — Linux 代码覆盖率（gcovr + codecov）
+#   coverage           — Windows 代码覆盖率（OpenCppCoverage + 阈值检查）
+#   coverage-linux     — Linux 代码覆盖率（gcovr + codecov + 阈值检查）
 #   test-harness       — Windows test_harness 审计工具
 #   static-analysis    — cppcheck 静态代码分析
+#   clang-tidy         — clang-tidy 静态分析（continue-on-error，信息性）
+#   perf-benchmark     — 性能基准回归（与 perf-baseline.json 对比）
+#   docs               — Doxygen 文档构建并部署到 GitHub Pages
 #
 # 修复问题 9（ctest 并行）/ 问题 7（覆盖率）/ 问题 17（ccache）
 # Phase 3: 1.1 跨平台 CI / 2.3 codecov 集成
+# R116: CI 基础设施套件（perf-benchmark / 阈值 / clang-tidy / docs）
 # ============================================================
 
 name: CI
@@ -353,7 +357,9 @@ jobs:
           }
 
       - name: 配置 CMake（Debug）
-        run: cmake --preset windows-msvc-debug
+        # MINILANG_BUILD_PERF_TESTS=OFF：覆盖率 job 仅构建 --target minilang_tests，
+        # 关闭 perf_test 目标避免无谓的配置/链接开销（与 coverage-linux 一致）。
+        run: cmake --preset windows-msvc-debug -DMINILANG_BUILD_PERF_TESTS=OFF
 
       - name: 构建测试
         run: cmake --build out/build/debug --target minilang_tests --parallel
@@ -366,6 +372,15 @@ jobs:
             --export_type html:coverage_html `
             --sources "${env:GITHUB_WORKSPACE}\lexer;${env:GITHUB_WORKSPACE}\parser;${env:GITHUB_WORKSPACE}\ast;${env:GITHUB_WORKSPACE}\interpreter;${env:GITHUB_WORKSPACE}\compiler;${env:GITHUB_WORKSPACE}\debug;${env:GITHUB_WORKSPACE}\formatter" `
             -- tests\minilang_tests.exe --gtest_brief=1
+
+      # R116 覆盖率门槛：解析 cobertura XML，行覆盖率低于 60% 则失败
+      # 阈值保守起步，后续随测试覆盖提升逐步加严
+      - name: 检查覆盖率阈值（行 ≥ 60%）
+        working-directory: out/build/debug
+        run: |
+          python "${{ github.workspace }}\scripts\coverage_threshold.py" `
+            --report coverage.xml `
+            --line-threshold 60.0
 
       - name: 上传覆盖率报告
         if: always()
@@ -430,7 +445,12 @@ jobs:
         run: pip install gcovr
 
       - name: 配置 CMake（Coverage Preset）
-        run: cmake --preset linux-gcc-coverage -DMINILANG_USE_CCACHE=ON
+        # MINILANG_BUILD_PERF_TESTS=OFF：覆盖率 job 仅构建 --target minilang_tests，
+        # 不构建 minilang_perf_test。若不关闭，gtest_discover_tests(DISCOVERY_MODE
+        # PRE_TEST) 会在 CTest 运行时注册占位测试 minilang_perf_test_NOT_BUILT
+        # 并报 "Could not find executable"，导致 CTest 返回 exit code 8，
+        # 阻塞后续覆盖率报告生成步骤。
+        run: cmake --preset linux-gcc-coverage -DMINILANG_USE_CCACHE=ON -DMINILANG_BUILD_PERF_TESTS=OFF
 
       - name: 构建测试
         run: cmake --build out/build/linux-coverage --target minilang_tests --parallel
@@ -442,6 +462,8 @@ jobs:
         run: ctest -j 4 --output-on-failure --verbose
 
       - name: 生成覆盖率报告 (gcovr)
+        # R116 覆盖率门槛：gcovr 原生支持 --fail-under-line，低于阈值则退出码 1
+        # 阈值 60% 与 Windows OpenCppCoverage job 保持一致，保守起步
         run: |
           gcovr \
             --root . \
@@ -453,6 +475,7 @@ jobs:
             --filter debug/ \
             --filter formatter/ \
             --exclude-unreachable-branches \
+            --fail-under-line 60.0 \
             --cobertura coverage.xml \
             --txt \
             --html coverage.html
@@ -581,7 +604,6 @@ jobs:
   # 作业 5：代码风格检查（clang-format）
   # P2 建议 3：轻量 lint 步骤（无需 Qt 依赖，秒级完成）。
   # continue-on-error 使其作为信息性检查，不阻塞主构建流程。
-  # 注：clang-tidy 需要编译数据库与 Qt 头文件，开销较大，留作后续增强。
   # ============================================================
   lint:
     name: Code Style (clang-format)
@@ -603,3 +625,217 @@ jobs:
           find lexer parser ast interpreter compiler debug formatter gui common app \
             -type f \( -name '*.cpp' -o -name '*.h' \) -print0 \
             | xargs -0 clang-format --dry-run --Werror
+
+  # ============================================================
+  # 作业 6：clang-tidy 静态分析（R116）
+  # ------------------------------------------------------------
+  # 使用项目根 .clang-tidy 配置（启用 bugprone/modernize/performance/
+  # readability/misc 检查组）。需要 compile_commands.json 才能解析
+  # Qt / QFluentKit 头文件路径，因此先 CMake 配置生成数据库。
+  # continue-on-error：信息性检查，初始阶段不阻塞主构建流程，
+  # 待修复存量告警后可改为 fail。
+  # ============================================================
+  clang-tidy:
+    name: Static Analysis (clang-tidy)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: build-test
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 clang-tidy
+        # 使用 LLVM 18 的 clang-tidy（Ubuntu 24.04 LTS 默认仓库）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy-18
+          sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-18 100
+          clang-tidy --version
+
+      - name: 配置 CMake（生成 compile_commands.json）
+        # CMAKE_EXPORT_COMPILE_COMMANDS=ON 让 CMake 生成编译数据库，
+        # clang-tidy 通过 -p 指向该数据库解析每个 TU 的编译参数。
+        run: cmake --preset linux-gcc-release -DMINILANG_USE_CCACHE=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: 运行 clang-tidy（核心模块）
+        # run-clang-tidy 是 LLVM 自带的并行驱动脚本，自动从
+        # compile_commands.json 读取所有 TU 并行执行 clang-tidy。
+        # 限制为 lexer/parser/ast/interpreter/compiler/debug/formatter/common
+        # 等核心模块（gui/app/tests 依赖较多 Qt 头文件，告警噪音大）。
+        # 注：compile_commands.json 中路径为绝对路径（如 /home/runner/.../lexer/Lexer.cpp），
+        # 所以 regex 使用子串匹配而非 ^锚定。
+        # 输出重定向到 clang-tidy-report.txt 供 artifact 上传。
+        run: |
+          # 优先 run-clang-tidy-18，回退到 run-clang-tidy
+          if command -v run-clang-tidy-18 >/dev/null; then
+            RUN_CT=run-clang-tidy-18
+          else
+            RUN_CT=run-clang-tidy
+          fi
+          echo "Using: $RUN_CT"
+          "$RUN_CT" -p out/build/linux-release \
+            -j 4 \
+            '(lexer|parser|ast|interpreter|compiler|debug|formatter|common)/' \
+            2>&1 | tee clang-tidy-report.txt || true
+
+      - name: 显示分析摘要
+        run: |
+          echo "=== clang-tidy 分析摘要 ==="
+          clang-tidy --version
+          echo ""
+          echo "警告总数: $(grep -c 'warning:' clang-tidy-report.txt || echo 0)"
+          echo "错误总数: $(grep -c 'error:' clang-tidy-report.txt || echo 0)"
+          echo ""
+          echo "Top 10 警告类别:"
+          grep -oE '\[[a-z-]+\]' clang-tidy-report.txt | sort | uniq -c | sort -rn | head -10 || true
+
+      - name: 上传 clang-tidy 报告
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: clang-tidy-report
+          path: clang-tidy-report.txt
+          retention-days: 14
+
+  # ============================================================
+  # 作业 7：性能基准回归检测（R116）
+  # ------------------------------------------------------------
+  # 运行 minilang_perf_test 采集三后端（Interpreter/StackVM/
+  # RegisterVM）× 三基准（fib(24)/大循环/字符串拼接）的当前耗时，
+  # 与 perf-baseline.json 对比，回归超 2.0x 则失败。
+  #
+  # 首次启用时基线 elapsed_ms=null（跳过判定），需要管理员在
+  # 首次成功 CI 后用 `python scripts/perf_baseline.py update`
+  # 刷新基线。本 job 仅在 Linux runner 上运行（性能数据跨平台
+  # 差异大，Linux 数字最稳定）。
+  # ============================================================
+  perf-benchmark:
+    name: Performance Benchmark (vs baseline)
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-perf-bench
+
+      - name: 配置 CMake（Release）
+        # Release 构建保证性能数据反映真实生产环境表现
+        # MINILANG_BUILD_PERF_TESTS=ON 显式启用 minilang_perf_test 目标
+        run: cmake --preset linux-gcc-release -DMINILANG_USE_CCACHE=ON -DMINILANG_BUILD_PERF_TESTS=ON
+
+      - name: 构建 minilang_perf_test
+        run: cmake --build out/build/linux-release --target minilang_perf_test --parallel
+
+      - name: 运行性能基准对比基线
+        run: |
+          python scripts/perf_baseline.py check \
+            --baseline perf-baseline.json \
+            --binary out/build/linux-release/tests/minilang_perf_test
+
+      - name: 上传性能基准报告（趋势追踪）
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: perf-benchmark-report
+          path: |
+            perf-baseline.json
+          retention-days: 30
+
+  # ============================================================
+  # 作业 8：Doxygen 文档构建与 GitHub Pages 部署（R116）
+  # ------------------------------------------------------------
+  # 仅在 push 到 main/master 时部署，PR 仅构建验证不部署。
+  # 部署目标：gh-pages 分支根目录，URL 形如
+  #   https://<owner>.github.io/<repo>/
+  #
+  # 首次部署需在仓库 Settings → Pages 中将 Source 设为
+  # "Deploy from a branch" → "gh-pages" → "/ (root)"。
+  # ============================================================
+  docs:
+    name: Doxygen Documentation
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: ${{ github.event_name == 'push' }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Doxygen 与 Graphviz
+        # graphviz 提供 dot 命令用于生成类图/调用图
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz
+          doxygen --version
+          dot -V
+
+      - name: 构建 Doxygen 文档
+        # Doxyfile 已配置 OUTPUT_DIRECTORY=docs/api、INPUT=核心模块目录
+        # GENERATE_HTML=YES、EXTRACT_ALL=YES、RECURSIVE=YES
+        run: doxygen Doxyfile
+
+      - name: 上传文档 artifact（便于审查）
+        uses: actions/upload-artifact@v5
+        with:
+          name: doxygen-docs
+          path: docs/api/html/
+          retention-days: 14
+
+      - name: 部署到 GitHub Pages
+        # 仅 main 分支 push 触发部署；PR 仅构建验证不部署
+        if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/api/html
+          publish_branch: gh-pages
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'Deploy Doxygen docs (${{ github.sha }})'

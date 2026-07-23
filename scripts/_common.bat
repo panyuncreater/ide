@@ -47,11 +47,16 @@ if defined QTDIR (
 if defined QTDIR goto :qtdir_found
 
 REM 策略 2：搜索常见安装路径（支持多个 Qt 安装位置）
+REM fix(2026-07-19): for 循环不会在首次匹配后跳出，mingw_64 会覆盖 msvc2022_64。
+REM 改为按优先级顺序检测，首个匹配即跳出（goto :qtdir_found）。
 for %%D in (D:\qt C:\qt D:\Qt C:\Qt "%USERPROFILE%\Qt" "%LOCALAPPDATA%\Qt") do (
     if exist "%%~D" (
         for /f "delims=" %%v in ('dir /b /ad "%%~D\6.*" 2^>nul') do (
             for %%k in (msvc2022_64 msvc2019_64 mingw_64 gcc_64 clang_64) do (
-                if exist "%%~D\%%v\%%k\lib\cmake\Qt6" set "QTDIR=%%~D\%%v\%%k"
+                if exist "%%~D\%%v\%%k\lib\cmake\Qt6" (
+                    set "QTDIR=%%~D\%%v\%%k"
+                    goto :qtdir_found
+                )
             )
         )
     )

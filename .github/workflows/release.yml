@@ -1,0 +1,306 @@
+# ============================================================
+# MiniLang IDE Release 自动化（R128）
+# ------------------------------------------------------------
+# 触发条件：
+#   1. 推送 v*.*.* 格式的 git tag（推荐方式）
+#   2. workflow_dispatch 手动触发，可指定版本号（默认取 tag 名或日期版本）
+#
+# 工作流程：
+#   1. 跨平台矩阵构建（Windows MSVC / Ubuntu GCC / macOS Clang）
+#   2. 复用 ci.yml 的构建步骤（CMake Preset + Ninja + ccache + QFluentKit 补丁）
+#   3. cpack 打包安装包（Win=ZIP / Linux=TGZ / macOS=ZIP）
+#   4. 生成 SHA256 校验和文件
+#   5. 创建/更新 GitHub Release 并上传所有平台安装包
+#
+# 与 ci.yml 的差异：
+#   - 触发条件不同（tag / 手动 vs push/PR）
+#   - 产物以 Release 形式发布而非 artifact
+#   - 启用 LTO + Release 优化（CMAKE_BUILD_TYPE=Release）
+#   - 跳过测试以加快发布流程（测试由 ci.yml 在 push 时已经覆盖）
+# ============================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'      # 形如 v1.0.0 / v1.2.3
+      - 'v*.*.*-*'     # 形如 v1.0.0-rc1 / v1.2.3-beta
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release 版本号（如 v1.0.0；留空则使用 short sha）'
+        required: false
+        default: ''
+      prerelease:
+        description: '标记为预发布（pre-release）'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  CMAKE_BUILD_TYPE: Release
+  QT_VERSION: '6.8.3'
+  AQT_VERSION: '==3.3.0'
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
+
+permissions:
+  contents: write   # softprops/action-gh-release 创建 Release 需要
+
+jobs:
+  # ============================================================
+  # 作业 1：跨平台构建 + 打包
+  # ============================================================
+  build-release:
+    name: Build & Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: win64_msvc2022_64
+            preset: windows-msvc-release
+            build_dir: out/build/release
+            artifact_name: minilang-ide-windows
+            asset_extension: zip
+            cpack_generator: ZIP
+          - os: ubuntu-latest
+            arch: linux_gcc_64
+            preset: linux-gcc-release
+            build_dir: out/build/linux-release
+            artifact_name: minilang-ide-linux
+            asset_extension: tar.gz
+            cpack_generator: TGZ
+          - os: macos-latest
+            arch: clang_64
+            preset: macos-clang-release
+            build_dir: out/build/macos-release
+            artifact_name: minilang-ide-macos
+            asset_extension: zip
+            cpack_generator: ZIP
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 计算 release 版本号
+        id: relver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # tag 触发：使用 tag 名作为版本号
+            VERSION="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            # 手动触发且指定了版本号
+            VERSION="${{ inputs.version }}"
+          else
+            # 手动触发未指定：使用 short sha
+            VERSION="v0.0.0-dev-${GITHUB_SHA::7}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Release version: ${VERSION}"
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ matrix.os }}-release-${{ matrix.arch }}
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: ${{ runner.os == 'Windows' && 'windows' || runner.os == 'Linux' && 'linux' || 'mac' }}
+          target: desktop
+          arch: ${{ matrix.arch }}
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 MSVC 开发环境 (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 创建 AGL stub framework (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          sudo mkdir -p /Library/Frameworks/AGL.framework/Versions/A
+          echo 'void __agl_stub(void) {}' | sudo clang -dynamiclib \
+            -install_name /Library/Frameworks/AGL.framework/Versions/A/AGL \
+            -o /Library/Frameworks/AGL.framework/Versions/A/AGL -x c -
+          sudo ln -sf Versions/A/AGL /Library/Frameworks/AGL.framework/AGL
+          sudo ln -sf Versions/A /Library/Frameworks/AGL.framework/Versions/Current
+
+      - name: 配置 CMake
+        run: cmake --preset ${{ matrix.preset }} -DMINILANG_USE_CCACHE=ON
+
+      - name: 构建项目
+        run: cmake --build ${{ matrix.build_dir }} --parallel
+
+      - name: 安装并打包
+        shell: bash
+        run: |
+          cmake --install ${{ matrix.build_dir }} --prefix install
+          cd ${{ matrix.build_dir }} && cpack -G ${{ matrix.cpack_generator }}
+
+      - name: 重命名产物包含版本号
+        shell: bash
+        run: |
+          VERSION="${{ steps.relver.outputs.version }}"
+          mkdir -p release-assets
+          cd ${{ matrix.build_dir }}
+          for f in MiniLangIDE-*; do
+            [ -f "$f" ] || continue
+            ext="${f##*.}"
+            # 统一命名为 MiniLangIDE-<version>-<platform>.<ext>
+            case "${{ runner.os }}" in
+              Windows) plat="windows-x64" ;;
+              Linux)   plat="linux-x64" ;;
+              macOS)   plat="macos" ;;
+            esac
+            newname="MiniLangIDE-${VERSION}-${plat}.${{ matrix.asset_extension }}"
+            cp "$f" "${GITHUB_WORKSPACE}/release-assets/${newname}"
+            echo "Packaged: ${newname}"
+          done
+          ls -la "${GITHUB_WORKSPACE}/release-assets/"
+
+      - name: 生成 SHA256 校验和
+        shell: bash
+        working-directory: release-assets
+        run: |
+          sha256sum MiniLangIDE-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release-assets/*
+          retention-days: 14
+
+  # ============================================================
+  # 作业 2：聚合产物 + 创建 GitHub Release
+  # ============================================================
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build-release
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+
+      - name: 计算 release 版本号
+        id: relver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="v0.0.0-dev-${GITHUB_SHA::7}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: 下载所有平台构建产物
+        uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+          pattern: minilang-ide-*
+          merge-multiple: true
+
+      - name: 显示所有产物
+        shell: bash
+        run: |
+          ls -la release-assets/
+          echo "---"
+          cat release-assets/SHA256SUMS.txt || true
+
+      - name: 合并各平台 SHA256SUMS
+        # 每个 OS 都生成了一份 SHA256SUMS.txt，合并后保留唯一一份
+        shell: bash
+        run: |
+          cd release-assets
+          # 合并所有 SHA256SUMS.txt 内容，按文件名排序去重
+          cat SHA256SUMS.txt | sort -u > SHA256SUMS.tmp
+          mv SHA256SUMS.tmp SHA256SUMS.txt
+          # 重新计算所有文件的 SHA256 以保证准确性
+          sha256sum MiniLangIDE-* > SHA256SUMS.txt
+          echo "=== Final SHA256SUMS ==="
+          cat SHA256SUMS.txt
+
+      - name: 生成 Release Notes
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${{ steps.relver.outputs.version }}"
+          cat > release-notes.md << EOF
+          # MiniLang IDE ${VERSION}
+
+          ## 平台安装包
+
+          - **Windows x64**: \`MiniLangIDE-${VERSION}-windows-x64.zip\`
+          - **Linux x64**: \`MiniLangIDE-${VERSION}-linux-x64.tar.gz\`
+          - **macOS**: \`MiniLangIDE-${VERSION}-macos.zip\`
+
+          ## 校验
+
+          下载后请用 SHA256SUMS.txt 校验安装包完整性：
+
+          \`\`\`bash
+          sha256sum -c SHA256SUMS.txt --ignore-missing
+          \`\`\`
+
+          ## 安装方法
+
+          ### Windows
+          解压 ZIP 到任意目录，运行 \`bin/minilang_ide.exe\`。
+
+          ### Linux
+          \`\`\`bash
+          tar xzf MiniLangIDE-${VERSION}-linux-x64.tar.gz
+          cd MiniLangIDE-${VERSION}-linux-x64
+          ./bin/minilang_ide
+          \`\`\`
+
+          ### macOS
+          解压 ZIP，将 MiniLangIDE 拖入 Applications 文件夹。
+
+          ## 环境要求
+
+          - Windows 10+ / Ubuntu 22.04+ / macOS 12+
+          - Qt6 运行时（已打包在安装包内，无需单独安装）
+
+          ## 完整变更日志
+
+          详见 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)。
+          EOF
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.relver.outputs.version }}
+          name: MiniLang IDE ${{ steps.relver.outputs.version }}
+          body_path: release-notes.md
+          files: |
+            release-assets/MiniLangIDE-*
+            release-assets/SHA256SUMS.txt
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(steps.relver.outputs.version, '-') }}
+          draft: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,36 @@
+# ============================================================
+# MiniLang pre-commit framework 配置
+# ------------------------------------------------------------
+# 适用人群：使用 https://pre-commit.com 框架的开发者
+#
+# 安装 pre-commit（一次性）：
+#   pip install pre-commit
+#
+# 安装本仓库的钩子：
+#   pre-commit install
+#
+# 手动运行所有钩子：
+#   pre-commit run --all-files
+#
+# 跳过：
+#   git commit --no-verify
+#
+# 本配置仅启用 clang-format 钩子，与项目根 .clang-format 文件配合。
+# 不引入 clang-tidy / cppcheck 等较慢的钩子（CI 中已运行），
+# 保持 pre-commit 在秒级完成。
+# ============================================================
+
+repos:
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v22.1.5
+    hooks:
+      - id: clang-format
+        # 仅检查项目源码目录，跳过 third_party / out / build
+        files: |
+          (?x)^(
+              lexer/|parser/|ast/|interpreter/|compiler/|debug/|formatter/|
+              common/|gui/|app/|cli/|tests/|test_harness/
+          ).*\.(cpp|h)$
+        # 不修改文件，仅检查 —— 与 CI lint job 行为一致
+        # 若希望 pre-commit 自动修复格式，删除下面这行
+        args: [--dry-run, --Werror]
