@@ -5,6 +5,7 @@
 # --- 构建输出目录 ---
 # 注：统一使用 out/ 目录（CMakePresets 配置）。build/ 为历史残留，可安全删除。
 build/
+build_*/
 out/
 x64/
 .vs/
@@ -37,6 +38,12 @@ compile_commands.json
 CTestTestfile.cmake
 .cmake/api/
 
+# --- Python 缓存 ---
+# R116 引入 CI 脚本（perf_baseline.py / coverage_threshold.py 等）后产生
+__pycache__/
+*.pyc
+*.pyo
+
 # --- Qt 自动生成 ---
 moc_*.cpp
 ui_*.h
@@ -62,6 +69,23 @@ build_output.txt
 test*_err.txt
 test*_out.txt
 Testing/
+
+# --- 临时调试输出（R154-R165 迭代期间产生） ---
+_tmp_*
+bld_*.txt
+cfg_*.txt
+rebuild_*.txt
+stdout.txt
+stderr.txt
+tee_out.txt
+match_test_output.txt
+tests_list*.txt
+
+# --- 一次性构建/测试脚本（临时） ---
+temp_build_*
+tmp_build_*
+tmp_test_*
+tmp_*.mlang
 
 # --- 文档生成 ---
 docs/api/
