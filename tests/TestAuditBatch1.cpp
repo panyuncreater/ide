@@ -12,38 +12,42 @@
 
 #include <gtest/gtest.h>
 
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
-#include "compiler/Compiler.h"
 #include "compiler/Bytecode.h"
-#include "compiler/VM.h"
-#include "compiler/RegisterVM.h"
+#include "compiler/Compiler.h"
 #include "compiler/IR.h"
-#include "interpreter/Value.h"
+#include "compiler/RegisterVM.h"
+#include "compiler/VM.h"
 #include "interpreter/Environment.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
+#include "interpreter/Value.h"
+#include "lexer/Lexer.h"
+#include "parser/Parser.h"
 
-#include <string>
 #include <memory>
-#include <vector>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 // ============================================================
 // 辅助函数
 // ============================================================
 
 static std::string runInterpreter(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
     Interpreter interp;
     std::string out;
     interp.setOutputCallback([&](const std::string& s) { out += s; });
     try {
         interp.execute(*ast);
     } catch (const RuntimeError& e) {
-        if (out.empty()) return "<runtime:" + std::string(e.what()) + ">";
+        if (out.empty())
+            return "<runtime:" + std::string(e.what()) + ">";
         return out + "<runtime:" + std::string(e.what()) + ">";
     } catch (const std::exception& e) {
         return "<runtime:" + std::string(e.what()) + ">";
@@ -52,54 +56,71 @@ static std::string runInterpreter(const std::string& src) {
 }
 
 static std::string runStackVM(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
     Compiler c;
     auto cr = c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     VM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(cr);
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
 }
 
 static std::string runStackVM_IR(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
-    Compiler c; c.setUseIR(true);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseIR(true);
     auto cr = c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     VM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(cr);
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
 }
 
 static std::string runRegVM(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
-    Compiler c; c.setUseRegisterVM(true);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseRegisterVM(true);
     c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     RegisterVM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(c.getLastRegisterResult());
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
@@ -107,12 +128,17 @@ static std::string runRegVM(const std::string& src) {
 
 // 编译源码并返回错误消息（用于检查编译期错误），无错误返回空串
 static std::string compileIRDiags(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
-    Compiler c; c.setUseIR(true);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseIR(true);
     c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return c.getLastError();
+    if (c.getDiagnostics().hasErrors())
+        return c.getLastError();
     return "";
 }
 
@@ -128,16 +154,15 @@ static std::string compileIRDiags(const std::string& src) {
 
 // ---- finally 正常路径：try 无异常，finally 在 catch 后执行 ----
 TEST(AuditBatch1Finally, NormalPathRunsFinally) {
-    std::string src =
-        "var log = \"\";"
-        "try {"
-        "  log = log + \"try\";"
-        "} catch (e) {"
-        "  log = log + \"catch\";"
-        "} finally {"
-        "  log = log + \"finally\";"
-        "}"
-        "print(log);";
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  log = log + \"try\";"
+                      "} catch (e) {"
+                      "  log = log + \"catch\";"
+                      "} finally {"
+                      "  log = log + \"finally\";"
+                      "}"
+                      "print(log);";
     std::string expected = "tryfinally";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -147,17 +172,16 @@ TEST(AuditBatch1Finally, NormalPathRunsFinally) {
 
 // ---- finally 异常路径：try 抛异常，catch 处理后 finally 执行 ----
 TEST(AuditBatch1Finally, ExceptionPathRunsFinallyAfterCatch) {
-    std::string src =
-        "var log = \"\";"
-        "try {"
-        "  log = log + \"try\";"
-        "  throw 42;"
-        "} catch (e) {"
-        "  log = log + \"catch\" + e;"
-        "} finally {"
-        "  log = log + \"finally\";"
-        "}"
-        "print(log);";
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  log = log + \"try\";"
+                      "  throw 42;"
+                      "} catch (e) {"
+                      "  log = log + \"catch\" + e;"
+                      "} finally {"
+                      "  log = log + \"finally\";"
+                      "}"
+                      "print(log);";
     std::string expected = "trycatch42finally";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -167,18 +191,17 @@ TEST(AuditBatch1Finally, ExceptionPathRunsFinallyAfterCatch) {
 
 // ---- finally 内部异常未捕获：finally 执行后 rethrow 传播到外层 ----
 TEST(AuditBatch1Finally, UncaughtExceptionRethrowsAfterFinally) {
-    std::string src =
-        "var log = \"\";"
-        "try {"
-        "  try {"
-        "    throw 99;"
-        "  } finally {"
-        "    log = log + \"inner-finally\";"
-        "  }"
-        "} catch (e) {"
-        "  log = log + \"outer-catch\" + e;"
-        "}"
-        "print(log);";
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try {"
+                      "    throw 99;"
+                      "  } finally {"
+                      "    log = log + \"inner-finally\";"
+                      "  }"
+                      "} catch (e) {"
+                      "  log = log + \"outer-catch\" + e;"
+                      "}"
+                      "print(log);";
     std::string expected = "inner-finallyouter-catch99";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -188,19 +211,18 @@ TEST(AuditBatch1Finally, UncaughtExceptionRethrowsAfterFinally) {
 
 // ---- finally 在函数内：finally 执行后函数返回 ----
 TEST(AuditBatch1Finally, FinallyInFunction) {
-    std::string src =
-        "fun test() {"
-        "  var log = \"\";"
-        "  try {"
-        "    log = log + \"try;\";"
-        "  } catch (e) {"
-        "    log = log + \"catch;\";"
-        "  } finally {"
-        "    log = log + \"finally;\";"
-        "  }"
-        "  return log;"
-        "}"
-        "print(test());";
+    std::string src = "fun test() {"
+                      "  var log = \"\";"
+                      "  try {"
+                      "    log = log + \"try;\";"
+                      "  } catch (e) {"
+                      "    log = log + \"catch;\";"
+                      "  } finally {"
+                      "    log = log + \"finally;\";"
+                      "  }"
+                      "  return log;"
+                      "}"
+                      "print(test());";
     std::string expected = "try;finally;";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -210,21 +232,20 @@ TEST(AuditBatch1Finally, FinallyInFunction) {
 
 // ---- finally 中 catch 块内 throw：finally 必须执行 ----
 TEST(AuditBatch1Finally, CatchThrowsFinallyStillRuns) {
-    std::string src =
-        "var log = \"\";"
-        "try {"
-        "  try {"
-        "    throw 1;"
-        "  } catch (e) {"
-        "    log = log + \"catch;\";"
-        "    throw 2;"
-        "  } finally {"
-        "    log = log + \"finally;\";"
-        "  }"
-        "} catch (e2) {"
-        "  log = log + \"outer:\" + e2;"
-        "}"
-        "print(log);";
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try {"
+                      "    throw 1;"
+                      "  } catch (e) {"
+                      "    log = log + \"catch;\";"
+                      "    throw 2;"
+                      "  } finally {"
+                      "    log = log + \"finally;\";"
+                      "  }"
+                      "} catch (e2) {"
+                      "  log = log + \"outer:\" + e2;"
+                      "}"
+                      "print(log);";
     std::string expected = "catch;finally;outer:2";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -234,18 +255,17 @@ TEST(AuditBatch1Finally, CatchThrowsFinallyStillRuns) {
 
 // ---- finally 配合顶层 catch 变量遮蔽全局 ----
 TEST(AuditBatch1Finally, FinallyWithTopLevelCatchShadowingGlobal) {
-    std::string src =
-        "var e = 999;"
-        "var log = \"\";"
-        "try {"
-        "  throw 42;"
-        "} catch (e) {"
-        "  log = log + \"catch:\" + e + \";\";"
-        "} finally {"
-        "  log = log + \"finally;\";"
-        "}"
-        "print(log);"
-        "print(e);";  // 外层全局 e 应恢复为 999
+    std::string src = "var e = 999;"
+                      "var log = \"\";"
+                      "try {"
+                      "  throw 42;"
+                      "} catch (e) {"
+                      "  log = log + \"catch:\" + e + \";\";"
+                      "} finally {"
+                      "  log = log + \"finally;\";"
+                      "}"
+                      "print(log);"
+                      "print(e);"; // 外层全局 e 应恢复为 999
     std::string expected = "catch:42;finally;999";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -258,21 +278,20 @@ TEST(AuditBatch1Finally, FinallyWithTopLevelCatchShadowingGlobal) {
 // 导致 finally 抛异常时 finallyRun 仍为 false，外层 catch 误判为"finally 未执行"并再次执行。
 // 修复：finallyRun = true 移到 evaluate(finallyBlock) 之前。
 TEST(AuditBatch1Finally, FinallyThrowsDoesNotDoubleExecute) {
-    std::string src =
-        "var log = \"\";"
-        "try {"
-        "  try {"
-        "    throw 1;"
-        "  } catch (e) {"
-        "    log = log + \"catch;\";"
-        "  } finally {"
-        "    log = log + \"finally;\";"
-        "    throw 2;"
-        "  }"
-        "} catch (e2) {"
-        "  log = log + \"outer:\" + e2;"
-        "}"
-        "print(log);";
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try {"
+                      "    throw 1;"
+                      "  } catch (e) {"
+                      "    log = log + \"catch;\";"
+                      "  } finally {"
+                      "    log = log + \"finally;\";"
+                      "    throw 2;"
+                      "  }"
+                      "} catch (e2) {"
+                      "  log = log + \"outer:\" + e2;"
+                      "}"
+                      "print(log);";
     // finally 只执行一次（不是 "catch;finally;finally;outer:2"）
     std::string expected = "catch;finally;outer:2";
     EXPECT_EQ(runInterpreter(src), expected);
@@ -284,20 +303,19 @@ TEST(AuditBatch1Finally, FinallyThrowsDoesNotDoubleExecute) {
 // ---- BUG-AUDIT-FINALLY-DOUBLE: try-finally（无 catch）+ finally 抛 throw ----
 // finally 自身抛 throw 时应只执行一次，新异常覆盖原异常传播到外层
 TEST(AuditBatch1Finally, TryFinallyWithoutCatchThrowsInFinally) {
-    std::string src =
-        "var log = \"\";"
-        "try {"
-        "  try {"
-        "    log = log + \"try;\";"
-        "    throw 1;"
-        "  } finally {"
-        "    log = log + \"finally;\";"
-        "    throw 2;"
-        "  }"
-        "} catch (e) {"
-        "  log = log + \"catch:\" + e;"
-        "}"
-        "print(log);";
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try {"
+                      "    log = log + \"try;\";"
+                      "    throw 1;"
+                      "  } finally {"
+                      "    log = log + \"finally;\";"
+                      "    throw 2;"
+                      "  }"
+                      "} catch (e) {"
+                      "  log = log + \"catch:\" + e;"
+                      "}"
+                      "print(log);";
     // 原异常 1 被 finally 抛出的 2 覆盖，finally 只执行一次
     std::string expected = "try;finally;catch:2";
     EXPECT_EQ(runInterpreter(src), expected);
@@ -361,13 +379,16 @@ TEST(AuditBatch1Print, EmptyPrintOutputsNewline) {
 // 重新解析产生等价 AST（thenBranch/body 节点类型不变）。
 // ============================================================
 
-#include "formatter/Formatter.h"
 #include "ast/ASTNode.h"
+#include "formatter/Formatter.h"
 
 static std::string formatSource(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
     Formatter f;
     return f.format(*ast);
 }
@@ -377,8 +398,7 @@ TEST(AuditBatch1Formatter, IfSingleStmtBodyPreserved) {
     std::string src = "if (true) print(1);";
     std::string result = formatSource(src);
     // 应保留无花括号形式（不应出现 "{"）
-    EXPECT_EQ(result.find("{"), std::string::npos)
-        << "单语句体不应被强制包裹花括号，实际: " << result;
+    EXPECT_EQ(result.find("{"), std::string::npos) << "单语句体不应被强制包裹花括号，实际: " << result;
     // 幂等性
     EXPECT_EQ(result, formatSource(result));
 }
@@ -387,8 +407,7 @@ TEST(AuditBatch1Formatter, IfSingleStmtBodyPreserved) {
 TEST(AuditBatch1Formatter, WhileSingleStmtBodyPreserved) {
     std::string src = "while (i < 10) print(i);";
     std::string result = formatSource(src);
-    EXPECT_EQ(result.find("{"), std::string::npos)
-        << "单语句体不应被强制包裹花括号，实际: " << result;
+    EXPECT_EQ(result.find("{"), std::string::npos) << "单语句体不应被强制包裹花括号，实际: " << result;
     EXPECT_EQ(result, formatSource(result));
 }
 
@@ -396,8 +415,7 @@ TEST(AuditBatch1Formatter, WhileSingleStmtBodyPreserved) {
 TEST(AuditBatch1Formatter, ForSingleStmtBodyPreserved) {
     std::string src = "for (var i = 0; i < 10; i = i + 1) print(i);";
     std::string result = formatSource(src);
-    EXPECT_EQ(result.find("{"), std::string::npos)
-        << "单语句体不应被强制包裹花括号，实际: " << result;
+    EXPECT_EQ(result.find("{"), std::string::npos) << "单语句体不应被强制包裹花括号，实际: " << result;
     EXPECT_EQ(result, formatSource(result));
 }
 
@@ -406,8 +424,7 @@ TEST(AuditBatch1Formatter, IfElseSingleStmtBodyPreserved) {
     std::string src = "if (a) print(1); else print(2);";
     std::string result = formatSource(src);
     // 不应出现任何花括号
-    EXPECT_EQ(result.find("{"), std::string::npos)
-        << "if-else 单语句体不应被强制包裹花括号，实际: " << result;
+    EXPECT_EQ(result.find("{"), std::string::npos) << "if-else 单语句体不应被强制包裹花括号，实际: " << result;
     EXPECT_EQ(result, formatSource(result));
 }
 
@@ -415,8 +432,7 @@ TEST(AuditBatch1Formatter, IfElseSingleStmtBodyPreserved) {
 TEST(AuditBatch1Formatter, ElseIfChainSingleStmtBodyPreserved) {
     std::string src = "if (a) print(1); else if (b) print(2); else print(3);";
     std::string result = formatSource(src);
-    EXPECT_EQ(result.find("{"), std::string::npos)
-        << "else-if 链单语句体不应被强制包裹花括号，实际: " << result;
+    EXPECT_EQ(result.find("{"), std::string::npos) << "else-if 链单语句体不应被强制包裹花括号，实际: " << result;
     EXPECT_EQ(result, formatSource(result));
 }
 
@@ -425,8 +441,7 @@ TEST(AuditBatch1Formatter, BlockBodyStillHasBraces) {
     std::string src = "if (true) { print(1); print(2); }";
     std::string result = formatSource(src);
     // Block 体应保留花括号
-    EXPECT_NE(result.find("{"), std::string::npos)
-        << "Block 体应保留花括号，实际: " << result;
+    EXPECT_NE(result.find("{"), std::string::npos) << "Block 体应保留花括号，实际: " << result;
     EXPECT_EQ(result, formatSource(result));
 }
 
@@ -445,22 +460,19 @@ TEST(AuditBatch1ReplFinally, TryFinallyIsCompleteLogic) {
     // 原 Bug：tryCount(1) > catchCount(0) → 误判不完整
     // 修复后：tryCount(1) > catchCount(0) + finallyCount(1) → 1 > 1 → false → 完整
     int tryCount = 1, catchCount = 0, finallyCount = 1;
-    EXPECT_FALSE(tryCount > catchCount + finallyCount)
-        << "try-finally（无 catch）应视为完整输入";
+    EXPECT_FALSE(tryCount > catchCount + finallyCount) << "try-finally（无 catch）应视为完整输入";
 }
 
 TEST(AuditBatch1ReplFinally, TryCatchFinallyIsCompleteLogic) {
     // try + catch + finally 也是完整
     int tryCount = 1, catchCount = 1, finallyCount = 1;
-    EXPECT_FALSE(tryCount > catchCount + finallyCount)
-        << "try-catch-finally 应视为完整输入";
+    EXPECT_FALSE(tryCount > catchCount + finallyCount) << "try-catch-finally 应视为完整输入";
 }
 
 TEST(AuditBatch1ReplFinally, TryWithoutCatchOrFinallyIsIncompleteLogic) {
     // try 无 catch 无 finally 仍应视为不完整
     int tryCount = 1, catchCount = 0, finallyCount = 0;
-    EXPECT_TRUE(tryCount > catchCount + finallyCount)
-        << "try 无 catch 无 finally 应视为不完整输入";
+    EXPECT_TRUE(tryCount > catchCount + finallyCount) << "try 无 catch 无 finally 应视为不完整输入";
 }
 
 // ============================================================
@@ -472,18 +484,17 @@ TEST(AuditBatch1ReplFinally, TryWithoutCatchOrFinallyIsIncompleteLogic) {
 
 TEST(AuditBatch1Inherit, DeepInheritanceNoFalseCycle) {
     // 5 层继承链，应正常工作不触发循环检测
-    std::string src =
-        "class A { var a = 1; }"
-        "class B extends A { var b = 2; }"
-        "class C extends B { var c = 3; }"
-        "class D extends C { var d = 4; }"
-        "class E extends D { var e = 5; }"
-        "var obj = E();"
-        "print(obj.a);"
-        "print(obj.b);"
-        "print(obj.c);"
-        "print(obj.d);"
-        "print(obj.e);";
+    std::string src = "class A { var a = 1; }"
+                      "class B extends A { var b = 2; }"
+                      "class C extends B { var c = 3; }"
+                      "class D extends C { var d = 4; }"
+                      "class E extends D { var e = 5; }"
+                      "var obj = E();"
+                      "print(obj.a);"
+                      "print(obj.b);"
+                      "print(obj.c);"
+                      "print(obj.d);"
+                      "print(obj.e);";
     std::string expected = "12345";
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runStackVM_IR(src), expected);
@@ -492,21 +503,20 @@ TEST(AuditBatch1Inherit, DeepInheritanceNoFalseCycle) {
 
 // ---- RegisterVM 深层继承方法查找 + super 链 ----
 TEST(AuditBatch1Inherit, DeepInheritanceMethodLookup) {
-    std::string src =
-        "class Base {"
-        "  fun who() { return \"base\"; }"
-        "}"
-        "class M1 extends Base {"
-        "  fun who() { return \"m1-\" + super.who(); }"
-        "}"
-        "class M2 extends M1 {"
-        "  fun who() { return \"m2-\" + super.who(); }"
-        "}"
-        "class M3 extends M2 {"
-        "  fun who() { return \"m3-\" + super.who(); }"
-        "}"
-        "var o = M3();"
-        "print(o.who());";
+    std::string src = "class Base {"
+                      "  fun who() { return \"base\"; }"
+                      "}"
+                      "class M1 extends Base {"
+                      "  fun who() { return \"m1-\" + super.who(); }"
+                      "}"
+                      "class M2 extends M1 {"
+                      "  fun who() { return \"m2-\" + super.who(); }"
+                      "}"
+                      "class M3 extends M2 {"
+                      "  fun who() { return \"m3-\" + super.who(); }"
+                      "}"
+                      "var o = M3();"
+                      "print(o.who());";
     std::string expected = "m3-m2-m1-base";
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runStackVM_IR(src), expected);
@@ -525,20 +535,19 @@ TEST(AuditBatch1Inherit, DeepInheritanceMethodLookup) {
 TEST(AuditBatch1CloseUpvalue, ForLoopClosureSnapshot) {
     // 每个闭包应返回其创建时 captured 的快照值（OP_CLOSE_UPVALUE 在块退出时关闭 upvalue）
     // MiniLang 不支持 fun() {} 作为表达式，使用命名函数声明 + 引用赋值
-    std::string src =
-        "fun makeFns() {"
-        "  var fns = [];"
-        "  for (var i = 0; i < 3; i = i + 1) {"
-        "    var captured = i;"
-        "    fun f() { return captured; }"
-        "    fns.push(f);"
-        "  }"
-        "  return fns;"
-        "}"
-        "var fns = makeFns();"
-        "print(fns[0]());"
-        "print(fns[1]());"
-        "print(fns[2]());";
+    std::string src = "fun makeFns() {"
+                      "  var fns = [];"
+                      "  for (var i = 0; i < 3; i = i + 1) {"
+                      "    var captured = i;"
+                      "    fun f() { return captured; }"
+                      "    fns.push(f);"
+                      "  }"
+                      "  return fns;"
+                      "}"
+                      "var fns = makeFns();"
+                      "print(fns[0]());"
+                      "print(fns[1]());"
+                      "print(fns[2]());";
     std::string expected = "012";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -548,22 +557,21 @@ TEST(AuditBatch1CloseUpvalue, ForLoopClosureSnapshot) {
 
 // ---- while 循环闭包快照 ----
 TEST(AuditBatch1CloseUpvalue, WhileLoopClosureSnapshot) {
-    std::string src =
-        "fun makeFns() {"
-        "  var fns = [];"
-        "  var i = 0;"
-        "  while (i < 3) {"
-        "    var captured = i;"
-        "    fun f() { return captured; }"
-        "    fns.push(f);"
-        "    i = i + 1;"
-        "  }"
-        "  return fns;"
-        "}"
-        "var fns = makeFns();"
-        "print(fns[0]());"
-        "print(fns[1]());"
-        "print(fns[2]());";
+    std::string src = "fun makeFns() {"
+                      "  var fns = [];"
+                      "  var i = 0;"
+                      "  while (i < 3) {"
+                      "    var captured = i;"
+                      "    fun f() { return captured; }"
+                      "    fns.push(f);"
+                      "    i = i + 1;"
+                      "  }"
+                      "  return fns;"
+                      "}"
+                      "var fns = makeFns();"
+                      "print(fns[0]());"
+                      "print(fns[1]());"
+                      "print(fns[2]());";
     std::string expected = "012";
     EXPECT_EQ(runInterpreter(src), expected);
     EXPECT_EQ(runStackVM(src), expected);
@@ -575,22 +583,23 @@ TEST(AuditBatch1CloseUpvalue, WhileLoopClosureSnapshot) {
 TEST(AuditBatch1CloseUpvalue, IfBlockClosureSnapshot) {
     // 对齐 AuditBugI1_ClosureInBlockCapturingParentVar 模式：
     // 命名函数声明 + g = f 引用赋值 + 额外块触发 OP_CLOSE_UPVALUE
-    std::string src =
-        "fun makeF() {"
-        "  var x = 42;"
-        "  var g = null;"
-        "  if (true) {"
-        "    fun f() { return x; }"
-        "    g = f;"
-        "  }"
-        "  if (true) { var dummy = 0; }"
-        "  return g();"
-        "}"
-        "print(makeF());";
+    std::string src = "fun makeF() {"
+                      "  var x = 42;"
+                      "  var g = null;"
+                      "  if (true) {"
+                      "    fun f() { return x; }"
+                      "    g = f;"
+                      "  }"
+                      "  if (true) { var dummy = 0; }"
+                      "  return g();"
+                      "}"
+                      "print(makeF());";
     std::string expected = "42";
     EXPECT_EQ(runInterpreter(src), expected);
-    // 已知限制：StackVM 直接路径对 if 块内命名函数声明 + 引用赋值存在预存在问题，
-    // g = f 后 g 仍为 null。ForLoop/WhileLoop 已覆盖 OP_CLOSE_UPVALUE 在 StackVM 的正确性。
+    // R103 W1 fix: StackVM 直接路径已通过 OP_GET_LOCAL + OP_CALL_EXPR 支持
+    // `var g = f; g();` 局部闭包变量调用，对齐 IR.cpp CRITICAL-1 fix。
+    // 原"已知限制"已消除，三后端一致。
+    EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runStackVM_IR(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
 }
@@ -661,19 +670,15 @@ TEST(AuditBatch1GcRoot, ContainerGcRootPtrNonNull) {
 
 // ---- 顶层使用 super 报运行时错误 ----
 TEST(AuditBatch1Super, TopLevelSuperRuntimeError) {
-    std::string src =
-        "class A { fun foo() { return 1; } }"
-        "var x = super.foo();";
+    std::string src = "class A { fun foo() { return 1; } }"
+                      "var x = super.foo();";
     auto ri = runInterpreter(src);
     auto rs = runStackVM_IR(src);
     auto rr = runRegVM(src);
     // 三后端都应报运行时错误（不崩溃、不静默通过）
-    EXPECT_NE(ri.find("<runtime:"), std::string::npos)
-        << "T1 Interpreter 应报运行时错误，实际: \"" << ri << "\"";
-    EXPECT_NE(rs.find("<runtime:"), std::string::npos)
-        << "T1 StackVM 应报运行时错误，实际: \"" << rs << "\"";
-    EXPECT_NE(rr.find("<runtime:"), std::string::npos)
-        << "T1 RegVM 应报运行时错误，实际: \"" << rr << "\"";
+    EXPECT_NE(ri.find("<runtime:"), std::string::npos) << "T1 Interpreter 应报运行时错误，实际: \"" << ri << "\"";
+    EXPECT_NE(rs.find("<runtime:"), std::string::npos) << "T1 StackVM 应报运行时错误，实际: \"" << rs << "\"";
+    EXPECT_NE(rr.find("<runtime:"), std::string::npos) << "T1 RegVM 应报运行时错误，实际: \"" << rr << "\"";
 }
 
 // ---- 顶层函数内使用 super 报运行时错误 ----
@@ -681,34 +686,29 @@ TEST(AuditBatch1Super, TopLevelSuperRuntimeError) {
 // currentClassName_/compilingClassName_ 在 visitFunDecl 中不清除）。
 // 此测试验证非类上下文（顶层函数）中使用 super 报运行时错误。
 TEST(AuditBatch1Super, NestedFunctionSuperRuntimeError) {
-    std::string src =
-        "class A { fun foo() { return 1; } }"
-        "fun outer() {"
-        "  return super.foo();"
-        "}"
-        "outer();";
+    std::string src = "class A { fun foo() { return 1; } }"
+                      "fun outer() {"
+                      "  return super.foo();"
+                      "}"
+                      "outer();";
     auto ri = runInterpreter(src);
     auto rs = runStackVM_IR(src);
     auto rr = runRegVM(src);
-    EXPECT_NE(ri.find("<runtime:"), std::string::npos)
-        << "T2 Interpreter 应报运行时错误，实际: \"" << ri << "\"";
-    EXPECT_NE(rs.find("<runtime:"), std::string::npos)
-        << "T2 StackVM 应报运行时错误，实际: \"" << rs << "\"";
-    EXPECT_NE(rr.find("<runtime:"), std::string::npos)
-        << "T2 RegVM 应报运行时错误，实际: \"" << rr << "\"";
+    EXPECT_NE(ri.find("<runtime:"), std::string::npos) << "T2 Interpreter 应报运行时错误，实际: \"" << ri << "\"";
+    EXPECT_NE(rs.find("<runtime:"), std::string::npos) << "T2 StackVM 应报运行时错误，实际: \"" << rs << "\"";
+    EXPECT_NE(rr.find("<runtime:"), std::string::npos) << "T2 RegVM 应报运行时错误，实际: \"" << rr << "\"";
 }
 
 // ---- 方法内直接使用 super 合法（不应报错）----
 TEST(AuditBatch1Super, MethodSuperAllowed) {
-    std::string src =
-        "class Base {"
-        "  fun greet() { return \"base\"; }"
-        "}"
-        "class Sub extends Base {"
-        "  fun greet() { return \"sub-\" + super.greet(); }"
-        "}"
-        "var s = Sub();"
-        "print(s.greet());";
+    std::string src = "class Base {"
+                      "  fun greet() { return \"base\"; }"
+                      "}"
+                      "class Sub extends Base {"
+                      "  fun greet() { return \"sub-\" + super.greet(); }"
+                      "}"
+                      "var s = Sub();"
+                      "print(s.greet());";
     EXPECT_EQ(runStackVM_IR(src), "sub-base");
     EXPECT_EQ(runRegVM(src), "sub-base");
 }
@@ -731,7 +731,7 @@ TEST(AuditBatch1OptIR, EmptyIRNoCrash) {
     ir.globalNames.clear();
     // BUG-IR-OPT-AUDIT-6 fix: optimizeIR 入口应防御性检查空 IR
     bool changed = optimizeIR(ir, false, false, false, false);
-    EXPECT_FALSE(changed);  // 空 IR 无可优化
+    EXPECT_FALSE(changed); // 空 IR 无可优化
 }
 
 // ---- 全部 pass 启用时不崩溃 ----
@@ -752,7 +752,7 @@ TEST(AuditBatch1OptIR, CSEWithoutDCEAutoDisabled) {
     ir.name = "cseNoDce";
     // enableCSE=true, enableDCE=false → CSE 应被自动禁用，不产生修改
     bool changed = optimizeIR(ir, false, false, true, false);
-    EXPECT_FALSE(changed);  // CSE 被禁用，无可优化
+    EXPECT_FALSE(changed); // CSE 被禁用，无可优化
 }
 
 // ---- 最小 IR（单 basic block + RETURN_NULL）不崩溃 ----
@@ -766,6 +766,6 @@ TEST(AuditBatch1OptIR, MinimalIRNoCrash) {
     bb.instructions.push_back(IRInstruction(IROp::RETURN_NULL, {}));
     ir.blocks.push_back(std::move(bb));
     bool changed = optimizeIR(ir, true, true, true, true);
-    (void)changed;  // 仅验证不崩溃
+    (void)changed; // 仅验证不崩溃
     SUCCEED();
 }

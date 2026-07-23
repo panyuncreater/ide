@@ -52,6 +52,15 @@ public:
     virtual void visitExportStmt(ExportStmt& node) = 0;
     // C5 fix: 插值字符串节点
     virtual void visitInterpolatedString(InterpolatedString& node) = 0;
+    // R98 元组与解构：元组字面量与解构绑定
+    virtual void visitTupleLiteral(TupleLiteral& node) = 0;
+    virtual void visitDestructureBinding(DestructureBinding& node) = 0;
+    // R99 枚举与 ADT + match：enum 声明 / variant 构造 / match 表达式
+    virtual void visitEnumDecl(EnumDecl& node) = 0;
+    virtual void visitEnumVariantExpr(EnumVariantExpr& node) = 0;
+    virtual void visitMatchExpr(MatchExpr& node) = 0;
+    // R164 协程/生成器：yield 表达式
+    virtual void visitYieldExpr(YieldExpr& node) = 0;
 };
 
 // ============================================================
@@ -106,4 +115,10 @@ public:
     void visitImportStmt(ImportStmt& node) override { defaultVisit(node); }
     void visitExportStmt(ExportStmt& node) override { defaultVisit(node); }
     void visitInterpolatedString(InterpolatedString& node) override { defaultVisit(node); }
+    void visitTupleLiteral(TupleLiteral& node) override { defaultVisit(node); }
+    void visitDestructureBinding(DestructureBinding& node) override { defaultVisit(node); }
+    void visitEnumDecl(EnumDecl& node) override { defaultVisit(node); }
+    void visitEnumVariantExpr(EnumVariantExpr& node) override { defaultVisit(node); }
+    void visitMatchExpr(MatchExpr& node) override { defaultVisit(node); }
+    void visitYieldExpr(YieldExpr& node) override { defaultVisit(node); }
 };

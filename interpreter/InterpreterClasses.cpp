@@ -4,6 +4,7 @@
 // S6 fix: 从 Interpreter.cpp 拆分，降低单文件复杂度。
 // ============================================================
 
+#include "common/ErrorMessages.h" // R161 fix: 三后端共享错误消息常量
 #include "interpreter/Interpreter.h"
 #include "interpreter/StringIntern.h" // PERF-05 fix: 方法标记字符串驻留
 
@@ -17,14 +18,15 @@ void Interpreter::visitClassDecl(ClassDecl& node) {
     cls.name = node.name;
     cls.superClassName = node.superClassName;
     cls.closureEnv = currentEnv_; // O5: 捕获类定义时的环境（闭包）
+    // R163 泛型扩展：记录类的类型参数，供 invokeMethod 合并类泛型 + 方法泛型参数
+    cls.typeParams = node.typeParams;
     // 不再存储 superClass 裸指针，运行时通过 superClassName 查找
 
     // 如果有父类，验证父类是否已定义
     if (!node.superClassName.empty()) {
-        auto it = classRegistry_.find(node.superClassName);
-        if (it == classRegistry_.end()) {
-            runtimeError("未定义的父类: " + node.superClassName, node.line, node.column);
-        }
+        // R97 #10 fix: 用 lookupClassSafely 替代 find + end() + runtimeError 三步模式
+        // （引用必须保留以触发查找副作用，否则编译器可能优化掉导致父类未定义检查被跳过）
+        (void)lookupClassSafely(node.superClassName, "未定义的父类: " + node.superClassName, node.line, node.column);
     }
 
     // 注册类名到环境
@@ -112,10 +114,10 @@ void Interpreter::visitMemberAccess(MemberAccess& node) {
         runtimeError("类 " + objC.className() + " 没有字段或方法 '" + node.fieldName + "'", node.line, node.column);
     }
 
-    // 字典的成员访问（同索引访问）
+    // 字典的成员访问（同索引访问，键为 string 类型字段名）
     if (objC.isDict()) {
         const auto& dict = objC.dictVal();
-        auto it = dict.find(node.fieldName);
+        auto it = dict.find(Value::DictKey{node.fieldName});
         if (it != dict.end()) {
             lastValue_ = it->second;
             return;
@@ -124,7 +126,7 @@ void Interpreter::visitMemberAccess(MemberAccess& node) {
         return;
     }
 
-    runtimeError("该类型不支持成员访问", node.line, node.column);
+    runtimeError(ErrorMessages::kTypeNotMemberAccessible, node.line, node.column);
 }
 
 void Interpreter::visitMemberAssign(MemberAssign& node) {

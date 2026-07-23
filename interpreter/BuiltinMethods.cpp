@@ -9,14 +9,18 @@
 // 自行将 Result<Value>::is_err() 转换为 RuntimeError 抛出（通过 to_runtime_error()）。
 
 #include "interpreter/BuiltinMethods.h"
+#include "common/ErrorFormat.h"       // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
+#include "common/ErrorMessages.h"     // R97 #1: 三后端共享错误消息常量
 #include "common/RuntimeLimits.h"     // S1 fix: MAX_RANGE 统一定义
 #include "common/Utf8Utils.h"         // P0-4 fix: UTF-8 码位工具
-#include "interpreter/ErrorFormat.h"  // P3 fix: runtimeErrorFmt 替代 std::to_string 拼接
 #include "interpreter/NumericUtils.h" // BUG9 fix: 溢出检查
+#include "interpreter/SimdUtils.h"    // R134: SIMD 向量化内核
+#include <chrono>                     // R136 channel.tryRecv 超时
 #include <cctype>
 #include <charconv>
 #include <cstdint>
 #include <string>
+#include <thread> // R136: spawn 子线程
 #include <unordered_set>
 
 // ============================================================
@@ -158,9 +162,14 @@ Result<Value> executeSharedDictHas(const Value& dict, const std::string& method,
     if (argCount != 1) {
         return Result<Value>::err(method + " 期望 1 个参数(键)", line, column);
     }
+    // L4 fix: 字典键支持 string/int/bool/float
+    auto dk = Value::dictKeyFromValue(args[0]);
+    if (!dk) {
+        return Result<Value>::err(ErrorMessages::kDictKeyInvalidType, line, column);
+    }
     // Perf-Finding: 缓存 find 迭代器，避免 dictVal() 二次调用与同键二次 hash 查找
     const auto& entries = dict.dictVal();
-    auto it = entries.find(args[0].toString());
+    auto it = entries.find(*dk);
     return Result<Value>::ok(Value(it != entries.end()));
 }
 
@@ -373,7 +382,8 @@ Result<Value> executeSharedDictKeys(const Value& dict, const Value* args, size_t
     std::vector<Value> keys;
     keys.reserve(entries.size());
     for (const auto& kv : entries) {
-        keys.emplace_back(Value(kv.first));
+        // L4 fix: kv.first 是 DictKey variant，转换回 Value
+        keys.emplace_back(Value::dictKeyToValue(kv.first));
     }
     return Result<Value>::ok(Value(std::move(keys)));
 }
@@ -395,9 +405,13 @@ Result<Value> executeSharedDictGet(const Value& dict, const Value* args, size_t 
         return Result<Value>::err(ErrorFormat::format("get 期望 1-2 个参数(键[, 默认值])，但传入了 %zu 个", argCount),
                                   line, column);
     }
+    // L4 fix: 字典键支持 string/int/bool/float
+    auto dk = Value::dictKeyFromValue(args[0]);
+    if (!dk) {
+        return Result<Value>::err(ErrorMessages::kDictKeyInvalidType, line, column);
+    }
     const auto& entries = dict.dictVal();
-    std::string key = args[0].toString();
-    auto it = entries.find(key);
+    auto it = entries.find(*dk);
     if (it != entries.end()) {
         return Result<Value>::ok(it->second);
     } else if (argCount == 2) {
@@ -439,8 +453,16 @@ Result<Value> executeSharedArrayJoin(const Value& arr, const Value* args, size_t
 bool isBuiltinFunction(const std::string& name) {
     // C7 fix: 用 unordered_set 实现 O(1) 查找，替代每次调用 9 次字符串比较
     static const std::unordered_set<std::string> builtinNames = {"len", "type", "str",   "int", "abs",
-                                                                 "min", "max",  "range", "sum"};
+                                                                 "min", "max",  "range", "sum",
+                                                                 // R136 并发原语构造函数
+                                                                 "channel", "mutex", "rwlock"};
     return builtinNames.count(name) > 0;
+}
+
+// R136 并发原语构造函数判断（与 isBuiltinFunction 分离，因 spawn 走独立路径）
+bool isConcurrencyBuiltin(const std::string& name) {
+    static const std::unordered_set<std::string> names = {"channel", "mutex", "rwlock"};
+    return names.count(name) > 0;
 }
 
 // ============================================================
@@ -623,6 +645,12 @@ Result<Value> executeBuiltinRange(const Value* args, size_t argCount, int line, 
 /// sum(arr): 对数组元素求和。
 /// 先判断数组是否全为 int：全 int 时做整数累加（addOverflow 溢出检查，溢出 err）；
 /// 否则转 double 累加，遇到非数值元素返回 err。返回 int 或 double。
+///
+/// R134 SIMD 快速路径：当数组元素数 >= SIMD_MIN_ELEMENTS (16) 且 CPU 支持 AVX2 时，
+/// 跳过逐元素 OverflowCheck 分支，改为分块累加（每块 256 元素，块内不可能溢出
+/// 因为 256 * (2^47-1) ≈ 2^55 < 2^63），仅块间做溢出检查。块内使用 AVX2 4 路并行
+/// 加法，吞吐量约 4x。整型路径还会用 decodeInt48Batch 批量解码 NaN-boxed int48
+/// 到连续 int64_t[]，避免每元素 isInt() + 符号扩展分支。
 Result<Value> executeBuiltinSum(const Value* args, size_t argCount, int line, int column) {
     if (auto r = checkExact("sum", argCount, 1, line, column); r.is_err())
         return r;
@@ -639,6 +667,27 @@ Result<Value> executeBuiltinSum(const Value* args, size_t argCount, int line, in
         }
     }
     if (allInt) {
+        // R134 SIMD 快速路径：分块累加 + AVX2 4 路并行
+        if (arr.size() >= minilang::simd::SIMD_MIN_ELEMENTS && minilang::simd::hasAvx2Support()) {
+            // 分块大小：256 * (2^47-1) ≈ 2^55 < 2^63，单块累加不可能溢出 int64
+            constexpr size_t CHUNK_SIZE = 256;
+            // 解码缓冲区：用 memcpy 提取 NaN-boxed bits，再批量解码
+            std::vector<int64_t> buffer(arr.size());
+            for (size_t i = 0; i < arr.size(); ++i) {
+                buffer[i] = arr[i].intVal();
+            }
+            int64_t total = 0;
+            for (size_t i = 0; i < arr.size(); i += CHUNK_SIZE) {
+                size_t chunkLen = std::min(CHUNK_SIZE, arr.size() - i);
+                int64_t chunkSum = minilang::simd::simdSumInt64(buffer.data() + i, chunkLen);
+                if (OverflowCheck::addOverflow(total, chunkSum)) {
+                    return Result<Value>::err("sum 整数累加溢出", line, column);
+                }
+                total += chunkSum;
+            }
+            return Result<Value>::ok(Value(total));
+        }
+        // 标量回退路径：逐元素累加 + 溢出检查
         int64_t total = 0;
         for (const auto& elem : arr) {
             if (OverflowCheck::addOverflow(total, elem.intVal())) {
@@ -648,6 +697,23 @@ Result<Value> executeBuiltinSum(const Value* args, size_t argCount, int line, in
         }
         return Result<Value>::ok(Value(total));
     } else {
+        // R134 SIMD 快速路径：double 累加（无需溢出检查）
+        if (arr.size() >= minilang::simd::SIMD_MIN_ELEMENTS && minilang::simd::hasAvx2Support()) {
+            bool allNumber = true;
+            std::vector<double> buffer(arr.size());
+            for (size_t i = 0; i < arr.size(); ++i) {
+                if (!arr[i].isNumber()) {
+                    allNumber = false;
+                    break;
+                }
+                buffer[i] = arr[i].toDouble();
+            }
+            if (allNumber) {
+                double total = minilang::simd::simdSumDouble(buffer.data(), buffer.size());
+                return Result<Value>::ok(Value(total));
+            }
+            // 混合类型：回退到标量路径报告错误
+        }
         double total = 0.0;
         for (const auto& elem : arr) {
             if (elem.isNumber()) {
@@ -660,12 +726,38 @@ Result<Value> executeBuiltinSum(const Value* args, size_t argCount, int line, in
     }
 }
 
+// ---- R136 channel()/mutex()/rwlock() 构造函数 ----
+/// channel(): 创建无缓冲消息通道。无参数。
+Result<Value> executeBuiltinChannel(const Value* /*args*/, size_t argCount, int line, int column) {
+    if (auto r = checkExact("channel", argCount, 0, line, column); r.is_err())
+        return r;
+    return Result<Value>::ok(Value::makeChannel());
+}
+
+/// mutex(): 创建互斥锁。无参数。
+Result<Value> executeBuiltinMutex(const Value* /*args*/, size_t argCount, int line, int column) {
+    if (auto r = checkExact("mutex", argCount, 0, line, column); r.is_err())
+        return r;
+    return Result<Value>::ok(Value::makeMutex());
+}
+
+/// rwlock(): 创建读写锁。无参数。
+Result<Value> executeBuiltinRwlock(const Value* /*args*/, size_t argCount, int line, int column) {
+    if (auto r = checkExact("rwlock", argCount, 0, line, column); r.is_err())
+        return r;
+    return Result<Value>::ok(Value::makeRwLock());
+}
+
 /// 顶层内置函数注册表（延迟初始化，thread-safe since C++11）
 const std::unordered_map<std::string, SharedBuiltinFn>& builtinFunctionRegistry() {
     static const std::unordered_map<std::string, SharedBuiltinFn> registry = {
         {"len", executeBuiltinLen}, {"type", executeBuiltinType},   {"str", executeBuiltinStr},
         {"int", executeBuiltinInt}, {"abs", executeBuiltinAbs},     {"min", executeBuiltinMin},
         {"max", executeBuiltinMax}, {"range", executeBuiltinRange}, {"sum", executeBuiltinSum},
+        // R136 并发原语构造函数
+        {"channel", executeBuiltinChannel},
+        {"mutex", executeBuiltinMutex},
+        {"rwlock", executeBuiltinRwlock},
     };
     return registry;
 }
@@ -714,6 +806,326 @@ Result<Value> executeSharedInput(const std::function<std::string(const std::stri
         // 让程序能感知中断而非拿到空串继续执行
         return Result<Value>::err(e.what(), line, column);
     }
+}
+
+// ============================================================
+// R98 W2: 高阶函数共享实现（map / filter / reduce / forEach / find）
+// ============================================================
+// 算法逻辑三后端共享，闭包调用通过 ClosureInvoker 回调注入。
+// 各后端在 dispatch point（visitFunCall / OP_CALL / executeCallImpl）拦截
+// 这 5 个名字，构造 ClosureInvoker 后调用本层函数。
+
+bool isHigherOrderBuiltin(const std::string& name) {
+    static const std::unordered_set<std::string> names = {"map", "filter", "reduce", "forEach", "find"};
+    return names.count(name) > 0;
+}
+
+Result<Value> executeSharedMap(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line,
+                               int column) {
+    if (!arr.isArray()) {
+        return Result<Value>::err("map 第 1 个参数必须是数组", line, column);
+    }
+    if (!closure.isClosure()) {
+        return Result<Value>::err("map 第 2 个参数必须是函数", line, column);
+    }
+    std::vector<Value> result;
+    result.reserve(arr.arrayVal().size());
+    for (const auto& elem : arr.arrayVal()) {
+        Value arg = elem; // copy（invoke 接收 const Value*，需稳定地址）
+        auto r = invoke(closure, &arg, 1, line, column);
+        if (r.is_err()) {
+            return r;
+        }
+        result.push_back(std::move(r.value()));
+    }
+    return Result<Value>::ok(Value(std::move(result)));
+}
+
+Result<Value> executeSharedFilter(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line,
+                                  int column) {
+    if (!arr.isArray()) {
+        return Result<Value>::err("filter 第 1 个参数必须是数组", line, column);
+    }
+    if (!closure.isClosure()) {
+        return Result<Value>::err("filter 第 2 个参数必须是函数", line, column);
+    }
+    std::vector<Value> result;
+    for (const auto& elem : arr.arrayVal()) {
+        Value arg = elem;
+        auto r = invoke(closure, &arg, 1, line, column);
+        if (r.is_err()) {
+            return r;
+        }
+        if (r.value().isTruthy()) {
+            result.push_back(elem);
+        }
+    }
+    return Result<Value>::ok(Value(std::move(result)));
+}
+
+Result<Value> executeSharedReduce(const Value& arr, const Value& closure, const Value& initial,
+                                  const ClosureInvoker& invoke, int line, int column) {
+    if (!arr.isArray()) {
+        return Result<Value>::err("reduce 第 1 个参数必须是数组", line, column);
+    }
+    if (!closure.isClosure()) {
+        return Result<Value>::err("reduce 第 2 个参数必须是函数", line, column);
+    }
+    Value accumulator = initial;
+    for (const auto& elem : arr.arrayVal()) {
+        Value args[2] = {accumulator, elem};
+        auto r = invoke(closure, args, 2, line, column);
+        if (r.is_err()) {
+            return r;
+        }
+        accumulator = std::move(r.value());
+    }
+    return Result<Value>::ok(std::move(accumulator));
+}
+
+Result<Value> executeSharedForEach(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line,
+                                   int column) {
+    if (!arr.isArray()) {
+        return Result<Value>::err("forEach 第 1 个参数必须是数组", line, column);
+    }
+    if (!closure.isClosure()) {
+        return Result<Value>::err("forEach 第 2 个参数必须是函数", line, column);
+    }
+    for (const auto& elem : arr.arrayVal()) {
+        Value arg = elem;
+        auto r = invoke(closure, &arg, 1, line, column);
+        if (r.is_err()) {
+            return r;
+        }
+        // forEach 忽略闭包返回值
+    }
+    return Result<Value>::ok(Value::nullValue());
+}
+
+Result<Value> executeSharedFind(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line,
+                                int column) {
+    if (!arr.isArray()) {
+        return Result<Value>::err("find 第 1 个参数必须是数组", line, column);
+    }
+    if (!closure.isClosure()) {
+        return Result<Value>::err("find 第 2 个参数必须是函数", line, column);
+    }
+    for (const auto& elem : arr.arrayVal()) {
+        Value arg = elem;
+        auto r = invoke(closure, &arg, 1, line, column);
+        if (r.is_err()) {
+            return r;
+        }
+        if (r.value().isTruthy()) {
+            return Result<Value>::ok(elem);
+        }
+    }
+    return Result<Value>::ok(Value::nullValue());
+}
+
+// ============================================================
+// R136 线程与并发原语：同步对象方法分发 + spawn 实现
+// ============================================================
+
+BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj, const std::vector<Value>& args,
+                                            int line, int col) {
+    // ---- Channel 方法 ----
+    if (obj.isChannel()) {
+        auto inner = obj.channelInner();
+        if (method == "send") {
+            if (args.size() != 1) {
+                throw RuntimeError("channel.send 期望 1 个参数，但传入了 " + std::to_string(args.size()) + " 个",
+                                   line, col);
+            }
+            std::unique_lock<std::mutex> lock(inner->mu);
+            if (inner->closed) {
+                throw RuntimeError("channel.send: 通道已关闭", line, col);
+            }
+            inner->queue.push(args[0]);
+            inner->cv.notify_one();
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "recv") {
+            if (!args.empty()) {
+                throw RuntimeError("channel.recv 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个",
+                                   line, col);
+            }
+            std::unique_lock<std::mutex> lock(inner->mu);
+            inner->cv.wait(lock, [&] { return !inner->queue.empty() || inner->closed; });
+            if (inner->queue.empty()) {
+                // 通道已关闭且无消息
+                return BuiltinMethodResult(Value::nullValue(), false);
+            }
+            Value v = std::move(inner->queue.front());
+            inner->queue.pop();
+            return BuiltinMethodResult(std::move(v), false);
+        }
+        if (method == "tryRecv") {
+            if (!args.empty()) {
+                throw RuntimeError("channel.tryRecv 期望 0 个参数", line, col);
+            }
+            std::unique_lock<std::mutex> lock(inner->mu);
+            if (inner->queue.empty()) {
+                return BuiltinMethodResult(Value::nullValue(), false);
+            }
+            Value v = std::move(inner->queue.front());
+            inner->queue.pop();
+            return BuiltinMethodResult(std::move(v), false);
+        }
+        if (method == "close") {
+            if (!args.empty()) {
+                throw RuntimeError("channel.close 期望 0 个参数", line, col);
+            }
+            std::unique_lock<std::mutex> lock(inner->mu);
+            inner->closed = true;
+            inner->cv.notify_all(); // 唤醒所有等待的 recv
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        throw RuntimeError("channel 不支持方法 " + method, line, col);
+    }
+
+    // ---- Mutex 方法 ----
+    if (obj.isMutex()) {
+        auto inner = obj.mutexInner();
+        if (method == "lock") {
+            inner->lock();
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "unlock") {
+            inner->unlock();
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "tryLock") {
+            bool acquired = inner->try_lock();
+            return BuiltinMethodResult(Value(acquired), false);
+        }
+        throw RuntimeError("mutex 不支持方法 " + method, line, col);
+    }
+
+    // ---- RwLock 方法 ----
+    if (obj.isRwLock()) {
+        auto inner = obj.rwlockInner();
+        if (method == "readLock") {
+            inner->lock_shared();
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "readUnlock") {
+            inner->unlock_shared();
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "writeLock") {
+            inner->lock();
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "writeUnlock") {
+            inner->unlock();
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "tryReadLock") {
+            bool acquired = inner->try_lock_shared();
+            return BuiltinMethodResult(Value(acquired), false);
+        }
+        if (method == "tryWriteLock") {
+            bool acquired = inner->try_lock();
+            return BuiltinMethodResult(Value(acquired), false);
+        }
+        throw RuntimeError("rwlock 不支持方法 " + method, line, col);
+    }
+
+    // ---- Thread 方法 ----
+    // R136 fix: 延迟执行模式——join() 时在主线程同步执行 pending 闭包
+    if (obj.isThread()) {
+        auto inner = obj.threadInner();
+        if (method == "join") {
+            std::unique_lock<std::mutex> lock(inner->stateMu);
+            if (inner->joined) {
+                throw RuntimeError("thread.join: 线程已 join", line, col);
+            }
+            if (inner->detached) {
+                throw RuntimeError("thread.join: 线程已 detach，无法 join", line, col);
+            }
+            // R136 fix: 延迟执行——主线程同步调用 invoker 执行 pending 闭包
+            if (inner->hasPending) {
+                auto invoker = std::static_pointer_cast<ClosureInvoker>(inner->pendingInvoker);
+                Value closure = inner->pendingClosure;
+                std::vector<Value> argsCopy = inner->pendingArgs; // 拷贝避免持锁访问
+                int spLine = inner->spawnLine;
+                int spCol = inner->spawnCol;
+                lock.unlock(); // 释放锁，invoker 内部可能调用 VM（不再有并发）
+                auto r = (*invoker)(closure, argsCopy.data(), argsCopy.size(), spLine, spCol);
+                lock.lock();
+                inner->joined = true;
+                inner->hasPending = false;
+                inner->pendingClosure = Value::nullValue();
+                inner->pendingArgs.clear();
+                inner->pendingInvoker.reset();
+                if (r.is_err()) {
+                    throw RuntimeError(r.error().message);
+                }
+            } else if (inner->thr.joinable()) {
+                // 兼容路径：若 thr 实际有线程（未来扩展），正常 join
+                lock.unlock();
+                inner->thr.join();
+                lock.lock();
+                inner->joined = true;
+            }
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "detach") {
+            std::unique_lock<std::mutex> lock(inner->stateMu);
+            if (inner->joined) {
+                throw RuntimeError("thread.detach: 线程已 join", line, col);
+            }
+            if (inner->detached) {
+                throw RuntimeError("thread.detach: 线程已 detach", line, col);
+            }
+            // R136 fix: 延迟执行模式下 detach 丢弃 pending 闭包
+            if (inner->hasPending) {
+                inner->hasPending = false;
+                inner->pendingClosure = Value::nullValue();
+                inner->pendingArgs.clear();
+                inner->pendingInvoker.reset();
+                inner->detached = true;
+            } else if (inner->thr.joinable()) {
+                inner->thr.detach();
+                inner->detached = true;
+            }
+            return BuiltinMethodResult(Value::nullValue(), false);
+        }
+        if (method == "isJoinable") {
+            std::unique_lock<std::mutex> lock(inner->stateMu);
+            // R136 fix: hasPending 或 thr.joinable() 都算 joinable
+            bool joinable = (inner->hasPending || (inner->thr.joinable())) && !inner->joined && !inner->detached;
+            return BuiltinMethodResult(Value(joinable), false);
+        }
+        throw RuntimeError("thread 不支持方法 " + method, line, col);
+    }
+
+    throw RuntimeError("类型 " + obj.typeName() + " 不支持同步对象方法 " + method, line, col);
+}
+
+/// R136 spawn(fn, args...) 共享层入口
+/// R136 fix: 延迟执行模式——不启动子线程，闭包与参数存入 ThreadInner 的 pending 字段。
+/// join() 时由主线程同步执行闭包（调用 invoker）。
+/// 原实现启动子线程并发执行 invokeClosureSync，但 VM/Interpreter 的 frames_/stack_/
+/// callStack_/currentEnv_ 非线程安全，子线程修改这些共享状态会破坏主线程执行，
+/// 导致栈溢出/无限循环/UAF（spawnMutex_ 只序列化子线程调用，未序列化主线程 VM 执行）。
+/// 延迟执行模式保持 API 语义（spawn 返回 Thread，join 等待完成），但无数据竞争。
+Result<Value> executeSharedSpawn(const Value& closure, const Value* args, size_t argCount,
+                                  const ClosureInvoker& invoker, int line, int column) {
+    if (!closure.isClosure()) {
+        return Result<Value>::err("spawn 第 1 个参数必须是函数", line, column);
+    }
+    Value threadVal = Value::makeThread();
+    auto inner = threadVal.threadInner();
+    inner->pendingClosure = closure;
+    inner->pendingArgs.assign(args, args + argCount);
+    // shared_ptr<ClosureInvoker> 隐式转换为 shared_ptr<void>（类型擦除）
+    inner->pendingInvoker = std::make_shared<ClosureInvoker>(invoker);
+    inner->spawnLine = line;
+    inner->spawnCol = column;
+    inner->hasPending = true;
+    return Result<Value>::ok(threadVal);
 }
 
 // ============================================================
@@ -852,13 +1264,21 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(const std::string& method, 
     if (method == "remove") {
         if (args.size() != 1)
             throw RuntimeError("remove 期望 1 个参数(键)", line, col);
-        obj.dictVal().erase(args[0].toString());
+        // L4 fix: 字典键支持 string/int/bool/float
+        auto dk = Value::dictKeyFromValue(args[0]);
+        if (!dk)
+            throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col);
+        obj.dictVal().erase(*dk);
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
     if (method == "set") {
         if (args.size() != 2)
             throw RuntimeError("set 期望 2 个参数(键, 值)", line, col);
-        obj.dictVal()[args[0].toString()] = args[1];
+        // L4 fix: 字典键支持 string/int/bool/float
+        auto dk = Value::dictKeyFromValue(args[0]);
+        if (!dk)
+            throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col);
+        obj.dictVal()[*dk] = args[1];
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
 

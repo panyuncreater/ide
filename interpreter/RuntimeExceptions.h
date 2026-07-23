@@ -65,6 +65,16 @@ public:
     ThrowException(Value val) : std::runtime_error("throw"), thrownValue(std::move(val)) {}
 };
 
+/// R164 协程/生成器：yield 信号异常（重放模式下从函数体抛出，被 .next() 拦截）
+/// 语义：visitYieldExpr 在命中目标 yieldId 时抛出，携带 yield 表达式的值。
+/// .next() 调用方捕获此异常，递增 currentYieldId 并返回值。
+class YieldSignal : public std::runtime_error {
+public:
+    Value yieldValue;
+
+    explicit YieldSignal(Value val) : std::runtime_error("yield"), yieldValue(std::move(val)) {}
+};
+
 /// 调试终止异常（用户点击停止按钮时抛出）
 class DebugStopException : public std::exception {
 public:

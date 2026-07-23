@@ -74,6 +74,7 @@
 #include <string>
 #include <unordered_map> // perf3 fix: addGlobal/addConstant hash 侧表
 #include <unordered_set>
+#include <utility> // R110: std::pair for emitMatchPattern 返回类型
 #include <vector>
 
 // ============================================================
@@ -163,14 +164,32 @@ enum class IROp : uint8_t {
     RETURN,      // return src                  operands: [src_vreg]
     RETURN_NULL, // return null（隐式返回）
 
+    // R164 协程/生成器：yield 表达式
+    // operands: [dest_vreg, src_vreg]  dest = yield 表达式结果（重放模式下 = src）
+    // 重放模式：若当前 yield 命中目标 yieldId，VM 抛出 VMYieldSignal 返回 src 值；
+    //           否则 dest = src，继续执行函数体。
+    YIELD,
+
     // ---- 闭包 ----
     MAKE_CLOSURE, // dest = closure(name, upvalues)  operands: [dest, name_idx, uv_count, uv1_isLocal, uv1_idx, ...]
 
     // ---- 容器 ----
     BUILD_ARRAY, // dest = [args...]            operands: [dest, count, arg1, arg2, ...]
     BUILD_DICT,  // dest = {k1:v1, k2:v2, ...}  operands: [dest, pair_count, k1, v1, k2, v2, ...]
+    BUILD_TUPLE, // R98 元组与解构：dest = (args...)  operands: [dest, count, arg1, arg2, ...] (immutable)
     INDEX_GET,   // dest = obj[idx]             operands: [dest, obj_vreg, idx_vreg]
     INDEX_SET,   // obj[idx] = val              operands: [obj_vreg, idx_vreg, val_vreg]
+
+    // R99 枚举与 ADT + match
+    // 构造 enum variant：dest = EnumName.VariantName(arg1, arg2, ...)
+    // operands: [dest, enumNameConstIdx, variantNameConstIdx, arg_count, arg1, arg2, ...]
+    BUILD_ENUM_VARIANT,
+    // 检查 scrutinee 是否为指定 enum variant：dest_bool = (scrut is EnumName.VariantName)
+    // operands: [dest_bool, scrut_vreg, enumNameConstIdx, variantNameConstIdx]
+    ENUM_VARIANT_NAME,
+    // 取 enum variant 字段：dest = scrutinee.fields[idx]
+    // operands: [dest, scrut_vreg, idx_imm]
+    ENUM_VARIANT_FIELD,
 
     // ---- 成员访问 ----
     MEMBER_GET,       // dest = obj.field            operands: [dest, obj_vreg, field_idx]
@@ -218,6 +237,17 @@ enum class IROp : uint8_t {
     // AUDIT-P1.1 fix: break/continue finally 续跳机制
     PUSH_JUMP_TARGET, // push 跳转目标到 pendingJumpStack_  operands: [label_idx]
     FINALLY_END,      // 从 pendingJumpStack_ pop 目标并跳转；栈空则继续执行
+
+    // R134 模式匹配扩展：获取容器长度（与 OP_LEN 对应）。
+    // operands: [dest_vreg, src_vreg]  dest = len(src)
+    // 支持 array/dict/string/tuple（与 StackVM OP_LEN 三后端一致）。
+    // 用于 TUPLE pattern 编译期元素数检查。
+    LEN,
+    // R134 模式匹配扩展：软类型测试（与 OP_TYPE_TEST 对应）。
+    // operands: [dest_vreg, src_vreg, type_const_idx]  dest = typeMatch(src, annotation)
+    // 与 IROp::TYPE_CHECK 区别：不抛错，写 bool 到 dest。
+    // 用于 TUPLE pattern 类型检查（不匹配时 fall through 而非抛错）。
+    TYPE_TEST,
 };
 
 /// IR 指令
@@ -264,6 +294,26 @@ struct IRFunction {
     // 由 AstIRBuilder 在分配 LOCAL slot 时增量维护，函数最终化时复制到 ir_->localSlotNames。
     // 限制：槽位复用（兄弟作用域）时后声明的变量名覆盖先前的，属于已知限制。
     std::vector<std::string> localSlotNames;
+    // L1 fix（2026-07-19）: 基于 IR 指令范围的 slot→name 反查表，解决兄弟作用域槽位
+    // 复用导致的变量名错位。startInstr/endInstr 是 IR 指令展平序号（跨基本块）。
+    // BytecodeIRBackend/RegisterBytecodeBackend lowering 时通过 irToBytecodeOffset_
+    // 映射翻译为字节码 IP 范围，填入 chunk_->slotNameRanges。
+    struct SlotNameRange {
+        uint32_t slot = 0;
+        std::string name;
+        size_t startInstr = 0;
+        size_t endInstr = 0; // 0 表示未关闭（函数级变量，fallback 到 localSlotNames）
+    };
+    std::vector<SlotNameRange> slotNameRanges;
+
+    // R164 协程/生成器：标记此函数为生成器（fun* 声明）。
+    // 后端 lowering 时复制到 BytecodeChunk::isGenerator / RegBytecodeChunk::isGenerator。
+    // VM/RegisterVM 在 CALL 时检测此标志：若为 true，创建协程值而非直接调用。
+    bool isGenerator = false;
+    // R164 协程/生成器：yield 总数（从 FunDecl.yieldCount 复制）。
+    // 静态 yield 数或 kDynamicYieldCount（INT_MAX，表示存在循环内 yield）。
+    int yieldCount = 0;
+    static constexpr int kDynamicYieldCount = 2147483647; // INT_MAX
 
     /// 分配虚拟寄存器
     IROperand allocVReg() { return IROperand::vreg(nextVReg++); }
@@ -431,6 +481,10 @@ public:
     void setModuleLoader(std::function<std::string(const std::string&)> loader) { moduleLoader_ = std::move(loader); }
     std::vector<std::unique_ptr<Block>> takeModuleAsts() { return std::move(moduleAsts_); }
 
+    /// R99 enum 校验：返回 build() 期间收集的 enum 元信息（编译期→运行时传递）。
+    /// Compiler 在 compileViaIR/compileViaRegisterIR 中调用并写入 CompileResult.enumInfos。
+    std::vector<VMEnumInfo> takeEnumInfos() { return std::move(enumInfos_); }
+
 private:
     std::unique_ptr<IRFunction> ir_;
     IRBasicBlock* currentBlock_ = nullptr; // 当前基本块（指令追加目标）
@@ -448,10 +502,24 @@ private:
     std::unordered_map<std::string, std::string> varTypes_; // 2026-06-29: 变量名→类型注解
     bool inFunction_ = false;
     std::string currentFunctionReturnType_; // BUG-TYPE-1 fix: 当前函数返回类型注解
+    std::vector<std::string>
+        currentTypeParams_; // R163 泛型扩展：当前函数/方法的类型参数（empty=非泛型），用于 emitTypeCheckIR 擦除
+    // R109 TCO: 当前函数 TCO 状态。emitFunctionPrologue/visitFunDecl 设置，
+    // visitReturnStmt 据此判断 return f(args) 是否可优化为"参数赋值 + JUMP 函数入口 label"。
+    // 不变量：三字段由 CompileContext 统一保存/恢复，嵌套函数编译后外层状态复原。
+    std::string currentFunctionName_;              // TCO: 当前函数名（空表示非函数体）
+    const FunDecl* currentFunctionDecl_ = nullptr; // TCO: 当前函数 FunDecl 指针（非拥有，AST 生命周期内有效）
+    uint32_t currentFunctionEntryLabel_ = 0;       // TCO: 当前函数体入口 basic block label（JUMP 目标）
+    bool currentFunctionIsMethod_ = false;         // TCO: 当前函数是否为类方法（方法 slot 0 是 this 不能被覆盖）
     uint32_t nextLocalSlot_ = 0;
     // BUG-IDE-12 fix: 局部变量 slot→name 映射（索引即 slot），跨作用域累积（不随块退出清除）。
     // 函数最终化时复制到 ir_->localSlotNames，供 RegisterVM 条件断点求值反查变量名。
     std::vector<std::string> localSlotNames_;
+    // L1 fix（2026-07-19）: 基于 IR 指令范围的 slot→name 映射，解决兄弟作用域槽位复用
+    // 导致的变量名错位。每个 range 记录变量名在 [startInstr, endInstr) 范围内占用 slot。
+    // 函数最终化时复制到 ir_->slotNameRanges，供 BytecodeIRBackend/RegisterBytecodeBackend
+    // lowering 时翻译为字节码 IP 范围填入 chunk_->slotNameRanges。
+    std::vector<IRFunction::SlotNameRange> slotNameRanges_;
     // C-9 fix: 编译类方法时为 true。visitFunDecl 检查此标记，
     // 预留 slot 0 给隐式 this 参数，并将 varMap_["this"] 绑定到 slot 0。
     // 调用方（executeMethodCallImpl/executeClassNewImpl）将 this 作为第一个参数传入。
@@ -459,6 +527,8 @@ private:
     // P1 fix: 当前编译的类名（visitClassDecl 设置，供 super 调用查找父类）。
     // compilingMethod_=true 时有效，编译完类方法后清空。
     std::string compilingClassName_;
+    // R163 泛型扩展：当前编译类的类型参数列表（visitClassDecl 设置，供 emitFunctionBody 合并到 currentTypeParams_）。
+    std::vector<std::string> compilingClassTypeParams_;
     // BUG-IR-VARDECL-1 fix: 已定义的类名集合（visitClassDecl 时填充）。
     // visitVarDecl 无初始化器时检查类型注解是否为类名，若是则自动构造实例，
     // 对齐 Compiler.cpp visitVarDecl L620-626 的 S2 fix 语义。
@@ -479,9 +549,19 @@ private:
             bool hadOld; // varMap_ 中是否已有同名旧条目（无则块退出时删除）
         };
         std::vector<ShadowedVar> shadowedVars;
+        // R164 fixup2: 本块作用域内已声明的变量名集合（含参数，用于同作用域重定义检测）。
+        // 嵌套块各有独立的 declaredNames，允许内块遮蔽外块变量（对齐 Interpreter
+        // tryDefineNew 仅检查当前 Environment 的行为）。
+        std::unordered_set<std::string> declaredNames;
     };
     std::vector<BlockScope> blockScopes_;
     int blockDepth_ = 0; // 当前块嵌套深度（仅在 inFunction_==true 时有效）
+
+    // R164 fixup2: 待注入到函数体块作用域的参数名列表。
+    // visitFunDecl 设置参数后填充，visitBlock 进入函数体块时消费（注入 declaredNames）。
+    // 使 visitVarDecl 能检测参数重定义（如 `fun f(b) { returna b; }` 中 `returna b;`
+    // 被解析为 VarDecl(name="b")，与参数 b 冲突）。
+    std::vector<std::string> pendingFunctionParams_;
 
     // 全局槽位管理（限制3 / B4: 委托给 GlobalSlotAllocator）
     GlobalSlotAllocator globalSlotAllocator_;
@@ -497,9 +577,25 @@ private:
     std::vector<std::unique_ptr<Block>> moduleAsts_;   // 保留模块 AST
     // BUG-AUDIT-MOD-1: 模块导出名称集合（对齐 Compiler::moduleExports_）
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
+    // R99 enum 校验：build() 期间收集的 enum 元信息，takeEnumInfos() 转移给 Compiler。
+    std::vector<VMEnumInfo> enumInfos_;
 
     /// VM-IMPORT: 处理 import 语句（内联编译模块代码到当前 IR）
     void handleImportStmt(ImportStmt& node);
+    /// VM-IMPORT: 路径解析后的下一步动作（resolveImportPath 返回值）
+    enum class ImportPathStatus {
+        kContinue,      // 路径已解析，继续加载模块
+        kAlreadyLoaded, // 模块已加载过（run-once），仅校验具名导入
+        kError,         // 已设置 hasError_，调用方直接返回
+    };
+    /// VM-IMPORT: 路径规范化与安全校验 + run-once 检查 + 循环依赖检测 + 深度保护
+    /// 成功时 outPath 填入规范化路径，返回 kContinue / kAlreadyLoaded；
+    /// 失败时设置 hasError_/errorMessage_/errorLine_ 并返回 kError。
+    ImportPathStatus resolveImportPath(ImportStmt& node, std::string& outPath);
+    /// VM-IMPORT: 加载模块源码 + 解析为 AST + 模块隔离重命名
+    bool loadImportedModule(ImportStmt& node, const std::string& path, std::unique_ptr<Block>& outAst);
+    /// VM-IMPORT: 具名导入验证（检查 node.names 是否在模块 export 集合中）
+    void bindImportedNames(ImportStmt& node, const std::string& path);
 
     // 闭包 upvalue 追踪（限制1）
     struct UpvalueInfo {
@@ -515,6 +611,13 @@ private:
     std::unordered_map<std::string, int> outerFunctions_;
     std::unordered_set<std::string> innerFunctions_;
     std::unordered_map<std::string, int> innerFunctionSlots_;
+    // R98 W3: Lambda 表达式合成名计数器（对齐 Compiler::lambdaCounter_）
+    int lambdaCounter_ = 0;
+    // R103 W1 fix: 记录所有 visitFunDecl 顶层路径处理过的函数名（含主模块+导入模块）。
+    // CRITICAL-1 fix 扩展 GLOBAL_SLOT 检查时排除此集合中的名字——FunDecl 顶层路径
+    // 的闭包值被 POP 丢弃（全局槽位为 null），调用应走 CALL 命名调用（functionChunks_
+    // 查找），不应走 CALL_EXPR 加载 null。仅 var 持闭包值的 GLOBAL_SLOT 走 CALL_EXPR。
+    std::unordered_set<std::string> topLevelFunDeclNames_;
 
     // 循环上下文（break/continue 跳转目标）
     // BUG-EXC-2 fix: tryDepthAtStart 记录循环开始时的 try 嵌套深度，
@@ -542,6 +645,66 @@ private:
         std::vector<size_t> pendingTargetPatches; // PUSH_JUMP_TARGET 的 label 待回填
     };
     std::vector<TryFinallyContext> tryFinallyStack_;
+    /// R98 重构：try/catch/finally 三阶段拆分的编译期上下文。
+    /// 由 visitTryStmt 创建并传递给 emitTryBlock / emitCatchBlock / emitFinallyBlock。
+    /// 字段语义：
+    ///   - hasFinally: 是否有 finally 块（决定是否发射外层 TRY_BEGIN/TRY_END 包装）
+    ///   - finallyCatchLabel: finally 异常路径入口 label（外层 TRY_BEGIN 的 catch 目标）
+    ///   - finallyEndLabel: finally 块统一出口 label
+    ///   - finallyEntryLabel: finally 正常路径入口 label（break/continue 续跳目标）
+    ///   - endLabel: try-catch 整体结束 label（catch 块后跳转目标）
+    ///   - catchLabel: 内层 catch 块入口 label（仅 catchVarName 非空时分配）
+    struct TryEmitCtx {
+        bool hasFinally = false;
+        uint32_t finallyCatchLabel = 0;
+        uint32_t finallyEndLabel = 0;
+        uint32_t finallyEntryLabel = 0;
+        uint32_t endLabel = 0;
+        uint32_t catchLabel = 0;
+    };
+    /// R98 重构：visitFunDecl 三阶段拆分的编译期上下文。
+    /// 进入子函数前保存父函数 22 个成员状态（避免 moved-from 状态被复用），
+    /// 子函数编译完成或异常时由 restoreParentFunctionState 恢复。
+    /// 对齐 Compiler.cpp 的 CompileContextGuard RAII 模式。
+    struct FunctionEmitCtx {
+        std::unique_ptr<IRFunction> savedIr;
+        IRBasicBlock* savedBlock = nullptr;
+        std::unordered_map<std::string, VarInfo> savedVarMap;
+        std::unordered_map<std::string, std::string> savedVarTypes;
+        bool savedInFunction = false;
+        uint32_t savedLocalSlot = 0;
+        std::vector<std::string> savedLocalSlotNames;
+        std::vector<IRFunction::SlotNameRange> savedSlotNameRanges;
+        std::vector<LoopContext> savedLoopStack;
+        std::vector<BlockScope> savedBlockScopes;
+        int savedBlockDepth = 0;
+        int savedTryDepth = 0;
+        bool savedCompilingMethod = false;
+        std::string savedCompilingClassName;
+        std::string savedCurrentFunctionReturnType;
+        std::vector<std::string> savedCurrentTypeParams;        // R163 泛型扩展
+        std::vector<std::string> savedCompilingClassTypeParams; // R163 泛型扩展
+        std::unordered_map<std::string, int> savedOuterLocalSlots;
+        std::unordered_map<std::string, int> savedOuterUpvalueNames;
+        std::unordered_map<std::string, int> savedOuterFunctions;
+        std::vector<UpvalueInfo> savedCurrentUpvalues;
+        std::unordered_map<std::string, int> savedCurrentUpvalueNames;
+        std::unordered_set<std::string> savedInnerFunctions;
+        std::unordered_map<std::string, int> savedInnerFunctionSlots;
+        // R109 TCO: 父函数 TCO 状态快照（4 字段）。visitFunDecl 入口保存，
+        // restoreParentFunctionState 恢复。子函数编译期间这 4 字段被子函数
+        // 的 emitFunctionPrologue 覆盖，编译完成后必须复原为父函数状态，
+        // 否则父函数后续 return 误判为子函数的 TCO。
+        std::string savedCurrentFunctionName;
+        const FunDecl* savedCurrentFunctionDecl = nullptr;
+        uint32_t savedCurrentFunctionEntryLabel = 0;
+        bool savedCurrentFunctionIsMethod = false;
+        /// R98 W3 fix: 匿名 lambda 的合成名（$lambda_N）。在 visitFunDecl 入口提前生成
+        /// 并递增 lambdaCounter_，避免嵌套 lambda 在 emitFunctionPrologue（读计数器）
+        /// 与 emitFunctionClosureRegistration（递增计数器）之间产生重名。
+        /// 具名函数此字段为空。
+        std::string lambdaName;
+    };
     // BUG-IR-SHADOW-SAVE fix: catch 变量遮蔽全局时，原值保存到临时 name-based 全局变量。
     // 不能用 vreg 保存——StackVM 后端的 LOAD_EXCEPTION 是 no-op（异常值已在栈上），
     // LOAD_GLOBAL 再 push 会使 DEFINE_GLOBAL pop 错误值（saved 而非 exception）。
@@ -586,6 +749,16 @@ private:
     // 避免手动 POP 遗漏导致栈泄漏/不平衡。
     void visitStatement(class ASTNode* node);
     IROperand visitBinaryOp(class BinaryOp* node);
+    // R111 重构：visitBinaryOp 提取 AND/OR 短路求值为两个独立单一职责 helper。
+    ///@{
+    IROperand emitShortCircuitAnd(class BinaryOp* node);
+    IROperand emitShortCircuitOr(class BinaryOp* node);
+    ///@}
+    // R111 重构：嵌套左值变异写回共享 helper（visitIndexAssign / visitMemberAssign /
+    // emitMethodCallWriteback 三处共用）。处理 IndexAccess(VarRef) | MemberAccess(VarRef)
+    // 形态的接收者：LOAD_MUTATED + 外层 INDEX_SET/MEMBER_SET + WRITEBACK 链。
+    // 返回 true 表示已处理写回（调用方据此 return），false 表示是复杂表达式未处理。
+    bool emitNestedAssignWriteback(class ASTNode* object, int line);
     IROperand visitUnaryOp(class UnaryOp* node);
     IROperand visitNumberLiteral(class NumberLiteral* node);
     IROperand visitStringLiteral(class StringLiteral* node);
@@ -597,18 +770,48 @@ private:
     void visitIfStmt(class IfStmt* node);
     void visitWhileStmt(class WhileStmt* node);
     void visitForStmt(class ForStmt* node);
-    void visitFunDecl(class FunDecl* node);
+    /// R98 W3: 返回 lambda 的 MAKE_CLOSURE dest vreg（供表达式上下文使用）；
+    /// 具名函数返回 vreg(0) 哨兵
+    IROperand visitFunDecl(class FunDecl* node);
+    /// R164 协程/生成器：yield 表达式 → IR YIELD 指令
+    IROperand visitYieldExpr(class YieldExpr* node);
     IROperand visitFunCall(class FunCall* node);
+    /// R98 W3: 返回 lambda 的 MAKE_CLOSURE dest vreg（供表达式上下文使用）；
+    /// 具名函数返回 vreg(0) 哨兵（具名函数不作为表达式求值）
+    /// R98 W3 fix: overrideName 非空时用其替代 node.name 作为合成名，
+    /// 由 visitFunDecl 入口提前生成（避免嵌套 lambda 重名）。
+    IROperand emitFunctionClosureRegistration(class FunDecl& node, const std::string& overrideName = "");
     void visitReturnStmt(class ReturnStmt* node);
     void visitPrintStmt(class PrintStmt* node);
     void visitBlock(class Block* node);
     IROperand visitArrayLiteral(class ArrayLiteral* node);
     IROperand visitDictLiteral(class DictLiteral* node);
+    // R98 元组与解构
+    IROperand visitTupleLiteral(class TupleLiteral* node);
+    void visitDestructureBinding(class DestructureBinding* node);
+    // R99 枚举与 ADT + match
+    void visitEnumDecl(class EnumDecl* node);
+    IROperand visitEnumVariantExpr(class EnumVariantExpr* node);
+    IROperand visitMatchExpr(class MatchExpr* node);
+    // R110 重构：visitMatchExpr 提取两个单一职责 helper（pattern 检查 + case body 编译）。
+    // R134 扩展：emitMatchPattern 现支持 6 种 pattern（WILDCARD/LITERAL/VARIABLE/VARIANT/TUPLE/OR）。
+    // emitMatchCaseBody 处理 case body 的 Block 末尾表达式保留值语义（对齐 StackVM Compiler）。
+    // 签名变更（R134）：返回 bool hasAnyCheck，接收 std::vector<uint32_t>& failLabels
+    // ——failLabels 收集所有"此 case 匹配失败需跳过"的目标 label（OR pattern 会产生多个）。
+    // 调用方需在每个 failLabel 处 emit LABEL + POP 残留 check 值。
+    ///@{
+    bool emitMatchPattern(const MatchPattern& p, uint32_t scrutSlot, int line, std::vector<uint32_t>& failLabels);
+    IROperand emitMatchCaseBody(ASTNode* body, int nodeLine);
+    ///@}
     IROperand visitIndexAccess(class IndexAccess* node);
     void visitIndexAssign(class IndexAssign* node);
     IROperand visitMemberAccess(class MemberAccess* node);
     void visitMemberAssign(class MemberAssign* node);
     IROperand visitMethodCall(class MethodCall* node);
+    // R110 重构：visitMethodCall 提取嵌套接收者变异写回块为单一职责 helper（~60 行后置动作）。
+    // 处理三类写回路径：VarRef 接收者 / super 调用 / 嵌套接收者（IndexAccess(VarRef) | MemberAccess(VarRef)）。
+    // 逻辑对齐 compiler/Compiler.cpp::emitMethodCallWriteback，IR 路径与非 IR 路径保持镜像结构。
+    void emitMethodCallWriteback(class MethodCall* node);
     IROperand visitInterpolatedString(class InterpolatedString* node);
     void visitClassDecl(class ClassDecl* node);
     void visitBreakStmt(class BreakStmt* node);
@@ -620,6 +823,32 @@ private:
     /// realTargetLabel 是 break/continue 的真实目标 label（endLabel/continueLabel）。
     /// 返回 true 表示已发射续跳 IR（调用方不应再发射常规 JUMP），false 表示无 finally。
     bool emitFinallyJumpIR(int line, uint32_t realTargetLabel);
+
+    /// R98 重构：try/catch/finally 三阶段拆分（visitTryStmt 的辅助方法）。
+    /// 三套 catch 路径（函数内 / 顶层遮蔽保护 / 顶层无遮蔽）在 emitCatchBlock 内部分发，
+    /// 每个变体负责发射自己的 finally（如有）并 pop tryFinallyStack_。
+    ///@{
+    void emitTryBlock(class TryStmt& node, TryEmitCtx& ctx);
+    void emitCatchBlock(class TryStmt& node, IROperand excVreg, TryEmitCtx& ctx);
+    void emitCatchInFunction(class TryStmt& node, IROperand excVreg, TryEmitCtx& ctx);
+    void emitCatchWithShadowSave(class TryStmt& node, IROperand excVreg, int existingSlot, TryEmitCtx& ctx);
+    void emitCatchGlobal(class TryStmt& node, IROperand excVreg, TryEmitCtx& ctx);
+    void emitFinallyBlock(class TryStmt& node, TryEmitCtx& ctx);
+    ///@}
+
+    /// R98 重构：visitFunDecl 三阶段拆分（prologue/body/epilogue + 状态恢复 + 闭包注册）。
+    /// 进入子函数前 visitFunDecl 保存父函数 22 个成员状态到 FunctionEmitCtx，
+    /// 调用 emitFunctionPrologue/Body/Epilogue 编译子函数，
+    /// 最终由 restoreParentFunctionState 恢复父状态、emitFunctionClosureRegistration
+    /// 在父 IR 中 emit MAKE_CLOSURE 并注册该函数。
+    ///@{
+    void emitFunctionPrologue(class FunDecl& node, FunctionEmitCtx& ctx);
+    void emitFunctionBody(class FunDecl& node, FunctionEmitCtx& ctx);
+    void emitFunctionEpilogue(class FunDecl& node, FunctionEmitCtx& ctx);
+    void restoreParentFunctionState(FunctionEmitCtx& ctx);
+    // R98 W3: emitFunctionClosureRegistration 已在上方声明（返回 IROperand），
+    // 此处不再重复声明，避免返回类型不同导致的重定义错误。
+    ///@}
 };
 
 // ============================================================
@@ -701,6 +930,73 @@ private:
     bool lowerInstruction(const IRInstruction& instr, const IRFunction& ir);
     bool patchJumps();
     void resetState();
+
+    // ---- lowerInstruction 类别拆分辅助（R98 重构：原 841 行单 switch 拆为 8 个 helper）----
+    // 主 lowerInstruction 仅保留 switch 外壳做类别分发，每个 helper 处理一组相关 IROp。
+    // 语义零变更：所有边界检查（BUG-IR-BOUND-1）、栈平衡（AUDIT-STACKCLOSURE）、
+    // 异常处理（BUG-EXC-1/AUDIT-P1.1）、字段默认值（BUG-INH-1/BUG-INH-IR-1）、
+    // 写回 slot→name 转换（BUG-NEW/BUG-IR-SLOTNAME-1）等审计点原样保留至各 helper。
+    /// 从 globalNames 取名（索引越界时返回空串）。原 lowerInstruction 中的 lambda，重构为静态方法。
+    static std::string globalNameOf(const IRFunction& ir, uint32_t idx);
+    /// 常量加载：LOAD_CONST/LOAD_NULL/LOAD_TRUE/LOAD_FALSE
+    bool lowerConstOp(const IRInstruction& instr, const IRFunction& ir);
+    /// 变量访问：LOAD_LOCAL/STORE_LOCAL/LOAD_GLOBAL/STORE_GLOBAL/DEFINE_GLOBAL/DELETE_VAR/
+    /// LOAD_UPVALUE/STORE_UPVALUE/CLOSE_UPVALUE
+    bool lowerVarOp(const IRInstruction& instr, const IRFunction& ir);
+    /// 算术 + 逻辑：ADD/SUB/MUL/DIV/MOD/NEGATE/NOT（无操作数，单字节 opcode）
+    bool lowerArithOp(const IRInstruction& instr, const IRFunction& ir);
+    /// 比较：EQ/NEQ/LT/GT/LTE/GTE（无操作数，单字节 opcode）
+    bool lowerCompareOp(const IRInstruction& instr, const IRFunction& ir);
+    /// 控制流：LABEL/JUMP/JUMP_IF_FALSE（LABEL 不产生字节码，跳转类占位 2B 待 patchJumps 回填）
+    bool lowerControlOp(const IRInstruction& instr, const IRFunction& ir);
+    /// 调用 + 闭包：CALL/CALL_EXPR/RETURN/RETURN_NULL/MAKE_CLOSURE
+    bool lowerCallOp(const IRInstruction& instr, const IRFunction& ir);
+    /// 容器 + 成员访问 + 方法调用：BUILD_ARRAY/BUILD_DICT/BUILD_TUPLE/INDEX_GET/INDEX_SET/
+    /// MEMBER_GET/MEMBER_SET/SUPER_MEMBER_GET/METHOD_CALL/SUPER_CALL
+    /// 主 lowerContainerOp 按 instr.op 分派到下方 3 个子 helper（R106 重构：原 181 行单 switch
+    /// 拆为分派器 + 3 个单一职责 helper）。语义零变更：所有边界检查（BUG-IR-BOUND-1）、
+    /// 栈深度映射（vregStackDepth_）等审计点原样保留至各 helper。
+    bool lowerContainerOp(const IRInstruction& instr, const IRFunction& ir);
+    /// lowerContainerOp 子阶段：容器构造与索引 IROp（BUILD_ARRAY/BUILD_DICT/BUILD_TUPLE/
+    /// BUILD_ENUM_VARIANT/ENUM_VARIANT_NAME/ENUM_VARIANT_FIELD/INDEX_GET/INDEX_SET）。
+    /// 含 count/pairCount/argCount 8 位上限检查（BUG-IR-BOUND-1）。依赖成员：chunk_、
+    /// vregStackDepth_、emitUint16。
+    bool lowerContainerBuildOps(const IRInstruction& instr, const IRFunction& ir);
+    /// lowerContainerOp 子阶段：成员访问 IROp（MEMBER_GET/MEMBER_SET/SUPER_MEMBER_GET）。
+    /// emit OP_MEMBER_GET/SET/SUPER_MEMBER_GET + nameConstIdx(2B)。SUPER_MEMBER_GET 与
+    /// MEMBER_GET 格式相同，仅 opcode 不同。依赖成员：chunk_、addStringConstant、
+    /// globalNameOf、vregStackDepth_。
+    bool lowerMemberAccessOps(const IRInstruction& instr, const IRFunction& ir);
+    /// lowerContainerOp 子阶段：方法调用 IROp（METHOD_CALL/SUPER_CALL）。
+    /// emit OP_METHOD_CALL/SUPER_CALL + nameConstIdx(2B) + argCount(1B) + recvVarIdx(2B)
+    /// + recvSlot(1B) [+ classIdx(2B) for SUPER_CALL]。含 argCount 8 位上限检查
+    /// （BUG-IR-BOUND-1，含 this 共 255）。依赖成员：chunk_、addStringConstant、
+    /// globalNameOf、vregStackDepth_。
+    bool lowerMethodCallOps(const IRInstruction& instr, const IRFunction& ir);
+    /// 类/异常/写回/杂项：DEFINE_CLASS/CLASS_NEW/INIT_FIELD/TRY_BEGIN/TRY_END/THROW/
+    /// LOAD_EXCEPTION/PUSH_JUMP_TARGET/FINALLY_END/WRITEBACK_*/PRINT/POP/DUP/LOAD_MUTATED/TYPE_CHECK
+    /// 主 lowerMiscOp 按 instr.op 分派到下方 4 个子 helper（R106 重构：原 324 行单 switch 拆为
+    /// 分派器 + 4 个单一职责 helper）。语义零变更：所有边界检查（BUG-IR-BOUND-1）、栈平衡
+    /// （AUDIT-STACKCLOSURE）、异常处理（BUG-EXC-1/AUDIT-P1.1）、字段默认值（BUG-INH-1/BUG-INH-IR-1）、
+    /// 写回 slot→name 转换（BUG-NEW/BUG-IR-SLOTNAME-1）等审计点原样保留至各 helper。
+    bool lowerMiscOp(const IRInstruction& instr, const IRFunction& ir);
+    /// lowerMiscOp 子阶段：类相关 IROp（DEFINE_CLASS/CLASS_NEW/INIT_FIELD）
+    /// DEFINE_CLASS 处理字段默认值常量 + 字段表达式临时局部变量槽位（BUG-INH-1/BUG-INH-IR-1），
+    /// emit OP_CLASS_NEW + 每个 OP_INIT_FIELD + OP_DEFINE_CLASS。依赖成员：chunk_、
+    /// addStringConstant、globalNameOf、ir.constants。
+    bool lowerClassOps(const IRInstruction& instr, const IRFunction& ir);
+    /// lowerMiscOp 子阶段：异常相关 IROp（TRY_BEGIN/TRY_END/THROW/LOAD_EXCEPTION/
+    /// PUSH_JUMP_TARGET/FINALLY_END）。TRY_BEGIN 与 PUSH_JUMP_TARGET 注册 pendingJumps_
+    /// 待 patchJumps 第二遍回填。LOAD_EXCEPTION 为 no-op（栈式 VM throwException 已推栈）。
+    bool lowerExceptionOps(const IRInstruction& instr, const IRFunction& ir);
+    /// lowerMiscOp 子阶段：写回指令 IROp（WRITEBACK_MEMBER_VAR/LOCAL/UPVALUE、
+    /// WRITEBACK_INDEX_VAR/LOCAL/UPVALUE）。处理 IMM_UINT slot→name 常量索引转换
+    /// （BUG-NEW/BUG-IR-SLOTNAME-1）与 slot/uvIdx 255 上限检查（Bug-14 同型修复）。
+    bool lowerWritebackOps(const IRInstruction& instr, const IRFunction& ir);
+    /// lowerMiscOp 子阶段：杂项 IROp（PRINT/POP/DUP/LOAD_MUTATED/TYPE_CHECK）。
+    /// DUP/LOAD_MUTATED/TYPE_CHECK 更新 vregStackDepth_ 栈深度映射。TYPE_CHECK 是 peek
+    /// 不 push，但仍记录 src_vreg 在此处"仍然有效"的栈深度（AUDIT-P2 fix）。
+    bool lowerMiscPureOps(const IRInstruction& instr, const IRFunction& ir);
 };
 
 // ============================================================

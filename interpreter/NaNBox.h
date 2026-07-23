@@ -1,7 +1,9 @@
 #pragma once
 
+#include "common/Logger.h" // BUG-001/002 fix: 降级路径需记录日志
 #include <cassert>
 #include <cstdint>
+#include <cstdio>  // std::snprintf — BUG-002 fix 指针格式化
 #include <cstdlib> // std::abort — Release 构建中 assert 兜底，避免 UB
 #include <cstring>
 #include <string>
@@ -62,10 +64,16 @@ public:
     }
 
     static NaNBox fromInt(int64_t i) {
-        // P0 fix: assert 在 Release 构建被剥离，超范围值静默截断导致数据损坏。
-        // 改为运行时 abort，与 VMStack 风格一致——显式失败优于静默继续。
+        // BUG-001 fix: 超范围值不再 abort 整个 IDE 进程，而是降级为 float 编码。
+        // 设计权衡：
+        //   - 唯一合法调用方 Value(int64_t) 已在 canEncodeInt 检查后走 BoxedIntData 路径，
+        //     直接调用 fromInt 的代码若超范围属于编程错误。
+        //   - 但 abort 会让 IDE 进程整体崩溃（用户代码 bug 不应导致 IDE 退出），
+        //     故采用 BUG_REPORT.md 方案 B：降级为 float，损失精度但不崩溃。
+        //   - 调用方可用 isInt() 区分降级情形；正常运行路径不会触发此分支。
         if (!canEncodeInt(i)) {
-            std::abort();
+            LOG_WARNING("NaNBox::fromInt 超范围降级为 float: value=" + std::to_string(i), "NaNBox");
+            return fromFloat(static_cast<double>(i));
         }
         NaNBox box;
         // 将 int64 截断为 int48（保留符号位扩展）
@@ -89,9 +97,31 @@ public:
     static NaNBox fromPtr(const void* ptr) {
         NaNBox box;
         uint64_t ptrBits = reinterpret_cast<uint64_t>(ptr);
-        // P0 fix: assert 在 Release 被剥离，内核指针（高 16 位非 0）静默截断
-        // 产生错误指针编码，后续 asPtr 解码出无效地址触发访问冲突。
+        // BUG-002 fix: 高 16 位非零的指针（内核地址 / ASLR 极端布局 / 自定义分配器）
+        // 无法用 48 位 payload 编码。原实现直接 abort 让 IDE 整体崩溃，对用户不友好。
+        // 改为：先记录详细错误日志（指针值 + 来源），再 abort。
+        //   - 指针无法"降级"为其他类型（不同于 fromInt 可降级为 float），故仍需 abort
+        //     防止后续 asPtr 解码出无效地址触发更难诊断的访问冲突。
+        //   - 日志记录后 abort，开发者可在日志中定位首个触发点。
+        //   - 正常 x86-64 用户空间地址高 16 位为 0，此分支仅在异常环境下触发。
+        //
+        // L9 fix 审计结论（2026-07-19）：
+        //   评估为"已知限制但实际不可触发"，保留 abort 作为防御性编程最后防线。
+        //   理由：(1) x86-64 用户空间虚拟地址范围 [0x0, 0x0000_7FFF_FFFF_FFFF] 由
+        //   硬件规范保证（Windows/Linux/macOS 均遵循），高 16 位始终为 0；
+        //   (2) 侵入式 RefCounted 通过 new 分配，必在用户空间堆内，高 16 位为 0；
+        //   (3) 改造为 BoxedPtrData 堆包装路径需新增 ValueType + 修改所有 asPtr
+        //   调用点（GcManager/Value.cpp/MemoryModelPanel 等约 20+ 处）+ 三后端同步，
+        //   改造风险高于 abort 本身（教学场景下不可触发）。
+        //   与 L10（PCH 全量重编译）的处理策略一致——硬件规范保证的不变量保留
+        //   防御性 abort，文档化说明而非改造代码。
         if ((ptrBits & ~PTR_MASK) != 0) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "0x%016llx", static_cast<unsigned long long>(ptrBits));
+            LOG_ERROR("NaNBox::fromPtr 高位非零指针无法编码: " + std::string(buf) +
+                          "（48 位 payload 范围内才能安全编码）",
+                      "NaNBox");
+            Logger::instance().flush();
             std::abort();
         }
         box.bits_ = PTR_TAG_BASE | (ptrBits & PTR_MASK);

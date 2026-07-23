@@ -37,6 +37,7 @@
 #include "common/Result.h"
 #include "common/RuntimeLimits.h"
 #include "compiler/Bytecode.h"
+#include "debug/DebugTypes.h"           // R161: WriteTarget 共享类型（Watchpoint peekWriteTarget 返回值）
 #include "interpreter/BuiltinMethods.h" // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
 #include "interpreter/Value.h"
 #include <array> // C3: opcode profiling 计数数组
@@ -125,6 +126,15 @@ struct VMStepInfo {
     size_t ip = 0;                   // 当前指令指针
     OpCode opcode = OpCode::OP_NULL; // 当前操作码
     size_t frameCount = 0;           // A4 fix: 当前调用帧栈深度（用于 step-over/out 语义）
+};
+
+// R164 协程/生成器：VM yield 信号（重放模式）
+// OP_YIELD 命中目标 yieldId 时抛出，被 VM::callCoroutineNext 捕获。
+// 与 Interpreter::YieldSignal 语义一致，但独立定义避免 Interpreter 依赖。
+// 异常传播路径：executeCoroutineOps → executeOneInstruction → 内部循环 → callCoroutineNext catch
+struct VMYieldSignal {
+    Value yieldValue;
+    explicit VMYieldSignal(Value v) : yieldValue(std::move(v)) {}
 };
 
 /// VM 调用帧
@@ -386,6 +396,39 @@ public:
     /// frameIndex 从 0 开始（0=栈底 main 帧）。越界或无 localSlotNames 返回空映射。
     std::unordered_map<std::string, Value> getFrameLocalsAt(size_t frameIndex) const;
 
+    /// R104 Function Breakpoint：在 OP_CALL / OP_CALL_EXPR 指令执行前查询被调用函数名。
+    /// 由 VmStepper 在 pre-execution 检测时调用，命中函数断点则暂停。
+    /// @return 若当前指令是 OP_CALL/OP_CALL_EXPR，返回常量池中的函数名；否则返回空字符串。
+    std::string peekCalledFunctionName() const;
+
+    /// R104 Exception Breakpoint：检查当前 IP 指向的指令是否为 OP_THROW。
+    /// 由 VmStepper 在 pre-execution 检测时调用，命中异常断点则暂停（throw 前）。
+    /// @return true 表示当前指令是 OP_THROW
+    bool isCurrentThrowInstruction() const;
+
+    // ---- R161 Watchpoint（数据断点）pre-execution peek ----
+    /// R161: pre-execution peek 当前 IP 指令的写入目标（不执行指令）。
+    /// 用于数据断点（Watchpoint）在写入指令执行前检查。
+    /// @return WriteTarget{isWrite=true, ...} 若当前指令是 SET 类指令；否则 isWrite=false
+    /// WriteTarget 类型定义在 debug/DebugTypes.h（VM/RegisterVM 共享）
+    WriteTarget peekWriteTarget() const;
+
+    /// R114 阶段 3：从快照恢复 VM 状态（状态回滚）。
+    /// 仅在 initExecution 已调用（initialized_==true）后可用。
+    /// 恢复语义：(1) 截断 frames_ 到 targetFrameCount 并设置栈顶帧 ip=targetIp；
+    /// (2) 替换 stack_ 为 stackValues（截断到 MAX_STACK_SIZE）；(3) 按 name 更新
+    /// globalSlots_/globals_（已有变量覆盖，新变量忽略——回滚不应创建编译期未注册的变量）；
+    /// (4) 清理 openUpvalues_（slots >= 新栈大小）、tryStack_（frameIndex >= targetFrameCount）、
+    /// pendingJumpStack_（break/continue 跨回滚未定义，保守清空）、lastError_/hasError_/
+    /// lastMutatedReceiver_。
+    /// @note 不恢复 frames_ 的内部字段（chunk 指针、basePointer、upvalues 等），因
+    ///       快照不捕获这些；调用方应保证 targetFrameCount <= 当前 frames_.size()
+    ///       （仅截断不扩展）。若 targetFrameCount > frames_.size() 返回 false。
+    /// @return true 成功；false 未初始化或 targetFrameCount 越界
+    bool restoreFromSnapshot(const std::vector<Value>& stackValues,
+                             const std::vector<std::pair<std::string, Value>>& globalsValues, size_t targetIp,
+                             size_t targetFrameCount);
+
 private:
     VMStack stack_;                                  // PERF-13: 定长数组操作数栈
     std::unordered_map<std::string, Value> globals_; // 全局变量表（runtime-defined fallback）
@@ -417,18 +460,15 @@ private:
         size_t generation = 0;     // globals_ 状态快照（检测 rehash / erase）
     };
     std::unordered_map<const std::string*, GlobalCacheEntry> globalCache_;
-    // P7: ASCII 字符串索引缓存（记住上次检查过的字符串，避免循环中重复 O(n) 扫描）
-    // S5 fix: 改为缓存 StringData* 指针（shared_ptr 管理的对象地址稳定），
-    //         O(1) 指针比较替代 O(n) 字符串内容比较；miss 时无需拷贝整个字符串
-    //         安全性：StringData 由 shared_ptr 持有，只要 Value 在栈上指针就有效
-    // BUG-VM-05 fix: (ptr, size) 双重验证已大幅降低内存复用误命中风险。
-    //         已知限制：极端场景下（StringData 释放后内存复用 + 相同长度 + 不同 ASCII 状态）
-    //         仍可能误命中。完全消除需缓存 StringData shared_ptr（复杂度高）或每次清除缓存
-    //         （破坏循环 s[i] 场景的缓存价值）。当前 (ptr, size) 验证为合理折中。
-    const void* lastAsciiStrPtr_ = nullptr;
-    size_t lastAsciiStrSize_ = 0; // BUGFIX-P2 fix: 缓存 size 防止堆地址复用误命中
-    bool lastAsciiStrIsAscii_ = false;
+    // R97 #3 fix: 移除 lastAsciiStr* 4 字段缓存，改为 StringData::cachedIsAscii 持久缓存。
+    // 原实现按 (ptr, size, firstByte) 三重验证缓存上次 ASCII 判定结果，存在堆地址复用
+    // 误命中风险（虽然概率极低）。新方案 isAscii 直接存在 StringData 内，与字符串生命周期
+    // 绑定，O(1) 读取无碰撞风险，且省去 4 个字段的 initExecution/resetState 重置开销。
     std::unordered_map<std::string, VMClassInfo> classInfo_; // 类信息注册表
+    // R99 enum 校验：enum 元信息注册表（enum 名→variant 列表），initExecution 从
+    // CompileResult.enumInfos 加载，OP_BUILD_ENUM_VARIANT 校验 variant 名与 arity。
+    // 对齐 Interpreter::enumRegistry_ 的运行时校验语义。
+    std::unordered_map<std::string, VMEnumInfo> enumRegistry_;
     // #12 fix: 类→方法名→chunk 两级索引，替代 findMethodChunk 冷路径每层继承链
     // 拼 "Class.method" 字符串。在 initExecution 中扫描 functionChunks_ 一次性构建。
     // 仅收录 "Class.method" 格式条目（按首个 '.' 拆分），普通函数名（无 '.'）不入索引。
@@ -443,11 +483,15 @@ private:
     std::unordered_map<std::string, Value> functionClosures_;      // 函数名→闭包值（含 upvalue 绑定）
     std::function<void(const std::string&)> outputCallback_;       // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
-    std::function<void(const VMStepInfo&)> stepCallback_;          // 步进回调
-    bool stepCallbackEnabled_ = false;                             // 是否启用步进回调
-    bool initialized_ = false;                                     // 是否已初始化执行环境
-    std::string lastError_;                                        // 最近一次运行时错误
-    int lastErrorLine_ = 0;                                        // 最近一次运行时错误的源码行号（1-based，0=无位置）
+    // R136 spawn 子线程闭包调用序列化 mutex。VM 的栈/帧非线程安全，
+    // spawn 出的子线程若并发调用 invokeClosureSync 会破坏这些共享状态。
+    // 通过此 mutex 序列化所有 spawn 出的闭包调用（同一 VM 实例级别）。
+    std::mutex spawnMutex_;
+    std::function<void(const VMStepInfo&)> stepCallback_; // 步进回调
+    bool stepCallbackEnabled_ = false;                    // 是否启用步进回调
+    bool initialized_ = false;                            // 是否已初始化执行环境
+    std::string lastError_;                               // 最近一次运行时错误
+    int lastErrorLine_ = 0;                               // 最近一次运行时错误的源码行号（1-based，0=无位置）
     // P1 fix: mutable 允许 const peek() 在栈下溢时设置错误标志
     mutable bool hasError_ = false;              // 运行时错误标志（用于快速检测）
     DiagnosticBag diagnostics_;                  // 诊断收集器
@@ -473,6 +517,14 @@ private:
     // P1 fix: stepOnce 累计指令计数器，防止通过循环调用 stepOnce 绕过 DoS 防护
     int64_t stepInstructionCount_ = 0;
     static constexpr int MAX_INHERITANCE_DEPTH = RuntimeLimits::MAX_INHERITANCE_DEPTH;
+
+    // R164 协程/生成器：重放模式状态
+    // currentCoroutineTargetYieldId_ >= 0 表示当前在协程重放上下文中（OP_YIELD 据此判定）。
+    // 每次 .next() 开始时设为 cd->currentYieldId，callCoroutineNext 结束时恢复为 -1。
+    int currentCoroutineTargetYieldId_ = -1;
+    // 运行时 yield 执行计数器：每次 OP_YIELD 递增，用于区分循环内同一 yield 节点的多次执行。
+    // 每次 .next() 重放开始时重置为 0（对齐 Interpreter::currentYieldExecutionCount_）。
+    int currentYieldExecutionCount_ = 0;
 
 #ifdef MINILANG_VM_PROFILING
     // C3: opcode 执行计数数组，索引 = static_cast<uint8_t>(OpCode)
@@ -575,6 +627,20 @@ private:
     /// 字符串内建方法分发（全部非变异，无需 writeBack 参数）。语义同上。
     VMResult dispatchStringBuiltin(const Value& obj, BuiltinMethod method, const std::string& methodName,
                                    uint8_t argCount, size_t& ip, OpCode op, int instrLen);
+    /// R136 同步对象方法分发（channel/mutex/rwlock/thread）。
+    /// 同步对象内部状态通过 shared_ptr<Inner> 共享，方法调用不修改 Value 本身（无需 writeBack）。
+    VMResult dispatchSyncObjectBuiltin(const Value& obj, const std::string& methodName, uint8_t argCount, size_t& ip,
+                                       OpCode op, int instrLen);
+    /// R164 协程/生成器方法分发（.next() / .done()）。
+    /// 协程内部状态通过 CoroutineData* 共享指针修改，无需 writeBack。
+    VMResult dispatchCoroutineBuiltin(Value& obj, const std::string& methodName, uint8_t argCount, size_t& ip,
+                                      OpCode op, int instrLen);
+    /// R164 D.5: 生成器函数调用拦截——从栈弹出参数，创建协程值 push 到栈顶。
+    /// 被 executeCallFunction（OP_CALL）和 executeCallExprValue（OP_CALL_EXPR）共用。
+    VMResult createCoroutineValue(const BytecodeChunk& genChunk, const std::string& funName, uint8_t argCount,
+                                  Value closureVal, size_t& ip, int instrLen);
+    /// R164 D.5: 协程 .next() 重放执行——设置帧、运行内部循环、捕获 VMYieldSignal。
+    Value callCoroutineNext(Value& coroVal);
 
     // ---- P0-3 fix: 共享内置方法分派样板提取 ----
     /// 非变异方法完成：检查错误 → pop 接收者 → push 结果 → 推进 ip。
@@ -598,7 +664,9 @@ private:
     }
 
     /// 获取字典的可变引用：同上，针对字典类型。
-    std::unordered_map<std::string, Value>& getMutableDictRef(Value& obj) {
+    /// L4 fix: 返回类型改为 DictKey-keyed map（dictVal/tryGetMutableDict 已同步）
+    /// R97 #2 fix: 返回类型改为 Value::DictMap（含 DictKeyEqual 透明比较器）
+    Value::DictMap& getMutableDictRef(Value& obj) {
         auto* dict = obj.tryGetMutableDict();
         if (dict)
             return *dict;
@@ -638,20 +706,135 @@ private:
     VMResult executeContainerOps(OpCode op, size_t& ip);
     VMResult executeWritebackOps(OpCode op, size_t& ip);
     VMResult executeMiscOps(OpCode op, size_t& ip);
+    /// R164 协程/生成器：OP_YIELD 指令执行（重放模式）
+    VMResult executeCoroutineOps(OpCode op, size_t& ip);
+
+    // ---- R132-D fix: executeWritebackOps 200 行拆为 thin dispatcher + 3 helper ----
+    // 按"写回目标"分组：全局变量/栈槽/upvalue 各一个 helper，每 helper 处理 MEMBER+INDEX 两种 op。
+    // MEMBER 与 INDEX 在同一存储类下语义等价（BUG-NEW fix 后均为整体替换 lastMutatedReceiver_），
+    // 区别仅在操作数编码（MEMBER 多 2B fieldIdx 用于反汇编）。
+    /// 写回到全局变量：OP_WRITEBACK_MEMBER_VAR / OP_WRITEBACK_INDEX_VAR。
+    /// 通过 resolveMutableGlobal 取可变引用，整体替换为 lastMutatedReceiver_。
+    VMResult writebackToGlobalVar(OpCode op, size_t& ip);
+    /// 写回到栈槽：OP_WRITEBACK_MEMBER_LOCAL / OP_WRITEBACK_INDEX_LOCAL。
+    /// 写入 stack_[bp+slot]，若 slot 是字段槽则标记 fieldsModified。
+    VMResult writebackToStackSlot(OpCode op, size_t& ip);
+    /// 写回到 upvalue：OP_WRITEBACK_MEMBER_UPVALUE / OP_WRITEBACK_INDEX_UPVALUE。
+    /// 已关闭 upvalue 写入 uv->value；open upvalue 写入 stack_[uv->stackSlot]
+    /// 并检查 owningFrame 字段槽范围，标记该帧 fieldsModified。
+    VMResult writebackToUpvalue(OpCode op, size_t& ip);
+
+    // ---- R131 fix: executeMiscOps 218 行二次拆分为 4 个 helper（原 218 行 → 每个方法 < 70 行）----
+    /// 栈操作 + 字段初始化指令：OP_PRINT/OP_POP/OP_DUP/OP_SWAP/OP_LOAD_MUTATED/OP_DUP_N/OP_INIT_FIELD
+    /// 共 7 个 case，均围绕栈顶元素操作（消费/复制/交换/字段写入栈顶实例）
+    VMResult executeMiscStackOps(OpCode op, size_t& ip);
+    /// 运行时类型注解检查（OP_TYPE_CHECK）：精确类型匹配 + 实例继承链查找（最深 64 层）
+    VMResult executeMiscTypeCheck(OpCode op, size_t& ip);
+    /// R134: 软类型测试（OP_TYPE_TEST）：与 OP_TYPE_CHECK 同语义但 push bool 而非抛错。
+    /// 用于 TUPLE pattern 类型检查（不匹配时 fall through 而非抛错）。
+    VMResult executeMiscTypeTest(OpCode op, size_t& ip);
+    /// 无条件/条件跳转指令：OP_JUMP/OP_JUMP_IF_FALSE/OP_LOOP（共享 jump 目标越界检查模式）
+    VMResult executeMiscJumpOps(OpCode op, size_t& ip);
+    /// 异常处理 + finally 跳转栈指令：OP_TRY_BEGIN/OP_TRY_END/OP_THROW/OP_PUSH_JUMP_TARGET/OP_FINALLY_END
+    /// 共 5 个 case，围绕 tryStack_/pendingJumpStack_ 两个异常机制栈管理
+    VMResult executeMiscExceptionOps(OpCode op, size_t& ip);
+
+    // ---- R118 fix: executeContainerOps 拆分为 4 个独立方法（原 524 行 → 每个方法 < 220 行）----
+    /// 容器构造指令：OP_BUILD_ARRAY / OP_BUILD_DICT / OP_BUILD_TUPLE / OP_BUILD_ENUM_VARIANT
+    VMResult executeContainerBuildOps(OpCode op, size_t& ip);
+    /// 索引访问指令：OP_INDEX_GET / OP_INDEX_SET / OP_INDEX_SET_VAR / OP_INDEX_SET_LOCAL
+    VMResult executeIndexOps(OpCode op, size_t& ip);
+
+    // ---- R122 fix: executeIndexOps 拆分为 4 个独立方法（原 223 行 → 每个方法 < 95 行）----
+    /// 索引读取（OP_INDEX_GET，跨 array/dict/string/tuple 多态含 ASCII 快速路径）
+    VMResult executeIndexGet(size_t& ip);
+    /// 嵌套索引赋值（OP_INDEX_SET，栈顶 obj+idx+val 存入 lastMutatedReceiver_）
+    VMResult executeIndexSet(size_t& ip);
+    /// 全局变量索引赋值（OP_INDEX_SET_VAR，通过 resolveMutableGlobal 取引用）
+    VMResult executeIndexSetVar(size_t& ip);
+    /// 局部变量索引赋值（OP_INDEX_SET_LOCAL，修改 stack_[bp+slot] 含 fieldsModified 同步）
+    VMResult executeIndexSetLocal(size_t& ip);
+    /// 成员访问指令：OP_SUPER_MEMBER_GET / OP_MEMBER_GET / OP_MEMBER_SET / OP_MEMBER_SET_VAR / OP_MEMBER_SET_LOCAL
+    VMResult executeMemberOps(OpCode op, size_t& ip);
+    /// 枚举查询指令：OP_ENUM_VARIANT_NAME / OP_ENUM_VARIANT_FIELD
+    VMResult executeEnumOps(OpCode op, size_t& ip);
+
+    // ---- R119 fix: executeVarOps 拆分为 4 个独立方法（原 289 行 → 每个方法 < 140 行）----
+    /// 按名称变量指令：OP_DEFINE_VAR / OP_GET_VAR / OP_SET_VAR / OP_DELETE_VAR（含 slot 快速路径 + 内联缓存 + fallback
+    /// globals_）
+    VMResult executeVarNameOps(OpCode op, size_t& ip);
+    /// 整数槽全局变量指令：OP_GET_GLOBAL / OP_SET_GLOBAL / OP_DEFINE_GLOBAL / OP_DELETE_GLOBAL
+    VMResult executeGlobalSlotOps(OpCode op, size_t& ip);
+    /// 局部变量指令：OP_GET_LOCAL / OP_SET_LOCAL（含 fieldsModified 标记同步）
+    VMResult executeLocalOps(OpCode op, size_t& ip);
+    /// Upvalue 闭包指令：OP_GET_UPVALUE / OP_SET_UPVALUE / OP_CLOSE_UPVALUE（含 open/closed 双路径 + owningFrameIdx
+    /// 字段同步）
+    VMResult executeUpvalueOps(OpCode op, size_t& ip);
 
     // ---- S1 fix: executeCallOps 拆分为 8 个独立方法（原 978 行 → 每个方法 < 200 行）----
     /// OP_RETURN 执行：方法调用返回、字段同步、栈帧弹出
     VMResult executeReturn(size_t& ip);
-    /// OP_CALL / OP_CALL_EXPR 执行：函数调用
+    /// OP_CALL / OP_CALL_EXPR 执行：函数调用（thin dispatcher，按 isExpr 分发到 executeCallByName /
+    /// executeCallExprValue）
     VMResult executeCall(size_t& ip, bool isExpr);
-    /// OP_SUPER_CALL / OP_METHOD_CALL 执行：方法调用（含 super）
+
+    // ---- R123 fix: executeCall 470 行二次拆分为 7 个 helper（原 470 行 → 每个方法 < 130 行）----
+    /// OP_CALL 路径分发器：按函数名查找缓存/classInfo_/input/higher-order/builtin/functionChunks_，
+    /// 命中后分发到对应 callee 类型 helper（constructor/input/higher-order/builtin/function）
+    VMResult executeCallByName(size_t& ip, OpCode op);
+    /// 类构造调用（OP_CALL 路径 classInfo_ 命中）：创建实例 + findMethodChunk("init") + 默认参数填充 + 帧构造
+    VMResult executeCallConstructor(size_t& ip, OpCode op, VMClassInfo& cls, const std::string& funName,
+                                    uint8_t argCount);
+    /// input() 内置函数（OP_CALL 路径 funName=="input"）：调用 executeSharedInput
+    VMResult executeCallBuiltinInput(size_t& ip, OpCode op, uint8_t argCount, const BytecodeChunk& chunk);
+    /// 高阶函数（OP_CALL 路径 isHigherOrderBuiltin 命中）：map/filter/reduce/forEach/find 分派
+    VMResult executeCallHigherOrder(size_t& ip, OpCode op, const std::string& funName, uint8_t argCount,
+                                    const BytecodeChunk& chunk);
+    /// 内置函数（OP_CALL 路径 isBuiltinFunction 命中）：调用 executeSharedBuiltinFunction
+    VMResult executeCallBuiltinFunction(size_t& ip, OpCode op, const std::string& funName, uint8_t argCount,
+                                        const BytecodeChunk& chunk);
+    /// R136 spawn(fn, args...) 内置函数（OP_CALL 路径 funName=="spawn"）：
+    /// 构造 ClosureInvoker（加 spawnMutex_ 序列化）后调用 executeSharedSpawn
+    VMResult executeCallSpawn(size_t& ip, OpCode op, uint8_t argCount, const BytecodeChunk& chunk);
+    /// 普通函数调用（OP_CALL 路径 functionChunks_ 命中）：默认参数范围检查 + 调用 setupFunctionCallFrame
+    VMResult executeCallFunction(size_t& ip, OpCode op, const std::string& funName, uint8_t argCount,
+                                 const BytecodeChunk& targetChunk);
+    /// 闭包值调用（OP_CALL_EXPR 路径 callee.isClosure）：栈布局调整 + chunkPtr 获取 + 调用 setupFunctionCallFrame
+    VMResult executeCallExprValue(size_t& ip, OpCode op);
+    /// 共享帧构造 helper：默认参数填充 + MAX_FRAMES 检查 + extraSlots 预分配 + newFrame 构造 + push frame
+    /// 被 executeCallFunction 和 executeCallExprValue 共享，统一两路径的帧构造逻辑
+    VMResult setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std::string& functionName,
+                                    uint8_t& argCount, size_t returnIp, size_t savedIp, OpCode op,
+                                    const std::vector<std::shared_ptr<VMUpvalue>>& upvalues);
+    /// OP_SUPER_CALL / OP_METHOD_CALL 执行：方法调用（thin dispatcher，按接收者类型分发到
+    /// dispatchArrayBuiltin/dispatchDictBuiltin/dispatchStringBuiltin/executeInstanceMethodCall）
     VMResult executeMethodCall(size_t& ip, OpCode op);
+
+    // ---- R131 fix: executeMethodCall 211 行二次拆分为 thin dispatcher + 1 个 helper ----
+    /// 类实例方法调用：super 调用解析 + findMethodChunk 沿继承链查找 + 默认参数填充 +
+    /// 字段槽位预填 + 局部变量 extraSlots 预分配 + 方法帧构造（含 writeBack 元信息）
+    /// 提取自 executeMethodCall 的 instance 分支（145 行），是方法调用最复杂路径
+    VMResult executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const std::string& methodName,
+                                       uint8_t argCount, uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte);
     /// OP_CLOSURE 执行：创建闭包值
     VMResult executeClosure(size_t& ip, OpCode op);
     /// OP_CLASS_NEW 执行：构造类实例
     VMResult executeClassNew(size_t& ip, OpCode op);
     /// OP_DEFINE_CLASS 执行：注册类信息
     VMResult executeDefineClass(size_t& ip, OpCode op);
+
+    /// R98 W2: 同步调用闭包值（供高阶函数共享层回调）
+    /// 手动构造调用帧（模拟 OP_CALL_EXPR 的帧设置），压入 frames_，
+    /// 运行内部指令循环直到该帧弹出，从栈顶读取返回值。
+    /// @param closure   闭包值
+    /// @param args      参数列表首指针
+    /// @param argCount  参数数量
+    /// @param line      调用行号（错误报告）
+    /// @param column    调用列号（错误报告）
+    /// @param[out] result 闭包返回值（仅成功时有效）
+    /// @return VM_OK 成功 / VM_RUNTIME_ERROR 失败（hasError_ 已设置）
+    VMResult invokeClosureSync(const Value& closure, const Value* args, size_t argCount, int line, int column,
+                               Value& result);
 
     /// 执行单条指令的内部实现（供 execute() 和 stepOnce() 共用）
     VMResult executeOneInstruction();

@@ -1,4 +1,5 @@
 #include "parser/Parser.h"
+#include "common/Logger.h"
 #include <unordered_set>
 
 // ============================================================
@@ -72,7 +73,40 @@ static void collectVarRefs(ASTNode* node, std::unordered_set<std::string>& names
         }
         break;
     }
+    // BUG-011 fix: 显式列举所有"叶节点"类型（无 VarRef 子树），落入 default 时
+    // 发出 LOG_WARNING 以便未来新增表达式类型时及时察觉遗漏。
+    // 当前 NodeType 全集：
+    //   表达式（已覆盖）：BINARY_OP / UNARY_OP / FUN_CALL / INDEX_ACCESS /
+    //     MEMBER_ACCESS / METHOD_CALL / ARRAY_LITERAL / DICT_LITERAL /
+    //     INTERPOLATED_STRING / VAR_REF
+    //   叶节点表达式（无子节点，无需递归）：NUMBER_LITERAL / STRING_LITERAL /
+    //     BOOL_LITERAL / NULL_LITERAL / SUPER_EXPR
+    //   语句节点（不应出现在默认参数表达式中，但若被错误构造也应记录）：
+    //     VAR_DECL / ASSIGNMENT / IF_STMT / WHILE_STMT / FOR_STMT / FUN_DECL /
+    //     RETURN_STMT / PRINT_STMT / BLOCK / INDEX_ASSIGN / CLASS_DECL /
+    //     MEMBER_ASSIGN / BREAK_STMT / CONTINUE_STMT / TRY_STMT / THROW_STMT /
+    //     IMPORT_STMT / EXPORT_STMT
+    case NodeType::NODE_NUMBER_LITERAL:
+    case NodeType::NODE_STRING_LITERAL:
+    case NodeType::NODE_BOOL_LITERAL:
+    case NodeType::NODE_NULL_LITERAL:
+    case NodeType::NODE_SUPER_EXPR:
+        // 叶节点：无 VarRef 子树，无需递归
+        break;
+    // R164 协程/生成器：yield 表达式不应出现在默认参数中（Parser 会在 primary()
+    // 报错"yield 只能出现在 fun* 体内"），但此处防御性覆盖避免 LOG_WARNING。
+    case NodeType::NODE_YIELD_EXPR:
+        if (auto* y = static_cast<YieldExpr*>(node); y->value)
+            collectVarRefs(y->value.get(), names);
+        break;
     default:
+        // BUG-011 fix: 未覆盖的节点类型——可能是未来新增的表达式类型。
+        // 发出 LOG_WARNING 以便开发者及时补充覆盖，避免默认参数前向引用检查
+        // 被静默绕过。注意：语句节点理论上不应出现在默认参数表达式中，
+        // 若触发此警告说明 Parser 构造了非预期的 AST 结构。
+        LOG_WARNING("collectVarRefs: 未覆盖的节点类型 " + std::to_string(static_cast<int>(node->nodeType)) +
+                        "，默认参数前向引用检查可能不完整",
+                    "Parser");
         break;
     }
 }
@@ -85,6 +119,7 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     parseDepth_ = 0; // P15 fix: 重置递归深度
     blockDepth_ = 0; // P0-1 fix: 重置块嵌套深度
     diagnostics_.clear();
+    knownEnums_.clear(); // R99: 重置已知 enum 名集合，防止 Parser 复用导致状态泄漏
 
     // PERF-21 fix: 预分配 statements 向量容量，避免每个 declaration push_back 触发 realloc。
     // 估算：平均每 4 个 token 产生 1 个声明（关键字 + 名字 + ... + 分号）
@@ -92,16 +127,26 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
     statements.reserve(tokens_->size() / 4);
 
     while (!isAtEnd()) {
-        // FIX: '}' 不是顶层语句的合法起始 token。若 synchronize() 在 '}' 处停下，
-        // 主循环必须也停下来，否则 declaration() → primary() 不识别 '}' → 抛异常 →
-        // synchronize() 又看到 '}' → 死循环。
-        if (check(TokenType::TK_RBRACE))
-            break;
+        // BUG-004 fix: 顶层出现 '}' 是非法 token（无 enclosing block）。
+        // 原实现 break 会丢弃后续有效声明。改为：消耗 stray '}' + 诊断，
+        // 然后继续解析后续声明。注意 synchronize() 仍在 '}' 处返回（不消费），
+        // 但本循环已先消耗 '}'，故不会无限循环。
+        // 安全性：nested block() 中的 '}' 不会被消耗到此处——block() 内部循环
+        // 同样 check(RBRACE) 退出并由 consume(TK_RBRACE) 消费闭合花括号，
+        // 不会回退到顶层 parse()。
+        if (check(TokenType::TK_RBRACE)) {
+            const Token& rbrace = peek();
+            diagnostics_.addError("多余的 '}' 在顶层（无匹配的 '{'）", rbrace.line, rbrace.column, DiagSource::Parser);
+            advance(); // 消耗 stray '}'，避免 declaration() → primary() 不识别 → 死循环
+            continue;
+        }
         // BUG-PARSER-AUDIT-5 fix: 错误数量上限，防止恶意输入触发 O(N) 诊断内存膨胀。
         // 原实现无上限，100 万个 ';' 可累积 ~100 万条 Diagnostic（~200MB）。
-        if (diagnostics_.errorCount() >= MAX_PARSE_ERRORS) {
-            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) + " 条），停止解析", peek().line,
-                                  peek().column, DiagSource::Parser);
+        // L7 fix: 改为读取 RuntimeConfig 运行时配置（教学场景可调）
+        const int dynMaxParseErrors = RuntimeLimits::RuntimeConfig::instance().maxParseErrors();
+        if (diagnostics_.errorCount() >= dynMaxParseErrors) {
+            diagnostics_.addError("错误过多（超过 " + std::to_string(dynMaxParseErrors) + " 条），停止解析",
+                                  peek().line, peek().column, DiagSource::Parser);
             break;
         }
         try {
@@ -323,12 +368,21 @@ std::unique_ptr<ASTNode> Parser::declaration() {
         return varDecl();
 
     // fun / function / func 声明（Lexer 已统一为 TK_FUN）
-    if (check(TokenType::TK_FUN))
+    // R98 W3: `fun name(...)` 是函数声明，`fun(...)` 是 lambda 表达式。
+    // 通过 peekNext 区分：fun 后跟标识符 → funDecl；fun 后跟 `(` → lambda 表达式
+    // （走 statement → expressionStatement → expression → primary → lambdaExpr）。
+    // lambda 作为语句无意义（闭包值未被使用），但语法允许——用户可能写
+    // `fun(x){...}(5);` 立即调用，此时走 expressionStatement 路径。
+    if (check(TokenType::TK_FUN) && !checkNext(TokenType::TK_LPAREN))
         return funDecl();
 
     // class 声明
     if (check(TokenType::TK_CLASS))
         return classDecl();
+
+    // R99 枚举与 ADT: enum 声明
+    if (check(TokenType::TK_ENUM))
+        return enumDecl();
 
     // F12: import / export 声明
     if (check(TokenType::TK_IMPORT))
@@ -401,9 +455,68 @@ std::unique_ptr<ASTNode> Parser::declaration() {
     return statement();
 }
 
-std::unique_ptr<VarDecl> Parser::varDecl() {
+std::unique_ptr<ASTNode> Parser::varDecl() {
     const Token& varTok = consume(TokenType::TK_VAR, "期望 'var'");
+
+    // R98 元组与解构：var (a, b, c) = expr 解构绑定
+    // 检测 var 后紧跟 '(' 的模式——避免与 var (expr) 的合法语法歧义，
+    // 解构绑定要求 '(' 后必须紧跟标识符（不能是表达式），且至少一个 ',' 分隔。
+    if (check(TokenType::TK_LPAREN)) {
+        // 前瞻：'(' IDENTIFIER (',' IDENTIFIER)+ ')' '='
+        int lookahead = current_ + 1;
+        bool isDestructure = false;
+        if (lookahead < static_cast<int>(tokens_->size()) && (*tokens_)[lookahead].type == TokenType::TK_IDENTIFIER) {
+            // 扫描至少一个 ','
+            int scanPos = lookahead + 1;
+            while (scanPos < static_cast<int>(tokens_->size()) && (*tokens_)[scanPos].type == TokenType::TK_COMMA) {
+                ++scanPos;
+                if (scanPos >= static_cast<int>(tokens_->size()) ||
+                    (*tokens_)[scanPos].type != TokenType::TK_IDENTIFIER) {
+                    break; // 不是合法解构模式
+                }
+                ++scanPos;
+            }
+            if (scanPos < static_cast<int>(tokens_->size()) && (*tokens_)[scanPos].type == TokenType::TK_RPAREN) {
+                ++scanPos;
+                if (scanPos < static_cast<int>(tokens_->size()) && (*tokens_)[scanPos].type == TokenType::TK_ASSIGN) {
+                    isDestructure = true;
+                }
+            }
+        }
+
+        if (isDestructure) {
+            advance(); // 消耗 '('
+            std::vector<std::string> names;
+            const Token& firstName = consume(TokenType::TK_IDENTIFIER, "期望变量名");
+            names.push_back(firstName.lexeme);
+            while (match(TokenType::TK_COMMA)) {
+                const Token& nextName = consume(TokenType::TK_IDENTIFIER, "期望变量名");
+                names.push_back(nextName.lexeme);
+            }
+            consume(TokenType::TK_RPAREN, "期望 ')' 结束解构绑定");
+            consume(TokenType::TK_ASSIGN, "期望 '=' 初始化解构绑定");
+            auto init = expression();
+            consume(TokenType::TK_SEMICOLON, "期望 ';' 结束解构绑定");
+            // 类型注解暂不支持与解构同时使用（语法歧义），保留为空字符串
+            return std::make_unique<DestructureBinding>(std::move(names), std::move(init), varTok.line, varTok.column);
+        }
+    }
+
     const Token& name = consume(TokenType::TK_IDENTIFIER, "期望变量名");
+
+    // R99 fix: 支持 var name: Type = expr; 语法（var-first 带类型注解）
+    // 原 varDecl 只支持 var name = expr;（无注解），typedVarDecl 支持 Type name = expr;（类型在前）。
+    // 但 `var c: Color = Color.Red;` 和 `var c: enum = Color.Red;` 落入 varDecl 路径，
+    // 因 `:` 后非 `=`/`;` 触发 ParseError，导致变量未定义。
+    std::string typeAnn;
+    if (match(TokenType::TK_COLON)) {
+        // 允许标识符（类名/enum 名）、类型关键字、TK_ENUM（R99 泛型 enum 注解）
+        if (!isIdentifierOrType() && !check(TokenType::TK_ENUM)) {
+            const Token& tok = peek();
+            throw ParseError("期望类型名", tok.line, tok.column);
+        }
+        typeAnn = parseTypeAnnotation();
+    }
 
     std::unique_ptr<ASTNode> init = nullptr;
     if (match(TokenType::TK_ASSIGN)) {
@@ -411,7 +524,7 @@ std::unique_ptr<VarDecl> Parser::varDecl() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束变量声明");
 
-    return std::make_unique<VarDecl>(name.lexeme, "", std::move(init), varTok.line, varTok.column);
+    return std::make_unique<VarDecl>(name.lexeme, typeAnn, std::move(init), varTok.line, varTok.column);
 }
 
 std::unique_ptr<VarDecl> Parser::typedVarDecl(const std::string& typeAnn) {
@@ -430,8 +543,30 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
     // 消耗 fun 或 function 关键字
     const Token& funTok = advance();
 
+    // R164 协程/生成器：检测 fun* 标记生成器函数（类似 JS function* / Python def+yield）
+    bool isGenerator = false;
+    if (match(TokenType::TK_STAR)) {
+        isGenerator = true;
+    }
+
     // 函数名：允许标识符或类型关键字（如 dict, array, int, float, string, bool）
     const Token& name = consumeIdentifierOrType("期望函数名");
+
+    // R163 泛型函数：可选类型参数列表 <T, E, ...>
+    // 与 enumDecl 的泛型解析模式一致：函数名后、'(' 前解析 <T, E>
+    std::vector<std::string> typeParams;
+    if (match(TokenType::TK_LT)) {
+        do {
+            if (!isIdentifierOrType()) {
+                const Token& tok = peek();
+                throw ParseError("期望类型参数名", tok.line, tok.column);
+            }
+            const Token& tp = advance();
+            typeParams.push_back(tp.lexeme);
+        } while (match(TokenType::TK_COMMA));
+        consume(TokenType::TK_GT, "期望 '>' 结束类型参数列表");
+    }
+
     consume(TokenType::TK_LPAREN, "期望 '('");
 
     std::vector<std::string> params;
@@ -461,11 +596,39 @@ std::unique_ptr<FunDecl> Parser::funDecl() {
         returnType = parseTypeAnnotation();
     }
 
+    // R164 协程/生成器：进入生成器函数体前重置 yieldId 计数器。
+    // isGenerator=true 时重置为 0（开始计数），否则设为 -1（标记非生成器上下文，
+    // primary() 遇到 yield 时报错）。YieldIdScope 保证异常路径下恢复外层计数器，
+    // 支持嵌套生成器函数独立计数。
+    YieldIdScope yieldScope{currentYieldId_};
+    currentYieldId_ = isGenerator ? 0 : -1;
+    // R164 协程/生成器：进入函数体前重置 yield-in-loop 追踪标志。
+    // 嵌套函数（包括嵌套 fun*）有独立的追踪上下文：外层循环不影响内层函数的
+    // yield-in-loop 判定。BoolScope 保证异常路径下恢复外层值。
+    BoolScope loopCtxScope{yieldInLoop_};
+    yieldInLoop_ = false;
+    BoolScope hasLoopYieldScope{currentFunHasYieldInLoop_};
+    currentFunHasYieldInLoop_ = false;
+
     consume(TokenType::TK_LBRACE, "期望 '{'");
     auto body = block();
 
     auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
                                           std::move(body), funTok.line, funTok.column);
+    decl->typeParams = std::move(typeParams);
+    // R164 协程/生成器：标记生成器函数（fun*），供 Interpreter/VM 在调用时
+    // 返回 Coroutine 值而非直接执行函数体。
+    decl->isGenerator = isGenerator;
+    // 记录生成器内 yield 总数（供 Interpreter 重放模式判断是否已耗尽）。
+    if (isGenerator) {
+        if (currentFunHasYieldInLoop_) {
+            // 循环内 yield：编译期节点数 ≠ 运行时执行数，用 INT_MAX 标记动态模式，
+            // done 改由函数体自然结束路径判定（避免 currentYieldId >= yieldCount 误判）
+            decl->yieldCount = FunDecl::kDynamicYieldCount;
+        } else {
+            decl->yieldCount = currentYieldId_;
+        }
+    }
     // F10: 计算必需参数个数（前缀无默认值的参数数量）
     int reqCount = 0;
     for (size_t i = 0; i < defaultValues.size(); ++i) {
@@ -499,6 +662,65 @@ std::unique_ptr<FunDecl> Parser::typedFunDecl(const std::string& returnType) {
 
     auto decl = std::make_unique<FunDecl>(name.lexeme, std::move(params), std::move(paramTypes), returnType,
                                           std::move(body), name.line, name.column);
+    // F10: 计算必需参数个数
+    int reqCount = 0;
+    for (size_t i = 0; i < defaultValues.size(); ++i) {
+        if (defaultValues[i] == nullptr) {
+            ++reqCount;
+        } else {
+            break;
+        }
+    }
+    decl->requiredParamCount = reqCount;
+    decl->defaultValues = std::move(defaultValues);
+    return decl;
+}
+
+// ============================================================
+// R98 W3: Lambda 表达式解析
+// ============================================================
+// 语法：fun(params) { body }（匿名函数，作为表达式使用）
+// 与 funDecl() 的差异：
+//   1. 消耗 fun 关键字后直接期望 '('（不接受函数名）
+//   2. 返回的 FunDecl 节点 name 为空字符串（Compiler/Interpreter 内部用合成名 `$lambda_N`）
+//   3. 作为表达式求值，结果为闭包值（不注册到 funRegistry_）
+// 复用：parseParamList（参数解析）、block（函数体解析）、类型注解解析
+std::unique_ptr<FunDecl> Parser::lambdaExpr() {
+    const Token& funTok = advance(); // 消耗 fun 关键字
+
+    // Lambda 直接期望 '('（无函数名）
+    consume(TokenType::TK_LPAREN, "期望 '('");
+
+    std::vector<std::string> params;
+    std::vector<std::string> paramTypes;
+    std::vector<std::shared_ptr<ASTNode>> defaultValues; // F10
+    parseParamList(params, paramTypes, defaultValues);
+    consume(TokenType::TK_RPAREN, "期望 ')'");
+
+    // 可选的返回值类型注解 : type 或 -> type（与 funDecl 一致）
+    std::string returnType;
+    if (match(TokenType::TK_COLON)) {
+        if (!isIdentifierOrType()) {
+            const Token& tok = peek();
+            throw ParseError("期望返回类型名", tok.line, tok.column);
+        }
+        returnType = parseTypeAnnotation();
+    } else if (check(TokenType::TK_MINUS) && checkNext(TokenType::TK_GT)) {
+        advance(); // 消耗 '-'
+        advance(); // 消耗 '>'
+        if (!isIdentifierOrType()) {
+            const Token& tok = peek();
+            throw ParseError("期望返回类型名", tok.line, tok.column);
+        }
+        returnType = parseTypeAnnotation();
+    }
+
+    consume(TokenType::TK_LBRACE, "期望 '{'");
+    auto body = block();
+
+    // 匿名 lambda：name 为空字符串
+    auto decl = std::make_unique<FunDecl>("", std::move(params), std::move(paramTypes), returnType, std::move(body),
+                                          funTok.line, funTok.column);
     // F10: 计算必需参数个数
     int reqCount = 0;
     for (size_t i = 0; i < defaultValues.size(); ++i) {
@@ -656,19 +878,55 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
     const Token& classTok = consume(TokenType::TK_CLASS, "期望 'class'");
     const Token& name = consumeIdentifierOrType("期望类名");
 
+    // R163 泛型类：可选类型参数列表 <T, K, V, ...>
+    // 与 enumDecl/funDecl 的泛型解析模式一致：类名后、extends/'{' 前解析 <T, K>
+    std::vector<std::string> typeParams;
+    if (match(TokenType::TK_LT)) {
+        do {
+            if (!isIdentifierOrType()) {
+                const Token& tok = peek();
+                throw ParseError("期望类型参数名", tok.line, tok.column);
+            }
+            const Token& tp = advance();
+            typeParams.push_back(tp.lexeme);
+        } while (match(TokenType::TK_COMMA));
+        consume(TokenType::TK_GT, "期望 '>' 结束类型参数列表");
+    }
+
     // 可选的 extends SuperClassName 或 : SuperClassName
+    std::string superClassName = parseClassExtends();
+
+    consume(TokenType::TK_LBRACE, "期望 '{'");
+
+    // 解析类成员
+    std::vector<std::shared_ptr<ASTNode>> members;
+    parseClassMembers(members);
+
+    consume(TokenType::TK_RBRACE, "期望 '}'");
+
+    // AUDIT-P2.8 fix: 记录闭合 '}' 所在行号，供 Formatter 注入类体末尾注释。
+    int closingBraceLine = previous().line;
+    auto decl =
+        std::make_unique<ClassDecl>(name.lexeme, superClassName, std::move(members), classTok.line, classTok.column);
+    decl->closingBraceLine = closingBraceLine;
+    decl->typeParams = std::move(typeParams);
+    return decl;
+}
+
+std::string Parser::parseClassExtends() {
+    // 可选的 extends SuperClassName 或 : SuperClassName
+    // 调用前应已 consume 类名
     std::string superClassName;
     if (match(TokenType::TK_EXTENDS) || match(TokenType::TK_COLON)) {
         // PARSE-03 fix: 父类名支持类型关键字（与类名声明一致）
         const Token& superName = consumeIdentifierOrType("期望父类名");
         superClassName = superName.lexeme;
     }
+    return superClassName;
+}
 
-    consume(TokenType::TK_LBRACE, "期望 '{'");
-
-    // 解析类成员
-    std::vector<std::shared_ptr<ASTNode>> members;
-
+void Parser::parseClassMembers(std::vector<std::shared_ptr<ASTNode>>& members) {
+    // 调用前应已 consume '{'，循环直到 '}' 或 EOF
     while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
         // BUG-PARSER-AUDIT-2 fix: classDecl 成员循环需 try/catch 错误恢复，
         // 与 block() 模式一致。原实现无恢复，单个坏成员抛异常会穿透到外层 block，
@@ -810,15 +1068,271 @@ std::unique_ptr<ClassDecl> Parser::classDecl() {
             // 由下方 consume(TK_RBRACE) 消费 class 的闭合花括号。
         }
     }
+}
 
-    consume(TokenType::TK_RBRACE, "期望 '}'");
+// ============================================================
+// R99 枚举与 ADT + match 表达式
+// ============================================================
 
-    // AUDIT-P2.8 fix: 记录闭合 '}' 所在行号，供 Formatter 注入类体末尾注释。
+std::unique_ptr<EnumDecl> Parser::enumDecl() {
+    // enum Name<T, U> { Variant1, Variant2(T), Variant3(T, U), ... }
+    const Token& enumTok = consume(TokenType::TK_ENUM, "期望 'enum'");
+    const Token& name = consumeIdentifierOrType("期望 enum 名称");
+
+    // 可选泛型类型参数列表 <T, U, ...>
+    std::vector<std::string> typeParams;
+    if (match(TokenType::TK_LT)) {
+        do {
+            if (!isIdentifierOrType()) {
+                const Token& tok = peek();
+                throw ParseError("期望类型参数名", tok.line, tok.column);
+            }
+            const Token& tp = advance();
+            typeParams.push_back(tp.lexeme);
+        } while (match(TokenType::TK_COMMA));
+        consume(TokenType::TK_GT, "期望 '>' 结束类型参数列表");
+    }
+
+    consume(TokenType::TK_LBRACE, "期望 '{' 开始 enum 体");
+
+    // 解析 variant 列表
+    std::vector<EnumVariant> variants;
+    while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
+        try {
+            if (!isIdentifierOrType()) {
+                const Token& tok = peek();
+                throw ParseError("期望 variant 名称", tok.line, tok.column);
+            }
+            const Token& varName = advance();
+            EnumVariant variant;
+            variant.name = varName.lexeme;
+
+            // 可选的参数类型列表 (T1, T2, ...)
+            if (match(TokenType::TK_LPAREN)) {
+                if (!check(TokenType::TK_RPAREN)) {
+                    do {
+                        // variant 参数类型可以是任意类型注解
+                        std::string paramType = parseTypeAnnotation();
+                        variant.paramTypes.push_back(paramType);
+                    } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
+                }
+                consume(TokenType::TK_RPAREN, "期望 ')' 结束 variant 参数列表");
+            }
+
+            variants.push_back(std::move(variant));
+
+            // variant 之间用 ',' 分隔，尾逗号可选
+            if (!match(TokenType::TK_COMMA)) {
+                break;
+            }
+        } catch (const ParseError& e) {
+            // 错误恢复：与 classDecl 一致
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            synchronize();
+            // synchronize 在 '}' 处返回（不消费），循环条件 check(RBRACE) 退出
+        }
+    }
+
+    consume(TokenType::TK_RBRACE, "期望 '}' 结束 enum 体");
+
     int closingBraceLine = previous().line;
-    auto decl =
-        std::make_unique<ClassDecl>(name.lexeme, superClassName, std::move(members), classTok.line, classTok.column);
+    auto decl = std::make_unique<EnumDecl>(name.lexeme, std::move(typeParams), std::move(variants), enumTok.line,
+                                           enumTok.column);
     decl->closingBraceLine = closingBraceLine;
+
+    // 注册 enum 名到 knownEnums_，供 call() 区分 EnumVariantExpr 与 MemberAccess
+    knownEnums_.insert(name.lexeme);
+
     return decl;
+}
+
+std::unique_ptr<MatchExpr> Parser::matchExpr() {
+    // match scrutinee { case Pattern [if guard] => body; ... default => body; }
+    const Token& matchTok = consume(TokenType::TK_MATCH, "期望 'match'");
+    DepthGuard guard{parseDepth_};
+
+    // scrutinee 必须用括号包裹以避免与 { case ... } 的歧义
+    consume(TokenType::TK_LPAREN, "期望 '(' 开始 match 表达式");
+    auto scrutinee = expression();
+    // R134 fix: scrutinee 支持元组字面量 (e1, e2, ...)。
+    // expression() 不会跨 ',' 解析元组（元组字面量由 primary 处理），
+    // 因此当首个 expression 后紧跟 ',' 时需切换到元组解析模式。
+    // 否则 `match (3, 4) { case (a, b) => ... }` 会因 consume(RPAREN) 看到 ',' 而抛错。
+    if (check(TokenType::TK_COMMA)) {
+        std::vector<std::shared_ptr<ASTNode>> elements;
+        elements.push_back(std::move(scrutinee));
+        while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN)) {
+            elements.push_back(expression());
+        }
+        scrutinee = std::make_unique<TupleLiteral>(std::move(elements), matchTok.line, matchTok.column);
+    }
+    consume(TokenType::TK_RPAREN, "期望 ')' 结束 match 表达式");
+
+    consume(TokenType::TK_LBRACE, "期望 '{' 开始 match 体");
+
+    std::vector<MatchCase> cases;
+    bool hasDefault = false;
+
+    while (!check(TokenType::TK_RBRACE) && !isAtEnd()) {
+        try {
+            MatchCase mc;
+
+            if (match(TokenType::TK_DEFAULT)) {
+                // default => body
+                if (hasDefault) {
+                    const Token& tok = previous();
+                    throw ParseError("match 表达式不能有多个 default 分支", tok.line, tok.column);
+                }
+                hasDefault = true;
+                mc.isDefault = true;
+                mc.pattern = nullptr;
+            } else if (match(TokenType::TK_CASE)) {
+                // case Pattern => body  (R134: Pattern 支持 OR/TUPLE/VARIABLE/嵌套)
+                mc.pattern = matchPattern();
+                mc.isDefault = false;
+            } else {
+                // 兼容裸 Pattern => body（无 case 关键字）
+                mc.pattern = matchPattern();
+                mc.isDefault = false;
+            }
+
+            // R134: 可选 guard 表达式 `if cond`
+            if (match(TokenType::TK_IF)) {
+                mc.guard = expression();
+            }
+
+            consume(TokenType::TK_ARROW, "期望 '=>' 分隔 match 模式与体");
+
+            // case 体：单表达式（以 ';' 结束）或块语句
+            if (check(TokenType::TK_LBRACE)) {
+                advance(); // 消耗 '{'
+                mc.body = block();
+            } else {
+                auto expr = expression();
+                // 可选 ';'（match case 体可能不强制分号）
+                match(TokenType::TK_SEMICOLON);
+                mc.body = std::move(expr);
+            }
+
+            cases.push_back(std::move(mc));
+        } catch (const ParseError& e) {
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            synchronize();
+        }
+    }
+
+    consume(TokenType::TK_RBRACE, "期望 '}' 结束 match 体");
+
+    return std::make_unique<MatchExpr>(std::move(scrutinee), std::move(cases), matchTok.line, matchTok.column);
+}
+
+// R134 模式匹配扩展：matchPattern 改为递归下降解析器。
+// 解析优先级（从低到高）：
+//   orPattern:   andPattern ('|' andPattern)*    -- OR pattern
+//   andPattern:  primaryPattern                   -- 当前无 and pattern，留接口
+//   primaryPattern:
+//     | '_'                                -- WILDCARD
+//     | INT_LIT/FLOAT_LIT/STRING_LIT/...   -- LITERAL
+//     | '(' pattern (',' pattern)* ')'     -- TUPLE pattern (或裸 (pattern))
+//     | Identifier                          -- VARIABLE pattern（绑定整个 scrutinee）
+//     | Identifier '.' Identifier '(' ... ')'  -- VARIANT pattern（嵌套子 pattern）
+//
+// 注意：VARIANT 的子 pattern 不再是字符串变量名，而是完整的 pattern，
+// 支持 `Some(Some(x))` / `Pair(Some(a), None)` 等嵌套形式。
+std::shared_ptr<MatchPattern> Parser::matchPattern() {
+    auto left = matchPrimaryPattern();
+    // OR pattern: left or right or ...（MiniLang 用 'or' 关键字而非 '|'）
+    while (match(TokenType::TK_OR)) {
+        auto right = matchPrimaryPattern();
+        // 合并到 OR pattern：若 left 已是 OR，则追加；否则新建 OR
+        if (left->kind == MatchPatternKind::OR) {
+            left->subPatterns.push_back(std::move(right));
+        } else {
+            auto orPattern = std::make_shared<MatchPattern>(MatchPatternKind::OR, left->line, left->column);
+            orPattern->subPatterns.push_back(std::move(left));
+            orPattern->subPatterns.push_back(std::move(right));
+            left = orPattern;
+        }
+    }
+    return left;
+}
+
+std::shared_ptr<MatchPattern> Parser::matchPrimaryPattern() {
+    const Token& tok = peek();
+
+    // 1. 通配符 _
+    if (check(TokenType::TK_IDENTIFIER) && tok.lexeme == "_") {
+        advance();
+        return std::make_shared<MatchPattern>(MatchPatternKind::WILDCARD, tok.line, tok.column);
+    }
+
+    // 2. 字面量模式（INT_LIT / FLOAT_LIT / STRING_LIT / TRUE / FALSE / NULL）
+    if (check(TokenType::TK_INT_LIT) || check(TokenType::TK_FLOAT_LIT) || check(TokenType::TK_STRING_LIT) ||
+        check(TokenType::TK_TRUE) || check(TokenType::TK_FALSE) || check(TokenType::TK_NULL)) {
+        auto literalExpr = primary();
+        auto p = std::make_shared<MatchPattern>(MatchPatternKind::LITERAL, tok.line, tok.column);
+        p->literal = std::move(literalExpr);
+        return p;
+    }
+
+    // 3. 元组模式：(pattern, pattern, ...) 或裸 (pattern)
+    if (check(TokenType::TK_LPAREN)) {
+        advance(); // 消耗 '('
+        // 空 () 视为 0 元组（不支持，要求至少 1 个元素）
+        if (check(TokenType::TK_RPAREN)) {
+            throw ParseError("match 元组模式要求至少 1 个元素", tok.line, tok.column);
+        }
+        auto p = std::make_shared<MatchPattern>(MatchPatternKind::TUPLE, tok.line, tok.column);
+        do {
+            p->subPatterns.push_back(matchPattern());
+        } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
+        consume(TokenType::TK_RPAREN, "期望 ')' 结束元组模式");
+        // 单元素 (x) 不是真正的元组，回退为裸 pattern
+        if (p->subPatterns.size() == 1) {
+            return std::move(p->subPatterns[0]);
+        }
+        return p;
+    }
+
+    // 4. 标识符：可能是 VARIABLE pattern 或 VARIANT pattern
+    if (check(TokenType::TK_IDENTIFIER)) {
+        const std::string& name = tok.lexeme;
+        // 4a. VARIANT pattern: EnumName.VariantName(...)
+        if (knownEnums_.find(name) != knownEnums_.end()) {
+            advance(); // 消耗 enum 名
+            consume(TokenType::TK_DOT, "期望 '.' 分隔 enum 名与 variant 名");
+            if (!isIdentifierOrType()) {
+                const Token& v = peek();
+                throw ParseError("期望 variant 名", v.line, v.column);
+            }
+            const Token& varNameTok = advance();
+
+            auto p = std::make_shared<MatchPattern>(MatchPatternKind::VARIANT, tok.line, tok.column);
+            p->enumName = name;
+            p->variantName = varNameTok.lexeme;
+
+            // 可选的子 pattern 列表 (subPattern1, subPattern2, ...)
+            // 子 pattern 是完整 pattern（递归 matchPattern），支持嵌套
+            if (match(TokenType::TK_LPAREN)) {
+                if (!check(TokenType::TK_RPAREN)) {
+                    do {
+                        p->subPatterns.push_back(matchPattern());
+                    } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
+                }
+                consume(TokenType::TK_RPAREN, "期望 ')' 结束 variant 子 pattern 列表");
+            }
+            return p;
+        }
+        // 4b. VARIABLE pattern: x（绑定整个 scrutinee 到变量 x）
+        // 注意：变量名不能是关键字（match/case/default/if 等）
+        advance(); // 消耗变量名
+        auto p = std::make_shared<MatchPattern>(MatchPatternKind::VARIABLE, tok.line, tok.column);
+        p->variableName = name;
+        return p;
+    }
+
+    throw ParseError("期望 match 模式（'_' / 字面量 / Identifier / EnumName.VariantName(...) / (p1, p2, ...)）",
+                     tok.line, tok.column);
 }
 
 std::unique_ptr<ASTNode> Parser::statement() {
@@ -911,6 +1425,11 @@ std::unique_ptr<WhileStmt> Parser::whileStmt() {
     auto cond = expression();
     consume(TokenType::TK_RPAREN, "期望 ')'");
 
+    // R164 协程/生成器：标记循环体解析期间 yieldInLoop_=true，供 primary() 检测
+    // yield-in-loop。BoolScope 保证异常路径下恢复外层值（支持嵌套循环与函数边界）。
+    BoolScope loopScope{yieldInLoop_};
+    yieldInLoop_ = true;
+
     // 支持带花括号的块和不带花括号的单条语句
     std::unique_ptr<ASTNode> body;
     if (check(TokenType::TK_LBRACE)) {
@@ -984,6 +1503,10 @@ std::unique_ptr<ForStmt> Parser::forStmt() {
         update = expression();
     }
     consume(TokenType::TK_RPAREN, "期望 ')'");
+
+    // R164 协程/生成器：标记循环体解析期间 yieldInLoop_=true（与 whileStmt 对称）。
+    BoolScope loopScope{yieldInLoop_};
+    yieldInLoop_ = true;
 
     // 支持带花括号的块和不带花括号的单条语句
     std::unique_ptr<ASTNode> body;
@@ -1207,9 +1730,11 @@ std::unique_ptr<Block> Parser::block() {
             break;
         // BUG-PARSER-AUDIT-5 fix: block() 主循环也需错误上限检查，
         // 防止恶意嵌套块内含大量错误触发 O(N) 诊断内存膨胀。
-        if (diagnostics_.errorCount() >= MAX_PARSE_ERRORS) {
-            diagnostics_.addError("错误过多（超过 " + std::to_string(MAX_PARSE_ERRORS) + " 条），停止解析", peek().line,
-                                  peek().column, DiagSource::Parser);
+        // L7 fix: 改为读取 RuntimeConfig 运行时配置（教学场景可调）
+        const int dynMaxParseErrors = RuntimeLimits::RuntimeConfig::instance().maxParseErrors();
+        if (diagnostics_.errorCount() >= dynMaxParseErrors) {
+            diagnostics_.addError("错误过多（超过 " + std::to_string(dynMaxParseErrors) + " 条），停止解析",
+                                  peek().line, peek().column, DiagSource::Parser);
             break;
         }
         try {
@@ -1504,6 +2029,30 @@ std::unique_ptr<ASTNode> Parser::call() {
             // PARSE-10 fix: 成员名支持类型关键字（与声明端一致）
             const Token& fieldName = consumeIdentifierOrType("期望成员名");
 
+            // R99 枚举与 ADT: EnumName.VariantName 或 EnumName.VariantName(args)
+            // 若 expr 是 VarRef 且其 name 在 knownEnums_ 中，则生成 EnumVariantExpr
+            // 而非 MemberAccess/MethodCall。这样后续 Interpreter/VM 可直接构造
+            // enum variant 值而无需运行时查表消歧。
+            if (expr->nodeType == NodeType::NODE_VAR_REF) {
+                auto* varRef = static_cast<VarRef*>(expr.get());
+                if (knownEnums_.find(varRef->name) != knownEnums_.end()) {
+                    // 收集可选的构造参数
+                    std::vector<std::shared_ptr<ASTNode>> args;
+                    if (match(TokenType::TK_LPAREN)) {
+                        args.reserve(4);
+                        if (!check(TokenType::TK_RPAREN)) {
+                            do {
+                                args.push_back(expression());
+                            } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN));
+                        }
+                        consume(TokenType::TK_RPAREN, "期望 ')' 结束 enum variant 构造参数列表");
+                    }
+                    expr = std::make_unique<EnumVariantExpr>(varRef->name, fieldName.lexeme, std::move(args),
+                                                             varRef->line, varRef->column);
+                    continue;
+                }
+            }
+
             // 检查是否是方法调用: obj.method(args)
             if (match(TokenType::TK_LPAREN)) {
                 std::vector<std::shared_ptr<ASTNode>> args;
@@ -1532,6 +2081,57 @@ std::unique_ptr<ASTNode> Parser::call() {
 }
 
 std::unique_ptr<ASTNode> Parser::primary() {
+    // R99 枚举与 ADT: match 表达式
+    if (check(TokenType::TK_MATCH)) {
+        if (parseDepth_ >= MAX_PARSE_DEPTH) {
+            const Token& m = peek();
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", m.line, m.column);
+        }
+        return matchExpr();
+    }
+
+    // R164 协程/生成器：yield 表达式
+    // 语法：yield expr（挂起并返回值）或 yield（无值，等价于 yield null）
+    // 语义：挂起当前生成器，将 value 返回给调用者；下次 .next() 从此处恢复执行。
+    // 约束：yield 只能出现在 fun* 声明的函数体内（currentYieldId_ >= 0）。
+    //       普通函数/lambda/全局作用域中出现 yield 报错。
+    // yieldId 分配：按源代码出现顺序递增（0,1,2,...），供 Interpreter 重放模式使用。
+    if (check(TokenType::TK_YIELD)) {
+        const Token& yieldTok = peek();
+        if (currentYieldId_ < 0) {
+            throw ParseError("yield 只能出现在 fun* 声明的生成器函数体内", yieldTok.line, yieldTok.column);
+        }
+        if (parseDepth_ >= MAX_PARSE_DEPTH) {
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", yieldTok.line,
+                             yieldTok.column);
+        }
+        advance(); // 消耗 yield 关键字
+
+        // 判断 yield 后是否跟表达式：
+        // - 若紧跟语句/参数终止符（; ) } , ] 或 EOF），视为无值 yield（等价于 yield null）
+        // - 否则解析后续表达式作为 yield 的值
+        std::shared_ptr<ASTNode> value = nullptr;
+        bool followedByTerminator = check(TokenType::TK_SEMICOLON) || check(TokenType::TK_RPAREN) ||
+                                    check(TokenType::TK_RBRACE) || check(TokenType::TK_COMMA) ||
+                                    check(TokenType::TK_RBRACKET) || check(TokenType::TK_EOF);
+        if (!followedByTerminator) {
+            DepthGuard guard{parseDepth_}; // C4 fix: 递归深度保护
+            value = expression();
+        }
+
+        // 分配递增 yieldId 并递增计数器（供同函数内后续 yield 使用）
+        int assignedId = currentYieldId_++;
+        // R164 协程/生成器：若当前处于循环体内，标记生成器为动态 yieldCount 模式。
+        // 循环内 yield 的编译期节点数 ≠ 运行时执行数（如 while 内 yield i 执行 N 次），
+        // 用 INT_MAX 标记使 done 判定改为函数体自然结束路径。
+        if (yieldInLoop_) {
+            currentFunHasYieldInLoop_ = true;
+        }
+        auto yieldNode = std::make_unique<YieldExpr>(std::move(value), yieldTok.line, yieldTok.column);
+        yieldNode->yieldId = assignedId;
+        return yieldNode;
+    }
+
     // 整数字面量
     if (match(TokenType::TK_INT_LIT)) {
         const Token& tok = previous();
@@ -1586,6 +2186,20 @@ std::unique_ptr<ASTNode> Parser::primary() {
         return std::make_unique<SuperExpr>(tok.line, tok.column);
     }
 
+    // R98 W3: Lambda 表达式 fun(params) { body }
+    // 在 primary 中识别 `fun` 后跟 `(`（lambda 表达式）vs `fun` 后跟标识符（函数声明，
+    // 仅在 declaration 上下文处理，不会进入 primary）。通过 peekNext 判断：
+    //   fun (  → lambda 表达式
+    //   fun id → 函数声明（不应进入 primary，但若用户在表达式上下文误用 fun name()，
+    //            报错"期望 '('"由 lambdaExpr 触发，提示用户使用声明语法）
+    if (check(TokenType::TK_FUN) && checkNext(TokenType::TK_LPAREN)) {
+        if (parseDepth_ >= MAX_PARSE_DEPTH) {
+            const Token& m = peek();
+            throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", m.line, m.column);
+        }
+        return lambdaExpr();
+    }
+
     // 标识符
     if (match(TokenType::TK_IDENTIFIER)) {
         const Token& tok = previous();
@@ -1633,20 +2247,45 @@ std::unique_ptr<ASTNode> Parser::primary() {
         return std::make_unique<DictLiteral>(std::move(pairs), brace.line, brace.column);
     }
 
-    // 分组表达式
+    // 分组表达式 / 元组字面量
     // BUG-PARSER-AUDIT-7 fix: 深度检查移到 match() 之前，与 unary() 的
     // AUDIT-BUG-P3 fix 模式对齐。原实现先 match 消耗 '(' 再检查深度，
     // 超限时抛异常 → synchronize() 的初始 advance() 会多消耗一个 token，
     // 导致恢复时多丢失一个 token。
+    //
+    // R98 元组与解构：'(e1, e2, ...)' 为元组字面量，'(e)' 为分组表达式。
+    // 解析策略：消耗 '(' 后解析第一个 expression，若紧跟 ',' 则切换到元组解析模式。
+    // 单元素元组需显式尾逗号：'(e,)'。空元组 '()' 由后续特例处理。
     if (check(TokenType::TK_LPAREN)) {
         if (parseDepth_ >= MAX_PARSE_DEPTH) {
             const Token& lp = peek();
             throw ParseError("表达式嵌套过深（超过 " + std::to_string(MAX_PARSE_DEPTH) + " 层）", lp.line, lp.column);
         }
+        const Token& lp = peek();
         advance(); // 消耗 '('
-        auto expr = expression();
+
+        // 空元组 ()
+        if (check(TokenType::TK_RPAREN)) {
+            advance(); // 消耗 ')'
+            return std::make_unique<TupleLiteral>(std::vector<std::shared_ptr<ASTNode>>{}, lp.line, lp.column);
+        }
+
+        auto firstExpr = expression();
+
+        // 元组字面量：(e1, e2, ...) 或 (e,) 单元素元组
+        if (check(TokenType::TK_COMMA)) {
+            std::vector<std::shared_ptr<ASTNode>> elements;
+            elements.push_back(std::move(firstExpr));
+            while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RPAREN)) {
+                elements.push_back(expression());
+            }
+            consume(TokenType::TK_RPAREN, "期望 ')' 结束元组字面量");
+            return std::make_unique<TupleLiteral>(std::move(elements), lp.line, lp.column);
+        }
+
+        // 分组表达式
         consume(TokenType::TK_RPAREN, "期望 ')' 结束分组表达式");
-        return expr;
+        return firstExpr;
     }
 
     // 错误

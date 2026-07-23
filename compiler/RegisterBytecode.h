@@ -74,6 +74,10 @@ enum class RegOp : uint8_t {
     REG_RETURN,        // src                         返回 src
     REG_RETURN_NULL,   // (无操作数)                  返回 null
 
+    // R164 协程/生成器：yield 表达式
+    // REG_YIELD dst, src — dst 接收 yield 表达式结果（重放模式 = src），src 提供 yield 值
+    REG_YIELD, // dst(1B), src(1B)
+
     // ---- 调用 ----
     REG_CALL,        // dst, nameIdx(2B), argCount(1B), arg1, arg2, ...  命名函数调用
     REG_CALL_EXPR,   // dst, callee, argCount(1B), arg1, ...             表达式调用
@@ -85,8 +89,17 @@ enum class RegOp : uint8_t {
     // ---- 容器 ----
     REG_BUILD_ARRAY, // dst, count(1B), elem1, elem2, ...
     REG_BUILD_DICT,  // dst, pairCount(1B), k1, v1, k2, v2, ...
+    REG_BUILD_TUPLE, // R98 元组与解构：dst, count(1B), elem1, elem2, ... (immutable)
     REG_INDEX_GET,   // dst, obj, idx
     REG_INDEX_SET,   // obj, idx, val
+
+    // R99 枚举与 ADT + match：enum variant 构造/检查/取字段
+    // dst, enumNameConstIdx(2B), variantNameConstIdx(2B), argCount(1B), arg1, arg2, ... (变长 7+argCount)
+    REG_BUILD_ENUM_VARIANT,
+    // dst, scrut, enumNameConstIdx(2B), variantNameConstIdx(2B) — dest = (scrut 是指定 enum variant)
+    REG_ENUM_VARIANT_NAME,
+    // dst, scrut, idx — dest = scrut.fields[idx]
+    REG_ENUM_VARIANT_FIELD,
 
     // ---- 成员访问 ----
     REG_MEMBER_GET, // dst, obj, fieldIdx(2B)
@@ -129,6 +142,17 @@ enum class RegOp : uint8_t {
     // AUDIT-P1.1 fix: break/continue finally 续跳机制（三后端一致性）
     REG_PUSH_JUMP_TARGET, // push 跳转目标到 pendingJumpStack_（操作数: target(2B)）
     REG_FINALLY_END,      // 从 pendingJumpStack_ pop 目标并跳转；栈空则继续执行（无操作数）
+
+    // R133 模式匹配扩展：获取容器长度（与 OP_LEN 对应，三后端一致）。
+    // 操作数: dst(1B) + src(1B)  语义: dst = len(src)
+    // 支持 array/dict/string/tuple（与 StackVM OP_LEN / IR LEN 同语义）。
+    // 用于 TUPLE pattern 编译期元素数检查。
+    REG_LEN,
+    // R133 模式匹配扩展：软类型测试（与 OP_TYPE_TEST / IROp::TYPE_TEST 对应）。
+    // 操作数: dst(1B) + src(1B) + typeIdx(2B)  语义: dst = typeMatch(src, annotation)
+    // 与 REG_TYPE_CHECK 区别：不抛错，写 bool 到 dst。
+    // 用于 TUPLE pattern 类型检查（不匹配时 fall through 而非抛错）。
+    REG_TYPE_TEST,
 };
 
 // ============================================================
@@ -178,6 +202,38 @@ struct RegBytecodeChunk {
     // 用于 RegisterVM 条件断点求值：从当前帧的寄存器反查变量名，注入临时 Interpreter 环境。
     // 限制：槽位复用时（兄弟作用域）后声明的变量名覆盖先前的，属于已知限制。
     std::vector<std::string> localRegNames;
+    // L1 fix（2026-07-19）: 基于IP范围的寄存器→名称反查表，解决兄弟作用域寄存器复用导致
+    // 的变量名错位。语义同 BytecodeChunk::slotNameRanges，但 slot 字段表示寄存器号。
+    struct SlotNameRange {
+        uint8_t slot = 0;
+        std::string name;
+        size_t startIp = 0;
+        size_t endIp = 0;
+    };
+    std::vector<SlotNameRange> slotNameRanges;
+
+    // R164 协程/生成器：标记此 chunk 为生成器函数体（fun* 声明）。
+    // RegisterVM 在 REG_CALL 时检测此标志：若为 true，创建协程值而非直接调用。
+    bool isGenerator = false;
+    // R164 协程/生成器：yield 总数（从 IRFunction.yieldCount 复制）。
+    // 静态 yield 数或 kDynamicYieldCount（INT_MAX，表示存在循环内 yield）。
+    int yieldCount = 0;
+    static constexpr int kDynamicYieldCount = 2147483647; // INT_MAX
+
+    /// L1 fix: 按 ip 反查 reg 对应的变量名。优先在 slotNameRanges 中查找
+    /// startIp <= ip < endIp && slot == N 的 range；未命中则回退到 localRegNames。
+    const std::string& resolveSlotName(size_t slot, size_t ip) const {
+        for (const auto& range : slotNameRanges) {
+            if (range.slot == slot && range.startIp <= ip && ip < range.endIp) {
+                return range.name;
+            }
+        }
+        if (slot < localRegNames.size()) {
+            return localRegNames[slot];
+        }
+        static const std::string empty;
+        return empty;
+    }
 
     RegBytecodeChunk() = default;
     explicit RegBytecodeChunk(const std::string& chunkName, int argCount = 0)
@@ -218,4 +274,6 @@ struct RegisterCompileResult {
     std::map<std::string, RegBytecodeChunk> functionChunks;
     int globalSlotCount = 0;
     std::vector<std::string> globalSlotNames;
+    // R99 enum 校验：与 CompileResult.enumInfos 对齐，RegisterVM 启动时加载。
+    std::vector<VMEnumInfo> enumInfos;
 };

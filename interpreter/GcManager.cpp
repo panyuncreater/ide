@@ -3,7 +3,7 @@
 // ============================================================
 
 #include "interpreter/GcManager.h"
-#include "Logger.h"
+#include "common/Logger.h"
 #include "interpreter/RefCounted.h"
 #include "interpreter/Value.h"
 
@@ -18,6 +18,11 @@ RefCounted::~RefCounted() {
 void GcManager::registerTracked(RefCounted* obj) {
     if (!obj)
         return;
+    // R135 GC 模式分流：RefCountOnly 模式跳过注册，纯引用计数管理生命周期。
+    // 循环引用会泄漏（已知限制，用于基线对比与教学演示）。
+    if (gcMode_ == GcMode::RefCountOnly) {
+        return;
+    }
     tracked_.push_back(obj);
     // AUDIT-P2-CORRECT fix: aliveSet_.insert 可能抛 bad_alloc（rehash），
     // 此时 tracked_ 已含 obj 但 aliveSet_ 不含，破坏不变量
@@ -31,6 +36,33 @@ void GcManager::registerTracked(RefCounted* obj) {
         throw;
     }
     obj->gcTracked_ = true;
+    // BUG-003 fix: 增量分配计数 + 阈值触发，避免长时间运行函数中循环引用累积
+    // 导致的内存峰值。checkIncrementalGc 内部有 gcInProgress_ 防递归保护。
+    ++allocationsSinceLastGc_;
+    checkIncrementalGc();
+}
+
+void GcManager::checkIncrementalGc() {
+    // BUG-003 fix: 增量 GC 触发逻辑
+    //   - 阈值未达：直接返回（O(1) 检查）
+    //   - 回调未注册：直接返回（无 Interpreter 场景，如单元测试直接构造 Value）
+    //   - GC 进行中：直接返回（防止回调内 collectCycle → 析构 → registerTracked → 递归）
+    //   - 触发：调用回调，回调内 Interpreter 收集 roots 并调用 collectCycle
+    if (gcInProgress_)
+        return;
+    if (allocationsSinceLastGc_ < gcAllocationThreshold_)
+        return;
+    if (!gcTriggerCallback_)
+        return;
+    gcInProgress_ = true;
+    try {
+        gcTriggerCallback_();
+    } catch (...) {
+        // 回调内不应抛异常（collectCycle 不抛）；防御性捕获避免异常逃逸到构造函数
+        gcInProgress_ = false;
+        throw;
+    }
+    gcInProgress_ = false;
 }
 
 void GcManager::onDestroyed(RefCounted* obj) {
@@ -108,6 +140,22 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
             // env 是 weak_ptr，不 mark（避免重新引入循环）
             break;
         }
+        case ValueType::VAL_TUPLE: {
+            // R98 元组与解构：元组元素可能持有可变容器形成间接环，需 mark 元素。
+            const auto& elements = cur->box_.asPtr<Value::TupleData>()->elements;
+            for (const auto& elem : elements) {
+                worklist.push_back(&elem);
+            }
+            break;
+        }
+        case ValueType::VAL_ENUM_VARIANT: {
+            // R99 枚举与 ADT：enum variant 的 fields 可能持有可变容器形成间接环，需 mark。
+            const auto& fields = cur->box_.asPtr<Value::EnumVariantData>()->fields;
+            for (const auto& f : fields) {
+                worklist.push_back(&f);
+            }
+            break;
+        }
         case ValueType::VAL_STRING:
         case ValueType::VAL_INT:
             // 叶子节点，无子引用
@@ -119,10 +167,15 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
 }
 
 void GcManager::collectCycle(const std::vector<const void*>& roots) {
+    // R135 GC 模式分流：RefCountOnly 模式无 tracked 对象，直接返回。
+    if (gcMode_ == GcMode::RefCountOnly) {
+        return;
+    }
     if (tracked_.empty())
         return;
 
-    // Phase 1: Mark - 从 roots 出发标记所有可达的容器节点
+    // R113 C 项：Phase 1: Mark - 从 roots 出发标记所有可达的容器节点
+    currentPhase_ = GcPhase::Marking;
     std::unordered_set<const void*> marked;
     marked.reserve(tracked_.size() * 2);
     for (const void* rootPtr : roots) {
@@ -158,22 +211,50 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
                 }
                 break;
             }
+            case ValueType::VAL_TUPLE: {
+                // R98 元组与解构：元组作为根时，标记其元素
+                const auto& elements = static_cast<const Value::TupleData*>(rootPtr)->elements;
+                for (const auto& elem : elements) {
+                    markValue(elem, marked);
+                }
+                break;
+            }
+            case ValueType::VAL_ENUM_VARIANT: {
+                // R99 枚举与 ADT：enum variant 作为根时，标记其 fields
+                const auto& fields = static_cast<const Value::EnumVariantData*>(rootPtr)->fields;
+                for (const auto& f : fields) {
+                    markValue(f, marked);
+                }
+                break;
+            }
             default:
                 break;
             }
         }
     }
+    // R113 C 项：Phase 1 结束，记录可达节点数
+    lastMarkedCount_ = marked.size();
 
     // Phase 2: Sweep - 遍历 tracked 列表，对 aliveSet_ 中存在但 marked 中不存在的
-    // 节点（不可达的循环孤岛）清空子元素打破循环。
+    // 节点（不可达的循环孤岛）执行回收。
+    //
+    // R135 GC 模式分流：
+    //   RefCountWithCycleGc (默认): 清空子元素打破循环，让 refCount 降至 0 自然释放
+    //   GcOnly: 收集到 toDelete 列表，迭代结束后统一 delete
     //
     // 安全性说明：
     //   - aliveSet_.find(obj) 用 obj 作为 key 哈希查找，不 dereference obj 内容，
     //     即使 obj 已被释放，也是安全的（key 比较只比较指针值）。
-    //   - 清空 obj 的子元素会触发级联析构，其他 tracked_ 条目的析构会调用
-    //     onDestroyed 从 aliveSet_ 移除，故后续遍历到那些条目时
+    //   - RefCountWithCycleGc 清空 obj 的子元素会触发级联析构，其他 tracked_ 条目
+    //     的析构会调用 onDestroyed 从 aliveSet_ 移除，故后续遍历到那些条目时
     //     aliveSet_.find 返回 not found → 安全跳过。
+    //   - GcOnly 模式不在迭代中 delete（避免级联析构修改 aliveSet_ 破坏迭代不变量），
+    //     而是收集到 toDelete，迭代结束后统一 delete。delete 触发 ~RefCounted →
+    //     onDestroyed → aliveSet_.erase，安全。
+    // R113 C 项：Phase 2 开始
+    currentPhase_ = GcPhase::Sweeping;
     size_t collectedCount = 0;
+    std::vector<RefCounted*> toDelete; // R135 GcOnly 模式：延迟 delete 列表
     for (RefCounted* obj : tracked_) {
         if (!obj)
             continue;
@@ -184,10 +265,19 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
         if (marked.find(obj) != marked.end())
             continue;
 
-        // 不可达的循环孤岛：清空子元素打破循环，让 refCount 降至 0 自然释放。
+        // 不可达的循环孤岛处理：先清空子元素打破循环。
+        // R135 GcOnly 修复：原实现 GcOnly 分支直接 push 到 toDelete 跳过清空，
+        // 导致后续 delete obj 触发 ~ArrayData → ~vector<Value> → 释放元素（即 obj 自身）
+        // → release() → refCount 降为 0 → 再次 delete obj，构成 use-after-free（SEH 0xc0000005）。
+        // 修复：GcOnly 与 RefCountWithCycleGc 共享相同的 std::move 清空策略打破循环。
+        // 区别仅在收尾：RefCountWithCycleGc 依赖 refCount 自然释放（不清 toDelete），
+        // GcOnly 收集存活对象到 toDelete 在迭代结束后显式 delete（处理 refCount>1 的强制回收语义）。
         // AUDIT-BUG-I3 fix: 先 move 出子元素到局部变量再清空，防止自引用容器
         // （如 a.append(a)）在 clear() 期间级联析构重入 vector 析构器导致 use-after-free。
         // move 后 obj->elements/entries/fields 为空，级联析构 obj 时其析构器看到空容器，安全。
+        // R135 GcOnly 路径：std::move 析构 tmp 时若触发级联 delete obj（仅当 refCount 来自循环引用），
+        // onDestroyed 会从 aliveSet_ 移除 obj，后续通过 aliveSet_.find 检查跳过 toDelete.push_back
+        // 避免 double-free。
         switch (obj->type) {
         case ValueType::VAL_ARRAY: {
             auto tmp = std::move(static_cast<Value::ArrayData*>(obj)->elements);
@@ -204,11 +294,50 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
             (void)tmp;
             break;
         }
+        case ValueType::VAL_TUPLE: {
+            // R98 元组与解构：清空元组元素打破循环（元组元素可能持有容器形成间接环）
+            auto tmp = std::move(static_cast<Value::TupleData*>(obj)->elements);
+            (void)tmp;
+            break;
+        }
+        case ValueType::VAL_ENUM_VARIANT: {
+            // R99 枚举与 ADT：清空 fields 打破循环（fields 可能持有容器形成间接环）
+            auto tmp = std::move(static_cast<Value::EnumVariantData*>(obj)->fields);
+            (void)tmp;
+            break;
+        }
         default:
             break;
         }
+
+        if (gcMode_ == GcMode::GcOnly) {
+            // R135 GcOnly 模式：std::move 清空子元素后，若 obj 仅被循环引用持有，
+            // 级联析构已 delete obj 并从 aliveSet_ 移除，跳过 toDelete.push_back 避免 double-free。
+            // 若 obj 还被循环外引用（refCount > 0），aliveSet_ 仍含 obj，需 push 到 toDelete
+            // 在迭代结束后显式 delete（GcOnly 语义：GC 主导生命周期，强制回收不可达对象）。
+            if (aliveSet_.find(obj) != aliveSet_.end()) {
+                toDelete.push_back(obj);
+            }
+        }
         ++collectedCount;
     }
+
+    // R135 GcOnly 模式：迭代结束后统一 delete 不可达对象。
+    // toDelete 仅包含 std::move 清空子元素后仍存活的对象（refCount > 0，
+    // 即被循环外引用持有）。仅被循环引用持有的对象已在 std::move tmp 析构时
+    // 通过 RefCounted release 机制自然 delete，不进入 toDelete。
+    // delete 触发 ~RefCounted → onDestroyed → aliveSet_.erase + tracked_ 条目悬垂。
+    // Phase 3 重建 tracked_ 时会过滤掉悬垂指针（aliveSet_ 中不存在）。
+    if (gcMode_ == GcMode::GcOnly && !toDelete.empty()) {
+        for (RefCounted* obj : toDelete) {
+            // 安全性：obj 在 push 时确认仍在 aliveSet_ 中（未被级联析构释放）。
+            // GcOnly 语义：GC 主导生命周期，强制回收不可达对象，无视 refCount > 0。
+            // 调用方需保证无其他强引用（GcOnly 不与 COW 共享引用共存）。
+            delete obj;
+        }
+    }
+    // R113 C 项：Phase 2 结束，记录回收孤岛数
+    lastCollectedCount_ = collectedCount;
 
     // Phase 3: 重建跟踪结构。
     // BUG-INTR-AUDIT-1 fix: 原实现无条件 tracked_.clear()，导致上一轮 marked 为可达
@@ -217,6 +346,8 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     // 变为不可达时，sweep 阶段不会检查它们（不在 tracked_ 中），无法打破循环，导致
     // 永久泄漏。修复：保留仍存活（在 aliveSet_ 中）且被标记为可达（在 marked 中）的
     // 容器条目，仅清除已释放的悬垂指针和已被回收的孤岛。
+    // R113 C 项：Phase 3 开始
+    currentPhase_ = GcPhase::Finalizing;
     std::vector<RefCounted*> survivors;
     survivors.reserve(tracked_.size());
     for (RefCounted* obj : tracked_) {
@@ -240,9 +371,32 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
     if (collectedCount > 0) {
         LOG_INFO("GcManager: 回收 " + std::to_string(collectedCount) + " 个循环引用孤岛", "GC");
     }
+    // BUG-003 fix: 重置分配计数，下一次增量触发需累计到阈值
+    allocationsSinceLastGc_ = 0;
+    // R113 C 项：collectCycle 结束，回归 Idle 并累计 GC 次数
+    ++totalGcCount_;
+    currentPhase_ = GcPhase::Idle;
 }
 
 void GcManager::reset() {
     tracked_.clear();
     aliveSet_.clear();
+    // BUG-003 fix: 同步重置分配计数，避免 reset 后立即触发误增量 GC
+    allocationsSinceLastGc_ = 0;
+    gcInProgress_ = false;
+    // R133 fix: 同步重置 GC 统计计数器。reset() 语义为"完全重置"，
+    // 但原实现遗漏 totalGcCount_/lastMarkedCount_/lastCollectedCount_，
+    // 导致测试隔离失败（前序测试累计的统计值污染后续测试断言）。
+    // 例如 GcModes.AllModes_GcStatsAvailable 期望 reset 后 totalGcCount()==0，
+    // GcModes.RefCountOnly_CollectCycleIsNoop 期望 lastCollectedCount()==0。
+    totalGcCount_ = 0;
+    lastMarkedCount_ = 0;
+    lastCollectedCount_ = 0;
+    currentPhase_ = GcPhase::Idle;
+    // R157 fix: 清除 gcTriggerCallback_，防御性修复。
+    // 根因：reset() 语义为"完全重置"，原实现遗漏 gcTriggerCallback_，
+    // 导致测试隔离时虽重置 tracked_/统计，但悬垂的回调仍指向已析构的 Interpreter。
+    // 后续后端执行触发 checkIncrementalGc 时调用悬垂回调 → UAF。
+    // 配合 Interpreter 析构函数的清除（根因修复）双重保护。
+    gcTriggerCallback_ = nullptr;
 }

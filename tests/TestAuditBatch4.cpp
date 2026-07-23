@@ -25,38 +25,42 @@
 
 #include <gtest/gtest.h>
 
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
-#include "formatter/Formatter.h"
-#include "compiler/Compiler.h"
+#include "common/Diagnostic.h"
 #include "compiler/Bytecode.h"
-#include "compiler/VM.h"
-#include "compiler/RegisterVM.h"
+#include "compiler/Compiler.h"
 #include "compiler/IR.h"
-#include "interpreter/Value.h"
+#include "compiler/RegisterVM.h"
+#include "compiler/VM.h"
+#include "formatter/Formatter.h"
 #include "interpreter/Environment.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
-#include "common/Diagnostic.h"
+#include "interpreter/Value.h"
+#include "lexer/Lexer.h"
+#include "parser/Parser.h"
 
-#include <string>
 #include <memory>
+#include <string>
 
 // ============================================================
 // 辅助函数
 // ============================================================
 
 static std::string runInterpreter(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
     Interpreter interp;
     std::string out;
     interp.setOutputCallback([&](const std::string& s) { out += s; });
     try {
         interp.execute(*ast);
     } catch (const RuntimeError& e) {
-        if (out.empty()) return "<runtime:" + std::string(e.what()) + ">";
+        if (out.empty())
+            return "<runtime:" + std::string(e.what()) + ">";
         return out + "<runtime:" + std::string(e.what()) + ">";
     } catch (const std::exception& e) {
         return "<runtime:" + std::string(e.what()) + ">";
@@ -65,54 +69,71 @@ static std::string runInterpreter(const std::string& src) {
 }
 
 static std::string runStackVM(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
     Compiler c;
     auto cr = c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     VM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(cr);
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
 }
 
 static std::string runStackVM_IR(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
-    Compiler c; c.setUseIR(true);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseIR(true);
     auto cr = c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     VM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(cr);
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
 }
 
 static std::string runRegVM(const std::string& src) {
-    Lexer lx; auto tk = lx.scan(src);
-    Parser p; auto ast = p.parse(tk);
-    if (!ast) return "<parse-fail>";
-    Compiler c; c.setUseRegisterVM(true);
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    if (!ast)
+        return "<parse-fail>";
+    Compiler c;
+    c.setUseRegisterVM(true);
     c.compile(*ast);
-    if (c.getDiagnostics().hasErrors()) return "<compile:" + c.getLastError() + ">";
+    if (c.getDiagnostics().hasErrors())
+        return "<compile:" + c.getLastError() + ">";
     RegisterVM vm;
     std::string out;
     vm.setOutputCallback([&](const std::string& s) { out += s; });
     vm.execute(c.getLastRegisterResult());
     if (vm.hasError()) {
-        if (out.empty()) return "<runtime:" + vm.getLastError() + ">";
+        if (out.empty())
+            return "<runtime:" + vm.getLastError() + ">";
         return out + "<runtime:" + vm.getLastError() + ">";
     }
     return out;
@@ -123,7 +144,8 @@ static std::string formatSource(const std::string& source) {
     auto tokens = lexer.scan(source);
     Parser parser;
     auto ast = parser.parse(tokens);
-    if (!ast) return "";
+    if (!ast)
+        return "";
     Formatter formatter;
     formatter.setComments(lexer.comments());
     return formatter.format(*ast);
@@ -133,10 +155,10 @@ static std::string formatSource(const std::string& source) {
 // BUG-AUDIT-EXC-CATCH-CLOSE: catch 变量 upvalue 未关闭
 // ============================================================
 // MiniLang 不支持匿名函数表达式，改用命名函数声明捕获 catch 变量。
-// 已知限制：直接 StackVM 路径不支持闭包变量调用（closure()），
-//   仅 Interpreter / IR 路径 / RegVM 支持局部闭包变量调用。
-// 直接 StackVM 的 OP_CLOSE_UPVALUE 修复为防御性修复（当前路径无法触发
-//   闭包变量调用，但修复确保未来支持时行为正确）。
+// R103 W1 fix: StackVM 直接路径已支持局部闭包变量调用（对齐 IR.cpp
+//   CRITICAL-1 fix），上述场景现可在四后端一致验证。
+// 直接 StackVM 的 OP_CLOSE_UPVALUE 修复为防御性修复（修复前路径无法触发
+//   闭包变量调用，但修复确保支持后行为正确）。
 
 TEST(AuditBatch4CatchUpvalue, ClosureCapturingCatchVarReturnsCorrectValue_Interp) {
     // catch 变量 e 被命名函数捕获后，catch 块退出时 e 的 slot 被回收。

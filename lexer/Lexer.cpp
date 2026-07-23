@@ -1,4 +1,4 @@
-﻿#include "lexer/Lexer.h"
+#include "lexer/Lexer.h"
 #include "common/Utf8Utils.h"
 #include <array>
 #include <cctype>
@@ -67,6 +67,13 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["dict"] = TokenType::TK_DICT;
         m["array"] = TokenType::TK_ARRAY;
         m["null"] = TokenType::TK_NULL;
+        // R99 枚举与 ADT + match：新增关键字
+        m["enum"] = TokenType::TK_ENUM;
+        m["match"] = TokenType::TK_MATCH;
+        m["case"] = TokenType::TK_CASE;
+        m["default"] = TokenType::TK_DEFAULT;
+        // R164 协程/生成器：新增关键字
+        m["yield"] = TokenType::TK_YIELD;
         return m;
     }();
     return kw;
@@ -224,45 +231,72 @@ void Lexer::scanToken() {
 
     char c = advance();
 
+    // R132-B fix: 按字符类别分组到 5 个返回 bool 的 helper + 1 个默认分支 helper，
+    // 替代原 213 行 switch。每个 helper 处理一类字符，返回 true 表示已处理（外层
+    // 短路）；最后一个 scanLiteralOrUnknownToken 总会消费字符，无 fallthrough。
+    if (scanWhitespaceToken(c))
+        return;
+    if (scanDelimiterToken(c))
+        return;
+    if (scanSlashToken(c))
+        return;
+    if (scanArithOperatorToken(c))
+        return;
+    if (scanTwoCharOperatorToken(c))
+        return;
+    scanLiteralOrUnknownToken(c);
+}
+
+// ============================================================
+// R132-B fix: scanToken 拆分 helper
+// ============================================================
+
+bool Lexer::scanWhitespaceToken(char c) {
+    // 空白字符：直接丢弃（advance 已消费）
+    // 注：'\r' 不会出现在此处，advance() 已将 \r 和 \r\n 统一返回 '\n'
     switch (c) {
-    // 空白字符
     case ' ':
     case '\t':
     case '\n':
     case '\f': // L3 fix: form feed
     case '\v': // L3 fix: vertical tab
-        // 注：'\r' 不会出现在此处，advance() 已将 \r 和 \r\n 统一返回 '\n'
-        break;
+        return true;
+    default:
+        return false;
+    }
+}
 
+bool Lexer::scanDelimiterToken(char c) {
+    switch (c) {
     // 分隔符
     case '(':
         addToken(TokenType::TK_LPAREN);
-        break;
+        return true;
     case ')':
         addToken(TokenType::TK_RPAREN);
-        break;
+        return true;
     case '{':
         addToken(TokenType::TK_LBRACE);
-        break;
+        return true;
     case '}':
         addToken(TokenType::TK_RBRACE);
-        break;
+        return true;
     case ';':
         addToken(TokenType::TK_SEMICOLON);
-        break;
+        return true;
     case ',':
         addToken(TokenType::TK_COMMA);
-        break;
+        return true;
     // 新增分隔符
     case '[':
         addToken(TokenType::TK_LBRACKET);
-        break;
+        return true;
     case ']':
         addToken(TokenType::TK_RBRACKET);
-        break;
+        return true;
     case ':':
         addToken(TokenType::TK_COLON);
-        break;
+        return true;
     // AUDIT-P2.7 fix: '?' 用于可选类型注解 T?（如 int?, string?）。
     //   Token.h 无法修改（不在允许修改的文件清单内），复用已完全废弃的 TK_FUNC 槽位。
     //   TK_FUNC 原为 "func" 关键字，Lexer 已将 "func" 统一映射到 TK_FUN（见 keywords()），
@@ -271,7 +305,7 @@ void Lexer::scanToken() {
     //   check(TK_FUNC) 识别 '?' 并追加 "?" 后缀到类型注解字符串。
     case '?':
         addToken(TokenType::TK_FUNC);
-        break;
+        return true;
     case '.':
         // .123 → 浮点数前导点
         if (isAsciiDigit(peek())) {
@@ -279,155 +313,170 @@ void Lexer::scanToken() {
         } else {
             addToken(TokenType::TK_DOT);
         }
-        break;
+        return true;
+    default:
+        return false;
+    }
+}
 
-    // 运算符
+bool Lexer::scanSlashToken(char c) {
+    if (c != '/')
+        return false;
+
+    // 单行注释
+    if (match('/')) {
+        // 捕获注释文本（含 // 前缀）
+        size_t commentStart = start_;
+        // P0-2 fix: 同时检查 \r 和 \n，避免 CRLF 下 advance() 消耗 \r\n 后
+        // peek() 跳过 \n 导致注释吞掉下一行内容
+        while (!isAtEnd() && peek() != '\n' && peek() != '\r')
+            advance();
+        std::string commentText(source_, commentStart, current_ - commentStart);
+        Token tok;
+        tok.type = TokenType::TK_LINE_COMMENT;
+        tok.lexeme = commentText;
+        tok.line = line_;
+        // BUG-LEX-AUDIT-3 fix: 统一用 UTF-8 感知 columnAt 计算列号，
+        // 与 addToken() 路径保持一致（D11 fix 遗漏了注释 token 路径）。
+        tok.column = columnAt(static_cast<int>(commentStart));
+        tokens_.push_back(tok);
+        return true;
+    }
+    if (match('*')) {
+        // 块注释 /* ... */（支持嵌套）
+        size_t commentStart = start_;
+        int startLine = line_;
+        // BUG-LEX-AUDIT-3 fix: 同行注释，统一用 columnAt
+        int startCol = columnAt(static_cast<int>(commentStart));
+        int depth = 1; // 嵌套深度
+        while (!isAtEnd() && depth > 0) {
+            if (peek() == '/' && peekNext() == '*') {
+                advance();
+                advance(); // 消耗 /*
+                depth++;
+            } else if (peek() == '*' && peekNext() == '/') {
+                advance();
+                advance(); // 消耗 */
+                depth--;
+            } else {
+                advance();
+            }
+        }
+        if (depth > 0) {
+            errorToken("未终止的块注释", startLine, startCol);
+            return true;
+        }
+        std::string commentText(source_, commentStart, current_ - commentStart);
+        Token tok;
+        tok.type = TokenType::TK_BLOCK_COMMENT;
+        tok.lexeme = commentText;
+        tok.line = startLine;
+        tok.column = startCol;
+        tokens_.push_back(tok);
+        return true;
+    }
+    addToken(TokenType::TK_SLASH);
+    return true;
+}
+
+bool Lexer::scanArithOperatorToken(char c) {
+    switch (c) {
     case '+':
         addToken(TokenType::TK_PLUS);
-        break;
+        return true;
     case '-':
         addToken(TokenType::TK_MINUS);
-        break;
+        return true;
     case '*':
         addToken(TokenType::TK_STAR);
-        break;
-    case '/':
-        // 单行注释
-        if (match('/')) {
-            // 捕获注释文本（含 // 前缀）
-            size_t commentStart = start_;
-            // P0-2 fix: 同时检查 \r 和 \n，避免 CRLF 下 advance() 消耗 \r\n 后
-            // peek() 跳过 \n 导致注释吞掉下一行内容
-            while (!isAtEnd() && peek() != '\n' && peek() != '\r')
-                advance();
-            std::string commentText(source_, commentStart, current_ - commentStart);
-            Token tok;
-            tok.type = TokenType::TK_LINE_COMMENT;
-            tok.lexeme = commentText;
-            tok.line = line_;
-            // BUG-LEX-AUDIT-3 fix: 统一用 UTF-8 感知 columnAt 计算列号，
-            // 与 addToken() 路径保持一致（D11 fix 遗漏了注释 token 路径）。
-            tok.column = columnAt(static_cast<int>(commentStart));
-            tokens_.push_back(tok);
-        } else if (match('*')) {
-            // 块注释 /* ... */（支持嵌套）
-            size_t commentStart = start_;
-            int startLine = line_;
-            // BUG-LEX-AUDIT-3 fix: 同行注释，统一用 columnAt
-            int startCol = columnAt(static_cast<int>(commentStart));
-            int depth = 1; // 嵌套深度
-            while (!isAtEnd() && depth > 0) {
-                if (peek() == '/' && peekNext() == '*') {
-                    advance();
-                    advance(); // 消耗 /*
-                    depth++;
-                } else if (peek() == '*' && peekNext() == '/') {
-                    advance();
-                    advance(); // 消耗 */
-                    depth--;
-                } else {
-                    advance();
-                }
-            }
-            if (depth > 0) {
-                errorToken("未终止的块注释", startLine, startCol);
-                return;
-            }
-            std::string commentText(source_, commentStart, current_ - commentStart);
-            Token tok;
-            tok.type = TokenType::TK_BLOCK_COMMENT;
-            tok.lexeme = commentText;
-            tok.line = startLine;
-            tok.column = startCol;
-            tokens_.push_back(tok);
-        } else {
-            addToken(TokenType::TK_SLASH);
-        }
-        break;
+        return true;
     case '%':
         addToken(TokenType::TK_PERCENT);
-        break;
+        return true;
+    default:
+        return false;
+    }
+}
 
-    // 可能是双字符运算符（使用查找表 O(1) 分派）
-    case '=':
-    case '!':
-    case '<':
-    case '>':
-    case '&':
-    case '|': {
-        // 双字符运算符查找表
-        struct TwoCharOp {
-            char first;
-            char second;        // 匹配的第二字符（'\0' 表示无匹配）
-            TokenType dualType; // 双字符类型
-            TokenType soloType; // 单字符类型
-            const char* hint;   // 错误提示（soloType 为 TK_ERROR 时使用）
-        };
-        static const TwoCharOp twoCharOps[] = {
-            {'=', '=', TokenType::TK_EQ, TokenType::TK_ASSIGN, nullptr},
-            {'!', '=', TokenType::TK_NEQ, TokenType::TK_NOT, nullptr},
-            {'<', '=', TokenType::TK_LEQ, TokenType::TK_LT, nullptr},
-            {'>', '=', TokenType::TK_GEQ, TokenType::TK_GT, nullptr},
-            {'&', '&', TokenType::TK_ERROR, TokenType::TK_ERROR, "请使用 'and' 关键字代替 '&'"},
-            {'|', '|', TokenType::TK_ERROR, TokenType::TK_ERROR, "请使用 'or' 关键字代替 '|'"},
-        };
-        // #28 fix: [256] 查找表按首字符 O(1) 定位条目，替代 6 项线性扫描。
-        // 首字符仅这 6 个有条目，其余槽位为 nullptr。首次调用时初始化，后续零开销。
-        static const auto firstCharTable = []() {
-            std::array<const TwoCharOp*, 256> t{};
-            for (const auto& op : twoCharOps) {
-                t[static_cast<unsigned char>(op.first)] = &op;
-            }
-            return t;
-        }();
-        const TwoCharOp* entry = firstCharTable[static_cast<unsigned char>(c)];
-        if (entry) {
-            if (entry->second != '\0' && match(entry->second)) {
-                if (entry->dualType != TokenType::TK_ERROR)
-                    addToken(entry->dualType);
-                else
-                    errorToken(std::string("'") + c + c + "'（" + entry->hint + "）");
-            } else if (entry->soloType != TokenType::TK_ERROR) {
-                addToken(entry->soloType);
-            } else {
-                errorToken(std::string("意外字符 '") + c + "'（" + entry->hint + "）");
-            }
-        }
-        break;
+bool Lexer::scanTwoCharOperatorToken(char c) {
+    // R99 枚举与 ADT + match：`=>` 箭头分隔符（match case 专用）。
+    // 优先检查 `=>` 以避免被 `==` 查找表吞掉 `=`。
+    if (c == '=' && match('>')) {
+        addToken(TokenType::TK_ARROW);
+        return true;
     }
 
-    // 字符串字面量
-    case '"':
-        string();
-        break;
+    // 双字符运算符查找表
+    struct TwoCharOp {
+        char first;
+        char second;        // 匹配的第二字符（'\0' 表示无匹配）
+        TokenType dualType; // 双字符类型
+        TokenType soloType; // 单字符类型
+        const char* hint;   // 错误提示（soloType 为 TK_ERROR 时使用）
+    };
+    static const TwoCharOp twoCharOps[] = {
+        {'=', '=', TokenType::TK_EQ, TokenType::TK_ASSIGN, nullptr},
+        {'!', '=', TokenType::TK_NEQ, TokenType::TK_NOT, nullptr},
+        {'<', '=', TokenType::TK_LEQ, TokenType::TK_LT, nullptr},
+        {'>', '=', TokenType::TK_GEQ, TokenType::TK_GT, nullptr},
+        {'&', '&', TokenType::TK_ERROR, TokenType::TK_ERROR, "请使用 'and' 关键字代替 '&'"},
+        {'|', '|', TokenType::TK_ERROR, TokenType::TK_ERROR, "请使用 'or' 关键字代替 '|'"},
+    };
+    // #28 fix: [256] 查找表按首字符 O(1) 定位条目，替代 6 项线性扫描。
+    // 首字符仅这 6 个有条目，其余槽位为 nullptr。首次调用时初始化，后续零开销。
+    static const auto firstCharTable = []() {
+        std::array<const TwoCharOp*, 256> t{};
+        for (const auto& op : twoCharOps) {
+            t[static_cast<unsigned char>(op.first)] = &op;
+        }
+        return t;
+    }();
+    const TwoCharOp* entry = firstCharTable[static_cast<unsigned char>(c)];
+    if (!entry)
+        return false;
+    if (entry->second != '\0' && match(entry->second)) {
+        if (entry->dualType != TokenType::TK_ERROR)
+            addToken(entry->dualType);
+        else
+            errorToken(std::string("'") + c + c + "'（" + entry->hint + "）");
+    } else if (entry->soloType != TokenType::TK_ERROR) {
+        addToken(entry->soloType);
+    } else {
+        errorToken(std::string("意外字符 '") + c + "'（" + entry->hint + "）");
+    }
+    return true;
+}
 
-    default:
-        // 数字
-        if (isAsciiDigit(c)) {
-            number();
+void Lexer::scanLiteralOrUnknownToken(char c) {
+    // 字符串字面量
+    if (c == '"') {
+        string();
+        return;
+    }
+    // 数字
+    if (isAsciiDigit(c)) {
+        number();
+        return;
+    }
+    // 标识符或关键字
+    if (isAsciiAlpha(c) || c == '_') {
+        identifier();
+        return;
+    }
+    // 无法识别的字符
+    // BUG-LPA-06 fix: 检测 UTF-8 多字节字符首字节，消费完整码位生成单个错误。
+    //   原实现按单字节处理，3 字节 UTF-8 字符（如中文）产生 3 个错误，
+    //   且错误消息中字符显示为单字节乱码，无法识别原字符。
+    unsigned char uc = static_cast<unsigned char>(c);
+    int codepointLen = Utf8::byteLength(uc);
+    if (codepointLen > 1) {
+        std::string utf8char(1, c);
+        for (int i = 1; i < codepointLen && !isAtEnd(); ++i) {
+            utf8char += advance();
         }
-        // 标识符或关键字
-        else if (isAsciiAlpha(c) || c == '_') {
-            identifier();
-        }
-        // 无法识别的字符
-        else {
-            // BUG-LPA-06 fix: 检测 UTF-8 多字节字符首字节，消费完整码位生成单个错误。
-            //   原实现按单字节处理，3 字节 UTF-8 字符（如中文）产生 3 个错误，
-            //   且错误消息中字符显示为单字节乱码，无法识别原字符。
-            unsigned char uc = static_cast<unsigned char>(c);
-            int codepointLen = Utf8::byteLength(uc);
-            if (codepointLen > 1) {
-                std::string utf8char(1, c);
-                for (int i = 1; i < codepointLen && !isAtEnd(); ++i) {
-                    utf8char += advance();
-                }
-                errorToken("意外字符 '" + utf8char + "'（标识符仅支持 ASCII）");
-            } else {
-                errorToken(std::string("意外字符 '") + c + "'");
-            }
-        }
-        break;
+        errorToken("意外字符 '" + utf8char + "'（标识符仅支持 ASCII）");
+    } else {
+        errorToken(std::string("意外字符 '") + c + "'");
     }
 }
 
@@ -602,415 +651,40 @@ void Lexer::string(bool isInterp) {
     while (!isAtEnd() && peek() != '"') {
         // F7: 检测插值起始 {
         if (peek() == '{') {
-            // L-P1-1: 插值嵌套深度检查，防止栈溢出
-            if (interpDepth_ >= MAX_INTERP_DEPTH) {
-                errorToken("字符串插值嵌套过深（最大 " + std::to_string(MAX_INTERP_DEPTH) + " 层）", startLine,
-                           startCol);
+            if (!handleInterpolation(startLine, startCol, value, isInterp))
                 return;
-            }
-            interpDepth_++;
-            // 发出前面的文本片段（TK_STRING_PART 表示插值字符串的一部分）
-            TokenType partType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
-            // 如果是插值字符串的第一个片段，用 TK_STRING_LIT；后续片段用 TK_STRING_PART
-            // 但为简化 Parser 逻辑，统一：插值字符串中所有文本片段都用 TK_STRING_PART，
-            // 仅当整个字符串无插值时用 TK_STRING_LIT（由下方闭合处判断）
-            // BUG-LEX-AUDIT-4 fix: 直接 emplace_back 绕过 scanToken() 的 MAX_TOKEN_COUNT 检查，
-            // 需在此显式检查，防止含大量小插值的字符串绕过 DoS 防护。
-            if (tokens_.size() >= MAX_TOKEN_COUNT) {
-                diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
-                                          "，源代码可能包含过多 token",
-                                      startLine, startCol, DiagSource::Lexer);
-                return;
-            }
-            std::string text(source_, start_, current_ - start_);
-            tokens_.emplace_back(partType, std::move(text), std::move(value), startLine,
-                                 startCol); // A1 fix: variant string
-
-            // 发出 TK_INTERP_START
-            // BUG-LEX-AUDIT-2 fix: 在 advance() 消耗 '{' 之前记录列号，
-            // 原实现 advance 后用 start_ 计算，但 start_ 仍指向片段起始而非 '{' 位置。
-            int braceLine = line_;
-            int braceCol = columnAt(current_);
-            // 消耗 {
-            advance();
-            if (tokens_.size() >= MAX_TOKEN_COUNT) { // BUG-LEX-AUDIT-4
-                diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
-                                          "，源代码可能包含过多 token",
-                                      braceLine, braceCol, DiagSource::Lexer);
-                return;
-            }
-            tokens_.emplace_back(TokenType::TK_INTERP_START, "{", std::monostate{}, braceLine,
-                                 braceCol); // A1 fix: variant monostate
-
-            // 扫描表达式直到 }（支持嵌套大括号，如对象字面量）
-            // 更新 start_ 到表达式起始位置，确保 scanToken() 的 addToken() 正确提取 lexeme
-            start_ = current_;
-            int braceDepth = 1;
-            // BUG-LEX-AUDIT-1 fix: 内层插值循环必须检查 MAX_TOKEN_COUNT。
-            // 原实现仅 scanToken() 入口检查，但检查触发时 scanToken() "返回不前进"，
-            // 而 '{' 与 default 分支只调用 scanToken() 不调用 advance()，形成无限循环。
-            // 修复：循环体首行检查并 return，让 string() 退出，scan() 主循环也 break。
-            while (!isAtEnd() && braceDepth > 0) {
-                if (tokens_.size() >= MAX_TOKEN_COUNT) {
-                    diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
-                                              "，源代码可能包含过多 token",
-                                          line_, currentColumn(), DiagSource::Lexer);
-                    return;
-                }
-                // 跳过空白
-                if (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') {
-                    advance();
-                    continue;
-                }
-                if (peek() == '{') {
-                    braceDepth++;
-                    start_ = current_; // 更新 start_ 以便 scanToken 正确提取
-                    scanToken();
-                } else if (peek() == '}') {
-                    braceDepth--;
-                    if (braceDepth == 0) {
-                        // BUG-LEX-AUDIT-2 fix: 在 advance() 消耗 '}' 之前记录列号。
-                        int endLine = line_;
-                        int endCol = columnAt(current_);
-                        advance();                               // 消耗 }
-                        if (tokens_.size() >= MAX_TOKEN_COUNT) { // BUG-LEX-AUDIT-4
-                            diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
-                                                      "，源代码可能包含过多 token",
-                                                  endLine, endCol, DiagSource::Lexer);
-                            return;
-                        }
-                        tokens_.emplace_back(TokenType::TK_INTERP_END, "}", std::monostate{}, endLine,
-                                             endCol); // A1 fix: variant monostate
-                        break;
-                    }
-                    start_ = current_; // 更新 start_ 以便 scanToken 正确提取
-                    scanToken();
-                } else if (peek() == '"') {
-                    // 嵌套字符串（可能含插值）
-                    // AUDIT-BUG-F10 fix: advance 前更新 start_，与 { } 默认分支一致。
-                    // 原实现缺少 start_=current_，导致嵌套字符串首 token 列号/lexeme 错误。
-                    start_ = current_;
-                    advance();
-                    string(false);     // 嵌套字符串作为独立 TK_STRING_LIT，非插值片段
-                    start_ = current_; // 更新 start_ 以便后续 scanToken 正确提取
-                } else {
-                    start_ = current_; // 更新 start_ 以便 scanToken 正确提取
-                    scanToken();
-                }
-            }
-            if (braceDepth > 0) {
-                interpDepth_--; // L-P1-1: 错误退出时也减少深度，保持计数器一致
-                errorToken("未终止的插值表达式（缺少 }）", startLine, startCol);
-                return;
-            }
-
-            // L-P1-1: 本层插值已闭合，减少深度
-            interpDepth_--;
-
-            // 继续扫描字符串剩余部分（标记为插值片段）
-            start_ = current_;
-            startLine = line_;
-            // AUDIT-P2 fix: 与同文件其他路径（addToken/columnAt）保持一致，使用 UTF-8 码位列号。
-            // 原实现用字节偏移 (start_ - lineStart_) + 1，若本行之前含多字节 UTF-8 字符
-            // （如中文），字节偏移 > 码位列号，导致插值片段诊断列号偏移、编辑器高亮位置错位。
-            startCol = columnAt(start_);
-            value.clear();
-            isInterp = true;
             continue;
         }
 
         // 换行处理由 advance() 统一完成（line_++ 和 lineStart_ 更新），
         // 此处不再手动递增，否则会导致行号双重递增。
         if (peek() == '\\') {
-            advance(); // 消耗反斜杠
-            if (isAtEnd()) {
-                errorToken("未终止的字符串", startLine, startCol);
+            if (!handleEscape(startLine, startCol, value))
                 return;
-            }
-            char esc = advance();
-            switch (esc) {
-            case 'n':
-                value += '\n';
+            continue;
+        }
+
+        // PERF-ROUND53 fix: 批量扫描连续普通字符（直到遇 \、{、"、\r、\n 或 EOF）。
+        // 原实现逐字符调用 advance() + value += char，对长字符串（如 1KB 文本）
+        // 产生 1024 次 advance() 调用 + 1024 次 value += char（可能触发多次 realloc）。
+        // 批量扫描用 value.append(ptr, len) 一次性追加，减少函数调用与 realloc 次数。
+        // 注：\r/\n 必须通过 advance() 处理以维护行号（advance 将 \r/\r\n 规范化为 \n），
+        // 故批量扫描在遇到它们时停止，由下次循环迭代调用 advance()。
+        // 多字节 UTF-8 字节（0x80-0xFF）均不与特殊字符（\=0x5C、{=0x7B、"=0x22、
+        // \r=0x0D、\n=0x0A）冲突，可安全批量扫描。
+        size_t runStart = current_;
+        while (!isAtEnd()) {
+            char c = source_[current_];
+            if (c == '"' || c == '\\' || c == '{' || c == '\r' || c == '\n')
                 break;
-            case 't':
-                value += '\t';
-                break;
-            case 'r':
-                value += '\r';
-                break;
-            case '\\':
-                value += '\\';
-                break;
-            case '"':
-                value += '"';
-                break;
-            case '\'':
-                value += '\'';
-                break;
-            case '0':
-                value += '\0';
-                break;
-            case 'b':
-                value += '\b';
-                break;
-            case 'f':
-                value += '\f';
-                break;
-            case 'a':
-                value += '\a';
-                break;
-            case 'v':
-                value += '\v';
-                break;
-            case 'x': {
-                // AUDIT-P2 fix: \xNN — 2 位十六进制字节转义
-                if (isAtEnd()) {
-                    errorToken("未终止的字符串", startLine, startCol);
-                    return;
-                }
-                char h1 = advance();
-                if (isAtEnd()) {
-                    errorToken("未终止的字符串", startLine, startCol);
-                    return;
-                }
-                char h2 = advance();
-                auto hexVal = [](char c) -> int {
-                    if (c >= '0' && c <= '9')
-                        return c - '0';
-                    if (c >= 'a' && c <= 'f')
-                        return c - 'a' + 10;
-                    if (c >= 'A' && c <= 'F')
-                        return c - 'A' + 10;
-                    return -1;
-                };
-                int v1 = hexVal(h1), v2 = hexVal(h2);
-                if (v1 < 0 || v2 < 0) {
-                    errorToken(std::string("无效的十六进制转义 '\\x") + h1 + h2 + "'", startLine, startCol);
-                    while (!isAtEnd() && peek() != '"') {
-                        if (peek() == '\\') {
-                            advance();
-                            if (!isAtEnd())
-                                advance();
-                        } else
-                            advance();
-                    }
-                    if (!isAtEnd())
-                        advance();
-                    return;
-                }
-                value += static_cast<char>((v1 << 4) | v2);
-                break;
-            }
-            case 'u': {
-                // AUDIT-P3.12 fix: \u{XXXXXX} 扩展语法支持非 BMP 字符（如 emoji）。
-                //   保留现有 4 位 \uXXXX 语法向后兼容。当 \u 后紧跟 '{' 时，读取
-                //   1-6 位十六进制直到 '}'，验证码点范围 0x000000-0x10FFFF 且非
-                //   代理码点 0xD800-0xDFFF，编码为 UTF-8（1-4 字节）。
-                if (peek() == '{') {
-                    advance(); // 消费 '{'
-                    uint32_t codepoint = 0;
-                    int hexCount = 0;
-                    bool hexError = false;
-                    while (peek() != '}' && peek() != '\0' && !isAtEnd()) {
-                        char hc = advance();
-                        int val = 0;
-                        if (hc >= '0' && hc <= '9')
-                            val = hc - '0';
-                        else if (hc >= 'a' && hc <= 'f')
-                            val = hc - 'a' + 10;
-                        else if (hc >= 'A' && hc <= 'F')
-                            val = hc - 'A' + 10;
-                        else {
-                            errorToken("无效的 Unicode 转义序列: 非法十六进制字符", startLine, startCol);
-                            hexError = true;
-                            break;
-                        }
-                        codepoint = (codepoint << 4) | static_cast<uint32_t>(val);
-                        hexCount++;
-                        if (hexCount > 6) {
-                            errorToken("Unicode 转义序列最多 6 位十六进制", startLine, startCol);
-                            hexError = true;
-                            break;
-                        }
-                    }
-                    if (hexError) {
-                        while (!isAtEnd() && peek() != '"') {
-                            if (peek() == '\\') {
-                                advance();
-                                if (!isAtEnd())
-                                    advance();
-                            } else
-                                advance();
-                        }
-                        if (!isAtEnd())
-                            advance();
-                        return;
-                    }
-                    if (peek() != '}') {
-                        errorToken("Unicode 转义序列缺少闭合 '}'", startLine, startCol);
-                        return;
-                    }
-                    advance(); // 消费 '}'
-                    // AUDIT-P2-ROUND49 fix: 三处码点验证失败路径（空转义/码点超出范围/代理码点）
-                    // 直接 return 未跳过到字符串结束，产生垃圾错误。改为统一标记 codepointError
-                    // 后复用与 hexError 相同的跳过到字符串结束逻辑，对齐 \xNN/\uXXXX 错误恢复。
-                    bool codepointError = false;
-                    if (hexCount == 0) {
-                        errorToken("Unicode 转义序列不能为空", startLine, startCol);
-                        codepointError = true;
-                    } else if (codepoint > 0x10FFFF) {
-                        errorToken("Unicode 码点超出范围 (最大 0x10FFFF)", startLine, startCol);
-                        codepointError = true;
-                    } else if (codepoint >= 0xD800 && codepoint <= 0xDFFF) {
-                        errorToken("无效的 Unicode 代理码点", startLine, startCol);
-                        codepointError = true;
-                    }
-                    if (codepointError) {
-                        while (!isAtEnd() && peek() != '"') {
-                            if (peek() == '\\') {
-                                advance();
-                                if (!isAtEnd())
-                                    advance();
-                            } else
-                                advance();
-                        }
-                        if (!isAtEnd())
-                            advance();
-                        return;
-                    }
-                    // 编码为 UTF-8（1-4 字节）
-                    if (codepoint <= 0x7F) {
-                        value += static_cast<char>(codepoint);
-                    } else if (codepoint <= 0x7FF) {
-                        value += static_cast<char>(0xC0 | (codepoint >> 6));
-                        value += static_cast<char>(0x80 | (codepoint & 0x3F));
-                    } else if (codepoint <= 0xFFFF) {
-                        value += static_cast<char>(0xE0 | (codepoint >> 12));
-                        value += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-                        value += static_cast<char>(0x80 | (codepoint & 0x3F));
-                    } else {
-                        value += static_cast<char>(0xF0 | (codepoint >> 18));
-                        value += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
-                        value += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-                        value += static_cast<char>(0x80 | (codepoint & 0x3F));
-                    }
-                    break;
-                }
-                // AUDIT-P2 fix: \uXXXX — 4 位十六进制 Unicode 码点，编码为 UTF-8
-                char d[4];
-                for (int i = 0; i < 4; ++i) {
-                    if (isAtEnd()) {
-                        errorToken("未终止的字符串", startLine, startCol);
-                        return;
-                    }
-                    d[i] = advance();
-                }
-                auto hexVal = [](char c) -> int {
-                    if (c >= '0' && c <= '9')
-                        return c - '0';
-                    if (c >= 'a' && c <= 'f')
-                        return c - 'a' + 10;
-                    if (c >= 'A' && c <= 'F')
-                        return c - 'A' + 10;
-                    return -1;
-                };
-                int cp = 0;
-                bool valid = true;
-                for (int i = 0; i < 4; ++i) {
-                    int v = hexVal(d[i]);
-                    if (v < 0) {
-                        valid = false;
-                        break;
-                    }
-                    cp = (cp << 4) | v;
-                }
-                if (!valid) {
-                    errorToken(std::string("无效的 Unicode 转义 '\\u") + d[0] + d[1] + d[2] + d[3] + "'", startLine,
-                               startCol);
-                    while (!isAtEnd() && peek() != '"') {
-                        if (peek() == '\\') {
-                            advance();
-                            if (!isAtEnd())
-                                advance();
-                        } else
-                            advance();
-                    }
-                    if (!isAtEnd())
-                        advance();
-                    return;
-                }
-                // AUDIT-P2-CORRECT fix: 拒绝 Unicode 代理码点（0xD800-0xDFFF）。
-                // 代理码点不是合法的 Unicode 标量值，将其编码为 UTF-8 会产生
-                // 非标准 "WTF-8"（3 字节序列），严格 UTF-8 校验器会拒绝。
-                if (cp >= 0xD800 && cp <= 0xDFFF) {
-                    errorToken(std::string("无效的 Unicode 代理码点 '\\u") + d[0] + d[1] + d[2] + d[3] +
-                                   "'（代理码点不能直接编码）",
-                               startLine, startCol);
-                    while (!isAtEnd() && peek() != '"') {
-                        if (peek() == '\\') {
-                            advance();
-                            if (!isAtEnd())
-                                advance();
-                        } else
-                            advance();
-                    }
-                    if (!isAtEnd())
-                        advance();
-                    return;
-                }
-                // 编码为 UTF-8
-                if (cp <= 0x7F) {
-                    value += static_cast<char>(cp);
-                } else if (cp <= 0x7FF) {
-                    value += static_cast<char>(0xC0 | (cp >> 6));
-                    value += static_cast<char>(0x80 | (cp & 0x3F));
-                } else {
-                    value += static_cast<char>(0xE0 | (cp >> 12));
-                    value += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-                    value += static_cast<char>(0x80 | (cp & 0x3F));
-                }
-                break;
-            }
-            default:
-                // AUDIT-BUG-L1 fix: 未知转义序列应报错，而非静默接受为字面字符。
-                // 原实现将 \q 等存储为 "\\q" 两字符，违反"非法输入应被拒绝"原则。
-                errorToken(std::string("未知转义序列 '\\") + esc + "'", startLine, startCol);
-                // 恢复：跳过到字符串结束或 EOF，避免级联产生误导性错误
-                while (!isAtEnd() && peek() != '"') {
-                    if (peek() == '\\') {
-                        advance();
-                        if (!isAtEnd())
-                            advance();
-                    } else
-                        advance();
-                }
-                if (!isAtEnd())
-                    advance(); // 消耗闭合的 '"'
-                return;
-            }
+            current_++;
+        }
+        if (current_ > runStart) {
+            value.append(source_.data() + runStart, current_ - runStart);
         } else {
-            // PERF-ROUND53 fix: 批量扫描连续普通字符（直到遇 \、{、"、\r、\n 或 EOF）。
-            // 原实现逐字符调用 advance() + value += char，对长字符串（如 1KB 文本）
-            // 产生 1024 次 advance() 调用 + 1024 次 value += char（可能触发多次 realloc）。
-            // 批量扫描用 value.append(ptr, len) 一次性追加，减少函数调用与 realloc 次数。
-            // 注：\r/\n 必须通过 advance() 处理以维护行号（advance 将 \r/\r\n 规范化为 \n），
-            // 故批量扫描在遇到它们时停止，由下次循环迭代调用 advance()。
-            // 多字节 UTF-8 字节（0x80-0xFF）均不与特殊字符（\=0x5C、{=0x7B、"=0x22、
-            // \r=0x0D、\n=0x0A）冲突，可安全批量扫描。
-            size_t runStart = current_;
-            while (!isAtEnd()) {
-                char c = source_[current_];
-                if (c == '"' || c == '\\' || c == '{' || c == '\r' || c == '\n')
-                    break;
-                current_++;
-            }
-            if (current_ > runStart) {
-                value.append(source_.data() + runStart, current_ - runStart);
-            } else {
-                // 首个字符即为 \r/\n（其他特殊字符已被外层 if 拦截），
-                // 调用 advance() 维护行号并将规范化后的字符（\n）加入 value
-                value += advance();
-            }
+            // 首个字符即为 \r/\n（其他特殊字符已被外层 if 拦截），
+            // 调用 advance() 维护行号并将规范化后的字符（\n）加入 value
+            value += advance();
         }
     }
 
@@ -1031,6 +705,423 @@ void Lexer::string(bool isInterp) {
     }
     std::string text(source_, start_, current_ - start_);
     tokens_.emplace_back(finalType, std::move(text), std::move(value), startLine, startCol); // A1 fix: variant string
+}
+
+// ============================================================
+// R131 fix: handleInterpolation - 处理字符串中的 '{' 插值起始
+// 提取自 string() 主循环的 '{' 分支（117 行），含插值深度检查、
+// TK_STRING_PART/TK_INTERP_START 发射、嵌套表达式扫描、TK_INTERP_END 发射
+// 返回 true=继续外层 string 循环，false=终止 string()
+// ============================================================
+bool Lexer::handleInterpolation(int& startLine, int& startCol, std::string& value, bool& isInterp) {
+    // L-P1-1: 插值嵌套深度检查，防止栈溢出
+    if (interpDepth_ >= MAX_INTERP_DEPTH) {
+        errorToken("字符串插值嵌套过深（最大 " + std::to_string(MAX_INTERP_DEPTH) + " 层）", startLine, startCol);
+        return false;
+    }
+    interpDepth_++;
+    // 发出前面的文本片段（TK_STRING_PART 表示插值字符串的一部分）
+    TokenType partType = isInterp ? TokenType::TK_STRING_PART : TokenType::TK_STRING_LIT;
+    // 如果是插值字符串的第一个片段，用 TK_STRING_LIT；后续片段用 TK_STRING_PART
+    // 但为简化 Parser 逻辑，统一：插值字符串中所有文本片段都用 TK_STRING_PART，
+    // 仅当整个字符串无插值时用 TK_STRING_LIT（由下方闭合处判断）
+    // BUG-LEX-AUDIT-4 fix: 直接 emplace_back 绕过 scanToken() 的 MAX_TOKEN_COUNT 检查，
+    // 需在此显式检查，防止含大量小插值的字符串绕过 DoS 防护。
+    if (tokens_.size() >= MAX_TOKEN_COUNT) {
+        diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) + "，源代码可能包含过多 token",
+                              startLine, startCol, DiagSource::Lexer);
+        return false;
+    }
+    std::string text(source_, start_, current_ - start_);
+    tokens_.emplace_back(partType, std::move(text), std::move(value), startLine,
+                         startCol); // A1 fix: variant string
+
+    // 发出 TK_INTERP_START
+    // BUG-LEX-AUDIT-2 fix: 在 advance() 消耗 '{' 之前记录列号，
+    // 原实现 advance 后用 start_ 计算，但 start_ 仍指向片段起始而非 '{' 位置。
+    int braceLine = line_;
+    int braceCol = columnAt(current_);
+    // 消耗 {
+    advance();
+    if (tokens_.size() >= MAX_TOKEN_COUNT) { // BUG-LEX-AUDIT-4
+        diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) + "，源代码可能包含过多 token",
+                              braceLine, braceCol, DiagSource::Lexer);
+        return false;
+    }
+    tokens_.emplace_back(TokenType::TK_INTERP_START, "{", std::monostate{}, braceLine,
+                         braceCol); // A1 fix: variant monostate
+
+    // 扫描表达式直到 }（支持嵌套大括号，如对象字面量）
+    // 更新 start_ 到表达式起始位置，确保 scanToken() 的 addToken() 正确提取 lexeme
+    start_ = current_;
+    int braceDepth = 1;
+    // BUG-LEX-AUDIT-1 fix: 内层插值循环必须检查 MAX_TOKEN_COUNT。
+    // 原实现仅 scanToken() 入口检查，但检查触发时 scanToken() "返回不前进"，
+    // 而 '{' 与 default 分支只调用 scanToken() 不调用 advance()，形成无限循环。
+    // 修复：循环体首行检查并 return，让 string() 退出，scan() 主循环也 break。
+    while (!isAtEnd() && braceDepth > 0) {
+        if (tokens_.size() >= MAX_TOKEN_COUNT) {
+            diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                                      "，源代码可能包含过多 token",
+                                  line_, currentColumn(), DiagSource::Lexer);
+            return false;
+        }
+        // 跳过空白
+        if (peek() == ' ' || peek() == '\t' || peek() == '\n' || peek() == '\r') {
+            advance();
+            continue;
+        }
+        if (peek() == '{') {
+            braceDepth++;
+            start_ = current_; // 更新 start_ 以便 scanToken 正确提取
+            scanToken();
+        } else if (peek() == '}') {
+            braceDepth--;
+            if (braceDepth == 0) {
+                // BUG-LEX-AUDIT-2 fix: 在 advance() 消耗 '}' 之前记录列号。
+                int endLine = line_;
+                int endCol = columnAt(current_);
+                advance();                               // 消耗 }
+                if (tokens_.size() >= MAX_TOKEN_COUNT) { // BUG-LEX-AUDIT-4
+                    diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
+                                              "，源代码可能包含过多 token",
+                                          endLine, endCol, DiagSource::Lexer);
+                    return false;
+                }
+                tokens_.emplace_back(TokenType::TK_INTERP_END, "}", std::monostate{}, endLine,
+                                     endCol); // A1 fix: variant monostate
+                break;
+            }
+            start_ = current_; // 更新 start_ 以便 scanToken 正确提取
+            scanToken();
+        } else if (peek() == '"') {
+            // 嵌套字符串（可能含插值）
+            // AUDIT-BUG-F10 fix: advance 前更新 start_，与 { } 默认分支一致。
+            // 原实现缺少 start_=current_，导致嵌套字符串首 token 列号/lexeme 错误。
+            start_ = current_;
+            advance();
+            string(false);     // 嵌套字符串作为独立 TK_STRING_LIT，非插值片段
+            start_ = current_; // 更新 start_ 以便后续 scanToken 正确提取
+        } else {
+            start_ = current_; // 更新 start_ 以便 scanToken 正确提取
+            scanToken();
+        }
+    }
+    if (braceDepth > 0) {
+        interpDepth_--; // L-P1-1: 错误退出时也减少深度，保持计数器一致
+        errorToken("未终止的插值表达式（缺少 }）", startLine, startCol);
+        return false;
+    }
+
+    // L-P1-1: 本层插值已闭合，减少深度
+    interpDepth_--;
+
+    // 继续扫描字符串剩余部分（标记为插值片段）
+    start_ = current_;
+    startLine = line_;
+    // AUDIT-P2 fix: 与同文件其他路径（addToken/columnAt）保持一致，使用 UTF-8 码位列号。
+    // 原实现用字节偏移 (start_ - lineStart_) + 1，若本行之前含多字节 UTF-8 字符
+    // （如中文），字节偏移 > 码位列号，导致插值片段诊断列号偏移、编辑器高亮位置错位。
+    startCol = columnAt(start_);
+    value.clear();
+    isInterp = true;
+    return true;
+}
+
+// ============================================================
+// R131 fix: handleEscape - 处理字符串中的 '\\' 转义序列
+// 提取自 string() 主循环的 '\\' 分支（267 行）。
+// switch 分发简单转义（\n/\t/\r/\\/\"/\'/\0/\b/\f/\a/\v）直接 inline，
+// \x 调用 handleHexEscape，\u 调用 handleUnicodeEscape，default 错误恢复。
+// 返回 true=继续外层循环，false=终止 string()
+// ============================================================
+bool Lexer::handleEscape(int startLine, int startCol, std::string& value) {
+    advance(); // 消耗反斜杠
+    if (isAtEnd()) {
+        errorToken("未终止的字符串", startLine, startCol);
+        return false;
+    }
+    char esc = advance();
+    switch (esc) {
+    case 'n':
+        value += '\n';
+        break;
+    case 't':
+        value += '\t';
+        break;
+    case 'r':
+        value += '\r';
+        break;
+    case '\\':
+        value += '\\';
+        break;
+    case '"':
+        value += '"';
+        break;
+    case '\'':
+        value += '\'';
+        break;
+    case '0':
+        value += '\0';
+        break;
+    case 'b':
+        value += '\b';
+        break;
+    case 'f':
+        value += '\f';
+        break;
+    case 'a':
+        value += '\a';
+        break;
+    case 'v':
+        value += '\v';
+        break;
+    case 'x':
+        return handleHexEscape(startLine, startCol, value);
+    case 'u':
+        return handleUnicodeEscape(startLine, startCol, value);
+    default:
+        // AUDIT-BUG-L1 fix: 未知转义序列应报错，而非静默接受为字面字符。
+        // 原实现将 \q 等存储为 "\\q" 两字符，违反"非法输入应被拒绝"原则。
+        errorToken(std::string("未知转义序列 '\\") + esc + "'", startLine, startCol);
+        // 恢复：跳过到字符串结束或 EOF，避免级联产生误导性错误
+        while (!isAtEnd() && peek() != '"') {
+            if (peek() == '\\') {
+                advance();
+                if (!isAtEnd())
+                    advance();
+            } else
+                advance();
+        }
+        if (!isAtEnd())
+            advance(); // 消耗闭合的 '"'
+        return false;
+    }
+    return true;
+}
+
+// ============================================================
+// R131 fix: handleHexEscape - 处理 \xNN 十六进制字节转义
+// 提取自 handleEscape 的 case 'x'（39 行）。
+// 读取 2 位十六进制 → 编码为单字节。错误恢复跳过到字符串结束或 EOF。
+// 返回 true=继续外层循环，false=终止 string()
+// ============================================================
+bool Lexer::handleHexEscape(int startLine, int startCol, std::string& value) {
+    // AUDIT-P2 fix: \xNN — 2 位十六进制字节转义
+    if (isAtEnd()) {
+        errorToken("未终止的字符串", startLine, startCol);
+        return false;
+    }
+    char h1 = advance();
+    if (isAtEnd()) {
+        errorToken("未终止的字符串", startLine, startCol);
+        return false;
+    }
+    char h2 = advance();
+    auto hexVal = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F')
+            return c - 'A' + 10;
+        return -1;
+    };
+    int v1 = hexVal(h1), v2 = hexVal(h2);
+    if (v1 < 0 || v2 < 0) {
+        errorToken(std::string("无效的十六进制转义 '\\x") + h1 + h2 + "'", startLine, startCol);
+        while (!isAtEnd() && peek() != '"') {
+            if (peek() == '\\') {
+                advance();
+                if (!isAtEnd())
+                    advance();
+            } else
+                advance();
+        }
+        if (!isAtEnd())
+            advance();
+        return false;
+    }
+    value += static_cast<char>((v1 << 4) | v2);
+    return true;
+}
+
+// ============================================================
+// R131 fix: handleUnicodeEscape - 处理 \u Unicode 转义
+// 提取自 handleEscape 的 case 'u'（170 行）。
+// 若 peek()=='{' 走 \u{XXXXXX} 扩展语法（1-6 位十六进制），
+// 否则走 \uXXXX 标准 4 位语法。验证码点范围 [0, 0x10FFFF] 且非代理码点
+// [0xD800, 0xDFFF]，编码为 UTF-8（1-4 字节）。
+// 返回 true=继续外层循环，false=终止 string()
+// ============================================================
+bool Lexer::handleUnicodeEscape(int startLine, int startCol, std::string& value) {
+    // AUDIT-P3.12 fix: \u{XXXXXX} 扩展语法支持非 BMP 字符（如 emoji）。
+    //   保留现有 4 位 \uXXXX 语法向后兼容。当 \u 后紧跟 '{' 时，读取
+    //   1-6 位十六进制直到 '}'，验证码点范围 0x000000-0x10FFFF 且非
+    //   代理码点 0xD800-0xDFFF，编码为 UTF-8（1-4 字节）。
+    if (peek() == '{') {
+        advance(); // 消费 '{'
+        uint32_t codepoint = 0;
+        int hexCount = 0;
+        bool hexError = false;
+        while (peek() != '}' && peek() != '\0' && !isAtEnd()) {
+            char hc = advance();
+            int val = 0;
+            if (hc >= '0' && hc <= '9')
+                val = hc - '0';
+            else if (hc >= 'a' && hc <= 'f')
+                val = hc - 'a' + 10;
+            else if (hc >= 'A' && hc <= 'F')
+                val = hc - 'A' + 10;
+            else {
+                errorToken("无效的 Unicode 转义序列: 非法十六进制字符", startLine, startCol);
+                hexError = true;
+                break;
+            }
+            codepoint = (codepoint << 4) | static_cast<uint32_t>(val);
+            hexCount++;
+            if (hexCount > 6) {
+                errorToken("Unicode 转义序列最多 6 位十六进制", startLine, startCol);
+                hexError = true;
+                break;
+            }
+        }
+        if (hexError) {
+            while (!isAtEnd() && peek() != '"') {
+                if (peek() == '\\') {
+                    advance();
+                    if (!isAtEnd())
+                        advance();
+                } else
+                    advance();
+            }
+            if (!isAtEnd())
+                advance();
+            return false;
+        }
+        if (peek() != '}') {
+            errorToken("Unicode 转义序列缺少闭合 '}'", startLine, startCol);
+            return false;
+        }
+        advance(); // 消费 '}'
+        // AUDIT-P2-ROUND49 fix: 三处码点验证失败路径（空转义/码点超出范围/代理码点）
+        // 直接 return 未跳过到字符串结束，产生垃圾错误。改为统一标记 codepointError
+        // 后复用与 hexError 相同的跳过到字符串结束逻辑，对齐 \xNN/\uXXXX 错误恢复。
+        bool codepointError = false;
+        if (hexCount == 0) {
+            errorToken("Unicode 转义序列不能为空", startLine, startCol);
+            codepointError = true;
+        } else if (codepoint > 0x10FFFF) {
+            errorToken("Unicode 码点超出范围 (最大 0x10FFFF)", startLine, startCol);
+            codepointError = true;
+        } else if (codepoint >= 0xD800 && codepoint <= 0xDFFF) {
+            errorToken("无效的 Unicode 代理码点", startLine, startCol);
+            codepointError = true;
+        }
+        if (codepointError) {
+            while (!isAtEnd() && peek() != '"') {
+                if (peek() == '\\') {
+                    advance();
+                    if (!isAtEnd())
+                        advance();
+                } else
+                    advance();
+            }
+            if (!isAtEnd())
+                advance();
+            return false;
+        }
+        // 编码为 UTF-8（1-4 字节）
+        if (codepoint <= 0x7F) {
+            value += static_cast<char>(codepoint);
+        } else if (codepoint <= 0x7FF) {
+            value += static_cast<char>(0xC0 | (codepoint >> 6));
+            value += static_cast<char>(0x80 | (codepoint & 0x3F));
+        } else if (codepoint <= 0xFFFF) {
+            value += static_cast<char>(0xE0 | (codepoint >> 12));
+            value += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+            value += static_cast<char>(0x80 | (codepoint & 0x3F));
+        } else {
+            value += static_cast<char>(0xF0 | (codepoint >> 18));
+            value += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+            value += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+            value += static_cast<char>(0x80 | (codepoint & 0x3F));
+        }
+        return true;
+    }
+    // AUDIT-P2 fix: \uXXXX — 4 位十六进制 Unicode 码点，编码为 UTF-8
+    char d[4];
+    for (int i = 0; i < 4; ++i) {
+        if (isAtEnd()) {
+            errorToken("未终止的字符串", startLine, startCol);
+            return false;
+        }
+        d[i] = advance();
+    }
+    auto hexVal = [](char c) -> int {
+        if (c >= '0' && c <= '9')
+            return c - '0';
+        if (c >= 'a' && c <= 'f')
+            return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F')
+            return c - 'A' + 10;
+        return -1;
+    };
+    int cp = 0;
+    bool valid = true;
+    for (int i = 0; i < 4; ++i) {
+        int v = hexVal(d[i]);
+        if (v < 0) {
+            valid = false;
+            break;
+        }
+        cp = (cp << 4) | v;
+    }
+    if (!valid) {
+        errorToken(std::string("无效的 Unicode 转义 '\\u") + d[0] + d[1] + d[2] + d[3] + "'", startLine, startCol);
+        while (!isAtEnd() && peek() != '"') {
+            if (peek() == '\\') {
+                advance();
+                if (!isAtEnd())
+                    advance();
+            } else
+                advance();
+        }
+        if (!isAtEnd())
+            advance();
+        return false;
+    }
+    // AUDIT-P2-CORRECT fix: 拒绝 Unicode 代理码点（0xD800-0xDFFF）。
+    // 代理码点不是合法的 Unicode 标量值，将其编码为 UTF-8 会产生
+    // 非标准 "WTF-8"（3 字节序列），严格 UTF-8 校验器会拒绝。
+    if (cp >= 0xD800 && cp <= 0xDFFF) {
+        errorToken(std::string("无效的 Unicode 代理码点 '\\u") + d[0] + d[1] + d[2] + d[3] +
+                       "'（代理码点不能直接编码）",
+                   startLine, startCol);
+        while (!isAtEnd() && peek() != '"') {
+            if (peek() == '\\') {
+                advance();
+                if (!isAtEnd())
+                    advance();
+            } else
+                advance();
+        }
+        if (!isAtEnd())
+            advance();
+        return false;
+    }
+    // 编码为 UTF-8
+    if (cp <= 0x7F) {
+        value += static_cast<char>(cp);
+    } else if (cp <= 0x7FF) {
+        value += static_cast<char>(0xC0 | (cp >> 6));
+        value += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        value += static_cast<char>(0xE0 | (cp >> 12));
+        value += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        value += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+    return true;
 }
 
 /// 构造并追加一个 Token：用 UTF-8 感知的 columnAt 计算列号，字面量默认为 monostate。

@@ -230,3 +230,49 @@ void ExportStmt::accept(Visitor& visitor) {
 void InterpolatedString::accept(Visitor& visitor) {
     visitor.visitInterpolatedString(*this);
 }
+
+// R98 元组与解构：元组字面量节点的 accept 实现
+// 派发至 visitTupleLiteral；访问者依次求值各 elements 并组装为 immutable 元组 Value。
+void TupleLiteral::accept(Visitor& visitor) {
+    visitor.visitTupleLiteral(*this);
+}
+
+// R98 元组与解构：解构绑定节点的 accept 实现
+// 派发至 visitDestructureBinding；访问者求值 initializer（必须为 tuple）后
+// 按位置拆分到 names 中的各变量名，可选类型注解 tupleTypeAnnotation 用于运行时校验。
+void DestructureBinding::accept(Visitor& visitor) {
+    visitor.visitDestructureBinding(*this);
+}
+
+// R99 枚举与 ADT + match：AST 节点 accept 实现
+// EnumDecl 派发至 visitEnumDecl；访问者注册 enum 到 enumRegistry_，供后续
+// EnumVariantExpr 构造时验证 enum/variant 存在性 + 参数数量。
+void EnumDecl::accept(Visitor& visitor) {
+    visitor.visitEnumDecl(*this);
+}
+
+// EnumVariantExpr 派发至 visitEnumVariantExpr；访问者查找 enum + variant，
+// 校验参数数量后构造 EnumVariantData Value（immutable）。
+void EnumVariantExpr::accept(Visitor& visitor) {
+    visitor.visitEnumVariantExpr(*this);
+}
+
+// MatchPattern 不直接 accept（由 MatchExpr::accept 内联处理），但保留实现以满足
+// ASTNode 抽象基类要求。MatchPattern 不应被独立访问——Compiler/Interpreter 直接读取
+// pattern 字段而非通过 visitor 分派。此处 no-op 保证若误调用不会污染栈/状态。
+void MatchPattern::accept(Visitor& visitor) {
+    // 故意空实现：MatchPattern 不通过 visitor 分派
+    (void)visitor;
+}
+
+// MatchExpr 派发至 visitMatchExpr；访问者求值 scrutinee，按顺序匹配 cases，
+// 第一个匹配的 case 执行 body 并返回值。穷尽性检查在 TypeChecker 编译期完成。
+void MatchExpr::accept(Visitor& visitor) {
+    visitor.visitMatchExpr(*this);
+}
+
+// R164 协程/生成器：YieldExpr 派发至 visitYieldExpr。
+// 访问者求值 value 表达式，挂起当前生成器并向调用者返回值。
+void YieldExpr::accept(Visitor& visitor) {
+    visitor.visitYieldExpr(*this);
+}

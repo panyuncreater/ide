@@ -3,6 +3,7 @@
 #include "Diagnostic.h"
 #include "ast/ASTNode.h"
 #include "common/RuntimeLimits.h"
+#include "common/TCO.h"         // TCO: 共享尾递归识别函数
 #include "common/TypeChecker.h" // A4 fix: TypeChecker stub 接入 pipeline
 #include "compiler/Bytecode.h"
 #include "compiler/GlobalSlotAllocator.h" // B4: 全局槽位分配器
@@ -125,9 +126,21 @@ private:
     // BUG-IDE-12 fix: 局部变量槽位→名称映射（索引即 slot），跨作用域累积（不随作用域退出清除）。
     // 函数最终化时复制到 chunk_.localSlotNames，供 VM 条件断点求值反查变量名。
     std::vector<std::string> localSlotNames_;
+    // L1 fix（2026-07-19）: 基于 IP 范围的槽位→名称映射，解决兄弟作用域槽位复用导致的
+    // 变量名错位。每个 range 记录变量名在 [startIp, endIp) 范围内占用 slot。
+    // 函数最终化时复制到 chunk_.slotNameRanges，供 VM 调试器按 frame.ip 精确反查。
+    std::vector<BytecodeChunk::SlotNameRange> slotNameRanges_;
     std::unordered_map<std::string, std::string> varTypes_; // 2026-06-29: 变量名→类型注解（local+global）
     bool inFunction_ = false;                               // 是否在函数体内
     std::string currentFunctionReturnType_;                 // BUG-TYPE-1 fix: 当前函数返回类型注解（empty 表示无注解）
+    std::vector<std::string> currentTypeParams_;            // R163 泛型扩展：当前函数/方法的类型参数（empty=非泛型），用于 emitTypeCheck 擦除
+    // TCO: 尾调用优化状态。visitFunDecl 入口设置 currentFunctionName_ /
+    // currentFunctionDecl_ / currentFunctionEntryIp_，visitReturnStmt 据此
+    // 判断 return f(args) 是否可优化为"参数赋值 + 跳转到函数入口"。
+    // 不变量：三字段由 CompileContext 统一保存/恢复，嵌套函数编译后外层状态复原。
+    std::string currentFunctionName_;              // TCO: 当前函数名（空表示非函数体）
+    const FunDecl* currentFunctionDecl_ = nullptr; // TCO: 当前函数 FunDecl 指针（非拥有，AST 生命周期内有效）
+    size_t currentFunctionEntryIp_ = 0;            // TCO: 当前函数体入口 IP（OP_JUMP 目标）
     std::unordered_map<std::string, std::vector<std::string>> classFieldNames_; // 类名 → 字段名列表（含继承字段）
     std::unordered_map<std::string, int> outerLocals_; // 外层函数的局部变量（用于检测闭包捕获）
     // VM-05/06: 闭包 upvalue 编译期追踪
@@ -193,6 +206,9 @@ private:
     // BUG-AUDIT-MOD-1: 模块导出名称集合（key=模块路径，value=该模块 export 的名称集合）
     // 对齐 InterpreterModules.cpp 的 export 检查——具名导入只能导入显式 export 的名称
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
+    // R99 enum 校验：编译期收集的 enum 元信息，compile() 完成时写入 CompileResult.enumInfos。
+    // 直接路径在 visitEnumDecl 中收集，IR/RegVM 路径通过 irBuilder.takeEnumInfos() 获取。
+    std::vector<VMEnumInfo> pendingEnumInfos_;
 
     /// VM-IMPORT: 模块路径规范化与安全校验（对齐 InterpreterModules.cpp SEC-1 防护）
     /// 返回空字符串表示路径非法（调用方应报错）
@@ -206,6 +222,12 @@ private:
     /// 注意：与 compile() 的 pre-scan 存在有意的不对称——此处预扫描 FunDecl，
     /// 因为模块函数导入验证（visitImportStmt）使用 lookupGlobalSlot 检查导出名。
     void preScanModuleGlobals(Block& moduleAst);
+
+    /// visitImportStmt 子阶段：收集模块导出名称集合
+    /// 仅 ExportStmt 包装的声明名（VarDecl/ClassDecl/FunDecl）计入导出集合，
+    /// 普通顶层声明不算导出。对齐 InterpreterModules.cpp:172-188 的语义。
+    /// 输出：moduleExports_[modulePath] = exports 集合
+    void collectModuleExports(const std::string& modulePath, Block& moduleAst);
 
     // ---- C3 fix: 编译上下文 RAII 守卫 ----
     // visitFunDecl 需保存/恢复 15 个成员变量。原代码手动 std::move 保存 + 手动恢复
@@ -231,6 +253,22 @@ private:
         int tryDepth = 0;
         std::vector<TryFinallyContext> tryFinallyStack; // AUDIT-P1.1 fix
         std::string currentFunctionReturnType;          // BUG-TYPE-1 fix: 当前函数返回类型注解
+        std::vector<std::string> currentTypeParams;     // R163 泛型扩展：当前函数/方法的类型参数
+        // TCO: 保存当前函数名 / FunDecl 指针 / 入口 IP，使嵌套函数编译后外层 TCO 状态复原。
+        std::string currentFunctionName;
+        const FunDecl* currentFunctionDecl = nullptr;
+        size_t currentFunctionEntryIp = 0;
+        // L1 fix（2026-07-19）: 保存局部变量名映射和 IP 范围表，使嵌套函数编译后
+        // 外层函数的 localSlotNames_/slotNameRanges_ 不被内层函数污染。原代码遗漏
+        // 这两个字段，导致外层函数最终化时 chunk_.localSlotNames 含内层函数的变量名。
+        std::vector<std::string> localSlotNames;
+        std::vector<BytecodeChunk::SlotNameRange> slotNameRanges;
+        // R164 fixup2: 保存字符串字面量去重缓存，使嵌套函数编译后外层 chunk 的
+        // stringConstIndex_ 不被内层函数 chunk 的索引污染。原代码遗漏此字段，
+        // 导致函数体内添加的字符串常量索引（指向函数 chunk 常量池）泄漏到外层，
+        // 外层 chunk 编译同名字符串时错误复用函数 chunk 的索引，而外层 chunk
+        // 该索引可能指向函数名常量，造成字典字符串键查找失败（d["a"] 变成 d["mk"]）。
+        std::unordered_map<std::string, uint16_t> stringConstIndex;
     };
 
     /// 保存当前编译上下文（move 语义，调用后成员变量处于 moved-from 状态）
@@ -238,7 +276,21 @@ private:
     /// 从快照恢复编译上下文
     void restoreCompileContext(CompileContext&& ctx);
 
-    /// RAII 守卫：构造时保存上下文，析构时自动恢复（含异常路径）
+    /// @brief RAII 守卫：构造时保存编译上下文，析构时自动恢复（含异常路径）。
+    ///
+    /// R97 #9 fix: 用于 visitClassDecl/visitFunDecl 等需要临时切换编译上下文的场景。
+    /// 原实现手动 save/restore 15+ 个成员变量，错误路径极易遗漏恢复步骤。
+    /// 使用 guard 后，无论正常返回还是异常返回，析构函数都会自动恢复上下文。
+    ///
+    /// @code
+    ///   CompileContextGuard guard(*this);     // 保存
+    ///   chunk_ = BytecodeChunk(...);           // 修改上下文
+    ///   if (error) return;                     // 析构自动恢复
+    ///   // 正常路径也自动恢复
+    /// @endcode
+    ///
+    /// @note 不可拷贝（避免双重恢复）。如需在正常路径跳过恢复，调用 dismiss()。
+    /// @warning currentClassName_ 不在 CompileContext 中，需单独手动保存/恢复。
     struct CompileContextGuard {
         Compiler& compiler;
         CompileContext saved;
@@ -256,6 +308,11 @@ private:
     // H5 fix: 内嵌函数闭包追踪 — 内嵌函数存储为局部变量，通过 OP_CALL_EXPR 调用
     std::unordered_set<std::string> innerFunctions_;          // 当前作用域中的内嵌函数名
     std::unordered_map<std::string, int> innerFunctionSlots_; // 内嵌函数名 → 局部变量槽位号
+
+    // R98 W3: Lambda 表达式合成名计数器——匿名 lambda 的 FunDecl.name 为空，
+    // 编译时用 `$lambda_N` 作为 functionChunks_/identifierIndex 的内部 key
+    // （$ 不在标识符首字符集中，合成名不会与用户变量名冲突）
+    int lambdaCounter_ = 0;
 
     // A2/B4: 全局变量整数槽位管理（委托给 GlobalSlotAllocator）
     GlobalSlotAllocator globalSlotAllocator_;
@@ -292,6 +349,16 @@ private:
     void compileStatement(ASTNode* node);
 
     /// 编译各个节点类型（Visitor 模式：由 accept 分派调用，返回 Value 统一接口）
+    /// L1 fix: 关闭 slot >= slotBase 的变量名 range（回填 endIp 为当前 code.size()）。
+    /// 在块作用域退出（currentLocals_ = savedLocals 之前）调用，记录变量生命周期边界。
+    void closeSlotRanges(size_t slotBase) {
+        size_t endIp = chunk_.code.size();
+        for (auto& range : slotNameRanges_) {
+            if (range.endIp == 0 && range.slot >= slotBase) {
+                range.endIp = endIp;
+            }
+        }
+    }
     void visitBinaryOp(BinaryOp& node) override;
     void visitUnaryOp(UnaryOp& node) override;
     void visitNumberLiteral(NumberLiteral& node) override;
@@ -327,6 +394,103 @@ private:
     void visitImportStmt(ImportStmt& node) override;
     void visitExportStmt(ExportStmt& node) override;
     void visitInterpolatedString(InterpolatedString& node) override; // C5 fix
+    // R98 元组与解构
+    void visitTupleLiteral(TupleLiteral& node) override;
+    void visitDestructureBinding(DestructureBinding& node) override;
+    /// 解构绑定单个变量绑定逻辑（复用 visitVarDecl 的局部/全局分支）
+    void bindDestructureVar(const std::string& name, int line, int col);
+
+    // R99 枚举与 ADT + match
+    void visitEnumDecl(EnumDecl& node) override;
+    void visitEnumVariantExpr(EnumVariantExpr& node) override;
+    void visitMatchExpr(MatchExpr& node) override;
+
+    // R164 协程/生成器：yield 表达式编译
+    void visitYieldExpr(YieldExpr& node) override;
+
+    // ============================================================
+    // 超长函数拆分：visitTryStmt / visitFunDecl / visitClassDecl 子阶段
+    // 拆分目的：降低单函数圈复杂度，便于审计与回归测试。
+    // 关键约束：所有 BUG-025 / BUG-026 / AUDIT-* / PERF-* 审计注释与不变量
+    // 必须原样保留；每条 emit 路径的 push/pop 平衡、CompileContextGuard
+    // RAII、breakJumps/continueJumps/finallyIndices 索引不变量不得改变。
+    // ============================================================
+
+    /// try-catch 编译期 patch 信息（emitTryBlock 输出 → emitCatchBlock 输入）
+    struct TryCatchPatchInfo {
+        size_t tryBeginIp = 0;
+        size_t catchOffsetPatch = std::string::npos;
+        size_t skipCatchJumpPatch = std::string::npos;
+    };
+
+    /// visitTryStmt 子阶段：编译 try 块
+    /// 发射 OP_TRY_BEGIN（catchOffset 占位）、try body（含 tryDepth_ 增减）、
+    /// OP_TRY_END、skip-catch OP_JUMP。无错误返回路径。
+    void emitTryBlock(TryStmt& node, TryCatchPatchInfo& info);
+
+    /// visitTryStmt 子阶段：编译 catch 块
+    /// 回填 catchOffset、绑定 catch 变量（shadow/cleanup 状态）、编译 catch body
+    /// （含 cleanup wrap：OP_TRY_BEGIN/END + cleanupThrow 路径）、cleanup 字节码、
+    /// OP_CLOSE_UPVALUE、closeSlotRanges、恢复 currentLocals_、回填 afterCatch。
+    /// 返回 false 表示发生溢出错误，调用方应跳过 finally 块直接返回
+    /// （保留原始控制流：原实现 catch 块 early return 不 pop tryFinallyStack_）。
+    bool emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info);
+
+    /// visitTryStmt 子阶段：编译 finally 块
+    /// 发射 OP_TRY_END（弹外层 handler）、记录 finallyEntryIp 回填续跳 patches、
+    /// 编译 finally body（正常路径）+ OP_FINALLY_END + skip-exception OP_JUMP、
+    /// 回填 finallyCatchOffset、编译 finally body（异常路径）+ OP_THROW、回填 afterFinally。
+    /// 早返回时不 pop tryFinallyStack_（由 visitTryStmt 统一 pop，保持单次 pop 语义）。
+    void emitFinallyBlock(TryStmt& node, size_t outerTryBeginIp, size_t finallyCatchOffsetPatch);
+
+    /// visitFunDecl 子阶段：函数声明
+    /// 基于 CompileContextGuard.saved 设置 outerLocals_/outerUpvalues_/outerFunctions_，
+    /// 创建函数 chunk、设置参数槽位（含 localSlotNames_）、BUG-UV-1 前向自由变量分析。
+    /// 返回 false 表示参数数量超限，调用方应在 guard 作用域内直接 return。
+    /// @param effectiveName 函数有效名称（匿名 lambda 用 `$lambda_N` 合成名，与 functionChunks_ key 一致）
+    bool declareFunction(FunDecl& node, const CompileContext& saved, const std::string& effectiveName);
+
+    /// visitFunDecl 子阶段：函数体编译
+    /// 编译 body、追加隐式 OP_NULL/OP_RETURN、保存 localCount/localSlotNames/slotNameRanges。
+    void compileFunctionBody(FunDecl& node);
+
+    /// visitFunDecl / emitMethodBody 共用子阶段：默认参数值 emit
+    /// 仅支持字面量（Number/String/Bool/Null）和负数字面量（含 --N 嵌套折叠），
+    /// 复杂表达式记录无效索引 0xFFFF（VM 不支持，Interpreter 路径仍可执行）。
+    void emitDefaultValues(FunDecl& node);
+
+    /// visitMatchExpr 子阶段：编译单个 match case 的模式检查
+    /// 处理 WILDCARD（无操作）/LITERAL（DUP+literal+OP_EQUAL+JUMP_IF_FALSE+POP）
+    /// /VARIANT（DUP+OP_ENUM_VARIANT_NAME+JUMP_IF_FALSE+POP+字段绑定）三种模式。
+    /// 匹配失败跳转 patch 追加到 caseSkipPatches 由调用方回填。
+    /// 栈布局不变量：调用前 [scrut]，调用后 [scrut]（保持 scrut 在栈顶供后续 case 复用）。
+    void emitMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches);
+
+    /// visitMatchExpr 子阶段：编译 case body 并保留值在栈顶
+    /// 处理 Block body（编译除最后一条外的所有语句带 POP，最后一条用 compileNode 保留值；
+    /// 非表达式语句补 OP_NULL）与单表达式 body 两种情况。
+    /// 空 body 推 OP_NULL。栈布局不变量：调用前 []，调用后 [body_result]。
+    void compileMatchBody(ASTNode* body, int line);
+
+    /// visitClassDecl 子阶段：类成员编译循环
+    /// 遍历 node.members，对每个 FunDecl 创建 CompileContextGuard 并调用 emitMethodBody。
+    /// currentClassName_ 不在 CompileContext 中，由本函数在每次迭代前后手动保存/恢复。
+    void compileClassMembers(ClassDecl& node, const std::vector<std::string>& allFieldNames);
+
+    /// visitClassDecl 子阶段：单个方法体编译
+    /// 设置方法 chunk（this/字段/参数槽位布局）、编译 body、保存元数据、emit 默认参数值、
+    /// 移交 chunk_ 到 functionChunks_[methodKey]。slot 越界时 early return（调用方继续下一成员）。
+    /// currentClassName_ 由调用方（compileClassMembers）在迭代结束时恢复。
+    /// R163 泛型扩展：classTypeParams 为类的类型参数列表，与 method.typeParams 合并后注入 currentTypeParams_。
+    void emitMethodBody(FunDecl& method, const std::string& className, const std::vector<std::string>& allFieldNames,
+                        CompileContextGuard& guard, const std::vector<std::string>& classTypeParams = {});
+
+    /// visitMethodCall 子阶段：嵌套访问变异方法写回
+    /// 当接收者是 MemberAccess/IndexAccess 且基对象是 VarRef 时，方法调用后发射写回指令，
+    /// 确保 this.arr.push(42) 等嵌套调用的修改不丢失。VM 在变异方法调用时将修改后的
+    /// 对象暂存到 lastMutatedReceiver_，写回指令从中取值写回基对象的字段/索引位置。
+    /// 仅依赖 receiver AST 与 currentLocals_（成员），无其他外部状态。
+    void emitMethodCallWriteback(const ASTNode* receiver, int line);
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);

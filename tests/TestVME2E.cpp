@@ -1983,10 +1983,10 @@ TEST(BackendConsistency, FunctionRecursion) {
 }
 
 // ---- 三后端一致：字符串方法 ----
-// 注意：RegisterVM 的 callBuiltinMethod 尚未实现 str.replace/str.split/str.trim/
-// str.substr/str.indexOf（仅实现 len/upper/lower/contains/startsWith/endsWith），
-// 故此处仅测试三后端共同支持的方法。缺失方法由
-// BackendConsistency.RegVmUnsupportedStringMethods 单独文档化。
+// R98 注释更新：原注释称"RegisterVM 尚未实现 str.replace/split/trim/substr/indexOf"
+// 已过时——RegisterVM 已通过共享 executeShared* 层补齐所有字符串方法（见下方
+// RegVmStringMethodsNowSupported / StringMethodsAllBackends 测试）。三后端字符串
+// 方法已全部对齐，此测试覆盖 len/upper/lower/contains 共 4 个基础方法。
 TEST(BackendConsistency, StringMethods) {
     std::string src =
         "var s = \"Hello\";"

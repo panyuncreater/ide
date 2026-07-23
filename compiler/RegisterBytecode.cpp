@@ -44,14 +44,19 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_JUMP_IF_FALSE           */ {"REG_JUMP_IF_FALSE", 4, false},
     /* REG_RETURN                  */ {"REG_RETURN", 2, false},
     /* REG_RETURN_NULL             */ {"REG_RETURN_NULL", 1, false},
+    /* REG_YIELD                   */ {"REG_YIELD", 3, false}, // R164: op + dst(1B) + src(1B)
     /* REG_CALL                    */ {"REG_CALL", 5, true},         // 变长: 5 + argCount
     /* REG_CALL_EXPR               */ {"REG_CALL_EXPR", 4, true},    // 变长: 4 + argCount
     /* REG_METHOD_CALL             */ {"REG_METHOD_CALL", 6, true},  // 变长: 6 + argCount
     /* REG_MAKE_CLOSURE            */ {"REG_MAKE_CLOSURE", 5, true}, // 变长: 5 + 2*uvCount (op+dst+nameIdx(2B)+uvCount)
     /* REG_BUILD_ARRAY             */ {"REG_BUILD_ARRAY", 3, true},  // 变长: 3 + count
     /* REG_BUILD_DICT              */ {"REG_BUILD_DICT", 3, true},   // 变长: 3 + 2*pairCount
+    /* REG_BUILD_TUPLE             */ {"REG_BUILD_TUPLE", 3, true},  // R98 元组与解构：变长: 3 + count
     /* REG_INDEX_GET               */ {"REG_INDEX_GET", 4, false},
     /* REG_INDEX_SET               */ {"REG_INDEX_SET", 4, false},
+    /* REG_BUILD_ENUM_VARIANT      */ {"REG_BUILD_ENUM_VARIANT", 7, true},  // R99: 变长 7 + argCount
+    /* REG_ENUM_VARIANT_NAME       */ {"REG_ENUM_VARIANT_NAME", 7, false},  // R99: op+dst+scrut+2*idx(2B)
+    /* REG_ENUM_VARIANT_FIELD      */ {"REG_ENUM_VARIANT_FIELD", 4, false}, // R99: op+dst+scrut+idx
     /* REG_MEMBER_GET              */ {"REG_MEMBER_GET", 5, false},
     /* REG_MEMBER_SET              */ {"REG_MEMBER_SET", 5, false},
     /* REG_CLASS_NEW               */ {"REG_CLASS_NEW", 5, true},    // 变长: 5 + argCount
@@ -74,6 +79,8 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_TYPE_CHECK              */ {"REG_TYPE_CHECK", 4, false}, // op(1B) + src(1B) + typeAnnotationConstIdx(2B)
     /* REG_PUSH_JUMP_TARGET        */ {"REG_PUSH_JUMP_TARGET", 3, false}, // op(1B) + target(2B)
     /* REG_FINALLY_END             */ {"REG_FINALLY_END", 1, false},
+    /* REG_LEN                     */ {"REG_LEN", 3, false},       // R134: op(1B) + dst(1B) + src(1B)
+    /* REG_TYPE_TEST               */ {"REG_TYPE_TEST", 5, false}, // R134: op(1B) + dst(1B) + src(1B) + typeIdx(2B)
 };
 } // anonymous namespace
 
@@ -193,6 +200,23 @@ size_t RegBytecodeChunk::instructionSizeAt(size_t offset) const {
         if (offset + 2 < code.size()) {
             uint8_t pairCount = code[offset + 2];
             return static_cast<size_t>(3 + static_cast<size_t>(pairCount) * 2);
+        }
+        return baseSize;
+    }
+    case RegOp::REG_BUILD_TUPLE: {
+        // R98 元组与解构：op + dst + count + elems（与 REG_BUILD_ARRAY 结构相同）
+        if (offset + 2 < code.size()) {
+            uint8_t count = code[offset + 2];
+            return static_cast<size_t>(3 + count);
+        }
+        return baseSize;
+    }
+    case RegOp::REG_BUILD_ENUM_VARIANT: {
+        // R99 枚举与 ADT：op + dst + enumNameConstIdx(2B) + variantNameConstIdx(2B) + argCount + args
+        // 布局: [op, dst, eLo, eHi, vLo, vHi, argCount, arg1, arg2, ...]
+        if (offset + 6 < code.size()) {
+            uint8_t argCount = code[offset + 6];
+            return static_cast<size_t>(7 + argCount);
         }
         return baseSize;
     }

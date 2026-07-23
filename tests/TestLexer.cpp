@@ -69,7 +69,7 @@ TEST(LexerTest, Keywords_ControlFlow) {
     Lexer lexer;
     auto tokens = lexer.scan("var fun if else while for return");
 
-    ASSERT_EQ(tokens.size(), 8u);  // 7 个关键字 + EOF
+    ASSERT_EQ(tokens.size(), 8u); // 7 个关键字 + EOF
     EXPECT_EQ(tokens[0].type, TokenType::TK_VAR);
     EXPECT_EQ(tokens[1].type, TokenType::TK_FUN);
     EXPECT_EQ(tokens[2].type, TokenType::TK_IF);
@@ -210,7 +210,7 @@ TEST(LexerTest, Identifier_DoubleUnderscorePrefixIsError) {
     auto tokens = lexer.scan("__foo");
 
     // 应产生一个 TK_ERROR Token
-    ASSERT_EQ(tokens.size(), 2u);  // ERROR + EOF
+    ASSERT_EQ(tokens.size(), 2u); // ERROR + EOF
     EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
     // 错误消息应包含保留前缀提示
     EXPECT_NE(tokens[0].lexeme.find("__"), std::string::npos);
@@ -314,7 +314,7 @@ TEST(LexerTest, Number_HexPrefixError) {
     Lexer lexer;
     auto tokens = lexer.scan("0x1F");
 
-    ASSERT_EQ(tokens.size(), 2u);  // ERROR + EOF
+    ASSERT_EQ(tokens.size(), 2u); // ERROR + EOF
     EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
     EXPECT_NE(tokens[0].lexeme.find("0x1F"), std::string::npos);
     EXPECT_TRUE(lexer.getDiagnostics().hasErrors());
@@ -339,6 +339,20 @@ TEST(LexerTest, Number_ScientificFormatError) {
     EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
     EXPECT_NE(tokens[0].lexeme.find("科学计数法"), std::string::npos);
     EXPECT_TRUE(lexer.getDiagnostics().hasErrors());
+}
+
+// BUG-010: 测试科学计数法不完整形式（e 后有符号但无数字）
+TEST(LexerTest, Number_ScientificFormatError_SignWithoutDigit) {
+    // 1e+ 和 1e- 应当报 TK_ERROR，而非拆分为 1/e/+ 等多 token
+    std::string cases[] = {"1e+", "1e-", "1E+", "1E-"};
+    for (const auto& src : cases) {
+        Lexer lexer;
+        auto tokens = lexer.scan(src);
+        ASSERT_GE(tokens.size(), 1u) << "source=" << src;
+        EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR) << "source=" << src;
+        EXPECT_NE(tokens[0].lexeme.find("科学计数法"), std::string::npos) << "source=" << src;
+        EXPECT_TRUE(lexer.getDiagnostics().hasErrors()) << "source=" << src;
+    }
 }
 
 // 测试：科学计数法 123.e5（整数后直接跟 .e 形式）
@@ -506,7 +520,7 @@ TEST(LexerTest, String_UnterminatedProducesError) {
     Lexer lexer;
     auto tokens = lexer.scan("\"hello");
 
-    ASSERT_EQ(tokens.size(), 2u);  // ERROR + EOF
+    ASSERT_EQ(tokens.size(), 2u); // ERROR + EOF
     EXPECT_EQ(tokens[0].type, TokenType::TK_ERROR);
     EXPECT_NE(tokens[0].lexeme.find("未终止"), std::string::npos);
     EXPECT_TRUE(lexer.getDiagnostics().hasErrors());
@@ -620,7 +634,7 @@ TEST(LexerTest, Comment_AtEndOfInput) {
     Lexer lexer;
     auto tokens = lexer.scan("abc // trailing comment");
 
-    ASSERT_EQ(tokens.size(), 2u);  // IDENTIFIER + EOF
+    ASSERT_EQ(tokens.size(), 2u); // IDENTIFIER + EOF
     EXPECT_EQ(tokens[0].type, TokenType::TK_IDENTIFIER);
     ASSERT_EQ(lexer.comments().size(), 1u);
     EXPECT_EQ(lexer.comments()[0].lexeme, "// trailing comment");
@@ -631,7 +645,7 @@ TEST(LexerTest, Comment_MultipleCollected) {
     Lexer lexer;
     auto tokens = lexer.scan("// c1\nabc // c2");
 
-    ASSERT_EQ(tokens.size(), 2u);  // IDENTIFIER + EOF
+    ASSERT_EQ(tokens.size(), 2u); // IDENTIFIER + EOF
     EXPECT_EQ(lexer.comments().size(), 2u);
     EXPECT_EQ(lexer.comments()[0].lexeme, "// c1");
     EXPECT_EQ(lexer.comments()[1].lexeme, "// c2");
@@ -721,7 +735,7 @@ TEST(LexerTest, Error_DiagnosticHasCorrectLocation) {
     const auto& diags = lexer.getDiagnostics().all();
     ASSERT_EQ(diags.size(), 1u);
     EXPECT_EQ(diags[0].line, 1);
-    EXPECT_EQ(diags[0].column, 3);  // 第 3 列
+    EXPECT_EQ(diags[0].column, 3); // 第 3 列
     EXPECT_EQ(diags[0].source, DiagSource::Lexer);
     EXPECT_TRUE(diags[0].isError());
 }
@@ -753,7 +767,7 @@ TEST(LexerTest, Position_ColumnAfterWhitespace) {
     auto tokens = scanTokens("  abc");
     ASSERT_EQ(tokens.size(), 1u);
     EXPECT_EQ(tokens[0].line, 1);
-    EXPECT_EQ(tokens[0].column, 3);  // 第 3 列
+    EXPECT_EQ(tokens[0].column, 3); // 第 3 列
 }
 
 // 测试：多行输入的行号递增
@@ -798,7 +812,7 @@ TEST(LexerTest, Position_BOMSkipped) {
     EXPECT_EQ(tokens[0].type, TokenType::TK_IDENTIFIER);
     EXPECT_EQ(tokens[0].lexeme, "abc");
     EXPECT_EQ(tokens[0].line, 1);
-    EXPECT_EQ(tokens[0].column, 1);  // BOM 跳过后列号从 1 开始
+    EXPECT_EQ(tokens[0].column, 1); // BOM 跳过后列号从 1 开始
 }
 
 // 测试：多行字符串使用起始位置（而非结束位置）
@@ -816,9 +830,9 @@ TEST(LexerTest, Position_EOFLineNumber) {
     Lexer lexer;
     auto tokens = lexer.scan("abc\ndef");
 
-    ASSERT_EQ(tokens.size(), 3u);  // IDENTIFIER + IDENTIFIER + EOF
+    ASSERT_EQ(tokens.size(), 3u); // IDENTIFIER + IDENTIFIER + EOF
     EXPECT_EQ(tokens[2].type, TokenType::TK_EOF);
-    EXPECT_EQ(tokens[2].line, 2);  // EOF 在第 2 行末尾
+    EXPECT_EQ(tokens[2].line, 2); // EOF 在第 2 行末尾
 }
 
 // 测试：混合 Token 序列的位置正确性

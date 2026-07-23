@@ -209,6 +209,55 @@ bool isBuiltinFunction(const std::string& name);
 Result<Value> executeSharedBuiltinFunction(const std::string& funcName, const Value* args, size_t argCount,
                                            int line = 0, int column = 0);
 
+// ============================================================
+// R98 W2: 高阶函数共享层（map / filter / reduce / forEach / find）
+// ============================================================
+// 这 5 个高阶函数需要调用用户传入的闭包值。由于 executeSharedBuiltinFunction
+// 是无状态纯函数层（无法调用闭包），此处提供独立的共享算法层：
+// 各后端（Interpreter / StackVM / RegisterVM）注入 ClosureInvoker 回调
+// 实现闭包调用，算法本身（数组遍历、结果构建）三后端共享。
+//
+// 设计要点：
+//   1. 闭包调用是后端特定的（Interpreter 用 AST eval，VM 用帧压栈+run loop，
+//      RegisterVM 用寄存器帧+run loop），无法在共享层实现
+//   2. 算法逻辑（遍历、过滤、归约）与后端无关，抽取到共享层避免 3x 重复
+//   3. 与 input() 类似，各后端在调用 executeSharedBuiltinFunction 之前拦截
+//      这 5 个名字，分派到本共享层
+
+/// 闭包调用回调：各后端注入具体实现
+/// @param closure  闭包值（用户传入的函数）
+/// @param args     参数列表首指针
+/// @param argCount 参数数量
+/// @param line     调用行号（用于错误报告）
+/// @param column   调用列号（用于错误报告）
+/// @return 闭包调用的结果（成功返回值，失败返回错误）
+using ClosureInvoker =
+    std::function<Result<Value>(const Value& closure, const Value* args, size_t argCount, int line, int column)>;
+
+/// 判断函数名是否为高阶内置函数（map/filter/reduce/forEach/find）
+bool isHigherOrderBuiltin(const std::string& name);
+
+/// map(arr, fn) — 对数组每个元素应用 fn，返回新数组
+Result<Value> executeSharedMap(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line = 0,
+                               int column = 0);
+
+/// filter(arr, fn) — 过滤数组元素，返回满足 fn(elem)==true 的元素组成的新数组
+Result<Value> executeSharedFilter(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line = 0,
+                                  int column = 0);
+
+/// reduce(arr, fn, initial) — 归约数组为单个值
+/// fn 接受两个参数：(accumulator, currentElement)
+Result<Value> executeSharedReduce(const Value& arr, const Value& closure, const Value& initial,
+                                  const ClosureInvoker& invoke, int line = 0, int column = 0);
+
+/// forEach(arr, fn) — 遍历数组对每个元素执行 fn，返回 null
+Result<Value> executeSharedForEach(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line = 0,
+                                   int column = 0);
+
+/// find(arr, fn) — 查找第一个满足 fn(elem)==true 的元素，未找到返回 null
+Result<Value> executeSharedFind(const Value& arr, const Value& closure, const ClosureInvoker& invoke, int line = 0,
+                                int column = 0);
+
 /// E3 fix: 执行 input() 函数（共享层，供 Interpreter 和 VM 共用）
 /// input() 不走 executeSharedBuiltinFunction 注册表（依赖 inputCallback 跨线程交互），
 /// 由调用方直接调用本函数并传入 callback。
@@ -222,6 +271,44 @@ Result<Value> executeSharedBuiltinFunction(const std::string& funcName, const Va
 /// @param column     调用列号
 Result<Value> executeSharedInput(const std::function<std::string(const std::string&)>& inputCallback, const Value* args,
                                  size_t argCount, int line = 0, int column = 0);
+
+// ============================================================
+// R136 线程与并发原语：channel/mutex/rwlock 内置函数 + 方法分发
+// ============================================================
+// channel()/mutex()/rwlock() 是无参数构造函数，走 executeSharedBuiltinFunction 注册表。
+// spawn(fn, args...) 类似 input()——需要后端注入 ClosureInvoker，走独立路径。
+// channel/mutex/rwlock/thread 的方法（send/recv/lock/unlock/join 等）通过
+// handleSyncObjectMethod 统一分发，供 Interpreter/VM 共用。
+
+/// 判断函数名是否为并发原语构造函数（channel/mutex/rwlock）
+bool isConcurrencyBuiltin(const std::string& name);
+
+/// 同步对象方法分发（channel.send/recv/close, mutex.lock/unlock/tryLock,
+/// rwlock.readLock/readUnlock/writeLock/writeUnlock/tryReadLock/tryWriteLock,
+/// thread.join/detach/isJoinable）
+/// @param method  方法名
+/// @param obj     同步对象值（可变引用，部分方法可能修改内部状态如 channel.close）
+/// @param args    已求值的参数列表
+/// @param line    调用行号
+/// @param col     调用列号
+/// @return        方法结果 + 是否修改了对象（用于 writeBack，目前始终 false——
+///                同步对象内部状态通过 shared_ptr<Inner> 共享，无需 writeBack）
+BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj, const std::vector<Value>& args,
+                                            int line, int col);
+
+/// spawn(fn, args...) 共享层入口（类似 input()，由调用方注入闭包调用器）
+/// @param closure    闭包值（用户传入的函数）
+/// @param args       闭包参数列表首指针
+/// @param argCount   参数数量
+/// @param invoker    闭包调用回调（各后端注入：Interpreter 用 AST eval，
+///                   VM 用帧压栈+run loop，RegisterVM 用寄存器帧+run loop）
+/// @param line       调用行号
+/// @param column     调用列号
+/// @return Thread 值（成功）或 err（参数错误）
+/// 注：invoker 必须线程安全或通过外部 mutex 序列化。当前实现 Interpreter
+/// 在 callSpawnBuiltin 内通过 spawnMutex_ 序列化所有 spawn 出的闭包调用。
+Result<Value> executeSharedSpawn(const Value& closure, const Value* args, size_t argCount,
+                                  const ClosureInvoker& invoker, int line = 0, int column = 0);
 
 /// 内置方法辅助类（全静态方法，无状态）
 class BuiltinMethods {

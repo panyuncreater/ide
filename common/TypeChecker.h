@@ -66,7 +66,15 @@ namespace minilang {
 // 提取自 Interpreter::typeMatch，供三后端统一类型注解强制逻辑。
 // 处理：原始类型(int/float/bool/string)、null（兼容所有注解）、
 // array/dict、数组元素类型注解(如 "int[]")、实例精确类名匹配。
+//
 // 实例继承链检查由调用方扩展（Interpreter 用 classRegistry_，VM 用 classInfo_）。
+// BUG-014 审计结论（2026-07-18）：三后端语义一致，非误报——
+//   - Interpreter::typeMatch 内联继承链遍历（classRegistry_）
+//   - StackVM OP_TYPE_CHECK (VMContainers.cpp:683-704) 在 typeMatchValue 失败后
+//     执行相同继承链 fallback 检查（classInfo_）
+//   - RegisterVM REG_TYPE_CHECK (RegisterVM.cpp:1337-1357) 同样有继承链 fallback
+//   三个后端对相同输入产生一致结果，仅代码组织不同（共享 helper + 调用方 fallback
+//   vs 内联实现）。null 兼容性、T? 剥离、fun() 类型、数组/dict 元素递归均已对齐。
 inline bool typeMatchValue(const Value& val, const std::string& annotation) {
     if (annotation.empty())
         return true;
@@ -89,9 +97,22 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
         return val.isArray();
     if (annotation == TypeName::DICT)
         return val.isDict();
+    // R98 元组与解构：tuple 类型注解匹配
+    if (annotation == TypeName::TUPLE)
+        return val.isTuple();
     if (annotation == TypeName::NULL_T)
         return val.isNull();
-    // dict[K:V] 泛型字典类型注解：key 总是 string，递归检查每个 value（对齐 Interpreter::typeMatch AUDIT-P2.7）
+    // R99 枚举与 ADT：enum variant 类型注解匹配
+    // - "enum"：泛型注解，匹配任意 enum variant
+    // - "<EnumName>"：精确 enum 名匹配（如 "Color" 匹配 Color.Red/Color.Green 等）
+    if (annotation == TypeName::ENUM) {
+        return val.isEnumVariant();
+    }
+    if (val.isEnumVariant()) {
+        return val.enumVariantEnumName() == annotation;
+    }
+    // dict[K:V] 泛型字典类型注解：key 支持 string/int/bool/float（L4 fix），递归检查每个 value
+    // （对齐 Interpreter::typeMatch AUDIT-P2.7）
     if (annotation.size() >= 7 && annotation.substr(0, 5) == "dict[" && annotation.back() == ']') {
         if (!val.isDict())
             return false;
@@ -102,8 +123,22 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
         std::string keyType = inner.substr(0, colonPos);
         std::string valType = inner.substr(colonPos + 1);
         for (const auto& kv : val.dictVal()) {
-            if (keyType != "string")
-                return false;
+            // L4 fix: kv.first 是 DictKey variant，按 keyType 检查键类型
+            if (keyType == "string") {
+                if (!std::holds_alternative<std::string>(kv.first))
+                    return false;
+            } else if (keyType == "int") {
+                if (!std::holds_alternative<int64_t>(kv.first))
+                    return false;
+            } else if (keyType == "bool") {
+                if (!std::holds_alternative<bool>(kv.first))
+                    return false;
+            } else if (keyType == "float") {
+                if (!std::holds_alternative<double>(kv.first))
+                    return false;
+            } else {
+                return false; // 未知 keyType
+            }
             if (!typeMatchValue(kv.second, valType))
                 return false;
         }
@@ -127,6 +162,19 @@ inline bool typeMatchValue(const Value& val, const std::string& annotation) {
     // 实例类型注解：精确类名匹配（继承链由调用方扩展）
     if (val.isInstance()) {
         return val.className() == annotation;
+    }
+    return false;
+}
+
+/// R163 泛型扩展：判断类型名是否是类型参数（如 T、E、K、V）。
+/// 用于四后端（Interpreter/StackVM/RegisterVM/IR）的类型参数擦除——
+/// 类型参数运行时不校验，仅跳过类型检查。
+/// 对齐 Interpreter::isTypeParameter 的实现。
+inline bool isTypeParameter(const std::string& typeName, const std::vector<std::string>& typeParams) {
+    for (const auto& tp : typeParams) {
+        if (typeName == tp) {
+            return true;
+        }
     }
     return false;
 }

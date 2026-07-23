@@ -27,6 +27,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map> // evaluateCondition 沙箱 instSnaps 用 std::map 按指针去重
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -38,12 +39,18 @@
 #include "Diagnostic.h"
 #include "ast/ASTNode.h"
 #include "common/IBackend.h" // ARCH-09 fix: 后端抽象接口
+#include "common/Result.h"   // R98 W2: invokeClosureSync 返回 Result<Value>
 #include "common/RuntimeLimits.h"
-#include "interpreter/CallFrame.h" // ARCH-02 fix: CallFrame 拆出，避免传递依赖
+#include "interpreter/BuiltinMethods.h" // R164 fix: handleCoroutineMethod 返回 BuiltinMethodResult
+#include "interpreter/CallFrame.h"      // ARCH-02 fix: CallFrame 拆出，避免传递依赖
 #include "interpreter/Environment.h"
 #include "interpreter/RuntimeExceptions.h" // S6 fix: 异常类提取到独立头文件
 #include "interpreter/Value.h"
 #include "interpreter/Visitor.h"
+// R164 fix: checkType 模板使用 ErrorFormat::format + ErrorMessages 常量
+// 顺序敏感性（项目记忆）：ErrorMessages.h 必须在 Value.h 之后
+#include "common/ErrorFormat.h"
+#include "common/ErrorMessages.h"
 
 // ============================================================
 // Interpreter 解释器
@@ -66,6 +73,8 @@ struct ClassInfo {
     std::unordered_map<std::string, std::shared_ptr<FunDecl>> methods; // 方法表
     std::unordered_map<std::string, Value> fields;                     // 默认字段值
     std::shared_ptr<Environment> closureEnv;                           // O5: 类定义时的环境（闭包捕获）
+    // R163 泛型类：类型参数列表（空 = 非泛型），方法调用时合并到 currentTypeParams_
+    std::vector<std::string> typeParams;
     // C6 fix: 方法分派缓存。沿继承链查找是 O(depth)，热路径上每次方法调用重复查找。
     // 缓存 methodName → (shared_ptr<FunDecl>, cacheGen_)。cacheGen_ 与 Interpreter::classRegistryGen_
     // 比较，不匹配则视为未命中（任何类重定义都会递增 gen，使全部缓存条目失效，
@@ -212,10 +221,35 @@ public:
     /// 且解释器不在 worker 线程中运行（isRunning()==false）。
     void resetReplEnvironment();
 
+    /// R161 调试器 REPL 阶段 2：从源 Interpreter 复制函数/类/枚举注册表，
+    /// 使调试器 REPL 中可调用用户定义的函数/类/枚举。
+    /// @param src 源 Interpreter（通常是主 Interpreter，持有 Run 期间建立的注册表）
+    /// @note shared_ptr<FunDecl> 共享所有权，AST 在源 Interpreter 析构前保持有效；
+    ///       ClassInfo 的 methods 也是 shared_ptr，共享所有权；
+    ///       EnumInfo 仅含字符串/向量，值拷贝安全。
+    /// @note 调用方需确保 src 不在 worker 线程中并发修改（Interpreter 调试暂停期
+    ///       worker 阻塞在 pauseCV_，安全；VM 暂停期主 Interpreter 空闲，安全）。
+    /// @note 每次调用覆盖当前注册表（不合并），多次调用以最后一次为准。
+    void injectRegistriesFrom(const Interpreter& src);
+
+    /// R161 调试器 REPL 阶段 2：查询主 Interpreter 是否有可注入的注册表。
+    /// 用于 IdeController 判定是否调用 injectRegistriesFrom（避免空注册表注入开销）。
+    bool hasRegistries() const { return !funRegistry_.empty() || !classRegistry_.empty() || !enumRegistry_.empty(); }
+
     /// 请求中止当前执行（REPL 超时/关闭时调用）
     /// checkBreak 会在每个语句节点检查此标志并抛异常，实现协作式中止
     void requestStop() { stopRequested_.store(true, std::memory_order_relaxed); }
     bool isStopRequested() const { return stopRequested_.load(std::memory_order_relaxed); }
+
+    // ---- R114 可回放执行时间轴：recorder 集成 ----
+    /// 启用/禁用执行轨迹录制。启用后 checkBreak 在每个语句节点入口采集快照。
+    /// @note 跨线程安全——recordingEnabled_ 为 atomic，checkBreak 在 worker 线程读，
+    ///       主线程 setRecordingEnabled() 写。recorder 内部 mutex 保护快照 deque。
+    ///       采集开销：每次 checkBreak 调用 captureInterpreterStep，含 Environment
+    ///       shared_ptr 拷贝 + allVariablesMap() 遍历 + Value toString，约 5-20μs。
+    ///       若性能敏感可仅在调试模式启用（setRecordingEnabled(debugMode)）。
+    void setRecordingEnabled(bool enabled) { recordingEnabled_.store(enabled, std::memory_order_relaxed); }
+    bool isRecordingEnabled() const { return recordingEnabled_.load(std::memory_order_relaxed); }
 
     // ---- 25 个 visit 方法实现 ----
 
@@ -254,6 +288,25 @@ public:
     void visitImportStmt(ImportStmt& node) override;
     void visitExportStmt(ExportStmt& node) override;
     void visitInterpolatedString(InterpolatedString& node) override; // C5 fix
+    // R98 元组与解构
+    void visitTupleLiteral(TupleLiteral& node) override;
+    void visitDestructureBinding(DestructureBinding& node) override;
+    // R99 枚举与 ADT + match
+    void visitEnumDecl(EnumDecl& node) override;
+    void visitEnumVariantExpr(EnumVariantExpr& node) override;
+    void visitMatchExpr(MatchExpr& node) override;
+    // R164 协程/生成器：yield 表达式求值（重放模式）
+    void visitYieldExpr(YieldExpr& node) override;
+
+    // R99 辅助方法
+    /// match case 体的求值（Block 或单表达式）
+    Value evaluateMatchBody(ASTNode* body);
+    /// R134 递归 pattern 匹配 helper
+    /// 在 caseEnv 中绑定变量；返回是否匹配成功。
+    /// 支持 WILDCARD/LITERAL/VARIABLE/VARIANT/TUPLE/OR 六种 pattern 递归匹配。
+    bool tryMatchPattern(const MatchPattern& p, const Value& scrutinee, Environment& caseEnv);
+    /// 判断类型名是否是 enum 的类型参数（运行时擦除，跳过类型校验）
+    bool isTypeParameter(const std::string& typeName, const std::vector<std::string>& typeParams) const;
 
 private:
     // 运行时限制常量 — 统一引用 common/RuntimeLimits.h
@@ -277,6 +330,10 @@ private:
     std::atomic<bool> debugMode_{false}; // 是否处于调试模式（快速跳过 checkBreak）
     // REPL 协作中止标志：closeEvent 超时路径设置，checkBreak 检查并抛异常
     std::atomic<bool> stopRequested_{false};
+    // R114 可回放执行时间轴：录制启用标志。checkBreak 在每个语句节点入口读取此标志，
+    // 为 true 时调用 traceRecorder().captureInterpreterStep() 采集快照。
+    // atomic<bool> 保证跨线程可见性（worker 线程读，主线程 setRecordingEnabled 写）。
+    std::atomic<bool> recordingEnabled_{false};
     // AUDIT-P1-CORRECT fix: 条件断点求值步数上限，防止无限循环（如 while(true){}）冻结 UI。
     // 0 表示非条件求值（不计数）；>0 表示正在条件求值（evaluate 中递增并检查上限）。
     // evaluateCondition 开头设为 1（开始计数），execute/executeRepl 开头重置为 0。
@@ -292,13 +349,17 @@ private:
     // 和主线程（REPL/条件断点求值/callback 设置）同时访问，std::function 成员无 mutex
     // 保护会导致数据竞争。setter 加锁写入，invocation 加锁拷贝后解锁调用（避免持锁回调）。
     mutable std::mutex callbackMutex_;
+    // R136 spawn 子线程闭包调用序列化 mutex。Interpreter 的 callStack_/currentEnv_
+    // 非线程安全，spawn 出的子线程若并发调用 invokeClosureSync 会破坏这些共享状态。
+    // 通过此 mutex 序列化所有 spawn 出的闭包调用（同一 Interpreter 实例级别）。
+    // 注：这本质上是"用户级并发受限"的折衷——真正并发需重构 Interpreter 为可重入。
+    // StackVM/RegisterVM 同理（操作数栈/寄存器帧非线程安全）。
+    std::mutex spawnMutex_;
     std::string currentFilePath_; // F12: 当前文件路径
-    // #13 fix: 字符串索引 ASCII 快速路径缓存（镜像 VM 的 P7 fix）。
-    // 循环 s[i] 访问时，首次判定字符串是否纯 ASCII 并缓存（按 StringData 指针），
-    // 后续访问 O(1) 按字节索引，避免每次 O(i) 码位扫描导致的 O(n²) 退化。
-    const void* lastAsciiStrPtr_ = nullptr;
-    size_t lastAsciiStrLen_ = 0;
-    bool lastAsciiStrIsAscii_ = false;
+    // R97 #3 fix: 移除 lastAsciiStr* 4 字段缓存，改为 StringData::cachedIsAscii 持久缓存。
+    // 原实现按 (ptr, len, firstByte) 三重验证缓存上次 ASCII 判定结果，存在堆地址复用
+    // 误命中风险。新方案 isAscii 直接存在 StringData 内，与字符串生命周期绑定，
+    // O(1) 读取无碰撞风险。
     std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache_; // F12: 模块缓存
     // BUG-REPL-AUDIT-1 fix: 模块文件 mtime 缓存，用于检测文件修改后缓存失效
     std::unordered_map<std::string, int64_t> moduleMtimes_;
@@ -316,7 +377,19 @@ private:
     int classRegistryGen_ = 0;                     // C6 fix: 类注册表代数，任何类定义/重定义时递增，使方法分派缓存失效
     std::vector<std::string> classContextStack_;   // super 解析用：当前执行的方法所属类名栈
     std::string currentFunctionReturnType_;        // 当前函数的返回类型
+    std::vector<std::string> currentTypeParams_;   // R163 当前函数/方法的泛型类型参数（空=非泛型）
     std::vector<std::unique_ptr<Block>> replAsts_; // REPL 模式下保留 AST，确保 funRegistry_/classRegistry_ 指针有效
+
+    // R99 枚举与 ADT: enum 注册表
+    // key=enum 名，value=EnumInfo（variant 列表 + 类型参数名 + AST 指针）
+    // visitEnumDecl 时插入；visitEnumVariantExpr/visitMatchExpr 时查询。
+    // AST 指针（shared_ptr）保证 REPL 重解析后旧引用仍有效。
+    struct EnumInfo {
+        std::vector<std::string> typeParams;                  // 类型参数名（空=非泛型）
+        std::vector<EnumVariant> variants;                    // variant 列表（按声明顺序）
+        std::unordered_map<std::string, size_t> variantIndex; // variant 名 → 在 variants 中的下标
+    };
+    std::unordered_map<std::string, EnumInfo> enumRegistry_;
 
     // RA-C fix: break/continue 改用状态标志而非 C++ 异常。
     // 仅在循环结构（visitWhileStmt/visitForStmt）内有效，传播路径短。
@@ -327,6 +400,19 @@ private:
     // 绝不会被 catch (ThrowException&) 误捕，自然穿透 try 块到达循环。
     enum class LoopFlow { None, Break, Continue };
     LoopFlow loopFlow_ = LoopFlow::None;
+
+    // R164 协程/生成器：当前重放的目标 yieldId。
+    // -1 表示不在协程重放上下文（普通函数执行）；>=0 表示当前正在重放生成器函数体，
+    // 当 visitYieldExpr 遇到 node.yieldId == currentCoroutineTargetYieldId_ 时抛出 YieldSignal。
+    // 由 callCoroutineNext 设置（保存旧值→设置目标→执行→恢复旧值），支持嵌套（生成器调用生成器）。
+    int currentCoroutineTargetYieldId_ = -1;
+
+    // R164 协程/生成器：运行时 yield 执行计数器。
+    // 重放模式下，每次 visitYieldExpr 被调用时递增。用于区分循环内同一 yield 节点的多次执行
+    // （编译期 yieldId 对循环内 yield 只分配一次，但运行时可能执行 N 次）。
+    // callCoroutineNext 每次重放开始时重置为 0；visitYieldExpr 比较
+    // currentYieldExecutionCount_ 与 currentCoroutineTargetYieldId_ 决定是否抛出 YieldSignal。
+    int currentYieldExecutionCount_ = 0;
 
     // ARCH-12 fix: REPL 状态暂存聚合为 ReplState 结构体（原为 10 个散布的 saved* 字段）。
     // 将 REPL 状态管理的完整边界集中在一处，便于理解和未来进一步提取为独立类。
@@ -349,6 +435,8 @@ private:
         // P2-A fix: 与 moduleCache_ 同步保存/恢复 mtime，避免 Run→REPL 切换后
         // 缓存失效检测错位（mtime 与 cache 内容不一致导致使用陈旧缓存）
         std::unordered_map<std::string, int64_t> savedModuleMtimes;
+        // R99: enum 注册表保存（与 classRegistry_ 同等处理）
+        std::unordered_map<std::string, EnumInfo> savedEnumRegistry;
         bool active = false; // 是否有暂存的状态（避免未 save 就 restore）
     } replState_;
 
@@ -370,16 +458,21 @@ private:
     // 构造时保存 currentFunctionReturnType_ 并设置新值；析构时恢复 returnType，
     // 并将 callStack_/classContextStack_ 弹出到构造时的深度（处理异常路径自动清理）。
     // currentEnv_ 不由此守卫管理（各调用点的 env 保存/恢复时机不同）。
+    // R163 泛型扩展：同时管理 currentTypeParams_（泛型函数/方法的类型参数列表）。
     struct CallFrameGuard {
         Interpreter& interp;
         std::string savedReturnType;
+        std::vector<std::string> savedTypeParams;
         size_t savedStackDepth;
         size_t savedClassContextDepth;
         bool manageClassContext;
-        CallFrameGuard(Interpreter& i, const std::string& newReturnType, bool manageCtx = false)
-            : interp(i), savedReturnType(i.currentFunctionReturnType_), savedStackDepth(i.callStack_.size()),
-              savedClassContextDepth(i.classContextStack_.size()), manageClassContext(manageCtx) {
+        CallFrameGuard(Interpreter& i, const std::string& newReturnType, bool manageCtx = false,
+                       const std::vector<std::string>& typeParams = {})
+            : interp(i), savedReturnType(i.currentFunctionReturnType_), savedTypeParams(i.currentTypeParams_),
+              savedStackDepth(i.callStack_.size()), savedClassContextDepth(i.classContextStack_.size()),
+              manageClassContext(manageCtx) {
             interp.currentFunctionReturnType_ = newReturnType;
+            interp.currentTypeParams_ = typeParams;
         }
         ~CallFrameGuard() {
             while (interp.callStack_.size() > savedStackDepth) {
@@ -391,6 +484,7 @@ private:
                 }
             }
             interp.currentFunctionReturnType_ = std::move(savedReturnType);
+            interp.currentTypeParams_ = std::move(savedTypeParams);
         }
         CallFrameGuard(const CallFrameGuard&) = delete;
         CallFrameGuard& operator=(const CallFrameGuard&) = delete;
@@ -418,6 +512,20 @@ private:
 
     /// 报告运行时错误
     [[noreturn]] void runtimeError(const std::string& msg, int line, int col);
+
+    /// @brief 安全查找类——找不到时调用 runtimeError（[[noreturn]]）。
+    ///
+    /// R97 #10 fix: 替代 `classRegistry_.find + end() 检查 + runtimeError` 三步重复模式。
+    /// 调用方负责构造 notFoundMsg（如 "未定义的父类: X" 或 "类 X 在 ... 期间被重定义并删除"）。
+    /// 由于 runtimeError 是 [[noreturn]]，函数在成功路径返回引用，失败路径不会返回。
+    ///
+    /// @param name 类名
+    /// @param notFoundMsg 找不到类时的错误消息
+    /// @param line 源码行号（用于错误定位）
+    /// @param col 源码列号（用于错误定位）
+    /// @return 类信息的 const 引用（成功路径）
+    /// @note 失败路径抛出 RuntimeError 异常，不会返回
+    const ClassInfo& lookupClassSafely(const std::string& name, const std::string& notFoundMsg, int line, int col);
 
     /// 查找类的方法（含继承链）
     FunDecl* findMethod(const ClassInfo& cls, const std::string& methodName);
@@ -460,16 +568,32 @@ private:
 
     /// 类型检查，不匹配则报运行时错误
     /// P20 fix: 模板化 contextBuilder 消除 std::function 堆分配
+    /// R164 fix: 三后端消息统一（fuzz mutate 发现的分歧）——放弃 contextBuilder 上下文前缀，
+    /// 统一用 ErrorMessages::kTypeAnnotationViolationFmt 对齐 StackVM/RegisterVM。
+    /// contextBuilder 参数保留（避免改调用方签名），但不用于错误消息。
+    /// 上下文可通过 runtimeError 的 line/col 定位。
     template <typename ContextBuilder>
     void checkType(const Value& val, const std::string& annotation, ContextBuilder&& contextBuilder, int line,
                    int col) {
+        (void)contextBuilder; // R164 fix: 不再用于错误消息，保留参数避免改调用方
+        // R163 泛型扩展：类型参数运行时擦除（跳过校验），与 enum variant 的 isTypeParameter 模式一致
+        if (!currentTypeParams_.empty() && isTypeParameter(annotation, currentTypeParams_)) {
+            return;
+        }
         if (!typeMatch(val, annotation)) {
-            runtimeError(contextBuilder() + " 期望类型 " + annotation + "，实际为 " + val.typeName(), line, col);
+            runtimeError(ErrorFormat::format(ErrorMessages::kTypeAnnotationViolationFmt, annotation.c_str(),
+                                             val.typeName().c_str()),
+                         line, col);
         }
     }
 
     /// 查找变量的类型注解（返回指针，避免字符串拷贝）
     const std::string* findTypeAnnotation(const std::string& varName) const;
+
+    /// BUG-003 fix: 增量 GC 触发器。收集当前 callStack_ / globalEnv_ / classRegistry_
+    /// 中的堆对象指针作为根集，调用 GcManager::collectCycle。由 GcManager 在分配
+    /// 阈值达到时回调。无堆对象时仍调用 collectCycle（其内部 tracked_.empty() 提前返回）。
+    void triggerIncrementalGc();
 
     // ---- P1 重构：visitFunCall 分派器辅助方法 ----
 
@@ -482,8 +606,36 @@ private:
     /// 顶层内置函数 len/type/str/int/abs/min/max/range/sum
     Value callBuiltinFunction(FunCall& node);
 
+    /// R98 W2: 高阶内置函数 map/filter/reduce/forEach/find
+    /// 拦截这 5 个名字，调用共享算法层（executeSharedMap 等），
+    /// 通过 invokeClosureSync 回调执行用户传入的闭包。
+    Value callHigherOrderBuiltin(FunCall& node);
+
+    /// R136 spawn(fn, args...) 内置函数
+    /// 拦截 spawn 调用，构造 ClosureInvoker（加 spawnMutex_ 序列化）后
+    /// 调用 executeSharedSpawn 启动新线程。
+    Value callSpawnBuiltin(FunCall& node);
+
+    /// R98 W2: 同步调用闭包值（供高阶函数共享层回调）
+    /// 从闭包提取 AST body + env，构造新 Environment 绑定参数，
+    /// 执行函数体并捕获 ReturnException 返回值。
+    /// 与 callClosureValue 的区别：不需要 FunCall AST 节点，
+    /// 直接接收 Value 闭包 + 参数列表，供高阶函数算法层回调。
+    Result<Value> invokeClosureSync(const Value& closure, const Value* args, size_t argCount, int line, int column);
+
     /// 类构造调用 ClassName(args)
     Value constructClassInstance(FunCall& node);
+
+    // ---- R133-D fix: constructClassInstance 205 行拆为 thin orchestrator + 3 helper
+    // （按子任务分组：字段复制 / init 环境准备 / init 体执行，与 R132-C visitImportStmt 模式同构）----
+    /// 复制类继承链上的默认字段值到实例（含循环继承检测）
+    void copyInheritedClassFields(Value& instance, ClassInfo* cls);
+    /// 准备 init 方法执行环境：创建 initEnv、绑定 this、绑定参数（含类型检查 + 默认值求值）、bindInstance
+    std::shared_ptr<Environment> setupInitEnvironment(ClassInfo* cls, FunDecl* initMethod,
+                                                      std::vector<Value>& argValues, Value& instance, FunCall& node);
+    /// 执行 init 方法体：压入调用帧、切换环境、压入类上下文、执行函数体、读回 this、关闭捕获
+    void runInitMethodBody(ClassInfo* cls, FunDecl* initMethod, std::shared_ptr<Environment> initEnv, Value& instance,
+                           FunCall& node);
 
     /// 普通函数/闭包调用 name(args)
     Value callNamedFunction(FunCall& node);
@@ -493,8 +645,50 @@ private:
     /// 类实例方法调用（含 super.method() 处理）
     Value callInstanceMethod(MethodCall& node, Value& obj);
 
+    /// 在类继承链中查找方法（含 super.method() 解析）。
+    /// 输出 searchClass / searchClassName / isSuperCall / method / cachedParentEnv。
+    /// 成功找到方法返回 true；类不存在或方法未找到返回 false
+    /// （调用方负责抛出 runtimeError）。
+    bool findMethodInClass(Value& obj, MethodCall& node, const ClassInfo*& searchClass, std::string& searchClassName,
+                           bool& isSuperCall, FunDecl*& method, std::shared_ptr<Environment>& cachedParentEnv);
+
+    /// 求值方法调用参数列表（含 F10 默认参数填充）。
+    /// 含 A3 fix（实参求值后重新查找类避免悬垂）和
+    /// AUDIT-P2-ROUND49 fix（默认参数求值后再次重新查找）。
+    /// 通过引用更新 searchClass / method / cachedParentEnv。
+    std::vector<Value> evaluateMethodArguments(MethodCall& node, const ClassInfo*& searchClass,
+                                               const std::string& searchClassName, FunDecl*& method,
+                                               std::shared_ptr<Environment>& cachedParentEnv);
+
+    /// 设置方法调用环境（this 绑定、参数入栈）并执行方法体。
+    /// 含 B3 CallFrameGuard、S2 RecursionGuard、RA-A MethodEnvGuard、
+    /// AUDIT-P1-CORRECT classContextStack 压入"方法实际定义所在类"等 fix。
+    /// 执行结束后写回 obj（按引用传递），并在 super 调用时写回 currentEnv_ 中的 this。
+    Value invokeMethod(MethodCall& node, Value& obj, const ClassInfo* searchClass, const std::string& searchClassName,
+                       bool isSuperCall, FunDecl* method, std::shared_ptr<Environment> cachedParentEnv,
+                       std::vector<Value> argValues);
+
     /// 求值参数列表（消除 visitMethodCall 中重复的参数求值逻辑）
     std::vector<Value> evaluateArguments(const std::vector<std::shared_ptr<ASTNode>>& args);
+
+    // ---- R132-C fix: visitImportStmt 208 行拆为 thin orchestrator + 3 helper ----
+
+    /// 解析并校验模块路径：'\\'→'/'、去除 "./" 前缀、拒绝空路径/绝对路径/'..' 段。
+    /// 包含 SEC-1 路径遍历防护与 BUG-MOD-1 Windows 驱动器路径修复。
+    /// 通过 runtimeError 抛出错误，正常路径返回规范化后的路径。
+    std::string resolveModulePath(ImportStmt& node);
+
+    /// 加载或获取缓存的模块环境。命中缓存时检查文件 mtime，失效则重新加载。
+    /// 未命中时调用 loader 加载源码、Lexer/Parser 解析、隔离 env 执行模块顶层语句。
+    /// 使用 ModuleEnvGuard RAII 守卫统一管理异常路径的状态恢复。
+    std::shared_ptr<Environment> loadModuleOrGetCached(const std::string& modulePath, ImportStmt& node,
+                                                       const std::function<std::string(const std::string&)>& loader,
+                                                       const std::function<int64_t(const std::string&)>& mtimeChecker);
+
+    /// 将模块导出名称导入到 currentEnv_。importAll=true 时导入全部导出名称；
+    /// 否则按 node.names 列表原子性导入（先全验证后全定义，避免部分失败导致环境不一致）。
+    void importNamesFromModule(const std::string& modulePath, ImportStmt& node,
+                               std::shared_ptr<Environment>& moduleEnv);
 
     // ---- B1 fix: 闭包仅捕获自由变量（静态分析 AST）----
 
@@ -515,4 +709,83 @@ private:
     /// 导致变量查找死循环（MAX_SCOPE_DEPTH 后返回"未定义的变量"）。
     /// 直接在 funEnv 中执行语句可避免此问题，且符合参数与函数体变量同作用域的标准语义。
     void executeFunctionBody(Block& body);
+
+    // ---- P1 重构：evaluateCondition 沙箱辅助方法 ----
+
+    /// 条件断点沙箱快照：单个 Environment 的局部变量深拷贝。
+    /// #1 fix: 快照作用域链所有变量绑定（深拷贝容器）。
+    /// AUDIT-SANDBOX-DEEP: 深拷贝容器值，防止条件中的容器变异污染程序状态。
+    struct EnvSnapshot {
+        Environment* env;
+        std::unordered_map<std::string, Value> variables;
+    };
+
+    /// 条件断点沙箱快照：实例字段深拷贝。
+    /// #1 fix: 快照绑定实例字段（防止 this.field = val）。
+    /// BUG-INTP-2 fix: 同时记录原始 InstanceData 指针，析构时比较 gcRootPtr()。
+    /// AUDIT-P2-CORRECT fix: 存储 Environment* 以便析构时重新获取 inst 指针，
+    /// 避免条件求值期间 variables map rehash 导致 inst 悬垂。
+    struct InstSnapEntry {
+        Environment* env;
+        const void* gcRoot;
+        std::unordered_map<std::string, Value> fields;
+    };
+
+    /// Phase 1: 沙箱环境创建——快照作用域链变量 + 绑定实例字段（深拷贝），
+    /// 并将深拷贝副本安装到环境中作为求值副本。
+    /// 保留 R82 P1 #3 fix（深拷贝变量/字段致沙箱失效修复）。
+    void setupSandboxEnvironment(std::vector<EnvSnapshot>& envSnaps, std::map<Value*, InstSnapEntry>& instSnaps);
+
+    /// Phase 2: 实际求值——假定沙箱已就绪，调用 node->accept 并返回结果。
+    /// 不管理任何状态，状态保存/恢复由调用方负责。
+    Value evalConditionExpr(ASTNode* node);
+
+    /// Phase 3: 沙箱状态恢复——按"实例字段 → 局部变量"顺序恢复（H2 fix 不变量）。
+    /// 由 SandboxGuard 析构调用以保证异常路径同样恢复。
+    void restoreSandboxState(std::vector<EnvSnapshot>& envSnaps, std::map<Value*, InstSnapEntry>& instSnaps);
+
+    // ---- P1 重构：visitVarDecl 辅助方法 ----
+
+    /// 求值 VarDecl 初始化值：若有 initializer 则求值；
+    /// 否则若有类类型注解则自动构造实例（含继承字段拷贝、0 必需参数 init 调用）；
+    /// 其他情况返回 null。
+    /// 保留 B8 fix（循环继承检测）、P1-2 fix（全默认参数 init）、
+    /// AUDIT-P1 fix（init 默认参数绑定 + closeCapturedVariables）、
+    /// AUDIT-P1-CORRECT fix（压入 init 方法定义所在类）。
+    Value evalVarDeclValue(VarDecl& node);
+
+    /// 绑定变量到当前环境（含类型检查、类型注解记录、capturedVarNames 清理、
+    /// 原子性 tryDefineNew）。最后将 initVal 写入 lastValue_。
+    /// 保留 AUDIT-P2-CORRECT fix（重声明捕获变量清理）、P21 fix（原子性检查+插入）。
+    void bindVarDecl(VarDecl& node, Value initVal);
+
+    // ---- R164 协程/生成器（重放模式）----
+
+    /// 生成器函数调用拦截：检测 FunDecl.isGenerator，构造 Coroutine 值而非执行函数体。
+    /// 在 callNamedFunction/callClosureValue 中调用，参数已求值完成。
+    /// @param generatorDecl  生成器函数 AST（shared_ptr 共享所有权）
+    /// @param closureEnv     定义时环境（闭包捕获）
+    /// @param argValues      已求值的调用参数（含默认参数填充）
+    /// @return Coroutine 值
+    Value makeCoroutineValue(std::shared_ptr<FunDecl> generatorDecl, std::shared_ptr<Environment> closureEnv,
+                             std::vector<Value> argValues);
+
+    /// 协程 .next() 方法实现：重放模式核心。
+    /// 设置 currentCoroutineTargetYieldId_ = cd->currentYieldId，从头执行生成器函数体。
+    /// 捕获 YieldSignal 时递增 currentYieldId 并返回 yield 值；
+    /// 函数体自然结束或 ReturnException 时标记 done=true 并返回最终值。
+    /// @param coroVal  Coroutine 值（可变引用，修改其 currentYieldId/done/currentValue）
+    /// @return 本次 yield 的值（或函数返回值，或 null 若已 done）
+    Value callCoroutineNext(Value& coroVal);
+
+    /// 协程方法分发：处理 .next() / .done() 方法调用。
+    /// @param method  方法名（"next" 或 "done"）
+    /// @param obj     Coroutine 值（可变引用，.next() 会修改状态）
+    /// @param args    已求值参数列表（next/done 期望 0 个参数）
+    /// @param line    调用行号
+    /// @param col     调用列号
+    /// @return 方法返回值 + 是否修改对象（.next() 修改 → true，.done() 不修改 → false）
+    /// @throws RuntimeError 方法名未知或参数数量错误时
+    BuiltinMethodResult handleCoroutineMethod(const std::string& method, Value& obj, const std::vector<Value>& args,
+                                              int line, int col);
 };

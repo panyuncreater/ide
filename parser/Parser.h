@@ -31,6 +31,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 // ============================================================
@@ -71,16 +72,62 @@ public:
         DepthGuard& operator=(const DepthGuard&) = delete;
     };
 
+    // R164 协程/生成器：yieldId 计数器 RAII 守卫。
+    // 进入生成器函数 funDecl 时构造，保存旧值并重置为 0；析构时恢复旧值。
+    // 支持嵌套生成器函数（外层 fun* 内定义内层 fun*）的独立 yieldId 计数。
+    // 异常安全：ParseError 抛出时 ~YieldIdScope 自动恢复外层计数器。
+    struct YieldIdScope {
+        int& counter;
+        int saved;
+        explicit YieldIdScope(int& c) : counter(c), saved(c) {}
+        ~YieldIdScope() { counter = saved; }
+        YieldIdScope(const YieldIdScope&) = delete;
+        YieldIdScope& operator=(const YieldIdScope&) = delete;
+    };
+
+    // R164 协程/生成器：bool 字段 RAII 守卫（异常安全保存/恢复）。
+    // 用于 yieldInLoop_（whileStmt/forStmt 入口置 true）和
+    // currentFunHasYieldInLoop_（funDecl 入口重置为 false）。
+    struct BoolScope {
+        bool& flag;
+        bool saved;
+        explicit BoolScope(bool& f) : flag(f), saved(f) {}
+        ~BoolScope() { flag = saved; }
+        BoolScope(const BoolScope&) = delete;
+        BoolScope& operator=(const BoolScope&) = delete;
+    };
+
 private:
     const std::vector<Token>* tokens_ = nullptr; // Token 流（引用，避免深拷贝）
     int current_ = 0;                            // 当前位置
     DiagnosticBag diagnostics_;                  // 诊断收集器
     int parseDepth_ = 0;                         // P15 fix: 递归深度计数器
     int blockDepth_ = 0;                         // P0-1 fix: 块嵌套深度计数器
+    // R164 协程/生成器：当前生成器函数内 yield 编号计数器。
+    // -1 表示不在生成器上下文（普通函数/全局作用域），>=0 表示当前生成器已分配的 yield 数。
+    // 由 YieldIdScope 在 funDecl 入口保存/重置/恢复，primary() 解析 yield 时分配并递增。
+    int currentYieldId_ = -1;
+    // R164 协程/生成器：当前是否处于循环体内部（while/for body）。
+    // 由 BoolScope 在 whileStmt/forStmt 入口保存/置 true/恢复。用于检测 yield-in-loop：
+    // 循环内 yield 的编译期 yieldCount 只是 AST 节点数（1），但运行时可能执行 N 次，
+    // 导致 callCoroutineNext 的 `currentYieldId >= yieldCount` 提前判定 done。
+    // 检测到此类生成器时，yieldCount 设为 INT_MAX（kDynamicYieldCount），
+    // done 改由函数体自然结束路径判定。
+    bool yieldInLoop_ = false;
+    // R164 协程/生成器：当前生成器函数体内是否存在 yield-in-loop。
+    // 由 BoolScope 在 funDecl 入口保存/重置/恢复。primary() 解析 yield 时若 yieldInLoop_
+    // 为 true 则置本字段为 true。funDecl 结尾若本字段为 true，decl->yieldCount = INT_MAX。
+    bool currentFunHasYieldInLoop_ = false;
     static constexpr int MAX_PARSE_DEPTH = RuntimeLimits::MAX_PARSE_DEPTH;
     static constexpr int MAX_BLOCK_DEPTH = RuntimeLimits::MAX_BLOCK_DEPTH;
     // BUG-PARSER-AUDIT-5: 错误数量上限，防止恶意输入触发 O(N) 诊断内存膨胀
     static constexpr int MAX_PARSE_ERRORS = RuntimeLimits::MAX_PARSE_ERRORS;
+
+    // R99 枚举与 ADT: 已声明的 enum 名称集合。
+    // call() 中用于区分 EnumName.VariantName（EnumVariantExpr）与
+    // instance.field（MemberAccess）—— parser 侧无类型系统，
+    // 通过维护已知 enum 名集合进行语法层消歧。enumDecl() 解析后插入。
+    std::unordered_set<std::string> knownEnums_;
 
     // ---- 辅助方法 ----
 
@@ -144,7 +191,8 @@ private:
     std::unique_ptr<ASTNode> declaration();
 
     /// 变量声明: var name = expr;
-    std::unique_ptr<VarDecl> varDecl();
+    /// R98 元组与解构：可能返回 DestructureBinding（var (a,b) = expr）。
+    std::unique_ptr<ASTNode> varDecl();
 
     /// 带类型注解的变量声明: int a = 10; int[] arr = [1,2,3]; dict d = {"a":1};
     std::unique_ptr<VarDecl> typedVarDecl(const std::string& typeAnn);
@@ -155,8 +203,40 @@ private:
     /// 带返回类型的函数声明: int fib(int n) { ... }
     std::unique_ptr<FunDecl> typedFunDecl(const std::string& returnType);
 
+    /// R98 W3: Lambda 表达式: fun(params) { body }（匿名函数，作为表达式使用）
+    /// 语法：`var f = fun(x) { return x * 2; };` 或 `var f = fun(x, y) { return x + y; };`
+    /// 复用 FunDecl 节点，name 为空字符串（Compiler/Interpreter 内部用合成名 `$lambda_N`）
+    std::unique_ptr<FunDecl> lambdaExpr();
+
     /// 类声明: class Name { members } 或 class Name extends Super { members }
     std::unique_ptr<ClassDecl> classDecl();
+
+    /// 解析类声明的 extends / : SuperClassName 子句。
+    /// 调用前应已 consume 类名，调用后 current_ 位于 '{' 之前。
+    /// 返回父类名（空字符串表示无父类）。
+    std::string parseClassExtends();
+
+    /// 解析类成员循环（var / fun / 类型注解 / 裸方法 / 类类型字段）。
+    /// 调用前应已 consume '{'，调用后 current_ 位于 '}' 之前。
+    /// 保留 BUG-PARSER-AUDIT-2 fix 的 try/catch 错误恢复。
+    /// 保留 BUG-LPA-04 fix 的 ClassName[] 数组字段支持。
+    /// 保留 AUDIT-P2 fix 的多维数组字段。
+    void parseClassMembers(std::vector<std::shared_ptr<ASTNode>>& members);
+
+    // R99 枚举与 ADT + match
+    /// enum 声明: enum Name<T, U> { Variant1, Variant2(T), ... }
+    std::unique_ptr<EnumDecl> enumDecl();
+
+    /// match 表达式: match scrutinee { case Pattern => body; ... default => body; }
+    std::unique_ptr<MatchExpr> matchExpr();
+
+    /// match 模式: _ / 字面量 / 变量 / EnumName.VariantName(...) / 元组 / OR pattern
+    /// R134 扩展：支持嵌套 pattern（subPatterns 递归）+ guard 表达式。
+    std::shared_ptr<MatchPattern> matchPattern();
+
+    /// match 主 pattern（不含 OR）：_ / 字面量 / 变量 / EnumName.VariantName(...) / 元组
+    /// R134 新增：matchPattern 的子 helper，递归下降解析的初级 pattern。
+    std::shared_ptr<MatchPattern> matchPrimaryPattern();
 
     /// 解析参数列表（支持C风格类型注解 int a 和冒号风格 a: int）
     /// 假设调用前已 consume '('

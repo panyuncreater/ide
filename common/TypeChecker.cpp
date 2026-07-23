@@ -54,6 +54,8 @@ public:
             actualType = TypeName::BOOL;
         } else if (dynamic_cast<NullLiteral*>(init)) {
             actualType = TypeName::NULL_T; // null 兼容所有类型，不报
+        } else if (dynamic_cast<TupleLiteral*>(init)) {
+            actualType = TypeName::TUPLE; // R98 元组与解构：元组字面量
         }
         // 非字面量（变量引用、表达式等）→ 跳过，运行时检查
         if (!actualType.empty() && actualType != TypeName::NULL_T) {
@@ -95,6 +97,8 @@ public:
                 // null 兼容所有类型，actualType 设为 NULL_T 但 typeMatchLiteral
                 // 对 null 永远返回 true，不会误报。保持与 checkVarDecl 一致性。
                 actualType = TypeName::NULL_T;
+            } else if (dynamic_cast<TupleLiteral*>(val)) {
+                actualType = TypeName::TUPLE; // R98 元组与解构
             }
             if (!actualType.empty()) {
                 if (!typeMatchLiteral(actualType, it->second)) {
@@ -223,6 +227,9 @@ private:
             return actual == TypeName::BOOL;
         if (annotation == TypeName::STRING)
             return actual == TypeName::STRING;
+        // R98 元组与解构：tuple 注解只接受 tuple 字面量
+        if (annotation == TypeName::TUPLE)
+            return actual == TypeName::TUPLE;
         return true; // array/dict/类名等无法在字面量层面检查
     }
 };

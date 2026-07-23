@@ -58,6 +58,7 @@ enum class OpCode : uint8_t {
 
     OP_BUILD_ARRAY,      // 构建数组（元素个数）
     OP_BUILD_DICT,       // 构建字典（键值对个数）
+    OP_BUILD_TUPLE,      // R98 元组与解构：构建元组（元素个数，immutable）
     OP_INDEX_GET,        // 索引取值
     OP_INDEX_SET,        // 索引赋值（旧：空操作）
     OP_INDEX_SET_VAR,    // 索引赋值到变量（nameIdx(2B)）：直接修改 globals_[varName]
@@ -122,6 +123,40 @@ enum class OpCode : uint8_t {
     // finally 块末尾的 OP_FINALLY_END 从栈取出目标并跳转，实现"先执行 finally 再跳转"。
     OP_PUSH_JUMP_TARGET, // push 跳转目标到 pendingJumpStack_（操作数: target(2B)）
     OP_FINALLY_END,      // 从 pendingJumpStack_ pop 目标并跳转；栈空则继续执行（无操作数）
+
+    // R99 枚举与 ADT + match
+    // 操作数: enumNameConstIdx(2B) + variantNameConstIdx(2B) + argCount(1B)
+    // 语义: 从栈顶依次 pop argCount 个参数（按声明顺序，最后一个参数在最顶），
+    //       构造 EnumVariantData(enumName, variantName, fields) 并 push 到栈顶。
+    OP_BUILD_ENUM_VARIANT,
+    // 操作数: enumNameConstIdx(2B) + variantNameConstIdx(2B)
+    // 语义: pop 栈顶 scrutinee，检查是否为 enum variant 且 enum/variant 名匹配，
+    //       匹配 push true，否则 push false。
+    OP_ENUM_VARIANT_NAME,
+    // 无操作数。语义: pop 栈顶 index，pop 栈顶 scrutinee，push scrutinee.fields[index]。
+    //       若 scrutinee 非 enum variant 或 index 越界，runtimeError。
+    OP_ENUM_VARIANT_FIELD,
+    // R99 match 表达式：交换栈顶两个值（无操作数，1B）。
+    // 用于 case body 完成后将 [scrutinee, body_result] 变为 [body_result, scrutinee]，
+    // 随后 OP_POP 弹出 scrutinee，留下 body_result 作为 match 结果。
+    OP_SWAP,
+    // R134 模式匹配扩展：获取容器长度（无操作数，1B）。
+    // 语义: pop 栈顶容器（array/dict/string/tuple），push 长度（int）。
+    //       用于 TUPLE pattern 编译期元素数检查。
+    OP_LEN,
+    // R134 模式匹配扩展：软类型测试（与 OP_TYPE_CHECK 区别：不抛错，push bool）。
+    // 操作数: typeAnnotationConstIdx(2B) — 常量池中类型注解字符串的索引
+    // 语义: pop 栈顶值，typeMatch 检查（含实例继承链），push bool。
+    //       用于 TUPLE pattern 类型检查（不匹配时 fall through 而非抛错）。
+    OP_TYPE_TEST,
+
+    // R164 协程/生成器：yield 表达式（无操作数，1B）。
+    // 语义: pop 栈顶 yield 值，递增运行时 yield 执行计数器。
+    //   - 若计数器 == 当前重放目标 yieldId：抛出 YieldSignal(yieldValue)，被 .next() 捕获
+    //   - 若计数器 < 目标：push yieldValue 回栈（作为 yield 表达式的结果），继续执行
+    //   - 若计数器 > 目标：不可能（计数器从 0 单调递增，target 首次命中即抛出）
+    // 注：VM 使用与 Interpreter 相同的重放模式，保证四后端语义一致。
+    OP_YIELD,
 };
 
 // ============================================================
@@ -175,6 +210,32 @@ struct BytecodeChunk {
     // 用于 VM 条件断点求值：从当前帧的栈槽反查变量名，注入临时 Interpreter 环境。
     // 限制：槽位复用时（兄弟作用域）后声明的变量名覆盖先前的，属于已知限制。
     std::vector<std::string> localSlotNames;
+    // L1 fix（2026-07-19）: 基于IP范围的槽位→名称反查表，解决兄弟作用域槽位复用导致
+    // 的变量名错位。每个 SlotNameRange 记录变量名在哪个 IP 范围 [startIp, endIp) 内
+    // 占用 slot。调试器反查时按 frame.ip 在范围内查找，精确到当前执行点。
+    // 保留 localSlotNames 作为 fallback（向后兼容，且覆盖无 range 信息的场景）。
+    struct SlotNameRange {
+        uint8_t slot = 0;
+        std::string name;
+        size_t startIp = 0;
+        size_t endIp = 0;
+    };
+    std::vector<SlotNameRange> slotNameRanges;
+
+    /// L1 fix: 按 ip 反查 slot 对应的变量名。优先在 slotNameRanges 中查找
+    /// startIp <= ip < endIp && slot == N 的 range；未命中则回退到 localSlotNames。
+    const std::string& resolveSlotName(size_t slot, size_t ip) const {
+        for (const auto& range : slotNameRanges) {
+            if (range.slot == slot && range.startIp <= ip && ip < range.endIp) {
+                return range.name;
+            }
+        }
+        if (slot < localSlotNames.size()) {
+            return localSlotNames[slot];
+        }
+        static const std::string empty;
+        return empty;
+    }
     // #11 fix: fieldOrder 的字段名→索引懒缓存。OP_MEMBER_SET_LOCAL 在 slot==0 时
     // 原线性扫描 fieldOrder（每次 this.field=v 都 O(n)）；改为首次访问时建 map，
     // 后续 O(1) 查找。mutable 因访问发生在 const 上下文（VM 执行 const chunk）。
@@ -182,6 +243,17 @@ struct BytecodeChunk {
     // fieldOrder 一致（缓存纯派生自 fieldOrder）。
     mutable std::unordered_map<std::string, size_t> fieldIndexCache_;
     mutable bool fieldIndexCacheBuilt_ = false;
+
+    // R164 协程/生成器：标记此 chunk 为生成器函数体（fun* 声明）。
+    // VM 在 OP_CALL 时检测此标志：若为 true，不直接 setupFunctionCallFrame，
+    // 而是构造 Coroutine 值返回调用方，由 .next() 触发重放执行。
+    bool isGenerator = false;
+    // R164 协程/生成器：yield 总数（从 FunDecl.yieldCount 复制）。
+    // 静态 yield 数（如 3 个 yield 语句 = 3）或 kDynamicYieldCount（INT_MAX，
+    // 表示存在循环内 yield，done 由函数体自然结束路径判定）。
+    int yieldCount = 0;
+    // R164 协程/生成器：动态 yieldCount 标记值（与 FunDecl::kDynamicYieldCount 一致）
+    static constexpr int kDynamicYieldCount = 2147483647; // INT_MAX
 
     /// 返回 fieldName 在 fieldOrder 中的索引，未找到返回 SIZE_MAX
     size_t fieldSlotIndex(const std::string& fieldName) const {
@@ -336,6 +408,18 @@ public:
     std::string disassembleInstruction(size_t& offset) const;
 };
 
+/// R99 enum variant 元信息（编译期→运行时传递，供 VM 校验 OP_BUILD_ENUM_VARIANT）
+struct VMEnumVariantInfo {
+    std::string name; // variant 名（如 "Red"/"Some"）
+    int arity = 0;    // 期望参数数量（无参 variant 为 0）
+};
+
+/// R99 enum 元信息（编译期→运行时传递）
+struct VMEnumInfo {
+    std::string name;                        // enum 名（如 "Color"/"Option"）
+    std::vector<VMEnumVariantInfo> variants; // variant 列表
+};
+
 /// 编译结果：包含主 chunk 和函数 chunk
 struct CompileResult {
     BytecodeChunk mainChunk;
@@ -345,6 +429,10 @@ struct CompileResult {
     // A2: 全局变量槽位映射（编译器→VM）
     int globalSlotCount = 0;
     std::vector<std::string> globalSlotNames;
+    // R99 enum 校验：编译期收集的 enum 元信息，VM 启动时加载到 enumRegistry_，
+    // 供 OP_BUILD_ENUM_VARIANT 校验 variant 名存在性与参数 arity 一致性。
+    // 对齐 Interpreter::enumRegistry_ 的运行时校验语义，保证三后端一致。
+    std::vector<VMEnumInfo> enumInfos;
 
     CompileResult() = default;
     CompileResult(CompileResult&&) noexcept = default;

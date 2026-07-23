@@ -14,20 +14,26 @@
 #include <gtest/gtest.h>
 
 #include "interpreter/BuiltinMethods.h"
+#include "interpreter/Interpreter.h" // RuntimeError 定义
 #include "interpreter/Value.h"
-#include "interpreter/Interpreter.h"  // RuntimeError 定义
 
-#include <string>
-#include <vector>
-#include <unordered_map>
 #include <algorithm>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 // ============================================================
 // 辅助函数：构造 int 值
 // ============================================================
-static Value makeInt(int64_t v) { return Value(v); }
-static Value makeStr(const std::string& s) { return Value(s); }
-static Value makeBool(bool b) { return Value(b); }
+static Value makeInt(int64_t v) {
+    return Value(v);
+}
+static Value makeStr(const std::string& s) {
+    return Value(s);
+}
+static Value makeBool(bool b) {
+    return Value(b);
+}
 
 // ============================================================
 // 1. 数组内置方法 - push
@@ -79,9 +85,7 @@ TEST(ArrayBuiltinPushTest, PushWrongArgCount) {
     Value arr(elems);
     std::vector<Value> args;
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("push", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("push", arr, args, 1, 1), RuntimeError);
 }
 
 TEST(ArrayBuiltinPushTest, PushTooManyArgs) {
@@ -90,9 +94,7 @@ TEST(ArrayBuiltinPushTest, PushTooManyArgs) {
     Value arr(elems);
     std::vector<Value> args = {makeInt(2), makeInt(3)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("push", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("push", arr, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -141,9 +143,7 @@ TEST(ArrayBuiltinPopTest, PopFromEmptyArrayThrows) {
     std::vector<Value> elems;
     Value arr(elems);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("pop", arr, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("pop", arr, {}, 1, 1), RuntimeError);
 }
 
 TEST(ArrayBuiltinPopTest, PopWithArgsThrows) {
@@ -152,9 +152,7 @@ TEST(ArrayBuiltinPopTest, PopWithArgsThrows) {
     Value arr(elems);
     std::vector<Value> args = {makeInt(99)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("pop", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("pop", arr, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -169,7 +167,7 @@ TEST(ArrayBuiltinLenTest, LenOfNonEmptyArray) {
     auto result = BuiltinMethods::handleArrayMethod("len", arr, {}, 1, 1);
 
     EXPECT_EQ(result.result.intVal(), 3);
-    EXPECT_FALSE(result.objectModified);  // len 不修改对象
+    EXPECT_FALSE(result.objectModified); // len 不修改对象
 }
 
 TEST(ArrayBuiltinLenTest, LenOfEmptyArray) {
@@ -188,9 +186,7 @@ TEST(ArrayBuiltinLenTest, LenWithArgsThrows) {
     Value arr(elems);
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("len", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("len", arr, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -242,9 +238,7 @@ TEST(ArrayBuiltinRemoveTest, RemoveNegativeIndexThrows) {
     Value arr(elems);
     std::vector<Value> args = {makeInt(-1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1), RuntimeError);
 }
 
 TEST(ArrayBuiltinRemoveTest, RemoveOutOfRangeIndexThrows) {
@@ -253,9 +247,7 @@ TEST(ArrayBuiltinRemoveTest, RemoveOutOfRangeIndexThrows) {
     Value arr(elems);
     std::vector<Value> args = {makeInt(5)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1), RuntimeError);
 }
 
 TEST(ArrayBuiltinRemoveTest, RemoveFromEmptyArrayThrows) {
@@ -264,9 +256,7 @@ TEST(ArrayBuiltinRemoveTest, RemoveFromEmptyArrayThrows) {
     Value arr(elems);
     std::vector<Value> args = {makeInt(0)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1), RuntimeError);
 }
 
 TEST(ArrayBuiltinRemoveTest, RemoveNonIntArgThrows) {
@@ -275,9 +265,7 @@ TEST(ArrayBuiltinRemoveTest, RemoveNonIntArgThrows) {
     Value arr(elems);
     std::vector<Value> args = {makeStr("0")};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("remove", arr, args, 1, 1), RuntimeError);
 }
 
 TEST(ArrayBuiltinRemoveTest, RemoveWrongArgCount) {
@@ -285,9 +273,7 @@ TEST(ArrayBuiltinRemoveTest, RemoveWrongArgCount) {
     std::vector<Value> elems = {makeInt(1)};
     Value arr(elems);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("remove", arr, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("remove", arr, {}, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -344,9 +330,7 @@ TEST(ArrayBuiltinContainsTest, ContainsWrongArgCount) {
     std::vector<Value> elems = {makeInt(1)};
     Value arr(elems);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("contains", arr, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("contains", arr, {}, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -414,9 +398,7 @@ TEST(ArrayBuiltinJoinTest, JoinTooManyArgs) {
     Value arr(elems);
     std::vector<Value> args = {makeStr(","), makeStr("-")};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("join", arr, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("join", arr, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -428,42 +410,18 @@ TEST(ArrayBuiltinUnknownMethodTest, UnknownMethodThrows) {
     std::vector<Value> elems = {makeInt(1)};
     Value arr(elems);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("shift", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("unshift", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("sort", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("reverse", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("map", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("filter", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("reduce", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("indexOf", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("slice", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("concat", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("size", arr, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleArrayMethod("nonExistentMethod", arr, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("shift", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("unshift", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("sort", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("reverse", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("map", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("filter", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("reduce", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("indexOf", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("slice", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("concat", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("size", arr, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleArrayMethod("nonExistentMethod", arr, {}, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -500,9 +458,7 @@ TEST(DictBuiltinLenTest, LenWithArgsThrows) {
     Value d(m);
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("len", d, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("len", d, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -553,9 +509,7 @@ TEST(DictBuiltinKeysTest, KeysWithArgsThrows) {
     Value d(m);
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("keys", d, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("keys", d, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -604,9 +558,7 @@ TEST(DictBuiltinValuesTest, ValuesWithArgsThrows) {
     Value d(m);
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("values", d, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("values", d, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -667,9 +619,7 @@ TEST(DictBuiltinHasTest, HasWrongArgCount) {
     m["a"] = makeInt(1);
     Value d(m);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("has", d, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("has", d, {}, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -743,9 +693,7 @@ TEST(DictBuiltinGetTest, GetNoArgsThrows) {
     m["a"] = makeInt(1);
     Value d(m);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("get", d, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("get", d, {}, 1, 1), RuntimeError);
 }
 
 TEST(DictBuiltinGetTest, GetTooManyArgsThrows) {
@@ -755,9 +703,7 @@ TEST(DictBuiltinGetTest, GetTooManyArgsThrows) {
     Value d(m);
     std::vector<Value> args = {makeStr("a"), makeInt(1), makeInt(2)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("get", d, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("get", d, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -777,8 +723,8 @@ TEST(DictBuiltinRemoveTest, RemoveExistingKey) {
     EXPECT_TRUE(result.result.isNull());
     EXPECT_TRUE(result.objectModified);
     EXPECT_EQ(d.dictVal().size(), 1u);
-    EXPECT_EQ(d.dictVal().find("a"), d.dictVal().end());
-    EXPECT_NE(d.dictVal().find("b"), d.dictVal().end());
+    EXPECT_EQ(d.dictVal().find(Value::DictKey{std::string("a")}), d.dictVal().end());
+    EXPECT_NE(d.dictVal().find(Value::DictKey{std::string("b")}), d.dictVal().end());
 }
 
 TEST(DictBuiltinRemoveTest, RemoveMissingKey) {
@@ -811,9 +757,7 @@ TEST(DictBuiltinRemoveTest, RemoveWrongArgCount) {
     m["a"] = makeInt(1);
     Value d(m);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("remove", d, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("remove", d, {}, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -826,21 +770,11 @@ TEST(DictBuiltinUnknownMethodTest, UnknownMethodThrows) {
     m["a"] = makeInt(1);
     Value d(m);
 
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("set", d, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("delete", d, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("merge", d, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("size", d, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleDictMethod("nonExistentMethod", d, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("set", d, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("delete", d, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("merge", d, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("size", d, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleDictMethod("nonExistentMethod", d, {}, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -869,7 +803,7 @@ TEST(StringBuiltinLenTest, LenEmptyString) {
 TEST(StringBuiltinLenTest, LenUtf8String) {
     // len 按 UTF-8 码位计数（非字节数）
     // "你好" 共 2 个码位，6 个字节
-    Value s(makeStr("\xe4\xbd\xa0\xe5\xa5\xbd"));  // "你好" UTF-8
+    Value s(makeStr("\xe4\xbd\xa0\xe5\xa5\xbd")); // "你好" UTF-8
 
     auto result = BuiltinMethods::handleStringMethod("len", s, {}, 1, 1);
 
@@ -878,7 +812,9 @@ TEST(StringBuiltinLenTest, LenUtf8String) {
 
 TEST(StringBuiltinLenTest, LenMixedAsciiAndUtf8) {
     // 混合 ASCII 与 UTF-8：a你b好c → 5 个码位
-    Value s(makeStr("a\xe4\xbd\xa0""b\xe5\xa5\xbd""c"));  // "a你b好c"
+    Value s(makeStr("a\xe4\xbd\xa0"
+                    "b\xe5\xa5\xbd"
+                    "c")); // "a你b好c"
 
     auto result = BuiltinMethods::handleStringMethod("len", s, {}, 1, 1);
 
@@ -890,9 +826,7 @@ TEST(StringBuiltinLenTest, LenWithArgsThrows) {
     Value s(makeStr("hello"));
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("len", s, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("len", s, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -951,9 +885,7 @@ TEST(StringBuiltinUpperTest, UpperWithArgsThrows) {
     Value s(makeStr("hello"));
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("upper", s, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("upper", s, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -1012,9 +944,7 @@ TEST(StringBuiltinLowerTest, LowerWithArgsThrows) {
     Value s(makeStr("HELLO"));
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("lower", s, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("lower", s, args, 1, 1), RuntimeError);
 }
 
 // ============================================================
@@ -1102,9 +1032,7 @@ TEST(StringBuiltinSplitTest, SplitEmptySeparatorThrows) {
     Value s(makeStr("hello"));
     std::vector<Value> args = {makeStr("")};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("split", s, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("split", s, args, 1, 1), RuntimeError);
 }
 
 TEST(StringBuiltinSplitTest, SplitDoesNotModifyOriginal) {
@@ -1207,18 +1135,14 @@ TEST(StringBuiltinReplaceTest, ReplaceInsufficientArgs) {
     Value s(makeStr("hello"));
     std::vector<Value> args = {makeStr("a")};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("replace", s, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("replace", s, args, 1, 1), RuntimeError);
 }
 
 TEST(StringBuiltinReplaceTest, ReplaceNoArgsThrows) {
     // replace 至少需要 2 个参数
     Value s(makeStr("hello"));
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("replace", s, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("replace", s, {}, 1, 1), RuntimeError);
 }
 
 TEST(StringBuiltinReplaceTest, ReplaceDoesNotModifyOriginal) {
@@ -1331,9 +1255,7 @@ TEST(StringBuiltinTrimTest, TrimWithArgsThrows) {
     Value s(makeStr("hello"));
     std::vector<Value> args = {makeInt(1)};
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("trim", s, args, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("trim", s, args, 1, 1), RuntimeError);
 }
 
 TEST(StringBuiltinTrimTest, TrimDoesNotModifyOriginal) {
@@ -1354,33 +1276,15 @@ TEST(StringBuiltinUnknownMethodTest, UnknownMethodThrows) {
     // 字符串没有 size/length/substring/slice/indexOf/contains/startsWith/endsWith 等方法
     Value s(makeStr("hello"));
 
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("size", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("length", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("substring", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("slice", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("indexOf", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("contains", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("startsWith", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("endsWith", s, {}, 1, 1),
-        RuntimeError);
-    EXPECT_THROW(
-        BuiltinMethods::handleStringMethod("nonExistentMethod", s, {}, 1, 1),
-        RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("size", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("length", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("substring", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("slice", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("indexOf", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("contains", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("startsWith", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("endsWith", s, {}, 1, 1), RuntimeError);
+    EXPECT_THROW(BuiltinMethods::handleStringMethod("nonExistentMethod", s, {}, 1, 1), RuntimeError);
 }
 
 // ============================================================

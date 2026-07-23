@@ -43,9 +43,10 @@
 //     程序执行流程。
 // ============================================================
 
+#include "common/ErrorFormat.h" // R97 #6 fix: ErrorFormat namespace 单一真相源
+
 #include <array>
 #include <atomic>
-#include <charconv>
 #include <chrono>
 #include <ctime> // P0-2 fix: localtime_s/localtime_r 线程安全版本
 #include <fstream>
@@ -277,38 +278,7 @@ private:
             Logger::Error(msg, source);                                                                                \
     } while (0)
 
-// ============================================================
-// P1-9 fix: 错误消息定位格式化（热路径优化）
-// ------------------------------------------------------------
-// runtimeError 是错误处理热路径，原实现使用 std::to_string + operator+
-// 多次堆分配。改用 std::to_chars 写入栈缓冲区，零堆分配。
-// ============================================================
-namespace ErrorFormat {
-inline std::string formatWithLocation(const std::string& msg, int line, int col) {
-    // 预估容量：msg + " (行 " + 11 位 int + ", 列 " + 11 位 int + ")"
-    std::string result;
-    result.reserve(msg.size() + 32);
-    result = msg;
-    result += " (行 ";
-    std::array<char, 24> buf{};
-    auto r1 = std::to_chars(buf.data(), buf.data() + buf.size(), line);
-    result.append(buf.data(), r1.ptr);
-    result += ", 列 ";
-    auto r2 = std::to_chars(buf.data(), buf.data() + buf.size(), col);
-    result.append(buf.data(), r2.ptr);
-    result += ')';
-    return result;
-}
-
-inline std::string formatWithLine(const std::string& msg, int line) {
-    std::string result;
-    result.reserve(msg.size() + 16);
-    result = msg;
-    result += " (行 ";
-    std::array<char, 24> buf{};
-    auto r = std::to_chars(buf.data(), buf.data() + buf.size(), line);
-    result.append(buf.data(), r.ptr);
-    result += ')';
-    return result;
-}
-} // namespace ErrorFormat
+// R97 #6 fix: ErrorFormat namespace（format / formatWithLocation / formatWithLine /
+// intToString）已迁移到 common/ErrorFormat.h 作为单一真相源。Logger.h 通过顶部
+// #include "common/ErrorFormat.h" 间接引入，下游文件只需 include Logger.h 即可
+// 同时获得 Logger 与 ErrorFormat（保持原有传递包含兼容性）。

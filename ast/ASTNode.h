@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -58,6 +59,14 @@ enum class NodeType {
     NODE_IMPORT_STMT,
     NODE_EXPORT_STMT,
     NODE_INTERPOLATED_STRING, // C5 fix: 保留插值字符串 AST 结构
+    NODE_TUPLE_LITERAL,       // R98 元组与解构：元组字面量 (e1, e2, ...)
+    NODE_DESTRUCTURE_BINDING, // R98 元组与解构：解构绑定 var (a, b) = expr
+    // R99 枚举与 ADT + match：enum 声明 / variant 构造 / match 表达式
+    NODE_ENUM_DECL,
+    NODE_ENUM_VARIANT_EXPR,
+    NODE_MATCH_EXPR,
+    // R164 协程/生成器：yield 表达式（挂起生成器并返回值）
+    NODE_YIELD_EXPR,
 };
 
 // ============================================================
@@ -77,9 +86,12 @@ public:
     int line = 0;                                    // 行号
     int column = 0;                                  // 列号
     NodeType nodeType = NodeType::NODE_NULL_LITERAL; // 节点类型（用于快速分发）
+    // R114 阶段 2: 全局唯一节点 ID（用于执行轨迹路径追踪）。
+    // 构造时分配，跨线程只读，便于 UI 快速定位 AST 节点。
+    uint64_t nodeId = 0;
 
-    ASTNode() = default;
-    ASTNode(int ln, int col) : line(ln), column(col) {}
+    ASTNode() : nodeId(nextNodeId()) {}
+    ASTNode(int ln, int col) : line(ln), column(col), nodeId(nextNodeId()) {}
     virtual ~ASTNode() = default;
 
     /// 访问者模式接受方法
@@ -90,6 +102,13 @@ public:
 
     /// 获取子节点列表（用于可视化遍历）
     virtual std::vector<ASTNode*> children() const = 0;
+
+private:
+    /// 全局原子计数器，构造时 ++counter 作为唯一 nodeId。
+    static uint64_t nextNodeId() {
+        static std::atomic<uint64_t> counter{0};
+        return ++counter;
+    }
 };
 
 /// 二元运算符类型枚举（缓存字符串→枚举映射，避免运行时字符串比较）
@@ -364,6 +383,39 @@ public:
     }
 };
 
+/// R98 元组与解构：解构绑定节点 var (a, b, c) = expr
+/// 语义：求值 initializer（必须为 tuple），按位置绑定到 names 中的各变量名。
+/// 类型注解 tupleTypeAnnotation 可选，用于运行时类型检查（如 "(int,string)"）。
+class DestructureBinding : public ASTNode {
+public:
+    std::vector<std::string> names;       // 被绑定的变量名列表（按元组位置对应）
+    std::string tupleTypeAnnotation;      // 可选：元组类型注解 "(T1,T2,...)"
+    std::shared_ptr<ASTNode> initializer; // 右侧表达式（求值结果必须为 tuple）
+
+    DestructureBinding(std::vector<std::string> ns, std::shared_ptr<ASTNode> init, int ln = 0, int col = 0,
+                       std::string typeAnn = "")
+        : ASTNode(ln, col), names(std::move(ns)), tupleTypeAnnotation(std::move(typeAnn)),
+          initializer(std::move(init)) {
+        nodeType = NodeType::NODE_DESTRUCTURE_BINDING;
+    }
+
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override {
+        std::string result = "Destructure(";
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i > 0)
+                result += ",";
+            result += names[i];
+        }
+        return result + ")";
+    }
+    std::vector<ASTNode*> children() const override {
+        if (initializer)
+            return {initializer.get()};
+        return {};
+    }
+};
+
 /// 赋值节点
 class Assignment : public ASTNode {
 public:
@@ -477,6 +529,23 @@ public:
     // 约束：一旦某参数有默认值，其后所有参数都必须有默认值。
     std::vector<std::shared_ptr<ASTNode>> defaultValues;
     int requiredParamCount = 0; // F10: 必需参数个数（无默认值的前缀参数数量）
+    // R163 泛型函数：类型参数列表（如 ["T", "E"]，空 = 非泛型）
+    // 与 EnumDecl.typeParams 语义一致：运行时类型擦除，类型参数仅用于跳过类型校验
+    std::vector<std::string> typeParams;
+    // R164 协程/生成器：标记为生成器函数（fun* 声明），函数体内可使用 yield 表达式。
+    // 调用生成器函数返回 Coroutine 值而非直接执行函数体，需通过 .next() 恢复执行。
+    bool isGenerator = false;
+    // R164 协程/生成器：生成器函数体内 yield 表达式总数（由 Parser 在解析 body 后填写）。
+    // Interpreter 重放模式用此判断生成器是否已耗尽（currentYieldId >= yieldCount）。
+    // VM/RegisterVM 帧快照模式不依赖此字段（依赖 OP_RETURN 后的 done 标志）。
+    // 特殊值 kDynamicYieldCount 表示存在循环内 yield（编译期节点数 ≠ 运行时执行数），
+    // 此时 yieldCount 不再用于提前判定 done，改由函数体自然结束路径判定。
+    int yieldCount = 0;
+    // R164 协程/生成器：动态 yieldCount 标记值（INT_MAX）。
+    // Parser 检测到 yield-in-loop 时将 yieldCount 设为此值，
+    // 使 callCoroutineNext 的 `currentYieldId >= yieldCount` 永远为 false，
+    // done 仅由函数体自然结束（executeFunctionBody 正常返回）或显式 return 触发。
+    static constexpr int kDynamicYieldCount = 2147483647; // INT_MAX
 
     // PERF-08 fix: 自由变量分析结果缓存。
     // computeFreeVariables 是纯函数（仅依赖函数体 AST 结构，不依赖运行时环境），
@@ -627,6 +696,26 @@ public:
     }
 };
 
+/// R98 元组与解构：元组字面量节点 (e1, e2, ...)
+/// 语义：求值各 elements 并组装为 immutable 元组 Value。
+/// 与 ArrayLiteral 区别：元组不可变、固定长度、支持解构绑定。
+class TupleLiteral : public ASTNode {
+public:
+    std::vector<std::shared_ptr<ASTNode>> elements;
+    TupleLiteral(std::vector<std::shared_ptr<ASTNode>> elems, int ln = 0, int col = 0)
+        : ASTNode(ln, col), elements(std::move(elems)) {
+        nodeType = NodeType::NODE_TUPLE_LITERAL;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "TupleLiteral"; }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> ch;
+        for (auto& e : elements)
+            ch.push_back(e.get());
+        return ch;
+    }
+};
+
 /// 字典字面量节点 {"key": value, ...}
 class DictLiteral : public ASTNode {
 public:
@@ -686,6 +775,9 @@ public:
     // AUDIT-P2.8 fix: 闭合 '}' 所在行号，供 Formatter 在类体末尾注入
     // closingBraceLine 之前的独立注释（对齐 formatBlock 的注释注入模式）。
     int closingBraceLine = 0;
+    // R163 泛型类：类型参数列表（如 ["T", "K", "V"]，空 = 非泛型）
+    // 与 EnumDecl.typeParams 语义一致：运行时类型擦除，类型参数仅用于跳过类型校验
+    std::vector<std::string> typeParams;
     ClassDecl(const std::string& n, const std::string& super, std::vector<std::shared_ptr<ASTNode>> mems, int ln = 0,
               int col = 0)
         : ASTNode(ln, col), name(n), superClassName(super), members(std::move(mems)) {
@@ -867,5 +959,199 @@ public:
     std::string nodeName() const override { return "ExportStmt"; }
     std::vector<ASTNode*> children() const override {
         return declaration ? std::vector<ASTNode*>{declaration.get()} : std::vector<ASTNode*>{};
+    }
+};
+
+// ============================================================
+// R99 枚举与 ADT + match：AST 节点
+// ============================================================
+// 设计要点：
+//   - EnumDecl 声明一个 sealed enum 类型，含 0+ 类型参数和 1+ variant
+//   - 每个 EnumVariant 携带 0+ 参数类型（无参数 = 简单枚举；有参数 = ADT）
+//   - EnumVariantExpr 是构造器调用：EnumName.VariantName(args...)
+//   - MatchExpr 是表达式（返回值），scrutinee 求值后按顺序匹配 cases
+//   - MatchCase 含一个 MatchPattern + body（Block 或单表达式）
+//   - MatchPattern 支持：通配符 `_`、字面量、Variant 模式（含变量绑定）
+//   - 编译期穷尽性检查由 TypeChecker 负责（需覆盖所有 variant 或含 default）
+
+/// 枚举 variant 定义（EnumDecl 的子元素）
+struct EnumVariant {
+    std::string name;                    ///< variant 名（如 "Some"/"None"/"Red"）
+    std::vector<std::string> paramTypes; ///< 参数类型注解（空 = 简单枚举 variant）
+};
+
+/// 枚举声明节点
+/// 语法：enum Name<T, U> { Variant1, Variant2(T), Variant3(T, U) }
+class EnumDecl : public ASTNode {
+public:
+    std::string name;                    ///< enum 类型名
+    std::vector<std::string> typeParams; ///< 类型参数列表（如 ["T", "E"]，空 = 非泛型）
+    std::vector<EnumVariant> variants;   ///< variant 列表
+    int closingBraceLine = 0;            ///< 闭合 '}' 行号（Formatter 注释注入用）
+
+    EnumDecl(const std::string& n, std::vector<std::string> tp, std::vector<EnumVariant> vs, int ln = 0, int col = 0)
+        : ASTNode(ln, col), name(n), typeParams(std::move(tp)), variants(std::move(vs)) {
+        nodeType = NodeType::NODE_ENUM_DECL;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "EnumDecl(" + name + ")"; }
+    std::vector<ASTNode*> children() const override { return {}; }
+};
+
+/// 枚举 variant 构造器调用节点
+/// 语法：EnumName.VariantName 或 EnumName.VariantName(arg1, arg2, ...)
+class EnumVariantExpr : public ASTNode {
+public:
+    std::string enumName;                            ///< enum 类型名
+    std::string variantName;                         ///< variant 名
+    std::vector<std::shared_ptr<ASTNode>> arguments; ///< 构造参数（空 = 简单枚举 variant）
+
+    EnumVariantExpr(const std::string& en, const std::string& vn, std::vector<std::shared_ptr<ASTNode>> args,
+                    int ln = 0, int col = 0)
+        : ASTNode(ln, col), enumName(en), variantName(vn), arguments(std::move(args)) {
+        nodeType = NodeType::NODE_ENUM_VARIANT_EXPR;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "EnumVariantExpr(" + enumName + "." + variantName + ")"; }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> ch;
+        for (auto& a : arguments)
+            ch.push_back(a.get());
+        return ch;
+    }
+};
+
+/// match 模式种类枚举
+/// R134 模式匹配扩展：在 R99 三种基础 pattern（WILDCARD/LITERAL/VARIANT）之上
+/// 新增 VARIABLE/TUPLE/OR 三种 pattern，支持嵌套 pattern 与 guard 表达式。
+enum class MatchPatternKind {
+    WILDCARD, ///< `_` 通配符，匹配任意值且不绑定
+    LITERAL,  ///< 字面量模式（数字/字符串/布尔/null）
+    VARIANT,  ///< Variant 模式：EnumName.VariantName(subPattern1, subPattern2, ...)
+    VARIABLE, ///< R134 变量绑定模式：`x` 绑定整个 scrutinee 到变量 x
+    TUPLE,    ///< R134 元组模式：`(subPattern1, subPattern2, ...)`
+    OR,       ///< R134 或模式：`subPattern1 | subPattern2 | ...`
+};
+
+/// match 模式节点
+/// R134 重构：将原 `bindings`（vector<string>）改为 `subPatterns`（vector<MatchPattern>）。
+/// 嵌套 pattern 通过 subPatterns 递归表达：
+///   - VARIANT: `Some(Some(x))` 的 subPatterns[0] 是另一个 VARIANT pattern
+///   - TUPLE: `(a, b)` 的 subPatterns = [VariablePattern("a"), VariablePattern("b")]
+///   - OR: `A | B` 的 subPatterns = [VariantPattern(A), VariantPattern(B)]
+/// 简单变量绑定 `case x =>` 用 VARIABLE pattern（variableName 字段）表达。
+/// 简单通配 `case _ =>` 用 WILDCARD pattern 表达。
+class MatchPattern : public ASTNode {
+public:
+    MatchPatternKind kind;
+    std::shared_ptr<ASTNode> literal;                       ///< LITERAL 模式的字面量表达式
+    std::string enumName;                                   ///< VARIANT 模式的 enum 名
+    std::string variantName;                                ///< VARIANT 模式的 variant 名
+    std::vector<std::shared_ptr<MatchPattern>> subPatterns; ///< R134 子 pattern 列表（VARIANT/TUPLE/OR 通用）
+    std::string variableName;                               ///< R134 VARIABLE 模式的变量名
+
+    MatchPattern(MatchPatternKind k, int ln = 0, int col = 0) : ASTNode(ln, col), kind(k) {
+        nodeType = NodeType::NODE_MATCH_EXPR; // 复用 MATCH_EXPR 节点类型标记（pattern 不单独枚举）
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override {
+        switch (kind) {
+        case MatchPatternKind::WILDCARD:
+            return "MatchPattern(_)";
+        case MatchPatternKind::LITERAL:
+            return "MatchPattern(literal)";
+        case MatchPatternKind::VARIANT:
+            return "MatchPattern(" + enumName + "." + variantName + ")";
+        case MatchPatternKind::VARIABLE:
+            return "MatchPattern(var:" + variableName + ")";
+        case MatchPatternKind::TUPLE:
+            return "MatchPattern(tuple:" + std::to_string(subPatterns.size()) + ")";
+        case MatchPatternKind::OR:
+            return "MatchPattern(or:" + std::to_string(subPatterns.size()) + ")";
+        }
+        return "MatchPattern";
+    }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> ch;
+        if (literal)
+            ch.push_back(literal.get());
+        for (auto& sp : subPatterns)
+            if (sp)
+                ch.push_back(sp.get());
+        return ch;
+    }
+};
+
+/// match case 子句
+/// R134 新增 guard 字段：`case Pattern if cond => body`
+/// guard 在 pattern 匹配成功后求值，guard 为 false 时视为不匹配继续下一 case。
+struct MatchCase {
+    std::shared_ptr<MatchPattern> pattern; ///< 模式（nullptr = default case）
+    std::shared_ptr<ASTNode> body;         ///< case 体（Block 或单表达式）
+    std::shared_ptr<ASTNode> guard;        ///< R134 守卫表达式（nullptr = 无 guard）
+    bool isDefault = false;                ///< 是否为 default case
+};
+
+/// match 表达式节点
+/// 语法：
+///   match scrutinee {
+///       case Pattern1 => body1;
+///       case Pattern2 => body2;
+///       default => bodyDefault;
+///   }
+class MatchExpr : public ASTNode {
+public:
+    std::shared_ptr<ASTNode> scrutinee; ///< 被匹配的表达式
+    std::vector<MatchCase> cases;       ///< case 列表（顺序敏感：第一个匹配的 case 执行）
+
+    MatchExpr(std::shared_ptr<ASTNode> scr, std::vector<MatchCase> cs, int ln = 0, int col = 0)
+        : ASTNode(ln, col), scrutinee(std::move(scr)), cases(std::move(cs)) {
+        nodeType = NodeType::NODE_MATCH_EXPR;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "MatchExpr"; }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> ch;
+        if (scrutinee)
+            ch.push_back(scrutinee.get());
+        for (auto& c : cases) {
+            if (c.body)
+                ch.push_back(c.body.get());
+            if (c.guard)
+                ch.push_back(c.guard.get());
+        }
+        return ch;
+    }
+};
+
+// ============================================================
+// R164 协程/生成器：yield 表达式
+// ============================================================
+/// yield 表达式节点（仅在 fun* 生成器函数体内合法）
+///
+/// 语义：
+///   - `yield expr`：挂起当前生成器，向 .next() 调用者返回 expr 的值。
+///     下次 .next() 调用时从此处恢复执行，yield 表达式本身的求值结果为 null。
+///   - `yield`（无值）：等价于 yield null。
+///
+/// 四后端实现差异（教学对比点）：
+///   - StackVM/RegisterVM：保存帧快照（IP+栈+寄存器+环境），真挂起/恢复。
+///   - Interpreter：重放模式——每次 .next() 从头执行函数体，用 yieldId 计数器
+///     跳过已返回的 yield。限制：yield 之间的有副作用代码会重复执行。
+class YieldExpr : public ASTNode {
+public:
+    std::shared_ptr<ASTNode> value; ///< yield 的值表达式（null = yield 无值）
+    int yieldId = -1;               ///< 编译期分配的递增编号（0,1,2,...），供 Interpreter 重放使用
+
+    YieldExpr(std::shared_ptr<ASTNode> v, int ln = 0, int col = 0) : ASTNode(ln, col), value(std::move(v)) {
+        nodeType = NodeType::NODE_YIELD_EXPR;
+    }
+    void accept(Visitor& visitor) override;
+    std::string nodeName() const override { return "YieldExpr"; }
+    std::vector<ASTNode*> children() const override {
+        std::vector<ASTNode*> ch;
+        if (value)
+            ch.push_back(value.get());
+        return ch;
     }
 };

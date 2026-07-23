@@ -61,47 +61,57 @@ constexpr OpCodeInfo kOpCodeInfo[] = {
     /* 33 OP_CALL_EXPR           */ {"OP_CALL_EXPR", 2, false},
     /* 34 OP_BUILD_ARRAY         */ {"OP_BUILD_ARRAY", 2, false},
     /* 35 OP_BUILD_DICT          */ {"OP_BUILD_DICT", 2, false},
-    /* 36 OP_INDEX_GET           */ {"OP_INDEX_GET", 1, false},
-    /* 37 OP_INDEX_SET           */ {"OP_INDEX_SET", 1, false},
-    /* 38 OP_INDEX_SET_VAR       */ {"OP_INDEX_SET_VAR", 3, false},
-    /* 39 OP_INDEX_SET_LOCAL     */ {"OP_INDEX_SET_LOCAL", 2, false},
-    /* 40 OP_MEMBER_GET          */ {"OP_MEMBER_GET", 3, false},
-    /* 41 OP_MEMBER_SET          */ {"OP_MEMBER_SET", 3, false},
-    /* 42 OP_MEMBER_SET_VAR      */ {"OP_MEMBER_SET_VAR", 5, false},
-    /* 43 OP_MEMBER_SET_LOCAL    */ {"OP_MEMBER_SET_LOCAL", 4, false},
-    /* 44 OP_METHOD_CALL         */ {"OP_METHOD_CALL", 7, false},
-    /* 45 OP_DUP                 */ {"OP_DUP", 1, false},
-    /* 46 OP_DUP_N               */ {"OP_DUP_N", 2, false},
-    /* 47 OP_CLOSURE             */ {"OP_CLOSURE", 4, true}, // 变长: 4 + 2*upvalueCount
-    /* 48 OP_GET_LOCAL           */ {"OP_GET_LOCAL", 2, false},
-    /* 49 OP_SET_LOCAL           */ {"OP_SET_LOCAL", 2, false},
-    /* 50 OP_CLASS_NEW           */ {"OP_CLASS_NEW", 4, false},
-    /* 51 OP_INIT_FIELD          */ {"OP_INIT_FIELD", 3, false},
-    /* 52 OP_DEFINE_CLASS        */ {"OP_DEFINE_CLASS", 5, false},
-    /* 53 OP_WRITEBACK_MEMBER_VAR   */ {"OP_WRITEBACK_MEMBER_VAR", 5, false},
-    /* 54 OP_WRITEBACK_MEMBER_LOCAL */ {"OP_WRITEBACK_MEMBER_LOCAL", 4, false},
-    /* 55 OP_WRITEBACK_INDEX_VAR    */ {"OP_WRITEBACK_INDEX_VAR", 3, false},
-    /* 56 OP_WRITEBACK_INDEX_LOCAL  */ {"OP_WRITEBACK_INDEX_LOCAL", 2, false},
-    /* 57 OP_SUPER_CALL             */ {"OP_SUPER_CALL", 9, false}, // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) +
+    /* 36 OP_BUILD_TUPLE         */ {"OP_BUILD_TUPLE", 2, false}, // R98 元组与解构（opcode(1B) + 元素个数(1B)）
+    /* 37 OP_INDEX_GET           */ {"OP_INDEX_GET", 1, false},
+    /* 38 OP_INDEX_SET           */ {"OP_INDEX_SET", 1, false},
+    /* 39 OP_INDEX_SET_VAR       */ {"OP_INDEX_SET_VAR", 3, false},
+    /* 40 OP_INDEX_SET_LOCAL     */ {"OP_INDEX_SET_LOCAL", 2, false},
+    /* 41 OP_MEMBER_GET          */ {"OP_MEMBER_GET", 3, false},
+    /* 42 OP_MEMBER_SET          */ {"OP_MEMBER_SET", 3, false},
+    /* 43 OP_MEMBER_SET_VAR      */ {"OP_MEMBER_SET_VAR", 5, false},
+    /* 44 OP_MEMBER_SET_LOCAL    */ {"OP_MEMBER_SET_LOCAL", 4, false},
+    /* 45 OP_METHOD_CALL         */ {"OP_METHOD_CALL", 7, false},
+    /* 46 OP_DUP                 */ {"OP_DUP", 1, false},
+    /* 47 OP_DUP_N               */ {"OP_DUP_N", 2, false},
+    /* 48 OP_CLOSURE             */ {"OP_CLOSURE", 4, true}, // 变长: 4 + 2*upvalueCount
+    /* 49 OP_GET_LOCAL           */ {"OP_GET_LOCAL", 2, false},
+    /* 50 OP_SET_LOCAL           */ {"OP_SET_LOCAL", 2, false},
+    /* 51 OP_CLASS_NEW           */ {"OP_CLASS_NEW", 4, false},
+    /* 52 OP_INIT_FIELD          */ {"OP_INIT_FIELD", 3, false},
+    /* 53 OP_DEFINE_CLASS        */ {"OP_DEFINE_CLASS", 5, false},
+    /* 54 OP_WRITEBACK_MEMBER_VAR   */ {"OP_WRITEBACK_MEMBER_VAR", 5, false},
+    /* 55 OP_WRITEBACK_MEMBER_LOCAL */ {"OP_WRITEBACK_MEMBER_LOCAL", 4, false},
+    /* 56 OP_WRITEBACK_INDEX_VAR    */ {"OP_WRITEBACK_INDEX_VAR", 3, false},
+    /* 57 OP_WRITEBACK_INDEX_LOCAL  */ {"OP_WRITEBACK_INDEX_LOCAL", 2, false},
+    /* 58 OP_SUPER_CALL             */ {"OP_SUPER_CALL", 9, false}, // B1 fix: opcode(1B) + nameIdx(2B) + argCount(1B) +
                                                                     // receiverVarIdx(2B) + receiverLocalSlot(1B) +
                                                                     // classIdx(2B)
-    /* 58 OP_SUPER_MEMBER_GET       */ {"OP_SUPER_MEMBER_GET", 3, false},
-    /* 59 OP_GET_GLOBAL             */ {"OP_GET_GLOBAL", 3, false},
-    /* 60 OP_SET_GLOBAL             */ {"OP_SET_GLOBAL", 3, false},
-    /* 61 OP_DEFINE_GLOBAL          */ {"OP_DEFINE_GLOBAL", 3, false},
-    /* 62 OP_DELETE_GLOBAL          */ {"OP_DELETE_GLOBAL", 3, false},
-    /* 63 OP_GET_UPVALUE            */ {"OP_GET_UPVALUE", 2, false},
-    /* 64 OP_SET_UPVALUE            */ {"OP_SET_UPVALUE", 2, false},
-    /* 65 OP_CLOSE_UPVALUE          */ {"OP_CLOSE_UPVALUE", 2, false},
-    /* 66 OP_TRY_BEGIN              */ {"OP_TRY_BEGIN", 3, false},
-    /* 67 OP_TRY_END                */ {"OP_TRY_END", 1, false},
-    /* 68 OP_THROW                  */ {"OP_THROW", 1, false},
-    /* 69 OP_WRITEBACK_MEMBER_UPVALUE */ {"OP_WRITEBACK_MEMBER_UPVALUE", 4, false},
-    /* 70 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE", 2, false},
-    /* 71 OP_LOAD_MUTATED             */ {"OP_LOAD_MUTATED", 1, false},
-    /* 72 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK", 3, false},       // opcode(1B) + typeAnnotationConstIdx(2B)
-    /* 73 OP_PUSH_JUMP_TARGET         */ {"OP_PUSH_JUMP_TARGET", 3, false}, // opcode(1B) + target(2B)
-    /* 74 OP_FINALLY_END              */ {"OP_FINALLY_END", 1, false},
+    /* 59 OP_SUPER_MEMBER_GET       */ {"OP_SUPER_MEMBER_GET", 3, false},
+    /* 60 OP_GET_GLOBAL             */ {"OP_GET_GLOBAL", 3, false},
+    /* 61 OP_SET_GLOBAL             */ {"OP_SET_GLOBAL", 3, false},
+    /* 62 OP_DEFINE_GLOBAL          */ {"OP_DEFINE_GLOBAL", 3, false},
+    /* 63 OP_DELETE_GLOBAL          */ {"OP_DELETE_GLOBAL", 3, false},
+    /* 64 OP_GET_UPVALUE            */ {"OP_GET_UPVALUE", 2, false},
+    /* 65 OP_SET_UPVALUE            */ {"OP_SET_UPVALUE", 2, false},
+    /* 66 OP_CLOSE_UPVALUE          */ {"OP_CLOSE_UPVALUE", 2, false},
+    /* 67 OP_TRY_BEGIN              */ {"OP_TRY_BEGIN", 3, false},
+    /* 68 OP_TRY_END                */ {"OP_TRY_END", 1, false},
+    /* 69 OP_THROW                  */ {"OP_THROW", 1, false},
+    /* 70 OP_WRITEBACK_MEMBER_UPVALUE */ {"OP_WRITEBACK_MEMBER_UPVALUE", 4, false},
+    /* 71 OP_WRITEBACK_INDEX_UPVALUE  */ {"OP_WRITEBACK_INDEX_UPVALUE", 2, false},
+    /* 72 OP_LOAD_MUTATED             */ {"OP_LOAD_MUTATED", 1, false},
+    /* 73 OP_TYPE_CHECK               */ {"OP_TYPE_CHECK", 3, false},       // opcode(1B) + typeAnnotationConstIdx(2B)
+    /* 74 OP_PUSH_JUMP_TARGET         */ {"OP_PUSH_JUMP_TARGET", 3, false}, // opcode(1B) + target(2B)
+    /* 75 OP_FINALLY_END              */ {"OP_FINALLY_END", 1, false},
+    /* 76 OP_BUILD_ENUM_VARIANT       */ {"OP_BUILD_ENUM_VARIANT", 6, false}, // R99: opcode(1B) + enumNameIdx(2B) +
+                                                                              // variantNameIdx(2B) + argCount(1B)
+    /* 77 OP_ENUM_VARIANT_NAME        */ {"OP_ENUM_VARIANT_NAME", 5, false},  // R99: opcode(1B) + enumNameIdx(2B) +
+                                                                              // variantNameIdx(2B)
+    /* 78 OP_ENUM_VARIANT_FIELD       */ {"OP_ENUM_VARIANT_FIELD", 1, false}, // R99: opcode(1B)
+    /* 79 OP_SWAP                     */ {"OP_SWAP", 1, false},               // R99: opcode(1B) 交换栈顶两个值
+    /* 80 OP_LEN                      */ {"OP_LEN", 1, false},                // R134: opcode(1B) 容器长度
+    /* 81 OP_TYPE_TEST                */ {"OP_TYPE_TEST", 3, false}, // R134: opcode(1B) + typeIdx(2B) 软类型测试
+    /* 82 OP_YIELD                    */ {"OP_YIELD", 1, false}, // R164: opcode(1B) yield 表达式（重放模式）
 };
 } // anonymous namespace
 
@@ -315,6 +325,13 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     case OpCode::OP_BUILD_DICT: {
         uint8_t count = code[offset + 1];
         str += "OP_BUILD_DICT " + std::to_string(count);
+        offset += 2;
+        break;
+    }
+    case OpCode::OP_BUILD_TUPLE: {
+        // R98 元组与解构：反汇编元组构建指令
+        uint8_t count = code[offset + 1];
+        str += "OP_BUILD_TUPLE " + std::to_string(count);
         offset += 2;
         break;
     }
@@ -575,6 +592,59 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     }
     case OpCode::OP_FINALLY_END:
         str += "OP_FINALLY_END";
+        offset += 1;
+        break;
+    case OpCode::OP_BUILD_ENUM_VARIANT: {
+        // R99 枚举与 ADT: 反汇编 enum variant 构造指令
+        uint16_t enumIdx = code[offset + 1] | (code[offset + 2] << 8);
+        uint16_t varIdx = code[offset + 3] | (code[offset + 4] << 8);
+        uint8_t argCount = code[offset + 5];
+        str += "OP_BUILD_ENUM_VARIANT " + std::to_string(enumIdx);
+        if (enumIdx < constants.size())
+            str += " (" + constants[enumIdx].stringVal() + ")";
+        str += "." + std::to_string(varIdx);
+        if (varIdx < constants.size())
+            str += " (" + constants[varIdx].stringVal() + ")";
+        str += " args=" + std::to_string(argCount);
+        offset += 6;
+        break;
+    }
+    case OpCode::OP_ENUM_VARIANT_NAME: {
+        // R99 枚举与 ADT: 反汇编 enum variant 名检查指令
+        uint16_t enumIdx = code[offset + 1] | (code[offset + 2] << 8);
+        uint16_t varIdx = code[offset + 3] | (code[offset + 4] << 8);
+        str += "OP_ENUM_VARIANT_NAME " + std::to_string(enumIdx);
+        if (enumIdx < constants.size())
+            str += " (" + constants[enumIdx].stringVal() + ")";
+        str += "." + std::to_string(varIdx);
+        if (varIdx < constants.size())
+            str += " (" + constants[varIdx].stringVal() + ")";
+        offset += 5;
+        break;
+    }
+    case OpCode::OP_ENUM_VARIANT_FIELD:
+        str += "OP_ENUM_VARIANT_FIELD";
+        offset += 1;
+        break;
+    case OpCode::OP_SWAP:
+        str += "OP_SWAP";
+        offset += 1;
+        break;
+    case OpCode::OP_LEN:
+        str += "OP_LEN";
+        offset += 1;
+        break;
+    case OpCode::OP_TYPE_TEST: {
+        uint16_t typeIdx = code[offset + 1] | (code[offset + 2] << 8);
+        str += "OP_TYPE_TEST typeIdx=" + std::to_string(typeIdx);
+        if (typeIdx < constants.size()) {
+            str += " (\"" + constants[typeIdx].toString() + "\")";
+        }
+        offset += 3;
+        break;
+    }
+    case OpCode::OP_YIELD:
+        str += "OP_YIELD";
         offset += 1;
         break;
     default:

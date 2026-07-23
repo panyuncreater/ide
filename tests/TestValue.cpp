@@ -18,13 +18,13 @@
 
 #include <gtest/gtest.h>
 
-#include "interpreter/Value.h"
 #include "interpreter/Environment.h"
+#include "interpreter/Value.h"
 
 #include <memory>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 // ============================================================
 // 1. 各类型构造与访问器
@@ -148,8 +148,8 @@ TEST(ValueConstructionTest, DictConstruct) {
     Value v(m);
     EXPECT_TRUE(v.isDict());
     EXPECT_EQ(v.dictVal().size(), 2u);
-    EXPECT_EQ(v.dictVal().at("a").intVal(), 1);
-    EXPECT_EQ(v.dictVal().at("b").stringVal(), "two");
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("a")}).intVal(), 1);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("b")}).stringVal(), "two");
     EXPECT_EQ(v.getType(), ValueType::VAL_DICT);
 }
 
@@ -160,7 +160,7 @@ TEST(ValueConstructionTest, DictMoveConstruct) {
     Value v(std::move(m));
     EXPECT_TRUE(v.isDict());
     EXPECT_EQ(v.dictVal().size(), 1u);
-    EXPECT_EQ(v.dictVal().at("x").intVal(), 10);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("x")}).intVal(), 10);
 }
 
 // 验证空字典构造（边界：零键值对）
@@ -447,7 +447,7 @@ TEST(ValueCowTest, EnsureUniqueDetachesDictOnWrite) {
     m["a"] = Value(int64_t(1));
     Value original(m);
     Value copy = original;
-    copy.dictVal()["b"] = Value(int64_t(2));
+    copy.dictVal()[Value::DictKey{std::string("b")}] = Value(int64_t(2));
     EXPECT_EQ(original.dictVal().size(), 1u);
     EXPECT_EQ(copy.dictVal().size(), 2u);
 }
@@ -475,9 +475,9 @@ TEST(ValueCowTest, TryGetMutableArrayWhenUnique) {
 // 验证共享（引用计数>1）数组 tryGetMutableArray 返回 nullptr（禁止原地修改）
 TEST(ValueCowTest, TryGetMutableArrayWhenShared) {
     Value original(std::vector<Value>{Value(int64_t(1))});
-    Value copy = original;  // 共享，refcount==2
+    Value copy = original; // 共享，refcount==2
     auto* mut = original.tryGetMutableArray();
-    EXPECT_EQ(mut, nullptr);  // 非独占时返回 nullptr
+    EXPECT_EQ(mut, nullptr); // 非独占时返回 nullptr
 }
 
 // 验证对非数组类型调用 tryGetMutableArray 返回 nullptr
@@ -495,7 +495,7 @@ TEST(ValueCowTest, TryGetMutableDictWhenUnique) {
     EXPECT_TRUE(v.isUniquelyOwned());
     auto* mut = v.tryGetMutableDict();
     ASSERT_NE(mut, nullptr);
-    (*mut)["b"] = Value(int64_t(2));
+    (*mut)[Value::DictKey{std::string("b")}] = Value(int64_t(2));
     EXPECT_EQ(v.dictVal().size(), 2u);
 }
 
@@ -582,7 +582,7 @@ TEST(ValueDeepCloneTest, DictCloneIndependence) {
     m["a"] = Value(int64_t(1));
     Value original(m);
     Value cloned = original.clone();
-    cloned.dictVal()["b"] = Value(int64_t(2));
+    cloned.dictVal()[Value::DictKey{std::string("b")}] = Value(int64_t(2));
     EXPECT_EQ(original.dictVal().size(), 1u);
     EXPECT_EQ(cloned.dictVal().size(), 2u);
 }
@@ -898,7 +898,7 @@ TEST(ValueEqualsTest, DictMissingKeyNotEqual) {
     m1["b"] = Value(int64_t(2));
     std::unordered_map<std::string, Value> m2;
     m2["a"] = Value(int64_t(1));
-    m2["c"] = Value(int64_t(2));  // 键名不同
+    m2["c"] = Value(int64_t(2)); // 键名不同
     EXPECT_FALSE(Value(m1).equals(Value(m2)));
 }
 
@@ -929,15 +929,35 @@ TEST(ValueEqualsTest, InstanceDifferentFieldsNotEqual) {
     EXPECT_FALSE(v1.equals(v2));
 }
 
-// 验证同名同环境的闭包相等
-TEST(ValueEqualsTest, ClosureEqualsSameNameAndEnv) {
+// L3 fix（2026-07-19）: 闭包相等性契约改为按 functionId 判断。
+// 独立 makeClosure 调用创建的闭包不判等（即使 name/env 相同），
+// 因为每次 makeClosure 分配全局唯一的 functionId。
+TEST(ValueEqualsTest, ClosureIndependentMakeNotEqual) {
     auto env = std::make_shared<Environment>();
     Value c1 = Value::makeClosure("f", env, {}, nullptr);
     Value c2 = Value::makeClosure("f", env, {}, nullptr);
+    EXPECT_FALSE(c1.equals(c2));
+}
+
+// L3 fix: 同一闭包值的拷贝判等（COW detach 保留 functionId）。
+TEST(ValueEqualsTest, ClosureCopyEqual) {
+    auto env = std::make_shared<Environment>();
+    Value c1 = Value::makeClosure("f", env, {}, nullptr);
+    Value c2 = c1; // 拷贝构造（共享 ClosureData，functionId 相同）
     EXPECT_TRUE(c1.equals(c2));
 }
 
-// 验证名称不同的闭包不相等
+// L3 fix: COW detach 后的拷贝仍判等（拷贝构造保留 functionId）。
+TEST(ValueEqualsTest, ClosureCOWDetachEqual) {
+    auto env = std::make_shared<Environment>();
+    Value c1 = Value::makeClosure("f", env, {}, nullptr);
+    Value c2 = c1;
+    // 触发 COW detach：修改 c2 的 params 会复制 ClosureData
+    c2.closureParams().push_back("x");
+    EXPECT_TRUE(c1.equals(c2));
+}
+
+// 验证名称不同的闭包不相等（functionId 也不同）
 TEST(ValueEqualsTest, ClosureDifferentNameNotEqual) {
     auto env = std::make_shared<Environment>();
     Value c1 = Value::makeClosure("f", env, {}, nullptr);
@@ -945,7 +965,7 @@ TEST(ValueEqualsTest, ClosureDifferentNameNotEqual) {
     EXPECT_FALSE(c1.equals(c2));
 }
 
-// 验证捕获环境不同的闭包不相等
+// 验证捕获环境不同的闭包不相等（functionId 也不同）
 TEST(ValueEqualsTest, ClosureDifferentEnvNotEqual) {
     auto env1 = std::make_shared<Environment>();
     auto env2 = std::make_shared<Environment>();
@@ -1038,11 +1058,7 @@ TEST(ValueIsTruthyTest, ClosureAlwaysTrue) {
 
 // 验证数组按索引访问混合类型（int/string/bool）元素
 TEST(ValueArrayTest, ElementAccess) {
-    std::vector<Value> elems = {
-        Value(int64_t(10)),
-        Value(std::string("hello")),
-        Value(true)
-    };
+    std::vector<Value> elems = {Value(int64_t(10)), Value(std::string("hello")), Value(true)};
     Value v(elems);
     EXPECT_EQ(v.arrayVal()[0].intVal(), 10);
     EXPECT_EQ(v.arrayVal()[1].stringVal(), "hello");
@@ -1083,13 +1099,7 @@ TEST(ValueArrayTest, NestedArrayAccess) {
 
 // 验证混合类型数组各元素的类型识别（int/float/string/bool/null）
 TEST(ValueArrayTest, MixedTypesArray) {
-    std::vector<Value> elems = {
-        Value(int64_t(1)),
-        Value(2.5),
-        Value(std::string("three")),
-        Value(true),
-        Value()
-    };
+    std::vector<Value> elems = {Value(int64_t(1)), Value(2.5), Value(std::string("three")), Value(true), Value()};
     Value v(elems);
     EXPECT_EQ(v.arrayVal().size(), 5u);
     EXPECT_TRUE(v.arrayVal()[0].isInt());
@@ -1120,8 +1130,8 @@ TEST(ValueDictTest, KeyValueAccess) {
     m["name"] = Value(std::string("Alice"));
     m["age"] = Value(int64_t(30));
     Value v(m);
-    EXPECT_EQ(v.dictVal().at("name").stringVal(), "Alice");
-    EXPECT_EQ(v.dictVal().at("age").intVal(), 30);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("name")}).stringVal(), "Alice");
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("age")}).intVal(), 30);
 }
 
 // 验证字典 size() 返回键值对数量
@@ -1146,8 +1156,8 @@ TEST(ValueDictTest, KeyExists) {
     std::unordered_map<std::string, Value> m;
     m["exists"] = Value(int64_t(1));
     Value v(m);
-    EXPECT_NE(v.dictVal().find("exists"), v.dictVal().end());
-    EXPECT_EQ(v.dictVal().find("missing"), v.dictVal().end());
+    EXPECT_NE(v.dictVal().find(Value::DictKey{std::string("exists")}), v.dictVal().end());
+    EXPECT_EQ(v.dictVal().find(Value::DictKey{std::string("missing")}), v.dictVal().end());
 }
 
 // 验证向字典插入新键后 size 增加且可访问
@@ -1155,9 +1165,9 @@ TEST(ValueDictTest, InsertNewKey) {
     std::unordered_map<std::string, Value> m;
     m["a"] = Value(int64_t(1));
     Value v(m);
-    v.dictVal()["b"] = Value(std::string("new"));
+    v.dictVal()[Value::DictKey{std::string("b")}] = Value(std::string("new"));
     EXPECT_EQ(v.dictVal().size(), 2u);
-    EXPECT_EQ(v.dictVal().at("b").stringVal(), "new");
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("b")}).stringVal(), "new");
 }
 
 // 验证覆盖已有键不改变 size，仅更新值
@@ -1165,9 +1175,9 @@ TEST(ValueDictTest, OverwriteExistingKey) {
     std::unordered_map<std::string, Value> m;
     m["a"] = Value(int64_t(1));
     Value v(m);
-    v.dictVal()["a"] = Value(int64_t(99));
+    v.dictVal()[Value::DictKey{std::string("a")}] = Value(int64_t(99));
     EXPECT_EQ(v.dictVal().size(), 1u);
-    EXPECT_EQ(v.dictVal().at("a").intVal(), 99);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("a")}).intVal(), 99);
 }
 
 // 验证字典可保存混合类型值（int/float/string/bool/null/array）
@@ -1181,12 +1191,12 @@ TEST(ValueDictTest, MixedValueTypes) {
     m["arr"] = Value(std::vector<Value>{Value(int64_t(1))});
     Value v(m);
     EXPECT_EQ(v.dictVal().size(), 6u);
-    EXPECT_TRUE(v.dictVal().at("int").isInt());
-    EXPECT_TRUE(v.dictVal().at("float").isFloat());
-    EXPECT_TRUE(v.dictVal().at("str").isString());
-    EXPECT_TRUE(v.dictVal().at("bool").isBool());
-    EXPECT_TRUE(v.dictVal().at("null").isNull());
-    EXPECT_TRUE(v.dictVal().at("arr").isArray());
+    EXPECT_TRUE(v.dictVal().at(Value::DictKey{std::string("int")}).isInt());
+    EXPECT_TRUE(v.dictVal().at(Value::DictKey{std::string("float")}).isFloat());
+    EXPECT_TRUE(v.dictVal().at(Value::DictKey{std::string("str")}).isString());
+    EXPECT_TRUE(v.dictVal().at(Value::DictKey{std::string("bool")}).isBool());
+    EXPECT_TRUE(v.dictVal().at(Value::DictKey{std::string("null")}).isNull());
+    EXPECT_TRUE(v.dictVal().at(Value::DictKey{std::string("arr")}).isArray());
 }
 
 // 验证嵌套字典的二级键访问
@@ -1196,7 +1206,70 @@ TEST(ValueDictTest, NestedDictInDict) {
     std::unordered_map<std::string, Value> outer;
     outer["nested"] = Value(inner);
     Value v(outer);
-    EXPECT_EQ(v.dictVal().at("nested").dictVal().at("x").intVal(), 1);
+    EXPECT_EQ(
+        v.dictVal().at(Value::DictKey{std::string("nested")}).dictVal().at(Value::DictKey{std::string("x")}).intVal(),
+        1);
+}
+
+// ============================================================
+// L4 fix（2026-07-19）: 字典键支持 string/int/bool/float 四种类型
+// ============================================================
+
+// 验证 int 键与 string 键不冲突（d[1] 与 d["1"] 是不同的键）
+TEST(ValueDictTest, L4_IntKeyDistinctFromStringKey) {
+    Value::DictMap m; // R97 #2: 改用 DictMap（含 DictKeyEqual 透明比较器）
+    m[Value::DictKey{int64_t(1)}] = Value(int64_t(100));
+    m[Value::DictKey{std::string("1")}] = Value(int64_t(200));
+    Value v(std::move(m));
+    EXPECT_EQ(v.dictVal().size(), 2u);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{int64_t(1)}).intVal(), 100);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{std::string("1")}).intVal(), 200);
+}
+
+// 验证 bool 键与 int 键不冲突（d[true] 与 d[1] 是不同的键）
+TEST(ValueDictTest, L4_BoolKeyDistinctFromIntKey) {
+    Value::DictMap m; // R97 #2: 改用 DictMap（含 DictKeyEqual 透明比较器）
+    m[Value::DictKey{true}] = Value(int64_t(1));
+    m[Value::DictKey{int64_t(1)}] = Value(int64_t(2));
+    Value v(std::move(m));
+    EXPECT_EQ(v.dictVal().size(), 2u);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{true}).intVal(), 1);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{int64_t(1)}).intVal(), 2);
+}
+
+// 验证 float 键
+TEST(ValueDictTest, L4_FloatKey) {
+    Value::DictMap m; // R97 #2: 改用 DictMap（含 DictKeyEqual 透明比较器）
+    m[Value::DictKey{3.14}] = Value(std::string("pi"));
+    Value v(std::move(m));
+    EXPECT_EQ(v.dictVal().size(), 1u);
+    EXPECT_EQ(v.dictVal().at(Value::DictKey{3.14}).stringVal(), "pi");
+}
+
+// 验证 dictKeyFromValue 对非法键类型返回 nullopt
+TEST(ValueDictTest, L4_DictKeyFromValueRejectsInvalidTypes) {
+    EXPECT_FALSE(Value::dictKeyFromValue(Value::nullValue()).has_value());
+    EXPECT_FALSE(Value::dictKeyFromValue(Value(std::vector<Value>{})).has_value());
+    EXPECT_FALSE(Value::dictKeyFromValue(Value(std::unordered_map<std::string, Value>{})).has_value());
+    EXPECT_FALSE(Value::dictKeyFromValue(Value::makeInstance("C")).has_value());
+    auto env = std::make_shared<Environment>();
+    EXPECT_FALSE(Value::dictKeyFromValue(Value::makeClosure("f", env, {}, nullptr)).has_value());
+}
+
+// 验证 dictKeyToValue 往返一致性
+TEST(ValueDictTest, L4_DictKeyRoundTrip) {
+    EXPECT_EQ(Value::dictKeyToValue(Value::DictKey{int64_t(42)}).intVal(), 42);
+    EXPECT_EQ(Value::dictKeyToValue(Value::DictKey{std::string("k")}).stringVal(), "k");
+    EXPECT_EQ(Value::dictKeyToValue(Value::DictKey{true}).boolVal(), true);
+    EXPECT_EQ(Value::dictKeyToValue(Value::DictKey{2.5}).floatVal(), 2.5);
+}
+
+// 验证 dictKeyToString 显示转换
+TEST(ValueDictTest, L4_DictKeyToString) {
+    EXPECT_EQ(Value::dictKeyToString(Value::DictKey{int64_t(42)}), "42");
+    EXPECT_EQ(Value::dictKeyToString(Value::DictKey{std::string("k")}), "k");
+    EXPECT_EQ(Value::dictKeyToString(Value::DictKey{true}), "true");
+    EXPECT_EQ(Value::dictKeyToString(Value::DictKey{false}), "false");
 }
 
 // ============================================================

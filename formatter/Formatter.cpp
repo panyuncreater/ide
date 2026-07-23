@@ -397,6 +397,36 @@ void Formatter::visitDictLiteral(DictLiteral& node) {
     return;
 }
 
+// R98 元组与解构：元组字面量格式化
+void Formatter::visitTupleLiteral(TupleLiteral& node) {
+    lastFormatResult_ = formatTupleLiteral(node);
+    return;
+}
+
+// R98 元组与解构：解构绑定格式化
+void Formatter::visitDestructureBinding(DestructureBinding& node) {
+    lastFormatResult_ = formatDestructureBinding(node);
+    return;
+}
+
+// R99 枚举与 ADT：enum 声明格式化
+void Formatter::visitEnumDecl(EnumDecl& node) {
+    lastFormatResult_ = formatEnumDecl(node);
+    return;
+}
+
+// R99 枚举与 ADT：enum variant 构造表达式格式化
+void Formatter::visitEnumVariantExpr(EnumVariantExpr& node) {
+    lastFormatResult_ = formatEnumVariantExpr(node);
+    return;
+}
+
+// R99 枚举与 ADT：match 表达式格式化
+void Formatter::visitMatchExpr(MatchExpr& node) {
+    lastFormatResult_ = formatMatchExpr(node);
+    return;
+}
+
 void Formatter::visitIndexAccess(IndexAccess& node) {
     lastFormatResult_ = formatIndexAccess(node);
     return;
@@ -858,7 +888,23 @@ std::string Formatter::formatFunDecl(FunDecl& node) {
     // PERF-27 fix: 预估输出大小（fun + name + params + body），避免反复 realloc
     std::string result;
     result.reserve(32 + node.params.size() * 16 + node.name.size());
-    result += "fun " + node.name + "(";
+    // R98 W3: 匿名 lambda（name 为空）格式化为 `fun(params)`，具名函数为 `fun name(params)`
+    if (node.name.empty()) {
+        result += "fun";
+    } else {
+        result += "fun " + node.name;
+    }
+    // R163 泛型扩展：输出类型参数列表 <T, E, ...>（与 formatEnumDecl 一致）
+    if (!node.typeParams.empty()) {
+        result += "<";
+        for (size_t i = 0; i < node.typeParams.size(); ++i) {
+            if (i > 0)
+                result += comma();
+            result += node.typeParams[i];
+        }
+        result += ">";
+    }
+    result += "(";
     for (size_t i = 0; i < node.params.size(); ++i) {
         if (i > 0)
             result += comma();
@@ -1073,6 +1119,214 @@ std::string Formatter::formatDictLiteral(DictLiteral& node) {
     return result;
 }
 
+// R98 元组与解构：格式化元组字面量
+// 输出 "(e1, e2, ...)"；单元素元组保留尾逗号 "(e1,)" 以区别于分组表达式 "(e1)"
+std::string Formatter::formatTupleLiteral(TupleLiteral& node) {
+    std::string result = "(";
+    result.reserve(node.elements.size() * 16 + 4);
+    for (size_t i = 0; i < node.elements.size(); ++i) {
+        if (i > 0)
+            result += comma();
+        result += formatNode(node.elements[i].get());
+    }
+    // 单元素元组保留尾逗号
+    if (node.elements.size() == 1) {
+        result += ",";
+    }
+    result += ")";
+    return result;
+}
+
+// R98 元组与解构：格式化解构绑定
+// 输出 "var (a, b, c) = initializer;"
+// 类型注解（如存在）输出为 "var (a, b, c): (int, string, int) = initializer;"
+std::string Formatter::formatDestructureBinding(DestructureBinding& node) {
+    std::string result = "var (";
+    for (size_t i = 0; i < node.names.size(); ++i) {
+        if (i > 0)
+            result += comma();
+        result += node.names[i];
+    }
+    result += ")";
+    if (!node.tupleTypeAnnotation.empty()) {
+        result += ": " + node.tupleTypeAnnotation;
+    }
+    if (node.initializer) {
+        result += " = " + formatNode(node.initializer.get());
+    }
+    result += ";";
+    return result;
+}
+
+// R99 枚举与 ADT：格式化 enum 声明
+// 输出 "enum Name<T, U> { Variant1, Variant2(T), Variant3(T, U) }"
+// 缩进与 formatClassDecl 一致：currentIndent_+1 用于 variant 列表。
+std::string Formatter::formatEnumDecl(EnumDecl& node) {
+    std::string result;
+    result.reserve(32 + node.name.size() + node.variants.size() * 32);
+    result += "enum " + node.name;
+    if (!node.typeParams.empty()) {
+        result += "<";
+        for (size_t i = 0; i < node.typeParams.size(); ++i) {
+            if (i > 0)
+                result += comma();
+            result += node.typeParams[i];
+        }
+        result += ">";
+    }
+    result += openBrace() + "\n";
+    currentIndent_++;
+    for (size_t i = 0; i < node.variants.size(); ++i) {
+        const auto& v = node.variants[i];
+        // 注释注入：variant 行号前的独立注释
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line < node.line) {
+            // 跳过 enum 声明行之前的注释（已被外层 formatBlock 处理）
+            commentIndex_++;
+        }
+        result += indent() + v.name;
+        if (!v.paramTypes.empty()) {
+            result += "(";
+            for (size_t j = 0; j < v.paramTypes.size(); ++j) {
+                if (j > 0)
+                    result += comma();
+                result += v.paramTypes[j];
+            }
+            result += ")";
+        }
+        // variant 是声明项，需自终止
+        result += ";";
+        // 同行行内注释
+        std::string trailing;
+        // variant 无独立行号字段，复用 enum 声明行号；不强行匹配注释避免误注入
+        (void)trailing;
+        result += "\n";
+    }
+    // closingBraceLine 之前的注释（对齐 formatClassDecl）
+    if (node.closingBraceLine > 0) {
+        while (commentIndex_ < comments_.size() && comments_[commentIndex_].line <= node.closingBraceLine) {
+            result += indent() + reindentBlockComment(comments_[commentIndex_].lexeme, indent()) + "\n";
+            commentIndex_++;
+        }
+    }
+    currentIndent_--;
+    result += indent() + "}";
+    return result;
+}
+
+// R99 枚举与 ADT：格式化 enum variant 构造表达式
+// 输出 "EnumName.VariantName" 或 "EnumName.VariantName(arg1, arg2)"
+std::string Formatter::formatEnumVariantExpr(EnumVariantExpr& node) {
+    std::string result = node.enumName + "." + node.variantName;
+    if (!node.arguments.empty()) {
+        result += "(";
+        for (size_t i = 0; i < node.arguments.size(); ++i) {
+            if (i > 0)
+                result += comma();
+            result += formatNode(node.arguments[i].get());
+        }
+        result += ")";
+    }
+    return result;
+}
+
+// R99 枚举与 ADT：格式化 match 表达式
+// 输出：
+//   match scrutinee {
+//       case Pattern1 => body1;
+//       case Pattern2 => body2;
+//       default => bodyDefault;
+//   }
+// pattern 格式：
+//   - WILDCARD: `_`
+//   - LITERAL: 字面量文本
+//   - VARIANT: `EnumName.VariantName` 或 `EnumName.VariantName(b1, b2)`
+// body 若为 Block 则按块格式化（自终止），否则补 `;`
+std::string Formatter::formatMatchExpr(MatchExpr& node) {
+    std::string result;
+    result.reserve(32 + node.cases.size() * 32);
+    result += "match " + formatNode(node.scrutinee.get()) + openBrace() + "\n";
+    currentIndent_++;
+    for (auto& mc : node.cases) {
+        result += indent();
+        if (mc.isDefault || !mc.pattern) {
+            result += "default";
+        } else {
+            // R134: 递归格式化 pattern（支持 6 种：WILDCARD/LITERAL/VARIABLE/VARIANT/TUPLE/OR）
+            result += "case " + formatMatchPattern(*mc.pattern);
+            // R134: guard 表达式 "if <cond>"
+            if (mc.guard) {
+                result += " if " + formatNode(mc.guard.get());
+            }
+        }
+        result += " => ";
+        if (mc.body) {
+            if (mc.body->nodeType == NodeType::NODE_BLOCK) {
+                // Block 自终止，格式化时已含 {}
+                result += formatNode(mc.body.get());
+            } else {
+                result += formatNode(mc.body.get()) + ";";
+            }
+        } else {
+            result += ";";
+        }
+        result += "\n";
+    }
+    currentIndent_--;
+    result += indent() + "}";
+    return result;
+}
+
+/// R134: 递归格式化 match pattern（6 种：WILDCARD/LITERAL/VARIABLE/VARIANT/TUPLE/OR）
+/// 保证 round-trip 等价性——formatter 输出能被 Parser 重新解析为等价 AST。
+std::string Formatter::formatMatchPattern(const MatchPattern& p) {
+    switch (p.kind) {
+    case MatchPatternKind::WILDCARD:
+        return "_";
+    case MatchPatternKind::LITERAL:
+        return formatNode(p.literal.get());
+    case MatchPatternKind::VARIABLE:
+        // R134: 绑定变量名（不带 case 前缀，由调用方添加）
+        return p.variableName;
+    case MatchPatternKind::VARIANT: {
+        // EnumName.VariantName(sub1, sub2, ...) — 递归格式化子 pattern
+        std::string result = p.enumName + "." + p.variantName;
+        if (!p.subPatterns.empty()) {
+            result += "(";
+            for (size_t i = 0; i < p.subPatterns.size(); ++i) {
+                if (i > 0)
+                    result += comma();
+                result += formatMatchPattern(*p.subPatterns[i]);
+            }
+            result += ")";
+        }
+        return result;
+    }
+    case MatchPatternKind::TUPLE: {
+        // (sub1, sub2, ...) — 递归格式化子 pattern
+        std::string result = "(";
+        for (size_t i = 0; i < p.subPatterns.size(); ++i) {
+            if (i > 0)
+                result += comma();
+            result += formatMatchPattern(*p.subPatterns[i]);
+        }
+        result += ")";
+        return result;
+    }
+    case MatchPatternKind::OR: {
+        // sub1 or sub2 or sub3 — 递归格式化子 pattern，用 " or " 连接
+        // 注：MiniLang 用 'or' 关键字（与 and/or 短路语义一致），非 '|'
+        std::string result;
+        for (size_t i = 0; i < p.subPatterns.size(); ++i) {
+            if (i > 0)
+                result += " or ";
+            result += formatMatchPattern(*p.subPatterns[i]);
+        }
+        return result;
+    }
+    }
+    return "_"; // 不应到达
+}
+
 /// 格式化下标访问：obj[index]；当 obj 为低优先级的二元/一元表达式时加括号避免歧义。
 std::string Formatter::formatIndexAccess(IndexAccess& node) {
     std::string obj = formatNode(node.object.get());
@@ -1098,6 +1352,16 @@ std::string Formatter::formatClassDecl(ClassDecl& node) {
     std::string result;
     result.reserve(32 + node.name.size() + node.members.size() * 48);
     result += "class " + node.name;
+    // R163 泛型扩展：输出类型参数列表 <T, K, V, ...>（与 formatEnumDecl 一致）
+    if (!node.typeParams.empty()) {
+        result += "<";
+        for (size_t i = 0; i < node.typeParams.size(); ++i) {
+            if (i > 0)
+                result += comma();
+            result += node.typeParams[i];
+        }
+        result += ">";
+    }
     if (!node.superClassName.empty()) {
         result += " extends " + node.superClassName;
     }

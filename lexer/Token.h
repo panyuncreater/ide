@@ -49,6 +49,13 @@ enum class TokenType {
     TK_DICT,     // dict 关键字
     TK_ARRAY,    // array 关键字
     TK_NULL,     // null 关键字
+    // R99 枚举与 ADT + match：新增关键字
+    TK_ENUM,     // enum 关键字
+    TK_MATCH,    // match 关键字
+    TK_CASE,     // case 关键字
+    TK_DEFAULT,  // default 关键字
+    // R164 协程/生成器：新增关键字
+    TK_YIELD,    // yield 关键字（生成器挂起）
     // 字面量
     TK_IDENTIFIER,
     TK_INT_LIT,
@@ -80,6 +87,7 @@ enum class TokenType {
     TK_RBRACKET, // ]
     TK_COLON,    // :
     TK_DOT,      // .
+    TK_ARROW,    // => （R99 match case 分隔符）
     // 特殊
     TK_EOF,
     TK_ERROR,
@@ -193,6 +201,16 @@ struct Token {
             return "ARRAY";
         case TokenType::TK_NULL:
             return "NULL";
+        case TokenType::TK_ENUM:
+            return "ENUM";
+        case TokenType::TK_MATCH:
+            return "MATCH";
+        case TokenType::TK_CASE:
+            return "CASE";
+        case TokenType::TK_DEFAULT:
+            return "DEFAULT";
+        case TokenType::TK_YIELD:
+            return "YIELD";
         case TokenType::TK_IDENTIFIER:
             return "IDENTIFIER";
         case TokenType::TK_INT_LIT:
@@ -245,6 +263,8 @@ struct Token {
             return "COLON";
         case TokenType::TK_DOT:
             return "DOT";
+        case TokenType::TK_ARROW:
+            return "ARROW";
         case TokenType::TK_EOF:
             return "EOF";
         case TokenType::TK_ERROR:

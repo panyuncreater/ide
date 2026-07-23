@@ -73,6 +73,27 @@ private:
     /// 扫描一个 Token
     void scanToken();
 
+    // ---- R132-B fix: scanToken 229 行拆为 thin dispatcher + 5 个返回 bool 的字符类 helper
+    // + 1 个默认分支 helper（每个 < 60 行）----
+    /// 处理空白字符（' '、'\t'、'\n'、'\f'、'\v'）：直接丢弃。
+    /// 返回 true=已处理；false=非空白字符（交由后续 helper）。
+    bool scanWhitespaceToken(char c);
+    /// 处理分隔符与 '.'：'(' ')' '{' '}' ';' ',' '[' ']' ':' '?' '.'。
+    /// '.' 后接数字时降级到 number()。返回 true=已处理；false=非分隔符。
+    bool scanDelimiterToken(char c);
+    /// 处理 '/' 及其衍生（单行注释 //、块注释 /*...*/、TK_SLASH 除法）。
+    /// 返回 true=已处理；false=非 '/' 字符。
+    bool scanSlashToken(char c);
+    /// 处理简单算术运算符 '+' '-' '*' '%'（无第二字符判断）。
+    /// 返回 true=已处理；false=非此类运算符。
+    bool scanArithOperatorToken(char c);
+    /// 处理双字符运算符 '=' '!' '<' '>' '&' '|'（含 => 箭头特例）。
+    /// 使用 O(1) 查找表分派。返回 true=已处理；false=非此类运算符。
+    bool scanTwoCharOperatorToken(char c);
+    /// 处理默认分支：'"'（字符串字面量）+ 数字 + 标识符/关键字 + 未知字符（UTF-8 感知）。
+    /// 总会消费当前字符并产生 Token 或错误，无 fallthrough。
+    void scanLiteralOrUnknownToken(char c);
+
     /// 扫描标识符或关键字
     void identifier();
 
@@ -85,6 +106,24 @@ private:
     /// F7: 扫描字符串字面量（支持插值）
     /// isInterp=true 表示当前处于插值字符串的后续片段（由 } 触发）
     void string(bool isInterp);
+
+    // ---- R131 fix: string() 448 行拆为 thin entry + 4 个 helper（每个 < 170 行）----
+    /// 处理字符串中的 '{' 插值起始：发射 TK_STRING_PART/TK_INTERP_START，
+    /// 嵌套扫描表达式直到匹配 '}'（支持嵌套大括号/嵌套字符串），
+    /// 发射 TK_INTERP_END。返回 true=继续外层循环，false=终止 string()。
+    /// interpDepth_ 在此处自增/自减。
+    bool handleInterpolation(int& startLine, int& startCol, std::string& value, bool& isInterp);
+    /// 处理字符串中的 '\\' 转义序列：switch 分发到简单转义（\n/\t/\r/\\/\"/\'/\0/\b/\f/\a/\v）
+    /// 或调用 handleHexEscape / handleUnicodeEscape。返回 true=继续外层循环，false=终止 string()。
+    /// 错误恢复：未知转义 / 十六进制错误 / Unicode 错误时跳过到字符串结束或 EOF 后 return false。
+    bool handleEscape(int startLine, int startCol, std::string& value);
+    /// 处理 \xNN 十六进制字节转义：读取 2 位十六进制 → 编码为单字节。
+    /// 错误恢复：非法十六进制字符时跳过到字符串结束或 EOF 后 return false。
+    bool handleHexEscape(int startLine, int startCol, std::string& value);
+    /// 处理 \u Unicode 转义：若 peek()=='{' 走 \u{XXXXXX} 扩展语法（1-6 位十六进制），
+    /// 否则走 \uXXXX 标准 4 位语法。验证码点范围 [0, 0x10FFFF] 且非代理码点 [0xD800, 0xDFFF]，
+    /// 编码为 UTF-8（1-4 字节）。错误恢复时跳过到字符串结束或 EOF 后 return false。
+    bool handleUnicodeEscape(int startLine, int startCol, std::string& value);
 
     /// 添加 Token
     void addToken(TokenType type);

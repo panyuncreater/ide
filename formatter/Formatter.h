@@ -58,6 +58,8 @@ class ReturnStmt;
 class PrintStmt;
 class ArrayLiteral;
 class DictLiteral;
+class TupleLiteral;
+class DestructureBinding;
 class IndexAccess;
 class IndexAssign;
 class ClassDecl;
@@ -145,6 +147,13 @@ public:
     void visitBlock(Block& node) override;
     void visitArrayLiteral(ArrayLiteral& node) override;
     void visitDictLiteral(DictLiteral& node) override;
+    // R98 元组与解构
+    void visitTupleLiteral(TupleLiteral& node) override;
+    void visitDestructureBinding(DestructureBinding& node) override;
+    // R99 枚举与 ADT + match
+    void visitEnumDecl(EnumDecl& node) override;
+    void visitEnumVariantExpr(EnumVariantExpr& node) override;
+    void visitMatchExpr(MatchExpr& node) override;
     void visitIndexAccess(IndexAccess& node) override;
     void visitIndexAssign(IndexAssign& node) override;
     void visitClassDecl(ClassDecl& node) override;
@@ -238,6 +247,15 @@ private:
     // 新增节点格式化
     std::string formatArrayLiteral(ArrayLiteral& node);
     std::string formatDictLiteral(DictLiteral& node);
+    // R98 元组与解构
+    std::string formatTupleLiteral(TupleLiteral& node);
+    std::string formatDestructureBinding(DestructureBinding& node);
+    // R99 枚举与 ADT + match
+    std::string formatEnumDecl(EnumDecl& node);
+    std::string formatEnumVariantExpr(EnumVariantExpr& node);
+    std::string formatMatchExpr(MatchExpr& node);
+    // R134: 递归格式化 match pattern（6 种：WILDCARD/LITERAL/VARIABLE/VARIANT/TUPLE/OR）
+    std::string formatMatchPattern(const MatchPattern& p);
     std::string formatIndexAccess(IndexAccess& node);
     std::string formatIndexAssign(IndexAssign& node);
     std::string formatClassDecl(ClassDecl& node);

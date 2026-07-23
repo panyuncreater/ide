@@ -1,8 +1,9 @@
 #include "compiler/VM.h"
-#include "Logger.h"
+#include "common/ErrorFormat.h"   // Dedup-5A: ErrorFormat::format 替代 std::to_string 拼接
+#include "common/ErrorMessages.h" // R97 #1: 三后端共享错误消息常量
+#include "common/Logger.h"
 #include "common/Utf8Utils.h"           // P0-4 fix: UTF-8 码位工具
 #include "interpreter/BuiltinMethods.h" // 共享纯函数层（len/contains/has）
-#include "interpreter/ErrorFormat.h"    // Dedup-5A: ErrorFormat::format 替代 std::to_string 拼接
 #include "interpreter/NumericUtils.h"   // 共享溢出检查（B6 fix）
 #include <algorithm>
 #include <climits>
@@ -317,6 +318,211 @@ std::string VM::getCurrentChunkName() const {
     return frames_.back().functionName;
 }
 
+// R104 Function Breakpoint：在 OP_CALL/OP_CALL_EXPR 执行前查询被调用函数名
+std::string VM::peekCalledFunctionName() const {
+    if (frames_.empty())
+        return "";
+    const VMCallFrame& frame = frames_.back();
+    if (!frame.chunk)
+        return "";
+    const auto& code = frame.chunk->code;
+    size_t ip = frame.ip;
+    if (ip >= code.size())
+        return "";
+    OpCode op = static_cast<OpCode>(code[ip]);
+    if (op != OpCode::OP_CALL && op != OpCode::OP_CALL_EXPR)
+        return "";
+    // OP_CALL 指令格式: [OP_CALL, idx_lo, idx_hi, argCount]
+    if (ip + 3 >= code.size())
+        return "";
+    uint16_t idx = code[ip + 1] | (code[ip + 2] << 8);
+    const auto& constants = frame.chunk->constants;
+    if (idx >= constants.size())
+        return "";
+    return constants[idx].stringVal();
+}
+
+// R104 Exception Breakpoint：检查当前指令是否为 OP_THROW
+bool VM::isCurrentThrowInstruction() const {
+    if (frames_.empty())
+        return false;
+    const VMCallFrame& frame = frames_.back();
+    if (!frame.chunk)
+        return false;
+    size_t ip = frame.ip;
+    if (ip >= frame.chunk->code.size())
+        return false;
+    return static_cast<OpCode>(frame.chunk->code[ip]) == OpCode::OP_THROW;
+}
+
+// R161 Watchpoint：pre-execution peek 当前 IP 指令的写入目标（不执行指令）
+WriteTarget VM::peekWriteTarget() const {
+    WriteTarget wt;
+    if (frames_.empty())
+        return wt;
+    const VMCallFrame& frame = frames_.back();
+    if (!frame.chunk)
+        return wt;
+    const auto& code = frame.chunk->code;
+    size_t ip = frame.ip;
+    if (ip >= code.size())
+        return wt;
+
+    OpCode op = static_cast<OpCode>(code[ip]);
+    const auto& constants = frame.chunk->constants;
+    auto readShort = [&code](size_t offset) -> uint16_t { return code[offset] | (code[offset + 1] << 8); };
+    auto constStr = [&constants](uint16_t idx) -> std::string {
+        return (idx < constants.size()) ? constants[idx].stringVal() : std::string{};
+    };
+    // slot → name 逆查（globalNameToSlot_ 遍历，仅 watchpoint 活跃时调用）
+    auto slotToGlobalName = [this](int slot) -> std::string {
+        for (const auto& kv : globalNameToSlot_) {
+            if (kv.second == slot)
+                return kv.first;
+        }
+        return {};
+    };
+    // localSlot → name 反查（L1 fix：按 ip 精确反查 SlotNameRange）
+    auto slotToLocalName = [&frame, ip](int slot) -> std::string { return frame.chunk->resolveSlotName(slot, ip); };
+
+    switch (op) {
+    // ---- 变量写入（nameIdx 编码）----
+    case OpCode::OP_SET_VAR:
+    case OpCode::OP_DEFINE_VAR: {
+        if (ip + 2 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.varName = constStr(readShort(ip + 1));
+        break;
+    }
+    // ---- 变量写入（slot 编码）----
+    case OpCode::OP_SET_GLOBAL:
+    case OpCode::OP_DEFINE_GLOBAL: {
+        if (ip + 2 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.varName = slotToGlobalName(readShort(ip + 1));
+        break;
+    }
+    case OpCode::OP_DELETE_GLOBAL: {
+        if (ip + 2 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.varName = slotToGlobalName(readShort(ip + 1));
+        break;
+    }
+    // ---- 局部变量写入 ----
+    case OpCode::OP_SET_LOCAL: {
+        if (ip + 1 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.localSlot = code[ip + 1];
+        wt.varName = slotToLocalName(wt.localSlot);
+        break;
+    }
+    // ---- upvalue 写入 ----
+    case OpCode::OP_SET_UPVALUE: {
+        if (ip + 1 >= code.size())
+            break;
+        wt.isWrite = true;
+        // upvalue 名称通过 chunk.upvalues[uvIdx].name 反查（R75 条件断点修复已记录）
+        uint8_t uvIdx = code[ip + 1];
+        if (uvIdx < frame.chunk->upvalues.size()) {
+            wt.varName = frame.chunk->upvalues[uvIdx].name;
+        }
+        break;
+    }
+    // ---- 字段写入（仅 fieldNameIdx）----
+    case OpCode::OP_MEMBER_SET:
+    case OpCode::OP_INIT_FIELD: {
+        if (ip + 2 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.isFieldWrite = true;
+        wt.fieldName = constStr(readShort(ip + 1));
+        break;
+    }
+    // ---- 字段写入（varIdx + fieldIdx）----
+    case OpCode::OP_MEMBER_SET_VAR:
+    case OpCode::OP_WRITEBACK_MEMBER_VAR: {
+        if (ip + 4 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.isFieldWrite = true;
+        wt.varName = constStr(readShort(ip + 1));
+        wt.fieldName = constStr(readShort(ip + 3));
+        break;
+    }
+    // ---- 字段写入（slot + fieldIdx）----
+    case OpCode::OP_MEMBER_SET_LOCAL:
+    case OpCode::OP_WRITEBACK_MEMBER_LOCAL: {
+        if (ip + 3 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.isFieldWrite = true;
+        wt.localSlot = code[ip + 1];
+        wt.varName = slotToLocalName(wt.localSlot);
+        wt.fieldName = constStr(readShort(ip + 2));
+        break;
+    }
+    // ---- 字段写入（uvIdx + fieldIdx）----
+    case OpCode::OP_WRITEBACK_MEMBER_UPVALUE: {
+        if (ip + 3 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.isFieldWrite = true;
+        uint8_t uvIdx = code[ip + 1];
+        if (uvIdx < frame.chunk->upvalues.size()) {
+            wt.varName = frame.chunk->upvalues[uvIdx].name;
+        }
+        wt.fieldName = constStr(readShort(ip + 2));
+        break;
+    }
+    // ---- 索引写入（无操作数，全在栈上）----
+    case OpCode::OP_INDEX_SET: {
+        wt.isWrite = true;
+        wt.isIndexWrite = true;
+        break;
+    }
+    // ---- 索引写入（varIdx）----
+    case OpCode::OP_INDEX_SET_VAR:
+    case OpCode::OP_WRITEBACK_INDEX_VAR: {
+        if (ip + 2 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.isIndexWrite = true;
+        wt.varName = constStr(readShort(ip + 1));
+        break;
+    }
+    // ---- 索引写入（slot）----
+    case OpCode::OP_INDEX_SET_LOCAL:
+    case OpCode::OP_WRITEBACK_INDEX_LOCAL: {
+        if (ip + 1 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.isIndexWrite = true;
+        wt.localSlot = code[ip + 1];
+        wt.varName = slotToLocalName(wt.localSlot);
+        break;
+    }
+    // ---- 索引写入（uvIdx）----
+    case OpCode::OP_WRITEBACK_INDEX_UPVALUE: {
+        if (ip + 1 >= code.size())
+            break;
+        wt.isWrite = true;
+        wt.isIndexWrite = true;
+        uint8_t uvIdx = code[ip + 1];
+        if (uvIdx < frame.chunk->upvalues.size()) {
+            wt.varName = frame.chunk->upvalues[uvIdx].name;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    return wt;
+}
+
 std::vector<VM::VMCallStackEntry> VM::getCallStack() const {
     std::vector<VMCallStackEntry> result;
     result.reserve(frames_.size());
@@ -361,15 +567,19 @@ std::unordered_map<std::string, Value> VM::getCurrentFrameLocals() const {
         }
     }
     // 遍历 chunk 的 localSlotNames，从栈槽反查值
-    const auto& names = frame.chunk->localSlotNames;
+    // L1 fix: 优先使用 resolveSlotName(slot, frame.ip) 按 IP 范围反查变量名，
+    // 解决兄弟作用域槽位复用导致的变量名错位（如 if/else 分支复用同一 slot）。
+    const auto& chunk = *frame.chunk;
     size_t bp = frame.basePointer;
-    for (size_t slot = 0; slot < names.size() && slot < static_cast<size_t>(frame.chunk->localCount); ++slot) {
-        if (names[slot].empty())
-            continue;
+    size_t curIp = frame.ip;
+    for (size_t slot = 0; slot < static_cast<size_t>(chunk.localCount); ++slot) {
         size_t stackIdx = bp + slot;
         if (stackIdx >= stack_.size())
             break;
-        result[names[slot]] = stack_[stackIdx];
+        const std::string& name = chunk.resolveSlotName(slot, curIp);
+        if (name.empty())
+            continue;
+        result[name] = stack_[stackIdx];
     }
     return result;
 }
@@ -399,15 +609,18 @@ std::unordered_map<std::string, Value> VM::getFrameLocalsAt(size_t frameIndex) c
             }
         }
     }
-    const auto& names = frame.chunk->localSlotNames;
+    // L1 fix: 优先使用 resolveSlotName(slot, frame.ip) 按 IP 范围反查变量名
+    const auto& chunk = *frame.chunk;
     size_t bp = frame.basePointer;
-    for (size_t slot = 0; slot < names.size() && slot < static_cast<size_t>(frame.chunk->localCount); ++slot) {
-        if (names[slot].empty())
-            continue;
+    size_t curIp = frame.ip;
+    for (size_t slot = 0; slot < static_cast<size_t>(chunk.localCount); ++slot) {
         size_t stackIdx = bp + slot;
         if (stackIdx >= stack_.size())
             break;
-        result[names[slot]] = stack_[stackIdx];
+        const std::string& name = chunk.resolveSlotName(slot, curIp);
+        if (name.empty())
+            continue;
+        result[name] = stack_[stackIdx];
     }
     return result;
 }
@@ -809,15 +1022,24 @@ VMResult VM::dispatchDictBuiltin(const Value& obj, BuiltinMethod method, const s
     Value mutableObj = std::move(stack_.back());
     stack_.pop_back();
 
-    if (method == BuiltinMethod::DICT_REMOVE || method == BuiltinMethod::ARR_REMOVE) {
+    if (method == BuiltinMethod::DICT_REMOVE) {
+        // 注：ARR_REMOVE 已在 dispatchArrayBuiltin 中处理，此处仅处理 DICT_REMOVE
         if (args.size() != 1)
             return runtimeError("remove 期望 1 个参数(键)");
+        // L4 fix: 字典键支持 string/int/bool/float
         // P2-9 fix: 使用 getMutableDictRef 统一 COW 变异模式
-        getMutableDictRef(mutableObj).erase(args[0].toString());
+        auto dk = Value::dictKeyFromValue(args[0]);
+        if (!dk)
+            return runtimeError(ErrorMessages::kDictKeyInvalidType);
+        getMutableDictRef(mutableObj).erase(*dk);
     } else if (method == BuiltinMethod::DICT_SET) {
         if (args.size() != 2)
             return runtimeError("set 期望 2 个参数(键, 值)");
-        getMutableDictRef(mutableObj)[args[0].toString()] = args[1];
+        // L4 fix: 字典键支持 string/int/bool/float
+        auto dk = Value::dictKeyFromValue(args[0]);
+        if (!dk)
+            return runtimeError(ErrorMessages::kDictKeyInvalidType);
+        getMutableDictRef(mutableObj)[*dk] = args[1];
     } else {
         return runtimeError("字典没有方法 " + methodName);
     }
@@ -894,6 +1116,47 @@ VMResult VM::dispatchStringBuiltin(const Value& obj, BuiltinMethod method, const
 }
 
 // ============================================================
+// R136 dispatchSyncObjectBuiltin - 同步对象方法分发
+// channel.send/recv/tryRecv/close, mutex.lock/unlock/tryLock,
+// rwlock.readLock/readUnlock/writeLock/writeUnlock/tryReadLock/tryWriteLock,
+// thread.join/detach/isJoinable
+// 同步对象内部状态通过 shared_ptr<Inner> 共享，方法调用不修改 Value 本身（无需 writeBack）
+// ============================================================
+VMResult VM::dispatchSyncObjectBuiltin(const Value& obj, const std::string& methodName, uint8_t argCount, size_t& ip,
+                                       OpCode op, int instrLen) {
+    SmallArgs<Value> args(argCount);
+    for (int i = argCount - 1; i >= 0; --i)
+        args[i] = pop();
+    if (hasError_)
+        return VMResult::VM_RUNTIME_ERROR;
+
+    // handleSyncObjectMethod 共享层抛 RuntimeError 而非返回 Result::err，
+    // 此处用 try/catch 捕获转为 runtimeError
+    Value result = Value::nullValue();
+    try {
+        // 共享层接收可变引用，但同步对象内部状态通过 shared_ptr<Inner> 共享，
+        // const_cast 安全（不会触发 COW detach，因 Inner 是 shared_ptr）
+        Value& mutableObj = const_cast<Value&>(obj);
+        std::vector<Value> argsVec(args.begin(), args.end());
+        auto br = handleSyncObjectMethod(methodName, mutableObj, argsVec, ip, 0);
+        result = std::move(br.result);
+    } catch (const RuntimeError& e) {
+        // 接收者仍在栈顶，需 pop 保持栈平衡
+        pop();
+        return runtimeError(e.what());
+    }
+
+    // 同步对象方法不修改 Value 本身，但 IR 路径对所有 isVarRef 方法调用无条件
+    // 发射 LOAD_MUTATED + STORE。设置 lastMutatedReceiver_ 为接收者原值（与字符串方法对齐）。
+    lastMutatedReceiver_ = peek(0);
+    pop(); // 移除接收者
+    push(std::move(result));
+    notifyStep(ip, op);
+    ip += instrLen;
+    return VMResult::VM_OK;
+}
+
+// ============================================================
 // 初始化 / 单步 / 状态查询
 // ============================================================
 
@@ -929,6 +1192,11 @@ void VM::initExecution(const CompileResult& result) {
     // P2: 清除全局变量缓存
     globalCache_.clear();
     classInfo_.clear();
+    // R99 enum 校验：加载 enum 元信息到 enumRegistry_ 供 OP_BUILD_ENUM_VARIANT 校验
+    enumRegistry_.clear();
+    for (const auto& info : result.enumInfos) {
+        enumRegistry_[info.name] = info;
+    }
     // M-新1 fix: 清理残留闭包/upvalue 状态，避免多次执行时悬空指针
     openUpvalues_.clear();
     functionClosures_.clear();
@@ -936,10 +1204,12 @@ void VM::initExecution(const CompileResult& result) {
     pendingFieldOrder_.clear();
     tryStack_.clear();         // F11: 清理异常处理栈
     pendingJumpStack_.clear(); // AUDIT-P1.1 fix: 清理续跳栈
-    // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
+    // P1 fix: 重置 stepOnce 指令计数器
+    // R97 #3 fix: 移除 lastAsciiStr* 重置（已迁移到 StringData::cachedIsAscii 持久缓存）
     stepInstructionCount_ = 0;
-    lastAsciiStrPtr_ = nullptr;
-    lastAsciiStrIsAscii_ = false;
+    // R164 协程/生成器：重置重放模式状态
+    currentCoroutineTargetYieldId_ = -1;
+    currentYieldExecutionCount_ = 0;
     // A2/B4: 初始化全局变量槽位
     globalSlots_.clear();
     globalNameToSlot_.clear();
@@ -992,6 +1262,7 @@ void VM::resetState() {
     frames_.clear();
     functionChunks_.clear();
     classInfo_.clear();
+    enumRegistry_.clear();   // R99 enum 校验：同步清理
     methodsByClass_.clear(); // #12 fix: 同步清理类方法索引
     globalSlots_.clear();
     // B4: globalSlotNames_ 已删除
@@ -1003,15 +1274,105 @@ void VM::resetState() {
     pendingJumpStack_.clear(); // AUDIT-P1.1 fix: 清理续跳栈
     openUpvalues_.clear();     // VM-05/06
     functionClosures_.clear(); // VM-05/06
-    // P1 fix: 重置 stepOnce 指令计数器和 ASCII 缓存
+    // P1 fix: 重置 stepOnce 指令计数器
+    // R97 #3 fix: 移除 lastAsciiStr* 重置（已迁移到 StringData::cachedIsAscii 持久缓存）
     stepInstructionCount_ = 0;
-    lastAsciiStrPtr_ = nullptr;
-    lastAsciiStrIsAscii_ = false;
     // V-P1-1 fix: 清理内联缓存，避免悬垂指针（callCache_/globalCache_ 指向已清空的容器）
     // PERF-14 fix: unordered_map clear()
     callCache_.clear();
     globalCache_.clear();
     initialized_ = false;
+    // R164 协程/生成器：重置重放模式状态
+    currentCoroutineTargetYieldId_ = -1;
+    currentYieldExecutionCount_ = 0;
+}
+
+// ============================================================
+// R114 阶段 3：restoreFromSnapshot — 从快照恢复 VM 状态（状态回滚）
+// ============================================================
+bool VM::restoreFromSnapshot(const std::vector<Value>& stackValues,
+                             const std::vector<std::pair<std::string, Value>>& globalsValues, size_t targetIp,
+                             size_t targetFrameCount) {
+    if (!initialized_) {
+        lastError_ = "VM 未初始化，无法回滚";
+        hasError_ = true;
+        return false;
+    }
+    if (targetFrameCount > frames_.size()) {
+        lastError_ = "回滚目标帧数超过当前帧数";
+        hasError_ = true;
+        return false;
+    }
+
+    // (1) 截断 frames_ 到 targetFrameCount（仅截断不扩展）
+    while (frames_.size() > targetFrameCount) {
+        frames_.pop_back();
+    }
+    // 设置栈顶帧 ip = targetIp（若仍有帧）
+    if (!frames_.empty()) {
+        currentFrame().ip = targetIp;
+    }
+
+    // (2) 替换 stack_ 为 stackValues（截断到 MAX_STACK_SIZE）
+    stack_.clear();
+    size_t copyCount = std::min(stackValues.size(), MAX_STACK_SIZE);
+    for (size_t i = 0; i < copyCount; ++i) {
+        stack_.push_back(stackValues[i]);
+    }
+
+    // (3) 按 name 更新 globalSlots_/globals_（已有变量覆盖，新变量忽略）
+    for (const auto& kv : globalsValues) {
+        const std::string& name = kv.first;
+        const Value& val = kv.second;
+        auto slotIt = globalNameToSlot_.find(name);
+        if (slotIt != globalNameToSlot_.end()) {
+            int slot = slotIt->second;
+            if (slot >= 0 && slot < static_cast<int>(globalSlots_.size())) {
+                globalSlots_[slot] = val;
+            }
+        } else {
+            // globals_ 中的 runtime-defined 变量
+            auto it = globals_.find(name);
+            if (it != globals_.end()) {
+                it->second = val;
+            }
+            // 不创建新变量——回滚不应引入编译期未注册的变量
+        }
+        // 同步失效 globalCache_ 中对应条目（避免命中旧值）
+        // globalCache_ 的 key 是 chunk 常量池字符串指针，无法按 name 直接清理，
+        // 但下次 lookup 时 generation 检查会捕获 globals_ size 变化。
+        // 由于回滚不改变 globals_ size（仅覆盖现有值），需要手动清理缓存。
+        // 简化：清空整个 globalCache_，下次 lookup 重建。
+    }
+    globalCache_.clear();
+
+    // (4) 清理 openUpvalues_（slots >= 新栈大小的 open upvalue 已悬垂）
+    size_t newStackSize = stack_.size();
+    while (!openUpvalues_.empty()) {
+        auto it = openUpvalues_.begin();
+        if (it->first >= newStackSize) {
+            openUpvalues_.erase(it);
+        } else {
+            break; // openUpvalues_ 按 stackSlot 排序，遇到 < newStackSize 即可停止
+        }
+    }
+
+    // (5) 清理 tryStack_（frameIndex >= targetFrameCount 的 handler 已悬垂）
+    while (!tryStack_.empty() && tryStack_.back().frameIndex >= targetFrameCount) {
+        tryStack_.pop_back();
+    }
+
+    // (6) 保守清空 pendingJumpStack_（break/continue 跨回滚未定义）
+    pendingJumpStack_.clear();
+
+    // (7) 清理错误/暂存状态
+    lastError_.clear();
+    lastErrorLine_ = 0;
+    hasError_ = false;
+    lastMutatedReceiver_ = Value::nullValue();
+    pendingFieldOrder_.clear();
+
+    return true;
 }
 
 VMResult VM::stepOnce() {
@@ -1027,9 +1388,10 @@ VMResult VM::stepOnce() {
     // 注意：execute() 使用每次调用重新开始的局部计数器，而 stepOnce 使用成员
     // stepInstructionCount_ 跨调用累计——因为单步模式下程序由 IDE 多次调用推进，
     // 若每次 stepOnce 都从 0 计数，无限循环单步将绕过指令数上限。
-    if (++stepInstructionCount_ > MAX_INSTRUCTIONS) {
-        lastError_ =
-            ErrorFormat::format("指令执行数超过上限 %lld，疑似无限循环", static_cast<long long>(MAX_INSTRUCTIONS));
+    // L7 fix: 改为读取 RuntimeConfig 运行时配置（教学场景可调）
+    const int64_t dynMaxInstr = RuntimeLimits::RuntimeConfig::instance().maxInstructions();
+    if (++stepInstructionCount_ > dynMaxInstr) {
+        lastError_ = ErrorFormat::format("指令执行数超过上限 %lld，疑似无限循环", static_cast<long long>(dynMaxInstr));
         lastErrorLine_ = 0;
         hasError_ = true;
         return VMResult::VM_RUNTIME_ERROR;
@@ -1129,9 +1491,11 @@ VMResult VM::execute(const CompileResult& result) {
         if (hasError_)
             return VMResult::VM_RUNTIME_ERROR;
         // S-02 fix: 检查指令预算
-        if (++instructionCount > MAX_INSTRUCTIONS) {
+        // L7 fix: 改为读取 RuntimeConfig 运行时配置（教学场景可调）
+        const int64_t dynMaxInstr = RuntimeLimits::RuntimeConfig::instance().maxInstructions();
+        if (++instructionCount > dynMaxInstr) {
             lastError_ =
-                ErrorFormat::format("指令执行数超过上限 %lld，疑似无限循环", static_cast<long long>(MAX_INSTRUCTIONS));
+                ErrorFormat::format("指令执行数超过上限 %lld，疑似无限循环", static_cast<long long>(dynMaxInstr));
             lastErrorLine_ = 0;
             hasError_ = true;
             return VMResult::VM_RUNTIME_ERROR;
@@ -1246,6 +1610,7 @@ VMResult VM::executeOneInstruction() {
     // 容器与成员操作类
     case OpCode::OP_BUILD_ARRAY:
     case OpCode::OP_BUILD_DICT:
+    case OpCode::OP_BUILD_TUPLE: // R98 元组与解构
     case OpCode::OP_INDEX_GET:
     case OpCode::OP_INDEX_SET:
     case OpCode::OP_INDEX_SET_VAR:
@@ -1255,6 +1620,9 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_MEMBER_SET_VAR:
     case OpCode::OP_MEMBER_SET_LOCAL:
     case OpCode::OP_SUPER_MEMBER_GET:
+    case OpCode::OP_BUILD_ENUM_VARIANT: // R99 枚举与 ADT
+    case OpCode::OP_ENUM_VARIANT_NAME:
+    case OpCode::OP_ENUM_VARIANT_FIELD:
         return executeContainerOps(op, ip);
 
     // 嵌套访问写回类
@@ -1282,7 +1650,14 @@ VMResult VM::executeOneInstruction() {
     case OpCode::OP_TYPE_CHECK:
     case OpCode::OP_PUSH_JUMP_TARGET:
     case OpCode::OP_FINALLY_END:
+    case OpCode::OP_SWAP:      // R99 match 表达式：交换栈顶两个值
+    case OpCode::OP_LEN:       // R134 模式匹配扩展：获取容器长度
+    case OpCode::OP_TYPE_TEST: // R134 模式匹配扩展：软类型测试
         return executeMiscOps(op, ip);
+
+    // R164 协程/生成器
+    case OpCode::OP_YIELD:
+        return executeCoroutineOps(op, ip);
 
     default:
         return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
@@ -1521,7 +1896,40 @@ VMResult VM::executeCompareOps(OpCode op, size_t& ip) {
 // 变量操作类指令
 // ============================================================
 
+// R119 重构：原 executeVarOps 289 行单 switch 拆为 thin dispatcher + 4 个 helper。
+// 拆分依据：与 R118 executeContainerOps 同模式（VM 类 execute*Ops 系列 + 共享状态全成员
+// + 4 大语义分组：按名称变量/整数槽全局/局部/Upvalue）。原 case 平均 20 行（最大 49 行），
+// 不属于 R107 准则定义的扁平 dispatch switch。helper 签名 (OpCode op, size_t& ip) 即可，
+// 共享状态传递成本为零。
 VMResult VM::executeVarOps(OpCode op, size_t& ip) {
+    switch (op) {
+    case OpCode::OP_DEFINE_VAR:
+    case OpCode::OP_GET_VAR:
+    case OpCode::OP_SET_VAR:
+    case OpCode::OP_DELETE_VAR:
+        return executeVarNameOps(op, ip);
+    case OpCode::OP_GET_GLOBAL:
+    case OpCode::OP_SET_GLOBAL:
+    case OpCode::OP_DEFINE_GLOBAL:
+    case OpCode::OP_DELETE_GLOBAL:
+        return executeGlobalSlotOps(op, ip);
+    case OpCode::OP_GET_LOCAL:
+    case OpCode::OP_SET_LOCAL:
+        return executeLocalOps(op, ip);
+    case OpCode::OP_GET_UPVALUE:
+    case OpCode::OP_SET_UPVALUE:
+    case OpCode::OP_CLOSE_UPVALUE:
+        return executeUpvalueOps(op, ip);
+    default:
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+    }
+}
+
+// ============================================================
+// executeVarNameOps - 按名称变量指令（slot 快速路径 + 内联缓存 + fallback globals_）
+// OP_DEFINE_VAR / OP_GET_VAR / OP_SET_VAR / OP_DELETE_VAR
+// ============================================================
+VMResult VM::executeVarNameOps(OpCode op, size_t& ip) {
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
 
@@ -1582,6 +1990,13 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
                 globalCache_[namePtr] = {&it->second, curGen};
                 push(it->second);
             } else {
+                // R97 #11 fix: 三后端 super 错误消息统一。
+                // Compiler::visitSuperExpr 在非方法上下文 emit OP_GET_VAR "this"，
+                // VM 在此回退到 GLOBAL_NAME 查找失败。原报 "未定义的变量: this"，
+                // 与 Interpreter "super 只能在类方法中使用" 不一致。统一为后者。
+                if (name == "this") {
+                    return runtimeError(ErrorMessages::kSuperOutsideMethod);
+                }
                 return runtimeError("未定义的变量: " + name);
             }
         }
@@ -1654,8 +2069,22 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         break;
     }
 
-        // ---- A2: 全局变量整数槽位指令 ----
+    default:
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+    }
 
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// executeGlobalSlotOps - 整数槽全局变量指令
+// OP_GET_GLOBAL / OP_SET_GLOBAL / OP_DEFINE_GLOBAL / OP_DELETE_GLOBAL
+// ============================================================
+VMResult VM::executeGlobalSlotOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+
+    switch (op) {
     case OpCode::OP_GET_GLOBAL: {
         uint16_t slot = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
         if (slot >= globalSlots_.size())
@@ -1699,6 +2128,22 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         break;
     }
 
+    default:
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// executeLocalOps - 局部变量指令（含 fieldsModified 标记同步）
+// OP_GET_LOCAL / OP_SET_LOCAL
+// ============================================================
+VMResult VM::executeLocalOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+
+    switch (op) {
     case OpCode::OP_GET_LOCAL: {
         uint8_t slot = chunk.code[ip + 1];
         size_t bp = currentFrame().basePointer;
@@ -1729,7 +2174,22 @@ VMResult VM::executeVarOps(OpCode op, size_t& ip) {
         break;
     }
 
-    // VM-05/06: upvalue 读写操作码
+    default:
+        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+    }
+
+    return VMResult::VM_OK;
+}
+
+// ============================================================
+// executeUpvalueOps - Upvalue 闭包指令（open/closed 双路径 + owningFrameIdx 字段同步）
+// OP_GET_UPVALUE / OP_SET_UPVALUE / OP_CLOSE_UPVALUE
+// ============================================================
+VMResult VM::executeUpvalueOps(OpCode op, size_t& ip) {
+    VMCallFrame& frame = currentFrame();
+    const BytecodeChunk& chunk = *frame.chunk;
+
+    switch (op) {
     case OpCode::OP_GET_UPVALUE: {
         uint8_t uvIdx = chunk.code[ip + 1];
         if (static_cast<size_t>(uvIdx) >= frame.upvalues.size()) {

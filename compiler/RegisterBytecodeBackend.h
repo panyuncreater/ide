@@ -69,4 +69,35 @@ private:
     // P0-REGALLOC fix: 寄存器分配辅助
     void collectVRegLastUse(const IRFunction& ir); // 预扫描构建 vregLastUse_ 与 lastUseToVregs_
     void releaseDeadVRegs(size_t instrIndex);      // 释放最后使用点 == instrIndex 的 vreg 寄存器
+
+    // lowerInstruction 按 IROp 类别拆分的私有 lowering 方法。
+    // 主函数 lowerInstruction 保留 switch 外壳，每个 case 调用对应的 lowerXxxOps。
+    // 三后端语义等价 / 寄存器分配 / patch 位置约定等不变量在拆分后保持一致。
+    bool lowerConstOps(const IRInstruction& instr, const IRFunction& ir);   // LOAD_CONST/NULL/TRUE/FALSE
+    bool lowerArithOps(const IRInstruction& instr, const IRFunction& ir);   // ADD/SUB/MUL/DIV/MOD/NEGATE
+    bool lowerCompareOps(const IRInstruction& instr, const IRFunction& ir); // EQ/NEQ/LT/GT/LTE/GTE
+    bool lowerLogicOps(const IRInstruction& instr, const IRFunction& ir);   // NOT（AND/OR 已在 AST 层展开为分支）
+    bool lowerVarOps(const IRInstruction& instr, const IRFunction& ir); // LOAD/STORE/DEFINE_GLOBAL + LOCAL + DELETE_VAR
+    bool lowerControlOps(const IRInstruction& instr,
+                         const IRFunction& ir);                          // LABEL/JUMP/JUMP_IF_FALSE/RETURN/RETURN_NULL
+    bool lowerCallOps(const IRInstruction& instr, const IRFunction& ir); // CALL/CALL_EXPR/METHOD_CALL/SUPER_CALL
+    bool lowerContainerOps(const IRInstruction& instr,
+                           const IRFunction& ir); // BUILD_*/INDEX_*/MEMBER_*/SUPER_MEMBER_GET
+    // ---- R133-A fix: lowerContainerOps 203 行拆为 thin dispatcher + 4 helper（按操作类型分组，
+    // 与 R118 StackVM executeContainerOps 拆分模式同构：BUILD/INDEX/ENUM_QUERY/MEMBER）----
+    bool lowerContainerBuildOps(const IRInstruction& instr,
+                                const IRFunction& ir); // BUILD_ARRAY/DICT/TUPLE/ENUM_VARIANT
+    bool lowerContainerIndexOps(const IRInstruction& instr, const IRFunction& ir); // INDEX_GET/INDEX_SET
+    bool lowerContainerEnumQueryOps(const IRInstruction& instr,
+                                    const IRFunction& ir); // ENUM_VARIANT_NAME/ENUM_VARIANT_FIELD
+    bool lowerContainerMemberOps(const IRInstruction& instr,
+                                 const IRFunction& ir); // MEMBER_GET/SUPER_MEMBER_GET/MEMBER_SET
+    bool lowerUpvalueOps(const IRInstruction& instr,
+                         const IRFunction& ir); // MAKE_CLOSURE/CLOSE_UPVALUE/LOAD|STORE_UPVALUE
+    bool lowerClassOps(const IRInstruction& instr, const IRFunction& ir); // DEFINE_CLASS/CLASS_NEW/INIT_FIELD
+    bool lowerMiscOps(const IRInstruction& instr,
+                      const IRFunction& ir); // PRINT/THROW/TYPE_CHECK/TRY_*/WRITEBACK_*/POP/DUP/LOAD_MUTATED 等
+
+    // 全局变量名查找辅助（idx 越界返回空字符串），原 lowerInstruction 内 lambda 提取为静态方法
+    static std::string globalName(const IRFunction& ir, uint32_t idx);
 };

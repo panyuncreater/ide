@@ -9,7 +9,7 @@
 // ============================================================
 
 #include "compiler/RegisterBytecodeBackend.h"
-#include "Logger.h"
+#include "common/Logger.h"
 
 RegisterBytecodeBackend::RegisterBytecodeBackend() = default;
 
@@ -172,6 +172,9 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
     chunk_->upvalues = ir.upvalues;
     // BUG-IDE-12 fix: 复制 slot→name 映射，供 RegisterVM 条件断点求值反查变量名
     chunk_->localRegNames = ir.localSlotNames;
+    // R164 协程/生成器：复制生成器标记和 yieldCount（RegisterVM 在 REG_CALL 时检测）
+    chunk_->isGenerator = ir.isGenerator;
+    chunk_->yieldCount = ir.yieldCount;
 
     // 复制常量池（保持索引一致）
     for (const auto& c : ir.constants) {
@@ -201,34 +204,196 @@ bool RegisterBytecodeBackend::lower(const IRFunction& ir) {
             ++instrIndex;
         }
     }
-    return patchJumps();
+    if (!patchJumps())
+        return false;
+
+    // L1 fix: 将 IR 指令范围的 slotNameRanges 翻译为字节码 IP 范围（对齐 BytecodeIRBackend）
+    if (!ir.slotNameRanges.empty() && !irToBytecodeOffset_.empty()) {
+        auto translateInstr = [this](size_t instrIdx) -> size_t {
+            size_t lo = 0, hi = irToBytecodeOffset_.size();
+            while (lo < hi) {
+                size_t mid = (lo + hi) / 2;
+                if (irToBytecodeOffset_[mid].first <= instrIdx)
+                    lo = mid + 1;
+                else
+                    hi = mid;
+            }
+            if (lo == 0)
+                return irToBytecodeOffset_[0].second;
+            return irToBytecodeOffset_[lo - 1].second;
+        };
+        for (const auto& range : ir.slotNameRanges) {
+            RegBytecodeChunk::SlotNameRange out;
+            out.slot = static_cast<uint8_t>(range.slot);
+            out.name = range.name;
+            out.startIp = translateInstr(range.startInstr);
+            if (range.endInstr == 0) {
+                out.endIp = 0;
+            } else {
+                out.endIp = translateInstr(range.endInstr);
+            }
+            chunk_->slotNameRanges.push_back(std::move(out));
+        }
+    }
+    return true;
 }
 
+// ============================================================
+// lowerInstruction — 按 IROp 类别分发的 lowering 主入口
+// ------------------------------------------------------------
+// 本函数原为 979 行的巨型 switch，按 IROp 类别拆分为 11 个 lowerXxxOps 私有方法。
+// 主函数保留 switch 外壳做类别分发，每个 case 调用对应的 lowerXxxOps。
+// 三后端语义等价 / 寄存器分配 / patch 位置约定等不变量在拆分后保持一致。
+//
+// 统一的写码约定（理解各 lowerXxxOps 内部 case 的关键）：
+//   · writeOp(RegOp)        写 1 字节操作码。
+//   · writeReg(reg)         写 1 字节"寄存器号"(0..31)，内部 assert(reg<32)——只用于真正的寄存器。
+//   · writeShort(uint16)    写 2 字节小端常量池索引 / 跳转目标 / 名称索引。
+//   · writeByte(uint8)      写 1 字节"数量或描述符"(argCount/uvCount/fieldCount/isLocal/idx 等)，
+//                           无 assert。正因如此，凡"数量操作数"必须用 writeByte 而非 writeReg，
+//                           否则数量 >= 32 时 Debug 构建的 assert 会崩溃（见各处 AUDIT-BUG-C1）。
+// 寄存器式与栈式的本质差异：所有中间结果存在固定寄存器而非操作数栈，故 POP/DUP 退化为
+// REG_MOVE 或 no-op；嵌套左值变异时 obj 寄存器记录在 lastMutatedReceiverReg_，由 WRITEBACK_*
+// 读取——这正是 collectVRegLastUse 需把 obj vreg 寿命延到 WRITEBACK 之后的原因。
+// AUDIT-P2 fix: vregToReg 溢出后设置 hasError_ 并返回占位 reg=0，但此前各 case 不检查
+// hasError_ 仍继续写入损坏字节码。在 lowerInstruction 入口快速失败，避免溢出后后续
+// 指令继续写入。当前指令的损坏字节码由 lower() 行 164 的 hasError_ 检查兜底（return false），
+// chunk_ 不会被 VM 加载使用。
+// ============================================================
 bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const IRFunction& ir) {
-    // lowerInstruction 是整个后端的"翻译核心"：把一条 SSA-like IR 指令映射为若干条
-    // 寄存器式字节码。统一的写码约定（理解下方所有 case 的关键）：
-    //   · writeOp(RegOp)        写 1 字节操作码。
-    //   · writeReg(reg)         写 1 字节"寄存器号"(0..31)，内部 assert(reg<32)——只用于真正的寄存器。
-    //   · writeShort(uint16)    写 2 字节小端常量池索引 / 跳转目标 / 名称索引。
-    //   · writeByte(uint8)      写 1 字节"数量或描述符"(argCount/uvCount/fieldCount/isLocal/idx 等)，
-    //                           无 assert。正因如此，凡"数量操作数"必须用 writeByte 而非 writeReg，
-    //                           否则数量 >= 32 时 Debug 构建的 assert 会崩溃（见各处 AUDIT-BUG-C1）。
-    // 寄存器式与栈式的本质差异：所有中间结果存在固定寄存器而非操作数栈，故 POP/DUP 退化为
-    // REG_MOVE 或 no-op；嵌套左值变异时 obj 寄存器记录在 lastMutatedReceiverReg_，由 WRITEBACK_*
-    // 读取——这正是 collectVRegLastUse 需把 obj vreg 寿命延到 WRITEBACK 之后的原因。
-    // AUDIT-P2 fix: vregToReg 溢出后设置 hasError_ 并返回占位 reg=0，但此前各 case 不检查
-    // hasError_ 仍继续写入损坏字节码。在 lowerInstruction 入口快速失败，避免溢出后后续
-    // 指令继续写入。当前指令的损坏字节码由 lower() 行 164 的 hasError_ 检查兜底（return false），
-    // chunk_ 不会被 VM 加载使用。
     if (hasError_)
         return false;
-    auto globalName = [&](uint32_t idx) -> std::string {
-        return idx < ir.globalNames.size() ? ir.globalNames[idx] : std::string{};
-    };
 
-    int line = instr.line;
     switch (instr.op) {
     // ---- 常量加载 ----
+    case IROp::LOAD_CONST:
+    case IROp::LOAD_NULL:
+    case IROp::LOAD_TRUE:
+    case IROp::LOAD_FALSE:
+        return lowerConstOps(instr, ir);
+
+    // ---- 局部变量 / 全局变量 ----
+    case IROp::LOAD_LOCAL:
+    case IROp::STORE_LOCAL:
+    case IROp::LOAD_GLOBAL:
+    case IROp::STORE_GLOBAL:
+    case IROp::DEFINE_GLOBAL:
+    case IROp::DELETE_VAR:
+        return lowerVarOps(instr, ir);
+
+    // ---- upvalue / 闭包 ----
+    case IROp::LOAD_UPVALUE:
+    case IROp::STORE_UPVALUE:
+    case IROp::CLOSE_UPVALUE:
+    case IROp::MAKE_CLOSURE:
+        return lowerUpvalueOps(instr, ir);
+
+    // ---- 算术 ----
+    case IROp::ADD:
+    case IROp::SUB:
+    case IROp::MUL:
+    case IROp::DIV:
+    case IROp::MOD:
+    case IROp::NEGATE:
+        return lowerArithOps(instr, ir);
+
+    // ---- 比较 ----
+    case IROp::EQ:
+    case IROp::NEQ:
+    case IROp::LT:
+    case IROp::GT:
+    case IROp::LTE:
+    case IROp::GTE:
+        return lowerCompareOps(instr, ir);
+
+    // ---- 逻辑 ----
+    case IROp::NOT:
+        return lowerLogicOps(instr, ir);
+
+    // ---- 控制流 ----
+    case IROp::LABEL:
+    case IROp::JUMP:
+    case IROp::JUMP_IF_FALSE:
+    case IROp::RETURN:
+    case IROp::RETURN_NULL:
+    // R164 协程/生成器：YIELD 可中断执行（抛 VMYieldSignal），归入控制流组
+    case IROp::YIELD:
+        return lowerControlOps(instr, ir);
+
+    // ---- 调用 ----
+    case IROp::CALL:
+    case IROp::CALL_EXPR:
+    case IROp::METHOD_CALL:
+    case IROp::SUPER_CALL:
+        return lowerCallOps(instr, ir);
+
+    // ---- 容器 / 成员访问 ----
+    case IROp::BUILD_ARRAY:
+    case IROp::BUILD_DICT:
+    case IROp::BUILD_TUPLE:
+    case IROp::INDEX_GET:
+    case IROp::INDEX_SET:
+    case IROp::MEMBER_GET:
+    case IROp::SUPER_MEMBER_GET:
+    case IROp::MEMBER_SET:
+    // R99 枚举与 ADT：enum variant 构造/检查/取字段（与容器指令同属 lowerContainerOps）
+    case IROp::BUILD_ENUM_VARIANT:
+    case IROp::ENUM_VARIANT_NAME:
+    case IROp::ENUM_VARIANT_FIELD:
+    // R133 模式匹配扩展：容器长度（与容器指令同属 lowerContainerOps）
+    case IROp::LEN:
+        return lowerContainerOps(instr, ir);
+
+    // ---- 类 ----
+    case IROp::DEFINE_CLASS:
+    case IROp::CLASS_NEW:
+    case IROp::INIT_FIELD:
+        return lowerClassOps(instr, ir);
+
+    // ---- 异常 / 写回 / 其他 ----
+    case IROp::TRY_BEGIN:
+    case IROp::TRY_END:
+    case IROp::THROW:
+    case IROp::LOAD_EXCEPTION:
+    case IROp::PUSH_JUMP_TARGET:
+    case IROp::FINALLY_END:
+    case IROp::WRITEBACK_MEMBER_VAR:
+    case IROp::WRITEBACK_MEMBER_LOCAL:
+    case IROp::WRITEBACK_INDEX_VAR:
+    case IROp::WRITEBACK_INDEX_LOCAL:
+    case IROp::WRITEBACK_MEMBER_UPVALUE:
+    case IROp::WRITEBACK_INDEX_UPVALUE:
+    case IROp::PRINT:
+    case IROp::POP:
+    case IROp::DUP:
+    case IROp::LOAD_MUTATED:
+    case IROp::TYPE_CHECK:
+    case IROp::TYPE_TEST: // R133: 软类型测试，与 TYPE_CHECK 同属 misc 类
+        return lowerMiscOps(instr, ir);
+
+    default:
+        Logger::Error("RegisterBytecodeBackend: 未支持的 IR 指令 " + std::to_string(static_cast<int>(instr.op)),
+                      "RegIR");
+        return false;
+    }
+}
+
+// ============================================================
+// globalName — 全局变量名查找辅助
+// ------------------------------------------------------------
+// idx 越界返回空字符串。原 lowerInstruction 内的 lambda，提取为静态方法
+// 供各 lowerXxxOps 共用。
+// ============================================================
+std::string RegisterBytecodeBackend::globalName(const IRFunction& ir, uint32_t idx) {
+    return idx < ir.globalNames.size() ? ir.globalNames[idx] : std::string{};
+}
+
+// ============================================================
+// lowerConstOps — 常量加载类（LOAD_CONST / LOAD_NULL / LOAD_TRUE / LOAD_FALSE）
+// ============================================================
+bool RegisterBytecodeBackend::lowerConstOps(const IRInstruction& instr, const IRFunction& /*ir*/) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::LOAD_CONST: {
         if (instr.operands.size() < 2)
             return false;
@@ -263,7 +428,18 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(dst, line);
         break;
     }
+    default:
+        return false;
+    }
+    return true;
+}
 
+// ============================================================
+// lowerVarOps — 变量类（LOAD/STORE_LOCAL + LOAD/STORE/DEFINE_GLOBAL + DELETE_VAR）
+// ============================================================
+bool RegisterBytecodeBackend::lowerVarOps(const IRInstruction& instr, const IRFunction& ir) {
+    int line = instr.line;
+    switch (instr.op) {
     // ---- 局部变量（在寄存器式中，local slot 即寄存器）----
     case IROp::LOAD_LOCAL: {
         // IR: LOAD_LOCAL dest_vreg, slot
@@ -318,7 +494,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         } else {
             // 名称版：将名称作为常量，用高 bit 标记（slot < 32768, nameIdx >= 32768）
             // 简化：名称版也走常量池查找 slot
-            uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
+            uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[1].index), ir);
             chunk_->writeOp(RegOp::REG_LOAD_GLOBAL, line);
             chunk_->writeReg(dst, line);
             chunk_->writeShort(nameIdx | 0x8000, line); // 高 bit 置 1 表示名称索引
@@ -334,7 +510,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             chunk_->writeReg(src, line);
             chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
         } else {
-            uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
             chunk_->writeOp(RegOp::REG_STORE_GLOBAL, line);
             chunk_->writeReg(src, line);
             chunk_->writeShort(nameIdx | 0x8000, line);
@@ -350,7 +526,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             chunk_->writeReg(src, line);
             chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
         } else {
-            uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
             chunk_->writeOp(RegOp::REG_DEFINE_GLOBAL, line);
             chunk_->writeReg(src, line);
             chunk_->writeShort(nameIdx | 0x8000, line);
@@ -371,14 +547,24 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             Logger::Error("RegisterBytecodeBackend: DELETE_VAR 不支持 IMM_UINT kind（无 slot→name 表）", "RegIR");
             return false;
         } else {
-            nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            nameIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
         }
         chunk_->writeOp(RegOp::REG_DELETE_GLOBAL, line);
         chunk_->writeShort(nameIdx, line);
         break;
     }
+    default:
+        return false;
+    }
+    return true;
+}
 
-    // ---- upvalue ----
+// ============================================================
+// lowerUpvalueOps — 闭包 upvalue 类（LOAD/STORE_UPVALUE + CLOSE_UPVALUE + MAKE_CLOSURE）
+// ============================================================
+bool RegisterBytecodeBackend::lowerUpvalueOps(const IRInstruction& instr, const IRFunction& ir) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::LOAD_UPVALUE: {
         if (instr.operands.size() < 2)
             return false;
@@ -437,8 +623,64 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         }
         break;
     }
+    case IROp::MAKE_CLOSURE: {
+        // IR: MAKE_CLOSURE dest, name_idx, uv_count, [isLocal, idx]×uv_count
+        if (instr.operands.size() < 3)
+            return false;
+        // P2-3 fix: uvCount/isLocal/idx 经 writeByte 编码为 1 字节，
+        // & 0xFF 静默截断会生成错误 upvalue 描述符（闭包捕获错误变量）。
+        if (instr.operands[2].index >= 256) {
+            Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE uvCount 超出 255 上限 (" +
+                              std::to_string(instr.operands[2].index) + ")",
+                          "RegIR");
+            hasError_ = true;
+            return false;
+        }
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[1].index), ir);
+        uint8_t uvCount = static_cast<uint8_t>(instr.operands[2].index);
+        chunk_->writeOp(RegOp::REG_MAKE_CLOSURE, line);
+        chunk_->writeReg(dst, line); // dst 是真正的寄存器号，用 writeReg
+        chunk_->writeShort(nameIdx, line);
+        // AUDIT-REGVB fix: uvCount/isLocal/idx 不是寄存器号，是 upvalue 描述符。
+        // 原用 writeReg（含 assert(reg < 32)），uvCount >= 32 或 idx >= 32 时 Debug 构建崩溃。
+        // 改用 writeByte（无 assert），合法范围 0-255 已由上方 >= 256 检查保证。
+        chunk_->writeByte(uvCount, line);
+        for (uint8_t i = 0; i < uvCount; ++i) {
+            size_t base = 3 + i * 2;
+            if (base + 1 >= instr.operands.size())
+                return false;
+            if (instr.operands[base].index >= 256) {
+                Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE isLocal 超出 255 上限 (" +
+                                  std::to_string(instr.operands[base].index) + ")",
+                              "RegIR");
+                hasError_ = true;
+                return false;
+            }
+            if (instr.operands[base + 1].index >= 256) {
+                Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE upvalue idx 超出 255 上限 (" +
+                                  std::to_string(instr.operands[base + 1].index) + ")",
+                              "RegIR");
+                hasError_ = true;
+                return false;
+            }
+            chunk_->writeByte(static_cast<uint8_t>(instr.operands[base].index), line);     // isLocal
+            chunk_->writeByte(static_cast<uint8_t>(instr.operands[base + 1].index), line); // idx
+        }
+        break;
+    }
+    default:
+        return false;
+    }
+    return true;
+}
 
-    // ---- 算术 ----
+// ============================================================
+// lowerArithOps — 算术类（ADD / SUB / MUL / DIV / MOD / NEGATE）
+// ============================================================
+bool RegisterBytecodeBackend::lowerArithOps(const IRInstruction& instr, const IRFunction& /*ir*/) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::ADD:
     case IROp::SUB:
     case IROp::MUL:
@@ -485,8 +727,18 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(src, line);
         break;
     }
+    default:
+        return false;
+    }
+    return true;
+}
 
-    // ---- 比较 ----
+// ============================================================
+// lowerCompareOps — 比较类（EQ / NEQ / LT / GT / LTE / GTE）
+// ============================================================
+bool RegisterBytecodeBackend::lowerCompareOps(const IRInstruction& instr, const IRFunction& /*ir*/) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::EQ:
     case IROp::NEQ:
     case IROp::LT:
@@ -527,6 +779,20 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(s2, line);
         break;
     }
+    default:
+        return false;
+    }
+    return true;
+}
+
+// ============================================================
+// lowerLogicOps — 逻辑类（NOT）
+// ------------------------------------------------------------
+// 注：AND/OR 已在 AST 层展开为分支（短路语义），IR 层只有 NOT。
+// ============================================================
+bool RegisterBytecodeBackend::lowerLogicOps(const IRInstruction& instr, const IRFunction& /*ir*/) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::NOT: {
         if (instr.operands.size() < 2)
             return false;
@@ -537,8 +803,18 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(src, line);
         break;
     }
+    default:
+        return false;
+    }
+    return true;
+}
 
-    // ---- 控制流 ----
+// ============================================================
+// lowerControlOps — 控制流类（LABEL / JUMP / JUMP_IF_FALSE / RETURN / RETURN_NULL）
+// ============================================================
+bool RegisterBytecodeBackend::lowerControlOps(const IRInstruction& instr, const IRFunction& /*ir*/) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::LABEL: {
         if (instr.operands.empty())
             return false;
@@ -575,14 +851,38 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeOp(RegOp::REG_RETURN_NULL, line);
         break;
     }
+    // R164 协程/生成器：YIELD dest, src → REG_YIELD dst, src（3 字节）
+    // 语义：RegisterVM 执行 REG_YIELD 时比较运行时计数器与目标 yieldId，
+    //   - 命中目标：抛 VMYieldSignal 返回 src 寄存器值
+    //   - 未命中：dst = src，继续执行函数体
+    case IROp::YIELD: {
+        if (instr.operands.size() < 2)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t src = vregToReg(instr.operands[1].index);
+        chunk_->writeOp(RegOp::REG_YIELD, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeReg(src, line);
+        break;
+    }
+    default:
+        return false;
+    }
+    return true;
+}
 
-    // ---- 调用 ----
+// ============================================================
+// lowerCallOps — 调用类（CALL / CALL_EXPR / METHOD_CALL / SUPER_CALL）
+// ============================================================
+bool RegisterBytecodeBackend::lowerCallOps(const IRInstruction& instr, const IRFunction& ir) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::CALL: {
         // IR: CALL dest, fun_name_idx, arg_count, arg1, ...
         if (instr.operands.size() < 3)
             return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
-        uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
+        uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[1].index), ir);
         // 参数数量上限检查：CALL 无隐式 this，上限 255
         if (instr.operands[2].index > 255) {
             Logger::Error("RegisterBytecodeBackend: CALL 参数数量超过 255 上限", "RegIR");
@@ -636,7 +936,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint8_t obj = vregToReg(instr.operands[1].index);
-        uint16_t methodIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        uint16_t methodIdx = addStringConstant(globalName(ir, instr.operands[2].index), ir);
         // 参数数量上限检查：METHOD_CALL 运行时 +1（this），上限 254
         if (instr.operands[3].index > 254) {
             Logger::Error("RegisterBytecodeBackend: METHOD_CALL 参数数量超过 254 上限（含 this 共 255）", "RegIR");
@@ -665,8 +965,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint8_t recvReg = vregToReg(instr.operands[1].index);
-        uint16_t methodIdx = addStringConstant(globalName(instr.operands[2].index), ir);
-        uint16_t classIdx = addStringConstant(globalName(instr.operands[3].index), ir);
+        uint16_t methodIdx = addStringConstant(globalName(ir, instr.operands[2].index), ir);
+        uint16_t classIdx = addStringConstant(globalName(ir, instr.operands[3].index), ir);
         if (instr.operands[4].index > 254) {
             Logger::Error("RegisterBytecodeBackend: SUPER_CALL 参数数量超过 254 上限（含 this 共 255）", "RegIR");
             hasError_ = true;
@@ -688,56 +988,52 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         }
         break;
     }
-
-    // ---- 闭包 ----
-    case IROp::MAKE_CLOSURE: {
-        // IR: MAKE_CLOSURE dest, name_idx, uv_count, [isLocal, idx]×uv_count
-        if (instr.operands.size() < 3)
-            return false;
-        // P2-3 fix: uvCount/isLocal/idx 经 writeByte 编码为 1 字节，
-        // & 0xFF 静默截断会生成错误 upvalue 描述符（闭包捕获错误变量）。
-        if (instr.operands[2].index >= 256) {
-            Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE uvCount 超出 255 上限 (" +
-                              std::to_string(instr.operands[2].index) + ")",
-                          "RegIR");
-            hasError_ = true;
-            return false;
-        }
-        uint8_t dst = vregToReg(instr.operands[0].index);
-        uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
-        uint8_t uvCount = static_cast<uint8_t>(instr.operands[2].index);
-        chunk_->writeOp(RegOp::REG_MAKE_CLOSURE, line);
-        chunk_->writeReg(dst, line); // dst 是真正的寄存器号，用 writeReg
-        chunk_->writeShort(nameIdx, line);
-        // AUDIT-REGVB fix: uvCount/isLocal/idx 不是寄存器号，是 upvalue 描述符。
-        // 原用 writeReg（含 assert(reg < 32)），uvCount >= 32 或 idx >= 32 时 Debug 构建崩溃。
-        // 改用 writeByte（无 assert），合法范围 0-255 已由上方 >= 256 检查保证。
-        chunk_->writeByte(uvCount, line);
-        for (uint8_t i = 0; i < uvCount; ++i) {
-            size_t base = 3 + i * 2;
-            if (base + 1 >= instr.operands.size())
-                return false;
-            if (instr.operands[base].index >= 256) {
-                Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE isLocal 超出 255 上限 (" +
-                                  std::to_string(instr.operands[base].index) + ")",
-                              "RegIR");
-                hasError_ = true;
-                return false;
-            }
-            if (instr.operands[base + 1].index >= 256) {
-                Logger::Error("RegisterBytecodeBackend: MAKE_CLOSURE upvalue idx 超出 255 上限 (" +
-                                  std::to_string(instr.operands[base + 1].index) + ")",
-                              "RegIR");
-                hasError_ = true;
-                return false;
-            }
-            chunk_->writeByte(static_cast<uint8_t>(instr.operands[base].index), line);     // isLocal
-            chunk_->writeByte(static_cast<uint8_t>(instr.operands[base + 1].index), line); // idx
-        }
-        break;
+    default:
+        return false;
     }
+    return true;
+}
 
-    // ---- 容器 ----
+// ============================================================
+// lowerContainerOps — 容器 / 成员访问类（thin dispatcher）
+// R133-A 重构：原 203 行单 switch 拆为 thin dispatcher + 4 个 helper，按操作类型分组。
+// 拆分模式与 R118 StackVM executeContainerOps 同构（BUILD/INDEX/ENUM_QUERY/MEMBER 四类），
+// 这是 R118/R120 模式在 IR→RegBytecode lowering 层的跨层迁移。
+// helper 签名与原函数一致（const IRInstruction&, const IRFunction&），共享状态全成员
+// （chunk_ / hasError_ / vregToReg / addStringConstant / globalName），传递成本为零。
+// ============================================================
+bool RegisterBytecodeBackend::lowerContainerOps(const IRInstruction& instr, const IRFunction& ir) {
+    switch (instr.op) {
+    case IROp::BUILD_ARRAY:
+    case IROp::BUILD_DICT:
+    case IROp::BUILD_TUPLE:
+    case IROp::BUILD_ENUM_VARIANT:
+        return lowerContainerBuildOps(instr, ir);
+    case IROp::INDEX_GET:
+    case IROp::INDEX_SET:
+    // R133: LEN 与 INDEX_GET 同属"容器元素/属性访问"语义族
+    case IROp::LEN:
+        return lowerContainerIndexOps(instr, ir);
+    case IROp::ENUM_VARIANT_NAME:
+    case IROp::ENUM_VARIANT_FIELD:
+        return lowerContainerEnumQueryOps(instr, ir);
+    case IROp::MEMBER_GET:
+    case IROp::SUPER_MEMBER_GET:
+    case IROp::MEMBER_SET:
+        return lowerContainerMemberOps(instr, ir);
+    default:
+        return false;
+    }
+}
+
+// ============================================================
+// lowerContainerBuildOps — 容器构造指令 lowering
+// BUILD_ARRAY / BUILD_DICT / BUILD_TUPLE / BUILD_ENUM_VARIANT
+// 与 R118/R120 StackVM/RegisterVM executeContainerBuildOps/executeArrayBuildOps 同构
+// ============================================================
+bool RegisterBytecodeBackend::lowerContainerBuildOps(const IRInstruction& instr, const IRFunction& ir) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::BUILD_ARRAY: {
         // IR: BUILD_ARRAY dest, count, arg1, arg2, ...
         if (instr.operands.size() < 2)
@@ -785,6 +1081,72 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         }
         break;
     }
+    // R98 元组与解构：BUILD_TUPLE → REG_BUILD_TUPLE lowering
+    case IROp::BUILD_TUPLE: {
+        // IR: BUILD_TUPLE dest, count, arg1, arg2, ...
+        if (instr.operands.size() < 2)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        if (instr.operands[1].index > 255) {
+            Logger::Error("RegisterBytecodeBackend: BUILD_TUPLE 元素数量超过 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
+        uint8_t count = static_cast<uint8_t>(instr.operands[1].index & 0xFF);
+        chunk_->writeOp(RegOp::REG_BUILD_TUPLE, line);
+        chunk_->writeReg(dst, line);
+        // AUDIT-BUG-C1 fix: count 是数量操作数，改用 writeByte。
+        chunk_->writeByte(count, line);
+        for (uint8_t i = 0; i < count; ++i) {
+            if (2 + i >= instr.operands.size())
+                return false;
+            uint8_t elemReg = vregToReg(instr.operands[2 + i].index);
+            chunk_->writeReg(elemReg, line);
+        }
+        break;
+    }
+    // R99 枚举与 ADT：BUILD_ENUM_VARIANT → REG_BUILD_ENUM_VARIANT lowering
+    // IR: [dest_vreg, enumNameConstIdx, variantNameConstIdx, argCount, arg1, arg2, ...]
+    // RegBytecode: op + dst + enumNameIdx(2B) + variantNameIdx(2B) + argCount(1B) + argRegs...
+    case IROp::BUILD_ENUM_VARIANT: {
+        if (instr.operands.size() < 4)
+            return false;
+        if (instr.operands[3].index > 255) {
+            Logger::Error("RegisterBytecodeBackend: BUILD_ENUM_VARIANT argCount 超出 255 上限", "RegIR");
+            hasError_ = true;
+            return false;
+        }
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint16_t enumNameIdx = static_cast<uint16_t>(instr.operands[1].index);
+        uint16_t variantNameIdx = static_cast<uint16_t>(instr.operands[2].index);
+        uint8_t argCount = static_cast<uint8_t>(instr.operands[3].index & 0xFF);
+        chunk_->writeOp(RegOp::REG_BUILD_ENUM_VARIANT, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeShort(enumNameIdx, line);
+        chunk_->writeShort(variantNameIdx, line);
+        chunk_->writeByte(argCount, line);
+        for (uint8_t i = 0; i < argCount; ++i) {
+            if (4 + i >= instr.operands.size())
+                return false;
+            uint8_t argReg = vregToReg(instr.operands[4 + i].index);
+            chunk_->writeReg(argReg, line);
+        }
+        break;
+    }
+    default:
+        return false;
+    }
+    return true;
+}
+
+// ============================================================
+// lowerContainerIndexOps — 索引访问指令 lowering
+// INDEX_GET / INDEX_SET
+// ============================================================
+bool RegisterBytecodeBackend::lowerContainerIndexOps(const IRInstruction& instr, const IRFunction& ir) {
+    (void)ir; // 暂未使用 IRFunction，保留参数签名与原函数一致
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::INDEX_GET: {
         if (instr.operands.size() < 3)
             return false;
@@ -809,14 +1171,83 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(val, line);
         break;
     }
+    // R133 模式匹配扩展：LEN → REG_LEN lowering
+    // IR: [dest_vreg, src_vreg]  RegBytecode: op + dst + src
+    case IROp::LEN: {
+        if (instr.operands.size() < 2)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t src = vregToReg(instr.operands[1].index);
+        chunk_->writeOp(RegOp::REG_LEN, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeReg(src, line);
+        break;
+    }
+    default:
+        return false;
+    }
+    return true;
+}
 
-    // ---- 成员访问 ----
+// ============================================================
+// lowerContainerEnumQueryOps — 枚举 variant 查询指令 lowering
+// ENUM_VARIANT_NAME / ENUM_VARIANT_FIELD（与 R118/R120 StackVM/RegisterVM executeEnumOps 同构）
+// ============================================================
+bool RegisterBytecodeBackend::lowerContainerEnumQueryOps(const IRInstruction& instr, const IRFunction& ir) {
+    (void)ir; // 暂未使用 IRFunction，保留参数签名与原函数一致
+    int line = instr.line;
+    switch (instr.op) {
+    // R99 枚举与 ADT：ENUM_VARIANT_NAME → REG_ENUM_VARIANT_NAME lowering
+    // IR: [dest_bool, scrut_vreg, enumNameConstIdx, variantNameConstIdx]
+    // RegBytecode: op + dst + scrut + enumNameIdx(2B) + variantNameIdx(2B)
+    case IROp::ENUM_VARIANT_NAME: {
+        if (instr.operands.size() < 4)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t scrut = vregToReg(instr.operands[1].index);
+        uint16_t enumNameIdx = static_cast<uint16_t>(instr.operands[2].index);
+        uint16_t variantNameIdx = static_cast<uint16_t>(instr.operands[3].index);
+        chunk_->writeOp(RegOp::REG_ENUM_VARIANT_NAME, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeReg(scrut, line);
+        chunk_->writeShort(enumNameIdx, line);
+        chunk_->writeShort(variantNameIdx, line);
+        break;
+    }
+    // R99 枚举与 ADT：ENUM_VARIANT_FIELD → REG_ENUM_VARIANT_FIELD lowering
+    // IR: [dest, scrut_vreg, idx_vreg]
+    // RegBytecode: op + dst + scrut + idx
+    case IROp::ENUM_VARIANT_FIELD: {
+        if (instr.operands.size() < 3)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t scrut = vregToReg(instr.operands[1].index);
+        uint8_t idx = vregToReg(instr.operands[2].index);
+        chunk_->writeOp(RegOp::REG_ENUM_VARIANT_FIELD, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeReg(scrut, line);
+        chunk_->writeReg(idx, line);
+        break;
+    }
+    default:
+        return false;
+    }
+    return true;
+}
+
+// ============================================================
+// lowerContainerMemberOps — 成员访问指令 lowering
+// MEMBER_GET / SUPER_MEMBER_GET / MEMBER_SET
+// ============================================================
+bool RegisterBytecodeBackend::lowerContainerMemberOps(const IRInstruction& instr, const IRFunction& ir) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::MEMBER_GET: {
         if (instr.operands.size() < 3)
             return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint8_t obj = vregToReg(instr.operands[1].index);
-        uint16_t fieldIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        uint16_t fieldIdx = addStringConstant(globalName(ir, instr.operands[2].index), ir);
         chunk_->writeOp(RegOp::REG_MEMBER_GET, line);
         chunk_->writeReg(dst, line);
         chunk_->writeReg(obj, line);
@@ -830,7 +1261,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
         uint8_t obj = vregToReg(instr.operands[1].index);
-        uint16_t fieldIdx = addStringConstant(globalName(instr.operands[2].index), ir);
+        uint16_t fieldIdx = addStringConstant(globalName(ir, instr.operands[2].index), ir);
         chunk_->writeOp(RegOp::REG_SUPER_MEMBER_GET, line);
         chunk_->writeReg(dst, line);
         chunk_->writeReg(obj, line);
@@ -841,7 +1272,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         if (instr.operands.size() < 3)
             return false;
         uint8_t obj = vregToReg(instr.operands[0].index);
-        uint16_t fieldIdx = addStringConstant(globalName(instr.operands[1].index), ir);
+        uint16_t fieldIdx = addStringConstant(globalName(ir, instr.operands[1].index), ir);
         uint8_t val = vregToReg(instr.operands[2].index);
         chunk_->writeOp(RegOp::REG_MEMBER_SET, line);
         chunk_->writeReg(obj, line);
@@ -849,8 +1280,18 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeReg(val, line);
         break;
     }
+    default:
+        return false;
+    }
+    return true;
+}
 
-    // ---- 类 ----
+// ============================================================
+// lowerClassOps — 类相关（DEFINE_CLASS / CLASS_NEW / INIT_FIELD）
+// ============================================================
+bool RegisterBytecodeBackend::lowerClassOps(const IRInstruction& instr, const IRFunction& ir) {
+    int line = instr.line;
+    switch (instr.op) {
     case IROp::DEFINE_CLASS: {
         // C-9 fix: 携带完整类元数据（父类、字段顺序、方法名→函数名映射）
         // BUG-INH-1 fix: 新增字段默认值常量索引
@@ -866,10 +1307,10 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         //   [3+3F+1 .. ] (methodName FIELD_NAME, funName FUNC_NAME) × M
         if (instr.operands.size() < 3)
             return false;
-        uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+        uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
 
         uint32_t parentRaw = instr.operands[1].index;
-        uint16_t parentIdx = (parentRaw == UINT32_MAX) ? 0xFFFF : addStringConstant(globalName(parentRaw), ir);
+        uint16_t parentIdx = (parentRaw == UINT32_MAX) ? 0xFFFF : addStringConstant(globalName(ir, parentRaw), ir);
 
         uint32_t fieldCount = instr.operands[2].index;
         if (instr.operands.size() < 3 + fieldCount * 3 + 1)
@@ -898,7 +1339,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
             size_t nameOpIdx = 3 + i * 3;
             size_t defaultOpIdx = 3 + i * 3 + 1;
             size_t exprSlotOpIdx = 3 + i * 3 + 2;
-            uint16_t fIdx = addStringConstant(globalName(instr.operands[nameOpIdx].index), ir);
+            uint16_t fIdx = addStringConstant(globalName(ir, instr.operands[nameOpIdx].index), ir);
             chunk_->writeShort(fIdx, line);
             // BUG-INH-1 fix: 编码字段默认值常量索引（UINT32_MAX → 0xFFFF 表示 null）
             // BUG-INH-IR-1 fix: 若有非字面量表达式，default const 写 0xFFFF，
@@ -933,8 +1374,8 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeByte(static_cast<uint8_t>(methodCount), line);
         for (uint32_t i = 0; i < methodCount; ++i) {
             size_t base = 3 + fieldCount * 3 + 1 + i * 2;
-            uint16_t mIdx = addStringConstant(globalName(instr.operands[base].index), ir);
-            uint16_t fIdx = addStringConstant(globalName(instr.operands[base + 1].index), ir);
+            uint16_t mIdx = addStringConstant(globalName(ir, instr.operands[base].index), ir);
+            uint16_t fIdx = addStringConstant(globalName(ir, instr.operands[base + 1].index), ir);
             chunk_->writeShort(mIdx, line);
             chunk_->writeShort(fIdx, line);
         }
@@ -945,7 +1386,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         if (instr.operands.size() < 3)
             return false;
         uint8_t dst = vregToReg(instr.operands[0].index);
-        uint16_t nameIdx = addStringConstant(globalName(instr.operands[1].index), ir);
+        uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[1].index), ir);
         if (instr.operands[2].index > 254) {
             Logger::Error("RegisterBytecodeBackend: CLASS_NEW 参数数量超过 254 上限（含 instance 共 255）", "RegIR");
             hasError_ = true;
@@ -967,12 +1408,25 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::INIT_FIELD: {
         if (instr.operands.empty())
             return false;
-        uint16_t fieldIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+        uint16_t fieldIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
         chunk_->writeOp(RegOp::REG_INIT_FIELD, line);
         chunk_->writeShort(fieldIdx, line);
         break;
     }
+    default:
+        return false;
+    }
+    return true;
+}
 
+// ============================================================
+// lowerMiscOps — 异常 / 写回 / 其他（TRY_*/THROW/LOAD_EXCEPTION/
+//                PUSH_JUMP_TARGET/FINALLY_END/WRITEBACK_*/PRINT/POP/DUP/
+//                LOAD_MUTATED/TYPE_CHECK）
+// ============================================================
+bool RegisterBytecodeBackend::lowerMiscOps(const IRInstruction& instr, const IRFunction& ir) {
+    int line = instr.line;
+    switch (instr.op) {
     // ---- 异常 ----
     case IROp::TRY_BEGIN: {
         if (instr.operands.empty())
@@ -1029,10 +1483,10 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
             chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
         } else {
-            uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
             chunk_->writeShort(nameIdx | 0x8000, line);
         }
-        chunk_->writeShort(addStringConstant(globalName(instr.operands[1].index), ir), line);
+        chunk_->writeShort(addStringConstant(globalName(ir, instr.operands[1].index), ir), line);
         break;
     }
     case IROp::WRITEBACK_MEMBER_LOCAL: {
@@ -1046,7 +1500,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         }
         chunk_->writeOp(RegOp::REG_WRITEBACK_MEMBER_LOCAL, line);
         chunk_->writeReg(static_cast<uint8_t>(instr.operands[0].index), line);
-        chunk_->writeShort(addStringConstant(globalName(instr.operands[1].index), ir), line);
+        chunk_->writeShort(addStringConstant(globalName(ir, instr.operands[1].index), ir), line);
         break;
     }
     case IROp::WRITEBACK_INDEX_VAR: {
@@ -1057,7 +1511,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         if (instr.operands[0].kind == IROperandKind::IMM_UINT) {
             chunk_->writeShort(static_cast<uint16_t>(instr.operands[0].index), line);
         } else {
-            uint16_t nameIdx = addStringConstant(globalName(instr.operands[0].index), ir);
+            uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
             chunk_->writeShort(nameIdx | 0x8000, line);
         }
         break;
@@ -1088,7 +1542,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         }
         chunk_->writeOp(RegOp::REG_WRITEBACK_MEMBER_UPVALUE, line);
         chunk_->writeByte(static_cast<uint8_t>(instr.operands[0].index), line);
-        chunk_->writeShort(addStringConstant(globalName(instr.operands[1].index), ir), line);
+        chunk_->writeShort(addStringConstant(globalName(ir, instr.operands[1].index), ir), line);
         break;
     }
     case IROp::WRITEBACK_INDEX_UPVALUE: {
@@ -1151,6 +1605,20 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
         chunk_->writeShort(typeIdx, line);
         break;
     }
+    // R133: 软类型测试（与 TYPE_CHECK 同语义但写 bool 到 dst 而非抛错）
+    // operands: [dest_vreg, src_vreg, type_const_idx]
+    case IROp::TYPE_TEST: {
+        if (instr.operands.size() < 3)
+            return false;
+        uint8_t dst = vregToReg(instr.operands[0].index);
+        uint8_t src = vregToReg(instr.operands[1].index);
+        uint16_t typeIdx = static_cast<uint16_t>(instr.operands[2].index);
+        chunk_->writeOp(RegOp::REG_TYPE_TEST, line);
+        chunk_->writeReg(dst, line);
+        chunk_->writeReg(src, line);
+        chunk_->writeShort(typeIdx, line);
+        break;
+    }
 
     default:
         Logger::Error("RegisterBytecodeBackend: 未支持的 IR 指令 " + std::to_string(static_cast<int>(instr.op)),
@@ -1197,16 +1665,15 @@ bool RegisterBytecodeBackend::lowerModule(const IRModule& module) {
     if (!lower(*module.mainFunction)) {
         return false;
     }
-    auto mainChunk = takeChunk();
-    if (!mainChunk)
-        return false;
 
-    // 末尾添加 RETURN_NULL
-    mainChunk->writeOp(RegOp::REG_RETURN_NULL, 0);
-    mainChunk->buildIpMap();
-
-    functionChunks_[mainChunk->name] = std::move(*mainChunk);
-    chunk_.reset();
+    // R103 W1 fix: mainFunction 的 chunk 保留在 chunk_ 中，由调用方 takeChunk() 获取，
+    // 不再放入 functionChunks_。原实现把 mainChunk 放入 functionChunks_["main"]，
+    // 当用户源码含 `fun main() {...}` 时，子函数 "main" 会覆盖 mainFunction 的 chunk，
+    // 导致 compileViaRegisterIR 的 find("main") 拿到用户函数而非顶层代码，
+    // RegVM 执行用户函数体而非顶层代码，输出为空。
+    // 对齐 BytecodeIRBackend::lowerModule 的设计：mainFunction → chunk_，子函数 → functionChunks_。
+    chunk_->writeOp(RegOp::REG_RETURN_NULL, 0);
+    chunk_->buildIpMap();
 
     // lower 子函数（每个子函数独立 backend 实例，避免覆盖状态）
     for (const auto& fn : module.functions) {
@@ -1220,7 +1687,5 @@ bool RegisterBytecodeBackend::lowerModule(const IRModule& module) {
         functionChunks_[fn->name] = std::move(*subChunk);
     }
 
-    // 恢复 chunk_ 指向 main（供 takeChunk() 调用）
-    // 注意：lowerModule 后 takeChunk() 返回空，调用方应使用 takeFunctionChunks()
     return true;
 }

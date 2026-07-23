@@ -29,6 +29,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>     // R136 spawnMutex_
 #include <stdexcept> // B3 fix: std::runtime_error 用于越界抛出
 #include <string>
 #include <unordered_map>
@@ -36,7 +37,8 @@
 #include <vector>
 
 // 前向声明
-struct VMClassInfo; // D-1: 与 VM.h 定义一致
+struct VMClassInfo;             // D-1: 与 VM.h 定义一致
+enum class BuiltinMethod : int; // 用于 callBuiltinMethod 子函数签名（定义见 interpreter/BuiltinMethods.h）
 
 /// 寄存器式 VM 步进信息（用于调试/可视化）
 // P3-1 fix: 加默认成员初始化器，新增字段时不会漏初始化导致未定义行为
@@ -136,6 +138,37 @@ public:
     /// frameIndex 从 0 开始（0=栈底 main 帧）。越界或无 localRegNames 返回空映射。
     std::unordered_map<std::string, Value> getFrameLocalsAt(size_t frameIndex) const;
 
+    /// R104 Function Breakpoint：在 REG_CALL 指令执行前查询被调用函数名。
+    /// @return 若当前指令是 REG_CALL，返回常量池中的函数名；否则返回空字符串。
+    std::string peekCalledFunctionName() const;
+
+    /// R104 Exception Breakpoint：检查当前 IP 指向的指令是否为 REG_THROW。
+    /// @return true 表示当前指令是 REG_THROW
+    bool isCurrentThrowInstruction() const;
+
+    /// R161 Watchpoint：pre-execution peek 当前 IP 指令的写入目标（不执行指令）。
+    /// 用于数据断点（Watchpoint）在写入指令执行前检查。
+    /// @return WriteTarget{isWrite=true, ...} 若当前指令是 SET 类指令；否则 isWrite=false
+    /// WriteTarget 类型定义在 debug/DebugTypes.h（VM/RegisterVM 共享）
+    WriteTarget peekWriteTarget() const;
+
+    /// R114 阶段 3：从快照恢复 RegisterVM 状态（状态回滚）。
+    /// 仅在 initExecution 已调用（initialized_==true）后可用。
+    /// 恢复语义：(1) 截断 frames_ 到 targetFrameCount 并设置栈顶帧 ip=targetIp；
+    /// (2) 将 registerValues 写入栈顶帧的 registers[]（截断到 MAX_REGISTERS=32）；
+    /// (3) 按 name 更新 globalSlots_/globals_（已有变量覆盖，新变量忽略）；
+    /// (4) 清理 openUpvalues_（slots >= MAX_REGISTERS 的 open upvalue 已悬垂——
+    ///     RegisterVM 寄存器帧定长 32，按 registerIndex 索引 openUpvalues_）；
+    /// (5) 清理 tryStack_（frameIndex >= targetFrameCount）、pendingJumpStack_、
+    /// pendingException_、lastMutatedReceiverReg_、hasError_/lastError_。
+    /// @note 与 StackVM 不同，RegisterVM 的 openUpvalues_ 按 registerIndex 而非
+    ///       栈绝对位置索引；回滚后所有 openUpvalues_ 应清理（因寄存器被覆盖，
+    ///       原 open upvalue 的 stackSlot 已指向新值）。
+    /// @return true 成功；false 未初始化或 targetFrameCount 越界
+    bool restoreFromSnapshot(const std::vector<Value>& registerValues,
+                             const std::vector<std::pair<std::string, Value>>& globalsValues, size_t targetIp,
+                             size_t targetFrameCount);
+
     /// 步进回调
     void setStepCallback(std::function<void(const RegVMStepInfo&)> cb) { stepCallback_ = cb; }
     void setStepCallbackEnabled(bool enabled) { stepCallbackEnabled_ = enabled; }
@@ -179,8 +212,19 @@ private:
         mutable std::vector<Value> flattenedFieldDefaults;
         mutable std::string resolvedInitFunName; // 沿继承链解析的 init 函数名
         mutable bool hasInit = false;            // 继承链中是否存在 init
+        // R133 Inline Cache: per-class method dispatch cache。镜像 StackVM
+        // VMClassInfo::methodCache 的设计：key=methodName,value=funName
+        // (空字符串表示"沿继承链未找到",作为负缓存避免重复查找)。
+        // 命中后跳过 executeMethodCallImpl 中沿继承链 O(n) × methods map O(log n)
+        // 的查找路径。失效条件：父类重定义时由 REG_DEFINE_CLASS 遍历子类置
+        // methodCache.clear()（对齐 BUG-INH-AUDIT-7 fix 的 flattenedComputed 失效模式）。
+        mutable std::unordered_map<std::string, std::string> methodCache;
     };
     std::unordered_map<std::string, RegClassInfo> classInfo_;
+    // R99 enum 校验：enum 元信息注册表（enum 名→variant 列表），initExecution 从
+    // RegisterCompileResult.enumInfos 加载，REG_BUILD_ENUM_VARIANT 校验 variant 名与 arity。
+    // 对齐 Interpreter::enumRegistry_ / VM::enumRegistry_ 的运行时校验语义。
+    std::unordered_map<std::string, VMEnumInfo> enumRegistry_;
 
     // upvalue 支持
     std::multimap<size_t, std::weak_ptr<VMUpvalue>> openUpvalues_;
@@ -193,6 +237,9 @@ private:
     // 回调
     std::function<void(const std::string&)> outputCallback_;
     std::function<std::string(const std::string&)> inputCallback_;
+    // R136 spawn 子线程闭包调用序列化 mutex。RegisterVM 的寄存器帧非线程安全，
+    // spawn 出的子线程若并发调用 invokeClosureSync 会破坏这些共享状态。
+    std::mutex spawnMutex_;
     std::function<void(const RegVMStepInfo&)> stepCallback_;
     bool stepCallbackEnabled_ = false;
 
@@ -221,6 +268,18 @@ private:
     Value pendingException_;
     // AUDIT-P1.1 fix: break/continue finally 续跳机制（与 StackVM 对齐）。
     std::vector<size_t> pendingJumpStack_;
+
+    // R164 协程/生成器：重放模式状态（与 StackVM::VM 对齐，独立字段避免状态串扰）
+    // currentCoroutineTargetYieldId_ >= 0 表示当前在协程重放上下文中（REG_YIELD 据此判定）。
+    // 每次 .next() 开始时设为 cd->currentYieldId，callCoroutineNext 结束时恢复为 -1。
+    int currentCoroutineTargetYieldId_ = -1;
+    // 运行时 yield 执行计数器：每次 REG_YIELD 递增，用于区分循环内同一 yield 节点的多次执行。
+    // 每次 .next() 重放开始时重置为 0（对齐 Interpreter::currentYieldExecutionCount_）。
+    int currentYieldExecutionCount_ = 0;
+    // R164 D.7 fix: 生成器函数体 REG_RETURN 的返回值捕获。
+    // callCoroutineNext 设置生成器帧 returnReg=-1（不写回调用者寄存器），
+    // executeReturnImpl 在 returnReg<0 时将返回值保存到此邮箱，供 callCoroutineNext 读取。
+    Value coroutineReturnValue_;
 
     // 常量
     static constexpr size_t MAX_FRAMES = RuntimeLimits::MAX_FRAMES;
@@ -292,16 +351,53 @@ private:
     VMResult executeControl(RegOp op, size_t& ip);
     VMResult executeMisc(RegOp op, size_t& ip);
 
+    // executeMisc 子分类（按 RegOp 类别拆分，避免单函数过长）
+    // 子函数自包含 stepCallback_ 调用，主函数 dispatch 后直接 return。
+    VMResult executeTryThrowOps(RegOp op, size_t& ip);
+    VMResult executeWritebackOps(RegOp op, size_t& ip);
+    VMResult executeTypeCheckOps(RegOp op, size_t& ip);
+    VMResult executeSuperCallOps(RegOp op, size_t& ip);
+    /// R164 协程/生成器：REG_YIELD 指令执行（重放模式）
+    VMResult executeCoroutineOps(RegOp op, size_t& ip);
+
+    // executeContainers 子分类（按容器操作类别拆分）
+    VMResult executeArrayOps(RegOp op, size_t& ip);
+    VMResult executeDictOps(RegOp op, size_t& ip);
+    VMResult executeMemberOps(RegOp op, size_t& ip);
+
+    // ---- R120 fix: executeArrayOps 拆分为 3 个独立方法（原 224 行 → 每个方法 < 100 行）----
+    /// 容器构造指令：REG_BUILD_ARRAY / REG_BUILD_TUPLE / REG_BUILD_ENUM_VARIANT
+    VMResult executeArrayBuildOps(RegOp op, size_t& ip);
+    /// 索引访问指令：REG_INDEX_GET / REG_INDEX_SET（跨 array/dict/string/tuple 多态）
+    VMResult executeArrayIndexOps(RegOp op, size_t& ip);
+    /// 枚举 variant 查询指令：REG_ENUM_VARIANT_NAME / REG_ENUM_VARIANT_FIELD
+    VMResult executeArrayEnumQueryOps(RegOp op, size_t& ip);
+
+    // executeCalls 子分类（按调用类型拆分）
+    VMResult executeCallOps(RegOp op, size_t& ip);
+    VMResult executeMethodCallOps(RegOp op, size_t& ip);
+    VMResult executeNewOps(RegOp op, size_t& ip);
+
     // 调用辅助
     // C-2 fix: closureValue 非空时从其 vmClosure 提取 upvalues 填入新帧，
     // 使被调用的闭包能访问捕获的外层变量。REG_CALL_EXPR 传 &callee，REG_CALL 传 nullptr。
     // C-8 fix: returnOffset 为调用者指令的总长度（字节数），用于计算 returnIp。
     //   原代码硬编码 ip+5+argCount 假定 REG_CALL 格式，对 REG_CALL_EXPR(4+argCount)
     //   和 REG_CLASS_NEW init(5+原argCount，但传入 argCount+1) 各偏移 +1，导致返回后 ip 错位。
+    // R133 fix: isMethodCall 标志方法调用路径（REG_METHOD_CALL/REG_SUPER_CALL/init 调用）。
+    //   方法调用路径的 funName 来自 methods map/classInfo_/局部变量,不是常量池稳定指针,
+    //   不应使用 callCache_（用 &funName 作 key 时栈帧复用会导致错误命中）。
+    //   详见 IC10 测试用例的 bug 分析。
     VMResult executeCallImpl(size_t& ip, const std::string& funName, uint8_t argCount, uint8_t dstReg,
                              const SmallArgs<uint8_t>& argRegs, size_t returnOffset,
-                             const Value* closureValue = nullptr);
+                             const Value* closureValue = nullptr, bool isMethodCall = false);
     VMResult executeReturnImpl(size_t& ip, Value result);
+    /// R98 W2: 高阶函数闭包同步调用。手动构造 RegCallFrame + 内部指令循环，
+    /// 执行闭包体直到帧弹出。返回值通过 returnReg=dstReg 写入调用者寄存器，
+    /// 循环结束后从 reg(dstReg) 读取到 result。
+    /// 镜像 VM::invokeClosureSync 的设计（StackVM 用栈，RegisterVM 用寄存器）。
+    VMResult invokeClosureSync(const Value& closure, const Value* args, size_t argCount, uint8_t dstReg, int line,
+                               int column, Value& result);
     VMResult executeMethodCallImpl(size_t& ip, const std::string& methodName, uint8_t argCount, uint8_t dstReg,
                                    uint8_t objReg, const SmallArgs<uint8_t>& argRegs);
     VMResult executeClosureImpl(size_t& ip, const std::string& name, uint8_t uvCount, const SmallArgs<uint8_t>& uvSpecs,
@@ -311,10 +407,32 @@ private:
     bool fillDefaultArgs(const RegBytecodeChunk& chunk, uint8_t& argCount, const std::string& funName,
                          std::vector<Value>& defaults);
 
+    // R164 协程/生成器：与 StackVM::VM 对称的协程支持
+    /// 生成器函数调用拦截——从寄存器读参数，创建协程值写入 dstReg。
+    /// 被 executeCallOps（REG_CALL）和 executeMethodCallOps 共用。
+    VMResult createCoroutineValue(const RegBytecodeChunk& genChunk, const std::string& funName, uint8_t argCount,
+                                  uint8_t dstReg, const SmallArgs<uint8_t>& argRegs, const Value* closureValue);
+    /// 协程 .next() 重放执行——设置帧、运行内部循环、捕获 RegVMYieldSignal。
+    Value callCoroutineNext(Value& coroVal);
+    /// 协程方法分发（.next() / .done()）。
+    /// 返回 true=已处理（caller 应 return，检查 hasError_）；false=未匹配协程方法（caller 继续查找）。
+    bool dispatchCoroutineBuiltin(Value& obj, const std::string& methodName, SmallArgs<Value>& args,
+                                  Value& result);
+
     // 内建方法
     // C-9 fix: 返回 bool 而非 VMResult。true=已处理（caller 应 return，检查 hasError_），
     // false=未匹配内建方法（caller 继续查找用户定义方法）。
     // 原实现无论是否匹配都返回 VM_OK，导致实例方法调用被静默吞掉（callBuiltinMethod
     // 对 instance 类型 fallthrough 到末尾 return VM_OK，caller 误以为已处理）。
     bool callBuiltinMethod(Value& obj, const std::string& methodName, SmallArgs<Value>& args, Value& result);
+
+    // callBuiltinMethod 子分类（按 obj 类型拆分，避免单函数过长）
+    // method 由主函数 classifyBuiltinMethod 一次性确定后传入，避免子函数重复分类。
+    // methodName 仅用于错误消息（"X 没有方法 Y"）。
+    bool callArrayBuiltinMethod(Value& obj, BuiltinMethod method, const std::string& methodName, SmallArgs<Value>& args,
+                                Value& result);
+    bool callDictBuiltinMethod(Value& obj, BuiltinMethod method, const std::string& methodName, SmallArgs<Value>& args,
+                               Value& result);
+    bool callStringBuiltinMethod(Value& obj, BuiltinMethod method, const std::string& methodName,
+                                 SmallArgs<Value>& args, Value& result);
 };

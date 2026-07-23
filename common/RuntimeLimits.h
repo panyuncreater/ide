@@ -37,8 +37,18 @@
 //   1. 所有常量为 constexpr，可供编译期常量折叠
 //   2. 仅依赖 <cstdint> 和 <cstddef>，无循环依赖风险
 //   3. 常量值与原各自定义保持一致，纯重构无行为变更
+//
+// L7 fix（2026-07-19）：引入 RuntimeConfig 运行时配置类。
+//   - 原审计结论（R93 BUG-020/021）认为可配置化与 constexpr 设计原则冲突，
+//     但用户要求修复此已知限制。折中方案：保留 constexpr 作为编译期默认值，
+//     另引入 RuntimeConfig 单例允许 IDE 在运行时覆盖部分 DoS 防护限制。
+//   - 仅 MAX_INSTRUCTIONS / MAX_PARSE_ERRORS / MAX_LOOP_ITERATIONS 三个
+//     DoS 防护常量支持运行时覆盖（教学场景下可能需要调整）。
+//   - 其他常量（递归深度、序列化深度等）保持 constexpr，因为它们关系到
+//     栈空间分配和编译期优化，运行时修改可能导致栈溢出。
 // ============================================================
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -110,5 +120,52 @@ constexpr int MAX_INTERP_DEPTH = 64;
 constexpr int MAX_FIND_HIGHLIGHTS = 1000;
 // 全部替换上限（防止超大文档 UI 卡死）
 constexpr int MAX_REPLACE_ALL = 100000;
+
+// ============================================================
+// L7 fix: RuntimeConfig — 运行时可配置的 DoS 防护限制
+// ------------------------------------------------------------
+// 允许 IDE 在运行时覆盖部分 DoS 防护常量（教学场景下可能需要调整）。
+// 设计要点：
+//   1. 单例模式，线程安全（std::atomic 存储）
+//   2. 默认值与上方 constexpr 保持一致
+//   3. 仅暴露三个 DoS 防护常量，其他常量保持 constexpr 不变
+//   4. 调用方应使用 RuntimeConfig::maxInstructions() 等方法，
+//      而非直接引用 RuntimeLimits::MAX_INSTRUCTIONS
+//   5. 测试场景可通过 setter 临时调小验证触发逻辑
+// ============================================================
+class RuntimeConfig {
+public:
+    static RuntimeConfig& instance() {
+        static RuntimeConfig cfg;
+        return cfg;
+    }
+
+    // DoS 防护限制（运行时可配置）
+    int64_t maxInstructions() const { return maxInstructions_.load(std::memory_order_relaxed); }
+    int maxParseErrors() const { return maxParseErrors_.load(std::memory_order_relaxed); }
+    int64_t maxLoopIterations() const { return maxLoopIterations_.load(std::memory_order_relaxed); }
+
+    void setMaxInstructions(int64_t v) { maxInstructions_.store(v, std::memory_order_relaxed); }
+    void setMaxParseErrors(int v) { maxParseErrors_.store(v, std::memory_order_relaxed); }
+    void setMaxLoopIterations(int64_t v) { maxLoopIterations_.store(v, std::memory_order_relaxed); }
+
+    // 重置为编译期默认值（测试 tearDown 调用避免污染后续测试）
+    void resetToDefaults() {
+        maxInstructions_.store(MAX_INSTRUCTIONS, std::memory_order_relaxed);
+        maxParseErrors_.store(MAX_PARSE_ERRORS, std::memory_order_relaxed);
+        maxLoopIterations_.store(MAX_LOOP_ITERATIONS, std::memory_order_relaxed);
+    }
+
+private:
+    RuntimeConfig()
+        : maxInstructions_(MAX_INSTRUCTIONS), maxParseErrors_(MAX_PARSE_ERRORS),
+          maxLoopIterations_(MAX_LOOP_ITERATIONS) {}
+    RuntimeConfig(const RuntimeConfig&) = delete;
+    RuntimeConfig& operator=(const RuntimeConfig&) = delete;
+
+    std::atomic<int64_t> maxInstructions_;
+    std::atomic<int> maxParseErrors_;
+    std::atomic<int64_t> maxLoopIterations_;
+};
 
 } // namespace RuntimeLimits
