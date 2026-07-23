@@ -10,3 +10,6 @@
 [submodule "third_party/QFluentKit"]
 	path = third_party/QFluentKit
 	url = https://github.com/toddming/QFluentKit.git
+[submodule "third_party/asmjit"]
+	path = third_party/asmjit
+	url = https://github.com/asmjit/asmjit.git
