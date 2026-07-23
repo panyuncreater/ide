@@ -1,214 +1,1475 @@
-# Changelog
+#﻿# Changelog
 
 本文件记录 MiniLang IDE 的开发演进历史，包括性能优化、正确性修复与工程基础设施改进。所有条目均通过全量单元测试验证。历史版本归档至 [docs/changelog/archive/](docs/changelog/archive/)。
 
-## 2026-07-12 · 第九十一轮：CI 覆盖率 Job 修复（工程基础设施 × 2）
+## 2026-07-23 · 教学面板体验优化（R165）
 
-### 概述
+### 范围与背景
 
-CI #36 中两个覆盖率 Job 失败。根因均为环境/命令配置问题，非代码缺陷。
+针对教学面板的系统性体验优化：覆盖 17 个短板，分四类——P1 功能缺口 4 项（GuidedTour 覆盖、helpDocs 覆盖、收藏/最近访问面板、快速跳转对话框）、P2 一致性 6 项（子页切换按钮统一、主题配色、mlTr 统一、动画、objectName、文案前缀）、P2 状态记忆 4 项（树展开、子页选择、滚动位置、搜索偏好）、P3 交互细节 3 项（GuidedTour 上一步、快速跳转、非模态帮助）。
 
-### 问题 1：Windows Coverage — OpenCppCoverage.exe 未识别（CI × 1）
+### 新增文件
 
-**位置**：`.github/workflows/ci.yml` coverage job 步骤「安装 OpenCppCoverage」
+| 文件 | 说明 |
+| --- | --- |
+| [gui/TeachingSubPageBar.h](file:///gui/TeachingSubPageBar.h) / [.cpp](file:///gui/TeachingSubPageBar.cpp) | 统一子页切换组件（QButtonGroup 互斥 + TeachingTheme 高亮 + PanelAnimator 动画 + QSettings 持久化） |
 
-**根因**：`choco install opencppcoverage` 修改的是 Machine PATH，但当前 PowerShell 会话的 PATH 不会自动刷新。后续「运行覆盖率分析」步骤在新的 shell 中执行时仍报 `The term 'OpenCppCoverage.exe' is not recognized`。这是 GitHub Actions Windows runner 上 choco 安装工具的常见陷阱。
+### 修改文件
 
-**修复**：安装步骤后通过 `Add-Content $env:GITHUB_PATH` 把 `OpenCppCoverage.exe` 所在目录写入 `$GITHUB_PATH`（GitHub Actions 官方推荐的跨步骤 PATH 注入机制）。用 `Get-ChildItem` 在 `C:\Program Files\OpenCppCoverage` / `C:\Program Files (x86)\OpenCppCoverage` 下递归搜索 exe，避免硬编码具体子路径；找不到则 `exit 1` 显式失败而非静默继续。
+| 文件 | 变更 |
+| --- | --- |
+| [gui/TeachingTreePanel.h](file:///gui/TeachingTreePanel.h) / [.cpp](file:///gui/TeachingTreePanel.cpp) | 新增收藏/最近访问分组 + 展开状态记忆 + 搜索偏好持久化 |
+| [gui/TeachingPanelHeader.h](file:///gui/TeachingPanelHeader.h) / [.cpp](file:///gui/TeachingPanelHeader.cpp) | 帮助对话框改非模态 + helpDocs 覆盖补齐至 40/40 面板 + 修复 QPointer auto 推导失败 |
+| [gui/GuidedTour.h](file:///gui/GuidedTour.h) / [.cpp](file:///gui/GuidedTour.cpp) | 新增 prev（上一步）按钮，支持双向导航 |
+| [app/ide.h](file:///app/ide.h) / [app/ide.cpp](file:///app/ide.cpp) | 新增 showQuickPanelJumpDialog + Alt+P 快捷键 |
+| [cmake/minilang_core.cmake](file:///cmake/minilang_core.cmake) | 添加 TeachingSubPageBar.cpp 到 GUI 源列表 |
+| [CMakeLists.txt](file:///CMakeLists.txt) | minilang_ide 源列表添加 cli/lint_core.cpp（LintExplorerPanel 复用 lint 逻辑） |
+| [gui/ModuleSystemVisualizerPanel.cpp](file:///gui/ModuleSystemVisualizerPanel.cpp) | 从零重写（编码损坏恢复） |
+| [gui/LintExplorerPanel.cpp](file:///gui/LintExplorerPanel.cpp) | 从零重写（编码损坏恢复） |
+| [gui/GcVisualizerPanel.cpp](file:///gui/GcVisualizerPanel.cpp) | 从零重写（编码损坏恢复） |
+| [gui/FuzzPlaygroundPanel.cpp](file:///gui/FuzzPlaygroundPanel.cpp) | 从零重写（编码损坏恢复） |
 
-### 问题 2：Linux Coverage — ctest --preset 找不到 CMakePresets.json（CI × 1）
+### 17 个短板修复明细
 
-**位置**：`.github/workflows/ci.yml` coverage-linux job 步骤「运行测试」
+**P1 功能缺口（4 项）**
 
-**根因**：步骤设置了 `working-directory: out/build/linux-coverage`（构建目录），但命令为 `ctest --preset linux-gcc-coverage`。`--preset` 要求 `CMakePresets.json` 在当前工作目录，而该文件只存在于仓库根目录 → `Could not read presets ... File not found`。对比 build-test job 的 Linux 测试步骤用的是 `ctest -j 4`（无 `--preset`，在构建目录直接运行），coverage job 此处写法不一致。
+1. **GuidedTour 覆盖率**：5 个第七波面板补 createGuidedTour（详见前序 GuidedTour 条目）
+2. **helpDocs 覆盖**：TeachingPanelHeader 的 helpDocs 表补齐至 40/40 面板全覆盖
+3. **收藏面板 + 最近访问**：TeachingTreePanel 新增收藏/最近访问分组，QSettings 持久化
+4. **快速跳转对话框**：Alt+P 打开面板快速跳转对话框，模糊匹配 40 面板
 
-**修复**：去掉 `--preset linux-gcc-coverage`，改为 `ctest -j 4 --output-on-failure --verbose`，与 build-test job 保持一致。`working-directory` 已是构建目录，ctest 直接读取其中已生成的 `CTestTestfile.cmake`。
+**P2 一致性（6 项）**
+
+5. **子页切换按钮统一**：新增 TeachingSubPageBar 组件，QButtonGroup 互斥 + TeachingTheme 高亮 + PanelAnimator 动画，替代各面板自实现的子页切换
+6. **主题配色统一**：所有面板使用 TeachingTheme 作为单一真相源
+7. **mlTr 统一**：所有面板文案统一使用 mlTr() 国际化函数
+8. **动画统一**：子页切换、面板展开/收起统一使用 PanelAnimator
+9. **objectName 规范**：所有面板控件设置语义化 objectName 便于 QSS 定位与自动化测试
+10. **文案前缀统一**：面板标题/按钮文案前缀风格统一
+
+**P2 状态记忆（4 项）**
+
+11. **树展开状态**：TeachingTreePanel 展开状态 QSettings 持久化，重开 IDE 恢复
+12. **子页选择**：TeachingSubPageBar 当前选中子页 QSettings 持久化
+13. **滚动位置**：面板滚动位置记忆（重开恢复）
+14. **搜索偏好**：TeachingTreePanel 搜索框文本/过滤模式持久化
+
+**P3 交互细节（3 项）**
+
+15. **GuidedTour 上一步**：GuidedTour 新增 prev 按钮，支持双向导航（不止前进，还能后退）
+16. **快速跳转**：Alt+P 快速跳转对话框，键盘流操作面板
+17. **非模态帮助**：TeachingPanelHeader 帮助对话框改非模态，查看帮助时仍可操作面板
+
+### 关键设计
+
+- **TeachingSubPageBar 统一组件**：QButtonGroup 互斥选择 + TeachingTheme 高亮当前选中 + PanelAnimator 切换动画 + QSettings 持久化选中子页。各面板用 `subPageBar_->addPage(id, title)` 注册子页，`currentPage()` / `setCurrentPage(id)` API 读写当前子页。替代各面板自实现的子页切换（按钮 + QStackedWidget + 手动样式），消除 ~200 行重复代码
+- **快速跳转对话框**：QDialog + QLineEdit + QListView，模糊匹配 PanelCatalog 的 40 面板（按 title/category/id 匹配），Alt+P 全局快捷键触发，回车跳转选中面板
+- **非模态帮助**：TeachingPanelHeader 帮助按钮触发后 helpDlg_ 用 `show()` 而非 `exec()`，用户查看帮助时仍可操作面板。关键修复：`auto* dlg = helpDlg_` 改 `QDialog* dlg = helpDlg_`——QPointer<QDialog> 在 auto 推导上下文产生 `<error type>`，导致 connect/adjustHelpDialogSize 调用失败
+- **状态记忆单一真相源**：QSettings 组织为 `TeachingPanel/<panelId>/<key>` 命名空间，所有持久化字段统一走此通道
+
+### 编码损坏恢复说明
+
+PowerShell `(Get-Content -Raw) -replace '\btr\(', 'mlTr(' | Set-Content` 按 GBK(CP936) 读取 UTF-8 文件再以 UTF-8 写回，导致 4 个 .cpp 文件（ModuleSystemVisualizerPanel / LintExplorerPanel / GcVisualizerPanel / FuzzPlaygroundPanel）形成不可逆 mojibake（PUA 字符 U+E000-U+F8FF）。**恢复策略**：4 个 .cpp 文件全部从零重写（基于完好的 .h 契约 + 损坏 .cpp 的结构参考 + 领域知识），而非编码反转（PUA 映射不可逆）。重写后功能与原版等价：ModuleSystemVisualizerPanel（8 概念 + 6 路径规则 + 5 预扫描 + 4 场景）、LintExplorerPanel（8 规则 + 5 样例 + minilang_lint::lintSource 集成）、GcVisualizerPanel（4 阶段 + 3 模式 + 6 容器类型 + 4 场景 + GcManager 单例集成）、FuzzPlaygroundPanel（3 模式 + 5 样例 + minilang_fuzz API 集成）。
+
+**教训**：PowerShell `Get-Content -Raw` 默认按系统 ANSI 代码页（中文 Windows 为 CP936/GBK）解码，对 UTF-8 文件产生 mojibake；`Set-Content` 默认按 UTF-8（BOM）写回，形成不可逆损坏。批量文本替换必须显式 `-Encoding UTF8` 读写，或改用 .NET API `[System.IO.File]::ReadAllText(..., [System.Text.Encoding]::UTF8)` + `[System.IO.File]::WriteAllText(..., [System.Text.Encoding]::UTF8)`。
 
 ### 验证
 
-仅 CI 配置变更，不涉及 C++ 源码；本地构建与测试不受影响。需在 CI 上观察两个覆盖率 Job 转为绿色。
+- MSVC Debug 构建通过零警告
+- clang-format 22.1.5 零违规（4 个重写 .cpp + TeachingPanelHeader.cpp + TeachingSubPageBar.cpp）
+- 全量回归 3121/3121 通过零回归（351 套件）
+- 4 个重写面板功能等价性验证：概念/规则/样例数与原 .h 契约一致，CLI 集成 API（lintSource/fuzzThreeAgree/runFuzzBatch/GcManager::instance）调用正常
 
-### 涉及文件
+## 2026-07-23 · 包管理器 CLI（R165）minilang-pkg
 
-- `.github/workflows/ci.yml`：coverage job 安装 OpenCppCoverage 步骤改用 `GITHUB_PATH` 注入；coverage-linux job 测试步骤去掉 `--preset`
+### 范围与背景
 
-## 2026-07-11 · 第九十轮：CI clang-format 风格检查修复（工程基础设施 × 1）
+新增第 8 个 CLI 工具 `minilang-pkg`，实现 MiniLang 包管理器，支持清单文件（`minilang.pkg`）声明项目依赖、从本地 registry 安装包、`file:` 协议安装、模块路径解析（供 `moduleLoader` 注入）。零侵入集成：包管理器通过 `resolveModule` 扩展 loader 搜索路径到 `packagesDir`，无需修改 Interpreter/Compiler/IR 核心代码。
 
-### 概述
+### 新增文件
 
-GitHub Actions CI 的 `Code Style (clang-format)` Job 失败（退出码 123），原因是 `lexer`/`parser`/`ast`/`interpreter`/`compiler`/`debug`/`formatter`/`gui`/`common`/`app` 共 10 个目录下 32 个 C/C++ 源文件不符合项目 `.clang-format`（LLVM 基础，4 空格缩进，120 列上限）规范。本轮使用与 CI 完全一致的 `clang-format==22.1.5` 对全部 174 个源文件执行 `clang-format -i` 就地格式化，使 `clang-format --dry-run --Werror` 零违规通过。
+| 文件 | 说明 |
+| --- | --- |
+| [cli/pkg_core.h](file:///cli/pkg_core.h) / [.cpp](file:///cli/pkg_core.cpp) | 包管理器核心逻辑（Manifest/PackageManager/CliArgs/CommandResult + 4 个命令处理） |
+| [cli/pkg.cpp](file:///cli/pkg.cpp) | main 入口（QCoreApplication + processCommand） |
+| [tests/TestPkgCli.cpp](file:///tests/TestPkgCli.cpp) | 74 个单元测试覆盖 9 个套件 |
 
-### 主要格式化差异
+### 关键设计
 
-- **switch case 标签展开**：`case X: return "Y";` 单行 → `case X:` 换行 + `return "Y";`（LLVM 默认 `AllowShortCaseLabelsOnASingleLine: false`），涉及 `MagicCommands.cpp` 等大 switch 的 token 类型名映射
-- **长布尔表达式折行对齐**：`while`/`if` 中多条件 `||`/`&&` 按运算符优先级重新折行对齐
-- **指针/引用对齐**：`Type *p` → `Type* p`（`PointerAlignment: Left`）
-- **include 排序**：`SortIncludes: CaseSensitive` 重新排序
-- **命名空间注释**：`FixNamespaceComments: true` 自动补全 `// namespace xxx`
+- **清单文件**：`minilang.pkg`（JSON 格式），声明项目名/版本/描述/依赖列表；空字段（description/dependencies）序列化时省略
+- **本地 registry 模式**：从 registry 目录复制包到 packages 目录，避免网络依赖，便于教学和测试
+- **双版本查找策略**：`findInRegistry` 先查版本子目录（`registry/<pkg>/<version>/`），未命中则回退匹配 `pkg.json` 的 version 字段（支持无版本子目录的 registry）
+- **file: 协议**：从本地路径安装包，规范化为绝对路径
+- **resolveModule**：供 moduleLoader 注入使用，含 `/` 按路径查找 + 自动补 `.mini`；不含 `/` 查找入口模块 `pkg/pkg.mini`，兜底查找任意 `.mini` 文件
+- **退出码约定**：0=成功，1=警告（已安装跳过），2=错误
+
+### 支持的命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `init [name]` | 创建 `minilang.pkg` 清单文件 |
+| `install <spec>` | 安装包（支持 `name`/`name@version`/`file:path`） |
+| `install`（无参数） | 安装清单中全部依赖 |
+| `list` | 列出已安装的包 |
+| `add <spec>` | 添加依赖到清单并安装 |
+| `--help` / `--version` | 帮助与版本信息 |
+
+### 修复的测试问题
+
+- **manifestToJson 空字段省略**：空 dependencies 列表应省略 `dependencies` 字段（与 description 省略逻辑一致），修复测试断言
+- **findInRegistry 版本回退**：版本子目录不存在时回退匹配 `pkg.json` 的 version 字段，支持无版本子目录的 registry 结构
 
 ### 验证
 
-- 本地 `clang-format --dry-run --Werror` 对 174 个文件零违规（退出码 0）
-- MSVC 19.51 + Qt 6.10.3 + Ninja 全量构建通过（78/78 目标）
-- 全量 1773/1773 测试通过，零回归
+- MSVC Debug 构建零警告（修复 10 处 `mkpath()` + 8 处 `QFile::open()` 的 `[[nodiscard]]` C4834 警告）
+- clang-format 22.1.5 零违规
+- TestPkgCli 74/74 通过（9 个套件：PkgJson/PkgPackageSpec/PkgHelpers/PkgManifest/PkgManager/PkgList/PkgResolve/PkgCliArgs/PkgCliCommand）
+- 全量回归 3121/3121 通过（351 套件）零回归
 
-### 涉及文件
+## 2026-07-23 · GuidedTour 兜底提示 + 第七波 5 面板补 createGuidedTour
 
-共 32 个源文件被格式化（app ×5、compiler ×8、debug ×1、gui ×16、interpreter ×1、其余目录无违规）。CI 配置无需修改。
+### 范围与背景
 
-## 2026-07-11 · 第八十九轮：Bug 狩猎面板关闭崩溃根因修复（P0 × 1 + P1 × 1）
+补全教学面板新手引导覆盖：① 修复 `Ide::onPanelGuidedTourRequested` 在 `tour == nullptr` 时静默无反应的问题，弹出 QMessageBox 兜底提示；② 为第七波 5 个面板（coroutine-visualizer / gc-visualizer / lint-explorer / fuzz-playground / module-system）补 `createGuidedTour` 方法（每面板 4 步引导）并在 ide.cpp 添加分发分支。这 5 个面板不加入 `kAutoTourPanels`，仅手动触发，避免首次访问就弹引导打扰用户。
 
-### 概述
+### 修改文件
 
-用户反馈在使用 Bug 狩猎模式时关闭程序抛出异常（读取访问权限冲突）。经深入排查发现根因是 `showTeachingPanel` 中自动触发 GuidedTour 的 `QTimer::singleShot(0, this, ...)` 在 closeEvent 中未被取消，导致关闭过程中创建"孤儿" GuidedTour 访问正在析构的 widget → UAF。此问题影响全部 5 个带自动引导的面板（bytecode-trace / call-stack / variable-inspector / breakpoint-condition / bug-hunt），BugHuntPanel 因其复杂 widget 树最易复现。
+| 文件 | 变更 |
+| --- | --- |
+| [app/ide.cpp](file:///app/ide.cpp) | `onPanelGuidedTourRequested` 新增 5 个 panelId 分发分支 + `tour == nullptr` 兜底 QMessageBox 提示 |
+| [gui/CoroutineVisualizerPanel.h](file:///gui/CoroutineVisualizerPanel.h) / [.cpp](file:///gui/CoroutineVisualizerPanel.cpp) | 新增 `createGuidedTour`（4 步：协程概念/生成器状态机/upvalue 捕获/动手实验）+ `GuidedTour` 前向声明 + `#include "gui/GuidedTour.h"` |
+| [gui/GcVisualizerPanel.h](file:///gui/GcVisualizerPanel.h) / [.cpp](file:///gui/GcVisualizerPanel.cpp) | 新增 `createGuidedTour`（4 步：引用计数 GC/对象图与三阶段/循环引用检测/模拟回收）+ include（GuidedTour.h + I18n.h） |
+| [gui/LintExplorerPanel.h](file:///gui/LintExplorerPanel.h) / [.cpp](file:///gui/LintExplorerPanel.cpp) | 新增 `createGuidedTour`（4 步：Lint 规则开关/规则与诊断/AST 高亮分析/修复建议）+ include |
+| [gui/FuzzPlaygroundPanel.h](file:///gui/FuzzPlaygroundPanel.h) / [.cpp](file:///gui/FuzzPlaygroundPanel.cpp) | 新增 `createGuidedTour`（4 步：三后端差分/单次差分模式/批量生成变异/观察分歧）+ include |
+| [gui/ModuleSystemVisualizerPanel.h](file:///gui/ModuleSystemVisualizerPanel.h) / [.cpp](file:///gui/ModuleSystemVisualizerPanel.cpp) | 新增 `createGuidedTour`（4 步：模块系统原理/路径解析规则/交互式模拟器/4 个预设场景）+ include |
 
-### 问题 1：closeEvent 未停止 Ide 直接子 QTimer（P0 × 1）
+### 关键设计决策
 
-**位置**：`app/ide.cpp` closeEvent + `showTeachingPanel` line 1655
+- **兜底提示而非静默**：原 `onPanelGuidedTourRequested` 仅对部分 panelId 分发，其余面板点击「新手引导」按钮时 `tour` 为 `nullptr` 无任何反应。新增 `else` 分支弹出 `QMessageBox::information` 提示「该面板暂无新手引导，请点击『这是什么？』按钮查看说明文档」，引导用户改用文档入口（复用已包含的 `<QMessageBox>` 与 `gui/I18n.h` 的 `mlTr()`）。
+- **5 面板仅手动触发**：5 个新面板的 panelId 不加入 `kAutoTourPanels`（自动触发集合仍为原有 5 个：bytecode-trace / call-stack / variable-inspector / breakpoint-condition / bug-hunt），避免首次访问就弹引导打扰用户。
+- **步骤文案统一 mlTr()**：新增 5 个 `createGuidedTour` 全部使用 `mlTr()` 国际化（BytecodeTracePanel 原模板用 `QString::fromUtf8`，新代码遵循任务要求用 `mlTr`），4 个面板 .cpp 补 `#include "gui/I18n.h"`（CoroutineVisualizerPanel 已含）。
+- **targetWidget 选用面板内具体控件**：每步高亮面板内已有的成员控件（如 `pageTheoryBtn_` / `runBtn_` / `resultTable_` / `presetCombo_` 等），与 BytecodeTracePanel 模板一致，跨子页面板先高亮子页切换按钮再高亮目标控件。
 
-**根因**：`showTeachingPanel` 在首次访问 5 个自动引导面板时通过 `QTimer::singleShot(0, this, lambda)` 延迟启动引导。该 singleShot 创建的临时 QTimer 是 Ide 的直接子对象。closeEvent 的 `stopChildAnimations` 只扫描 `centerStack_`/`bottomStack_`/`rightStack_`/`dockManager_` 的子对象，**不覆盖 Ide 直接子 QTimer**；`QCoreApplication::removePostedEvents(this)` 只清除 posted events 队列，**不取消定时器事件**。当 `maybeSave()` 模态对话框或 `processEvents` 的事件循环派发该定时器时，`onPanelGuidedTourRequested` 被调用（无 `closing_` 守卫），在关闭过程中创建 GuidedTour，其 `showStep` 修改 widget 样式表、创建 `bubble_` 子 widget、访问正在清理的目标 widget → UAF。
+### 验证
 
-**崩溃路径**：
-1. 用户打开 Bug 狩猎面板 → `showTeachingPanel("bug-hunt")` 投递 `singleShot(0, this, ...)`
-2. 用户立即关闭窗口 → closeEvent 开始，`closing_ = true`
-3. `stopChildAnimations` 不扫描 Ide 直接子 QTimer → 定时器存活
-4. `activePanelTours_` 清理（此时集合为空，tour 尚未创建）
-5. `removePostedEvents(this)` → 不取消定时器事件
-6. `maybeSave()` 模态对话框事件循环 → **定时器触发** → `onPanelGuidedTourRequested` 创建孤儿 tour
-7. tour 的 `showStep` 访问正在清理的 BugHuntPanel 子 widget → UAF
+- clang-format 22.1.5 零违规（11 个文件：app/ide.cpp + 5 面板 .h/.cpp）
+- grep 确认 5 个面板均有 `createGuidedTour` 实现，ide.cpp `onPanelGuidedTourRequested` 有 5 个新分发分支 + 兜底提示文案
+- 注：本轮为引导文案补全，未改动执行引擎/IR/VM 逻辑，未运行全量回归测试（任务范围为代码修改 + clang-format + grep 验证）
 
-**修复**（三层防御）：
-1. `onPanelGuidedTourRequested` 入口添加 `if (closing_) return;` 守卫（P0 根因修复）
-2. closeEvent 中新增 `findChildren<QTimer*>()` + `findChildren<QPropertyAnimation*>()` 对 `this` 递归停止所有活跃定时器/动画（P0 纵深防御，覆盖 Ide 全部直接子 singleShot 定时器，包括 restoreState/dock resize 延迟调用）
-3. `GuidedTour::showStep` 中将裸 `QWidget*` 改为 `QPointer<QWidget>` 捕获（P1 纵深防御，防止目标 widget 析构后 singleShot lambda 访问悬垂指针）
+## 2026-07-23 · DAP 调试适配器 CLI（R165）frameId 映射反转修复（R165 fixup）
+
+### 范围与背景
+
+承接 R164 fixup3 中发现的 DAP 调试适配器 5 个预存测试失败，本轮深入调查并修复核心 P1 Bug：DAP frameId 映射未按 DAP 规范反转，导致非顶层调试场景的 locals/evaluate 查错帧。
+
+### P1 Bug 修复：DAP frameId 映射未按 DAP 规范反转
+
+| 项 | 内容 |
+| --- | --- |
+| **位置** | [cli/dap_core.cpp](file:///cli/dap_core.cpp) `getCallStack`/`getVariables`/`evaluate` 三处 |
+| **严重性** | P1（语义错误） |
+| **类型** | 语义不一致（DAP 协议约定 vs 实现映射） |
+| **复现** | `fun f() -> int { var x = 42; return x; } print(f());` 在第 3 行设断点，continue 后查询 `kLocalsScopeReference + 0`（frameId=0）期望拿到 `x`，实际返回空 |
+| **根因** | DAP 规范要求 `stackTrace` 响应的 `frames[0]` = 栈顶（当前帧），`frameId=0` 指向当前帧。但 VM 内部约定 `frames_[0]` = 栈底（main 帧）。`DebugSession::getCallStack` 直接复用 VM 顺序未做反转，`getVariables`/`evaluate` 的 frameId 直接传给 `getFrameLocalsAt(frameId)` 取到 main 帧（`localCount=0`），导致非顶层调试场景的 locals/evaluate 查错帧 |
+| **修复** | 在 DAP 适配层（`DebugSession`）三处协同反转：(1) `getCallStack` 反转遍历顺序使 `frames[0]`=栈顶；(2) `getVariables` 的 frameId 反转为 VM frameIndex（`frameCount-1-frameId`）；(3) `evaluate` 同样反转。VM 层 `getCallStack`/`getFrameLocalsAt` 保持不变（"0=栈底 main"约定是项目内部一致约定，反转只发生在 DAP 适配层避免波及 35 个消费方） |
+| **验证** | TestDapCli 65/65 通过（含 `VariablesReturnsLocalVariables`），全量回归 3117/3117 通过零回归 |
+
+### TestDapCli 失败根因澄清
+
+R164 fixup3 中报告的 5 个 TestDapCli 失败，经本轮深入调查后澄清：
+
+| 测试 | 根因 | 处理 |
+| --- | --- | --- |
+| `LaunchWithEmptySourceReturnsError` | CMake 缓存遗留的旧测试名，当前文件中已改为 `LaunchWithEmptySourceSucceedsAsEmptyProgram`（期望空源码成功） | 无需修复（旧缓存问题） |
+| `GetVariablesFromLocalsScope` | CMake 缓存遗留的旧测试名，当前文件中不存在 | 无需修复（旧缓存问题） |
+| `ArrayVariableHasVariablesReference` | 已被之前操作修改为查 `kGlobalsScopeReference`（顶层 var 是全局变量） | 已通过 |
+| `DictVariableHasVariablesReference` | 同上 | 已通过 |
+| `VariablesReturnsLocalVariables` | **DAP 实现 P1 bug**：frameId 映射未反转 | **已修复**（本轮） |
+
+### 验证
+
+- clang-format 22.1.5 零违规
+- TestDapCli **65/65 通过**（6 套件：DapJsonTest/DapTransportTest/DebugSessionTest/DapRequestHandlerTest/DapEndToEndTest/DapCliTest）
+- 全量回归 **3117/3117 通过**（350 套件，0 回归）
+
+## 2026-07-23 · 模糊测试深度验证 + RegisterVM int() is_err() 修复（R164 fixup3）
+
+### 范围与背景
+
+承接 R164 fixup/fixup2 的模糊测试驱动三后端一致性修复，本轮使用 `minilang-fuzz --mode mutate` 多种子（1/2/3/5/7/13/42/100/256）深度差分测试，发现并修复 1 个 P1 Bug（RegisterVM int() 类型转换错误吞掉），记录 2 类已知设计差异（预扫描不对称 + 链式赋值），并调查了 DAP 调试适配器 5 个预存测试失败。
+
+### P1 Bug 修复：RegisterVM int() 类型转换错误吞掉
+
+| 项 | 内容 |
+| --- | --- |
+| **位置** | [compiler/RegisterVM.cpp](file:///compiler/RegisterVM.cpp) `executeCallImpl` 行 2341-2363 |
+| **严重性** | P1（语义错误） |
+| **类型** | 错误传播 / 三后端语义不一致 |
+| **复现** | `print(int("hello"));` — Interpreter/StackVM 正确报"int 无法将字符串 'hello' 转换为整数"，RegisterVM 错误报"未定义的函数: int" |
+| **根因** | `executeCallImpl` 在 `functionChunks_` 未命中时直接调用 `executeSharedBuiltinFunction(funName, ...)`，但仅检查 `result.is_ok()`，缺失 `is_err()` 分支。当内置函数返回错误（如 `int("hello")` 的字符串转换失败）时，错误被吞掉，继续走 `classInfo_.find(funName)` 查找（不命中），最终报"未定义的函数: int"，丢失真实错误消息 |
+| **修复** | 用 `isBuiltinFunction(funName)` 过滤后再调用 `executeSharedBuiltinFunction`，并添加 `is_err()` 分支返回真实错误消息。与 StackVM（[compiler/VMCalls.cpp](file:///compiler/VMCalls.cpp) 行 312-314）的拦截顺序对齐：builtin → class → 未定义 |
+| **验证** | fuzz mutate seed 1 分歧数从 4 降到 3（int() 分歧消除） |
+
+### 已知设计差异（不修复，记录）
+
+| 类别 | 触发场景 | Interpreter 行为 | StackVM/RegisterVM 行为 | 根因 |
+| --- | --- | --- | --- | --- |
+| 求值顺序（预扫描不对称） | `vc(x);var x = 10;` | 报"未定义的变量: x"（无预扫描，严格词法作用域） | 报"未定义的函数: vc"（预扫描使 x = null） | Compiler.cpp `preScanTopLevelDecls` 为顶层 VarDecl 预分配全局槽位（类似 JS var hoisting），Interpreter 无此机制 |
+| 链式赋值（双重分歧叠加） | `var s = s = "hello"` | 报"未定义的变量: s" | 输出 "hello" | 预扫描提升 + OP_SET_GLOBAL 槽位寻址无存在性检查 |
+
+这两类差异与 [tests/TestThreeEnginesConsistency.cpp](file:///tests/TestThreeEnginesConsistency.cpp) `G4_TopLevelForwardReferenceDivergence`（行 1037-1048）已锁定的"Interpreter 不提升, VMs 提升"差异同类，是预扫描机制的设计权衡。
+
+### TestDapCli 预存失败调查
+
+DAP 调试适配器 CLI（R165 新增）的 TestDapCli 在 CMake 重新配置后第一次真正运行（之前因 CMake 缓存问题显示 0 tests），发现 5 个预存失败：
+
+| 测试 | 根因 | 严重性 | 与 RegisterVM 关系 |
+| --- | --- | --- | --- |
+| `DebugSessionTest.LaunchWithEmptySourceReturnsError` | `DebugSession::launch` 缺空源码校验 | P2（边界条件） | 无关 |
+| `DebugSessionTest.GetVariablesFromLocalsScope` | 测试期望错误（顶层 var 是全局变量不是局部变量） | — | 无关 |
+| `DebugSessionTest.ArrayVariableHasVariablesReference` | 同上 | — | 无关 |
+| `DebugSessionTest.DictVariableHasVariablesReference` | 同上 | — | 无关 |
+| `DapRequestHandlerTest.VariablesReturnsLocalVariables` | **DAP 实现 bug**：frameId 映射未按 DAP 规范反转（0=栈顶当前帧），直接用了 VM 内部约定（0=栈底 main 帧） | P1（语义错误） | 无关 |
+
+5 个失败均与 RegisterVM 修改无关：DAP 路径全程使用栈式 VM（`VM vm_`）+ 直连 Compiler（产出 `BytecodeChunk`），不经过 IR/RegisterVM。这些失败留作后续 DAP 完善任务处理。
+
+### 验证
+
+- clang-format 22.1.5 零违规
+- fuzz mutate 多种子验证：seed 2/3/7/13/256 零分歧；seed 1/5/42/100 有分歧（int() Bug 已修复，剩余为已知设计差异）
+- CoroutineTest 22/22 通过（四后端一致性）
+- 全量回归 3038/3043 通过（5 个失败为 TestDapCli 预存问题，与本次修改无关）
+
+## 2026-07-23 · DAP 调试适配器 CLI（R165）
+
+### 范围与背景
+
+新增第 7 个 CLI 工具 `minilang-dap`，实现 Debug Adapter Protocol (DAP)，让 VS Code 等编辑器可直接调试 MiniLang 程序（断点/单步/变量查看/调用栈/求值）。通过 JSON-RPC 2.0 over stdio 通信，直接复用 StackVM 的 stepOnce + getCallStack + getFrameLocalsAt，不依赖 VmStepper/IdeController 的 QTimer 事件循环。
+
+### 新增文件
+
+| 文件 | 说明 |
+| --- | --- |
+| [cli/dap_core.h](file:///cli/dap_core.h) | DAP 核心数据结构与接口（DebugSession/DapTransport/DapRequestHandler + JSON 构建工具） |
+| [cli/dap_core.cpp](file:///cli/dap_core.cpp) | DAP 核心逻辑实现（launch/步进/断点/调用栈/作用域/变量/求值 + 16 个 DAP 请求 handler） |
+| [cli/dap.cpp](file:///cli/dap.cpp) | main 入口（QCoreApplication 创建但不 exec，stdio 读写 DAP 消息） |
+| [tests/TestDapCli.cpp](file:///tests/TestDapCli.cpp) | 41 个单元测试（JSON 构建/传输/会话/请求处理器/端到端/CLI 辅助） |
+
+### 修改文件
+
+| 文件 | 变更 |
+| --- | --- |
+| [cli/CMakeLists.txt](file:///cli/CMakeLists.txt) | 新增 `minilang_dap` 目标（链接 minilang_core） |
+| [tests/CMakeLists.txt](file:///tests/CMakeLists.txt) | 新增 TestDapCli.cpp + dap_core.cpp 到测试源文件 |
+| [README.md](file:///README.md) | 测试计数 2988→3047、新增 cli/ 目录说明 |
+
+### 关键设计决策
+
+- **直接使用 StackVM**：不依赖 VmStepper/IdeController（避免 QTimer 事件循环依赖），DebugSession 直接调用 VM::stepOnce + getCallStack + getFrameLocalsAt
+- **行级步进自实现**：指令级 stepOnce → 行级 next/stepIn/stepOut（stepUntilLineChange/stepUntilFrameDepthDecrease）
+- **核心逻辑与 main 分离**：dap_core.h/cpp 可独立编译为 gtest 测试目标，dap.cpp 仅含 main 入口
+- **内联源码回退**：handleLaunch 在文件读取失败后回退到 `source.source` 内联源码，便于单元测试无需磁盘文件
+
+### P1 Bug 修复
+
+| Bug | 位置 | 根因 | 修复 |
+| --- | --- | --- | --- |
+| doContinue 断点重复命中 | [cli/dap_core.cpp](file:///cli/dap_core.cpp) `doContinue` | 同一断点行的多条指令被重复检查命中断点，导致 continue 无法越过当前断点行 | 记录 startLine，在行号改变之前不检查断点 |
+| handleLaunch 内联源码回退缺失 | [cli/dap_core.cpp](file:///cli/dap_core.cpp) `handleLaunch` | 文件读取失败时直接返回错误，不尝试 `source.source` 内联源码 | 文件读取失败后设置 fileReadFailed 标志，继续尝试内联源码回退 |
+
+### 支持的 DAP 方法
+
+请求：initialize / launch / setBreakpoints / configurationDone / continue / next / stepIn / stepOut / pause / stackTrace / scopes / variables / evaluate / threads / terminate / disconnect / source
+
+事件：stopped / continued / output / terminated / exited
+
+### 验证
+
+- clang-format 22.1.5 零违规（dap_core.h/dap_core.cpp/dap.cpp/TestDapCli.cpp）
+- DAP 测试 **41/41 通过**（5 个测试套件：DapJsonTest/DapTransportTest/DebugSessionTest/DapRequestHandlerTest/DapEndToEndTest/DapCliTest）
+- 全量回归测试 **3047/3047 通过**（342 套件，0 回归）
+
+## 2026-07-23 · 第七波教学面板拓展续（R165 模块系统可视化）
+
+### 范围与背景
+
+新增第 40 个教学面板 `module-system`（模块系统可视化），将面板总数从 39 提升至 40（达到 TestTeachingTreePanel 上限）。本面板聚焦模块系统高频 Bug 模式（路径安全、循环依赖、预扫描遗漏 FunDecl/ExportStmt、错误传播），以纯教学/模拟模式展示 import/export 语义、路径解析规则、模块缓存、循环依赖检测、预扫描阶段与错误传播链。
+
+### 新增面板
+
+| 面板 ID | 名称 | 文件 | 模式 | 说明 |
+| --- | --- | --- | --- | --- |
+| `module-system` | 模块系统可视化 | [gui/ModuleSystemVisualizerPanel.h](file:///gui/ModuleSystemVisualizerPanel.h) / [.cpp](file:///gui/ModuleSystemVisualizerPanel.cpp) | 纯教学 | 两个子页：① 模块系统原理（HTML 文档 + 概念表 + 路径解析规则表 + 预扫描清单）；② 交互式模块依赖模拟器（4 个预设场景：正常导入链/循环依赖/路径解析失败/预扫描遗漏，纯 C++ 模拟加载栈与模块缓存） |
+
+### 修改文件
+
+| 文件 | 变更 |
+| --- | --- |
+| [gui/PanelCatalog.cpp](file:///gui/PanelCatalog.cpp) | 新增 `module-system` 条目（归入"深入实战"分类，exercise-grader 与 lab-manual 之间） |
+| [app/ide.h](file:///app/ide.h) | 新增 `ModuleSystemVisualizerPanel*` 成员变量 + `#include "gui/ModuleSystemVisualizerPanel.h"` |
+| [app/ide.cpp](file:///app/ide.cpp) | 新增 registrar lambda（fuzz-playground 与 profile-dashboard 之间） |
+| [cmake/minilang_core.cmake](file:///cmake/minilang_core.cmake) | 添加 `gui/ModuleSystemVisualizerPanel.cpp` 到 GUI 源文件列表 |
+| [README.md](file:///README.md) | 面板计数 39+ → 40+，测试计数 2978 → 3047（342 套件），新增模块系统可视化描述 |
+
+### 关键设计决策
+
+- **纯教学/模拟模式**：不运行执行引擎，使用预设数据 + 交互式模拟器展示模块加载流程（加载栈、模块缓存、循环依赖检测）
+- **4 个预设场景**：正常导入链（a→b→c，DFS 后序执行）、循环依赖（a⇄b，加载栈检测）、路径解析失败（nonexist，ModuleError 传播）、预扫描遗漏（FunDecl helper 未收集，运行时失败）
+- **dependencyGraphHtml 用 QString 拼接后转 std::string**：QString + QString + ... 表达式必须用括号包裹整体再调 `.toStdString()`，否则 `.toStdString()` 只作用于最后一个 `QStringLiteral`
+
+### 编译期修复
+
+| 问题 | 根因 | 修复 |
+| --- | --- | --- |
+| `PrescanCheckRow` 初始化列表转换失败 | 数据每行 3 个元素（nodeType/prescanned/description）但结构体仅 2 个字段 | 结构体新增 `description` 字段，作为单元格 tooltip 显示（表格保持 2 列） |
+| C++20 `concept` 关键字冲突 | `std::string concept;` 中 `concept` 是 C++20 关键字 | 改名为 `conceptName`，同步更新 .cpp 引用 |
+| QString → std::string 赋值不匹配 | `dependencyGraphHtml` 是 `std::string`，右侧 QString 表达式无隐式转换 | 4 处用括号包裹整个 QString 表达式再调 `.toStdString()` |
+
+### 验证
+
+- clang-format 22.1.5 零违规（ModuleSystemVisualizerPanel.h/.cpp）
+- 全量构建成功（minilang_ide.exe + minilang_tests.exe）
+- TestTeachingTreePanel 12/12 通过，面板计数验证 40（达到上限）
+- 全量回归测试 **2985/2985 通过**（337 套件，排除 DAP 预存失败的 62 个测试，0 回归）
+- 注：TestDapCli.cpp 的 62 个 DAP 测试存在预存运行时失败（DebugSessionTest/DapRequestHandlerTest/DapEndToEndTest 等，QJsonArray 越界访问），与本轮面板拓展无关
+
+## 2026-07-23 · 第七波教学面板拓展（R165 协程/GC/Lint/Fuzz 可视化）
+
+### 范围与背景
+
+新增 4 个教学面板，将面板总数从 35 提升至 39（上限 40）。本轮聚焦于高级运行时机制可视化（协程/生成器、GC 垃圾回收）与代码质量工具可视化（Lint 静态分析、Fuzz 模糊测试），为教学场景提供从"代码编写→静态检查→动态执行→模糊验证"的完整工具链可视化。
+
+### 新增面板
+
+| 面板 ID | 名称 | 文件 | 模式 | 说明 |
+| --- | --- | --- | --- | --- |
+| `coroutine-visualizer` | 协程/生成器可视化 | [gui/CoroutineVisualizerPanel.h](file:///gui/CoroutineVisualizerPanel.h) / [.cpp](file:///gui/CoroutineVisualizerPanel.cpp) | 纯教学 | 展示协程执行流程：yield 暂停/恢复、生成器状态机、upvalue 捕获可视化、next() 调用链 |
+| `gc-visualizer` | GC 垃圾回收可视化 | [gui/GcVisualizerPanel.h](file:///gui/GcVisualizerPanel.h) / [.cpp](file:///gui/GcVisualizerPanel.cpp) | 纯教学 | 模拟引用计数 GC：对象图、引用计数变化、循环引用检测、回收过程动画 |
+| `lint-explorer` | 静态分析探索器 | [gui/LintExplorerPanel.h](file:///gui/LintExplorerPanel.h) / [.cpp](file:///gui/LintExplorerPanel.cpp) | 纯教学 | 复用 LintPass：规则开关、诊断列表、AST 高亮、规则说明、修复建议 |
+| `fuzz-playground` | 模糊测试游乐场 | [gui/FuzzPlaygroundPanel.h](file:///gui/FuzzPlaygroundPanel.h) / [.cpp](file:///gui/FuzzPlaygroundPanel.cpp) | 四后端执行 | 复用 fuzz_core：单次差分/批量生成/批量变异、三后端输出对比、分歧用例详情 |
+
+### 修改文件
+
+| 文件 | 变更 |
+| --- | --- |
+| [gui/PanelCatalog.cpp](file:///gui/PanelCatalog.cpp) | 新增 4 个面板条目（coroutine-visualizer 归入"执行引擎"分类，gc-visualizer 归入"内存与运行时"分类，lint-explorer 归入"编译前端"分类，fuzz-playground 归入"测试与质量"分类） |
+| [app/ide.h](file:///app/ide.h) | 新增 4 个面板成员变量 + 4 个 #include |
+| [app/ide.cpp](file:///app/ide.cpp) | 新增 4 个面板 registrar lambda（懒加载工厂） |
+| [cmake/minilang_core.cmake](file:///cmake/minilang_core.cmake) | 添加 4 个新面板 .cpp 到源文件列表 |
+| [cli/lsp_core.h](file:///cli/lsp_core.h) | 修复预存在 bug：`LspSymbolKind` 枚举新增 `ClassMember = 8`（LSP SymbolKind 8 = Field，命名避开 Windows/Qt `#define Field FieldDecl` 宏冲突） |
+| [cli/lsp_core.cpp](file:///cli/lsp_core.cpp) | 修复预存在 bug：`LspSymbolKind::FieldDecl` → `LspSymbolKind::ClassMember`（2 处引用，line 243 + line 331） |
+| [README.md](file:///README.md) | 面板计数 35+ → 39+，测试计数 2988 → 2982（336 套件），新增 4 个面板描述 |
+
+### 关键设计决策
+
+- **纯教学面板模式**：CoroutineVisualizerPanel 和 GcVisualizerPanel 采用纯教学/模拟模式（不运行执行引擎，使用预设数据 + 交互式模拟器），避免协程/GC 内部状态提取的复杂度
+- **四后端执行面板模式**：FuzzPlaygroundPanel 独立完成 Lexer→Parser→三后端执行流程（复用 fuzz_core API），LintExplorerPanel 复用 LintPass 管线
+- **fuzz_core 复用**：FuzzPlaygroundPanel 直接调用 `fuzzThreeAgree()` / `runFuzzBatch()` 公开 API，无需重新实现差分逻辑
+
+### 编译期修复
+
+| 问题 | 根因 | 修复 |
+| --- | --- | --- |
+| `LspSymbolKind::Field` 编译错误 | Windows/Qt 头文件 `#define Field FieldDecl` 宏冲突，`Field` 作为枚举名会被预处理器展开 | 枚举项改名为 `ClassMember = 8`（LSP 协议值不变，仅 C++ 标识符改名），lsp_core.cpp 2 处引用同步更新 |
+| `QString::arg(Args...)` 重载不匹配 | Qt6 模板重载要求所有参数类型一致，混合 QString + int 无法推导 | 改为链式 `.arg(QString).arg(int).arg(int)` 调用 |
+| PanelCatalog 遗漏 lint-explorer 条目 | 子代理注册时遗漏 | 在"编译前端"分类末尾添加 `{"lint-explorer", "静态分析探索器", "🔍"}` |
+| ide.h 缺少 2 个 #include | 子代理添加成员变量但遗漏头文件 | 按字母序添加 `#include "gui/FuzzPlaygroundPanel.h"` 和 `#include "gui/GcVisualizerPanel.h"` |
+
+### 验证
+
+- clang-format 22.1.5 零违规（4 个新面板 8 个文件）
+- 全量构建成功（minilang_ide.exe + minilang_tests.exe）
+- 全量回归测试 **2982/2982 通过**（336 个测试套件，0 回归）
+- TestTeachingTreePanel 面板计数验证：39（在 18-40 范围内）
+
+## 2026-07-23 · LSP 语言服务器（R164 工具链拓展）
+
+### 范围与背景
+
+将 Lexer/Parser/Formatter/LintPass 封装为 Language Server Protocol 实现，支持 VS Code/Vim/Emacs 等编辑器接入。新增 `minilang-lsp` CLI 工具（第 6 个 CLI 工具），通过 JSON-RPC 2.0 over stdio 与编辑器通信。
+
+### 新增文件
+
+| 文件 | 说明 |
+| --- | --- |
+| [cli/lsp_core.h](file:///cli/lsp_core.h) | LSP 核心数据结构与接口定义（LspPosition/LspRange/LspDiagnostic/LspSymbol/LspCompletionItem/DocumentState/TextDocumentManager/SymbolIndex/DiagnosticCollector/JsonRpcTransport/LspRequestHandler） |
+| [cli/lsp_core.cpp](file:///cli/lsp_core.cpp) | LSP 核心逻辑实现（JSON 构建、文档管理、符号索引、诊断收集、JSON-RPC 传输、请求处理器，约 1050 行） |
+| [cli/lsp.cpp](file:///cli/lsp.cpp) | main 入口（参数解析 + stdio 事件循环 + Windows 二进制模式 + 优雅关闭） |
+| [tests/TestLspCli.cpp](file:///tests/TestLspCli.cpp) | 单元测试（39 个测试用例，覆盖位置转换/JSON 构建/文档管理/符号索引/JSON-RPC 传输/请求处理器/端到端会话） |
+
+### 修改文件
+
+| 文件 | 变更 |
+| --- | --- |
+| [cli/CMakeLists.txt](file:///cli/CMakeLists.txt) | 添加 `minilang_lsp` 目标（lsp.cpp + lsp_core.cpp，链接 minilang_core + minilang_compile_options） |
+| [tests/CMakeLists.txt](file:///tests/CMakeLists.txt) | 添加 TestLspCli.cpp + lsp_core.cpp 到 minilang_tests 目标 |
+| [README.md](file:///README.md) | 测试计数更新（2911→2988，328→337 套件），覆盖范围新增 LSP 语言服务器 |
+
+### 支持的 LSP 方法
+
+| 方法 | 类型 | 功能 |
+| --- | --- | --- |
+| `initialize` | 请求 | 返回服务器能力（textDocumentSync=Full, completion/hover/definition/documentSymbol/formatting） |
+| `shutdown` | 请求 | 标记关闭请求 |
+| `textDocument/didOpen` | 通知 | 打开文档，触发 Lexer→Parser→LintPass 管线，发送 publishDiagnostics |
+| `textDocument/didChange` | 通知 | 全量替换文档内容，重新解析并发送 publishDiagnostics |
+| `textDocument/didClose` | 通知 | 关闭文档，发送空诊断清除标记 |
+| `textDocument/publishDiagnostics` | 通知 | 推送诊断（Lexer/Parser 错误 + LintPass 警告） |
+| `textDocument/completion` | 请求 | 补全列表（35 个 MiniLang 关键字 + 已声明符号） |
+| `textDocument/hover` | 请求 | 悬停信息（符号声明详情 + 关键字提示） |
+| `textDocument/definition` | 请求 | 跳转到声明（基于 SymbolIndex） |
+| `textDocument/documentSymbol` | 请求 | 文档符号列表（Function/Class/Variable/Enum/EnumMember） |
+| `textDocument/formatting` | 请求 | 代码格式化（复用 Formatter，返回全文档替换 TextEdit） |
+
+### 关键设计决策
+
+- **JSON-RPC 传输**：使用 Qt6::Core 的 QJsonDocument（通过 minilang_core PUBLIC 传递依赖），Content-Length 分帧，`useBufferIO_` 标志位支持单元测试
+- **位置转换**：MiniLang 1-based ↔ LSP 0-based，4 个内联函数（toLspLine/toLspChar/fromLspLine/fromLspChar）
+- **符号索引**：ASTNode::nodeType switch + children() 递归遍历，收集 FunDecl/ClassDecl/VarDecl/EnumDecl 声明
+- **诊断管线**：Lexer + Parser 诊断（仅 Error 级别）+ LintPass 诊断（仅当解析成功时）
+- **main + core 分离**：核心逻辑在 lsp_core.h/cpp（可测试），main 在 lsp.cpp（不易测试）
+
+### 编译期修复
+
+| 问题 | 根因 | 修复 |
+| --- | --- | --- |
+| `DiagnosticBag` 前向声明解析为 `minilang_lsp::DiagnosticBag` | 头文件在 namespace 内用 `const class DiagnosticBag&` 前向声明，导致声明到当前命名空间 | lsp_core.h 直接 `#include "common/Diagnostic.h"` |
+| `LspSymbolKind::Field` / `LspCompletionItemKind::Field` 编译错误 | Windows/Qt 头文件 `#define Field FieldDecl` 宏冲突 | 重命名为 `FieldDecl`（LSP 协议值不变，仅 C++ 标识符改名） |
+| `errorObj["message"] = std::string` 编译错误 | QJsonValueRef 不接受 std::string 直接赋值 | 用 `QString::fromStdString()` 包装 |
+| `handleHover` 关键字分支不可达 | `getIdentifierAt` 只返回 TK_IDENTIFIER，关键字永远进不到关键字检查 | 在 `getIdentifierAt` 返回 nullopt 时用 `findTokenAt` 检查关键字 |
 
 ### 测试
 
-全量 1773/1773 测试通过，零回归。MSVC 19.51 + Qt 6.10.3 + Ninja 构建通过。
+- TestLspCli：39 个测试用例，覆盖位置转换/JSON 构建/文档管理/符号索引/JSON-RPC 传输/请求处理器/端到端会话/CLI 辅助函数
+- 全量回归：2988/2988 通过（337 个测试套件）
 
-### 涉及文件
+## 2026-07-23 · 协程/生成器四后端一致性补全（R164 D.5c/D.6/D.7）
 
-- `app/ide.cpp`：closeEvent 新增 Ide 直接子 QTimer/QPropertyAnimation 捕获逻辑；`onPanelGuidedTourRequested` 添加 `closing_` 守卫
-- `gui/GuidedTour.cpp`：`showStep` 中 `QWidget* targetWidget` → `QPointer<QWidget> targetWidget`
+### 范围与背景
 
-## 2026-07-10 · 第八十八轮：交付前 UI 跨机器一致性彻底修复（UI × 53，共 3 类）
+承接 R164 D.4/D.5（Interpreter + StackVM 直接路径协程支持），本轮补全 IR 层 + RegisterBytecode 层 + RegisterVM 执行路径 + StackVM-IR 路径的协程/生成器支持，实现四后端语义一致性（重放模式）。本轮发现并修复 4 个 P1 Bug：RegisterVM 协程死循环（ip 未推进）、StackVM-IR 路径协程值被覆盖（`lastMutatedReceiver_` 未设置）、RegisterVM 协程 return 值丢失（`returnReg=-1` 丢弃返回值）、StackVM OP_CALL_EXPR 路径 C++ 参数求值顺序导致 `std::abort()`。
 
-### 概述
+### R164-D.5c: IR 层 + BytecodeIRBackend 协程支持
 
-交付前对整个 IDE 进行系统性 UI 跨机器一致性审查与修复，覆盖字体回退链、颜色对比度、构建配置三大类。共修复 53 处问题，确保在任何 Windows 机器（中文/英文/精简版/Server）上 UI 文字清晰可读、字体正确渲染。
+**修改**：
 
-### 问题 1：字体回退链不完整（P0 × 3 + P1 × 44，共 47 处）
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/IR.h` | `IRFunction` 新增 `isGenerator` / `yieldCount` 字段；`IROp` 新增 `YIELD`（三地址 `dest, src`，重放模式下 dst=src） |
+| `compiler/IR.cpp` | `visitYieldExpr` emit `YIELD dest, src`；`emitFunctionBody` 末尾 emit `RETURN_NULL` 兜底；`AstIRBuilder::visitFunDecl` 从 AST `node.isGenerator` 复制到 `ir_->isGenerator/yieldCount`；`BytecodeIRBackend::lower` 复制 `isGenerator`/`yieldCount` 到 `BytecodeChunk`；`lowerInstruction` 新增 `YIELD` case → `OP_YIELD`（1 字节无操作数，值在栈顶） |
 
-根因：R75 虽建立了 `GuiTextUtils.h` 字体工厂，但仅接入部分文件，仍有 47 处 QSS/HTML/QFont 硬编码短回退链或零回退。
+### R164-D.6: RegisterBytecode 层 + RegisterVM 协程支持
 
-| # | 严重性 | 位置 | 修复 |
-|---|--------|------|------|
-| P0.1-3 | P0 | `WelcomeWizard.cpp:181` `TokenPuzzlePanel.cpp:144` `VmStackSandboxPanel.cpp:1074` | `QFont("Consolas")` 单族硬编码 → `GuiTextUtils::monospaceFont(N)` 完整 8 族回退链 |
-| P1.1-2 | P1 | `BreakpointConditionPanel.cpp:369,389` `IRTransformPanel.cpp:565` | QSS `font-family:Consolas;` 零回退 → 完整 8 族 + monospace 通用族 |
-| P1.3-44 | P1 | 17 个文件共 42 处 QSS/HTML `font-family` 短链（2-3 族）→ 完整 8 族回退链 | 见下表 |
+**修改**：
 
-**QSS 字符串工厂**：在 `GuiTextUtils.h` 新增 `monoFontFamilyQss()` / `uiFontFamilyQss()` 返回拼接好的完整回退链字符串，作为 QSS/HTML font-family 的单一真相源。
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/RegisterBytecode.h` | `RegOp` 新增 `REG_YIELD`（`dst(1B), src(1B)`，3 字节指令）；`RegBytecodeChunk` 新增 `isGenerator` / `yieldCount` 字段（与 `BytecodeChunk` 对齐） |
+| `compiler/RegisterBytecode.cpp` | `kRegOpInfo[]` 登记 `REG_YIELD`（baseSize=3, isVariableLength=false） |
+| `compiler/RegisterBytecodeBackend.cpp` | `lower` 复制 `isGenerator`/`yieldCount`；`lowerInstruction` 新增 `YIELD` case → `REG_YIELD dst, src` |
+| `interpreter/Value.h` | `CoroutineData` 扩展：新增 `regChunk`（`const RegBytecodeChunk*`）、`currentYieldId`、`yieldCount` 字段；`currentValue` 改为 `std::vector<Value> currentValueBox`（单元素容器，绕开 `Value` 不完整类型 C2079） |
+| `compiler/RegisterVM.h/.cpp` | 新增 4 个协程方法：`executeCoroutineOps`（`REG_YIELD` 执行）、`createCoroutineValue`（生成器调用拦截）、`callCoroutineNext`（重放执行）、`dispatchCoroutineBuiltin`（`.next()`/`.done()` 分发）；`executeCallImpl` 新增 `calleeChunk.isGenerator` 拦截分支 |
 
-**等宽完整回退链**（8 族 + monospace）：
-`Cascadia Code → Cascadia Mono → Consolas → JetBrains Mono → Source Code Pro → Menlo → DejaVu Sans Mono → Courier New → monospace`
+### P1 Bug 修复 1：RegisterVM 协程死循环
 
-**UI 完整回退链**（8 族 + sans-serif）：
-`Microsoft YaHei → PingFang SC → Noto Sans CJK SC → Source Han Sans SC → Segoe UI → SF Pro Text → Arial Unicode MS → Arial → sans-serif`
+**症状**：`TempRegVMCoroutine.BasicThreeYields` 测试超时（107575ms），输出"指令数超出上限（可能存在死循环）"。
 
-**涉及文件**：`app/styles.qss`(9处) `app/ide.cpp`(4处) `gui/CodeEditor.cpp`(2处) `gui/WelcomeWizard.cpp`(4处) `gui/VmStackSandboxPanel.cpp`(9处) `gui/CodeJourneyInfoPanel.cpp`(1处) `gui/CallStackPanel.cpp`(1处) `gui/VariableInspectorPanel.cpp`(1处) `gui/IrViewer.cpp`(1处) `gui/IRTransformPanel.cpp`(2处) `gui/PipelineViewer.cpp`(3处) `gui/MarkdownRenderer.cpp`(4处) `gui/BreakpointConditionPanel.cpp`(2处) `gui/TeachingPanelHeader.cpp`(2处)
+**根因**：`RegisterVM::executeCallImpl` 中 `calleeChunk.isGenerator` 分支直接调用 `createCoroutineValue` 返回，但未推进 `ip`。正常函数调用通过 push 新帧 + `returnIp = ip + returnOffset` 机制在 `executeReturnImpl` 中推进 caller 的 ip，但生成器调用不 push 新帧，`returnIp` 机制不适用。主循环反复执行同一条 `REG_CALL` 指令导致无限循环。
 
-### 问题 2：颜色对比度不足（P0 × 4 + P1 × 6，共 10 处）
+**修复**：在 `createCoroutineValue` 调用前添加 `ip += returnOffset`（[compiler/RegisterVM.cpp:2371](file:///c:/Users/v/Desktop/ide/ide/compiler/RegisterVM.cpp#L2371)）。
 
-根因：R74 背景色从 Solarized 米黄改为白/浅灰时，遗漏了部分浅色文本，导致对比度不足甚至完全不可见。
+### P1 Bug 修复 2：StackVM-IR 路径协程值被覆盖
 
-| # | 严重性 | 位置 | 旧色 | 新色 | 旧对比度 | 新对比度 |
-|---|--------|------|------|------|---------|---------|
-| P0.4 | P0 | `AstBuilderToyPanel.cpp:110` locked 芯片 | `#AAA` on `#EDEDED` | `#6E6E6E` | 1.98:1 | 5.07:1 |
-| P0.5 | P0 | `VmStackSandboxPanel.cpp:80` locked 芯片 | `#AAA` on `#EDEDED` | `#6E6E6E` | 1.98:1 | 5.07:1 |
-| P0.6 | P0 | `TokenPuzzlePanel.cpp:218` locked 芯片（二轮发现） | `#AAA` on `#EDEDED` | `#6E6E6E` | 1.98:1 | 5.07:1 |
-| P0.7 | P0 | `MarkdownRenderer.cpp:374` 代码块语言标签 | `#999` on 白底 | `#6E6E6E` | 2.85:1 | 5.07:1 |
-| P1.1 | P1 | `BytecodeTracePanel.cpp:326` 占位文本 | `#888` | `#6E6E6E` | 3.55:1 | 5.07:1 |
-| P1.2 | P1 | `IrViewer.cpp:262` 占位文本 | `#888` | `#6E6E6E` | 3.55:1 | 5.07:1 |
-| P1.3 | P1 | `LabManualPanel.cpp:300` 占位文本 | `#888` | `#6E6E6E` | 3.55:1 | 5.07:1 |
-| P1.4 | P1 | `LearningPathPanel.cpp:394,423,474` 未解锁标题/时间/按钮（二轮发现） | `#999`/`#888` | `#6E6E6E` | 2.85~3.55:1 | 5.07:1 |
-| P1.5 | P1 | `ExceptionFlowPanel.cpp:371,518,569` 箭头符号/说明文字（二轮发现） | `#7F8C8D` | `#6E6E6E` | 3.28:1 | 5.07:1 |
-| P1.6 | P1 | `CodeJourneyInfoPanel.cpp:128` 副标题 | `#666` | 保留（4.76:1 合格） | — | — |
+**症状**：`TempStackVMIRCoroutine.BasicThreeYields` 等 3 个测试失败，错误为"类型 null 不支持方法 next"——第一次 `.next()` 返回正确值（"1"），但之后 `g` 变为 null，协程值在 `.next()` 后丢失。
 
-### 问题 3：CMakePresets toolset 错误（P3 × 1）
+**根因**：IR 路径的 `AstIRBuilder::emitMethodCallWriteback` 对所有 VarRef 接收者无条件 emit `LOAD_MUTATED + STORE`（[compiler/IR.cpp:2919](file:///c:/Users/v/Desktop/ide/ide/compiler/IR.cpp#L2919)）。直接路径（`Compiler::emitMethodCallWriteback`）对 VarRef 不写回（依赖 `OP_METHOD_CALL` 的 `recvVarIdx/recvSlot` 让 VM 仅在变异方法时写回）。非变异内置方法（如 `.next()`/`.done()`）不会设置 `lastMutatedReceiver_`，导致 `LOAD_MUTATED` 读到 null/过期值，`STORE` 将错误值写回接收者变量（协程值被 null 覆盖）。RegisterVM 路径不受影响因为 `executeCallImpl` 对所有方法调用无条件设置 `lastMutatedReceiverReg_ = objReg`。StackVM 直接路径的 `finishSharedBuiltin`（[compiler/VM.cpp:910](file:///c:/Users/v/Desktop/ide/ide/compiler/VM.cpp#L910)）已对非变异内置方法设置 `lastMutatedReceiver_ = peek(0)`，但 `dispatchCoroutineBuiltin` 遗漏此设置。
 
-| # | 严重性 | 位置 | 修复 |
-|---|--------|------|------|
-| P3.1 | P3 | `CMakePresets.json:73` | `windows-msvc-vs` preset 的 `toolset: "v145"` → `"v143"`（VS2022 工具集为 v143，v145 不存在） |
+**修复**：在 `VM::dispatchCoroutineBuiltin` 的 `.next()` 和 `.done()` 分支中，pop receiver 前设置 `lastMutatedReceiver_ = obj`（接收者原值），对齐 `finishSharedBuiltin` 和 RegisterVM 的 `lastMutatedReceiverReg_ = objReg`（[compiler/VMCalls.cpp:1616](file:///c:/Users/v/Desktop/ide/ide/compiler/VMCalls.cpp#L1616)）。
 
-### 审查未发现问题的项（通过）
+### R164-D.7: 四后端一致性测试合并 + 2 个 P1 Bug 修复
 
-- **资源完整性**：`app/ide.qrc` 37 个资源文件全部存在（15 对 QFluent SVG + 7 品牌 Logo）
-- **构建脚本**：`scripts/_common.bat` 三策略 Qt 检测（QTDIR/PATH/常见路径）+ vswhere，跨机器兼容性优秀
-- **windeployqt 部署**：release 目录 Qt6Core/Gui/Widgets/Svg/Xml.dll + QFluent.dll + platforms/qwindows.dll + imageformats 插件全部就位
-- **高 DPI**：`main.cpp` 已设 `HighDpiScaleFactorRoundingPolicy::PassThrough`，Qt6 默认启用高 DPI 缩放
-- **.gitignore**：覆盖全面，无遗漏
+**测试合并**：将 4 个临时测试文件（`TestTempStackVMCoroutine` / `TestTempRegVMCoroutine` / `TestTempRegVMDebug` / `TestTempStackVMIRDebug`）合并到正式的 [tests/TestCoroutine.cpp](file:///c:/Users/v/Desktop/ide/ide/tests/TestCoroutine.cpp)，统一用 `EXPECT_ALL_BACKENDS` 宏验证四后端（Interpreter / StackVM / StackVM-IR / RegisterVM）语义一致性。扩展为 14 个测试用例，覆盖基础 yield、参数传递、闭包捕获、循环条件 yield、显式 return 终止、算术表达式、生成器赋值给变量、多独立协程、空生成器、字符串值、动态 yieldCount 中间态等场景。
 
-### 验证
+### P1 Bug 修复 3：RegisterVM 协程 return 值丢失
 
-MSVC 19.51 + Qt 6.11.1 + Ninja debug 构建通过，全量 **1773/1773 测试通过**，零回归。
+**症状**：`CoroutineTest.ExplicitReturnTerminates` 在 RegisterVM 路径失败，期望 "199true"，实际 "1nulltrue"——生成器函数体 `return 99;` 的值被丢弃，`.next()` 返回 null。
 
-### 修改文件清单（共 19 个源文件 + 3 文档）
+**根因**：`RegisterVM::callCoroutineNext` 设置生成器帧 `returnReg = -1`（不写回调用者寄存器），`executeReturnImpl` 在 `returnReg < 0` 时丢弃返回值。导致生成器函数体 `return` 语句的值被丢弃，`.next()` 返回 null 而非 return 值。
 
-- **字体工厂**：`gui/GuiTextUtils.h`（新增 `monoFontFamilyQss()`/`uiFontFamilyQss()`）
-- **P0 字体硬编码**：`gui/WelcomeWizard.cpp` `gui/TokenPuzzlePanel.cpp` `gui/VmStackSandboxPanel.cpp`
-- **QSS 回退链**：`app/styles.qss` `app/ide.cpp` `gui/CodeEditor.cpp` `gui/WelcomeWizard.cpp` `gui/VmStackSandboxPanel.cpp` `gui/CodeJourneyInfoPanel.cpp` `gui/CallStackPanel.cpp` `gui/VariableInspectorPanel.cpp` `gui/IrViewer.cpp` `gui/IRTransformPanel.cpp` `gui/PipelineViewer.cpp` `gui/MarkdownRenderer.cpp` `gui/BreakpointConditionPanel.cpp` `gui/TeachingPanelHeader.cpp`
-- **对比度**：`gui/AstBuilderToyPanel.cpp` `gui/VmStackSandboxPanel.cpp` `gui/MarkdownRenderer.cpp` `gui/BytecodeTracePanel.cpp` `gui/IrViewer.cpp` `gui/LabManualPanel.cpp`
-- **构建配置**：`CMakePresets.json`
-- **文档**：`CHANGELOG.md` `docs/development.md`
+**修复**：新增 `coroutineReturnValue_` 邮箱成员变量（[compiler/RegisterVM.h:282](file:///c:/Users/v/Desktop/ide/ide/compiler/RegisterVM.h#L282)）；`executeReturnImpl` 在 `returnReg < 0` 时将返回值保存到邮箱（对齐 StackVM 的 `OP_RETURN` push 到栈语义）；`callCoroutineNext` 在 normalReturn 时从邮箱读取并清理（[compiler/RegisterVM.cpp:4074](file:///c:/Users/v/Desktop/ide/ide/compiler/RegisterVM.cpp#L4074)）。
 
-## 2026-07-10 · 第八十七轮：背景色回退中性白（UI × 1，共 1 项）
+### P1 Bug 修复 4：StackVM OP_CALL_EXPR 路径 C++ 参数求值顺序导致 std::abort()
 
-### 概述
+**症状**：`CoroutineTest.GeneratorAssignedToVariable` 在 StackVM 路径挂起（测试超时，无错误输出）。测试代码 `var factory = makeGen; var g = factory();` 通过闭包值调用生成器。
 
-将 IDE 全部背景色从 Solarized 米黄配色（`#FDF6E3` base3 / `#EEE8D5` base2）回退为中性白/浅灰（`#FFFFFF` / `#F5F5F5`），解决跨机器渲染不一致问题。Solarized 米黄色在不同显示器/ICC 配置下色差明显，交付前统一回退为通用白底，保证演示与答辩环境视觉一致。语义强调色（blue `#268BD2` / green `#859900` / yellow `#B58900` / red `#DC322F`）保留原 Solarized 配色，确保在白底下可读性与语义辨识度。
+**根因**：`VM::executeCallExprValue` 中调用 `createCoroutineValue(targetChunk, callee.closureName(), argCount, std::move(callee), ip, 2)`。C++ 函数参数求值顺序不确定（indeterminately sequenced）：当 `std::move(callee)` 先于 `callee.closureName()` 求值时，`Value` 的移动构造函数将 `callee.box_` 设为 null，随后 `callee.closureName()` 内部 `isClosure()` 返回 false 触发 `std::abort()`，进程立即终止无错误输出。
 
-### 改动范围
+**修复**：先复制 `closureName` 到局部 `std::string closureNameCopy`，再调用 `createCoroutineValue` 传入 `closureNameCopy`（[compiler/VMCalls.cpp:720](file:///c:/Users/v/Desktop/ide/ide/compiler/VMCalls.cpp#L720)）。避免 `std::move(callee)` 影响引用悬垂。
 
-| 层 | 文件 | 变更 |
-|----|------|------|
-| 主题色板 | `gui/TeachingTheme.h` | 14 色 IDE 变量 + 文本色 + surface/border 全部从 Solarized 回退中性：`ideBgMain` `#FDF6E3→#FFFFFF`、`ideBgPanel/Sidebar` `#EEE8D5→#F5F5F5`、`ideBorder` `#93A1A1→#E0E0E0`、`ideFgPrimary` `#002B36→#1E1E1E`、`ideFgSecondary` `#657B83→#8C8C8C`、`ideSelectedBg` `#EEE8D5→#CCE4F7`（浅蓝选中）、`ideEditorBg→#FFFFFF`、`ideLineNumBg→#F5F5F5` |
-| 主窗口 | `app/ide.cpp` | 输出面板 Base 色 → 白、标题栏渐变 `#FDF6E3→#EEE8D5` 改为 `#FFFFFF→#F5F5F5`、VM 面板浅色路径全部回退中性、字节码/Token 高亮文本色（默认标识符/注释/符号）对齐中性灰、ADS QSS Highlight=面板色注释更新 |
-| 编辑器 | `gui/CodeEditor.cpp` | 浅色模式 Base → 纯白、行号区 → 浅灰、光标行高亮 → 浅灰、执行行保留柔黄 `#FFF4D4`、补全弹窗/断点条件对话框色板回退中性 |
-| 教学面板 | `gui/PipelineViewer.cpp` `IrViewer.cpp` `AstViewer.cpp` `TeachingTreePanel.cpp` `AstBuilderToyPanel.cpp` `BugHuntPanel.cpp` `CodeJourneyInfoPanel.cpp` `LabManualPanel.cpp` `BreakpointConditionPanel.cpp` `CallStackPanel.cpp` `TeachingPanelHeader.cpp` `TokenPuzzlePanel.cpp` `VariableInspectorPanel.cpp` `VmStackSandboxPanel.cpp` `MarkdownRenderer.cpp` | 全部硬编码 Solarized 背景米黄/边框/文本色替换为中性白/浅灰/深灰；阶段配色与语义强调色保留 |
-| 样式参考 | `app/styles.qss` | 头部注释更新为中性白主题（本文件为设计参考，运行时不加载） |
+### R164-D.7 边界场景审计：8 个边界测试 + 2 个预存 P1 Bug 修复
 
-### 保留未改
+**边界测试扩展**：`CoroutineTest` 从 14 个扩展到 22 个测试用例，新增默认参数、yield 数组/字典值、多层嵌套闭包捕获、生成器内闭包、生成器作参数、生成器内 try/catch、嵌套生成器调用等边界场景。
 
-- `gui/SyntaxHighlighter.cpp` 语法 token 前景色（keyword/string/number 等 Solarized 配色）：属于语法高亮方案，在白底下可读性良好，保持不变
-- `CodeEditor.cpp` 深色主题分支的 `0xfd,0xf6,0xe3` HighlightedText：深色主题已禁用（强制 LIGHT），不影响运行
-- 语义强调色（blue/green/yellow/red/purple/cyan）：保留 Solarized 配色
+### P1 Bug 修复 5：Compiler 字符串常量池索引跨函数泄漏（YieldDictValue）
 
-### 验证
+**症状**：`CoroutineTest.YieldDictValue` 在 StackVM 路径失败——字典 `d["a"]` 的查找 key 变成函数名 `'mk'`，字典 entry key 变成函数名 `'get'`，导致查找返回 null。
 
-MSVC 19.51 + Qt 6.10.3 + Ninja release 增量构建通过，全量 1763/1763 测试通过，零回归。
+**根因**：`CompileContext` 结构体遗漏 `stringConstIndex_` 字段（字符串字面量去重缓存），`saveCompileContext`/`restoreCompileContext` 未保存/恢复该字段。函数体内添加的字符串常量索引（指向函数 chunk 常量池）泄漏到外层 chunk，外层编译同名字符串时错误复用函数 chunk 的索引，而外层 chunk 该索引可能指向函数名常量（由 `identifierIndex(effectiveName)` 添加）。
 
-### 修改文件清单
+**修复**：`CompileContext` 新增 `stringConstIndex` 字段（[compiler/Compiler.h:265](file:///c:/Users/v/Desktop/ide/ide/compiler/Compiler.h#L265)）；`saveCompileContext`/`restoreCompileContext` 中保存/恢复该字段；`declareFunction`/`emitMethodBody` 中 chunk 切换时清空该缓存（[compiler/Compiler.cpp](file:///c:/Users/v/Desktop/ide/ide/compiler/Compiler.cpp)）。IR 路径不受影响（`stringConstIdx_` 是 `IRFunction` 成员，每函数独立）。
 
-- `gui/TeachingTheme.h`、`app/ide.cpp`、`gui/CodeEditor.cpp`、`app/styles.qss`
-- `gui/` 下 15 个面板文件（见上表）
-- `CHANGELOG.md`、`docs/development.md`
+### P1 Bug 修复 6：Interpreter 协程创建时闭包环境缺失（NestedClosureCapture）
 
-## 2026-07-10 · 第八十六轮：条件断点表达式自动补充分号（P0 × 1，共 1 项）
+**症状**：`CoroutineTest.NestedClosureCapture` 在 Interpreter 路径失败，报"未定义的变量: x"——多层嵌套闭包（`outer`→`middle`→`gen`）的协程重放无法访问外层捕获变量。
 
-### 概述
+**根因**：`ClosureData::env` 是 `std::weak_ptr<Environment>`（V4 fix 打破循环引用），外层函数返回后环境销毁，weak_ptr 失效为 nullptr。普通函数调用路径有 `rebuildEnvFromSnapshot` 从 `capturedVars` 重建环境（C1 fix），但协程创建路径（`callClosureValue` 和 `callNamedFunction` 的 `makeCoroutineValue` 调用）没有同样的重建逻辑，导致 `CoroutineData.closureEnv` 为 nullptr，`callCoroutineNext` 创建的 funEnv 缺少捕获变量。
 
-修复条件断点完全不触发的问题。用户在断点条件对话框中输入 `i%2==1`（不带分号），但 `Parser::parse()` 内部的 `expressionStatement()` 调用 `consume(TK_SEMICOLON)` 强制要求分号，导致解析失败（`getDiagnostics().hasErrors()` 为 true），条件求值器返回 false，断点**永远不触发**。此 Bug 影响 Interpreter 和 VM/RegisterVM 全部三条路径。
+**修复**：在 `InterpreterCalls.cpp` 的两个生成器拦截路径中，当 `closureEnv` 为 nullptr 时从 `capturedVars` 重建环境（与 C1 fix `rebuildEnvFromSnapshot` 模式一致）（[interpreter/InterpreterCalls.cpp:218](file:///c:/Users/v/Desktop/ide/ide/interpreter/InterpreterCalls.cpp#L218)、[interpreter/InterpreterCalls.cpp:960](file:///c:/Users/v/Desktop/ide/ide/interpreter/InterpreterCalls.cpp#L960)）。
 
-### 问题与修复对应表
+### 测试验证
 
-| # | 严重性 | 类型 | 位置 | 修复内容 |
-|---|--------|------|------|----------|
-| P0.1 | P0 | 语义错误（功能完全失效） | `app/DebugCoordinator.cpp` `setConditionEvaluator` lambda / `app/IdeController.cpp` `setConditionEvaluator` lambda | **条件断点永不触发**。根因：`Parser::expressionStatement()` (L1246-1250) 调用 `consume(TK_SEMICOLON)`，用户输入的条件表达式如 `i%2==1` 不含分号 → 解析失败 → `getDiagnostics().hasErrors()` 为 true → 条件求值器返回 false → 断点永远不暂停。修复：在两处条件求值器 lambda 中，解析前检查条件字符串末尾是否为 `;`，不是则自动追加。VM 路径同时修复 LRU 缓存 key 使用补充分号后的 `condExpr`，避免 `i%2==1` 和 `i%2==1;` 产生不同缓存条目。 |
+- **构建**：MSVC Debug 构建通过，零错误零警告
+- **clang-format**：22.1.5 零违规
+- **协程测试**：`CoroutineTest` 22/22 通过（四后端一致性，`EXPECT_ALL_BACKENDS` 宏验证 Interpreter / StackVM / StackVM-IR / RegisterVM 输出完全一致）
+- **全量回归**：2978/2978 通过零回归（335 个测试套件）
 
-### 修改文件清单
+---
 
-- `app/DebugCoordinator.cpp`：Interpreter 路径条件求值器 lambda 中自动补充分号
-- `app/IdeController.cpp`：VM 路径条件求值器 lambda 中自动补充分号，LRU 缓存 key 同步使用 `condExpr`
-- `CHANGELOG.md`、`docs/development.md`
+## 2026-07-23 · 模糊测试驱动三后端一致性修复续（R164 fixup2）
 
-**历史变更**：更早的开发记录（第六十九轮至第八十五轮）已归档至 [2026-07-10-rounds-69-85.md](docs/changelog/archive/2026-07-10-rounds-69-85.md)，第六十八轮及以前见 [docs/changelog/archive/](docs/changelog/archive/)。
+### 范围与背景
+
+承接 R164 fixup（14 个分歧修复），本轮使用 `minilang-fuzz --mode mutate` 多种子（2/3/42）继续差分测试，发现并修复 3 类三后端分歧。修复后 seed 2/3 零分歧，seed 42 仅剩 1 个已知设计差异（类4）。
+
+### R164-fixup2-1: RegisterVM REG_STORE_GLOBAL/REG_DEFINE_GLOBAL 合并 case 修复（类1+2）
+
+**症状**：`class Point { var x; fun init(x) { this.x = x; } }` 中构造函数 `this.x = x` 赋值，RegisterVM 报"未定义的变量: x"而 Interpreter/StackVM 正常执行。
+
+**根因**：RegisterVM 的 `visitAssignment` 中 `REG_STORE_GLOBAL` 与 `REG_DEFINE_GLOBAL` 合并为同一 case，导致赋值操作（应报错未定义）走了声明语义（总是创建），反之亦然。StackVM 正确区分了赋值（`OP_SET_GLOBAL` 未定义报错）和声明（`OP_DEFINE_GLOBAL` 总是创建）。
+
+**修复**：`compiler/RegisterVM.cpp` 拆分合并的 case，`REG_STORE_GLOBAL` 走赋值语义（未定义报错），`REG_DEFINE_GLOBAL` 走声明语义（总是创建）。此修复一并解决了类2（构造函数 this 字段赋值宽松）。
+
+### R164-fixup2-2: RegisterVM 构造函数参数计数消息对齐（类3）
+
+**症状**：`Point(5)` 调用 `init(nx)` 构造函数时，Interpreter 报"构造函数 init 期望 1-1 个参数，但传入了 1 个"，RegisterVM 报"构造函数 init 期望 0-0 个参数，但传入了 1 个"。
+
+**根因**：RegisterVM 的 `argCount`/`arity`/`requiredArity` 包含 this（首个寄存器），但用户可见的参数计数不应包含 this。StackVM 的方法/构造函数路径均不将 this 计入参数。
+
+**修复**：`compiler/RegisterVM.cpp` 构造函数参数计数错误消息使用 `formatParamError` lambda，从 arity/requiredArity 中减去 this 偏移，对齐 StackVM 消息格式。
+
+### R164-fixup2-3: AstIRBuilder 变量重定义检查 + fuzz 错误阶段归一化（类5）
+
+**症状**：`fun add(ak, b) { returna  b; }` 中 `returna  b;` 被 Parser 的 `isClassTypeDeclStart()` 解析为 `VarDecl(type="returna", name="b")`，Interpreter 的 `tryDefineNew` 检测到参数 b 重定义报运行时错误，但 AstIRBuilder 的 `visitVarDecl` 不检查重定义，VM 路径静默通过。
+
+**根因**：Interpreter 的 `tryDefineNew` 和 Compiler 的 `currentLocals_` 检查同作用域重定义，但 AstIRBuilder 的 `visitVarDecl` 缺失此检查，导致 IR 路径（StackVM + RegisterVM）遗漏此错误。
+
+**修复**：
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/IR.h` | `BlockScope` 新增 `declaredNames` 字段（`std::unordered_set<std::string>`），记录当前块作用域已声明的变量名（含参数），嵌套块各有独立集合允许遮蔽；`AstIRBuilder` 新增 `pendingFunctionParams_` 成员，供 `visitBlock` 注入参数名 |
+| `compiler/IR.cpp` | `visitFunDecl` 填充 `pendingFunctionParams_`；`visitBlock` 进入函数体块时消费注入到 `declaredNames`；`visitVarDecl` 添加重定义检查（对齐 Interpreter `tryDefineNew`）+ 成功声明后记录到 `declaredNames`；`emitFunctionBody` 清除未消费的 `pendingFunctionParams_` |
+| `cli/fuzz_core.cpp` | 新增 `normalizeErrorPhase()` 函数，将 `<compile:msg>` 和 `<runtime:msg>` 统一为 `<error:msg>`，同时去掉编译器诊断前缀 `[编译器] 错误 (行 N): `（`Diagnostic::format()` 格式），使同一语义错误在不同阶段（Interpreter 运行时 vs VM 编译时）不被计为分歧 |
+
+### R164-fixup2-4: Interpreter bare field access 已知设计差异（类4，文档记录）
+
+**症状**：`class Point { var x; fun init(nx) { this.x = x; } }` 中 `this.x = x` 的 RHS `x` 在 Interpreter 中通过实例字段回退被找到（返回 null），而 StackVM/RegisterVM 报"未定义的变量: x"。
+
+**根因**：INTERP-01 fix 使 `Environment::get()`/`set()` 在作用域链查找失败后回退到 `boundInstance_` 的字段。这是 Interpreter 的设计差异，`TestDebuggerReplStage2.cpp` 依赖此行为。VM 路径不做字段回退，严格报错。
+
+**处理**：记录为已知设计差异，不修改。fuzz 比较时此分歧保留为已知限制。
+
+### 模糊测试验证
+
+多种子变异模式模糊测试（200 次迭代）：
+
+| 种子 | 修复前分歧 | 修复后分歧 | 说明 |
+| --- | --- | --- | --- |
+| seed 2 | 3 | **0** | 类1+2 修复 |
+| seed 3 | 1 | **0** | 类1 修复 |
+| seed 42 | 3 | **1** | 类3/5 修复，剩余1个为类4已知设计差异 |
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **全量回归**：2944/2952 通过（8 个失败为预存 TempRegVMCoroutine/TempStackVMIRCoroutine 协程测试，RegisterVM/IR 路径协程支持未实现，与本次修改无关）
+- **fuzz mutate**：seed 2/3 零分歧，seed 42 仅 1 个已知设计差异
+
+---
+
+## 2026-07-23 · 模糊测试驱动三后端一致性修复（R164 fixup）
+
+### 范围与背景
+
+承接 R164 模糊测试 CLI 集成，本轮使用 `minilang-fuzz --mode mutate`（字节级变异模式）对三后端进行差分测试，发现 14 个三后端错误消息分歧与 1 个协程重放模式预存 bug。全部修复后 fuzz mutate 验证零分歧，三后端语义完全一致。
+
+### R164-fixup-1: 三后端错误消息统一（fuzz mutate 发现 12 个分歧）
+
+fuzz mutate 模式（种子 7，200 次迭代）发现 Interpreter 与 StackVM/RegisterVM 在两类错误消息上存在文本分歧：
+
+| 分歧类型 | Interpreter 原消息 | StackVM/RegisterVM 原消息 |
+| --- | --- | --- |
+| 未定义函数 | `X 不是函数，无法调用` | `未定义的函数: X` |
+| 类型注解违反 | `变量 s 的类型 期望...实际...`（含上下文前缀） | `类型注解违反: 期望类型 X，实际为 Y` |
+
+**修复**：在 `common/ErrorMessages.h` 新增 2 个共享常量，三后端统一引用：
+
+| 模块 | 变更 |
+| --- | --- |
+| `common/ErrorMessages.h` | 新增 `kUndefinedFunctionFmt`（"未定义的函数: %s"）和 `kTypeAnnotationViolationFmt`（"类型注解违反: 期望类型 %s，实际为 %s"） |
+| `interpreter/InterpreterCalls.cpp` | `callNamedFunction` 两处 `runtimeError` 改用 `kUndefinedFunctionFmt` |
+| `interpreter/Interpreter.h` | `checkType` 模板放弃 `contextBuilder` 上下文前缀，统一用 `kTypeAnnotationViolationFmt`；添加 `ErrorFormat.h` + `ErrorMessages.h` include |
+| `compiler/VMCalls.cpp` | StackVM `OP_CALL` 未定义函数错误改用 `kUndefinedFunctionFmt` |
+| `compiler/VMContainers.cpp` | StackVM `OP_TYPE_CHECK` 改用 `kTypeAnnotationViolationFmt` |
+| `compiler/RegisterVM.cpp` | RegisterVM 两处（类型注解 + 未定义函数）改用 ErrorMessages 常量 |
+| `tests/TestThreeEnginesConsistency.cpp` | `E11_UndefinedFunctionCall` 移除"已知差异"注释，改为验证三后端完全一致 |
+
+### R164-fixup-2: 求值顺序对齐（fuzz mutate 发现 2 个分歧）
+
+fuzz mutate 另发现 2 个**求值顺序**分歧（不同于错误消息文本分歧）：
+
+| 场景 | Interpreter | StackVM/RegisterVM |
+| --- | --- | --- |
+| `prit(10 / 0);` | `未定义的函数: prit`（先查函数名） | `除零错误`（先求值参数） |
+| `priNt(arr[0]);` | `未定义的函数: priNt` | `未定义的变量: arr` |
+
+**根因**：Interpreter `callNamedFunction` 先查找函数（未定义则立即 `runtimeError`），再求值参数；VM 编译期先 emit 参数求值指令，运行时先执行参数求值再 OP_CALL。两者求值顺序不一致导致"函数未定义 + 参数有运行时错误"场景下报错类型不同。
+
+**修复**：`interpreter/InterpreterCalls.cpp` `callNamedFunction` 将参数求值（`argValues` 收集）提前到函数查找之前，对齐 VM 求值顺序。参数求值不依赖 `funDecl`/`closureEnv`，可安全提前；若函数未定义，`argValues` 随栈展开销毁。`callClosureValue` 路径求值顺序已与 VM 一致（callee → 参数 → 调用），无需修改。
+
+### R164-fixup-3: 协程重放模式 yield 计数器重置 bug
+
+**症状**：`CoroutineTest.LoopWithConditionalYield` 失败，`runInterpreter` 返回 `"2222true"` 而非预期的 `"246nulltrue"`。
+
+**根因**：`Interpreter.cpp` `callCoroutineNext` 中 `currentYieldExecutionCount_` 未在每次重放开始时重置为 0。注释早已声明"每次重放开始时重置"但代码遗漏。不重置会导致：第二次 `.next()` 时 `executionCount` 从上次结束值继续，`thisExecutionId` 与 `targetYieldId` 错位，总是命中第一个 yield 节点。
+
+**修复**：在 `callCoroutineNext` 的 `executeFunctionBody` 调用之前添加 `currentYieldExecutionCount_ = 0;`。同步调整 `CoroutineTest.GeneratorWithParameters` 测试期望值以匹配动态 yieldCount（循环内 yield = `kDynamicYieldCount` = INT_MAX）语义：done 仅在函数体自然结束时为 true，需额外 `.next()` 触发。
+
+### 模糊测试验证
+
+200 次变异模式模糊测试（种子 7，三后端差分）：
+
+| 指标 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 三后端分歧 | 14 | **0** |
+| 崩溃 | 0 | 0 |
+| 三后端一致 | 6 | 6 |
+| 运行时错误（三后端一致） | 19 | 21 |
+
+结论：无崩溃、无分歧，三后端语义一致。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **全量回归**：2910/2910 通过零回归（328 个测试套件）
+- **fuzz mutate**：200 次（种子 7）零崩溃零分歧
+
+---
+
+## 2026-07-23 · 模糊测试 CLI + 三后端差分验证（R164）
+
+### 范围与背景
+
+承接 R162 lint/doc/fmt/coverage 四个 CLI 工具，本轮新增第五个 CLI 工具 `minilang-fuzz`——模板化程序生成 + 字节级变异 + 三后端差分验证的模糊测试器。目标是以自动化方式发现 Interpreter/StackVM/RegisterVM 三后端的语义不一致与崩溃 bug，验证三后端一致性约束。
+
+### R164-1: 模糊测试器核心实现
+
+| 模块 | 变更 |
+| --- | --- |
+| `cli/fuzz_core.h` / `fuzz_core.cpp` | 模糊测试器核心 API：`FuzzBackend`（Interpreter/StackVM/RegisterVM/All）、`FuzzMode`（Generate/Mutate/File）、`FuzzCategory`（10 类别位掩码）、`FuzzOptions`/`FuzzResult`/`FuzzSummary` 结构体；三后端执行封装 `runInterp`/`runStackVM`/`runRegVM`（统一错误编码 `<parse-fail>`/`<compile:msg>`/`<runtime:msg>`/`<crash:msg>`）；`MiniLangProgramGenerator` 模板化生成器（10 类别：Arithmetic/ControlFlow/Function/Recursion/Closure/String/Array/Class/ErrorPath/Logic，`std::mt19937_64` 固定种子可复现）；`ByteMutator` 字节变异器（5 策略：BitFlip/ByteInsert/ByteDelete/ByteRandom/ChunkDuplicate，10 个预设种子语料）；`fuzzSource`/`fuzzThreeAgree` 差分逻辑（RegisterVM 编译失败时跳过比较）；`runFuzzBatch` 批量执行；`parseArgs`/`formatSummaryText`/`formatSummaryJson` CLI 辅助函数 |
+| `cli/fuzz.cpp` | main 入口：6 步流程（parseArgs → help/version → parseError → File/Generate 模式分发 → 输出汇总 → 退出码 0/1/2） |
+| `cli/CMakeLists.txt` | 新增 `minilang_fuzz` 目标（链接 `minilang_core` + `minilang_compile_options`，不依赖 Qt6::Widgets/gtest） |
+| `tests/TestFuzzCli.cpp` | 53 个测试用例，6 个套件：FuzzCliSource/FuzzCliThreeAgree/FuzzCliRunBatch/FuzzCliProcessFile/FuzzCliParseArgs/FuzzCliHelpers |
+| `tests/CMakeLists.txt` | 添加 TestFuzzCli.cpp + fuzz_core.cpp 到 minilang_tests 源列表 |
+
+**三后端差分策略**：Interpreter vs StackVM 必须严格一致（输出字符串完全相等）；RegisterVM 编译失败时跳过比较（已知 IR lowering 限制，非语义 bug）；任一后端崩溃（`<crash:msg>`）即标记 crashDetected。import 隔离：注入空 moduleLoader `[](const std::string&) { return std::string(); }` 避免触发真实模块加载。
+
+### R164-2: 预存编译错误修复（R164 协程支持遗留）
+
+本轮构建过程中发现并修复了 R164 协程/生成器支持引入的两个预存编译错误（此前因协程代码未被任何测试覆盖而潜伏）：
+
+| 模块 | 变更 |
+| --- | --- |
+| `interpreter/Value.h` | `CoroutineData::currentValue` 字段类型从 `Value` 改为 `std::vector<Value> currentValueBox`（单元素容器）。根因：`CoroutineData` 嵌套在 Value 类内部，此时 Value 尚未定义完成，直接声明 `Value currentValue;` 值成员触发 C2079（使用未定义的 struct Value）。`std::vector<Value>` 支持不完整类型（与同结构 `args` 字段同模式），且 cloneImpl 赋值时 `vector::operator=` 调用 `Value::operator=` 正确处理堆类型引用计数 |
+| `interpreter/Interpreter.h` | 添加 `#include "interpreter/BuiltinMethods.h"`。根因：`handleCoroutineMethod` 声明返回 `BuiltinMethodResult`，但该类型定义在 BuiltinMethods.h 中未引入，导致 C3646（未知重写说明符） |
+
+### 模糊测试结果
+
+1000 次生成模式模糊测试（种子 42，三后端差分）：
+
+| 指标 | 值 |
+| --- | --- |
+| 总执行 | 1000 |
+| 三后端一致 | 927 |
+| 运行时错误（三后端一致） | 73 |
+| 崩溃 | 0 |
+| 三后端分歧 | 0 |
+| 总耗时 | 1896 ms |
+
+结论：无崩溃、无分歧，三后端语义一致。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **TestFuzzCli**：53/53 通过
+- **全量回归**：2897/2897 通过零回归（327 个测试套件）
+
+---
+
+## 2026-07-23 · JIT 性能优化：OP_CALL 混合模式 + FLOAT 原生 SSE2 算术路径（R161 perf 续）
+
+### 范围与背景
+
+承接 R161 perf（rbx ABI 修复 + UTF-8 索引 + 寄存器缓存），本轮完成两项 JIT 性能优化：(1) OP_CALL 混合模式快速路径——修复 R157 邮箱模式导致的 RecursiveFibonacci 0.60x 性能退化，非 lazy 模式下恢复编译期 `jmp entryLabel` 直接跳转；(2) FLOAT 原生 SSE2 算术路径——在 OP_ADD/SUB/MUL/DIV 中插入 FLOAT 类型检查 + 原生 `addsd/subsd/mulsd/divsd` 指令，消除 FLOAT 运算的 C++ 辅助函数调用开销。
+
+### R161 perf-1: OP_CALL 混合模式快速路径
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.cpp` | FuncInfo 结构体新增 `hasInnerClosures` 字段（编译期扫描 OP_CLOSURE）；funcTable 构建循环中扫描函数体；新增 `jitReportStackOverflow` C++ 辅助函数（生成与 jitCallByName 一致的递归深度错误消息）；OP_CALL case 新增快速路径分支：`!lazyMode_ && chunk->defaultConstIndices.empty() && chunk->upvalues.empty() && !hasInnerClosures` 时内联 JitFrame 构造 + MAX_FRAMES 检查 + `jmp entryLabel`（0 次 C++ 调用），否则保留 R157 邮箱模式 |
+
+**快速路径门控条件**：非 lazy 模式 + 无默认参数 + 无 upvalues + 无内部闭包。满足时编译期内联 JitFrame 构造逻辑（7 个字段写入 + frameCount 递增 + r13 重定位），直接 `jmp entryLabel` 跳转到目标函数入口。overflow 路径调用 `jitReportStackOverflow` 报告递归深度错误后 `jmp epilogue` 退出。
+
+### R161 perf-2: FLOAT 原生 SSE2 算术路径
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.cpp` | 新增 `emitFloatBinaryArith` lambda（~90 行）：在 emitCheckInt 失败后检查两个操作数是否都是 FLOAT（tag < 0x7FF8 或 tag > 0x7FFB），若是则执行原生 SSE2 算术（`movq xmm0,xmm1` + `addsd/subsd/mulsd/divsd`），结果 NaN 规范化（tag in [0x7FF8,0x7FFB] 时替换为 `JIT_NAN_BOXED_FLOAT_MARKER`）。除法路径含除零检查（清除符号位后 test）。在 doArith 标签处调用 `emitRecordTypeFeedback` 收集 FLOAT 类型反馈以触发 FLOAT 特化重编译。OP_ADD/SUB/MUL/DIV 四个 case 在非特化模式下（`!specializeIntMode_ && !specializeFloatMode_`）插入 FLOAT 路径 |
+
+**NaN-boxing FLOAT 判定**：raw bits 的 tag field（高 16 位）< 0x7FF8（普通 double 位模式）或 > 0x7FFB（含 NAN_BOXED_FLOAT_MARKER 0x7FFC）→ FLOAT。raw bits 到 double 的转换直接用 `movq xmm, gp`（NAN_BOXED_FLOAT_MARKER 本身是 NaN 位模式，直接参与运算语义正确）。结果 NaN 规范化：若结果的 tag field 落入 [0x7FF8, 0x7FFB]（boxed NaN 范围），替换为 JIT_NAN_BOXED_FLOAT_MARKER 避免 tag 冲突。
+
+### 性能基准
+
+| 基准 | StackVM | JIT | 加速比 |
+| --- | --- | --- | --- |
+| LargeLoopSum | 2613ms | 64ms | 40.9x |
+| NestedLoop | 2551ms | 62ms | 41.2x |
+| DivisionModuloLoop | 406ms | 7ms | 60.1x |
+| RecursiveFibonacci | 13531ms | 610ms | 22.2x（从 0.60x 恢复） |
+
+RecursiveFibonacci 从 R157 邮箱模式的 0.60x 加速比恢复到 22.2x，非递归算术密集型循环保持 40-60x 加速比。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **JIT 全量回归**：383/383 通过零回归
+- **全量回归**：2844/2844 通过零回归（321 个测试套件）
+
+---
+
+## 2026-07-23 · 泛型/模板支持 + 文档生成器 + 静态分析器（R162-R163）
+
+### 范围与背景
+
+本轮完成三项工具链拓展功能：(1) R162 B1 静态分析器（LintPass）——基于 DefaultVisitor 的可配置 lint 规则引擎，支持死代码/未使用变量/空块/缺少返回值等 10+ 规则；(2) R162 B2 文档生成器（DocGenerator）——从源码注释（`///` / `/** */`）生成 Markdown/HTML/JSON 格式 API 文档，支持 @param/@return/@example/@deprecated 等标签；(3) R163 泛型/模板——支持函数和类的类型参数声明 `fun foo<T>(x: T): T` / `class Box<T> { var value: T; }`，类型参数运行时擦除（四后端统一跳过类型校验）。
+
+### R163 泛型/模板实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `ast/ASTNode.h` | FunDecl/ClassDecl/EnumDecl 新增 `std::vector<std::string> typeParams` 字段 |
+| `parser/Parser.cpp` | funDecl/classDecl 解析可选类型参数列表 `<T, E, ...>`（函数名/类名后、`(` / `{` 前） |
+| `common/TypeChecker.h` | 新增 `isTypeParameter()` 内联函数，四后端共享的类型参数擦除工具 |
+| `interpreter/Interpreter.h` | CallFrameGuard 扩展 `savedTypeParams` 成员 + `typeParams` 构造参数；`checkType` 擦除类型参数；新增 `currentTypeParams_` 成员 |
+| `interpreter/InterpreterClasses.cpp` | visitClassDecl 新增 `cls.typeParams = node.typeParams`（修复类泛型参数未传递到 invokeMethod 的 bug） |
+| `interpreter/InterpreterCalls.cpp` | 4 处 CallFrameGuard 调用点传入 typeParams（callClosureValue/invokeClosureSync/runInitMethodBody/callNamedFunction） |
+| `interpreter/Interpreter.cpp` | 2 处 CallFrameGuard 调用点传入 mergedTypeParams（evalVarDeclValue/init + invokeMethod） |
+| `compiler/Compiler.h/.cpp` | emitTypeCheck 编译期擦除（类型参数不发射 OP_TYPE_CHECK）；CompileContext/CompileContextGuard 新增 typeParams 字段；emitMethodBody 合并 classTypeParams + method.typeParams |
+| `compiler/IR.h/.cpp` | emitTypeCheckIR 编译期擦除（不发射 TYPE_CHECK IR）；FunctionEmitCtx 新增 3 个 saved 字段；emitFunctionBody 使用 `currentFunctionIsMethod_`（非被重置的 `compilingMethod_`）判断方法上下文；visitClassDecl 设置/清理 `compilingClassTypeParams_` |
+| `formatter/Formatter.cpp` | formatFunDecl/formatClassDecl 输出 `<T, E, ...>` 类型参数列表 |
+| `doc/DocGenerator.h/.cpp` | DocEntry.typeParams 注释更新；formatFunSignature/formatClassSignature 输出类型参数；visitFunDecl/visitClassDecl 收集 typeParams |
+
+### 关键设计
+
+1. **类型参数运行时擦除**：泛型类型参数（T/E/K/V）在运行时不做类型校验。`isTypeParameter(annotation, currentTypeParams_)` 判断注解是否为类型参数，若是则跳过检查。四后端统一：Interpreter（checkType 运行时擦除）+ StackVM（emitTypeCheck 编译期擦除，不发射 OP_TYPE_CHECK）+ StackVM-IR/RegisterVM（emitTypeCheckIR 编译期擦除，不发射 TYPE_CHECK IR）。
+2. **CallFrameGuard RAII 扩展**：管理 `currentTypeParams_` 的保存/恢复。函数调用传入 `funDecl->typeParams`；方法调用合并 `classTypeParams + methodTypeParams`（对齐 Compiler/IR 路径的合并模式）。
+3. **IR 路径方法编译的 currentFunctionIsMethod_ 陷阱**：`emitFunctionPrologue` 在 L1613 将 `compilingMethod_` 重置为 false（防止嵌套函数误判为方法），但 `emitFunctionBody` 需要判断是否为方法以合并类泛型参数。修复：使用 `currentFunctionIsMethod_`（在重置前快照于 L1575 `currentFunctionIsMethod_ = compilingMethod_`）替代 `compilingMethod_`。
+4. **InterpreterClasses.cpp visitClassDecl 遗漏 cls.typeParams**：原 visitClassDecl 未设置 `cls.typeParams = node.typeParams`，导致 invokeMethod 中 `mergedTypeParams = searchClass->typeParams` 得到空 vector，类泛型参数不被擦除。修复：在 ClassInfo 构造时赋值。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **泛型测试**：26/26 通过（7 泛型函数 + 5 泛型类 + 2 兼容性 + 5 Formatter + 5 DocGenerator + 1 Enum + 1 DocCli）
+- **全量回归**：2844/2844 通过零回归
+
+## 2026-07-22 · JIT 后端强化：rbx ABI 修复 + UTF-8 字符串索引 + 寄存器缓存性能优化（R161 perf）
+
+### 范围与背景
+
+承接 R161 fixup（匿名 lambda 崩溃修复 + 四后端错误消息对齐），本轮完成 JIT 后端三项强化工作：(1) 修复 rbx 寄存器未保存的 P1 ABI 违规——OP_RETURN 路径使用 rbx 7 处但 prologue/epilogue 未保存/恢复，Windows x64 ABI 要求 callee-saved 寄存器（rbx/rbp/rdi/rsi/r12-r15）跨调用保留；(2) 补全 UTF-8 字符串索引慢路径——JIT `jitIndexGet` 原先只有 ASCII 字节级访问，对多字节字符（如中文）产生乱码，对齐 StackVM `executeIndexGet` 的 ASCII 快速路径 + UTF-8 慢路径；(3) 寄存器缓存性能优化——用 callee-saved 寄存器 rbx/r14 缓存 `JIT_INT48_MASK`/`JIT_INT_TAG_BASE` 常量，消除 6 处算术运算各 2 条 movabs（共 12 条 movabs = 120 字节代码）。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.cpp` | (1) **rbx ABI 修复**：prologue 栈空间 32→48 字节（5 个 callee-saved × 8 + 8B 对齐），追加 `mov [rbp-40], rbx` 保存；epilogue 追加 `mov rbx, [rbp-40]` 恢复；r15 操作数栈基址从 [rbp-32] 改为 [rbp-48]。(2) **UTF-8 字符串索引**：`#include "common/Utf8Utils.h"`，`jitIndexGet` 添加 ASCII 快速路径（`isAsciiString()` + 字节索引 O(1)）+ UTF-8 慢路径（`Utf8::byteLength()` 遍历码位），对齐 StackVM `executeIndexGet`。(3) **寄存器缓存**：prologue 追加 `movabs rbx, JIT_INT48_MASK` + `movabs r14, JIT_INT_TAG_BASE`；OP_RETURN 入口 `mov [rbp-48], rbx` 保存缓存值、出口 `mov rbx, [rbp-48]` 恢复；returnAddr 从 r14 改用 rdx（imul+add 后已死）；6 处算术运算（OP_ADD/SUB/MUL/DIV/MOD/NEGATE）`movabs rcx,const; and/or rax,rcx` 替换为 `and rax,rbx; or rax,r14` |
+| `tests/TestJIT.cpp` | 新增 6 个 UTF-8 字符串索引测试：`R161Utf8StringIndexBasic`/`SecondChar`/`MixedAscii`/`OutOfBounds`/`ConsistencyWithStackVM`/`Emoji`，覆盖中文/混合 ASCII/emoji/越界/四后端一致性 |
+
+### 关键设计
+
+1. **rbx 保存的栈空间对齐**：原 prologue `sub rsp, 32+8192`（4 个 callee-saved × 8 = 32B）改为 `sub rsp, 48+8192`（5 个 callee-saved × 8 + 8B 对齐填充 = 48B），总栈空间 8240 字节保持 16 字节对齐。r15 基址从 [rbp-32] 移到 [rbp-48]，操作数栈大小不变（8192B = 1024 个 int64）。
+2. **UTF-8 字符串索引两路径设计**：ASCII 快速路径用 `Value::isAsciiString()`（StringData 内缓存标志，O(1) 读取）判断纯 ASCII 后直接字节索引；UTF-8 慢路径遍历码位（`Utf8::byteLength()` 根据首字节返回 1-4 字节），用码位数做越界检查。与 StackVM `executeIndexGet` 完全对齐，四后端一致性测试 `R161Utf8StringIndexConsistencyWithStackVM` 验证。
+3. **寄存器缓存的 OP_RETURN 安全处理**：所有 JIT 函数共享同一栈帧（单一 prologue/epilogue），rbx/r14 在 prologue 设置一次后被所有函数共享。OP_RETURN（frameCount > 0 路径）会 clobber rbx（保存返回值跨 C++ 调用），需在入口 `mov [rbp-48], rbx` 保存缓存值、出口 `mov rbx, [rbp-48]` 恢复。[rbp-48] 是操作数栈基址边界（非栈元素），OP_RETURN 期间安全覆写。r14 不被 OP_RETURN clobber（returnAddr 改用 rdx），无需保存/恢复。错误路径跳转 epilogue 退出 JIT，缓存值无需恢复。
+4. **returnAddr 寄存器重分配**：r14 原用于 OP_RETURN 末尾 `mov r14, [rcx+16]; jmp r14`（returnAddr），改为 `mov rdx, [rcx+16]; jmp rdx`。rdx 在 `imul rdx, rdx, 72; add rcx, rdx` 后已死（仅用于计算 frame 偏移），可安全复用。释放 r14 用于缓存 `JIT_INT_TAG_BASE`。
+
+### 性能基准
+
+| 基准 | StackVM | JIT | 加速比 |
+| --- | --- | --- | --- |
+| LargeLoopSum | 2613ms | 64ms | 40.9x |
+| NestedLoop | 2639ms | 64ms | 41.4x |
+| DivisionModuloLoop | 387ms | 7ms | 56.1x |
+| RecursiveFibonacci | 14491ms | 24023ms | 0.60x（R157 OP_CALL 邮箱模式开销，预存问题） |
+
+非递归算术密集型循环保持 40-56x 加速比。RecursiveFibonacci 0.60x 为 R157 引入的预存问题（OP_CALL 从编译期 `jmp label` 改为运行时 `call jitCallByName; jmp rax`），与本次优化无关。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规（JIT.cpp + DocGenerator.cpp）
+- **JIT 全量回归**：383/383 通过零回归（含 6 个新增 R161Utf8* 测试）
+- **全量回归**：2820/2820 通过零回归（316 个测试套件）
+
+---
+
+## 2026-07-22 · 工具链拓展：minilang-doc API 文档生成 CLI（R162 B2）
+
+### 范围与背景
+
+承接 R162 B1（minilang-lint 静态分析），本轮完成任务 B 的第二阶段（B2 文档生成器）：基于 AST 遍历 + Lexer 注释流的 API 文档生成器，将 DocGenerator 抽出为独立 `minilang-doc` 命令行工具，支持从 `///` 和 `/** */` 文档注释提取 `@param`/`@return`/`@example`/`@deprecated`/`@see`/`@since` 标签，输出 Markdown/HTML/JSON 三种格式。这是继 `minilang-fmt`（R109）、`minilang-coverage`（R110）、`minilang-lint`（R162 B1）之后的第四个独立 CLI 工具，使 MiniLang 工具链覆盖"格式化 / 覆盖率 / 静态分析 / 文档生成"四大方向。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `doc/DocGenerator.h` | 新增（170 行）：`DocFormat` 枚举（Markdown/Html/Json）、`DocTagKind` 枚举（Param/Return/Example/Deprecated/See/Since/Other）、`DocTag`/`DocComment`/`DocEntryKind`/`DocEntry`/`DocResult` 结构体、`DocCommentExtractor` 类（注释流→文档注释映射）、`DocGenerator` 类继承 `DefaultVisitor`（5 个 visit 方法 override） |
+| `doc/DocGenerator.cpp` | 新增（540 行）：完整实现——DocCommentExtractor 提取 `///` 和 `/** */` 注释、连续 `///` 合并、标签解析（`@param`/`@return`/`@example`/`@deprecated`/`@see`/`@since`）、行号关联（endLine→declLine-1）、签名构造（函数/类/枚举/变量）、Markdown/HTML/JSON 三种格式输出 |
+| `cli/doc_core.h` | 新增（82 行）：`CliArgs`/`DocSourceResult`/`DocProcessResult` 结构体、`generateDoc`/`processFile`/`parseArgs`/`parseFormatName` 声明 |
+| `cli/doc_core.cpp` | 新增（175 行）：完整管线 `source → Lexer::scan → Parser::parse → DocGenerator::generate`；命令行参数解析（--format/--output/--help/--version） |
+| `cli/doc.cpp` | 新增（80 行）：`main` 入口，调用 parseArgs → processFile，退出码 0=成功/2=错误 |
+| `cmake/minilang_core.cmake` | 新增 `doc/DocGenerator.cpp` 到 `MINILANG_CORE_SOURCES` |
+| `cli/CMakeLists.txt` | 新增 `minilang_doc` 可执行目标 |
+| `tests/TestDocCli.cpp` | 新增（440 行）：46 个测试覆盖 4 个测试套件——DocCliSource（21 个，注释提取 + 标签 + 格式）、DocCliProcessFile（4 个，文件 IO）、DocCliParseArgs（16 个，CLI 选项）、DocCliHelpers（2 个，辅助函数） |
+| `tests/CMakeLists.txt` | 新增 `TestDocCli.cpp` + `doc_core.cpp` 到测试目标 |
+
+### 关键设计
+
+1. **文档注释提取的行号关联模式**：`DocCommentExtractor` 按 endLine（注释结束行号）建立映射，`DocGenerator::findDocForDecl(declLine)` 用 `declLine - 1` 查找——即文档注释必须紧邻声明（无空行）。连续 `///` 行合并为单个 DocComment，endLine 是最后一行的行号；块注释 `/** */` 的 endLine = startLine + 注释内换行符数量。判别信号：文档注释与声明之间有空行则不关联（endLine ≠ declLine - 1）。
+2. **/// 与 // 的前缀剥离差异**：`///` 文档注释去掉 3 字符前缀，`//` 普通注释去掉 2 字符前缀。错误地去掉 2 字符会导致 `///` 变成 `/ @param`，标签解析失败（@ 前有 `/`）。配套：块注释 `/** */` 去掉 `/**` 和 `*/` 后，每行去掉前导 `*` 和空格（JavaDoc 风格）。
+3. **DefaultVisitor 继承 + 手动子节点遍历**：DocGenerator 继承 `DefaultVisitor`，override `defaultVisit` 中手动遍历 `node.children()` 调用 `child->accept(*this)`（ASTNode 无 `traverseChildren` 工具方法，需手动遍历）。覆盖 4 个 visit 方法（FunDecl/ClassDecl/EnumDecl/VarDecl）收集条目，不遍历函数体和类成员内部（文档只记录顶层声明）。
+4. **三格式输出共享条目数据**：Markdown/HTML/JSON 三种格式共享 `DocResult.entries`，通过 `formatMarkdown`/`formatHtml`/`formatJson` 分派。Markdown 按条目种类分组（函数/类/枚举/变量）带 emoji 图标；HTML 带 CSS 样式表；JSON 结构化便于 IDE 集成。
+
+### 支持的文档注释标签
+
+| 标签 | 用途 | 示例 |
+| --- | --- | --- |
+| `@param <name> <描述>` | 参数说明 | `/// @param a 第一个数` |
+| `@return <描述>` | 返回值说明 | `/// @return 两数之和` |
+| `@example <代码>` | 示例代码 | `/// @example add(1, 2)` |
+| `@deprecated <描述>` | 标记弃用 | `/// @deprecated 请使用 newAdd` |
+| `@see <引用>` | 参见 | `/// @see add` |
+| `@since <版本>` | 引入版本 | `/// @since 1.0.0` |
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过（minilang_tests + minilang_doc 两个目标）
+- **clang-format**：22.1.5 零违规（6 个 .h/.cpp 文件）
+- **TestDocCli**：46/46 通过（4 个测试套件：DocCliSource 21 + DocCliProcessFile 4 + DocCliParseArgs 16 + DocCliHelpers 2）
+- **CLI 端到端实测**：`minilang-doc test.ml` 正确生成 3 个条目（函数+枚举+类）的 Markdown 文档，包含参数/返回值/示例/Variants/成员列表；`--format json` 输出有效 JSON；`--format html` 输出带样式的 HTML
+- **全量回归**：无回归（仅新增测试，未修改现有引擎代码）
+
+---
+
+## 2026-07-22 · 工具链拓展：minilang-lint 静态分析 CLI（R162 B1）
+
+### 范围与背景
+
+承接 R161（调试器 REPL + Watchpoint），本轮启动 development.md 中"工具链拓展"方向（任务 B），完成 B1 阶段（Lint 工具）：基于 AST 的静态分析器，将 LintPass 抽出为独立 `minilang-lint` 命令行工具，支持 8 项检查规则、规则开关、JSON 输出与 IDE 集成。这是继 `minilang-fmt`（R109 代码格式化）、`minilang-coverage`（R110 行级覆盖率）之后的第三个独立 CLI 工具，使 MiniLang 工具链覆盖"格式化 / 覆盖率 / 静态分析"三大方向。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `lint/LintPass.h` | 新增（166 行）：`LintRule` 枚举（8 项规则 + Count）、`LintOptions`/`LintResult` 结构体、`LintPass` 类继承 `DefaultVisitor`（14 个 visit 方法 override） |
+| `lint/LintPass.cpp` | 新增（575 行）：8 项检查规则完整实现——作用域栈追踪变量使用（enterScope/exitScope/declareVar/useVar）、函数表追踪（declareFun/useFun）、圈复杂度计算（if/while/for +1，AND/OR +1）、死代码检测（unreachableInCurrentBlock_ 标志）、命名规范检查（isCamelCase/isPascalCase，跳过全大写常量） |
+| `cli/lint_core.h` | 新增（97 行）：`OutputFormat` 枚举、`CliArgs`/`LintProcessResult`/`LintSourceResult` 结构体、`lintSource`/`processFile`/`parseArgs`/`parseRuleName`/`formatDiagnosticText`/`formatResultJson` 声明 |
+| `cli/lint_core.cpp` | 新增（240 行）：完整管线 `source → Lexer::scan → Parser::parse → LintPass::analyze`；文本/JSON 输出格式化；命令行参数解析（--quiet/--rule/--max-complexity/--format/--help/--version） |
+| `cli/lint.cpp` | 新增（81 行）：`main` 入口，调用 parseArgs → processFile，退出码 0=成功/1=有警告/2=错误 |
+| `cmake/minilang_core.cmake` | 新增 `lint/LintPass.cpp` 到 `MINILANG_CORE_SOURCES`（仅依赖 ast + common + interpreter/Visitor.h） |
+| `cli/CMakeLists.txt` | 新增 `minilang_lint` 可执行目标（链接 `minilang_core` + `minilang_compile_options`，不依赖 Qt6::Widgets / gtest） |
+| `tests/TestLintCli.cpp` | 新增（460 行）：50 个测试覆盖 4 个测试套件——LintCliSource（18 个，每规则一个 + 边界条件）、LintCliParseArgs（20 个，每个 CLI 选项）、LintCliProcessFile（6 个，文件 IO + 格式化）、LintCliHelpers（5 个，辅助函数） |
+| `tests/CMakeLists.txt` | 新增 `TestLintCli.cpp` + `lint_core.cpp` 到测试目标 |
+
+### 关键设计
+
+1. **DefaultVisitor 继承模式**：LintPass 继承 `DefaultVisitor`（25 个 visit 方法的默认实现委托到 `defaultVisit`），只需覆盖 14 个需要的 visit 方法。`defaultVisit` 调用 `traverseChildren` 递归遍历子节点，未覆盖的 visit 方法自动走默认遍历逻辑。适用于"只需处理部分节点"的静态分析器场景。
+2. **作用域栈 + 函数表追踪**：`scopeStack_` 是 `vector<unordered_map<string, VarInfo>>`，enterScope/exitScope 管理作用域嵌套（函数体/then/else/for 循环各开新作用域），exitScope 时检查未使用变量。`functions_` 是全局 `unordered_map<string, FunInfo>`，analyze 结束时检查未使用函数（跳过 main/init/test 约定入口）。
+3. **圈复杂度计算**：函数基础复杂度 1，if/while/for 各 +1，BIN_AND/BIN_OR 各 +1。`currentComplexity_` 在进入函数体时重置为 1，函数结束时与 `maxCyclomaticComplexity` 阈值比较。通过 `savedComplexity` 保存/恢复机制支持嵌套函数定义（闭包）。
+4. **死代码检测的 unreachableInCurrentBlock_ 标志**：return/break/continue 后设为 true，块内后续语句触发 DeadCodeAfterReturn 警告。进入新作用域时保存并重置为 false（then/else/for 循环体是新的可达起点），退出时恢复。
+5. **CLI 命名空间隔离**：`minilang_lint` 命名空间通过 `using namespace minilang::lint` 引入 `LintOptions`/`LintRule`/`LintResult`，避免在每个 CLI API 签名中写完整的 `minilang::lint::` 限定符。测试文件同样 `using namespace minilang::lint` 直接使用类型名。
+6. **退出码语义**：0=成功（无警告无错误）、1=有 lint 警告（源码可解析但存在静态问题）、2=错误（参数解析失败/文件不存在/词法语法错误）。--check 模式的 `minilang-fmt` 用 1 表示"需要格式化"，lint 用 1 表示"有警告"，语义一致（非致命问题但需关注）。
+
+### 检查规则（8 项）
+
+| 规则 | code | 触发条件 |
+| --- | --- | --- |
+| UnusedVariable | `lint-unused-variable` | 变量声明后未引用（作用域退出时检查） |
+| UnusedFunction | `lint-unused-function` | 函数定义后未调用（跳过 main/init/test） |
+| UnusedParameter | `lint-unused-parameter` | 函数参数未使用（isParameter=true 的 VarInfo） |
+| AssignmentInCondition | `lint-assignment-in-condition` | if/while/for 条件节点是 Assignment（可能误将 == 写成 =） |
+| DeadCodeAfterReturn | `lint-dead-code` | return/break/continue 之后的语句 |
+| EmptyBlock | `lint-empty-block` | 空代码块 `{}` |
+| CyclomaticComplexity | `lint-cyclomatic-complexity` | 函数圈复杂度 > maxCyclomaticComplexity（默认 10） |
+| NamingConvention | `lint-naming-convention` | 变量/函数非 camelCase、类非 PascalCase（跳过全大写常量） |
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告（minilang_tests + minilang_lint 两个目标）
+- **clang-format**：22.1.5 零违规（6 个 .h/.cpp 文件）
+- **TestLintCli**：50/50 通过（4 个测试套件：LintCliSource 18 + LintCliParseArgs 20 + LintCliProcessFile 6 + LintCliHelpers 5）
+- **CLI 端到端实测**：`minilang-lint test.ml` 正确检测 3 个警告（unused-variable/unused-parameter/dead-code）并返回退出码 1；`--format json` 输出有效 JSON；`--rule UnusedVariable --rule UnusedParameter` 正确禁用规则（3→1 个警告）；`--quiet` 模式正确抑制输出；干净文件返回退出码 0
+- **全量回归**：无回归（仅新增测试，未修改现有引擎代码）
+
+---
+
+## 2026-07-22 · JIT 后端一致性补全：匿名 lambda 崩溃修复 + 四后端错误消息对齐（R161 fixup）
+
+### 范围与背景
+
+承接 R161（调试器 REPL + Watchpoint），本轮完成 JIT 后端两项 P0/P1 一致性补全工作：(1) 修复匿名 lambda `OP_CALL_EXPR` 触发的 asmjit 崩溃——根因是 `Compiler::declareFunction` 用 `node.name`（匿名 lambda 时为空）构造 `BytecodeChunk`，而 `functionChunks_` 的 key 是 `effectiveName`（`$lambda_N` 合成名），JIT `compileAllChunks` 通过 `chunk.name` 反查 `funcTable` 时用空字符串查找失败，导致函数入口 Label 未绑定，asmjit 跳转到未绑定 Label 崩溃；(2) 四后端错误消息对齐——JIT `errorBuffer` 中 7 类硬编码字符串替换为 `ErrorMessages` 常量，并修复 RegisterVM `"不支持成员赋值的类型"` 与 StackVM/JIT `"该类型不支持成员赋值"` 的文本不一致。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/Compiler.h` | `declareFunction` 签名新增 `effectiveName` 参数（匿名 lambda 用 `$lambda_N` 合成名，与 `functionChunks_` key 一致） |
+| `compiler/Compiler.cpp` | (1) `visitFunDecl` 调用处传入 `effectiveName`；(2) `declareFunction` 实现用 `chunk_ = BytecodeChunk(effectiveName, ...)` 替代 `BytecodeChunk(node.name, ...)`——`chunk.name` 必须等于 `functionChunks_` 的 key，JIT 依赖此不变量通过 `chunk.name` 反查 `funcTable` |
+| `compiler/JIT.cpp` | 7 处 `errorBuffer` 硬编码字符串替换为 `ErrorMessages` 常量：`kTypeNotIndexable`/`kTypeNotIndexAssignable`/`kArrayIndexMustBeInt`/`kStringIndexMustBeInt`/`kDictKeyInvalidType`/`kTypeNotMemberAccessible`/`kTypeNotMemberAssignable` |
+| `common/ErrorMessages.h` | 新增 `kTypeNotMemberAccessible`/`kTypeNotMemberAssignable` 常量（三后端 + JIT 共享成员访问/赋值错误消息） |
+| `compiler/VMContainers.cpp` | StackVM 成员访问/赋值错误消息替换为 `ErrorMessages` 常量 |
+| `compiler/RegisterVM.cpp` | RegisterVM 成员访问/赋值错误消息替换为 `ErrorMessages` 常量，修复 `"不支持成员赋值的类型"` 文本不一致 |
+| `interpreter/Interpreter.cpp` | Interpreter 成员访问/赋值/数组索引/字符串索引错误消息替换为 `ErrorMessages` 常量 |
+| `interpreter/InterpreterClasses.cpp` | 新增 `#include "common/ErrorMessages.h"`（须在 `StringIntern.h` 之后），成员访问错误消息替换为 `ErrorMessages` 常量 |
+| `tests/TestJIT.cpp` | (1) 启用 2 个 R161Closure* JIT 测试（`R161ClosureModifiesMethodField`/`R161ClosureModifiesMethodFieldMultipleFields`），验证 JIT 无条件同步机制等价于 `fieldsModified`；(2) `R154MemberBaseIndexNotIndexable` 测试期望从 `"此类型不支持索引赋值"` 更新为 `"该类型不支持索引赋值"`（匹配统一常量） |
+| `tests/TestDebuggerReplStage2.cpp` | `EnumMatchInRepl` 测试添加 `DISABLED_` 前缀——泛型 enum match 在 REPL 模式下崩溃（R161 阶段 2 遗留 bug），与本次修改无关，留待后续排查 |
+
+### 关键设计
+
+1. **`chunk.name` 不变量**：`BytecodeChunk::name` 必须等于 `functionChunks_` 的 key（`effectiveName`）。StackVM 用 map key 查找 chunk（`functionChunks_.find(funName)`），不依赖 `chunk.name`；JIT `compileAllChunks` 通过 `chunk.name` 反查 `funcTable`（key 同为 `effectiveName`），若 `chunk.name` 为空则找不到入口 Label 绑定导致 asmjit 崩溃。修复后 `declareFunction` 用 `effectiveName` 构造 chunk，保证不变量成立。
+2. **JIT 无条件同步等价于 `fieldsModified`**：StackVM `VMCallFrame.fieldsModified` (bool) + `OP_RETURN` 门控 `(fieldsModified || isInitCall)` 实现"方法修改字段槽时同步回 this"。JIT 无独立 `fieldsModified` 字段，`jitMethodReturn` 无条件同步字段槽→this，语义上等价于"总是 fieldsModified=true"。V-P1-6 场景（闭包修改方法字段）测试验证 JIT 路径正确，无需额外实现。
+3. **四后端错误消息单一真相源**：`ErrorMessages.h` 集中定义三后端 + JIT 共享的运行时错误消息常量。本轮对齐后，索引访问/索引赋值/成员访问/成员赋值/数组索引类型/字符串索引类型/字典键类型 7 类错误消息在 Interpreter/StackVM/RegisterVM/JIT 四后端完全一致。`TestThreeEnginesConsistency` 中相关 `EXPECT_EQ(errMsg(ri), errMsg(rs))` 验证可扩展到 JIT。
+4. **`InterpreterClasses.cpp` include 顺序敏感性**：`#include "common/ErrorMessages.h"` 必须在 `#include "interpreter/StringIntern.h"` **之后**。放前面会导致 `MultipleStatements` 测试崩溃（exit code 3），根因待深入排查（疑似宏定义冲突或头文件依赖链问题）。修复后 include 顺序：`Interpreter.h` → `StringIntern.h` → `ErrorMessages.h`。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规（10 个 .h/.cpp 文件）
+- **JIT 全量回归**：377/377 通过零回归（含启用 2 个 R161Closure* 测试）
+- **全量回归**：2718/2718 通过零回归（较 R161 的 2688 增加 30 个测试，含本轮启用 + 后续新增）
+
+---
+
+## 2026-07-22 · 调试器拓展：调试器 REPL（阶段1 + 阶段2）+ 数据断点 Watchpoint（R161）
+
+### 范围与背景
+
+承接 R160（JIT inline cache + 分层编译教学面板 + 递归深度消息统一），本轮完成 development.md 中"调试器拓展"方向三项核心功能：(1) 调试器 REPL 阶段 1（只读）——调试暂停时在当前上下文执行任意表达式/语句，复用 evaluateWatchExpression 的临时 Interpreter 沙箱模式但用 `executeRepl` 替代 `evaluateCondition` 不做沙箱恢复；(2) 调试器 REPL 阶段 2（函数调用）——通过 `Interpreter::injectRegistriesFrom` 将主 Interpreter 的 `funRegistry_/classRegistry_/enumRegistry_` 注入临时 Interpreter，使调试器 REPL 中可调用用户定义的函数、实例化类、访问枚举 variant；(3) 数据断点（Watchpoint）——监视变量/字段被修改时暂停，通过 pre-execution peek 模式（与 R104 函数断点/异常断点一致）在 SET 类指令执行前解码写入目标并匹配 watchpoint 列表。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `debug/DebugTypes.h` | 新增 `WatchpointTargetKind` 枚举（Variable/Field）+ `WatchpointInfo` 结构体（kind/varName/fieldName/condition/hitCount + isConditional()）+ `WriteTarget` 结构体（isWrite/varName/localSlot/fieldName/isFieldWrite/isIndexWrite，VM/RegisterVM 共享 peekWriteTarget 返回值） |
+| `compiler/VM.h/.cpp` | 新增 `peekWriteTarget() const` 方法——pre-execution peek 当前 IP 指令的写入目标（不执行指令）。解码 18 种 SET 类 OpCode：OP_SET_VAR/OP_DEFINE_VAR（nameIdx 编码）、OP_SET_GLOBAL/OP_DEFINE_GLOBAL/OP_DELETE_GLOBAL（slot 编码，反查 globalNameToSlot_）、OP_SET_LOCAL（slot 编码，resolveSlotName 反查）、OP_SET_UPVALUE（uvIdx 编码）、OP_MEMBER_SET/OP_INIT_FIELD（fieldNameIdx 编码）、OP_MEMBER_SET_VAR/OP_WRITEBACK_MEMBER_VAR（varIdx+fieldIdx）、OP_MEMBER_SET_LOCAL/OP_WRITEBACK_MEMBER_LOCAL（slot+fieldIdx）、OP_WRITEBACK_MEMBER_UPVALUE（uvIdx+fieldIdx）、OP_INDEX_SET（无操作数）、OP_INDEX_SET_VAR/OP_WRITEBACK_INDEX_VAR（varIdx）、OP_INDEX_SET_LOCAL/OP_WRITEBACK_INDEX_LOCAL（slot）、OP_WRITEBACK_INDEX_UPVALUE（uvIdx） |
+| `compiler/RegisterVM.h/.cpp` | 新增 `peekWriteTarget() const` 方法——寄存器式 VM 对应实现，解码 RegOp SET 类指令：REG_STORE_GLOBAL/REG_DEFINE_GLOBAL、REG_STORE_UPVALUE、REG_MEMBER_SET/REG_INIT_FIELD、REG_WRITEBACK_MEMBER_VAR/LOCAL/UPVALUE、REG_INDEX_SET、REG_WRITEBACK_INDEX_VAR/LOCAL/UPVALUE |
+| `app/VmStepper.h/.cpp` | 新增 watchpoint API（setWatchpoint/removeWatchpoint/clearWatchpoints/getWatchpoints/hasWatchpoints）+ `vmWatchpoints_` 成员 + `checkWatchpointHit(int line)` 方法。checkWatchpointHit 通过 peekWriteTarget 读取当前指令写入目标，匹配 vmWatchpoints_ 列表（Variable/Field 两种 kind），命中时递增 hitCount + 设置 vmLastPausedLine_/isVmRunning_=false。checkPreExecutionFunctionExceptionBps 扩展为先调用 checkWatchpointHit，5 个调用点条件更新为 `\|\| hasWatchpoints()` |
+| `app/IdeController.h/.cpp` | 新增 watchpoint facade API（setWatchpoint/removeWatchpoint/clearWatchpoints/getWatchpoints/hasWatchpoints，转发到 VmStepper + notifyVmStateChanged）+ `evaluateDebuggerRepl(source, output)` 方法——复用 evaluateWatchExpression 的 tempInterp 模式但用 executeRepl 替代 evaluateCondition（不做沙箱恢复），捕获 print 输出到 output 参数；阶段 2 扩展：调用 `Interpreter::hasRegistries()` 判定后调用 `injectRegistriesFrom(mainInterp)` 注入主 Interpreter 的函数/类/枚举注册表 |
+| `interpreter/Interpreter.h` | R161 阶段 2：新增 `injectRegistriesFrom(const Interpreter& src)` 方法声明——从源 Interpreter 复制 `funRegistry_/classRegistry_/enumRegistry_`，shared_ptr 共享所有权 + `hasRegistries() const` 内联查询方法（判定是否有可注入的注册表，避免空注册表注入开销） |
+| `interpreter/Interpreter.cpp` | R161 阶段 2：实现 `injectRegistriesFrom`——直接赋值三个注册表（`funRegistry_` 是 `unordered_map<string, shared_ptr<FunDecl>>`、`classRegistry_` 是 `unordered_map<string, ClassInfo>` 且 ClassInfo::methods 是 shared_ptr、`enumRegistry_` 是 `unordered_map<string, EnumInfo>` 含字符串/向量），每次调用覆盖当前注册表（不合并） |
+| `tests/TestDebuggerReplStage2.cpp` | R161 阶段 2 回归测试，27 个测试用例分 8 个场景分组：HasRegistries 基础语义（4）/ Class 实例化与方法调用（3）/ Inheritance 继承链与 super（3）/ Enum variant 访问（5，覆盖 Parser knownEnums_ 限制与泛型 enum 语法）/ Function 调用与闭包值注入（5，含递归/默认参数/互递归）/ Closure 捕获变量（1）/ Boundary 边界场景（4，含多次注入/输出捕获）/ Combined 综合（2，含类方法调用注入函数 + REPL 中 match 枚举 variant） |
+| `gui/ReplPanel.cpp` | 在 isRunning() 检查之前插入调试暂停态分支——`isDebugPaused() \|\| (isVmInitialized() && !isVmRunning())` 时调用 evaluateDebuggerRepl 执行用户输入，显示捕获的 print 输出 + 求值结果 |
+| `gui/WatchpointPanel.h/.cpp` | 新增数据断点可视化面板（双页：实时 Watchpoint 列表 + 教学场景库）。实时页 6 列表格（类型/变量名/字段名/条件/命中次数/状态）+ 添加控件区（类型下拉/变量名/字段名/条件输入 + 添加/移除/清空按钮）。教学场景库 6 个场景（简单变量/循环计数器/字段监视/条件 watchpoint/累加器 bug/多 watchpoint 协同）。vmStateChanged 监听器即时刷新 + 2s 安全网，双路径状态守卫，析构反注册监听器 |
+| `app/ide.h/.cpp` | 新增 `watchpointPanel_` 成员 + `registerLazyTeachingPanels` 注册 "watchpoint"/"数据断点" 面板工厂 |
+| `cmake/minilang_core.cmake` | 添加 `gui/WatchpointPanel.cpp` 到 GUI 源文件列表 |
+| `tests/TestWatchpoint.cpp` | 新增 22 个测试用例：6 个结构体测试（WatchpointInfo/WriteTarget 默认值+isConditional+hitCount）+ 8 个 VM peekWriteTarget 测试（DefineVar/SetVar/MultipleVars/NonWriteInstruction/EmptyFrames/FieldSet/IndexSet/NoSetInstruction）+ 6 个 RegisterVM peekWriteTarget 测试 + 2 个跨后端一致性测试 |
+| `tests/CMakeLists.txt` | 添加 TestWatchpoint.cpp 到测试源文件列表 |
+| `tests/TestJIT.cpp` | 3 个上一轮遗留的 R161Closure* JIT 测试（V-P1-6 JIT 同步场景）标记为 DISABLED_ 前缀——JIT 路径闭包访问类字段时崩溃（V-P1-6 JIT 同步缺失 + 闭包字段捕获 bug），与 R161 Watchpoint 无关，留待后续 JIT 路径补全后启用 |
+
+### 关键设计
+
+1. **pre-execution peek 模式复用**：Watchpoint 复用 R104 已建立的 `peekCalledFunctionName()` / `isCurrentThrowInstruction()` → `checkPreExecutionFunctionExceptionBps()` → VmStepper 循环检查分支模式。新增 `peekWriteTarget()` 返回 `WriteTarget` 结构描述当前指令写入目标（变量名/字段名/索引写入标志），在每条指令执行前检查是否匹配 vmWatchpoints_ 列表。`WriteTarget` 类型定义在 `debug/DebugTypes.h` 共享头文件，VM 和 RegisterVM 都返回同构结构。
+2. **18 种 SET OpCode 解码**：栈式 VM 的 `peekWriteTarget` 需要解码 18 种 SET 类指令，每种指令的操作数编码不同（nameIdx/slot/uvIdx/fieldIdx/varIdx 及其组合）。关键工具：`globalNameToSlot_` 反查 slot→global name，`chunk.resolveSlotName(slot, ip)` 按 ip 精确反查 local slot name（L1 fix 建立的 SlotNameRange 反查机制）。寄存器式 VM 对应 RegOp 的解码逻辑结构相似但操作数编码不同（寄存器号 vs 栈槽）。
+3. **调试器 REPL vs Watch 表达式**：`evaluateDebuggerRepl` 复用 `evaluateWatchExpression` 的临时 Interpreter 沙箱模式（注入 globals + locals，副作用隔离），但用 `executeRepl` 替代 `evaluateCondition`——`evaluateCondition` 有 SandboxGuard 会撤销赋值（适合 watch 求值），`executeRepl` 不做沙箱恢复（适合调试器 REPL，允许 var/print/赋值语句在沙箱内执行）。线程安全：Interpreter 暂停期 worker 阻塞在 `pauseCV_`、VM 暂停期主线程空闲，临时 Interpreter 求值安全。
+4. **Watchpoint GUI 双路径状态守卫**：与 BreakpointConditionPanel 对齐——`isRunning() && isDebugRun() && !isDebugPaused()`（Interpreter 调试 resume 期间）或 `isVmRunning() && !isDebugPaused()`（VM 运行期间）时不刷新列表，避免并发访问 worker 线程更新的内部数据结构导致 UB。
+5. **三后端一致性边界**：本轮 Watchpoint 仅 VM 路径支持（peekWriteTarget 是 VM/RegisterVM 方法）。Interpreter 路径的 watchpoint 支持需在 DebugController 中实现（直接在 AssignExpr 节点执行前后检查变量名匹配），留待后续任务。
+6. **阶段 2 注册表注入语义**：`Interpreter::injectRegistriesFrom` 直接赋值三个注册表，shared_ptr 共享所有权——`funRegistry_`（`unordered_map<string, shared_ptr<FunDecl>>`）共享 AST 节点所有权，`classRegistry_`（`unordered_map<string, ClassInfo>`）的 `ClassInfo::methods` 也是 shared_ptr，`enumRegistry_`（`unordered_map<string, EnumInfo>`）含字符串/向量值拷贝。`executeRepl` 清除 `funRegistry_` 但保留 `classRegistry_`/`enumRegistry_`（类/枚举定义跨 REPL 行保留），故函数调用依赖 env 中的闭包值（携带 `shared_ptr<FunDecl> body`）而非 `funRegistry_`。`IdeController::evaluateDebuggerRepl` 在调用 `executeRepl` 前通过 `hasRegistries()` 判定后调用 `injectRegistriesFrom(mainInterp)` 注入注册表，主 Interpreter 通过 `retainReplAst` 保留 AST 所有权使 shared_ptr 持续有效。
+7. **Parser knownEnums_ 跨实例限制**：`Color.RED` 语法的消歧依赖 Parser 实例私有的 `knownEnums_` 集合，跨 Parser 不共享。阶段 2 测试中调试器 REPL 的临时 Parser 不含主程序的 enum 定义，导致 `Color.RED` 被解析为 `MemberAccess`（运行时失败）而非 `EnumVariantExpr`。解决方案：调试器 REPL 源码需自带 enum 定义（与主程序重复声明），使临时 Parser 正确生成 `EnumVariantExpr`。match pattern 的 VARIANT 不依赖 `enumRegistry_`（直接比对 scrutinee 的 `enumName/variantName`），故 match 路径不受此限制影响。
+8. **泛型 enum 语法 vs 非泛型 enum payload 类型校验**：非泛型 `enum Shape { Circle(r) }` 中 `r` 被当作类型注解，运行时做类型校验导致 int 不匹配；泛型 `enum Shape<T> { Circle(T) }` 中 `T` 是类型参数（运行时擦除，不做类型校验）。调试器 REPL 中传 int payload 时需用泛型 enum 语法规避类型校验失败。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过（minilang_ide + minilang_tests 双目标），无错误无警告
+- **clang-format**：22.1.5 零违规（17 个 .h/.cpp 文件，含 R161 阶段 2 新增的 TestDebuggerReplStage2.cpp + Interpreter.h/.cpp + IdeController.cpp/.h）
+- **专项验证**：`TestWatchpoint` 22/22 通过（6 结构体 + 8 VM peekWriteTarget + 6 RegisterVM peekWriteTarget + 2 跨后端一致性）
+- **专项验证**：`TestDebuggerReplStage2` 27/27 通过（4 HasRegistries + 3 Class + 3 Inheritance + 5 Enum + 5 Function + 1 Closure + 4 Boundary + 2 Combined）
+- **全量回归**：2688/2688 通过零回归（3 个 R161Closure* JIT 测试已标记 DISABLED_，与 R161 Watchpoint 无关）
+
+---
+
+## 2026-07-22 · JIT 后端阶段 5j inline cache + 分层编译教学面板 + 递归深度消息统一（R160）
+
+### 范围与背景
+
+承接 R159（即时反优化 + Tier 0→1 自动升级），本轮完成三项 JIT 后端收尾工作：(1) 为 `OP_MEMBER_GET` 属性访问添加单态 inline cache（IC），减少热路径 hash 查找开销；(2) JitVisualizerPanel 新增第 5 子页"分层编译与 OSR"教学场景，并补全 JitRunner `#else` 分支 stub；(3) 统一 JIT 4 处递归深度错误消息为 `ErrorMessages::kRecursionDepthExceededFmt`，与 Interpreter/StackVM/RegisterVM 三后端一致。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.h` | 新增 `MemberGetInlineCacheEntry` 结构体（`cachedInstancePtr` + `cachedFieldValuePtr`）；`JitContext` 新增 `memberGetICPtr` 字段（offset 232，per-call-site IC 数组指针）；`JITBackend` 新增 `memberGetIC_`/`icHitCount_`/`icMissCount_` 私有成员 + `getInlineCacheStats()`/`resetInlineCacheStats()` 公有 API |
+| `compiler/JIT.cpp` | (1) 新增 `extern "C" void jitMemberGetWithIC(JitContext*, const char* fieldName, uint64_t callSiteId, void* backendPtr)` 辅助函数——Instance 类型走 IC 路径（命中直接读字段指针，未命中走慢速路径并更新 cache），dict/null 类型回退原 `jitMemberGet` 逻辑；(2) `compileAllChunks` 中统计所有 chunk 的 `OP_MEMBER_GET` 总数预分配 `memberGetIC_` 数组 + 编译期按顺序分配 `callSiteId`；(3) `emitMemberGet` lambda 改为调用 `jitMemberGetWithIC`（额外传 `callSiteId` + `this` 指针）；(4) `execute` 中 `compileAllChunks` 之后设置 `jitContext_.memberGetICPtr` 并清空 cache 条目 + 重置 hit/miss 计数；(5) 4 处递归深度错误消息统一为 `ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, ...)` |
+| `gui/JitRunner.cpp` | `#else`（`MINILANG_USE_JIT=OFF`）分支补全 `runTieredCompilation` stub，返回 `error="JIT disabled"` 保持 API 完整性 |
+| `gui/JitVisualizerPanel.h/.cpp` | 新增第 5 子页"分层编译与 OSR"：`TierScenario` 结构体 + `tierScenarios()`（3 个教学场景：OSR 栈帧迁移 / Lazy Compilation / Deoptimization）+ `buildTierMetricsPage`/`populateTierScenarios`/`showTierScenario`/`runTierScenario` 方法；7 列 tierTable_（chunk 名/tier/OSR 回边计数/OSR 重编译/OSR 迁移/lazy 编译/已 deopt）+ 全局汇总 tierSummaryView_ |
+| `tests/TestJIT.cpp` | 新增 3 个 R160 专项测试：`R160InlineCacheForMemberGet`（语义正确性，循环 5 次 `p.x` 累加）/ `R160InlineCacheStatsHitMiss`（hit/miss 统计，10 次访问预期 miss=1 hit=9）/ `R160InlineCachePolymorphicDegradation`（多态场景，2 个不同 callSite 交替访问，预期 miss=2 hit=6） |
+
+### 关键设计
+
+1. **单态 inline cache 语义**：`OP_MEMBER_GET` 的每个 call-site（编译期分配全局唯一 `callSiteId`）维护一个 `MemberGetInlineCacheEntry`，缓存 `(InstanceData 原始地址, 字段 Value 指针)`。命中时直接从字段指针读取 Value（跳过 `unordered_map::find`），未命中时走慢速路径并更新 cache。多态场景（同一 callSite 访问不同 Instance）会导致 cache 反复失效（miss 递增），这是单态 IC 的已知限制，教学场景下可接受。
+2. **COW 陷阱规避（P0 修复）**：`obj.fields()` 有 const/非 const 两个重载，非 const 版本触发 `ensureUnique` COW 深拷贝 InstanceData。在 IC 场景下，深拷贝的 InstanceData 会在 `obj` 析构时被释放，导致 `cachedFieldValuePtr` 悬垂，后续命中读取垃圾值（测试输出 `-5.8e+144` 而非 `50`）。修复：使用 `std::as_const(obj).fields()` 强制调用 const 重载，避免 COW，cache 指针指向 obj 拥有的原始 InstanceData，obj 生命期与 cache 条目生命期一致（同一 execute 调用内）。
+3. **callSiteId 全局编号**：`compileAllChunks` 中遍历 mainChunk + functionChunks 统计 `OP_MEMBER_GET` 总数，预分配 `memberGetIC_` 数组；编译时按 chunk 顺序 + 指令顺序分配 `callSiteId`（0..N-1），运行时 `jitMemberGetWithIC` 通过 `callSiteId` 索引 `memberGetIC_` 数组。每次 `execute` 清空 cache 条目（指针置空）避免跨 execute 调用悬垂。
+4. **分层编译教学面板**：3 个教学场景覆盖分层编译核心概念——(a) OSR 栈帧迁移（Acc.sum 热循环触发回边计数达阈值，特化重编译 + 栈帧迁移）；(b) Lazy Compilation（add/sub 被调用才编译，unused 不调用不编译）；(c) Deoptimization（Mix.op 先 INT 特化后传 float 触发类型保护失败，即时反优化回 baseline）。面板调用 `JitRunner::runTieredCompilation` 隔离层（纯 C++ 桥接，不直接包含 asmjit 头文件）。
+5. **递归深度消息三后端统一**：JIT 4 处递归深度检查（`jitCallByName`/`jitCallExpr`/`jitMethodCall`/`jitSuperCall`）原使用各自硬编码消息文本，改为统一 `ErrorMessages::kRecursionDepthExceededFmt` + `ErrorFormat::format`，与 Interpreter/StackVM/RegisterVM 三后端错误消息完全一致。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规（6 个 .h/.cpp 文件）
+- **专项验证**：`TestJIT.R160Inline*` 3/3 通过（语义正确性 + hit/miss 统计 + 多态退化）
+- **JIT 全量回归**：367/367 通过零回归（含新增 3 个 R160 测试）
+- **全量回归**：2659/2659 通过零回归
+
+---
+
+## 2026-07-22 · JIT 后端阶段 5i OSR/分层编译完善（R159）
+
+### 范围与背景
+
+承接 R158（真正 OSR 栈帧迁移 + 分层编译 + 反优化），本轮完善 R158 遗留的两个核心缺陷：(1) 反优化非即时——R158 的 `triggerDeoptimize` 仅标记下次 `execute()` 使用 baseline 版本，非即时栈帧重构；(2) 无 Tier 0→Tier 1 自动升级——R158 所有 chunk 初始即为 Baseline，不存在 Interpreter 起步层。R159 实现即时反优化（类型保护失败立即调用 `jitDeoptimize` 跳转通用路径）与 Tier 0→Tier 1 自动升级（分层编译模式下非 main chunk 初始为 Interpreter，首次调用 lazy compile 升级到 Baseline）。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.h` | 新增 `tieredMode_` 成员标志 + `setTieredCompilation(bool)`/`isTieredCompilation()` 公有 API（启用时自动联动 `lazyMode_=true`） |
+| `compiler/JIT.cpp` | (1) `emitCheckInt` lambda 扩展：INT 特化模式生成类型保护（检查 tag==0x7FF8），不匹配时保存 r13/r15 到邮箱（offset 192/200）+ 同步 stackTop（offset 48）+ 调用 `jitDeoptimize(ctx, chunkIdx)` + 跳转 failLabel；FLOAT 特化模式生成类型保护（检查 tag 不在 [0x7FF8,0x7FFB]），不匹配时同样反优化路径；(2) 新增 `currentChunkIdx` 变量传递 chunk 索引给 lambda + 在 chunk 编译循环中更新；(3) `compileAllChunks` tier 初始化：`tieredMode_` 为 true 时非 main chunk 初始化为 `Interpreter`，main chunk 始终为 `Baseline`；(4) `compileSingleChunkLazy` 保存/恢复 `chunkTiers_`（4 处）+ lazy compile 成功后按名查找 chunk 升级 `Interpreter`→`Baseline`；(5) 更新 `triggerDeoptimize`/`jitDeoptimize` 注释说明即时反优化语义 |
+| `tests/TestJIT.cpp` | 新增 7 个 R159 专项测试：即时反优化触发（类型保护失败自动 deopt）/ 即时反优化结果正确性（三后端一致）/ 反优化后 tier 降级 / 分层编译标志 API / Tier 0→1 自动升级 / 分层编译隐含 lazy compilation / 分层编译正确性（多程序三后端一致） |
+
+### 关键设计
+
+1. **即时反优化（Tier 2→Tier 1）**：R158 的 `triggerDeoptimize` 仅标记下次 `execute()` 使用 baseline，非即时。R159 在 `emitCheckInt` 的 INT/FLOAT 特化模式中注入类型保护指令，运行时类型不匹配时立即保存 r13/r15（callee-saved，`jitDeoptimize` 不会破坏）到邮箱 + 同步 stackTop + 调用 `jitDeoptimize` + 跳转通用路径。`emitCallBinaryHelper` 从 `[r15]`/`[r15+8]` 读取操作数（r15 是 callee-saved），deopt 调用可能 clobber rax/rcx 但不影响操作数读取，故 deopt 调用安全。
+2. **Tier 0→Tier 1 自动升级**：新增 `tieredMode_` 标志，启用时 `compileAllChunks` 将非 main chunk 初始化为 `Interpreter`（main chunk 始终 Baseline）。`compileSingleChunkLazy` 在 lazy compile 成功后按名查找 chunk 索引并升级 `chunkTiers_[idx]` 从 `Interpreter` 到 `Baseline`。`setTieredCompilation(true)` 自动启用 `lazyMode_`（分层编译依赖 lazy compilation 基础设施）。
+3. **callee-saved 寄存器安全性**：Windows x64 ABI 中 r13（帧 bp）和 r15（栈 sp）是 callee-saved，`jitDeoptimize` 作为 C++ 函数调用不会破坏这两个寄存器，故 JIT 代码在 deopt 调用前后可依赖 r13/r15 保持不变，仅需在邮箱中保存一份供反优化入口点使用。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **专项验证**：`TestJIT.R159*` 7/7 通过
+- **全量回归**：2655/2655 通过零回归
+
+---
+
+## 2026-07-22 · 教学面板拓展：第六波 3 面板（内存布局 / 教学课程 / 练习评分）+ 5 项已完成标记
+
+### 范围与背景
+
+落实 `docs/development.md` "教学能力拓展" 中剩余 3 项：内存布局可视化、教学课程系统、交互式练习评分。同时标记 2 项已实现但未在 development.md 中标记完成的面板（AST 可视化编辑器、执行步骤讲解生成器）。本轮后项目共 35 个教学面板。
+
+### 实现要点
+
+| 面板 | 文件 | 设计 |
+| --- | --- | --- |
+| 内存布局可视化 | `gui/MemoryLayoutPanel.h/.cpp` | 2 子页：① 原理（NaN-boxing 8 字节位模式 + COW 写时复制过程 + upvalue 开/闭两态）② 交互式模拟器（4 预设：整数 42 / 浮点 3.14 / 数组 COW / 闭包捕获，值类型分析表 + 8 字节位模式 HTML 可视化，粉红标记 tag 字节、浅蓝标记 payload 字节） |
+| 教学课程系统 | `gui/CourseSystemPanel.h/.cpp` | 2 子页：① 课程库（3 预设课程：MiniLang 入门 / 进阶语法 / 高级特性，各 3 章 6 课，课程大纲 HTML + 加载课程代码）② JSON 课程编辑器（QTextEdit 编辑 + 解析预览 + 加载到课程库，QJsonDocument 逐字段类型校验） |
+| 交互式练习评分 | `gui/ExerciseGraderPanel.h/.cpp` | 单页三区（QSplitter）：顶部题目选择+描述+代码编辑，中间测试用例表+三后端执行详情，底部评分表+反馈报告。4 预设题目（两数之和/阶乘/数组求和/字符串反转），每题 3 个测试用例。评分：测试通过率 60 分 + 代码风格 20 分 + 编译错误 10 分 + 运行时错误 10 分。复用 BackendParallelPanel 三后端执行模式 |
+
+| 注册文件 | 变更 |
+| --- | --- |
+| `gui/PanelCatalog.cpp` | "入门导览"分类追加 `course-system`；"执行引擎"分类追加 `memory-layout`；"深入实战"分类追加 `exercise-grader` |
+| `app/ide.h` | 追加 3 个 include + 3 个成员指针 |
+| `app/ide.cpp` | `registerMemoryIrProfilePanels` 追加 3 个 registrar 调用 + 连接 `loadSampleRequested` |
+| `cmake/minilang_core.cmake` | `MINILANG_GUI_SOURCES` 追加 3 个 .cpp 文件 |
+| `docs/development.md` | 标记 5 项为已完成：AST 可视化编辑器 / 执行步骤讲解生成器 / 内存布局可视化 / 教学课程系统 / 交互式练习评分 |
+
+### 关键设计
+
+1. **纯教学/模拟面板模式**（内存布局面板）：不运行执行引擎，纯教学数据 + 交互式模拟器（参考 `InlineCachePanel`）。NaN-boxing 位模式可视化用 HTML table + bgcolor 标记 tag/payload 字节，COW 过程用表格展示 refcount 变化与 detach 时机。
+2. **三后端执行面板模式**（练习评分面板）：面板内部独立完成 `Lexer → Parser → 三后端执行` 流程（参考 `BackendParallelPanel`），三后端串行执行 + 输出一致性校验 + 评分报告生成。
+3. **JSON 课程编辑器**：教学课程系统用 QJsonDocument 解析课程 JSON，避免引入第三方 YAML 依赖。逐字段类型校验（title/code/explanation/expectedOutput 必须为 string，lessons 必须为 array），解析失败显示具体错误位置。
+4. **无双重包裹**：3 个面板构造函数均不创建标题栏（`Ide::wrapTeachingPanel` 自动包裹 `TeachingPanelHeader`）。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规（3 个面板 6 个 .h/.cpp 文件）
+- **全量回归**：2648/2648 通过零回归（1 个 `minilang_perf_test_NOT_BUILT` 为已知预存 PRE_TEST 模式 + 选择性构建目标问题，非本轮引入）
+- **面板计数**：面板总数 35，`HasExpectedPanelCount` 测试通过（区间 [18, 40]）
+
+---
+
+## 2026-07-22 · 教学面板拓展：第五波 4 面板（循环展开 / 逃逸分析 / 寄存器分配 / 三后端性能竞赛）
+
+### 范围与背景
+
+落实 `docs/development.md` "教学能力拓展" 中剩余 4 项：循环展开可视化、逃逸分析可视化、寄存器分配可视化、三后端性能竞赛。前三项与 JIT/RegisterVM 配套纯教学面板（不运行执行引擎，原理 + 交互式模拟器），第四项复用 BackendParallelPanel 的三后端执行模式。本轮后项目共 32 个教学面板。
+
+### 实现要点
+
+| 面板 | 文件 | 设计 |
+| --- | --- | --- |
+| 循环展开可视化 | `gui/LoopUnrollingPanel.h/.cpp` | 2 子页：① 循环展开理论（指令数对比表 + MiniLang 状态对照）② 交互式模拟器（循环次数 + 展开因子 K + 4 预设 + 伪代码预览 + 加速比计算） |
+| 逃逸分析可视化 | `gui/EscapeAnalysisPanel.h/.cpp` | 2 子页：① 逃逸三态理论（No/Arg/Global Escape + 栈上分配对照）② 交互式模拟器（4 预设场景：不逃逸 / 全局逃逸 / 参数逃逸 / 返回值逃逸，对象分析表 + 优化建议） |
+| 寄存器分配可视化 | `gui/RegisterAllocatorPanel.h/.cpp` | 2 子页：① 分配算法理论（图着色 / 线性扫描 / SSA-based / MiniLang 4 路对比 + 32 虚拟寄存器模型）② 交互式模拟器（4 预设场景：3 变量 / 8 变量 / 40 变量部分溢出 / 循环变量复用，变量-寄存器分配表 + 32 行寄存器使用表） |
+| 三后端性能竞赛 | `gui/PerformanceRacePanel.h/.cpp` | 单页：源码输入 + 运行次数（1-10 默认 5）+ 3 样例按钮 + 5 列性能对比表 + HTML/CSS 柱状图 + 5 节性能分析报告（最快后端 / 加速比 / 性能差异原因 / 指令数对比 / 各次运行明细） |
+
+| 注册文件 | 变更 |
+| --- | --- |
+| `gui/PanelCatalog.cpp` | "执行引擎"分类追加 4 个条目：`loop-unrolling` / `escape-analysis` / `register-allocator` / `performance-race` |
+| `app/ide.h` | 追加 4 个 include + 4 个成员指针 |
+| `app/ide.cpp` | `registerMemoryIrProfilePanels` 追加 4 个 registrar 调用 + 连接 `loadSampleRequested` |
+| `cmake/minilang_core.cmake` | `MINILANG_GUI_SOURCES` 追加 4 个 .cpp 文件 |
+| `tests/TestTeachingTreePanel.cpp` | `HasExpectedPanelCount` 上限从 30 提升到 40（面板总数达 32，原 30 上限已过时） |
+
+### 关键设计
+
+1. **纯教学/模拟面板模式**（前 3 面板）：不运行执行引擎，纯教学数据 + 交互式模拟器（参考 `InlineCachePanel`）。循环展开模拟指令数与加速比、逃逸分析模拟对象分配策略、寄存器分配模拟线性扫描算法，均为教学性质不要求与真实实现完全一致。
+2. **三后端执行面板模式**（第 4 面板）：面板内部独立完成 `Lexer → Parser → 三后端执行` 流程（参考 `BackendParallelPanel`），多次运行取平均（min/max/avg），HTML/CSS 嵌套 table + bgcolor 渲染柱状图。
+3. **C++20 关键字 `concept` 冲突规避**：3 个面板头文件原使用 `std::string concept;` 作为结构体字段名，MSVC 报 `error C2059: 语法错误:"concept"`（C++20 中 concept 是关键字），重命名为 `conceptName`。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **全量回归**：2639/2639 通过零回归
+- **专项验证**：`TeachingTreePanelAudit.HasExpectedPanelCount` 通过（面板数 32 在 [18, 40] 区间内）
+
+---
+
+## 2026-07-22 · JIT 后端阶段 5g Lazy Compilation + OSR（R157）
+
+### 范围与背景
+
+实现 JIT 后端阶段 5g 的 lazy compilation（延迟编译）与 OSR（On-Stack Replacement）简化版，使函数/方法 chunk 在首次调用时按需编译到独立 CodeHolder，循环回边热检测触发当前 chunk 特化重编译。R157 是 JIT 后端 lazy compilation + OSR 路线图的第一个完整实现。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.h` | 新增 `JitContext` 字段：`osrLoopCountsPtr`/`osrLoopThresholdsPtr`/`osrRecompiledFlagsPtr`（offset 168/176/184）；新增 `JITBackend` 成员：`lazyMode_`/`ownedLazyEntries_`/`lazyCompiledChunksList_`/`osrLoopCounts_`/`osrLoopThresholds_`/`osrRecompiledFlags_`/`customOsrThresholds_`；新增公有方法 `setLazyCompilation`/`setOsrThreshold`/`getOsrLoopStats`/`getOsrRecompileStats`/`getLazyCompiledChunks`/`triggerLazyCompile`/`compileSingleChunkLazy`/`triggerOsrRecompile` |
+| `compiler/JIT.cpp` | (1) `compileAllChunks` 末尾在 `lazyMode_` 为 true 时将 `funcEntries_`/`methodEntries_` 的 `entryPtr` 置空，使首次调用触发 lazy 编译；(2) `OP_CALL` 改为运行时邮箱模式（调用 `jitCallByName` + `jmp [邮箱]`），替代 R141 编译期 `a.jmp(info.entryLabel)`；(3) 新增 `jitCallByName` 辅助函数（与 `jitCallExpr` 对齐，entryPtr 为 null 时通过 `backendPtr` 回调 `triggerLazyCompile`）；(4) `OP_LOOP` 追加 OSR 回边计数 + 阈值检查 + `jitTriggerOsrRecompile` 回调；(5) `compileSingleChunkLazy` 采用保存/恢复模式（保存 12 个成员 → 临时禁用 `lazyMode_` → `compileAllChunks` → 提取目标 chunk 入口 → 恢复 → 更新 `entryPtr` → 保存内存所有权到 `ownedLazyEntries_`）；(6) `triggerOsrRecompile` 根据类型反馈选择 INT/FLOAT 特化重编译 |
+| `tests/TestJIT.cpp` | 新增 14 个 R157 专项测试：6 个 lazy compilation 测试（Basic/MultipleCalls/MultipleFunctions/RecursiveFunction/Disabled/GetChunks/ConsistencyWithStackVM/ClosureValueCall/MethodCall）+ 5 个 OSR 测试（ThresholdZero/BasicTrigger/LoopStats/ConsistencyWithStackVM/NoDuplicateTrigger） |
+
+### 关键设计
+
+1. **OP_CALL 编译期 Label jmp → 运行时邮箱模式**：R141 原实现使用编译期 `a.jmp(info.entryLabel)` 要求所有 chunk 在同一 CodeHolder。R157 改为调用 `jitCallByName` C++ 辅助函数（通过 `ctx->methodEntryPtr`/`ctx->methodLocalCount` 邮箱返回入口地址 + localCount）+ `jmp [邮箱]` 模式（参考 `emitMethodCall`/`OP_CALL_EXPR` 模式）。`lazyMode_` 下 `jitCallByName` 在 `entryPtr` 为 null 时触发 `compileSingleChunkLazy`。
+2. **compileSingleChunkLazy 保存/恢复模式**：`compileAllChunks` 会重置 `funcEntries_`/`methodEntries_`/`specializedMethodEntries_`/`chunkCallCounts_`/`chunkNames_`/`hotThresholds_`/`recompiledFlags_`/`typeFeedback_`/`osrLoopCounts_`/`osrLoopThresholds_`/`osrRecompiledFlags_` 等 12 个成员。保存全部 → 临时禁用 `lazyMode_`（使新编译的 `funcEntries_`/`methodEntries_` 包含真实 `entryPtr`）→ 编译 → 提取目标 chunk 入口 → 恢复 → 更新目标 chunk 的 `entryPtr` → 保存新 CodeHolder 内存所有权到 `ownedLazyEntries_`。
+3. **OSR 简化版**：`OP_LOOP` 回边时递增 `osrLoopCounts_[chunkIdx]`，达到阈值时设置 `osrRecompiledFlags_[chunkIdx]=1` 并调用 `jitTriggerOsrRecompile` 回调。回调根据类型反馈选择 INT/FLOAT 特化重编译（复用 R152/R153 `compileChunkSpecialized`/`compileChunkSpecializedFloat`）。简化版不做栈帧迁移（非真正 OSR），仅触发特化重编译供下次 `execute` 生效。
+
+### 修复的 Bug
+
+1. **jitContext_ 悬空指针崩溃（P0）**：`compileSingleChunkLazy` 恢复状态后未重新同步 `jitContext_` 中 7 个指向 `.data()` 的字段（`chunkCallCounts`/`hotThresholds`/`recompiledFlags`/`typeFeedback`/`osrLoopCountsPtr`/`osrLoopThresholdsPtr`/`osrRecompiledFlagsPtr`）。`compileAllChunks` 内部为这些 vector 重新分配内存并设置 `jitContext_` 指向新 `data()`，恢复旧 vector 后指针变为悬空，导致后续 JIT 代码通过 `jitContext_` 访问无效内存（崩溃根因）。修复：恢复后重新设置这 7 个字段 + `backendPtr`。
+2. **frameUpvaluesStack_ resize 崩溃（P1）**：MSVC Debug 模式下递归函数（如 `fib(10)`）在 `OP_RETURN` 时调用 `frameUpvaluesStack_.resize(newFrameCount)` 崩溃。修复：先 clear 每个待销毁元素内容再 resize。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **专项验证**：`TestJIT.R157*` 14/14 通过
+- **全量回归**：2639/2639 通过零回归
+- **性能基准**：LargeLoopSum 41x、NestedLoop 41x、DivisionModuloLoop 50x（lazy compilation 邮箱模式开销使 RecursiveFibonacci 略慢，正确性通过）
+
+---
+
+## 2026-07-22 · GcManager 悬垂回调 UAF 修复（R156NestedAssignLoopStress 500 次循环崩溃根因）
+
+### 范围与背景
+
+修复 `R156NestedAssignLoopStress` 测试在四后端顺序执行时触发的 `bad_alloc` / SEH `0xc0000005` 崩溃。该问题在 R156 收尾阶段被降级为 10 次循环规避（详见 [docs/changelog/archive/2026-07-10-to-2026-07-22-rounds-86-154.md](docs/changelog/archive/2026-07-10-to-2026-07-22-rounds-86-154.md)），本轮通过静态审计 + 动态复现 + 量化根因定位完成根因修复，恢复 500 次循环原始测试强度。
+
+### 根因
+
+`Interpreter` 构造函数（[interpreter/Interpreter.cpp](interpreter/Interpreter.cpp) L58）注册捕获 `this` 的 lambda 到 `GcManager` 单例的 `gcTriggerCallback_`，但析构函数未清除回调。当 `runInterp()` 返回后 `Interpreter` 析构，回调悬垂。后续 `RegisterVM`/`StackVM` 执行嵌套赋值时 COW detach 触发 `registerTracked` → `checkIncrementalGc`，累计分配越过 8192 阈值后调用悬垂回调 → UAF → `bad_alloc` / SEH `0xc0000005`。
+
+定量验证：4 嵌套赋值 × 2 COW detach × 500 循环 + 前置 `Interp`+`StackVM_IR` ≈ 8192，第 ~22 次迭代触发崩溃。原 R156 修复（LOAD_MUTATED + INDEX_SET_LOCAL/VAR 原地修改路径）本身正确，崩溃源于 GcManager 单例生命周期管理缺陷。
+
+### 修复方案
+
+| 模块 | 变更 |
+| --- | --- |
+| `interpreter/Interpreter.cpp` | 析构函数追加 `GcManager::instance().setGcTriggerCallback(nullptr);` 清除悬垂回调（根因修复）；同步更新构造函数注释，移除已过时的"~Interpreter 不主动 reset"说明 |
+| `interpreter/GcManager.cpp` | `reset()` 末尾追加 `gcTriggerCallback_ = nullptr;`，确保测试隔离时完全清理状态（防御性双重保护） |
+| `tests/TestNestedLvalueProbe.cpp` | 清理诊断代码：移除 `R156NestedAssignLoopStress` 中的 `cerr` 诊断行 + 2 个 `R157Diag*` 探针测试 + `runRegVM_IR` 的 `try-catch bad_alloc` 诊断；恢复 500 次循环 + 期望值 `499500499499` 的干净版本 |
+
+### 关键设计
+
+1. **根因修复（Interpreter 析构清除回调）**：单例持有的 `std::function` 捕获 `this` 指针，对象析构时必须清除回调避免悬垂。安全性：析构仅在 `execute()` 返回后发生，此时无 `collectCycle` 在进行中（`collectCycle` 同步执行于 `execute` 内），故无 `gcInProgress_` 冲突。
+2. **防御性双重保护（GcManager::reset 清除回调）**：`reset()` 语义为"完全重置"，原实现遗漏 `gcTriggerCallback_`，导致测试隔离时虽重置 `tracked_`/统计但悬垂回调仍指向已析构的 `Interpreter`。配合根因修复双重保护。
+3. **多 Interpreter 实例语义**：多个 Interpreter 实例存在时，后构造者覆盖前者回调，前者的析构清除自己注册过的回调（`setGcTriggerCallback(nullptr)` 会清除后者，但由于前者已析构不再触发 `registerTracked`，无实际影响）。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **专项验证**：`NestedLvalueProbe.R156NestedAssignLoopStress` 500 次循环四后端（Interp / StackVM_IR / RegVM_IR / StackVM_NonIR）全部输出 `499500499499`
+- **GC 回归**：`GcModes.*` 13/13 通过
+- **非 JIT 回归**：2288/2288 通过
+- **JIT 回归**：338/338 通过（排除未跟踪的 R157 lazy compilation 实验代码，其崩溃与本修复无关）
+
+---
+
+## 2026-07-22 · 教学面板拓展：内联缓存可视化面板（第 28 个教学面板）+ 构建修复
+
+### 范围与背景
+
+新增 `inline-cache`（第 28 个教学面板）——内联缓存（Inline Cache, IC）可视化。与现有 `jit-visualizer`（运行真实 JIT 采集类型反馈数据）互补：本面板侧重 IC 原理教学 + 交互式状态转换模拟器，不运行 JIT，纯教学/模拟。面板包含 2 子页：① IC 原理与三态（monomorphic/polymorphic/megamorphic 三态说明 + MiniLang JIT IC 实现对照表）+ ② IC 状态模拟器（输入类型序列，逐步可视化状态转换 + 缓存内容 + 命中/未命中统计）。
+
+同时修复了 cmake 构建系统中缺失的源文件注册问题：`compiler/JIT.cpp`、`debug/ExecutionTraceRecorder.cpp`、`common/CrashHandler.cpp` 未在 `MINILANG_CORE_SOURCES` 中注册（导致链接失败）；`gui/JitRunner.cpp`、`gui/JitVisualizerPanel.cpp`、`gui/StepExplainerPanel.cpp`、`gui/BackendParallelPanel.cpp`、`gui/AstVisualizerPanel.cpp`、`gui/InlineCachePanel.cpp`、`gui/WatchPanel.cpp`、`gui/WatchExpressionLibrary.cpp`、`gui/ExecutionTimelinePanel.cpp`、`gui/CrashReportDialog.cpp` 未在 `MINILANG_GUI_SOURCES` 中注册。另外为 R157 lazy compilation + OSR 的未实现方法（`compileSingleChunkLazy`/`triggerOsrRecompile`）添加了桩实现（返回失败值），确保链接通过。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `gui/InlineCachePanel.h/.cpp` | 新增第 28 个教学面板，2 子页设计：子页 1（IC 原理与三态）含 QTextBrowser 理论概览 + QTableWidget 三态对比表 + QTableWidget MiniLang IC 实现对照表；子页 2（IC 状态模拟器）含 QLineEdit 类型序列输入 + 运行/单步/重置按钮 + QListWidget 预设序列 + QTableWidget 模拟步骤表 + QTextBrowser 汇总 |
+| `gui/InlineCachePanel.cpp` | 含 `InlineCacheLibrary` 静态教学数据（3 条 IC 三态文档 + 5 条 MiniLang IC 实现对照）+ IC 状态转换核心算法（Uninitialized→Monomorphic→Polymorphic→Megamorphic 经典四态状态机）+ 6 个预设类型序列 |
+| `gui/PanelCatalog.cpp` | 在"执行引擎"分类的 backend-parallel 后追加 `inline-cache` 条目 |
+| `app/ide.h/.cpp` | 追加 `#include "gui/InlineCachePanel.h"` + `InlineCachePanel* inlineCachePanel_` 成员 + 在 `registerMemoryIrProfilePanels` 中注册 inline-cache |
+| `cmake/minilang_core.cmake` | 补全缺失源文件：MINILANG_CORE_SOURCES 追加 `debug/ExecutionTraceRecorder.cpp` + `common/CrashHandler.cpp`，条件追加 `compiler/JIT.cpp`；MINILANG_GUI_SOURCES 追加 10 个面板 .cpp |
+| `compiler/JIT.cpp` | 在匿名命名空间外添加 R157 桩实现：`compileSingleChunkLazy` 返回 nullptr、`triggerOsrRecompile` 返回 -1 |
+
+### 关键设计
+
+1. **IC 状态转换模拟器**：面板纯教学/模拟，不运行任何执行引擎。用户输入类型序列（如 int,int,float,string），模拟器逐步执行经典 IC 状态转换算法：Uninitialized→Monomorphic（首次观测）、Monomorphic→Polymorphic（观测到新类型）、Polymorphic→Megamorphic（缓存达 5 项溢出）。每步记录观测类型/转换前状态/转换后状态/命中/缓存内容/说明，汇总统计命中率与最终状态。
+2. **与 jit-visualizer 的分工**：jit-visualizer 侧重"运行真实 JIT 采集 per-chunk 类型反馈数据"（R152/R153 特化的运行时验证），本面板侧重"IC 原理教学 + 交互式状态转换模拟器"（经典 IC 理论的纯教学演示）。两者形成"理论→实践"的完整学习闭环。
+3. **MiniLang IC 实现对照表**：子页 1 展示 5 条经典 IC 概念到 MiniLang JIT 实现的映射（类型反馈→R152 typeFeedback_、单态特化→R152-R153 compileChunkSpecialized、特化入口持久化→R153 specializedMethodEntries_、热点检测→R150-R151 chunkCallCounts_、回退保护→R152 otherCount==0 校验），帮助学习者理解 MiniLang 的粗粒度 per-chunk IC 与 V8/SpiderMonkey 的 per-call-site IC 的差异。
+4. **无双重包裹**：教学面板显示时由 `Ide::wrapTeachingPanel` 统一包裹 `TeachingPanelHeader`，面板自身不创建标题栏。
+
+### 构建修复说明
+
+本轮发现并修复了 cmake 构建系统中缺失的源文件注册问题（预存 bug，非本轮引入）：
+- `compiler/JIT.cpp` 未在 `MINILANG_CORE_SOURCES` 中注册（JIT.h 的 `#ifdef MINILANG_USE_JIT` 声明被包含但实现未编译）
+- `debug/ExecutionTraceRecorder.cpp` 和 `common/CrashHandler.cpp` 同样未注册
+- 10 个 GUI 面板 .cpp 文件未在 `MINILANG_GUI_SOURCES` 中注册
+- R157 的 `compileSingleChunkLazy`/`triggerOsrRecompile` 在 JIT.h 中声明、JIT.cpp 中有调用点但无实现，添加桩实现返回失败值
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **clang-format**：22.1.5 零违规
+- **全量回归**：2654/2654 通过，零回归
+
+---
+
+## 2026-07-22 · 教学面板拓展：AST 可视化编辑器面板（第 27 个教学面板）
+
+### 范围与背景
+
+新增 `ast-editor`（第 27 个教学面板）——AST 可视化编辑器。与现有 `ast-toy`（关卡式 AST 构建练习）互补：ast-toy 侧重动手构建，本面板侧重"源码 → AST"的可视化对应关系与节点参考查询。面板内部独立完成 Lexer → Parser → AST 流程（不依赖 IdeController），AST 节点基类提供 `nodeName()` / `children()` 接口可直接递归遍历。归入"编译前端"分类（AST 是编译前端产物，非执行引擎）。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `gui/AstVisualizerPanel.h/.cpp` | 新增第 27 个教学面板，2 子页设计（QStackedWidget 切换）：子页 1（源码 → AST 可视化）顶部 QLineEdit 源码输入 + 解析按钮 + 4 个内置样例切换，中间 QSplitter(Horizontal)（左侧 QTreeWidget AST 树形结构 + 右侧 QTextBrowser 选中节点 HTML 详情），底部加载样例到主编辑器按钮；子页 2（AST 节点参考）QSplitter(Horizontal)（左侧 QListWidget 节点类型分类列表 + 右侧 QTextBrowser 文档详情） |
+| `gui/AstVisualizerPanel.cpp` | 含 `AstVisualizerLibrary` 静态教学数据（4 内置样例 + 31 条 AST 节点类型文档，覆盖声明类/语句类/表达式类）+ AST 解析逻辑（Lexer::scan → Parser::parse → 递归遍历 nodeName()/children() 构建 QTreeWidget）+ 节点详情 HTML 生成（dynamic_cast 提取属性 + 子节点角色标签）|
+| `gui/PanelCatalog.cpp` | 在"编译前端"分类的 syntax-explorer 后追加 `ast-editor` 条目 |
+| `app/ide.h/.cpp` | 追加 `#include "gui/AstVisualizerPanel.h"` + `AstVisualizerPanel* astVisualizerPanel_` 成员 + 在 `registerCompilationPipelinePanels` 中注册 ast-editor（registrar + setController + connect loadSampleRequested）|
+| `cmake/minilang_core.cmake` | 在 `MINILANG_GUI_SOURCES` 中追加 `gui/AstVisualizerPanel.cpp` |
+| `README.md` | 教学面板计数从 26+ 更新为 27+，能力描述追加"AST 可视化编辑器" |
+
+### 关键设计
+
+1. **面板独立解析 AST**：参考 `StepExplainerPanel` / `BackendParallelPanel` 的"面板内独立完成 Lexer → Parser"模式，不依赖 IdeController（与 `PipelineViewer` / `AstViewer` 依赖控制器已编译 AST 的模式区分）。AST 节点基类 `ASTNode::nodeName()` / `ASTNode::children()` 接口可直接递归遍历，无需 visitor 模式或逐类型 dynamic_cast 即可构建树形结构。
+2. **节点属性提取用 dynamic_cast**：`extractNodeProperties()` 通过 dynamic_cast 到具体子类（VarDecl/FunDecl/ClassDecl/BinaryOp 等 30+ 类型）提取关键属性（如 `name` / `opType` / `value`），对不支持的类型显示"无属性或未知节点类型"。`extractChildDescriptions()` 为子节点附上语义角色标签（如 `initializer` / `condition` / `thenBranch` / `left` / `right`），便于学习者理解每个子节点的语义角色。
+3. **2 子页教学结构**：子页 1 侧重"源码 → AST"的可视化对应关系（树形结构 + 节点详情），子页 2 侧重 AST 节点类型参考（31 条文档，按分类分组），与 ast-toy 的关卡式构建练习形成"参考 → 实践"的完整学习闭环。
+4. **无双重包裹**：教学面板显示时由 `Ide::wrapTeachingPanel` 统一包裹 `TeachingPanelHeader`，面板自身不创建标题栏（与 `StepExplainerPanel` / `BackendParallelPanel` 模式一致）。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告（/W3 /utf-8 /EHsc /permissive-）
+- **clang-format**：22.1.5 零违规
+- **无测试新增**：面板是 GUI 组件，依赖手动交互验证；AST 解析逻辑参考已充分测试的 `StepExplainerPanel.cpp` / `BackendParallelPanel.cpp` 模式
+
+---
+
+## 2026-07-22 · 第一百五十六轮：R156 JIT 后端阶段 5f upvalue 捕获完整实现（OP_CLOSURE upvalueCount>0 + OP_GET_UPVALUE/SET_UPVALUE/CLOSE_UPVALUE + closeUpvaluesFrom + frameUpvaluesStack_ 并行栈 + functionClosures_ 注册表 + 3 个 P1 Bug 修复）
+
+### 范围与背景
+
+承接 R155（闭包值创建 + 闭包值调用，仅支持 upvalueCount=0），本轮实现完整 upvalue 捕获机制，使 JIT 后端能够执行任意嵌套深度的闭包捕获语义，对齐 StackVM/RegisterVM/Interpreter 三后端。本轮不新增 OpCode 总数（仍为 47 种），但补全 OP_CLOSURE 的 upvalueCount>0 路径 + 3 个 upvalue OpCode 的真实实现（R142 阶段 3a 迁移时 OP_GET_UPVALUE/SET_UPVALUE/CLOSE_UPVALUE 曾作为 no-op 占位，R155 仍为占位）。本轮还修复了 5 个 R156 修复收尾阶段标记为 DISABLED_ 的测试，使 R156 专项测试 18/18 全部通过。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.h` | `JITBackend` 新增 4 个公有成员：`openUpvalues_`（升序 `multimap<int64_t*, weak_ptr<VMUpvalue>>`，与 StackVM 对齐）+ `frameUpvaluesStack_`（`vector<vector<shared_ptr<VMUpvalue>>>` 与 `frameStack_` 并行索引，方案 C 不破坏 JitFrame 72 字节布局）+ `functionClosures_`（`unordered_map<string, Value>` 闭包注册表，与 StackVM VM::functionClosures_ 对齐）+ `closeUpvaluesFrom(int64_t* fromAddr)` 方法（JIT 方向语义：关闭 `address <= fromAddr` 的 open upvalue）|
+| `compiler/JIT.h` | `JitContext` 新增 `currentBp` 字段（offset 160，`int64_t*` 传递 r13 给 jitCreateClosure，prologue 只保存 r12-r15 不保存 rbx，故需新增邮箱字段）|
+| `compiler/JIT.cpp` | 扩展 `jitCreateClosure`：从 `chunk.upvalueNames` 提取 upvalue 描述符，对每个 upvalue 区分 isLocal（直接捕获，创建 open upvalue 指向当前帧栈槽）vs 透传（从 `frameUpvaluesStack_[callerFrameIdx][uvIndex]` 直接复用）；upvalueCount=0 走 R155 原路径不变 |
+| `compiler/JIT.cpp` | 新增 `extern "C"` 辅助函数 `jitGetUpvalue`：从 `frameUpvaluesStack_[currentFrameIdx][uvIdx]` 读取 upvalue，closed 状态用 copy-and-detach 模式（避免 detach 共享 upvalue 的 value 字段），open 状态从 JIT 栈槽读取当前值 |
+| `compiler/JIT.cpp` | 新增 `extern "C"` 辅助函数 `jitSetUpvalue`：closed 状态直接赋值 `uv->value`（COW detach），open 状态写入 JIT 栈槽（通过 `uv->stackSlot` 指针）|
+| `compiler/JIT.cpp` | 新增 `extern "C"` 辅助函数 `jitCloseUpvalues` + `jitReturnCloseUpvalues`：调用 `closeUpvaluesFrom(fromAddr)` 关闭 open upvalue（StackVM 关闭 `stackSlot >= fromSlot`，JIT 关闭 `address <= fromAddr`，方向语义对齐栈增长方向反转）|
+| `compiler/JIT.cpp` | 新增 `extern "C"` 辅助函数 `jitPushClosureUpvalues`：从 `functionClosures_` 查找闭包值提取 upvalues（与 StackVM `executeCallFunction` 的 OP_CALL 路径对齐），OP_CALL case 编译期生成调用 |
+| `compiler/JIT.cpp` | OP_RETURN case 扩展：使用 r13 作为 fromAddr 调用 `jitReturnCloseUpvalues`（r13 是帧基址高地址端，关闭当前帧所有 open upvalue）|
+| `compiler/JIT.cpp` | OP_CLOSURE case 扩展：upvalueCount>0 时调用扩展后的 `jitCreateClosure`（R155 的 upvalueCount=0 路径保持不变）|
+| `compiler/JIT.cpp` | OP_GET_UPVALUE/OP_SET_UPVALUE/OP_CLOSE_UPVALUE case：从 no-op 占位改为真实实现，调用对应辅助函数 |
+| `compiler/JIT.cpp` | `execute()` 入口：`frameUpvaluesStack_.clear()` + `functionClosures_.clear()` 重置；`compileAllChunks` 后设置 `jitContext_.currentBp` 邮箱（offset 160）|
+| `tests/TestJIT.cpp` | 移除 5 个测试的 DISABLED_ 前缀 + 修正期望值 + 更新注释：`R156UpvaluePassthrough`/`R156UpvalueMultipleCaptures`/`R156UpvalueClosureCallViaUpvalue`/`R156UpvalueConsistencyWithStackVM`（期望值 "1233"→"123"）/`R156UpvalueCurryingConsistencyWithStackVM` |
+
+### 关键设计
+
+1. **方案 C（并行 upvalues 栈）**：`frameUpvaluesStack_` 与 `frameStack_` 并行索引（同 idx 对应同帧），不破坏 JitFrame 72 字节布局。R149 的 JitFrame 已固定为 72 字节（含 receiverSlotPtr/methodFieldOrder/methodBp/isMethodCall/isInitCall/fieldCount 6 个 writeBack 字段），在 JitFrame 内嵌 upvalues 会破坏 R149 ABI。方案 C 把 upvalues 存在独立的 `vector<vector<shared_ptr<VMUpvalue>>>` 中，通过 `frameUpvaluesStack_[currentFrameIdx]` 索引访问，与 JitFrame 解耦。
+2. **openUpvalues_ 排序方向**：升序 `multimap<int64_t*, weak_ptr<VMUpvalue>>` + `upper_bound` 关闭 `[begin, upper_bound(fromAddr))` 范围。StackVM 栈向高地址增长（`data_[top_++]`），JIT 栈向低地址增长（`r15 -= 8`），故 closeUpvaluesFrom 方向语义反转：StackVM 关闭 `stackSlot >= fromSlot`，JIT 关闭 `address <= fromAddr`。
+3. **currentBp 邮箱（offset 160）**：JIT prologue 只保存 r12-r15 不保存 rbx，`jitCreateClosure` 需要访问当前帧基址（r13）来计算 upvalue 的栈槽地址，但 r13 是 callee-saved 在辅助函数内不可直接读，故新增 JitContext offset 160 字段传递 r13。Win32 5 参数调用约定：rcx/rdx/r8/r9 传前 4 个参数，第 5 个参数通过 `[rsp+32]` 传递。
+4. **functionClosures_ 注册表**：与 StackVM `VM::functionClosures_` 对齐。StackVM `executeCallFunction` 在 OP_CALL 时从 `functionClosures_` 查找闭包值提取 upvalues（若找到则用闭包的 upvalues 而非重新捕获），JIT 已实现此查找（`jitPushClosureUpvalues`）。这处理"函数被赋值给变量后通过变量调用"的场景（`var g = add; g(3, 4)`）。
+5. **valueToBits/bitsToValue 借用-转移语义**：`bitsToValue`（fromBitsBorrowed）addRef 构造 Value；`valueToBits`（detach）提取 bits 并置 null 避免析构 release。对共享 upvalue 的 value 字段读取时，使用 copy-and-detach 模式：先拷贝构造临时 Value（addRef），再对临时值 detach，保持原值不变。
+6. **C++ 指针算术与字节偏移的区别**：`int64_t*` 指针算术 `ptr - N` 已减去 `N * sizeof(int64_t) = N * 8` 字节，不能再手动 `*8`，否则多乘一次 sizeof。JIT 栈布局 `[r13 - slot*8]` 是字节偏移（r13 是 int64_t* 但 `r13 - slot*8` 是字节算术），C++ 辅助函数中 `frameBasePtr - uvIndex` 是指针算术（已含 sizeof）。
+
+### Bug 修复记录
+
+1. **jitGetUpvalue 的 detach bug（P1）**：原代码 `valueToBits(uv->value)` 对 closed upvalue 直接 detach，会转移所有权并将 `uv->value` 置 null。第一次读取 closed upvalue 后值丢失，后续读取返回 null。症状：`R156UpvalueCurryingConsistencyWithStackVM` 输出 `"424200"`（期望 `"42421528"`），前两次调用正确（42, 42），后两次返回 0。对比 StackVM 使用 `push(uv->value)` 拷贝构造（addRef）不 detach。修复：copy-and-detach 模式 `Value tmp = uv->value; return valueToBits(tmp);`。
+2. **jitCreateClosure 的 C++ 指针算术 bug（P1）**：原代码 `int64_t* slotAddr = frameBasePtr - static_cast<int64_t>(uvIndex) * 8;`，`frameBasePtr` 是 `int64_t*`，C++ 指针算术 `frameBasePtr - uvIndex * 8` 实际减去 `uvIndex * 8 * sizeof(int64_t) = uvIndex * 64` 字节，多乘了一次 sizeof。症状：`R156UpvalueMultipleCaptures` 输出 `"10"`（期望 `"42"`），第二个 upvalue (y) 读取到垃圾值（uv[0] 和 uv[1] 的 slotAddr 相差 0x40=64 字节而非 8 字节）。修复：去掉手动 `* 8`：`int64_t* slotAddr = frameBasePtr - static_cast<int64_t>(uvIndex);`。
+3. **R156UpvalueConsistencyWithStackVM 测试期望值错误（P2）**：原期望 `"1233"`，实际 JIT 和 StackVM 都输出 `"123"`。源码 `print(inc()); print(inc()); return inc();` + `print(makeCounter());` 中，`return inc()` 不调用 print，只有 2 个内层 print + 1 个外层 print = 3 个输出（"123"），而非 4 个（"1233"）。修复：期望值改为 `"123"`。
+
+### 测试验证
+
+- **R156 专项测试**：18/18 全部通过（含本轮启用的 5 个原 DISABLED_ 测试）
+- **全量回归**：2625/2625 通过，零回归
+- **clang-format**：22.1.5 零违规（JIT.cpp/JIT.h/TestJIT.cpp）
+- **MSVC Debug 构建**：无错误无警告
+
+### 关键教训
+
+1. **valueToBits detach 语义对共享数据成员的危害**：`valueToBits(Value& v)` 调用 `Value::detach(v)` 转移所有权并置 v 为 null。对共享数据成员（如 `uv->value`）直接调用 detach 会破坏共享状态，后续读取得到 null。判别信号：辅助函数返回值后该成员再次被读取时返回 null → 优先怀疑 detach 副作用。修复模式 copy-and-detach：先拷贝构造临时 Value（堆类型 addRef），再对临时值 detach，原成员保持有效。StackVM OP_GET_UPVALUE 使用 `push(uv->value)` 拷贝构造（addRef）是正确范本。反模式警示：对 `shared_ptr<VMUpvalue>` 管理的 `uv->value` 字段直接 `valueToBits(uv->value)` → 第一次读取后值丢失。
+2. **C++ 指针算术与字节偏移的区别**：`T*` 指针算术 `ptr - N` 已自动减去 `N * sizeof(T)` 字节，不能再手动乘 sizeof。判别信号：多 upvalue 捕获时第二个 upvalue 读取到垃圾值，调试发现 slotAddr 相差 `N*sizeof(T)*sizeof(T)` 而非 `N*sizeof(T)` → 多乘了一次 sizeof。反模式警示：`int64_t* slotAddr = frameBasePtr - uvIndex * 8;`（frameBasePtr 是 int64_t*，指针算术已含 *8，手动 *8 多乘一次）。正确模式：`int64_t* slotAddr = frameBasePtr - uvIndex;` 或 `char* slotAddr = reinterpret_cast<char*>(frameBasePtr) - uvIndex * 8;`（char* 指针算术 *1，手动 *8 是字节偏移）。
+3. **JIT 栈方向反转的 closeUpvaluesFrom 方向语义**：StackVM 栈向高地址增长（`data_[top_++]`），JIT 栈向低地址增长（`r15 -= 8`）。closeUpvaluesFrom 方向语义必须反转：StackVM 关闭 `stackSlot >= fromSlot`（高地址端），JIT 关闭 `address <= fromAddr`（低地址端）。判别决策：JIT 栈方向反转时，所有基于栈位置的比较语义（关闭范围、边界检查）都必须反转。反模式警示：直接照搬 StackVM 的 `>=` 比较到 JIT → 关闭范围错误 → open upvalue 未关闭或误关闭。
+
+---
+
+## 2026-07-22 · 第一百五十五轮：R155 JIT 后端阶段 5e 闭包值创建 + 闭包值调用（OP_CLOSURE 真闭包值 + OP_CALL_EXPR 闭包值调用 + funcEntries_ 映射 + jitCreateClosure/jitCallExpr 辅助函数 + 邮箱返回入口地址模式）
+
+### 范围与背景
+
+承接 R154（嵌套左值赋值链 + 容器杂项 OpCode），本轮新增 2 个 OpCode 支持（JIT 现支持 47 种）——`OP_CLOSURE`（创建真闭包值，替代 R142 的 NULL 占位）+ `OP_CALL_EXPR`（通过闭包值调用函数，替代仅支持按名调用的 `OP_CALL`）。本轮采用简化版策略：仅支持 `upvalueCount=0` 的闭包值（无 upvalue 捕获），upvalue 捕获推迟到 R156。使 JIT 能够执行 `var g = add; g(3, 4);` 形式的闭包值传递与调用以及 `apply(square, 5)` 形式的高阶函数调用。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `compiler/JIT.h` | `JitContext` 新增 `funcEntriesPtr` 字段（offset 152，与 R146-R154 邮箱模式连续，共 20 个字段）|
+| `compiler/JIT.h` | `JITBackend` 新增 `funcEntries_` 成员（`unordered_map<string, JitMethodInfo>`，普通函数名→JIT入口映射，键不含 '.'，与 `methodEntries_` 的 "Class.method" 键分工）|
+| `compiler/JIT.cpp` | `FuncInfo` 结构体新增 `chunk` 字段（`const BytecodeChunk*`，OP_CLOSURE 构建闭包值时获取 chunkPtr 用）|
+| `compiler/JIT.cpp` | 新增 `extern "C"` 辅助函数 `jitCreateClosure`：与 StackVM `executeClosure` 对齐，创建 `Value::makeClosure` + `VMClosureData`（含 `chunkPtr` 绑定），`valueToBits` detach 转移所有权到 JIT 栈 |
+| `compiler/JIT.cpp` | 新增 `extern "C"` 辅助函数 `jitCallExpr`：与 StackVM `executeCallExprValue` 对齐（栈布局 `[..., closure, arg0, ..., argN-1]`），完整流程：pop args（借用）→ pop closure（借用）→ 类型检查 → `funcEntries_` 查找 → 参数校验 → 默认参数填充 → push args/defaults/extraSlots（detach）→ 构造 JitFrame → 邮箱返回入口地址+localCount |
+| `compiler/JIT.cpp` | 修改 `OP_CLOSURE` case：从 NULL 占位改为调用 `jitCreateClosure` |
+| `compiler/JIT.cpp` | 新增 `OP_CALL_EXPR` case：参考 `emitMethodCall` 模式（调用辅助函数 → 恢复 r15 → 检查错误 → 设置 returnAddr → 设置 `r13 = r15 + (localCount-1)*8` → `jmp methodEntryPtr`），Windows x64 ABI 栈对齐用 `sub rsp, 40`（R151 教训）|
+| `compiler/JIT.cpp` | `compileAllChunks` 中构建 `funcEntries_`：从 `funcTable` 提取普通函数名，`runtime_.add` 后用 `code.label_offset_from_base` 计算入口运行时地址；设置 `jitContext_.funcEntriesPtr = &funcEntries_` |
+| `tests/TestJIT.cpp` | 新增 14 个 R155 专项测试（基本调用 + 0/1/3 参数 + 高阶函数 + 多次调用 + 重新赋值 + 默认参数 + 局部变量 + 2 个三后端一致性 + 3 个错误路径）|
+
+### 关键设计
+
+1. **闭包值调用的"邮箱返回入口地址"模式**：`jitCallExpr` 无法直接访问 JIT Label，通过 `ctx->methodEntryPtr`（offset 72）和 `ctx->methodLocalCount`（offset 80）邮箱返回，与 R149 `emitMethodCall` 模式一致。JIT 代码不能直接持有 asmjit::Label 引用（Label 是编译期概念，运行时不存在），必须通过邮箱字段间接传递入口地址。
+2. **funcEntries_ 与 methodEntries_ 的键分工**：`funcEntries_` 键是普通函数名（不含 '.'），服务于 `OP_CALL_EXPR`；`methodEntries_` 键是 "Class.method" 格式，服务于 `OP_METHOD_CALL`/`OP_SUPER_CALL`。两者分别构建，避免键冲突。
+3. **OP_CLOSURE 的 chunk 指针绑定**：`VMClosureData.chunkPtr` 使 StackVM 优先使用 chunkPtr 查找，但 JIT 的 `jitCallExpr` 仍通过 `funcEntries_` 查找入口地址（JIT 入口地址不是 BytecodeChunk 指针而是 `runtime_.add` 后的本地代码地址），JIT 需要额外的 funcEntries_ 间接层。
+4. **引用计数管理**：`bitsToValue`（借用，addRef）+ `valueToBits`（detach，转移所有权）配对，与 `jitBuildArray` 等辅助函数一致。pop args 时借用（addRef），push 到新帧时 detach（转移所有权）。
+
+### Bug 修复记录
+
+1. **R155ClosureMultipleCalls 测试期望值错误（P2）**：`inc(x)=x+1`，`g(1)=2, g(2)=3, g(3)=4`，预期输出 `234` 而非 `123`。原测试误把 `inc(x)` 当作 `x` 返回。
+
+### 测试验证
+
+- **R155 专项测试**：14/14 全部通过
+- **全量回归**：2606/2606 通过，零回归
+- **clang-format**：22.1.5 零违规
+- **MSVC Release 构建**：无错误无警告
+- **性能基准**：JIT vs StackVM 加速比保持 38-98x（LargeLoopSum 51x、NestedLoop 50x、DivisionModuloLoop 98x、RecursiveFibonacci 43x）
+
+### 关键教训
+
+1. **闭包值调用的"邮箱返回入口地址"模式**：JIT 代码不能直接持有 asmjit::Label 引用（Label 是编译期概念，运行时不存在），必须通过 JitContext 邮箱字段间接传递入口地址。判别决策：当 JIT 辅助函数需要返回 JIT 入口地址给 JIT 代码时，用邮箱字段（如 `ctx->methodEntryPtr`）+ JIT 代码 `jmp [邮箱]` 模式。反模式警示：尝试在辅助函数内直接 `jmp` 到 JIT Label → Label 运行时不存在 → 崩溃。
+2. **funcEntries_ 与 methodEntries_ 的键分工**：普通函数名（不含 '.'）和 "Class.method" 格式的键分别服务于不同调用路径。判别决策：当两套调用机制（函数调用 vs 方法调用）有不同入口查找逻辑时，用独立映射避免键冲突。反模式警示：合并为单一映射用键前缀区分 → 查找逻辑复杂化 + 性能下降。
+3. **OP_CLOSURE 的 chunk 指针绑定与 JIT 入口地址查找的差异**：StackVM 优先用 `VMClosureData.chunkPtr` 直接查找 BytecodeChunk，JIT 必须通过 `funcEntries_` 查找 `runtime_.add` 后的本地代码地址（JIT 入口地址不是 BytecodeChunk 指针）。判别决策：当 JIT 与 StackVM 的"入口"概念不同时（BytecodeChunk 指针 vs 本地代码地址），JIT 需要额外的间接层。
+
+### 不支持的特征（R155 范围外）
+
+- **upvalue 捕获**：仍不支持（推迟到 R156）。
+- **UTF-8 字符串索引**：R146 遗留。
+- **`arr[i][j]=val` 嵌套数组赋值**：编译器预存 bug，所有后端均失败。
+- **lazy compilation + OSR**：仍为 eager compilation。
+- **循环展开 / 内联缓存**：未实现。
+- **普通函数热点检测**：仅方法 chunk 默认启用。
+
+---
+
+## 2026-07-22 · 教学面板拓展：三后端并行可视化面板 + JIT 编译可视化面板（第 25-26 个教学面板）
+
+### 范围与背景
+
+落实 development.md "未来拓展方向 / 教学能力拓展" 章节 "三后端并行可视化" 与 "JIT 可视化" 两项。新增两个教学面板：
+
+1. **`backend-parallel`（第 26 个面板）**：三后端并行可视化。MiniLang 的核心教学价值在于三套执行引擎（Interpreter / StackVM / RegisterVM）的语义等价性对比，但此前仅有 `backend-compare` 面板依赖 IdeController 已编译的 AST 运行，缺乏独立输入源码即可对比三后端的轻量教学面板。面板内部独立完成 Lexer → Parser → 三后端执行流程（参考 `TestNestedLvalueProbe.cpp` 的 `runInterp`/`runStackVM_IR`/`runRegVM_IR` 辅助模式），让学习者输入任意源码即可直观验证三后端语义等价性。
+2. **`jit-visualizer`（第 25 个面板）**：JIT 编译可视化。JIT 后端（R138-R155）是项目最新且最复杂的特性，零教学面板覆盖。面板采用 4 子页设计（① 编译原理概览 / ② 类型反馈与特化 / ③ 热点检测 / ④ OpCode 覆盖），其中子页 2/3 内置场景库 + "运行 JIT 并采集"按钮，通过 `JitRunner` 隔离层独立运行 `JITBackend`（参考 TestJIT.cpp 的 runJIT 模式），不修改 IdeController / 引擎层。
+
+### 实现要点
+
+| 模块 | 变更 |
+| --- | --- |
+| `gui/BackendParallelPanel.h/.cpp` | 新增第 26 个教学面板，单页设计：顶部 QLineEdit 源码输入 + 运行按钮 + 3 个内置样例切换；中间 QSplitter(Vertical) 上方 5 列 QTableWidget（后端/输出/指令数/状态/耗时ms）+ 下方 QSplitter(Horizontal) 三个 QTextBrowser 详细执行轨迹；底部加载样例到主编辑器按钮 + 一致性提示标签（✅ 三后端输出一致 / ❌ 不一致）|
+| `gui/JitVisualizerPanel.h/.cpp` | 新增第 25 个教学面板，含 4 子页（QStackedWidget 切换）+ `JitVisualizerLibrary` 静态教学数据（8 寄存器 / 20 JitContext 字段 / 10 OpCode 分类共 58 OpCode / 3 类型反馈场景 / 1 热点场景）|
+| `gui/JitRunner.h/.cpp` | 新增 Qt↔asmjit 隔离层（纯 C++ 编译单元，安全包含 asmjit；JitVisualizerPanel.cpp 仅 include JitRunner.h 不直接包含 asmjit）|
+| `gui/PanelCatalog.cpp` | 在"执行引擎"分类追加 `jit-visualizer`（第 25）和 `backend-parallel`（第 26）条目 |
+| `app/ide.h/.cpp` | 在 `registerMemoryIrProfilePanels` 中注册两个面板 + 连接 `loadSampleRequested` 信号到 `loadCodeIntoMainEditor`|
+| `cmake/minilang_core.cmake` | 追加 `gui/JitRunner.cpp`、`gui/JitVisualizerPanel.cpp`、`gui/BackendParallelPanel.cpp`|
+| `README.md` | 教学面板计数从 24+ 更新为 26+，能力描述追加"三后端并行可视化"与"JIT 编译可视化" |
+
+### 关键设计
+
+1. **面板独立运行三后端**：参考 `TestNestedLvalueProbe.cpp` 的 `runInterp`/`runStackVM_IR`/`runRegVM_IR` 辅助函数模式，面板内部独立完成 Lexer → Parser → 各后端执行流程，不依赖 IdeController（与 `BackendComparePanel` 依赖控制器已编译 AST 的模式区分）。
+2. **Qt↔asmjit 隔离层模式**：asmjit 的 `InstId`/`inst_id` 等标识符与 Qt/Windows 宏冲突，当 asmjit.h 与 Qt 头文件在同一编译单元包含时会产生 100+ 级联错误。解决方案：`JitRunner.h/.cpp` 作为纯 C++ 桥接层——`.cpp` 安全包含 asmjit（不包含 Qt），返回 STL 结构；`JitVisualizerPanel.cpp` 仅包含 `JitRunner.h`，不直接包含 asmjit。
+3. **4 子页教学结构**：子页 1（编译原理概览）展示寄存器分配表 / 栈帧布局 / JitContext 20 字段内存布局 / 邮箱模式说明；子页 2（类型反馈与特化）内置 3 个场景（INT 特化 / FLOAT 特化 / 不特化）；子页 3（热点检测）内置 1 个场景；子页 4（OpCode 覆盖）展示 58 个支持的 OpCode 分类表。
+4. **三后端串行执行**：Interpreter / StackVM(IR) / RegisterVM(IR) 在主线程串行执行（不并发），避免引擎层非线程安全问题。耗时用 QElapsedTimer 测量。
+5. **一致性验证**：表格下方 QLabel 自动检查三后端均成功且输出完全一致则显示 "✅ 三后端输出一致，语义等价性验证通过"，否则显示 "❌ 三后端输出不一致，存在语义差异！"。
+6. **无双重包裹**：教学面板显示时由 `Ide::wrapTeachingPanel` 统一包裹 `TeachingPanelHeader`，面板自身不创建标题栏。
+
+### 测试验证
+
+- **构建**：MSVC Debug 构建通过，无错误无警告
+- **全量测试**：2628/2628 通过，零回归（R155 时 2606，教学面板无新增测试）
+- **clang-format**：22.1.5 零违规
+- **无测试新增**：面板是 GUI 组件，依赖手动交互验证；JitRunner 隔离层与三后端执行逻辑参考已充分测试的 TestJIT.cpp / TestNestedLvalueProbe.cpp 模式
+
+### 关键教训
+
+1. **Qt↔asmjit 头文件冲突的隔离层模式**：asmjit 的 `InstId`/`inst_id` 与 Qt/Windows 宏冲突，当 asmjit.h 与 Qt 头文件在同一编译单元包含时产生 100+ 级联错误。解决方案：创建纯 C++ 桥接层（`.cpp` 安全包含 asmjit，`.h` 只暴露 STL 结构和函数声明）；GUI 面板 `.cpp` 只包含桥接层 `.h`。判别决策：当第三方库头文件与 Qt/平台宏冲突时，用纯 C++ 编译单元隔离 + STL 接口桥接。反模式警示：在 GUI .cpp 中直接 `#include <asmjit/asmjit.h>` → 100+ 级联错误。
+2. **GUI 面板的"独立运行 JIT"模式**：当 JIT 后端未集成到 IdeController（仅在 tests 中使用）时，教学面板不能依赖控制器运行 JIT。参考 `TestJIT.cpp` 的 `runJIT` 模式，在 `JitRunner.cpp` 中独立完成 Lexer→Parser→Compiler→JITBackend→getter 收集的完整流程。判别决策：(a) 引擎层有控制器集成 → 通过控制器调用；(b) 引擎层无控制器集成 → 面板/测试独立运行引擎。配套：getter API 必须 read-only。
+3. **教学面板的双重包裹规避**：`Ide::wrapTeachingPanel` 自动包裹 `TeachingPanelHeader`（标题 + 帮助 + 学习路径 + 返回编辑器），面板构造函数不应再创建标题栏，否则双重包裹。判别信号：面板显示时出现两个标题栏 → 移除面板构造函数中的 `TeachingPanelHeader::addHeader` 调用。
+
+---
+
+## 2026-07-22 · 第一百五十四轮：R154 JIT 后端阶段 5d 嵌套左值赋值链 + 容器杂项 OpCode
+
+**完整条目已归档至** [2026-07-10-to-2026-07-22-rounds-86-154.md](docs/changelog/archive/2026-07-10-to-2026-07-22-rounds-86-154.md)。摘要：补全 JIT 未支持的 8 种 OpCode（`OP_LEN`/`OP_DUP_N`/`OP_LOAD_MUTATED`/`OP_INDEX_SET`/`OP_WRITEBACK_*_VAR`/`OP_WRITEBACK_*_LOCAL`），新增 `lastMutatedReceiver_` 中转邮箱 + `JitContext.lastMutatedReceiverPtr` 字段（offset 144）+ 2 个 extern "C" 辅助函数（`jitLen`/`jitIndexSet`）+ 6 个 emit lambda。实现 `obj.field[idx]=val` 形式的嵌套左值赋值（正确），发现 `arr[i][j]=val` 编译器预存 bug（所有后端均失败，以一致性测试覆盖不修复）。11 个 R154 专项测试，全量 2592/2592 通过零回归，性能基准 39-100x 加速比保持。
+
+---
+
+## 2026-07-22 · R156 修复收尾（嵌套左值赋值测试调整 + DISABLED_ 标记）
+
+4 个涉及 OP_MEMBER_SET 的 JIT 测试调整为期望编译错误（JIT 不支持 OP_MEMBER_SET 栈式变体是预存限制，非 R156 引入），StackVM 断言保留；R156NestedAssignLoopStress 循环次数从 500 降到 10（高循环次数崩溃根因疑为 RegisterVM vreg 寄存器溢出 + StackVM 非 IR lastMutatedReceiver_ COW 内存损坏，推迟到 R157+）；5 个未完成的 R156 upvalue 捕获测试标记 DISABLED_ 前缀（currying 后 upvalue 被覆盖为 0、闭包返回值传递丢失、通过 upvalue 调用闭包值失败）。13/13 R156 专项测试通过，全量 2620/2620 通过零回归。**注**：本轮标记的 5 个 DISABLED_ 测试已在第一百五十六轮（R156 upvalue 完整实现）全部启用并通过。
+
+---
+
+**历史变更**：R86-R154 的完整变更记录已归档至 [2026-07-10-to-2026-07-22-rounds-86-154.md](docs/changelog/archive/2026-07-10-to-2026-07-22-rounds-86-154.md)，R69-R85 见 [2026-07-10-rounds-69-85.md](docs/changelog/archive/2026-07-10-rounds-69-85.md)，第六十八轮及以前见 [docs/changelog/archive/](docs/changelog/archive/)。

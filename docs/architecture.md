@@ -52,20 +52,26 @@ Value 类型使用 8 字节 NaN-boxing 编码，将 `sizeof(Value)` 从 24 字�
 
 ---
 
-## 三后端架构
+## 四后端架构
 
-MiniLang 维护三个执行后端并存策略：
+MiniLang 维护四个执行后端并存策略：
 
 | 后端 | 类 | 特点 |
 |------|------|------|
 | Interpreter | `Interpreter` | 树遍历，基准实现，最易调试 |
 | StackVM | `VM` | 栈式字节码，75 条 OpCode，1024×8B 定长操作数栈 + 栈顶指针 |
 | RegisterVM | `RegisterVM` | 寄存器式字节码，59 条 RegOp，32 虚拟寄存器 R0-R31 |
+| JIT | `JITBackend` | 基于 asmjit 的本地机器码后端（x86-64），可选启用（`MINILANG_USE_JIT`） |
 
-三后端必须保持语义一致性。IR 层作为可选中间表示，启用后在 lowering 前执行优化 pass。
+三解释后端（Interpreter / StackVM / RegisterVM）必须保持语义一致性。IR 层作为可选中间表示，启用后在 lowering 前执行优化 pass。JIT 后端与 StackVM 共享 `BytecodeChunk` 输入，定位为"StackVM 的硬件加速器"，语义必须与三后端对齐。
+
+### JIT 后端
+
+JIT 后端将 `BytecodeChunk` 编译为 x86-64 本地机器码直接在 CPU 上执行，消除 dispatch loop 开销。实现 V8 风格的分层编译（Tier 0 Interpreter → Tier 1 Baseline → Tier 2 Specialized），含热点检测、类型反馈、INT/FLOAT 特化重编译、lazy compilation、OSR 栈帧迁移、反优化等现代 JIT 核心机制。JIT 代码通过 `JitContext` 邮箱模式与 C++ 运行时交互（`r12` 寄存器持有上下文指针，硬编码 offset 访问字段）。
 
 详见 [ADR-002: 三后端策略](adr/ADR-002-triple-backend.md)
 详见 [ADR-003: IR 中间层](adr/ADR-003-ir-layer.md)
+详见 [ADR-006: JIT 后端](adr/ADR-006-jit-backend.md)
 
 ---
 

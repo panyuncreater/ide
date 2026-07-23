@@ -3,7 +3,7 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Qt6](https://img.shields.io/badge/Qt-6-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
-![Tests](https://img.shields.io/badge/tests-1773-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3121-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 一个用 C++20 / Qt6 构建的轻量级教学型编程语言集成开发环境。通过从零实现一门完整编程语言（词法分析 → 解析 → 解释/编译 → 虚拟机）来教授编译原理与运行时设计的核心概念。
@@ -12,7 +12,7 @@
 
 ## 功能特性
 
-**语言能力**：int/float/bool/string/null 类型、闭包、类继承、数组/字典 (COW)、字符串插值、try/catch 异常、模块系统 (import/export)
+**语言能力**：int/float/bool/string/null 类型、闭包、类继承、数组/字典 (COW)、字符串插值、try/catch 异常、模块系统 (import/export)、元组与解构、枚举与 ADT + match、泛型/模板 `<T>`、协程 async-await
 
 **三执行引擎**：
 
@@ -22,7 +22,7 @@
 | 数据传递 | 函数返回值 | 操作数栈 push/pop | 32 虚拟寄存器 R0-R31 |
 | 适用场景 | 教学调试、REPL | 通用执行、字节码可视化 | 性能对比、IR 研究 |
 
-**IDE 能力**：语法高亮编辑器、AST 树形图、字节码反汇编、IR 可视化、调试器（断点/单步/变量监视）、代码格式化器、REPL（含 %magic 命令）、20+ 教学面板
+**IDE 能力**：语法高亮编辑器、AST 树形图、字节码反汇编、IR 可视化、调试器（断点/单步/变量监视）、代码格式化器、REPL（含 %magic 命令）、40+ 教学面板（含 JIT 编译可视化、三后端并行可视化、AST 可视化编辑器、循环展开可视化、逃逸分析可视化、寄存器分配可视化、三后端性能竞赛、内存布局可视化、教学课程系统、交互式练习评分、协程/生成器可视化、GC 垃圾回收可视化、静态分析探索器、模糊测试游乐场、模块系统可视化）
 
 ## 架构
 
@@ -102,7 +102,8 @@ try {
 | `gui/` | Qt6 GUI 组件（编辑器/AST 视图/教学面板等） |
 | `app/` | IdeController（Facade）、WorkerManager、VmStepper、DebugCoordinator、PipelineRunner、Ide 主窗口 |
 | `common/` | Diagnostic、Logger、IBackend、TypeChecker |
-| `tests/` | GoogleTest 单元测试（1773 个） |
+| `cli/` | 命令行工具：minilang-dap（DAP 调试适配器）、minilang-lsp（LSP 语言服务器）、minilang-fuzz（模糊测试）、minilang-pkg（包管理器） |
+| `tests/` | GoogleTest 单元测试（3121 个） |
 | `docs/` | 架构文档、开发指南、设计决策记录 |
 
 ## 测试
@@ -118,7 +119,7 @@ try {
 cd out/build/debug && ctest -R LexerTest.* --verbose
 ```
 
-项目包含 **1773 个 GoogleTest 单元测试**（212 个测试套件），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层、三后端一致性、格式化器、教学面板数据完整性等。
+项目包含 **3121 个 GoogleTest 单元测试**（351 个测试套件），覆盖前端（Lexer/Parser）、解释器、编译器与虚拟机、IR 中间层、四后端一致性（Interpreter/StackVM/RegisterVM/JIT）、格式化器、LSP 语言服务器、DAP 调试适配器、包管理器、教学面板数据完整性等。
 
 ## 文档
 

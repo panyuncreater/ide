@@ -72,6 +72,24 @@ VmStepper
 - **限制**：槽位复用（兄弟作用域）时后声明的变量名覆盖先前的，属于已知限制
 - **性能**：条件断点求值有额外开销（Environment 快照/恢复），但仅在断点命中时发生
 
+### L1 限制审计结论（2026-07-19）+ 实施完成（2026-07-19 第九十六轮）
+
+**触发场景**：函数内兄弟作用域（if/else、同级 block、try-catch）复用同一槽位时，`localSlotNames_[slot]` 被后声明的变量名覆盖，导致在**先声明的分支**内设置条件断点时变量名错位。
+
+**影响范围**：仅 VM / RegisterVM 模式下的条件断点求值与调用栈变量显示；Interpreter 模式直接使用 AST Environment 不受影响；普通断点/步进不读 localSlotNames 不受影响。
+
+**严重性**：P2（边界/一致性问题，非崩溃）
+
+**实施方案 D（基于 IP 范围的反查表）——已实施**：
+- BytecodeChunk / RegBytecodeChunk 新增 `vector<SlotNameRange { uint8_t slot; std::string name; size_t startIp; size_t endIp; }>`
+- Compiler 在 `visitVarDecl` 记录 `(slot, name, startIp)` 入栈，块退出时 `closeSlotRanges` 回填 `endIp`
+- 调试器反查时按 `frame.ip` 在 `slotNameRanges` 中查找 `startIp <= ip < endIp && slot == N`
+- 保留 `localSlotNames` 作为 fallback，向后兼容
+- IR 路径（BytecodeIRBackend / RegisterBytecodeBackend）同步生成 `slotNameRanges`
+- 三后端统一受益，不影响执行性能/字节码语义/寄存器分配
+
+**当前状态**：已实施完成（2026-07-19 第九十六轮）。兄弟作用域槽位复用场景下，条件断点按 IP 范围反查变量名，不再错位。
+
 ## Alternatives
 
 - **各后端独立调试接口**：实现简单但用户体验不一致
