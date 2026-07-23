@@ -209,20 +209,65 @@ void BreakpointConditionPanel::buildLivePage(QWidget* host) {
     liveStatusLabel_ = new CaptionLabel(QString::fromUtf8("未绑定控制器"), host);
     layout->addWidget(liveStatusLabel_);
 
-    // 4 列：行号 / 条件表达式 / 命中次数 / 状态
-    breakpointTable_ = new QTableWidget(0, 4, host);
+    // 5 列：行号 / 类型 / 条件表达式 / 命中次数 / 状态
+    breakpointTable_ = new QTableWidget(0, 5, host);
     breakpointTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     breakpointTable_->setHorizontalHeaderLabels({
         QString::fromUtf8("行号"),
+        QString::fromUtf8("类型"),
         QString::fromUtf8("条件表达式"),
         QString::fromUtf8("命中次数"),
         QString::fromUtf8("状态"),
     });
     breakpointTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    breakpointTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    breakpointTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    breakpointTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    breakpointTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
     breakpointTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    layout->addWidget(breakpointTable_, 1);
+    breakpointTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    layout->addWidget(breakpointTable_, 2);
+
+    // R104 函数断点子面板
+    auto* funcBpGroup = new QWidget(host);
+    auto* funcBpLayout = new QVBoxLayout(funcBpGroup);
+    funcBpLayout->setContentsMargins(0, 4, 0, 4);
+    auto* funcBpLabel = new CaptionLabel(QString::fromUtf8("函数断点（按函数名）"), funcBpGroup);
+    funcBpLayout->addWidget(funcBpLabel);
+    functionBpList_ = new QListWidget(funcBpGroup);
+    functionBpList_->setMaximumHeight(80);
+    funcBpLayout->addWidget(functionBpList_);
+    auto* funcBpBtnLayout = new QHBoxLayout();
+    auto* funcBpEdit = new QLineEdit(funcBpGroup);
+    funcBpEdit->setPlaceholderText(QString::fromUtf8("输入函数名后点击添加"));
+    addFunctionBpBtn_ = new QPushButton(QString::fromUtf8("添加"), funcBpGroup);
+    removeFunctionBpBtn_ = new QPushButton(QString::fromUtf8("移除选中"), funcBpGroup);
+    funcBpBtnLayout->addWidget(funcBpEdit);
+    funcBpBtnLayout->addWidget(addFunctionBpBtn_);
+    funcBpBtnLayout->addWidget(removeFunctionBpBtn_);
+    funcBpLayout->addLayout(funcBpBtnLayout);
+    layout->addWidget(funcBpGroup);
+
+    // 函数断点添加按钮
+    connect(addFunctionBpBtn_, &QPushButton::clicked, this, [this, funcBpEdit]() {
+        if (!controller_ || funcBpEdit->text().isEmpty())
+            return;
+        controller_->setFunctionBreakpoint(funcBpEdit->text().toStdString());
+        funcBpEdit->clear();
+        refreshLive();
+    });
+    connect(removeFunctionBpBtn_, &QPushButton::clicked, this, [this]() {
+        if (!controller_ || !functionBpList_->currentItem())
+            return;
+        controller_->removeFunctionBreakpoint(functionBpList_->currentItem()->text().toStdString());
+        refreshLive();
+    });
+
+    // R104 异常断点复选框
+    exceptionBpCheck_ = new QCheckBox(QString::fromUtf8("异常断点：throw 前暂停（catch throw 语义）"), host);
+    connect(exceptionBpCheck_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (controller_)
+            controller_->setExceptionBreakpointEnabled(checked);
+    });
+    layout->addWidget(exceptionBpCheck_);
 }
 
 void BreakpointConditionPanel::buildLibraryPage(QWidget* host) {
@@ -304,15 +349,61 @@ void BreakpointConditionPanel::refreshLive() {
         int line = sortedLines[i];
         std::string cond = controller_->getBreakpointCondition(line);
         int hitCount = controller_->getBreakpointHitCount(line);
+        // R104: 类型列（Line / Logpoint）
+        BreakpointKind kind = controller_->getBreakpointKind(line);
+        QString kindText = (kind == BreakpointKind::Logpoint) ? QString::fromUtf8("日志断点")
+                                                              : QString::fromUtf8("行断点");
+        std::string logMsg = controller_->getLogpointMessage(line);
 
         breakpointTable_->setItem(i, 0, new QTableWidgetItem(QString::number(line)));
-        breakpointTable_->setItem(
-            i, 1,
-            new QTableWidgetItem(cond.empty() ? QString::fromUtf8("（无条件）") : QString::fromUtf8(cond.c_str())));
-        breakpointTable_->setItem(i, 2, new QTableWidgetItem(QString::number(hitCount)));
-        // 状态：条件断点 vs 普通断点
-        QString status = cond.empty() ? QString::fromUtf8("普通断点") : QString::fromUtf8("条件断点");
-        breakpointTable_->setItem(i, 3, new QTableWidgetItem(status));
+        breakpointTable_->setItem(i, 1, new QTableWidgetItem(kindText));
+        QString condDisplay;
+        if (kind == BreakpointKind::Logpoint) {
+            condDisplay = logMsg.empty() ? QString::fromUtf8("（无日志消息）")
+                                         : QString::fromUtf8(logMsg.c_str());
+            if (!cond.empty())
+                condDisplay += QString::fromUtf8(" [if ") + QString::fromUtf8(cond.c_str()) +
+                               QString::fromUtf8("]");
+        } else {
+            condDisplay = cond.empty() ? QString::fromUtf8("（无条件）") : QString::fromUtf8(cond.c_str());
+        }
+        breakpointTable_->setItem(i, 2, new QTableWidgetItem(condDisplay));
+        breakpointTable_->setItem(i, 3, new QTableWidgetItem(QString::number(hitCount)));
+        // 状态：综合显示
+        QString status;
+        if (kind == BreakpointKind::Logpoint) {
+            status = QString::fromUtf8("记录日志");
+        } else if (cond.empty()) {
+            status = QString::fromUtf8("普通断点");
+        } else {
+            status = QString::fromUtf8("条件断点");
+        }
+        breakpointTable_->setItem(i, 4, new QTableWidgetItem(status));
+    }
+
+    // R104: 刷新函数断点列表
+    QSet<std::string> funcBps = controller_->getFunctionBreakpoints();
+    functionBpList_->clear();
+    QList<std::string> sortedFuncBps = funcBps.values();
+    std::sort(sortedFuncBps.begin(), sortedFuncBps.end());
+    for (const auto& name : sortedFuncBps) {
+        int hitCnt = controller_->getFunctionBreakpointHitCount(name);
+        QString itemText = QString::fromUtf8(name.c_str()) + QString::fromUtf8("  (命中: ") +
+                           QString::number(hitCnt) + QString::fromUtf8(")");
+        functionBpList_->addItem(itemText);
+    }
+
+    // R104: 同步异常断点复选框状态（避免用户切换时信号回环）
+    bool excEnabled = controller_->isExceptionBreakpointEnabled();
+    if (exceptionBpCheck_->isChecked() != excEnabled) {
+        QSignalBlocker blocker(exceptionBpCheck_);
+        exceptionBpCheck_->setChecked(excEnabled);
+    }
+    if (excEnabled) {
+        int excHits = controller_->getExceptionBreakpointHitCount();
+        exceptionBpCheck_->setText(QString::fromUtf8("异常断点：throw 前暂停（命中: %1）").arg(excHits));
+    } else {
+        exceptionBpCheck_->setText(QString::fromUtf8("异常断点：throw 前暂停（catch throw 语义）"));
     }
 }
 

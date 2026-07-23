@@ -26,6 +26,7 @@
 // ============================================================
 
 #include "ast/ASTNode.h" // Block 类型完整定义（measureXxxOnce 签名需要）
+#include <QComboBox>
 #include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
@@ -35,8 +36,10 @@
 #include <QWidget>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -116,6 +119,10 @@ signals:
     /// 信号：请求主窗口载入指定示例代码。
     void loadSampleRequested(const QString& code);
 
+private slots:
+    /// R111: 柱状图维度切换（耗时/指令数/内存）
+    void onMetricChanged(int index);
+
 private:
     IdeController* controller_ = nullptr;
 
@@ -126,6 +133,7 @@ private:
     // 右侧三后端柱状图 + 性能表
     QPushButton* runProfileBtn_ = nullptr;
     QLabel* statusLabel_ = nullptr;
+    QComboBox* metricCombo_ = nullptr;     // R111: 柱状图维度切换（耗时/指令数/内存）
     QTableWidget* resultTable_ = nullptr;  // 后端 / 平均时间 / 标准差 / 比值
     QTextBrowser* analysisView_ = nullptr; // 文字分析
 #ifdef MINILANG_HAVE_QTCHARTS
@@ -135,6 +143,10 @@ private:
     QBarSeries* barSeries_ = nullptr;
 #endif
 
+    // R111: 柱状图维度枚举（耗时 / 指令数 / 内存）
+    enum class MetricDimension { Time, Instructions, Memory };
+    MetricDimension currentMetric_ = MetricDimension::Time;
+
     // 单后端测量
     struct BackendTiming {
         std::string name;
@@ -142,6 +154,9 @@ private:
         double stddevMicros = 0.0;
         bool success = true;
         std::string errorMessage;
+        // R111: 新增维度
+        uint64_t totalInstructions = 0; // 执行指令总数（Interpreter 无指令概念，保持 0）
+        size_t peakTrackedCount = 0;    // GC tracked 节点峰值（内存维度）
     };
 
     /// P1-1: 指令计数结果（仅 StackVM / RegisterVM，Interpreter 无指令概念）
@@ -153,17 +168,25 @@ private:
     QTableWidget* registerVmOpTable_ = nullptr; // RegisterVM Top N 热点 opcode
     QTextBrowser* opCodeDocView_ = nullptr;     // OpCode 性能文档说明
 
-    /// 测量 Interpreter 单次执行时间（微秒）。StackVM/RegisterVM 走 measureXxxWithProfile。
-    double measureInterpreterOnce(Block& ast);
+    /// R111: 测量 Interpreter 单次执行 — 返回 (微秒, GC tracked 峰值)
+    std::pair<double, size_t> measureInterpreterOnce(Block& ast);
 
-    /// P1-1: 在 StackVM/RegisterVM 测量期间累加 opcode 计数到本地数组
-    /// 返回 (微秒, opcodeCounts[256])；测量期间 stepCallback 启用
-    std::pair<double, std::array<uint64_t, 256>> measureStackVMWithProfile(Block& ast);
-    std::pair<double, std::array<uint64_t, 256>> measureRegisterVMWithProfile(Block& ast);
+    /// R111: 在 StackVM/RegisterVM 测量期间累加 opcode 计数 + GC tracked 峰值
+    /// 返回 (微秒, opcodeCounts[256], GC tracked 峰值)；测量期间 stepCallback 启用
+    std::tuple<double, std::array<uint64_t, 256>, size_t> measureStackVMWithProfile(Block& ast);
+    std::tuple<double, std::array<uint64_t, 256>, size_t> measureRegisterVMWithProfile(Block& ast);
 
-    /// 多次测量取平均 + 标准差
-    BackendTiming measureBackend(const std::string& name, std::function<double(Block&)> measure, Block& ast,
-                                 int iterations);
+    /// 多次测量取平均 + 标准差 + 内存峰值
+    /// measure 返回 (微秒, GC tracked 峰值)；BackendTiming 填充 avgMicros/stddevMicros/peakTrackedCount
+    BackendTiming measureBackend(const std::string& name, std::function<std::pair<double, size_t>(Block&)> measure,
+                                 Block& ast, int iterations);
+
+    /// R111: 维度切换辅助 — 提取当前维度的数值（double 用于归一化与绘制）
+    static double getMetricValue(const BackendTiming& r, MetricDimension metric);
+    /// R111: 维度切换辅助 — 当前维度的 Y 轴标题
+    static QString metricAxisTitle(MetricDimension metric);
+    /// R111: 维度切换辅助 — 当前维度的柱顶数值标签
+    static QString metricLabel(const BackendTiming& r, MetricDimension metric);
 
     /// 渲染柱状图（QPainter 自绘模式；QtCharts 模式下走 renderChart）
     void paintEvent(QPaintEvent* event) override;

@@ -19,7 +19,9 @@
 // std::function 回调，头文件内联无 moc 依赖），状态变更即时刷新，QTimer 降为 2s 安全网。
 // ============================================================
 
+#include <QCheckBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -92,9 +94,16 @@ private:
     QStackedWidget* stack_ = nullptr;
 
     // 子页 1：实时断点列表
-    QTableWidget* breakpointTable_ = nullptr; // 4 列：行号 / 条件 / 命中次数 / 状态
+    QTableWidget* breakpointTable_ = nullptr; // 5 列：行号 / 类型 / 条件 / 命中次数 / 状态
     QLabel* liveStatusLabel_ = nullptr;
     QTimer* refreshTimer_ = nullptr;
+
+    // R104 函数断点子面板
+    QListWidget* functionBpList_ = nullptr;
+    QPushButton* addFunctionBpBtn_ = nullptr;
+    QPushButton* removeFunctionBpBtn_ = nullptr;
+    // R104 异常断点复选框
+    class QCheckBox* exceptionBpCheck_ = nullptr;
 
     // 子页 2：教学场景库
     QListWidget* scenarioList_ = nullptr;

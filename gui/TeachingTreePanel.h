@@ -13,6 +13,8 @@
 #pragma once
 
 #include <QMap>
+#include <QSet>
+#include <QStringList>
 #include <QWidget>
 
 class QTreeWidget;
@@ -29,20 +31,19 @@ public:
     /// panelId 取值见构造函数中的 4 大分类；"editor" 选中代码编辑器项
     void setCurrentPanel(const QString& panelId);
 
+    /// 切换某面板的收藏状态（★ 置顶）。持久化到 QSettings。
+    void toggleFavorite(const QString& panelId);
+
 signals:
     /// 用户点击叶子节点时发射
-    /// panelId 取值："editor" / "welcome" / "code-journey" / "learning-path"
-    /// / "glossary" / "pipeline" / "token-puzzle" / "ast-toy" /
-    /// "syntax-explorer" / "backend-compare" / "vm-sandbox" /
-    /// "memory-model" / "ir-transform" / "bytecode-trace" /
-    /// "call-stack" / "variable-inspector" / "breakpoint-condition" /
-    /// "bug-hunt" / "exception-flow" / "closure-inspector" /
-    /// "profile-dashboard" / "lab-manual"
     void panelRequested(const QString& panelId);
 
 private slots:
     /// 搜索框文本变化 → 按包含匹配过滤叶子节点
     void onSearchChanged(const QString& text);
+    /// 分类展开/折叠状态变化 → 持久化到 QSettings
+    void onItemExpanded(QTreeWidgetItem* item);
+    void onItemCollapsed(QTreeWidgetItem* item);
 
 private:
     QTreeWidget* tree_ = nullptr;
@@ -57,7 +58,30 @@ private:
     // B3: 搜索框
     QLineEdit* searchEdit_ = nullptr;
 
+    // 收藏分类节点（动态构建，置顶于 4 大分类之前）
+    QTreeWidgetItem* favoritesCatItem_ = nullptr;
+    // 最近访问分类节点（动态构建，置顶于收藏之后）
+    QTreeWidgetItem* recentCatItem_ = nullptr;
+    // 当前收藏的 panelId 集合（持久化）
+    QSet<QString> favorites_;
+    // 最近访问的 panelId 列表（最多 5 条，最新在前，持久化）
+    QStringList recentPanels_;
+
+    // 搜索开始前各分类的折叠状态快照（搜索清空时恢复，避免覆盖用户偏好）
+    QSet<QString> collapsedBeforeSearch_;
+    bool searchActive_ = false;
+
     void buildTree();
     void onItemClicked(QTreeWidgetItem* item, int column);
     void onItemActivated(QTreeWidgetItem* item, int column);
+
+    // 收藏与最近访问
+    void loadFavoritesAndRecent();
+    void saveFavorites() const;
+    void saveRecent() const;
+    void pushRecent(const QString& panelId);
+    void rebuildFavoritesSection();
+    void rebuildRecentSection();
+    /// 分类节点的显示标题（用于 QSettings key）
+    QString categoryTitle(const QTreeWidgetItem* catItem) const;
 };

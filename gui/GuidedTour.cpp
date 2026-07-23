@@ -105,6 +105,17 @@ void GuidedTour::start() {
         bottomRow->addWidget(stepIndicator_);
         bottomRow->addStretch(1);
 
+        // 上一步按钮：透明背景 + 边框（首步禁用）
+        prevBtn_ = new QPushButton(mlTr("← 上一步"), bubble_);
+        prevBtn_->setStyleSheet(QString("QPushButton { background: transparent; color: %1;"
+                                        "  border: 1px solid %2; border-radius: 4px;"
+                                        "  padding: 6px 12px; font-size: 12px; }"
+                                        "QPushButton:hover { background: %3; }"
+                                        "QPushButton:disabled { color: %4; border-color: %4; }")
+                                    .arg(TeachingTheme::textSecondary().name(), TeachingTheme::border().name(),
+                                         TeachingTheme::surfaceHover().name(), TeachingTheme::textHint().name()));
+        bottomRow->addWidget(prevBtn_);
+
         // 次按钮：透明背景 + 边框
         secondaryBtn_ = new QPushButton(bubble_);
         secondaryBtn_->setStyleSheet(QString("QPushButton { background: transparent; color: %1;"
@@ -126,6 +137,7 @@ void GuidedTour::start() {
         layout->addLayout(bottomRow);
 
         connect(primaryBtn_, &QPushButton::clicked, this, &GuidedTour::next);
+        connect(prevBtn_, &QPushButton::clicked, this, &GuidedTour::prev);
         connect(secondaryBtn_, &QPushButton::clicked, this, &GuidedTour::skip);
     }
 
@@ -167,6 +179,10 @@ void GuidedTour::showStep(int index) {
     stepIndicator_->setText(mlTr("步骤 %1 / %2").arg(index + 1).arg(steps_.size()));
     primaryBtn_->setText(step.primaryBtnText);
     secondaryBtn_->setText(step.secondaryBtnText);
+    // 上一步按钮：首步禁用
+    if (prevBtn_) {
+        prevBtn_->setEnabled(index > 0);
+    }
 
     // ---- 计算目标矩形并初步定位气泡 ----
     // OPT-2 fix: 移除 show() 之前的 adjustSize()——首次显示前 Qt 布局尚未完成，
@@ -291,6 +307,18 @@ void GuidedTour::next() {
         return;
     }
     showStep(nextIndex);
+}
+
+// ============================================================
+// prev — 上一步
+// ============================================================
+
+/// 返回上一步；首步时无效（按钮已禁用）。
+void GuidedTour::prev() {
+    const int prevIndex = currentIndex_ - 1;
+    if (prevIndex < 0)
+        return;
+    showStep(prevIndex);
 }
 
 // ============================================================

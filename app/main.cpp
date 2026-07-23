@@ -4,12 +4,15 @@
 #include <QFile>
 #include <QIcon>
 #include <QMessageBox>
+#include <QSettings>
 #include <QStyleFactory>
 #include <QStyleHints>
 #include <QTextStream>
 
 #include "FluentGlobal.h"
 #include "Theme.h"
+#include "common/CrashHandler.h" // R128: 崩溃报告系统
+#include "gui/CrashReportDialog.h" // R128: 启动时检测上次崩溃
 #include "gui/GuiTextUtils.h" // R75: uiFont() 跨机器字体回退链
 #include "gui/I18n.h"         // D2: i18n 翻译辅助层
 
@@ -17,9 +20,22 @@
 // MiniLang IDE 程序入口
 // 第五轮重构：接入 QFluentKit 主题系统 + DPI 自适应
 // D2: 接入 i18n 翻译加载
+// R128: 安装 CrashHandler + 启动时检测上次崩溃
 // ============================================================
 
+namespace {
+// 持久化"忽略此崩溃报告"的设置键
+// 仅当用户在 CrashReportDialog 勾选"不再提示"时写入
+constexpr const char* kCrashIgnoreKey = "crash/ignoreLastReport";
+} // anonymous namespace
+
 int main(int argc, char* argv[]) {
+    // R128: 安装崩溃处理器（在 QApplication 之前，捕获启动早期崩溃）
+    // 写入路径：<temp>/minilang-crashdumps/crash-<signal>-<timestamp>.{dmp|txt}
+    minilang::CrashHandler::instance().install();
+    // 启动时清理 30 天以上的旧报告
+    minilang::CrashHandler::cleanupOldReports(30);
+
     // DPI 自适应：PassThrough 保留分数缩放（1.25x/1.5x），高分辨率屏幕清晰不模糊
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
@@ -40,6 +56,32 @@ int main(int argc, char* argv[]) {
     // D2: 加载翻译（MINILANG_ENABLE_I18N=ON 时查找 minilang_<locale>.qm；
     //     未启用时为 no-op，下方 mlTr 调用退化为 QString::fromUtf8）
     loadMiniLangTranslations();
+
+    // R128: 检测上次会话是否崩溃
+    // - 读取 QSettings 判断用户是否选择"忽略此报告"
+    // - 未忽略则弹出 CrashReportDialog
+    // - 用户可查看/复制/删除/忽略报告
+    {
+        QSettings settings;
+        bool ignoreCrash = settings.value(kCrashIgnoreKey, false).toBool();
+        if (!ignoreCrash) {
+            auto report = minilang::CrashHandler::lastCrashReport();
+            if (report.valid) {
+                minilang::gui::CrashReportDialog dlg(report);
+                dlg.exec();
+                if (dlg.ignoreRequested()) {
+                    settings.setValue(kCrashIgnoreKey, true);
+                } else if (dlg.reportDeleted()) {
+                    // 用户已删除报告，清除忽略标志
+                    settings.remove(kCrashIgnoreKey);
+                }
+            }
+        } else {
+            // 用户选择忽略，消费掉报告但不弹窗
+            minilang::CrashHandler::consumeLastCrashReport();
+            settings.remove(kCrashIgnoreKey);
+        }
+    }
 
     // 使用 Fusion 作为基础样式（QFluentKit QSS 覆盖其调色板驱动的背景）
     // R76 fix: Fusion 插件可能未部署，检查返回值防止空指针回退到 windowsvista
@@ -89,7 +131,10 @@ int main(int argc, char* argv[]) {
     try {
         auto w = std::make_unique<Ide>();
         w->show();
-        return a.exec();
+        int ret = a.exec();
+        // 应用正常退出时卸载崩溃处理器（避免析构期异常触发 minidump）
+        minilang::CrashHandler::instance().uninstall();
+        return ret;
     } catch (const std::exception& e) {
         QMessageBox::critical(nullptr, mlTr("MiniLang IDE - 启动错误"), QString::fromStdString(e.what()));
         return 1;

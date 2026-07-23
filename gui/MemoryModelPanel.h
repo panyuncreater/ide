@@ -16,7 +16,9 @@
 // 不修改引擎层（避免破坏现有性能）。
 // ============================================================
 
+#include <QComboBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -28,6 +30,7 @@
 #include <vector>
 
 class IdeController;
+struct Value; // R113 B 项：currentHeapValues_ / renderHeapObjectDetail 使用 const Value*
 
 // ---- 教学场景库数据结构 ----
 
@@ -119,25 +122,33 @@ private:
     /// OPT-1: vmStateChanged 监听回调——仅当面板可见时刷新第 4 子页实时状态。
     /// 不检查 autoRefresh 按钮是因为 MemoryModelPanel 第 4 子页的"自动刷新"
     /// 由 animAutoRefreshBtn_ 的 checked 状态控制 animTimer_，监听器作为补充通道。
+    /// R113 A 项: 同步刷新第 5 子页 RegisterVM 寄存器帧状态。
     void onVmStateChanged() {
         if (isVisible()) {
             refreshAnimState();
+            refreshRegVmState();
         }
     }
 
     IdeController* controller_ = nullptr;
 
-    // 子页切换按钮（4 个子页）
+    // 子页切换按钮（5 个子页）
     QPushButton* pageNanBoxBtn_ = nullptr;
     QPushButton* pageRefCountBtn_ = nullptr;
     QPushButton* pageGcBtn_ = nullptr;
-    QPushButton* pageAnimBtn_ = nullptr; // P4-4: 第 4 子页"实时动画"
+    QPushButton* pageAnimBtn_ = nullptr;  // P4-4: 第 4 子页"实时动画"
+    QPushButton* pageRegVmBtn_ = nullptr; // R113 A 项: 第 5 子页"RegisterVM 寄存器帧"
     QStackedWidget* stack_ = nullptr;
 
     // 子页 1：NaN-boxing
     QListWidget* nanBoxList_ = nullptr;
     QTableWidget* nanBoxBitTable_ = nullptr; // 64 位分段显示
     QTextBrowser* nanBoxDesc_ = nullptr;
+    // R113 D 项：NaN-box 交互式编辑器（子页 1 增强）
+    QComboBox* nanBoxCustomTypeCombo_ = nullptr;   // 类型选择：int/float/bool/null/hex
+    QLineEdit* nanBoxCustomValueEdit_ = nullptr;   // 值输入
+    QPushButton* nanBoxCustomEncodeBtn_ = nullptr; // 编码按钮
+    std::vector<NaNBoundingBox> customBoxes_;      // 用户自定义编码结果（动态追加到列表）
 
     // 子页 2：RefCounted
     QListWidget* refCountScenarioList_ = nullptr;
@@ -150,23 +161,43 @@ private:
     QPushButton* gcRefreshBtn_ = nullptr;
 
     // 子页 4：实时动画（与 VM 单步联动）
-    QLabel* animStatusLabel_ = nullptr;         // VM 状态：运行中 / 已暂停 / 未初始化
-    QLabel* animOpCodeLabel_ = nullptr;         // 当前 OpCode 名
-    QLabel* animStackDepthLabel_ = nullptr;     // 操作数栈深度
-    QLabel* animFrameCountLabel_ = nullptr;     // 栈帧数
-    QLabel* animGcTrackedLabel_ = nullptr;      // GC tracked 节点数
-    QTableWidget* heapObjectTable_ = nullptr;   // 堆对象表：地址 / 类型 / refCount / 字段数
-    QLabel* gcPhaseLabel_ = nullptr;            // GC 阶段说明（来自 MemoryAnimLibrary）
-    QTextBrowser* gcPhaseBrowser_ = nullptr;    // 4 阶段说明详细展示
-    QPushButton* animRefreshBtn_ = nullptr;     // 手动刷新按钮
-    QPushButton* animAutoRefreshBtn_ = nullptr; // 切换自动刷新（500ms）
-    QTimer* animTimer_ = nullptr;               // 500ms 自动刷新定时器
+    QLabel* animStatusLabel_ = nullptr;               // VM 状态：运行中 / 已暂停 / 未初始化
+    QLabel* animOpCodeLabel_ = nullptr;               // 当前 OpCode 名
+    QLabel* animStackDepthLabel_ = nullptr;           // 操作数栈深度
+    QLabel* animFrameCountLabel_ = nullptr;           // 栈帧数
+    QLabel* animGcTrackedLabel_ = nullptr;            // GC tracked 节点数
+    QLabel* animGcStatsLabel_ = nullptr;              // R113 C 项：GC 阶段 + 上次结果 + 累计次数
+    QTableWidget* heapObjectTable_ = nullptr;         // 堆对象表：地址 / 类型 / refCount / 字段数
+    QTextBrowser* heapObjectDetailBrowser_ = nullptr; // R113 B 项：堆对象详情（ClosureData upvalue 生命周期）
+    QLabel* gcPhaseLabel_ = nullptr;                  // GC 阶段说明（来自 MemoryAnimLibrary）
+    QTextBrowser* gcPhaseBrowser_ = nullptr;          // 4 阶段说明详细展示
+    QPushButton* animRefreshBtn_ = nullptr;           // 手动刷新按钮
+    QPushButton* animAutoRefreshBtn_ = nullptr;       // 切换自动刷新（500ms）
+    QTimer* animTimer_ = nullptr;                     // 500ms 自动刷新定时器
+
+    // 子页 5：RegisterVM 寄存器帧可视化（R113 A 项）
+    // 基于 getVmStack()（RegisterVM 模式下返回当前帧寄存器窗口）+ getVmCurrentIP()
+    // + getVmCallStack() 实现。栈式 VM 模式下显示提示并禁用刷新。
+    QLabel* regVmModeLabel_ = nullptr;            // VM 模式：RegisterVM / StackVM
+    QLabel* regVmFrameInfoLabel_ = nullptr;       // 当前帧：函数名/ip/帧索引/激活寄存器数
+    QTableWidget* regVmCallStackTable_ = nullptr; // 调用栈：depth/functionName/line/locals 数
+    QTableWidget* regVmRegisterTable_ = nullptr;  // 当前帧寄存器：编号/类型/值/地址
+    QLabel* regVmHintLabel_ = nullptr;            // 教学提示文字
+    QPushButton* regVmRefreshBtn_ = nullptr;      // 手动刷新
+    QPushButton* regVmAutoRefreshBtn_ = nullptr;  // 自动刷新切换
+
+    // R113 B 项：堆对象详情交互状态
+    // currentHeapValues_ 与 heapObjectTable_ 的行号一一对应，保存选中行对应的
+    // 裸 Value*（指向 controller_ 返回的 stack/globals 副本）。refreshAnimState
+    // 每次刷新会重建 currentHeapValues_，并通过保留选中行号刷新详情浏览器。
+    std::vector<const Value*> currentHeapValues_;
 
     // 构造辅助
     void buildNanBoxPage(QWidget* host);
     void buildRefCountPage(QWidget* host);
     void buildGcPage(QWidget* host);
-    void buildAnimPage(QWidget* host); // P4-4: 第 4 子页
+    void buildAnimPage(QWidget* host);  // P4-4: 第 4 子页
+    void buildRegVmPage(QWidget* host); // R113 A 项: 第 5 子页
 
     // 数据填充
     void populateNanBoxList();
@@ -175,5 +206,20 @@ private:
     void populateRefCountDetail(int index);
     void populateGcPhases();
     void refreshGcStats();
-    void refreshAnimState(); // P4-4: 刷新第 4 子页状态
+    void refreshAnimState();  // P4-4: 刷新第 4 子页状态
+    void refreshRegVmState(); // R113 A 项: 刷新第 5 子页状态
+
+    // R113 D 项：NaN-box 交互式编辑器
+    /// 根据当前类型+值输入编码 NaN-box，将结果作为自定义示例追加到列表并选中显示。
+    void onNanBoxCustomEncode();
+    /// 将单个 NaNBoundingBox 渲染到位图表格 + 说明浏览器（供示例与自定义编码共用）。
+    void renderNanBoxDetail(const NaNBoundingBox& b);
+
+    // R113 B 项：闭包 upvalue 生命周期增强
+    /// 堆对象表行选中回调——根据行号取出 currentHeapValues_ 中的 Value*，
+    /// 调用 renderHeapObjectDetail 渲染详情到 heapObjectDetailBrowser_。
+    void onHeapObjectSelected(int row);
+    /// 按 ValueType 分发渲染堆对象详情。ClosureData 走 upvalue 生命周期详情；
+    /// 其他堆类型给出简短结构摘要（地址/类型/refCount/关键字段），保持 UI 一致性。
+    void renderHeapObjectDetail(const Value& v);
 };

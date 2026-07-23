@@ -266,10 +266,16 @@ void CallStackPanel::hideEvent(QHideEvent* event) {
 /// 3. 将帧序列倒序（栈顶在上）填入 QTreeWidget，每个帧节点再展开其本地变量
 ///    子节点（值/类型经 try/catch 包裹 toString/typeName 防异常）。
 /// 该树形结构即运行时调用栈帧来源：函数名/调用深度/当前行号/局部变量。
+/// R121: 重建期间设置 inRefresh_ 守卫避免 currentItemChanged 误触发 setSelectedFrame。
+///       重建后尝试恢复选中之前选中的帧（通过 selectedFrame_ 索引匹配 depth 列）。
 void CallStackPanel::refreshLive() {
+    // R121: 守卫避免 stackTree_->clear() 触发 currentItemChanged → onFrameSelected
+    // 在重建期间误调用 controller_->setSelectedFrame 导致循环刷新。
+    inRefresh_ = true;
     stackTree_->clear();
     if (!controller_) {
         liveStatusLabel_->setText(tr("状态：未绑定 controller"));
+        inRefresh_ = false;
         return;
     }
 
@@ -284,6 +290,7 @@ void CallStackPanel::refreshLive() {
             // 调试运行中（resume 后 worker 活跃），跳过快照获取避免数据竞争
             liveStatusLabel_->setText(tr("状态：调试运行中（暂停后刷新）"));
             frameDetail_->clear();
+            inRefresh_ = false;
             return;
         }
         entries = controller_->getDebugCallStack();
@@ -295,6 +302,7 @@ void CallStackPanel::refreshLive() {
         if (controller_->isVmRunning()) {
             liveStatusLabel_->setText(tr("状态：VM 运行中（暂停后刷新）"));
             frameDetail_->clear();
+            inRefresh_ = false;
             return;
         }
         entries = controller_->getVmCallStack();
@@ -302,16 +310,27 @@ void CallStackPanel::refreshLive() {
     } else {
         liveStatusLabel_->setText(tr("状态：未运行（启动调试或 VM 单步以查看调用栈）"));
         frameDetail_->clear();
+        inRefresh_ = false;
         return;
     }
 
-    liveStatusLabel_->setText(tr("状态：%1 | 帧数：%2").arg(modeLabel).arg(entries.size()));
+    // R121: 状态标签追加选中帧提示（selectedFrame >= 0 时显示）
+    int selFrame = controller_->getSelectedFrame();
+    QString selHint;
+    if (selFrame >= 0 && selFrame < static_cast<int>(entries.size())) {
+        selHint = tr(" | 已选帧: %1 (%2)")
+                      .arg(selFrame)
+                      .arg(QString::fromUtf8(entries[selFrame].functionName.c_str()));
+    }
+    liveStatusLabel_->setText(tr("状态：%1 | 帧数：%2%3").arg(modeLabel).arg(entries.size()).arg(selHint));
 
     if (entries.empty()) {
         frameDetail_->setPlainText(tr("（调用栈为空）"));
+        inRefresh_ = false;
         return;
     }
 
+    QTreeWidgetItem* itemToSelect = nullptr;
     for (int i = static_cast<int>(entries.size()) - 1; i >= 0; --i) {
         const auto& e = entries[i];
         auto* frame = new QTreeWidgetItem();
@@ -339,12 +358,24 @@ void CallStackPanel::refreshLive() {
             localItem->setText(2, QString::fromUtf8(typeStr.c_str()));
         }
         stackTree_->addTopLevelItem(frame);
+        // R121: 恢复选中之前选中的帧
+        if (selFrame >= 0 && e.depth == selFrame) {
+            itemToSelect = frame;
+        }
     }
     stackTree_->resizeColumnToContents(0);
+    // R121: 重建完成后恢复选中（不触发 setSelectedFrame 循环，因 inRefresh_ 已 false
+    // 但 onFrameSelected 调用 setSelectedFrame 不会重复刷新——selectedFrame 值未变）
+    if (itemToSelect) {
+        stackTree_->setCurrentItem(itemToSelect);
+    }
+    inRefresh_ = false;
 }
 
 /// 选中栈树节点时渲染详情：顶层帧节点显示函数名/深度/当前行/局部变量数；
 /// 子节点（变量）显示类型与值，写入详情浏览器。
+/// R121: 选中顶层帧节点时通知 controller 切换选中帧（触发 VariableInspector/WatchPanel 联动刷新）。
+///       inRefresh_ 守卫避免 refreshLive 重建树期间误触发。
 void CallStackPanel::onFrameSelected() {
     auto* cur = stackTree_->currentItem();
     if (!cur) {
@@ -368,6 +399,16 @@ void CallStackPanel::onFrameSelected() {
                            .arg(line)
                            .arg(cur->childCount());
         frameDetail_->setHtml(html);
+
+        // R121: 通知 controller 切换选中帧（VariableInspector / WatchPanel 会自动刷新）。
+        // inRefresh_ 守卫避免 refreshLive 重建树时的 currentItemChanged 误触发。
+        if (controller_ && !inRefresh_) {
+            bool ok = false;
+            int depthInt = depth.toInt(&ok);
+            if (ok && depthInt >= 0) {
+                controller_->setSelectedFrame(depthInt);
+            }
+        }
     } else {
         // 选中变量子节点
         QString varName = cur->text(0);

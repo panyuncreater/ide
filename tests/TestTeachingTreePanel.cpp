@@ -46,11 +46,13 @@ TEST(TeachingTreePanelAudit, PanelIdsAreNonEmpty) {
     }
 }
 
-// 验证面板总数在合理区间 [18, 30]（既不过少也不过滥）。
+// 验证面板总数在合理区间 [18, 40]（既不过少也不过滥）。
+// 上限从 30 提升到 40：第五波教学面板拓展（循环展开/逃逸分析/寄存器分配/三后端性能竞赛）
+// 后面板总数达 32，原 30 上限已过时。
 TEST(TeachingTreePanelAudit, HasExpectedPanelCount) {
     auto ids = PanelCatalog::allPanelIds();
     EXPECT_GE(ids.size(), 18u) << "Too few panels";
-    EXPECT_LE(ids.size(), 30u) << "Too many panels";
+    EXPECT_LE(ids.size(), 40u) << "Too many panels";
 }
 
 // 验证 lab-01 ~ lab-08 等实验手册 ID 都被规范映射到 "lab-manual"。

@@ -36,7 +36,22 @@ set(MINILANG_CORE_SOURCES
     # 功能 11：REPL %magic 命令系统（仅依赖 IdeController 内联方法 + minilang_core 符号，
     # 可被测试目标安全链接。ReplPanel.cpp 在 GUI_SOURCES 中调用 MagicCommands::handle）
     gui/MagicCommands.cpp
+    # R114 可回放执行时间轴：执行轨迹记录器（VmStepper / Interpreter 调用）
+    debug/ExecutionTraceRecorder.cpp
+    # R128 崩溃报告：CrashHandler（MiniDumpWriteDump + 崩溃报告持久化）
+    common/CrashHandler.cpp
+    # R162 静态分析器：LintPass（基于 AST 的 8 项检查规则）
+    # 仅依赖 ast + common + interpreter/Visitor.h（DefaultVisitor 基类），不依赖 Qt / 引擎层
+    lint/LintPass.cpp
+    # R162 B2 文档生成器：DocGenerator（基于 AST 遍历 + Lexer 注释流的 API 文档生成）
+    # 仅依赖 ast + common + lexer + interpreter/Visitor.h（DefaultVisitor 基类），不依赖 Qt / 引擎层
+    doc/DocGenerator.cpp
 )
+
+# JIT 后端源文件（条件编译，MINILANG_USE_JIT = ON 时包含）
+if(MINILANG_USE_JIT)
+    list(APPEND MINILANG_CORE_SOURCES compiler/JIT.cpp)
+endif()
 
 # GUI 模块源文件
 set(MINILANG_GUI_SOURCES
@@ -64,6 +79,30 @@ set(MINILANG_GUI_SOURCES
     gui/MemoryModelPanel.cpp
     gui/IRTransformPanel.cpp
     gui/ProfileDashboardPanel.cpp
+    # 教学面板拓展：JIT 可视化 + 执行步骤讲解 + 三后端并行 + AST 可视化 + 内联缓存
+    gui/JitRunner.cpp
+    gui/JitVisualizerPanel.cpp
+    gui/StepExplainerPanel.cpp
+    gui/BackendParallelPanel.cpp
+    gui/AstVisualizerPanel.cpp
+    gui/InlineCachePanel.cpp
+    # 教学面板拓展（第五波）：循环展开 + 逃逸分析 + 寄存器分配 + 三后端性能竞赛
+    gui/LoopUnrollingPanel.cpp
+    gui/EscapeAnalysisPanel.cpp
+    gui/RegisterAllocatorPanel.cpp
+    gui/PerformanceRacePanel.cpp
+    # 教学面板拓展（第六波）：内存布局 + 教学课程 + 练习评分
+    gui/MemoryLayoutPanel.cpp
+    gui/CourseSystemPanel.cpp
+    gui/ExerciseGraderPanel.cpp
+    # 教学面板拓展（第七波）：协程 + GC + Lint + Fuzz + 模块系统
+    gui/CoroutineVisualizerPanel.cpp
+    gui/GcVisualizerPanel.cpp
+    gui/LintExplorerPanel.cpp
+    gui/FuzzPlaygroundPanel.cpp
+    gui/ModuleSystemVisualizerPanel.cpp
+    # 教学面板子页切换栏统一组件（R165 体验优化）
+    gui/TeachingSubPageBar.cpp
     # 教学增强面板（第三波）
     gui/CallStackPanel.cpp
     gui/VariableInspectorPanel.cpp
@@ -121,6 +160,13 @@ set(MINILANG_GUI_SOURCES
     # 依赖 Qt6::Widgets（QTreeWidget/QTreeWidgetItem），不依赖 IdeController / 引擎层，
     # 不加入测试目标（GUI 组件难以单元测试）。
     gui/TeachingTreePanel.cpp
+    # 教学面板拓展（第四波）：观察表达式 + 执行时间轴 + 崩溃报告
+    gui/WatchExpressionLibrary.cpp
+    gui/WatchPanel.cpp
+    # R161: 数据断点面板（Watchpoint，监视变量 / 字段被修改时暂停）
+    gui/WatchpointPanel.cpp
+    gui/ExecutionTimelinePanel.cpp
+    gui/CrashReportDialog.cpp
 )
 
 # ============================================================

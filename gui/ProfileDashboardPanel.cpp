@@ -178,20 +178,36 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent) : QWidget(parent) 
     auto* timingTab = new QWidget(this);
     auto* timingLayout = new QVBoxLayout(timingTab);
     timingLayout->setContentsMargins(0, 0, 0, 0);
-    timingLayout->addWidget(new QLabel(QString::fromUtf8("三后端平均时间（微秒）：")), 0);
-    // 表格：4 列（后端 / 平均 / 标准差 / 与最快比值）
-    resultTable_ = new QTableWidget(0, 4, this);
+    // R111: 柱状图维度切换（耗时/指令数/内存）
+    auto* metricLayout = new QHBoxLayout();
+    metricLayout->addWidget(new QLabel(QString::fromUtf8("柱状图维度：")), 0);
+    metricCombo_ = new QComboBox(this);
+    metricCombo_->addItem(QString::fromUtf8("耗时 (μs)"), static_cast<int>(MetricDimension::Time));
+    metricCombo_->addItem(QString::fromUtf8("指令数"), static_cast<int>(MetricDimension::Instructions));
+    metricCombo_->addItem(QString::fromUtf8("内存 (GC tracked 峰值)"), static_cast<int>(MetricDimension::Memory));
+    connect(metricCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &ProfileDashboardPanel::onMetricChanged);
+    metricLayout->addWidget(metricCombo_, 0);
+    metricLayout->addStretch(1);
+    timingLayout->addLayout(metricLayout, 0);
+    timingLayout->addWidget(new QLabel(QString::fromUtf8("三后端综合性能对比：")), 0);
+    // R111: 表格扩展为 6 列（后端 / 平均 / 标准差 / 比值 / 指令数 / 内存峰值）
+    resultTable_ = new QTableWidget(0, 6, this);
     resultTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     resultTable_->setHorizontalHeaderLabels({
         QString::fromUtf8("后端"),
         QString::fromUtf8("平均 (μs)"),
         QString::fromUtf8("标准差 (μs)"),
         QString::fromUtf8("比值"),
+        QString::fromUtf8("指令数"),
+        QString::fromUtf8("内存峰值"),
     });
     resultTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     resultTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     resultTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
-    resultTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+    resultTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    resultTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    resultTable_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
     resultTable_->setFixedHeight(120);
     timingLayout->addWidget(resultTable_, 0);
 
@@ -309,13 +325,16 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent) : QWidget(parent) 
 // ---- 后端测量 ----
 
 /// 单次用解释器执行被测代码并返回耗时（秒）。
-double ProfileDashboardPanel::measureInterpreterOnce(Block& ast) {
+std::pair<double, size_t> ProfileDashboardPanel::measureInterpreterOnce(Block& ast) {
+    // R111: 测量前清空 GcManager tracked 列表，确保峰值反映本后端执行
+    GcManager::instance().reset();
     Interpreter interp;
     interp.setOutputCallback([](const std::string&) {});
     auto t0 = std::chrono::high_resolution_clock::now();
     interp.execute(ast);
     auto t1 = std::chrono::high_resolution_clock::now();
-    return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    size_t peakTracked = GcManager::instance().trackedCount();
+    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), peakTracked};
 }
 
 // ============================================================
@@ -326,9 +345,11 @@ double ProfileDashboardPanel::measureInterpreterOnce(Block& ast) {
 //   - ProfileDashboardPanel 直接 new VM/RegisterVM，绕过 VmStepper 的禁用逻辑
 //   - stepCallback 签名：void(const VMStepInfo&) / void(const RegVMStepInfo&)
 //   - 性能开销：每条指令一次 std::function 调用（~20-50ns），对剖析场景可接受
-//   - 返回 std::pair<double, std::array<uint64_t, 256>>：时间 + opcode 计数
+//   - R111: 返回 std::tuple<double, std::array<uint64_t, 256>, size_t>：时间 + opcode 计数 + GC tracked 峰值
 
-std::pair<double, std::array<uint64_t, 256>> ProfileDashboardPanel::measureStackVMWithProfile(Block& ast) {
+std::tuple<double, std::array<uint64_t, 256>, size_t> ProfileDashboardPanel::measureStackVMWithProfile(Block& ast) {
+    // R111: 测量前清空 GcManager tracked 列表
+    GcManager::instance().reset();
     Compiler compiler;
     auto result = compiler.compile(ast);
     if (compiler.getDiagnostics().hasErrors()) {
@@ -346,10 +367,13 @@ std::pair<double, std::array<uint64_t, 256>> ProfileDashboardPanel::measureStack
     if (vmres != VMResult::VM_OK) {
         throw std::runtime_error("VM runtime error");
     }
-    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts};
+    size_t peakTracked = GcManager::instance().trackedCount();
+    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts, peakTracked};
 }
 
-std::pair<double, std::array<uint64_t, 256>> ProfileDashboardPanel::measureRegisterVMWithProfile(Block& ast) {
+std::tuple<double, std::array<uint64_t, 256>, size_t> ProfileDashboardPanel::measureRegisterVMWithProfile(Block& ast) {
+    // R111: 测量前清空 GcManager tracked 列表
+    GcManager::instance().reset();
     Compiler compiler;
     compiler.setUseRegisterVM(true);
     auto regResult = compiler.compileViaRegisterIR(ast);
@@ -368,22 +392,28 @@ std::pair<double, std::array<uint64_t, 256>> ProfileDashboardPanel::measureRegis
     if (vmres != VMResult::VM_OK) {
         throw std::runtime_error("RegisterVM runtime error");
     }
-    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts};
+    size_t peakTracked = GcManager::instance().trackedCount();
+    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts, peakTracked};
 }
 
-ProfileDashboardPanel::BackendTiming ProfileDashboardPanel::measureBackend(const std::string& name,
-                                                                           std::function<double(Block&)> measure,
-                                                                           Block& ast, int iterations) {
+ProfileDashboardPanel::BackendTiming
+ProfileDashboardPanel::measureBackend(const std::string& name, std::function<std::pair<double, size_t>(Block&)> measure,
+                                      Block& ast, int iterations) {
     BackendTiming t;
     t.name = name;
     std::vector<double> samples;
     samples.reserve(iterations);
+    size_t maxTracked = 0;
     try {
         for (int i = 0; i < iterations; ++i) {
-            samples.push_back(measure(ast));
+            auto [us, tracked] = measure(ast);
+            samples.push_back(us);
+            if (tracked > maxTracked)
+                maxTracked = tracked;
         }
         t.avgMicros = mean(samples);
         t.stddevMicros = stddev(samples);
+        t.peakTrackedCount = maxTracked;
         t.success = true;
     } catch (const std::exception& e) {
         t.success = false;
@@ -481,6 +511,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
     // R77 fix: 指令计数取 N 次平均（与时间统计 mean(samples) 一致），否则显示值为
     // 单次实际值的 N 倍（iterations=3 时 OP_CALL 等热点被放大 3 倍），与 OpCode
     // 性能文档库的参考量级（如"fib(20) OP_CALL ~21891 次"）矛盾。
+    // R111: 同时累加 GC tracked 峰值（取 max）用于内存维度
     std::array<uint64_t, 256> stackVmCounts{};
     std::array<uint64_t, 256> registerVmCounts{};
     {
@@ -488,12 +519,15 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
         t.name = "StackVM";
         std::vector<double> samples;
         samples.reserve(scenario.iterations);
+        size_t maxTracked = 0;
         try {
             for (int i = 0; i < scenario.iterations; ++i) {
-                auto [us, counts] = measureStackVMWithProfile(*ast);
+                auto [us, counts, tracked] = measureStackVMWithProfile(*ast);
                 samples.push_back(us);
                 for (size_t j = 0; j < 256; ++j)
                     stackVmCounts[j] += counts[j];
+                if (tracked > maxTracked)
+                    maxTracked = tracked;
             }
             // 取平均：指令计数是确定值，取平均消除潜在非确定性，与 avgMicros 口径一致
             if (scenario.iterations > 0) {
@@ -502,6 +536,12 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
             }
             t.avgMicros = mean(samples);
             t.stddevMicros = stddev(samples);
+            t.peakTrackedCount = maxTracked;
+            // R111: 计算指令总数（sum of opcode counts）
+            uint64_t total = 0;
+            for (size_t j = 0; j < 256; ++j)
+                total += stackVmCounts[j];
+            t.totalInstructions = total;
             t.success = true;
         } catch (const std::exception& e) {
             t.success = false;
@@ -524,12 +564,15 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
         t.name = "RegisterVM";
         std::vector<double> samples;
         samples.reserve(scenario.iterations);
+        size_t maxTracked = 0;
         try {
             for (int i = 0; i < scenario.iterations; ++i) {
-                auto [us, counts] = measureRegisterVMWithProfile(*ast);
+                auto [us, counts, tracked] = measureRegisterVMWithProfile(*ast);
                 samples.push_back(us);
                 for (size_t j = 0; j < 256; ++j)
                     registerVmCounts[j] += counts[j];
+                if (tracked > maxTracked)
+                    maxTracked = tracked;
             }
             // R77 fix: 取平均，与 StackVM 口径一致
             if (scenario.iterations > 0) {
@@ -538,6 +581,12 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
             }
             t.avgMicros = mean(samples);
             t.stddevMicros = stddev(samples);
+            t.peakTrackedCount = maxTracked;
+            // R111: 计算指令总数
+            uint64_t total = 0;
+            for (size_t j = 0; j < 256; ++j)
+                total += registerVmCounts[j];
+            t.totalInstructions = total;
             t.success = true;
         } catch (const std::exception& e) {
             t.success = false;
@@ -610,6 +659,13 @@ void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& resu
             QString ratioText =
                 (ratio > 1.001) ? QString::fromUtf8("%1x 慢").arg(ratio, 0, 'f', 2) : QString::fromUtf8("最快");
             resultTable_->setItem(i, 3, new QTableWidgetItem(ratioText));
+            // R111: 指令数（Interpreter 无指令概念，显示 "—")
+            QString instrText =
+                (r.totalInstructions > 0) ? QString::number(r.totalInstructions) : QString::fromUtf8("—");
+            resultTable_->setItem(i, 4, new QTableWidgetItem(instrText));
+            // R111: 内存峰值（GC tracked 节点数）
+            resultTable_->setItem(i, 5,
+                                  new QTableWidgetItem(QString::number(static_cast<qulonglong>(r.peakTrackedCount))));
         } else {
             // 问题 7: 显示失败原因而非仅"失败"，帮助诊断后端兼容性问题
             QString errText = QString::fromUtf8("失败: ") + QString::fromUtf8(r.errorMessage.c_str()).left(60);
@@ -619,6 +675,8 @@ void ProfileDashboardPanel::renderResults(const std::vector<BackendTiming>& resu
             resultTable_->setItem(i, 1, errItem);
             resultTable_->setItem(i, 2, new QTableWidgetItem(QString::fromUtf8("—")));
             resultTable_->setItem(i, 3, new QTableWidgetItem(QString::fromUtf8("—")));
+            resultTable_->setItem(i, 4, new QTableWidgetItem(QString::fromUtf8("—")));
+            resultTable_->setItem(i, 5, new QTableWidgetItem(QString::fromUtf8("—")));
         }
     }
     analysisView_->setHtml(buildAnalysis(results, scenario));
@@ -693,6 +751,69 @@ QString ProfileDashboardPanel::buildAnalysis(const std::vector<BackendTiming>& r
     return QString::fromUtf8(os.str().c_str());
 }
 
+// ============================================================
+// R111: 柱状图维度切换 — 耗时 / 指令数 / 内存
+// ============================================================
+// 设计要点：
+//   - currentMetric_ 决定柱状图归一化与标签数值
+//   - Interpreter 无指令概念（totalInstructions=0），Instructions 维度下显示空柱
+//     并保留 zero-based 的归一化基准（避免除零）
+//   - 切换维度时 QPainter 模式触发 update()，QtCharts 模式触发 renderChart()
+
+/// R111: 从 BackendTiming 提取当前维度的数值（统一为 double 用于归一化与绘制）
+double ProfileDashboardPanel::getMetricValue(const BackendTiming& r, MetricDimension metric) {
+    switch (metric) {
+    case MetricDimension::Time:
+        return r.avgMicros;
+    case MetricDimension::Instructions:
+        return static_cast<double>(r.totalInstructions);
+    case MetricDimension::Memory:
+        return static_cast<double>(r.peakTrackedCount);
+    }
+    return 0.0;
+}
+
+/// R111: 当前维度的 Y 轴标题与数值格式
+QString ProfileDashboardPanel::metricAxisTitle(MetricDimension metric) {
+    switch (metric) {
+    case MetricDimension::Time:
+        return QString::fromUtf8("平均时间 (μs)");
+    case MetricDimension::Instructions:
+        return QString::fromUtf8("指令数");
+    case MetricDimension::Memory:
+        return QString::fromUtf8("GC tracked 峰值");
+    }
+    return {};
+}
+
+/// R111: 当前维度的柱顶数值标签文本
+QString ProfileDashboardPanel::metricLabel(const BackendTiming& r, MetricDimension metric) {
+    if (!r.success)
+        return {};
+    switch (metric) {
+    case MetricDimension::Time:
+        return QString::number(r.avgMicros, 'f', 0);
+    case MetricDimension::Instructions:
+        return QString::number(r.totalInstructions);
+    case MetricDimension::Memory:
+        return QString::number(static_cast<qulonglong>(r.peakTrackedCount));
+    }
+    return {};
+}
+
+/// R111: 维度切换槽 — 更新 currentMetric_ 并触发重绘
+void ProfileDashboardPanel::onMetricChanged(int index) {
+    if (index < 0 || index >= metricCombo_->count())
+        return;
+    int data = metricCombo_->itemData(index).toInt();
+    currentMetric_ = static_cast<MetricDimension>(data);
+#ifdef MINILANG_HAVE_QTCHARTS
+    renderChart(lastResults_);
+#else
+    update();
+#endif
+}
+
 /// 重写绘制事件，绘制自定义图表背景/网格。
 void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
 #ifdef MINILANG_HAVE_QTCHARTS
@@ -722,11 +843,18 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
     p.setPen(QColor(200, 200, 200));
     p.drawRect(chartRect);
 
-    // 找最大值用于归一化
+    // R111: 维度标题
+    p.setPen(QColor(80, 80, 80));
+    p.drawText(chartRect.left(), chartRect.top() - 5, metricAxisTitle(currentMetric_));
+
+    // R111: 找最大值用于归一化（根据 currentMetric_ 选择字段）
     double maxVal = 0;
     for (const auto& r : lastResults_) {
-        if (r.success && r.avgMicros > maxVal)
-            maxVal = r.avgMicros;
+        if (r.success) {
+            double v = getMetricValue(r, currentMetric_);
+            if (v > maxVal)
+                maxVal = v;
+        }
     }
     if (maxVal <= 0)
         return;
@@ -740,7 +868,8 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
     int barWidth = chartRect.width() / 4;
     for (int i = 0; i < (int)lastResults_.size(); ++i) {
         const auto& r = lastResults_[i];
-        int barHeight = r.success ? (int)(r.avgMicros / maxVal * (chartRect.height() - 30)) : 0;
+        double v = r.success ? getMetricValue(r, currentMetric_) : 0.0;
+        int barHeight = (int)(v / maxVal * (chartRect.height() - 30));
         QRect bar(chartRect.left() + barWidth / 2 + i * barWidth, chartRect.bottom() - barHeight - 20, barWidth,
                   barHeight);
         p.setBrush(QBrush(colors[i % 3]));
@@ -748,7 +877,7 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
         p.setPen(QColor(0, 0, 0));
         p.drawText(bar.left(), chartRect.bottom() - 5, QString::fromUtf8(r.name.c_str()));
         if (r.success) {
-            p.drawText(bar.left(), bar.top() - 5, QString::number(r.avgMicros, 'f', 0));
+            p.drawText(bar.left(), bar.top() - 5, metricLabel(r, currentMetric_));
         }
     }
 #endif
@@ -769,10 +898,14 @@ void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& result
 
     auto* series = new QBarSeries(this);
     QStringList categories;
+    // R111: 根据 currentMetric_ 选择维度
     double maxVal = 0;
     for (const auto& r : results) {
-        if (r.success && r.avgMicros > maxVal)
-            maxVal = r.avgMicros;
+        if (r.success) {
+            double v = getMetricValue(r, currentMetric_);
+            if (v > maxVal)
+                maxVal = v;
+        }
     }
 
     // 三色柱（与 QPainter 模式保持一致：蓝/橙/绿）
@@ -787,7 +920,7 @@ void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& result
         auto* barSet = new QBarSet(QString::fromUtf8(r.name.c_str()), this);
         barSet->setColor(kColors[i % 3]);
         if (r.success) {
-            *barSet << r.avgMicros;
+            *barSet << getMetricValue(r, currentMetric_);
         } else {
             *barSet << 0; // 失败柱以 0 高度显示
         }
@@ -802,10 +935,10 @@ void ProfileDashboardPanel::renderChart(const std::vector<BackendTiming>& result
     chart_->addAxis(axisX, Qt::AlignBottom);
     series->attachAxis(axisX);
 
-    // Y 轴（时间 μs）
+    // R111: Y 轴标题随维度切换
     auto* axisY = new QValueAxis(this);
     axisY->setRange(0, maxVal * 1.1);
-    axisY->setTitleText(QString::fromUtf8("平均时间 (μs)"));
+    axisY->setTitleText(metricAxisTitle(currentMetric_));
     axisY->setLabelFormat("%.0f");
     chart_->addAxis(axisY, Qt::AlignLeft);
     series->attachAxis(axisY);

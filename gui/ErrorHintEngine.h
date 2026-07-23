@@ -49,12 +49,15 @@ public:
 
     // ---- P1-F12 fix: 错误模式表（带 tag），供手册「常见错误」表引用 ----
 
-    /// 错误模式描述：tag / 标题 / 触发该错误的示例代码 / 所属类别
+    /// 错误模式描述：tag / 标题 / 触发该错误的示例代码 / 所属类别 / 教学说明
     struct ErrorPattern {
         std::string tag;       // 稳定标识，如 "missing-semicolon"
         std::string title;     // 中文标题，如 "缺少分号"
         std::string buggyCode; // 触发该错误的最小 MiniLang 代码
         std::string category;  // 所属类别：parser / runtime / type
+        // R117 新增：教学说明 markdown，用于错误列表 tooltip 与「为什么」浮层
+        // 包含：根因 / 常见触发场景 / 修复模板 / 相关节点
+        std::string teachingMarkdown;
     };
 
     /// 返回所有错误模式（带 tag）。手册「常见错误」表按 tag 引用此表，
@@ -62,4 +65,21 @@ public:
     /// 点击后自动加载 buggyCode 到编辑器并运行，让学员看到真实报错 +
     /// ErrorHintEngine 增强提示。引擎扩模式时手册自动同步，消除双份真相。
     static const std::vector<ErrorPattern>& errorPatterns();
+
+    // ---- R117: 错误消息教学模式 API ----
+
+    /// 按 tag 查找 ErrorPattern（用于 tooltip / 教学浮层渲染）
+    /// @return 找到返回指针，未找到返回 nullptr
+    static const ErrorPattern* findPattern(const std::string& tag);
+
+    /// 渲染为 tooltip 富文本（HTML）：tag 标题 + 一句话根因 + 完整教学说明
+    /// 用于错误列表 item 的 setToolTip（鼠标悬停显示教学说明）
+    /// @param tag 错误模式 tag（如 "missing-semicolon"）
+    /// @return HTML 富文本；tag 未找到返回空字符串（调用方回退到原始消息）
+    static std::string renderTooltipHtml(const std::string& tag);
+
+    /// 渲染为教学 markdown（用于 Flyout / Dialog 显示完整教学说明）
+    /// @param tag 错误模式 tag
+    /// @return markdown 文本；tag 未找到返回空字符串
+    static std::string renderTeachingMarkdown(const std::string& tag);
 };

@@ -111,6 +111,60 @@ add_executable(minilang_tests
     TestAuditBatch3.cpp
     TestAuditBatch4.cpp
     TestAuditBatch5.cpp
+    # R98 runToCursor 临时断点机制回归测试（DebugController 一次性断点 API）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestRunToCursor.cpp
+    # R104 调试器拓展回归测试（Logpoint / Function BP / Exception BP）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestR104DebuggerExtensions.cpp
+    # R161 Watchpoint（数据断点）回归测试（VM/RegisterVM peekWriteTarget 单元测试）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestWatchpoint.cpp
+    # R161 调试器 REPL 阶段 2 回归测试（Interpreter injectRegistriesFrom/hasRegistries）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestDebuggerReplStage2.cpp
+    # R94 嵌套 try-finally + break/continue 续跳链测试（finallyIndices 索引 bug 回归）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestNestedTryFinallyBreak.cpp
+    # R98 元组与解构：四后端一致性测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestTuple.cpp
+    # R99 枚举与 ADT + match：四后端一致性测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestEnum.cpp
+    # R163 泛型/模板：四后端一致性 + Formatter/DocGenerator 输出测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestGenerics.cpp
+    # R134 模式匹配扩展（VARIABLE/TUPLE/OR pattern + guard）：四后端一致性测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestMatch.cpp
+    # R103 闭包与高阶函数增强：四后端一致性测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestClosure.cpp
+    # R98 W2 内建高阶函数 map/filter/reduce/forEach/find：四后端一致性测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestHigherOrderFunctions.cpp
+    # R98 W3 Lambda 表达式：四后端一致性测试
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestLambda.cpp
+    # R109 代码格式化 CLI：核心逻辑测试（同时编译 fmt_core.cpp 以链接符号）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestFmtCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/fmt_core.cpp
+    # R110 行级覆盖率 CLI：核心逻辑测试（同时编译 coverage_core.cpp 以链接符号）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCoverageCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/coverage_core.cpp
+    # R162 静态分析 CLI：核心逻辑测试（同时编译 lint_core.cpp 以链接符号）
+    # LintPass.cpp 已在 minilang_core 的 CORE_SOURCES 中，通过链接 minilang_core 获取符号
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestLintCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/lint_core.cpp
+    # R162 B2 文档生成 CLI：核心逻辑测试（同时编译 doc_core.cpp 以链接符号）
+    # DocGenerator.cpp 已在 minilang_core 的 CORE_SOURCES 中，通过链接 minilang_core 获取符号
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestDocCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/doc_core.cpp
+    # R164 模糊测试 CLI：核心逻辑测试（同时编译 fuzz_core.cpp 以链接符号）
+    # 引擎符号通过链接 minilang_core 获取
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestFuzzCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/fuzz_core.cpp
+    # R164 LSP 语言服务器 CLI：核心逻辑测试（同时编译 lsp_core.cpp 以链接符号）
+    # Lexer/Parser/Formatter/LintPass 已在 minilang_core 的 CORE_SOURCES 中
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestLspCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/lsp_core.cpp
+    # R165 DAP 调试适配器 CLI：核心逻辑测试（同时编译 dap_core.cpp 以链接符号）
+    # Lexer/Parser/Compiler/VM 已在 minilang_core 的 CORE_SOURCES 中
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestDapCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/dap_core.cpp
+    # R165 包管理器 CLI：核心逻辑测试（同时编译 pkg_core.cpp 以链接符号）
+    # Qt6::Core 已通过 minilang_core PUBLIC 链接传递
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestPkgCli.cpp
+    ${MINILANG_ROOT_DIR}/cli/pkg_core.cpp
     # 教学面板数据类（位于 MINILANG_GUI_SOURCES，但仅含纯数据，
     # 通过显式编译进测试目标以避免 minilang_core 强依赖 Qt6::Widgets）
     ${MINILANG_ROOT_DIR}/gui/BugHuntLibrary.cpp
@@ -127,6 +181,10 @@ add_executable(minilang_tests
     ${MINILANG_ROOT_DIR}/gui/BytecodeTracePanel.cpp
     # 第二档 P1-2：BreakpointConditionLibrary
     ${MINILANG_ROOT_DIR}/gui/BreakpointConditionPanel.cpp
+    # R117: WatchExpressionLibrary（独立编译单元，不依赖 IdeController.cpp）
+    # WatchPanel.cpp 调用 evaluateWatchExpression（非 inline，定义在 IdeController.cpp），
+    # 而 minilang_tests 不链接 IdeController.cpp，故仅加入 Library 数据单元。
+    ${MINILANG_ROOT_DIR}/gui/WatchExpressionLibrary.cpp
     # 新手引导组件——5 个面板的 createGuidedTour 方法调用 GuidedTour::addStep /
     # GuidedTour 构造函数，需加入测试目标以解析符号。依赖 Qt6::Widgets（QFrame/
     # QLabel/QPushButton），不依赖 IdeController / 引擎层。
@@ -185,6 +243,51 @@ add_executable(minilang_tests
     # Markdown 渲染器测试（MarkdownRenderer.cpp 已在上方显式加入测试目标）
     ${CMAKE_CURRENT_SOURCE_DIR}/TestMarkdownRendererAudit.cpp
     ${MINILANG_ROOT_DIR}/gui/MarkdownRenderer.cpp
+    # R109 TCO 尾调用优化测试（覆盖基础尾递归 / 非尾递归 / 互递归 / try 块 / 类方法 / 闭包 / 默认参数 / 三后端一致性 / 类型检查）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestTCO.cpp
+    # R117 Watch 表达式面板测试（WatchExpressionLibrary.cpp 已在上方显式加入测试目标）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestWatchPanel.cpp
+    # R114 可回放执行时间轴：VmStepper.cpp 提供 Q_OBJECT MOC 元对象 + 非 inline 方法定义。
+    # ExecutionTraceRecorder.cpp 已在 minilang_core 中（SKIP_AUTOMOC 避免跨目标 MOC 重复），
+    # 测试目标通过链接 minilang_core 获取其符号。
+    ${MINILANG_ROOT_DIR}/app/VmStepper.cpp
+    # R114 可回放执行时间轴测试：核心 API + 环形缓冲 + JSON 序列化 +
+    # Interpreter 集成 + PanelCatalog 注册。链接 minilang_core 获取全部符号。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestExecutionTraceRecorder.cpp
+    # R121 调用栈帧切换测试：Interpreter::getCallStackSnapshot() 帧独立性 +
+    # CallStackLibrary 场景完整性 + CallStackEntry 结构字段。
+    # 上层 API（IdeController::setSelectedFrame / getSelectedFrameLocals）
+    # 不在 minilang_core 中，通过代码审查 + IDE 手动测试验证（与 R98 VmStepper 模式一致）。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestFrameSwitching.cpp
+    # R123 RegisterVM 闭包变量调用专项审计（边界场景测试）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestClosureAudit.cpp
+    # R128 崩溃报告系统测试：CrashHandler 单例/安装/报告读取/清理/回调注入
+    # 不进行真实崩溃触发，仅验证 API 行为与文件 IO（链接 minilang_core 获取符号）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCrashHandler.cpp
+    # R133 Inline Cache 优化回归测试：覆盖 RegisterVM methodCache 正/负缓存路径、
+    # 多态分发、深继承链、递归、父类重定义失效等 15 个场景，全部四后端一致性验证。
+    # 依赖 common/ThreeBackends.h 共享基础设施（inline 函数 + EXPECT_ALL_BACKENDS 宏）。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestInlineCache.cpp
+    # R134 SIMD 向量化回归测试：Layer 1 内核单元测试（simdSumInt64/simdSumDouble/
+    # simdMinInt64/simdMaxInt64/decodeInt48Batch）+ Layer 2 端到端 sum() 四后端
+    # 语义验证（覆盖 15/16/17/100/256 元素边界 + 负数 + 浮点 + 空数组）。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestSimdKernels.cpp
+    # R135 GC 替代引用计数控件：三模式（RefCountOnly/RefCountWithCycleGc/GcOnly）
+    # 切换 API + 循环引用回收 + 三模式语义一致性验证（共 12 个测试）。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestGcModes.cpp
+    # R136 线程与并发原语：channel/mutex/rwlock/spawn 四后端一致性测试
+    # 覆盖 channel send/recv/tryRecv/close、mutex lock/unlock/tryLock、
+    # rwlock read/write 锁、spawn + join/detach、闭包捕获、错误处理（共 30+ 测试）。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestConcurrency.cpp
+    # R164 协程/生成器：fun* 生成器函数 + yield 表达式 + .next()/.done() 方法
+    # 四后端一致性验证（Interpreter/StackVM/StackVM-IR/RegisterVM 重放模式）。
+    # D.7 合并：原 TempStackVMCoroutine/TempRegVMCoroutine/TempStackVMIRCoroutine 临时测试
+    # 已合并到 TestCoroutine.cpp，统一用 EXPECT_ALL_BACKENDS 宏验证四后端。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCoroutine.cpp
+    # R138 JIT 后端阶段 1 PoC 测试：asmjit 字节码→本地代码编译执行
+    # 验证整数算术子集（OP_INT/ADD/SUB/MUL/NEGATE/PRINT/POP/RETURN/NULL/TRUE/FALSE）。
+    # 条件编译：MINILANG_USE_JIT=OFF 时仅注册 skip 占位测试，确保 CTest 一致性。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestJIT.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
@@ -220,6 +323,8 @@ if(MSVC)
     # 每个栈帧较大（~3KB），MAX_PARSE_DEPTH=256 对应 ~128 层括号 × 11 帧
     # × 3KB ≈ 4.2MB，需大于默认 1MB 栈才能让深度检查正常触发而非栈溢出。
     target_link_options(minilang_tests PRIVATE /STACK:8388608)
+    # R128: CrashHandler.cpp 在 Windows 上使用 MiniDumpWriteDump，需链接 dbghelp
+    target_link_libraries(minilang_tests PRIVATE dbghelp)
 endif()
 
 # ============================================================
@@ -261,6 +366,8 @@ target_link_libraries(minilang_perf_test PRIVATE
 
 if(MSVC)
     target_link_options(minilang_perf_test PRIVATE /STACK:8388608)
+    # R128: CrashHandler 通过 minilang_core 链接进来，需 dbghelp
+    target_link_libraries(minilang_perf_test PRIVATE dbghelp)
 endif()
 
 # 注册到 CTest（独立于 minilang_tests 的测试发现）

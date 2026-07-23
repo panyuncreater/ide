@@ -363,3 +363,107 @@ TEST(ErrorHintEngineCodeMatching, LocalizedMsgStillMatchesViaCode) {
     EXPECT_NE(enriched.find("分号"), std::string::npos)
         << "英文消息通过 code 仍应附加中文教学提示";
 }
+
+// ============================================================
+// 测试套件 5：ErrorHintEngineTeachingMode — R117 错误消息教学模式
+// ------------------------------------------------------------
+// R117: 新增 teachingMarkdown 字段 + findPattern / renderTooltipHtml /
+// renderTeachingMarkdown 三个 API。验证：
+//   1. 每个 ErrorPattern 都有非空 teachingMarkdown
+//   2. teachingMarkdown 包含根因/触发场景/修复模板关键章节
+//   3. findPattern 命中已知 tag / 未命中返回 nullptr
+//   4. renderTooltipHtml 返回 HTML 富文本（含标题 + 类别 + 教学）
+//   5. renderTeachingMarkdown 返回原始 markdown 文本
+//   6. 未命中 tag 时 renderTooltipHtml / renderTeachingMarkdown 返回空字符串
+// ============================================================
+
+TEST(ErrorHintEngineTeachingMode, AllPatternsHaveTeachingMarkdown) {
+    // R117: 每个 ErrorPattern 必须有非空 teachingMarkdown 字段
+    const auto& patterns = ErrorHintEngine::errorPatterns();
+    EXPECT_FALSE(patterns.empty());
+    for (const auto& p : patterns) {
+        EXPECT_FALSE(p.teachingMarkdown.empty())
+            << "teachingMarkdown 不能为空 (tag=" << p.tag << ")";
+        // 教学说明应包含根因章节
+        EXPECT_NE(p.teachingMarkdown.find("根因"), std::string::npos)
+            << "teachingMarkdown 应包含「根因」章节 (tag=" << p.tag << ")";
+        // 教学说明应包含修复模板章节
+        EXPECT_NE(p.teachingMarkdown.find("修复模板"), std::string::npos)
+            << "teachingMarkdown 应包含「修复模板」章节 (tag=" << p.tag << ")";
+    }
+}
+
+TEST(ErrorHintEngineTeachingMode, FindPatternHitsKnownTag) {
+    // findPattern 应能查到所有 errorPatterns() 中的 tag
+    const auto& patterns = ErrorHintEngine::errorPatterns();
+    for (const auto& p : patterns) {
+        const auto* found = ErrorHintEngine::findPattern(p.tag);
+        ASSERT_NE(found, nullptr) << "findPattern 应命中已知 tag: " << p.tag;
+        EXPECT_EQ(found->tag, p.tag);
+        EXPECT_EQ(found->title, p.title);
+        EXPECT_EQ(found->teachingMarkdown, p.teachingMarkdown);
+    }
+}
+
+TEST(ErrorHintEngineTeachingMode, FindPatternMissesUnknownTag) {
+    // findPattern 对未知 tag 应返回 nullptr
+    EXPECT_EQ(ErrorHintEngine::findPattern("nonexistent-tag"), nullptr);
+    EXPECT_EQ(ErrorHintEngine::findPattern(""), nullptr);
+}
+
+TEST(ErrorHintEngineTeachingMode, RenderTooltipHtmlReturnsHtmlForKnownTag) {
+    // renderTooltipHtml 应返回非空 HTML 富文本
+    std::string html = ErrorHintEngine::renderTooltipHtml("missing-semicolon");
+    EXPECT_FALSE(html.empty());
+    // HTML 应包含 <div> 标签
+    EXPECT_NE(html.find("<div"), std::string::npos);
+    // HTML 应包含标题（"缺少分号"）
+    EXPECT_NE(html.find("缺少分号"), std::string::npos);
+    // HTML 应包含教学说明的「根因」关键词
+    EXPECT_NE(html.find("根因"), std::string::npos);
+}
+
+TEST(ErrorHintEngineTeachingMode, RenderTooltipHtmlEmptyForUnknownTag) {
+    // 未命中 tag 时返回空字符串（调用方回退到原始消息）
+    EXPECT_TRUE(ErrorHintEngine::renderTooltipHtml("nonexistent-tag").empty());
+    EXPECT_TRUE(ErrorHintEngine::renderTooltipHtml("").empty());
+}
+
+TEST(ErrorHintEngineTeachingMode, RenderTeachingMarkdownReturnsRawMarkdown) {
+    // renderTeachingMarkdown 应返回原始 markdown（不含 HTML 包装）
+    std::string md = ErrorHintEngine::renderTeachingMarkdown("division-by-zero");
+    EXPECT_FALSE(md.empty());
+    // markdown 应以 "## " 标题开头
+    EXPECT_EQ(md.substr(0, 3), "## ");
+    // markdown 不应包含 HTML 标签（与 renderTooltipHtml 区分）
+    EXPECT_EQ(md.find("<div"), std::string::npos);
+    EXPECT_EQ(md.find("<br>"), std::string::npos);
+}
+
+TEST(ErrorHintEngineTeachingMode, RenderTeachingMarkdownEmptyForUnknownTag) {
+    EXPECT_TRUE(ErrorHintEngine::renderTeachingMarkdown("nonexistent-tag").empty());
+    EXPECT_TRUE(ErrorHintEngine::renderTeachingMarkdown("").empty());
+}
+
+TEST(ErrorHintEngineTeachingMode, TooltipHtmlEscapesSpecialChars) {
+    // renderTooltipHtml 应转义 markdown 中的 < > & 避免 HTML 注入
+    // 选取一个含 < 或 > 的教学说明（recursion-depth 的 `if (n = 0)` 中有 = 但无 < >，
+    // 改用 type-mismatch，其教学说明含 `var x: int = "string"`，无 < >；
+    // 实际所有教学说明中 < > 出现在 `if (i >= 0 && i < len(arr))` 的 index-out-of-bounds）
+    std::string html = ErrorHintEngine::renderTooltipHtml("index-out-of-bounds");
+    EXPECT_FALSE(html.empty());
+    // 教学说明原文含 `i < len(arr)`，转义后应变为 `i &lt; len(arr)`
+    EXPECT_NE(html.find("&lt;"), std::string::npos)
+        << "应将 < 转义为 &lt;";
+    // 不应出现裸 < （除了 HTML 标签本身的 <）
+    // 简单验证：去掉所有 HTML 标签后不应有 < 字符
+    std::string stripped = html;
+    auto pos = std::string::npos;
+    while ((pos = stripped.find('<')) != std::string::npos) {
+        auto end = stripped.find('>', pos);
+        if (end == std::string::npos) break;
+        stripped.erase(pos, end - pos + 1);
+    }
+    EXPECT_EQ(stripped.find('<'), std::string::npos)
+        << "转义后正文不应有裸 < 字符";
+}

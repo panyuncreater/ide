@@ -112,6 +112,10 @@ private:
     QPushButton* loadCodeBtn_ = nullptr;
     int currentScenarioIdx_ = -1;
 
+    // R121: refreshLive 重建 stackTree_ 时 currentItemChanged 会触发 onFrameSelected。
+    // 此守卫避免在重建期间误触发 controller_->setSelectedFrame 导致循环刷新。
+    bool inRefresh_ = false;
+
     // 构造辅助
     void buildLivePage(QWidget* host);
     void buildLibraryPage(QWidget* host);

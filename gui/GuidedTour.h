@@ -61,6 +61,7 @@ public:
 
     void start(); // 开始引导，从第 0 步
     void next();  // 下一步
+    void prev();  // 上一步（首步时禁用）
     void skip();  // 跳过引导
 
 signals:
@@ -84,6 +85,7 @@ private:
     class QLabel* bubbleDesc_ = nullptr;
     class QPushButton* primaryBtn_ = nullptr;
     class QPushButton* secondaryBtn_ = nullptr;
+    class QPushButton* prevBtn_ = nullptr; // 上一步按钮（首步禁用）
     class QLabel* stepIndicator_ = nullptr;
 
     // 当前被高亮的目标及其原始样式表（用于步骤切换/结束时恢复）。

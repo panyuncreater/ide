@@ -329,6 +329,9 @@ void VariableInspectorPanel::hideEvent(QHideEvent* event) {
 }
 
 /// 读取 VM 当前变量状态并刷新实时展示（含异常保护）。
+/// R121: 当 controller_->getSelectedFrame() >= 0 时，locals 改为消费 getSelectedFrameLocals()
+///       显示所选帧的局部变量；globals 保持显示当前后端的全局变量（VM 模式）。
+///       selectedFrame_ == -1 时保持原行为（栈顶 locals + globals）。
 void VariableInspectorPanel::refreshLive() {
     varTree_->clear();
     if (!controller_) {
@@ -370,8 +373,26 @@ void VariableInspectorPanel::refreshLive() {
         return;
     }
 
+    // R121: 当用户选中调用栈某帧时（selectedFrame >= 0），用 getSelectedFrameLocals()
+    // 覆盖 locals，显示该帧的局部变量。selectedFrame_ == -1 时保持原行为。
+    int selFrame = controller_->getSelectedFrame();
+    QString frameHint;
+    if (selFrame >= 0) {
+        auto selLocals = controller_->getSelectedFrameLocals();
+        if (!selLocals.empty()) {
+            // 用所选帧 locals 替换原 locals（原 locals 是栈顶帧 + 全局混合，已通过 globals 分支保留全局）
+            // 对于 Interpreter 模式，原 locals 已含全局 + upvalue，需保留全局部分
+            // 简化策略：直接清空 locals，用所选帧 locals 填充；globals 独立显示
+            locals.clear();
+            for (const auto& kv : selLocals) {
+                locals.push_back(VariableSnapshot{kv.first, kv.second, "selected-frame"});
+            }
+            frameHint = tr(" | 已选帧: %1").arg(selFrame);
+        }
+    }
+
     int total = static_cast<int>(locals.size() + globals.size());
-    liveStatusLabel_->setText(tr("状态：%1 | 变量数：%2").arg(modeLabel).arg(total));
+    liveStatusLabel_->setText(tr("状态：%1 | 变量数：%2%3").arg(modeLabel).arg(total).arg(frameHint));
 
     // 全局变量组
     auto* globalGroup = new QTreeWidgetItem(varTree_);

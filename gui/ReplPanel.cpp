@@ -44,14 +44,32 @@ ReplPanel::ReplPanel(QWidget* parent) : QWidget(parent) {
     outputArea_->document()->setMaximumBlockCount(10000);
     layout->addWidget(outputArea_);
 
-    // 输入行
-    inputLine_ = new QLineEdit(this);
+    // 输入行（L5 fix: QPlainTextEdit 替换 QLineEdit，支持多行历史回放与编辑）
+    inputLine_ = new QPlainTextEdit(this);
     inputLine_->setPlaceholderText(">>> 输入代码，%help 查看 magic 命令");
+    // L5 fix: 单行高度起，多行历史回放时动态撑高（最多 5 行约 120px）。
+    // textChanged 信号触发 adjustInputHeight 按行数调整高度。
+    inputLine_->setLineWrapMode(QPlainTextEdit::NoWrap);
+    inputLine_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    inputLine_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    inputLine_->setFixedHeight(30); // 初始单行高度
     layout->addWidget(inputLine_);
 
-    connect(inputLine_, &QLineEdit::returnPressed, this, &ReplPanel::onReturnPressed);
+    // L5 fix: textChanged 动态调整高度——单行 30px，多行按行数撑高（上限 120px）
+    connect(inputLine_, &QPlainTextEdit::textChanged, this, [this]() {
+        int lineCount = inputLine_->document()->blockCount();
+        int newHeight = qMin(120, qMax(30, 30 + (lineCount - 1) * 22));
+        if (inputLine_->height() != newHeight) {
+            inputLine_->setFixedHeight(newHeight);
+        }
+    });
 
-    // 安装事件过滤器以支持历史浏览
+    // L5 fix: QPlainTextEdit 无 returnPressed 信号，改在 eventFilter 中拦截
+    // Return/Enter 键调用 onReturnPressed（Shift+Enter 用于多行内换行，但 REPL
+    // 续行机制已处理多行，故 Shift+Enter 不需要特殊支持）。
+    // 不再 connect returnPressed 信号。
+
+    // 安装事件过滤器以支持历史浏览 + Return 键拦截
     inputLine_->installEventFilter(this);
 
     // 欢迎信息
@@ -163,7 +181,7 @@ void ReplPanel::onReturnPressed() {
         return;
     }
 
-    QString line = inputLine_->text();
+    QString line = inputLine_->toPlainText();
     QString trimmedLine = line.trimmed();
 
     // AUDIT-REPL-3 fix: 续行模式下空行中止续行（等价 Ctrl+C 中断）。
@@ -364,6 +382,27 @@ void ReplPanel::executeLine(const QString& line) {
     // QT-R-06 fix: 若上一次异步执行尚未完成，拒绝新输入
     if (replRunning_) {
         appendError("上一次执行尚未完成，请稍候...");
+        return;
+    }
+
+    // R161: 调试器 REPL 模式——调试暂停时在当前上下文执行任意表达式/语句。
+    // 复用 ReplPanel 现有 UI（输入框/历史/续行），走主线程同步求值（不走 std::async），
+    // 因为 Interpreter 暂停期 worker 阻塞在 pauseCV_、VM 暂停期主线程空闲，无竞争。
+    // 阶段1 只读语义：临时 Interpreter 独立实例，副作用不写回主程序。
+    if (controller_->isDebugPaused() || (controller_->isVmInitialized() && !controller_->isVmRunning())) {
+        std::string capturedOutput;
+        auto watchResult = controller_->evaluateDebuggerRepl(line.toStdString(), &capturedOutput);
+        if (!capturedOutput.empty()) {
+            appendOutput(QString::fromStdString(capturedOutput));
+        }
+        if (watchResult.ok) {
+            // 裸表达式显示求值结果；print/var/赋值语句返回 null 不显示
+            if (!watchResult.valueRepr.empty() && watchResult.valueRepr != "null" && watchResult.typeName != "null") {
+                appendOutput(QString::fromStdString(watchResult.valueRepr));
+            }
+        } else {
+            appendError(QString::fromStdString(watchResult.error));
+        }
         return;
     }
 
@@ -749,11 +788,18 @@ bool ReplPanel::isInputComplete(const QString& input) {
 bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {
     if (obj == inputLine_ && event->type() == QEvent::KeyPress) {
         QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+        // L5 fix: QPlainTextEdit 无 returnPressed 信号，在此拦截 Return/Enter 键
+        // 触发 onReturnPressed。Shift+Enter 允许在多行历史中插入换行（不触发执行）。
+        if ((keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) &&
+            !(keyEvent->modifiers() & Qt::ShiftModifier)) {
+            onReturnPressed();
+            return true;
+        }
         if (keyEvent->key() == Qt::Key_Up) {
             // 上一条历史
             if (historyIndex_ > 0) {
                 historyIndex_--;
-                inputLine_->setText(history_[historyIndex_]);
+                inputLine_->setPlainText(history_[historyIndex_]);
             }
             return true;
         }
@@ -761,7 +807,7 @@ bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {
             // 下一条历史
             if (historyIndex_ < static_cast<int>(history_.size()) - 1) {
                 historyIndex_++;
-                inputLine_->setText(history_[historyIndex_]);
+                inputLine_->setPlainText(history_[historyIndex_]);
             } else {
                 historyIndex_ = history_.size();
                 inputLine_->clear();

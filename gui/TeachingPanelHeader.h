@@ -16,6 +16,7 @@
 // 「返回编辑器」按钮发 returnToEditorRequested 信号，切回代码编辑区
 // ============================================================
 
+#include <QPointer>
 #include <QString>
 #include <QWidget>
 
@@ -54,6 +55,8 @@ private:
     QPushButton* tourBtn_ = nullptr; // 「新手引导」按钮
     QPushButton* learningPathBtn_ = nullptr;
     QPushButton* backBtn_ = nullptr; // 「返回编辑器」按钮
+    // 非模态帮助对话框（复用，避免重复创建）
+    QPointer<QDialog> helpDlg_;
 
     void showHelpDialog();
 

@@ -1,5 +1,5 @@
 #include "ide.h"
-#include "Logger.h"
+#include "common/Logger.h"
 #include "common/RuntimeLimits.h"
 #include "common/SpellChecker.h"
 #include "gui/ErrorHintEngine.h" // P0-3 fix (F10): 主编译/运行路径接入错误增强
@@ -12,6 +12,7 @@
 #include <QAbstractItemView>
 #include <QAbstractScrollArea>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QColor>
@@ -580,6 +581,63 @@ void Ide::closeEvent(QCloseEvent* event) {
     if (fileTreeFilterTimer_)
         fileTreeFilterTimer_->stop();
 
+    // 阶段 1：停止所有动画与定时器（含子 widget 与 Ide 直接子对象）
+    stopCloseAnimationsAndTimers();
+
+    // 阶段 2：清理所有活跃的面板特定 GuidedTour
+    cleanupActivePanelTours();
+
+    // 阶段 3：尽早切断 controller_ → Ide 信号槽并清空待处理事件
+    disconnectControllerEarly();
+
+    if (!maybeSave()) {
+        closing_ = false;
+        event->ignore();
+        return;
+    }
+
+    if (replPanel_->isReplRunning()) {
+        auto ret = QMessageBox::warning(
+            this, mlTr("REPL 仍在执行"),
+            mlTr("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒。\n\n是否继续关闭？"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (ret != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+    }
+
+    // 阶段 4：停止运行中的 Worker/VM/REPL（用户取消时返回 false，已 event->ignore()）
+    if (!stopRunningWorkersForClose(event))
+        return;
+
+    // Save AST independent window geometry before closing
+    if (astWindow_ && !astWindow_->isHidden())
+        saveAstWindowGeometry();
+    // ISSUE-7 fix: 清理 GuidedTour。若引导气泡仍活跃，bubble_ 是 host_(Ide) 的子 widget，
+    // 析构链会销毁它，但 showStep 中排队的 QTimer::singleShot(0, this, ...) 可能持有
+    // GuidedTour 裸 this。先调用 hideOverlay 取消气泡并 deleteLater，再 delete guidedTour_
+    // 确保所有延迟 lambda 的 this 在析构前失效（GuidedTour 析构会 hideOverlay）。
+    if (guidedTour_) {
+        delete guidedTour_;
+        guidedTour_ = nullptr;
+    }
+    // ISSUE-7 fix: disconnect 已在 closeEvent 入口执行（ROUND-60 提前到 maybeSave 之前），
+    // 此处保留 removePostedEvents 兜底，清空 stopForClose/processEvents 期间可能重新投递的事件。
+    // ROUND-66 P0 fix: 原参数 0 只移除 QEvent::None，改为无参（-1=所有类型）。
+    // 同时清空 controller_ 及其协作成员的队列。
+    QCoreApplication::removePostedEvents(this);
+    if (controller_)
+        controller_->clearPendingEvents();
+    saveLayout();
+    event->accept();
+}
+
+/// closeEvent 阶段 1：停止所有动画与定时器。
+/// 包含：splitterAnim_/bottomPanelAnim_ 显式 stop；stopChildAnimations lambda 递归
+/// 停止 centerStack_/bottomStack_/rightStack_/dockManager_ 子 QPropertyAnimation/QTimer
+/// 并 removePostedEvents；pendingHide 定时器；ROUND-89 Ide 直接子对象扫描兜底。
+void Ide::stopCloseAnimationsAndTimers() {
     // ROUND-67 P0/P1 fix: 立即停止所有活跃的 QVariantAnimation。
     // 关键认知：QVariantAnimation 由 QUnifiedTimer（全局动画定时器）驱动，
     // 不经过 Qt 对象事件队列，removePostedEvents 完全无法清理它！
@@ -669,14 +727,16 @@ void Ide::closeEvent(QCloseEvent* event) {
             }
         }
     }
+}
 
-    // ROUND-67 P1 fix: 清理所有活跃的面板特定 GuidedTour。
-    // 5 个教学面板首次访问自动触发 GuidedTour，tour 的 showStep 中排队
-    // QTimer::singleShot(0, tour, ...) 持有裸 targetWidget 指针。
-    // removePostedEvents(this) 只清空 Ide 队列，不清空 tour 队列。
-    // maybeSave 模态对话框期间 tour 的 singleShot 被派发，访问可能已被
-    // reparent/清理的 targetWidget → UAF。显式 disconnect + removePostedEvents(tour) + delete。
-    // （hideOverlay 是 private，~GuidedTour 析构会调用它清理气泡）
+/// closeEvent 阶段 2：清理所有活跃的面板特定 GuidedTour。
+/// 5 个教学面板首次访问自动触发 GuidedTour，tour 的 showStep 中排队
+/// QTimer::singleShot(0, tour, ...) 持有裸 targetWidget 指针。
+/// removePostedEvents(this) 只清空 Ide 队列，不清空 tour 队列。
+/// maybeSave 模态对话框期间 tour 的 singleShot 被派发，访问可能已被
+/// reparent/清理的 targetWidget → UAF。显式 disconnect + removePostedEvents(tour) + delete。
+/// （hideOverlay 是 private，~GuidedTour 析构会调用它清理气泡）
+void Ide::cleanupActivePanelTours() {
     if (!activePanelTours_.isEmpty()) {
         for (GuidedTour* tour : activePanelTours_) {
             if (tour) {
@@ -687,13 +747,15 @@ void Ide::closeEvent(QCloseEvent* event) {
         }
         activePanelTours_.clear();
     }
+}
 
-    // ROUND-60 fix: 尽早切断 controller_ → Ide 的所有信号-槽连接。
-    // 原实现将 disconnect 放在 closeEvent 末尾（maybeSave/processEvents 之后），
-    // 但 maybeSave() 的模态对话框与 processEvents(521) 会派发主线程事件队列中
-    // 挂起的 QueuedConnection 事件（outputReady 等），此时 5 个 lambda 无 closing_
-    // 守卫会访问已部分析构的 UI 成员导致 UAF。尽早 disconnect + removePostedEvents
-    // 双重保险：disconnect 阻止未来投递，removePostedEvents 清空已投递未派发的事件。
+/// closeEvent 阶段 3：尽早切断 controller_ → Ide 的所有信号-槽连接。
+/// 原实现将 disconnect 放在 closeEvent 末尾（maybeSave/processEvents 之后），
+/// 但 maybeSave() 的模态对话框与 processEvents(521) 会派发主线程事件队列中
+/// 挂起的 QueuedConnection 事件（outputReady 等），此时 5 个 lambda 无 closing_
+/// 守卫会访问已部分析构的 UI 成员导致 UAF。尽早 disconnect + removePostedEvents
+/// 双重保险：disconnect 阻止未来投递，removePostedEvents 清空已投递未派发的事件。
+void Ide::disconnectControllerEarly() {
     disconnect(controller_, nullptr, this, nullptr);
     // ROUND-67 P2 fix: 清空所有 vmStateChangedListener 回调，防止 closeEvent 后续
     // 操作（vmStop/stopForClose 等）触发 notifyVmStateChanged 时，7 个教学面板的
@@ -711,24 +773,14 @@ void Ide::closeEvent(QCloseEvent* event) {
     QCoreApplication::removePostedEvents(this);
     if (controller_)
         controller_->clearPendingEvents();
+}
 
-    if (!maybeSave()) {
-        closing_ = false;
-        event->ignore();
-        return;
-    }
-
-    if (replPanel_->isReplRunning()) {
-        auto ret = QMessageBox::warning(
-            this, mlTr("REPL 仍在执行"),
-            mlTr("REPL 有异步任务正在执行。\n关闭窗口将发送中止请求并等待最多 5 秒。\n\n是否继续关闭？"),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (ret != QMessageBox::Yes) {
-            event->ignore();
-            return;
-        }
-    }
-
+/// closeEvent 阶段 4：停止运行中的 Worker/VM/REPL。
+/// 顺序：Interpreter Worker stopForClose(3000ms) → 失败时弹"强制终止"对话框，
+/// 用户选择 Save 但仍 modified / Cancel 时返回 false（调用方需 event->ignore + return）；
+/// 否则 forceStop + setRunningState(false)。随后 vmStop + processEvents 清空挂起 timeout；
+/// 最后 REPL requestReplStop + waitReplFuture。
+bool Ide::stopRunningWorkersForClose(QCloseEvent* event) {
     if (controller_->isRunning()) {
         if (!controller_->stopForClose(3000)) {
             if (codeEditor_ && codeEditor_->document()->isModified()) {
@@ -742,11 +794,11 @@ void Ide::closeEvent(QCloseEvent* event) {
                     onSave();
                     if (codeEditor_->document()->isModified()) {
                         event->ignore();
-                        return;
+                        return false;
                     }
                 } else if (ret == QMessageBox::Cancel) {
                     event->ignore();
-                    return;
+                    return false;
                 }
             }
             controller_->forceStop();
@@ -774,32 +826,8 @@ void Ide::closeEvent(QCloseEvent* event) {
         controller_->requestReplStop();
     }
     replPanel_->waitReplFuture();
-    // Save AST independent window geometry before closing
-    if (astWindow_ && !astWindow_->isHidden())
-        saveAstWindowGeometry();
-    // ISSUE-7 fix: 清理 GuidedTour。若引导气泡仍活跃，bubble_ 是 host_(Ide) 的子 widget，
-    // 析构链会销毁它，但 showStep 中排队的 QTimer::singleShot(0, this, ...) 可能持有
-    // GuidedTour 裸 this。先调用 hideOverlay 取消气泡并 deleteLater，再 delete guidedTour_
-    // 确保所有延迟 lambda 的 this 在析构前失效（GuidedTour 析构会 hideOverlay）。
-    if (guidedTour_) {
-        delete guidedTour_;
-        guidedTour_ = nullptr;
-    }
-    // ISSUE-7 fix: disconnect 已在 closeEvent 入口执行（ROUND-60 提前到 maybeSave 之前），
-    // 此处保留 removePostedEvents 兜底，清空 stopForClose/processEvents 期间可能重新投递的事件。
-    // ROUND-66 P0 fix: 原参数 0 只移除 QEvent::None，改为无参（-1=所有类型）。
-    // 同时清空 controller_ 及其协作成员的队列。
-    QCoreApplication::removePostedEvents(this);
-    if (controller_)
-        controller_->clearPendingEvents();
-    saveLayout();
-    event->accept();
+    return true;
 }
-
-// ============================================================
-// Native event: frameless window edge resize (Windows WM_NCHITTEST)
-// 第九轮：无边框窗口保留边缘拖拽调整大小能力
-// ============================================================
 
 /// Windows 原生事件：捕获 WM_NCHITTEST 实现无边框窗口的边缘拖拽与缩放。
 bool Ide::nativeEvent(const QByteArray& eventType, void* message, qintptr* result) {
@@ -1091,6 +1119,13 @@ int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
         controller_->setBreakpointCondition(line, condition.toStdString());
     });
 
+    // R104: Logpoint 类型/日志消息变更信号 → IdeController
+    connect(data.editor, &CodeEditor::breakpointKindRequested, this,
+            [this](int line, BreakpointKind kind, const QString& logMessage) {
+                controller_->setBreakpointKind(line, kind);
+                controller_->setLogpointMessage(line, logMessage.toStdString());
+            });
+
     // AUDIT-P2-CORRECT fix: 行号区点击切换断点时，若处于 Interpreter 调试暂停状态，
     // 同步断点到 DebugController，避免新断点不生效/已删除断点仍触发。
     // VM 模式无需处理（每次步进前 syncVmBreakpoints 会同步）。
@@ -1124,48 +1159,74 @@ int Ide::createNewEditorTab(const QString& filePath, const QString& content) {
     });
 
     // 第十三轮：CodeEditor 右键菜单 contextActionRequested 信号路由
-    connect(data.editor, &CodeEditor::contextActionRequested, this, [this](const QString& action) {
-        if (action == "toggleComment") {
-            // 复用 CodeEditor 自带的 Ctrl+/ 逻辑
-            QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_Slash, Qt::ControlModifier, "/");
-            QApplication::sendEvent(codeEditor_, &keyPress);
-        } else if (action == "toggleBlockComment") {
-            QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_Slash, Qt::ControlModifier | Qt::ShiftModifier, "/");
-            QApplication::sendEvent(codeEditor_, &keyPress);
-        } else if (action == "format") {
-            onFormat();
-        } else if (action == "gotoLine") {
-            QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier, "g");
-            QApplication::sendEvent(codeEditor_, &keyPress);
-        } else if (action == "find") {
-            onFind();
-        } else if (action == "replace") {
-            onReplace();
-        } else if (action == "toggleBreakpoint") {
-            // 切换当前行断点
-            int line = codeEditor_->textCursor().blockNumber() + 1;
-            auto bps = codeEditor_->getBreakpoints();
-            if (bps.contains(line))
-                bps.remove(line);
-            else
-                bps.insert(line);
-            codeEditor_->setBreakpoints(bps);
-            syncVmBreakpoints();
-        } else if (action == "editBreakpointCondition") {
-            // 复用 CodeEditor 的断点条件编辑
-            int line = codeEditor_->textCursor().blockNumber() + 1;
-            // 通过 LineNumberArea 的右键菜单触发——直接发射 breakpointConditionRequested
-            // CodeEditor 没有公共 API，这里简化为提示用户使用行号区右键
-            QToolTip::showText(QCursor::pos(), mlTr("请在行号左侧右键点击断点设置条件"), codeEditor_);
-        } else if (action == "runToCursor") {
-            // 运行到当前行：通过断点临时切换实现（简化版）
-            int line = codeEditor_->textCursor().blockNumber() + 1;
-            // TODO: 实现真正的 runToCursor，当前提示用户该功能开发中
-            QToolTip::showText(QCursor::pos(), mlTr("运行到当前行功能开发中"), codeEditor_);
-        }
-    });
+    connect(data.editor, &CodeEditor::contextActionRequested, this, &Ide::handleEditorContextAction);
 
     return idx;
+}
+
+/// CodeEditor 右键菜单 contextActionRequested 信号路由。
+/// 提取自 createNewEditorTab：保持所有动作分支与原始控制流完全一致。
+void Ide::handleEditorContextAction(const QString& action) {
+    if (action == "toggleComment") {
+        // 复用 CodeEditor 自带的 Ctrl+/ 逻辑
+        QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_Slash, Qt::ControlModifier, "/");
+        QApplication::sendEvent(codeEditor_, &keyPress);
+    } else if (action == "toggleBlockComment") {
+        QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_Slash, Qt::ControlModifier | Qt::ShiftModifier, "/");
+        QApplication::sendEvent(codeEditor_, &keyPress);
+    } else if (action == "format") {
+        onFormat();
+    } else if (action == "gotoLine") {
+        QKeyEvent keyPress(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier, "g");
+        QApplication::sendEvent(codeEditor_, &keyPress);
+    } else if (action == "find") {
+        onFind();
+    } else if (action == "replace") {
+        onReplace();
+    } else if (action == "toggleBreakpoint") {
+        // 切换当前行断点
+        int line = codeEditor_->textCursor().blockNumber() + 1;
+        auto bps = codeEditor_->getBreakpoints();
+        if (bps.contains(line))
+            bps.remove(line);
+        else
+            bps.insert(line);
+        codeEditor_->setBreakpoints(bps);
+        syncVmBreakpoints();
+    } else if (action == "editBreakpointCondition") {
+        // 复用 CodeEditor 的断点条件编辑
+        int line = codeEditor_->textCursor().blockNumber() + 1;
+        // 通过 LineNumberArea 的右键菜单触发——直接发射 breakpointConditionRequested
+        // CodeEditor 没有公共 API，这里简化为提示用户使用行号区右键
+        QToolTip::showText(QCursor::pos(), mlTr("请在行号左侧右键点击断点设置条件"), codeEditor_);
+    } else if (action == "runToCursor") {
+        // R98 runToCursor: 运行到当前光标行暂停。通过 IdeController::runToCursor
+        // 分派到 Interpreter 路径（DebugController 临时断点 + resume）或 VM 路径
+        // （VmStepper 临时断点 + stepByMode(RUN)）。临时断点是一次性的，命中后自动清除。
+        int line = codeEditor_->textCursor().blockNumber() + 1;
+        if (line <= 0)
+            return;
+        // REPL 异步执行中禁止 runToCursor，避免与 REPL worker 线程并发访问解释器状态
+        if (replPanel_ && replPanel_->isReplRunning()) {
+            appendError(mlTr("REPL 正在执行，请先停止 REPL 再使用运行到当前行"));
+            showBottomPanel(1);
+            return;
+        }
+        // 必须处于调试暂停 / VM 步进 / Worker 运行中任一状态才能 runToCursor
+        if (!controller_->isRunning() && !controller_->isDebugPaused() && !controller_->isVmInitialized() &&
+            !controller_->isVmRunning()) {
+            appendError(mlTr("请先启动调试或 VM 步进再使用运行到当前行"));
+            showBottomPanel(1);
+            return;
+        }
+        try {
+            controller_->runToCursor(line);
+        } catch (const std::exception& e) {
+            appendError(mlTr("运行到当前行失败: %1").arg(QString::fromStdString(e.what())));
+        } catch (...) {
+            appendError(mlTr("运行到当前行发生未知异常"));
+        }
+    }
 }
 
 /// 切换到指定标签：同步活动编辑器、高亮器、文件路径与窗口标题。
@@ -1523,6 +1584,30 @@ void Ide::ensureTeachingPanelCreated(const QString& panelId) {
 
 /// 显示指定教学面板：经 centerStack_ 路由并以滑入动画呈现。
 void Ide::showTeachingPanel(const QString& panelId) {
+    int idx = prepareTeachingPanelTransition(panelId);
+    if (idx < 0)
+        return;
+
+    // 任务2：三栏布局 — 先保存 splitter 尺寸（布局引擎还未重算）
+    const bool editorHasTabs = editorTabWidget_ && editorTabWidget_->count() > 0;
+    const bool editorWasVisible = editorTabWidget_ && editorTabWidget_->isVisible();
+    QList<int> savedSplitterSizes;
+    if (centerSplitter_)
+        savedSplitterSizes = centerSplitter_->sizes();
+
+    applyTeachingPanelDockAndPageSwitch(panelId, idx);
+
+    finalizeTeachingPanelShow(panelId, savedSplitterSizes, editorHasTabs, editorWasVisible);
+
+    // 持久化上次访问的教学面板（启动时恢复）
+    if (panelId != QStringLiteral("editor")) {
+        QSettings().setValue(QStringLiteral("teaching/lastPanelId"), panelId);
+    }
+}
+
+/// showTeachingPanel 阶段 1：懒加载 + 取消挂起意图 + 停止旧动画 + 查找面板索引。
+/// 返回 centerStack_ 索引；返回 -1 表示 panelId 不在映射中（已调用 showEditorArea 回退）。
+int Ide::prepareTeachingPanelTransition(const QString& panelId) {
     // 懒加载：首次访问时构造面板
     ensureTeachingPanelCreated(panelId);
 
@@ -1546,17 +1631,14 @@ void Ide::showTeachingPanel(const QString& panelId) {
     if (it == panelToStackIndex_.end() || !centerStack_) {
         // panelId 不在映射中，回退到编辑器模式
         showEditorArea();
-        return;
+        return -1;
     }
-    int idx = it.value();
+    return it.value();
+}
 
-    // 任务2：三栏布局 — 先保存 splitter 尺寸（布局引擎还未重算）
-    const bool editorHasTabs = editorTabWidget_ && editorTabWidget_->count() > 0;
-    const bool editorWasVisible = editorTabWidget_ && editorTabWidget_->isVisible();
-    QList<int> savedSplitterSizes;
-    if (centerSplitter_)
-        savedSplitterSizes = centerSplitter_->sizes();
-
+/// showTeachingPanel 阶段 2：BUG-R14-2 dock 状态记录 + 白名单显隐 + centerStack_ 切换 +
+/// pipeline/learning-path 刷新 + PanelAnimator::slideInWidget + editorTabWidget_ 显隐。
+void Ide::applyTeachingPanelDockAndPageSwitch(const QString& panelId, int idx) {
     // BUG-R14-2 fix: 从编辑器模式进入教学面板时，记录 bottomContainer_/rightDock_ 的可见状态，
     // 供 showEditorArea 恢复。必须在 dock 显隐调整之前记录，否则会捕获到隐藏后的错误状态。
     // 教学面板间切换时不记录（已隐藏，避免覆盖记录）。
@@ -1618,7 +1700,12 @@ void Ide::showTeachingPanel(const QString& panelId) {
     } else if (editorTabWidget_) {
         editorTabWidget_->show();
     }
+}
 
+/// showTeachingPanel 阶段 3：splitter 重分配动画 + 教学树高亮 + 浏览面板活动标记 +
+/// 首次自动 GuidedTour + syncViewMenuChecks。
+void Ide::finalizeTeachingPanelShow(const QString& panelId, const QList<int>& savedSplitterSizes, bool editorHasTabs,
+                                    bool editorWasVisible) {
     // 动画：编辑器从右侧滑入，教学区压缩
     // ROUND-60 fix (Issue 4): 原条件仅 !editorWasVisible 时触发动画，
     // 但编辑器已可见（编辑器独占模式 centerStack_ 被 hide 且宽度 0）时，
@@ -1785,6 +1872,106 @@ void Ide::onTeachingPanelRequested(const QString& panelId) {
     }
 }
 
+/// R165 体验优化：Alt+P 快速跳转面板（命令面板）
+/// 弹出含搜索框的面板列表对话框，按关键字过滤 PanelCatalog 全部面板，
+/// 选中后调用 showTeachingPanel 跳转。对话框非模态可关闭，支持键盘导航。
+void Ide::showQuickPanelJumpDialog() {
+    auto* dlg = new QDialog(this);
+    dlg->setWindowTitle(mlTr("跳转到面板…"));
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setMinimumSize(420, 480);
+
+    auto* layout = new QVBoxLayout(dlg);
+    layout->setContentsMargins(12, 12, 12, 12);
+    layout->setSpacing(8);
+
+    auto* searchEdit = new QLineEdit(dlg);
+    searchEdit->setPlaceholderText(mlTr("输入面板名称或关键字筛选…"));
+    searchEdit->setClearButtonEnabled(true);
+    layout->addWidget(searchEdit);
+
+    auto* list = new QListWidget(dlg);
+    list->setObjectName("quickPanelJumpList");
+    list->setUniformItemSizes(true);
+    list->setFocusPolicy(Qt::NoFocus);
+    layout->addWidget(list, 1);
+
+    auto* hint = new QLabel(mlTr("↑↓ 选择 · Enter 跳转 · Esc 关闭"), dlg);
+    hint->setStyleSheet(QString("color: %1; font-size: 11px;").arg(TeachingTheme::textHint().name()));
+    layout->addWidget(hint);
+
+    // 收集全部面板条目（panelId + 显示文本 + 分类），用于过滤
+    struct PanelItem {
+        QString id;
+        QString display;
+        QString searchable;
+    };
+    QVector<PanelItem> items;
+    const auto& cats = PanelCatalog::categories();
+    for (const auto& cat : cats) {
+        for (const auto& leaf : cat.leaves) {
+            PanelItem it;
+            it.id = QString::fromUtf8(leaf.id);
+            it.display = QString::fromUtf8(leaf.emoji) + " " + QString::fromUtf8(leaf.label) + "  · " +
+                         QString::fromUtf8(cat.title);
+            it.searchable = it.display + " " + it.id;
+            items.append(it);
+        }
+    }
+
+    // 填充列表（按分类顺序，保持稳定）
+    auto refillList = [list, &items](const QString& filter) {
+        list->clear();
+        QString f = filter.trimmed().toLower();
+        for (const auto& it : items) {
+            if (f.isEmpty() || it.searchable.toLower().contains(f)) {
+                auto* item = new QListWidgetItem(it.display, list);
+                item->setData(Qt::UserRole, it.id);
+                list->addItem(item);
+            }
+        }
+        if (list->count() > 0) {
+            list->setCurrentRow(0);
+        }
+    };
+    refillList(QString());
+
+    // 搜索过滤（防抖不必要，数据量小直接刷新）
+    connect(searchEdit, &QLineEdit::textChanged, this, [refillList](const QString& text) { refillList(text); });
+
+    // 确认跳转：双击或 Enter
+    auto jumpToSelected = [this, list, dlg]() {
+        auto* cur = list->currentItem();
+        if (!cur) {
+            return;
+        }
+        QString panelId = cur->data(Qt::UserRole).toString();
+        dlg->close();
+        showTeachingPanel(panelId);
+    };
+    connect(list, &QListWidget::itemDoubleClicked, this, [jumpToSelected](QListWidgetItem*) { jumpToSelected(); });
+    connect(searchEdit, &QLineEdit::returnPressed, this, [jumpToSelected]() { jumpToSelected(); });
+
+    // ↑↓ 在搜索框时导航列表（QShortcut 作用于 dlg，搜索框持有焦点时触发）
+    auto* upSc = new QShortcut(QKeySequence(Qt::Key_Up), dlg);
+    auto* downSc = new QShortcut(QKeySequence(Qt::Key_Down), dlg);
+    connect(upSc, &QShortcut::activated, list, [list]() {
+        int row = list->currentRow();
+        if (row > 0) {
+            list->setCurrentRow(row - 1);
+        }
+    });
+    connect(downSc, &QShortcut::activated, list, [list]() {
+        int row = list->currentRow();
+        if (row >= 0 && row < list->count() - 1) {
+            list->setCurrentRow(row + 1);
+        }
+    });
+
+    dlg->show();
+    searchEdit->setFocus();
+}
+
 /// 将全局代码字号应用到所有已打开的编辑器。
 void Ide::applyCodeFontSizeToAllEditors() {
     // 遍历所有已打开的编辑器标签页，应用全局 codeFontSize_
@@ -1924,6 +2111,33 @@ void Ide::initWelcomePage() {
     outerLayout->setContentsMargins(0, 0, 0, 0);
     outerLayout->setSpacing(0);
 
+    setupWelcomeRecentPanel(outerLayout);
+
+    // Center area
+    auto* centerArea = new QWidget;
+    centerArea->setObjectName("welcomeCenter");
+    centerArea->setAcceptDrops(true);
+    // ISSUE-3 fix: 确保 QSS background 在普通 QWidget 上生效（applyFluentStyle 设置背景色）
+    centerArea->setAttribute(Qt::WA_StyledBackground, true);
+    auto* centerLayout = new QVBoxLayout(centerArea);
+    centerLayout->setAlignment(Qt::AlignCenter);
+    centerLayout->setSpacing(12);
+
+    setupWelcomeCenterHeader(centerLayout);
+    setupWelcomeActionButtons(centerLayout);
+    setupWelcomeShortcutLinks(centerLayout);
+
+    outerLayout->addWidget(centerArea, 1);
+
+    // 第十一轮：安装拖拽 eventFilter
+    welcomePage_->installEventFilter(this);
+    centerArea->installEventFilter(this);
+
+    loadRecentWorkspaces();
+}
+
+/// initWelcomePage 子模块 1：创建 welcomeRecentPanel（220px 宽，最近工作区 QListWidget）。
+void Ide::setupWelcomeRecentPanel(QHBoxLayout* outerLayout) {
     // Left: recent workspaces (第十一轮：220px 宽)
     auto* recentPanel = new QWidget;
     recentPanel->setObjectName("welcomeRecentPanel");
@@ -1959,17 +2173,10 @@ void Ide::initWelcomePage() {
     });
     recentLayout->addWidget(recentListWidget_, 1);
     outerLayout->addWidget(recentPanel);
+}
 
-    // Center area
-    auto* centerArea = new QWidget;
-    centerArea->setObjectName("welcomeCenter");
-    centerArea->setAcceptDrops(true);
-    // ISSUE-3 fix: 确保 QSS background 在普通 QWidget 上生效（applyFluentStyle 设置背景色）
-    centerArea->setAttribute(Qt::WA_StyledBackground, true);
-    auto* centerLayout = new QVBoxLayout(centerArea);
-    centerLayout->setAlignment(Qt::AlignCenter);
-    centerLayout->setSpacing(12);
-
+/// initWelcomePage 子模块 2：创建 centerArea 头部（Logo + TitleLabel + CaptionLabel）。
+void Ide::setupWelcomeCenterHeader(QVBoxLayout* centerLayout) {
     // 第十三轮：ML 几何品牌 Logo（精致连笔版，替代原 { } 文字）
     // 修复：QPixmap(":/icons/minilang_logo.svg") 在某些 Qt6 安装下因 SVG plugin
     // 加载时机问题返回空 pixmap。改用 QIcon 自动调用 QSvgRenderer 渲染，更可靠。
@@ -2024,7 +2231,10 @@ void Ide::initWelcomePage() {
     centerLayout->addSpacing(2);
     centerLayout->addWidget(subtitleLabel, 0, Qt::AlignCenter);
     centerLayout->addSpacing(24);
+}
 
+/// initWelcomePage 子模块 3：创建 btnContainer + primaryBtn + secondaryBtn + tourBtn。
+void Ide::setupWelcomeActionButtons(QVBoxLayout* centerLayout) {
     // 第十一轮：按钮区域，最大宽度 400px，8px 圆角
     auto* btnContainer = new QWidget;
     btnContainer->setObjectName("welcomeBtnContainer");
@@ -2085,7 +2295,10 @@ void Ide::initWelcomePage() {
     centerLayout->addWidget(btnContainer, 0, Qt::AlignCenter);
 
     centerLayout->addSpacing(16);
+}
 
+/// initWelcomePage 子模块 4：创建 shortcutLayout（语法示例 + 帮助文档链接）+ addStretch(4)。
+void Ide::setupWelcomeShortcutLinks(QVBoxLayout* centerLayout) {
     // 第十三轮：辅助链接带 Fluent 图标（BOOK_SHELF + HELP）
     auto* shortcutLayout = new QHBoxLayout;
     shortcutLayout->setAlignment(Qt::AlignCenter);
@@ -2135,13 +2348,6 @@ void Ide::initWelcomePage() {
     centerLayout->addLayout(shortcutLayout);
 
     centerLayout->addStretch(4);
-    outerLayout->addWidget(centerArea, 1);
-
-    // 第十一轮：安装拖拽 eventFilter
-    welcomePage_->installEventFilter(this);
-    centerArea->installEventFilter(this);
-
-    loadRecentWorkspaces();
 }
 
 /// 从持久化设置加载最近工作区列表。
@@ -2210,6 +2416,33 @@ void Ide::initTitleBar() {
     layout->setContentsMargins(12, 0, 0, 0);
     layout->setSpacing(8);
 
+    setupTitleBarLeftSide(layout);
+
+    // ---- 系统菜单按钮（Fluent DropDownToolButton + RoundMenu 替代 QMenuBar）----
+    auto* menuBtn = new DropDownToolButton(Fluent::IconType::MENU, titleBar_);
+    menuBtn->setFixedSize(32, 32);
+    menuBtn->setToolTip(mlTr("菜单"));
+
+    auto* mainMenu = new RoundMenu(QString(), titleBar_);
+    mainMenu->addMenu(buildFileMenu(titleBar_));
+    mainMenu->addMenu(buildEditMenu(titleBar_));
+    mainMenu->addMenu(buildViewMenu(titleBar_));
+    registerTeachingPanelShortcuts();
+    mainMenu->addMenu(buildRunMenu(titleBar_));
+    mainMenu->addMenu(buildHelpMenu(titleBar_));
+    menuBtn->setMenu(mainMenu);
+    layout->addWidget(menuBtn);
+
+    setupTitleBarMiddleToolbar(layout);
+    setupTitleBarDebugAndVmButtons(layout);
+    setupTitleBarRightSide(layout);
+
+    // 拖拽移动窗口 + 双击最大化/还原
+    titleBar_->installEventFilter(this);
+}
+
+/// initTitleBar 子模块 1：左侧应用图标 + 名称 + 路径标签。
+void Ide::setupTitleBarLeftSide(QHBoxLayout* layout) {
     // ---- 左侧：应用图标 + 名称 ----
     titleIconLabel_ = new QLabel(titleBar_);
     titleIconLabel_->setFixedSize(16, 16);
@@ -2231,17 +2464,12 @@ void Ide::initTitleBar() {
     pathFont.setPointSize(9);
     titlePathLabel_->setFont(pathFont);
     layout->addWidget(titlePathLabel_);
+}
 
-    // ---- 系统菜单按钮（Fluent DropDownToolButton + RoundMenu 替代 QMenuBar）----
-    auto* menuBtn = new DropDownToolButton(Fluent::IconType::MENU, titleBar_);
-    menuBtn->setFixedSize(32, 32);
-    menuBtn->setToolTip(mlTr("菜单"));
-
-    // 创建主菜单（File / Edit / View / Run / Help 子菜单）
-    auto* mainMenu = new RoundMenu(QString(), titleBar_);
-
+/// initTitleBar 子模块 2：构建「文件」子菜单（新建/打开/打开文件夹/保存/另存为）。
+RoundMenu* Ide::buildFileMenu(QWidget* parent) {
     // -- File --
-    auto* fileMenu = new RoundMenu(mlTr("文件"), titleBar_);
+    auto* fileMenu = new RoundMenu(mlTr("文件"), parent);
     newAction_ = new QAction(mlTr("新建(&N)"), this);
     newAction_->setShortcut(QKeySequence::New);
     connect(newAction_, &QAction::triggered, this, [this]() {
@@ -2269,10 +2497,13 @@ void Ide::initTitleBar() {
     saveAsAction_->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_S);
     connect(saveAsAction_, &QAction::triggered, this, &Ide::onSaveAs);
     fileMenu->addAction(saveAsAction_);
-    mainMenu->addMenu(fileMenu);
+    return fileMenu;
+}
 
+/// initTitleBar 子模块 3：构建「编辑」子菜单（格式化/查找/替换/跳转到行）。
+RoundMenu* Ide::buildEditMenu(QWidget* parent) {
     // -- Edit --
-    auto* editMenu = new RoundMenu(mlTr("编辑"), titleBar_);
+    auto* editMenu = new RoundMenu(mlTr("编辑"), parent);
     auto* formatMenuAct = new QAction(mlTr("格式化"), this);
     formatMenuAct->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
     connect(formatMenuAct, &QAction::triggered, this, [this]() {
@@ -2310,10 +2541,13 @@ void Ide::initTitleBar() {
         }
     });
     editMenu->addAction(gotoLineAct);
-    mainMenu->addMenu(editMenu);
+    return editMenu;
+}
 
+/// initTitleBar 子模块 4：构建「视图」子菜单（资源管理器/调试/输出/编译分析/学习中心 + 字号调节）。
+RoundMenu* Ide::buildViewMenu(QWidget* parent) {
     // -- View --
-    auto* viewMenu = new RoundMenu(mlTr("视图"), titleBar_);
+    auto* viewMenu = new RoundMenu(mlTr("视图"), parent);
     viewExplorerAction_ = new QAction(mlTr("资源管理器"), this);
     viewExplorerAction_->setCheckable(true);
     connect(viewExplorerAction_, &QAction::toggled, this, [this](bool on) {
@@ -2400,46 +2634,12 @@ void Ide::initTitleBar() {
     // 教学面板的统一入口已收敛到「学习中心」（左侧 TeachingTreePanel 树形导航）。
     // 原 4 个教学面板子菜单（入门导览/编译前端/执行引擎/深入实战）已移除，
     // 避免视图菜单冗余选项造成新手认知负担。教学面板通过 TeachingTreePanel 切换。
-
-    // 保留教学面板快捷键（不在菜单中显示，通过 QShortcut 注册）
-    auto registerTeachingShortcut = [this](const QString& panelId, const QKeySequence& shortcut) {
-        auto* sc = new QShortcut(shortcut, this);
-        connect(sc, &QShortcut::activated, this, [this, panelId]() {
-            // 切换逻辑：若当前已显示该面板则切回编辑器，否则显示该面板
-            auto it = panelToStackIndex_.constFind(panelId);
-            if (it != panelToStackIndex_.end() && centerStack_ && !centerInEditorMode_ &&
-                centerStack_->currentIndex() == it.value()) {
-                showEditorArea();
-            } else {
-                showTeachingPanel(panelId);
-            }
-        });
-    };
-    registerTeachingShortcut(QStringLiteral("pipeline"), Qt::CTRL | Qt::SHIFT | Qt::Key_P);
-    registerTeachingShortcut(QStringLiteral("backend-compare"), Qt::CTRL | Qt::SHIFT | Qt::Key_B);
-    registerTeachingShortcut(QStringLiteral("bug-hunt"), Qt::CTRL | Qt::SHIFT | Qt::Key_H);
-    registerTeachingShortcut(QStringLiteral("syntax-explorer"), Qt::CTRL | Qt::SHIFT | Qt::Key_1);
-    registerTeachingShortcut(QStringLiteral("lab-manual"), Qt::ALT | Qt::Key_5);
-    registerTeachingShortcut(QStringLiteral("memory-model"), Qt::CTRL | Qt::SHIFT | Qt::Key_7);
-    registerTeachingShortcut(QStringLiteral("ir-transform"), Qt::CTRL | Qt::SHIFT | Qt::Key_8);
-    registerTeachingShortcut(QStringLiteral("profile-dashboard"), Qt::ALT | Qt::Key_4);
-    registerTeachingShortcut(QStringLiteral("call-stack"), Qt::CTRL | Qt::SHIFT | Qt::Key_5);
-    registerTeachingShortcut(QStringLiteral("variable-inspector"), Qt::CTRL | Qt::SHIFT | Qt::Key_6);
-    registerTeachingShortcut(QStringLiteral("bytecode-trace"), Qt::CTRL | Qt::SHIFT | Qt::Key_4);
-    registerTeachingShortcut(QStringLiteral("breakpoint-condition"), Qt::ALT | Qt::Key_1);
-    registerTeachingShortcut(QStringLiteral("exception-flow"), Qt::ALT | Qt::Key_2);
-    registerTeachingShortcut(QStringLiteral("closure-inspector"), Qt::ALT | Qt::Key_3);
-    registerTeachingShortcut(QStringLiteral("token-puzzle"), Qt::CTRL | Qt::SHIFT | Qt::Key_2);
-    registerTeachingShortcut(QStringLiteral("ast-toy"), Qt::CTRL | Qt::SHIFT | Qt::Key_3);
-    registerTeachingShortcut(QStringLiteral("vm-sandbox"), Qt::CTRL | Qt::SHIFT | Qt::Key_9);
-    registerTeachingShortcut(QStringLiteral("code-journey"), Qt::CTRL | Qt::SHIFT | Qt::Key_J);
-    registerTeachingShortcut(QStringLiteral("glossary"), Qt::CTRL | Qt::SHIFT | Qt::Key_G);
+    // 教学面板快捷键注册见 registerTeachingPanelShortcuts()。
 
     // ---- 字号调节（代码编辑器，全局应用于所有编辑器标签页） ----
     // 注意：viewMenu 是 QFluentKit RoundMenu（非 QMenu），QAction 的 setShortcut
     // 不会注册为窗口级全局快捷键。改用 QShortcut（与 registerTeachingShortcut 一致）
     // 确保快捷键在任何焦点上下文下生效，QAction 仅作菜单显示项。
-    viewMenu->addSeparator();
     auto* fontIncreaseAction = new QAction(mlTr("放大字号"), this);
     connect(fontIncreaseAction, &QAction::triggered, this, [this]() {
         codeFontSize_ = qBound(8, codeFontSize_ + 1, 32);
@@ -2476,10 +2676,54 @@ void Ide::initTitleBar() {
         applyCodeFontSizeToAllEditors();
     });
 
-    mainMenu->addMenu(viewMenu);
+    return viewMenu;
+}
 
+/// initTitleBar 子模块 5：注册 18 个教学面板的 QShortcut（不在菜单中显示）。
+void Ide::registerTeachingPanelShortcuts() {
+    // 保留教学面板快捷键（不在菜单中显示，通过 QShortcut 注册）
+    auto registerTeachingShortcut = [this](const QString& panelId, const QKeySequence& shortcut) {
+        auto* sc = new QShortcut(shortcut, this);
+        connect(sc, &QShortcut::activated, this, [this, panelId]() {
+            // 切换逻辑：若当前已显示该面板则切回编辑器，否则显示该面板
+            auto it = panelToStackIndex_.constFind(panelId);
+            if (it != panelToStackIndex_.end() && centerStack_ && !centerInEditorMode_ &&
+                centerStack_->currentIndex() == it.value()) {
+                showEditorArea();
+            } else {
+                showTeachingPanel(panelId);
+            }
+        });
+    };
+    registerTeachingShortcut(QStringLiteral("pipeline"), Qt::CTRL | Qt::SHIFT | Qt::Key_P);
+    registerTeachingShortcut(QStringLiteral("backend-compare"), Qt::CTRL | Qt::SHIFT | Qt::Key_B);
+    registerTeachingShortcut(QStringLiteral("bug-hunt"), Qt::CTRL | Qt::SHIFT | Qt::Key_H);
+    registerTeachingShortcut(QStringLiteral("syntax-explorer"), Qt::CTRL | Qt::SHIFT | Qt::Key_1);
+    registerTeachingShortcut(QStringLiteral("lab-manual"), Qt::ALT | Qt::Key_5);
+    registerTeachingShortcut(QStringLiteral("memory-model"), Qt::CTRL | Qt::SHIFT | Qt::Key_7);
+    registerTeachingShortcut(QStringLiteral("ir-transform"), Qt::CTRL | Qt::SHIFT | Qt::Key_8);
+    registerTeachingShortcut(QStringLiteral("profile-dashboard"), Qt::ALT | Qt::Key_4);
+    registerTeachingShortcut(QStringLiteral("call-stack"), Qt::CTRL | Qt::SHIFT | Qt::Key_5);
+    registerTeachingShortcut(QStringLiteral("variable-inspector"), Qt::CTRL | Qt::SHIFT | Qt::Key_6);
+    registerTeachingShortcut(QStringLiteral("bytecode-trace"), Qt::CTRL | Qt::SHIFT | Qt::Key_4);
+    registerTeachingShortcut(QStringLiteral("breakpoint-condition"), Qt::ALT | Qt::Key_1);
+    registerTeachingShortcut(QStringLiteral("exception-flow"), Qt::ALT | Qt::Key_2);
+    registerTeachingShortcut(QStringLiteral("closure-inspector"), Qt::ALT | Qt::Key_3);
+    registerTeachingShortcut(QStringLiteral("token-puzzle"), Qt::CTRL | Qt::SHIFT | Qt::Key_2);
+    registerTeachingShortcut(QStringLiteral("ast-toy"), Qt::CTRL | Qt::SHIFT | Qt::Key_3);
+    registerTeachingShortcut(QStringLiteral("vm-sandbox"), Qt::CTRL | Qt::SHIFT | Qt::Key_9);
+    registerTeachingShortcut(QStringLiteral("code-journey"), Qt::CTRL | Qt::SHIFT | Qt::Key_J);
+    registerTeachingShortcut(QStringLiteral("glossary"), Qt::CTRL | Qt::SHIFT | Qt::Key_G);
+
+    // R165 体验优化：Alt+P 快速跳转面板（命令面板，复用 PanelCatalog 搜索）
+    auto* quickJumpSc = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_P), this);
+    connect(quickJumpSc, &QShortcut::activated, this, [this]() { showQuickPanelJumpDialog(); });
+}
+
+/// initTitleBar 子模块 6：构建「运行」子菜单（运行/调试/单步进入/单步跳过/单步跳出/继续/停止）。
+RoundMenu* Ide::buildRunMenu(QWidget* parent) {
     // -- Run --
-    auto* runMenu = new RoundMenu(mlTr("运行"), titleBar_);
+    auto* runMenu = new RoundMenu(mlTr("运行"), parent);
     auto* runMenuAct = new QAction(mlTr("运行"), this);
     runMenuAct->setShortcut(Qt::Key_F5);
     connect(runMenuAct, &QAction::triggered, this, [this]() {
@@ -2515,10 +2759,13 @@ void Ide::initTitleBar() {
     stopMenuAct->setShortcut(Qt::SHIFT | Qt::Key_F5);
     connect(stopMenuAct, &QAction::triggered, this, &Ide::onStop);
     runMenu->addAction(stopMenuAct);
-    mainMenu->addMenu(runMenu);
+    return runMenu;
+}
 
+/// initTitleBar 子模块 7：构建「帮助」子菜单（语法示例/再次显示欢迎向导/帮助）。
+RoundMenu* Ide::buildHelpMenu(QWidget* parent) {
     // -- Help --
-    auto* helpMenu = new RoundMenu(mlTr("帮助"), titleBar_);
+    auto* helpMenu = new RoundMenu(mlTr("帮助"), parent);
     auto* samplesAct = new QAction(mlTr("语法示例"), this);
     connect(samplesAct, &QAction::triggered, this, [this]() {
         QString sampleDir = QApplication::applicationDirPath() + "/../../samples/mini";
@@ -2546,11 +2793,72 @@ void Ide::initTitleBar() {
     auto* helpAct = new QAction(mlTr("帮助"), this);
     connect(helpAct, &QAction::triggered, this, &Ide::showHelpDialog);
     helpMenu->addAction(helpAct);
-    mainMenu->addMenu(helpMenu);
+    // R117: 语言切换子菜单（运行时切换 UI 语言，复用 I18n.h switchMiniLangLanguage）
+    helpMenu->addMenu(buildLanguageMenu(parent));
+    return helpMenu;
+}
 
-    menuBtn->setMenu(mainMenu);
-    layout->addWidget(menuBtn);
+/// R117: 构建语言切换子菜单。
+/// 扫描 translations/ 目录中的 .qm 文件 + 始终包含 "跟随系统" 选项。
+/// 当前 locale 用 QActionGroup 互斥勾选标记。
+RoundMenu* Ide::buildLanguageMenu(QWidget* parent) {
+    auto* langMenu = new RoundMenu(mlTr("语言"), parent);
+    auto* group = new QActionGroup(langMenu);
+    group->setExclusive(true);
 
+    // "跟随系统" 选项（清空 QSettings 中的 ui/locale 键）
+    auto* sysAct = new QAction(mlTr("跟随系统"), langMenu);
+    sysAct->setCheckable(true);
+    QString cur = currentMiniLangLocale();
+    // 若 QSettings 无持久化偏好，则视为"跟随系统"
+    QSettings s;
+    bool hasPref = s.contains(kLocaleSettingsKey);
+    sysAct->setChecked(!hasPref);
+    connect(sysAct, &QAction::triggered, this, [this]() { switchLanguageWithPrompt(QString()); });
+    langMenu->addAction(sysAct);
+    group->addAction(sysAct);
+
+    // 扫描可用 locale
+    QStringList locales = availableMiniLangLocales();
+    // locale → 显示名称映射（已知 locale 用本地化名称，未知回退到 locale 代码）
+    static const QHash<QString, QString> kDisplayNames = {
+        {"zh_CN", QStringLiteral("简体中文")},
+        {"en_US", QStringLiteral("English (US)")},
+        {"ja_JP", QStringLiteral("日本語")},
+        {"zh_TW", QStringLiteral("繁體中文")},
+    };
+    for (const QString& loc : locales) {
+        QString disp = kDisplayNames.value(loc, loc);
+        auto* act = new QAction(disp, langMenu);
+        act->setCheckable(true);
+        act->setChecked(hasPref && cur == loc);
+        act->setData(loc);
+        connect(act, &QAction::triggered, this, [this, loc]() { switchLanguageWithPrompt(loc); });
+        langMenu->addAction(act);
+        group->addAction(act);
+    }
+    return langMenu;
+}
+
+/// R117: 切换 UI 语言并提示用户重启以完整生效。
+/// 切换后 translator 已重新加载，但已实例化的 widget 文本不会自动刷新
+/// （Qt 翻译机制仅在 tr() 调用时查表），需重启 IDE 让所有 widget 重新构造。
+void Ide::switchLanguageWithPrompt(const QString& locale) {
+    bool ok = switchMiniLangLanguage(locale);
+    if (ok) {
+        QMessageBox::information(this, mlTr("语言切换"),
+                                 mlTr("语言已切换，重启 IDE 后完整生效。\n"
+                                      "（部分 UI 元素需重新构造才能加载新翻译）"));
+    } else if (locale.isEmpty()) {
+        // "跟随系统" 且无可用 .qm 时也算成功（回退到源字符串）
+        QMessageBox::information(this, mlTr("语言切换"), mlTr("已恢复为跟随系统语言，重启 IDE 后生效。"));
+    } else {
+        QMessageBox::warning(this, mlTr("语言切换"), mlTr("找不到对应语言的翻译文件（minilang_%1.qm）。").arg(locale));
+    }
+}
+
+/// initTitleBar 子模块 8：中间工具栏（分隔线 + Run/Debug split + 格式化 + AST 按钮）。
+void Ide::setupTitleBarMiddleToolbar(QHBoxLayout* layout) {
     // 分隔线：菜单 ↔ 工具栏
     auto addSeparator = [&layout, this]() {
         auto* sep = new QFrame(titleBar_);
@@ -2607,7 +2915,10 @@ void Ide::initTitleBar() {
     astBtn->setToolTip(mlTr("查看 AST 树形图 (Ctrl+Shift+A)"));
     astBtn->setDefaultAction(astAction_);
     layout->addWidget(astBtn);
+}
 
+/// initTitleBar 子模块 9：调试按钮组 + VM 按钮组（动态显隐）。
+void Ide::setupTitleBarDebugAndVmButtons(QHBoxLayout* layout) {
     // ---- 调试按钮组（动态显隐）----
     debugSepAction_ = nullptr; // 无独立分隔线，用布局间距控制
     debugButtonContainer_ = new QWidget(titleBar_);
@@ -2678,7 +2989,10 @@ void Ide::initTitleBar() {
 
     clearAction_ = new QAction(mlTr("清空"), this);
     clearAction_->setToolTip(mlTr("清空输出面板"));
+}
 
+/// initTitleBar 子模块 10：右侧区域（弹性 + engineCombo_ + 分隔线 + min/max/close + eventFilter）。
+void Ide::setupTitleBarRightSide(QHBoxLayout* layout) {
     // 弹性空间
     layout->addStretch(1);
 
@@ -2696,6 +3010,14 @@ void Ide::initTitleBar() {
     // 用户如需自定义主题色，仍可在 QFluentKit 设置中切换 ThemeColor
 
     // 分隔线：工具栏 ↔ 窗口按钮
+    auto addSeparator = [&layout, this]() {
+        auto* sep = new QFrame(titleBar_);
+        sep->setFrameShape(QFrame::VLine);
+        sep->setFixedWidth(1);
+        sep->setStyleSheet("background: transparent;");
+        sep->setObjectName("titleBarSep");
+        layout->addWidget(sep);
+    };
     addSeparator();
 
     // ---- 右侧：窗口控制按钮 ----
@@ -2730,9 +3052,6 @@ void Ide::initTitleBar() {
     layout->addWidget(titleMinBtn_);
     layout->addWidget(titleMaxBtn_);
     layout->addWidget(titleCloseBtn_);
-
-    // 拖拽移动窗口 + 双击最大化/还原
-    titleBar_->installEventFilter(this);
 }
 
 // ============================================================
@@ -2745,7 +3064,37 @@ void Ide::initUI() {
     resize(1280, 800);
 
     // ---- Create content widgets before ADS docks ----
+    createContentWidgets();
 
+    // ---- 三栏布局：[centerStack_ (教学/欢迎) | editorSplitter_ (编辑器+底部面板)] ----
+    setupCentralSplitter();
+
+    // ---- Activity bar (left-most 48px) ----
+    setupActivityBar();
+
+    // ---- Right panel container: Pivot + close button + QStackedWidget ----
+    QWidget* rightContainer = setupRightPanel();
+
+    // ---- AST independent window ----
+    setupAstWindow();
+
+    // ---- Main container: TitleBar + (ActivityBar | DockManager) ----
+    setupMainContainerAndDockManager();
+
+    // ---- 创建 4 个 ADS dock（central/fileTree/debug/right）----
+    setupDockWidgets(rightContainer);
+
+    // ---- 教学面板懒加载工厂注册 ----
+    registerLazyTeachingPanels();
+
+    // ---- 教学树 dock + 面板尺寸约束 + 启动隐藏 + 信号连接 ----
+    setupTeachingTreeAndFinalize();
+}
+
+// ============================================================
+// createContentWidgets — initUI 子模块 1：创建内容控件
+// ============================================================
+void Ide::createContentWidgets() {
     // File tree
     fileTree_ = new QTreeWidget;
     fileTree_->setObjectName("fileTree");
@@ -2855,7 +3204,12 @@ void Ide::initUI() {
 
     // Welcome page
     initWelcomePage();
+}
 
+// ============================================================
+// setupCentralSplitter — initUI 子模块 2：三栏布局
+// ============================================================
+void Ide::setupCentralSplitter() {
     // Editor tab widget
     editorTabWidget_ = new QTabWidget;
     editorTabWidget_->setObjectName("editorTabWidget");
@@ -2965,7 +3319,12 @@ void Ide::initUI() {
     centerSplitter_->setSizes({420, 780});
     // 启动时无编辑器标签，隐藏编辑器栏（仅显示欢迎页）
     editorTabWidget_->hide();
+}
 
+// ============================================================
+// setupActivityBar — initUI 子模块 3：活动栏
+// ============================================================
+void Ide::setupActivityBar() {
     // ---- Activity bar (left-most 48px) ----
     // P0.5 注册制重构：每个活动项有唯一字符串 ID，新增面板只需追加一行
     activityBar_ = new ActivityBar;
@@ -2975,7 +3334,12 @@ void Ide::initUI() {
     activityBar_->addItem("learn", mlTr("学习"), Fluent::IconType::EDUCATION);
     // 仅连接 id-based 信号，避免 index+id 双重分发
     connect(activityBar_, &ActivityBar::currentChangedById, this, &Ide::onActivityChangedById);
+}
 
+// ============================================================
+// setupRightPanel — initUI 子模块 4：右侧面板容器
+// ============================================================
+QWidget* Ide::setupRightPanel() {
     // ---- Right panel container: Pivot + close button + QStackedWidget ----
     // 第十一轮：默认宽度 800px，最小 500px；标签栏 28px 紧凑
     auto* rightContainer = new QWidget;
@@ -3049,6 +3413,13 @@ void Ide::initUI() {
     rightLayout->addWidget(rightStack_, 1);
     connect(rightPivot_, &Pivot::currentItemChanged, this, &Ide::onRightPivotChanged);
 
+    return rightContainer;
+}
+
+// ============================================================
+// setupAstWindow — initUI 子模块 5：AST 独立顶层窗口
+// ============================================================
+void Ide::setupAstWindow() {
     // ---- AST independent window ----
     // BUG-LEAK-01 fix: 原 new QWidget(nullptr) 无 Qt parent 所有权，析构时泄漏。
     // 传入 this 作为 parent，Qt 会在 Ide 析构时自动 delete astWindow_。
@@ -3063,7 +3434,12 @@ void Ide::initUI() {
     astLayout->addWidget(astViewer_);
     // Re-parent the astViewer now that it's in the window
     astViewer_->setParent(astWindow_);
+}
 
+// ============================================================
+// setupMainContainerAndDockManager — initUI 子模块 6：主容器 + ADS Dock Manager
+// ============================================================
+void Ide::setupMainContainerAndDockManager() {
     // ---- Main container: TitleBar + MenuBar + Toolbar + (ActivityBar | DockManager) ----
     // 第九轮：自定义顶部三层整合（标题栏 + 菜单栏 + 工具栏），扁平白色风格
     auto* mainContainer = new QWidget;
@@ -3124,7 +3500,12 @@ void Ide::initUI() {
     // 底部面板已移至 editorSplitter_ 内部（仅覆盖代码编辑区，类似 VS Code 集成终端）
     // 不再放在 mainLayout 中，避免横跨全宽覆盖教学面板
     setCentralWidget(mainContainer);
+}
 
+// ============================================================
+// setupDockWidgets — initUI 子模块 7：创建 4 个 ADS dock
+// ============================================================
+void Ide::setupDockWidgets(QWidget* rightContainer) {
     // Central dock widget (editor area) — must be set FIRST
     auto* centralDock = dockManager_->createDockWidget("Editor");
     centralDock->setWidget(centerSplitter_, ads::CDockWidget::ForceNoScrollArea);
@@ -3165,7 +3546,12 @@ void Ide::initUI() {
     rightDock_->setWidget(rightContainer, ads::CDockWidget::ForceNoScrollArea);
     dockManager_->addDockWidget(ads::RightDockWidgetArea, rightDock_);
     // 第十二轮：所有面板支持完整拖拽重组、浮动、标签分组（移除旧的浮动/移动锁定）
+}
 
+// ============================================================
+// registerLazyTeachingPanels — initUI 子模块 8：19 个教学面板懒加载工厂
+// ============================================================
+void Ide::registerLazyTeachingPanels() {
     // ---- 教学增强面板（迁移至 centerStack_，由左侧 TeachingTreePanel 切换）----
     // 第十四轮重构：原独立 dock 改为 centerStack_ 子页，点击教学树叶子节点切换。
     // 启动性能优化：教学面板采用懒加载——启动时仅注册工厂函数，首次访问时才构造。
@@ -3187,19 +3573,34 @@ void Ide::initUI() {
             codeEditor_->highlightSourceLine(line);
     };
 
+    // R132 fix: 按面板波次分组到 4 个 helper，每个 helper 接受 registerLazyPanel + highlightSourceLine
+    // 函数对象作为参数（避免暴露为成员方法），保持 registerLazyTeachingPanels 为本函数内私有 lambda
+    registerCompilationPipelinePanels(registerLazyPanel, highlightSourceLine);
+    registerMemoryIrProfilePanels(registerLazyPanel, highlightSourceLine);
+    registerDebugInspectorPanels(registerLazyPanel, highlightSourceLine);
+    registerLearningPathPanels(registerLazyPanel);
+}
+
+// ============================================================
+// R132-A fix: registerLazyTeachingPanels 拆分 helper
+// ============================================================
+
+void Ide::registerCompilationPipelinePanels(
+    const std::function<void(const QString&, const QString&, std::function<QWidget*()>)>& registrar,
+    const std::function<void(int)>& sourceLineHighlighter) {
     // 第一波 + 第三波
-    registerLazyPanel(QStringLiteral("pipeline"), mlTr("编译管线可视化"), [this, highlightSourceLine]() {
+    registrar(QStringLiteral("pipeline"), mlTr("编译管线可视化"), [this, sourceLineHighlighter]() {
         pipelineViewer_ = new PipelineViewer(this);
         pipelineViewer_->setController(controller_);
-        connect(pipelineViewer_, &PipelineViewer::sourceLineRequested, this, highlightSourceLine);
+        connect(pipelineViewer_, &PipelineViewer::sourceLineRequested, this, sourceLineHighlighter);
         return pipelineViewer_;
     });
-    registerLazyPanel(QStringLiteral("backend-compare"), mlTr("三后端对比"), [this]() {
+    registrar(QStringLiteral("backend-compare"), mlTr("三后端对比"), [this]() {
         backendComparePanel_ = new BackendComparePanel(this);
         backendComparePanel_->setController(controller_);
         return backendComparePanel_;
     });
-    registerLazyPanel(QStringLiteral("bug-hunt"), mlTr("Bug 狩猎"), [this]() {
+    registrar(QStringLiteral("bug-hunt"), mlTr("Bug 狩猎"), [this]() {
         bugHuntPanel_ = new BugHuntPanel(this);
         bugHuntPanel_->setController(controller_);
         connect(bugHuntPanel_, &BugHuntPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
@@ -3222,13 +3623,19 @@ void Ide::initUI() {
         });
         return bugHuntPanel_;
     });
-    registerLazyPanel(QStringLiteral("syntax-explorer"), mlTr("语法探索器"), [this]() {
+    registrar(QStringLiteral("syntax-explorer"), mlTr("语法探索器"), [this]() {
         syntaxExplorerPanel_ = new SyntaxExplorerPanel(this);
         syntaxExplorerPanel_->setController(controller_);
         connect(syntaxExplorerPanel_, &SyntaxExplorerPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
         return syntaxExplorerPanel_;
     });
-    registerLazyPanel(QStringLiteral("lab-manual"), mlTr("实验手册"), [this]() {
+    registrar(QStringLiteral("ast-editor"), mlTr("AST 可视化编辑器"), [this]() {
+        astVisualizerPanel_ = new AstVisualizerPanel(this);
+        astVisualizerPanel_->setController(controller_);
+        connect(astVisualizerPanel_, &AstVisualizerPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return astVisualizerPanel_;
+    });
+    registrar(QStringLiteral("lab-manual"), mlTr("实验手册"), [this]() {
         labManualPanel_ = new LabManualPanel(this);
         labManualPanel_->setController(controller_);
         connect(labManualPanel_, &LabManualPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
@@ -3244,72 +3651,220 @@ void Ide::initUI() {
         });
         return labManualPanel_;
     });
+}
 
+void Ide::registerMemoryIrProfilePanels(
+    const std::function<void(const QString&, const QString&, std::function<QWidget*()>)>& registrar,
+    const std::function<void(int)>& sourceLineHighlighter) {
     // 第二波
-    registerLazyPanel(QStringLiteral("memory-model"), mlTr("内存模型"), [this]() {
+    registrar(QStringLiteral("memory-model"), mlTr("内存模型"), [this]() {
         memoryModelPanel_ = new MemoryModelPanel(this);
         memoryModelPanel_->setController(controller_);
         return memoryModelPanel_;
     });
-    registerLazyPanel(QStringLiteral("ir-transform"), mlTr("IR 变换"), [this, highlightSourceLine]() {
+    registrar(QStringLiteral("ir-transform"), mlTr("IR 变换"), [this, sourceLineHighlighter]() {
         irTransformPanel_ = new IRTransformPanel(this);
         irTransformPanel_->setController(controller_);
-        connect(irTransformPanel_, &IRTransformPanel::sourceLineRequested, this, highlightSourceLine);
+        connect(irTransformPanel_, &IRTransformPanel::sourceLineRequested, this, sourceLineHighlighter);
         return irTransformPanel_;
     });
-    registerLazyPanel(QStringLiteral("profile-dashboard"), mlTr("性能剖析"), [this]() {
+    registrar(QStringLiteral("jit-visualizer"), mlTr("JIT 编译可视化"), [this]() {
+        jitVisualizerPanel_ = new JitVisualizerPanel(this);
+        jitVisualizerPanel_->setController(controller_);
+        connect(jitVisualizerPanel_, &JitVisualizerPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return jitVisualizerPanel_;
+    });
+    registrar(QStringLiteral("step-explainer"), mlTr("执行步骤讲解"), [this]() {
+        stepExplainerPanel_ = new StepExplainerPanel(this);
+        stepExplainerPanel_->setController(controller_);
+        connect(stepExplainerPanel_, &StepExplainerPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return stepExplainerPanel_;
+    });
+    registrar(QStringLiteral("backend-parallel"), mlTr("三后端并行可视化"), [this]() {
+        backendParallelPanel_ = new BackendParallelPanel(this);
+        backendParallelPanel_->setController(controller_);
+        connect(backendParallelPanel_, &BackendParallelPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return backendParallelPanel_;
+    });
+    registrar(QStringLiteral("inline-cache"), mlTr("内联缓存可视化"), [this]() {
+        inlineCachePanel_ = new InlineCachePanel(this);
+        inlineCachePanel_->setController(controller_);
+        connect(inlineCachePanel_, &InlineCachePanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return inlineCachePanel_;
+    });
+    registrar(QStringLiteral("loop-unrolling"), mlTr("循环展开可视化"), [this]() {
+        loopUnrollingPanel_ = new LoopUnrollingPanel(this);
+        loopUnrollingPanel_->setController(controller_);
+        connect(loopUnrollingPanel_, &LoopUnrollingPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return loopUnrollingPanel_;
+    });
+    registrar(QStringLiteral("escape-analysis"), mlTr("逃逸分析可视化"), [this]() {
+        escapeAnalysisPanel_ = new EscapeAnalysisPanel(this);
+        escapeAnalysisPanel_->setController(controller_);
+        connect(escapeAnalysisPanel_, &EscapeAnalysisPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return escapeAnalysisPanel_;
+    });
+    registrar(QStringLiteral("register-allocator"), mlTr("寄存器分配可视化"), [this]() {
+        registerAllocatorPanel_ = new RegisterAllocatorPanel(this);
+        registerAllocatorPanel_->setController(controller_);
+        connect(registerAllocatorPanel_, &RegisterAllocatorPanel::loadSampleRequested, this,
+                &Ide::loadCodeIntoMainEditor);
+        return registerAllocatorPanel_;
+    });
+    registrar(QStringLiteral("performance-race"), mlTr("三后端性能竞赛"), [this]() {
+        performanceRacePanel_ = new PerformanceRacePanel(this);
+        performanceRacePanel_->setController(controller_);
+        connect(performanceRacePanel_, &PerformanceRacePanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return performanceRacePanel_;
+    });
+    registrar(QStringLiteral("memory-layout"), mlTr("内存布局可视化"), [this]() {
+        memoryLayoutPanel_ = new MemoryLayoutPanel(this);
+        memoryLayoutPanel_->setController(controller_);
+        connect(memoryLayoutPanel_, &MemoryLayoutPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return memoryLayoutPanel_;
+    });
+    registrar(QStringLiteral("course-system"), mlTr("教学课程系统"), [this]() {
+        courseSystemPanel_ = new CourseSystemPanel(this);
+        courseSystemPanel_->setController(controller_);
+        connect(courseSystemPanel_, &CourseSystemPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return courseSystemPanel_;
+    });
+    registrar(QStringLiteral("exercise-grader"), mlTr("交互式练习评分"), [this]() {
+        exerciseGraderPanel_ = new ExerciseGraderPanel(this);
+        exerciseGraderPanel_->setController(controller_);
+        connect(exerciseGraderPanel_, &ExerciseGraderPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return exerciseGraderPanel_;
+    });
+    // 教学面板拓展（第七波）：协程/GC/Lint/Fuzz 四面板
+    registrar(QStringLiteral("coroutine-visualizer"), mlTr("协程/生成器可视化"), [this]() {
+        coroutineVisualizerPanel_ = new CoroutineVisualizerPanel(this);
+        coroutineVisualizerPanel_->setController(controller_);
+        connect(coroutineVisualizerPanel_, &CoroutineVisualizerPanel::loadSampleRequested, this,
+                &Ide::loadCodeIntoMainEditor);
+        return coroutineVisualizerPanel_;
+    });
+    registrar(QStringLiteral("gc-visualizer"), mlTr("GC 垃圾回收可视化"), [this]() {
+        gcVisualizerPanel_ = new GcVisualizerPanel(this);
+        gcVisualizerPanel_->setController(controller_);
+        connect(gcVisualizerPanel_, &GcVisualizerPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return gcVisualizerPanel_;
+    });
+    registrar(QStringLiteral("lint-explorer"), mlTr("静态分析探索器"), [this]() {
+        lintExplorerPanel_ = new LintExplorerPanel(this);
+        lintExplorerPanel_->setController(controller_);
+        connect(lintExplorerPanel_, &LintExplorerPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return lintExplorerPanel_;
+    });
+    registrar(QStringLiteral("fuzz-playground"), mlTr("模糊测试游乐场"), [this]() {
+        fuzzPlaygroundPanel_ = new FuzzPlaygroundPanel(this);
+        fuzzPlaygroundPanel_->setController(controller_);
+        connect(fuzzPlaygroundPanel_, &FuzzPlaygroundPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return fuzzPlaygroundPanel_;
+    });
+    registrar(QStringLiteral("module-system"), mlTr("模块系统可视化"), [this]() {
+        moduleSystemVisualizerPanel_ = new ModuleSystemVisualizerPanel(this);
+        moduleSystemVisualizerPanel_->setController(controller_);
+        connect(moduleSystemVisualizerPanel_, &ModuleSystemVisualizerPanel::loadSampleRequested, this,
+                &Ide::loadCodeIntoMainEditor);
+        return moduleSystemVisualizerPanel_;
+    });
+    registrar(QStringLiteral("profile-dashboard"), mlTr("性能剖析"), [this]() {
         profileDashboardPanel_ = new ProfileDashboardPanel(this);
         profileDashboardPanel_->setController(controller_);
         return profileDashboardPanel_;
     });
+}
 
+void Ide::registerDebugInspectorPanels(
+    const std::function<void(const QString&, const QString&, std::function<QWidget*()>)>& registrar,
+    const std::function<void(int)>& sourceLineHighlighter) {
     // 第三波
-    registerLazyPanel(QStringLiteral("call-stack"), mlTr("调用栈"), [this]() {
+    registrar(QStringLiteral("call-stack"), mlTr("调用栈"), [this]() {
         callStackPanel_ = new CallStackPanel(this);
         callStackPanel_->setController(controller_);
         connect(callStackPanel_, &CallStackPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
         return callStackPanel_;
     });
-    registerLazyPanel(QStringLiteral("variable-inspector"), mlTr("变量检查器"), [this]() {
+    registrar(QStringLiteral("variable-inspector"), mlTr("变量检查器"), [this]() {
         variableInspectorPanel_ = new VariableInspectorPanel(this);
         variableInspectorPanel_->setController(controller_);
         connect(variableInspectorPanel_, &VariableInspectorPanel::loadSampleRequested, this,
                 &Ide::loadCodeIntoMainEditor);
         return variableInspectorPanel_;
     });
-    registerLazyPanel(QStringLiteral("bytecode-trace"), mlTr("字节码轨迹"), [this, highlightSourceLine]() {
+    registrar(QStringLiteral("bytecode-trace"), mlTr("字节码轨迹"), [this, sourceLineHighlighter]() {
         bytecodeTracePanel_ = new BytecodeTracePanel(this);
         bytecodeTracePanel_->setController(controller_);
         connect(bytecodeTracePanel_, &BytecodeTracePanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
-        connect(bytecodeTracePanel_, &BytecodeTracePanel::sourceLineRequested, this, highlightSourceLine);
+        connect(bytecodeTracePanel_, &BytecodeTracePanel::sourceLineRequested, this, sourceLineHighlighter);
         return bytecodeTracePanel_;
     });
-    registerLazyPanel(QStringLiteral("breakpoint-condition"), mlTr("条件断点"), [this]() {
+    registrar(QStringLiteral("breakpoint-condition"), mlTr("条件断点"), [this]() {
         breakpointConditionPanel_ = new BreakpointConditionPanel(this);
         breakpointConditionPanel_->setController(controller_);
         connect(breakpointConditionPanel_, &BreakpointConditionPanel::loadSampleRequested, this,
                 &Ide::loadCodeIntoMainEditor);
         return breakpointConditionPanel_;
     });
-    registerLazyPanel(QStringLiteral("exception-flow"), mlTr("异常流"), [this]() {
+    // R117: 观察表达式面板（任意表达式求值 + 持久化 + vmStateChanged 自动刷新）
+    registrar(QStringLiteral("watch-expressions"), mlTr("观察表达式"), [this]() {
+        watchPanel_ = new WatchPanel(this);
+        watchPanel_->setController(controller_);
+        connect(watchPanel_, &WatchPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return watchPanel_;
+    });
+    // R161: 数据断点面板（Watchpoint，监视变量/字段被修改时暂停）
+    registrar(QStringLiteral("watchpoint"), mlTr("数据断点"), [this]() {
+        watchpointPanel_ = new WatchpointPanel(this);
+        watchpointPanel_->setController(controller_);
+        connect(watchpointPanel_, &WatchpointPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
+        return watchpointPanel_;
+    });
+    // R114: 可回放执行时间轴（三后端统一执行轨迹录制 + QSlider 随机访问回放）
+    registrar(QStringLiteral("execution-timeline"), mlTr("可回放执行时间轴"), [this]() {
+        executionTimelinePanel_ = new ExecutionTimelinePanel(this);
+        executionTimelinePanel_->setController(controller_);
+        // 同步当前引擎索引到面板后端类型（0=Interpreter, 1=StackVM, 2=RegisterVM）
+        if (engineCombo_) {
+            int idx = engineCombo_->currentIndex();
+            TraceBackend b = (idx == 0)   ? TraceBackend::Interpreter
+                             : (idx == 2) ? TraceBackend::RegisterVM
+                                          : TraceBackend::StackVM;
+            executionTimelinePanel_->setBackendType(b);
+        }
+        // 录制开关：同时启用 VM 路径与 Interpreter 路径，覆盖三条执行路径
+        connect(executionTimelinePanel_, &ExecutionTimelinePanel::recordingToggled, this,
+                [this](bool enabled, TraceBackend backend) {
+                    if (!controller_)
+                        return;
+                    controller_->setVmRecordingEnabled(enabled, backend);
+                    controller_->setInterpreterRecordingEnabled(enabled);
+                });
+        connect(executionTimelinePanel_, &ExecutionTimelinePanel::returnToEditorRequested, this, &Ide::showEditorArea);
+        return executionTimelinePanel_;
+    });
+    registrar(QStringLiteral("exception-flow"), mlTr("异常流"), [this]() {
         exceptionFlowPanel_ = new ExceptionFlowPanel(this);
         connect(exceptionFlowPanel_, &ExceptionFlowPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
         return exceptionFlowPanel_;
     });
-    registerLazyPanel(QStringLiteral("closure-inspector"), mlTr("闭包检查器"), [this]() {
+    registrar(QStringLiteral("closure-inspector"), mlTr("闭包检查器"), [this]() {
         closureInspectorPanel_ = new ClosureInspectorPanel(this);
         connect(closureInspectorPanel_, &ClosureInspectorPanel::loadSampleRequested, this,
                 &Ide::loadCodeIntoMainEditor);
         return closureInspectorPanel_;
     });
+}
 
+void Ide::registerLearningPathPanels(
+    const std::function<void(const QString&, const QString&, std::function<QWidget*()>)>& registrar) {
     // 第四档（功能 1-6）
-    registerLazyPanel(QStringLiteral("learning-path"), mlTr("学习路径地图"), [this]() {
+    registrar(QStringLiteral("learning-path"), mlTr("学习路径地图"), [this]() {
         learningPathPanel_ = new LearningPathPanel(this);
         connect(learningPathPanel_, &LearningPathPanel::activityRequested, this, &Ide::onActivityRequested);
         return learningPathPanel_;
     });
-    registerLazyPanel(QStringLiteral("token-puzzle"), mlTr("Token 拼图"), [this]() {
+    registrar(QStringLiteral("token-puzzle"), mlTr("Token 拼图"), [this]() {
         tokenPuzzlePanel_ = new TokenPuzzlePanel(this);
         connect(tokenPuzzlePanel_, &TokenPuzzlePanel::activityCompleted, this, [this](const QString& /*levelId*/) {
             if (!learningPathPanel_)
@@ -3321,7 +3876,7 @@ void Ide::initUI() {
         });
         return tokenPuzzlePanel_;
     });
-    registerLazyPanel(QStringLiteral("ast-toy"), mlTr("AST 构建器"), [this]() {
+    registrar(QStringLiteral("ast-toy"), mlTr("AST 构建器"), [this]() {
         astBuilderToyPanel_ = new AstBuilderToyPanel(this);
         connect(astBuilderToyPanel_, &AstBuilderToyPanel::activityCompleted, this, [this](const QString& /*levelId*/) {
             if (!learningPathPanel_)
@@ -3337,7 +3892,7 @@ void Ide::initUI() {
         });
         return astBuilderToyPanel_;
     });
-    registerLazyPanel(QStringLiteral("vm-sandbox"), mlTr("VM 栈沙盒"), [this]() {
+    registrar(QStringLiteral("vm-sandbox"), mlTr("VM 栈沙盒"), [this]() {
         vmStackSandboxPanel_ = new VmStackSandboxPanel(this);
         // 第二十七轮：绑定 IdeController，启用「真实字节码追踪」子页的真实 VM 单步功能
         vmStackSandboxPanel_->setController(controller_);
@@ -3352,7 +3907,7 @@ void Ide::initUI() {
                 });
         return vmStackSandboxPanel_;
     });
-    registerLazyPanel(QStringLiteral("code-journey"), mlTr("代码生命旅程"), [this]() {
+    registrar(QStringLiteral("code-journey"), mlTr("代码生命旅程"), [this]() {
         codeJourneyPanel_ = new CodeJourneyInfoPanel(this);
         // ROUND-60 fix (Issue 1): 移除 jumpToPanelRequested 连接（底部按钮已删除）
         // 点进面板观看即标记 code-journey 活动完成
@@ -3363,7 +3918,7 @@ void Ide::initUI() {
         });
         return codeJourneyPanel_;
     });
-    registerLazyPanel(QStringLiteral("glossary"), mlTr("术语表"), [this]() {
+    registrar(QStringLiteral("glossary"), mlTr("术语表"), [this]() {
         glossaryPanel_ = new GlossaryPanel(this);
         connect(glossaryPanel_, &GlossaryPanel::termActivated, this, [this](const QString& termId) {
             const QString pid = GlossaryPanel::relatedPanelFor(termId);
@@ -3373,7 +3928,12 @@ void Ide::initUI() {
         });
         return glossaryPanel_;
     });
+}
 
+// ============================================================
+// setupTeachingTreeAndFinalize — initUI 子模块 9：教学树 dock + 最终化
+// ============================================================
+void Ide::setupTeachingTreeAndFinalize() {
     // ---- 左侧教学树导航 dock（与文件树/调试面板同区域 tab）----
     teachingTreePanel_ = new TeachingTreePanel(this);
     teachingTreeDock_ = dockManager_->createDockWidget("teachingTreeDock");
@@ -3392,8 +3952,12 @@ void Ide::initUI() {
     fileTree_->setMinimumWidth(240);
     debugPanel_->setMinimumWidth(260);
     bottomContainer_->setMinimumHeight(220);
-    rightContainer->setMinimumWidth(420);
-    rightContainer->setMaximumWidth(1200);
+    // rightContainer 已由 setupRightPanel() 创建并被 rightDock_ 接管（setWidget），
+    // 此处通过 rightDock_->widget() 访问设置尺寸约束（与原代码语义等价）
+    if (rightDock_ && rightDock_->widget()) {
+        rightDock_->widget()->setMinimumWidth(420);
+        rightDock_->widget()->setMaximumWidth(1200);
+    }
 
     // 延迟隐藏单 widget 标题栏（R60-2 fix: 移除无条件 resize，改由 restoreLayout
     // 在无保存状态时才应用默认尺寸，避免覆盖用户上次保存的面板大小）
@@ -3609,6 +4173,45 @@ void Ide::applyFluentStyle() {
         return;
     applyingStyle_ = true;
 
+    registerFluentWidgetsAndScrollBars();
+
+    // ---- Theme-aware color palette ----
+    // 14 色统一走 TeachingTheme::ide*()，亮/暗主题切换时 applyFluentStyle()
+    // 会被重新调用（onThemeModeChanged 信号触发），无需手动刷新各 widget。
+    FluentPalette p;
+    p.dark = Theme::isDark();
+    p.bgMain = TeachingTheme::ideBgMain().name();
+    p.bgPanel = TeachingTheme::ideBgPanel().name();
+    p.bgSidebar = TeachingTheme::ideBgSidebar().name();
+    p.fgPrimary = TeachingTheme::ideFgPrimary().name();
+    p.fgSecondary = TeachingTheme::ideFgSecondary().name();
+    p.borderColor = TeachingTheme::ideBorder().name();
+    p.accentColor = TeachingTheme::ideAccent().name();
+    p.hoverBg = TeachingTheme::ideHoverBg().name();
+    p.selectedBg = TeachingTheme::ideSelectedBg().name();
+    p.statusBg = TeachingTheme::ideStatusBg().name();
+    p.editorBg = TeachingTheme::ideEditorBg().name();
+    p.lineNumBg = TeachingTheme::ideLineNumBg().name();
+    p.lineNumFg = TeachingTheme::ideLineNumFg().name();
+
+    QString adsQss = buildAdsQss(p);
+    applyAdsDockStyle(adsQss);
+    applyTitleBarStyle(p);
+    applyStatusBarStyle(p);
+    QString panelQss = buildPanelContainerQss(p);
+    applyEditorTabStyle(p);
+    applyItemViewStyle(p);
+    applyActivityBarStyle(p);
+    applyGlobalPaletteFallback();
+    applyContainerBackgrounds(p);
+    applyVmStackPanelStyle(p);
+    applyMainQssWithGroupBox(panelQss);
+    syncEditorTheme();
+
+    applyingStyle_ = false;
+}
+
+void Ide::registerFluentWidgetsAndScrollBars() {
     // ---- Register native widgets with QFluentKit style sheet manager ----
     // R66-2 fix: fileTree_/errorListWidget_/bytecodeList_/recentListWidget_/tokenTable_
     // 不再注册到 QFluentKit。原因：QFluentKit 的 list_view.qss/table_view.qss 设置
@@ -3635,25 +4238,9 @@ void Ide::applyFluentStyle() {
         bytecodeList_->setVerticalScrollBar(new ScrollBar(bytecodeList_));
     if (fileTree_ && !isFluentScrollBar(fileTree_->verticalScrollBar()))
         fileTree_->setVerticalScrollBar(new ScrollBar(fileTree_));
+}
 
-    // ---- Theme-aware color palette ----
-    // 14 色统一走 TeachingTheme::ide*()，亮/暗主题切换时 applyFluentStyle()
-    // 会被重新调用（onThemeModeChanged 信号触发），无需手动刷新各 widget。
-    bool dark = Theme::isDark();
-    QString bgMain = TeachingTheme::ideBgMain().name();
-    QString bgPanel = TeachingTheme::ideBgPanel().name();
-    QString bgSidebar = TeachingTheme::ideBgSidebar().name();
-    QString fgPrimary = TeachingTheme::ideFgPrimary().name();
-    QString fgSecondary = TeachingTheme::ideFgSecondary().name();
-    QString borderColor = TeachingTheme::ideBorder().name();
-    QString accentColor = TeachingTheme::ideAccent().name();
-    QString hoverBg = TeachingTheme::ideHoverBg().name();
-    QString selectedBg = TeachingTheme::ideSelectedBg().name();
-    QString statusBg = TeachingTheme::ideStatusBg().name();
-    QString editorBg = TeachingTheme::ideEditorBg().name();
-    QString lineNumBg = TeachingTheme::ideLineNumBg().name();
-    QString lineNumFg = TeachingTheme::ideLineNumFg().name();
-
+QString Ide::buildAdsQss(const FluentPalette& p) {
     // ============================================================
     // ADS (Qt Advanced Docking System) comprehensive QSS override
     // 完全覆盖 ADS 默认样式，对齐中性白主题（R74: 回退 Solarized 米黄）
@@ -3663,8 +4250,7 @@ void Ide::applyFluentStyle() {
     // 同样补充 QToolTip 样式，防止回退到 Windows 11 默认黑色 tooltip。
     // ColorSchemeMode 已在构造后设为 Light，setPalette 不会触发 loadStylesheet 覆盖。
     // ============================================================
-    QString adsQss =
-        QString(R"(
+    return QString(R"(
         /* ---- ADS Tab Bar ---- */
         ads--CDockAreaWidget {
             background: %1;
@@ -3877,9 +4463,11 @@ void Ide::applyFluentStyle() {
             font-size: 12px;
         }
     )")
-            .arg(bgMain, fgPrimary, accentColor, fgPrimary, hoverBg, dark ? "#505050" : "#d0d0d0", /* close btn hover */
-                 borderColor, bgSidebar);
+        .arg(p.bgMain, p.fgPrimary, p.accentColor, p.fgPrimary, p.hoverBg, p.dark ? "#505050" : "#d0d0d0",
+             /* close btn hover */ p.borderColor, p.bgSidebar);
+}
 
+void Ide::applyAdsDockStyle(const QString& adsQss) {
     // ---- Apply ADS QSS ----
     // R68 修复方案：构造时已将 ColorSchemeMode 设为 Light（非 FollowPalette），
     // ADS eventFilter 检测到 ColorSchemeMode!=FollowPalette 时跳过 loadStylesheet，
@@ -3930,7 +4518,9 @@ void Ide::applyFluentStyle() {
             }
         }
     }
+}
 
+void Ide::applyTitleBarStyle(const FluentPalette& p) {
     // ============================================================
     // Title bar styling (统一标题栏)
     // ============================================================
@@ -3980,9 +4570,11 @@ void Ide::applyFluentStyle() {
                 border-radius: 4px;
             }
         )")
-                                     .arg(borderColor, fgPrimary, fgSecondary, hoverBg));
+                                     .arg(p.borderColor, p.fgPrimary, p.fgSecondary, p.hoverBg));
     }
+}
 
+void Ide::applyStatusBarStyle(const FluentPalette& p) {
     // ============================================================
     // Status bar styling
     // ============================================================
@@ -4002,9 +4594,11 @@ void Ide::applyFluentStyle() {
                 background: transparent;
             }
         )")
-                              .arg(statusBg, borderColor, fgSecondary));
+                              .arg(p.statusBg, p.borderColor, p.fgSecondary));
     }
+}
 
+QString Ide::buildPanelContainerQss(const FluentPalette& p) {
     // ============================================================
     // Panel container styling (bottom + right)
     // ============================================================
@@ -4039,18 +4633,20 @@ void Ide::applyFluentStyle() {
             border-radius: 4px;
         }
     )")
-                           .arg(bgPanel, borderColor, fgSecondary, hoverBg, bgMain);
+                           .arg(p.bgPanel, p.borderColor, p.fgSecondary, p.hoverBg, p.bgMain);
 
     // PERF: 不再用 findChildren 全树遍历逐个 setStyleSheet。
     // panelQss 中的 #id 选择器会通过 Qt 样式表继承机制自动应用到匹配 objectName 的子控件。
-    // panelQss 将和 QGroupBox 等样式一起合并设置到主窗口（见函数末尾）。
+    // panelQss 将和 QGroupBox 等样式一起合并设置到主窗口（见 applyMainQssWithGroupBox）。
+    return panelQss;
+}
 
+void Ide::applyEditorTabStyle(const FluentPalette& p) {
     // ============================================================
     // Editor tab widget styling
     // ============================================================
     if (editorTabWidget_) {
-        editorTabWidget_->setStyleSheet(
-            QString(R"(
+        editorTabWidget_->setStyleSheet(QString(R"(
             QTabWidget::pane {
                 background: %1;
                 border: none;
@@ -4082,9 +4678,12 @@ void Ide::applyFluentStyle() {
                 border-radius: 3px;
             }
         )")
-                .arg(bgMain, bgPanel, fgSecondary, accentColor, fgPrimary, hoverBg, dark ? "#505050" : "#d0d0d0"));
+                                            .arg(p.bgMain, p.bgPanel, p.fgSecondary, p.accentColor, p.fgPrimary,
+                                                 p.hoverBg, p.dark ? "#505050" : "#d0d0d0"));
     }
+}
 
+void Ide::applyItemViewStyle(const FluentPalette& p) {
     // ============================================================
     // Tree/Table/List view common styling
     // ============================================================
@@ -4120,7 +4719,7 @@ void Ide::applyFluentStyle() {
             gridline-color: %6;
         }
     )")
-                              .arg(bgMain, fgPrimary, selectedBg, hoverBg, bgPanel, borderColor);
+                              .arg(p.bgMain, p.fgPrimary, p.selectedBg, p.hoverBg, p.bgPanel, p.borderColor);
 
     // Apply to all tree/table/list views
     if (fileTree_)
@@ -4133,7 +4732,9 @@ void Ide::applyFluentStyle() {
         tokenTable_->setStyleSheet(itemViewQss);
     if (recentListWidget_)
         recentListWidget_->setStyleSheet(itemViewQss);
+}
 
+void Ide::applyActivityBarStyle(const FluentPalette& p) {
     // ============================================================
     // Activity bar styling
     // ============================================================
@@ -4144,9 +4745,11 @@ void Ide::applyFluentStyle() {
                 border-right: 1px solid %2;
             }
         )")
-                                        .arg(bgSidebar, borderColor));
+                                        .arg(p.bgSidebar, p.borderColor));
     }
+}
 
+void Ide::applyGlobalPaletteFallback() {
     // ============================================================
     // 全局兜底背景（R60-1 fix）
     // 历史问题：白名单枚举式 setStyleSheet 遗漏新容器即出现色块割裂。
@@ -4154,45 +4757,44 @@ void Ide::applyFluentStyle() {
     // 所有未显式设置背景的子 widget 自动继承此背景色，无需逐一枚举。
     // 下方白名单仅用于需要 border:none 等额外样式的容器。
     // ============================================================
-    {
-        QColor bg = TeachingTheme::ideBgMain();
-        QColor bgPanel = TeachingTheme::ideBgPanel();
-        QColor fg = TeachingTheme::ideFgPrimary();
-        QPalette pal = palette();
-        pal.setColor(QPalette::Window, bg);
-        pal.setColor(QPalette::Base, bg);
-        // R65-2 fix: 设置 AlternateBase 为面板色（比主背景稍深），
-        // 使 alternatingRowColors 的列表（如字节码列表）交替行也保持浅灰色调。
-        pal.setColor(QPalette::AlternateBase, bgPanel);
-        // R68 fix: 设置 ToolTip 颜色，防止 QToolTip 回退到 Windows 11 默认黑色样式
-        pal.setColor(QPalette::ToolTipBase, bg);
-        pal.setColor(QPalette::ToolTipText, fg);
-        // R71/R74 fix: 设置 QPalette::Highlight 为面板色 (#F5F5F5)，HighlightedText 为深色字。
-        // 根因：ads--CDockWidgetTab 等 QSS 选择器不匹配 ads::CDockWidgetTab 类
-        // (QSS 类型选择器基于 metaObject()->className()，命名空间中的类返回
-        // "ads::CDockWidgetTab"，与 "ads--CDockWidgetTab" 不等)，QSS 规则不生效，
-        // ADS tab 背景由 palette(Highlight) 控制。R65-1 移除 Highlight 设置后，
-        // tab 使用系统默认 Highlight 色 (#258292 蓝绿色)，显示"蓝底"。
-        // 设置 Highlight=#F5F5F5 (面板色) 后，tab 背景为浅灰色，与主背景 #FFFFFF
-        // 有微妙区别，视觉上区分 active/inactive tab。列表选中项也使用此色，
-        // 浅灰底+深色字，中性主题跨机器渲染一致。
-        pal.setColor(QPalette::Highlight, bgPanel);
-        pal.setColor(QPalette::HighlightedText, fg);
-        // R76 fix: 补全文本角色，防止系统深色模式下 Text/WindowText 回退为浅色
-        // 导致文字与白色背景不可见。
-        pal.setColor(QPalette::WindowText, fg);
-        pal.setColor(QPalette::Text, fg);
-        pal.setColor(QPalette::ButtonText, fg);
-        pal.setColor(QPalette::Button, bg);
-        pal.setColor(QPalette::PlaceholderText, TeachingTheme::ideFgSecondary());
-        setPalette(pal);
-        setAutoFillBackground(true);
-        // R68 fix: 全局设置 QToolTip 样式（qApp 级别），确保所有 widget 的 tooltip
-        // 都使用主题色而非 Windows 11 默认黑色。用静态变量确保只设置一次（避免
-        // applyFluentStyle 多次调用导致 QSS 重复累积）。
-        static bool s_toolTipStyled = false;
-        if (!s_toolTipStyled) {
-            qApp->setStyleSheet(qApp->styleSheet() + QString(R"(
+    QColor bg = TeachingTheme::ideBgMain();
+    QColor bgPanel = TeachingTheme::ideBgPanel();
+    QColor fg = TeachingTheme::ideFgPrimary();
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, bg);
+    pal.setColor(QPalette::Base, bg);
+    // R65-2 fix: 设置 AlternateBase 为面板色（比主背景稍深），
+    // 使 alternatingRowColors 的列表（如字节码列表）交替行也保持浅灰色调。
+    pal.setColor(QPalette::AlternateBase, bgPanel);
+    // R68 fix: 设置 ToolTip 颜色，防止 QToolTip 回退到 Windows 11 默认黑色样式
+    pal.setColor(QPalette::ToolTipBase, bg);
+    pal.setColor(QPalette::ToolTipText, fg);
+    // R71/R74 fix: 设置 QPalette::Highlight 为面板色 (#F5F5F5)，HighlightedText 为深色字。
+    // 根因：ads--CDockWidgetTab 等 QSS 选择器不匹配 ads::CDockWidgetTab 类
+    // (QSS 类型选择器基于 metaObject()->className()，命名空间中的类返回
+    // "ads::CDockWidgetTab"，与 "ads--CDockWidgetTab" 不等)，QSS 规则不生效，
+    // ADS tab 背景由 palette(Highlight) 控制。R65-1 移除 Highlight 设置后，
+    // tab 使用系统默认 Highlight 色 (#258292 蓝绿色)，显示"蓝底"。
+    // 设置 Highlight=#F5F5F5 (面板色) 后，tab 背景为浅灰色，与主背景 #FFFFFF
+    // 有微妙区别，视觉上区分 active/inactive tab。列表选中项也使用此色，
+    // 浅灰底+深色字，中性主题跨机器渲染一致。
+    pal.setColor(QPalette::Highlight, bgPanel);
+    pal.setColor(QPalette::HighlightedText, fg);
+    // R76 fix: 补全文本角色，防止系统深色模式下 Text/WindowText 回退为浅色
+    // 导致文字与白色背景不可见。
+    pal.setColor(QPalette::WindowText, fg);
+    pal.setColor(QPalette::Text, fg);
+    pal.setColor(QPalette::ButtonText, fg);
+    pal.setColor(QPalette::Button, bg);
+    pal.setColor(QPalette::PlaceholderText, TeachingTheme::ideFgSecondary());
+    setPalette(pal);
+    setAutoFillBackground(true);
+    // R68 fix: 全局设置 QToolTip 样式（qApp 级别），确保所有 widget 的 tooltip
+    // 都使用主题色而非 Windows 11 默认黑色。用静态变量确保只设置一次（避免
+    // applyFluentStyle 多次调用导致 QSS 重复累积）。
+    static bool s_toolTipStyled = false;
+    if (!s_toolTipStyled) {
+        qApp->setStyleSheet(qApp->styleSheet() + QString(R"(
                 QToolTip {
                     background: %1;
                     color: %2;
@@ -4202,11 +4804,12 @@ void Ide::applyFluentStyle() {
                     font-size: 12px;
                 }
             )")
-                                                         .arg(bg.name(), fg.name(), TeachingTheme::ideBorder().name()));
-            s_toolTipStyled = true;
-        }
+                                                     .arg(bg.name(), fg.name(), TeachingTheme::ideBorder().name()));
+        s_toolTipStyled = true;
     }
+}
 
+void Ide::applyContainerBackgrounds(const FluentPalette& p) {
     // ============================================================
     // Main container / middle area / central stack / splitter
     // R15-7/R74: 补全覆盖 centerStack_、centerSplitter_、welcomePage_、replPanel_、
@@ -4214,7 +4817,7 @@ void Ide::applyFluentStyle() {
     // 未变白色」的割裂感。统一使用纯白 (#FFFFFF) 作为主背景，跨机器渲染一致。
     // PERF: 合并原来的 3 次 findChildren 全树遍历为 1 次，直接用成员指针处理已知控件
     // ============================================================
-    const QString bgStyle = QString("background: %1; border: none;").arg(bgMain);
+    const QString bgStyle = QString("background: %1; border: none;").arg(p.bgMain);
 
     // 直接通过成员指针设置已知控件（无需遍历）
     auto applyBgStyle = [&bgStyle](QWidget* w) {
@@ -4242,9 +4845,9 @@ void Ide::applyFluentStyle() {
             name == "rightPivotRow" || name == "bytecodePage" || name == "bytecodeSplitter" ||
             name == "debugButtonContainer" || name == "vmButtonContainer") {
             if (name == "mainContainer" || name == "middleArea") {
-                QPalette p = w->palette();
-                p.setColor(QPalette::Window, TeachingTheme::ideBgMain());
-                w->setPalette(p);
+                QPalette p2 = w->palette();
+                p2.setColor(QPalette::Window, TeachingTheme::ideBgMain());
+                w->setPalette(p2);
                 w->setAutoFillBackground(true);
             }
             if (name == "debugButtonContainer" || name == "vmButtonContainer") {
@@ -4255,18 +4858,20 @@ void Ide::applyFluentStyle() {
             w->setAttribute(Qt::WA_StyledBackground, true);
         }
     }
+}
 
+void Ide::applyVmStackPanelStyle(const FluentPalette& p) {
     // ============================================================
     // VM Stack Panel 主题化样式（原由 styles.qss 集中管理，现迁移到 applyFluentStyle）
     // R74: 浅色路径回退为中性白/浅灰（原 Solarized base3/base2）
     // ============================================================
-    QString vmOpBg = dark ? "#1e2a1e" : "#ffffff";
-    QString vmOpFg = dark ? "#b5cea8" : "#859900";
-    QString vmOpBorder = dark ? "#2d3a2d" : "#e0e0e0";
-    QString vmItemBorder = dark ? "#2d2d30" : "#f0f0f0";
-    QString vmSelectedBg = dark ? "#264f78" : "#cce4f7";
-    QString vmSelectedFg = dark ? "#ffffff" : "#268BD2";
-    QString vmHeaderBg = dark ? "#252526" : "#f5f5f5";
+    QString vmOpBg = p.dark ? "#1e2a1e" : "#ffffff";
+    QString vmOpFg = p.dark ? "#b5cea8" : "#859900";
+    QString vmOpBorder = p.dark ? "#2d3a2d" : "#e0e0e0";
+    QString vmItemBorder = p.dark ? "#2d2d30" : "#f0f0f0";
+    QString vmSelectedBg = p.dark ? "#264f78" : "#cce4f7";
+    QString vmSelectedFg = p.dark ? "#ffffff" : "#268BD2";
+    QString vmHeaderBg = p.dark ? "#252526" : "#f5f5f5";
 
     QString vmQss = QString(R"(
         QLabel#vmOpLabel {
@@ -4321,13 +4926,15 @@ void Ide::applyFluentStyle() {
             letter-spacing: 0;
         }
     )")
-                        .arg(vmOpBg, vmOpFg, vmOpBorder, fgSecondary, bgMain, fgPrimary, borderColor, vmItemBorder,
-                             vmSelectedBg, vmSelectedFg, vmHeaderBg);
+                        .arg(vmOpBg, vmOpFg, vmOpBorder, p.fgSecondary, p.bgMain, p.fgPrimary, p.borderColor,
+                             vmItemBorder, vmSelectedBg, vmSelectedFg, vmHeaderBg);
 
     // 应用到 VM 栈面板（若已创建）
     if (vmStackPanel_)
         vmStackPanel_->setStyleSheet(vmQss);
+}
 
+void Ide::applyMainQssWithGroupBox(const QString& panelQss) {
     // ============================================================
     // P2-3/4: QGroupBox 统一 Fluent 外观 + 面板容器样式
     // WelcomeWizard / VmStackSandboxPanel 等面板使用 QGroupBox 作为分组容器，
@@ -4352,7 +4959,9 @@ void Ide::applyFluentStyle() {
                    .arg(TeachingTheme::surface().name())
                    .arg(TeachingTheme::textPrimary().name());
     setStyleSheet(mainQss);
+}
 
+void Ide::syncEditorTheme() {
     // ---- Sync editor theme（深色主题已移除，强制 light 配色）----
     if (codeEditor_)
         codeEditor_->setDarkTheme(false);
@@ -4360,8 +4969,6 @@ void Ide::applyFluentStyle() {
         if (tab.editor && tab.editor != codeEditor_)
             tab.editor->setDarkTheme(false);
     }
-
-    applyingStyle_ = false;
 }
 
 // ============================================================
@@ -4413,6 +5020,15 @@ void Ide::updateStatusBar() {
 
 /// 连接主界面信号槽：菜单/工具栏/编辑器交互路由到对应槽函数。
 void Ide::initConnections() {
+    connectToolbarActions();
+    connectEngineComboAndEditorTabs();
+    connectGlobalShortcuts();
+    connectFileTreeAndErrorFilters();
+    connectControllerSignals();
+}
+
+/// initConnections 子模块 1：连接调试/格式/AST 工具栏动作 + VM 步进/运行/停止动作。
+void Ide::connectToolbarActions() {
     connect(stepInAction_, &QAction::triggered, this, &Ide::onStepIn);
     connect(stepOverAction_, &QAction::triggered, this, &Ide::onStepOver);
     connect(stepOutAction_, &QAction::triggered, this, &Ide::onStepOut);
@@ -4432,7 +5048,10 @@ void Ide::initConnections() {
     connect(vmStepOutAction_, &QAction::triggered, this, &Ide::onVmStepOut);
     connect(vmRunAction_, &QAction::triggered, this, &Ide::onVmRun);
     connect(vmStopAction_, &QAction::triggered, this, &Ide::onVmStop);
+}
 
+/// initConnections 子模块 2：连接 engineCombo_ 执行引擎切换 + editorTabWidget_ 信号。
+void Ide::connectEngineComboAndEditorTabs() {
     // 第十二轮：执行引擎切换（0=树遍历解释器，1=栈式VM，2=寄存器式VM）
     if (engineCombo_) {
         connect(engineCombo_, &ComboBox::currentIndexChanged, this, [this](int index) {
@@ -4445,13 +5064,24 @@ void Ide::initConnections() {
             // 寄存器式 VM 使用 setUseRegisterVM(true)
             // 栈式 VM / 树遍历解释器 使用 setUseRegisterVM(false)
             controller_->setUseRegisterVM(index == 2);
+            // R114: 同步执行时间轴面板的后端类型，使其在录制前已知目标后端
+            // 0=Interpreter, 1=StackVM, 2=RegisterVM
+            if (executionTimelinePanel_) {
+                TraceBackend b = (index == 0)   ? TraceBackend::Interpreter
+                                 : (index == 2) ? TraceBackend::RegisterVM
+                                                : TraceBackend::StackVM;
+                executionTimelinePanel_->setBackendType(b);
+            }
             appendOutput(mlTr("--- 执行引擎切换: %1 ---").arg(engineCombo_->currentText()));
         });
     }
 
     connect(editorTabWidget_, &QTabWidget::currentChanged, this, &Ide::onCurrentTabChanged);
     connect(editorTabWidget_, &QTabWidget::tabCloseRequested, this, &Ide::onEditorTabCloseRequested);
+}
 
+/// initConnections 子模块 3：注册全局 QShortcut（查找/替换/查找下一个/Esc）。
+void Ide::connectGlobalShortcuts() {
     // Shortcuts
     auto* findSc = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
     connect(findSc, &QShortcut::activated, this, [this]() {
@@ -4479,7 +5109,11 @@ void Ide::initConnections() {
         if (findReplacePanel_ && findReplacePanel_->isVisible())
             findReplacePanel_->closePanel();
     });
+}
 
+/// initConnections 子模块 4：连接 fileTree_ + fileTreeFilterEdit_ 200ms 防抖过滤 +
+/// errFilter{Error,Warning,Info,Hint}Btn_ 类型过滤按钮。
+void Ide::connectFileTreeAndErrorFilters() {
     connect(fileTree_, &QTreeWidget::itemActivated, this, &Ide::onFileTreeItemActivated);
 
     // 文件树搜索过滤：200ms 防抖（避免大目录每次按键都全量遍历）
@@ -4531,7 +5165,12 @@ void Ide::initConnections() {
         connect(errFilterInfoBtn_, &QToolButton::toggled, this, [this]() { applyErrorFilter(); });
     if (errFilterHintBtn_)
         connect(errFilterHintBtn_, &QToolButton::toggled, this, [this]() { applyErrorFilter(); });
+}
 
+/// initConnections 子模块 5：连接 controller_ 输出/运行/调试/VM/诊断信号。
+/// ISSUE-7 + ROUND-60 + AUDIT-P2-CORRECT fix：所有 lambda 入口检查 closing_ +
+/// 运行状态，防御 closeEvent 期间 stale QueuedConnection 访问已析构成员的 UAF。
+void Ide::connectControllerSignals() {
     // Controller signals
     connect(controller_, &IdeController::outputReady, this, [this](const QString& msg) {
         if (closing_)
@@ -5048,6 +5687,17 @@ void Ide::restoreLayout() {
     });
     // 第九轮：恢复后同步视图菜单勾选状态
     syncViewMenuChecks();
+
+    // R165 体验优化：恢复上次访问的教学面板（不阻塞启动，延迟到事件循环空闲）
+    const QString lastPanelId = settings.value("teaching/lastPanelId").toString();
+    if (!lastPanelId.isEmpty() && lastPanelId != QStringLiteral("editor")) {
+        QTimer::singleShot(0, this, [this, lastPanelId]() {
+            // 仅当面板在注册表中存在才恢复（避免已删除面板的残留 key 导致错误）
+            if (PanelCatalog::findById(lastPanelId.toStdString()) != nullptr) {
+                showTeachingPanel(lastPanelId);
+            }
+        });
+    }
 }
 
 // ============================================================
@@ -5412,7 +6062,7 @@ void Ide::appendOutput(const QString& text, OutputLevel level) {
 }
 
 /// 向错误列表追加诊断项（带行/列与严重级别）。
-void Ide::appendError(const QString& text, int line, int column, DiagLevel level) {
+void Ide::appendError(const QString& text, int line, int column, DiagLevel level, const std::string& diagCode) {
     if (!errorPanelHasErrors_) {
         errorListWidget_->clear();
         errorPanelHasErrors_ = true;
@@ -5451,18 +6101,41 @@ void Ide::appendError(const QString& text, int line, int column, DiagLevel level
                                                            : // = TeachingTheme::hint()（中性浅灰）
                                 "#268BD2";                   // Solarized blue
 
+    // R117: 若 diagCode 命中 ErrorHintEngine 教学模式表，在错误条目右侧
+    // 追加「❓」图标提示用户悬停查看教学说明（hover tooltip 由 setToolTip 设置）
+    QString teachingHint;
+    bool hasTeaching = false;
+    if (!diagCode.empty()) {
+        std::string tooltipHtml = ErrorHintEngine::renderTooltipHtml(diagCode);
+        if (!tooltipHtml.empty()) {
+            hasTeaching = true;
+            teachingHint = QString("<span style='color:#268BD2;font-size:12px;margin-left:6px;'>&#10067; "
+                                   "%1</span>")
+                               .arg(mlTr("悬停查看说明"));
+            // 用教学 HTML 覆盖默认 tooltip
+            item->setToolTip(QString::fromStdString(tooltipHtml));
+        }
+    }
+    if (!hasTeaching) {
+        item->setToolTip(text);
+    }
+
     // Build rich-text HTML (all inline styles, no class selectors)
     QString html = QString("<table style='width:100%;border-collapse:collapse;border-spacing:0;'>"
                            "<tr>"
                            "  <td style='width:22px;color:%1;font-size:14px;'>%2</td>"
                            "  <td style='color:%3;'>%4</td>"
+                           "  <td style='width:auto;text-align:right;'>%5</td>"
                            "</tr></table>")
-                       .arg(iconColor, iconChar, textColor, text.toHtmlEscaped());
+                       .arg(iconColor, iconChar, textColor, text.toHtmlEscaped(), teachingHint);
 
     item->setData(RichTextItemDelegate::kHtmlRole, html);
     item->setData(Qt::UserRole, line);                        // keep click-to-goto-line working
     item->setData(Qt::UserRole + 3, static_cast<int>(level)); // for badge count
-    item->setToolTip(text);
+    // R117: 保存 diagCode，便于未来扩展（如点击「❓」打开 Flyout）
+    if (!diagCode.empty()) {
+        item->setData(Qt::UserRole + 4, QString::fromStdString(diagCode));
+    }
 
     errorListWidget_->addItem(item);
     updateErrorBadge();
@@ -6303,8 +6976,20 @@ void Ide::onPanelGuidedTourRequested(const QString& panelId) {
         tour = variableInspectorPanel_->createGuidedTour(this);
     } else if (panelId == QStringLiteral("breakpoint-condition") && breakpointConditionPanel_) {
         tour = breakpointConditionPanel_->createGuidedTour(this);
+    } else if (panelId == QStringLiteral("watch-expressions") && watchPanel_) {
+        tour = watchPanel_->createGuidedTour(this);
     } else if (panelId == QStringLiteral("bug-hunt") && bugHuntPanel_) {
         tour = bugHuntPanel_->createGuidedTour(this);
+    } else if (panelId == QStringLiteral("coroutine-visualizer") && coroutineVisualizerPanel_) {
+        tour = coroutineVisualizerPanel_->createGuidedTour(this);
+    } else if (panelId == QStringLiteral("gc-visualizer") && gcVisualizerPanel_) {
+        tour = gcVisualizerPanel_->createGuidedTour(this);
+    } else if (panelId == QStringLiteral("lint-explorer") && lintExplorerPanel_) {
+        tour = lintExplorerPanel_->createGuidedTour(this);
+    } else if (panelId == QStringLiteral("fuzz-playground") && fuzzPlaygroundPanel_) {
+        tour = fuzzPlaygroundPanel_->createGuidedTour(this);
+    } else if (panelId == QStringLiteral("module-system") && moduleSystemVisualizerPanel_) {
+        tour = moduleSystemVisualizerPanel_->createGuidedTour(this);
     }
     if (tour) {
         // AUDIT-P0 fix: 连接 finished → deleteLater，避免 tour 对象永不释放。
@@ -6321,6 +7006,12 @@ void Ide::onPanelGuidedTourRequested(const QString& panelId) {
             tour->deleteLater();
         });
         tour->start();
+    } else {
+        // 兜底提示：该面板暂未提供新手引导（tour 为 nullptr），避免点击
+        // 「新手引导」按钮后静默无反应。引导用户改用「这是什么？」按钮查看
+        // 该面板的说明文档。
+        QMessageBox::information(this, mlTr("新手引导"),
+                                 mlTr("该面板暂无新手引导，请点击「这是什么？」按钮查看说明文档。"));
     }
 }
 
@@ -6828,6 +7519,41 @@ void Ide::showHelpDialog() {
     grid->setColumnMinimumWidth(0, 120);
     grid->setColumnStretch(1, 1);
 
+    // 提取快捷键分组填充到独立方法（4 组 × 8 项，两列布局）
+    populateHelpDialogShortcuts(grid, dlg);
+    layout->addLayout(grid);
+
+    layout->addSpacing(4);
+    auto* tipLabel = new QLabel(mlTr("在代码行号左侧点击可设置/取消断点，右键点击断点可设置条件。\n"
+                                     "💡 更多教学面板快捷键：Ctrl+Shift+5~9（调用栈/变量/内存/IR变换/VM栈沙盒）、"
+                                     "Alt+1~5（条件断点/异常流/闭包/性能/实验手册）。"),
+                                dlg);
+    tipLabel->setObjectName("helpTip");
+    tipLabel->setWordWrap(true);
+    layout->addWidget(tipLabel);
+
+    layout->addStretch(1);
+    auto* btnRow = new QHBoxLayout;
+    btnRow->addStretch(1);
+    auto* okBtn = new QPushButton(mlTr("确定"), dlg);
+    okBtn->setObjectName("helpOkBtn");
+    okBtn->setCursor(Qt::PointingHandCursor);
+    connect(okBtn, &QPushButton::clicked, dlg, &QDialog::accept);
+    btnRow->addWidget(okBtn);
+    layout->addLayout(btnRow);
+
+    // 居中显示在父窗口
+    if (parentWidget()) {
+        dlg->move(parentWidget()->geometry().center() - QPoint(dlg->width() / 2, dlg->height() / 2));
+    }
+
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->exec();
+}
+
+/// 填充帮助对话框的快捷键分组网格（4 组 × 8 项，两列布局）。
+/// 提取自 showHelpDialog：保持分组结构、列布局与组标题样式完全一致。
+void Ide::populateHelpDialogShortcuts(QGridLayout* grid, QDialog* dlg) {
     // 分组结构：组名 + 该组快捷键列表
     struct Shortcut {
         const char* key;
@@ -6923,34 +7649,6 @@ void Ide::showHelpDialog() {
     // 设置行间距（每行之间稍大间距）
     grid->setVerticalSpacing(4);
     grid->setRowMinimumHeight(0, 28);
-    layout->addLayout(grid);
-
-    layout->addSpacing(4);
-    auto* tipLabel = new QLabel(mlTr("在代码行号左侧点击可设置/取消断点，右键点击断点可设置条件。\n"
-                                     "💡 更多教学面板快捷键：Ctrl+Shift+5~9（调用栈/变量/内存/IR变换/VM栈沙盒）、"
-                                     "Alt+1~5（条件断点/异常流/闭包/性能/实验手册）。"),
-                                dlg);
-    tipLabel->setObjectName("helpTip");
-    tipLabel->setWordWrap(true);
-    layout->addWidget(tipLabel);
-
-    layout->addStretch(1);
-    auto* btnRow = new QHBoxLayout;
-    btnRow->addStretch(1);
-    auto* okBtn = new QPushButton(mlTr("确定"), dlg);
-    okBtn->setObjectName("helpOkBtn");
-    okBtn->setCursor(Qt::PointingHandCursor);
-    connect(okBtn, &QPushButton::clicked, dlg, &QDialog::accept);
-    btnRow->addWidget(okBtn);
-    layout->addLayout(btnRow);
-
-    // 居中显示在父窗口
-    if (parentWidget()) {
-        dlg->move(parentWidget()->geometry().center() - QPoint(dlg->width() / 2, dlg->height() / 2));
-    }
-
-    dlg->setAttribute(Qt::WA_DeleteOnClose);
-    dlg->exec();
 }
 
 // ============================================================
@@ -7156,7 +7854,9 @@ void Ide::displayDiagnostics(const DiagnosticBag& bag) {
         text += ": " + QString::fromStdString(msg);
 
         if (diag.isError()) {
-            appendError(text, diag.line, diag.column, diag.level);
+            // R117: 传入 diag.code 让 appendError 查 ErrorHintEngine 教学模式表，
+            // 命中时 tooltip 显示教学 markdown（根因/触发场景/修复模板/相关概念）
+            appendError(text, diag.line, diag.column, diag.level, diag.code);
         } else if (diag.isWarning()) {
             appendOutput(text, OutputLevel::Warning);
         } else {

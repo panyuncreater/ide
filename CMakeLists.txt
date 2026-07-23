@@ -83,6 +83,7 @@ if(MINILANG_ENABLE_I18N)
         message(STATUS "i18n enabled: Qt Linguist tools available")
         set(MINILANG_TRANSLATION_SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/app/translations/minilang_zh_CN.ts
+            ${CMAKE_CURRENT_SOURCE_DIR}/app/translations/minilang_en_US.ts
         )
         # 仅 lrelease：把已填充的 .ts 编译为 .qm（不重写 .ts 源文件）
         qt_add_translation(MINILANG_QM_FILES
@@ -165,6 +166,23 @@ set(CMAKE_INSTALL_PREFIX "${_saved_install_prefix}" CACHE PATH "" FORCE)
 unset(_saved_install_prefix)
 
 # ============================================================
+# 第三方依赖：asmjit（JIT 后端，可选）
+# ------------------------------------------------------------
+# asmjit 是轻量级 C++17 JIT 编译库，支持 x86/x64/ARM64。
+# 启用 MINILANG_USE_JIT=ON 时作为静态库编入项目，供 JITBackend 使用。
+# 教学价值：展示 JIT 编译原理（字节码→本地代码），与 StackVM 解释执行对比。
+# ============================================================
+option(MINILANG_USE_JIT "Enable JIT backend (asmjit)" ON)
+if(MINILANG_USE_JIT)
+    set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library" FORCE)
+    set(ASMJIT_TEST OFF CACHE BOOL "Build asmjit tests" FORCE)
+    set(ASMJIT_NO_INSTALL ON CACHE BOOL "Disable asmjit install" FORCE)
+    add_subdirectory(third_party/asmjit)
+    add_compile_definitions(MINILANG_USE_JIT)
+    message(STATUS "JIT backend enabled (asmjit)")
+endif()
+
+# ============================================================
 # 包含共享模块：源文件列表 + 编译选项 + 配置函数
 # 修复问题 2（源文件列表重复维护）
 # ============================================================
@@ -177,7 +195,21 @@ add_library(minilang_core STATIC
     ${MINILANG_CORE_SOURCES}
 )
 
+# R114 可回放执行时间轴：ExecutionTraceRecorder.cpp include VmStepper.h（QObject 派生类），
+# AUTOMOC 默认会为 VmStepper.h 生成 moc_VmStepper.cpp。但 minilang_ide/tests 中的
+# VmStepper.cpp 也会触发 MOC 生成，minilang_ide 链接 minilang_core 时会出现 LNK2005
+# 重复元对象符号。设置 SKIP_AUTOMOC 让 minilang_core 跳过该源文件的 MOC 扫描——
+# ExecutionTraceRecorder.cpp 仅调用 VmStepper 的 inline 方法（不依赖 MOC 元对象代码），
+# 链接时由 minilang_ide/tests 中的 VmStepper.cpp 提供 MOC 元对象 + 非 inline 方法定义。
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/debug/ExecutionTraceRecorder.cpp
+    PROPERTIES SKIP_AUTOMOC ON)
+
 minilang_configure_core_target(minilang_core ${CMAKE_CURRENT_SOURCE_DIR})
+
+# JIT 后端：链接 asmjit 静态库（条件依赖）
+if(MINILANG_USE_JIT)
+    target_link_libraries(minilang_core PUBLIC asmjit::asmjit)
+endif()
 
 # C1: 应用 Unity Build 属性（选项在文件前部声明，此处目标已创建）
 if(MINILANG_UNITY_BUILD)
@@ -204,6 +236,10 @@ add_executable(minilang_ide WIN32
     app/ide.qrc
     app/app.rc
     ${MINILANG_GUI_SOURCES}
+    # R164+ 模糊测试教学面板复用 fuzz_core 逻辑（cli/fuzz_core.cpp 无 Qt 依赖，安全包含）
+    ${CMAKE_CURRENT_SOURCE_DIR}/cli/fuzz_core.cpp
+    # R162+ 静态分析教学面板复用 lint_core 逻辑（cli/lint_core.cpp 无 Qt 依赖，安全包含）
+    ${CMAKE_CURRENT_SOURCE_DIR}/cli/lint_core.cpp
 )
 
 target_include_directories(minilang_ide PRIVATE
@@ -232,8 +268,9 @@ if(MINILANG_USE_QTCHARTS)
 endif()
 
 # Windows: 链接 dwmapi 用于深色标题栏 (DWMWA_USE_IMMERSIVE_DARK_MODE)
+# R128: 链接 dbghelp 用于 CrashHandler 的 MiniDumpWriteDump
 if(WIN32)
-    target_link_libraries(minilang_ide PRIVATE dwmapi)
+    target_link_libraries(minilang_ide PRIVATE dwmapi dbghelp)
 endif()
 
 # 部署 QFluent 动态库到 exe 同目录（QFluent 为 SHARED 库，运行时需 DLL）
@@ -277,6 +314,28 @@ option(MINILANG_BUILD_TEST_HARNESS "Build MiniLang test harness (audit/stress to
 if(MINILANG_BUILD_TEST_HARNESS)
     add_subdirectory(test_harness)
 endif()
+
+# ============================================================
+# cli 子目录（独立命令行工具）
+# R109: minilang-fmt 代码格式化 CLI
+# 默认 ON（轻量工具，无额外依赖），CI 覆盖率构建可显式关闭
+# ============================================================
+option(MINILANG_BUILD_CLI "Build MiniLang CLI tools (minilang-fmt)" ON)
+if(MINILANG_BUILD_CLI)
+    add_subdirectory(cli)
+endif()
+
+# ============================================================
+# 性能基准回归测试（独立可执行目标 minilang_perf_test）
+# ------------------------------------------------------------
+# 默认 ON 以便常规构建仍能跑性能测试；CI 覆盖率构建显式关闭，
+# 因为覆盖率 job 仅构建 --target minilang_tests，未构建
+# minilang_perf_test，但 gtest_discover_tests(DISCOVERY_MODE PRE_TEST)
+# 仍会注册占位测试 minilang_perf_test_NOT_BUILT 导致 CTest 失败。
+# 选项同时包裹 add_executable 与 gtest_discover_tests，保证
+# "未构建即不注册"的不变量。
+# ============================================================
+option(MINILANG_BUILD_PERF_TESTS "Build MiniLang performance regression test target (minilang_perf_test)" ON)
 
 # ============================================================
 # 安装规则

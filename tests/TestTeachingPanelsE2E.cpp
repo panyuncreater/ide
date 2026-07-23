@@ -16,25 +16,25 @@
 //   CallStackPanel / VariableInspectorPanel / BytecodeTracePanel / BreakpointConditionPanel（2 子页 + QTimer）
 // ============================================================
 
-#include <gtest/gtest.h>
 #include <QApplication>
-#include <QWidget>
-#include <QStackedWidget>
-#include <QPushButton>
 #include <QListWidget>
+#include <QPushButton>
+#include <QStackedWidget>
 #include <QTextBrowser>
 #include <QTimer>
-#include <vector>
+#include <QWidget>
+#include <gtest/gtest.h>
 #include <string>
+#include <vector>
 
-#include "gui/ExceptionFlowPanel.h"
-#include "gui/ClosureInspectorPanel.h"
-#include "gui/MemoryModelPanel.h"
-#include "gui/IRTransformPanel.h"
-#include "gui/CallStackPanel.h"
-#include "gui/VariableInspectorPanel.h"
-#include "gui/BytecodeTracePanel.h"
 #include "gui/BreakpointConditionPanel.h"
+#include "gui/BytecodeTracePanel.h"
+#include "gui/CallStackPanel.h"
+#include "gui/ClosureInspectorPanel.h"
+#include "gui/ExceptionFlowPanel.h"
+#include "gui/IRTransformPanel.h"
+#include "gui/MemoryModelPanel.h"
+#include "gui/VariableInspectorPanel.h"
 
 // ============================================================
 // Qt 测试环境：懒初始化 QApplication
@@ -46,7 +46,8 @@
 namespace {
 
 QApplication* ensureQApp() {
-    if (QCoreApplication::instance()) return qApp;
+    if (QCoreApplication::instance())
+        return qApp;
     static int argc = 1;
     static char arg0[] = "minilang_tests";
     static char* argv[] = {arg0, nullptr};
@@ -58,7 +59,8 @@ QApplication* ensureQApp() {
 QPushButton* findButtonByText(QWidget* parent, const char* text) {
     auto buttons = parent->findChildren<QPushButton*>();
     for (auto* btn : buttons) {
-        if (btn->text() == QString::fromUtf8(text)) return btn;
+        if (btn->text() == QString::fromUtf8(text))
+            return btn;
     }
     return nullptr;
 }
@@ -71,28 +73,32 @@ QStackedWidget* findStack(QWidget* parent) {
 /// 查找当前子页中的第一个 QListWidget
 QListWidget* findListInCurrentPage(QWidget* parent) {
     auto* stack = parent->findChild<QStackedWidget*>();
-    if (!stack) return nullptr;
+    if (!stack)
+        return nullptr;
     return stack->currentWidget()->findChild<QListWidget*>();
 }
 
 /// 查找当前子页中的第一个 QTextBrowser
 QTextBrowser* findBrowserInCurrentPage(QWidget* parent) {
     auto* stack = parent->findChild<QStackedWidget*>();
-    if (!stack) return nullptr;
+    if (!stack)
+        return nullptr;
     return stack->currentWidget()->findChild<QTextBrowser*>();
 }
 
 /// 停止面板所有 QTimer（防止 nullptr controller 被定时器触发）
 void stopAllTimers(QWidget* panel) {
     auto timers = panel->findChildren<QTimer*>();
-    for (auto* t : timers) t->stop();
+    for (auto* t : timers)
+        t->stop();
 }
 
 /// 检查面板是否有活跃的 QTimer
 bool anyTimerActive(QWidget* panel) {
     auto timers = panel->findChildren<QTimer*>();
     for (auto* t : timers) {
-        if (t->isActive()) return true;
+        if (t->isActive())
+            return true;
     }
     return false;
 }
@@ -110,9 +116,7 @@ protected:
         panel_ = new ExceptionFlowPanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     ExceptionFlowPanel* panel_ = nullptr;
 };
 
@@ -197,9 +201,7 @@ protected:
         panel_ = new ClosureInspectorPanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     ClosureInspectorPanel* panel_ = nullptr;
 };
 
@@ -282,16 +284,16 @@ protected:
         panel_ = new MemoryModelPanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     MemoryModelPanel* panel_ = nullptr;
 };
 
 TEST_F(MemoryModelPanelE2E, Construct_HasFourSubpages) {
+    // R113 A 项：第 5 子页"RegisterVM 寄存器帧"加入后，子页数 4 → 5。
+    // 测试名保留 HasFourSubpages 不改名以避免 git diff 噪音，仅断言数量。
     auto* stack = findStack(panel_);
     ASSERT_NE(stack, nullptr);
-    EXPECT_EQ(stack->count(), 4);
+    EXPECT_EQ(stack->count(), 5);
 }
 
 TEST_F(MemoryModelPanelE2E, Construct_InitialSubpageIsNanBox) {
@@ -351,9 +353,7 @@ protected:
         panel_ = new IRTransformPanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     IRTransformPanel* panel_ = nullptr;
 };
 
@@ -425,9 +425,7 @@ protected:
         panel_ = new CallStackPanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     CallStackPanel* panel_ = nullptr;
 };
 
@@ -490,9 +488,7 @@ protected:
         panel_ = new VariableInspectorPanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     VariableInspectorPanel* panel_ = nullptr;
 };
 
@@ -541,9 +537,7 @@ protected:
         panel_ = new BytecodeTracePanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     BytecodeTracePanel* panel_ = nullptr;
 };
 
@@ -593,9 +587,7 @@ protected:
         panel_ = new BreakpointConditionPanel();
         stopAllTimers(panel_);
     }
-    void TearDown() override {
-        delete panel_;
-    }
+    void TearDown() override { delete panel_; }
     BreakpointConditionPanel* panel_ = nullptr;
 };
 
@@ -679,27 +671,35 @@ TEST(TeachingPanelsE2EAllPanels, AllPanelsConstructWithNullController) {
 TEST(TeachingPanelsE2EAllPanels, AllPanelsHaveStackedWidget) {
     ensureQApp();
     // 所有教学面板都使用 QStackedWidget 进行子页切换
-    ExceptionFlowPanel p1; stopAllTimers(&p1);
+    ExceptionFlowPanel p1;
+    stopAllTimers(&p1);
     EXPECT_NE(findStack(&p1), nullptr);
 
-    ClosureInspectorPanel p2; stopAllTimers(&p2);
+    ClosureInspectorPanel p2;
+    stopAllTimers(&p2);
     EXPECT_NE(findStack(&p2), nullptr);
 
-    MemoryModelPanel p3; stopAllTimers(&p3);
+    MemoryModelPanel p3;
+    stopAllTimers(&p3);
     EXPECT_NE(findStack(&p3), nullptr);
 
-    IRTransformPanel p4; stopAllTimers(&p4);
+    IRTransformPanel p4;
+    stopAllTimers(&p4);
     EXPECT_NE(findStack(&p4), nullptr);
 
-    CallStackPanel p5; stopAllTimers(&p5);
+    CallStackPanel p5;
+    stopAllTimers(&p5);
     EXPECT_NE(findStack(&p5), nullptr);
 
-    VariableInspectorPanel p6; stopAllTimers(&p6);
+    VariableInspectorPanel p6;
+    stopAllTimers(&p6);
     EXPECT_NE(findStack(&p6), nullptr);
 
-    BytecodeTracePanel p7; stopAllTimers(&p7);
+    BytecodeTracePanel p7;
+    stopAllTimers(&p7);
     EXPECT_NE(findStack(&p7), nullptr);
 
-    BreakpointConditionPanel p8; stopAllTimers(&p8);
+    BreakpointConditionPanel p8;
+    stopAllTimers(&p8);
     EXPECT_NE(findStack(&p8), nullptr);
 }

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "debug/DebugTypes.h"      // R104: BreakpointKind
 #include "gui/CodeSnippetEngine.h" // 功能 13：代码模板系统
 
 // ============================================================
@@ -87,6 +88,14 @@ public:
     /// 获取断点条件
     std::string getBreakpointCondition(int line) const;
 
+    /// R104 Logpoint：获取/设置断点类型（Line / Logpoint）
+    BreakpointKind getBreakpointKind(int line) const;
+    void setBreakpointKind(int line, BreakpointKind kind);
+
+    /// R104 Logpoint：获取/设置日志消息模板（仅 Logpoint 模式下使用）
+    std::string getLogpointMessage(int line) const;
+    void setLogpointMessage(int line, const std::string& msg);
+
     /// F8: 切换折叠状态（供 LineNumberArea 调用）
     void toggleFold(int blockNumber);
 
@@ -112,6 +121,12 @@ public:
 signals:
     /// 用户通过右键菜单设置断点条件时发射
     void breakpointConditionRequested(int line, const QString& condition);
+
+    /// R104 Logpoint：用户通过对话框修改断点类型 / 日志消息时发射。
+    /// @param line 行号
+    /// @param kind 新的断点类型（Line / Logpoint）
+    /// @param logMessage 日志消息模板（kind==Logpoint 时非空）
+    void breakpointKindRequested(int line, BreakpointKind kind, const QString& logMessage);
 
     /// 右键上下文菜单触发项目特化操作时发射（如 toggleComment / format /
     /// gotoLine / find / replace / toggleBreakpoint / editBreakpointCondition /
@@ -154,6 +169,8 @@ private:
     QSet<int> errorLines_;                                   // 错误行号
     QSet<int> breakpoints_;                                  // 断点行号
     QMap<int, std::string> breakpointConditions_;            // 断点条件表达式
+    QMap<int, BreakpointKind> breakpointKinds_;              // R104: 断点类型（默认 Line）
+    QMap<int, std::string> logpointMessages_;                // R104: Logpoint 日志模板
     int currentLine_ = -1;                                   // 当前执行行号
     int sourceHighlightLine_ = -1;                           // IR/字节码面板点击高亮的源码行号
     QList<QTextEdit::ExtraSelection> cachedErrorSelections_; // 缓存的错误行选择（仅 errorLines_ 变化时重建）
@@ -235,6 +252,22 @@ private:
 
     /// H4: 对选中范围切换 /* */ 块注释（选区首尾包裹或去除）
     void toggleBlockComment(QTextCursor& tc);
+
+    // ---- R131 fix: keyPressEvent 314 行拆为 thin dispatcher + 4 helper（每个 < 100 行）----
+    /// Snippet 系统键盘交互：Ctrl+T 打开模板列表 / Tab 占位符导航 or 触发词展开 or 缩进 /
+    /// Shift+Tab 反向占位符 or 反向缩进 / Escape 退出占位符导航
+    /// 返回 true=已处理（不再继续 keyPressEvent 后续逻辑），false=未处理
+    bool handleSnippetKeys(QKeyEvent* event);
+    /// 编辑动作快捷键：Ctrl+Space/J 触发补全 / Ctrl+/ 行注释切换 / Ctrl+Shift+/ 块注释切换 /
+    /// Ctrl+D 选中下一个相同单词 / Ctrl+Shift+K 删除当前行 / Ctrl+Shift+D 复制当前行
+    /// 返回 true=已处理，false=未处理
+    bool handleEditorActionKeys(QKeyEvent* event);
+    /// Alt+Up/Down 移动当前行（或选区）上/下，对齐 VSCode 快捷键
+    /// 返回 true=已处理，false=未处理
+    bool handleLineMoveKeys(QKeyEvent* event);
+    /// 回车自动缩进（无选区时复制上一行缩进，上一行以 { 结尾则加一级 4 空格）
+    /// 返回 true=已处理，false=未处理
+    bool handleEnterAutoIndent(QKeyEvent* event);
 
     /// H2 辅助：判断位置 pos 是否在字符串或注释内（避免匹配字符串内的括号）
     /// 通过从文档开头扫描到 pos，统计字符串/注释状态实现

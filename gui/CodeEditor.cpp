@@ -2,6 +2,7 @@
 #include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
 #include "gui/I18n.h"         // 功能 13：mlTr() 国际化
 #include <QAbstractItemView>
+#include <QComboBox>
 #include <QCompleter>
 #include <QContextMenuEvent>
 #include <QDialog>
@@ -71,6 +72,9 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                 // 无抗锯齿且用纯色 drawEllipse，圆点边缘锯齿明显，视觉粗糙。
                 bool hasCondition = codeEditor->breakpointConditions_.contains(lineNumber) &&
                                     !codeEditor->breakpointConditions_[lineNumber].empty();
+                // R104: Logpoint 使用蓝色菱形区分于普通红圆点（条件 Logpoint 蓝色菱形+金环）
+                bool isLogpoint = codeEditor->breakpointKinds_.contains(lineNumber) &&
+                                  codeEditor->breakpointKinds_[lineNumber] == BreakpointKind::Logpoint;
                 // 抗锯齿：仅在此圆点绘制阶段开启，避免影响行号文字渲染
                 painter.save();
                 painter.setRenderHint(QPainter::Antialiasing, true);
@@ -79,30 +83,63 @@ void LineNumberArea::paintEvent(QPaintEvent* event) {
                 int cx = 14;
                 int cy = (top + bottom) / 2;
 
-                // 主题感知核心色：无条件=红色，条件=橙色（与原语义一致，但采用更柔和的色值）
-                QColor coreColor = hasCondition ? QColor(0xF5, 0xA6, 0x23) : QColor(0xE4, 0x3B, 0x44);
-                QColor ringColor = hasCondition ? QColor(0xC2, 0x7A, 0x0E) : QColor(0xA8, 0x24, 0x2C);
-                QColor glowColor = hasCondition ? QColor(0xF5, 0xA6, 0x23, 60) : QColor(0xE4, 0x3B, 0x44, 60);
+                // 主题感知核心色：Logpoint=蓝色（不暂停/仅记录），普通=红色/橙色
+                QColor coreColor;
+                QColor ringColor;
+                QColor glowColor;
+                if (isLogpoint) {
+                    // R104: Logpoint 用 Solarized blue (#268BD2) 与编辑器语法强调色一致
+                    coreColor = QColor(0x26, 0x8B, 0xD2);
+                    ringColor = QColor(0x1E, 0x6F, 0xA3);
+                    glowColor = QColor(0x26, 0x8B, 0xD2, 60);
+                } else if (hasCondition) {
+                    coreColor = QColor(0xF5, 0xA6, 0x23);
+                    ringColor = QColor(0xC2, 0x7A, 0x0E);
+                    glowColor = QColor(0xF5, 0xA6, 0x23, 60);
+                } else {
+                    coreColor = QColor(0xE4, 0x3B, 0x44);
+                    ringColor = QColor(0xA8, 0x24, 0x2C);
+                    glowColor = QColor(0xE4, 0x3B, 0x44, 60);
+                }
 
                 // 1) 外发光（半透明大圆，营造柔和光晕）
                 painter.setPen(Qt::NoPen);
                 painter.setBrush(glowColor);
                 painter.drawEllipse(QPointF(cx, cy), radius + 3.0, radius + 3.0);
 
-                // 2) 主圆点——径向渐变（中心高光 → 边缘深色），产生立体感
-                QRadialGradient gradient(QPointF(cx - radius * 0.3, cy - radius * 0.3), radius * 1.4);
-                QColor highlight = coreColor.lighter(140);
-                gradient.setColorAt(0.0, highlight);
-                gradient.setColorAt(1.0, coreColor);
-                painter.setBrush(QBrush(gradient));
-                painter.setPen(QPen(ringColor, 1.2));
-                painter.drawEllipse(QPointF(cx, cy), radius, radius);
+                // R104: Logpoint 用菱形（旋转 45° 的方形）暗示"记录而非暂停"
+                if (isLogpoint) {
+                    painter.translate(cx, cy);
+                    painter.rotate(45.0);
+                    QRadialGradient gradient(QPointF(-radius * 0.3, -radius * 0.3), radius * 1.4);
+                    QColor highlight = coreColor.lighter(140);
+                    gradient.setColorAt(0.0, highlight);
+                    gradient.setColorAt(1.0, coreColor);
+                    painter.setBrush(QBrush(gradient));
+                    painter.setPen(QPen(ringColor, 1.2));
+                    painter.drawEllipse(QPointF(0, 0), radius, radius);
+                    // 条件 Logpoint：外环金色装饰
+                    if (hasCondition) {
+                        painter.setBrush(Qt::NoBrush);
+                        painter.setPen(QPen(QColor(0xC2, 0x7A, 0x0E, 180), 1.0));
+                        painter.drawEllipse(QPointF(0, 0), radius + 2.0, radius + 2.0);
+                    }
+                } else {
+                    // 2) 主圆点——径向渐变（中心高光 → 边缘深色），产生立体感
+                    QRadialGradient gradient(QPointF(cx - radius * 0.3, cy - radius * 0.3), radius * 1.4);
+                    QColor highlight = coreColor.lighter(140);
+                    gradient.setColorAt(0.0, highlight);
+                    gradient.setColorAt(1.0, coreColor);
+                    painter.setBrush(QBrush(gradient));
+                    painter.setPen(QPen(ringColor, 1.2));
+                    painter.drawEllipse(QPointF(cx, cy), radius, radius);
 
-                // 3) 条件断点：外环金色装饰（带间隙的双层圆环）
-                if (hasCondition) {
-                    painter.setBrush(Qt::NoBrush);
-                    painter.setPen(QPen(QColor(0xC2, 0x7A, 0x0E, 180), 1.0));
-                    painter.drawEllipse(QPointF(cx, cy), radius + 2.0, radius + 2.0);
+                    // 3) 条件断点：外环金色装饰（带间隙的双层圆环）
+                    if (hasCondition) {
+                        painter.setBrush(Qt::NoBrush);
+                        painter.setPen(QPen(QColor(0xC2, 0x7A, 0x0E, 180), 1.0));
+                        painter.drawEllipse(QPointF(cx, cy), radius + 2.0, radius + 2.0);
+                    }
                 }
                 painter.restore();
             }
@@ -200,6 +237,8 @@ void LineNumberArea::mousePressEvent(QMouseEvent* event) {
     if (codeEditor->breakpoints_.contains(lineNumber)) {
         codeEditor->breakpoints_.remove(lineNumber);
         codeEditor->breakpointConditions_.remove(lineNumber);
+        codeEditor->breakpointKinds_.remove(lineNumber);
+        codeEditor->logpointMessages_.remove(lineNumber);
     } else {
         codeEditor->breakpoints_.insert(lineNumber);
     }
@@ -237,22 +276,177 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
 
     QMenu menu(this);
     QString currentCond = QString::fromStdString(codeEditor->getBreakpointCondition(lineNumber));
+    BreakpointKind currentKind = codeEditor->getBreakpointKind(lineNumber);
+    QString currentLogMsg = QString::fromStdString(codeEditor->getLogpointMessage(lineNumber));
 
-    QAction* setCondAction = menu.addAction(currentCond.isEmpty() ? QString("设置条件... (行 %1)").arg(lineNumber)
-                                                                  : QString("修改条件: \"%1\"").arg(currentCond));
+    // R104: 新增"编辑断点属性"综合对话框入口（含类型选择+日志消息+条件）
+    QAction* editPropsAction = menu.addAction(QString::fromUtf8("编辑断点属性... (行 %1)").arg(lineNumber));
+
+    QAction* setCondAction =
+        menu.addAction(currentCond.isEmpty() ? QString::fromUtf8("设置条件... (行 %1)").arg(lineNumber)
+                                             : QString::fromUtf8("修改条件: \"%1\"").arg(currentCond));
+
+    // R104: 快速切换 Logpoint / 普通断点
+    QAction* toggleKindAction = nullptr;
+    if (currentKind == BreakpointKind::Logpoint) {
+        toggleKindAction = menu.addAction(QString::fromUtf8("切换为普通断点"));
+    } else {
+        toggleKindAction = menu.addAction(QString::fromUtf8("切换为日志断点 (Logpoint)"));
+    }
 
     QAction* removeCondAction = nullptr;
     if (!currentCond.isEmpty()) {
-        removeCondAction = menu.addAction("移除条件");
+        removeCondAction = menu.addAction(QString::fromUtf8("移除条件"));
     }
 
     QAction* chosen = menu.exec(event->globalPos());
-    if (chosen == setCondAction) {
+
+    // R104: 综合属性对话框——含类型选择 + 日志消息（仅 Logpoint）+ 条件表达式
+    if (chosen == editPropsAction) {
+        QDialog dlg(this);
+        dlg.setWindowTitle(QString::fromUtf8("断点属性 · 行 %1").arg(lineNumber));
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
+        dlg.setFixedSize(460, 320);
+
+        // Fluent 色板（亮色主题，与 IDE 整体风格一致）（R74: 中性白）
+        const QString bgSurf = "#FFFFFF";
+        const QString fgPrim = "#1E1E1E";
+        const QString fgSec = "#8C8C8C";
+        const QString accent = "#268BD2";
+        const QString border = "#E0E0E0";
+        const QString warnFg = "#B58900";
+        const QString btnBg = "#268BD2";
+        const QString btnHov = "#1E6FA3";
+        const QString monoFont =
+            "'Cascadia Code','Cascadia Mono','Consolas','JetBrains Mono','Source Code Pro','Menlo','DejaVu Sans "
+            "Mono','Courier New',monospace";
+
+        dlg.setStyleSheet(QString("QDialog { background: %1; border-radius: 8px; }"
+                                  "QLabel#condTitle { font-size: 14px; font-weight: 600; color: %2; }"
+                                  "QLabel#condHint  { font-size: 11px; color: %3; }"
+                                  "QLabel#condWarn  { font-size: 11px; color: %4; }"
+                                  "QLineEdit#condEdit, QLineEdit#logEdit { "
+                                  "  background: #FFFFFF; color: %2; "
+                                  "  border: 1px solid %5; border-radius: 4px; "
+                                  "  padding: 6px 8px; font-family: %6; "
+                                  "  font-size: 13px; "
+                                  "} "
+                                  "QLineEdit#condEdit:focus, QLineEdit#logEdit:focus { border: 1px solid %7; }"
+                                  "QComboBox#kindCombo { "
+                                  "  background: #FFFFFF; color: %2; "
+                                  "  border: 1px solid %5; border-radius: 4px; "
+                                  "  padding: 4px 8px; font-size: 13px; "
+                                  "} "
+                                  "QPushButton#condOk { "
+                                  "  background: %8; color: #FFFFFF; border: none; border-radius: 4px; "
+                                  "  padding: 6px 18px; font-size: 13px; font-weight: 500; "
+                                  "} "
+                                  "QPushButton#condOk:hover { background: %9; }"
+                                  "QPushButton#condCancel { "
+                                  "  background: transparent; color: %3; border: 1px solid %5; border-radius: 4px; "
+                                  "  padding: 6px 14px; font-size: 13px; "
+                                  "} "
+                                  "QPushButton#condCancel:hover { background: rgba(0,0,0,0.05); }")
+                              .arg(bgSurf, fgPrim, fgSec, warnFg, border, monoFont, accent, btnBg, btnHov));
+
+        auto* layout = new QVBoxLayout(&dlg);
+        layout->setContentsMargins(20, 16, 20, 16);
+        layout->setSpacing(8);
+
+        auto* titleLabel = new QLabel(QString::fromUtf8("断点属性 · 行 %1").arg(lineNumber), &dlg);
+        titleLabel->setObjectName("condTitle");
+        layout->addWidget(titleLabel);
+
+        // 类型选择器
+        auto* kindLabel = new QLabel(QString::fromUtf8("断点类型"), &dlg);
+        kindLabel->setObjectName("condHint");
+        layout->addWidget(kindLabel);
+        auto* kindCombo = new QComboBox(&dlg);
+        kindCombo->setObjectName("kindCombo");
+        kindCombo->addItem(QString::fromUtf8("普通断点（命中即暂停）"), static_cast<int>(BreakpointKind::Line));
+        kindCombo->addItem(QString::fromUtf8("日志断点 Logpoint（命中不暂停，仅输出日志）"),
+                           static_cast<int>(BreakpointKind::Logpoint));
+        kindCombo->setCurrentIndex(currentKind == BreakpointKind::Logpoint ? 1 : 0);
+        layout->addWidget(kindCombo);
+
+        // 日志消息输入（仅 Logpoint 模式下启用）
+        auto* logLabel = new QLabel(QString::fromUtf8("日志消息模板（可用 {expr} 插值，如 i={i}）"), &dlg);
+        logLabel->setObjectName("condHint");
+        logLabel->setWordWrap(true);
+        layout->addWidget(logLabel);
+        auto* logEdit = new QLineEdit(currentLogMsg, &dlg);
+        logEdit->setObjectName("logEdit");
+        logEdit->setPlaceholderText(QString::fromUtf8("如：i={i}, sum={sum}"));
+        layout->addWidget(logEdit);
+
+        // 条件表达式
+        auto* condLabel = new QLabel(QString::fromUtf8("条件表达式（留空 = 无条件）"), &dlg);
+        condLabel->setObjectName("condHint");
+        condLabel->setWordWrap(true);
+        layout->addWidget(condLabel);
+        auto* edit = new QLineEdit(currentCond, &dlg);
+        edit->setObjectName("condEdit");
+        edit->setPlaceholderText(QString::fromUtf8("例如 i == 5 或 x > 10"));
+        layout->addWidget(edit);
+
+        auto* warnLabel =
+            new QLabel(QString::fromUtf8("提示：Logpoint 命中不暂停仅输出日志；条件为假时不输出/不暂停。"), &dlg);
+        warnLabel->setObjectName("condWarn");
+        warnLabel->setWordWrap(true);
+        layout->addWidget(warnLabel);
+
+        // 类型切换时启用/禁用日志消息输入框
+        auto updateLogEditEnabled = [logEdit](int idx) { logEdit->setEnabled(idx == 1); };
+        updateLogEditEnabled(kindCombo->currentIndex());
+        QObject::connect(kindCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), updateLogEditEnabled);
+
+        auto* btnRow = new QHBoxLayout();
+        btnRow->addStretch();
+        auto* cancelBtn = new QPushButton(QString::fromUtf8("取消"), &dlg);
+        cancelBtn->setObjectName("condCancel");
+        auto* okBtn = new QPushButton(QString::fromUtf8("确定"), &dlg);
+        okBtn->setObjectName("condOk");
+        btnRow->addWidget(cancelBtn);
+        btnRow->addSpacing(8);
+        btnRow->addWidget(okBtn);
+        layout->addLayout(btnRow);
+
+        connect(okBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+        connect(cancelBtn, &QPushButton::clicked, &dlg, &QDialog::reject);
+        edit->setFocus();
+        edit->selectAll();
+
+        if (dlg.exec() == QDialog::Accepted) {
+            // 应用类型
+            BreakpointKind newKind = static_cast<BreakpointKind>(kindCombo->currentData().toInt());
+            codeEditor->breakpointKinds_[lineNumber] = newKind;
+            // 应用日志消息
+            QString logTrimmed = logEdit->text().trimmed();
+            if (newKind == BreakpointKind::Logpoint && !logTrimmed.isEmpty()) {
+                codeEditor->logpointMessages_[lineNumber] = logTrimmed.toStdString();
+            } else {
+                codeEditor->logpointMessages_.remove(lineNumber);
+            }
+            // 应用条件
+            QString cond = edit->text();
+            QString condTrimmed = cond.trimmed();
+            std::string condStr = condTrimmed.toStdString();
+            if (condStr.empty()) {
+                codeEditor->breakpointConditions_.remove(lineNumber);
+            } else {
+                codeEditor->breakpointConditions_[lineNumber] = condStr;
+            }
+            // 发射综合信号（类型 + 日志消息）和条件信号（保持向后兼容）
+            emit codeEditor->breakpointKindRequested(lineNumber, newKind, logTrimmed);
+            emit codeEditor->breakpointConditionRequested(lineNumber, condTrimmed);
+            update();
+        }
+    } else if (chosen == setCondAction) {
         // P-IDE-5 fix: 用自定义 Fluent 风格对话框替代默认 QInputDialog，
         // 统一 IDE 视觉语言（圆角/主色按钮/提示文案色板）。原 QInputDialog 在
         // Windows 原生主题下显得突兀，与 Fluent Design 风格不一致。
         QDialog dlg(this);
-        dlg.setWindowTitle(QString("设置断点条件"));
+        dlg.setWindowTitle(QString::fromUtf8("设置断点条件"));
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt::WindowContextHelpButtonHint);
         dlg.setFixedSize(420, 180);
 
@@ -295,30 +489,30 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
         layout->setContentsMargins(20, 16, 20, 16);
         layout->setSpacing(8);
 
-        auto* titleLabel = new QLabel(QString("断点条件 · 行 %1").arg(lineNumber), &dlg);
+        auto* titleLabel = new QLabel(QString::fromUtf8("断点条件 · 行 %1").arg(lineNumber), &dlg);
         titleLabel->setObjectName("condTitle");
         layout->addWidget(titleLabel);
 
-        auto* hintLabel = new QLabel(QString("输入条件表达式（例如 i == 5 或 x > 10）"), &dlg);
+        auto* hintLabel = new QLabel(QString::fromUtf8("输入条件表达式（例如 i == 5 或 x > 10）"), &dlg);
         hintLabel->setObjectName("condHint");
         hintLabel->setWordWrap(true);
         layout->addWidget(hintLabel);
 
         auto* edit = new QLineEdit(currentCond, &dlg);
         edit->setObjectName("condEdit");
-        edit->setPlaceholderText("留空则变为无条件断点");
+        edit->setPlaceholderText(QString::fromUtf8("留空则变为无条件断点"));
         layout->addWidget(edit);
 
-        auto* warnLabel = new QLabel(QString("提示：条件为假时断点不会暂停；语法错误会导致断点失效。"), &dlg);
+        auto* warnLabel = new QLabel(QString::fromUtf8("提示：条件为假时断点不会暂停；语法错误会导致断点失效。"), &dlg);
         warnLabel->setObjectName("condWarn");
         warnLabel->setWordWrap(true);
         layout->addWidget(warnLabel);
 
         auto* btnRow = new QHBoxLayout();
         btnRow->addStretch();
-        auto* cancelBtn = new QPushButton("取消", &dlg);
+        auto* cancelBtn = new QPushButton(QString::fromUtf8("取消"), &dlg);
         cancelBtn->setObjectName("condCancel");
-        auto* okBtn = new QPushButton("确定", &dlg);
+        auto* okBtn = new QPushButton(QString::fromUtf8("确定"), &dlg);
         okBtn->setObjectName("condOk");
         btnRow->addWidget(cancelBtn);
         btnRow->addSpacing(8);
@@ -342,6 +536,21 @@ void LineNumberArea::contextMenuEvent(QContextMenuEvent* event) {
             emit codeEditor->breakpointConditionRequested(lineNumber, condTrimmed);
             update(); // 刷新颜色（红/橙）
         }
+    } else if (chosen == toggleKindAction) {
+        // R104: 快速切换 Logpoint / 普通断点
+        BreakpointKind newKind =
+            (currentKind == BreakpointKind::Logpoint) ? BreakpointKind::Line : BreakpointKind::Logpoint;
+        codeEditor->breakpointKinds_[lineNumber] = newKind;
+        if (newKind == BreakpointKind::Line) {
+            // 切回普通断点：清空日志消息
+            codeEditor->logpointMessages_.remove(lineNumber);
+            emit codeEditor->breakpointKindRequested(lineNumber, newKind, QString());
+        } else {
+            // 切换到 Logpoint：保留原日志消息（若有）
+            QString logMsg = QString::fromStdString(codeEditor->getLogpointMessage(lineNumber));
+            emit codeEditor->breakpointKindRequested(lineNumber, newKind, logMsg);
+        }
+        update();
     } else if (chosen == removeCondAction) {
         codeEditor->breakpointConditions_.remove(lineNumber);
         emit codeEditor->breakpointConditionRequested(lineNumber, QString());
@@ -604,6 +813,21 @@ void CodeEditor::setBreakpoints(const QSet<int>& breakpoints) {
             ++it;
         }
     }
+    // R104: 同步清理不再有效的断点类型和日志消息
+    for (auto it = breakpointKinds_.begin(); it != breakpointKinds_.end();) {
+        if (!breakpoints_.contains(it.key())) {
+            it = breakpointKinds_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = logpointMessages_.begin(); it != logpointMessages_.end();) {
+        if (!breakpoints_.contains(it.key())) {
+            it = logpointMessages_.erase(it);
+        } else {
+            ++it;
+        }
+    }
     lineNumberArea_->update();
 }
 
@@ -613,6 +837,41 @@ std::string CodeEditor::getBreakpointCondition(int line) const {
         return it.value();
     }
     return "";
+}
+
+BreakpointKind CodeEditor::getBreakpointKind(int line) const {
+    auto it = breakpointKinds_.find(line);
+    if (it != breakpointKinds_.end()) {
+        return it.value();
+    }
+    return BreakpointKind::Line; // 默认普通行断点
+}
+
+void CodeEditor::setBreakpointKind(int line, BreakpointKind kind) {
+    if (breakpoints_.contains(line)) {
+        breakpointKinds_[line] = kind;
+        if (kind == BreakpointKind::Line) {
+            logpointMessages_.remove(line);
+        }
+        lineNumberArea_->update();
+        viewport()->update();
+    }
+}
+
+std::string CodeEditor::getLogpointMessage(int line) const {
+    auto it = logpointMessages_.find(line);
+    if (it != logpointMessages_.end()) {
+        return it.value();
+    }
+    return "";
+}
+
+void CodeEditor::setLogpointMessage(int line, const std::string& msg) {
+    if (breakpoints_.contains(line)) {
+        logpointMessages_[line] = msg;
+        lineNumberArea_->update();
+        viewport()->update();
+    }
 }
 
 void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded) {
@@ -708,6 +967,9 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
             // 同理处理 breakpointConditions_：移除被删除行的条件
             for (int line : breakpointsToRemove) {
                 breakpointConditions_.remove(line);
+                // R104: 同步移除 Logpoint 类型和日志消息
+                breakpointKinds_.remove(line);
+                logpointMessages_.remove(line);
             }
             // 同理处理 foldedBlocks_（0-based blockNumber，与 1-based line 同步偏移）
             QSet<int> newFolded;
@@ -760,6 +1022,33 @@ void CodeEditor::onContentsChange(int position, int charsRemoved, int charsAdded
         }
     }
     breakpointConditions_ = std::move(newConditions);
+
+    // R104: 同步偏移断点类型（breakpointKinds_）和日志消息（logpointMessages_）
+    QMap<int, BreakpointKind> newKinds;
+    for (auto it = breakpointKinds_.begin(); it != breakpointKinds_.end(); ++it) {
+        int line = it.key();
+        if (line < startLine) {
+            newKinds[line] = it.value();
+        } else {
+            int newLine = line + delta;
+            if (newLine > 0)
+                newKinds[newLine] = it.value();
+        }
+    }
+    breakpointKinds_ = std::move(newKinds);
+
+    QMap<int, std::string> newMessages;
+    for (auto it = logpointMessages_.begin(); it != logpointMessages_.end(); ++it) {
+        int line = it.key();
+        if (line < startLine) {
+            newMessages[line] = it.value();
+        } else {
+            int newLine = line + delta;
+            if (newLine > 0)
+                newMessages[newLine] = it.value();
+        }
+    }
+    logpointMessages_ = std::move(newMessages);
 
     // BUG-CE-3 fix: 调整 foldedBlocks_（0-based blockNumber）
     QSet<int> newFolded;
@@ -1164,260 +1453,15 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
         }
     }
 
-    // ========================================================
-    // 功能 13：代码模板 / Snippets 系统的键盘交互
-    // ========================================================
-    // Ctrl+T 打开模板列表对话框
-    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_T) {
-        showSnippetListDialog();
+    // R131 fix: 按功能分组调用 4 个 helper，每个 helper 返回 true 表示已处理
+    if (handleSnippetKeys(event))
         return;
-    }
-
-    // Tab 键：占位符导航 or 触发词展开 or 默认缩进
-    if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier) {
-        if (currentPlaceholderIdx_ >= 0) {
-            // 已在占位符导航模式 → 跳到下一个占位符
-            jumpToNextPlaceholder();
-            return;
-        }
-        // 未在导航模式 → 检测触发词并尝试展开
-        if (tryExpandSnippet()) {
-            return; // 已展开，事件已消费
-        }
-        // H1: 无匹配触发词 → 多行缩进 or 插入 4 空格
-        QTextCursor tc = textCursor();
-        if (tc.hasSelection()) {
-            indentSelection(tc, /*addIndent=*/true);
-        } else {
-            // 单行：插入 4 空格而非 \t（保持与 setTabStopDistance 一致）
-            tc.insertText(QString(4, ' '));
-        }
+    if (handleEditorActionKeys(event))
         return;
-    }
-
-    // Shift+Tab：占位符反向导航 or 默认反向缩进
-    if (event->key() == Qt::Key_Backtab || (event->key() == Qt::Key_Tab && (event->modifiers() & Qt::ShiftModifier))) {
-        if (currentPlaceholderIdx_ >= 0) {
-            jumpToPrevPlaceholder();
-            return;
-        }
-        // H1: 反向缩进
-        QTextCursor tc = textCursor();
-        if (tc.hasSelection()) {
-            indentSelection(tc, /*addIndent=*/false);
-        } else {
-            unindentLine(tc);
-        }
+    if (handleLineMoveKeys(event))
         return;
-    }
-
-    // Escape：退出占位符导航模式
-    if (event->key() == Qt::Key_Escape && currentPlaceholderIdx_ >= 0) {
-        clearSnippetState();
+    if (handleEnterAutoIndent(event))
         return;
-    }
-
-    // P1-2 fix: Ctrl+Space 在中文 IME 下会被系统拦截切换输入法，增加 Ctrl+J 作为备选触发键
-    if (event->modifiers() == Qt::ControlModifier && (event->key() == Qt::Key_Space || event->key() == Qt::Key_J)) {
-        triggerCompletion();
-        return;
-    }
-
-    // H4: Ctrl+/ 行注释切换（//）
-    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Slash) {
-        QTextCursor tc = textCursor();
-        if (tc.hasSelection()) {
-            toggleCommentSelection(tc);
-        } else {
-            // 当前行：选中整行后切换
-            tc.select(QTextCursor::LineUnderCursor);
-            toggleCommentSelection(tc);
-        }
-        return;
-    }
-
-    // H4: Ctrl+Shift+/ 块注释切换（/* */）
-    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
-        (event->key() == Qt::Key_Slash || event->key() == Qt::Key_Question)) {
-        // 注意：Shift+/ 在某些键盘布局下产生 Key_Question
-        QTextCursor tc = textCursor();
-        toggleBlockComment(tc);
-        return;
-    }
-
-    // M8: Ctrl+D 选中下一个相同单词（简化版：单光标，无多光标）
-    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_D) {
-        QTextCursor tc = textCursor();
-        if (tc.hasSelection()) {
-            // 已有选择：查找下一个相同文本
-            QString selectedText = tc.selectedText();
-            QTextDocument::FindFlags flags;
-            QTextCursor found = document()->find(selectedText, tc.position(), flags);
-            if (!found.isNull()) {
-                setTextCursor(found);
-            }
-        } else {
-            // 无选择：选中当前单词
-            tc.select(QTextCursor::WordUnderCursor);
-            setTextCursor(tc);
-        }
-        return;
-    }
-
-    // M8: Ctrl+Shift+K 删除当前行
-    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_K) {
-        QTextCursor tc = textCursor();
-        tc.beginEditBlock();
-        tc.select(QTextCursor::LineUnderCursor);
-        if (tc.hasSelection()) {
-            tc.removeSelectedText();
-            // 同时删除行尾换行符（如果不是最后一行）
-            tc.movePosition(QTextCursor::StartOfLine);
-            if (tc.position() < document()->characterCount() - 1) {
-                QTextCursor next = tc;
-                next.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 1);
-                if (next.selectedText() == "\n") {
-                    next.removeSelectedText();
-                }
-            }
-        }
-        tc.endEditBlock();
-        return;
-    }
-
-    // R53-UX9 fix: Ctrl+Shift+D 复制当前行（或选区）到下一行。
-    // 对齐 VSCode/Sublime 常用编辑器快捷键，提升代码编辑效率。
-    // 与 Ctrl+D（选中下一个相同单词）不冲突——后者无 Shift。
-    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_D) {
-        QTextCursor tc = textCursor();
-        tc.beginEditBlock();
-        if (tc.hasSelection()) {
-            // 选区复制：在选区末尾插入选区文本副本
-            int selStart = tc.selectionStart();
-            int selEnd = tc.selectionEnd();
-            QString selText = tc.selectedText();
-            // QTextCursor.selectedText 用 U+2029 替换换行符，需还原
-            selText.replace(QChar(0x2029), QChar('\n'));
-            tc.setPosition(selEnd);
-            tc.insertText('\n' + selText);
-            // 保持原选区选中，光标移到副本
-            QTextCursor newTc = tc;
-            newTc.setPosition(selEnd + 1);
-            newTc.setPosition(selEnd + 1 + selText.length(), QTextCursor::KeepAnchor);
-            setTextCursor(newTc);
-        } else {
-            // 当前行复制：在当前行下方插入当前行副本
-            tc.select(QTextCursor::LineUnderCursor);
-            QString lineText = tc.selectedText();
-            lineText.replace(QChar(0x2029), QChar('\n'));
-            tc.movePosition(QTextCursor::EndOfLine);
-            tc.insertText('\n' + lineText);
-        }
-        tc.endEditBlock();
-        return;
-    }
-
-    // R53-UX9 fix: Alt+Up / Alt+Down 移动当前行（或选区）上/下。
-    // 对齐 VSCode 常用编辑器快捷键，提升代码重组效率。
-    // 不与现有快捷键冲突（Alt+Up/Down 此前未绑定）。
-    if (event->modifiers() == Qt::AltModifier && (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
-        bool moveUp = (event->key() == Qt::Key_Up);
-        QTextCursor tc = textCursor();
-        QTextDocument* doc = document();
-
-        // 确定要移动的行范围 [startLine, endLine]
-        int selStart = tc.selectionStart();
-        int selEnd = tc.selectionEnd();
-        int startLine = doc->findBlock(selStart).blockNumber();
-        int endLine = doc->findBlock(selEnd).blockNumber();
-        // 若选区末尾恰在行首（非整行选中末尾），endLine 应回退一行
-        if (selStart != selEnd && doc->findBlock(selEnd).position() == selEnd && endLine > startLine) {
-            --endLine;
-        }
-        int totalBlocks = doc->blockCount();
-
-        if (moveUp) {
-            if (startLine <= 0)
-                return; // 已是第一行，无法上移
-            QTextBlock prevBlock = doc->findBlockByNumber(startLine - 1);
-            QString prevText = prevBlock.text();
-            tc.beginEditBlock();
-            // 删除上一行
-            QTextCursor del = tc;
-            del.setPosition(prevBlock.position());
-            del.movePosition(QTextCursor::StartOfLine);
-            del.movePosition(QTextCursor::Down, QTextCursor::KeepAnchor);
-            del.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
-            del.removeSelectedText();
-            // 在移动块末尾插入被删的行
-            QTextBlock endBlock = doc->findBlockByNumber(endLine); // 删除后行号已变
-            tc.setPosition(endBlock.position() + endBlock.text().length());
-            tc.insertText('\n' + prevText);
-            tc.endEditBlock();
-            // 重新选中移动后的块
-            QTextBlock newStart = doc->findBlockByNumber(startLine - 1);
-            QTextBlock newEnd = doc->findBlockByNumber(endLine - 1);
-            QTextCursor sel = tc;
-            sel.setPosition(newStart.position());
-            sel.setPosition(newEnd.position() + newEnd.text().length(), QTextCursor::KeepAnchor);
-            setTextCursor(sel);
-        } else {
-            if (endLine >= totalBlocks - 1)
-                return; // 已是最后一行，无法下移
-            QTextBlock nextBlock = doc->findBlockByNumber(endLine + 1);
-            QString nextText = nextBlock.text();
-            tc.beginEditBlock();
-            // 删除下一行
-            QTextCursor del = tc;
-            del.setPosition(nextBlock.position());
-            del.movePosition(QTextCursor::StartOfLine);
-            del.movePosition(QTextCursor::Down, QTextCursor::KeepAnchor);
-            del.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
-            del.removeSelectedText();
-            // 在移动块开头插入被删的行
-            QTextBlock startBlock = doc->findBlockByNumber(startLine);
-            tc.setPosition(startBlock.position());
-            tc.insertText(nextText + '\n');
-            tc.endEditBlock();
-            // 重新选中移动后的块
-            QTextBlock newStart = doc->findBlockByNumber(startLine + 1);
-            QTextBlock newEnd = doc->findBlockByNumber(endLine + 1);
-            QTextCursor sel = tc;
-            sel.setPosition(newStart.position());
-            sel.setPosition(newEnd.position() + newEnd.text().length(), QTextCursor::KeepAnchor);
-            setTextCursor(sel);
-        }
-        return;
-    }
-
-    // H1: 回车自动缩进（无选择时，复制上一行缩进；上一行以 { 结尾则加一级）
-    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && event->modifiers() == Qt::NoModifier) {
-        QTextCursor tc = textCursor();
-        if (!tc.hasSelection()) {
-            // 获取当前行完整文本
-            QTextCursor lineCursor = tc;
-            lineCursor.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
-            QString lineText = lineCursor.selectedText();
-            // 提取行首空白
-            QString indent;
-            for (QChar c : lineText) {
-                if (c == ' ' || c == '\t')
-                    indent += c;
-                else
-                    break;
-            }
-            // 光标前的部分：若以 { 结尾则加一级缩进
-            int cursorCol = tc.position() - lineCursor.position();
-            QString beforeCursor = lineText.left(cursorCol);
-            if (beforeCursor.trimmed().endsWith('{')) {
-                indent += QString(4, ' ');
-            }
-            // 插入换行 + 缩进
-            tc.insertText('\n' + indent);
-            setTextCursor(tc);
-            return;
-        }
-    }
 
     // 先处理按键（插入字符等）
     QPlainTextEdit::keyPressEvent(event);
@@ -1449,6 +1493,300 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
             }
         }
     }
+}
+
+// ============================================================
+// R131 fix: handleSnippetKeys - Snippet 系统键盘交互
+// 提取自 keyPressEvent 的 snippet 块（52 行）。
+// Ctrl+T 打开模板列表 / Tab 占位符导航 or 触发词展开 or 缩进 /
+// Shift+Tab 反向占位符 or 反向缩进 / Escape 退出占位符导航
+// 返回 true=已处理，false=未匹配
+// ============================================================
+bool CodeEditor::handleSnippetKeys(QKeyEvent* event) {
+    // ========================================================
+    // 功能 13：代码模板 / Snippets 系统的键盘交互
+    // ========================================================
+    // Ctrl+T 打开模板列表对话框
+    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_T) {
+        showSnippetListDialog();
+        return true;
+    }
+
+    // Tab 键：占位符导航 or 触发词展开 or 默认缩进
+    if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier) {
+        if (currentPlaceholderIdx_ >= 0) {
+            // 已在占位符导航模式 → 跳到下一个占位符
+            jumpToNextPlaceholder();
+            return true;
+        }
+        // 未在导航模式 → 检测触发词并尝试展开
+        if (tryExpandSnippet()) {
+            return true; // 已展开，事件已消费
+        }
+        // H1: 无匹配触发词 → 多行缩进 or 插入 4 空格
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            indentSelection(tc, /*addIndent=*/true);
+        } else {
+            // 单行：插入 4 空格而非 \t（保持与 setTabStopDistance 一致）
+            tc.insertText(QString(4, ' '));
+        }
+        return true;
+    }
+
+    // Shift+Tab：占位符反向导航 or 默认反向缩进
+    if (event->key() == Qt::Key_Backtab || (event->key() == Qt::Key_Tab && (event->modifiers() & Qt::ShiftModifier))) {
+        if (currentPlaceholderIdx_ >= 0) {
+            jumpToPrevPlaceholder();
+            return true;
+        }
+        // H1: 反向缩进
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            indentSelection(tc, /*addIndent=*/false);
+        } else {
+            unindentLine(tc);
+        }
+        return true;
+    }
+
+    // Escape：退出占位符导航模式
+    if (event->key() == Qt::Key_Escape && currentPlaceholderIdx_ >= 0) {
+        clearSnippetState();
+        return true;
+    }
+
+    return false;
+}
+
+// ============================================================
+// R131 fix: handleEditorActionKeys - 编辑动作快捷键
+// 提取自 keyPressEvent 的编辑动作块（99 行）。
+// Ctrl+Space/J 触发补全 / Ctrl+/ 行注释切换 / Ctrl+Shift+/ 块注释切换 /
+// Ctrl+D 选中下一个相同单词 / Ctrl+Shift+K 删除当前行 / Ctrl+Shift+D 复制当前行
+// 返回 true=已处理，false=未匹配
+// ============================================================
+bool CodeEditor::handleEditorActionKeys(QKeyEvent* event) {
+    // P1-2 fix: Ctrl+Space 在中文 IME 下会被系统拦截切换输入法，增加 Ctrl+J 作为备选触发键
+    if (event->modifiers() == Qt::ControlModifier && (event->key() == Qt::Key_Space || event->key() == Qt::Key_J)) {
+        triggerCompletion();
+        return true;
+    }
+
+    // H4: Ctrl+/ 行注释切换（//）
+    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Slash) {
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            toggleCommentSelection(tc);
+        } else {
+            // 当前行：选中整行后切换
+            tc.select(QTextCursor::LineUnderCursor);
+            toggleCommentSelection(tc);
+        }
+        return true;
+    }
+
+    // H4: Ctrl+Shift+/ 块注释切换（/* */）
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
+        (event->key() == Qt::Key_Slash || event->key() == Qt::Key_Question)) {
+        // 注意：Shift+/ 在某些键盘布局下产生 Key_Question
+        QTextCursor tc = textCursor();
+        toggleBlockComment(tc);
+        return true;
+    }
+
+    // M8: Ctrl+D 选中下一个相同单词（简化版：单光标，无多光标）
+    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_D) {
+        QTextCursor tc = textCursor();
+        if (tc.hasSelection()) {
+            // 已有选择：查找下一个相同文本
+            QString selectedText = tc.selectedText();
+            QTextDocument::FindFlags flags;
+            QTextCursor found = document()->find(selectedText, tc.position(), flags);
+            if (!found.isNull()) {
+                setTextCursor(found);
+            }
+        } else {
+            // 无选择：选中当前单词
+            tc.select(QTextCursor::WordUnderCursor);
+            setTextCursor(tc);
+        }
+        return true;
+    }
+
+    // M8: Ctrl+Shift+K 删除当前行
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_K) {
+        QTextCursor tc = textCursor();
+        tc.beginEditBlock();
+        tc.select(QTextCursor::LineUnderCursor);
+        if (tc.hasSelection()) {
+            tc.removeSelectedText();
+            // 同时删除行尾换行符（如果不是最后一行）
+            tc.movePosition(QTextCursor::StartOfLine);
+            if (tc.position() < document()->characterCount() - 1) {
+                QTextCursor next = tc;
+                next.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 1);
+                if (next.selectedText() == "\n") {
+                    next.removeSelectedText();
+                }
+            }
+        }
+        tc.endEditBlock();
+        return true;
+    }
+
+    // R53-UX9 fix: Ctrl+Shift+D 复制当前行（或选区）到下一行。
+    // 对齐 VSCode/Sublime 常用编辑器快捷键，提升代码编辑效率。
+    // 与 Ctrl+D（选中下一个相同单词）不冲突——后者无 Shift。
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) && event->key() == Qt::Key_D) {
+        QTextCursor tc = textCursor();
+        tc.beginEditBlock();
+        if (tc.hasSelection()) {
+            // 选区复制：在选区末尾插入选区文本副本
+            int selStart = tc.selectionStart();
+            int selEnd = tc.selectionEnd();
+            QString selText = tc.selectedText();
+            // QTextCursor.selectedText 用 U+2029 替换换行符，需还原
+            selText.replace(QChar(0x2029), QChar('\n'));
+            tc.setPosition(selEnd);
+            tc.insertText('\n' + selText);
+            // 保持原选区选中，光标移到副本
+            QTextCursor newTc = tc;
+            newTc.setPosition(selEnd + 1);
+            newTc.setPosition(selEnd + 1 + selText.length(), QTextCursor::KeepAnchor);
+            setTextCursor(newTc);
+        } else {
+            // 当前行复制：在当前行下方插入当前行副本
+            tc.select(QTextCursor::LineUnderCursor);
+            QString lineText = tc.selectedText();
+            lineText.replace(QChar(0x2029), QChar('\n'));
+            tc.movePosition(QTextCursor::EndOfLine);
+            tc.insertText('\n' + lineText);
+        }
+        tc.endEditBlock();
+        return true;
+    }
+
+    return false;
+}
+
+// ============================================================
+// R131 fix: handleLineMoveKeys - Alt+Up/Down 移动当前行（或选区）
+// 提取自 keyPressEvent 的行移动块（72 行）。对齐 VSCode 快捷键。
+// 返回 true=已处理，false=未匹配
+// ============================================================
+bool CodeEditor::handleLineMoveKeys(QKeyEvent* event) {
+    // R53-UX9 fix: Alt+Up / Alt+Down 移动当前行（或选区）上/下。
+    // 对齐 VSCode 常用编辑器快捷键，提升代码重组效率。
+    // 不与现有快捷键冲突（Alt+Up/Down 此前未绑定）。
+    if (event->modifiers() != Qt::AltModifier || (event->key() != Qt::Key_Up && event->key() != Qt::Key_Down)) {
+        return false;
+    }
+    bool moveUp = (event->key() == Qt::Key_Up);
+    QTextCursor tc = textCursor();
+    QTextDocument* doc = document();
+
+    // 确定要移动的行范围 [startLine, endLine]
+    int selStart = tc.selectionStart();
+    int selEnd = tc.selectionEnd();
+    int startLine = doc->findBlock(selStart).blockNumber();
+    int endLine = doc->findBlock(selEnd).blockNumber();
+    // 若选区末尾恰在行首（非整行选中末尾），endLine 应回退一行
+    if (selStart != selEnd && doc->findBlock(selEnd).position() == selEnd && endLine > startLine) {
+        --endLine;
+    }
+    int totalBlocks = doc->blockCount();
+
+    if (moveUp) {
+        if (startLine <= 0)
+            return true; // 已是第一行，无法上移
+        QTextBlock prevBlock = doc->findBlockByNumber(startLine - 1);
+        QString prevText = prevBlock.text();
+        tc.beginEditBlock();
+        // 删除上一行
+        QTextCursor del = tc;
+        del.setPosition(prevBlock.position());
+        del.movePosition(QTextCursor::StartOfLine);
+        del.movePosition(QTextCursor::Down, QTextCursor::KeepAnchor);
+        del.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+        del.removeSelectedText();
+        // 在移动块末尾插入被删的行
+        QTextBlock endBlock = doc->findBlockByNumber(endLine); // 删除后行号已变
+        tc.setPosition(endBlock.position() + endBlock.text().length());
+        tc.insertText('\n' + prevText);
+        tc.endEditBlock();
+        // 重新选中移动后的块
+        QTextBlock newStart = doc->findBlockByNumber(startLine - 1);
+        QTextBlock newEnd = doc->findBlockByNumber(endLine - 1);
+        QTextCursor sel = tc;
+        sel.setPosition(newStart.position());
+        sel.setPosition(newEnd.position() + newEnd.text().length(), QTextCursor::KeepAnchor);
+        setTextCursor(sel);
+    } else {
+        if (endLine >= totalBlocks - 1)
+            return true; // 已是最后一行，无法下移
+        QTextBlock nextBlock = doc->findBlockByNumber(endLine + 1);
+        QString nextText = nextBlock.text();
+        tc.beginEditBlock();
+        // 删除下一行
+        QTextCursor del = tc;
+        del.setPosition(nextBlock.position());
+        del.movePosition(QTextCursor::StartOfLine);
+        del.movePosition(QTextCursor::Down, QTextCursor::KeepAnchor);
+        del.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+        del.removeSelectedText();
+        // 在移动块开头插入被删的行
+        QTextBlock startBlock = doc->findBlockByNumber(startLine);
+        tc.setPosition(startBlock.position());
+        tc.insertText(nextText + '\n');
+        tc.endEditBlock();
+        // 重新选中移动后的块
+        QTextBlock newStart = doc->findBlockByNumber(startLine + 1);
+        QTextBlock newEnd = doc->findBlockByNumber(endLine + 1);
+        QTextCursor sel = tc;
+        sel.setPosition(newStart.position());
+        sel.setPosition(newEnd.position() + newEnd.text().length(), QTextCursor::KeepAnchor);
+        setTextCursor(sel);
+    }
+    return true;
+}
+
+// ============================================================
+// R131 fix: handleEnterAutoIndent - 回车自动缩进
+// 提取自 keyPressEvent 的回车块（28 行）。
+// 无选区时复制上一行缩进，上一行以 { 结尾则加一级 4 空格
+// 返回 true=已处理，false=未匹配（让默认 QPlainTextEdit::keyPressEvent 处理）
+// ============================================================
+bool CodeEditor::handleEnterAutoIndent(QKeyEvent* event) {
+    // H1: 回车自动缩进（无选择时，复制上一行缩进；上一行以 { 结尾则加一级）
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && event->modifiers() == Qt::NoModifier) {
+        QTextCursor tc = textCursor();
+        if (!tc.hasSelection()) {
+            // 获取当前行完整文本
+            QTextCursor lineCursor = tc;
+            lineCursor.movePosition(QTextCursor::StartOfLine, QTextCursor::KeepAnchor);
+            QString lineText = lineCursor.selectedText();
+            // 提取行首空白
+            QString indent;
+            for (QChar c : lineText) {
+                if (c == ' ' || c == '\t')
+                    indent += c;
+                else
+                    break;
+            }
+            // 光标前的部分：若以 { 结尾则加一级缩进
+            int cursorCol = tc.position() - lineCursor.position();
+            QString beforeCursor = lineText.left(cursorCol);
+            if (beforeCursor.trimmed().endsWith('{')) {
+                indent += QString(4, ' ');
+            }
+            // 插入换行 + 缩进
+            tc.insertText('\n' + indent);
+            setTextCursor(tc);
+            return true;
+        }
+    }
+    return false;
 }
 
 void CodeEditor::focusInEvent(QFocusEvent* event) {

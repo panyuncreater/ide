@@ -157,6 +157,106 @@ const QHash<QString, HelpDoc>& helpDocs() {
           mlTr("1. 读面板遇到陌生词，打开本面板查\n2. 点术语条目跳去相关教学面板\n3. "
                "配合「学习路径地图」把术语系统过一遍"),
           mlTr("术语 / 释义 / 概念索引 / 跨面板跳转")}},
+        // ---- 入门导览（补齐缺失面板）----
+        {QStringLiteral("welcome"),
+         {mlTr("新手的第一站：用几张卡片介绍 MiniLang IDE 的核心功能和学习路径，让你快速知道「这工具能干"
+               "嘛、我该从哪开始」。"),
+          mlTr("1. 第一次打开 IDE 时浏览引导卡片\n2. 点「开始旅程」跳去学习路径地图\n3. "
+               "跟着推荐顺序逐个面板探索"),
+          mlTr("引导 / 入门 / 学习路径")}},
+        {QStringLiteral("course-system"),
+         {mlTr("把 MiniLang 的教学内容组织成结构化课程，每节课配目标、讲解和练习，照着学就能系统掌握从词"
+               "法到 VM 的全链路。"),
+          mlTr("1. 从课程列表挑一节感兴趣的\n2. 按章节顺序学下来\n3. 配合「实验手册」做配套实验"),
+          mlTr("课程 / 章节 / 教学内容")}},
+        // ---- 编译前端（补齐缺失面板）----
+        {QStringLiteral("ast-editor"),
+         {mlTr("直接在画布上拖拽、编辑 AST 节点，实时看到树结构变化对执行结果的影响。比「AST 构建器」更"
+               "自由——随便改、随便试。"),
+          mlTr("1. 先用「AST 构建器」理解基本结构\n2. 在本面板自由编辑节点\n3. 改完跑一下看结果对不对"),
+          mlTr("AST / 节点编辑 / 实时执行")}},
+        {QStringLiteral("lint-explorer"),
+         {mlTr("把静态分析规则和它触发的警告摆出来，让你看到编译器在不跑代码的情况下能查出什么问题——"
+               "未使用变量、类型不匹配、可能的 Bug。"),
+          mlTr("1. 先搞懂语法规则\n2. 在本面板写点带「坑」的代码\n3. 看每条警告对应哪条规则"),
+          mlTr("静态分析 / Lint / 警告 / 类型检查")}},
+        // ---- 执行引擎（补齐缺失面板）----
+        {QStringLiteral("jit-visualizer"),
+         {mlTr("演示热点代码如何被 JIT 编译器识别并编译成更快的本地代码，让你看清「解释执行 → 热点检测 → "
+               "编译优化」的完整链路。"),
+          mlTr("1. 先搞懂 VM 基本执行\n2. 在本面板跑一段循环代码\n3. 观察热点被识别和编译的过程"),
+          mlTr("JIT / 热点检测 / 即时编译 / 优化")}},
+        {QStringLiteral("step-explainer"),
+         {mlTr("把每条字节码执行时的「为什么这么做」用大白话讲出来——不只是显示状态，还解释指令的语义和"
+               "设计意图。"),
+          mlTr("1. 先在「字节码追踪」看状态变化\n2. 卡住的指令来本面板查讲解\n3. 配合「VM 沙盒」动手验证"),
+          mlTr("指令语义 / 执行讲解 / 字节码")}},
+        {QStringLiteral("backend-parallel"),
+         {mlTr("让 Interpreter / StackVM / RegisterVM 三条路径同时跑同一份代码，并排显示各自的执行进度"
+               "——谁先到、谁卡住，一目了然。"),
+          mlTr("1. 先用「三后端对比」理解差异\n2. 在本面板观察并行执行\n3. 关注分叉点和汇合点"),
+          mlTr("三后端 / 并行执行 / 进度对比")}},
+        {QStringLiteral("inline-cache"),
+         {mlTr("把内联缓存（IC）的命中 / 未命中 / 失效过程画出来，让你看清动态分派是怎么被加速的——为什"
+               "么同样一个调用，第二次就变快了。"),
+          mlTr("1. 先搞懂方法分派机制\n2. 在本面板反复调用同一方法\n3. "
+               "观察缓存从 monomorphic 到 polymorphic 的演化"),
+          mlTr("内联缓存 / 动态分派 / monomorphic / polymorphic")}},
+        {QStringLiteral("loop-unrolling"),
+         {mlTr("把循环展开优化前后的代码和执行轨迹摆在一起，让你看清为什么展开能减少分支开销——以及展开"
+               "过度会怎样。"),
+          mlTr("1. 先看「IR 优化回放」理解基本优化\n2. 在本面板对比展开前后\n3. 调整展开因子观察收益变化"),
+          mlTr("循环展开 / 优化 / 分支开销")}},
+        {QStringLiteral("escape-analysis"),
+         {mlTr("演示逃逸分析如何判断对象该分配在栈上还是堆上——能栈上分配就不用堆，省得给 GC 增加负担。"),
+          mlTr("1. 先搞懂栈 vs 堆的区别\n2. 在本面板写不同作用域的对象\n3. 观察哪些对象逃逸到堆"),
+          mlTr("逃逸分析 / 栈上分配 / 堆分配 / GC")}},
+        {QStringLiteral("register-allocator"),
+         {mlTr("把寄存器分配的图着色算法过程演给你看——哪些变量挤同一个寄存器、哪些溢出到内存，看分配器"
+               "怎么权衡。"),
+          mlTr("1. 先搞懂寄存器 VM 的寄存器概念\n2. 在本面板观察着色过程\n3. 看溢出（spill）发生在哪里"),
+          mlTr("寄存器分配 / 图着色 / 溢出 / 寄存器 VM")}},
+        {QStringLiteral("performance-race"),
+         {mlTr("让三后端跑同一段代码比谁快，用赛道动画直观呈现耗时差距——不只是数字，是看得见的速度差。"),
+          mlTr("1. 先用「三后端对比」理解语义差异\n2. 在本面板选一段代码开赛\n3. 分析赢家为什么赢"),
+          mlTr("性能竞赛 / 耗时对比 / 三后端")}},
+        {QStringLiteral("memory-layout"),
+         {mlTr("把结构体、数组、对象在内存里的字节布局画出来——对齐、填充、偏移量，一眼看清。"),
+          mlTr("1. 先搞懂基本数据类型大小\n2. 在本面板查看不同结构的布局\n3. 注意对齐和填充的开销"),
+          mlTr("内存布局 / 对齐 / 填充 / 偏移量")}},
+        {QStringLiteral("gc-visualizer"),
+         {mlTr("把 GC 的 mark / sweep / compact 过程做成动画，让你看清垃圾是怎么被找出来、怎么被回收的"
+               "——配合「内存模型」看更清楚。"),
+          mlTr("1. 先看「内存模型」搞懂堆\n2. 在本面板触发 GC\n3. 观察 mark 和 sweep 阶段"),
+          mlTr("GC / mark-sweep / compact / 垃圾回收")}},
+        {QStringLiteral("watch-expressions"),
+         {mlTr("让你在调试时添加任意表达式实时求值，比单纯看变量更灵活——可以盯着 a + b * c 这种组合表达"
+               "式的变化。"),
+          mlTr("1. 先搞懂基本调试断点\n2. 在本面板添加想观察的表达式\n3. 单步执行看值怎么变"),
+          mlTr("观察表达式 / 调试 / 实时求值")}},
+        {QStringLiteral("execution-timeline"),
+         {mlTr("把整个执行过程录成时间轴，可以拖回去看任意时刻的状态——调试时不再只能往前走，可以倒带。"),
+          mlTr("1. 先跑一遍代码录制时间轴\n2. 拖动时间指针回到任意时刻\n3. 配合「变量检查器」看历史状态"),
+          mlTr("时间轴 / 回放 / 历史状态 / 调试")}},
+        {QStringLiteral("coroutine-visualizer"),
+         {mlTr("把协程和生成器的挂起 / 恢复过程画出来，让你看清 yield 时到底保存了什么、resume 时怎么回"
+               "到原处。"),
+          mlTr("1. 先搞懂函数调用栈\n2. 在本面板写个生成器\n3. 观察 yield/Resume 的状态切换"),
+          mlTr("协程 / 生成器 / yield / 挂起恢复")}},
+        // ---- 深入实战（补齐缺失面板）----
+        {QStringLiteral("fuzz-playground"),
+         {mlTr("自动生成大量随机输入喂给你的代码，看哪些输入能让代码崩溃或行为异常——找 Bug 不用全靠手"
+               "，让机器帮你撞。"),
+          mlTr("1. 先写一个目标函数\n2. 在本面板启动模糊测试\n3. 分析崩溃样本找根因"),
+          mlTr("模糊测试 / 随机输入 / 崩溃样本 / Bug 发现")}},
+        {QStringLiteral("module-system"),
+         {mlTr("把模块之间的 import / export 依赖关系画成图，循环依赖、缺失导出、路径解析错误一眼现形。"),
+          mlTr("1. 先写几个互相 import 的模块\n2. 在本面板看依赖图\n3. 检查有没有循环依赖"),
+          mlTr("模块 / import / export / 依赖图 / 循环依赖")}},
+        {QStringLiteral("exercise-grader"),
+         {mlTr("给你一道题，你写代码，它当场判对错并给反馈——比「实验手册」更强调即时的对错验证。"),
+          mlTr("1. 从题库挑一道题\n2. 在编辑器里写答案\n3. 点评分看反馈和提示"),
+          mlTr("练习 / 评分 / 即时反馈 / 自动判题")}},
     };
     return docs;
 }
@@ -296,9 +396,16 @@ void TeachingPanelHeader::showHelpDialog() {
 
     const auto& docs = helpDocs();
     auto it = docs.find(panelId_);
+    // 非模态复用：若已有打开的帮助对话框，先关闭再重建（内容可能随面板切换更新）
+    if (helpDlg_) {
+        helpDlg_->close();
+        helpDlg_->deleteLater();
+        helpDlg_ = nullptr;
+    }
     if (it == docs.end()) {
         // 兜底情况：未知 panelId，改用 QTextBrowser 替代 BodyLabel，确保长文本可滚动
-        auto* dlg = new QDialog(this);
+        helpDlg_ = new QDialog(this);
+        QDialog* dlg = helpDlg_;
         dlg->setObjectName("helpDialog");
         // 窗口标题加 📖 emoji
         dlg->setWindowTitle(kBookEmoji + QStringLiteral(" ") + mlTr("帮助"));
@@ -335,15 +442,16 @@ void TeachingPanelHeader::showHelpDialog() {
 
         dlg->setStyleSheet(kDialogQss);
         adjustHelpDialogSize(dlg, browser);
-        // QDialog 默认支持 Esc 关闭（触发 reject）
-        dlg->exec();
-        dlg->deleteLater();
+        // 非模态显示（用户可边看帮助边操作面板）
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->show();
         return;
     }
 
     const HelpDoc& doc = it.value();
 
-    auto* dlg = new QDialog(this);
+    helpDlg_ = new QDialog(this);
+    QDialog* dlg = helpDlg_;
     dlg->setObjectName("helpDialog");
     // 窗口标题格式：「📖 帮助 · <面板标题>」
     dlg->setWindowTitle(kBookEmoji + QStringLiteral(" ") + mlTr("帮助 · ") + title_);
@@ -391,9 +499,9 @@ void TeachingPanelHeader::showHelpDialog() {
 
     dlg->setStyleSheet(kDialogQss);
     adjustHelpDialogSize(dlg, browser);
-    // QDialog 默认支持 Esc 关闭（触发 reject）
-    dlg->exec();
-    dlg->deleteLater();
+    // 非模态显示（用户可边看帮助边操作面板）
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
 }
 
 void TeachingPanelHeader::adjustHelpDialogSize(QDialog* dlg, QTextBrowser* browser) {
