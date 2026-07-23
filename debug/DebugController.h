@@ -53,12 +53,92 @@ public:
     // A5 fix: 委托给 DebugEvaluator，DebugController 不再直接持有回调
     void setConditionEvaluator(std::function<bool(const std::string&)> evaluator);
 
+    /// R104 Logpoint：设置日志输出回调（由 IDE 设置，接收日志字符串）。
+    /// Logpoint 命中时调用此回调输出格式化后的日志消息。
+    /// 若未设置，Logpoint 命中后日志被丢弃（仍递增 hitCount）。
+    void setLogCallback(std::function<void(const std::string&)> cb);
+
+    /// R104 Logpoint：设置断点类型（Line / Logpoint）
+    void setBreakpointKind(int line, BreakpointKind kind);
+
+    /// R104 Logpoint：获取断点类型
+    BreakpointKind getBreakpointKind(int line) const;
+
+    /// R104 Logpoint：设置 Logpoint 日志模板（如 "i={i}, sum={sum}"）。
+    /// 模板中的 {expr} 占位符在沙箱中求值后替换为对应的字符串表示。
+    void setLogpointMessage(int line, const std::string& msg);
+
+    /// R104 Logpoint：获取 Logpoint 日志模板
+    std::string getLogpointMessage(int line) const;
+
+    /// R104 Function Breakpoint：添加函数断点（按函数名）
+    void setFunctionBreakpoint(const std::string& functionName);
+
+    /// R104 Function Breakpoint：移除函数断点
+    void removeFunctionBreakpoint(const std::string& functionName);
+
+    /// R104 Function Breakpoint：批量设置函数断点（替换全部）
+    void setFunctionBreakpoints(const QSet<std::string>& names);
+
+    /// R104 Function Breakpoint：查询所有函数断点名
+    QSet<std::string> getFunctionBreakpoints() const;
+
+    /// R104 Function Breakpoint：设置函数断点条件
+    void setFunctionBreakpointCondition(const std::string& functionName, const std::string& condition);
+
+    /// R104 Function Breakpoint：获取函数断点条件
+    std::string getFunctionBreakpointCondition(const std::string& functionName) const;
+
+    /// R104 Function Breakpoint：获取函数断点命中次数
+    int getFunctionBreakpointHitCount(const std::string& functionName) const;
+
+    /// R104 Function Breakpoint：查询是否存在指定函数断点
+    bool hasFunctionBreakpoint(const std::string& functionName) const;
+
+    /// R104 Function Breakpoint：Interpreter 在 callNamedFunction / callClosureValue 入口调用。
+    /// 若函数名匹配且条件（可选）满足，则递增 hitCount 并通过 doPause 暂停。
+    /// @param functionName 被调用函数名
+    /// @param line 调用所在行号（用于 pausedAt 信号）
+    /// @return true 表示已暂停（调用方应在调用后立即检查 stopped_ 标志）
+    bool checkFunctionBreakpoint(const std::string& functionName, int line);
+
+    /// R104 Exception Breakpoint：启用/禁用异常断点（throw 前暂停）
+    void setExceptionBreakpointEnabled(bool enabled);
+
+    /// R104 Exception Breakpoint：查询异常断点是否启用
+    bool isExceptionBreakpointEnabled() const;
+
+    /// R104 Exception Breakpoint：获取异常断点命中次数
+    int getExceptionBreakpointHitCount() const;
+
+    /// R104 Exception Breakpoint：Interpreter 在 visitThrowStmt 抛出前调用。
+    /// 若异常断点启用，则递增 hitCount 并通过 doPause 暂停。
+    /// @param line throw 语句所在行号（用于 pausedAt 信号）
+    /// @return true 表示已暂停（调用方应在调用后立即检查 stopped_ 标志）
+    bool checkExceptionBreakpoint(int line);
+
     /// 步进控制
     void stepIn();
     void stepOver();
     void stepOut();
     void resume();
     void stop();
+
+    /// R98 runToCursor: 设置一次性临时断点（仅命中一次后自动清除）。
+    /// 调用此方法后调用 resume() 即可"运行到目标行"。
+    /// 与用户断点独立——临时断点命中后自动清除，不影响用户断点。
+    /// 已设置未命中的临时断点会被新调用覆盖（取最后一次目标行）。
+    /// @param line 目标行号（必须 > 0，否则忽略）
+    /// @note stop()/reset()/析构会清除临时断点
+    void setTemporaryBreakpoint(int line);
+
+    /// R98 runToCursor: 清除临时断点（手动取消/停止/重置时调用）。
+    /// 线程安全：pauseMutex_ 保护。
+    void clearTemporaryBreakpoint();
+
+    /// R98 runToCursor: 查询当前临时断点行号（调试/测试用）。
+    /// @return 临时断点行号；无临时断点时返回 -1
+    int getTemporaryBreakpoint() const;
 
     /// 设置当前调用深度（由 Interpreter 更新）
     void setCurrentDepth(int depth);
@@ -99,6 +179,12 @@ signals:
     /// 变量变更通知
     void variablesChanged();
 
+    /// R104 Logpoint：日志断点命中并完成日志输出后发射。
+    /// @param line Logpoint 所在行号
+    /// @param message 已格式化的日志消息（{expr} 占位符已求值替换）
+    /// @note 本信号在 worker 线程发射（与 pausedAt 同），UI 通过 Qt::QueuedConnection 安全接收
+    void logpointLogged(int line, const std::string& message);
+
 private:
     std::atomic<int> mode_{static_cast<int>(StepMode::MODE_RUN)}; // atomic for cross-thread access
     QSet<int> breakpoints_;                                       // 断点行号集合
@@ -119,6 +205,23 @@ private:
     std::atomic<bool> running_{false};        // #9 fix: atomic for cross-thread access
     std::atomic<bool> stopped_{false};        // #9 fix: atomic for cross-thread access
     std::atomic<bool> paused_{false};         // atomic for cross-thread access  // 是否处于暂停状态（等待用户操作）
+    // R98 runToCursor: 一次性临时断点。runToCursor 设置后由 checkBreak 慢速路径检测，
+    // 命中即清除并暂停。与 breakpoints_ 独立存储避免影响用户断点（BreakpointConditionPanel
+    // 显示/编辑不应感知临时断点）。由 pauseMutex_ 保护（worker 线程在 checkBreak 中读取）。
+    int tempBreakpointLine_ = -1; // -1 表示无临时断点；>0 为目标行号
+    // R98 runToCursor: 原子快速路径标志（与 hasBreakpoints_ 同级），临时断点存在时为 true。
+    // checkBreak 快速路径必须同时检查 hasBreakpoints_ 和 hasTempBreakpoint_ 才能无锁返回。
+    std::atomic<bool> hasTempBreakpoint_{false};
+
+    // R104 Function Breakpoint：函数名 → 详情。由 pauseMutex_ 保护（与 breakpoints_ 同锁）。
+    // Interpreter 在 callNamedFunction / callClosureValue 入口调用 checkFunctionBreakpoint 查询。
+    QMap<std::string, FunctionBreakpointInfo> functionBreakpoints_;
+    // R104 Exception Breakpoint：单一全局开关。由 pauseMutex_ 保护。
+    // Interpreter 在 visitThrowStmt 抛出前调用 checkExceptionBreakpoint 查询。
+    ExceptionBreakpointState exceptionBreakpoint_;
+    // R104 Logpoint：日志输出回调。锁外调用（与 outputCallback_ 同模式）。
+    // 命中 Logpoint 时通过此回调输出格式化后的日志消息。
+    std::function<void(const std::string&)> logCallback_;
 
     // A2: 线程安全的暂停/恢复机制（替代 QEventLoop）
     mutable std::mutex pauseMutex_; // P0-9 fix: mutable 以便 const 方法加锁
@@ -150,4 +253,12 @@ private:
     void updateLineTracking(int line, int snapCurrentDepth, int snapStepOverDepth, StepMode snapMode);
     /// 执行暂停（设置 paused_、emit pausedAt、阻塞等待）
     void doPause(int line, int snapCurrentDepth);
+
+    /// R104 Logpoint：格式化日志消息（{expr} 占位符求值替换）。
+    /// 通过 evaluator_ 在沙箱中求值每个 {expr}，结果用 Value::toString() 转字符串后替换。
+    /// 占位符语法：{表达式}，如 "i={i}, sum={sum}" 中 {i} 和 {sum} 被求值替换。
+    /// 不合法的占位符（解析失败/求值异常）保留原样不替换。
+    /// @param templateStr 日志模板
+    /// @param line Logpoint 所在行号（用于沙箱求值上下文）
+    std::string formatLogpointMessage(const std::string& templateStr, int line);
 };

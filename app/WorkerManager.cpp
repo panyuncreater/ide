@@ -1,5 +1,5 @@
 #include "WorkerManager.h"
-#include "Logger.h"
+#include "common/Logger.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>

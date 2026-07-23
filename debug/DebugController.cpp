@@ -1,6 +1,6 @@
 #include "debug/DebugController.h"
-#include "Logger.h"
 #include "ast/ASTNode.h"
+#include "common/Logger.h"
 #include "interpreter/RuntimeExceptions.h" // S6 fix: DebugStopException 定义
 #include <chrono>                          // AUDIT-P2-CORRECT fix: waitCallbacksIdle 超时
 #include <stdexcept>
@@ -18,6 +18,10 @@ DebugController::~DebugController() {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         paused_ = false;
         mode_.store(static_cast<int>(StepMode::MODE_RUN));
+        // R98 runToCursor: 析构时清除临时断点，防止 worker 线程在 ~DebugController
+        // 与 waitCallbacksIdle 之间的窗口内仍读取已失效的 tempBreakpointLine_。
+        tempBreakpointLine_ = -1;
+        hasTempBreakpoint_.store(false);
     }
     pauseCV_.notify_all();
     // AUDIT-P2-CORRECT fix: 防御性等待所有锁外 callback 完成，避免析构期间
@@ -38,8 +42,10 @@ void DebugController::checkBreak(ASTNode* node) {
     if (!running_)
         return;
 
-    // D-P1-1 fix: 原子快速路径——RUN 模式且无断点时，无锁返回
-    if (static_cast<StepMode>(mode_.load()) == StepMode::MODE_RUN && !hasBreakpoints_.load()) {
+    // D-P1-1 fix: 原子快速路径——RUN 模式且无断点（含 R98 临时断点）时，无锁返回
+    // R98 runToCursor: 必须同时检查 hasTempBreakpoint_，否则临时断点会被无锁跳过
+    if (static_cast<StepMode>(mode_.load()) == StepMode::MODE_RUN && !hasBreakpoints_.load() &&
+        !hasTempBreakpoint_.load()) {
         // PERF-ROUND53 fix: 移除快速路径的 updateLineTracking 调用。
         // 原实现每节点执行 2 次原子 load + 1-2 次原子 store（crossedLine_/lastSeenLine_），
         // 在紧密循环百万级节点中累积可观开销。快速路径前提是无断点，此时
@@ -57,6 +63,7 @@ void DebugController::checkBreak(ASTNode* node) {
     int snapCurrentDepth, snapStepOverDepth, snapStepOutDepth;
     int snapLastPausedLine, snapLastPausedDepth, snapMinBreakpointLine;
     bool snapCrossedDeeper;
+    int snapTempBreakpointLine; // R98 runToCursor: 临时断点行号快照
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         snapMode = static_cast<StepMode>(mode_.load());
@@ -69,10 +76,12 @@ void DebugController::checkBreak(ASTNode* node) {
         snapLastPausedDepth = lastPausedDepth_.load();
         snapMinBreakpointLine = minBreakpointLine_;
         snapCrossedDeeper = crossedDeeper_.load();
+        snapTempBreakpointLine = tempBreakpointLine_;
     }
 
     // 慢速路径中的二次确认（hasBreakpoints_ 原子读可能与锁内状态有微小窗口）
-    if (snapMode == StepMode::MODE_RUN && localBreakpoints.empty()) {
+    // R98 runToCursor: 必须同时考虑临时断点存在性
+    if (snapMode == StepMode::MODE_RUN && localBreakpoints.empty() && snapTempBreakpointLine < 0) {
         updateLineTracking(node->line, 0, 0, StepMode::MODE_RUN);
         return;
     }
@@ -88,6 +97,22 @@ void DebugController::checkBreak(ASTNode* node) {
     // updateLineTracking 覆盖为 true（line != lastSeenLine_），导致 resume 后
     // 同行下一个 AST 子表达式断点重复触发。
     updateLineTracking(node->line, snapCurrentDepth, snapStepOverDepth, snapMode);
+
+    // R98 runToCursor: 临时断点检测——优先于用户断点和步进逻辑判断。
+    // 仅在 MODE_RUN 下检测（与 setTemporaryBreakpoint 后调用 resume() 的预期一致）；
+    // 不要求 crossedLine_（临时断点首次到达即命中，无需"跨行后重触发"语义，因为
+    // 它是一次性的）。命中后立即清除临时断点字段，防止再次触发。
+    if (snapMode == StepMode::MODE_RUN && snapTempBreakpointLine > 0 && node->line == snapTempBreakpointLine) {
+        {
+            std::lock_guard<std::mutex> lock(pauseMutex_);
+            tempBreakpointLine_ = -1;
+            hasTempBreakpoint_.store(false);
+        }
+        // 临时断点命中视为断点事件，重置 crossedLine_ 避免同行后续子表达式误触发用户断点
+        crossedLine_.store(false);
+        doPause(node->line, snapCurrentDepth);
+        return;
+    }
 
     // C11 fix: 委托给助手方法判断是否应暂停
     bool shouldPause = false;
@@ -131,6 +156,47 @@ bool DebugController::shouldPauseAtBreakpoint(int line, const QSet<int>& localBr
         // 单行循环中行号不变 → crossedLine_ 永不再变 true → 条件断点首次不满足后永不再触发。
         // 检查是否为条件断点
         auto infoIt = localBreakpointInfos.find(line);
+        // R104 Logpoint：命中不暂停，仅输出日志并递增 hitCount
+        // Logpoint 仍可附加条件（条件为真时才输出日志）
+        if (infoIt != localBreakpointInfos.end() && infoIt->isLogpoint()) {
+            bool shouldLog = true;
+            if (infoIt->isConditional()) {
+                if (evaluator_ && evaluator_->hasCallback()) {
+                    shouldLog = evaluator_->evaluate(infoIt->condition, line);
+                } else {
+                    shouldLog = false; // 无求值器，条件 Logpoint 视为不命中
+                }
+            }
+            if (shouldLog) {
+                // 递增 hitCount（锁内）
+                {
+                    std::lock_guard<std::mutex> lock(pauseMutex_);
+                    auto realIt = breakpointInfos_.find(line);
+                    if (realIt != breakpointInfos_.end())
+                        realIt->hitCount++;
+                }
+                // 格式化日志消息并输出（锁外，避免持锁回调死锁）
+                std::string logMsg = formatLogpointMessage(infoIt->logMessage, line);
+                std::function<void(const std::string&)> cb;
+                {
+                    std::lock_guard<std::mutex> lock(pauseMutex_);
+                    cb = logCallback_;
+                }
+                if (cb) {
+                    try {
+                        cb(logMsg);
+                    } catch (...) {
+                        // 日志回调异常被吞掉，避免影响程序执行
+                    }
+                }
+                // 发射 logpointLogged 信号（UI 通过 Qt::QueuedConnection 接收）
+                emit logpointLogged(line, logMsg);
+                // Logpoint 命中后重置 crossedLine_，同行后续子表达式不再触发
+                crossedLine_.store(false);
+            }
+            // Logpoint 永远不暂停
+            return false;
+        }
         if (infoIt != localBreakpointInfos.end() && infoIt->isConditional()) {
             // A5 fix: 委托给 DebugEvaluator 求值（异常处理 + 日志已封装）
             if (evaluator_ && evaluator_->hasCallback()) {
@@ -357,6 +423,247 @@ void DebugController::setConditionEvaluator(std::function<bool(const std::string
     evaluator_->setCallback(std::move(evaluator));
 }
 
+// ============================================================
+// R104 调试器拓展：Logpoint / Function Breakpoint / Exception Breakpoint
+// ============================================================
+//
+// 设计原则：
+// - Logpoint 复用 BreakpointInfo（同为行锚点），通过 kind 字段区分
+// - Function/Exception Breakpoint 独立存储（不依赖行号）
+// - 三类断点共享 doPause() 暂停机制与 pausedAt 信号
+// - 线程安全：所有存储由 pauseMutex_ 保护（与现有断点同锁）
+// ============================================================
+
+void DebugController::setLogCallback(std::function<void(const std::string&)> cb) {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    logCallback_ = std::move(cb);
+}
+
+void DebugController::setBreakpointKind(int line, BreakpointKind kind) {
+    if (line <= 0)
+        return;
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    // 确保断点存在
+    if (!breakpoints_.contains(line)) {
+        breakpoints_.insert(line);
+        if (!breakpointInfos_.contains(line)) {
+            breakpointInfos_.insert(line, BreakpointInfo(line));
+        }
+        updateMinBreakpointLine();
+        hasBreakpoints_.store(!breakpoints_.empty());
+    }
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        it->kind = kind;
+        // 切换为 Line 时清空 logMessage（避免残留）
+        if (kind == BreakpointKind::Line) {
+            it->logMessage.clear();
+        }
+        it->hitCount = 0; // 类型变更时重置命中计数
+    }
+}
+
+BreakpointKind DebugController::getBreakpointKind(int line) const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        return it->kind;
+    }
+    return BreakpointKind::Line;
+}
+
+void DebugController::setLogpointMessage(int line, const std::string& msg) {
+    if (line <= 0)
+        return;
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    if (!breakpoints_.contains(line)) {
+        breakpoints_.insert(line);
+        if (!breakpointInfos_.contains(line)) {
+            breakpointInfos_.insert(line, BreakpointInfo(line));
+        }
+        updateMinBreakpointLine();
+        hasBreakpoints_.store(!breakpoints_.empty());
+    }
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        it->kind = BreakpointKind::Logpoint;
+        it->logMessage = msg;
+        it->hitCount = 0; // 消息变更时重置命中计数
+    }
+}
+
+std::string DebugController::getLogpointMessage(int line) const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        return it->logMessage;
+    }
+    return "";
+}
+
+std::string DebugController::formatLogpointMessage(const std::string& templateStr, int line) {
+    // R104 v1 实现：直接返回模板字符串，不进行 {expr} 插值。
+    // {expr} 插值需要新增返回 string 的求值器回调（与现有 bool 条件求值器独立），
+    // 涉及 Interpreter::evaluateExpressionString 新 API + 沙箱求值扩展。
+    // v1 提供"非暂停日志断点"核心价值：用户可设置带条件的 Logpoint，
+    // 条件为真时输出固定消息，追踪程序执行流而不暂停。
+    // 后续可拓展 {expr} 插值：扫描模板中的 {...} 模式，对每个 expr 调用
+    // logpointEvaluator_(expr) 获取字符串表示并替换。
+    (void)line; // 预留：未来插值需要行号上下文
+    return templateStr;
+}
+
+void DebugController::setFunctionBreakpoint(const std::string& functionName) {
+    if (functionName.empty())
+        return;
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    if (!functionBreakpoints_.contains(functionName)) {
+        functionBreakpoints_.insert(functionName, FunctionBreakpointInfo(functionName));
+    }
+}
+
+void DebugController::removeFunctionBreakpoint(const std::string& functionName) {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    functionBreakpoints_.remove(functionName);
+}
+
+void DebugController::setFunctionBreakpoints(const QSet<std::string>& names) {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    // 保留已有命中次数（对齐 setBreakpoints 的 P0-10 fix 语义）
+    QMap<std::string, FunctionBreakpointInfo> newMap;
+    for (const auto& name : names) {
+        if (name.empty())
+            continue;
+        auto it = functionBreakpoints_.find(name);
+        if (it != functionBreakpoints_.end()) {
+            newMap.insert(name, it.value());
+        } else {
+            newMap.insert(name, FunctionBreakpointInfo(name));
+        }
+    }
+    functionBreakpoints_ = std::move(newMap);
+}
+
+QSet<std::string> DebugController::getFunctionBreakpoints() const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    QSet<std::string> result;
+    for (auto it = functionBreakpoints_.begin(); it != functionBreakpoints_.end(); ++it) {
+        result.insert(it.key());
+    }
+    return result;
+}
+
+void DebugController::setFunctionBreakpointCondition(const std::string& functionName, const std::string& condition) {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    auto it = functionBreakpoints_.find(functionName);
+    if (it != functionBreakpoints_.end()) {
+        it->condition = condition;
+        it->hitCount = 0; // 条件变更时重置命中计数（对齐 setBreakpointCondition 语义）
+    } else {
+        // 函数断点不存在时自动创建（对齐 setBreakpointCondition 行为）
+        FunctionBreakpointInfo info(functionName);
+        info.condition = condition;
+        functionBreakpoints_.insert(functionName, std::move(info));
+    }
+}
+
+std::string DebugController::getFunctionBreakpointCondition(const std::string& functionName) const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    auto it = functionBreakpoints_.find(functionName);
+    if (it != functionBreakpoints_.end()) {
+        return it->condition;
+    }
+    return "";
+}
+
+int DebugController::getFunctionBreakpointHitCount(const std::string& functionName) const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    auto it = functionBreakpoints_.find(functionName);
+    if (it != functionBreakpoints_.end()) {
+        return it->hitCount;
+    }
+    return 0;
+}
+
+bool DebugController::hasFunctionBreakpoint(const std::string& functionName) const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    return functionBreakpoints_.contains(functionName);
+}
+
+bool DebugController::checkFunctionBreakpoint(const std::string& functionName, int line) {
+    // 快速路径：无函数断点时立即返回（避免每次函数调用都加锁）
+    // 注：functionBreakpoints_ 由 pauseMutex_ 保护，但读取 emptiness 需要锁。
+    // 此处先取锁内快照判断，避免漏检。
+    FunctionBreakpointInfo snapshot;
+    bool matched = false;
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        if (!running_ || stopped_)
+            return false;
+        auto it = functionBreakpoints_.find(functionName);
+        if (it == functionBreakpoints_.end())
+            return false;
+        snapshot = it.value();
+        matched = true;
+    }
+
+    // 条件求值（锁外，避免持锁回调死锁）
+    if (snapshot.isConditional()) {
+        if (evaluator_ && evaluator_->hasCallback()) {
+            if (!evaluator_->evaluate(snapshot.condition, line)) {
+                return false; // 条件不满足
+            }
+        } else {
+            return false; // 无求值器，条件断点视为不命中
+        }
+    }
+
+    // 命中：递增 hitCount 并暂停
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        auto it = functionBreakpoints_.find(functionName);
+        if (it != functionBreakpoints_.end()) {
+            it->hitCount++;
+        }
+    }
+    doPause(line, currentDepth_.load());
+    return true;
+}
+
+void DebugController::setExceptionBreakpointEnabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    exceptionBreakpoint_.enabled = enabled;
+}
+
+bool DebugController::isExceptionBreakpointEnabled() const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    return exceptionBreakpoint_.enabled;
+}
+
+int DebugController::getExceptionBreakpointHitCount() const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    return exceptionBreakpoint_.hitCount;
+}
+
+bool DebugController::checkExceptionBreakpoint(int line) {
+    bool enabled = false;
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        if (!running_ || stopped_)
+            return false;
+        enabled = exceptionBreakpoint_.enabled;
+    }
+    if (!enabled)
+        return false;
+
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        exceptionBreakpoint_.hitCount++;
+    }
+    doPause(line, currentDepth_.load());
+    return true;
+}
+
 void DebugController::stepIn() {
     LOG_DEBUG("Step In", "Debugger");
     // P1-8 fix: 消除 TOCTOU。原实现先无锁检查 !running_ 决定走快速路径（无 CV notify），
@@ -436,8 +743,35 @@ void DebugController::stop() {
     {
         std::lock_guard<std::mutex> lock(pauseMutex_);
         paused_ = false;
+        // R98 runToCursor: stop() 清除临时断点。用户主动停止调试时，残留的临时断点
+        // 不应跨调试会话存活——下次启动调试时若 tempBreakpointLine_ 仍为旧值，
+        // checkBreak 慢速路径会在目标行意外暂停。
+        tempBreakpointLine_ = -1;
+        hasTempBreakpoint_.store(false);
     }
     pauseCV_.notify_one();
+}
+
+// R98 runToCursor: 一次性临时断点 API 实现。
+// 临时断点与用户断点独立存储（tempBreakpointLine_ 单值 vs breakpoints_ 集合），
+// 命中后立即清除（checkBreak 中处理），不污染 BreakpointConditionPanel 显示。
+void DebugController::setTemporaryBreakpoint(int line) {
+    if (line <= 0)
+        return;
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    tempBreakpointLine_ = line;
+    hasTempBreakpoint_.store(true);
+}
+
+void DebugController::clearTemporaryBreakpoint() {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    tempBreakpointLine_ = -1;
+    hasTempBreakpoint_.store(false);
+}
+
+int DebugController::getTemporaryBreakpoint() const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    return tempBreakpointLine_;
 }
 
 void DebugController::setCurrentDepth(int depth) {
@@ -571,6 +905,10 @@ void DebugController::reset() {
             for (auto it = breakpointInfos_.begin(); it != breakpointInfos_.end(); ++it) {
                 it->hitCount = 0;
             }
+            // R98 runToCursor: reset() 清除临时断点。新调试会话不应继承上一次会话的
+            // runToCursor 目标行，否则首次 RUN 模式 checkBreak 慢速路径会立即触发暂停。
+            tempBreakpointLine_ = -1;
+            hasTempBreakpoint_.store(false);
         }
     }
     if (!locked) {

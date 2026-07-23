@@ -1,5 +1,5 @@
 #include "IdeController.h"
-#include "Logger.h"
+#include "common/Logger.h"
 #include "interpreter/Environment.h" // #4 fix: VM 条件断点求值
 #include "interpreter/Interpreter.h" // P0-3 fix: currentEnvironment() 访问
 #include "lexer/Lexer.h"             // #4 fix: VM 条件断点求值
@@ -264,6 +264,9 @@ bool IdeController::prepareRun(bool isDebug, const std::string& source, const st
         vmStepper_.setCompileResult(pipeline_.lastCompileResult());
     }
 
+    // R121: 新运行启动时清除上一轮选中帧（不应继承到新调试会话）
+    clearSelectedFrame();
+
     // OPT-1: 新运行已就绪，通知订阅面板刷新（CallStack/VariableInspector 等显示运行状态）。
     notifyVmStateChanged();
     return true;
@@ -392,6 +395,275 @@ std::string IdeController::runStringCaptureOutput(const std::string& source) {
         return std::string("!ERROR: ") + e.what();
     } catch (...) {
         return std::string("!ERROR: Unknown exception");
+    }
+}
+
+// ============================================================
+// R117 Watch 表达式求值（调试器拓展）
+// ------------------------------------------------------------
+// 在当前调试暂停上下文中求值用户输入的表达式，返回完整 Value 信息供
+// WatchPanel 显示。实现策略与 setConditionEvaluator 一致：
+//   1. 自动补充分号（用户输入通常不带分号）
+//   2. LRU 缓存 AST（32 条上限），避免循环内重复 Lexer+Parser
+//   3. 创建临时 Interpreter + 沙箱 Environment，注入 globals/locals
+//   4. 若存在 this 且为实例，绑定 boundInstance_ 使裸字段名可访问
+//   5. evaluateCondition 返回 Value（沙箱化，状态自动恢复），
+//      WatchPanel 用完整 Value 而非 isTruthy() 展示类型+值
+//
+// 与条件断点求值的区别：
+//   - 条件断点求值仅返回 bool（isTruthy），Watch 返回完整 Value
+//   - 条件断点求值仅覆盖 VM 路径（VmStepper 回调），Watch 同时覆盖
+//     VM 路径与 Interpreter 调试暂停路径（直接调用，无 worker 线程冲突）
+//   - 条件断点求值的 LRU 缓存在 lambda 闭包内（VmStepper 持有），
+//     Watch 的 LRU 缓存在 IdeController 成员中（多次调用共享）
+//
+// 线程安全：本方法在 GUI 线程调用，访问的 vmStepper_/debugCoord_ 状态
+// 在暂停期间稳定（VM 暂停 / Interpreter 在 worker 线程暂停中），
+// 与 setConditionEvaluator 的线程模型一致。
+// ============================================================
+
+// 静态 LRU 缓存上限（与条件断点 AST 缓存对齐）
+namespace {
+constexpr size_t WATCH_AST_CACHE_MAX = 32;
+}
+
+// ============================================================
+// R121 调用栈帧切换：获取所选帧的局部变量
+// ------------------------------------------------------------
+// 实现已移至 IdeController.h 内联定义（R121-build fix）。
+// 原因：VariableInspectorPanel.cpp 调用此方法，但 minilang_tests 不链接
+// IdeController.cpp。改为 inline 使符号在调用方编译单元内可见。
+// ============================================================
+
+IdeController::WatchResult IdeController::evaluateWatchExpression(const std::string& expr) {
+    WatchResult result;
+    if (expr.empty()) {
+        result.error = "表达式为空";
+        return result;
+    }
+
+    // 判定当前暂停模式，收集要注入的变量
+    bool vmMode = vmStepper_.isRunning() || vmStepper_.isInitialized();
+    bool interpPaused = debugCoord_.isPaused();
+    if (!vmMode && !interpPaused) {
+        result.error = "未在调试暂停状态（请先调试运行并命中断点）";
+        return result;
+    }
+
+    try {
+        // ---- 1. 自动补充分号 + LRU AST 缓存 ----
+        std::string normExpr = expr;
+        if (!normExpr.empty() && normExpr.back() != ';') {
+            normExpr += ';';
+        }
+        std::shared_ptr<Block> ast;
+        auto lookupIt = watchAstCacheLookup_.find(normExpr);
+        if (lookupIt != watchAstCacheLookup_.end()) {
+            // 命中：move_to_front（最近使用）
+            watchAstCacheList_.splice(watchAstCacheList_.begin(), watchAstCacheList_, lookupIt->second);
+            ast = lookupIt->second->second;
+        } else {
+            Lexer lexer;
+            auto tokens = lexer.scan(normExpr);
+            Parser parser;
+            auto parsed = parser.parse(tokens);
+            if (!parsed || parsed->statements.empty() || parser.getDiagnostics().hasErrors()) {
+                result.error = "表达式解析失败";
+                return result;
+            }
+            ast = std::shared_ptr<Block>(std::move(parsed));
+            // LRU 淘汰：超上限时移除最久未使用（链表尾部）
+            if (watchAstCacheList_.size() >= WATCH_AST_CACHE_MAX) {
+                watchAstCacheLookup_.erase(watchAstCacheList_.back().first);
+                watchAstCacheList_.pop_back();
+            }
+            watchAstCacheList_.emplace_front(normExpr, ast);
+            watchAstCacheLookup_[normExpr] = watchAstCacheList_.begin();
+        }
+
+        // ---- 2. 创建临时 Interpreter + 注入变量 ----
+        Interpreter tempInterp;
+        auto env = std::make_shared<Environment>();
+        if (vmMode) {
+            // VM 模式：注入 VM globals + 所选帧 locals（局部变量遮蔽同名全局）
+            for (const auto& kv : vmStepper_.getGlobals()) {
+                env->define(kv.first, kv.second);
+            }
+            // R121: 用 getSelectedFrameLocals() 替代 getCurrentFrameLocals()，
+            // 支持用户切换到调用栈任意帧查看该帧上下文。selectedFrame_ == -1 时
+            // 返回栈顶 locals（与原 getCurrentFrameLocals 行为一致，向后兼容）。
+            for (const auto& kv : getSelectedFrameLocals()) {
+                env->define(kv.first, kv.second);
+            }
+        } else {
+            // Interpreter 调试暂停模式：
+            // - 注入全局 + 栈顶 upvalue/locals 快照（保持 R117 行为）
+            // - 若 selectedFrame_ >= 0，用所选帧 locals 覆盖（R121 帧切换）
+            //   env->define 同名变量后写覆盖前写，实现"切换到帧 N 时看到帧 N 的 locals"
+            for (const auto& snap : debugCoord_.getDebugVariableSnapshot()) {
+                env->define(snap.name, snap.value);
+            }
+            if (selectedFrame_ >= 0) {
+                for (const auto& kv : getSelectedFrameLocals()) {
+                    env->define(kv.first, kv.second);
+                }
+            }
+        }
+        // this 绑定：若存在 this 变量且为实例，绑定 boundInstance_ 使裸字段名
+        // 可回退解析实例字段（与方法体执行语义一致）。
+        auto& vars = env->localVariables();
+        auto thisIt = vars.find("this");
+        if (thisIt != vars.end() && thisIt->second.isInstance()) {
+            env->bindInstance(const_cast<Value*>(&thisIt->second));
+        }
+        tempInterp.setGlobalEnvironment(env);
+
+        // ---- 3. 沙箱求值，返回完整 Value ----
+        Value v = tempInterp.evaluateCondition(ast->statements[0].get());
+        result.ok = true;
+        result.value = v;
+        result.typeName = v.typeName();
+        result.valueRepr = v.toString();
+        return result;
+    } catch (const std::exception& e) {
+        result.error = std::string("求值异常: ") + e.what();
+        LOG_WARNING("Watch 表达式求值异常: " + result.error + "（表达式: " + expr + "）", "IdeController");
+        return result;
+    } catch (...) {
+        result.error = "求值异常: 未知错误";
+        return result;
+    }
+}
+
+// ---- R161 调试器 REPL 求值 ----
+// 与 evaluateWatchExpression 的核心区别：
+// 1. 允许多条语句（Block 而非单表达式），用 executeRepl 执行整个 Block
+// 2. 允许 var/print/赋值语句，临时 Interpreter 独立实例天然隔离副作用
+// 3. 捕获 print 输出到 output 参数（供 ReplPanel 显示）
+// 4. 不做沙箱恢复（evaluateCondition 的 SandboxGuard 会撤销赋值，调试器 REPL 不需要）
+IdeController::WatchResult IdeController::evaluateDebuggerRepl(const std::string& source, std::string* output) {
+    WatchResult result;
+    if (source.empty()) {
+        result.error = "输入为空";
+        return result;
+    }
+
+    // 判定当前暂停模式，收集要注入的变量
+    bool vmMode = vmStepper_.isRunning() || vmStepper_.isInitialized();
+    bool interpPaused = debugCoord_.isPaused();
+    if (!vmMode && !interpPaused) {
+        result.error = "未在调试暂停状态（请先调试运行并命中断点）";
+        return result;
+    }
+
+    try {
+        // ---- 1. 自动补充分号 + LRU AST 缓存 ----
+        std::string normSource = source;
+        if (!normSource.empty() && normSource.back() != ';') {
+            normSource += ';';
+        }
+        std::shared_ptr<Block> ast;
+        auto lookupIt = watchAstCacheLookup_.find(normSource);
+        if (lookupIt != watchAstCacheLookup_.end()) {
+            watchAstCacheList_.splice(watchAstCacheList_.begin(), watchAstCacheList_, lookupIt->second);
+            ast = lookupIt->second->second;
+        } else {
+            Lexer lexer;
+            auto tokens = lexer.scan(normSource);
+            Parser parser;
+            auto parsed = parser.parse(tokens);
+            if (!parsed || parsed->statements.empty() || parser.getDiagnostics().hasErrors()) {
+                // 解析失败时尝试提取诊断信息
+                const auto& diags = parser.getDiagnostics();
+                if (!diags.all().empty()) {
+                    result.error = "语法错误: " + diags.all()[0].message;
+                } else {
+                    result.error = "语法解析失败";
+                }
+                return result;
+            }
+            ast = std::shared_ptr<Block>(std::move(parsed));
+            if (watchAstCacheList_.size() >= WATCH_AST_CACHE_MAX) {
+                watchAstCacheLookup_.erase(watchAstCacheList_.back().first);
+                watchAstCacheList_.pop_back();
+            }
+            watchAstCacheList_.emplace_front(normSource, ast);
+            watchAstCacheLookup_[normSource] = watchAstCacheList_.begin();
+        }
+
+        // ---- 2. 创建临时 Interpreter + 注入变量（与 evaluateWatchExpression 一致）----
+        Interpreter tempInterp;
+        auto env = std::make_shared<Environment>();
+        if (vmMode) {
+            for (const auto& kv : vmStepper_.getGlobals()) {
+                env->define(kv.first, kv.second);
+            }
+            for (const auto& kv : getSelectedFrameLocals()) {
+                env->define(kv.first, kv.second);
+            }
+        } else {
+            for (const auto& snap : debugCoord_.getDebugVariableSnapshot()) {
+                env->define(snap.name, snap.value);
+            }
+            if (selectedFrame_ >= 0) {
+                for (const auto& kv : getSelectedFrameLocals()) {
+                    env->define(kv.first, kv.second);
+                }
+            }
+        }
+        // this 绑定
+        auto& vars = env->localVariables();
+        auto thisIt = vars.find("this");
+        if (thisIt != vars.end() && thisIt->second.isInstance()) {
+            env->bindInstance(const_cast<Value*>(&thisIt->second));
+        }
+        tempInterp.setGlobalEnvironment(env);
+
+        // ---- R161 阶段 2：注入函数/类/枚举注册表 ----
+        // 从主 Interpreter 复制注册表，使调试器 REPL 中可调用用户定义的
+        // 函数/类/枚举。shared_ptr<FunDecl> 共享所有权，AST 在主 Interpreter
+        // 析构前有效（主 Interpreter 由 IdeController 持有，生命期长于 tempInterp）。
+        //
+        // 线程安全：Interpreter 调试暂停期 worker 阻塞在 pauseCV_，
+        // VM 暂停期主 Interpreter 空闲，复制注册表安全。
+        //
+        // 边界：主 Interpreter 未运行过（如直接用 VM 调试从未 Run Interpreter）
+        // 时 hasRegistries()=false，跳过注入，REPL 仅能访问变量不能调用函数。
+        if (interpreter_ && interpreter_->hasRegistries()) {
+            tempInterp.injectRegistriesFrom(*interpreter_);
+        }
+
+        // ---- 3. 捕获 print 输出 ----
+        std::string capturedOutput;
+        if (output) {
+            tempInterp.setOutputCallback([&capturedOutput](const std::string& s) {
+                capturedOutput += s;
+                capturedOutput += '\n';
+            });
+        }
+
+        // ---- 4. 用 executeRepl 执行整个 Block（多条语句，不做沙箱恢复）----
+        // 临时 Interpreter 是独立实例，赋值/var 声明的副作用仅影响 tempInterp 的 env，
+        // 不写回主程序的 VM/Interpreter 状态（阶段1只读语义）。
+        Value v = tempInterp.executeRepl(*ast);
+        result.ok = true;
+        result.value = v;
+        result.typeName = v.typeName();
+        result.valueRepr = v.toString();
+        if (output) {
+            *output = capturedOutput;
+        }
+        return result;
+    } catch (const RuntimeError& e) {
+        result.error = std::string("运行时错误: ") + e.what();
+        return result;
+    } catch (const std::exception& e) {
+        result.error = std::string("求值异常: ") + e.what();
+        LOG_WARNING("调试器 REPL 求值异常: " + result.error + "（源码: " + source + "）", "IdeController");
+        return result;
+    } catch (...) {
+        result.error = "求值异常: 未知错误";
+        return result;
     }
 }
 

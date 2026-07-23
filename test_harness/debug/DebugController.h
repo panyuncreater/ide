@@ -53,6 +53,32 @@ public:
     void setBreakpointCondition(int line, const std::string& cond);
     void setConditionEvaluator(std::function<bool(const std::string&)> eval);
 
+    // R104 Logpoint：日志断点 API（与生产版 DebugController 同步）。
+    // 桩实现仅记录状态，不实际输出日志（无 UI 通道）。
+    void setLogCallback(std::function<void(const std::string&)> cb);
+    void setBreakpointKind(int line, BreakpointKind kind);
+    BreakpointKind getBreakpointKind(int line) const;
+    void setLogpointMessage(int line, const std::string& msg);
+    std::string getLogpointMessage(int line) const;
+
+    // R104 Function Breakpoint：函数断点 API（与生产版同步）。
+    // 桩实现仅记录状态，checkFunctionBreakpoint 在测试中可被手动调用。
+    void setFunctionBreakpoint(const std::string& functionName);
+    void removeFunctionBreakpoint(const std::string& functionName);
+    void setFunctionBreakpoints(const std::set<std::string>& names);
+    std::set<std::string> getFunctionBreakpoints() const;
+    void setFunctionBreakpointCondition(const std::string& functionName, const std::string& cond);
+    std::string getFunctionBreakpointCondition(const std::string& functionName) const;
+    int getFunctionBreakpointHitCount(const std::string& functionName) const;
+    bool hasFunctionBreakpoint(const std::string& functionName) const;
+    bool checkFunctionBreakpoint(const std::string& functionName, int line);
+
+    // R104 Exception Breakpoint：异常断点 API（与生产版同步）。
+    void setExceptionBreakpointEnabled(bool enabled);
+    bool isExceptionBreakpointEnabled() const;
+    int getExceptionBreakpointHitCount() const;
+    bool checkExceptionBreakpoint(int line);
+
     // 回调注册：变量快照与调用栈采集回调，供暂停时记录上下文。
     void setVariableCallback(std::function<std::vector<VariableSnapshot>()> cb);
     void setCallStackCallback(std::function<std::vector<CallStackEntry>()> cb);
@@ -71,11 +97,15 @@ public:
     const std::vector<DebugPauseEvent>& pauseEvents() const;
     int maxDepthSeen() const;
 
+    // R104 测试访问：暴露 Logpoint 日志记录与命中次数（仅桩实现提供）。
+    const std::vector<std::pair<int, std::string>>& logpointLogs() const;
+    int logpointHitCount(int line) const;
+
 private:
     // 每实例调试状态：当前模式、断点集合、条件、栈深度跟踪与各帧/行号去重标志。
     StepMode mode_ = StepMode::MODE_RUN;
     std::set<int> breakpoints_;
-    std::map<int, std::string> breakpointConditions_;
+    std::map<int, BreakpointInfo> breakpointInfos_;
     std::function<bool(const std::string&)> conditionEvaluator_;
     int currentDepth_ = 0;
     int stepOverDepth_ = 0;
@@ -99,4 +129,11 @@ private:
 
     std::function<std::vector<VariableSnapshot>()> variableCallback_;
     std::function<std::vector<CallStackEntry>()> callStackCallback_;
+
+    // R104 新断点存储
+    std::function<void(const std::string&)> logCallback_;
+    std::map<std::string, FunctionBreakpointInfo> functionBreakpoints_;
+    ExceptionBreakpointState exceptionBreakpoint_;
+    // 测试访问：记录 Logpoint 命中事件（行号, 消息）
+    std::vector<std::pair<int, std::string>> logpointLogs_;
 };

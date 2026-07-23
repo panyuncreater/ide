@@ -112,18 +112,51 @@ void DebugController::checkBreak(ASTNode* node) {
         break;
     case StepMode::MODE_RUN:
         // BUG-DBG-14 fix: 条件断点求值 + crossedLine_ 机制
+        // R104 Logpoint: 命中不暂停，仅输出日志并递增 hitCount
         if (breakpoints_.count(line) > 0) {
-            // 检查是否有条件
-            auto condIt = breakpointConditions_.find(line);
-            if (condIt == breakpointConditions_.end() || condIt->second.empty()) {
+            auto infoIt = breakpointInfos_.find(line);
+            // R104 Logpoint 分支：命中不暂停，仅记录日志
+            if (infoIt != breakpointInfos_.end() && infoIt->second.isLogpoint()) {
+                bool shouldLog = true;
+                if (infoIt->second.isConditional()) {
+                    if (conditionEvaluator_) {
+                        shouldLog = conditionEvaluator_(infoIt->second.condition);
+                    } else {
+                        shouldLog = false;
+                    }
+                }
+                if (shouldLog && (line != lastPausedLine_ || crossedLine_)) {
+                    infoIt->second.hitCount++;
+                    std::string logMsg = infoIt->second.logMessage;
+                    logpointLogs_.push_back({line, logMsg});
+                    if (logCallback_) {
+                        try {
+                            logCallback_(logMsg);
+                        } catch (...) {
+                            // 吞掉日志回调异常
+                        }
+                    }
+                    crossedLine_ = false;
+                }
+                // Logpoint 永不暂停
+                shouldPause = false;
+            } else if (infoIt != breakpointInfos_.end() && infoIt->second.isConditional()) {
+                // 条件断点：求值为真才暂停，用 crossedLine_ 允许单行循环重新触发
+                if (conditionEvaluator_) {
+                    shouldPause = conditionEvaluator_(infoIt->second.condition)
+                        && (line != lastPausedLine_ || crossedLine_);
+                    if (shouldPause) {
+                        infoIt->second.hitCount++;
+                    }
+                }
+                // 无求值器时视为条件不满足（不暂停）
+            } else {
                 // 无条件断点：用 crossedLine_ 避免同行重复触发
                 shouldPause = (line != lastPausedLine_ || crossedLine_);
-            } else if (conditionEvaluator_) {
-                // 条件断点：求值为真才暂停，用 crossedLine_ 允许单行循环重新触发
-                shouldPause = conditionEvaluator_(condIt->second)
-                    && (line != lastPausedLine_ || crossedLine_);
+                if (shouldPause && infoIt != breakpointInfos_.end()) {
+                    infoIt->second.hitCount++;
+                }
             }
-            // 无求值器时视为条件不满足（不暂停）
         }
         break;
     }
@@ -161,16 +194,45 @@ void DebugController::checkBreak(ASTNode* node) {
 // ── Breakpoint management ──────────────────────────────────────────
 
 // 断点增删查：以行号为键维护断点集合。
-void DebugController::setBreakpoint(int line) { breakpoints_.insert(line); }
-void DebugController::removeBreakpoint(int line) { breakpoints_.erase(line); }
+void DebugController::setBreakpoint(int line) {
+    breakpoints_.insert(line);
+    if (breakpointInfos_.find(line) == breakpointInfos_.end()) {
+        breakpointInfos_[line] = BreakpointInfo(line);
+    }
+}
+void DebugController::removeBreakpoint(int line) {
+    breakpoints_.erase(line);
+    breakpointInfos_.erase(line);
+}
 bool DebugController::hasBreakpoint(int line) const { return breakpoints_.count(line) > 0; }
 
 // 批量覆盖式设置断点集合。
-void DebugController::setBreakpoints(const std::set<int>& lines) { breakpoints_ = lines; }
+void DebugController::setBreakpoints(const std::set<int>& lines) {
+    // 保留已有断点信息（hitCount/condition）
+    std::map<int, BreakpointInfo> newInfos;
+    for (int line : lines) {
+        auto it = breakpointInfos_.find(line);
+        if (it != breakpointInfos_.end()) {
+            newInfos[line] = it->second;
+        } else {
+            newInfos[line] = BreakpointInfo(line);
+        }
+    }
+    breakpoints_ = lines;
+    breakpointInfos_ = std::move(newInfos);
+}
 
 // 为指定行号的断点附加条件表达式（字符串形式）。
 void DebugController::setBreakpointCondition(int line, const std::string& cond) {
-    breakpointConditions_[line] = cond;
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        it->second.condition = cond;
+        it->second.hitCount = 0; // 条件变更重置命中计数（与生产版一致）
+    } else {
+        BreakpointInfo info(line, cond);
+        breakpointInfos_[line] = std::move(info);
+        breakpoints_.insert(line);
+    }
 }
 
 // 设置条件断点的求值器（lambda），在命中断点时求值决定是否满足暂停条件。
@@ -225,6 +287,11 @@ void DebugController::reset() {
     pauseLines_.clear();
     pauseDepths_.clear();
     pauseEvents_.clear();
+    // R104: 重置新断点存储
+    functionBreakpoints_.clear();
+    exceptionBreakpoint_ = ExceptionBreakpointState{};
+    logpointLogs_.clear();
+    // 注：logCallback_ 不重置（由 IDE 注入，跨调试会话复用）
 }
 
 // ── Test access ────────────────────────────────────────────────────
@@ -240,4 +307,228 @@ int DebugController::maxDepthSeen() const {
     int mx = 0;
     for (int d : pauseDepths_) mx = std::max(mx, d);
     return mx;
+}
+
+// ============================================================
+// R104 调试器拓展：Logpoint / Function Breakpoint / Exception Breakpoint
+// ============================================================
+// 桩实现：仅维护状态，不阻塞线程（与桩整体设计一致）。
+// checkFunctionBreakpoint/checkExceptionBreakpoint 在测试中可被手动调用，
+// 返回是否命中并递增 hitCount；命中时记录一次 pauseEvent 供测试断言。
+// ============================================================
+
+// ── Logpoint ───────────────────────────────────────────────────────
+
+void DebugController::setLogCallback(std::function<void(const std::string&)> cb) {
+    logCallback_ = std::move(cb);
+}
+
+void DebugController::setBreakpointKind(int line, BreakpointKind kind) {
+    if (line <= 0) return;
+    auto it = breakpointInfos_.find(line);
+    if (it == breakpointInfos_.end()) {
+        breakpointInfos_[line] = BreakpointInfo(line);
+        breakpoints_.insert(line);
+        it = breakpointInfos_.find(line);
+    }
+    it->second.kind = kind;
+    if (kind == BreakpointKind::Line) {
+        it->second.logMessage.clear();
+    }
+    it->second.hitCount = 0;
+}
+
+BreakpointKind DebugController::getBreakpointKind(int line) const {
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        return it->second.kind;
+    }
+    return BreakpointKind::Line;
+}
+
+void DebugController::setLogpointMessage(int line, const std::string& msg) {
+    if (line <= 0) return;
+    auto it = breakpointInfos_.find(line);
+    if (it == breakpointInfos_.end()) {
+        breakpointInfos_[line] = BreakpointInfo(line);
+        breakpoints_.insert(line);
+        it = breakpointInfos_.find(line);
+    }
+    it->second.kind = BreakpointKind::Logpoint;
+    it->second.logMessage = msg;
+    it->second.hitCount = 0;
+}
+
+std::string DebugController::getLogpointMessage(int line) const {
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        return it->second.logMessage;
+    }
+    return "";
+}
+
+// ── Function Breakpoint ────────────────────────────────────────────
+
+void DebugController::setFunctionBreakpoint(const std::string& functionName) {
+    if (functionName.empty()) return;
+    if (functionBreakpoints_.find(functionName) == functionBreakpoints_.end()) {
+        functionBreakpoints_[functionName] = FunctionBreakpointInfo(functionName);
+    }
+}
+
+void DebugController::removeFunctionBreakpoint(const std::string& functionName) {
+    functionBreakpoints_.erase(functionName);
+}
+
+void DebugController::setFunctionBreakpoints(const std::set<std::string>& names) {
+    std::map<std::string, FunctionBreakpointInfo> newMap;
+    for (const auto& name : names) {
+        if (name.empty()) continue;
+        auto it = functionBreakpoints_.find(name);
+        if (it != functionBreakpoints_.end()) {
+            newMap[name] = it->second;
+        } else {
+            newMap[name] = FunctionBreakpointInfo(name);
+        }
+    }
+    functionBreakpoints_ = std::move(newMap);
+}
+
+std::set<std::string> DebugController::getFunctionBreakpoints() const {
+    std::set<std::string> result;
+    for (const auto& kv : functionBreakpoints_) {
+        result.insert(kv.first);
+    }
+    return result;
+}
+
+void DebugController::setFunctionBreakpointCondition(const std::string& functionName, const std::string& cond) {
+    auto it = functionBreakpoints_.find(functionName);
+    if (it != functionBreakpoints_.end()) {
+        it->second.condition = cond;
+        it->second.hitCount = 0;
+    } else {
+        FunctionBreakpointInfo info(functionName);
+        info.condition = cond;
+        functionBreakpoints_[functionName] = std::move(info);
+    }
+}
+
+std::string DebugController::getFunctionBreakpointCondition(const std::string& functionName) const {
+    auto it = functionBreakpoints_.find(functionName);
+    if (it != functionBreakpoints_.end()) {
+        return it->second.condition;
+    }
+    return "";
+}
+
+int DebugController::getFunctionBreakpointHitCount(const std::string& functionName) const {
+    auto it = functionBreakpoints_.find(functionName);
+    if (it != functionBreakpoints_.end()) {
+        return it->second.hitCount;
+    }
+    return 0;
+}
+
+bool DebugController::hasFunctionBreakpoint(const std::string& functionName) const {
+    return functionBreakpoints_.find(functionName) != functionBreakpoints_.end();
+}
+
+bool DebugController::checkFunctionBreakpoint(const std::string& functionName, int line) {
+    if (!running_ || stopped_) return false;
+    auto it = functionBreakpoints_.find(functionName);
+    if (it == functionBreakpoints_.end()) return false;
+
+    // 条件求值
+    if (it->second.isConditional()) {
+        if (conditionEvaluator_) {
+            if (!conditionEvaluator_(it->second.condition)) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // 命中：递增 hitCount 并记录暂停事件（与桩整体设计一致——不阻塞）
+    it->second.hitCount++;
+    lastPausedLine_ = line;
+    lastPausedDepth_ = currentDepth_;
+    pauseCount_++;
+    pauseLines_.push_back(line);
+    pauseDepths_.push_back(currentDepth_);
+    DebugPauseEvent evt;
+    evt.line = line;
+    evt.depth = currentDepth_;
+    if (variableCallback_) {
+        auto vars = variableCallback_();
+        for (auto& v : vars) {
+            evt.variables.push_back({v.name, v.value.toString()});
+        }
+    }
+    if (callStackCallback_) {
+        auto stack = callStackCallback_();
+        for (auto& s : stack) {
+            evt.callStack.push_back(s.functionName);
+        }
+    }
+    pauseEvents_.push_back(std::move(evt));
+    return true;
+}
+
+// ── Exception Breakpoint ───────────────────────────────────────────
+
+void DebugController::setExceptionBreakpointEnabled(bool enabled) {
+    exceptionBreakpoint_.enabled = enabled;
+}
+
+bool DebugController::isExceptionBreakpointEnabled() const {
+    return exceptionBreakpoint_.enabled;
+}
+
+int DebugController::getExceptionBreakpointHitCount() const {
+    return exceptionBreakpoint_.hitCount;
+}
+
+bool DebugController::checkExceptionBreakpoint(int line) {
+    if (!running_ || stopped_) return false;
+    if (!exceptionBreakpoint_.enabled) return false;
+
+    exceptionBreakpoint_.hitCount++;
+    lastPausedLine_ = line;
+    lastPausedDepth_ = currentDepth_;
+    pauseCount_++;
+    pauseLines_.push_back(line);
+    pauseDepths_.push_back(currentDepth_);
+    DebugPauseEvent evt;
+    evt.line = line;
+    evt.depth = currentDepth_;
+    if (variableCallback_) {
+        auto vars = variableCallback_();
+        for (auto& v : vars) {
+            evt.variables.push_back({v.name, v.value.toString()});
+        }
+    }
+    if (callStackCallback_) {
+        auto stack = callStackCallback_();
+        for (auto& s : stack) {
+            evt.callStack.push_back(s.functionName);
+        }
+    }
+    pauseEvents_.push_back(std::move(evt));
+    return true;
+}
+
+// ── R104 测试访问 ───────────────────────────────────────────────────
+
+const std::vector<std::pair<int, std::string>>& DebugController::logpointLogs() const {
+    return logpointLogs_;
+}
+
+int DebugController::logpointHitCount(int line) const {
+    auto it = breakpointInfos_.find(line);
+    if (it != breakpointInfos_.end()) {
+        return it->second.hitCount;
+    }
+    return 0;
 }

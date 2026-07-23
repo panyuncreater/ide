@@ -162,3 +162,11 @@ void DebugCoordinator::setupDebug(const QSet<int>& breakpoints, const QMap<int, 
     debugger_->reset();
     debugger_->stepIn();
 }
+
+// ============================================================
+// R121 调用栈帧切换：按帧索引获取 Interpreter 局部变量
+// ------------------------------------------------------------
+// 实现已移至 DebugCoordinator.h 内联定义（R121-build fix）。
+// 原因：VariableInspectorPanel.cpp 调用此方法，但 minilang_tests 不链接
+// DebugCoordinator.cpp。改为 inline 使符号在调用方编译单元内可见。
+// ============================================================

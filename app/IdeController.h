@@ -23,8 +23,10 @@
 #include <QSet>
 #include <QString>
 #include <functional>
+#include <list> // R117: watchAstCache LRU 实现
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "DebugCoordinator.h"
@@ -33,6 +35,7 @@
 #include "VmStepper.h"
 #include "WorkerManager.h"
 #include "debug/DebugController.h"
+#include "debug/ExecutionTraceRecorder.h" // R114: TraceBackend 定义
 #include "interpreter/Interpreter.h"
 #include "interpreter/Value.h"
 
@@ -159,6 +162,105 @@ public:
     /// @return 捕获的输出文本；若词法/语法/运行时错误，返回 "!ERROR: <描述>"
     std::string runStringCaptureOutput(const std::string& source);
 
+    // ---- R117 Watch 表达式求值（调试器拓展）----
+    // 在当前调试暂停上下文中求值表达式，返回完整值信息供 WatchPanel 显示。
+    // 沙箱求值，不影响 VM/Interpreter 状态。
+    // 支持两种暂停模式：
+    //   - VM 模式（isVmInitialized() || isVmRunning()）：注入 VM globals + 当前帧 locals
+    //   - Interpreter 调试暂停模式（isDebugPaused()）：注入 debugCoord_ 变量快照
+    // 其他状态返回 ok=false + 错误描述。
+    struct WatchResult {
+        bool ok = false;       // 求值是否成功
+        Value value;           // 求值结果值（ok=false 时为 null）
+        std::string error;     // 错误信息（ok=false 时填充）
+        std::string typeName;  // 类型名（int/float/bool/null/string/array/dict/instance/closure/...）
+        std::string valueRepr; // 值的字符串表示（Value::toString 格式）
+    };
+    /// R117: 在当前调试暂停上下文中求值 watch 表达式。
+    /// @param expr 表达式源码（无需分号，自动补全）
+    WatchResult evaluateWatchExpression(const std::string& expr);
+
+    // ---- R161 调试器 REPL（暂停时执行任意表达式/语句）----
+    // 与 evaluateWatchExpression 的区别：
+    //   - 允许多条语句（Block 而非单表达式）
+    //   - 允许 var/print/赋值语句（沙箱内副作用不写回主程序，阶段1只读）
+    //   - 用 executeRepl 替代 evaluateCondition（不做沙箱恢复，临时 Interpreter 独立实例）
+    //   - 捕获 print 输出到 output 成员（供 ReplPanel 显示）
+    // 线程安全：主线程同步求值（Interpreter 暂停期 worker 阻塞、VM 暂停期主线程空闲）
+    /// R161: 调试器 REPL 求值。返回 ok/value/typeName/valueRepr/output。
+    /// @param source 源码（无需分号，自动补全；支持多条语句）
+    /// @param[out] output 捕获的 print 输出（每行一个元素）
+    WatchResult evaluateDebuggerRepl(const std::string& source, std::string* output = nullptr);
+
+    // ---- R121 调用栈帧切换 ----
+    // 让用户在调试暂停时可"上移"到调用栈任意帧查看局部变量（类似 GDB `frame N`）。
+    // selectedFrame_ = -1 表示未选/默认栈顶；>= 0 表示选中的帧索引（0=栈底 main）。
+    // 由 CallStackPanel::onFrameSelected 触发 setSelectedFrame，所有面板通过 vmStateChanged
+    // 监听器自动刷新。VariableInspector / WatchPanel 通过 getSelectedFrameLocals 获取所选帧上下文。
+    // 边界：越界时 fallback 到栈顶；stop/reset/prepareRun 时 clear。
+    /// 设置选中的调用栈帧索引（-1=未选/默认栈顶）。变化时通知订阅面板刷新。
+    void setSelectedFrame(int depth) {
+        if (selectedFrame_ == depth)
+            return;
+        selectedFrame_ = depth;
+        notifyVmStateChanged();
+    }
+    /// 获取当前选中的调用栈帧索引（-1=未选/默认栈顶）
+    int getSelectedFrame() const { return selectedFrame_; }
+    /// 清除选中帧（在 stop/reset/prepareRun 等状态重置点调用）
+    /// @note 不触发 notifyVmStateChanged，由调用方（stop/vmStop/vmReset/prepareRun）
+    ///       统一通知，避免双重通知。
+    void clearSelectedFrame() { selectedFrame_ = -1; }
+    /// 获取所选帧的局部变量（用于 VariableInspector 显示 + Watch 求值注入）。
+    /// selectedFrame_ == -1 时返回当前帧（栈顶）locals。
+    /// VM 模式 / Interpreter 调试暂停模式均支持。其他状态返回空。
+    /// 越界时 fallback 到栈顶（与 GDB `frame N` 行为一致）。
+    /// @note R121-build fix: 改为 inline 以避免 VariableInspectorPanel.cpp 依赖
+    ///       IdeController.cpp 的非 inline 符号（minilang_tests 不链接 IdeController.cpp）。
+    ///       所依赖的 vmStepper_ / debugCoord_ 方法均已 inline。
+    std::vector<std::pair<std::string, Value>> getSelectedFrameLocals() const {
+        std::vector<std::pair<std::string, Value>> result;
+        bool vmMode = vmStepper_.isRunning() || vmStepper_.isInitialized();
+        bool interpPaused = debugCoord_.isPaused();
+        if (!vmMode && !interpPaused) {
+            return result;
+        }
+        if (vmMode) {
+            size_t frameCount = vmStepper_.getFrameCount();
+            if (frameCount == 0)
+                return result;
+            size_t targetIdx = static_cast<size_t>(selectedFrame_);
+            // selectedFrame_ == -1 或越界 → fallback 到栈顶（frameCount - 1）
+            if (selectedFrame_ < 0 || targetIdx >= frameCount) {
+                targetIdx = frameCount - 1;
+            }
+            auto locals = vmStepper_.getFrameLocalsAt(targetIdx);
+            for (const auto& kv : locals) {
+                result.emplace_back(kv.first, kv.second);
+            }
+        } else {
+            // Interpreter 调试暂停模式：通过 debugCoord_ 直接访问 CallFrame.env
+            // 越界由 debugCoord_.getFrameLocalsAt 内部处理（返回空），此处需手动 fallback 到栈顶
+            if (selectedFrame_ < 0) {
+                // -1 表示栈顶：用 getDebugVariableSnapshot() 拿当前帧 locals（保持 R117 行为）
+                for (const auto& snap : debugCoord_.getDebugVariableSnapshot()) {
+                    result.emplace_back(snap.name, snap.value);
+                }
+            } else {
+                auto locals = debugCoord_.getFrameLocalsAt(selectedFrame_);
+                if (locals.empty()) {
+                    // 越界 fallback：尝试栈顶
+                    for (const auto& snap : debugCoord_.getDebugVariableSnapshot()) {
+                        result.emplace_back(snap.name, snap.value);
+                    }
+                } else {
+                    result = std::move(locals);
+                }
+            }
+        }
+        return result;
+    }
+
     // ---- 管线操作（转发到 PipelineRunner）----
     bool runLexer(const std::string& source) { return pipeline_.runLexer(source); }
     bool runParser() { return pipeline_.runParser(); }
@@ -209,7 +311,124 @@ public:
     void stepOver() { debugCoord_.stepOver(); }
     void stepOut() { debugCoord_.stepOut(); }
     void resume() { debugCoord_.resume(); }
-    void stop() { debugCoord_.stop(); }
+    // R121: 调试停止时清除选中帧（新调试会话不应继承旧选中状态）
+    void stop() {
+        debugCoord_.stop();
+        clearSelectedFrame();
+        notifyVmStateChanged();
+    }
+
+    /// R98 runToCursor: 运行到指定行暂停（Facade 分派到 Interpreter 或 VM 路径）。
+    /// 分派规则：
+    ///   - VM 路径活跃（vmStepper_.isRunning() || vmStepper_.isInitialized()）：
+    ///     设置 VM 临时断点后调用 vmStepByMode(RUN) 启动异步分批执行。
+    ///   - 否则（Interpreter 调试模式）：设置 Interpreter 临时断点后调用 resume()。
+    /// 临时断点是一次性的——命中后自动清除，不影响用户断点。
+    /// @param line 目标行号（必须 > 0，否则忽略）
+    /// @note 调用方应先检查 isRunning()/isDebugPaused()/isVmInitialized() 之一为 true。
+    void runToCursor(int line) {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized()) {
+            vmStepper_.setTempBreakpoint(line);
+            vmStepByMode(VmStepMode::RUN);
+        } else {
+            debugCoord_.setTemporaryBreakpoint(line);
+            debugCoord_.resume();
+        }
+    }
+
+    // ---- R104 调试器拓展：Logpoint / Function BP / Exception BP ----
+    // Facade 分派：VM 路径活跃时转发到 VmStepper，否则转发到 DebugCoordinator（Interpreter）。
+    // 日志回调由 GUI 注入一次，同时设置到两个路径（避免切换后端时丢失）。
+    void setLogCallback(std::function<void(const std::string&)> cb) {
+        auto cbCopy = cb;
+        debugCoord_.setLogCallback(std::move(cb));
+        vmStepper_.setLogCallback(std::move(cbCopy));
+    }
+    void setBreakpointKind(int line, BreakpointKind kind) {
+        debugCoord_.setBreakpointKind(line, kind);
+        vmStepper_.setBreakpointKind(line, kind);
+        notifyVmStateChanged();
+    }
+    BreakpointKind getBreakpointKind(int line) const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.getBreakpointKind(line);
+        return debugCoord_.getBreakpointKind(line);
+    }
+    void setLogpointMessage(int line, const std::string& msg) {
+        debugCoord_.setLogpointMessage(line, msg);
+        vmStepper_.setLogpointMessage(line, msg);
+        notifyVmStateChanged();
+    }
+    std::string getLogpointMessage(int line) const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.getLogpointMessage(line);
+        return debugCoord_.getLogpointMessage(line);
+    }
+
+    void setFunctionBreakpoint(const std::string& name) {
+        debugCoord_.setFunctionBreakpoint(name);
+        vmStepper_.setFunctionBreakpoint(name);
+        notifyVmStateChanged();
+    }
+    void removeFunctionBreakpoint(const std::string& name) {
+        debugCoord_.removeFunctionBreakpoint(name);
+        vmStepper_.removeFunctionBreakpoint(name);
+        notifyVmStateChanged();
+    }
+    void setFunctionBreakpoints(const QSet<std::string>& names) {
+        debugCoord_.setFunctionBreakpoints(names);
+        vmStepper_.setFunctionBreakpoints(names);
+        notifyVmStateChanged();
+    }
+    QSet<std::string> getFunctionBreakpoints() const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.getFunctionBreakpoints();
+        return debugCoord_.getFunctionBreakpoints();
+    }
+    bool hasFunctionBreakpoint(const std::string& name) const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.hasFunctionBreakpoint(name);
+        return debugCoord_.hasFunctionBreakpoint(name);
+    }
+    int getFunctionBreakpointHitCount(const std::string& name) const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.getFunctionBreakpointHitCount(name);
+        return debugCoord_.getFunctionBreakpointHitCount(name);
+    }
+
+    void setExceptionBreakpointEnabled(bool enabled) {
+        debugCoord_.setExceptionBreakpointEnabled(enabled);
+        vmStepper_.setExceptionBreakpointEnabled(enabled);
+        notifyVmStateChanged();
+    }
+    bool isExceptionBreakpointEnabled() const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.isExceptionBreakpointEnabled();
+        return debugCoord_.isExceptionBreakpointEnabled();
+    }
+    int getExceptionBreakpointHitCount() const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.getExceptionBreakpointHitCount();
+        return debugCoord_.getExceptionBreakpointHitCount();
+    }
+
+    // ---- R161 Watchpoint（数据断点）facade ----
+    // 添加数据断点（监视变量/字段被修改时暂停）。
+    // VM 路径转发到 vmStepper_；Interpreter 路径暂不支持 watchpoint（仅 VM 路径）。
+    void setWatchpoint(const WatchpointInfo& wp) {
+        vmStepper_.setWatchpoint(wp);
+        notifyVmStateChanged();
+    }
+    void removeWatchpoint(const std::string& varName, const std::string& fieldName = "") {
+        vmStepper_.removeWatchpoint(varName, fieldName);
+        notifyVmStateChanged();
+    }
+    void clearWatchpoints() {
+        vmStepper_.clearWatchpoints();
+        notifyVmStateChanged();
+    }
+    const QVector<WatchpointInfo>& getWatchpoints() const { return vmStepper_.getWatchpoints(); }
+    bool hasWatchpoints() const { return vmStepper_.hasWatchpoints(); }
 
     // ---- VM 操作（转发到 VmStepper）----
     // OPT-1: 在状态变更后调用 notifyVmStateChanged() 通知订阅面板，
@@ -240,10 +459,12 @@ public:
     }
     void vmStop() {
         vmStepper_.stop();
+        clearSelectedFrame(); // R121: VM 停止时清除选中帧
         notifyVmStateChanged();
     }
     void vmReset() {
         vmStepper_.reset();
+        clearSelectedFrame(); // R121: VM 重置时清除选中帧
         notifyVmStateChanged();
     }
     bool isVmRunning() const { return vmStepper_.isRunning(); }
@@ -313,6 +534,17 @@ public:
     }
     bool getUseRegisterVM() const { return pipeline_.compiler().getUseRegisterVM(); }
 
+    // R114: 可回放执行时间轴——录制开关转发
+    // VM 路径（栈式/寄存器式）通过 vmStepper_ 启用，Interpreter 路径通过 interpreter_ 启用。
+    // GUI 层（ExecutionTimelinePanel）切换录制时同时调用两个方法，覆盖三条执行路径。
+    // 跨线程安全：vmStepper_ 主线程访问；interpreter_ 内部使用 atomic<bool>。
+    void setVmRecordingEnabled(bool enabled, TraceBackend backend) { vmStepper_.setRecordingEnabled(enabled, backend); }
+    void setInterpreterRecordingEnabled(bool enabled) {
+        if (interpreter_) {
+            interpreter_->setRecordingEnabled(enabled);
+        }
+    }
+
     // ---- 状态访问（转发到 PipelineRunner）----
     const std::vector<Token>& lastTokens() const { return pipeline_.lastTokens(); }
     const CompileResult& lastCompileResult() const { return pipeline_.lastCompileResult(); }
@@ -359,6 +591,12 @@ private:
     // VM-IMPORT: 当前文件路径（供 runCompiler 设置 Compiler 模块加载器的相对路径基准）
     std::string currentFilePath_;
 
+    // R121 调用栈帧切换：用户选中的帧索引（-1=未选/默认栈顶；>= 0=帧索引，0=栈底 main）
+    // 由 CallStackPanel::onFrameSelected 调用 setSelectedFrame 更新，
+    // VariableInspector/WatchPanel 通过 getSelectedFrameLocals() 消费。
+    // stop/reset/prepareRun 时通过 clearSelectedFrame() 重置为 -1。
+    int selectedFrame_ = -1;
+
     // ---- OPT-1: VM 状态变更观察者订阅者列表 ----
     // 6 个面板（CallStack/VariableInspector/BytecodeTrace/MemoryModel/BreakpointCondition/
     // VmStackSandbox）在 setController 时注册回调，替代 500ms QTimer 轮询。
@@ -379,6 +617,15 @@ private:
                 vmStateChangedListeners_[i].fn();
         }
     }
+
+    // ---- R117: Watch 表达式 AST LRU 缓存 ----
+    // 与条件断点 AST 缓存（setConditionEvaluator lambda 闭包内）对齐：
+    // list + unordered_map 经典 LRU，命中 move_to_front，超上限 pop_back（最久未使用）。
+    // 缓存 key 为自动补充分号后的表达式字符串，避免用户输入 i 与 i; 视为不同条目。
+    using WatchAstCacheList = std::list<std::pair<std::string, std::shared_ptr<Block>>>;
+    using WatchAstCacheLookup = std::unordered_map<std::string, WatchAstCacheList::iterator>;
+    WatchAstCacheList watchAstCacheList_;
+    WatchAstCacheLookup watchAstCacheLookup_;
 
     /// VM-IMPORT: 为 Compiler 设置模块加载器（对齐 WorkerManager 为 Interpreter 设置的 loader）
     /// 基于 filePath 的目录解析相对模块路径，自动添加 .mini 后缀

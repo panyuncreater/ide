@@ -1,5 +1,5 @@
 #include "VmStepper.h"
-#include "Logger.h"
+#include "common/Logger.h"
 #include <QApplication> // P3.6 fix: activeWindow + repaint 替代 processEvents
 #include <QCoreApplication>
 #include <QWidget> // P3.6 fix: QWidget::repaint
@@ -147,200 +147,497 @@ VmStepper::VmStepResult VmStepper::stepByMode(VmStepMode mode) {
                 return VmStepResult::PAUSED_AT_BREAKPOINT;
             }
         }
+        // R104: pre-execution 函数断点 + 异常断点检查（首次初始化后）
+        if (!vmFunctionBreakpoints_.isEmpty() || vmExceptionBreakpointEnabled_ || hasWatchpoints()) {
+            int initLine = getCurrentLine();
+            if (checkPreExecutionFunctionExceptionBps(initLine)) {
+                return VmStepResult::PAUSED_AT_BREAKPOINT;
+            }
+        }
 
         // A4 fix: 步进循环期间禁用 stepCallback（避免每条指令 emit 信号拖慢 UI）。
         // UI 更新由 stepByMode 返回后调用方一次性完成。
         vm_.setStepCallbackEnabled(false);
         regVm_.setStepCallbackEnabled(false);
 
-        // QT-R-01 fix: RUN 模式改为异步分批执行，启动 QTimer 后立即返回 RUNNING。
-        // 暂停时通过 vmRunPaused 信号通知 UI，避免主线程 while(true) 循环冻结 UI。
-        if (mode == VmStepMode::RUN) {
-            vmRunStepCount_ = 0;
-            vmRunTimer_->start();
-            return VmStepResult::RUNNING;
+        // 按模式分派到对应 execXxx 方法。每个方法独立完成步进循环并返回结果。
+        // 公共前置（编译结果检查 / VM 初始化 / crossed 标志重置 / 用户断点
+        // pre-execution 检查 / stepCallback 禁用）已在上方完成，execXxx 仅负责
+        // 模式特有逻辑（R98 临时断点 / 异步分批 / 同步循环 shouldPause 判定）。
+        switch (mode) {
+        case VmStepMode::RUN:
+            return execStepRun();
+        case VmStepMode::STEP_IN:
+            return execStepIn();
+        case VmStepMode::STEP_OVER:
+            return execStepOver();
+        case VmStepMode::STEP_OUT:
+            return execStepOut();
         }
-
-        // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
-        // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
-        // 与 Interpreter 的 pre-execution 语义对齐。原实现在 stepOnce 之后检查
-        // （post-execution），多语句行（print(1); print(2);）VM 可能在执行完
-        // print(1) 后才检测到断点行，用户看到 print(1) 已输出。
-        // 现在在每条指令执行前先检查当前 IP 是否命中断点。
-        constexpr int64_t MAX_STEP_LOOP = 1000000;
-        int64_t stepCount = 0;
-        // P1-2 fix: 记录步进起始时的行号和帧深度，用于 STEP_IN 行级粒度判断。
-        // 对齐 Interpreter DebugController::shouldPauseForStepping 的 STEP_IN 逻辑：
-        // 行号变化或调用深度变化时暂停（而非每条指令暂停）。
-        int stepStartLine = getCurrentLine();
-        size_t stepStartFrame = getFrameCount();
-
-        while (true) {
-            // P1-3 fix: pre-execution 断点检查——执行前检查当前 IP 是否命中断点
-            {
-                int preLine = getCurrentLine();
-                if (preLine > 0) {
-                    if (preLine != vmLastSeenLine_) {
-                        vmCrossedLine_ = true;
-                    }
-                    // 注：pre-execution 检查时不更新 vmLastSeenLine_，
-                    // 留到 post-execution 统一更新，避免漏检
-                    if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                        vmBreakpointHitCounts_[preLine]++;
-                        vmLastPausedLine_ = preLine;
-                        vmCrossedLine_ = false;
-                        isVmRunning_ = false;
-                        return VmStepResult::PAUSED_AT_BREAKPOINT;
-                    }
-                }
-            }
-
-            VMResult result = stepOnceActive();
-            ++stepCount;
-
-            // BUG-IDE-18 fix: STEP_OVER/OUT 在深递归或长循环上同步执行可达数十万步，
-            // 期间不处理任何事件会让 UI 看似冻结（标题栏"无响应"、面板不重绘）。
-            // 每 2000 步让出事件循环处理绘制事件（ExcludeUserInputEvents
-            // 排除用户输入事件以避免重入触发 stop/step 等槽函数）。若期间 VM 被异步
-            // 停止（isVmRunning_ 被置 false），立即返回 OK 让 UI 更新。
-            //
-            // P3.6 fix: 原实现调用 processEvents(ExcludeUserInputEvents) 会派发 QTimer
-            // 事件，虽然各面板已有 isVmRunning() 守卫，但定时器重入仍是潜在风险。
-            // 改用 sendPostedEvents(DeferredDelete) 处理对象生命周期 + 遍历所有可见
-            // 顶层窗口调用 repaint() 强制重绘，彻底避免定时器事件派发。
-            // repaint() 同步处理 paint event 不进入事件循环，无重入风险。
-            // 注：sendPostedEvents(nullptr, QEvent::DeferredDelete) 仅处理 DeferredDelete
-            // 类型的 posted events（QObject 删除），不处理 QTimer/Socket 等事件。
-            if (stepCount % 2000 == 0) {
-                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-                // 强制重绘所有可见顶层窗口（主窗口 + 浮动 dock 容器）
-                if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
-                    for (QWidget* w : app->topLevelWidgets()) {
-                        if (w->isVisible()) {
-                            w->repaint();
-                        }
-                    }
-                }
-                if (!isVmRunning_) {
-                    return VmStepResult::OK;
-                }
-            }
-
-            if (result == VMResult::VM_RUNTIME_ERROR) {
-                isVmInitialized_ = false;
-                isVmRunning_ = false;
-                return VmStepResult::ERROR;
-            }
-
-            if (isActiveFinished()) {
-                isVmInitialized_ = false;
-                isVmRunning_ = false;
-                return VmStepResult::FINISHED;
-            }
-
-            // A4 fix: 所有模式的循环上限保护
-            if (stepCount >= MAX_STEP_LOOP) {
-                isVmRunning_ = false;
-                return VmStepResult::OK; // 返回 OK 让 UI 更新，用户可继续
-            }
-
-            // A4 fix: 检查是否应暂停
-            int currentLine = getCurrentLine();
-            size_t currentFrameCount = getFrameCount();
-
-            // P1-3 fix: 行号追踪更新（post-execution）。
-            // 断点命中检查已移到 pre-execution（循环开头），此处仅更新行号追踪状态。
-            // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制。
-            // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
-            // 仅在断点真正命中（含条件满足）时清 false，与 DebugController F4 修复一致。
-            if (currentLine > 0) {
-                if (currentLine != vmLastSeenLine_) {
-                    vmCrossedLine_ = true;
-                }
-                vmLastSeenLine_ = currentLine;
-            }
-
-            // 根据步进模式判断是否暂停
-            bool shouldPause = false;
-            switch (mode) {
-            case VmStepMode::STEP_IN:
-                // P1-2 fix: 对齐 Interpreter 的 STEP_IN 语义——行号变化或调用深度
-                // 变化时暂停，而非每条指令暂停。原实现 shouldPause=true 导致 VM 模式
-                // 下一个简单赋值需点击 5-10 次才能走完（一个表达式编译为多条指令）。
-                // 现在仅在行号或帧深度发生变化时暂停，与 Interpreter AST 节点级粒度对齐。
-                if (currentLine != vmLastPausedLine_ || currentFrameCount != stepStartFrame) {
-                    shouldPause = true;
-                }
-                break;
-            case VmStepMode::STEP_OVER:
-                // AUDIT-BUG-D2 fix: 跟踪是否进入过更深的帧（crossedDeeper）。
-                // 同行函数调用（如 foo(); bar(); 同在第5行）STEP_OVER foo() 后
-                // currentLine 仍为 5 == vmLastPausedLine_，原逻辑不暂停直接执行 bar()。
-                // crossedDeeper 标志确保从更深帧返回后即使行号不变也暂停。
-                if (currentFrameCount > vmStepStartFrameCount_) {
-                    vmCrossedDeeper_ = true;
-                }
-                // 帧深度回到起始或更浅，且行号变化（行号为 0 时仅按帧深度判断）
-                if (currentFrameCount <= vmStepStartFrameCount_) {
-                    if (currentLine == 0) {
-                        // 无行号信息（如 OP_CLOSURE 等辅助指令），仅当帧深度变化时暂停
-                        if (currentFrameCount != vmStepStartFrameCount_) {
-                            shouldPause = true;
-                        }
-                    } else if (currentLine != vmLastPausedLine_ || vmCrossedDeeper_) {
-                        shouldPause = true;
-                    }
-                    // BUG-DBG-13 fix: crossedDeeper_ 在每次 stepByMode 入口处重置
-                    // （见上方 AUDIT-BUG-F3 fix: vmCrossedDeeper_ = false），而非不存在的
-                    // resetVmStepState 函数。原注释引用的函数从未定义，误导维护者。
-                }
-                break;
-            case VmStepMode::STEP_OUT:
-                // 帧深度比起始更浅
-                if (currentFrameCount < vmStepStartFrameCount_) {
-                    shouldPause = true;
-                }
-                // A4 fix: 若已在栈底无法跨出（frameCount == startFrameCount == 1），
-                // 执行到下一条有行号的指令即暂停（避免死循环）
-                // BUG-DBG-3 fix: 顶层 STEP_OUT 行为与 STEP_OVER 顶层不一致——
-                // STEP_OVER 用 crossedDeeper_ 允许同行暂停，STEP_OUT 顶层仅用行号变化判断，
-                // 单行循环（如 for (...; ...; ...) foo();）STEP_OUT 后永不暂停（行号不变），
-                // 直到循环结束才停止。修复：与 STEP_OVER 顶层对齐，使用 crossedLine_ 机制
-                // 允许跨行后同行暂停。
-                // R54-7 fix: 注释原提及"vmCrossedDeeper_"但代码实际使用 vmCrossedLine_，
-                // 已更正注释。STEP_OUT 在栈底时无处可"跨出"，降级为"跨行后暂停"语义
-                // （与 STEP_IN 行级粒度一致），使用 vmCrossedLine_ 是正确设计。
-                else if (currentFrameCount <= 1 && currentLine > 0 &&
-                         (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
-                    shouldPause = true;
-                }
-                break;
-            case VmStepMode::RUN:
-                // RUN 模式：仅断点命中才暂停（已在上方检查）
-                // QT-R-01 fix: 不会走到这里（RUN 在上方异步分支返回）
-                break;
-            }
-
-            if (shouldPause) {
-                // P1-4 fix: 步进模式下若当前行有断点，递增 hitCount（对齐
-                // DebugController L108-114 的行为）。虽然 pre-execution 断点检查
-                // 已在循环开头处理了断点命中，但步进暂停可能发生在断点行上
-                // （pre-execution 因 vmCrossedLine_ 等去重条件未触发，步进模式
-                // 无去重条件直接暂停）。此处在步进暂停时补充递增 hitCount，
-                // 使 VM 与 Interpreter 的断点命中次数统计一致。
-                if (currentLine > 0 && vmBreakpoints_.contains(currentLine)) {
-                    vmBreakpointHitCounts_[currentLine]++;
-                }
-                vmLastPausedLine_ = currentLine;
-                isVmRunning_ = false;
-                return VmStepResult::OK;
-            }
-        }
+        // 不可达：枚举已穷尽。回滚状态返回 OK 让 UI 更新。
+        isVmRunning_ = false;
+        return VmStepResult::OK;
     } catch (...) {
         // 异常时重置所有状态，避免永久卡死
         isVmInitialized_ = false;
         isVmRunning_ = false;
         throw;
+    }
+}
+
+// ============================================================
+// R98 runToCursor / QT-R-01 fix: RUN 模式异步分批执行入口
+// ------------------------------------------------------------
+// 由 stepByMode 在完成公共前置检查后调用。仅负责 RUN 模式特有的：
+//   1. R98 临时断点 pre-execution 检查（优先级低于用户断点初始检查，
+//      不重复递增 hitCount；不要求 crossedLine_，一次性断点首次到达即命中）
+//   2. 启动 QTimer 异步分批执行（runBatch 槽）
+// ============================================================
+VmStepper::VmStepResult VmStepper::execStepRun() {
+    // R98 runToCursor: 临时断点检测——优先级低于用户断点初始检查（不重复递增 hitCount），
+    // 但高于步进循环。仅在 RUN 模式下检测（runToCursor 调用 stepByMode(RUN)，
+    // execStepRun 仅由 RUN case 调用，mode 判定已隐含）。
+    // 命中后立即清除 vmTempBreakpointLine_，防止 runBatch 后续迭代重复触发。
+    // 不要求 crossedLine_（一次性断点首次到达即命中，无需"跨行后重触发"语义）。
+    if (vmTempBreakpointLine_ > 0) {
+        int initLine = getCurrentLine();
+        if (initLine > 0 && initLine == vmTempBreakpointLine_) {
+            vmTempBreakpointLine_ = -1;
+            vmLastPausedLine_ = initLine;
+            vmCrossedLine_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::PAUSED_AT_BREAKPOINT;
+        }
+    }
+
+    // QT-R-01 fix: RUN 模式改为异步分批执行，启动 QTimer 后立即返回 RUNNING。
+    // 暂停时通过 vmRunPaused 信号通知 UI，避免主线程 while(true) 循环冻结 UI。
+    vmRunStepCount_ = 0;
+    vmRunTimer_->start();
+    return VmStepResult::RUNNING;
+}
+
+// ============================================================
+// STEP_IN / STEP_OVER / STEP_OUT 同步步进循环
+// ------------------------------------------------------------
+// 三个方法共享相同的循环骨架（pre-execution 断点检查 / stepOnceActive /
+// UI 让出 / 错误-完成-上限检查 / 行号追踪），仅在 shouldPause 判定逻辑
+// 上按模式差异化。所有 R82 P0/P1 fix 审计注释原样保留。
+// ============================================================
+
+/// STEP_IN 模式：行号或帧深度变化时暂停（R82 P1-2 fix 行级粒度）。
+VmStepper::VmStepResult VmStepper::execStepIn() {
+    // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
+    // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
+    // 与 Interpreter 的 pre-execution 语义对齐。原实现在 stepOnce 之后检查
+    // （post-execution），多语句行（print(1); print(2);）VM 可能在执行完
+    // print(1) 后才检测到断点行，用户看到 print(1) 已输出。
+    // 现在在每条指令执行前先检查当前 IP 是否命中断点。
+    constexpr int64_t MAX_STEP_LOOP = 1000000;
+    int64_t stepCount = 0;
+    // P1-2 fix: 记录步进起始时的行号和帧深度，用于 STEP_IN 行级粒度判断。
+    // 对齐 Interpreter DebugController::shouldPauseForStepping 的 STEP_IN 逻辑：
+    // 行号变化或调用深度变化时暂停（而非每条指令暂停）。
+    int stepStartLine = getCurrentLine();
+    size_t stepStartFrame = getFrameCount();
+
+    while (true) {
+        // P1-3 fix: pre-execution 断点检查——执行前检查当前 IP 是否命中断点
+        {
+            int preLine = getCurrentLine();
+            if (preLine > 0) {
+                if (preLine != vmLastSeenLine_) {
+                    vmCrossedLine_ = true;
+                }
+                // 注：pre-execution 检查时不更新 vmLastSeenLine_，
+                // 留到 post-execution 统一更新，避免漏检
+                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                    vmBreakpointHitCounts_[preLine]++;
+                    vmLastPausedLine_ = preLine;
+                    vmCrossedLine_ = false;
+                    isVmRunning_ = false;
+                    return VmStepResult::PAUSED_AT_BREAKPOINT;
+                }
+            }
+            // R104: pre-execution 函数断点 + 异常断点检查
+            if (!vmFunctionBreakpoints_.isEmpty() || vmExceptionBreakpointEnabled_ || hasWatchpoints()) {
+                if (checkPreExecutionFunctionExceptionBps(preLine)) {
+                    return VmStepResult::PAUSED_AT_BREAKPOINT;
+                }
+            }
+        }
+
+        VMResult result = stepOnceActive();
+        ++stepCount;
+        maybeRecordStep(); // R114: 采集执行轨迹快照（recorder 启用时）
+
+        // BUG-IDE-18 fix: STEP_OVER/OUT 在深递归或长循环上同步执行可达数十万步，
+        // 期间不处理任何事件会让 UI 看似冻结（标题栏"无响应"、面板不重绘）。
+        // 每 2000 步让出事件循环处理绘制事件（ExcludeUserInputEvents
+        // 排除用户输入事件以避免重入触发 stop/step 等槽函数）。若期间 VM 被异步
+        // 停止（isVmRunning_ 被置 false），立即返回 OK 让 UI 更新。
+        //
+        // P3.6 fix: 原实现调用 processEvents(ExcludeUserInputEvents) 会派发 QTimer
+        // 事件，虽然各面板已有 isVmRunning() 守卫，但定时器重入仍是潜在风险。
+        // 改用 sendPostedEvents(DeferredDelete) 处理对象生命周期 + 遍历所有可见
+        // 顶层窗口调用 repaint() 强制重绘，彻底避免定时器事件派发。
+        // repaint() 同步处理 paint event 不进入事件循环，无重入风险。
+        // 注：sendPostedEvents(nullptr, QEvent::DeferredDelete) 仅处理 DeferredDelete
+        // 类型的 posted events（QObject 删除），不处理 QTimer/Socket 等事件。
+        if (stepCount % 2000 == 0) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            // 强制重绘所有可见顶层窗口（主窗口 + 浮动 dock 容器）
+            if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
+                for (QWidget* w : app->topLevelWidgets()) {
+                    if (w->isVisible()) {
+                        w->repaint();
+                    }
+                }
+            }
+            if (!isVmRunning_) {
+                return VmStepResult::OK;
+            }
+        }
+
+        if (result == VMResult::VM_RUNTIME_ERROR) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::ERROR;
+        }
+
+        if (isActiveFinished()) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::FINISHED;
+        }
+
+        // A4 fix: 所有模式的循环上限保护
+        if (stepCount >= MAX_STEP_LOOP) {
+            isVmRunning_ = false;
+            return VmStepResult::OK; // 返回 OK 让 UI 更新，用户可继续
+        }
+
+        // A4 fix: 检查是否应暂停
+        int currentLine = getCurrentLine();
+        size_t currentFrameCount = getFrameCount();
+
+        // P1-3 fix: 行号追踪更新（post-execution）。
+        // 断点命中检查已移到 pre-execution（循环开头），此处仅更新行号追踪状态。
+        // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制。
+        // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
+        // 仅在断点真正命中（含条件满足）时清 false，与 DebugController F4 修复一致。
+        if (currentLine > 0) {
+            if (currentLine != vmLastSeenLine_) {
+                vmCrossedLine_ = true;
+            }
+            vmLastSeenLine_ = currentLine;
+        }
+
+        // P1-2 fix: 对齐 Interpreter 的 STEP_IN 语义——行号变化或调用深度
+        // 变化时暂停，而非每条指令暂停。原实现 shouldPause=true 导致 VM 模式
+        // 下一个简单赋值需点击 5-10 次才能走完（一个表达式编译为多条指令）。
+        // 现在仅在行号或帧深度发生变化时暂停，与 Interpreter AST 节点级粒度对齐。
+        bool shouldPause = false;
+        if (currentLine != vmLastPausedLine_ || currentFrameCount != stepStartFrame) {
+            shouldPause = true;
+        }
+
+        if (shouldPause) {
+            // P1-4 fix: 步进模式下若当前行有断点，递增 hitCount（对齐
+            // DebugController L108-114 的行为）。虽然 pre-execution 断点检查
+            // 已在循环开头处理了断点命中，但步进暂停可能发生在断点行上
+            // （pre-execution 因 vmCrossedLine_ 等去重条件未触发，步进模式
+            // 无去重条件直接暂停）。此处在步进暂停时补充递增 hitCount，
+            // 使 VM 与 Interpreter 的断点命中次数统计一致。
+            if (currentLine > 0 && vmBreakpoints_.contains(currentLine)) {
+                vmBreakpointHitCounts_[currentLine]++;
+            }
+            vmLastPausedLine_ = currentLine;
+            isVmRunning_ = false;
+            return VmStepResult::OK;
+        }
+    }
+}
+
+/// STEP_OVER 模式：跳过函数调用，同帧深度时暂停（含 crossedDeeper 同行调用检测）。
+VmStepper::VmStepResult VmStepper::execStepOver() {
+    // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
+    // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
+    // 与 Interpreter 的 pre-execution 语义对齐。原实现在 stepOnce 之后检查
+    // （post-execution），多语句行（print(1); print(2);）VM 可能在执行完
+    // print(1) 后才检测到断点行，用户看到 print(1) 已输出。
+    // 现在在每条指令执行前先检查当前 IP 是否命中断点。
+    constexpr int64_t MAX_STEP_LOOP = 1000000;
+    int64_t stepCount = 0;
+
+    while (true) {
+        // P1-3 fix: pre-execution 断点检查——执行前检查当前 IP 是否命中断点
+        {
+            int preLine = getCurrentLine();
+            if (preLine > 0) {
+                if (preLine != vmLastSeenLine_) {
+                    vmCrossedLine_ = true;
+                }
+                // 注：pre-execution 检查时不更新 vmLastSeenLine_，
+                // 留到 post-execution 统一更新，避免漏检
+                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                    vmBreakpointHitCounts_[preLine]++;
+                    vmLastPausedLine_ = preLine;
+                    vmCrossedLine_ = false;
+                    isVmRunning_ = false;
+                    return VmStepResult::PAUSED_AT_BREAKPOINT;
+                }
+            }
+            // R104: pre-execution 函数断点 + 异常断点检查
+            if (!vmFunctionBreakpoints_.isEmpty() || vmExceptionBreakpointEnabled_ || hasWatchpoints()) {
+                if (checkPreExecutionFunctionExceptionBps(preLine)) {
+                    return VmStepResult::PAUSED_AT_BREAKPOINT;
+                }
+            }
+        }
+
+        VMResult result = stepOnceActive();
+        ++stepCount;
+        maybeRecordStep(); // R114: 采集执行轨迹快照（recorder 启用时）
+
+        // BUG-IDE-18 fix: STEP_OVER/OUT 在深递归或长循环上同步执行可达数十万步，
+        // 期间不处理任何事件会让 UI 看似冻结（标题栏"无响应"、面板不重绘）。
+        // 每 2000 步让出事件循环处理绘制事件（ExcludeUserInputEvents
+        // 排除用户输入事件以避免重入触发 stop/step 等槽函数）。若期间 VM 被异步
+        // 停止（isVmRunning_ 被置 false），立即返回 OK 让 UI 更新。
+        //
+        // P3.6 fix: 原实现调用 processEvents(ExcludeUserInputEvents) 会派发 QTimer
+        // 事件，虽然各面板已有 isVmRunning() 守卫，但定时器重入仍是潜在风险。
+        // 改用 sendPostedEvents(DeferredDelete) 处理对象生命周期 + 遍历所有可见
+        // 顶层窗口调用 repaint() 强制重绘，彻底避免定时器事件派发。
+        // repaint() 同步处理 paint event 不进入事件循环，无重入风险。
+        // 注：sendPostedEvents(nullptr, QEvent::DeferredDelete) 仅处理 DeferredDelete
+        // 类型的 posted events（QObject 删除），不处理 QTimer/Socket 等事件。
+        if (stepCount % 2000 == 0) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            // 强制重绘所有可见顶层窗口（主窗口 + 浮动 dock 容器）
+            if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
+                for (QWidget* w : app->topLevelWidgets()) {
+                    if (w->isVisible()) {
+                        w->repaint();
+                    }
+                }
+            }
+            if (!isVmRunning_) {
+                return VmStepResult::OK;
+            }
+        }
+
+        if (result == VMResult::VM_RUNTIME_ERROR) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::ERROR;
+        }
+
+        if (isActiveFinished()) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::FINISHED;
+        }
+
+        // A4 fix: 所有模式的循环上限保护
+        if (stepCount >= MAX_STEP_LOOP) {
+            isVmRunning_ = false;
+            return VmStepResult::OK; // 返回 OK 让 UI 更新，用户可继续
+        }
+
+        // A4 fix: 检查是否应暂停
+        int currentLine = getCurrentLine();
+        size_t currentFrameCount = getFrameCount();
+
+        // P1-3 fix: 行号追踪更新（post-execution）。
+        // 断点命中检查已移到 pre-execution（循环开头），此处仅更新行号追踪状态。
+        // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制。
+        // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
+        // 仅在断点真正命中（含条件满足）时清 false，与 DebugController F4 修复一致。
+        if (currentLine > 0) {
+            if (currentLine != vmLastSeenLine_) {
+                vmCrossedLine_ = true;
+            }
+            vmLastSeenLine_ = currentLine;
+        }
+
+        // AUDIT-BUG-D2 fix: 跟踪是否进入过更深的帧（crossedDeeper）。
+        // 同行函数调用（如 foo(); bar(); 同在第5行）STEP_OVER foo() 后
+        // currentLine 仍为 5 == vmLastPausedLine_，原逻辑不暂停直接执行 bar()。
+        // crossedDeeper 标志确保从更深帧返回后即使行号不变也暂停。
+        bool shouldPause = false;
+        if (currentFrameCount > vmStepStartFrameCount_) {
+            vmCrossedDeeper_ = true;
+        }
+        // 帧深度回到起始或更浅，且行号变化（行号为 0 时仅按帧深度判断）
+        if (currentFrameCount <= vmStepStartFrameCount_) {
+            if (currentLine == 0) {
+                // 无行号信息（如 OP_CLOSURE 等辅助指令），仅当帧深度变化时暂停
+                if (currentFrameCount != vmStepStartFrameCount_) {
+                    shouldPause = true;
+                }
+            } else if (currentLine != vmLastPausedLine_ || vmCrossedDeeper_) {
+                shouldPause = true;
+            }
+            // BUG-DBG-13 fix: crossedDeeper_ 在每次 stepByMode 入口处重置
+            // （见上方 AUDIT-BUG-F3 fix: vmCrossedDeeper_ = false），而非不存在的
+            // resetVmStepState 函数。原注释引用的函数从未定义，误导维护者。
+        }
+
+        if (shouldPause) {
+            // P1-4 fix: 步进模式下若当前行有断点，递增 hitCount（对齐
+            // DebugController L108-114 的行为）。虽然 pre-execution 断点检查
+            // 已在循环开头处理了断点命中，但步进暂停可能发生在断点行上
+            // （pre-execution 因 vmCrossedLine_ 等去重条件未触发，步进模式
+            // 无去重条件直接暂停）。此处在步进暂停时补充递增 hitCount，
+            // 使 VM 与 Interpreter 的断点命中次数统计一致。
+            if (currentLine > 0 && vmBreakpoints_.contains(currentLine)) {
+                vmBreakpointHitCounts_[currentLine]++;
+            }
+            vmLastPausedLine_ = currentLine;
+            isVmRunning_ = false;
+            return VmStepResult::OK;
+        }
+    }
+}
+
+/// STEP_OUT 模式：跳出当前帧，帧深度比起始更浅时暂停（栈底降级为跨行暂停）。
+VmStepper::VmStepResult VmStepper::execStepOut() {
+    // STEP_IN/OVER/OUT: 同步执行（快速操作，不阻塞 UI）
+    // P1-3 fix: VM 断点检查改为 pre-execution（执行前检查 IP 位置），
+    // 与 Interpreter 的 pre-execution 语义对齐。原实现在 stepOnce 之后检查
+    // （post-execution），多语句行（print(1); print(2);）VM 可能在执行完
+    // print(1) 后才检测到断点行，用户看到 print(1) 已输出。
+    // 现在在每条指令执行前先检查当前 IP 是否命中断点。
+    constexpr int64_t MAX_STEP_LOOP = 1000000;
+    int64_t stepCount = 0;
+
+    while (true) {
+        // P1-3 fix: pre-execution 断点检查——执行前检查当前 IP 是否命中断点
+        {
+            int preLine = getCurrentLine();
+            if (preLine > 0) {
+                if (preLine != vmLastSeenLine_) {
+                    vmCrossedLine_ = true;
+                }
+                // 注：pre-execution 检查时不更新 vmLastSeenLine_，
+                // 留到 post-execution 统一更新，避免漏检
+                if (checkBreakpointHit(preLine) && (preLine != vmLastPausedLine_ || vmCrossedLine_)) {
+                    vmBreakpointHitCounts_[preLine]++;
+                    vmLastPausedLine_ = preLine;
+                    vmCrossedLine_ = false;
+                    isVmRunning_ = false;
+                    return VmStepResult::PAUSED_AT_BREAKPOINT;
+                }
+            }
+            // R104: pre-execution 函数断点 + 异常断点检查
+            if (!vmFunctionBreakpoints_.isEmpty() || vmExceptionBreakpointEnabled_ || hasWatchpoints()) {
+                if (checkPreExecutionFunctionExceptionBps(preLine)) {
+                    return VmStepResult::PAUSED_AT_BREAKPOINT;
+                }
+            }
+        }
+
+        VMResult result = stepOnceActive();
+        ++stepCount;
+        maybeRecordStep(); // R114: 采集执行轨迹快照（recorder 启用时）
+
+        // BUG-IDE-18 fix: STEP_OVER/OUT 在深递归或长循环上同步执行可达数十万步，
+        // 期间不处理任何事件会让 UI 看似冻结（标题栏"无响应"、面板不重绘）。
+        // 每 2000 步让出事件循环处理绘制事件（ExcludeUserInputEvents
+        // 排除用户输入事件以避免重入触发 stop/step 等槽函数）。若期间 VM 被异步
+        // 停止（isVmRunning_ 被置 false），立即返回 OK 让 UI 更新。
+        //
+        // P3.6 fix: 原实现调用 processEvents(ExcludeUserInputEvents) 会派发 QTimer
+        // 事件，虽然各面板已有 isVmRunning() 守卫，但定时器重入仍是潜在风险。
+        // 改用 sendPostedEvents(DeferredDelete) 处理对象生命周期 + 遍历所有可见
+        // 顶层窗口调用 repaint() 强制重绘，彻底避免定时器事件派发。
+        // repaint() 同步处理 paint event 不进入事件循环，无重入风险。
+        // 注：sendPostedEvents(nullptr, QEvent::DeferredDelete) 仅处理 DeferredDelete
+        // 类型的 posted events（QObject 删除），不处理 QTimer/Socket 等事件。
+        if (stepCount % 2000 == 0) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            // 强制重绘所有可见顶层窗口（主窗口 + 浮动 dock 容器）
+            if (auto* app = qobject_cast<QApplication*>(QCoreApplication::instance())) {
+                for (QWidget* w : app->topLevelWidgets()) {
+                    if (w->isVisible()) {
+                        w->repaint();
+                    }
+                }
+            }
+            if (!isVmRunning_) {
+                return VmStepResult::OK;
+            }
+        }
+
+        if (result == VMResult::VM_RUNTIME_ERROR) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::ERROR;
+        }
+
+        if (isActiveFinished()) {
+            isVmInitialized_ = false;
+            isVmRunning_ = false;
+            return VmStepResult::FINISHED;
+        }
+
+        // A4 fix: 所有模式的循环上限保护
+        if (stepCount >= MAX_STEP_LOOP) {
+            isVmRunning_ = false;
+            return VmStepResult::OK; // 返回 OK 让 UI 更新，用户可继续
+        }
+
+        // A4 fix: 检查是否应暂停
+        int currentLine = getCurrentLine();
+        size_t currentFrameCount = getFrameCount();
+
+        // P1-3 fix: 行号追踪更新（post-execution）。
+        // 断点命中检查已移到 pre-execution（循环开头），此处仅更新行号追踪状态。
+        // BUG-DBG-2 fix: 移植 DebugController::crossedLine_ 机制。
+        // crossedLine_ 在行号变化时置 true，允许同行断点在跨行后重新触发；
+        // 仅在断点真正命中（含条件满足）时清 false，与 DebugController F4 修复一致。
+        if (currentLine > 0) {
+            if (currentLine != vmLastSeenLine_) {
+                vmCrossedLine_ = true;
+            }
+            vmLastSeenLine_ = currentLine;
+        }
+
+        // 帧深度比起始更浅
+        bool shouldPause = false;
+        if (currentFrameCount < vmStepStartFrameCount_) {
+            shouldPause = true;
+        }
+        // A4 fix: 若已在栈底无法跨出（frameCount == startFrameCount == 1），
+        // 执行到下一条有行号的指令即暂停（避免死循环）
+        // BUG-DBG-3 fix: 顶层 STEP_OUT 行为与 STEP_OVER 顶层不一致——
+        // STEP_OVER 用 crossedDeeper_ 允许同行暂停，STEP_OUT 顶层仅用行号变化判断，
+        // 单行循环（如 for (...; ...; ...) foo();）STEP_OUT 后永不暂停（行号不变），
+        // 直到循环结束才停止。修复：与 STEP_OVER 顶层对齐，使用 crossedLine_ 机制
+        // 允许跨行后同行暂停。
+        // R54-7 fix: 注释原提及"vmCrossedDeeper_"但代码实际使用 vmCrossedLine_，
+        // 已更正注释。STEP_OUT 在栈底时无处可"跨出"，降级为"跨行后暂停"语义
+        // （与 STEP_IN 行级粒度一致），使用 vmCrossedLine_ 是正确设计。
+        else if (currentFrameCount <= 1 && currentLine > 0 && (currentLine != vmLastPausedLine_ || vmCrossedLine_)) {
+            shouldPause = true;
+        }
+
+        if (shouldPause) {
+            // P1-4 fix: 步进模式下若当前行有断点，递增 hitCount（对齐
+            // DebugController L108-114 的行为）。虽然 pre-execution 断点检查
+            // 已在循环开头处理了断点命中，但步进暂停可能发生在断点行上
+            // （pre-execution 因 vmCrossedLine_ 等去重条件未触发，步进模式
+            // 无去重条件直接暂停）。此处在步进暂停时补充递增 hitCount，
+            // 使 VM 与 Interpreter 的断点命中次数统计一致。
+            if (currentLine > 0 && vmBreakpoints_.contains(currentLine)) {
+                vmBreakpointHitCounts_[currentLine]++;
+            }
+            vmLastPausedLine_ = currentLine;
+            isVmRunning_ = false;
+            return VmStepResult::OK;
+        }
     }
 }
 
@@ -373,6 +670,19 @@ void VmStepper::runBatch() {
             {
                 int preLine = getCurrentLine();
                 if (preLine > 0) {
+                    // R98 runToCursor: 临时断点检测——优先于用户断点检查。
+                    // runBatch 仅在 RUN 模式下被调用（stepByMode 的 RUN 分支启动 QTimer），
+                    // 因此无需再判断 mode。命中后立即清除 vmTempBreakpointLine_ 防止重复触发。
+                    // 不要求 crossedLine_（一次性断点首次到达即命中）。
+                    if (vmTempBreakpointLine_ > 0 && preLine == vmTempBreakpointLine_) {
+                        vmTempBreakpointLine_ = -1;
+                        vmRunTimer_->stop();
+                        vmLastPausedLine_ = preLine;
+                        vmCrossedLine_ = false;
+                        isVmRunning_ = false;
+                        emit vmRunPaused(VmStepResult::PAUSED_AT_BREAKPOINT);
+                        return;
+                    }
                     if (preLine != vmLastSeenLine_) {
                         vmCrossedLine_ = true;
                     }
@@ -387,10 +697,19 @@ void VmStepper::runBatch() {
                     }
                     vmLastSeenLine_ = preLine;
                 }
+                // R104: pre-execution 函数断点 + 异常断点检查
+                if (!vmFunctionBreakpoints_.isEmpty() || vmExceptionBreakpointEnabled_ || hasWatchpoints()) {
+                    if (checkPreExecutionFunctionExceptionBps(preLine)) {
+                        vmRunTimer_->stop();
+                        emit vmRunPaused(VmStepResult::PAUSED_AT_BREAKPOINT);
+                        return;
+                    }
+                }
             }
 
             VMResult result = stepOnceActive();
             ++vmRunStepCount_;
+            maybeRecordStep(); // R114: 采集执行轨迹快照（recorder 启用时）
 
             if (result == VMResult::VM_RUNTIME_ERROR) {
                 vmRunTimer_->stop();
@@ -443,6 +762,8 @@ void VmStepper::stop() {
     // BUG-DBG-2 fix: 同步重置 crossedLine_ 状态，避免下一轮运行残留旧状态
     vmLastSeenLine_ = -1;
     vmCrossedLine_ = false;
+    // R98 runToCursor: stop() 清除临时断点。用户主动停止时残留的临时断点不应跨会话存活。
+    vmTempBreakpointLine_ = -1;
 }
 
 // #4 fix: 检查断点命中（含条件求值）
@@ -454,6 +775,16 @@ void VmStepper::stop() {
 // 现改为纯查询，hitCount 递增移到调用方过滤条件通过之后。
 bool VmStepper::checkBreakpointHit(int line) {
     if (vmBreakpoints_.isEmpty() || line <= 0 || !vmBreakpoints_.contains(line)) {
+        return false;
+    }
+    // R104 Logpoint：命中不暂停，仅输出日志并递增 hitCount
+    auto kindIt = vmBreakpointKinds_.find(line);
+    if (kindIt != vmBreakpointKinds_.end() && kindIt.value() == BreakpointKind::Logpoint) {
+        if (handleLogpointHit(line)) {
+            // Logpoint 已处理（输出日志），返回 false 不暂停
+            return false;
+        }
+        // handleLogpointHit 返回 false 表示条件不满足，继续不暂停
         return false;
     }
     // #4 fix: 检查是否有条件表达式
@@ -468,5 +799,115 @@ bool VmStepper::checkBreakpointHit(int line) {
     // 无求值器时视为条件不满足（不暂停）——与 DebugEvaluator::evaluate 语义一致。
     // AUDIT-BUG-D1 fix: 原返回 true 会导致条件断点被当作无条件断点，
     // 用户设置的条件被完全忽略。返回 false 更安全（不暂停而非总是暂停）。
+    return false;
+}
+
+// R104 Logpoint：处理 Logpoint 命中——输出日志、递增 hitCount
+// 返回 true 表示已处理（条件满足或无条件），返回 false 表示条件不满足
+bool VmStepper::handleLogpointHit(int line) {
+    // 检查条件
+    auto condIt = vmBreakpointConditions_.find(line);
+    if (condIt != vmBreakpointConditions_.end() && !condIt->empty()) {
+        if (vmConditionEvaluator_ && !vmConditionEvaluator_(condIt.value())) {
+            return false; // 条件不满足
+        }
+        if (!vmConditionEvaluator_) {
+            return false; // 无求值器，条件 Logpoint 视为不命中
+        }
+    }
+    // 递增 hitCount
+    vmBreakpointHitCounts_[line]++;
+    // 输出日志（v1 直接返回模板字符串，不进行 {expr} 插值）
+    auto msgIt = vmLogpointMessages_.find(line);
+    std::string logMsg = (msgIt != vmLogpointMessages_.end()) ? msgIt.value() : std::string{};
+    if (vmLogCallback_) {
+        try {
+            vmLogCallback_(logMsg);
+        } catch (...) {
+            // 吞掉日志回调异常
+        }
+    }
+    return true;
+}
+
+// R104 Function BP：pre-execution 检测 OP_CALL/REG_CALL 是否命中函数断点
+bool VmStepper::checkFunctionBreakpointHit() {
+    if (vmFunctionBreakpoints_.isEmpty())
+        return false;
+    std::string funName = useRegister_ ? regVm_.peekCalledFunctionName() : vm_.peekCalledFunctionName();
+    if (funName.empty() || !vmFunctionBreakpoints_.contains(funName))
+        return false;
+    // 命中：递增 hitCount
+    vmFunctionBreakpointHitCounts_[funName]++;
+    return true;
+}
+
+// R104 Exception BP：pre-execution 检测 OP_THROW/REG_THROW 是否命中异常断点
+bool VmStepper::checkExceptionBreakpointHit() {
+    if (!vmExceptionBreakpointEnabled_)
+        return false;
+    bool isThrow = useRegister_ ? regVm_.isCurrentThrowInstruction() : vm_.isCurrentThrowInstruction();
+    if (!isThrow)
+        return false;
+    // 命中：递增 hitCount
+    vmExceptionBreakpointHitCount_++;
+    return true;
+}
+
+// R104 辅助：pre-execution 统一检查函数断点 + 异常断点
+bool VmStepper::checkPreExecutionFunctionExceptionBps(int line) {
+    // 函数断点优先（OP_CALL/REG_CALL 指令）
+    if (checkFunctionBreakpointHit()) {
+        vmLastPausedLine_ = line;
+        vmCrossedLine_ = false;
+        isVmRunning_ = false;
+        return true;
+    }
+    // 异常断点（OP_THROW/REG_THROW 指令）
+    if (checkExceptionBreakpointHit()) {
+        vmLastPausedLine_ = line;
+        vmCrossedLine_ = false;
+        isVmRunning_ = false;
+        return true;
+    }
+    // R161 Watchpoint（数据断点）：pre-execution 检查 SET 类指令
+    if (checkWatchpointHit(line)) {
+        return true; // checkWatchpointHit 内部已设置 vmLastPausedLine_ 等
+    }
+    return false;
+}
+
+// R161 Watchpoint：pre-execution 检查当前指令是否写入被监视的变量/字段
+bool VmStepper::checkWatchpointHit(int line) {
+    if (vmWatchpoints_.isEmpty())
+        return false;
+    // 通过 peekWriteTarget 读取当前 IP 指令的写入目标（不执行指令）
+    WriteTarget wt = useRegister_ ? regVm_.peekWriteTarget() : vm_.peekWriteTarget();
+    if (!wt.isWrite)
+        return false;
+    // 遍历 watchpoint 列表，匹配变量名/字段名
+    for (auto& wp : vmWatchpoints_) {
+        bool matched = false;
+        if (wp.kind == WatchpointTargetKind::Variable) {
+            // 变量级 watchpoint：匹配变量名（索引写入也匹配，因为修改了容器变量本身）
+            if (!wt.varName.empty() && wt.varName == wp.varName) {
+                matched = true;
+            }
+        } else if (wp.kind == WatchpointTargetKind::Field) {
+            // 字段级 watchpoint：匹配字段名（varName 可选，空=任意对象的该字段）
+            if (!wt.isFieldWrite)
+                continue;
+            if (wt.fieldName == wp.fieldName && (wp.varName.empty() || wt.varName == wp.varName)) {
+                matched = true;
+            }
+        }
+        if (matched) {
+            wp.hitCount++;
+            vmLastPausedLine_ = line;
+            vmCrossedLine_ = false;
+            isVmRunning_ = false;
+            return true;
+        }
+    }
     return false;
 }
