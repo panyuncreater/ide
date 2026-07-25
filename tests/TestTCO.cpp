@@ -1,30 +1,39 @@
 // ============================================================
-// R109 TCO（尾调用优化）测试套件
+// R109/L15 TCO（尾调用优化）测试套件
 // ------------------------------------------------------------
-// 验证 `return f(args)` 形态的自递归调用在 VM 三路径（StackVM 直接路径 /
-// StackVM IR 路径 / RegisterVM 路径）上被优化为"参数赋值 + JUMP 函数入口"，
-// 跳过 OP_RETURN 的帧弹出，复用当前帧执行下一轮递归——深度无界。
+// 验证 `return f(args)` 和 `return this.method(args)` 形态的自递归调用
+// 在 VM 三路径（StackVM 直接路径 / StackVM IR 路径 / RegisterVM 路径）上
+// 被优化为"参数赋值 + JUMP 函数入口"，跳过 OP_RETURN 的帧弹出，
+// 复用当前帧执行下一轮递归——深度无界。
 //
 // Interpreter 路径是树遍历，无 TCO 能力，必须依赖 MAX_RECURSION_DEPTH 保护。
 // 这是架构性设计差异：Interpreter 触发深度限制，VM 三路径触发指令数限制
 // 或正常返回。本测试套件的核心断言是"VM 三路径不再触发深度限制"。
 //
-// 保守识别条件（六条同时满足才允许 TCO，缺一不可）：
-//   (1) AST 结构：return f(args) 且 f == 当前函数名（TCO::isTailRecursiveReturn）
+// L15 扩展后的识别条件（必须同时满足才允许 TCO，缺一不可）：
+//   (1) AST 结构：return f(args) 或 return this.method(args)
+//       （TCO::identifyTailCall 返回 SelfFunction 或 SelfMethod）
 //   (2) 不在 try 块内（tryDepth_ == 0）
-//   (3) 函数无闭包 upvalue（currentUpvalues_.empty()）
-//   (4) 参数数量等于形参数量（无默认参数填充）
-//   (5) 不是类方法（方法 slot 0 是 this 不能被覆盖）
-//   (6) currentFunctionDecl_ 非空
+//   (3) currentFunctionDecl_ 非空
+//   (4) args.size() <= params.size()（超出视为非尾调用）
+//
+// L15 放宽的限制：
+//   - 闭包 upvalue：SelfFunction/SelfMethod 安全（upvalue 指向外层栈，不变）
+//   - 默认参数：args.size() < params.size() 时用默认值填充
+//   - 类方法：SelfMethod 保留 slot 0 (this) 和字段槽，仅覆盖参数槽
+//
+// 仍不支持的形态（需 VM 层 OP_TAIL_CALL，留作后续工作）：
+//   - 互递归 return g(args)（g != 当前函数名，跨 chunk 跳转）
+//   - 链式调用 return f(x)(y)（callee != nullptr，闭包目标编译期未知）
 //
 // 测试覆盖：
 //   1. 基础尾递归：累加 / 阶乘（深度 > 256 时 VM 三路径正常返回，Interpreter 报错）
 //   2. 非尾递归仍走深度限制：var x = f(n-1); return x; 不应被 TCO 优化
-//   3. 互递归不启用 TCO：return other(n-1) 不是自递归
+//   3. 互递归不启用 TCO：return other(n-1) 跨函数调用，需 OP_TAIL_CALL（未实现）
 //   4. try 块内不启用 TCO：return f(args) 在 try 内仍触发深度限制
-//   5. 类方法不启用 TCO：method 内 return method(args) 仍触发深度限制
-//   6. 闭包函数不启用 TCO：捕获 upvalue 的函数内 return f(args) 仍触发深度限制
-//   7. 默认参数不启用 TCO：return f() （f 有默认参数）仍触发深度限制
+//   5. 类方法自调用启用 TCO（L15）：method 内 return this.method(args) 不再触发深度限制
+//   6. 闭包函数自调用启用 TCO（L15）：捕获 upvalue 的函数内 return f(args) 不再触发深度限制
+//   7. 默认参数自调用启用 TCO（L15）：return f() （f 有默认参数）不再触发深度限制
 //   8. 三后端一致性：小规模 N 下 TCO 路径与 Interpreter 结果一致
 // ============================================================
 
@@ -256,42 +265,48 @@ TEST(TCONotApplied, MutualRecursionNotTCO) {
 // ============================================================
 
 TEST(TCONotApplied, TailCallInTryBlockNotTCO) {
-    // try 块内的 return f(args) 不应被 TCO 优化（tryStack_ handler 不清理 + finally/catch 语义破坏）
-    // 三后端都应触发深度限制
+    // try 块内的 return f(args) 不应被 TCO 优化（tryStack_ handler 不清理 + finally/catch 语义破坏）。
+    //
+    // 函数无 base case：若 TCO 错误启用，n 递减至负无穷永不返回（测试挂起超时）。
+    // TCO 正确不启用时：递归到 MAX_RECURSION_DEPTH/MAX_FRAMES（256），抛出深度限制错误。
+    //
+    // L14 语义变更后：try/catch 捕获 runtimeError（含递归深度错误），catch 块返回 0。
+    // 因此四后端均输出 "0"——这验证了 TCO 未启用（否则会无限递归挂起），
+    // 同时验证了 L14 的 try/catch 能捕获递归深度错误。
     std::string src = "func f(n) { try { return f(n - 1); } catch (e) { return 0; } }\n"
                       "print(f(500));\n";
-    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM_IR(src)));
-    EXPECT_TRUE(isRecursionDepthError(runRegVM(src)));
+    EXPECT_EQ(runInterpreter(src), "0");
+    EXPECT_EQ(runStackVM(src), "0");
+    EXPECT_EQ(runStackVM_IR(src), "0");
+    EXPECT_EQ(runRegVM(src), "0");
 }
 
 // ============================================================
-// 5. 类方法不启用 TCO（方法 slot 0 是 this 不能被覆盖）
+// 5. 类方法自调用启用 TCO（L15 扩展：SelfMethod）
 // ============================================================
 
-TEST(TCONotApplied, MethodTailCallNotTCO) {
-    // 类方法 self_call 内的 return this.self_call() 是 MethodCall 节点（非 FunCall），
-    // TCO::isTailRecursiveReturn 检查 nodeType == NODE_FUN_CALL 返回 false，不启用 TCO。
-    // 三后端都应触发深度限制（每次方法调用 +1 帧）。
+TEST(TCOApplied, MethodTailCallSelfCall) {
+    // L15: 类方法 self_call 内的 return this.self_call() 现在可被 TCO 优化。
+    // 保留 slot 0 (this) 和字段槽，仅覆盖参数槽，JUMP 回方法入口。
+    // VM 三路径不触发深度限制；Interpreter 仍触发（树遍历无 TCO）。
     std::string src = "class Counter {\n"
                       "  func self_call(n) { if (n == 0) { return 0; } return this.self_call(n - 1); }\n"
                       "}\n"
                       "var c = Counter();\n"
                       "print(c.self_call(500));\n";
     EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM_IR(src)));
-    EXPECT_TRUE(isRecursionDepthError(runRegVM(src)));
+    EXPECT_EQ(runStackVM(src), "0");
+    EXPECT_EQ(runStackVM_IR(src), "0");
+    EXPECT_EQ(runRegVM(src), "0");
 }
 
 // ============================================================
-// 6. 闭包函数不启用 TCO（upvalue 指向被覆盖的栈槽）
+// 6. 闭包函数自调用启用 TCO（L15 扩展：放宽 upvalue 限制）
 // ============================================================
 
-TEST(TCONotApplied, ClosureTailCallNotTCO) {
-    // 捕获 upvalue 的函数：inner 捕获 x，return inner(args) 是对 inner 自身的递归
-    // 但 inner 有 upvalue，TCO 不应启用
+TEST(TCOApplied, ClosureTailCallSelfRecursion) {
+    // L15: 捕获 upvalue 的函数 inner 内 return inner(args) 是自递归。
+    // upvalue 指向外层函数 outer 的栈槽，递归不覆盖外层栈槽，安全启用 TCO。
     std::string src = "func outer() {\n"
                       "  var x = 100;\n"
                       "  func inner(n) { if (n == 0) { return x; } return inner(n - 1); }\n"
@@ -299,23 +314,53 @@ TEST(TCONotApplied, ClosureTailCallNotTCO) {
                       "}\n"
                       "print(outer());\n";
     EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM_IR(src)));
-    EXPECT_TRUE(isRecursionDepthError(runRegVM(src)));
+    EXPECT_EQ(runStackVM(src), "100");
+    EXPECT_EQ(runStackVM_IR(src), "100");
+    EXPECT_EQ(runRegVM(src), "100");
 }
 
 // ============================================================
-// 7. 默认参数不启用 TCO（参数槽位错位）
+// 7. 默认参数自调用启用 TCO（L15 扩展：默认参数填充）
 // ============================================================
 
-TEST(TCONotApplied, DefaultParamTailCallNotTCO) {
-    // f 有默认参数；return f(n-1) 参数数量 < 形参数量，TCO 不应启用
+TEST(TCOApplied, DefaultParamTailCallSelfRecursion) {
+    // L15: f 有默认参数；return f(n-1) 参数数量 < 形参数量，
+    // TCO 路径用默认值 m=0 填充缺失参数，JUMP 回函数入口。
     std::string src = "func f(n, m = 0) { if (n == 0) { return m; } return f(n - 1); }\n"
                       "print(f(500));\n";
     EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM(src)));
-    EXPECT_TRUE(isRecursionDepthError(runStackVM_IR(src)));
-    EXPECT_TRUE(isRecursionDepthError(runRegVM(src)));
+    EXPECT_EQ(runStackVM(src), "0");
+    EXPECT_EQ(runStackVM_IR(src), "0");
+    EXPECT_EQ(runRegVM(src), "0");
+}
+
+TEST(TCOApplied, MethodTailCallPreservesFields) {
+    // L15: 方法自调用期间字段值应保持不变（TCO 不覆盖 this 和字段槽）。
+    // Counter.value 在递归过程中被读取，验证未被破坏。
+    std::string src = "class Counter {\n"
+                      "  var count = 0;\n"
+                      "  func recurse(n) { if (n == 0) { return this.count; } return this.recurse(n - 1); }\n"
+                      "}\n"
+                      "var c = Counter();\n"
+                      "c.count = 42;\n"
+                      "print(c.recurse(500));\n";
+    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runStackVM(src), "42");
+    EXPECT_EQ(runStackVM_IR(src), "42");
+    EXPECT_EQ(runRegVM(src), "42");
+}
+
+TEST(TCOApplied, MethodTailCallWithAccumulator) {
+    // L15: 方法自调用带累加器参数，验证参数槽正确覆盖。
+    std::string src = "class Accumulator {\n"
+                      "  func sum(n, acc) { if (n == 0) { return acc; } return this.sum(n - 1, acc + n); }\n"
+                      "}\n"
+                      "var a = Accumulator();\n"
+                      "print(a.sum(500, 0));\n"; // 1+2+...+500 = 125250
+    EXPECT_TRUE(isRecursionDepthError(runInterpreter(src)));
+    EXPECT_EQ(runStackVM(src), "125250");
+    EXPECT_EQ(runStackVM_IR(src), "125250");
+    EXPECT_EQ(runRegVM(src), "125250");
 }
 
 // ============================================================

@@ -3,12 +3,16 @@
 #include "common/Logger.h"
 #include "common/RuntimeLimits.h"             // BUG-AUDIT-MOD-3: MAX_RECURSION_DEPTH
 #include "common/TCO.h"                       // R109 TCO: 尾递归自调用识别
+#include "compiler/BytecodeCache.h"           // P2-11: .minic 文件加载
+#include "compiler/IRSSA.h"                   // P2-10: gvnPass/licmPass/inlinePass
 #include "compiler/RegisterBytecodeBackend.h" // PERF-14: 寄存器式后端
 #include "interpreter/NumericUtils.h"         // 共享溢出检查（B6 fix）
 #include "lexer/Lexer.h"                      // VM-IMPORT: 模块源码词法分析
 #include "parser/Parser.h"                    // VM-IMPORT: 模块源码语法分析
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <sstream>
 
 // ============================================================
@@ -217,15 +221,27 @@ CompileResult Compiler::compileViaIR(Block& program) {
     // VM-IMPORT: 转发模块加载器给 AstIRBuilder，使 IR 路径也支持 import
     irBuilder.setModuleLoader(moduleLoader_);
     // 清理上次编译的模块状态（对齐 compile() 直接路径的清理）
+    // P3-A6: 补齐 moduleLoadingStack_ 和 moduleExports_ 的清理（与 compileViaRegisterIR
+    // 的 P2-B fix 对齐，原 P2-B 修复时漏掉了 compileViaIR 路径，三路径状态重置不对称）
     linkedModuleSet_.clear();
     moduleLoadingSet_.clear();
+    moduleLoadingStack_.clear();
+    moduleExports_.clear();
     moduleAsts_.clear();
     lastIR_ = irBuilder.build(program);
     // BUG-INH-AUDIT-1 fix: 先检查 hasError() 再检查 !lastIR_。
-    // build() 在 hasError_ 时返回 nullptr，原顺序下 !lastIR_ 先触发 "IR 构建失败"，
+    // build() 在错误时返回 nullptr，原顺序下 !lastIR_ 先触发 "IR 构建失败"，
     // 吞掉具体错误消息（如 super 编译错误）。改为先检查 hasError() 传播具体消息。
+    // P2-12 fix: 合并 AstIRBuilder 的 DiagnosticBag 到 Compiler::diagnostics_，
+    // 消除"私有字段→手动 error() 转化"的冗余路径。
     if (irBuilder.hasError()) {
-        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(), irBuilder.errorLine(), 0);
+        auto irDiags = irBuilder.takeDiagnostics();
+        for (const auto& d : irDiags.all()) {
+            diagnostics_.add(d);
+        }
+        if (!irDiags.hasErrors()) {
+            error("IR 构建失败", 0, 0); // 防御性兜底
+        }
         CompileResult emptyResult;
         return emptyResult;
     }
@@ -318,6 +334,8 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     AstIRBuilder irBuilder;
     // VM-IMPORT: 转发模块加载器给 AstIRBuilder，使寄存器式路径也支持 import
     irBuilder.setModuleLoader(moduleLoader_);
+    // L11: 转发预编译模块解析器（仅 RegisterVM 路径，compileViaIR 不转发）
+    irBuilder.setPrecompiledModuleResolver(precompiledModuleResolver_);
     // P2-B fix: 对齐 compile() 直接路径，补齐 moduleLoadingStack_ 和 moduleExports_ 的清理
     linkedModuleSet_.clear();
     moduleLoadingSet_.clear();
@@ -326,8 +344,15 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     moduleAsts_.clear();
     lastIR_ = irBuilder.build(program);
     // BUG-INH-AUDIT-1 fix: 先检查 hasError() 再检查 !lastIR_（同 compile IR 路径）。
+    // P2-12 fix: 合并 AstIRBuilder 的 DiagnosticBag 到 Compiler::diagnostics_
     if (irBuilder.hasError()) {
-        error(irBuilder.errorMessage().empty() ? "IR 构建失败" : irBuilder.errorMessage(), irBuilder.errorLine(), 0);
+        auto irDiags = irBuilder.takeDiagnostics();
+        for (const auto& d : irDiags.all()) {
+            diagnostics_.add(d);
+        }
+        if (!irDiags.hasErrors()) {
+            error("IR 构建失败", 0, 0); // 防御性兜底
+        }
         RegisterCompileResult emptyResult;
         return emptyResult;
     }
@@ -356,10 +381,54 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
     // BUG-IR-OPT-1 fix: 不仅优化 main 函数，还需遍历 module->functions 优化所有子函数，
     // 否则子函数错过常量折叠/DCE 等优化。
     if (irOptimize_) {
+        // P2-10 IR SSA 基础设施：函数内联在 optimizeIR 之前执行，
+        // 使内联后的代码能被常量折叠/DCE 进一步优化。
+        // inlinePass 操作整个 IRModule（需访问被调用函数 IR）。
+        if (irSSAOptimize_) {
+            inlinePass(*module);
+        }
         optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
         for (auto& fn : module->functions) {
             if (fn)
                 optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+        }
+        // P2-10 IR SSA 基础设施：GVN + LICM 在 optimizeIR 之后执行，
+        // 对已优化的 IR 进行跨基本块值编号和循环不变外提。
+        // 与 CSE 同源约束：仅寄存器式后端安全（替换 dest vreg 引用后无栈残留）。
+        // P2-10 fix: ssaConstructPass/ssaDestructPass 必须包裹 GVN/LICM——
+        // GVN 的跨块 CSE 和 LICM 的循环不变外提依赖 PHI 节点跟踪变量在不同
+        // 控制流路径的值。不构造 SSA 时，LOAD_LOCAL/STORE_LOCAL 语义被保留
+        // 但变量值无法跨块追踪，LICM 误判不变表达式导致语义错误。
+        //
+        // P2-10 fix2: 仅当 ssaConstructPass 返回 true（实际插入 PHI）时才运行
+        // GVN/LICM。ssaConstructPass 仅处理 LOCAL 变量（STORE_LOCAL），当函数只
+        // 含 GLOBAL 变量（如顶层代码 var/print）时返回 false，此时 GVN 的跨块 CSE
+        // 会创建跨循环 live range（vreg 在外层循环定义、内层循环使用），而
+        // RegisterBytecodeBackend 的 collectVRegLastUse 是线性扫描不识别回边，
+        // 会在首次迭代的"最后使用"点释放寄存器并复用，后续迭代读到错误值。
+        // SSA 构造+析构路径安全：PHI 在 ssaDestruct 还原为 LOAD_LOCAL，每轮迭代
+        // 重新加载，无跨循环 live range 问题。
+        if (irSSAOptimize_) {
+            bool ssaBuilt = ssaConstructPass(*module->mainFunction);
+            if (ssaBuilt) {
+                gvnPass(*module->mainFunction);
+                licmPass(*module->mainFunction);
+                ssaDestructPass(*module->mainFunction);
+                // SSA 析构后清理死 LOAD_LOCAL（ssaDestruct 将 PHI 还原为 LOAD_LOCAL，
+                // 部分 LOAD_LOCAL dest 可能无引用，DCE 安全删除）
+                optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+            }
+            for (auto& fn : module->functions) {
+                if (fn) {
+                    bool fnSsaBuilt = ssaConstructPass(*fn);
+                    if (fnSsaBuilt) {
+                        gvnPass(*fn);
+                        licmPass(*fn);
+                        ssaDestructPass(*fn);
+                        optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+                    }
+                }
+            }
         }
     }
 
@@ -390,6 +459,50 @@ RegisterCompileResult Compiler::compileViaRegisterIR(Block& program) {
 
     // 恢复 lastIR_ 供调试/可视化使用
     lastIR_ = std::move(module->mainFunction);
+
+    // L11 预编译模块（RegisterVM）：post-lowering 合并 pending 模块
+    // AstIRBuilder::handleImportStmt 对每个 .minic 模块：
+    //   1. 在 IR builder 的 globalSlotAllocator_ 中分配全局槽位（与 Compiler 的 allocator 分离）
+    //   2. emit IR CALL 调用模块初始化函数（lowering 后为 REG_CALL）
+    //   3. 记录 pending 模块（path, initFnName, line）
+    // post-lowering 阶段加载 .minic 文件，将模块 RegBytecodeChunk 合并到结果。
+    //
+    // 关键不变量：sync Compiler::globalSlotAllocator_ 与 IR builder 的全局槽位名表。
+    // loadPrecompiledRegisterModule 通过 allocateGlobalSlot（Compiler 的 allocator）分配
+    // 模块全局槽位并构建 relocationMap。若不同步，Compiler 的 allocator 为空，会分配
+    // 重复槽位（从 0 开始），导致 relocationMap 指向错误槽位，模块全局变量读写错位。
+    auto pendingModules = irBuilder.takePendingRegPrecompiledModules();
+    if (!pendingModules.empty()) {
+        // 同步 Compiler::globalSlotAllocator_ 与 IR builder 的全局槽位名表
+        globalSlotAllocator_.clear();
+        for (const auto& gname : result.globalSlotNames) {
+            globalSlotAllocator_.allocate(gname);
+        }
+
+        // 将 result 移到 lastRegisterResult_（loadPrecompiledRegisterModule 操作此成员）
+        lastRegisterResult_ = std::move(result);
+
+        // 逐个加载 pending 模块（.minic → RegBytecodeChunk 合并）
+        for (const auto& pending : pendingModules) {
+            if (!loadPrecompiledRegisterModule(pending.modulePath, pending.initFnName, pending.line)) {
+                LOG_INFO("Register VM 预编译模块加载失败，可能需回退源码编译: " + pending.modulePath,
+                         "Compiler-RegPrecompiled");
+            }
+        }
+
+        // 合并 pendingEnumInfos_ 到结果（loadPrecompiledRegisterModule 收集模块 enum 元信息）
+        for (auto& enumInfo : pendingEnumInfos_) {
+            lastRegisterResult_.enumInfos.push_back(std::move(enumInfo));
+        }
+        pendingEnumInfos_.clear();
+
+        // 从 allocator 更新全局槽位名表（理论上无新增，因 IR builder 已预分配；防御性同步）
+        lastRegisterResult_.globalSlotNames = globalSlotAllocator_.names();
+        lastRegisterResult_.globalSlotCount = static_cast<int>(lastRegisterResult_.globalSlotNames.size());
+
+        // 移回 result 以复用下方 LOG_INFO + return
+        result = std::move(lastRegisterResult_);
+    }
 
     // Perf-LazyLog: LOG_INFO 宏级别过滤后跳过字符串构造
     LOG_INFO("Register IR 编译完成: " + std::to_string(result.mainChunk.code.size()) + " 字节, " +
@@ -466,7 +579,6 @@ bool Compiler::emitFinallyJump(int line, std::vector<size_t>& realTargetPatches)
     //   实际：最内层（i==1）push realTarget，外层 push 下一个内层 finally 的 entry。
     //   修复：判据改为 `if (i == finallyIndices.size())`，索引改为 `finallyIndices[i]`。
     for (size_t i = finallyIndices.size(); i > 0; --i) {
-        size_t ctxIdx = finallyIndices[i - 1];
         chunk_.writeOp(OpCode::OP_PUSH_JUMP_TARGET, line);
         size_t patch = chunk_.code.size();
         chunk_.writeShort(0, line); // 占位，待回填
@@ -944,7 +1056,7 @@ void Compiler::visitAssignment(Assignment& node) {
 
 // VM-05/06: 解析闭包捕获变量为 upvalue 索引
 // 返回 upvalue 在 currentUpvalues_ 中的索引，-1 表示不是闭包变量
-int Compiler::resolveUpvalue(const std::string& name, int line) {
+int Compiler::resolveUpvalue(const std::string& name, int /*line*/) {
     // 1. 检查是否已在当前 upvalue 列表中（去重）
     auto existIt = currentUpvalueNames_.find(name);
     if (existIt != currentUpvalueNames_.end()) {
@@ -1776,9 +1888,9 @@ void Compiler::emitDefaultValues(FunDecl& node) {
                 uint16_t constIdx = chunk_.addConstant(constVal);
                 chunk_.defaultConstIndices.push_back(constIdx);
             } else {
-                // 复杂表达式默认值：VM 不支持，记录无效索引（0xFFFF）
+                // 复杂表达式默认值：VM 不支持，记录无效索引（NO_INDEX）
                 // Interpreter 路径仍可正常执行
-                chunk_.defaultConstIndices.push_back(0xFFFF);
+                chunk_.defaultConstIndices.push_back(RuntimeLimits::NO_INDEX);
             }
         }
     }
@@ -1928,36 +2040,62 @@ void Compiler::visitReturnStmt(ReturnStmt& node) {
         error("return 只能在函数体内使用", node.line, 0);
         return;
     }
-    // R109 TCO: 尾调用优化。识别 return f(args) 形态的自递归调用，
-    // 编译为"参数求值 + 逆序 OP_SET_LOCAL 覆盖参数槽 + OP_JUMP 函数入口"。
+    // R109/L15 TCO: 尾调用优化。识别 return f(args) 或 return this.method(args) 形态的
+    // 自递归调用，编译为"参数求值 + 逆序 OP_SET_LOCAL 覆盖参数槽 + OP_JUMP 函数入口"。
     // 跳过 OP_RETURN 的帧弹出，复用当前帧执行下一轮递归，深度无界。
     //
-    // 优化条件（保守策略，与 IR 路径严格对齐）：
-    //   (1) AST 结构匹配（TCO::isTailRecursiveReturn：return f(args) 且 f == 当前函数名）
-    //   (2) 不在 try 块内（tryDepth_ == 0，否则 tryStack_ handler 不清理 + finally/catch 语义破坏）
-    //   (3) 函数无闭包 upvalue（currentUpvalues_.empty()，否则跳转后 upvalue 指向被覆盖的栈槽）
-    //   (4) 参数数量等于形参数量（无默认参数填充，避免参数槽位错位）
-    //   (5) 不是类方法（currentClassName_.empty()，方法 slot 0 是 this 不能被覆盖）
-    //   (6) currentFunctionDecl_ 非空（用于获取形参数量）
+    // L15 扩展（与 IR 路径严格对齐）：
+    //   - SelfFunction: 放宽 upvalue 限制（同函数重用闭包，upvalue 指向外层栈不变）
+    //   - SelfFunction: 支持默认参数（args.size() < params.size() 时用默认值填充）
+    //   - SelfMethod: 类方法自调用 return this.method(args)
+    //     保留 slot 0 (this) 和 slot 1..N (字段)，仅覆盖参数槽 N+1..N+params
+    //
+    // 仍要求的条件：
+    //   (1) AST 结构匹配（TCO::identifyTailCall 返回非 None）
+    //   (2) 不在 try 块内（tryDepth_ == 0）
+    //   (3) currentFunctionDecl_ 非空（用于获取形参/默认值）
+    //   (4) args.size() <= params.size()（超出视为非尾调用）
     //
     // 参数求值顺序：先全部求值到栈顶，再逆序 OP_SET_LOCAL + OP_POP 覆盖参数槽。
     // 逆序保证：args[i] 可能引用 params[j]（j<i），若顺序赋值会破坏 params[j]。
     // 栈布局变化：[..., val_0, val_1, ..., val_N-1] → [...] → OP_JUMP（栈深度恢复）
-    if (!currentFunctionName_.empty() && tryDepth_ == 0 && currentUpvalues_.empty() && currentClassName_.empty() &&
-        currentFunctionDecl_ != nullptr && TCO::isTailRecursiveReturn(&node, currentFunctionName_)) {
-        auto* call = static_cast<FunCall*>(node.value.get());
-        if (call->arguments.size() == currentFunctionDecl_->params.size()) {
-            // 编译所有参数表达式，结果压栈
-            for (auto& arg : call->arguments) {
+    const bool isMethod = !currentClassName_.empty();
+    TCO::TailCallInfo tco = TCO::identifyTailCall(&node, currentFunctionName_, isMethod);
+    if (tco.kind != TCO::TailCallInfo::Kind::None && tryDepth_ == 0 && currentFunctionDecl_ != nullptr) {
+        const size_t paramCount = currentFunctionDecl_->params.size();
+        // 计算参数槽位基址：SelfFunction=0，SelfMethod=1+fieldCount（跳过 this 和字段）
+        size_t paramSlotBase = 0;
+        const std::vector<std::shared_ptr<ASTNode>>* args = nullptr;
+        if (tco.kind == TCO::TailCallInfo::Kind::SelfFunction) {
+            args = &tco.call->arguments;
+        } else { // SelfMethod
+            paramSlotBase = 1 + chunk_.fieldOrder.size();
+            args = &tco.methodCall->arguments;
+        }
+        if (args->size() <= paramCount && paramSlotBase + paramCount <= 255) {
+            // 编译所有实参表达式，结果压栈
+            for (auto& arg : *args) {
                 compileNode(arg.get());
             }
+            // L15: 缺失参数用默认值或 null 填充
+            for (size_t i = args->size(); i < paramCount; ++i) {
+                if (i < currentFunctionDecl_->defaultValues.size() && currentFunctionDecl_->defaultValues[i]) {
+                    compileNode(currentFunctionDecl_->defaultValues[i].get());
+                } else {
+                    chunk_.writeOp(OpCode::OP_NULL, node.line);
+                }
+            }
             // 逆序 OP_SET_LOCAL + OP_POP 覆盖参数槽位
-            for (int i = static_cast<int>(call->arguments.size()) - 1; i >= 0; --i) {
+            // 栈布局：[..., val_0, val_1, ..., val_{N-1}]（val_{N-1} 在栈顶）
+            // OP_SET_LOCAL 复制栈顶到 slot（不弹栈），OP_POP 弹栈。
+            // 必须从栈顶（val_{N-1}）开始赋值到 slot N-1，逆序向下，
+            // 否则正向迭代会把 val_{N-1-i} 赋给 slot i（参数顺序反转）。
+            for (size_t i = paramCount; i > 0; --i) {
                 chunk_.writeOp(OpCode::OP_SET_LOCAL, node.line);
-                chunk_.write(static_cast<uint8_t>(i), node.line);
+                chunk_.write(static_cast<uint8_t>(paramSlotBase + i - 1), node.line);
                 chunk_.writeOp(OpCode::OP_POP, node.line);
             }
-            // 跳转到函数入口（OP_JUMP 是绝对跳转）
+            // 跳转到函数/方法入口（OP_JUMP 是绝对跳转）
             chunk_.writeOp(OpCode::OP_JUMP, node.line);
             chunk_.writeShort(static_cast<uint16_t>(currentFunctionEntryIp_), node.line);
             return;
@@ -1974,6 +2112,26 @@ void Compiler::visitReturnStmt(ReturnStmt& node) {
     // R109 TCO: TCO 路径跳过 TYPE_CHECK 是安全的——递归调用的 return 会再次触发检查。
     if (!currentFunctionReturnType_.empty()) {
         emitTypeCheck(currentFunctionReturnType_, node.line);
+    }
+    // L4 fix: return 在 try-finally 块内时，续跳到 finally 入口执行 finally 块。
+    // finally 块作为 Block 栈平衡（var 声明 OP_SET_LOCAL+OP_POP 不改操作数栈深度），
+    // 返回值留在栈顶，finally 末尾 OP_FINALLY_END 续跳到紧邻的 OP_RETURN（return landing pad）。
+    // finally 块内若再次 return/throw，新控制流覆盖原 return（与 Interpreter 对齐）。
+    std::vector<size_t> returnFinallyPatches;
+    if (emitFinallyJump(node.line, returnFinallyPatches)) {
+        // return 在 try-finally 块内：回填 realTarget 到 OP_RETURN 位置
+        size_t returnIp = chunk_.code.size();
+        if (returnIp > 65535) {
+            error("return 续跳目标溢出 65535", node.line, 0);
+            return;
+        }
+        uint16_t target = static_cast<uint16_t>(returnIp);
+        for (size_t patch : returnFinallyPatches) {
+            // patch = OP_PUSH_JUMP_TARGET opcode 位置（emitFinallyJump 存 patch-1）
+            // 回填操作数两字节到 patch+1, patch+2（与 breakJumps 回填一致）
+            chunk_.code[patch + 1] = static_cast<uint8_t>(target & 0xFF);
+            chunk_.code[patch + 2] = static_cast<uint8_t>((target >> 8) & 0xFF);
+        }
     }
     chunk_.writeOp(OpCode::OP_RETURN, node.line);
     return;
@@ -2077,6 +2235,58 @@ void Compiler::visitImportStmt(ImportStmt& node) {
         return;
     }
 
+    // P2-11: 命名空间导入字典构造 lambda（run-once 与首次加载路径共用）
+    // 对每个 export 名 emit: OP_STRING(key常量) + OP_GET_GLOBAL(value)，
+    // 最后 OP_BUILD_DICT + OP_DEFINE_GLOBAL(namespaceAlias)。
+    // 修复说明：
+    //   - 使用 OP_STRING（非已废弃的 OP_CONSTANT）
+    //   - 使用 writeShort（BytecodeChunk 无 writeUint16 方法）
+    //   - 使用 addConstant(Value(name))（BytecodeChunk 无 addStringConstant 方法）
+    //   - run-once 路径也需调用：全局槽位已存在，OP_GET_GLOBAL 可直接读取
+    auto emitNamespaceDict = [this, &node, &modulePath]() {
+        if (node.namespaceAlias.empty())
+            return;
+        auto expIt = moduleExports_.find(modulePath);
+        if (expIt != moduleExports_.end() && !expIt->second.empty()) {
+            // 收集导出名并排序（确保三后端字典 key 顺序一致）
+            std::vector<std::string> sortedExports(expIt->second.begin(), expIt->second.end());
+            std::sort(sortedExports.begin(), sortedExports.end());
+            if (sortedExports.size() > 255) {
+                error("命名空间导入的导出数量超过 255 上限", node.line, 0);
+                return;
+            }
+            // 逐个 push key(字符串常量) + value(全局槽位值)
+            for (const auto& name : sortedExports) {
+                // push key: 字符串常量（D5 fix: OP_STRING 替代废弃的 OP_CONSTANT）
+                uint16_t keyIdx = chunk_.addConstant(Value(name));
+                chunk_.writeOp(OpCode::OP_STRING, node.line);
+                chunk_.writeShort(keyIdx, node.line);
+                // push value: OP_GET_GLOBAL
+                int slot = lookupGlobalSlot(name);
+                if (slot < 0) {
+                    error("命名空间导入失败：导出名 " + name + " 未分配全局槽位", node.line, 0);
+                    return;
+                }
+                chunk_.writeOp(OpCode::OP_GET_GLOBAL, node.line);
+                chunk_.writeShort(static_cast<uint16_t>(slot), node.line);
+            }
+            // OP_BUILD_DICT: 弹出 2*count 个值，push 字典
+            chunk_.writeOp(OpCode::OP_BUILD_DICT, node.line);
+            chunk_.write(static_cast<uint8_t>(sortedExports.size()), node.line);
+            // OP_DEFINE_GLOBAL: 将字典存入 namespaceAlias 全局槽位
+            int nsSlot = allocateGlobalSlot(node.namespaceAlias);
+            chunk_.writeOp(OpCode::OP_DEFINE_GLOBAL, node.line);
+            chunk_.writeShort(static_cast<uint16_t>(nsSlot), node.line);
+        } else {
+            // 空模块：构造空字典
+            chunk_.writeOp(OpCode::OP_BUILD_DICT, node.line);
+            chunk_.write(0, node.line);
+            int nsSlot = allocateGlobalSlot(node.namespaceAlias);
+            chunk_.writeOp(OpCode::OP_DEFINE_GLOBAL, node.line);
+            chunk_.writeShort(static_cast<uint16_t>(nsSlot), node.line);
+        }
+    };
+
     // 2. run-once 检查：已编译的模块跳过（全局槽位已定义）
     if (linkedModuleSet_.count(modulePath)) {
         // BUG-AUDIT-MOD-1 fix: 已编译模块的具名导入验证也检查 export 集合（对齐 Interpreter）
@@ -2091,12 +2301,31 @@ void Compiler::visitImportStmt(ImportStmt& node) {
                 }
             }
         }
+        // P2-11 fix: run-once 路径也需构造命名空间字典（全局槽位已存在，OP_GET_GLOBAL 可直接读取）
+        emitNamespaceDict();
         return;
     }
 
-    // 3. 循环依赖检测
+    // 3. P2-14 循环导入延迟加载：不报错，跳过本次内联编译（避免无限递归）
+    // 模块的全局槽位已由首次加载路径的 preScanModuleGlobals 预扫描分配（值为 null），
+    // moduleExports_ 已由 collectModuleExports 填充。首次加载路径会继续内联编译模块语句，
+    // 填充全局槽位。循环回路闭合时，访问未初始化的导出名运行时读到 null（保持现有全局槽位语义）。
+    // 语义参考 ES Modules + Python：模块全局槽位立即分配，值按执行顺序填充。
     if (moduleLoadingSet_.count(modulePath)) {
-        error("检测到循环依赖: " + modulePath, node.line, 0);
+        // 具名导入验证：检查 export 集合（对齐 run-once 路径）
+        if (!node.importAll && !node.names.empty()) {
+            auto expIt = moduleExports_.find(modulePath);
+            if (expIt != moduleExports_.end()) {
+                for (const auto& name : node.names) {
+                    if (expIt->second.find(name) == expIt->second.end()) {
+                        error("模块 " + modulePath + " 中未导出名称: " + name, node.line, 0);
+                        return;
+                    }
+                }
+            }
+        }
+        // P2-11: 循环导入场景也需构造命名空间字典（全局槽位已预扫描分配）
+        emitNamespaceDict();
         return;
     }
 
@@ -2106,6 +2335,44 @@ void Compiler::visitImportStmt(ImportStmt& node) {
     if (moduleLoadingStack_.size() >= RuntimeLimits::MAX_RECURSION_DEPTH) {
         error("模块导入深度超过限制 (" + std::to_string(RuntimeLimits::MAX_RECURSION_DEPTH) + ")", node.line, 0);
         return;
+    }
+
+    // P2-11 预编译模块：优先尝试加载 .minic 文件（跳过源码解析与编译）
+    // 成功时直接合并预编译字节码到当前编译，无需 moduleLoader_
+    // 失败时回退到下方源码编译路径（需要 moduleLoader_）
+    if (precompiledModuleResolver_) {
+        // 标记为正在加载（循环检测，.minic 路径也需要）
+        moduleLoadingSet_.insert(modulePath);
+        moduleLoadingStack_.push_back(modulePath);
+
+        bool loaded = loadPrecompiledModule(modulePath, node);
+
+        // 无论成功与否，都从加载集移除（loadPrecompiledModule 内部不操作加载集）
+        moduleLoadingSet_.erase(modulePath);
+        moduleLoadingStack_.pop_back();
+
+        if (loaded) {
+            // 标记为已链接（run-once 语义）
+            linkedModuleSet_.insert(modulePath);
+
+            // P2-11: 命名空间导入字典构造（.minic 路径也需要）
+            emitNamespaceDict();
+
+            // BUG-AUDIT-MOD-1 fix: 具名导入验证（检查 export 集合）
+            if (!node.importAll && !node.names.empty()) {
+                auto expIt = moduleExports_.find(modulePath);
+                if (expIt != moduleExports_.end()) {
+                    for (const auto& name : node.names) {
+                        if (expIt->second.find(name) == expIt->second.end()) {
+                            error("模块 " + modulePath + " 中未导出名称: " + name, node.line, 0);
+                            return;
+                        }
+                    }
+                }
+            }
+            return; // .minic 加载成功，跳过源码编译
+        }
+        // .minic 加载失败，回退到源码编译路径
     }
 
     // 4. 检查模块加载器
@@ -2150,6 +2417,10 @@ void Compiler::visitImportStmt(ImportStmt& node) {
     moduleLoadingSet_.erase(modulePath);
     moduleLoadingStack_.pop_back(); // BUG-AUDIT-MOD-3
     linkedModuleSet_.insert(modulePath);
+
+    // P2-11: import * as ns from "path" — 构造命名空间字典对象
+    // 模块代码已内联编译，导出名对应的全局槽位已分配。调用 emitNamespaceDict emit 字节码。
+    emitNamespaceDict();
 
     // 11. BUG-AUDIT-MOD-1 fix: 具名导入验证改为检查 export 集合（对齐 Interpreter）
     // 原实现仅检查 lookupGlobalSlot(name) < 0（名称存在即通过），
@@ -2339,6 +2610,617 @@ void Compiler::collectModuleExports(const std::string& modulePath, Block& module
     moduleExports_[modulePath] = std::move(exports);
 }
 
+// ============================================================
+// P2-11 预编译模块：独立编译入口
+// ============================================================
+CompileResult Compiler::compileModule(const std::string& source, const std::string& modulePath) {
+    // 独立编译模块源码，生成可序列化的 CompileResult。
+    // 与 compile() 的关键区别：
+    //   1. 模块全局槽位从 0 开始独立编号
+    //   2. 收集 export 名称到 result.moduleExports
+    //   3. 不设置 moduleLoader_（模块内 import 仍通过 moduleLoader_ 处理，但模块不应再 import 其他模块）
+    //
+    // 生成的 CompileResult 可通过 BytecodeCache::storeToFile 序列化为 .minic 文件。
+
+    // 1. 词法分析
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    if (lexer.getDiagnostics().hasErrors()) {
+        const auto& diags = lexer.getDiagnostics().all();
+        if (!diags.empty()) {
+            error("模块 '" + modulePath + "' 词法错误: " + diags.front().message, diags.front().line,
+                  diags.front().column);
+        } else {
+            error("模块 '" + modulePath + "' 词法错误", 0, 0);
+        }
+        return {};
+    }
+
+    // 2. 语法分析
+    Parser parser;
+    auto moduleAst = parser.parse(tokens);
+    if (parser.hasErrors() || !moduleAst) {
+        const auto& diags = parser.getDiagnostics().all();
+        if (!diags.empty()) {
+            error("模块 '" + modulePath + "' 语法错误: " + diags.front().message, diags.front().line,
+                  diags.front().column);
+        } else {
+            error("模块 '" + modulePath + "' 语法错误", 0, 0);
+        }
+        return {};
+    }
+
+    // 3. 重置编译器状态（与 compile() 相同的状态清理）
+    chunk_ = BytecodeChunk();
+    chunk_.name = "module:" + modulePath;
+    chunk_.arity = 0;
+    chunk_.reserveCode(1024);
+    varIndex_.clear();
+    stringConstIndex_.clear();
+    diagnostics_.clear();
+    functionChunks_.clear();
+    currentLocals_.clear();
+    inFunction_ = false;
+    classFieldNames_.clear();
+    outerLocals_.clear();
+    writebackCounter_ = 0;
+    peakLocals_ = 0;
+    blockDepth_ = 0;
+    blockSaveCounter_ = 0;
+    compileDepth_ = 0;
+    globalSlotAllocator_.clear();
+    innerFunctions_.clear();
+    innerFunctionSlots_.clear();
+    linkedModuleSet_.clear();
+    moduleLoadingSet_.clear();
+    moduleLoadingStack_.clear();
+    moduleExports_.clear();
+    moduleAsts_.clear();
+    pendingEnumInfos_.clear();
+
+    // 4. 预扫描模块顶层声明，分配全局槽位
+    preScanModuleGlobals(*moduleAst);
+
+    // 5. 收集模块导出名称
+    collectModuleExports(modulePath, *moduleAst);
+
+    // 6. 内联编译模块语句
+    for (auto& stmt : moduleAst->statements) {
+        if (stmt)
+            compileStatement(stmt.get());
+    }
+
+    // 7. 末尾添加 null + return（模块 mainChunk 必须有返回值）
+    chunk_.writeOp(OpCode::OP_NULL, 0);
+    chunk_.writeOp(OpCode::OP_RETURN, 0);
+
+    // 8. 构建结果
+    CompileResult result;
+    result.mainChunk = std::move(chunk_);
+    result.functionChunks = std::move(functionChunks_);
+    result.globalSlotCount = globalSlotAllocator_.count();
+    result.globalSlotNames = std::move(globalSlotAllocator_.mutableNames());
+    result.enumInfos = std::move(pendingEnumInfos_);
+
+    // 9. 填充 moduleExports（从 moduleExports_ map 提取，排序确保确定性）
+    auto expIt = moduleExports_.find(modulePath);
+    if (expIt != moduleExports_.end()) {
+        result.moduleExports.reserve(expIt->second.size());
+        for (const auto& name : expIt->second) {
+            result.moduleExports.push_back(name);
+        }
+        std::sort(result.moduleExports.begin(), result.moduleExports.end());
+    }
+
+    // 10. 预计算 IP→指令索引映射
+    result.mainChunk.buildIpMap();
+    for (auto& kv : result.functionChunks) {
+        kv.second.buildIpMap();
+    }
+
+    LOG_INFO("模块预编译完成: " + modulePath + " (" + std::to_string(result.globalSlotCount) + " 全局槽, " +
+                 std::to_string(result.functionChunks.size()) + " 函数chunk, " +
+                 std::to_string(result.moduleExports.size()) + " 导出)",
+             "Compiler");
+
+    return result;
+}
+
+// ============================================================
+// L11 预编译模块（RegisterVM）：独立编译模块源码为 RegisterCompileResult
+// ============================================================
+RegisterCompileResult Compiler::compileModuleViaRegisterIR(const std::string& source, const std::string& modulePath) {
+    // 独立编译模块源码，生成可序列化的 RegisterCompileResult。
+    // 与 compileViaRegisterIR 的关键区别：
+    //   1. 模块全局槽位从 0 开始独立编号（不与主程序共享）
+    //   2. 收集 export 名称到 result.moduleExports
+    //   3. 不设置 moduleLoader_（模块内 import 仍通过 moduleLoader_ 处理）
+    //
+    // 生成的 RegisterCompileResult 可通过 BytecodeCache::storeRegisterToFile
+    // 序列化为 MLRC 格式 .minic 文件。
+
+    // 1. 词法分析
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    if (lexer.getDiagnostics().hasErrors()) {
+        const auto& diags = lexer.getDiagnostics().all();
+        if (!diags.empty()) {
+            error("模块 '" + modulePath + "' 词法错误: " + diags.front().message, diags.front().line,
+                  diags.front().column);
+        } else {
+            error("模块 '" + modulePath + "' 词法错误", 0, 0);
+        }
+        return {};
+    }
+
+    // 2. 语法分析
+    Parser parser;
+    auto moduleAst = parser.parse(tokens);
+    if (parser.hasErrors() || !moduleAst) {
+        const auto& diags = parser.getDiagnostics().all();
+        if (!diags.empty()) {
+            error("模块 '" + modulePath + "' 语法错误: " + diags.front().message, diags.front().line,
+                  diags.front().column);
+        } else {
+            error("模块 '" + modulePath + "' 语法错误", 0, 0);
+        }
+        return {};
+    }
+
+    // 3. 重置编译器状态（与 compileViaRegisterIR 相同的状态清理）
+    diagnostics_.clear();
+    linkedModuleSet_.clear();
+    moduleLoadingSet_.clear();
+    moduleLoadingStack_.clear();
+    moduleExports_.clear();
+    moduleAsts_.clear();
+    pendingEnumInfos_.clear();
+    globalSlotAllocator_.clear();
+
+    // 3.5 收集模块导出名称（对齐 compileModule 的 collectModuleExports 调用）
+    // IR builder 有自己的 moduleExports_，但 result.moduleExports 从 Compiler::moduleExports_ 提取。
+    collectModuleExports(modulePath, *moduleAst);
+
+    // 4. AstIRBuilder 构建模块 IR（独立全局槽位）
+    AstIRBuilder irBuilder;
+    // 模块编译不转发 precompiledModuleResolver_（模块内的 import 走源码编译）
+    lastIR_ = irBuilder.build(*moduleAst);
+    if (irBuilder.hasError()) {
+        auto irDiags = irBuilder.takeDiagnostics();
+        for (const auto& d : irDiags.all()) {
+            diagnostics_.add(d);
+        }
+        if (!irDiags.hasErrors()) {
+            error("IR 构建失败", 0, 0);
+        }
+        return {};
+    }
+    if (!lastIR_) {
+        error("IR 构建失败", 0, 0);
+        return {};
+    }
+    auto irModuleAsts = irBuilder.takeModuleAsts();
+    for (auto& ast : irModuleAsts) {
+        moduleAsts_.push_back(std::move(ast));
+    }
+
+    IRModule* module = irBuilder.getModule();
+    module->mainFunction = std::move(lastIR_);
+    module->globalSlotNames = irBuilder.getGlobalSlotNames();
+
+    // 5. IR 优化（对齐 compileViaRegisterIR 的优化配置）
+    if (irOptimize_) {
+        if (irSSAOptimize_) {
+            inlinePass(*module);
+        }
+        optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+        for (auto& fn : module->functions) {
+            if (fn)
+                optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+        }
+        if (irSSAOptimize_) {
+            bool ssaBuilt = ssaConstructPass(*module->mainFunction);
+            if (ssaBuilt) {
+                gvnPass(*module->mainFunction);
+                licmPass(*module->mainFunction);
+                ssaDestructPass(*module->mainFunction);
+                optimizeIR(*module->mainFunction, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+            }
+            for (auto& fn : module->functions) {
+                if (fn) {
+                    bool fnSsaBuilt = ssaConstructPass(*fn);
+                    if (fnSsaBuilt) {
+                        gvnPass(*fn);
+                        licmPass(*fn);
+                        ssaDestructPass(*fn);
+                        optimizeIR(*fn, /*enableCopyPropagation=*/false, /*enableDCE=*/true);
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. IR → RegisterBytecode
+    RegisterBytecodeBackend backend;
+    if (!backend.lowerModule(*module)) {
+        error("Register IR lowering 失败", 0, 0);
+        return {};
+    }
+
+    RegisterCompileResult result;
+    auto mainChunk = backend.takeChunk();
+    if (!mainChunk) {
+        error("Register IR lowering 未生成 main 字节码", 0, 0);
+        return {};
+    }
+    result.mainChunk = std::move(*mainChunk);
+    result.functionChunks = backend.takeFunctionChunks();
+    result.globalSlotNames = irBuilder.getGlobalSlotNames();
+    result.globalSlotCount = static_cast<int>(result.globalSlotNames.size());
+    result.enumInfos = irBuilder.takeEnumInfos();
+
+    // 7. 填充 moduleExports（从 moduleExports_ map 提取，排序确保确定性）
+    auto expIt = moduleExports_.find(modulePath);
+    if (expIt != moduleExports_.end()) {
+        result.moduleExports.reserve(expIt->second.size());
+        for (const auto& name : expIt->second) {
+            result.moduleExports.push_back(name);
+        }
+        std::sort(result.moduleExports.begin(), result.moduleExports.end());
+    }
+
+    // 8. 预计算 IP→指令索引映射
+    result.mainChunk.buildIpMap();
+    for (auto& kv : result.functionChunks) {
+        kv.second.buildIpMap();
+    }
+
+    // 恢复 lastIR_ 供调试/可视化使用
+    lastIR_ = std::move(module->mainFunction);
+
+    LOG_INFO("Register VM 模块预编译完成: " + modulePath + " (" + std::to_string(result.globalSlotCount) + " 全局槽, " +
+                 std::to_string(result.functionChunks.size()) + " 函数chunk, " +
+                 std::to_string(result.moduleExports.size()) + " 导出)",
+             "Compiler-RegModule");
+
+    return result;
+}
+
+// ============================================================
+// P2-11 预编译模块：重命名 OP_CLOSURE/OP_CALL 引用的函数名
+// ============================================================
+void Compiler::renameClosureRefs(BytecodeChunk& chunk, const std::string& prefix,
+                                 const std::unordered_set<std::string>& exportSet,
+                                 const std::unordered_set<std::string>& moduleFunctions) {
+    // 遍历 code 中的 OP_CLOSURE / OP_CALL 指令，获取 nameIdx → constants[nameIdx].stringVal()，
+    // 若名称在 moduleFunctions 中且不在 exportSet 中，则前缀化为 `prefix + name` 并更新常量。
+    //
+    // 必须同时处理 OP_CLOSURE 和 OP_CALL：
+    //   - OP_CLOSURE 创建闭包值，引用函数名常量；非导出函数的闭包值需重命名，
+    //     否则 functionChunks_.find(oldName) 在主程序中会找到错误的函数（如主程序同名函数）。
+    //   - OP_CALL 按名查找函数；模块内调用非导出函数（如 `main` 调用 `helper`）也需重命名，
+    //     否则运行时按原名查找会命中主程序的同名函数，破坏模块隔离语义。
+    //
+    // 通过 moduleFunctions 精确判断 OP_CALL 引用的是模块内函数还是内置函数：
+    //   - 模块内非导出函数（在 moduleFunctions 中，不在 exportSet 中）→ 前缀化
+    //   - 模块内导出函数（在 exportSet 中）→ 保持原名
+    //   - 内置函数（不在 moduleFunctions 中）→ 保持原名
+    //
+    // 格式：
+    //   OP_CLOSURE: [op(1B), nameIdx(2B), upvalueCount(1B), ...upvalueDescs]
+    //   OP_CALL:    [op(1B), nameIdx(2B), argCount(1B)]
+    size_t offset = 0;
+    while (offset < chunk.code.size()) {
+        if (offset >= chunk.code.size())
+            break;
+        OpCode op = static_cast<OpCode>(chunk.code[offset]);
+        if (op == OpCode::OP_CLOSURE || op == OpCode::OP_CALL) {
+            if (offset + 2 < chunk.code.size()) {
+                uint16_t nameIdx = static_cast<uint16_t>(chunk.code[offset + 1]) |
+                                   (static_cast<uint16_t>(chunk.code[offset + 2]) << 8);
+                if (nameIdx < chunk.constants.size() && chunk.constants[nameIdx].isString()) {
+                    const std::string& fnName = chunk.constants[nameIdx].stringVal();
+                    // 仅重命名模块内非导出函数：在 moduleFunctions 中但不在 exportSet 中
+                    if (moduleFunctions.count(fnName) > 0 && exportSet.count(fnName) == 0) {
+                        chunk.constants[nameIdx] = Value(prefix + fnName);
+                    }
+                }
+            }
+        }
+        offset += chunk.instructionSizeAt(offset);
+    }
+}
+
+// ============================================================
+// L11 预编译模块（RegisterVM）：重命名 REG_CALL/REG_MAKE_CLOSURE 引用的函数名
+// ============================================================
+void Compiler::renameRegClosureRefs(RegBytecodeChunk& chunk, const std::string& prefix,
+                                    const std::unordered_set<std::string>& exportSet,
+                                    const std::unordered_set<std::string>& moduleFunctions) {
+    // 遍历 code 中的 REG_CALL / REG_MAKE_CLOSURE 指令，获取 nameIdx →
+    // constants[nameIdx].stringVal()，若名称在 moduleFunctions 中且不在 exportSet 中，
+    // 则前缀化为 `prefix + name` 并更新常量。
+    //
+    // 指令格式（nameIdx 位置相同）：
+    //   REG_CALL:         [op(1B), dst(1B), nameIdx(2B LE), argCount(1B), args...]
+    //   REG_MAKE_CLOSURE: [op(1B), dst(1B), nameIdx(2B LE), uvCount(1B), uvDescs...]
+    //                     nameIdx 在 offset+2..offset+3
+    size_t offset = 0;
+    while (offset < chunk.code.size()) {
+        RegOp op = static_cast<RegOp>(chunk.code[offset]);
+        if (op == RegOp::REG_CALL || op == RegOp::REG_MAKE_CLOSURE) {
+            // nameIdx 在 offset+2..offset+3（2B LE）
+            if (offset + 3 < chunk.code.size()) {
+                uint16_t nameIdx = static_cast<uint16_t>(chunk.code[offset + 2]) |
+                                   (static_cast<uint16_t>(chunk.code[offset + 3]) << 8);
+                if (nameIdx < chunk.constants.size() && chunk.constants[nameIdx].isString()) {
+                    const std::string& fnName = chunk.constants[nameIdx].stringVal();
+                    // 仅重命名模块内非导出函数：在 moduleFunctions 中但不在 exportSet 中
+                    if (moduleFunctions.count(fnName) > 0 && exportSet.count(fnName) == 0) {
+                        chunk.constants[nameIdx] = Value(prefix + fnName);
+                    }
+                }
+            }
+        }
+        offset += chunk.instructionSizeAt(offset);
+    }
+}
+
+// ============================================================
+// P2-11 预编译模块：加载 .minic 并合并到当前编译
+// ============================================================
+bool Compiler::loadPrecompiledModule(const std::string& modulePath, ImportStmt& node) {
+    // 策略概述：
+    //   1. 通过 precompiledModuleResolver_ 获取 .minic 文件路径
+    //   2. BytecodeCache::tryLoadFromFile 加载预编译 CompileResult
+    //   3. 为模块的 globalSlotNames 在主程序分配对应全局槽位
+    //   4. 构建 relocationMap: moduleSlot → mainSlot
+    //   5. 模块 mainChunk 转为函数 chunk (__mod_<hash>__init)，
+    //      重命名非导出函数引用，重定位全局槽位
+    //   6. 模块 functionChunks 重命名+重定位后合并到主程序
+    //   7. 主 chunk emit OP_CLOSURE + OP_CALL_EXPR + OP_POP 调用模块初始化
+    //   8. 填充 moduleExports_ 供后续具名导入验证
+
+    if (!precompiledModuleResolver_)
+        return false;
+
+    std::string minicPath = precompiledModuleResolver_(modulePath);
+    if (minicPath.empty())
+        return false;
+
+    // L12: 推导源码路径（与 .minic 同目录、同 stem、.mini 扩展名）
+    // 用于 tryLoadFromFile 的源码失效校验：若源码 mtime/hash 与 .minic 头部
+    // 嵌入值不匹配（源码已修改），返回 nullopt 回退到源码编译。
+    // 推导失败（无 .mini 文件）→ sourcePath 为空，tryLoadFromFile 跳过校验（向后兼容）。
+    std::string sourcePath;
+    {
+        namespace fs = std::filesystem;
+        fs::path minicP(minicPath);
+        if (minicP.has_stem()) {
+            fs::path candidate = minicP.parent_path() / (minicP.stem().string() + ".mini");
+            std::error_code ec;
+            if (fs::exists(candidate, ec)) {
+                sourcePath = candidate.string();
+            }
+        }
+    }
+
+    BytecodeCache cache;
+    auto moduleResult = cache.tryLoadFromFile(minicPath, sourcePath);
+    if (!moduleResult)
+        return false; // 加载失败（文件不存在/损坏/校验失败/源码已修改），回退到源码编译
+
+    // 生成模块前缀（用于非导出函数名重命名，避免与主程序冲突）
+    // FNV-1a 哈希确保不同模块路径产生不同前缀
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (unsigned char c : modulePath) {
+        hash ^= c;
+        hash *= 0x100000001b3ULL;
+    }
+    std::string modPrefix = "__mod_" + std::to_string(hash) + "_";
+
+    // 构建导出名称集合（用于决定哪些函数名不重命名）
+    std::unordered_set<std::string> exportSet(moduleResult->moduleExports.begin(), moduleResult->moduleExports.end());
+
+    // P2-11 fix: 构建模块所有函数名集合（导出+非导出），用于 renameClosureRefs
+    // 精确判断 OP_CALL/OP_CLOSURE 引用的是模块内函数还是内置函数。
+    // 仅模块内非导出函数需要前缀化；内置函数（如 print）保持原名。
+    std::unordered_set<std::string> moduleFunctions;
+    for (const auto& [fnName, _] : moduleResult->functionChunks) {
+        moduleFunctions.insert(fnName);
+    }
+
+    // 1. 为模块的全局槽位在主程序分配对应槽位
+    //    relocationMap[moduleSlot] = mainSlot（-1 表示不重定位）
+    std::vector<int> relocationMap(moduleResult->globalSlotCount, -1);
+    for (int i = 0; i < moduleResult->globalSlotCount; ++i) {
+        const std::string& name = moduleResult->globalSlotNames[i];
+        // 导出名直接在主程序分配槽位（导入方需通过此槽位访问）
+        // 非导出名也分配槽位（模块内部代码需要），但名称被前缀化避免主程序访问
+        std::string mainName = (exportSet.count(name) > 0) ? name : (modPrefix + name);
+        int mainSlot = allocateGlobalSlot(mainName);
+        relocationMap[i] = mainSlot;
+    }
+
+    // 2. 处理模块 mainChunk：转为函数 chunk
+    std::string initFnName = modPrefix + "_init";
+    BytecodeChunk& moduleMainChunk = moduleResult->mainChunk;
+    moduleMainChunk.name = initFnName;
+    // 重命名非导出函数引用（OP_CLOSURE/OP_CALL 的常量池条目）
+    renameClosureRefs(moduleMainChunk, modPrefix, exportSet, moduleFunctions);
+    // 重定位全局槽位引用
+    moduleMainChunk.relocateGlobalSlots(relocationMap);
+
+    // 3. 处理模块 functionChunks：重命名 + 重定位
+    for (auto& [oldName, fnChunk] : moduleResult->functionChunks) {
+        // 导出函数保持原名，非导出函数前缀化
+        std::string newName = (exportSet.count(oldName) > 0) ? oldName : (modPrefix + oldName);
+        fnChunk.name = newName;
+        renameClosureRefs(fnChunk, modPrefix, exportSet, moduleFunctions);
+        fnChunk.relocateGlobalSlots(relocationMap);
+        functionChunks_[newName] = std::move(fnChunk);
+    }
+
+    // 4. 将模块 mainChunk 添加为函数 chunk
+    functionChunks_[initFnName] = std::move(moduleMainChunk);
+
+    // 5. 主 chunk emit 调用模块初始化函数
+    //    OP_CLOSURE(nameIdx, upvalueCount=0) + OP_CALL_EXPR(0) + OP_POP
+    // 注意：OP_CLOSURE 格式为 [op(1B), nameIdx(2B), upvalueCount(1B), upvalueDescs...]，
+    // 没有 argCount 字段（与 visitFunDecl 中的 OP_CLOSURE emit 一致，参见 Compiler.cpp:1605-1607）。
+    // 多 emit 一个字节会导致后续指令位置错位，触发"常量池索引越界"。
+    uint16_t nameIdx = chunk_.addConstant(Value(initFnName));
+    chunk_.writeOp(OpCode::OP_CLOSURE, node.line);
+    chunk_.writeShort(nameIdx, node.line);
+    chunk_.write(static_cast<uint8_t>(0), node.line); // upvalueCount = 0
+    chunk_.writeOp(OpCode::OP_CALL_EXPR, node.line);
+    chunk_.write(static_cast<uint8_t>(0), node.line); // argCount = 0
+    chunk_.writeOp(OpCode::OP_POP, node.line);        // 丢弃返回值
+
+    // 6. 填充 moduleExports_（供具名导入验证和命名空间字典构造）
+    std::unordered_set<std::string> exports(moduleResult->moduleExports.begin(), moduleResult->moduleExports.end());
+    moduleExports_[modulePath] = std::move(exports);
+
+    // 7. 合并 enum 元信息（模块可能定义 enum，主程序需要知道以校验 OP_BUILD_ENUM_VARIANT）
+    for (auto& enumInfo : moduleResult->enumInfos) {
+        pendingEnumInfos_.push_back(std::move(enumInfo));
+    }
+
+    LOG_INFO("预编译模块加载成功: " + modulePath + " → " + minicPath + " (" +
+                 std::to_string(moduleResult->functionChunks.size()) + " 函数chunk)",
+             "Compiler");
+
+    return true;
+}
+
+// ============================================================
+// L11 预编译模块（RegisterVM）：加载 MLRC 格式 .minic 并合并到 lastRegisterResult_
+// ============================================================
+bool Compiler::loadPrecompiledRegisterModule(const std::string& modulePath, const std::string& initFnName, int line) {
+    // 策略概述（对齐 loadPrecompiledModule，操作 RegBytecodeChunk）：
+    //   1. 通过 precompiledModuleResolver_ 获取 .minic 文件路径
+    //   2. BytecodeCache::tryLoadRegisterFromFile 加载预编译 RegisterCompileResult
+    //   3. 为模块的 globalSlotNames 在主程序分配对应全局槽位
+    //   4. 构建 relocationMap: moduleSlot → mainSlot
+    //   5. 模块 mainChunk 转为函数 chunk (initFnName)，
+    //      重命名非导出函数引用，重定位全局槽位
+    //   6. 模块 functionChunks 重命名+重定位后合并到 lastRegisterResult_.functionChunks
+    //   7. 主 chunk 追加 REG_CALL 调用模块初始化函数
+    //   8. 填充 moduleExports_ 供后续具名导入验证
+    //
+    // 注意：此方法在 compileViaRegisterIR 的 post-lowering 阶段调用，
+    // lastRegisterResult_ 已包含主程序的 RegBytecodeChunk。模块的 chunks 合并到其中。
+
+    if (!precompiledModuleResolver_)
+        return false;
+
+    std::string minicPath = precompiledModuleResolver_(modulePath);
+    if (minicPath.empty())
+        return false;
+
+    // L12: 推导源码路径（与 .minic 同目录、同 stem、.mini 扩展名）
+    std::string sourcePath;
+    {
+        namespace fs = std::filesystem;
+        fs::path minicP(minicPath);
+        if (minicP.has_stem()) {
+            fs::path candidate = minicP.parent_path() / (minicP.stem().string() + ".mini");
+            std::error_code ec;
+            if (fs::exists(candidate, ec)) {
+                sourcePath = candidate.string();
+            }
+        }
+    }
+
+    BytecodeCache cache;
+    auto moduleResult = cache.tryLoadRegisterFromFile(minicPath, sourcePath);
+    if (!moduleResult)
+        return false; // 加载失败，回退到源码编译
+
+    // 生成模块前缀（用于非导出函数名重命名，避免与主程序冲突）
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (unsigned char c : modulePath) {
+        hash ^= c;
+        hash *= 0x100000001b3ULL;
+    }
+    std::string modPrefix = "__mod_" + std::to_string(hash) + "_";
+
+    // 构建导出名称集合（用于决定哪些函数名不重命名）
+    std::unordered_set<std::string> exportSet(moduleResult->moduleExports.begin(), moduleResult->moduleExports.end());
+
+    // 构建模块所有函数名集合（导出+非导出），用于 renameRegClosureRefs
+    std::unordered_set<std::string> moduleFunctions;
+    for (const auto& [fnName, _] : moduleResult->functionChunks) {
+        moduleFunctions.insert(fnName);
+    }
+
+    // 1. 为模块的全局槽位在主程序分配对应槽位
+    std::vector<int> relocationMap(moduleResult->globalSlotCount, -1);
+    for (int i = 0; i < moduleResult->globalSlotCount; ++i) {
+        const std::string& name = moduleResult->globalSlotNames[i];
+        std::string mainName = (exportSet.count(name) > 0) ? name : (modPrefix + name);
+        int mainSlot = allocateGlobalSlot(mainName);
+        relocationMap[i] = mainSlot;
+    }
+
+    // 2. 处理模块 mainChunk：转为函数 chunk (initFnName)
+    RegBytecodeChunk& moduleMainChunk = moduleResult->mainChunk;
+    moduleMainChunk.name = initFnName;
+    renameRegClosureRefs(moduleMainChunk, modPrefix, exportSet, moduleFunctions);
+    moduleMainChunk.relocateGlobalSlots(relocationMap);
+
+    // 3. 处理模块 functionChunks：重命名 + 重定位
+    for (auto& [oldName, fnChunk] : moduleResult->functionChunks) {
+        std::string newName = (exportSet.count(oldName) > 0) ? oldName : (modPrefix + oldName);
+        fnChunk.name = newName;
+        renameRegClosureRefs(fnChunk, modPrefix, exportSet, moduleFunctions);
+        fnChunk.relocateGlobalSlots(relocationMap);
+        lastRegisterResult_.functionChunks[newName] = std::move(fnChunk);
+    }
+
+    // 4. 将模块 mainChunk 添加为函数 chunk
+    lastRegisterResult_.functionChunks[initFnName] = std::move(moduleMainChunk);
+
+    // 5. 主 chunk 追加 REG_CALL 调用模块初始化函数
+    //    REG_CALL 格式: [op(1B), dst(1B), nameIdx(2B LE), argCount(1B)]
+    //    dst = 0（寄存器 0，返回值被丢弃），argCount = 0
+    //    nameIdx 指向常量池中的 initFnName 字符串
+    RegBytecodeChunk& mainChunk = lastRegisterResult_.mainChunk;
+    uint16_t nameIdx = static_cast<uint16_t>(mainChunk.constants.size());
+    mainChunk.constants.push_back(Value(initFnName));
+    mainChunk.code.push_back(static_cast<uint8_t>(RegOp::REG_CALL));
+    mainChunk.code.push_back(0); // dst = r0
+    mainChunk.code.push_back(static_cast<uint8_t>(nameIdx & 0xFF));
+    mainChunk.code.push_back(static_cast<uint8_t>((nameIdx >> 8) & 0xFF));
+    mainChunk.code.push_back(0); // argCount = 0
+    // lines/columns 对齐
+    mainChunk.lines.push_back(line);
+    mainChunk.lines.push_back(line);
+    mainChunk.lines.push_back(line);
+    mainChunk.lines.push_back(line);
+    mainChunk.lines.push_back(line);
+    mainChunk.columns.push_back(0);
+    mainChunk.columns.push_back(0);
+    mainChunk.columns.push_back(0);
+    mainChunk.columns.push_back(0);
+    mainChunk.columns.push_back(0);
+
+    // 6. 填充 moduleExports_（供具名导入验证和命名空间字典构造）
+    std::unordered_set<std::string> exports(moduleResult->moduleExports.begin(), moduleResult->moduleExports.end());
+    moduleExports_[modulePath] = std::move(exports);
+
+    // 7. 合并 enum 元信息
+    for (auto& enumInfo : moduleResult->enumInfos) {
+        pendingEnumInfos_.push_back(std::move(enumInfo));
+    }
+
+    LOG_INFO("Register VM 预编译模块加载成功: " + modulePath + " → " + minicPath + " (" +
+                 std::to_string(moduleResult->functionChunks.size()) + " 函数chunk)",
+             "Compiler-RegPrecompiled");
+
+    return true;
+}
+
 void Compiler::visitTryStmt(TryStmt& node) {
     // 编译模式:
     //   OP_TRY_BEGIN <catchOffset>
@@ -2455,6 +3337,43 @@ void Compiler::emitTryBlock(TryStmt& node, TryCatchPatchInfo& info) {
 }
 
 bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
+    // L27 重构：原 200 行单函数按阶段拆分为 5 个子函数分发，降低圈复杂度。
+    // 所有 BUG-7a/7b/7c/BUG-AUDIT-EXC-*/BUG-TRY-1/L1 fix 不变量原样保留。
+    // 阶段顺序：回填 catchOffset → 绑定 catch 变量 → 编译 catch body（含 cleanup wrap）
+    //          → 恢复作用域 → 回填 afterCatch 跳转。
+
+    // 阶段 1：回填 catchOffset
+    if (!patchCatchOffset(node, info)) {
+        return false;
+    }
+
+    // 阶段 2：绑定 catch 变量（函数内/顶层，含遮蔽保护）
+    CatchVarBindInfo bind;
+    if (!bindCatchVariable(node, bind)) {
+        return false;
+    }
+
+    // 阶段 3：编译 catch body（含 cleanup wrap），返回 cleanup 跳转 patch
+    // 注：若 cleanupThrowOffset 溢出，emitCatchBodyWithCleanup 已完成 restoreMapping +
+    // currentLocals_ 恢复并返回 false，此时不可再调用 restoreCatchScope（会重复恢复 +
+    // 错误 emit OP_CLOSE_UPVALUE），直接返回 false 保持原 early-return 语义。
+    size_t skipCleanupThrowJumpPatch = std::string::npos;
+    if (!emitCatchBodyWithCleanup(node, bind, skipCleanupThrowJumpPatch)) {
+        return false;
+    }
+
+    // 阶段 4：恢复 catch 作用域（restoreMapping + OP_CLOSE_UPVALUE + closeSlotRanges + 恢复 currentLocals_）
+    restoreCatchScope(node, bind);
+
+    // 阶段 5：回填 afterCatch 跳转目标
+    if (!patchSkipCatchJumps(node, info, skipCleanupThrowJumpPatch)) {
+        return false;
+    }
+
+    return true;
+}
+
+bool Compiler::patchCatchOffset(TryStmt& node, const TryCatchPatchInfo& info) {
     // 4. 回填 catchOffset
     size_t catchIp = chunk_.code.size();
     size_t catchOffset = catchIp - (info.tryBeginIp + 3);
@@ -2465,19 +3384,18 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
     }
     chunk_.code[info.catchOffsetPatch] = static_cast<uint8_t>(catchOffset & 0xFF);
     chunk_.code[info.catchOffsetPatch + 1] = static_cast<uint8_t>((catchOffset >> 8) & 0xFF);
+    return true;
+}
 
+bool Compiler::bindCatchVariable(TryStmt& node, CatchVarBindInfo& bind) {
     // 5. 在 catchIp 处：异常值已在栈顶，绑定到 catch 变量
     // BUG 7a/7b/7c fix: catch 变量应 shadow 外层同名变量，不覆盖其值；
     // 顶层 catch 变量在 catch 块结束后清理，不泄漏到外层作用域
-    auto savedCatchLocals = currentLocals_;
-    bool needCatchVarCleanup = false;
-    bool hasShadowedGlobal = false;
-    int shadowedGlobalSlot = -1;
-    std::string shadowedSaveName;
+    bind.savedCatchLocals = currentLocals_;
+    bind.catchVarName = node.catchVarName;
     // BUG-AUDIT-EXC-CATCH-CLOSE fix: 记录 catch 变量 slot，catch 块退出时
     // 发射 OP_CLOSE_UPVALUE 关闭指向该 slot 的 open upvalue，防止 slot 复用后
     // 闭包读取错误值（对齐 IR 路径 leaveBlockScope 和 Interpreter closeCapturedVariables）。
-    int catchVarSlot = -1;
 
     if (inFunction_) {
         // 函数内：始终分配新局部变量槽位（shadow 外层同名变量，不覆盖其值）
@@ -2488,7 +3406,7 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
         }
         currentLocals_[node.catchVarName] = slot;
         peakLocals_ = std::max(peakLocals_, static_cast<int>(currentLocals_.size()));
-        catchVarSlot = slot;
+        bind.catchVarSlot = slot;
         // BUG-IDE-12 fix: 记录 catch 变量 slot→name
         if (static_cast<size_t>(slot) >= localSlotNames_.size()) {
             localSlotNames_.resize(slot + 1);
@@ -2503,14 +3421,14 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
         chunk_.writeOp(OpCode::OP_POP, node.line);
     } else {
         // 顶层：使用块作用域变量（OP_DEFINE_VAR），不覆盖已有全局变量
-        shadowedGlobalSlot = (blockDepth_ > 0) ? -1 : lookupGlobalSlot(node.catchVarName);
-        if (shadowedGlobalSlot >= 0) {
+        bind.shadowedGlobalSlot = (blockDepth_ > 0) ? -1 : lookupGlobalSlot(node.catchVarName);
+        if (bind.shadowedGlobalSlot >= 0) {
             // 保存被遮蔽的全局值到临时变量
-            hasShadowedGlobal = true;
-            shadowedSaveName = "__catch_save_" + std::to_string(blockSaveCounter_++) + "_" + node.catchVarName;
-            uint16_t saveIdx = identifierIndex(shadowedSaveName);
+            bind.hasShadowedGlobal = true;
+            bind.shadowedSaveName = "__catch_save_" + std::to_string(blockSaveCounter_++) + "_" + node.catchVarName;
+            uint16_t saveIdx = identifierIndex(bind.shadowedSaveName);
             chunk_.writeOp(OpCode::OP_GET_GLOBAL, node.line);
-            chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
+            chunk_.writeShort(static_cast<uint16_t>(bind.shadowedGlobalSlot), node.line);
             chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
             chunk_.writeShort(saveIdx, node.line);
             globalSlotAllocator_.removeMapping(node.catchVarName); // B4: 临时遮蔽
@@ -2519,9 +3437,13 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
         uint16_t nameIdx = identifierIndex(node.catchVarName);
         chunk_.writeOp(OpCode::OP_DEFINE_VAR, node.line);
         chunk_.writeShort(nameIdx, node.line);
-        needCatchVarCleanup = true;
+        bind.needCatchVarCleanup = true;
     }
+    return true;
+}
 
+bool Compiler::emitCatchBodyWithCleanup(TryStmt& node, const CatchVarBindInfo& bind,
+                                        size_t& outSkipCleanupThrowJumpPatch) {
     // 6. 编译 catch 块
     // BUG-TRY-1 fix: 若 catch 块内 throw，原实现跳过清理代码，导致 catch 变量泄漏、
     // 被遮蔽的全局值未恢复。修复：用 OP_TRY_BEGIN 包装 catch 块，捕获内层 throw，
@@ -2540,7 +3462,8 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
     //
     // cleanup 字节码栈平衡为 0（OP_DELETE_VAR 不影响栈；OP_GET_VAR+OP_SET_GLOBAL+OP_DELETE_VAR = 0），
     // 异常值保持在栈顶，OP_THROW 可正确 rethrow。
-    bool needsCleanupWrap = needCatchVarCleanup || hasShadowedGlobal;
+    outSkipCleanupThrowJumpPatch = std::string::npos;
+    bool needsCleanupWrap = bind.needCatchVarCleanup || bind.hasShadowedGlobal;
     size_t innerTryBeginIp = 0;
     size_t innerCatchOffsetPatch = std::string::npos;
     if (needsCleanupWrap) {
@@ -2563,29 +3486,11 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
     }
 
     // 7. 清理顶层 catch 变量并恢复被遮蔽的全局值（正常路径）
-    // cleanup 字节码发射逻辑提取为 lambda，正常路径和异常路径各调用一次
-    auto emitCleanupBytecode = [&]() {
-        if (needCatchVarCleanup) {
-            uint16_t nameIdx = identifierIndex(node.catchVarName);
-            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-            chunk_.writeShort(nameIdx, node.line);
-        }
-        if (hasShadowedGlobal) {
-            uint16_t saveIdx = identifierIndex(shadowedSaveName);
-            chunk_.writeOp(OpCode::OP_GET_VAR, node.line);
-            chunk_.writeShort(saveIdx, node.line);
-            chunk_.writeOp(OpCode::OP_SET_GLOBAL, node.line);
-            chunk_.writeShort(static_cast<uint16_t>(shadowedGlobalSlot), node.line);
-            chunk_.writeOp(OpCode::OP_DELETE_VAR, node.line);
-            chunk_.writeShort(saveIdx, node.line);
-        }
-    };
-    emitCleanupBytecode();
+    emitCatchCleanupBytecode(bind, node.line);
 
-    size_t skipCleanupThrowJumpPatch = std::string::npos;
     if (needsCleanupWrap) {
         // 正常路径：跳过 cleanupThrow 块
-        skipCleanupThrowJumpPatch = chunk_.code.size();
+        outSkipCleanupThrowJumpPatch = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP, node.line);
         chunk_.writeShort(0, node.line); // 占位，稍后回填为 afterCatch
 
@@ -2597,10 +3502,10 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
             // BUG-TRY-LEAK-1 fix: early return 前必须恢复编译期状态，否则
             // globalSlotAllocator_ 状态不一致 + currentLocals_ 泄漏 catch 变量。
             // 对齐 L1840-L1845 的正常路径恢复逻辑。
-            if (hasShadowedGlobal) {
-                globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot);
+            if (bind.hasShadowedGlobal) {
+                globalSlotAllocator_.restoreMapping(node.catchVarName, bind.shadowedGlobalSlot);
             }
-            currentLocals_ = std::move(savedCatchLocals);
+            currentLocals_ = std::move(bind.savedCatchLocals);
             return false;
         }
         chunk_.code[innerCatchOffsetPatch] = static_cast<uint8_t>(cleanupThrowOffset & 0xFF);
@@ -2608,13 +3513,36 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
 
         // 异常路径：发射 cleanup 字节码 + OP_THROW rethrow
         // 此时异常值在栈顶，cleanup 字节码栈平衡为 0，异常值保持栈顶
-        emitCleanupBytecode();
+        emitCatchCleanupBytecode(bind, node.line);
         chunk_.writeOp(OpCode::OP_THROW, node.line);
     }
+    return true;
+}
 
+void Compiler::emitCatchCleanupBytecode(const CatchVarBindInfo& bind, int line) {
+    // cleanup 字节码：清理顶层 catch 变量 + 恢复被遮蔽的全局值
+    // 栈平衡为 0（OP_DELETE_VAR 不影响栈；OP_GET_VAR+OP_SET_GLOBAL+OP_DELETE_VAR = 0）
+    // 正常路径和异常路径各调用一次（原 emitCleanupBytecode lambda 语义）。
+    if (bind.needCatchVarCleanup) {
+        uint16_t nameIdx = identifierIndex(bind.catchVarName);
+        chunk_.writeOp(OpCode::OP_DELETE_VAR, line);
+        chunk_.writeShort(nameIdx, line);
+    }
+    if (bind.hasShadowedGlobal) {
+        uint16_t saveIdx = identifierIndex(bind.shadowedSaveName);
+        chunk_.writeOp(OpCode::OP_GET_VAR, line);
+        chunk_.writeShort(saveIdx, line);
+        chunk_.writeOp(OpCode::OP_SET_GLOBAL, line);
+        chunk_.writeShort(static_cast<uint16_t>(bind.shadowedGlobalSlot), line);
+        chunk_.writeOp(OpCode::OP_DELETE_VAR, line);
+        chunk_.writeShort(saveIdx, line);
+    }
+}
+
+void Compiler::restoreCatchScope(TryStmt& node, const CatchVarBindInfo& bind) {
     // restoreMapping 是编译期操作（修改 slots_ map），不影响运行时字节码，只调用一次
-    if (hasShadowedGlobal) {
-        globalSlotAllocator_.restoreMapping(node.catchVarName, shadowedGlobalSlot); // B4: 恢复遮蔽
+    if (bind.hasShadowedGlobal) {
+        globalSlotAllocator_.restoreMapping(node.catchVarName, bind.shadowedGlobalSlot); // B4: 恢复遮蔽
     }
 
     // BUG-AUDIT-EXC-CATCH-CLOSE fix: 函数内 catch 变量 slot 在恢复 currentLocals_ 前
@@ -2622,20 +3550,22 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
     // 局部变量会复用该 slot 覆盖原值，逃逸的闭包通过 upvalue 读取到错误值（等价悬垂引用）。
     // 对齐 IR 路径 leaveBlockScope（IR.cpp:439-441）和 Interpreter CatchEnvGuard 析构
     // 调用 closeCapturedVariables 的语义。顶层 catch 变量用 OP_DELETE_VAR 清理，无需此处理。
-    if (inFunction_ && catchVarSlot >= 0 && catchVarSlot <= 255) {
+    if (inFunction_ && bind.catchVarSlot >= 0 && bind.catchVarSlot <= 255) {
         chunk_.writeOp(OpCode::OP_CLOSE_UPVALUE, node.line);
-        chunk_.write(static_cast<uint8_t>(catchVarSlot), node.line);
+        chunk_.write(static_cast<uint8_t>(bind.catchVarSlot), node.line);
     }
 
     // L1 fix: 回填 catch 变量及 catch 块内声明的变量 range 的 endIp。
     // savedCatchLocals.size() 是 catch 作用域的 slot 基址，关闭 slot >= 该基址
     // 的全部 open ranges。closeSlotRanges 必须在 currentLocals_ 恢复前调用，
     // 否则 endIp 会被错误地保留为 0（未关闭）。
-    closeSlotRanges(savedCatchLocals.size());
+    closeSlotRanges(bind.savedCatchLocals.size());
 
     // 恢复 currentLocals_，使 catch 变量不泄漏到外层作用域
-    currentLocals_ = std::move(savedCatchLocals);
+    currentLocals_ = std::move(bind.savedCatchLocals);
+}
 
+bool Compiler::patchSkipCatchJumps(TryStmt& node, const TryCatchPatchInfo& info, size_t skipCleanupThrowJumpPatch) {
     // 8. 回填跳过 catch 块的跳转目标（OP_JUMP 使用绝对地址）
     size_t afterCatch = chunk_.code.size();
     // P1-3 fix: 检查 afterCatch 是否溢出 uint16_t
@@ -2650,7 +3580,6 @@ bool Compiler::emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info) {
         chunk_.code[skipCleanupThrowJumpPatch + 1] = static_cast<uint8_t>(afterCatchTarget & 0xFF);
         chunk_.code[skipCleanupThrowJumpPatch + 2] = static_cast<uint8_t>((afterCatchTarget >> 8) & 0xFF);
     }
-
     return true;
 }
 
@@ -3146,9 +4075,13 @@ void Compiler::visitMatchExpr(MatchExpr& node) {
         }
     }
 
-    // 所有 case 未匹配：OP_POP 删 scrut + OP_NULL push null
+    // L6 fix: 所有 case 未匹配时，对齐 Interpreter 的 runtimeError 行为（抛异常而非静默返回 null）
+    // 无 default 分支时：OP_POP 删 scrut + OP_STRING(msg) + OP_THROW 抛出异常
     chunk_.writeOp(OpCode::OP_POP, node.line);
-    chunk_.writeOp(OpCode::OP_NULL, node.line);
+    uint16_t errIdx = chunk_.addConstant(Value(std::string("match 表达式没有匹配的 case")));
+    chunk_.writeOp(OpCode::OP_STRING, node.line);
+    chunk_.writeShort(errIdx, node.line);
+    chunk_.writeOp(OpCode::OP_THROW, node.line);
 
     // 回填所有 end jumps
     uint16_t endTarget = safeCodeOffset();
@@ -3167,210 +4100,212 @@ void Compiler::emitMatchPattern(const MatchPattern& p, std::vector<size_t>& case
     // R133 模式匹配扩展：递归处理六种 pattern（WILDCARD/LITERAL/VARIABLE/VARIANT/TUPLE/OR）。
     // 栈布局不变量：调用前 [scrut]，调用后 [scrut]（保持 scrut 在栈顶供后续 case 复用）。
     // 匹配失败跳转 patch 追加到 caseSkipPatches 由调用方回填到下一 case 起始。
+    //
+    // L27 重构：原 211 行 switch 按模式类型分发到 6 个子函数，降低圈复杂度。
     switch (p.kind) {
     case MatchPatternKind::WILDCARD:
         // 永远匹配，无需检查
         break;
-    case MatchPatternKind::LITERAL: {
-        // DUP scrutinee + literal + OP_EQUAL + JUMP_IF_FALSE → next + OP_POP
-        chunk_.writeOp(OpCode::OP_DUP, p.line);
-        compileNode(p.literal.get());
-        chunk_.writeOp(OpCode::OP_EQUAL, p.line);
-        size_t skipPatch = chunk_.code.size();
-        chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
-        chunk_.writeShort(0, p.line);
-        caseSkipPatches.push_back(skipPatch);
-        chunk_.writeOp(OpCode::OP_POP, p.line);
+    case MatchPatternKind::LITERAL:
+        emitLiteralMatchPattern(p, caseSkipPatches);
+        break;
+    case MatchPatternKind::VARIABLE:
+        emitVariableMatchPattern(p);
+        break;
+    case MatchPatternKind::VARIANT:
+        emitVariantMatchPattern(p, caseSkipPatches);
+        break;
+    case MatchPatternKind::TUPLE:
+        emitTupleMatchPattern(p, caseSkipPatches);
+        break;
+    case MatchPatternKind::OR:
+        emitOrMatchPattern(p, caseSkipPatches);
         break;
     }
-    case MatchPatternKind::VARIABLE: {
-        // R133: DUP scrutinee + 绑定整个 scrut 到 variableName
-        // DUP 让 scrut 留在栈顶（保持栈不变量），副本绑定到 variableName
+}
+
+void Compiler::emitLiteralMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches) {
+    // DUP scrutinee + literal + OP_EQUAL + JUMP_IF_FALSE → next + OP_POP
+    chunk_.writeOp(OpCode::OP_DUP, p.line);
+    compileNode(p.literal.get());
+    chunk_.writeOp(OpCode::OP_EQUAL, p.line);
+    size_t skipPatch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
+    chunk_.writeShort(0, p.line);
+    caseSkipPatches.push_back(skipPatch);
+    chunk_.writeOp(OpCode::OP_POP, p.line);
+}
+
+void Compiler::emitVariableMatchPattern(const MatchPattern& p) {
+    // R133: DUP scrutinee + 绑定整个 scrut 到 variableName
+    // DUP 让 scrut 留在栈顶（保持栈不变量），副本绑定到 variableName
+    chunk_.writeOp(OpCode::OP_DUP, p.line);
+    bindDestructureVar(p.variableName, p.line, p.column);
+}
+
+void Compiler::emitVariantMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches) {
+    // DUP scrutinee + OP_ENUM_VARIANT_NAME + JUMP_IF_FALSE → next + OP_POP
+    chunk_.writeOp(OpCode::OP_DUP, p.line);
+    uint16_t enumIdx = chunk_.addConstant(Value(p.enumName));
+    uint16_t varIdx = chunk_.addConstant(Value(p.variantName));
+    chunk_.writeOp(OpCode::OP_ENUM_VARIANT_NAME, p.line);
+    chunk_.writeShort(enumIdx, p.line);
+    chunk_.writeShort(varIdx, p.line);
+    size_t skipPatch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
+    chunk_.writeShort(0, p.line);
+    caseSkipPatches.push_back(skipPatch);
+    chunk_.writeOp(OpCode::OP_POP, p.line); // 弹出 bool
+    // 绑定 variant 字段（递归子 pattern）
+    // R133: subPatterns 替代 R99 的 bindings（vector<string>），支持嵌套
+    for (size_t i = 0; i < p.subPatterns.size(); ++i) {
+        // DUP scrutinee + OP_INT i + OP_ENUM_VARIANT_FIELD + 递归 emitMatchPattern(sub, ...)
         chunk_.writeOp(OpCode::OP_DUP, p.line);
-        bindDestructureVar(p.variableName, p.line, p.column);
-        break;
-    }
-    case MatchPatternKind::VARIANT: {
-        // DUP scrutinee + OP_ENUM_VARIANT_NAME + JUMP_IF_FALSE → next + OP_POP
-        chunk_.writeOp(OpCode::OP_DUP, p.line);
-        uint16_t enumIdx = chunk_.addConstant(Value(p.enumName));
-        uint16_t varIdx = chunk_.addConstant(Value(p.variantName));
-        chunk_.writeOp(OpCode::OP_ENUM_VARIANT_NAME, p.line);
-        chunk_.writeShort(enumIdx, p.line);
-        chunk_.writeShort(varIdx, p.line);
-        size_t skipPatch = chunk_.code.size();
-        chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
-        chunk_.writeShort(0, p.line);
-        caseSkipPatches.push_back(skipPatch);
-        chunk_.writeOp(OpCode::OP_POP, p.line); // 弹出 bool
-        // 绑定 variant 字段（递归子 pattern）
-        // R133: subPatterns 替代 R99 的 bindings（vector<string>），支持嵌套
-        for (size_t i = 0; i < p.subPatterns.size(); ++i) {
-            // DUP scrutinee + OP_INT i + OP_ENUM_VARIANT_FIELD + 递归 emitMatchPattern(sub, ...)
-            chunk_.writeOp(OpCode::OP_DUP, p.line);
-            uint16_t idxConst = chunk_.addConstant(Value(static_cast<int64_t>(i)));
-            chunk_.writeOp(OpCode::OP_INT, p.line);
-            chunk_.writeShort(idxConst, p.line);
-            chunk_.writeOp(OpCode::OP_ENUM_VARIANT_FIELD, p.line);
-            // 栈顶是 fields[i]，递归匹配子 pattern
-            // R133 fix: 子 pattern fail 用独立 subFailPatches，失败时先 POP field 再跳到 caseSkip（同 TUPLE pattern）
-            // R133 fix-2: 成功路径 OP_POP 后必须 JUMP 跳过失败路径代码（同 TUPLE pattern）
-            {
-                std::vector<size_t> subFailPatches;
-                emitMatchPattern(*p.subPatterns[i], subFailPatches);
-                chunk_.writeOp(OpCode::OP_POP, p.line); // 成功路径 POP field
-                if (!subFailPatches.empty()) {
-                    // 成功路径 JUMP 跳过失败路径代码（占位，稍后回填）
-                    size_t successJumpOver = chunk_.code.size();
-                    chunk_.writeOp(OpCode::OP_JUMP, p.line);
-                    chunk_.writeShort(0, p.line);
-                    // 失败路径入口
-                    uint16_t subFailPos = safeCodeOffset();
-                    for (auto& sp : subFailPatches) {
-                        chunk_.code[sp + 1] = static_cast<uint8_t>(subFailPos & 0xFF);
-                        chunk_.code[sp + 2] = static_cast<uint8_t>((subFailPos >> 8) & 0xFF);
-                    }
-                    chunk_.writeOp(OpCode::OP_POP, p.line); // 失败路径 POP field
-                    size_t jumpToSkip = chunk_.code.size();
-                    chunk_.writeOp(OpCode::OP_JUMP, p.line);
-                    chunk_.writeShort(0, p.line);
-                    caseSkipPatches.push_back(jumpToSkip);
-                    // 回填成功路径 JUMP
-                    uint16_t afterFail = safeCodeOffset();
-                    chunk_.code[successJumpOver + 1] = static_cast<uint8_t>(afterFail & 0xFF);
-                    chunk_.code[successJumpOver + 2] = static_cast<uint8_t>((afterFail >> 8) & 0xFF);
-                }
-            }
-        }
-        break;
-    }
-    case MatchPatternKind::TUPLE: {
-        // R133: 元组模式 - 检查是 tuple + 元素数匹配 + 递归匹配每个元素
-        // 软类型检查：DUP + OP_TYPE_TEST "tuple"（push bool 不抛错）+ JUMP_IF_FALSE next + POP
-        // 注：用 OP_TYPE_TEST 而非 OP_TYPE_CHECK——后者不匹配时 runtimeError，
-        // 而 TUPLE pattern 不匹配时应 fall through 到下一 case 而非抛错。
-        chunk_.writeOp(OpCode::OP_DUP, p.line);
-        uint16_t tupleTypeNameConst = chunk_.addConstant(Value(std::string("tuple")));
-        chunk_.writeOp(OpCode::OP_TYPE_TEST, p.line);
-        chunk_.writeShort(tupleTypeNameConst, p.line);
-        size_t typeSkipPatch = chunk_.code.size();
-        chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
-        chunk_.writeShort(0, p.line);
-        caseSkipPatches.push_back(typeSkipPatch);
-        chunk_.writeOp(OpCode::OP_POP, p.line);
-        // 元素数检查：DUP + OP_LEN + OP_INT size + OP_EQUAL + JUMP_IF_FALSE next + POP
-        chunk_.writeOp(OpCode::OP_DUP, p.line);
-        chunk_.writeOp(OpCode::OP_LEN, p.line);
-        uint16_t sizeConst = chunk_.addConstant(Value(static_cast<int64_t>(p.subPatterns.size())));
+        uint16_t idxConst = chunk_.addConstant(Value(static_cast<int64_t>(i)));
         chunk_.writeOp(OpCode::OP_INT, p.line);
-        chunk_.writeShort(sizeConst, p.line);
-        chunk_.writeOp(OpCode::OP_EQUAL, p.line);
-        size_t sizeSkipPatch = chunk_.code.size();
-        chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
-        chunk_.writeShort(0, p.line);
-        caseSkipPatches.push_back(sizeSkipPatch);
-        chunk_.writeOp(OpCode::OP_POP, p.line);
-        // 递归匹配每个元素
-        for (size_t i = 0; i < p.subPatterns.size(); ++i) {
-            // DUP tuple + OP_INT i + OP_INDEX_GET + 递归 emitMatchPattern(sub, ...) + POP
-            chunk_.writeOp(OpCode::OP_DUP, p.line);
-            uint16_t idxConst = chunk_.addConstant(Value(static_cast<int64_t>(i)));
-            chunk_.writeOp(OpCode::OP_INT, p.line);
-            chunk_.writeShort(idxConst, p.line);
-            chunk_.writeOp(OpCode::OP_INDEX_GET, p.line);
-            // R133 fix: 子 pattern 的 fail 用独立 subFailPatches，失败时先 POP element 再跳到 caseSkip。
-            // 原实现把子 pattern fail 直接加入 caseSkipPatches，失败时栈上有 [scrut, element, bool]，
-            // caseSkip 处只 POP bool，element 残留导致后续 case 栈错乱。
-            // 正确做法：子 pattern fail 回填到"POP element + JUMP caseSkip"，先清栈再跳转。
-            // R133 fix-2: 成功路径 OP_POP 后必须 JUMP 跳过失败路径代码，否则会跌入失败路径
-            // 的 OP_POP+OP_JUMP，导致栈下溢。结构：
-            //   [子 pattern body] → [scrut, elem, bool]
-            //   OP_JUMP_IF_FALSE subFailPos  (失败跳走，栈 [scrut, elem, bool])
-            //   OP_POP  (成功路径 LITERAL 自己的 pop bool) → [scrut, elem]
-            //   OP_POP  (成功路径 TUPLE loop 的 pop elem) → [scrut]
-            //   OP_JUMP afterFail   ← 成功路径跳过失败代码
-            //   subFailPos:
-            //   OP_POP  (失败路径 pop bool) → [scrut, elem]
-            //   OP_JUMP caseSkip → [scrut, elem] (caseSkip 处 OP_POP 消费 elem)
-            //   afterFail: (下一 sub-pattern)
-            {
-                std::vector<size_t> subFailPatches;
-                emitMatchPattern(*p.subPatterns[i], subFailPatches);
-                // 成功路径：POP element 继续
-                chunk_.writeOp(OpCode::OP_POP, p.line);
-                // 失败路径：回填 subFailPatches 到此位置，POP element 后跳到 caseSkip
-                if (!subFailPatches.empty()) {
-                    // 成功路径 JUMP 跳过失败路径代码（占位，稍后回填）
-                    size_t successJumpOver = chunk_.code.size();
-                    chunk_.writeOp(OpCode::OP_JUMP, p.line);
-                    chunk_.writeShort(0, p.line);
-                    // 失败路径入口
-                    uint16_t subFailPos = safeCodeOffset();
-                    for (auto& sp : subFailPatches) {
-                        chunk_.code[sp + 1] = static_cast<uint8_t>(subFailPos & 0xFF);
-                        chunk_.code[sp + 2] = static_cast<uint8_t>((subFailPos >> 8) & 0xFF);
-                    }
-                    chunk_.writeOp(OpCode::OP_POP, p.line); // 失败路径 POP element
-                    size_t jumpToSkip = chunk_.code.size();
-                    chunk_.writeOp(OpCode::OP_JUMP, p.line);
-                    chunk_.writeShort(0, p.line);
-                    caseSkipPatches.push_back(jumpToSkip);
-                    // 回填成功路径 JUMP 到此（下一 sub-pattern 或 TUPLE 末尾）
-                    uint16_t afterFail = safeCodeOffset();
-                    chunk_.code[successJumpOver + 1] = static_cast<uint8_t>(afterFail & 0xFF);
-                    chunk_.code[successJumpOver + 2] = static_cast<uint8_t>((afterFail >> 8) & 0xFF);
-                }
-            }
-        }
-        break;
+        chunk_.writeShort(idxConst, p.line);
+        chunk_.writeOp(OpCode::OP_ENUM_VARIANT_FIELD, p.line);
+        // 栈顶是 fields[i]，递归匹配子 pattern
+        // R133 fix: 子 pattern fail 用独立 subFailPatches，失败时先 POP field 再跳到 caseSkip（同 TUPLE pattern）
+        // R133 fix-2: 成功路径 OP_POP 后必须 JUMP 跳过失败路径代码（同 TUPLE pattern）
+        std::vector<size_t> subFailPatches;
+        emitMatchPattern(*p.subPatterns[i], subFailPatches);
+        chunk_.writeOp(OpCode::OP_POP, p.line); // 成功路径 POP field
+        emitSubPatternFailPath(subFailPatches, caseSkipPatches, p.line);
     }
-    case MatchPatternKind::OR: {
-        // R133: OR pattern - 任一子 pattern 匹配即成功
-        // 编译策略：依次尝试每个子 pattern，任一成功跳到 OR 成功位置（OR 末尾）；
-        // 全部失败时 emit 永假检查让 case 整体跳到下一 case。
-        std::vector<size_t> successJumps; // 各子 pattern 成功后跳到 OR 末尾
-        for (size_t i = 0; i < p.subPatterns.size(); ++i) {
-            // 编译子 pattern，失败的 patch 暂存到 subPatches
-            std::vector<size_t> subPatches;
-            emitMatchPattern(*p.subPatterns[i], subPatches);
-            // 子 pattern 成功：跳到 OR 末尾
-            size_t successJump = chunk_.code.size();
-            chunk_.writeOp(OpCode::OP_JUMP, p.line);
-            chunk_.writeShort(0, p.line);
-            successJumps.push_back(successJump);
-            // 子 pattern 失败位置：所有 subPatches 回填到同一位置，然后只写一次 POP
-            // R133 fix: 原实现每个 sp 都 writeOp POP，导致 failPos 处有多个 POP，
-            // 第一个 sp 跳转到 failPos 后会连续执行多个 POP，栈下溢。
-            // 正确做法：所有 patch 共享同一 failPos，只写一次 POP。
-            uint16_t failPos = safeCodeOffset();
-            for (auto& sp : subPatches) {
-                chunk_.code[sp + 1] = static_cast<uint8_t>(failPos & 0xFF);
-                chunk_.code[sp + 2] = static_cast<uint8_t>((failPos >> 8) & 0xFF);
-            }
-            if (!subPatches.empty()) {
-                // 失败路径有 bool 残留需 POP（JUMP_IF_FALSE 不消费条件值）
-                chunk_.writeOp(OpCode::OP_POP, p.line);
-            }
-        }
-        // 所有子 pattern 失败：OR 失败
-        // R133 fix: caseSkip handler 约定——所有 fail patch 跳转时栈须为 [scrut, X]
-        // （X 为 JUMP_IF_FALSE 残留的 bool 或 TUPLE/VARIANT sub-pattern fail 残留的 elem）。
-        // handler 执行一次 OP_POP 消费 X，回到 [scrut] 供下一 case 使用。
-        // OR 整体失败时栈已回到 [scrut]（sub-pattern failPos 已 POP bool），无残值 X，
-        // 故 push 一个 OP_NULL 作为占位残值，让 caseSkip handler 的 OP_POP 正确消费。
-        chunk_.writeOp(OpCode::OP_NULL, p.line);
-        size_t orFailJump = chunk_.code.size();
+}
+
+void Compiler::emitTupleMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches) {
+    // R133: 元组模式 - 检查是 tuple + 元素数匹配 + 递归匹配每个元素
+    // 软类型检查：DUP + OP_TYPE_TEST "tuple"（push bool 不抛错）+ JUMP_IF_FALSE next + POP
+    // 注：用 OP_TYPE_TEST 而非 OP_TYPE_CHECK——后者不匹配时 runtimeError，
+    // 而 TUPLE pattern 不匹配时应 fall through 到下一 case 而非抛错。
+    chunk_.writeOp(OpCode::OP_DUP, p.line);
+    uint16_t tupleTypeNameConst = chunk_.addConstant(Value(std::string("tuple")));
+    chunk_.writeOp(OpCode::OP_TYPE_TEST, p.line);
+    chunk_.writeShort(tupleTypeNameConst, p.line);
+    size_t typeSkipPatch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
+    chunk_.writeShort(0, p.line);
+    caseSkipPatches.push_back(typeSkipPatch);
+    chunk_.writeOp(OpCode::OP_POP, p.line);
+    // 元素数检查：DUP + OP_LEN + OP_INT size + OP_EQUAL + JUMP_IF_FALSE next + POP
+    chunk_.writeOp(OpCode::OP_DUP, p.line);
+    chunk_.writeOp(OpCode::OP_LEN, p.line);
+    uint16_t sizeConst = chunk_.addConstant(Value(static_cast<int64_t>(p.subPatterns.size())));
+    chunk_.writeOp(OpCode::OP_INT, p.line);
+    chunk_.writeShort(sizeConst, p.line);
+    chunk_.writeOp(OpCode::OP_EQUAL, p.line);
+    size_t sizeSkipPatch = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP_IF_FALSE, p.line);
+    chunk_.writeShort(0, p.line);
+    caseSkipPatches.push_back(sizeSkipPatch);
+    chunk_.writeOp(OpCode::OP_POP, p.line);
+    // 递归匹配每个元素
+    for (size_t i = 0; i < p.subPatterns.size(); ++i) {
+        // DUP tuple + OP_INT i + OP_INDEX_GET + 递归 emitMatchPattern(sub, ...) + POP
+        chunk_.writeOp(OpCode::OP_DUP, p.line);
+        uint16_t idxConst = chunk_.addConstant(Value(static_cast<int64_t>(i)));
+        chunk_.writeOp(OpCode::OP_INT, p.line);
+        chunk_.writeShort(idxConst, p.line);
+        chunk_.writeOp(OpCode::OP_INDEX_GET, p.line);
+        // R133 fix: 子 pattern 的 fail 用独立 subFailPatches，失败时先 POP element 再跳到 caseSkip。
+        // 原实现把子 pattern fail 直接加入 caseSkipPatches，失败时栈上有 [scrut, element, bool]，
+        // caseSkip 处只 POP bool，element 残留导致后续 case 栈错乱。
+        // 正确做法：子 pattern fail 回填到"POP element + JUMP caseSkip"，先清栈再跳转。
+        // R133 fix-2: 成功路径 OP_POP 后必须 JUMP 跳过失败路径代码，否则会跌入失败路径
+        // 的 OP_POP+OP_JUMP，导致栈下溢。结构：
+        //   [子 pattern body] → [scrut, elem, bool]
+        //   OP_JUMP_IF_FALSE subFailPos  (失败跳走，栈 [scrut, elem, bool])
+        //   OP_POP  (成功路径 LITERAL 自己的 pop bool) → [scrut, elem]
+        //   OP_POP  (成功路径 TUPLE loop 的 pop elem) → [scrut]
+        //   OP_JUMP afterFail   ← 成功路径跳过失败代码
+        //   subFailPos:
+        //   OP_POP  (失败路径 pop bool) → [scrut, elem]
+        //   OP_JUMP caseSkip → [scrut, elem] (caseSkip 处 OP_POP 消费 elem)
+        //   afterFail: (下一 sub-pattern)
+        std::vector<size_t> subFailPatches;
+        emitMatchPattern(*p.subPatterns[i], subFailPatches);
+        // 成功路径：POP element 继续
+        chunk_.writeOp(OpCode::OP_POP, p.line);
+        emitSubPatternFailPath(subFailPatches, caseSkipPatches, p.line);
+    }
+}
+
+void Compiler::emitSubPatternFailPath(std::vector<size_t>& subFailPatches, std::vector<size_t>& caseSkipPatches,
+                                      int line) {
+    // VARIANT/TUPLE 共用：失败路径回填 + POP elem/field + JUMP caseSkip + 回填成功 JUMP。
+    // 调用前须已 emit 子 pattern 与成功路径 POP（elem/field）。
+    // subFailPatches 为空时无失败路径代码可 emit，直接返回。
+    if (subFailPatches.empty()) {
+        return;
+    }
+    // 成功路径 JUMP 跳过失败路径代码（占位，稍后回填）
+    size_t successJumpOver = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP, line);
+    chunk_.writeShort(0, line);
+    // 失败路径入口
+    uint16_t subFailPos = safeCodeOffset();
+    for (auto& sp : subFailPatches) {
+        chunk_.code[sp + 1] = static_cast<uint8_t>(subFailPos & 0xFF);
+        chunk_.code[sp + 2] = static_cast<uint8_t>((subFailPos >> 8) & 0xFF);
+    }
+    chunk_.writeOp(OpCode::OP_POP, line); // 失败路径 POP elem/field
+    size_t jumpToSkip = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP, line);
+    chunk_.writeShort(0, line);
+    caseSkipPatches.push_back(jumpToSkip);
+    // 回填成功路径 JUMP 到此（下一 sub-pattern 或末尾）
+    uint16_t afterFail = safeCodeOffset();
+    chunk_.code[successJumpOver + 1] = static_cast<uint8_t>(afterFail & 0xFF);
+    chunk_.code[successJumpOver + 2] = static_cast<uint8_t>((afterFail >> 8) & 0xFF);
+    subFailPatches.clear();
+}
+
+void Compiler::emitOrMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches) {
+    // R133: OR pattern - 任一子 pattern 匹配即成功
+    // 编译策略：依次尝试每个子 pattern，任一成功跳到 OR 成功位置（OR 末尾）；
+    // 全部失败时 emit 永假检查让 case 整体跳到下一 case。
+    std::vector<size_t> successJumps; // 各子 pattern 成功后跳到 OR 末尾
+    for (size_t i = 0; i < p.subPatterns.size(); ++i) {
+        // 编译子 pattern，失败的 patch 暂存到 subPatches
+        std::vector<size_t> subPatches;
+        emitMatchPattern(*p.subPatterns[i], subPatches);
+        // 子 pattern 成功：跳到 OR 末尾
+        size_t successJump = chunk_.code.size();
         chunk_.writeOp(OpCode::OP_JUMP, p.line);
         chunk_.writeShort(0, p.line);
-        caseSkipPatches.push_back(orFailJump);
-        // OR 成功位置：回填所有 successJumps 跳到这里
-        uint16_t orSuccess = safeCodeOffset();
-        for (auto& sj : successJumps) {
-            chunk_.code[sj + 1] = static_cast<uint8_t>(orSuccess & 0xFF);
-            chunk_.code[sj + 2] = static_cast<uint8_t>((orSuccess >> 8) & 0xFF);
+        successJumps.push_back(successJump);
+        // 子 pattern 失败位置：所有 subPatches 回填到同一位置，然后只写一次 POP
+        // R133 fix: 原实现每个 sp 都 writeOp POP，导致 failPos 处有多个 POP，
+        // 第一个 sp 跳转到 failPos 后会连续执行多个 POP，栈下溢。
+        // 正确做法：所有 patch 共享同一 failPos，只写一次 POP。
+        uint16_t failPos = safeCodeOffset();
+        for (auto& sp : subPatches) {
+            chunk_.code[sp + 1] = static_cast<uint8_t>(failPos & 0xFF);
+            chunk_.code[sp + 2] = static_cast<uint8_t>((failPos >> 8) & 0xFF);
         }
-        break;
+        if (!subPatches.empty()) {
+            // 失败路径有 bool 残留需 POP（JUMP_IF_FALSE 不消费条件值）
+            chunk_.writeOp(OpCode::OP_POP, p.line);
+        }
     }
+    // 所有子 pattern 失败：OR 失败
+    // R133 fix: caseSkip handler 约定——所有 fail patch 跳转时栈须为 [scrut, X]
+    // （X 为 JUMP_IF_FALSE 残留的 bool 或 TUPLE/VARIANT sub-pattern fail 残留的 elem）。
+    // handler 执行一次 OP_POP 消费 X，回到 [scrut] 供下一 case 使用。
+    // OR 整体失败时栈已回到 [scrut]（sub-pattern failPos 已 POP bool），无残值 X，
+    // 故 push 一个 OP_NULL 作为占位残值，让 caseSkip handler 的 OP_POP 正确消费。
+    chunk_.writeOp(OpCode::OP_NULL, p.line);
+    size_t orFailJump = chunk_.code.size();
+    chunk_.writeOp(OpCode::OP_JUMP, p.line);
+    chunk_.writeShort(0, p.line);
+    caseSkipPatches.push_back(orFailJump);
+    // OR 成功位置：回填所有 successJumps 跳到这里
+    uint16_t orSuccess = safeCodeOffset();
+    for (auto& sj : successJumps) {
+        chunk_.code[sj + 1] = static_cast<uint8_t>(orSuccess & 0xFF);
+        chunk_.code[sj + 2] = static_cast<uint8_t>((orSuccess >> 8) & 0xFF);
     }
 }
 
@@ -3476,13 +4411,37 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
             uint8_t slot = static_cast<uint8_t>(localIt->second);
             chunk_.writeOp(OpCode::OP_INDEX_SET_LOCAL, node.line);
             chunk_.write(slot, node.line);
-        } else {
-            compileNode(node.index.get());
-            compileNode(node.value.get());
-            uint16_t nameIdx = identifierIndex(objVar->name);
-            chunk_.writeOp(OpCode::OP_INDEX_SET_VAR, node.line);
-            chunk_.writeShort(nameIdx, node.line);
+            return;
         }
+        // W3-2-Bug1c fix: upvalue 接收者的索引赋值（闭包内 arr[i] = val）
+        // 原 bug: 只检查 currentLocals_，未检查 upvalue，导致 upvalue 接收者错误走全局变量路径
+        // 报"未定义的变量"。修复: 用 OP_GET_UPVALUE 获取数组引用 + OP_INDEX_SET 修改元素。
+        // W3-2-Bug1b 对齐: OP_INDEX_SET 的 COW ensureUnique 在数组 refcount > 1（upvalue 与栈
+        // 副本同时引用）时产生新数组副本，lastMutatedReceiver_ 持有新副本但 upvalue 仍指向旧值。
+        // 必须发射 OP_WRITEBACK_INDEX_UPVALUE 将变异后的新数组写回 upvalue。
+        // 对齐 IR 路径 visitIndexAssign 的 #7 fix（IR.cpp L3035-3039）与 visitMemberAssign 的
+        // W3-2-Bug1b fix（Compiler.cpp L4718-4734）。
+        if (inFunction_) {
+            int uvIdx = resolveUpvalue(objVar->name, node.line);
+            if (uvIdx >= 0) {
+                // 栈序: [obj, idx, val] — OP_INDEX_SET 弹出 val/idx/obj
+                chunk_.writeOp(OpCode::OP_GET_UPVALUE, node.line);
+                chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+                compileNode(node.index.get());
+                compileNode(node.value.get());
+                chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
+                // COW detach 后写回 upvalue（整体替换语义，lastMutatedReceiver_ = 变异后数组）
+                chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_UPVALUE, node.line);
+                chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+                return;
+            }
+        }
+        // 全局变量路径（原逻辑）
+        compileNode(node.index.get());
+        compileNode(node.value.get());
+        uint16_t nameIdx = identifierIndex(objVar->name);
+        chunk_.writeOp(OpCode::OP_INDEX_SET_VAR, node.line);
+        chunk_.writeShort(nameIdx, node.line);
         return;
     }
 
@@ -3503,6 +4462,45 @@ void Compiler::visitIndexAssign(IndexAssign& node) {
     if (baseVar) {
         auto localIt = currentLocals_.find(baseVar->name);
         bool isLocal = (localIt != currentLocals_.end());
+
+        // W3-2-Bug1c fix: 嵌套索引赋值的 upvalue 接收者（闭包内 b.field[i] = val / arr[j][i] = val）
+        // 原 bug: 嵌套路径只处理 isLocal / 全局变量，未处理 upvalue，导致 upvalue 接收者错误走全局
+        // 变量路径报"未定义的变量"。修复: 用 OP_GET_UPVALUE + OP_INDEX_SET/OP_MEMBER_SET + WRITEBACK_*_UPVALUE
+        // 链传播变异。对齐 IR 路径 emitNestedAssignWriteback 的 UPVALUE 分支（IR.cpp L3006-3013）。
+        int uvIdx = -1;
+        if (!isLocal && inFunction_) {
+            uvIdx = resolveUpvalue(baseVar->name, node.line);
+        }
+        if (uvIdx >= 0) {
+            // 步骤 1-3: 编译外层表达式 → push base.outer（副本） + 内层索引 + 值
+            compileNode(node.object.get());
+            compileNode(node.index.get());
+            compileNode(node.value.get());
+            // 步骤 4: OP_INDEX_SET 弹出 val/idx/obj，修改 obj（COW detach），lastMutatedReceiver_ = new_base.outer
+            chunk_.writeOp(OpCode::OP_INDEX_SET, node.line);
+            // 步骤 5: 加载基变量 + 设置基变量字段/索引为 new_base.outer，产生 new_base
+            // 栈序: [base, outerIdx, mut]（outerIdx 路径）或 [base, mut]（outerMem 路径）
+            chunk_.writeOp(OpCode::OP_GET_UPVALUE, node.line);
+            chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+            if (outerIdx) {
+                // base[outerIdx] = mut
+                compileNode(outerIdx->index.get());
+                chunk_.writeOp(OpCode::OP_LOAD_MUTATED, node.line);
+                chunk_.writeOp(OpCode::OP_INDEX_SET, node.line); // lastMutatedReceiver_ = new_base
+                chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_UPVALUE, node.line);
+                chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+            } else {
+                // base.field = mut
+                uint16_t fieldIdx = identifierIndex(outerMem->fieldName);
+                chunk_.writeOp(OpCode::OP_LOAD_MUTATED, node.line);
+                chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line); // lastMutatedReceiver_ = new_base
+                chunk_.writeShort(fieldIdx, node.line);
+                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_UPVALUE, node.line);
+                chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+                chunk_.writeShort(fieldIdx, node.line);
+            }
+            return;
+        }
 
         // 编译外层表达式 → push base[outerIdx] 或 base.field（正确求值中间值）
         // 注意：不再 push base 变量本身——WRITEBACK_*_LOCAL/VAR 和 MEMBER_SET_LOCAL/VAR
@@ -3650,11 +4648,11 @@ void Compiler::visitClassDecl(ClassDecl& node) {
 
     // 将类注册为全局变量（OP_DEFINE_CLASS 从栈上 pop 模板实例并注册类信息）
     // 操作数: nameIdx(2B) + superNameIdx(2B)
-    //   superNameIdx == 0xFFFF 表示无父类；否则为父类名在常量池中的索引
+    //   superNameIdx == NO_INDEX 表示无父类；否则为父类名在常量池中的索引
     chunk_.writeOp(OpCode::OP_DEFINE_CLASS, node.line);
     chunk_.writeShort(nameIdx, node.line);
     if (node.superClassName.empty()) {
-        chunk_.writeShort(0xFFFF, node.line); // 无父类标记
+        chunk_.writeShort(RuntimeLimits::NO_INDEX, node.line); // 无父类标记
     } else {
         uint16_t superIdx = identifierIndex(node.superClassName);
         chunk_.writeShort(superIdx, node.line);
@@ -3705,7 +4703,8 @@ void Compiler::emitMethodBody(FunDecl& method, const std::string& className,
     slotNameRanges_.clear();       // L1 fix: 清空 IP 范围表
     stringConstIndex_.clear();     // R164 fixup2: 清空字符串常量去重缓存（新 chunk 有新常量池）
     currentClassName_ = className; // B1 fix: 记录当前类名供 super 使用
-    // R163 泛型扩展：合并类泛型参数 + 方法泛型参数，供 emitTypeCheck 擦除（对齐 Interpreter invokeMethod 的 mergedTypeParams）
+    // R163 泛型扩展：合并类泛型参数 + 方法泛型参数，供 emitTypeCheck 擦除（对齐 Interpreter invokeMethod 的
+    // mergedTypeParams）
     currentTypeParams_ = classTypeParams;
     for (const auto& tp : method.typeParams) {
         currentTypeParams_.push_back(tp);
@@ -3752,6 +4751,12 @@ void Compiler::emitMethodBody(FunDecl& method, const std::string& className,
     // 记录字段声明顺序（含继承字段），供 VM OP_METHOD_CALL 按序推入
     chunk_.fieldOrder = allFieldNames;
 
+    // L15 TCO: 设置方法 TCO 状态——currentFunctionName_ 用简单方法名（不含 "ClassName." 前缀），
+    // 供 visitReturnStmt 识别 return this.method(args) 自调用。entry IP 在 body 编译前记录。
+    currentFunctionName_ = method.name;
+    currentFunctionDecl_ = &method;
+    currentFunctionEntryIp_ = chunk_.code.size();
+
     if (method.body) {
         compileNode(method.body.get());
     }
@@ -3765,6 +4770,13 @@ void Compiler::emitMethodBody(FunDecl& method, const std::string& className,
     chunk_.localSlotNames = localSlotNames_;
     // L1 fix: 保存 IP 范围表到 chunk，供 VM 调试器按 frame.ip 反查变量名
     chunk_.slotNameRanges = slotNameRanges_;
+    // W3-2-Bug2 fix: 保存 upvalue 描述符到方法 chunk，供 VM 在类定义时捕获外层函数变量。
+    // 对齐 visitFunDecl 的 chunk_.upvalues = std::move(currentUpvalues_)（Compiler.cpp L1623）
+    // 和 IR 路径 emitFunctionEpilogue 的 ir_->upvalues 复制（IR.cpp L1951-1954）。
+    // 仅当类定义在函数内时 currentUpvalues_ 非空（emitMethodBody 的 outerLocals_ 设置条件：
+    // guard.saved.inFunction 为 true）。VM executeDefineClass 会在类定义时为有 upvalue 的
+    // 方法创建 VMClosureData 捕获当前帧的栈槽/upvalue。
+    chunk_.upvalues = currentUpvalues_;
 
     // F10: 编译默认参数值为常量（与 visitFunDecl 一致，复用 emitDefaultValues）
     // BUG 6a fix: 方法默认参数值同样递归折叠嵌套一元取反（由 emitDefaultValues 统一实现）
@@ -3801,6 +4813,30 @@ void Compiler::visitMemberAssign(MemberAssign& node) {
             chunk_.write(slot, node.line);
             chunk_.writeShort(fieldIdx, node.line);
             return;
+        }
+        // W3-2 fix: upvalue 接收者的字段赋值（闭包内 b.field = val）
+        // 原 bug: 只检查 currentLocals_，未检查 upvalue，导致 upvalue 接收者错误走全局变量路径
+        // 报"未定义的变量"。修复: 用 OP_GET_UPVALUE 获取对象引用 + OP_MEMBER_SET 修改字段。
+        // W3-2-Bug1b fix: fields() 调用 ensureUnique<InstanceData>() 做 COW detach。
+        // 当 InstanceData 共享（refcount > 1，如 upvalue 与栈副本同时引用）时，COW 产生新副本，
+        // lastMutatedReceiver_ 持有新副本但 upvalue 仍指向旧值。必须发射 OP_WRITEBACK_MEMBER_UPVALUE
+        // 将变异后的新副本写回 upvalue。对齐 IR 路径 visitMemberAssign 的 #7 fix（IR.cpp L3084-3088）。
+        if (inFunction_) {
+            int uvIdx = resolveUpvalue(objVar->name, node.line);
+            if (uvIdx >= 0) {
+                // 栈序: [obj, val] — OP_MEMBER_SET 弹出 val 和 obj
+                chunk_.writeOp(OpCode::OP_GET_UPVALUE, node.line);
+                chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+                compileNode(node.value.get());
+                uint16_t fieldIdx = identifierIndex(node.fieldName);
+                chunk_.writeOp(OpCode::OP_MEMBER_SET, node.line);
+                chunk_.writeShort(fieldIdx, node.line);
+                // COW detach 后写回 upvalue（整体替换语义，lastMutatedReceiver_ = 变异后基容器）
+                chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_UPVALUE, node.line);
+                chunk_.write(static_cast<uint8_t>(uvIdx), node.line);
+                chunk_.writeShort(fieldIdx, node.line);
+                return;
+            }
         }
         compileNode(node.value.get());
         uint16_t varIdx = identifierIndex(objVar->name);
@@ -3901,8 +4937,8 @@ void Compiler::visitMethodCall(MethodCall& node) {
         return;
     }
     // 检查接收者是否为简单变量（VarRef），用于 writeBack
-    uint16_t receiverVarIdx = 0xFFFF; // 0xFFFF = 无全局变量 writeBack
-    uint8_t receiverLocalSlot = 0xFF; // 0xFF = 无局部变量 writeBack
+    uint16_t receiverVarIdx = RuntimeLimits::NO_INDEX;  // NO_INDEX = 无全局变量 writeBack
+    uint8_t receiverLocalSlot = RuntimeLimits::NO_SLOT; // NO_SLOT = 无局部变量 writeBack
     VarRef* objVar = (node.object && node.object->nodeType == NodeType::NODE_VAR_REF)
                          ? static_cast<VarRef*>(node.object.get())
                          : nullptr;
@@ -3957,8 +4993,8 @@ void Compiler::visitMethodCall(MethodCall& node) {
     chunk_.writeOp(isSuperCall ? OpCode::OP_SUPER_CALL : OpCode::OP_METHOD_CALL, node.line);
     chunk_.writeShort(nameIdx, node.line);
     chunk_.write(static_cast<uint8_t>(node.arguments.size()), node.line);
-    chunk_.writeShort(receiverVarIdx, node.line); // 接收者全局变量名索引（0xFFFF = 无全局 writeBack）
-    chunk_.write(receiverLocalSlot, node.line);   // 接收者局部变量 slot（0xFF = 无局部 writeBack）
+    chunk_.writeShort(receiverVarIdx, node.line); // 接收者全局变量名索引（NO_INDEX = 无全局 writeBack）
+    chunk_.write(receiverLocalSlot, node.line);   // 接收者局部变量 slot（NO_SLOT = 无局部 writeBack）
     if (isSuperCall) {
         // B1 fix: 编码当前类名索引，VM 用它查找父类（而非运行时实例类名）
         uint16_t classIdx = identifierIndex(currentClassName_);
@@ -3971,7 +5007,7 @@ void Compiler::visitMethodCall(MethodCall& node) {
     // 写回指令从中取值写回基对象的字段/索引位置。
     // 若接收者是 VarRef（objVar != nullptr），helper 内部 MemberAccess/IndexAccess
     // 类型检查均不匹配，等价于 no-op（原 if (!objVar && node.object) 守卫的等价简化）。
-    emitMethodCallWriteback(node.object.get(), node.line);
+    emitMethodCallWriteback(node.object.get(), node.line, cachedIndexVar);
 
     // #9 fix: 清理 __wb_idx_ 缓存变量，防止永久泄漏到 globals_
     if (!cachedIndexVar.empty()) {
@@ -3982,12 +5018,19 @@ void Compiler::visitMethodCall(MethodCall& node) {
     return;
 }
 
-void Compiler::emitMethodCallWriteback(const ASTNode* receiver, int line) {
+void Compiler::emitMethodCallWriteback(const ASTNode* receiver, int line, const std::string& cachedIndexVar) {
     // visitMethodCall 子阶段：嵌套访问变异方法写回
     // 当接收者是 MemberAccess/IndexAccess 且基对象是 VarRef 时，发射写回指令，
-    // 确保 this.arr.push(42) 等嵌套调用的修改不丢失。VM 在变异方法调用时将修改后的
-    // 对象暂存到 lastMutatedReceiver_，写回指令从中取值写回基对象的字段/索引位置。
-    // 仅依赖 receiver AST 与 currentLocals_（成员），无其他外部状态。
+    // 确保 this.arr.push(42) 等嵌套调用的修改不丢失。
+    //
+    // W3-2-Bug1 fix: 对齐 IR 路径 emitNestedAssignWriteback 的 3 步序列。
+    // 原 bug: 直接发射 OP_WRITEBACK_MEMBER_*，但 lastMutatedReceiver_ 是方法接收者
+    // （变异后的成员，如数组），而非整个基容器（如 Box 实例）。WRITEBACK 的"整体替换"
+    // 语义会把基容器替换为成员，导致后续访问报"该类型不支持成员访问"。
+    // 修复: 先加载基变量 + LOAD_MUTATED + MEMBER_SET/INDEX_SET 在基容器上设置字段/索引，
+    // 产生新的变异基容器（OP_MEMBER_SET/OP_INDEX_SET 会更新 lastMutatedReceiver_ 为
+    // 整个变异后的基容器），再 WRITEBACK 整体替换变量/upvalue。
+    //
     // 若 receiver 为 nullptr / VarRef / SuperExpr 等非 MemberAccess/IndexAccess 类型，
     // 内部类型检查均不匹配，函数为 no-op。
     if (!receiver)
@@ -3998,12 +5041,36 @@ void Compiler::emitMethodCallWriteback(const ASTNode* receiver, int line) {
         if (ma->object && ma->object->nodeType == NodeType::NODE_VAR_REF) {
             auto* baseVar = static_cast<VarRef*>(ma->object.get());
             uint16_t fieldIdx = identifierIndex(ma->fieldName);
+
+            // 步骤 1-3: 加载基变量 + LOAD_MUTATED + MEMBER_SET
+            // 栈序: [..., base, mutated_val] → MEMBER_SET → [...]
+            // MEMBER_SET 弹出 val 和 obj，设置 obj.field=val，
+            // 并将变异后的整个 obj 存入 lastMutatedReceiver_。
+            emitLoadVariable(baseVar->name, line);         // push base (e.g., Box)
+            chunk_.writeOp(OpCode::OP_LOAD_MUTATED, line); // push mutated member (e.g., array)
+            chunk_.writeOp(OpCode::OP_MEMBER_SET, line);   // base.field = mutated; lastMutatedReceiver_ = new base
+            chunk_.writeShort(fieldIdx, line);
+
+            // 步骤 4: WRITEBACK 整体替换变量/upvalue 为 lastMutatedReceiver_（新的变异基容器）
             auto localIt = currentLocals_.find(baseVar->name);
             if (localIt != currentLocals_.end()) {
                 // 局部变量成员写回：OP_WRITEBACK_MEMBER_LOCAL(slot, fieldIdx)
                 chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_LOCAL, line);
                 chunk_.write(static_cast<uint8_t>(localIt->second), line);
                 chunk_.writeShort(fieldIdx, line);
+            } else if (inFunction_) {
+                // upvalue 接收者的成员写回（闭包内 b.data.push(4)）
+                int uvIdx = resolveUpvalue(baseVar->name, line);
+                if (uvIdx >= 0) {
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_UPVALUE, line);
+                    chunk_.write(static_cast<uint8_t>(uvIdx), line);
+                    chunk_.writeShort(fieldIdx, line);
+                } else {
+                    // 全局变量成员写回：OP_WRITEBACK_MEMBER_VAR(varIdx, fieldIdx)
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_VAR, line);
+                    chunk_.writeShort(identifierIndex(baseVar->name), line);
+                    chunk_.writeShort(fieldIdx, line);
+                }
             } else {
                 // 全局变量成员写回：OP_WRITEBACK_MEMBER_VAR(varIdx, fieldIdx)
                 chunk_.writeOp(OpCode::OP_WRITEBACK_MEMBER_VAR, line);
@@ -4017,19 +5084,71 @@ void Compiler::emitMethodCallWriteback(const ASTNode* receiver, int line) {
         auto* ia = static_cast<const IndexAccess*>(receiver);
         if (ia->object && ia->object->nodeType == NodeType::NODE_VAR_REF) {
             auto* baseVar = static_cast<VarRef*>(ia->object.get());
+            if (cachedIndexVar.empty())
+                return; // 无缓存索引，无法写回（不应发生，visitMethodCall 已保证缓存）
+
+            // 步骤 1-4: 加载基变量 + 加载缓存索引 + LOAD_MUTATED + INDEX_SET
+            // 栈序: [..., base, idx, mutated_val] → INDEX_SET → [...]
+            // INDEX_SET 弹出 val, idx, obj，设置 obj[idx]=val，
+            // 并将变异后的整个 obj 存入 lastMutatedReceiver_。
+            emitLoadVariable(baseVar->name, line); // push base (e.g., arr)
+            uint16_t cacheIdx = identifierIndex(cachedIndexVar);
+            chunk_.writeOp(OpCode::OP_GET_VAR, line); // push cached index
+            chunk_.writeShort(cacheIdx, line);
+            chunk_.writeOp(OpCode::OP_LOAD_MUTATED, line); // push mutated element
+            chunk_.writeOp(OpCode::OP_INDEX_SET, line);    // base[idx] = mutated; lastMutatedReceiver_ = new base
+
+            // 步骤 5: WRITEBACK 整体替换变量/upvalue 为 lastMutatedReceiver_（新的变异基容器）
             auto localIt = currentLocals_.find(baseVar->name);
-            // BUGFIX-P1 fix: WRITEBACK_INDEX handler 已改为整体替换语义，不再 pop 索引，
-            // 因此不再向栈推入索引值（原实现每次泄漏 1 个栈值）。
             if (localIt != currentLocals_.end()) {
                 // 局部变量索引写回：OP_WRITEBACK_INDEX_LOCAL(slot)
                 chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_LOCAL, line);
                 chunk_.write(static_cast<uint8_t>(localIt->second), line);
+            } else if (inFunction_) {
+                // upvalue 接收者的索引写回（闭包内 arr[i].push(42)）
+                int uvIdx = resolveUpvalue(baseVar->name, line);
+                if (uvIdx >= 0) {
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_UPVALUE, line);
+                    chunk_.write(static_cast<uint8_t>(uvIdx), line);
+                } else {
+                    // 全局变量索引写回：OP_WRITEBACK_INDEX_VAR(varIdx)
+                    chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_VAR, line);
+                    chunk_.writeShort(identifierIndex(baseVar->name), line);
+                }
             } else {
                 // 全局变量索引写回：OP_WRITEBACK_INDEX_VAR(varIdx)
                 chunk_.writeOp(OpCode::OP_WRITEBACK_INDEX_VAR, line);
                 chunk_.writeShort(identifierIndex(baseVar->name), line);
             }
         }
+    }
+}
+
+void Compiler::emitLoadVariable(const std::string& name, int line) {
+    // 发射变量加载指令，逻辑与 visitVarRef 一致。
+    // 优先级: local → upvalue → global slot → global name。
+    if (inFunction_) {
+        auto it = currentLocals_.find(name);
+        if (it != currentLocals_.end()) {
+            chunk_.writeOp(OpCode::OP_GET_LOCAL, line);
+            chunk_.write(static_cast<uint8_t>(it->second), line);
+            return;
+        }
+        int uvIdx = resolveUpvalue(name, line);
+        if (uvIdx >= 0) {
+            chunk_.writeOp(OpCode::OP_GET_UPVALUE, line);
+            chunk_.write(static_cast<uint8_t>(uvIdx), line);
+            return;
+        }
+    }
+    int slot = lookupGlobalSlot(name);
+    if (slot >= 0) {
+        chunk_.writeOp(OpCode::OP_GET_GLOBAL, line);
+        chunk_.writeShort(static_cast<uint16_t>(slot), line);
+    } else {
+        uint16_t nameIdx = identifierIndex(name);
+        chunk_.writeOp(OpCode::OP_GET_VAR, line);
+        chunk_.writeShort(nameIdx, line);
     }
 }
 

@@ -3623,7 +3623,7 @@ void Ide::registerCompilationPipelinePanels(
         });
         return bugHuntPanel_;
     });
-    registrar(QStringLiteral("syntax-explorer"), mlTr("语法探索器"), [this]() {
+    registrar(QStringLiteral("syntax-explorer"), mlTr("语法浏览器"), [this]() {
         syntaxExplorerPanel_ = new SyntaxExplorerPanel(this);
         syntaxExplorerPanel_->setController(controller_);
         connect(syntaxExplorerPanel_, &SyntaxExplorerPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
@@ -3662,7 +3662,7 @@ void Ide::registerMemoryIrProfilePanels(
         memoryModelPanel_->setController(controller_);
         return memoryModelPanel_;
     });
-    registrar(QStringLiteral("ir-transform"), mlTr("IR 变换"), [this, sourceLineHighlighter]() {
+    registrar(QStringLiteral("ir-transform"), mlTr("IR 优化回放"), [this, sourceLineHighlighter]() {
         irTransformPanel_ = new IRTransformPanel(this);
         irTransformPanel_->setController(controller_);
         connect(irTransformPanel_, &IRTransformPanel::sourceLineRequested, this, sourceLineHighlighter);
@@ -3768,7 +3768,7 @@ void Ide::registerMemoryIrProfilePanels(
                 &Ide::loadCodeIntoMainEditor);
         return moduleSystemVisualizerPanel_;
     });
-    registrar(QStringLiteral("profile-dashboard"), mlTr("性能剖析"), [this]() {
+    registrar(QStringLiteral("profile-dashboard"), mlTr("性能仪表盘"), [this]() {
         profileDashboardPanel_ = new ProfileDashboardPanel(this);
         profileDashboardPanel_->setController(controller_);
         return profileDashboardPanel_;
@@ -3779,7 +3779,7 @@ void Ide::registerDebugInspectorPanels(
     const std::function<void(const QString&, const QString&, std::function<QWidget*()>)>& registrar,
     const std::function<void(int)>& sourceLineHighlighter) {
     // 第三波
-    registrar(QStringLiteral("call-stack"), mlTr("调用栈"), [this]() {
+    registrar(QStringLiteral("call-stack"), mlTr("调用栈检查器"), [this]() {
         callStackPanel_ = new CallStackPanel(this);
         callStackPanel_->setController(controller_);
         connect(callStackPanel_, &CallStackPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
@@ -3792,7 +3792,7 @@ void Ide::registerDebugInspectorPanels(
                 &Ide::loadCodeIntoMainEditor);
         return variableInspectorPanel_;
     });
-    registrar(QStringLiteral("bytecode-trace"), mlTr("字节码轨迹"), [this, sourceLineHighlighter]() {
+    registrar(QStringLiteral("bytecode-trace"), mlTr("字节码追踪"), [this, sourceLineHighlighter]() {
         bytecodeTracePanel_ = new BytecodeTracePanel(this);
         bytecodeTracePanel_->setController(controller_);
         connect(bytecodeTracePanel_, &BytecodeTracePanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
@@ -3843,7 +3843,7 @@ void Ide::registerDebugInspectorPanels(
         connect(executionTimelinePanel_, &ExecutionTimelinePanel::returnToEditorRequested, this, &Ide::showEditorArea);
         return executionTimelinePanel_;
     });
-    registrar(QStringLiteral("exception-flow"), mlTr("异常流"), [this]() {
+    registrar(QStringLiteral("exception-flow"), mlTr("异常流可视化"), [this]() {
         exceptionFlowPanel_ = new ExceptionFlowPanel(this);
         connect(exceptionFlowPanel_, &ExceptionFlowPanel::loadSampleRequested, this, &Ide::loadCodeIntoMainEditor);
         return exceptionFlowPanel_;
@@ -3892,7 +3892,7 @@ void Ide::registerLearningPathPanels(
         });
         return astBuilderToyPanel_;
     });
-    registrar(QStringLiteral("vm-sandbox"), mlTr("VM 栈沙盒"), [this]() {
+    registrar(QStringLiteral("vm-sandbox"), mlTr("VM 沙盒"), [this]() {
         vmStackSandboxPanel_ = new VmStackSandboxPanel(this);
         // 第二十七轮：绑定 IdeController，启用「真实字节码追踪」子页的真实 VM 单步功能
         vmStackSandboxPanel_->setController(controller_);

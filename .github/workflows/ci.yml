@@ -42,8 +42,10 @@ env:
   #     该 bug 在 aqtinstall 3.3.0 的 PR #909 中修复，故使用 3.3.0。
   #     但为稳妥起见，Linux 矩阵仍显式使用 linux_gcc_64 架构名。
   #     qttools 模块在 Qt 6.8.3 的 aqtinstall 元数据中不可用（所有平台均报
-  #     "packages ['qttools'] were not found"），故不安装；CMake 对
-  #     LinguistTools 缺失有优雅降级（QUIET + WARNING + 跳过 .qm 编译）。
+  #     "packages ['qttools'] were not found"），故不安装。
+  # L30 修复：Ubuntu 通过 apt 安装 qt6-l10n-tools（提供 lrelease6），
+  # CMakeLists.txt lrelease 回退路径（find_program）编译 .ts → .qm。
+  # macOS/Windows 本地有 LinguistTools，无需额外安装。
   # 可通过 Actions → Run workflow → qt_version 手动覆盖 Qt 版本。
   QT_VERSION: ${{ inputs.qt_version != '' && inputs.qt_version || '6.8.3' }}
   AQT_VERSION: '==3.3.0'
@@ -147,6 +149,21 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      # L30: 安装 Qt Linguist lrelease 工具（Ubuntu）。
+      # aqtinstall 的 qttools 模块在 Qt 6.8.3 元数据中不可用（"packages ['qttools']
+      # were not found"），但 Ubuntu apt 包 qt6-l10n-tools 提供 lrelease6/lrelease 可执行文件。
+      # CMakeLists.txt 的 lrelease 回退路径（find_program）会找到它并编译 .ts → .qm，
+      # 替代原先的优雅降级（跳过 .qm 编译）。macOS/Windows 本地有 LinguistTools 无需此步。
+      - name: 安装 Qt Linguist 工具 (lrelease, Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          # 创建 lrelease 兼容符号链接（apt 提供的是 lrelease6，CMake find_program
+          # 会依次尝试 lrelease / lrelease6 / lrelease-qt6，此步骤仅为冗余保障）
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+          lrelease6 --version
 
       - name: 配置 CMake (Linux Preset)
         if: runner.os == 'Linux'
@@ -373,14 +390,19 @@ jobs:
             --sources "${env:GITHUB_WORKSPACE}\lexer;${env:GITHUB_WORKSPACE}\parser;${env:GITHUB_WORKSPACE}\ast;${env:GITHUB_WORKSPACE}\interpreter;${env:GITHUB_WORKSPACE}\compiler;${env:GITHUB_WORKSPACE}\debug;${env:GITHUB_WORKSPACE}\formatter" `
             -- tests\minilang_tests.exe --gtest_brief=1
 
-      # R116 覆盖率门槛：解析 cobertura XML，行覆盖率低于 60% 则失败
-      # 阈值保守起步，后续随测试覆盖提升逐步加严
-      - name: 检查覆盖率阈值（行 ≥ 60%）
+      # R116 覆盖率门槛：解析 cobertura XML，行覆盖率低于 75% 则失败
+      # W3-3 (2026-07-24)：阈值从 60% 提升到 65%，配合 W1 /W4 警告清零后的代码质量基线。
+      # P3-19 (2026-07-25)：阈值从 65% 提升到 70%，新增 TestCoverageGaps2.cpp（10 个测试）
+      # 覆盖循环导入深层嵌套/并发原语边界/IR 优化 pass 验证。
+      # P3-A2 (2026-07-25)：阈值从 70% 提升到 75%（覆盖率提升路径最终目标）。
+      # 配合 C1 GUI E2E 测试扩展（TestTeachingPanelsE2E 新增交互样本）+ C2 GCC/Clang
+      # 警告清零（Linux/macOS debug preset 启用 -Werror）进一步提升代码质量基线。
+      - name: 检查覆盖率阈值（行 ≥ 75%）
         working-directory: out/build/debug
         run: |
           python "${{ github.workspace }}\scripts\coverage_threshold.py" `
             --report coverage.xml `
-            --line-threshold 60.0
+            --line-threshold 75.0
 
       - name: 上传覆盖率报告
         if: always()
@@ -463,7 +485,9 @@ jobs:
 
       - name: 生成覆盖率报告 (gcovr)
         # R116 覆盖率门槛：gcovr 原生支持 --fail-under-line，低于阈值则退出码 1
-        # 阈值 60% 与 Windows OpenCppCoverage job 保持一致，保守起步
+        # W3-3 (2026-07-24)：阈值从 60% 提升到 65%，与 Windows OpenCppCoverage job 保持一致。
+        # P3-19 (2026-07-25)：阈值从 65% 提升到 70%，新增 TestCoverageGaps2.cpp（10 个测试）。
+        # P3-A2 (2026-07-25)：阈值从 70% 提升到 75%（覆盖率提升路径最终目标）。
         run: |
           gcovr \
             --root . \
@@ -475,7 +499,7 @@ jobs:
             --filter debug/ \
             --filter formatter/ \
             --exclude-unreachable-branches \
-            --fail-under-line 60.0 \
+            --fail-under-line 75.0 \
             --cobertura coverage.xml \
             --txt \
             --html coverage.html
@@ -625,6 +649,27 @@ jobs:
           find lexer parser ast interpreter compiler debug formatter gui common app \
             -type f \( -name '*.cpp' -o -name '*.h' \) -print0 \
             | xargs -0 clang-format --dry-run --Werror
+
+  # ============================================================
+  # 作业 5b：翻译完整性检查（P2-13）
+  # ------------------------------------------------------------
+  # 验证 en_US.ts 与 zh_CN.ts 的消息数量一致、source 匹配、
+  # translation 非空。防止新增 mlTr() 调用后忘记同步 .ts 文件。
+  # 纯 Python 标准库脚本，无需安装依赖。
+  # ============================================================
+  translation-check:
+    name: Translation Completeness
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+
+      - name: 检查翻译完整性
+        run: |
+          python scripts/translation_check.py \
+            --zh app/translations/minilang_zh_CN.ts \
+            --en app/translations/minilang_en_US.ts
 
   # ============================================================
   # 作业 6：clang-tidy 静态分析（R116）

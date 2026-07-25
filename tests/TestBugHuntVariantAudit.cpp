@@ -50,12 +50,13 @@ TEST(BugHuntVariantAudit, CriticalVariantIdsPresent) {
     // 验证关键变体 ID 都已收录
     const auto& variants = BugHuntVariantLibrary::variants();
     std::set<std::string> ids;
-    for (const auto& v : variants) ids.insert(v.id);
-    EXPECT_NE(ids.find("variant-cp-1-param"), ids.end());       // 常量池去重变体
+    for (const auto& v : variants)
+        ids.insert(v.id);
+    EXPECT_NE(ids.find("variant-cp-1-param"), ids.end());      // 常量池去重变体
     EXPECT_NE(ids.find("variant-uv-1-closure"), ids.end());    // 闭包变体
     EXPECT_NE(ids.find("variant-ir-pop-2-expr"), ids.end());   // IR 栈泄漏变体
-    EXPECT_NE(ids.find("variant-def-1-default"), ids.end());  // 默认参数变体
-    EXPECT_NE(ids.find("variant-mod-1-cycle"), ids.end());     // 模块循环依赖变体
+    EXPECT_NE(ids.find("variant-def-1-default"), ids.end());   // 默认参数变体
+    EXPECT_NE(ids.find("variant-mod-1-cycle"), ids.end());     // 模块循环导入延迟加载变体
     EXPECT_NE(ids.find("variant-dbg-1-condition"), ids.end()); // 调试条件断点变体
     EXPECT_NE(ids.find("variant-regvm-2-vreg"), ids.end());    // 寄存器 vreg 变体
 }
@@ -71,7 +72,8 @@ TEST(BugHuntVariantAudit, ParentIdsExistInBugHuntLibrary) {
     // 每个变体的 parentId 必须是 BugHuntLibrary 中存在的父题 ID
     const auto& items = BugHuntLibrary::items();
     std::set<std::string> parentIds;
-    for (const auto& it : items) parentIds.insert(it.id);
+    for (const auto& it : items)
+        parentIds.insert(it.id);
 
     const auto& variants = BugHuntVariantLibrary::variants();
     for (const auto& v : variants) {
@@ -91,7 +93,8 @@ TEST(BugHuntVariantAudit, SourceCodeIsLexable) {
         EXPECT_FALSE(tokens.empty()) << v.id << ": sourceCode 无法 lex";
         size_t mainStreamCount = 0;
         for (const auto& tk : tokens) {
-            if (tk.type != TokenType::TK_EOF) ++mainStreamCount;
+            if (tk.type != TokenType::TK_EOF)
+                ++mainStreamCount;
         }
         EXPECT_GT(mainStreamCount, 0u) << v.id << ": sourceCode 无有效 token";
     }

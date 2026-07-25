@@ -1,4 +1,5 @@
 #include "WorkerManager.h"
+#include "common/BuiltinModules.h" // P2-11: std/* 内建模块拦截
 #include "common/Logger.h"
 #include <QDir>
 #include <QFile>
@@ -168,6 +169,10 @@ bool WorkerManager::prepareRun(bool isDebug, std::shared_ptr<Block> astRoot, con
         return {};
     };
     interpreter_->setModuleLoader([resolveModulePath](const std::string& modulePath) -> std::string {
+        // P2-11: 内建标准库模块拦截（std/math, std/string, std/list）
+        if (BuiltinModuleRegistry::isBuiltinModule(modulePath)) {
+            return BuiltinModuleRegistry::getSource(modulePath);
+        }
         QString resolved = resolveModulePath(modulePath);
         if (resolved.isEmpty())
             return "";

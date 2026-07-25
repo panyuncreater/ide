@@ -87,7 +87,7 @@ std::unordered_set<int> collectExecutableFromRegister(const RegisterCompileResul
 
 /// 按 StackVM 后端分析覆盖率
 FileCoverage analyzeWithStackVM(const std::string& source, const std::string& sourceName, Block& ast,
-                                const CoverageOptions& opts) {
+                                [[maybe_unused]] const CoverageOptions& opts) {
     FileCoverage fc;
     fc.sourceName = sourceName;
     fc.source = source;
@@ -173,7 +173,7 @@ FileCoverage analyzeWithStackVM(const std::string& source, const std::string& so
 
 /// 按 RegisterVM 后端分析覆盖率
 FileCoverage analyzeWithRegisterVM(const std::string& source, const std::string& sourceName, Block& ast,
-                                   const CoverageOptions& opts) {
+                                   [[maybe_unused]] const CoverageOptions& opts) {
     FileCoverage fc;
     fc.sourceName = sourceName;
     fc.source = source;

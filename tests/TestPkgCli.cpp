@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace minilang_pkg;
@@ -1201,4 +1202,615 @@ TEST(PkgCliCommandTest, EmptyCommandShowsHelp) {
     CommandResult result = processCommand(args);
     EXPECT_EQ(result.exitCode, 0);
     EXPECT_NE(result.output.find("用法"), std::string::npos);
+}
+
+// ============================================================
+// P2-11 版本约束测试
+// ============================================================
+
+TEST(PkgVersionTest, ParseValidSemVer) {
+    Version v = Version::parse("1.2.3");
+    EXPECT_EQ(v.major, 1);
+    EXPECT_EQ(v.minor, 2);
+    EXPECT_EQ(v.patch, 3);
+}
+
+TEST(PkgVersionTest, ParseTwoComponent) {
+    Version v = Version::parse("2.0");
+    EXPECT_EQ(v.major, 2);
+    EXPECT_EQ(v.minor, 0);
+    EXPECT_EQ(v.patch, 0);
+}
+
+TEST(PkgVersionTest, ParseSingleComponent) {
+    Version v = Version::parse("5");
+    EXPECT_EQ(v.major, 5);
+    EXPECT_EQ(v.minor, 0);
+    EXPECT_EQ(v.patch, 0);
+}
+
+TEST(PkgVersionTest, ParseEmptyReturnsZero) {
+    Version v = Version::parse("");
+    Version zero{0, 0, 0};
+    EXPECT_EQ(v, zero);
+}
+
+TEST(PkgVersionTest, ParseStopsAtNonDigit) {
+    Version v = Version::parse("1.2.3-beta");
+    EXPECT_EQ(v.major, 1);
+    EXPECT_EQ(v.minor, 2);
+    EXPECT_EQ(v.patch, 3);
+}
+
+TEST(PkgVersionTest, ToStringRoundTrip) {
+    Version v{3, 1, 4};
+    EXPECT_EQ(v.toString(), "3.1.4");
+}
+
+TEST(PkgVersionTest, Comparisons) {
+    Version v1{1, 0, 0};
+    Version v2{1, 0, 1};
+    Version v3{1, 1, 0};
+    Version v4{2, 0, 0};
+
+    EXPECT_TRUE(v1 < v2);
+    EXPECT_TRUE(v2 < v3);
+    EXPECT_TRUE(v3 < v4);
+    EXPECT_TRUE(v1 <= v1);
+    EXPECT_TRUE(v4 > v3);
+    EXPECT_TRUE(v4 >= v4);
+    EXPECT_TRUE(v1 != v2);
+    Version one{1, 0, 0};
+    EXPECT_TRUE(v1 == one);
+}
+
+// ============================================================
+// P2-11 版本约束解析与匹配
+// ============================================================
+
+TEST(PkgVersionConstraintTest, ParseAny) {
+    VersionConstraint c = VersionConstraint::parse("*");
+    EXPECT_EQ(c.op, ConstraintOp::Any);
+    EXPECT_TRUE(c.matches(Version{1, 0, 0}));
+    EXPECT_TRUE(c.matches(Version{99, 99, 99}));
+}
+
+TEST(PkgVersionConstraintTest, ParseEmptyAsAny) {
+    VersionConstraint c = VersionConstraint::parse("");
+    EXPECT_EQ(c.op, ConstraintOp::Any);
+}
+
+TEST(PkgVersionConstraintTest, ParseExact) {
+    VersionConstraint c = VersionConstraint::parse("1.2.3");
+    EXPECT_EQ(c.op, ConstraintOp::Exact);
+    EXPECT_TRUE(c.matches(Version{1, 2, 3}));
+    EXPECT_FALSE(c.matches(Version{1, 2, 4}));
+    EXPECT_FALSE(c.matches(Version{1, 3, 0}));
+}
+
+TEST(PkgVersionConstraintTest, ParseCaret) {
+    VersionConstraint c = VersionConstraint::parse("^1.2.3");
+    EXPECT_EQ(c.op, ConstraintOp::Caret);
+    // ^1.2.3 → >=1.2.3 <2.0.0
+    EXPECT_TRUE(c.matches(Version{1, 2, 3}));
+    EXPECT_TRUE(c.matches(Version{1, 9, 9}));
+    EXPECT_FALSE(c.matches(Version{2, 0, 0}));
+    EXPECT_FALSE(c.matches(Version{1, 2, 2}));
+}
+
+TEST(PkgVersionConstraintTest, ParseCaretZeroMajor) {
+    VersionConstraint c = VersionConstraint::parse("^0.2.3");
+    EXPECT_EQ(c.op, ConstraintOp::Caret);
+    // ^0.2.3 → >=0.2.3 <0.3.0
+    EXPECT_TRUE(c.matches(Version{0, 2, 3}));
+    EXPECT_TRUE(c.matches(Version{0, 2, 9}));
+    EXPECT_FALSE(c.matches(Version{0, 3, 0}));
+    EXPECT_FALSE(c.matches(Version{1, 0, 0}));
+}
+
+TEST(PkgVersionConstraintTest, ParseCaretZeroMajorMinor) {
+    VersionConstraint c = VersionConstraint::parse("^0.0.1");
+    EXPECT_EQ(c.op, ConstraintOp::Caret);
+    // ^0.0.1 → >=0.0.1 <0.0.2
+    EXPECT_TRUE(c.matches(Version{0, 0, 1}));
+    EXPECT_FALSE(c.matches(Version{0, 0, 2}));
+}
+
+TEST(PkgVersionConstraintTest, ParseTilde) {
+    VersionConstraint c = VersionConstraint::parse("~1.2.3");
+    EXPECT_EQ(c.op, ConstraintOp::Tilde);
+    // ~1.2.3 → >=1.2.3 <1.3.0
+    EXPECT_TRUE(c.matches(Version{1, 2, 3}));
+    EXPECT_TRUE(c.matches(Version{1, 2, 9}));
+    EXPECT_FALSE(c.matches(Version{1, 3, 0}));
+    EXPECT_FALSE(c.matches(Version{1, 1, 0}));
+}
+
+TEST(PkgVersionConstraintTest, ParseGreaterEq) {
+    VersionConstraint c = VersionConstraint::parse(">=1.0.0");
+    EXPECT_EQ(c.op, ConstraintOp::GreaterEq);
+    EXPECT_TRUE(c.matches(Version{1, 0, 0}));
+    EXPECT_TRUE(c.matches(Version{2, 0, 0}));
+    EXPECT_FALSE(c.matches(Version{0, 9, 9}));
+}
+
+TEST(PkgVersionConstraintTest, ParseGreater) {
+    VersionConstraint c = VersionConstraint::parse(">1.0.0");
+    EXPECT_EQ(c.op, ConstraintOp::Greater);
+    EXPECT_FALSE(c.matches(Version{1, 0, 0}));
+    EXPECT_TRUE(c.matches(Version{1, 0, 1}));
+    EXPECT_FALSE(c.matches(Version{0, 9, 9}));
+}
+
+TEST(PkgVersionConstraintTest, ParseLessEq) {
+    VersionConstraint c = VersionConstraint::parse("<=2.0.0");
+    EXPECT_EQ(c.op, ConstraintOp::LessEq);
+    EXPECT_TRUE(c.matches(Version{2, 0, 0}));
+    EXPECT_TRUE(c.matches(Version{1, 9, 9}));
+    EXPECT_FALSE(c.matches(Version{2, 0, 1}));
+}
+
+TEST(PkgVersionConstraintTest, ParseLess) {
+    VersionConstraint c = VersionConstraint::parse("<2.0.0");
+    EXPECT_EQ(c.op, ConstraintOp::Less);
+    EXPECT_FALSE(c.matches(Version{2, 0, 0}));
+    EXPECT_TRUE(c.matches(Version{1, 9, 9}));
+}
+
+TEST(PkgVersionConstraintTest, ToStringRoundTrip) {
+    EXPECT_EQ(VersionConstraint::parse("^1.0.0").toString(), "^1.0.0");
+    EXPECT_EQ(VersionConstraint::parse("~1.2.3").toString(), "~1.2.3");
+    EXPECT_EQ(VersionConstraint::parse(">=1.0.0").toString(), ">=1.0.0");
+    EXPECT_EQ(VersionConstraint::parse("*").toString(), "*");
+    EXPECT_EQ(VersionConstraint::parse("1.2.3").toString(), "1.2.3");
+}
+
+// ============================================================
+// P2-11 PackageManager 版本约束安装
+// ============================================================
+
+TEST(PkgManagerConstraintTest, InstallWithCaretConstraintPicksLatestMatching) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createVersionedRegistry(registryPath); // ver-pkg 1.0.0 + 2.0.0
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    PackageManager pm(config);
+
+    // ^1.0.0 应选择 1.0.0（而非 2.0.0）
+    InstallResult result = pm.install("ver-pkg@^1.0.0");
+    EXPECT_TRUE(result.ok) << result.errorMessage;
+    EXPECT_EQ(result.version, "1.0.0");
+}
+
+TEST(PkgManagerConstraintTest, InstallWithGreaterEqConstraintPicksHighest) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createVersionedRegistry(registryPath);
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    PackageManager pm(config);
+
+    // >=1.0.0 应选择最高版本 2.0.0
+    InstallResult result = pm.install("ver-pkg@>=1.0.0");
+    EXPECT_TRUE(result.ok) << result.errorMessage;
+    EXPECT_EQ(result.version, "2.0.0");
+}
+
+TEST(PkgManagerConstraintTest, InstallWithLessConstraintPicksMatchingVersion) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createVersionedRegistry(registryPath);
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    PackageManager pm(config);
+
+    // <2.0.0 应选择 1.0.0
+    InstallResult result = pm.install("ver-pkg@<2.0.0");
+    EXPECT_TRUE(result.ok) << result.errorMessage;
+    EXPECT_EQ(result.version, "1.0.0");
+}
+
+TEST(PkgManagerConstraintTest, InstallWithUnsatisfiableConstraintFails) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createVersionedRegistry(registryPath); // 1.0.0 + 2.0.0
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    PackageManager pm(config);
+
+    // >=3.0.0 无匹配版本
+    InstallResult result = pm.install("ver-pkg@>=3.0.0");
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.errorMessage.find("未找到"), std::string::npos);
+}
+
+TEST(PkgManagerConstraintTest, GetInstalledVersionReadsPkgJson) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    QDir pkgDir = QDir(packagesPath).filePath("test-ver");
+    (void)pkgDir.mkpath(".");
+    QFile pkgJson(pkgDir.filePath("pkg.json"));
+    (void)pkgJson.open(QIODevice::WriteOnly | QIODevice::Text);
+    QTextStream(&pkgJson) << "{\"name\":\"test-ver\",\"version\":\"3.7.2\"}";
+    pkgJson.close();
+
+    PkgConfig config;
+    config.packagesDir = packagesPath.toStdString();
+    PackageManager pm(config);
+
+    auto ver = pm.getInstalledVersion("test-ver");
+    ASSERT_TRUE(ver.has_value());
+    EXPECT_EQ(ver->major, 3);
+    EXPECT_EQ(ver->minor, 7);
+    EXPECT_EQ(ver->patch, 2);
+}
+
+TEST(PkgManagerConstraintTest, GetInstalledVersionReturnsNulloptForUninstalled) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    PkgConfig config;
+    config.packagesDir = QDir(tmpDir.path()).filePath("packages").toStdString();
+    PackageManager pm(config);
+
+    EXPECT_FALSE(pm.getInstalledVersion("nonexistent").has_value());
+}
+
+TEST(PkgManagerConstraintTest, CheckVersionConstraintReturnsTrueWhenNotInstalled) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    PkgConfig config;
+    config.packagesDir = QDir(tmpDir.path()).filePath("packages").toStdString();
+    PackageManager pm(config);
+
+    // 未安装的包不构成冲突
+    EXPECT_TRUE(pm.checkVersionConstraint("nonexistent", VersionConstraint::parse("^1.0.0")));
+}
+
+TEST(PkgManagerConstraintTest, CheckVersionConstraintDetectsConflict) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    QDir pkgDir = QDir(packagesPath).filePath("conflict-pkg");
+    (void)pkgDir.mkpath(".");
+    QFile pkgJson(pkgDir.filePath("pkg.json"));
+    (void)pkgJson.open(QIODevice::WriteOnly | QIODevice::Text);
+    QTextStream(&pkgJson) << "{\"name\":\"conflict-pkg\",\"version\":\"1.5.0\"}";
+    pkgJson.close();
+
+    PkgConfig config;
+    config.packagesDir = packagesPath.toStdString();
+    PackageManager pm(config);
+
+    // 已安装 1.5.0，要求 ^2.0.0 → 冲突
+    EXPECT_FALSE(pm.checkVersionConstraint("conflict-pkg", VersionConstraint::parse("^2.0.0")));
+    // 已安装 1.5.0，要求 ^1.0.0 → 兼容
+    EXPECT_TRUE(pm.checkVersionConstraint("conflict-pkg", VersionConstraint::parse("^1.0.0")));
+}
+
+// ============================================================
+// P2-11 传递依赖安装测试
+// ============================================================
+
+namespace {
+/// 创建带传递依赖的 registry
+/// registry/
+///   app-pkg/
+///     pkg.json (依赖 lib-a)
+///     minilang.pkg (声明依赖 lib-a)
+///     app-pkg.mini
+///   lib-a/
+///     pkg.json
+///     lib-a.mini
+void createTransitiveRegistry(const QString& registryPath) {
+    QDir registryDir(registryPath);
+    (void)registryDir.mkpath(".");
+
+    // app-pkg：有传递依赖
+    QDir appDir = registryDir.filePath("app-pkg");
+    (void)appDir.mkpath(".");
+    {
+        QFile pkgJson(appDir.filePath("pkg.json"));
+        (void)pkgJson.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&pkgJson) << "{\"name\":\"app-pkg\",\"version\":\"1.0.0\"}";
+        pkgJson.close();
+
+        // 声明传递依赖
+        QFile manifest(appDir.filePath("minilang.pkg"));
+        (void)manifest.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&manifest) << "{\"name\":\"app-pkg\",\"version\":\"1.0.0\","
+                                  "\"dependencies\":[{\"name\":\"lib-a\",\"version\":\"1.0.0\"}]}";
+        manifest.close();
+
+        QFile miniFile(appDir.filePath("app-pkg.mini"));
+        (void)miniFile.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&miniFile) << "export fun app() { return 42; }\n";
+        miniFile.close();
+    }
+
+    // lib-a：被 app-pkg 依赖
+    QDir libDir = registryDir.filePath("lib-a");
+    (void)libDir.mkpath(".");
+    {
+        QFile pkgJson(libDir.filePath("pkg.json"));
+        (void)pkgJson.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&pkgJson) << "{\"name\":\"lib-a\",\"version\":\"1.0.0\"}";
+        pkgJson.close();
+
+        QFile miniFile(libDir.filePath("lib-a.mini"));
+        (void)miniFile.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&miniFile) << "export fun lib() { return 1; }\n";
+        miniFile.close();
+    }
+}
+
+/// 创建循环依赖的 registry
+/// registry/
+///   cycle-a/
+///     pkg.json
+///     minilang.pkg (依赖 cycle-b)
+///   cycle-b/
+///     pkg.json
+///     minilang.pkg (依赖 cycle-a)
+void createCycleRegistry(const QString& registryPath) {
+    QDir registryDir(registryPath);
+    (void)registryDir.mkpath(".");
+
+    for (const auto& [name, dep] :
+         std::vector<std::pair<QString, QString>>{{"cycle-a", "cycle-b"}, {"cycle-b", "cycle-a"}}) {
+        QDir dir = registryDir.filePath(name);
+        (void)dir.mkpath(".");
+        QFile pkgJson(dir.filePath("pkg.json"));
+        (void)pkgJson.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&pkgJson) << QString("{\"name\":\"%1\",\"version\":\"1.0.0\"}").arg(name);
+        pkgJson.close();
+
+        QFile manifest(dir.filePath("minilang.pkg"));
+        (void)manifest.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&manifest) << QString("{\"name\":\"%1\",\"version\":\"1.0.0\","
+                                          "\"dependencies\":[{\"name\":\"%2\",\"version\":\"1.0.0\"}]}")
+                                      .arg(name, dep);
+        manifest.close();
+
+        QFile miniFile(dir.filePath(name + ".mini"));
+        (void)miniFile.open(QIODevice::WriteOnly | QIODevice::Text);
+        QTextStream(&miniFile) << "export var v = 1;\n";
+        miniFile.close();
+    }
+}
+} // namespace
+
+TEST(PkgManagerTransitiveTest, InstallAllWithTransitiveInstallsDependencies) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createTransitiveRegistry(registryPath);
+
+    // 创建顶层清单
+    QString manifestPath = QDir(tmpDir.path()).filePath("minilang.pkg");
+    writeFile(manifestPath,
+              R"({"name":"root","version":"0.1.0","dependencies":[{"name":"app-pkg","version":"1.0.0"}]})");
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    config.manifestPath = manifestPath.toStdString();
+    PackageManager pm(config);
+
+    std::string error;
+    ASSERT_TRUE(pm.loadManifest("", &error)) << error;
+
+    auto results = pm.installAllWithTransitive();
+    // 应安装 app-pkg + lib-a（传递依赖）
+    ASSERT_EQ(results.size(), 2u);
+    EXPECT_EQ(results[0].packageName, "app-pkg");
+    EXPECT_TRUE(results[0].ok);
+    EXPECT_EQ(results[1].packageName, "lib-a");
+    EXPECT_TRUE(results[1].ok);
+
+    // 验证两个包都已安装
+    EXPECT_TRUE(isPackageInstalled(packagesPath.toStdString(), "app-pkg"));
+    EXPECT_TRUE(isPackageInstalled(packagesPath.toStdString(), "lib-a"));
+}
+
+TEST(PkgManagerTransitiveTest, InstallAllWithoutTransitiveSkipsTransitiveDeps) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createTransitiveRegistry(registryPath);
+
+    QString manifestPath = QDir(tmpDir.path()).filePath("minilang.pkg");
+    writeFile(manifestPath,
+              R"({"name":"root","version":"0.1.0","dependencies":[{"name":"app-pkg","version":"1.0.0"}]})");
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    config.manifestPath = manifestPath.toStdString();
+    PackageManager pm(config);
+
+    std::string error;
+    ASSERT_TRUE(pm.loadManifest("", &error)) << error;
+
+    // 扁平安装：只装 app-pkg，不装 lib-a
+    auto results = pm.installAll();
+    ASSERT_EQ(results.size(), 1u);
+    EXPECT_EQ(results[0].packageName, "app-pkg");
+    EXPECT_TRUE(results[0].ok);
+
+    EXPECT_TRUE(isPackageInstalled(packagesPath.toStdString(), "app-pkg"));
+    EXPECT_FALSE(isPackageInstalled(packagesPath.toStdString(), "lib-a"));
+}
+
+TEST(PkgManagerTransitiveTest, InstallAllWithTransitiveHandlesCycle) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createCycleRegistry(registryPath);
+
+    QString manifestPath = QDir(tmpDir.path()).filePath("minilang.pkg");
+    writeFile(manifestPath,
+              R"({"name":"root","version":"0.1.0","dependencies":[{"name":"cycle-a","version":"1.0.0"}]})");
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    config.manifestPath = manifestPath.toStdString();
+    PackageManager pm(config);
+
+    std::string error;
+    ASSERT_TRUE(pm.loadManifest("", &error)) << error;
+
+    // 循环依赖不应导致无限递归（visited 集合检测）
+    auto results = pm.installAllWithTransitive();
+    // 至少安装 cycle-a，可能也安装 cycle-b（取决于顺序）
+    EXPECT_GE(results.size(), 1u);
+    EXPECT_EQ(results[0].packageName, "cycle-a");
+    EXPECT_TRUE(results[0].ok);
+    // 两包都应安装（cycle-b 作为 cycle-a 的传递依赖）
+    EXPECT_TRUE(isPackageInstalled(packagesPath.toStdString(), "cycle-a"));
+    EXPECT_TRUE(isPackageInstalled(packagesPath.toStdString(), "cycle-b"));
+}
+
+TEST(PkgManagerTransitiveTest, InstallAllWithTransitiveWithoutManifestFails) {
+    PkgConfig config;
+    PackageManager pm(config);
+    auto results = pm.installAllWithTransitive();
+    ASSERT_EQ(results.size(), 1u);
+    EXPECT_FALSE(results[0].ok);
+    EXPECT_NE(results[0].errorMessage.find("未加载清单"), std::string::npos);
+}
+
+TEST(PkgManagerTransitiveTest, InstallAllWithTransitiveSkipsAlreadyInstalled) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createTransitiveRegistry(registryPath);
+
+    QString manifestPath = QDir(tmpDir.path()).filePath("minilang.pkg");
+    writeFile(manifestPath,
+              R"({"name":"root","version":"0.1.0","dependencies":[{"name":"app-pkg","version":"1.0.0"}]})");
+
+    PkgConfig config;
+    config.registryDir = registryPath.toStdString();
+    config.packagesDir = packagesPath.toStdString();
+    config.manifestPath = manifestPath.toStdString();
+    PackageManager pm(config);
+
+    std::string error;
+    ASSERT_TRUE(pm.loadManifest("", &error));
+
+    // 第一次安装
+    auto results1 = pm.installAllWithTransitive();
+    EXPECT_EQ(results1.size(), 2u); // app-pkg + lib-a
+
+    // 第二次安装：都应标记为已安装
+    auto results2 = pm.installAllWithTransitive();
+    EXPECT_EQ(results2.size(), 2u);
+    for (const auto& r : results2) {
+        EXPECT_TRUE(r.ok);
+        EXPECT_TRUE(r.alreadyInstalled);
+    }
+}
+
+// ============================================================
+// P2-11 CLI --no-transitive 选项测试
+// ============================================================
+
+TEST(PkgCliTransitiveFlagTest, ParseNoTransitiveBeforeCommand) {
+    const char* argv[] = {"minilang-pkg", "--no-transitive", "install"};
+    CliArgs args = parseArgs(3, const_cast<char**>(argv));
+    EXPECT_TRUE(args.noTransitive);
+    EXPECT_EQ(args.command, "install");
+}
+
+TEST(PkgCliTransitiveFlagTest, ParseNoTransitiveAfterCommand) {
+    const char* argv[] = {"minilang-pkg", "install", "--no-transitive"};
+    CliArgs args = parseArgs(3, const_cast<char**>(argv));
+    EXPECT_TRUE(args.noTransitive);
+    EXPECT_EQ(args.command, "install");
+}
+
+TEST(PkgCliTransitiveFlagTest, DefaultIsTransitive) {
+    const char* argv[] = {"minilang-pkg", "install"};
+    CliArgs args = parseArgs(2, const_cast<char**>(argv));
+    EXPECT_FALSE(args.noTransitive);
+}
+
+TEST(PkgCliTransitiveFlagTest, InstallCommandUsesTransitiveByDefault) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createTransitiveRegistry(registryPath);
+
+    QString manifestPath = QDir(tmpDir.path()).filePath("minilang.pkg");
+    writeFile(manifestPath,
+              R"({"name":"root","version":"0.1.0","dependencies":[{"name":"app-pkg","version":"1.0.0"}]})");
+
+    // 保持 QByteArray 活跃，避免 const char* 悬垂
+    QByteArray regArg = registryPath.toLocal8Bit();
+    QByteArray pkgArg = packagesPath.toLocal8Bit();
+    QByteArray manArg = manifestPath.toLocal8Bit();
+    const char* argv[] = {"minilang-pkg",   "install",          "--registry", regArg.constData(),
+                          "--packages-dir", pkgArg.constData(), "--manifest", manArg.constData()};
+    CliArgs args = parseArgs(8, const_cast<char**>(argv));
+    CommandResult result = processInstall(args);
+    EXPECT_EQ(result.exitCode, 0) << result.output;
+    // 传递依赖 lib-a 应被安装
+    EXPECT_TRUE(isPackageInstalled(packagesPath.toStdString(), "lib-a"));
+    EXPECT_NE(result.output.find("含传递依赖"), std::string::npos);
+}
+
+TEST(PkgCliTransitiveFlagTest, InstallCommandWithNoTransitiveSkipsTransitiveDeps) {
+    QTemporaryDir tmpDir;
+    ASSERT_TRUE(tmpDir.isValid());
+    QString registryPath = QDir(tmpDir.path()).filePath("registry");
+    QString packagesPath = QDir(tmpDir.path()).filePath("packages");
+    createTransitiveRegistry(registryPath);
+
+    QString manifestPath = QDir(tmpDir.path()).filePath("minilang.pkg");
+    writeFile(manifestPath,
+              R"({"name":"root","version":"0.1.0","dependencies":[{"name":"app-pkg","version":"1.0.0"}]})");
+
+    QByteArray regArg = registryPath.toLocal8Bit();
+    QByteArray pkgArg = packagesPath.toLocal8Bit();
+    QByteArray manArg = manifestPath.toLocal8Bit();
+    const char* argv[] = {"minilang-pkg",     "install",          "--no-transitive",
+                          "--registry",       regArg.constData(), "--packages-dir",
+                          pkgArg.constData(), "--manifest",       manArg.constData()};
+    CliArgs args = parseArgs(9, const_cast<char**>(argv));
+    CommandResult result = processInstall(args);
+    EXPECT_EQ(result.exitCode, 0) << result.output;
+    // 传递依赖 lib-a 不应被安装
+    EXPECT_FALSE(isPackageInstalled(packagesPath.toStdString(), "lib-a"));
+    EXPECT_EQ(result.output.find("含传递依赖"), std::string::npos);
+}
+
+TEST(PkgCliHelpTest, HelpDocumentsVersionConstraints) {
+    std::string h = helpString();
+    EXPECT_NE(h.find("^1.0.0"), std::string::npos);
+    EXPECT_NE(h.find("~1.0.0"), std::string::npos);
+    EXPECT_NE(h.find("--no-transitive"), std::string::npos);
 }

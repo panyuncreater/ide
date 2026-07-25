@@ -59,16 +59,22 @@ const std::vector<BugHuntVariant>& BugHuntVariantLibrary::variants() {
                        "c;\n}\nprint(f());\nprint(f(10));\nprint(f(10, 20));\nprint(f(10, 20, 30));",
                        "🎯 预测四次调用的输出：6 / 15 / 33 / 60", "✅ 输出 6, 15, 33, 60（三后端一致）",
                        "💡 检查 fillDefaultArgs 在 argCount < arity 时从右向左填充默认值的顺序。"},
-        // 5. variant-mod-1-cycle：从 2 模块循环依赖改为 3 模块循环依赖
-        BugHuntVariant{
-            "variant-mod-1-cycle", "BUG-MOD-1", "📦 模块变体：3 模块循环依赖",
-            "🔍 差异：原题为 2 模块（a↔b）循环依赖；本变体扩展为 3 模块链式循环（a→b→c→a），"
-            "考察 moduleLoadingSet_ 循环检测在 3 模块链路下是否能正确识别并报错。"
-            "新挑战点：3 模块循环的检测深度——moduleLoadingStack_ 是否记录完整路径？",
-            "// 模拟三模块循环依赖（需配合模块文件）\n// a.mini: import { x } from \"b.mini\";\n// b.mini: import { y "
-            "} from \"c.mini\";\n// c.mini: import { z } from \"a.mini\";\nimport { x } from \"b.mini\";\nprint(x);",
-            "🎯 预测：三后端是否都能检测到循环依赖并报错（而非死循环）", "⚠️ 运行时错误：检测到循环依赖 a→b→c→a",
-            "💡 检查 moduleLoadingSet_/moduleLoadingStack_ 在 3 模块链路下的检测逻辑是否完整。"},
+        // 5. variant-mod-1-cycle：3 模块循环导入延迟加载（P2-14 后循环不再报错）
+        BugHuntVariant{"variant-mod-1-cycle", "BUG-MOD-1", "📦 模块变体：3 模块循环导入延迟加载",
+                       "🔍 差异：原题为 2 模块（a↔b）循环依赖检测；本变体扩展为 3 模块链式循环（a→b→c→a），"
+                       "考察 P2-14 循环导入延迟加载语义——模块环境立即创建，回路闭合时返回部分 env，"
+                       "访问未定义导出名时由 Environment::get 抛\"未定义变量\"错误。"
+                       "新挑战点：3 模块循环的加载顺序——c 先执行完 → b → a，访问未初始化名是否报错？",
+                       "// 模拟三模块循环导入（需配合模块文件）\n// a.mini: import { y } from \"b.mini\"; export var x "
+                       "= 1;\n// b.mini: import "
+                       "{ z } from \"c.mini\"; export var y = 2;\n// c.mini: import { x } from \"a.mini\"; export var "
+                       "z = 3;\nimport { x } "
+                       "from \"a.mini\";\nprint(x);",
+                       "🎯 预测：循环导入延迟加载是否成功——c 回路闭合时 a 的 x 尚未定义，是否报错？",
+                       "✅ 输出 1（a 的 x=1 在 "
+                       "import b 之前已定义，回路闭合时 c 能读到 x）",
+                       "💡 检查 P2-14 循环导入延迟加载：模块环境立即入缓存，预扫描 export 名用于具名导入验证，"
+                       "回路闭合时返回部分 env。导出名在循环引用前定义则成功，否则报\"未定义变量\"错误。"},
         // 6. variant-dbg-1-condition：条件断点表达式改为 arr.len() == 3
         BugHuntVariant{"variant-dbg-1-condition", "BUG-DBG-1", "🐞 调试变体：条件断点表达式含方法调用",
                        "🔍 差异：原题条件断点为 i == 5（简单变量比较）；本变体改为 arr.len() == 3（含方法调用），"

@@ -29,6 +29,33 @@ public:
     /// 编译 AST 块到字节码
     CompileResult compile(Block& program);
 
+    /// P2-11 预编译模块：独立编译模块源码为 CompileResult。
+    /// 与 compile() 的区别：
+    ///   - 模块全局槽位从 0 开始独立编号（不与主程序共享）
+    ///   - 收集 export 语句导出的名称到 result.moduleExports
+    ///   - 用于生成 .minic 预编译模块文件
+    /// @param source 模块源码
+    /// @param modulePath 模块路径（用于 export 集合索引与诊断）
+    /// @return CompileResult；编译失败时 diagnostics_ 含错误
+    CompileResult compileModule(const std::string& source, const std::string& modulePath);
+
+    /// L11 预编译模块（RegisterVM）：独立编译模块源码为 RegisterCompileResult。
+    /// 与 compileViaRegisterIR 的区别：
+    ///   - 模块全局槽位从 0 开始独立编号（不与主程序共享）
+    ///   - 收集 export 语句导出的名称到 result.moduleExports
+    ///   - 用于生成 MLRC 格式 .minic 预编译模块文件（通过 BytecodeCache::storeRegisterToFile）
+    /// @param source 模块源码
+    /// @param modulePath 模块路径（用于 export 集合索引与诊断）
+    /// @return RegisterCompileResult；编译失败时 diagnostics_ 含错误
+    RegisterCompileResult compileModuleViaRegisterIR(const std::string& source, const std::string& modulePath);
+
+    /// P2-11 预编译模块：设置 .minic 文件路径解析器。
+    /// 回调接收模块路径，返回对应的 .minic 文件系统路径（空表示无预编译文件）。
+    /// 未设置时 visitImportStmt 不尝试加载 .minic，退化为源码编译。
+    void setPrecompiledModuleResolver(std::function<std::string(const std::string&)> resolver) {
+        precompiledModuleResolver_ = std::move(resolver);
+    }
+
     /// ARCH-06: IR 中间层编译路径（实验性）
     /// AST → IR（AstIRBuilder）→ Bytecode（BytecodeIRBackend）
     /// 当 useIR_=true 时由 compile() 调用。简化实现，不支持高级特性。
@@ -45,6 +72,9 @@ public:
     /// 获取编译过程中的诊断信息
     const DiagnosticBag& getDiagnostics() const { return diagnostics_; }
 
+    /// P1-7: 清空诊断信息(字节码缓存命中时调用,避免陈旧诊断)
+    void clearDiagnostics() { diagnostics_.clear(); }
+
     // ARCH-06: IR 中间层开关（实验性，默认关闭）
     // 启用后 compile() 走 AST → IR → Bytecode 路径（AstIRBuilder + BytecodeIRBackend）。
     // IR 路径已支持闭包 upvalue、写回指令、全局槽位分配、默认参数、块作用域等完整特性。
@@ -55,6 +85,13 @@ public:
     /// 启用后在 IR lowering 前执行：常量折叠 → 复制传播 → 死代码消除
     void setIROptimize(bool enabled) { irOptimize_ = enabled; }
     bool getIROptimize() const { return irOptimize_; }
+
+    /// P2-10 IR SSA 高级优化 pass 开关（仅当 irOptimize_=true 且寄存器式后端时生效）
+    /// 启用后在 optimizeIR 后额外执行：GVN（全局值编号）+ LICM（循环不变外提）+ 函数内联。
+    /// 与 CSE 同源约束：GVN/LICM 替换 dest vreg 引用后栈式后端栈残留 → OP_POP 栈下溢，
+    /// 因此仅对寄存器式后端安全（compileViaRegisterIR 路径）。
+    void setIRSSAOptimize(bool enabled) { irSSAOptimize_ = enabled; }
+    bool getIRSSAOptimize() const { return irSSAOptimize_; }
 
     /// PERF-14: 寄存器式 VM 开关（默认关闭）
     /// 启用后 compile() 走 AST → IR → RegisterBytecode 路径，
@@ -82,6 +119,11 @@ public:
     /// PERF-14: 寄存器式编译结果（compileViaRegisterIR 后有效）
     const RegisterCompileResult& getLastRegisterResult() const { return lastRegisterResult_; }
 
+    /// L17: 缓存注入接口。PipelineRunner 字节码缓存命中时，跳过 compileViaRegisterIR，
+    /// 直接将反序列化的 RegisterCompileResult 注入到 lastRegisterResult_，使后续
+    /// getLastRegisterResult() 返回缓存结果。调用方需自行 clearDiagnostics()。
+    void setLastRegisterResult(RegisterCompileResult result) { lastRegisterResult_ = std::move(result); }
+
     // VM-IMPORT: 模块加载器（使 VM 编译路径支持 import 语句）
     // 语义对齐 Interpreter::setModuleLoader：IDE 在编译前注入基于当前文件路径的加载回调。
     // 直接路径在 visitImportStmt 中使用；IR/寄存器路径在 compileViaIR/compileViaRegisterIR
@@ -100,9 +142,14 @@ public:
 
 private:
     // ARCH-06: IR 中间层状态
-    bool useIR_ = false;                                            // 是否启用 IR 路径（实验性，默认关闭）
-    bool irOptimize_ = false;                                       // 是否启用 IR 优化 pass（方向二）
-    std::unique_ptr<IRFunction> lastIR_;                            // 最近一次 IR 构建结果
+    bool useIR_ = false;                 // 是否启用 IR 路径（实验性，默认关闭）
+    bool irOptimize_ = false;            // 是否启用 IR 优化 pass（方向二）
+    bool irSSAOptimize_ = true;          // L16: SSA 高级优化默认启用（GVN/LICM/内联，仅寄存器式后端）。
+                                         //   仅当 irOptimize_=true 时生效。
+                                         //   验证机制：ssaConstructPass 返回 false（无 LOCAL 变量需 PHI）时
+                                         //   自动跳过 GVN/LICM，仅保留 SSA 构造+析构往返（语义等价）。
+                                         //   回退：用户可显式 setIRSSAOptimize(false) 禁用 SSA 优化。
+    std::unique_ptr<IRFunction> lastIR_; // 最近一次 IR 构建结果
     std::vector<std::pair<size_t, size_t>> lastIRToBytecodeOffset_; // 方向四：IR→字节码偏移映射
 
     // PERF-14: 寄存器式 VM 状态
@@ -133,7 +180,8 @@ private:
     std::unordered_map<std::string, std::string> varTypes_; // 2026-06-29: 变量名→类型注解（local+global）
     bool inFunction_ = false;                               // 是否在函数体内
     std::string currentFunctionReturnType_;                 // BUG-TYPE-1 fix: 当前函数返回类型注解（empty 表示无注解）
-    std::vector<std::string> currentTypeParams_;            // R163 泛型扩展：当前函数/方法的类型参数（empty=非泛型），用于 emitTypeCheck 擦除
+    std::vector<std::string>
+        currentTypeParams_; // R163 泛型扩展：当前函数/方法的类型参数（empty=非泛型），用于 emitTypeCheck 擦除
     // TCO: 尾调用优化状态。visitFunDecl 入口设置 currentFunctionName_ /
     // currentFunctionDecl_ / currentFunctionEntryIp_，visitReturnStmt 据此
     // 判断 return f(args) 是否可优化为"参数赋值 + 跳转到函数入口"。
@@ -210,6 +258,9 @@ private:
     // 直接路径在 visitEnumDecl 中收集，IR/RegVM 路径通过 irBuilder.takeEnumInfos() 获取。
     std::vector<VMEnumInfo> pendingEnumInfos_;
 
+    // P2-11 预编译模块：.minic 文件路径解析器（IDE 注入，将模块路径映射到 .minic 文件系统路径）
+    std::function<std::string(const std::string&)> precompiledModuleResolver_;
+
     /// VM-IMPORT: 模块路径规范化与安全校验（对齐 InterpreterModules.cpp SEC-1 防护）
     /// 返回空字符串表示路径非法（调用方应报错）
     std::string normalizeModulePath(const std::string& rawPath) const;
@@ -228,6 +279,56 @@ private:
     /// 普通顶层声明不算导出。对齐 InterpreterModules.cpp:172-188 的语义。
     /// 输出：moduleExports_[modulePath] = exports 集合
     void collectModuleExports(const std::string& modulePath, Block& moduleAst);
+
+    /// P2-11 预编译模块：尝试加载 .minic 并合并到当前编译。
+    /// 在 visitImportStmt 中优先调用，失败时返回 false 以回退到源码编译。
+    /// 合并策略：模块 mainChunk 转为函数 chunk（__mod_<hash>__init），
+    /// 通过 OP_CLOSURE + OP_CALL_EXPR 调用初始化；模块函数 chunk 按导出/非导出
+    /// 决定是否重命名前缀化，避免与主程序同名冲突。全局槽位通过 relocationMap 重映射。
+    /// @param modulePath 规范化后的模块路径
+    /// @param node ImportStmt 节点（用于错误报告与命名空间字典构造）
+    /// @return true=合并成功；false=无 .minic 或加载失败（调用方应回退到源码编译）
+    bool loadPrecompiledModule(const std::string& modulePath, ImportStmt& node);
+
+    /// L11 预编译模块（RegisterVM）：加载 MLRC 格式 .minic 并合并到 lastRegisterResult_。
+    /// 在 compileViaRegisterIR 的 post-lowering 阶段调用，处理 AstIRBuilder 记录的
+    /// pending 预编译模块加载。合并策略对齐 loadPrecompiledModule：
+    ///   - 模块 mainChunk 转为函数 chunk（__mod_<hash>___init），重命名非导出函数引用，
+    ///     重定位全局槽位
+    ///   - 模块 functionChunks 重命名+重定位后合并到 lastRegisterResult_.functionChunks
+    ///   - 主 chunk 追加 REG_CALL 调用模块初始化函数
+    ///   - 填充 moduleExports_ 供后续具名导入验证
+    /// @param modulePath 规范化后的模块路径
+    /// @param initFnName 模块初始化函数名（__mod_<hash>___init）
+    /// @param line 导入语句行号（用于错误报告）
+    /// @return true=合并成功；false=加载失败（调用方应报错或回退）
+    bool loadPrecompiledRegisterModule(const std::string& modulePath, const std::string& initFnName, int line);
+
+    /// P2-11 预编译模块：重命名 chunk 常量池中被 OP_CLOSURE/OP_CALL 引用的函数名。
+    /// 遍历 code 中的 OP_CLOSURE / OP_CALL 指令，获取 nameIdx → constants[nameIdx].stringVal()，
+    /// 若名称在 moduleFunctions 中且不在 exportSet 中，则前缀化为 `__mod_<hash>_<name>` 并更新常量。
+    /// 同时处理 OP_CALL 是为了模块隔离：模块内调用非导出函数（如 `main` 调 `helper`）时，
+    /// OP_CALL 按名查找需重定向到前缀化后的模块函数名，否则会命中主程序同名函数。
+    /// @param chunk 要处理的字节码块（就地修改 constants）
+    /// @param prefix 重命名前缀（如 `__mod_<hash>_`）
+    /// @param exportSet 导出名称集合（在集合中的名称不重命名）
+    /// @param moduleFunctions 模块定义的所有函数名（导出+非导出），用于精确判断
+    ///                        OP_CALL 引用的是模块内函数还是内置函数
+    static void renameClosureRefs(BytecodeChunk& chunk, const std::string& prefix,
+                                  const std::unordered_set<std::string>& exportSet,
+                                  const std::unordered_set<std::string>& moduleFunctions);
+
+    /// L11 预编译模块（RegisterVM）：重命名 RegBytecodeChunk 常量池中被
+    /// REG_CALL/REG_MAKE_CLOSURE 引用的函数名。对齐 renameClosureRefs 语义：
+    /// 遍历 code 中的 REG_CALL/REG_MAKE_CLOSURE 指令，获取 nameIdx →
+    /// constants[nameIdx].stringVal()，若名称在 moduleFunctions 中且不在 exportSet 中，
+    /// 则前缀化为 `__mod_<hash>_<name>` 并更新常量。
+    /// 指令格式：
+    ///   REG_CALL:        [op(1B), dst(1B), nameIdx(2B LE), argCount(1B), args...]
+    ///   REG_MAKE_CLOSURE: [op(1B), dst(1B), nameIdx(2B LE), uvCount(1B), uvDescs...]
+    static void renameRegClosureRefs(RegBytecodeChunk& chunk, const std::string& prefix,
+                                     const std::unordered_set<std::string>& exportSet,
+                                     const std::unordered_set<std::string>& moduleFunctions);
 
     // ---- C3 fix: 编译上下文 RAII 守卫 ----
     // visitFunDecl 需保存/恢复 15 个成员变量。原代码手动 std::move 保存 + 手动恢复
@@ -434,7 +535,44 @@ private:
     /// OP_CLOSE_UPVALUE、closeSlotRanges、恢复 currentLocals_、回填 afterCatch。
     /// 返回 false 表示发生溢出错误，调用方应跳过 finally 块直接返回
     /// （保留原始控制流：原实现 catch 块 early return 不 pop tryFinallyStack_）。
+    ///
+    /// L27 重构：原 200 行单函数按阶段拆分为 5 个子函数分发，
+    /// 降低圈复杂度便于启用 readability-function-cognitive-complexity 检查。
+    /// 所有 BUG-7a/7b/7c/BUG-AUDIT-EXC-*/BUG-TRY-1/L1 fix 不变量原样保留。
     bool emitCatchBlock(TryStmt& node, const TryCatchPatchInfo& info);
+
+    /// catch 变量绑定状态（emitCatchBlock 子阶段间传递）
+    struct CatchVarBindInfo {
+        std::unordered_map<std::string, int> savedCatchLocals; // currentLocals_ 快照（函数内 catch 变量恢复用）
+        std::string catchVarName;                              // catch 变量名（cleanup 字节码 OP_DELETE_VAR 用）
+        bool needCatchVarCleanup = false;                      // 顶层 catch 变量需 OP_DELETE_VAR 清理
+        bool hasShadowedGlobal = false;                        // 顶层 catch 变量遮蔽已有全局
+        int shadowedGlobalSlot = -1;                           // 被遮蔽的全局槽位
+        std::string shadowedSaveName;                          // 临时保存被遮蔽全局值的变量名
+        int catchVarSlot = -1;                                 // 函数内 catch 变量 slot（OP_CLOSE_UPVALUE 用）
+    };
+
+    /// emitCatchBlock 子阶段 1：回填 catchOffset（OP_TRY_BEGIN 占位）
+    /// 溢出 65535 时返回 false 并发 error。
+    bool patchCatchOffset(TryStmt& node, const TryCatchPatchInfo& info);
+    /// emitCatchBlock 子阶段 2：绑定 catch 变量到栈顶异常值
+    /// 函数内：分配局部 slot + OP_SET_LOCAL + OP_POP；顶层：OP_DEFINE_VAR + 可选遮蔽保护。
+    /// 返回 false 表示函数局部变量数量超限（slot > 255），调用方应 early return。
+    bool bindCatchVariable(TryStmt& node, CatchVarBindInfo& bind);
+    /// emitCatchBlock 子阶段 3：编译 catch body（含 cleanup wrap）
+    /// needsCleanupWrap 时用 OP_TRY_BEGIN/END 包装 catch 块，捕获内层 throw 跳到
+    /// cleanupThrow 路径执行清理后 rethrow。
+    /// @param outSkipCleanupThrowJumpPatch 输出 cleanup 跳转 patch（无 wrap 时为 npos）
+    /// @return false 表示 cleanupThrowOffset 溢出 65535（已恢复 currentLocals_，调用方 early return）
+    bool emitCatchBodyWithCleanup(TryStmt& node, const CatchVarBindInfo& bind, size_t& outSkipCleanupThrowJumpPatch);
+    /// emitCatchBlock 子阶段 4：恢复 catch 作用域
+    /// restoreMapping + OP_CLOSE_UPVALUE + closeSlotRanges + 恢复 currentLocals_。
+    void restoreCatchScope(TryStmt& node, const CatchVarBindInfo& bind);
+    /// emitCatchBlock 子阶段 5：回填 afterCatch 跳转目标
+    /// 回填 skipCatchJumpPatch 与 skipCleanupThrowJumpPatch。溢出 65535 时返回 false。
+    bool patchSkipCatchJumps(TryStmt& node, const TryCatchPatchInfo& info, size_t skipCleanupThrowJumpPatch);
+    /// emitCatchBlock 子阶段共用：发射 cleanup 字节码（OP_DELETE_VAR + 恢复遮蔽全局）
+    void emitCatchCleanupBytecode(const CatchVarBindInfo& bind, int line);
 
     /// visitTryStmt 子阶段：编译 finally 块
     /// 发射 OP_TRY_END（弹外层 handler）、记录 finallyEntryIp 回填续跳 patches、
@@ -456,7 +594,7 @@ private:
 
     /// visitFunDecl / emitMethodBody 共用子阶段：默认参数值 emit
     /// 仅支持字面量（Number/String/Bool/Null）和负数字面量（含 --N 嵌套折叠），
-    /// 复杂表达式记录无效索引 0xFFFF（VM 不支持，Interpreter 路径仍可执行）。
+    /// 复杂表达式记录无效索引 NO_INDEX（VM 不支持，Interpreter 路径仍可执行）。
     void emitDefaultValues(FunDecl& node);
 
     /// visitMatchExpr 子阶段：编译单个 match case 的模式检查
@@ -464,7 +602,26 @@ private:
     /// /VARIANT（DUP+OP_ENUM_VARIANT_NAME+JUMP_IF_FALSE+POP+字段绑定）三种模式。
     /// 匹配失败跳转 patch 追加到 caseSkipPatches 由调用方回填。
     /// 栈布局不变量：调用前 [scrut]，调用后 [scrut]（保持 scrut 在栈顶供后续 case 复用）。
+    ///
+    /// L27 重构：原 211 行单函数按 MatchPatternKind 拆分为 6 个子函数分发，
+    /// 降低圈复杂度便于启用 readability-function-cognitive-complexity 检查。
+    /// 所有 R133 模式匹配不变量（栈布局/失败 patch 回填/嵌套递归语义）原样保留。
     void emitMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches);
+
+    /// emitMatchPattern 子阶段：LITERAL 模式（DUP+literal+OP_EQUAL+JUMP_IF_FALSE+POP）
+    void emitLiteralMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches);
+    /// emitMatchPattern 子阶段：VARIABLE 模式（DUP+bindDestructureVar 绑定整个 scrut）
+    void emitVariableMatchPattern(const MatchPattern& p);
+    /// emitMatchPattern 子阶段：VARIANT 模式（OP_ENUM_VARIANT_NAME 检查 + 字段递归匹配）
+    void emitVariantMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches);
+    /// emitMatchPattern 子阶段：TUPLE 模式（TYPE_TEST + LEN 检查 + 元素递归匹配）
+    void emitTupleMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches);
+    /// emitMatchPattern 子阶段：OR 模式（依次尝试子 pattern，任一成功跳到 OR 末尾）
+    void emitOrMatchPattern(const MatchPattern& p, std::vector<size_t>& caseSkipPatches);
+    /// emitMatchPattern 子阶段：VARIANT/TUPLE 子 pattern 共用的失败路径发射
+    /// 成功路径 JUMP 跳过失败代码 + 失败路径 POP elem/field + JUMP caseSkip + 回填成功 JUMP。
+    /// subFailPatches 调用后将被清空（已回填）。调用前须已 emit 子 pattern 与成功路径 POP。
+    void emitSubPatternFailPath(std::vector<size_t>& subFailPatches, std::vector<size_t>& caseSkipPatches, int line);
 
     /// visitMatchExpr 子阶段：编译 case body 并保留值在栈顶
     /// 处理 Block body（编译除最后一条外的所有语句带 POP，最后一条用 compileNode 保留值；
@@ -490,7 +647,12 @@ private:
     /// 确保 this.arr.push(42) 等嵌套调用的修改不丢失。VM 在变异方法调用时将修改后的
     /// 对象暂存到 lastMutatedReceiver_，写回指令从中取值写回基对象的字段/索引位置。
     /// 仅依赖 receiver AST 与 currentLocals_（成员），无其他外部状态。
-    void emitMethodCallWriteback(const ASTNode* receiver, int line);
+    /// cachedIndexVar: IndexAccess 接收者的预缓存索引变量名（__wb_idx_N），空表示无缓存。
+    void emitMethodCallWriteback(const ASTNode* receiver, int line, const std::string& cachedIndexVar);
+
+    /// 发射变量加载指令（OP_GET_LOCAL / OP_GET_UPVALUE / OP_GET_GLOBAL / OP_GET_VAR）。
+    /// 根据 currentLocals_ / upvalue / global slot 解析变量位置并发射对应加载指令。
+    void emitLoadVariable(const std::string& name, int line);
 
     /// 发出编译错误
     void error(const std::string& msg, int line, int col);

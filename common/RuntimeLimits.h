@@ -20,6 +20,8 @@
  *   - 序列化/比较：MAX_TOSTRING_DEPTH / MAX_EQUALS_DEPTH / MAX_CLONE_DEPTH
  *   - Lexer 输入：MAX_SOURCE_SIZE / MAX_TOKEN_COUNT / MAX_INTERP_DEPTH
  *   - GUI 查找/替换：MAX_FIND_HIGHLIGHTS / MAX_REPLACE_ALL
+ *   - JIT 调用参数：MAX_JIT_ARGS
+ *   - 字节码哨兵值：NO_INDEX / NO_SLOT
  *
  * @see Interpreter VM Parser Lexer Formatter Value
  */
@@ -120,6 +122,25 @@ constexpr int MAX_INTERP_DEPTH = 64;
 constexpr int MAX_FIND_HIGHLIGHTS = 1000;
 // 全部替换上限（防止超大文档 UI 卡死）
 constexpr int MAX_REPLACE_ALL = 100000;
+
+// ---- JIT 调用参数上限 ----
+// P3-15 fix: JIT 运行时辅助函数（jitCallExpr/jitCallMethod/jitCallByName）从
+// 操作数栈 pop 参数到本地缓冲区，argCount 编码为 uint8_t（上限 255），
+// 256 是覆盖全部合法 argCount 的最小 2 的幂。原 JIT.cpp 4 处硬编码 Value args[256]，
+// 现统一为 std::array<Value, MAX_JIT_ARGS>，便于静态边界检查与 clang-tidy 审计。
+constexpr size_t MAX_JIT_ARGS = 256;
+// P3-15 fix: JIT 默认参数填充缓冲区上限。默认参数是参数的子集，
+// 64 足够覆盖实际场景（函数参数总数上限 MAX_JIT_ARGS=256，但默认参数数量
+// 远小于此）。原 JIT.cpp 4 处硬编码 Value defaults[64]，现统一为
+// std::array<Value, MAX_DEFAULT_PARAMS>，便于静态边界检查。
+constexpr size_t MAX_DEFAULT_PARAMS = 64;
+
+// ---- 字节码哨兵值（"无"标记）----
+// P3-14 fix: 提取散布在 Compiler/VM/Bytecode/IR/JIT/RegisterVM 共 40+ 处的
+// 魔法数字哨兵。0xFFFF 表示 uint16 槽位/常量索引"无"，0xFF 表示 uint8
+// receiverLocalSlot"无槽位"。原裸数字既无语义又难以一致维护。
+constexpr uint16_t NO_INDEX = 0xFFFF; ///< uint16 常量池/变量索引哨兵：无索引
+constexpr uint8_t NO_SLOT = 0xFF;     ///< uint8 receiverLocalSlot 哨兵：无槽位
 
 // ============================================================
 // L7 fix: RuntimeConfig — 运行时可配置的 DoS 防护限制

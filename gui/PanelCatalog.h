@@ -30,8 +30,9 @@
 
 /// 单个教学面板元数据
 struct PanelEntry {
-    const char* id;    // 面板唯一标识（如 "vm-sandbox"）
-    const char* label; // 显示名（如 "VM 沙盒"，已通过 mlTr 国际化）
+    const char* id; // 面板唯一标识（如 "vm-sandbox"）
+    const char* label; // 显示名（如 "VM 沙盒"，const char* 字面量；由消费方 TeachingTreePanel 通过 mlTr(leaf.label)
+                       // 包裹国际化）
     const char* emoji; // 前缀 emoji
 };
 

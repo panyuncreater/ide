@@ -3,10 +3,10 @@
 // ------------------------------------------------------------
 // 纯教学/模拟面板，不运行 MiniLang 执行引擎。包含：
 //   1. 模块系统原理静态文档（import/export 语义 + 路径解析规则 +
-//      模块缓存 + 循环依赖检测 + 预扫描阶段 + 错误传播链）
+//      模块缓存 + 循环导入延迟加载 + 预扫描阶段 + 错误传播链）
 //   2. 交互式模块依赖模拟器：4 个预设场景，纯 C++ 模拟加载栈与模块缓存
 //
-//   展示正常导入链 / 循环依赖 / 路径解析失败 /
+//   展示正常导入链 / 循环导入延迟加载 / 路径解析失败 /
 //   预扫描遗漏的处理流程
 //
 // 模块系统是 MiniLang 的高频 Bug 模式，本面板以预设数据教学这些概念。
@@ -102,11 +102,12 @@ const std::vector<ModuleConceptRow>& ModuleSystemLibrary::conceptRows() {
          "二次 import 同一模块直接命中缓存（跳过已缓存），保证模块级单例语义。"
          "缓存命中（已加载完成）合法，与「正在加载中」是两种不同状态。",
          "ModuleLoader::moduleCache_ / loadOrCached"},
-        {"循环依赖检测",
+        {"循环导入延迟加载",
          "维护「加载中」栈 loadingStack_，进入 import 递归前压栈，完成出栈。"
-         "若目标模块已在栈中则判定为循环依赖，立即报错，避免无限递归。"
-         "若目标已在栈中即 a→b→a，立即抛 ModuleError。",
-         "ModuleLoader::loadingStack_ / detectCycle"},
+         "若目标模块已在栈中则判定为循环导入，不再报错——返回已创建的部分 env（P2-14）。"
+         "模块环境立即入缓存，内容按执行顺序填充。访问未定义导出名时由 Environment::get 抛\"未定义变量\"错误。"
+         "语义参考 ES Modules + Python。",
+         "ModuleLoader::loadingStack_ / moduleCache_ / moduleExports_"},
         {"预扫描",
          "模块执行前先遍历顶层 AST，收集 FunDecl 与 ExportStmt 声明并预注册到模块作用域，"
          "使函数定义顺序无关（前向引用）。VarDecl/ClassDecl/EnumDecl 不预扫描，运行时处理。"
@@ -157,11 +158,12 @@ const std::vector<ModuleScenarioInfo>& ModuleSystemLibrary::scenarios() {
          "// a.ml\nimport b;\nfun main() { b.greet(); }\n\n"
          "// b.ml\nimport c;\nfun greet() { print(c.msg()); }\n\n"
          "// c.ml\nfun msg() { return \"hello from c\"; }"},
-        {"场景 2：循环依赖",
+        {"场景 2：循环导入延迟加载",
          "a.ml imports b.ml imports a.ml，加载栈探测到 a.ml 正在加载中，"
-         "立即判定为循环依赖并报错，避免无限递归。",
-         "// a.ml\nimport b;\nfun a() { b.b(); }\n\n"
-         "// b.ml\nimport a;   // 循环：a 正在加载\nfun b() { a.a(); }"},
+         "不再报错——返回已创建的部分 env（P2-14 延迟加载语义）。"
+         "模块环境立即入缓存，内容按执行顺序填充。访问未定义名时由 Environment::get 抛\"未定义变量\"错误。",
+         "// a.ml\nimport b;\nexport fun a() { b.b(); }\n\n"
+         "// b.ml\nimport a;   // 循环：a 正在加载，返回部分 env\nexport fun b() { a.a(); }"},
         {"场景 3：路径解析失败",
          "a.ml imports nonexist，路径解析失败（文件不存在），ModuleError 沿 import 链"
          "向上传播，a.ml 加载随之失败。",
@@ -268,59 +270,61 @@ void ModuleSystemVisualizerPanel::buildTheoryPage(QWidget* host) {
 
 void ModuleSystemVisualizerPanel::populateTheory() {
     // 理论概览 HTML
-    QString html =
-        QStringLiteral("<h2>MiniLang 模块系统原理</h2>"
-                       "<p>模块系统通过 <b>import / export</b> 支持跨文件代码组织。一个模块从源码到可用"
-                       "需经历：<b>Lexer → Parser → 预扫描 → 模块缓存 → 循环依赖检测 → 执行</b>。"
-                       "模块系统是 MiniLang 的高频 Bug 模式（路径安全、循环依赖、预扫描遗漏 FunDecl/ExportStmt、"
-                       "错误传播），理解每一阶段的不变量是排查此类 Bug 的关键。</p>"
+    QString html = QStringLiteral(
+        "<h2>MiniLang 模块系统原理</h2>"
+        "<p>模块系统通过 <b>import / export</b> 支持跨文件代码组织。一个模块从源码到可用"
+        "需经历：<b>Lexer → Parser → 预扫描 → 模块缓存 → 循环导入延迟加载 → 执行</b>。"
+        "模块系统是 MiniLang 的高频 Bug 模式（路径安全、循环导入、预扫描遗漏 FunDecl/ExportStmt、"
+        "错误传播），理解每一阶段的不变量是排查此类 Bug 的关键。</p>"
 
-                       "<h3>一、加载管线</h3>"
-                       "<ol>"
-                       "<li><b>词法/语法分析</b>：import / export 生成 ImportStmt / ExportStmt AST 节点。</li>"
-                       "<li><b>路径解析</b>：import 路径基于当前模块目录，自动补全 .ml；路径安全禁止逃逸项目根。</li>"
-                       "<li><b>循环依赖检测</b>：目标模块入「加载栈」前检查是否已在栈中，是则报错。</li>"
-                       "<li><b>预扫描</b>：遍历顶层 AST，收集 FunDecl / ExportStmt 并预注册到模块作用域，"
-                       "支持前向引用。VarDecl/ClassDecl/EnumDecl 不预扫描。</li>"
-                       "<li><b>模块缓存</b>：以规范路径为 key 缓存已加载模块，二次 import 命中缓存跳过执行。</li>"
-                       "<li><b>执行</b>：后序执行模块顶层语句；import 端绑定 export 的符号到当前作用域。</li>"
-                       "</ol>"
+        "<h3>一、加载管线</h3>"
+        "<ol>"
+        "<li><b>词法/语法分析</b>：import / export 生成 ImportStmt / ExportStmt AST 节点。</li>"
+        "<li><b>路径解析</b>：import 路径基于当前模块目录，自动补全 .ml；路径安全禁止逃逸项目根。</li>"
+        "<li><b>循环导入延迟加载</b>：目标模块入「加载栈」前检查是否已在栈中，是则返回部分 env（P2-14）。</li>"
+        "<li><b>预扫描</b>：遍历顶层 AST，收集 FunDecl / ExportStmt 并预注册到模块作用域，"
+        "支持前向引用。VarDecl/ClassDecl/EnumDecl 不预扫描。</li>"
+        "<li><b>模块缓存</b>：以规范路径为 key 缓存已加载模块，二次 import 命中缓存跳过执行。</li>"
+        "<li><b>执行</b>：后序执行模块顶层语句；import 端绑定 export 的符号到当前作用域。</li>"
+        "</ol>"
 
-                       "<h3>二、import / export 语义</h3>"
-                       "<ul>"
-                       "<li><b>import \"foo\"</b>：加载 foo.ml，执行后将其 export 的符号绑定到当前作用域。</li>"
-                       "<li><b>export fun name() {...}</b>：声明并导出函数，预扫描阶段即被收集。</li>"
-                       "<li><b>export var x = ...</b>：导出变量，其值在模块执行后确定。</li>"
-                       "<li>未 export 的顶层声明对 import 端不可见（模块隔离）。</li>"
-                       "</ul>"
+        "<h3>二、import / export 语义</h3>"
+        "<ul>"
+        "<li><b>import \"foo\"</b>：加载 foo.ml，执行后将其 export 的符号绑定到当前作用域。</li>"
+        "<li><b>export fun name() {...}</b>：声明并导出函数，预扫描阶段即被收集。</li>"
+        "<li><b>export var x = ...</b>：导出变量，其值在模块执行后确定。</li>"
+        "<li>未 export 的顶层声明对 import 端不可见（模块隔离）。</li>"
+        "</ul>"
 
-                       "<h3>三、模块缓存与循环依赖</h3>"
-                       "<p>模块按规范路径缓存，保证「每个模块仅执行一次」的模块级单例语义。"
-                       "循环依赖通过「加载栈」检测：进入 import 递归前压栈，完成出栈。"
-                       "若目标已在栈中即 a→b→a，立即抛 ModuleError。注意缓存命中（已加载完成）"
-                       "与「正在加载中」（栈中）是两种不同状态，前者合法后者非法。</p>"
+        "<h3>三、模块缓存与循环导入延迟加载</h3>"
+        "<p>模块按规范路径缓存，保证「每个模块仅执行一次」的模块级单例语义。"
+        "循环导入通过「加载栈」检测：进入 import 递归前压栈，完成出栈。"
+        "若目标已在栈中即 a→b→a，P2-14 后不再报错——返回已创建的部分 env，"
+        "模块环境立即入缓存，内容按执行顺序填充。访问未定义导出名时由 Environment::get 抛\"未定义变量\"错误。"
+        "语义参考 ES Modules + Python。注意缓存命中（已加载完成）"
+        "与「正在加载中」（栈中）是两种不同状态，前者返回完整 env 后者返回部分 env。</p>"
 
-                       "<h3>四、预扫描的必要性</h3>"
-                       "<p>预扫描收集 FunDecl/ExportStmt 使<b>函数定义顺序无关</b>——"
-                       "先调用后定义也能工作（前向引用）。若预扫描遗漏某节点类型（历史 Bug 模式），"
-                       "则调用方在运行时找不到该符号，报「未定义」错误。VarDecl "
-                       "不预扫描因为初始化表达式有副作用，必须按顺序执行。</p>"
+        "<h3>四、预扫描的必要性</h3>"
+        "<p>预扫描收集 FunDecl/ExportStmt 使<b>函数定义顺序无关</b>——"
+        "先调用后定义也能工作（前向引用）。若预扫描遗漏某节点类型（历史 Bug 模式），"
+        "则调用方在运行时找不到该符号，报「未定义」错误。VarDecl "
+        "不预扫描因为初始化表达式有副作用，必须按顺序执行。</p>"
 
-                       "<h3>五、错误传播链</h3>"
-                       "<p>模块加载任意阶段失败（路径解析 / 预扫描 / 执行）均抛 ModuleError，"
-                       "沿 import 调用链向上传播，最终在顶层报告并停止。错误<b>不应被吞掉</b>。"
-                       "若 import 失败后仍继续执行，会导致后续访问未定义符号的级联错误，掩盖根因。</p>"
+        "<h3>五、错误传播链</h3>"
+        "<p>模块加载任意阶段失败（路径解析 / 预扫描 / 执行）均抛 ModuleError，"
+        "沿 import 调用链向上传播，最终在顶层报告并停止。错误<b>不应被吞掉</b>。"
+        "若 import 失败后仍继续执行，会导致后续访问未定义符号的级联错误，掩盖根因。</p>"
 
-                       "<h3>教学价值</h3>"
-                       "<p>本面板可视化模块系统全流程，帮助理解：</p>"
-                       "<ul>"
-                       "<li>DFS 加载顺序与后序执行的因果</li>"
-                       "<li>加载栈如何检测循环依赖</li>"
-                       "<li>预扫描遗漏导致的运行时失败模式</li>"
-                       "<li>错误传播链对调试的重要性</li>"
-                       "</ul>"
-                       "<p style='color:#666;font-size:small;'>"
-                       "提示：切换到「② 交互式模块依赖模拟器」子页，选择预设场景体验加载流程。</p>");
+        "<h3>教学价值</h3>"
+        "<p>本面板可视化模块系统全流程，帮助理解：</p>"
+        "<ul>"
+        "<li>DFS 加载顺序与后序执行的因果</li>"
+        "<li>加载栈如何实现循环导入延迟加载</li>"
+        "<li>预扫描遗漏导致的运行时失败模式</li>"
+        "<li>错误传播链对调试的重要性</li>"
+        "</ul>"
+        "<p style='color:#666;font-size:small;'>"
+        "提示：切换到「② 交互式模块依赖模拟器」子页，选择预设场景体验加载流程。</p>");
     theoryBrowser_->setHtml(html);
 
     // 概念表
@@ -490,27 +494,29 @@ ModuleSimResult ModuleSystemVisualizerPanel::runScenario(int idx) {
         break;
     }
     case 1: {
-        // 场景 2：循环依赖 a ⇄ b
-        // 加载栈：[a] → import b → [a,b] → import a → a 已在栈中 → 循环
+        // 场景 2：循环导入延迟加载 a ⇄ b（P2-14）
+        // 加载栈：[a] → import b → [a,b] → import a → a 已在栈中 → 返回部分 env
         addStep("a.ml", "开始加载", "成功");
-        addStep("a.ml", "预扫描", "成功");
+        addStep("a.ml", "预扫描 + 立即入缓存", "成功");
         addStep("b.ml", "开始加载(import ./b)", "成功");
-        addStep("b.ml", "预扫描", "成功");
-        addStep("a.ml", "开始加载(import ./a)", "循环");
-        addStep("b.ml", "检测到循环依赖(a.ml 在加载栈中)", "循环");
-        addStep("a.ml", "错误传播:ModuleError", "失败");
-        result.success = false;
-        result.summary = "❌ 检测到循环依赖 a.ml ⇄ b.ml：加载栈 [a, b] 探测到 a.ml "
-                         "正在加载中，立即抛 ModuleError。"
-                         "注意：缓存命中（已加载完成）合法，但「正在加载中」即循环。";
-        // 依赖图：a ⇄ b（红色高亮表示循环）
+        addStep("b.ml", "预扫描 + 立即入缓存", "成功");
+        addStep("a.ml", "import ./a → 已在加载栈中", "延迟加载");
+        addStep("b.ml", "返回部分 env（a 尚未填充完）", "延迟加载");
+        addStep("b.ml", "执行完毕", "成功");
+        addStep("a.ml", "执行完毕", "成功");
+        result.success = true;
+        result.summary = "✅ 循环导入延迟加载（P2-14）：加载栈 [a, b] 中再次遇到 a.ml，"
+                         "不再报错——返回已创建的部分 env。模块环境立即入缓存，内容按执行顺序填充。"
+                         "访问未定义导出名时由 Environment::get 抛\"未定义变量\"错误。"
+                         "语义参考 ES Modules + Python。";
+        // 依赖图：a ⇄ b（橙色高亮表示循环延迟加载）
         result.dependencyGraphHtml = (QStringLiteral("<table cellpadding='0' cellspacing='0'><tr>") +
-                                      moduleNodeHtml("a.ml", "#ffebee", "#c0392b") + arrowCell("⇄") +
-                                      moduleNodeHtml("b.ml", "#ffebee", "#c0392b") +
+                                      moduleNodeHtml("a.ml", "#fff3e0", "#ef6c00") + arrowCell("⇄") +
+                                      moduleNodeHtml("b.ml", "#fff3e0", "#ef6c00") +
                                       QStringLiteral("</tr></table>"
-                                                     "<p style='color:#c0392b;font-size:small;'>"
-                                                     "红色边框=循环依赖，⇄ 表示双向 import。"
-                                                     "加载栈 [a.ml, b.ml] 中再次遇到 a.ml 触发检测</p>"))
+                                                     "<p style='color:#ef6c00;font-size:small;'>"
+                                                     "橙色边框=循环导入延迟加载，⇄ 表示双向 import。"
+                                                     "加载栈 [a.ml, b.ml] 中再次遇到 a.ml 返回部分 env</p>"))
                                          .toStdString();
         break;
     }
@@ -693,9 +699,9 @@ void ModuleSystemVisualizerPanel::onLoadSample() {
                                     "\n"
                                     "// 注意：以下写法会触发模块系统错误\n"
                                     "// import nonexist;        // 路径解析失败\n"
-                                    "// 循环依赖：a imports b imports a → 加载栈检测报错\n"
+                                    "// 循环导入：a imports b imports a → 延迟加载返回部分 env（P2-14）\n"
                                     "\n"
-                                    "print(\"模块系统支持前向引用、模块缓存与循环依赖检测\");");
+                                    "print(\"模块系统支持前向引用、模块缓存与循环导入延迟加载\");");
     emit loadSampleRequested(sample);
 }
 
@@ -714,9 +720,9 @@ GuidedTour* ModuleSystemVisualizerPanel::createGuidedTour(QWidget* host) {
                        "以及解析失败时 ModuleError 如何沿调用栈传播。"));
     tour->addStep(pageSimulatorBtn_, mlTr("交互式模拟器"),
                   mlTr("点击「依赖模拟器」切到子页 2：纯 C++ 模拟模块加载栈与缓存，"
-                       "可视化展示加载顺序、循环依赖检测与预扫描遗漏。"));
+                       "可视化展示加载顺序、循环导入延迟加载与预扫描遗漏。"));
     tour->addStep(presetCombo_, mlTr("4 个预设场景"),
-                  mlTr("用此下拉框依次运行 4 个预设场景：正常导入链 / 循环依赖 / "
+                  mlTr("用此下拉框依次运行 4 个预设场景：正常导入链 / 循环导入延迟加载 / "
                        "路径解析失败 / 预扫描遗漏，对照时间轴与依赖图理解每种情况。"));
     return tour;
 }

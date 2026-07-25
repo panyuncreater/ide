@@ -86,6 +86,17 @@ struct ClassInfo {
 };
 
 // ============================================================
+// 枚举定义信息（R99）
+// ============================================================
+
+/// 枚举定义信息结构（与 ClassInfo 同级，便于 StateSnapshot 等外部结构使用）
+struct EnumInfo {
+    std::vector<std::string> typeParams;                  // 类型参数名（空=非泛型）
+    std::vector<EnumVariant> variants;                    // variant 列表（按声明顺序）
+    std::unordered_map<std::string, size_t> variantIndex; // variant 名 → 在 variants 中的下标
+};
+
+// ============================================================
 // Interpreter 解释器
 // ============================================================
 
@@ -236,6 +247,57 @@ public:
     /// 用于 IdeController 判定是否调用 injectRegistriesFrom（避免空注册表注入开销）。
     bool hasRegistries() const { return !funRegistry_.empty() || !classRegistry_.empty() || !enumRegistry_.empty(); }
 
+    // ---- L18: Interpreter 状态快照与回滚 ----
+    /// Interpreter 状态快照（用于回溯调试 / reverse debugging）。
+    /// 捕获完整执行状态：环境链 + 调用栈 + 注册表 + 控制标志。
+    /// 通过 shared_ptr 共享所有权保持 Environment 对象存活；通过 flat variables map
+    /// 保持快照时刻的变量值（防止 live 执行变异污染快照）。
+    /// COW 容器（Array/Dict/Instance）通过 Value 拷贝自然隔离——live 执行的变异
+    /// 会触发 COW detach，快照持有的 Value 仍指向旧容器数据。
+    struct StateSnapshot {
+        // 环境链结构（shared_ptr 保持对象存活）
+        std::shared_ptr<Environment> globalEnv;
+        std::shared_ptr<Environment> currentEnv;
+        std::vector<CallFrame> callStack;
+        // 环境链每层变量快照（currentEnv -> parent -> ... -> globalEnv）
+        // 每个 entry: (env shared_ptr, 该 env 的局部变量深拷贝)
+        // 恢复时调用 env->restoreLocalVariables(variables) 整表替换
+        std::vector<std::pair<std::shared_ptr<Environment>, std::unordered_map<std::string, Value>>> envChainVars;
+        // 注册表（shared_ptr 共享 AST 所有权）
+        std::unordered_map<std::string, std::shared_ptr<FunDecl>> funRegistry;
+        int funRegistryGen = 0;
+        std::unordered_map<std::string, ClassInfo> classRegistry;
+        int classRegistryGen = 0;
+        // EnumInfo 现已提升为顶层结构（与 ClassInfo 同级）
+        std::unordered_map<std::string, EnumInfo> enumRegistry;
+        std::unordered_map<std::string, std::shared_ptr<Environment>> moduleCache;
+        std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports;
+        std::unordered_map<std::string, int64_t> moduleMtimes;
+        std::vector<std::string> moduleLoadingStack;
+        std::unordered_set<std::string> moduleLoadingSet;
+        std::unordered_set<std::string> exportedNames;
+        // 控制状态
+        int recursionDepth = 0;
+        std::vector<std::string> classContextStack;
+        std::string currentFunctionReturnType;
+        std::vector<std::string> currentTypeParams;
+        int loopFlow = 0; // 0=None, 1=Break, 2=Continue
+        int currentCoroutineTargetYieldId = -1;
+        int currentYieldExecutionCount = 0;
+    };
+
+    /// 捕获当前 Interpreter 完整状态快照（用于回溯调试）。
+    /// @return shared_ptr<StateSnapshot>，可存入 TraceSnapshot::interpreterState
+    /// @note 调用方需确保调用时无其他线程修改 Interpreter（debugger 暂停期安全）
+    std::shared_ptr<StateSnapshot> captureStateSnapshot() const;
+
+    /// 从快照恢复 Interpreter 状态（回溯调试核心）。
+    /// @param snap captureStateSnapshot 返回的快照
+    /// @return true 成功；false 快照无效
+    /// @note 恢复后 Interpreter 状态等价于快照时刻，可继续步进。
+    ///       已输出的 print 副作用无法撤回（与 VM 路径一致的语义限制）。
+    bool restoreFromSnapshot(const StateSnapshot& snap);
+
     /// 请求中止当前执行（REPL 超时/关闭时调用）
     /// checkBreak 会在每个语句节点检查此标志并抛异常，实现协作式中止
     void requestStop() { stopRequested_.store(true, std::memory_order_relaxed); }
@@ -384,11 +446,7 @@ private:
     // key=enum 名，value=EnumInfo（variant 列表 + 类型参数名 + AST 指针）
     // visitEnumDecl 时插入；visitEnumVariantExpr/visitMatchExpr 时查询。
     // AST 指针（shared_ptr）保证 REPL 重解析后旧引用仍有效。
-    struct EnumInfo {
-        std::vector<std::string> typeParams;                  // 类型参数名（空=非泛型）
-        std::vector<EnumVariant> variants;                    // variant 列表（按声明顺序）
-        std::unordered_map<std::string, size_t> variantIndex; // variant 名 → 在 variants 中的下标
-    };
+    // L18: EnumInfo 已提升为顶层结构（与 ClassInfo 同级），便于 StateSnapshot 使用
     std::unordered_map<std::string, EnumInfo> enumRegistry_;
 
     // RA-C fix: break/continue 改用状态标志而非 C++ 异常。
@@ -513,6 +571,10 @@ private:
     /// 报告运行时错误
     [[noreturn]] void runtimeError(const std::string& msg, int line, int col);
 
+    /// P2 fix (错误码优先匹配): 带 code 的重载——抛出携带稳定诊断码的 RuntimeError，
+    /// 由 runStatementsWithExceptionHandling 的 catch 块透传到 addError。
+    [[noreturn]] void runtimeError(const std::string& msg, int line, int col, const std::string& diagCode);
+
     /// @brief 安全查找类——找不到时调用 runtimeError（[[noreturn]]）。
     ///
     /// R97 #10 fix: 替代 `classRegistry_.find + end() 检查 + runtimeError` 三步重复模式。
@@ -583,7 +645,7 @@ private:
         if (!typeMatch(val, annotation)) {
             runtimeError(ErrorFormat::format(ErrorMessages::kTypeAnnotationViolationFmt, annotation.c_str(),
                                              val.typeName().c_str()),
-                         line, col);
+                         line, col, DiagCodes::kTypeMismatch);
         }
     }
 

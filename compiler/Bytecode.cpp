@@ -1,4 +1,5 @@
 #include "compiler/Bytecode.h"
+#include "common/RuntimeLimits.h" // P3-14: NO_INDEX/NO_SLOT 哨兵常量
 #include <sstream>
 #include <string>
 
@@ -16,7 +17,7 @@
 // ---- MiniLang 字节码格式约定（编解码通用）----
 //   · code：连续的 uint8_t 指令流。首字节为 opcode，后续字节为操作数（小端）。
 //   · 常量池 constants：所有字面量（数字/字符串/变量名/类型注解）集中存放，
-//     指令中以 16 位小端索引（code[ip+1] | code[ip+2]<<8）引用，0xFFFF 常作"无"哨兵。
+//     指令中以 16 位小端索引（code[ip+1] | code[ip+2]<<8）引用，RuntimeLimits::NO_INDEX 常作"无"哨兵。
 //   · 局部变量槽为 8 位；全局变量槽为 16 位；跳转/循环目标为绝对字节偏移（同样 16 位小端），
 //     OP_JUMP_IF_FALSE 不消费条件值（由编译器额外生成 OP_POP）。
 //   · 唯一变长指令是 OP_CLOSURE：基础 4 字节 +
@@ -395,9 +396,9 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         uint8_t localSlot = code[offset + 6];
         str += "OP_METHOD_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " +
                std::to_string(argCount);
-        if (receiverIdx != 0xFFFF && receiverIdx < constants.size())
+        if (receiverIdx != RuntimeLimits::NO_INDEX && receiverIdx < constants.size())
             str += " recv=" + constants[receiverIdx].stringVal();
-        if (localSlot != 0xFF)
+        if (localSlot != RuntimeLimits::NO_SLOT)
             str += " slot=" + std::to_string(localSlot);
         offset += 7;
         break;
@@ -410,9 +411,9 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         uint16_t classIdx = code[offset + 7] | (code[offset + 8] << 8); // B1 fix
         str += "OP_SUPER_CALL " + std::to_string(idx) + " (" + constants[idx].stringVal() + ") " +
                std::to_string(argCount);
-        if (receiverIdx != 0xFFFF && receiverIdx < constants.size())
+        if (receiverIdx != RuntimeLimits::NO_INDEX && receiverIdx < constants.size())
             str += " recv=" + constants[receiverIdx].stringVal();
-        if (localSlot != 0xFF)
+        if (localSlot != RuntimeLimits::NO_SLOT)
             str += " slot=" + std::to_string(localSlot);
         if (classIdx < constants.size())
             str += " class=" + constants[classIdx].stringVal();
@@ -469,7 +470,7 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
         uint16_t idx = code[offset + 1] | (code[offset + 2] << 8);
         uint16_t superIdx = code[offset + 3] | (code[offset + 4] << 8);
         str += "OP_DEFINE_CLASS " + std::to_string(idx) + " (" + constants[idx].stringVal() + ")";
-        if (superIdx != 0xFFFF && superIdx < constants.size()) {
+        if (superIdx != RuntimeLimits::NO_INDEX && superIdx < constants.size()) {
             str += " extends " + constants[superIdx].stringVal();
         }
         offset += 5;
@@ -654,4 +655,30 @@ std::string BytecodeChunk::disassembleInstruction(size_t& offset) const {
     }
 
     return str;
+}
+
+// ============================================================
+// P2-11 预编译模块：全局槽位重定位
+// ============================================================
+void BytecodeChunk::relocateGlobalSlots(const std::vector<int>& relocationMap) {
+    size_t offset = 0;
+    while (offset < code.size()) {
+        if (offset >= code.size())
+            break;
+        OpCode op = static_cast<OpCode>(code[offset]);
+        // 仅全局槽位指令需要重定位（OP_GET_GLOBAL/OP_SET_GLOBAL/OP_DEFINE_GLOBAL/OP_DELETE_GLOBAL）
+        if (op == OpCode::OP_GET_GLOBAL || op == OpCode::OP_SET_GLOBAL ||
+            op == OpCode::OP_DEFINE_GLOBAL || op == OpCode::OP_DELETE_GLOBAL) {
+            if (offset + 2 < code.size()) {
+                uint16_t slot = static_cast<uint16_t>(code[offset + 1]) |
+                                (static_cast<uint16_t>(code[offset + 2]) << 8);
+                if (slot < relocationMap.size() && relocationMap[slot] >= 0) {
+                    int newSlot = relocationMap[slot];
+                    code[offset + 1] = static_cast<uint8_t>(newSlot & 0xFF);
+                    code[offset + 2] = static_cast<uint8_t>((newSlot >> 8) & 0xFF);
+                }
+            }
+        }
+        offset += instructionSizeAt(offset);
+    }
 }

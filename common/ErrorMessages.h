@@ -14,6 +14,15 @@
 // - 仅统一"三后端可能产生但消息文本不一致"的错误消息
 // - 栈下溢等内部错误（各后端独有）不在此统一
 // - 含动态参数的消息（如 "数组索引越界: %lld"）仍用 ErrorFormat::format
+//
+// P3-16 fix: 新增 *FmtStd 常量（std::format 风格占位符 {}），
+// 与 *Fmt（printf 风格 %d/%s）一一对应。新代码应优先使用 *FmtStd +
+// ErrorFormat::formatStd。老 *Fmt 常量保留兼容现有调用方。
+// 迁移示例：
+//   // legacy
+//   ErrorFormat::format(kRecursionDepthExceededFmt, limit)
+//   // modern（推荐）
+//   ErrorFormat::formatStd(kRecursionDepthExceededFmtStd, limit)
 // ============================================================
 
 namespace ErrorMessages {
@@ -39,6 +48,8 @@ inline constexpr const char* kDictKeyInvalidType = "字典键必须是 string/in
 // 原 Interpreter 报 "递归深度超过限制 (256)"，VM 报 "调用栈溢出"——文本不一致。
 // 统一为 "递归深度超过限制 (N)"，N 由 ErrorFormat::format(kRecursionDepthExceededFmt, limit) 注入。
 inline constexpr const char* kRecursionDepthExceededFmt = "递归深度超过限制 (%d)";
+// P3-16 fix: std::format 风格占位符
+inline constexpr const char* kRecursionDepthExceededFmtStd = "递归深度超过限制 ({})";
 
 // super 上下文类（R97 #11 fix: 三后端消息统一）
 // 顶层 / 普通函数内使用 super 时，Interpreter 报 "super 只能在类方法中使用"，
@@ -53,6 +64,8 @@ inline constexpr const char* kSuperOutsideMethod = "super 只能在类方法中�
 // 三后端一致性优先于 Interpreter 的语义细分（VM 端不区分"未定义"与"非函数"）。
 // 上下文可通过 runtimeError 的 line/col 定位。
 inline constexpr const char* kUndefinedFunctionFmt = "未定义的函数: %s";
+// P3-16 fix: std::format 风格占位符（支持 std::string 参数，无需 .c_str()）
+inline constexpr const char* kUndefinedFunctionFmtStd = "未定义的函数: {}";
 
 // 类型注解违反类（R164 fix: 三后端消息统一，由 fuzz mutate 模式发现）
 // Interpreter 原报 "<context> 期望类型 X，实际为 Y"（contextBuilder 生成上下文前缀如"变量 s 的类型"），
@@ -62,5 +75,65 @@ inline constexpr const char* kUndefinedFunctionFmt = "未定义的函数: %s";
 // 修复方向：Interpreter 放弃 contextBuilder 前缀对齐 VM（改动小），而非 VM 扩展指令编码（改动大）。
 // contextBuilder 参数保留（避免改调用方签名），但不用于错误消息。
 inline constexpr const char* kTypeAnnotationViolationFmt = "类型注解违反: 期望类型 %s，实际为 %s";
+// P3-16 fix: std::format 风格占位符（支持 std::string 参数，无需 .c_str()）
+inline constexpr const char* kTypeAnnotationViolationFmtStd = "类型注解违反: 期望类型 {}，实际为 {}";
 
 } // namespace ErrorMessages
+
+// ============================================================
+// DiagCodes — 结构化诊断码常量（P2-12 错误处理统一）
+// ------------------------------------------------------------
+// 集中定义三后端（Interpreter / StackVM / RegisterVM / JIT）共享的
+// 稳定诊断码字符串。诊断码作为 ErrorHintEngine 的精确匹配键，使错误
+// 提示引擎能根据 code 提供针对性修复建议。
+//
+// 设计原则：
+// - 诊断码使用 kebab-case（如 "division-by-zero"），全小写 + 连字符
+// - 诊断码是稳定 API（不变量），错误消息文本可演进
+// - 新增诊断码须在此集中定义，禁止在调用点硬编码字面量
+// - 三后端同一语义错误必须使用相同诊断码
+//
+// 迁移状态（P2-12）：
+// - Interpreter: 约 23/72 runtimeError 调用已带 code（散布字面量）
+// - StackVM/RegisterVM: 大部分 runtimeError 已带 code（散布字面量）
+// - Lexer/Parser: 未迁移（无 diagCode）
+// 本头文件集中定义后，散布字面量逐步替换为常量引用。
+// ============================================================
+namespace DiagCodes {
+
+// 算术错误类
+inline constexpr const char* kDivisionByZero = "division-by-zero";
+
+// 变量/作用域类
+inline constexpr const char* kUndefinedVariable = "undefined-variable";
+inline constexpr const char* kNullAccess = "null-access";
+
+// 类型错误类
+inline constexpr const char* kTypeMismatch = "type-mismatch";
+
+// 索引/边界类
+inline constexpr const char* kIndexOutOfBounds = "index-out-of-bounds";
+
+// 调用/函数类
+inline constexpr const char* kArityMismatch = "arity-mismatch";
+inline constexpr const char* kRecursionDepth = "recursion-depth";
+
+// 解析类（Parser 补全用）
+inline constexpr const char* kUnexpectedToken = "unexpected-token";
+inline constexpr const char* kMissingSemicolon = "missing-semicolon";
+inline constexpr const char* kUnbalancedBrace = "unbalanced-brace";
+inline constexpr const char* kTooManyErrors = "too-many-errors";
+inline constexpr const char* kStrayBrace = "stray-brace";
+inline constexpr const char* kImportNotAtTopLevel = "import-not-at-top-level";
+inline constexpr const char* kExportNotAtTopLevel = "export-not-at-top-level";
+
+// 词法类（Lexer 补全用）
+inline constexpr const char* kUnterminatedString = "unterminated-string";
+inline constexpr const char* kInvalidEscape = "invalid-escape";
+inline constexpr const char* kIntegerOverflow = "integer-overflow";
+inline constexpr const char* kInvalidNumber = "invalid-number";
+inline constexpr const char* kUnknownToken = "unknown-token";
+inline constexpr const char* kSourceTooLarge = "source-too-large";
+inline constexpr const char* kTooManyTokens = "too-many-tokens";
+
+} // namespace DiagCodes

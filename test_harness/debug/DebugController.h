@@ -11,14 +11,14 @@
 // ============================================================
 #pragma once
 
-#include <vector>
-#include <string>
-#include <functional>
-#include <set>
-#include <map>
-#include "interpreter/Value.h"
 #include "ast/ASTNode.h"
 #include "debug/DebugTypes.h"
+#include "interpreter/Value.h"
+#include <functional>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
 
 // ── Recorded pause event ──────────────────────────────────────────
 struct DebugPauseEvent {
@@ -79,6 +79,15 @@ public:
     int getExceptionBreakpointHitCount() const;
     bool checkExceptionBreakpoint(int line);
 
+    // L19 Watchpoint：数据断点 API（与生产版同步）。
+    // 桩实现仅记录状态，checkWatchpointHit 在测试中可被手动调用。
+    void setWatchpoint(const WatchpointInfo& wp);
+    void removeWatchpoint(const std::string& varName, const std::string& fieldName = "");
+    void clearWatchpoints();
+    std::vector<WatchpointInfo> getWatchpoints() const;
+    bool hasWatchpoints() const { return hasWatchpoints_; }
+    bool checkWatchpointHit(const std::string& varName, bool isFieldWrite, const std::string& fieldName, int line);
+
     // 回调注册：变量快照与调用栈采集回调，供暂停时记录上下文。
     void setVariableCallback(std::function<std::vector<VariableSnapshot>()> cb);
     void setCallStackCallback(std::function<std::vector<CallStackEntry>()> cb);
@@ -134,6 +143,9 @@ private:
     std::function<void(const std::string&)> logCallback_;
     std::map<std::string, FunctionBreakpointInfo> functionBreakpoints_;
     ExceptionBreakpointState exceptionBreakpoint_;
+    // L19 Watchpoint 存储（与生产版同步）
+    std::vector<WatchpointInfo> watchpoints_;
+    bool hasWatchpoints_ = false;
     // 测试访问：记录 Logpoint 命中事件（行号, 消息）
     std::vector<std::pair<int, std::string>> logpointLogs_;
 };

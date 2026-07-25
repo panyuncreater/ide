@@ -264,6 +264,13 @@ struct RegBytecodeChunk {
 
     /// 获取指定偏移处的指令长度（处理变长指令）
     size_t instructionSizeAt(size_t offset) const;
+
+    /// L11 预编译模块：全局槽位重定位（对齐 BytecodeChunk::relocateGlobalSlots）。
+    /// 遍历字节码流，将 REG_LOAD_GLOBAL/REG_STORE_GLOBAL/REG_DEFINE_GLOBAL 的
+    /// slot 操作数按 relocationMap 重映射。
+    /// REG_DELETE_GLOBAL 使用 nameConstIdx（常量池索引）而非 slot，无需重定位。
+    /// @param relocationMap[moduleSlot] = mainSlot（-1 表示不重定位）
+    void relocateGlobalSlots(const std::vector<int>& relocationMap);
 };
 
 // ============================================================
@@ -276,4 +283,15 @@ struct RegisterCompileResult {
     std::vector<std::string> globalSlotNames;
     // R99 enum 校验：与 CompileResult.enumInfos 对齐，RegisterVM 启动时加载。
     std::vector<VMEnumInfo> enumInfos;
+    // L11 预编译模块：模块导出名称集合（对齐 CompileResult::moduleExports）。
+    // 非空时表示此 RegisterCompileResult 是一个独立编译的模块（.minic），
+    // 包含模块通过 export 语句导出的所有名称。
+    // 用于 import 时具名导入验证 + 命名空间字典构造。
+    std::vector<std::string> moduleExports;
+
+    RegisterCompileResult() = default;
+    RegisterCompileResult(RegisterCompileResult&&) noexcept = default;
+    RegisterCompileResult& operator=(RegisterCompileResult&&) noexcept = default;
+    RegisterCompileResult(const RegisterCompileResult&) = default;
+    RegisterCompileResult& operator=(const RegisterCompileResult&) = default;
 };

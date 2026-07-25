@@ -95,11 +95,6 @@ static bool containsOp(const BytecodeChunk& chunk, OpCode op) {
     return false;
 }
 
-static uint16_t readShort(const std::vector<uint8_t>& code, size_t offset) {
-    if (offset + 1 >= code.size()) return 0xFFFF;
-    return code[offset] | (code[offset + 1] << 8);
-}
-
 // ============================================================
 // BUG-CP-1: addConstant 跨类型去重
 // ------------------------------------------------------------

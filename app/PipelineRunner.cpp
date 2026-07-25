@@ -33,6 +33,62 @@ bool PipelineRunner::runParser() {
 bool PipelineRunner::runCompiler() {
     if (!astRoot_)
         return false;
+
+    // P1-7 + L17: 字节码磁盘缓存。
+    //   - StackVM 路径(useRegisterVM_=false): tryLoad/store，magic "MLBC"，扩展名 .mbc
+    //   - RegisterVM 路径(useRegisterVM_=true): tryLoadRegister/storeRegister，
+    //     magic "MLRC"，扩展名 .mrc（L17 新增，复用 L11 序列化层）
+    // 缓存 key = FNV-1a(source) + compilerMode(direct=0/IR=1)。
+    if (bytecodeCacheEnabled_ && !lastSource_.empty()) {
+        BytecodeCache::CacheKey key;
+        key.source = lastSource_;
+        key.compilerMode = compiler_.getUseIR() ? 1 : 0;
+        // mtime 暂不校验(PipelineRunner 不持有文件路径);依赖 source hash 失效
+        key.mtime = 0;
+
+        if (compiler_.getUseRegisterVM()) {
+            // L17: RegisterVM 路径缓存
+            auto cachedReg = bytecodeCache_.tryLoadRegister(key);
+            if (cachedReg) {
+                // 缓存命中:跳过编译,直接注入到 compiler_.lastRegisterResult_
+                compiler_.setLastRegisterResult(std::move(*cachedReg));
+                compiler_.clearDiagnostics();
+                emit diagnosticsReady(compiler_.getDiagnostics());
+                return true;
+            }
+
+            // 缓存未命中:正常编译
+            lastCompileResult_ = compiler_.compile(*astRoot_);
+            emit diagnosticsReady(compiler_.getDiagnostics());
+
+            // 仅在编译成功时写入缓存(避免缓存错误结果)
+            if (!compiler_.getDiagnostics().hasErrors()) {
+                bytecodeCache_.storeRegister(key, compiler_.getLastRegisterResult());
+            }
+            return !compiler_.getDiagnostics().hasErrors();
+        }
+
+        // StackVM 路径缓存
+        auto cached = bytecodeCache_.tryLoad(key);
+        if (cached) {
+            // 缓存命中:跳过编译,直接使用反序列化的 CompileResult
+            lastCompileResult_ = std::move(*cached);
+            compiler_.clearDiagnostics(); // 清空陈旧诊断(上次某次编译的)
+            emit diagnosticsReady(compiler_.getDiagnostics());
+            return true; // 缓存命中的结果必然是成功编译的产物
+        }
+
+        // 缓存未命中:正常编译
+        lastCompileResult_ = compiler_.compile(*astRoot_);
+        emit diagnosticsReady(compiler_.getDiagnostics());
+
+        // 仅在编译成功时写入缓存(避免缓存错误结果)
+        if (!compiler_.getDiagnostics().hasErrors()) {
+            bytecodeCache_.store(key, lastCompileResult_);
+        }
+        return !compiler_.getDiagnostics().hasErrors();
+    }
+
     lastCompileResult_ = compiler_.compile(*astRoot_);
     emit diagnosticsReady(compiler_.getDiagnostics());
     return !compiler_.getDiagnostics().hasErrors();
@@ -48,6 +104,9 @@ bool PipelineRunner::formatCode(std::string& formatted) {
 
 // C9 fix: 统一前端管线实现
 PipelineRunner::PipelineResult PipelineRunner::runFrontendPipeline(const std::string& source) {
+    // P1-7: 记录源码,供 runCompiler 查询字节码缓存
+    lastSource_ = source;
+
     // BUG-ORCH-7 fix: 源码级缓存——同一源码的连续调用（如 blockIfHasErrors + prepareRun）
     // 直接复用上次的 Lexer/Parser 结果，避免重复执行前端管线
     if (!cachedPipelineSource_.empty() && cachedPipelineSource_ == source) {

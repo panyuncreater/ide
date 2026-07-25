@@ -8,7 +8,8 @@
 #include "common/ErrorFormat.h"   // Dedup-5A: ErrorFormat::format 替代 std::to_string 拼接
 #include "common/ErrorMessages.h" // R97 #11 fix: 三后端共享错误消息常量
 #include "common/Logger.h"
-#include "common/Utf8Utils.h" // P0-4 fix: UTF-8 码位工具
+#include "common/RuntimeLimits.h" // P3-14: NO_INDEX/NO_SLOT 哨兵常量
+#include "common/Utf8Utils.h"     // P0-4 fix: UTF-8 码位工具
 #include "compiler/VM.h"
 #include "interpreter/BuiltinMethods.h" // 共享纯函数层（len/contains/has）
 #include "interpreter/NumericUtils.h"   // 共享溢出检查（B6 fix）
@@ -58,7 +59,7 @@ VMResult VM::executeCallOps(OpCode op, size_t& ip) {
     case OpCode::OP_DEFINE_CLASS:
         return executeDefineClass(ip, op);
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}", static_cast<int>(op)));
     }
 }
 
@@ -210,7 +211,7 @@ VMResult VM::executeReturn(size_t& ip) {
     // 检查前移后，若栈已损坏立即标记并清理为安全状态（避免后续查询返回错误数据）。
     if (savedBp > stack_.size()) {
         // 栈损坏：清理所有帧和栈，防止后续查询（getCallStack/getCurrentFrameLocals）
-        // 在已损坏状态上返回错误数据。保留 lastError_ 供调用方诊断。
+        // 在已损坏状态上返回错误数据。保留 diagnostics_ 供调用方诊断（P2-12）。
         frames_.clear();
         stack_.clear();
         tryStack_.clear();
@@ -315,7 +316,8 @@ VMResult VM::executeCallByName(size_t& ip, OpCode op) {
         // PERF-12 fix: 批量 pop 用 popN 一次 resize
         popN(argCount);
         // R164 fix: 三后端消息统一（ErrorMessages 单一真相源）
-        return runtimeError(ErrorFormat::format(ErrorMessages::kUndefinedFunctionFmt, funName.c_str()));
+        return runtimeError(ErrorFormat::formatStd(ErrorMessages::kUndefinedFunctionFmtStd, funName),
+                            "undefined-function");
     }
 
     // P3: 缓存未命中时写入缓存
@@ -355,9 +357,12 @@ VMResult VM::executeCallConstructor(size_t& ip, OpCode op, VMClassInfo& cls, con
         // P0-1 fix: 使用范围检查支持默认参数，并填充缺失的默认值
         std::vector<Value> defaults;
         if (!fillDefaultArgs(initChunk, argCount, funName, defaults)) {
-            return runtimeError(ErrorFormat::format("构造函数 init 期望 %d-%d 个参数，但传入了 %d 个",
-                                                    initChunk.requiredArity, initChunk.arity,
-                                                    static_cast<int>(argCount)));
+            return runtimeError(ErrorFormat::formatStd("构造函数 init 期望 {}-{} 个参数，但传入了 {} 个",
+
+                                                       initChunk.requiredArity, initChunk.arity,
+
+                                                       static_cast<int>(argCount)),
+                                DiagCodes::kArityMismatch);
         }
         // 将默认参数追加到 args 末尾
         for (auto& d : defaults) {
@@ -367,7 +372,8 @@ VMResult VM::executeCallConstructor(size_t& ip, OpCode op, VMClassInfo& cls, con
         if (frames_.size() >= MAX_FRAMES) {
             // R97 #11 fix: 三后端递归深度消息统一为"递归深度超过限制 (N)"
             return runtimeError(
-                ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(MAX_FRAMES)));
+                ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
+                DiagCodes::kRecursionDepth);
         }
 
         // 推入 this
@@ -405,8 +411,9 @@ VMResult VM::executeCallConstructor(size_t& ip, OpCode op, VMClassInfo& cls, con
             // 与 executeCall OP_CALL 普通路径（BUG-VM-02 fix）保持栈平衡。
             // args 已含默认值追加，用 args.size() 反映栈上实际参数数。
             popN(1 + fieldCount + static_cast<int>(args.size()));
-            return runtimeError(ErrorFormat::format("类 %s 的 init 方法帧布局损坏: localCount=%d < preAllocated=%d",
-                                                    funName.c_str(), initChunk.localCount, preAllocated));
+            return runtimeError(ErrorFormat::formatStd("类 {} 的 init 方法帧布局损坏: localCount={} < preAllocated={}",
+
+                                                       funName, initChunk.localCount, preAllocated));
         }
         for (int i = 0; i < extraSlots; ++i) {
             push(Value::nullValue());
@@ -429,8 +436,10 @@ VMResult VM::executeCallConstructor(size_t& ip, OpCode op, VMClassInfo& cls, con
 
     // 无 init 方法：检查是否有多余参数（与解释器行为保持一致）
     if (argCount > 0) {
-        return runtimeError(ErrorFormat::format("类 %s 没有 init 方法，但传入了 %d 个参数", cls.name.c_str(),
-                                                static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("类 {} 没有 init 方法，但传入了 {} 个参数", cls.name,
+
+                                                   static_cast<int>(argCount)),
+                            DiagCodes::kArityMismatch);
     }
     push(instance);
     notifyStep(ip, op);
@@ -497,7 +506,8 @@ VMResult VM::executeCallHigherOrder(size_t& ip, OpCode op, const std::string& fu
         Value res;
         VMResult r = invokeClosureSync(closure, a, ac, hoLine, 0, res);
         if (r != VMResult::VM_OK) {
-            return Result<Value>::err(lastError_, hoLine, 0);
+            // P2-12: 从 diagnostics_ 派生错误消息（替代已移除的 lastError_）
+            return Result<Value>::err(getLastError(), hoLine, 0);
         }
         return Result<Value>::ok(std::move(res));
     };
@@ -505,27 +515,32 @@ VMResult VM::executeCallHigherOrder(size_t& ip, OpCode op, const std::string& fu
     Result<Value> hoResult = Result<Value>::ok(Value::nullValue());
     if (funName == "map") {
         if (argCount != 2) {
-            return runtimeError(ErrorFormat::format("map 期望 2 个参数，但传入了 %d 个", argCount));
+            return runtimeError(ErrorFormat::formatStd("map 期望 2 个参数，但传入了 {} 个", argCount),
+                                DiagCodes::kArityMismatch);
         }
         hoResult = executeSharedMap(args[0], args[1], invoke, hoLine, 0);
     } else if (funName == "filter") {
         if (argCount != 2) {
-            return runtimeError(ErrorFormat::format("filter 期望 2 个参数，但传入了 %d 个", argCount));
+            return runtimeError(ErrorFormat::formatStd("filter 期望 2 个参数，但传入了 {} 个", argCount),
+                                DiagCodes::kArityMismatch);
         }
         hoResult = executeSharedFilter(args[0], args[1], invoke, hoLine, 0);
     } else if (funName == "reduce") {
         if (argCount != 3) {
-            return runtimeError(ErrorFormat::format("reduce 期望 3 个参数，但传入了 %d 个", argCount));
+            return runtimeError(ErrorFormat::formatStd("reduce 期望 3 个参数，但传入了 {} 个", argCount),
+                                DiagCodes::kArityMismatch);
         }
         hoResult = executeSharedReduce(args[0], args[1], args[2], invoke, hoLine, 0);
     } else if (funName == "forEach") {
         if (argCount != 2) {
-            return runtimeError(ErrorFormat::format("forEach 期望 2 个参数，但传入了 %d 个", argCount));
+            return runtimeError(ErrorFormat::formatStd("forEach 期望 2 个参数，但传入了 {} 个", argCount),
+                                DiagCodes::kArityMismatch);
         }
         hoResult = executeSharedForEach(args[0], args[1], invoke, hoLine, 0);
     } else if (funName == "find") {
         if (argCount != 2) {
-            return runtimeError(ErrorFormat::format("find 期望 2 个参数，但传入了 %d 个", argCount));
+            return runtimeError(ErrorFormat::formatStd("find 期望 2 个参数，但传入了 {} 个", argCount),
+                                DiagCodes::kArityMismatch);
         }
         hoResult = executeSharedFind(args[0], args[1], invoke, hoLine, 0);
     }
@@ -548,7 +563,7 @@ VMResult VM::executeCallSpawn(size_t& ip, OpCode op, uint8_t argCount, const Byt
     if (argCount < 1) {
         // popN 保证栈平衡
         popN(argCount);
-        return runtimeError("spawn 期望至少 1 个参数（函数），但传入了 0 个");
+        return runtimeError("spawn 期望至少 1 个参数（函数），但传入了 0 个", DiagCodes::kArityMismatch);
     }
     size_t savedIp = ip;
     if (stack_.size() < static_cast<size_t>(argCount)) {
@@ -568,8 +583,17 @@ VMResult VM::executeCallSpawn(size_t& ip, OpCode op, uint8_t argCount, const Byt
         std::lock_guard<std::mutex> lock(spawnMutex_);
         Value res;
         VMResult r = invokeClosureSync(closure, a, ac, spawnLine, 0, res);
+        // P3-A1: VM_EXCEPTION_THROW 不是错误——闭包内 throw 已被外层 try/catch 捕获，
+        // throwException 已就位 catchIp + 栈顶 thrownValue + 弹空 tryStack_ handler。
+        // 若当作错误抛 RuntimeError，会破坏已就位的 catch 状态（覆盖 catchIp、栈被掏空）。
+        // 返回 ok(null) 让 handleSyncObjectMethod 不抛、dispatchSyncObjectBuiltin 通过
+        // tryStack_ 缩小检测返回 VM_EXCEPTION_THROW 让主循环继续 catch 块。
+        if (r == VMResult::VM_EXCEPTION_THROW) {
+            return Result<Value>::ok(Value::nullValue());
+        }
         if (r != VMResult::VM_OK) {
-            return Result<Value>::err(lastError_, spawnLine, 0);
+            // P2-12: 从 diagnostics_ 派生错误消息（替代已移除的 lastError_）
+            return Result<Value>::err(getLastError(), spawnLine, 0);
         }
         return Result<Value>::ok(std::move(res));
     };
@@ -625,9 +649,12 @@ VMResult VM::executeCallFunction(size_t& ip, OpCode op, const std::string& funNa
     if (argCount < static_cast<uint8_t>(targetChunk.requiredArity) ||
         argCount > static_cast<uint8_t>(targetChunk.arity)) {
         popN(argCount);
-        return runtimeError(ErrorFormat::format("函数 %s 期望 %d-%d 个参数，但传入了 %d 个", funName.c_str(),
-                                                targetChunk.requiredArity, targetChunk.arity,
-                                                static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个", funName,
+
+                                                   targetChunk.requiredArity, targetChunk.arity,
+
+                                                   static_cast<int>(argCount)),
+                            DiagCodes::kArityMismatch);
     }
 
     // R164 D.5: 生成器函数拦截——不直接调用，创建协程值返回调用方。
@@ -679,7 +706,7 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
     if (!callee.isClosure()) {
         // R3-1 fix: 弹出参数以保持栈平衡
         popN(argCount);
-        return runtimeError("表达式调用需要函数值");
+        return runtimeError("表达式调用需要函数值", DiagCodes::kTypeMismatch);
     }
 
     // M3 fix: 优先使用闭包值中的 chunkPtr（直接指针，无哈希查找）
@@ -696,7 +723,7 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
     if (!targetChunkPtr) {
         // R3-1 fix: 弹出参数保持栈平衡
         popN(argCount);
-        return runtimeError("未找到函数: " + callee.closureName());
+        return runtimeError("未找到函数: " + callee.closureName(), "undefined-function");
     }
 
     const BytecodeChunk& targetChunk = *targetChunkPtr;
@@ -705,9 +732,12 @@ VMResult VM::executeCallExprValue(size_t& ip, OpCode op) {
         argCount > static_cast<uint8_t>(targetChunk.arity)) {
         // R3-1 fix: 弹出参数保持栈平衡
         popN(argCount);
-        return runtimeError(ErrorFormat::format("函数 %s 期望 %d-%d 个参数，但传入了 %d 个",
-                                                callee.closureName().c_str(), targetChunk.requiredArity,
-                                                targetChunk.arity, static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个",
+
+                                                   callee.closureName(), targetChunk.requiredArity,
+
+                                                   targetChunk.arity, static_cast<int>(argCount)),
+                            DiagCodes::kArityMismatch);
     }
 
     // R164 D.5: 生成器函数拦截——闭包值调用路径。
@@ -754,7 +784,7 @@ VMResult VM::setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std:
         // argCount + pushedDefaults 个，其中 pushedDefaults = i - defaultStartIdx。
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = targetChunk.defaultConstIndices[i];
-            if (constIdx == 0xFFFF) {
+            if (constIdx == RuntimeLimits::NO_INDEX) {
                 int pushedDefaults = i - defaultStartIdx;
                 popN(static_cast<size_t>(argCount) + static_cast<size_t>(pushedDefaults));
                 return runtimeError("函数 " + functionName + " 的默认参数包含非字面量表达式，VM 不支持");
@@ -773,7 +803,8 @@ VMResult VM::setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std:
         popN(argCount);
         // R97 #11 fix: 三后端递归深度消息统一
         return runtimeError(
-            ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(MAX_FRAMES)));
+            ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
+            DiagCodes::kRecursionDepth);
     }
 
     // 预分配局部变量栈空间：函数体内 var 声明的局部变量需要栈槽，
@@ -782,8 +813,9 @@ VMResult VM::setupFunctionCallFrame(const BytecodeChunk& targetChunk, const std:
     // V-P2-1 fix: extraSlots 为负表示帧布局损坏
     if (extraSlots < 0) {
         popN(argCount);
-        return runtimeError(ErrorFormat::format("函数调用帧布局损坏: localCount=%d < argCount=%d",
-                                                targetChunk.localCount, static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("函数调用帧布局损坏: localCount={} < argCount={}",
+
+                                                   targetChunk.localCount, static_cast<int>(argCount)));
     }
     for (int i = 0; i < extraSlots; ++i) {
         push(Value::nullValue());
@@ -876,6 +908,8 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
     // 方法未找到或对象非实例
     // 先保存类型信息，因为 pop 会使 obj 引用失效
     bool wasInstance = obj.isInstance();
+    // P2 fix (null-access): 捕获 null 标志，供下方发出 null-access 诊断码
+    bool wasNull = obj.isNull();
     std::string clsName = wasInstance ? obj.className() : "";
     // 2026-06-29 BUG-1 fix (与 RegisterVM 对齐): 非 array/dict/string/instance
     // 类型（null/int/float/bool/closure）调用方法时，原消息"方法调用需要类实例"
@@ -885,9 +919,12 @@ VMResult VM::executeMethodCall(size_t& ip, OpCode op) {
         pop();
     pop();
     if (wasInstance) {
-        return runtimeError("类 " + clsName + " 没有方法 " + methodName);
+        return runtimeError("类 " + clsName + " 没有方法 " + methodName, "undefined-function");
+    } else if (wasNull) {
+        // P2 fix (null-access): null 值方法调用给出明确的 null-access 诊断码
+        return runtimeError("不能在 null 值上访问属性或调用方法", DiagCodes::kNullAccess);
     } else {
-        return runtimeError("类型 " + typeName + " 不支持方法 " + methodName);
+        return runtimeError("类型 " + typeName + " 不支持方法 " + methodName, "undefined-function");
     }
 }
 
@@ -913,7 +950,7 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
         // V-P1-7 fix: classIdx 越界应报错而非静默降级到运行时类名（可能导致错误的 super 查找）
         if (classIdx >= chunk.constants.size()) {
             return runtimeError(
-                ErrorFormat::format("内部错误: super 调用的类名常量索引越界 (%d)", static_cast<int>(classIdx)));
+                ErrorFormat::formatStd("内部错误: super 调用的类名常量索引越界 ({})", static_cast<int>(classIdx)));
         }
         searchClassName = chunk.constants[classIdx].stringVal();
         auto clsIt = classInfo_.find(searchClassName);
@@ -927,7 +964,7 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
     if (targetChunkPtr == nullptr) {
         // 方法未找到：pop 参数和接收者，返回错误（与原 executeMethodCall 末尾错误路径一致）
         popN(argCount + 1);
-        return runtimeError("类 " + objCopy.className() + " 没有方法 " + methodName);
+        return runtimeError("类 " + objCopy.className() + " 没有方法 " + methodName, "undefined-function");
     }
     const BytecodeChunk& targetChunk = *targetChunkPtr;
 
@@ -936,9 +973,12 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
         argCount > static_cast<uint8_t>(targetChunk.arity)) {
         // PERF-12 fix: 批量 pop 用 popN（参数 + 接收者）
         popN(argCount + 1);
-        return runtimeError(ErrorFormat::format("方法 %s 期望 %d-%d 个参数，但传入了 %d 个", methodName.c_str(),
-                                                targetChunk.requiredArity, targetChunk.arity,
-                                                static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("方法 {} 期望 {}-{} 个参数，但传入了 {} 个", methodName,
+
+                                                   targetChunk.requiredArity, targetChunk.arity,
+
+                                                   static_cast<int>(argCount)),
+                            DiagCodes::kArityMismatch);
     }
 
     if (frames_.size() >= MAX_FRAMES) {
@@ -946,7 +986,8 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
         popN(argCount + 1);
         // R97 #11 fix: 三后端递归深度消息统一
         return runtimeError(
-            ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(MAX_FRAMES)));
+            ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
+            DiagCodes::kRecursionDepth);
     }
 
     // 收集参数（反向填充，省去 reverse）
@@ -996,7 +1037,7 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
         // BUG-023 fix (2026-07-18): 错误路径必须弹出已 push 的默认参数（见 OP_CALL 路径注释）
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = targetChunk.defaultConstIndices[i];
-            if (constIdx == 0xFFFF) {
+            if (constIdx == RuntimeLimits::NO_INDEX) {
                 int pushedDefaults = i - defaultStartIdx;
                 popN(static_cast<size_t>(1 + fieldCount + argCount) + static_cast<size_t>(pushedDefaults));
                 return runtimeError("方法 " + methodName + " 的默认参数包含非字面量表达式，VM 不支持");
@@ -1019,8 +1060,9 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
         // AUDIT-P3-ROUND50 fix: 错误路径未清理栈上已推入的 this + fields + args，
         // 与同函数其他错误路径（L705/L714/L759/L765/L769 的 popN）不一致。
         popN(1 + fieldCount + argCount);
-        return runtimeError(ErrorFormat::format("方法 %s 帧布局损坏: localCount=%d < preAllocated=%d",
-                                                methodName.c_str(), targetChunk.localCount, preAllocated));
+        return runtimeError(ErrorFormat::formatStd("方法 {} 帧布局损坏: localCount={} < preAllocated={}",
+
+                                                   methodName, targetChunk.localCount, preAllocated));
     }
     for (int i = 0; i < extraSlots; ++i) {
         push(Value::nullValue());
@@ -1035,12 +1077,18 @@ VMResult VM::executeInstanceMethodCall(size_t& ip, OpCode op, Value obj, const s
     newFrame.isMethodCall = true;
     newFrame.isInitCall = (methodName == "init"); // init 返回 this 而非 null
     // 记录接收者变量名（用于 writeBack 到 globals_）
-    if (receiverVarIdx != 0xFFFF && receiverVarIdx < chunk.constants.size() &&
+    if (receiverVarIdx != RuntimeLimits::NO_INDEX && receiverVarIdx < chunk.constants.size() &&
         chunk.constants[receiverVarIdx].isString()) {
         newFrame.receiverVarName = chunk.constants[receiverVarIdx].stringVal();
     }
     // 记录接收者局部变量 slot（用于 writeBack 到调用者栈帧）
-    newFrame.receiverLocalSlot = (receiverLocalSlotByte == 0xFF) ? -1 : receiverLocalSlotByte;
+    newFrame.receiverLocalSlot = (receiverLocalSlotByte == RuntimeLimits::NO_SLOT) ? -1 : receiverLocalSlotByte;
+    // W3-2-Bug2 fix: 若方法有捕获的 upvalue（函数内定义的类），填充帧的 upvalue 列表。
+    // methodUpvalues_ 在 OP_DEFINE_CLASS 时为有 upvalue 描述符的方法创建 VMClosureData 捕获。
+    auto upvIt = methodUpvalues_.find(targetChunk.name);
+    if (upvIt != methodUpvalues_.end() && upvIt->second) {
+        newFrame.upvalues = upvIt->second->upvalues;
+    }
     size_t savedIp = ip;
     frames_.push_back(std::move(newFrame));
 
@@ -1135,7 +1183,7 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
         // 类定义阶段：类尚未注册（OP_DEFINE_CLASS 会随后注册）。
         // 创建空模板实例供 OP_INIT_FIELD 填充字段，不支持带参数构造。
         if (argCount > 0) {
-            return runtimeError("类 " + className + " 尚未定义，不能带参数构造");
+            return runtimeError("类 " + className + " 尚未定义，不能带参数构造", "undefined-function");
         }
         Value instance = Value::makeInstance(className);
         push(std::move(instance));
@@ -1170,9 +1218,12 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
         // P0-1 fix: 使用范围检查支持默认参数，并填充缺失的默认值
         std::vector<Value> defaults;
         if (!fillDefaultArgs(initChunk, argCount, className, defaults)) {
-            return runtimeError(ErrorFormat::format("构造函数 init 期望 %d-%d 个参数，但传入了 %d 个",
-                                                    initChunk.requiredArity, initChunk.arity,
-                                                    static_cast<int>(argCount)));
+            return runtimeError(ErrorFormat::formatStd("构造函数 init 期望 {}-{} 个参数，但传入了 {} 个",
+
+                                                       initChunk.requiredArity, initChunk.arity,
+
+                                                       static_cast<int>(argCount)),
+                                DiagCodes::kArityMismatch);
         }
         // 将默认参数追加到 args 末尾
         for (auto& d : defaults) {
@@ -1182,7 +1233,8 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
         if (frames_.size() >= MAX_FRAMES) {
             // R97 #11 fix: 三后端递归深度消息统一
             return runtimeError(
-                ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(MAX_FRAMES)));
+                ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
+                DiagCodes::kRecursionDepth);
         }
 
         // 推入 this
@@ -1216,8 +1268,9 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
         int extraSlots = initChunk.localCount - preAllocated;
         // V-P2-1 fix: extraSlots 为负表示帧布局损坏
         if (extraSlots < 0) {
-            return runtimeError(ErrorFormat::format("类 %s 的 init 方法帧布局损坏: localCount=%d < preAllocated=%d",
-                                                    className.c_str(), initChunk.localCount, preAllocated));
+            return runtimeError(ErrorFormat::formatStd("类 {} 的 init 方法帧布局损坏: localCount={} < preAllocated={}",
+
+                                                       className, initChunk.localCount, preAllocated));
         }
         for (int i = 0; i < extraSlots; ++i) {
             push(Value::nullValue());
@@ -1241,16 +1294,20 @@ VMResult VM::executeClassNew(size_t& ip, OpCode op) {
     // 无 init 或 init.arity 不匹配 argCount：推入实例（OP_INIT_FIELD 或手动 init 后续处理）
     // V-P1-8 fix: init 存在但参数不匹配（argCount==0 且 init.requiredArity>0）时报错，而非静默跳过
     if (initChunkPtr != nullptr && !shouldCallInit) {
-        return runtimeError(ErrorFormat::format("类 %s 的 init 期望至少 %d 个参数，但传入了 %d 个", cls.name.c_str(),
-                                                initChunkPtr->requiredArity, static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("类 {} 的 init 期望至少 {} 个参数，但传入了 {} 个", cls.name,
+
+                                                   initChunkPtr->requiredArity, static_cast<int>(argCount)),
+                            DiagCodes::kArityMismatch);
     }
 
     // 无 init 但有参数：报错（与解释器一致）
     // BUG-VM-01 fix: 检查必须在 push(instance) 之前，错误返回时栈上不残留 instance。
     // 与同文件 executeCall 类构造路径（L327-336 检查在 push 之前）顺序一致。
     if (initChunkPtr == nullptr && argCount > 0) {
-        return runtimeError(ErrorFormat::format("类 %s 没有 init 方法，但传入了 %d 个参数", cls.name.c_str(),
-                                                static_cast<int>(argCount)));
+        return runtimeError(ErrorFormat::formatStd("类 {} 没有 init 方法，但传入了 {} 个参数", cls.name,
+
+                                                   static_cast<int>(argCount)),
+                            DiagCodes::kArityMismatch);
     }
 
     push(instance);
@@ -1264,14 +1321,14 @@ VMResult VM::executeDefineClass(size_t& ip, OpCode op) {
     VMCallFrame& frame = currentFrame();
     const BytecodeChunk& chunk = *frame.chunk;
     // 操作数: nameIdx(2B) + superNameIdx(2B)
-    // superNameIdx == 0xFFFF 表示无父类
+    // superNameIdx == RuntimeLimits::NO_INDEX 表示无父类
     uint16_t idx = chunk.code[ip + 1] | (chunk.code[ip + 2] << 8);
     uint16_t superIdx = chunk.code[ip + 3] | (chunk.code[ip + 4] << 8);
     if (idx >= chunk.constants.size())
         return runtimeError("常量池索引越界");
     const std::string& className = chunk.constants[idx].stringVal();
     std::string superClassName;
-    if (superIdx != 0xFFFF && superIdx < chunk.constants.size()) {
+    if (superIdx != RuntimeLimits::NO_INDEX && superIdx < chunk.constants.size()) {
         superClassName = chunk.constants[superIdx].stringVal();
     }
     // V-P2-17 fix: templateInstance 只读不写，改为 const 避免 fields() 触发 COW 深拷贝
@@ -1335,7 +1392,7 @@ VMResult VM::executeDefineClass(size_t& ip, OpCode op) {
     for (int guard = 0; guard < MAX_INHERITANCE_DEPTH && !cur.empty(); ++guard) {
         auto clsIt = classInfo_.find(cur);
         if (clsIt == classInfo_.end()) {
-            return runtimeError("未定义的父类: " + cur);
+            return runtimeError("未定义的父类: " + cur, "undefined-function");
         }
         chain.push_back(cur);
         cur = clsIt->second.superClassName;
@@ -1381,9 +1438,54 @@ VMResult VM::executeDefineClass(size_t& ip, OpCode op) {
         globals_[className] = std::move(classVal);
     }
 
+    // W3-2-Bug2 fix: 为有 upvalue 的方法创建 upvalue 捕获。
+    // 类定义在外层函数内时，方法可能引用外层函数的局部变量（upvalue）。
+    // 此时仍在定义类的外层函数帧中，可以正确捕获栈槽/upvalue。
+    // 方法调用时从 methodUpvalues_ 读取并填充方法帧的 upvalues。
+    captureMethodUpvalues(className);
+
     notifyStep(ip, op);
     ip += 5; // nameIdx(2B) + superNameIdx(2B) + opcode(1B)
     return VMResult::VM_OK;
+}
+
+// W3-2-Bug2 fix: 在类定义时为有 upvalue 的方法创建 upvalue 捕获
+void VM::captureMethodUpvalues(const std::string& className) {
+    auto methodsIt = methodsByClass_.find(className);
+    if (methodsIt == methodsByClass_.end())
+        return;
+    VMCallFrame& frame = currentFrame();
+    for (const auto& [methodName, chunkPtr] : methodsIt->second) {
+        if (!chunkPtr || chunkPtr->upvalues.empty())
+            continue;
+        auto closureData = std::make_shared<VMClosureData>();
+        closureData->functionName = chunkPtr->name;
+        closureData->chunkPtr = chunkPtr;
+        closureData->upvalues.resize(chunkPtr->upvalues.size());
+        for (size_t i = 0; i < chunkPtr->upvalues.size(); ++i) {
+            const UpvalueDesc& desc = chunkPtr->upvalues[i];
+            if (desc.isLocal) {
+                // 直接捕获：创建 open upvalue 指向当前帧的栈槽
+                auto uv = std::make_shared<VMUpvalue>();
+                uv->stackSlot = frame.basePointer + static_cast<size_t>(desc.index);
+                uv->isClosed = false;
+                uv->owningFrameIdx = frames_.size() - 1;
+                closureData->upvalues[i] = uv;
+                openUpvalues_.emplace(uv->stackSlot, uv);
+            } else {
+                // 透传：复用当前帧的 upvalue
+                if (static_cast<size_t>(desc.index) < frame.upvalues.size()) {
+                    closureData->upvalues[i] = frame.upvalues[static_cast<size_t>(desc.index)];
+                } else {
+                    auto uv = std::make_shared<VMUpvalue>();
+                    uv->value = Value::nullValue();
+                    uv->isClosed = true;
+                    closureData->upvalues[i] = uv;
+                }
+            }
+        }
+        methodUpvalues_[chunkPtr->name] = closureData;
+    }
 }
 
 // ============================================================
@@ -1397,13 +1499,13 @@ VMResult VM::executeDefineClass(size_t& ip, OpCode op) {
 //   2. 调用前后 stack_.size() 不变（push args + locals，pop 全部 + push result）
 //   3. 调用者 ip 引用可能因 frames_.push_back 重分配而悬垂——调用方负责保存/恢复
 //   4. DoS 防护：内部循环使用本地计数器，限制为 maxInstructions（与外层独立）
-//   5. 错误传播：hasError_ + lastError_ 由内部 executeOneInstruction 设置，
-//      调用方检测 VM_RUNTIME_ERROR 后通过 lastError_ 获取错误信息
+//   5. 错误传播：hasError_ + diagnostics_ 由内部 executeOneInstruction 设置，
+//      调用方检测 VM_RUNTIME_ERROR 后通过 getLastError() 获取错误信息（P2-12）
 
-VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t argCount, int line, int /*column*/,
+VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t argCount, int /*line*/, int /*column*/,
                                Value& result) {
     if (!closure.isClosure()) {
-        return runtimeError("高阶函数的参数必须是函数");
+        return runtimeError("高阶函数的参数必须是函数", DiagCodes::kTypeMismatch);
     }
 
     // 查找闭包 chunk（与 OP_CALL_EXPR 路径一致）
@@ -1417,22 +1519,26 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
         }
     }
     if (!targetChunkPtr) {
-        return runtimeError("未找到函数: " + closure.closureName());
+        return runtimeError("未找到函数: " + closure.closureName(), "undefined-function");
     }
     const BytecodeChunk& targetChunk = *targetChunkPtr;
 
     // 参数数量检查
     if (argCount < static_cast<size_t>(targetChunk.requiredArity) ||
         argCount > static_cast<size_t>(targetChunk.arity)) {
-        return runtimeError(ErrorFormat::format("函数 %s 期望 %d-%d 个参数，但传入了 %zu 个",
-                                                closure.closureName().c_str(), targetChunk.requiredArity,
-                                                targetChunk.arity, argCount));
+        return runtimeError(ErrorFormat::formatStd("函数 {} 期望 {}-{} 个参数，但传入了 {} 个",
+
+                                                   closure.closureName(), targetChunk.requiredArity,
+
+                                                   targetChunk.arity, argCount),
+                            DiagCodes::kArityMismatch);
     }
 
     // MAX_FRAMES 检查
     if (frames_.size() >= MAX_FRAMES) {
         return runtimeError(
-            ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(MAX_FRAMES)));
+            ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
+            DiagCodes::kRecursionDepth);
     }
 
     // 压入参数（左到右，arg0 在栈低位）
@@ -1450,7 +1556,7 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
         }
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = targetChunk.defaultConstIndices[i];
-            if (constIdx == 0xFFFF || constIdx >= targetChunk.constants.size()) {
+            if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= targetChunk.constants.size()) {
                 popN(effectiveArgCount);
                 return runtimeError("函数 " + closure.closureName() + " 默认参数无效");
             }
@@ -1488,6 +1594,7 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
     }
 
     size_t savedFrameCount = frames_.size();
+    size_t savedTryStackSize = tryStack_.size(); // P3-A1: 快照 tryStack_ 检测异常穿透
     frames_.push_back(std::move(newFrame));
 
     // 内部指令循环：执行直到帧弹出
@@ -1501,14 +1608,27 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
             break;
         }
         VMResult r = executeOneInstruction();
+        // L14: VM_EXCEPTION_THROW 表示异常被 try/catch 捕获，继续执行
+        if (r == VMResult::VM_EXCEPTION_THROW)
+            continue;
         if (r != VMResult::VM_OK || hasError_) {
             break;
         }
     }
 
     if (hasError_) {
-        // 错误已设置到 lastError_，调用方检测 VM_RUNTIME_ERROR 后读取
+        // P2-12: 错误已写入 diagnostics_，调用方检测 VM_RUNTIME_ERROR 后通过 getLastError() 读取
         return VMResult::VM_RUNTIME_ERROR;
+    }
+
+    // P3-A1: 异常穿透检测
+    // spawn 闭包内 throw 触发 throwException 弹出闭包帧 + 弹出外层 try handler + push thrownValue
+    // 到栈顶 + 设 main 帧 catchIp。此时 frames_ 已退回 savedFrameCount，tryStack_ 缩小，
+    // 栈顶是 thrownValue（不应被当作闭包返回值 pop）。返回 VM_EXCEPTION_THROW 让调用方
+    // （dispatchSyncObjectBuiltin / executeCallSpawn 等）不操作 ip/stack，由主循环保留 catchIp
+    // 继续 catch 块。判别信号：spawn 闭包内 throw 后 join 报"栈下溢"-> 检查此处是否误 pop。
+    if (tryStack_.size() < savedTryStackSize) {
+        return VMResult::VM_EXCEPTION_THROW;
     }
 
     // 闭包返回值在栈顶（OP_RETURN 已 push）
@@ -1529,7 +1649,7 @@ VMResult VM::invokeClosureSync(const Value& closure, const Value* args, size_t a
 // ============================================================
 VMResult VM::executeCoroutineOps(OpCode op, size_t& ip) {
     if (op != OpCode::OP_YIELD) {
-        return runtimeError(ErrorFormat::format("未知协程操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知协程操作码: {}", static_cast<int>(op)));
     }
     // 防御性检查：yield 在非生成器函数体中出现（Compiler 已在 visitYieldExpr 拦截，
     // 但字节码注入路径或动态构造的 chunk 可能绕过——此处兜底报错而非崩溃）
@@ -1579,7 +1699,7 @@ VMResult VM::createCoroutineValue(const BytecodeChunk& genChunk, const std::stri
         }
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = genChunk.defaultConstIndices[i];
-            if (constIdx == 0xFFFF || constIdx >= genChunk.constants.size()) {
+            if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= genChunk.constants.size()) {
                 return runtimeError("生成器 " + funName + " 默认参数无效");
             }
             args.push_back(genChunk.constants[constIdx]);
@@ -1606,7 +1726,7 @@ VMResult VM::dispatchCoroutineBuiltin(Value& obj, const std::string& methodName,
             // 清理栈上参数和接收者
             popN(argCount);
             pop();
-            return runtimeError("coroutine.next() 不接受参数");
+            return runtimeError("coroutine.next() 不接受参数", DiagCodes::kArityMismatch);
         }
         Value result = callCoroutineNext(obj);
         if (hasError_) {
@@ -1626,7 +1746,7 @@ VMResult VM::dispatchCoroutineBuiltin(Value& obj, const std::string& methodName,
         if (argCount != 0) {
             popN(argCount);
             pop();
-            return runtimeError("coroutine.done() 不接受参数");
+            return runtimeError("coroutine.done() 不接受参数", DiagCodes::kArityMismatch);
         }
         auto* cd = obj.coroutineData();
         Value result(cd->done);
@@ -1640,7 +1760,7 @@ VMResult VM::dispatchCoroutineBuiltin(Value& obj, const std::string& methodName,
     // 未知方法：清理栈并报错
     popN(argCount);
     pop();
-    return runtimeError("coroutine 类型不支持方法 " + methodName);
+    return runtimeError("coroutine 类型不支持方法 " + methodName, "undefined-function");
 }
 
 // ============================================================
@@ -1674,7 +1794,8 @@ Value VM::callCoroutineNext(Value& coroVal) {
 
     // MAX_FRAMES 检查
     if (frames_.size() >= MAX_FRAMES) {
-        runtimeError(ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(MAX_FRAMES)));
+        runtimeError(ErrorFormat::formatStd(ErrorMessages::kRecursionDepthExceededFmtStd, static_cast<int>(MAX_FRAMES)),
+                     DiagCodes::kRecursionDepth);
         return Value::nullValue();
     }
 
@@ -1699,7 +1820,7 @@ Value VM::callCoroutineNext(Value& coroVal) {
         if (defaultStartIdx >= 0) {
             for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
                 uint16_t constIdx = genChunk->defaultConstIndices[i];
-                if (constIdx != 0xFFFF && constIdx < genChunk->constants.size()) {
+                if (constIdx != RuntimeLimits::NO_INDEX && constIdx < genChunk->constants.size()) {
                     push(genChunk->constants[constIdx]);
                     ++effectiveArgCount;
                 }
@@ -1754,6 +1875,9 @@ Value VM::callCoroutineNext(Value& coroVal) {
                 break;
             }
             VMResult r = executeOneInstruction();
+            // L14: VM_EXCEPTION_THROW 表示异常被 try/catch 捕获，继续执行
+            if (r == VMResult::VM_EXCEPTION_THROW)
+                continue;
             if (r != VMResult::VM_OK || hasError_) {
                 break;
             }

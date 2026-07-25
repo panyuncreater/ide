@@ -325,7 +325,6 @@ TEST(DebugSessionTest, DoContinueStopsAtBreakpoint) {
 TEST(DebugSessionTest, DoStepInAdvancesExecution) {
     DebugSession session;
     session.launch("var x = 1;\nvar y = 2;\nprint(x + y);\n", "/test.ml");
-    int initialLine = session.getCurrentLine();
 
     StepResult result = session.doStepIn();
     // stepIn 应该步进到下一行（Ok）或结束（Finished）
@@ -879,13 +878,93 @@ TEST(DapRequestHandlerTest, DisconnectSetsShouldExit) {
     EXPECT_TRUE(handler.shouldExit());
 }
 
-TEST(DapRequestHandlerTest, PauseReturnsErrorResponse) {
+TEST(DapRequestHandlerTest, PauseReturnsSuccessResponse) {
+    // L21: pause 请求现在返回成功响应（原为错误）。
+    // 未 launch 时仅返回响应（无 stopped 事件，因 session 未启动）。
     DapRequestHandler handler;
     auto responses = handler.handleMessage(makeDapRequest(1, "pause"));
     ASSERT_EQ(responses.size(), 1u);
-    EXPECT_FALSE(responses[0].value("success").toBool());
+    EXPECT_TRUE(responses[0].value("success").toBool());
     // pause 不应导致 shouldExit
     EXPECT_FALSE(handler.shouldExit());
+    // pauseRequested_ 标志应被设置
+    EXPECT_TRUE(handler.session().isPauseRequested());
+}
+
+TEST(DapRequestHandlerTest, PauseBeforeContinueSetsFlagAndStopsImmediately) {
+    // L21: pause 在 continue 之前到达（continue 未在执行）。
+    // 已 launch 但未 finished 时，应发送 stopped(Pause) 事件。
+    DapRequestHandler handler;
+    // launch 一个简单程序
+    handler.session().launch("var x = 1;", "test.mini");
+    // 清除 launch 产生的输出，便于后续检查
+    handler.session().clearOutput();
+
+    auto responses = handler.handleMessage(makeDapRequest(1, "pause"));
+    // 应有 2 个响应：pause 成功响应 + stopped(Pause) 事件
+    ASSERT_EQ(responses.size(), 2u);
+    EXPECT_TRUE(responses[0].value("success").toBool());
+    EXPECT_EQ(responses[0].value("command").toString().toStdString(), "pause");
+    // 第二个是 stopped 事件
+    EXPECT_EQ(responses[1].value("event").toString().toStdString(), "stopped");
+    EXPECT_EQ(responses[1].value("body").toObject().value("reason").toString().toStdString(), "pause");
+    // pauseRequested_ 应被清除（已通过 stopped 事件消费）
+    EXPECT_FALSE(handler.session().isPauseRequested());
+}
+
+TEST(DapRequestHandlerTest, PauseRequestedFlagStopsContinueImmediately) {
+    // L21: 预先设置 pauseRequested_ 标志，doContinue 第一轮检查即退出。
+    DapRequestHandler handler;
+    // launch 一个会无限循环的程序
+    handler.session().launch("var i = 0; while (i < 1000000) { i = i + 1; }", "test.mini");
+    handler.session().clearOutput();
+
+    // 预设 pause 标志（模拟 pause 在 continue 之前到达）
+    handler.session().requestPause();
+
+    // 发送 continue 请求——doContinue 应在第一轮检查即退出
+    auto responses = handler.handleMessage(makeDapRequest(1, "continue"));
+    // 应有 2 个响应：continue 成功响应 + stopped(Pause) 事件
+    ASSERT_EQ(responses.size(), 2u);
+    EXPECT_TRUE(responses[0].value("success").toBool());
+    EXPECT_EQ(responses[1].value("event").toString().toStdString(), "stopped");
+    EXPECT_EQ(responses[1].value("body").toObject().value("reason").toString().toStdString(), "pause");
+    // pauseRequested_ 应被清除
+    EXPECT_FALSE(handler.session().isPauseRequested());
+}
+
+TEST(DapRequestHandlerTest, StdinPollCallbackTriggersPauseDuringContinue) {
+    // L21: stdin 轮询回调检测到数据时，doContinue 应退出并发送 stopped(Pause)。
+    DapRequestHandler handler;
+    // launch 一个会执行很多步的程序
+    handler.session().launch("var i = 0; while (i < 1000000) { i = i + 1; } print(i);", "test.mini");
+    handler.session().clearOutput();
+
+    // 注入轮询回调：第 3 次调用返回 true（模拟 stdin 有 pause 消息）
+    int pollCount = 0;
+    handler.session().setStdinPollCallback([&pollCount]() {
+        ++pollCount;
+        return pollCount >= 3; // 第 3 次轮询时返回 true
+    });
+
+    auto responses = handler.handleMessage(makeDapRequest(1, "continue"));
+    // 应有 2 个响应：continue 成功响应 + stopped(Pause) 事件
+    ASSERT_GE(responses.size(), 2u);
+    EXPECT_TRUE(responses[0].value("success").toBool());
+    // 找到 stopped 事件
+    bool foundStop = false;
+    for (const auto& resp : responses) {
+        if (resp.value("event").toString().toStdString() == "stopped") {
+            foundStop = true;
+            EXPECT_EQ(resp.value("body").toObject().value("reason").toString().toStdString(), "pause");
+            break;
+        }
+    }
+    EXPECT_TRUE(foundStop);
+    // 轮询回调应被调用至少 3 次
+    EXPECT_GE(pollCount, 3);
+    // pauseRequested_ 应被清除
+    EXPECT_FALSE(handler.session().isPauseRequested());
 }
 
 TEST(DapRequestHandlerTest, UnknownCommandReturnsErrorResponse) {

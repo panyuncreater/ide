@@ -26,14 +26,18 @@
 #include "compiler/Compiler.h"
 #include "compiler/RegisterVM.h"
 #include "compiler/VM.h"
-#include "debug/DebugTypes.h" // R161: WatchpointInfo + WriteTarget
+#include "debug/DebugController.h" // L19: Interpreter watchpoint 测试
+#include "debug/DebugTypes.h"      // R161: WatchpointInfo + WriteTarget
 #include "interpreter/Interpreter.h"
 #include "interpreter/RuntimeExceptions.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 
+#include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 // ============================================================
@@ -596,4 +600,404 @@ TEST(PeekWriteTargetConsistency, FieldSet_BothBackendsReportSameFieldName) {
 
     EXPECT_EQ(stackFieldName, regFieldName) << "两后端字段写入名应一致";
     EXPECT_EQ(stackFieldName, "x");
+}
+
+// ============================================================
+// 第五组：L19 Interpreter 路径 Watchpoint 测试
+// ------------------------------------------------------------
+// 验证 Interpreter 路径的 watchpoint 在 visitAssignment/visitVarDecl/
+// visitMemberAssign/visitIndexAssign 入口正确触发暂停。
+// 测试模式参照 TestR104DebuggerExtensions.cpp 的函数断点测试（线程执行 + 暂停等待）。
+// ============================================================
+
+namespace {
+/// 辅助：等待 dbg 暂停（最多 timeoutMs 毫秒），返回是否暂停
+bool waitForPause(DebugController* dbg, std::atomic<int>& pauseCount, int target, int timeoutMs = 2000) {
+    (void)dbg;
+    for (int i = 0; i < timeoutMs / 10 && pauseCount.load() < target; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return pauseCount.load() >= target;
+}
+} // namespace
+
+TEST(L19InterpreterWatchpoint, VariableWatchpoint_PausesOnAssignment) {
+    const std::string source = "var x = 0;\n" // line 1 — var decl
+                               "x = 1;\n"     // line 2 — assignment
+                               "x = 2;\n"     // line 3 — assignment
+                               "print(x);\n"; // line 4
+
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    WatchpointInfo wp;
+    wp.kind = WatchpointTargetKind::Variable;
+    wp.varName = "x";
+    dbg->setWatchpoint(wp);
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(), [&](int) { pauseCount.fetch_add(1); }, Qt::DirectConnection);
+
+    std::thread execThread([&]() {
+        try {
+            interp.execute(*ast);
+        } catch (...) {
+        }
+    });
+
+    // x 被 3 次写入：var x=0（line 1）+ x=1（line 2）+ x=2（line 3）
+    // 第一次暂停在 line 1（var decl）
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 1));
+    EXPECT_EQ(dbg->getWatchpoints().size(), 1u);
+    auto wps = dbg->getWatchpoints();
+    EXPECT_EQ(wps[0].hitCount, 1);
+    dbg->resume();
+
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 2));
+    wps = dbg->getWatchpoints();
+    EXPECT_EQ(wps[0].hitCount, 2);
+    dbg->resume();
+
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 3));
+    wps = dbg->getWatchpoints();
+    EXPECT_EQ(wps[0].hitCount, 3);
+    dbg->resume();
+
+    execThread.join();
+    EXPECT_EQ(pauseCount.load(), 3);
+}
+
+TEST(L19InterpreterWatchpoint, FieldWatchpoint_PausesOnMemberAssign) {
+    const std::string source = "class C {\n"
+                               "    var x = 0;\n"
+                               "}\n"
+                               "var c = C();\n" // line 4
+                               "c.x = 1;\n"     // line 5 — field write
+                               "c.x = 2;\n"     // line 6 — field write
+                               "print(c.x);\n"; // line 7
+
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    WatchpointInfo wp;
+    wp.kind = WatchpointTargetKind::Field;
+    wp.varName = "c"; // 接收者变量名
+    wp.fieldName = "x";
+    dbg->setWatchpoint(wp);
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(), [&](int) { pauseCount.fetch_add(1); }, Qt::DirectConnection);
+
+    std::thread execThread([&]() {
+        try {
+            interp.execute(*ast);
+        } catch (...) {
+        }
+    });
+
+    // c.x 被 2 次写入：line 5 + line 6
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 1));
+    auto wps = dbg->getWatchpoints();
+    EXPECT_EQ(wps[0].hitCount, 1);
+    dbg->resume();
+
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 2));
+    wps = dbg->getWatchpoints();
+    EXPECT_EQ(wps[0].hitCount, 2);
+    dbg->resume();
+
+    execThread.join();
+    EXPECT_EQ(pauseCount.load(), 2);
+}
+
+TEST(L19InterpreterWatchpoint, IndexWatchpoint_PausesOnIndexAssign) {
+    const std::string source = "var arr = [0, 0, 0];\n"     // line 1
+                               "arr[0] = 10;\n"             // line 2 — index write
+                               "arr[1] = 20;\n"             // line 3 — index write
+                               "print(arr[0] + arr[1]);\n"; // line 4
+
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    WatchpointInfo wp;
+    wp.kind = WatchpointTargetKind::Variable;
+    wp.varName = "arr";
+    dbg->setWatchpoint(wp);
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(), [&](int) { pauseCount.fetch_add(1); }, Qt::DirectConnection);
+
+    std::thread execThread([&]() {
+        try {
+            interp.execute(*ast);
+        } catch (...) {
+        }
+    });
+
+    // arr 被 3 次写入：var arr=[...]（line 1）+ arr[0]=10（line 2）+ arr[1]=20（line 3）
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 1));
+    dbg->resume();
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 2));
+    dbg->resume();
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 3));
+    dbg->resume();
+
+    execThread.join();
+    EXPECT_EQ(pauseCount.load(), 3);
+}
+
+TEST(L19InterpreterWatchpoint, ConditionalWatchpoint_OnlyPausesWhenConditionTrue) {
+    const std::string source = "var i = 0;\n"      // line 1
+                               "while (i < 5) {\n" // line 2
+                               "    i = i + 1;\n"  // line 3 — watched write
+                               "}\n"
+                               "print(i);\n";
+
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    // 条件求值器：读取 interp 的 i，i > 3 时返回 true
+    dbg->setConditionEvaluator([&](const std::string& /*cond*/) -> bool {
+        auto env = interp.getGlobalEnvironment();
+        if (!env)
+            return false;
+        auto val = env->get("i");
+        if (val && val->isInt()) {
+            return val->intVal() > 3;
+        }
+        return false;
+    });
+
+    dbg->reset();
+    dbg->resume();
+    WatchpointInfo wp;
+    wp.varName = "i";
+    wp.condition = "i > 3";
+    dbg->setWatchpoint(wp);
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(), [&](int) { pauseCount.fetch_add(1); }, Qt::DirectConnection);
+
+    std::thread execThread([&]() {
+        try {
+            interp.execute(*ast);
+        } catch (...) {
+        }
+    });
+
+    // i 从 0 开始，每次循环 i = i + 1，i 的值在写入前为 0,1,2,3,4
+    // 条件 i > 3 在 i=4 时为 true（写入前 i=3，条件检查时读 i=3，3>3=false）
+    // 实际：pre-execution 检查时读的是写入前的旧值
+    // i=0(var decl) → 条件 0>3 false → i=1 → 条件 1>3 false → ... → i=4 → 条件 4>3 true
+    // 所以只有 1 次暂停（i=4 写入前，即第 5 次循环）
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 1));
+    dbg->resume();
+
+    execThread.join();
+    EXPECT_EQ(pauseCount.load(), 1);
+    auto wps = dbg->getWatchpoints();
+    EXPECT_EQ(wps[0].hitCount, 1);
+}
+
+TEST(L19InterpreterWatchpoint, NoWatchpoint_NoPause) {
+    // 无 watchpoint 时不应暂停（快速路径短路）
+    const std::string source = "var x = 0;\n"
+                               "x = 1;\n"
+                               "x = 2;\n"
+                               "print(x);\n";
+
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    std::string output;
+    interp.setOutputCallback([&](const std::string& s) { output += s; });
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    // 不设置任何 watchpoint
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(), [&](int) { pauseCount.fetch_add(1); }, Qt::DirectConnection);
+
+    interp.execute(*ast); // 同步执行（无暂停）
+
+    EXPECT_EQ(pauseCount.load(), 0);
+    EXPECT_EQ(output, "2");
+    EXPECT_FALSE(dbg->hasWatchpoints());
+}
+
+TEST(L19InterpreterWatchpoint, RemoveWatchpoint_StopsPausing) {
+    const std::string source = "var x = 0;\n" // line 1
+                               "x = 1;\n"     // line 2
+                               "x = 2;\n"     // line 3
+                               "print(x);\n"; // line 4
+
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    WatchpointInfo wp;
+    wp.varName = "x";
+    dbg->setWatchpoint(wp);
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(), [&](int) { pauseCount.fetch_add(1); }, Qt::DirectConnection);
+
+    std::thread execThread([&]() {
+        try {
+            interp.execute(*ast);
+        } catch (...) {
+        }
+    });
+
+    // 第一次暂停后移除 watchpoint
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 1));
+    dbg->removeWatchpoint("x");
+    EXPECT_FALSE(dbg->hasWatchpoints());
+    dbg->resume();
+
+    execThread.join();
+    // 只暂停 1 次（移除后不再触发）
+    EXPECT_EQ(pauseCount.load(), 1);
+}
+
+TEST(L19InterpreterWatchpoint, FieldWatchpoint_WildcardVarName_MatchesAnyReceiver) {
+    // varName 为空的 Field watchpoint 匹配任意接收者（仅按 fieldName 匹配）
+    const std::string source = "class C {\n"
+                               "    var val = 0;\n"
+                               "}\n"
+                               "var a = C();\n"           // line 4
+                               "var b = C();\n"           // line 5
+                               "a.val = 1;\n"             // line 6 — field write on a
+                               "b.val = 2;\n"             // line 7 — field write on b
+                               "print(a.val + b.val);\n"; // line 8
+
+    auto ast = parseSource(source);
+    ASSERT_NE(ast, nullptr);
+
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+    WatchpointInfo wp;
+    wp.kind = WatchpointTargetKind::Field;
+    wp.varName = ""; // 空通配任意接收者
+    wp.fieldName = "val";
+    dbg->setWatchpoint(wp);
+
+    std::atomic<int> pauseCount{0};
+    QObject::connect(
+        dbg.get(), &DebugController::pausedAt, dbg.get(), [&](int) { pauseCount.fetch_add(1); }, Qt::DirectConnection);
+
+    std::thread execThread([&]() {
+        try {
+            interp.execute(*ast);
+        } catch (...) {
+        }
+    });
+
+    // a.val 和 b.val 各 1 次写入，共 2 次暂停
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 1));
+    dbg->resume();
+    ASSERT_TRUE(waitForPause(dbg.get(), pauseCount, 2));
+    dbg->resume();
+
+    execThread.join();
+    EXPECT_EQ(pauseCount.load(), 2);
+    auto wps = dbg->getWatchpoints();
+    EXPECT_EQ(wps[0].hitCount, 2);
+}
+
+// L19 audit fix 回归测试：removeWatchpoint("") 只移除通配 watchpoint，不移除全部。
+// 原实现 varName.empty() || wp.varName == varName 导致空 varName 通配所有，
+// 与 VmStepper 精确匹配语义不一致。修复后空 varName 只匹配 varName 也为空的 watchpoint。
+TEST(L19InterpreterWatchpoint, RemoveWatchpoint_EmptyVarName_OnlyRemovesWildcard) {
+    Interpreter interp;
+    auto dbg = std::make_shared<DebugController>();
+    interp.setOutputCallback([](const std::string&) {});
+    interp.setDebugger(dbg);
+    interp.setDebugMode(true);
+
+    dbg->reset();
+    dbg->resume();
+
+    // 设置两个 watchpoint：一个具名 Variable，一个通配 Field
+    WatchpointInfo wpVar;
+    wpVar.kind = WatchpointTargetKind::Variable;
+    wpVar.varName = "x";
+    dbg->setWatchpoint(wpVar);
+
+    WatchpointInfo wpField;
+    wpField.kind = WatchpointTargetKind::Field;
+    wpField.varName = ""; // 通配任意接收者
+    wpField.fieldName = "y";
+    dbg->setWatchpoint(wpField);
+
+    ASSERT_EQ(dbg->getWatchpoints().size(), 2u);
+    ASSERT_TRUE(dbg->hasWatchpoints());
+
+    // 移交通配 Field watchpoint（varName=""）
+    dbg->removeWatchpoint("", "y");
+
+    // 应该只剩具名 Variable watchpoint
+    EXPECT_TRUE(dbg->hasWatchpoints());
+    auto remaining = dbg->getWatchpoints();
+    ASSERT_EQ(remaining.size(), 1u);
+    EXPECT_EQ(remaining[0].kind, WatchpointTargetKind::Variable);
+    EXPECT_EQ(remaining[0].varName, "x");
+
+    // 清理
+    dbg->clearWatchpoints();
+    EXPECT_FALSE(dbg->hasWatchpoints());
 }

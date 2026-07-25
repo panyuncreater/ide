@@ -19,7 +19,7 @@ void DebugController::stepIn() {
     mode_ = StepMode::MODE_STEP_IN;
     running_ = true;
     stopped_ = false;
-    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
+    crossedDeeper_ = false; // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 // 进入「单步跳过」模式：记录当前栈深度，函数调用不进入；返回后即使行号不变也因 crossedDeeper_ 而暂停。
@@ -28,7 +28,7 @@ void DebugController::stepOver() {
     stepOverDepth_ = currentDepth_;
     running_ = true;
     stopped_ = false;
-    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
+    crossedDeeper_ = false; // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 // 进入「单步跳出」模式：运行至从当前函数帧返回到更浅帧时暂停。
@@ -37,7 +37,7 @@ void DebugController::stepOut() {
     stepOutDepth_ = currentDepth_;
     running_ = true;
     stopped_ = false;
-    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
+    crossedDeeper_ = false; // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 // 恢复连续运行（MODE_RUN）：不再逐步暂停，直到命中断点或收到 stop。
@@ -45,7 +45,7 @@ void DebugController::resume() {
     mode_ = StepMode::MODE_RUN;
     running_ = true;
     stopped_ = false;
-    crossedDeeper_ = false;  // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
+    crossedDeeper_ = false; // BUG-DBG-14 fix: 新步进开始，重置交叉帧标志
 }
 
 // 请求停止：置 stopped_ 标志，checkBreak 将立即返回、不再暂停。
@@ -63,7 +63,8 @@ void DebugController::setCurrentDepth(int depth) {
 // 核心暂停判定：根据当前步进模式（STEP_IN/OVER/OUT/RUN）结合断点、行号去重与交叉帧标志，
 // 决定是否在当前 AST 节点暂停；命中时记录行号、深度与变量/调用栈快照，随后自动恢复（不阻塞）。
 void DebugController::checkBreak(ASTNode* node) {
-    if (stopped_) return;
+    if (stopped_)
+        return;
 
     int line = node->line;
 
@@ -105,8 +106,7 @@ void DebugController::checkBreak(ASTNode* node) {
         // BUG-DBG-14 fix: 顶层 STEP_OUT 用 crossedLine_ 允许单行循环暂停
         if (currentDepth_ < stepOutDepth_) {
             shouldPause = true;
-        } else if (currentDepth_ <= 1 && line > 0
-                   && (line != lastPausedLine_ || crossedLine_)) {
+        } else if (currentDepth_ <= 1 && line > 0 && (line != lastPausedLine_ || crossedLine_)) {
             shouldPause = true;
         }
         break;
@@ -143,8 +143,8 @@ void DebugController::checkBreak(ASTNode* node) {
             } else if (infoIt != breakpointInfos_.end() && infoIt->second.isConditional()) {
                 // 条件断点：求值为真才暂停，用 crossedLine_ 允许单行循环重新触发
                 if (conditionEvaluator_) {
-                    shouldPause = conditionEvaluator_(infoIt->second.condition)
-                        && (line != lastPausedLine_ || crossedLine_);
+                    shouldPause =
+                        conditionEvaluator_(infoIt->second.condition) && (line != lastPausedLine_ || crossedLine_);
                     if (shouldPause) {
                         infoIt->second.hitCount++;
                     }
@@ -164,8 +164,8 @@ void DebugController::checkBreak(ASTNode* node) {
     if (shouldPause) {
         lastPausedLine_ = line;
         lastPausedDepth_ = currentDepth_;
-        crossedLine_ = false;  // 命中后重置，同行后续指令不再触发
-        crossedDeeper_ = false;  // 命中后重置
+        crossedLine_ = false;   // 命中后重置，同行后续指令不再触发
+        crossedDeeper_ = false; // 命中后重置
         pauseCount_++;
         pauseLines_.push_back(line);
         pauseDepths_.push_back(currentDepth_);
@@ -204,7 +204,9 @@ void DebugController::removeBreakpoint(int line) {
     breakpoints_.erase(line);
     breakpointInfos_.erase(line);
 }
-bool DebugController::hasBreakpoint(int line) const { return breakpoints_.count(line) > 0; }
+bool DebugController::hasBreakpoint(int line) const {
+    return breakpoints_.count(line) > 0;
+}
 
 // 批量覆盖式设置断点集合。
 void DebugController::setBreakpoints(const std::set<int>& lines) {
@@ -265,9 +267,13 @@ std::vector<CallStackEntry> DebugController::getCallStack() const {
 // ── State queries ──────────────────────────────────────────────────
 
 // 是否处于运行态（running_ 为真表示尚未被 stop）。
-bool DebugController::isRunning() const { return running_; }
+bool DebugController::isRunning() const {
+    return running_;
+}
 // 此 headless stub 永不真正阻塞暂停，恒返回 false。
-bool DebugController::isPaused() const { return false; }  // never actually pauses
+bool DebugController::isPaused() const {
+    return false;
+} // never actually pauses
 
 // 复位全部调试状态：模式、深度、断点命中记录、快照与交叉帧标志一并清零，回到初始态。
 void DebugController::reset() {
@@ -297,15 +303,24 @@ void DebugController::reset() {
 // ── Test access ────────────────────────────────────────────────────
 
 // 测试访问接口：返回暂停次数、各次暂停行号、深度与完整暂停事件快照。
-int DebugController::pauseCount() const { return pauseCount_; }
-const std::vector<int>& DebugController::pauseLines() const { return pauseLines_; }
-const std::vector<int>& DebugController::pauseDepths() const { return pauseDepths_; }
-const std::vector<DebugPauseEvent>& DebugController::pauseEvents() const { return pauseEvents_; }
+int DebugController::pauseCount() const {
+    return pauseCount_;
+}
+const std::vector<int>& DebugController::pauseLines() const {
+    return pauseLines_;
+}
+const std::vector<int>& DebugController::pauseDepths() const {
+    return pauseDepths_;
+}
+const std::vector<DebugPauseEvent>& DebugController::pauseEvents() const {
+    return pauseEvents_;
+}
 
 // 返回所有暂停事件中出现过的最大栈深度（用于校验 STEP_OUT / 嵌套调用深度）。
 int DebugController::maxDepthSeen() const {
     int mx = 0;
-    for (int d : pauseDepths_) mx = std::max(mx, d);
+    for (int d : pauseDepths_)
+        mx = std::max(mx, d);
     return mx;
 }
 
@@ -324,7 +339,8 @@ void DebugController::setLogCallback(std::function<void(const std::string&)> cb)
 }
 
 void DebugController::setBreakpointKind(int line, BreakpointKind kind) {
-    if (line <= 0) return;
+    if (line <= 0)
+        return;
     auto it = breakpointInfos_.find(line);
     if (it == breakpointInfos_.end()) {
         breakpointInfos_[line] = BreakpointInfo(line);
@@ -347,7 +363,8 @@ BreakpointKind DebugController::getBreakpointKind(int line) const {
 }
 
 void DebugController::setLogpointMessage(int line, const std::string& msg) {
-    if (line <= 0) return;
+    if (line <= 0)
+        return;
     auto it = breakpointInfos_.find(line);
     if (it == breakpointInfos_.end()) {
         breakpointInfos_[line] = BreakpointInfo(line);
@@ -370,7 +387,8 @@ std::string DebugController::getLogpointMessage(int line) const {
 // ── Function Breakpoint ────────────────────────────────────────────
 
 void DebugController::setFunctionBreakpoint(const std::string& functionName) {
-    if (functionName.empty()) return;
+    if (functionName.empty())
+        return;
     if (functionBreakpoints_.find(functionName) == functionBreakpoints_.end()) {
         functionBreakpoints_[functionName] = FunctionBreakpointInfo(functionName);
     }
@@ -383,7 +401,8 @@ void DebugController::removeFunctionBreakpoint(const std::string& functionName) 
 void DebugController::setFunctionBreakpoints(const std::set<std::string>& names) {
     std::map<std::string, FunctionBreakpointInfo> newMap;
     for (const auto& name : names) {
-        if (name.empty()) continue;
+        if (name.empty())
+            continue;
         auto it = functionBreakpoints_.find(name);
         if (it != functionBreakpoints_.end()) {
             newMap[name] = it->second;
@@ -435,9 +454,11 @@ bool DebugController::hasFunctionBreakpoint(const std::string& functionName) con
 }
 
 bool DebugController::checkFunctionBreakpoint(const std::string& functionName, int line) {
-    if (!running_ || stopped_) return false;
+    if (!running_ || stopped_)
+        return false;
     auto it = functionBreakpoints_.find(functionName);
-    if (it == functionBreakpoints_.end()) return false;
+    if (it == functionBreakpoints_.end())
+        return false;
 
     // 条件求值
     if (it->second.isConditional()) {
@@ -491,10 +512,111 @@ int DebugController::getExceptionBreakpointHitCount() const {
 }
 
 bool DebugController::checkExceptionBreakpoint(int line) {
-    if (!running_ || stopped_) return false;
-    if (!exceptionBreakpoint_.enabled) return false;
+    if (!running_ || stopped_)
+        return false;
+    if (!exceptionBreakpoint_.enabled)
+        return false;
 
     exceptionBreakpoint_.hitCount++;
+    lastPausedLine_ = line;
+    lastPausedDepth_ = currentDepth_;
+    pauseCount_++;
+    pauseLines_.push_back(line);
+    pauseDepths_.push_back(currentDepth_);
+    DebugPauseEvent evt;
+    evt.line = line;
+    evt.depth = currentDepth_;
+    if (variableCallback_) {
+        auto vars = variableCallback_();
+        for (auto& v : vars) {
+            evt.variables.push_back({v.name, v.value.toString()});
+        }
+    }
+    if (callStackCallback_) {
+        auto stack = callStackCallback_();
+        for (auto& s : stack) {
+            evt.callStack.push_back(s.functionName);
+        }
+    }
+    pauseEvents_.push_back(std::move(evt));
+    return true;
+}
+
+// ── L19 Watchpoint（与生产版同步，桩实现不阻塞） ───────────────────
+
+void DebugController::setWatchpoint(const WatchpointInfo& wp) {
+    watchpoints_.push_back(wp);
+    hasWatchpoints_ = true;
+}
+
+void DebugController::removeWatchpoint(const std::string& varName, const std::string& fieldName) {
+    // L19 audit fix: 精确匹配 varName（与 VmStepper/生产版 DebugController 一致），
+    // 空 varName 只移除 varName 也为空的 watchpoint，不作为"移除全部"快捷方式。
+    for (int i = static_cast<int>(watchpoints_.size()) - 1; i >= 0; --i) {
+        const auto& wp = watchpoints_[i];
+        bool matchVar = (wp.varName == varName);
+        bool matchField = fieldName.empty() || wp.fieldName == fieldName;
+        if (matchVar && matchField) {
+            watchpoints_.erase(watchpoints_.begin() + i);
+        }
+    }
+    hasWatchpoints_ = !watchpoints_.empty();
+}
+
+void DebugController::clearWatchpoints() {
+    watchpoints_.clear();
+    hasWatchpoints_ = false;
+}
+
+std::vector<WatchpointInfo> DebugController::getWatchpoints() const {
+    return watchpoints_;
+}
+
+bool DebugController::checkWatchpointHit(const std::string& varName, bool isFieldWrite, const std::string& fieldName,
+                                         int line) {
+    if (!hasWatchpoints_ || !running_ || stopped_)
+        return false;
+
+    WatchpointInfo snapshot;
+    bool matched = false;
+    for (const auto& wp : watchpoints_) {
+        if (wp.kind == WatchpointTargetKind::Variable && !isFieldWrite) {
+            // L19 audit fix: 添加 !varName.empty() 防御性保护（与生产版/VM 路径对齐）
+            if (!varName.empty() && wp.varName == varName) {
+                snapshot = wp;
+                matched = true;
+                break;
+            }
+        } else if (wp.kind == WatchpointTargetKind::Field && isFieldWrite) {
+            if (wp.fieldName == fieldName && (wp.varName.empty() || wp.varName == varName)) {
+                snapshot = wp;
+                matched = true;
+                break;
+            }
+        }
+    }
+    if (!matched)
+        return false;
+
+    // 条件求值
+    if (snapshot.isConditional()) {
+        if (conditionEvaluator_) {
+            if (!conditionEvaluator_(snapshot.condition)) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // 命中：递增 hitCount 并记录暂停事件（与桩整体设计一致——不阻塞）
+    for (auto& wp : watchpoints_) {
+        if (wp.kind == snapshot.kind && wp.varName == snapshot.varName && wp.fieldName == snapshot.fieldName &&
+            wp.condition == snapshot.condition) {
+            wp.hitCount++;
+            break;
+        }
+    }
     lastPausedLine_ = line;
     lastPausedDepth_ = currentDepth_;
     pauseCount_++;

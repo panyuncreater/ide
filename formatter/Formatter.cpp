@@ -1140,15 +1140,24 @@ std::string Formatter::formatTupleLiteral(TupleLiteral& node) {
 // R98 元组与解构：格式化解构绑定
 // 输出 "var (a, b, c) = initializer;"
 // 类型注解（如存在）输出为 "var (a, b, c): (int, string, int) = initializer;"
+// L20 per-name 注解：输出 "var (a: int, b: string) = initializer;"（优先于 tupleTypeAnnotation）
 std::string Formatter::formatDestructureBinding(DestructureBinding& node) {
     std::string result = "var (";
     for (size_t i = 0; i < node.names.size(); ++i) {
         if (i > 0)
             result += comma();
         result += node.names[i];
+        // L20: per-name 类型注解（优先于整体 tupleTypeAnnotation）
+        if (node.hasNameTypeAnnotations()) {
+            const std::string& nameAnn = node.nameTypeAt(i);
+            if (!nameAnn.empty()) {
+                result += ": " + nameAnn;
+            }
+        }
     }
     result += ")";
-    if (!node.tupleTypeAnnotation.empty()) {
+    // L20: 仅当无 per-name 注解时才输出整体 tupleTypeAnnotation（避免双重注解）
+    if (!node.hasNameTypeAnnotations() && !node.tupleTypeAnnotation.empty()) {
         result += ": " + node.tupleTypeAnnotation;
     }
     if (node.initializer) {
@@ -1449,7 +1458,7 @@ std::string Formatter::formatMethodCall(MethodCall& node) {
 }
 
 /// 格式化 null 字面量：裸输出 "null" 关键字。
-std::string Formatter::formatNullLiteral(NullLiteral& node) {
+std::string Formatter::formatNullLiteral(NullLiteral& /*node*/) {
     return "null";
 }
 

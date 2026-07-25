@@ -19,6 +19,12 @@
 #include <cstring>
 #include <sstream>
 
+// W4 模式下 /wd4996 被释放，本文件使用 std::fopen（C 标准接口），
+// 局部禁用 C4996 弃用警告，避免阻塞 W4/WERROR 构建。
+#ifdef _MSC_VER
+#pragma warning(disable : 4996)
+#endif
+
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -233,6 +239,23 @@ StepResult DebugSession::doContinue() {
     int startLine = vm_.getCurrentLine();
     int count = 0;
     while (count < kMaxStepInstructions) {
+        // L21: 每 kPausePollInterval 步轮询一次 stdin 是否有 pause 请求。
+        // stdinPollCallback_ 由 dap.cpp 注入（非 Windows 用 poll/select，Windows 用
+        // PeekNamedPipe）。测试场景不设置回调，此分支被跳过（保持旧行为）。
+        // pauseRequested_ 也可能由 handlePause 在 continue 启动后通过另一消息设置
+        // （仅多线程场景，当前同步模型下 pause 必然在 continue 之前到达）。
+        if ((count & (kPausePollInterval - 1)) == 0 && count > 0) {
+            if (pauseRequested_.load(std::memory_order_relaxed)) {
+                return StepResult::Ok; // 暂停，回到断点位置
+            }
+            if (stdinPollCallback_ && stdinPollCallback_()) {
+                // stdin 有数据待读，可能是 pause 请求。
+                // 不在此处解析消息（会破坏 DapTransport 的分帧状态），仅设置标志
+                // 让 doContinue 退出，控制权交回 main 循环读取并处理 pause。
+                pauseRequested_ = true;
+                return StepResult::Ok;
+            }
+        }
         StepResult r = stepOnceWithCheck();
         if (r != StepResult::Ok) {
             return r;
@@ -804,8 +827,19 @@ std::vector<QJsonObject> DapRequestHandler::handleMessage(const QJsonObject& mes
         auto events = doStepAndSendEvents(&DebugSession::doStepOut);
         responses.insert(responses.end(), events.begin(), events.end());
     } else if (cmd == "pause") {
+        // L21: 返回成功响应 + stopped 事件（reason=pause）。
+        // 两种场景：
+        // (a) continue 正在执行：stdin 轮询回调检测到数据 → doContinue 退出 →
+        //     doStepAndSendEvents 发送 stopped(Pause)。此处 handlePause 仅设置标志
+        //     作为后备（若 continue 已退出则标志由下次 continue 检查）。
+        // (b) continue 未在执行（pause 在 continue 之前/之后到达）：直接发送
+        //     stopped(Pause) 事件，客户端据此刷新调用栈。
         QJsonValue body = handlePause(args);
-        responses.push_back(makeResponse(seq, cmd, false, body, "pause not supported synchronously"));
+        responses.push_back(makeResponse(seq, cmd, true, body));
+        if (session_.isLaunched() && !session_.isFinished()) {
+            responses.push_back(makeStoppedEvent(DapStoppedReason::Pause, session_.getCurrentLine()));
+            session_.clearPauseRequest();
+        }
     } else if (cmd == "stackTrace") {
         QJsonValue body = handleStackTrace(args);
         responses.push_back(makeResponse(seq, cmd, true, body));
@@ -923,8 +957,14 @@ std::vector<QJsonObject> DapRequestHandler::doStepAndSendEvents(StepResult (Debu
     }
     case StepResult::Ok:
         // 步进暂停：continue 命中断点为 breakpoint，其他为 step
-        // 简化：统一用 step（客户端会刷新调用栈）
-        events.push_back(makeStoppedEvent(DapStoppedReason::Step, session_.getCurrentLine()));
+        // L21: 若 pauseRequested_ 为 true，说明是 pause 请求触发的暂停，用 Pause 原因。
+        if (session_.isPauseRequested()) {
+            events.push_back(makeStoppedEvent(DapStoppedReason::Pause, session_.getCurrentLine()));
+            session_.clearPauseRequest();
+        } else {
+            // 简化：统一用 step（客户端会刷新调用栈）
+            events.push_back(makeStoppedEvent(DapStoppedReason::Step, session_.getCurrentLine()));
+        }
         break;
     case StepResult::MaxStepsExceeded:
         events.push_back(makeStoppedEvent(DapStoppedReason::Step, session_.getCurrentLine()));
@@ -1207,8 +1247,16 @@ QJsonValue DapRequestHandler::handleSource(const QJsonObject& /*args*/) {
 }
 
 QJsonValue DapRequestHandler::handlePause(const QJsonObject& /*args*/) {
-    // 不支持同步暂停（VM 步进为同步模型，无法中断正在执行的 continue）
-    // 不设置 shouldExit_，仅返回错误
+    // L21: 同步暂停支持。
+    // (a) 若 continue 尚未启动（pause 在 continue 之前到达），设置 pauseRequested_
+    //     标志，下一次 doContinue 启动时首轮检查即退出。
+    // (b) 若 continue 正在执行（不可能在当前同步模型中发生——handleMessage 同步
+    //     处理，doContinue 占用控制权直到结束），pauseRequested_ 由 stdin 轮询
+    //     回调间接设置（dap.cpp 检测到 stdin 数据 → 回调返回 true → doContinue 退出
+    //     → main 循环读取 pause 消息 → 调用 handlePause → 设置标志）。
+    // 成功响应后 DAP 客户端期望收到 stopped 事件（reason=pause），
+    // 该事件由 doStepAndSendEvents 在 doContinue 返回 Ok 后发送。
+    session_.requestPause();
     return QJsonObject();
 }
 

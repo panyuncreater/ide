@@ -33,8 +33,17 @@ class RuntimeError : public std::runtime_error {
 public:
     int line;
     int column;
+    // P2 fix (错误码优先匹配): 稳定诊断码，如 "division-by-zero"。
+    // 与 ErrorHintEngine::errorPatterns() 表中的 tag 对应。空字符串表示未设置，
+    // ErrorHintEngine 回退到中/英子串匹配兜底逻辑。由 Interpreter::runtimeError
+    // 在抛出时填充，runStatementsWithExceptionHandling 的 catch 块透传到 addError。
+    std::string code;
 
     RuntimeError(const std::string& msg, int ln = 0, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
+
+    /// P2 fix: 带 code 的构造重载（引擎迁移时使用）
+    RuntimeError(const std::string& msg, int ln, int col, const std::string& diagCode)
+        : std::runtime_error(msg), line(ln), column(col), code(diagCode) {}
 };
 
 /// return 语句专用异常（用于跳出函数体）

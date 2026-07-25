@@ -66,7 +66,7 @@ VMResult VM::executeContainerOps(OpCode op, size_t& ip) {
     case OpCode::OP_ENUM_VARIANT_FIELD:
         return executeEnumOps(op, ip);
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
     }
 }
 
@@ -162,7 +162,7 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
         // 对齐 Interpreter::visitEnumVariantExpr 的校验逻辑，保证三后端一致。
         auto enumIt = enumRegistry_.find(enumName);
         if (enumIt == enumRegistry_.end()) {
-            return runtimeError(ErrorFormat::format("未定义的 enum: %s", enumName.c_str()));
+            return runtimeError(ErrorFormat::formatStd("未定义的 enum: {}",  enumName), "undefined-function");
         }
         const VMEnumInfo& info = enumIt->second;
         const VMEnumVariantInfo* varInfo = nullptr;
@@ -174,11 +174,14 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
         }
         if (varInfo == nullptr) {
             return runtimeError(
-                ErrorFormat::format("enum '%s' 没有 variant '%s'", enumName.c_str(), variantName.c_str()));
+                ErrorFormat::formatStd("enum '{}' 没有 variant '{}'",  enumName,  variantName),
+                "undefined-function");
         }
         if (static_cast<int>(argCount) != varInfo->arity) {
-            return runtimeError(ErrorFormat::format("enum variant '%s.%s' 期望 %d 个参数，得到 %d 个", enumName.c_str(),
-                                                    variantName.c_str(), varInfo->arity, static_cast<int>(argCount)));
+            return runtimeError(ErrorFormat::formatStd("enum variant '{}.{}' 期望 {} 个参数，得到 {} 个",  enumName,
+                                                    
+                                                    variantName,  varInfo->arity,  static_cast<int>(argCount)),
+                                DiagCodes::kArityMismatch);
         }
 
         std::vector<Value> fields(argCount);
@@ -192,7 +195,7 @@ VMResult VM::executeContainerBuildOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -219,7 +222,7 @@ VMResult VM::executeIndexOps(OpCode op, size_t& ip) {
     case OpCode::OP_INDEX_SET_LOCAL:
         return executeIndexSetLocal(ip);
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
     }
 }
 
@@ -238,14 +241,16 @@ VMResult VM::executeIndexGet(size_t& ip) {
         if (BoundsCheck::inBounds(i, obj.arrayVal().size())) {
             push(obj.arrayVal()[static_cast<size_t>(i)]);
         } else {
-            return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)", static_cast<long long>(i),
-                                                    obj.arrayVal().size()));
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
+                                                    
+                                                    obj.arrayVal().size()),
+                                DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
         auto dk = Value::dictKeyFromValue(idx);
         if (!dk)
-            return runtimeError(ErrorMessages::kDictKeyInvalidType);
+            return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
         auto it = obj.dictVal().find(*dk);
         if (it != obj.dictVal().end()) {
             push(it->second);
@@ -285,28 +290,32 @@ VMResult VM::executeIndexGet(size_t& ip) {
             charCount++;
         }
         if (i < 0 || !found) {
-            return runtimeError(ErrorFormat::format("字符串索引越界: %lld, 有效范围 [0, %lld)",
-                                                    static_cast<long long>(i), static_cast<long long>(charCount)));
+            return runtimeError(ErrorFormat::formatStd("字符串索引越界: {}, 有效范围 [0, {})",
+                                                    
+                                                    static_cast<long long>(i),  static_cast<long long>(charCount)),
+                                DiagCodes::kIndexOutOfBounds);
         }
         push(Value(s.substr(targetBytePos, targetByteLen)));
     } else if (obj.isString()) {
-        return runtimeError(ErrorMessages::kStringIndexMustBeInt);
+        return runtimeError(ErrorMessages::kStringIndexMustBeInt, DiagCodes::kTypeMismatch);
     } else if (obj.isDict()) {
         // R97 #1 fix: 对齐 RegisterVM/Interpreter——dict 非 string 索引原落入通用
         // ErrorMessages::kTypeNotIndexable 分支，现显式报字典键类型错误。
         // L4 fix 遗漏的旧字符串 "字典键必须是字符串" 已修正为统一消息。
-        return runtimeError(ErrorMessages::kDictKeyInvalidType);
+        return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
     } else if (obj.isTuple() && idx.isInt()) {
         // R98 元组与解构：元组索引访问（immutable，与数组语义一致）
         int64_t i = idx.intVal();
         if (BoundsCheck::inBounds(i, obj.tupleVal().size())) {
             push(obj.tupleVal()[static_cast<size_t>(i)]);
         } else {
-            return runtimeError(ErrorFormat::format("元组索引越界: %lld, 有效范围 [0, %zu)", static_cast<long long>(i),
-                                                    obj.tupleVal().size()));
+            return runtimeError(ErrorFormat::formatStd("元组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
+                                                    
+                                                    obj.tupleVal().size()),
+                                DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isTuple()) {
-        return runtimeError("元组索引必须是整数");
+        return runtimeError("元组索引必须是整数", DiagCodes::kTypeMismatch);
     } else {
         return runtimeError(ErrorMessages::kTypeNotIndexable);
     }
@@ -334,17 +343,19 @@ VMResult VM::executeIndexSet(size_t& ip) {
         if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
             obj.arrayVal()[static_cast<size_t>(i)] = val;
         } else {
-            return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)", static_cast<long long>(i),
-                                                    std::as_const(obj).arrayVal().size()));
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
+                                                    
+                                                    std::as_const(obj).arrayVal().size()),
+                                DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
         auto dk = Value::dictKeyFromValue(innerIdx);
         if (!dk)
-            return runtimeError(ErrorMessages::kDictKeyInvalidType);
+            return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
         obj.dictVal()[*dk] = val;
     } else if (obj.isArray()) {
-        return runtimeError(ErrorMessages::kArrayIndexMustBeInt);
+        return runtimeError(ErrorMessages::kArrayIndexMustBeInt, DiagCodes::kTypeMismatch);
     } else {
         return runtimeError(ErrorMessages::kTypeNotIndexAssignable);
     }
@@ -372,7 +383,7 @@ VMResult VM::executeIndexSetVar(size_t& ip) {
     // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析（先 globalSlots_ 再 globals_）
     Value* objPtr = resolveMutableGlobal(varName);
     if (!objPtr)
-        return runtimeError("未定义的变量: " + varName);
+        return runtimeError("未定义的变量: " + varName, DiagCodes::kUndefinedVariable);
     Value& obj = *objPtr; // 引用，直接修改
     if (obj.isArray() && index.isInt()) {
         int64_t i = index.intVal();
@@ -380,17 +391,19 @@ VMResult VM::executeIndexSetVar(size_t& ip) {
         if (BoundsCheck::inBounds(i, std::as_const(obj).arrayVal().size())) {
             obj.arrayVal()[static_cast<size_t>(i)] = val;
         } else {
-            return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)", static_cast<long long>(i),
-                                                    std::as_const(obj).arrayVal().size()));
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
+                                                    
+                                                    std::as_const(obj).arrayVal().size()),
+                                DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
         auto dk = Value::dictKeyFromValue(index);
         if (!dk)
-            return runtimeError(ErrorMessages::kDictKeyInvalidType);
+            return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
         obj.dictVal()[*dk] = val;
     } else if (obj.isArray()) {
-        return runtimeError(ErrorMessages::kArrayIndexMustBeInt);
+        return runtimeError(ErrorMessages::kArrayIndexMustBeInt, DiagCodes::kTypeMismatch);
     } else {
         return runtimeError(ErrorMessages::kTypeNotIndexAssignable);
     }
@@ -429,19 +442,21 @@ VMResult VM::executeIndexSetLocal(size_t& ip) {
             if (isFieldSlot)
                 currentFrame().fieldsModified = true;
         } else {
-            return runtimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)", static_cast<long long>(i),
-                                                    std::as_const(obj).arrayVal().size()));
+            return runtimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(i),
+                                                    
+                                                    std::as_const(obj).arrayVal().size()),
+                                DiagCodes::kIndexOutOfBounds);
         }
     } else if (obj.isDict()) {
         // L4 fix: 字典键支持 string/int/bool/float
         auto dk = Value::dictKeyFromValue(index);
         if (!dk)
-            return runtimeError(ErrorMessages::kDictKeyInvalidType);
+            return runtimeError(ErrorMessages::kDictKeyInvalidType, DiagCodes::kTypeMismatch);
         obj.dictVal()[*dk] = val;
         if (isFieldSlot)
             currentFrame().fieldsModified = true;
     } else if (obj.isArray()) {
-        return runtimeError(ErrorMessages::kArrayIndexMustBeInt);
+        return runtimeError(ErrorMessages::kArrayIndexMustBeInt, DiagCodes::kTypeMismatch);
     } else {
         return runtimeError(ErrorMessages::kTypeNotIndexAssignable);
     }
@@ -494,6 +509,9 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
             } else {
                 push(Value::nullValue());
             }
+        } else if (obj.isNull()) {
+            // P2 fix (null-access): null 值成员访问给出明确的 null-access 诊断码
+            return runtimeError("不能在 null 值上访问属性或调用方法", DiagCodes::kNullAccess);
         } else {
             return runtimeError(ErrorMessages::kTypeNotMemberAccessible);
         }
@@ -540,7 +558,7 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
         // A2: Dedup-7B resolveMutableGlobal 统一全局变量解析
         Value* objPtr = resolveMutableGlobal(varName);
         if (!objPtr)
-            return runtimeError("未定义的变量: " + varName);
+            return runtimeError("未定义的变量: " + varName, DiagCodes::kUndefinedVariable);
         Value& obj = *objPtr; // 引用，直接修改
         if (obj.isInstance()) {
             obj.fields()[fieldName] = val;
@@ -597,7 +615,7 @@ VMResult VM::executeMemberOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -654,8 +672,10 @@ VMResult VM::executeEnumOps(OpCode op, size_t& ip) {
         int64_t i = idx.intVal();
         const auto& fields = scrut.enumVariantFields();
         if (i < 0 || static_cast<size_t>(i) >= fields.size()) {
-            return runtimeError(ErrorFormat::format("OP_ENUM_VARIANT_FIELD: 索引越界 %lld, 有效范围 [0, %zu)",
-                                                    static_cast<long long>(i), fields.size()));
+            return runtimeError(ErrorFormat::formatStd("OP_ENUM_VARIANT_FIELD: 索引越界 {}, 有效范围 [0, {})",
+                                                    
+                                                    static_cast<long long>(i),  fields.size()),
+                                DiagCodes::kIndexOutOfBounds);
         }
         push(fields[static_cast<size_t>(i)]);
         notifyStep(ip, op);
@@ -664,7 +684,7 @@ VMResult VM::executeEnumOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -690,7 +710,7 @@ VMResult VM::executeWritebackOps(OpCode op, size_t& ip) {
     case OpCode::OP_WRITEBACK_INDEX_UPVALUE:
         return writebackToUpvalue(op, ip);
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
     }
 }
 
@@ -721,7 +741,7 @@ VMResult VM::writebackToGlobalVar(OpCode op, size_t& ip) {
         Value* objPtr = resolveMutableGlobal(varName);
         if (!objPtr) {
             lastMutatedReceiver_ = Value::nullValue();
-            return runtimeError("未定义的变量: " + varName);
+            return runtimeError("未定义的变量: " + varName, DiagCodes::kUndefinedVariable);
         }
         *objPtr = std::move(lastMutatedReceiver_);
         lastMutatedReceiver_ = Value::nullValue();
@@ -744,7 +764,7 @@ VMResult VM::writebackToGlobalVar(OpCode op, size_t& ip) {
     Value* objPtr = resolveMutableGlobal(varName);
     if (!objPtr) {
         lastMutatedReceiver_ = Value::nullValue();
-        return runtimeError("未定义的变量: " + varName);
+        return runtimeError("未定义的变量: " + varName, DiagCodes::kUndefinedVariable);
     }
     *objPtr = std::move(lastMutatedReceiver_);
     lastMutatedReceiver_ = Value::nullValue();
@@ -898,7 +918,7 @@ VMResult VM::executeMiscOps(OpCode op, size_t& ip) {
     case OpCode::OP_FINALLY_END:
         return executeMiscExceptionOps(op, ip);
     default:
-        return runtimeError(ErrorFormat::format("未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("未知操作码: {}",  static_cast<int>(op)));
     }
 }
 
@@ -1011,7 +1031,7 @@ VMResult VM::executeMiscStackOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::format("executeMiscStackOps 未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("executeMiscStackOps 未知操作码: {}",  static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1053,8 +1073,9 @@ VMResult VM::executeMiscTypeCheck(OpCode op, size_t& ip) {
                 return VMResult::VM_OK;
             } // 匹配，通过
         }
-        return runtimeError(ErrorFormat::format(ErrorMessages::kTypeAnnotationViolationFmt, annotation.c_str(),
-                                                val.typeName().c_str()));
+        return runtimeError(
+            ErrorFormat::formatStd(ErrorMessages::kTypeAnnotationViolationFmtStd,  annotation,  val.typeName()),
+            DiagCodes::kTypeMismatch);
     }
     notifyStep(ip, op);
     ip += 3; // opcode(1B) + typeIdx(2B)
@@ -1144,7 +1165,7 @@ VMResult VM::executeMiscJumpOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::format("executeMiscJumpOps 未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("executeMiscJumpOps 未知操作码: {}",  static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;
@@ -1221,7 +1242,7 @@ VMResult VM::executeMiscExceptionOps(OpCode op, size_t& ip) {
     }
 
     default:
-        return runtimeError(ErrorFormat::format("executeMiscExceptionOps 未知操作码: %d", static_cast<int>(op)));
+        return runtimeError(ErrorFormat::formatStd("executeMiscExceptionOps 未知操作码: {}",  static_cast<int>(op)));
     }
 
     return VMResult::VM_OK;

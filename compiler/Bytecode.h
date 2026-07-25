@@ -73,7 +73,7 @@ enum class OpCode : uint8_t {
     OP_DUP_N, // 复制栈中第 N 个值到栈顶（操作数: depth(1B)），用于写回时保留索引值
 
     // 新增指令
-    OP_CLOSURE,      // 创建闭包值（操作数: nameIdx(2B) + argCount(1B)）
+    OP_CLOSURE,      // 创建闭包值（操作数: nameIdx(2B) + upvalueCount(1B) + upvalueDescs[2B each]）
     OP_GET_LOCAL,    // 读取当前帧局部变量（操作数: slot(1B)）
     OP_SET_LOCAL,    // 写入当前帧局部变量（操作数: slot(1B)）
     OP_CLASS_NEW,    // 类构造调用（操作数: nameIdx(2B) + argCount(1B)）
@@ -406,6 +406,12 @@ public:
 
     /// 反汇编单条指令（D9 fix: 实现移至 Bytecode.cpp）
     std::string disassembleInstruction(size_t& offset) const;
+
+    /// P2-11 预编译模块：全局槽位重定位。
+    /// 遍历字节码流，将 OP_GET_GLOBAL/OP_SET_GLOBAL/OP_DEFINE_GLOBAL/OP_DELETE_GLOBAL
+    /// 的操作数 slot 按 relocationMap 重映射。
+    /// @param relocationMap[moduleSlot] = mainSlot（-1 表示不重定位）
+    void relocateGlobalSlots(const std::vector<int>& relocationMap);
 };
 
 /// R99 enum variant 元信息（编译期→运行时传递，供 VM 校验 OP_BUILD_ENUM_VARIANT）
@@ -433,6 +439,11 @@ struct CompileResult {
     // 供 OP_BUILD_ENUM_VARIANT 校验 variant 名存在性与参数 arity 一致性。
     // 对齐 Interpreter::enumRegistry_ 的运行时校验语义，保证三后端一致。
     std::vector<VMEnumInfo> enumInfos;
+    // P2-11 预编译模块：模块导出名称集合。
+    // 非空时表示此 CompileResult 是一个独立编译的模块（.minic），
+    // 包含模块通过 export 语句导出的所有名称。
+    // 用于 import 时具名导入验证 + 命名空间字典构造。
+    std::vector<std::string> moduleExports;
 
     CompileResult() = default;
     CompileResult(CompileResult&&) noexcept = default;

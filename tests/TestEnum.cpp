@@ -421,23 +421,30 @@ TEST(EnumBoundary, UndefinedEnum) {
 TEST(EnumBoundary, UndefinedVariant) {
     std::string src = "enum Color { Red, Green, Blue }"
                       "var c = Color.NoSuchVariant;";
-    // Interpreter 通过 enumRegistry_ 校验 variant 名，报运行时错误。
-    // StackVM/IR/RegVM 路径的 OP_BUILD_ENUM_VARIANT 仅按常量池字符串构造 variant，
-    // 不持有 enum 注册表（设计决策：VM 层不做语义校验，类似 OP_CLASS_NEW 不校验类名）。
-    // 这里验证 Interpreter 报错，其他路径不报错（属于 VM 设计差异）。
+    // L5 fix: 四后端均通过 enumRegistry_ 校验 variant 名，报运行时错误。
+    // StackVM (VMContainers.cpp OP_BUILD_ENUM_VARIANT) / RegisterVM (RegisterVM.cpp
+    // REG_BUILD_ENUM_VARIANT) 在运行时检查 enum 已声明、variant 存在、arity 一致。
     EXPECT_TRUE(runInterpreter(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runStackVM(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runStackVM_IR(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runRegVM(src).find("<runtime:") != std::string::npos);
 }
 
 TEST(EnumBoundary, WrongArity) {
     std::string src = "enum Option<T> { Some(T), None }"
                       "var s = Option.Some(1, 2);"; // Some 期望 1 参数，传 2
-    // 同 UndefinedVariant：Interpreter 通过 enumRegistry_ 校验 arity，报运行时错误。
-    // StackVM/IR/RegVM 路径的 OP_BUILD_ENUM_VARIANT 仅按 argCount 构造，不校验声明 arity。
+    // L5 fix: 四后端均通过 enumRegistry_ 校验 arity，报运行时错误。
     EXPECT_TRUE(runInterpreter(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runStackVM(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runStackVM_IR(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runRegVM(src).find("<runtime:") != std::string::npos);
 }
 
 TEST(EnumBoundary, MatchNoCaseMatched) {
-    // match 无 default 且无 case 匹配 → 运行时错误
+    // L6 fix: match 无 default 且无 case 匹配 → 四后端均报运行时错误
+    // StackVM 路径 (Compiler.cpp visitMatchExpr): OP_POP + OP_STRING + OP_THROW
+    // IR 路径 (IR.cpp visitMatchExpr): LOAD_CONST + THROW
+    // Interpreter: runtimeError("match 表达式没有匹配的 case")
     std::string src = "enum Color { Red, Green, Blue }"
                       "var c = Color.Blue;"
                       "var r = match (c) {"
@@ -446,9 +453,9 @@ TEST(EnumBoundary, MatchNoCaseMatched) {
                       "};"
                       "print(r);";
     EXPECT_TRUE(runInterpreter(src).find("<runtime:") != std::string::npos);
-    // StackVM/RegVM/IR 路径在无 default 时 tempSlot=null，输出 null
-    // 但语义一致性：四路径都不报错且产生 null（IR 路径设计）
-    // 这里验证 Interpreter 报错（其他路径输出 null，属于 IR 设计差异）
+    EXPECT_TRUE(runStackVM(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runStackVM_IR(src).find("<runtime:") != std::string::npos);
+    EXPECT_TRUE(runRegVM(src).find("<runtime:") != std::string::npos);
 }
 
 // ============================================================

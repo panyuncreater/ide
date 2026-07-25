@@ -146,7 +146,7 @@ const std::vector<Course>& CourseSystemLibrary::presetCourses() {
                    "// 导入整个模块\nimport \"utils\";\n// 导入指定名称\nimport { helper } from "
                    "\"utils\";\nprint(\"imported\");",
                    "import 语句只能在顶层使用，支持导入全部或指定名称。"
-                   "模块路径用字符串字面量，需注意路径安全与循环依赖。",
+                   "模块路径用字符串字面量，需注意路径安全与循环导入延迟加载。",
                    "imported"},
                   {"1.2 export 导出",
                    "// 导出变量\nexport var PI = 3.14;\n// 导出函数\nexport fun area(r) {\n  return PI * r * "

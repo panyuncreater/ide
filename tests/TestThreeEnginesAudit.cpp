@@ -9,7 +9,7 @@
 //   BUG-VM-02  (P2): OP_CALL 函数路径错误返回点未 popN
 //   BUG-VM-03  (P2): executeMethodCall MAX_FRAMES 错误未 popN
 //   BUG-VM-04  (P2): OP_BUILD_DICT 错误路径栈残留
-//   BUG-VM-05  (P2): lastAsciiStrPtr_ 缓存失效条件（已知限制标注）
+//   BUG-VM-05  (P2): lastAsciiStrPtr_ 缓存失效条件（R97 #3 已修复，改用 StringData::cachedIsAscii）
 //   BUG-REGVM-1 (P2): executeArith 字符串拼接路径跳过 stepCallback_
 //   BUG-REGVM-2 (P2): REG_RETURN/RETURN_NULL/THROW 跳过 stepCallback_
 //   BUG-REGVM-3 (P2): functionClosures_ 死代码删除
@@ -273,9 +273,12 @@ TEST(ThreeEngAuditVM04, DictNormalPathWorks) {
 }
 
 // ============================================================
-// BUG-VM-05: lastAsciiStrPtr_ 缓存失效条件（已知限制标注）
+// BUG-VM-05: lastAsciiStrPtr_ 缓存失效条件（R97 #3 已修复）
 // ------------------------------------------------------------
-// (ptr, size) 双重验证已大幅降低风险。验证字符串索引正常工作。
+// R97 #3 fix: 移除 lastAsciiStr* 4 字段缓存，改为 StringData::cachedIsAscii 持久缓存。
+// isAscii 直接存在 StringData 内，与字符串生命周期绑定，O(1) 读取无碰撞风险。
+// 非 const stringVal() 返回可变引用时 reset() 使缓存失效。
+// 验证字符串索引 ASCII 快速路径与 UTF-8 路径均正常工作。
 // ============================================================
 
 TEST(ThreeEngAuditVM05, StringIndexAsciiFastPathWorks) {

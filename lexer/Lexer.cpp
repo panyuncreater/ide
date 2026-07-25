@@ -1,4 +1,5 @@
 #include "lexer/Lexer.h"
+#include "common/ErrorMessages.h" // P2-12: DiagCodes 常量
 #include "common/Utf8Utils.h"
 #include <array>
 #include <cctype>
@@ -55,6 +56,7 @@ const std::unordered_map<std::string, TokenType>& Lexer::keywords() {
         m["import"] = TokenType::TK_IMPORT;
         m["from"] = TokenType::TK_FROM;
         m["export"] = TokenType::TK_EXPORT;
+        m["as"] = TokenType::TK_AS; // P2-11: import * as ns
         m["int"] = TokenType::TK_INT;
         m["float"] = TokenType::TK_FLOAT;
         m["bool"] = TokenType::TK_BOOL;
@@ -84,7 +86,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
     if (source.size() > MAX_SOURCE_SIZE) {
         diagnostics_.addError("源代码过大（" + std::to_string(source.size() / 1024 / 1024) + "MB），超过上限 " +
                                   std::to_string(MAX_SOURCE_SIZE / 1024 / 1024) + "MB",
-                              1, 1, DiagSource::Lexer);
+                              1, 1, DiagSource::Lexer, DiagCodes::kSourceTooLarge);
         tokens_.clear();
         tokens_.emplace_back(TokenType::TK_EOF, "", std::monostate{}, 1, 1);
         return tokens_;
@@ -129,7 +131,7 @@ std::vector<Token> Lexer::scan(const std::string& source) {
         if (tokens_.size() > MAX_TOKEN_COUNT) {
             diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
                                       "，源代码可能包含过多 token",
-                                  line_, currentColumn(), DiagSource::Lexer);
+                                  line_, currentColumn(), DiagSource::Lexer, DiagCodes::kTooManyTokens);
             break;
         }
     }
@@ -225,7 +227,7 @@ void Lexer::scanToken() {
     // Hard Constraint #27: Lexer must check MAX_TOKEN_COUNT at start of scanToken().
     if (tokens_.size() >= MAX_TOKEN_COUNT) {
         diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) + "，源代码可能包含过多 token",
-                              line_, currentColumn(), DiagSource::Lexer);
+                              line_, currentColumn(), DiagSource::Lexer, DiagCodes::kTooManyTokens);
         return;
     }
 
@@ -700,7 +702,7 @@ void Lexer::string(bool isInterp) {
     // BUG-LEX-AUDIT-4 fix: 末尾片段也需检查 MAX_TOKEN_COUNT
     if (tokens_.size() >= MAX_TOKEN_COUNT) {
         diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) + "，源代码可能包含过多 token",
-                              startLine, startCol, DiagSource::Lexer);
+                              startLine, startCol, DiagSource::Lexer, DiagCodes::kTooManyTokens);
         return;
     }
     std::string text(source_, start_, current_ - start_);
@@ -729,7 +731,7 @@ bool Lexer::handleInterpolation(int& startLine, int& startCol, std::string& valu
     // 需在此显式检查，防止含大量小插值的字符串绕过 DoS 防护。
     if (tokens_.size() >= MAX_TOKEN_COUNT) {
         diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) + "，源代码可能包含过多 token",
-                              startLine, startCol, DiagSource::Lexer);
+                              startLine, startCol, DiagSource::Lexer, DiagCodes::kTooManyTokens);
         return false;
     }
     std::string text(source_, start_, current_ - start_);
@@ -745,7 +747,7 @@ bool Lexer::handleInterpolation(int& startLine, int& startCol, std::string& valu
     advance();
     if (tokens_.size() >= MAX_TOKEN_COUNT) { // BUG-LEX-AUDIT-4
         diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) + "，源代码可能包含过多 token",
-                              braceLine, braceCol, DiagSource::Lexer);
+                              braceLine, braceCol, DiagSource::Lexer, DiagCodes::kTooManyTokens);
         return false;
     }
     tokens_.emplace_back(TokenType::TK_INTERP_START, "{", std::monostate{}, braceLine,
@@ -763,7 +765,7 @@ bool Lexer::handleInterpolation(int& startLine, int& startCol, std::string& valu
         if (tokens_.size() >= MAX_TOKEN_COUNT) {
             diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
                                       "，源代码可能包含过多 token",
-                                  line_, currentColumn(), DiagSource::Lexer);
+                                  line_, currentColumn(), DiagSource::Lexer, DiagCodes::kTooManyTokens);
             return false;
         }
         // 跳过空白
@@ -785,7 +787,7 @@ bool Lexer::handleInterpolation(int& startLine, int& startCol, std::string& valu
                 if (tokens_.size() >= MAX_TOKEN_COUNT) { // BUG-LEX-AUDIT-4
                     diagnostics_.addError("Token 数量超过上限 " + std::to_string(MAX_TOKEN_COUNT) +
                                               "，源代码可能包含过多 token",
-                                          endLine, endCol, DiagSource::Lexer);
+                                          endLine, endCol, DiagSource::Lexer, DiagCodes::kTooManyTokens);
                     return false;
                 }
                 tokens_.emplace_back(TokenType::TK_INTERP_END, "}", std::monostate{}, endLine,

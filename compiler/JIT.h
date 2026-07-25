@@ -23,14 +23,46 @@
  *   - 整数取模：OP_MODULO（cqo + idiv，余数在 rdx）
  *   - 除零错误路径：test + jz → jitReportError → jmp epilogue
  *
- * 阶段 2b 函数调用（R141）：
+ * 阶段 2b 函数调用（R141，后续版本持续扩展）：
  *   - 所有 chunk（mainChunk + functionChunks）编译到一个 CodeHolder
  *   - 每个 chunk 对应一个入口 Label，OP_CALL 用 jmp targetLabel
  *   - 局部变量：OP_GET_LOCAL / OP_SET_LOCAL（r13 = basePointer，[r13 - slot*8]）
  *   - 函数调用：OP_CALL（保存调用者帧 → 设置新 r13 → jmp 函数 Label）
  *   - 函数返回：OP_RETURN（恢复调用者帧 → jmp 返回地址；mainChunk return 跳 epilogue）
- *   - 闭包创建：OP_CLOSURE（仅 upvalueCount=0，push null 标记，不捕获 upvalue）
- *   - 不支持：OP_CALL_EXPR（闭包值调用）、upvalue 捕获、递归深度限制、默认参数、方法调用
+ *   - 闭包创建：OP_CLOSURE（R156 起支持 upvalue 捕获，含 closed/open 两种状态）
+ *   - 闭包值调用：OP_CALL_EXPR（R155 实现，含 upvalue 绑定与默认参数补全）
+ *   - 方法调用：OP_METHOD_CALL / OP_SUPER_CALL（R149 实现，含 init 自动调用与字段 writeBack）
+ *   - 默认参数：编译期收集 defaultConstIndices，运行时按 missingCount 补全（R149/R155）
+ *   - 递归深度限制：RuntimeLimits::MAX_FRAMES（256），超出报 recursion-depth-exceeded
+ *
+ * 阶段 2c 浮点原生与类型反馈（R152）：
+ *   - 浮点原生：发射 SSE2 指令（movsd/addsd/subsd/mulsd/divsd），三层分派
+ *     （INT 原生 → FLOAT 原生 → C++ helper 兜底），避免浮点走 C++ 辅助函数调用开销
+ *   - 类型反馈：per-chunk TypeFeedback 计数器，重编译时决策 INT/FLOAT 特化策略
+ *
+ * 阶段 2d 异常处理（R162）：
+ *   - try/catch/throw 结构化异常处理（OP_TRY_BEGIN/OP_TRY_END/OP_THROW）
+ *   - finally 块与 break/continue 续跳（OP_PUSH_JUMP_TARGET/OP_FINALLY_END）
+ *   - C++ 辅助函数 jitThrow 实现栈展开：搜索 tryStack_ → 截断操作数栈 → 跨帧传播
+ *   - 跨帧异常传播：弹出 JitFrame、关闭 upvalue、恢复 r13/r15
+ *   - JIT 代码通过 lea label 获取 catch 块绝对地址，jitThrow 返回该地址供 jmp
+ *
+ * GC 集成（P2-9 fix，R166）：
+ *   - JIT 持有的 Value 引用（操作数栈/帧栈/全局槽位）以 NaN-boxing raw bits 表示，
+ *     未注册为 GC roots。若 JIT 执行期间 Interpreter 的增量 GC 回调被触发
+ *     （jitBuildArray 等 helper 分配容器累计达 8192 阈值），会以不完整 roots 集
+ *     误回收 JIT 存活容器，导致 UAF。
+ *   - 解决方案：JITBackend::execute() 入口构造 GcManager::CallbackSuppressor，
+ *     原子保存并置空 gcTriggerCallback_，析构时恢复。JIT 期间增量 GC 被完全抑制，
+ *     产生的循环引用孤岛由下一轮 Interpreter execute() 入口的兜底 collectCycle 回收
+ *     （跨 execute 边界自动清理）。
+ *   - 未实现 safepoint 轮询机制（在 OP_LOOP 回边处轮询 GC 请求标志并收集 JIT roots）：
+ *     当前方案对教学场景足够（JIT 执行短任务，GC 延迟到下一轮 Interpreter 执行），
+ *     长期运行场景的内存峰值可由 Interpreter 兜底回收控制。
+ *
+ * 尚不支持（截至 R166）：
+ *   - 运行时错误不可捕获：除零/溢出/类型错误等 runtimeError 不触发 try/catch
+ *     （与 StackVM 行为一致：try/catch 仅捕获显式 throw，不捕获运行时错误）
  *
  * 教学价值：
  *   - 展示 JIT 编译原理：字节码 → 本地代码的直接映射
@@ -75,6 +107,8 @@
  *   offset 144 : lastMutatedReceiverPtr (8B, int64_t* 嵌套左值赋值链中转邮箱) — R154 新增
  *   offset 152 : funcEntriesPtr   (8B, unordered_map<string,JitMethodInfo>*) — R155 新增
  *   offset 160 : currentBp        (8B, int64_t* 当前帧 basePointer r13) — R156 新增
+ *   offset 232 : memberGetICPtr   (8B, MemberGetInlineCacheEntry*) — R160 新增
+ *   offset 240 : globalsPtr       (8B, unordered_map<string,Value>*) — R162 新增
  *   JIT 代码访问 globalSlots[slot]: mov rcx, [r12+24]; mov rax, [rcx + slot*8]
  *   JIT 代码访问帧栈: mov rax, [r12+32]; mov rcx, [r12+40]; mov rcx, [rcx]
  *   R146 数组辅助函数访问 JIT 栈: JIT 代码在调用前 mov [r12+48], r15 更新栈顶指针，
@@ -240,6 +274,12 @@ struct JitContext {
     int64_t deoptChunkIdx = 0;       // offset 224: 反优化 chunk 索引（jitDeoptimize 设置）
     // R160: inline cache 字段（OP_MEMBER_GET 属性访问缓存）
     void* memberGetICPtr = nullptr; // offset 232: MemberGetInlineCacheEntry 数组指针（per-call-site）
+    // R162: 名称变量映射（OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR）
+    // 指向 JITBackend::globals_（unordered_map<string, Value>），catch 变量等无 slot 的名称变量走此路径
+    void* globalsPtr = nullptr; // offset 240: unordered_map<string, Value>* 名称变量表
+    // P2-9: JIT GC 集成采用 CallbackSuppressor 方案（非 safepoint 轮询），
+    //   JITBackend::execute() 入口抑制增量 GC 回调，无需 JIT 代码内轮询。
+    //   详见文件头部"GC 集成"章节与 GcManager::CallbackSuppressor。
 };
 
 /// R160: Per-call-site inline cache entry for OP_MEMBER_GET
@@ -258,6 +298,15 @@ struct JitContext {
 struct MemberGetInlineCacheEntry {
     const void* cachedInstancePtr = nullptr;    ///< cache key: InstanceData 原始地址
     const Value* cachedFieldValuePtr = nullptr; ///< cache value: 字段 Value 指针（直接读取）
+};
+
+/// R162: JIT try/catch 异常处理器（运行时栈结构）
+/// OP_TRY_BEGIN 时 push 到 tryStack_，OP_TRY_END 时 pop，OP_THROW 时搜索。
+/// 与 StackVM VM::TryHandler 对齐，但 catchIp 改为 void*（JIT 代码绝对地址）。
+struct JitTryHandler {
+    void* catchAddr = nullptr;    ///< catch 块的 JIT 代码绝对地址（lea label 解析）
+    int64_t* stackBase = nullptr; ///< try 开始时 r15（操作数栈顶），catch 时恢复
+    size_t frameIndex = 0;        ///< 所属帧索引（*frameCount 值），用于跨帧异常传播
 };
 
 /// JIT 编译后的入口函数签名
@@ -290,10 +339,30 @@ public:
     JitResult execute(const CompileResult& result);
 
     /// 是否发生过错误
-    bool hasError() const { return hasError_; }
+    /// P2-12: override IBackend::hasError()，签名一致
+    bool hasError() const override { return hasError_ || diagnostics_.hasErrors(); }
 
     /// 获取最后的错误消息
-    const std::string& getLastError() const { return lastError_; }
+    /// P2-12: override IBackend::getLastError()，返回值类型对齐（消除协变返回类型错误）
+    std::string getLastError() const override {
+        // 优先从 diagnostics_ 派生（结构化错误），无诊断时回退到 lastError_（JIT 内部错误）
+        const auto& diags = diagnostics_.all();
+        for (auto it = diags.rbegin(); it != diags.rend(); ++it) {
+            if (it->isError())
+                return it->message;
+        }
+        return lastError_;
+    }
+
+    /// 获取最后错误的源码行号（P2-12: 新增 override）
+    int getLastErrorLine() const override {
+        const auto& diags = diagnostics_.all();
+        for (auto it = diags.rbegin(); it != diags.rend(); ++it) {
+            if (it->isError())
+                return it->line;
+        }
+        return 0;
+    }
 
     /// R150: 获取 per-chunk 调用计数统计（热点检测用）
     /// @return 按 chunk 索引顺序的 (chunkName, callCount) 列表，mainChunk 索引 0 不计数（恒为 0）
@@ -408,6 +477,17 @@ public:
     /// @return 0=成功（deoptEntryPoint 已设置），非 0=失败
     int64_t triggerDeoptimize(int64_t chunkIdx);
 
+    /// R162: 名称变量访问器（供 jitDefineVar/jitGetVar/jitSetVar/jitDeleteVar 等
+    /// extern "C" helper 访问 private 成员，避免 friend 与 extern "C" 链接规范冲突）
+    ///@{
+    std::vector<int64_t>& globalSlotsMut() { return globalSlots_; }
+    std::unordered_map<std::string, int>& globalNameToSlotMut() { return globalNameToSlot_; }
+    std::unordered_map<std::string, Value>& globalsMut() { return globals_; }
+    const std::vector<int64_t>& globalSlotsRef() const { return globalSlots_; }
+    const std::unordered_map<std::string, int>& globalNameToSlotRef() const { return globalNameToSlot_; }
+    const std::unordered_map<std::string, Value>& globalsRef() const { return globals_; }
+    ///@}
+
 private:
     /// 编译所有 chunk（mainChunk + functionChunks）到一个 CodeHolder
     /// @param result 编译结果（含 mainChunk 和 functionChunks）
@@ -473,14 +553,8 @@ private:
     std::function<void(const std::string&)> outputCallback_;       ///< print 输出回调
     std::function<std::string(const std::string&)> inputCallback_; ///< input 输入回调
 
-    std::vector<int64_t> globalSlots_; ///< R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）
-
     std::vector<JitFrame> frameStack_; ///< R141: 帧栈存储（预分配，JitContext.frames 指向此）
     size_t frameCount_ = 0;            ///< R141: 当前帧深度（JitContext.frameCount 指向此）
-
-    /// R147: 全局变量名→slot 映射，编译期解析 OP_INDEX_SET_VAR 的 nameIdx→slot。
-    /// 从 CompileResult.globalSlotNames 构建，供 compileAllChunks 查询。
-    std::unordered_map<std::string, int> globalNameToSlot_;
 
     /// R148: 运行时类注册表（与 StackVM classInfo_ 等价，简化版无 methodCache）
     /// OP_DEFINE_CLASS 执行时填充，OP_CLASS_NEW/OP_MEMBER_GET/SET 查询
@@ -680,6 +754,26 @@ public:
     /// R160: inline cache 命中/未命中计数（教学统计用）
     uint64_t icHitCount_ = 0;
     uint64_t icMissCount_ = 0;
+
+    /// R162: try/catch 异常处理器栈（与 StackVM tryStack_ 对齐）
+    /// OP_TRY_BEGIN push，OP_TRY_END pop，OP_THROW 搜索。
+    /// jitThrow 通过 backendPtr 访问此栈，支持跨帧异常传播。
+    std::vector<JitTryHandler> tryStack_;
+
+    /// R162: finally 续跳地址栈（与 StackVM pendingJumpStack_ 对齐）
+    /// OP_PUSH_JUMP_TARGET push（JIT 代码地址），OP_FINALLY_END pop 并跳转。
+    /// 异常传播时清空（异常中断 break/continue 续跳链）。
+    std::vector<void*> pendingJumpStack_;
+
+    /// R162: 名称变量表（与 StackVM globals_ 对齐）
+    /// OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR 操作此表
+    /// （catch 变量、顶层 if 块内 var 等无 slot 分配的名称变量）
+    /// extern "C" helper 通过 backendPtr 直接访问，故声明在 public 区
+    std::unordered_map<std::string, Value> globals_;
+
+    /// R162: extern "C" helper（jitDefineVar 等）通过 backendPtr 访问，故声明在 public 区
+    std::vector<int64_t> globalSlots_; ///< R139: 全局变量 slot 存储（与 StackVM globalSlots_ 等价）
+    std::unordered_map<std::string, int> globalNameToSlot_; ///< R147: 名称→slot 映射
 
     /// R156: 关闭所有指向 address <= fromAddr 的 open upvalues
     /// 与 StackVM closeUpvaluesFrom(fromSlot) 语义对齐但方向反转：

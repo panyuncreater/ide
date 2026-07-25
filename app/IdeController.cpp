@@ -1,4 +1,5 @@
 #include "IdeController.h"
+#include "common/BuiltinModules.h" // P2-11: std/* 内建模块拦截
 #include "common/Logger.h"
 #include "interpreter/Environment.h" // #4 fix: VM 条件断点求值
 #include "interpreter/Interpreter.h" // P0-3 fix: currentEnvironment() 访问
@@ -294,6 +295,10 @@ void IdeController::setupCompilerModuleLoader(const std::string& filePath) {
     // 捕获 baseDir 副本到 lambda（独立于 IdeController 生命周期，
     // Compiler 持有 std::function 直到下次设置或析构）
     pipeline_.compiler().setModuleLoader([baseDir](const std::string& modulePath) -> std::string {
+        // P2-11: 内建标准库模块拦截（std/math, std/string, std/list）
+        if (BuiltinModuleRegistry::isBuiltinModule(modulePath)) {
+            return BuiltinModuleRegistry::getSource(modulePath);
+        }
         QString qPath = QString::fromStdString(modulePath);
         if (!qPath.endsWith(".mini", Qt::CaseInsensitive)) {
             qPath += ".mini";
@@ -704,6 +709,10 @@ void IdeController::setupReplModuleCallbacks() {
         return {};
     };
     interpreter_->setModuleLoader([resolveModulePath](const std::string& modulePath) -> std::string {
+        // P2-11: 内建标准库模块拦截（std/math, std/string, std/list）
+        if (BuiltinModuleRegistry::isBuiltinModule(modulePath)) {
+            return BuiltinModuleRegistry::getSource(modulePath);
+        }
         QString resolved = resolveModulePath(modulePath);
         if (resolved.isEmpty())
             return "";

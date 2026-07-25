@@ -142,3 +142,18 @@ target_link_libraries(minilang_pkg PRIVATE
     minilang_core
     minilang_compile_options
 )
+
+# ================================================================
+# minilang_compile: 预编译模块 CLI 工具（P2-11）
+# 依赖 Lexer + Parser + Compiler + BytecodeCache（通过 minilang_core 链接）
+# 将 MiniLang 源码编译为 .minic 预编译模块文件
+# 不依赖 Qt6::Widgets / gtest
+# ================================================================
+add_executable(minilang_compile
+    compile.cpp
+    compile_core.cpp
+)
+target_link_libraries(minilang_compile PRIVATE
+    minilang_core
+    minilang_compile_options
+)

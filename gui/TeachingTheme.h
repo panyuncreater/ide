@@ -114,6 +114,50 @@ inline QColor hint() {
     return QColor("#8C8C8C"); // R74: 中性浅灰（原 Solarized base00 #657B83）
 }
 
+// ============================================================
+// P3-18 fix: 排查发现的高频缺失语义色补全
+// ------------------------------------------------------------
+// 2026-07-23 全量排查 gui/ 目录发现 47 个文件、350+ 处硬编码颜色。
+// 以下函数补全排查中发现的高频缺失语义色，为后续渐进迁移提供目标。
+// 排查报告与迁移优先级见 docs/development.md「硬编码颜色排查」章节。
+// ============================================================
+
+/// 弱化文本色：比 textHint 更暗一档的中性灰
+/// 排查发现 25+ 处硬编码 #6E6E6E（语义与 textHint 重叠但更暗）
+inline QColor textMuted() {
+    return QColor(0x6e, 0x6e, 0x6e); // 中性灰（替代散布的 #6E6E6E）
+}
+
+/// 主色 hover 背景色：浅蓝（用于按钮/卡片 hover 态背景）
+/// 排查发现 6+ 处硬编码 #E5F3FB（TeachingTheme 原仅有 #ECECEC hover 与 #CCE4F7 selected）
+inline QColor primaryHoverBg() {
+    return QColor(0xE5, 0xF3, 0xFB); // 浅蓝 hover 背景（替代散布的 #E5F3FB）
+}
+
+/// 主色上的前景色：白色（用于彩色背景按钮的文字色）
+/// 排查发现 30+ 处硬编码 "white"（在 color: white 配合彩色背景的场景）
+inline QColor onPrimary() {
+    return QColor(0xFF, 0xFF, 0xFF); // 纯白（主色背景上的文字色）
+}
+
+/// 主色 disabled 态：中灰（用于禁用按钮背景）
+/// 排查发现 primaryButtonStyle() 内部及 WelcomeWizard 等处硬编码 #888
+inline QColor primaryDisabled() {
+    return QColor(0x88, 0x88, 0x88); // 中灰（禁用态背景，替代散布的 #888）
+}
+
+/// 锁定/禁用态背景色：极浅灰
+/// 排查发现 5+ 处硬编码 #EDEDED（AstBuilderToy/BugHunt/LabManual/TokenPuzzle/VmStackSandbox 的 [locked='true'] 样式）
+inline QColor lockedBg() {
+    return QColor(0xED, 0xED, 0xED); // 极浅灰（锁定态背景，替代散布的 #EDEDED）
+}
+
+/// 代码块/预格式化文本背景色：浅灰（与 surfaceHover 一致，单独命名以表达语义）
+/// 排查发现 10+ 处硬编码 #F5F5F5 用于 <pre> 标签背景
+inline QColor codeBlockBg() {
+    return QColor(0xF5, 0xF5, 0xF5); // 浅灰（代码块背景，与 surfaceHover 同值但语义独立）
+}
+
 /// 学习路径 5 阶段配色（阶段 0-4，失败/未开始用 5）
 /// 用于 LearningPathPanel / WelcomeWizard Step 4 / CodeJourneyInfoPanel 5 阶段图
 inline QColor learningStageColor(int stage) {
@@ -185,12 +229,14 @@ inline QColor ideLineNumFg() {
 /// 主按钮样式表（用于 QPushButton 模拟 PrimaryPushButton 视觉）
 /// 注：优先使用 QFluentKit PrimaryPushButton；此函数仅用于无法替换的旧代码
 inline QString primaryButtonStyle() {
-    return QString("QPushButton { background: %1; color: white; border: none;"
+    // P3-18 fix: 内部硬编码 #888 / white 替换为语义色函数
+    return QString("QPushButton { background: %1; color: %2; border: none;"
                    "  border-radius: 5px; padding: 8px 20px; font-size: 13px; }"
-                   "QPushButton:hover { background: %2; }"
-                   "QPushButton:pressed { background: %3; }"
-                   "QPushButton:disabled { background: #888; }")
-        .arg(primary().name(), primaryHover().name(), primaryPressed().name());
+                   "QPushButton:hover { background: %3; }"
+                   "QPushButton:pressed { background: %4; }"
+                   "QPushButton:disabled { background: %5; }")
+        .arg(primary().name(), onPrimary().name(), primaryHover().name(), primaryPressed().name(),
+             primaryDisabled().name());
 }
 
 /// 次按钮样式表（透明背景 + 边框）

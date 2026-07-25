@@ -10,6 +10,8 @@
 
 #include "compiler/RegisterBytecodeBackend.h"
 #include "common/Logger.h"
+#include "common/RuntimeLimits.h" // P3-14: NO_INDEX/NO_SLOT 哨兵常量
+#include "compiler/IRSSA.h"       // P2-10 fix: IRCFG/DominatorTree/NaturalLoopInfo 用于循环感知寄存器分配
 
 RegisterBytecodeBackend::RegisterBytecodeBackend() = default;
 
@@ -129,9 +131,230 @@ void RegisterBytecodeBackend::collectVRegLastUse(const IRFunction& ir) {
         }
     }
     // 未匹配到 WRITEBACK 的 obj vreg 不释放（保守安全，避免寄存器被复用覆盖）
+    // P2-10 fix: 线性扫描不感知循环回边，循环外定义、循环内使用的 vreg 会被提前释放。
+    // 在构建反向映射前，先延长循环不变 vreg 的最后使用点到循环末尾。
+    extendLastUseForLoops(ir);
+    // L4 fix: 线性扫描不感知 finally 块控制流，return 值 vreg 会被 finally 块覆盖。
+    extendLastUseForFinallyJumps(ir);
+
     // 构建反向映射：instrIndex → 在此处最后使用的 vreg 列表
     for (const auto& kv : vregLastUse_) {
         lastUseToVregs_[kv.second].push_back(kv.first);
+    }
+}
+
+// P2-10 fix: 循环感知最后使用扩展
+// ------------------------------------------------------------
+// 问题：collectVRegLastUse 的线性扫描假设 vreg 的"最后使用"是指令序列中最后一次引用。
+//       但在循环中，vreg 会被多次使用（每轮迭代一次）。如果 vreg 定义在循环外、
+//       使用在循环内（如循环上界常量 v3 = LOAD_CONST 3，用于 LT v8 v22 v3），
+//       线性扫描会在循环内的最后一次引用后释放寄存器。该寄存器可能被循环内的
+//       另一个 vreg 复用（如 MUL v12 v24 v22 复用 v3 的寄存器），导致下一轮迭代
+//       LT 指令读到 v12 的值而非 v3 的值（3），循环条件错误。
+//
+// 修复：对每个自然循环，收集循环体内"定义"和"使用"的 vreg 集合。
+//       对使用在循环内但定义在循环外的 vreg（循环不变量），将其最后使用点
+//       延长到循环体的最后一条指令索引，确保寄存器在整个循环期间不被释放复用。
+//
+// 判定"定义"：指令首操作数为 VIRTUAL 且指令属于"写"语义（LOAD_*/算术/比较/CALL 等）。
+//            STORE_LOCAL/MEMBER_SET/INDEX_SET 等指令的首操作数虽可能为 VIRTUAL（obj），
+//            但属于"读"语义，不算定义。
+void RegisterBytecodeBackend::extendLastUseForLoops(const IRFunction& ir) {
+    IRCFG cfg(ir);
+    if (cfg.size() < 2)
+        return;
+    DominatorTree domTree(cfg);
+    NaturalLoopInfo loopInfo(cfg, domTree);
+    if (loopInfo.loops().empty())
+        return;
+
+    // 计算每个 IRBasicBlock 在扁平指令序列中的起始偏移
+    // collectVRegLastUse 的 globalIdx = sum(block[0..i-1].instructions.size()) + localIdx
+    std::vector<size_t> blockFlatOffset;
+    blockFlatOffset.reserve(ir.blocks.size());
+    size_t acc = 0;
+    for (const auto& blk : ir.blocks) {
+        blockFlatOffset.push_back(acc);
+        acc += blk.instructions.size();
+    }
+
+    // 辅助：判断指令是否"定义"了首操作数 vreg（写入 dest）
+    // 与 IR.cpp 的 isPureCompute / lowering 代码中的 dest 约定一致：
+    // 有 dest 的指令首操作数为 VIRTUAL；STORE_*/MEMBER_SET/INDEX_SET/WRITEBACK_*
+    // 等无 dest，首操作数为 slot/obj/name_idx（虽可能 VIRTUAL 但非 dest）。
+    static const auto isStoreLikeOp = [](IROp op) {
+        switch (op) {
+        case IROp::STORE_LOCAL:
+        case IROp::STORE_GLOBAL:
+        case IROp::STORE_UPVALUE:
+        case IROp::MEMBER_SET:
+        case IROp::MEMBER_SET_LOCAL: // L7 fix
+        case IROp::INDEX_SET:
+        case IROp::WRITEBACK_MEMBER_VAR:
+        case IROp::WRITEBACK_MEMBER_LOCAL:
+        case IROp::WRITEBACK_INDEX_VAR:
+        case IROp::WRITEBACK_INDEX_LOCAL:
+        case IROp::WRITEBACK_MEMBER_UPVALUE:
+        case IROp::WRITEBACK_INDEX_UPVALUE:
+        case IROp::DEFINE_GLOBAL:
+        case IROp::DELETE_VAR:
+        case IROp::CLOSE_UPVALUE:
+        case IROp::LABEL:
+        case IROp::JUMP:
+        case IROp::JUMP_IF_FALSE:
+        case IROp::RETURN:
+        case IROp::RETURN_NULL:
+        case IROp::THROW:
+        case IROp::POP:
+        case IROp::PRINT:
+        case IROp::YIELD:
+        case IROp::INIT_FIELD:
+            return true;
+        default:
+            return false;
+        }
+    };
+
+    for (const auto& loop : loopInfo.loops()) {
+        // 计算循环体的最后一条指令的扁平索引（循环末尾）
+        size_t loopEndIdx = 0;
+        for (uint32_t nodeId : loop.body) {
+            const auto& node = cfg.node(nodeId);
+            size_t nodeEnd = blockFlatOffset[node.sourceBlockIdx] + node.endInstr;
+            if (nodeEnd > loopEndIdx)
+                loopEndIdx = nodeEnd;
+        }
+        if (loopEndIdx == 0)
+            continue;
+
+        // 收集循环体内定义和使用的 vreg
+        std::unordered_set<uint32_t> vregsDefinedInLoop;
+        std::unordered_set<uint32_t> vregsUsedInLoop;
+        for (uint32_t nodeId : loop.body) {
+            const auto& node = cfg.node(nodeId);
+            const auto& blk = ir.blocks[node.sourceBlockIdx];
+            for (size_t i = node.startInstr; i < node.endInstr; ++i) {
+                const auto& instr = blk.instructions[i];
+                bool hasDest = !instr.operands.empty() && instr.operands[0].kind == IROperandKind::VIRTUAL &&
+                               !isStoreLikeOp(instr.op);
+                for (size_t opi = 0; opi < instr.operands.size(); ++opi) {
+                    const auto& op = instr.operands[opi];
+                    if (op.kind != IROperandKind::VIRTUAL)
+                        continue;
+                    if (opi == 0 && hasDest) {
+                        vregsDefinedInLoop.insert(op.index);
+                    } else {
+                        vregsUsedInLoop.insert(op.index);
+                    }
+                }
+            }
+        }
+
+        // 对使用在循环内但定义在循环外的 vreg，延长最后使用点到循环末尾
+        for (uint32_t vreg : vregsUsedInLoop) {
+            if (vregsDefinedInLoop.count(vreg) > 0)
+                continue; // 循环内定义，每轮迭代重新写入，安全释放
+            auto it = vregLastUse_.find(vreg);
+            if (it != vregLastUse_.end() && it->second < loopEndIdx) {
+                it->second = loopEndIdx;
+            }
+        }
+    }
+}
+
+// L4 fix: finally 块感知最后使用扩展
+// ------------------------------------------------------------
+// 问题：return 在 try-finally 内时，IR 生成如下序列：
+//   <define val>
+//   PUSH_JUMP_TARGET returnLandingLabel   ← 记录返回着陆点
+//   JUMP finallyEntryLabel                 ← 跳到 finally 入口
+//   LABEL returnLandingLabel              ← 着陆点（控制流从 FINALLY_END 跳回此处）
+//   RETURN val                             ← 使用 return 值 vreg
+//   ...
+//   LABEL finallyEntryLabel                ← finally 块开始
+//   <finally block body>
+//   FINALLY_END                             ← finally 块结束（跳回 returnLandingLabel）
+//
+// 线性顺序中 RETURN(val) 在 finally 块之前，故 vregLastUse_[val] = RETURN 索引，
+// finally 块的 vreg 可能复用 val 的寄存器。但控制流上 finally 块在 RETURN 之前执行，
+// 导致 RETURN 读到被 finally 块覆盖的错误值。
+//
+// 修复：扫描 PUSH_JUMP_TARGET 指令，定位对应的 finally 块（finallyEntryLabel→FINALLY_END），
+// 将着陆点后使用但定义在 PUSH_JUMP_TARGET 之前的 vreg 的最后使用点延长到 FINALLY_END。
+void RegisterBytecodeBackend::extendLastUseForFinallyJumps(const IRFunction& ir) {
+    // 扁平化所有指令，构建 label → 全局索引 映射
+    struct FlatInstr {
+        const IRInstruction* instr;
+        size_t globalIdx;
+    };
+    std::vector<FlatInstr> flat;
+    std::unordered_map<uint32_t, size_t> labelToIdx; // label index → global instruction index
+
+    size_t globalIdx = 0;
+    for (const auto& block : ir.blocks) {
+        for (const auto& instr : block.instructions) {
+            flat.push_back({&instr, globalIdx});
+            if (instr.op == IROp::LABEL && !instr.operands.empty() && instr.operands[0].kind == IROperandKind::LABEL) {
+                labelToIdx[instr.operands[0].index] = globalIdx;
+            }
+            ++globalIdx;
+        }
+    }
+    if (flat.empty())
+        return;
+
+    // 扫描 PUSH_JUMP_TARGET，对每个 finally 跳转扩展 vreg 生命周期
+    for (size_t i = 0; i < flat.size(); ++i) {
+        if (flat[i].instr->op != IROp::PUSH_JUMP_TARGET)
+            continue;
+        if (flat[i].instr->operands.empty() || flat[i].instr->operands[0].kind != IROperandKind::LABEL)
+            continue;
+        uint32_t landingPadLabel = flat[i].instr->operands[0].index;
+
+        // 下一条应为 JUMP finallyEntryLabel
+        if (i + 1 >= flat.size() || flat[i + 1].instr->op != IROp::JUMP)
+            continue;
+        if (flat[i + 1].instr->operands.empty() || flat[i + 1].instr->operands[0].kind != IROperandKind::LABEL)
+            continue;
+        uint32_t finallyEntryLabel = flat[i + 1].instr->operands[0].index;
+
+        // 查找着陆点 LABEL 的全局索引
+        auto landingIt = labelToIdx.find(landingPadLabel);
+        if (landingIt == labelToIdx.end())
+            continue;
+        size_t landingIdx = landingIt->second;
+
+        // 查找 finally 入口 LABEL 的全局索引
+        auto finallyEntryIt = labelToIdx.find(finallyEntryLabel);
+        if (finallyEntryIt == labelToIdx.end())
+            continue;
+        size_t finallyEntryIdx = finallyEntryIt->second;
+
+        // 从 finally 入口扫描到 FINALLY_END，确定 finally 块末尾索引
+        size_t finallyEndIdx = finallyEntryIdx;
+        for (size_t j = finallyEntryIdx; j < flat.size(); ++j) {
+            if (flat[j].instr->op == IROp::FINALLY_END) {
+                finallyEndIdx = j;
+                break;
+            }
+        }
+        // 若未找到 FINALLY_END，用 finally 块区域的最大索引兜底
+        if (finallyEndIdx == finallyEntryIdx)
+            finallyEndIdx = flat.size() - 1;
+
+        // 收集着陆点之后、finally 入口之前使用的所有 vreg
+        // （这些 vreg 定义在 PUSH_JUMP_TARGET 之前，需跨越 finally 块存活）
+        // landingIdx 指向 LABEL 指令，从下一条开始扫描到 finallyEntryIdx
+        for (size_t j = landingIdx + 1; j < finallyEntryIdx && j < flat.size(); ++j) {
+            for (const auto& op : flat[j].instr->operands) {
+                if (op.kind != IROperandKind::VIRTUAL)
+                    continue;
+                auto it = vregLastUse_.find(op.index);
+                if (it != vregLastUse_.end() && it->second < finallyEndIdx) {
+                    it->second = finallyEndIdx;
+                }
+            }
+        }
     }
 }
 
@@ -336,6 +559,7 @@ bool RegisterBytecodeBackend::lowerInstruction(const IRInstruction& instr, const
     case IROp::MEMBER_GET:
     case IROp::SUPER_MEMBER_GET:
     case IROp::MEMBER_SET:
+    case IROp::MEMBER_SET_LOCAL: // L7 fix
     // R99 枚举与 ADT：enum variant 构造/检查/取字段（与容器指令同属 lowerContainerOps）
     case IROp::BUILD_ENUM_VARIANT:
     case IROp::ENUM_VARIANT_NAME:
@@ -1020,6 +1244,7 @@ bool RegisterBytecodeBackend::lowerContainerOps(const IRInstruction& instr, cons
     case IROp::MEMBER_GET:
     case IROp::SUPER_MEMBER_GET:
     case IROp::MEMBER_SET:
+    case IROp::MEMBER_SET_LOCAL: // L7 fix
         return lowerContainerMemberOps(instr, ir);
     default:
         return false;
@@ -1031,7 +1256,7 @@ bool RegisterBytecodeBackend::lowerContainerOps(const IRInstruction& instr, cons
 // BUILD_ARRAY / BUILD_DICT / BUILD_TUPLE / BUILD_ENUM_VARIANT
 // 与 R118/R120 StackVM/RegisterVM executeContainerBuildOps/executeArrayBuildOps 同构
 // ============================================================
-bool RegisterBytecodeBackend::lowerContainerBuildOps(const IRInstruction& instr, const IRFunction& ir) {
+bool RegisterBytecodeBackend::lowerContainerBuildOps(const IRInstruction& instr, const IRFunction& /*ir*/) {
     int line = instr.line;
     switch (instr.op) {
     case IROp::BUILD_ARRAY: {
@@ -1280,6 +1505,27 @@ bool RegisterBytecodeBackend::lowerContainerMemberOps(const IRInstruction& instr
         chunk_->writeReg(val, line);
         break;
     }
+    case IROp::MEMBER_SET_LOCAL: {
+        // L7 fix: 方法体内 this.field = val → REG_MEMBER_SET reg(slot), field, val
+        // 直接用 slot 作为 objReg（RegisterVM slot N → reg N），修改 reg(slot) in place，
+        // 避免 vreg 副本导致 COW detach 后原 reg 不变。
+        if (instr.operands.size() < 3)
+            return false;
+        if (instr.operands[0].index >= 32) {
+            Logger::Error("RegisterBytecodeBackend: MEMBER_SET_LOCAL slot 超出 32 寄存器上限 (slot=" +
+                              std::to_string(instr.operands[0].index) + ")",
+                          "RegBackend");
+            return false;
+        }
+        uint8_t objReg = static_cast<uint8_t>(instr.operands[0].index); // slot = reg
+        uint16_t fieldIdx = addStringConstant(globalName(ir, instr.operands[1].index), ir);
+        uint8_t val = vregToReg(instr.operands[2].index);
+        chunk_->writeOp(RegOp::REG_MEMBER_SET, line);
+        chunk_->writeReg(objReg, line);
+        chunk_->writeShort(fieldIdx, line);
+        chunk_->writeReg(val, line);
+        break;
+    }
     default:
         return false;
     }
@@ -1310,7 +1556,8 @@ bool RegisterBytecodeBackend::lowerClassOps(const IRInstruction& instr, const IR
         uint16_t nameIdx = addStringConstant(globalName(ir, instr.operands[0].index), ir);
 
         uint32_t parentRaw = instr.operands[1].index;
-        uint16_t parentIdx = (parentRaw == UINT32_MAX) ? 0xFFFF : addStringConstant(globalName(ir, parentRaw), ir);
+        uint16_t parentIdx =
+            (parentRaw == UINT32_MAX) ? RuntimeLimits::NO_INDEX : addStringConstant(globalName(ir, parentRaw), ir);
 
         uint32_t fieldCount = instr.operands[2].index;
         if (instr.operands.size() < 3 + fieldCount * 3 + 1)
@@ -1341,24 +1588,24 @@ bool RegisterBytecodeBackend::lowerClassOps(const IRInstruction& instr, const IR
             size_t exprSlotOpIdx = 3 + i * 3 + 2;
             uint16_t fIdx = addStringConstant(globalName(ir, instr.operands[nameOpIdx].index), ir);
             chunk_->writeShort(fIdx, line);
-            // BUG-INH-1 fix: 编码字段默认值常量索引（UINT32_MAX → 0xFFFF 表示 null）
-            // BUG-INH-IR-1 fix: 若有非字面量表达式，default const 写 0xFFFF，
+            // BUG-INH-1 fix: 编码字段默认值常量索引（UINT32_MAX → NO_INDEX 表示 null）
+            // BUG-INH-IR-1 fix: 若有非字面量表达式，default const 写 NO_INDEX，
             //   额外编码 1 字节 exprReg（= local slot 号，RegisterVM 中 local slot = register）
             uint32_t defaultConstIdx = instr.operands[defaultOpIdx].index;
             uint32_t exprSlot = instr.operands[exprSlotOpIdx].index;
             if (exprSlot != UINT32_MAX) {
-                // 非字面量表达式：default const 写 0xFFFF，exprReg 写 slot 号
+                // 非字面量表达式：default const 写 NO_INDEX，exprReg 写 slot 号
                 if (exprSlot >= 32) {
                     Logger::Error("RegisterBytecodeBackend: DEFINE_CLASS 字段临时局部变量槽位超出 32 寄存器上限",
                                   "RegIR");
                     hasError_ = true;
                     return false;
                 }
-                chunk_->writeShort(0xFFFF, line);
+                chunk_->writeShort(RuntimeLimits::NO_INDEX, line);
                 chunk_->writeByte(static_cast<uint8_t>(exprSlot), line);
             } else if (defaultConstIdx == UINT32_MAX) {
-                chunk_->writeShort(0xFFFF, line);
-                chunk_->writeByte(0xFF, line); // 0xFF = 无表达式寄存器
+                chunk_->writeShort(RuntimeLimits::NO_INDEX, line);
+                chunk_->writeByte(RuntimeLimits::NO_SLOT, line); // NO_SLOT = 无表达式寄存器
             } else {
                 if (defaultConstIdx >= ir.constants.size()) {
                     Logger::Error("RegisterBytecodeBackend: DEFINE_CLASS 字段默认值常量索引越界", "RegIR");
@@ -1368,7 +1615,7 @@ bool RegisterBytecodeBackend::lowerClassOps(const IRInstruction& instr, const IR
                 const Value& defaultVal = ir.constants[defaultConstIdx];
                 uint16_t constIdx = chunk_->addConstant(defaultVal);
                 chunk_->writeShort(constIdx, line);
-                chunk_->writeByte(0xFF, line); // 0xFF = 无表达式寄存器
+                chunk_->writeByte(RuntimeLimits::NO_SLOT, line); // NO_SLOT = 无表达式寄存器
             }
         }
         chunk_->writeByte(static_cast<uint8_t>(methodCount), line);

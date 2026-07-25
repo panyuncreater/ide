@@ -44,7 +44,7 @@ constexpr RegOpInfo kRegOpInfo[] = {
     /* REG_JUMP_IF_FALSE           */ {"REG_JUMP_IF_FALSE", 4, false},
     /* REG_RETURN                  */ {"REG_RETURN", 2, false},
     /* REG_RETURN_NULL             */ {"REG_RETURN_NULL", 1, false},
-    /* REG_YIELD                   */ {"REG_YIELD", 3, false}, // R164: op + dst(1B) + src(1B)
+    /* REG_YIELD                   */ {"REG_YIELD", 3, false},       // R164: op + dst(1B) + src(1B)
     /* REG_CALL                    */ {"REG_CALL", 5, true},         // 变长: 5 + argCount
     /* REG_CALL_EXPR               */ {"REG_CALL_EXPR", 4, true},    // 变长: 4 + argCount
     /* REG_METHOD_CALL             */ {"REG_METHOD_CALL", 6, true},  // 变长: 6 + argCount
@@ -279,4 +279,33 @@ void RegBytecodeChunk::buildIpMap() {
         offset += instructionSizeAt(offset);
     }
     ipToInstrIndex[code.size()] = instrIndex;
+}
+
+// L11 预编译模块：全局槽位重定位
+// 指令格式：
+//   REG_LOAD_GLOBAL:   op(1B) + dst(1B) + slot(2B LE)  → slot at offset+2..offset+3
+//   REG_STORE_GLOBAL:  op(1B) + src(1B) + slot(2B LE)  → slot at offset+2..offset+3
+//   REG_DEFINE_GLOBAL: op(1B) + src(1B) + slot(2B LE)  → slot at offset+2..offset+3
+//   REG_DELETE_GLOBAL: op(1B) + nameConstIdx(2B LE)    → 常量池索引，不是 slot，跳过
+void RegBytecodeChunk::relocateGlobalSlots(const std::vector<int>& relocationMap) {
+    size_t offset = 0;
+    while (offset < code.size()) {
+        if (offset >= code.size())
+            break;
+        RegOp op = static_cast<RegOp>(code[offset]);
+        // 仅全局槽位指令需要重定位（REG_DELETE_GLOBAL 用 nameConstIdx，不是 slot）
+        if (op == RegOp::REG_LOAD_GLOBAL || op == RegOp::REG_STORE_GLOBAL || op == RegOp::REG_DEFINE_GLOBAL) {
+            // op(1B) + reg(1B) + slot(2B LE) → slot 在 offset+2..offset+3
+            if (offset + 3 < code.size()) {
+                uint16_t slot =
+                    static_cast<uint16_t>(code[offset + 2]) | (static_cast<uint16_t>(code[offset + 3]) << 8);
+                if (slot < relocationMap.size() && relocationMap[slot] >= 0) {
+                    int newSlot = relocationMap[slot];
+                    code[offset + 2] = static_cast<uint8_t>(newSlot & 0xFF);
+                    code[offset + 3] = static_cast<uint8_t>((newSlot >> 8) & 0xFF);
+                }
+            }
+        }
+        offset += instructionSizeAt(offset);
+    }
 }

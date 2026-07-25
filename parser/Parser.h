@@ -43,8 +43,17 @@ class ParseError : public std::runtime_error {
 public:
     int line;
     int column;
+    // P2 fix (错误码优先匹配): 稳定诊断码，如 "missing-semicolon"。
+    // 与 ErrorHintEngine::errorPatterns() 表中的 tag 对应。空字符串表示未设置，
+    // ErrorHintEngine 回退到中/英子串匹配兜底逻辑。由 consume()/直接 throw 填充，
+    // declaration()/block() 等的 catch 块透传到 addError。
+    std::string code;
 
     ParseError(const std::string& msg, int ln = 0, int col = 0) : std::runtime_error(msg), line(ln), column(col) {}
+
+    /// P2 fix: 带 code 的构造重载（引擎迁移时使用）
+    ParseError(const std::string& msg, int ln, int col, const std::string& diagCode)
+        : std::runtime_error(msg), line(ln), column(col), code(diagCode) {}
 };
 
 /// 递归下降语法分析器
@@ -155,10 +164,12 @@ private:
     }
 
     /// 消耗当前 Token，必须匹配指定类型，否则抛异常
-    const Token& consume(TokenType type, const std::string& message);
+    /// @param diagCode P2 fix: 稳定诊断码（如 "missing-semicolon"），透传到 ParseError.code
+    const Token& consume(TokenType type, const std::string& message, const std::string& diagCode = "");
 
     /// 消耗标识符或类型关键字（允许 dict/array/int/float/string/bool 作为名称）
-    const Token& consumeIdentifierOrType(const std::string& message);
+    /// @param diagCode P2 fix: 稳定诊断码，透传到 ParseError.code
+    const Token& consumeIdentifierOrType(const std::string& message, const std::string& diagCode = "");
 
     /// 检查当前 token 是否是标识符或类型关键字
     bool isIdentifierOrType() const;
@@ -181,6 +192,13 @@ private:
     /// 使用安全回溯：仅在 [ 后紧跟 ] 时才消费，否则回退 [
     /// 返回如 "int", "int[]", "ClassName", "ClassName[]" 等字符串
     std::string parseTypeAnnotation();
+
+    /// L20: 解析解构绑定中变量名后的可选 `: Type` 注解。
+    /// 与 VarDecl 的 `: Type` 解析路径对齐：识别 TK_COLON 后调用 parseTypeAnnotation，
+    /// 支持 R99 enum 泛型注解（TK_ENUM）与所有 isIdentifierOrType 类型。
+    /// @param line/col 用于错误诊断（注解解析失败时定位）
+    /// @return 类型注解字符串；若当前位置不是 `:`，返回空串（不消费任何 token）
+    std::string parseOptionalNameTypeAnnotation(int line, int col);
 
     // P2-1 fix: 移除未实现的 parseReturnType() 声明（死代码）
     // 实际的 -> type 解析逻辑在 funDecl() 和 classDecl() 中内联实现

@@ -563,7 +563,7 @@ void LintPass::visitBinaryOp(BinaryOp& node) {
 // 辅助方法
 // ============================================================
 
-void LintPass::checkConditionForAssignment(ASTNode* cond, int line, int col) {
+void LintPass::checkConditionForAssignment(ASTNode* cond, int /*line*/, int /*col*/) {
     if (!cond || !isRuleEnabled(LintRule::AssignmentInCondition)) {
         return;
     }

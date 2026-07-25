@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "minilang-ide",
+  "version": "1.0.0",
+  "description": "MiniLang IDE — 教学型编程语言 IDE（C++20/Qt6）。三套执行引擎 + IR 层 + 调试器 + 40+ 教学面板。",
+  "license": "MIT",
+  "dependencies": [
+    "qt-advanced-docking-system",
+    "asmjit",
+    "gtest"
+  ],
+  "$comment": [
+    "P3-17: 依赖管理规范化清单（版本声明 + 替代来源）。",
+    "",
+    "本清单声明项目依赖的 vcpkg 可用端口。版本固定不在此处（vcpkg 默认安装最新可用版本），",
+    "而是通过 git submodule + CMakeLists.txt 版本变量双重固定：",
+    "  - qt-advanced-docking-system → ADS_VERSION=5.0.0（third_party/ads submodule）",
+    "  - asmjit                     → ASMJIT_VERSION=master-0bd5787（third_party/asmjit submodule, rolling）",
+    "  - gtest                      → third_party/googletest submodule pin v1.14.0",
+    "",
+    "QFluentKit 未收录 vcpkg，仅以 git submodule 方式提供（QFLUENTKIT_VERSION=1.0）。",
+    "",
+    "项目主构建路径使用 vendored git submodule（见 .gitmodules），无需 vcpkg。",
+    "vcpkg 为可选替代来源，启用方式：",
+    "  cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake",
+    "启用 vcpkg 后需在 CMakeLists.txt 中用 find_package 替换对应 add_subdirectory(third_party/...) 调用。",
+    "",
+    "若需通过 vcpkg 锁定具体版本，请添加 builtin-baseline 字段（填入 vcpkg 仓库的 commit SHA）",
+    "并为每个依赖添加 version>= 约束。此处省略以避免硬编码过时 SHA。"
+  ]
+}

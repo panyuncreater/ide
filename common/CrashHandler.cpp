@@ -151,7 +151,9 @@ void CrashHandler::writeCrashMeta(const std::string& dumpDir,
     auto now = std::chrono::system_clock::now();
     auto t   = std::chrono::system_clock::to_time_t(now);
     oss << "{\n";
-    oss << "  \"timestamp\": \"" << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S") << "\",\n";
+    std::tm tmBuf;
+    localtime_s(&tmBuf, &t);
+    oss << "  \"timestamp\": \"" << std::put_time(&tmBuf, "%Y-%m-%d %H:%M:%S") << "\",\n";
     oss << "  \"signal\": \"" << signalName << "\",\n";
     oss << "  \"dumpFile\": \"" << dumpFile << "\"\n";
     oss << "}\n";
@@ -229,7 +231,9 @@ CrashReport CrashHandler::lastCrashReport() {
         latestTime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
     auto t = std::chrono::system_clock::to_time_t(sctp);
     std::ostringstream ts;
-    ts << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+    std::tm tmBuf;
+    localtime_s(&tmBuf, &t);
+    ts << std::put_time(&tmBuf, "%Y-%m-%d %H:%M:%S");
     report.timestamp = ts.str();
 
     // POSIX：读取 backtrace 文件内容

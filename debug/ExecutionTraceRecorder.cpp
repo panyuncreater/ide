@@ -105,9 +105,18 @@ std::string TraceSnapshot::toJson() const {
 // ============================================================
 
 void ExecutionTraceRecorder::pushSnapshot(TraceSnapshot&& snap) {
+    // P0-3 fix: 双重检查消除 TOCTOU。
+    // 锁外 fast-path 短路避免无 push 时无谓加锁；锁内再次检查 enabled_ 防止
+    // fast-path 与获取锁之间被 setEnabled(false) + clear() 翻转的窗口。
+    // 场景：worker 线程 capture 完成（fast-path enabled_=true）→ UI 线程
+    // setEnabled(false) + clear()（清空 snapshots_/stepCounter_）→ worker
+    // 获取锁 push 一个 stale 快照到已清空的列表，破坏 clear() 语义。
+    // 锁内再次检查 enabled_=false → 丢弃，维护 clear() 不变量。
     if (!enabled_.load(std::memory_order_relaxed))
         return;
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!enabled_.load(std::memory_order_relaxed))
+        return;
     snap.step = stepCounter_++;
     if (snap.step >= maxSteps_) {
         // ring buffer 策略：移除最旧的快照
@@ -246,6 +255,12 @@ void ExecutionTraceRecorder::captureInterpreterStep(Interpreter& interp, int nod
                 snap.globalsValues.emplace_back(kv.first, kv.second);
             }
         }
+    }
+
+    // L18: FullState 模式下捕获完整 Interpreter 状态快照（用于回溯调试）
+    // 类型擦除为 shared_ptr<void>，回滚时由 Interpreter::restoreFromSnapshot 消费
+    if (recordingMode_ == RecordingMode::FullState) {
+        snap.interpreterState = interp.captureStateSnapshot();
     }
 
     pushSnapshot(std::move(snap));

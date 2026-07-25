@@ -1454,7 +1454,11 @@ TEST(ExecutionTraceRecorderRollback, MismatchedBackendReturnsFalse) {
     r.setRecordingMode(RecordingMode::StringsOnly);
 }
 
-TEST(ExecutionTraceRecorderRollback, InterpreterBackendReturnsFalse) {
+TEST(ExecutionTraceRecorderRollback, VmStepperRejectsInterpreterBackendSnapshot) {
+    // L18: VmStepper 是 VM 侧类（StackVM/RegisterVM），不持有 Interpreter 引用，
+    // 无法回滚 Interpreter 后端快照——仍返回 false。
+    // Interpreter 路径的回滚通过 Interpreter::restoreFromSnapshot 直接消费，
+    // 见 ExecutionTraceRecorderInterpreterRollback 套件。
     auto& r = traceRecorder();
     r.clear();
     r.startSession();
@@ -1468,7 +1472,7 @@ TEST(ExecutionTraceRecorderRollback, InterpreterBackendReturnsFalse) {
     fakeSnap.ip = 0;
     fakeSnap.frameCount = 0;
     bool ok = stepper.restoreFromSnapshot(fakeSnap);
-    EXPECT_FALSE(ok) << "Interpreter 后端快照不支持回滚，应返回 false";
+    EXPECT_FALSE(ok) << "VmStepper 不支持 Interpreter 后端快照回滚，应返回 false";
 
     r.endSession();
     r.clear();
@@ -1516,6 +1520,209 @@ TEST(ExecutionTraceRecorderRollback, RollbackPreservesGlobalsValue_EarlyState) {
                 EXPECT_EQ(it->second.intVal(), 10) << "回滚后 x 应恢复为 10";
             }
         }
+    }
+
+    r.endSession();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+}
+
+// ============================================================
+// 测试套件 12：Interpreter 后端状态回滚（L18 — reverse debugging）
+// ------------------------------------------------------------
+// 验证 Interpreter::captureStateSnapshot / restoreFromSnapshot 的回滚语义。
+// 测试模式：(1) FullState 模式录制 Interpreter 执行 → (2) 取某步快照 →
+// (3) 继续执行改变状态 → (4) 回滚到快照 → (5) 断言 Interpreter 状态恢复。
+//
+// 与 VM 路径的区别：
+//   - VM 路径通过 VmStepper::restoreFromSnapshot 消费快照
+//   - Interpreter 路径通过 Interpreter::restoreFromSnapshot 直接消费
+//   - TraceSnapshot::interpreterState（shared_ptr<void>）持有完整状态快照
+// ============================================================
+
+namespace {
+
+/// 在 FullState 模式下录制 Interpreter 执行（用于 L18 回滚测试）
+void runInterpreterFullState(Interpreter& interp, const std::string& source) {
+    Lexer lexer;
+    auto tokens = lexer.scan(source);
+    Parser parser;
+    auto ast = parser.parse(tokens);
+    ASSERT_NE(ast, nullptr);
+
+    interp.setRecordingEnabled(true);
+    interp.setOutputCallback([](const std::string&) {});
+    interp.execute(*ast);
+}
+
+} // namespace
+
+TEST(ExecutionTraceRecorderInterpreterRollback, FullStateModePopulatesInterpreterState) {
+    // L18: FullState 模式下，Interpreter 后端快照应填充 interpreterState 字段
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::FullState);
+    r.startSession();
+
+    {
+        Interpreter interp;
+        runInterpreterFullState(interp, "var x = 42; var y = x + 1;");
+    }
+
+    ASSERT_GT(r.size(), 0u);
+    bool anyHasState = false;
+    for (size_t i = 0; i < r.size(); ++i) {
+        auto snap = r.stepAt(i);
+        ASSERT_TRUE(snap.has_value());
+        if (snap->backend == TraceBackend::Interpreter && snap->interpreterState) {
+            anyHasState = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(anyHasState) << "FullState 模式下 Interpreter 快照应填充 interpreterState";
+
+    r.endSession();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+}
+
+TEST(ExecutionTraceRecorderInterpreterRollback, StringsOnlyModeLeavesInterpreterStateEmpty) {
+    // L18: StringsOnly 模式下，interpreterState 字段应为空（不捕获完整状态）
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+    r.startSession();
+
+    {
+        Interpreter interp;
+        runInterpreterFullState(interp, "var x = 1;");
+    }
+
+    ASSERT_GT(r.size(), 0u);
+    for (size_t i = 0; i < r.size(); ++i) {
+        auto snap = r.stepAt(i);
+        ASSERT_TRUE(snap.has_value());
+        EXPECT_FALSE(snap->interpreterState)
+            << "StringsOnly 模式下 interpreterState 应为空（快照 idx=" << i << "）";
+    }
+
+    r.endSession();
+    r.clear();
+}
+
+TEST(ExecutionTraceRecorderInterpreterRollback, RestoreFromSnapshotSucceeds) {
+    // L18: Interpreter::restoreFromSnapshot 应成功恢复状态
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::FullState);
+    r.startSession();
+
+    Interpreter interp;
+    runInterpreterFullState(interp, "var x = 10; var y = 20;");
+
+    ASSERT_GT(r.size(), 0u);
+    // 取最后一个快照（程序执行完毕后的状态）
+    auto targetSnap = r.stepAt(r.size() - 1);
+    ASSERT_TRUE(targetSnap.has_value());
+    ASSERT_EQ(targetSnap->backend, TraceBackend::Interpreter);
+    ASSERT_TRUE(targetSnap->interpreterState);
+
+    // 回滚到该快照
+    auto stateSnap = std::static_pointer_cast<Interpreter::StateSnapshot>(targetSnap->interpreterState);
+    bool ok = interp.restoreFromSnapshot(*stateSnap);
+    EXPECT_TRUE(ok) << "Interpreter 回滚应成功";
+
+    r.endSession();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+}
+
+TEST(ExecutionTraceRecorderInterpreterRollback, RollbackRestoresVariableValue) {
+    // L18: 回滚到早期快照后，变量应恢复到快照时的值
+    // 程序：x 先 = 10，后 = 20。回滚到中间快照后，x 应为 10
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::FullState);
+    r.startSession();
+
+    Interpreter interp;
+    runInterpreterFullState(interp, "var x = 10; x = 20;");
+
+    ASSERT_GT(r.size(), 0u);
+    // 找到第一个包含 x=10 的快照
+    size_t earlyIdx = 0;
+    bool foundEarly = false;
+    for (size_t i = 0; i < r.size(); ++i) {
+        auto snap = r.stepAt(i);
+        ASSERT_TRUE(snap.has_value());
+        for (const auto& kv : snap->globalsValues) {
+            if (kv.first == "x" && kv.second.isInt() && kv.second.intVal() == 10) {
+                earlyIdx = i;
+                foundEarly = true;
+                break;
+            }
+        }
+        if (foundEarly)
+            break;
+    }
+
+    if (foundEarly) {
+        auto earlySnap = r.stepAt(earlyIdx);
+        ASSERT_TRUE(earlySnap.has_value());
+        ASSERT_TRUE(earlySnap->interpreterState);
+        auto stateSnap = std::static_pointer_cast<Interpreter::StateSnapshot>(earlySnap->interpreterState);
+        bool ok = interp.restoreFromSnapshot(*stateSnap);
+        EXPECT_TRUE(ok) << "回滚到 x=10 的快照应成功";
+        if (ok) {
+            // 验证回滚后 globals 中 x = 10
+            auto globalEnv = interp.getGlobalEnvironment();
+            ASSERT_TRUE(globalEnv);
+            const Value* xVal = globalEnv->get("x");
+            ASSERT_NE(xVal, nullptr);
+            EXPECT_EQ(xVal->intVal(), 10) << "回滚后 x 应恢复为 10";
+        }
+    }
+
+    r.endSession();
+    r.clear();
+    r.setRecordingMode(RecordingMode::StringsOnly);
+}
+
+TEST(ExecutionTraceRecorderInterpreterRollback, RollbackAllowsContinueExecution) {
+    // L18: 回滚后 Interpreter 应能继续执行（状态一致可继续步进）
+    auto& r = traceRecorder();
+    r.clear();
+    r.setRecordingMode(RecordingMode::FullState);
+    r.startSession();
+
+    Interpreter interp;
+    runInterpreterFullState(interp, "var x = 10; x = 20;");
+
+    ASSERT_GT(r.size(), 0u);
+    // 取第一个快照作为回滚目标
+    auto earlySnap = r.stepAt(0);
+    ASSERT_TRUE(earlySnap.has_value());
+    ASSERT_TRUE(earlySnap->interpreterState);
+
+    auto stateSnap = std::static_pointer_cast<Interpreter::StateSnapshot>(earlySnap->interpreterState);
+    bool ok = interp.restoreFromSnapshot(*stateSnap);
+    EXPECT_TRUE(ok);
+    if (ok) {
+        // 回滚后继续执行新代码——Interpreter 应能正常工作
+        // 注：使用字面量 print(42) 而非 print(x)，因为第一个快照捕获时机早于
+        // var x 的执行，回滚后 x 可能尚未定义；本测试关注"回滚后能继续执行"，
+        // 不关注 x 的值是否保留（由 RollbackRestoresVariableValue 覆盖）。
+        std::string output;
+        interp.setOutputCallback([&output](const std::string& s) { output += s; });
+        Lexer lexer;
+        auto tokens = lexer.scan("print(42);");
+        Parser parser;
+        auto ast = parser.parse(tokens);
+        ASSERT_NE(ast, nullptr);
+        interp.executeRepl(*ast);
+        // 关键是不崩溃且产生输出
+        EXPECT_FALSE(output.empty()) << "回滚后继续执行应产生输出";
+        EXPECT_NE(output.find("42"), std::string::npos) << "应打印字面量 42";
     }
 
     r.endSession();

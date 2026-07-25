@@ -79,7 +79,7 @@ struct RegCallFrame {
 // ============================================================
 // 寄存器式虚拟机
 // ============================================================
-class RegisterVM : public IBackend {
+class RegisterVM : public IVmBackend {
 public:
     RegisterVM();
     ~RegisterVM() override = default;
@@ -96,11 +96,11 @@ public:
     /// 初始化执行环境（单步模式前置）
     void initExecution(const RegisterCompileResult& result);
 
-    /// 单步执行一条指令
-    VMResult stepOnce();
+    /// P1-5 fix: IVmBackend override — 单步执行一条指令
+    VMResult stepOnce() override;
 
-    /// 是否执行完毕
-    bool isFinished() const;
+    /// P1-5 fix: IVmBackend override — 是否执行完毕
+    bool isFinished() const override;
 
     /// 是否已初始化
     bool isInitialized() const { return initialized_; }
@@ -109,25 +109,42 @@ public:
     void resetState();
 
     /// 错误状态
-    bool hasError() const { return hasError_; }
-    std::string getLastError() const { return lastError_; }
-    int getLastErrorLine() const { return lastErrorLine_; }
+    /// P2-12: hasError_/getLastError()/getLastErrorLine() 从 diagnostics_ 派生，
+    /// 消除 lastError_/lastErrorLine_ 字段冗余（与 VM 改造对齐）。
+    bool hasError() const { return hasError_ || diagnostics_.hasErrors(); }
+    std::string getLastError() const {
+        const auto& diags = diagnostics_.all();
+        for (auto it = diags.rbegin(); it != diags.rend(); ++it) {
+            if (it->isError())
+                return it->message;
+        }
+        return {};
+    }
+    int getLastErrorLine() const {
+        const auto& diags = diagnostics_.all();
+        for (auto it = diags.rbegin(); it != diags.rend(); ++it) {
+            if (it->isError())
+                return it->line;
+        }
+        return 0;
+    }
 
     /// 调试接口
     std::vector<Value> getRegisters() const;
-    std::unordered_map<std::string, Value> getGlobals() const;
-    size_t getCurrentIP() const;
+    /// P1-5 fix: IVmBackend override — 获取操作数栈快照。
+    /// RegisterVM 无操作数栈，返回当前帧寄存器窗口值（与 getRegisters 语义一致）。
+    std::vector<Value> getStack() const override { return getRegisters(); }
+    std::unordered_map<std::string, Value> getGlobals() const override;
+    size_t getCurrentIP() const override;
     RegOp getCurrentOpCode() const;
-    int getCurrentLine() const;
+    int getCurrentLine() const override;
     std::string getCurrentChunkName() const;
-    size_t getFrameCount() const { return frames_.size(); }
+    size_t getFrameCount() const override { return frames_.size(); }
 
-    struct RegCallStackEntry {
-        std::string functionName;
-        int line;
-        size_t ip;
-    };
-    std::vector<RegCallStackEntry> getCallStack() const;
+    // P1-5 扩展: RegCallStackEntry 改为 VmCallStackEntry 别名，统一到 IVmBackend 接口。
+    // 旧代码引用 RegisterVM::RegCallStackEntry 仍可编译（别名透明）。
+    using RegCallStackEntry = VmCallStackEntry;
+    std::vector<VmCallStackEntry> getCallStack() const override;
 
     /// BUG-IDE-12 fix: 获取当前帧的局部变量名→值映射（用于 RegisterVM 条件断点求值）。
     /// 结合当前帧 chunk 的 localRegNames + 寄存器窗口反查。
@@ -160,7 +177,7 @@ public:
     /// (4) 清理 openUpvalues_（slots >= MAX_REGISTERS 的 open upvalue 已悬垂——
     ///     RegisterVM 寄存器帧定长 32，按 registerIndex 索引 openUpvalues_）；
     /// (5) 清理 tryStack_（frameIndex >= targetFrameCount）、pendingJumpStack_、
-    /// pendingException_、lastMutatedReceiverReg_、hasError_/lastError_。
+    /// pendingException_、lastMutatedReceiverReg_、hasError_/diagnostics_。
     /// @note 与 StackVM 不同，RegisterVM 的 openUpvalues_ 按 registerIndex 而非
     ///       栈绝对位置索引；回滚后所有 openUpvalues_ 应清理（因寄存器被覆盖，
     ///       原 open upvalue 的 stackSlot 已指向新值）。
@@ -229,6 +246,13 @@ private:
     // upvalue 支持
     std::multimap<size_t, std::weak_ptr<VMUpvalue>> openUpvalues_;
 
+    // W3-2-Bug2 fix: 函数内定义的类的方法捕获的 upvalue（key = funName "Class.method"）。
+    // 在 REG_DEFINE_CLASS 执行时（此时仍在定义类的外层函数帧中），为有 upvalue 描述符的方法
+    // 创建 VMClosureData 捕获当前帧的寄存器槽（isLocal=true）或当前帧的 upvalue（isLocal=false）。
+    // REG_METHOD_CALL 时通过 executeCallImpl 的 populateUpvalues 从此 map 读取并填充方法帧的
+    // upvalues，使方法体内 REG_LOAD_UPVALUE 能正确访问。
+    std::unordered_map<std::string, std::shared_ptr<VMClosureData>> methodUpvalues_;
+
     // C-1 fix: 跟踪最近一次 INDEX_SET/MEMBER_SET 的接收者寄存器号，
     // 供紧随其后的 WRITEBACK_* 指令读取变异后的容器并写回到变量槽。
     // （镜像栈式 VM 的 lastMutatedReceiver_ 机制；IR 保证 WRITEBACK 紧跟 SET）
@@ -245,9 +269,10 @@ private:
 
     // 状态
     bool initialized_ = false;
+    // P2-12: lastError_/lastErrorLine_ 字段已移除，getLastError()/getLastErrorLine()
+    // 改为从 diagnostics_ 派生（消除双通道冗余）。
+    // hasError_ 保留作为快速路径标志（与 VM 对齐），权威来源为 diagnostics_。
     bool hasError_ = false;
-    std::string lastError_;
-    int lastErrorLine_ = 0;
     DiagnosticBag diagnostics_;
     int64_t instructionCount_ = 0;
 
@@ -330,7 +355,8 @@ private:
         return frame.registers[r];
     }
 
-    VMResult runtimeError(const std::string& msg);
+    /// @param diagCode P2 fix: 稳定诊断码（如 "division-by-zero"），透传到 addError
+    VMResult runtimeError(const std::string& msg, const std::string& diagCode = "");
     VMResult executeOneInstruction();
     VMResult throwException(Value thrownValue);
     /// C-3 fix: 关闭指向 [fromSlot, ∞) 范围（全局编码 stackSlot）的 open upvalues，
@@ -407,6 +433,12 @@ private:
     bool fillDefaultArgs(const RegBytecodeChunk& chunk, uint8_t& argCount, const std::string& funName,
                          std::vector<Value>& defaults);
 
+    /// W3-2-Bug2 fix: 在类定义时为有 upvalue 的方法创建 upvalue 捕获。
+    /// 遍历 classInfo_[className].methods 中的方法，查 functionChunks_ 获取 chunk，
+    /// 对 chunk->upvalues 非空的方法创建 VMClosureData，从当前帧捕获寄存器槽
+    /// （isLocal=true）或 upvalue（isLocal=false）。镜像 StackVM VM::captureMethodUpvalues。
+    void captureMethodUpvalues(const std::string& className);
+
     // R164 协程/生成器：与 StackVM::VM 对称的协程支持
     /// 生成器函数调用拦截——从寄存器读参数，创建协程值写入 dstReg。
     /// 被 executeCallOps（REG_CALL）和 executeMethodCallOps 共用。
@@ -416,8 +448,7 @@ private:
     Value callCoroutineNext(Value& coroVal);
     /// 协程方法分发（.next() / .done()）。
     /// 返回 true=已处理（caller 应 return，检查 hasError_）；false=未匹配协程方法（caller 继续查找）。
-    bool dispatchCoroutineBuiltin(Value& obj, const std::string& methodName, SmallArgs<Value>& args,
-                                  Value& result);
+    bool dispatchCoroutineBuiltin(Value& obj, const std::string& methodName, SmallArgs<Value>& args, Value& result);
 
     // 内建方法
     // C-9 fix: 返回 bool 而非 VMResult。true=已处理（caller 应 return，检查 hasError_），

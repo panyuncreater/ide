@@ -805,8 +805,8 @@ QString ProfileDashboardPanel::metricLabel(const BackendTiming& r, MetricDimensi
 void ProfileDashboardPanel::onMetricChanged(int index) {
     if (index < 0 || index >= metricCombo_->count())
         return;
-    int data = metricCombo_->itemData(index).toInt();
-    currentMetric_ = static_cast<MetricDimension>(data);
+    int metricData = metricCombo_->itemData(index).toInt();
+    currentMetric_ = static_cast<MetricDimension>(metricData);
 #ifdef MINILANG_HAVE_QTCHARTS
     renderChart(lastResults_);
 #else
@@ -821,6 +821,8 @@ void ProfileDashboardPanel::paintEvent(QPaintEvent* event) {
     QWidget::paintEvent(event);
     return;
 #else
+    // W4 fix: 无 QtCharts 时 event 未使用，显式抑制 C4100（保留参数名供 QtCharts 分支使用）
+    (void)event;
     if (lastResults_.empty())
         return;
     QPainter p(this);

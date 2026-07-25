@@ -57,6 +57,7 @@ const std::vector<PanelCategory>& PanelCatalog::categories() {
              {"variable-inspector", "变量检查器", "🔍"},
              {"breakpoint-condition", "条件断点", "🛑"},
              {"watch-expressions", "观察表达式", "👀"},
+             {"watchpoint", "数据断点", "🔬"},
              {"execution-timeline", "可回放执行时间轴", "🎞️"},
              {"coroutine-visualizer", "协程/生成器可视化", "🔄"},
          }},

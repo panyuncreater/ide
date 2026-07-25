@@ -235,10 +235,9 @@ VmStepper::VmStepResult VmStepper::execStepIn() {
     // 现在在每条指令执行前先检查当前 IP 是否命中断点。
     constexpr int64_t MAX_STEP_LOOP = 1000000;
     int64_t stepCount = 0;
-    // P1-2 fix: 记录步进起始时的行号和帧深度，用于 STEP_IN 行级粒度判断。
+    // P1-2 fix: 记录步进起始时的帧深度，用于 STEP_IN 行级粒度判断。
     // 对齐 Interpreter DebugController::shouldPauseForStepping 的 STEP_IN 逻辑：
     // 行号变化或调用深度变化时暂停（而非每条指令暂停）。
-    int stepStartLine = getCurrentLine();
     size_t stepStartFrame = getFrameCount();
 
     while (true) {
@@ -831,12 +830,29 @@ bool VmStepper::handleLogpointHit(int line) {
 }
 
 // R104 Function BP：pre-execution 检测 OP_CALL/REG_CALL 是否命中函数断点
+// P1-4 fix: 对齐 DebugController::checkFunctionBreakpoint（L593-631）——
+// 命中后若 FunctionBreakpointInfo.isConditional()，调用 vmConditionEvaluator_ 求值，
+// 条件不满足则不暂停（返回 false）。无求值器时条件断点视为不命中（与 DebugController L617 一致）。
 bool VmStepper::checkFunctionBreakpointHit() {
     if (vmFunctionBreakpoints_.isEmpty())
         return false;
     std::string funName = useRegister_ ? regVm_.peekCalledFunctionName() : vm_.peekCalledFunctionName();
-    if (funName.empty() || !vmFunctionBreakpoints_.contains(funName))
+    if (funName.empty())
         return false;
+    auto it = vmFunctionBreakpoints_.constFind(funName);
+    if (it == vmFunctionBreakpoints_.constEnd())
+        return false;
+    const FunctionBreakpointInfo& info = it.value();
+    // P1-4 fix: 条件求值（对齐 DebugController L611-618）
+    if (info.isConditional()) {
+        if (vmConditionEvaluator_) {
+            if (!vmConditionEvaluator_(info.condition)) {
+                return false; // 条件不满足
+            }
+        } else {
+            return false; // 无求值器，条件断点视为不命中
+        }
+    }
     // 命中：递增 hitCount
     vmFunctionBreakpointHitCounts_[funName]++;
     return true;
@@ -878,6 +894,9 @@ bool VmStepper::checkPreExecutionFunctionExceptionBps(int line) {
 }
 
 // R161 Watchpoint：pre-execution 检查当前指令是否写入被监视的变量/字段
+// P1-4 fix: 对齐 DebugController 条件断点求值语义——WatchpointInfo.isConditional() 时
+// 调用 vmConditionEvaluator_ 求值，条件不满足则跳过此 watchpoint 继续匹配下一个。
+// 无求值器时条件 watchpoint 视为不命中（与 DebugController L617 一致）。
 bool VmStepper::checkWatchpointHit(int line) {
     if (vmWatchpoints_.isEmpty())
         return false;
@@ -902,6 +921,16 @@ bool VmStepper::checkWatchpointHit(int line) {
             }
         }
         if (matched) {
+            // P1-4 fix: 条件求值（WatchpointInfo.condition 字段已存在但 v1 未使用）
+            if (wp.isConditional()) {
+                if (vmConditionEvaluator_) {
+                    if (!vmConditionEvaluator_(wp.condition)) {
+                        continue; // 条件不满足，继续匹配下一个 watchpoint
+                    }
+                } else {
+                    continue; // 无求值器，条件 watchpoint 视为不命中
+                }
+            }
             wp.hitCount++;
             vmLastPausedLine_ = line;
             vmCrossedLine_ = false;

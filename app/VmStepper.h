@@ -31,6 +31,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "common/IDebugController.h" // P1-4: 调试控制器统一接口
 #include "compiler/Bytecode.h"
 #include "compiler/RegisterBytecode.h"
 #include "compiler/RegisterVM.h" // A1 fix: 寄存器式 VM 后端
@@ -39,7 +40,7 @@
 #include "debug/ExecutionTraceRecorder.h" // R114: 可回放执行时间轴 recorder
 #include "interpreter/Value.h"
 
-class VmStepper : public QObject {
+class VmStepper : public QObject, public IDebugController {
     Q_OBJECT
 
 public:
@@ -49,7 +50,7 @@ public:
     enum class VmStepMode { STEP_IN, STEP_OVER, STEP_OUT, RUN };
 
     explicit VmStepper(QObject* parent = nullptr);
-    ~VmStepper();
+    ~VmStepper() override;
 
     // ---- 回调设置（由 IdeController 在构造时调用）----
     // A1 fix: 同时为两个后端设置回调，避免切换后端时回调缺失。
@@ -72,7 +73,7 @@ public:
     /// A1 fix: 设置 RegisterVM 编译结果（仅 useRegister_=true 时使用）
     void setRegisterCompileResult(const RegisterCompileResult& result) { lastRegCompileResult_ = result; }
     /// A4 fix: 设置 VM 模式断点（复用 Interpreter 的 breakpoint 行号集合）
-    void setBreakpoints(const QSet<int>& breakpoints) { vmBreakpoints_ = breakpoints; }
+    void setBreakpoints(const QSet<int>& breakpoints) override { vmBreakpoints_ = breakpoints; }
 
     /// R98 runToCursor: 设置一次性临时断点（仅命中一次后自动清除）。
     /// 调用此方法后调用 stepByMode(VmStepMode::RUN) 即可"运行到目标行"。
@@ -94,6 +95,11 @@ public:
     /// @return 临时断点行号；无临时断点时返回 -1
     int getTempBreakpoint() const { return vmTempBreakpointLine_; }
 
+    // P1-4 fix: IDebugController 接口要求的临时断点方法（转发到 setTempBreakpoint 系列别名）
+    void setTemporaryBreakpoint(int line) override { setTempBreakpoint(line); }
+    void clearTemporaryBreakpoint() override { clearTempBreakpoint(); }
+    int getTemporaryBreakpoint() const override { return getTempBreakpoint(); }
+
     /// #4 fix: 设置 VM 模式条件断点（行号→条件表达式）
     // BUG-DBG-AUDIT-2 fix: 条件变更时重置对应行的 hitCount（对齐
     // DebugController::setBreakpointCondition 行 308-313，条件变更 → hitCount 清零）。
@@ -107,7 +113,7 @@ public:
     /// BUG-DBG-AUDIT-2 fix: 获取 VM 模式断点命中次数。
     /// 对齐 DebugController::getBreakpointHitCount 语义——返回 vmBreakpointHitCounts_[line]，
     /// 不存在时返回 0。仅 VM 模式活跃时由 IdeController::getBreakpointHitCount 分派调用。
-    int getBreakpointHitCount(int line) const {
+    int getBreakpointHitCount(int line) const override {
         auto it = vmBreakpointHitCounts_.find(line);
         return it != vmBreakpointHitCounts_.end() ? it.value() : 0;
     }
@@ -118,16 +124,16 @@ public:
     bool isCondStopRequested() const { return vmCondStopRequested_.load(std::memory_order_relaxed); }
 
     /// #4 fix: 设置条件求值器回调（由 IdeController 注入，使用临时 Interpreter + VM 全局变量求值）
-    void setConditionEvaluator(std::function<bool(const std::string&)> evaluator) {
+    void setConditionEvaluator(std::function<bool(const std::string&)> evaluator) override {
         vmConditionEvaluator_ = std::move(evaluator);
     }
 
     // ---- R104 调试器拓展：Logpoint / Function BP / Exception BP ----
     /// R104 Logpoint：设置日志回调（命中 Logpoint 时调用，输出格式化消息）
-    void setLogCallback(std::function<void(const std::string&)> cb) { vmLogCallback_ = std::move(cb); }
+    void setLogCallback(std::function<void(const std::string&)> cb) override { vmLogCallback_ = std::move(cb); }
 
     /// R104 Logpoint：设置断点类型（Line / Logpoint）
-    void setBreakpointKind(int line, BreakpointKind kind) {
+    void setBreakpointKind(int line, BreakpointKind kind) override {
         if (line <= 0)
             return;
         vmBreakpointKinds_[line] = kind;
@@ -138,13 +144,13 @@ public:
     }
 
     /// R104 Logpoint：获取断点类型
-    BreakpointKind getBreakpointKind(int line) const {
+    BreakpointKind getBreakpointKind(int line) const override {
         auto it = vmBreakpointKinds_.find(line);
         return it != vmBreakpointKinds_.end() ? it.value() : BreakpointKind::Line;
     }
 
     /// R104 Logpoint：设置 Logpoint 日志消息模板
-    void setLogpointMessage(int line, const std::string& msg) {
+    void setLogpointMessage(int line, const std::string& msg) override {
         if (line <= 0)
             return;
         vmBreakpointKinds_[line] = BreakpointKind::Logpoint;
@@ -153,46 +159,108 @@ public:
     }
 
     /// R104 Logpoint：获取 Logpoint 日志消息模板
-    std::string getLogpointMessage(int line) const {
+    std::string getLogpointMessage(int line) const override {
         auto it = vmLogpointMessages_.find(line);
         return it != vmLogpointMessages_.end() ? it.value() : std::string{};
     }
 
     /// R104 Function BP：添加函数断点
-    void setFunctionBreakpoint(const std::string& name) {
-        if (!name.empty())
-            vmFunctionBreakpoints_.insert(name);
+    // P1-4 fix: 内部存储改为 QMap<std::string, FunctionBreakpointInfo>，
+    // 与 DebugController 对齐支持条件求值。setFunctionBreakpoint 仅插入默认（无条件）条目，
+    // 若已存在则保留原有 condition（对齐 DebugController::setBreakpoint 行为）。
+    void setFunctionBreakpoint(const std::string& name) override {
+        if (name.empty())
+            return;
+        if (!vmFunctionBreakpoints_.contains(name)) {
+            vmFunctionBreakpoints_.insert(name, FunctionBreakpointInfo(name));
+        }
     }
     /// R104 Function BP：移除函数断点
-    void removeFunctionBreakpoint(const std::string& name) { vmFunctionBreakpoints_.remove(name); }
+    void removeFunctionBreakpoint(const std::string& name) override {
+        vmFunctionBreakpoints_.remove(name);
+        vmFunctionBreakpointHitCounts_.remove(name);
+    }
     /// R104 Function BP：批量设置函数断点
-    void setFunctionBreakpoints(const QSet<std::string>& names) { vmFunctionBreakpoints_ = names; }
-    /// R104 Function BP：查询所有函数断点
-    QSet<std::string> getFunctionBreakpoints() const { return vmFunctionBreakpoints_; }
+    /// P1-4 fix: 保留已有条目的 condition（与 DebugController::setFunctionBreakpoints
+    /// 未实现批量 condition 保留的语义对齐——这里更安全，避免批量替换丢失条件）。
+    void setFunctionBreakpoints(const QSet<std::string>& names) override {
+        QMap<std::string, FunctionBreakpointInfo> next;
+        for (const auto& name : names) {
+            if (name.empty())
+                continue;
+            auto it = vmFunctionBreakpoints_.constFind(name);
+            if (it != vmFunctionBreakpoints_.constEnd()) {
+                next.insert(name, it.value()); // 保留 condition
+            } else {
+                next.insert(name, FunctionBreakpointInfo(name));
+            }
+        }
+        vmFunctionBreakpoints_ = std::move(next);
+        // 清理被移除断点的 hitCount
+        for (auto it = vmFunctionBreakpointHitCounts_.begin(); it != vmFunctionBreakpointHitCounts_.end();) {
+            if (!vmFunctionBreakpoints_.contains(it.key())) {
+                it = vmFunctionBreakpointHitCounts_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    /// R104 Function BP：查询所有函数断点名
+    /// P1-4 fix: 内部存储改为 QMap<...FunctionBreakpointInfo>，返回时提取 keys。
+    QSet<std::string> getFunctionBreakpoints() const override {
+        QSet<std::string> result;
+        for (auto it = vmFunctionBreakpoints_.constBegin(); it != vmFunctionBreakpoints_.constEnd(); ++it) {
+            result.insert(it.key());
+        }
+        return result;
+    }
     /// R104 Function BP：函数断点命中次数
-    int getFunctionBreakpointHitCount(const std::string& name) const {
+    int getFunctionBreakpointHitCount(const std::string& name) const override {
         auto it = vmFunctionBreakpointHitCounts_.find(name);
         return it != vmFunctionBreakpointHitCounts_.end() ? it.value() : 0;
     }
     /// R104 Function BP：查询是否存在指定函数断点
-    bool hasFunctionBreakpoint(const std::string& name) const { return vmFunctionBreakpoints_.contains(name); }
+    bool hasFunctionBreakpoint(const std::string& name) const override { return vmFunctionBreakpoints_.contains(name); }
+
+    /// P1-4 fix: 设置函数断点条件表达式（与 DebugController::setFunctionBreakpointCondition 对齐）。
+    /// 函数断点不存在时自动创建（对齐 setBreakpointCondition 行为）。
+    /// 条件变更时重置对应函数的 hitCount（对齐 DebugController L556-568 语义）。
+    void setFunctionBreakpointCondition(const std::string& name, const std::string& condition) override {
+        if (name.empty())
+            return;
+        auto it = vmFunctionBreakpoints_.find(name);
+        if (it != vmFunctionBreakpoints_.end()) {
+            it.value().condition = condition;
+            it.value().hitCount = 0;
+        } else {
+            FunctionBreakpointInfo info(name);
+            info.condition = condition;
+            vmFunctionBreakpoints_.insert(name, std::move(info));
+        }
+        vmFunctionBreakpointHitCounts_.remove(name);
+    }
+    /// P1-4 fix: 获取函数断点条件表达式（与 DebugController::getFunctionBreakpointCondition 对齐）。
+    std::string getFunctionBreakpointCondition(const std::string& name) const override {
+        auto it = vmFunctionBreakpoints_.constFind(name);
+        return it != vmFunctionBreakpoints_.constEnd() ? it.value().condition : std::string{};
+    }
 
     /// R104 Exception BP：启用/禁用异常断点
-    void setExceptionBreakpointEnabled(bool enabled) {
+    void setExceptionBreakpointEnabled(bool enabled) override {
         vmExceptionBreakpointEnabled_ = enabled;
         if (!enabled)
             vmExceptionBreakpointHitCount_ = 0;
     }
     /// R104 Exception BP：查询异常断点是否启用
-    bool isExceptionBreakpointEnabled() const { return vmExceptionBreakpointEnabled_; }
+    bool isExceptionBreakpointEnabled() const override { return vmExceptionBreakpointEnabled_; }
     /// R104 Exception BP：异常断点命中次数
-    int getExceptionBreakpointHitCount() const { return vmExceptionBreakpointHitCount_; }
+    int getExceptionBreakpointHitCount() const override { return vmExceptionBreakpointHitCount_; }
 
     // ---- R161 Watchpoint（数据断点）----
     /// 添加数据断点（监视变量/字段被修改时暂停）
-    void setWatchpoint(const WatchpointInfo& wp) { vmWatchpoints_.append(wp); }
+    void setWatchpoint(const WatchpointInfo& wp) override { vmWatchpoints_.append(wp); }
     /// 移除指定变量名的数据断点
-    void removeWatchpoint(const std::string& varName, const std::string& fieldName = "") {
+    void removeWatchpoint(const std::string& varName, const std::string& fieldName = "") override {
         for (int i = vmWatchpoints_.size() - 1; i >= 0; --i) {
             if (vmWatchpoints_[i].varName == varName &&
                 (fieldName.empty() || vmWatchpoints_[i].fieldName == fieldName)) {
@@ -201,11 +269,11 @@ public:
         }
     }
     /// 清除所有数据断点
-    void clearWatchpoints() { vmWatchpoints_.clear(); }
+    void clearWatchpoints() override { vmWatchpoints_.clear(); }
     /// 查询所有数据断点
     const QVector<WatchpointInfo>& getWatchpoints() const { return vmWatchpoints_; }
     /// 是否有数据断点（快速路径判断）
-    bool hasWatchpoints() const { return !vmWatchpoints_.isEmpty(); }
+    bool hasWatchpoints() const override { return !vmWatchpoints_.isEmpty(); }
 
     // ---- R114 可回放执行时间轴：recorder 集成 ----
     /// 启用/禁用执行轨迹录制。启用后每次 stepOnceActive() 后自动采集快照。
@@ -296,11 +364,11 @@ public:
     VmStepResult stepByMode(VmStepMode mode);
 
     /// A4 fix: 停止 VM 并重置状态
-    void stop();
+    void stop() override;
     /// A4 fix: 重置 VM 状态（用于重新开始）
     // B2 fix: 停止 RUN 模式定时器并重置 isVmRunning_，避免 runBatch 在已 resetState 的 VM 上调用
     // currentFrame() 触发 std::abort。原 reset() 遗漏定时器停止 + 状态复位。
-    void reset() {
+    void reset() override {
         if (vmRunTimer_)
             vmRunTimer_->stop();
         isVmRunning_ = false;
@@ -376,7 +444,7 @@ public:
     //   line → line
     //   depth → 帧索引（0=栈底 main，递增到栈顶）
     //   locals → P2-3 fix: 通过 getFrameLocalsAt() 反查各帧局部变量
-    std::vector<CallStackEntry> getCallStack() const {
+    std::vector<CallStackEntry> getCallStack() const override {
         std::vector<CallStackEntry> result;
         if (useRegister_) {
             auto frames = regVm_.getCallStack();
@@ -475,8 +543,10 @@ private:
     QMap<int, BreakpointKind> vmBreakpointKinds_;
     QMap<int, std::string> vmLogpointMessages_;
     std::function<void(const std::string&)> vmLogCallback_;
-    // Function BP：函数名集合。pre-execution 检测 OP_CALL/REG_CALL 时匹配。
-    QSet<std::string> vmFunctionBreakpoints_;
+    // Function BP：函数名→条件信息映射。pre-execution 检测 OP_CALL/REG_CALL 时匹配。
+    // P1-4 fix: 从 QSet<std::string> 改为 QMap<std::string, FunctionBreakpointInfo>，
+    // 与 DebugController::functionBreakpoints_ 对齐，支持条件求值（R104 移植 R161 一致性）。
+    QMap<std::string, FunctionBreakpointInfo> vmFunctionBreakpoints_;
     QMap<std::string, int> vmFunctionBreakpointHitCounts_;
     // Exception BP：单一全局开关。pre-execution 检测 OP_THROW/REG_THROW 时暂停。
     bool vmExceptionBreakpointEnabled_ = false;

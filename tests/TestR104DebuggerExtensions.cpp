@@ -119,7 +119,7 @@ TEST(R104Logpoint, ConditionalLogs_OnlyWhenTrue) {
 
     // 模拟条件求值器：在 condition 中检查 i 是否为偶数
     // 实际生产中由 DebugEvaluator 在沙箱中求值；此处直接读 interp 的全局变量 i
-    dbg->setConditionEvaluator([&](const std::string& cond) -> bool {
+    dbg->setConditionEvaluator([&](const std::string& /*cond*/) -> bool {
         // 求值条件表达式 cond（"i % 2 == 0"）— 测试中简化为读取 interp 的 i
         auto env = interp.getGlobalEnvironment();
         if (!env)

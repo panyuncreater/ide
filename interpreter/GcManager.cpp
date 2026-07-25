@@ -18,6 +18,10 @@ RefCounted::~RefCounted() {
 void GcManager::registerTracked(RefCounted* obj) {
     if (!obj)
         return;
+    // P0-1 fix: 全程持锁，保护 tracked_/aliveSet_/计数器/checkIncrementalGc 读写的状态。
+    // checkIncrementalGc 可能触发 gcTriggerCallback_→collectCycle，collectCycle 会重入
+    // 同一把锁（recursive_mutex 安全），且 collectCycle 内 GcOnly delete 也会重入 onDestroyed。
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // R135 GC 模式分流：RefCountOnly 模式跳过注册，纯引用计数管理生命周期。
     // 循环引用会泄漏（已知限制，用于基线对比与教学演示）。
     if (gcMode_ == GcMode::RefCountOnly) {
@@ -66,6 +70,10 @@ void GcManager::checkIncrementalGc() {
 }
 
 void GcManager::onDestroyed(RefCounted* obj) {
+    // P0-1 fix: 加锁保护 aliveSet_.erase。任何线程上的 RefCounted 析构都会触及此路径，
+    // 与 registerTracked/collectCycle 并发时 aliveSet_ 无锁修改会破坏哈希表内部结构。
+    // collectCycle 持锁期间 delete 触发本方法时通过 recursive_mutex 安全重入。
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // 从 aliveSet_ 移除（tracked_ 中的悬垂指针在 collectCycle 中通过
     // aliveSet_.find 检查跳过，无需立即清理 vector）。
     // 仅用 obj 作为 key 做哈希查找/删除，不 dereference obj 内容。
@@ -167,6 +175,9 @@ void GcManager::markValue(const Value& v, std::unordered_set<const void*>& marke
 }
 
 void GcManager::collectCycle(const std::vector<const void*>& roots) {
+    // P0-1 fix: 全程持锁，互斥其他线程的 registerTracked/onDestroyed/reset/统计读取。
+    // GcOnly 模式 delete 对象触发 ~RefCounted→onDestroyed 通过 recursive_mutex 重入安全。
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     // R135 GC 模式分流：RefCountOnly 模式无 tracked 对象，直接返回。
     if (gcMode_ == GcMode::RefCountOnly) {
         return;
@@ -379,6 +390,8 @@ void GcManager::collectCycle(const std::vector<const void*>& roots) {
 }
 
 void GcManager::reset() {
+    // P0-1 fix: 加锁保护，与 worker 线程的 registerTracked/onDestroyed/collectCycle 互斥。
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     tracked_.clear();
     aliveSet_.clear();
     // BUG-003 fix: 同步重置分配计数，避免 reset 后立即触发误增量 GC
@@ -399,4 +412,72 @@ void GcManager::reset() {
     // 后续后端执行触发 checkIncrementalGc 时调用悬垂回调 → UAF。
     // 配合 Interpreter 析构函数的清除（根因修复）双重保护。
     gcTriggerCallback_ = nullptr;
+}
+
+// P0-1 fix: 以下访问器全部加锁，消除 UI 线程读取与 worker 线程写入的数据竞争。
+size_t GcManager::trackedCount() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return tracked_.size();
+}
+
+void GcManager::setGcTriggerCallback(std::function<void()> cb) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    gcTriggerCallback_ = std::move(cb);
+}
+
+// P2-9 fix: CallbackSuppressor 实现。
+// 构造时原子保存 gcTriggerCallback_ 并置空，析构时恢复。
+// 嵌套场景：每个实例独立持有 saved_ 副本，析构按栈序恢复，
+// 最内层析构恢复最外层 suppressor 置空前的回调（即 Interpreter 的回调）。
+GcManager::CallbackSuppressor::CallbackSuppressor() {
+    auto& gc = GcManager::instance();
+    std::lock_guard<std::recursive_mutex> lock(gc.mutex_);
+    saved_ = std::move(gc.gcTriggerCallback_);
+    gc.gcTriggerCallback_ = nullptr;
+}
+
+GcManager::CallbackSuppressor::~CallbackSuppressor() {
+    auto& gc = GcManager::instance();
+    std::lock_guard<std::recursive_mutex> lock(gc.mutex_);
+    gc.gcTriggerCallback_ = std::move(saved_);
+}
+
+size_t GcManager::allocationsSinceLastGc() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return allocationsSinceLastGc_;
+}
+
+void GcManager::setGcAllocationThreshold(size_t threshold) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    gcAllocationThreshold_ = threshold;
+}
+
+GcPhase GcManager::currentPhase() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return currentPhase_;
+}
+
+size_t GcManager::lastMarkedCount() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return lastMarkedCount_;
+}
+
+size_t GcManager::lastCollectedCount() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return lastCollectedCount_;
+}
+
+size_t GcManager::totalGcCount() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return totalGcCount_;
+}
+
+GcMode GcManager::gcMode() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return gcMode_;
+}
+
+void GcManager::setGcMode(GcMode mode) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    gcMode_ = mode;
 }

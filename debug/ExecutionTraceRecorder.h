@@ -72,8 +72,15 @@ struct TraceSnapshot {
     std::vector<Value> registerValues;                            // 寄存器值深拷贝
     std::vector<std::pair<std::string, Value>> globalsValues;     // 全局变量值
     std::vector<std::pair<std::string, Value>> visibleVarsValues; // 可见变量值
+    // L18: Interpreter 后端完整状态快照（类型擦除，避免头文件循环依赖）。
+    // 实际类型为 std::shared_ptr<Interpreter::StateSnapshot>。
+    // 仅 Interpreter 后端 + FullState 模式填充；VM 后端为空。
+    // 回滚时 VmStepper/DebugController 通过 Interpreter::restoreFromSnapshot 消费。
+    std::shared_ptr<void> interpreterState;
     // 注：Environment 链与 VM 帧的深拷贝由 PlaybackController 在回滚时按需重建，
     // 不在每个快照中存储（避免每步深拷贝整个环境链导致内存爆炸）
+    // L18 更新：Interpreter 后端例外——interpreterState 持有完整环境链快照，
+    // 因为 Interpreter 无 IP/帧概念，必须依赖完整状态快照回滚（而非重建）
 
     /// JSON 序列化（阶段 2）——用于持久化/跨语言交换
     std::string toJson() const;

@@ -1,4 +1,8 @@
 # MiniLang IDE clang-tidy 配置
+# P3-14 完整启用：misc-*/readability-*/bugprone-*/modernize-*/performance-* 全部启用，
+# 原排除的 readability-magic-numbers / misc-const-correctness / readability-function-cognitive-complexity
+# 已启用并配置合理忽略项（位掩码 / 2 的幂 / 常见小整数 / 认知复杂度阈值放宽）。
+# CI 中 clang-tidy job 为 continue-on-error 信息性检查，告警不阻塞主构建。
 Checks: >
   -*,
   bugprone-*,
@@ -9,13 +13,9 @@ Checks: >
   -modernize-avoid-c-arrays,
   performance-*,
   readability-*,
-  -readability-magic-numbers,
-  -readability-identifier-length,
-  -readability-function-cognitive-complexity,
   misc-*,
   -misc-include-cleaner,
-  -misc-non-private-member-variables-in-classes,
-  -misc-const-correctness
+  -misc-non-private-member-variables-in-classes
 
 CheckOptions:
   - key: readability-identifier-naming.ClassCase
@@ -30,8 +30,24 @@ CheckOptions:
     value: _
   - key: readability-identifier-naming.EnumCase
     value: CamelCase
-    - key: modernize-use-nullptr.NullPointerLiteral
-      value: 'nullptr'
+  - key: modernize-use-nullptr.NullPointerLiteral
+    value: 'nullptr'
+  # P3-14: readability-magic-numbers 配置——忽略字节提取位掩码、2 的幂、常见小整数
+  # 项目中 `v & 0xFF` / `(v >> 8) & 0xFF` 等字节序列化模式属合理位运算，
+  # 0/1/2 等小整数用于索引/计数也属合理。忽略这些值避免假阳性。
+  # 0xFF/0xFFFF/0xFFFFFFFF 用于 NaN-boxing/字节掩码，8/16/32/64 用于位宽/对齐。
+  - key: readability-magic-numbers.IgnoredIntegerValues
+    value: '0;1;2;3;4;5;6;7;8;10;16;32;64;100;1000;255;256;65535;0xFF;0xFFFF;0xFFFFFFFF;0xFFFFFFFFFFFFFFFF'
+  - key: readability-magic-numbers.IgnorePowersOf2IntegerValues
+    value: 'true'
+  - key: readability-magic-numbers.IgnoreBitFieldsInitializerWidths
+    value: 'true'
+  # P3-14: readability-function-cognitive-complexity 阈值从默认 25 放宽到 50
+  # L27 已拆分 emitMatchPattern (211→6 子函数) / emitCatchBlock (200→5 阶段子函数)，
+  # 但 Compiler.cpp 中仍有部分 emit* 函数因指令序列自然复杂（如 visitMatchStmt）
+  # 难以无副作用拆分。阈值 50 允许这类函数通过，同时仍能捕获真正过长的函数。
+  - key: readability-function-cognitive-complexity.Threshold
+    value: '50'
 
 WarningsAsErrors: ''
 HeaderFilterRegex: '^(?!(Qt|clang|llvm|gtest|gmock)).*\.h$'

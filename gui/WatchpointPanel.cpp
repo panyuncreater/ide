@@ -323,7 +323,8 @@ void WatchpointPanel::refreshLive() {
         return;
     }
 
-    const QVector<WatchpointInfo>& wps = controller_->getWatchpoints();
+    // L19: getWatchpoints 返回值拷贝（支持 Interpreter 路径的 std::vector → QVector 转换）
+    QVector<WatchpointInfo> wps = controller_->getWatchpoints();
     if (wps.isEmpty()) {
         liveStatusLabel_->setText(QString::fromUtf8("无 Watchpoint"));
         watchpointTable_->setRowCount(0);

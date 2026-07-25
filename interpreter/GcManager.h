@@ -34,6 +34,7 @@
 
 #include "interpreter/ValueTypes.h" // ValueType
 #include <functional>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
 
@@ -77,15 +78,17 @@ public:
     // 注册容器节点到 tracked 列表 + aliveSet_
     // 仅注册 ArrayData/DictData/InstanceData（可能形成循环的类型）
     // StringData/ClosureData 不注册（StringData 无子引用，ClosureData 已用 weak_ptr 打破循环）
+    // P0-1 fix: 加锁保护 tracked_/aliveSet_/计数器，消除多线程分配容器的数据竞争。
     void registerTracked(RefCounted* obj);
 
     // RefCounted 析构钩子：从 aliveSet_ 移除本指针
-    // 安全性：单线程 collectCycle 期间不会并发；this 在析构函数内仍有效
+    // 安全性：collectCycle 持有同一把锁时通过 recursive_mutex 安全重入
     void onDestroyed(RefCounted* obj);
 
     // 执行一次 mark-sweep 收集
     // roots: 当前存活的根集（globals/stack/frames 中的容器 Value）
     // 从 roots 出发 mark 所有可达容器，sweep 未标记的循环孤岛
+    // P0-1 fix: 全程持锁；GcOnly 模式 delete 触发 ~RefCounted→onDestroyed 通过 recursive_mutex 重入
     void collectCycle(const std::vector<const void*>& roots);
 
     // 清空 tracked 列表 + aliveSet_（VM/Interpreter 完全重置时调用）
@@ -93,27 +96,28 @@ public:
     void reset();
 
     // 调试：当前 tracked 节点数
-    size_t trackedCount() const { return tracked_.size(); }
+    size_t trackedCount() const;
 
     // BUG-003 fix: 设置增量 GC 触发回调（由 Interpreter 在构造时注册）
     // 回调内 Interpreter 收集当前根集（globalEnv_、callStack_ 各帧 env 等）
     // 并调用 collectCycle。回调可为空（无 Interpreter 时跳过增量触发）。
-    void setGcTriggerCallback(std::function<void()> cb) { gcTriggerCallback_ = std::move(cb); }
+    void setGcTriggerCallback(std::function<void()> cb);
 
     // BUG-003 fix: 上次 GC 后累计分配的容器数（用于诊断/测试）
-    size_t allocationsSinceLastGc() const { return allocationsSinceLastGc_; }
+    size_t allocationsSinceLastGc() const;
 
     // BUG-003 fix: 配置增量触发阈值（测试场景可调小以验证触发行为）
-    void setGcAllocationThreshold(size_t threshold) { gcAllocationThreshold_ = threshold; }
+    void setGcAllocationThreshold(size_t threshold);
 
     // R113 C 项：GC 进度只读统计——供 MemoryModelPanel 实时展示上次 GC 经历的阶段
     // 与结果。collectCycle 同步阻塞，currentPhase_ 在阶段切换时短暂变更，结束后
     // 回归 Idle；UI 在 animTimer_ 周期内观察到的值通常是 Idle（除非 GC 恰好在该
     // 周期内执行）。lastMarkedCount/lastCollectedCount 反映上次 GC 的结果。
-    GcPhase currentPhase() const { return currentPhase_; }
-    size_t lastMarkedCount() const { return lastMarkedCount_; }
-    size_t lastCollectedCount() const { return lastCollectedCount_; }
-    size_t totalGcCount() const { return totalGcCount_; }
+    // P0-1 fix: 全部加锁读取，消除 UI 线程与 worker 线程 collectCycle 写入的数据竞争。
+    GcPhase currentPhase() const;
+    size_t lastMarkedCount() const;
+    size_t lastCollectedCount() const;
+    size_t totalGcCount() const;
 
     // R135 GC 模式切换 API——运行前切换内存管理策略。
     // 默认 RefCountWithCycleGc（项目历史行为）。
@@ -121,8 +125,28 @@ public:
     // GcOnly: sweep 阶段直接 delete 不可达对象（实验性，存在 COW/VM root 限制）
     // 切换时机：仅在 Interpreter/VM 完全重置后（reset() 后）切换，避免运行中
     // 切换导致 tracked_/aliveSet_ 状态不一致。
-    GcMode gcMode() const { return gcMode_; }
-    void setGcMode(GcMode mode) { gcMode_ = mode; }
+    GcMode gcMode() const;
+    void setGcMode(GcMode mode);
+
+    // P2-9 fix: RAII 增量 GC 回调抑制器。
+    // 构造时原子地保存当前 gcTriggerCallback_ 并置空，析构时恢复。
+    // 用途：JIT 后端执行期间临时禁用增量 GC 触发——JIT 持有的 Value 引用
+    // （操作数栈/帧栈/全局槽位，以 NaN-boxing raw bits 表示）未注册为 GC roots，
+    // 若此时 Interpreter 的回调被触发，会以不完整 roots 集误回收 JIT 存活容器，
+    // 导致语义损坏或 UAF。抑制期间产生的循环引用孤岛由下一轮 Interpreter
+    // execute() 入口的兜底 collectCycle 回收（跨 execute 边界自动清理）。
+    // 线程安全：内部持 recursive_mutex_，与 setGcTriggerCallback 互斥。
+    // 嵌套安全：每个 suppressor 实例独立保存/恢复自己的副本，支持嵌套。
+    class CallbackSuppressor {
+    public:
+        CallbackSuppressor();
+        ~CallbackSuppressor();
+        CallbackSuppressor(const CallbackSuppressor&) = delete;
+        CallbackSuppressor& operator=(const CallbackSuppressor&) = delete;
+
+    private:
+        std::function<void()> saved_;
+    };
 
 private:
     GcManager() = default;
@@ -160,4 +184,11 @@ private:
     // R135 GC 模式字段——控制 registerTracked / collectCycle 的行为分流。
     // 默认 RefCountWithCycleGc 保持向后兼容。
     GcMode gcMode_ = GcMode::RefCountWithCycleGc;
+
+    // P0-1 fix: 全局锁，保护 tracked_/aliveSet_/所有计数器/回调/模式字段。
+    // 使用 recursive_mutex 是因为 collectCycle 在 GcOnly 模式下 delete 对象会触发
+    // ~RefCounted→onDestroyed 重入同一把锁；registerTracked→checkIncrementalGc→
+    // gcTriggerCallback_→collectCycle 也是同线程重入。recursive_mutex 保证这些
+    // 合法的重入不死锁，同时互斥其他线程的并发访问。
+    mutable std::recursive_mutex mutex_;
 };

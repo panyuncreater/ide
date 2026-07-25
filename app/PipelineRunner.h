@@ -23,6 +23,7 @@
 #include "Diagnostic.h"
 #include "ast/ASTNode.h"
 #include "compiler/Bytecode.h"
+#include "compiler/BytecodeCache.h"
 #include "compiler/Compiler.h"
 #include "formatter/Formatter.h"
 #include "lexer/Lexer.h"
@@ -88,6 +89,17 @@ public:
     /// BUG-ORCH-7 fix: 失效前端管线缓存（Compiler 设置变更或外部强制刷新时调用）
     void invalidatePipelineCache() { cachedPipelineSource_.clear(); }
 
+    /// P1-7: 启用/禁用字节码磁盘缓存（默认启用）。
+    /// 禁用后 runCompiler 不查询/写入磁盘缓存,始终走 Compiler::compile。
+    void setBytecodeCacheEnabled(bool enabled) { bytecodeCacheEnabled_ = enabled; }
+    bool isBytecodeCacheEnabled() const { return bytecodeCacheEnabled_; }
+
+    /// P1-7: 清空字节码缓存（修改被 import 的模块后调用,避免陈旧缓存）。
+    void invalidateBytecodeCache() { bytecodeCache_.clear(); }
+
+    /// P1-7: 访问底层缓存对象（测试/管理用）
+    BytecodeCache& bytecodeCache() { return bytecodeCache_; }
+
     /// REPL 专用：直接设置词法/语法分析结果（供 magic 命令无参查询）
     /// REPL 传入源码，内部静默执行 Lex+Parse（不发 diagnosticsReady 信号），
     /// 更新 lastTokens_/astRoot_。注意：不清空 lastCompileResult_，
@@ -119,6 +131,7 @@ public:
         lastTokens_.clear();
         astRoot_.reset();
         lastCompileResult_ = CompileResult{};
+        lastSource_.clear(); // P1-7: 清空源码记录
     }
 
 private:
@@ -141,4 +154,9 @@ private:
     // BUG-ORCH-7 fix: 前端管线源码级缓存，避免 blockIfHasErrors + prepareRun 重复执行 Lexer/Parser
     std::string cachedPipelineSource_;
     PipelineResult cachedPipelineResult_;
+    // P1-7: 字节码磁盘缓存
+    BytecodeCache bytecodeCache_;
+    bool bytecodeCacheEnabled_ = true;
+    // P1-7: 记录最近一次 runFrontendPipeline 的源码,供 runCompiler 查询缓存
+    std::string lastSource_;
 };

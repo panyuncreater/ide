@@ -534,8 +534,8 @@ counter();
 // 综合三后端一致性测试
 // ============================================================
 
-TEST(AuditBatch4Consistency, TryCatchFinallyWithClosure_Interp) {
-    // finally 块 + 闭包捕获 + 异常传播（Interpreter 全局闭包变量调用）
+TEST(AuditBatch4Consistency, TryCatchFinallyWithClosure_AllBackends) {
+    // finally 块 + 闭包捕获 + 异常传播 + return 时执行 finally（L4 修复，三后端一致）
     std::string src = R"(
 var log = "";
 fun risky() {
@@ -553,8 +553,13 @@ var f = risky();
 print(log);
 print(f());
 )";
-    // finally 在 return 时不执行是已知限制，此处仅验证 Interpreter 行为
-    EXPECT_EQ(runInterpreter(src), "err1err1");
+    // L4 fix: return 在 try-finally 内时执行 finally（对齐 Java/Python 主流语义）
+    // catch 块 return getter → 先执行 finally（log += "fin"）→ 再返回 getter
+    // 输出：err1fin（return 前 finally 已执行）+ err1（getter 返回捕获的 e）
+    EXPECT_EQ(runInterpreter(src), "err1finerr1");
+    EXPECT_EQ(runStackVM(src), "err1finerr1");
+    EXPECT_EQ(runStackVM_IR(src), "err1finerr1");
+    EXPECT_EQ(runRegVM(src), "err1finerr1");
 }
 
 TEST(AuditBatch4Consistency, NestedTryCatchWithBreak_AllBackends) {

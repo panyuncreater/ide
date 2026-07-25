@@ -37,7 +37,7 @@ std::string helpString() {
 
 命令:
   install [package]   安装包（从 registry 或 file: 协议）
-                      无 package 参数时安装清单中所有依赖
+                      无 package 参数时安装清单中所有依赖（含传递依赖）
   list                列出已安装的包
   init [name]         初始化 minilang.pkg 清单文件
   add <package>       添加依赖到清单并安装
@@ -46,6 +46,7 @@ std::string helpString() {
   --registry <dir>        指定本地 registry 目录
   --packages-dir <dir>    指定包安装目录（默认 minilang_packages）
   --manifest <path>       指定清单文件路径（默认 minilang.pkg）
+  --no-transitive         安装清单依赖时跳过传递依赖（默认安装传递依赖）
   --help                  显示帮助信息
   --version               显示版本信息
 
@@ -54,13 +55,23 @@ std::string helpString() {
   name@1.0.0            指定版本
   file:./path/to/pkg    从本地路径安装
 
+版本约束格式（在清单 dependencies[].version 中使用）:
+  1.0.0     精确匹配
+  ^1.0.0    兼容版本（>=1.0.0 <2.0.0，同主版本）
+  ~1.0.0    近似版本（>=1.0.0 <1.1.0，同次版本）
+  >=1.0.0   最低版本
+  >1.0.0    高于指定版本
+  <=2.0.0   最高版本
+  <2.0.0    低于指定版本
+  *         任意版本
+
 清单文件格式 (minilang.pkg, JSON):
   {
     "name": "my-project",
     "version": "0.1.0",
     "description": "项目描述",
     "dependencies": [
-      { "name": "math-utils", "version": "1.0.0" }
+      { "name": "math-utils", "version": "^1.0.0" }
     ]
   }
 
@@ -68,6 +79,7 @@ std::string helpString() {
   minilang-pkg init my-project
   minilang-pkg add math-utils@1.0.0
   minilang-pkg install
+  minilang-pkg install --no-transitive
   minilang-pkg list
 
 退出码:
@@ -413,10 +425,17 @@ InstallResult PackageManager::install(const std::string& packageSpec) {
         srcPath = srcInfo.absoluteFilePath().toStdString();
     } else {
         // registry 模式
-        srcPath = findInRegistry(pkgInfo.name, pkgInfo.version);
+        // P2-11: 检测版本约束操作符（^/~/>=/>/<=/</*），使用约束匹配
+        const std::string& ver = pkgInfo.version;
+        bool isConstraint =
+            !ver.empty() && (ver[0] == '^' || ver[0] == '~' || ver[0] == '>' || ver[0] == '<' || ver == "*");
+        if (isConstraint) {
+            srcPath = findInRegistryWithConstraint(pkgInfo.name, VersionConstraint::parse(ver));
+        } else {
+            srcPath = findInRegistry(pkgInfo.name, ver);
+        }
         if (srcPath.empty()) {
-            result.errorMessage =
-                "在 registry 中未找到包: " + pkgInfo.name + (pkgInfo.version.empty() ? "" : "@" + pkgInfo.version);
+            result.errorMessage = "在 registry 中未找到包: " + pkgInfo.name + (ver.empty() ? "" : "@" + ver);
             if (config_.registryDir.empty()) {
                 result.errorMessage += "（未指定 --registry 目录）";
             }
@@ -444,8 +463,11 @@ InstallResult PackageManager::install(const std::string& packageSpec) {
             QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(content));
             if (doc.isObject()) {
                 QJsonObject obj = doc.object();
-                if (result.version.empty()) {
-                    result.version = obj.value("version").toString().toStdString();
+                // P2-11: 始终用 pkg.json 中的实际版本覆盖 result.version
+                // （result.version 可能是约束字符串如 "^1.0.0"，非实际版本号）
+                QString actualVer = obj.value("version").toString();
+                if (!actualVer.isEmpty()) {
+                    result.version = actualVer.toStdString();
                 }
             }
         }
@@ -583,6 +605,9 @@ CliArgs parseArgs(int argc, char* argv[]) {
         } else if (arg == "--version" || arg == "-v") {
             args.showVersion = true;
             i++;
+        } else if (arg == "--no-transitive") {
+            args.noTransitive = true;
+            i++;
         } else if (arg == "--registry") {
             if (i + 1 >= argc) {
                 args.parseError = true;
@@ -643,6 +668,8 @@ CliArgs parseArgs(int argc, char* argv[]) {
                 return args;
             }
             args.manifestPath = QString::fromLocal8Bit(argv[++i]).toStdString();
+        } else if (arg == "--no-transitive") {
+            args.noTransitive = true;
         } else if (arg == "--help" || arg == "-h") {
             args.showHelp = true;
         } else if (arg == "--version" || arg == "-v") {
@@ -728,10 +755,11 @@ CommandResult processInstall(const CliArgs& args) {
             return result;
         }
 
-        auto results = pm.installAll();
+        // 默认安装传递依赖，--no-transitive 时回退到扁平安装
+        auto results = args.noTransitive ? pm.installAll() : pm.installAllWithTransitive();
         bool allOk = true;
         bool anyWarning = false;
-        std::string output = "安装依赖:\n";
+        std::string output = "安装依赖" + std::string(args.noTransitive ? "" : "（含传递依赖）") + ":\n";
         for (const auto& r : results) {
             if (r.ok) {
                 if (r.alreadyInstalled) {
@@ -907,6 +935,309 @@ CommandResult processAdd(const CliArgs& args) {
         result.output = "已添加依赖到清单，但安装失败: " + installResult.errorMessage;
     }
     return result;
+}
+
+// ============================================================
+// P2-11 版本约束与传递依赖解析实现
+// ============================================================
+
+Version Version::parse(const std::string& str) {
+    Version v;
+    int field = 0; // 0=major, 1=minor, 2=patch
+    int num = 0;
+    bool hasNum = false;
+    for (char c : str) {
+        if (c >= '0' && c <= '9') {
+            num = num * 10 + (c - '0');
+            hasNum = true;
+        } else if (c == '.') {
+            if (hasNum) {
+                if (field == 0)
+                    v.major = num;
+                else if (field == 1)
+                    v.minor = num;
+                num = 0;
+                hasNum = false;
+                ++field;
+            }
+        } else {
+            break; // 非数字非点号，停止解析
+        }
+    }
+    if (hasNum) {
+        if (field == 0)
+            v.major = num;
+        else if (field == 1)
+            v.minor = num;
+        else if (field >= 2)
+            v.patch = num;
+    }
+    return v;
+}
+
+std::string Version::toString() const {
+    return std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
+}
+
+VersionConstraint VersionConstraint::parse(const std::string& str) {
+    VersionConstraint c;
+    if (str.empty() || str == "*") {
+        c.op = ConstraintOp::Any;
+        return c;
+    }
+    if (str[0] == '^') {
+        c.op = ConstraintOp::Caret;
+        c.version = Version::parse(str.substr(1));
+        return c;
+    }
+    if (str[0] == '~') {
+        c.op = ConstraintOp::Tilde;
+        c.version = Version::parse(str.substr(1));
+        return c;
+    }
+    if (str.size() >= 2 && str[0] == '>' && str[1] == '=') {
+        c.op = ConstraintOp::GreaterEq;
+        c.version = Version::parse(str.substr(2));
+        return c;
+    }
+    if (str.size() >= 2 && str[0] == '<' && str[1] == '=') {
+        c.op = ConstraintOp::LessEq;
+        c.version = Version::parse(str.substr(2));
+        return c;
+    }
+    if (str[0] == '>') {
+        c.op = ConstraintOp::Greater;
+        c.version = Version::parse(str.substr(1));
+        return c;
+    }
+    if (str[0] == '<') {
+        c.op = ConstraintOp::Less;
+        c.version = Version::parse(str.substr(1));
+        return c;
+    }
+    // 默认：精确匹配
+    c.op = ConstraintOp::Exact;
+    c.version = Version::parse(str);
+    return c;
+}
+
+bool VersionConstraint::matches(const Version& ver) const {
+    switch (op) {
+    case ConstraintOp::Any:
+        return true;
+    case ConstraintOp::Exact:
+        return ver == version;
+    case ConstraintOp::Caret:
+        // ^1.0.0 → >=1.0.0 <2.0.0
+        // ^0.1.0 → >=0.1.0 <0.2.0
+        // ^0.0.1 → >=0.0.1 <0.0.2
+        if (ver < version)
+            return false;
+        if (version.major > 0)
+            return ver.major == version.major;
+        if (version.minor > 0)
+            return ver.major == 0 && ver.minor == version.minor;
+        return ver.major == 0 && ver.minor == 0 && ver.patch == version.patch;
+    case ConstraintOp::Tilde:
+        // ~1.0.0 → >=1.0.0 <1.1.0
+        if (ver < version)
+            return false;
+        return ver.major == version.major && ver.minor == version.minor;
+    case ConstraintOp::GreaterEq:
+        return ver >= version;
+    case ConstraintOp::Greater:
+        return ver > version;
+    case ConstraintOp::LessEq:
+        return ver <= version;
+    case ConstraintOp::Less:
+        return ver < version;
+    }
+    return false;
+}
+
+std::string VersionConstraint::toString() const {
+    switch (op) {
+    case ConstraintOp::Any:
+        return "*";
+    case ConstraintOp::Exact:
+        return version.toString();
+    case ConstraintOp::Caret:
+        return "^" + version.toString();
+    case ConstraintOp::Tilde:
+        return "~" + version.toString();
+    case ConstraintOp::GreaterEq:
+        return ">=" + version.toString();
+    case ConstraintOp::Greater:
+        return ">" + version.toString();
+    case ConstraintOp::LessEq:
+        return "<=" + version.toString();
+    case ConstraintOp::Less:
+        return "<" + version.toString();
+    }
+    return "*";
+}
+
+std::optional<Version> PackageManager::getInstalledVersion(const std::string& pkgName) const {
+    QString pkgJsonPath = QDir(QString::fromStdString(resolvePackagePath(pkgName))).filePath("pkg.json");
+    if (!QFile::exists(pkgJsonPath))
+        return std::nullopt;
+    QFile pkgJson(pkgJsonPath);
+    if (!pkgJson.open(QIODevice::ReadOnly | QIODevice::Text))
+        return std::nullopt;
+    QJsonDocument doc = QJsonDocument::fromJson(pkgJson.readAll());
+    pkgJson.close();
+    if (!doc.isObject())
+        return std::nullopt;
+    QString verStr = doc.object().value("version").toString();
+    if (verStr.isEmpty())
+        return std::nullopt;
+    return Version::parse(verStr.toStdString());
+}
+
+bool PackageManager::checkVersionConstraint(const std::string& pkgName, const VersionConstraint& constraint) const {
+    auto installed = getInstalledVersion(pkgName);
+    if (!installed)
+        return true; // 未安装，不构成冲突
+    return constraint.matches(*installed);
+}
+
+std::string PackageManager::findInRegistryWithConstraint(const std::string& pkgName,
+                                                         const VersionConstraint& constraint) const {
+    if (config_.registryDir.empty())
+        return {};
+
+    QDir registryDir(QString::fromStdString(config_.registryDir));
+    if (!registryDir.exists())
+        return {};
+
+    QDir pkgDir = registryDir.filePath(QString::fromStdString(pkgName));
+    if (!pkgDir.exists())
+        return {};
+
+    // Any 约束：回退到现有 findInRegistry 逻辑
+    if (constraint.op == ConstraintOp::Any)
+        return findInRegistry(pkgName, "");
+
+    // 收集所有版本子目录
+    QDir::Filters dirFilters = QDir::Dirs | QDir::NoSymLinks | QDir::NoDotAndDotDot;
+    QStringList entries = pkgDir.entryList(dirFilters, QDir::Name);
+
+    Version bestVersion;
+    std::string bestPath;
+    bool found = false;
+
+    for (const QString& entry : entries) {
+        Version ver = Version::parse(entry.toStdString());
+        if (constraint.matches(ver)) {
+            if (!found || ver > bestVersion) {
+                bestVersion = ver;
+                bestPath = pkgDir.filePath(entry).toStdString();
+                found = true;
+            }
+        }
+    }
+
+    if (found)
+        return bestPath;
+
+    // 回退：检查包目录本身的 pkg.json 版本是否匹配
+    QString pkgJsonPath = pkgDir.filePath("pkg.json");
+    if (QFile::exists(pkgJsonPath)) {
+        QFile pkgJson(pkgJsonPath);
+        if (pkgJson.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QJsonDocument doc = QJsonDocument::fromJson(pkgJson.readAll());
+            pkgJson.close();
+            if (doc.isObject()) {
+                QString verStr = doc.object().value("version").toString();
+                Version ver = Version::parse(verStr.toStdString());
+                if (constraint.matches(ver))
+                    return pkgDir.absolutePath().toStdString();
+            }
+        }
+    }
+
+    return {};
+}
+
+void PackageManager::installTransitiveDeps(const std::string& pkgPath, std::unordered_set<std::string>& visited,
+                                           std::vector<InstallResult>& results) {
+    // 读取已安装包的 minilang.pkg 清单
+    QString manifestPath = QDir(QString::fromStdString(pkgPath)).filePath("minilang.pkg");
+    if (!QFile::exists(manifestPath))
+        return; // 无清单，无传递依赖
+
+    QFile manifestFile(manifestPath);
+    if (!manifestFile.open(QIODevice::ReadOnly | QIODevice::Text))
+        return;
+
+    std::string content = QString::fromUtf8(manifestFile.readAll()).toStdString();
+    manifestFile.close();
+
+    std::string parseError;
+    Manifest depManifest = parseManifest(content, &parseError);
+    if (!parseError.empty())
+        return; // 清单解析失败，跳过传递依赖
+
+    // 递归安装每个依赖
+    for (const auto& dep : depManifest.dependencies) {
+        // 循环依赖检测
+        if (visited.count(dep.name))
+            continue;
+        visited.insert(dep.name);
+
+        // 构建安装描述符
+        std::string spec = dep.name;
+        if (!dep.version.empty() && dep.source.substr(0, 5) != "file:") {
+            spec += "@" + dep.version;
+        }
+        if (dep.source.substr(0, 5) == "file:") {
+            spec = dep.source;
+        }
+
+        InstallResult result = install(spec);
+        results.push_back(result);
+
+        // P2-11: 即使包已安装也要检查传递依赖（它们可能尚未安装）
+        if (result.ok && !result.installPath.empty()) {
+            installTransitiveDeps(result.installPath, visited, results);
+        }
+    }
+}
+
+std::vector<InstallResult> PackageManager::installAllWithTransitive() {
+    std::vector<InstallResult> results;
+    if (!manifestLoaded_) {
+        InstallResult r;
+        r.errorMessage = "未加载清单文件";
+        results.push_back(r);
+        return results;
+    }
+
+    std::unordered_set<std::string> visited;
+
+    for (const auto& dep : manifest_.dependencies) {
+        if (visited.count(dep.name))
+            continue;
+        visited.insert(dep.name);
+
+        std::string spec = dep.name;
+        if (!dep.version.empty() && dep.source.substr(0, 5) != "file:") {
+            spec += "@" + dep.version;
+        }
+        if (dep.source.substr(0, 5) == "file:") {
+            spec = dep.source;
+        }
+
+        InstallResult result = install(spec);
+        results.push_back(result);
+
+        // P2-11: 即使包已安装也要检查传递依赖（它们可能尚未安装）
+        if (result.ok && !result.installPath.empty()) {
+            installTransitiveDeps(result.installPath, visited, results);
+        }
+    }
+
+    return results;
 }
 
 } // namespace minilang_pkg

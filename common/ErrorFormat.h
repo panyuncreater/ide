@@ -12,12 +12,20 @@
 // 循环内越界等场景频繁触发错误路径时产生可观开销。
 // 本工具使用栈缓冲 + std::to_chars（无 locale、无堆分配）。
 //
-// 用法：
-//   ErrorFormat::format("数组索引越界: %d, 有效范围 [0, %d)", idx, size);
+// P3-16 fix: 新增 formatStd（std::format 风格），提供类型安全的现代 API。
+// 旧的 format（printf 风格）保留为 legacy API，避免破坏现有 70+ 调用方。
+// 新代码应优先使用 formatStd；ErrorMessages.h 中新增 std::format 风格常量。
+// CrashHandler.cpp 的 snprintf 因异步信号安全约束保留不迁移。
+//
+// 用法（推荐）：
+//   ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", idx, size);
 //   ErrorFormat::formatWithLocation(msg, line, col);
 //   ErrorFormat::formatWithLine(msg, line);
 //
-// format 支持的格式说明符：
+// 用法（legacy，printf 风格，保留兼容）：
+//   ErrorFormat::format("数组索引越界: %d, 有效范围 [0, %d)", idx, size);
+//
+// format 支持的格式说明符（legacy）：
 //   %d  - int / int64_t / size_t（整型）
 //   %s  - const char* / std::string
 //   %zu - size_t（显式）
@@ -28,8 +36,10 @@
 #include <charconv>
 #include <cstdio>
 #include <cstring>
+#include <format>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 namespace ErrorFormat {
 
@@ -73,6 +83,28 @@ template <typename... Args> inline std::string format(const char* fmt, Args&&...
     }
     // 截断（消息过长）：返回 512 字节
     return std::string(buf, sizeof(buf) - 1);
+}
+
+// ============================================================
+// P3-16 fix: formatStd — std::format 风格的类型安全格式化（推荐）
+// ------------------------------------------------------------
+// 与 format（printf 风格）对比：
+//   - 类型安全：编译期检查参数与占位符匹配，避免 %d/%s 误用导致 UB
+//   - 占位符：{} 而非 %d/%s/%zu，无需为不同整型选择正确说明符
+//   - std::string 参数无需 .c_str()
+//   - 性能：std::format 内部使用编译期格式串解析 + 栈缓冲，性能与 snprintf 相当
+//
+// 迁移策略：
+//   - 新代码应使用 formatStd + ErrorMessages 中 *FmtStd 常量
+//   - 老 format 调用可逐步迁移（不强制），保持两套 API 共存
+//   - CrashHandler.cpp 保留 snprintf（异步信号安全约束）
+//
+// 用法：
+//   ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})", idx, size);
+//   ErrorFormat::formatStd("未定义的函数: {}", funName);  // funName 可为 std::string
+// ============================================================
+template <typename... Args> inline std::string formatStd(std::format_string<Args...> fmt, Args&&... args) {
+    return std::format(fmt, std::forward<Args>(args)...);
 }
 
 // ============================================================

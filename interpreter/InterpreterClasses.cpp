@@ -4,7 +4,8 @@
 // S6 fix: 从 Interpreter.cpp 拆分，降低单文件复杂度。
 // ============================================================
 
-#include "common/ErrorMessages.h" // R161 fix: 三后端共享错误消息常量
+#include "common/ErrorMessages.h"  // R161 fix: 三后端共享错误消息常量
+#include "debug/DebugController.h" // L19 fix: visitMemberAssign 调用 checkWatchpointHit 需完整定义
 #include "interpreter/Interpreter.h"
 #include "interpreter/StringIntern.h" // PERF-05 fix: 方法标记字符串驻留
 
@@ -38,7 +39,6 @@ void Interpreter::visitClassDecl(ClassDecl& node) {
     // C6 fix: 任何类定义/重定义都递增 gen，使所有 ClassInfo::methodCache_ 条目失效，
     // 防止子类缓存指向已被替换的父类旧方法指针。
     classRegistryGen_++;
-    ClassInfo& registeredCls = classRegistry_[node.name];
 
     // 处理类成员
     for (auto& member : node.members) {
@@ -126,11 +126,26 @@ void Interpreter::visitMemberAccess(MemberAccess& node) {
         return;
     }
 
-    runtimeError(ErrorMessages::kTypeNotMemberAccessible, node.line, node.column);
+    // P2 fix (null-access): null 值成员访问给出明确的 null-access 诊断码，
+    // 供 ErrorHintEngine 按 code 精确匹配教学提示（而非依赖子串匹配）。
+    if (objC.isNull()) {
+        runtimeError("不能在 null 值上访问属性或调用方法", node.line, node.column, DiagCodes::kNullAccess);
+    }
+    runtimeError(ErrorMessages::kTypeNotMemberAccessible, node.line, node.column, DiagCodes::kTypeMismatch);
 }
 
 void Interpreter::visitMemberAssign(MemberAssign& node) {
     checkBreak(&node);
+    // L19 Watchpoint（pre-execution 语义，与 VM OP_MEMBER_SET 对齐）：
+    // 字段写入检查。仅当 node.object 是简单 VarRef 时附带接收者变量名，
+    // 复杂链式访问（如 obj.a.b = 1）仅按 fieldName 匹配（varName 空通配）。
+    if (debugger_ && debugger_->hasWatchpoints()) {
+        std::string rootVarName;
+        if (node.object->nodeType == NodeType::NODE_VAR_REF) {
+            rootVarName = static_cast<VarRef*>(node.object.get())->name;
+        }
+        debugger_->checkWatchpointHit(rootVarName, true, node.fieldName, node.line);
+    }
     // 左到右求值：object → value（由 writeBack 内部按序求值）
     lastValue_ = writeBack(node.object.get(), false, nullptr, node.fieldName, node.value.get(), node.line, node.column);
     return;

@@ -20,6 +20,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -58,11 +59,15 @@ public:
         }
         if (!snap)
             return false;
-        // AUDIT-P1 fix: snap() 调用期间增减活跃计数，供析构时 spin-wait
-        activeCallbackCount_.fetch_add(1, std::memory_order_acq_rel);
+        // P0-2 fix: 活跃计数改为 shared_ptr<atomic>。CountGuard 持有 shared_ptr 副本，
+        // 即使 waitCallbackIdle 超时后 ~DebugEvaluator 析构（释放成员 shared_ptr），
+        // worker 线程的 CountGuard 副本仍保持 atomic 存活，~CountGuard 的 fetch_sub 安全，
+        // 彻底消除超时后继续析构导致的 UAF。snap 本身是锁内拷贝的局部 std::function，
+        // 不依赖 this->callback_，故 ~DebugEvaluator 销毁 callback_ 不影响 snap。
+        activeCallbackCount_->fetch_add(1, std::memory_order_acq_rel);
         struct CountGuard {
-            std::atomic<int>& cnt;
-            ~CountGuard() { cnt.fetch_sub(1, std::memory_order_acq_rel); }
+            std::shared_ptr<std::atomic<int>> cnt;
+            ~CountGuard() { cnt->fetch_sub(1, std::memory_order_acq_rel); }
         } guard{activeCallbackCount_};
         try {
             return snap(condition);
@@ -85,11 +90,13 @@ public:
     void waitCallbackIdle() const {
         constexpr int MAX_WAIT_MS = 3000;
         auto start = std::chrono::steady_clock::now();
-        while (activeCallbackCount_.load(std::memory_order_acquire) > 0) {
+        // P0-2 fix: 超时后不再有 UAF 风险——worker 的 CountGuard 持有 shared_ptr 副本，
+        // atomic 存活至最后一个 shared_ptr 释放。超时仅表示"放弃等待"，析构可安全继续。
+        while (activeCallbackCount_->load(std::memory_order_acquire) > 0) {
             if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
                     .count() > MAX_WAIT_MS) {
                 Logger::Warning("DebugEvaluator::waitCallbackIdle 超时（callback 可能挂死），"
-                                "继续析构（风险：worker 线程可能仍在执行 callback）",
+                                "继续析构（计数器为 shared_ptr，worker 完成后安全释放，无 UAF）",
                                 "Debugger");
                 break;
             }
@@ -100,6 +107,7 @@ public:
 private:
     mutable std::mutex mutex_;
     ConditionCallback callback_;
-    // AUDIT-P1 fix: 活跃 callback 计数，用于析构时等待正在执行的 callback 完成
-    mutable std::atomic<int> activeCallbackCount_{0};
+    // P0-2 fix: 活跃 callback 计数改为 shared_ptr<atomic>，生命周期独立于 DebugEvaluator。
+    // worker 线程 evaluate() 的 CountGuard 持有副本，析构超时后仍可安全 fetch_sub。
+    mutable std::shared_ptr<std::atomic<int>> activeCallbackCount_{std::make_shared<std::atomic<int>>(0)};
 };

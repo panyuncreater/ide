@@ -590,6 +590,15 @@ bool isCompileFailure(const std::string& s) {
     return s.find("<compile:") != std::string::npos;
 }
 
+// L29: 判断输出是否包含任意错误标记（parse-fail / compile / runtime / crash）。
+// 无错误标记即为"成功"（输出为程序的正常 stdout）。用于精确判定 fuzz 三后端差分时
+// RegisterVM 编译失败是否应跳过比较：仅当 Interpreter/StackVM 均成功而 RegisterVM
+// 编译失败（已知 IR lowering 限制）时才跳过；若三后端均出错则比较归一化后的消息。
+bool hasErrorTag(const std::string& s) {
+    return s.find("<parse-fail>") != std::string::npos || s.find("<compile:") != std::string::npos ||
+           s.find("<runtime:") != std::string::npos || s.find("<crash:") != std::string::npos;
+}
+
 } // anonymous namespace
 
 // ============================================================
@@ -630,8 +639,15 @@ FuzzResult fuzzSource(const std::string& source, FuzzBackend backend) {
             result.crashDetected = true;
         // 三后端差分
         if (!result.crashDetected) {
-            // RegisterVM 可能编译失败（已知 IR lowering 限制），跳过比较
+            // L29: RegisterVM 编译失败跳过比较的精确化。
+            // 原实现：regvmCompileFail 时一律跳过 Interpreter vs RegisterVM 比较（过于宽泛）。
+            // 现实现：仅当 RegisterVM 编译失败且 Interpreter/StackVM 均成功（无错误标记）时跳过——
+            // 这是已知 IR lowering 限制（RegisterVM 无法编译某些合法程序）。
+            // 若三后端均出错，则比较归一化后的错误消息以捕获真实分歧（如消息文本不一致）。
             bool regvmCompileFail = isCompileFailure(result.regvmOutput);
+            bool interpSucceeded = !hasErrorTag(result.interpOutput);
+            bool stackSucceeded = !hasErrorTag(result.stackvmOutput);
+            bool skipRegvmComparison = regvmCompileFail && interpSucceeded && stackSucceeded;
             // R164 fixup2: 归一化错误阶段（<compile:msg> / <runtime:msg> → <error:msg>），
             // 使同一语义错误在不同阶段（Interpreter 运行时 vs VM 编译时）不被计为分歧
             std::string interpNorm = normalizeErrorPhase(result.interpOutput);
@@ -640,7 +656,7 @@ FuzzResult fuzzSource(const std::string& source, FuzzBackend backend) {
             if (interpNorm != stackNorm) {
                 result.disagreement = true;
                 result.errorMessage = "Interpreter vs StackVM 分歧";
-            } else if (!regvmCompileFail && interpNorm != regNorm) {
+            } else if (!skipRegvmComparison && interpNorm != regNorm) {
                 result.disagreement = true;
                 result.errorMessage = "Interpreter vs RegisterVM 分歧";
             }

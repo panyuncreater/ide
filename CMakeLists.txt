@@ -18,11 +18,21 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# P1-6: 导出 compile_commands.json 供 clangd/clang-tidy 工具链使用。
+# Ninja/Makefile 生成器支持；VS 生成器不支持（IDE 内置 IntelliSense）。
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # ============================================================
 # 构建选项
 # ============================================================
 # 修复问题 10：Warnings as errors 选项化
+# P1-8 (W1 收尾): /W4 警告清零已完成，windows-msvc-debug/release preset 默认启用 /W4 + /WX。
+# C2 (2026-07-25 P3-A2 配套): GCC/Clang 警告清零已完成，linux-gcc-debug/release 与
+# macos-clang-debug/release preset 全部启用 -Wall -Wextra -Wpedantic -Werror 零警告基线
+# （原仅 release preset 启用 -Werror，现 debug preset 一致启用，三平台 CI 矩阵
+# 在 Debug/Release 两种配置下均强制零警告）。
 option(MINILANG_WERROR "Treat warnings as errors" OFF)
+option(MINILANG_W4 "Enable MSVC /W4 warning level and release /wd4996 (requires warning cleanup)" OFF)
 # 修复问题 17：ccache 支持
 option(MINILANG_USE_CCACHE "Use ccache/sccache to accelerate builds" OFF)
 if(MINILANG_USE_CCACHE)
@@ -78,25 +88,49 @@ endif()
 option(MINILANG_ENABLE_I18N "Enable Qt Linguist i18n infrastructure (.ts -> .qm + runtime loading)" ON)
 if(MINILANG_ENABLE_I18N)
     add_compile_definitions(MINILANG_ENABLE_I18N)
+    set(MINILANG_TRANSLATION_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/app/translations/minilang_zh_CN.ts
+        ${CMAKE_CURRENT_SOURCE_DIR}/app/translations/minilang_en_US.ts
+    )
+    # 优先路径：Qt6 LinguistTools CMake 配置（提供 qt_add_translation 函数）
     find_package(Qt6 COMPONENTS LinguistTools QUIET)
     if(Qt6LinguistTools_FOUND)
-        message(STATUS "i18n enabled: Qt Linguist tools available")
-        set(MINILANG_TRANSLATION_SOURCES
-            ${CMAKE_CURRENT_SOURCE_DIR}/app/translations/minilang_zh_CN.ts
-            ${CMAKE_CURRENT_SOURCE_DIR}/app/translations/minilang_en_US.ts
-        )
+        message(STATUS "i18n enabled: Qt Linguist tools available (qt_add_translation)")
         # 仅 lrelease：把已填充的 .ts 编译为 .qm（不重写 .ts 源文件）
         qt_add_translation(MINILANG_QM_FILES
             ${MINILANG_TRANSLATION_SOURCES}
         )
-        # 注册 .qm 生成目标（默认构建）
+    else()
+        # L30 回退路径：Qt6LinguistTools CMake 配置不可用（aqtinstall 未提供 qttools 模块），
+        # 但系统中存在 lrelease 可执行文件（如 apt 包 qt6-l10n-tools）。直接调用 lrelease
+        # 编译 .ts → .qm，等效于 qt_add_translation 的底层实现。
+        find_program(LRELEASE_EXECUTABLE
+            NAMES lrelease lrelease6 lrelease-qt6
+            DOC "Qt Linguist lrelease tool (.ts -> .qm compiler)")
+        if(LRELEASE_EXECUTABLE)
+            message(STATUS "i18n enabled: lrelease found at ${LRELEASE_EXECUTABLE} (fallback path)")
+            foreach(_ts ${MINILANG_TRANSLATION_SOURCES})
+                get_filename_component(_qm_name "${_ts}" NAME_WE)
+                set(_qm "${CMAKE_CURRENT_BINARY_DIR}/${_qm_name}.qm")
+                add_custom_command(
+                    OUTPUT "${_qm}"
+                    COMMAND ${LRELEASE_EXECUTABLE} -compress -idbased "${_ts}" -qm "${_qm}"
+                    DEPENDS "${_ts}"
+                    COMMENT "Compiling ${_qm_name}.qm (lrelease fallback)"
+                    VERBATIM
+                )
+                list(APPEND MINILANG_QM_FILES "${_qm}")
+            endforeach()
+        else()
+            message(WARNING "MINILANG_ENABLE_I18N=ON but neither Qt6::LinguistTools nor lrelease found; .qm not built (runtime falls back to source strings)")
+        endif()
+    endif()
+    # 注册 .qm 生成目标（默认构建）与安装
+    if(MINILANG_QM_FILES)
         add_custom_target(minilang_translations ALL DEPENDS ${MINILANG_QM_FILES})
-        # 安装时随 exe 部署 .qm 到 bin/translations/，使安装包也能加载翻译
         install(FILES ${MINILANG_QM_FILES}
             DESTINATION bin/translations
         )
-    else()
-        message(WARNING "MINILANG_ENABLE_I18N=ON but Qt6::LinguistTools not found; .qm not built (runtime falls back to source strings)")
     endif()
 endif()
 
@@ -159,7 +193,12 @@ add_subdirectory(third_party/ads)
 # ------------------------------------------------------------
 # QFluent 构建为 SHARED 库。
 # 保存/恢复 CMAKE_INSTALL_PREFIX，防止 QFluent 的 FORCE 设置污染父项目。
+# QFLUENTKIT_VERSION 固定：作为 git submodule 引入，third_party/QFluentKit 内
+# git describe 返回 1.0-4-g8503e72（基线 tag 1.0）。当前 pin 为 1.0
+# （见 .gitmodules 记录）。更新 QFluentKit 子模块需同步此值。
+# 注：QFluentKit 未收录 vcpkg，仅以 submodule 方式提供。
 # ============================================================
+set(QFLUENTKIT_VERSION "1.0" CACHE STRING "Pinned QFluentKit version (submodule: tag 1.0)")
 set(_saved_install_prefix "${CMAKE_INSTALL_PREFIX}")
 add_subdirectory(third_party/QFluentKit)
 set(CMAKE_INSTALL_PREFIX "${_saved_install_prefix}" CACHE PATH "" FORCE)
@@ -171,7 +210,11 @@ unset(_saved_install_prefix)
 # asmjit 是轻量级 C++17 JIT 编译库，支持 x86/x64/ARM64。
 # 启用 MINILANG_USE_JIT=ON 时作为静态库编入项目，供 JITBackend 使用。
 # 教学价值：展示 JIT 编译原理（字节码→本地代码），与 StackVM 解释执行对比。
+# ASMJIT_VERSION 固定：asmjit 上游采用 rolling 发布（无正式版本 tag），
+# 子模块跟随 master 分支，当前 pin commit 0bd5787（见 .gitmodules 记录）。
+# vcpkg 中的 asmjit 端口以日期版本发布，可作替代来源。
 # ============================================================
+set(ASMJIT_VERSION "master-0bd5787" CACHE STRING "Pinned asmjit version (submodule: master, rolling)")
 option(MINILANG_USE_JIT "Enable JIT backend (asmjit)" ON)
 if(MINILANG_USE_JIT)
     set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library" FORCE)
@@ -179,46 +222,16 @@ if(MINILANG_USE_JIT)
     set(ASMJIT_NO_INSTALL ON CACHE BOOL "Disable asmjit install" FORCE)
     add_subdirectory(third_party/asmjit)
     add_compile_definitions(MINILANG_USE_JIT)
-    message(STATUS "JIT backend enabled (asmjit)")
+    message(STATUS "JIT backend enabled (asmjit ${ASMJIT_VERSION})")
 endif()
 
 # ============================================================
-# 包含共享模块：源文件列表 + 编译选项 + 配置函数
+# 包含共享模块：源文件列表 + 编译选项 + 配置函数 + target 创建
 # 修复问题 2（源文件列表重复维护）
+# P1-6: minilang_core.cmake 内部创建 4 个 OBJECT 子库 + STATIC 聚合，
+#        此处 include 后 minilang_core target 即已就绪。
 # ============================================================
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/minilang_core.cmake)
-
-# ============================================================
-# minilang_core 静态库（供 IDE 和测试复用）
-# ============================================================
-add_library(minilang_core STATIC
-    ${MINILANG_CORE_SOURCES}
-)
-
-# R114 可回放执行时间轴：ExecutionTraceRecorder.cpp include VmStepper.h（QObject 派生类），
-# AUTOMOC 默认会为 VmStepper.h 生成 moc_VmStepper.cpp。但 minilang_ide/tests 中的
-# VmStepper.cpp 也会触发 MOC 生成，minilang_ide 链接 minilang_core 时会出现 LNK2005
-# 重复元对象符号。设置 SKIP_AUTOMOC 让 minilang_core 跳过该源文件的 MOC 扫描——
-# ExecutionTraceRecorder.cpp 仅调用 VmStepper 的 inline 方法（不依赖 MOC 元对象代码），
-# 链接时由 minilang_ide/tests 中的 VmStepper.cpp 提供 MOC 元对象 + 非 inline 方法定义。
-set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/debug/ExecutionTraceRecorder.cpp
-    PROPERTIES SKIP_AUTOMOC ON)
-
-minilang_configure_core_target(minilang_core ${CMAKE_CURRENT_SOURCE_DIR})
-
-# JIT 后端：链接 asmjit 静态库（条件依赖）
-if(MINILANG_USE_JIT)
-    target_link_libraries(minilang_core PUBLIC asmjit::asmjit)
-endif()
-
-# C1: 应用 Unity Build 属性（选项在文件前部声明，此处目标已创建）
-if(MINILANG_UNITY_BUILD)
-    set_target_properties(minilang_core PROPERTIES
-        UNITY_BUILD ON
-        UNITY_BUILD_CODE_BEFORE_INCLUDE "// Unity build block"
-        UNITY_BUILD_BATCH_SIZE 8)
-    message(STATUS "Unity build enabled for minilang_core (cold build optimization, batch=8)")
-endif()
 
 # ============================================================
 # minilang_ide 可执行目标（GUI 应用）
@@ -261,6 +274,11 @@ target_link_libraries(minilang_ide PRIVATE
     qtadvanceddocking-qt6
     QFluent
 )
+
+# P1-6: 为 minilang_ide 启用 PCH（复用 common/pch.h 标准库头预编译）。
+# ide 的 65 个 .cpp 普遍包含 <string>/<vector>/<memory> 等标准库头，
+# PCH 可减少重复解析开销（增量构建 -10~20%）。
+minilang_enable_pch(minilang_ide ${CMAKE_CURRENT_SOURCE_DIR})
 
 # C2: 启用 QtCharts 时链接到 IDE 目标
 if(MINILANG_USE_QTCHARTS)

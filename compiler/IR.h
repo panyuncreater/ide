@@ -64,6 +64,7 @@
 // ============================================================
 
 #include "ast/ASTNode.h"                  // VM-IMPORT: Block 完整定义（moduleAsts_ 需要 unique_ptr<Block> 析构）
+#include "common/Diagnostic.h"            // P2-12: AstIRBuilder 用 DiagnosticBag 替代私有三元组
 #include "compiler/Bytecode.h"            // IRBackend lowering 到 BytecodeChunk + UpvalueDesc
 #include "compiler/GlobalSlotAllocator.h" // B4: 全局槽位分配器
 #include <cstdint>
@@ -192,8 +193,12 @@ enum class IROp : uint8_t {
     ENUM_VARIANT_FIELD,
 
     // ---- 成员访问 ----
-    MEMBER_GET,       // dest = obj.field            operands: [dest, obj_vreg, field_idx]
-    MEMBER_SET,       // obj.field = val             operands: [obj_vreg, field_idx, val_vreg]
+    MEMBER_GET, // dest = obj.field            operands: [dest, obj_vreg, field_idx]
+    MEMBER_SET, // obj.field = val             operands: [obj_vreg, field_idx, val_vreg]
+    // L7 fix: 方法体内 this.field = val 直接修改局部槽位（slot 0 = this），
+    // 避免 MEMBER_SET 通过栈副本修改导致 COW detach 后原 slot 不变。
+    // operands: [slot(LOCAL_SLOT), field_idx(FIELD_NAME), val_vreg(VIRTUAL)]
+    MEMBER_SET_LOCAL,
     SUPER_MEMBER_GET, // dest = super.field         operands: [dest, this_vreg, field_idx]
 
     // ---- 方法调用 ----
@@ -248,6 +253,29 @@ enum class IROp : uint8_t {
     // 与 IROp::TYPE_CHECK 区别：不抛错，写 bool 到 dest。
     // 用于 TUPLE pattern 类型检查（不匹配时 fall through 而非抛错）。
     TYPE_TEST,
+
+    // ============================================================
+    // P2-10 IR SSA 基础设施：PHI 节点（真正的 SSA）
+    // -----------------------------------------------------------
+    // SSA 构造阶段（Cytron 支配边界算法）在合并点插入 PHI 合并多分支到达的
+    // 局部变量值，使局部变量进入 SSA 形态，解锁跨分支值分析（GVN/LICM 等）。
+    //
+    // operands: [dest_vreg, slot(LOCAL_SLOT), pred1_nodeid(IMM_UINT), vreg1(VIRTUAL),
+    //             pred2_nodeid(IMM_UINT), vreg2(VIRTUAL), ...]
+    //   dest_vreg = 由前驱块到达时的合并值
+    //   slot = 此 PHI 合并的局部变量槽位（ssaDestructPass 据此还原 STORE_LOCAL）
+    //   (pred_nodeid, vreg) 对表示"从 pred_nodeid 前驱进入时取 vreg 的值"
+    //   pred_nodeid 为 CFG node ID（IMM_UINT），非 labelIndex（LABEL）。
+    //   原方案用 labelIndex 标识前驱，但 fall-through 块无 LABEL 时继承所在
+    //   IRBasicBlock 的 labelIndex，导致同块内多 CFG 节点共享 labelIndex 产生歧义。
+    //
+    // 生命周期约束（重要）：
+    //   - PHI 仅在 SSA 构造（ssaConstructPass）与 SSA 析构（ssaDestructPass）之间存在。
+    //   - SSA 析构必须在 backend lowering 之前完成，将 PHI 拆解为前驱块尾部的
+    //     STORE_LOCAL / copy 序列。因此 BytecodeIRBackend / RegisterBytecodeBackend
+    //     永远不会看到 PHI 指令（ssaDestructPass 已消除）。
+    //   - 若 lowering 意外遇到 PHI，视为编译器内部错误（assert + 返回失败）。
+    PHI,
 };
 
 /// IR 指令
@@ -370,9 +398,9 @@ struct IRFunction {
         return idx;
     }
     /// 添加全局变量名/字段名/函数名，返回索引
-    uint32_t addGlobal(const std::string& name) {
+    uint32_t addGlobal(const std::string& globalName) {
         // perf3 fix: hash 侧表 O(1) 查找替代 O(n) 线性扫描
-        auto it = globalNameIdx_.find(name);
+        auto it = globalNameIdx_.find(globalName);
         if (it != globalNameIdx_.end())
             return it->second;
         // P2-2 fix: 与 addConstant 对齐——globalNames 索引经 writeShort 编码为 uint16_t，
@@ -380,9 +408,9 @@ struct IRFunction {
         if (globalNames.size() >= 65535) {
             throw std::runtime_error("IR 全局名池索引超出 65535 上限");
         }
-        globalNames.push_back(name);
+        globalNames.push_back(globalName);
         uint32_t idx = static_cast<uint32_t>(globalNames.size() - 1);
-        globalNameIdx_[name] = idx;
+        globalNameIdx_[globalName] = idx;
         return idx;
     }
     /// 添加基本块，返回引用
@@ -469,17 +497,63 @@ public:
     const std::vector<std::string>& getGlobalSlotNames() const { return globalSlotAllocator_.names(); }
 
     /// BUG-MOD-1 fix: IR 构建错误报告接口。
-    /// AstIRBuilder 不直接访问 Compiler::diagnostics_，通过 hasError/errorMessage 暴露错误状态。
-    /// compileViaIR/compileViaRegisterIR 在 build() 后检查并转化为用户可见 diagnostic。
-    bool hasError() const { return hasError_; }
-    const std::string& errorMessage() const { return errorMessage_; }
-    int errorLine() const { return errorLine_; }
+    /// P2-12 fix: 改用 DiagnosticBag 替代私有的 hasError_/errorMessage_/errorLine_ 三元组。
+    /// 编译期错误统一收集到 irDiagnostics_，Compiler 在 compileViaIR/compileViaRegisterIR
+    /// 中调用 takeDiagnostics() 转移并合并到 Compiler::diagnostics_，消除"私有字段→手动转化"
+    /// 的冗余路径。hasError()/errorMessage()/errorLine() 保留为兼容接口，委托到 irDiagnostics_。
+    bool hasError() const { return irDiagnostics_.hasErrors(); }
+    /// P2-12 fix (错误恢复): 是否有致命错误——build() 顶层循环仅对致命错误中止。
+    bool hasFatalError() const { return irDiagnostics_.hasFatalErrors(); }
+    const std::string& errorMessage() const {
+        static const std::string empty;
+        const auto& all = irDiagnostics_.all();
+        for (auto it = all.rbegin(); it != all.rend(); ++it) {
+            if (it->isError())
+                return it->message;
+        }
+        return empty;
+    }
+    int errorLine() const {
+        const auto& all = irDiagnostics_.all();
+        for (auto it = all.rbegin(); it != all.rend(); ++it) {
+            if (it->isError())
+                return it->line;
+        }
+        return 0;
+    }
+    /// P2-12: 获取 IR 构建期间收集的诊断包（只读）
+    const DiagnosticBag& diagnostics() const { return irDiagnostics_; }
+    /// P2-12: 转移诊断包所有权给 Compiler 合并
+    DiagnosticBag takeDiagnostics() {
+        DiagnosticBag result = std::move(irDiagnostics_);
+        irDiagnostics_.clear();
+        return result;
+    }
 
     // VM-IMPORT: 模块加载器（使 IR 路径也支持 import 语句的内联编译）
     // Compiler 在 compileViaIR/compileViaRegisterIR 中调用 setModuleLoader 注入。
     // build() 后调用 takeModuleAsts() 转移模块 AST 所有权给 Compiler 保留。
     void setModuleLoader(std::function<std::string(const std::string&)> loader) { moduleLoader_ = std::move(loader); }
     std::vector<std::unique_ptr<Block>> takeModuleAsts() { return std::move(moduleAsts_); }
+
+    /// L11 预编译模块（RegisterVM）：设置 .minic 文件路径解析器。
+    /// 仅在 compileViaRegisterIR 路径中转发（compileViaIR 不转发，保持 IR 路径无预编译支持）。
+    /// 回调接收模块路径，返回对应的 .minic 文件系统路径（空表示无预编译文件）。
+    void setPrecompiledModuleResolver(std::function<std::string(const std::string&)> resolver) {
+        precompiledModuleResolver_ = std::move(resolver);
+    }
+
+    /// L11 预编译模块（RegisterVM）：pending 模块加载记录。
+    /// handleImportStmt 检测到 .minic 时记录，Compiler 在 post-lowering 阶段
+    /// 调用 loadPrecompiledRegisterModule 处理。
+    struct PendingRegPrecompiledModule {
+        std::string modulePath; // 规范化模块路径
+        std::string initFnName; // 模块初始化函数名（__mod_<hash>___init）
+        int line;               // 导入语句行号
+    };
+    std::vector<PendingRegPrecompiledModule> takePendingRegPrecompiledModules() {
+        return std::move(pendingRegPrecompiledModules_);
+    }
 
     /// R99 enum 校验：返回 build() 期间收集的 enum 元信息（编译期→运行时传递）。
     /// Compiler 在 compileViaIR/compileViaRegisterIR 中调用并写入 CompileResult.enumInfos。
@@ -489,14 +563,16 @@ private:
     std::unique_ptr<IRFunction> ir_;
     IRBasicBlock* currentBlock_ = nullptr; // 当前基本块（指令追加目标）
     std::unique_ptr<IRModule> module_;     // IR 模块（收集所有函数）
-    bool hasError_ = false;                // BUG-MOD-1: IR 构建错误标志
-    std::string errorMessage_;             // BUG-MOD-1: 错误消息
-    int errorLine_ = 0;                    // BUG-MOD-1: 错误行号
+    // P2-12: 替代原 hasError_/errorMessage_/errorLine_ 三元组，统一诊断收集
+    DiagnosticBag irDiagnostics_;
 
     // 变量解析状态
     struct VarInfo {
-        enum class Kind { LOCAL, GLOBAL_SLOT, GLOBAL_NAME, UPVALUE } kind;
-        uint32_t index; // LOCAL→slot, GLOBAL_SLOT→槽位号, GLOBAL_NAME→globalNames idx, UPVALUE→uv idx
+        // L7 fix: 新增 MEMBER kind——方法体内裸字段访问解析为 this.field（MEMBER_GET/MEMBER_SET），
+        // 不注册为 LOCAL slot，避免 StackVM（推字段槽）与 RegisterVM（不推字段槽）帧布局不一致。
+        enum class Kind { LOCAL, GLOBAL_SLOT, GLOBAL_NAME, UPVALUE, MEMBER } kind;
+        uint32_t
+            index; // LOCAL→slot, GLOBAL_SLOT→槽位号, GLOBAL_NAME→globalNames idx, UPVALUE→uv idx, MEMBER→field name idx
     };
     std::unordered_map<std::string, VarInfo> varMap_;
     std::unordered_map<std::string, std::string> varTypes_; // 2026-06-29: 变量名→类型注解
@@ -533,6 +609,15 @@ private:
     // visitVarDecl 无初始化器时检查类型注解是否为类名，若是则自动构造实例，
     // 对齐 Compiler.cpp visitVarDecl L620-626 的 S2 fix 语义。
     std::unordered_set<std::string> definedClassNames_;
+    // L7 fix: 类名 → 完整字段名列表（含继承字段，父类字段在前）映射。
+    // visitClassDecl 时构建，供子类编译时查找父类字段顺序。
+    // 对齐 Compiler.cpp classFieldNames_ 的语义。
+    std::unordered_map<std::string, std::vector<std::string>> classFieldNames_;
+    // L7 fix: 当前编译类的完整字段列表（含继承字段），由 visitClassDecl 设置，
+    // emitFunctionPrologue 在 compilingMethod_ 分支中消费——将每个字段注册为局部变量，
+    // 使方法体内裸访问字段（如 x = ax）解析为 this 的字段槽位而非全局变量。
+    // 对齐 Compiler.cpp emitMethodBody L4635-4646 的字段→局部变量映射。
+    std::vector<std::string> compilingClassFieldNames_;
 
     // 块作用域跟踪（限制5）
     struct BlockScope {
@@ -577,6 +662,11 @@ private:
     std::vector<std::unique_ptr<Block>> moduleAsts_;   // 保留模块 AST
     // BUG-AUDIT-MOD-1: 模块导出名称集合（对齐 Compiler::moduleExports_）
     std::unordered_map<std::string, std::unordered_set<std::string>> moduleExports_;
+    // L11 预编译模块（RegisterVM）：.minic 文件路径解析器
+    // 仅 compileViaRegisterIR 路径转发；compileViaIR 不转发保持无预编译支持
+    std::function<std::string(const std::string&)> precompiledModuleResolver_;
+    // L11 pending 预编译模块加载记录（handleImportStmt 填充，Compiler post-lowering 消费）
+    std::vector<PendingRegPrecompiledModule> pendingRegPrecompiledModules_;
     // R99 enum 校验：build() 期间收集的 enum 元信息，takeEnumInfos() 转移给 Compiler。
     std::vector<VMEnumInfo> enumInfos_;
 
@@ -584,18 +674,24 @@ private:
     void handleImportStmt(ImportStmt& node);
     /// VM-IMPORT: 路径解析后的下一步动作（resolveImportPath 返回值）
     enum class ImportPathStatus {
-        kContinue,      // 路径已解析，继续加载模块
-        kAlreadyLoaded, // 模块已加载过（run-once），仅校验具名导入
-        kError,         // 已设置 hasError_，调用方直接返回
+        kContinue,        // 路径已解析，继续加载模块
+        kAlreadyLoaded,   // 模块已加载过（run-once），仅校验具名导入
+        kCircularLoading, // P2-14: 循环导入延迟加载，跳过本次内联编译
+        kError,           // 已设置 hasError_，调用方直接返回
     };
     /// VM-IMPORT: 路径规范化与安全校验 + run-once 检查 + 循环依赖检测 + 深度保护
-    /// 成功时 outPath 填入规范化路径，返回 kContinue / kAlreadyLoaded；
+    /// 成功时 outPath 填入规范化路径，返回 kContinue / kAlreadyLoaded / kCircularLoading；
     /// 失败时设置 hasError_/errorMessage_/errorLine_ 并返回 kError。
     ImportPathStatus resolveImportPath(ImportStmt& node, std::string& outPath);
     /// VM-IMPORT: 加载模块源码 + 解析为 AST + 模块隔离重命名
     bool loadImportedModule(ImportStmt& node, const std::string& path, std::unique_ptr<Block>& outAst);
     /// VM-IMPORT: 具名导入验证（检查 node.names 是否在模块 export 集合中）
     void bindImportedNames(ImportStmt& node, const std::string& path);
+    /// P2-11: 命名空间导入 IR 生成（import * as ns from "path"）
+    /// 对每个 export 名 emit LOAD_CONST(key) + LOAD_GLOBAL(value)，
+    /// 然后 BUILD_DICT + DEFINE_GLOBAL(namespaceAlias)。
+    /// 在 run-once 与首次加载路径均需调用。
+    void emitNamespaceImportIR(ImportStmt& node, const std::string& path);
 
     // 闭包 upvalue 追踪（限制1）
     struct UpvalueInfo {
@@ -679,6 +775,10 @@ private:
         std::vector<BlockScope> savedBlockScopes;
         int savedBlockDepth = 0;
         int savedTryDepth = 0;
+        // L4 fix: tryFinallyStack_ 必须跨函数边界保存/恢复，否则嵌套函数（如
+        // try-finally 内声明的闭包）的 return 语句会误引用外层函数的 finallyEntryLabel，
+        // 导致 patchJumps 找不到 label（finallyEntryLabel 在外层函数 IR 中）→ IR lowering 失败。
+        std::vector<TryFinallyContext> savedTryFinallyStack;
         bool savedCompilingMethod = false;
         std::string savedCompilingClassName;
         std::string savedCurrentFunctionReturnType;
@@ -1075,6 +1175,23 @@ bool loopUnrollingPass(IRFunction& ir);
 /// 返回：是否修改了 IR
 bool optimizeIR(IRFunction& ir, bool enableCopyPropagation = false, bool enableDCE = false, bool enableCSE = false,
                 bool enableLoopUnroll = false);
+
+// ============================================================
+// P2-10 IR SSA 基础设施（见 compiler/IRSSA.h）
+// ============================================================
+// 支配树 / 支配边界 / 自然循环检测 / PHI 节点 / GVN / LICM / 函数内联。
+// 详见 compiler/IRSSA.h 的完整接口文档。
+/// 全局值编号：基于支配树将 CSE 从基本块内扩展到全局（dest vreg 引用替换）。
+/// 仅对寄存器式后端安全（与 CSE 同源约束：栈式后端替换引用后栈残留 → OP_POP 栈下溢）。
+bool gvnPass(IRFunction& ir);
+
+/// 循环不变代码外提：将循环体内不依赖循环变量的纯计算提升到循环前置块。
+/// 依赖自然循环检测（回边识别）。仅对寄存器式后端安全。
+bool licmPass(IRFunction& ir);
+
+/// 函数内联：按成本模型内联小函数（getter / 简单算术）到调用点。
+/// 操作 IRModule（需访问被调用函数 IR）。返回是否修改。
+bool inlinePass(IRModule& module);
 
 // ============================================================
 // IR 打印（调试用）

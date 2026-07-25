@@ -69,6 +69,16 @@ private:
     // P0-REGALLOC fix: 寄存器分配辅助
     void collectVRegLastUse(const IRFunction& ir); // 预扫描构建 vregLastUse_ 与 lastUseToVregs_
     void releaseDeadVRegs(size_t instrIndex);      // 释放最后使用点 == instrIndex 的 vreg 寄存器
+    // P2-10 fix: 循环感知最后使用扩展。线性扫描寄存器分配不处理循环回边：
+    // 循环外定义、循环内使用的 vreg（如循环上界常量）会被提前释放并复用，
+    // 导致下一轮迭代读到错误值。此方法将此类 vreg 的最后使用点延长到循环末尾。
+    void extendLastUseForLoops(const IRFunction& ir);
+    // L4 fix: finally 块感知最后使用扩展。return 在 try-finally 内时，return 值 vreg
+    // 在 PUSH_JUMP_TARGET+JUMP 之前定义，在 LABEL(returnLandingLabel)+RETURN 处使用。
+    // 线性顺序中 RETURN 在 finally 块之前，但控制流上 finally 块在 RETURN 之前执行，
+    // finally 块的 vreg 可能复用 return 值的寄存器导致 RETURN 读到错误值。
+    // 此方法将 return 值 vreg 的最后使用点延长到 FINALLY_END（finally 块末尾）。
+    void extendLastUseForFinallyJumps(const IRFunction& ir);
 
     // lowerInstruction 按 IROp 类别拆分的私有 lowering 方法。
     // 主函数 lowerInstruction 保留 switch 外壳，每个 case 调用对应的 lowerXxxOps。

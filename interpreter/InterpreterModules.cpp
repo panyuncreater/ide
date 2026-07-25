@@ -30,15 +30,11 @@ void Interpreter::visitImportStmt(ImportStmt& node) {
         runtimeError("未设置模块加载器，无法执行 import", node.line, node.column);
     }
 
-    // 循环依赖检测（D19 fix: 用 unordered_set 实现 O(1) 查找，替代线性扫描）
-    if (moduleLoadingSet_.count(modulePath) > 0) {
-        runtimeError("检测到循环依赖: " + modulePath, node.line, node.column);
-        // R53-4 fix: 防御性 return。当前 runtimeError 是 throw 语义，此行不可达；
-        // 但若未来 runtimeError 改为非抛出式错误处理（错误码/返回值），
-        // 缺少 return 会继续执行后续加载流程，违反"循环依赖即停止"语义。
-        return;
-    }
-    // P1-1 fix: 深度导入链递归保护（防止 C++ 栈溢出）
+    // P2-14 循环导入延迟加载：不再报错，由 loadModuleOrGetCached 返回部分加载的模块环境。
+    // 循环回路闭合时，模块环境已创建但可能尚未填充所有导出名称——访问未定义名称时
+    // 由 Environment::get 抛"未定义变量"错误（保持现有语义），访问已定义名称返回当前值。
+    // 语义参考 ES Modules + Python：模块对象立即创建，内容按执行顺序填充。
+    // 深度保护仍保留（防止 C++ 栈溢出）
     if (moduleLoadingStack_.size() >= MAX_RECURSION_DEPTH) {
         runtimeError("模块导入深度超过限制 (" + std::to_string(MAX_RECURSION_DEPTH) + ")", node.line, node.column);
         // R53-4 fix: 同上，防御性 return
@@ -107,8 +103,16 @@ Interpreter::loadModuleOrGetCached(const std::string& modulePath, ImportStmt& no
     // 检查缓存
     auto cacheIt = moduleCache_.find(modulePath);
     std::shared_ptr<Environment> moduleEnv;
+    // P2-14 循环导入延迟加载：缓存命中时区分完整/部分加载
+    if (cacheIt != moduleCache_.end() && moduleLoadingSet_.count(modulePath) > 0) {
+        // 部分加载（循环导入）：模块正在加载中，返回已创建的部分 env
+        // 不检查 mtime（模块还在加载中，文件未被修改）
+        // 模块环境可能尚未填充所有导出名称——访问未定义名称时由 Environment::get
+        // 抛"未定义变量"错误（保持现有语义），访问已定义名称返回当前值
+        return cacheIt->second;
+    }
     if (cacheIt != moduleCache_.end()) {
-        // BUG-REPL-AUDIT-1 fix: 检查文件 mtime 是否变化，若变化则缓存失效
+        // 完整缓存命中：检查文件 mtime 是否变化，若变化则缓存失效
         if (mtimeChecker) {
             int64_t currentMtime = mtimeChecker(modulePath);
             auto mtimeIt = moduleMtimes_.find(modulePath);
@@ -120,9 +124,9 @@ Interpreter::loadModuleOrGetCached(const std::string& modulePath, ImportStmt& no
                 cacheIt = moduleCache_.end(); // 标记为未命中
             }
         }
-    }
-    if (cacheIt != moduleCache_.end()) {
-        return cacheIt->second;
+        if (cacheIt != moduleCache_.end()) {
+            return cacheIt->second;
+        }
     }
 
     // 加载模块源码（A6 fix: 使用已拷贝的 loader，避免跨线程数据竞争）
@@ -148,6 +152,40 @@ Interpreter::loadModuleOrGetCached(const std::string& modulePath, ImportStmt& no
     // 模块环境隔离：模块只能访问自身定义和导出的名称，不能读写导入方全局变量
     auto moduleParentEnv = std::make_shared<Environment>(nullptr);
     moduleEnv = std::make_shared<Environment>(moduleParentEnv);
+
+    // P2-14 循环导入延迟加载：立即入缓存，支持循环回路闭合时返回部分 env
+    // 模块语句执行完成后 env 已被填充，cache 指向同一对象无需重新赋值
+    moduleCache_[modulePath] = moduleEnv;
+
+    // P2-14 预扫描 export 名到 moduleExports_，让循环导入命中时能验证具名导入
+    // 对齐 VM/IR 路径的 collectModuleExports（预扫描 ExportStmt 包装的声明名）
+    // exportedNames_ 仍按原机制在 visitExportStmt 中填充，加载完成后覆盖此预扫描值
+    {
+        std::unordered_set<std::string> prescanExports;
+        for (auto& stmt : ast->statements) {
+            if (!stmt || stmt->nodeType != NodeType::NODE_EXPORT_STMT)
+                continue;
+            auto* exp = static_cast<ExportStmt*>(stmt.get());
+            if (!exp->declaration)
+                continue;
+            ASTNode* decl = exp->declaration.get();
+            switch (decl->nodeType) {
+            case NodeType::NODE_VAR_DECL:
+                prescanExports.insert(static_cast<VarDecl*>(decl)->name);
+                break;
+            case NodeType::NODE_CLASS_DECL:
+                prescanExports.insert(static_cast<ClassDecl*>(decl)->name);
+                break;
+            case NodeType::NODE_FUN_DECL:
+                prescanExports.insert(static_cast<FunDecl*>(decl)->name);
+                break;
+            default:
+                break;
+            }
+        }
+        moduleExports_[modulePath] = std::move(prescanExports);
+    }
+
     auto savedEnv = currentEnv_;
     auto savedExported = exportedNames_;
     exportedNames_.clear();
@@ -157,6 +195,8 @@ Interpreter::loadModuleOrGetCached(const std::string& modulePath, ImportStmt& no
 
     // RA-A fix: RAII 守卫统一管理异常路径下的状态恢复（moduleEnv close、env、exported、loadingStack/Set），
     // 消除原 catch(...) + throw; 的 rethrow。正常路径通过 dismiss 跳过守卫清理。
+    // P2-14: 扩展守卫，异常路径清除 moduleCache_/moduleExports_ 中的部分 env，
+    // 避免后续 import 命中缓存返回未填充完整的 env
     struct ModuleEnvGuard {
         Interpreter& interp;
         std::shared_ptr<Environment>& env;
@@ -165,6 +205,8 @@ Interpreter::loadModuleOrGetCached(const std::string& modulePath, ImportStmt& no
         std::unordered_set<std::string> savedExported;
         std::vector<std::string>& loadingStack;
         std::unordered_set<std::string>& loadingSet;
+        std::unordered_map<std::string, std::shared_ptr<Environment>>& cache;
+        std::unordered_map<std::string, std::unordered_set<std::string>>& exportsCache;
         const std::string& modulePath;
         bool dismissed = false;
         ~ModuleEnvGuard() {
@@ -177,10 +219,14 @@ Interpreter::loadModuleOrGetCached(const std::string& modulePath, ImportStmt& no
                 exported = std::move(savedExported);
                 loadingStack.pop_back();
                 loadingSet.erase(modulePath); // D19 fix: 同步移除
+                // P2-14: 清除部分 env 和预扫描的 export 名
+                cache.erase(modulePath);
+                exportsCache.erase(modulePath);
             }
         }
-    } envGuard{*this,         moduleEnv,           savedEnv,          exportedNames_,
-               savedExported, moduleLoadingStack_, moduleLoadingSet_, modulePath};
+    } envGuard{*this,          moduleEnv,           savedEnv,          exportedNames_,
+               savedExported,  moduleLoadingStack_, moduleLoadingSet_, moduleCache_,
+               moduleExports_, modulePath};
 
     for (auto& stmt : ast->statements) {
         evaluate(stmt.get());
@@ -193,8 +239,8 @@ Interpreter::loadModuleOrGetCached(const std::string& modulePath, ImportStmt& no
     moduleLoadingSet_.erase(modulePath); // D19 fix: 同步移除
     currentEnv_ = savedEnv;
 
-    // 缓存模块环境和导出名称（必须在恢复 savedExported 之前捕获当前模块的 exports）
-    moduleCache_[modulePath] = moduleEnv;
+    // P2-14: moduleCache_[modulePath] 已在创建时入缓存，无需重新赋值
+    // 用实际执行的 export 名覆盖预扫描值（处理条件分支 export 等动态场景）
     moduleExports_[modulePath] = exportedNames_;
     // BUG-REPL-AUDIT-1 fix: 记录模块文件 mtime，下次 import 时检查是否变化
     if (mtimeChecker) {
@@ -212,7 +258,20 @@ void Interpreter::importNamesFromModule(const std::string& modulePath, ImportStm
                                         std::shared_ptr<Environment>& moduleEnv) {
     // 导入名称到当前环境（仅导入已 export 的名称）
     auto& exports = moduleExports_[modulePath];
-    if (node.importAll) {
+    if (!node.namespaceAlias.empty()) {
+        // P2-11: import * as ns from "path" — 构造包含所有导出名称的字典对象
+        // 使用 Value::DictMap（R97 #2: 含 DictKeyEqual 透明比较器）构造，
+        // 再通过 Value(DictMap&&) 构造堆字典值。键为导出名（string）。
+        Value::DictMap dict;
+        dict.reserve(exports.size());
+        for (const auto& name : exports) {
+            const Value* valPtr = moduleEnv->get(name);
+            if (valPtr) {
+                dict.emplace(std::string(name), *valPtr);
+            }
+        }
+        currentEnv_->define(node.namespaceAlias, Value(std::move(dict)));
+    } else if (node.importAll) {
         // 导入全部导出名称
         for (const auto& name : exports) {
             const Value* valPtr = moduleEnv->get(name);

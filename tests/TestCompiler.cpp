@@ -15,12 +15,13 @@
 
 #include <gtest/gtest.h>
 
+#include "ast/ASTNode.h"
+#include "common/RuntimeLimits.h" // P3-14: NO_INDEX 哨兵值
+#include "compiler/Bytecode.h"
+#include "compiler/Compiler.h"
+#include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
-#include "compiler/Compiler.h"
-#include "compiler/Bytecode.h"
-#include "ast/ASTNode.h"
-#include "interpreter/Value.h"
 
 #include <string>
 #include <vector>
@@ -36,7 +37,8 @@ static CompileResult compileSource(const std::string& source) {
     Parser parser;
     auto ast = parser.parse(tokens);
     EXPECT_NE(ast, nullptr);
-    if (!ast) return CompileResult{};
+    if (!ast)
+        return CompileResult{};
     Compiler compiler;
     return compiler.compile(*ast);
 }
@@ -58,7 +60,8 @@ static std::vector<OpCode> collectOps(const BytecodeChunk& chunk) {
 static bool containsOp(const BytecodeChunk& chunk, OpCode op) {
     auto ops = collectOps(chunk);
     for (auto o : ops) {
-        if (o == op) return true;
+        if (o == op)
+            return true;
     }
     return false;
 }
@@ -66,13 +69,18 @@ static bool containsOp(const BytecodeChunk& chunk, OpCode op) {
 /// 检查 OpCode 序列是否包含指定子序列
 static bool containsOpSequence(const BytecodeChunk& chunk, const std::vector<OpCode>& seq) {
     auto ops = collectOps(chunk);
-    if (seq.empty() || ops.size() < seq.size()) return false;
+    if (seq.empty() || ops.size() < seq.size())
+        return false;
     for (size_t i = 0; i + seq.size() <= ops.size(); ++i) {
         bool match = true;
         for (size_t j = 0; j < seq.size(); ++j) {
-            if (ops[i + j] != seq[j]) { match = false; break; }
+            if (ops[i + j] != seq[j]) {
+                match = false;
+                break;
+            }
         }
-        if (match) return true;
+        if (match)
+            return true;
     }
     return false;
 }
@@ -80,16 +88,19 @@ static bool containsOpSequence(const BytecodeChunk& chunk, const std::vector<OpC
 /// 检查 OpCode 序列是否以指定前缀开头
 static bool startsWithOps(const BytecodeChunk& chunk, const std::vector<OpCode>& prefix) {
     auto ops = collectOps(chunk);
-    if (ops.size() < prefix.size()) return false;
+    if (ops.size() < prefix.size())
+        return false;
     for (size_t i = 0; i < prefix.size(); ++i) {
-        if (ops[i] != prefix[i]) return false;
+        if (ops[i] != prefix[i])
+            return false;
     }
     return true;
 }
 
 /// 从字节码偏移处读取 16 位小端序整数
 static uint16_t readShort(const std::vector<uint8_t>& code, size_t offset) {
-    if (offset + 1 >= code.size()) return 0xFFFF;
+    if (offset + 1 >= code.size())
+        return RuntimeLimits::NO_INDEX;
     return code[offset] | (code[offset + 1] << 8);
 }
 
@@ -189,7 +200,10 @@ TEST(CompilerVariableTest, VarDeclWithInit) {
     ASSERT_FALSE(chunk.constants.empty());
     bool found = false;
     for (auto& v : chunk.constants) {
-        if (v.isInt() && v.intVal() == 1) { found = true; break; }
+        if (v.isInt() && v.intVal() == 1) {
+            found = true;
+            break;
+        }
     }
     EXPECT_TRUE(found);
 }
@@ -315,7 +329,6 @@ TEST(CompilerFunctionTest, FunCall) {
 /// `return 1;` → 验证函数体生成 OP_RETURN
 TEST(CompilerFunctionTest, ReturnStmt) {
     auto result = compileSource("fun f() { return 1; }");
-    auto& chunk = result.mainChunk;
     // 函数体应存在于 functionChunks 中
     auto it = result.functionChunks.find("f");
     ASSERT_NE(it, result.functionChunks.end());
@@ -327,7 +340,8 @@ TEST(CompilerFunctionTest, ReturnStmt) {
     auto ops = collectOps(funChunk);
     int returnCount = 0;
     for (auto op : ops) {
-        if (op == OpCode::OP_RETURN) returnCount++;
+        if (op == OpCode::OP_RETURN)
+            returnCount++;
     }
     // 显式 return + 隐式 return
     EXPECT_GE(returnCount, 2);
@@ -351,8 +365,10 @@ TEST(CompilerClassTest, ClassDecl) {
     bool foundFoo = false, foundX = false;
     for (auto& v : chunk.constants) {
         if (v.isString()) {
-            if (v.stringVal() == "Foo") foundFoo = true;
-            if (v.stringVal() == "x") foundX = true;
+            if (v.stringVal() == "Foo")
+                foundFoo = true;
+            if (v.stringVal() == "x")
+                foundX = true;
         }
     }
     EXPECT_TRUE(foundFoo);
@@ -378,9 +394,12 @@ TEST(CompilerConstantPoolTest, ConstantValues) {
     // 常量池应包含字符串 "world"、整数 42、浮点 2.5
     bool foundStr = false, foundInt = false, foundFloat = false;
     for (auto& v : chunk.constants) {
-        if (v.isString() && v.stringVal() == "world") foundStr = true;
-        if (v.isInt() && v.intVal() == 42) foundInt = true;
-        if (v.isFloat() && v.floatVal() == 2.5) foundFloat = true;
+        if (v.isString() && v.stringVal() == "world")
+            foundStr = true;
+        if (v.isInt() && v.intVal() == 42)
+            foundInt = true;
+        if (v.isFloat() && v.floatVal() == 2.5)
+            foundFloat = true;
     }
     EXPECT_TRUE(foundStr);
     EXPECT_TRUE(foundInt);
@@ -394,7 +413,8 @@ TEST(CompilerConstantPoolTest, ConstantDedup) {
     // 整数 1 应只出现一次（通过 addConstant 的哈希去重）
     int count = 0;
     for (auto& v : chunk.constants) {
-        if (v.isInt() && v.intVal() == 1) count++;
+        if (v.isInt() && v.intVal() == 1)
+            count++;
     }
     EXPECT_EQ(count, 1);
 }
@@ -405,7 +425,8 @@ TEST(CompilerConstantPoolTest, StringConstantDedup) {
     auto& chunk = result.mainChunk;
     int count = 0;
     for (auto& v : chunk.constants) {
-        if (v.isString() && v.stringVal() == "dup") count++;
+        if (v.isString() && v.stringVal() == "dup")
+            count++;
     }
     EXPECT_EQ(count, 1);
 }
@@ -438,7 +459,8 @@ TEST(CompilerGlobalSlotTest, ClassSlotAllocation) {
     EXPECT_GE(result.globalSlotCount, 1);
     bool foundFoo = false;
     for (auto& name : result.globalSlotNames) {
-        if (name == "Foo") foundFoo = true;
+        if (name == "Foo")
+            foundFoo = true;
     }
     EXPECT_TRUE(foundFoo);
 }
@@ -482,7 +504,7 @@ TEST(CompilerGlobalSlotTest, DefineGlobalSlotOperand) {
 /// 辅助：以类型检查启用模式编译，返回 (result, diagnostics 引用)
 struct TypeCheckCompile {
     CompileResult result;
-    Compiler compiler;  // 保留所有权以访问 diagnostics
+    Compiler compiler; // 保留所有权以访问 diagnostics
 };
 static TypeCheckCompile compileWithTypeCheck(const std::string& source) {
     TypeCheckCompile tc;
@@ -490,7 +512,8 @@ static TypeCheckCompile compileWithTypeCheck(const std::string& source) {
     auto tokens = lexer.scan(source);
     Parser parser;
     auto ast = parser.parse(tokens);
-    if (!ast) return tc;
+    if (!ast)
+        return tc;
     tc.compiler.setEnableTypeCheck(true);
     tc.result = tc.compiler.compile(*ast);
     return tc;
@@ -500,7 +523,8 @@ static TypeCheckCompile compileWithTypeCheck(const std::string& source) {
 static int countTypeCheckerWarnings(const DiagnosticBag& bag) {
     int n = 0;
     for (const auto& d : bag.all()) {
-        if (d.source == DiagSource::TypeChecker && d.isWarning()) ++n;
+        if (d.source == DiagSource::TypeChecker && d.isWarning())
+            ++n;
     }
     return n;
 }
@@ -522,8 +546,7 @@ TEST(CompilerTypeCheckTest, A2_LiteralMismatchOnAssignment) {
 /// A3: `float a = 5` — int 字面量可宽化为 float 注解 → 不应产生警告
 TEST(CompilerTypeCheckTest, A3_IntWidensToFloat) {
     auto tc = compileWithTypeCheck("float a = 5;");
-    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
-        << "int→float 宽化应为合法，无警告";
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0) << "int→float 宽化应为合法，无警告";
 }
 
 /// A4: `string a = 5` — 字面量 int 不匹配 string 注解 → 产生警告
@@ -541,8 +564,7 @@ TEST(CompilerTypeCheckTest, A5_StringToBoolMismatch) {
 /// A6: `int a = null` — null 兼容所有类型注解 → 不应产生警告
 TEST(CompilerTypeCheckTest, A6_NullCompatibleWithAllAnnotations) {
     auto tc = compileWithTypeCheck("int a = null;");
-    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
-        << "null 应兼容所有类型注解，无警告";
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0) << "null 应兼容所有类型注解，无警告";
 }
 
 /// A7: `int a = 5` — 带类型注解的 VarDecl 应发射 OP_TYPE_CHECK 指令
@@ -565,10 +587,10 @@ TEST(CompilerTypeCheckTest, A9_EmitsOpTypeCheckForAnnotatedAssignment) {
     int typeCheckCount = 0;
     auto ops = collectOps(tc.result.mainChunk);
     for (auto op : ops) {
-        if (op == OpCode::OP_TYPE_CHECK) ++typeCheckCount;
+        if (op == OpCode::OP_TYPE_CHECK)
+            ++typeCheckCount;
     }
-    EXPECT_GE(typeCheckCount, 2)
-        << "VarDecl 和 Assignment 各应发射一次 OP_TYPE_CHECK";
+    EXPECT_GE(typeCheckCount, 2) << "VarDecl 和 Assignment 各应发射一次 OP_TYPE_CHECK";
 }
 
 /// A10: `int[] a = [1, 2, 3]` — 数组类型注解应发射 OP_TYPE_CHECK
@@ -594,8 +616,7 @@ TEST(CompilerTypeCheckTest, A10_ArrayTypeAnnotationEmitsCheck) {
 /// 用于强化断言——不仅验证警告数量，还验证警告内容正确
 static bool hasTypeCheckerWarningContaining(const DiagnosticBag& bag, const std::string& substr) {
     for (const auto& d : bag.all()) {
-        if (d.source == DiagSource::TypeChecker && d.isWarning() &&
-            d.message.find(substr) != std::string::npos) {
+        if (d.source == DiagSource::TypeChecker && d.isWarning() && d.message.find(substr) != std::string::npos) {
             return true;
         }
     }
@@ -611,8 +632,7 @@ TEST(CompilerTypeCheckTest, A11_FloatToIntRejectedOnVarDecl) {
     int warns = countTypeCheckerWarnings(tc.compiler.getDiagnostics());
     EXPECT_GE(warns, 1) << "int a = 3.14 应产生类型不匹配警告";
     // 强化：验证警告消息包含 int 和 float 类型名（防止误报无关警告通过）
-    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "int"))
-        << "警告消息应提及 int 注解";
+    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "int")) << "警告消息应提及 int 注解";
     EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "float"))
         << "警告消息应提及 float 实际类型";
 }
@@ -630,8 +650,7 @@ TEST(CompilerTypeCheckTest, A12_FloatToIntRejectedOnAssignment) {
 TEST(CompilerTypeCheckTest, A13_IntToBoolMismatch) {
     auto tc = compileWithTypeCheck("bool a = 1;");
     EXPECT_GE(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 1);
-    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "bool"))
-        << "警告消息应提及 bool 注解";
+    EXPECT_TRUE(hasTypeCheckerWarningContaining(tc.compiler.getDiagnostics(), "bool")) << "警告消息应提及 bool 注解";
 }
 
 /// A14: `string a = true` — bool 字面量不匹配 string 注解 → 产生警告并验证内容
@@ -646,8 +665,7 @@ TEST(CompilerTypeCheckTest, A14_BoolToStringMismatch) {
 /// 验证 int→float 宽化在赋值路径也生效（A3 仅测声明路径）
 TEST(CompilerTypeCheckTest, A15_IntWidensToFloatOnAssignment) {
     auto tc = compileWithTypeCheck("float a = 1.5; a = 5;");
-    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
-        << "float 变量赋 int 字面量应宽化，无警告";
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0) << "float 变量赋 int 字面量应宽化，无警告";
 }
 
 // AUDIT-BUG-E1: TypeChecker 作用域泄漏——if/while/for 块内变量类型注解污染外层
@@ -673,6 +691,5 @@ while (true) {
 }
 x = 42
 )");
-    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0)
-        << "while 块内的 var x: string 不应泄漏到外层";
+    EXPECT_EQ(countTypeCheckerWarnings(tc.compiler.getDiagnostics()), 0) << "while 块内的 var x: string 不应泄漏到外层";
 }

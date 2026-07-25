@@ -6,9 +6,9 @@
 // 规范 ID 映射，以及与 LearningPath 活动的一致性。
 // ============================================================
 
-#include <gtest/gtest.h>
-#include "gui/PanelCatalog.h"
 #include "gui/LearningPathData.h"
+#include "gui/PanelCatalog.h"
+#include <gtest/gtest.h>
 
 #include <set>
 #include <string>
@@ -46,21 +46,20 @@ TEST(TeachingTreePanelAudit, PanelIdsAreNonEmpty) {
     }
 }
 
-// 验证面板总数在合理区间 [18, 40]（既不过少也不过滥）。
-// 上限从 30 提升到 40：第五波教学面板拓展（循环展开/逃逸分析/寄存器分配/三后端性能竞赛）
-// 后面板总数达 32，原 30 上限已过时。
+// 验证面板总数在合理区间 [18, 45]（既不过少也不过滥）。
+// 上限从 30 → 40 → 45：第五波教学面板拓展后达 32；P3-20 fix 补录遗漏的 watchpoint
+// 面板后达 41，原 40 上限已过时。上限设为 45 留余量。
 TEST(TeachingTreePanelAudit, HasExpectedPanelCount) {
     auto ids = PanelCatalog::allPanelIds();
     EXPECT_GE(ids.size(), 18u) << "Too few panels";
-    EXPECT_LE(ids.size(), 40u) << "Too many panels";
+    EXPECT_LE(ids.size(), 45u) << "Too many panels";
 }
 
 // 验证 lab-01 ~ lab-08 等实验手册 ID 都被规范映射到 "lab-manual"。
 TEST(TeachingTreePanelAudit, CanonicalIdMapsLabManual) {
     for (int i = 1; i <= 8; ++i) {
         std::string labId = "lab-0" + std::to_string(i);
-        EXPECT_EQ(PanelCatalog::canonicalPanelId(labId), "lab-manual")
-            << labId << " not mapped to lab-manual";
+        EXPECT_EQ(PanelCatalog::canonicalPanelId(labId), "lab-manual") << labId << " not mapped to lab-manual";
     }
 }
 
@@ -81,8 +80,7 @@ TEST(TeachingTreePanelAudit, CanonicalIdPassThrough) {
     auto ids = PanelCatalog::allPanelIds();
     for (const auto& id : ids) {
         std::string canonical = PanelCatalog::canonicalPanelId(id);
-        EXPECT_FALSE(canonical.empty())
-            << "Valid panel ID " << id << " maps to empty canonical";
+        EXPECT_FALSE(canonical.empty()) << "Valid panel ID " << id << " maps to empty canonical";
     }
 }
 
@@ -103,13 +101,23 @@ TEST(TeachingTreePanelAudit, FindByIdReturnsNullForUnknown) {
     EXPECT_EQ(PanelCatalog::findById(""), nullptr);
 }
 
+// P3-20 fix: 验证 watchpoint 面板已在 PanelCatalog 注册（曾因遗漏导致导航树不显示 + canonicalPanelId 返回空）。
+TEST(TeachingTreePanelAudit, WatchpointPanelIsRegistered) {
+    const PanelEntry* entry = PanelCatalog::findById("watchpoint");
+    ASSERT_NE(entry, nullptr) << "watchpoint 面板未在 PanelCatalog 注册";
+    EXPECT_NE(std::string(entry->label), "") << "watchpoint label 为空";
+    // canonicalPanelId 必须返回非空（曾因 findById 返回 nullptr 导致返回空字符串）
+    EXPECT_EQ(PanelCatalog::canonicalPanelId("watchpoint"), "watchpoint")
+        << "watchpoint canonicalPanelId 返回空，导航树跳转将失效";
+}
+
 // 验证 LearningPath 的每个活动（除 welcome/freeform 外）都能映射到某个有效面板。
 TEST(TeachingTreePanelAudit, LearningPathActivitiesMapToValidPanels) {
     const auto& activities = LearningPathData::activities();
     for (const auto& act : activities) {
-        if (act.id == "welcome" || act.id == "freeform-project") continue;
+        if (act.id == "welcome" || act.id == "freeform-project")
+            continue;
         std::string canonical = PanelCatalog::canonicalPanelId(act.id);
-        EXPECT_FALSE(canonical.empty())
-            << "Learning path activity " << act.id << " has no panel mapping";
+        EXPECT_FALSE(canonical.empty()) << "Learning path activity " << act.id << " has no panel mapping";
     }
 }

@@ -1,4 +1,5 @@
 #include "parser/Parser.h"
+#include "common/ErrorMessages.h" // P2-12: DiagCodes 常量
 #include "common/Logger.h"
 #include <unordered_set>
 
@@ -136,7 +137,8 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
         // 不会回退到顶层 parse()。
         if (check(TokenType::TK_RBRACE)) {
             const Token& rbrace = peek();
-            diagnostics_.addError("多余的 '}' 在顶层（无匹配的 '{'）", rbrace.line, rbrace.column, DiagSource::Parser);
+            diagnostics_.addError("多余的 '}' 在顶层（无匹配的 '{'）", rbrace.line, rbrace.column,
+                                  DiagSource::Parser, DiagCodes::kStrayBrace);
             advance(); // 消耗 stray '}'，避免 declaration() → primary() 不识别 → 死循环
             continue;
         }
@@ -146,7 +148,7 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
         const int dynMaxParseErrors = RuntimeLimits::RuntimeConfig::instance().maxParseErrors();
         if (diagnostics_.errorCount() >= dynMaxParseErrors) {
             diagnostics_.addError("错误过多（超过 " + std::to_string(dynMaxParseErrors) + " 条），停止解析",
-                                  peek().line, peek().column, DiagSource::Parser);
+                                  peek().line, peek().column, DiagSource::Parser, DiagCodes::kTooManyErrors);
             break;
         }
         try {
@@ -156,7 +158,7 @@ std::unique_ptr<Block> Parser::parse(const std::vector<Token>& tokens) {
             }
         } catch (const ParseError& e) {
             // 收集错误到诊断包而非吞掉
-            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser, e.code);
             // 错误恢复：同步到下一个声明边界
             synchronize();
         }
@@ -218,17 +220,38 @@ bool Parser::checkNext(TokenType type) const {
     return (*tokens_)[idx].type == type;
 }
 
-const Token& Parser::consume(TokenType type, const std::string& message) {
+const Token& Parser::consume(TokenType type, const std::string& message, const std::string& diagCode) {
     if (check(type))
         return advance();
     const Token& tok = peek();
     // BUG-PARSER-MSG-1 fix (P2): 错误消息拼接实际得到的 token，与 primary() 风格一致。
     // 原实现仅输出调用方传入的 message（如"期望 ';'"），用户不知道下一个 token 是什么，
     // 难以判断问题位置。改为"期望 ';' 但得到 'var'"，提升诊断价值。
-    throw ParseError(message + " 但得到 '" + tok.lexeme + "'", tok.line, tok.column);
+    // P2 fix (错误码优先匹配): 调用方未显式提供 diagCode 时，按 token 类型派生默认
+    // 稳定诊断码（分号→missing-semicolon / 圆括号→unbalanced-paren / 花括号→unbalanced-brace），
+    // 覆盖全部 consume 调用点，无需逐处手填。显式传入的 diagCode 优先。
+    std::string code = diagCode;
+    if (code.empty()) {
+        switch (type) {
+        case TokenType::TK_SEMICOLON:
+            code = "missing-semicolon";
+            break;
+        case TokenType::TK_LPAREN:
+        case TokenType::TK_RPAREN:
+            code = "unbalanced-paren";
+            break;
+        case TokenType::TK_LBRACE:
+        case TokenType::TK_RBRACE:
+            code = "unbalanced-brace";
+            break;
+        default:
+            break;
+        }
+    }
+    throw ParseError(message + " 但得到 '" + tok.lexeme + "'", tok.line, tok.column, code);
 }
 
-const Token& Parser::consumeIdentifierOrType(const std::string& message) {
+const Token& Parser::consumeIdentifierOrType(const std::string& message, const std::string& diagCode) {
     // 允许普通标识符
     if (check(TokenType::TK_IDENTIFIER))
         return advance();
@@ -238,7 +261,7 @@ const Token& Parser::consumeIdentifierOrType(const std::string& message) {
     }
     const Token& tok = peek();
     // BUG-PARSER-MSG-1 fix: 同 consume，拼接实际 token
-    throw ParseError(message + " 但得到 '" + tok.lexeme + "'", tok.line, tok.column);
+    throw ParseError(message + " 但得到 '" + tok.lexeme + "'", tok.line, tok.column, diagCode);
 }
 
 bool Parser::isIdentifierOrType() const {
@@ -360,6 +383,21 @@ std::string Parser::parseTypeAnnotation() {
     return typeAnn;
 }
 
+// L20: 解析解构绑定中变量名后的可选 `: Type` 注解
+std::string Parser::parseOptionalNameTypeAnnotation(int line, int col) {
+    if (!match(TokenType::TK_COLON)) {
+        return ""; // 无 `:`，返回空串表示该位置无注解
+    }
+    // 与 VarDecl `: Type` 路径对齐：允许 isIdentifierOrType 或 TK_ENUM（R99 泛型 enum 注解）
+    if (!isIdentifierOrType() && !check(TokenType::TK_ENUM)) {
+        const Token& tok = peek();
+        throw ParseError("期望类型名", tok.line, tok.column);
+    }
+    (void)line;
+    (void)col;
+    return parseTypeAnnotation();
+}
+
 // ---- 声明与语句 ----
 
 std::unique_ptr<ASTNode> Parser::declaration() {
@@ -461,44 +499,85 @@ std::unique_ptr<ASTNode> Parser::varDecl() {
     // R98 元组与解构：var (a, b, c) = expr 解构绑定
     // 检测 var 后紧跟 '(' 的模式——避免与 var (expr) 的合法语法歧义，
     // 解构绑定要求 '(' 后必须紧跟标识符（不能是表达式），且至少一个 ',' 分隔。
+    // L20: 支持每个变量名后可选 `: Type` 注解，前瞻需跳过 ": <Type>" 序列。
     if (check(TokenType::TK_LPAREN)) {
-        // 前瞻：'(' IDENTIFIER (',' IDENTIFIER)+ ')' '='
+        // 前瞻：'(' IDENTIFIER (':' <TypeTokens>)? (',' IDENTIFIER (':' <TypeTokens>)?)* ')' '='
+        // 注：不强制要求逗号（var (a) = expr 也视为解构，与原实现一致）
         int lookahead = current_ + 1;
         bool isDestructure = false;
         if (lookahead < static_cast<int>(tokens_->size()) && (*tokens_)[lookahead].type == TokenType::TK_IDENTIFIER) {
-            // 扫描至少一个 ','
             int scanPos = lookahead + 1;
-            while (scanPos < static_cast<int>(tokens_->size()) && (*tokens_)[scanPos].type == TokenType::TK_COMMA) {
-                ++scanPos;
-                if (scanPos >= static_cast<int>(tokens_->size()) ||
-                    (*tokens_)[scanPos].type != TokenType::TK_IDENTIFIER) {
-                    break; // 不是合法解构模式
+            while (scanPos < static_cast<int>(tokens_->size())) {
+                // L20: 跳过可选 ": <TypeTokens>"
+                if ((*tokens_)[scanPos].type == TokenType::TK_COLON) {
+                    ++scanPos; // 消耗 ':'
+                    // 跳过类型 token 序列：标识符/类型关键字/enum/'['/']'/'?'/','/'('/')'/'{'/'}'（dict[K:V], fun():ret）
+                    // 简化：跳过到下一个 ',' 或 ')'，不严格解析类型语法（实际解析在 parseTypeAnnotation）
+                    while (scanPos < static_cast<int>(tokens_->size())) {
+                        TokenType tt = (*tokens_)[scanPos].type;
+                        if (tt == TokenType::TK_COMMA || tt == TokenType::TK_RPAREN)
+                            break;
+                        ++scanPos;
+                    }
+                    if (scanPos >= static_cast<int>(tokens_->size()))
+                        break;
                 }
-                ++scanPos;
-            }
-            if (scanPos < static_cast<int>(tokens_->size()) && (*tokens_)[scanPos].type == TokenType::TK_RPAREN) {
-                ++scanPos;
-                if (scanPos < static_cast<int>(tokens_->size()) && (*tokens_)[scanPos].type == TokenType::TK_ASSIGN) {
-                    isDestructure = true;
+                if ((*tokens_)[scanPos].type == TokenType::TK_COMMA) {
+                    ++scanPos;
+                    if (scanPos >= static_cast<int>(tokens_->size()) ||
+                        (*tokens_)[scanPos].type != TokenType::TK_IDENTIFIER) {
+                        break; // 不是合法解构模式
+                    }
+                    ++scanPos; // 消耗 IDENTIFIER
+                    continue;
                 }
+                if ((*tokens_)[scanPos].type == TokenType::TK_RPAREN) {
+                    ++scanPos;
+                    // 注：原实现不强制要求逗号（var (a) = expr 也视为解构），此处保持兼容
+                    if (scanPos < static_cast<int>(tokens_->size()) &&
+                        (*tokens_)[scanPos].type == TokenType::TK_ASSIGN) {
+                        isDestructure = true;
+                    }
+                    break;
+                }
+                break; // 不是合法解构模式
             }
         }
 
         if (isDestructure) {
             advance(); // 消耗 '('
             std::vector<std::string> names;
+            std::vector<std::string> nameTypeAnns; // L20: per-name 类型注解
+            bool anyNameTypeAnn = false;           // L20: 是否有任一位置带注解
+            // L20: 解析第一个变量名 + 可选 `: Type`
             const Token& firstName = consume(TokenType::TK_IDENTIFIER, "期望变量名");
             names.push_back(firstName.lexeme);
+            {
+                std::string ann = parseOptionalNameTypeAnnotation(firstName.line, firstName.column);
+                nameTypeAnns.push_back(ann);
+                if (!ann.empty())
+                    anyNameTypeAnn = true;
+            }
             while (match(TokenType::TK_COMMA)) {
                 const Token& nextName = consume(TokenType::TK_IDENTIFIER, "期望变量名");
                 names.push_back(nextName.lexeme);
+                std::string ann = parseOptionalNameTypeAnnotation(nextName.line, nextName.column);
+                nameTypeAnns.push_back(ann);
+                if (!ann.empty())
+                    anyNameTypeAnn = true;
             }
             consume(TokenType::TK_RPAREN, "期望 ')' 结束解构绑定");
             consume(TokenType::TK_ASSIGN, "期望 '=' 初始化解构绑定");
             auto init = expression();
             consume(TokenType::TK_SEMICOLON, "期望 ';' 结束解构绑定");
-            // 类型注解暂不支持与解构同时使用（语法歧义），保留为空字符串
-            return std::make_unique<DestructureBinding>(std::move(names), std::move(init), varTok.line, varTok.column);
+            // L20: 若任一位置带类型注解，则 nameTypeAnnotations 全量保留（空串表示该位置无注解）；
+            //      若全部无注解，保留空 vector 以维持向后兼容（hasNameTypeAnnotations() == false）
+            auto node = std::make_unique<DestructureBinding>(std::move(names), std::move(init), varTok.line,
+                                                              varTok.column);
+            if (anyNameTypeAnn) {
+                node->nameTypeAnnotations = std::move(nameTypeAnns);
+            }
+            return node;
         }
     }
 
@@ -1062,7 +1141,7 @@ void Parser::parseClassMembers(std::vector<std::shared_ptr<ASTNode>>& members) {
             }
         } catch (const ParseError& e) {
             // BUG-PARSER-AUDIT-2 fix: 成员解析错误恢复
-            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser, e.code);
             synchronize();
             // synchronize 在 '}' 处返回（不消费），循环条件 check(RBRACE) 退出，
             // 由下方 consume(TK_RBRACE) 消费 class 的闭合花括号。
@@ -1127,7 +1206,7 @@ std::unique_ptr<EnumDecl> Parser::enumDecl() {
             }
         } catch (const ParseError& e) {
             // 错误恢复：与 classDecl 一致
-            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser, e.code);
             synchronize();
             // synchronize 在 '}' 处返回（不消费），循环条件 check(RBRACE) 退出
         }
@@ -1216,7 +1295,7 @@ std::unique_ptr<MatchExpr> Parser::matchExpr() {
 
             cases.push_back(std::move(mc));
         } catch (const ParseError& e) {
-            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser, e.code);
             synchronize();
         }
     }
@@ -1608,17 +1687,20 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
     // 跳过 try 块内的 catch 子句，使 tryStmt() 找不到 catch 而进入死循环。
     if (blockDepth_ > 0) {
         const Token& tok = peek();
-        diagnostics_.addError("import 语句只能在顶层使用", tok.line, tok.column, DiagSource::Parser);
+        diagnostics_.addError("import 语句只能在顶层使用", tok.line, tok.column, DiagSource::Parser,
+                              DiagCodes::kImportNotAtTopLevel);
         // 继续解析 import 语句，不抛异常
     }
     const Token& importTok = consume(TokenType::TK_IMPORT, "期望 'import'");
 
     std::vector<std::string> names;
     bool importAll = false;
+    std::string namespaceAlias; // P2-11: import * as ns 模式的命名空间别名
 
-    // 两种形式:
-    // 1. import "path";           — 导入全部
-    // 2. import { a, b } from "path"; — 导入指定名称
+    // 三种形式:
+    // 1. import "path";                    — 导入全部到当前作用域
+    // 2. import { a, b } from "path";      — 导入指定名称
+    // 3. import * as ns from "path";       — 导入全部到命名空间对象 ns（P2-11）
     if (check(TokenType::TK_LBRACE)) {
         advance(); // 消耗 '{'
         do {
@@ -1627,6 +1709,14 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
         } while (match(TokenType::TK_COMMA) && !check(TokenType::TK_RBRACE));
         consume(TokenType::TK_RBRACE, "期望 '}'");
         consume(TokenType::TK_FROM, "期望 'from'");
+    } else if (check(TokenType::TK_STAR)) {
+        // P2-11: import * as ns from "path"
+        advance(); // 消耗 '*'
+        consume(TokenType::TK_AS, "期望 'as'（import * as ns 语法）");
+        const Token& aliasTok = consume(TokenType::TK_IDENTIFIER, "期望命名空间别名");
+        namespaceAlias = aliasTok.lexeme;
+        consume(TokenType::TK_FROM, "期望 'from'");
+        importAll = true; // namespace 模式也是导入全部
     } else {
         importAll = true;
     }
@@ -1639,6 +1729,11 @@ std::unique_ptr<ImportStmt> Parser::importStmt() {
     }
     consume(TokenType::TK_SEMICOLON, "期望 ';' 结束 import 语句");
 
+    // P2-11: namespace 模式用专用构造函数
+    if (!namespaceAlias.empty()) {
+        return std::make_unique<ImportStmt>(pathTok.literalString(), namespaceAlias, importTok.line,
+                                            importTok.column);
+    }
     return std::make_unique<ImportStmt>(pathTok.literalString(), std::move(names), importAll, importTok.line,
                                         importTok.column);
 }
@@ -1648,7 +1743,8 @@ std::unique_ptr<ExportStmt> Parser::exportStmt() {
     // FIX: 同 importStmt()，不抛异常，改为记录诊断后继续解析。
     if (blockDepth_ > 0) {
         const Token& tok = peek();
-        diagnostics_.addError("export 语句只能在顶层使用", tok.line, tok.column, DiagSource::Parser);
+        diagnostics_.addError("export 语句只能在顶层使用", tok.line, tok.column, DiagSource::Parser,
+                              DiagCodes::kExportNotAtTopLevel);
     }
     const Token& exportTok = consume(TokenType::TK_EXPORT, "期望 'export'");
 
@@ -1734,7 +1830,7 @@ std::unique_ptr<Block> Parser::block() {
         const int dynMaxParseErrors = RuntimeLimits::RuntimeConfig::instance().maxParseErrors();
         if (diagnostics_.errorCount() >= dynMaxParseErrors) {
             diagnostics_.addError("错误过多（超过 " + std::to_string(dynMaxParseErrors) + " 条），停止解析",
-                                  peek().line, peek().column, DiagSource::Parser);
+                                  peek().line, peek().column, DiagSource::Parser, DiagCodes::kTooManyErrors);
             break;
         }
         try {
@@ -1744,7 +1840,7 @@ std::unique_ptr<Block> Parser::block() {
             }
         } catch (const ParseError& e) {
             // P1-1/P1-2 fix: block() 内错误恢复，避免单错误导致整个块被放弃
-            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser);
+            diagnostics_.addError(e.what(), e.line, e.column, DiagSource::Parser, e.code);
             synchronize();
             // synchronize 后若已到 '}' 或 EOF 则退出循环
         }
@@ -1760,7 +1856,8 @@ std::unique_ptr<Block> Parser::block() {
         // 结构性块边界或 EOF：不消耗，让调用方处理 catch/finally/else
     } else {
         // 其他情况（如错误上限 break 后 peek 非 '}'）：记录诊断但不抛错
-        diagnostics_.addError("期望 '}'", peek().line, peek().column, DiagSource::Parser);
+        diagnostics_.addError("期望 '}'", peek().line, peek().column, DiagSource::Parser,
+                              DiagCodes::kUnbalancedBrace);
     }
 
     auto blk = std::make_unique<Block>(std::move(stmts), lbrace.line, lbrace.column);
@@ -2290,7 +2387,7 @@ std::unique_ptr<ASTNode> Parser::primary() {
 
     // 错误
     const Token& tok = peek();
-    throw ParseError("意外的 Token: '" + tok.lexeme + "'", tok.line, tok.column);
+    throw ParseError("意外的 Token: '" + tok.lexeme + "'", tok.line, tok.column, "unexpected-token");
 }
 
 // ---- 错误恢复 ----

@@ -126,22 +126,6 @@ static std::string runRegVM(const std::string& src) {
     return out;
 }
 
-// 编译源码并返回错误消息（用于检查编译期错误），无错误返回空串
-static std::string compileIRDiags(const std::string& src) {
-    Lexer lx;
-    auto tk = lx.scan(src);
-    Parser p;
-    auto ast = p.parse(tk);
-    if (!ast)
-        return "<parse-fail>";
-    Compiler c;
-    c.setUseIR(true);
-    c.compile(*ast);
-    if (c.getDiagnostics().hasErrors())
-        return c.getLastError();
-    return "";
-}
-
 // ============================================================
 // BUG-AUDIT-FINALLY-1: finally 块语法
 // ------------------------------------------------------------

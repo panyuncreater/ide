@@ -664,6 +664,114 @@ bool DebugController::checkExceptionBreakpoint(int line) {
     return true;
 }
 
+// L19 Watchpoint（Interpreter 路径）：参照 checkFunctionBreakpoint 模板实现。
+// watchpoints_ 由 pauseMutex_ 保护，hasWatchpoints_ 原子标志供快速路径短路。
+void DebugController::setWatchpoint(const WatchpointInfo& wp) {
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        watchpoints_.push_back(wp);
+    }
+    hasWatchpoints_.store(true, std::memory_order_relaxed);
+}
+
+void DebugController::removeWatchpoint(const std::string& varName, const std::string& fieldName) {
+    bool empty = false;
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        // 倒序遍历移除所有匹配项（与 VmStepper::removeWatchpoint 行为一致）。
+        // 精确匹配 varName：空 varName 只移除 varName 也为空的 watchpoint（通配 Field watchpoint），
+        // 不作为"移除全部"的快捷方式——移除全部应使用 clearWatchpoints()。
+        // L19 audit fix: 原实现 varName.empty() || wp.varName == varName 导致空 varName 通配所有，
+        // 与 VmStepper 的精确匹配语义不一致，路径切换后 watchpoint 列表不同步。
+        for (int i = static_cast<int>(watchpoints_.size()) - 1; i >= 0; --i) {
+            const auto& wp = watchpoints_[i];
+            bool matchVar = (wp.varName == varName);
+            bool matchField = fieldName.empty() || wp.fieldName == fieldName;
+            if (matchVar && matchField) {
+                watchpoints_.erase(watchpoints_.begin() + i);
+            }
+        }
+        empty = watchpoints_.empty();
+    }
+    hasWatchpoints_.store(!empty, std::memory_order_relaxed);
+}
+
+void DebugController::clearWatchpoints() {
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        watchpoints_.clear();
+    }
+    hasWatchpoints_.store(false, std::memory_order_relaxed);
+}
+
+std::vector<WatchpointInfo> DebugController::getWatchpoints() const {
+    std::lock_guard<std::mutex> lock(pauseMutex_);
+    return watchpoints_;
+}
+
+bool DebugController::checkWatchpointHit(const std::string& varName, bool isFieldWrite, const std::string& fieldName,
+                                         int line) {
+    // 快速路径：无 watchpoint 时立即返回（避免每次赋值都加锁）
+    if (!hasWatchpoints_.load(std::memory_order_relaxed))
+        return false;
+
+    // 与 VmStepper::checkWatchpointHit 匹配语义对齐：
+    // - Variable 类型：varName 完全匹配（索引写入视为修改变量本身，也匹配）
+    // - Field 类型：要求 isFieldWrite，fieldName 匹配，varName 空时通配
+    WatchpointInfo snapshot;
+    bool matched = false;
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        if (!running_ || stopped_)
+            return false;
+        for (const auto& wp : watchpoints_) {
+            if (wp.kind == WatchpointTargetKind::Variable && !isFieldWrite) {
+                // L19 audit fix: 添加 !varName.empty() 防御性保护（与 VmStepper 对齐），
+                // 避免空 varName 误匹配 varName="" 的 Variable watchpoint。
+                if (!varName.empty() && wp.varName == varName) {
+                    snapshot = wp;
+                    matched = true;
+                    break;
+                }
+            } else if (wp.kind == WatchpointTargetKind::Field && isFieldWrite) {
+                if (wp.fieldName == fieldName && (wp.varName.empty() || wp.varName == varName)) {
+                    snapshot = wp;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!matched)
+        return false;
+
+    // 条件求值（锁外，避免持锁回调死锁）
+    if (snapshot.isConditional()) {
+        if (evaluator_ && evaluator_->hasCallback()) {
+            if (!evaluator_->evaluate(snapshot.condition, line)) {
+                return false; // 条件不满足
+            }
+        } else {
+            return false; // 无求值器，条件 watchpoint 视为不命中
+        }
+    }
+
+    // 命中：递增 hitCount 并暂停（重新查找避免锁外快照过期）
+    {
+        std::lock_guard<std::mutex> lock(pauseMutex_);
+        for (auto& wp : watchpoints_) {
+            if (wp.kind == snapshot.kind && wp.varName == snapshot.varName && wp.fieldName == snapshot.fieldName &&
+                wp.condition == snapshot.condition) {
+                wp.hitCount++;
+                break;
+            }
+        }
+    }
+    doPause(line, currentDepth_.load());
+    return true;
+}
+
 void DebugController::stepIn() {
     LOG_DEBUG("Step In", "Debugger");
     // P1-8 fix: 消除 TOCTOU。原实现先无锁检查 !running_ 决定走快速路径（无 CV notify），
@@ -799,10 +907,11 @@ std::vector<VariableSnapshot> DebugController::getVariableSnapshot() const {
     }
     if (cb) {
         // AUDIT-P1 fix: cb() 调用期间增减活跃计数，供 DebugCoordinator 析构时 spin-wait
-        activeCallbackCount_.fetch_add(1, std::memory_order_acq_rel);
+        // P0-2 fix: CountGuard 持有 shared_ptr 副本，超时析构后仍安全（atomic 独立存活）。
+        activeCallbackCount_->fetch_add(1, std::memory_order_acq_rel);
         struct CountGuard {
-            std::atomic<int>& cnt;
-            ~CountGuard() { cnt.fetch_sub(1, std::memory_order_acq_rel); }
+            std::shared_ptr<std::atomic<int>> cnt;
+            ~CountGuard() { cnt->fetch_sub(1, std::memory_order_acq_rel); }
         } guard{activeCallbackCount_};
         return cb();
     }
@@ -818,10 +927,11 @@ std::vector<CallStackEntry> DebugController::getCallStack() const {
     }
     if (cb) {
         // AUDIT-P1 fix: cb() 调用期间增减活跃计数，供 DebugCoordinator 析构时 spin-wait
-        activeCallbackCount_.fetch_add(1, std::memory_order_acq_rel);
+        // P0-2 fix: CountGuard 持有 shared_ptr 副本，超时析构后仍安全（atomic 独立存活）。
+        activeCallbackCount_->fetch_add(1, std::memory_order_acq_rel);
         struct CountGuard {
-            std::atomic<int>& cnt;
-            ~CountGuard() { cnt.fetch_sub(1, std::memory_order_acq_rel); }
+            std::shared_ptr<std::atomic<int>> cnt;
+            ~CountGuard() { cnt->fetch_sub(1, std::memory_order_acq_rel); }
         } guard{activeCallbackCount_};
         return cb();
     }
@@ -835,13 +945,15 @@ void DebugController::waitCallbacksIdle() const {
     // 死循环（如条件断点求值包含无限循环），activeCallbackCount_ 永不归零，析构永久阻塞，
     // 进程挂死。超时后记录警告并继续析构（接受可能的 UAF 风险，但优于永久阻塞）。
     // 与 P1-1（条件断点求值超时）配合：若条件求值有步数上限，callback 不会无限循环。
+    // P0-2 fix: 计数器为 shared_ptr<atomic>，超时后继续析构不再有 UAF——worker 的 CountGuard
+    // 副本保持 atomic 存活至其 fetch_sub 完成释放。超时仅表示放弃等待，不引入悬垂访问。
     constexpr int MAX_WAIT_MS = 3000;
     auto start = std::chrono::steady_clock::now();
-    while (activeCallbackCount_.load(std::memory_order_acquire) > 0) {
+    while (activeCallbackCount_->load(std::memory_order_acquire) > 0) {
         if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() >
             MAX_WAIT_MS) {
             Logger::Warning("waitCallbacksIdle 超时（callback 可能挂死），"
-                            "继续析构（风险：worker 线程可能仍在执行 callback）",
+                            "继续析构（计数器为 shared_ptr，worker 完成后安全释放，无 UAF）",
                             "Debugger");
             break;
         }

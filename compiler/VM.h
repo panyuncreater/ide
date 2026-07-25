@@ -33,9 +33,11 @@
 #pragma once
 
 #include "Diagnostic.h"
-#include "common/IBackend.h" // ARCH-09 fix: 后端抽象接口
+#include "common/ErrorMessages.h" // P2-12: DiagCodes 诊断码常量
+#include "common/IBackend.h"      // ARCH-09 fix: 后端抽象接口
 #include "common/Result.h"
 #include "common/RuntimeLimits.h"
+#include "common/VmTypes.h" // P1-5 fix: VMResult 提取到 common/ 供 IVmBackend 引用
 #include "compiler/Bytecode.h"
 #include "debug/DebugTypes.h"           // R161: WriteTarget 共享类型（Watchpoint peekWriteTarget 返回值）
 #include "interpreter/BuiltinMethods.h" // #20 fix: BuiltinMethod 枚举 + classifyBuiltinMethod
@@ -110,8 +112,7 @@ public:
     }
 };
 
-/// 虚拟机执行结果
-enum class VMResult { VM_OK, VM_RUNTIME_ERROR, VM_STACK_OVERFLOW };
+/// 虚拟机执行结果（P1-5 fix: 已提取到 common/VmTypes.h，此处通过 #include 引入）
 
 /// VM 执行模式
 enum class VMExecMode {
@@ -266,7 +267,7 @@ private:
 };
 
 /// 简单栈式虚拟机
-class VM : public IBackend {
+class VM : public IVmBackend {
 public:
     VM();
 
@@ -279,11 +280,11 @@ public:
     /// 初始化执行环境但不运行（单步模式前置操作）
     void initExecution(const CompileResult& result);
 
-    /// 单步执行一条指令（需先调用 initExecution）
-    VMResult stepOnce();
+    /// P1-5 fix: IVmBackend override — 单步执行一条指令（需先调用 initExecution）
+    VMResult stepOnce() override;
 
-    /// 是否执行完毕（无帧可执行）
-    bool isFinished() const;
+    /// P1-5 fix: IVmBackend override — 是否执行完毕（无帧可执行）
+    bool isFinished() const override;
 
     /// 是否已初始化（initExecution 已调用）
     bool isInitialized() const;
@@ -320,11 +321,11 @@ public:
     /// 获取诊断信息（简短访问器）
     const DiagnosticBag& diagnostics() const { return diagnostics_; }
 
-    /// 获取栈内容（用于调试，拷贝）
-    std::vector<Value> getStack() const;
+    /// P1-5 fix: IVmBackend override — 获取栈内容（用于调试，拷贝）
+    std::vector<Value> getStack() const override;
 
-    /// 获取全局变量表（合并 slot-based + map-based，调试/测试用）
-    std::unordered_map<std::string, Value> getGlobals() const {
+    /// P1-5 fix: IVmBackend override — 获取全局变量表（合并 slot-based + map-based，调试/测试用）
+    std::unordered_map<std::string, Value> getGlobals() const override {
         std::unordered_map<std::string, Value> result;
         // B4: 从 globalNameToSlot_ 重建逆映射（避免存储冗余的 globalSlotNames_）
         for (const auto& kv : globalNameToSlot_) {
@@ -343,20 +344,21 @@ public:
     /// 向后兼容：旧版 getGlobalsRef 改为调用 getGlobals
     std::unordered_map<std::string, Value> getGlobalsRef() const { return getGlobals(); }
 
-    /// 获取当前帧的 IP（用于单步调试 UI 高亮）
-    size_t getCurrentIP() const;
+    /// P1-5 fix: IVmBackend override — 获取当前帧的 IP（用于单步调试 UI 高亮）
+    size_t getCurrentIP() const override;
 
     /// 获取当前帧的指令操作码（用于单步调试 UI 显示）
     OpCode getCurrentOpCode() const;
 
-    /// 获取当前帧的源码行号（从当前 chunk 的 lines 数组获取）
-    int getCurrentLine() const;
+    /// P1-5 fix: IVmBackend override — 获取当前帧的源码行号（从当前 chunk 的 lines 数组获取）
+    int getCurrentLine() const override;
 
     /// 获取当前帧的 chunk 名称（"main" 或函数名）
     std::string getCurrentChunkName() const;
 
     /// A4 fix: 获取当前调用帧栈深度（用于 step-over/out 判断）
-    size_t getFrameCount() const { return frames_.size(); }
+    /// P1-5 fix: IVmBackend override
+    size_t getFrameCount() const override { return frames_.size(); }
 
 #ifdef MINILANG_VM_PROFILING
     // ============================================================
@@ -380,12 +382,10 @@ public:
 
     /// A4 fix: 获取调用栈快照（用于 UI 调用栈面板显示）
     /// 返回从栈底到栈顶的调用帧信息（函数名 + 当前行号 + ip）
-    struct VMCallStackEntry {
-        std::string functionName; // "main" 或函数名
-        int line;                 // 当前源码行号
-        size_t ip;                // 当前指令指针
-    };
-    std::vector<VMCallStackEntry> getCallStack() const;
+    // P1-5 扩展: VMCallStackEntry 改为 VmCallStackEntry 别名，统一到 IVmBackend 接口。
+    // 旧代码引用 VM::VMCallStackEntry 仍可编译（别名透明）。
+    using VMCallStackEntry = VmCallStackEntry;
+    std::vector<VmCallStackEntry> getCallStack() const override;
 
     /// BUG-IDE-12 fix: 获取当前帧的局部变量名→值映射（用于 VM 条件断点求值）。
     /// 结合当前帧 chunk 的 localSlotNames + 栈槽（basePointer + slot）反查。
@@ -480,7 +480,12 @@ private:
     // closeUpvaluesFrom 从 O(n) 线性扫描降为 O(log n + k)。value 用 weak_ptr 监视 shared_ptr 生命周期
     // （closure 持有强引用），closure 销毁后 weak_ptr 自动过期，不阻碍 upvalue 释放。
     std::multimap<size_t, std::weak_ptr<VMUpvalue>> openUpvalues_;
-    std::unordered_map<std::string, Value> functionClosures_;      // 函数名→闭包值（含 upvalue 绑定）
+    std::unordered_map<std::string, Value> functionClosures_; // 函数名→闭包值（含 upvalue 绑定）
+    // W3-2-Bug2 fix: 函数内定义的类的方法捕获的 upvalue（key = chunk name "Class.method"）。
+    // 在 OP_DEFINE_CLASS 执行时（此时仍在定义类的外层函数帧中），为有 upvalue 描述符的方法
+    // 创建 VMClosureData 捕获当前帧的栈槽（isLocal=true）或当前帧的 upvalue（isLocal=false）。
+    // OP_METHOD_CALL 时从此 map 读取并填充方法帧的 upvalues，使方法体内 OP_GET_UPVALUE 能正确访问。
+    std::unordered_map<std::string, std::shared_ptr<VMClosureData>> methodUpvalues_;
     std::function<void(const std::string&)> outputCallback_;       // 输出回调
     std::function<std::string(const std::string&)> inputCallback_; // 输入回调（input() 函数）
     // R136 spawn 子线程闭包调用序列化 mutex。VM 的栈/帧非线程安全，
@@ -490,10 +495,10 @@ private:
     std::function<void(const VMStepInfo&)> stepCallback_; // 步进回调
     bool stepCallbackEnabled_ = false;                    // 是否启用步进回调
     bool initialized_ = false;                            // 是否已初始化执行环境
-    std::string lastError_;                               // 最近一次运行时错误
-    int lastErrorLine_ = 0;                               // 最近一次运行时错误的源码行号（1-based，0=无位置）
+    // P2-12: lastError_/lastErrorLine_ 字段已移除，getLastError()/getLastErrorLine()
+    // 改为从 diagnostics_ 派生（消除双通道冗余）。
     // P1 fix: mutable 允许 const peek() 在栈下溢时设置错误标志
-    mutable bool hasError_ = false;              // 运行时错误标志（用于快速检测）
+    mutable bool hasError_ = false;              // 运行时错误标志（快速路径，权威来源为 diagnostics_）
     DiagnosticBag diagnostics_;                  // 诊断收集器
     Value lastMutatedReceiver_;                  // 变异方法调用后暂存修改后的接收者对象（用于嵌套访问写回）
     std::vector<std::string> pendingFieldOrder_; // M3: OP_INIT_FIELD 执行期间记录的字段声明顺序
@@ -570,7 +575,8 @@ private:
     }
 
     /// 运行时错误
-    VMResult runtimeError(const std::string& msg);
+    /// @param diagCode P2 fix: 稳定诊断码（如 "division-by-zero"），透传到 addError
+    VMResult runtimeError(const std::string& msg, const std::string& diagCode = "");
 
     /// F11: 抛出异常，搜索 try 处理器或跨帧传播
     VMResult throwException(Value thrownValue);
@@ -593,8 +599,8 @@ private:
     VMResult pushCompareResult(bool result, size_t& ip, OpCode opcode);
 
     /// 写回变异方法调用后的接收者（统一数组/字典/实例三处写回逻辑）
-    /// receiverVarIdx: 接收者的全局变量索引（0xFFFF 表示无）
-    /// receiverLocalSlotByte: 接收者的本地槽字节（0xFF 表示无）
+    /// receiverVarIdx: 接收者的全局变量索引（NO_INDEX 表示无）
+    /// receiverLocalSlotByte: 接收者的本地槽字节（NO_SLOT 表示无）
     /// mutatedObj: 被修改的对象引用（将被 std::move）
     /// fieldsModified: 是否修改了字段（影响实例字段同步）
     VMResult writeBackReceiver(uint16_t receiverVarIdx, uint8_t receiverLocalSlotByte, Value& mutatedObj,
@@ -611,7 +617,7 @@ private:
             return pushCompareResult(cmp(left, right), ip, opcode);
         }
         if (!left.isNumber() || !right.isNumber())
-            return runtimeError("比较运算需要数值或字符串类型");
+            return runtimeError("比较运算需要数值或字符串类型", DiagCodes::kTypeMismatch);
         return pushCompareResult(cmp(left, right), ip, opcode);
     }
 
@@ -653,10 +659,13 @@ private:
     bool extractSharedBuiltin(Result<Value>&& sr, Value& out);
 
     // ---- P2-9 fix: COW 变异模式提取 ----
+    // P3-14b fix: misc-const-correctness — 两个 helper 仅修改入参 obj（COW detach），
+    // 不访问任何 *this 成员，因此可标 const。const 方法返回 mutable 引用是合法的
+    // （constness 约束 *this 而非返回值/入参）。
     /// 获取数组的可变引用：若独占拥有数据（refcount==1）直接返回；
     /// 否则通过非 const arrayVal() 触发 COW detach 后返回。
     /// 消除 dispatchArrayBuiltin 中 4 处重复的 tryGetMutableArray 模式。
-    std::vector<Value>& getMutableArrayRef(Value& obj) {
+    std::vector<Value>& getMutableArrayRef(Value& obj) const {
         auto* arr = obj.tryGetMutableArray();
         if (arr)
             return *arr;
@@ -666,7 +675,7 @@ private:
     /// 获取字典的可变引用：同上，针对字典类型。
     /// L4 fix: 返回类型改为 DictKey-keyed map（dictVal/tryGetMutableDict 已同步）
     /// R97 #2 fix: 返回类型改为 Value::DictMap（含 DictKeyEqual 透明比较器）
-    Value::DictMap& getMutableDictRef(Value& obj) {
+    Value::DictMap& getMutableDictRef(Value& obj) const {
         auto* dict = obj.tryGetMutableDict();
         if (dict)
             return *dict;
@@ -822,6 +831,10 @@ private:
     VMResult executeClassNew(size_t& ip, OpCode op);
     /// OP_DEFINE_CLASS 执行：注册类信息
     VMResult executeDefineClass(size_t& ip, OpCode op);
+    /// W3-2-Bug2 fix: 在类定义时为有 upvalue 的方法创建 upvalue 捕获。
+    /// 遍历 methodsByClass_[className] 中的方法，对 chunk->upvalues 非空的方法
+    /// 创建 VMClosureData，从当前帧捕获栈槽（isLocal=true）或 upvalue（isLocal=false）。
+    void captureMethodUpvalues(const std::string& className);
 
     /// R98 W2: 同步调用闭包值（供高阶函数共享层回调）
     /// 手动构造调用帧（模拟 OP_CALL_EXPR 的帧设置），压入 frames_，

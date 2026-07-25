@@ -15,9 +15,9 @@
 #include "common/Utf8Utils.h"         // P0-4 fix: UTF-8 码位工具
 #include "interpreter/NumericUtils.h" // BUG9 fix: 溢出检查
 #include "interpreter/SimdUtils.h"    // R134: SIMD 向量化内核
-#include <chrono>                     // R136 channel.tryRecv 超时
 #include <cctype>
 #include <charconv>
+#include <chrono> // R136 channel.tryRecv 超时
 #include <cstdint>
 #include <string>
 #include <thread> // R136: spawn 子线程
@@ -105,7 +105,7 @@ namespace {
 
 Result<Value> checkExact(const char* name, size_t argCount, size_t expected, int line, int column) {
     if (argCount != expected) {
-        return Result<Value>::err(ErrorFormat::format("%s 期望 %zu 个参数，但传入了 %zu 个", name, expected, argCount),
+        return Result<Value>::err(ErrorFormat::formatStd("{} 期望 {} 个参数，但传入了 {} 个",  name,  expected,  argCount),
                                   line, column);
     }
     return Result<Value>::ok(Value::nullValue());
@@ -115,7 +115,7 @@ Result<Value> checkRange(const char* name, size_t argCount, size_t minExpected, 
                          int column) {
     if (argCount < minExpected || argCount > maxExpected) {
         return Result<Value>::err(
-            ErrorFormat::format("%s 期望 %zu-%zu 个参数，但传入了 %zu 个", name, minExpected, maxExpected, argCount),
+            ErrorFormat::formatStd("{} 期望 {}-{} 个参数，但传入了 {} 个",  name,  minExpected,  maxExpected,  argCount),
             line, column);
     }
     return Result<Value>::ok(Value::nullValue());
@@ -127,7 +127,7 @@ Result<Value> checkRange(const char* name, size_t argCount, size_t minExpected, 
 // 共享纯函数实现（供 Interpreter 和 VM 共用）
 // ============================================================
 
-Result<Value> executeSharedLen(const Value& obj, const Value* args, size_t argCount, int line, int column) {
+Result<Value> executeSharedLen(const Value& obj, const Value* /*args*/, size_t argCount, int line, int column) {
     if (auto r = checkExact("len", argCount, 0, line, column); r.is_err())
         return r;
     if (obj.isArray()) {
@@ -197,7 +197,7 @@ Result<Value> executeSharedStrEndsWith(const Value& str, const Value* args, size
 Result<Value> executeSharedStrSubstr(const Value& str, const Value* args, size_t argCount, int line, int column) {
     if (argCount < 1 || argCount > 2) {
         return Result<Value>::err(
-            ErrorFormat::format("substr 期望 1-2 个参数(起始[, 长度])，但传入了 %zu 个", argCount), line, column);
+            ErrorFormat::formatStd("substr 期望 1-2 个参数(起始[, 长度])，但传入了 {} 个",  argCount), line, column);
     }
     if (!args[0].isInt()) {
         return Result<Value>::err("substr 起始位置必须是整数", line, column);
@@ -262,7 +262,7 @@ Result<Value> executeSharedStrIndexOf(const Value& str, const Value* args, size_
 // S1 fix: 共享 replace 实现 — 单遍构建 O(N)，消除 VM 侧 O(N²) Bug
 Result<Value> executeSharedStrReplace(const Value& str, const Value* args, size_t argCount, int line, int column) {
     if (argCount != 2) {
-        return Result<Value>::err(ErrorFormat::format("replace 期望 2 个参数(旧串, 新串)，但传入了 %zu 个", argCount),
+        return Result<Value>::err(ErrorFormat::formatStd("replace 期望 2 个参数(旧串, 新串)，但传入了 {} 个",  argCount),
                                   line, column);
     }
     const std::string& src = str.stringVal();
@@ -303,7 +303,7 @@ Result<Value> executeSharedStrReplace(const Value& str, const Value* args, size_
 // S3 fix: 字符串/字典/数组非变异方法共享层实现
 // 消除 Interpreter 与 VM 间的双重实现，统一参数校验和内存预分配策略
 
-Result<Value> executeSharedStrUpper(const Value& str, const Value* args, size_t argCount, int line, int column) {
+Result<Value> executeSharedStrUpper(const Value& str, const Value* /*args*/, size_t argCount, int line, int column) {
     if (auto r = checkExact("upper", argCount, 0, line, column); r.is_err())
         return r;
     const std::string& s = str.stringVal();
@@ -315,7 +315,7 @@ Result<Value> executeSharedStrUpper(const Value& str, const Value* args, size_t 
     return Result<Value>::ok(Value(std::move(result)));
 }
 
-Result<Value> executeSharedStrLower(const Value& str, const Value* args, size_t argCount, int line, int column) {
+Result<Value> executeSharedStrLower(const Value& str, const Value* /*args*/, size_t argCount, int line, int column) {
     if (auto r = checkExact("lower", argCount, 0, line, column); r.is_err())
         return r;
     const std::string& s = str.stringVal();
@@ -355,7 +355,7 @@ Result<Value> executeSharedStrSplit(const Value& str, const Value* args, size_t 
     return Result<Value>::ok(Value(std::move(parts)));
 }
 
-Result<Value> executeSharedStrTrim(const Value& str, const Value* args, size_t argCount, int line, int column) {
+Result<Value> executeSharedStrTrim(const Value& str, const Value* /*args*/, size_t argCount, int line, int column) {
     if (auto r = checkExact("trim", argCount, 0, line, column); r.is_err())
         return r;
     const std::string& s = str.stringVal();
@@ -375,7 +375,7 @@ Result<Value> executeSharedStrContains(const Value& str, const Value* args, size
     return Result<Value>::ok(Value(str.stringVal().find(args[0].toString()) != std::string::npos));
 }
 
-Result<Value> executeSharedDictKeys(const Value& dict, const Value* args, size_t argCount, int line, int column) {
+Result<Value> executeSharedDictKeys(const Value& dict, const Value* /*args*/, size_t argCount, int line, int column) {
     if (auto r = checkExact("keys", argCount, 0, line, column); r.is_err())
         return r;
     const auto& entries = dict.dictVal();
@@ -388,7 +388,7 @@ Result<Value> executeSharedDictKeys(const Value& dict, const Value* args, size_t
     return Result<Value>::ok(Value(std::move(keys)));
 }
 
-Result<Value> executeSharedDictValues(const Value& dict, const Value* args, size_t argCount, int line, int column) {
+Result<Value> executeSharedDictValues(const Value& dict, const Value* /*args*/, size_t argCount, int line, int column) {
     if (auto r = checkExact("values", argCount, 0, line, column); r.is_err())
         return r;
     const auto& entries = dict.dictVal();
@@ -402,7 +402,7 @@ Result<Value> executeSharedDictValues(const Value& dict, const Value* args, size
 
 Result<Value> executeSharedDictGet(const Value& dict, const Value* args, size_t argCount, int line, int column) {
     if (argCount < 1 || argCount > 2) {
-        return Result<Value>::err(ErrorFormat::format("get 期望 1-2 个参数(键[, 默认值])，但传入了 %zu 个", argCount),
+        return Result<Value>::err(ErrorFormat::formatStd("get 期望 1-2 个参数(键[, 默认值])，但传入了 {} 个",  argCount),
                                   line, column);
     }
     // L4 fix: 字典键支持 string/int/bool/float
@@ -452,8 +452,8 @@ Result<Value> executeSharedArrayJoin(const Value& arr, const Value* args, size_t
 /// 前快速识别，避免将用户自定义函数误判为内置。
 bool isBuiltinFunction(const std::string& name) {
     // C7 fix: 用 unordered_set 实现 O(1) 查找，替代每次调用 9 次字符串比较
-    static const std::unordered_set<std::string> builtinNames = {"len", "type", "str",   "int", "abs",
-                                                                 "min", "max",  "range", "sum",
+    static const std::unordered_set<std::string> builtinNames = {"len", "type", "str", "int", "abs", "min", "max",
+                                                                 "range", "sum",
                                                                  // R136 并发原语构造函数
                                                                  "channel", "mutex", "rwlock"};
     return builtinNames.count(name) > 0;
@@ -625,12 +625,12 @@ Result<Value> executeBuiltinRange(const Value* args, size_t argCount, int line, 
     }
     int64_t n = v.intVal();
     if (n < 0) {
-        return Result<Value>::err(ErrorFormat::format("range 参数不能为负数: %lld", static_cast<long long>(n)), line,
+        return Result<Value>::err(ErrorFormat::formatStd("range 参数不能为负数: {}",  static_cast<long long>(n)), line,
                                   column);
     }
     if (n > RuntimeLimits::MAX_RANGE) {
         return Result<Value>::err(
-            ErrorFormat::format("range 参数超过上限 %lld", static_cast<long long>(RuntimeLimits::MAX_RANGE)), line,
+            ErrorFormat::formatStd("range 参数超过上限 {}",  static_cast<long long>(RuntimeLimits::MAX_RANGE)), line,
             column);
     }
     std::vector<Value> elements;
@@ -751,9 +751,15 @@ Result<Value> executeBuiltinRwlock(const Value* /*args*/, size_t argCount, int l
 /// 顶层内置函数注册表（延迟初始化，thread-safe since C++11）
 const std::unordered_map<std::string, SharedBuiltinFn>& builtinFunctionRegistry() {
     static const std::unordered_map<std::string, SharedBuiltinFn> registry = {
-        {"len", executeBuiltinLen}, {"type", executeBuiltinType},   {"str", executeBuiltinStr},
-        {"int", executeBuiltinInt}, {"abs", executeBuiltinAbs},     {"min", executeBuiltinMin},
-        {"max", executeBuiltinMax}, {"range", executeBuiltinRange}, {"sum", executeBuiltinSum},
+        {"len", executeBuiltinLen},
+        {"type", executeBuiltinType},
+        {"str", executeBuiltinStr},
+        {"int", executeBuiltinInt},
+        {"abs", executeBuiltinAbs},
+        {"min", executeBuiltinMin},
+        {"max", executeBuiltinMax},
+        {"range", executeBuiltinRange},
+        {"sum", executeBuiltinSum},
         // R136 并发原语构造函数
         {"channel", executeBuiltinChannel},
         {"mutex", executeBuiltinMutex},
@@ -928,14 +934,14 @@ Result<Value> executeSharedFind(const Value& arr, const Value& closure, const Cl
 // ============================================================
 
 BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj, const std::vector<Value>& args,
-                                            int line, int col) {
+                                           int line, int col) {
     // ---- Channel 方法 ----
     if (obj.isChannel()) {
         auto inner = obj.channelInner();
         if (method == "send") {
             if (args.size() != 1) {
-                throw RuntimeError("channel.send 期望 1 个参数，但传入了 " + std::to_string(args.size()) + " 个",
-                                   line, col);
+                throw RuntimeError("channel.send 期望 1 个参数，但传入了 " + std::to_string(args.size()) + " 个", line,
+                                   col, DiagCodes::kArityMismatch);
             }
             std::unique_lock<std::mutex> lock(inner->mu);
             if (inner->closed) {
@@ -947,8 +953,8 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
         }
         if (method == "recv") {
             if (!args.empty()) {
-                throw RuntimeError("channel.recv 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个",
-                                   line, col);
+                throw RuntimeError("channel.recv 期望 0 个参数，但传入了 " + std::to_string(args.size()) + " 个", line,
+                                   col, DiagCodes::kArityMismatch);
             }
             std::unique_lock<std::mutex> lock(inner->mu);
             inner->cv.wait(lock, [&] { return !inner->queue.empty() || inner->closed; });
@@ -962,7 +968,7 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
         }
         if (method == "tryRecv") {
             if (!args.empty()) {
-                throw RuntimeError("channel.tryRecv 期望 0 个参数", line, col);
+                throw RuntimeError("channel.tryRecv 期望 0 个参数", line, col, DiagCodes::kArityMismatch);
             }
             std::unique_lock<std::mutex> lock(inner->mu);
             if (inner->queue.empty()) {
@@ -974,14 +980,14 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
         }
         if (method == "close") {
             if (!args.empty()) {
-                throw RuntimeError("channel.close 期望 0 个参数", line, col);
+                throw RuntimeError("channel.close 期望 0 个参数", line, col, DiagCodes::kArityMismatch);
             }
             std::unique_lock<std::mutex> lock(inner->mu);
             inner->closed = true;
             inner->cv.notify_all(); // 唤醒所有等待的 recv
             return BuiltinMethodResult(Value::nullValue(), false);
         }
-        throw RuntimeError("channel 不支持方法 " + method, line, col);
+        throw RuntimeError("channel 不支持方法 " + method, line, col, "undefined-function");
     }
 
     // ---- Mutex 方法 ----
@@ -999,7 +1005,7 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
             bool acquired = inner->try_lock();
             return BuiltinMethodResult(Value(acquired), false);
         }
-        throw RuntimeError("mutex 不支持方法 " + method, line, col);
+        throw RuntimeError("mutex 不支持方法 " + method, line, col, "undefined-function");
     }
 
     // ---- RwLock 方法 ----
@@ -1029,7 +1035,7 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
             bool acquired = inner->try_lock();
             return BuiltinMethodResult(Value(acquired), false);
         }
-        throw RuntimeError("rwlock 不支持方法 " + method, line, col);
+        throw RuntimeError("rwlock 不支持方法 " + method, line, col, "undefined-function");
     }
 
     // ---- Thread 方法 ----
@@ -1098,10 +1104,10 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
             bool joinable = (inner->hasPending || (inner->thr.joinable())) && !inner->joined && !inner->detached;
             return BuiltinMethodResult(Value(joinable), false);
         }
-        throw RuntimeError("thread 不支持方法 " + method, line, col);
+        throw RuntimeError("thread 不支持方法 " + method, line, col, "undefined-function");
     }
 
-    throw RuntimeError("类型 " + obj.typeName() + " 不支持同步对象方法 " + method, line, col);
+    throw RuntimeError("类型 " + obj.typeName() + " 不支持同步对象方法 " + method, line, col, "undefined-function");
 }
 
 /// R136 spawn(fn, args...) 共享层入口
@@ -1112,7 +1118,7 @@ BuiltinMethodResult handleSyncObjectMethod(const std::string& method, Value& obj
 /// 导致栈溢出/无限循环/UAF（spawnMutex_ 只序列化子线程调用，未序列化主线程 VM 执行）。
 /// 延迟执行模式保持 API 语义（spawn 返回 Thread，join 等待完成），但无数据竞争。
 Result<Value> executeSharedSpawn(const Value& closure, const Value* args, size_t argCount,
-                                  const ClosureInvoker& invoker, int line, int column) {
+                                 const ClosureInvoker& invoker, int line, int column) {
     if (!closure.isClosure()) {
         return Result<Value>::err("spawn 第 1 个参数必须是函数", line, column);
     }
@@ -1208,14 +1214,15 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(const std::string& method,
     // S6 fix: 变异方法直接处理
     if (method == "push") {
         if (args.size() != 1)
-            throw RuntimeError("push 期望 1 个参数", line, col);
+            throw RuntimeError("push 期望 1 个参数", line, col, DiagCodes::kArityMismatch);
         obj.arrayVal().push_back(args[0]);
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
 
     if (method == "pop") {
         if (!args.empty())
-            throw RuntimeError(ErrorFormat::format("pop 期望 0 个参数，但传入了 %zu 个", args.size()), line, col);
+            throw RuntimeError(ErrorFormat::formatStd("pop 期望 0 个参数，但传入了 {} 个",  args.size()), line, col,
+                               DiagCodes::kArityMismatch);
         // AUDIT-BUG-C5 fix: 空数组检查用 const 访问器避免 COW detach。
         // 非 const arrayVal() 在 refCount>1 时会 ensureUnique 深拷贝整个数组，
         // 此处仅为检查 empty() 却触发不必要的克隆。
@@ -1228,14 +1235,15 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(const std::string& method,
 
     if (method == "remove") {
         if (args.size() != 1)
-            throw RuntimeError("remove 期望 1 个参数(索引)", line, col);
+            throw RuntimeError("remove 期望 1 个参数(索引)", line, col, DiagCodes::kArityMismatch);
         if (!args[0].isInt())
-            throw RuntimeError("remove 参数必须是整数索引", line, col);
+            throw RuntimeError("remove 参数必须是整数索引", line, col, DiagCodes::kTypeMismatch);
         int64_t idx = args[0].intVal();
         if (idx < 0 || static_cast<size_t>(idx) >= std::as_const(obj).arrayVal().size())
-            throw RuntimeError(ErrorFormat::format("数组索引越界: %lld, 有效范围 [0, %zu)", static_cast<long long>(idx),
+            throw RuntimeError(ErrorFormat::formatStd("数组索引越界: {}, 有效范围 [0, {})",  static_cast<long long>(idx),
+                                                   
                                                    std::as_const(obj).arrayVal().size()),
-                               line, col);
+                               line, col, DiagCodes::kIndexOutOfBounds);
         obj.arrayVal().erase(obj.arrayVal().begin() + static_cast<size_t>(idx));
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
@@ -1247,7 +1255,7 @@ BuiltinMethodResult BuiltinMethods::handleArrayMethod(const std::string& method,
         return dispatchShared(it->second, obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
     }
 
-    throw RuntimeError("数组没有方法 " + method, line, col);
+    throw RuntimeError("数组没有方法 " + method, line, col, "undefined-function");
 }
 
 // ============================================================
@@ -1263,21 +1271,21 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(const std::string& method, 
     // S6 fix: 变异方法直接处理
     if (method == "remove") {
         if (args.size() != 1)
-            throw RuntimeError("remove 期望 1 个参数(键)", line, col);
+            throw RuntimeError("remove 期望 1 个参数(键)", line, col, DiagCodes::kArityMismatch);
         // L4 fix: 字典键支持 string/int/bool/float
         auto dk = Value::dictKeyFromValue(args[0]);
         if (!dk)
-            throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col);
+            throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col, DiagCodes::kTypeMismatch);
         obj.dictVal().erase(*dk);
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
     if (method == "set") {
         if (args.size() != 2)
-            throw RuntimeError("set 期望 2 个参数(键, 值)", line, col);
+            throw RuntimeError("set 期望 2 个参数(键, 值)", line, col, DiagCodes::kArityMismatch);
         // L4 fix: 字典键支持 string/int/bool/float
         auto dk = Value::dictKeyFromValue(args[0]);
         if (!dk)
-            throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col);
+            throw RuntimeError(ErrorMessages::kDictKeyInvalidType, line, col, DiagCodes::kTypeMismatch);
         obj.dictVal()[*dk] = args[1];
         return BuiltinMethodResult(Value::nullValue(), /*objectModified=*/true);
     }
@@ -1297,7 +1305,7 @@ BuiltinMethodResult BuiltinMethods::handleDictMethod(const std::string& method, 
         return dispatchShared(it->second, obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
     }
 
-    throw RuntimeError("字典没有方法 " + method, line, col);
+    throw RuntimeError("字典没有方法 " + method, line, col, "undefined-function");
 }
 
 // ============================================================
@@ -1318,5 +1326,5 @@ BuiltinMethodResult BuiltinMethods::handleStringMethod(const std::string& method
         return dispatchShared(it->second, obj, args.empty() ? nullptr : args.data(), args.size(), line, col);
     }
 
-    throw RuntimeError("字符串没有方法 " + method, line, col);
+    throw RuntimeError("字符串没有方法 " + method, line, col, "undefined-function");
 }

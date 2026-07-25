@@ -46,7 +46,8 @@ enum class DiagSource {
     RegisterVM, // BUG-IBACKEND-3: 区分 StackVM 与 RegisterVM 诊断来源
     Formatter,
     IDE,
-    TypeChecker // 2026-06-29: 静态类型检查诊断
+    TypeChecker, // 2026-06-29: 静态类型检查诊断
+    JIT          // P2-12: JIT 后端独立诊断来源（不再复用 VM/Compiler）
 };
 
 /// 单条诊断信息
@@ -61,6 +62,11 @@ struct Diagnostic {
     /// ErrorHintEngine 会回退到现有的中/英子串匹配兜底逻辑。
     /// 引擎模块逐步迁移到带 code 的 Diagnostic 构造，未迁移时行为不变（兼容性保证）。
     std::string code;
+    /// P2-12 fix (错误恢复): 是否为致命错误——致命错误阻止错误恢复继续编译，
+    /// 可恢复错误（isFatal=false）允许编译器在记录后跳过当前节点继续处理后续兄弟节点。
+    /// 仅在 DiagLevel::Error 级别下区分 Fatal/Recoverable；Warning/Info/Hint 恒为非致命。
+    /// 默认 false（向后兼容：现有 addError 调用视为可恢复）。
+    bool isFatal = false;
 
     Diagnostic(DiagLevel lv, const std::string& msg, int ln, int col, DiagSource src)
         : level(lv), message(msg), line(ln), column(col), source(src) {}
@@ -68,6 +74,11 @@ struct Diagnostic {
     /// P2 fix: 带 code 的构造重载（未来引擎迁移时使用）
     Diagnostic(DiagLevel lv, const std::string& msg, int ln, int col, DiagSource src, const std::string& diagCode)
         : level(lv), message(msg), line(ln), column(col), source(src), code(diagCode) {}
+
+    /// P2-12 fix: 带 isFatal 标志的构造重载（错误恢复专用）
+    Diagnostic(DiagLevel lv, const std::string& msg, int ln, int col, DiagSource src, const std::string& diagCode,
+               bool fatal)
+        : level(lv), message(msg), line(ln), column(col), source(src), code(diagCode), isFatal(fatal) {}
 
     /// 是否为错误级别
     bool isError() const { return level == DiagLevel::Error; }
@@ -111,6 +122,8 @@ struct Diagnostic {
             return "IDE";
         case DiagSource::TypeChecker:
             return "类型检查";
+        case DiagSource::JIT:
+            return "JIT"; // P2-12
         }
         return "未知";
     }
@@ -156,6 +169,15 @@ public:
         ++errorCount_;
     }
 
+    /// P2-12 fix (错误恢复): 添加致命错误——致命错误阻止错误恢复继续编译。
+    /// 致命错误场景：模块加载失败、内部不变量违反（未支持的 AST 节点/BinOp）、
+    /// 父类未定义导致字段索引全错等。可恢复错误用 addError 添加（默认 isFatal=false）。
+    void addErrorFatal(const std::string& msg, int line, int col, DiagSource src, const std::string& diagCode = "") {
+        diagnostics_.emplace_back(DiagLevel::Error, msg, line, col, src, diagCode, /*isFatal=*/true);
+        ++errorCount_;
+        ++fatalErrorCount_;
+    }
+
     /// 便捷方法：添加警告
     void addWarning(const std::string& msg, int line, int col, DiagSource src) {
         diagnostics_.emplace_back(DiagLevel::Warning, msg, line, col, src);
@@ -180,6 +202,10 @@ public:
 
     /// 是否有错误
     bool hasErrors() const { return errorCount_ > 0; }
+
+    /// P2-12 fix (错误恢复): 是否有致命错误——编译器仅对致命错误中止，
+    /// 可恢复错误记录后跳过当前节点继续处理后续兄弟节点。
+    bool hasFatalErrors() const { return fatalErrorCount_ > 0; }
 
     /// 是否有警告
     bool hasWarnings() const { return warningCount_ > 0; }
@@ -211,6 +237,7 @@ public:
         diagnostics_.clear();
         errorCount_ = 0;
         warningCount_ = 0;
+        fatalErrorCount_ = 0; // P2-12 fix
     }
 
     /// 诊断数量
@@ -247,6 +274,7 @@ public:
 
 private:
     std::vector<Diagnostic> diagnostics_;
-    int errorCount_ = 0;   // P2 fix: O(1) 错误计数
-    int warningCount_ = 0; // P2 fix: O(1) 警告计数
+    int errorCount_ = 0;      // P2 fix: O(1) 错误计数
+    int warningCount_ = 0;    // P2 fix: O(1) 警告计数
+    int fatalErrorCount_ = 0; // P2-12 fix: O(1) 致命错误计数（错误恢复用）
 };

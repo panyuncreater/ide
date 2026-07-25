@@ -38,8 +38,11 @@
 #include "common/ErrorFormat.h"
 #include "common/ErrorMessages.h"
 #include "common/RuntimeLimits.h"
-#include "common/Utf8Utils.h" // R161 fixup: UTF-8 字符串索引慢路径
+#include "common/Utf8Utils.h"      // R161 fixup: UTF-8 字符串索引慢路径
+#include "interpreter/GcManager.h" // P2-9: CallbackSuppressor for JIT GC safety
 #include "interpreter/Value.h"
+#include <algorithm>
+#include <array>
 #include <asmjit/asmjit.h>
 #include <cstdint>
 #include <cstdio>
@@ -47,6 +50,9 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h> // OutputDebugStringA for JIT debug tracing
+#endif
 
 // ============================================================
 // NaN-boxing 常量（R142 阶段 3a：与 interpreter/NaNBox.h 保持一致）
@@ -1036,7 +1042,7 @@ extern "C" void jitCallExpr(JitContext* ctx, uint8_t argCount) {
     int64_t* sp = ctx->stackTop;
 
     // 1. pop args（借用，不 detach）
-    Value args[256];
+    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -1114,7 +1120,7 @@ extern "C" void jitCallExpr(JitContext* ctx, uint8_t argCount) {
     }
 
     // 6. 默认参数填充
-    Value defaults[64];
+    std::array<Value, RuntimeLimits::MAX_DEFAULT_PARAMS> defaults;
     int defaultCount = 0;
     if (argCount < static_cast<uint8_t>(foundFunc->arity)) {
         int missingCount = foundFunc->arity - argCount;
@@ -1130,7 +1136,7 @@ extern "C" void jitCallExpr(JitContext* ctx, uint8_t argCount) {
         }
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = (*foundFunc->defaultConstIndices)[static_cast<size_t>(i)];
-            if (constIdx == 0xFFFF || constIdx >= foundFunc->constants->size()) {
+            if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= foundFunc->constants->size()) {
                 if (ctx->hasError && ctx->errorBuffer) {
                     *ctx->hasError = true;
                     *ctx->errorBuffer = "函数 " + funName + " 默认参数常量索引越界";
@@ -1300,7 +1306,7 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
     int64_t* sp = ctx->stackTop;
 
     // 1. pop args（反向填充：栈顶是 argN-1）
-    Value args[256];
+    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -1395,7 +1401,7 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
         return;
     }
 
-    Value defaults[64];
+    std::array<Value, RuntimeLimits::MAX_DEFAULT_PARAMS> defaults;
     int defaultCount = 0;
     if (argCount < static_cast<uint8_t>(initMethod->arity)) {
         int missingCount = initMethod->arity - argCount;
@@ -1411,7 +1417,7 @@ extern "C" void jitClassNew(JitContext* ctx, const char* className, uint8_t argC
         }
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = (*initMethod->defaultConstIndices)[static_cast<size_t>(i)];
-            if (constIdx == 0xFFFF || constIdx >= initMethod->constants->size()) {
+            if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= initMethod->constants->size()) {
                 if (ctx->hasError && ctx->errorBuffer) {
                     *ctx->hasError = true;
                     *ctx->errorBuffer = "方法 init 默认参数常量索引越界";
@@ -1924,7 +1930,7 @@ extern "C" int64_t jitMethodReturn(JitContext* ctx, JitFrame* framePtr, int64_t 
 /// @param methodName 方法名（C 字符串，静态生命期）
 /// @param packedArgs 打包参数：
 ///        - bit 0-7: argCount
-///        - bit 8-15: receiverLocalSlotByte（0xFF=无局部变量接收者）
+///        - bit 8-15: receiverLocalSlotByte（NO_SLOT=无局部变量接收者）
 ///        - bit 16: isInitCall（1=init 调用，返回 this）
 ///        - bit 17: isSuperCall（1=super 调用，需 superClassName）
 /// @param receiverSlotPtr 接收者 slot 指针（null=无 writeBack，如临时表达式）
@@ -1936,7 +1942,8 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
     }
 
     uint8_t argCount = static_cast<uint8_t>(packedArgs & 0xFF);
-    uint8_t receiverLocalSlotByte = static_cast<uint8_t>((packedArgs >> 8) & 0xFF);
+    // W4 fix: receiverLocalSlotByte（bits 8-15）由 emitMethodCall 打包但 jitMethodCall
+    // 通过 receiverSlotPtr 参数完成写回，无需在此解包。
     bool isInitCall = (packedArgs & (1LL << 16)) != 0;
     bool isSuperCall = (packedArgs & (1LL << 17)) != 0;
 
@@ -1944,7 +1951,8 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
 
     // 1. pop argCount 个参数（反向填充：栈顶是 argN-1）
     //    JIT 栈向下增长，sp += 1 是 pop（向高地址移动）
-    Value args[256]; // 假设最多 256 参数
+    //    argCount 为 uint8_t（上限 255），MAX_JIT_ARGS=256 覆盖全部合法值
+    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -2049,7 +2057,7 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
         return;
     }
 
-    Value defaults[64];
+    std::array<Value, RuntimeLimits::MAX_DEFAULT_PARAMS> defaults;
     int defaultCount = 0;
     if (argCount < static_cast<uint8_t>(foundMethod->arity)) {
         int missingCount = foundMethod->arity - argCount;
@@ -2065,7 +2073,7 @@ extern "C" void jitMethodCall(JitContext* ctx, const char* methodName, int64_t p
         }
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = (*foundMethod->defaultConstIndices)[static_cast<size_t>(i)];
-            if (constIdx == 0xFFFF || constIdx >= foundMethod->constants->size()) {
+            if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= foundMethod->constants->size()) {
                 if (ctx->hasError && ctx->errorBuffer) {
                     *ctx->hasError = true;
                     *ctx->errorBuffer = "方法 " + std::string(methodName) + " 默认参数常量索引越界";
@@ -2193,14 +2201,19 @@ extern "C" int64_t jitTriggerRecompile(JitContext* ctx, int64_t chunkIdx) {
 // 快速路径的 MAX_FRAMES 检查触发时调用（罕见路径，C++ 调用开销可忽略）。
 // 设置 hasError + errorBuffer，错误消息与 jitCallByName 对齐。
 extern "C" void jitReportStackOverflow(JitContext* ctx) {
-    if (!ctx) {
+    if (!ctx || !ctx->hasError || !ctx->errorBuffer) {
         return;
     }
-    if (ctx->hasError && ctx->errorBuffer) {
-        *ctx->hasError = true;
-        *ctx->errorBuffer =
-            ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(RuntimeLimits::MAX_FRAMES));
-    }
+    *ctx->hasError = true;
+    // P0 fix: use ErrorFormat::format (snprintf-based, ~200B stack) instead of
+    // ErrorFormat::formatStd (std::format-based, ~8KB stack in MSVC Debug).
+    // The JIT entry() function allocates 8KB operand stack on the native stack
+    // (sub rsp, 8240) without __chkstk. When jitReportStackOverflow is called
+    // from the overflow path (below the 8KB allocation), std::format's large
+    // stack frame exceeds the committed stack region → access violation.
+    // Error paths are rare; snprintf's performance is irrelevant here.
+    *ctx->errorBuffer =
+        ErrorFormat::format(ErrorMessages::kRecursionDepthExceededFmt, static_cast<int>(RuntimeLimits::MAX_FRAMES));
 }
 
 // ============================================================
@@ -2220,7 +2233,7 @@ extern "C" void jitCallByName(JitContext* ctx, const char* funName, uint8_t argC
     int64_t* sp = ctx->stackTop;
 
     // 1. pop args（借用，不 detach）
-    Value args[256];
+    std::array<Value, RuntimeLimits::MAX_JIT_ARGS> args;
     for (int i = argCount - 1; i >= 0; --i) {
         args[i] = bitsToValue(*sp); // 借用
         sp += 1;                    // pop
@@ -2284,7 +2297,7 @@ extern "C" void jitCallByName(JitContext* ctx, const char* funName, uint8_t argC
     }
 
     // 5. 默认参数填充
-    Value defaults[64];
+    std::array<Value, RuntimeLimits::MAX_DEFAULT_PARAMS> defaults;
     int defaultCount = 0;
     if (argCount < static_cast<uint8_t>(foundFunc->arity)) {
         int missingCount = foundFunc->arity - argCount;
@@ -2300,7 +2313,7 @@ extern "C" void jitCallByName(JitContext* ctx, const char* funName, uint8_t argC
         }
         for (int i = defaultStartIdx; i < defaultStartIdx + missingCount; ++i) {
             uint16_t constIdx = (*foundFunc->defaultConstIndices)[static_cast<size_t>(i)];
-            if (constIdx == 0xFFFF || constIdx >= foundFunc->constants->size()) {
+            if (constIdx == RuntimeLimits::NO_INDEX || constIdx >= foundFunc->constants->size()) {
                 if (ctx->hasError && ctx->errorBuffer) {
                     *ctx->hasError = true;
                     *ctx->errorBuffer = "函数 " + name + " 默认参数常量索引越界";
@@ -2426,6 +2439,319 @@ extern "C" int64_t jitDeoptimize(JitContext* ctx, int64_t chunkIdx) {
     return backend->triggerDeoptimize(chunkIdx);
 }
 
+// ============================================================
+// R162: 异常处理辅助函数（try/catch/throw + finally 续跳）
+// ============================================================
+
+/// R162: push try handler 到 tryStack_
+/// JIT 代码在 OP_TRY_BEGIN 处调用，传入 catch 块地址（lea label）和当前栈顶。
+/// frameIndex 从 ctx->frameCount 读取，用于跨帧异常传播时判断 handler 归属。
+extern "C" void jitPushTryHandler(JitContext* ctx, void* catchAddr, int64_t* stackBase) {
+    if (!ctx || !ctx->backendPtr)
+        return;
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    size_t frameIdx = ctx->frameCount ? *ctx->frameCount : 0;
+    backend->tryStack_.push_back({catchAddr, stackBase, frameIdx});
+}
+
+/// R162: pop try handler（OP_TRY_END）
+/// 仅当栈顶 handler 属于当前帧时弹出，与 StackVM 语义对齐。
+extern "C" void jitPopTryHandler(JitContext* ctx) {
+    if (!ctx || !ctx->backendPtr)
+        return;
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    size_t currentFrameIdx = ctx->frameCount ? *ctx->frameCount : 0;
+    if (!backend->tryStack_.empty() && backend->tryStack_.back().frameIndex == currentFrameIdx) {
+        backend->tryStack_.pop_back();
+    }
+}
+
+/// R162: push jump target 到 pendingJumpStack_（OP_PUSH_JUMP_TARGET）
+/// JIT 代码通过 lea label 获取目标地址，传入此函数存储。
+/// OP_FINALLY_END 从此栈 pop 地址并跳转，实现 break/continue 续跳。
+extern "C" void jitPushJumpTarget(JitContext* ctx, void* targetAddr) {
+    if (!ctx || !ctx->backendPtr)
+        return;
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    backend->pendingJumpStack_.push_back(targetAddr);
+}
+
+/// R162: pop jump target（OP_FINALLY_END）
+/// 返回目标地址供 JIT 代码 jmp，栈空时返回 nullptr（正常完成路径）。
+extern "C" void* jitPopJumpTarget(JitContext* ctx) {
+    if (!ctx || !ctx->backendPtr)
+        return nullptr;
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (backend->pendingJumpStack_.empty())
+        return nullptr;
+    void* target = backend->pendingJumpStack_.back();
+    backend->pendingJumpStack_.pop_back();
+    return target;
+}
+
+/// R162: 抛出异常 — 搜索 tryStack_、截断操作数栈、跨帧传播
+///
+/// 算法（与 StackVM VM::throwException 对齐）：
+/// 1. 清空 pendingJumpStack_（异常中断 break/continue 续跳链）
+/// 2. 搜索 tryStack_ 顶部当前帧的 handler：
+///    - 找到：截断栈到 handler.stackBase，push thrownValue，返回 catchAddr
+///    - 未找到且当前帧非 main：pop JitFrame、关闭 upvalue、恢复 r13，继续搜索
+///    - 未找到且当前帧为 main：未捕获异常，设置错误标志，返回 nullptr
+///
+/// JIT 函数共享主 chunk 的栈帧（无独立 prologue/epilogue），因此 rbp/r14/rbx
+/// 跨函数调用不变，只有 r13（basePointer）和 r15（stackTop）需要恢复。
+///
+/// @param ctx JitContext 指针
+/// @param thrownValueBits 异常值的 NaN-boxing 原始位
+/// @param currentR13 当前帧的 r13（用于关闭 upvalue）
+/// @return catch 块地址（找到时）或 nullptr（未捕获）
+extern "C" void* jitThrow(JitContext* ctx, uint64_t thrownValueBits, int64_t* currentR13) {
+    if (!ctx || !ctx->backendPtr) {
+        return nullptr;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+
+    // 1. 清空 pendingJumpStack_（异常中断 break/continue 续跳链）
+    backend->pendingJumpStack_.clear();
+
+    int64_t* r13 = currentR13;
+
+    while (true) {
+        size_t currentFrameIdx = ctx->frameCount ? *ctx->frameCount : 0;
+
+        // 2. 搜索 tryStack_ 顶部当前帧的 handler
+        while (!backend->tryStack_.empty()) {
+            auto& handler = backend->tryStack_.back();
+            if (handler.frameIndex == currentFrameIdx) {
+                // 找到 handler：截断栈、push thrownValue、返回 catchAddr
+                // JIT upvalue 指向 r13-relative 局部变量槽，操作数栈截断不影响 upvalue，无需关闭。
+                //
+                // JIT 栈向下增长（push: sub r15,8; mov [r15],val；pop: mov rax,[r15]; add r15,8），
+                // r15/stackTop 指向栈顶值（空栈时指向栈基址）。
+                // handler.stackBase = try_begin 时的 r15（指向当时栈顶）。
+                // 截断 + push thrownValue：新栈顶 = handler.stackBase - 1（向低地址移动一槽），
+                // [新栈顶] = thrownValueBits。
+                if (handler.stackBase) {
+                    int64_t* newSp = handler.stackBase - 1;
+                    *newSp = static_cast<int64_t>(thrownValueBits);
+                    ctx->stackTop = newSp;
+                }
+                ctx->currentBp = r13; // 同帧：r13 不变；跨帧：已更新为调用者 r13
+                backend->tryStack_.pop_back();
+                return handler.catchAddr;
+            }
+            if (handler.frameIndex < currentFrameIdx) {
+                break; // handler 在外层帧，需弹出当前帧
+            }
+            backend->tryStack_.pop_back(); // handler.frameIndex > currentFrameIdx：残留 handler
+        }
+
+        // 3. 当前帧无 handler
+        if (currentFrameIdx == 0) {
+            // main 帧未捕获异常
+            Value thrownValue = bitsToValue(thrownValueBits);
+            std::string str = thrownValue.toString();
+            if (str.size() > 200)
+                str = str.substr(0, 200) + "...";
+            if (ctx->hasError)
+                *ctx->hasError = true;
+            if (ctx->errorBuffer)
+                *ctx->errorBuffer = "未捕获的异常: " + str;
+            return nullptr;
+        }
+
+        // 4. 弹出当前帧，传播到调用者
+        size_t frameIdx = currentFrameIdx - 1;
+        JitFrame& frame = ctx->frames[frameIdx];
+
+        // 关闭当前帧的 open upvalues（addr <= r13）
+        backend->closeUpvaluesFrom(r13);
+
+        // 清理属于被弹出帧的 tryStack_ handler
+        while (!backend->tryStack_.empty() && backend->tryStack_.back().frameIndex >= currentFrameIdx) {
+            backend->tryStack_.pop_back();
+        }
+
+        // 弹出帧
+        *ctx->frameCount = currentFrameIdx - 1;
+
+        // 恢复调用者的 r13
+        r13 = frame.callerBp;
+    }
+}
+
+/// L14: 运行时错误转异常 — 将错误消息字符串转换为 Value 并调用 jitThrow。
+/// 用于除零、索引越界等运行时错误路径，使 try/catch 能捕获这些错误。
+/// @param ctx JitContext 指针
+/// @param msg 错误消息（C 字符串，静态字符串）
+/// @param currentR13 当前帧的 r13（用于关闭 upvalue）
+/// @return catch 块地址（找到时）或 nullptr（未捕获，hasError 已由 jitThrow 设置）
+extern "C" void* jitRuntimeThrow(JitContext* ctx, const char* msg, int64_t* currentR13) {
+    if (!ctx)
+        return nullptr;
+    std::string str(msg ? msg : "runtime error");
+    Value thrownValue(std::move(str));
+    uint64_t thrownValueBits = valueToBits(thrownValue);
+    return jitThrow(ctx, thrownValueBits, currentR13);
+}
+
+/// L14: 检查 hasError 并转为可捕获异常 — 用于 C++ 辅助函数（jitDivGeneric 等）
+/// 在返回后检查错误标志，若已设置则将 errorBuffer 中的消息转为异常抛出。
+/// @param ctx JitContext 指针
+/// @param currentR13 当前帧的 r13
+/// @return catch 块地址（找到时）或 nullptr（未捕获或无错误）
+extern "C" void* jitCheckAndRethrow(JitContext* ctx, int64_t* currentR13) {
+    if (!ctx || !ctx->hasError || !*ctx->hasError)
+        return nullptr;
+    std::string msg;
+    if (ctx->errorBuffer)
+        msg = *ctx->errorBuffer;
+    if (msg.empty())
+        msg = "运行时错误";
+    // 清除 hasError — 异常将被捕获或不捕获，但不应保留旧的 hasError 标志
+    // （jitThrow 在未捕获时会重新设置 hasError）
+    *ctx->hasError = false;
+    if (ctx->errorBuffer)
+        ctx->errorBuffer->clear();
+    Value thrownValue(std::move(msg));
+    uint64_t thrownValueBits = valueToBits(thrownValue);
+    return jitThrow(ctx, thrownValueBits, currentR13);
+}
+
+// ============================================================
+// R162: 名称变量辅助函数（OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR）
+// 与 StackVM VM::executeVarNameOps 语义对齐，但无 inline cache（JIT 走 C++ helper 慢路径）
+// ============================================================
+
+/// R162: OP_DEFINE_VAR — pop 栈顶值，存入 globals_[name]（或 globalSlots_ 若 slot 存在）
+/// 栈布局：[val] → []（pop val）
+extern "C" void jitDefineVar(JitContext* ctx, const char* name) {
+    if (!ctx || !ctx->stackTop || !name) {
+        if (ctx && ctx->hasError) {
+            *ctx->hasError = true;
+            if (ctx->errorBuffer)
+                *ctx->errorBuffer = "jitDefineVar: 无效参数";
+        }
+        return;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (!backend) {
+        return;
+    }
+    // pop 栈顶值（JIT 栈向下增长，pop = sp 上移 +1）
+    int64_t* sp = ctx->stackTop;
+    uint64_t bits = static_cast<uint64_t>(*sp);
+    sp += 1;
+    ctx->stackTop = sp;
+    Value val = bitsToValue(bits);
+    // 检查 slot 快速路径（使用访问器避免 private 成员访问问题）
+    auto& globalNameToSlot = backend->globalNameToSlotMut();
+    auto& globalSlots = backend->globalSlotsMut();
+    auto gsIt = globalNameToSlot.find(name);
+    if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
+        globalSlots[gsIt->second] = static_cast<int64_t>(bits);
+    } else {
+        backend->globals_[name] = std::move(val);
+    }
+}
+
+/// R162: OP_GET_VAR — 查找 globals_[name]（或 globalSlots_），返回 raw bits 供 JIT 代码 push
+/// @return raw bits of the value（错误时返回 JIT_NULL_BITS 并设置 hasError）
+extern "C" uint64_t jitGetVar(JitContext* ctx, const char* name) {
+    if (!ctx || !name) {
+        return JIT_NULL_BITS;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (!backend) {
+        return JIT_NULL_BITS;
+    }
+    // slot 快速路径（使用访问器避免 private 成员访问问题）
+    auto& globalNameToSlot = backend->globalNameToSlotMut();
+    auto& globalSlots = backend->globalSlotsMut();
+    auto gsIt = globalNameToSlot.find(name);
+    if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
+        return static_cast<uint64_t>(globalSlots[gsIt->second]);
+    }
+    auto it = backend->globals_.find(name);
+    if (it != backend->globals_.end()) {
+        uint64_t bits;
+        std::memcpy(&bits, &it->second, sizeof(uint64_t));
+        return bits;
+    }
+    // 未找到
+    if (ctx->hasError)
+        *ctx->hasError = true;
+    if (ctx->errorBuffer) {
+        if (std::string(name) == "this") {
+            *ctx->errorBuffer = ErrorMessages::kSuperOutsideMethod;
+        } else {
+            *ctx->errorBuffer = "未定义的变量: " + std::string(name);
+        }
+    }
+    return JIT_NULL_BITS;
+}
+
+/// R162: OP_SET_VAR — pop 栈顶值，更新 globals_[name]（或 globalSlots_）
+/// 栈布局：[val] → []（pop val）
+extern "C" void jitSetVar(JitContext* ctx, const char* name) {
+    if (!ctx || !ctx->stackTop || !name) {
+        if (ctx && ctx->hasError) {
+            *ctx->hasError = true;
+            if (ctx->errorBuffer)
+                *ctx->errorBuffer = "jitSetVar: 无效参数";
+        }
+        return;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (!backend) {
+        return;
+    }
+    // pop 栈顶值（JIT 栈向下增长，pop = sp 上移 +1）
+    int64_t* sp = ctx->stackTop;
+    uint64_t bits = static_cast<uint64_t>(*sp);
+    sp += 1;
+    ctx->stackTop = sp;
+    Value val = bitsToValue(bits);
+    // slot 快速路径（使用访问器避免 private 成员访问问题）
+    auto& globalNameToSlot = backend->globalNameToSlotMut();
+    auto& globalSlots = backend->globalSlotsMut();
+    auto gsIt = globalNameToSlot.find(name);
+    if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
+        globalSlots[gsIt->second] = static_cast<int64_t>(bits);
+        return;
+    }
+    auto it = backend->globals_.find(name);
+    if (it == backend->globals_.end()) {
+        if (ctx->hasError)
+            *ctx->hasError = true;
+        if (ctx->errorBuffer)
+            *ctx->errorBuffer = "未定义的变量: " + std::string(name);
+        return;
+    }
+    it->second = std::move(val);
+}
+
+/// R162: OP_DELETE_VAR — 从 globals_ 删除 name（或 globalSlots_ 置 null）
+/// 无栈效应
+extern "C" void jitDeleteVar(JitContext* ctx, const char* name) {
+    if (!ctx || !name) {
+        return;
+    }
+    auto* backend = static_cast<JITBackend*>(ctx->backendPtr);
+    if (!backend) {
+        return;
+    }
+    // 使用访问器避免 private 成员访问问题
+    auto& globalNameToSlot = backend->globalNameToSlotMut();
+    auto& globalSlots = backend->globalSlotsMut();
+    auto gsIt = globalNameToSlot.find(name);
+    if (gsIt != globalNameToSlot.end() && gsIt->second < static_cast<int>(globalSlots.size())) {
+        globalSlots[gsIt->second] = static_cast<int64_t>(JIT_NULL_BITS);
+    } else {
+        backend->globals_.erase(name);
+    }
+}
+
 } // extern "C"
 
 // ============================================================
@@ -2466,15 +2792,16 @@ void JITBackend::setInputCallback(std::function<std::string(const std::string&)>
 }
 
 void JITBackend::runtimeError(const std::string& msg) {
+    // P2-12: 错误信息统一写入 diagnostics_，DiagSource 用 JIT（不再复用 VM/Compiler）。
+    // 移除 lastError_ 冗余写入——getLastError() 已从 diagnostics_ 派生。
     hasError_ = true;
-    lastError_ = msg;
-    diagnostics_.addError(msg, 0, 0, DiagSource::VM);
+    diagnostics_.addError(msg, 0, 0, DiagSource::JIT);
 }
 
 void JITBackend::compileError(const std::string& msg) {
+    // P2-12: 编译期错误也用 JIT 来源（asmjit CodeHolder 失败、字节码越界等）
     hasError_ = true;
-    lastError_ = msg;
-    diagnostics_.addError(msg, 0, 0, DiagSource::Compiler);
+    diagnostics_.addError(msg, 0, 0, DiagSource::JIT);
 }
 
 // ============================================================
@@ -2632,10 +2959,37 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
             // R143 修复：hasError 是 bool（1 字节），不能用 mov rax,[rax] 读取 8 字节，
             // 否则会读到 bool 之后的 padding/垃圾数据，误判为有错误导致提前跳转 epilogue。
             // 必须用 movzx 读取 1 字节并零扩展到 64 位。
+            // L14: 不再直接跳 epilogue，而是调用 jitCheckAndRethrow 将错误转为可捕获异常。
+            Label noError = a.new_label();
             a.mov(x86::rax, x86::qword_ptr(x86::r12, 8)); // rax = hasError 指针 (bool*)
             a.movzx(x86::rax, x86::byte_ptr(x86::rax));   // rax = *hasError (1 字节零扩展)
             a.test(x86::rax, x86::rax);
-            a.jnz(epilogue);
+            a.jz(noError);
+            // 有错误：同步栈顶并调用 jitCheckAndRethrow(ctx, r13)
+            a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+#ifdef _WIN32
+            a.mov(x86::rcx, x86::r12);
+            a.mov(x86::rdx, x86::r13);
+            a.sub(x86::rsp, 32);
+            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCheckAndRethrow));
+            a.call(x86::rax);
+            a.add(x86::rsp, 32);
+#else
+            a.mov(x86::rdi, x86::r12);
+            a.mov(x86::rsi, x86::r13);
+            a.sub(x86::rsp, 8);
+            a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitCheckAndRethrow));
+            a.call(x86::rax);
+            a.add(x86::rsp, 8);
+#endif
+            // rax = catchAddr 或 nullptr（未捕获时 hasError 已由 jitThrow 设置）
+            a.test(x86::rax, x86::rax);
+            a.jz(epilogue);
+            // 捕获异常：恢复 r13/r15 并跳转到 catch 块
+            a.mov(x86::r13, x86::qword_ptr(x86::r12, 160));
+            a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+            a.jmp(x86::rax);
+            a.bind(noError);
         }
     };
 
@@ -3150,7 +3504,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
     // 参数说明：
     //   methodName       方法名（C 字符串，需静态生命期，嵌入 JIT 机器码）
     //   argCount         实际参数个数
-    //   receiverLocalSlotByte  0xFF=无局部接收者；否则为当前帧局部 slot 索引
+    //   receiverLocalSlotByte  NO_SLOT=无局部接收者；否则为当前帧局部 slot 索引
     //   receiverGlobalSlot     -1=无全局接收者；否则为 globalSlots 中的 slot 索引
     //   isSuperCall     是否 super 调用
     //   superClassName  super 调用的父类名（C 字符串，nullptr=非 super 调用）
@@ -3159,7 +3513,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
         Label returnLabel = a.new_label();
 
         // 1. 计算 receiverSlotPtr → r10
-        if (receiverLocalSlotByte != 0xFF) {
+        if (receiverLocalSlotByte != RuntimeLimits::NO_SLOT) {
             // 接收者是当前帧的局部变量：r10 = r13 - receiverLocalSlotByte * 8
             a.lea(x86::r10, x86::qword_ptr(x86::r13, -static_cast<int32_t>(receiverLocalSlotByte) * 8));
         } else if (receiverGlobalSlot >= 0) {
@@ -3633,9 +3987,9 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
         // 若函数体无 OP_CLOSURE，则 frameUpvaluesStack_ 在此帧不会被访问，
         // 可跳过 jitCallByName 的 frameUpvaluesStack_ 初始化
         {
-            const auto& code = chunk.code;
-            for (size_t i = 0; i < code.size();) {
-                OpCode op = static_cast<OpCode>(code[i]);
+            const auto& chunkCode = chunk.code;
+            for (size_t i = 0; i < chunkCode.size();) {
+                OpCode op = static_cast<OpCode>(chunkCode[i]);
                 if (op == OpCode::OP_CLOSURE) {
                     info.hasInnerClosures = true;
                     break;
@@ -3757,18 +4111,31 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
         currentChunkIdx = chunkIdx; // R159: 更新 emitCheckInt lambda 使用的 chunk 索引
 
         // ---- 第一遍扫描：收集所有跳转目标位置，为每个位置创建 Label ----
+        // R162: 新增 OP_TRY_BEGIN（catchOffset 相对偏移）和 OP_PUSH_JUMP_TARGET（绝对目标）
         const auto& bytecodes = chunk.code;
         std::unordered_map<size_t, Label> jumpLabels;
         {
             size_t scanIp = 0;
             while (scanIp < bytecodes.size()) {
                 OpCode scanOp = static_cast<OpCode>(bytecodes[scanIp]);
-                if (scanOp == OpCode::OP_JUMP || scanOp == OpCode::OP_JUMP_IF_FALSE || scanOp == OpCode::OP_LOOP) {
+                if (scanOp == OpCode::OP_JUMP || scanOp == OpCode::OP_JUMP_IF_FALSE || scanOp == OpCode::OP_LOOP ||
+                    scanOp == OpCode::OP_PUSH_JUMP_TARGET) {
+                    // 绝对偏移目标：OP_JUMP/OP_JUMP_IF_FALSE/OP_LOOP/OP_PUSH_JUMP_TARGET
                     if (scanIp + 2 < bytecodes.size()) {
                         uint16_t target = static_cast<uint16_t>(bytecodes[scanIp + 1]) |
                                           (static_cast<uint16_t>(bytecodes[scanIp + 2]) << 8);
                         if (target < bytecodes.size() && jumpLabels.find(target) == jumpLabels.end()) {
                             jumpLabels[target] = a.new_label();
+                        }
+                    }
+                } else if (scanOp == OpCode::OP_TRY_BEGIN) {
+                    // 相对偏移目标：catchIp = scanIp + 3 + catchOffset
+                    if (scanIp + 2 < bytecodes.size()) {
+                        uint16_t catchOffset = static_cast<uint16_t>(bytecodes[scanIp + 1]) |
+                                               (static_cast<uint16_t>(bytecodes[scanIp + 2]) << 8);
+                        size_t catchTarget = scanIp + 3 + catchOffset;
+                        if (catchTarget < bytecodes.size() && jumpLabels.find(catchTarget) == jumpLabels.end()) {
+                            jumpLabels[catchTarget] = a.new_label();
                         }
                     }
                 }
@@ -4164,24 +4531,33 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                     a.bind(floatCheckDiv);
                     emitFloatBinaryArith(3 /*div*/, genericDiv, divEnd, chunkIdx, divByZero);
                 }
-                // 除零错误路径（栈未 pop，但直接 jmp epilogue 退出，不影响）
+                // 除零错误路径（L14: 通过 jitRuntimeThrow 转为可捕获异常）
                 a.bind(divByZero);
+                a.mov(x86::qword_ptr(x86::r12, 48), x86::r15); // 同步栈顶到 ctx
 #ifdef _WIN32
                 a.mov(x86::rcx, x86::r12);
                 a.movabs(x86::rdx, reinterpret_cast<uint64_t>("除零错误"));
+                a.mov(x86::r8, x86::r13);
                 a.sub(x86::rsp, 32);
-                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitReportError));
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitRuntimeThrow));
                 a.call(x86::rax);
                 a.add(x86::rsp, 32);
 #else
                 a.mov(x86::rdi, x86::r12);
                 a.movabs(x86::rsi, reinterpret_cast<uint64_t>("除零错误"));
+                a.mov(x86::rdx, x86::r13);
                 a.sub(x86::rsp, 8);
-                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitReportError));
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitRuntimeThrow));
                 a.call(x86::rax);
                 a.add(x86::rsp, 8);
 #endif
-                a.jmp(epilogue);
+                // rax = catchAddr 或 nullptr（未捕获时 hasError 已由 jitThrow 设置）
+                a.test(x86::rax, x86::rax);
+                a.jz(epilogue);
+                // 捕获异常：恢复 r13/r15 并跳转到 catch 块
+                a.mov(x86::r13, x86::qword_ptr(x86::r12, 160));
+                a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                a.jmp(x86::rax);
                 // C++ 辅助路径：调用 jitDivGeneric(ctx, left, right)（含除零检查）
                 a.bind(genericDiv);
                 emitRecordTypeFeedback(x86::rax, chunkIdx);
@@ -4234,23 +4610,33 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 a.sub(x86::r15, 8);
                 a.mov(x86::qword_ptr(x86::r15), x86::rax);
                 a.jmp(modEnd);
+                // 除零错误路径（L14: 通过 jitRuntimeThrow 转为可捕获异常）
                 a.bind(modByZero);
+                a.mov(x86::qword_ptr(x86::r12, 48), x86::r15); // 同步栈顶到 ctx
 #ifdef _WIN32
                 a.mov(x86::rcx, x86::r12);
                 a.movabs(x86::rdx, reinterpret_cast<uint64_t>("除零错误"));
+                a.mov(x86::r8, x86::r13);
                 a.sub(x86::rsp, 32);
-                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitReportError));
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitRuntimeThrow));
                 a.call(x86::rax);
                 a.add(x86::rsp, 32);
 #else
                 a.mov(x86::rdi, x86::r12);
                 a.movabs(x86::rsi, reinterpret_cast<uint64_t>("除零错误"));
+                a.mov(x86::rdx, x86::r13);
                 a.sub(x86::rsp, 8);
-                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitReportError));
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitRuntimeThrow));
                 a.call(x86::rax);
                 a.add(x86::rsp, 8);
 #endif
-                a.jmp(epilogue);
+                // rax = catchAddr 或 nullptr（未捕获时 hasError 已由 jitThrow 设置）
+                a.test(x86::rax, x86::rax);
+                a.jz(epilogue);
+                // 捕获异常：恢复 r13/r15 并跳转到 catch 块
+                a.mov(x86::r13, x86::qword_ptr(x86::r12, 160));
+                a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                a.jmp(x86::rax);
                 // C++ 辅助路径：调用 jitModGeneric(ctx, left, right)（含除零检查）
                 a.bind(genericMod);
                 emitRecordTypeFeedback(x86::rax, chunkIdx);
@@ -4672,7 +5058,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
             }
             case OpCode::OP_DEFINE_CLASS: {
                 // 5B 操作数：opcode + nameIdx(2B) + superNameIdx(2B)
-                // superNameIdx=0xFFFF 表示无父类
+                // superNameIdx=NO_INDEX 表示无父类
                 if (ip + 4 >= bytecodes.size()) {
                     compileError("OP_DEFINE_CLASS 操作数越界");
                     return nullptr;
@@ -4690,7 +5076,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 // JIT 机器码，execute() 运行时才访问，chunk 随 CompileResult 存活）
                 const char* className = chunk.constants[nameIdx].stringVal().c_str();
                 const char* superClassName = nullptr;
-                if (superIdx != 0xFFFF) {
+                if (superIdx != RuntimeLimits::NO_INDEX) {
                     if (superIdx >= chunk.constants.size()) {
                         compileError("OP_DEFINE_CLASS 父类名常量池索引越界");
                         return nullptr;
@@ -5049,7 +5435,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                         ip += 4;
                         break;
                     }
-                    compileError("JIT 阶段 2b 不支持的函数调用（未注册）: " + funName);
+                    compileError("JIT 不支持的函数调用（未注册）: " + funName);
                     return nullptr;
                 }
 
@@ -5233,8 +5619,8 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
             // 操作数：opcode(1) + nameIdx(2) + argCount(1) + receiverVarIdx(2) + receiverLocalSlotByte(1)
             //   nameIdx              方法名常量池索引
             //   argCount             实际参数个数
-            //   receiverVarIdx       接收者变量名常量池索引（0xFFFF=无全局接收者 writeBack）
-            //   receiverLocalSlotByte 接收者局部 slot（0xFF=无局部接收者 writeBack）
+            //   receiverVarIdx       接收者变量名常量池索引（NO_INDEX=无全局接收者 writeBack）
+            //   receiverLocalSlotByte 接收者局部 slot（NO_SLOT=无局部接收者 writeBack）
             // 栈布局（调用前）：[argN-1]...[arg0][receiver] ← r15 指向 argN-1
             // 栈布局（调用后）：[extraSlots...][defaults...][args...][fields...][this]
             case OpCode::OP_METHOD_CALL: {
@@ -5256,9 +5642,9 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 // 析构导致 movabs 嵌入的指针悬垂
                 const char* methodName = chunk.constants[nameIdx].stringVal().c_str();
 
-                // 编译期解析 receiverVarIdx → 全局 slot（若 receiverVarIdx != 0xFFFF）
+                // 编译期解析 receiverVarIdx → 全局 slot（若 receiverVarIdx != RuntimeLimits::NO_INDEX）
                 int receiverGlobalSlot = -1;
-                if (receiverLocalSlotByte == 0xFF && receiverVarIdx != 0xFFFF) {
+                if (receiverLocalSlotByte == RuntimeLimits::NO_SLOT && receiverVarIdx != RuntimeLimits::NO_INDEX) {
                     if (receiverVarIdx >= chunk.constants.size()) {
                         compileError("OP_METHOD_CALL 接收者变量名常量池索引越界");
                         return nullptr;
@@ -5307,7 +5693,7 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 const char* superClassName = chunk.constants[classIdx].stringVal().c_str();
 
                 int receiverGlobalSlot = -1;
-                if (receiverLocalSlotByte == 0xFF && receiverVarIdx != 0xFFFF) {
+                if (receiverLocalSlotByte == RuntimeLimits::NO_SLOT && receiverVarIdx != RuntimeLimits::NO_INDEX) {
                     if (receiverVarIdx >= chunk.constants.size()) {
                         compileError("OP_SUPER_CALL 接收者变量名常量池索引越界");
                         return nullptr;
@@ -5870,10 +6256,361 @@ JitEntryFn JITBackend::compileAllChunks(const CompileResult& result) {
                 break;
             }
 
+            // ---- R162: 异常处理指令（try/catch/throw + finally 续跳） ----
+            // 与 StackVM executeMiscExceptionOps 语义对齐：
+            //   OP_TRY_BEGIN: push JitTryHandler{catchAddr, stackBase=r15, frameIndex} 到 tryStack_
+            //   OP_TRY_END: pop tryStack_ 顶部当前帧的 handler
+            //   OP_THROW: pop 栈顶值 → jitThrow 搜索 handler → 截断栈/jmp catchAddr 或 jmp epilogue
+            //   OP_PUSH_JUMP_TARGET: push 续跳目标地址到 pendingJumpStack_
+            //   OP_FINALLY_END: pop 续跳目标 → jmp 或继续执行
+            //
+            // catch 块入口约定：thrown value 已被 jitThrow push 到 handler.stackBase - 1，
+            // ctx->stackTop = handler.stackBase - 1（新栈顶），JIT 代码从 ctx 重载 r15/r13 后 jmp catchAddr。
+            case OpCode::OP_TRY_BEGIN: {
+                if (ip + 2 >= bytecodes.size()) {
+                    compileError("OP_TRY_BEGIN 操作数越界");
+                    return nullptr;
+                }
+                uint16_t catchOffset =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                size_t catchTarget = ip + 3 + catchOffset;
+                auto catchIt = jumpLabels.find(catchTarget);
+                if (catchIt == jumpLabels.end()) {
+                    compileError("OP_TRY_BEGIN catch 目标位置无 Label: " + std::to_string(catchTarget));
+                    return nullptr;
+                }
+                // 同步栈顶到 ctx（防御性，jitPushTryHandler 不操作栈但保持模式一致）
+                a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+                // lea rdx/rsi, [catchLabel] — 获取 catch 块绝对地址
+#ifdef _WIN32
+                // Win32: rcx=ctx, rdx=catchAddr, r8=stackBase(r15)
+                a.lea(x86::rdx, x86::qword_ptr(catchIt->second));
+                a.mov(x86::rcx, x86::r12);
+                a.mov(x86::r8, x86::r15);
+                a.sub(x86::rsp, 32); // shadow space
+#else
+                // Linux: rdi=ctx, rsi=catchAddr, rdx=stackBase(r15)
+                a.lea(x86::rsi, x86::qword_ptr(catchIt->second));
+                a.mov(x86::rdi, x86::r12);
+                a.mov(x86::rdx, x86::r15);
+                a.sub(x86::rsp, 8); // 16-byte alignment
+#endif
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitPushTryHandler));
+                a.call(x86::rax);
+#ifdef _WIN32
+                a.add(x86::rsp, 32);
+#else
+                a.add(x86::rsp, 8);
+#endif
+                a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                ip += 3;
+                break;
+            }
+
+            case OpCode::OP_TRY_END: {
+                // 1B 操作数：opcode
+                // 弹出 tryStack_ 顶部当前帧的 handler（正常路径）
+                a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+#ifdef _WIN32
+                a.mov(x86::rcx, x86::r12);
+                a.sub(x86::rsp, 32);
+#else
+                a.mov(x86::rdi, x86::r12);
+                a.sub(x86::rsp, 8);
+#endif
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitPopTryHandler));
+                a.call(x86::rax);
+#ifdef _WIN32
+                a.add(x86::rsp, 32);
+#else
+                a.add(x86::rsp, 8);
+#endif
+                a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                ip += 1;
+                break;
+            }
+
+            case OpCode::OP_THROW: {
+                // 1B 操作数：opcode
+                // 栈布局：[..., thrownValue] → []
+                // pop thrownValue 到 rax（作为 arg2 传递）
+                a.mov(x86::rax, x86::qword_ptr(x86::r15));
+                a.add(x86::r15, 8);
+                // 同步栈顶到 ctx（jitThrow 通过 ctx->stackTop 截断栈）
+                a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+                // 调用 jitThrow(ctx, thrownValueBits, currentR13)
+                // 返回值 rax = catchAddr（找到）或 nullptr（未捕获，hasError 已设置）
+#ifdef _WIN32
+                // Win32: rcx=ctx, rdx=thrownValueBits, r8=currentR13
+                a.mov(x86::rcx, x86::r12);
+                a.mov(x86::rdx, x86::rax);
+                a.mov(x86::r8, x86::r13);
+                a.sub(x86::rsp, 32);
+#else
+                // Linux: rdi=ctx, rsi=thrownValueBits, rdx=currentR13
+                a.mov(x86::rdi, x86::r12);
+                a.mov(x86::rsi, x86::rax);
+                a.mov(x86::rdx, x86::r13);
+                a.sub(x86::rsp, 8);
+#endif
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitThrow));
+                a.call(x86::rax);
+#ifdef _WIN32
+                a.add(x86::rsp, 32);
+#else
+                a.add(x86::rsp, 8);
+#endif
+                // rax = catchAddr 或 nullptr
+                a.test(x86::rax, x86::rax);
+                a.jz(epilogue); // 未捕获异常，跳到 epilogue（hasError 已由 jitThrow 设置）
+                // 捕获异常：从 ctx 恢复 r13（可能跨帧传播）和 r15（被 jitThrow 截断）
+                // ctx->currentBp (offset 160) = catch 块所在帧的 basePointer
+                // ctx->stackTop (offset 48) = catch 块所在帧的栈顶（thrown value 已 push）
+                a.mov(x86::r13, x86::qword_ptr(x86::r12, 160));
+                a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                // jmp catchAddr（thrown value 在栈顶，catch 块代码消费）
+                a.jmp(x86::rax);
+                // 不可达：上述 jz(epilogue) 或 jmp(rax) 已转移控制流
+                ip += 1;
+                break;
+            }
+
+            case OpCode::OP_PUSH_JUMP_TARGET: {
+                // 3B 操作数：opcode + target(2B, 绝对偏移)
+                if (ip + 2 >= bytecodes.size()) {
+                    compileError("OP_PUSH_JUMP_TARGET 操作数越界");
+                    return nullptr;
+                }
+                uint16_t target =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                auto targetIt = jumpLabels.find(target);
+                if (targetIt == jumpLabels.end()) {
+                    compileError("OP_PUSH_JUMP_TARGET 目标位置无 Label: " + std::to_string(target));
+                    return nullptr;
+                }
+                a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+#ifdef _WIN32
+                // Win32: rcx=ctx, rdx=targetAddr
+                a.lea(x86::rdx, x86::qword_ptr(targetIt->second));
+                a.mov(x86::rcx, x86::r12);
+                a.sub(x86::rsp, 32);
+#else
+                // Linux: rdi=ctx, rsi=targetAddr
+                a.lea(x86::rsi, x86::qword_ptr(targetIt->second));
+                a.mov(x86::rdi, x86::r12);
+                a.sub(x86::rsp, 8);
+#endif
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitPushJumpTarget));
+                a.call(x86::rax);
+#ifdef _WIN32
+                a.add(x86::rsp, 32);
+#else
+                a.add(x86::rsp, 8);
+#endif
+                a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                ip += 3;
+                break;
+            }
+
+            case OpCode::OP_FINALLY_END: {
+                // 1B 操作数：opcode
+                // 从 pendingJumpStack_ pop 目标地址：null = 继续执行，非 null = jmp 目标
+                a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+#ifdef _WIN32
+                a.mov(x86::rcx, x86::r12);
+                a.sub(x86::rsp, 32);
+#else
+                a.mov(x86::rdi, x86::r12);
+                a.sub(x86::rsp, 8);
+#endif
+                a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitPopJumpTarget));
+                a.call(x86::rax);
+#ifdef _WIN32
+                a.add(x86::rsp, 32);
+#else
+                a.add(x86::rsp, 8);
+#endif
+                a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                // rax = target addr 或 nullptr
+                a.test(x86::rax, x86::rax);
+                Label continueLabel = a.new_label();
+                a.jz(continueLabel); // null = 无续跳，继续执行下一条指令
+                a.jmp(x86::rax);     // 非空 = 续跳到 break/continue 目标
+                a.bind(continueLabel);
+                ip += 1;
+                break;
+            }
+
+            // ---- R162: 名称变量指令（OP_DEFINE_VAR/OP_GET_VAR/OP_SET_VAR/OP_DELETE_VAR） ----
+            // 3B 操作数：opcode + nameIdx(2B, 常量池索引指向变量名字符串)
+            // 通过 C++ helper 操作 globals_ map（或 globalSlots_ 快速路径）
+            case OpCode::OP_DEFINE_VAR: {
+                if (ip + 2 >= bytecodes.size()) {
+                    compileError("OP_DEFINE_VAR 操作数越界");
+                    return nullptr;
+                }
+                uint16_t nameIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                if (nameIdx >= chunk.constants.size() || !chunk.constants[nameIdx].isString()) {
+                    compileError("OP_DEFINE_VAR 常量池索引越界或类型错误");
+                    return nullptr;
+                }
+                {
+                    const char* namePtr = chunk.constants[nameIdx].stringVal().c_str();
+                    a.mov(x86::qword_ptr(x86::r12, 48), x86::r15); // sync stackTop
+                    a.movabs(x86::r10, reinterpret_cast<uint64_t>(namePtr));
+#ifdef _WIN32
+                    a.mov(x86::rcx, x86::r12); // arg1 = ctx
+                    a.mov(x86::rdx, x86::r10); // arg2 = name
+                    a.sub(x86::rsp, 32);
+#else
+                    a.mov(x86::rdi, x86::r12);
+                    a.mov(x86::rsi, x86::r10);
+                    a.sub(x86::rsp, 8);
+#endif
+                    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitDefineVar));
+                    a.call(x86::rax);
+#ifdef _WIN32
+                    a.add(x86::rsp, 32);
+#else
+                    a.add(x86::rsp, 8);
+#endif
+                    a.mov(x86::r15, x86::qword_ptr(x86::r12, 48)); // restore stackTop
+                    a.mov(x86::rax, x86::qword_ptr(x86::r12, 8));  // check hasError
+                    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+                    a.test(x86::rax, x86::rax);
+                    a.jnz(epilogue);
+                }
+                ip += 3;
+                break;
+            }
+
+            case OpCode::OP_GET_VAR: {
+                if (ip + 2 >= bytecodes.size()) {
+                    compileError("OP_GET_VAR 操作数越界");
+                    return nullptr;
+                }
+                uint16_t nameIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                if (nameIdx >= chunk.constants.size() || !chunk.constants[nameIdx].isString()) {
+                    compileError("OP_GET_VAR 常量池索引越界或类型错误");
+                    return nullptr;
+                }
+                {
+                    const char* namePtr = chunk.constants[nameIdx].stringVal().c_str();
+                    a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+                    a.movabs(x86::r10, reinterpret_cast<uint64_t>(namePtr));
+#ifdef _WIN32
+                    a.mov(x86::rcx, x86::r12);
+                    a.mov(x86::rdx, x86::r10);
+                    a.sub(x86::rsp, 32);
+#else
+                    a.mov(x86::rdi, x86::r12);
+                    a.mov(x86::rsi, x86::r10);
+                    a.sub(x86::rsp, 8);
+#endif
+                    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitGetVar));
+                    a.call(x86::rax);
+#ifdef _WIN32
+                    a.add(x86::rsp, 32);
+#else
+                    a.add(x86::rsp, 8);
+#endif
+                    // rax = raw bits（错误时为 JIT_NULL_BITS，hasError 已设置）
+                    // push result to stack
+                    a.sub(x86::r15, 8);
+                    a.mov(x86::qword_ptr(x86::r15), x86::rax);
+                    // restore stackTop（jitGetVar 不修改栈，但保持模式一致）
+                    a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+                    a.mov(x86::rax, x86::qword_ptr(x86::r12, 8));
+                    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+                    a.test(x86::rax, x86::rax);
+                    a.jnz(epilogue);
+                }
+                ip += 3;
+                break;
+            }
+
+            case OpCode::OP_SET_VAR: {
+                if (ip + 2 >= bytecodes.size()) {
+                    compileError("OP_SET_VAR 操作数越界");
+                    return nullptr;
+                }
+                uint16_t nameIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                if (nameIdx >= chunk.constants.size() || !chunk.constants[nameIdx].isString()) {
+                    compileError("OP_SET_VAR 常量池索引越界或类型错误");
+                    return nullptr;
+                }
+                {
+                    const char* namePtr = chunk.constants[nameIdx].stringVal().c_str();
+                    a.mov(x86::qword_ptr(x86::r12, 48), x86::r15);
+                    a.movabs(x86::r10, reinterpret_cast<uint64_t>(namePtr));
+#ifdef _WIN32
+                    a.mov(x86::rcx, x86::r12);
+                    a.mov(x86::rdx, x86::r10);
+                    a.sub(x86::rsp, 32);
+#else
+                    a.mov(x86::rdi, x86::r12);
+                    a.mov(x86::rsi, x86::r10);
+                    a.sub(x86::rsp, 8);
+#endif
+                    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitSetVar));
+                    a.call(x86::rax);
+#ifdef _WIN32
+                    a.add(x86::rsp, 32);
+#else
+                    a.add(x86::rsp, 8);
+#endif
+                    a.mov(x86::r15, x86::qword_ptr(x86::r12, 48));
+                    a.mov(x86::rax, x86::qword_ptr(x86::r12, 8));
+                    a.movzx(x86::rax, x86::byte_ptr(x86::rax));
+                    a.test(x86::rax, x86::rax);
+                    a.jnz(epilogue);
+                }
+                ip += 3;
+                break;
+            }
+
+            case OpCode::OP_DELETE_VAR: {
+                if (ip + 2 >= bytecodes.size()) {
+                    compileError("OP_DELETE_VAR 操作数越界");
+                    return nullptr;
+                }
+                uint16_t nameIdx =
+                    static_cast<uint16_t>(bytecodes[ip + 1]) | (static_cast<uint16_t>(bytecodes[ip + 2]) << 8);
+                if (nameIdx >= chunk.constants.size() || !chunk.constants[nameIdx].isString()) {
+                    compileError("OP_DELETE_VAR 常量池索引越界或类型错误");
+                    return nullptr;
+                }
+                {
+                    const char* namePtr = chunk.constants[nameIdx].stringVal().c_str();
+                    a.movabs(x86::r10, reinterpret_cast<uint64_t>(namePtr));
+#ifdef _WIN32
+                    a.mov(x86::rcx, x86::r12);
+                    a.mov(x86::rdx, x86::r10);
+                    a.sub(x86::rsp, 32);
+#else
+                    a.mov(x86::rdi, x86::r12);
+                    a.mov(x86::rsi, x86::r10);
+                    a.sub(x86::rsp, 8);
+#endif
+                    a.movabs(x86::rax, reinterpret_cast<uint64_t>(&jitDeleteVar));
+                    a.call(x86::rax);
+#ifdef _WIN32
+                    a.add(x86::rsp, 32);
+#else
+                    a.add(x86::rsp, 8);
+#endif
+                }
+                ip += 3;
+                break;
+            }
+
             default:
-                // 阶段 2b 仍不支持的指令（OP_CALL_EXPR 闭包值调用、upvalue、类、容器等）
-                compileError("JIT 阶段 2b 不支持的 OpCode: " + std::string(opCodeName(op)) +
-                             " (ip=" + std::to_string(ip) + ")");
+                // P2-9: 当前 JIT 不支持的指令。
+                compileError("JIT 不支持的 OpCode: " + std::string(opCodeName(op)) + " (ip=" + std::to_string(ip) +
+                             ")");
                 return nullptr;
             }
         }
@@ -7031,6 +7768,7 @@ std::vector<std::pair<std::string, minilang::JitTier>> JITBackend::getChunkTiers
 // ============================================================
 JitResult JITBackend::execute(const CompileResult& result) {
     // 重置状态
+    // P2-12: lastError_ 字段保留作为兜底（getLastError 末尾返回），diagnostics_ 为权威来源
     hasError_ = false;
     lastError_.clear();
     diagnostics_.clear();
@@ -7082,6 +7820,17 @@ JitResult JITBackend::execute(const CompileResult& result) {
     openUpvalues_.clear();
     functionClosures_.clear();
     jitContext_.currentBp = nullptr;
+
+    // R162: 清空异常处理栈（支持多次 execute 调用，避免上次残留 handler 干扰）
+    // tryStack_ 和 pendingJumpStack_ 在 OP_TRY_BEGIN/OP_PUSH_JUMP_TARGET 时 push，
+    // 正常路径 OP_TRY_END/OP_FINALLY_END 时 pop，但异常中断时可能残留。
+    tryStack_.clear();
+    pendingJumpStack_.clear();
+
+    // R162: 清空名称变量表（catch 变量等无 slot 的名称变量走此路径）
+    // 与 StackVM globals_ 对齐，每次 execute 重新开始
+    globals_.clear();
+    jitContext_.globalsPtr = &globals_;
 
     // R158: 初始化 OSR 栈帧迁移 + 反优化邮箱字段
     // osrSavedBp/osrSavedSp: OSR 触发时 JIT 代码写入，OSR 入口点读取恢复
@@ -7156,10 +7905,23 @@ JitResult JITBackend::execute(const CompileResult& result) {
     }
 
     // 调用 JIT 编译后的本地代码
+    // P2-9 fix: JIT 代码执行期间禁用增量 GC 回调。JIT 持有的 Value 引用
+    // （操作数栈/帧栈/全局槽位）以 NaN-boxing raw bits 表示，未注册为 GC roots。
+    // 若此时 Interpreter 的 gcTriggerCallback_ 被触发（JIT 内 jitBuildArray 等
+    // helper 分配容器累计达 8192 阈值时），会以不完整 roots 集误回收 JIT 存活容器，
+    // 导致语义损坏或 UAF。CallbackSuppressor 构造时原子保存并置空回调，析构时恢复。
+    // JIT 期间产生的循环引用孤岛由下一轮 Interpreter execute() 入口兜底 collectCycle 回收。
+    GcManager::CallbackSuppressor gcSuppressor;
     int64_t ret = entry(&jitContext_);
     (void)ret; // PoC 不使用返回值
 
     if (hasError_) {
+        // P2-12: JIT 代码通过 ctx->errorBuffer 写入错误消息到 lastError_，
+        // 在此同步到 diagnostics_（统一错误查询接口，getLastError 从 diagnostics_ 派生）。
+        // DiagSource::JIT 与 VM/Compiler 区分，便于错误来源定位。
+        if (!lastError_.empty()) {
+            diagnostics_.addError(lastError_, 0, 0, DiagSource::JIT);
+        }
         return JitResult::RuntimeError;
     }
 

@@ -78,7 +78,7 @@ std::string ErrorHintEngine::suggestSpelling(const std::string& target, const st
 // 错误消息增强
 // ============================================================
 /// 为错误消息附加教学性提示（按类别/模式/诊断码匹配）。
-std::string ErrorHintEngine::enrichErrorMessage(const std::string& msg, const std::string& category,
+std::string ErrorHintEngine::enrichErrorMessage(const std::string& msg, const std::string& /*category*/,
                                                 const std::vector<std::string>& scopeVars) {
     // 未知模式原样返回
     std::string enriched = msg;

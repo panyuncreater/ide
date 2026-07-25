@@ -91,6 +91,16 @@ public:
     bool isExceptionBreakpointEnabled() const { return debugger_->isExceptionBreakpointEnabled(); }
     int getExceptionBreakpointHitCount() const { return debugger_->getExceptionBreakpointHitCount(); }
 
+    // L19 Watchpoint：转发到 DebugController（Interpreter 路径）。
+    // IdeController facade 同时设置 vmStepper_ 和 debugCoord_，确保路径切换后 watchpoint 不丢失。
+    void setWatchpoint(const WatchpointInfo& wp) { debugger_->setWatchpoint(wp); }
+    void removeWatchpoint(const std::string& varName, const std::string& fieldName = "") {
+        debugger_->removeWatchpoint(varName, fieldName);
+    }
+    void clearWatchpoints() { debugger_->clearWatchpoints(); }
+    std::vector<WatchpointInfo> getWatchpoints() const { return debugger_->getWatchpoints(); }
+    bool hasWatchpoints() const { return debugger_->hasWatchpoints(); }
+
     // ---- 调试状态查询 ----
     std::vector<VariableSnapshot> getDebugVariableSnapshot() const { return debugger_->getVariableSnapshot(); }
     std::vector<CallStackEntry> getDebugCallStack() const { return debugger_->getCallStack(); }

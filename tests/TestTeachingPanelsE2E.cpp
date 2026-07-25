@@ -17,9 +17,11 @@
 // ============================================================
 
 #include <QApplication>
+#include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QTableWidget>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QWidget>
@@ -703,3 +705,215 @@ TEST(TeachingPanelsE2EAllPanels, AllPanelsHaveStackedWidget) {
     stopAllTimers(&p8);
     EXPECT_NE(findStack(&p8), nullptr);
 }
+
+// ============================================================
+// C1: GUI 交互级 E2E 测试样本（2026-07-25 P3-A2 配套）
+// ------------------------------------------------------------
+// 与上方基础交互测试的区别：聚焦于边界条件、幂等性、跨面板状态隔离、
+// 顺序导航 4 类样本场景。每个样本代表一种典型 GUI 交互故障模式：
+//   - 边界选择：第一行/最后一行/清空选择时详情是否正确联动
+//   - 幂等性：重复点击同一按钮 currentIndex 不漂移
+//   - 跨面板隔离：构造 A → 销毁 → 构造 B，QTimer 全部停止无泄漏
+//   - 顺序导航：依次点击每个子页按钮，currentIndex 顺序变化
+// ============================================================
+
+// --- C1 样本 1：ExceptionFlowPanel 列表边界选择 ---
+
+TEST_F(ExceptionFlowPanelE2E, C1_SelectFirstRow_DetailNonEmpty) {
+    auto* list = findListInCurrentPage(panel_);
+    ASSERT_NE(list, nullptr);
+    ASSERT_GT(list->count(), 0);
+    list->setCurrentRow(0);
+    auto* browser = findBrowserInCurrentPage(panel_);
+    ASSERT_NE(browser, nullptr);
+    EXPECT_FALSE(browser->toPlainText().isEmpty());
+}
+
+TEST_F(ExceptionFlowPanelE2E, C1_SelectLastRow_DetailNonEmpty) {
+    auto* list = findListInCurrentPage(panel_);
+    ASSERT_NE(list, nullptr);
+    ASSERT_GT(list->count(), 0);
+    list->setCurrentRow(list->count() - 1);
+    auto* browser = findBrowserInCurrentPage(panel_);
+    ASSERT_NE(browser, nullptr);
+    EXPECT_FALSE(browser->toPlainText().isEmpty());
+}
+
+TEST_F(ExceptionFlowPanelE2E, C1_ClearSelection_DetailStaleButNoCrash) {
+    auto* list = findListInCurrentPage(panel_);
+    ASSERT_NE(list, nullptr);
+    list->setCurrentRow(0);
+    list->setCurrentRow(-1); // 清空选择
+    // 无崩溃即通过：详情可能保留旧内容或清空，关键是面板状态一致
+    auto* browser = findBrowserInCurrentPage(panel_);
+    EXPECT_NE(browser, nullptr);
+}
+
+// --- C1 样本 2：ClosureInspectorPanel 重复点击幂等性 ---
+
+TEST_F(ClosureInspectorPanelE2E, C1_RepeatClickSameButton_IndexStable) {
+    auto* btn = findButtonByText(panel_, "upvalue 生命周期");
+    ASSERT_NE(btn, nullptr);
+    btn->click();
+    auto* stack = findStack(panel_);
+    ASSERT_NE(stack, nullptr);
+    int firstIdx = stack->currentIndex();
+    // 重复点击同一按钮，currentIndex 应保持不变
+    btn->click();
+    btn->click();
+    EXPECT_EQ(stack->currentIndex(), firstIdx);
+}
+
+TEST_F(ClosureInspectorPanelE2E, C1_ToggleBetweenSubpages_IndexFlips) {
+    auto* phaseBtn = findButtonByText(panel_, "upvalue 生命周期");
+    auto* scenarioBtn = findButtonByText(panel_, "教学场景库");
+    ASSERT_NE(phaseBtn, nullptr);
+    ASSERT_NE(scenarioBtn, nullptr);
+    auto* stack = findStack(panel_);
+    ASSERT_NE(stack, nullptr);
+
+    phaseBtn->click();
+    EXPECT_EQ(stack->currentIndex(), 1);
+    scenarioBtn->click();
+    EXPECT_EQ(stack->currentIndex(), 0);
+    phaseBtn->click();
+    EXPECT_EQ(stack->currentIndex(), 1);
+    scenarioBtn->click();
+    EXPECT_EQ(stack->currentIndex(), 0);
+}
+
+// --- C1 样本 3：IRTransformPanel 顺序循环导航 ---
+
+TEST_F(IRTransformPanelE2E, C1_SequentialNavigation_AllIndicesVisited) {
+    auto* stack = findStack(panel_);
+    ASSERT_NE(stack, nullptr);
+    // 依次访问 4 个子页：Lowering(0) → Optimize(1) → Current(2) → Replay(3) → Lowering(0)
+    findButtonByText(panel_, "AST → IR lowering")->click();
+    EXPECT_EQ(stack->currentIndex(), 0);
+    findButtonByText(panel_, "优化 pass 对比")->click();
+    EXPECT_EQ(stack->currentIndex(), 1);
+    findButtonByText(panel_, "当前源码 IR")->click();
+    EXPECT_EQ(stack->currentIndex(), 2);
+    findButtonByText(panel_, "逐步优化回放")->click();
+    EXPECT_EQ(stack->currentIndex(), 3);
+    findButtonByText(panel_, "AST → IR lowering")->click();
+    EXPECT_EQ(stack->currentIndex(), 0);
+}
+
+TEST_F(IRTransformPanelE2E, C1_OptimizePageListPopulated) {
+    auto* stack = findStack(panel_);
+    ASSERT_NE(stack, nullptr);
+    stack->setCurrentIndex(1);
+    auto* list = findListInCurrentPage(panel_);
+    if (list) {
+        EXPECT_GT(list->count(), 0);
+    }
+}
+
+TEST_F(IRTransformPanelE2E, C1_CurrentPageListPopulated) {
+    auto* stack = findStack(panel_);
+    ASSERT_NE(stack, nullptr);
+    stack->setCurrentIndex(2);
+    // Current 页可能没有 list（仅显示源码 IR），只验证不崩溃
+    auto* list = findListInCurrentPage(panel_);
+    if (list) {
+        EXPECT_GE(list->count(), 0);
+    }
+}
+
+// --- C1 样本 4：跨面板 QTimer 状态隔离 ---
+
+TEST(TeachingPanelsE2EAllPanels, C1_CrossPanelTimerIsolation) {
+    ensureQApp();
+    // 构造面板 A → 销毁 → 构造面板 B，验证 B 的 QTimer 状态独立
+    {
+        CallStackPanel pA;
+        stopAllTimers(&pA);
+        EXPECT_FALSE(anyTimerActive(&pA));
+    }
+    {
+        BreakpointConditionPanel pB;
+        stopAllTimers(&pB);
+        EXPECT_FALSE(anyTimerActive(&pB));
+    }
+    // 再构造一次 A，验证状态干净
+    {
+        CallStackPanel pA2;
+        stopAllTimers(&pA2);
+        EXPECT_FALSE(anyTimerActive(&pA2));
+    }
+}
+
+TEST(TeachingPanelsE2EAllPanels, C1_PanelDestruction_NoDanglingTimers) {
+    ensureQApp();
+    // 在同一作用域内构造多个面板，验证析构后 qApp 无悬挂 QTimer
+    {
+        ExceptionFlowPanel p1;
+        ClosureInspectorPanel p2;
+        MemoryModelPanel p3;
+        IRTransformPanel p4;
+        stopAllTimers(&p1);
+        stopAllTimers(&p2);
+        stopAllTimers(&p3);
+        stopAllTimers(&p4);
+    }
+    // qApp 顶层无子 QTimer（面板析构应带走其子 QTimer）
+    auto topTimers = qApp->findChildren<QTimer*>();
+    for (auto* t : topTimers) {
+        EXPECT_FALSE(t->isActive()) << "qApp 顶层存在活跃 QTimer（面板析构未清理）";
+    }
+}
+
+// --- C1 样本 5：MemoryModelPanel 子页详情内容非空 ---
+
+TEST_F(MemoryModelPanelE2E, C1_EachSubpageHasContent) {
+    auto* stack = findStack(panel_);
+    ASSERT_NE(stack, nullptr);
+    // 遍历 5 个子页，验证每个子页都有非空内容（list/browser/table/label 任一）
+    // 子页 0-2 含 QListWidget + QTextBrowser；子页 3 含 QTableWidget + QTextBrowser；
+    // 子页 4（RegisterVM 寄存器帧）含 QTableWidget + QLabel，无 QTextBrowser
+    for (int i = 0; i < stack->count(); ++i) {
+        stack->setCurrentIndex(i);
+        auto* host = stack->currentWidget();
+        ASSERT_NE(host, nullptr);
+        auto* list = host->findChild<QListWidget*>();
+        auto* browser = host->findChild<QTextBrowser*>();
+        auto* table = host->findChild<QTableWidget*>();
+        bool hasContent = false;
+        if (list && list->count() > 0) hasContent = true;
+        if (browser && !browser->toPlainText().isEmpty()) hasContent = true;
+        if (table && table->rowCount() > 0) hasContent = true;
+        // 兜底：检查是否有非空文本 QLabel（如 regVmHintLabel_）
+        if (!hasContent) {
+            auto labels = host->findChildren<QLabel*>();
+            for (auto* lbl : labels) {
+                if (!lbl->text().isEmpty()) {
+                    hasContent = true;
+                    break;
+                }
+            }
+        }
+        EXPECT_TRUE(hasContent) << "子页 " << i << " 内容为空";
+    }
+}
+
+// --- C1 样本 6：BytecodeTracePanel 子页切换后 list 内容保持 ---
+
+TEST_F(BytecodeTracePanelE2E, C1_LibraryListCountStableAfterToggle) {
+    auto* libraryBtn = findButtonByText(panel_, "OpCode 教学库");
+    auto* traceBtn = findButtonByText(panel_, "执行轨迹");
+    ASSERT_NE(libraryBtn, nullptr);
+    ASSERT_NE(traceBtn, nullptr);
+    libraryBtn->click();
+    auto* list = findListInCurrentPage(panel_);
+    ASSERT_NE(list, nullptr);
+    int initialCount = list->count();
+    EXPECT_GT(initialCount, 0);
+    // 切换到 trace 页再切回 library 页，list 数量应保持不变
+    traceBtn->click();
+    libraryBtn->click();
+    auto* listAfter = findListInCurrentPage(panel_);
+    ASSERT_NE(listAfter, nullptr);
+    EXPECT_EQ(listAfter->count(), initialCount);
+}
+

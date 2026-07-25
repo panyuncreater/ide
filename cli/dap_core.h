@@ -40,6 +40,7 @@
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 
+#include <atomic>
 #include <functional>
 #include <optional>
 #include <string>
@@ -63,6 +64,11 @@ constexpr int kGlobalsScopeReference = 2000;
 
 /// continue/step 最大指令数（防止无限循环）
 constexpr int kMaxStepInstructions = 1000000;
+
+/// L21: continue 循环中每 N 步轮询一次 stdin 是否有 pause 请求。
+/// 值过小会拖慢步进（每步都调用平台 IO），过大会延迟 pause 响应。
+/// 256 步在典型 MiniLang 程序中约对应 10-50μs 步进开销，轮询开销可忽略。
+constexpr int kPausePollInterval = 256;
 
 // ============================================================
 // DAP 数据类型
@@ -231,6 +237,7 @@ public:
 
     /// 获取累积的输出
     std::string getOutput() const { return outputBuffer_; }
+    void clearOutput() { outputBuffer_.clear(); }
 
     // ---- 错误信息 ----
 
@@ -244,6 +251,19 @@ public:
 
     /// 获取 VM（供测试用）
     const VM& getVM() const { return vm_; }
+
+    // ---- L21: 同步暂停（pause 请求）支持 ----
+
+    /// 设置 stdin 非阻塞轮询回调。dap.cpp 在非 Windows 平台用 `poll`/`select`，
+    /// Windows 平台用 `_kbhit` 或 PeekNamedPipe 检测 stdin 是否有数据可读。
+    /// 回调返回 true 表示 stdin 有数据待读取（调用方应中断 continue 循环）。
+    /// @note 测试场景不设置回调，doContinue 不会主动检查 pause（保持旧行为）。
+    void setStdinPollCallback(std::function<bool()> cb) { stdinPollCallback_ = std::move(cb); }
+
+    /// 请求暂停（由 handlePause 调用）。doContinue 循环将检查此标志并提前退出。
+    void requestPause() { pauseRequested_ = true; }
+    bool isPauseRequested() const { return pauseRequested_; }
+    void clearPauseRequest() { pauseRequested_ = false; }
 
 private:
     Lexer lexer_;
@@ -261,6 +281,10 @@ private:
 
     bool launched_ = false;
     bool vmInitialized_ = false;
+
+    // L21: 同步暂停支持
+    std::atomic<bool> pauseRequested_{false};      // pause 请求标志（handlePause 设置）
+    std::function<bool()> stdinPollCallback_;      // stdin 非阻塞轮询回调（dap.cpp 注入）
 
     std::function<void(const std::string&)> outputCallback_;
     std::string outputBuffer_;

@@ -28,21 +28,10 @@ if(NOT TARGET minilang_core)
     # 项目根目录
     set(MINILANG_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
-    # 包含共享模块：源文件列表 + 编译选项 + 配置函数
-    # 修复问题 2（源文件列表重复维护）
+    # 包含共享模块：源文件列表 + 编译选项 + 配置函数 + target 创建
+    # P1-6: minilang_core.cmake 内部创建 4 个 OBJECT 子库 + STATIC 聚合，
+    #        include 后 minilang_core target 即已就绪，无需再手动 add_library。
     include(${MINILANG_ROOT_DIR}/cmake/minilang_core.cmake)
-
-    # 将源文件路径前缀为绝对路径（独立构建时 CMAKE_CURRENT_SOURCE_DIR 是 tests/）
-    set(ABS_CORE_SOURCES "")
-    foreach(src ${MINILANG_CORE_SOURCES})
-        list(APPEND ABS_CORE_SOURCES "${MINILANG_ROOT_DIR}/${src}")
-    endforeach()
-
-    # 核心静态库
-    add_library(minilang_core STATIC ${ABS_CORE_SOURCES})
-
-    # 使用共享配置函数（统一 include dirs / link / PCH / 编译选项）
-    minilang_configure_core_target(minilang_core ${MINILANG_ROOT_DIR})
 endif()
 
 # ============================================================
@@ -85,7 +74,11 @@ add_executable(minilang_tests
     TestVME2E.cpp
     TestCompiler.cpp
     TestIR.cpp
+    # P2-10 IR SSA 基础设施测试：CFG/支配树/支配边界/自然循环/PHI/GVN/LICM/内联
+    TestIRSSA.cpp
     TestNaNBox.cpp
+    TestBytecodeCache.cpp
+    TestP1_4DebugUnification.cpp
     TestIRShadowFix.cpp
     TestNestedLvalueProbe.cpp
     TestMethodCallProbe.cpp
@@ -111,6 +104,8 @@ add_executable(minilang_tests
     TestAuditBatch3.cpp
     TestAuditBatch4.cpp
     TestAuditBatch5.cpp
+    # P2-12 错误处理统一回归测试（IBackend 接口 + DiagCodes + Lexer/Parser 补全）
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestErrorUnification.cpp
     # R98 runToCursor 临时断点机制回归测试（DebugController 一次性断点 API）
     ${CMAKE_CURRENT_SOURCE_DIR}/TestRunToCursor.cpp
     # R104 调试器拓展回归测试（Logpoint / Function BP / Exception BP）
@@ -171,9 +166,15 @@ add_executable(minilang_tests
     ${MINILANG_ROOT_DIR}/gui/SyntaxProductionLibrary.cpp
     ${MINILANG_ROOT_DIR}/gui/LabManualContent.cpp
     # 第二波面板：MemoryModelLibrary/IRTransformLibrary/ProfileLibrary
-    # 实现位于对应的 Panel.cpp 中（非独立 Library.cpp），整体加入测试目标
+    # P3-20 拆分：MemoryModelLibrary.cpp 已从 MemoryModelPanel.cpp 拆出，
+    # IRTransformLibrary.cpp + IROptReplayLibrary.cpp 已从 IRTransformPanel.cpp 拆出
+    # （纯静态教学场景数据），需独立加入测试目标以解析符号。Profile 仍内嵌于
+    # 对应 Panel.cpp 中，整体加入测试目标。
+    ${MINILANG_ROOT_DIR}/gui/MemoryModelLibrary.cpp
     ${MINILANG_ROOT_DIR}/gui/MemoryModelPanel.cpp
     ${MINILANG_ROOT_DIR}/gui/IRTransformPanel.cpp
+    ${MINILANG_ROOT_DIR}/gui/IRTransformLibrary.cpp
+    ${MINILANG_ROOT_DIR}/gui/IROptReplayLibrary.cpp
     ${MINILANG_ROOT_DIR}/gui/ProfileDashboardPanel.cpp
     # 第三波面板：CallStackLibrary/VariableInspectorLibrary/BytecodeTraceLibrary
     ${MINILANG_ROOT_DIR}/gui/CallStackPanel.cpp
@@ -288,6 +289,20 @@ add_executable(minilang_tests
     # 验证整数算术子集（OP_INT/ADD/SUB/MUL/NEGATE/PRINT/POP/RETURN/NULL/TRUE/FALSE）。
     # 条件编译：MINILANG_USE_JIT=OFF 时仅注册 skip 占位测试，确保 CTest 一致性。
     ${CMAKE_CURRENT_SOURCE_DIR}/TestJIT.cpp
+    # P2-11 子项 4 内建标准库模块测试：BuiltinModuleRegistry API +
+    # Compiler/Interpreter 路径对 `import "std/math|string|list"` 的拦截执行。
+    # 链接 minilang_core 获取 BuiltinModules.cpp 符号。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestBuiltinModules.cpp
+    # P2-10 IR SSA 基础设施测试：IRCFG/DominatorTree/DominanceFrontier/
+    # NaturalLoopInfo + ssaConstruct/ssaDestruct + GVN/LICM/inline + 端到端语义验证。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestIRSSA.cpp
+    # P2-11 预编译模块测试：compileModule + .minic 序列化 + 端到端导入 + 函数名隔离。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestPrecompiledModules.cpp
+    # W3-2 覆盖率缺口定向补充测试：类型注解/UTF-8/类自动构造/闭包upvalue/enum错误路径四后端一致性。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCoverageGaps.cpp
+    # P3-19 覆盖率缺口定向补充测试第二批：循环导入深层嵌套/并发原语边界/IR 优化 pass 验证。
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestCoverageGaps2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TestL14RuntimeErrorCatch.cpp
 )
 
 target_link_libraries(minilang_tests PRIVATE
@@ -298,6 +313,10 @@ target_link_libraries(minilang_tests PRIVATE
     gtest
     minilang_compile_options
 )
+
+# P1-6: 为 minilang_tests 启用 PCH（复用 common/pch.h 标准库头预编译）。
+# 测试目标含 60+ .cpp，普遍包含 <string>/<vector>/<memory>，PCH 加速增量构建。
+minilang_enable_pch(minilang_tests ${MINILANG_ROOT_DIR})
 
 # QFluentKit 组件头文件（PushButton.h / Label.h / CardWidget.h 等）位于 src/QFluent/
 # 子目录，而 QFluent 目标仅导出 src/。补充两个路径以支持 #include "PushButton.h"

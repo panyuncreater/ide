@@ -40,6 +40,7 @@
 
 #ifdef MINILANG_USE_JIT
 #include "compiler/JIT.h"
+#include "interpreter/GcManager.h" // P2-9: CallbackSuppressor 测试
 #endif
 
 #include <gtest/gtest.h>
@@ -536,6 +537,15 @@ TEST(TestJIT, DeepRecursion) {
     // 较深递归（验证帧栈正确恢复，深度 20）
     // fun count(n) { if (n == 0) { return 0; } return 1 + count(n - 1); } print(count(20)); → "20"
     EXPECT_EQ(runJIT("fun count(n) { if (n == 0) { return 0; } return 1 + count(n - 1); } print(count(20));"), "20");
+}
+
+// 临时调试：255 层递归（刚好不触发 MAX_FRAMES=256）
+TEST(TestJIT, DeepRecursion255) {
+    // 255 层递归，刚好不触发 MAX_FRAMES
+    std::string src = "fun count(n) { if (n == 0) { return 0; } return 1 + count(n - 1); } print(count(255));";
+    std::string out = runJIT(src);
+    std::cerr << "[DEBUG] DeepRecursion255 output: '" << out << "'" << std::endl;
+    EXPECT_EQ(out, "255");
 }
 
 // ---- 函数内控制流测试 ----
@@ -5467,6 +5477,466 @@ TEST(TestJIT, R161ClosureModifiesMethodFieldMultipleFields) {
     std::string vmOut = minilang_test::runStackVM(src);
     EXPECT_EQ(jitOut, "2010") << "JIT 输出: " << jitOut;
     EXPECT_EQ(vmOut, "2010") << "StackVM 输出: " << vmOut;
+}
+
+// ============================================================
+// R162: JIT 异常处理测试用例（try/catch/throw + finally）
+// ============================================================
+// 验证 OP_TRY_BEGIN/OP_TRY_END/OP_THROW/OP_PUSH_JUMP_TARGET/OP_FINALLY_END
+// 机器码生成与 jitThrow 栈展开逻辑。
+// 关键不变量：
+//   1. 同一 MiniLang 源码在 JIT 与 StackVM 上输出一致（三后端一致性扩展至四后端）
+//   2. try 正常路径：OP_TRY_END 弹出 handler，无异常传播
+//   3. throw 路径：jitThrow 搜索 tryStack_，截断操作数栈，jmp catchAddr
+//   4. 跨帧异常：被调函数 throw，主调者 catch，帧栈正确展开
+//   5. finally 续跳：break/continue 触发 finally，OP_FINALLY_END pop 目标续跳
+
+// ---- 基础 try/catch：throw 字面量，catch 捕获 ----
+TEST(TestJIT, R162TryCatchThrowInt) {
+    std::string src = "try {"
+                      "  throw 42;"
+                      "} catch (e) {"
+                      "  print(e);"
+                      "}";
+    std::string expected = "42";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- try/catch 不触发：正常路径不进入 catch ----
+TEST(TestJIT, R162TryCatchNoThrow) {
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  log = log + \"try\";"
+                      "} catch (e) {"
+                      "  log = log + \"catch\";"
+                      "}"
+                      "print(log);";
+    std::string expected = "try";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- try/catch + finally 正常路径 ----
+TEST(TestJIT, R162TryCatchFinallyNormal) {
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  log = log + \"try\";"
+                      "} catch (e) {"
+                      "  log = log + \"catch\";"
+                      "} finally {"
+                      "  log = log + \"finally\";"
+                      "}"
+                      "print(log);";
+    std::string expected = "tryfinally";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- try/catch + finally 异常路径 ----
+TEST(TestJIT, R162TryCatchFinallyException) {
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  log = log + \"try\";"
+                      "  throw 42;"
+                      "} catch (e) {"
+                      "  log = log + \"catch\" + e;"
+                      "} finally {"
+                      "  log = log + \"finally\";"
+                      "}"
+                      "print(log);";
+    std::string expected = "trycatch42finally";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- try/finally 无 catch：正常路径 ----
+TEST(TestJIT, R162TryFinallyNoCatchNormal) {
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  log = log + \"try\";"
+                      "} finally {"
+                      "  log = log + \"finally\";"
+                      "}"
+                      "print(log);";
+    std::string expected = "tryfinally";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- 嵌套 try/catch ----
+TEST(TestJIT, R162NestedTryCatch) {
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try {"
+                      "    throw 1;"
+                      "  } catch (e1) {"
+                      "    log = log + \"inner:\" + e1 + \";\";"
+                      "    throw 2;"
+                      "  }"
+                      "} catch (e2) {"
+                      "  log = log + \"outer:\" + e2;"
+                      "}"
+                      "print(log);";
+    std::string expected = "inner:1;outer:2";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- 嵌套 try/finally：finally 内部异常未捕获，传播到外层 catch ----
+TEST(TestJIT, R162NestedTryFinallyUncaught) {
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try {"
+                      "    throw 99;"
+                      "  } finally {"
+                      "    log = log + \"inner-finally\";"
+                      "  }"
+                      "} catch (e) {"
+                      "  log = log + \"outer-catch\" + e;"
+                      "}"
+                      "print(log);";
+    std::string expected = "inner-finallyouter-catch99";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- throw 字符串 ----
+TEST(TestJIT, R162ThrowString) {
+    std::string src = "try {"
+                      "  throw \"error-msg\";"
+                      "} catch (e) {"
+                      "  print(e);"
+                      "}";
+    std::string expected = "error-msg";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- 跨帧异常：函数内 throw，主调者 catch ----
+TEST(TestJIT, R162CrossFrameException) {
+    std::string src = "fun fail() {"
+                      "  throw 100;"
+                      "}"
+                      "try {"
+                      "  fail();"
+                      "} catch (e) {"
+                      "  print(e);"
+                      "}";
+    std::string expected = "100";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- 跨帧异常：深层调用栈 throw，顶层 catch ----
+TEST(TestJIT, R162DeepCrossFrameException) {
+    std::string src = "fun level3() { throw 7; }"
+                      "fun level2() { level3(); }"
+                      "fun level1() { level2(); }"
+                      "try {"
+                      "  level1();"
+                      "} catch (e) {"
+                      "  print(e);"
+                      "}";
+    std::string expected = "7";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- 未捕获异常：JIT 应设置 hasError 并返回 RuntimeError ----
+TEST(TestJIT, R162UncaughtException) {
+    std::string src = "throw 42;";
+    std::string result = runJIT(src);
+    EXPECT_NE(result.find("jit-runtime"), std::string::npos)
+        << "未捕获异常应触发 JIT RuntimeError，实际输出: " << result;
+    EXPECT_NE(result.find("未捕获的异常"), std::string::npos) << "错误消息应包含'未捕获的异常'，实际输出: " << result;
+}
+
+// ---- try/catch 在函数内 ----
+// 注意：MiniLang 的 try/catch 仅捕获显式 throw，不捕获运行时错误（如除零）。
+// 故 safeDiv 需显式检查除数并 throw，与 StackVM 行为一致。
+TEST(TestJIT, R162TryCatchInFunction) {
+    std::string src = "fun safeDiv(a, b) {"
+                      "  try {"
+                      "    if (b == 0) { throw \"div-by-zero\"; }"
+                      "    return a / b;"
+                      "  } catch (e) {"
+                      "    return -1;"
+                      "  }"
+                      "}"
+                      "print(safeDiv(10, 2));"
+                      "print(safeDiv(10, 0));";
+    std::string expected = "5-1";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- finally 在函数内：finally 执行后函数返回 ----
+TEST(TestJIT, R162FinallyInFunction) {
+    std::string src = "fun test() {"
+                      "  var log = \"\";"
+                      "  try {"
+                      "    log = log + \"try;\";"
+                      "  } catch (e) {"
+                      "    log = log + \"catch;\";"
+                      "  } finally {"
+                      "    log = log + \"finally;\";"
+                      "  }"
+                      "  return log;"
+                      "}"
+                      "print(test());";
+    std::string expected = "try;finally;";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- catch 块内 throw：finally 必须执行 ----
+TEST(TestJIT, R162CatchThrowsFinallyRuns) {
+    std::string src = "var log = \"\";"
+                      "try {"
+                      "  try {"
+                      "    throw 1;"
+                      "  } catch (e) {"
+                      "    log = log + \"catch;\";"
+                      "    throw 2;"
+                      "  } finally {"
+                      "    log = log + \"finally;\";"
+                      "  }"
+                      "} catch (e2) {"
+                      "  log = log + \"outer:\" + e2;"
+                      "}"
+                      "print(log);";
+    std::string expected = "catch;finally;outer:2";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- catch 变量遮蔽全局 ----
+TEST(TestJIT, R162CatchVarShadowsGlobal) {
+    std::string src = "var e = 999;"
+                      "var log = \"\";"
+                      "try {"
+                      "  throw 42;"
+                      "} catch (e) {"
+                      "  log = log + \"catch:\" + e + \";\";"
+                      "} finally {"
+                      "  log = log + \"finally;\";"
+                      "}"
+                      "print(log);"
+                      "print(e);"; // 外层全局 e 应恢复为 999
+    std::string expected = "catch:42;finally;999";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- while 循环中 break 触发 finally ----
+TEST(TestJIT, R162BreakInTryFinally) {
+    std::string src = "var log = \"\";"
+                      "var i = 0;"
+                      "while (i < 5) {"
+                      "  i = i + 1;"
+                      "  try {"
+                      "    if (i == 3) { break; }"
+                      "    log = log + i;"
+                      "  } finally {"
+                      "    log = log + \"f\";"
+                      "  }"
+                      "}"
+                      "print(log);";
+    // i=1: try(1) finally(f) → "1f"
+    // i=2: try(2) finally(f) → "1f2f"
+    // i=3: try(break) finally(f) → "1f2ff" then break out
+    std::string expected = "1f2ff";
+    EXPECT_EQ(runJIT(src), expected) << "JIT 输出: " << runJIT(src);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- throw 后续跳值在操作数栈 ----
+TEST(TestJIT, R162ThrowExpression) {
+    std::string src = "try {"
+                      "  throw 1 + 2 + 3;"
+                      "} catch (e) {"
+                      "  print(e);"
+                      "}";
+    std::string expected = "6";
+    EXPECT_EQ(runJIT(src), expected);
+    EXPECT_EQ(minilang_test::runStackVM(src), expected);
+}
+
+// ---- 多次 execute 调用：tryStack_ 清空验证 ----
+TEST(TestJIT, R162MultipleExecuteClearsTryStack) {
+    std::string src = "try { throw 1; } catch (e) { print(e); }";
+    // 第一次 execute
+    EXPECT_EQ(runJIT(src), "1");
+    // 第二次 execute（独立 JITBackend 实例，验证无残留）
+    EXPECT_EQ(runJIT(src), "1");
+}
+
+// ============================================================
+// P2-9: JIT GC 抑制测试（CallbackSuppressor）
+// ------------------------------------------------------------
+// 验证 JITBackend::execute() 期间增量 GC 回调被抑制，
+// 避免不完整 roots 集误回收 JIT 存活容器导致 UAF。
+// ============================================================
+
+/// JIT 执行期间 GC 回调被抑制（不触发增量回收）
+TEST(TestJITGcSuppression, GcCallbackSuppressedDuringJitExecution) {
+    // 设置一个会被调用的 GC 触发回调（标志位 + 计数器）
+    auto& gc = GcManager::instance();
+    int gcCallCount = 0;
+    gc.setGcTriggerCallback([&gcCallCount] { ++gcCallCount; });
+    // 调小阈值，确保 JIT 内 helper 分配容器时若回调未被抑制则会触发
+    gc.setGcAllocationThreshold(1);
+    // 重置分配计数器，确保从 0 开始累计
+    gc.reset();
+
+    // JIT 代码创建数组（触发 jitBuildArray helper → registerTracked → checkIncrementalGc）
+    // 若 CallbackSuppressor 未生效，gcCallCount 会 > 0
+    std::string result = runJIT("var a = [1, 2, 3]; print(a[0] + a[1] + a[2]);");
+
+    EXPECT_EQ(result, "6");
+    // JIT 执行期间 GC 回调应被完全抑制
+    EXPECT_EQ(gcCallCount, 0) << "JIT 执行期间 GC 回调不应被触发（CallbackSuppressor 应抑制）";
+
+    // 清理：恢复默认状态
+    gc.setGcTriggerCallback(nullptr);
+    gc.setGcAllocationThreshold(GcManager::GC_ALLOCATION_THRESHOLD);
+    gc.reset();
+}
+
+/// 多次 JIT 执行验证 CallbackSuppressor 正确恢复回调（无累积抑制）
+TEST(TestJITGcSuppression, MultipleJitExecutionsRestoreCallback) {
+    auto& gc = GcManager::instance();
+    int gcCallCount = 0;
+    gc.setGcTriggerCallback([&gcCallCount] { ++gcCallCount; });
+    gc.setGcAllocationThreshold(1);
+    gc.reset();
+
+    // 连续 3 次 JIT 执行，每次都应抑制 GC 回调
+    // 若 CallbackSuppressor 析构未恢复回调，第 2/3 次时回调指针已被置空
+    // （suppress 时保存 nullptr → 析构恢复 nullptr），后续抑制无意义但结果应正确
+    for (int i = 0; i < 3; ++i) {
+        gcCallCount = 0;
+        EXPECT_EQ(runJIT("var a = [1, 2]; print(a[0] + a[1]);"), "3");
+        EXPECT_EQ(gcCallCount, 0) << "第 " << i + 1 << " 次 JIT 执行期间回调不应被触发";
+    }
+
+    // 清理
+    gc.setGcTriggerCallback(nullptr);
+    gc.setGcAllocationThreshold(GcManager::GC_ALLOCATION_THRESHOLD);
+    gc.reset();
+}
+
+/// JIT 数组操作不崩溃（验证 GC 抑制期间无 UAF）
+TEST(TestJITGcSuppression, JitArrayOperationsNoCrash) {
+    // 创建多个数组并执行操作，验证 JIT 期间无 UAF
+    // 即使 GC 被抑制，数组本身由引用计数管理生命周期，
+    // 循环引用孤岛由下一轮 Interpreter execute() 兜底回收
+    std::string src = R"(
+        var a = [1, 2, 3];
+        var b = [4, 5, 6];
+        var c = [a, b];
+        print(c[0][0] + c[0][1] + c[0][2]);
+        print(c[1][0] + c[1][1] + c[1][2]);
+    )";
+    EXPECT_EQ(runJIT(src), "615");
+}
+
+/// JIT 循环内创建数组不崩溃（长时间运行场景）
+TEST(TestJITGcSuppression, JitLoopArrayCreationNoCrash) {
+    // 循环内创建数组，累计分配数远超 GC 阈值（8192）
+    // 验证 GC 抑制期间不会因未回收导致崩溃
+    std::string src = R"(
+        var sum = 0;
+        var i = 0;
+        while (i < 100) {
+            var arr = [i, i + 1, i + 2];
+            sum = sum + arr[0];
+            i = i + 1;
+        }
+        print(sum);
+    )";
+    std::string result = runJIT(src);
+    // sum = 0+1+2+...+99 = 4950
+    EXPECT_EQ(result, "4950");
+}
+
+// ============================================================
+// R165: 浮点边界值与递归深度边界测试（P3-A3 补充盲区）
+// ------------------------------------------------------------
+// 现有 R143 浮点测试仅用 3.14/1.5/2.5 等常规值；现有 R160 递归深度测试
+// 仅验证统一错误消息，未覆盖边界值（256 刚好触发 / 255 刚好通过）。
+// 本组补齐 P1 浮点边界值（NaN/Infinity/-0.0/极大值/极小值）与 P2 递归深度
+// 边界值，与 StackVM 输出对比保证一致性。
+// ============================================================
+
+// ---- P1: 浮点边界值（与 StackVM 输出对比，不硬编码预期）----
+
+TEST(TestJIT, R165FloatNegativeZero) {
+    // -0.0 输出格式（IEEE 754 负零，与 +0.0 数值相等但符号位不同）
+    EXPECT_EQ(runJIT("print(-0.0);"), minilang_test::runStackVM("print(-0.0);"));
+}
+
+TEST(TestJIT, R165FloatScientificLarge) {
+    // 大数科学计数法（1e10 = 10000000000）
+    EXPECT_EQ(runJIT("print(1e10);"), minilang_test::runStackVM("print(1e10);"));
+}
+
+TEST(TestJIT, R165FloatScientificSmall) {
+    // 小数科学计数法（1e-10 = 0.0000000001）
+    EXPECT_EQ(runJIT("print(1e-10);"), minilang_test::runStackVM("print(1e-10);"));
+}
+
+TEST(TestJIT, R165FloatLargeValue) {
+    // 接近 double 上限（1e308，未溢出）
+    EXPECT_EQ(runJIT("print(1e308);"), minilang_test::runStackVM("print(1e308);"));
+}
+
+TEST(TestJIT, R165FloatSmallValue) {
+    // 接近 double 下限（1e-300，未下溢到 denormal）
+    EXPECT_EQ(runJIT("print(1e-300);"), minilang_test::runStackVM("print(1e-300);"));
+}
+
+TEST(TestJIT, R165FloatMinSubnormal) {
+    // subnormal 边界（1e-323，仍可表示但精度极低）
+    EXPECT_EQ(runJIT("print(1e-323);"), minilang_test::runStackVM("print(1e-323);"));
+}
+
+TEST(TestJIT, R165FloatArithmeticMixed) {
+    // 浮点 + 整数混合运算（隐式类型转换）
+    EXPECT_EQ(runJIT("print(2 + 0.5);"), minilang_test::runStackVM("print(2 + 0.5);"));
+}
+
+TEST(TestJIT, R165FloatNestedArithmetic) {
+    // 嵌套浮点运算（验证 IEEE 754 舍入与 StackVM 一致）
+    EXPECT_EQ(runJIT("print((1.0/3.0)*3.0);"), minilang_test::runStackVM("print((1.0/3.0)*3.0);"));
+}
+
+// ---- P2: 递归深度边界值（255 通过 / 256 触发限制）----
+
+TEST(TestJIT, R165RecursionDepthExactly255) {
+    // 255 层递归（与 DeepRecursion255 相同，作为边界对照基准）
+    std::string src = "fun count(n) { if (n == 0) { return 0; } return 1 + count(n - 1); } print(count(255));";
+    EXPECT_EQ(runJIT(src), "255");
+}
+
+TEST(TestJIT, R165RecursionDepthAtLimit256Fails) {
+    // 256 层递归应触发 MAX_FRAMES=256 限制（与 StackVM 错误消息一致）
+    std::string src = "fun count(n) { if (n == 0) { return 0; } return 1 + count(n - 1); } print(count(256));";
+    std::string jitOut = runJIT(src);
+    std::string vmOut = minilang_test::runStackVM(src);
+    // 错误前缀不同（<jit-runtime: vs <runtime:），但核心消息应一致
+    EXPECT_NE(jitOut.find("递归深度超过限制 (256)"), std::string::npos)
+        << "JIT 256 层递归应触发限制，实际: " << jitOut;
+    EXPECT_NE(vmOut.find("递归深度超过限制 (256)"), std::string::npos)
+        << "StackVM 256 层递归应触发限制，实际: " << vmOut;
+}
+
+TEST(TestJIT, R165RecursionDepthAtLimit257Fails) {
+    // 257 层递归（验证刚超限 1 层也触发限制，与 256 行为一致）
+    std::string src = "fun count(n) { if (n == 0) { return 0; } return 1 + count(n - 1); } print(count(257));";
+    std::string jitOut = runJIT(src);
+    EXPECT_NE(jitOut.find("递归深度超过限制"), std::string::npos) << "JIT 257 层递归应触发限制，实际: " << jitOut;
 }
 
 #else // !MINILANG_USE_JIT

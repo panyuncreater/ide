@@ -396,6 +396,21 @@ public:
         return debugCoord_.getFunctionBreakpointHitCount(name);
     }
 
+    /// P1-4 fix: 设置函数断点条件（双写 DebugController + VmStepper，对齐行断点条件双写语义）。
+    /// Interpreter 路径走 debugCoord_，VM 路径走 vmStepper_。两条路径独立存储 condition，
+    /// 但条件变更时都重置对应函数的 hitCount（与 setBreakpointCondition 行为一致）。
+    void setFunctionBreakpointCondition(const std::string& name, const std::string& condition) {
+        debugCoord_.setFunctionBreakpointCondition(name, condition);
+        vmStepper_.setFunctionBreakpointCondition(name, condition);
+        notifyVmStateChanged();
+    }
+    /// P1-4 fix: 获取函数断点条件（按活跃后端分派，与 getFunctionBreakpointHitCount 一致）。
+    std::string getFunctionBreakpointCondition(const std::string& name) const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized())
+            return vmStepper_.getFunctionBreakpointCondition(name);
+        return debugCoord_.getFunctionBreakpointCondition(name);
+    }
+
     void setExceptionBreakpointEnabled(bool enabled) {
         debugCoord_.setExceptionBreakpointEnabled(enabled);
         vmStepper_.setExceptionBreakpointEnabled(enabled);
@@ -414,21 +429,39 @@ public:
 
     // ---- R161 Watchpoint（数据断点）facade ----
     // 添加数据断点（监视变量/字段被修改时暂停）。
-    // VM 路径转发到 vmStepper_；Interpreter 路径暂不支持 watchpoint（仅 VM 路径）。
+    // L19: 同时设置 vmStepper_ 和 debugCoord_（参照 exception breakpoint 模式），
+    // 确保调试路径切换后 watchpoint 不丢失。
     void setWatchpoint(const WatchpointInfo& wp) {
         vmStepper_.setWatchpoint(wp);
+        debugCoord_.setWatchpoint(wp);
         notifyVmStateChanged();
     }
     void removeWatchpoint(const std::string& varName, const std::string& fieldName = "") {
         vmStepper_.removeWatchpoint(varName, fieldName);
+        debugCoord_.removeWatchpoint(varName, fieldName);
         notifyVmStateChanged();
     }
     void clearWatchpoints() {
         vmStepper_.clearWatchpoints();
+        debugCoord_.clearWatchpoints();
         notifyVmStateChanged();
     }
-    const QVector<WatchpointInfo>& getWatchpoints() const { return vmStepper_.getWatchpoints(); }
-    bool hasWatchpoints() const { return vmStepper_.hasWatchpoints(); }
+    // L19: 返回值拷贝（VM 路径 QVector + Interpreter 路径 std::vector 统一为 QVector）。
+    // 优先返回 vmStepper_ 的（与 VM 路径行为一致），VM 未初始化时返回 debugCoord_ 的。
+    // watchpoint 列表通常很小（几个），值拷贝开销可忽略。
+    QVector<WatchpointInfo> getWatchpoints() const {
+        if (vmStepper_.isRunning() || vmStepper_.isInitialized()) {
+            return vmStepper_.getWatchpoints();
+        }
+        QVector<WatchpointInfo> result;
+        auto vec = debugCoord_.getWatchpoints();
+        result.reserve(static_cast<int>(vec.size()));
+        for (const auto& wp : vec) {
+            result.append(wp);
+        }
+        return result;
+    }
+    bool hasWatchpoints() const { return vmStepper_.hasWatchpoints() || debugCoord_.hasWatchpoints(); }
 
     // ---- VM 操作（转发到 VmStepper）----
     // OPT-1: 在状态变更后调用 notifyVmStateChanged() 通知订阅面板，

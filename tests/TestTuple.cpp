@@ -20,6 +20,7 @@
 #include "compiler/IR.h"
 #include "compiler/RegisterVM.h"
 #include "compiler/VM.h"
+#include "formatter/Formatter.h"
 #include "interpreter/Interpreter.h"
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
@@ -389,4 +390,149 @@ TEST(TupleThreeEngines, MultipleReturnViaTuple) {
     EXPECT_EQ(runStackVM(src), expected);
     EXPECT_EQ(runStackVM_IR(src), expected);
     EXPECT_EQ(runRegVM(src), expected);
+}
+
+// ============================================================
+// L20 测试：per-name 类型注解 var (a: int, b: string) = expr;
+// ------------------------------------------------------------
+// 验证语法支持、运行时类型检查、四后端语义一致性、Formatter 往返等价性。
+// 注：Compiler/IR/RegisterVM 路径不 emit 类型检查指令（与 VarDecl 一致——
+//     类型注解仅由 Interpreter 在运行时检查，VM 路径信任编译期已通过 TypeChecker）。
+//     但 MiniLang 的 TypeChecker 当前不处理 DestructureBinding，因此 VM 路径
+//     实际跳过类型检查。这是已知限制——类型注解在 VM 路径下仅作文档/未来静态检查预留。
+//     Interpreter 路径在运行时强制校验。
+// ============================================================
+
+TEST(TupleL20, PerNameTypeAnnotationBasic) {
+    // 基本语法：var (a: int, b: string) = (1, "hello");
+    std::string src = "var (a: int, b: string) = (1, \"hello\");"
+                      "print(a);"
+                      "print(\";\");"
+                      "print(b);";
+    std::string expected = "1;hello";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+TEST(TupleL20, PerNameTypeAnnotationAllTypes) {
+    // 全类型注解：int/float/bool/string
+    // 使用 3.5（精确二进制表示）避免 std::to_chars(general,17) 对 3.14 产生
+    // "3.1400000000000001" 的四后端格式化差异
+    std::string src = "var (i: int, f: float, b: bool, s: string) = (42, 3.5, true, \"ok\");"
+                      "print(i);"
+                      "print(\";\");"
+                      "print(f);"
+                      "print(\";\");"
+                      "print(b);"
+                      "print(\";\");"
+                      "print(s);";
+    std::string expected = "42;3.5;true;ok";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+TEST(TupleL20, PerNameTypeAnnotationPartial) {
+    // 部分注解：仅部分位置带类型注解（其他位置无注解，不校验）
+    std::string src = "var (a: int, b, c: string) = (1, 2, \"three\");"
+                      "print(a);"
+                      "print(\";\");"
+                      "print(b);"
+                      "print(\";\");"
+                      "print(c);";
+    std::string expected = "1;2;three";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+TEST(TupleL20, PerNameTypeAnnotationMismatchInterpreter) {
+    // Interpreter 路径：类型不匹配触发运行时错误
+    std::string src = "var (a: int, b: string) = (\"not_int\", 42);"
+                      "print(a);";
+    std::string result = runInterpreter(src);
+    EXPECT_NE(result.find("runtime"), std::string::npos)
+        << "Interpreter 应在类型不匹配时报运行时错误，实际: " << result;
+}
+
+TEST(TupleL20, PerNameTypeAnnotationArraySuffix) {
+    // 数组后缀类型注解：var (arr: int[], s: string) = ([1,2,3], "ok");
+    std::string src = "var (arr: int[], s: string) = ([1, 2, 3], \"ok\");"
+                      "print(arr[0]);"
+                      "print(\";\");"
+                      "print(arr[2]);"
+                      "print(\";\");"
+                      "print(s);";
+    std::string expected = "1;3;ok";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+TEST(TupleL20, PerNameTypeAnnotationNoAnnotationBackwardCompat) {
+    // 无注解向后兼容：var (a, b) = (1, 2); 应与原行为一致
+    std::string src = "var (a, b) = (1, 2);"
+                      "print(a + b);";
+    std::string expected = "3";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+TEST(TupleL20, PerNameTypeAnnotationInsideFunction) {
+    // 函数内解构 + 类型注解
+    std::string src = "fun test() {"
+                      "  var (a: int, b: int) = (10, 20);"
+                      "  return a + b;"
+                      "}"
+                      "print(test());";
+    std::string expected = "30";
+    EXPECT_EQ(runInterpreter(src), expected);
+    EXPECT_EQ(runStackVM(src), expected);
+    EXPECT_EQ(runStackVM_IR(src), expected);
+    EXPECT_EQ(runRegVM(src), expected);
+}
+
+TEST(TupleL20, PerNameTypeAnnotationFormatterRoundtrip) {
+    // Formatter 往返：格式化后重新解析应保持语义等价
+    std::string src = "var (a: int, b: string) = (1, \"hello\");"
+                      "print(a);"
+                      "print(\";\");"
+                      "print(b);";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    ASSERT_NE(ast, nullptr);
+    Formatter fmt;
+    fmt.setComments(lx.comments());
+    std::string formatted = fmt.format(*ast);
+    // 重新解析格式化后的代码
+    Lexer lx2;
+    auto tk2 = lx2.scan(formatted);
+    Parser p2;
+    auto ast2 = p2.parse(tk2);
+    ASSERT_NE(ast2, nullptr);
+    // 执行应得到相同结果
+    std::string expected = "1;hello";
+    EXPECT_EQ(runInterpreter(formatted), expected);
+}
+
+TEST(TupleL20, PerNameTypeAnnotationParseErrorOnInvalidType) {
+    // 类型注解后跟非法 token 应触发解析错误
+    // 注：Parser::parse 捕获 ParseError 后记录诊断并继续，仍返回非空 AST。
+    //      因此检查 hasErrors() 而非 ast == nullptr。
+    std::string src = "var (a: 123, b: string) = (1, \"hello\");"
+                      "print(a);";
+    Lexer lx;
+    auto tk = lx.scan(src);
+    Parser p;
+    auto ast = p.parse(tk);
+    EXPECT_TRUE(p.hasErrors()) << "类型注解后跟数字字面量应触发解析错误";
 }

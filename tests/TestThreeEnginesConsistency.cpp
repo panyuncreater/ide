@@ -1368,16 +1368,38 @@ TEST(ConsistencyDiff, E12_MethodCallOnNull) {
     EXPECT_EQ(rs, rr);
 }
 
-// E13: break 在循环外 — Interpreter 报运行时错误，VM 路径报编译期错误（IR 日志）
-// 已知差异：Interpreter 运行时报 "break 只能在循环体内使用"；
-// StackVM/RegisterVM 的 IR 路径将 break 外提视为编译期错误并返回空输出。
+// E13: break 在循环外 — Interpreter 报运行时错误，VM 路径报编译期错误
+// L1 fix: IR 路径原仅 Logger::Error 不设置 irDiagnostics_，导致编译"成功"且 break
+// 被静默忽略（空输出）。修复后 IR 路径正确报告编译错误，与 StackVM 一致。
+// 架构性差异：Interpreter 无编译期，运行时报错；VM 路径编译期报错。
+// 编译错误格式含 "[编译器] 错误 (行 X):" 前缀，运行时错误格式为纯消息。
+// 核心消息文本 "break 只能在循环体内使用" 在三后端中一致。
 TEST(ConsistencyDiff, E13_BreakOutsideLoop) {
     std::string src = "break;";
     auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
-    // Interpreter 报运行时错误
-    EXPECT_TRUE(isRuntimeError(ri));
-    // StackVM/RegisterVM 不产生输出（编译期错误，无运行时输出）
-    EXPECT_NE(ri, rs) << "Interpreter vs StackVM — 已知差异";
+    // Interpreter 报运行时错误，消息含核心文本
+    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+    EXPECT_NE(ri.find("break 只能在循环体内使用"), std::string::npos) << "Interpreter: " << ri;
+    // StackVM_IR / RegVM_IR 报编译期错误（L1 fix 后一致），消息含核心文本
+    EXPECT_NE(rs.find("<compile:"), std::string::npos) << "StackVM_IR: " << rs;
+    EXPECT_NE(rs.find("break 只能在循环体内使用"), std::string::npos) << "StackVM_IR: " << rs;
+    EXPECT_NE(rr.find("<compile:"), std::string::npos) << "RegVM_IR: " << rr;
+    EXPECT_NE(rr.find("break 只能在循环体内使用"), std::string::npos) << "RegVM_IR: " << rr;
+    // StackVM_IR 与 RegVM_IR 结果一致
+    EXPECT_EQ(rs, rr) << "StackVM_IR vs RegVM_IR";
+}
+
+// E13b: continue 在循环外 — 同 E13，验证 continue 的一致性
+TEST(ConsistencyDiff, E13b_ContinueOutsideLoop) {
+    std::string src = "continue;";
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
+    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+    EXPECT_NE(ri.find("continue 只能在循环体内使用"), std::string::npos) << "Interpreter: " << ri;
+    EXPECT_NE(rs.find("<compile:"), std::string::npos) << "StackVM_IR: " << rs;
+    EXPECT_NE(rs.find("continue 只能在循环体内使用"), std::string::npos) << "StackVM_IR: " << rs;
+    EXPECT_NE(rr.find("<compile:"), std::string::npos) << "RegVM_IR: " << rr;
+    EXPECT_NE(rr.find("continue 只能在循环体内使用"), std::string::npos) << "RegVM_IR: " << rr;
+    EXPECT_EQ(rs, rr) << "StackVM_IR vs RegVM_IR";
 }
 
 // ============================================================
@@ -1704,17 +1726,16 @@ TEST(ConsistencyDiff, AuditAndOr_NestedReturnValue) {
     EXPECT_EQ(runRegVM_IR(src), "13");
 }
 
-TEST(ConsistencyDiff, AuditSuper_RuntimeErrorNotCatchableByTryCatch) {
+TEST(ConsistencyDiff, AuditSuper_RuntimeErrorCatchableByTryCatch_L14) {
+    // L14: runtimeError 现在可被 try/catch 捕获（原 AuditSuper_RuntimeErrorNotCatchableByTryCatch
+    // 验证的"不可捕获"语义已废弃）。super 在非方法上下文调用产生 runtimeError，
+    // 被 catch 捕获后执行 catch 块。三后端一致输出 "caught"。
     std::string src = "class A { fun get() { return 1; } }"
                       "try { super.get(); } catch (e) { print(\"caught\"); }";
     auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
-    EXPECT_TRUE(isRuntimeError(ri));
-    EXPECT_TRUE(isRuntimeError(rs));
-    EXPECT_TRUE(isRuntimeError(rr));
-    // R97 #11 fix: 三后端 super 错误消息统一为 "super 只能在类方法中使用"
-    EXPECT_EQ(ri, rs);
-    EXPECT_EQ(ri, rr);
-    EXPECT_EQ(rs, rr);
+    EXPECT_EQ(ri, "caught");
+    EXPECT_EQ(rs, "caught");
+    EXPECT_EQ(rr, "caught");
 }
 
 TEST(ConsistencyDiff, AuditSuper_UserThrowIsCatchable) {
@@ -1924,12 +1945,14 @@ TEST(ConsistencyDiff, AuditInter_InterpolationMidThrowNoPartial) {
     EXPECT_EQ(runRegVM_IR(src), "caught:boom");
 }
 
-TEST(ConsistencyDiff, AuditInter_InterpolationUndefinedVarRuntimeError) {
+TEST(ConsistencyDiff, AuditInter_InterpolationUndefinedVarRuntimeError_L14) {
+    // L14: runtimeError 现在可被 try/catch 捕获。字符串插值中引用未定义变量
+    // 产生 runtimeError，被 catch 捕获后执行 catch 块。三后端一致输出 "caught"。
     std::string src = "try { var x = \"val{undefinedVar}\"; print(x); }"
                       "catch (e) { print(\"caught\"); }";
-    EXPECT_TRUE(isRuntimeError(runInterp(src)));
-    EXPECT_TRUE(isRuntimeError(runStackVM_IR(src)));
-    EXPECT_TRUE(isRuntimeError(runRegVM_IR(src)));
+    EXPECT_EQ(runInterp(src), "caught");
+    EXPECT_EQ(runStackVM_IR(src), "caught");
+    EXPECT_EQ(runRegVM_IR(src), "caught");
 }
 
 TEST(ConsistencyDiff, AuditInter_InterpolationThrowCaught) {
@@ -2418,24 +2441,31 @@ TEST(ConsistencyDiff, AuditF7_CatchVarScopeLeakFunction) {
     EXPECT_EQ(rs, rr) << "catch 变量作用域——StackVM vs RegVM";
 }
 
-// F7: 顶层 catch 变量作用域——catch 块后引用应报错
-// 注：IR 路径（StackVM/RegVM）无 DELETE_GLOBAL 指令，顶层 catch 变量泄漏是已知限制。
-// 仅验证 Interpreter 路径正确报错。
+// F7: 顶层 catch 变量作用域——catch 块后引用应报错（三后端一致）
+// L2 fix: IR 路径通过 emitCatchGlobal 的 DELETE_VAR 指令清理 catch 变量，
+// 现已与 Interpreter 一致在 catch 块外引用时报"未定义的变量"。
 TEST(ConsistencyDiff, AuditF7_CatchVarScopeLeakTopLevel) {
     std::string src = "try { throw \"err\"; } catch (e) { print(e); }\n"
                       "print(e);\n"; // 顶层 catch 块外引用 e，应报"未定义的变量"
-    auto ri = runInterp(src);
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
     EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
+    EXPECT_TRUE(isRuntimeError(rs)) << "StackVM: " << rs;
+    EXPECT_TRUE(isRuntimeError(rr)) << "RegVM: " << rr;
+    EXPECT_EQ(ri, rs) << "catch 变量作用域——Interpreter vs StackVM";
+    EXPECT_EQ(rs, rr) << "catch 变量作用域——StackVM vs RegVM";
 }
 
-// F7: catch 变量遮蔽外层同名变量——catch 块后外层变量应恢复
-// 注：IR 路径遮蔽执行顺序有预存在 bug，仅验证 Interpreter。
+// F7: catch 变量遮蔽外层同名变量——catch 块后外层变量应恢复（三后端一致）
+// L3 fix: IR 路径 emitCatchWithShadowSave 已实现遮蔽保护，
+// 现已与 Interpreter 一致在 catch 块外恢复外层变量原值。
 TEST(ConsistencyDiff, AuditF7_CatchVarShadowingRestored) {
     std::string src = "var e = 100;\n"
                       "try { throw 42; } catch (e) { print(e); }\n" // catch 内 e=42
                       "print(e);\n";                                // catch 块外 e 应恢复为 100
-    auto ri = runInterp(src);
+    auto ri = runInterp(src), rs = runStackVM_IR(src), rr = runRegVM_IR(src);
     EXPECT_EQ(ri, "42100") << "Interpreter: catch 内输出 42，catch 外输出 100";
+    EXPECT_EQ(ri, rs) << "StackVM: catch 遮蔽恢复";
+    EXPECT_EQ(ri, rr) << "RegVM: catch 遮蔽恢复";
 }
 
 // F8: 模块异常路径不崩溃——closeCapturedVariables 在异常路径正确调用

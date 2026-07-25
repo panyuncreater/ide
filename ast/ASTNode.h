@@ -386,10 +386,18 @@ public:
 /// R98 元组与解构：解构绑定节点 var (a, b, c) = expr
 /// 语义：求值 initializer（必须为 tuple），按位置绑定到 names 中的各变量名。
 /// 类型注解 tupleTypeAnnotation 可选，用于运行时类型检查（如 "(int,string)"）。
+/// L20 per-name 类型注解（2026-07-24）：nameTypeAnnotations[i] 与 names[i] 一一对应，
+/// 支持 `var (a: int, b: string) = expr;` 语法。空字符串表示该位置无注解。
+/// 设计：
+///   - nameTypeAnnotations.size() == 0：完全无注解（向后兼容）
+///   - nameTypeAnnotations.size() == names.size()：每个位置可能有注解（空串=该位置无注解）
+///   - 运行时按位置校验：tup[i] 必须匹配 nameTypeAnnotations[i]（非空时）
+///   - 与 tupleTypeAnnotation 互斥：per-name 注解优先，tupleTypeAnnotation 保留作整体注解（向后兼容）
 class DestructureBinding : public ASTNode {
 public:
     std::vector<std::string> names;       // 被绑定的变量名列表（按元组位置对应）
     std::string tupleTypeAnnotation;      // 可选：元组类型注解 "(T1,T2,...)"
+    std::vector<std::string> nameTypeAnnotations; // L20: per-name 类型注解，与 names 平行
     std::shared_ptr<ASTNode> initializer; // 右侧表达式（求值结果必须为 tuple）
 
     DestructureBinding(std::vector<std::string> ns, std::shared_ptr<ASTNode> init, int ln = 0, int col = 0,
@@ -399,6 +407,17 @@ public:
         nodeType = NodeType::NODE_DESTRUCTURE_BINDING;
     }
 
+    /// L20: 检查是否启用了 per-name 类型注解
+    bool hasNameTypeAnnotations() const { return !nameTypeAnnotations.empty(); }
+
+    /// L20: 获取位置 i 的类型注解（无注解返回空串）
+    const std::string& nameTypeAt(size_t i) const {
+        static const std::string empty;
+        if (i < nameTypeAnnotations.size())
+            return nameTypeAnnotations[i];
+        return empty;
+    }
+
     void accept(Visitor& visitor) override;
     std::string nodeName() const override {
         std::string result = "Destructure(";
@@ -406,6 +425,10 @@ public:
             if (i > 0)
                 result += ",";
             result += names[i];
+            if (i < nameTypeAnnotations.size() && !nameTypeAnnotations[i].empty()) {
+                result += ":";
+                result += nameTypeAnnotations[i];
+            }
         }
         return result + ")";
     }
@@ -929,15 +952,24 @@ public:
 };
 
 /// import 语句节点
-/// 语法: import "path"; 或 import { a, b } from "path";
+/// 语法:
+///   import "path";                      — 导入全部到当前作用域
+///   import { a, b } from "path";        — 导入指定名称
+///   import * as ns from "path";         — 导入全部到命名空间对象 ns（P2-11）
 class ImportStmt : public ASTNode {
 public:
     std::string modulePath;         // 模块路径（字符串字面量）
     std::vector<std::string> names; // 导入的名称（空表示导入全部）
     bool importAll;                 // true = import * (导入全部), false = 指定名称
+    std::string namespaceAlias;     // P2-11: 命名空间别名（非空表示 import * as ns 模式）
 
     ImportStmt(const std::string& path, std::vector<std::string> n, bool all, int ln = 0, int col = 0)
         : ASTNode(ln, col), modulePath(path), names(std::move(n)), importAll(all) {
+        nodeType = NodeType::NODE_IMPORT_STMT;
+    }
+    // P2-11: 命名空间导入构造函数
+    ImportStmt(const std::string& path, const std::string& alias, int ln = 0, int col = 0)
+        : ASTNode(ln, col), modulePath(path), importAll(true), namespaceAlias(alias) {
         nodeType = NodeType::NODE_IMPORT_STMT;
     }
     void accept(Visitor& visitor) override;

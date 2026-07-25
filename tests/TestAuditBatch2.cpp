@@ -372,10 +372,12 @@ TEST(AuditBatch2Inherit, SuperInPlainFunctionRuntimeError) {
 }
 
 // ============================================================
-// 11. BUG-INH-AUDIT-6: super 在 try/catch 内不可捕获（运行时错误穿透）
+// 11. BUG-INH-AUDIT-6: super 在 try/catch 内可捕获（L14 语义变更）
+//     L14 前：runtimeError 穿透 try/catch（不可捕获）
+//     L14 后：runtimeError 被 try/catch 捕获，catch 变量绑定错误消息
 //     三后端统一行为
 // ============================================================
-TEST(AuditBatch2Inherit, SuperErrorNotCatchableByTryCatch) {
+TEST(AuditBatch2Inherit, SuperErrorCatchableByTryCatch_L14) {
     std::string src =
         "class A { fun get() { return 1; } }"
         "try {"
@@ -388,10 +390,11 @@ TEST(AuditBatch2Inherit, SuperErrorNotCatchableByTryCatch) {
     auto rs = runStackVM(src);
     auto rsIR = runStackVM_IR(src);
     auto rr = runRegVM(src);
-    EXPECT_TRUE(isRuntimeError(ri)) << "Interpreter: " << ri;
-    EXPECT_TRUE(isRuntimeError(rs)) << "StackVM: " << rs;
-    EXPECT_TRUE(isRuntimeError(rsIR)) << "StackVM-IR: " << rsIR;
-    EXPECT_TRUE(isRuntimeError(rr)) << "RegVM: " << rr;
+    // L14: super 错误消息被 catch 捕获，e = "super 只能在类方法中使用"
+    EXPECT_EQ(ri, "caught:super 只能在类方法中使用end");
+    EXPECT_EQ(rs, "caught:super 只能在类方法中使用end");
+    EXPECT_EQ(rsIR, "caught:super 只能在类方法中使用end");
+    EXPECT_EQ(rr, "caught:super 只能在类方法中使用end");
 }
 
 // ============================================================

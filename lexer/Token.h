@@ -35,6 +35,7 @@ enum class TokenType {
     TK_IMPORT,
     TK_FROM,
     TK_EXPORT,
+    TK_AS, // P2-11: import * as ns 中的 as 关键字
     // 类型关键字
     TK_INT,
     TK_FLOAT,
@@ -177,6 +178,8 @@ struct Token {
             return "FROM";
         case TokenType::TK_EXPORT:
             return "EXPORT";
+        case TokenType::TK_AS: // P2-11
+            return "AS";
         case TokenType::TK_INT:
             return "INT_TYPE";
         case TokenType::TK_FLOAT:
