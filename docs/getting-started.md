@@ -190,7 +190,8 @@ for (var i = 0; i < 10; i = i + 1) {
 | `MINILANG_ENABLE_I18N` | ON | Qt Linguist 国际化 i18n 工具链（默认编译 .ts → .qm 并部署到 exe 旁） |
 | `MINILANG_ENABLE_LTO` | ON | Release 构建启用链接时优化 |
 | `MINILANG_USE_CCACHE` | OFF | 启用 ccache 缓存 |
-| `MINILANG_WERROR` | OFF | 将编译器警告视为错误 |
+| `MINILANG_W4` | OFF | MSVC /W4 警告级别 + 释放 /wd4996（windows-msvc-debug/release preset 默认 ON） |
+| `MINILANG_WERROR` | OFF | 将编译器警告视为错误（windows-msvc-debug/release preset 默认 ON） |
 | `MINILANG_BUILD_TESTS` | ON | 构建 GoogleTest 单元测试 |
 | `MINILANG_BUILD_TEST_HARNESS` | OFF | 构建审计/压测工具 |
 | `MINILANG_USE_QTCHARTS` | OFF | 使用 QtCharts 绘制柱状图（性能仪表盘等） |
