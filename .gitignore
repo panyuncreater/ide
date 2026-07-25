@@ -66,9 +66,21 @@ CMakeUserPresets.json
 *.log
 build_log*.txt
 build_output.txt
+build_out.txt
+build_err.txt
 test*_err.txt
 test*_out.txt
 Testing/
+
+# --- 一次性构建/测试脚本（P2/P3 迭代期间产生） ---
+_build_*.bat
+build_l*.bat
+build_l*.ps1
+build_p*.bat
+build_temp_*.bat
+build_test_*.bat
+build_tests.bat
+run_*_tests.ps1
 
 # --- 临时调试输出（R154-R165 迭代期间产生） ---
 _tmp_*
