@@ -104,6 +104,21 @@ tmp_*.mlang
 docs/api/
 minilang_architecture.png
 
+# --- 根目录迭代残留（2026-07 清扫，历史垃圾已归档至 _archive_cleanup/）---
+# 约定：正式脚本一律放 scripts/，根目录不应出现 .py/.i/临时 bat
+/_archive_cleanup/
+/*.py
+/*.i
+/_*.txt
+/build_*.txt
+/test_*.txt
+/check_deps*.bat
+/rebuild_*.bat
+/get_env.bat
+/link_stress.bat
+/compile_stress_direct.bat
+/force_rebuild_stress.bat
+
 # --- 杂项 ---
 nul
 /MiniLangIDE_交付物.zip
