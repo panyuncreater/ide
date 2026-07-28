@@ -73,6 +73,23 @@ public:
     /// B4: 恢复之前 removeMapping 移除的槽位映射
     void restoreMapping(const std::string& name, int slot) { slots_[name] = slot; }
 
+    /// AUDIT-R5 R5 fix（快照导入语义）：将 name 从解析表（slots_）移除，使其可被重新
+    /// 分配到新槽位，但保留该槽位的字节码索引有效——所有已 emit 的引用按 slot 索引寻址，
+    /// 不受名称移除影响。同时将 names_[slot] 改名为唯一 marker，避免 slot→name 表出现
+    /// 重复名污染条件断点等按名反查。返回原槽位号（-1=未找到）。
+    /// 用途：模块内联后，导出名的槽位归属模块内部引用；导入方另分配新槽位承载快照副本，
+    /// 使模块内对导出变量的变异不经导入方名称可见（与 Interpreter 快照语义一致）。
+    int detachName(const std::string& name, const std::string& marker) {
+        auto it = slots_.find(name);
+        if (it == slots_.end())
+            return -1;
+        int slot = it->second;
+        slots_.erase(it);
+        if (slot >= 0 && slot < static_cast<int>(names_.size()))
+            names_[slot] = marker;
+        return slot;
+    }
+
     /// 取槽位名表（slot → name，最终传递给 CompileResult）
     const std::vector<std::string>& names() const { return names_; }
 
