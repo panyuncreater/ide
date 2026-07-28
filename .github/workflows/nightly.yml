@@ -1,0 +1,472 @@
+# ============================================================
+# MiniLang 夜间工作流（Nightly）
+# ------------------------------------------------------------
+# 触发条件：
+#   schedule        — 每日 18:00 UTC（= 北京时间次日 02:00）
+#   workflow_dispatch — 手动触发
+#
+# 作业：
+#   dynamic-fuzz     — 运行 tests_dynamic/fuzz_minilang.py 动态模糊测试
+#   native-fuzz      — 构建并运行 minilang-fuzz 原生三后端差分模糊测试
+#                      （拓展计划·基建：崩溃/分歧用例自动归档 artifact）
+#   sanitize-tsan    — TSan 竞态检测（并发/GUI 测试子集，信息性）
+#   formatter-audit  — 构建并运行 formatter_audit 审计工具
+#                      （ci.yml 的 test-harness 仅构建不运行，此处实际执行）
+#   pgo-linux        — PGO 两趟构建验证（GENERATE → 跑代表性负载 → USE）
+#   perf-baseline-refresh — 重新测量并产出刷新后的 perf-baseline.json
+#                      artifact（维护者人工审阅后提交，激活回归门禁）
+#   windows-arm64    — Windows ARM64 原生构建 + 核心测试（信息性，
+#                      含 MINILANG_USE_JIT_A64 PoC 编译验证）
+# ============================================================
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # 18:00 UTC = 02:00 北京时间
+  workflow_dispatch:
+
+env:
+  # 与 ci.yml 保持一致的 Qt 版本与 aqtinstall 版本
+  QT_VERSION: '6.8.3'
+  AQT_VERSION: '==3.3.0'
+
+jobs:
+  # ============================================================
+  # 作业 1：动态模糊测试（Python，无需编译）
+  # ------------------------------------------------------------
+  # 运行 tests_dynamic/fuzz_minilang.py：模拟 NaNBox/Lexer/Parser/GC
+  # 等核心逻辑的动态验证 + 生成 MiniLang 程序模糊测试用例。
+  # ============================================================
+  dynamic-fuzz:
+    name: Dynamic Fuzz (Python)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+
+      - name: 运行模糊测试
+        run: python3 tests_dynamic/fuzz_minilang.py
+
+  # ============================================================
+  # 作业 1.5：原生三后端差分模糊测试（拓展计划·基建）
+  # ------------------------------------------------------------
+  # 构建 minilang_fuzz CLI（R164）并每夜运行：
+  #   generate 模式 3000 轮 + mutate 模式 1500 轮，时间派生种子
+  #   （每夜不同种子 → 长期累积覆盖面；日志印出种子保证可复现）
+  #   退出码 1 = 发现崩溃或三后端分歧 → 作业失败 +
+  #   crash-*.ml 用例自动上传 artifact（保留 30 天供复现归因）
+  # ============================================================
+  native-fuzz:
+    name: Native Fuzz (三后端差分)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-native-fuzz
+
+      - name: 配置 CMake
+        run: cmake --preset linux-gcc-release -DMINILANG_USE_CCACHE=ON
+
+      - name: 构建 minilang_fuzz
+        run: cmake --build out/build/linux-release --target minilang_fuzz --parallel
+
+      - name: 运行生成模式模糊测试（3000 轮）
+        working-directory: out/build/linux-release/cli
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          SEED=$(date +%s)
+          echo "generate 模式种子: $SEED（复现：--seed $SEED）"
+          ./minilang_fuzz --mode generate --iterations 3000 --seed "$SEED" --quiet
+
+      - name: 运行变异模式模糊测试（1500 轮）
+        # 生成模式失败也继续跑变异模式，一次夜间运行收集两类结果
+        if: always()
+        working-directory: out/build/linux-release/cli
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          SEED=$(date +%s)
+          echo "mutate 模式种子: $SEED（复现：--seed $SEED）"
+          ./minilang_fuzz --mode mutate --iterations 1500 --seed "$SEED" --quiet
+
+      - name: 上传崩溃/分歧用例（发现问题时）
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: fuzz-crash-cases-${{ github.run_id }}
+          path: out/build/linux-release/cli/crash-*.ml
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ============================================================
+  # 作业 1.6：TSan 竞态检测（拓展计划·基建）
+  # ------------------------------------------------------------
+  # GUI/Worker 线程竞态是项目历史高频 bug 模式（AGENTS.md 第 10 条）。
+  # 使用已有 linux-gcc-tsan 预设，仅跑并发/线程/GUI 相关测试子集
+  # （TSan 5-15x 减速，全量会超时）。
+  # 首期 continue-on-error：先累积发现建立基线，清零后转阻断式。
+  # ============================================================
+  sanitize-tsan:
+    name: Sanitizer (TSan, 并发子集)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-tsan
+
+      - name: 配置 CMake (TSan Preset)
+        run: cmake --preset linux-gcc-tsan -DMINILANG_USE_CCACHE=ON
+
+      - name: 构建项目
+        run: cmake --build out/build/linux-tsan --parallel
+
+      - name: 运行并发/GUI 测试子集（TSan）
+        working-directory: out/build/linux-tsan
+        env:
+          QT_QPA_PLATFORM: offscreen
+          TSAN_OPTIONS: halt_on_error=0:second_deadlock_stack=1
+        # -R 正则筛选竞态高风险测试：并发原语/channel/协程/GUI 烟雾/Worker
+        run: ctest -j 2 --output-on-failure -R 'Concurrency|Channel|Thread|Coroutine|GuiSmoke|Worker|Async'
+
+
+  # ============================================================
+  # 作业 2：formatter_audit 构建 + 运行
+  # ------------------------------------------------------------
+  # 与 ci.yml 的 test-harness 作业不同：此处不仅构建 formatter_audit，
+  # 还实际执行它，验证 100+ 格式化用例的运行时行为。
+  # ============================================================
+  formatter-audit:
+    name: Formatter Audit (Build & Run)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      # 应用 QFluentKit 本地补丁（详见 ci.yml build-test 作业同名步骤说明）
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      # ---- 安装 Qt6（Linux，与 ci.yml Linux 作业一致）----
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      # L30: 安装 Qt Linguist lrelease 工具（与 ci.yml build-test Linux 步骤一致）
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-formatter-audit
+
+      # MINILANG_BUILD_TEST_HARNESS=ON 启用 test_harness 子目录（含 formatter_audit 目标）
+      - name: 配置 CMake
+        run: cmake --preset linux-gcc-release -DMINILANG_USE_CCACHE=ON -DMINILANG_BUILD_TEST_HARNESS=ON
+
+      - name: 构建 formatter_audit
+        run: cmake --build out/build/linux-release --target formatter_audit --parallel
+
+      - name: 运行 formatter_audit
+        working-directory: out/build/linux-release
+        run: ./test_harness/formatter_audit
+
+  # ============================================================
+  # 作业 3：PGO 两趟构建验证（E4，补齐“PGO CI 集成缺失”已知限制）
+  # ------------------------------------------------------------
+  # CMakeLists.txt 已提供 MINILANG_PGO_GENERATE / MINILANG_PGO_USE 两趟
+  # 构建选项，但此前 CI 从未验证过完整链路。本作业在 Linux GCC 上：
+  #   趟 1：-fprofile-generate 构建 minilang_perf_test 并运行代表性负载
+  #        （.gcda 写入构建目录对应 obj 旁）
+  #   趟 2：同一构建目录重新配置 -fprofile-use 重编（profile 路径天然匹配），
+  #        再跑一次负载验证优化后二进制功能正确
+  # 注：趟 2 需 -Wno-missing-profile（release preset 启用 -Werror，未被负载
+  # 覆盖的 TU 会报 missing-profile 警告）。
+  # ============================================================
+  pgo-linux:
+    name: PGO Two-Pass Build (Linux GCC)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      # 趟 1：插桩构建 + 运行代表性负载生成 profile
+      # （PGO 插桩/优化与 ccache 不兼容，两趟均禁用 ccache）
+      - name: 配置（趟 1：PGO GENERATE）
+        run: >
+          cmake --preset linux-gcc-release
+          -DMINILANG_USE_CCACHE=OFF
+          -DMINILANG_PGO_GENERATE=ON
+
+      - name: 构建 perf 负载（趟 1）
+        run: cmake --build out/build/linux-release --target minilang_perf_test --parallel
+
+      - name: 运行代表性负载生成 profile
+        working-directory: out/build/linux-release
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./tests/minilang_perf_test --gtest_brief=1 --gtest_filter='PerfBenchmark.*'
+
+      # 趟 2：同一构建目录切换 USE 重编（.gcda 路径与 obj 对应，天然匹配）
+      - name: 配置（趟 2：PGO USE）
+        run: >
+          cmake --preset linux-gcc-release
+          -DMINILANG_USE_CCACHE=OFF
+          -DMINILANG_PGO_GENERATE=OFF
+          -DMINILANG_PGO_USE=ON
+          -DCMAKE_CXX_FLAGS=-Wno-missing-profile
+
+      - name: 构建（趟 2：PGO 优化产物）
+        run: cmake --build out/build/linux-release --target minilang_perf_test --parallel
+
+      - name: 验证 PGO 优化产物功能正确
+        working-directory: out/build/linux-release
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ./tests/minilang_perf_test --gtest_brief=1 --gtest_filter='PerfBenchmark.*'
+
+  # ============================================================
+  # 作业 4：perf-baseline 基线刷新（拓展计划·基建）
+  # ------------------------------------------------------------
+  # 背景：perf-baseline.json 所有 elapsed_ms 均为 null，ci.yml 的
+  # perf-benchmark 作业实际上从未触发过回归判定（门禁未生效）。
+  # 本作业在与 perf-benchmark 相同的 runner 环境/相同预设下重新测量，
+  # 产出刷新后的 perf-baseline.json artifact。
+  # 维护者工作流：下载 artifact → 人工审阅数值合理性 → 提交入库，
+  # 从而激活回归门禁（不自动提交：基线变更应经人工确认，避免
+  # runner 性能波动污染基线）。
+  # 触发：随 nightly 每日运行 + 手动 dispatch（artifact 仅保留 30 天，
+  # 日常可忽略，需要刷新基线时取最近一次即可）。
+  # ============================================================
+  perf-baseline-refresh:
+    name: Perf Baseline Refresh (artifact)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-perf-baseline-refresh
+
+      - name: 配置 CMake（Release + Perf Tests，与 ci.yml perf-benchmark 对齐）
+        run: cmake --preset linux-gcc-release -DMINILANG_USE_CCACHE=ON -DMINILANG_BUILD_PERF_TESTS=ON
+
+      - name: 构建 minilang_perf_test
+        run: cmake --build out/build/linux-release --target minilang_perf_test --parallel
+
+      - name: 重新测量并刷新基线（保留 v3 schema/category_tolerance）
+        run: |
+          python scripts/perf_baseline.py update \
+            --baseline perf-baseline.json \
+            --binary out/build/linux-release/tests/minilang_perf_test
+          echo "=== 刷新后的基线 ==="
+          cat perf-baseline.json
+
+      - name: 上传刷新后的基线 artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: perf-baseline-refreshed-${{ github.run_id }}
+          path: perf-baseline.json
+          retention-days: 30
+
+      - name: 使用说明
+        run: |
+          echo '维护者：下载 artifact 审阅数值后提交入库即可激活 perf-benchmark 回归门禁。'
+          echo '若数值与上次刷新波动 >30%，说明 runner 不稳，建议重跑一次取稳定值。'
+
+  # ============================================================
+  # 作业 5：Windows ARM64 原生构建 + 核心测试（拓展计划·基建）
+  # ------------------------------------------------------------
+  # GitHub windows-11-arm 公共 runner（公开仓库免费）上原生 MSVC ARM64
+  # 编译：Qt 使用 win64_msvc2022_arm64 包（Qt 6.8+ 提供 ARM64 原生目标）。
+  # 目的：
+  #   1. 验证核心代码在 ARM64 上可编译可运行（x64 JIT 由 CMakeLists
+  #      平台检测自动禁用，回退解释/VM 路径）
+  #   2. MINILANG_USE_JIT_A64=ON 编译验证 ARM64 JIT PoC（无测试覆盖，
+  #      仅保障不编译回退，为 Phase 2 铺路）
+  # 信息性（continue-on-error）：ARM64 平台尚非交付目标。
+  # ============================================================
+  windows-arm64:
+    name: Windows ARM64 (Native, 信息性)
+    runs-on: windows-11-arm
+    continue-on-error: true
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6 (ARM64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows_arm64
+          target: desktop
+          arch: win64_msvc2022_arm64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 MSVC 开发环境 (ARM64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 配置 CMake（Debug + ARM64 JIT PoC 编译验证）
+        run: cmake --preset windows-msvc-debug -DMINILANG_USE_JIT_A64=ON
+
+      - name: 构建测试目标
+        run: cmake --build out/build/debug --target minilang_tests --parallel
+
+      - name: 运行核心测试子集
+        working-directory: out/build/debug
+        # 核心语义子集：词法/语法/三后端一致性（JIT 相关测试在非 x64
+        # 平台自动降级为解释路径，仍可验证行为一致）
+        run: ctest -C Debug -j 4 --output-on-failure -R 'Lexer|Parser|Interpreter|ThreeEngines'

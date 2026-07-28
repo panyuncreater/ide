@@ -144,6 +144,12 @@ def compare(
         key = f"{entry['backend']}::{entry['benchmark']}"
         baseline_map[key] = entry
 
+    # v3: per-category 差异化容忍度（覆盖全局 tolerance）
+    category_tolerance: dict[str, float] = {
+        k: float(v)
+        for k, v in baseline.get("category_tolerance", {}).items()
+    }
+
     rows: list[ComparisonRow] = []
     for it in items:
         key = f"{it.backend}::{it.benchmark}"
@@ -165,9 +171,11 @@ def compare(
             )
         else:
             ratio = it.elapsed_ms / baseline_ms
-            regressed = ratio > tolerance
+            # v3: 使用 category-specific tolerance（未列出则回退全局值）
+            effective_tolerance = category_tolerance.get(category, tolerance)
+            regressed = ratio > effective_tolerance
             note = (
-                f"回归 {ratio:.2f}x > 阈值 {tolerance:.2f}x"
+                f"回归 {ratio:.2f}x > 阈值 {effective_tolerance:.2f}x"
                 if regressed
                 else f"正常 ({ratio:.2f}x)"
             )
@@ -234,7 +242,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_update(args: argparse.Namespace) -> int:
     items = run_perf_binary(args.binary)
-    # 保留旧基线的 tolerance 字段，若无则用默认值
+    # 保留旧基线的 tolerance / version / category_tolerance / note 字段，
+    # 若无则用默认值（修复：此前 update 会把 v3 schema 降级回 v2，
+    # 丢失 category_tolerance 差异化容忍度，导致 CI 判定退回全局阈值）
+    old: dict[str, Any] = {}
     try:
         with open(args.baseline, "r", encoding="utf-8") as f:
             old = json.load(f)
@@ -242,26 +253,32 @@ def cmd_update(args: argparse.Namespace) -> int:
     except FileNotFoundError:
         tolerance = args.tolerance
 
-    # R117 v2：输出含 category 字段；version 升级为 2
-    payload = {
-        "version": 2,
+    payload: dict[str, Any] = {
+        "version": int(old.get("version", 3)),
         "tolerance": tolerance,
-        "description": "MiniLang CI 性能基线（由 scripts/perf_baseline.py update 生成）",
-        "benchmarks": [
-            {
-                "backend": it.backend,
-                "benchmark": it.benchmark,
-                "category": it.category,
-                "elapsed_ms": round(it.elapsed_ms, 3),
-                "output": it.output,
-            }
-            for it in items
-        ],
     }
+    if "category_tolerance" in old:
+        payload["category_tolerance"] = old["category_tolerance"]
+    payload["description"] = old.get(
+        "description",
+        "MiniLang CI 性能基线（由 scripts/perf_baseline.py update 生成）",
+    )
+    if "note" in old:
+        payload["note"] = old["note"]
+    payload["benchmarks"] = [
+        {
+            "backend": it.backend,
+            "benchmark": it.benchmark,
+            "category": it.category,
+            "elapsed_ms": round(it.elapsed_ms, 3),
+            "output": it.output,
+        }
+        for it in items
+    ]
     with open(args.baseline, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
         f.write("\n")
-    print(f"[OK] 基线已写入 {args.baseline}（{len(items)} 项，v2 schema）")
+    print(f"[OK] 基线已写入 {args.baseline}（{len(items)} 项，v{payload['version']} schema）")
     return 0
 
 

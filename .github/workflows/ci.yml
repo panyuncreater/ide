@@ -10,6 +10,7 @@
 #   test-harness       — Windows test_harness 审计工具
 #   static-analysis    — cppcheck 静态代码分析
 #   clang-tidy         — clang-tidy 静态分析（continue-on-error，信息性）
+#   sanitize-asan      — ASan+UBSan 内存错误门禁（Linux，阻断式）
 #   perf-benchmark     — 性能基准回归（与 perf-baseline.json 对比）
 #   docs               — Doxygen 文档构建并部署到 GitHub Pages
 #
@@ -651,6 +652,30 @@ jobs:
             | xargs -0 clang-format --dry-run --Werror
 
   # ============================================================
+  # ============================================================
+  # 作业 5c：Conventional Commits 格式验证（P4-9a）
+  # ------------------------------------------------------------
+  # 仅 PR 触发：验证 PR 中所有 commit message 符合
+  # Conventional Commits 格式（feat/fix/refactor/perf/docs/test/chore: ...）。
+  # 纯 Python 标准库脚本，无需安装依赖。
+  # ============================================================
+  lint-commits:
+    name: Commit Message Lint
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 验证 commit message 格式
+        run: |
+          python scripts/check_commit_msg.py \
+            --range origin/${{ github.base_ref }}..HEAD
+
+  # ============================================================
   # 作业 5b：翻译完整性检查（P2-13）
   # ------------------------------------------------------------
   # 验证 en_US.ts 与 zh_CN.ts 的消息数量一致、source 匹配、
@@ -671,19 +696,24 @@ jobs:
             --zh app/translations/minilang_zh_CN.ts \
             --en app/translations/minilang_en_US.ts
 
+      # 拓展二期·平台：源码→ts 同步性检查（translation_check.py 只查
+      # 两个 .ts 之间的一致性，无法发现「源码新增 mlTr 字符串但忘跑
+      # lupdate」的缺口）。ratchet 基线 806 条存量欠账，新增未同步即红。
+      - name: 检查源码字符串同步性（ratchet）
+        run: python scripts/check_i18n.py --repo-root .
+
   # ============================================================
   # 作业 6：clang-tidy 静态分析（R116）
   # ------------------------------------------------------------
   # 使用项目根 .clang-tidy 配置（启用 bugprone/modernize/performance/
   # readability/misc 检查组）。需要 compile_commands.json 才能解析
   # Qt / QFluentKit 头文件路径，因此先 CMake 配置生成数据库。
-  # continue-on-error：信息性检查，初始阶段不阻塞主构建流程，
-  # 待修复存量告警后可改为 fail。
+  # P2-3: bugprone-*/performance-* 设为 WarningsAsErrors（阻塞），
+  # readability-*/modernize-*/misc-* 仍为信息性（不阻塞）。
   # ============================================================
   clang-tidy:
     name: Static Analysis (clang-tidy)
     runs-on: ubuntu-latest
-    continue-on-error: true
     needs: build-test
 
     steps:
@@ -762,6 +792,80 @@ jobs:
           name: clang-tidy-report
           path: clang-tidy-report.txt
           retention-days: 14
+
+  # ============================================================
+  # 作业 6.5：ASan/UBSan 内存错误门禁（拓展计划·基建）
+  # ------------------------------------------------------------
+  # 手写 VM + JIT + GC + NaN-boxing 项目的最高性价比质量门禁：
+  # Linux GCC Debug + -fsanitize=address,undefined 跑全量 ctest。
+  # 取代原末尾信息性 sanitizers 矩阵作业（仅跑 Lexer/Parser/
+  # Interpreter 子集）：ASan 升级为全量+阻断式，TSan 迁至
+  # nightly.yml sanitize-tsan（并发子集，5-15x 减速不适合 PR 门禁）。
+  # 设计决策：
+  #   - detect_leaks=0：Qt/fontconfig 一次性分配会产生大量 LSan 噪声，
+  #     首期专注 UAF/越界/UB（项目历史高频 bug 模式 1/3/6），
+  #     泄漏检测待建立抑制清单后再开启
+  #   - halt_on_error=1：UBSan 默认仅打印不失败，强制首错即停
+  #   - allocator_may_return_null=1：RuntimeLimits 压力测试故意触发
+  #     巨大分配，允许分配器返回 null 走正常 bad_alloc 路径
+  #   - ASan 下 JIT 可执行页 mmap 与拦截器兼容，TestJIT 正常运行
+  # ============================================================
+  sanitize-asan:
+    name: Sanitizer (ASan+UBSan, Linux)
+    runs-on: ubuntu-latest
+    needs: build-test
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 应用 QFluentKit 本地补丁
+        shell: bash
+        run: git apply --directory=third_party/QFluentKit --whitespace=nowarn patches/qfluentkit-local-fixes.patch
+
+      - name: 安装 Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 QTDIR 环境变量
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      - name: 安装 Qt Linguist 工具 (lrelease)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-l10n-tools
+          which lrelease6 && sudo ln -sf "$(which lrelease6)" /usr/local/bin/lrelease || true
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: ${{ runner.os }}-asan
+
+      - name: 配置 CMake (ASan+UBSan Preset)
+        # WERROR=OFF：sanitizer 插桩可能引入 maybe-uninitialized 等新告警
+        # （沿用原 sanitizers 作业经验），告警门禁由 build-test 作业把关
+        run: cmake --preset linux-gcc-asan -DMINILANG_USE_CCACHE=ON -DMINILANG_WERROR=OFF
+
+      - name: 构建项目
+        run: cmake --build out/build/linux-asan --parallel
+
+      - name: 运行单元测试（ASan+UBSan）
+        working-directory: out/build/linux-asan
+        env:
+          QT_QPA_PLATFORM: offscreen
+          ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        # ASan 约 2x 减速，降低并行度避免内存峰值打爆 runner
+        run: ctest -j 2 --output-on-failure
 
   # ============================================================
   # 作业 7：性能基准回归检测（R116）
@@ -884,3 +988,72 @@ jobs:
           user_name: 'github-actions[bot]'
           user_email: 'github-actions[bot]@users.noreply.github.com'
           commit_message: 'Deploy Doxygen docs (${{ github.sha }})'
+
+  # ============================================================
+  # 作业 9：PGO 两趟构建（仅 push to main，不阻塞 PR）
+  # ------------------------------------------------------------
+  # Profile-Guided Optimization 两趟构建：
+  #   Pass 1: PGO_GENERATE 构建 + 运行测试生成 profile 数据
+  #   Pass 2: PGO_USE 构建 + 运行性能基准验证收益
+  # 仅 Windows MSVC（主 CI 平台），作为信息性 job（continue-on-error）。
+  # ============================================================
+  pgo-build:
+    name: PGO Two-Pass Build (Windows)
+    runs-on: windows-latest
+    needs: build-test
+    if: ${{ github.event_name == 'push' }}
+    continue-on-error: true
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: 安装 Qt6 (Windows)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          aqtversion: ${{ env.AQT_VERSION }}
+          cache: true
+
+      - name: 设置 MSVC 开发环境
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: 设置 QTDIR
+        shell: bash
+        run: echo "QTDIR=${{ env.QT_ROOT_DIR }}/.." >> $GITHUB_ENV
+
+      # Pass 1: PGO 插桩构建 + 运行测试生成 profile
+      - name: "PGO Pass 1: 配置 (Generate)"
+        run: >
+          cmake --preset windows-msvc-release
+          -DMINILANG_PGO_GENERATE=ON
+          -DMINILANG_USE_CCACHE=OFF
+
+      - name: "PGO Pass 1: 构建"
+        run: cmake --build out/build/release --parallel
+
+      - name: "PGO Pass 1: 运行测试 (生成 profile)"
+        working-directory: out/build/release
+        run: ctest -C Release -j 4 --output-on-failure
+
+      # Pass 2: PGO 优化构建 + 性能验证
+      - name: "PGO Pass 2: 重新配置 (Use)"
+        run: >
+          cmake --preset windows-msvc-release
+          -DMINILANG_PGO_USE=ON
+          -DMINILANG_PGO_GENERATE=OFF
+          -DMINILANG_USE_CCACHE=OFF
+
+      - name: "PGO Pass 2: 构建"
+        run: cmake --build out/build/release --parallel
+
+      - name: "PGO Pass 2: 运行性能基准"
+        working-directory: out/build/release
+        run: ctest -C Release -j 4 --output-on-failure -R perf

@@ -1,0 +1,31 @@
+# ============================================================
+# Dependabot 自动依赖升级配置
+# ------------------------------------------------------------
+# 1. gitsubmodule: 每月检查 third_party/ 下的 git submodule 更新
+#    (ads/asmjit/googletest/QFluentKit)
+# 2. github-actions: 每周检查 CI workflow 中使用的 Actions 版本更新
+#    (checkout/upload-artifact/install-qt-action 等)
+# ============================================================
+version: 2
+updates:
+  # Git submodule 依赖（third_party/ 下的 4 个子模块）
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels: ["dependencies", "submodule"]
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    open-pull-requests-limit: 5
+
+  # GitHub Actions 版本更新
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    open-pull-requests-limit: 10
