@@ -19,6 +19,8 @@
 #include "gui/LearnerProgress.h"   // P2-3 fix (F9): 学情画像持久化
 #include "gui/MarkdownRenderer.h"  // 统一 Markdown 渲染
 #include "gui/SyntaxHighlighter.h" // MiniLang 语法高亮器
+#include "QFluent/InfoBar.h"       // P2-UX fix: 进度保存失败 toast 通知
+#include "gui/ProgressSaveFeedback.h" // P2-UX fix: 共享 save 失败反馈 helper
 
 LabManualPanel::LabManualPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -462,7 +464,7 @@ void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
         // P2-3 fix (F9): 记录得分到学情画像——单题正确记 100 分（按章节累计，
         // 通过 recordScore 取最大值语义保留历史最佳）。星级暂记 1，全章通过后再升 3。
         LearnerProgressStore::instance().recordScore(chs[currentChapterIndex_].id, 100, 1);
-        LearnerProgressStore::instance().save();
+        saveProgressWithFeedback(); // P2-UX fix: 失败时弹出 toast 通知
         // AUDIT-P2 fix: 答对后禁用提交按钮，防止重复提交并视觉提示已通过
         QPushButton* submitBtn =
             exercisesContainer_->findChild<QPushButton*>(QString::fromUtf8("submit_choice_%1").arg(choiceIndex));
@@ -474,7 +476,7 @@ void LabManualPanel::onSubmitChoiceExercise(int choiceIndex) {
     } else {
         // P2-3 fix (F9): 答错记录失败次数，用于薄弱点分析
         LearnerProgressStore::instance().recordFailure(chs[currentChapterIndex_].id);
-        LearnerProgressStore::instance().save();
+        saveProgressWithFeedback(); // P2-UX fix: 失败时弹出 toast 通知
     }
 
     // AUDIT-P2 fix: 恢复守卫（答对时按钮已禁用，但守卫仍需复位以便其他题提交）
@@ -560,7 +562,7 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
     if (correct) {
         exercisePassed_[exerciseIndex] = true;
         LearnerProgressStore::instance().recordScore(chs[currentChapterIndex_].id, 100, 1);
-        LearnerProgressStore::instance().save();
+        saveProgressWithFeedback(); // P2-UX fix: 失败时弹出 toast 通知
         // AUDIT-P2 fix: 答对后禁用提交按钮，防止重复提交并视觉提示已通过
         QPushButton* submitBtn =
             exercisesContainer_->findChild<QPushButton*>(QString::fromUtf8("submit_output_%1").arg(exerciseIndex));
@@ -572,7 +574,7 @@ void LabManualPanel::onSubmitExpectedOutputExercise(int exerciseIndex) {
     } else if (controllerAvailable) {
         // AUDIT-P2 fix: 仅在 controller 可用时才记录失败，避免误判污染学情
         LearnerProgressStore::instance().recordFailure(chs[currentChapterIndex_].id);
-        LearnerProgressStore::instance().save();
+        saveProgressWithFeedback(); // P2-UX fix: 失败时弹出 toast 通知
     }
 
     // AUDIT-P2 fix: 恢复守卫
@@ -599,7 +601,7 @@ void LabManualPanel::checkAllExercisesPassed() {
     const auto& ch = chs[currentChapterIndex_];
     // P2-3 fix (F9): 全章通过——升级星级为 3 星（满星），保留历史最佳
     LearnerProgressStore::instance().recordScore(ch.id, 100, 3);
-    LearnerProgressStore::instance().save();
+    saveProgressWithFeedback(); // P2-UX fix: 失败时弹出 toast 通知
     emit exerciseCompleted(QString::fromUtf8(ch.id.c_str()));
     statusLabel_->setText(QString::fromUtf8("🎉 %1").arg(mlTr("本章练习全部通过！")));
 }
@@ -817,4 +819,15 @@ void LabManualPanel::onToggleFold() {
     }
     // 重新渲染当前章节（应用/取消折叠）
     showCurrentChapter();
+}
+
+// ============================================================
+// P2-UX fix: 持久化学习进度并在失败时弹出 toast 通知用户
+// ------------------------------------------------------------
+// 失败提示逻辑已提取为共享 helper saveLearnerProgressWithFeedback
+// （gui/ProgressSaveFeedback.h），供全部教学面板复用；本成员函数
+// 保留作为兼容包装（现有调用点不变）。
+// ============================================================
+void LabManualPanel::saveProgressWithFeedback() {
+    saveLearnerProgressWithFeedback(this);
 }

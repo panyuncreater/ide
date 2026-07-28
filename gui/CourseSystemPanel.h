@@ -16,6 +16,13 @@
 //   2. 课程编辑器：QTextEdit 编辑课程 JSON，解析预览后可加载到
 //      课程库下拉框
 //
+// 拓展二期·课程内容外部化：
+//   - 从磁盘 JSON 文件导入课程（编辑器子页「从文件导入」）
+//   - 导出当前选中课程到 JSON 文件（课程库子页「导出课程」，
+//     预设课程也可导出作为编写模板；配合 minilang-pkg 可作为
+//     课程包分发：pkg 包目录放 course.json，学生导入即用）
+//   - 自定义课程 QSettings 持久化（重启 IDE 不丢失）
+//
 // 设计约束：
 //   - 面板构造函数不创建标题栏（Ide::wrapTeachingPanel 自动包裹）
 //   - setController 内联实现（仅赋值，面板不依赖控制器运行）
@@ -71,6 +78,21 @@ public:
 
     /// JSON 字符串解析为 Course，失败时返回 false 并填充 errMsg
     static bool parseCourse(const QString& json, Course& out, QString& errMsg);
+
+    // ---- 拓展二期：课程内容外部化（JSON 课程包文件 IO + 批量序列化）----
+
+    /// 从磁盘 JSON 文件加载单个课程（复用 parseCourse 校验）
+    static bool loadCourseFromFile(const QString& path, Course& out, QString& errMsg);
+
+    /// 将单个课程写入磁盘 JSON 文件（UTF-8，复用 courseToJson）
+    static bool saveCourseToFile(const QString& path, const Course& course, QString& errMsg);
+
+    /// 多课程 → JSON 数组字符串（自定义课程 QSettings 持久化用）
+    static QString coursesToJsonArray(const std::vector<Course>& courses);
+
+    /// JSON 数组字符串 → 多课程（逐项复用 parseCourse 校验，
+    /// 单项非法则整体失败，避免静默丢课）
+    static bool parseCoursesArray(const QString& json, std::vector<Course>& out, QString& errMsg);
 };
 
 // ---- 主面板 ----
@@ -92,6 +114,8 @@ private slots:
     void onLoadCourseCode();        // 课程库：加载当前课代码到编辑器
     void onParsePreview();          // 编辑器：解析 JSON 并预览
     void onLoadToLibrary();         // 编辑器：将自定义课程加入课程库
+    void onImportFromFile();        // 拓展二期：从 JSON 文件导入课程到编辑器
+    void onExportCourse();          // 拓展二期：导出当前选中课程到 JSON 文件
 
 private:
     IdeController* controller_ = nullptr;
@@ -111,6 +135,8 @@ private:
     QPushButton* parsePreviewBtn_ = nullptr;  // 解析预览按钮
     QTextBrowser* previewBrowser_ = nullptr;  // 解析预览结果
     QPushButton* loadToLibraryBtn_ = nullptr; // 加载到课程库按钮
+    QPushButton* importFileBtn_ = nullptr;    // 拓展二期：从文件导入按钮
+    QPushButton* exportFileBtn_ = nullptr;    // 拓展二期：导出到文件按钮（课程库子页）
 
     // 用户自定义课程（通过编辑器加载到课程库）
     std::vector<Course> customCourses_;
@@ -134,4 +160,8 @@ private:
 
     /// 将一个课程的首课代码作为加载样例（取第一章第一课）
     QString firstLessonCode(const Course& course) const;
+
+    // 拓展二期：自定义课程 QSettings 持久化（重启 IDE 不丢失）
+    void loadCustomCoursesFromSettings();
+    void saveCustomCoursesToSettings() const;
 };

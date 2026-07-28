@@ -9,6 +9,7 @@
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog> // 拓展二期：命中条件/依赖行编辑输入框
 #include <QSplitter>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -210,13 +211,15 @@ void BreakpointConditionPanel::buildLivePage(QWidget* host) {
     layout->addWidget(liveStatusLabel_);
 
     // 5 列：行号 / 类型 / 条件表达式 / 命中次数 / 状态
-    breakpointTable_ = new QTableWidget(0, 5, host);
+    breakpointTable_ = new QTableWidget(0, 7, host);
     breakpointTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     breakpointTable_->setHorizontalHeaderLabels({
         QString::fromUtf8("行号"),
         QString::fromUtf8("类型"),
         QString::fromUtf8("条件表达式"),
         QString::fromUtf8("命中次数"),
+        QString::fromUtf8("命中条件"),
+        QString::fromUtf8("依赖行"),
         QString::fromUtf8("状态"),
     });
     breakpointTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
@@ -224,6 +227,13 @@ void BreakpointConditionPanel::buildLivePage(QWidget* host) {
     breakpointTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
     breakpointTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     breakpointTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    breakpointTable_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    breakpointTable_->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
+    // 拓展二期：双击「命中条件」/「依赖行」列弹输入框编辑
+    // （与 VariableInspectorPanel 双击改值同模式：QInputDialog 提交到
+    // IdeController facade，不直接编辑单元格避免刷新递归）
+    connect(breakpointTable_, &QTableWidget::cellDoubleClicked, this,
+            [this](int row, int column) { onBreakpointCellDoubleClicked(row, column); });
     layout->addWidget(breakpointTable_, 2);
 
     // R104 函数断点子面板
@@ -299,6 +309,53 @@ void BreakpointConditionPanel::buildLibraryPage(QWidget* host) {
     connect(scenarioList_, &QListWidget::currentRowChanged, this, &BreakpointConditionPanel::populateScenarioDetail);
 }
 
+// ============================================================
+// 拓展二期：双击「命中条件」(列 4)/「依赖行」(列 5)弹输入框编辑
+// ------------------------------------------------------------
+// 提交到 IdeController facade（双路径同步 DebugController + VmStepper），
+// 随后 refreshLive 回读展示。非可编辑列双击无效果。
+// ============================================================
+void BreakpointConditionPanel::onBreakpointCellDoubleClicked(int row, int column) {
+    if (!controller_ || row < 0)
+        return;
+    if (column != 4 && column != 5)
+        return;
+    auto* lineItem = breakpointTable_->item(row, 0);
+    if (!lineItem)
+        return;
+    bool lineOk = false;
+    int line = lineItem->text().toInt(&lineOk);
+    if (!lineOk || line <= 0)
+        return;
+
+    if (column == 4) {
+        // 命中条件："N"/"== N"/">= N"/"> N"/"% N"，空=清除
+        std::string cur = controller_->getBreakpointHitCondition(line);
+        bool ok = false;
+        QString text = QInputDialog::getText(
+            this, QString::fromUtf8("命中条件"),
+            QString::fromUtf8("行 %1 的命中条件（如 \">= 3\" / \"% 2\" / \"5\"，留空清除）：").arg(line),
+            QLineEdit::Normal, QString::fromUtf8(cur.c_str()), &ok);
+        if (!ok)
+            return;
+        controller_->setBreakpointHitCondition(line, text.trimmed().toStdString());
+    } else {
+        // 依赖行：仅当依赖行断点命中过后本断点才激活（0 清除）
+        int curDep = controller_->getBreakpointDependency(line);
+        bool ok = false;
+        int dep = QInputDialog::getInt(this, QString::fromUtf8("依赖断点"),
+                                       QString::fromUtf8("行 %1 依赖的断点行号（0 = 清除依赖）：").arg(line),
+                                       curDep > 0 ? curDep : 0, 0, 1000000, 1, &ok);
+        if (!ok)
+            return;
+        controller_->setBreakpointDependency(line, dep);
+    }
+    refreshLive();
+}
+
+// ============================================================
+// 拓展二期之前的既有实现分隔线
+// ============================================================
 void BreakpointConditionPanel::refreshLive() {
     if (!controller_) {
         liveStatusLabel_->setText(QString::fromUtf8("未绑定控制器"));
@@ -369,6 +426,14 @@ void BreakpointConditionPanel::refreshLive() {
         }
         breakpointTable_->setItem(i, 2, new QTableWidgetItem(condDisplay));
         breakpointTable_->setItem(i, 3, new QTableWidgetItem(QString::number(hitCount)));
+        // 拓展二期：命中条件列 + 依赖行列（双击可编辑）
+        std::string hitCond = controller_->getBreakpointHitCondition(line);
+        int depLine = controller_->getBreakpointDependency(line);
+        breakpointTable_->setItem(
+            i, 4,
+            new QTableWidgetItem(hitCond.empty() ? QString::fromUtf8("（无）") : QString::fromUtf8(hitCond.c_str())));
+        breakpointTable_->setItem(
+            i, 5, new QTableWidgetItem(depLine > 0 ? QString::number(depLine) : QString::fromUtf8("（无）")));
         // 状态：综合显示
         QString status;
         if (kind == BreakpointKind::Logpoint) {
@@ -378,7 +443,7 @@ void BreakpointConditionPanel::refreshLive() {
         } else {
             status = QString::fromUtf8("条件断点");
         }
-        breakpointTable_->setItem(i, 4, new QTableWidgetItem(status));
+        breakpointTable_->setItem(i, 6, new QTableWidgetItem(status)); // 拓展二期：状态列后移至列 6
     }
 
     // R104: 刷新函数断点列表

@@ -11,6 +11,7 @@
 #include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡星级持久化
+#include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 #include "gui/TokenPuzzleData.h"
 
 #include <QBrush>
@@ -393,7 +394,7 @@ void TokenPuzzlePanel::onCheckAnswer() {
     }
     // P0-2 fix (F7): 持久化关卡星级到 LearnerProgressStore
     LearnerProgressStore::instance().markLevelStars(levelId(currentLevelIndex_).toStdString(), stars);
-    LearnerProgressStore::instance().save();
+    saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
     setFeedback(mlTr("✅ 完全正确！获得 %1").arg(starsToText(stars)));
     unlockNextLevel();
     updateScoreDisplay();
@@ -432,7 +433,7 @@ void TokenPuzzlePanel::onSkipLevel() {
     }
     // P0-2 fix (F7): 持久化跳过状态（0 星）
     LearnerProgressStore::instance().markLevelStars(levelId(currentLevelIndex_).toStdString(), 0);
-    LearnerProgressStore::instance().save();
+    saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
     setFeedback(mlTr("已跳过本关（不计星），下一关已解锁"));
     unlockNextLevel();
     updateScoreDisplay();

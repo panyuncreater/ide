@@ -128,6 +128,7 @@ private:
     QPushButton* pageHotspotBtn_ = nullptr;
     QPushButton* pageOpCodeBtn_ = nullptr;
     QPushButton* pageTierBtn_ = nullptr; // R160: 子页 5
+    QPushButton* pageAsmBtn_ = nullptr;  // 拓展二期: 子页 6（字节码↔汇编对照）
     QStackedWidget* stack_ = nullptr;
     QLabel* jitAvailLabel_ = nullptr; // JIT 启用状态提示
 
@@ -161,12 +162,20 @@ private:
     QTableWidget* tierTable_ = nullptr;       // per-chunk tier/OSR/deopt 指标表
     QTextBrowser* tierSummaryView_ = nullptr; // 全局汇总（lazy/osr/deopt 列表 + 总 deopt 次数）
 
+    // 拓展二期·子页 6：字节码↔汇编对照（JITBackend::setAsmCapture 链路）
+    class QPlainTextEdit* asmSrcEdit_ = nullptr; // 可编辑源码（预填示例）
+    QPushButton* asmRunBtn_ = nullptr;           // 编译并对照按钮
+    QTextBrowser* asmBytecodeView_ = nullptr;    // 左：字节码反汇编
+    QTextBrowser* asmAsmView_ = nullptr;         // 右：JIT 发射的 x86-64 汇编
+    QLabel* asmStatusLabel_ = nullptr;           // 状态/输出摘要
+
     // 构造辅助
     void buildOverviewPage(QWidget* host);
     void buildTypeFeedbackPage(QWidget* host);
     void buildHotspotPage(QWidget* host);
     void buildOpCodePage(QWidget* host);
     void buildTierMetricsPage(QWidget* host); // R160: 子页 5
+    void buildAsmComparePage(QWidget* host);  // 拓展二期: 子页 6
 
     // 数据填充
     void populateOverview();
@@ -180,4 +189,5 @@ private:
     void runTypeFeedbackScenario(int index);
     void runHotspotScenario(int index);
     void runTierScenario(int index); // R160: 子页 5
+    void runAsmCompare();            // 拓展二期: 子页 6（编译+捕获汇编+双栏展示）
 };

@@ -94,7 +94,7 @@ private:
     QStackedWidget* stack_ = nullptr;
 
     // 子页 1：实时断点列表
-    QTableWidget* breakpointTable_ = nullptr; // 5 列：行号 / 类型 / 条件 / 命中次数 / 状态
+    QTableWidget* breakpointTable_ = nullptr; // 7 列：行号 / 类型 / 条件 / 命中次数 / 命中条件 / 依赖行 / 状态
     QLabel* liveStatusLabel_ = nullptr;
     QTimer* refreshTimer_ = nullptr;
 
@@ -116,6 +116,9 @@ private:
 
     /// 刷新实时断点列表
     void refreshLive();
+
+    /// 拓展二期：双击「命中条件」/「依赖行」列弹输入框编辑
+    void onBreakpointCellDoubleClicked(int row, int column);
 
     /// 填充教学场景详情
     void populateScenarioDetail(int index);

@@ -86,6 +86,16 @@ public:
     /// 绑定 IdeController（仅赋值，不注册监听器——与 BackendParallelPanel 模式一致）
     void setController(IdeController* controller) { controller_ = controller; }
 
+    // ARCH-10: SingleRunResult 公开为接口类型，供 convertServiceResult 辅助函数使用
+    // 单次运行结果（参考 BackendParallelPanel::BackendExecResult，去掉 traceHtml）
+    struct SingleRunResult {
+        QString output;       // 标准输出（print 输出）
+        QString status;       // 状态文本（"✅ 成功" / "❌ 错误: ..."）
+        qint64 elapsedMs = 0; // 单次耗时（毫秒）
+        QString instrCount;   // 指令数（"N/A" 或字节数）
+        bool success = false; // 是否成功（编译+运行均无错）
+    };
+
 signals:
     /// 请求将样例代码加载到主编辑器
     void loadSampleRequested(const QString& code);
@@ -116,13 +126,7 @@ private:
     QLabel* consistencyLabel_ = nullptr;
 
     // 单次运行结果（参考 BackendParallelPanel::BackendExecResult，去掉 traceHtml）
-    struct SingleRunResult {
-        QString output;       // 标准输出（print 输出）
-        QString status;       // 状态文本（"✅ 成功" / "❌ 错误: ..."）
-        qint64 elapsedMs = 0; // 单次耗时（毫秒）
-        QString instrCount;   // 指令数（"N/A" 或字节数）
-        bool success = false; // 是否成功（编译+运行均无错）
-    };
+    // ARCH-10: SingleRunResult 已上移至 public 区段
 
     // 三后端单次执行函数（参考 BackendParallelPanel.cpp 的
     // runInterpreter / runStackVM_IR / runRegVM_IR 实现模式）

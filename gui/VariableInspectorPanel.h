@@ -92,6 +92,8 @@ private slots:
     void onAutoRefreshToggled(bool checked);
     /// 变量选中项变化回调。
     void onVariableSelected();
+    /// 拓展二期：双击变量项修改值（仅调试暂停/VM 暂停时生效）。
+    void onVariableDoubleClicked(class QTreeWidgetItem* item, int column);
     /// 示例选中项变化回调。
     void onExampleSelected(int index);
     /// 载入示例代码到编辑器。

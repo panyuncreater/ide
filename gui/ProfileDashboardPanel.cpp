@@ -4,14 +4,13 @@
 
 #include "gui/ProfileDashboardPanel.h"
 #include "app/IdeController.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
-#include "interpreter/GcManager.h"
-#include "interpreter/Interpreter.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
+#include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
+// ARCH-10: 仍保留 Bytecode.h/RegisterBytecode.h 仅用于 opcode 名称查询
+// （opCodeName / regOpName 是 inline 函数，无副作用，不构成对编译器内部实现的依赖）
+#include "compiler/Bytecode.h"
+#include "compiler/RegisterBytecode.h"
+// AUDIT-R2 P1-5 fix: 不再直接依赖 GcManager（peak tracked 由
+// BackendExecutionService::executeWithDetail 基线差值语义提供）
 
 #include <QApplication>
 #include <QHBoxLayout>
@@ -323,82 +322,60 @@ ProfileDashboardPanel::ProfileDashboardPanel(QWidget* parent) : QWidget(parent) 
 }
 
 // ---- 后端测量 ----
+// ARCH-10 重构：通过 BackendExecutionService::executeWithDetail 触发执行，
+// 面板不再直接依赖 Lexer/Parser/Compiler/VM/RegisterVM/Interpreter 内部头文件。
+// 服务返回的 BackendExecDetail 包含 elapsedMs/opcodeCounts/peakTrackedCount。
 
-/// 单次用解释器执行被测代码并返回耗时（秒）。
-std::pair<double, size_t> ProfileDashboardPanel::measureInterpreterOnce(Block& ast) {
-    // R111: 测量前清空 GcManager tracked 列表，确保峰值反映本后端执行
-    GcManager::instance().reset();
-    Interpreter interp;
-    interp.setOutputCallback([](const std::string&) {});
-    auto t0 = std::chrono::high_resolution_clock::now();
-    interp.execute(ast);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    size_t peakTracked = GcManager::instance().trackedCount();
-    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), peakTracked};
+/// 单次用解释器执行被测代码并返回耗时（微秒）+ GC tracked 峰值。
+std::pair<double, size_t> ProfileDashboardPanel::measureInterpreterOnce(const std::string& src) {
+    // AUDIT-R2 P1-5 fix: 不再 reset 全局 GcManager（会破坏并发执行的 worker
+    // 线程 GC 跟踪状态）；executeWithDetail 内部已改为基线差值语义，
+    // peakTrackedCount 天然反映本次执行的净增峰值，面板侧 reset 冗余。
+    auto detail = BackendExecutionService::executeWithDetail(src, BackendType::Interpreter);
+    if (!detail.success) {
+        throw std::runtime_error(detail.errorPrefix + ": " + detail.errorMsg);
+    }
+    // AUDIT-R2 P2-2 fix: 直接使用微秒字段，不再 ms×1000 假精度
+    double micros = static_cast<double>(detail.elapsedUs);
+    return {micros, detail.peakTrackedCount};
 }
 
 // ============================================================
-// P1-1: 真实 instrumentation — 通过 stepCallback 累加 opcode 计数
+// P1-1: 真实 instrumentation — 通过 BackendExecutionService::executeWithDetail
+//       累加 opcode 计数（服务内部通过 stepCallback 实现，对调用方透明）
 // ============================================================
 // 设计要点：
-//   - 复用 VM/RegisterVM 已有的 stepCallback_ 机制（无需引擎层改造）
-//   - ProfileDashboardPanel 直接 new VM/RegisterVM，绕过 VmStepper 的禁用逻辑
-//   - stepCallback 签名：void(const VMStepInfo&) / void(const RegVMStepInfo&)
-//   - 性能开销：每条指令一次 std::function 调用（~20-50ns），对剖析场景可接受
-//   - R111: 返回 std::tuple<double, std::array<uint64_t, 256>, size_t>：时间 + opcode 计数 + GC tracked 峰值
+//   - 面板不再直接 new VM/RegisterVM，由服务统一管理执行
+//   - 服务返回的 BackendExecDetail.opcodeCounts 已包含 256 槽 opcode 频次
+//   - R111: 返回 std::tuple<double, std::array<uint64_t, 256>, size_t>：
+//     时间（μs） + opcode 计数 + GC tracked 峰值
 
-std::tuple<double, std::array<uint64_t, 256>, size_t> ProfileDashboardPanel::measureStackVMWithProfile(Block& ast) {
-    // R111: 测量前清空 GcManager tracked 列表
-    GcManager::instance().reset();
-    Compiler compiler;
-    auto result = compiler.compile(ast);
-    if (compiler.getDiagnostics().hasErrors()) {
-        throw std::runtime_error("Compile error: " + compiler.getDiagnostics().summary());
+std::tuple<double, std::array<uint64_t, 256>, size_t>
+ProfileDashboardPanel::measureStackVMWithProfile(const std::string& src) {
+    // AUDIT-R2 P1-5 fix: 不再 reset 全局 GcManager（同 measureInterpreterOnce）
+    auto detail = BackendExecutionService::executeWithDetail(src, BackendType::StackVM_IR);
+    if (!detail.success) {
+        throw std::runtime_error(detail.errorPrefix + ": " + detail.errorMsg);
     }
-    VM vm;
-    vm.setOutputCallback([](const std::string&) {});
-    std::array<uint64_t, 256> counts{};
-    vm.setStepCallback([&counts](const VMStepInfo& info) { counts[static_cast<uint8_t>(info.opcode)]++; });
-    vm.setStepCallbackEnabled(true);
-    auto t0 = std::chrono::high_resolution_clock::now();
-    auto vmres = vm.execute(result);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    vm.setStepCallbackEnabled(false);
-    if (vmres != VMResult::VM_OK) {
-        throw std::runtime_error("VM runtime error");
-    }
-    size_t peakTracked = GcManager::instance().trackedCount();
-    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts, peakTracked};
+    double micros = static_cast<double>(detail.elapsedUs); // AUDIT-R2 P2-2 fix
+    return {micros, detail.opcodeCounts, detail.peakTrackedCount};
 }
 
-std::tuple<double, std::array<uint64_t, 256>, size_t> ProfileDashboardPanel::measureRegisterVMWithProfile(Block& ast) {
-    // R111: 测量前清空 GcManager tracked 列表
-    GcManager::instance().reset();
-    Compiler compiler;
-    compiler.setUseRegisterVM(true);
-    auto regResult = compiler.compileViaRegisterIR(ast);
-    if (compiler.getDiagnostics().hasErrors()) {
-        throw std::runtime_error("Compile error: " + compiler.getDiagnostics().summary());
+std::tuple<double, std::array<uint64_t, 256>, size_t>
+ProfileDashboardPanel::measureRegisterVMWithProfile(const std::string& src) {
+    // AUDIT-R2 P1-5 fix: 不再 reset 全局 GcManager（同 measureInterpreterOnce）
+    auto detail = BackendExecutionService::executeWithDetail(src, BackendType::RegisterVM_IR);
+    if (!detail.success) {
+        throw std::runtime_error(detail.errorPrefix + ": " + detail.errorMsg);
     }
-    RegisterVM vm;
-    vm.setOutputCallback([](const std::string&) {});
-    std::array<uint64_t, 256> counts{};
-    vm.setStepCallback([&counts](const RegVMStepInfo& info) { counts[static_cast<uint8_t>(info.opcode)]++; });
-    vm.setStepCallbackEnabled(true);
-    auto t0 = std::chrono::high_resolution_clock::now();
-    auto vmres = vm.execute(regResult);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    vm.setStepCallbackEnabled(false);
-    if (vmres != VMResult::VM_OK) {
-        throw std::runtime_error("RegisterVM runtime error");
-    }
-    size_t peakTracked = GcManager::instance().trackedCount();
-    return {std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count(), counts, peakTracked};
+    double micros = static_cast<double>(detail.elapsedUs); // AUDIT-R2 P2-2 fix
+    return {micros, detail.opcodeCounts, detail.peakTrackedCount};
 }
 
 ProfileDashboardPanel::BackendTiming
-ProfileDashboardPanel::measureBackend(const std::string& name, std::function<std::pair<double, size_t>(Block&)> measure,
-                                      Block& ast, int iterations) {
+ProfileDashboardPanel::measureBackend(const std::string& name,
+                                      std::function<std::pair<double, size_t>(const std::string&)> measure,
+                                      const std::string& src, int iterations) {
     BackendTiming t;
     t.name = name;
     std::vector<double> samples;
@@ -406,10 +383,12 @@ ProfileDashboardPanel::measureBackend(const std::string& name, std::function<std
     size_t maxTracked = 0;
     try {
         for (int i = 0; i < iterations; ++i) {
-            auto [us, tracked] = measure(ast);
+            auto [us, tracked] = measure(src);
             samples.push_back(us);
             if (tracked > maxTracked)
                 maxTracked = tracked;
+            // Bug #75 fix: 让出 UI 事件循环，避免内层测量循环阻塞界面
+            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         }
         t.avgMicros = mean(samples);
         t.stddevMicros = stddev(samples);
@@ -477,7 +456,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
         return;
     }
 
-    // 先 lex + parse 源码
+    // 先 lex + parse 源码（仅用于早期错误检查；测量走 BackendExecutionService 重新执行）
     Lexer lexer;
     auto tokens = lexer.scan(scenario.sourceCode);
     Parser parser;
@@ -491,11 +470,13 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
         profiling_ = false; // AUDIT-P1 fix: 错误返回点恢复守卫
         return;
     }
+    (void)ast; // ARCH-10: ast 仅用于 parse 错误检查，测量阶段直接传 sourceCode
 
     // 多次测量三后端
     std::vector<BackendTiming> results;
     results.push_back(measureBackend(
-        "Interpreter", [this](Block& a) { return measureInterpreterOnce(a); }, *ast, scenario.iterations));
+        "Interpreter", [this](const std::string& s) { return measureInterpreterOnce(s); },
+        scenario.sourceCode, scenario.iterations));
 
     // 问题 7: 在后端之间处理事件，避免长时间阻塞 UI
     statusRunningBase_ = QString::fromUtf8("运行中 [2/3] StackVM");
@@ -522,7 +503,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
         size_t maxTracked = 0;
         try {
             for (int i = 0; i < scenario.iterations; ++i) {
-                auto [us, counts, tracked] = measureStackVMWithProfile(*ast);
+                auto [us, counts, tracked] = measureStackVMWithProfile(scenario.sourceCode);
                 samples.push_back(us);
                 for (size_t j = 0; j < 256; ++j)
                     stackVmCounts[j] += counts[j];
@@ -567,7 +548,7 @@ void ProfileDashboardPanel::runProfile(int scenarioIndex) {
         size_t maxTracked = 0;
         try {
             for (int i = 0; i < scenario.iterations; ++i) {
-                auto [us, counts, tracked] = measureRegisterVMWithProfile(*ast);
+                auto [us, counts, tracked] = measureRegisterVMWithProfile(scenario.sourceCode);
                 samples.push_back(us);
                 for (size_t j = 0; j < 256; ++j)
                     registerVmCounts[j] += counts[j];

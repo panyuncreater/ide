@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // GcVisualizerPanel.cpp — GC 垃圾回收可视化教学面板实现
 // ------------------------------------------------------------
 // 纯教学/模拟面板，不运行 MiniLang 执行引擎。包含：
@@ -12,6 +12,7 @@
 // ============================================================
 
 #include "gui/GcVisualizerPanel.h"
+#include "app/IdeController.h" // AUDIT-R5 R7 fix (BUG-2): 运行期状态查询（isRunning/isVmRunning）
 #include "gui/GuidedTour.h"
 
 #include <QHBoxLayout>
@@ -23,11 +24,11 @@
 #include <string>
 #include <vector>
 
+#include "common/MemoryInspectionAPI.h" // ARCH-10: GC 统计/控制只读 API（替代直接依赖 interpreter/GcManager.h）
 #include "gui/GuiTextUtils.h"
 #include "gui/I18n.h"
 #include "gui/TeachingSubPageBar.h"
-#include "interpreter/GcManager.h"
-#include "interpreter/Value.h"
+#include "interpreter/Value.h" // Value 用于构造模拟场景的数组（语言运行时值类型，不可避免）
 
 // ============================================================
 // 匿名命名空间 — 辅助函数
@@ -67,6 +68,11 @@ QString modeToString(GcMode m) {
 QString htmlEscape(const std::string& s) {
     return QString::fromUtf8(s.c_str()).toHtmlEscaped();
 }
+
+/// ARCH-10: 一次性获取 GC 统计快照的便捷包装。
+/// 替代 GcManager::instance().xxx() 直接调用，消除面板对 interpreter/GcManager.h 的依赖。
+/// 注意：每次调用都会获取 GcManager 内部锁，仅用于 UI 刷新或步骤采样（非热路径）。
+GcStatsSnapshot gcStats() { return MemoryInspectionAPI::getGcStats(); }
 
 } // namespace
 
@@ -413,14 +419,17 @@ void GcVisualizerPanel::refreshStats() {
             statsTable_->setItem(row, 1, new QTableWidgetItem(value));
         }
     };
-    setVal(0, phaseToString(GcManager::instance().currentPhase()));
-    setVal(1, QString::number(static_cast<qulonglong>(GcManager::instance().trackedCount())));
-    setVal(2, QString::number(static_cast<qulonglong>(GcManager::instance().lastMarkedCount())));
-    setVal(3, QString::number(static_cast<qulonglong>(GcManager::instance().lastCollectedCount())));
-    setVal(4, QString::number(static_cast<qulonglong>(GcManager::instance().totalGcCount())));
-    setVal(5, QString::number(static_cast<qulonglong>(GcManager::instance().allocationsSinceLastGc())));
-    setVal(6, QString::number(static_cast<qulonglong>(GcManager::GC_ALLOCATION_THRESHOLD)));
-    setVal(7, modeToString(GcManager::instance().gcMode()));
+    // ARCH-10: 通过 MemoryInspectionAPI 一次性获取 GC 统计快照，
+    // 消除面板对 interpreter/GcManager.h 的直接依赖（含 7 次单例访问合并为 1 次快照读取）。
+    GcStatsSnapshot stats = MemoryInspectionAPI::getGcStats();
+    setVal(0, phaseToString(stats.phase));
+    setVal(1, QString::number(static_cast<qulonglong>(stats.trackedCount)));
+    setVal(2, QString::number(static_cast<qulonglong>(stats.lastMarkedCount)));
+    setVal(3, QString::number(static_cast<qulonglong>(stats.lastCollectedCount)));
+    setVal(4, QString::number(static_cast<qulonglong>(stats.totalGcCount)));
+    setVal(5, QString::number(static_cast<qulonglong>(stats.allocationsSinceLastGc)));
+    setVal(6, QString::number(static_cast<qulonglong>(stats.allocationThreshold)));
+    setVal(7, modeToString(stats.mode));
 }
 
 // ============================================================
@@ -438,15 +447,18 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
     result.scenarioCode = scenarios[idx].codeSnippet;
 
     // 公共前置：完全重置，避免历史状态污染
-    GcManager::instance().reset();
-    GcManager::instance().setGcMode(GcMode::RefCountWithCycleGc);
+    // ARCH-10: 通过 MemoryInspectionAPI 间接调用 GcManager，消除直接依赖
+    MemoryInspectionAPI::resetGc();
+    MemoryInspectionAPI::setGcMode(GcMode::RefCountWithCycleGc);
 
     switch (idx) {
     case 0: {
         // 场景 1：简单孤岛 — 两个互相引用的数组
         result.modeUsed = GcMode::RefCountWithCycleGc;
-        result.steps.push_back(
-            {"reset 后", GcManager::instance().trackedCount(), 0, 0, GcManager::instance().totalGcCount()});
+        {
+            auto s = gcStats();
+            result.steps.push_back({"reset 后", s.trackedCount, 0, 0, s.totalGcCount});
+        }
         {
             Value a(std::vector<Value>{});
             Value b(std::vector<Value>{});
@@ -454,16 +466,20 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
             b.arrayVal().push_back(a); // b → a（循环）
             // a, b 离开作用域：refCount 各降 1，但互相引用使 refCount=1 无法归零
         }
-        result.steps.push_back(
-            {"构造循环并离开作用域", GcManager::instance().trackedCount(), 0, 0, GcManager::instance().totalGcCount()});
+        {
+            auto s = gcStats();
+            result.steps.push_back({"构造循环并离开作用域", s.trackedCount, 0, 0, s.totalGcCount});
+        }
         {
             std::vector<const void*> emptyRoots;
-            GcManager::instance().collectCycle(emptyRoots);
+            MemoryInspectionAPI::collectCycle(emptyRoots);
         }
-        result.steps.push_back({"collectCycle(空 roots)", GcManager::instance().trackedCount(),
-                                GcManager::instance().lastMarkedCount(), GcManager::instance().lastCollectedCount(),
-                                GcManager::instance().totalGcCount()});
-        result.expectationMet = GcManager::instance().lastCollectedCount() > 0;
+        {
+            auto s = gcStats();
+            result.steps.push_back({"collectCycle(空 roots)", s.trackedCount, s.lastMarkedCount, s.lastCollectedCount,
+                                    s.totalGcCount});
+            result.expectationMet = s.lastCollectedCount > 0;
+        }
         result.summary = result.expectationMet ? "✅ 期望达成：循环引用孤岛被 mark-sweep 成功回收，"
                                                  "引用计数无法处理的循环由 GcManager 接管。"
                                                : "❌ 期望未达成：循环引用孤岛未被回收。";
@@ -472,8 +488,10 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
     case 1: {
         // 场景 2：多层循环 — A→B→C→A 三层循环
         result.modeUsed = GcMode::RefCountWithCycleGc;
-        result.steps.push_back(
-            {"reset 后", GcManager::instance().trackedCount(), 0, 0, GcManager::instance().totalGcCount()});
+        {
+            auto s = gcStats();
+            result.steps.push_back({"reset 后", s.trackedCount, 0, 0, s.totalGcCount});
+        }
         {
             Value a(std::vector<Value>{});
             Value b(std::vector<Value>{});
@@ -483,16 +501,21 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
             c.arrayVal().push_back(a); // C → A（三层循环）
             // 离开作用域：三个数组互相引用，refCount=1，无法归零
         }
-        result.steps.push_back({"构造三层循环并离开作用域", GcManager::instance().trackedCount(), 0, 0,
-                                GcManager::instance().totalGcCount()});
+        {
+            auto s = gcStats();
+            result.steps.push_back(
+                {"构造三层循环并离开作用域", s.trackedCount, 0, 0, s.totalGcCount});
+        }
         {
             std::vector<const void*> emptyRoots;
-            GcManager::instance().collectCycle(emptyRoots);
+            MemoryInspectionAPI::collectCycle(emptyRoots);
         }
-        result.steps.push_back({"collectCycle(空 roots)", GcManager::instance().trackedCount(),
-                                GcManager::instance().lastMarkedCount(), GcManager::instance().lastCollectedCount(),
-                                GcManager::instance().totalGcCount()});
-        result.expectationMet = GcManager::instance().lastCollectedCount() > 0;
+        {
+            auto s = gcStats();
+            result.steps.push_back({"collectCycle(空 roots)", s.trackedCount, s.lastMarkedCount, s.lastCollectedCount,
+                                    s.totalGcCount});
+            result.expectationMet = s.lastCollectedCount > 0;
+        }
         result.summary = result.expectationMet ? "✅ 期望达成：三层循环整条链被 mark-sweep 回收，"
                                                  "mark 阶段从空根集出发无可达对象，sweep 回收全部循环节点。"
                                                : "❌ 期望未达成：多层循环未被回收。";
@@ -501,31 +524,37 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
     case 2: {
         // 场景 3：可达保留 — 循环引用但仍有外部根
         result.modeUsed = GcMode::RefCountWithCycleGc;
-        result.steps.push_back(
-            {"reset 后", GcManager::instance().trackedCount(), 0, 0, GcManager::instance().totalGcCount()});
+        {
+            auto s = gcStats();
+            result.steps.push_back({"reset 后", s.trackedCount, 0, 0, s.totalGcCount});
+        }
         {
             // arr 在内层作用域持有，作为 root
             Value arr(std::vector<Value>{});
             arr.arrayVal().push_back(arr); // 自循环
-            result.steps.push_back({"构造自循环（arr 仍存活）", GcManager::instance().trackedCount(), 0, 0,
-                                    GcManager::instance().totalGcCount()});
+            {
+                auto s = gcStats();
+                result.steps.push_back(
+                    {"构造自循环（arr 仍存活）", s.trackedCount, 0, 0, s.totalGcCount});
+            }
             std::vector<const void*> roots = {arr.gcRootPtr()};
-            GcManager::instance().collectCycle(roots); // arr 作为 root 标记可达
-            result.steps.push_back({"collectCycle(roots={arr})", GcManager::instance().trackedCount(),
-                                    GcManager::instance().lastMarkedCount(), GcManager::instance().lastCollectedCount(),
-                                    GcManager::instance().totalGcCount()});
-            result.expectationMet =
-                (GcManager::instance().lastCollectedCount() == 0 && GcManager::instance().trackedCount() >= 1);
+            MemoryInspectionAPI::collectCycle(roots); // arr 作为 root 标记可达
+            auto s = gcStats();
+            result.steps.push_back({"collectCycle(roots={arr})", s.trackedCount, s.lastMarkedCount,
+                                    s.lastCollectedCount, s.totalGcCount});
+            result.expectationMet = (s.lastCollectedCount == 0 && s.trackedCount >= 1);
             // arr 即将离开作用域：释放后仅剩自循环引用，refCount=1
         }
         // arr 已释放，自循环孤岛仍存活（refCount=1），再次 collectCycle 才回收
         {
             std::vector<const void*> emptyRoots;
-            GcManager::instance().collectCycle(emptyRoots);
+            MemoryInspectionAPI::collectCycle(emptyRoots);
         }
-        result.steps.push_back({"arr 释放后再 collectCycle(空 roots)", GcManager::instance().trackedCount(),
-                                GcManager::instance().lastMarkedCount(), GcManager::instance().lastCollectedCount(),
-                                GcManager::instance().totalGcCount()});
+        {
+            auto s = gcStats();
+            result.steps.push_back({"arr 释放后再 collectCycle(空 roots)", s.trackedCount, s.lastMarkedCount,
+                                    s.lastCollectedCount, s.totalGcCount});
+        }
         result.summary = result.expectationMet
                              ? "✅ 期望达成：作为 root 的循环数组未被 sweep 回收"
                                "（mark 阶段从 roots 出发标记可达容器）；arr 释放后再 collectCycle 才回收。"
@@ -535,20 +564,22 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
     case 3: {
         // 场景 4：增量 GC — 多次分配 + GC，trackedCount 趋势
         result.modeUsed = GcMode::RefCountWithCycleGc;
-        result.steps.push_back(
-            {"reset 后", GcManager::instance().trackedCount(), 0, 0, GcManager::instance().totalGcCount()});
+        {
+            auto s = gcStats();
+            result.steps.push_back({"reset 后", s.trackedCount, 0, 0, s.totalGcCount});
+        }
         for (int i = 0; i < 5; ++i) {
             {
                 Value arr(std::vector<Value>{});
                 arr.arrayVal().push_back(arr); // 自循环
             }
             std::vector<const void*> emptyRoots;
-            GcManager::instance().collectCycle(emptyRoots);
-            result.steps.push_back({"第 " + std::to_string(i + 1) + " 轮 collectCycle 后",
-                                    GcManager::instance().trackedCount(), GcManager::instance().lastMarkedCount(),
-                                    GcManager::instance().lastCollectedCount(), GcManager::instance().totalGcCount()});
+            MemoryInspectionAPI::collectCycle(emptyRoots);
+            auto s = gcStats();
+            result.steps.push_back({"第 " + std::to_string(i + 1) + " 轮 collectCycle 后", s.trackedCount,
+                                    s.lastMarkedCount, s.lastCollectedCount, s.totalGcCount});
         }
-        size_t finalTracked = GcManager::instance().trackedCount();
+        size_t finalTracked = gcStats().trackedCount;
         result.expectationMet = (finalTracked <= 1);
         result.summary = result.expectationMet
                              ? "✅ 期望达成：5 轮 collectCycle 后 trackedCount 稳定（≤1），"
@@ -562,8 +593,8 @@ GcSimResult GcVisualizerPanel::runScenario(int idx) {
     }
 
     // 公共清理：恢复干净状态（reset 不重置 gcMode_，需显式恢复默认）
-    GcManager::instance().reset();
-    GcManager::instance().setGcMode(GcMode::RefCountWithCycleGc);
+    MemoryInspectionAPI::resetGc();
+    MemoryInspectionAPI::setGcMode(GcMode::RefCountWithCycleGc);
     return result;
 }
 
@@ -616,6 +647,16 @@ void GcVisualizerPanel::renderScenarioResult(const GcSimResult& result) {
 // ============================================================
 
 void GcVisualizerPanel::onRunSimulation() {
+    // AUDIT-R5 R7 fix (BUG-2): 模拟器 runScenario 会 reset() 全局 GcManager 单例。
+    // 若此时 Worker 线程正在执行用户程序，reset 会清空 tracked_/aliveSet_，
+    // 破坏其 collectCycle 的存活判定（可能提前回收 UAF 或统计崩坏）。
+    // 运行期拒绝模拟（与 BackendExecutionService 的 AUDIT-R2 P1-5 防护策略对齐）。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        simBrowser_->setHtml(
+            mlTr("<p style='color:red;'>程序正在运行，GC 模拟会重置全局 GcManager 单例并破坏运行中的对象跟踪。"
+                 "请先停止执行后再运行模拟。</p>"));
+        return;
+    }
     int idx = presetCombo_->currentIndex();
     if (idx < 0) {
         simBrowser_->setHtml(mlTr("<p style='color:red;'>请先选择一个预设场景</p>"));
@@ -627,8 +668,16 @@ void GcVisualizerPanel::onRunSimulation() {
 }
 
 void GcVisualizerPanel::onResetGcManager() {
-    GcManager::instance().reset();
-    GcManager::instance().setGcMode(GcMode::RefCountWithCycleGc);
+    // AUDIT-R5 R7 fix (BUG-2): 运行期拒绝重置——resetGc 无条件重置全局
+    // GcManager 单例，Worker 线程执行期间重置会破坏 collectCycle 的存活判定。
+    if (controller_ && (controller_->isRunning() || controller_->isVmRunning())) {
+        simBrowser_->setHtml(mlTr("<p style='color:red;'>程序正在运行，不能重置全局 GcManager（会破坏"
+                                  "运行中的对象跟踪）。请先停止执行。</p>"));
+        return;
+    }
+    // ARCH-10: 通过 MemoryInspectionAPI 间接调用 GcManager
+    MemoryInspectionAPI::resetGc();
+    MemoryInspectionAPI::setGcMode(GcMode::RefCountWithCycleGc);
     refreshStats();
     simBrowser_->setHtml(mlTr("<p style='color:#666;'>GcManager 已重置（reset + 恢复 RefCountWithCycleGc 默认模式），"
                               "tracked / 统计计数 / 阶段均已清零。</p>"));

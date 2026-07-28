@@ -1,34 +1,21 @@
 // ============================================================
 // BackendParallelPanel.cpp — 三后端并行可视化教学面板实现
 // ------------------------------------------------------------
-// 面板内部独立完成 Lexer → Parser → 三后端执行流程：
-//   1. Interpreter：树遍历解释器直接执行 AST
-//   2. StackVM(IR)：Compiler(setUseIR(true)) → VM::execute(CompileResult)
-//   3. RegisterVM(IR)：Compiler(setUseRegisterVM(true)) → RegisterVM::execute
-// 三后端在主线程串行执行，捕获输出/指令数/状态/耗时，并对比
-// 三后端输出一致性验证语义等价性。
+// ARCH-10 重构：面板不再直接 include Compiler.h/VM.h/RegisterVM.h/
+// Interpreter.h/Lexer.h/Parser.h 等内部头文件，统一通过
+// BackendExecutionService 中间层触发 Lexer → Parser → 三后端执行。
+// 面板仅负责结果渲染与一致性比对，编译/执行细节由服务封装。
 // ============================================================
 
 #include "gui/BackendParallelPanel.h"
 
-#include "common/Diagnostic.h"
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
-#include "interpreter/Interpreter.h"
-#include "interpreter/RuntimeExceptions.h"
-#include "interpreter/Value.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
+#include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
-#include <QElapsedTimer>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QSplitter>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
-
-#include <sstream>
 
 // ============================================================
 // 内置示例库（3 个）
@@ -51,20 +38,6 @@ const std::vector<BackendParallelSample>& BackendParallelPanel::samples() {
 
 namespace {
 
-/// 格式化 DiagnosticBag 中的错误条目为 HTML（已转义）
-QString formatDiagnosticErrors(const DiagnosticBag& bag) {
-    QString result;
-    for (const auto& d : bag.all()) {
-        if (d.isError()) {
-            result += QString::fromUtf8(d.format().c_str()).toHtmlEscaped() + QStringLiteral("<br>");
-        }
-    }
-    if (result.isEmpty()) {
-        result = QStringLiteral("（未知错误）");
-    }
-    return result;
-}
-
 /// 构造执行轨迹 HTML：编译阶段 + 执行阶段 + 统计信息
 QString buildTraceHtml(const QString& compileStage, const QString& execStage, const QString& instrCount,
                        qint64 elapsedMs, bool hasRuntimeError) {
@@ -78,6 +51,34 @@ QString buildTraceHtml(const QString& compileStage, const QString& execStage, co
         .arg(compileStage)
         .arg(execStage)
         .arg(stats);
+}
+
+/// 将服务层 BackendExecResult 转换为面板内部结构（含 traceHtml 渲染）
+BackendParallelPanel::BackendExecResult convertServiceResult(const ::BackendExecResult& sr) {
+    BackendParallelPanel::BackendExecResult r;
+    r.success = sr.success;
+    r.output = QString::fromUtf8(sr.output.c_str());
+    r.elapsedMs = static_cast<qint64>(sr.elapsedMs);
+    r.instrCount = QString::fromUtf8(sr.instrCountText().c_str());
+
+    // 状态文本
+    r.status = QString::fromUtf8(sr.statusText().c_str());
+
+    // 编译阶段描述
+    QString compileStage = QString::fromUtf8(sr.compileStageText().c_str());
+
+    // 执行阶段 HTML：输出 + 运行时错误（若有）
+    QString execStage = QString::fromUtf8(sr.output.c_str()).toHtmlEscaped();
+    bool hasRuntimeError = (!sr.success && sr.errorPrefix == "运行时错误");
+    if (hasRuntimeError) {
+        QString err = QString::fromUtf8(sr.errorMsg.c_str()).toHtmlEscaped();
+        execStage += QStringLiteral("\n❌ 运行时错误: %1").arg(err);
+    } else if (!sr.success) {
+        // 词法/语法/编译错误：execStage 留空，compileStage 已含错误信息
+        execStage = QStringLiteral("");
+    }
+    r.traceHtml = buildTraceHtml(compileStage, execStage, r.instrCount, r.elapsedMs, hasRuntimeError);
+    return r;
 }
 
 } // anonymous namespace
@@ -190,8 +191,8 @@ BackendParallelPanel::BackendParallelPanel(QWidget* parent) : QWidget(parent) {
     }
 }
 
-/// 运行三后端：串行执行 Interpreter / StackVM(IR) / RegisterVM(IR)，
-/// 渲染表格行与执行轨迹，并检查输出一致性。
+/// 运行三后端：通过 BackendExecutionService 串行执行 Interpreter /
+/// StackVM(IR) / RegisterVM(IR)，渲染表格行与执行轨迹，并检查输出一致性。
 void BackendParallelPanel::onRunAllBackends() {
     std::string src = sourceEdit_->text().toStdString();
     if (src.empty()) {
@@ -200,10 +201,13 @@ void BackendParallelPanel::onRunAllBackends() {
         return;
     }
 
-    // 串行执行三后端（主线程，避免引擎层非线程安全问题）
-    BackendExecResult interp = runInterpreter(src);
-    BackendExecResult stackvm = runStackVM_IR(src);
-    BackendExecResult regvm = runRegVM_IR(src);
+    // ARCH-10: 通过服务中间层触发三后端执行（主线程串行，避免引擎层非线程安全问题）
+    BackendExecResult interp = convertServiceResult(
+        BackendExecutionService::execute(src, BackendType::Interpreter));
+    BackendExecResult stackvm = convertServiceResult(
+        BackendExecutionService::execute(src, BackendType::StackVM_IR));
+    BackendExecResult regvm = convertServiceResult(
+        BackendExecutionService::execute(src, BackendType::RegisterVM_IR));
 
     // 渲染表格行
     renderResult(0, QString::fromUtf8("Interpreter"), interp);
@@ -217,289 +221,6 @@ void BackendParallelPanel::onRunAllBackends() {
 
     // 一致性检查
     renderConsistency(interp, stackvm, regvm);
-}
-
-/// 运行 Interpreter 树遍历后端：Lexer → Parser → Interpreter::execute(AST)。
-/// 指令数显示 N/A（无字节码），耗时用 QElapsedTimer 测量。
-BackendParallelPanel::BackendExecResult BackendParallelPanel::runInterpreter(const std::string& src) {
-    BackendExecResult r;
-    r.instrCount = QStringLiteral("N/A");
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 词法错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        QString err = formatDiagnosticErrors(lex.getDiagnostics());
-        r.status = QString::fromUtf8("❌ 词法错误");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 词法错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 语法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 语法错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.status = QString::fromUtf8("❌ 语法错误");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 语法错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    // Interpreter 执行
-    Interpreter interp;
-    std::string out;
-    interp.setOutputCallback([&](const std::string& s) { out += s; });
-
-    QElapsedTimer timer;
-    timer.start();
-    bool hasRuntimeError = false;
-    QString runtimeErr;
-    try {
-        interp.execute(*ast);
-    } catch (const RuntimeError& e) {
-        hasRuntimeError = true;
-        runtimeErr = QString::fromUtf8(e.what()).toHtmlEscaped();
-    } catch (const std::exception& e) {
-        hasRuntimeError = true;
-        runtimeErr = QString::fromUtf8(e.what()).toHtmlEscaped();
-    }
-    r.elapsedMs = timer.elapsed();
-    r.output = QString::fromUtf8(out.c_str());
-
-    if (hasRuntimeError) {
-        r.status = QString::fromUtf8("❌ 运行时错误: ") + runtimeErr;
-        r.success = false;
-        r.traceHtml = buildTraceHtml(QStringLiteral("✅ 编译成功（Interpreter 直接执行 AST，无字节码）"),
-                                     QString::fromUtf8(out.c_str()).toHtmlEscaped() +
-                                         QStringLiteral("\n❌ 运行时错误: %1").arg(runtimeErr),
-                                     r.instrCount, r.elapsedMs, true);
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-        r.traceHtml = buildTraceHtml(QStringLiteral("✅ 编译成功（Interpreter 直接执行 AST，无字节码）"),
-                                     QString::fromUtf8(out.c_str()).toHtmlEscaped(), r.instrCount, r.elapsedMs, false);
-    }
-    return r;
-}
-
-/// 运行 StackVM（IR 路径）：Compiler(setUseIR(true)) → VM::execute(CompileResult)。
-/// 指令数取 mainChunk.code.size()（字节码字节数）。
-BackendParallelPanel::BackendExecResult BackendParallelPanel::runStackVM_IR(const std::string& src) {
-    BackendExecResult r;
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 词法错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        QString err = formatDiagnosticErrors(lex.getDiagnostics());
-        r.status = QString::fromUtf8("❌ 词法错误");
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 词法错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 语法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 语法错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.status = QString::fromUtf8("❌ 语法错误");
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 语法错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    // Compiler（IR 路径）
-    Compiler compiler;
-    compiler.setUseIR(true);
-    CompileResult cr;
-    try {
-        cr = compiler.compile(*ast);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 编译错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (compiler.getDiagnostics().hasErrors()) {
-        QString err = formatDiagnosticErrors(compiler.getDiagnostics());
-        r.status =
-            QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(compiler.getLastError().c_str()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 编译错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    r.instrCount = QString::number(static_cast<qint64>(cr.mainChunk.code.size()));
-
-    // VM 执行
-    VM vm;
-    std::string out;
-    vm.setOutputCallback([&](const std::string& s) { out += s; });
-
-    QElapsedTimer timer;
-    timer.start();
-    vm.execute(cr);
-    r.elapsedMs = timer.elapsed();
-    r.output = QString::fromUtf8(out.c_str());
-
-    QString compileStage = QStringLiteral("✅ 编译成功（IR 路径，字节码 %1 字节）").arg(r.instrCount);
-    if (vm.hasError()) {
-        QString err = QString::fromUtf8(vm.getLastError().c_str()).toHtmlEscaped();
-        r.status = QString::fromUtf8("❌ 运行时错误: ") + err;
-        r.success = false;
-        r.traceHtml = buildTraceHtml(compileStage,
-                                     QString::fromUtf8(out.c_str()).toHtmlEscaped() +
-                                         QStringLiteral("\n❌ 运行时错误: %1").arg(err),
-                                     r.instrCount, r.elapsedMs, true);
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-        r.traceHtml = buildTraceHtml(compileStage, QString::fromUtf8(out.c_str()).toHtmlEscaped(), r.instrCount,
-                                     r.elapsedMs, false);
-    }
-    return r;
-}
-
-/// 运行 RegisterVM（IR 路径）：Compiler(setUseRegisterVM(true)) →
-/// RegisterVM::execute(RegBytecodeChunk)。指令数取 mainChunk.code.size()。
-BackendParallelPanel::BackendExecResult BackendParallelPanel::runRegVM_IR(const std::string& src) {
-    BackendExecResult r;
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 词法错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        QString err = formatDiagnosticErrors(lex.getDiagnostics());
-        r.status = QString::fromUtf8("❌ 词法错误");
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 词法错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 语法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 语法错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.status = QString::fromUtf8("❌ 语法错误");
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 语法错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    // Compiler（寄存器 IR 路径）
-    Compiler compiler;
-    compiler.setUseRegisterVM(true);
-    try {
-        compiler.compile(*ast);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml = buildTraceHtml(QStringLiteral("❌ 编译错误: %1").arg(QString::fromUtf8(e.what()).toHtmlEscaped()),
-                                     QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-    if (compiler.getDiagnostics().hasErrors()) {
-        QString err = formatDiagnosticErrors(compiler.getDiagnostics());
-        r.status =
-            QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(compiler.getLastError().c_str()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        r.traceHtml =
-            buildTraceHtml(QStringLiteral("❌ 编译错误:<br>%1").arg(err), QStringLiteral(""), r.instrCount, 0, false);
-        return r;
-    }
-
-    const auto& regResult = compiler.getLastRegisterResult();
-    r.instrCount = QString::number(static_cast<qint64>(regResult.mainChunk.code.size()));
-
-    // RegisterVM 执行
-    RegisterVM vm;
-    std::string out;
-    vm.setOutputCallback([&](const std::string& s) { out += s; });
-
-    QElapsedTimer timer;
-    timer.start();
-    vm.execute(regResult);
-    r.elapsedMs = timer.elapsed();
-    r.output = QString::fromUtf8(out.c_str());
-
-    QString compileStage = QStringLiteral("✅ 编译成功（寄存器 IR 路径，字节码 %1 字节）").arg(r.instrCount);
-    if (vm.hasError()) {
-        QString err = QString::fromUtf8(vm.getLastError().c_str()).toHtmlEscaped();
-        r.status = QString::fromUtf8("❌ 运行时错误: ") + err;
-        r.success = false;
-        r.traceHtml = buildTraceHtml(compileStage,
-                                     QString::fromUtf8(out.c_str()).toHtmlEscaped() +
-                                         QStringLiteral("\n❌ 运行时错误: %1").arg(err),
-                                     r.instrCount, r.elapsedMs, true);
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-        r.traceHtml = buildTraceHtml(compileStage, QString::fromUtf8(out.c_str()).toHtmlEscaped(), r.instrCount,
-                                     r.elapsedMs, false);
-    }
-    return r;
 }
 
 /// 渲染单个后端的表格行（后端名/输出/指令数/状态/耗时）。

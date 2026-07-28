@@ -142,4 +142,8 @@ private:
     /// @param markdown 原始 Markdown
     /// @return 折叠后的 Markdown（若 foldMinorSections_=false 则原样返回）
     QString applyFolding(const std::string& markdown) const;
+    /// P2-UX fix: 持久化学习进度并在失败时弹出 toast 通知用户。
+    /// 包裹 LearnerProgressStore::instance().save()，失败时显示 InfoBar 警告，
+    /// 避免进度静默丢失（磁盘满/权限不足等场景）。
+    void saveProgressWithFeedback();
 };

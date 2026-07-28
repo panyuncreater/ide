@@ -17,6 +17,7 @@
 #include "gui/AstBuilderToyPanel.h"
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡完成状态持久化
+#include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 // P1-3 fix (F14): 引入真实 Lexer + Parser 用于对照验证
 #include "ast/ASTNode.h"
 #include "lexer/Lexer.h"
@@ -413,7 +414,7 @@ void AstBuilderToyPanel::markCurrentCompleted() {
         // 仅首次完成时持久化 + 发射信号
         std::string id = "ast-toy-level-" + std::to_string(lvl);
         LearnerProgressStore::instance().markLevelStars(id, 3);
-        LearnerProgressStore::instance().save();
+        saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
         QString levelId = QString::fromUtf8("ast-toy-level-%1").arg(lvl);
         emit activityCompleted(levelId);
     }

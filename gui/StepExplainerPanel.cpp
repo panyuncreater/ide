@@ -10,6 +10,7 @@
 
 #include "common/Diagnostic.h"
 #include "compiler/Compiler.h"
+#include "gui/I18n.h" // mlTrCtx() 国际化
 #include "interpreter/Value.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
@@ -318,7 +319,7 @@ QString formatDiagnosticErrors(const DiagnosticBag& bag) {
         }
     }
     if (result.isEmpty()) {
-        result = QStringLiteral("（未知错误）");
+        result = mlTrCtx("StepExplainer", "（未知错误）");
     }
     return result;
 }
@@ -344,9 +345,9 @@ uint8_t readByteOperand(const BytecodeChunk& chunk, size_t ip) {
 QString formatConstant(const BytecodeChunk& chunk, uint16_t idx) {
     if (idx < chunk.constants.size()) {
         QString val = QString::fromUtf8(chunk.constants[idx].toString().c_str()).toHtmlEscaped();
-        return QStringLiteral("常量池索引: %1 (值: %2)").arg(idx).arg(val);
+        return mlTrCtx("StepExplainer", "常量池索引: %1 (值: %2)").arg(idx).arg(val);
     }
-    return QStringLiteral("常量池索引: %1 (越界)").arg(idx);
+    return mlTrCtx("StepExplainer", "常量池索引: %1 (越界)").arg(idx);
 }
 
 /// 按 OpCode 解析操作数字节，返回自然语言描述
@@ -384,30 +385,34 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
     case OpCode::OP_FINALLY_END:
     case OpCode::OP_ENUM_VARIANT_FIELD:
     case OpCode::OP_LEN:
-        return QStringLiteral("无操作数");
+    case OpCode::OP_ADD_INT_SPEC:
+    case OpCode::OP_SUB_INT_SPEC:
+    case OpCode::OP_MUL_INT_SPEC:
+    case OpCode::OP_LT_INT_SPEC:
+        return mlTrCtx("StepExplainer", "无操作数");
 
     // 1 字节操作数：槽位 / 计数 / 索引
     case OpCode::OP_CALL_EXPR:
-        return QStringLiteral("参数个数: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "参数个数: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_BUILD_ARRAY:
     case OpCode::OP_BUILD_DICT:
     case OpCode::OP_BUILD_TUPLE:
-        return QStringLiteral("元素个数: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "元素个数: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_DUP_N:
-        return QStringLiteral("深度: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "深度: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_GET_LOCAL:
     case OpCode::OP_SET_LOCAL:
-        return QStringLiteral("局部槽位: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "局部槽位: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_INDEX_SET_LOCAL:
-        return QStringLiteral("局部槽位: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "局部槽位: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_GET_UPVALUE:
     case OpCode::OP_SET_UPVALUE:
     case OpCode::OP_CLOSE_UPVALUE:
-        return QStringLiteral("upvalue 索引: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "upvalue 索引: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_WRITEBACK_INDEX_LOCAL:
-        return QStringLiteral("局部槽位: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "局部槽位: %1").arg(readByteOperand(chunk, ip));
     case OpCode::OP_WRITEBACK_INDEX_UPVALUE:
-        return QStringLiteral("upvalue 索引: %1").arg(readByteOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "upvalue 索引: %1").arg(readByteOperand(chunk, ip));
 
     // 2 字节：常量池索引 / 名称索引
     case OpCode::OP_CONSTANT:
@@ -424,32 +429,32 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
     case OpCode::OP_SUPER_MEMBER_GET:
         return formatConstant(chunk, readShortOperand(chunk, ip));
     case OpCode::OP_INIT_FIELD:
-        return QStringLiteral("字段名索引: %1").arg(readShortOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "字段名索引: %1").arg(readShortOperand(chunk, ip));
     case OpCode::OP_TYPE_CHECK:
     case OpCode::OP_TYPE_TEST:
-        return QStringLiteral("类型注解索引: %1").arg(readShortOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "类型注解索引: %1").arg(readShortOperand(chunk, ip));
 
     // 2 字节：跳转目标 / 全局槽位
     case OpCode::OP_JUMP:
     case OpCode::OP_JUMP_IF_FALSE:
     case OpCode::OP_LOOP:
-        return QStringLiteral("跳转目标: %1").arg(readShortOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "跳转目标: %1").arg(readShortOperand(chunk, ip));
     case OpCode::OP_PUSH_JUMP_TARGET:
-        return QStringLiteral("跳转目标: %1").arg(readShortOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "跳转目标: %1").arg(readShortOperand(chunk, ip));
     case OpCode::OP_GET_GLOBAL:
     case OpCode::OP_SET_GLOBAL:
     case OpCode::OP_DEFINE_GLOBAL:
     case OpCode::OP_DELETE_GLOBAL:
-        return QStringLiteral("全局槽位: %1").arg(readShortOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "全局槽位: %1").arg(readShortOperand(chunk, ip));
     case OpCode::OP_TRY_BEGIN:
-        return QStringLiteral("catch 偏移: %1").arg(readShortOperand(chunk, ip));
+        return mlTrCtx("StepExplainer", "catch 偏移: %1").arg(readShortOperand(chunk, ip));
 
     // 名称索引(2B) + 参数个数(1B)
     case OpCode::OP_CALL:
     case OpCode::OP_CLASS_NEW: {
         uint16_t nameIdx = readShortOperand(chunk, ip);
         uint8_t argCount = (ip + 3 < chunk.code.size()) ? chunk.code[ip + 3] : 0;
-        return QStringLiteral("%1, 参数个数: %2").arg(formatConstant(chunk, nameIdx)).arg(argCount);
+        return mlTrCtx("StepExplainer", "%1, 参数个数: %2").arg(formatConstant(chunk, nameIdx)).arg(argCount);
     }
 
     // 变量索引(2B) + 字段索引(2B)
@@ -458,7 +463,7 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
         uint16_t fieldIdx = (ip + 4 < chunk.code.size())
                                 ? static_cast<uint16_t>(chunk.code[ip + 3] | (chunk.code[ip + 4] << 8))
                                 : 0;
-        return QStringLiteral("变量索引: %1, 字段索引: %2").arg(varIdx).arg(fieldIdx);
+        return mlTrCtx("StepExplainer", "变量索引: %1, 字段索引: %2").arg(varIdx).arg(fieldIdx);
     }
     // 槽位(1B) + 字段索引(2B)
     case OpCode::OP_MEMBER_SET_LOCAL:
@@ -468,7 +473,7 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
         uint16_t fieldIdx = (ip + 3 < chunk.code.size())
                                 ? static_cast<uint16_t>(chunk.code[ip + 2] | (chunk.code[ip + 3] << 8))
                                 : 0;
-        return QStringLiteral("槽位: %1, 字段索引: %2").arg(slot).arg(fieldIdx);
+        return mlTrCtx("StepExplainer", "槽位: %1, 字段索引: %2").arg(slot).arg(fieldIdx);
     }
     // 变量索引(2B) + 字段索引(2B)
     case OpCode::OP_WRITEBACK_MEMBER_VAR: {
@@ -476,20 +481,20 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
         uint16_t fieldIdx = (ip + 4 < chunk.code.size())
                                 ? static_cast<uint16_t>(chunk.code[ip + 3] | (chunk.code[ip + 4] << 8))
                                 : 0;
-        return QStringLiteral("变量索引: %1, 字段索引: %2").arg(varIdx).arg(fieldIdx);
+        return mlTrCtx("StepExplainer", "变量索引: %1, 字段索引: %2").arg(varIdx).arg(fieldIdx);
     }
 
     // 名称索引(2B) + 参数个数(1B) + 接收者索引(2B) — OP_METHOD_CALL (7B)
     case OpCode::OP_METHOD_CALL: {
         uint16_t nameIdx = readShortOperand(chunk, ip);
         uint8_t argCount = (ip + 3 < chunk.code.size()) ? chunk.code[ip + 3] : 0;
-        return QStringLiteral("%1, 参数个数: %2").arg(formatConstant(chunk, nameIdx)).arg(argCount);
+        return mlTrCtx("StepExplainer", "%1, 参数个数: %2").arg(formatConstant(chunk, nameIdx)).arg(argCount);
     }
     // OP_SUPER_CALL (9B)
     case OpCode::OP_SUPER_CALL: {
         uint16_t nameIdx = readShortOperand(chunk, ip);
         uint8_t argCount = (ip + 3 < chunk.code.size()) ? chunk.code[ip + 3] : 0;
-        return QStringLiteral("%1, 参数个数: %2").arg(formatConstant(chunk, nameIdx)).arg(argCount);
+        return mlTrCtx("StepExplainer", "%1, 参数个数: %2").arg(formatConstant(chunk, nameIdx)).arg(argCount);
     }
     // OP_DEFINE_CLASS (5B)
     case OpCode::OP_DEFINE_CLASS: {
@@ -501,7 +506,7 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
     case OpCode::OP_CLOSURE: {
         uint16_t nameIdx = readShortOperand(chunk, ip);
         uint8_t upvalueCount = (ip + 3 < chunk.code.size()) ? chunk.code[ip + 3] : 0;
-        return QStringLiteral("%1, upvalue 数: %2").arg(formatConstant(chunk, nameIdx)).arg(upvalueCount);
+        return mlTrCtx("StepExplainer", "%1, upvalue 数: %2").arg(formatConstant(chunk, nameIdx)).arg(upvalueCount);
     }
 
     // R99 枚举指令
@@ -511,7 +516,7 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
                                   ? static_cast<uint16_t>(chunk.code[ip + 3] | (chunk.code[ip + 4] << 8))
                                   : 0;
         uint8_t argCount = (ip + 5 < chunk.code.size()) ? chunk.code[ip + 5] : 0;
-        return QStringLiteral("枚举名: %1, variant 名: %2, 参数个数: %3")
+        return mlTrCtx("StepExplainer", "枚举名: %1, variant 名: %2, 参数个数: %3")
             .arg(formatConstant(chunk, enumIdx))
             .arg(formatConstant(chunk, variantIdx))
             .arg(argCount);
@@ -521,12 +526,12 @@ QString describeOperands(const BytecodeChunk& chunk, size_t ip, OpCode op) {
         uint16_t variantIdx = (ip + 4 < chunk.code.size())
                                   ? static_cast<uint16_t>(chunk.code[ip + 3] | (chunk.code[ip + 4] << 8))
                                   : 0;
-        return QStringLiteral("枚举名: %1, variant 名: %2")
+        return mlTrCtx("StepExplainer", "枚举名: %1, variant 名: %2")
             .arg(formatConstant(chunk, enumIdx))
             .arg(formatConstant(chunk, variantIdx));
     }
     }
-    return QStringLiteral("无操作数");
+    return mlTrCtx("StepExplainer", "无操作数");
 }
 
 } // anonymous namespace
@@ -539,27 +544,27 @@ QString StepExplainerLibrary::generateStepExplanation(const BytecodeChunk& chunk
     int line = chunk.getLine(ip);
 
     // 查找静态文档条目获取栈效果与语义
-    QString stackEffect = QStringLiteral("（未知）");
-    QString semantics = QStringLiteral("（暂无文档）");
-    QString category = QStringLiteral("其他");
+    QString stackEffect = mlTrCtx("StepExplainer", "（未知）");
+    QString semantics = mlTrCtx("StepExplainer", "（暂无文档）");
+    QString category = mlTrCtx("StepExplainer", "其他");
     QString nameStr = QString::fromUtf8(name).toHtmlEscaped();
     for (const auto& doc : opCodeDocs()) {
         if (doc.name == name) {
-            stackEffect = QString::fromUtf8(doc.stackEffect.c_str()).toHtmlEscaped();
-            semantics = QString::fromUtf8(doc.semantics.c_str()).toHtmlEscaped();
-            category = QString::fromUtf8(doc.category.c_str()).toHtmlEscaped();
+            stackEffect = mlTrCtx("StepExplainer", doc.stackEffect.c_str()).toHtmlEscaped();
+            semantics = mlTrCtx("StepExplainer", doc.semantics.c_str()).toHtmlEscaped();
+            category = mlTrCtx("StepExplainer", doc.category.c_str()).toHtmlEscaped();
             break;
         }
     }
 
     QString html = QStringLiteral(
         "<h3>%1</h3>"
-        "<p><b>分类:</b> %2 | <b>源码行:</b> %3 | <b>IP:</b> %4</p>"
-        "<h4>操作数值</h4>"
+        "<p><b>%8</b> %2 | <b>%9</b> %3 | <b>%10</b> %4</p>"
+        "<h4>%11</h4>"
         "<p><code>%5</code></p>"
-        "<h4>栈效果</h4>"
+        "<h4>%12</h4>"
         "<p><code>%6</code></p>"
-        "<h4>语义讲解</h4>"
+        "<h4>%13</h4>"
         "<p>%7</p>")
         .arg(nameStr)
         .arg(category)
@@ -567,7 +572,13 @@ QString StepExplainerLibrary::generateStepExplanation(const BytecodeChunk& chunk
         .arg(ip)
         .arg(operandDesc)
         .arg(stackEffect)
-        .arg(semantics);
+        .arg(semantics)
+        .arg(mlTrCtx("StepExplainer", "分类:"))
+        .arg(mlTrCtx("StepExplainer", "源码行:"))
+        .arg(mlTrCtx("StepExplainer", "IP:"))
+        .arg(mlTrCtx("StepExplainer", "操作数值"))
+        .arg(mlTrCtx("StepExplainer", "栈效果"))
+        .arg(mlTrCtx("StepExplainer", "语义讲解"));
     return html;
 }
 
@@ -619,7 +630,7 @@ StepExplainerPanel::StepExplainerPanel(QWidget* parent) : QWidget(parent) {
     populateOpCodes();
 
     // 占位提示
-    stepDetail_->setHtml(QString::fromUtf8(
+    stepDetail_->setHtml(tr(
         "<div style='color:#6E6E6E; padding:8px;'><i>（点击「编译并生成讲解」后，选中上方表格的某行查看该指令的详细讲解）</i></div>"));
 }
 
@@ -702,7 +713,7 @@ void StepExplainerPanel::onCompile() {
 
     std::string source = sourceEdit_->text().toStdString();
     if (source.empty()) {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#C0392B; padding:8px;'><b>请输入源码</b></div>"));
         return;
     }
@@ -713,13 +724,13 @@ void StepExplainerPanel::onCompile() {
     try {
         tokens = lex.scan(source);
     } catch (const std::exception& e) {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#C0392B; padding:8px;'><b>词法错误:</b> %1</div>")
             .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return;
     }
     if (lex.getDiagnostics().hasErrors()) {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#C0392B; padding:8px;'><b>词法错误:</b> %1</div>")
             .arg(formatDiagnosticErrors(lex.getDiagnostics())));
         return;
@@ -730,13 +741,13 @@ void StepExplainerPanel::onCompile() {
     try {
         ast = parser.parse(tokens);
     } catch (const std::exception& e) {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#C0392B; padding:8px;'><b>语法错误:</b> %1</div>")
             .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return;
     }
     if (parser.hasErrors()) {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#C0392B; padding:8px;'><b>语法错误:</b> %1</div>")
             .arg(formatDiagnosticErrors(parser.getDiagnostics())));
         return;
@@ -747,13 +758,13 @@ void StepExplainerPanel::onCompile() {
     try {
         result = compiler.compile(*ast);
     } catch (const std::exception& e) {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#C0392B; padding:8px;'><b>编译错误:</b> %1</div>")
             .arg(QString::fromUtf8(e.what()).toHtmlEscaped()));
         return;
     }
     if (compiler.getDiagnostics().hasErrors()) {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#C0392B; padding:8px;'><b>编译错误:</b> %1</div>")
             .arg(formatDiagnosticErrors(compiler.getDiagnostics())));
         return;
@@ -794,7 +805,7 @@ void StepExplainerPanel::onCompile() {
     if (!steps_.empty()) {
         stepTable_->selectRow(0);
     } else {
-        stepDetail_->setHtml(QString::fromUtf8(
+        stepDetail_->setHtml(tr(
             "<div style='color:#6E6E6E; padding:8px;'><i>（编译产物为空）</i></div>"));
     }
 }
@@ -835,21 +846,26 @@ void StepExplainerPanel::showOpCode(int index) {
     }
     const auto& d = StepExplainerLibrary::opCodeDocs()[index];
     QString html = QString("<h2>%1</h2>"
-                           "<p><b>分类:</b> %2</p>"
-                           "<h3>操作数格式</h3>"
+                           "<p><b>%7</b> %2</p>"
+                           "<h3>%8</h3>"
                            "<p><code>%3</code></p>"
-                           "<h3>栈效果</h3>"
+                           "<h3>%9</h3>"
                            "<p><code>%4</code></p>"
-                           "<h3>语义讲解</h3>"
+                           "<h3>%10</h3>"
                            "<p>%5</p>"
-                           "<h3>样例代码</h3>"
+                           "<h3>%11</h3>"
                            "<pre>%6</pre>")
                        .arg(QString::fromUtf8(d.name.c_str()).toHtmlEscaped())
-                       .arg(QString::fromUtf8(d.category.c_str()).toHtmlEscaped())
-                       .arg(QString::fromUtf8(d.operandFormat.c_str()).toHtmlEscaped())
-                       .arg(QString::fromUtf8(d.stackEffect.c_str()).toHtmlEscaped())
-                       .arg(QString::fromUtf8(d.semantics.c_str()).toHtmlEscaped())
-                       .arg(QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped());
+                       .arg(mlTrCtx("StepExplainer", d.category.c_str()).toHtmlEscaped())
+                       .arg(mlTrCtx("StepExplainer", d.operandFormat.c_str()).toHtmlEscaped())
+                       .arg(mlTrCtx("StepExplainer", d.stackEffect.c_str()).toHtmlEscaped())
+                       .arg(mlTrCtx("StepExplainer", d.semantics.c_str()).toHtmlEscaped())
+                       .arg(QString::fromUtf8(d.exampleCode.c_str()).toHtmlEscaped())
+                       .arg(mlTrCtx("StepExplainer", "分类:"))
+                       .arg(mlTrCtx("StepExplainer", "操作数格式"))
+                       .arg(mlTrCtx("StepExplainer", "栈效果"))
+                       .arg(mlTrCtx("StepExplainer", "语义讲解"))
+                       .arg(mlTrCtx("StepExplainer", "样例代码"));
     opCodeDetail_->setHtml(html);
 }
 

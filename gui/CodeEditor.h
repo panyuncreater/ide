@@ -139,7 +139,15 @@ signals:
     /// 不同步到 DebugController.breakpoints_，新断点不生效，已删除断点仍触发。
     void breakpointsChanged();
 
+    /// 拓展二期·调试：hover 表达式求值——鼠标悬停在标识符（含 obj.field
+    /// 点链）上时发射。上层（Ide）判定调试暂停态后调
+    /// IdeController::evaluateWatchExpression 并用 QToolTip 展示结果；
+    /// 非暂停态上层直接忽略（不弹提示）。
+    void hoverEvaluateRequested(const QString& expression, const QPoint& globalPos);
+
 protected:
+    /// 拓展二期·调试：拦截 QEvent::ToolTip 实现 hover 表达式求值
+    bool event(QEvent* e) override;
     /// 行号区域重绘时触发
     void resizeEvent(QResizeEvent* event) override;
     /// F13: 键盘事件处理（Ctrl+Space 触发补全、补全弹窗导航）
@@ -196,6 +204,9 @@ private:
 
     /// F13: 获取光标下的单词前缀
     QString textUnderCursor() const;
+    /// 拓展二期·调试：取视口坐标处的 hover 表达式（标识符含左侧 obj. 点链）；
+    /// 坐标不在标识符上返回空串
+    QString hoverExpressionAt(const QPoint& viewportPos) const;
     /// F13: 触发补全弹窗
     void triggerCompletion();
     /// F13: 更新补全弹窗位置和前缀过滤

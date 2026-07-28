@@ -89,6 +89,14 @@ FindReplacePanel::FindReplacePanel(CodeEditor* editor, QWidget* parent) : QWidge
     connect(findEdit_, &QLineEdit::returnPressed, this, &FindReplacePanel::onFindNext);
     connect(replaceEdit_, &QLineEdit::returnPressed, this, &FindReplacePanel::onReplace);
 
+    // P-8 perf: 200ms 防抖定时器，对齐 BugHuntPanel 搜索防抖设计。
+    // textChanged 仅记录最新文本并重启定时器，真正高亮在 timeout 中执行，
+    // 避免大文档每输入一个字符就 O(n) 全文档扫描。
+    highlightDebounceTimer_ = new QTimer(this);
+    highlightDebounceTimer_->setSingleShot(true);
+    highlightDebounceTimer_->setInterval(200);
+    connect(highlightDebounceTimer_, &QTimer::timeout, this, [this]() { highlightMatches(pendingHighlightText_); });
+
     // 默认隐藏替换行（仅查找模式）
     replaceEdit_->setVisible(false);
     replaceBtn_->setVisible(false);
@@ -160,18 +168,19 @@ void FindReplacePanel::keyPressEvent(QKeyEvent* event) {
     QWidget::keyPressEvent(event);
 }
 
-/// 查找文本变化回调：实时刷新匹配高亮。
+/// 查找文本变化回调：防抖刷新匹配高亮。
 void FindReplacePanel::onFindTextChanged(const QString& text) {
     if (text.isEmpty()) {
+        highlightDebounceTimer_->stop();
         clearHighlights();
         statusLabel_->setText("");
         return;
     }
+    // P-8 perf: 防抖——仅记录最新文本并重启 200ms 定时器，
+    // 真正高亮在 timeout 回调中执行（对齐 BugHuntPanel 防抖模式）。
     // BUG-FR-5 fix: 仅更新高亮，不调用 findText(true)。
-    // 原实现在文本变化时调用 findText(true) 会移动编辑器光标到匹配位置，
-    // 打断用户在编辑器中的编辑操作（光标跳动）。高亮已通过 highlightMatches
-    // 更新，用户按 F3/回车时再主动查找。
-    highlightMatches(text);
+    pendingHighlightText_ = text;
+    highlightDebounceTimer_->start();
 }
 
 /// 执行一次查找（forward 指定方向），返回是否找到。

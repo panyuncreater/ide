@@ -1,13 +1,7 @@
 #include "gui/BackendComparePanel.h"
 #include "app/IdeController.h"
-#include "compiler/Compiler.h"
-#include "compiler/IR.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
-#include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
-#include "interpreter/Interpreter.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
+#include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
+#include "gui/GuiTextUtils.h"               // R75: monospaceFont() 跨机器字体回退链
 
 #include <QApplication>
 #include <QHBoxLayout>
@@ -85,9 +79,10 @@ void BackendComparePanel::runComparison() {
     if (comparing_) {
         return;
     }
-    // 直接从 controller 获取 AST（已在主编辑器编译完成）
-    Block* ast = controller_->astRoot();
-    if (!ast) {
+    // ARCH-10: 通过 BackendExecutionService 触发三后端，面板不再依赖
+    // Compiler/VM/RegisterVM/Interpreter 内部头文件。源码从 controller 的
+    // lastSource() 获取（由 runFrontendPipeline 在主编辑器运行时填充）。
+    if (controller_->lastSource().empty()) {
         diffLabel_->setText(QString::fromUtf8("请先在主编辑器中输入并编译代码"));
         return;
     }
@@ -119,119 +114,67 @@ void BackendComparePanel::runComparison() {
     comparing_ = false;
 }
 
-/// 运行 Interpreter 后端：用 controller 持有的 AST 执行，捕获输出与耗时，
-/// 按行切分输出并返回 BackendResult（含状态 / 错误消息 / 耗时微秒）。
+// ============================================================
+// ARCH-10 重构：三后端执行通过 BackendExecutionService 触发
+// ============================================================
+// 面板不再直接依赖 Compiler/VM/RegisterVM/Interpreter/Lexer/Parser 等
+// 内部头文件。源码从 IdeController::lastSource() 获取（由 runFrontendPipeline
+// 在主编辑器运行时填充），交由 BackendExecutionService 完整执行 Lexer →
+// Parser → Compiler → 指定后端的流程。
+
+namespace {
+
+/// 将服务层 BackendExecResult 转换为面板内部 BackendResult
+BackendComparePanel::BackendResult convertServiceResult(const ::BackendExecResult& sr) {
+    BackendComparePanel::BackendResult r;
+    r.status = sr.success ? "OK" : "ERROR";
+    r.errorMessage = sr.success ? std::string() : (sr.errorPrefix + ": " + sr.errorMsg);
+    r.elapsedMicros = sr.elapsedMs * 1000; // ms → μs
+    // 按行切分输出（保留原 BackendComparePanel 输出格式）
+    std::string s = sr.output;
+    std::istringstream iss(s);
+    std::string line;
+    while (std::getline(iss, line)) {
+        r.outputLines.push_back(line);
+    }
+    // 若有错误，附加错误信息到输出末尾（保持原行为：错误也作为输出展示）
+    if (!sr.success && !sr.errorMsg.empty()) {
+        r.outputLines.push_back(std::string("[") + sr.errorPrefix + "] " + sr.errorMsg);
+    }
+    return r;
+}
+
+} // namespace
+
+/// 运行 Interpreter 后端：通过 BackendExecutionService 触发。
 BackendComparePanel::BackendResult BackendComparePanel::runInterpreter(const std::string& /*source*/) {
     BackendResult r;
-    if (!controller_ || !controller_->astRoot()) {
+    if (!controller_ || controller_->lastSource().empty()) {
         r.status = "NO_AST";
         return r;
     }
-    std::ostringstream out;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    try {
-        Interpreter interp;
-        interp.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
-        interp.execute(*controller_->astRoot());
-        r.status = "OK";
-    } catch (const std::exception& e) {
-        r.status = "ERROR";
-        r.errorMessage = e.what();
-        out << "[ERROR] " << e.what();
-    }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    r.elapsedMicros = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-    std::string s = out.str();
-    std::istringstream iss(s);
-    std::string line;
-    while (std::getline(iss, line))
-        r.outputLines.push_back(line);
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(controller_->lastSource(), BackendType::Interpreter));
 }
 
-/// 运行 StackVM 后端：先由 Compiler 编译 AST 为 BytecodeChunk，再由 VM 执行，
-/// 捕获输出 / 编译错误 / 运行时错误并返回 BackendResult。
+/// 运行 StackVM 后端：通过 BackendExecutionService 触发（IR 路径）。
 BackendComparePanel::BackendResult BackendComparePanel::runStackVM(const std::string& /*source*/) {
     BackendResult r;
-    if (!controller_ || !controller_->astRoot()) {
+    if (!controller_ || controller_->lastSource().empty()) {
         r.status = "NO_AST";
         return r;
     }
-    std::ostringstream out;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    try {
-        Compiler compiler;
-        auto result = compiler.compile(*controller_->astRoot());
-        if (compiler.getDiagnostics().hasErrors()) {
-            r.status = "ERROR";
-            r.errorMessage = compiler.getDiagnostics().summary();
-            out << "[Compile Error]\n" << r.errorMessage;
-        } else {
-            VM vm;
-            vm.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
-            auto vmres = vm.execute(result);
-            r.status = (vmres == VMResult::VM_OK) ? "OK" : "ERROR";
-            if (vmres != VMResult::VM_OK) {
-                out << "[VM Error] result=" << (int)vmres;
-                r.errorMessage = "VM runtime error";
-            }
-        }
-    } catch (const std::exception& e) {
-        r.status = "ERROR";
-        r.errorMessage = e.what();
-        out << "[ERROR] " << e.what();
-    }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    r.elapsedMicros = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-    std::string s = out.str();
-    std::istringstream iss(s);
-    std::string line;
-    while (std::getline(iss, line))
-        r.outputLines.push_back(line);
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(controller_->lastSource(), BackendType::StackVM_IR));
 }
 
-/// 运行 RegisterVM 后端：启用寄存器式 IR 路径（compileViaRegisterIR）编译，
-/// 再由 RegisterVM 执行，捕获输出与错误并返回 BackendResult。
+/// 运行 RegisterVM 后端：通过 BackendExecutionService 触发（寄存器 IR 路径）。
 BackendComparePanel::BackendResult BackendComparePanel::runRegisterVM(const std::string& /*source*/) {
     BackendResult r;
-    if (!controller_ || !controller_->astRoot()) {
+    if (!controller_ || controller_->lastSource().empty()) {
         r.status = "NO_AST";
         return r;
     }
-    std::ostringstream out;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    try {
-        Compiler compiler;
-        compiler.setUseRegisterVM(true);
-        auto regResult = compiler.compileViaRegisterIR(*controller_->astRoot());
-        if (compiler.getDiagnostics().hasErrors()) {
-            r.status = "ERROR";
-            r.errorMessage = compiler.getDiagnostics().summary();
-            out << "[Compile Error]\n" << r.errorMessage;
-        } else {
-            RegisterVM vm;
-            vm.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
-            auto vmres = vm.execute(regResult);
-            r.status = (vmres == VMResult::VM_OK) ? "OK" : "ERROR";
-            if (vmres != VMResult::VM_OK) {
-                out << "[RegVM Error] result=" << (int)vmres;
-                r.errorMessage = "RegisterVM runtime error";
-            }
-        }
-    } catch (const std::exception& e) {
-        r.status = "ERROR";
-        r.errorMessage = e.what();
-        out << "[ERROR] " << e.what();
-    }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    r.elapsedMicros = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-    std::string s = out.str();
-    std::istringstream iss(s);
-    std::string line;
-    while (std::getline(iss, line))
-        r.outputLines.push_back(line);
-    return r;
+    return convertServiceResult(
+        BackendExecutionService::execute(controller_->lastSource(), BackendType::RegisterVM_IR));
 }
 
 /// 将三后端结果渲染到对应列：填充输出文本与状态标签（状态 + 耗时），

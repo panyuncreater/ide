@@ -1,10 +1,9 @@
 // ============================================================
 // PerformanceRacePanel.cpp — 三后端性能竞赛教学面板实现
 // ------------------------------------------------------------
-// 面板内部独立完成 Lexer → Parser → 三后端执行流程：
-//   1. Interpreter：树遍历解释器直接执行 AST
-//   2. StackVM(IR)：Compiler(setUseIR(true)) → VM::execute(CompileResult)
-//   3. RegisterVM(IR)：Compiler(setUseRegisterVM(true)) → RegisterVM::execute
+// ARCH-10 重构：面板不再直接 include Compiler.h/VM.h/RegisterVM.h/
+// Interpreter.h/Lexer.h/Parser.h 等内部头文件，统一通过
+// BackendExecutionService 中间层触发 Lexer → Parser → 三后端执行。
 // 每个后端运行 N 次（1-10，由 QSpinBox 选择），记录平均/最小/最大
 // 耗时，并用 HTML/CSS 绘制水平柱状图，生成性能分析报告。
 // 三后端在主线程串行执行（避免引擎层非线程安全问题）。
@@ -12,22 +11,15 @@
 
 #include "gui/PerformanceRacePanel.h"
 
-#include "common/Diagnostic.h"
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
-#include "interpreter/Interpreter.h"
-#include "interpreter/RuntimeExceptions.h"
-#include "interpreter/Value.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
+#include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
-#include <QElapsedTimer>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QSplitter>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
+#include <QApplication>
+#include <QEventLoop>
 
 #include <algorithm>
 #include <sstream>
@@ -54,20 +46,6 @@ const std::vector<PerfSample>& PerformanceRaceLibrary::samples() {
 
 namespace {
 
-/// 格式化 DiagnosticBag 中的错误条目为 HTML（已转义）
-QString formatDiagnosticErrors(const DiagnosticBag& bag) {
-    QString result;
-    for (const auto& d : bag.all()) {
-        if (d.isError()) {
-            result += QString::fromUtf8(d.format().c_str()).toHtmlEscaped() + QStringLiteral("<br>");
-        }
-    }
-    if (result.isEmpty()) {
-        result = QStringLiteral("（未知错误）");
-    }
-    return result;
-}
-
 /// 后端柱状图颜色（Interpreter 蓝 / StackVM 绿 / RegisterVM 橙）
 QString backendColor(int idx) {
     switch (idx) {
@@ -85,6 +63,17 @@ QString backendColor(int idx) {
 /// 格式化耗时（保留 3 位小数）
 QString formatMs(double ms) {
     return QString::number(ms, 'f', 3) + QStringLiteral(" ms");
+}
+
+/// 将服务层 BackendExecResult 转换为面板内部 SingleRunResult
+PerformanceRacePanel::SingleRunResult convertServiceResult(const ::BackendExecResult& sr) {
+    PerformanceRacePanel::SingleRunResult r;
+    r.success = sr.success;
+    r.output = QString::fromUtf8(sr.output.c_str());
+    r.elapsedMs = static_cast<qint64>(sr.elapsedMs);
+    r.instrCount = QString::fromUtf8(sr.instrCountText().c_str());
+    r.status = QString::fromUtf8(sr.statusText().c_str());
+    return r;
 }
 
 } // anonymous namespace
@@ -181,9 +170,11 @@ PerformanceRacePanel::PerformanceRacePanel(QWidget* parent) : QWidget(parent) {
     // 信号连接
     connect(raceBtn_, &QPushButton::clicked, this, &PerformanceRacePanel::onRunRace);
     connect(loadSampleBtn_, &QPushButton::clicked, this, &PerformanceRacePanel::onLoadSample);
-    connect(sample1Btn_, &QPushButton::clicked, [this]() { onSelectSample(0); });
-    connect(sample2Btn_, &QPushButton::clicked, [this]() { onSelectSample(1); });
-    connect(sample3Btn_, &QPushButton::clicked, [this]() { onSelectSample(2); });
+    // BUG-95 fix (P3): 为 lambda connect 补齐 this 作为 context object，
+    // 确保 PerformanceRacePanel 析构后自动断开连接，避免悬垂 this 捕获。
+    connect(sample1Btn_, &QPushButton::clicked, this, [this]() { onSelectSample(0); });
+    connect(sample2Btn_, &QPushButton::clicked, this, [this]() { onSelectSample(1); });
+    connect(sample3Btn_, &QPushButton::clicked, this, [this]() { onSelectSample(2); });
 
     // 预填示例代码
     sourceEdit_->setText(QString::fromUtf8(PerformanceRaceLibrary::samples()[0].code.c_str()));
@@ -218,6 +209,9 @@ void PerformanceRacePanel::onRunRace() {
         runCount = 1;
     }
 
+    // Bug #72 fix: 执行期间禁用按钮，防止重复点击
+    raceBtn_->setEnabled(false);
+
     // 串行执行三后端（主线程，避免引擎层非线程安全问题）
     BackendPerfResult interp =
         runBackendMultiple(src, QString::fromUtf8("Interpreter"), runCount, &PerformanceRacePanel::runInterpreterOnce);
@@ -237,230 +231,27 @@ void PerformanceRacePanel::onRunRace() {
 
     // 一致性检查
     renderConsistency(interp, stackvm, regvm);
+
+    // Bug #72 fix: 恢复按钮
+    raceBtn_->setEnabled(true);
 }
 
-/// 运行 Interpreter 树遍历后端一次：Lexer → Parser → Interpreter::execute(AST)。
-/// 指令数显示 N/A（无字节码），耗时用 QElapsedTimer 测量。
+/// 运行 Interpreter 树遍历后端一次。
+/// ARCH-10: 通过 BackendExecutionService 触发，面板不再直接依赖 Lexer/Parser/Interpreter。
 PerformanceRacePanel::SingleRunResult PerformanceRacePanel::runInterpreterOnce(const std::string& src) {
-    SingleRunResult r;
-    r.instrCount = QStringLiteral("N/A");
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + formatDiagnosticErrors(lex.getDiagnostics());
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 语法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.status = QString::fromUtf8("❌ 语法错误: ") + err;
-        return r;
-    }
-
-    // Interpreter 执行
-    Interpreter interp;
-    std::string out;
-    interp.setOutputCallback([&](const std::string& s) { out += s; });
-
-    QElapsedTimer timer;
-    timer.start();
-    bool hasRuntimeError = false;
-    QString runtimeErr;
-    try {
-        interp.execute(*ast);
-    } catch (const RuntimeError& e) {
-        hasRuntimeError = true;
-        runtimeErr = QString::fromUtf8(e.what()).toHtmlEscaped();
-    } catch (const std::exception& e) {
-        hasRuntimeError = true;
-        runtimeErr = QString::fromUtf8(e.what()).toHtmlEscaped();
-    }
-    r.elapsedMs = timer.elapsed();
-    r.output = QString::fromUtf8(out.c_str());
-
-    if (hasRuntimeError) {
-        r.status = QString::fromUtf8("❌ 运行时错误: ") + runtimeErr;
-        r.success = false;
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-    }
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(src, BackendType::Interpreter));
 }
 
-/// 运行 StackVM（IR 路径）一次：Compiler(setUseIR(true)) → VM::execute(CompileResult)。
-/// 指令数取 mainChunk.code.size()（字节码字节数）。
+/// 运行 StackVM（IR 路径）一次。
+/// ARCH-10: 通过 BackendExecutionService 触发，面板不再直接依赖 Compiler/VM。
 PerformanceRacePanel::SingleRunResult PerformanceRacePanel::runStackVM_IR_Once(const std::string& src) {
-    SingleRunResult r;
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + formatDiagnosticErrors(lex.getDiagnostics());
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 语法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.status = QString::fromUtf8("❌ 语法错误: ") + err;
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-
-    // Compiler（IR 路径）
-    Compiler compiler;
-    compiler.setUseIR(true);
-    CompileResult cr;
-    try {
-        cr = compiler.compile(*ast);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-    if (compiler.getDiagnostics().hasErrors()) {
-        r.status =
-            QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(compiler.getLastError().c_str()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-
-    r.instrCount = QString::number(static_cast<qint64>(cr.mainChunk.code.size()));
-
-    // VM 执行
-    VM vm;
-    std::string out;
-    vm.setOutputCallback([&](const std::string& s) { out += s; });
-
-    QElapsedTimer timer;
-    timer.start();
-    vm.execute(cr);
-    r.elapsedMs = timer.elapsed();
-    r.output = QString::fromUtf8(out.c_str());
-
-    if (vm.hasError()) {
-        r.status = QString::fromUtf8("❌ 运行时错误: ") + QString::fromUtf8(vm.getLastError().c_str()).toHtmlEscaped();
-        r.success = false;
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-    }
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(src, BackendType::StackVM_IR));
 }
 
-/// 运行 RegisterVM（IR 路径）一次：Compiler(setUseRegisterVM(true)) →
-/// RegisterVM::execute(RegBytecodeChunk)。指令数取 mainChunk.code.size()。
+/// 运行 RegisterVM（IR 路径）一次。
+/// ARCH-10: 通过 BackendExecutionService 触发，面板不再直接依赖 Compiler/RegisterVM。
 PerformanceRacePanel::SingleRunResult PerformanceRacePanel::runRegVM_IR_Once(const std::string& src) {
-    SingleRunResult r;
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        r.status = QString::fromUtf8("❌ 词法错误: ") + formatDiagnosticErrors(lex.getDiagnostics());
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 语法错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.status = QString::fromUtf8("❌ 语法错误: ") + err;
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-
-    // Compiler（寄存器 IR 路径）
-    Compiler compiler;
-    compiler.setUseRegisterVM(true);
-    try {
-        compiler.compile(*ast);
-    } catch (const std::exception& e) {
-        r.status = QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(e.what()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-    if (compiler.getDiagnostics().hasErrors()) {
-        r.status =
-            QString::fromUtf8("❌ 编译错误: ") + QString::fromUtf8(compiler.getLastError().c_str()).toHtmlEscaped();
-        r.instrCount = QStringLiteral("N/A");
-        return r;
-    }
-
-    const auto& regResult = compiler.getLastRegisterResult();
-    r.instrCount = QString::number(static_cast<qint64>(regResult.mainChunk.code.size()));
-
-    // RegisterVM 执行
-    RegisterVM vm;
-    std::string out;
-    vm.setOutputCallback([&](const std::string& s) { out += s; });
-
-    QElapsedTimer timer;
-    timer.start();
-    vm.execute(regResult);
-    r.elapsedMs = timer.elapsed();
-    r.output = QString::fromUtf8(out.c_str());
-
-    if (vm.hasError()) {
-        r.status = QString::fromUtf8("❌ 运行时错误: ") + QString::fromUtf8(vm.getLastError().c_str()).toHtmlEscaped();
-        r.success = false;
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-    }
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(src, BackendType::RegisterVM_IR));
 }
 
 /// 多次运行汇总：调用指定单次执行函数 N 次，记录每次耗时，计算平均/最小/最大。
@@ -479,6 +270,8 @@ PerformanceRacePanel::runBackendMultiple(const std::string& src, const QString& 
     for (int i = 0; i < runCount; ++i) {
         SingleRunResult r = (this->*runner)(src);
         last = r;
+        // Bug #72 fix: 让出 UI 事件循环，避免长时间冻结
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         if (r.success) {
             result.runs.push_back(static_cast<double>(r.elapsedMs));
         } else {

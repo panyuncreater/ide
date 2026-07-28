@@ -8,11 +8,13 @@
 
 #include "gui/JitVisualizerPanel.h"
 
+#include "gui/GuiTextUtils.h" // 拓展二期：monospaceFont（字节码/汇编等宽字体）
 #include "gui/I18n.h"      // mlTr
 #include "gui/JitRunner.h" // Qt↔asmjit 隔离层（不直接包含 JIT.h 以避免宏冲突）
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QPlainTextEdit> // 拓展二期：子页 6 源码编辑框
 #include <QSplitter>
 #include <QVBoxLayout>
 
@@ -243,11 +245,13 @@ JitVisualizerPanel::JitVisualizerPanel(QWidget* parent) : QWidget(parent) {
     pageHotspotBtn_ = new QPushButton(mlTr("③ 热点检测"), this);
     pageOpCodeBtn_ = new QPushButton(mlTr("④ OpCode 覆盖"), this);
     pageTierBtn_ = new QPushButton(mlTr("⑤ 分层编译与 OSR"), this);
+    pageAsmBtn_ = new QPushButton(mlTr("⑥ 字节码↔汇编对照"), this);
     btnBar->addWidget(pageOverviewBtn_);
     btnBar->addWidget(pageTypeFeedbackBtn_);
     btnBar->addWidget(pageHotspotBtn_);
     btnBar->addWidget(pageOpCodeBtn_);
     btnBar->addWidget(pageTierBtn_);
+    btnBar->addWidget(pageAsmBtn_);
     btnBar->addStretch();
     root->addLayout(btnBar);
 
@@ -280,6 +284,12 @@ JitVisualizerPanel::JitVisualizerPanel(QWidget* parent) : QWidget(parent) {
         buildTierMetricsPage(host);
         stack_->addWidget(host);
     }
+    // 拓展二期：子页 6（字节码↔汇编对照）
+    {
+        auto* host = new QWidget();
+        buildAsmComparePage(host);
+        stack_->addWidget(host);
+    }
 
     // 按钮切换
     connect(pageOverviewBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(0); });
@@ -287,6 +297,7 @@ JitVisualizerPanel::JitVisualizerPanel(QWidget* parent) : QWidget(parent) {
     connect(pageHotspotBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(2); });
     connect(pageOpCodeBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(3); });
     connect(pageTierBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(4); });
+    connect(pageAsmBtn_, &QPushButton::clicked, this, [this]() { stack_->setCurrentIndex(5); });
 
     // 初始数据
     populateOverview();
@@ -786,4 +797,75 @@ void JitVisualizerPanel::runTierScenario(int index) {
     summary += QStringLiteral("<br><b>预期亮点：</b>%1").arg(QString::fromStdString(s.expectedHighlights));
 
     tierSummaryView_->setHtml(summary);
+}
+
+// ============================================================
+// 拓展二期·子页 6：字节码↔汇编对照
+// ------------------------------------------------------------
+// 左栏字节码反汇编（BytecodeChunk::disassemble），右栏 JIT 发射的
+// x86-64 汇编（JITBackend::setAsmCapture 挂 asmjit StringLogger）。
+// 源码可编辑，预填整数算术示例（JIT 全覆盖的 OpCode 子集）。
+// ============================================================
+
+void JitVisualizerPanel::buildAsmComparePage(QWidget* host) {
+    auto* layout = new QVBoxLayout(host);
+    layout->setContentsMargins(4, 4, 4, 4);
+    layout->setSpacing(4);
+
+    layout->addWidget(new QLabel(mlTr("<b>字节码↔汇编对照</b>：编辑源码后点击「编译并对照」，"
+                                     "左栏展示栈式字节码反汇编，右栏展示 JIT 真实发射的 x86-64 汇编"
+                                     "（含机器码字节，asmjit StringLogger 捕获）。"), host));
+
+    asmSrcEdit_ = new QPlainTextEdit(host);
+    asmSrcEdit_->setFont(GuiTextUtils::monospaceFont());
+    asmSrcEdit_->setMaximumHeight(120);
+    asmSrcEdit_->setPlainText(QStringLiteral("fun add(a, b) {\n    return a + b;\n}\nprint(add(3, 5));\n"));
+    layout->addWidget(asmSrcEdit_);
+
+    auto* btnBar = new QHBoxLayout();
+    asmRunBtn_ = new QPushButton(mlTr("编译并对照"), host);
+#ifndef MINILANG_USE_JIT
+    asmRunBtn_->setEnabled(false);
+#endif
+    btnBar->addWidget(asmRunBtn_);
+    asmStatusLabel_ = new QLabel(host);
+    btnBar->addWidget(asmStatusLabel_, 1);
+    layout->addLayout(btnBar);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, host);
+    auto* leftWrap = new QWidget(host);
+    auto* leftLayout = new QVBoxLayout(leftWrap);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->addWidget(new QLabel(mlTr("字节码反汇编：")));
+    asmBytecodeView_ = new QTextBrowser(host);
+    asmBytecodeView_->setFont(GuiTextUtils::monospaceFont());
+    leftLayout->addWidget(asmBytecodeView_, 1);
+    auto* rightWrap = new QWidget(host);
+    auto* rightLayout = new QVBoxLayout(rightWrap);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->addWidget(new QLabel(mlTr("JIT 发射的 x86-64 汇编：")));
+    asmAsmView_ = new QTextBrowser(host);
+    asmAsmView_->setFont(GuiTextUtils::monospaceFont());
+    rightLayout->addWidget(asmAsmView_, 1);
+    splitter->addWidget(leftWrap);
+    splitter->addWidget(rightWrap);
+    splitter->setSizes({300, 400});
+    layout->addWidget(splitter, 1);
+
+    connect(asmRunBtn_, &QPushButton::clicked, this, &JitVisualizerPanel::runAsmCompare);
+}
+
+void JitVisualizerPanel::runAsmCompare() {
+    asmStatusLabel_->setText(mlTr("编译中..."));
+    auto r = JitRunner::runAsmDump(asmSrcEdit_->toPlainText().toStdString());
+    if (!r.ok) {
+        // 字节码反汇编可能已成功（仅 JIT 阶段失败），仍展示左栏
+        asmBytecodeView_->setPlainText(QString::fromStdString(r.bytecodeText));
+        asmAsmView_->setPlainText(QString::fromStdString(r.error));
+        asmStatusLabel_->setText(mlTr("❌ 失败：%1").arg(QString::fromStdString(r.error)));
+        return;
+    }
+    asmBytecodeView_->setPlainText(QString::fromStdString(r.bytecodeText));
+    asmAsmView_->setPlainText(QString::fromStdString(r.asmText));
+    asmStatusLabel_->setText(mlTr("✅ 成功（输出：%1）").arg(QString::fromStdString(r.output).trimmed()));
 }

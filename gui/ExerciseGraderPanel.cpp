@@ -13,15 +13,7 @@
 
 #include "gui/ExerciseGraderPanel.h"
 
-#include "common/Diagnostic.h"
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
-#include "interpreter/Interpreter.h"
-#include "interpreter/RuntimeExceptions.h"
-#include "interpreter/Value.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
+#include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -52,7 +44,9 @@ const std::vector<Exercise>& ExerciseGraderLibrary::exercises() {
          "fun add(a, b) {\n    return a + b;\n}\nprint(add(3, 5));",
          {{"3+5", "fun add(a, b) { return a + b; } print(add(3, 5));", "8"},
           {"10+20", "fun add(a, b) { return a + b; } print(add(10, 20));", "30"},
-          {"-1+1", "fun add(a, b) { return a + b; } print(add(-1, 1));", "0"}}},
+          {"-1+1", "fun add(a, b) { return a + b; } print(add(-1, 1));", "0"},
+          // 拓展二期：隐藏用例（大数+负数组合，防硬编码骗分）
+          {"隐藏用例", "fun add(a, b) { return a + b; } print(add(123456, -456));", "123000", true}}},
         // 2. 阶乘计算
         {"阶乘计算",
          "<h3>题目：阶乘计算</h3>"
@@ -62,40 +56,64 @@ const std::vector<Exercise>& ExerciseGraderLibrary::exercises() {
          "fun fact(n) {\n    if (n <= 1) {\n        return 1;\n    }\n    return n * fact(n-1);\n}\nprint(fact(5));",
          {{"fact(5)", "fun fact(n) { if (n <= 1) { return 1; } return n * fact(n-1); } print(fact(5));", "120"},
           {"fact(1)", "fun fact(n) { if (n <= 1) { return 1; } return n * fact(n-1); } print(fact(1));", "1"},
-          {"fact(6)", "fun fact(n) { if (n <= 1) { return 1; } return n * fact(n-1); } print(fact(6));", "720"}}},
+          {"fact(6)", "fun fact(n) { if (n <= 1) { return 1; } return n * fact(n-1); } print(fact(6));", "720"},
+          // 拓展二期：隐藏用例（边界 n=0）
+          {"隐藏用例", "fun fact(n) { if (n <= 1) { return 1; } return n * fact(n-1); } print(fact(0));", "1", true}}},
         // 3. 数组求和
+        // 拓展二期修复（题库自校验测试发现）：MiniLang 无 for-in 语法，
+        // 原题面/用例的 「for (var x in arr)」 全部语法错误，学生按题目写必然 0 分。
+        // 改为索引遍历 + arr.len()（与引擎实际支持的语法一致）。
         {"数组求和",
          "<h3>题目：数组求和</h3>"
          "<p>实现一个函数 <code>sum(arr)</code>，返回数组所有元素之和。</p>"
-         "<p><b>要求：</b>使用 <code>for (var x in arr)</code> 遍历数组。</p>",
-         "初始化累加器 <code>var s = 0;</code>，循环中 <code>s = s + x;</code>。",
-         "fun sum(arr) {\n    var s = 0;\n    for (var x in arr) {\n        s = s + x;\n    }\n    return "
-         "s;\n}\nprint(sum([1,2,3,4,5]));",
+         "<p><b>要求：</b>使用 <code>arr.len()</code> 获取长度，索引遍历数组。</p>",
+         "初始化累加器 <code>var s = 0;</code>，循环中 <code>s = s + arr[i];</code>。",
+         "fun sum(arr) {\n    var s = 0;\n    for (var i = 0; i < arr.len(); i = i + 1) {\n        s = s + "
+         "arr[i];\n    }\n    return s;\n}\nprint(sum([1,2,3,4,5]));",
          {{"[1,2,3,4,5]",
-           "fun sum(arr) { var s = 0; for (var x in arr) { s = s + x; } return s; } print(sum([1,2,3,4,5]));", "15"},
+           "fun sum(arr) { var s = 0; for (var i = 0; i < arr.len(); i = i + 1) { s = s + arr[i]; } return s; } "
+           "print(sum([1,2,3,4,5]));",
+           "15"},
           {"[10,20,30]",
-           "fun sum(arr) { var s = 0; for (var x in arr) { s = s + x; } return s; } print(sum([10,20,30]));", "60"},
-          {"[]", "fun sum(arr) { var s = 0; for (var x in arr) { s = s + x; } return s; } print(sum([]));", "0"}}},
+           "fun sum(arr) { var s = 0; for (var i = 0; i < arr.len(); i = i + 1) { s = s + arr[i]; } return s; } "
+           "print(sum([10,20,30]));",
+           "60"},
+          {"[]",
+           "fun sum(arr) { var s = 0; for (var i = 0; i < arr.len(); i = i + 1) { s = s + arr[i]; } return s; } "
+           "print(sum([]));",
+           "0"},
+          // 拓展二期：隐藏用例（含负数与重复元素）
+          {"隐藏用例",
+           "fun sum(arr) { var s = 0; for (var i = 0; i < arr.len(); i = i + 1) { s = s + arr[i]; } return s; } "
+           "print(sum([-5,5,7,7,-14]));",
+           "0", true}}},
         // 4. 字符串反转
+        // 拓展二期修复（题库自校验测试发现）：字符串方法是 len() 而非 length()，
+        // 原题面/用例的 s.length() 全部运行时错误。
         {"字符串反转",
          "<h3>题目：字符串反转</h3>"
          "<p>实现一个函数 <code>reverse(s)</code>，返回字符串 s 的反转。</p>"
-         "<p><b>要求：</b>使用 <code>s.length()</code> 获取长度，<code>s[i]</code> 索引字符。</p>",
+         "<p><b>要求：</b>使用 <code>s.len()</code> 获取长度，<code>s[i]</code> 索引字符。</p>",
          "从末尾向前遍历，<code>r = r + s[i];</code> 逐字符拼接。",
-         "fun reverse(s) {\n    var r = \"\";\n    for (var i = s.length()-1; i >= 0; i = i - 1) {\n        r = r + "
+         "fun reverse(s) {\n    var r = \"\";\n    for (var i = s.len()-1; i >= 0; i = i - 1) {\n        r = r + "
          "s[i];\n    }\n    return r;\n}\nprint(reverse(\"hello\"));",
          {{"hello",
-           "fun reverse(s) { var r = \"\"; for (var i = s.length()-1; i >= 0; i = i - 1) { r = r + s[i]; } return r; } "
+           "fun reverse(s) { var r = \"\"; for (var i = s.len()-1; i >= 0; i = i - 1) { r = r + s[i]; } return r; } "
            "print(reverse(\"hello\"));",
            "olleh"},
           {"abc",
-           "fun reverse(s) { var r = \"\"; for (var i = s.length()-1; i >= 0; i = i - 1) { r = r + s[i]; } return r; } "
+           "fun reverse(s) { var r = \"\"; for (var i = s.len()-1; i >= 0; i = i - 1) { r = r + s[i]; } return r; } "
            "print(reverse(\"abc\"));",
            "cba"},
           {"a",
-           "fun reverse(s) { var r = \"\"; for (var i = s.length()-1; i >= 0; i = i - 1) { r = r + s[i]; } return r; } "
+           "fun reverse(s) { var r = \"\"; for (var i = s.len()-1; i >= 0; i = i - 1) { r = r + s[i]; } return r; } "
            "print(reverse(\"a\"));",
-           "a"}}},
+           "a"},
+          // 拓展二期：隐藏用例（回文串，反转后相同——硬编码 "olleh" 骗不过）
+          {"隐藏用例",
+           "fun reverse(s) { var r = \"\"; for (var i = s.len()-1; i >= 0; i = i - 1) { r = r + s[i]; } return r; } "
+           "print(reverse(\"racecar\"));",
+           "racecar", true}}},
     };
     return kExercises;
 }
@@ -104,23 +122,9 @@ const std::vector<Exercise>& ExerciseGraderLibrary::exercises() {
 // 匿名命名空间：辅助函数
 // ============================================================
 
-namespace {
-
-/// 格式化 DiagnosticBag 中的错误条目为纯文本（分号分隔）
-QString formatDiagnosticErrors(const DiagnosticBag& bag) {
-    QString result;
-    for (const auto& d : bag.all()) {
-        if (d.isError()) {
-            result += QString::fromUtf8(d.format().c_str()) + QStringLiteral("; ");
-        }
-    }
-    if (result.isEmpty()) {
-        result = QStringLiteral("（未知错误）");
-    }
-    return result;
-}
-
-} // anonymous namespace
+// ARCH-10: 原 formatDiagnosticErrors 函数已随 runInterpreter/runStackVM_IR/
+// runRegVM_IR 重构移除——错误信息现在由 BackendExecutionService 直接通过
+// BackendExecResult.errorMsg 提供，无需面板自行格式化 DiagnosticBag。
 
 // ============================================================
 // ExerciseGraderPanel 实现
@@ -250,15 +254,19 @@ void ExerciseGraderPanel::onExerciseSelected(int idx) {
                           QStringLiteral("</p>"));
     codeEdit_->setPlainText(QString::fromUtf8(ex.starterCode.c_str()));
 
-    // 初始化测试用例表
+    // 初始化测试用例表（拓展二期：隐藏用例不展示输入与期望输出）
     testTable_->setRowCount(static_cast<int>(ex.testCases.size()));
     for (int i = 0; i < static_cast<int>(ex.testCases.size()); ++i) {
         const auto& tc = ex.testCases[i];
-        auto* nameItem = new QTableWidgetItem(QString::fromUtf8(tc.name.c_str()));
+        auto* nameItem = new QTableWidgetItem(tc.hidden ? QString::fromUtf8("🔒 ") + QString::fromUtf8(tc.name.c_str())
+                                                        : QString::fromUtf8(tc.name.c_str()));
         nameItem->setTextAlignment(Qt::AlignCenter);
         testTable_->setItem(i, 0, nameItem);
-        testTable_->setItem(i, 1, new QTableWidgetItem(QString::fromUtf8(tc.code.c_str())));
-        auto* expItem = new QTableWidgetItem(QString::fromUtf8(tc.expectedOutput.c_str()));
+        testTable_->setItem(i, 1,
+                            new QTableWidgetItem(tc.hidden ? QString::fromUtf8("（隐藏）")
+                                                           : QString::fromUtf8(tc.code.c_str())));
+        auto* expItem = new QTableWidgetItem(tc.hidden ? QString::fromUtf8("（隐藏）")
+                                                       : QString::fromUtf8(tc.expectedOutput.c_str()));
         expItem->setTextAlignment(Qt::AlignCenter);
         testTable_->setItem(i, 2, expItem);
         testTable_->setItem(i, 3, new QTableWidgetItem(QString::fromUtf8("（待运行）")));
@@ -299,23 +307,39 @@ void ExerciseGraderPanel::onSubmitGrade() {
         if (!result.success && actual.isEmpty()) {
             actualDisplay = QString::fromUtf8("（错误）");
         }
+        // 拓展二期：隐藏用例通过时实际输出列也隐藏（实际==期望，展示即泄漏）；
+        // 失败时展示学生自己代码的输出，不构成期望值泄漏
+        if (tc.hidden && pass) {
+            actualDisplay = QString::fromUtf8("（隐藏）");
+        }
         auto* actualItem = new QTableWidgetItem(actualDisplay);
         auto* statusItem = new QTableWidgetItem(pass ? QString::fromUtf8("✅ 通过") : QString::fromUtf8("❌ 失败"));
         statusItem->setTextAlignment(Qt::AlignCenter);
         if (pass) {
             statusItem->setForeground(QColor(QStringLiteral("#27AE60")));
             ++passed;
-            passDetails << QString::fromUtf8("%1: ✅ 期望「%2」, 实际「%3」")
-                               .arg(QString::fromUtf8(tc.name.c_str()))
-                               .arg(expected)
-                               .arg(actual);
+            // 拓展二期：隐藏用例通过时也不泄漏期望/实际值
+            if (tc.hidden) {
+                passDetails << QString::fromUtf8("%1: ✅ 隐藏用例通过").arg(QString::fromUtf8(tc.name.c_str()));
+            } else {
+                passDetails << QString::fromUtf8("%1: ✅ 期望「%2」, 实际「%3」")
+                                   .arg(QString::fromUtf8(tc.name.c_str()))
+                                   .arg(expected)
+                                   .arg(actual);
+            }
         } else {
             statusItem->setForeground(QColor(QStringLiteral("#C0392B")));
             QString actualForDetail = actual.isEmpty() ? QString::fromUtf8("（无输出）") : actual;
-            failDetails << QString::fromUtf8("%1: ❌ 期望「%2」, 实际「%3」")
-                               .arg(QString::fromUtf8(tc.name.c_str()))
-                               .arg(expected)
-                               .arg(actualForDetail);
+            // 拓展二期：隐藏用例失败时不泄漏期望值（防针对性硬编码）
+            if (tc.hidden) {
+                failDetails << QString::fromUtf8("%1: ❌ 输出与隐藏用例期望不符（期望值不公开）")
+                                   .arg(QString::fromUtf8(tc.name.c_str()));
+            } else {
+                failDetails << QString::fromUtf8("%1: ❌ 期望「%2」, 实际「%3」")
+                                   .arg(QString::fromUtf8(tc.name.c_str()))
+                                   .arg(expected)
+                                   .arg(actualForDetail);
+            }
         }
         testTable_->setItem(i, 3, actualItem);
         testTable_->setItem(i, 4, statusItem);
@@ -347,8 +371,9 @@ void ExerciseGraderPanel::onSubmitGrade() {
     // 3. 评分
     std::vector<GradeItem> items;
 
-    // 测试用例通过率（满分 60，每题 20 分）
-    int testScore = passed * 20;
+    // 测试用例通过率（满分 60，拓展二期：按比例计分——用例数从 3 个增到
+    // 3 公开 + 1 隐藏，原「每例 20 分」硬编码不再适用）
+    int testScore = total > 0 ? (passed * 60) / total : 0;
     items.push_back(
         {"测试用例通过率", testScore, 60, QString::fromUtf8("通过 %1/%2 个用例").arg(passed).arg(total).toStdString()});
 
@@ -545,231 +570,48 @@ void ExerciseGraderPanel::renderGradeReport(const std::vector<GradeItem>& items,
 }
 
 // ============================================================
-// 三后端执行函数（参考 BackendParallelPanel::runInterpreter 等）
+// 三后端执行函数（ARCH-10 重构：通过 BackendExecutionService 触发）
 // ============================================================
+// 面板不再直接依赖 Lexer/Parser/Compiler/VM/RegisterVM/Interpreter 等
+// 内部头文件，统一通过 BackendExecutionService 中间层触发执行流程。
+// 服务返回的 BackendExecResult 包含 success/output/errorPrefix/errorMsg，
+// 这里转换为面板内部使用的 ExecResult 结构（含 compileError/runtimeError 标志）。
 
-/// 运行 Interpreter 树遍历后端：Lexer → Parser → Interpreter::execute(AST)。
+namespace {
+
+/// 将服务层 BackendExecResult 转换为面板内部 ExecResult
+ExerciseGraderPanel::ExecResult convertServiceResult(const ::BackendExecResult& sr) {
+    ExerciseGraderPanel::ExecResult r;
+    r.output = QString::fromUtf8(sr.output.c_str());
+    if (sr.success) {
+        r.status = QString::fromUtf8("✅ 成功");
+        r.success = true;
+    } else {
+        // 根据 errorPrefix 判定错误阶段
+        bool isCompileStage =
+            (sr.errorPrefix == "词法错误" || sr.errorPrefix == "语法错误" || sr.errorPrefix == "编译错误");
+        r.compileError = isCompileStage;
+        r.runtimeError = !isCompileStage; // "运行时错误"
+        r.errorMsg = QString::fromUtf8(sr.errorPrefix.c_str()) + QString::fromUtf8(": ") +
+                     QString::fromUtf8(sr.errorMsg.c_str());
+        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
+    }
+    return r;
+}
+
+} // namespace
+
+/// 运行 Interpreter 树遍历后端。
 ExerciseGraderPanel::ExecResult ExerciseGraderPanel::runInterpreter(const std::string& src) {
-    ExecResult r;
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("词法错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        r.errorMsg = QString::fromUtf8("词法错误: ") + formatDiagnosticErrors(lex.getDiagnostics());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("语法错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.errorMsg = QString::fromUtf8("语法错误: ") + err;
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    // Interpreter 执行
-    Interpreter interp;
-    std::string out;
-    interp.setOutputCallback([&](const std::string& s) { out += s; });
-
-    try {
-        interp.execute(*ast);
-    } catch (const RuntimeError& e) {
-        r.errorMsg = QString::fromUtf8("运行时错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.runtimeError = true;
-        r.output = QString::fromUtf8(out.c_str());
-        return r;
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("运行时错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.runtimeError = true;
-        r.output = QString::fromUtf8(out.c_str());
-        return r;
-    }
-
-    r.output = QString::fromUtf8(out.c_str());
-    r.status = QString::fromUtf8("✅ 成功");
-    r.success = true;
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(src, BackendType::Interpreter));
 }
 
-/// 运行 StackVM（IR 路径）：Compiler(setUseIR(true)) → VM::execute(CompileResult)。
+/// 运行 StackVM（IR 路径）。
 ExerciseGraderPanel::ExecResult ExerciseGraderPanel::runStackVM_IR(const std::string& src) {
-    ExecResult r;
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("词法错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        r.errorMsg = QString::fromUtf8("词法错误: ") + formatDiagnosticErrors(lex.getDiagnostics());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("语法错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.errorMsg = QString::fromUtf8("语法错误: ") + err;
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    // Compiler（IR 路径）
-    Compiler compiler;
-    compiler.setUseIR(true);
-    CompileResult cr;
-    try {
-        cr = compiler.compile(*ast);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("编译错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (compiler.getDiagnostics().hasErrors()) {
-        r.errorMsg = QString::fromUtf8("编译错误: ") + formatDiagnosticErrors(compiler.getDiagnostics());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    // VM 执行
-    VM vm;
-    std::string out;
-    vm.setOutputCallback([&](const std::string& s) { out += s; });
-
-    vm.execute(cr);
-    r.output = QString::fromUtf8(out.c_str());
-    if (vm.hasError()) {
-        r.errorMsg = QString::fromUtf8("运行时错误: ") + QString::fromUtf8(vm.getLastError().c_str());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.runtimeError = true;
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-    }
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(src, BackendType::StackVM_IR));
 }
 
-/// 运行 RegisterVM（IR 路径）：Compiler(setUseRegisterVM(true)) →
-/// RegisterVM::execute(RegBytecodeChunk)。
+/// 运行 RegisterVM（IR 路径）。
 ExerciseGraderPanel::ExecResult ExerciseGraderPanel::runRegVM_IR(const std::string& src) {
-    ExecResult r;
-
-    // Lexer
-    Lexer lex;
-    std::vector<Token> tokens;
-    try {
-        tokens = lex.scan(src);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("词法错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (lex.getDiagnostics().hasErrors()) {
-        r.errorMsg = QString::fromUtf8("词法错误: ") + formatDiagnosticErrors(lex.getDiagnostics());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    // Parser
-    Parser parser;
-    std::unique_ptr<Block> ast;
-    try {
-        ast = parser.parse(tokens);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("语法错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (!ast || parser.hasErrors()) {
-        QString err = ast ? formatDiagnosticErrors(parser.getDiagnostics()) : QStringLiteral("AST 为空");
-        r.errorMsg = QString::fromUtf8("语法错误: ") + err;
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    // Compiler（寄存器 IR 路径）
-    Compiler compiler;
-    compiler.setUseRegisterVM(true);
-    try {
-        compiler.compile(*ast);
-    } catch (const std::exception& e) {
-        r.errorMsg = QString::fromUtf8("编译错误: ") + QString::fromUtf8(e.what());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-    if (compiler.getDiagnostics().hasErrors()) {
-        r.errorMsg = QString::fromUtf8("编译错误: ") + formatDiagnosticErrors(compiler.getDiagnostics());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.compileError = true;
-        return r;
-    }
-
-    const auto& regResult = compiler.getLastRegisterResult();
-
-    // RegisterVM 执行
-    RegisterVM vm;
-    std::string out;
-    vm.setOutputCallback([&](const std::string& s) { out += s; });
-
-    vm.execute(regResult);
-    r.output = QString::fromUtf8(out.c_str());
-    if (vm.hasError()) {
-        r.errorMsg = QString::fromUtf8("运行时错误: ") + QString::fromUtf8(vm.getLastError().c_str());
-        r.status = QString::fromUtf8("❌ ") + r.errorMsg;
-        r.runtimeError = true;
-    } else {
-        r.status = QString::fromUtf8("✅ 成功");
-        r.success = true;
-    }
-    return r;
+    return convertServiceResult(BackendExecutionService::execute(src, BackendType::RegisterVM_IR));
 }

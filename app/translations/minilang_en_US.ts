@@ -6309,5 +6309,37 @@ Train debugging skills through real bugs accumulated by the project itself: read
         <source>🔴 VM 命中断点: 第 %1 行</source>
         <translation type="finished">🔴 VM hit Breakpoint: ordinal %1 Line</translation>
     </message>
+    <message>
+        <source>⑥ 字节码↔汇编对照</source>
+        <translation>⑥ Bytecode ↔ Assembly</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;字节码↔汇编对照&lt;/b&gt;：编辑源码后点击「编译并对照」，左栏展示栈式字节码反汇编，右栏展示 JIT 真实发射的 x86-64 汇编（含机器码字节，asmjit StringLogger 捕获）。</source>
+        <translation>&lt;b&gt;Bytecode ↔ Assembly&lt;/b&gt;: edit the source and click "Compile &amp;amp; Compare". Left pane shows stack bytecode disassembly; right pane shows the actual x86-64 assembly emitted by the JIT (with machine-code bytes, captured via asmjit StringLogger).</translation>
+    </message>
+    <message>
+        <source>编译并对照</source>
+        <translation>Compile &amp;&amp; Compare</translation>
+    </message>
+    <message>
+        <source>字节码反汇编：</source>
+        <translation>Bytecode disassembly:</translation>
+    </message>
+    <message>
+        <source>JIT 发射的 x86-64 汇编：</source>
+        <translation>JIT-emitted x86-64 assembly:</translation>
+    </message>
+    <message>
+        <source>编译中...</source>
+        <translation>Compiling...</translation>
+    </message>
+    <message>
+        <source>❌ 失败：%1</source>
+        <translation>❌ Failed: %1</translation>
+    </message>
+    <message>
+        <source>✅ 成功（输出：%1）</source>
+        <translation>✅ Success (output: %1)</translation>
+    </message>
 </context>
 </TS>

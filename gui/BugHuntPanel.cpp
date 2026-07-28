@@ -1,14 +1,10 @@
 #include "gui/BugHuntPanel.h"
 #include "app/IdeController.h"
-#include "compiler/Compiler.h"
-#include "compiler/RegisterVM.h"
-#include "compiler/VM.h"
+#include "common/BackendExecutionService.h" // ARCH-10: 后端执行服务中间层
 #include "gui/GuidedTour.h"
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h"
-#include "interpreter/Interpreter.h"
-#include "lexer/Lexer.h"
-#include "parser/Parser.h"
+#include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 
 #include <QButtonGroup>
 #include <QHBoxLayout>
@@ -35,6 +31,28 @@
 // 本文件实现 BugHuntPanel：编译器 Bug 狩猎教学模式的主面板，整合题库
 // 选择（芯片栏 + 难度筛选）、内嵌代码编辑、运行验证（含三后端对比）、
 // 递进提示/答案与变体挑战模式。
+
+namespace {
+// AUDIT-R2 P1-4 fix: verifying_/tripleVerifying_ 守卫改为 RAII——原实现在函数
+// 末尾手动恢复标志与按钮，中途任何异常（执行链/持久化/UI 调用）都会使标志卡死
+// 为 true、按钮永久禁用。析构自动恢复保证异常安全。
+struct VerifyScopeGuard {
+    bool& flag;
+    QPushButton* btn;
+    VerifyScopeGuard(bool& f, QPushButton* b) : flag(f), btn(b) {
+        flag = true;
+        if (btn)
+            btn->setEnabled(false);
+    }
+    ~VerifyScopeGuard() {
+        flag = false;
+        if (btn)
+            btn->setEnabled(true);
+    }
+    VerifyScopeGuard(const VerifyScopeGuard&) = delete;
+    VerifyScopeGuard& operator=(const VerifyScopeGuard&) = delete;
+};
+} // namespace
 
 BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
     auto* mainLayout = new QVBoxLayout(this);
@@ -80,7 +98,11 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
     }
     auto* diffGroup = new QButtonGroup(this);
     diffGroup->setExclusive(true);
-    diffGroup->addButton(diffAllBtn_, -1);
+    // AUDIT-R2 P1-1 fix: QButtonGroup::addButton 的 id=-1 表示"自动分配"（Qt 文档：
+    // 自动分配的 id 从 -2 起递减），原代码点击「全部」时 idClicked 发出 -2 而非 -1，
+    // currentDifficultyFilter_ 被设为 -2 导致所有芯片被隐藏、状态栏误报"专家级"。
+    // 改用正数哨兵 3 表示「全部」，onDifficultyChanged 内翻译为内部筛选值 -1。
+    diffGroup->addButton(diffAllBtn_, 3);
     diffGroup->addButton(diffBeginnerBtn_, 0);
     diffGroup->addButton(diffIntermediateBtn_, 1);
     diffGroup->addButton(diffExpertBtn_, 2);
@@ -205,16 +227,18 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
     connect(codeEditor_, &QTextEdit::textChanged, this, &BugHuntPanel::onCodeModified);
     connect(loadBtn_, &QPushButton::clicked, this, [this]() {
         if (variantMode_) {
-            if (currentVariantIndex_ < 0)
-                return;
             const auto& variants = BugHuntVariantLibrary::variants();
+            // AUDIT-R2 P2-5 fix: 补上界检查，与 showCurrentVariant 双侧检查口径一致
+            if (currentVariantIndex_ < 0 || currentVariantIndex_ >= (int)variants.size())
+                return;
             emit loadSampleRequested(QString::fromUtf8(variants[currentVariantIndex_].sourceCode.c_str()));
             statusLabel_->setText(mlTr("已请求加载变体到主编辑器"));
             return;
         }
-        if (currentItemIndex_ < 0)
-            return;
         const auto& items = BugHuntLibrary::items();
+        // AUDIT-R2 P2-5 fix: 补上界检查
+        if (currentItemIndex_ < 0 || currentItemIndex_ >= (int)items.size())
+            return;
         emit loadSampleRequested(QString::fromUtf8(items[currentItemIndex_].sourceCode.c_str()));
         statusLabel_->setText(mlTr("已请求加载到主编辑器"));
     });
@@ -242,7 +266,10 @@ BugHuntPanel::BugHuntPanel(QWidget* parent) : QWidget(parent) {
                 }
             }
             if (totalInDiff > 0 && solvedInDiff == totalInDiff) {
-                emit challengeSolved(diffInt);
+                // AUDIT-R2 P1-2 fix: 构造函数内直接 emit 时外部 connect 尚未建立
+                //（ide.cpp 在 new BugHuntPanel 返回后才 connect），信号会被直接丢弃，
+                // "跨会话补发"从未生效。延迟到事件循环首轮再发射，确保信号到达学习路径。
+                QTimer::singleShot(0, this, [this, diffInt]() { emit challengeSolved(diffInt); });
             }
         }
     }
@@ -340,24 +367,13 @@ void BugHuntPanel::refreshBugChips() {
 }
 
 // OPT-2 fix: 从原 textChanged lambda 提取的搜索过滤逻辑，供防抖定时器调用。
-// 按 title/id/category 小写包含匹配，控制 bugChips_ 可见性。
-// R51-2 fix: 同时考虑难度筛选条件，与 refreshBugChips 联动——
-// 搜索与难度筛选取交集，避免互相覆盖。
+// AUDIT-R2 P2-4 fix: 原实现与 refreshBugChips 双轨重复且行为分叉——搜索路径
+// 只设可见性，不自动重选被过滤掉的当前题、不刷新 current 高亮。
+// refreshBugChips 已读取 lastSearchText_ 并处理难度+搜索交集与自动重选，
+// 直接委托即可，消除重复的 haystack 构造逻辑。
 void BugHuntPanel::applySearchFilter(const QString& filter) {
-    QString lowered = filter.toLower();
-    const auto& items = BugHuntLibrary::items();
-    for (int i = 0; i < bugChips_.size() && i < (int)items.size(); ++i) {
-        if (!bugChips_[i])
-            continue;
-        QString haystack = QString::fromUtf8(items[i].title.c_str()).toLower() + " " +
-                           QString::fromUtf8(items[i].id.c_str()).toLower() + " " +
-                           QString::fromUtf8(items[i].category.c_str()).toLower();
-        bool matchSearch = lowered.isEmpty() || haystack.contains(lowered);
-        // R51-2 fix: 同时检查难度筛选
-        int diffId = static_cast<int>(items[i].difficulty);
-        bool matchDiff = (currentDifficultyFilter_ == -1 || diffId == currentDifficultyFilter_);
-        bugChips_[i]->setVisible(matchSearch && matchDiff);
-    }
+    lastSearchText_ = filter;
+    refreshBugChips();
 }
 
 void BugHuntPanel::populateVariantChips() {
@@ -466,16 +482,17 @@ void BugHuntPanel::showCurrentItem() {
 }
 
 void BugHuntPanel::onDifficultyChanged(int id) {
-    // id: -1 = 全部，0 = BEGINNER，1 = INTERMEDIATE，2 = EXPERT
-    currentDifficultyFilter_ = id;
+    // AUDIT-R2 P1-1 fix: 按钮组 id：3 = 全部（哨兵，因 QButtonGroup 禁用 -1），
+    // 0/1/2 = BEGINNER/INTERMEDIATE/EXPERT；内部筛选值仍用 -1 表示全部。
+    currentDifficultyFilter_ = (id == 3) ? -1 : id;
     refreshBugChips(); // issue 5: 刷新芯片可见性
     // 状态栏给出筛选反馈
     QString label;
-    if (id == -1)
+    if (currentDifficultyFilter_ == -1)
         label = mlTr("难度筛选：全部");
-    else if (id == 0)
+    else if (currentDifficultyFilter_ == 0)
         label = mlTr("难度筛选：入门级");
-    else if (id == 1)
+    else if (currentDifficultyFilter_ == 1)
         label = mlTr("难度筛选：进阶级");
     else
         label = mlTr("难度筛选：专家级");
@@ -487,72 +504,50 @@ void BugHuntPanel::onRunVerify() {
     if (verifying_)
         return;
     if (currentItemIndex_ < 0) {
-        statusLabel_->setText(QString::fromUtf8("请先选择题目"));
+        statusLabel_->setText(mlTr("请先选择题目"));
         return;
     }
     std::string source = codeEditor_->toPlainText().toStdString();
     if (source.empty()) {
-        outputEdit_->setPlainText(QString::fromUtf8("（空代码）"));
+        outputEdit_->setPlainText(mlTr("（空代码）"));
         return;
     }
 
-    // AUDIT-P2 fix: 通过 early return 后才禁用按钮+设标志，函数末尾恢复
-    verifying_ = true;
-    runBtn_->setEnabled(false);
+    // AUDIT-R2 P1-4 fix: RAII 守卫——异常抛出时也能恢复标志与按钮状态
+    VerifyScopeGuard guard(verifying_, runBtn_);
 
+    // ARCH-10: 通过 BackendExecutionService 触发 Interpreter + StackVM 两条路径，
+    // 面板不再直接依赖 Lexer/Parser/Compiler/VM/Interpreter 等内部头文件。
     std::ostringstream out;
-    try {
-        Lexer lex;
-        auto tokens = lex.scan(source);
-        Parser parser;
-        auto ast = parser.parse(tokens);
-        if (parser.hasErrors()) {
-            const auto& diags = parser.getDiagnostics();
-            out << "[Parser 错误]\n" << diags.summary() << "\n";
-            outputEdit_->setPlainText(QString::fromUtf8(out.str().c_str()));
-            // AUDIT-P1 fix: 错误返回路径必须恢复守卫，否则按钮永久禁用。
-            // 对齐 TokenPuzzlePanel onCheckAnswer 的对称出口恢复模式。
-            verifying_ = false;
-            runBtn_->setEnabled(true);
-            return;
-        }
-        Interpreter interp;
-        interp.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
-        interp.execute(*ast);
+    auto interpRes = BackendExecutionService::execute(source, BackendType::Interpreter);
+    if (!interpRes.output.empty()) {
+        out << interpRes.output;
+    }
+    if (interpRes.success) {
         out << "\n[Interpreter 路径运行完成]";
-    } catch (const std::exception& e) {
-        out << "\n[Interpreter 异常] " << e.what();
+    } else {
+        out << "\n[Interpreter 异常] " << interpRes.errorPrefix << ": " << interpRes.errorMsg;
     }
 
-    // 也可选运行 StackVM 路径观察差异
-    try {
-        Lexer lex;
-        auto tokens = lex.scan(source);
-        Parser parser;
-        auto ast = parser.parse(tokens);
-        if (!parser.hasErrors()) {
-            Compiler compiler;
-            auto result = compiler.compile(*ast);
-            if (!compiler.getDiagnostics().hasErrors()) {
-                VM vm;
-                vm.setOutputCallback([&out](const std::string& s) { out << s << "\n"; });
-                auto vmres = vm.execute(result);
-                out << "\n[StackVM 路径: " << (int)vmres << "]";
-            }
-        }
-    } catch (const std::exception& e) {
-        out << "\n[StackVM 异常] " << e.what();
+    // AUDIT-R2 P1-3 fix: 原实现硬编码 "[StackVM 路径: 0]"（历史遗留退出码占位）
+    // 且丢弃 stackRes.output，用户无法对比两后端输出——而"对比后端行为差异"
+    // 正是本面板的教学核心（如 BUG-CP-1 需观察两后端 print 值差异）。
+    auto stackRes = BackendExecutionService::execute(source, BackendType::StackVM_IR);
+    if (stackRes.success) {
+        out << "\n\n--- StackVM 路径输出 ---\n";
+        if (!stackRes.output.empty())
+            out << stackRes.output;
+        out << "[StackVM 路径运行完成]";
+    } else {
+        out << "\n[StackVM 路径: " << stackRes.errorPrefix << " - " << stackRes.errorMsg << "]";
     }
     outputEdit_->setPlainText(QString::fromUtf8(out.str().c_str()));
-    statusLabel_->setText(QString::fromUtf8("验证完成 — 对比期望/Bug 行为"));
+    statusLabel_->setText(mlTr("验证完成 — 对比期望/Bug 行为"));
     // 调试流程：标记「观察」步骤完成
     if (!stepObserved_) {
         stepObserved_ = true;
         refreshDebugSteps();
     }
-    // AUDIT-P2 fix: 恢复按钮+标志
-    verifying_ = false;
-    runBtn_->setEnabled(true);
 }
 
 void BugHuntPanel::onShowHint() {
@@ -560,7 +555,7 @@ void BugHuntPanel::onShowHint() {
         return;
     const auto& items = BugHuntLibrary::items();
     if (hintLevel_ >= (int)items[currentItemIndex_].hints.size()) {
-        statusLabel_->setText(QString::fromUtf8("已无更多提示"));
+        statusLabel_->setText(mlTr("已无更多提示"));
         return;
     }
     QString hint = QString::fromUtf8(items[currentItemIndex_].hints[hintLevel_].c_str());
@@ -568,10 +563,9 @@ void BugHuntPanel::onShowHint() {
     QString current = outputEdit_->toPlainText();
     if (!current.isEmpty())
         current += "\n\n";
-    current += QString::fromUtf8("=== 提示 %1 ===\n%2").arg(hintLevel_).arg(hint);
+    current += mlTr("=== 提示 %1 ===\n%2").arg(hintLevel_).arg(hint);
     outputEdit_->setPlainText(current);
-    statusLabel_->setText(
-        QString::fromUtf8("已显示提示 %1/%2").arg(hintLevel_).arg((int)items[currentItemIndex_].hints.size()));
+    statusLabel_->setText(mlTr("已显示提示 %1/%2").arg(hintLevel_).arg((int)items[currentItemIndex_].hints.size()));
 }
 
 void BugHuntPanel::onShowAnswer() {
@@ -581,10 +575,9 @@ void BugHuntPanel::onShowAnswer() {
     QString current = outputEdit_->toPlainText();
     if (!current.isEmpty())
         current += "\n\n";
-    current +=
-        QString::fromUtf8("=== 答案 ===\n%1").arg(QString::fromUtf8(items[currentItemIndex_].explanation.c_str()));
+    current += mlTr("=== 答案 ===\n%1").arg(QString::fromUtf8(items[currentItemIndex_].explanation.c_str()));
     outputEdit_->setPlainText(current);
-    statusLabel_->setText(QString::fromUtf8("答案已显示"));
+    statusLabel_->setText(mlTr("答案已显示"));
 }
 
 // ============================================================
@@ -613,12 +606,12 @@ void BugHuntPanel::refreshDebugSteps() {
 
 void BugHuntPanel::onSubmitPrediction() {
     if (currentItemIndex_ < 0 && !variantMode_) {
-        statusLabel_->setText(QString::fromUtf8("请先选择题目"));
+        statusLabel_->setText(mlTr("请先选择题目"));
         return;
     }
     QString pred = predictionEdit_->text().trimmed();
     if (pred.isEmpty()) {
-        statusLabel_->setText(QString::fromUtf8("请输入你的预测后再提交"));
+        statusLabel_->setText(mlTr("请输入你的预测后再提交"));
         return;
     }
     stepPredicted_ = true;
@@ -627,9 +620,9 @@ void BugHuntPanel::onSubmitPrediction() {
     QString current = outputEdit_->toPlainText();
     if (!current.isEmpty())
         current += "\n\n";
-    current += QString::fromUtf8("=== 我的预测 ===\n%1").arg(pred);
+    current += mlTr("=== 我的预测 ===\n%1").arg(pred);
     outputEdit_->setPlainText(current);
-    statusLabel_->setText(QString::fromUtf8("预测已记录 — 现在点击「运行验证」观察实际行为"));
+    statusLabel_->setText(mlTr("预测已记录 — 现在点击「运行验证」观察实际行为"));
 }
 
 void BugHuntPanel::onCodeModified() {
@@ -656,103 +649,44 @@ struct BackendRunResult {
     long long micros = 0;      // 耗时（微秒）
 };
 
+// ARCH-10: 通过 BackendExecutionService 触发三后端，面板不再直接依赖
+// Lexer/Parser/Compiler/VM/RegisterVM/Interpreter 等内部头文件。
+// 服务返回的 BackendExecResult 已包含 output/success/errorPrefix/errorMsg/elapsedMs，
+// 这里转换为面板内部使用的 BackendRunResult 结构。
+
 // Interpreter 路径：树遍历解释器
 BackendRunResult runInterpreter(const std::string& source) {
     BackendRunResult r;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    try {
-        Lexer lex;
-        auto tokens = lex.scan(source);
-        Parser parser;
-        auto ast = parser.parse(tokens);
-        if (parser.hasErrors()) {
-            r.exceptionName = "ParseError: " + parser.getDiagnostics().summary();
-        } else {
-            Interpreter interp;
-            interp.setOutputCallback([&r](const std::string& s) {
-                r.output += s;
-                r.output += "\n";
-            });
-            interp.execute(*ast);
-        }
-    } catch (const std::exception& e) {
-        r.exceptionName = e.what();
+    auto sr = BackendExecutionService::execute(source, BackendType::Interpreter);
+    r.output = sr.output;
+    r.micros = sr.elapsedUs; // AUDIT-R2 P2-2 fix: 直接使用微秒精度字段，不再 ms×1000 冒充 μs
+    if (!sr.success) {
+        r.exceptionName = sr.errorPrefix + ": " + sr.errorMsg;
     }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    r.micros = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     return r;
 }
 
 // StackVM 路径：栈式字节码虚拟机
 BackendRunResult runStackVM(const std::string& source) {
     BackendRunResult r;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    try {
-        Lexer lex;
-        auto tokens = lex.scan(source);
-        Parser parser;
-        auto ast = parser.parse(tokens);
-        if (parser.hasErrors()) {
-            r.exceptionName = "ParseError: " + parser.getDiagnostics().summary();
-        } else {
-            Compiler compiler;
-            auto result = compiler.compile(*ast);
-            if (compiler.getDiagnostics().hasErrors()) {
-                r.exceptionName = "CompileError: " + compiler.getLastError();
-            } else {
-                VM vm;
-                vm.setOutputCallback([&r](const std::string& s) {
-                    r.output += s;
-                    r.output += "\n";
-                });
-                vm.execute(result);
-                if (vm.hasError()) {
-                    r.exceptionName = vm.getLastError();
-                }
-            }
-        }
-    } catch (const std::exception& e) {
-        r.exceptionName = e.what();
+    auto sr = BackendExecutionService::execute(source, BackendType::StackVM_IR);
+    r.output = sr.output;
+    r.micros = sr.elapsedUs; // AUDIT-R2 P2-2 fix: 微秒精度
+    if (!sr.success) {
+        r.exceptionName = sr.errorPrefix + ": " + sr.errorMsg;
     }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    r.micros = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     return r;
 }
 
 // RegisterVM 路径：寄存器式虚拟机
 BackendRunResult runRegisterVM(const std::string& source) {
     BackendRunResult r;
-    auto t0 = std::chrono::high_resolution_clock::now();
-    try {
-        Lexer lex;
-        auto tokens = lex.scan(source);
-        Parser parser;
-        auto ast = parser.parse(tokens);
-        if (parser.hasErrors()) {
-            r.exceptionName = "ParseError: " + parser.getDiagnostics().summary();
-        } else {
-            Compiler compiler;
-            compiler.setUseRegisterVM(true);
-            compiler.compile(*ast);
-            if (compiler.getDiagnostics().hasErrors()) {
-                r.exceptionName = "CompileError: " + compiler.getLastError();
-            } else {
-                RegisterVM vm;
-                vm.setOutputCallback([&r](const std::string& s) {
-                    r.output += s;
-                    r.output += "\n";
-                });
-                vm.execute(compiler.getLastRegisterResult());
-                if (vm.hasError()) {
-                    r.exceptionName = vm.getLastError();
-                }
-            }
-        }
-    } catch (const std::exception& e) {
-        r.exceptionName = e.what();
+    auto sr = BackendExecutionService::execute(source, BackendType::RegisterVM_IR);
+    r.output = sr.output;
+    r.micros = sr.elapsedUs; // AUDIT-R2 P2-2 fix: 微秒精度
+    if (!sr.success) {
+        r.exceptionName = sr.errorPrefix + ": " + sr.errorMsg;
     }
-    auto t1 = std::chrono::high_resolution_clock::now();
-    r.micros = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     return r;
 }
 } // namespace
@@ -764,25 +698,24 @@ void BugHuntPanel::onTripleVerify() {
     // 变体模式下验证当前变体；标准模式下验证当前题目
     if (variantMode_) {
         if (currentVariantIndex_ < 0) {
-            statusLabel_->setText(QString::fromUtf8("请先选择变体"));
+            statusLabel_->setText(mlTr("请先选择变体"));
             return;
         }
     } else {
         if (currentItemIndex_ < 0) {
-            statusLabel_->setText(QString::fromUtf8("请先选择题目"));
+            statusLabel_->setText(mlTr("请先选择题目"));
             return;
         }
     }
 
     std::string source = codeEditor_->toPlainText().toStdString();
     if (source.empty()) {
-        outputEdit_->setPlainText(QString::fromUtf8("（空代码）"));
+        outputEdit_->setPlainText(mlTr("（空代码）"));
         return;
     }
 
-    // AUDIT-P2 fix: 通过 early return 后才禁用按钮+设标志，函数末尾恢复
-    tripleVerifying_ = true;
-    tripleVerifyBtn_->setEnabled(false);
+    // AUDIT-R2 P1-4 fix: RAII 守卫——异常抛出时也能恢复标志与按钮状态
+    VerifyScopeGuard guard(tripleVerifying_, tripleVerifyBtn_);
 
     // 三条路径独立执行
     auto ir = runInterpreter(source);
@@ -791,8 +724,10 @@ void BugHuntPanel::onTripleVerify() {
 
     // 一致性判定
     bool outputConsistent = (ir.output == sv.output) && (sv.output == rv.output);
-    bool exceptionConsistent = !ir.exceptionName.empty() && !sv.exceptionName.empty() && !rv.exceptionName.empty() &&
-                               ir.exceptionName == sv.exceptionName && sv.exceptionName == rv.exceptionName;
+    // AUDIT-R2 P2-1 fix: 原判定要求三后端均有异常才可能"一致"，导致最常见的
+    // 成功场景（三后端均无异常）被误报"异常行为 [不一致]"。正确语义：
+    // 三后端异常名完全相同（含"均为空"）即一致。
+    bool exceptionConsistent = (ir.exceptionName == sv.exceptionName) && (sv.exceptionName == rv.exceptionName);
 
     std::ostringstream out;
     out << "============= 三后端对比验证 =============\n";
@@ -832,7 +767,7 @@ void BugHuntPanel::onTripleVerify() {
     out << "\n";
 
     outputEdit_->setPlainText(QString::fromUtf8(out.str().c_str()));
-    statusLabel_->setText(QString::fromUtf8("三后端对比验证完成"));
+    statusLabel_->setText(mlTr("三后端对比验证完成"));
     // 调试流程：标记「验证」步骤完成
     if (!stepVerified_) {
         stepVerified_ = true;
@@ -840,8 +775,7 @@ void BugHuntPanel::onTripleVerify() {
     }
     if (variantMode_) {
         variantStatusLabel_->setText(
-            QString::fromUtf8("变体验证完成 — 输出%1")
-                .arg(outputConsistent ? QString::fromUtf8("一致") : QString::fromUtf8("不一致")));
+            mlTr("变体验证完成 — 输出%1").arg(outputConsistent ? mlTr("一致") : mlTr("不一致")));
     }
 
     // P0-B fix: 三后端输出一致且均无异常 → 视为"狩猎"成功，发射 challengeSolved。
@@ -866,7 +800,7 @@ void BugHuntPanel::onTripleVerify() {
                 // AUDIT-P1 fix: 持久化已解决题目到 LearnerProgressStore，解决跨会话完成判定丢失。
                 std::string solvedKey = "bughunt-solved-" + items[currentItemIndex_].id;
                 LearnerProgressStore::instance().markLevelStars(solvedKey, 1);
-                LearnerProgressStore::instance().save();
+                saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
                 int totalInDiff = 0;
                 int solvedInDiff = 0;
                 for (int i = 0; i < (int)items.size(); ++i) {
@@ -887,9 +821,7 @@ void BugHuntPanel::onTripleVerify() {
             }
         }
     }
-    // AUDIT-P2 fix: 恢复按钮+标志
-    tripleVerifying_ = false;
-    tripleVerifyBtn_->setEnabled(true);
+    // AUDIT-R2 P1-4 fix: 标志与按钮由 VerifyScopeGuard 析构自动恢复
 }
 
 void BugHuntPanel::onToggleVariantMode() {
@@ -939,6 +871,10 @@ void BugHuntPanel::onToggleVariantMode() {
 
 void BugHuntPanel::onVariantSelected(int variantIndex) {
     // issue 5: 芯片点击 → 直接传入 variants() 索引
+    // AUDIT-R2 P2-5 fix: 拒绝越界索引，避免 currentVariantIndex_ 残留非法值
+    // 后被其他路径（如 loadBtn_）直接用于下标访问
+    if (variantIndex < 0 || variantIndex >= (int)BugHuntVariantLibrary::variants().size())
+        return;
     currentVariantIndex_ = variantIndex;
     showCurrentVariant();
     refreshVariantChips();
@@ -969,7 +905,7 @@ void BugHuntPanel::showCurrentVariant() {
     descBrowser_->setHtml(html);
     codeEditor_->setPlainText(QString::fromUtf8(v.sourceCode.c_str()));
     outputEdit_->clear();
-    variantStatusLabel_->setText(QString::fromUtf8("当前变体：%1").arg(QString::fromUtf8(v.id.c_str())));
+    variantStatusLabel_->setText(mlTr("当前变体：%1").arg(QString::fromUtf8(v.id.c_str())));
     // 重置调试流程状态
     originalCode_ = QString::fromUtf8(v.sourceCode.c_str());
     stepPredicted_ = false;

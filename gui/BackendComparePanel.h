@@ -32,6 +32,14 @@ public:
     /// 触发一次三后端对比执行（从当前编辑器源码编译）
     void runComparison();
 
+    // ARCH-10: BackendResult 公开为接口类型，供 convertServiceResult 辅助函数使用
+    struct BackendResult {
+        std::vector<std::string> outputLines;
+        std::string status; // "OK" / "ERROR" / "NO_AST"
+        std::string errorMessage;
+        int64_t elapsedMicros = 0;
+    };
+
 private:
     IdeController* controller_ = nullptr;
     // AUDIT-P2 fix: runComparison 重入守卫——processEvents 期间定时器/信号链路可能重入
@@ -45,13 +53,6 @@ private:
     QLabel* regVmStatus_ = nullptr;
     QLabel* diffLabel_ = nullptr;
     QPushButton* runButton_ = nullptr;
-
-    struct BackendResult {
-        std::vector<std::string> outputLines;
-        std::string status; // "OK" / "ERROR" / "NO_AST"
-        std::string errorMessage;
-        int64_t elapsedMicros = 0;
-    };
 
     /// 三个后端分别执行
     BackendResult runInterpreter(const std::string& source);

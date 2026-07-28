@@ -59,6 +59,7 @@ const std::vector<PanelCategory>& PanelCatalog::categories() {
              {"watch-expressions", "观察表达式", "👀"},
              {"watchpoint", "数据断点", "🔬"},
              {"execution-timeline", "可回放执行时间轴", "🎞️"},
+             {"reverse-timeline", "反向调试时间轴", "⏪"},
              {"coroutine-visualizer", "协程/生成器可视化", "🔄"},
          }},
         {"深入实战",

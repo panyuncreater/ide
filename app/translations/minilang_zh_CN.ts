@@ -5614,5 +5614,37 @@ print(0 or &quot;default&quot;);  // 0（保留原值）</translation>
         <source>🔴 VM 命中断点: 第 %1 行</source>
         <translation type="finished">🔴 VM 命中断点: 第 %1 行</translation>
     </message>
+    <message>
+        <source>⑥ 字节码↔汇编对照</source>
+        <translation>⑥ 字节码↔汇编对照</translation>
+    </message>
+    <message>
+        <source>&lt;b&gt;字节码↔汇编对照&lt;/b&gt;：编辑源码后点击「编译并对照」，左栏展示栈式字节码反汇编，右栏展示 JIT 真实发射的 x86-64 汇编（含机器码字节，asmjit StringLogger 捕获）。</source>
+        <translation>&lt;b&gt;字节码↔汇编对照&lt;/b&gt;：编辑源码后点击「编译并对照」，左栏展示栈式字节码反汇编，右栏展示 JIT 真实发射的 x86-64 汇编（含机器码字节，asmjit StringLogger 捕获）。</translation>
+    </message>
+    <message>
+        <source>编译并对照</source>
+        <translation>编译并对照</translation>
+    </message>
+    <message>
+        <source>字节码反汇编：</source>
+        <translation>字节码反汇编：</translation>
+    </message>
+    <message>
+        <source>JIT 发射的 x86-64 汇编：</source>
+        <translation>JIT 发射的 x86-64 汇编：</translation>
+    </message>
+    <message>
+        <source>编译中...</source>
+        <translation>编译中...</translation>
+    </message>
+    <message>
+        <source>❌ 失败：%1</source>
+        <translation>❌ 失败：%1</translation>
+    </message>
+    <message>
+        <source>✅ 成功（输出：%1）</source>
+        <translation>✅ 成功（输出：%1）</translation>
+    </message>
 </context>
 </TS>

@@ -88,6 +88,20 @@ TypeFeedbackResult runTypeFeedback(const std::string& src, const std::string& me
 /// 运行热点检测场景：编译+执行源码，采集 per-chunk 调用计数与重编译标志。
 HotspotResult runHotspot(const std::string& src, const std::string& methodChunkName, uint64_t threshold);
 
+/// 拓展二期·教学：字节码↔汇编对照结果
+struct AsmDumpResult {
+    std::string output;       ///< print 输出
+    std::string error;        ///< 错误信息（ok=false 时有效）
+    bool ok = false;          ///< 是否成功
+    std::string bytecodeText; ///< 全部 chunk 的字节码反汇编文本
+    std::string asmText;      ///< JIT 发射的 x86-64 汇编文本（含机器码）
+};
+
+/// 拓展二期·教学：编译+执行源码，同时采集字节码反汇编与 JIT 汇编文本
+/// （JITBackend::setAsmCapture + BytecodeChunk::disassemble），供
+/// JitVisualizerPanel 字节码↔汇编对照子页展示。JIT 未启用时 ok=false。
+AsmDumpResult runAsmDump(const std::string& src);
+
 /// R160: 运行分层编译场景：启用 tiered compilation + OSR + deopt，
 /// 采集 per-chunk tier 状态、OSR 迁移、lazy compilation、反优化指标。
 /// osrChunkName 用于调小 OSR 阈值加速演示。

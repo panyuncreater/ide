@@ -14,6 +14,7 @@
 
 #include "gui/LearningPathPanel.h"
 #include "gui/I18n.h"
+#include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 
 #include <QFrame>
 #include <QHBoxLayout>
@@ -613,7 +614,7 @@ void LearningPathPanel::onActivityClicked(const QString& activityId) {
         return;
     auto& store = LearnerProgressStore::instance();
     store.recordAttempt(activityId.toStdString());
-    store.save();
+    saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
     emit activityRequested(activityId);
 }
 
@@ -635,6 +636,6 @@ void LearningPathPanel::markActivityCompleted(const QString& activityId) {
         return;
     }
     store.markCompleted(activityId.toStdString());
-    store.save();
+    saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
     refresh();
 }

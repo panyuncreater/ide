@@ -30,7 +30,7 @@
 #include <vector>
 
 class IdeController;
-struct Value; // R113 B 项：currentHeapValues_ / renderHeapObjectDetail 使用 const Value*
+struct Value; // R113 B 项：currentHeapValues_ / renderHeapObjectDetail 使用 Value 副本
 
 // ---- 教学场景库数据结构 ----
 
@@ -190,7 +190,7 @@ private:
     // currentHeapValues_ 与 heapObjectTable_ 的行号一一对应，保存选中行对应的
     // 裸 Value*（指向 controller_ 返回的 stack/globals 副本）。refreshAnimState
     // 每次刷新会重建 currentHeapValues_，并通过保留选中行号刷新详情浏览器。
-    std::vector<const Value*> currentHeapValues_;
+    std::vector<Value> currentHeapValues_;
 
     // 构造辅助
     void buildNanBoxPage(QWidget* host);

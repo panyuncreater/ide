@@ -13,12 +13,16 @@
 
 #include "gui/CourseSystemPanel.h"
 
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QLabel>
+#include <QSettings>
 #include <QVBoxLayout>
 
 #include <utility>
@@ -321,6 +325,76 @@ bool CourseSystemLibrary::parseCourse(const QString& json, Course& out, QString&
 }
 
 // ============================================================
+// 拓展二期：课程内容外部化（文件 IO + 批量序列化）
+// ============================================================
+
+bool CourseSystemLibrary::loadCourseFromFile(const QString& path, Course& out, QString& errMsg) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        errMsg = QStringLiteral("无法读取文件：%1（%2）").arg(path, file.errorString());
+        return false;
+    }
+    QString json = QString::fromUtf8(file.readAll());
+    file.close();
+    return parseCourse(json, out, errMsg);
+}
+
+bool CourseSystemLibrary::saveCourseToFile(const QString& path, const Course& course, QString& errMsg) {
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        errMsg = QStringLiteral("无法写入文件：%1（%2）").arg(path, file.errorString());
+        return false;
+    }
+    file.write(courseToJson(course).toUtf8());
+    file.close();
+    return true;
+}
+
+QString CourseSystemLibrary::coursesToJsonArray(const std::vector<Course>& courses) {
+    QJsonArray arr;
+    for (const auto& c : courses) {
+        // 复用 courseToJson → 再解为 QJsonObject，保证单课程序列化格式单一事实源
+        QJsonDocument doc = QJsonDocument::fromJson(courseToJson(c).toUtf8());
+        if (doc.isObject())
+            arr.append(doc.object());
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Indented));
+}
+
+bool CourseSystemLibrary::parseCoursesArray(const QString& json, std::vector<Course>& out, QString& errMsg) {
+    out.clear();
+    QJsonParseError parseErr;
+    QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parseErr);
+    if (parseErr.error != QJsonParseError::NoError) {
+        errMsg = QStringLiteral("JSON 解析失败：%1").arg(parseErr.errorString());
+        return false;
+    }
+    if (!doc.isArray()) {
+        errMsg = QStringLiteral("JSON 顶层必须是数组");
+        return false;
+    }
+    const QJsonArray arr = doc.array();
+    for (int i = 0; i < arr.size(); ++i) {
+        if (!arr[i].isObject()) {
+            errMsg = QStringLiteral("第 %1 项不是对象").arg(i + 1);
+            out.clear();
+            return false;
+        }
+        // 逐项复用 parseCourse 完整校验（字段类型/必需字段）
+        Course c;
+        QString itemErr;
+        QString itemJson = QString::fromUtf8(QJsonDocument(arr[i].toObject()).toJson(QJsonDocument::Compact));
+        if (!parseCourse(itemJson, c, itemErr)) {
+            errMsg = QStringLiteral("第 %1 项非法：%2").arg(i + 1).arg(itemErr);
+            out.clear();
+            return false;
+        }
+        out.push_back(std::move(c));
+    }
+    return true;
+}
+
+// ============================================================
 // CourseSystemPanel 构造
 // ============================================================
 
@@ -365,6 +439,10 @@ CourseSystemPanel::CourseSystemPanel(QWidget* parent) : QWidget(parent) {
         }
     });
 
+    // 拓展二期：恢复上次会话的自定义课程（须在 populateCourses 前，
+    // 否则首次合并视图不含持久化课程）
+    loadCustomCoursesFromSettings();
+
     // 初始数据填充：合并预设课程并刷新下拉框（内部渲染首项）
     populateCourses();
 
@@ -406,6 +484,9 @@ void CourseSystemPanel::buildLibraryPage(QWidget* host) {
     topBar->addWidget(courseCombo_, 1);
     loadCodeBtn_ = new QPushButton(tr("加载课程代码到编辑器"));
     topBar->addWidget(loadCodeBtn_);
+    // 拓展二期：导出当前选中课程（预设课程也可导出作为编写模板）
+    exportFileBtn_ = new QPushButton(tr("导出课程..."));
+    topBar->addWidget(exportFileBtn_);
     layout->addLayout(topBar);
 
     // 课程详情
@@ -417,6 +498,7 @@ void CourseSystemPanel::buildLibraryPage(QWidget* host) {
     connect(courseCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &CourseSystemPanel::onCourseSelected);
     connect(loadCodeBtn_, &QPushButton::clicked, this, &CourseSystemPanel::onLoadCourseCode);
+    connect(exportFileBtn_, &QPushButton::clicked, this, &CourseSystemPanel::onExportCourse);
 }
 
 // ============================================================
@@ -445,6 +527,9 @@ void CourseSystemPanel::buildEditorPage(QWidget* host) {
     parsePreviewBtn_ = new QPushButton(tr("解析预览"));
     loadToLibraryBtn_ = new QPushButton(tr("加载到课程库"));
     loadToLibraryBtn_->setEnabled(false);
+    // 拓展二期：从磁盘 JSON 课程包导入（外部化分发链路的入口）
+    importFileBtn_ = new QPushButton(tr("从文件导入..."));
+    btnBar->addWidget(importFileBtn_);
     btnBar->addWidget(parsePreviewBtn_);
     btnBar->addWidget(loadToLibraryBtn_);
     btnBar->addStretch();
@@ -459,6 +544,7 @@ void CourseSystemPanel::buildEditorPage(QWidget* host) {
     // 信号连接
     connect(parsePreviewBtn_, &QPushButton::clicked, this, &CourseSystemPanel::onParsePreview);
     connect(loadToLibraryBtn_, &QPushButton::clicked, this, &CourseSystemPanel::onLoadToLibrary);
+    connect(importFileBtn_, &QPushButton::clicked, this, &CourseSystemPanel::onImportFromFile);
 }
 
 // ============================================================
@@ -650,6 +736,8 @@ void CourseSystemPanel::onLoadToLibrary() {
     }
     customCourses_.push_back(lastParsedCourse_);
     refreshMergedCourses();
+    // 拓展二期：自定义课程入库后立即持久化（重启 IDE 不丢失）
+    saveCustomCoursesToSettings();
 
     // 选中新加入的课程（末尾）
     int newIdx = static_cast<int>(mergedCourses_.size()) - 1;
@@ -662,4 +750,74 @@ void CourseSystemPanel::onLoadToLibrary() {
     previewBrowser_->append(QStringLiteral("<p style='color:#2E7D32;'><b>已加载到课程库：</b>%1（共 %2 章）</p>")
                                 .arg(esc(newTitle))
                                 .arg(static_cast<int>(lastParsedCourse_.chapters.size())));
+}
+
+// ============================================================
+// 拓展二期：文件导入/导出 + QSettings 持久化
+// ============================================================
+
+void CourseSystemPanel::onImportFromFile() {
+    QString path = QFileDialog::getOpenFileName(this, tr("从文件导入课程"), QString(),
+                                                tr("课程 JSON 文件 (*.json);;所有文件 (*)"));
+    if (path.isEmpty())
+        return;
+
+    Course course;
+    QString errMsg;
+    if (!CourseSystemLibrary::loadCourseFromFile(path, course, errMsg)) {
+        previewBrowser_->setHtml(QStringLiteral("<p style='color:red;'><b>导入失败：</b>%1</p>").arg(errMsg.toHtmlEscaped()));
+        loadToLibraryBtn_->setEnabled(false);
+        hasLastParsed_ = false;
+        return;
+    }
+
+    // 导入成功：回填编辑器（便于二次编辑）+ 直接预览 + 允许入库
+    jsonEditor_->setPlainText(CourseSystemLibrary::courseToJson(course));
+    lastParsedCourse_ = std::move(course);
+    hasLastParsed_ = true;
+    renderPreview(lastParsedCourse_);
+    loadToLibraryBtn_->setEnabled(true);
+    previewBrowser_->append(QStringLiteral("<p style='color:#2E7D32;'>已从文件导入：%1，点击「加载到课程库」入库。</p>")
+                                .arg(QFileInfo(path).fileName().toHtmlEscaped()));
+}
+
+void CourseSystemPanel::onExportCourse() {
+    int idx = courseCombo_->currentIndex();
+    if (idx < 0 || idx >= static_cast<int>(mergedCourses_.size())) {
+        courseDetail_->append(QStringLiteral("<p style='color:red;'>请先选择一个课程。</p>"));
+        return;
+    }
+    const Course& c = mergedCourses_[idx];
+
+    // 默认文件名：课程标题.json
+    QString defaultName = QString::fromUtf8(c.title.c_str()) + QStringLiteral(".json");
+    QString path = QFileDialog::getSaveFileName(this, tr("导出课程"), defaultName,
+                                                tr("课程 JSON 文件 (*.json);;所有文件 (*)"));
+    if (path.isEmpty())
+        return;
+
+    QString errMsg;
+    if (!CourseSystemLibrary::saveCourseToFile(path, c, errMsg)) {
+        courseDetail_->append(QStringLiteral("<p style='color:red;'><b>导出失败：</b>%1</p>").arg(errMsg.toHtmlEscaped()));
+        return;
+    }
+    courseDetail_->append(QStringLiteral("<p style='color:#2E7D32;'>已导出课程到：%1</p>").arg(path.toHtmlEscaped()));
+}
+
+void CourseSystemPanel::loadCustomCoursesFromSettings() {
+    QSettings settings(QStringLiteral("MiniLang"), QStringLiteral("CourseSystem"));
+    QString json = settings.value(QStringLiteral("customCoursesJson")).toString();
+    if (json.trimmed().isEmpty())
+        return;
+    std::vector<Course> courses;
+    QString errMsg;
+    // 解析失败静默忽略（旧版本/损坏数据不阻塞面板启动），下次保存会覆盖
+    if (CourseSystemLibrary::parseCoursesArray(json, courses, errMsg)) {
+        customCourses_ = std::move(courses);
+    }
+}
+
+void CourseSystemPanel::saveCustomCoursesToSettings() const {
+    QSettings settings(QStringLiteral("MiniLang"), QStringLiteral("CourseSystem"));
+    settings.setValue(QStringLiteral("customCoursesJson"), CourseSystemLibrary::coursesToJsonArray(customCourses_));
 }

@@ -4,11 +4,9 @@
 
 #include "gui/MemoryModelPanel.h"
 #include "app/IdeController.h"
+#include "common/MemoryInspectionAPI.h" // ARCH-10: NaNBox/GcManager/RefCounted 只读检视（替代直接依赖 interpreter/ 内部头文件）
 #include "gui/MarkdownRenderer.h"
 #include "gui/PanelAnimator.h"
-#include "interpreter/GcManager.h"
-#include "interpreter/NaNBox.h"
-#include "interpreter/RefCounted.h"
 #include "interpreter/Value.h"
 #include "interpreter/ValueData.h" // R113 B 项：VMUpvalue 完整定义（isClosed/stackSlot/owningFrameIdx）
 
@@ -60,61 +58,9 @@ std::string bitsToBinary(uint64_t bits) {
 }
 
 /// 根据 ValueType 返回堆对象 C++ 结构名（用于"地址/类型"表格展示）
+/// ARCH-10: 通过 MemoryInspectionAPI 获取堆对象元信息，消除对 RefCounted* 的直接访问。
 std::string heapStructName(const Value& v) {
-    if (!v.isPointer())
-        return "<scalar>";
-    RefCounted* p = v.asPointer();
-    if (!p)
-        return "<null-ptr>";
-    switch (p->type) {
-    case ValueType::VAL_INT:
-        return "BoxedIntData";
-    case ValueType::VAL_STRING:
-        return "StringData";
-    case ValueType::VAL_ARRAY:
-        return "ArrayData";
-    case ValueType::VAL_DICT:
-        return "DictData";
-    case ValueType::VAL_INSTANCE:
-        return "InstanceData";
-    case ValueType::VAL_CLOSURE:
-        return "ClosureData";
-    case ValueType::VAL_NULL:
-    case ValueType::VAL_FLOAT:
-    case ValueType::VAL_BOOL:
-        return "<scalar-in-heap>";
-    }
-    return "<unknown>";
-}
-
-/// 返回堆对象的字段数/元素数（用于"字段数/元素数"列展示）
-/// 对 Array 返回元素数，Dict/Instance 返回字段数，Closure 返回 capturedVars 数，
-/// String 返回字符数，BoxedInt 返回 1（仅 value 字段）。
-size_t heapFieldCount(const Value& v) {
-    if (!v.isPointer())
-        return 0;
-    RefCounted* p = v.asPointer();
-    if (!p)
-        return 0;
-    switch (p->type) {
-    case ValueType::VAL_INT:
-        return 1; // BoxedIntData.value
-    case ValueType::VAL_STRING:
-        return static_cast<size_t>(v.codepointCount());
-    case ValueType::VAL_ARRAY:
-        return v.arrayVal().size();
-    case ValueType::VAL_DICT:
-        return v.dictVal().size();
-    case ValueType::VAL_INSTANCE:
-        return v.fields().size();
-    case ValueType::VAL_CLOSURE:
-        return v.capturedVars().size();
-    case ValueType::VAL_NULL:
-    case ValueType::VAL_FLOAT:
-    case ValueType::VAL_BOOL:
-        return 0;
-    }
-    return 0;
+    return MemoryInspectionAPI::inspectHeap(v).structName;
 }
 
 /// 将指针格式化为 16 进制字符串
@@ -520,9 +466,10 @@ void MemoryModelPanel::onNanBoxCustomEncode() {
     try {
         if (type == QString::fromUtf8("int")) {
             int64_t v = std::stoll(valueStr.toStdString());
-            bool canEncode = NaNBox::canEncodeInt(v);
-            NaNBox box = NaNBox::fromInt(v); // 超范围会降级为 float 并 LOG_WARNING
-            b.bits = box.rawBits();
+            // ARCH-10: 通过 MemoryInspectionAPI 封装 NaNBox 编码逻辑，消除直接依赖。
+            bool canEncode = MemoryInspectionAPI::canEncodeInt(v);
+            uint64_t bits = MemoryInspectionAPI::encodeInt(v); // 超范围会降级为 float 并 LOG_WARNING
+            b.bits = bits;
             if (canEncode) {
                 b.isInt = true;
                 b.intVal = v;
@@ -535,7 +482,7 @@ void MemoryModelPanel::onNanBoxCustomEncode() {
             } else {
                 // 降级为 float：显示警告
                 b.isFloat = true;
-                b.floatVal = box.asFloat();
+                b.floatVal = MemoryInspectionAPI::decodeFloat(bits);
                 b.title = "🛠 自定义 int " + valueStr.toStdString() + " (降级为 float)";
                 b.description = "⚠️ **降级警告：** int " + valueStr.toStdString() +
                                 " 超出 int48 范围（|v| < 2^47），NaNBox::fromInt 自动降级为 float 编码。"
@@ -546,8 +493,8 @@ void MemoryModelPanel::onNanBoxCustomEncode() {
             b.sourceExpr = valueStr.toStdString();
         } else if (type == QString::fromUtf8("float")) {
             double v = std::stod(valueStr.toStdString());
-            NaNBox box = NaNBox::fromFloat(v);
-            b.bits = box.rawBits();
+            // ARCH-10: 通过 MemoryInspectionAPI 封装 NaNBox 编码逻辑
+            b.bits = MemoryInspectionAPI::encodeFloat(v);
             b.isFloat = true;
             b.floatVal = v;
             b.title = "🛠 自定义 float " + valueStr.toStdString();
@@ -559,8 +506,8 @@ void MemoryModelPanel::onNanBoxCustomEncode() {
             b.sourceExpr = valueStr.toStdString();
         } else if (type == QString::fromUtf8("bool")) {
             bool v = (valueStr.toLower() == QString::fromUtf8("true") || valueStr == QString::fromUtf8("1"));
-            NaNBox box = NaNBox::fromBool(v);
-            b.bits = box.rawBits();
+            // ARCH-10: 通过 MemoryInspectionAPI 封装 NaNBox 编码逻辑
+            b.bits = MemoryInspectionAPI::encodeBool(v);
             b.isBool = true;
             b.intVal = v ? 1 : 0;
             b.title = std::string("🛠 自定义 bool ") + (v ? "true" : "false");
@@ -570,8 +517,8 @@ void MemoryModelPanel::onNanBoxCustomEncode() {
                             "无需堆分配，Value 拷贝仅 8 字节赋值。";
             b.sourceExpr = v ? "true" : "false";
         } else if (type == QString::fromUtf8("null")) {
-            NaNBox box = NaNBox::null();
-            b.bits = box.rawBits();
+            // ARCH-10: 通过 MemoryInspectionAPI 封装 NaNBox 编码逻辑
+            b.bits = MemoryInspectionAPI::encodeNull();
             b.isNull = true;
             b.title = "🛠 自定义 null";
             b.description = std::string("🛠 用户自定义编码：null 编码到 NULL_BITS = 0x7FFA000000000000。") +
@@ -700,10 +647,11 @@ void MemoryModelPanel::populateGcPhases() {
 }
 
 /// 刷新「tracked 节点数」状态标签：读取 GcManager 单例当前 tracked 容器数量。
+/// ARCH-10: 通过 MemoryInspectionAPI 间接访问 GcManager，消除直接依赖。
 void MemoryModelPanel::refreshGcStats() {
     if (!gcTrackedCountLabel_)
         return;
-    size_t tracked = GcManager::instance().trackedCount();
+    size_t tracked = MemoryInspectionAPI::getGcStats().trackedCount;
     gcTrackedCountLabel_->setText(QString::fromUtf8("tracked 节点数：%1").arg(tracked));
 }
 
@@ -842,7 +790,9 @@ void MemoryModelPanel::buildAnimPage(QWidget* host) {
             animAutoRefreshBtn_->setText(QString::fromUtf8("停止自动刷新"));
             refreshAnimState();
         } else {
-            animTimer_->stop();
+            // P1 #38 fix: 若第 5 子页（RegisterVM）仍开启自动刷新，则保持 animTimer_ 运行（对称启停）
+            if (!(regVmAutoRefreshBtn_ && regVmAutoRefreshBtn_->isChecked()))
+                animTimer_->stop();
             animAutoRefreshBtn_->setText(QString::fromUtf8("自动刷新（2s）"));
         }
     });
@@ -864,11 +814,13 @@ void MemoryModelPanel::refreshAnimState() {
         return;
 
     // R113 C 项：刷新 GC 进度统计栏（不依赖 VM 状态，单例始终可读）
+    // ARCH-10: 通过 MemoryInspectionAPI 一次性获取 GC 统计快照，消除对 GcManager 的直接依赖。
     auto refreshGcStats = [this]() {
         if (!animGcStatsLabel_)
             return;
+        GcStatsSnapshot stats = MemoryInspectionAPI::getGcStats();
         QString phaseText = QString::fromUtf8("Idle");
-        switch (GcManager::instance().currentPhase()) {
+        switch (stats.phase) {
         case GcPhase::Marking:
             phaseText = QString::fromUtf8("🟢 Marking");
             break;
@@ -885,9 +837,9 @@ void MemoryModelPanel::refreshAnimState() {
         }
         animGcStatsLabel_->setText(QString::fromUtf8("GC 阶段：%1 | 上次标记 %2, 回收 %3 | 累计 %4 次")
                                        .arg(phaseText)
-                                       .arg(GcManager::instance().lastMarkedCount())
-                                       .arg(GcManager::instance().lastCollectedCount())
-                                       .arg(GcManager::instance().totalGcCount()));
+                                       .arg(stats.lastMarkedCount)
+                                       .arg(stats.lastCollectedCount)
+                                       .arg(stats.totalGcCount));
     };
     refreshGcStats();
 
@@ -946,7 +898,8 @@ void MemoryModelPanel::refreshAnimState() {
     animFrameCountLabel_->setText(QString::fromUtf8("栈帧数：%1").arg(frameCount));
 
     // ---- GC tracked 节点数 ----
-    size_t tracked = GcManager::instance().trackedCount();
+    // ARCH-10: 通过 MemoryInspectionAPI 间接访问 GcManager
+    size_t tracked = MemoryInspectionAPI::getGcStats().trackedCount;
     animGcTrackedLabel_->setText(QString::fromUtf8("GC tracked：%1").arg(tracked));
 
     // ---- 收集堆对象：遍历 stack + globals 中的 Value，按地址去重 ----
@@ -954,31 +907,31 @@ void MemoryModelPanel::refreshAnimState() {
     // useCount() 被自身临时引用膨胀（保持显示的 refCount 为真实值）。
     auto globals = controller_->getVmGlobals();
 
-    std::vector<const Value*> heapValuePtrs;
-    heapValuePtrs.reserve(stack.size() + globals.size());
+    std::vector<Value> heapValueCopies;
+    heapValueCopies.reserve(stack.size() + globals.size());
     for (const auto& v : stack) {
         if (v.isPointer() && v.asPointer())
-            heapValuePtrs.push_back(&v);
+            heapValueCopies.push_back(v);
     }
     for (const auto& kv : globals) {
         if (kv.second.isPointer() && kv.second.asPointer())
-            heapValuePtrs.push_back(&kv.second);
+            heapValueCopies.push_back(kv.second);
     }
 
     // 按地址去重（保留首次出现的 Value 引用）
     std::unordered_set<const void*> seenAddrs;
-    std::vector<const Value*> uniqueValues;
-    uniqueValues.reserve(heapValuePtrs.size());
-    for (const Value* vp : heapValuePtrs) {
-        const void* addr = static_cast<const void*>(vp->asPointer());
+    std::vector<Value> uniqueValues;
+    uniqueValues.reserve(heapValueCopies.size());
+    for (const Value& v : heapValueCopies) {
+        const void* addr = static_cast<const void*>(v.asPointer());
         if (seenAddrs.insert(addr).second) {
-            uniqueValues.push_back(vp);
+            uniqueValues.push_back(v);
         }
     }
 
     // 按地址升序排序
-    std::sort(uniqueValues.begin(), uniqueValues.end(), [](const Value* a, const Value* b) {
-        return static_cast<const void*>(a->asPointer()) < static_cast<const void*>(b->asPointer());
+    std::sort(uniqueValues.begin(), uniqueValues.end(), [](const Value& a, const Value& b) {
+        return static_cast<const void*>(a.asPointer()) < static_cast<const void*>(b.asPointer());
     });
 
     // ---- 填充堆对象表 ----
@@ -994,23 +947,25 @@ void MemoryModelPanel::refreshAnimState() {
     // refreshAnimState 调用内有效；下次刷新会整体替换 currentHeapValues_。
     currentHeapValues_ = std::move(uniqueValues);
     for (int i = 0; i < (int)currentHeapValues_.size(); ++i) {
-        const Value* vp = currentHeapValues_[i];
-        RefCounted* p = vp->asPointer();
+        const Value& vp = currentHeapValues_[i];
+        // ARCH-10: 通过 MemoryInspectionAPI 一次性获取堆对象元信息快照，
+        // 消除对 RefCounted* 的直接访问（地址/类型/refCount/字段数全部由快照提供）。
+        HeapObjectSnapshot snap = MemoryInspectionAPI::inspectHeap(vp);
 
         // 地址列
-        heapObjectTable_->setItem(i, 0, new QTableWidgetItem(QString::fromUtf8(ptrToHex(p).c_str())));
+        heapObjectTable_->setItem(i, 0, new QTableWidgetItem(QString::fromUtf8(snap.addressHex.c_str())));
 
         // 类型列
-        heapObjectTable_->setItem(i, 1, new QTableWidgetItem(QString::fromUtf8(heapStructName(*vp).c_str())));
+        heapObjectTable_->setItem(i, 1, new QTableWidgetItem(QString::fromUtf8(snap.structName.c_str())));
 
         // refCount 列
-        auto* rcItem = new QTableWidgetItem(QString::number(p->useCount()));
+        auto* rcItem = new QTableWidgetItem(QString::number(snap.refCount));
         rcItem->setTextAlignment(Qt::AlignCenter);
         heapObjectTable_->setItem(i, 2, rcItem);
 
         // 字段数/元素数列
         heapObjectTable_->setItem(i, 3,
-                                  new QTableWidgetItem(QString::number(static_cast<qulonglong>(heapFieldCount(*vp)))));
+                                  new QTableWidgetItem(QString::number(static_cast<qulonglong>(snap.fieldCount))));
     }
 
     // R113 B 项：恢复选中行并刷新详情浏览器。若 prevSelectedRow 仍在新表范围内，
@@ -1038,12 +993,8 @@ void MemoryModelPanel::onHeapObjectSelected(int row) {
         heapObjectDetailBrowser_->clear();
         return;
     }
-    const Value* vp = currentHeapValues_[row];
-    if (!vp) {
-        heapObjectDetailBrowser_->clear();
-        return;
-    }
-    renderHeapObjectDetail(*vp);
+    const Value& v = currentHeapValues_[row];
+    renderHeapObjectDetail(v);
 }
 
 /// 按 ValueType 分发渲染堆对象详情到 heapObjectDetailBrowser_。
@@ -1058,13 +1009,14 @@ void MemoryModelPanel::renderHeapObjectDetail(const Value& v) {
         heapObjectDetailBrowser_->setHtml(QString::fromUtf8(os.str().c_str()));
         return;
     }
-    RefCounted* p = v.asPointer();
-    std::string structName = heapStructName(v);
-    os << "<h3>📦 " << structName << " 详情</h3>";
-    os << "<p><b>地址：</b><code>" << ptrToHex(p) << "</code></p>";
-    os << "<p><b>refCount：</b>" << p->useCount() << "</p>";
+    // ARCH-10: 通过 MemoryInspectionAPI 获取堆对象元信息快照（地址/类型/refCount），
+    // 消除对 RefCounted* 的直接访问。后续 switch 仍用 v.getType()（Value 公开 API）分发。
+    HeapObjectSnapshot snap = MemoryInspectionAPI::inspectHeap(v);
+    os << "<h3>📦 " << snap.structName << " 详情</h3>";
+    os << "<p><b>地址：</b><code>" << snap.addressHex << "</code></p>";
+    os << "<p><b>refCount：</b>" << snap.refCount << "</p>";
 
-    switch (p->type) {
+    switch (v.getType()) {
     case ValueType::VAL_CLOSURE: {
         // R113 B 项核心：ClosureData upvalue 生命周期详情
         os << "<h4>闭包元数据</h4>";

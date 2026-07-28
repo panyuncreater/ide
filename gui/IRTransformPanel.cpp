@@ -13,13 +13,16 @@
 #include "compiler/Compiler.h"
 #include "compiler/IR.h"
 #include "gui/GuiTextUtils.h" // R75: monospaceFont() 跨机器字体回退链
+#include "gui/I18n.h"         // mlTr() 国际化
 #include "gui/PanelAnimator.h"
 #include "lexer/Lexer.h"
 #include "parser/Parser.h"
 
 #include <QApplication>
+#include <QCheckBox> // 拓展二期：预测模式开关
 #include <QHBoxLayout>
 #include <QRegularExpression>
+#include <QSpinBox> // 拓展二期：预测指令数输入
 #include <QSplitter>
 #include <QVBoxLayout>
 #include <sstream>
@@ -73,10 +76,10 @@ IRTransformPanel::IRTransformPanel(QWidget* parent) : QWidget(parent) {
     mainLayout->setSpacing(4);
 
     auto* pageBar = new QHBoxLayout;
-    pageLoweringBtn_ = new QPushButton(QString::fromUtf8("AST → IR lowering"), this);
-    pageOptimizeBtn_ = new QPushButton(QString::fromUtf8("优化 pass 对比"), this);
-    pageCurrentBtn_ = new QPushButton(QString::fromUtf8("当前源码 IR"), this);
-    pageReplayBtn_ = new QPushButton(QString::fromUtf8("逐步优化回放"), this);
+    pageLoweringBtn_ = new QPushButton(tr("AST → IR lowering"), this);
+    pageOptimizeBtn_ = new QPushButton(tr("优化 pass 对比"), this);
+    pageCurrentBtn_ = new QPushButton(tr("当前源码 IR"), this);
+    pageReplayBtn_ = new QPushButton(tr("逐步优化回放"), this);
     pageLoweringBtn_->setCheckable(true);
     pageOptimizeBtn_->setCheckable(true);
     pageCurrentBtn_->setCheckable(true);
@@ -198,19 +201,19 @@ void IRTransformPanel::buildOptimizePage(QWidget* host) {
     layout->setContentsMargins(0, 0, 0, 0);
 
     optList_ = new QListWidget(host);
-    optSummary_ = new QLabel(QString::fromUtf8("请选择优化 pass"), host);
+    optSummary_ = new QLabel(tr("请选择优化 pass"), host);
 
     auto* beforeWrap = new QWidget(host);
     auto* beforeLayout = new QVBoxLayout(beforeWrap);
     beforeLayout->setContentsMargins(0, 0, 0, 0);
-    beforeLayout->addWidget(new QLabel(QString::fromUtf8("优化前 IR：")));
+    beforeLayout->addWidget(new QLabel(tr("优化前 IR：")));
     optBefore_ = new QTextBrowser(host);
     beforeLayout->addWidget(optBefore_, 1);
 
     auto* afterWrap = new QWidget(host);
     auto* afterLayout = new QVBoxLayout(afterWrap);
     afterLayout->setContentsMargins(0, 0, 0, 0);
-    afterLayout->addWidget(new QLabel(QString::fromUtf8("优化后 IR：")));
+    afterLayout->addWidget(new QLabel(tr("优化后 IR：")));
     optAfter_ = new QTextBrowser(host);
     afterLayout->addWidget(optAfter_, 1);
 
@@ -223,10 +226,64 @@ void IRTransformPanel::buildOptimizePage(QWidget* host) {
     splitter->setStretchFactor(2, 1);
     splitter->setSizes({150, 250, 250});
 
+    // 拓展二期·教学：IR 优化预测练习模式控件行。
+    // 开启后隐藏优化后 IR 与指令数变化，学生先预测优化后指令数
+    // 再提交揭示（答案数据直接取自 IROptimizationExample.instrAfter）。
+    auto* predictBar = new QHBoxLayout();
+    predictCheck_ = new QCheckBox(tr("🎯 预测模式（先猜优化后指令数，再揭示答案）"), host);
+    predictBar->addWidget(predictCheck_);
+    predictBar->addWidget(new QLabel(tr("预测优化后指令数:"), host));
+    predictSpin_ = new QSpinBox(host);
+    predictSpin_->setRange(0, 999);
+    predictSpin_->setEnabled(false);
+    predictBar->addWidget(predictSpin_);
+    predictSubmitBtn_ = new QPushButton(tr("提交预测"), host);
+    predictSubmitBtn_->setEnabled(false);
+    predictBar->addWidget(predictSubmitBtn_);
+    predictResultLabel_ = new QLabel(host);
+    predictResultLabel_->setWordWrap(true);
+    predictBar->addWidget(predictResultLabel_, 1);
+    layout->addLayout(predictBar);
+
     layout->addWidget(optSummary_);
     layout->addWidget(splitter, 1);
 
     connect(optList_, &QListWidget::currentRowChanged, this, &IRTransformPanel::populateOptDetail);
+    connect(predictCheck_, &QCheckBox::toggled, this, [this](bool on) {
+        predictMode_ = on;
+        predictSpin_->setEnabled(on);
+        predictSubmitBtn_->setEnabled(on);
+        predictResultLabel_->clear();
+        // 切换模式后重新渲染当前场景（隐藏/揭示优化后 IR）
+        populateOptDetail(optList_->currentRow());
+    });
+    connect(predictSubmitBtn_, &QPushButton::clicked, this, &IRTransformPanel::onPredictSubmit);
+}
+
+/// 拓展二期：提交预测——揭示优化后 IR，对照 instrAfter 判定预测。
+void IRTransformPanel::onPredictSubmit() {
+    int index = optList_->currentRow();
+    const auto& items = IRTransformLibrary::optimizationExamples();
+    if (index < 0 || index >= (int)items.size())
+        return;
+    const auto& e = items[index];
+
+    // 揭示答案
+    optAfter_->setPlainText(QString::fromUtf8(e.irAfter.c_str()));
+    optSummary_->setText(tr("%1 — %2 → %3 条指令（减少 %4 条）")
+                             .arg(QString::fromUtf8(e.title.c_str()))
+                             .arg(e.instrBefore)
+                             .arg(e.instrAfter)
+                             .arg(e.instrBefore - e.instrAfter));
+
+    int guess = predictSpin_->value();
+    if (guess == e.instrAfter) {
+        predictResultLabel_->setText(tr("✅ 预测正确！优化后确为 %1 条指令").arg(e.instrAfter));
+    } else {
+        predictResultLabel_->setText(tr("❌ 预测 %1 条，实际 %2 条——对照右侧揭示的优化后 IR 看看哪些指令被消除了")
+                                         .arg(guess)
+                                         .arg(e.instrAfter));
+    }
 }
 
 /// 构建「当前源码 IR」子页：刷新按钮 + 状态标签 + 可点击 IR 浏览器。
@@ -236,8 +293,8 @@ void IRTransformPanel::buildCurrentPage(QWidget* host) {
     layout->setContentsMargins(0, 0, 0, 0);
 
     auto* toolbar = new QHBoxLayout;
-    refreshBtn_ = new PrimaryPushButton(QString::fromUtf8("重新生成 IR"), host);
-    currentStatusLabel_ = new CaptionLabel(QString::fromUtf8("尚未生成"), host);
+    refreshBtn_ = new PrimaryPushButton(tr("重新生成 IR"), host);
+    currentStatusLabel_ = new CaptionLabel(tr("尚未生成"), host);
     toolbar->addWidget(refreshBtn_);
     toolbar->addStretch();
     toolbar->addWidget(currentStatusLabel_);
@@ -298,11 +355,11 @@ void IRTransformPanel::populateLoweringDetail(int index) {
 
     std::ostringstream os;
     os << "<h3>" << esc(e.title) << "</h3>";
-    os << "<p><b>AST 节点：</b> <code>" << esc(e.astSummary) << "</code></p>";
-    os << "<p><b>源码：</b> <code>" << esc(e.sourceCode) << "</code></p>";
+    os << "<p><b>" << tr("AST 节点：").toStdString() << "</b> <code>" << esc(e.astSummary) << "</code></p>";
+    os << "<p><b>" << tr("源码：").toStdString() << "</b> <code>" << esc(e.sourceCode) << "</code></p>";
     os << "<hr>";
     os << "<p>" << esc(e.description) << "</p>";
-    os << "<h4>Lowering 后的 IR：</h4>";
+    os << "<h4>" << tr("Lowering 后的 IR：").toStdString() << "</h4>";
     os << "<pre style='background:" << TeachingTheme::surface().name().toStdString()
        << "; padding:8px; font-family:\"Cascadia Code\",\"Cascadia Mono\",\"Consolas\",\"JetBrains Mono\",\"Source "
           "Code Pro\",\"Menlo\",\"DejaVu Sans Mono\",\"Courier New\",monospace;'>"
@@ -326,19 +383,30 @@ void IRTransformPanel::populateOptList() {
 }
 
 /// 根据选中索引渲染优化对比：摘要标签（标题 + 指令数变化）+ 优化前/后 IR 文本。
+/// 拓展二期：预测模式下隐藏优化后 IR 与指令数（由 onPredictSubmit 揭示）。
 void IRTransformPanel::populateOptDetail(int index) {
     const auto& items = IRTransformLibrary::optimizationExamples();
     if (index < 0 || index >= (int)items.size())
         return;
     const auto& e = items[index];
 
-    optSummary_->setText(QString::fromUtf8("%1 — %2 → %3 条指令（减少 %4 条）")
+    optBefore_->setPlainText(QString::fromUtf8(e.irBefore.c_str()));
+    if (predictMode_) {
+        // 预测模式：遮盖答案，提示学生先思考
+        optSummary_->setText(tr("%1 — 优化前 %2 条指令，优化后？条（预测后提交揭示）")
+                                 .arg(QString::fromUtf8(e.title.c_str()))
+                                 .arg(e.instrBefore));
+        optAfter_->setPlainText(tr("（预测模式：先在上方输入你预测的优化后指令数，\n"
+                                   "点击「提交预测」后揭示优化后 IR 与答案）"));
+        predictResultLabel_->clear();
+        return;
+    }
+    optSummary_->setText(tr("%1 — %2 → %3 条指令（减少 %4 条）")
                              .arg(QString::fromUtf8(e.title.c_str()))
                              .arg(e.instrBefore)
                              .arg(e.instrAfter)
                              .arg(e.instrBefore - e.instrAfter));
 
-    optBefore_->setPlainText(QString::fromUtf8(e.irBefore.c_str()));
     optAfter_->setPlainText(QString::fromUtf8(e.irAfter.c_str()));
     // 注：移除 fadeInWidget —— opacity 卡 0 导致切换后详情区空白
 }
@@ -347,14 +415,14 @@ void IRTransformPanel::populateOptDetail(int index) {
 /// 渲染为可点击 HTML，并显示基本块/指令数。异常时在状态栏报告。
 void IRTransformPanel::populateCurrentIR() {
     if (!controller_) {
-        currentStatusLabel_->setText(QString::fromUtf8("未绑定控制器"));
-        currentIrBrowser_->setPlainText(QString::fromUtf8("（未绑定控制器）"));
+        currentStatusLabel_->setText(tr("未绑定控制器"));
+        currentIrBrowser_->setPlainText(tr("（未绑定控制器）"));
         return;
     }
     Block* ast = controller_->astRoot();
     if (!ast) {
-        currentStatusLabel_->setText(QString::fromUtf8("请先在主编辑器中输入并编译代码"));
-        currentIrBrowser_->setPlainText(QString::fromUtf8("（无 AST）"));
+        currentStatusLabel_->setText(tr("请先在主编辑器中输入并编译代码"));
+        currentIrBrowser_->setPlainText(tr("（无 AST）"));
         return;
     }
 
@@ -363,7 +431,7 @@ void IRTransformPanel::populateCurrentIR() {
         builder.build(*ast);
         IRModule* mod = builder.getModule();
         if (!mod || !mod->mainFunction) {
-            currentStatusLabel_->setText(QString::fromUtf8("IR 生成失败"));
+            currentStatusLabel_->setText(tr("IR 生成失败"));
             return;
         }
         std::string irText = IRToString(*mod->mainFunction);
@@ -372,11 +440,11 @@ void IRTransformPanel::populateCurrentIR() {
         for (const auto& blk : mod->mainFunction->blocks) {
             instrCount += (int)blk.instructions.size();
         }
-        currentStatusLabel_->setText(QString::fromUtf8("已生成 IR：%1 基本块 / %2 条指令")
+        currentStatusLabel_->setText(tr("已生成 IR：%1 基本块 / %2 条指令")
                                          .arg(mod->mainFunction->blocks.size())
                                          .arg(instrCount));
     } catch (const std::exception& e) {
-        currentStatusLabel_->setText(QString::fromUtf8("IR 生成异常"));
+        currentStatusLabel_->setText(tr("IR 生成异常"));
         currentIrBrowser_->setPlainText(QString::fromUtf8(e.what()));
     }
 }
@@ -395,13 +463,13 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
     auto* layout = new QVBoxLayout(host);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    replayStatusLabel_ = new QLabel(QString::fromUtf8("请选择场景"), host);
+    replayStatusLabel_ = new QLabel(tr("请选择场景"), host);
 
     // 左侧：场景列表
     auto* scenarioWrap = new QWidget(host);
     auto* scenarioLayout = new QVBoxLayout(scenarioWrap);
     scenarioLayout->setContentsMargins(0, 0, 0, 0);
-    scenarioLayout->addWidget(new QLabel(QString::fromUtf8("场景列表："), scenarioWrap));
+    scenarioLayout->addWidget(new QLabel(tr("场景列表："), scenarioWrap));
     replayList_ = new QListWidget(scenarioWrap);
     scenarioLayout->addWidget(replayList_, 1);
 
@@ -409,7 +477,7 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
     auto* stepsWrap = new QWidget(host);
     auto* stepsLayout = new QVBoxLayout(stepsWrap);
     stepsLayout->setContentsMargins(0, 0, 0, 0);
-    stepsLayout->addWidget(new QLabel(QString::fromUtf8("Pass 步骤："), stepsWrap));
+    stepsLayout->addWidget(new QLabel(tr("Pass 步骤："), stepsWrap));
     replayStepsList_ = new QListWidget(stepsWrap);
     stepsLayout->addWidget(replayStepsList_, 1);
 
@@ -417,7 +485,7 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
     auto* irWrap = new QWidget(host);
     auto* irLayout = new QVBoxLayout(irWrap);
     irLayout->setContentsMargins(0, 0, 0, 0);
-    irLayout->addWidget(new QLabel(QString::fromUtf8("IR 快照："), irWrap));
+    irLayout->addWidget(new QLabel(tr("IR 快照："), irWrap));
     replayIrBrowser_ = new QTextBrowser(irWrap);
     replayIrBrowser_->setFont(GuiTextUtils::monospaceFont(10));
     replayIrBrowser_->setOpenLinks(false);
@@ -428,7 +496,7 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
     auto* decisionsWrap = new QWidget(host);
     auto* decisionsLayout = new QVBoxLayout(decisionsWrap);
     decisionsLayout->setContentsMargins(0, 0, 0, 0);
-    decisionsLayout->addWidget(new QLabel(QString::fromUtf8("决策解释："), decisionsWrap));
+    decisionsLayout->addWidget(new QLabel(tr("决策解释："), decisionsWrap));
     replayDecisionsList_ = new QListWidget(decisionsWrap);
     decisionsLayout->addWidget(replayDecisionsList_, 1);
 
@@ -463,7 +531,7 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
         replayStepsList_->clear();
         const auto& steps = scenarios[row].second;
         for (const auto& s : steps) {
-            QString text = QString::fromUtf8("[%1] %2 (修改 %3 条)")
+            QString text = tr("[%1] %2 (修改 %3 条)")
                                .arg(QString::fromUtf8(s.passName.c_str()))
                                .arg(QString::fromUtf8(s.passRound.c_str()))
                                .arg(s.modifiedCount);
@@ -472,7 +540,7 @@ void IRTransformPanel::buildReplayPage(QWidget* host) {
         if (!steps.empty()) {
             replayStepsList_->setCurrentRow(0);
         }
-        replayStatusLabel_->setText(QString::fromUtf8("场景：%1 — %2 个步骤")
+        replayStatusLabel_->setText(tr("场景：%1 — %2 个步骤")
                                         .arg(QString::fromUtf8(scenarios[row].first.c_str()))
                                         .arg(steps.size()));
         // 注：移除 fadeInWidget —— QListWidget 刷新无需动画，
@@ -541,7 +609,7 @@ void IRTransformPanel::populateReplayStep(int scenarioIdx, int stepIdx) {
     }
 
     // 状态标签
-    replayStatusLabel_->setText(QString::fromUtf8("场景：%1 — %2 / %3 — %4 条指令（修改 %5 条）")
+    replayStatusLabel_->setText(tr("场景：%1 — %2 / %3 — %4 条指令（修改 %5 条）")
                                     .arg(QString::fromUtf8(scenarios[scenarioIdx].first.c_str()))
                                     .arg(QString::fromUtf8(s.passName.c_str()))
                                     .arg(QString::fromUtf8(s.passRound.c_str()))

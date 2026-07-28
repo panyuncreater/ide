@@ -11,8 +11,8 @@
 // 功能 9（Bug 狩猎分级题库重构）新增 difficulty 字段：
 //   BEGINNER      — 入门级（阅读理解型，5 道 BUG-READ-01..05）
 //   INTERMEDIATE  — 进阶级（4 道：BUG-DEF-1 / BUG-REGVM-2 / BUG-REPL-1 / BUG-F-04）
-//   EXPERT        — 专家级（6 道：BUG-IR-POP-2 / BUG-CP-1 / BUG-UV-1 /
-//                   BUG-DBG-1 / BUG-CP-2 / BUG-MOD-1）
+//   EXPERT        — 专家级（6 道，按题库顺序：BUG-CP-1 / BUG-CP-2 / BUG-UV-1 /
+//                   BUG-IR-POP-2 / BUG-MOD-1 / BUG-DBG-1）
 // ============================================================
 
 /// 返回 Bug 狩猎题库的全部条目（静态单例），按难度分组：

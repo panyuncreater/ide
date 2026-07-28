@@ -52,6 +52,17 @@ public:
     /// 绑定 IdeController（仅赋值，不注册监听器——与 JitVisualizerPanel 模式一致）
     void setController(IdeController* controller) { controller_ = controller; }
 
+    // ARCH-10: BackendExecResult 公开为接口类型，供 convertServiceResult 辅助函数使用
+    // 三后端执行结果
+    struct BackendExecResult {
+        QString output;       // 标准输出（print 输出）
+        QString status;       // 状态文本（"✅ 成功" / "❌ 错误: ..."）
+        qint64 elapsedMs = 0; // 耗时（毫秒）
+        QString instrCount;   // 指令数（"N/A" 或字节数）
+        QString traceHtml;    // 详细执行轨迹 HTML
+        bool success = false; // 是否成功（编译+运行均无错）
+    };
+
 signals:
     /// 请求将样例代码加载到主编辑器
     void loadSampleRequested(const QString& code);
@@ -84,15 +95,7 @@ private:
     // 内置示例库（3 个）
     static const std::vector<BackendParallelSample>& samples();
 
-    // 三后端执行结果
-    struct BackendExecResult {
-        QString output;       // 标准输出（print 输出）
-        QString status;       // 状态文本（"✅ 成功" / "❌ 错误: ..."）
-        qint64 elapsedMs = 0; // 耗时（毫秒）
-        QString instrCount;   // 指令数（"N/A" 或字节数）
-        QString traceHtml;    // 详细执行轨迹 HTML
-        bool success = false; // 是否成功（编译+运行均无错）
-    };
+    // ARCH-10: BackendExecResult 已上移至 public 区段
 
     // 三后端执行函数（参考 TestNestedLvalueProbe.cpp 辅助模式）
     BackendExecResult runInterpreter(const std::string& src);

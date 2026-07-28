@@ -4,20 +4,19 @@
 
 #include "gui/VariableInspectorPanel.h"
 #include "app/IdeController.h"
+#include "common/MemoryInspectionAPI.h" // ARCH-10: NaNBox 位模式快照（替代直接依赖 interpreter/NaNBox.h）
 #include "debug/DebugTypes.h"
 #include "gui/GuidedTour.h"
 #include "gui/MarkdownRenderer.h"
 #include "gui/PanelAnimator.h"
-#include "interpreter/NaNBox.h"
-#include "interpreter/RefCounted.h"
 #include "interpreter/Value.h"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog> // 拓展二期：双击改值输入对话框
 #include <QSplitter>
 #include <QVBoxLayout>
 #include <algorithm> // AUDIT-P2 fix: std::sort 全局变量按名排序
-#include <iomanip>
 #include <sstream>
 #include <vector>
 
@@ -115,34 +114,10 @@ const std::vector<VariableTypeExample>& VariableInspectorLibrary::examples() {
 namespace {
 
 std::string valueToBitsHex(const Value& v) {
-    std::ostringstream os;
-    os << "0x" << std::hex << std::setfill('0') << std::setw(16);
-    switch (v.getType()) {
-    case ValueType::VAL_INT:
-        // AUDIT-P1 fix: BoxedIntData（超大整数装箱为堆对象）的 type==VAL_INT
-        // 但 isPointer()==true，此时 intVal() 返回原始 int64（可能超出 int48 范围），
-        // 调用 NaNBox::fromInt 会触发 canEncodeInt 失败 → std::abort() 崩溃。
-        // 对 BoxedIntData 显示堆指针占位符，与堆类型 default 分支一致。
-        if (v.isPointer()) {
-            os << "7ffb????????????";
-        } else {
-            os << NaNBox::fromInt(v.intVal()).rawBits();
-        }
-        break;
-    case ValueType::VAL_FLOAT:
-        os << NaNBox::fromFloat(v.floatVal()).rawBits();
-        break;
-    case ValueType::VAL_BOOL:
-        os << NaNBox::fromBool(v.boolVal()).rawBits();
-        break;
-    case ValueType::VAL_NULL:
-        os << NaNBox::null().rawBits();
-        break;
-    default:
-        os << "7ffb????????????";
-        break;
-    }
-    return os.str();
+    // ARCH-10: 通过 MemoryInspectionAPI 获取 NaN-box 位模式快照，
+    // 消除面板对 interpreter/NaNBox.h 的直接依赖。
+    // 内部实现已处理 BoxedIntData（堆指针）降级为 PTR_TAG_BASE 占位符的边界情况。
+    return MemoryInspectionAPI::inspectValue(v).bitsHex;
 }
 
 std::string bitsToBinary(uint64_t bits) {
@@ -270,6 +245,50 @@ void VariableInspectorPanel::buildLivePage(QWidget* host) {
     connect(autoRefreshCheck_, &QCheckBox::toggled, this, &VariableInspectorPanel::onAutoRefreshToggled);
     connect(varTree_, &QTreeWidget::currentItemChanged,
             [this](QTreeWidgetItem*, QTreeWidgetItem*) { onVariableSelected(); });
+    // 拓展二期：双击变量项修改值（setVariable）
+    connect(varTree_, &QTreeWidget::itemDoubleClicked, this, &VariableInspectorPanel::onVariableDoubleClicked);
+}
+
+// ============================================================
+// 拓展二期：双击变量项修改值（仅调试暂停/VM 暂停时生效）
+// ------------------------------------------------------------
+// 交互：双击变量行 → QInputDialog 输入新值（int/float/bool/null/"字符串"）
+// → parseDebugValueText 解析 → IdeController::setDebugVariableValue 写回
+// （Interpreter 路径经 DebugController 写回调；VM 路径经 VmStepper 双后端）。
+// 仅接受第一层变量项（分组的直接子项）；容器子元素编辑暂不支持。
+// ============================================================
+void VariableInspectorPanel::onVariableDoubleClicked(QTreeWidgetItem* item, int column) {
+    Q_UNUSED(column);
+    if (!controller_ || !item)
+        return;
+    // 仅第一层变量项：有父（分组）且父无父（分组是顶层）
+    if (!item->parent() || item->parent()->parent())
+        return;
+    // 仅调试暂停或 VM 暂停（单步间隙）时可写
+    bool interpPaused = controller_->isRunning() && controller_->isDebugRun() && controller_->isDebugPaused();
+    bool vmPaused = !controller_->isRunning() && controller_->isVmInitialized() && !controller_->isVmRunning();
+    if (!interpPaused && !vmPaused) {
+        liveStatusLabel_->setText(tr("状态：仅调试暂停/VM 单步暂停时可修改变量"));
+        return;
+    }
+    const QString name = item->text(0);
+    bool ok = false;
+    const QString text =
+        QInputDialog::getText(this, tr("修改变量"),
+                              tr("变量 %1 的新值（int / float / true / false / null / \"字符串\"）：").arg(name),
+                              QLineEdit::Normal, item->text(2), &ok);
+    if (!ok || text.isEmpty())
+        return;
+    Value newVal;
+    if (!parseDebugValueText(text.toStdString(), newVal)) {
+        liveStatusLabel_->setText(tr("状态：新值解析失败（支持 int/float/bool/null/\"字符串\"）"));
+        return;
+    }
+    if (controller_->setDebugVariableValue(name.toStdString(), newVal)) {
+        refreshLive(); // 写入成功：刷新树展示新值
+    } else {
+        liveStatusLabel_->setText(tr("状态：变量 %1 写入失败（不存在或当前后端不支持）").arg(name));
+    }
 }
 
 /// 构建「类型示例库」子页 UI。
@@ -409,19 +428,37 @@ void VariableInspectorPanel::refreshLive() {
         auto* item = new QTreeWidgetItem(globalGroup);
         item->setText(0, QString::fromUtf8(name.c_str()));
         // AUDIT-P1 fix: toString()/typeName() 异常防护，与 VmStackPanel 一致。
+        // P2-UX fix: 捕获异常原因并设为 tooltip，通知用户值可能已损坏。
         std::string valStr, typeStr;
+        QString errorTooltip;
         try {
             typeStr = val.typeName();
+        } catch (const std::exception& e) {
+            typeStr = "<error>";
+            errorTooltip = tr("typeName() 异常：%1（值可能已损坏）").arg(QString::fromUtf8(e.what()));
         } catch (...) {
             typeStr = "<error>";
+            errorTooltip = tr("typeName() 抛出未知异常（值可能已损坏）");
         }
         try {
             valStr = val.toString();
+        } catch (const std::exception& e) {
+            valStr = "<error>";
+            errorTooltip = errorTooltip.isEmpty()
+                               ? tr("toString() 异常：%1（值可能已损坏）").arg(QString::fromUtf8(e.what()))
+                               : errorTooltip + "\n" + tr("toString() 异常：%1").arg(QString::fromUtf8(e.what()));
         } catch (...) {
             valStr = "<error>";
+            errorTooltip = errorTooltip.isEmpty() ? tr("toString() 抛出未知异常（值可能已损坏）")
+                                                  : errorTooltip + "\n" + tr("toString() 抛出未知异常");
         }
         item->setText(1, QString::fromUtf8(typeStr.c_str()));
         item->setText(2, QString::fromUtf8(valStr.c_str()));
+        if (!errorTooltip.isEmpty()) {
+            item->setToolTip(0, errorTooltip);
+            item->setToolTip(1, errorTooltip);
+            item->setToolTip(2, errorTooltip);
+        }
         item->setData(0, Qt::UserRole, QString::fromUtf8(name.c_str()));
     }
     globalGroup->setExpanded(true);
@@ -444,19 +481,37 @@ void VariableInspectorPanel::refreshLive() {
             auto* item = new QTreeWidgetItem(group);
             item->setText(0, QString::fromUtf8(s->name.c_str()));
             // AUDIT-P1 fix: toString()/typeName() 异常防护。
+            // P2-UX fix: 捕获异常原因并设为 tooltip，通知用户值可能已损坏。
             std::string valStr, typeStr;
+            QString errorTooltip;
             try {
                 typeStr = s->value.typeName();
+            } catch (const std::exception& e) {
+                typeStr = "<error>";
+                errorTooltip = tr("typeName() 异常：%1（值可能已损坏）").arg(QString::fromUtf8(e.what()));
             } catch (...) {
                 typeStr = "<error>";
+                errorTooltip = tr("typeName() 抛出未知异常（值可能已损坏）");
             }
             try {
                 valStr = s->value.toString();
+            } catch (const std::exception& e) {
+                valStr = "<error>";
+                errorTooltip = errorTooltip.isEmpty()
+                                   ? tr("toString() 异常：%1（值可能已损坏）").arg(QString::fromUtf8(e.what()))
+                                   : errorTooltip + "\n" + tr("toString() 异常：%1").arg(QString::fromUtf8(e.what()));
             } catch (...) {
                 valStr = "<error>";
+                errorTooltip = errorTooltip.isEmpty() ? tr("toString() 抛出未知异常（值可能已损坏）")
+                                                      : errorTooltip + "\n" + tr("toString() 抛出未知异常");
             }
             item->setText(1, QString::fromUtf8(typeStr.c_str()));
             item->setText(2, QString::fromUtf8(valStr.c_str()));
+            if (!errorTooltip.isEmpty()) {
+                item->setToolTip(0, errorTooltip);
+                item->setToolTip(1, errorTooltip);
+                item->setToolTip(2, errorTooltip);
+            }
             item->setData(0, Qt::UserRole, QString::fromUtf8(s->name.c_str()));
         }
         group->setExpanded(true);

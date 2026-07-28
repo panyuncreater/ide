@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QTimer>
 #include <QWidget>
 
 class CodeEditor;
@@ -71,6 +72,11 @@ private:
     QCheckBox* wholeWordCheck_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     bool replaceVisible_ = false;
+
+    // P-8 perf: 200ms 防抖定时器，对齐 BugHuntPanel 的搜索防抖设计。
+    // 大文档时避免每输入一个字符就 O(n) 全文档高亮。
+    QTimer* highlightDebounceTimer_ = nullptr;
+    QString pendingHighlightText_;
 
     /// 查找文本，从当前位置向后/向前查找
     /// forward=true 向后查找, false 向前查找

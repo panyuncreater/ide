@@ -9,6 +9,7 @@
 #include "Theme.h" // QFluentKit（onThemeModeChanged 信号）
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h" // AUDIT-P1 fix: markCompleted 直接持久化
+#include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 #include "gui/TeachingTheme.h"
 
 #include <QLabel>
@@ -85,7 +86,7 @@ void CodeJourneyInfoPanel::markCompleted() {
     journeyCompleted_ = true;
     // 直接持久化到 LearnerProgressStore，不依赖外部信号连接
     LearnerProgressStore::instance().markCompleted("code-journey");
-    LearnerProgressStore::instance().save();
+    saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
     refreshProgress();
     emit journeyCompleted();
 }

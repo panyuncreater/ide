@@ -16,6 +16,9 @@
 #include "parser/Parser.h"
 #include <QColor>
 #include <QKeyEvent>
+#include <QRegularExpression> // 拓展二期：Tab 补全历史词提取
+#include <QSet>               // 拓展二期：补全候选去重
+#include <QSettings> // 拓展二期：REPL 历史持久化
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <cstdlib> // IDE-CLOSE-01 fix: std::_Exit 强制进程退出
@@ -29,6 +32,8 @@
 
 /// 构造 REPL 面板：初始化输出区、输入框与后台执行状态。
 ReplPanel::ReplPanel(QWidget* parent) : QWidget(parent) {
+    // 拓展二期：启动时恢复上次会话的输入历史（QSettings 持久化）
+    loadHistoryFromSettings();
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
@@ -155,6 +160,7 @@ void ReplPanel::appendError(const QString& text) {
 void ReplPanel::clearHistory() {
     outputArea_->clear();
     history_.clear();
+    saveHistoryToSettings(); // 拓展二期：清除同步到持久化存储
     historyIndex_ = -1;
     // AUDIT-BUG-R1 fix: 重置续行状态，防止 clearHistory 后遗留脏状态
     pendingInput_.clear();
@@ -213,6 +219,7 @@ void ReplPanel::onReturnPressed() {
         // 按 Up 键需翻越多次才能到达上一条不同命令。
         if (history_.empty() || history_.back() != trimmedLine) {
             history_.push_back(trimmedLine);
+            saveHistoryToSettings(); // 拓展二期：追加即持久化（崩溃不丢历史）
         }
         historyIndex_ = history_.size();
     }
@@ -835,6 +842,103 @@ bool ReplPanel::eventFilter(QObject* obj, QEvent* event) {
             outputArea_->clear();
             return true;
         }
+        // 拓展二期：Tab 前缀补全（关键字 + 历史词）。
+        // 唯一匹配直接补全；多候选补全至公共前缀并在输出区列出候选；
+        // 无匹配/空前缀时放行（保留默认 Tab 缩进）。
+        if (keyEvent->key() == Qt::Key_Tab && !(keyEvent->modifiers() & Qt::ShiftModifier)) {
+            if (tryTabComplete())
+                return true;
+        }
     }
     return QWidget::eventFilter(obj, event);
+}
+
+// ============================================================
+// 拓展二期：Tab 补全 + 历史持久化
+// ============================================================
+
+bool ReplPanel::tryTabComplete() {
+    // 取光标前的当前词（标识符字符 [A-Za-z0-9_]）
+    QTextCursor cursor = inputLine_->textCursor();
+    QString text = inputLine_->toPlainText();
+    int pos = cursor.position();
+    int start = pos;
+    while (start > 0) {
+        QChar c = text.at(start - 1);
+        if (c.isLetterOrNumber() || c == '_') {
+            --start;
+        } else {
+            break;
+        }
+    }
+    QString prefix = text.mid(start, pos - start);
+    if (prefix.isEmpty())
+        return false; // 无前缀：保留默认 Tab 行为
+
+    // 候选集：MiniLang 关键字/内建 + 历史输入中的标识符词
+    static const QStringList kKeywords = {
+        "var",    "fun",      "if",     "else",   "while", "for",    "return", "break", "continue", "print",
+        "true",   "false",    "null",   "and",    "or",    "not",    "class",  "extends", "super",   "import",
+        "from",   "export",   "try",    "catch",  "finally", "throw", "enum",   "match",  "case",    "default",
+        "yield",  "len",      "type",   "str",    "int",   "abs",    "min",    "max",    "range",   "sum",
+        "channel", "mutex",   "rwlock", "spawn"};
+    QSet<QString> candidateSet;
+    for (const QString& kw : kKeywords) {
+        if (kw.startsWith(prefix) && kw != prefix)
+            candidateSet.insert(kw);
+    }
+    // 历史词：拆历史条目中的标识符（用户自己的变量/函数名高频出现在历史里）
+    static const QRegularExpression kWordRe(QStringLiteral("[A-Za-z_][A-Za-z0-9_]*"));
+    for (const QString& h : history_) {
+        auto it = kWordRe.globalMatch(h);
+        while (it.hasNext()) {
+            QString w = it.next().captured(0);
+            if (w.startsWith(prefix) && w != prefix)
+                candidateSet.insert(w);
+        }
+    }
+    if (candidateSet.isEmpty())
+        return false;
+
+    QStringList candidates = candidateSet.values();
+    candidates.sort();
+    if (candidates.size() == 1) {
+        // 唯一匹配：直接补全
+        cursor.setPosition(start);
+        cursor.setPosition(pos, QTextCursor::KeepAnchor);
+        cursor.insertText(candidates.first());
+        return true;
+    }
+    // 多候选：补全至最长公共前缀 + 列出候选
+    QString common = candidates.first();
+    for (const QString& c : candidates) {
+        int i = 0;
+        while (i < common.size() && i < c.size() && common.at(i) == c.at(i))
+            ++i;
+        common.truncate(i);
+    }
+    if (common.size() > prefix.size()) {
+        cursor.setPosition(start);
+        cursor.setPosition(pos, QTextCursor::KeepAnchor);
+        cursor.insertText(common);
+    }
+    appendOutput(QString::fromUtf8("[补全候选] ") + candidates.join(QStringLiteral("  ")));
+    return true;
+}
+
+void ReplPanel::loadHistoryFromSettings() {
+    QSettings settings(QStringLiteral("MiniLang"), QStringLiteral("ReplPanel"));
+    history_ = settings.value(QStringLiteral("history")).toStringList();
+    historyIndex_ = history_.size();
+}
+
+void ReplPanel::saveHistoryToSettings() {
+    QSettings settings(QStringLiteral("MiniLang"), QStringLiteral("ReplPanel"));
+    // 仅保留最近 200 条，避免无限增长
+    QStringList tail = history_;
+    constexpr int kMaxPersisted = 200;
+    if (tail.size() > kMaxPersisted) {
+        tail = tail.mid(tail.size() - kMaxPersisted);
+    }
+    settings.setValue(QStringLiteral("history"), tail);
 }

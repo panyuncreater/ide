@@ -38,6 +38,9 @@ struct TestCase {
     std::string name;           // 用例名（如 "3+5"）
     std::string code;           // 完整代码（含输入）
     std::string expectedOutput; // 期望输出
+    // 拓展二期：隐藏用例（真实判题模式）——表格中不展示输入与期望输出，
+    // 失败时不泄漏期望值，防止学生针对公开用例硬编码输出骗分
+    bool hidden = false;
 };
 
 /// 单个练习题目
@@ -46,7 +49,7 @@ struct Exercise {
     std::string description;         // 题目描述（HTML）
     std::string hint;                // 提示
     std::string starterCode;         // 起始代码
-    std::vector<TestCase> testCases; // 测试用例（3 个）
+    std::vector<TestCase> testCases; // 测试用例（3 个公开 + 1 个隐藏）
 };
 
 /// 评分项
@@ -75,6 +78,17 @@ public:
     /// 绑定 IdeController（仅赋值，不注册监听器——与 BackendParallelPanel 模式一致）
     void setController(IdeController* controller) { controller_ = controller; }
 
+    // ARCH-10: ExecResult 公开为接口类型，供 convertServiceResult 辅助函数使用
+    // 执行结果
+    struct ExecResult {
+        QString output;            // 标准输出（print 输出）
+        QString status;            // 状态文本（"✅ 成功" / "❌ 错误: ..."）
+        bool success = false;      // 是否成功（编译+运行均无错）
+        QString errorMsg;          // 错误信息（不含状态前缀图标）
+        bool compileError = false; // 编译阶段错误（词法/语法/编译）
+        bool runtimeError = false; // 运行时错误
+    };
+
 signals:
     /// 请求将样例代码加载到主编辑器
     void loadSampleRequested(const QString& code);
@@ -102,15 +116,7 @@ private:
     QTextBrowser* feedbackBrowser_ = nullptr;
     QPushButton* loadSampleBtn_ = nullptr;
 
-    // 执行结果
-    struct ExecResult {
-        QString output;            // 标准输出（print 输出）
-        QString status;            // 状态文本（"✅ 成功" / "❌ 错误: ..."）
-        bool success = false;      // 是否成功（编译+运行均无错）
-        QString errorMsg;          // 错误信息（不含状态前缀图标）
-        bool compileError = false; // 编译阶段错误（词法/语法/编译）
-        bool runtimeError = false; // 运行时错误
-    };
+    // ARCH-10: ExecResult 已上移至 public 区段
 
     // 构建界面、填充题目
     void buildUI();

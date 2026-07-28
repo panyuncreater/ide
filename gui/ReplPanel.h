@@ -101,4 +101,12 @@ private:
 
     /// 键盘事件过滤（支持上下键浏览历史）
     bool eventFilter(QObject* obj, QEvent* event) override;
+
+    // ---- 拓展二期：Tab 补全 + 历史持久化 ----
+    /// Tab 前缀补全（关键字 + 历史词）。返回 true 表示已处理（拦截 Tab）。
+    bool tryTabComplete();
+    /// 从 QSettings 恢复历史（构造时调用）
+    void loadHistoryFromSettings();
+    /// 历史写入 QSettings（追加/清除时调用，保留最近 200 条）
+    void saveHistoryToSettings();
 };

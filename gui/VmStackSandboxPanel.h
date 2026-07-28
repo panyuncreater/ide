@@ -134,6 +134,11 @@ private:
     // 用户可点击 stepBtn_/resetTraceBtn_ 触发重入，与正在跑的循环共享 vm_
     // 状态导致崩溃。traceRunning_ 守卫阻止重入。
     bool traceRunning_ = false;
+    // BUG-96 fix (P3): refreshTraceViews 重入守卫——onTraceRunAll 循环内
+    // processEvents 期间，VM 状态变更监听器/事件回调可能再次触发 refreshTraceViews，
+    // 与外层正在执行的刷新逻辑竞争修改 QListWidget/QTableWidget 视图状态。
+    // 该标志在 refreshTraceViews 入口置位、出口复位，重入调用直接返回。
+    bool traceRefreshing_ = false;
 
     // ---- 内部方法 ----
     /// 加载指定关卡。

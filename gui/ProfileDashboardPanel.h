@@ -25,7 +25,6 @@
 // 不修改引擎层 instrumentation。
 // ============================================================
 
-#include "ast/ASTNode.h" // Block 类型完整定义（measureXxxOnce 签名需要）
 #include <QComboBox>
 #include <QLabel>
 #include <QListWidget>
@@ -169,17 +168,21 @@ private:
     QTextBrowser* opCodeDocView_ = nullptr;     // OpCode 性能文档说明
 
     /// R111: 测量 Interpreter 单次执行 — 返回 (微秒, GC tracked 峰值)
-    std::pair<double, size_t> measureInterpreterOnce(Block& ast);
+    /// ARCH-10: 通过 BackendExecutionService 触发执行，参数为源码字符串
+    std::pair<double, size_t> measureInterpreterOnce(const std::string& src);
 
     /// R111: 在 StackVM/RegisterVM 测量期间累加 opcode 计数 + GC tracked 峰值
     /// 返回 (微秒, opcodeCounts[256], GC tracked 峰值)；测量期间 stepCallback 启用
-    std::tuple<double, std::array<uint64_t, 256>, size_t> measureStackVMWithProfile(Block& ast);
-    std::tuple<double, std::array<uint64_t, 256>, size_t> measureRegisterVMWithProfile(Block& ast);
+    /// ARCH-10: 通过 BackendExecutionService 触发执行，参数为源码字符串
+    std::tuple<double, std::array<uint64_t, 256>, size_t> measureStackVMWithProfile(const std::string& src);
+    std::tuple<double, std::array<uint64_t, 256>, size_t> measureRegisterVMWithProfile(const std::string& src);
 
     /// 多次测量取平均 + 标准差 + 内存峰值
     /// measure 返回 (微秒, GC tracked 峰值)；BackendTiming 填充 avgMicros/stddevMicros/peakTrackedCount
-    BackendTiming measureBackend(const std::string& name, std::function<std::pair<double, size_t>(Block&)> measure,
-                                 Block& ast, int iterations);
+    /// ARCH-10: measure 接收源码字符串（与 measureInterpreterOnce 一致）
+    BackendTiming measureBackend(const std::string& name,
+                                 std::function<std::pair<double, size_t>(const std::string&)> measure,
+                                 const std::string& src, int iterations);
 
     /// R111: 维度切换辅助 — 提取当前维度的数值（double 用于归一化与绘制）
     static double getMetricValue(const BackendTiming& r, MetricDimension metric);

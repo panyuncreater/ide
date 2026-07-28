@@ -6,7 +6,8 @@
  * 并高亮当前正在执行的指令，帮助学员把「代码」与「机器状态」对应起来。
  */
 #include "gui/VmStackPanel.h"
-#include "gui/GuiTextUtils.h" // Dedup-4A: monospaceFont()
+#include "common/ErrorFormat.h" // truncateForError
+#include "gui/GuiTextUtils.h"   // Dedup-4A: monospaceFont()
 #include <QAbstractItemView>
 #include <QHeaderView>
 #include <QVBoxLayout>
@@ -94,8 +95,7 @@ void VmStackPanel::updateStack(std::vector<Value> stack) {
         std::string valStr;
         try {
             valStr = stack[i].toString();
-            if (valStr.size() > 200)
-                valStr = valStr.substr(0, 200) + "...";
+            ErrorFormat::truncateForError(valStr);
         } catch (...) {
             valStr = "<error>";
         }
@@ -140,8 +140,7 @@ void VmStackPanel::updateRegisters(std::vector<Value> registers) {
         std::string valStr;
         try {
             valStr = registers[i].toString();
-            if (valStr.size() > 200)
-                valStr = valStr.substr(0, 200) + "...";
+            ErrorFormat::truncateForError(valStr);
         } catch (...) {
             valStr = "<error>";
         }
@@ -181,8 +180,7 @@ void VmStackPanel::updateGlobals(std::unordered_map<std::string, Value> globals)
         std::string valStr;
         try {
             valStr = entry.second.toString();
-            if (valStr.size() > 200)
-                valStr = valStr.substr(0, 200) + "...";
+            ErrorFormat::truncateForError(valStr);
         } catch (...) {
             valStr = "<error>";
         }

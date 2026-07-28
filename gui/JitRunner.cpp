@@ -211,6 +211,35 @@ TierMetricsResult runTieredCompilation(const std::string& src, const std::string
     return r;
 }
 
+AsmDumpResult runAsmDump(const std::string& src) {
+    AsmDumpResult r;
+    CompileResult cr;
+    std::string compileErr;
+    if (!compileSource(src, cr, compileErr)) {
+        r.error = compileErr;
+        return r;
+    }
+
+    // 字节码反汇编：mainChunk + 全部函数/方法 chunk（复用 disassemble）
+    r.bytecodeText = "== mainChunk ==\n" + cr.mainChunk.disassemble();
+    for (const auto& [name, chunk] : cr.functionChunks) {
+        r.bytecodeText += "\n== " + name + " ==\n" + chunk.disassemble();
+    }
+
+    // JIT 编译+执行，捕获发射的汇编文本
+    JITBackend jit;
+    jit.setAsmCapture(true);
+    jit.setOutputCallback([&](const std::string& s) { r.output += s; });
+    JitResult res = jit.execute(cr);
+    if (res != JitResult::OK) {
+        r.error = jit.getLastError();
+        return r;
+    }
+    r.asmText = jit.getCapturedAsm();
+    r.ok = true;
+    return r;
+}
+
 #else // !MINILANG_USE_JIT
 
 TypeFeedbackResult runTypeFeedback(const std::string&, const std::string&, uint64_t) {
@@ -227,6 +256,12 @@ HotspotResult runHotspot(const std::string&, const std::string&, uint64_t) {
 
 TierMetricsResult runTieredCompilation(const std::string&, const std::string&, uint64_t) {
     TierMetricsResult r;
+    r.error = "JIT disabled (MINILANG_USE_JIT=OFF)";
+    return r;
+}
+
+AsmDumpResult runAsmDump(const std::string&) {
+    AsmDumpResult r;
     r.error = "JIT disabled (MINILANG_USE_JIT=OFF)";
     return r;
 }

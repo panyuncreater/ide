@@ -14,6 +14,8 @@
 // AUDIT-P1 fix: 需要 LearningPathData::stageCount() 用于 currentStage 校验上限。
 #include "gui/LearningPathData.h"
 
+#include "common/Logger.h" // P2-UX: 进度持久化失败日志
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -74,6 +76,10 @@ bool LearnerProgressStore::load() {
     QFile file(path);
     if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
         // 文件不存在或无法打开——回退到空进度，不视为错误
+        // P2-UX fix: 记录日志便于诊断权限/路径问题（文件不存在不记录，仅记录打开失败）
+        if (file.exists()) {
+            LOG_WARNING("Progress file exists but cannot be opened: " + path.toStdString(), "Progress");
+        }
         return false;
     }
 
@@ -84,6 +90,8 @@ bool LearnerProgressStore::load() {
     QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
         // JSON 格式不匹配——回退到空进度，不崩溃
+        // P2-UX fix: 记录解析错误便于诊断文件损坏
+        LOG_WARNING("Progress file JSON parse error: " + parseError.errorString().toStdString(), "Progress");
         return false;
     }
 
@@ -313,15 +321,27 @@ bool LearnerProgressStore::save() const {
     QSaveFile sf(path);
     sf.setDirectWriteFallback(false);
     if (!sf.open(QIODevice::WriteOnly)) {
+        // P2-UX fix: 记录写入失败原因，进度可能丢失——调用方应检查返回值并通知用户
+        LOG_WARNING("Progress save failed: cannot open file for writing: " + path.toStdString() +
+                        " (error: " + sf.errorString().toStdString() + ")",
+                    "Progress");
         return false;
     }
     QByteArray payload = doc.toJson(QJsonDocument::Indented);
     qint64 written = sf.write(payload);
     if (written != static_cast<qint64>(payload.size())) {
         sf.cancelWriting();
+        // P2-UX fix: 记录写入不完整原因（磁盘满/权限等）
+        LOG_WARNING("Progress save failed: incomplete write to " + path.toStdString() +
+                        " (wrote " + std::to_string(written) + " of " + std::to_string(payload.size()) + " bytes)",
+                    "Progress");
         return false;
     }
     if (!sf.commit()) {
+        // P2-UX fix: 记录原子替换失败原因（目标文件被占用/权限等）
+        LOG_WARNING("Progress save failed: QSaveFile commit failed for " + path.toStdString() +
+                        " (error: " + sf.errorString().toStdString() + ")",
+                    "Progress");
         return false;
     }
     return true;

@@ -7,6 +7,7 @@
 #include "gui/I18n.h"
 #include "gui/LearnerProgress.h" // P0-2 fix (F7): 关卡完成状态持久化
 #include "gui/PanelAnimator.h"
+#include "gui/ProgressSaveFeedback.h" // P2-UX fix: save 失败 toast 通知
 #include "gui/TeachingTheme.h"
 // P1-3 fix (F14): 引入真实 Lexer + Parser + Compiler + StackVM 用于对照验证
 #include "app/IdeController.h"
@@ -717,7 +718,7 @@ void VmStackSandboxPanel::onCheck() {
         if (currentLevelIndex_ >= 0 && currentLevelIndex_ < static_cast<int>(levels.size())) {
             std::string id = "level-" + std::to_string(levels[currentLevelIndex_].level);
             LearnerProgressStore::instance().markLevelStars(id, 3);
-            LearnerProgressStore::instance().save();
+            saveLearnerProgressWithFeedback(this); // P2-UX fix: 失败时弹 toast 避免静默丢失
             QString levelId = QString("level-%1").arg(levels[currentLevelIndex_].level);
             emit activityCompleted(levelId);
         }
@@ -1284,8 +1285,17 @@ void VmStackSandboxPanel::onTraceReset() {
 
 /// 刷新跟踪页的字节码、栈与寄存器全部视图。
 void VmStackSandboxPanel::refreshTraceViews() {
-    if (!controller_)
+    // BUG-96 fix (P3): 重入守卫——onTraceRunAll 主循环每 1000 步调用 processEvents，
+    // 期间 VM 状态变更监听器或其它事件回调可能再次进入 refreshTraceViews，
+    // 与外层刷新竞争修改 bytecodeList_/traceStackView_/registerTable_ 视图状态。
+    // 检测到正在刷新则直接返回（下一次外层刷新会带上最新状态）。
+    if (traceRefreshing_)
         return;
+    traceRefreshing_ = true;
+    if (!controller_) {
+        traceRefreshing_ = false;
+        return;
+    }
 
     // 1. 更新 IP 指示器
     if (controller_->isVmInitialized()) {
@@ -1385,6 +1395,9 @@ void VmStackSandboxPanel::refreshTraceViews() {
     //    这里用 VM 的 lastError 作为兜底显示，正常输出由 vmStep 内部回调累积）
     //    注：IdeController 的 outputReady 信号由 ide.cpp 主窗口接收并显示在底部输出面板，
     //    此处仅显示追踪页自身的状态信息。
+
+    // BUG-96 fix (P3): 复位重入守卫
+    traceRefreshing_ = false;
 }
 
 /// 刷新寄存器表（如跟踪的是寄存器机模型时）。
